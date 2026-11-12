@@ -7,6 +7,9 @@
 
 import * as THREE from "three";
 
+/** The kinds of light a piece can give; Ambience sets how bright and how far each one reaches. */
+export type LightKind = "fire" | "candle" | "lamp";
+
 const WOOD = "#8a6a44";
 const DARK_WOOD = "#5a3d22";
 const PALE_WOOD = "#b98b5a";
@@ -60,10 +63,39 @@ class Builder {
     return mesh;
   }
 
-  /** Where the fire's light hangs, in the model's own space. */
-  fire(x: number, y: number, z: number): this {
-    this.group.userData.fire = new THREE.Vector3(x, y, z);
+  /**
+   * Where the piece's light hangs, in the model's own space: an empty marker
+   * the renderer finds after placing it (see WorldRenderer.buildProps), so a
+   * candle on a table that has been turned still lights from the right spot.
+   */
+  light(kind: LightKind, x: number, y: number, z: number): this {
+    const at = new THREE.Object3D();
+    at.position.set(x, y, z);
+    at.userData.light = kind;
+    this.group.add(at);
     return this;
+  }
+
+  /** A fire's light: warm, flickering, and the one that throws shadows indoors. */
+  fire(x: number, y: number, z: number): this {
+    return this.light("fire", x, y, z);
+  }
+
+  /** A cylinder lying on its side along x, its middle at (x, y, z). */
+  roll(color: string, radius: number, length: number, x = 0, y = 0, z = 0, sides = 6): THREE.Mesh {
+    const mesh = this.mesh(new THREE.CylinderGeometry(radius, radius, length, sides), new THREE.MeshLambertMaterial({ color, flatShading: true }), x, y, z);
+    mesh.rotation.z = Math.PI / 2;
+    return mesh;
+  }
+
+  /** See-through, for glass. */
+  glass(mesh: THREE.Mesh, opacity = 0.45): THREE.Mesh {
+    const m = mesh.material as THREE.MeshLambertMaterial;
+    m.transparent = true;
+    m.opacity = opacity;
+    m.depthWrite = false;
+    mesh.userData.glass = true;
+    return mesh;
   }
 
   /** A trophy's stand, with its top at y = 0.5. */
@@ -132,6 +164,7 @@ const MODELS: Record<string, (b: Builder) => void> = {
     b.box("#b87333", 0.26, 0.05, 0.26, 0, 0.8);
     b.glow("#ffd98a", new THREE.BoxGeometry(0.2, 0.24, 0.2), 0, 0.98, 0);
     b.cone("#b87333", 0.2, 0.14, 0, 1.1);
+    b.light("lamp", 0, 0.98, 0);
   },
   banner(b) {
     b.post(IRON, 0.14, 0.18, 0.06);
@@ -210,6 +243,177 @@ const MODELS: Record<string, (b: Builder) => void> = {
     b.post(PALE_WOOD, 0.03, 0.03, 0.8, 0.25, 0.04, -0.02, 5);
     b.box(IRON, 0.22, 0.2, 0.04, 0.32, 0.68, -0.02);
   },
+  // ---- more furniture ----
+  desk(b) {
+    b.box(DARK_WOOD, 1.1, 0.06, 0.56, 0, 0.56);
+    // A bank of drawers on the left, two legs on the right.
+    b.box(WOOD, 0.34, 0.56, 0.5, -0.36, 0);
+    for (const y of [0.08, 0.3]) {
+      b.box(PALE_WOOD, 0.28, 0.17, 0.02, -0.36, y, 0.25);
+      b.box(GOLD, 0.05, 0.04, 0.03, -0.36, y + 0.07, 0.27);
+    }
+    for (const z of [-0.22, 0.22]) b.box("#3b2616", 0.07, 0.56, 0.07, 0.48, 0, z);
+  },
+  side_table(b) {
+    b.box("#5e3d24", 0.56, 0.05, 0.52, 0, 0.5);
+    for (const [x, z] of [[-0.22, -0.2], [0.22, -0.2], [-0.22, 0.2], [0.22, 0.2]]) b.box("#3b2616", 0.06, 0.5, 0.06, x, 0, z);
+    b.box(WOOD, 0.46, 0.03, 0.42, 0, 0.16);
+  },
+  dresser(b) {
+    b.box(DARK_WOOD, 1.02, 0.05, 0.5, 0, 0, -0.1);
+    b.box(WOOD, 0.98, 0.75, 0.46, 0, 0.05, -0.1);
+    b.box(DARK_WOOD, 1.04, 0.04, 0.52, 0, 0.8, -0.1);
+    for (const y of [0.1, 0.34, 0.58]) {
+      b.box(PALE_WOOD, 0.86, 0.19, 0.02, 0, y, 0.14);
+      for (const x of [-0.22, 0.22]) b.box(GOLD, 0.06, 0.04, 0.03, x, y + 0.08, 0.16);
+    }
+  },
+  cupboard(b) {
+    b.box(DARK_WOOD, 0.92, 0.05, 0.46, 0, 0, -0.12);
+    b.box(WOOD, 0.88, 1.41, 0.42, 0, 0.05, -0.12);
+    b.box(DARK_WOOD, 0.96, 0.06, 0.48, 0, 1.46, -0.12);
+    for (const x of [-0.215, 0.215]) {
+      b.box(PALE_WOOD, 0.4, 1.28, 0.02, x, 0.12, 0.1);
+      b.box(DARK_WOOD, 0.3, 0.5, 0.025, x, 0.8, 0.1);
+      b.box(IRON, 0.04, 0.12, 0.03, x > 0 ? 0.05 : -0.05, 0.7, 0.12);
+    }
+  },
+  crate(b) {
+    b.box(PALE_WOOD, 0.66, 0.5, 0.66);
+    for (const y of [0.06, 0.36]) b.box(WOOD, 0.68, 0.08, 0.68, 0, y);
+    b.box(WOOD, 0.08, 0.5, 0.68, -0.29, 0);
+    b.box(WOOD, 0.08, 0.5, 0.68, 0.29, 0);
+    b.box(DARK_WOOD, 0.7, 0.06, 0.7, 0, 0.5);
+  },
+  barrel(b) {
+    b.post(WOOD, 0.28, 0.26, 0.74, 0, 0, 0, 8);
+    for (const y of [0.1, 0.6]) b.post("#4a4f5a", 0.29, 0.29, 0.05, 0, y, 0, 8);
+    b.post(DARK_WOOD, 0.27, 0.27, 0.04, 0, 0.74, 0, 8);
+  },
+  fireplace(b) {
+    b.box("#8d8674", 1.6, 0.12, 0.8);
+    for (const x of [-0.62, 0.62]) b.box(STONE, 0.36, 0.82, 0.6, x, 0.12, -0.05);
+    b.box("#2e2a27", 0.9, 0.82, 0.12, 0, 0.12, -0.3);
+    b.box("#8d8674", 1.7, 0.12, 0.38, 0, 0.94, 0.19);
+    b.box(STONE, 1.6, 0.12, 0.6, 0, 0.94, -0.05);
+    b.box(STONE, 1.0, 0.95, 0.5, 0, 1.06, -0.17);
+    // Stones set into the face, a shade lighter.
+    for (const [x, y] of [[-0.68, 0.3], [0.58, 0.56], [-0.55, 0.7], [0.7, 0.22]]) b.box("#aaa699", 0.14, 0.1, 0.02, x, y, 0.26);
+    // A grate of logs, embers, and a big pixel fire.
+    b.box(IRON, 0.7, 0.04, 0.4, 0, 0.12, 0);
+    b.box(DARK_WOOD, 0.6, 0.09, 0.12, 0, 0.16, 0.06).rotation.y = 0.15;
+    b.box("#4a321c", 0.56, 0.08, 0.11, 0, 0.16, -0.08).rotation.y = -0.2;
+    b.box("#c4421c", 0.5, 0.03, 0.2, 0, 0.24, 0);
+    const flames: [string, number, number, number, number][] = [
+      ["#ff5a1a", 0.15, 0.4, -0.2, -0.04],
+      ["#ff7a24", 0.17, 0.52, -0.04, 0.0],
+      ["#ff6a1f", 0.15, 0.42, 0.13, -0.05],
+      ["#ff8a2a", 0.12, 0.3, 0.27, 0.0],
+      ["#ffb83a", 0.11, 0.34, -0.1, 0.07],
+      ["#ffc94a", 0.1, 0.28, 0.06, 0.08],
+      ["#ffe27a", 0.07, 0.18, -0.02, 0.1],
+      ["#fff3b0", 0.05, 0.1, 0.14, 0.1],
+    ];
+    for (const [color, w, h, x, z] of flames) b.flame(color, w, h, w * 0.7, x, 0.24, z);
+    b.fire(0, 0.6, 0.6);
+  },
+
+  // ---- small things ----
+  candle(b) {
+    b.post(GOLD, 0.07, 0.08, 0.025);
+    b.post("#efe6c8", 0.035, 0.035, 0.14, 0, 0.025);
+    b.flame("#ffb03a", 0.035, 0.06, 0.035, 0, 0.165, 0);
+    b.flame("#fff0a0", 0.018, 0.035, 0.018, 0, 0.17, 0.004);
+    b.light("candle", 0, 0.26, 0);
+  },
+  candelabra(b) {
+    b.post("#b87333", 0.07, 0.09, 0.03);
+    b.post("#b87333", 0.02, 0.02, 0.2, 0, 0.03);
+    b.box("#b87333", 0.26, 0.025, 0.03, 0, 0.21);
+    for (const x of [-0.12, 0, 0.12]) {
+      const y = x === 0 ? 0.26 : 0.235;
+      b.post("#b87333", 0.03, 0.025, 0.02, x, y - 0.02);
+      b.post("#efe6c8", 0.022, 0.022, 0.09, x, y);
+      b.flame("#ffb03a", 0.026, 0.05, 0.026, x, y + 0.09, 0);
+    }
+    b.light("candle", 0, 0.42, 0);
+  },
+  hand_lantern(b) {
+    b.box("#b87333", 0.15, 0.03, 0.15);
+    b.glow("#ffd98a", new THREE.BoxGeometry(0.11, 0.13, 0.11), 0, 0.095, 0);
+    for (const [x, z] of [[-0.065, -0.065], [0.065, -0.065], [-0.065, 0.065], [0.065, 0.065]]) b.box("#8a5a2a", 0.02, 0.13, 0.02, x, 0.03, z);
+    b.cone("#b87333", 0.11, 0.07, 0, 0.16);
+    b.box("#8a5a2a", 0.1, 0.02, 0.02, 0, 0.25);
+    b.light("lamp", 0, 0.12, 0.1);
+  },
+  mug(b) {
+    b.post("#9a7146", 0.06, 0.055, 0.13, 0, 0, 0, 8);
+    b.post(IRON, 0.062, 0.062, 0.02, 0, 0.03, 0, 8);
+    b.post("#f4efe1", 0.055, 0.055, 0.02, 0, 0.12, 0, 8);
+    b.box("#9a7146", 0.03, 0.08, 0.02, 0.075, 0.025);
+  },
+  bottle(b) {
+    b.post("#2f7a4a", 0.045, 0.05, 0.15, 0, 0, 0, 6);
+    b.post("#2f7a4a", 0.018, 0.03, 0.07, 0, 0.15, 0, 6);
+    b.post(PALE_WOOD, 0.016, 0.016, 0.03, 0, 0.22, 0, 5);
+    b.box(CLOTH, 0.07, 0.06, 0.005, 0, 0.05, 0.045);
+  },
+  plate(b) {
+    b.post("#b86a4a", 0.14, 0.11, 0.02, 0, 0, 0, 8);
+    b.box("#c99a54", 0.14, 0.06, 0.08, -0.02, 0.02, 0).rotation.y = 0.4;
+    b.box("#e8c84a", 0.07, 0.05, 0.06, 0.07, 0.02, 0.04);
+  },
+  books(b) {
+    const stack: [string, number, number, number][] = [["#3f6fa8", 0.22, 0.15, 0.05], ["#b9433d", 0.2, 0.14, -0.2], ["#6b8c2f", 0.18, 0.13, 0.25]];
+    stack.forEach(([color, w, d, turn], i) => {
+      const book = b.box(color, w, 0.045, d, 0, i * 0.045);
+      book.rotation.y = turn;
+      b.box("#f4efe1", w - 0.02, 0.03, 0.01, 0, i * 0.045 + 0.008, d / 2).rotation.y = turn;
+    });
+  },
+  potted_herb(b) {
+    b.post("#b8613a", 0.08, 0.06, 0.1, 0, 0, 0, 6);
+    b.post("#4a3424", 0.07, 0.07, 0.01, 0, 0.095, 0, 6);
+    for (const [x, z, h] of [[0, 0, 0.18], [0.04, 0.03, 0.13], [-0.04, 0.02, 0.14], [0.01, -0.04, 0.12]]) b.cone("#5e9a3a", 0.035, h, x, 0.1, z, 4);
+  },
+  mushroom_jar(b) {
+    for (const [x, z, color] of [[-0.02, 0, "#b9433d"], [0.03, 0.02, "#c9a877"], [0.01, -0.03, "#8a5a3c"]] as const) {
+      b.post("#efe6c8", 0.01, 0.012, 0.06, x, 0.01, z, 5);
+      b.cone(color, 0.03, 0.03, x, 0.06, z, 6);
+    }
+    b.glass(b.post("#cfe4ea", 0.07, 0.07, 0.15, 0, 0, 0, 8), 0.4);
+    b.post(GOLD, 0.072, 0.072, 0.025, 0, 0.15, 0, 8);
+  },
+  skull(b) {
+    b.box("#efe9d6", 0.12, 0.1, 0.13, 0, 0.03);
+    b.box("#e2dbc4", 0.09, 0.04, 0.07, 0, 0, 0.03);
+    for (const x of [-0.03, 0.03]) b.box("#2a2018", 0.03, 0.025, 0.01, x, 0.07, 0.065);
+    b.box("#2a2018", 0.015, 0.02, 0.01, 0, 0.045, 0.065);
+  },
+  sea_chart(b) {
+    b.box("#e6d7a8", 0.32, 0.006, 0.24);
+    for (const [w, x, z] of [[0.1, -0.06, -0.05], [0.07, 0.07, 0.04], [0.05, -0.02, 0.07]]) b.box("#6b8c5a", w, 0.008, w * 0.6, x, 0, z);
+    b.box("#b9433d", 0.02, 0.01, 0.02, 0.09, 0, -0.06);
+    b.roll("#d8c48e", 0.025, 0.26, 0, 0.025, -0.13);
+  },
+  hourglass(b) {
+    for (const y of [0, 0.19]) b.post(DARK_WOOD, 0.07, 0.07, 0.02, 0, y, 0, 6);
+    for (const a of [0.5, 2.6, 4.7]) b.post(DARK_WOOD, 0.008, 0.008, 0.17, Math.sin(a) * 0.055, 0.02, Math.cos(a) * 0.055, 4);
+    b.glass(b.cone("#d9eef2", 0.045, 0.085, 0, 0.02, 0, 6), 0.5).rotation.x = Math.PI;
+    b.glass(b.cone("#d9eef2", 0.045, 0.085, 0, 0.105, 0, 6), 0.5);
+    b.cone("#e0b86a", 0.035, 0.04, 0, 0.02, 0, 6);
+  },
+  writing_set(b) {
+    b.post("#1f2430", 0.04, 0.045, 0.05, 0, 0, 0, 6);
+    b.post("#0c0e14", 0.02, 0.02, 0.01, 0, 0.05, 0, 6);
+    const quill = b.box("#f4efe1", 0.012, 0.22, 0.04, 0.03, 0.03, 0);
+    quill.rotation.z = -0.5;
+    b.box("#c9a877", 0.12, 0.004, 0.16, -0.1, 0, 0.02);
+  },
+  coin_pile(b) {
+    const coins: [number, number, number][] = [[0, 0, 0], [0, 0.016, 0], [0.005, 0.032, 0.004], [0.06, 0, 0.03], [0.06, 0.016, 0.03], [-0.05, 0, 0.04], [-0.02, 0, -0.06], [0.04, 0, -0.05]];
+    for (const [x, y, z] of coins) b.post(GOLD, 0.035, 0.035, 0.015, x, y, z, 8);
+  },
   // Far goods, sold only by a traveling salesman.
   globe(b) {
     b.post(DARK_WOOD, 0.08, 0.2, 0.08);
@@ -280,6 +484,28 @@ const MODELS: Record<string, (b: Builder) => void> = {
 function crate(b: Builder) {
   b.box(WOOD, 0.6, 0.6, 0.6);
   b.box(DARK_WOOD, 0.64, 0.08, 0.64, 0, 0.26);
+}
+
+/** A pale see-through copy of a model, to show where something being carried would go. Red when it cannot go there. */
+export function ghostModel(model: string): THREE.Group {
+  const g = propModel(model);
+  g.traverse((o) => {
+    if (!(o instanceof THREE.Mesh)) return;
+    o.material = new THREE.MeshBasicMaterial({ color: "#bfe8ff", transparent: true, opacity: 0.55, depthWrite: false });
+    o.castShadow = o.receiveShadow = false;
+    o.userData.flame = undefined;
+  });
+  g.traverse((o) => {
+    if (o.userData.light) o.userData.light = undefined;
+  });
+  return g;
+}
+
+/** Tint a ghost: pale blue where it fits, red where it does not. */
+export function tintGhost(g: THREE.Group, ok: boolean) {
+  g.traverse((o) => {
+    if (o instanceof THREE.Mesh) (o.material as THREE.MeshBasicMaterial).color.set(ok ? "#bfe8ff" : "#ff6b6b");
+  });
 }
 
 export const PROP_MODELS = Object.keys(MODELS);

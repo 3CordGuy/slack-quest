@@ -55,33 +55,36 @@ describe("carryProblem", () => {
 
 describe("lootPlace: nothing earned is lost", () => {
   it("goes into the pack while there is room", () => {
-    expect(lootPlace({ carried: 8, limit: 9, hasHome: true })).toBe("pack");
-    expect(lootPlace({ carried: 8, limit: 9, hasHome: false })).toBe("pack");
+    expect(lootPlace({ carried: 8, limit: 9, hasHome: true, room: 5 })).toBe("pack");
+    expect(lootPlace({ carried: 8, limit: 9, hasHome: false, room: 0 })).toBe("pack");
   });
 
-  it("overflows to the chest at home", () => {
-    expect(lootPlace({ carried: 9, limit: 9, hasHome: true })).toBe("storage");
-    expect(lootPlace({ carried: 12, limit: 9, hasHome: true })).toBe("storage");
+  it("overflows to a container at home with room", () => {
+    expect(lootPlace({ carried: 9, limit: 9, hasHome: true, room: 1 })).toBe("storage");
+    expect(lootPlace({ carried: 12, limit: 9, hasHome: true, room: 3 })).toBe("storage");
   });
 
-  it("is carried over the limit when there is no home", () => {
-    expect(lootPlace({ carried: 9, limit: 9, hasHome: false })).toBe("overfull");
+  it("is carried over the limit with no home, or every container full", () => {
+    expect(lootPlace({ carried: 9, limit: 9, hasHome: false, room: 0 })).toBe("overfull");
+    expect(lootPlace({ carried: 9, limit: 9, hasHome: true, room: 0 })).toBe("overfull");
   });
 
   it("tells the player whenever it did not go into the pack", () => {
     expect(lootPlaceText("pack", "Rusty Sword")).toBeNull();
-    expect(lootPlaceText("storage", "Rusty Sword")).toMatch(/Rusty Sword was sent to the storage chest/);
+    expect(lootPlaceText("storage", "Rusty Sword")).toMatch(/Rusty Sword was sent to storage at home/);
     expect(lootPlaceText("overfull", "Rusty Sword")).toMatch(/over the limit/);
   });
 });
 
 describe("storage", () => {
-  it("takes unequipped carried items, only with a home", () => {
-    expect(storeProblem({ equipped: false, stored: false }, true)).toBeNull();
-    expect(storeProblem({ equipped: true, stored: false }, true)).toBe("Unequip it first.");
-    expect(storeProblem({ equipped: false, stored: true }, true)).toMatch(/already in storage/);
-    expect(storeProblem({ equipped: false, stored: false }, false)).toMatch(/no storage yet/);
-    expect(storeProblem(null, true)).toBe("No such item.");
+  it("takes unequipped carried items, only with a home that has room", () => {
+    const home = { hasHome: true, room: 3 };
+    expect(storeProblem({ equipped: false, stored: false }, home)).toBeNull();
+    expect(storeProblem({ equipped: true, stored: false }, home)).toBe("Unequip it first.");
+    expect(storeProblem({ equipped: false, stored: true }, home)).toMatch(/already in storage/);
+    expect(storeProblem({ equipped: false, stored: false }, { hasHome: false, room: 0 })).toMatch(/no storage yet/);
+    expect(storeProblem({ equipped: false, stored: false }, { hasHome: true, room: 0 })).toMatch(/chest at home is full/);
+    expect(storeProblem(null, home)).toBe("No such item.");
   });
 
   it("gives back only what is stored, and only if it fits", () => {

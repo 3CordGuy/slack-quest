@@ -86,7 +86,7 @@ async function party(db: D1Database, playerId: string): Promise<Party | null> {
   const [c, res, inv] = await db.batch([
     db.prepare("SELECT name, gold FROM characters WHERE player_id = ? AND status = 'active'").bind(playerId),
     db.prepare("SELECT kind, qty FROM resources WHERE player_id = ? AND qty > 0").bind(playerId),
-    db.prepare("SELECT id, name, equipped, stored FROM inventory WHERE player_id = ?").bind(playerId),
+    db.prepare("SELECT id, name, equipped, stored_in FROM inventory WHERE player_id = ?").bind(playerId),
   ]);
   const character = c.results[0] as { name: string; gold: number } | undefined;
   if (!character) return null;
@@ -95,7 +95,7 @@ async function party(db: D1Database, playerId: string): Promise<Party | null> {
     holdings: {
       gold: character.gold,
       resources: Object.fromEntries((res.results as { kind: string; qty: number }[]).map((r) => [r.kind, r.qty])),
-      items: (inv.results as { id: number; name: string; equipped: number; stored: number }[]).map((i) => ({ id: i.id, name: i.name, equipped: !!i.equipped, stored: !!i.stored })),
+      items: (inv.results as { id: number; name: string; equipped: number; stored_in: number | null }[]).map((i) => ({ id: i.id, name: i.name, equipped: !!i.equipped, stored: i.stored_in !== null })),
     },
   };
 }
@@ -248,8 +248,8 @@ export function settleStatements(
   }
   const { items } = offer.give;
   if (items.length > 0) {
-    need(`(SELECT COUNT(*) FROM inventory WHERE player_id = ? AND equipped = 0 AND stored = 0 AND id IN (${items.map(() => "?").join(", ")})) = ?`, from, ...items, items.length);
-    need("(SELECT COUNT(*) FROM inventory WHERE player_id = ? AND equipped = 0 AND stored = 0) + ? <= ?", to, items.length, takerLimit);
+    need(`(SELECT COUNT(*) FROM inventory WHERE player_id = ? AND equipped = 0 AND stored_in IS NULL AND id IN (${items.map(() => "?").join(", ")})) = ?`, from, ...items, items.length);
+    need("(SELECT COUNT(*) FROM inventory WHERE player_id = ? AND equipped = 0 AND stored_in IS NULL) + ? <= ?", to, items.length, takerLimit);
   }
   for (const [who, goods] of [[from, offer.give], [to, offer.ask]] as const) {
     if (goods.gold > 0) need("(SELECT gold FROM characters WHERE player_id = ?) >= ?", who, goods.gold);
@@ -269,7 +269,7 @@ export function settleStatements(
     // The gear arrives in the other pack, not worn.
     stmts.push(
       db
-        .prepare(`UPDATE inventory SET player_id = ? WHERE player_id = ? AND equipped = 0 AND stored = 0 AND id IN (${items.map(() => "?").join(", ")}) AND ${settled}`)
+        .prepare(`UPDATE inventory SET player_id = ? WHERE player_id = ? AND equipped = 0 AND stored_in IS NULL AND id IN (${items.map(() => "?").join(", ")}) AND ${settled}`)
         .bind(to, from, ...items, row.id, token),
     );
   }
@@ -358,7 +358,7 @@ export async function listTrades(db: D1Database, playerId: string): Promise<Trad
   const offers = new Map(open.map((r) => [r.id, offerOf(r)]));
   const ids = [...new Set([...offers.values()].flatMap((o) => o.give.items))];
   const items = ids.length
-    ? (await db.prepare(`SELECT * FROM inventory WHERE equipped = 0 AND stored = 0 AND id IN (${ids.map(() => "?").join(", ")})`).bind(...ids).all<InventoryRow & { player_id: string }>()).results
+    ? (await db.prepare(`SELECT * FROM inventory WHERE equipped = 0 AND stored_in IS NULL AND id IN (${ids.map(() => "?").join(", ")})`).bind(...ids).all<InventoryRow & { player_id: string }>()).results
     : [];
   return {
     open: open.map((r) => {

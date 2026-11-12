@@ -3,7 +3,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { HexPos } from "@gantt-quest/core";
-import type { ChestItem, Furnishing, HarborPlayer, HutClientMessage, HutServerMessage } from "@gantt-quest/world";
+import type { Furnishing, HarborPlayer, HutClientMessage, HutServerMessage } from "@gantt-quest/world";
 import { PROFILE } from "./api";
 import type { HarborChatLine } from "./useHarbor";
 
@@ -20,15 +20,13 @@ export interface HutConnection {
   status: "connecting" | "open" | "closed";
   /** The connection failed, or the hut is not yours to enter. */
   error: string | null;
-  /** Owner only: the storage chest and how full the pack is. Null for a visitor, or until it arrives. */
-  chest: { items: ChestItem[]; carried: number; limit: number } | null;
   /** The last thing the server would not do, e.g. placing on the doorway. Cleared by the next change. */
   refused: string | null;
   send(message: HutClientMessage): void;
 }
 
 /** `onMoved` fires for every walk, including your own, so the renderer can animate it. */
-export function useHut(ownerId: string, onMoved: (id: string, path: HexPos[]) => void, onChest?: () => void): HutConnection {
+export function useHut(ownerId: string, onMoved: (id: string, path: HexPos[]) => void): HutConnection {
   const [you, setYou] = useState<string | null>(null);
   const [owner, setOwner] = useState<HutConnection["owner"]>(null);
   const [tier, setTier] = useState<number | null>(null);
@@ -39,9 +37,6 @@ export function useHut(ownerId: string, onMoved: (id: string, path: HexPos[]) =>
   const [status, setStatus] = useState<HutConnection["status"]>("connecting");
   const [error, setError] = useState<string | null>(null);
   const [refused, setRefused] = useState<string | null>(null);
-  const [chest, setChest] = useState<HutConnection["chest"]>(null);
-  const chestChanged = useRef(onChest);
-  chestChanged.current = onChest;
   const socket = useRef<WebSocket | null>(null);
   const moved = useRef(onMoved);
   moved.current = onMoved;
@@ -78,10 +73,6 @@ export function useHut(ownerId: string, onMoved: (id: string, path: HexPos[]) =>
           setTier(msg.tier);
           setFurnishings(msg.furnishings);
           setRefused(null);
-        } else if (msg.type === "chest") {
-          setChest({ items: msg.items, carried: msg.carried, limit: msg.limit });
-          // The pack changed too: let the caller re-read it.
-          chestChanged.current?.();
         } else if (msg.type === "refused") {
           setRefused(msg.reason);
         } else if (msg.type === "joined") {
@@ -126,5 +117,5 @@ export function useHut(ownerId: string, onMoved: (id: string, path: HexPos[]) =>
     if (message.type !== "move" && message.type !== "say") setRefused(null);
     if (socket.current?.readyState === WebSocket.OPEN) socket.current.send(JSON.stringify(message));
   }, []);
-  return { you, owner, tier, canEdit, players, furnishings, chat, status, error, refused, chest, send };
+  return { you, owner, tier, canEdit, players, furnishings, chat, status, error, refused, send };
 }

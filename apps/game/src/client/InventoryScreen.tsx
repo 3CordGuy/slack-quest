@@ -212,7 +212,7 @@ export function InventoryScreen({ me, refresh, onClose, onIsland = false }: Prop
                 Pack size {CARRY_FORMULA} = {carry.limit}, not counting what you wear.{" "}
                 {carry.carried > carry.limit ? <span className="bad">Over the limit: send {carry.carried - carry.limit} to storage before taking on more. </span> : null}
                 {carry.hasHome
-                  ? `${carry.stored} in storage at home. Send things there from anywhere; take them back inside your hut.`
+                  ? `${carry.stored} kept at home, room for ${carry.room} more. Send things there from anywhere; take them out from a chest inside your hut.`
                   : "No storage yet: build a shack on a plot in the Harbor for a chest to keep the rest in."}
               </p>
             )}
@@ -228,8 +228,8 @@ export function InventoryScreen({ me, refresh, onClose, onIsland = false }: Prop
                     <button className="primary" disabled={busy || !!equipProblem(selected, c.class_id, c.level)} onClick={() => equip(selected.id)}>Equip</button>
                     <button disabled={busy} onClick={() => act(async () => { await api.sell(selected.id); setSelectedId(null); })}>Sell · {sellPrice(selected)}g</button>
                     <button
-                      disabled={busy || !carry?.hasHome}
-                      title={carry?.hasHome ? "Off to the chest in your hut. Take it back from inside the hut." : "You have no storage yet. Build a shack on a plot in the Harbor."}
+                      disabled={busy || !carry?.hasHome || carry.room <= 0}
+                      title={!carry?.hasHome ? "You have no storage yet. Build a shack on a plot in the Harbor." : carry.room <= 0 ? "Every chest at home is full." : "Off to a chest in your hut. Take it back from inside the hut."}
                       onClick={() => act(async () => { await api.store(selected.id); setSelectedId(null); })}
                     >
                       Send to storage

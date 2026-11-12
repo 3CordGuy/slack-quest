@@ -89,7 +89,7 @@ describe("crafting", () => {
   });
 
   it("needs the blueprint for the pieces that have one", () => {
-    const plenty = { wood: 99, fur: 99, iron: 99, stone: 99, bone: 99, copper: 99 };
+    const plenty = { wood: 99, fur: 99, iron: 99, stone: 99, bone: 99, copper: 99, herbs: 99, mushrooms: 99 };
     expect(craftProblem("bed", STARTER_BLUEPRINTS, plenty)).toMatch(/blueprint/);
     expect(craftProblem("bed", [...STARTER_BLUEPRINTS, "bed"], plenty)).toBeNull();
     for (const def of Object.values(FURNISHINGS)) {

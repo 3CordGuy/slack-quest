@@ -9,6 +9,7 @@
 
 import * as THREE from "three";
 import type { Tile } from "@gantt-quest/world";
+import type { LightKind } from "./props";
 
 /** One full day, in milliseconds. */
 const DAY_MS = 10 * 60 * 1000;
@@ -257,6 +258,16 @@ interface Wisp {
   speed: number;
 }
 
+/** How many plain lights candles and lanterns share. Fixed, so adding a candle never recompiles a material. */
+const GLOW_LIGHTS = 4;
+
+/** How each kind of small light looks. Fires past the first use these too. */
+const GLOW: Record<LightKind, { color: string; power: number; range: number; flicker: boolean }> = {
+  candle: { color: "#ffb35c", power: 0.9, range: 3.2, flicker: true },
+  lamp: { color: "#ffd08a", power: 1.5, range: 4.5, flicker: false },
+  fire: { color: "#ff9548", power: 2.2, range: 5, flicker: true },
+};
+
 export class Ambience {
   /** Everything built for the current map. */
   readonly group = new THREE.Group();
@@ -278,7 +289,13 @@ export class Ambience {
    * never changes the number of lights (and recompiles every material).
    */
   private fireLight = new THREE.PointLight("#ff9548", 0, 6, 2);
-  private fires: THREE.Vector3[] = [];
+  /**
+   * Candles, lanterns and any fire past the first: a few plain lights (no
+   * shadows) handed to the ones nearest the camera's target each frame. Also
+   * always in the scene, for the same reason.
+   */
+  private glows = Array.from({ length: GLOW_LIGHTS }, () => new THREE.PointLight("#ffb35c", 0, 4, 2));
+  private lights: { pos: THREE.Vector3; kind: LightKind }[] = [];
   private flames: THREE.Mesh[] = [];
 
   private grass: THREE.InstancedMesh | null = null;
@@ -330,7 +347,7 @@ export class Ambience {
     this.fireLight.shadow.camera.near = 0.1;
     this.fireLight.shadow.camera.far = 8;
     this.fireLight.shadow.bias = -0.004;
-    scene.add(this.hemi, this.sun, this.sun.target, this.lamp, this.fireLight, this.group);
+    scene.add(this.hemi, this.sun, this.sun.target, this.lamp, this.fireLight, ...this.glows, this.group);
   }
 
   /** Lay out the decoration for a map. `skip` holds the hexes to leave clear. */
@@ -643,7 +660,7 @@ export class Ambience {
   dispose() {
     this.clear();
     this.setSmoke([]);
-    this.scene.remove(this.hemi, this.sun, this.sun.target, this.lamp, this.fireLight, this.group);
+    this.scene.remove(this.hemi, this.sun, this.sun.target, this.lamp, this.fireLight, ...this.glows, this.group);
     this.lamp.shadow.map?.dispose();
     this.fireLight.shadow.map?.dispose();
     this.sun.shadow.map?.dispose();
@@ -789,13 +806,13 @@ export class Ambience {
   }
 
   /** Draw smoke rising from these points (chimney tops). An empty list clears it. */
-  /** The fires in the scene (hearths, campfires) and their flames, which flicker each frame. The meshes belong to the caller. */
-  setFires(fires: THREE.Vector3[], flames: THREE.Mesh[]) {
-    this.fires = fires;
+  /** The lights the props ask for (hearths, campfires, candles, lanterns) and the flames to flicker. The meshes belong to the caller. */
+  setLights(lights: { pos: THREE.Vector3; kind: LightKind }[], flames: THREE.Mesh[]) {
+    this.lights = lights;
     this.flames = flames;
   }
 
-  /** Lick the flames up and down, and let the firelight breathe with them. */
+  /** Lick the flames up and down, and let the lights breathe with them. */
   private flicker(clock: number, target: THREE.Vector3) {
     const motion = this.still ? 0 : 1;
     for (const f of this.flames) {
@@ -807,21 +824,43 @@ export class Ambience {
       f.scale.y = 1 + motion * (Math.sin(clock * 6.3 + seed) * 0.18 + (jitter - 0.5) * 0.45);
       f.scale.x = f.scale.z = 1 + motion * (hash(step, k, 901) - 0.5) * 0.25;
     }
+    // Indoors the lights are part of the room; outdoors they show only as the day goes.
+    const dusk = this.indoors ? 1 : 1 - this.daylight;
+    const near = (a: { pos: THREE.Vector3 }, b: { pos: THREE.Vector3 }) => a.pos.distanceToSquared(target) - b.pos.distanceToSquared(target);
+    const sorted = [...this.lights].sort(near);
+
+    // The nearest fire gets the light that throws shadows.
+    const fire = sorted.find((l) => l.kind === "fire");
     const light = this.fireLight;
-    // Kept visible (at no strength) rather than hidden, so the scene's light count stays fixed.
-    if (this.fires.length === 0) {
+    if (fire) {
+      light.position.copy(fire.pos);
+      light.castShadow = this.indoors;
+      light.intensity = 3.2 * dusk * this.waver(clock, 0, motion);
+    } else {
+      // Kept in the scene (at no strength) rather than hidden, so the light count stays fixed.
       light.intensity = 0;
       light.castShadow = false;
-      return;
     }
-    let near = this.fires[0];
-    for (const p of this.fires) if (p.distanceToSquared(target) < near.distanceToSquared(target)) near = p;
-    light.position.copy(near);
-    const flick = 1 + motion * (Math.sin(clock * 8.1) * 0.07 + Math.sin(clock * 13.7 + 1.3) * 0.05 + (hash(Math.floor(clock * 9), 3, 902) - 0.5) * 0.1);
-    // Indoors it is the second light in the room; outdoors it shows only as the day goes.
-    const strength = this.indoors ? 3.2 : 2.4 * (1 - this.daylight);
-    light.castShadow = this.indoors;
-    light.intensity = strength * flick;
+
+    // Everything else, nearest first, shares the plain lights.
+    const rest = sorted.filter((l) => l !== fire);
+    this.glows.forEach((g, i) => {
+      const l = rest[i];
+      if (!l) {
+        g.intensity = 0;
+        return;
+      }
+      const look = GLOW[l.kind];
+      g.position.copy(l.pos);
+      g.color.set(look.color);
+      g.distance = look.range;
+      g.intensity = look.power * dusk * (look.flicker ? this.waver(clock, i + 1, motion) : 1);
+    });
+  }
+
+  /** A gentle unsteadiness for a flame's light, different for each `n`. */
+  private waver(clock: number, n: number, motion: number): number {
+    return 1 + motion * (Math.sin(clock * (8.1 + n * 0.7) + n) * 0.07 + Math.sin(clock * 13.7 + 1.3 + n * 2.1) * 0.05 + (hash(Math.floor(clock * 9), 3 + n, 902) - 0.5) * 0.1);
   }
 
   setSmoke(stacks: THREE.Vector3[]) {
@@ -892,7 +931,7 @@ export class Ambience {
       // The lamp does the work; a low fill keeps the corners readable. It wavers a little, like a flame.
       this.sun.intensity = 0;
       // With a fire going, the lamp and fill step back so the room is not overlit.
-      const fire = this.fires.length > 0;
+      const fire = this.lights.some((l) => l.kind === "fire");
       this.lamp.intensity = (fire ? 1.15 : 1.5) * (this.still ? 1 : 1 + Math.sin(clock * 7) * 0.035 + Math.sin(clock * 13.3) * 0.02);
       this.hemi.intensity = fire ? 0.8 : 0.95;
       this.hemi.color.set("#ffe9c9");

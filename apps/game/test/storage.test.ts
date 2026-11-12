@@ -4,8 +4,8 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { beforeEach, describe, expect, it } from "vitest";
-import { CARRY_BASE, type ItemDef } from "@gantt-quest/world";
-import { applyGrant, buyShopItem, carryState, equipItem, getInventory, getShop, sellItem, storeItem, takeStoredItem } from "../src/server/db";
+import { CARRY_BASE, FURNISHINGS, STORAGE_CHEST, type ItemDef } from "@gantt-quest/world";
+import { applyGrant, buyShopItem, carryState, equipItem, getInventory, getShop, sellItem, storeItem, stowGear, unstowGear } from "../src/server/db";
 import { buyFromSalesman, getSalesman } from "../src/server/salesman";
 import { acceptTrade, proposeTrade } from "../src/server/trade";
 
@@ -62,16 +62,21 @@ const LIMIT = CARRY_BASE + 2;
 const loot: ItemDef = { kind: "trinket", ref: "ring", name: "Sea Ring", rarity: "rare", slot: "ring", power: 0, statBonus: {}, levelReq: 1, icon: "ring" };
 const grant = (item: ItemDef | null = loot) => applyGrant(db, "RUNA", "ann", { xp: 0, gold: 0, item });
 const one = <T = Row>(text: string, ...args: (string | number)[]) => sql.prepare(text).get(...args) as T;
-const carried = () => one<{ n: number }>("SELECT COUNT(*) AS n FROM inventory WHERE player_id = 'ann' AND equipped = 0 AND stored = 0").n;
-const stored = () => one<{ n: number }>("SELECT COUNT(*) AS n FROM inventory WHERE player_id = 'ann' AND stored = 1").n;
+const carried = () => one<{ n: number }>("SELECT COUNT(*) AS n FROM inventory WHERE player_id = 'ann' AND equipped = 0 AND stored_in IS NULL").n;
+const stored = () => one<{ n: number }>("SELECT COUNT(*) AS n FROM inventory WHERE player_id = 'ann' AND stored_in IS NOT NULL").n;
 const gold = (id = "ann") => one<{ gold: number }>("SELECT gold FROM characters WHERE player_id = ?", id).gold;
-const packIds = () => (sql.prepare("SELECT id FROM inventory WHERE player_id = 'ann' AND equipped = 0 AND stored = 0 ORDER BY id").all() as { id: number }[]).map((r) => r.id);
+const packIds = () => (sql.prepare("SELECT id FROM inventory WHERE player_id = 'ann' AND equipped = 0 AND stored_in IS NULL ORDER BY id").all() as { id: number }[]).map((r) => r.id);
 
 function fillPack(n: number) {
   const item = sql.prepare("INSERT INTO inventory (player_id, kind, ref, name, rarity, slot, equipped, created_at) VALUES ('ann', 'trinket', 'ring', ?, 'common', 'ring', 0, ?)");
   for (let i = 0; i < n; i++) item.run(`Ring ${i}`, Date.now());
 }
-const buildShack = () => sql.prepare("INSERT INTO huts (player_id, tier, plot, bin_json) VALUES ('ann', 1, 0, NULL)").run();
+/** A built shack, with the free Storage Chest standing in it. Returns the chest's id. */
+const CHEST_SLOTS = FURNISHINGS[STORAGE_CHEST].storage!;
+function buildShack(): number {
+  sql.prepare("INSERT INTO huts (player_id, tier, plot, bin_json) VALUES ('ann', 1, 0, NULL)").run();
+  return Number(sql.prepare("INSERT INTO furnishings (player_id, def_id, label, q, r, created_at) VALUES ('ann', 'storage_chest', 'Storage Chest', 1, 1, 0)").run().lastInsertRowid);
+}
 
 beforeEach(() => {
   ({ sql, db } = openDb());
@@ -91,7 +96,7 @@ beforeEach(() => {
 describe("carryState", () => {
   it("counts only unequipped, carried items, and adds Strength from gear", async () => {
     fillPack(2);
-    expect(await carryState(db, "ann")).toEqual({ carried: 2, limit: LIMIT, stored: 0, hasHome: false });
+    expect(await carryState(db, "ann")).toEqual({ carried: 2, limit: LIMIT, stored: 0, hasHome: false, room: 0 });
     sql.prepare("INSERT INTO inventory (player_id, kind, ref, name, rarity, slot, stat_bonus_json, equipped, created_at) VALUES ('ann', 'trinket', 'ring', 'Ring of Might', 'rare', 'ring', '{\"str\":3}', 1, 0)").run();
     expect((await carryState(db, "ann"))!.limit).toBe(LIMIT + 3);
   });
@@ -121,6 +126,16 @@ describe("loot never goes missing", () => {
   it("is carried over the limit when there is no home", async () => {
     fillPack(LIMIT);
     expect(await grant()).toBe("overfull");
+    expect(carried()).toBe(LIMIT + 1);
+  });
+
+  it("is carried over the limit when every chest at home is full", async () => {
+    const chest = buildShack();
+    fillPack(LIMIT + CHEST_SLOTS);
+    for (const id of packIds().slice(0, CHEST_SLOTS)) sql.prepare("UPDATE inventory SET stored_in = ? WHERE id = ?").run(chest, id);
+    expect((await carryState(db, "ann"))!.room).toBe(0);
+    expect(await grant()).toBe("overfull");
+    expect(stored()).toBe(CHEST_SLOTS);
     expect(carried()).toBe(LIMIT + 1);
   });
 
@@ -164,17 +179,30 @@ describe("the storage chest", () => {
     expect((await getInventory(db, "ann")).map((i) => i.name)).toEqual(["Mace"]);
   });
 
-  it("gives back only while there is room", async () => {
+  it("gives back only while there is room in the pack", async () => {
     buildShack();
     fillPack(LIMIT);
     const [first] = packIds();
     await storeItem(db, "ann", first);
     fillPack(1);
-    expect(await takeStoredItem(db, "ann", first)).toMatch(/pack is full/);
+    expect(await unstowGear(db, "ann", first)).toMatch(/pack is full/);
     expect(stored()).toBe(1);
     await storeItem(db, "ann", packIds()[0]);
-    expect(await takeStoredItem(db, "ann", first)).toBeNull();
+    expect(await unstowGear(db, "ann", first)).toBeNull();
     expect(carried()).toBe(LIMIT);
+  });
+
+  it("goes into the free chest first, and refuses once every container is full", async () => {
+    const chest = buildShack();
+    const crate = Number(sql.prepare("INSERT INTO furnishings (player_id, def_id, label, created_at) VALUES ('ann', 'crate', 'Crate', 0)").run().lastInsertRowid);
+    fillPack(CHEST_SLOTS + FURNISHINGS.crate.storage! + 1);
+    await storeItem(db, "ann", packIds()[0]);
+    expect(one<{ stored_in: number }>("SELECT stored_in FROM inventory WHERE stored_in IS NOT NULL").stored_in).toBe(chest);
+    while (stored() < CHEST_SLOTS + FURNISHINGS.crate.storage!) expect(await storeItem(db, "ann", packIds()[0])).toBeNull();
+    expect(one<{ n: number }>("SELECT COUNT(*) AS n FROM inventory WHERE stored_in = ?", crate).n).toBe(FURNISHINGS.crate.storage!);
+    expect(await storeItem(db, "ann", packIds()[0])).toMatch(/chest at home is full/);
+    // A chosen container is checked too.
+    expect(await stowGear(db, "ann", chest, packIds()[0])).toMatch(/full/);
   });
 
   it("will not sell, equip or take what is not there", async () => {
@@ -182,10 +210,10 @@ describe("the storage chest", () => {
     fillPack(1);
     const [id] = packIds();
     await storeItem(db, "ann", id);
-    expect(await sellItem(db, "ann", id)).toMatch(/in storage/);
-    expect(await equipItem(db, "ann", id)).toMatch(/in storage/);
-    expect(await takeStoredItem(db, "bo", id)).toMatch(/not in your storage/);
-    expect(await takeStoredItem(db, "ann", 1)).toMatch(/not in your storage/);
+    expect(await sellItem(db, "ann", id)).toMatch(/kept at home/);
+    expect(await equipItem(db, "ann", id)).toMatch(/kept at home/);
+    expect(await unstowGear(db, "bo", id)).toMatch(/not in a container/);
+    expect(await unstowGear(db, "ann", 1)).toMatch(/not in a container/);
   });
 });
 

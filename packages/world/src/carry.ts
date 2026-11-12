@@ -2,16 +2,18 @@
 //
 // A hero carries a pack of unequipped gear whose size grows with Strength
 // (base plus what their gear gives). Worn gear does not count. Everything
-// else waits in the storage chest at home: items can be sent there from
-// anywhere, but only taken out while standing in your own hut.
+// else waits in the containers of their hut (hut.ts `storage`: the free
+// Storage Chest every home has, plus any chests, crates and cupboards they
+// add): items can be sent there from anywhere, but only taken out while
+// standing in your own hut.
 //
 // Hut materials (wood, stone, herbs...) are not gear and never count: they
 // live in their own heaps, not in the pack.
 //
 // Nothing earned is ever lost to a full pack. Loot that does not fit goes
-// to the chest at home; without a home yet it goes into the pack anyway,
-// over the limit, and the hero simply cannot take on more until they are
-// back under it. Buying and trades are refused instead, since the player
+// to a container at home with room; with no home yet, or every container
+// full, it goes into the pack anyway, over the limit, and the hero simply
+// cannot take on more until they are back under it. Buying and trades are refused instead, since the player
 // can choose not to.
 
 import type { Stats } from "@gantt-quest/core";
@@ -34,10 +36,12 @@ export interface CarryState {
   /** Unequipped items carried now. */
   carried: number;
   limit: number;
-  /** Items in the storage chest at home. */
+  /** Gear kept in containers at home. */
   stored: number;
   /** True once the hero has a hut, and so a chest. */
   hasHome: boolean;
+  /** Free slots across the containers at home (shared with decorations and materials). */
+  room: number;
 }
 
 /** Room left in the pack; never negative, even when over the limit. */
@@ -60,27 +64,28 @@ export function carryProblem(s: Pick<CarryState, "carried" | "limit">, adding: n
 export type LootPlace = "pack" | "storage" | "overfull";
 
 /**
- * Where loot lands: in the pack if there is room, else the chest at home,
- * else (no home yet) the pack anyway, over the limit. Never nowhere.
+ * Where loot lands: in the pack if there is room, else a container at home
+ * with a free slot, else the pack anyway, over the limit. Never nowhere.
  */
-export function lootPlace(s: Pick<CarryState, "carried" | "limit" | "hasHome">): LootPlace {
+export function lootPlace(s: Pick<CarryState, "carried" | "limit" | "hasHome" | "room">): LootPlace {
   if (s.carried < s.limit) return "pack";
-  return s.hasHome ? "storage" : "overfull";
+  return s.hasHome && s.room > 0 ? "storage" : "overfull";
 }
 
 /** The feed line for loot that did not go into the pack, or null if it did. */
 export function lootPlaceText(place: LootPlace, itemName: string): string | null {
-  if (place === "storage") return `Pack full: ${itemName} was sent to the storage chest at home.`;
-  if (place === "overfull") return `Pack full and no hut to send it to: ${itemName} is carried over the limit. Buy a plot and build a shack for a storage chest.`;
+  if (place === "storage") return `Pack full: ${itemName} was sent to storage at home.`;
+  if (place === "overfull") return `Pack full and nowhere at home to keep it: ${itemName} is carried over the limit. Make room in your pack or your hut's chests.`;
   return null;
 }
 
 /** Why an item cannot go to storage, or null if it can. */
-export function storeProblem(item: { equipped: boolean; stored: boolean } | null, hasHome: boolean): string | null {
+export function storeProblem(item: { equipped: boolean; stored: boolean } | null, home: Pick<CarryState, "hasHome" | "room">): string | null {
   if (!item) return "No such item.";
   if (item.stored) return "That is already in storage.";
   if (item.equipped) return "Unequip it first.";
-  if (!hasHome) return "You have no storage yet. Buy a plot in the Harbor and fill its bin to raise a shack; its chest holds what you cannot carry.";
+  if (!home.hasHome) return "You have no storage yet. Buy a plot in the Harbor and fill its bin to raise a shack; it comes with a chest for what you cannot carry.";
+  if (home.room <= 0) return "Every chest at home is full. Make room there, or add another chest, crate or cupboard.";
   return null;
 }
 
