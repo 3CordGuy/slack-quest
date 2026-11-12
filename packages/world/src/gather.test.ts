@@ -373,9 +373,9 @@ describe("resting", () => {
     expect(restReadyAt(noon)).toBe(noon + 20 * 60_000);
   });
 
-  it("gives back more at home than on a bedroll, and never more than a day's outings", () => {
-    expect(REST_OUTINGS.hut).toBeGreaterThan(REST_OUTINGS.bedroll);
-    expect(REST_OUTINGS.hut).toBeLessThan(GATHER_DAILY_OUTINGS);
+  it("gives back one outing on a bedroll and all of them at home", () => {
+    expect(REST_OUTINGS.bedroll).toBe(1);
+    expect(REST_OUTINGS.hut).toBe(GATHER_DAILY_OUTINGS);
   });
 });
 
