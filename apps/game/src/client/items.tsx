@@ -17,6 +17,7 @@ import {
 } from "@gantt-quest/world";
 import type { InventoryItem } from "./api";
 import { itemArtUrl } from "./itemArt";
+import { blurb, itemName, label } from "./labels";
 
 /** An inventory row as the game rules see it, keeping its id and equipped flag. */
 export type OwnedItem = ItemDef & { id: number; equipped: boolean };
@@ -27,7 +28,7 @@ export function toOwned(row: InventoryItem): OwnedItem {
     equipped: !!row.equipped,
     kind: row.kind,
     ref: row.ref,
-    name: row.name,
+    name: itemName(row),
     rarity: row.rarity,
     slot: row.slot,
     power: row.power,
@@ -69,7 +70,7 @@ export function ItemTile({ item, selected, locked, match, onClick, onDragStart, 
     <button
       className={`tile ${selected ? "selected" : ""} ${locked ? "locked" : ""} ${match ? "match" : ""}`}
       style={{ borderColor: color }}
-      title={item.name}
+      title={itemName(item)}
       draggable={!!onDragStart}
       onDragStart={onDragStart}
       onClick={onClick}
@@ -123,7 +124,7 @@ export function ItemDetail({ item, current, equipped, classId, level, children }
       <div className="detail-head">
         <span className="detail-icon" style={{ borderColor: color }}><Icon name={item.icon} color={color} size={54} /></span>
         <div>
-          <strong style={{ color }}>{item.name}</strong>
+          <strong style={{ color }}>{itemName(item)}</strong>
           <div>
             <span className="tag" style={{ color, borderColor: color, marginLeft: 0 }}>{item.rarity}</span>
             {equipped && <span className="tag">equipped</span>}
@@ -140,7 +141,7 @@ export function ItemDetail({ item, current, equipped, classId, level, children }
         <ul className="abilities">
           {abilities.map((id) => {
             const a = ABILITIES[id];
-            return <li key={id}><strong>{a.name}</strong> <span className="muted">{a.rolls} × {STAT_LABEL[a.stat]} · {a.blurb}</span></li>;
+            return <li key={id}><strong>{label("ability", id)}</strong> <span className="muted">{a.rolls} × {STAT_LABEL[a.stat]} · {blurb("ability", id)}</span></li>;
           })}
         </ul>
       )}
@@ -149,7 +150,7 @@ export function ItemDetail({ item, current, equipped, classId, level, children }
       {diff && (
         <div className={`diff ${diff.verdict.toLowerCase()}`}>
           <div className="diff-head">
-            <span className="muted">vs {current ? current.name : "empty slot"}</span>
+            <span className="muted">vs {current ? itemName(current) : "empty slot"}</span>
             <VerdictTag verdict={diff.verdict} />
           </div>
           {diff.rows.map((r) => (

@@ -4,7 +4,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { HexPos } from "@gantt-quest/core";
-import { FURNISHINGS, HERO_CLASSES, craftProblem, hutPerks, hutRoom, hutTier, nextHutTier, placedFurnishings, poiAt, upgradeProblem, type Furnishing } from "@gantt-quest/world";
+import { FURNISHINGS, craftProblem, hutPerks, hutRoom, hutTier, nextHutTier, placedFurnishings, poiAt, upgradeProblem, type Furnishing } from "@gantt-quest/world";
 import { api, type Hut, type Me } from "./api";
 import { DragPanel } from "./DragPanel";
 import { CostChips, PerkMeter, ResourceChips } from "./hutDrops";
@@ -12,8 +12,9 @@ import { TileAction } from "./TileAction";
 import { WorldRenderer, type RenderState } from "./render/WorldRenderer";
 import { useHut } from "./useHut";
 import "./hut.css";
+import { blurb, label } from "./labels";
 
-const className = (id: string) => HERO_CLASSES.find((c) => c.id === id)?.name ?? id;
+const className = (id: string) => label("class", id);
 const same = (a: HexPos, b: HexPos) => a.q === b.q && a.r === b.r;
 const defOf = (f: Furnishing) => FURNISHINGS[f.defId];
 
@@ -183,7 +184,7 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
           {chosen ? (
             <div className="hut-chosen">
               <strong>{chosen.label}</strong>
-              <p className="muted">{defOf(chosen)?.blurb}</p>
+              <p className="muted">{(chosen && blurb("furnishing", chosen.defId))}</p>
               <div className="row">
                 <button className="small" onClick={() => hut.send({ type: "rotate", id: chosen.id })}>Rotate</button>
                 <button className="small" onClick={() => pick(chosen.id)}>Move</button>
@@ -202,7 +203,7 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
           <ul className="hut-list">
             {stored.map((f) => (
               <li key={f.id}>
-                <button className={holding === f.id ? "selected" : ""} title={defOf(f)?.blurb} onClick={() => pick(f.id)}>
+                <button className={holding === f.id ? "selected" : ""} title={blurb("furnishing", f.defId)} onClick={() => pick(f.id)}>
                   {f.label}{defOf(f)?.kind === "trophy" && <span className="tag">trophy</span>}
                 </button>
               </li>
@@ -214,7 +215,7 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
           <ul className="hut-list">
             {placed.map((f) => (
               <li key={f.id}>
-                <button className={selected === f.id || holding === f.id ? "selected" : ""} title={defOf(f)?.blurb} onClick={() => (setHolding(null), setSelected((s) => (s === f.id ? null : f.id)))}>
+                <button className={selected === f.id || holding === f.id ? "selected" : ""} title={blurb("furnishing", f.defId)} onClick={() => (setHolding(null), setSelected((s) => (s === f.id ? null : f.id)))}>
                   {f.label}
                 </button>
               </li>
@@ -236,13 +237,13 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
                   return (
                     <li key={def.id} className={known ? "" : "locked"}>
                       <div>
-                        <strong>{def.name}</strong>
-                        <span className="muted"> · {known ? def.blurb : "Blueprint not found yet. Islands hide them."}</span>
+                        <strong>{label("furnishing", def.id)}</strong>
+                        <span className="muted"> · {known ? blurb("furnishing", def.id) : "Blueprint not found yet. Islands hide them."}</span>
                       </div>
                       <div className="row">
                         <CostChips cost={def.recipe!} have={own.resources} />
                         <span className="spacer" />
-                        <button className="small primary" disabled={busy || !!problem} title={problem ?? "Goes into storage"} onClick={() => void spend(() => api.craft(def.id), `${def.name} crafted. It is in storage.`)}>
+                        <button className="small primary" disabled={busy || !!problem} title={problem ?? "Goes into storage"} onClick={() => void spend(() => api.craft(def.id), `${label("furnishing", def.id)} crafted. It is in storage.`)}>
                           Craft
                         </button>
                       </div>

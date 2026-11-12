@@ -7,9 +7,7 @@
 import { useEffect, useState } from "react";
 import {
   PROJECTS,
-  PROJECT_COST_LABEL,
   projectAmountsText,
-  projectById,
   projectCostKinds,
   projectGivable,
   type HarborWorks,
@@ -19,6 +17,7 @@ import {
 } from "@gantt-quest/world";
 import { api } from "../api";
 import { DragPanel } from "../DragPanel";
+import { blurb, costLabel, label } from "../labels";
 import "./works.css";
 
 function ago(at: number): string {
@@ -54,10 +53,10 @@ function ProjectCard({ def, paid, builtAt, stock, onGive }: { def: ProjectDef; p
   return (
     <li className={`works-project ${built ? "built" : ""} ${def.open ? "" : "closed"}`} data-project={def.id}>
       <div className="works-title">
-        <strong>{def.name}</strong>
+        <strong>{label("project", def.id)}</strong>
         {built ? <span className="tag good">Built</span> : !def.open && <span className="tag">Not yet open</span>}
       </div>
-      <span className="muted">{def.blurb}</span>
+      <span className="muted">{blurb("project", def.id)}</span>
       <span>{built ? "" : "Once built: "}{def.benefit}</span>
       {!built && (
         <div className="works-costs">
@@ -67,8 +66,8 @@ function ProjectCard({ def, paid, builtAt, stock, onGive }: { def: ProjectDef; p
             const max = givable[kind] ?? 0;
             return (
               <div key={kind} className="works-cost" data-kind={kind}>
-                <span className="works-kind">{PROJECT_COST_LABEL[kind]}</span>
-                <span className="bar" role="progressbar" aria-label={`${def.name}: ${PROJECT_COST_LABEL[kind]}`} aria-valuemin={0} aria-valuemax={cost} aria-valuenow={have}>
+                <span className="works-kind">{costLabel(kind)}</span>
+                <span className="bar" role="progressbar" aria-label={`${label("project", def.id)}: ${costLabel(kind)}`} aria-valuemin={0} aria-valuemax={cost} aria-valuenow={have}>
                   <span className={`bar-fill works-fill ${have >= cost ? "met" : ""}`} style={{ width: `${(100 * have) / cost}%` }} />
                   <span>{have} / {cost}</span>
                 </span>
@@ -80,7 +79,7 @@ function ProjectCard({ def, paid, builtAt, stock, onGive }: { def: ProjectDef; p
                       max={max}
                       step={1}
                       inputMode="numeric"
-                      aria-label={`${PROJECT_COST_LABEL[kind]} to give`}
+                      aria-label={`${costLabel(kind)} to give`}
                       placeholder="0"
                       disabled={max === 0 || busy}
                       value={amounts[kind] ?? ""}
@@ -163,7 +162,7 @@ export function WorksPanel({ works, refresh, onClose }: { works: HarborWorks | u
             <ul className="works-gifts">
               {shown.gifts.map((g, i) => (
                 <li key={`${g.at}:${g.kind}:${i}`}>
-                  <span><strong>{g.name}</strong> gave {g.qty} {PROJECT_COST_LABEL[g.kind].toLowerCase()} to the {projectById(g.projectId)?.name ?? g.projectId}</span>
+                  <span><strong>{g.name}</strong> gave {g.qty} {costLabel(g.kind).toLowerCase()} to the {label("project", g.projectId)}</span>
                   <span className="muted">{ago(g.at)}</span>
                 </li>
               ))}

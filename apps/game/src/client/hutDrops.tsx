@@ -1,9 +1,10 @@
 // Hut materials as the voyage and the inventory show them: feed wording, a
 // row of resource counts, and the list on the ending screen.
 
-import { FURNISHINGS, PERK_CAPS, RESOURCE_KINDS, RESOURCE_LABEL, type Earned, type FurnishingGrant, type Perk, type ResourceKind, type Resources } from "@gantt-quest/world";
+import { FURNISHINGS, PERK_CAPS, RESOURCE_KINDS, type Earned, type FurnishingGrant, type Perk, type ResourceKind, type Resources } from "@gantt-quest/world";
 import { Icon } from "./items";
 import "./hutDrops.css";
+import { label } from "./labels";
 
 /** Icon tint per resource; only the outline pass and cache key use it. */
 const RESOURCE_COLOR: Record<ResourceKind, string> = {
@@ -19,10 +20,10 @@ const RESOURCE_COLOR: Record<ResourceKind, string> = {
 
 /** "2 fur, 1 bone", in the catalogue's order. */
 export function resourceText(resources: Resources): string {
-  return RESOURCE_KINDS.filter((k) => resources[k]).map((k) => `${resources[k]} ${RESOURCE_LABEL[k].toLowerCase()}`).join(", ");
+  return RESOURCE_KINDS.filter((k) => resources[k]).map((k) => `${resources[k]} ${label("resource", k).toLowerCase()}`).join(", ");
 }
 
-export const blueprintName = (id: string) => FURNISHINGS[id]?.name ?? id;
+export const blueprintName = (id: string) => label("furnishing", id);
 export const isTrophy = (f: FurnishingGrant) => FURNISHINGS[f.defId]?.kind === "trophy";
 
 /** One chip per resource. With `all`, kinds the player has none of are shown as zero. */
@@ -30,10 +31,10 @@ export function ResourceChips({ resources, all = false }: { resources: Resources
   return (
     <div className="res-chips">
       {RESOURCE_KINDS.filter((k) => all || resources[k]).map((k) => (
-        <span key={k} className={`res-chip ${resources[k] ? "" : "none"}`} title={RESOURCE_LABEL[k]}>
+        <span key={k} className={`res-chip ${resources[k] ? "" : "none"}`} title={label("resource", k)}>
           <Icon name={`res-${k}`} color={RESOURCE_COLOR[k]} size={22} />
           <strong>{resources[k] ?? 0}</strong>
-          <span className="res-name">{RESOURCE_LABEL[k]}</span>
+          <span className="res-name">{label("resource", k)}</span>
         </span>
       ))}
     </div>
@@ -55,7 +56,7 @@ export function HutSpoils({ earned }: { earned: Earned }) {
           {furnishings.map((f, i) => (
             <li key={`f${i}`}>
               <span className="tag">{isTrophy(f) ? "Trophy" : "Decor"}</span> <strong>{f.label}</strong>
-              {isTrophy(f) && <span className="muted"> · {FURNISHINGS[f.defId].name}</span>}
+              {isTrophy(f) && <span className="muted"> · {label("furnishing", f.defId)}</span>}
             </li>
           ))}
           {blueprints.map((id, i) => (
@@ -101,7 +102,7 @@ export function CostChips({ cost, have, gold, haveGold }: { cost: Resources; hav
     <span className="cost-chips">
       {gold ? <span className={`cost ${(haveGold ?? 0) < gold ? "short" : ""}`} title={`You have ${haveGold ?? 0} gold`}><Icon name="cash" color="#ffd23f" size={16} /> {gold}g</span> : null}
       {RESOURCE_KINDS.filter((k) => cost[k]).map((k) => (
-        <span key={k} className={`cost ${(have[k] ?? 0) < cost[k]! ? "short" : ""}`} title={`${RESOURCE_LABEL[k]}: you have ${have[k] ?? 0}`}>
+        <span key={k} className={`cost ${(have[k] ?? 0) < cost[k]! ? "short" : ""}`} title={`${label("resource", k)}: you have ${have[k] ?? 0}`}>
           <Icon name={`res-${k}`} color={RESOURCE_COLOR[k]} size={16} /> {have[k] ?? 0}/{cost[k]}
         </span>
       ))}

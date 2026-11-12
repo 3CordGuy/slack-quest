@@ -126,7 +126,8 @@ const BASES: Record<Exclude<Slot, "main_hand">, Base[]> = {
 /** Every armor and trinket base, for the content catalogue. Read-only: the rules use BASES. */
 export const GEAR_BASES: readonly Base[] = Object.values(BASES).flat();
 
-const RARITY_PREFIX: Record<Rarity, string> = { common: "", uncommon: "Sturdy ", rare: "Fine ", epic: "Masterwork ", legendary: "Mythic " };
+/** Word put in front of a base name for each rarity: "Fine Audit Mace". */
+export const RARITY_PREFIX: Record<Rarity, string> = { common: "", uncommon: "Sturdy ", rare: "Fine ", epic: "Masterwork ", legendary: "Mythic " };
 const ARMOR_BASE: Partial<Record<Slot, number>> = { body: 3, helmet: 2, legs: 2, off_hand: 2 };
 const ARMOR_SLOTS: Slot[] = ["off_hand", "body", "helmet", "legs"];
 const SLOT_WEIGHT: [Slot, number][] = [

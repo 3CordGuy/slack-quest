@@ -8,13 +8,14 @@
 // as the server so the button explains itself, but the server decides.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { RESOURCE_KINDS, RESOURCE_LABEL, TRADE_MAX_ITEMS, isGift, tradeGoodsText, tradeProblem, type ResourceKind, type Resources, type TradeGoods, type TradeOffer } from "@gantt-quest/world";
+import { RESOURCE_KINDS, TRADE_MAX_ITEMS, isGift, tradeGoodsText, tradeProblem, type ResourceKind, type Resources, type TradeGoods, type TradeOffer } from "@gantt-quest/world";
 import type { TradeList, TradeOutcome, TradeView } from "../server/trade";
 import { api, type Me } from "./api";
 import { DragPanel } from "./DragPanel";
 import { ResourceChips } from "./hutDrops";
 import { Icon, ItemTile, toOwned } from "./items";
 import "./trade.css";
+import { itemName, label } from "./labels";
 
 const POLL_MS = 4000;
 const NOTICE_MS = 7000;
@@ -267,7 +268,7 @@ function Compose({ me, to, run, acted }: { me: Me; to: TradePartner; run?: strin
   const empty = items.length === 0 && !tradeGoodsText(offer.give);
   const problem = tradeProblem(offer, {
     from: me.player.id,
-    giver: { gold, resources: held ?? {}, items: me.inventory.map((i) => ({ id: i.id, equipped: !!i.equipped, name: i.name })) },
+    giver: { gold, resources: held ?? {}, items: me.inventory.map((i) => ({ id: i.id, equipped: !!i.equipped, name: itemName(i) })) },
   });
   const giveText = [...(items.length ? [`${items.length} item${items.length === 1 ? "" : "s"}`] : []), tradeGoodsText(offer.give)].filter(Boolean).join(", ");
 
@@ -303,14 +304,14 @@ function Compose({ me, to, run, acted }: { me: Me; to: TradePartner; run?: strin
       <div className="trade-amounts">
         <AmountInput label="Gold" have={gold} value={give.gold} onChange={(v) => setGive((a) => ({ ...a, gold: v }))} />
         {RESOURCE_KINDS.filter((k) => (held?.[k] ?? 0) > 0).map((k) => (
-          <AmountInput key={k} label={RESOURCE_LABEL[k]} have={held![k]} value={give[k]} onChange={(v) => setGive((a) => ({ ...a, [k]: v }))} />
+          <AmountInput key={k} label={label("resource", k)} have={held![k]} value={give[k]} onChange={(v) => setGive((a) => ({ ...a, [k]: v }))} />
         ))}
       </div>
       <h3>You ask for <span className="muted">(optional)</span></h3>
       <div className="trade-amounts">
         <AmountInput label="Gold" value={ask.gold} onChange={(v) => setAsk((a) => ({ ...a, gold: v }))} />
         {RESOURCE_KINDS.map((k) => (
-          <AmountInput key={k} label={RESOURCE_LABEL[k]} value={ask[k]} onChange={(v) => setAsk((a) => ({ ...a, [k]: v }))} />
+          <AmountInput key={k} label={label("resource", k)} value={ask[k]} onChange={(v) => setAsk((a) => ({ ...a, [k]: v }))} />
         ))}
       </div>
       {!empty && (

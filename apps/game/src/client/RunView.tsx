@@ -4,8 +4,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { hexDistance, type HexPos } from "@gantt-quest/core";
 import {
-  EFFECT_INFO,
-  HERO_CLASSES,
   MAX_NPC_MESSAGES,
   MAX_PERSUADE_ATTEMPTS,
   MOVE_COST,
@@ -33,11 +31,12 @@ import { InventoryScreen } from "./InventoryScreen";
 import { Trading } from "./TradePanel";
 import { WorldRenderer } from "./render/WorldRenderer";
 import { useRun, type RunConnection } from "./useRun";
+import { itemName, label } from "./labels";
 
 /** The least time the crossing stays on screen once a ship has sailed. */
 const MIN_CROSSING_MS = 4500;
 
-const className = (id: string) => HERO_CLASSES.find((c) => c.id === id)?.name ?? id;
+const className = (id: string) => label("class", id);
 const POI_LABEL: Record<string, string> = { landing: "The Landing", hut: "Hut", lair: "Lair", shrine: "Old shrine", cache: "Hidden cache", camp: "Brigand camp" };
 
 const PICKUP_LABEL: Record<string, string> = { herbs: "A patch of herbs", mushrooms: "A ring of mushrooms", wood: "A pile of wood", stone: "A pile of stones" };
@@ -93,7 +92,7 @@ function describe(events: WorldEvent[], state: ClientState, names: Map<string, s
       case "level_up": out.push(`${n(ev.heroId)} reached level ${ev.level}!`); break;
       case "gold": out.push(`${n(ev.heroId)} gains ${ev.amount} gold.`); break;
       case "xp": out.push(`${n(ev.heroId)} gains ${ev.amount} XP.`); break;
-      case "loot": out.push(`${n(ev.heroId)} found ${ev.item.name} (${ev.item.rarity}).`); break;
+      case "loot": out.push(`${n(ev.heroId)} found ${itemName(ev.item)} (${ev.item.rarity}).`); break;
       case "key_item": out.push(`${n(ev.heroId)} now carries ${ev.name}.`); break;
       case "resources": out.push(`${n(ev.heroId)} gathers ${resourceText(ev.resources)}.`); break;
       case "blueprint": out.push(`${n(ev.heroId)} found a blueprint: ${blueprintName(ev.blueprint)}.`); break;
@@ -110,8 +109,8 @@ function describe(events: WorldEvent[], state: ClientState, names: Map<string, s
         if (b.t === "hit") out.push(`${n(b.actor)}: ${b.ability} hits ${n(b.target)} for ${b.amount}${b.perfect ? " (perfect!)" : ""}.`);
         else if (b.t === "miss") out.push(`${n(b.actor)}: ${b.ability} misses ${n(b.target)}.`);
         else if (b.t === "heal") out.push(`${n(b.actor)}: ${b.ability} restores ${b.amount} HP to ${n(b.target)}.`);
-        else if (b.t === "effect") out.push(`${n(b.target)} is ${EFFECT_INFO[b.effect].name.toLowerCase()}.`);
-        else if (b.t === "tick") out.push(`${n(b.target)} takes ${b.amount} from ${EFFECT_INFO[b.effect].name.toLowerCase()}.`);
+        else if (b.t === "effect") out.push(`${n(b.target)} is ${label("effect", b.effect).toLowerCase()}.`);
+        else if (b.t === "tick") out.push(`${n(b.target)} takes ${b.amount} from ${label("effect", b.effect).toLowerCase()}.`);
         else if (b.t === "skip") out.push(`${n(b.id)} is stunned and loses the turn.`);
         else if (b.t === "down") out.push(`${n(b.id)} goes down!`);
         else if (b.t === "flee") out.push(b.ok ? `${n(b.actor)} leads the retreat.` : `${n(b.actor)} fails to break away.`);
@@ -595,7 +594,7 @@ function Ending({ state, onLeave }: { state: ClientState; onLeave(): void }) {
         {earned ? (
           <ul className="gear">
             <li><span>{earned.xp} XP · {earned.gold} gold</span></li>
-            {earned.items.map((item, i) => <li key={i} className={`rarity-${item.rarity}`}><span><strong>{item.name}</strong> <span className="muted">{item.rarity}</span></span></li>)}
+            {earned.items.map((item, i) => <li key={i} className={`rarity-${item.rarity}`}><span><strong>{itemName(item)}</strong> <span className="muted">{item.rarity}</span></span></li>)}
           </ul>
         ) : (
           <p className="muted">Nothing but the story.</p>
