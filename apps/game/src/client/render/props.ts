@@ -76,8 +76,9 @@ const MODELS: Record<string, (b: Builder) => void> = {
     b.box(DARK_WOOD, 0.08, 0.08, 0.12, 0, 0.26, 0.36);
   },
   table(b) {
-    b.box(PALE_WOOD, 1.0, 0.08, 0.7, 0, 0.42);
-    for (const [x, z] of [[-0.42, -0.27], [0.42, -0.27], [-0.42, 0.27], [0.42, 0.27]]) b.box(DARK_WOOD, 0.08, 0.42, 0.08, x, 0, z);
+    // Dark, oiled wood, so it stands out from the pale floorboards it sits on.
+    b.box("#5e3d24", 1.0, 0.08, 0.7, 0, 0.42);
+    for (const [x, z] of [[-0.42, -0.27], [0.42, -0.27], [-0.42, 0.27], [0.42, 0.27]]) b.box("#3b2616", 0.08, 0.42, 0.08, x, 0, z);
     b.box("#d8d2c0", 0.2, 0.05, 0.2, 0.22, 0.5, 0.05);
   },
   chair(b) {
