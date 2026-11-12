@@ -566,6 +566,26 @@ export class WorldRenderer {
     return new THREE.Vector3(x, tileTop(this.state ? tileAt(this.state.map, pos) : undefined), z);
   }
 
+  /**
+   * Where a point above a hex sits on screen, in CSS pixels from the container's top left corner.
+   * `lift` is how far above the ground to aim; the default is where a hero's name label hangs.
+   * Null when the point is behind the camera or outside the view.
+   */
+  screenAbove(pos: HexPos, lift = 1.8): { x: number; y: number } | null {
+    if (!this.state) return null;
+    const v = this.standAt(pos);
+    v.y += lift;
+    v.project(this.camera);
+    if (v.z < -1 || v.z > 1 || Math.abs(v.x) > 1 || Math.abs(v.y) > 1) return null;
+    // The canvas is drawn at 1/PIXEL size and stretched; the container's own size is what the HUD is laid out in.
+    return { x: ((v.x + 1) / 2) * this.container.clientWidth, y: ((1 - v.y) / 2) * this.container.clientHeight };
+  }
+
+  /** Whether a unit is still on its way along a walked path. */
+  isWalking(id: string): boolean {
+    return (this.units.get(id)?.path.length ?? 0) > 0;
+  }
+
   // ---------- points of interest ----------
 
   private buildPois(state: RenderState) {
