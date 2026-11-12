@@ -129,26 +129,46 @@ const DROPS = 150;
 /** Puffs of smoke in the air over one chimney at a time. */
 const PUFFS = 12;
 /**
- * Cobbles for the Harbor's streets, as quiet as the floorboards: broad setts
- * in four near-identical greys, offset row to row, with joints only a shade
- * darker and now and then a faintly mossy one.
+ * Cobbles for the Harbor's streets, as quiet as the floorboards: irregular
+ * rounded stones of uneven size in four near-identical greys, with joints
+ * only a shade darker and now and then a faintly mossy stone. Each pixel
+ * belongs to the nearest of a scatter of stone centres, and the pixels where
+ * two stones meet are the joint. The scatter wraps, so the sheet tiles.
  */
 const cobbleTexture = () =>
   pixelTexture(32, 32, (ctx) => {
+    const SIZE = 32;
+    const CELLS = 5;
+    const step = SIZE / CELLS;
     const stones = ["#72757c", "#6d7077", "#75787f", "#6f7279"];
-    const joint = "#63666d";
-    for (let row = 0; row < 4; row++) {
-      const y = row * 8;
-      const shift = row % 2 ? 6 : 0;
-      for (let k = -1; k < 3; k++) {
-        const x = k * 12 + shift;
-        ctx.fillStyle = hash(row, k, 600) < 0.07 ? "#6b746c" : stones[Math.floor(hash(row, k, 601) * stones.length)];
-        for (let dx = 0; dx < 12; dx++) ctx.fillRect((((x + dx) % 32) + 32) % 32, y, 1, 7);
-        ctx.fillStyle = joint;
-        ctx.fillRect((((x + 11) % 32) + 32) % 32, y, 1, 7);
+    // One centre per cell of a coarse grid, pushed well off the middle so no rows or columns show.
+    const centres: { x: number; y: number; tone: string }[] = [];
+    for (let cy = 0; cy < CELLS; cy++) {
+      for (let cx = 0; cx < CELLS; cx++) {
+        centres.push({
+          x: (cx + 0.15 + hash(cx, cy, 610) * 0.7) * step,
+          y: (cy + 0.15 + hash(cx, cy, 611) * 0.7) * step,
+          tone: hash(cx, cy, 612) < 0.07 ? "#6b746c" : stones[Math.floor(hash(cx, cy, 613) * stones.length)],
+        });
       }
-      ctx.fillStyle = joint;
-      ctx.fillRect(0, y + 7, 32, 1);
+    }
+    const wrap = (d: number) => Math.min(Math.abs(d), SIZE - Math.abs(d));
+    for (let y = 0; y < SIZE; y++) {
+      for (let x = 0; x < SIZE; x++) {
+        let best = Infinity;
+        let second = Infinity;
+        let tone = stones[0];
+        for (const c of centres) {
+          const d = Math.hypot(wrap(x + 0.5 - c.x), wrap(y + 0.5 - c.y));
+          if (d < best) {
+            second = best;
+            best = d;
+            tone = c.tone;
+          } else if (d < second) second = d;
+        }
+        ctx.fillStyle = second - best < 1.1 ? "#63666d" : tone;
+        ctx.fillRect(x, y, 1, 1);
+      }
     }
   });
 

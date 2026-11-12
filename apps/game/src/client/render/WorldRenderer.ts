@@ -606,6 +606,21 @@ export class WorldRenderer {
     return { x: ((v.x + 1) / 2) * this.container.clientWidth, y: ((1 - v.y) / 2) * this.container.clientHeight };
   }
 
+  /**
+   * Where a unit's name label sits, in container pixels: just above its head,
+   * wherever the unit is drawn (which is not always the middle of its hex).
+   * Null when the unit is not on screen.
+   */
+  screenAboveUnit(id: string): { x: number; y: number } | null {
+    const unit = this.units.get(id);
+    if (!unit) return null;
+    const v = unit.sprite.position.clone();
+    v.y += unit.sprite.scale.y + 0.3 - unit.bob;
+    v.project(this.camera);
+    if (v.z < -1 || v.z > 1 || Math.abs(v.x) > 1 || Math.abs(v.y) > 1) return null;
+    return { x: ((v.x + 1) / 2) * this.container.clientWidth, y: ((1 - v.y) / 2) * this.container.clientHeight };
+  }
+
   /** Whether a unit is still on its way along a walked path. */
   isWalking(id: string): boolean {
     return (this.units.get(id)?.path.length ?? 0) > 0;

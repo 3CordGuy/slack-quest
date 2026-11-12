@@ -1,5 +1,6 @@
-// A place's main button, floated just above the hex the player stands on so
-// it is next to where they clicked to walk there. The bar at the bottom of
+// A place's main button, floated above the player's own character (clear of
+// their name) while they stand on that place, so it is next to where they
+// clicked to walk there. The bar at the bottom of
 // the screen keeps the same button; this one is only the shortcut.
 
 import { useEffect, useRef, type RefObject } from "react";
@@ -25,7 +26,8 @@ export function TileAction({ renderer, pos, unitId, label, run }: {
       const el = wrap.current;
       if (!el) return;
       const world = renderer.current;
-      const at = world && !world.isWalking(unitId) ? world.screenAbove({ q, r }) : null;
+      // Over the character's own head (and name), falling back to the hex if they are not drawn yet.
+      const at = world && !world.isWalking(unitId) ? (world.screenAboveUnit(unitId) ?? world.screenAbove({ q, r })) : null;
       el.style.visibility = at ? "visible" : "hidden";
       if (at) el.style.transform = `translate(${Math.round(at.x)}px, ${Math.round(at.y)}px)`;
     };
