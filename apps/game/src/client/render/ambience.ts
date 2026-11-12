@@ -84,6 +84,46 @@ const waveTexture = () =>
 const WAVE_WIDTH = 1.3;
 /** How far each row sits from the middle of its hex. */
 const WAVE_ROW = 0.3;
+/** World units covered by one repeat of the floorboard texture: about one hex across. */
+const BOARD_SPAN = 1.76;
+
+/**
+ * Floorboards for a hut: four rows of planks with staggered ends, a dark seam
+ * between rows, and a few streaks of grain. Flat colours only, so it sits with
+ * the rest of the scenery.
+ */
+const floorTexture = () =>
+  pixelTexture(32, 32, (ctx) => {
+    const boards = ["#b58d5e", "#a98253", "#bd9566", "#b08a5c"];
+    const seam = "#7f5f3c";
+    const grain = "#9c7749";
+    const light = "#c9a274";
+    for (let row = 0; row < 4; row++) {
+      const y = row * 8;
+      // Each row is two planks, with the joint somewhere different every row.
+      const joint = [11, 25, 5, 19][row];
+      for (let x = 0; x < 32; x++) {
+        const plank = x < joint ? row : row + 2;
+        ctx.fillStyle = boards[plank % boards.length];
+        ctx.fillRect(x, y, 1, 7);
+      }
+      ctx.fillStyle = seam;
+      ctx.fillRect(0, y + 7, 32, 1);
+      ctx.fillRect(joint, y, 1, 7);
+      // Short streaks along the plank, darker and lighter.
+      for (let i = 0; i < 5; i++) {
+        const gx = Math.floor(hash(row, i, 300) * 28);
+        const gy = y + 1 + Math.floor(hash(row, i, 301) * 5);
+        const len = 2 + Math.floor(hash(row, i, 302) * 4);
+        ctx.fillStyle = i % 3 === 2 ? light : grain;
+        ctx.fillRect(gx, gy, len, 1);
+      }
+    }
+    // One knot.
+    ctx.fillStyle = seam;
+    ctx.fillRect(21, 11, 2, 2);
+  });
+
 /** Pixels in one wisp's trail. */
 const TRAIL = 34;
 
@@ -262,6 +302,34 @@ export class Ambience {
     });
 
     this.bounds = { minX, maxX, minZ, maxZ };
+
+    // ---- floorboards: a hut's floor hexes get a plank top, laid as one sheet so the boards run across hexes ----
+    const floor = tiles.filter((t) => (t.biome as string) === "floor");
+    if (floor.length > 0) {
+      const positions: number[] = [];
+      const uvs: number[] = [];
+      for (const t of floor) {
+        const p = place(t);
+        const y = p.y + 0.006;
+        for (let i = 0; i < 6; i++) {
+          const a = (i * Math.PI) / 3;
+          const b = ((i + 1) * Math.PI) / 3;
+          for (const [x, z] of [[p.x, p.z], [p.x + Math.sin(a) * 0.985, p.z + Math.cos(a) * 0.985], [p.x + Math.sin(b) * 0.985, p.z + Math.cos(b) * 0.985]]) {
+            positions.push(x, y, z);
+            uvs.push(x / BOARD_SPAN, z / BOARD_SPAN);
+          }
+        }
+      }
+      const sheet = new THREE.BufferGeometry();
+      sheet.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+      sheet.setAttribute("uv", new THREE.Float32BufferAttribute(uvs, 2));
+      sheet.computeVertexNormals();
+      const map = floorTexture();
+      map.wrapS = map.wrapT = THREE.RepeatWrapping;
+      const boards = new THREE.Mesh(sheet, new THREE.MeshLambertMaterial({ map }));
+      boards.receiveShadow = true;
+      this.group.add(boards);
+    }
     // ---- wisps: trails of single pixels that sway gently as they cross ----
     // No wind indoors.
     const indoors = (this.indoors = tiles.some((t) => (t.biome as string) === "floor"));
