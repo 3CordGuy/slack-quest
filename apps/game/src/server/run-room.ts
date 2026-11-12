@@ -32,7 +32,7 @@ import {
 } from "@gantt-quest/world";
 import { generateFill, islandFacts, npcTurn, writeEpilogue } from "./ai";
 import { recordStep } from "./board";
-import { clearPubOrders, restoreGathering, applyGrant, applyPenalty, conversationStatement, getRun, heroInitFor, refreshHarbor, saveRunStatements, type Env } from "./db";
+import { clearPubOrders, restoreGathering, applyGrant, applyPenalty, conversationStatement, getRun, heroInitFor, recentStories, refreshHarbor, saveRunStatements, type Env } from "./db";
 import { clearBrews } from "./workshops";
 import { takeLarder } from "./galley";
 
@@ -328,10 +328,15 @@ export class RunRoom extends DurableObject<Env> {
   private async generateStory() {
     const world = this.world!;
     const rng = makeRng(seedFromString(`story|${world.seed}`));
-    const frame = pickFrame(rng);
+    // Not the kind of story, nor the ask, the crew has just had.
+    const recent = await recentStories(this.env.DB, this.crewId).catch((err) => {
+      console.warn("run-room:recent-stories-failed", { err: err instanceof Error ? err.message : String(err) });
+      return { frames: [] as string[], demand: undefined };
+    });
+    const frame = pickFrame(rng, recent.frames);
     const fallback = cannedFill(frame, rng);
     // The NPC's ask is chosen by the game, then handed to the model so the prose agrees with it.
-    const demand = pickDemand(frame, rng);
+    const demand = pickDemand(frame, rng, recent.demand);
     const hints = storyHints(rng, frame);
     const fill = (await generateFill(this.env, frame, world.heroes.map((h) => h.name), demand, islandFacts(world.map), hints)) ?? fallback;
     // The ship has sailed: what the heroes ate and drank at the pub is used up on this voyage.
