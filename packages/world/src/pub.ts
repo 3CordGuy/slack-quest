@@ -32,6 +32,10 @@ export const PUB_SHOALS: HexPos = at(5, 5);
 /** The barkeep's spot, behind the bar. */
 export const PUB_BARKEEP_POS: HexPos = at(3, 1);
 export const PUB_BARKEEP = { id: "barkeep", name: "Old Tam" } as const;
+/** Where a traveling salesman stands when one is in (see salesman.ts): the corner by the far wall. Nobody else stands there. */
+export const PUB_SALESMAN_POS: HexPos = at(10, 4);
+/** Where a customer stands to trade with the salesman. */
+export const PUB_TRADER: HexPos = at(9, 4);
 
 export interface PubFitting {
   id: number;
@@ -59,17 +63,19 @@ export const PUB_FITTINGS: PubFitting[] = [
   fit(12, "chair", 3, 6, 4),
   fit(13, "table", 9, 6),
   fit(14, "chair", 8, 6, 1),
+  // The salesmen's sea chest, beside the corner they take.
+  fit(15, "chest", 10, 6, 5),
 ];
 
-/** The room: the same every time. The counter and the two game tables are places to stand, not obstacles. */
+/** The room: the same every time. The counter, the two game tables and the trader's spot are places to stand, not obstacles. */
 export function pubRoom(): WorldMap {
   const room = buildRoom(PUB_GRID);
-  return { ...room, pois: [...room.pois, harborPoi("counter", "counter", PUB_COUNTER), harborPoi("dice", "dice", PUB_DICE), harborPoi("shoals", "shoals", PUB_SHOALS)] };
+  return { ...room, pois: [...room.pois, harborPoi("counter", "counter", PUB_COUNTER), harborPoi("dice", "dice", PUB_DICE), harborPoi("shoals", "shoals", PUB_SHOALS), harborPoi("trader", "trader", PUB_TRADER)] };
 }
 
-/** A walkable route across the pub, or null. The barkeep's side of the bar is his alone. */
+/** A walkable route across the pub, or null. The barkeep's side of the bar is his alone, and the salesmen's corner theirs. */
 export function pubPath(room: WorldMap, from: HexPos, to: HexPos): HexPos[] | null {
-  return hutPath(room, [...PUB_FITTINGS, PUB_BARKEEP_POS], from, to);
+  return hutPath(room, [...PUB_FITTINGS, PUB_BARKEEP_POS, PUB_SALESMAN_POS], from, to);
 }
 
 // ---------- the menu ----------

@@ -59,6 +59,23 @@ function drawHat(px: Px, look: Look) {
   } else if (look.hat === "circlet") {
     px(5, 3, 6, 1, look.accent);
     px(7, 2, 2, 1, "#7fe3ff");
+  } else if (look.hat === "brim") {
+    // A wide-brimmed travelling hat with a band.
+    const c = look.hatColor ?? look.body;
+    px(2, 4, 12, 1, c);
+    px(5, 1, 6, 3, c);
+    px(5, 3, 6, 1, look.accent);
+  } else if (look.hat === "turban") {
+    const c = look.hatColor ?? look.accent;
+    px(4, 1, 8, 3, c);
+    px(6, 0, 4, 1, c);
+    px(7, 2, 2, 1, look.accent);
+  } else if (look.hat === "kerchief") {
+    // A cloth knotted over the head, tails at the back.
+    const c = look.hatColor ?? look.accent;
+    px(5, 2, 6, 2, c);
+    px(11, 3, 1, 2, c);
+    px(12, 4, 1, 1, c);
   } else if (look.hat === "horns") {
     px(4, 0, 1, 3, look.accent);
     px(11, 0, 1, 3, look.accent);
@@ -89,6 +106,14 @@ function drawHumanoid(ctx: CanvasRenderingContext2D, look: Look) {
   px(7, 6, 1, 1, OUTLINE);
   px(9, 6, 1, 1, OUTLINE);
 
+  // A traveller's long coat, open at the front, down over the legs.
+  if (look.coat) {
+    px(4, 14, 3, 3, look.body);
+    px(9, 14, 3, 3, look.body);
+    px(4, 9, 1, 8, look.accent);
+    px(11, 9, 1, 8, look.accent);
+  }
+
   drawHat(px, look);
 
   if (look.weapon === "sword") {
@@ -110,6 +135,29 @@ function drawHumanoid(ctx: CanvasRenderingContext2D, look: Look) {
     px(13, 9, 1, 6, "#7a5230");
     px(12, 6, 3, 3, look.accent);
     px(13, 7, 1, 1, "#ffffff");
+  } else if (look.weapon === "lantern") {
+    // A lit lantern held out on its ring.
+    px(13, 10, 1, 2, "#6f7480");
+    px(12, 12, 3, 1, "#6f7480");
+    px(12, 13, 3, 2, "#ffd98a");
+    px(12, 15, 3, 1, "#6f7480");
+  } else if (look.weapon === "scroll") {
+    // Rolled plans under the arm, tied with blue.
+    px(11, 11, 5, 2, "#e8dcc0");
+    px(15, 11, 1, 2, "#c9b58a");
+    px(13, 11, 1, 2, "#3f6fa8");
+  } else if (look.weapon === "pack") {
+    // A big pack on the back, showing past the shoulder, with a rolled blanket on top.
+    px(0, 8, 3, 7, "#7a5230");
+    px(0, 7, 3, 1, look.accent);
+    px(1, 11, 1, 1, "#e0b12e");
+  } else if (look.weapon === "basket") {
+    // A basket of greens on the arm.
+    px(12, 12, 4, 3, "#b98b5a");
+    px(12, 11, 1, 1, "#b98b5a");
+    px(15, 11, 1, 1, "#b98b5a");
+    px(13, 11, 2, 1, "#6fae4a");
+    px(13, 13, 2, 1, "#8a6a44");
   } else if (look.weapon === "bow") {
     px(13, 6, 1, 1, "#7a5230");
     px(14, 7, 1, 7, "#7a5230");

@@ -378,6 +378,10 @@ function mockBarkeep(input: BarkeepInput): string {
     const voyage = input.facts.find((f) => f.startsWith("Recent voyage"));
     return voyage ? `I heard about that one. ${voyage.replace(/^Recent voyage: /, "")} Eat first next time.` : "Nobody from this crew has come back with a story yet. Eat first; the sea is easier on a full stomach.";
   }
+  if (/\b(salesman|salesmen|trader|peddler|visitor|stranger|corner)\b/.test(said)) {
+    const fact = input.facts.find((f) => f.includes("traveling salesman"));
+    if (fact) return fact.replace(/^Word is /, "").replace(/^No traveling salesman is in\. Word is /, "Nobody in the corner tonight. I hear ");
+  }
   if (/\b(free|discount|give|gold)\b/.test(said)) return "Prices are on the board, and the board does not haggle. Neither do I.";
   return `Evening, ${input.hero}. Something off the board, or just the warm?`;
 }
