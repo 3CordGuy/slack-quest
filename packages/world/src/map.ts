@@ -303,8 +303,8 @@ export function generateMap(seed: string, grid: HexGrid = MAP_GRID): WorldMap {
  * ground rises.
  */
 export const PICKUPS: { find: ResourceKind; count: number; ground: Biome[] }[] = [
-  { find: "herbs", count: 3, ground: ["plains"] },
-  { find: "mushrooms", count: 3, ground: ["forest"] },
+  { find: "herbs", count: 4, ground: ["plains"] },
+  { find: "mushrooms", count: 4, ground: ["forest"] },
   { find: "wood", count: 2, ground: ["forest", "plains"] },
   { find: "stone", count: 2, ground: ["hills", "plains"] },
 ];

@@ -17,6 +17,7 @@ import {
   cannedFill,
   clientView,
   createWorld,
+  currentActor,
   makeRng,
   pickDemand,
   pickFrame,
@@ -41,6 +42,28 @@ interface Attachment {
   playerId: string;
 }
 
+/** Whose turn is being waited on, and a key that changes whenever the turn does. */
+function waitingOn(world: WorldState): { key: string; heroId: string } | null {
+  if (world.phase === "overworld" && world.turn) return { key: `o:${world.round}:${world.turn.heroId}:${world.turn.deadline ?? 0}`, heroId: world.turn.heroId };
+  if (world.phase === "battle" && world.battle) {
+    const actor = currentActor(world.battle);
+    if (actor && actor.side === "hero" && !actor.down) return { key: `b:${world.battle.deadline ?? 0}:${actor.id}`, heroId: actor.id };
+  }
+  return null;
+}
+
+/**
+ * Votes needed to skip `heroId`'s turn. If they have left the voyage, one
+ * crewmate is enough. If they are still here, at least two of the others who
+ * are here, and more than half of them, must agree: one impatient player can
+ * never skip someone who is playing, and in a pair the turn timer decides.
+ */
+function skipVotesNeeded(world: WorldState, heroId: string, online: string[]): number {
+  if (!online.includes(heroId)) return 1;
+  const others = world.heroes.filter((h) => h.id !== heroId && online.includes(h.id)).length;
+  return Math.max(2, Math.floor(others / 2) + 1);
+}
+
 /** The Harbor projects fixed on a run at launch. Anything unreadable counts as none. */
 function launchProjects(json: string | null): string[] {
   try {
@@ -52,6 +75,9 @@ function launchProjects(json: string | null): string[] {
 }
 
 export class RunRoom extends DurableObject<Env> {
+  /** Votes to skip the current turn. Held in memory: a vote lost to hibernation is simply cast again. */
+  private skip: { key: string; voters: string[] } | null = null;
+
   private world: WorldState | null = null;
   /** The crew whose Harbor this ship sailed from, if any. */
   private crewId: string | null = null;
@@ -125,8 +151,30 @@ export class RunRoom extends DurableObject<Env> {
         await this.load();
         const hero = await heroInitFor(this.env.DB, playerId);
         if (!hero) return "No character.";
-        const { base, unspent, bonus, weapon, weaponPower, armor, outfit } = hero;
-        return this.apply({ type: "gear", heroId: playerId, gear: { base, unspent, bonus, weapon, weaponPower, armor, outfit } });
+        const { base, unspent, bonus, weapon, weaponPower, armor, outfit, traits } = hero;
+        return this.apply({ type: "gear", heroId: playerId, gear: { base, unspent, bonus, weapon, weaponPower, armor, outfit, traits } });
+      });
+      if (error) ws.send(JSON.stringify({ type: "error", message: error }));
+      return;
+    }
+    if (msg.type === "vote_skip") {
+      // A crewmate votes to end the current hero's turn now, as the turn timer would.
+      const error = await this.serial(async () => {
+        await this.load();
+        const world = this.world;
+        if (!world) return "No voyage here.";
+        if (!world.heroes.some((h) => h.id === playerId)) return "You are not aboard.";
+        const waiting = waitingOn(world);
+        if (!waiting) return "There is no turn to skip.";
+        if (waiting.heroId === playerId) return "It is your own turn.";
+        if (this.skip?.key !== waiting.key) this.skip = { key: waiting.key, voters: [] };
+        if (!this.skip.voters.includes(playerId)) this.skip.voters.push(playerId);
+        if (this.skip.voters.length >= skipVotesNeeded(world, waiting.heroId, this.online())) {
+          this.skip = null;
+          return this.apply({ type: "timeout" });
+        }
+        this.broadcast([]);
+        return null;
       });
       if (error) ws.send(JSON.stringify({ type: "error", message: error }));
       return;
@@ -228,15 +276,23 @@ export class RunRoom extends DurableObject<Env> {
     else if (effect.kind === "run_end") this.ctx.waitUntil(restoreGathering(this.env.DB, this.world?.heroes.map((h) => h.id) ?? []).catch((err) => console.warn("run-room:gather-restore-failed", { err: err instanceof Error ? err.message : String(err) })));
   }
 
+  /** Players connected right now. */
+  private online(): string[] {
+    return [...new Set(this.ctx.getWebSockets().map((ws) => (ws.deserializeAttachment() as Attachment).playerId))];
+  }
+
   private broadcast(events: WorldEvent[]) {
     const world = this.world;
     if (!world) return;
     const sockets = this.ctx.getWebSockets();
-    const online = [...new Set(sockets.map((ws) => (ws.deserializeAttachment() as Attachment).playerId))];
+    const online = this.online();
+    // Votes to skip the turn in progress, if any have been cast for it.
+    const waiting = waitingOn(world);
+    const skip = waiting ? { heroId: waiting.heroId, votes: this.skip?.key === waiting.key ? this.skip.voters : [], needed: skipVotesNeeded(world, waiting.heroId, online) } : null;
     for (const ws of sockets) {
       const { playerId } = ws.deserializeAttachment() as Attachment;
       try {
-        ws.send(JSON.stringify({ type: "update", state: clientView(world, playerId), events, online }));
+        ws.send(JSON.stringify({ type: "update", state: clientView(world, playerId), events, online, skip }));
       } catch {
         // Socket is closing; webSocketClose will follow.
       }

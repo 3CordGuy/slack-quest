@@ -93,7 +93,7 @@ describe("enemy intents", () => {
         if (ev.t !== "check" || !planned.has(ev.actor)) continue;
         const plan = planned.get(ev.actor)!;
         const kind = enemy(state, ev.actor).kind;
-        expect(ev.check.label.replace(" (glitched)", "")).toBe(ENEMIES[kind].attacks[plan!.attack].name);
+        expect(ev.check.label.replace(" (fouled)", "")).toBe(ENEMIES[kind].attacks[plan!.attack].name);
         planned.delete(ev.actor);
       }
       state = r.state;

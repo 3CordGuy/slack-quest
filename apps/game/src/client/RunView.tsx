@@ -19,6 +19,7 @@ import {
   type ClientState,
   type Poi,
   type WorldEvent,
+  TRAIT_BY_ID,
 } from "@gantt-quest/world";
 import * as World from "@gantt-quest/world";
 import type { Me } from "./api";
@@ -122,6 +123,7 @@ function describe(events: WorldEvent[], state: ClientState, names: Map<string, s
         else if (b.t === "effect") out.push(`${n(b.target)} is ${label("effect", b.effect).toLowerCase()}.`);
         else if (b.t === "tick") out.push(`${n(b.target)} takes ${b.amount} from ${label("effect", b.effect).toLowerCase()}.`);
         else if (b.t === "skip") out.push(`${n(b.id)} is stunned and loses the turn.`);
+        else if (b.t === "trait") out.push(`${n(b.id)}: ${TRAIT_BY_ID[b.trait]?.name ?? b.trait}!`);
         else if (b.t === "down") out.push(`${n(b.id)} goes down!`);
         else if (b.t === "flee") out.push(b.ok ? `${n(b.actor)} leads the retreat.` : `${n(b.actor)} fails to break away.`);
         break;
@@ -296,6 +298,8 @@ export function RunView({ code, me, refresh, onLeave }: { code: string; me: Me; 
               <Crew state={state} online={run.online} onTrade={ashore ? setTradeWith : undefined} />
               <Feed lines={feed} />
               {state.phase === "overworld" && <TurnBar state={state} run={run} />}
+              <SkipVoteBar state={state} run={run} />
+              <YourTurnFrame state={state} />
               {ashore && me.character && <Trading me={me} partners={state.heroes.filter((h) => h.id !== state.you)} withId={tradeWith} onWith={setTradeWith} refresh={refresh} run={code} />}
               {state.phase === "overworld" && <Chat state={state} run={run} talkTo={talkTo} onTalked={() => setTalkTo(null)} />}
               {state.phase === "battle" && !held && !intro && <BattleHud battle={state.battle!} you={state.you} onAction={(action) => run.send({ type: "battle", action })} />}
@@ -623,4 +627,47 @@ function Ending({ state, onLeave }: { state: ClientState; onLeave(): void }) {
       </div>
     </div>
   );
+}
+
+/**
+ * While the crew waits on someone else's turn, a vote to skip it. One vote
+ * does it if they have left; otherwise more than half of the others here.
+ * The server ends the turn exactly as its own timer would.
+ */
+function SkipVoteBar({ state, run }: { state: ClientState; run: ReturnType<typeof useRun> }) {
+  const skip = run.skip;
+  if (!skip || skip.heroId === state.you) return null;
+  const name = state.heroes.find((h) => h.id === skip.heroId)?.name ?? "this hero";
+  const away = !run.online.includes(skip.heroId);
+  const voted = skip.votes.includes(state.you);
+  // Someone still here can only be skipped if enough of the rest are here to outvote them.
+  const others = state.heroes.filter((h) => h.id !== skip.heroId && run.online.includes(h.id)).length;
+  if (!away && others < skip.needed) return null;
+  return (
+    <div className="panel skip-vote" role="status">
+      <span>
+        Waiting on <strong>{name}</strong>{away ? <span className="bad"> · away</span> : null}
+        {skip.votes.length > 0 && <span className="muted"> · {skip.votes.length} of {skip.needed} voted to skip</span>}
+      </span>
+      <button className="small" disabled={voted} onClick={run.voteSkip}>
+        {voted ? "You voted to skip" : skip.needed <= 1 ? `Skip ${name}'s turn` : `Vote to skip ${name}'s turn`}
+      </button>
+    </div>
+  );
+}
+
+/**
+ * A gold frame around the whole screen while it is your turn, on the island
+ * or in a fight: it flashes as the turn arrives, then holds as a soft glow.
+ * Keyed on the turn so the flash plays again each time it comes back round.
+ */
+function YourTurnFrame({ state }: { state: ClientState }) {
+  let turnKey: string | null = null;
+  if (state.phase === "overworld" && state.turn?.heroId === state.you) turnKey = `o:${state.round}`;
+  else if (state.phase === "battle" && state.battle) {
+    const actor = World.currentActor(state.battle);
+    if (actor?.id === state.you && !actor.down) turnKey = `b:${state.battle.deadline ?? 0}`;
+  }
+  if (!turnKey) return null;
+  return <div key={turnKey} className="your-turn-frame" aria-hidden="true" />;
 }

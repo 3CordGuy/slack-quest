@@ -23,6 +23,8 @@ export interface HeroSheet {
   weaponPower: number;
   armor: number;
   outfit?: Outfit;
+  /** Class traits picked so far (traits.ts). */
+  traits?: string[];
 }
 
 /** What a fight wears down. */
@@ -74,5 +76,6 @@ export function heroCombatant(sheet: HeroSheet, vitals: Pick<Vitals, "hp" | "max
     abilities: WEAPONS[sheet.weapon]?.abilities ?? [],
     effects: [],
     down: false,
+    traits: [...(sheet.traits ?? [])],
   };
 }

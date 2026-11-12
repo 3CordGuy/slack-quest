@@ -288,6 +288,10 @@ export class Ambience {
   private background = new THREE.Color("#a9dcf7");
   /** How much of the day's light there is, 0 (night) to 1. */
   private daylight = 1;
+  /** How dark it is outdoors, 0 (full day) to 1 (deep night). Always 0 indoors. */
+  get night(): number {
+    return this.indoors ? 0 : 1 - this.daylight;
+  }
   /** A room: steady lamplight, a dark backdrop and no wind. */
   private indoors = false;
   /** Direction to the sun (or the moon), for anything that must face it. */

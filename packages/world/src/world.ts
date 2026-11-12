@@ -68,6 +68,8 @@ export interface HeroInit {
   pubBuff?: Perk;
   /** The brews in their bag from the apothecary (ids, at most one of each). Used up when this voyage sails. */
   brews?: string[];
+  /** Class traits picked so far (traits.ts). */
+  traits?: string[];
 }
 
 export interface Hero extends HeroInit {
@@ -202,7 +204,7 @@ export type WorldAction =
   | { type: "talk"; heroId: string; npcId: string; text: string; persuade?: boolean; focus?: number }
   | { type: "npc_reply"; npcId: string; heroId: string; output: NpcOutput }
   | { type: "battle"; heroId: string; action: BattleAction }
-  | { type: "gear"; heroId: string; gear: Pick<HeroInit, "base" | "unspent" | "bonus" | "weapon" | "weaponPower" | "armor" | "outfit"> }
+  | { type: "gear"; heroId: string; gear: Pick<HeroInit, "base" | "unspent" | "bonus" | "weapon" | "weaponPower" | "armor" | "outfit" | "traits"> }
   | { type: "epilogue"; text: string };
 
 /** Action types a player's client may send. Everything else is server-only. */

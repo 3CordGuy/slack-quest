@@ -196,6 +196,13 @@ export const HUT_TIERS: HutTier[] = [
 /**
  * Materials the market stall buys, and what it pays for each piece. Only
  * what islanders forage: the stall has no use for timber or ore.
+ *
+ * 3 gold is pitched at what the Apothecary's brews are worth at pub prices:
+ * a Focus Tonic's 4 pieces sell for 12 against Spiced Rum's 14 for the same
+ * focus, a Stoneskin Salve's 3 mushrooms for 9 against Fish Stew's 12 for the
+ * same HP. Brewing is never worse than selling and buying the pub's version,
+ * and a Healing Draught (a potion, which nobody sells) is better. The herbalist
+ * salesman pays 5 to 7 a piece, so the stall stays the everyday floor.
  */
 export const STALL_BUYS: Partial<Record<ResourceKind, number>> = { herbs: 3, mushrooms: 3 };
 
