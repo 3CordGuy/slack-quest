@@ -391,16 +391,55 @@ function darken(hex: string, by = 0.35): string {
 
 const cache = new Map<string, string>();
 
-/**
- * Image URL for an item icon. `accent` is the rarity colour. With
- * `silhouette` the whole figure is drawn flat in the accent colour and
- * without an outline, for empty equipment slots.
- */
-export function itemArtUrl(name: string, accent: string, silhouette = false): string {
-  const key = `${name}|${accent}|${silhouette}`;
-  const hit = cache.get(key);
-  if (hit) return hit;
+// ---------- admin icon overrides ----------
+//
+// An admin can replace an icon with their own 16x16 pixels (uploaded PNG or
+// drawn in the admin page's editor). Two reserved colours keep the rarity
+// tint working: pure magenta is drawn in the accent (rarity) colour and dark
+// purple in its shade. The outline is added here, as for the code-drawn art.
 
+export const ICON_SIZE = SIZE;
+export const MARKER_ACCENT = "#ff00ff";
+export const MARKER_SHADE = "#800080";
+
+/** 16x16 RGBA, row by row, as from ImageData. */
+export type IconPixels = Uint8ClampedArray;
+
+let iconOverrides: Record<string, IconPixels> = {};
+
+/** Replace the icon overrides in force (decoded from the content bundle). Clears the cache so every icon redraws. */
+export function setIconOverrides(next: Record<string, IconPixels>): void {
+  iconOverrides = next;
+  cache.clear();
+}
+
+const hex2 = (n: number) => n.toString(16).padStart(2, "0");
+
+/**
+ * The colour to paint for one opaque pixel of an override: the markers
+ * become the accent and its shade, anything else is drawn as it is.
+ */
+export function markerColour(r: number, g: number, b: number, accent: string, shade: string): string {
+  const hex = `#${hex2(r)}${hex2(g)}${hex2(b)}`;
+  if (hex === MARKER_ACCENT) return accent;
+  if (hex === MARKER_SHADE) return shade;
+  return hex;
+}
+
+/** Art that paints an override's pixels; fully or mostly transparent pixels are left empty. */
+function pixelArt(pixels: IconPixels): Art {
+  return (p) => {
+    for (let y = 0; y < SIZE; y++) {
+      for (let x = 0; x < SIZE; x++) {
+        const i = (y * SIZE + x) * 4;
+        if (pixels[i + 3] < 128) continue;
+        p.r(x, y, 1, 1, markerColour(pixels[i], pixels[i + 1], pixels[i + 2], p.accent, p.shade));
+      }
+    }
+  };
+}
+
+function drawIcon(art: Art, accent: string, silhouette: boolean): string {
   const canvas = document.createElement("canvas");
   canvas.width = ART_PIXELS;
   canvas.height = ART_PIXELS;
@@ -422,7 +461,7 @@ export function itemArtUrl(name: string, accent: string, silhouette = false): st
       }
     },
   };
-  (ART[name] ?? ART["gem-chain"])(pen);
+  art(pen);
 
   if (!silhouette) {
     // Same outline pass as the character sprites: empty pixels touching a filled one go dark.
@@ -435,9 +474,60 @@ export function itemArtUrl(name: string, accent: string, silhouette = false): st
       }
     }
   }
-  const url = canvas.toDataURL();
+  return canvas.toDataURL();
+}
+
+const codeArt = (name: string): Art => ART[name] ?? ART["gem-chain"];
+
+/**
+ * Image URL for an item icon. `accent` is the rarity colour. With
+ * `silhouette` the whole figure is drawn flat in the accent colour and
+ * without an outline, for empty equipment slots. An admin override, when
+ * there is one, replaces the code-drawn art.
+ */
+export function itemArtUrl(name: string, accent: string, silhouette = false): string {
+  const key = `${name}|${accent}|${silhouette}`;
+  const hit = cache.get(key);
+  if (hit) return hit;
+  const over = iconOverrides[name];
+  const url = drawIcon(over ? pixelArt(over) : codeArt(name), accent, silhouette);
   cache.set(key, url);
   return url;
+}
+
+/** An icon drawn from pixels not (yet) in force, or the code art when null: the admin page's live preview. */
+export function previewIconUrl(name: string, pixels: IconPixels | null, accent: string, silhouette = false): string {
+  return drawIcon(pixels ? pixelArt(pixels) : codeArt(name), accent, silhouette);
+}
+
+/**
+ * The code-drawn icon as 16x16 pixels without its outline, with the accent
+ * and shade drawn in the marker colours: a starting point for the editor
+ * that keeps the rarity tint.
+ */
+export function codeIconPixels(name: string): IconPixels {
+  const canvas = document.createElement("canvas");
+  canvas.width = SIZE;
+  canvas.height = SIZE;
+  const ctx = canvas.getContext("2d", { willReadFrequently: true })!;
+  const pen: Pen = {
+    accent: MARKER_ACCENT,
+    shade: MARKER_SHADE,
+    r: (x, y, w, h, color) => {
+      ctx.fillStyle = color;
+      ctx.fillRect(x, y, w, h);
+    },
+    l: (x0, y0, x1, y1, color) => {
+      ctx.fillStyle = color;
+      const steps = Math.max(Math.abs(x1 - x0), Math.abs(y1 - y0));
+      for (let i = 0; i <= steps; i++) {
+        const t = steps === 0 ? 0 : i / steps;
+        ctx.fillRect(Math.round(x0 + (x1 - x0) * t), Math.round(y0 + (y1 - y0) * t), 1, 1);
+      }
+    },
+  };
+  codeArt(name)(pen);
+  return ctx.getImageData(0, 0, SIZE, SIZE).data;
 }
 
 export const ITEM_ART_NAMES = Object.keys(ART);

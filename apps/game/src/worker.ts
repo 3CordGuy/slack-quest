@@ -68,6 +68,7 @@ import {
   checkImport,
   checkOverride,
   contentBundle,
+  recentLog,
   deleteOverride,
   isAdmin,
   isOverrideKind,
@@ -218,6 +219,12 @@ app.get("/api/admin/overrides/:kind/:target/history", async (c) => {
   const { kind, target } = c.req.param();
   if (!isOverrideKind(kind)) return c.json({ error: `Unknown override kind "${kind}".` }, 400);
   return c.json({ history: await overrideHistory(c.env.DB, kind, target) });
+});
+
+// Every change of every kind, newest first. `before` pages back by log id.
+app.get("/api/admin/log", async (c) => {
+  const before = Number(c.req.query("before"));
+  return c.json({ log: await recentLog(c.env.DB, 100, Number.isInteger(before) && before > 0 ? before : undefined) });
 });
 
 // Export is the bundle itself; import takes one back (from another environment) and checks every entry first.

@@ -6,7 +6,7 @@
 
 import * as THREE from "three";
 import { RARITY_COLOR, outfitKey, type Outfit, type Slot } from "@gantt-quest/world";
-import { LOOKS, type Look } from "./looks";
+import { LOOKS, mergeLook, type Look, type LookPalette } from "./looks";
 
 const W = 18;
 const H = 22;
@@ -433,9 +433,53 @@ function drawDummy(ctx: CanvasRenderingContext2D) {
 
 const cache = new Map<string, THREE.CanvasTexture>();
 
-/** Cache key for a sprite: the kind plus whatever is being worn, and whether they are asleep. */
+// Admin palette overrides (from the content bundle), laid over LOOKS. Every
+// change bumps the revision, which is part of every sprite key: the cache
+// starts afresh and the world renderer, which compares keys, redraws units.
+let palettes: Record<string, LookPalette> = {};
+let revision = 0;
+
+/** Replace the palette overrides in force. Sprites drawn from now on use them. */
+export function setLookOverrides(next: Record<string, LookPalette>): void {
+  if (JSON.stringify(next) === JSON.stringify(palettes)) return;
+  palettes = next;
+  revision++;
+  cache.clear();
+}
+
+/** A kind's look as currently drawn: the stock look with any admin palette over it. Unknown kinds get the bandit. */
+export function lookFor(kind: string): Look {
+  return mergeLook(LOOKS[kind] ?? LOOKS.bandit, palettes[kind]);
+}
+
+/** Cache key for a sprite: the kind plus whatever is being worn, whether they are asleep, and the overrides in force. */
 export function spriteKey(kind: string, outfit?: Outfit, asleep = false): string {
-  return (outfit ? `${kind}|${outfitKey(outfit)}` : kind) + (asleep ? "|zz" : "");
+  return (outfit ? `${kind}|${outfitKey(outfit)}` : kind) + (asleep ? "|zz" : "") + `|r${revision}`;
+}
+
+/** Draw one sprite onto a fresh canvas. Shared by the cached textures and the admin preview. */
+function drawSprite(kind: string, look: Look, outfit: Outfit | undefined, asleep: boolean): HTMLCanvasElement {
+  const canvas = document.createElement("canvas");
+  canvas.width = W;
+  canvas.height = H;
+  const ctx = canvas.getContext("2d", { willReadFrequently: true })!;
+  if (kind === "wolf") drawWolf(ctx);
+  // The pack leader: the same animal, darker, with a red eye. The renderer draws it larger.
+  else if (kind === "alpha") drawWolf(ctx, "#4a4f5c", "#2c3039", "#ff4d4d");
+  else if (kind === "dummy") drawDummy(ctx);
+  else if (outfit) drawHero(ctx, look, outfit);
+  else drawHumanoid(ctx, look);
+  // Asleep: the eyes are shut, a short dark line where each one was.
+  if (asleep && LOOKS[kind]) {
+    ctx.fillStyle = look.skin;
+    ctx.fillRect(8, 7, 1, 1);
+    ctx.fillRect(10, 7, 1, 1);
+    ctx.fillStyle = OUTLINE;
+    ctx.fillRect(7, 7, 2, 1);
+    ctx.fillRect(10, 7, 2, 1);
+  }
+  finish(ctx);
+  return canvas;
 }
 
 /**
@@ -447,33 +491,22 @@ export function spriteTexture(kind: string, outfit?: Outfit, asleep = false): TH
   const key = spriteKey(kind, outfit, asleep);
   const hit = cache.get(key);
   if (hit) return hit;
-  const canvas = document.createElement("canvas");
-  canvas.width = W;
-  canvas.height = H;
-  const ctx = canvas.getContext("2d", { willReadFrequently: true })!;
-  if (kind === "wolf") drawWolf(ctx);
-  // The pack leader: the same animal, darker, with a red eye. The renderer draws it larger.
-  else if (kind === "alpha") drawWolf(ctx, "#4a4f5c", "#2c3039", "#ff4d4d");
-  else if (kind === "dummy") drawDummy(ctx);
-  else if (outfit) drawHero(ctx, LOOKS[kind] ?? LOOKS.bandit, outfit);
-  else drawHumanoid(ctx, LOOKS[kind] ?? LOOKS.bandit);
-  // Asleep: the eyes are shut, a short dark line where each one was.
-  if (asleep && LOOKS[kind]) {
-    ctx.fillStyle = LOOKS[kind].skin;
-    ctx.fillRect(8, 7, 1, 1);
-    ctx.fillRect(10, 7, 1, 1);
-    ctx.fillStyle = OUTLINE;
-    ctx.fillRect(7, 7, 2, 1);
-    ctx.fillRect(10, 7, 2, 1);
-  }
-  finish(ctx);
-  const tex = new THREE.CanvasTexture(canvas);
+  const tex = new THREE.CanvasTexture(drawSprite(kind, lookFor(kind), outfit, asleep));
   tex.magFilter = THREE.NearestFilter;
   tex.minFilter = THREE.NearestFilter;
   tex.generateMipmaps = false;
   tex.colorSpace = THREE.SRGBColorSpace;
   cache.set(key, tex);
   return tex;
+}
+
+/**
+ * A sprite drawn with a given palette (undefined: the stock look) rather than
+ * the one in force, as an image URL: the admin page's live preview. Same
+ * drawing code as the game, no cache.
+ */
+export function previewSpriteUrl(kind: string, palette: LookPalette | undefined, outfit?: Outfit, asleep = false): string {
+  return drawSprite(kind, mergeLook(LOOKS[kind] ?? LOOKS.bandit, palette), outfit, asleep).toDataURL();
 }
 
 export const SPRITE_ASPECT = W / H;
