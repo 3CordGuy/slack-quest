@@ -85,6 +85,8 @@ export interface Me {
   inventory: InventoryItem[];
   /** The crew whose Harbor this player shares, if any. The id doubles as the invite code. */
   crew: { id: string; name: string } | null;
+  /** On the ADMIN_EMAILS allow-list. Only shows the admin link; the server checks every admin call. */
+  isAdmin: boolean;
 }
 
 export type { StatKey };
