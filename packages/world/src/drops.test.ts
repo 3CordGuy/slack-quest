@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { STARTING_STATS } from "@gantt-quest/core";
 import {
+  DUMMY_KIND,
   CACHE_DECOR,
   CACHE_RESOURCES,
   CANNED_FILLS,
@@ -116,7 +117,8 @@ const units = (r: Resources) => Object.values(r).reduce((a, n) => a + (n ?? 0), 
 
 describe("drop tables", () => {
   it("covers every enemy with valid resource kinds", () => {
-    for (const kind of Object.keys(ENEMIES)) {
+    // The sparring dummy is practice only and pays nothing.
+    for (const kind of Object.keys(ENEMIES).filter((k) => k !== DUMMY_KIND)) {
       expect(ENEMY_DROPS[kind]?.length, kind).toBeGreaterThan(0);
       for (const r of ENEMY_DROPS[kind]) expect(RESOURCE_KINDS).toContain(r);
     }

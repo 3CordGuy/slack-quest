@@ -7,6 +7,7 @@ export * from "./content";
 export * from "./gear";
 export * from "./map";
 export * from "./battle";
+export * from "./hero";
 export * from "./progression";
 export * from "./story";
 export * from "./npc";

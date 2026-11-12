@@ -19,6 +19,7 @@ import { rollCheck, statPct, type CheckResult } from "./check";
 import { ENEMIES, KEY_ITEMS, WEAPONS } from "./content";
 import { battleDrops, cacheDrops, storyTrophy } from "./drops";
 import { rollItem, type ItemDef, type Outfit } from "./gear";
+import { freshVitals, heroCombatant } from "./hero";
 import { addResources, type Resources } from "./hut";
 import { findPath, generateMap, poiAt, poiById, type Poi, type WorldMap } from "./map";
 import {
@@ -416,27 +417,9 @@ function startTurn(ctx: Ctx) {
   }
 }
 
+/** The hero as they stand right now: the shared combatant, with this voyage's wounds and spent focus. */
 function toCombatant(hero: Hero): Combatant {
-  const stats = heroStats(hero);
-  return {
-    id: hero.id,
-    side: "hero",
-    name: hero.name,
-    kind: hero.classId,
-    level: hero.level,
-    hp: hero.hp,
-    maxHp: hero.maxHp,
-    pct: { str: statPct(stats.str), int_stat: statPct(stats.int_stat), vit: statPct(stats.vit), agi: statPct(stats.agi), dex: statPct(stats.dex) },
-    outfit: hero.outfit,
-    power: hero.weaponPower ?? 0,
-    armor: hero.armor ?? 0,
-    speed: statPct(stats.agi),
-    focus: hero.focus,
-    potions: hero.potions,
-    abilities: WEAPONS[hero.weapon]?.abilities ?? [],
-    effects: [],
-    down: false,
-  };
+  return heroCombatant(hero, hero);
 }
 
 function startBattle(ctx: Ctx, at: HexPos, enemies: string[], poiId: string | null, npcId: string | null) {
@@ -700,15 +683,9 @@ export function stepWorld(prev: WorldState, action: WorldAction): StepResult {
       if (state.phase !== "lobby") return fail("this ship has already sailed");
       if (state.heroes.length >= MAX_PARTY) return fail("the ship is full");
       const init = action.hero;
-      const maxHp = maxHpFor(addStats(init.base, init.bonus), init.level);
-      const maxFocus = maxFocusFor(init.level);
       state.heroes.push({
         ...init,
-        hp: maxHp,
-        maxHp,
-        focus: maxFocus,
-        maxFocus,
-        potions: 1,
+        ...freshVitals(init),
         keyItems: [],
         pos: poiById(state.map, "landing")!.pos,
         ready: false,

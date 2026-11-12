@@ -4,12 +4,13 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { HexPos } from "@gantt-quest/core";
-import { HARBOR_PIERS, HARBOR_PLOTS, HARBOR_SHOP, HERO_CLASSES, MAX_PARTY, generateHarbor, harborPoi, poiAt, type HarborShip } from "@gantt-quest/world";
+import { HARBOR_PIERS, HARBOR_PLOTS, HARBOR_RING, HARBOR_SHOP, HERO_CLASSES, MAX_PARTY, generateHarbor, harborPoi, poiAt, type HarborShip } from "@gantt-quest/world";
 import { api, type Me } from "./api";
 import { AccountPanel } from "./Account";
 import { DragPanel } from "./DragPanel";
 import { InventoryScreen } from "./InventoryScreen";
 import { ShopScreen } from "./ShopScreen";
+import { SparView } from "./SparView";
 import { WorldRenderer, type RenderState } from "./render/WorldRenderer";
 import { useHarbor } from "./useHarbor";
 
@@ -22,6 +23,7 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
   const [hover, setHover] = useState<HexPos | null>(null);
   const [sheet, setSheet] = useState(false);
   const [shop, setShop] = useState(false);
+  const [spar, setSpar] = useState(false);
   const [account, setAccount] = useState(false);
   const [copied, setCopied] = useState(false);
   const [text, setText] = useState("");
@@ -71,8 +73,9 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
     };
   }, []);
   useEffect(() => {
-    if (scene) renderer.current?.setState(scene);
-  }, [scene]);
+    // While the sparring view is open it draws the scene itself, with its bout on top.
+    if (scene && !spar) renderer.current?.setState(scene);
+  }, [scene, spar]);
   useEffect(() => {
     chatEnd.current?.scrollIntoView({ block: "end" });
   }, [harbor.chat.length]);
@@ -123,6 +126,7 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
     harbor.send({ type: "refresh" });
   };
   const atShop = !!self && same(self.pos, HARBOR_SHOP);
+  const atRing = !!self && same(self.pos, HARBOR_RING);
   const error = harbor.error ?? launchError;
 
   return (
@@ -216,6 +220,11 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
             <span>The market stall</span>
             <button className="primary" onClick={() => setShop(true)}>Browse the wares</button>
           </>
+        ) : atRing ? (
+          <>
+            <span>The sparring ring</span>
+            <button className="primary" onClick={() => setSpar(true)}>Spar</button>
+          </>
         ) : hutOwner ? (
           <span>{hutOwner.id === you ? "Your hut. Decorating and upgrades are coming." : `${hutOwner.name}'s hut.`}</span>
         ) : (
@@ -227,6 +236,7 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
       {error && <div className="toast">{error}</div>}
       {sheet && me.character && <InventoryScreen me={me} refresh={refreshAll} onClose={() => setSheet(false)} />}
       {account && <AccountPanel me={me} refresh={refresh} onClose={() => setAccount(false)} />}
+      {spar && scene && me.character && <SparView me={me} scene={scene} renderer={renderer} onClose={() => setSpar(false)} />}
       {shop && me.character && <ShopScreen me={me} refresh={refreshAll} onClose={() => setShop(false)} />}
     </div>
   );

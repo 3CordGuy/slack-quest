@@ -1,0 +1,29 @@
+/* The sparring ring (SparView). */
+
+/* A layer over the Harbor that only its own panels catch clicks on. */
+.spar { position: absolute; inset: 0; pointer-events: none; }
+.spar > * { pointer-events: auto; }
+.spar > .battle, .spar > .feed, .spar > .slots { pointer-events: none; }
+
+/* While sparring, the Harbor's own panels step aside for the arena. */
+.harbor-view:has(> .spar) > :is(.docks, .crew, .harbor-chat, .turnbar, .tip) { display: none; }
+
+/* Clear of the Harbor's top bar, which stays in reach. */
+.spar > .overlay { padding-top: 52px; }
+.overlay .panel.spar-pick { max-width: 640px; max-height: 100%; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }
+.spar-hero { display: flex; gap: 12px; align-items: flex-start; }
+.spar-hero img { width: 54px; height: 66px; image-rendering: pixelated; flex: none; }
+.spar-abilities { margin-top: 4px; }
+.spar-abilities li { padding: 1px 0; }
+.spar-opponents { display: grid; grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); gap: 8px; }
+.spar-opponent { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 8px 6px; text-align: center; font-size: 12px; }
+.spar-opponent img { width: 36px; height: 44px; image-rendering: pixelated; }
+.spar-buttons .primary { flex: 1; }
+.overlay .panel.spar-result { max-width: 420px; text-align: center; display: flex; flex-direction: column; gap: 10px; }
+
+.spar-banner { position: absolute; top: 96px; right: 10px; z-index: 13; display: flex; gap: 12px; align-items: center; padding: 4px 10px; }
+.spar > .spar-feed { left: 10px; top: 48px; bottom: auto; max-height: 150px; justify-content: flex-start; }
+
+@media (max-width: 720px) {
+  .spar-banner { top: 88px; right: 6px; }
+}
