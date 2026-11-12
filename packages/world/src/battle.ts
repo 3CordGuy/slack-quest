@@ -5,7 +5,7 @@
 
 import type { StatKey } from "@gantt-quest/core";
 import { rollCheck, statPct, type CheckResult } from "./check";
-import { ABILITIES, BARD_AURA, DRUID_REGEN, EFFECT_TICK, ENEMIES, type AbilityDef, type EffectKind } from "./content";
+import { ABILITIES, ARMOR_DAMAGE_DIVISOR, BARD_AURA, DRUID_REGEN, EFFECT_TICK, ENEMIES, WARLOCK_BLEED_TURNS, type AbilityDef, type EffectKind } from "./content";
 import { afterArmor, type Outfit } from "./gear";
 import type { Rng } from "./rng";
 
@@ -113,7 +113,15 @@ export function createBattle(setup: BattleSetup, rng: Rng): { state: BattleState
       down: false,
     };
   });
-  const combatants = [...setup.heroes.map((h) => ({ ...h, effects: [], down: h.hp <= 0 })), ...enemies];
+  // The SRE Warden comes into every fight already guarded (see advance for how long it lasts).
+  const combatants = [
+    ...setup.heroes.map((h) => {
+      const down = h.hp <= 0;
+      const effects: ActiveEffect[] = h.kind === "sre_warden" && !down ? [{ kind: "guarded", turns: 1 }] : [];
+      return { ...h, effects, down };
+    }),
+    ...enemies,
+  ];
   const initiative = new Map(combatants.map((c) => [c.id, c.speed + rng.next() * 30]));
   const order = combatants.map((c) => c.id).sort((a, b) => initiative.get(b)! - initiative.get(a)!);
   const state: BattleState = {
@@ -179,8 +187,10 @@ function advance(state: BattleState, rng: Rng, events: BattleEvent[]) {
     const actor = currentActor(state)!;
     if (actor.down) continue;
 
-    // Guard lasts until the start of the guarded combatant's next turn.
-    actor.effects = actor.effects.filter((e) => e.kind !== "guarded");
+    // Guard and taunt last until the start of the combatant's next turn. The
+    // SRE Warden's opening guard holds through its first turn, to its second.
+    const keepGuard = actor.kind === "sre_warden" && actor.side === "hero" && state.round === 1;
+    actor.effects = actor.effects.filter((e) => e.kind !== "taunting" && (keepGuard || e.kind !== "guarded"));
     for (const e of [...actor.effects]) {
       const tick = EFFECT_TICK[e.kind];
       if (tick) {
@@ -227,7 +237,9 @@ function enemyTurn(state: BattleState, actor: Combatant, rng: Rng, events: Battl
     }
   }
   const heroes = living(state, "hero");
-  const targets = attack.target === "all_heroes" ? heroes : [rng.pick(heroes)];
+  // A taunting hero draws every single-target attack onto itself.
+  const taunting = heroes.filter((h) => h.effects.some((e) => e.kind === "taunting"));
+  const targets = attack.target === "all_heroes" ? heroes : [rng.pick(taunting.length > 0 ? taunting : heroes)];
   const check = rollCheck(rng, { label: attack.name, pct: attack.pct, count: attack.rolls });
   events.push({ t: "check", actor: actor.id, check });
   const scaled = Math.round(((attack.damage + Math.floor(actor.level / 2)) * check.successes) / attack.rolls);
@@ -282,9 +294,19 @@ function resolveAbility(
         events.push({ t: "miss", actor: actor.id, target: target.id, ability: def.name });
         continue;
       }
-      const amount = damage(state, target, Math.round((def.damage + actor.level + actor.power + aura) * scale), events);
+      // Bulwark Strike leans on the Warden's armor; Hex on the size of its target.
+      const armorBonus = def.armorDamage ? Math.floor(actor.armor / ARMOR_DAMAGE_DIVISOR) : 0;
+      const sizeBonus = def.maxHpDamage ? Math.round(target.maxHp * def.maxHpDamage) : 0;
+      const amount = damage(state, target, Math.round((def.damage + actor.level + actor.power + aura + armorBonus + sizeBonus) * scale), events);
       events.push({ t: "hit", actor: actor.id, target: target.id, amount, ability: def.name, perfect: check.perfect });
       if (check.perfect && def.perfect && !target.down) addEffect(target, def.perfect.effect, def.perfect.turns, events);
+      // The Data Warlock's perfect hits leave the target bleeding.
+      if (check.perfect && actor.side === "hero" && actor.kind === "data_warlock" && !target.down) addEffect(target, "bleeding", WARLOCK_BLEED_TURNS, events);
+      if (def.drain && amount > 0 && !actor.down && actor.hp < actor.maxHp) {
+        const healed = Math.min(actor.maxHp - actor.hp, Math.max(1, Math.round(amount * def.drain)));
+        actor.hp += healed;
+        events.push({ t: "heal", actor: actor.id, target: actor.id, amount: healed, ability: def.name });
+      }
     }
     if (def.heal !== undefined && !check.fumble) {
       const amount = Math.min(target.maxHp - target.hp, Math.round((def.heal + actor.level) * scale));
