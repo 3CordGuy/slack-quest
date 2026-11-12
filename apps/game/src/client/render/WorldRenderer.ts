@@ -199,7 +199,20 @@ interface Unit {
   asleep: boolean;
   nextZ: number;
   zCount: number;
+  /** Arrows that hit it and stayed in, until it goes down or the fight ends. */
+  arrows?: StuckArrow[];
 }
+
+/** An arrow left standing in a combatant: where on the sprite it sits, and its tilt. */
+interface StuckArrow {
+  sprite: THREE.Sprite;
+  /** Offset from the unit's feet, in world units. */
+  off: THREE.Vector3;
+  rot: number;
+}
+
+/** No more than this many arrows stay in one combatant; the oldest falls out. */
+const MAX_STUCK_ARROWS = 6;
 
 interface Want {
   kind: string;
@@ -515,7 +528,7 @@ export class WorldRenderer {
         if (unit) unit.path = ev.path.map((p) => this.standAt(p));
       } else if (ev.t === "battle") {
         const b = ev.ev;
-        if (b.t === "hit") this.later(beat++, () => this.attack(b.actor, b.target, b.ability, b.perfect, () => this.float(b.target, `-${b.amount}`, b.perfect ? "#ffd23f" : "#ff6b6b")));
+        if (b.t === "hit") this.later(beat++, () => this.attack(b.actor, b.target, b.ability, b.perfect, () => this.float(b.target, `-${b.amount}`, b.perfect ? "#ffd23f" : "#ff6b6b"), true));
         else if (b.t === "miss") this.later(beat++, () => this.attack(b.actor, b.target, b.ability, false, () => this.float(b.target, "miss", "#c9d1e0")));
         else if (b.t === "heal") this.later(beat++, () => { this.sparkle(b.target, "#7dff9a"); this.float(b.target, `+${b.amount}`, "#7dff9a"); });
         else if (b.t === "tick") this.later(beat++, () => this.float(b.target, `-${b.amount}`, "#ffa94d"));
@@ -538,7 +551,7 @@ export class WorldRenderer {
    * on the target at once, or a bolt or arrow flies across first. `onImpact`
    * runs when it lands.
    */
-  private attack(actorId: string, targetId: string, ability: string, perfect: boolean, onImpact: () => void) {
+  private attack(actorId: string, targetId: string, ability: string, perfect: boolean, onImpact: () => void, landed = false) {
     const a = this.units.get(actorId);
     const t = this.units.get(targetId);
     if (!a || !t || a === t) return onImpact();
@@ -554,6 +567,8 @@ export class WorldRenderer {
       const from = a.goal.clone().add(new THREE.Vector3(dir * 0.5, a.sprite.scale.y * 0.6, 0.05));
       this.spawnFx(kind, color, flip, { from, to: hitAt, life: 0.24, size: [1.0, 1.0], spin: 0, fade: false, onEnd: () => {
         this.spawnFx("burst", perfect ? "#ffd23f" : color, false, { from: hitAt, to: hitAt, life: 0.22, size: [0.7, 1.7], spin: 0.5, fade: true });
+        // An arrow that lands stays in: point first, the shaft toward whoever shot it.
+        if (kind === "arrow" && landed) this.stickArrow(t, dir);
         onImpact();
       } });
       return;
@@ -562,6 +577,37 @@ export class WorldRenderer {
     this.lunge(actorId, targetId);
     this.spawnFx("slash", perfect ? "#ffd23f" : "#dfe9ff", flip, { from: hitAt, to: hitAt, life: 0.26, size: [1.3, 2.3], spin: -dir * 0.9, fade: true });
     onImpact();
+  }
+
+  /** Leave an arrow standing in `unit`, shot from the `dir` side (1: from the left). */
+  private stickArrow(unit: Unit, dir: number) {
+    const arrows = (unit.arrows ??= []);
+    if (arrows.length >= MAX_STUCK_ARROWS) this.dropArrow(arrows.shift()!);
+    const size = 0.6;
+    const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: fxTexture("arrow", "#e8dcc0", dir < 0), transparent: true, depthTest: false }));
+    sprite.scale.set(size, size, 1);
+    sprite.renderOrder = 5;
+    const h = unit.sprite.scale.y;
+    const w = unit.sprite.scale.x;
+    // Somewhere on the body, the point a little inside it, the shaft drooping a touch.
+    // Spread over the body: each new one avoids the height of the last so they don't bunch up.
+    const last = arrows.at(-1)?.off.y ?? -1;
+    let y = h * (0.25 + Math.random() * 0.5);
+    if (Math.abs(y - last) < h * 0.12) y = h * 0.25 + ((y - h * 0.25 + h * 0.2) % (h * 0.5));
+    const off = new THREE.Vector3(-dir * (size * 0.3) + (Math.random() - 0.5) * w * 0.3, y, 0.06);
+    const rot = dir * (-0.05 - Math.random() * 0.35);
+    this.fxGroup.add(sprite);
+    arrows.push({ sprite, off, rot });
+  }
+
+  private dropArrow(a: StuckArrow) {
+    this.fxGroup.remove(a.sprite);
+    a.sprite.material.dispose();
+  }
+
+  private clearArrows(unit: Unit) {
+    for (const a of unit.arrows ?? []) this.dropArrow(a);
+    unit.arrows = [];
   }
 
   private sparkle(unitId: string, color: string) {
@@ -1668,6 +1714,7 @@ export class WorldRenderer {
       if (unit.ring) this.unitGroup.remove(unit.ring);
       if (unit.hpBack) this.unitGroup.remove(unit.hpBack);
       if (unit.hpFill) this.unitGroup.remove(unit.hpFill);
+      this.clearArrows(unit);
       this.dropLabel(unit);
       this.units.delete(id);
     }
@@ -1699,6 +1746,8 @@ export class WorldRenderer {
       unit.baseRot = w.down ? Math.PI / 2 : w.asleep ? Math.PI / 2 : 0;
       mat.opacity = w.down ? 0.55 : 1;
       unit.sprite.center.set(0.5, w.down || w.asleep ? 0.5 : 0);
+      // Arrows stay in until the one they hit goes down, or the fight is over.
+      if (w.down || !state.battle) this.clearArrows(unit);
 
       if (w.ring && !unit.ring) {
         unit.ring = new THREE.Mesh(new THREE.RingGeometry(0.3, 0.44, 6), new THREE.MeshBasicMaterial({ side: THREE.DoubleSide }));
@@ -2156,6 +2205,10 @@ export class WorldRenderer {
         unit.label.position.set(p.x, ground + unit.label.userData.lift, p.z);
         const tall = unit.label.userData.rows * labelRow;
         unit.label.scale.set(tall * unit.label.userData.aspect, tall, 1);
+      }
+      for (const a of unit.arrows ?? []) {
+        a.sprite.position.set(p.x + a.off.x, ground + a.off.y, p.z + a.off.z);
+        a.sprite.material.rotation = a.rot + unit.lean;
       }
       if (unit.hpBack && unit.hpFill) {
         const lift = unit.hpBack.userData.lift ?? 2;
