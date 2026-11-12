@@ -1,13 +1,14 @@
-// The two workshops the crew can build at the Harbor: the apothecary, where
-// herbs and mushrooms are brewed into a bag carried on the next voyage, and
-// the smithy, where weapons are sharpened and armour reinforced.
+// The workshops the crew can build at the Harbor: the apothecary, where
+// herbs and mushrooms are brewed into a bag carried on the next voyage; the
+// smithy, where weapons are sharpened and armour reinforced; and the galley,
+// where the crew cooks into one larder their next ship sails with.
 //
 // What can be done is worked out here only to grey out buttons; the server
 // checks every brew and every step again.
 
 import { useEffect, useState } from "react";
-import { BREWS, SMITHY_MAX_STEPS, brewBuff, brewProblem, recipeText, smithyProblem, smithyWork, upgradedName, type Resources } from "@gantt-quest/world";
-import { api, type ApothecaryView, type SmithyView } from "../api";
+import { BREWS, DISHES, SMITHY_MAX_STEPS, brewBuff, cookProblem, dishRecipeText, larderText, brewProblem, recipeText, smithyProblem, smithyWork, upgradedName, type Resources } from "@gantt-quest/world";
+import { api, type ApothecaryView, type GalleyView, type SmithyView } from "../api";
 import { DragPanel } from "../DragPanel";
 import { perkText } from "../hutDrops";
 import { label } from "../labels";
@@ -143,6 +144,73 @@ export function SmithyPanel({ onClose, refresh }: { onClose(): void; refresh(): 
                   </span>
                   <button className="small" disabled={busy || !!problem} title={problem ?? `${verb} for ${amountsText(item.cost!.gold, item.cost!.resources)}`} onClick={() => void work(item.id)}>
                     {item.cost ? `${verb} +1` : `+${SMITHY_MAX_STEPS}`}
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        </>
+      )}
+    </Shell>
+  );
+}
+
+export function GalleyPanel({ onClose }: { onClose(): void }) {
+  const [view, setView] = useState<GalleyView | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    api.galley().then(setView, (e: Error) => setError(e.message));
+  }, []);
+  const cook = async (id: string, name: string) => {
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const res = await api.cook(id);
+      setView(res);
+      setNotice(`${name} goes into the crew's larder.${res.xp?.text ? ` ${res.xp.text}` : ""}`);
+    } catch (e) {
+      setError((e as Error).message);
+      api.galley().then(setView, () => {});
+    } finally {
+      setBusy(false);
+    }
+  };
+  const stocked = view ? larderText(view.larder) : "";
+
+  return (
+    <Shell
+      id="harbor.galley"
+      title="The galley"
+      intro="Cook for the crew's next ship. The larder is shared: anyone in the crew can cook into it, and the whole of it goes aboard when your crew's next ship sails."
+      error={error}
+      notice={notice}
+      onClose={onClose}
+    >
+      {!view && !error && <p className="muted">Stirring the pot…</p>}
+      {view && !view.inCrew && <p className="muted">Join a crew first: the galley cooks for a crew's ship.</p>}
+      {view && view.inCrew && (
+        <>
+          <p className="works-stock">
+            The crew's larder: <strong>{stocked || "empty"}</strong>
+            {stocked && <span className="muted"> · goes aboard the next ship</span>}
+          </p>
+          <p className="works-stock">You hold: <strong>{amountsText(0, { bone: view.resources.bone ?? 0, herbs: view.resources.herbs ?? 0, fur: view.resources.fur ?? 0, mushrooms: view.resources.mushrooms ?? 0 })}</strong></p>
+          <ul className="workshop-list">
+            {DISHES.map((d) => {
+              const held = view.larder[d.id] ?? 0;
+              const problem = cookProblem(d.id, view);
+              return (
+                <li key={d.id} className={held >= d.cap ? "having" : ""} data-dish={d.id}>
+                  <span>
+                    <strong>{d.name}</strong> <span className="muted">· {held}/{d.cap} in the larder</span>
+                    <br />
+                    <span className="muted small-note">{d.effect} {d.blurb} Takes {dishRecipeText(d.recipe)}.</span>
+                  </span>
+                  <button className="small" disabled={busy || !!problem} title={problem ?? `Cook ${d.name}`} onClick={() => void cook(d.id, d.name)}>
+                    {held >= d.cap ? "Larder full" : "Cook"}
                   </button>
                 </li>
               );

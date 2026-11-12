@@ -11,8 +11,9 @@ import type { GatherStatus } from "../server/gather";
 import type { XpResult } from "../server/harbor-xp";
 import type { TradeList } from "../server/trade";
 import type { ApothecaryView, SmithyView } from "../server/workshops";
+import type { GalleyView } from "../server/galley";
 
-export type { ApothecaryView, SmithyView };
+export type { ApothecaryView, SmithyView, GalleyView };
 
 export type { GatherStatus, XpResult };
 
@@ -170,6 +171,8 @@ export const api = {
   brew: (brewId: string) => request<ApothecaryView & { xp?: XpResult }>("/api/apothecary/brew", { brewId }),
   smithy: () => request<SmithyView>("/api/smithy"),
   smith: (itemId: number) => request<SmithyView & { worked: string; xp?: XpResult }>("/api/smithy/work", { itemId }),
+  galley: () => request<GalleyView>("/api/galley"),
+  cook: (dishId: string) => request<GalleyView & { xp?: XpResult }>("/api/galley/cook", { dishId }),
   giveToProject: (projectId: string, give: ProjectAmounts) => request<Works & { completed: boolean; xp?: XpResult }>("/api/projects/give", { projectId, give }),
   hut: () => request<Hut>("/api/hut"),
   craft: (defId: string) => request<{ ok: true; xp?: XpResult }>("/api/hut/craft", { defId }),

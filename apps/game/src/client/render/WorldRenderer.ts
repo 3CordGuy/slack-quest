@@ -1648,7 +1648,8 @@ export class WorldRenderer {
         break;
       }
       case "apothecary":
-      case "smithy": {
+      case "smithy":
+      case "galley": {
         if (!poi.cleared) {
           // Still a crew project: a fenced building site with the materials stacked inside it.
           const post = lambert("#7a5230");
@@ -1661,15 +1662,46 @@ export class WorldRenderer {
           }
           // The front is left open, with a little board saying what is coming.
           add(box(0.04, 0.5, 0.04), post, 0.4, 0.25, 0.62);
-          add(box(0.3, 0.18, 0.03), lambert(poi.kind === "apothecary" ? "#4f8a4a" : "#4a4f5a"), 0.4, 0.46, 0.64);
+          add(box(0.3, 0.18, 0.03), lambert(poi.kind === "apothecary" ? "#4f8a4a" : poi.kind === "galley" ? "#a0522d" : "#4a4f5a"), 0.4, 0.46, 0.64);
           // A pile of planks, squared stones, and the trade's own makings: sacks of herbs, or iron bars.
           for (let i = 0; i < 3; i++) add(box(0.5, 0.05, 0.12), lambert(i % 2 ? "#c9a877" : "#8a6a44"), -0.2, 0.03 + i * 0.05, -0.05 + i * 0.02, 0.15 * i);
           for (const [x, y, z] of [[0.25, 0.08, -0.05], [0.38, 0.08, 0.1], [0.3, 0.22, 0.02]]) add(box(0.16, 0.14, 0.16), lambert("#959eac"), x, y, z, 0.3);
-          if (poi.kind === "apothecary") {
+          if (poi.kind === "galley") {
+            // Bundles of furs and a heap of bones, waiting to be built into a cookhouse.
+            for (const [x, z, c] of [[-0.28, 0.3, "#7a5a3a"], [-0.05, 0.36, "#9a7a55"]] as [number, number, string][]) add(box(0.22, 0.12, 0.16), lambert(c), x, 0.06, z, 0.3);
+            for (let i = 0; i < 4; i++) add(new THREE.CylinderGeometry(0.025, 0.025, 0.26, 4), lambert("#ece4cf"), 0.15 + (i % 2) * 0.06, 0.04 + Math.floor(i / 2) * 0.04, 0.35).rotation.z = Math.PI / 2 + i * 0.5;
+          } else if (poi.kind === "apothecary") {
             for (const [x, z] of [[-0.25, 0.3], [0.05, 0.35]]) add(new THREE.CylinderGeometry(0.11, 0.13, 0.22, 6), lambert("#c9b37a"), x, 0.11, z);
             for (const [x, z] of [[-0.25, 0.3], [0.05, 0.35]]) add(new THREE.SphereGeometry(0.09, 5, 4), lambert("#5f9e4a"), x, 0.25, z);
           } else {
             for (let i = 0; i < 4; i++) add(box(0.32, 0.05, 0.07), lambert(i < 2 ? "#6f737a" : "#c8743a"), -0.1 + (i % 2) * 0.08, 0.03 + Math.floor(i / 2) * 0.05, 0.32, 0.2);
+          }
+          break;
+        }
+        if (poi.kind === "galley") {
+          // The galley: a low timber cookhouse under a russet roof, a broad stone chimney smoking at one end,
+          // a cauldron on a fire by the door, barrels of provisions, and fish hung to dry under the eaves.
+          add(box(1.0, 0.56, 0.66), lambert("#8a6a44"), 0, 0.28, -0.04);
+          for (const x of [-0.48, 0.48]) add(box(0.06, 0.58, 0.7), lambert("#5a3d22"), x, 0.29, -0.04);
+          add(box(1.08, 0.05, 0.74), lambert("#4a3a2a"), 0, 0.58, -0.04);
+          const roof = add(new THREE.ConeGeometry(0.7, 0.42, 4), lambert("#a0522d"), 0, 0.8, -0.04, Math.PI / 4);
+          roof.scale.z = 0.75;
+          add(box(0.22, 0.34, 0.04), lambert("#3a2c22"), 0.12, 0.17, 0.3);
+          add(box(0.2, 0.14, 0.03), new THREE.MeshBasicMaterial({ color: "#ffd08a" }), -0.24, 0.36, 0.3);
+          // The chimney: broad and stone, up the west end. The ambience draws its smoke.
+          add(box(0.26, 1.15, 0.26), lambert("#8b95a5"), -0.38, 0.58, -0.22);
+          add(box(0.32, 0.06, 0.32), lambert("#6f7f95"), -0.38, 1.17, -0.22);
+          g.userData.smoke = new THREE.Vector3(-0.38, 1.24, -0.22);
+          // A cauldron over a small fire by the door.
+          add(new THREE.ConeGeometry(0.1, 0.12, 5), new THREE.MeshBasicMaterial({ color: "#ff9a3c" }), 0.5, 0.06, 0.42);
+          add(new THREE.SphereGeometry(0.14, 7, 5), lambert("#2e2a2a"), 0.5, 0.2, 0.42);
+          add(new THREE.CylinderGeometry(0.11, 0.11, 0.02, 7), lambert("#d9b45a"), 0.5, 0.3, 0.42);
+          // Barrels of provisions, ready to go aboard.
+          for (const [x, z] of [[-0.62, 0.3], [-0.5, 0.48]]) add(new THREE.CylinderGeometry(0.1, 0.1, 0.24, 7), lambert("#7a5230"), x, 0.12, z);
+          // Fish hung to dry from the eaves.
+          for (const x of [-0.05, 0.3, 0.42]) {
+            add(box(0.012, 0.08, 0.012), lambert("#5a3d22"), x, 0.52, 0.36);
+            add(new THREE.ConeGeometry(0.035, 0.14, 4), lambert("#9fb3c2"), x, 0.42, 0.36).rotation.x = Math.PI;
           }
           break;
         }
