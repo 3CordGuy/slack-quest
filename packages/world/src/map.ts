@@ -51,7 +51,7 @@ export interface Tile {
  * `board` and `shop` exist only in the Harbor: a moored ship, a crew member's
  * hut, the notice board and the market stall. `door` is the way out of a hut's room.
  */
-export type PoiKind = "landing" | "hut" | "lair" | "shrine" | "cache" | "camp" | "pier" | "plot" | "board" | "shop" | "ring" | "dice" | "door" | "works" | "pub" | "counter" | "shoals" | "rocks" | "wreck" | "lot" | "ship" | "pickup" | "fishing" | "felling" | "quarry";
+export type PoiKind = "landing" | "hut" | "lair" | "shrine" | "cache" | "camp" | "pier" | "plot" | "board" | "shop" | "ring" | "dice" | "door" | "works" | "pub" | "counter" | "shoals" | "rocks" | "wreck" | "lot" | "site" | "ship" | "pickup" | "fishing" | "felling" | "quarry";
 
 export interface Poi {
   id: string;
@@ -69,6 +69,8 @@ export interface Poi {
   tier?: number;
   /** For a pickup on an island: what lies there for the taking. */
   find?: ResourceKind;
+  /** For a bought plot whose shack is not up yet: how full its resource bin is, 0 to 1. */
+  fill?: number;
 }
 
 export interface WorldMap {

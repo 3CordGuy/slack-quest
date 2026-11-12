@@ -135,6 +135,48 @@ export const HUT_TIERS: HutTier[] = [
 /** What a plot of land in the Harbor costs. A hut can only be built, entered or furnished once its owner has one. */
 export const PLOT_PRICE = 120;
 
+// ---------- raising the shack ----------
+//
+// A bought plot is bare ground with a resource bin on it. The owner fills the
+// bin a little at a time, from what they gather; when it holds everything the
+// shack needs, the shack goes up and the hut can be entered.
+
+/** What goes into the bin before a shack stands on a new plot. */
+export const SHACK_COST: Resources = { wood: 10, stone: 6 };
+
+/** What the bin still needs, by kind. Empty once it is full. */
+export function binNeeds(bin: Resources): Resources {
+  const out: Resources = {};
+  for (const k of RESOURCE_KINDS) {
+    const n = (SHACK_COST[k] ?? 0) - Math.max(0, Math.floor(bin[k] ?? 0));
+    if (n > 0) out[k] = n;
+  }
+  return out;
+}
+
+/** True once the bin holds everything the shack needs. */
+export function binFull(bin: Resources): boolean {
+  return Object.keys(binNeeds(bin)).length === 0;
+}
+
+/** How full the bin is, from 0 to 1, counting every piece the same. */
+export function binFill(bin: Resources): number {
+  const total = RESOURCE_KINDS.reduce((n, k) => n + (SHACK_COST[k] ?? 0), 0);
+  const need = RESOURCE_KINDS.reduce((n, k) => n + (binNeeds(bin)[k] ?? 0), 0);
+  return total === 0 ? 1 : (total - need) / total;
+}
+
+/** What goes into the bin from `have` right now: as much of each kind as is held, up to what is still needed. */
+export function binDeposit(bin: Resources, have: Resources): Resources {
+  const out: Resources = {};
+  const needs = binNeeds(bin);
+  for (const k of RESOURCE_KINDS) {
+    const n = Math.min(needs[k] ?? 0, Math.max(0, Math.floor(have[k] ?? 0)));
+    if (n > 0) out[k] = n;
+  }
+  return out;
+}
+
 // ---------- what a player owns ----------
 
 /** One owned furnishing. `q`/`r` are null while it is in storage. */

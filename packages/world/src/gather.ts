@@ -509,8 +509,11 @@ export function gatherView(state: GatherState): GatherView {
 
 /** How long a player must wait between rests. */
 export const REST_COOLDOWN_MS = 20 * 60 * 1000;
-/** Outings a rest gives back: one on a bedroll under the sky, two in a bed of your own. */
-export const REST_OUTINGS = { bedroll: 1, hut: 2 } as const;
+/**
+ * Outings a rest gives back: one on a bedroll under the sky; in a shack of
+ * your own, all of them. Both wait out the same cooldown.
+ */
+export const REST_OUTINGS = { bedroll: 1, hut: GATHER_DAILY_OUTINGS } as const;
 export type RestPlace = keyof typeof REST_OUTINGS;
 
 /** When a player who last rested at `restedAt` may rest again, in ms. Zero if they never have. */

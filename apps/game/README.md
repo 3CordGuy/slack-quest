@@ -40,6 +40,8 @@ CLOUDFLARE_ENV=staging pnpm --filter @gantt-quest/game build
 pnpm --filter @gantt-quest/game exec wrangler deploy
 ```
 
+Apply the migrations first and confirm they are recorded (`SELECT name FROM d1_migrations ORDER BY id DESC LIMIT 1`) before deploying, so new code never runs against the old schema. A new Durable Object class (as `PubRoom` was) also needs its binding and a migration tag in your local `wrangler.jsonc`, for each environment.
+
 Build before deploying: `wrangler deploy` ships whatever the last build produced, for whichever environment it was built for. Sign-in is an ungated guest account, so anyone with the URL can use the Workers AI allocation.
 
 ## Where things live
@@ -60,16 +62,24 @@ Build before deploying: `wrangler deploy` ships whatever the last build produced
 | `…/drops.ts` | Materials, blueprints, decor and trophies paid out by fights, caches and a won story |
 | `…/contracts.ts` | Notice-board contracts and the crew's weekly goal |
 | `…/hero.ts` | A hero as the battle rules see one; shared by voyages and the sparring ring |
+| `…/gather.ts` | Fishing, felling and the quarry: outings, timing, payouts, stamina and resting |
+| `…/projects.ts` | Crew projects (the lighthouse and those still to open) |
+| `…/pub.ts` | The pub's room, menu and food-and-drink boosts |
+| `…/dice.ts`, `…/shoals.ts` | The pub's two table games, each a pure reducer with a per-player view |
+| `…/trade.ts` | Offers between crewmates and their validation |
 | `apps/game/src/worker.ts` | Harbor HTTP API and the WebSocket route |
 | `apps/game/src/server/run-room.ts` | One Durable Object per voyage: persist, broadcast, timers |
 | `apps/game/src/server/harbor-room.ts` | One Durable Object per crew: presence, walking, chat, dock board |
 | `apps/game/src/server/hut-room.ts` | One Durable Object per hut owner: presence, walking, chat and furniture |
+| `apps/game/src/server/pub-room.ts` | One Durable Object per crew for the pub: presence, walking, chat and the game tables |
+| `apps/game/src/server/stake-table.ts` | A game table for any stake game: antes, prize, per-player views, forfeits |
+| `apps/game/src/server/gather.ts`, `projects.ts`, `trade.ts` | D1 work for gathering and resting, crew projects, and trading |
 | `apps/game/src/server/board.ts` | Contract results and crew-goal progress in D1 |
 | `apps/game/src/server/ai.ts` | Prompts and the Workers AI calls (and the mock) |
 | `apps/game/src/server/db.ts` | D1 access |
 | `apps/game/src/server/email.ts` | Sending sign-in codes |
-| `apps/game/src/client/render/` | Three.js renderer, placeholder sprites, furniture models (`props.ts`) and the sky, shadows and moving decoration (`ambience.ts`) |
-| `apps/game/src/client/*.tsx` | Character creation, crew gate, shared Harbor, huts, notice board (`board/`), sparring ring, inventory, market stall and in-voyage HUD (React) |
+| `apps/game/src/client/render/` | Three.js renderer, placeholder sprites, furniture models (`props.ts`) and the sky, weather, shadows and moving decoration (`ambience.ts`) |
+| `apps/game/src/client/*.tsx` | Character creation, crew gate, shared Harbor, huts, the pub, notice board (`board/`), works (`works/`), sparring, gathering, trading, inventory, market stall, the crossing, fight pacing (`BattleBeats.tsx`) and the in-voyage HUD (React) |
 | `apps/game/src/client/itemArt.ts` | Pixel-art item icons drawn in code, in the style of the hero sprites; the accent colour is the item's rarity |
 
 ## Rules worth knowing before changing things
@@ -87,17 +97,23 @@ Build before deploying: `wrangler deploy` ships whatever the last build produced
 pnpm --filter @gantt-quest/world test
 pnpm --filter @gantt-quest/world typecheck
 pnpm --filter @gantt-quest/game typecheck
+pnpm --filter @gantt-quest/game test
 ```
 
-In dev builds the page exposes `window.__gq` (`state`, `send`, and the `World` module) on a voyage and `window.__harbor` in the Harbor, for driving either from the console. Set `window.__gqTime` to a number from 0 to 1 to pin the time of day (0 is midnight, 0.5 is noon).
+The game's own tests (`apps/game/test/`) run the trading server code against SQLite with the migrations applied, using Node's built-in `node:sqlite` as a stand-in for D1.
+
+In dev builds the page exposes `window.__gq` (`state`, `send`, and the `World` module) on a voyage and `window.__harbor` in the Harbor, for driving either from the console. Set `window.__gqTime` to a number from 0 to 1 to pin the time of day (0 is midnight, 0.5 is noon), and `window.__gqWeather` from 0 (clear) to 1 (heavy rain) to pin the weather. The pub and huts expose `window.__pub` and `window.__hut` the same way.
 
 ## Known gaps in milestone 1
 
 - Placeholder art: sprites are drawn in code (`render/sprites.ts`), props are primitive shapes.
-- Four story frames, one talkable NPC per story, three hero classes.
+- Four story frames, one talkable NPC per story.
+- Three hero classes (QA Paladin, DevOps Mage, Refactor Rogue). The original game had eight; Backend Druid, Frontend Bard, Staff Sage, SRE Warden and Data Warlock have stats in `packages/core` but no weapons, abilities or sprites here yet.
 - Battle numbers are not tuned; a focused party can stun-lock the boss.
 - Battle events animate in sequence but HP bars jump to the final value.
-- Huts can be entered and furnished, but crafting, buying furniture, hut tiers and applying hut perks to a voyage are not built. Only the first 12 crew members get a hut drawn.
-- The Harbor's only shop is the market stall (gear). No smithy, potions or provisioning yet. Crew chat is not stored.
+- The Harbor has twelve plots; a crew larger than that cannot all own one.
+- The smithy and galley projects are not open yet. Crew chat is not stored.
+- The doom clock does not allow for time lost to fog and roaming bands.
+- Timing in fishing and the quarry trusts the client's reported moment within a round trip, so a script can always hit dead centre (capped at +20% a roll).
 - Gear has no affixes, uniques, sets or elements.
 - No production deploy and no CI deploy. Staging is deployed by hand; production needs a workflow change and review.

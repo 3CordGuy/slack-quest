@@ -185,7 +185,11 @@ export function GatherPanel({ spot, onClose }: { spot: GatherSpot; onClose(): vo
   };
   const step = (choice: GatherChoice) => run(() => api.gatherStep(choice));
 
-  const outing = status?.outing ?? null;
+  const latest = status?.outing ?? null;
+  // An outing still open is shown wherever the player stands. One already finished at another spot is not:
+  // this spot is shown instead, with a line saying what came home from there.
+  const outing = latest && (latest.spot === spot || latest.status === "active") ? latest : null;
+  const finishedElsewhere = latest && !outing ? latest : null;
   // Keep the newest check in view as the log grows.
   const logEnd = useRef<HTMLLIElement>(null);
   useEffect(() => {
@@ -207,7 +211,16 @@ export function GatherPanel({ spot, onClose }: { spot: GatherSpot; onClose(): vo
           <span className="spacer" />
           <button className="small" onClick={onClose}>{active ? "Step away" : "Close"}</button>
         </header>
-        {outing && outing.spot !== spot && active && <p className="bad">You left this outing unfinished. Finish it before starting another.</p>}
+        {outing && outing.spot !== spot && active && (
+          // Walked to another spot with an outing still open: say where it is and offer the way out, without alarm.
+          <div className="gather-elsewhere">
+            <p>
+              You still have an outing open at <strong>{def.name.replace(/^The /, "the ")}</strong>. Carry on with it here, or {words.bank.toLowerCase()} with what you have
+              {Object.keys(outing.haul).length > 0 ? <> ({resourceText(outing.haul)})</> : null} and then {WORDS[spot].start.toLowerCase()} here.
+            </p>
+            <button disabled={busy} onClick={() => step({ t: "bank" })}>{words.bank}</button>
+          </div>
+        )}
         <p className="muted">{def.blurb}</p>
 
         {status && (
@@ -226,10 +239,17 @@ export function GatherPanel({ spot, onClose }: { spot: GatherSpot; onClose(): vo
         {error && <p className="bad">{error}</p>}
         {!status && !error && <p className="muted">Looking around…</p>}
 
+        {finishedElsewhere && (
+          <p className={finishedElsewhere.status === "banked" ? "good" : "muted"}>
+            {finishedElsewhere.status === "banked"
+              ? `Brought home from ${GATHER_SPOTS[finishedElsewhere.spot].name.replace(/^The /, "the ")}: ${resourceText(paid ?? finishedElsewhere.payout)}.`
+              : `Nothing came home from ${GATHER_SPOTS[finishedElsewhere.spot].name.replace(/^The /, "the ")}.`}
+          </p>
+        )}
         {status && !outing && (
           left > 0
             ? <button className="primary" disabled={busy} onClick={() => run(() => api.gatherStart(spot))}>{words.start} · uses 1 stamina</button>
-            : <p className="bad">You are worn out for today. A voyage gives all three outings back, and a meal at the pub gives back one a day.</p>
+            : <p className="bad">You are worn out for today. A voyage or a rest in your own shack gives all three outings back, and a meal at the pub gives back one a day.</p>
         )}
 
         {outing && (

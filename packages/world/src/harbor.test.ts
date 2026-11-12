@@ -51,11 +51,12 @@ describe("harbor map", () => {
     expect(harborPath(map, HARBOR_SPAWN, HARBOR_SPAWN)).toBeNull();
   });
 
-  it("is a walled, cobbled port: streets join every place, the wall and the sea cannot be crossed", () => {
+  it("is a walled port: each place stands on cobbles, the wall and the sea cannot be crossed", () => {
     const biomes = new Set(map.tiles.map((t) => t.biome));
     for (const b of ["cobble", "mud", "rampart", "water", "dock"]) expect(biomes.has(b as never), b).toBe(true);
-    // The places people use stand on or beside a street.
+    // The places people use stand on cobbles, and only they do.
     for (const pos of [HARBOR_BOARD, HARBOR_SHOP, HARBOR_RING, HARBOR_SPAWN, HARBOR_WORKS]) expect(tileAt(map, pos)?.biome).toBe("cobble");
+    expect(map.tiles.filter((t) => t.biome === "cobble").length).toBe(6);
     const wall = map.tiles.find((t) => t.biome === "rampart")!;
     expect(harborPath(map, HARBOR_SPAWN, wall)).toBeNull();
     // Rocks and the wreck are out in the water, out of reach.

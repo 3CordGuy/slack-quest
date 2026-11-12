@@ -137,13 +137,13 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
   const hoverPiece = hover ? placed.find((f) => same({ q: f.q, r: f.r }, hover)) : undefined;
   const tip = hoverPiece ? hoverPiece.label : hover && room && poiAt(room, hover)?.kind === "door" ? "The door" : null;
   /** What the last rest did, or why it did nothing. */
-  const [rested, setRested] = useState<string | null>(null);
+  const [rested, setRested] = useState<{ text: string; ok: boolean } | null>(null);
   const restAtHome = async () => {
     try {
       const res = await api.rest("hut");
-      setRested(`Slept well: ${res.regained} outing${res.regained === 1 ? "" : "s"} back, ${res.stamina.left} of ${res.stamina.max} left.`);
+      setRested({ text: `You sleep in your own bed and wake rested: your stamina is full again, ${res.stamina.left} of ${res.stamina.max} outings.`, ok: true });
     } catch (e) {
-      setRested((e as Error).message);
+      setRested({ text: (e as Error).message, ok: false });
     }
   };
   const say = () => {
@@ -301,8 +301,8 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
         {atDoor ? <span>The door back to the Harbor.</span>
           : canEdit ? <span className="muted">Click a hex to walk. Furnish the room from the Furnish panel.</span>
           : <span className="muted">Click a hex to walk. Only {owner?.name ?? "the owner"} can move the furniture.</span>}
-        {canEdit && <button title="Sleep in your own bed: two gathering outings back, once every twenty minutes" onClick={() => void restAtHome()}>Rest</button>}
-        {rested && <span className="good">{rested}</span>}
+        {canEdit && <button title="Sleep in your own bed: all your gathering outings back, once every twenty minutes" onClick={() => void restAtHome()}>Rest</button>}
+        {rested && <span className={rested.ok ? "good" : "bad"}>{rested.text}</span>}
         <button className={atDoor ? "primary" : ""} onClick={onLeave}>Leave</button>
       </DragPanel>
       {atDoor && self && <TileAction renderer={renderer} pos={self.pos} unitId={self.id} label="Leave" run={onLeave} />}

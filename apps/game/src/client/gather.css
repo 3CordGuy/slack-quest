@@ -72,3 +72,7 @@
 .timing-verdict.timing-good { color: var(--good); }
 .timing-verdict.timing-close { color: #d8d2c0; }
 .timing-verdict.timing-miss, .timing-verdict.timing-late { color: var(--bad); }
+
+/* An outing still open at another spot: a calm note with the way out. */
+.gather-elsewhere { display: flex; align-items: center; gap: 12px; padding: 8px 10px; margin: 6px 0; border: 1px solid var(--gold); background: rgba(224, 177, 46, 0.08); }
+.gather-elsewhere p { margin: 0; flex: 1; }

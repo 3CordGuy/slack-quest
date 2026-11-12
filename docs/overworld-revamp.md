@@ -37,27 +37,42 @@ What the code review found that shapes the plan:
 - Room to grow, not in milestone 1: choosing between several islands on a sea chart (difficulty, biome, story frame), provisioning the ship with gold before sailing (potions, focus, extra doom-clock days), and Harbor upgrades paid for with island loot.
 
 ### The Harbor as a shared, walkable place
-Decided 2026-11-11: **one Harbor per crew**. Built so far: the shared map, ships, chat, walk-in huts, the notice board and the sparring ring.
+Decided 2026-11-11: **one Harbor per crew**, called **Heylets Harbor** (`HARBOR_NAME`). Built so far: the shared map, ships, chat, plots and walk-in huts with crafting and tiers, the notice board, the sparring ring, gathering, crew projects, the pub with two table games, resting, and trading between crewmates.
 
 - **Crews.** A crew is a group of players (up to 40) sharing one Harbor. A player founds one or joins by invite code or link (`#crew/CODE`) and belongs to one crew at a time. Crew size is independent of party size: a ship still carries at most four.
-- **A place, not a menu.** The Harbor is a fixed hex map drawn by the same renderer as the islands. Everyone present sees everyone else's sprite, with a name tag, walking around in real time.
+- **A place, not a menu.** The Harbor is a fixed hex map drawn by the same renderer as the islands: a wet, walled, run-down port. An old stone rampart runs along the back and down the sides (fallen in two places, low near the water, never walkable); cobbled streets join the quay, the lane between the huts and the plaza; off the cobbles is mud and tired scrub with puddles; the coast is ragged, with shingle spits between the piers; rocks stand out of the sea with a wreck on them. Everyone present sees everyone else's sprite, with a name tag, walking around in real time.
 - **Free movement, no turns.** Click a hex to walk there. The server checks the path and broadcasts it once; clients animate along it. No server tick loop, which keeps to the Durable Object rules.
 - **One `HarborRoom` Durable Object per crew.** Hibernating WebSockets; who is present and where they stand lives in socket attachments; crew membership, ships and the voyage log are read from D1.
 - **Ships at the docks.** A launched ship is moored at one of three piers; crewmates walk onto the pier and board, or use the dock board. Ships at sea are listed with their story title and day, so those ashore can follow along. The four-letter code still works as a fallback.
 - **Voyage log.** Finished voyages (title, outcome, who went) are listed for the whole crew.
 - **Crew chat.** Free text among crew members, relayed to whoever is in the Harbor and not stored.
-- **Hut plots.** Each member gets a hut on a plot, handed out in join order (12 plots drawn so far).
-- **Walk-in huts.** Standing on a plot offers "Enter". Inside is a small hex room drawn by the same renderer, served by one `HutRoom` Durable Object per owner (presence, walking and chat as in the Harbor). The owner and their crewmates may enter; only the owner can place, turn or put away furniture, and each change is written to D1 before it is broadcast. Everyone starts with a table, a stool and a rug. The view can be turned: walls on the camera's side drop to a kerb, like a doll's house. Leaving returns you to that hut's door in the Harbor.
+- **Hut plots are bought.** Twelve plots are staked out with a for-sale board. A member buys one for 120 gold (`PLOT_PRICE`), one each; the gold and the claim are one conditional write, so two players cannot buy the same plot. A shack comes with it. A hut can only be entered once its owner has a plot, and leaving the crew gives the plot up (the hut's contents stay with the player).
+- **Walk-in huts.** Standing on an owned plot offers "Enter". Inside is a small hex room drawn by the same renderer, served by one `HutRoom` Durable Object per owner (presence, walking and chat as in the Harbor). The owner and their crewmates may enter; only the owner can place, turn or put away furniture, and each change is written to D1 before it is broadcast. Everyone starts with a table, a stool and a rug. The view can be turned: walls on the camera's side drop to a kerb, like a doll's house. Leaving returns you to that hut's door in the Harbor. A hanging lantern lights the room and casts shadows from the furniture; the floor is pixel floorboards.
+- **Crafting, furniture and tiers.** The owner crafts furniture from materials (starter recipes are known; others need a blueprint found on an island), buys pieces at the market stall's Furniture tab, and upgrades the hut from Shack to Cottage to Lodge for gold and materials, which enlarges the room and the building in the Harbor. Prices and recipes are re-derived on the server.
+- **Hut perks on a voyage.** Furniture standing in the hut gives small, capped boosts when its owner boards (`PERK_CAPS`): +1 focus (bed), +1 potion (chest), +4 max HP (hearth), a few percent XP (bookshelf, trophies). They show in the ship's lobby.
 - **Things to bring home.** Voyages now pay hut materials as well as gear and gold. Fights drop materials by enemy kind (fur and bone from beasts, iron and copper from armed enemies, stone from the guardian), cache searches drop wood, stone or copper and occasionally a blueprint or a piece of decor, and winning a story gives each hero a trophy named for it. Drops use the run's seeded RNG and are written as they are earned. The inventory has a Materials row.
 - **Notice board.** A hero may take one **contract** in the ship's lobby: a side bet such as searching every cache, finishing with days to spare or winning without a potion. It is settled by the reducer from the voyage's own facts and tallies, and pays gold (and sometimes materials) only if the story is won. The crew also shares one **goal per calendar week** (win voyages, fulfil contracts, hunt an enemy, haul a material); every member is paid once when it fills. Progress comes only from voyage events on the server, and there is no timer: a week's row is created the first time it is read or advanced.
 - **Sparring ring.** A practice fight for one hero, in their real gear, against a training dummy or a chosen enemy. It runs entirely in the browser on the voyage battle rules; nothing is sent, won, lost or saved, and crewmates do not see it.
+- **Gathering** (`gather.ts`): three solo, push-your-luck outings at the Harbor's edges that pay hut materials. The server holds each outing (seed included) and only sends a view of it.
+  - *Felling* (Strength): pick trees on a 3×3 stand; two are rotten. A felled tree says how many rotten ones stand beside it.
+  - *Fishing* (Dexterity): pick one of five places to cast. Gulls mark where to start; each cast says how near the school was and which way, and the school drifts. On the school is +15% a roll and one more fish.
+  - *The quarry* (Vitality): pick one of nine blocks; two are weak (two cracks of roof each). Dust along each row and column counts its weak blocks; a cut block says how much ore is beside it. Three cracks cave it in.
+  - *Timing:* fishing and the quarry are then timed. A marker moves along a bar (a darting fish that speeds up each cast; a swinging pick) and the player stops it on the mark: dead centre +20% a roll, on the mark +10%, close nothing, off it or after 10 s −15%. The hero's stat widens the mark (0.7× to 1.4×) and slows the marker (0.85× to 1.25×). The server sets the motion from the seed, times the stop itself, and only believes the client's moment within a round trip.
+  - *Stamina:* three outings a UTC day. Coming home from a voyage restores all three; a meal at the pub restores one, once a day; resting restores one or two (below).
+- **Resting.** Everyone has a bedroll: on any open ground in the Harbor the bottom bar offers to lay it out and rest, for one outing back (the bedroll shows until you walk off). Resting in your own hut gives two. Either has a 20-minute cooldown and only works when you have used an outing.
+- **Crew projects** (`projects.ts`): buildings the whole crew pays into with gold and materials at the works. Each contribution is checked and written in one batch, and projects are permanent. The **lighthouse** adds one day to every voyage's doom clock; the smithy and galley are listed but not yet open.
+- **The pub.** A hall with a chimney, entered like a hut: a room larger than any hut, served by one `PubRoom` Durable Object per crew, with a bar, kegs, a hearth and tables.
+  - *Food and drink:* one drink and one meal carry into the hero's next voyage as a small boost on top of hut perks (ale +2 max HP, rum +1 focus, stew +4 max HP, pie +5% XP) and are used up when it begins. Prices come from the menu on the server.
+  - *Old Tam,* the barkeep, can be talked to. He is a model call that only talks: he knows the menu, the crew's weekly goal and its last three voyages, and nothing he says changes the game.
+  - *Dice:* a bluffing dice game for two to four (`dice.ts`), for an ante of 5, 10 or 20 gold each; the house keeps 10%.
+  - *Shoals:* a second bluffing game (`shoals.ts`). Each pilot holds three Channels and one Shoal, lays markers face down, bids how many they can turn over without striking a Shoal, and the high bidder sails. Two clear runs win; a Shoal costs a marker for good. Same stakes as dice.
+  - Both tables run in `stake-table.ts`: antes taken in one statement when a game starts, the prize paid in one when it ends, each player sent only their own view, and a seated player who walks away forfeits.
+- **Trading** (`trade.ts`). A player can offer a crewmate up to eight unequipped items, gold and materials, and may ask for gold and materials back (asking nothing is a gift). In the Harbor, or on an island when both are aboard the same voyage and it is not in a fight. The other player accepts or declines; an offer lapses after 15 minutes. Accepting is one batch that only moves anything if both still hold what was promised.
 
 Still to build:
-- **Crafting, furniture for gold and hut tiers.** The catalogue, recipes, blueprints and three tiers exist as rules (`hut.ts`), and larger rooms are unit-tested, but nothing in the game spends materials or gold on them yet.
-- **Hut perks on a voyage.** The capped perks (`hutPerks`) are returned by `/api/hut` but not yet shown in the game or applied when a hero boards.
-- **More Harbor activities:** gathering spots, crew building projects and dice at the plaza are planned, not built.
+- **The smithy and galley** projects, and anything else the works can build after the lighthouse.
+- **Asking for specific items in a trade.** Offers can ask for gold and materials only.
 - **Upgrades stay modest.** Mostly cosmetic, plus conveniences (storage, a display shelf, starting a voyage rested). Anything stronger would make new players weaker than veterans on the same ship.
-- **Durable accounts are in place** (see Accounts below), so hut customisation can now be built on them.
 - **More than 12 huts**, and several ships beyond three piers, need a larger or scrolling Harbor.
 
 ### Accounts
@@ -100,6 +115,11 @@ Built to bring the new game closer to the original's inventory and economy.
 
 ### Overworld (For the King style)
 - Seeded hex map with biomes that carry movement cost; points of interest (landing, hut, lair, shrine, camp, caches) placed by the story skeleton.
+- **The crossing.** While the island's story is being written, the screen shows the crew's ship sailing over open water past rocks, for at least 4.5 seconds.
+- **Fog of war.** An island starts hidden but for what can be seen from the landing. A hero sees two hexes, three from a hilltop; fog lifts as the party moves and stays lifted, and nobody can walk into it. Fogged ground, the places on it and enemies out of sight are never sent to clients (`clientView`).
+- **Roaming bands.** Two enemy bands are loose when a voyage begins and another comes ashore every three days, up to four. A band is one enemy for a lone hero, two for a party, three for a full ship. Each night a band within three hexes of a hero closes up to two; the rest wander. A band must come into view before it can attack, and a hero who walks up to one starts the fight there.
+- **Forest finds.** Each forest hex nobody has crossed rolls once as a hero passes: wood (13%), berries for 3 HP (10%), bones (7%), a wolf ambush that ends the walk (6%) or buried coin (4%).
+- **Talking.** Clicking an islander opens the Talk panel, unfolding it if minimized, with the cursor in the box. Clicking any figure means the hex it stands on.
 - Round-based turns: each hero rolls movement points from speed, moves, then acts (talk, search, rest, fight). Heroes can split up; a fight pulls in heroes within 2 hexes.
 - A doom clock ticks each round and is the story's deadline, which keeps a run bite-size.
 - `hexPath` in `hex.ts` is unweighted BFS; add a weighted A* in `packages/world` rather than changing core.
@@ -117,18 +137,22 @@ Built to bring the new game closer to the original's inventory and economy.
 - Damage scales with successes; perfect results apply the ability's status effect (stun, bleed, burn…), named from `EFFECT_META`.
 - Enemies pick a target and ability from a simple weighted table and resolve on the server straight away; the client only paces the animation.
 - Lives in `packages/world/battle.ts` as a pure `stepBattle(state, action, rng)`, expected to be a few hundred lines.
+- **Pacing** (`client/BattleBeats.tsx`). The server resolves a fight's last blow, its end and its rewards in one step; the client slows that down without changing it. A fight opens with a card saying who has been met and why, and the first blow waits for it. When it ends, the fight is held on screen while the last blows land, then a recap lists what each hero gained (XP, gold, items, materials, level-ups, who was knocked down) until dismissed. A successful cache search gets the same kind of card.
+- **The battleground** is one large hex of the ground the fight broke out on, dressed for that terrain (forest, hills, plains, bare ground) or place (a camp's tents and fire, a lair's standing stones), with the dressing kept to the back and sides.
 
 ### Rendering
 - Plain Three.js in an imperative `WorldRenderer` class mounted by a thin React component; HUD, chat and menus stay in React DOM on top.
 - Terrain is one `InstancedMesh` of flat-shaded hex prisms with a limited palette. Props (trees, huts) are low-poly glTF exported from Blockbench.
 - Heroes, NPCs and monsters are sprite quads that rotate around Y to face the camera, with `NearestFilter` and a fixed pixels-per-unit so texel size is consistent.
-- Tilted camera with pan, zoom and rotation. Pan by dragging, with one finger, or by holding W/A/S/D or the arrow keys; turn with Q/E, a right-drag, a two-finger twist or the on-screen buttons. Fights always face the default way.
+- Tilted camera with pan, zoom, rotation and tilt (R/F, a right-drag up and down, or the buttons; about 24° to 72°). Pan by dragging, with one finger, or by holding W/A/S/D or the arrow keys; turn with Q/E, a right-drag, a two-finger twist or the on-screen buttons. Fights always face the default way.
 - **Ambience** (`render/ambience.ts`) is decoration only and reads no game state. It keeps the flat, low-texture look:
-  - A ten-minute day and night taken from the wall clock, so a crew shares one sky. The sun crosses, warms at dusk and hands over to a moon. Terrain, trees, rocks and buildings cast hard-edged shadows. Indoors the light is steady.
+  - A ten-minute day and night taken from the wall clock, so a crew shares one sky.
+  - **Weather** follows the clock too: a new spell every seven minutes, easing into the next, from clear to heavy rain. Cloud comes in first (a dimmer, greyer sun and a slate sky) and pixel rain only in the wetter spells. The Harbor runs a little wetter than islands; indoors there is none. The sun crosses, warms at dusk and hands over to a moon. Terrain, trees, rocks and buildings cast hard-edged shadows. Indoors the light is steady.
   - Characters cast shadows shaped like their sprites, through an unseen cut-out turned to the sun. Their sprites are drawn over the scenery so nobody is hidden inside a building.
   - Hills carry one to three rocks in four shapes and five greys.
-  - Flat pixel-art motion: two rows of paper cut-out waves on each water hex, grass tufts that lean with the wind, and wisps (trails of single pixels that curl through a loop). No wisps indoors, and no motion under `prefers-reduced-motion`.
-  - In dev builds, set `window.__gqTime` to a number from 0 to 1 to pin the time of day.
+  - Quiet pixel textures laid as sheets across hexes: floorboards in huts, cobbles in the streets, mud, and planks on the piers. Open sea beyond the shallows is drawn as plain water, not hexes, so a map has a ragged edge.
+  - Flat pixel-art motion: two rows of paper cut-out waves on each water hex, one to four grass tufts a grass hex that lean with the wind, wisps (pixel trails that sway gently and fade out), and smoke from the pub's chimney. No wisps indoors, and no motion under `prefers-reduced-motion`.
+  - In dev builds, set `window.__gqTime` (0 midnight to 1) or `window.__gqWeather` (0 clear to 1 heavy rain) to pin the sky.
 - Combat uses the same renderer: the camera pushes in on the hex where the fight started, heroes and enemies line up facing each other on that terrain, and the roll check plays as a row of slots in the HUD.
 - Sprites: use a placeholder CC0 16-bit pack for the first milestone. Flux is not reliable for consistent animated sheets; keep it for NPC dialogue portraits with a new pixel-art prompt prefix through the existing R2 cache approach (`generateAndCacheArt` in `apps/web/src/ai.ts` is the reference).
 
@@ -136,6 +160,7 @@ Built to bring the new game closer to the original's inventory and economy.
 - **Every floating panel can be moved and minimized.** `DragPanel` wraps each one: drag it by its grip (or, with a mouse, by any part that is not a control), and fold it to its title with the minimize button. Positions and folded state are remembered per browser; double-click the grip to put a panel back.
 - **The inventory and market stall can be resized from any corner**, with the opposite corner staying put; double-click a corner for the default size. Their layout follows the panel's own size through CSS container queries: three columns when large, two at medium width, one scrolling column when narrow, and when short the paper doll turns on its side (hero at the left, two rows of four slots) with the long text moved to tooltips.
 - **On a phone the larger panels start minimized** (story, crew, docks, crew chat) as chips under the top bar, so the map and the turn bar are clear.
+- **A place's action floats over your character.** Standing on a place, its button ("Go in", "Enter your hut", "Browse the wares"…) also appears above your character's name, as well as in the bar at the bottom.
 - **The map takes touch gestures.** One finger pans, two fingers pinch to zoom and pan together, and a tap walks. A pinch never counts as a tap.
 
 ### Story generation: structure from code, flavour from the model
