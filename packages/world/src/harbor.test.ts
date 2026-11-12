@@ -50,4 +50,22 @@ describe("harbor map", () => {
     expect(harborPath(map, HARBOR_SPAWN, { q: 99, r: 99 })).toBeNull();
     expect(harborPath(map, HARBOR_SPAWN, HARBOR_SPAWN)).toBeNull();
   });
+
+  it("is a walled, cobbled port: streets join every place, the wall and the sea cannot be crossed", () => {
+    const biomes = new Set(map.tiles.map((t) => t.biome));
+    for (const b of ["cobble", "mud", "rampart", "water", "dock"]) expect(biomes.has(b as never), b).toBe(true);
+    // The places people use stand on or beside a street.
+    for (const pos of [HARBOR_BOARD, HARBOR_SHOP, HARBOR_RING, HARBOR_SPAWN, HARBOR_WORKS]) expect(tileAt(map, pos)?.biome).toBe("cobble");
+    const wall = map.tiles.find((t) => t.biome === "rampart")!;
+    expect(harborPath(map, HARBOR_SPAWN, wall)).toBeNull();
+    // Rocks and the wreck are out in the water, out of reach.
+    const scenery = map.pois.filter((p) => p.kind === "rocks" || p.kind === "wreck");
+    expect(scenery.length).toBeGreaterThan(3);
+    for (const p of scenery) {
+      expect(tileAt(map, p.pos)?.biome).toBe("water");
+      expect(harborPath(map, HARBOR_SPAWN, p.pos)).toBeNull();
+    }
+    // No mooring is fouled by a rock.
+    for (const pier of HARBOR_PIERS) expect(scenery.some((p) => p.pos.q === pier.q && p.pos.r === pier.r + 1)).toBe(false);
+  });
 });

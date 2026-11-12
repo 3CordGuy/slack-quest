@@ -124,8 +124,34 @@ const floorTexture = () =>
     ctx.fillRect(21, 11, 2, 2);
   });
 
+/** Raindrops in the air at once. */
+const DROPS = 150;
 /** Puffs of smoke in the air over one chimney at a time. */
 const PUFFS = 12;
+/**
+ * Cobbles for the Harbor's streets, as quiet as the floorboards: broad setts
+ * in four near-identical greys, offset row to row, with joints only a shade
+ * darker and now and then a faintly mossy one.
+ */
+const cobbleTexture = () =>
+  pixelTexture(32, 32, (ctx) => {
+    const stones = ["#72757c", "#6d7077", "#75787f", "#6f7279"];
+    const joint = "#63666d";
+    for (let row = 0; row < 4; row++) {
+      const y = row * 8;
+      const shift = row % 2 ? 6 : 0;
+      for (let k = -1; k < 3; k++) {
+        const x = k * 12 + shift;
+        ctx.fillStyle = hash(row, k, 600) < 0.07 ? "#6b746c" : stones[Math.floor(hash(row, k, 601) * stones.length)];
+        for (let dx = 0; dx < 12; dx++) ctx.fillRect((((x + dx) % 32) + 32) % 32, y, 1, 7);
+        ctx.fillStyle = joint;
+        ctx.fillRect((((x + 11) % 32) + 32) % 32, y, 1, 7);
+      }
+      ctx.fillStyle = joint;
+      ctx.fillRect(0, y + 7, 32, 1);
+    }
+  });
+
 /** Pixels in one wisp's trail. */
 const TRAIL = 34;
 
@@ -171,6 +197,9 @@ export class Ambience {
   /** The map's extent, which gusts are scattered over. */
   private bounds = { minX: 0, maxX: 0, minZ: 0, maxZ: 0 };
   private wispPoints: THREE.Points | null = null;
+  /** Low cloud and rain: set for a map with streets. */
+  private overcast = false;
+  private rain: THREE.Points | null = null;
   /** Chimney smoke: a column of pixel puffs over each stack. Outlives a map rebuild, so it is kept out of `group`. */
   private smoke: THREE.Points | null = null;
   private stacks: THREE.Vector3[] = [];
@@ -330,12 +359,13 @@ export class Ambience {
       this.group.add(lantern, cap, chain);
     }
 
-    // ---- floorboards: a hut's floor hexes get a plank top, laid as one sheet so the boards run across hexes ----
-    const floor = tiles.filter((t) => (t.biome as string) === "floor");
-    if (floor.length > 0) {
+    // ---- floorboards and cobbles: laid as one sheet each, so the pattern runs across hexes ----
+    const lay = (biome: string, map: THREE.CanvasTexture, span: number) => {
+      const under = tiles.filter((t) => (t.biome as string) === biome);
+      if (under.length === 0) return;
       const positions: number[] = [];
       const uvs: number[] = [];
-      for (const t of floor) {
+      for (const t of under) {
         const p = place(t);
         const y = p.y + 0.006;
         for (let i = 0; i < 6; i++) {
@@ -343,7 +373,7 @@ export class Ambience {
           const b = ((i + 1) * Math.PI) / 3;
           for (const [x, z] of [[p.x, p.z], [p.x + Math.sin(a) * 0.985, p.z + Math.cos(a) * 0.985], [p.x + Math.sin(b) * 0.985, p.z + Math.cos(b) * 0.985]]) {
             positions.push(x, y, z);
-            uvs.push(x / BOARD_SPAN, z / BOARD_SPAN);
+            uvs.push(x / span, z / span);
           }
         }
       }
@@ -351,12 +381,46 @@ export class Ambience {
       sheet.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
       sheet.setAttribute("uv", new THREE.Float32BufferAttribute(uvs, 2));
       sheet.computeVertexNormals();
-      const map = floorTexture();
       map.wrapS = map.wrapT = THREE.RepeatWrapping;
-      const boards = new THREE.Mesh(sheet, new THREE.MeshLambertMaterial({ map }));
-      boards.receiveShadow = true;
-      this.group.add(boards);
+      const mesh = new THREE.Mesh(sheet, new THREE.MeshLambertMaterial({ map }));
+      mesh.receiveShadow = true;
+      this.group.add(mesh);
+    };
+    lay("floor", floorTexture(), BOARD_SPAN);
+    lay("cobble", cobbleTexture(), BOARD_SPAN);
+
+    // ---- puddles: standing water on the mud and in the dips of the street ----
+    const pools: THREE.Matrix4[] = [];
+    for (const t of tiles) {
+      const wet = (t.biome as string) === "mud" ? 0.45 : (t.biome as string) === "cobble" ? 0.22 : 0;
+      if (wet === 0 || skip(t) || hash(t.q, t.r, 400) > wet) continue;
+      const p = place(t);
+      const size = 0.28 + hash(t.q, t.r, 401) * 0.3;
+      pools.push(
+        new THREE.Matrix4().compose(
+          new THREE.Vector3(p.x + (hash(t.q, t.r, 402) - 0.5) * 0.7, p.y + 0.014, p.z + (hash(t.q, t.r, 403) - 0.5) * 0.7),
+          new THREE.Quaternion().setFromEuler(new THREE.Euler(-Math.PI / 2, 0, hash(t.q, t.r, 404) * 6)),
+          new THREE.Vector3(size * 1.5, size, 1),
+        ),
+      );
     }
+    if (pools.length > 0) {
+      const mesh = new THREE.InstancedMesh(new THREE.CircleGeometry(1, 7), new THREE.MeshLambertMaterial({ color: "#3b4a63" }), pools.length);
+      pools.forEach((m, i) => mesh.setMatrixAt(i, m));
+      mesh.receiveShadow = true;
+      this.group.add(mesh);
+    }
+
+    // ---- weather: a place with streets (the Harbor) sits under low cloud and steady rain ----
+    this.overcast = tiles.some((t) => (t.biome as string) === "cobble");
+    if (this.overcast && !this.still) {
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute("position", new THREE.BufferAttribute(new Float32Array(DROPS * 2 * 3), 3));
+      this.rain = new THREE.Points(geometry, new THREE.PointsMaterial({ size: 2, sizeAttenuation: false, color: "#b9c7dc", transparent: true, opacity: 0.42, depthWrite: false }));
+      this.rain.frustumCulled = false;
+      this.group.add(this.rain);
+    }
+
     // ---- wisps: trails of single pixels that sway gently as they cross ----
     // No wind indoors.
     const indoors = (this.indoors = tiles.some((t) => (t.biome as string) === "floor"));
@@ -386,6 +450,7 @@ export class Ambience {
     this.grass = null;
     this.waves = [];
     this.wispPoints = null;
+    this.rain = null;
     this.tufts = [];
     this.crests = [];
     this.wisps = [];
@@ -411,6 +476,7 @@ export class Ambience {
   /** Advance the sky and everything that sways. `yaw` is the camera's turn; `target` is what it looks at. */
   update(clock: number, yaw: number, target: THREE.Vector3) {
     this.light(target, clock);
+    this.fall(clock, target);
     this.puff(clock);
     const motion = this.still ? 0 : 1;
 
@@ -494,6 +560,21 @@ export class Ambience {
     }
   }
 
+  /** Rain: each drop is two pixels, one above the other, falling on a slant around wherever the camera looks. */
+  private fall(clock: number, target: THREE.Vector3) {
+    if (!this.rain) return;
+    const pos = this.rain.geometry.getAttribute("position") as THREE.BufferAttribute;
+    for (let i = 0; i < DROPS; i++) {
+      const life = (clock * (0.9 + hash(i, 1, 500) * 0.5) + hash(i, 2, 500)) % 1;
+      const y = 8 * (1 - life);
+      const x = target.x + (hash(i, 3, 500) - 0.5) * 30 + life * 2.2;
+      const z = target.z + (hash(i, 4, 500) - 0.5) * 24;
+      pos.setXYZ(i * 2, x, y, z);
+      pos.setXYZ(i * 2 + 1, x - 0.07, y + 0.24, z);
+    }
+    pos.needsUpdate = true;
+  }
+
   /** Draw smoke rising from these points (chimney tops). An empty list clears it. */
   setSmoke(stacks: THREE.Vector3[]) {
     if (this.smoke) {
@@ -574,12 +655,21 @@ export class Ambience {
     this.hemi.groundColor.set("#232a4d").lerp(GROUND_DAY, daylight);
     if (this.indoors) this.background.set("#1d1a2b");
     else this.background.set("#161c3c").lerp(SKY_DAY, daylight).lerp(DUSK, glow * 0.7);
+    if (this.overcast) {
+      // Low cloud: a weaker, greyer sun, a slate sky, and everything a shade cooler.
+      this.sun.intensity *= 0.55;
+      this.hemi.intensity *= 0.92;
+      this.hemi.color.lerp(SLATE, 0.45);
+      this.background.lerp(SLATE, 0.8).multiplyScalar(0.75 + 0.2 * daylight);
+    }
     // Unlit cut-outs (grass, wave crests) are tinted by hand to match.
     this.flatTint.set("#56669c").lerp(WHITE, daylight).lerp(DUSK, glow * 0.2);
+    if (this.overcast) this.flatTint.lerp(SLATE, 0.35).multiplyScalar(0.82);
   }
 }
 
 const WHITE = new THREE.Color("#ffffff");
+const SLATE = new THREE.Color("#7f8b98");
 const SUN_NOON = new THREE.Color("#fff3d6");
 const SKY_DAY = new THREE.Color("#a9dcf7");
 const GROUND_DAY = new THREE.Color("#5a6a8a");

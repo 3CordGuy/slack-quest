@@ -91,7 +91,11 @@ const MAX_PITCH = 1.25;
 /** Camera distance per unit of zoom, kept from when the tilt was fixed. */
 const CAMERA_REACH = Math.hypot(0.72, 0.78);
 const PLAYER_COLORS = ["#ffd23f", "#5ce1e6", "#ff7ab6", "#9dff6b"];
-const BIOME_COLOR: Record<string, string> = { plains: "#7cb856", forest: "#4c9a52", hills: "#a39672", water: "#3f86dc", dock: "#9a7748", floor: "#b08a5c", wall: "#6e5a48" };
+const BIOME_COLOR: Record<string, string> = { plains: "#7cb856", forest: "#4c9a52", hills: "#a39672", water: "#3f86dc", dock: "#9a7748", cobble: "#6f7279", mud: "#5f5140", rampart: "#62656d", floor: "#b08a5c", wall: "#6e5a48" };
+/** What grass and trees are pulled toward under the Harbor's low cloud. */
+const DRAB = new THREE.Color("#5d6a5c");
+/** And the sea there: cold and grey-green. */
+const GREY_SEA = new THREE.Color("#2f4a5f");
 
 export function hexToWorld(p: HexPos): { x: number; z: number } {
   return { x: SQRT3 * (p.q + p.r / 2), z: 1.5 * p.r };
@@ -229,6 +233,8 @@ export class WorldRenderer {
   private userPitch = DEFAULT_PITCH;
   /** Movement keys held down right now (W A S D and the arrows), for sliding the view. */
   private heldKeys = new Set<string>();
+  /** The map is a wet, walled port (it has streets): greens are drawn drab. */
+  private sodden = false;
   /** The camera turn the indoor walls were last cut for. */
   private wallTurn = NaN;
   private rotateButtons: HTMLDivElement;
@@ -462,6 +468,8 @@ export class WorldRenderer {
 
   private buildTerrain(state: RenderState) {
     this.mapCode = state.code;
+    this.sodden = state.map.tiles.some((t) => t.biome === "cobble");
+    (this.sea.material as THREE.MeshLambertMaterial).color.set(this.sodden ? "#2b4558" : "#3577cf");
     this.wallTurn = NaN;
     this.tiles = state.map.tiles;
     if (this.terrain) {
@@ -503,6 +511,19 @@ export class WorldRenderer {
         );
       }
     }
+    // The rampart's broken teeth: a merlon or two left standing on each length of wall.
+    const merlons: THREE.Matrix4[] = [];
+    for (const t of this.tiles) {
+      if (t.biome !== "rampart") continue;
+      const { x, z } = hexToWorld(t);
+      const top = tileTop(t);
+      for (let i = 0; i < 3; i++) {
+        if (noise(t.q, t.r, 20 + i) < 0.35) continue;
+        const a = (i / 3) * Math.PI * 2 + noise(t.q, t.r, 23) * 2;
+        const tall = 0.18 + noise(t.q, t.r, 26 + i) * 0.2;
+        merlons.push(new THREE.Matrix4().compose(new THREE.Vector3(x + Math.sin(a) * 0.55, top + tall / 2, z + Math.cos(a) * 0.55), new THREE.Quaternion().setFromEuler(new THREE.Euler(0, a, 0)), new THREE.Vector3(0.36, tall, 0.3)));
+      }
+    }
     this.ambience.build(
       this.tiles,
       (t) => poiKeys.has(key(t)),
@@ -516,7 +537,8 @@ export class WorldRenderer {
       mesh.receiveShadow = true;
       this.decor.add(mesh);
     };
-    instanced(new THREE.ConeGeometry(0.34, 0.9, 5), "#2f7a3d", trees);
+    instanced(new THREE.ConeGeometry(0.34, 0.9, 5), this.sodden ? "#3a5d41" : "#2f7a3d", trees);
+    if (merlons.length > 0) instanced(new THREE.BoxGeometry(1, 1, 1), "#6a6d75", merlons);
 
     // Start centred on the island.
     const xs = this.tiles.map((t) => hexToWorld(t).x);
@@ -552,7 +574,10 @@ export class WorldRenderer {
     const white = new THREE.Color("#ffffff");
     this.tiles.forEach((t, i) => {
       c.set(BIOME_COLOR[t.biome]);
-      c.offsetHSL(0, 0, (noise(t.q, t.r, 9) - 0.5) * 0.06);
+      // In a wet, walled port the green is tired.
+      if (this.sodden && (t.biome === "plains" || t.biome === "forest")) c.lerp(DRAB, 0.5);
+      if (this.sodden && t.biome === "water") c.lerp(GREY_SEA, 0.65);
+      c.offsetHSL(0, 0, (noise(t.q, t.r, 9) - 0.5) * (t.biome === "rampart" ? 0.1 : 0.06));
       const r = this.reach.get(key(t));
       if (r && r.cost > 0 && !this.state?.freeRoam) c.lerp(white, 0.3);
       this.terrain!.setColorAt(i, c);
@@ -790,6 +815,37 @@ export class WorldRenderer {
         add(new THREE.CylinderGeometry(0.09, 0.09, 0.04, 8), lambert("#7db6f2"), -0.16, 0.43, -0.28);
         add(new THREE.CylinderGeometry(0.09, 0.09, 0.04, 8), lambert("#d9b45a"), 0.14, 0.43, -0.4);
         add(new THREE.CylinderGeometry(0.09, 0.09, 0.08, 8), lambert("#6b4a2b"), 0.04, 0.45, -0.16);
+        break;
+      }
+      case "rocks": {
+        // Black rocks standing out of the sea, wet and sharp.
+        const rock = lambert("#3d4048");
+        const pale = lambert("#565a63");
+        add(new THREE.ConeGeometry(0.42, 0.9, 5), rock, -0.15, 0.3, 0.05, 0.4);
+        add(new THREE.ConeGeometry(0.3, 0.6, 4), pale, 0.4, 0.18, -0.2, 1.1);
+        add(new THREE.DodecahedronGeometry(0.26, 0), rock, 0.15, 0.02, 0.45, 0.7);
+        add(new THREE.ConeGeometry(0.18, 0.4, 4), pale, -0.55, 0.08, -0.3, 2);
+        break;
+      }
+      case "wreck": {
+        // A ship that did not make the harbour: the hull broken-backed on the rocks, ribs showing, the mast gone over the side.
+        const hull = lambert("#4a3526");
+        const dark = lambert("#33241a");
+        const stern = add(box(1.1, 0.5, 0.62), hull, -0.35, 0.16, 0.0);
+        stern.rotation.set(0.1, 0.25, -0.32);
+        const bow = add(box(0.9, 0.42, 0.56), hull, 0.75, 0.02, 0.22);
+        bow.rotation.set(-0.12, -0.3, 0.38);
+        const deck = add(box(1.0, 0.05, 0.5), lambert("#6b5138"), -0.36, 0.44, 0.0);
+        deck.rotation.copy(stern.rotation);
+        for (let i = 0; i < 4; i++) add(box(0.05, 0.42, 0.05), dark, 0.18 + i * 0.13, 0.18 + i * 0.02, -0.26 + (i % 2) * 0.5).rotation.z = 0.2 + i * 0.12;
+        const mast = add(new THREE.CylinderGeometry(0.045, 0.06, 1.7, 5), dark, -0.5, 0.75, 0.05);
+        mast.rotation.z = -0.95;
+        const yard = add(new THREE.CylinderGeometry(0.03, 0.03, 0.8, 4), dark, -1.0, 1.02, 0.05);
+        yard.rotation.x = Math.PI / 2;
+        const rag = add(box(0.03, 0.4, 0.55), lambert("#b9b3a3"), -1.0, 0.82, 0.05);
+        rag.rotation.z = 0.25;
+        add(new THREE.ConeGeometry(0.34, 0.7, 5), lambert("#3d4048"), 0.25, 0.18, -0.55, 0.6);
+        add(new THREE.DodecahedronGeometry(0.24, 0), lambert("#565a63"), -0.9, 0.0, 0.5, 0.3);
         break;
       }
       case "counter": {
