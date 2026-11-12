@@ -47,6 +47,9 @@ const FREE_ROAM_REACH = 60;
 const SQRT3 = Math.sqrt(3);
 /** Render at 1/PIXEL resolution and scale up unsmoothed for a chunky look. */
 const PIXEL = 2;
+/** Nearest and farthest the camera may sit from what it looks at. */
+const MIN_ZOOM = 7;
+const MAX_ZOOM = 40;
 const PLAYER_COLORS = ["#ffd23f", "#5ce1e6", "#ff7ab6", "#9dff6b"];
 const BIOME_COLOR: Record<string, string> = { plains: "#7cb856", forest: "#4c9a52", hills: "#a39672", water: "#3f86dc", dock: "#9a7748" };
 
@@ -158,6 +161,9 @@ export class WorldRenderer {
   private targetGoal = new THREE.Vector3();
   private dist = 24;
   private userDist = 24;
+  /** Active pointers on the canvas, by id. Two of them make a pinch. */
+  private touches = new Map<number, { x: number; y: number }>();
+  private pinch: { dist: number; x: number; y: number; zoom: number } | null = null;
   private pointer = { x: 0, y: 0, downX: 0, downY: 0, down: false, dragged: false, dirty: false, inside: false };
 
   constructor(private container: HTMLElement, private callbacks: RendererCallbacks) {
@@ -201,6 +207,7 @@ export class WorldRenderer {
     canvas.addEventListener("pointerdown", this.onPointerDown);
     canvas.addEventListener("pointermove", this.onPointerMove);
     canvas.addEventListener("pointerup", this.onPointerUp);
+    canvas.addEventListener("pointercancel", this.onPointerUp);
     canvas.addEventListener("pointerleave", this.onPointerLeave);
     canvas.addEventListener("wheel", this.onWheel, { passive: false });
     this.resizeObserver = new ResizeObserver(() => this.resize());
@@ -216,6 +223,7 @@ export class WorldRenderer {
     canvas.removeEventListener("pointerdown", this.onPointerDown);
     canvas.removeEventListener("pointermove", this.onPointerMove);
     canvas.removeEventListener("pointerup", this.onPointerUp);
+    canvas.removeEventListener("pointercancel", this.onPointerUp);
     canvas.removeEventListener("pointerleave", this.onPointerLeave);
     canvas.removeEventListener("wheel", this.onWheel);
     this.renderer.dispose();
@@ -715,15 +723,59 @@ export class WorldRenderer {
     return { q: t.q, r: t.r };
   }
 
+  // Pointer handling covers mouse and touch. One pointer pans (or taps a
+  // hex if it barely moves); two pointers pinch to zoom and pan together.
+
   private onPointerDown = (e: PointerEvent) => {
-    this.pointer.down = true;
-    this.pointer.dragged = false;
-    this.pointer.downX = this.pointer.x = e.clientX;
-    this.pointer.downY = this.pointer.y = e.clientY;
-    this.renderer.domElement.setPointerCapture(e.pointerId);
+    const canvas = this.renderer.domElement;
+    try {
+      canvas.setPointerCapture(e.pointerId);
+    } catch {
+      // Capture is a nicety (keeps a drag alive off the canvas); carry on without it.
+    }
+    this.touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (this.touches.size === 1) {
+      this.pointer.down = true;
+      this.pointer.dragged = false;
+      this.pointer.downX = this.pointer.x = e.clientX;
+      this.pointer.downY = this.pointer.y = e.clientY;
+    } else if (this.touches.size === 2) {
+      // A second finger: this is a pinch, never a tap.
+      this.pointer.dragged = true;
+      this.pinch = { ...this.pinchState(), zoom: this.userDist };
+    }
   };
 
+  /** Distance between the two touches and their midpoint. */
+  private pinchState(): { dist: number; x: number; y: number } {
+    const [a, b] = [...this.touches.values()];
+    return { dist: Math.max(1, Math.hypot(a.x - b.x, a.y - b.y)), x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+  }
+
+  private panBy(dx: number, dy: number) {
+    if (this.state?.battle) return;
+    const k = (this.dist / this.container.clientHeight) * 0.75;
+    this.targetGoal.x -= dx * k;
+    this.targetGoal.z -= dy * k * 1.3;
+    this.target.copy(this.targetGoal);
+  }
+
   private onPointerMove = (e: PointerEvent) => {
+    const touch = this.touches.get(e.pointerId);
+    if (touch) {
+      touch.x = e.clientX;
+      touch.y = e.clientY;
+    }
+    if (this.pinch && this.touches.size >= 2) {
+      const now = this.pinchState();
+      // Fingers apart zooms in: the camera distance shrinks as the spread grows.
+      this.userDist = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, this.pinch.zoom * (this.pinch.dist / now.dist)));
+      if (!this.state?.battle) this.dist = this.userDist;
+      this.panBy(now.x - this.pinch.x, now.y - this.pinch.y);
+      this.pinch.x = now.x;
+      this.pinch.y = now.y;
+      return;
+    }
     const dx = e.clientX - this.pointer.x;
     const dy = e.clientY - this.pointer.y;
     this.pointer.x = e.clientX;
@@ -731,20 +783,26 @@ export class WorldRenderer {
     this.pointer.inside = true;
     if (this.pointer.down) {
       if (Math.hypot(e.clientX - this.pointer.downX, e.clientY - this.pointer.downY) > 6) this.pointer.dragged = true;
-      if (this.pointer.dragged && !this.state?.battle) {
-        const k = (this.dist / this.container.clientHeight) * 0.75;
-        this.targetGoal.x -= dx * k;
-        this.targetGoal.z -= dy * k * 1.3;
-        this.target.copy(this.targetGoal);
-      }
+      if (this.pointer.dragged) this.panBy(dx, dy);
     } else {
       this.pointer.dirty = true;
     }
   };
 
   private onPointerUp = (e: PointerEvent) => {
-    this.renderer.domElement.releasePointerCapture(e.pointerId);
-    const wasClick = this.pointer.down && !this.pointer.dragged;
+    const canvas = this.renderer.domElement;
+    if (canvas.hasPointerCapture(e.pointerId)) canvas.releasePointerCapture(e.pointerId);
+    this.touches.delete(e.pointerId);
+    if (this.touches.size >= 1) {
+      // One finger of a pinch lifted: carry on panning with the other, without a jump.
+      this.pinch = null;
+      const [rest] = [...this.touches.values()];
+      this.pointer.x = rest.x;
+      this.pointer.y = rest.y;
+      return;
+    }
+    this.pinch = null;
+    const wasClick = this.pointer.down && !this.pointer.dragged && e.type === "pointerup";
     this.pointer.down = false;
     if (!wasClick) return;
     const pos = this.pick();
@@ -752,13 +810,14 @@ export class WorldRenderer {
   };
 
   private onPointerLeave = () => {
+    if (this.touches.size > 0) return;
     this.pointer.inside = false;
     this.setHovered(null);
   };
 
   private onWheel = (e: WheelEvent) => {
     e.preventDefault();
-    this.userDist = Math.max(9, Math.min(38, this.userDist * (e.deltaY > 0 ? 1.1 : 0.9)));
+    this.userDist = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, this.userDist * (e.deltaY > 0 ? 1.1 : 0.9)));
     if (!this.state?.battle) this.dist = this.userDist;
   };
 

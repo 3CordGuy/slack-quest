@@ -5,6 +5,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { RARITY_COLOR, SLOT_LABEL, equipProblem, sellPrice } from "@gantt-quest/world";
 import { api, type Me, type Shop } from "./api";
+import { DragPanel } from "./DragPanel";
 import { useAct } from "./Harbor";
 import { Icon, ItemDetail, ItemTile, VerdictTag, bonusSummary, compare, powerLabel, toOwned } from "./items";
 
@@ -31,7 +32,7 @@ export function ShopScreen({ me, refresh, onClose }: { me: Me; refresh(): Promis
 
   return (
     <div className="overlay inv-overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="inv panel shop" role="dialog" aria-label="Market stall">
+      <DragPanel id="shop" title="Market stall" compact className="inv panel shop" role="dialog" aria-label="Market stall">
         <header className="inv-head">
           <h2>Market stall</h2>
           <button className={`small ${tab === "buy" ? "selected" : ""}`} onClick={() => setTab("buy")}>Buy</button>
@@ -99,7 +100,7 @@ export function ShopScreen({ me, refresh, onClose }: { me: Me; refresh(): Promis
             )}
           </section>
         </div>
-      </div>
+      </DragPanel>
     </div>
   );
 }

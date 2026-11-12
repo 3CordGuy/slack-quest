@@ -269,3 +269,72 @@ input:focus, button:focus-visible, select:focus { outline: 2px solid var(--accen
   .inv-body, .shop-body { grid-template-columns: 1fr; overflow-y: auto; }
   .inv-left, .inv-detail, .inv-pack, .shop-list { overflow: visible; }
 }
+
+/* ---------- Draggable panels ---------- */
+.draggable { touch-action: pan-y; }
+.draggable.dragging { opacity: 0.88; cursor: grabbing; user-select: none; z-index: 45; }
+.timeline, .actions { position: relative; }
+.panel-tools { position: absolute; top: 0; right: 0; z-index: 2; display: flex; background: rgba(27, 24, 48, 0.9); border-left: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+.grip, .min-btn {
+  width: 22px; height: 22px; display: grid; place-items: center; padding: 0;
+  font-size: 13px; line-height: 1; color: var(--muted); background: none; border: none; user-select: none;
+}
+.grip { cursor: grab; touch-action: none; }
+.min-btn { font-size: 15px; font-weight: bold; }
+.grip:hover, .min-btn:hover:not(:disabled) { color: var(--gold); border: none; }
+.dragging .grip { cursor: grabbing; color: var(--gold); }
+/* The crew column is a stack of cards with no frame of its own; hang the tools just outside it. */
+.crew > .panel-tools { top: -2px; right: -2px; border: 1px solid var(--line); }
+.inv-head { padding-right: 46px; }
+@media (pointer: coarse) {
+  .grip, .min-btn { width: 32px; height: 32px; font-size: 17px; }
+  .inv-head { padding-right: 68px; }
+}
+body { touch-action: manipulation; overscroll-behavior: none; }
+
+/* A minimized panel shows only its title and tools. */
+.panel-title { display: block; width: calc(100% - 48px); text-align: left; background: none; border: none; padding: 0 0 4px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; font-size: 12px; }
+.panel-title:hover { color: var(--gold); border: none; }
+.crew > .panel-title { background: var(--panel); border: 2px solid var(--line); padding: 3px 8px; width: 100%; }
+.folded > :not(.panel-tools):not(.panel-title) { display: none !important; }
+.draggable.folded { width: auto; min-width: 150px; min-height: 26px; max-height: none; overflow: visible; display: block; padding: 4px 56px 4px 10px; }
+.folded .panel-title { padding: 0; width: 100%; white-space: nowrap; }
+.crew.folded { width: 150px; padding: 0; }
+.crew.folded > .panel-title { padding: 3px 56px 3px 8px; }
+/* A minimized modal steps aside so the Harbor behind it can be used. */
+.inv-overlay:has(> .folded) { background: none; pointer-events: none; align-items: flex-start; justify-content: flex-end; padding-top: 48px; }
+.inv-overlay:has(> .folded) > .folded { pointer-events: auto; max-width: 220px; }
+@media (pointer: coarse) {
+  .panel-title { width: calc(100% - 68px); padding: 4px 0 6px; font-size: 13px; }
+  .draggable.folded { min-height: 34px; padding: 7px 72px 7px 10px; }
+  .crew.folded > .panel-title { padding: 7px 72px 7px 8px; }
+}
+/* Leave room for the tools on panels that have no header row. */
+.turnbar.draggable:not(.folded), .timeline.draggable:not(.folded) { padding-right: 56px; }
+.actions.draggable:not(.folded) { padding-top: 26px; }
+.chat.draggable .chat-head { padding-right: 48px; }
+@media (pointer: coarse) {
+  .turnbar.draggable:not(.folded), .timeline.draggable:not(.folded) { padding-right: 74px; }
+  .actions.draggable:not(.folded) { padding-top: 36px; }
+  .chat.draggable .chat-head { padding-right: 68px; }
+}
+
+/* ---------- Phones ---------- */
+.topbar { white-space: nowrap; min-height: 36px; }
+.topbar > strong { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+@media (max-width: 760px) {
+  .wide-only { display: none; }
+  .topbar { gap: 8px; padding: 6px 8px; }
+  /* Minimized panels line up as chips under the top bar and above the bottom edge. */
+  .story { top: 46px; left: 6px; }
+  .crew { top: 46px; right: 6px; }
+  .story:not(.folded) { width: calc(100vw - 12px); max-height: 55vh; overflow-y: auto; }
+  .crew:not(.folded) { width: min(240px, 70vw); top: 88px; }
+  .harbor-chat { left: 6px; bottom: 96px; }
+  .harbor-chat:not(.folded), .chat:not(.folded) { left: 6px; right: 6px; width: auto; }
+  .turnbar { bottom: 8px; width: calc(100% - 12px); font-size: 13px; }
+  .tip { bottom: auto; top: 90px; white-space: normal; max-width: 90vw; }
+  .battle { padding: 6px; top: 40px; }
+  .side { width: 46vw; }
+  .ability-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}

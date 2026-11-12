@@ -23,6 +23,7 @@ import {
   type WorldEvent,
 } from "@gantt-quest/world";
 import * as World from "@gantt-quest/world";
+import { DragPanel } from "./DragPanel";
 import { WorldRenderer } from "./render/WorldRenderer";
 import { useRun, type RunConnection } from "./useRun";
 
@@ -211,13 +212,13 @@ function TopBar({ state, code, status, onLeave }: { state: ClientState; code: st
   return (
     <div className="topbar">
       <strong>{state.story?.title ?? "A ship at the Harbor"}</strong>
-      {state.story && <span className="muted">{state.story.islandName}</span>}
+      {state.story && <span className="muted wide-only">{state.story.islandName}</span>}
       {state.round > 0 && state.phase !== "ended" && (
         <span className={state.doom <= 3 ? "bad" : ""}>Day {state.round} · {state.doom} day{state.doom === 1 ? "" : "s"} left</span>
       )}
       <span className="spacer" />
       {status !== "open" && <span className="bad">reconnecting…</span>}
-      <span className="muted">Ship {code}</span>
+      <span className="muted wide-only">Ship {code}</span>
       <button className="small" onClick={onLeave}>Harbor</button>
     </div>
   );
@@ -257,7 +258,7 @@ function Story({ state }: { state: ClientState }) {
   const [open, setOpen] = useState(true);
   if (!state.story) return null;
   return (
-    <div className="story panel">
+    <DragPanel id="run.story" title="Story" foldOnPhone className="story panel">
       <button className="link" onClick={() => setOpen(!open)}>{open ? "Hide" : "Show"} story</button>
       {open && <p>{state.story.premise}</p>}
       <ul className="objectives">
@@ -270,7 +271,7 @@ function Story({ state }: { state: ClientState }) {
           {state.story.demand.done ? "☑" : "☐"} {state.story.demand.npcName} asks that you {state.story.demand.text}.
         </p>
       )}
-    </div>
+    </DragPanel>
   );
 }
 
@@ -280,7 +281,7 @@ function Pips({ n, max }: { n: number; max: number }) {
 
 function Crew({ state, online }: { state: ClientState; online: string[] }) {
   return (
-    <div className="crew">
+    <DragPanel id="run.crew" title="Crew" foldOnPhone className="crew">
       {state.heroes.map((h) => {
         const c = state.battle?.combatants.find((x) => x.id === h.id);
         const hp = c?.hp ?? h.hp;
@@ -294,7 +295,7 @@ function Crew({ state, online }: { state: ClientState; online: string[] }) {
           </div>
         );
       })}
-    </div>
+    </DragPanel>
   );
 }
 
@@ -339,7 +340,7 @@ function TurnBar({ state, run }: { state: ClientState; run: RunConnection }) {
     : poi.kind === "lair" ? (poi.cleared ? null : `Storm ${poiName(state, poi)}`)
     : null;
   return (
-    <div className="turnbar panel">
+    <DragPanel id="run.turn" title="Your turn" compact className="turnbar panel">
       {mine ? (
         <>
           <strong>Your turn</strong>
@@ -352,7 +353,7 @@ function TurnBar({ state, run }: { state: ClientState; run: RunConnection }) {
         <span>Waiting for <strong>{hero.name}</strong>…</span>
       )}
       {left !== null && <span className={left <= 15 ? "bad" : "muted"}>{left}s</span>}
-    </div>
+    </DragPanel>
   );
 }
 
@@ -383,7 +384,7 @@ function Chat({ state, run }: { state: ClientState; run: RunConnection }) {
     setFocus(0);
   };
   return (
-    <div className="chat panel">
+    <DragPanel id="run.chat" title="Talk" compact className="chat panel">
       <div className="chat-head">
         <strong>{npc.name}</strong> <span className="muted">{npc.role}</span>
         <span className="tag">{mood}</span>
@@ -415,7 +416,7 @@ function Chat({ state, run }: { state: ClientState; run: RunConnection }) {
           </label>
         </>
       )}
-    </div>
+    </DragPanel>
   );
 }
 
@@ -453,11 +454,11 @@ function Battle({ state, run }: { state: ClientState; run: RunConnection }) {
 
   return (
     <div className="battle">
-      <div className="timeline panel">
+      <DragPanel id="run.timeline" title="Turn order" compact className="timeline panel">
         <span className="muted">Round {battle.round}</span>
         {order.map((c) => <span key={c.id} className={`turn-chip ${c.side} ${c.id === actorId ? "active" : ""}`}>{c.name}</span>)}
         {left !== null && <span className={left <= 15 ? "bad" : "muted"}>{left}s</span>}
-      </div>
+      </DragPanel>
       <div className="sides">
         {(["hero", "enemy"] as const).map((side) => (
           <div key={side} className="side">
@@ -467,7 +468,7 @@ function Battle({ state, run }: { state: ClientState; run: RunConnection }) {
           </div>
         ))}
       </div>
-      <div className="actions panel">
+      <DragPanel id="run.actions" title="Actions" compact className="actions panel">
         {mine && me ? (
           <>
             <div className="ability-row">
@@ -502,7 +503,7 @@ function Battle({ state, run }: { state: ClientState; run: RunConnection }) {
         ) : (
           <span>{me ? <>Waiting for <strong>{actor?.name}</strong>…</> : "Your crewmates are fighting. You are too far away to join."}</span>
         )}
-      </div>
+      </DragPanel>
     </div>
   );
 }
