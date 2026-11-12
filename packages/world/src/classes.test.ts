@@ -225,7 +225,7 @@ describe("Wreck Warlock", () => {
     }
   });
 
-  it("heals itself half the damage Soul Drain deals", () => {
+  it("heals itself a third of the damage Soul Drain deals", () => {
     let drains = 0;
     for (let seed = 0; seed < 40; seed++) {
       const { events } = spar([hero("k", "data_warlock")], { k: "soul_drain" }, seed, 6, [DUMMY_KIND], 500);
@@ -235,7 +235,7 @@ describe("Wreck Warlock", () => {
         // The hit it drained from: just before, or before the bleeding a perfect hit leaves.
         const hit = events.slice(0, i).reverse().find((x) => x.t === "hit" && x.actor === "k")!;
         expect(hit).toBeDefined();
-        if (hit.t === "hit") expect(e.amount).toBeLessThanOrEqual(Math.max(1, Math.round(hit.amount / 2)));
+        if (hit.t === "hit") expect(e.amount).toBeLessThanOrEqual(Math.max(1, Math.round(hit.amount * ABILITIES.soul_drain.drain!)));
       });
     }
     expect(drains).toBeGreaterThan(0);
