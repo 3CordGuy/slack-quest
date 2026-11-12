@@ -415,6 +415,15 @@ export class WorldRenderer {
         add(box(0.18, 0.3, 0.04), lambert("#5a3d22"), 0, 0.15, 0.33);
         break;
       }
+      case "shop": {
+        // Market stall: a counter under a striped awning.
+        add(box(0.9, 0.3, 0.45), lambert("#8a6a44"), 0, 0.15, 0);
+        for (const x of [-0.42, 0.42]) add(new THREE.CylinderGeometry(0.04, 0.04, 0.95, 5), lambert("#5a3d22"), x, 0.47, 0.2);
+        for (let i = 0; i < 4; i++) add(box(0.26, 0.06, 0.62), lambert(i % 2 ? "#f4efe1" : "#b9433d"), -0.39 + i * 0.26, 0.97, 0.05);
+        add(box(0.16, 0.14, 0.16), lambert("#e0b12e"), -0.22, 0.37, 0);
+        add(box(0.14, 0.18, 0.14), lambert("#3b82f6"), 0.2, 0.39, 0);
+        break;
+      }
       case "board":
         add(new THREE.CylinderGeometry(0.05, 0.05, 0.9, 5), lambert("#5a3d22"), -0.3, 0.45, 0);
         add(new THREE.CylinderGeometry(0.05, 0.05, 0.9, 5), lambert("#5a3d22"), 0.3, 0.45, 0);

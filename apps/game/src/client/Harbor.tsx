@@ -1,11 +1,11 @@
 // Screens a player passes through before reaching the shared Harbor:
 // character creation (roll and re-roll starting stats) and choosing a crew.
-// Also exports the character sheet, which the Harbor shows as a panel.
+// The character sheet itself lives in InventoryScreen.tsx.
 
 import { useState } from "react";
 import { STARTING_STATS } from "@gantt-quest/core";
-import { HERO_CLASSES, STAT_KEYS, STAT_LABEL, WEAPONS, statPct, xpToNext } from "@gantt-quest/world";
-import { api, type Character, type InventoryItem, type Me, type StatKey } from "./api";
+import { HERO_CLASSES, STAT_KEYS, STAT_LABEL, WEAPONS, statPct } from "@gantt-quest/world";
+import { api, type Character, type Me, type StatKey } from "./api";
 
 type Act = (fn: () => Promise<unknown>) => Promise<void>;
 
@@ -133,70 +133,6 @@ function Creation({ draft, busy, act, invite }: { draft: Character | null; busy:
           Begin with these
         </button>
       </div>
-    </section>
-  );
-}
-
-export function Sheet({ character: c, inventory, busy, act }: { character: Character; inventory: InventoryItem[]; busy: boolean; act: Act }) {
-  const cls = HERO_CLASSES.find((k) => k.id === c.class_id);
-  const bonus = (stat: StatKey) =>
-    inventory.filter((i) => i.equipped).reduce((a, i) => a + ((JSON.parse(i.stat_bonus_json) as Partial<Record<StatKey, number>>)[stat] ?? 0), 0);
-  const describe = (i: InventoryItem) => {
-    const b = JSON.parse(i.stat_bonus_json) as Partial<Record<StatKey, number>>;
-    const parts = STAT_KEYS.filter((k) => b[k]).map((k) => `+${b[k]} ${STAT_LABEL[k]}`);
-    if (i.kind === "weapon") parts.push(WEAPONS[i.ref]?.abilities.length + " abilities");
-    return parts.join(", ");
-  };
-
-  return (
-    <section className="panel sheet">
-      <h2>
-        {c.name} <span className="muted">· {cls?.name} · Level {c.level}</span>
-      </h2>
-      <div className="bar" title={`${c.xp} / ${xpToNext(c.level)} XP`}>
-        <div className="bar-fill xp" style={{ width: `${(100 * c.xp) / xpToNext(c.level)}%` }} />
-      </div>
-      <p className="muted">
-        {c.xp} / {xpToNext(c.level)} XP · {c.gold} gold
-        {c.unspent_points > 0 && <strong className="good"> · {c.unspent_points} stat point{c.unspent_points > 1 ? "s" : ""} to spend</strong>}
-      </p>
-      <div className="stats">
-        {STAT_KEYS.map((k) => (
-          <StatRow key={k} stat={k} value={c[k] + bonus(k)}>
-            {c.unspent_points > 0 && (
-              <button className="small" disabled={busy} onClick={() => act(() => api.spend(k))}>
-                +1
-              </button>
-            )}
-          </StatRow>
-        ))}
-      </div>
-      <h3>Gear</h3>
-      <ul className="gear">
-        {inventory.map((i) => (
-          <li key={i.id} className={`rarity-${i.rarity}`}>
-            <span>
-              <strong>{i.name}</strong> <span className="muted">{describe(i)}</span>
-            </span>
-            {i.equipped ? (
-              <span className="tag">equipped</span>
-            ) : (
-              <button className="small" disabled={busy} onClick={() => act(() => api.equip(i.id))}>
-                Equip
-              </button>
-            )}
-          </li>
-        ))}
-      </ul>
-      <button
-        className="danger small"
-        disabled={busy}
-        onClick={() => {
-          if (confirm("Re-roll? This discards the character and all its gear.")) void act(() => api.reroll());
-        }}
-      >
-        Re-roll character
-      </button>
     </section>
   );
 }

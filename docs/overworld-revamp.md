@@ -55,6 +55,17 @@ Still to build:
 - **Durable accounts first.** Guest accounts live in a browser cookie. A hut someone has decorated must survive a cleared cookie, so email sign-in comes before hut customisation.
 - **More than 12 huts**, and several ships beyond three piers, need a larger or scrolling Harbor.
 
+### Gear, inventory and the market stall
+Built to bring the new game closer to the original's inventory and economy.
+
+- **Eight equipment slots**, as in the original: main hand, off hand, body, helmet, legs, boots, ring, amulet.
+- **Three kinds of item.** A weapon (main hand) decides the hero's abilities and adds its power to their damage. Armor (off hand, body, helmet, legs) adds to an armor total. Trinkets (boots, ring, amulet) carry stat bonuses only.
+- **Five rarities** with the original colours: common, uncommon, rare, epic, legendary. Rarity sets how much power and how many stat points an item carries; the level it dropped at nudges power and sets a level requirement on rare and above.
+- **Armor in battle.** Each enemy hit is reduced by a third of the hero's armor, never by more than half the hit and never below 1. Bleeding and burning ignore armor.
+- **Inventory screen.** A paper doll around the hero's sprite, the pack with filter tabs and sorting, and a detail panel comparing any item against what is worn (per-stat deltas and an upgrade / downgrade / sidegrade verdict). Drag onto the doll to equip, back to the pack to unequip; click an empty slot to highlight what fits. Stat points are spent here.
+- **Market stall** in the Harbor. Sells one item per slot for the player's class and level, re-stocked daily and derived from (player, day) so the server re-checks every purchase. Buys unequipped items for 30% of their price.
+- Not ported from the original: affixes, unique and set effects, item level, elemental tags, consumables in the bag, haggling, the smithy, giving items to other players, and character save slots.
+
 ### Run loop (server-authoritative)
 - One `RunRoom` DO per run, joined by a short code. Clients send intents over a hibernating WebSocket; the DO runs `stepWorld(state, action, rng)` from `packages/world`, persists to D1, then broadcasts events.
 - RNG is seeded and its cursor lives in run state, so every run is replayable from its action log.
@@ -142,7 +153,7 @@ Later milestones, not planned in detail: the look (real sprites, fog of war, day
 ## Assumptions to veto
 
 - **Characters start fresh in the new game.** Same creation flow and stats as today, but in the new database; existing characters, gear and gold do not migrate.
-- **The Harbor has no economy yet.** It is a shared place with docks, huts and a character sheet; shops, smithy, inn, provisioning and upgrades come later, so loot and levels are the only progression.
+- **The Harbor's economy is one stall.** Gear is bought and sold at the market stall; the smithy, inn, provisioning and hut upgrades come later.
 - **Persuasion rolls use `int_stat`** rather than adding a sixth social stat.
 - **Heroes move individually**, not as one party token.
 - **Nothing ships.** Milestone 1 runs under `wrangler dev` only. A new worker needs changes to the GitHub Actions deploy workflow and its `wrangler.jsonc` secret, which waits for review.

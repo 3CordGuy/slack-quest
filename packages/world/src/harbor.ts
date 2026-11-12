@@ -20,6 +20,8 @@ export const HARBOR_PIERS: HexPos[] = [at(2, 8), at(6, 8), at(10, 8)];
 /** Hut plots, handed out to crew members in the order they joined: front row first, from the middle outward. */
 export const HARBOR_PLOTS: HexPos[] = [3, 1].flatMap((r) => [5, 7, 3, 9, 1, 11].map((col) => at(col, r)));
 export const HARBOR_BOARD: HexPos = at(6, 4);
+/** The market stall, where gear is bought and sold. */
+export const HARBOR_SHOP: HexPos = at(9, 5);
 
 const HEIGHT: Record<Biome, number> = { water: 0.05, plains: 0.3, forest: 0.42, hills: 0.75, dock: 0.1 };
 
@@ -44,7 +46,7 @@ export function generateHarbor(): WorldMap {
     const ripple = ((pos.q * 7 + pos.r * 13) % 5) * 0.012;
     return { q: pos.q, r: pos.r, biome, h: HEIGHT[biome] + (biome === "plains" ? ripple : 0) };
   });
-  return { grid: HARBOR_GRID, tiles, pois: [harborPoi("board", "board", HARBOR_BOARD)] };
+  return { grid: HARBOR_GRID, tiles, pois: [harborPoi("board", "board", HARBOR_BOARD), harborPoi("shop", "shop", HARBOR_SHOP)] };
 }
 
 /** Longest walk the server will accept in one request. */

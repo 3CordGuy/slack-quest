@@ -145,6 +145,11 @@ export function spriteTexture(kind: string): THREE.CanvasTexture {
 
 export const SPRITE_ASPECT = W / H;
 
+/** The same sprite as an image URL, for use in the HUD. */
+export function spriteDataUrl(kind: string): string {
+  return (spriteTexture(kind).image as HTMLCanvasElement).toDataURL();
+}
+
 /** A short text label as a pixel-crisp texture, for floating combat numbers. */
 export function textTexture(text: string, color: string): THREE.CanvasTexture {
   const canvas = document.createElement("canvas");

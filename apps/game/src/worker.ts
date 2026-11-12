@@ -6,6 +6,7 @@ import { Hono, type Context } from "hono";
 import { getCookie, setCookie } from "hono/cookie";
 import { HERO_CLASSES, MAX_CREW, makeRng, rollStartingStats } from "@gantt-quest/world";
 import {
+  buyShopItem,
   confirmCharacter,
   createCrew,
   createGuest,
@@ -16,12 +17,15 @@ import {
   getCharacter,
   getInventory,
   getRun,
+  getShop,
   joinCrew,
   leaveCrew,
   playerForToken,
   refreshHarbor,
   saveDraft,
+  sellItem,
   spendPoint,
+  unequipItem,
   type Env,
   type Player,
 } from "./server/db";
@@ -103,8 +107,33 @@ app.post("/api/character/spend", async (c) => {
 
 app.post("/api/character/equip", async (c) => {
   const body = await c.req.json<{ itemId?: number }>().catch(() => ({}) as { itemId?: number });
-  const ok = await equipItem(c.env.DB, c.get("player").id, Number(body.itemId));
-  return ok ? c.json({ ok }) : c.json({ error: "Cannot equip that." }, 409);
+  const error = await equipItem(c.env.DB, c.get("player").id, Number(body.itemId));
+  return error ? c.json({ error }, 409) : c.json({ ok: true });
+});
+
+app.post("/api/character/unequip", async (c) => {
+  const body = await c.req.json<{ itemId?: number }>().catch(() => ({}) as { itemId?: number });
+  const error = await unequipItem(c.env.DB, c.get("player").id, Number(body.itemId));
+  return error ? c.json({ error }, 409) : c.json({ ok: true });
+});
+
+// ---------- the market stall ----------
+
+app.post("/api/inventory/sell", async (c) => {
+  const body = await c.req.json<{ itemId?: number }>().catch(() => ({}) as { itemId?: number });
+  const result = await sellItem(c.env.DB, c.get("player").id, Number(body.itemId));
+  return typeof result === "string" ? c.json({ error: result }, 409) : c.json({ gold: result });
+});
+
+app.get("/api/shop", async (c) => {
+  const shop = await getShop(c.env.DB, c.get("player").id);
+  return shop ? c.json(shop) : c.json({ error: "Create a character first." }, 409);
+});
+
+app.post("/api/shop/buy", async (c) => {
+  const body = await c.req.json<{ index?: number }>().catch(() => ({}) as { index?: number });
+  const error = await buyShopItem(c.env.DB, c.get("player").id, Number(body.index));
+  return error ? c.json({ error }, 409) : c.json({ ok: true });
 });
 
 // ---------- crews and the shared Harbor ----------

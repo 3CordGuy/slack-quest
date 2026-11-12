@@ -288,7 +288,7 @@ function Crew({ state, online }: { state: ClientState; online: string[] }) {
         return (
           <div key={h.id} className={`panel hero-card ${state.turn?.heroId === h.id && state.phase === "overworld" ? "active" : ""} ${online.includes(h.id) ? "" : "offline"}`}>
             <div><strong>{h.name}</strong>{h.id === state.you && <span className="tag">you</span>}</div>
-            <div className="muted">{className(h.classId)} · Lv {h.level}{online.includes(h.id) ? "" : " · away"}</div>
+            <div className="muted">{className(h.classId)} · Lv {h.level}{(h.armor ?? 0) > 0 ? ` · armor ${h.armor}` : ""}{online.includes(h.id) ? "" : " · away"}</div>
             <div className="bar"><div className="bar-fill hp" style={{ width: `${(100 * hp) / h.maxHp}%` }} /><span>{hp} / {h.maxHp}</span></div>
             <div className="muted"><Pips n={focus} max={h.maxFocus} /> · {c?.potions ?? h.potions} potion{(c?.potions ?? h.potions) === 1 ? "" : "s"}</div>
           </div>
