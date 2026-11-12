@@ -56,6 +56,7 @@ import {
   buyPlot,
   fillBin,
   hasShack,
+  publicHero,
 } from "./server/db";
 
 import { enterHut } from "./server/hut-room";
@@ -176,6 +177,13 @@ app.get("/api/me", async (c) => {
   // `inventory` is what the hero has with them; what is in storage at home is only listed inside their hut.
   // `isAdmin` only decides whether the client shows the admin link: every admin route checks again.
   return c.json({ player, character, inventory, crew, carry, isAdmin: isAdmin(c.env, player) });
+});
+
+// A crewmate's or shipmate's hero sheet, read-only: what the overhead plate opens on a click.
+app.get("/api/hero/:id", async (c) => {
+  const hero = await publicHero(c.env.DB, c.get("player").id, c.req.param("id"));
+  if (!hero) return c.json({ error: "No such hero in your crew or on your voyages." }, 404);
+  return c.json({ hero });
 });
 
 // ---------- content overrides ----------

@@ -95,3 +95,25 @@ export function maxHpFor(stats: Stats, level: number): number {
 export function maxFocusFor(level: number): number {
   return 2 + Math.floor(level / 5);
 }
+
+/** How far through the current level a hero is, 0 to 1. For the XP bar over their head. */
+export function xpProgress(level: number, xp: number): number {
+  const need = xpToNext(level);
+  if (!(need > 0) || !Number.isFinite(xp)) return 0;
+  return Math.max(0, Math.min(1, xp / need));
+}
+
+/** Which colour a health bar is: green above half, yellow above a quarter, red below. */
+export type HealthBand = "good" | "hurt" | "low";
+
+export function healthBand(fraction: number): HealthBand {
+  return fraction > 0.5 ? "good" : fraction > 0.25 ? "hurt" : "low";
+}
+
+/** Where an HP or XP bar `width` pixels long ends: whole pixels, never empty while anything is left, never full until it is. */
+export function barPixels(fraction: number, width: number): number {
+  const f = Math.max(0, Math.min(1, Number.isFinite(fraction) ? fraction : 0));
+  if (f <= 0) return 0;
+  if (f >= 1) return width;
+  return Math.max(1, Math.min(width - 1, Math.round(f * width)));
+}

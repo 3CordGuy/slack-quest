@@ -192,13 +192,15 @@ export class HutRoom extends DurableObject<Env> {
       old.serializeAttachment(null);
       old.close(4000, "replaced by a newer connection");
     }
+    const hero = await heroInitFor(this.env.DB, id);
     const player: HarborPlayer = {
       id,
       name: decodeURIComponent(request.headers.get("x-player-name") ?? "Sailor"),
       classId: request.headers.get("x-player-class") ?? "",
-      level: Number(request.headers.get("x-player-level") ?? 1),
+      level: hero?.level ?? Number(request.headers.get("x-player-level") ?? 1),
+      xp: hero?.xp,
       pos,
-      outfit: (await heroInitFor(this.env.DB, id))?.outfit,
+      outfit: hero?.outfit,
     };
 
     const pair = new WebSocketPair();
