@@ -19,6 +19,7 @@ import {
   type ClientState,
   type Poi,
   type WorldEvent,
+  TRAIT_BY_ID,
 } from "@gantt-quest/world";
 import * as World from "@gantt-quest/world";
 import type { Me } from "./api";
@@ -122,6 +123,7 @@ function describe(events: WorldEvent[], state: ClientState, names: Map<string, s
         else if (b.t === "effect") out.push(`${n(b.target)} is ${label("effect", b.effect).toLowerCase()}.`);
         else if (b.t === "tick") out.push(`${n(b.target)} takes ${b.amount} from ${label("effect", b.effect).toLowerCase()}.`);
         else if (b.t === "skip") out.push(`${n(b.id)} is stunned and loses the turn.`);
+        else if (b.t === "trait") out.push(`${n(b.id)}: ${TRAIT_BY_ID[b.trait]?.name ?? b.trait}!`);
         else if (b.t === "down") out.push(`${n(b.id)} goes down!`);
         else if (b.t === "flee") out.push(b.ok ? `${n(b.actor)} leads the retreat.` : `${n(b.actor)} fails to break away.`);
         break;

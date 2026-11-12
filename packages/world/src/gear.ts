@@ -89,6 +89,14 @@ export const WEAPON_ICON: Record<string, string> = {
   maul: "maul",
   grimoire: "grimoire",
   void_staff: "void-staff",
+  ballast_flail: "hammer-drop",
+  barometer_rod: "wizard-staff",
+  gaff_hook: "daggers",
+  coral_staff: "root-staff",
+  ships_bell: "lute",
+  astrolabe: "orb",
+  lamp_hook: "pager-axe",
+  bilge_chalice: "grimoire",
 };
 
 export interface Base {
@@ -207,7 +215,9 @@ export function rollItem(rng: Rng, classId: string, quality: number, level: numb
   }
 
   if (kind === "weapon") {
-    const weapons = heroClass(classId)?.weapons ?? Object.keys(WEAPONS);
+    // Good loot (lairs and bosses) can also be the class's signature weapon. Same one draw either way.
+    const cls = heroClass(classId);
+    const weapons = cls ? (quality >= 0.5 ? [...cls.weapons, cls.signature] : cls.weapons) : Object.keys(WEAPONS);
     return weaponItem(rng.pick(weapons), rarity, level, statBonus);
   }
   const base = rng.pick(BASES[slot as Exclude<Slot, "main_hand">]);

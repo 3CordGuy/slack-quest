@@ -29,3 +29,4 @@ export * from "./shoals";
 export * from "./trade";
 export * from "./carry";
 export * from "./catalogue";
+export * from "./traits";

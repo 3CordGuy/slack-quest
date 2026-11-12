@@ -125,8 +125,8 @@ export class RunRoom extends DurableObject<Env> {
         await this.load();
         const hero = await heroInitFor(this.env.DB, playerId);
         if (!hero) return "No character.";
-        const { base, unspent, bonus, weapon, weaponPower, armor, outfit } = hero;
-        return this.apply({ type: "gear", heroId: playerId, gear: { base, unspent, bonus, weapon, weaponPower, armor, outfit } });
+        const { base, unspent, bonus, weapon, weaponPower, armor, outfit, traits } = hero;
+        return this.apply({ type: "gear", heroId: playerId, gear: { base, unspent, bonus, weapon, weaponPower, armor, outfit, traits } });
       });
       if (error) ws.send(JSON.stringify({ type: "error", message: error }));
       return;

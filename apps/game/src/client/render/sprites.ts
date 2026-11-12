@@ -5,7 +5,7 @@
 // a texture per `kind`.
 
 import * as THREE from "three";
-import { ENEMIES, RARITY_COLOR, barPixels, healthBand, outfitKey, type HealthBand, type Outfit, type Slot } from "@gantt-quest/world";
+import { ENEMIES, WEAPONS, RARITY_COLOR, barPixels, healthBand, outfitKey, type HealthBand, type Outfit, type Slot } from "@gantt-quest/world";
 import { LOOKS, mergeLook, type Look, type LookPalette } from "./looks";
 
 const W = 18;
@@ -282,7 +282,9 @@ function drawHero(ctx: CanvasRenderingContext2D, look: Look, outfit: Outfit) {
   }
 
   // Main hand: at the right of the picture.
-  const weapon = outfit.main_hand?.ref;
+  const held = outfit.main_hand?.ref;
+  // Signature weapons are drawn like a weapon the class already has.
+  const weapon = (held && WEAPONS[held]?.looksLike) || held;
   if (weapon === "mace") {
     px(13, 8, 1, 8, GEAR.wood);
     px(12, 5, 3, 3, GEAR.iron);
@@ -564,7 +566,8 @@ export function sleepZTexture(): THREE.CanvasTexture {
 /** A short text label as a pixel-crisp texture, for floating combat numbers. */
 export function textTexture(text: string, color: string): THREE.CanvasTexture {
   const canvas = document.createElement("canvas");
-  canvas.width = 64;
+  // Wide enough for the text: a damage number fits the usual 64, a trait's name needs more.
+  canvas.width = Math.max(64, text.length * 12 + 8);
   canvas.height = 24;
   const ctx = canvas.getContext("2d")!;
   ctx.font = "bold 18px ui-monospace, Menlo, monospace";
@@ -572,9 +575,9 @@ export function textTexture(text: string, color: string): THREE.CanvasTexture {
   ctx.textBaseline = "middle";
   ctx.lineWidth = 4;
   ctx.strokeStyle = OUTLINE;
-  ctx.strokeText(text, 32, 12);
+  ctx.strokeText(text, canvas.width / 2, 12);
   ctx.fillStyle = color;
-  ctx.fillText(text, 32, 12);
+  ctx.fillText(text, canvas.width / 2, 12);
   const tex = new THREE.CanvasTexture(canvas);
   tex.magFilter = THREE.NearestFilter;
   tex.minFilter = THREE.NearestFilter;

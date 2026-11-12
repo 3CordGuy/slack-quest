@@ -482,3 +482,14 @@ button.nudge { border-color: var(--gold); color: var(--gold); }
 .chip .intent { font-size: 12px; color: var(--muted, #b8b0a0); }
 .chip .intent.heavy { color: #ff8a7a; font-weight: 600; }
 .turn-chip.skip { opacity: 0.5; text-decoration: line-through; }
+/* Class traits in the inventory: one of two at each trait level. */
+.traits { margin: 6px 0 12px; }
+.trait-tier { margin: 6px 0; }
+.trait-tier.locked { opacity: 0.55; }
+.trait-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; margin-top: 4px; }
+.trait { display: flex; flex-direction: column; gap: 2px; text-align: left; padding: 6px 8px; font-size: 12px; }
+.trait strong { font-size: 13px; }
+.trait.selected { border-color: var(--gold); }
+.trait.passed { opacity: 0.45; }
+.trait:disabled { cursor: default; }
+.trait.selected:disabled { opacity: 1; }

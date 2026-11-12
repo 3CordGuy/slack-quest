@@ -35,6 +35,8 @@ export interface HeroClass {
   blurb: string;
   /** First entry is the starting weapon; the rest drop as loot. */
   weapons: string[];
+  /** A rarer weapon with the class's signature ability. Drops only where loot is good (lairs and bosses). */
+  signature: string;
   /** Something the class always does in a fight, if it has one. Shown when choosing a class. */
   passive?: string;
 }
@@ -54,24 +56,28 @@ export const HERO_CLASSES: HeroClass[] = [
     name: "Tidewall Paladin",
     blurb: "Tough front-liner. Hits hard with Strength and shrugs off blows.",
     weapons: ["mace", "greatsword"],
+    signature: "ballast_flail",
   },
   {
     id: "devops_mage",
     name: "Stormcall Mage",
     blurb: "Fragile caster. Burns enemies and patches up allies with Intelligence.",
     weapons: ["staff", "tome"],
+    signature: "barometer_rod",
   },
   {
     id: "refactor_rogue",
     name: "Smuggler Rogue",
     blurb: "Fast and precise. Opens wounds with Dexterity and usually acts first.",
     weapons: ["daggers", "shortbow"],
+    signature: "gaff_hook",
   },
   {
     id: "backend_druid",
     name: "Reef Druid",
     blurb: "Hardy healer. Mends allies and tangles enemies with Intelligence, and regrows like coral.",
     weapons: ["root_staff", "sickle"],
+    signature: "coral_staff",
     passive: `Deep roots: heals ${DRUID_REGEN} HP at the start of each of its turns in a fight.`,
   },
   {
@@ -79,6 +85,7 @@ export const HERO_CLASSES: HeroClass[] = [
     name: "Shanty Bard",
     blurb: "Makes everyone better. Plays the party up and the enemy down with Intelligence.",
     weapons: ["lute", "flute"],
+    signature: "ships_bell",
     passive: `Encore: while the Bard is standing, every other hero's attacks do +${BARD_AURA} damage.`,
   },
   {
@@ -86,12 +93,14 @@ export const HERO_CLASSES: HeroClass[] = [
     name: "Starchart Sage",
     blurb: "Raw power. The hardest-hitting spells of any class, and little else to fall back on.",
     weapons: ["orb", "scepter"],
+    signature: "astrolabe",
   },
   {
     id: "sre_warden",
     name: "Lighthouse Warden",
     blurb: "The wall. Draws every blow onto itself and hits back with Strength and the weight of its armor.",
     weapons: ["pager_axe", "maul"],
+    signature: "lamp_hook",
     passive: "Night watch: starts every fight guarded (half damage) until its second turn.",
   },
   {
@@ -99,6 +108,7 @@ export const HERO_CLASSES: HeroClass[] = [
     name: "Wreck Warlock",
     blurb: "Curses and drains with Intelligence. The bigger the enemy, the harder its Hex lands.",
     weapons: ["grimoire", "void_staff"],
+    signature: "bilge_chalice",
     passive: `Riptide: every perfect hit also leaves the target bleeding for ${WARLOCK_BLEED_TURNS} turns.`,
   },
 ];
@@ -133,6 +143,18 @@ export interface AbilityDef {
   maxHpDamage?: number;
   /** Heals the user this share of the damage it deals. */
   drain?: number;
+  /** Extra damage for each different debuff on the target. */
+  perDebuffDamage?: number;
+  /** Extra damage against a target carrying this effect. */
+  vsEffect?: { effect: EffectKind; bonus: number };
+  /** Damage multiplied by this against a target under a quarter of its max HP. */
+  finisher?: number;
+  /** The ally it targets takes the next turn (not when used on yourself). */
+  actNext?: boolean;
+  /** Goes straight through Guarded. */
+  ignoreGuard?: boolean;
+  /** Extra damage per turn of Bleeding left on the target, and the bleeding stops. */
+  bleedPayoff?: number;
   blurb: string;
 }
 
@@ -164,6 +186,15 @@ export const ABILITIES: Record<string, AbilityDef> = {
   hex: { id: "hex", name: "Hex", stat: "int_stat", rolls: 3, target: "enemy", damage: 6, maxHpDamage: 0.05, perfect: { effect: "glitched", turns: 1 }, blurb: "A slow query on the target: adds 5% of its max HP to the damage. Perfect: fouled." },
   blight: { id: "blight", name: "Blight", stat: "int_stat", rolls: 4, target: "all_enemies", damage: 5, blurb: "A curse on every enemy at once." },
   soul_drain: { id: "soul_drain", name: "Soul Drain", stat: "int_stat", rolls: 2, target: "enemy", damage: 7, drain: 0.5, blurb: "Takes some of their life for yours: heals you half the damage dealt." },
+  // Signature abilities: one per class, on its signature weapon.
+  full_reckoning: { id: "full_reckoning", name: "Full Reckoning", stat: "str", rolls: 3, target: "enemy", damage: 8, perDebuffDamage: 2, blurb: "Every wound it carries counts against it: +2 damage per different debuff on the target." },
+  thunderhead: { id: "thunderhead", name: "Thunderhead", stat: "int_stat", rolls: 3, target: "all_enemies", damage: 7, vsEffect: { effect: "burning", bonus: 3 }, blurb: "Lightning on every enemy, +3 on any already Burning." },
+  land_the_catch: { id: "land_the_catch", name: "Land the Catch", stat: "dex", rolls: 3, target: "enemy", damage: 9, finisher: 2, blurb: "Hook the weakest: double damage to an enemy under a quarter of its HP." },
+  riptide: { id: "riptide", name: "Riptide", stat: "int_stat", rolls: 3, target: "all_enemies", damage: 4, targetEffect: { effect: "slowed", turns: 1 }, blurb: "Drags at every enemy, and leaves them Becalmed." },
+  all_hands: { id: "all_hands", name: "All Hands", stat: "int_stat", rolls: 2, target: "ally", heal: 4, actNext: true, blurb: "Ring the bell: a crewmate patches up a little and takes the very next turn." },
+  plot_the_course: { id: "plot_the_course", name: "Plot the Course", stat: "int_stat", rolls: 3, target: "enemy", damage: 10, ignoreGuard: true, perfect: { effect: "exposed", turns: 2 }, blurb: "Goes straight through a guard. Perfect: holed." },
+  lighthouse_beam: { id: "lighthouse_beam", name: "Lighthouse Beam", stat: "str", rolls: 3, target: "all_enemies", damage: 4, selfEffect: { effect: "taunting", turns: 1 }, blurb: "Sweep the light across every enemy, and every one of them comes for you." },
+  red_tide: { id: "red_tide", name: "Red Tide", stat: "int_stat", rolls: 3, target: "enemy", damage: 6, bleedPayoff: 2, blurb: "Calls in the debt: +2 damage per turn of Bleeding left on the target, and the bleeding stops." },
   pin_down: { id: "pin_down", name: "Pin Down", stat: "agi", rolls: 2, target: "enemy", damage: 4, perfect: { effect: "stunned", turns: 1 }, blurb: "Perfect: stuns." },
 };
 
@@ -172,6 +203,8 @@ export interface WeaponDef {
   name: string;
   classId: string;
   abilities: string[];
+  /** Drawn in hand like this other weapon (signature weapons borrow a look). */
+  looksLike?: string;
 }
 
 export const WEAPONS: Record<string, WeaponDef> = {
@@ -190,6 +223,15 @@ export const WEAPONS: Record<string, WeaponDef> = {
   pager_axe: { id: "pager_axe", name: "Foghorn Axe", classId: "sre_warden", abilities: ["bulwark_strike", "taunt", "hold_the_line"] },
   maul: { id: "maul", name: "Bell-Buoy Maul", classId: "sre_warden", abilities: ["shockwave", "bulwark_strike", "taunt"] },
   grimoire: { id: "grimoire", name: "Drowned Grimoire", classId: "data_warlock", abilities: ["hex", "soul_drain"] },
+  // Signature weapons: each class's own ability plus a staple, drawn like a weapon the class already has.
+  ballast_flail: { id: "ballast_flail", name: "Ballast Flail", classId: "qa_paladin", abilities: ["full_reckoning", "smite", "shield_wall"], looksLike: "mace" },
+  barometer_rod: { id: "barometer_rod", name: "Barometer Rod", classId: "devops_mage", abilities: ["thunderhead", "firebolt", "mend"], looksLike: "staff" },
+  gaff_hook: { id: "gaff_hook", name: "Gaff Hook", classId: "refactor_rogue", abilities: ["land_the_catch", "quick_stab", "flurry"], looksLike: "daggers" },
+  coral_staff: { id: "coral_staff", name: "Coral Staff", classId: "backend_druid", abilities: ["riptide", "thornlash", "rejuvenate"], looksLike: "root_staff" },
+  ships_bell: { id: "ships_bell", name: "Ship's Bell", classId: "frontend_bard", abilities: ["all_hands", "dissonance", "encore"], looksLike: "lute" },
+  astrolabe: { id: "astrolabe", name: "Astrolabe", classId: "staff_sage", abilities: ["plot_the_course", "manifest", "arcane_ward"], looksLike: "orb" },
+  lamp_hook: { id: "lamp_hook", name: "Lamp Hook", classId: "sre_warden", abilities: ["lighthouse_beam", "bulwark_strike", "hold_the_line"], looksLike: "pager_axe" },
+  bilge_chalice: { id: "bilge_chalice", name: "Bilge Chalice", classId: "data_warlock", abilities: ["red_tide", "hex", "soul_drain"], looksLike: "grimoire" },
   void_staff: { id: "void_staff", name: "Undertow Staff", classId: "data_warlock", abilities: ["blight", "hex", "soul_drain"] },
 };
 

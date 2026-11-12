@@ -46,6 +46,7 @@ import {
   sellItem,
   sellMaterial,
   spendPoint,
+  pickTrait,
   unequipItem,
   upgradeHut,
   type Env,
@@ -294,6 +295,12 @@ app.post("/api/character/spend", async (c) => {
   const body = await c.req.json<{ stat?: string }>().catch(() => ({}) as { stat?: string });
   const ok = await spendPoint(c.env.DB, c.get("player").id, String(body.stat));
   return ok ? c.json({ ok }) : c.json({ error: "No points to spend." }, 409);
+});
+
+app.post("/api/character/trait", async (c) => {
+  const body = await c.req.json<{ trait?: string }>().catch(() => ({}) as { trait?: string });
+  const error = await pickTrait(c.env.DB, c.get("player").id, String(body.trait ?? ""));
+  return error ? c.json({ error }, 409) : c.json({ ok: true });
 });
 
 app.post("/api/character/equip", async (c) => {
