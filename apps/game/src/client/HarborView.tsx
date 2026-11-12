@@ -87,6 +87,7 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
   const tip = !hoverPoi ? null
     : hoverPoi.kind === "board" ? "Notice board"
     : hoverPoi.kind === "shop" ? "Market stall: buy and sell gear"
+    : hoverPoi.kind === "ring" ? "Sparring ring"
     : hoverPoi.kind === "plot" ? `${board.members.find((m) => `plot:${m.id}` === hoverPoi.id)?.name ?? "Someone"}'s hut`
     : hoverPoi.kind === "pier" ? `${moored.find((s) => `ship:${s.code}` === hoverPoi.id)?.captain ?? "A"}'s ship`
     : null;

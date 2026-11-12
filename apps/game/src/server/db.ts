@@ -11,10 +11,16 @@ import {
   sellPrice,
   shopStock,
   weaponItem,
+  RESOURCE_KINDS,
+  STARTER_BLUEPRINTS,
+  type FurnishingGrant,
   type HarborBoard,
   type HarborLogEntry,
   type HarborShip,
   type HeroInit,
+  type HutSummary,
+  type ResourceKind,
+  type Resources,
   type ItemDef,
   type ItemKind,
   type Rarity,
@@ -23,6 +29,7 @@ import {
   type WorldState,
 } from "@gantt-quest/world";
 import type { HarborRoom } from "./harbor-room";
+import type { HutRoom } from "./hut-room";
 import type { RunRoom } from "./run-room";
 
 export interface Env {
@@ -31,6 +38,7 @@ export interface Env {
   ASSETS: Fetcher;
   RUN_ROOM: DurableObjectNamespace<RunRoom>;
   HARBOR_ROOM: DurableObjectNamespace<HarborRoom>;
+  HUT_ROOM: DurableObjectNamespace<HutRoom>;
   /** "mock" replaces Workers AI with a scripted stand-in. */
   AI_MODE?: string;
   /** Email Sending binding. Without it (and MAIL_FROM_ADDRESS) sign-in codes go to the log. */
@@ -374,13 +382,16 @@ export async function applyGrant(
   db: D1Database,
   code: string,
   playerId: string,
-  grant: { xp: number; gold: number; item: ItemDef | null },
+  grant: { xp: number; gold: number; item: ItemDef | null; resources?: Resources; blueprint?: string; furnishing?: FurnishingGrant },
 ): Promise<void> {
   const c = await getCharacter(db, playerId);
   if (!c) return;
   const gold = grant.gold;
   const stmts: D1PreparedStatement[] = [];
   if (grant.item) stmts.push(insertItem(db, playerId, grant.item, false));
+  if (grant.resources) stmts.push(...resourceStatements(db, playerId, grant.resources));
+  if (grant.blueprint) stmts.push(blueprintStatement(db, playerId, grant.blueprint));
+  if (grant.furnishing) stmts.push(furnishingStatement(db, playerId, grant.furnishing));
   const next = applyXp({ classId: c.class_id, level: c.level, xp: c.xp, stats: statsOf(c), unspent: c.unspent_points }, grant.xp);
   stmts.push(
     db
@@ -573,4 +584,48 @@ export async function refreshHarbor(env: Env, crewId: string | null): Promise<vo
   } catch (err) {
     console.warn("harbor:refresh-failed", { err: err instanceof Error ? err.message : String(err) });
   }
+}
+
+// ---------- huts: materials, blueprints and furnishings ----------
+
+/** Statements that add (or, with negative amounts, spend) resources. Amounts never go below zero. */
+export function resourceStatements(db: D1Database, playerId: string, resources: Resources): D1PreparedStatement[] {
+  return RESOURCE_KINDS.filter((kind) => resources[kind]).map((kind) =>
+    db
+      .prepare(
+        `INSERT INTO resources (player_id, kind, qty) VALUES (?1, ?2, MAX(0, ?3))
+         ON CONFLICT(player_id, kind) DO UPDATE SET qty = MAX(0, qty + ?3)`,
+      )
+      .bind(playerId, kind, resources[kind]!),
+  );
+}
+
+export function blueprintStatement(db: D1Database, playerId: string, blueprintId: string): D1PreparedStatement {
+  return db.prepare("INSERT OR IGNORE INTO blueprints (player_id, blueprint_id) VALUES (?, ?)").bind(playerId, blueprintId);
+}
+
+/** A new furnishing goes into storage, unplaced. */
+export function furnishingStatement(db: D1Database, playerId: string, furnishing: FurnishingGrant, meta: unknown = {}): D1PreparedStatement {
+  return db
+    .prepare("INSERT INTO furnishings (player_id, def_id, label, meta_json, created_at) VALUES (?, ?, ?, ?, ?)")
+    .bind(playerId, furnishing.defId, furnishing.label, JSON.stringify(meta), now());
+}
+
+/** A player's hut tier, materials, known blueprints and furnishings. Everyone has a tier 1 hut by default. */
+export async function getHut(db: D1Database, playerId: string): Promise<HutSummary> {
+  const [hut, resources, blueprints, furnishings] = await Promise.all([
+    db.prepare("SELECT tier FROM huts WHERE player_id = ?").bind(playerId).first<{ tier: number }>(),
+    db.prepare("SELECT kind, qty FROM resources WHERE player_id = ? AND qty > 0").bind(playerId).all<{ kind: ResourceKind; qty: number }>(),
+    db.prepare("SELECT blueprint_id FROM blueprints WHERE player_id = ?").bind(playerId).all<{ blueprint_id: string }>(),
+    db
+      .prepare("SELECT id, def_id AS defId, label, q, r, facing FROM furnishings WHERE player_id = ? ORDER BY id")
+      .bind(playerId)
+      .all<HutSummary["furnishings"][number]>(),
+  ]);
+  return {
+    tier: hut?.tier ?? 1,
+    resources: Object.fromEntries(resources.results.map((r) => [r.kind, r.qty])),
+    blueprints: [...new Set([...STARTER_BLUEPRINTS, ...blueprints.results.map((b) => b.blueprint_id)])],
+    furnishings: furnishings.results,
+  };
 }

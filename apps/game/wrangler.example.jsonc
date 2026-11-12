@@ -36,12 +36,14 @@
   "durable_objects": {
     "bindings": [
           { "name": "RUN_ROOM", "class_name": "RunRoom" },
-          { "name": "HARBOR_ROOM", "class_name": "HarborRoom" }
+          { "name": "HARBOR_ROOM", "class_name": "HarborRoom" },
+          { "name": "HUT_ROOM", "class_name": "HutRoom" }
         ]
   },
   "migrations": [
     { "tag": "v1", "new_sqlite_classes": ["RunRoom"] },
-    { "tag": "v2", "new_sqlite_classes": ["HarborRoom"] }
+    { "tag": "v2", "new_sqlite_classes": ["HarborRoom"] },
+    { "tag": "v3", "new_sqlite_classes": ["HutRoom"] }
   ],
   // Staging: `CLOUDFLARE_ENV=staging pnpm build && wrangler deploy`.
   // Environments do not inherit bindings, so they are repeated here.
@@ -65,7 +67,8 @@
       "durable_objects": {
         "bindings": [
           { "name": "RUN_ROOM", "class_name": "RunRoom" },
-          { "name": "HARBOR_ROOM", "class_name": "HarborRoom" }
+          { "name": "HARBOR_ROOM", "class_name": "HarborRoom" },
+          { "name": "HUT_ROOM", "class_name": "HutRoom" }
         ]
       }
     }

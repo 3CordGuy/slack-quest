@@ -4,7 +4,7 @@
 
 import { Hono, type Context } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
-import { HERO_CLASSES, MAX_CREW, makeRng, rollStartingStats } from "@gantt-quest/world";
+import { HERO_CLASSES, MAX_CREW, hutPerks, makeRng, rollStartingStats } from "@gantt-quest/world";
 import { sendSignInCode } from "./server/email";
 import {
   attachEmail,
@@ -24,6 +24,7 @@ import {
   deleteCharacter,
   equipItem,
   getCharacter,
+  getHut,
   getInventory,
   getRun,
   getShop,
@@ -40,6 +41,7 @@ import {
 } from "./server/db";
 
 export { HarborRoom } from "./server/harbor-room";
+export { HutRoom } from "./server/hut-room";
 export { RunRoom } from "./server/run-room";
 
 type App = { Bindings: Env; Variables: { player: Player } };
@@ -195,6 +197,14 @@ app.post("/api/shop/buy", async (c) => {
   const body = await c.req.json<{ index?: number }>().catch(() => ({}) as { index?: number });
   const error = await buyShopItem(c.env.DB, c.get("player").id, Number(body.index));
   return error ? c.json({ error }, 409) : c.json({ ok: true });
+});
+
+// ---------- huts ----------
+
+// Everything the player owns for their hut, and the perks it currently gives.
+app.get("/api/hut", async (c) => {
+  const hut = await getHut(c.env.DB, c.get("player").id);
+  return c.json({ ...hut, perks: hutPerks(hut.furnishings) });
 });
 
 // ---------- crews and the shared Harbor ----------

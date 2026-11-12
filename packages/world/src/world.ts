@@ -18,6 +18,7 @@ import {
 import { rollCheck, statPct, type CheckResult } from "./check";
 import { ENEMIES, KEY_ITEMS, WEAPONS } from "./content";
 import { rollItem, type ItemDef, type Outfit } from "./gear";
+import { addResources, type Resources } from "./hut";
 import { findPath, generateMap, poiAt, poiById, type Poi, type WorldMap } from "./map";
 import {
   MAX_NPC_MESSAGES,
@@ -87,10 +88,20 @@ export interface Turn {
   deadline: number | null;
 }
 
+/** A piece of furniture or a trophy handed to a hero. */
+export interface FurnishingGrant {
+  defId: string;
+  label: string;
+}
+
 export interface Earned {
   xp: number;
   gold: number;
   items: ItemDef[];
+  /** Hut materials, learned blueprints and furnishings. Absent on voyages saved before huts. */
+  resources?: Resources;
+  blueprints?: string[];
+  furnishings?: FurnishingGrant[];
 }
 
 export type Phase = "lobby" | "generating" | "overworld" | "battle" | "ended";
@@ -161,6 +172,9 @@ export type WorldEvent =
   | { t: "gold"; heroId: string; amount: number }
   | { t: "loot"; heroId: string; item: ItemDef }
   | { t: "key_item"; heroId: string; item: string; name: string }
+  | { t: "resources"; heroId: string; resources: Resources }
+  | { t: "blueprint"; heroId: string; blueprint: string }
+  | { t: "furnishing"; heroId: string; furnishing: FurnishingGrant }
   | { t: "geared"; heroId: string }
   | { t: "rite"; heroId: string; text: string }
   | { t: "chat"; line: ChatLine }
@@ -174,7 +188,7 @@ export type WorldEvent =
 export type WorldEffect =
   | { kind: "story_gen" }
   | { kind: "npc_call"; npcId: string; heroId: string; text: string; check: CheckResult | null }
-  | { kind: "grant"; heroId: string; xp: number; gold: number; item: ItemDef | null }
+  | { kind: "grant"; heroId: string; xp: number; gold: number; item: ItemDef | null; resources?: Resources; blueprint?: string; furnishing?: FurnishingGrant }
   | { kind: "penalty"; heroId: string; goldPct: number; cap: number }
   | { kind: "epilogue" }
   | { kind: "run_end"; outcome: "victory" | "defeat" };
@@ -278,7 +292,11 @@ interface Ctx {
 const fail = (error: string): StepResult => ({ ok: false, error });
 const heroById = (state: WorldState, id: string) => state.heroes.find((h) => h.id === id);
 
-function grant(ctx: Ctx, hero: Hero, g: { xp?: number; gold?: number; item?: ItemDef | null }) {
+function grant(
+  ctx: Ctx,
+  hero: Hero,
+  g: { xp?: number; gold?: number; item?: ItemDef | null; resources?: Resources; blueprint?: string; furnishing?: FurnishingGrant },
+) {
   const xp = g.xp ?? 0;
   const gold = g.gold ?? 0;
   const item = g.item ?? null;
@@ -305,7 +323,24 @@ function grant(ctx: Ctx, hero: Hero, g: { xp?: number; gold?: number; item?: Ite
   }
   if (gold > 0) ctx.events.push({ t: "gold", heroId: hero.id, amount: gold });
   if (item) ctx.events.push({ t: "loot", heroId: hero.id, item });
-  if (xp > 0 || gold > 0 || item) ctx.effects.push({ kind: "grant", heroId: hero.id, xp, gold, item });
+
+  // Things for the hut. Like gear, they are written to the player as they are earned.
+  const resources = g.resources && Object.keys(g.resources).length > 0 ? g.resources : undefined;
+  if (resources) {
+    earned.resources = addResources(earned.resources ?? {}, resources);
+    ctx.events.push({ t: "resources", heroId: hero.id, resources });
+  }
+  if (g.blueprint) {
+    (earned.blueprints ??= []).push(g.blueprint);
+    ctx.events.push({ t: "blueprint", heroId: hero.id, blueprint: g.blueprint });
+  }
+  if (g.furnishing) {
+    (earned.furnishings ??= []).push(g.furnishing);
+    ctx.events.push({ t: "furnishing", heroId: hero.id, furnishing: g.furnishing });
+  }
+  if (xp > 0 || gold > 0 || item || resources || g.blueprint || g.furnishing) {
+    ctx.effects.push({ kind: "grant", heroId: hero.id, xp, gold, item, resources, blueprint: g.blueprint, furnishing: g.furnishing });
+  }
 }
 
 function setFact(ctx: Ctx, fact: string) {

@@ -572,6 +572,18 @@ export class WorldRenderer {
         add(box(0.14, 0.18, 0.14), lambert("#3b82f6"), 0.2, 0.39, 0);
         break;
       }
+      case "ring": {
+        // Sparring ring: four posts, a rope, and a straw dummy.
+        for (const [x, z] of [[-0.55, -0.2], [0.55, -0.2], [-0.55, 0.6], [0.55, 0.6]]) add(new THREE.CylinderGeometry(0.05, 0.05, 0.55, 5), lambert("#5a3d22"), x, 0.27, z);
+        add(box(1.1, 0.04, 0.04), lambert("#e8dcc0"), 0, 0.45, -0.2);
+        add(box(1.1, 0.04, 0.04), lambert("#e8dcc0"), 0, 0.45, 0.6);
+        add(box(0.04, 0.04, 0.8), lambert("#e8dcc0"), -0.55, 0.45, 0.2);
+        add(box(0.04, 0.04, 0.8), lambert("#e8dcc0"), 0.55, 0.45, 0.2);
+        add(new THREE.CylinderGeometry(0.14, 0.18, 0.5, 6), lambert("#d9b45a"), 0.2, 0.3, 0.1);
+        add(new THREE.SphereGeometry(0.13, 6, 5), lambert("#d9b45a"), 0.2, 0.66, 0.1);
+        add(box(0.5, 0.06, 0.06), lambert("#7a5230"), 0.2, 0.45, 0.1);
+        break;
+      }
       case "board":
         add(new THREE.CylinderGeometry(0.05, 0.05, 0.9, 5), lambert("#5a3d22"), -0.3, 0.45, 0);
         add(new THREE.CylinderGeometry(0.05, 0.05, 0.9, 5), lambert("#5a3d22"), 0.3, 0.45, 0);
