@@ -1,0 +1,152 @@
+name: Deploy game
+
+# Deploys the revamp (apps/game) to staging or production. Separate from
+# deploy.yml, which deploys the legacy apps/web and apps/slack on pushes to main.
+#
+#   - Manual run (Actions tab, or `gh workflow run deploy-game.yml -f target=…`):
+#     either environment. GitHub only lists a manual workflow once this file is
+#     on the default branch (main); until then use the tag below.
+#   - A tag `game-v*` (e.g. game-v2026.11.12): production. Tag pushes use the
+#     workflow at the tagged commit, so this works from overworld-revamp.
+#   - A push to overworld-revamp: staging, but ONLY when the repo variable
+#     GAME_STAGING_AUTODEPLOY is "true". Off by default, so the hand-deploy
+#     flow keeps working until you switch it on.
+#
+# The `production` job runs in the `production` GitHub Environment. Give that
+# environment a required reviewer (Settings > Environments) so every production
+# deploy waits for a click, whatever started it.
+#
+# Order, per environment: write config -> tests -> D1 bookmark -> migrate ->
+# confirm the newest migration is recorded -> build -> deploy -> smoke test.
+# A failure at any step stops before the Worker changes.
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Where to deploy
+        type: choice
+        options: [staging, production]
+        default: staging
+  push:
+    branches: [overworld-revamp]
+    tags: ["game-v*"]
+    paths:
+      - "apps/game/**"
+      - "packages/world/**"
+      - "packages/core/**"
+      - "pnpm-lock.yaml"
+      - ".github/workflows/deploy-game.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  pick:
+    name: Pick target
+    runs-on: ubuntu-latest
+    outputs:
+      target: ${{ steps.pick.outputs.target }}
+    steps:
+      - id: pick
+        env:
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          INPUT: ${{ inputs.target }}
+          AUTODEPLOY: ${{ vars.GAME_STAGING_AUTODEPLOY }}
+        run: |
+          if [ "$EVENT" = "workflow_dispatch" ]; then t="$INPUT"
+          elif [[ "$REF" == refs/tags/game-v* ]]; then t=production
+          elif [ "$REF" = "refs/heads/overworld-revamp" ] && [ "$AUTODEPLOY" = "true" ]; then t=staging
+          else t=none
+          fi
+          echo "target=$t" >> "$GITHUB_OUTPUT"
+          echo "Target: $t"
+
+  deploy:
+    name: Deploy to ${{ needs.pick.outputs.target }}
+    needs: pick
+    if: needs.pick.outputs.target == 'staging' || needs.pick.outputs.target == 'production'
+    runs-on: ubuntu-latest
+    environment:
+      name: ${{ needs.pick.outputs.target }}
+      url: ${{ needs.pick.outputs.target == 'production' && 'https://harbor.heylets.party' || 'https://harbor-staging.heylets.party' }}
+    # One deploy per environment at a time; never cancel one halfway through a migration.
+    concurrency:
+      group: deploy-game-${{ needs.pick.outputs.target }}
+      cancel-in-progress: false
+    env:
+      TARGET: ${{ needs.pick.outputs.target }}
+      HOST: ${{ needs.pick.outputs.target == 'production' && 'harbor.heylets.party' || 'harbor-staging.heylets.party' }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    defaults:
+      run:
+        working-directory: apps/game
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+        working-directory: .
+
+      # The whole apps/game/wrangler.jsonc (local, staging and production
+      # sections), real database ids included. It is gitignored.
+      - name: Write wrangler config
+        env:
+          WRANGLER_GAME_CONFIG: ${{ secrets.WRANGLER_GAME_CONFIG }}
+        run: |
+          if [ -z "$WRANGLER_GAME_CONFIG" ]; then echo "::error::WRANGLER_GAME_CONFIG secret is not set"; exit 1; fi
+          printf '%s' "$WRANGLER_GAME_CONFIG" > wrangler.jsonc
+          if grep -q "REPLACE_WITH_" wrangler.jsonc; then echo "::error::wrangler.jsonc still has a REPLACE_WITH_ placeholder"; exit 1; fi
+
+      - name: Unit tests
+        run: pnpm --filter @gantt-quest/world --filter @gantt-quest/game test
+        working-directory: .
+
+      # A Time Travel bookmark from just before the migration, so the job log
+      # says exactly where to restore to if a migration goes wrong.
+      - name: D1 bookmark before migrating
+        run: pnpm exec wrangler d1 time-travel info DB --env "$TARGET" || echo "::warning::could not read a bookmark"
+
+      - name: Apply D1 migrations
+        run: pnpm exec wrangler d1 migrations apply DB --remote --env "$TARGET"
+
+      - name: Confirm migrations are recorded
+        run: |
+          expected="$(ls migrations/*.sql | sort | tail -1 | xargs basename)"
+          applied="$(pnpm exec wrangler d1 execute DB --remote --env "$TARGET" --json \
+            --command "SELECT name FROM d1_migrations ORDER BY id DESC LIMIT 1" | jq -r '.[0].results[0].name')"
+          echo "newest file: $expected   newest applied: $applied"
+          if [ "$expected" != "$applied" ]; then echo "::error::D1 is not on the newest migration"; exit 1; fi
+
+      # The Cloudflare Vite plugin bakes the environment into dist/; deploy then
+      # ships exactly that build (so no --env on deploy).
+      - name: Build
+        run: CLOUDFLARE_ENV="$TARGET" pnpm build
+
+      - name: Deploy
+        run: pnpm exec wrangler deploy --message "${GITHUB_REF_NAME}@${GITHUB_SHA::7} (run ${GITHUB_RUN_ID})"
+
+      # Read-only checks: the page loads, and the API answers without a session.
+      # It does not sign in, so it creates no rows in the database.
+      - name: Smoke test
+        working-directory: .
+        run: |
+          for i in 1 2 3 4 5 6; do
+            code="$(curl -s -o /dev/null -w '%{http_code}' "https://$HOST/")" && [ "$code" = 200 ] && break
+            echo "GET / -> $code, retrying"; sleep 10
+          done
+          [ "$code" = 200 ] || { echo "::error::GET https://$HOST/ returned $code"; exit 1; }
+          curl -s "https://$HOST/" | grep -qi '<div id="root"' || { echo "::error::page does not look like the game"; exit 1; }
+          api="$(curl -s -o /dev/null -w '%{http_code}' "https://$HOST/api/me")"
+          [ "$api" = 401 ] || { echo "::error::GET /api/me returned $api, expected 401"; exit 1; }
+          echo "Smoke test passed for https://$HOST"
