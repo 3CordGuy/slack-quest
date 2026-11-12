@@ -2,7 +2,7 @@
 
 The rewrite described in [`docs/overworld-revamp.md`](../../docs/overworld-revamp.md): a live, turn-based co-op game. A crew shares **the Harbor** (a walkable place where you see each other), up to four of them board a ship and sail to **an Island** (one seeded hex map with one generated story), talks to Workers AI characters, fights line-up battles, and brings XP and loot home.
 
-This app is separate from `apps/web` (the existing game), with its own Worker, Durable Object and D1 database. Nothing here is deployed yet.
+This app is separate from `apps/web` (the existing game), with its own Worker, Durable Objects and D1 database. It runs on staging; production (harbor.heylets.party) is set up by [`docs/game-production-checklist.md`](../../docs/game-production-checklist.md).
 
 ## Run it locally
 
