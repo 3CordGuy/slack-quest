@@ -5,7 +5,8 @@ import type { NoticeBoard } from "../server/board";
 
 /** What the Harbor's notice board shows: the crew goal and the contracts on offer. */
 export type Board = NoticeBoard;
-import type { GatherChoice, GatherSpot, HarborWorks, HutSummary, ItemDef, Perk, ProjectAmounts, Resources, ShopEntry, TradeOffer } from "@gantt-quest/world";
+import type { GatherChoice, GatherSpot, HarborWorks, HutSummary, ItemDef, Perk, ProjectAmounts, Resources, SalesEntry, SalesmanId, SalesmanVisit, ShopEntry, TradeOffer } from "@gantt-quest/world";
+import { forcedSalesman } from "./salesmanClock";
 import type { GatherStatus } from "../server/gather";
 import type { TradeList } from "../server/trade";
 
@@ -57,6 +58,18 @@ export interface InventoryItem {
   equipped: number;
 }
 
+/** The traveling salesman in the pub, if one is in, and their stock for this player; otherwise who is due next. */
+export interface SalesmanView {
+  here: (SalesmanVisit & { entries: (SalesEntry & { bought: boolean; problem: string | null })[] }) | null;
+  next: { salesmanId: SalesmanId; startsAt: number } | null;
+}
+
+/** In the dev server, a forced visitor (see salesmanClock.ts) is passed on so the server agrees. */
+const salesmanHeader = (): Record<string, string> => {
+  const forced = forcedSalesman();
+  return forced ? { "x-gq-salesman": forced } : {};
+};
+
 export interface Shop {
   refreshAt: number;
   entries: (ShopEntry & { bought: boolean })[];
@@ -76,10 +89,10 @@ export interface Me {
 
 export type { StatKey };
 
-async function request<T>(path: string, body?: unknown): Promise<T> {
+async function request<T>(path: string, body?: unknown, extra: Record<string, string> = {}): Promise<T> {
   const res = await fetch(path, {
     method: body === undefined ? "GET" : "POST",
-    headers: { "content-type": "application/json", ...(PROFILE ? { "x-gq-profile": PROFILE } : {}) },
+    headers: { "content-type": "application/json", ...(PROFILE ? { "x-gq-profile": PROFILE } : {}), ...extra },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   const data = (await res.json().catch(() => ({}))) as { error?: string };
@@ -130,6 +143,8 @@ export const api = {
   pub: () => request<PubTab>("/api/pub"),
   pubOrder: (itemId: string) => request<PubTab>("/api/pub/order", { itemId }),
   pubTalk: (text: string) => request<{ say: string }>("/api/pub/talk", { text }),
+  salesman: () => request<SalesmanView>("/api/pub/salesman", undefined, salesmanHeader()),
+  buyFromSalesman: (index: number) => request<{ got: SalesEntry }>("/api/pub/salesman/buy", { index }, salesmanHeader()),
   projects: () => request<Works>("/api/projects"),
   giveToProject: (projectId: string, give: ProjectAmounts) => request<Works & { completed: boolean }>("/api/projects/give", { projectId, give }),
   hut: () => request<Hut>("/api/hut"),

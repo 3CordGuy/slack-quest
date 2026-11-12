@@ -148,6 +148,10 @@ export const FURNISHINGS: Record<string, FurnishingDef> = {
   writing_set: { id: "writing_set", name: "Ink and Quill", kind: "furniture", size: "small", model: "writing_set", blurb: "For the voyage log.", price: 10, recipe: { bone: 1, copper: 1 } },
   coin_pile: { id: "coin_pile", name: "Pile of Coins", kind: "furniture", size: "small", model: "coin_pile", blurb: "For show, not for spending.", price: 30 },
 
+  // Far goods: never at the stall and never crafted. Only a traveling salesman carries them (see salesman.ts).
+  globe: { id: "globe", name: "Sea Globe", kind: "furniture", model: "globe", blurb: "Some of the coastlines are guesses. +1% XP.", perk: { xpPct: 1 } },
+  ship_bottle: { id: "ship_bottle", name: "Ship in a Bottle", kind: "furniture", model: "ship_bottle", blurb: "Nobody knows how it got in there." },
+  shell_chimes: { id: "shell_chimes", name: "Shell Chimes", kind: "furniture", model: "shell_chimes", blurb: "They ring when the wind is from the sea." },
   // Trophies come only from finishing a story, one kind per story shape.
   trophy_relic: { id: "trophy_relic", name: "Recovered Relic", kind: "trophy", model: "trophy_relic", blurb: "A replica of what was won back. +1% XP.", perk: { xpPct: 1 } },
   trophy_token: { id: "trophy_token", name: "Keepsake of Thanks", kind: "trophy", model: "trophy_token", blurb: "Given by someone brought home. +1% XP.", perk: { xpPct: 1 } },

@@ -11,8 +11,8 @@ const W = 18;
 const H = 22;
 const OUTLINE = "#1b1830";
 
-type Hat = "helm" | "wizard" | "hood" | "horns" | "leaves" | "feather" | "circlet" | "none";
-type Weapon = "sword" | "staff" | "daggers" | "club" | "bow" | "lute" | "orb" | "none";
+type Hat = "helm" | "wizard" | "hood" | "horns" | "leaves" | "feather" | "circlet" | "brim" | "turban" | "kerchief" | "none";
+type Weapon = "sword" | "staff" | "daggers" | "club" | "bow" | "lute" | "orb" | "lantern" | "scroll" | "pack" | "basket" | "none";
 
 interface Look {
   skin: string;
@@ -22,6 +22,10 @@ interface Look {
   accent: string;
   hat: Hat;
   weapon: Weapon;
+  /** Colour of the hat, where it is not the body's. */
+  hatColor?: string;
+  /** A full-length coat over the legs, for travellers. */
+  coat?: boolean;
 }
 
 const LOOKS: Record<string, Look> = {
@@ -31,6 +35,11 @@ const LOOKS: Record<string, Look> = {
   backend_druid: { skin: "#d9a67c", hair: "#5a3d22", body: "#5d7d3a", legs: "#4a3a26", accent: "#a6d06a", hat: "leaves", weapon: "staff" },
   frontend_bard: { skin: "#f1c9a5", hair: "#c9743a", body: "#b9433d", legs: "#3b2f5a", accent: "#e0b12e", hat: "feather", weapon: "lute" },
   staff_sage: { skin: "#e8c2a0", hair: "#d9d9e3", body: "#6a3fa0", legs: "#3a2560", accent: "#f2d675", hat: "circlet", weapon: "orb" },
+  // Traveling salesmen (packages/world/src/salesman.ts): each one easy to tell from the crew at a glance.
+  salesman_curio: { skin: "#f1d3b8", hair: "#1f1a24", body: "#5b2f63", legs: "#2a1838", accent: "#e0b12e", hat: "brim", hatColor: "#2a1f2e", weapon: "lantern", coat: true },
+  salesman_plans: { skin: "#d9a67c", hair: "#9a9aa2", body: "#2f5f73", legs: "#24323a", accent: "#e8dcc0", hat: "kerchief", hatColor: "#3f6fa8", weapon: "scroll" },
+  salesman_far: { skin: "#b07a52", hair: "#2a1c14", body: "#c96a2a", legs: "#4a2f1e", accent: "#2f8c8a", hat: "turban", hatColor: "#f2e6c8", weapon: "pack", coat: true },
+  salesman_herbs: { skin: "#e3c2a2", hair: "#ececec", body: "#5a6b3a", legs: "#3e4a2a", accent: "#a6d06a", hat: "hood", weapon: "basket" },
   npc: { skin: "#e8b891", hair: "#b9b9b9", body: "#a0683a", legs: "#5a4632", accent: "#e8dcc0", hat: "none", weapon: "none" },
   bandit: { skin: "#d9a67c", hair: "#3a2a20", body: "#7a2f2f", legs: "#3a3030", accent: "#1f1f1f", hat: "hood", weapon: "club" },
   cultist: { skin: "#cdb7d6", hair: "#2a1838", body: "#5b2a7a", legs: "#34194a", accent: "#e04fd0", hat: "hood", weapon: "staff" },
@@ -87,6 +96,23 @@ function drawHat(px: Px, look: Look) {
   } else if (look.hat === "circlet") {
     px(5, 3, 6, 1, look.accent);
     px(7, 2, 2, 1, "#7fe3ff");
+  } else if (look.hat === "brim") {
+    // A wide-brimmed travelling hat with a band.
+    const c = look.hatColor ?? look.body;
+    px(2, 4, 12, 1, c);
+    px(5, 1, 6, 3, c);
+    px(5, 3, 6, 1, look.accent);
+  } else if (look.hat === "turban") {
+    const c = look.hatColor ?? look.accent;
+    px(4, 1, 8, 3, c);
+    px(6, 0, 4, 1, c);
+    px(7, 2, 2, 1, look.accent);
+  } else if (look.hat === "kerchief") {
+    // A cloth knotted over the head, tails at the back.
+    const c = look.hatColor ?? look.accent;
+    px(5, 2, 6, 2, c);
+    px(11, 3, 1, 2, c);
+    px(12, 4, 1, 1, c);
   } else if (look.hat === "horns") {
     px(4, 0, 1, 3, look.accent);
     px(11, 0, 1, 3, look.accent);
@@ -117,6 +143,14 @@ function drawHumanoid(ctx: CanvasRenderingContext2D, look: Look) {
   px(7, 6, 1, 1, OUTLINE);
   px(9, 6, 1, 1, OUTLINE);
 
+  // A traveller's long coat, open at the front, down over the legs.
+  if (look.coat) {
+    px(4, 14, 3, 3, look.body);
+    px(9, 14, 3, 3, look.body);
+    px(4, 9, 1, 8, look.accent);
+    px(11, 9, 1, 8, look.accent);
+  }
+
   drawHat(px, look);
 
   if (look.weapon === "sword") {
@@ -138,6 +172,29 @@ function drawHumanoid(ctx: CanvasRenderingContext2D, look: Look) {
     px(13, 9, 1, 6, "#7a5230");
     px(12, 6, 3, 3, look.accent);
     px(13, 7, 1, 1, "#ffffff");
+  } else if (look.weapon === "lantern") {
+    // A lit lantern held out on its ring.
+    px(13, 10, 1, 2, "#6f7480");
+    px(12, 12, 3, 1, "#6f7480");
+    px(12, 13, 3, 2, "#ffd98a");
+    px(12, 15, 3, 1, "#6f7480");
+  } else if (look.weapon === "scroll") {
+    // Rolled plans under the arm, tied with blue.
+    px(11, 11, 5, 2, "#e8dcc0");
+    px(15, 11, 1, 2, "#c9b58a");
+    px(13, 11, 1, 2, "#3f6fa8");
+  } else if (look.weapon === "pack") {
+    // A big pack on the back, showing past the shoulder, with a rolled blanket on top.
+    px(0, 8, 3, 7, "#7a5230");
+    px(0, 7, 3, 1, look.accent);
+    px(1, 11, 1, 1, "#e0b12e");
+  } else if (look.weapon === "basket") {
+    // A basket of greens on the arm.
+    px(12, 12, 4, 3, "#b98b5a");
+    px(12, 11, 1, 1, "#b98b5a");
+    px(15, 11, 1, 1, "#b98b5a");
+    px(13, 11, 2, 1, "#6fae4a");
+    px(13, 13, 2, 1, "#8a6a44");
   } else if (look.weapon === "bow") {
     px(13, 6, 1, 1, "#7a5230");
     px(14, 7, 1, 7, "#7a5230");

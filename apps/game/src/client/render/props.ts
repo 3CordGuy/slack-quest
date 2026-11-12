@@ -42,6 +42,11 @@ class Builder {
     return this.mesh(new THREE.ConeGeometry(radius, h, sides), new THREE.MeshLambertMaterial({ color, flatShading: true }), x, y + h / 2, z);
   }
 
+  /** A lit ball centred on the point given. */
+  ball(color: string, radius: number, x: number, y: number, z: number, detail = 1): THREE.Mesh {
+    return this.mesh(new THREE.IcosahedronGeometry(radius, detail), new THREE.MeshLambertMaterial({ color, flatShading: true }), x, y, z);
+  }
+
   /** Something that glows: drawn unlit, centred on the point given. */
   glow(color: string, geometry: THREE.BufferGeometry, x: number, y: number, z: number): THREE.Mesh {
     return this.mesh(geometry, new THREE.MeshBasicMaterial({ color }), x, y, z);
@@ -400,6 +405,43 @@ const MODELS: Record<string, (b: Builder) => void> = {
   coin_pile(b) {
     const coins: [number, number, number][] = [[0, 0, 0], [0, 0.016, 0], [0.005, 0.032, 0.004], [0.06, 0, 0.03], [0.06, 0.016, 0.03], [-0.05, 0, 0.04], [-0.02, 0, -0.06], [0.04, 0, -0.05]];
     for (const [x, y, z] of coins) b.post(GOLD, 0.035, 0.035, 0.015, x, y, z, 8);
+  },
+  // Far goods, sold only by a traveling salesman.
+  globe(b) {
+    b.post(DARK_WOOD, 0.08, 0.2, 0.08);
+    b.post(DARK_WOOD, 0.04, 0.05, 0.5, 0, 0.08, 0, 5);
+    b.ball("#3f7fb8", 0.24, 0, 0.8, 0);
+    // A couple of guessed-at coastlines, and the brass ring it turns in.
+    b.box("#7aa64a", 0.16, 0.12, 0.06, 0.06, 0.78, 0.2);
+    b.box("#7aa64a", 0.1, 0.08, 0.06, -0.14, 0.86, 0.16);
+    b.box(GOLD, 0.04, 0.56, 0.04, 0.27, 0.52, 0);
+    b.box(GOLD, 0.04, 0.56, 0.04, -0.27, 0.52, 0);
+  },
+  ship_bottle(b) {
+    // A low stand, a green glass bottle on its side, and the little ship inside.
+    b.box(DARK_WOOD, 0.7, 0.36, 0.32);
+    b.box(WOOD, 0.74, 0.04, 0.36, 0, 0.36);
+    b.box(DARK_WOOD, 0.24, 0.3, 0.2, 0, 0.4);
+    b.box(WOOD, 0.28, 0.05, 0.08, 0, 0.42);
+    b.box(CLOTH, 0.02, 0.18, 0.14, 0, 0.47);
+    const glass = b.box("#b8e0cc", 0.56, 0.22, 0.22, 0, 0.4);
+    const m = glass.material as THREE.MeshLambertMaterial;
+    m.transparent = true;
+    m.opacity = 0.4;
+    m.depthWrite = false;
+    b.box("#b8e0cc", 0.12, 0.1, 0.1, 0.34, 0.46);
+    b.box("#8a6a44", 0.05, 0.08, 0.08, 0.42, 0.47);
+  },
+  shell_chimes(b) {
+    b.post(IRON, 0.14, 0.18, 0.06);
+    b.post(DARK_WOOD, 0.04, 0.04, 1.35, 0, 0.06, 0, 5);
+    b.box(DARK_WOOD, 0.66, 0.05, 0.05, 0, 1.3);
+    // Strings of shells hanging off the arm.
+    [-0.28, -0.14, 0.14, 0.28].forEach((x, i) => {
+      const drop = 0.3 + (i % 2) * 0.12;
+      b.box("#d8d0c0", 0.01, drop, 0.01, x, 1.3 - drop);
+      b.cone(i % 2 ? "#f4d9c6" : "#f4efe1", 0.06, 0.1, x, 1.24 - drop, 0, 6);
+    });
   },
   trophy_relic(b) {
     b.pedestal();

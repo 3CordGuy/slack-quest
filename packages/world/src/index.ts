@@ -22,5 +22,6 @@ export * from "./drops";
 export * from "./gather";
 export * from "./projects";
 export * from "./pub";
+export * from "./salesman";
 export * from "./shoals";
 export * from "./trade";

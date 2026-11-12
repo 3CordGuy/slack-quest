@@ -4,7 +4,7 @@
 
 import { Hono, type Context } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
-import { HARBOR_PIERS, HARBOR_PLOTS, HERO_CLASSES, MAX_CREW, PUB_MAX_TALK, PUB_MENU, hutPerks, makeRng, pubBuff, rollStartingStats } from "@gantt-quest/world";
+import { HARBOR_PIERS, HARBOR_PLOTS, HERO_CLASSES, MAX_CREW, PUB_MAX_TALK, PUB_MENU, dueIn, hutPerks, nextSalesmanVisit, salesman, salesmanVisitAt, makeRng, pubBuff, rollStartingStats } from "@gantt-quest/world";
 import { barkeepReply } from "./server/ai";
 import { noticeBoard } from "./server/board";
 import { sendSignInCode } from "./server/email";
@@ -58,6 +58,7 @@ import {
 
 import { enterHut } from "./server/hut-room";
 import { enterPub } from "./server/pub-room";
+import { buyFromSalesman, getSalesman } from "./server/salesman";
 import { gatherStatus, rest, startOuting, stepOuting } from "./server/gather";
 import { builtProjectIds, contribute, crewWorks, projectStock } from "./server/projects";
 import { acceptTrade, closeTrade, listTrades, proposeTrade } from "./server/trade";
@@ -311,6 +312,36 @@ app.post("/api/pub/order", async (c) => {
   return c.json({ orders, buff: pubBuff(orders), rested: result.rested });
 });
 
+// The traveling salesman in the pub, if one is in, and their stock as this player sees it; otherwise when the next is due.
+// `x-gq-salesman` forces a visitor in the dev server only (see server/salesman.ts).
+app.get("/api/pub/salesman", async (c) => {
+  const result = await getSalesman(c.env.DB, c.get("player").id, c.req.header("x-gq-salesman"));
+  return typeof result === "string" ? c.json({ error: result }, 409) : c.json(result);
+});
+
+// Buy one entry of the salesman's stock. Only the index is named; the stock and its prices are derived here.
+app.post("/api/pub/salesman/buy", async (c) => {
+  const player = c.get("player");
+  const body = await c.req.json<{ index?: unknown }>().catch(() => ({}) as { index?: unknown });
+  const result = await buyFromSalesman(c.env.DB, player.id, body.index, c.req.header("x-gq-salesman"));
+  if (typeof result === "string") return c.json({ error: result }, 409);
+  // A blueprint or a furnishing shows up in their hut, if they have it open in another tab.
+  if (result.got.goods.kind === "blueprint" || result.got.goods.kind === "furnishing") c.executionCtx.waitUntil(refreshHut(c.env, player.id));
+  return c.json(result);
+});
+
+/** What the barkeep knows about traveling salesmen: who is in, or who is due next. */
+function salesmanFact(crewId: string): string {
+  const at = Date.now();
+  const here = salesmanVisitAt(crewId, at);
+  const who = (id: string) => salesman(id)!;
+  if (here) return `A traveling salesman is in the pub now, in the corner by the far wall: ${who(here.salesmanId).name}, ${who(here.salesmanId).trade}. Gone ${dueIn(here.endsAt - at)}.`;
+  const next = nextSalesmanVisit(crewId, at);
+  return next
+    ? `No traveling salesman is in. Word is ${who(next.salesmanId).name}, ${who(next.salesmanId).trade}, is due ${dueIn(next.startsAt - at)}.`
+    : "No traveling salesman is in, and none is due that you know of.";
+}
+
 // A word with the barkeep. He only talks: nothing he says changes anything.
 app.post("/api/pub/talk", async (c) => {
   const player = c.get("player");
@@ -324,6 +355,7 @@ app.post("/api/pub/talk", async (c) => {
     ...PUB_MENU.map((i) => `On the board: ${i.name}, ${i.price} gold (${i.kind}). ${i.blurb}`),
     "A hero can carry one drink and one meal into their next voyage; they do a little good there and are gone after.",
     "There is a dice table in the pub where crewmates bluff each other for a small stake.",
+    salesmanFact(crew.id),
     ...(board.goal ? [`The crew's goal this week: ${board.goal.text}.`] : []),
     ...harbor.log.slice(0, 3).map((v) => `Recent voyage: "${v.title}" ended in ${v.outcome === "victory" ? "a win" : v.outcome === "defeat" ? "a loss" : v.outcome}, sailed by ${v.crew.join(", ") || "nobody he knows"}.`),
   ];
