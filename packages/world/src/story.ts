@@ -362,12 +362,22 @@ export function frameById(id: string): StoryFrame | undefined {
   return STORY_FRAMES.find((f) => f.id === id);
 }
 
-export function pickFrame(rng: Rng): StoryFrame {
-  return rng.pick(STORY_FRAMES);
+/**
+ * Pick the kind of story for a voyage. `recent` is the crew's last voyages'
+ * frame ids, newest first: the most recent half of the frames are skipped,
+ * so a crew never sails the same kind of story twice running and works
+ * through the others before one comes round again.
+ */
+export function pickFrame(rng: Rng, recent: string[] = []): StoryFrame {
+  const skip = new Set(recent.slice(0, Math.floor(STORY_FRAMES.length / 2)));
+  const fresh = STORY_FRAMES.filter((f) => !skip.has(f.id));
+  return rng.pick(fresh.length > 0 ? fresh : STORY_FRAMES);
 }
 
-export function pickDemand(frame: StoryFrame, rng: Rng): Demand {
-  return rng.pick(frame.demands);
+/** Pick what the islander asks, avoiding the ask `recent` names (the crew's last) when there is another. */
+export function pickDemand(frame: StoryFrame, rng: Rng, recent?: string): Demand {
+  const fresh = frame.demands.filter((d) => d.id !== recent);
+  return rng.pick(fresh.length > 0 ? fresh : frame.demands);
 }
 
 /** Stands in for a demand on stories saved before demands existed: nothing is asked. */

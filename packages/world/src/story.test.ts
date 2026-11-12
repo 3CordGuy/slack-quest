@@ -11,6 +11,8 @@ import {
   factPoi,
   frameById,
   generateMap,
+  pickDemand,
+  pickFrame,
   makeRng,
   poiById,
   requiredDoom,
@@ -240,6 +242,34 @@ describe("hints", () => {
       const h = storyHints(makeRng(i), rescue);
       expect(rescue.hints!.relic).toContain(h.relic);
       expect(rescue.hints!.villain).toContain(h.villain);
+    }
+  });
+});
+
+describe("variety between voyages", () => {
+  it("never repeats the crew's last kinds of story, and cycles through them all", () => {
+    const recent: string[] = [];
+    const seen = new Set<string>();
+    for (let i = 0; i < 40; i++) {
+      const frame = pickFrame(makeRng(seedFromString(`voyage-${i}`)), recent);
+      expect(recent.slice(0, Math.floor(STORY_FRAMES.length / 2))).not.toContain(frame.id);
+      recent.unshift(frame.id);
+      seen.add(frame.id);
+    }
+    expect(seen.size).toBe(STORY_FRAMES.length);
+  });
+
+  it("picks freely for a crew with no voyages, and copes with every frame being recent", () => {
+    const ids = STORY_FRAMES.map((f) => f.id);
+    expect(ids).toContain(pickFrame(makeRng(1)).id);
+    expect(ids).toContain(pickFrame(makeRng(1), [...ids, ...ids]).id);
+  });
+
+  it("asks something different of the crew than last time, when the story allows it", () => {
+    for (const frame of STORY_FRAMES) {
+      for (const last of frame.demands) {
+        for (let i = 0; i < 10; i++) expect(pickDemand(frame, makeRng(i), last.id).id).not.toBe(last.id);
+      }
     }
   });
 });
