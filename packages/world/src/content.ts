@@ -24,7 +24,14 @@ export interface HeroClass {
   blurb: string;
   /** First entry is the starting weapon; the rest drop as loot. */
   weapons: string[];
+  /** Something the class always does in a fight, if it has one. Shown when choosing a class. */
+  passive?: string;
 }
+
+/** HP the Backend Druid grows back at the start of each of its turns in a fight. */
+export const DRUID_REGEN = 2;
+/** Extra damage on every other hero's attacks while a Frontend Bard is standing. One Bard's worth, however many there are. */
+export const BARD_AURA = 2;
 
 export const HERO_CLASSES: HeroClass[] = [
   {
@@ -44,6 +51,26 @@ export const HERO_CLASSES: HeroClass[] = [
     name: "Refactor Rogue",
     blurb: "Fast and precise. Opens wounds with Dexterity and usually acts first.",
     weapons: ["daggers", "shortbow"],
+  },
+  {
+    id: "backend_druid",
+    name: "Backend Druid",
+    blurb: "Hardy healer. Mends allies and tangles enemies with Intelligence, and slowly grows back.",
+    weapons: ["root_staff", "sickle"],
+    passive: `Deep roots: heals ${DRUID_REGEN} HP at the start of each of its turns in a fight.`,
+  },
+  {
+    id: "frontend_bard",
+    name: "Frontend Bard",
+    blurb: "Makes everyone better. Plays the party up and the enemy down with Intelligence.",
+    weapons: ["lute", "flute"],
+    passive: `Encore: while the Bard is standing, every other hero's attacks do +${BARD_AURA} damage.`,
+  },
+  {
+    id: "staff_sage",
+    name: "Staff Sage",
+    blurb: "Raw power. The hardest-hitting spells of any class, and little else to fall back on.",
+    weapons: ["orb", "scepter"],
   },
 ];
 
@@ -84,6 +111,15 @@ export const ABILITIES: Record<string, AbilityDef> = {
   quick_stab: { id: "quick_stab", name: "Quick Stab", stat: "dex", rolls: 2, target: "enemy", damage: 8, perfect: { effect: "bleeding", turns: 3 }, blurb: "Reliable. Perfect: bleeding." },
   flurry: { id: "flurry", name: "Flurry", stat: "dex", rolls: 4, target: "enemy", damage: 12, blurb: "Four cuts; every one has to land." },
   aimed_shot: { id: "aimed_shot", name: "Aimed Shot", stat: "dex", rolls: 3, target: "enemy", damage: 10, blurb: "A careful, heavy shot." },
+  thornlash: { id: "thornlash", name: "Thornlash", stat: "int_stat", rolls: 3, target: "enemy", damage: 8, perfect: { effect: "bleeding", turns: 3 }, blurb: "Thorns that dig in. Perfect: bleeding." },
+  rejuvenate: { id: "rejuvenate", name: "Rejuvenate", stat: "int_stat", rolls: 2, target: "ally", heal: 9, blurb: "Heal an ally (or yourself)." },
+  overgrowth: { id: "overgrowth", name: "Overgrowth", stat: "int_stat", rolls: 3, target: "all_enemies", damage: 5, blurb: "Roots burst up under every enemy." },
+  dissonance: { id: "dissonance", name: "Dissonance", stat: "int_stat", rolls: 3, target: "enemy", damage: 7, perfect: { effect: "stunned", turns: 1 }, blurb: "A note nobody can think through. Perfect: stuns." },
+  encore: { id: "encore", name: "Second Wind", stat: "int_stat", rolls: 2, target: "ally", heal: 7, blurb: "A tune that gets an ally (or yourself) back on their feet." },
+  cacophony: { id: "cacophony", name: "Cacophony", stat: "int_stat", rolls: 4, target: "all_enemies", damage: 5, blurb: "Every enemy hears it." },
+  manifest: { id: "manifest", name: "Manifest", stat: "int_stat", rolls: 3, target: "enemy", damage: 13, blurb: "Raw force. The heaviest single spell there is." },
+  arcane_ward: { id: "arcane_ward", name: "Arcane Ward", stat: "int_stat", rolls: 2, target: "self", heal: 3, selfEffect: { effect: "guarded", turns: 1 }, blurb: "Wrap yourself in a ward and steady your breath." },
+  meteor: { id: "meteor", name: "Meteor", stat: "int_stat", rolls: 4, target: "all_enemies", damage: 9, perfect: { effect: "burning", turns: 3 }, blurb: "Everything has to land. Perfect: sets them all burning." },
   pin_down: { id: "pin_down", name: "Pin Down", stat: "agi", rolls: 2, target: "enemy", damage: 4, perfect: { effect: "stunned", turns: 1 }, blurb: "Perfect: stuns." },
 };
 
@@ -101,6 +137,12 @@ export const WEAPONS: Record<string, WeaponDef> = {
   tome: { id: "tome", name: "Runbook Tome", classId: "devops_mage", abilities: ["chain_spark", "hex_bolt", "mend"] },
   daggers: { id: "daggers", name: "Twin Diff Daggers", classId: "refactor_rogue", abilities: ["quick_stab", "flurry"] },
   shortbow: { id: "shortbow", name: "Hotfix Shortbow", classId: "refactor_rogue", abilities: ["aimed_shot", "pin_down", "quick_stab"] },
+  root_staff: { id: "root_staff", name: "Root Cause Staff", classId: "backend_druid", abilities: ["thornlash", "rejuvenate"] },
+  sickle: { id: "sickle", name: "Garbage Collector's Sickle", classId: "backend_druid", abilities: ["overgrowth", "thornlash", "rejuvenate"] },
+  lute: { id: "lute", name: "Responsive Lute", classId: "frontend_bard", abilities: ["dissonance", "encore"] },
+  flute: { id: "flute", name: "Hot-Reload Flute", classId: "frontend_bard", abilities: ["cacophony", "dissonance", "encore"] },
+  orb: { id: "orb", name: "Monolith Orb", classId: "staff_sage", abilities: ["manifest", "arcane_ward"] },
+  scepter: { id: "scepter", name: "Legacy Scepter", classId: "staff_sage", abilities: ["meteor", "manifest", "arcane_ward"] },
 };
 
 // ---------- enemies ----------

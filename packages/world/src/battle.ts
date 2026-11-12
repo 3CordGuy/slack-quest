@@ -5,7 +5,7 @@
 
 import type { StatKey } from "@gantt-quest/core";
 import { rollCheck, statPct, type CheckResult } from "./check";
-import { ABILITIES, EFFECT_TICK, ENEMIES, type AbilityDef, type EffectKind } from "./content";
+import { ABILITIES, BARD_AURA, DRUID_REGEN, EFFECT_TICK, ENEMIES, type AbilityDef, type EffectKind } from "./content";
 import { afterArmor, type Outfit } from "./gear";
 import type { Rng } from "./rng";
 
@@ -193,6 +193,13 @@ function advance(state: BattleState, rng: Rng, events: BattleEvent[]) {
     if (state.status !== "active") break;
     if (actor.down) continue;
 
+    // The Backend Druid grows back a little at the start of each of its turns, stunned or not.
+    if (actor.side === "hero" && actor.kind === "backend_druid" && actor.hp < actor.maxHp) {
+      const amount = Math.min(actor.maxHp - actor.hp, DRUID_REGEN);
+      actor.hp += amount;
+      events.push({ t: "heal", actor: actor.id, target: actor.id, amount, ability: "Deep Roots" });
+    }
+
     const stun = actor.effects.find((e) => e.kind === "stunned");
     if (stun) {
       actor.effects = actor.effects.filter((e) => e !== stun);
@@ -266,6 +273,8 @@ function resolveAbility(
   });
   events.push({ t: "check", actor: actor.id, check });
   const scale = check.successes / def.rolls;
+  // While a Frontend Bard stands, every other hero hits a little harder.
+  const aura = actor.side === "hero" && actor.kind !== "frontend_bard" && living(state, "hero").some((h) => h.kind === "frontend_bard") ? BARD_AURA : 0;
 
   for (const target of targets) {
     if (def.damage !== undefined) {
@@ -273,7 +282,7 @@ function resolveAbility(
         events.push({ t: "miss", actor: actor.id, target: target.id, ability: def.name });
         continue;
       }
-      const amount = damage(state, target, Math.round((def.damage + actor.level + actor.power) * scale), events);
+      const amount = damage(state, target, Math.round((def.damage + actor.level + actor.power + aura) * scale), events);
       events.push({ t: "hit", actor: actor.id, target: target.id, amount, ability: def.name, perfect: check.perfect });
       if (check.perfect && def.perfect && !target.down) addEffect(target, def.perfect.effect, def.perfect.turns, events);
     }

@@ -76,6 +76,12 @@ const WEAPON_ICON: Record<string, string> = {
   tome: "scroll-unfurled",
   daggers: "daggers",
   shortbow: "crossbow",
+  root_staff: "root-staff",
+  sickle: "sickle",
+  lute: "lute",
+  flute: "flute",
+  orb: "orb",
+  scepter: "scepter",
 };
 
 interface Base {

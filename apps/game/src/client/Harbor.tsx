@@ -122,6 +122,7 @@ function Creation({ draft, busy, act, invite }: { draft: Character | null; busy:
           <button key={c.id} className={`class-card ${classId === c.id ? "selected" : ""}`} onClick={() => setClassId(c.id)}>
             <strong>{c.name}</strong>
             <span>{c.blurb}</span>
+            {c.passive && <span className="class-passive">{c.passive}</span>}
             <span className="muted">Starts with {WEAPONS[c.weapons[0]].name}</span>
           </button>
         ))}
