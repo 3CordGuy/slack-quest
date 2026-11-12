@@ -1353,6 +1353,23 @@ export class WorldRenderer {
     const rect = this.renderer.domElement.getBoundingClientRect();
     const ndc = new THREE.Vector2(((this.pointer.x - rect.left) / rect.width) * 2 - 1, -((this.pointer.y - rect.top) / rect.height) * 2 + 1);
     this.raycaster.setFromCamera(ndc, this.camera);
+    // A figure stands up out of its hex, so a click on it would otherwise land on the ground behind.
+    // Clicking someone (other than yourself) means the hex they stand on.
+    if (!this.state?.battle) {
+      const others = [...this.units.entries()].filter(([id, u]) => id !== this.state?.you && u.sprite.visible);
+      const onFigure = this.raycaster.intersectObjects(others.map(([, u]) => u.sprite), false)[0];
+      const unit = onFigure && others.find(([, u]) => u.sprite === onFigure.object)?.[1];
+      if (unit) {
+        let best: Tile | null = null;
+        let bestD = Infinity;
+        for (const t of this.tiles) {
+          const w = hexToWorld(t);
+          const d = (w.x - unit.goal.x) ** 2 + (w.z - unit.goal.z) ** 2;
+          if (d < bestD) [best, bestD] = [t, d];
+        }
+        if (best) return { q: best.q, r: best.r };
+      }
+    }
     const hit = this.raycaster.intersectObject(this.terrain)[0];
     if (!hit || hit.instanceId === undefined) return null;
     const t = this.tiles[hit.instanceId];

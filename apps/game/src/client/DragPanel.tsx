@@ -94,6 +94,8 @@ interface Props extends HTMLAttributes<HTMLDivElement> {
   resizable?: boolean;
   /** Start folded on narrow screens. The player's own choice, once made, wins. */
   foldOnPhone?: boolean;
+  /** Change this number to unfold the panel from outside (it does not change the remembered choice). */
+  unfold?: number;
   children: ReactNode;
 }
 
@@ -109,7 +111,7 @@ function loadFolded(id: string, foldOnPhone: boolean): boolean {
   return foldOnPhone && isPhone();
 }
 
-export function DragPanel({ id, title, compact = false, resizable = false, foldOnPhone = false, className = "", children, style, ...rest }: Props) {
+export function DragPanel({ id, title, compact = false, resizable = false, foldOnPhone = false, unfold = 0, className = "", children, style, ...rest }: Props) {
   const [size, setSize] = useState<Size | null>(() => (resizable ? loadSize(id) : null));
   /** While a corner is being dragged: where the opposite corner must stay. */
   const pin = useRef<{ sx: number; sy: number; x: number; y: number } | null>(null);
@@ -124,6 +126,9 @@ export function DragPanel({ id, title, compact = false, resizable = false, foldO
       return !f;
     });
   };
+  useEffect(() => {
+    if (unfold) setFolded(false);
+  }, [unfold]);
   const el = useRef<HTMLDivElement>(null);
   const [offset, setOffset] = useState<Offset>(() => load(id));
   const [dragging, setDragging] = useState(false);
