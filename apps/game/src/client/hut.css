@@ -1,6 +1,8 @@
 /* Inside a hut (HutView). Shared layout classes come from styles.css. */
 
 .hut-hint { color: var(--gold); }
+.hut-turn { display: flex; gap: 4px; flex-wrap: wrap; margin: 4px 0 8px; }
+.hut-turn button { min-width: 32px; }
 
 .hut-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
 .hut-list button { width: 100%; text-align: left; }
