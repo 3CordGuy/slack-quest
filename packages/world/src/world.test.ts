@@ -46,7 +46,7 @@ const frame = STORY_FRAMES[0];
 const fill = CANNED_FILLS.stolen_relic[0];
 
 function heroInit(id: string, classId: string, weapon: string): HeroInit {
-  return { id, name: id.toUpperCase(), classId, level: 1, xp: 0, unspent: 0, base: { ...STARTING_STATS[classId] }, bonus: {}, weapon };
+  return { id, name: id.toUpperCase(), classId, level: 1, xp: 0, unspent: 0, base: { ...STARTING_STATS[classId] }, bonus: {}, weapon, weaponPower: 0, armor: 0 };
 }
 
 /** Apply an action that must succeed; collect events and effects. */
@@ -150,7 +150,7 @@ describe("battle", () => {
   const fighter = (id: string, over: Partial<Combatant> = {}): Combatant => ({
     id, side: "hero", name: id, kind: "qa_paladin", level: 1, hp: 30, maxHp: 30,
     pct: { str: 100, vit: 100, agi: 100, dex: 100, int_stat: 100 },
-    speed: 200, focus: 2, potions: 1, abilities: ["smite", "shield_wall", "cleave"], effects: [], down: false, ...over,
+    power: 0, armor: 0, speed: 200, focus: 2, potions: 1, abilities: ["smite", "shield_wall", "cleave"], effects: [], down: false, ...over,
   });
   const setup = (heroes: Combatant[], enemyKinds: string[], seed = 3) =>
     createBattle({ heroes, enemyKinds, avgLevel: 1, poiId: "camp" }, makeRng(seed));

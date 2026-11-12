@@ -4,6 +4,7 @@
 export * from "./rng";
 export * from "./check";
 export * from "./content";
+export * from "./gear";
 export * from "./map";
 export * from "./battle";
 export * from "./progression";

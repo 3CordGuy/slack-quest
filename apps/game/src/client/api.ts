@@ -1,6 +1,7 @@
 // HTTP helpers for the Harbor screens.
 
 import type { StatKey } from "@gantt-quest/core";
+import type { ItemDef, ShopEntry } from "@gantt-quest/world";
 
 /** Optional ?p=2 gives this tab its own guest session, for testing two players on one machine. */
 export const PROFILE = new URLSearchParams(location.search).get("p") ?? "";
@@ -22,13 +23,21 @@ export interface Character {
 
 export interface InventoryItem {
   id: number;
-  kind: "weapon" | "trinket";
+  kind: ItemDef["kind"];
   ref: string;
   name: string;
-  rarity: string;
-  slot: string;
+  rarity: ItemDef["rarity"];
+  slot: ItemDef["slot"];
+  power: number;
+  level_req: number;
+  icon: string;
   stat_bonus_json: string;
   equipped: number;
+}
+
+export interface Shop {
+  refreshAt: number;
+  entries: (ShopEntry & { bought: boolean })[];
 }
 
 export interface Me {
@@ -73,6 +82,10 @@ export const api = {
   reroll: () => request("/api/character/reroll", {}),
   spend: (stat: StatKey) => request("/api/character/spend", { stat }),
   equip: (itemId: number) => request("/api/character/equip", { itemId }),
+  unequip: (itemId: number) => request("/api/character/unequip", { itemId }),
+  sell: (itemId: number) => request<{ gold: number }>("/api/inventory/sell", { itemId }),
+  shop: () => request<Shop>("/api/shop"),
+  buy: (index: number) => request("/api/shop/buy", { index }),
   createRun: () => request<{ code: string }>("/api/run", {}),
   createCrew: (name: string) => request("/api/crew", { name }),
   joinCrew: (code: string) => request("/api/crew/join", { code }),

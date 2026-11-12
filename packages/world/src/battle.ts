@@ -6,6 +6,7 @@
 import type { StatKey } from "@gantt-quest/core";
 import { rollCheck, statPct, type CheckResult } from "./check";
 import { ABILITIES, EFFECT_TICK, ENEMIES, type AbilityDef, type EffectKind } from "./content";
+import { afterArmor, type Outfit } from "./gear";
 import type { Rng } from "./rng";
 
 export interface ActiveEffect {
@@ -24,6 +25,12 @@ export interface Combatant {
   maxHp: number;
   /** Per-roll success chance by stat. Heroes only. */
   pct: Partial<Record<StatKey, number>>;
+  /** What a hero is visibly wearing, for drawing the sprite. */
+  outfit?: Outfit;
+  /** Added to this hero's ability damage. From the equipped weapon. */
+  power: number;
+  /** Blunts each enemy hit. From equipped armor. */
+  armor: number;
   /** Initiative base, 0–100. */
   speed: number;
   focus: number;
@@ -96,6 +103,8 @@ export function createBattle(setup: BattleSetup, rng: Rng): { state: BattleState
       hp,
       maxHp: hp,
       pct: {},
+      power: 0,
+      armor: 0,
       speed: def.speed,
       focus: 0,
       potions: 0,
@@ -137,9 +146,11 @@ function addEffect(target: Combatant, effect: EffectKind, turns: number, events:
   events.push({ t: "effect", target: target.id, effect, turns });
 }
 
-function damage(state: BattleState, target: Combatant, raw: number, events: BattleEvent[]): number {
+/** Apply damage. `direct` hits are blunted by armor; bleeding and burning are not. */
+function damage(state: BattleState, target: Combatant, raw: number, events: BattleEvent[], direct = true): number {
   const guarded = target.effects.some((e) => e.kind === "guarded");
-  const amount = Math.max(0, guarded ? Math.ceil(raw / 2) : raw);
+  const blunted = direct ? afterArmor(raw, target.armor) : raw;
+  const amount = Math.max(0, guarded ? Math.ceil(blunted / 2) : blunted);
   target.hp = Math.max(0, target.hp - amount);
   if (target.hp === 0 && !target.down) {
     target.down = true;
@@ -173,7 +184,7 @@ function advance(state: BattleState, rng: Rng, events: BattleEvent[]) {
     for (const e of [...actor.effects]) {
       const tick = EFFECT_TICK[e.kind];
       if (tick) {
-        const amount = damage(state, actor, tick, events);
+        const amount = damage(state, actor, tick, events, false);
         events.push({ t: "tick", target: actor.id, effect: e.kind, amount });
         e.turns -= 1;
       }
@@ -262,7 +273,7 @@ function resolveAbility(
         events.push({ t: "miss", actor: actor.id, target: target.id, ability: def.name });
         continue;
       }
-      const amount = damage(state, target, Math.round((def.damage + actor.level) * scale), events);
+      const amount = damage(state, target, Math.round((def.damage + actor.level + actor.power) * scale), events);
       events.push({ t: "hit", actor: actor.id, target: target.id, amount, ability: def.name, perfect: check.perfect });
       if (check.perfect && def.perfect && !target.down) addEffect(target, def.perfect.effect, def.perfect.turns, events);
     }

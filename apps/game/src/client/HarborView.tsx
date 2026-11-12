@@ -4,9 +4,10 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { HexPos } from "@gantt-quest/core";
-import { HARBOR_PIERS, HARBOR_PLOTS, HERO_CLASSES, MAX_PARTY, generateHarbor, harborPoi, poiAt, type HarborShip } from "@gantt-quest/world";
+import { HARBOR_PIERS, HARBOR_PLOTS, HARBOR_SHOP, HERO_CLASSES, MAX_PARTY, generateHarbor, harborPoi, poiAt, type HarborShip } from "@gantt-quest/world";
 import { api, type Me } from "./api";
-import { Sheet, useAct } from "./Harbor";
+import { InventoryScreen } from "./InventoryScreen";
+import { ShopScreen } from "./ShopScreen";
 import { WorldRenderer, type RenderState } from "./render/WorldRenderer";
 import { useHarbor } from "./useHarbor";
 
@@ -18,10 +19,10 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
   const renderer = useRef<WorldRenderer | null>(null);
   const [hover, setHover] = useState<HexPos | null>(null);
   const [sheet, setSheet] = useState(false);
+  const [shop, setShop] = useState(false);
   const [copied, setCopied] = useState(false);
   const [text, setText] = useState("");
   const [launchError, setLaunchError] = useState<string | null>(null);
-  const { busy, error: actError, act } = useAct(refresh);
   const chatEnd = useRef<HTMLDivElement>(null);
 
   const harbor = useHarbor((id, path) => renderer.current?.playEvents([{ t: "moved", heroId: id, path }]));
@@ -45,7 +46,7 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
       phase: "overworld",
       round: 0,
       map: { ...base, pois },
-      heroes: players.map((p) => ({ id: p.id, classId: p.classId, pos: p.pos, label: p.name })),
+      heroes: players.map((p) => ({ id: p.id, classId: p.classId, pos: p.pos, label: p.name, outfit: p.outfit })),
       turn: null,
       battle: null,
       story: null,
@@ -82,6 +83,7 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
   const hoverPoi = scene && hover ? poiAt(scene.map, hover) : undefined;
   const tip = !hoverPoi ? null
     : hoverPoi.kind === "board" ? "Notice board"
+    : hoverPoi.kind === "shop" ? "Market stall: buy and sell gear"
     : hoverPoi.kind === "plot" ? `${board.members.find((m) => `plot:${m.id}` === hoverPoi.id)?.name ?? "Someone"}'s hut`
     : hoverPoi.kind === "pier" ? `${moored.find((s) => `ship:${s.code}` === hoverPoi.id)?.captain ?? "A"}'s ship`
     : null;
@@ -111,7 +113,13 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
     harbor.send({ type: "say", text });
     setText("");
   };
-  const error = harbor.error ?? actError ?? launchError;
+  // After a change of gear, have the Harbor show everyone the new look.
+  const refreshAll = async () => {
+    await refresh();
+    harbor.send({ type: "refresh" });
+  };
+  const atShop = !!self && same(self.pos, HARBOR_SHOP);
+  const error = harbor.error ?? launchError;
 
   return (
     <div className="run harbor-view">
@@ -124,7 +132,7 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
         {harbor.crew && <span className="muted">Invite code {harbor.crew.id}</span>}
         <button className="small" onClick={copy}>{copied ? "Copied" : "Copy invite link"}</button>
         <button className="small" onClick={() => setSheet(true)}>
-          {me.character?.name}{me.character && me.character.unspent_points > 0 ? " ●" : ""}
+          Inventory · {me.character?.name}{me.character && me.character.unspent_points > 0 ? " ●" : ""}
         </button>
       </div>
 
@@ -197,35 +205,22 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
             <span>{shipHere.captain}'s ship · {shipHere.aboard.length}/{MAX_PARTY} aboard</span>
             <button className="primary" onClick={() => board_(shipHere)}>Walk aboard</button>
           </>
+        ) : atShop ? (
+          <>
+            <span>The market stall</span>
+            <button className="primary" onClick={() => setShop(true)}>Browse the wares</button>
+          </>
         ) : hutOwner ? (
           <span>{hutOwner.id === you ? "Your hut. Decorating and upgrades are coming." : `${hutOwner.name}'s hut.`}</span>
         ) : (
-          <span className="muted">Click a hex to walk. Ships are boarded at the piers.</span>
+          <span className="muted">Click a hex to walk. Ships are boarded at the piers; gear is traded at the market stall.</span>
         )}
       </div>
 
       {tip && <div className="tip">{tip}</div>}
       {error && <div className="toast">{error}</div>}
-      {sheet && me.character && (
-        <div className="overlay" onClick={(e) => e.target === e.currentTarget && setSheet(false)}>
-          <div className="sheet-wrap">
-            <Sheet character={me.character} inventory={me.inventory} busy={busy} act={act} />
-            <div className="row">
-              <button onClick={() => setSheet(false)}>Close</button>
-              <span className="spacer" />
-              <button
-                className="danger small"
-                disabled={busy}
-                onClick={() => {
-                  if (confirm("Leave this crew? You can rejoin with its invite code.")) void act(() => api.leaveCrew());
-                }}
-              >
-                Leave crew
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {sheet && me.character && <InventoryScreen me={me} refresh={refreshAll} onClose={() => setSheet(false)} />}
+      {shop && me.character && <ShopScreen me={me} refresh={refreshAll} onClose={() => setShop(false)} />}
     </div>
   );
 }

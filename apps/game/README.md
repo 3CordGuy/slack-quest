@@ -49,13 +49,15 @@ Build before deploying: `wrangler deploy` ships whatever the last build produced
 | `…/npc.ts` | Parsing and validating what the model proposes |
 | `…/view.ts` | What a client is allowed to see (hides the lair, NPC secrets, RNG) |
 | `…/harbor.ts` | The Harbor map, path check and message types |
+| `…/gear.ts` | Slots, rarities, item generation, armor, prices and the stall's stock |
 | `apps/game/src/worker.ts` | Harbor HTTP API and the WebSocket route |
 | `apps/game/src/server/run-room.ts` | One Durable Object per voyage: persist, broadcast, timers |
 | `apps/game/src/server/harbor-room.ts` | One Durable Object per crew: presence, walking, chat, dock board |
 | `apps/game/src/server/ai.ts` | Prompts and the Workers AI calls (and the mock) |
 | `apps/game/src/server/db.ts` | D1 access |
 | `apps/game/src/client/render/` | Three.js island renderer and placeholder sprites |
-| `apps/game/src/client/*.tsx` | Character creation, crew gate, shared Harbor and in-voyage HUD (React) |
+| `apps/game/src/client/*.tsx` | Character creation, crew gate, shared Harbor, inventory, market stall and in-voyage HUD (React) |
+| `apps/game/src/client/itemArt.ts` | Pixel-art item icons drawn in code, in the style of the hero sprites; the accent colour is the item's rarity |
 
 ## Rules worth knowing before changing things
 
@@ -83,6 +85,7 @@ In dev builds the page exposes `window.__gq` (`state`, `send`, and the `World` m
 - Battle numbers are not tuned; a focused party can stun-lock the boss.
 - Battle events animate in sequence but HP bars jump to the final value.
 - Huts are plots only: no interiors, decorating or upgrades yet, and only the first 12 crew members get one drawn.
-- The Harbor has no shops or provisioning yet. Crew chat is not stored.
+- The Harbor's only shop is the market stall (gear). No smithy, potions or provisioning yet. Crew chat is not stored.
+- Gear has no affixes, uniques, sets or elements, and gear found on an island cannot be equipped until you are back in the Harbor.
 - Accounts are still guest cookies.
 - No production deploy and no CI deploy. Staging is deployed by hand; production needs a workflow change and review.

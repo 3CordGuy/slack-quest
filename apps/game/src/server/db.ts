@@ -3,15 +3,23 @@
 
 import type { StatKey, Stats } from "@gantt-quest/core";
 import {
-  WEAPONS,
   applyXp,
+  equipProblem,
   heroClass,
+  loadoutOf,
+  outfitOf,
+  sellPrice,
+  shopStock,
   weaponItem,
   type HarborBoard,
   type HarborLogEntry,
   type HarborShip,
   type HeroInit,
   type ItemDef,
+  type ItemKind,
+  type Rarity,
+  type ShopEntry,
+  type Slot,
   type WorldState,
 } from "@gantt-quest/world";
 import type { HarborRoom } from "./harbor-room";
@@ -50,13 +58,42 @@ export interface CharacterRow {
 
 export interface InventoryRow {
   id: number;
-  kind: "weapon" | "trinket";
+  kind: ItemKind;
   ref: string;
   name: string;
-  rarity: string;
-  slot: "weapon" | "trinket";
+  rarity: Rarity;
+  slot: Slot;
+  power: number;
+  level_req: number;
+  icon: string;
   stat_bonus_json: string;
   equipped: number;
+}
+
+export function rowToItem(row: InventoryRow): ItemDef {
+  return {
+    kind: row.kind,
+    ref: row.ref,
+    name: row.name,
+    rarity: row.rarity,
+    slot: row.slot,
+    power: row.power,
+    statBonus: JSON.parse(row.stat_bonus_json) as Partial<Stats>,
+    levelReq: row.level_req,
+    icon: row.icon,
+  };
+}
+
+function insertItem(db: D1Database, playerId: string, item: ItemDef, equipped: boolean): D1PreparedStatement {
+  return db
+    .prepare(
+      "INSERT INTO inventory (player_id, kind, ref, name, rarity, slot, power, level_req, icon, stat_bonus_json, equipped, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(playerId, item.kind, item.ref, item.name, item.rarity, item.slot, item.power, item.levelReq, item.icon, JSON.stringify(item.statBonus), equipped ? 1 : 0, Date.now());
+}
+
+async function getItem(db: D1Database, playerId: string, itemId: number): Promise<InventoryRow | null> {
+  return db.prepare("SELECT * FROM inventory WHERE id = ? AND player_id = ?").bind(itemId, playerId).first<InventoryRow>();
 }
 
 const now = () => Date.now();
@@ -116,11 +153,7 @@ export async function confirmCharacter(db: D1Database, playerId: string): Promis
   const weapon = weaponItem(cls.weapons[0]);
   await db.batch([
     db.prepare("UPDATE characters SET status = 'active' WHERE player_id = ?").bind(playerId),
-    db
-      .prepare(
-        "INSERT INTO inventory (player_id, kind, ref, name, rarity, slot, stat_bonus_json, equipped, created_at) VALUES (?, 'weapon', ?, ?, 'common', 'weapon', '{}', 1, ?)",
-      )
-      .bind(playerId, weapon.ref, weapon.name, now()),
+    insertItem(db, playerId, weapon, true),
   ]);
   return true;
 }
@@ -143,32 +176,112 @@ export async function spendPoint(db: D1Database, playerId: string, stat: string)
   return res.meta.changes > 0;
 }
 
-export async function equipItem(db: D1Database, playerId: string, itemId: number): Promise<boolean> {
-  const item = await db.prepare("SELECT * FROM inventory WHERE id = ? AND player_id = ?").bind(itemId, playerId).first<InventoryRow>();
-  if (!item) return false;
-  if (item.kind === "weapon") {
-    const c = await getCharacter(db, playerId);
-    if (!c || WEAPONS[item.ref]?.classId !== c.class_id) return false;
-  }
+/** Equip an item, swapping out whatever is in its slot. Returns an error message or null. */
+export async function equipItem(db: D1Database, playerId: string, itemId: number): Promise<string | null> {
+  const [row, c] = await Promise.all([getItem(db, playerId, itemId), getCharacter(db, playerId)]);
+  if (!row || !c) return "No such item.";
+  const problem = equipProblem(rowToItem(row), c.class_id, c.level);
+  if (problem) return `${problem}.`;
   await db.batch([
-    db.prepare("UPDATE inventory SET equipped = 0 WHERE player_id = ? AND slot = ?").bind(playerId, item.slot),
+    db.prepare("UPDATE inventory SET equipped = 0 WHERE player_id = ? AND slot = ?").bind(playerId, row.slot),
     db.prepare("UPDATE inventory SET equipped = 1 WHERE id = ?").bind(itemId),
   ]);
-  return true;
+  return null;
+}
+
+export async function unequipItem(db: D1Database, playerId: string, itemId: number): Promise<string | null> {
+  const row = await getItem(db, playerId, itemId);
+  if (!row) return "No such item.";
+  // Abilities come from the weapon, so the main hand is only ever swapped.
+  if (row.slot === "main_hand") return "You need a weapon in hand. Equip another to swap.";
+  await db.prepare("UPDATE inventory SET equipped = 0 WHERE id = ?").bind(itemId).run();
+  return null;
+}
+
+/** Sell an unequipped item to the market stall. Returns the gold paid, or an error message. */
+export async function sellItem(db: D1Database, playerId: string, itemId: number): Promise<number | string> {
+  const row = await getItem(db, playerId, itemId);
+  if (!row) return "No such item.";
+  if (row.equipped) return "Unequip it first.";
+  const gold = sellPrice(rowToItem(row));
+  const res = await db.batch([
+    db.prepare("DELETE FROM inventory WHERE id = ? AND player_id = ? AND equipped = 0").bind(itemId, playerId),
+    db.prepare("UPDATE characters SET gold = gold + ? WHERE player_id = ? AND changes() > 0").bind(gold, playerId),
+  ]);
+  return res[0].meta.changes > 0 ? gold : "No such item.";
+}
+
+// ---------- the market stall ----------
+
+const DAY_MS = 24 * 60 * 60_000;
+
+export interface ShopView {
+  /** Epoch ms when the stock next changes. */
+  refreshAt: number;
+  entries: (ShopEntry & { bought: boolean })[];
+}
+
+export async function getShop(db: D1Database, playerId: string): Promise<ShopView | null> {
+  const c = await getCharacter(db, playerId);
+  if (!c || c.status !== "active") return null;
+  const day = Math.floor(now() / DAY_MS);
+  const bought = await db.prepare("SELECT idx FROM shop_purchases WHERE player_id = ? AND day = ?").bind(playerId, day).all<{ idx: number }>();
+  const taken = new Set(bought.results.map((r) => r.idx));
+  return {
+    refreshAt: (day + 1) * DAY_MS,
+    entries: shopStock(`${playerId}|${day}`, c.class_id, c.level).map((e) => ({ ...e, bought: taken.has(e.index) })),
+  };
+}
+
+/** Buy one entry of today's stock. The stock is re-derived here, so the client cannot name its own item or price. */
+export async function buyShopItem(db: D1Database, playerId: string, index: number): Promise<string | null> {
+  const [shop, c] = await Promise.all([getShop(db, playerId), getCharacter(db, playerId)]);
+  const entry = shop?.entries.find((e) => e.index === index);
+  if (!shop || !c || !entry) return "The stall has nothing like that.";
+  if (entry.bought) return "Already sold.";
+  if (c.gold < entry.price) return "Not enough gold.";
+  const day = Math.floor(now() / DAY_MS);
+  try {
+    // The purchase row's primary key makes a double-buy fail the whole batch.
+    const res = await db.batch([
+      db.prepare("INSERT INTO shop_purchases (player_id, day, idx) VALUES (?, ?, ?)").bind(playerId, day, index),
+      db.prepare("UPDATE characters SET gold = gold - ?1 WHERE player_id = ?2 AND gold >= ?1").bind(entry.price, playerId),
+      insertItem(db, playerId, entry.item, false),
+    ]);
+    if (res[1].meta.changes === 0) {
+      // Gold went elsewhere between the check and the batch: undo.
+      await db.batch([
+        db.prepare("DELETE FROM shop_purchases WHERE player_id = ? AND day = ? AND idx = ?").bind(playerId, day, index),
+        db.prepare("DELETE FROM inventory WHERE id = ?").bind(res[2].meta.last_row_id),
+      ]);
+      return "Not enough gold.";
+    }
+  } catch {
+    return "Already sold.";
+  }
+  return null;
 }
 
 /** Everything a run needs to know about a character when it boards. */
 export async function heroInitFor(db: D1Database, playerId: string): Promise<HeroInit | null> {
   const c = await getCharacter(db, playerId);
   if (!c || c.status !== "active") return null;
-  const equipped = (await getInventory(db, playerId)).filter((i) => i.equipped);
-  const bonus: Partial<Stats> = {};
-  for (const item of equipped) {
-    const b = JSON.parse(item.stat_bonus_json) as Partial<Stats>;
-    for (const key of STAT_COLUMNS) if (b[key]) bonus[key] = (bonus[key] ?? 0) + b[key]!;
-  }
-  const weapon = equipped.find((i) => i.kind === "weapon")?.ref ?? heroClass(c.class_id)!.weapons[0];
-  return { id: c.player_id, name: c.name, classId: c.class_id, level: c.level, xp: c.xp, unspent: c.unspent_points, base: statsOf(c), bonus, weapon };
+  const worn = (await getInventory(db, playerId)).filter((i) => i.equipped).map(rowToItem);
+  const loadout = loadoutOf(worn);
+  return {
+    id: c.player_id,
+    name: c.name,
+    classId: c.class_id,
+    level: c.level,
+    xp: c.xp,
+    unspent: c.unspent_points,
+    base: statsOf(c),
+    bonus: loadout.bonus,
+    weapon: loadout.weapon ?? heroClass(c.class_id)!.weapons[0],
+    weaponPower: loadout.weaponPower,
+    armor: loadout.armor,
+    outfit: outfitOf(worn),
+  };
 }
 
 // ---------- rewards ----------
@@ -182,22 +295,9 @@ export async function applyGrant(
 ): Promise<void> {
   const c = await getCharacter(db, playerId);
   if (!c) return;
-  let gold = grant.gold;
+  const gold = grant.gold;
   const stmts: D1PreparedStatement[] = [];
-  if (grant.item) {
-    const owned = grant.item.kind === "weapon"
-      ? await db.prepare("SELECT id FROM inventory WHERE player_id = ? AND ref = ?").bind(playerId, grant.item.ref).first()
-      : null;
-    // A second copy of a weapon is worth more as coin.
-    if (owned) gold += 15;
-    else {
-      stmts.push(
-        db
-          .prepare("INSERT INTO inventory (player_id, kind, ref, name, rarity, slot, stat_bonus_json, equipped, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?)")
-          .bind(playerId, grant.item.kind, grant.item.ref, grant.item.name, grant.item.rarity, grant.item.slot, JSON.stringify(grant.item.statBonus), now()),
-      );
-    }
-  }
+  if (grant.item) stmts.push(insertItem(db, playerId, grant.item, false));
   const next = applyXp({ classId: c.class_id, level: c.level, xp: c.xp, stats: statsOf(c), unspent: c.unspent_points }, grant.xp);
   stmts.push(
     db

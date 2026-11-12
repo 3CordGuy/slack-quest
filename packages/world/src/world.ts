@@ -16,7 +16,8 @@ import {
   type Combatant,
 } from "./battle";
 import { rollCheck, statPct, type CheckResult } from "./check";
-import { KEY_ITEMS, WEAPONS, rollItem, type ItemDef } from "./content";
+import { KEY_ITEMS, WEAPONS } from "./content";
+import { rollItem, type ItemDef, type Outfit } from "./gear";
 import { findPath, generateMap, poiAt, poiById, type Poi, type WorldMap } from "./map";
 import {
   MAX_NPC_MESSAGES,
@@ -48,6 +49,12 @@ export interface HeroInit {
   /** Sum of equipped gear bonuses. */
   bonus: Partial<Stats>;
   weapon: string;
+  /** Damage bonus from the equipped weapon. */
+  weaponPower: number;
+  /** Armor total from equipped gear. */
+  armor: number;
+  /** What the hero is visibly wearing, for drawing the sprite. */
+  outfit?: Outfit;
 }
 
 export interface Hero extends HeroInit {
@@ -201,6 +208,11 @@ export function createWorld(code: string, seed: string): WorldState {
 /** Bring a saved state up to the current shape. Call on every state loaded from storage. */
 export function upgradeWorld(state: WorldState): WorldState {
   if (state.bible && !state.bible.demand) state.bible.demand = NO_DEMAND;
+  // Heroes saved before gear had power and armor.
+  for (const hero of state.heroes) {
+    hero.weaponPower ??= 0;
+    hero.armor ??= 0;
+  }
   return state;
 }
 
@@ -314,7 +326,7 @@ function endRun(ctx: Ctx, outcome: "victory" | "defeat", reason: string) {
   state.result = { outcome, reason, epilogue: null };
   for (const hero of state.heroes) {
     if (outcome === "victory") {
-      grant(ctx, hero, { xp: 50, gold: 30, item: rollItem(ctx.rng, hero.classId, 0.8) });
+      grant(ctx, hero, { xp: 50, gold: 30, item: rollItem(ctx.rng, hero.classId, 0.8, hero.level) });
     } else {
       // Soft death: a capped gold loss, never the character.
       ctx.effects.push({ kind: "penalty", heroId: hero.id, goldPct: 0.1, cap: 25 });
@@ -359,6 +371,9 @@ function toCombatant(hero: Hero): Combatant {
     hp: hero.hp,
     maxHp: hero.maxHp,
     pct: { str: statPct(stats.str), int_stat: statPct(stats.int_stat), vit: statPct(stats.vit), agi: statPct(stats.agi), dex: statPct(stats.dex) },
+    outfit: hero.outfit,
+    power: hero.weaponPower ?? 0,
+    armor: hero.armor ?? 0,
     speed: statPct(stats.agi),
     focus: hero.focus,
     potions: hero.potions,
@@ -418,7 +433,7 @@ function finishBattle(ctx: Ctx) {
     grant(ctx, hero, {
       xp: battle.xp,
       gold: rng.int(5, 12) * (battle.boss ? 3 : 1),
-      item: battle.boss || rng.chance(0.4) ? rollItem(rng, hero.classId, battle.boss ? 0.6 : 0.2) : null,
+      item: battle.boss || rng.chance(0.4) ? rollItem(rng, hero.classId, battle.boss ? 0.6 : 0.2, hero.level) : null,
     });
   }
   if (battle.npcId) setFact(ctx, `fought:${battle.npcId}`);
@@ -466,7 +481,7 @@ function interact(ctx: Ctx, hero: Hero): string | null {
       grant(ctx, hero, {
         xp: 10,
         gold: rng.int(6, 14) * check.successes,
-        item: check.perfect ? rollItem(rng, hero.classId, 0.4) : null,
+        item: check.perfect ? rollItem(rng, hero.classId, 0.4, hero.level) : null,
       });
     }
   } else if (poi.kind === "camp" || poi.kind === "lair") {

@@ -3,7 +3,6 @@
 // and world.ts give it meaning.
 
 import type { StatKey, Stats } from "@gantt-quest/core";
-import type { Rng } from "./rng";
 
 /** Effect names match EFFECT_META in packages/core/src/flavor.ts, plus `guarded`. */
 export type EffectKind = "bleeding" | "burning" | "stunned" | "guarded";
@@ -154,52 +153,6 @@ export const ENEMIES: Record<string, EnemyDef> = {
     ],
   },
 };
-
-// ---------- loot ----------
-
-export type Rarity = "common" | "uncommon" | "rare";
-
-/** A persistent item: written to the player's inventory when it drops. */
-export interface ItemDef {
-  kind: "weapon" | "trinket";
-  /** Weapon id, or trinket id. */
-  ref: string;
-  name: string;
-  rarity: Rarity;
-  slot: "weapon" | "trinket";
-  statBonus: Partial<Stats>;
-}
-
-const TRINKETS: ItemDef[] = [
-  { kind: "trinket", ref: "lucky_lanyard", name: "Lucky Lanyard", rarity: "common", slot: "trinket", statBonus: { dex: 1 } },
-  { kind: "trinket", ref: "standup_whistle", name: "Stand-up Whistle", rarity: "common", slot: "trinket", statBonus: { agi: 1 } },
-  { kind: "trinket", ref: "rubber_duck", name: "Rubber Duck of Insight", rarity: "common", slot: "trinket", statBonus: { int_stat: 1 } },
-  { kind: "trinket", ref: "iron_mug", name: "Iron Coffee Mug", rarity: "common", slot: "trinket", statBonus: { vit: 1 } },
-  { kind: "trinket", ref: "grip_tape", name: "Grip Tape Wraps", rarity: "common", slot: "trinket", statBonus: { str: 1 } },
-  { kind: "trinket", ref: "oncall_pager", name: "On-call Pager", rarity: "uncommon", slot: "trinket", statBonus: { agi: 1, dex: 1 } },
-  { kind: "trinket", ref: "blameless_badge", name: "Blameless Badge", rarity: "uncommon", slot: "trinket", statBonus: { vit: 1, str: 1 } },
-  { kind: "trinket", ref: "root_token", name: "Root Access Token", rarity: "rare", slot: "trinket", statBonus: { int_stat: 2, dex: 1 } },
-  { kind: "trinket", ref: "legacy_keystone", name: "Legacy Keystone", rarity: "rare", slot: "trinket", statBonus: { str: 2, vit: 1 } },
-];
-
-export function weaponItem(weaponId: string): ItemDef {
-  const w = WEAPONS[weaponId];
-  return { kind: "weapon", ref: w.id, name: w.name, rarity: "uncommon", slot: "weapon", statBonus: {} };
-}
-
-/**
- * Roll one persistent item for a hero. `quality` 0..1 shifts the odds toward
- * rarer trinkets and the class's second weapon.
- */
-export function rollItem(rng: Rng, classId: string, quality: number): ItemDef {
-  const cls = heroClass(classId);
-  const second = cls?.weapons[1];
-  if (second && rng.chance(0.2 + quality * 0.3)) return weaponItem(second);
-  const r = rng.next() + quality * 0.35;
-  const rarity: Rarity = r > 1.05 ? "rare" : r > 0.65 ? "uncommon" : "common";
-  const pool = TRINKETS.filter((t) => t.rarity === rarity);
-  return { ...rng.pick(pool) };
-}
 
 // ---------- run-scoped key items ----------
 

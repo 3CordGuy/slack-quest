@@ -35,10 +35,10 @@ export interface Tile {
 
 /**
  * `landing` is where the party's ship puts in on an island. `pier`, `plot`
- * and `board` exist only in the Harbor: a moored ship, a crew member's hut,
- * and the notice board.
+ * `board` and `shop` exist only in the Harbor: a moored ship, a crew member's
+ * hut, the notice board and the market stall.
  */
-export type PoiKind = "landing" | "hut" | "lair" | "shrine" | "cache" | "camp" | "pier" | "plot" | "board";
+export type PoiKind = "landing" | "hut" | "lair" | "shrine" | "cache" | "camp" | "pier" | "plot" | "board" | "shop";
 
 export interface Poi {
   id: string;

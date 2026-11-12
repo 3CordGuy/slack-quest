@@ -19,7 +19,7 @@ import {
   type HarborPlayer,
   type HarborServerMessage,
 } from "@gantt-quest/world";
-import { getCrew, harborBoard, type Env } from "./db";
+import { getCrew, harborBoard, heroInitFor, type Env } from "./db";
 
 const MAP = generateHarbor();
 
@@ -81,6 +81,7 @@ export class HarborRoom extends DurableObject<Env> {
       classId: request.headers.get("x-player-class") ?? "",
       level: Number(request.headers.get("x-player-level") ?? 1),
       pos,
+      outfit: (await heroInitFor(this.env.DB, id))?.outfit,
     };
 
     const pair = new WebSocketPair();
@@ -113,6 +114,13 @@ export class HarborRoom extends DurableObject<Env> {
       if (!path) return;
       ws.serializeAttachment({ ...player, pos: path[path.length - 1] } satisfies HarborPlayer);
       this.broadcast({ type: "moved", id: player.id, path });
+    } else if (msg.type === "refresh") {
+      // They changed gear or levelled: re-read the character and show everyone the new look.
+      const hero = await heroInitFor(this.env.DB, player.id);
+      if (!hero) return;
+      const next: HarborPlayer = { ...player, name: hero.name, classId: hero.classId, level: hero.level, outfit: hero.outfit };
+      ws.serializeAttachment(next);
+      this.broadcast({ type: "joined", player: next });
     } else if (msg.type === "say") {
       const text = String(msg.text ?? "").replace(/\s+/g, " ").trim().slice(0, HARBOR_MAX_SAY);
       if (text) this.broadcast({ type: "said", id: player.id, name: player.name, text });
