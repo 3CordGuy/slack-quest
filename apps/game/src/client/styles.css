@@ -182,11 +182,9 @@ input:focus, button:focus-visible, select:focus { outline: 2px solid var(--accen
 /* ---------- Shared Harbor ---------- */
 .docks { width: min(340px, 40vw); max-height: calc(100vh - 270px); overflow-y: auto; }
 .docks h3:first-child { margin-top: 0; }
-.ships li, .roster li { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 5px 0; border-bottom: 1px dashed #37335a; }
+.ships li { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 5px 0; border-bottom: 1px dashed #37335a; }
 .ships { margin-bottom: 10px; }
 .log li { padding: 3px 0; font-size: 12px; }
-.roster li.away { opacity: 0.5; }
-.roster h3 { margin-top: 0; }
 .crew .panel h3 { margin-top: 0; }
 .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #4a4570; }
 .dot.on { background: var(--good); }
