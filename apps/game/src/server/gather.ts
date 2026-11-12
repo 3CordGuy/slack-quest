@@ -133,13 +133,33 @@ function payoutStatements(db: D1Database, playerId: string, claim: string, paid:
   );
 }
 
+/** How far behind the server's own clock a reported stop may be: a round trip, and a little over. */
+const TIMING_SLACK_MS = 600;
+
+/**
+ * Put the server's clock on a timed choice. An aim is stamped with now. A stop
+ * is judged by when the client says the player pressed, but only believed if
+ * it falls between when the marker started and when the request arrived,
+ * less a round trip at most. Anything else (a stop "from the future", or one
+ * far older than the request) is judged at the server's own estimate.
+ */
+function timed(state: GatherState, choice: GatherChoice, now: number): GatherChoice {
+  if (choice.t === "aim") return { ...choice, now };
+  if (choice.t !== "push" || !state.aim) return choice;
+  const elapsed = now - state.aim.startedAt;
+  const said = Number(choice.at);
+  const at = Number.isFinite(said) && said >= 0 && said <= elapsed + 50 && said >= elapsed - TIMING_SLACK_MS ? said : Math.max(0, elapsed - 150);
+  return { ...choice, at };
+}
+
 /** Apply one choice to the outing in progress. A finished outing is paid and cleared in the same batch. */
 export async function stepOuting(db: D1Database, playerId: string, choice: unknown): Promise<(GatherStatus & { paid?: Resources }) | string> {
   const stats = await gatherStats(db, playerId);
   if (!stats) return "Create a character first.";
   const row = await readRow(db, playerId);
   if (!row?.session_json) return "You are not out gathering.";
-  const step = stepGather(JSON.parse(row.session_json) as GatherState, (choice ?? {}) as GatherChoice);
+  const current = JSON.parse(row.session_json) as GatherState;
+  const step = stepGather(current, timed(current, (choice ?? {}) as GatherChoice, Date.now()));
   if (step.error) return step.error;
   const next = step.state;
 
