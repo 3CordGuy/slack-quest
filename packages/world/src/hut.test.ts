@@ -136,3 +136,28 @@ describe("making a hut bigger", () => {
     expect(upgradeProblem(top, 99999, { wood: 999, stone: 999, iron: 999 })).toBe("Your hut is as big as huts get.");
   });
 });
+
+describe("the resource bin on a new plot", () => {
+  it("takes what is held, never more than the shack still needs", async () => {
+    const { SHACK_COST, binDeposit, binFill, binFull, binNeeds } = await import("./index");
+    expect(binFull({})).toBe(false);
+    expect(binFill({})).toBe(0);
+    expect(binNeeds({})).toEqual(SHACK_COST);
+    // Only the kinds the shack needs go in, and only up to what it needs.
+    const first = binDeposit({}, { wood: 4, stone: 50, fur: 9 });
+    expect(first).toEqual({ wood: 4, stone: SHACK_COST.stone });
+    expect(binFull(first)).toBe(false);
+    expect(binFill(first)).toBeGreaterThan(0);
+    expect(binFill(first)).toBeLessThan(1);
+    // Nothing held, nothing in.
+    expect(binDeposit(first, {})).toEqual({});
+    const rest = binDeposit(first, { wood: 99 });
+    expect(rest).toEqual({ wood: SHACK_COST.wood! - 4 });
+    const full = addResources({ ...first }, rest);
+    expect(binFull(full)).toBe(true);
+    expect(binFill(full)).toBe(1);
+    expect(binDeposit(full, { wood: 5, stone: 5 })).toEqual({});
+    // Odd amounts from a request are cleaned before they count.
+    expect(binDeposit({}, { wood: -3, stone: 2.7 })).toEqual({ stone: 2 });
+  });
+});

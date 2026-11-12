@@ -48,7 +48,8 @@ import {
   orderAtPub,
   pubOrders,
   buyPlot,
-  plotOf,
+  fillBin,
+  hasShack,
 } from "./server/db";
 
 import { enterHut } from "./server/hut-room";
@@ -335,7 +336,7 @@ app.post("/api/rest", async (c) => {
   const player = c.get("player");
   const body = await c.req.json<{ place?: unknown }>().catch(() => ({}) as { place?: unknown });
   const place = body.place === "hut" ? "hut" : "bedroll";
-  if (place === "hut" && (await plotOf(c.env.DB, player.id)) === null) return c.json({ error: "You have no hut to rest in yet." }, 409);
+  if (place === "hut" && !(await hasShack(c.env.DB, player.id))) return c.json({ error: "You have no hut to rest in yet." }, 409);
   const result = await rest(c.env.DB, player.id, place);
   return typeof result === "string" ? c.json({ error: result }, 409) : c.json(result);
 });
@@ -350,6 +351,17 @@ app.post("/api/hut/plot", async (c) => {
   if (error) return c.json({ error }, 409);
   c.executionCtx.waitUntil(refreshHarbor(c.env, crew.id));
   return c.json({ plot: Number(body.plot) });
+});
+
+// Put materials into the resource bin on your plot. When it is full the shack goes up (`bin` comes back null).
+app.post("/api/hut/bin", async (c) => {
+  const player = c.get("player");
+  const crew = await crewFor(c.env.DB, player.id);
+  if (!crew) return c.json({ error: "Join a crew first." }, 409);
+  const result = await fillBin(c.env.DB, player.id);
+  if (typeof result === "string") return c.json({ error: result }, 409);
+  c.executionCtx.waitUntil(refreshHarbor(c.env, crew.id));
+  return c.json(result);
 });
 
 // ---------- Harbor projects ----------

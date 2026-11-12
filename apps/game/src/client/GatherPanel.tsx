@@ -229,7 +229,7 @@ export function GatherPanel({ spot, onClose }: { spot: GatherSpot; onClose(): vo
         {status && !outing && (
           left > 0
             ? <button className="primary" disabled={busy} onClick={() => run(() => api.gatherStart(spot))}>{words.start} · uses 1 stamina</button>
-            : <p className="bad">You are worn out for today. A voyage gives all three outings back, and a meal at the pub gives back one a day.</p>
+            : <p className="bad">You are worn out for today. A voyage or a rest in your own shack gives all three outings back, and a meal at the pub gives back one a day.</p>
         )}
 
         {outing && (

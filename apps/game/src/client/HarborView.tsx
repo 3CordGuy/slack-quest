@@ -4,7 +4,7 @@
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { HexPos } from "@gantt-quest/core";
-import { GATHER_SPOTS, GATHER_SPOT_IDS, HARBOR_BOARD, HARBOR_GATHER, HARBOR_NAME, HARBOR_PIERS, HARBOR_PLOTS, HARBOR_PUB, HARBOR_RING, HARBOR_SHOP, HARBOR_WORKS, HERO_CLASSES, MAX_PARTY, PLOT_PRICE, builtProjects, generateHarbor, harborPoi, hutTier, poiAt, type GatherSpot, type HarborShip } from "@gantt-quest/world";
+import { GATHER_SPOTS, GATHER_SPOT_IDS, HARBOR_BOARD, HARBOR_GATHER, HARBOR_NAME, HARBOR_PIERS, HARBOR_PLOTS, HARBOR_PUB, HARBOR_RING, HARBOR_SHOP, HARBOR_WORKS, HERO_CLASSES, MAX_PARTY, PLOT_PRICE, RESOURCE_KINDS, RESOURCE_LABEL, SHACK_COST, binFill, binNeeds, builtProjects, generateHarbor, harborPoi, hutTier, poiAt, type GatherSpot, type HarborShip, type Resources } from "@gantt-quest/world";
 import { api, type Me } from "./api";
 import { AccountPanel } from "./Account";
 import { NoticeBoard } from "./board/NoticeBoard";
@@ -21,6 +21,11 @@ import { WorksPanel } from "./works/WorksPanel";
 
 const className = (id: string) => HERO_CLASSES.find((c) => c.id === id)?.name ?? id;
 const same = (a: HexPos, b: HexPos) => a.q === b.q && a.r === b.r;
+/** "10 wood and 6 stone". */
+const costText = (r: Resources) => {
+  const parts = RESOURCE_KINDS.filter((k) => (r[k] ?? 0) > 0).map((k) => `${r[k]} ${RESOURCE_LABEL[k].toLowerCase()}`);
+  return parts.length > 1 ? `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}` : (parts[0] ?? "nothing");
+};
 
 export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown> }) {
   const mount = useRef<HTMLDivElement>(null);
@@ -53,10 +58,12 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
     const pois = [
       // The works are a building site until the lighthouse stands there.
       ...base.pois.map((p) => (p.id === "works" ? { ...p, cleared: lit } : p)),
-      // A plot someone has bought has their hut on it; the rest are staked out and for sale.
+      // A plot someone has bought has their hut on it, or a resource bin while the shack is still to go up; the rest are staked out and for sale.
       ...HARBOR_PLOTS.map((pos, i) => {
         const owner = board.members.find((m) => m.plot === i);
-        return owner ? { ...harborPoi(`plot:${owner.id}`, "plot", pos), tier: owner.hutTier ?? 1 } : harborPoi(`lot:${i}`, "lot", pos);
+        if (!owner) return harborPoi(`lot:${i}`, "lot", pos);
+        if (owner.bin) return { ...harborPoi(`site:${owner.id}`, "site", pos), fill: binFill(owner.bin) };
+        return { ...harborPoi(`plot:${owner.id}`, "plot", pos), tier: owner.hutTier ?? 1 };
       }),
       ...moored.map((s) => harborPoi(`ship:${s.code}`, "pier", HARBOR_PIERS[s.pier!])),
     ];
@@ -116,6 +123,7 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
     : hoverPoi.kind === "pub" ? "The pub: food, drink, Old Tam and the dice table"
     : hoverPoi.kind === "works" ? (lit ? "The lighthouse: crew projects" : "The works: crew projects")
     : hoverPoi.kind === "lot" ? (myPlot === null ? `A plot for sale: ${PLOT_PRICE} gold` : "An empty plot")
+    : hoverPoi.kind === "site" ? (hoverPoi.id === `site:${you}` ? "Your plot: fill the bin and the shack goes up" : `${board.members.find((m) => `site:${m.id}` === hoverPoi.id)?.name ?? "Someone"}'s plot: building a shack`)
     : hoverPoi.kind === "plot" ? `${board.members.find((m) => `plot:${m.id}` === hoverPoi.id)?.name ?? "Someone"}'s ${hutTier(hoverPoi.tier ?? 1).name.toLowerCase()}`
     : hoverPoi.kind === "pier" ? `${moored.find((s) => `ship:${s.code}` === hoverPoi.id)?.captain ?? "A"}'s ship`
     : null;
@@ -185,7 +193,32 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
     try {
       await api.buyPlot(plot);
       await refresh();
-      say_("The plot is yours. There is a shack on it already; go in and make it home.");
+      say_(`The plot is yours. Fill the resource bin on it with ${costText(SHACK_COST)} and the shack goes up.`);
+    } catch (e) {
+      say_((e as Error).message);
+    }
+  };
+  // The bin on your own plot, while the shack is still to go up, and what you hold that could go in it.
+  const myBin = hutOwner?.id === you ? hutOwner.bin : undefined;
+  const [held, setHeld] = useState<Resources | null>(null);
+  useEffect(() => {
+    if (!myBin) return;
+    let live = true;
+    api.hut().then((h) => live && setHeld(h.resources), () => undefined);
+    return () => {
+      live = false;
+    };
+  }, [!!myBin]);
+  const fillBin = async () => {
+    try {
+      const res = await api.fillBin();
+      setHeld((h) => {
+        const next = { ...(h ?? {}) };
+        for (const k of RESOURCE_KINDS) if (res.put[k]) next[k] = Math.max(0, (next[k] ?? 0) - res.put[k]!);
+        return next;
+      });
+      await refresh();
+      say_(res.bin === null ? `In go ${costText(res.put)}. The bin is full and the shack goes up!` : `In go ${costText(res.put)}. The bin still wants ${costText(binNeeds(res.bin))}.`);
     } catch (e) {
       say_((e as Error).message);
     }
@@ -212,6 +245,15 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
       }
     : atPub ? { title: "The pub", label: "Go in", run: () => goInside("pub", "pub") }
     : atWorks ? { title: lit ? "The lighthouse" : "The works", label: "See the crew's projects", run: () => setWorks(true) }
+    : myBin ? {
+        title: (
+          <>Your plot <span className="muted">· the shack's resource bin: {RESOURCE_KINDS.filter((k) => SHACK_COST[k]).map((k) => `${myBin[k] ?? 0}/${SHACK_COST[k]} ${RESOURCE_LABEL[k].toLowerCase()}`).join(", ")}{held ? ` · you hold ${RESOURCE_KINDS.filter((k) => SHACK_COST[k]).map((k) => `${held[k] ?? 0} ${RESOURCE_LABEL[k].toLowerCase()}`).join(", ")}` : ""}</span></>
+        ),
+        label: "Put materials in the bin",
+        run: () => void fillBin(),
+      }
+    // Someone else's plot with only a bin on it: nothing to do there yet.
+    : hutOwner?.bin ? null
     : hutOwner ? {
         title: <>{hutOwner.id === you ? "Your hut" : `${hutOwner.name}'s hut`} <span className="muted">· {hutTier(hutOwner.hutTier ?? 1).name}</span></>,
         label: hutOwner.id === you ? "Enter your hut" : `Enter ${hutOwner.name}'s hut`,
