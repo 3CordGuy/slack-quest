@@ -15,6 +15,7 @@ import { TileAction } from "./TileAction";
 import { HutToolbar, type ToolAction } from "./HutToolbar";
 import { WorldRenderer, type PlaceTarget, type RenderState } from "./render/WorldRenderer";
 import { HutContainer } from "./HutContainer";
+import { HeroSheet, useHeroSheet } from "./HeroSheet";
 import { useHut } from "./useHut";
 import "./hut.css";
 import { blurb, label } from "./labels";
@@ -89,7 +90,7 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
       phase: "overworld",
       round: 0,
       map: room,
-      heroes: players.map((p) => ({ id: p.id, classId: p.classId, pos: p.pos, label: p.name, outfit: p.outfit })),
+      heroes: players.map((p) => ({ id: p.id, classId: p.classId, pos: p.pos, label: p.name, outfit: p.outfit, level: p.level, xp: p.xp })),
       turn: null,
       battle: null,
       story: null,
@@ -183,10 +184,14 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
     return true;
   };
 
+  const heroSheet = useHeroSheet();
+
   useEffect(() => {
     const r = new WorldRenderer(mount.current!, {
       onHexClick: (pos) => click.current(pos),
       onHover: setHover,
+      onHeroClick: heroSheet.onHeroClick,
+      onHeroHover: heroSheet.onHeroHover,
       onPropClick: (id) => propClick.current(Number(id)),
       onPropHover: (id) => setHoverProp(id === null ? null : Number(id)),
       onPlace: (target) => place.current(target),
@@ -495,6 +500,7 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
           <button className="primary" onClick={onLeave}>Back to the Harbor</button>
         </div>
       )}
+      {heroSheet.open && you && <HeroSheet id={heroSheet.open} you={you} pinned={heroSheet.pinned} onClose={heroSheet.close} />}
     </div>
   );
 }

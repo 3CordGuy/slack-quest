@@ -11,9 +11,9 @@ import { Ambience } from "./ambience";
 import "./camera.css";
 import type { HexPos } from "@gantt-quest/core";
 import { hexDistance } from "@gantt-quest/core";
-import { BATTLE_JOIN_RANGE, ENEMIES, MOVE_COST, findPath, reachable, tileAt, type ClientState, type Outfit, type Phase, type Poi, type Tile, type WorldEvent, type WorldMap } from "@gantt-quest/world";
+import { BATTLE_JOIN_RANGE, ENEMIES, MOVE_COST, findPath, xpProgress, reachable, tileAt, type ClientState, type Outfit, type Phase, type Poi, type Tile, type WorldEvent, type WorldMap } from "@gantt-quest/world";
 import { ghostModel, propModel, tintGhost, type LightKind } from "./props";
-import { SPRITE_ASPECT, fxTexture, labelTexture, sleepZTexture, spriteKey, spriteTexture, textTexture, type FxKind } from "./sprites";
+import { SPRITE_ASPECT, fxTexture, labelTexture, plateKey, sleepZTexture, spriteKey, spriteTexture, textTexture, type FxKind, type PlateStats } from "./sprites";
 
 /** Spells fly as a coloured bolt; these are their colours, by ability name. */
 const SPELL_COLOR: Record<string, string> = {
@@ -38,7 +38,7 @@ export interface RenderState {
   round: number;
   map: WorldMap;
   /** `asleep`: lying down with eyes shut, z's rising, as on a bedroll in the Harbor. */
-  heroes: { id: string; classId: string; pos: HexPos; label?: string; outfit?: Outfit; asleep?: boolean }[];
+  heroes: RenderHero[];
   turn: { heroId: string; mp: number } | null;
   battle: ClientState["battle"];
   story: { npcs: { id: string; poi: string }[] } | null;
@@ -53,6 +53,36 @@ export interface RenderState {
   indoors?: boolean;
   /** A piece being carried: a ghost of it follows the pointer, and a click sets it down (RendererCallbacks.onPlace). */
   holding?: Holding | null;
+}
+
+/**
+ * Someone drawn standing on the map. A player's hero carries `level` (and,
+ * on a voyage, `hp`), which puts a plate over their head: the level, the
+ * name, an HP bar and an XP bar. Without `level` it is a plain name tag.
+ */
+export interface RenderHero {
+  id: string;
+  classId: string;
+  pos: HexPos;
+  /** The name tag. A voyage's heroes have none set, so their `name` is used once they have a plate. */
+  label?: string;
+  name?: string;
+  outfit?: Outfit;
+  /** `asleep`: lying down with eyes shut, z's rising, as on a bedroll in the Harbor. */
+  asleep?: boolean;
+  level?: number;
+  /** XP into the current level. */
+  xp?: number;
+  /** Absent off a voyage, where every hero is at full health. */
+  hp?: number;
+  maxHp?: number;
+}
+
+/** A hero's plate stats, or nothing for someone who is not a player's hero. */
+export function plateOf(h: RenderHero): PlateStats | undefined {
+  if (h.level === undefined) return undefined;
+  const hp = h.hp !== undefined && h.maxHp ? h.hp / h.maxHp : 1;
+  return { level: h.level, hp, xp: xpProgress(h.level, h.xp ?? 0) };
 }
 
 export interface SceneProp {
@@ -178,6 +208,10 @@ interface Want {
   pos: THREE.Vector3;
   size: number;
   label?: string;
+  /** Level, HP and XP drawn under the name. */
+  plate?: PlateStats;
+  /** Heroes sharing a hex: which of them this is, so their plates are stacked instead of overlapping. */
+  stack?: number;
   ring?: string;
   pulse?: boolean;
   hp?: number;
@@ -225,6 +259,10 @@ export interface RendererCallbacks {
   onPropClick?(id: string | number): boolean;
   /** The prop under the pointer changed. */
   onPropHover?(id: string | number | null): void;
+  /** A click on a hero standing on the map (yourself included). Return true if it was handled; otherwise it falls through to their hex. */
+  onHeroClick?(id: string): boolean;
+  /** The hero under the pointer changed. Never yourself. */
+  onHeroHover?(id: string | null): void;
   /** While carrying something: a click on a spot to set it down. */
   onPlace?(target: PlaceTarget): void;
   /** While carrying something: whether it may go at that spot (the ghost turns red if not). */
@@ -264,6 +302,8 @@ export class WorldRenderer {
   private aimedAt: PlaceTarget | null = null;
   /** The prop under the pointer, for its tooltip. */
   private hoverProp: string | number | null = null;
+  /** The hero under the pointer, for their sheet. */
+  private hoverHero: string | null = null;
   private sea: THREE.Mesh;
   private unitGroup = new THREE.Group();
   private fxGroup = new THREE.Group();
@@ -1587,7 +1627,9 @@ export class WorldRenderer {
         const pos = this.standAt(h.pos);
         pos.x += (i - (n - 1) / 2) * 0.6;
         pos.z += 0.25;
-        want.set(h.id, { kind: h.classId, outfit: h.outfit, pos, size: 1.5, label: h.label, ring: colorOf(h.id), pulse: state.turn?.heroId === h.id, asleep: h.asleep });
+        const plate = plateOf(h);
+        const label = h.label ?? (plate ? h.name : undefined);
+        want.set(h.id, { kind: h.classId, outfit: h.outfit, pos, size: 1.5, label, plate: label ? plate : undefined, stack: i, ring: colorOf(h.id), pulse: state.turn?.heroId === h.id, asleep: h.asleep });
       }
       for (const npc of state.story?.npcs ?? []) {
         const poi = state.map.pois.find((p) => p.id === npc.poi);
@@ -1669,21 +1711,26 @@ export class WorldRenderer {
       }
       if (w.pulse) this.pulsing.add(id);
 
-      if ((w.label ?? "") !== unit.labelText) {
+      const labelKey = w.label ? plateKey(w.label, w.plate) : "";
+      if (labelKey !== unit.labelText) {
         this.dropLabel(unit);
-        unit.labelText = w.label ?? "";
+        unit.labelText = labelKey;
         if (w.label) {
-          const { texture, aspect } = labelTexture(w.label);
+          const { texture, aspect } = labelTexture(w.label, w.plate);
           // A fixed size on screen, whatever the zoom: each pixel of the label lands on exactly one pixel of the view.
           unit.label = new THREE.Sprite(new THREE.SpriteMaterial({ map: texture, transparent: true, depthTest: false, sizeAttenuation: false }));
-          // Held a third of its own height clear of the head, at any zoom.
-          unit.label.center.set(0.5, -0.35);
           unit.label.userData.aspect = aspect;
           unit.label.userData.rows = texture.image.height;
           unit.label.userData.lift = w.asleep ? w.size * SPRITE_ASPECT + 0.3 : w.size + 0.3;
           unit.label.renderOrder = 7;
           this.unitGroup.add(unit.label);
         }
+      }
+      if (unit.label) {
+        // Held five of its own pixels clear of the head, at any zoom, however tall the plate;
+        // a second hero on the same hex has theirs a plate higher, so neither hides the other.
+        const rows = unit.label.userData.rows as number;
+        unit.label.center.set(0.5, -(5 + (w.stack ?? 0) * (rows + 2)) / rows);
       }
 
       if (w.hp !== undefined && !unit.hpBack) {
@@ -1740,6 +1787,28 @@ export class WorldRenderer {
       dot.position.set(p.x, p.y + 0.2, p.z);
       this.pathGroup.add(dot);
     }
+  }
+
+  /** The hero (a figure in `state.heroes`, yourself included) under the pointer, by their figure or their plate. Never in a fight. */
+  private pickHero(): string | null {
+    const state = this.state;
+    if (!state || state.battle || state.holding) return null;
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    const ndc = new THREE.Vector2(((this.pointer.x - rect.left) / rect.width) * 2 - 1, -((this.pointer.y - rect.top) / rect.height) * 2 + 1);
+    this.raycaster.setFromCamera(ndc, this.camera);
+    const targets: THREE.Object3D[] = [];
+    const owner = new Map<THREE.Object3D, string>();
+    for (const h of state.heroes) {
+      const u = this.units.get(h.id);
+      if (!u || !u.sprite.visible) continue;
+      for (const o of [u.sprite, u.label]) {
+        if (!o) continue;
+        targets.push(o);
+        owner.set(o, h.id);
+      }
+    }
+    const hit = this.raycaster.intersectObjects(targets, false)[0];
+    return hit ? (owner.get(hit.object) ?? null) : null;
   }
 
   private pick(): HexPos | null {
@@ -1931,6 +2000,11 @@ export class WorldRenderer {
       if (target) this.callbacks.onPlace(target);
       return;
     }
+    if (this.callbacks.onHeroClick) {
+      const hero = this.pickHero();
+      // Opening someone's sheet is all a click on them does: nobody walks off as well.
+      if (hero !== null && this.callbacks.onHeroClick(hero)) return;
+    }
     if (this.callbacks.onPropClick && !this.state?.battle) {
       const prop = this.pickProp();
       if (prop !== null && this.callbacks.onPropClick(prop)) return;
@@ -1944,6 +2018,7 @@ export class WorldRenderer {
     if (this.touches.size > 0) return;
     this.pointer.inside = false;
     this.setHovered(null);
+    if (this.hoverHero !== null) this.callbacks.onHeroHover?.((this.hoverHero = null));
   };
 
   private onWheel = (e: WheelEvent) => {
@@ -1996,6 +2071,12 @@ export class WorldRenderer {
       this.pointer.dirty = false;
       this.setHovered(this.pick());
       if (this.state?.holding) this.placeGhost();
+      if (this.callbacks.onHeroHover) {
+        // Your own figure walks to wherever the pointer clicked, so it is not hovered: a click opens your sheet instead.
+        const picked = this.pickHero();
+        const hero = picked === this.state?.you ? null : picked;
+        if (hero !== this.hoverHero) this.callbacks.onHeroHover((this.hoverHero = hero));
+      }
       if (this.callbacks.onPropHover) {
         const prop = this.state?.battle ? null : this.pickProp();
         if (prop !== this.hoverProp) this.callbacks.onPropHover((this.hoverProp = prop));

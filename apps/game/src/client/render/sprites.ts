@@ -5,7 +5,7 @@
 // a texture per `kind`.
 
 import * as THREE from "three";
-import { ENEMIES, RARITY_COLOR, outfitKey, type Outfit, type Slot } from "@gantt-quest/world";
+import { ENEMIES, RARITY_COLOR, barPixels, healthBand, outfitKey, type HealthBand, type Outfit, type Slot } from "@gantt-quest/world";
 import { LOOKS, mergeLook, type Look, type LookPalette } from "./looks";
 
 const W = 18;
@@ -583,35 +583,111 @@ export function textTexture(text: string, color: string): THREE.CanvasTexture {
   return tex;
 }
 
-/** A name tag. Returns the texture and its width-to-height ratio so the caller can size the sprite. */
-export function labelTexture(text: string): { texture: THREE.CanvasTexture; aspect: number } {
+/** What a hero's overhead plate shows under their name: level, and how full their HP and XP are (0 to 1). */
+export interface PlateStats {
+  level: number;
+  hp: number;
+  xp: number;
+}
+
+const PLATE_BG: [number, number, number, number] = [27, 24, 48, 225];
+const NAME_INK: [number, number, number] = [241, 238, 228];
+const LEVEL_INK: [number, number, number] = [255, 210, 63];
+const BAR_TRACK = "#3b3560";
+const HP_COLOR: Record<HealthBand, string> = { good: "#6ee06e", hurt: "#ffd23f", low: "#ff6b6b" };
+const XP_COLOR = "#7d8cff";
+/** Rows of the name line, then the HP bar (3 rows), a gap, the XP bar (2 rows) and a margin. */
+const NAME_ROWS = 15;
+const PLATE_ROWS = NAME_ROWS + 6;
+/** Bars never shorter than this, so a short name still gets a readable bar. */
+const MIN_PLATE_WIDTH = 34;
+
+/** The key a plate is cached and redrawn by: it changes only when a pixel of it would. */
+export function plateKey(text: string, plate?: PlateStats): string {
+  if (!plate) return text;
+  const width = plateWidth(text, plate);
+  const inner = width - 6;
+  return `${text}|${plate.level}|${barPixels(plate.hp, inner)}:${healthBand(plate.hp)}|${barPixels(plate.xp, inner)}`;
+}
+
+const LABEL_FONT = "12px ui-monospace, Menlo, Consolas, monospace";
+let measurer: CanvasRenderingContext2D | null = null;
+function measure(text: string): number {
+  if (!measurer) {
+    measurer = document.createElement("canvas").getContext("2d")!;
+    measurer.font = LABEL_FONT;
+    (measurer as CanvasRenderingContext2D & { letterSpacing?: string }).letterSpacing = "1px";
+  }
+  return Math.ceil(measurer.measureText(text).width);
+}
+const levelText = (plate: PlateStats) => `Lv${plate.level}`;
+function plateWidth(text: string, plate?: PlateStats): number {
+  if (!plate) return measure(text) + 8;
+  return Math.max(MIN_PLATE_WIDTH, measure(levelText(plate)) + 6 + measure(text) + 8);
+}
+
+/**
+ * A name tag, and with `plate` a hero's overhead plate: their level in gold
+ * beside the name, then a thin HP bar (green, yellow, red as it drops) and a
+ * thinner XP bar. Every pixel is solid, so it stays as crisp as the sprite.
+ * Returns the texture, its width-to-height ratio, and how many of its rows
+ * are the name line (the rest sit under it).
+ */
+export function labelTexture(text: string, plate?: PlateStats): { texture: THREE.CanvasTexture; aspect: number } {
   // Drawn small and then snapped to solid pixels, so a name is as hard-edged as the sprite under it.
   // Regular weight at this size gives strokes one pixel wide; bold fills the letters in.
-  const font = "12px ui-monospace, Menlo, Consolas, monospace";
-  const probe = document.createElement("canvas").getContext("2d")!;
-  probe.font = font;
-  (probe as CanvasRenderingContext2D & { letterSpacing?: string }).letterSpacing = "1px";
   const canvas = document.createElement("canvas");
-  canvas.width = Math.ceil(probe.measureText(text).width) + 8;
-  canvas.height = 15;
+  canvas.width = plateWidth(text, plate);
+  canvas.height = plate ? PLATE_ROWS : NAME_ROWS;
   const ctx = canvas.getContext("2d", { willReadFrequently: true })!;
-  ctx.font = font;
+  ctx.font = LABEL_FONT;
   (ctx as CanvasRenderingContext2D & { letterSpacing?: string }).letterSpacing = "1px";
-  ctx.textAlign = "center";
   ctx.textBaseline = "middle";
   ctx.fillStyle = "#ffffff";
-  ctx.fillText(text, canvas.width / 2, canvas.height / 2 + 1);
+  const mid = NAME_ROWS / 2 + 1;
+  // Where the gold level ends and the name begins.
+  let split = 0;
+  if (plate) {
+    const lv = levelText(plate);
+    const lvW = measure(lv);
+    const nameW = measure(text);
+    const left = Math.floor((canvas.width - (lvW + 6 + nameW)) / 2);
+    ctx.textAlign = "left";
+    ctx.fillText(lv, left, mid);
+    ctx.fillText(text, left + lvW + 6, mid);
+    split = left + lvW + 3;
+  } else {
+    ctx.textAlign = "center";
+    ctx.fillText(text, canvas.width / 2, mid);
+  }
   // Every pixel becomes either text or plate: no soft edges for the sampler to smear.
   const image = ctx.getImageData(0, 0, canvas.width, canvas.height);
   const px = image.data;
   for (let k = 0; k < px.length; k += 4) {
     const ink = px[k + 3] >= 96;
-    px[k] = ink ? 241 : 27;
-    px[k + 1] = ink ? 238 : 24;
-    px[k + 2] = ink ? 228 : 48;
-    px[k + 3] = ink ? 255 : 225;
+    const x = (k / 4) % canvas.width;
+    const colour = x < split ? LEVEL_INK : NAME_INK;
+    px[k] = ink ? colour[0] : PLATE_BG[0];
+    px[k + 1] = ink ? colour[1] : PLATE_BG[1];
+    px[k + 2] = ink ? colour[2] : PLATE_BG[2];
+    px[k + 3] = ink ? 255 : PLATE_BG[3];
   }
   ctx.putImageData(image, 0, 0);
+  if (plate) {
+    const x0 = 3;
+    const inner = canvas.width - 6;
+    const bar = (y: number, rows: number, fraction: number, colour: string) => {
+      ctx.fillStyle = BAR_TRACK;
+      ctx.fillRect(x0, y, inner, rows);
+      const filled = barPixels(fraction, inner);
+      if (filled > 0) {
+        ctx.fillStyle = colour;
+        ctx.fillRect(x0, y, filled, rows);
+      }
+    };
+    bar(NAME_ROWS - 1, 3, plate.hp, HP_COLOR[healthBand(plate.hp)]);
+    bar(NAME_ROWS + 3, 2, plate.xp, XP_COLOR);
+  }
   const texture = new THREE.CanvasTexture(canvas);
   texture.magFilter = THREE.NearestFilter;
   texture.minFilter = THREE.NearestFilter;

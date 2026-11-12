@@ -45,6 +45,7 @@ import {
   type HarborLogEntry,
   type HarborShip,
   type HeroInit,
+  type PublicHero,
   type HutSummary,
   type ResourceKind,
   type Resources,
@@ -551,6 +552,39 @@ export async function heroInitFor(db: D1Database, playerId: string): Promise<Her
     pubBuff: pubBuff(orders),
     // And the brews in their bag from the apothecary.
     brews,
+  };
+}
+
+/**
+ * A hero as their crewmates and shipmates see them: the sheet that opens on
+ * clicking them. Null unless the viewer is that hero, shares their crew, or
+ * has sailed on a voyage with them. Only game facts leave here.
+ */
+export async function publicHero(db: D1Database, viewerId: string, heroId: string): Promise<PublicHero | null> {
+  if (viewerId !== heroId) {
+    const known = await db
+      .prepare(
+        `SELECT 1 AS ok WHERE EXISTS (SELECT 1 FROM crew_members a JOIN crew_members b ON a.crew_id = b.crew_id WHERE a.player_id = ?1 AND b.player_id = ?2)
+           OR EXISTS (SELECT 1 FROM run_players a JOIN run_players b ON a.code = b.code WHERE a.player_id = ?1 AND b.player_id = ?2)`,
+      )
+      .bind(viewerId, heroId)
+      .first<{ ok: number }>();
+    if (!known) return null;
+  }
+  const [hero, inventory] = await Promise.all([heroInitFor(db, heroId), getInventory(db, heroId)]);
+  if (!hero) return null;
+  return {
+    id: hero.id,
+    name: hero.name,
+    classId: hero.classId,
+    level: hero.level,
+    xp: hero.xp,
+    base: hero.base,
+    bonus: hero.bonus,
+    weaponPower: hero.weaponPower,
+    armor: hero.armor,
+    gear: inventory.filter((i) => i.equipped).map(rowToItem),
+    hutPerks: hero.hutPerks,
   };
 }
 

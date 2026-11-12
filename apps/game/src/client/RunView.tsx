@@ -32,6 +32,7 @@ import { SailingView } from "./SailingView";
 import { HutSpoils, blueprintName, isTrophy, perkText, resourceText } from "./hutDrops";
 import { InventoryScreen } from "./InventoryScreen";
 import { Trading } from "./TradePanel";
+import { HeroSheet, useHeroSheet } from "./HeroSheet";
 import { WorldRenderer } from "./render/WorldRenderer";
 import { useRun, type RunConnection } from "./useRun";
 import { itemName, label } from "./labels";
@@ -215,6 +216,7 @@ export function RunView({ code, me, refresh, onLeave }: { code: string; me: Me; 
   });
   const send = useRef(run.send);
   send.current = run.send;
+  const heroSheet = useHeroSheet();
 
   useEffect(() => {
     const r = new WorldRenderer(mount.current!, {
@@ -232,6 +234,8 @@ export function RunView({ code, me, refresh, onLeave }: { code: string; me: Me; 
         if (s?.phase === "overworld" && s.turn?.heroId === s.you) send.current({ type: "move", to: pos });
       },
       onHover: setHover,
+      onHeroClick: heroSheet.onHeroClick,
+      onHeroHover: heroSheet.onHeroHover,
     });
     renderer.current = r;
     if (latest.current) r.setState(latest.current);
@@ -298,6 +302,10 @@ export function RunView({ code, me, refresh, onLeave }: { code: string; me: Me; 
               {intro && !held && <BattleIntro intro={intro} />}
               {held && recap && <BattleRecap recap={recap} you={state.you} onDone={release} />}
               {find && !held && !intro && <FindCard find={find} onDone={() => setFind(null)} />}
+              {state.phase === "overworld" && heroSheet.open && (() => {
+                const h = state.heroes.find((x) => x.id === heroSheet.open);
+                return h && <HeroSheet id={h.id} you={state.you} pinned={heroSheet.pinned} onClose={heroSheet.close} live={{ hp: h.hp, maxHp: h.maxHp, focus: h.focus, maxFocus: h.maxFocus }} />;
+              })()}
               {hover && state.phase === "overworld" && <HexTip state={state} hover={hover} />}
             </>
           )}

@@ -80,13 +80,15 @@ export class HarborRoom extends DurableObject<Env> {
       old.serializeAttachment(null);
       old.close(4000, "replaced by a newer connection");
     }
+    const hero = await heroInitFor(this.env.DB, id);
     const player: HarborPlayer = {
       id,
       name: decodeURIComponent(request.headers.get("x-player-name") ?? "Sailor"),
       classId: request.headers.get("x-player-class") ?? "",
-      level: Number(request.headers.get("x-player-level") ?? 1),
+      level: hero?.level ?? Number(request.headers.get("x-player-level") ?? 1),
+      xp: hero?.xp,
       pos,
-      outfit: (await heroInitFor(this.env.DB, id))?.outfit,
+      outfit: hero?.outfit,
     };
 
     const pair = new WebSocketPair();
@@ -124,7 +126,7 @@ export class HarborRoom extends DurableObject<Env> {
       // They changed gear or levelled: re-read the character and show everyone the new look.
       const hero = await heroInitFor(this.env.DB, player.id);
       if (!hero) return;
-      const next: HarborPlayer = { ...player, name: hero.name, classId: hero.classId, level: hero.level, outfit: hero.outfit };
+      const next: HarborPlayer = { ...player, name: hero.name, classId: hero.classId, level: hero.level, xp: hero.xp, outfit: hero.outfit };
       ws.serializeAttachment(next);
       this.broadcast({ type: "joined", player: next });
     } else if (msg.type === "bedroll") {

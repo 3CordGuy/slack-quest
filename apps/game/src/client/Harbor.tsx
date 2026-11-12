@@ -178,7 +178,7 @@ function Creation({ draft, busy, act, invite }: { draft: Character | null; busy:
     setNameError(null);
     try {
       const { name: suggested } = await api.suggestName(classId, offered.current);
-      offered.current = [...offered.current, suggested].slice(-8);
+      offered.current = [...offered.current, suggested].slice(-12);
       setName(suggested);
     } catch (e) {
       setNameError((e as Error).message);

@@ -56,6 +56,7 @@ import {
   buyPlot,
   fillBin,
   hasShack,
+  publicHero,
 } from "./server/db";
 
 import { enterHut } from "./server/hut-room";
@@ -178,6 +179,13 @@ app.get("/api/me", async (c) => {
   return c.json({ player, character, inventory, crew, carry, isAdmin: isAdmin(c.env, player) });
 });
 
+// A crewmate's or shipmate's hero sheet, read-only: what the overhead plate opens on a click.
+app.get("/api/hero/:id", async (c) => {
+  const hero = await publicHero(c.env.DB, c.get("player").id, c.req.param("id"));
+  if (!hero) return c.json({ error: "No such hero in your crew or on your voyages." }, 404);
+  return c.json({ hero });
+});
+
 // ---------- content overrides ----------
 
 // Names, palettes and pixel art changed on the admin side, as one bundle every
@@ -246,8 +254,12 @@ app.post("/api/character/name", async (c) => {
   const body = await c.req.json<{ classId?: string; avoid?: unknown }>().catch(() => ({}) as { classId?: string; avoid?: unknown });
   const cls = HERO_CLASSES.find((k) => k.id === body.classId);
   if (!cls) return c.json({ error: "Unknown class." }, 400);
-  const avoid = Array.isArray(body.avoid) ? body.avoid.filter((a): a is string => typeof a === "string").map((a) => a.slice(0, 20)).slice(-8) : [];
-  return c.json({ name: await heroName(c.env, { className: cls.name, blurb: cls.blurb, avoid }) });
+  const avoid = Array.isArray(body.avoid) ? body.avoid.filter((a): a is string => typeof a === "string").map((a) => a.slice(0, 20)).slice(-12) : [];
+  const playerId = c.get("player").id;
+  // Another player's hero (draft or active) already has it; the asker's own draft does not count.
+  const isTaken = async (name: string) =>
+    !!(await c.env.DB.prepare("SELECT 1 FROM characters WHERE name = ?1 COLLATE NOCASE AND player_id != ?2 LIMIT 1").bind(name, playerId).first());
+  return c.json({ name: await heroName(c.env, { className: cls.name, blurb: cls.blurb, avoid, isTaken }) });
 });
 
 // Roll (or re-roll) starting stats for a character that is still a draft.

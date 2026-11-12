@@ -15,6 +15,7 @@ import { perkText } from "./hutDrops";
 import { TileAction } from "./TileAction";
 import { WorldRenderer, type RenderState } from "./render/WorldRenderer";
 import { usePub } from "./usePub";
+import { HeroSheet, useHeroSheet } from "./HeroSheet";
 import { blurb, label } from "./labels";
 import "./hut.css";
 import "./pub.css";
@@ -83,7 +84,7 @@ export function PubView({ me, refresh, onLeave }: { me: Me; refresh(): Promise<u
       round: 0,
       map: ROOM,
       heroes: [
-        ...players.map((p) => ({ id: p.id, classId: p.classId, pos: p.pos, label: p.name, outfit: p.outfit })),
+        ...players.map((p) => ({ id: p.id, classId: p.classId, pos: p.pos, label: p.name, outfit: p.outfit, level: p.level, xp: p.xp })),
         // The barkeep stands behind his bar and is drawn like anyone else.
         { id: PUB_BARKEEP.id, classId: "npc", pos: PUB_BARKEEP_POS, label: PUB_BARKEEP.name },
         // A traveling salesman, when one is in, takes the corner by the far wall.
@@ -103,12 +104,15 @@ export function PubView({ me, refresh, onLeave }: { me: Me; refresh(): Promise<u
   const send = useRef(pub.send);
   send.current = pub.send;
 
+  // The barkeep and the salesman are drawn like heroes, but only players have a sheet.
+  const heroSheet = useHeroSheet((id) => players.some((p) => p.id === id));
+
   useEffect(() => {
     const r = new WorldRenderer(mount.current!, { onHexClick: (to) => {
         if (pinned.current) return;
         // Clicking the salesman walks you up to their table.
         send.current({ type: "move", to: sellerHere.current && same(to, PUB_SALESMAN_POS) ? PUB_TRADER : to });
-      }, onHover: setHover });
+      }, onHover: setHover, onHeroClick: heroSheet.onHeroClick, onHeroHover: heroSheet.onHeroHover });
     renderer.current = r;
     if (latest.current) r.setState(latest.current);
     return () => {
@@ -292,6 +296,7 @@ export function PubView({ me, refresh, onLeave }: { me: Me; refresh(): Promise<u
           <button className="primary" onClick={onLeave}>Back to the Harbor</button>
         </div>
       )}
+      {heroSheet.open && you && <HeroSheet id={heroSheet.open} you={you} pinned={heroSheet.pinned} onClose={heroSheet.close} />}
     </div>
   );
 }
