@@ -237,6 +237,12 @@ function foldByLook(g: THREE.Group) {
     g.add(mesh);
   }
 }
+/** Window glass that warms with the dusk: `unlit` by day, `lit` by night (the ambience moves it between the two; see `setGlows`). */
+function warmPane(unlit: string, lit: string): THREE.MeshBasicMaterial {
+  const m = new THREE.MeshBasicMaterial({ color: lit });
+  m.userData = { unlit, lit };
+  return m;
+}
 /** The open sea at the dead of night, and the fog by day and by night. */
 const NIGHT_SEA = new THREE.Color("#0f1a33");
 const FOG_DAY = new THREE.Color("#3a4358");
@@ -1701,10 +1707,9 @@ export class WorldRenderer {
         const roofMat = lambert("#7a3a2c");
         const glows: BuildingGlow[] = [];
         const panes: THREE.MeshBasicMaterial[] = [];
-        /** A window's glass: dim amber by day, lamplit by night (the ambience moves it between the two). */
+        /** A window's glass: dim amber by day, lamplit by night. */
         const pane = (unlit: string, lit: string) => {
-          const m = new THREE.MeshBasicMaterial({ color: lit });
-          m.userData = { unlit, lit };
+          const m = warmPane(unlit, lit);
           panes.push(m);
           return m;
         };
@@ -2113,7 +2118,10 @@ export class WorldRenderer {
           const roof = add(new THREE.ConeGeometry(0.7, 0.42, 4), lambert("#a0522d"), 0, 0.8, -0.04, Math.PI / 4);
           roof.scale.z = 0.75;
           add(box(0.22, 0.34, 0.04), lambert("#3a2c22"), 0.12, 0.17, 0.3);
-          add(box(0.2, 0.14, 0.03), new THREE.MeshBasicMaterial({ color: "#ffd08a" }), -0.24, 0.36, 0.3);
+          // The window warms at dusk, with a soft glow over it.
+          const glass = warmPane("#c99a52", "#ffd08a");
+          add(box(0.2, 0.14, 0.03), glass, -0.24, 0.36, 0.3).userData.glow = true;
+          g.userData.panes = [glass];
           // The chimney: broad and stone, up the west end. The ambience draws its smoke.
           add(box(0.26, 1.15, 0.26), lambert("#8b95a5"), -0.38, 0.58, -0.22);
           add(box(0.32, 0.06, 0.32), lambert("#6f7f95"), -0.38, 1.17, -0.22);
@@ -2122,6 +2130,11 @@ export class WorldRenderer {
           add(new THREE.ConeGeometry(0.1, 0.12, 5), new THREE.MeshBasicMaterial({ color: "#ff9a3c" }), 0.5, 0.06, 0.42);
           add(new THREE.SphereGeometry(0.14, 7, 5), lambert("#2e2a2a"), 0.5, 0.2, 0.42);
           add(new THREE.CylinderGeometry(0.11, 0.11, 0.02, 7), lambert("#d9b45a"), 0.5, 0.3, 0.42);
+          // After dark the fire glows and throws flickering firelight over the quay; the window glows too.
+          g.userData.glows = [
+            { pos: new THREE.Vector3(-0.24, 0.36, 0.48), size: 0.44 },
+            { pos: new THREE.Vector3(0.5, 0.12, 0.6), size: 0.36, light: "fire" },
+          ] satisfies BuildingGlow[];
           // Barrels of provisions, ready to go aboard.
           for (const [x, z] of [[-0.62, 0.3], [-0.5, 0.48]]) add(new THREE.CylinderGeometry(0.1, 0.1, 0.24, 7), lambert("#7a5230"), x, 0.12, z);
           // Fish hung to dry from the eaves.
@@ -2166,6 +2179,8 @@ export class WorldRenderer {
         add(new THREE.ConeGeometry(0.08, 0.16, 5), new THREE.MeshBasicMaterial({ color: "#ffc04a" }), -0.2, 0.39, -0.12);
         const glow = add(new THREE.SphereGeometry(0.32, 8, 6), new THREE.MeshBasicMaterial({ color: "#ff8a3a", transparent: true, opacity: 0.22, depthWrite: false }), -0.2, 0.36, -0.1);
         glow.userData.glow = true;
+        // After dark the coals glow out of the open front and their firelight fills the shed.
+        g.userData.glows = [{ pos: new THREE.Vector3(-0.2, 0.42, 0.14), size: 0.62, light: "fire" }] satisfies BuildingGlow[];
         // The chimney rises from the back of the forge; the ambience draws its smoke.
         add(box(0.2, 1.05, 0.2), lambert("#6f737a"), -0.2, 0.75, -0.26);
         add(box(0.26, 0.06, 0.26), lambert("#5d6168"), -0.2, 1.28, -0.26);
