@@ -5,7 +5,13 @@ import type { NoticeBoard } from "../server/board";
 
 /** What the Harbor's notice board shows: the crew goal and the contracts on offer. */
 export type Board = NoticeBoard;
-import type { HutSummary, ItemDef, Perk, ShopEntry } from "@gantt-quest/world";
+import type { HarborWorks, HutSummary, ItemDef, Perk, ProjectAmounts, ShopEntry } from "@gantt-quest/world";
+
+/** The crew's projects and what this player has to give toward them. */
+export interface Works {
+  works: HarborWorks;
+  stock: ProjectAmounts;
+}
 
 /** Optional ?p=2 gives this tab its own guest session, for testing two players on one machine. */
 export const PROFILE = new URLSearchParams(location.search).get("p") ?? "";
@@ -102,6 +108,8 @@ export const api = {
   createCrew: (name: string) => request("/api/crew", { name }),
   joinCrew: (code: string) => request("/api/crew/join", { code }),
   leaveCrew: () => request("/api/crew/leave", {}),
+  projects: () => request<Works>("/api/projects"),
+  giveToProject: (projectId: string, give: ProjectAmounts) => request<Works & { completed: boolean }>("/api/projects/give", { projectId, give }),
   hut: () => request<Hut>("/api/hut"),
   craft: (defId: string) => request("/api/hut/craft", { defId }),
   upgradeHut: () => request<{ tier: number }>("/api/hut/upgrade", {}),

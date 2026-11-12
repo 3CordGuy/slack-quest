@@ -759,6 +759,34 @@ export class WorldRenderer {
         add(box(0.5, 0.06, 0.06), lambert("#7a5230"), 0.2, 0.45, 0.1);
         break;
       }
+      case "works": {
+        const stone = lambert("#b9b4a8");
+        if (poi.cleared) {
+          // The lighthouse: a tapering white tower with a red band, a gallery and a lit lamp.
+          add(new THREE.CylinderGeometry(0.5, 0.56, 0.22, 8), stone, 0, 0.11, 0);
+          add(new THREE.CylinderGeometry(0.3, 0.42, 0.7, 8), lambert("#f4efe1"), 0, 0.57, 0);
+          add(new THREE.CylinderGeometry(0.25, 0.3, 0.35, 8), lambert("#b9433d"), 0, 1.095, 0);
+          add(new THREE.CylinderGeometry(0.21, 0.25, 0.4, 8), lambert("#f4efe1"), 0, 1.47, 0);
+          add(new THREE.CylinderGeometry(0.34, 0.34, 0.06, 8), lambert("#4a4458"), 0, 1.7, 0);
+          add(new THREE.CylinderGeometry(0.15, 0.15, 0.24, 6), new THREE.MeshBasicMaterial({ color: "#ffd23f" }), 0, 1.85, 0);
+          add(new THREE.ConeGeometry(0.26, 0.24, 8), lambert("#8c3b2f"), 0, 2.09, 0);
+          add(box(0.16, 0.28, 0.04), lambert("#5a3d22"), 0, 0.36, 0.41);
+          // Tall enough to stand over the huts when seen from the tilted camera.
+          g.scale.y = 1.3;
+        } else {
+          // A building site: the first course of the foundation, scaffold poles, planks and a crate.
+          add(new THREE.CylinderGeometry(0.5, 0.56, 0.16, 8), stone, 0, 0.08, 0);
+          for (const [x, z] of [[-0.42, -0.3], [0.42, -0.3], [-0.42, 0.34], [0.42, 0.34]]) add(new THREE.CylinderGeometry(0.035, 0.035, 0.95, 5), lambert("#7a5230"), x, 0.47, z);
+          add(box(0.9, 0.04, 0.05), lambert("#8a6a44"), 0, 0.62, -0.3);
+          add(box(0.9, 0.04, 0.05), lambert("#8a6a44"), 0, 0.62, 0.34);
+          add(box(0.05, 0.04, 0.68), lambert("#8a6a44"), -0.42, 0.9, 0.02);
+          add(box(0.05, 0.04, 0.68), lambert("#8a6a44"), 0.42, 0.9, 0.02);
+          add(box(0.34, 0.14, 0.26), stone, -0.08, 0.23, 0.05, 0.3);
+          for (let i = 0; i < 3; i++) add(box(0.6, 0.05, 0.14), lambert(i % 2 ? "#a07a4c" : "#8a6a44"), 0.72, 0.03 + i * 0.05, 0.3, 0.25 * i);
+          add(box(0.24, 0.22, 0.24), lambert("#9a6b2f"), -0.72, 0.11, 0.35, 0.4);
+        }
+        break;
+      }
       case "door":
         // A doormat in the gap, and a post either side of it.
         add(box(0.9, 0.04, 0.5), lambert("#8c3b2f"), 0, 0.02, 0.28);

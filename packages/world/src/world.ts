@@ -32,6 +32,7 @@ import {
   type NpcOutput,
   type NpcRun,
 } from "./npc";
+import { voyageBoons } from "./projects";
 import { addStats, applyXp, maxFocusFor, maxHpFor } from "./progression";
 import { makeRng, seedFromString, type Rng } from "./rng";
 import { NO_DEMAND, demandMet, validateBible, type StoryBible } from "./story";
@@ -138,6 +139,8 @@ export interface WorldState {
   battle: (BattleState & { npcId: string | null; deadline: number | null }) | null;
   result: { outcome: "victory" | "defeat"; reason: string; epilogue: string | null } | null;
   earned: Record<string, Earned>;
+  /** Harbor projects the crew had built when this voyage was launched. Absent on voyages saved before projects. */
+  projects?: string[];
 }
 
 export type WorldAction =
@@ -171,6 +174,8 @@ export const CLIENT_ACTIONS: ReadonlySet<WorldAction["type"]> = new Set([
 export type WorldEvent =
   | { t: "joined"; heroId: string; name: string }
   | { t: "phase"; phase: Phase }
+  /** Something a built Harbor project did for this voyage, said once as it opens. */
+  | { t: "harbor_boon"; projectId: string; text: string }
   | { t: "turn_start"; heroId: string; mp: number; check: CheckResult }
   | { t: "round"; round: number; doom: number }
   | { t: "moved"; heroId: string; path: HexPos[] }
@@ -209,7 +214,8 @@ export type StepResult =
   | { ok: true; state: WorldState; events: WorldEvent[]; effects: WorldEffect[] }
   | { ok: false; error: string };
 
-export function createWorld(code: string, seed: string): WorldState {
+/** `projects` are the Harbor projects the launching crew has built; their benefits apply when the story begins. */
+export function createWorld(code: string, seed: string, projects: readonly string[] = []): WorldState {
   return {
     v: 1,
     code,
@@ -231,6 +237,7 @@ export function createWorld(code: string, seed: string): WorldState {
     battle: null,
     result: null,
     earned: {},
+    projects: [...projects],
   };
 }
 
@@ -775,7 +782,9 @@ export function stepWorld(prev: WorldState, action: WorldAction): StepResult {
         const poi = poiById(state.map, poiId);
         if (poi) poi.enemies = enemies;
       }
-      state.doom = Math.max(action.bible.doomRounds, requiredDoom(state.map, action.bible, state.heroes));
+      // What the crew has built at the Harbor comes along: the lighthouse lengthens the clock.
+      const boons = voyageBoons(state.projects);
+      state.doom = Math.max(action.bible.doomRounds, requiredDoom(state.map, action.bible, state.heroes)) + boons.doomDays;
       state.npcs = Object.fromEntries(action.bible.npcs.map((n) => [n.id, newNpcRun()]));
       state.order = [...state.heroes]
         .sort((a, b) => heroStats(b).agi - heroStats(a).agi || a.id.localeCompare(b.id))
@@ -783,6 +792,7 @@ export function stepWorld(prev: WorldState, action: WorldAction): StepResult {
       state.phase = "overworld";
       state.round = 1;
       ctx.events.push({ t: "phase", phase: "overworld" });
+      for (const line of boons.lines) ctx.events.push({ t: "harbor_boon", ...line });
       startTurn(ctx);
       return done(null);
     }

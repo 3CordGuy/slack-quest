@@ -4,7 +4,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { HexPos } from "@gantt-quest/core";
-import { HARBOR_BOARD, HARBOR_PIERS, HARBOR_PLOTS, HARBOR_RING, HARBOR_SHOP, HERO_CLASSES, MAX_PARTY, generateHarbor, harborPoi, hutTier, poiAt, type HarborShip } from "@gantt-quest/world";
+import { HARBOR_BOARD, HARBOR_PIERS, HARBOR_PLOTS, HARBOR_RING, HARBOR_SHOP, HARBOR_WORKS, HERO_CLASSES, MAX_PARTY, builtProjects, generateHarbor, harborPoi, hutTier, poiAt, type HarborShip } from "@gantt-quest/world";
 import { api, type Me } from "./api";
 import { AccountPanel } from "./Account";
 import { NoticeBoard } from "./board/NoticeBoard";
@@ -14,6 +14,7 @@ import { ShopScreen } from "./ShopScreen";
 import { SparView } from "./SparView";
 import { WorldRenderer, type RenderState } from "./render/WorldRenderer";
 import { useHarbor } from "./useHarbor";
+import { WorksPanel } from "./works/WorksPanel";
 
 const className = (id: string) => HERO_CLASSES.find((c) => c.id === id)?.name ?? id;
 const same = (a: HexPos, b: HexPos) => a.q === b.q && a.r === b.r;
@@ -26,6 +27,7 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
   const [shop, setShop] = useState(false);
   const [notices, setNotices] = useState(false);
   const [spar, setSpar] = useState(false);
+  const [works, setWorks] = useState(false);
   const [account, setAccount] = useState(false);
   const [copied, setCopied] = useState(false);
   const [text, setText] = useState("");
@@ -38,12 +40,14 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
   const base = useMemo(generateHarbor, []);
   const { board, players, you } = harbor;
   const moored = board.ships.filter((s) => s.pier !== null);
+  const lit = builtProjects(board.works).includes("lighthouse");
 
   // The Harbor as the renderer sees it: the fixed map plus a hut per member and a ship per moored voyage.
   const scene = useMemo<RenderState | null>(() => {
     if (!you) return null;
     const pois = [
-      ...base.pois,
+      // The works are a building site until the lighthouse stands there.
+      ...base.pois.map((p) => (p.id === "works" ? { ...p, cleared: lit } : p)),
       ...board.members.slice(0, HARBOR_PLOTS.length).map((m, i) => ({ ...harborPoi(`plot:${m.id}`, "plot", HARBOR_PLOTS[i]), tier: m.hutTier ?? 1 })),
       ...moored.map((s) => harborPoi(`ship:${s.code}`, "pier", HARBOR_PIERS[s.pier!])),
     ];
@@ -93,6 +97,7 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
     : hoverPoi.kind === "board" ? "Notice board: the crew goal and contracts"
     : hoverPoi.kind === "shop" ? "Market stall: gear, and furniture for your hut"
     : hoverPoi.kind === "ring" ? "Sparring ring"
+    : hoverPoi.kind === "works" ? (lit ? "The lighthouse: crew projects" : "The works: crew projects")
     : hoverPoi.kind === "plot" ? `${board.members.find((m) => `plot:${m.id}` === hoverPoi.id)?.name ?? "Someone"}'s ${hutTier(hoverPoi.tier ?? 1).name.toLowerCase()}`
     : hoverPoi.kind === "pier" ? `${moored.find((s) => `ship:${s.code}` === hoverPoi.id)?.captain ?? "A"}'s ship`
     : null;
@@ -130,6 +135,7 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
   const atShop = !!self && same(self.pos, HARBOR_SHOP);
   const atBoard = !!self && same(self.pos, HARBOR_BOARD);
   const atRing = !!self && same(self.pos, HARBOR_RING);
+  const atWorks = !!self && same(self.pos, HARBOR_WORKS);
   const error = harbor.error ?? launchError;
 
   return (
@@ -233,6 +239,11 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
             <span>The sparring ring</span>
             <button className="primary" onClick={() => setSpar(true)}>Spar</button>
           </>
+        ) : atWorks ? (
+          <>
+            <span>{lit ? "The lighthouse" : "The works"}</span>
+            <button className="primary" onClick={() => setWorks(true)}>See the crew's projects</button>
+          </>
         ) : hutOwner ? (
           <>
             <span>{hutOwner.id === you ? "Your hut" : `${hutOwner.name}'s hut`} <span className="muted">· {hutTier(hutOwner.hutTier ?? 1).name}</span></span>
@@ -256,6 +267,7 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
       {sheet && me.character && <InventoryScreen me={me} refresh={refreshAll} onClose={() => setSheet(false)} />}
       {account && <AccountPanel me={me} refresh={refresh} onClose={() => setAccount(false)} />}
       {notices && <NoticeBoard refresh={refresh} onClose={() => setNotices(false)} />}
+      {works && <WorksPanel works={board.works} refresh={refresh} onClose={() => setWorks(false)} />}
       {spar && scene && me.character && <SparView me={me} scene={scene} renderer={renderer} onClose={() => setSpar(false)} />}
       {shop && me.character && <ShopScreen me={me} refresh={refreshAll} onClose={() => setShop(false)} />}
     </div>
