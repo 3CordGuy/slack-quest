@@ -57,7 +57,9 @@ import {
   type ShopEntry,
   type Slot,
   type WorldState,
+  HARBOR_XP,
 } from "@gantt-quest/world";
+import { prepareXp, xpOutcome, type XpResult } from "./harbor-xp";
 import type { HarborRoom } from "./harbor-room";
 import { crewWorks } from "./projects";
 import { brewBagOf } from "./workshops";
@@ -1171,14 +1173,16 @@ export function paidFurnishingStatement(db: D1Database, playerId: string, defId:
 }
 
 /** Craft a furnishing from materials. Returns an error message, or null once it is in storage. */
-export async function craftFurnishing(db: D1Database, playerId: string, defId: string): Promise<string | null> {
+export async function craftFurnishing(db: D1Database, playerId: string, defId: string): Promise<string | { xp?: XpResult }> {
   const [c, hut] = await Promise.all([getCharacter(db, playerId), getHut(db, playerId)]);
   if (c?.status !== "active") return "Create a character first.";
   const problem = craftProblem(defId, hut.blueprints, hut.resources);
   if (problem) return problem;
-  const res = await db.batch([...spendStatements(db, playerId, 0, FURNISHINGS[defId].recipe!), paidFurnishingStatement(db, playerId, defId)]);
+  const xp = await prepareXp(db, playerId, HARBOR_XP.craft);
+  const made = [...spendStatements(db, playerId, 0, FURNISHINGS[defId].recipe!), paidFurnishingStatement(db, playerId, defId)];
+  const res = await db.batch([...made, ...(xp?.statements() ?? [])]);
   // The materials went elsewhere between the check and the batch: nothing was spent.
-  return res[res.length - 1].meta.changes > 0 ? null : "You no longer have the materials for that.";
+  return res[made.length - 1].meta.changes > 0 ? { xp: xpOutcome(xp, res) } : "You no longer have the materials for that.";
 }
 
 /** Buy a furnishing at the market stall. The price is the catalogue's; the client names only the piece. */

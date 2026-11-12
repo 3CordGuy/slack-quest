@@ -19,10 +19,12 @@ interface Props {
   you: string;
   gold: number;
   error: string | null;
+  /** The last XP anyone in the pub earned: the winner's, just after a game. */
+  lastXp?: { id: string; amount: number } | null;
   send(action: ShoalsRequest): void;
 }
 
-export function ShoalsTable({ table, you, gold, error, send }: Props) {
+export function ShoalsTable({ table, you, gold, error, lastXp, send }: Props) {
   const [count, setCount] = useState(1);
   // Each time the bid or the table changes, offer the smallest legal bid.
   useEffect(() => {
@@ -51,6 +53,7 @@ export function ShoalsTable({ table, you, gold, error, send }: Props) {
           {table?.phase === "done" && table.winner && (
             <p className="dice-result">
               <strong>{name(table.winner)}</strong> won {table.prize} gold from a pot of {table.pot}.
+              {lastXp?.id === table.winner && lastXp.amount > 0 && <> <span className="xp-gain">+{lastXp.amount} XP</span></>}
             </p>
           )}
           <div className="row">

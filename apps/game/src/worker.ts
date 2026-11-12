@@ -4,7 +4,7 @@
 
 import { Hono, type Context } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
-import { HARBOR_PIERS, HARBOR_PLOTS, HERO_CLASSES, MAX_CREW, PUB_MAX_TALK, PUB_MENU, dueIn, hutPerks, nextSalesmanVisit, salesman, salesmanVisitAt, makeRng, pubBuff, rollStartingStats } from "@gantt-quest/world";
+import { HARBOR_PIERS, HARBOR_PLOTS, HARBOR_XP, HERO_CLASSES, MAX_CREW, PUB_MAX_TALK, PUB_MENU, dueIn, hutPerks, nextSalesmanVisit, salesman, salesmanVisitAt, makeRng, pubBuff, rollStartingStats } from "@gantt-quest/world";
 import { barkeepReply, heroName } from "./server/ai";
 import { noticeBoard } from "./server/board";
 import { sendSignInCode } from "./server/email";
@@ -67,6 +67,7 @@ import { gatherStatus, rest, startOuting, stepOuting } from "./server/gather";
 import { builtProjectIds, contribute, crewWorks, projectStock } from "./server/projects";
 import { acceptTrade, closeTrade, listTrades, proposeTrade } from "./server/trade";
 import { apothecaryView, brew, smithItem, smithyView } from "./server/workshops";
+import { announceXp, harborXpFor, prepareXp, xpOutcome } from "./server/harbor-xp";
 import {
   checkImport,
   checkOverride,
@@ -169,15 +170,16 @@ app.use("/api/*", async (c, next) => {
 
 app.get("/api/me", async (c) => {
   const player = c.get("player");
-  const [character, inventory, crew, carry] = await Promise.all([
+  const [character, inventory, crew, carry, harborXp] = await Promise.all([
     getCharacter(c.env.DB, player.id),
     getInventory(c.env.DB, player.id),
     crewFor(c.env.DB, player.id),
     carryState(c.env.DB, player.id),
+    harborXpFor(c.env.DB, player.id),
   ]);
   // `inventory` is what the hero has with them; what is in storage at home is only listed inside their hut.
   // `isAdmin` only decides whether the client shows the admin link: every admin route checks again.
-  return c.json({ player, character, inventory, crew, carry, isAdmin: isAdmin(c.env, player) });
+  return c.json({ player, character, inventory, crew, carry, harborXp, isAdmin: isAdmin(c.env, player) });
 });
 
 // A crewmate's or shipmate's hero sheet, read-only: what the overhead plate opens on a click.
@@ -376,11 +378,12 @@ app.get("/api/hut", async (c) => {
 app.post("/api/hut/craft", async (c) => {
   const player = c.get("player");
   const body = await c.req.json<{ defId?: string }>().catch(() => ({}) as { defId?: string });
-  const error = await craftFurnishing(c.env.DB, player.id, String(body.defId));
-  if (error) return c.json({ error }, 409);
+  const result = await craftFurnishing(c.env.DB, player.id, String(body.defId));
+  if (typeof result === "string") return c.json({ error: result }, 409);
   // Written to D1 above; now the room they are standing in is told.
   await refreshHut(c.env, player.id);
-  return c.json({ ok: true });
+  if (result.xp) c.executionCtx.waitUntil(announceXp(c.env, player.id, result.xp));
+  return c.json({ ok: true, xp: result.xp });
 });
 
 // Make the hut one tier bigger, for the gold and materials in HUT_TIERS.
@@ -523,8 +526,11 @@ app.post("/api/gather/start", async (c) => {
 // One choice: push on or bank. The server rolls; the reply is what the player may see.
 app.post("/api/gather/step", async (c) => {
   const body = await c.req.json<{ choice?: unknown }>().catch(() => ({}) as { choice?: unknown });
-  const result = await stepOuting(c.env.DB, c.get("player").id, body.choice);
-  return typeof result === "string" ? c.json({ error: result }, 409) : c.json(result);
+  const player = c.get("player");
+  const result = await stepOuting(c.env.DB, player.id, body.choice);
+  if (typeof result === "string") return c.json({ error: result }, 409);
+  if (result.xp) c.executionCtx.waitUntil(announceXp(c.env, player.id, result.xp));
+  return c.json(result);
 });
 
 // Rest: on a bedroll in the Harbor, or at home if you have a hut. Gives back gathering stamina, on a cooldown.
@@ -580,8 +586,9 @@ app.post("/api/projects/give", async (c) => {
   const result = await contribute(c.env.DB, crew.id, player.id, String(body.projectId ?? ""), body.give);
   if ("error" in result) return c.json({ error: result.error }, 409);
   c.executionCtx.waitUntil(refreshHarbor(c.env, crew.id));
+  if (result.xp) c.executionCtx.waitUntil(announceXp(c.env, player.id, result.xp));
   const [works, stock] = await Promise.all([crewWorks(c.env.DB, crew.id), projectStock(c.env.DB, player.id)]);
-  return c.json({ works, stock, completed: result.completed });
+  return c.json({ works, stock, completed: result.completed, xp: result.xp });
 });
 
 // ---------- the apothecary and the smithy ----------
@@ -593,9 +600,10 @@ app.get("/api/apothecary", async (c) => c.json(await apothecaryView(c.env.DB, c.
 app.post("/api/apothecary/brew", async (c) => {
   const player = c.get("player");
   const body = await c.req.json<{ brewId?: unknown }>().catch(() => ({}) as { brewId?: unknown });
-  const error = await brew(c.env.DB, player.id, String(body.brewId ?? ""));
-  if (error) return c.json({ error }, 409);
-  return c.json(await apothecaryView(c.env.DB, player.id));
+  const result = await brew(c.env.DB, player.id, String(body.brewId ?? ""));
+  if (typeof result === "string") return c.json({ error: result }, 409);
+  if (result.xp) c.executionCtx.waitUntil(announceXp(c.env, player.id, result.xp));
+  return c.json({ ...(await apothecaryView(c.env.DB, player.id)), xp: result.xp });
 });
 
 // The weapons and armour this hero has with them, and what the next step on each would cost.
@@ -607,7 +615,23 @@ app.post("/api/smithy/work", async (c) => {
   const body = await c.req.json<{ itemId?: unknown }>().catch(() => ({}) as { itemId?: unknown });
   const result = await smithItem(c.env.DB, player.id, body.itemId);
   if (typeof result === "string") return c.json({ error: result }, 409);
-  return c.json({ ...(await smithyView(c.env.DB, player.id)), worked: result.name });
+  if (result.xp) c.executionCtx.waitUntil(announceXp(c.env, player.id, result.xp));
+  return c.json({ ...(await smithyView(c.env.DB, player.id)), worked: result.name, xp: result.xp });
+});
+
+// ---------- the sparring ring ----------
+
+// A bout at the ring has ended. The bout itself runs in the browser, so all this does is pay its
+// few XP, and only for the first SPAR_XP_DAILY_BOUTS bouts of the day, under the daily Harbor cap.
+app.post("/api/spar/done", async (c) => {
+  const player = c.get("player");
+  const xp = await prepareXp(c.env.DB, player.id, HARBOR_XP.spar, { spar: true });
+  if (!xp) return c.json({ error: "Create a character first." }, 409);
+  const statements = xp.statements("1");
+  const results = statements.length > 0 ? await c.env.DB.batch(statements) : [];
+  const earned = xpOutcome(xp, results);
+  if (earned) c.executionCtx.waitUntil(announceXp(c.env, player.id, earned));
+  return c.json({ xp: earned });
 });
 
 // ---------- giving and trading between crewmates ----------

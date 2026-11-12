@@ -22,7 +22,7 @@
 .overlay .panel.spar-result { max-width: 420px; text-align: center; display: flex; flex-direction: column; gap: 10px; }
 
 .spar-banner { position: absolute; top: 96px; right: 10px; z-index: 13; display: flex; gap: 12px; align-items: center; padding: 4px 10px; }
-.spar > .spar-feed { left: 10px; top: 48px; bottom: auto; max-height: 150px; justify-content: flex-start; }
+.spar > .spar-feed { left: 10px; top: 104px; bottom: auto; max-height: 150px; justify-content: flex-start; }
 
 @media (max-width: 720px) {
   .spar-banner { top: 88px; right: 6px; }

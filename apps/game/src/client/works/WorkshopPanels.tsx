@@ -48,8 +48,9 @@ export function ApothecaryPanel({ onClose }: { onClose(): void }) {
     setError(null);
     setNotice(null);
     try {
-      setView(await api.brew(id));
-      setNotice(`A ${name} goes into your bag.`);
+      const res = await api.brew(id);
+      setView(res);
+      setNotice(`A ${name} goes into your bag.${res.xp?.text ? ` ${res.xp.text}` : ""}`);
     } catch (e) {
       setError((e as Error).message);
       api.apothecary().then(setView, () => {});
@@ -108,7 +109,7 @@ export function SmithyPanel({ onClose, refresh }: { onClose(): void; refresh(): 
     try {
       const res = await api.smith(id);
       setView(res);
-      setNotice(`The smith hands it back: ${res.worked}.`);
+      setNotice(`The smith hands it back: ${res.worked}.${res.xp?.text ? ` ${res.xp.text}` : ""}`);
       // Gold and power changed on the character sheet too.
       void refresh();
     } catch (e) {

@@ -565,12 +565,15 @@ export function sleepZTexture(): THREE.CanvasTexture {
 
 /** A short text label as a pixel-crisp texture, for floating combat numbers. */
 export function textTexture(text: string, color: string): THREE.CanvasTexture {
+  const font = "bold 18px ui-monospace, Menlo, monospace";
   const canvas = document.createElement("canvas");
-  // Wide enough for the text: a damage number fits the usual 64, a trait's name needs more.
-  canvas.width = Math.max(64, text.length * 12 + 8);
+  // 64 wide fits a damage number; longer text ("+10 XP", "LEVEL UP") gets a wider canvas, so the sprite's aspect follows it.
+  const measureCtx = canvas.getContext("2d")!;
+  measureCtx.font = font;
+  canvas.width = Math.max(64, Math.ceil(measureCtx.measureText(text).width) + 10);
   canvas.height = 24;
   const ctx = canvas.getContext("2d")!;
-  ctx.font = "bold 18px ui-monospace, Menlo, monospace";
+  ctx.font = font;
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
   ctx.lineWidth = 4;
@@ -591,6 +594,8 @@ export interface PlateStats {
   level: number;
   hp: number;
   xp: number;
+  /** Just earned XP: the XP bar is drawn lit up for a moment. */
+  glow?: boolean;
 }
 
 const PLATE_BG: [number, number, number, number] = [27, 24, 48, 225];
@@ -599,6 +604,9 @@ const LEVEL_INK: [number, number, number] = [255, 210, 63];
 const BAR_TRACK = "#3b3560";
 const HP_COLOR: Record<HealthBand, string> = { good: "#6ee06e", hurt: "#ffd23f", low: "#ff6b6b" };
 const XP_COLOR = "#7d8cff";
+/** The XP bar as it lights up on a gain: pale blue track, near-white fill. */
+const XP_GLOW_TRACK = "#5f7fd8";
+const XP_GLOW_COLOR = "#e4f4ff";
 /** Rows of the name line, then the HP bar (3 rows), a gap, the XP bar (2 rows) and a margin. */
 const NAME_ROWS = 15;
 const PLATE_ROWS = NAME_ROWS + 6;
@@ -610,7 +618,7 @@ export function plateKey(text: string, plate?: PlateStats): string {
   if (!plate) return text;
   const width = plateWidth(text, plate);
   const inner = width - 6;
-  return `${text}|${plate.level}|${barPixels(plate.hp, inner)}:${healthBand(plate.hp)}|${barPixels(plate.xp, inner)}`;
+  return `${text}|${plate.level}|${barPixels(plate.hp, inner)}:${healthBand(plate.hp)}|${barPixels(plate.xp, inner)}${plate.glow ? "|glow" : ""}`;
 }
 
 const LABEL_FONT = "12px ui-monospace, Menlo, Consolas, monospace";
@@ -679,8 +687,8 @@ export function labelTexture(text: string, plate?: PlateStats): { texture: THREE
   if (plate) {
     const x0 = 3;
     const inner = canvas.width - 6;
-    const bar = (y: number, rows: number, fraction: number, colour: string) => {
-      ctx.fillStyle = BAR_TRACK;
+    const bar = (y: number, rows: number, fraction: number, colour: string, track = BAR_TRACK) => {
+      ctx.fillStyle = track;
       ctx.fillRect(x0, y, inner, rows);
       const filled = barPixels(fraction, inner);
       if (filled > 0) {
@@ -689,7 +697,8 @@ export function labelTexture(text: string, plate?: PlateStats): { texture: THREE
       }
     };
     bar(NAME_ROWS - 1, 3, plate.hp, HP_COLOR[healthBand(plate.hp)]);
-    bar(NAME_ROWS + 3, 2, plate.xp, XP_COLOR);
+    if (plate.glow) bar(NAME_ROWS + 3, 2, plate.xp, XP_GLOW_COLOR, XP_GLOW_TRACK);
+    else bar(NAME_ROWS + 3, 2, plate.xp, XP_COLOR);
   }
   const texture = new THREE.CanvasTexture(canvas);
   texture.magFilter = THREE.NearestFilter;
@@ -699,9 +708,131 @@ export function labelTexture(text: string, plate?: PlateStats): { texture: THREE
   return { texture, aspect: canvas.width / canvas.height };
 }
 
+// ---------- speech bubbles ----------
+
+const BUBBLE_FILL: [number, number, number] = [250, 246, 232];
+const BUBBLE_EDGE: [number, number, number] = [27, 24, 48];
+const BUBBLE_INK: [number, number, number] = [35, 31, 58];
+/** Widest a line of speech may be, in pixels of text, so a bubble stays narrow on a phone. */
+const BUBBLE_TEXT_WIDTH = 120;
+const BUBBLE_MAX_LINES = 3;
+const BUBBLE_LINE_ROWS = 13;
+/** Rows the tail hangs below the box. */
+export const BUBBLE_TAIL_ROWS = 4;
+
+/** Break speech into at most three lines that fit the bubble, ending in an ellipsis if it had to be cut. */
+export function wrapSpeech(text: string): string[] {
+  const words = text.replace(/\s+/g, " ").trim().split(" ").filter(Boolean);
+  const lines: string[] = [];
+  let line = "";
+  let cut = false;
+  const fits = (s: string) => measure(s) <= BUBBLE_TEXT_WIDTH;
+  for (let word of words) {
+    const tryLine = line ? `${line} ${word}` : word;
+    if (fits(tryLine)) {
+      line = tryLine;
+      continue;
+    }
+    if (line) {
+      lines.push(line);
+      line = "";
+      if (lines.length === BUBBLE_MAX_LINES) {
+        cut = true;
+        break;
+      }
+    }
+    // A word too long for a line on its own is broken wherever it runs out of room.
+    while (!fits(word)) {
+      let n = word.length - 1;
+      while (n > 1 && !fits(word.slice(0, n))) n--;
+      lines.push(word.slice(0, n));
+      word = word.slice(n);
+      if (lines.length === BUBBLE_MAX_LINES) {
+        cut = true;
+        break;
+      }
+    }
+    if (cut) break;
+    line = word;
+  }
+  if (!cut && line) lines.push(line);
+  if (cut && lines.length > 0) {
+    let last = lines[lines.length - 1];
+    while (last.length > 0 && !fits(`${last}…`)) last = last.slice(0, -1);
+    lines[lines.length - 1] = `${last.trimEnd()}…`;
+  }
+  return lines.length > 0 ? lines : ["…"];
+}
+
+/**
+ * A speech bubble: pale, with a one-pixel dark outline, clipped corners and a
+ * tail at the bottom middle pointing down at the speaker. The text is drawn as
+ * text on a canvas (never markup) and snapped to solid pixels like a name tag.
+ */
+export function bubbleTexture(text: string): { texture: THREE.CanvasTexture; width: number; rows: number } {
+  const lines = wrapSpeech(text);
+  const textW = Math.max(...lines.map(measure));
+  const width = Math.max(16, textW + 10);
+  const box = lines.length * BUBBLE_LINE_ROWS + 4;
+  const rows = box + BUBBLE_TAIL_ROWS;
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = rows;
+  const ctx = canvas.getContext("2d", { willReadFrequently: true })!;
+  ctx.font = LABEL_FONT;
+  (ctx as CanvasRenderingContext2D & { letterSpacing?: string }).letterSpacing = "1px";
+  ctx.textBaseline = "middle";
+  ctx.textAlign = "left";
+  ctx.fillStyle = "#ffffff";
+  const left = Math.floor((width - textW) / 2);
+  lines.forEach((line, i) => ctx.fillText(line, left, 2 + i * BUBBLE_LINE_ROWS + BUBBLE_LINE_ROWS / 2 + 1));
+  const image = ctx.getImageData(0, 0, width, rows);
+  const px = image.data;
+  const mid = Math.floor(width / 2);
+  // What each pixel is: outside, edge, or inside the bubble (box with clipped corners, plus the tail).
+  const shape = (x: number, y: number): 0 | 1 | 2 => {
+    if (y < box) {
+      const sideX = x === 0 || x === width - 1;
+      const sideY = y === 0 || y === box - 1;
+      // Corners are clipped, and the pixel diagonally inside each one is outline, so they read as round.
+      if (sideX && sideY) return 0;
+      if ((x === 1 || x === width - 2) && (y === 1 || y === box - 2)) return 1;
+      // The outline is open where the tail joins the box.
+      if (y === box - 1 && Math.abs(x - mid) <= 2) return 2;
+      return sideX || sideY ? 1 : 2;
+    }
+    // The tail narrows a pixel each row to a point.
+    const t = y - box;
+    const half = 2 - t;
+    if (half < 0) return x === mid ? 1 : 0;
+    if (x === mid - half - 1 || x === mid + half + 1) return 1;
+    if (x >= mid - half && x <= mid + half) return 2;
+    return 0;
+  };
+  for (let y = 0; y < rows; y++) {
+    for (let x = 0; x < width; x++) {
+      const k = (y * width + x) * 4;
+      const ink = px[k + 3] >= 96;
+      const s = shape(x, y);
+      const colour = s === 0 ? null : s === 1 ? BUBBLE_EDGE : ink ? BUBBLE_INK : BUBBLE_FILL;
+      px[k] = colour?.[0] ?? 0;
+      px[k + 1] = colour?.[1] ?? 0;
+      px[k + 2] = colour?.[2] ?? 0;
+      px[k + 3] = colour ? 255 : 0;
+    }
+  }
+  ctx.putImageData(image, 0, 0);
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.magFilter = THREE.NearestFilter;
+  texture.minFilter = THREE.NearestFilter;
+  texture.generateMipmaps = false;
+  texture.colorSpace = THREE.SRGBColorSpace;
+  return { texture, width, rows };
+}
+
 // ---------- battle effects ----------
 
-export type FxKind = "slash" | "bolt" | "arrow" | "burst" | "spark";
+export type FxKind = "slash" | "bolt" | "arrow" | "burst" | "spark" | "mote";
 
 const fxCache = new Map<string, THREE.CanvasTexture>();
 
@@ -772,6 +903,11 @@ export function fxTexture(kind: FxKind, color: string, flip = false): THREE.Canv
     }
     ctx.fillStyle = "#ffffff";
     ctx.fillRect(7, 7, 2, 2);
+  } else if (kind === "mote") {
+    // One XP mote: a solid 4x4 pixel, a white glint in its corner, in the middle of the tile.
+    ctx.fillStyle = color;
+    ctx.fillRect(6, 6, 4, 4);
+    dot(6, 6, "#ffffff");
   } else {
     for (const [cx, cy] of [[4, 4], [11, 6], [6, 11], [12, 12]]) {
       dot(cx, cy, "#ffffff");

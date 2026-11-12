@@ -20,6 +20,7 @@ export * from "./hutroom";
 export * from "./contracts";
 export * from "./drops";
 export * from "./gather";
+export * from "./harborxp";
 export * from "./projects";
 export * from "./pub";
 export * from "./apothecary";

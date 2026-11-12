@@ -2,7 +2,7 @@
 // gear, against a training dummy or an enemy of their choosing.
 //
 // The whole bout runs in this browser on the same battle rules a voyage
-// uses. Nothing is sent to the server, so nothing is won, lost or saved, and
+// uses. Nothing about the fight is sent to the server, so nothing is won, lost or saved, and
 // the rest of the crew does not see it. While it is open this view borrows
 // the Harbor's renderer: a bout is drawn by handing it the Harbor scene with
 // a battle attached.
@@ -12,6 +12,7 @@ import {
   ABILITIES,
   DUMMY_KIND,
   ENEMIES,
+  SPAR_XP_DAILY_BOUTS,
   STAT_LABEL,
   WEAPONS,
   createBattle,
@@ -29,7 +30,7 @@ import {
   type HeroSheet,
   type Rng,
 } from "@gantt-quest/world";
-import type { Me } from "./api";
+import { api, type Me } from "./api";
 import { BattleHud } from "./BattleHud";
 import { toOwned } from "./items";
 import { spriteDataUrl } from "./render/sprites";
@@ -66,7 +67,7 @@ function sheetOf(me: Me, id: string): HeroSheet {
 function describe(ev: BattleEvent, n: (id: string) => string): string | null {
   switch (ev.t) {
     case "hit": return `${n(ev.actor)}: ${ev.ability} hits ${n(ev.target)} for ${ev.amount}${ev.perfect ? " (perfect!)" : ""}.`;
-    case "miss": return `${n(ev.actor)}: ${ev.ability} misses ${n(ev.target)}.`;
+    case "miss": return ev.heal ? `${n(ev.actor)}: ${ev.ability} fails.` : `${n(ev.actor)}: ${ev.ability} misses ${n(ev.target)}.`;
     case "heal": return `${n(ev.actor)}: ${ev.ability} restores ${ev.amount} HP to ${n(ev.target)}.`;
     case "effect": return `${n(ev.target)} is ${label("effect", ev.effect).toLowerCase()}.`;
     case "tick": return `${n(ev.target)} takes ${ev.amount} from ${label("effect", ev.effect).toLowerCase()}.`;
@@ -105,6 +106,10 @@ export function SparView({ me, scene, renderer, onClose }: Props) {
   const [shown, setShown] = useState<{ who: string; check: CheckResult } | null>(null);
   const [result, setResult] = useState<Exclude<BattleStatus, "active"> | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /** What the finished bout paid in Harbor XP, once the server has said. */
+  const [xpText, setXpText] = useState<string | null>(null);
+  /** The bout already reported as finished, so it is only paid once. */
+  const paidFor = useRef<BattleState | null>(null);
   /** Events from the latest step, waiting for the renderer to have the state they belong to. */
   const queue = useRef<BattleEvent[]>([]);
 
@@ -141,7 +146,14 @@ export function SparView({ me, scene, renderer, onClose }: Props) {
   const blows = useRef(0);
   useEffect(() => {
     if (status === "active") return;
-    const t = setTimeout(() => setResult(status), 500 + blows.current * BEAT_MS);
+    const t = setTimeout(() => {
+      setResult(status);
+      // A bout fought to the end (not walked out of) is worth a few XP, for the first few a day.
+      if (status !== "fled" && bout && paidFor.current !== bout.battle) {
+        paidFor.current = bout.battle;
+        api.sparDone().then((r) => setXpText(r.xp?.text || null), () => setXpText(null));
+      }
+    }, 500 + blows.current * BEAT_MS);
     return () => clearTimeout(t);
   }, [status, bout]);
 
@@ -166,6 +178,7 @@ export function SparView({ me, scene, renderer, onClose }: Props) {
     queue.current = [];
     setFeed([`${sheet.name} squares up to ${many > 1 ? `${many} × ` : ""}${label("enemy", kind)}.`]);
     setResult(null);
+    setXpText(null);
     setShown(null);
     report(created.state, created.events);
     setBout({ battle: created.state, rng });
@@ -194,7 +207,7 @@ export function SparView({ me, scene, renderer, onClose }: Props) {
         <div className="overlay">
           <div className="panel spar-pick">
             <h2>The sparring ring</h2>
-            <p className="muted">A practice bout. You start rested, in the gear you are wearing. Nothing is won, lost or saved.</p>
+            <p className="muted">A practice bout. You start rested, in the gear you are wearing. Your first {SPAR_XP_DAILY_BOUTS} bouts fought to the end each day give a few XP; nothing else is won, lost or saved.</p>
             <div className="spar-hero">
               <img className="pixel-icon" alt="" src={spriteDataUrl(sheet.classId, sheet.outfit)} />
               <div>
@@ -256,7 +269,10 @@ export function SparView({ me, scene, renderer, onClose }: Props) {
             <div className="overlay">
               <div className="panel spar-result">
                 <h2 className={RESULT[result].tone}>{RESULT[result].title}</h2>
-                <p>{RESULT[result].line} <span className="muted">Nothing was won or lost.</span></p>
+                <p>
+                  {RESULT[result].line}{" "}
+                  {xpText ? <span className={xpText.startsWith("+") ? "xp-gain" : "muted"}>{xpText}</span> : <span className="muted">Nothing was won or lost.</span>}
+                </p>
                 <div className="row spar-buttons">
                   <button className="primary" onClick={begin}>Again</button>
                   <button onClick={choose}>Change opponent</button>

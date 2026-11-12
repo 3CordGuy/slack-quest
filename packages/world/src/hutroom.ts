@@ -6,7 +6,7 @@
 // are, where a furnishing may stand, and that furniture is walked around.
 
 import { allHexesInGrid, posKey, type HexGrid, type HexPos } from "@gantt-quest/core";
-import { harborPoi, type HarborPlayer } from "./harbor";
+import { harborPoi, type HarborPlayer, type XpMessage } from "./harbor";
 import { FURNISHINGS, HUT_TIERS, type Furnishing, type HutTier } from "./hut";
 import { BASE_HEIGHT, findPath, poiAt, tileAt, type Tile, type WorldMap } from "./map";
 
@@ -222,7 +222,8 @@ export type HutServerMessage =
   | { type: "moved"; id: string; path: HexPos[] }
   | { type: "said"; id: string; name: string; text: string }
   /** Sent only to whoever asked for something that was not allowed. */
-  | { type: "refused"; reason: string };
+  | { type: "refused"; reason: string }
+  | XpMessage;
 
 export type HutClientMessage =
   | { type: "move"; to: HexPos }

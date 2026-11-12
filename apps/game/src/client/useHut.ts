@@ -3,7 +3,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { HexPos } from "@gantt-quest/core";
-import type { Furnishing, HarborPlayer, HutClientMessage, HutServerMessage } from "@gantt-quest/world";
+import type { Furnishing, HarborPlayer, HutClientMessage, HutServerMessage, XpMessage } from "@gantt-quest/world";
 import { PROFILE } from "./api";
 import type { HarborChatLine } from "./useHarbor";
 
@@ -25,8 +25,8 @@ export interface HutConnection {
   send(message: HutClientMessage): void;
 }
 
-/** `onMoved` fires for every walk, including your own, so the renderer can animate it. */
-export function useHut(ownerId: string, onMoved: (id: string, path: HexPos[]) => void): HutConnection {
+/** `onMoved` fires for every walk, including your own, so the renderer can animate it; `onSaid` for every chat line, yours too, so it can show it over the speaker. */
+export function useHut(ownerId: string, onMoved: (id: string, path: HexPos[]) => void, onXp?: (m: XpMessage) => void, onSaid?: (id: string, text: string) => void): HutConnection {
   const [you, setYou] = useState<string | null>(null);
   const [owner, setOwner] = useState<HutConnection["owner"]>(null);
   const [tier, setTier] = useState<number | null>(null);
@@ -40,6 +40,10 @@ export function useHut(ownerId: string, onMoved: (id: string, path: HexPos[]) =>
   const socket = useRef<WebSocket | null>(null);
   const moved = useRef(onMoved);
   moved.current = onMoved;
+  const xpSeen = useRef(onXp);
+  xpSeen.current = onXp;
+  const said = useRef(onSaid);
+  said.current = onSaid;
 
   useEffect(() => {
     let closed = false;
@@ -84,8 +88,14 @@ export function useHut(ownerId: string, onMoved: (id: string, path: HexPos[]) =>
           setPlayers((ps) => ps.map((p) => (p.id === msg.id ? { ...p, pos: end } : p)));
           // After React has applied the new position, so the walk is not snapped over.
           queueMicrotask(() => moved.current(msg.id, msg.path));
+        } else if (msg.type === "xp") {
+          // Someone here earned XP: their plate shows the new level and bar, then the sparkle plays.
+          setPlayers((ps) => ps.map((p) => (p.id === msg.id ? { ...p, level: msg.level, xp: msg.xp } : p)));
+          queueMicrotask(() => xpSeen.current?.(msg));
         } else if (msg.type === "said") {
           setChat((c) => [...c, { name: msg.name, text: msg.text }].slice(-30));
+          // Over their head too, for everyone who can see them.
+          said.current?.(msg.id, msg.text);
         }
       };
       ws.onclose = async (e) => {

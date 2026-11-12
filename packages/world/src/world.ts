@@ -92,6 +92,8 @@ export interface ChatLine {
   who: "hero" | "npc" | "system";
   name: string;
   text: string;
+  /** The hero who said it, on a hero's line. Absent on lines saved before it was kept. */
+  heroId?: string;
 }
 
 export interface Turn {
@@ -833,7 +835,7 @@ function talk(ctx: Ctx, hero: Hero, action: Extract<WorldAction, { type: "talk" 
   }
   run.messages += 1;
   run.busy = true;
-  pushChat(ctx, { npcId: sheet.id, who: "hero", name: hero.name, text });
+  pushChat(ctx, { npcId: sheet.id, who: "hero", name: hero.name, text, heroId: hero.id });
   setFact(ctx, `met:${sheet.id}`);
   ctx.effects.push({ kind: "npc_call", npcId: sheet.id, heroId: hero.id, text, check });
   return null;
