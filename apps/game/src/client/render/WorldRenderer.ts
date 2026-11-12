@@ -7,7 +7,8 @@
 // in on the fight and lines the two sides up facing each other.
 
 import * as THREE from "three";
-import { Ambience, CARD_LAYER, SHADOW_SLOTS, SLOT_LAYER } from "./ambience";
+import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
+import { Ambience, CARD_LAYER, SHADOW_SLOTS, SLOT_LAYER, pixelTexture, stamp, type BuildingGlow } from "./ambience";
 import "./camera.css";
 import type { HexPos } from "@gantt-quest/core";
 import { hexDistance } from "@gantt-quest/core";
@@ -176,6 +177,66 @@ const PLAYER_COLORS = ["#ffd23f", "#5ce1e6", "#ff7ab6", "#9dff6b"];
 const BIOME_COLOR: Record<string, string> = { plains: "#7cb856", forest: "#4c9a52", hills: "#a39672", water: "#3f86dc", dock: "#9a7748", cobble: "#6f7279", mud: "#5f5140", rampart: "#62656d", floor: "#b08a5c", wall: "#6e5a48", fog: "#2b3140" };
 /** What grass and trees are pulled toward under the Harbor's low cloud. */
 const DRAB = new THREE.Color("#5d6a5c");
+/** The pub's painted sign: a foaming tankard on an oxblood board with a gold edge. Made once and shared. */
+let pubSignTexture: THREE.CanvasTexture | null = null;
+function pubSign(): THREE.CanvasTexture {
+  pubSignTexture ??= pixelTexture(16, 14, (ctx) => {
+    ctx.fillStyle = "#6e2b26";
+    ctx.fillRect(0, 0, 16, 14);
+    stamp(ctx, [
+      "BBBBBBBBBBBBBBBB",
+      "B              B",
+      "B    W  WW     B",
+      "B   WWWWWWW    B",
+      "B  WWWWWWWWW   B",
+      "B   hhhhhhh    B",
+      "B   YyYYyYYYY  B",
+      "B   YyYYyYY  Y B",
+      "B   hhhhhhh  Y B",
+      "B   YyYYyYY  Y B",
+      "B   YyYYyYYYY  B",
+      "B   hhhhhhh    B",
+      "B              B",
+      "BBBBBBBBBBBBBBBB",
+    ], { B: "#d9b45a", W: "#f4efe1", Y: "#d08a3a", y: "#a8662a", h: "#3a2c22" });
+  });
+  return pubSignTexture;
+}
+/**
+ * Fold a model's pieces that share a look into one mesh each, so a detailed building costs a handful of draw calls
+ * rather than one a piece. Plain lambert pieces of the same colour fold together; a piece with any other material
+ * (a pane the ambience warms, the painted sign) folds only with pieces using that very material. Glows stay apart.
+ */
+function foldByLook(g: THREE.Group) {
+  const sets = new Map<string, THREE.Mesh[]>();
+  for (const o of g.children) {
+    if (!(o instanceof THREE.Mesh)) continue;
+    const m = o.material as THREE.Material;
+    const key = (m instanceof THREE.MeshLambertMaterial && !m.map ? `lambert:${m.color.getHexString()}` : m.uuid) + (o.userData.glow ? ":glow" : "");
+    const set = sets.get(key);
+    if (set) set.push(o);
+    else sets.set(key, [o]);
+  }
+  for (const meshes of sets.values()) {
+    if (meshes.length < 2) continue;
+    const parts = meshes.map((mesh) => {
+      mesh.updateMatrix();
+      const geo = (mesh.geometry.index ? mesh.geometry.toNonIndexed() : mesh.geometry.clone()).applyMatrix4(mesh.matrix);
+      geo.clearGroups();
+      return geo;
+    });
+    const folded = mergeGeometries(parts);
+    for (const p of parts) p.dispose();
+    if (!folded) continue;
+    const mesh = new THREE.Mesh(folded, meshes[0].material);
+    mesh.userData.glow = meshes[0].userData.glow;
+    for (const m of meshes) {
+      g.remove(m);
+      m.geometry.dispose();
+    }
+    g.add(mesh);
+  }
+}
 /** The open sea at the dead of night, and the fog by day and by night. */
 const NIGHT_SEA = new THREE.Color("#0f1a33");
 const FOG_DAY = new THREE.Color("#3a4358");
@@ -1143,6 +1204,9 @@ export class WorldRenderer {
     const stacks: THREE.Vector3[] = [];
     /** A lighthouse's lantern, which the ambience turns a beam from. */
     let beacon: THREE.Vector3 | null = null;
+    /** Buildings' lit windows and lanterns, and the panes that warm at dusk. */
+    const glows: BuildingGlow[] = [];
+    const panes: THREE.MeshBasicMaterial[] = [];
     for (const poi of state.map.pois) {
       const g = this.poiModel(poi);
       const at = this.standAt(poi.pos);
@@ -1154,9 +1218,12 @@ export class WorldRenderer {
       this.poiGroup.add(g);
       if (g.userData.smoke) stacks.push((g.userData.smoke as THREE.Vector3).clone().add(g.position));
       if (g.userData.beacon) beacon = (g.userData.beacon as THREE.Vector3).clone().add(g.position);
+      for (const glow of (g.userData.glows as BuildingGlow[] | undefined) ?? []) glows.push({ ...glow, pos: glow.pos.clone().add(g.position) });
+      panes.push(...((g.userData.panes as THREE.MeshBasicMaterial[] | undefined) ?? []));
     }
     this.ambience.setSmoke(stacks);
     this.ambience.setBeacon(beacon);
+    this.ambience.setGlows(glows, panes);
     // The sea breaks around rocks standing out of it, and the wreck on them.
     this.ambience.setSeaRocks(state.map.pois.filter((p) => p.kind === "rocks" || p.kind === "wreck").map((p) => this.standAt(p.pos)));
   }
@@ -1625,22 +1692,146 @@ export class WorldRenderer {
         break;
       }
       case "pub": {
-        // The pub: a long hall, wider and taller than any hut, with lit windows, a sign and a stone chimney.
-        const wall = lambert("#b89668");
-        const roof = lambert("#5d3a2a");
-        add(box(1.5, 0.72, 0.95), wall, 0, 0.36, 0);
-        add(box(1.62, 0.08, 1.07), lambert("#4a2f22"), 0, 0.76, 0);
-        const ridge = add(new THREE.ConeGeometry(0.78, 0.6, 4), roof, 0, 1.1, 0, Math.PI / 4);
-        ridge.scale.x = 1.5;
-        add(box(0.22, 0.36, 0.04), lambert("#4a2f22"), 0, 0.18, 0.48);
-        for (const x of [-0.48, 0.48]) add(box(0.2, 0.2, 0.03), new THREE.MeshBasicMaterial({ color: "#ffd98a" }), x, 0.42, 0.48);
-        // A sign on a bracket by the door.
-        add(box(0.04, 0.04, 0.3), lambert("#3a2c22"), 0.26, 0.62, 0.62);
-        add(box(0.03, 0.2, 0.26), lambert("#d9b45a"), 0.26, 0.48, 0.66);
-        // The chimney stands proud of the roof; its smoke is drawn by the ambience.
-        add(box(0.24, 1.3, 0.24), lambert("#8b8f96"), 0.5, 0.65, -0.22);
-        add(box(0.3, 0.07, 0.3), lambert("#6f737a"), 0.5, 1.33, -0.22);
-        g.userData.smoke = new THREE.Vector3(0.5, 1.4, -0.22);
+        // The pub: the warm heart of the town. A two-storey inn, bigger than any hut: a stone ground floor, a jettied
+        // upper floor of cream plaster and dark timbers under a steep gabled roof, windows that warm and glow as the
+        // light goes, a painted sign on a bracket, a lantern, and barrels and a bench out front.
+        const timber = lambert("#4a2f22");
+        const plaster = lambert("#e8d9b5");
+        const stone = lambert("#a8977a");
+        const roofMat = lambert("#7a3a2c");
+        const glows: BuildingGlow[] = [];
+        const panes: THREE.MeshBasicMaterial[] = [];
+        /** A window's glass: dim amber by day, lamplit by night (the ambience moves it between the two). */
+        const pane = (unlit: string, lit: string) => {
+          const m = new THREE.MeshBasicMaterial({ color: lit });
+          m.userData = { unlit, lit };
+          panes.push(m);
+          return m;
+        };
+        const lowerGlass = pane("#c99a52", "#ffd98a");
+        const upperGlass = pane("#b98a4a", "#ffc870");
+        /** A framed window on the front, with a cross of glazing bars. */
+        const framed = (x: number, y: number, w: number, h: number, z: number, glass: THREE.Material) => {
+          add(box(w + 0.05, h + 0.05, 0.012), timber, x, y, z);
+          add(box(w, h, 0.01), glass, x, y, z + 0.008).userData.glow = true;
+          add(box(0.02, h, 0.012), timber, x, y, z + 0.014);
+          add(box(w, 0.02, 0.012), timber, x, y, z + 0.014);
+          glows.push({ pos: new THREE.Vector3(x, y, z + 0.18), size: w * 2.2 });
+        };
+
+        // The ground floor: a stone plinth and stone walls.
+        add(box(1.6, 0.08, 1.0), lambert("#7b8494"), 0, 0.04, 0);
+        add(box(1.5, 0.46, 0.92), stone, 0, 0.31, 0);
+        for (const x of [-0.48, 0.48]) {
+          framed(x, 0.31, 0.26, 0.2, 0.46, lowerGlass);
+          add(box(0.32, 0.03, 0.06), timber, x, 0.19, 0.48);
+        }
+        // The door: a red door in a timber frame, a lit fanlight over it, a brass handle and a stone step.
+        add(box(0.3, 0.42, 0.02), timber, 0, 0.29, 0.465);
+        add(box(0.22, 0.35, 0.03), lambert("#7a3a24"), 0, 0.255, 0.47);
+        add(box(0.2, 0.035, 0.02), lowerGlass, 0, 0.472, 0.475).userData.glow = true;
+        add(box(0.03, 0.03, 0.02), lambert("#e0b12e"), 0.07, 0.25, 0.49);
+        add(box(0.4, 0.04, 0.12), lambert("#8b8f96"), 0, 0.02, 0.56);
+        // A little gabled hood over the door on two brackets.
+        const hood = add(box(0.46, 0.035, 0.24), roofMat, 0, 0.53, 0.57);
+        hood.rotation.x = 0.35;
+        for (const x of [-0.19, 0.19]) add(box(0.03, 0.03, 0.16), timber, x, 0.47, 0.52).rotation.x = -0.75;
+
+        // The jettied upper floor: a beam, cream plaster, and a frame of dark timbers.
+        add(box(1.62, 0.07, 1.04), timber, 0, 0.575, 0);
+        add(box(1.58, 0.38, 1.0), plaster, 0, 0.8, 0);
+        add(box(1.64, 0.05, 1.04), timber, 0, 1.0, 0);
+        for (const x of [-0.79, 0.79]) for (const z of [-0.5, 0.5]) add(box(0.06, 0.38, 0.06), timber, x, 0.8, z);
+        for (const x of [-0.25, 0.25]) for (const z of [-0.505, 0.505]) add(box(0.05, 0.38, 0.02), timber, x, 0.8, z);
+        for (const x of [-0.795, 0.795]) add(box(0.02, 0.38, 0.05), timber, x, 0.8, 0);
+        // A cross brace in the middle bay, front and back.
+        for (const z of [-0.507, 0.507]) for (const tilt of [-0.66, 0.66]) add(box(0.56, 0.04, 0.015), timber, 0, 0.8, z).rotation.z = tilt;
+        // Two windows upstairs, each with a box of flowers under it.
+        for (const [x, bloom] of [[-0.52, "#d0473a"], [0.52, "#e8c53a"]] as [number, string][]) {
+          framed(x, 0.82, 0.22, 0.18, 0.5, upperGlass);
+          add(box(0.28, 0.06, 0.08), lambert("#6b4a2b"), x, 0.68, 0.54);
+          add(box(0.24, 0.04, 0.06), lambert("#4f8a3a"), x, 0.725, 0.54);
+          for (const dx of [-0.08, 0, 0.08]) add(box(0.04, 0.04, 0.04), lambert(bloom), x + dx, 0.755, 0.55 + (dx === 0 ? 0.01 : 0));
+        }
+
+        // The roof: a long gabled roof with eaves that overhang all round, and a smaller gable over the door,
+        // standing out of the front slab, with a lit window in it.
+        const eaves = 1.02;
+        /** A gabled roof: a plaster prism `len` long, `half` out to each eave and `rise` high, under two overhanging slabs. Its ridge runs along x, or along z with `alongZ`. */
+        const gabled = (cx: number, cz: number, len: number, half: number, rise: number, alongZ: boolean) => {
+          const shape = new THREE.Shape([new THREE.Vector2(-half, 0), new THREE.Vector2(half, 0), new THREE.Vector2(0, rise)]);
+          const prism = new THREE.ExtrudeGeometry(shape, { depth: len, bevelEnabled: false }).translate(0, 0, -len / 2);
+          if (!alongZ) prism.rotateY(Math.PI / 2);
+          add(prism, plaster, cx, eaves, cz);
+          const pitch = Math.atan2(rise, half);
+          const slope = Math.hypot(rise, half) * 1.18;
+          for (const side of [1, -1]) {
+            // Half way down the slope, lifted half a slab's thickness off the gable.
+            const along = slope / 2;
+            const out = side * (along * Math.cos(pitch) + 0.03 * Math.sin(pitch));
+            const y = eaves + rise - along * Math.sin(pitch) + 0.03 * Math.cos(pitch);
+            if (alongZ) add(box(slope, 0.06, len + 0.1), roofMat, cx + out, y, cz).rotation.z = -side * pitch;
+            else add(box(len + 0.2, 0.06, slope), roofMat, cx, y, cz + out).rotation.x = side * pitch;
+          }
+          return pitch;
+        };
+        const rise = 0.44;
+        const pitch = gabled(0, 0, 1.56, 0.5, rise, false);
+        // A darker course of shingles part way down each slope, and a ridge cap.
+        for (const side of [1, -1]) {
+          const d = 0.24;
+          add(box(1.77, 0.065, 0.06), lambert("#5d2a20"), 0, eaves + rise - d * Math.sin(pitch) + 0.035 * Math.cos(pitch), side * (d * Math.cos(pitch) + 0.035 * Math.sin(pitch))).rotation.x = side * pitch;
+        }
+        add(box(1.82, 0.07, 0.1), lambert("#4a2018"), 0, eaves + rise + 0.03, 0);
+        gabled(0, 0.32, 0.48, 0.32, 0.34, true);
+        add(box(0.08, 0.06, 0.58), lambert("#4a2018"), 0, eaves + 0.37, 0.32);
+        framed(0, eaves + 0.13, 0.16, 0.13, 0.565, upperGlass);
+        // A small window in each end gable, under the peak.
+        for (const x of [-0.785, 0.785]) {
+          add(box(0.015, 0.14, 0.14), timber, x, eaves + 0.15, 0);
+          add(box(0.012, 0.1, 0.1), upperGlass, x + Math.sign(x) * 0.006, eaves + 0.15, 0).userData.glow = true;
+        }
+
+        // The chimney stands proud of the roof, with a pot on top; its smoke is drawn by the ambience.
+        add(box(0.22, 0.92, 0.22), lambert("#8b8f96"), 0.52, 1.36, -0.24);
+        add(box(0.28, 0.06, 0.28), lambert("#6f737a"), 0.52, 1.83, -0.24);
+        add(new THREE.CylinderGeometry(0.05, 0.06, 0.08, 6), lambert("#b8643a"), 0.52, 1.9, -0.24);
+        g.userData.smoke = new THREE.Vector3(0.52, 1.96, -0.24);
+
+        // The sign: an iron bracket off the front corner, under the eaves, and a painted board hanging from it, face on to the street.
+        const iron = lambert("#2b2a33");
+        add(box(0.32, 0.03, 0.03), iron, 0.94, 0.6, 0.47);
+        add(box(0.2, 0.025, 0.025), iron, 0.85, 0.54, 0.47).rotation.z = 0.6;
+        for (const x of [0.84, 1.04]) add(box(0.012, 0.05, 0.012), iron, x, 0.565, 0.47);
+        add(box(0.32, 0.28, 0.025), lambert("#3a2c22"), 0.94, 0.4, 0.47);
+        const face = new THREE.MeshLambertMaterial({ map: pubSign() });
+        add(new THREE.PlaneGeometry(0.3, 0.26), face, 0.94, 0.4, 0.484);
+        add(new THREE.PlaneGeometry(0.3, 0.26), face, 0.94, 0.4, 0.456, Math.PI);
+
+        // A lantern on a bracket by the door, lit at dusk.
+        add(box(0.03, 0.03, 0.14), iron, -0.66, 0.5, 0.53);
+        add(box(0.08, 0.02, 0.08), iron, -0.66, 0.485, 0.6);
+        const flame = add(box(0.05, 0.07, 0.05), new THREE.MeshBasicMaterial({ color: "#ffd77a" }), -0.66, 0.44, 0.6);
+        flame.userData.glow = true;
+        for (const [dx, dz] of [[-0.035, -0.035], [0.035, -0.035], [-0.035, 0.035], [0.035, 0.035]]) add(box(0.012, 0.09, 0.012), iron, -0.66 + dx, 0.44, 0.6 + dz);
+        add(new THREE.ConeGeometry(0.06, 0.05, 4), iron, -0.66, 0.51, 0.6, Math.PI / 4);
+        glows.push({ pos: new THREE.Vector3(-0.66, 0.44, 0.72), size: 0.42, light: "candle" });
+        // The lamplight spilling out of the front, onto the street: held high and well out, so a hero at the door
+        // is lit evenly rather than with a hot spot.
+        glows.push({ pos: new THREE.Vector3(0, 1.1, 1.4), size: 0, light: "lamp" });
+
+        // Barrels by the lantern, and a bench under the sign with a tankard left on it.
+        for (const [x, z] of [[-0.62, 0.68], [-0.42, 0.74]]) {
+          add(new THREE.CylinderGeometry(0.1, 0.1, 0.22, 8), lambert("#7a5230"), x, 0.11, z);
+          for (const y of [0.05, 0.17]) add(new THREE.CylinderGeometry(0.104, 0.104, 0.02, 8), timber, x, y, z);
+        }
+        add(box(0.4, 0.035, 0.11), lambert("#8a6a44"), 0.52, 0.15, 0.62);
+        for (const x of [0.36, 0.68]) add(box(0.04, 0.13, 0.08), timber, x, 0.065, 0.62);
+        add(new THREE.CylinderGeometry(0.025, 0.025, 0.05, 6), lambert("#d08a3a"), 0.6, 0.193, 0.62);
+        add(new THREE.CylinderGeometry(0.026, 0.026, 0.012, 6), lambert("#f4efe1"), 0.6, 0.223, 0.62);
+        g.userData.glows = glows;
+        g.userData.panes = panes;
+        foldByLook(g);
         break;
       }
       case "shoals": {
