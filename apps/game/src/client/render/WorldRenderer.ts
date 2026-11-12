@@ -11,7 +11,7 @@ import { Ambience } from "./ambience";
 import "./camera.css";
 import type { HexPos } from "@gantt-quest/core";
 import { hexDistance } from "@gantt-quest/core";
-import { BATTLE_JOIN_RANGE, ENEMIES, TRAIT_BY_ID, MOVE_COST, findPath, xpProgress, reachable, tileAt, type ClientState, type Outfit, type Phase, type Poi, type Tile, type WorldEvent, type WorldMap } from "@gantt-quest/world";
+import { BASE_HEIGHT, BATTLE_JOIN_RANGE, BIG_REACH, ENEMIES, HEX_DIRS, TRAIT_BY_ID, MOVE_COST, WALL_FACE_HALF, WALL_ITEM_BOTTOM, WALL_ITEM_TOP, findPath, xpProgress, reachable, tileAt, wallFace, wallFaces, type ClientState, type Outfit, type Phase, type Poi, type Tile, type WorldEvent, type WorldMap } from "@gantt-quest/world";
 import { ghostModel, propModel, tintGhost, type LightKind } from "./props";
 import { SPRITE_ASPECT, bubbleTexture, fxTexture, labelTexture, plateKey, sleepZTexture, spriteKey, spriteTexture, textTexture, type FxKind, type PlateStats } from "./sprites";
 
@@ -90,16 +90,23 @@ export interface SceneProp {
   /** Which model to draw; see render/props.ts. */
   model: string;
   pos: HexPos;
-  /** 0 to 5, in sixths of a turn. */
+  /** 0 to 5, in sixths of a turn. A wall piece: which side of its wall hex it hangs on. */
   facing: number;
   /** Ringed, to show it is the one being handled. */
   selected?: boolean;
   /** A small thing: stepped over, not walked around. */
   small?: boolean;
-  /** A small thing's offset from the middle of its hex (or of its support's top), and its turn in radians. */
+  /** Hung on a wall: `pos` is the wall hex, `facing` the side, `x` along it and `y` up from the floor. */
+  mount?: boolean;
+  /** Offset from the middle of its hex (or of its support's top), and its turn in radians on top of `facing`. */
   x?: number;
   z?: number;
+  y?: number;
   angle?: number;
+  /** How far out its selection ring goes. */
+  ring?: number;
+  /** The hexes it keeps people out of, when that is more than its own (see hutroom.ts, coveredHexes). Small things and wall pieces keep nobody out. */
+  covers?: HexPos[];
   /** The prop it stands on; then x/z/angle are in that prop's own frame. */
   on?: string | number;
   /** Its flat top, in its own frame, for small things to stand on. */
@@ -112,13 +119,17 @@ export interface PlaceTarget {
   x: number;
   z: number;
   on?: string | number;
+  /** On a wall: `pos` is the wall hex, `x` how far along this side of it, `y` how high. */
+  wall?: { side: number; y: number };
 }
 
 /** Something being carried, to be set down where the pointer is. */
 export interface Holding {
   model: string;
   small: boolean;
-  /** Furniture's turn, in sixths; a small thing's, in radians. */
+  /** A wall piece's face, w wide and h tall: it is aimed at the walls, not the floor. */
+  mount?: { w: number; h: number };
+  /** Its turn: `facing` sixths plus `angle` radians. */
   facing: number;
   angle: number;
 }
@@ -168,6 +179,10 @@ export function hexToWorld(p: HexPos): { x: number; z: number } {
 }
 
 const tileTop = (t: Tile | undefined) => (!t ? 0.2 : t.biome === "water" ? 0.14 : 0.35 + t.h * 1.1);
+/** A room's floor, which wall pieces' heights are measured from. */
+const FLOOR_TOP = tileTop({ q: 0, r: 0, biome: "floor", h: BASE_HEIGHT.floor });
+/** A turn in sixths plus radians, as Three.js turns a model about y. */
+const yawOf = (facing: number, angle = 0) => -((facing * Math.PI) / 3 + angle);
 const key = (p: HexPos) => `${p.q},${p.r}`;
 /** To the nearest thousandth, so offsets sent to the server stay short. */
 const round = (n: number) => Math.round(n * 1000) / 1000;
@@ -318,8 +333,12 @@ export interface RendererCallbacks {
   onPlace?(target: PlaceTarget): void;
   /** While carrying something: whether it may go at that spot (the ghost turns red if not). */
   canPlace?(target: PlaceTarget): boolean;
-  /** Shift and the wheel, while carrying something: turn it one step (+1 clockwise). */
-  onTurnHeld?(dir: 1 | -1): void;
+  /**
+   * Shift and the wheel, while carrying something: turn it (+1 clockwise).
+   * `amount` is how far the wheel moved, from 0 to 1 (a trackpad sends many
+   * small ones), and `alt` whether Alt was held, which flips snapping.
+   */
+  onTurnHeld?(dir: 1 | -1, amount: number, alt: boolean): void;
 }
 
 /** A small thing on the floor keeps this close to the middle of its hex. */
@@ -417,6 +436,12 @@ export class WorldRenderer {
   private deep = new Set<string>();
   /** The camera turn the indoor walls were last cut for. */
   private wallTurn = NaN;
+  /** Indoors, the walls cut down to a kerb so the camera can see in, by hex key. Things hung on them are hidden. */
+  private lowered = new Set<string>();
+  /** Indoors, the wall sides things can hang on, by hex key: which sides of that hex. */
+  private hangable = new Map<string, number[]>();
+  /** How high the last wall piece was aimed, for when the pointer is on top of a wall. */
+  private wallY = 1.1;
   private rotateButtons: HTMLDivElement;
   private pointer = { x: 0, y: 0, downX: 0, downY: 0, down: false, dragged: false, dirty: false, inside: false };
 
@@ -867,6 +892,9 @@ export class WorldRenderer {
     this.seaBase.set(this.sodden ? "#2b4558" : "#3577cf");
     (this.sea.material as THREE.MeshLambertMaterial).color.copy(this.seaBase);
     this.wallTurn = NaN;
+    this.lowered.clear();
+    this.hangable.clear();
+    if (state.indoors) for (const f of wallFaces(state.map)) this.hangable.set(key(f.pos), [...(this.hangable.get(key(f.pos)) ?? []), f.side]);
     this.tiles = state.map.tiles;
     if (this.terrain) {
       this.scene.remove(this.terrain);
@@ -971,14 +999,33 @@ export class WorldRenderer {
     const m = new THREE.Matrix4();
     const upright = new THREE.Quaternion();
     const kerb = tileTop({ q: 0, r: 0, biome: "wall", h: 0.22 } as Tile);
+    // A wall away from the camera stands its full height; the low front wall, seen from behind, comes up a little.
+    const raised = tileTop({ q: 0, r: 0, biome: "wall", h: 0.9 } as Tile);
+    this.lowered.clear();
     this.tiles.forEach((t, i) => {
       if ((t.biome as string) !== "wall") return;
       const { x, z } = hexToWorld(t);
       const toward = (x - this.target.x) * Math.sin(this.yaw) + (z - this.target.z) * Math.cos(this.yaw);
-      m.compose(new THREE.Vector3(x, 0, z), upright, new THREE.Vector3(1, toward > 0.6 ? kerb : Math.max(kerb, tileTop({ ...t, h: 0.9 })), 1));
+      if (toward > 0.6) this.lowered.add(key(t));
+      m.compose(new THREE.Vector3(x, 0, z), upright, new THREE.Vector3(1, toward > 0.6 ? kerb : Math.max(raised, tileTop(t)), 1));
       this.terrain!.setMatrixAt(i, m);
     });
     this.terrain.instanceMatrix.needsUpdate = true;
+    this.hideLoweredWallProps();
+  }
+
+  /** Things hung on a wall that has been cut down for the camera would float in the air: hide them until it stands again. */
+  private hideLoweredWallProps() {
+    for (const g of this.propModels.values()) {
+      const wall = g.userData.wallKey as string | undefined;
+      if (wall) g.visible = !this.lowered.has(wall);
+    }
+  }
+
+  /** Where a wall piece hangs: on side `side` of wall hex `pos`, `x` along it and `y` up from the floor; and which way it faces. */
+  private wallSpot(pos: HexPos, side: number, x: number, y: number): { at: THREE.Vector3; yaw: number } {
+    const f = wallFace(pos, side);
+    return { at: new THREE.Vector3(f.x + f.tx * x, FLOOR_TOP + y, f.z + f.tz * x), yaw: Math.atan2(f.nx, f.nz) };
   }
 
   private paintTiles() {
@@ -1090,7 +1137,7 @@ export class WorldRenderer {
   /** Furniture: rebuilt whenever a piece is added, moved, turned or selected. */
   private buildProps(state: RenderState) {
     const props = state.props ?? [];
-    const sig = props.map((p) => `${p.id}:${p.model}:${key(p.pos)}:${p.facing}:${p.selected ? 1 : 0}:${p.x ?? 0}:${p.z ?? 0}:${p.angle ?? 0}:${p.on ?? ""}`).join("|");
+    const sig = props.map((p) => `${p.id}:${p.model}:${key(p.pos)}:${p.facing}:${p.selected ? 1 : 0}:${p.x ?? 0}:${p.z ?? 0}:${p.y ?? 0}:${p.angle ?? 0}:${p.on ?? ""}`).join("|");
     if (sig === this.propSig) return;
     this.propSig = sig;
     this.propGroup.traverse((o) => {
@@ -1114,10 +1161,16 @@ export class WorldRenderer {
         g.position.set(prop.x ?? 0, top.y, prop.z ?? 0);
         g.rotation.y = -(prop.angle ?? 0);
         base.add(g);
+      } else if (prop.mount) {
+        const { at, yaw } = this.wallSpot(prop.pos, prop.facing, prop.x ?? 0, prop.y ?? 0);
+        g.position.copy(at);
+        g.rotation.y = yaw;
+        g.userData.wallKey = key(prop.pos);
+        this.propGroup.add(g);
       } else {
         const at = this.standAt(prop.pos);
         g.position.set(at.x + (prop.x ?? 0), at.y, at.z + (prop.z ?? 0));
-        g.rotation.y = prop.small ? -(prop.angle ?? 0) : -(prop.facing * Math.PI) / 3;
+        g.rotation.y = yawOf(prop.facing, prop.angle);
         this.propGroup.add(g);
       }
       g.userData.surface = prop.surface;
@@ -1150,15 +1203,23 @@ export class WorldRenderer {
         if (o.userData.light) lights.push({ pos: o.getWorldPosition(new THREE.Vector3()), kind: o.userData.light as LightKind });
       });
       if (prop.selected) {
-        const [inner, outer] = prop.small ? [0.18, 0.24] : [0.8, 0.95];
-        const ring = new THREE.Mesh(new THREE.RingGeometry(inner, outer, 6), new THREE.MeshBasicMaterial({ color: "#ffd23f", side: THREE.DoubleSide, depthTest: !prop.small }));
-        ring.rotation.x = -Math.PI / 2;
-        ring.rotation.z = Math.PI / 6;
-        ring.position.copy(g.getWorldPosition(new THREE.Vector3())).setY(g.getWorldPosition(new THREE.Vector3()).y + 0.03);
+        const outer = prop.small ? 0.24 : prop.ring ?? 0.95;
+        const inner = prop.small ? 0.18 : outer - 0.13;
+        const ring = new THREE.Mesh(new THREE.RingGeometry(inner, outer, prop.mount ? 16 : 6), new THREE.MeshBasicMaterial({ color: "#ffd23f", side: THREE.DoubleSide, depthTest: !prop.small && !prop.mount }));
+        if (prop.mount) {
+          // Flat on the wall, just in front of the piece, and hidden with it.
+          ring.position.set(0, 0, 0.02);
+          g.add(ring);
+        } else {
+          ring.rotation.x = -Math.PI / 2;
+          ring.rotation.z = Math.PI / 6;
+          ring.position.copy(g.getWorldPosition(new THREE.Vector3())).setY(g.getWorldPosition(new THREE.Vector3()).y + 0.03);
+          this.propGroup.add(ring);
+        }
         ring.renderOrder = 2;
-        this.propGroup.add(ring);
       }
     }
+    this.hideLoweredWallProps();
     this.ambience.setLights(lights, flames);
   }
 
@@ -1195,9 +1256,10 @@ export class WorldRenderer {
     const rect = this.renderer.domElement.getBoundingClientRect();
     const ndc = new THREE.Vector2(((this.pointer.x - rect.left) / rect.width) * 2 - 1, -((this.pointer.y - rect.top) / rect.height) * 2 + 1);
     this.raycaster.setFromCamera(ndc, this.camera);
+    if (holding.mount) return this.aimAtWall(holding.mount);
     if (holding.small) {
-      // A top first: aimed at, the thing stands on it, kept inside its edges.
-      const top = this.raycaster.intersectObjects(this.surfaces, false)[0];
+      // A top first: aimed at, the thing stands on it, kept inside its edges. Not one hidden with its wall.
+      const top = this.raycaster.intersectObjects(this.surfaces, false).find((h) => this.propModels.get(h.object.userData.sheetOf as string | number)?.visible !== false);
       if (top) {
         const id = top.object.userData.sheetOf as string | number;
         const base = this.propModels.get(id)!;
@@ -1213,13 +1275,65 @@ export class WorldRenderer {
     if (!hit || hit.instanceId === undefined) return null;
     const t = this.tiles[hit.instanceId];
     const pos = { q: t.q, r: t.r };
-    if (!holding.small) return { pos, x: 0, z: 0 };
     const mid = hexToWorld(pos);
     let x = hit.point.x - mid.x;
     let z = hit.point.z - mid.z;
     const d = Math.hypot(x, z);
-    if (d > SMALL_REACH) [x, z] = [(x / d) * SMALL_REACH, (z / d) * SMALL_REACH];
+    // Furniture goes anywhere in its hex too, but settles in the middle when brought near it, the way it always stood.
+    if (!holding.small && d < 0.15) return { pos, x: 0, z: 0 };
+    const reach = holding.small ? SMALL_REACH : BIG_REACH;
+    if (d > reach) [x, z] = [(x / d) * reach, (z / d) * reach];
     return { pos, x: round(x), z: round(z) };
+  }
+
+  /**
+   * Where the pointer would hang a wall piece `mount` big: on the side of a
+   * back or side wall it is over (or, over the floor, the nearest such side
+   * beside it), as far along and as high as it points, kept on that side.
+   */
+  private aimAtWall(mount: { w: number; h: number }): PlaceTarget | null {
+    const hit = this.raycaster.intersectObject(this.terrain!)[0];
+    if (!hit || hit.instanceId === undefined) return null;
+    const t = this.tiles[hit.instanceId];
+    const point = hit.point;
+    let pos: HexPos;
+    let side: number;
+    let y = this.wallY;
+    if (t.biome === "wall") {
+      if (this.lowered.has(key(t))) return null;
+      pos = { q: t.q, r: t.r };
+      const mid = hexToWorld(pos);
+      const sides = this.hangable.get(key(t));
+      if (!sides?.length) return null;
+      // The side the pointer is nearest, of those that face the room.
+      const score = (s: number) => {
+        const f = wallFace(pos, s);
+        return f.nx * (point.x - mid.x) + f.nz * (point.z - mid.z);
+      };
+      side = sides.reduce((a, b) => (score(b) > score(a) ? b : a));
+      // On the face of the wall (not its top), the height is where the pointer is.
+      if (hit.face && Math.abs(hit.face.normal.y) < 0.5) y = point.y - FLOOR_TOP;
+    } else if (t.biome === "floor") {
+      // Over the floor beside a wall: the nearest side facing it, at the last height used.
+      let best: { pos: HexPos; side: number; d: number } | null = null;
+      HEX_DIRS.forEach((dir) => {
+        const w = { q: t.q + dir.q, r: t.r + dir.r };
+        if (this.lowered.has(key(w))) return;
+        const back = HEX_DIRS.findIndex((o) => o.q === -dir.q && o.r === -dir.r);
+        if (!this.hangable.get(key(w))?.includes(back)) return;
+        const f = wallFace(w, back);
+        const d = Math.hypot(point.x - f.x, point.z - f.z);
+        if (d < 0.6 && (!best || d < best.d)) best = { pos: w, side: back, d };
+      });
+      if (!best) return null;
+      ({ pos, side } = best);
+    } else return null;
+    const f = wallFace(pos, side);
+    const along = Math.max(0, WALL_FACE_HALF - mount.w / 2);
+    const x = Math.max(-along, Math.min(along, (point.x - f.x) * f.tx + (point.z - f.z) * f.tz));
+    y = Math.max(WALL_ITEM_BOTTOM + mount.h / 2, Math.min(WALL_ITEM_TOP - mount.h / 2, y));
+    this.wallY = y;
+    return { pos, x: round(x), z: 0, wall: { side, y: round(y) } };
   }
 
   private placeGhost() {
@@ -1231,7 +1345,11 @@ export class WorldRenderer {
     ghost.visible = !!target;
     if (!target) return;
     const base = target.on !== undefined ? this.propModels.get(target.on) : undefined;
-    if (base) {
+    if (target.wall) {
+      const { at, yaw } = this.wallSpot(target.pos, target.wall.side, target.x, target.wall.y);
+      ghost.position.copy(at);
+      ghost.rotation.y = yaw;
+    } else if (base) {
       const t = base.userData.surface as NonNullable<SceneProp["surface"]>;
       ghost.position.copy(base.localToWorld(new THREE.Vector3(target.x, t.y + 0.004, target.z)));
       // Props only ever turn about the vertical, so the support's yaw is all there is to add.
@@ -1239,7 +1357,7 @@ export class WorldRenderer {
     } else {
       const at = this.standAt(target.pos);
       ghost.position.set(at.x + target.x, at.y + 0.004, at.z + target.z);
-      ghost.rotation.y = holding.small ? -holding.angle : -(holding.facing * Math.PI) / 3;
+      ghost.rotation.y = yawOf(holding.facing, holding.angle);
     }
     tintGhost(ghost, this.callbacks.canPlace?.(target) ?? true);
   }
@@ -1257,7 +1375,7 @@ export class WorldRenderer {
   private stepCost(state: RenderState): ((t: Tile) => number) | undefined {
     if (!state.props?.length) return undefined;
     // Small things are stepped over.
-    const blocked = new Set(state.props.filter((p) => !p.small && p.on === undefined).map((p) => key(p.pos)));
+    const blocked = new Set(state.props.filter((p) => !p.small && !p.mount && p.on === undefined).flatMap((p) => (p.covers ?? [p.pos]).map(key)));
     return (t) => (blocked.has(key(t)) ? Infinity : MOVE_COST[t.biome]);
   }
 
@@ -2355,13 +2473,10 @@ export class WorldRenderer {
 
   private onWheel = (e: WheelEvent) => {
     e.preventDefault();
-    // Shift and the wheel turn whatever is being carried, a notch at a time.
+    // Shift and the wheel turn whatever is being carried: a notch at a time, or (snapping off) as far as the wheel moves.
     if (e.shiftKey && this.state?.holding && this.callbacks.onTurnHeld) {
-      const now = performance.now();
-      if (now - this.lastTurn > 90 && Math.abs(e.deltaY || e.deltaX) > 0) {
-        this.lastTurn = now;
-        this.callbacks.onTurnHeld((e.deltaY || e.deltaX) > 0 ? 1 : -1);
-      }
+      const delta = e.deltaY || e.deltaX;
+      if (delta !== 0) this.callbacks.onTurnHeld(delta > 0 ? 1 : -1, Math.min(1, Math.abs(delta) / 100), e.altKey);
       return;
     }
     // Proportional to how far the wheel moved, capped so one notch is about 6%.
@@ -2390,7 +2505,6 @@ export class WorldRenderer {
   }
 
   private camDist = 24;
-  private lastTurn = 0;
 
   private frame = (now: number) => {
     this.raf = requestAnimationFrame(this.frame);

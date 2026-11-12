@@ -14,16 +14,21 @@ import {
   FURNISHINGS,
   HARBOR_MAX_SAY,
   STORAGE_CHEST,
+  coveredHexes,
   freeSpot,
   placedFurnishings,
   hutDoor,
   hutPath,
   hutRoom,
+  isMounted,
   isSmall,
   placeProblem,
   putInProblem,
   smallPlaceProblem,
+  turnOf,
   validFacing,
+  wallPlaceProblem,
+  wrapAngle,
   type Furnishing,
   type HarborPlayer,
   type HutClientMessage,
@@ -262,42 +267,60 @@ export class HutRoom extends DurableObject<Env> {
     const piece = hut.furnishings.find((f) => f.id === Number(msg.id));
     if (!piece) return refuse("You do not own that.");
     const small = isSmall(piece.defId);
+    const mounted = isMounted(piece.defId);
     const others = hut.furnishings.filter((f) => f !== piece);
     /** Small things standing on this piece. They ride along when it moves and go back to storage with it. */
     const riders = others.filter((f) => f.onId === piece.id);
+    /** Everything but this piece and what rides on it: what it must keep clear of. */
+    const rest = others.filter((f) => f.onId !== piece.id);
+    /** Why a floor piece cannot stand at this spot: the room's rules, then anyone standing where it would go. */
+    const floorProblem = (to: { q: number; r: number }, spot: { x: number; z: number; angle: number }, turningInPlace = false) => {
+      const problem = placeProblem(hut.room, rest, piece.defId, to, spot);
+      if (problem) return problem;
+      // Turning a piece where it stands never pushes out someone standing on its own hex.
+      const covered = coveredHexes(piece.defId, to, spot).filter((h) => !turningInPlace || h.q !== to.q || h.r !== to.r);
+      return this.players().some((p) => covered.some((h) => h.q === p.pos.q && h.r === p.pos.r)) ? "Someone is standing there." : null;
+    };
 
-    type Spot = Pick<Furnishing, "q" | "r" | "facing" | "x" | "z" | "angle" | "onId" | "inId">;
-    const stored: Spot = { q: null, r: null, facing: piece.facing, x: 0, z: 0, angle: 0, onId: null, inId: null };
+    type Spot = Pick<Furnishing, "q" | "r" | "facing" | "x" | "z" | "y" | "angle" | "onId" | "inId">;
+    const stored: Spot = { q: null, r: null, facing: piece.facing, x: 0, z: 0, y: 0, angle: piece.angle, onId: null, inId: null };
     let next: Spot;
     /** Where the riders end up: with the piece on its new hex, or back in storage. */
     let ridersTo: "follow" | "storage" | "stay" = "stay";
+    const num = (v: unknown, fallback: number) => (v === undefined ? fallback : Number(v));
 
     if (msg.type === "place") {
-      if (small) {
-        const angle = msg.angle === undefined ? piece.angle : Number(msg.angle);
-        const x = Number(msg.x ?? 0);
-        const z = Number(msg.z ?? 0);
+      const to = { q: Number(msg.to?.q), r: Number(msg.to?.r) };
+      if (mounted) {
+        const spot = { pos: to, side: Number(msg.facing), x: num(msg.x, 0), y: num(msg.y, 0) };
+        const problem = wallPlaceProblem(hut.room, rest, piece.defId, spot);
+        if (problem) return refuse(problem);
+        next = { q: to.q, r: to.r, facing: spot.side, x: spot.x, z: 0, y: spot.y, angle: 0, onId: null, inId: null };
+        ridersTo = "follow";
+      } else if (small) {
+        const angle = num(msg.angle, piece.angle);
+        const x = num(msg.x, 0);
+        const z = num(msg.z, 0);
         if (msg.on !== undefined) {
           const on = Number(msg.on);
           const problem = smallPlaceProblem(hut.room, others, piece.defId, { on, x, z, angle });
           if (problem) return refuse(problem);
           const base = others.find((f) => f.id === on)!;
-          next = { q: base.q, r: base.r, facing: 0, x, z, angle, onId: on, inId: null };
+          next = { q: base.q, r: base.r, facing: 0, x, z, y: 0, angle: wrapAngle(angle), onId: on, inId: null };
         } else {
-          const to = { q: Number(msg.to?.q), r: Number(msg.to?.r) };
           const problem = smallPlaceProblem(hut.room, others, piece.defId, { pos: to, x, z, angle });
           if (problem) return refuse(problem);
-          next = { q: to.q, r: to.r, facing: 0, x, z, angle, onId: null, inId: null };
+          next = { q: to.q, r: to.r, facing: 0, x, z, y: 0, angle: wrapAngle(angle), onId: null, inId: null };
         }
       } else {
-        const to = { q: Number(msg.to?.q), r: Number(msg.to?.r) };
-        const facing = msg.facing === undefined ? piece.facing : msg.facing;
-        if (!validFacing(facing)) return refuse("It cannot face that way.");
+        // A whole turn in `angle`; a facing in sixths from an older client; or else the way it faced before.
+        if (msg.facing !== undefined && !validFacing(msg.facing)) return refuse("It cannot face that way.");
+        const angle = msg.angle !== undefined ? Number(msg.angle) : msg.facing !== undefined ? turnOf({ facing: msg.facing }) : turnOf(piece);
+        const spot = { x: num(msg.x, 0), z: num(msg.z, 0), angle };
         // Its own riders move with it, so they do not count as in the way.
-        const problem = placeProblem(hut.room, others.filter((f) => f.onId !== piece.id), piece.defId, to);
+        const problem = floorProblem(to, spot);
         if (problem) return refuse(problem);
-        if (this.players().some((p) => p.pos.q === to.q && p.pos.r === to.r)) return refuse("Someone is standing there.");
-        next = { q: to.q, r: to.r, facing, x: 0, z: 0, angle: 0, onId: null, inId: null };
+        next = { q: to.q, r: to.r, facing: 0, x: spot.x, z: spot.z, y: 0, angle: wrapAngle(angle), onId: null, inId: null };
         ridersTo = "follow";
       }
     } else if (msg.type === "pick_up") {
@@ -312,16 +335,18 @@ export class HutRoom extends DurableObject<Env> {
       next = { ...stored, inId: into!.id };
       ridersTo = "storage";
     } else {
-      if (piece.q === null) return refuse("Put it down before turning it.");
-      if (small) {
-        const angle = msg.angle === undefined ? piece.angle + Math.PI / 12 : Number(msg.angle);
-        if (!Number.isFinite(angle)) return refuse("It cannot face that way.");
-        next = { ...piece, angle: ((angle % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI) };
-      } else {
-        const facing = msg.facing === undefined ? (piece.facing + 1) % 6 : msg.facing;
-        if (!validFacing(facing)) return refuse("It cannot face that way.");
-        next = { ...piece, facing };
+      if (piece.q === null || piece.r === null) return refuse("Put it down before turning it.");
+      if (mounted) return refuse("It hangs flat on the wall.");
+      if (msg.facing !== undefined && !validFacing(msg.facing)) return refuse("It cannot face that way.");
+      const step = small ? Math.PI / 12 : Math.PI / 3;
+      const angle = msg.angle !== undefined ? Number(msg.angle) : msg.facing !== undefined ? turnOf({ facing: msg.facing }) : turnOf(piece) + step;
+      if (!Number.isFinite(angle)) return refuse("It cannot face that way.");
+      if (!small && piece.onId === null) {
+        // A long piece turned where it stands may now poke through a wall or into a neighbour.
+        const problem = floorProblem({ q: piece.q, r: piece.r }, { x: piece.x, z: piece.z, angle }, true);
+        if (problem) return refuse(problem);
       }
+      next = { ...piece, facing: 0, angle: wrapAngle(angle) };
     }
 
     // The copy in memory changes at once, so a request arriving while D1 is
@@ -329,15 +354,15 @@ export class HutRoom extends DurableObject<Env> {
     // the write has landed; if it fails the change is undone.
     const moved = riders.map((f) => ({ f, before: { ...f } }));
     const before = { ...piece };
-    const pick = (f: Furnishing): Spot => ({ q: f.q, r: f.r, facing: f.facing, x: f.x, z: f.z, angle: f.angle, onId: f.onId, inId: f.inId });
+    const pick = (f: Furnishing): Spot => ({ q: f.q, r: f.r, facing: f.facing, x: f.x, z: f.z, y: f.y, angle: f.angle, onId: f.onId, inId: f.inId });
     Object.assign(piece, pick({ ...piece, ...next }));
     for (const { f } of moved) {
       if (ridersTo === "follow") Object.assign(f, { q: piece.q, r: piece.r });
-      else if (ridersTo === "storage") Object.assign(f, { q: null, r: null, x: 0, z: 0, angle: 0, onId: null });
+      else if (ridersTo === "storage") Object.assign(f, { q: null, r: null, x: 0, z: 0, y: 0, angle: 0, onId: null });
     }
     const save = (f: Furnishing) =>
-      this.env.DB.prepare("UPDATE furnishings SET q = ?, r = ?, facing = ?, x = ?, z = ?, angle = ?, on_id = ?, in_id = ? WHERE id = ? AND player_id = ?")
-        .bind(f.q, f.r, f.facing, f.x, f.z, f.angle, f.onId, f.inId, f.id, ownerId);
+      this.env.DB.prepare("UPDATE furnishings SET q = ?, r = ?, facing = ?, x = ?, z = ?, y = ?, angle = ?, on_id = ?, in_id = ? WHERE id = ? AND player_id = ?")
+        .bind(f.q, f.r, f.facing, f.x, f.z, f.y, f.angle, f.onId, f.inId, f.id, ownerId);
     try {
       await this.env.DB.batch([save(piece), ...(ridersTo === "stay" ? [] : moved.map(({ f }) => save(f)))]);
     } catch (err) {
