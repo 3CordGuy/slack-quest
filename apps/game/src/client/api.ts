@@ -41,7 +41,8 @@ export interface Shop {
 }
 
 export interface Me {
-  player: { id: string; name: string };
+  /** `email` is null for a guest, whose account lives only in this browser. */
+  player: { id: string; name: string; email: string | null };
   character: Character | null;
   inventory: InventoryItem[];
   /** The crew whose Harbor this player shares, if any. The id doubles as the invite code. */
@@ -87,6 +88,9 @@ export const api = {
   shop: () => request<Shop>("/api/shop"),
   buy: (index: number) => request("/api/shop/buy", { index }),
   createRun: () => request<{ code: string }>("/api/run", {}),
+  requestCode: (email: string) => request("/api/auth/email/request", { email }),
+  verifyCode: (email: string, code: string) => request<{ outcome: "linked" | "signed_in" | "created" | "already" }>("/api/auth/email/verify", { email, code }),
+  signOut: () => request("/api/auth/signout", {}),
   createCrew: (name: string) => request("/api/crew", { name }),
   joinCrew: (code: string) => request("/api/crew/join", { code }),
   leaveCrew: () => request("/api/crew/leave", {}),

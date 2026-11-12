@@ -6,6 +6,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { HexPos } from "@gantt-quest/core";
 import { HARBOR_PIERS, HARBOR_PLOTS, HARBOR_SHOP, HERO_CLASSES, MAX_PARTY, generateHarbor, harborPoi, poiAt, type HarborShip } from "@gantt-quest/world";
 import { api, type Me } from "./api";
+import { AccountPanel } from "./Account";
 import { DragPanel } from "./DragPanel";
 import { InventoryScreen } from "./InventoryScreen";
 import { ShopScreen } from "./ShopScreen";
@@ -21,6 +22,7 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
   const [hover, setHover] = useState<HexPos | null>(null);
   const [sheet, setSheet] = useState(false);
   const [shop, setShop] = useState(false);
+  const [account, setAccount] = useState(false);
   const [copied, setCopied] = useState(false);
   const [text, setText] = useState("");
   const [launchError, setLaunchError] = useState<string | null>(null);
@@ -132,6 +134,9 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
         {harbor.status !== "open" && <span className="bad">connecting…</span>}
         {harbor.crew && <span className="muted wide-only">Invite code {harbor.crew.id}</span>}
         <button className="small" onClick={copy}>{copied ? "Copied" : <>Invite<span className="wide-only"> link</span></>}</button>
+        <button className={`small ${me.player.email ? "" : "nudge"}`} title={me.player.email ?? "Guest account: not saved yet"} onClick={() => setAccount(true)}>
+          {me.player.email ? "Account" : "Save progress"}
+        </button>
         <button className="small" onClick={() => setSheet(true)}>
           Inventory<span className="wide-only"> · {me.character?.name}</span>{me.character && me.character.unspent_points > 0 ? " ●" : ""}
         </button>
@@ -220,6 +225,7 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
       {tip && <div className="tip">{tip}</div>}
       {error && <div className="toast">{error}</div>}
       {sheet && me.character && <InventoryScreen me={me} refresh={refreshAll} onClose={() => setSheet(false)} />}
+      {account && <AccountPanel me={me} refresh={refresh} onClose={() => setAccount(false)} />}
       {shop && me.character && <ShopScreen me={me} refresh={refreshAll} onClose={() => setShop(false)} />}
     </div>
   );
