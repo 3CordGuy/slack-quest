@@ -36,29 +36,64 @@ export const HARBOR_PUB: HexPos = at(8, 6);
 /** The works: where the crew's shared projects are paid for, and where the lighthouse goes up. */
 export const HARBOR_WORKS: HexPos = at(5, 6);
 
-const HEIGHT: Record<Biome, number> = { water: 0.05, plains: 0.3, forest: 0.42, hills: 0.75, dock: 0.1, floor: 0.1, wall: 0.9 };
+/** Rocks standing out of the water, and the wreck on them. Scenery: nobody can reach them. */
+export const HARBOR_ROCKS: HexPos[] = [at(0, 9), at(4, 9), at(8, 10), at(1, 10), at(12, 10)];
+export const HARBOR_WRECK: HexPos = at(11, 9);
+
+const HEIGHT: Record<Biome, number> = { water: 0.05, plains: 0.3, forest: 0.42, hills: 0.75, dock: 0.1, cobble: 0.26, mud: 0.2, rampart: 1.25, floor: 0.1, wall: 0.9 };
 
 export function harborPoi(id: string, kind: PoiKind, pos: HexPos): Poi {
   return { id, kind, pos, hidden: false, cleared: false, usedBy: [], enemies: [] };
 }
 
+/** A fixed 0..1 value per hex, so the same ground is mud or scrub every time. */
+const grit = (col: number, r: number) => {
+  const n = Math.sin(col * 127.1 + r * 311.7) * 43758.5453;
+  return n - Math.floor(n);
+};
+
+/** The streets: a quay along the shore, a lane between the two rows of huts, the plaza, and the road joining them. */
+function isStreet(col: number, r: number): boolean {
+  if (r === 7) return col >= 1 && col <= 11;
+  if (r === 2) return col >= 1 && col <= 11;
+  if (r === 6) return col >= 4 && col <= 9;
+  if (r === 5) return col >= 3 && col <= 9;
+  return col === 6 && r >= 2 && r <= 7;
+}
+
 /**
- * The Harbor map. The same for every crew: a tree line at the back, a hut
- * district, a plaza with the notice board, then the shore and three piers
- * running out into the sea at the front.
+ * The Harbor map. The same for every crew: an old stone rampart at the back
+ * and down the sides, fallen in places; two rows of hut plots with a cobbled
+ * lane between them; a plaza; a quay along the shore with three piers; and
+ * beyond them the sea, with rocks standing out of it and a wreck on the rocks.
+ * Off the cobbles the ground is mud and scrub.
  */
 export function generateHarbor(): WorldMap {
   const pierKeys = new Set(HARBOR_PIERS.map((p) => `${p.q},${p.r}`));
+  const same = (a: HexPos, b: HexPos) => a.q === b.q && a.r === b.r;
   const tiles: Tile[] = allHexesInGrid(HARBOR_GRID).map((pos) => {
     const col = colOf(pos);
-    let biome: Biome = "plains";
-    if (pos.r === 0) biome = col % 4 === 1 ? "hills" : "forest";
-    else if (pos.r >= 8) biome = pierKeys.has(`${pos.q},${pos.r}`) ? "dock" : "water";
-    else if ((col === 0 || col >= 12) && pos.r <= 5) biome = "forest";
-    if (pos.q === HARBOR_GATHER.quarry.q && pos.r === HARBOR_GATHER.quarry.r) biome = "hills";
-    // A fixed ripple so the ground is not perfectly flat.
+    const last = (pos.r % 2 === 0 ? HARBOR_GRID.cols : HARBOR_GRID.cols - 1) - 1;
+    let biome: Biome;
+    let h: number | null = null;
+    if (pos.r >= 8) biome = pierKeys.has(`${pos.q},${pos.r}`) ? "dock" : "water";
+    else if (pos.r === 0) {
+      // The back wall, breached in two places where it has come down into rubble.
+      biome = col === 3 || col === 9 ? "hills" : "rampart";
+    } else if (col === 0 || col >= last) {
+      // The sides: trees at the back where the wall never reached, then wall down to the shore, broken low near the water.
+      biome = pos.r <= 3 ? "forest" : pos.r <= 6 ? "rampart" : "mud";
+      if (biome === "rampart" && pos.r === 6) h = 0.7;
+    } else if (isStreet(col, pos.r)) biome = "cobble";
+    else biome = grit(col, pos.r) < (pos.r >= 5 ? 0.6 : 0.35) ? "mud" : "plains";
+    // The gathering spots keep the ground they are about.
+    if (same(pos, HARBOR_GATHER.quarry)) biome = "hills";
+    if (same(pos, HARBOR_GATHER.felling)) biome = "forest";
+    if (same(pos, HARBOR_GATHER.fishing)) biome = "mud";
+    // A fixed ripple so the ground is not perfectly flat, and a rampart that is not all one height.
     const ripple = ((pos.q * 7 + pos.r * 13) % 5) * 0.012;
-    return { q: pos.q, r: pos.r, biome, h: HEIGHT[biome] + (biome === "plains" ? ripple : 0) };
+    if (biome === "rampart" && h === null) h = HEIGHT.rampart - (grit(col, pos.r) < 0.3 ? 0.3 : 0) + ripple * 4;
+    return { q: pos.q, r: pos.r, biome, h: h ?? HEIGHT[biome] + (biome === "plains" || biome === "mud" ? ripple : 0) };
   });
   return {
     grid: HARBOR_GRID,
@@ -69,6 +104,8 @@ export function generateHarbor(): WorldMap {
       harborPoi("fishing", "fishing", HARBOR_GATHER.fishing),
       harborPoi("felling", "felling", HARBOR_GATHER.felling),
       harborPoi("quarry", "quarry", HARBOR_GATHER.quarry),
+      ...HARBOR_ROCKS.map((p, i) => harborPoi(`rocks:${i}`, "rocks", p)),
+      harborPoi("wreck", "wreck", HARBOR_WRECK),
     ],
   };
 }
@@ -76,9 +113,9 @@ export function generateHarbor(): WorldMap {
 /** Longest walk the server will accept in one request. */
 export const HARBOR_MAX_PATH = 60;
 
-/** A walkable route between two Harbor hexes, or null. Every step costs the same here. */
+/** A walkable route between two Harbor hexes, or null. Every step costs the same here; the sea and the rampart cannot be crossed. */
 export function harborPath(map: WorldMap, from: HexPos, to: HexPos): HexPos[] | null {
-  const route = findPath(map, from, to, HARBOR_MAX_PATH, (t) => (t.biome === "water" ? Infinity : 1));
+  const route = findPath(map, from, to, HARBOR_MAX_PATH, (t) => (t.biome === "water" || t.biome === "rampart" ? Infinity : 1));
   return route && route.path.length > 0 ? route.path : null;
 }
 

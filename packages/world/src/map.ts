@@ -14,8 +14,12 @@ import {
 } from "@gantt-quest/core";
 import { makeRng, seedFromString, type Rng } from "./rng";
 
-/** `dock` is the wooden pier surface used in the Harbor. `floor` and `wall` make up the inside of a hut. */
-export type Biome = "plains" | "forest" | "hills" | "water" | "dock" | "floor" | "wall";
+/**
+ * `dock`, `cobble`, `mud` and `rampart` belong to the Harbor: the wooden pier
+ * surface, its streets, its wet ground, and the old stone wall around it
+ * (which cannot be climbed). `floor` and `wall` make up the inside of a hut.
+ */
+export type Biome = "plains" | "forest" | "hills" | "water" | "dock" | "cobble" | "mud" | "rampart" | "floor" | "wall";
 
 export const MOVE_COST: Record<Biome, number> = {
   plains: 1,
@@ -23,6 +27,9 @@ export const MOVE_COST: Record<Biome, number> = {
   hills: 2,
   water: Infinity,
   dock: 1,
+  cobble: 1,
+  mud: 1,
+  rampart: Infinity,
   floor: 1,
   wall: Infinity,
 };
@@ -40,7 +47,7 @@ export interface Tile {
  * `board` and `shop` exist only in the Harbor: a moored ship, a crew member's
  * hut, the notice board and the market stall. `door` is the way out of a hut's room.
  */
-export type PoiKind = "landing" | "hut" | "lair" | "shrine" | "cache" | "camp" | "pier" | "plot" | "board" | "shop" | "ring" | "dice" | "door" | "works" | "pub" | "counter" | "shoals" | "fishing" | "felling" | "quarry";
+export type PoiKind = "landing" | "hut" | "lair" | "shrine" | "cache" | "camp" | "pier" | "plot" | "board" | "shop" | "ring" | "dice" | "door" | "works" | "pub" | "counter" | "shoals" | "rocks" | "wreck" | "fishing" | "felling" | "quarry";
 
 export interface Poi {
   id: string;
@@ -187,7 +194,7 @@ function pickBiome(rng: Rng): Biome {
   return "plains";
 }
 
-export const BASE_HEIGHT: Record<Biome, number> = { water: 0.05, plains: 0.3, forest: 0.4, hills: 0.75, dock: 0.1, floor: 0.1, wall: 0.9 };
+export const BASE_HEIGHT: Record<Biome, number> = { water: 0.05, plains: 0.3, forest: 0.4, hills: 0.75, dock: 0.1, cobble: 0.26, mud: 0.2, rampart: 1.25, floor: 0.1, wall: 0.9 };
 
 /** Offset-space position of a hex, used for the island outline. */
 function flatPos(pos: HexPos): { x: number; y: number } {
