@@ -7,8 +7,9 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { HexPos } from "@gantt-quest/core";
-import { FURNISHINGS, craftProblem, hutPerks, hutRoom, hutTier, isSmall, nextHutTier, placeProblem, placedFurnishings, poiAt, smallPlaceProblem, upgradeProblem, type Furnishing } from "@gantt-quest/world";
+import { FURNISHINGS, coveredHexes, craftProblem, footprintOf, hutPerks, hutRoom, hutTier, isMounted, isSmall, nextHutTier, placeProblem, placedFurnishings, poiAt, smallPlaceProblem, turnOf, upgradeProblem, wallPlaceProblem, wrapAngle, type Furnishing } from "@gantt-quest/world";
 import { api, type Hut, type Me } from "./api";
+import { CrewRoster } from "./CrewRoster";
 import { DragPanel } from "./DragPanel";
 import { CostChips, PerkMeter, ResourceChips } from "./hutDrops";
 import { TileAction } from "./TileAction";
@@ -19,15 +20,34 @@ import { HeroSheet, useHeroSheet } from "./HeroSheet";
 import { useHut } from "./useHut";
 import "./hut.css";
 import { blurb, label } from "./labels";
+import { ThingIcon, furnishingIcon } from "./thingIcons";
 import { xpEvents } from "./xpEvents";
+import { StaminaBolts } from "./StaminaBolts";
 
-const className = (id: string) => label("class", id);
 const same = (a: HexPos, b: HexPos) => a.q === b.q && a.r === b.r;
 const defOf = (f: Furnishing) => FURNISHINGS[f.defId];
-/** One notch of a small thing's turn: a twenty-fourth of a circle. */
-const NOTCH = Math.PI / 12;
-const TAU = Math.PI * 2;
-const wrap = (a: number) => ((a % TAU) + TAU) % TAU;
+/** A snapped turn: furniture to the hex's six facings, a small thing in twenty-fourths (15°). */
+const snapStep = (defId: string) => (isSmall(defId) ? Math.PI / 12 : Math.PI / 3);
+/** A free turn's step from a key or a toolbar button: 5°. */
+const FINE = Math.PI / 36;
+/** The next snapped turn from `angle` in direction `dir`: an angle between notches goes to the nearest one that way. */
+function snapTurn(angle: number, dir: 1 | -1, step: number): number {
+  const at = angle / step;
+  const near = Math.round(at);
+  const from = Math.abs(at - near) < 1e-3 ? near : dir > 0 ? Math.floor(at) : Math.ceil(at);
+  return wrapAngle((from + dir) * step);
+}
+/** Turning snaps to notches unless switched off; the choice is remembered on this device. */
+const SNAP_KEY = "hut.snap";
+const readSnap = () => {
+  try {
+    return localStorage.getItem(SNAP_KEY) !== "off";
+  } catch {
+    return true;
+  }
+};
+/** Where a floor piece stands, for the rules. */
+const spotOf = (f: Furnishing) => ({ x: f.x, z: f.z, angle: turnOf(f) });
 
 /** What a piece can do, as short tags under its name. */
 function tags(defId: string): string[] {
@@ -35,6 +55,7 @@ function tags(defId: string): string[] {
   if (!def) return [];
   const out: string[] = [];
   if (def.size === "small") out.push("small");
+  if (def.mount) out.push("wall");
   if (def.light) out.push(def.light === "fire" ? "fire" : "light");
   if (def.surface) out.push("top");
   if (def.storage) out.push(`holds ${def.storage}`);
@@ -55,8 +76,47 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
   const [text, setText] = useState("");
   /** A furnishing picked up to be put down on the next floor hex clicked. */
   const [holding, setHolding] = useState<number | null>(null);
-  /** How the carried piece is turned: furniture in sixths, small things in radians. */
-  const [turn, setTurn] = useState({ facing: 0, angle: 0 });
+  /**
+   * Whether this player has put the hanging lamp out, for mood light from the
+   * room's own candles, lanterns and fires. Each player's own view, remembered per hut.
+   */
+  const lampKey = `gq.hutLamp.${ownerId}`;
+  /** Your gathering stamina, and when you may next rest: bolts on your plate, and the owner's Rest button. Read on the way in and after each rest. */
+  const [stamina, setStamina] = useState<Awaited<ReturnType<typeof api.gather>> | null>(null);
+  useEffect(() => {
+    void api.gather().then(setStamina, () => setStamina(null));
+  }, []);
+  const [lampOff, setLampOff] = useState(() => {
+    try {
+      return localStorage.getItem(lampKey) === "off";
+    } catch {
+      return false;
+    }
+  });
+  const toggleLamp = () =>
+    setLampOff((off) => {
+      try {
+        localStorage.setItem(lampKey, off ? "on" : "off");
+      } catch {
+        // Storage is off: the choice lasts until the page closes.
+      }
+      return !off;
+    });
+  /** How the carried piece is turned, in radians. */
+  const [turn, setTurn] = useState(0);
+  /** Whether turning snaps to notches (the hex's facings, or 15° for small things). Alt flips it while held. */
+  const [snap, setSnap] = useState(readSnap);
+  const toggleSnap = () =>
+    setSnap((on) => {
+      try {
+        localStorage.setItem(SNAP_KEY, on ? "off" : "on");
+      } catch {
+        // Private browsing: it is only forgotten.
+      }
+      return !on;
+    });
+  /** A placed piece being turned: shown at once, sent once the turning stops. */
+  const [turning, setTurning] = useState<{ id: number; angle: number } | null>(null);
   /** The placed furnishing whose controls are showing. */
   const [selected, setSelected] = useState<number | null>(null);
   /** The prop under the pointer, for its tooltip. */
@@ -83,7 +143,8 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
   const room = useMemo(() => (tier === null ? null : hutRoom(tier)), [tier]);
   const placed = useMemo(() => placedFurnishings(furnishings), [furnishings]);
   const stored = furnishings.filter((f) => f.q === null && f.inId === null);
-  const storedBig = stored.filter((f) => !isSmall(f.defId));
+  const storedBig = stored.filter((f) => !isSmall(f.defId) && !isMounted(f.defId));
+  const storedWall = stored.filter((f) => isMounted(f.defId));
   const storedSmall = stored.filter((f) => isSmall(f.defId));
   const chosen = placed.find((f) => f.id === selected) ?? null;
   const held = furnishings.find((f) => f.id === holding) ?? null;
@@ -103,32 +164,45 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
       npcs: {},
       freeRoam: true,
       indoors: true,
-      props: placed.map((f) => ({
-        id: f.id,
-        model: defOf(f)?.model ?? f.defId,
-        pos: { q: f.q, r: f.r },
-        facing: f.facing,
-        selected: f.id === selected || f.id === holding,
-        small: isSmall(f.defId),
-        x: f.x,
-        z: f.z,
-        angle: f.angle,
-        on: f.onId ?? undefined,
-        surface: defOf(f)?.surface,
-      })),
-      holding: held && canEdit ? { model: defOf(held)?.model ?? held.defId, small: isSmall(held.defId), facing: turn.facing, angle: turn.angle } : null,
+      lampOff,
+      stamina: stamina ? { left: stamina.stamina.left, max: stamina.stamina.max } : undefined,
+      props: placed.map((f) => {
+        const def = defOf(f);
+        const small = isSmall(f.defId);
+        const mount = def?.mount;
+        const turned = turning?.id === f.id ? { facing: 0, angle: turning.angle } : { facing: f.facing, angle: f.angle };
+        const fp = footprintOf(f.defId);
+        return {
+          id: f.id,
+          model: def?.model ?? f.defId,
+          pos: { q: f.q, r: f.r },
+          ...(mount ? { facing: f.facing, angle: 0 } : turned),
+          selected: f.id === selected || f.id === holding,
+          small,
+          mount: !!mount,
+          x: f.x,
+          z: f.z,
+          y: f.y,
+          on: f.onId ?? undefined,
+          surface: def?.surface,
+          ring: mount ? Math.max(mount.w, mount.h) / 2 + 0.08 : Math.max(0.35, (fp.round ? fp.w : Math.hypot(fp.w, fp.d)) / 2 + 0.08),
+          covers: !small && !mount && f.onId === null ? coveredHexes(f.defId, f, { x: f.x, z: f.z, angle: turnOf(turned) }) : undefined,
+        };
+      }),
+      holding: held && canEdit ? { model: defOf(held)?.model ?? held.defId, small: isSmall(held.defId), mount: defOf(held)?.mount, facing: 0, angle: turn } : null,
     };
-  }, [ownerId, tier, room, players, you, placed, selected, holding, held, canEdit, turn]);
+  }, [ownerId, tier, room, players, you, placed, selected, holding, held, canEdit, turn, turning, lampOff, stamina]);
   const latest = useRef(scene);
   latest.current = scene;
+  const snapRef = useRef(snap);
+  snapRef.current = snap;
 
   // The renderer is created once; its click handler reads the current state through this ref.
   const click = useRef<(pos: HexPos) => void>(() => {});
   click.current = (pos) => {
     const piece = placed.find((f) => same({ q: f.q, r: f.r }, pos));
     if (canEdit && holding !== null) {
-      // Clicking the piece being moved puts it back where it was.
-      if (piece?.id !== holding) hut.send({ type: "place", id: holding, to: pos });
+      // Clicking the piece being moved puts it back where it was. (Setting it down goes through `place`.)
       setSelected(holding);
       setHolding(null);
     } else if (canEdit && piece) {
@@ -148,11 +222,24 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
     if (!held || !room) return "Nothing is being carried.";
     const others = furnishings.filter((f) => f.id !== held.id);
     if (isSmall(held.defId)) {
-      const spot = target.on !== undefined ? { on: Number(target.on), x: target.x, z: target.z, angle: turn.angle } : { pos: target.pos, x: target.x, z: target.z, angle: turn.angle };
+      const spot = target.on !== undefined ? { on: Number(target.on), x: target.x, z: target.z, angle: turn } : { pos: target.pos, x: target.x, z: target.z, angle: turn };
       return smallPlaceProblem(room, others, held.defId, spot);
     }
     // Its own riders move with it.
-    return placeProblem(room, others.filter((f) => f.onId !== held.id), held.defId, target.pos) ?? (players.some((p) => same(p.pos, target.pos)) ? "Someone is standing there." : null);
+    const rest = others.filter((f) => f.onId !== held.id);
+    if (isMounted(held.defId)) {
+      if (!target.wall) return "Point at a back or side wall.";
+      return wallPlaceProblem(room, rest, held.defId, { pos: target.pos, side: target.wall.side, x: target.x, y: target.wall.y });
+    }
+    return floorTrouble(held, target.pos, { x: target.x, z: target.z, angle: turn }, rest);
+  };
+  /** Why a floor piece cannot stand at `spot`, by the rules and for anyone standing where it would go (see HutRoom). */
+  const floorTrouble = (piece: Furnishing, pos: HexPos, spot: { x: number; z: number; angle: number }, rest: Furnishing[], turningInPlace = false): string | null => {
+    if (!room) return "Nothing is being carried.";
+    const problem = placeProblem(room, rest, piece.defId, pos, spot);
+    if (problem) return problem;
+    const covered = coveredHexes(piece.defId, pos, spot).filter((h) => !turningInPlace || !same(h, pos));
+    return players.some((p) => covered.some((h) => same(h, p.pos))) ? "Someone is standing there." : null;
   };
   const place = useRef<(target: PlaceTarget) => void>(() => {});
   place.current = (target) => {
@@ -160,27 +247,60 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
     // A spot it cannot go: say why, and keep hold of it.
     const problem = whyNot.current(target);
     if (problem) return setRefusal(problem);
-    const small = isSmall(held.defId);
-    hut.send({
-      type: "place",
-      id: held.id,
-      to: target.pos,
-      ...(small ? { x: target.x, z: target.z, angle: turn.angle, ...(target.on !== undefined ? { on: Number(target.on) } : {}) } : { facing: turn.facing }),
-    });
+    if (target.wall) {
+      hut.send({ type: "place", id: held.id, to: target.pos, facing: target.wall.side, x: target.x, y: target.wall.y });
+    } else {
+      hut.send({ type: "place", id: held.id, to: target.pos, x: target.x, z: target.z, angle: turn, ...(target.on !== undefined ? { on: Number(target.on) } : {}) });
+    }
     setSelected(held.id);
     setHolding(null);
   };
+
+  // Turning a placed piece shows at once and is sent when the turning stops, so holding a key down is one save, not thirty.
+  const sendTurn = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (!turning) return;
+    if (sendTurn.current) clearTimeout(sendTurn.current);
+    sendTurn.current = setTimeout(() => {
+      hut.send({ type: "rotate", id: turning.id, angle: turning.angle });
+      sendTurn.current = null;
+    }, 220);
+  }, [turning]);
+  // Once the room has the new turn (or said no), the piece is drawn from what it says again.
+  useEffect(() => setTurning(null), [furnishings, hut.refused]);
+
   /**
-   * Turn what is carried, or (with nothing carried) the piece chosen: furniture
-   * a sixth of a turn, a small thing `notches` twenty-fourths.
+   * Turn what is carried, or (with nothing carried) the piece chosen. Snapped,
+   * it goes to the next notch: the hex's six facings for furniture, 15° for a
+   * small thing. Free, it turns `by` radians (5° unless said).
    */
-  const turnBy = useRef<(dir: 1 | -1, notches?: number) => void>(() => {});
-  turnBy.current = (dir, notches = 1) => {
-    if (held) {
-      setTurn((t) => ({ facing: (t.facing + dir + 6) % 6, angle: wrap(t.angle + dir * notches * NOTCH) }));
-    } else if (chosen) {
-      if (isSmall(chosen.defId)) hut.send({ type: "rotate", id: chosen.id, angle: wrap(chosen.angle + dir * notches * NOTCH) });
-      else hut.send({ type: "rotate", id: chosen.id, facing: (chosen.facing + dir + 6) % 6 });
+  const turnBy = useRef<(dir: 1 | -1, free: boolean, by?: number) => void>(() => {});
+  turnBy.current = (dir, free, by = FINE) => {
+    const piece = held ?? chosen;
+    if (!piece || isMounted(piece.defId)) return;
+    const next = (from: number) => (free ? wrapAngle(from + dir * by) : snapTurn(from, dir, snapStep(piece.defId)));
+    if (held) return setTurn(next);
+    if (!chosen) return;
+    const from = turning?.id === chosen.id ? turning.angle : turnOf(chosen);
+    const angle = next(from);
+    // Big pieces can be too long to turn where they stand: say so before asking.
+    if (!isSmall(chosen.defId) && chosen.onId === null) {
+      const problem = floorTrouble(chosen, chosen, { x: chosen.x, z: chosen.z, angle }, furnishings.filter((f) => f.id !== chosen.id && f.onId !== chosen.id), true);
+      if (problem) return setRefusal(problem);
+    }
+    setTurning({ id: chosen.id, angle });
+  };
+  /** The wheel, while carrying: snapped, a notch per click (not too fast on a trackpad); free, as far as it moves. */
+  const lastWheel = useRef(0);
+  const wheelTurn = useRef<(dir: 1 | -1, amount: number, alt: boolean) => void>(() => {});
+  wheelTurn.current = (dir, amount, alt) => {
+    if (snap !== alt) {
+      const now = performance.now();
+      if (now - lastWheel.current < 90) return;
+      lastWheel.current = now;
+      turnBy.current(dir, false);
+    } else {
+      turnBy.current(dir, true, amount * (Math.PI / 18));
     }
   };
   const propClick = useRef<(id: number) => boolean>(() => false);
@@ -202,7 +322,7 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
       onPropHover: (id) => setHoverProp(id === null ? null : Number(id)),
       onPlace: (target) => place.current(target),
       canPlace: (target) => whyNot.current(target) === null,
-      onTurnHeld: (dir) => turnBy.current(dir),
+      onTurnHeld: (dir, amount, alt) => wheelTurn.current(dir, amount, alt),
     });
     renderer.current = r;
     if (latest.current) r.setState(latest.current);
@@ -221,9 +341,13 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
     const onKey = (e: KeyboardEvent) => {
       const el = e.target as HTMLElement | null;
       if (el && /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName)) return;
+      // By code as well as key: Alt with a bracket types another character on a Mac.
+      const dir = e.code === "BracketLeft" || e.key === "[" ? -1 : e.code === "BracketRight" || e.key === "]" ? 1 : 0;
       if (e.key === "Escape") (setHolding(null), setSelected(null), setOpened(null));
-      else if (e.key === "[") turnBy.current(-1);
-      else if (e.key === "]") turnBy.current(1);
+      else if (dir) {
+        e.preventDefault();
+        turnBy.current(dir, snapRef.current === e.altKey);
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -259,14 +383,38 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
   const atDoor = !!self && !!room && poiAt(room, self.pos)?.kind === "door";
   const hoverPiece = (hoverProp !== null ? placed.find((f) => f.id === hoverProp) : undefined) ?? (hover ? placed.find((f) => same({ q: f.q, r: f.r }, hover) && f.onId === null && !isSmall(f.defId)) : undefined);
   const tip = hoverPiece ? hoverPiece.label : hover && room && poiAt(room, hover)?.kind === "door" ? "The door" : null;
-  /** What the last rest did, or why it did nothing. */
-  const [rested, setRested] = useState<{ text: string; ok: boolean } | null>(null);
+  /** Ticks once a minute while a rest is cooling down, so "rest again in" counts down. */
+  const [clock, setClock] = useState(() => Date.now());
+  const coolingUntil = stamina?.restReadyAt ?? 0;
+  useEffect(() => {
+    if (coolingUntil <= Date.now()) return;
+    const t = setInterval(() => setClock(Date.now()), 15_000);
+    return () => clearInterval(t);
+  }, [coolingUntil]);
+  const restIn = Math.max(0, Math.ceil((coolingUntil - clock) / 60_000));
+  const tired = !!stamina && stamina.stamina.left < stamina.stamina.max;
+  /** Why resting would do nothing right now, or null (the server has the last word). */
+  const restBlocked = !stamina ? null : !tired ? "You are not tired. Rest after you have been out gathering." : restIn > 0 ? `You can rest again in ${restIn} min.` : null;
+  const staminaLine = stamina && `${stamina.stamina.left} of ${stamina.stamina.max} outings${restIn > 0 ? ` · rest again in ${restIn} min` : ""}`;
+  /** A short note that fades: what a rest did, or why it did nothing. */
+  const [notice, setNotice] = useState<{ text: string; ok: boolean; n: number } | null>(null);
+  useEffect(() => {
+    if (!notice) return;
+    const t = setTimeout(() => setNotice(null), 4000);
+    return () => clearTimeout(t);
+  }, [notice]);
+  const [resting, setResting] = useState(false);
   const restAtHome = async () => {
+    setResting(true);
     try {
       const res = await api.rest("hut");
-      setRested({ text: `You sleep in your own bed and wake rested: your stamina is full again, ${res.stamina.left} of ${res.stamina.max} outings.`, ok: true });
+      setStamina(res);
+      setClock(Date.now());
+      setNotice({ text: `You wake rested: ${res.stamina.left} of ${res.stamina.max} outings.`, ok: true, n: Date.now() });
     } catch (e) {
-      setRested({ text: (e as Error).message, ok: false });
+      setNotice({ text: (e as Error).message, ok: false, n: Date.now() });
+    } finally {
+      setResting(false);
     }
   };
   const say = () => {
@@ -276,7 +424,7 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
   };
   const pick = (id: number) => {
     const piece = furnishings.find((f) => f.id === id);
-    if (piece) setTurn({ facing: piece.facing, angle: piece.angle });
+    if (piece) setTurn(turnOf(piece));
     setSelected(null);
     setHolding((h) => (h === id ? null : id));
   };
@@ -306,23 +454,25 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
     return () => clearTimeout(t);
   }, [refusal]);
 
+  /** Buttons to turn a floor piece: to the next notch either way, and 5° either way, plus the snapping switch. */
+  const turnTools = (defId: string): ToolAction[] => {
+    const notch = isSmall(defId) ? "15°" : "a sixth";
+    return [
+      { key: "left", icon: "left", title: `Turn left ${notch} ( [ )`, run: () => turnBy.current(-1, false) },
+      { key: "fine-left", icon: "fineLeft", title: "Turn left 5° (Alt + [ )", run: () => turnBy.current(-1, true) },
+      { key: "fine-right", icon: "fineRight", title: "Turn right 5° (Alt + ] )", run: () => turnBy.current(1, true) },
+      { key: "right", icon: "right", title: `Turn right ${notch} ( ] )`, run: () => turnBy.current(1, false) },
+      { key: "snap", icon: "snap", title: snap ? "Snapping on: [ ], ] and Shift + wheel turn to the notches. Click to turn freely." : "Snapping off: [ ], ] and Shift + wheel turn freely. Click to snap to the notches.", active: snap, run: toggleSnap },
+    ];
+  };
+
   /** The floating controls for the chosen piece. */
   const tools: ToolAction[] = [];
   if (chosen && canEdit && !held) {
-    const small = isSmall(chosen.defId);
-    tools.push({ key: "move", icon: "move", title: "Move: pick it up and set it down somewhere else", run: () => pick(chosen.id) });
-    if (small) {
-      tools.push(
-        { key: "left", icon: "left", title: "Turn left 45°", run: () => turnBy.current(-1, 3) },
-        { key: "fine-left", icon: "fineLeft", title: "Turn left a notch (15°, or [ )", run: () => turnBy.current(-1) },
-        { key: "fine-right", icon: "fineRight", title: "Turn right a notch (15°, or ] )", run: () => turnBy.current(1) },
-        { key: "right", icon: "right", title: "Turn right 45°", run: () => turnBy.current(1, 3) },
-      );
-    } else {
-      tools.push(
-        { key: "left", icon: "left", title: "Turn left a sixth ( [ )", run: () => turnBy.current(-1) },
-        { key: "right", icon: "right", title: "Turn right a sixth ( ] )", run: () => turnBy.current(1) },
-      );
+    tools.push({ key: "move", icon: "move", title: isMounted(chosen.defId) ? "Move: take it down and hang it somewhere else" : "Move: pick it up and set it down somewhere else", run: () => pick(chosen.id) });
+    if (!isMounted(chosen.defId)) tools.push(...turnTools(chosen.defId));
+    if (chosen.defId === "bed") {
+      tools.push({ key: "rest", icon: "rest", title: restBlocked ?? "Rest: sleep here and wake with all your outings back", run: () => void restAtHome() });
     }
     if (defOf(chosen)?.storage) {
       tools.push({ key: "open", icon: "open", title: opened === chosen.id ? "Close: hide what it holds" : "Open: see what it holds", active: opened === chosen.id, run: () => setOpened((o) => (o === chosen.id ? null : chosen.id)) });
@@ -345,24 +495,39 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
       {canEdit && (
         <DragPanel id="hut.storage" title="Storage" foldOnPhone className="story panel hut-storage">
           {held ? (
-            <p className="hut-hint">
-              Click to set the <strong>{held.label}</strong> down.{" "}
-              {isSmall(held.defId) ? "It goes anywhere in a hex, or on a table, desk or other top. " : ""}
-              <kbd>[</kbd> <kbd>]</kbd> or Shift + wheel turns it. <button className="link" onClick={() => setHolding(null)}>Cancel</button>
-            </p>
+            isMounted(held.defId) ? (
+              <p className="hut-hint">
+                Point at a back or side wall and click to hang the <strong>{held.label}</strong> there, as high as you point. <button className="link" onClick={() => setHolding(null)}>Cancel</button>
+              </p>
+            ) : (
+              <>
+                <p className="hut-hint">
+                  Click to set the <strong>{held.label}</strong> down.{" "}
+                  {isSmall(held.defId) ? "It goes anywhere in a hex, or on a table, shelf or other top. " : "It goes anywhere inside a hex, against a wall or another piece. "}
+                  <kbd>[</kbd> <kbd>]</kbd> or Shift + wheel turns it{snap ? " to the notches; hold Alt to turn freely" : " freely; hold Alt to snap"}. <button className="link" onClick={() => setHolding(null)}>Cancel</button>
+                </p>
+                <div className="hut-turn">
+                  {turnTools(held.defId).map((t) => (
+                    <button key={t.key} className={`small ${t.active ? "selected" : ""}`} title={t.title} aria-label={t.title} onClick={t.run}>
+                      {{ left: "⟲", fineLeft: "‹", fineRight: "›", right: "⟳", snap: t.active ? "Snap on" : "Snap off" }[t.icon as string] ?? t.key}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )
           ) : (
-            <p className="muted">Pick a piece up to place it. Small things go anywhere in a hex, or on top of a table, desk, dresser or chest. Click a placed piece for its controls.</p>
+            <p className="muted">Pick a piece up to place it. Furniture goes anywhere inside a hex, wall pieces hang on the back and side walls, and small things go anywhere, or on top of a table, shelf, dresser or chest. Click a placed piece for its controls.</p>
           )}
           {noteIn("storage")}
           {stored.length === 0 && <p className="muted">Nothing in storage. Make something in the Craft panel.</p>}
-          {[["Furniture", storedBig], ["Small things", storedSmall]].map(([heading, list]) => (list as Furnishing[]).length > 0 && (
+          {[["Furniture", storedBig], ["On the walls", storedWall], ["Small things", storedSmall]].map(([heading, list]) => (list as Furnishing[]).length > 0 && (
             <div key={heading as string}>
               <h4>{heading as string}</h4>
               <ul className="hut-list">
                 {(list as Furnishing[]).map((f) => (
                   <li key={f.id}>
                     <button className={holding === f.id ? "selected" : ""} title={`${blurb("furnishing", f.defId)} Pick it up to place it.`} onClick={() => pick(f.id)}>
-                      {f.label}{tags(f.defId).filter((t) => t !== "small").map((t) => <span key={t} className="tag">{t}</span>)}
+                      <ThingIcon icon={furnishingIcon(f.defId)} size={27} />{f.label}{tags(f.defId).filter((t) => t !== "small").map((t) => <span key={t} className="tag">{t}</span>)}
                     </button>
                   </li>
                 ))}
@@ -383,9 +548,12 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
                 const problem = craftProblem(def.id, own.blueprints, own.resources);
                 return (
                   <li key={def.id} className={known ? "" : "locked"}>
-                    <div>
+                    <div className="with-icon">
+                      <ThingIcon icon={furnishingIcon(def.id)} size={36} />
+                      <span className="grow">
                       <strong>{label("furnishing", def.id)}</strong>
                       <span className="muted"> · {known ? blurb("furnishing", def.id) : "Blueprint not found yet. Islands hide them."}</span>
+                      </span>
                     </div>
                     <div className="row">
                       <CostChips cost={def.recipe!} have={own.resources} />
@@ -460,21 +628,18 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
       {chosen && tools.length > 0 && (
         <HutToolbar renderer={renderer} propId={chosen.id} name={chosen.label} tags={tags(chosen.defId)} actions={tools} />
       )}
-      {refusal && <div className="toast" role="status">{refusal}</div>}
+      {refusal ? <div className="toast" role="status">{refusal}</div>
+        : notice && <div key={notice.n} className={`toast fade ${notice.ok ? "note" : ""}`} role="status">{notice.text}</div>}
 
       {you && <>
-      <DragPanel id="hut.crew" title="Inside" foldOnPhone className="crew">
-        <div className="panel">
-          <h3>{players.length} here now</h3>
-          <ul className="roster">
-            {players.map((p) => (
-              <li key={p.id}>
-                <span><i className="dot on" /> <strong>{p.name}</strong>{p.id === you && <span className="tag">you</span>}{p.id === ownerId && p.id !== you && <span className="tag">owner</span>}</span>
-                <span className="muted">{className(p.classId)} · {p.level}</span>
-              </li>
-            ))}
-          </ul>
-        </div>
+      <DragPanel id="hut.crew" title="Inside" foldOnPhone className="crew roster-panel">
+        <CrewRoster
+          you={you}
+          heading={<>{players.length} in the hut</>}
+          members={players.map((p) => ({ id: p.id, name: p.name, classId: p.classId, level: p.level, outfit: p.outfit, here: true, tags: p.id === ownerId && p.id !== you ? ["owner"] : undefined }))}
+          onOpen={heroSheet.onHeroClick}
+          openId={heroSheet.open}
+        />
       </DragPanel>
 
       <DragPanel id="hut.chat" title="Hut chat" foldOnPhone className="chat panel harbor-chat">
@@ -489,13 +654,28 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
         </div>
       </DragPanel>
 
-      <DragPanel id="hut.turn" title="Here" compact className="turnbar panel">
-        {atDoor ? <span>The door back to the Harbor.</span>
-          : canEdit ? <span className="muted">Click a hex to walk. Place pieces from the Storage panel; click one for its controls.</span>
-          : <span className="muted">Click a hex to walk. Only {owner?.name ?? "the owner"} can move the furniture.</span>}
-        {canEdit && <button title="Sleep in your own bed: all your gathering outings back, once every twenty minutes" onClick={() => void restAtHome()}>Rest</button>}
-        {rested && <span className={rested.ok ? "good" : "bad"}>{rested.text}</span>}
-        <button className={atDoor ? "primary" : ""} onClick={onLeave}>Leave</button>
+      <DragPanel id="hut.turn" title="Here" compact className="turnbar panel hut-here">
+        <p className={`hut-here-hint ${atDoor ? "" : "muted"}`}>
+          {atDoor ? "The door back to the Harbor." : canEdit ? "Click a hex to walk, or a piece for its controls." : `Only ${owner?.name ?? "the owner"} can move the furniture.`}
+        </p>
+        <div className="hut-here-row">
+          {canEdit && (
+            <>
+              {stamina && (
+                <span className="hut-stamina" title={staminaLine ?? undefined}>
+                  <StaminaBolts left={stamina.stamina.left} max={stamina.stamina.max} size={16} />
+                  {restIn > 0 && <span className="muted"> rest in {restIn} min</span>}
+                </span>
+              )}
+              <button disabled={resting || !!restBlocked} title={restBlocked ?? "Sleep here: all your gathering outings back, once every twenty minutes"} onClick={() => void restAtHome()}>Rest</button>
+            </>
+          )}
+          <span className="spacer" />
+          <button className={lampOff ? "" : "lamp-on"} aria-pressed={!lampOff} title={lampOff ? "Light the hanging lamp" : "Put the hanging lamp out and let the candles, lanterns and fire light the room"} onClick={toggleLamp}>
+            {lampOff ? "Lamp off" : "Lamp on"}
+          </button>
+          <button className={atDoor ? "primary" : ""} onClick={onLeave}>Leave</button>
+        </div>
       </DragPanel>
       {atDoor && self && <TileAction renderer={renderer} pos={self.pos} unitId={self.id} label="Leave" run={onLeave} />}
       </>}

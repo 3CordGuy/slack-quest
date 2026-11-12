@@ -32,6 +32,8 @@ export const HARBOR_XP = {
   brew: 3,
   /** A step at the Smithy's forge. */
   smith: 4,
+  /** A dish cooked into the Galley's larder. */
+  cook: 3,
   /** Giving to a crew project. */
   project: 4,
 } as const;

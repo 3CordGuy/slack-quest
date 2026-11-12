@@ -193,7 +193,8 @@ describe("drop tables", () => {
         expect(trophy.defId).toBe(TROPHY_FOR_FRAME[frame.id]);
         expect(FURNISHINGS[trophy.defId].kind).toBe("trophy");
         expect(trophy.label).toContain(fill.title);
-        expect(trophy.label.includes(fill.villain_name) || trophy.label.toLowerCase().includes(fill.relic_name.toLowerCase())).toBe(true);
+        // A lifted curse is the whole island's thanks; every other trophy names the villain or what was won.
+        expect([fill.villain_name, fill.relic_name, fill.island_name].some((n) => trophy.label.toLowerCase().includes(n.toLowerCase()))).toBe(true);
       }
     }
     expect(storyTrophy({ frameId: "no_such_frame", title: "x", relicName: "y", villain: { name: "z", description: "" } })).toBeUndefined();

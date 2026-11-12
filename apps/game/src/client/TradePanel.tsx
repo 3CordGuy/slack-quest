@@ -13,7 +13,8 @@ import type { TradeList, TradeOutcome, TradeView } from "../server/trade";
 import { api, type Me } from "./api";
 import { DragPanel } from "./DragPanel";
 import { ResourceChips } from "./hutDrops";
-import { Icon, ItemTile, toOwned } from "./items";
+import { ItemTile, toOwned } from "./items";
+import { GOLD_ICON, ThingIcon, resourceIcon, type IconRef } from "./thingIcons";
 import "./trade.css";
 import { itemName, label } from "./labels";
 
@@ -163,7 +164,7 @@ function Goods({ goods, items = [] }: { goods: TradeGoods; items?: TradeView["gi
       <div className="res-chips">
         {goods.gold > 0 && (
           <span className="res-chip" title="Gold">
-            <Icon name="cash" color="#ffd23f" size={22} />
+            <ThingIcon icon={GOLD_ICON} size={22} />
             <strong>{goods.gold}</strong>
             <span className="res-name">Gold</span>
           </span>
@@ -238,10 +239,10 @@ function goodsOf(amounts: Amounts): TradeGoods {
   return { gold: whole(amounts.gold), resources };
 }
 
-function AmountInput({ label, have, value, onChange }: { label: string; have?: number; value: string | undefined; onChange(text: string): void }) {
+function AmountInput({ label, icon, have, value, onChange }: { label: string; icon: IconRef; have?: number; value: string | undefined; onChange(text: string): void }) {
   return (
     <label className="trade-amount">
-      <span>{label}{have !== undefined && <span className="muted"> · {have}</span>}</span>
+      <span className="with-icon"><ThingIcon icon={icon} size={18} /><span>{label}{have !== undefined && <span className="muted"> · {have}</span>}</span></span>
       <input type="number" min={0} max={have} step={1} inputMode="numeric" placeholder="0" value={value ?? ""} onChange={(e) => onChange(e.target.value)} />
     </label>
   );
@@ -305,16 +306,16 @@ function Compose({ me, to, run, acted }: { me: Me; to: TradePartner; run?: strin
         </div>
       )}
       <div className="trade-amounts">
-        <AmountInput label="Gold" have={gold} value={give.gold} onChange={(v) => setGive((a) => ({ ...a, gold: v }))} />
+        <AmountInput label="Gold" icon={GOLD_ICON} have={gold} value={give.gold} onChange={(v) => setGive((a) => ({ ...a, gold: v }))} />
         {RESOURCE_KINDS.filter((k) => (held?.[k] ?? 0) > 0).map((k) => (
-          <AmountInput key={k} label={label("resource", k)} have={held![k]} value={give[k]} onChange={(v) => setGive((a) => ({ ...a, [k]: v }))} />
+          <AmountInput key={k} label={label("resource", k)} icon={resourceIcon(k)} have={held![k]} value={give[k]} onChange={(v) => setGive((a) => ({ ...a, [k]: v }))} />
         ))}
       </div>
       <h3>You ask for <span className="muted">(optional)</span></h3>
       <div className="trade-amounts">
-        <AmountInput label="Gold" value={ask.gold} onChange={(v) => setAsk((a) => ({ ...a, gold: v }))} />
+        <AmountInput label="Gold" icon={GOLD_ICON} value={ask.gold} onChange={(v) => setAsk((a) => ({ ...a, gold: v }))} />
         {RESOURCE_KINDS.map((k) => (
-          <AmountInput key={k} label={label("resource", k)} value={ask[k]} onChange={(v) => setAsk((a) => ({ ...a, [k]: v }))} />
+          <AmountInput key={k} label={label("resource", k)} icon={resourceIcon(k)} value={ask[k]} onChange={(v) => setAsk((a) => ({ ...a, [k]: v }))} />
         ))}
       </div>
       {!empty && (

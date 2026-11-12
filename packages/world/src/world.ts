@@ -35,6 +35,7 @@ import {
   type NpcRun,
 } from "./npc";
 import { voyageBoons } from "./projects";
+import { LANDING_REST_HP, eatsChowder, galleyBoon } from "./galley";
 import { addStats, applyXp, maxFocusFor, maxHpFor } from "./progression";
 import { makeRng, seedFromString, type Rng } from "./rng";
 import { NO_DEMAND, demandMet, validateBible, type StoryBible } from "./story";
@@ -189,6 +190,8 @@ export interface WorldState {
   earned: Record<string, Earned>;
   /** Harbor projects the crew had built when this voyage was launched. Absent on voyages saved before projects. */
   projects?: string[];
+  /** What the galley put in the hold for this voyage and is not yet eaten. Absent when it sailed with none. */
+  larder?: { chowder: number };
 }
 
 export type WorldAction =
@@ -196,7 +199,8 @@ export type WorldAction =
   | { type: "ready"; heroId: string; ready: boolean }
   | { type: "start"; heroId: string }
   | { type: "contract"; heroId: string; contractId: string | null }
-  | { type: "begin"; bible: StoryBible }
+  /** `larder` is the crew's galley larder, taken aboard as the ship sailed (server-only, like the rest of `begin`). */
+  | { type: "begin"; bible: StoryBible; larder?: unknown }
   | { type: "move"; heroId: string; to: HexPos }
   | { type: "interact"; heroId: string }
   | { type: "end_turn"; heroId: string }
@@ -229,7 +233,8 @@ export type WorldEvent =
   | { t: "moved"; heroId: string; path: HexPos[] }
   | { t: "poi_revealed"; poiId: string }
   | { t: "check"; heroId: string; check: CheckResult }
-  | { t: "rest"; heroId: string; hp: number; focus: number; where: string }
+  /** `ate` is set when the hero ate a chowder from the galley's larder; `left` is how many are still in the hold. */
+  | { t: "rest"; heroId: string; hp: number; focus: number; where: string; ate?: "chowder"; left?: number }
   | { t: "search"; heroId: string; found: boolean }
   /** A roaming band has caught a hero, or a hero has walked into one. */
   | { t: "ambush"; heroId: string; kinds: string[]; by: "band" | "hero" }
@@ -503,6 +508,24 @@ function look(state: WorldState, also: HexPos[] = []) {
   state.seen = [...seen];
 }
 
+/**
+ * The island's coast: every land hex that touches the sea, and the sea hexes
+ * beside them, as "q,r". The lighthouse's chart: with it built, a voyage opens
+ * with all of these already seen. Fixed by the map, so it draws on no rolls.
+ */
+export function coastHexes(map: WorldMap): string[] {
+  const water = map.tiles.filter((t) => t.biome === "water");
+  const out = new Set<string>();
+  for (const t of map.tiles) {
+    if (t.biome === "water") continue;
+    const sea = water.filter((w) => hexDistance(w, t) === 1);
+    if (sea.length === 0) continue;
+    out.add(posKeyOf(t));
+    for (const w of sea) out.add(posKeyOf(w));
+  }
+  return [...out];
+}
+
 /** Whether a hero standing at `from` may step onto `tile`: it has been seen, or is in plain sight right now. */
 function inSight(state: WorldState, tile: HexPos, from: HexPos): boolean {
   return !state.seen || hexDistance(tile, from) <= VISION || state.seen.includes(posKeyOf(tile));
@@ -771,9 +794,19 @@ function interact(ctx: Ctx, hero: Hero): string | null {
     ctx.events.push({ t: "rest", heroId: hero.id, hp, focus, where: "shrine" });
     setFact(ctx, `prayed:${poi.id}`);
   } else if (poi.kind === "landing") {
-    const hp = Math.min(hero.maxHp - hero.hp, 6);
-    hero.hp += hp;
-    ctx.events.push({ t: "rest", heroId: hero.id, hp, focus: 0, where: "landing" });
+    if (state.larder && eatsChowder(hero, state.larder.chowder)) {
+      // A bowl of the galley's chowder from the hold: back on their feet, and their head clear.
+      const hp = hero.maxHp - hero.hp;
+      const focus = Math.max(0, hero.maxFocus - hero.focus);
+      hero.hp = hero.maxHp;
+      hero.focus = Math.max(hero.focus, hero.maxFocus);
+      state.larder.chowder -= 1;
+      ctx.events.push({ t: "rest", heroId: hero.id, hp, focus, where: "landing", ate: "chowder", left: state.larder.chowder });
+    } else {
+      const hp = Math.min(hero.maxHp - hero.hp, LANDING_REST_HP);
+      hero.hp += hp;
+      ctx.events.push({ t: "rest", heroId: hero.id, hp, focus: 0, where: "landing" });
+    }
   } else if (poi.kind === "cache") {
     if (poi.cleared) return "already searched";
     poi.cleared = true;
@@ -1006,7 +1039,11 @@ export function stepWorld(prev: WorldState, action: WorldAction): StepResult {
       }
       // What the crew has built at the Harbor comes along: the lighthouse lengthens the clock.
       const boons = voyageBoons(state.projects);
-      state.doom = Math.max(action.bible.doomRounds, requiredDoom(state.map, action.bible, state.heroes)) + boons.doomDays;
+      // And the galley's larder: stores lengthen it too, and chowder goes in the hold for the landing.
+      const galley = galleyBoon(action.larder);
+      state.doom = Math.max(action.bible.doomRounds, requiredDoom(state.map, action.bible, state.heroes)) + boons.doomDays + galley.doomDays;
+      if (galley.chowder > 0) state.larder = { chowder: galley.chowder };
+      else delete state.larder;
       state.npcs = Object.fromEntries(action.bible.npcs.map((n) => [n.id, newNpcRun()]));
       state.order = [...state.heroes]
         .sort((a, b) => heroStats(b).agi - heroStats(a).agi || a.id.localeCompare(b.id))
@@ -1017,9 +1054,12 @@ export function stepWorld(prev: WorldState, action: WorldAction): StepResult {
       state.seen = [];
       state.roamers = [];
       look(state);
+      // The lighthouse's chart: the whole coast is already known. Bands still come ashore out of the heroes' own sight.
+      if (boons.chartCoast) state.seen = [...new Set([...state.seen, ...coastHexes(state.map)])];
       for (let i = 0; i < ROAMERS_AT_START; i++) spawnRoamer(ctx);
       ctx.events.push({ t: "phase", phase: "overworld" });
       for (const line of boons.lines) ctx.events.push({ t: "harbor_boon", ...line });
+      if (galley.line) ctx.events.push({ t: "harbor_boon", projectId: "galley", text: galley.line });
       startTurn(ctx);
       return done(null);
     }

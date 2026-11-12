@@ -273,7 +273,38 @@ interface Wisp {
 /** How many plain lights candles and lanterns share. Fixed, so adding a candle never recompiles a material. */
 const GLOW_LIGHTS = 4;
 
-/** How each kind of small light looks. Fires past the first use these too. */
+/**
+ * How many of a hut's candles, lanterns and fires throw shadows at once: the
+ * ones nearest your hero. Fixed, so walking past a candle never changes the
+ * number of shadow-casting lights (and recompiles every material); lights are
+ * moved between pieces instead.
+ */
+export const SHADOW_SLOTS = 6;
+/**
+ * The layer heroes' shadow cards for the sun and the hanging lamp sit on. Not
+ * layer 0, so the main view never draws them; each light's shadow camera looks
+ * at layer 0 (the room) plus the layer of the cards turned toward it.
+ */
+export const CARD_LAYER = 9;
+/** Shadow slot `i` sees the cards on layer `SLOT_LAYER + i`, each turned to face it. */
+export const SLOT_LAYER = 10;
+/** Shadow maps a moving hero may redraw in one frame. Others wait their turn (a frame or two), oldest first. */
+const MOVE_REDRAWS = 2;
+/** How far past a light's reach a hero can stand and still throw a shadow it draws: about a hero's height. */
+const STIR_MARGIN = 1.6;
+/** How much nearer (in world units) another piece must be before a shadow slot is handed to it from the one it lights. */
+const SLOT_HOLD = 1;
+/** How much nearer a fire counts as when the slots are handed out. */
+const FIRE_PULL = 3;
+/**
+ * Seconds a piece's shadow takes to fade in or out when a slot changes hands. Meanwhile the piece's light is
+ * shared between its slot and a plain light in the same spot, so its brightness never changes; only the shadow fades.
+ */
+const SLOT_FADE = 0.45;
+/** Plain lights added indoors only, for pieces whose shadow is fading: they need a plain light alongside their slot. */
+const FADE_GLOWS = 2;
+
+/** How each kind of small light looks outdoors, and indoors under the lamp. Outdoor fires past the first use these too. */
 const GLOW: Record<LightKind, { color: string; power: number; range: number; flicker: boolean }> = {
   candle: { color: "#ffb35c", power: 0.9, range: 3.2, flicker: true },
   lamp: { color: "#ffd08a", power: 1.5, range: 4.5, flicker: false },
@@ -296,21 +327,50 @@ export class Ambience {
   private indoors = false;
   /** Direction to the sun (or the moon), for anything that must face it. */
   readonly sunDir = new THREE.Vector3(-0.4, 0.8, 0.4);
-  /** A hut's hanging lamp: the one light indoors, and what the furniture's shadows fall away from. */
+  /** A hut's hanging lamp over the middle of the room, which its owner can put out. */
   private lamp = new THREE.PointLight("#ffd7a1", 0, 0, 0);
+  /** Whether the hut's hanging lamp is lit. Off, the room is lit only by its candles, lanterns and fires. */
+  private lampOn = true;
+  /** The lamp's glowing lantern, dimmed when the lamp is put out. */
+  private lanternMat: THREE.MeshBasicMaterial | null = null;
   /**
-   * Firelight: one warm light for the hearth (or campfire) nearest the camera's
-   * target. Indoors it casts shadows alongside the lamp; outdoors it only glows,
-   * and only once the light starts to go. Always in the scene, so adding a fire
-   * never changes the number of lights (and recompiles every material).
+   * Firelight outdoors: one warm light for the campfire nearest the camera's
+   * target, no shadows, showing only once the light starts to go. Always in the
+   * scene outdoors, so adding a fire never changes the number of lights (and
+   * recompiles every material). Hidden indoors, where the shadow slots light the fires.
    */
   private fireLight = new THREE.PointLight("#ff9548", 0, 6, 2);
   /**
-   * Candles, lanterns and any fire past the first: a few plain lights (no
-   * shadows) handed to the ones nearest the camera's target each frame. Also
-   * always in the scene, for the same reason.
+   * Indoors, the candles, lanterns and fires nearest your hero each get one of
+   * these: a light with its own shadow map, so every one of them throws the
+   * hero's and the furniture's shadows. The maps are drawn only when something
+   * in reach changes (see stir), not every frame. Hidden outdoors.
+   */
+  private slots = Array.from({ length: SHADOW_SLOTS }, () => new THREE.PointLight("#ffb35c", 0, 6, 1));
+  /** The piece each slot is lighting, or null while it has none. */
+  private slotOf: ({ pos: THREE.Vector3; kind: LightKind } | null)[] = Array(SHADOW_SLOTS).fill(null);
+  /**
+   * How much of its piece's light each slot carries, 0 to 1; a plain light carries the rest. It eases up after a
+   * slot is handed to a piece and down before the slot leaves it, so a shadow fades rather than pops.
+   */
+  private slotWeight: number[] = Array(SHADOW_SLOTS).fill(0);
+  /** A room just built: its slots start at full strength instead of fading in. */
+  private freshRoom = false;
+  private lastClock = 0;
+  /** Slots a moving hero has asked to redraw, waiting for their turn. */
+  private stirred = new Set<number>();
+  /** The frame each slot's map was last drawn on, so the longest-waiting go first. */
+  private drawnAt: number[] = Array(SHADOW_SLOTS).fill(0);
+  private frameNo = 0;
+  /** Where your hero stands, for picking the slot to redraw first. */
+  private focus = new THREE.Vector3();
+  /**
+   * Candles, lanterns and fires past those: a few plain lights (no shadows)
+   * handed to the ones nearest each frame. Also always in the scene, for the same reason.
    */
   private glows = Array.from({ length: GLOW_LIGHTS }, () => new THREE.PointLight("#ffb35c", 0, 4, 2));
+  /** A couple more plain lights indoors, so pieces whose shadow is fading in or out always have one. Hidden outdoors. */
+  private fadeGlows = Array.from({ length: FADE_GLOWS }, () => new THREE.PointLight("#ffb35c", 0, 4, 2));
   private lights: { pos: THREE.Vector3; kind: LightKind }[] = [];
   private flames: THREE.Mesh[] = [];
 
@@ -338,6 +398,11 @@ export class Ambience {
   /** Chimney smoke: a column of pixel puffs over each stack. Outlives a map rebuild, so it is kept out of `group`. */
   private smoke: THREE.Points | null = null;
   private stacks: THREE.Vector3[] = [];
+  /**
+   * A lighthouse's lamp: two soft beams turning slowly round it and a glow on the lantern. Additive meshes and a
+   * sprite, no light of its own, so the light count never changes. Kept out of `group`, like the smoke.
+   */
+  private beacon: { root: THREE.Group; spin: THREE.Group; beams: THREE.MeshBasicMaterial; glow: THREE.SpriteMaterial; halo: THREE.Sprite } | null = null;
   private flatTint = new THREE.Color();
   private still = typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
   private m = new THREE.Matrix4();
@@ -359,16 +424,29 @@ export class Ambience {
     cam.far = 120;
     this.sun.shadow.bias = -0.0015;
     this.sun.shadow.normalBias = 0.04;
+    // The sun and the lamp see the room and the heroes' cards turned toward them.
+    this.sun.shadow.camera.layers.enable(CARD_LAYER);
     this.lamp.shadow.mapSize.set(512, 512);
     this.lamp.shadow.camera.near = 0.2;
     this.lamp.shadow.camera.far = 30;
     this.lamp.shadow.bias = -0.004;
+    this.lamp.shadow.camera.layers.enable(CARD_LAYER);
+    // A room stands still: the lamp's shadows are redrawn only when something changes (see stir).
+    this.lamp.shadow.autoUpdate = false;
     this.lamp.visible = false;
-    this.fireLight.shadow.mapSize.set(512, 512);
-    this.fireLight.shadow.camera.near = 0.1;
-    this.fireLight.shadow.camera.far = 8;
-    this.fireLight.shadow.bias = -0.004;
-    scene.add(this.hemi, this.sun, this.sun.target, this.lamp, this.fireLight, ...this.glows, this.group);
+    this.slots.forEach((s, i) => {
+      // 256 a face: six of them, so a phone keeps its memory, and the coarse edge suits the pixels.
+      s.shadow.mapSize.set(256, 256);
+      s.shadow.camera.near = 0.1;
+      s.shadow.bias = -0.004;
+      s.shadow.autoUpdate = false;
+      s.shadow.camera.layers.enable(SLOT_LAYER + i);
+      // Always casting while indoors: only the light's place and strength change, so no material ever recompiles.
+      s.castShadow = true;
+      s.visible = false;
+    });
+    for (const g of this.fadeGlows) g.visible = false;
+    scene.add(this.hemi, this.sun, this.sun.target, this.lamp, this.fireLight, ...this.slots, ...this.glows, ...this.fadeGlows, this.group);
   }
 
   /** Lay out the decoration for a map. `skip` holds the hexes to leave clear. */
@@ -472,11 +550,21 @@ export class Ambience {
 
     // ---- a hut is lit by a lamp hung over the middle of the room, not by the sky ----
     const inside = tiles.some((t) => (t.biome as string) === "floor");
-    this.lamp.visible = this.lamp.castShadow = inside;
+    this.lamp.visible = inside;
+    // Casting even while it is out (at no strength, its map not redrawn), so putting it out never recompiles a material.
+    this.lamp.castShadow = inside;
     this.sun.castShadow = !inside;
+    this.fireLight.visible = !inside;
+    for (const s of this.slots) s.visible = inside;
+    for (const g of this.fadeGlows) g.visible = inside;
+    this.slotOf.fill(null);
+    this.slotWeight.fill(0);
+    this.freshRoom = inside;
+    this.stirAll();
     if (inside) {
       this.lamp.position.set((minX + maxX) / 2, 2.7, (minZ + maxZ) / 2);
-      const lantern = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.26, 0.2), new THREE.MeshBasicMaterial({ color: "#ffe2a8" }));
+      this.lanternMat = new THREE.MeshBasicMaterial({ color: this.lampOn ? "#ffe2a8" : "#4a3f30" });
+      const lantern = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.26, 0.2), this.lanternMat);
       lantern.position.copy(this.lamp.position);
       const cap = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.06, 0.28), new THREE.MeshBasicMaterial({ color: "#3a2c22" }));
       cap.position.copy(this.lamp.position).setY(this.lamp.position.y + 0.16);
@@ -720,9 +808,11 @@ export class Ambience {
   dispose() {
     this.clear();
     this.setSmoke([]);
-    this.scene.remove(this.hemi, this.sun, this.sun.target, this.lamp, this.fireLight, ...this.glows, this.group);
+    this.setBeacon(null);
+    this.scene.remove(this.hemi, this.sun, this.sun.target, this.lamp, this.fireLight, ...this.slots, ...this.glows, ...this.fadeGlows, this.group);
     this.lamp.shadow.map?.dispose();
     this.fireLight.shadow.map?.dispose();
+    for (const s of this.slots) s.shadow.map?.dispose();
     this.sun.shadow.map?.dispose();
   }
 
@@ -754,12 +844,14 @@ export class Ambience {
   }
 
   /** Advance the sky and everything that sways. `yaw` is the camera's turn; `target` is what it looks at. */
-  update(clock: number, yaw: number, target: THREE.Vector3) {
+  /** `focus`, if given, is where your own hero stands: the lights near you are the ones that matter. */
+  update(clock: number, yaw: number, target: THREE.Vector3, focus?: THREE.Vector3) {
     this.light(target, clock);
     this.fall(clock, target);
     this.puff(clock);
+    this.sweep(clock);
     this.splash(clock);
-    this.flicker(clock, target);
+    this.flicker(clock, focus ?? target);
     const motion = this.still ? 0 : 1;
 
     if (this.grass) {
@@ -868,10 +960,116 @@ export class Ambience {
   }
 
   /** Draw smoke rising from these points (chimney tops). An empty list clears it. */
+  /** Light or put out a hut's hanging lamp. */
+  setLampOn(on: boolean) {
+    if (on === this.lampOn) return;
+    this.lampOn = on;
+    this.lanternMat?.color.set(on ? "#ffe2a8" : "#4a3f30");
+    // The lamp's map has been left alone while it was out, and the small lights change their reach with it (see flicker).
+    this.stirAll();
+  }
+
   /** The lights the props ask for (hearths, campfires, candles, lanterns) and the flames to flicker. The meshes belong to the caller. */
   setLights(lights: { pos: THREE.Vector3; kind: LightKind }[], flames: THREE.Mesh[]) {
     this.lights = lights;
     this.flames = flames;
+    // Called whenever a piece is placed, moved, turned or taken away: every shadow in the room may have changed.
+    this.stirAll();
+  }
+
+  /** Redraw every indoor shadow map on the next frame: the room itself changed (a piece, a wall, the lamp). */
+  stirAll() {
+    this.lamp.shadow.needsUpdate = true;
+    this.slots.forEach((s, i) => {
+      s.shadow.needsUpdate = true;
+      this.drawnAt[i] = this.frameNo;
+    });
+    this.stirred.clear();
+  }
+
+  /**
+   * Something that throws a shadow (a hero) moved at `at`, or appeared or went
+   * away there. Call it for where it was as well as where it is, so a shadow
+   * left behind is cleared. The maps of the lights within reach are redrawn:
+   * the lamp's straight away, the others a few a frame (see settleShadows).
+   */
+  stir(at: THREE.Vector3) {
+    if (!this.indoors) return;
+    if (this.lampOn) this.lamp.shadow.needsUpdate = true;
+    this.slots.forEach((s, i) => {
+      if (!this.slotOf[i] || s.shadow.needsUpdate) return;
+      const reach = s.distance + STIR_MARGIN;
+      if (s.position.distanceToSquared(at) <= reach * reach) this.stirred.add(i);
+    });
+  }
+
+  /**
+   * Hand out this frame's redraws, just before drawing: the slot nearest your
+   * hero every frame (its shadow is the one you look at), then the ones that
+   * have waited longest. Standing still, nothing is redrawn.
+   */
+  settleShadows() {
+    this.frameNo++;
+    if (this.stirred.size === 0) return;
+    const waiting = [...this.stirred];
+    let first = waiting[0];
+    for (const i of waiting) if (this.slots[i].position.distanceToSquared(this.focus) < this.slots[first].position.distanceToSquared(this.focus)) first = i;
+    const order = [first, ...waiting.filter((i) => i !== first).sort((a, b) => this.drawnAt[a] - this.drawnAt[b])];
+    for (const i of order.slice(0, MOVE_REDRAWS)) {
+      this.slots[i].shadow.needsUpdate = true;
+      this.drawnAt[i] = this.frameNo;
+      this.stirred.delete(i);
+    }
+  }
+
+  /** The turn, about the vertical, that faces something at (x, z) toward shadow slot `i`'s light. */
+  slotFacing(i: number, x: number, z: number): number {
+    const p = this.slots[i].position;
+    return Math.atan2(p.x - x, p.z - z);
+  }
+
+  /**
+   * Give the slots to these lights (the nearest few). A slot keeps its light while that light is still wanted,
+   * so walking hands over only the slot whose light fell out. That slot's shadow fades out first (its weight
+   * eases to 0), and only then is the slot moved to the new piece, redrawn once, and faded in.
+   */
+  private assignSlots(want: { pos: THREE.Vector3; kind: LightKind }[], dt: number) {
+    const same = (a: { pos: THREE.Vector3; kind: LightKind }, b: { pos: THREE.Vector3; kind: LightKind }) => a.kind === b.kind && a.pos.distanceToSquared(b.pos) < 1e-6;
+    const step = dt / SLOT_FADE;
+    const left = [...want];
+    const free: number[] = [];
+    this.slotOf.forEach((cur, i) => {
+      if (!cur) {
+        free.push(i);
+        return;
+      }
+      const k = left.findIndex((l) => same(l, cur));
+      if (k >= 0) {
+        // Still wanted (perhaps again, part way through fading out): ease back up.
+        this.slotOf[i] = left[k];
+        left.splice(k, 1);
+        this.slotWeight[i] = Math.min(1, this.slotWeight[i] + step);
+        return;
+      }
+      // No longer wanted. A piece taken out of the room goes at once; one walked away from fades out first.
+      const still = this.lights.find((l) => same(l, cur));
+      this.slotWeight[i] = still ? Math.max(0, this.slotWeight[i] - step) : 0;
+      if (still) this.slotOf[i] = still;
+      if (this.slotWeight[i] > 0) return;
+      this.slotOf[i] = null;
+      free.push(i);
+    });
+    for (const i of free) {
+      const next = left.shift() ?? null;
+      this.slotOf[i] = next;
+      if (!next) continue;
+      this.slotWeight[i] = this.freshRoom ? 1 : 0;
+      this.slots[i].position.copy(next.pos);
+      this.slots[i].shadow.needsUpdate = true;
+      this.drawnAt[i] = this.frameNo;
+      this.stirred.delete(i);
+    }
+    this.freshRoom = false;
   }
 
   /** Lick the flames up and down, and let the lights breathe with them. */
@@ -890,22 +1088,74 @@ export class Ambience {
     const dusk = this.indoors ? 1 : 1 - this.daylight;
     const near = (a: { pos: THREE.Vector3 }, b: { pos: THREE.Vector3 }) => a.pos.distanceToSquared(target) - b.pos.distanceToSquared(target);
     const sorted = [...this.lights].sort(near);
+    this.focus.copy(target);
 
-    // The nearest fire gets the light that throws shadows.
+    if (this.indoors) {
+      // Indoors the nearest few each throw shadows. A piece already holding a slot keeps it until another is
+      // clearly nearer (SLOT_HOLD), so walking along the edge between two never hands a slot back and forth.
+      // Matched by place, since setLights hands over new objects for the same pieces.
+      const slotted = (l: { pos: THREE.Vector3; kind: LightKind }) => this.slotOf.some((o) => o && o.kind === l.kind && o.pos.distanceToSquared(l.pos) < 1e-6);
+      // A fire is the brightest thing in the room and throws the longest shadows, so it counts as a little nearer.
+      const keyed = sorted.map((l) => ({ l, d: l.pos.distanceTo(target) - (slotted(l) ? SLOT_HOLD : 0) - (l.kind === "fire" ? FIRE_PULL : 0) }));
+      keyed.sort((a, b) => a.d - b.d);
+      const dt = Math.min(0.1, Math.max(0, clock - this.lastClock));
+      this.lastClock = clock;
+      this.assignSlots(keyed.slice(0, SHADOW_SLOTS).map((k) => k.l), dt);
+      // Only their strength changes from frame to frame (the flicker and the fades), which needs no redraw of
+      // their maps; their place and reach change only when a slot is handed to another piece.
+      this.slots.forEach((s, i) => {
+        const l = this.slotOf[i];
+        if (!l) {
+          // Kept in the scene (at no strength) rather than hidden, so the light count stays fixed.
+          s.intensity = 0;
+          return;
+        }
+        const look = this.roomLook(l, clock, motion);
+        this.reach(s, look.distance, look.decay);
+        s.color.set(look.color);
+        s.intensity = look.intensity * this.slotWeight[i];
+      });
+      // Whatever share of a piece's light its slot does not carry (all of it, for a piece with no slot) goes to a
+      // plain light in the same spot with the same look, so the piece is always exactly as bright: handing it to
+      // or from a slot only fades its shadow in or out.
+      const share = (l: { pos: THREE.Vector3; kind: LightKind }) => {
+        const i = this.slotOf.indexOf(l);
+        return i < 0 ? 1 : 1 - this.slotWeight[i];
+      };
+      const rest = sorted.filter((l) => share(l) > 0.001);
+      [...this.glows, ...this.fadeGlows].forEach((g, i) => {
+        const l = rest[i];
+        if (!l) {
+          g.intensity = 0;
+          return;
+        }
+        const look = this.roomLook(l, clock, motion);
+        g.position.copy(l.pos);
+        g.color.set(look.color);
+        g.distance = look.distance;
+        g.decay = look.decay;
+        g.intensity = look.intensity * share(l);
+      });
+      return;
+    }
+
+    // Outdoors the nearest campfire glows once the light starts to go; nothing but the sun throws shadows.
     const fire = sorted.find((l) => l.kind === "fire");
     const light = this.fireLight;
+    light.castShadow = false;
     if (fire) {
       light.position.copy(fire.pos);
-      light.castShadow = this.indoors;
+      light.color.set("#ff9548");
+      light.distance = 6;
+      light.decay = 2;
       light.intensity = 3.2 * dusk * this.waver(clock, 0, motion);
     } else {
       // Kept in the scene (at no strength) rather than hidden, so the light count stays fixed.
       light.intensity = 0;
-      light.castShadow = false;
     }
+    const rest = sorted.filter((l) => l !== fire);
 
     // Everything else, nearest first, shares the plain lights.
-    const rest = sorted.filter((l) => l !== fire);
     this.glows.forEach((g, i) => {
       const l = rest[i];
       if (!l) {
@@ -916,8 +1166,34 @@ export class Ambience {
       g.position.copy(l.pos);
       g.color.set(look.color);
       g.distance = look.range;
+      g.decay = 2;
       g.intensity = look.power * dusk * (look.flicker ? this.waver(clock, i + 1, motion) : 1);
     });
+  }
+
+  /**
+   * How a candle, lantern or fire lights a room, the same whether it holds a shadow slot or a plain light.
+   * Its flicker is keyed to the piece's place, not to the light carrying it, so it never jumps on a hand-over.
+   */
+  private roomLook(l: { pos: THREE.Vector3; kind: LightKind }, clock: number, motion: number): { color: string; distance: number; decay: number; intensity: number } {
+    const wave = this.waver(clock, Math.abs(Math.floor(l.pos.x * 13 + l.pos.z * 7)) % 7, motion);
+    if (l.kind === "fire") return { color: "#ff9548", distance: 6, decay: 2, intensity: 3.2 * wave };
+    const look = GLOW[l.kind];
+    const flick = look.flicker ? wave : 1;
+    // Under the lamp a small light is only a warm spot, as it always was; its shadow is a faint one close by.
+    if (this.lampOn) return { color: look.color, distance: look.range, decay: 2, intensity: look.power * flick };
+    // With the lamp out the small lights carry the room: more reach, fading gently (decay 1), so a hero a hex or
+    // two away still throws a shadow you can see. Several share the room, so each is softer than the one shadow
+    // light there used to be.
+    return { color: look.color, distance: Math.max(look.range * 2, 6), decay: 1, intensity: look.power * 2.6 * flick };
+  }
+
+  /** Set a slot's reach and falloff. A new reach moves its shadow camera's far plane, so its map is redrawn. */
+  private reach(s: THREE.PointLight, distance: number, decay: number) {
+    s.decay = decay;
+    if (s.distance === distance) return;
+    s.distance = distance;
+    s.shadow.needsUpdate = true;
   }
 
   /** A gentle unsteadiness for a flame's light, different for each `n`. */
@@ -940,6 +1216,91 @@ export class Ambience {
     this.smoke = new THREE.Points(geometry, new THREE.PointsMaterial({ size: 3, sizeAttenuation: false, vertexColors: true, transparent: true, depthWrite: false }));
     this.smoke.frustumCulled = false;
     this.scene.add(this.smoke);
+  }
+
+  /**
+   * Put a lighthouse's turning beam at `at` (the middle of its lantern), or take it away with null.
+   * Each beam is an open cone lying on its side, apex in the lantern, coloured by a ramp that fades to black
+   * along its length: drawn additively, black adds nothing, so it thins out to nothing with no hard end.
+   */
+  setBeacon(at: THREE.Vector3 | null) {
+    if (this.beacon) {
+      this.scene.remove(this.beacon.root);
+      this.beacon.root.traverse((o) => {
+        if (o instanceof THREE.Mesh || o instanceof THREE.Sprite) o.geometry.dispose();
+      });
+      this.beacon.beams.map?.dispose();
+      this.beacon.beams.dispose();
+      this.beacon.glow.map?.dispose();
+      this.beacon.glow.dispose();
+      this.beacon = null;
+    }
+    if (!at) return;
+    const ramp = (stops: [number, string][], w: number, h: number, radial: boolean) => {
+      const canvas = document.createElement("canvas");
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext("2d")!;
+      const grad = radial ? ctx.createRadialGradient(w / 2, h / 2, 0, w / 2, h / 2, w / 2) : ctx.createLinearGradient(0, 0, 0, h);
+      for (const [o, c] of stops) grad.addColorStop(o, c);
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, 0, w, h);
+      const tex = new THREE.CanvasTexture(canvas);
+      tex.colorSpace = THREE.SRGBColorSpace;
+      return tex;
+    };
+    // A cone's apex is the top of the texture (the canvas's first row), its open end the bottom.
+    const beams = new THREE.MeshBasicMaterial({
+      map: ramp([[0, "#fff1c0"], [0.1, "#c9a650"], [0.45, "#3a2f14"], [1, "#000000"]], 2, 64, false),
+      transparent: true,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+      fog: false,
+    });
+    const root = new THREE.Group();
+    root.position.copy(at);
+    const spin = new THREE.Group();
+    root.add(spin);
+    const LENGTH = 3.4;
+    for (const side of [1, -1]) {
+      const cone = new THREE.Mesh(new THREE.ConeGeometry(0.42, LENGTH, 14, 1, true), beams);
+      // Lay it on its side with the apex at the lantern, pointing out along x (and back, for the second beam).
+      cone.rotation.z = (side * Math.PI) / 2;
+      cone.position.x = (side * LENGTH) / 2;
+      // A touch below the lamp, so the beam reads as sweeping the water rather than the sky.
+      cone.position.y = -0.12;
+      cone.renderOrder = 2;
+      spin.add(cone);
+    }
+    const glow = new THREE.SpriteMaterial({
+      map: ramp([[0, "#fff4cc"], [0.25, "#ffd77a"], [0.6, "#5a3f10"], [1, "#000000"]], 64, 64, true),
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      transparent: true,
+      fog: false,
+    });
+    const halo = new THREE.Sprite(glow);
+    halo.renderOrder = 2;
+    root.add(halo);
+    root.traverse((o) => (o.frustumCulled = false));
+    this.scene.add(root);
+    this.beacon = { root, spin, beams, glow, halo };
+  }
+
+  /** The lighthouse's beam turns slowly; faint by day, plain at dusk and night. */
+  private sweep(clock: number) {
+    const b = this.beacon;
+    if (!b) return;
+    const dark = this.night;
+    // A full turn every 24 seconds or so: slow enough to be calm, never a strobe. Held still when motion is reduced.
+    b.spin.rotation.y = this.still ? 0.6 : clock * 0.26;
+    b.beams.opacity = 0.06 + 0.5 * dark;
+    // The glow breathes very gently, and is barely there at noon.
+    const breathe = this.still ? 1 : 0.92 + 0.08 * Math.sin(clock * 1.3);
+    b.glow.opacity = (0.18 + 0.72 * dark) * breathe;
+    const size = 0.8 + 0.5 * dark;
+    b.halo.scale.set(size, size, 1);
   }
 
   /** Puffs leave the stack one after another, drift with the wind as they climb, and thin out. */
@@ -1031,9 +1392,13 @@ export class Ambience {
     col.needsUpdate = true;
   }
 
-  /** The turn, about the vertical, that faces something at (x, z) toward whatever lights it. */
+  /**
+   * The turn, about the vertical, that faces something at (x, z) toward the sun or, indoors, the hanging lamp:
+   * for the shadow card the sun and the lamp see (CARD_LAYER). Each shadow slot has a card of its own (slotFacing).
+   */
   towardLight(x: number, z: number): number {
-    return this.indoors ? Math.atan2(this.lamp.position.x - x, this.lamp.position.z - z) : Math.atan2(this.sunDir.x, this.sunDir.z);
+    if (!this.indoors) return Math.atan2(this.sunDir.x, this.sunDir.z);
+    return Math.atan2(this.lamp.position.x - x, this.lamp.position.z - z);
   }
 
   private light(target: THREE.Vector3, clock: number) {
@@ -1064,8 +1429,14 @@ export class Ambience {
       this.sun.intensity = 0;
       // With a fire going, the lamp and fill step back so the room is not overlit.
       const fire = this.lights.some((l) => l.kind === "fire");
-      this.lamp.intensity = (fire ? 1.15 : 1.5) * (this.still ? 1 : 1 + Math.sin(clock * 7) * 0.035 + Math.sin(clock * 13.3) * 0.02);
-      this.hemi.intensity = fire ? 0.8 : 0.95;
+      if (this.lampOn) {
+        this.lamp.intensity = (fire ? 1.15 : 1.5) * (this.still ? 1 : 1 + Math.sin(clock * 7) * 0.035 + Math.sin(clock * 13.3) * 0.02);
+        this.hemi.intensity = fire ? 0.8 : 0.95;
+      } else {
+        // Lamp out: a faint fill so the room never goes black, and the candles, lanterns and fires do the rest.
+        this.lamp.intensity = 0;
+        this.hemi.intensity = 0.15;
+      }
       this.hemi.color.set("#ffe9c9");
       this.hemi.groundColor.set("#3b2f2a");
       this.background.set("#1d1a2b");

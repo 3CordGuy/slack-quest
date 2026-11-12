@@ -10,8 +10,10 @@ import { DiceTable } from "./DiceTable";
 import { ShoalsTable } from "./ShoalsTable";
 import { SalesmanPanel } from "./SalesmanPanel";
 import { useSalesman } from "./salesmanClock";
+import { CrewRoster } from "./CrewRoster";
 import { DragPanel } from "./DragPanel";
 import { perkText } from "./hutDrops";
+import { ThingIcon, pubIcon } from "./thingIcons";
 import { TileAction } from "./TileAction";
 import { WorldRenderer, type RenderState } from "./render/WorldRenderer";
 import { usePub } from "./usePub";
@@ -21,7 +23,6 @@ import { xpEvents } from "./xpEvents";
 import "./hut.css";
 import "./pub.css";
 
-const className = (id: string) => label("class", id);
 const same = (a: HexPos, b: HexPos) => a.q === b.q && a.r === b.r;
 const ROOM = pubRoom();
 const DOOR = ROOM.pois.find((p) => p.kind === "door")!.pos;
@@ -29,6 +30,12 @@ const DOOR = ROOM.pois.find((p) => p.kind === "door")!.pos;
 interface TalkLine {
   who: string;
   text: string;
+}
+
+/** One thing ordered at the bar, with its icon, or what to say when there is none. */
+function Having({ item, none }: { item: { id: string } | undefined; none: string }) {
+  if (!item) return <strong>{none}</strong>;
+  return <span className="pub-having"><ThingIcon icon={pubIcon(item.id)} size={18} /><strong>{label("pub", item.id)}</strong></span>;
 }
 
 export function PubView({ me, refresh, onLeave }: { me: Me; refresh(): Promise<unknown>; onLeave(): void }) {
@@ -220,7 +227,8 @@ export function PubView({ me, refresh, onLeave }: { me: Me; refresh(): Promise<u
               const mine = tab?.orders.includes(item.id);
               return (
                 <li key={item.id} className={mine ? "having" : ""}>
-                  <div>
+                  <ThingIcon icon={pubIcon(item.id)} size={36} />
+                  <div className="grow">
                     <strong>{label("pub", item.id)}</strong> <span className="tag">{item.kind}</span>
                     <div className="muted">{blurb("pub", item.id)} <span className="good">{buffText(item.buff)}</span></div>
                   </div>
@@ -234,7 +242,7 @@ export function PubView({ me, refresh, onLeave }: { me: Me; refresh(): Promise<u
           {orderError && <p className="bad">{orderError}</p>}
           {rested && <p className="good">That set you up: one gathering outing is yours again today.</p>}
           <p>
-            In you: <strong>{having("drink")?.name ?? "no drink"}</strong> and <strong>{having("food")?.name ?? "no meal"}</strong>
+            In you: <Having item={having("drink")} none="no drink" /> and <Having item={having("food")} none="no meal" />
             {tab && perkText(tab.buff) && <span className="good"> · next voyage: {perkText(tab.buff)}</span>}
           </p>
 
@@ -258,18 +266,14 @@ export function PubView({ me, refresh, onLeave }: { me: Me; refresh(): Promise<u
       {you && atDice && <DiceTable table={pub.dice} you={you} gold={gold} error={pub.diceError} lastXp={pub.lastXp} send={(action) => pub.send({ type: "dice", action })} />}
 
       {you && <>
-      <DragPanel id="pub.crew" title="Inside" foldOnPhone className="crew">
-        <div className="panel">
-          <h3>{players.length} here now</h3>
-          <ul className="roster">
-            {players.map((p) => (
-              <li key={p.id}>
-                <span><i className="dot on" /> <strong>{p.name}</strong>{p.id === you && <span className="tag">you</span>}</span>
-                <span className="muted">{className(p.classId)} · {p.level}</span>
-              </li>
-            ))}
-          </ul>
-        </div>
+      <DragPanel id="pub.crew" title="Inside" foldOnPhone className="crew roster-panel">
+        <CrewRoster
+          you={you}
+          heading={<>{players.length} in the pub</>}
+          members={players.map((p) => ({ id: p.id, name: p.name, classId: p.classId, level: p.level, outfit: p.outfit, here: true }))}
+          onOpen={heroSheet.onHeroClick}
+          openId={heroSheet.open}
+        />
       </DragPanel>
 
       <DragPanel id="pub.chat" title="Pub chat" foldOnPhone className="chat panel harbor-chat">

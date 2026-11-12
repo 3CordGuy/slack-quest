@@ -13,8 +13,10 @@
 // Everything here is read from the events of the step that ended the fight.
 
 import type { ClientState, ItemDef, Resources, WorldEvent } from "@gantt-quest/world";
-import { ENEMIES, RARITY_COLOR } from "@gantt-quest/world";
-import { blueprintName, resourceText } from "./hutDrops";
+import { ENEMIES, RARITY_COLOR, RESOURCE_KINDS } from "@gantt-quest/world";
+import { blueprintName } from "./hutDrops";
+import { Icon } from "./items";
+import { BlueprintIcon, GOLD_ICON, ThingIcon, brewIcon, furnishingIcon, resourceIcon } from "./thingIcons";
 import { itemName, label } from "./labels";
 
 type Battle = NonNullable<ClientState["battle"]>;
@@ -92,8 +94,9 @@ export interface Spoils {
   gold: number;
   items: ItemDef[];
   resources: Resources;
+  /** Blueprint ids (furnishing def ids). */
   blueprints: string[];
-  furnishings: string[];
+  furnishings: Picked[];
   level: number | null;
   /** Knocked down during the fight. */
   fell: boolean;
@@ -109,6 +112,31 @@ export interface Recap {
   /** Who was beaten, for the heading. */
   enemies: string;
   heroes: Spoils[];
+}
+
+/** A furnishing picked up on the voyage: its def id for the icon, and the name it was given. */
+export interface Picked {
+  defId: string;
+  label: string;
+}
+
+/** Gold, materials, gear, blueprints and decor won, one chip each with its pixel icon. */
+function GainChips({ gold, items, resources, blueprints, furnishings }: { gold: number; items: ItemDef[]; resources: Resources; blueprints: string[]; furnishings: Picked[] }) {
+  return (
+    <>
+      {gold > 0 && <span className="chip gold with-icon"><ThingIcon icon={GOLD_ICON} size={18} />+{gold} gold</span>}
+      {RESOURCE_KINDS.filter((k) => resources[k]).map((k) => (
+        <span key={k} className="chip with-icon"><ThingIcon icon={resourceIcon(k)} size={18} />{resources[k]} {label("resource", k).toLowerCase()}</span>
+      ))}
+      {items.map((item, i) => (
+        <span key={i} className="chip with-icon" style={{ borderColor: RARITY_COLOR[item.rarity], color: RARITY_COLOR[item.rarity] }}>
+          <Icon name={item.icon} color={RARITY_COLOR[item.rarity]} size={18} />{itemName(item)}
+        </span>
+      ))}
+      {blueprints.map((b, i) => <span key={`b${i}`} className="chip with-icon"><BlueprintIcon defId={b} size={18} />Blueprint: {blueprintName(b)}</span>)}
+      {furnishings.map((f, i) => <span key={`f${i}`} className="chip with-icon"><ThingIcon icon={furnishingIcon(f.defId)} size={18} />{f.label}</span>)}
+    </>
+  );
 }
 
 /** What the fight that just ended came to, from the events of the step that ended it. */
@@ -130,8 +158,8 @@ export function recapFor(events: WorldEvent[], settled: Battle, state: ClientSta
     else if (ev.t === "gold") by.get(ev.heroId) && (by.get(ev.heroId)!.gold += ev.amount);
     else if (ev.t === "loot") by.get(ev.heroId)?.items.push(ev.item);
     else if (ev.t === "level_up") by.get(ev.heroId) && (by.get(ev.heroId)!.level = ev.level);
-    else if (ev.t === "blueprint") by.get(ev.heroId)?.blueprints.push(blueprintName(ev.blueprint));
-    else if (ev.t === "furnishing") by.get(ev.heroId)?.furnishings.push(ev.furnishing.label);
+    else if (ev.t === "blueprint") by.get(ev.heroId)?.blueprints.push(ev.blueprint);
+    else if (ev.t === "furnishing") by.get(ev.heroId)?.furnishings.push({ defId: ev.furnishing.defId, label: ev.furnishing.label });
     else if (ev.t === "resources") {
       const h = by.get(ev.heroId);
       if (h) for (const [kind, n] of Object.entries(ev.resources)) h.resources[kind as keyof Resources] = (h.resources[kind as keyof Resources] ?? 0) + (n ?? 0);
@@ -169,11 +197,7 @@ export function BattleRecap({ recap, you, onDone }: { recap: Recap; you: string;
               {gained ? (
                 <div className="recap-gains">
                   {h.xp > 0 && <span className="chip">+{h.xp} XP</span>}
-                  {h.gold > 0 && <span className="chip gold">+{h.gold} gold</span>}
-                  {Object.keys(h.resources).length > 0 && <span className="chip">{resourceText(h.resources)}</span>}
-                  {h.items.map((item, i) => <span key={i} className="chip" style={{ borderColor: RARITY_COLOR[item.rarity], color: RARITY_COLOR[item.rarity] }}>{itemName(item)}</span>)}
-                  {h.blueprints.map((b, i) => <span key={`b${i}`} className="chip">Blueprint: {b}</span>)}
-                  {h.furnishings.map((f, i) => <span key={`f${i}`} className="chip">{f}</span>)}
+                  <GainChips gold={h.gold} items={h.items} resources={h.resources} blueprints={h.blueprints} furnishings={h.furnishings} />
                 </div>
               ) : (
                 <div className="muted">{recap.status === "victory" ? "Nothing to show for it this time." : "Nothing gained."}</div>
@@ -199,8 +223,9 @@ export interface Find {
   gold: number;
   items: ItemDef[];
   resources: Resources;
+  /** Blueprint ids (furnishing def ids). */
   blueprints: string[];
-  furnishings: string[];
+  furnishings: Picked[];
   /** Two or more of the three rolls landed: there was a potion in it too. */
   potion: boolean;
 }
@@ -218,8 +243,8 @@ export function findFor(events: WorldEvent[], you: string, names: Map<string, st
     if (ev.t === "xp") find.xp += ev.amount;
     else if (ev.t === "gold") find.gold += ev.amount;
     else if (ev.t === "loot") find.items.push(ev.item);
-    else if (ev.t === "blueprint") find.blueprints.push(blueprintName(ev.blueprint));
-    else if (ev.t === "furnishing") find.furnishings.push(ev.furnishing.label);
+    else if (ev.t === "blueprint") find.blueprints.push(ev.blueprint);
+    else if (ev.t === "furnishing") find.furnishings.push({ defId: ev.furnishing.defId, label: ev.furnishing.label });
     else if (ev.t === "resources") for (const [kind, n] of Object.entries(ev.resources)) find.resources[kind as keyof Resources] = (find.resources[kind as keyof Resources] ?? 0) + (n ?? 0);
   }
   return find;
@@ -232,12 +257,8 @@ export function FindCard({ find, onDone }: { find: Find; onDone(): void }) {
       <h2>{find.mine ? "You found something!" : `${find.hero} found something!`}</h2>
       <p className="muted">The cache gives up what it was hiding.</p>
       <div className="recap-gains find-gains">
-        {find.gold > 0 && <span className="chip gold">+{find.gold} gold</span>}
-        {find.potion && <span className="chip">A potion</span>}
-        {find.items.map((item, i) => <span key={i} className="chip" style={{ borderColor: RARITY_COLOR[item.rarity], color: RARITY_COLOR[item.rarity] }}>{itemName(item)}</span>)}
-        {Object.keys(find.resources).length > 0 && <span className="chip">{resourceText(find.resources)}</span>}
-        {find.blueprints.map((b, i) => <span key={`b${i}`} className="chip">Blueprint: {b}</span>)}
-        {find.furnishings.map((f, i) => <span key={`f${i}`} className="chip">{f}</span>)}
+        {find.potion && <span className="chip with-icon"><ThingIcon icon={brewIcon("healing")} size={18} />A potion</span>}
+        <GainChips gold={find.gold} items={find.items} resources={find.resources} blueprints={find.blueprints} furnishings={find.furnishings} />
         {find.xp > 0 && <span className="chip">+{find.xp} XP</span>}
         {empty && <span className="muted">Less than it promised.</span>}
       </div>

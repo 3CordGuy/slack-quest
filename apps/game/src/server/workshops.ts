@@ -18,6 +18,7 @@ import {
   smithyWork,
   upgradedName,
   type ItemKind,
+  type Rarity,
   type Resources,
   type Slot,
   type SmithyCost,
@@ -92,6 +93,9 @@ export interface SmithyItem {
   power: number;
   upgrades: number;
   equipped: boolean;
+  /** For the item's pixel icon in the list. */
+  icon: string;
+  rarity: Rarity;
   /** What the next step costs, or null at the cap. */
   cost: SmithyCost | null;
 }
@@ -104,14 +108,14 @@ export interface SmithyView {
   items: SmithyItem[];
 }
 
-type SmithyRow = { id: number; name: string; kind: ItemKind; slot: Slot; power: number; upgrades: number; equipped: number };
+type SmithyRow = { id: number; name: string; kind: ItemKind; slot: Slot; power: number; upgrades: number; equipped: number; icon: string; rarity: Rarity };
 
 export async function smithyView(db: D1Database, playerId: string): Promise<SmithyView> {
   const [built, held, rows] = await Promise.all([
     crewBuilt(db, playerId, SMITHY_PROJECT),
     holdings(db, playerId),
     db
-      .prepare("SELECT id, name, kind, slot, power, upgrades, equipped FROM inventory WHERE player_id = ? AND stored_in IS NULL AND kind IN ('weapon', 'armor') ORDER BY equipped DESC, id")
+      .prepare("SELECT id, name, kind, slot, power, upgrades, equipped, icon, rarity FROM inventory WHERE player_id = ? AND stored_in IS NULL AND kind IN ('weapon', 'armor') ORDER BY equipped DESC, id")
       .bind(playerId)
       .all<SmithyRow>(),
   ]);

@@ -7,11 +7,11 @@
 // in on the fight and lines the two sides up facing each other.
 
 import * as THREE from "three";
-import { Ambience } from "./ambience";
+import { Ambience, CARD_LAYER, SHADOW_SLOTS, SLOT_LAYER } from "./ambience";
 import "./camera.css";
 import type { HexPos } from "@gantt-quest/core";
 import { hexDistance } from "@gantt-quest/core";
-import { BATTLE_JOIN_RANGE, ENEMIES, TRAIT_BY_ID, MOVE_COST, findPath, xpProgress, reachable, tileAt, type ClientState, type Outfit, type Phase, type Poi, type Tile, type WorldEvent, type WorldMap } from "@gantt-quest/world";
+import { BASE_HEIGHT, BATTLE_JOIN_RANGE, BIG_REACH, ENEMIES, HEX_DIRS, TRAIT_BY_ID, MOVE_COST, WALL_FACE_HALF, WALL_ITEM_BOTTOM, WALL_ITEM_TOP, findPath, xpProgress, reachable, tileAt, wallFace, wallFaces, type ClientState, type Outfit, type Phase, type Poi, type Tile, type WorldEvent, type WorldMap } from "@gantt-quest/world";
 import { ghostModel, propModel, tintGhost, type LightKind } from "./props";
 import { SPRITE_ASPECT, bubbleTexture, fxTexture, labelTexture, plateKey, sleepZTexture, spriteKey, spriteTexture, textTexture, type FxKind, type PlateStats } from "./sprites";
 
@@ -51,6 +51,10 @@ export interface RenderState {
   props?: SceneProp[];
   /** Inside a building: no sea or sky around the map, and the camera starts closer. */
   indoors?: boolean;
+  /** Inside a hut with its hanging lamp put out: the room is lit by its own candles, lanterns and fires. */
+  lampOff?: boolean;
+  /** Your gathering outings, shown as lightning bolts on your own plate. */
+  stamina?: { left: number; max: number };
   /** A piece being carried: a ghost of it follows the pointer, and a click sets it down (RendererCallbacks.onPlace). */
   holding?: Holding | null;
 }
@@ -78,6 +82,11 @@ export interface RenderHero {
   maxHp?: number;
 }
 
+/** The first word of a name, for a plate: "Ewan Driftwood" is "Ewan". */
+export function firstName(name: string): string {
+  return name.trim().split(/\s+/)[0] || name;
+}
+
 /** A hero's plate stats, or nothing for someone who is not a player's hero. */
 export function plateOf(h: RenderHero): PlateStats | undefined {
   if (h.level === undefined) return undefined;
@@ -90,16 +99,23 @@ export interface SceneProp {
   /** Which model to draw; see render/props.ts. */
   model: string;
   pos: HexPos;
-  /** 0 to 5, in sixths of a turn. */
+  /** 0 to 5, in sixths of a turn. A wall piece: which side of its wall hex it hangs on. */
   facing: number;
   /** Ringed, to show it is the one being handled. */
   selected?: boolean;
   /** A small thing: stepped over, not walked around. */
   small?: boolean;
-  /** A small thing's offset from the middle of its hex (or of its support's top), and its turn in radians. */
+  /** Hung on a wall: `pos` is the wall hex, `facing` the side, `x` along it and `y` up from the floor. */
+  mount?: boolean;
+  /** Offset from the middle of its hex (or of its support's top), and its turn in radians on top of `facing`. */
   x?: number;
   z?: number;
+  y?: number;
   angle?: number;
+  /** How far out its selection ring goes. */
+  ring?: number;
+  /** The hexes it keeps people out of, when that is more than its own (see hutroom.ts, coveredHexes). Small things and wall pieces keep nobody out. */
+  covers?: HexPos[];
   /** The prop it stands on; then x/z/angle are in that prop's own frame. */
   on?: string | number;
   /** Its flat top, in its own frame, for small things to stand on. */
@@ -112,13 +128,17 @@ export interface PlaceTarget {
   x: number;
   z: number;
   on?: string | number;
+  /** On a wall: `pos` is the wall hex, `x` how far along this side of it, `y` how high. */
+  wall?: { side: number; y: number };
 }
 
 /** Something being carried, to be set down where the pointer is. */
 export interface Holding {
   model: string;
   small: boolean;
-  /** Furniture's turn, in sixths; a small thing's, in radians. */
+  /** A wall piece's face, w wide and h tall: it is aimed at the walls, not the floor. */
+  mount?: { w: number; h: number };
+  /** Its turn: `facing` sixths plus `angle` radians. */
   facing: number;
   angle: number;
 }
@@ -168,6 +188,10 @@ export function hexToWorld(p: HexPos): { x: number; z: number } {
 }
 
 const tileTop = (t: Tile | undefined) => (!t ? 0.2 : t.biome === "water" ? 0.14 : 0.35 + t.h * 1.1);
+/** A room's floor, which wall pieces' heights are measured from. */
+const FLOOR_TOP = tileTop({ q: 0, r: 0, biome: "floor", h: BASE_HEIGHT.floor });
+/** A turn in sixths plus radians, as Three.js turns a model about y. */
+const yawOf = (facing: number, angle = 0) => -((facing * Math.PI) / 3 + angle);
 const key = (p: HexPos) => `${p.q},${p.r}`;
 /** To the nearest thousandth, so offsets sent to the server stay short. */
 const round = (n: number) => Math.round(n * 1000) / 1000;
@@ -179,8 +203,16 @@ const noise = (q: number, r: number, salt: number) => {
 
 interface Unit {
   sprite: THREE.Sprite;
-  /** Unseen cut-out of the sprite, turned to the sun, that throws its shadow. */
-  caster: THREE.Mesh;
+  /**
+   * Unseen cut-outs of the sprite that throw its shadow, each turned to face one light: the first for the sun
+   * (or a hut's hanging lamp), then one per shadow slot indoors. Each sits on its own layer, which only its
+   * light's shadow camera looks at, so every light sees the hero face on and none sees another light's card.
+   */
+  casters: THREE.Mesh[];
+  /** Where its shadow was last drawn from, and whether it threw one: a change asks the lights near it to redraw. */
+  shadowAt: THREE.Vector3;
+  shadowShown: boolean;
+  shadowSize: number;
   ring: THREE.Mesh | null;
   hpBack: THREE.Sprite | null;
   hpFill: THREE.Sprite | null;
@@ -318,8 +350,12 @@ export interface RendererCallbacks {
   onPlace?(target: PlaceTarget): void;
   /** While carrying something: whether it may go at that spot (the ghost turns red if not). */
   canPlace?(target: PlaceTarget): boolean;
-  /** Shift and the wheel, while carrying something: turn it one step (+1 clockwise). */
-  onTurnHeld?(dir: 1 | -1): void;
+  /**
+   * Shift and the wheel, while carrying something: turn it (+1 clockwise).
+   * `amount` is how far the wheel moved, from 0 to 1 (a trackpad sends many
+   * small ones), and `alt` whether Alt was held, which flips snapping.
+   */
+  onTurnHeld?(dir: 1 | -1, amount: number, alt: boolean): void;
 }
 
 /** A small thing on the floor keeps this close to the middle of its hex. */
@@ -417,12 +453,20 @@ export class WorldRenderer {
   private deep = new Set<string>();
   /** The camera turn the indoor walls were last cut for. */
   private wallTurn = NaN;
+  /** Indoors, the walls cut down to a kerb so the camera can see in, by hex key. Things hung on them are hidden. */
+  private lowered = new Set<string>();
+  /** Indoors, the wall sides things can hang on, by hex key: which sides of that hex. */
+  private hangable = new Map<string, number[]>();
+  /** How high the last wall piece was aimed, for when the pointer is on top of a wall. */
+  private wallY = 1.1;
   private rotateButtons: HTMLDivElement;
   private pointer = { x: 0, y: 0, downX: 0, downY: 0, down: false, dragged: false, dirty: false, inside: false };
 
   constructor(private container: HTMLElement, private callbacks: RendererCallbacks) {
     this.renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: "low-power" });
     this.renderer.setPixelRatio(1);
+    // Dev server only: the latest view, for reading draw calls (`__gqWorld.renderer.info.render.calls`) from the console.
+    if (import.meta.env.DEV) (globalThis as { __gqWorld?: WorldRenderer }).__gqWorld = this;
     const canvas = this.renderer.domElement;
     canvas.style.width = "100%";
     canvas.style.height = "100%";
@@ -524,6 +568,7 @@ export class WorldRenderer {
     if (first || lifted !== this.lifted) this.buildTerrain(state, first);
     this.lifted = lifted;
     this.state = state;
+    this.ambience.setLampOn(!state.lampOff);
     this.buildPois(state);
     this.buildProps(state);
     this.updateGhost();
@@ -867,6 +912,9 @@ export class WorldRenderer {
     this.seaBase.set(this.sodden ? "#2b4558" : "#3577cf");
     (this.sea.material as THREE.MeshLambertMaterial).color.copy(this.seaBase);
     this.wallTurn = NaN;
+    this.lowered.clear();
+    this.hangable.clear();
+    if (state.indoors) for (const f of wallFaces(state.map)) this.hangable.set(key(f.pos), [...(this.hangable.get(key(f.pos)) ?? []), f.side]);
     this.tiles = state.map.tiles;
     if (this.terrain) {
       this.scene.remove(this.terrain);
@@ -971,14 +1019,36 @@ export class WorldRenderer {
     const m = new THREE.Matrix4();
     const upright = new THREE.Quaternion();
     const kerb = tileTop({ q: 0, r: 0, biome: "wall", h: 0.22 } as Tile);
+    // A wall away from the camera stands its full height; the low front wall, seen from behind, comes up a little.
+    const raised = tileTop({ q: 0, r: 0, biome: "wall", h: 0.9 } as Tile);
+    const was = [...this.lowered].join("|");
+    this.lowered.clear();
     this.tiles.forEach((t, i) => {
       if ((t.biome as string) !== "wall") return;
       const { x, z } = hexToWorld(t);
       const toward = (x - this.target.x) * Math.sin(this.yaw) + (z - this.target.z) * Math.cos(this.yaw);
-      m.compose(new THREE.Vector3(x, 0, z), upright, new THREE.Vector3(1, toward > 0.6 ? kerb : Math.max(kerb, tileTop({ ...t, h: 0.9 })), 1));
+      if (toward > 0.6) this.lowered.add(key(t));
+      m.compose(new THREE.Vector3(x, 0, z), upright, new THREE.Vector3(1, toward > 0.6 ? kerb : Math.max(raised, tileTop(t)), 1));
       this.terrain!.setMatrixAt(i, m);
     });
     this.terrain.instanceMatrix.needsUpdate = true;
+    this.hideLoweredWallProps();
+    // A wall cut down (or stood back up) and the pieces hung on it change every light's shadows.
+    if ([...this.lowered].join("|") !== was) this.ambience.stirAll();
+  }
+
+  /** Things hung on a wall that has been cut down for the camera would float in the air: hide them until it stands again. */
+  private hideLoweredWallProps() {
+    for (const g of this.propModels.values()) {
+      const wall = g.userData.wallKey as string | undefined;
+      if (wall) g.visible = !this.lowered.has(wall);
+    }
+  }
+
+  /** Where a wall piece hangs: on side `side` of wall hex `pos`, `x` along it and `y` up from the floor; and which way it faces. */
+  private wallSpot(pos: HexPos, side: number, x: number, y: number): { at: THREE.Vector3; yaw: number } {
+    const f = wallFace(pos, side);
+    return { at: new THREE.Vector3(f.x + f.tx * x, FLOOR_TOP + y, f.z + f.tz * x), yaw: Math.atan2(f.nx, f.nz) };
   }
 
   private paintTiles() {
@@ -1065,12 +1135,14 @@ export class WorldRenderer {
   // ---------- points of interest ----------
 
   private buildPois(state: RenderState) {
-    const sig = state.map.pois.map((p) => `${p.id}:${p.cleared}:${p.tier ?? ""}`).join("|");
+    const sig = state.map.pois.map((p) => `${p.id}:${p.cleared}:${p.tier ?? ""}:${p.fill ?? ""}`).join("|");
     if (sig === this.poiSig) return;
     this.poiSig = sig;
     this.poiGroup.clear();
     /** Chimney tops, which the ambience draws smoke from. */
     const stacks: THREE.Vector3[] = [];
+    /** A lighthouse's lantern, which the ambience turns a beam from. */
+    let beacon: THREE.Vector3 | null = null;
     for (const poi of state.map.pois) {
       const g = this.poiModel(poi);
       const at = this.standAt(poi.pos);
@@ -1081,8 +1153,10 @@ export class WorldRenderer {
       });
       this.poiGroup.add(g);
       if (g.userData.smoke) stacks.push((g.userData.smoke as THREE.Vector3).clone().add(g.position));
+      if (g.userData.beacon) beacon = (g.userData.beacon as THREE.Vector3).clone().add(g.position);
     }
     this.ambience.setSmoke(stacks);
+    this.ambience.setBeacon(beacon);
     // The sea breaks around rocks standing out of it, and the wreck on them.
     this.ambience.setSeaRocks(state.map.pois.filter((p) => p.kind === "rocks" || p.kind === "wreck").map((p) => this.standAt(p.pos)));
   }
@@ -1090,7 +1164,7 @@ export class WorldRenderer {
   /** Furniture: rebuilt whenever a piece is added, moved, turned or selected. */
   private buildProps(state: RenderState) {
     const props = state.props ?? [];
-    const sig = props.map((p) => `${p.id}:${p.model}:${key(p.pos)}:${p.facing}:${p.selected ? 1 : 0}:${p.x ?? 0}:${p.z ?? 0}:${p.angle ?? 0}:${p.on ?? ""}`).join("|");
+    const sig = props.map((p) => `${p.id}:${p.model}:${key(p.pos)}:${p.facing}:${p.selected ? 1 : 0}:${p.x ?? 0}:${p.z ?? 0}:${p.y ?? 0}:${p.angle ?? 0}:${p.on ?? ""}`).join("|");
     if (sig === this.propSig) return;
     this.propSig = sig;
     this.propGroup.traverse((o) => {
@@ -1114,10 +1188,16 @@ export class WorldRenderer {
         g.position.set(prop.x ?? 0, top.y, prop.z ?? 0);
         g.rotation.y = -(prop.angle ?? 0);
         base.add(g);
+      } else if (prop.mount) {
+        const { at, yaw } = this.wallSpot(prop.pos, prop.facing, prop.x ?? 0, prop.y ?? 0);
+        g.position.copy(at);
+        g.rotation.y = yaw;
+        g.userData.wallKey = key(prop.pos);
+        this.propGroup.add(g);
       } else {
         const at = this.standAt(prop.pos);
         g.position.set(at.x + (prop.x ?? 0), at.y, at.z + (prop.z ?? 0));
-        g.rotation.y = prop.small ? -(prop.angle ?? 0) : -(prop.facing * Math.PI) / 3;
+        g.rotation.y = yawOf(prop.facing, prop.angle);
         this.propGroup.add(g);
       }
       g.userData.surface = prop.surface;
@@ -1150,15 +1230,23 @@ export class WorldRenderer {
         if (o.userData.light) lights.push({ pos: o.getWorldPosition(new THREE.Vector3()), kind: o.userData.light as LightKind });
       });
       if (prop.selected) {
-        const [inner, outer] = prop.small ? [0.18, 0.24] : [0.8, 0.95];
-        const ring = new THREE.Mesh(new THREE.RingGeometry(inner, outer, 6), new THREE.MeshBasicMaterial({ color: "#ffd23f", side: THREE.DoubleSide, depthTest: !prop.small }));
-        ring.rotation.x = -Math.PI / 2;
-        ring.rotation.z = Math.PI / 6;
-        ring.position.copy(g.getWorldPosition(new THREE.Vector3())).setY(g.getWorldPosition(new THREE.Vector3()).y + 0.03);
+        const outer = prop.small ? 0.24 : prop.ring ?? 0.95;
+        const inner = prop.small ? 0.18 : outer - 0.13;
+        const ring = new THREE.Mesh(new THREE.RingGeometry(inner, outer, prop.mount ? 16 : 6), new THREE.MeshBasicMaterial({ color: "#ffd23f", side: THREE.DoubleSide, depthTest: !prop.small && !prop.mount }));
+        if (prop.mount) {
+          // Flat on the wall, just in front of the piece, and hidden with it.
+          ring.position.set(0, 0, 0.02);
+          g.add(ring);
+        } else {
+          ring.rotation.x = -Math.PI / 2;
+          ring.rotation.z = Math.PI / 6;
+          ring.position.copy(g.getWorldPosition(new THREE.Vector3())).setY(g.getWorldPosition(new THREE.Vector3()).y + 0.03);
+          this.propGroup.add(ring);
+        }
         ring.renderOrder = 2;
-        this.propGroup.add(ring);
       }
     }
+    this.hideLoweredWallProps();
     this.ambience.setLights(lights, flames);
   }
 
@@ -1195,9 +1283,10 @@ export class WorldRenderer {
     const rect = this.renderer.domElement.getBoundingClientRect();
     const ndc = new THREE.Vector2(((this.pointer.x - rect.left) / rect.width) * 2 - 1, -((this.pointer.y - rect.top) / rect.height) * 2 + 1);
     this.raycaster.setFromCamera(ndc, this.camera);
+    if (holding.mount) return this.aimAtWall(holding.mount);
     if (holding.small) {
-      // A top first: aimed at, the thing stands on it, kept inside its edges.
-      const top = this.raycaster.intersectObjects(this.surfaces, false)[0];
+      // A top first: aimed at, the thing stands on it, kept inside its edges. Not one hidden with its wall.
+      const top = this.raycaster.intersectObjects(this.surfaces, false).find((h) => this.propModels.get(h.object.userData.sheetOf as string | number)?.visible !== false);
       if (top) {
         const id = top.object.userData.sheetOf as string | number;
         const base = this.propModels.get(id)!;
@@ -1213,13 +1302,65 @@ export class WorldRenderer {
     if (!hit || hit.instanceId === undefined) return null;
     const t = this.tiles[hit.instanceId];
     const pos = { q: t.q, r: t.r };
-    if (!holding.small) return { pos, x: 0, z: 0 };
     const mid = hexToWorld(pos);
     let x = hit.point.x - mid.x;
     let z = hit.point.z - mid.z;
     const d = Math.hypot(x, z);
-    if (d > SMALL_REACH) [x, z] = [(x / d) * SMALL_REACH, (z / d) * SMALL_REACH];
+    // Furniture goes anywhere in its hex too, but settles in the middle when brought near it, the way it always stood.
+    if (!holding.small && d < 0.15) return { pos, x: 0, z: 0 };
+    const reach = holding.small ? SMALL_REACH : BIG_REACH;
+    if (d > reach) [x, z] = [(x / d) * reach, (z / d) * reach];
     return { pos, x: round(x), z: round(z) };
+  }
+
+  /**
+   * Where the pointer would hang a wall piece `mount` big: on the side of a
+   * back or side wall it is over (or, over the floor, the nearest such side
+   * beside it), as far along and as high as it points, kept on that side.
+   */
+  private aimAtWall(mount: { w: number; h: number }): PlaceTarget | null {
+    const hit = this.raycaster.intersectObject(this.terrain!)[0];
+    if (!hit || hit.instanceId === undefined) return null;
+    const t = this.tiles[hit.instanceId];
+    const point = hit.point;
+    let pos: HexPos;
+    let side: number;
+    let y = this.wallY;
+    if (t.biome === "wall") {
+      if (this.lowered.has(key(t))) return null;
+      pos = { q: t.q, r: t.r };
+      const mid = hexToWorld(pos);
+      const sides = this.hangable.get(key(t));
+      if (!sides?.length) return null;
+      // The side the pointer is nearest, of those that face the room.
+      const score = (s: number) => {
+        const f = wallFace(pos, s);
+        return f.nx * (point.x - mid.x) + f.nz * (point.z - mid.z);
+      };
+      side = sides.reduce((a, b) => (score(b) > score(a) ? b : a));
+      // On the face of the wall (not its top), the height is where the pointer is.
+      if (hit.face && Math.abs(hit.face.normal.y) < 0.5) y = point.y - FLOOR_TOP;
+    } else if (t.biome === "floor") {
+      // Over the floor beside a wall: the nearest side facing it, at the last height used.
+      let best: { pos: HexPos; side: number; d: number } | null = null;
+      HEX_DIRS.forEach((dir) => {
+        const w = { q: t.q + dir.q, r: t.r + dir.r };
+        if (this.lowered.has(key(w))) return;
+        const back = HEX_DIRS.findIndex((o) => o.q === -dir.q && o.r === -dir.r);
+        if (!this.hangable.get(key(w))?.includes(back)) return;
+        const f = wallFace(w, back);
+        const d = Math.hypot(point.x - f.x, point.z - f.z);
+        if (d < 0.6 && (!best || d < best.d)) best = { pos: w, side: back, d };
+      });
+      if (!best) return null;
+      ({ pos, side } = best);
+    } else return null;
+    const f = wallFace(pos, side);
+    const along = Math.max(0, WALL_FACE_HALF - mount.w / 2);
+    const x = Math.max(-along, Math.min(along, (point.x - f.x) * f.tx + (point.z - f.z) * f.tz));
+    y = Math.max(WALL_ITEM_BOTTOM + mount.h / 2, Math.min(WALL_ITEM_TOP - mount.h / 2, y));
+    this.wallY = y;
+    return { pos, x: round(x), z: 0, wall: { side, y: round(y) } };
   }
 
   private placeGhost() {
@@ -1231,7 +1372,11 @@ export class WorldRenderer {
     ghost.visible = !!target;
     if (!target) return;
     const base = target.on !== undefined ? this.propModels.get(target.on) : undefined;
-    if (base) {
+    if (target.wall) {
+      const { at, yaw } = this.wallSpot(target.pos, target.wall.side, target.x, target.wall.y);
+      ghost.position.copy(at);
+      ghost.rotation.y = yaw;
+    } else if (base) {
       const t = base.userData.surface as NonNullable<SceneProp["surface"]>;
       ghost.position.copy(base.localToWorld(new THREE.Vector3(target.x, t.y + 0.004, target.z)));
       // Props only ever turn about the vertical, so the support's yaw is all there is to add.
@@ -1239,7 +1384,7 @@ export class WorldRenderer {
     } else {
       const at = this.standAt(target.pos);
       ghost.position.set(at.x + target.x, at.y + 0.004, at.z + target.z);
-      ghost.rotation.y = holding.small ? -holding.angle : -(holding.facing * Math.PI) / 3;
+      ghost.rotation.y = yawOf(holding.facing, holding.angle);
     }
     tintGhost(ghost, this.callbacks.canPlace?.(target) ?? true);
   }
@@ -1257,7 +1402,7 @@ export class WorldRenderer {
   private stepCost(state: RenderState): ((t: Tile) => number) | undefined {
     if (!state.props?.length) return undefined;
     // Small things are stepped over.
-    const blocked = new Set(state.props.filter((p) => !p.small && p.on === undefined).map((p) => key(p.pos)));
+    const blocked = new Set(state.props.filter((p) => !p.small && !p.mount && p.on === undefined).flatMap((p) => (p.covers ?? [p.pos]).map(key)));
     return (t) => (blocked.has(key(t)) ? Infinity : MOVE_COST[t.biome]);
   }
 
@@ -1620,35 +1765,126 @@ export class WorldRenderer {
         break;
       }
       case "works": {
-        const stone = lambert("#b9b4a8");
+        // The works: the builders' yard where the crew's projects are paid for. Kept low, as it stands in the plaza:
+        // a trestle table with the plans weighted down on it, a slate of pledges, and timber and stone waiting to go.
+        const wood = lambert("#7a5230");
+        for (const x of [-0.32, 0.32]) {
+          for (const z of [-0.14, 0.14]) add(box(0.05, 0.36, 0.05), wood, x, 0.18, z - 0.12).rotation.z = x < 0 ? 0.12 : -0.12;
+        }
+        add(box(0.84, 0.05, 0.44), lambert("#a07a4c"), 0, 0.38, -0.12);
+        // The plans: a sheet of blue paper with white lines, a rolled plan, and a stone on the corner.
+        add(box(0.42, 0.012, 0.3), lambert("#3f6fa8"), -0.08, 0.41, -0.1, 0.12);
+        for (const dz of [-0.06, 0.0, 0.06]) add(box(0.3, 0.014, 0.012), lambert("#dce8f5"), -0.08, 0.416, -0.1 + dz, 0.12);
+        add(box(0.06, 0.014, 0.2), lambert("#dce8f5"), -0.02, 0.416, -0.1, 0.12);
+        add(new THREE.CylinderGeometry(0.035, 0.035, 0.36, 6), lambert("#e8dcc0"), 0.28, 0.44, -0.16).rotation.x = Math.PI / 2;
+        add(new THREE.DodecahedronGeometry(0.05), lambert("#8b95a5"), -0.26, 0.44, -0.2);
+        // A slate on an easel, chalked with the tally.
+        add(box(0.04, 0.6, 0.04), wood, 0.58, 0.3, -0.28).rotation.z = 0.15;
+        add(box(0.3, 0.24, 0.03), lambert("#2e3138"), 0.54, 0.44, -0.24, -0.3);
+        for (const dy of [-0.05, 0.0, 0.05]) add(box(0.18, 0.015, 0.032), lambert("#e8e4da"), 0.54, 0.44 + dy, -0.236, -0.3);
+        // Squared stone and planks, stacked by the table.
+        for (const [x, z] of [[-0.6, 0.3], [-0.42, 0.42], [-0.58, 0.5]]) add(box(0.16, 0.14, 0.16), lambert("#a3acba"), x, 0.07, z, 0.3);
+        for (let i = 0; i < 3; i++) add(box(0.5, 0.05, 0.12), lambert(i % 2 ? "#c9a877" : "#8a6a44"), 0.32, 0.03 + i * 0.05, 0.38, 0.2 + 0.08 * i);
+        break;
+      }
+      case "lighthouse": {
+        // The lighthouse, on the rocks at the end of the east spit. Every stage stands on the same rocky base.
+        const rock = lambert("#5d6270");
+        const pale = lambert("#7b8291");
+        add(new THREE.DodecahedronGeometry(0.42, 0), rock, -0.05, 0.02, 0.02, 0.3).scale.y = 0.55;
+        add(new THREE.DodecahedronGeometry(0.3, 0), pale, 0.36, 0.0, 0.22, 1.2).scale.y = 0.6;
+        add(new THREE.DodecahedronGeometry(0.26, 0), rock, -0.42, -0.02, 0.3, 0.8).scale.y = 0.5;
+        add(new THREE.DodecahedronGeometry(0.2, 0), pale, 0.3, 0.0, -0.36, 2.1).scale.y = 0.6;
+        const base = 0.2;
+        const fill = Math.max(0, Math.min(1, poi.fill ?? 0));
+        const white = lambert("#f1ece0");
+        const red = lambert("#b9433d");
+        /** One band of the striped tower: radius at the bottom and top, height, and the course it starts on. */
+        const course = (r0: number, r1: number, h: number, y: number, m: THREE.Material) => add(new THREE.CylinderGeometry(r1, r0, h, 8), m, 0, y + h / 2, 0);
+        // The tower in four bands, tapering, alternately white and red.
+        const BANDS = [0.34, 0.31, 0.28, 0.25, 0.22];
+        const BAND_H = 0.36;
+        const scaffold = (height: number) => {
+          const pole = lambert("#7a5230");
+          const plank = lambert("#8a6a44");
+          for (const [x, z] of [[-0.42, -0.36], [0.42, -0.36], [-0.42, 0.36], [0.42, 0.36]]) add(new THREE.CylinderGeometry(0.03, 0.03, height, 5), pole, x, base + height / 2, z);
+          for (let y = base + 0.35; y < base + height - 0.05; y += 0.4) {
+            add(box(0.88, 0.035, 0.05), plank, 0, y, -0.36);
+            add(box(0.88, 0.035, 0.05), plank, 0, y, 0.36);
+            add(box(0.05, 0.035, 0.76), plank, 0.42, y, 0);
+          }
+        };
         if (poi.cleared) {
-          // The lighthouse: a tapering white tower with a red band, a gallery and a lit lamp.
-          add(new THREE.CylinderGeometry(0.5, 0.56, 0.22, 8), stone, 0, 0.11, 0);
-          add(new THREE.CylinderGeometry(0.3, 0.42, 0.7, 8), lambert("#f4efe1"), 0, 0.57, 0);
-          add(new THREE.CylinderGeometry(0.25, 0.3, 0.35, 8), lambert("#b9433d"), 0, 1.095, 0);
-          add(new THREE.CylinderGeometry(0.21, 0.25, 0.4, 8), lambert("#f4efe1"), 0, 1.47, 0);
-          add(new THREE.CylinderGeometry(0.34, 0.34, 0.06, 8), lambert("#4a4458"), 0, 1.7, 0);
-          add(new THREE.CylinderGeometry(0.15, 0.15, 0.24, 6), new THREE.MeshBasicMaterial({ color: "#ffd23f" }), 0, 1.85, 0);
-          add(new THREE.ConeGeometry(0.26, 0.24, 8), lambert("#8c3b2f"), 0, 2.09, 0);
-          add(box(0.16, 0.28, 0.04), lambert("#5a3d22"), 0, 0.36, 0.41);
-          // Tall enough to stand over the huts when seen from the tilted camera.
-          g.scale.y = 1.3;
+          // Built: a striped stone tower on a plinth, a door and two small windows, a gallery with its rail,
+          // the lantern room of glass, and a red cap with a vane. The ambience turns the beam and lights the glow.
+          add(new THREE.CylinderGeometry(0.4, 0.44, 0.14, 8), lambert("#9a958a"), 0, base + 0.07, 0);
+          let y = base + 0.14;
+          for (let i = 0; i < 4; i++) {
+            course(BANDS[i], BANDS[i + 1], BAND_H, y, i % 2 ? red : white);
+            y += BAND_H;
+          }
+          add(box(0.14, 0.24, 0.04), lambert("#4a3a2a"), 0, base + 0.26, 0.37);
+          add(box(0.18, 0.04, 0.05), lambert("#9a958a"), 0, base + 0.4, 0.37);
+          for (const [wy, wr] of [[base + 0.75, 0.31], [base + 1.2, 0.27]]) add(box(0.07, 0.1, 0.03), lambert("#2b2f3d"), 0, wy, wr);
+          // The gallery: a broad slab, eight posts and a rail round it.
+          const gy = y;
+          add(new THREE.CylinderGeometry(0.33, 0.27, 0.07, 8), lambert("#4a4458"), 0, gy + 0.035, 0);
+          const iron = lambert("#2b2a33");
+          for (let i = 0; i < 8; i++) {
+            const a = (i / 8) * Math.PI * 2 + Math.PI / 8;
+            add(box(0.02, 0.14, 0.02), iron, Math.cos(a) * 0.3, gy + 0.14, Math.sin(a) * 0.3);
+          }
+          add(new THREE.CylinderGeometry(0.31, 0.31, 0.025, 8, 1, true), new THREE.MeshLambertMaterial({ color: "#2b2a33", flatShading: true, side: THREE.DoubleSide }), 0, gy + 0.21, 0);
+          // The lantern room: a warm core behind glass, with dark glazing bars.
+          const ly = gy + 0.07;
+          const core = add(new THREE.CylinderGeometry(0.09, 0.09, 0.16, 6), new THREE.MeshBasicMaterial({ color: "#ffe9a8" }), 0, ly + 0.13, 0);
+          core.userData.glow = true;
+          const glass = add(new THREE.CylinderGeometry(0.17, 0.17, 0.26, 8), new THREE.MeshBasicMaterial({ color: "#ffd77a", transparent: true, opacity: 0.45, depthWrite: false }), 0, ly + 0.13, 0);
+          glass.userData.glow = true;
+          for (let i = 0; i < 4; i++) {
+            const a = (i / 4) * Math.PI * 2;
+            add(box(0.025, 0.26, 0.025), iron, Math.cos(a) * 0.17, ly + 0.13, Math.sin(a) * 0.17);
+          }
+          // The cap: a dark red dome-ish cone, a ball and a little vane.
+          add(new THREE.CylinderGeometry(0.2, 0.2, 0.03, 8), iron, 0, ly + 0.275, 0);
+          add(new THREE.ConeGeometry(0.21, 0.2, 8), lambert("#8c3b2f"), 0, ly + 0.39, 0);
+          add(new THREE.SphereGeometry(0.035, 6, 4), iron, 0, ly + 0.5, 0);
+          add(box(0.012, 0.1, 0.012), iron, 0, ly + 0.56, 0);
+          add(box(0.08, 0.03, 0.008), iron, 0.03, ly + 0.59, 0);
+          // Where the beam turns from: the middle of the lantern.
+          g.userData.beacon = new THREE.Vector3(0, ly + 0.13, 0);
+        } else if (fill >= 0.5) {
+          // More than half paid for: the lower half of the tower is up, inside its scaffold, with a hoist and a bucket of mortar.
+          add(new THREE.CylinderGeometry(0.4, 0.44, 0.14, 8), lambert("#9a958a"), 0, base + 0.07, 0);
+          course(BANDS[0], BANDS[1], BAND_H, base + 0.14, white);
+          course(BANDS[1], BANDS[2], BAND_H * 0.6, base + 0.14 + BAND_H, lambert("#c9c3b5"));
+          scaffold(1.1);
+          add(box(0.04, 0.04, 0.5), lambert("#7a5230"), 0.42, base + 1.12, 0.12);
+          add(box(0.008, 0.5, 0.008), lambert("#d9c9a0"), 0.42, base + 0.86, 0.34);
+          add(new THREE.CylinderGeometry(0.05, 0.04, 0.07, 6), lambert("#5a3d22"), 0.42, base + 0.6, 0.34);
+          for (const [x, z] of [[-0.5, 0.42], [-0.34, 0.5]]) add(box(0.14, 0.12, 0.14), lambert("#a3acba"), x, base + 0.06, z, 0.4);
+        } else if (fill > 0) {
+          // Begun: the plinth and the first course, the scaffold's corner poles, and stone stacked ready.
+          add(new THREE.CylinderGeometry(0.4, 0.44, 0.14, 8), lambert("#9a958a"), 0, base + 0.07, 0);
+          course(BANDS[0], 0.33, 0.12, base + 0.14, lambert("#c9c3b5"));
+          scaffold(0.7);
+          for (const [x, z] of [[-0.5, 0.42], [-0.34, 0.5], [-0.46, 0.56]]) add(box(0.14, 0.12, 0.14), lambert("#a3acba"), x, base + 0.06, z, 0.4);
+          for (let i = 0; i < 3; i++) add(box(0.46, 0.04, 0.1), lambert(i % 2 ? "#c9a877" : "#8a6a44"), 0.36, base + 0.02 + i * 0.04, 0.48, 0.5 + 0.1 * i);
         } else {
-          // A building site: the first course of the foundation, scaffold poles, planks and a crate.
-          add(new THREE.CylinderGeometry(0.5, 0.56, 0.16, 8), stone, 0, 0.08, 0);
-          for (const [x, z] of [[-0.42, -0.3], [0.42, -0.3], [-0.42, 0.34], [0.42, 0.34]]) add(new THREE.CylinderGeometry(0.035, 0.035, 0.95, 5), lambert("#7a5230"), x, 0.47, z);
-          add(box(0.9, 0.04, 0.05), lambert("#8a6a44"), 0, 0.62, -0.3);
-          add(box(0.9, 0.04, 0.05), lambert("#8a6a44"), 0, 0.62, 0.34);
-          add(box(0.05, 0.04, 0.68), lambert("#8a6a44"), -0.42, 0.9, 0.02);
-          add(box(0.05, 0.04, 0.68), lambert("#8a6a44"), 0.42, 0.9, 0.02);
-          add(box(0.34, 0.14, 0.26), stone, -0.08, 0.23, 0.05, 0.3);
-          for (let i = 0; i < 3; i++) add(box(0.6, 0.05, 0.14), lambert(i % 2 ? "#a07a4c" : "#8a6a44"), 0.72, 0.03 + i * 0.05, 0.3, 0.25 * i);
-          add(box(0.24, 0.22, 0.24), lambert("#9a6b2f"), -0.72, 0.11, 0.35, 0.4);
+          // Not begun: the point is only surveyed. A ring of stakes marks where the tower will stand, with a flag on one.
+          const stake = lambert("#a07a4c");
+          for (let i = 0; i < 6; i++) {
+            const a = (i / 6) * Math.PI * 2;
+            add(box(0.035, 0.22, 0.035), stake, Math.cos(a) * 0.34, base + 0.08, Math.sin(a) * 0.34);
+          }
+          add(box(0.025, 0.5, 0.025), stake, 0.34, base + 0.22, 0);
+          add(box(0.012, 0.12, 0.16), lambert("#b9433d"), 0.34, base + 0.4, 0.08);
         }
         break;
       }
       case "apothecary":
-      case "smithy": {
+      case "smithy":
+      case "galley": {
         if (!poi.cleared) {
           // Still a crew project: a fenced building site with the materials stacked inside it.
           const post = lambert("#7a5230");
@@ -1661,15 +1897,46 @@ export class WorldRenderer {
           }
           // The front is left open, with a little board saying what is coming.
           add(box(0.04, 0.5, 0.04), post, 0.4, 0.25, 0.62);
-          add(box(0.3, 0.18, 0.03), lambert(poi.kind === "apothecary" ? "#4f8a4a" : "#4a4f5a"), 0.4, 0.46, 0.64);
+          add(box(0.3, 0.18, 0.03), lambert(poi.kind === "apothecary" ? "#4f8a4a" : poi.kind === "galley" ? "#a0522d" : "#4a4f5a"), 0.4, 0.46, 0.64);
           // A pile of planks, squared stones, and the trade's own makings: sacks of herbs, or iron bars.
           for (let i = 0; i < 3; i++) add(box(0.5, 0.05, 0.12), lambert(i % 2 ? "#c9a877" : "#8a6a44"), -0.2, 0.03 + i * 0.05, -0.05 + i * 0.02, 0.15 * i);
           for (const [x, y, z] of [[0.25, 0.08, -0.05], [0.38, 0.08, 0.1], [0.3, 0.22, 0.02]]) add(box(0.16, 0.14, 0.16), lambert("#959eac"), x, y, z, 0.3);
-          if (poi.kind === "apothecary") {
+          if (poi.kind === "galley") {
+            // Bundles of furs and a heap of bones, waiting to be built into a cookhouse.
+            for (const [x, z, c] of [[-0.28, 0.3, "#7a5a3a"], [-0.05, 0.36, "#9a7a55"]] as [number, number, string][]) add(box(0.22, 0.12, 0.16), lambert(c), x, 0.06, z, 0.3);
+            for (let i = 0; i < 4; i++) add(new THREE.CylinderGeometry(0.025, 0.025, 0.26, 4), lambert("#ece4cf"), 0.15 + (i % 2) * 0.06, 0.04 + Math.floor(i / 2) * 0.04, 0.35).rotation.z = Math.PI / 2 + i * 0.5;
+          } else if (poi.kind === "apothecary") {
             for (const [x, z] of [[-0.25, 0.3], [0.05, 0.35]]) add(new THREE.CylinderGeometry(0.11, 0.13, 0.22, 6), lambert("#c9b37a"), x, 0.11, z);
             for (const [x, z] of [[-0.25, 0.3], [0.05, 0.35]]) add(new THREE.SphereGeometry(0.09, 5, 4), lambert("#5f9e4a"), x, 0.25, z);
           } else {
             for (let i = 0; i < 4; i++) add(box(0.32, 0.05, 0.07), lambert(i < 2 ? "#6f737a" : "#c8743a"), -0.1 + (i % 2) * 0.08, 0.03 + Math.floor(i / 2) * 0.05, 0.32, 0.2);
+          }
+          break;
+        }
+        if (poi.kind === "galley") {
+          // The galley: a low timber cookhouse under a russet roof, a broad stone chimney smoking at one end,
+          // a cauldron on a fire by the door, barrels of provisions, and fish hung to dry under the eaves.
+          add(box(1.0, 0.56, 0.66), lambert("#8a6a44"), 0, 0.28, -0.04);
+          for (const x of [-0.48, 0.48]) add(box(0.06, 0.58, 0.7), lambert("#5a3d22"), x, 0.29, -0.04);
+          add(box(1.08, 0.05, 0.74), lambert("#4a3a2a"), 0, 0.58, -0.04);
+          const roof = add(new THREE.ConeGeometry(0.7, 0.42, 4), lambert("#a0522d"), 0, 0.8, -0.04, Math.PI / 4);
+          roof.scale.z = 0.75;
+          add(box(0.22, 0.34, 0.04), lambert("#3a2c22"), 0.12, 0.17, 0.3);
+          add(box(0.2, 0.14, 0.03), new THREE.MeshBasicMaterial({ color: "#ffd08a" }), -0.24, 0.36, 0.3);
+          // The chimney: broad and stone, up the west end. The ambience draws its smoke.
+          add(box(0.26, 1.15, 0.26), lambert("#8b95a5"), -0.38, 0.58, -0.22);
+          add(box(0.32, 0.06, 0.32), lambert("#6f7f95"), -0.38, 1.17, -0.22);
+          g.userData.smoke = new THREE.Vector3(-0.38, 1.24, -0.22);
+          // A cauldron over a small fire by the door.
+          add(new THREE.ConeGeometry(0.1, 0.12, 5), new THREE.MeshBasicMaterial({ color: "#ff9a3c" }), 0.5, 0.06, 0.42);
+          add(new THREE.SphereGeometry(0.14, 7, 5), lambert("#2e2a2a"), 0.5, 0.2, 0.42);
+          add(new THREE.CylinderGeometry(0.11, 0.11, 0.02, 7), lambert("#d9b45a"), 0.5, 0.3, 0.42);
+          // Barrels of provisions, ready to go aboard.
+          for (const [x, z] of [[-0.62, 0.3], [-0.5, 0.48]]) add(new THREE.CylinderGeometry(0.1, 0.1, 0.24, 7), lambert("#7a5230"), x, 0.12, z);
+          // Fish hung to dry from the eaves.
+          for (const x of [-0.05, 0.3, 0.42]) {
+            add(box(0.012, 0.08, 0.012), lambert("#5a3d22"), x, 0.52, 0.36);
+            add(new THREE.ConeGeometry(0.035, 0.14, 4), lambert("#9fb3c2"), x, 0.42, 0.36).rotation.x = Math.PI;
           }
           break;
         }
@@ -1897,8 +2164,11 @@ export class WorldRenderer {
         const pos = this.standAt(h.pos);
         pos.x += (i - (n - 1) / 2) * 0.6;
         pos.z += 0.25;
-        const plate = plateOf(h);
-        const label = h.label ?? (plate ? h.name : undefined);
+        const base = plateOf(h);
+        const plate = base && h.id === state.you && state.stamina ? { ...base, bolts: state.stamina } : base;
+        // A plate shows a first name only: full names run long over a crowd.
+        const full = h.label ?? (plate ? h.name : undefined);
+        const label = plate && full ? firstName(full) : full;
         want.set(h.id, { kind: h.classId, outfit: h.outfit, pos, size: 1.5, label, plate: label ? plate : undefined, stack: i, ring: colorOf(h.id), pulse: state.turn?.heroId === h.id, asleep: h.asleep });
       }
       for (const npc of state.story?.npcs ?? []) {
@@ -1932,9 +2202,13 @@ export class WorldRenderer {
       const w = want.get(id);
       // A change of gear is a different sprite, so the unit is rebuilt.
       if (w && spriteKey(w.kind, w.outfit, w.asleep) === unit.kind) continue;
-      this.unitGroup.remove(unit.sprite, unit.caster);
-      unit.caster.material instanceof THREE.Material && unit.caster.material.dispose();
-      unit.caster.customDepthMaterial?.dispose();
+      this.unitGroup.remove(unit.sprite, ...unit.casters);
+      // The cards share one set of materials.
+      const card = unit.casters[0];
+      card.material instanceof THREE.Material && card.material.dispose();
+      card.customDepthMaterial?.dispose();
+      card.customDistanceMaterial?.dispose();
+      if (unit.shadowShown) this.ambience.stir(unit.shadowAt);
       if (unit.ring) this.unitGroup.remove(unit.ring);
       if (unit.hpBack) this.unitGroup.remove(unit.hpBack);
       if (unit.hpFill) this.unitGroup.remove(unit.hpFill);
@@ -1951,11 +2225,20 @@ export class WorldRenderer {
         sprite.renderOrder = 2;
         sprite.center.set(0.5, 0);
         sprite.position.copy(w.pos);
-        const caster = new THREE.Mesh(CASTER_PLANE, new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false, side: THREE.DoubleSide, map: sprite.material.map, alphaTest: 0.5 }));
-        caster.customDepthMaterial = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking, map: sprite.material.map, alphaTest: 0.5, side: THREE.DoubleSide });
-        caster.castShadow = true;
-        this.unitGroup.add(sprite, caster);
-        unit = { sprite, caster, ring: null, hpBack: null, hpFill: null, label: null, labelText: "", goal: w.pos.clone(), path: [], kick: new THREE.Vector3(), lean: 0, baseRot: 0, stride: 0, bob: 0, kind: spriteKey(w.kind, w.outfit, w.asleep), asleep: false, nextZ: 0, zCount: 0, glowUntil: 0, glowing: false, head: w.size + 0.3, stack: 0, feet: w.pos.clone() };
+        const material = new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false, side: THREE.DoubleSide, map: sprite.material.map, alphaTest: 0.5 });
+        const depth = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking, map: sprite.material.map, alphaTest: 0.5, side: THREE.DoubleSide });
+        // Point lights (a hut's lamp, its fires and candles) draw shadows with a distance pass, which needs its own cut-out.
+        const distance = new THREE.MeshDistanceMaterial({ map: sprite.material.map, alphaTest: 0.5, side: THREE.DoubleSide });
+        const casters = Array.from({ length: 1 + SHADOW_SLOTS }, (_, i) => {
+          const caster = new THREE.Mesh(CASTER_PLANE, material);
+          caster.customDepthMaterial = depth;
+          caster.customDistanceMaterial = distance;
+          caster.castShadow = true;
+          caster.layers.set(i === 0 ? CARD_LAYER : SLOT_LAYER + i - 1);
+          return caster;
+        });
+        this.unitGroup.add(sprite, ...casters);
+        unit = { sprite, casters, shadowAt: w.pos.clone(), shadowShown: false, shadowSize: 0, ring: null, hpBack: null, hpFill: null, label: null, labelText: "", goal: w.pos.clone(), path: [], kick: new THREE.Vector3(), lean: 0, baseRot: 0, stride: 0, bob: 0, kind: spriteKey(w.kind, w.outfit, w.asleep), asleep: false, nextZ: 0, zCount: 0, glowUntil: 0, glowing: false, head: w.size + 0.3, stack: 0, feet: w.pos.clone() };
         this.units.set(id, unit);
       }
       unit.goal.copy(w.pos);
@@ -1966,8 +2249,10 @@ export class WorldRenderer {
       unit.head = w.asleep ? w.size * SPRITE_ASPECT + 0.3 : w.size + 0.3;
       unit.stack = w.stack ?? 0;
       unit.sprite.scale.set(w.size * SPRITE_ASPECT, w.size, 1);
-      unit.caster.scale.copy(unit.sprite.scale);
-      unit.caster.visible = !w.down && !w.asleep;
+      for (const caster of unit.casters) {
+        caster.scale.copy(unit.sprite.scale);
+        caster.visible = !w.down && !w.asleep;
+      }
       const mat = unit.sprite.material;
       unit.baseRot = w.down ? Math.PI / 2 : w.asleep ? Math.PI / 2 : 0;
       mat.opacity = w.down ? 0.55 : 1;
@@ -2323,13 +2608,10 @@ export class WorldRenderer {
 
   private onWheel = (e: WheelEvent) => {
     e.preventDefault();
-    // Shift and the wheel turn whatever is being carried, a notch at a time.
+    // Shift and the wheel turn whatever is being carried: a notch at a time, or (snapping off) as far as the wheel moves.
     if (e.shiftKey && this.state?.holding && this.callbacks.onTurnHeld) {
-      const now = performance.now();
-      if (now - this.lastTurn > 90 && Math.abs(e.deltaY || e.deltaX) > 0) {
-        this.lastTurn = now;
-        this.callbacks.onTurnHeld((e.deltaY || e.deltaX) > 0 ? 1 : -1);
-      }
+      const delta = e.deltaY || e.deltaX;
+      if (delta !== 0) this.callbacks.onTurnHeld(delta > 0 ? 1 : -1, Math.min(1, Math.abs(delta) / 100), e.altKey);
       return;
     }
     // Proportional to how far the wheel moved, capped so one notch is about 6%.
@@ -2358,7 +2640,6 @@ export class WorldRenderer {
   }
 
   private camDist = 24;
-  private lastTurn = 0;
 
   private frame = (now: number) => {
     this.raf = requestAnimationFrame(this.frame);
@@ -2412,7 +2693,7 @@ export class WorldRenderer {
       this.target.z + Math.cos(this.yaw) * flat,
     );
     this.camera.lookAt(this.target);
-    this.ambience.update(this.clock, this.yaw, this.target);
+    this.ambience.update(this.clock, this.yaw, this.target, this.state?.you ? this.units.get(this.state.you)?.sprite.position : undefined);
     // Night reaches the open sea and the fog too, not just the lit ground.
     const night = this.ambience.night;
     (this.sea.material as THREE.MeshLambertMaterial).color.copy(this.seaBase).lerp(NIGHT_SEA, night * 0.8);
@@ -2454,8 +2735,20 @@ export class WorldRenderer {
       const ground = p.y;
       unit.feet.set(p.x, ground, p.z);
       p.y += unit.bob;
-      unit.caster.position.copy(p);
-      unit.caster.rotation.y = this.ambience.towardLight(p.x, p.z);
+      unit.casters.forEach((caster, i) => {
+        caster.position.copy(p);
+        caster.rotation.y = i === 0 ? this.ambience.towardLight(p.x, p.z) : this.ambience.slotFacing(i - 1, p.x, p.z);
+      });
+      // Indoors the shadow maps are drawn only when something changes: a hero that moved (or lay down, or stood up)
+      // asks the lights in reach of where it was and where it is now to redraw.
+      const shown = unit.casters[0].visible;
+      if (shown !== unit.shadowShown || (shown && (unit.shadowAt.distanceToSquared(p) > 1e-6 || unit.shadowSize !== unit.sprite.scale.y))) {
+        if (unit.shadowShown) this.ambience.stir(unit.shadowAt);
+        if (shown) this.ambience.stir(p);
+        unit.shadowAt.copy(p);
+        unit.shadowShown = shown;
+        unit.shadowSize = unit.sprite.scale.y;
+      }
       if (unit.ring) {
         unit.ring.position.set(p.x, ground + 0.04, p.z);
         const s = this.pulsing.has(id) ? 1.25 + Math.sin(this.clock * 6) * 0.2 : 1;
@@ -2541,6 +2834,7 @@ export class WorldRenderer {
       }
     }
 
+    this.ambience.settleShadows();
     this.renderer.render(this.scene, this.camera);
   };
 }

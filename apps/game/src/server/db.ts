@@ -740,6 +740,22 @@ export async function getRun(db: D1Database, code: string): Promise<RunRow | nul
   return db.prepare("SELECT code, seed, status, state_json, crew_id, projects_json FROM runs WHERE code = ?").bind(code).first<RunRow>();
 }
 
+/**
+ * The kinds of story a crew sailed most recently, newest first, and what the
+ * islander asked of them last time, so the next voyage can be something else.
+ */
+export async function recentStories(db: D1Database, crewId: string | null, limit = 6): Promise<{ frames: string[]; demand?: string }> {
+  if (!crewId) return { frames: [] };
+  const { results } = await db
+    .prepare(
+      "SELECT json_extract(bible_json, '$.frameId') AS frame, json_extract(bible_json, '$.demand.id') AS demand FROM runs " +
+        "WHERE crew_id = ? AND bible_json IS NOT NULL ORDER BY created_at DESC LIMIT ?",
+    )
+    .bind(crewId, limit)
+    .all<{ frame: string | null; demand: string | null }>();
+  return { frames: results.map((r) => r.frame).filter((f): f is string => !!f), demand: results[0]?.demand ?? undefined };
+}
+
 export function saveRunStatements(db: D1Database, state: WorldState, action: unknown): D1PreparedStatement[] {
   const status = state.phase === "ended" ? (state.result?.outcome ?? "defeat") : state.phase;
   return [
@@ -1019,7 +1035,7 @@ export async function getHut(db: D1Database, playerId: string): Promise<HutSumma
     db.prepare("SELECT kind, qty FROM resources WHERE player_id = ? AND qty > 0").bind(playerId).all<{ kind: ResourceKind; qty: number }>(),
     db.prepare("SELECT blueprint_id FROM blueprints WHERE player_id = ?").bind(playerId).all<{ blueprint_id: string }>(),
     db
-      .prepare("SELECT id, def_id AS defId, label, q, r, facing, x, z, angle, on_id AS onId, in_id AS inId FROM furnishings WHERE player_id = ? ORDER BY id")
+      .prepare("SELECT id, def_id AS defId, label, q, r, facing, x, z, y, angle, on_id AS onId, in_id AS inId FROM furnishings WHERE player_id = ? ORDER BY id")
       .bind(playerId)
       .all<HutSummary["furnishings"][number]>(),
     db

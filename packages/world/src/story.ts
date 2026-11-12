@@ -179,6 +179,8 @@ export interface StoryBible {
   defeatLine: string;
   /** Rounds before time runs out. The run lengthens this to fit the island. */
   doomRounds: number;
+  /** The path this story takes. Missing on stories saved before paths varied, which all took their frame's first. */
+  spine?: Spine;
 }
 
 /** The parts of a bible that depend on which kind of story it is. */
@@ -187,9 +189,27 @@ type FramePlan = Pick<StoryBible, "objectives" | "finalObjective" | "rites" | "t
   poiNames?: Record<string, string>;
 };
 
+/** Where the islander who can help is found. */
+export type NpcPlace = "hut" | "shrine" | "landing";
+/** How the party learns where the lair is: the islander tells them, or they follow a trail themselves. */
+export type Lead = "told" | "trail";
+/** What finishes the story: the fight at the lair, or carrying what was won to someone or somewhere. */
+export type Ending = "fight" | "homecoming" | "shrine" | "ship";
+
+/**
+ * The path a story takes through its island. A frame says which paths suit
+ * it; each voyage picks one, so two stories of the same kind can still be
+ * found, followed and finished differently.
+ */
+export interface Spine {
+  npcAt: NpcPlace;
+  lead: Lead;
+  ending: Ending;
+}
+
 export interface StoryFrame {
   id: string;
-  /** Tells the model what kind of story to write. */
+  /** Tells the model what kind of story to write. Where the islander is, and how it ends, are added from the spine. */
   brief: string;
   /** What three of the fill's fields mean in this kind of story. */
   fields: { relic: string; villain: string; lair: string };
@@ -198,7 +218,15 @@ export interface StoryFrame {
   /** Shortest the doom clock may be; the run lengthens it to fit the island. */
   doomRounds: number;
   demands: Demand[];
-  plan(fill: StoryFill, rng: Rng): FramePlan;
+  /** The paths this kind of story may take. The first of each is the one used when none is picked. */
+  spines: { npcAt: NpcPlace[]; lead: Lead[]; ending: Ending[] };
+  /** For a trail: the cache that reveals the lair, its name on the map, and what the islander says it is. */
+  trail?: { poi: "cache1" | "cache2"; name: string; text: string };
+  /** How the brief describes each ending, completing "The story ends when …". */
+  endings?: Partial<Record<Ending, string>>;
+  /** How the brief describes what the islander knows, when it is not the way to a lair. */
+  leads?: Partial<Record<Lead, string>>;
+  plan(fill: StoryFill, rng: Rng, spine: Spine): FramePlan;
 }
 
 const DEMANDS = {
@@ -212,7 +240,50 @@ const CAMP_ENCOUNTERS = [["bandit", "wolf"], ["bandit", "bandit"], ["archer", "b
 const charm = (fill: StoryFill, gate: Gate): Capability => ({ id: "give_charm", verb: "give_item", item: "charm", itemName: fill.charm_name, gate });
 const revealLair = (fill: StoryFill): Capability => ({ id: "reveal_lair", verb: "reveal_location", poi: "lair", poiName: fill.lair_name, gate: "demand" });
 const callGuard: Capability = { id: "call_guard", verb: "start_combat", enemies: ["bandit"], gate: "provoked" };
-const meet = (fill: StoryFill): Objective => ({ id: "meet", text: `Find ${fill.npc_name} at the hut near the shore`, fact: "met:npc1" });
+
+const NPC_PLACE_TEXT: Record<NpcPlace, { find: string; brief: string }> = {
+  hut: { find: "at the hut near the shore", brief: "lives in a hut near the shore" },
+  shrine: { find: "at the old shrine", brief: "keeps the old shrine inland and is found there" },
+  landing: { find: "waiting at the landing", brief: "is waiting at the landing when the heroes' ship comes in" },
+};
+const meet = (fill: StoryFill, spine: Spine): Objective => ({ id: "meet", text: `Find ${fill.npc_name} ${NPC_PLACE_TEXT[spine.npcAt].find}`, fact: "met:npc1" });
+
+/** Where an ending is performed, or null when the fight itself ends the story. */
+export function endingPoi(spine: Spine): string | null {
+  return spine.ending === "fight" ? null : spine.ending === "homecoming" ? spine.npcAt : spine.ending === "shrine" ? "shrine" : "landing";
+}
+
+/**
+ * Objectives, rites, triggers and capabilities for a story that ends at a
+ * lair: find the islander, learn the way (told or trailed), win the fight,
+ * then perhaps carry what was won somewhere.
+ */
+function lairPlan(
+  fill: StoryFill,
+  spine: Spine,
+  frame: Pick<StoryFrame, "trail">,
+  text: { locate: string; defeat: string; deliver: (poi: string) => { objective: string; label: string; done: string } },
+): Pick<FramePlan, "objectives" | "finalObjective" | "rites" | "triggers" | "route" | "capabilities" | "poiNames"> {
+  const trail = spine.lead === "trail" ? frame.trail : undefined;
+  const at = endingPoi(spine);
+  const deliver = at ? text.deliver(at) : null;
+  return {
+    capabilities: trail ? [charm(fill, "demand"), callGuard] : [revealLair(fill), charm(fill, "persuade"), callGuard],
+    objectives: [
+      meet(fill, spine),
+      trail
+        ? { id: "trail", text: `Follow the trail: search ${trail.name.charAt(0).toLowerCase()}${trail.name.slice(1)}`, fact: `searched:${trail.poi}` }
+        : { id: "locate", text: text.locate, fact: "revealed:lair" },
+      { id: "defeat", text: text.defeat, fact: "defeated:lair" },
+      ...(deliver && at ? [{ id: "return", text: deliver.objective, fact: `returned:${at}` }] : []),
+    ],
+    finalObjective: deliver ? "return" : "defeat",
+    rites: deliver && at ? [{ id: "return", poi: at, requires: ["defeated:lair"], sets: `returned:${at}`, label: deliver.label, text: deliver.done }] : [],
+    triggers: trail ? [{ requires: [`searched:${trail.poi}`], reveal: "lair" }] : [],
+    route: ["landing", spine.npcAt, ...(trail ? [trail.poi] : []), "lair", ...(at ? [at] : [])],
+    poiNames: trail ? { [trail.poi]: trail.name } : undefined,
+  };
+}
 
 export const STORY_FRAMES: StoryFrame[] = [
   {
@@ -220,7 +291,7 @@ export const STORY_FRAMES: StoryFrame[] = [
     id: "stolen_relic",
     brief:
       "A villain has stolen something the island's people depend on and gone to ground in a hidden lair. " +
-      "One islander living in a hut near the shore knows where the lair is and owns a protective charm.",
+      "One islander can help, and owns a protective charm.",
     fields: {
       relic: "the stolen thing, starting with \"the\"",
       villain: "the thief",
@@ -228,29 +299,35 @@ export const STORY_FRAMES: StoryFrame[] = [
     },
     doomRounds: 16,
     demands: [DEMANDS.clear_camp, DEMANDS.earn_trust, DEMANDS.fetch, DEMANDS.pray],
-    plan: (fill, rng) => ({
-      capabilities: [revealLair(fill), charm(fill, "persuade"), callGuard],
-      objectives: [
-        meet(fill),
-        { id: "locate", text: `Learn where ${fill.lair_name} is hidden`, fact: "revealed:lair" },
-        { id: "defeat", text: `Defeat ${fill.villain_name} and recover ${fill.relic_name}`, fact: "defeated:lair" },
-      ],
-      finalObjective: "defeat",
-      rites: [],
-      triggers: [],
+    spines: { npcAt: ["hut", "shrine", "landing"], lead: ["told", "trail"], ending: ["fight", "homecoming", "shrine", "ship"] },
+    trail: { poi: "cache2", name: "Where the thieves rested", text: "the thieves stopped to rest somewhere inland and left signs of where they were going" },
+    endings: {
+      homecoming: "the stolen thing is carried back to that islander",
+      shrine: "the stolen thing is set back in its place at the island's old shrine",
+      ship: "the stolen thing is carried aboard the heroes' ship, out of the thief's reach",
+    },
+    plan: (fill, rng, spine) => ({
+      ...lairPlan(fill, spine, frameById("stolen_relic")!, {
+        locate: `Learn where ${fill.lair_name} is hidden`,
+        defeat: `Defeat ${fill.villain_name} and recover ${fill.relic_name}`,
+        deliver: (poi) =>
+          poi === "shrine"
+            ? { objective: `Set ${fill.relic_name} back in its place at the shrine`, label: `Set ${fill.relic_name} in its place`, done: `${fill.relic_name} is back where it belongs.` }
+            : poi === "landing"
+              ? { objective: `Get ${fill.relic_name} aboard the ship`, label: `Load ${fill.relic_name} aboard`, done: `${fill.relic_name} is stowed aboard and safe.` }
+              : { objective: `Return ${fill.relic_name} to ${fill.npc_name}`, label: `Return ${fill.relic_name}`, done: `${fill.relic_name} is back in ${fill.npc_name}'s hands.` },
+      }),
       encounters: { lair: ["villain", rng.pick(["cultist", "brute", "archer"])], camp: rng.pick(CAMP_ENCOUNTERS) },
-      route: ["landing", "hut", "lair"],
       victoryLine: `${fill.villain_name} is beaten and ${fill.relic_name} is on its way home.`,
       defeatLine: `${fill.villain_name} slipped away with ${fill.relic_name}.`,
     }),
   },
   {
-    // The fight is in the middle; the story ends by walking someone home.
+    // The fight is in the middle; the story ends by walking someone to safety.
     id: "rescue",
     brief:
       "Someone the island cannot do without has been carried off by a gang and is held at a hidden hideout. " +
-      "Their kin, living in a hut near the shore, knows where the hideout is and owns a protective charm. " +
-      "The story ends when the captive is brought home to that hut.",
+      "Their kin can help, and owns a protective charm.",
     fields: {
       relic: "the captive: a first name and their trade, e.g. \"Wenna the bonesetter\" (a person, not an object)",
       villain: "the leader of the gang",
@@ -262,20 +339,23 @@ export const STORY_FRAMES: StoryFrame[] = [
     },
     doomRounds: 18,
     demands: [DEMANDS.clear_camp, DEMANDS.earn_trust, DEMANDS.pray],
-    plan: (fill, rng) => ({
-      capabilities: [revealLair(fill), charm(fill, "persuade"), callGuard],
-      objectives: [
-        meet(fill),
-        { id: "locate", text: `Learn where ${fill.lair_name} is hidden`, fact: "revealed:lair" },
-        { id: "free", text: `Free ${fill.relic_name} from ${fill.villain_name}'s gang`, fact: "defeated:lair" },
-        { id: "return", text: `Bring ${fill.relic_name} home to ${fill.npc_name}`, fact: "returned:hut" },
-      ],
-      finalObjective: "return",
-      rites: [{ id: "return", poi: "hut", requires: ["defeated:lair"], sets: "returned:hut", label: `Bring ${fill.relic_name} home`, text: `${fill.relic_name} is home.` }],
-      triggers: [],
+    spines: { npcAt: ["hut", "landing"], lead: ["told", "trail"], ending: ["homecoming", "ship"] },
+    trail: { poi: "cache2", name: "Where the struggle was", text: "there was a struggle somewhere inland, and the gang left a trail from it" },
+    endings: {
+      homecoming: "the captive is brought home to that islander",
+      ship: "the captive is taken aboard the heroes' ship, where the gang cannot follow",
+    },
+    plan: (fill, rng, spine) => ({
+      ...lairPlan(fill, spine, frameById("rescue")!, {
+        locate: `Learn where ${fill.lair_name} is hidden`,
+        defeat: `Free ${fill.relic_name} from ${fill.villain_name}'s gang`,
+        deliver: (poi) =>
+          poi === "landing" && spine.ending === "ship"
+            ? { objective: `Get ${fill.relic_name} aboard the ship`, label: `Help ${fill.relic_name} aboard`, done: `${fill.relic_name} is aboard and safe.` }
+            : { objective: `Bring ${fill.relic_name} home to ${fill.npc_name}`, label: `Bring ${fill.relic_name} home`, done: `${fill.relic_name} is home.` },
+      }),
       encounters: { lair: ["villain", rng.pick(["bandit", "archer", "brute"])], camp: rng.pick(CAMP_ENCOUNTERS) },
-      route: ["landing", "hut", "lair", "hut"],
-      victoryLine: `${fill.relic_name} is home safe, and ${fill.villain_name}'s gang is scattered.`,
+      victoryLine: `${fill.relic_name} is safe, and ${fill.villain_name}'s gang is scattered.`,
       defeatLine: `${fill.villain_name}'s gang sailed with ${fill.relic_name} aboard.`,
     }),
   },
@@ -283,9 +363,8 @@ export const STORY_FRAMES: StoryFrame[] = [
     // No one to ask the way: the party tracks the beast by searching two places.
     id: "beast_hunt",
     brief:
-      "A great beast has been preying on the island and nobody knows where it dens. A tracker living in a hut near " +
-      "the shore has been following its signs, which lie at two spots on the island, and owns a protective charm. " +
-      "There is no human villain: the beast is the threat.",
+      "A great beast has been preying on the island and nobody knows where it dens. A tracker has been following " +
+      "its signs, which lie at two spots on the island, and owns a protective charm. There is no human villain: the beast is the threat.",
     fields: {
       relic: "what the beast has been taking or ruining, starting with \"the\" (the flocks, the night catch)",
       villain: "what islanders call the beast, e.g. \"the Grey Widow\"; its description says what kind of animal it is",
@@ -297,33 +376,39 @@ export const STORY_FRAMES: StoryFrame[] = [
     },
     doomRounds: 18,
     demands: [DEMANDS.clear_camp, DEMANDS.earn_trust, DEMANDS.pray],
-    plan: (fill) => ({
-      // The tracker cannot point to the den; the charm is what the demand unlocks.
-      capabilities: [charm(fill, "demand"), callGuard],
-      objectives: [
-        meet(fill),
-        { id: "sign1", text: "Search for the beast's tracks near the shore", fact: "searched:cache1" },
-        { id: "sign2", text: "Search the kill site further inland", fact: "searched:cache2" },
-        { id: "slay", text: `Hunt down ${fill.villain_name} at ${fill.lair_name}`, fact: "defeated:lair" },
-      ],
-      finalObjective: "slay",
-      rites: [],
-      triggers: [{ requires: ["searched:cache1", "searched:cache2"], reveal: "lair" }],
-      encounters: { lair: ["alpha", "wolf"], camp: [["wolf", "wolf"], ["bandit", "wolf"], ["archer", "bandit"]][fill.title.length % 3] },
-      route: ["landing", "hut", "cache1", "cache2", "lair"],
-      poiNames: { cache1: "Tracks near the shore", cache2: "The kill site" },
-      victoryLine: `${fill.villain_name} is dead, and ${fill.relic_name} can rest easy.`,
-      defeatLine: `${fill.villain_name} is still out there, and the island has run out of patience for hunters.`,
-    }),
+    // The signs are the lead, so a hunt is always tracked; the tracker may be anywhere.
+    spines: { npcAt: ["hut", "landing", "shrine"], lead: ["trail"], ending: ["fight", "homecoming"] },
+    endings: { homecoming: "proof of the kill is brought back to the tracker" },
+    plan: (fill, _rng, spine) => {
+      const home = spine.ending === "homecoming" ? spine.npcAt : null;
+      return {
+        // The tracker cannot point to the den; the charm is what the demand unlocks.
+        capabilities: [charm(fill, "demand"), callGuard],
+        objectives: [
+          meet(fill, spine),
+          { id: "sign1", text: "Search for the beast's tracks near the shore", fact: "searched:cache1" },
+          { id: "sign2", text: "Search the kill site further inland", fact: "searched:cache2" },
+          { id: "slay", text: `Hunt down ${fill.villain_name} at ${fill.lair_name}`, fact: "defeated:lair" },
+          ...(home ? [{ id: "return", text: `Bring proof of the kill to ${fill.npc_name}`, fact: `returned:${home}` }] : []),
+        ],
+        finalObjective: home ? "return" : "slay",
+        rites: home ? [{ id: "return", poi: home, requires: ["defeated:lair"], sets: `returned:${home}`, label: `Show ${fill.npc_name} the kill`, text: `${fill.npc_name} turns the trophy over in their hands and nods.` }] : [],
+        triggers: [{ requires: ["searched:cache1", "searched:cache2"], reveal: "lair" }],
+        encounters: { lair: ["alpha", "wolf"], camp: [["wolf", "wolf"], ["bandit", "wolf"], ["archer", "bandit"]][fill.title.length % 3] },
+        route: ["landing", spine.npcAt, "cache1", "cache2", "lair", ...(home ? [home] : [])],
+        poiNames: { cache1: "Tracks near the shore", cache2: "The kill site" },
+        victoryLine: `${fill.villain_name} is dead, and ${fill.relic_name} can rest easy.`,
+        defeatLine: `${fill.villain_name} is still out there, and the island has run out of patience for hunters.`,
+      };
+    },
   },
   {
     // Three things to gather in any order, and the ending is not a fight.
     id: "broken_relic",
     brief:
       "Something the island depends on was broken into three pieces and scattered: raiders took one to their camp, " +
-      "one lies lost at an old cache inland, and a guardian holds the last in a hidden vault. An islander living in a " +
-      "hut near the shore knows the way to the vault and owns a protective charm. Whole again, it must be restored " +
-      "at the island's old shrine. The guardian is not evil, only bound to its duty.",
+      "one lies lost at an old cache inland, and a guardian holds the last in a hidden vault. One islander can help, " +
+      "and owns a protective charm. Whole again, it must be restored at the island's old shrine. The guardian is not evil, only bound to its duty.",
     fields: {
       relic: "the broken thing, starting with \"the\"",
       villain: "the vault's guardian (a stone sentinel, an old automaton, a bound spirit); its description says what it is",
@@ -334,40 +419,204 @@ export const STORY_FRAMES: StoryFrame[] = [
     },
     doomRounds: 20,
     demands: [DEMANDS.earn_trust, DEMANDS.fetch, DEMANDS.pray],
-    plan: (fill, rng) => ({
-      capabilities: [revealLair(fill), charm(fill, "persuade"), callGuard],
-      objectives: [
-        meet(fill),
-        { id: "piece1", text: `Take a piece of ${fill.relic_name} back from the raiders' camp`, fact: "defeated:camp" },
-        { id: "piece2", text: "Recover the piece lost at the inland cache", fact: "searched:cache2" },
-        { id: "locate", text: `Learn the way to ${fill.lair_name}`, fact: "revealed:lair" },
-        { id: "piece3", text: `Win the last piece from ${fill.villain_name} in ${fill.lair_name}`, fact: "defeated:lair" },
-        { id: "restore", text: `Restore ${fill.relic_name} at the old shrine`, fact: "restored:shrine" },
-      ],
-      finalObjective: "restore",
-      rites: [
-        { id: "restore", poi: "shrine", requires: ["defeated:camp", "searched:cache2", "defeated:lair"], sets: "restored:shrine", label: `Restore ${fill.relic_name}`, text: `${fill.relic_name} is whole again.` },
-      ],
-      triggers: [],
-      encounters: { lair: ["guardian"], camp: rng.pick([["bandit", "bandit"], ["archer", "bandit"], ["brute"], ["cultist", "archer"]]) },
-      route: ["landing", "hut", "camp", "cache2", "lair", "shrine"],
-      poiNames: { cache2: "The lost piece" },
-      victoryLine: `${fill.relic_name} is whole again and back where it belongs.`,
-      defeatLine: `The pieces of ${fill.relic_name} stayed scattered, and the island went without.`,
-    }),
+    spines: { npcAt: ["hut", "shrine"], lead: ["told", "trail"], ending: ["shrine"] },
+    trail: { poi: "cache1", name: "An old chart", text: "an old chart showing the way to the vault was hidden near the shore" },
+    plan: (fill, rng, spine) => {
+      const chart = spine.lead === "trail";
+      return {
+        capabilities: chart ? [charm(fill, "demand"), callGuard] : [revealLair(fill), charm(fill, "persuade"), callGuard],
+        objectives: [
+          meet(fill, spine),
+          { id: "piece1", text: `Take a piece of ${fill.relic_name} back from the raiders' camp`, fact: "defeated:camp" },
+          { id: "piece2", text: "Recover the piece lost at the inland cache", fact: "searched:cache2" },
+          chart
+            ? { id: "trail", text: `Find the old chart to ${fill.lair_name} near the shore`, fact: "searched:cache1" }
+            : { id: "locate", text: `Learn the way to ${fill.lair_name}`, fact: "revealed:lair" },
+          { id: "piece3", text: `Win the last piece from ${fill.villain_name} in ${fill.lair_name}`, fact: "defeated:lair" },
+          { id: "restore", text: `Restore ${fill.relic_name} at the old shrine`, fact: "restored:shrine" },
+        ],
+        finalObjective: "restore",
+        rites: [
+          { id: "restore", poi: "shrine", requires: ["defeated:camp", "searched:cache2", "defeated:lair"], sets: "restored:shrine", label: `Restore ${fill.relic_name}`, text: `${fill.relic_name} is whole again.` },
+        ],
+        triggers: chart ? [{ requires: ["searched:cache1"], reveal: "lair" }] : [],
+        encounters: { lair: ["guardian"], camp: rng.pick([["bandit", "bandit"], ["archer", "bandit"], ["brute"], ["cultist", "archer"]]) },
+        route: ["landing", spine.npcAt, "camp", "cache2", ...(chart ? ["cache1"] : []), "lair", "shrine"],
+        poiNames: { cache2: "The lost piece", ...(chart ? { cache1: "An old chart" } : {}) },
+        victoryLine: `${fill.relic_name} is whole again and back where it belongs.`,
+        defeatLine: `The pieces of ${fill.relic_name} stayed scattered, and the island went without.`,
+      };
+    },
+  },
+  {
+    // A race: two halves of a chart, a rival crew to beat to the vault, and a run back to the ship.
+    id: "rival_crew",
+    brief:
+      "A rival crew of treasure-seekers landed on the island just ahead of the heroes, after the same hoard, which lies in a " +
+      "sealed vault nobody has opened in living memory. The way to the vault is on a chart torn in two: one half was hidden " +
+      "near the shore, and the rivals hold the other at their camp in the wilds. Their captain means to reach the vault first. " +
+      "One islander can help, and owns a protective charm.",
+    fields: {
+      relic: "the hoard, starting with \"the\" (what it is and whose it was, e.g. \"the Saltwife's silver\")",
+      villain: "the rival crew's captain",
+      lair: "the sealed vault, starting with \"the\"",
+    },
+    hints: {
+      relic: ["a drowned king's silver", "a lighthouse keeper's hidden savings", "a cargo of spices nobody came back for", "a chest of ship's bells", "a smuggler's stash of fine glass", "the island's old tithe, never paid"],
+      villain: ["a cheerful rogue who thinks this is all a game", "a captain who lost everything and needs this to pay her crew", "a cold-eyed salvager who takes what he finds", "an old rival of every captain in the Harbor", "a pair of twins who never agree on anything"],
+    },
+    doomRounds: 18,
+    // Clearing the camp and searching the shore are already the story, so the islander asks something else.
+    demands: [DEMANDS.earn_trust, DEMANDS.pray],
+    spines: { npcAt: ["hut", "shrine", "landing"], lead: ["told"], ending: ["ship", "homecoming"] },
+    leads: { told: "They know a way into the vault and will tell it once they trust the heroes, though the two halves of the chart show it too." },
+    endings: {
+      ship: "the hoard is safely aboard the heroes' ship",
+      homecoming: "the islanders are given their share of the hoard",
+    },
+    plan: (fill, rng, spine) => {
+      const at = spine.ending === "homecoming" ? spine.npcAt : "landing";
+      return {
+        capabilities: [revealLair(fill), charm(fill, "persuade"), callGuard],
+        objectives: [
+          meet(fill, spine),
+          { id: "chart1", text: "Find the half of the chart hidden near the shore", fact: "searched:cache1" },
+          { id: "chart2", text: `Take the other half from ${fill.villain_name}'s crew at their camp`, fact: "defeated:camp" },
+          { id: "vault", text: `Beat ${fill.villain_name} to ${fill.relic_name} at ${fill.lair_name}`, fact: "defeated:lair" },
+          spine.ending === "homecoming"
+            ? { id: "return", text: `Give ${fill.npc_name} the island's share of ${fill.relic_name}`, fact: `returned:${at}` }
+            : { id: "return", text: `Get ${fill.relic_name} aboard the ship`, fact: `returned:${at}` },
+        ],
+        finalObjective: "return",
+        rites: [
+          spine.ending === "homecoming"
+            ? { id: "return", poi: at, requires: ["defeated:lair"], sets: `returned:${at}`, label: `Share out ${fill.relic_name}`, text: `${fill.npc_name} counts out the island's share, and laughs for the first time in days.` }
+            : { id: "return", poi: at, requires: ["defeated:lair"], sets: `returned:${at}`, label: `Load ${fill.relic_name} aboard`, text: `${fill.relic_name} is stowed below decks.` },
+        ],
+        // Both halves of the chart show the way, as the islander can.
+        triggers: [{ requires: ["searched:cache1", "defeated:camp"], reveal: "lair" }],
+        // The captain holds the camp; the crew's best went ahead to the vault.
+        encounters: { camp: ["villain", rng.pick(["bandit", "archer"])], lair: rng.pick([["brute", "bandit"], ["archer", "archer", "bandit"], ["brute", "archer"]]) },
+        route: ["landing", spine.npcAt, "cache1", "camp", "lair", at],
+        poiNames: { cache1: "Half a chart", camp: `${fill.villain_name}'s camp` },
+        victoryLine: `${fill.villain_name} sails home empty-handed, and ${fill.relic_name} is yours.`,
+        defeatLine: `${fill.villain_name}'s crew got away with ${fill.relic_name}.`,
+      };
+    },
+  },
+  {
+    // No villain to fight: three stones to wake, then the curse broken where it began.
+    id: "lift_curse",
+    brief:
+      "A curse lies on the island and has taken something its people cannot live without. It is held in place by three old " +
+      "standing stones that have gone cold: one near the shore, one inland, and one in the wilds where raiders have made camp. " +
+      "Each must be woken with words only one islander still knows, and then the curse broken at the place where it began. " +
+      "Whoever laid the curse is long gone and cannot be fought. The islander owns a protective charm.",
+    fields: {
+      relic: "what the curse has taken from the island, starting with \"the\" (the island's sleep, the fish, the children's voices)",
+      villain: "who laid the curse long ago; they are gone or dead and cannot be fought",
+      lair: "the place where the curse began and must be broken, starting with \"the\"",
+    },
+    hints: {
+      relic: ["the island's sleep", "the fish from the bay", "every bird's song", "the colour from the flowers", "the warmth from the hearths", "the children's laughter"],
+      villain: ["a drowned witch nobody would help", "a saint whose prayer went wrong", "a jilted lighthouse keeper", "a merchant cheated by the whole island", "a sea-spirit whose shrine was neglected"],
+    },
+    doomRounds: 20,
+    // The camp is one of the stones, so the islander does not ask for it twice.
+    demands: [DEMANDS.earn_trust, DEMANDS.fetch, DEMANDS.pray],
+    spines: { npcAt: ["hut", "landing"], lead: ["told"], ending: ["shrine"] },
+    leads: { told: "They know the old words that wake the stones, and teach them to anyone who comes to speak with them." },
+    endings: { shrine: "the curse is broken at the place where it began, the island's old shrine" },
+    plan: (fill, rng, spine) => {
+      const words = "met:npc1";
+      return {
+        capabilities: [charm(fill, "persuade"), callGuard],
+        objectives: [
+          { ...meet(fill, spine), text: `Learn the old words from ${fill.npc_name}` },
+          { id: "stone1", text: "Wake the standing stone near the shore", fact: "woken:cache1" },
+          { id: "stone2", text: "Wake the standing stone inland", fact: "woken:cache2" },
+          { id: "stone3", text: "Drive the raiders off the third stone and wake it", fact: "woken:camp" },
+          { id: "break", text: `Break the curse at ${fill.lair_name}`, fact: "broken:shrine" },
+        ],
+        finalObjective: "break",
+        rites: [
+          { id: "stone1", poi: "cache1", requires: [words], sets: "woken:cache1", label: "Speak the words to the stone", text: "The shore stone hums, and warms under your hand." },
+          { id: "stone2", poi: "cache2", requires: [words], sets: "woken:cache2", label: "Speak the words to the stone", text: "The inland stone hums, and warms under your hand." },
+          { id: "stone3", poi: "camp", requires: [words, "defeated:camp"], sets: "woken:camp", label: "Speak the words to the stone", text: "The last stone hums. All three are awake." },
+          { id: "break", poi: "shrine", requires: ["woken:cache1", "woken:cache2", "woken:camp"], sets: "broken:shrine", label: "Break the curse", text: `The air cracks like ice on a pond, and ${fill.relic_name} comes back to the island.` },
+        ],
+        triggers: [],
+        // Nobody is the boss here: the hidden place in the hills holds only the curse's last followers.
+        encounters: { camp: rng.pick(CAMP_ENCOUNTERS), lair: ["cultist", rng.pick(["cultist", "archer"])] },
+        route: ["landing", spine.npcAt, "cache1", "camp", "cache2", "shrine"],
+        poiNames: { cache1: "The shore stone", cache2: "The inland stone", shrine: fill.lair_name, lair: "A hidden coven" },
+        victoryLine: `The curse is broken, and ${fill.relic_name} is the island's again.`,
+        defeatLine: `The stones went cold again, and the curse kept ${fill.relic_name}.`,
+      };
+    },
   },
 ];
+
+/** The spine a frame takes when none is picked: the first of each of its options. */
+export function defaultSpine(frame: StoryFrame): Spine {
+  return { npcAt: frame.spines.npcAt[0], lead: frame.spines.lead[0], ending: frame.spines.ending[0] };
+}
+
+/** Pick a path through this kind of story. */
+export function pickSpine(frame: StoryFrame, rng: Rng): Spine {
+  return { npcAt: rng.pick(frame.spines.npcAt), lead: rng.pick(frame.spines.lead), ending: rng.pick(frame.spines.ending) };
+}
+
+/** Every path this kind of story can take, for tests and tools. */
+export function allSpines(frame: StoryFrame): Spine[] {
+  return frame.spines.npcAt.flatMap((npcAt) => frame.spines.lead.flatMap((lead) => frame.spines.ending.map((ending) => ({ npcAt, lead, ending }))));
+}
+
+/**
+ * The asks that make sense on this path: not to pray at the shrine the
+ * islander stands at, and not to search the cache the trail already leads to.
+ */
+export function demandsFor(frame: StoryFrame, spine: Spine): Demand[] {
+  const busy = new Set<string>();
+  if (spine.npcAt === "shrine") busy.add("prayed:shrine");
+  if (spine.lead === "trail" && frame.trail) busy.add(`searched:${frame.trail.poi}`);
+  const ok = frame.demands.filter((d) => !d.fact || !busy.has(d.fact));
+  return ok.length > 0 ? ok : frame.demands;
+}
+
+/** The brief handed to the model: the frame's own, plus where the islander is, how the way is found, and how it ends. */
+export function storyBrief(frame: StoryFrame, spine: Spine): string {
+  const parts = [frame.brief, `The islander who can help ${NPC_PLACE_TEXT[spine.npcAt].brief}.`];
+  const lead = frame.leads?.[spine.lead];
+  if (lead) parts.push(lead);
+  else if (spine.lead === "trail" && frame.trail) parts.push(`They cannot say where the lair is, but they know ${frame.trail.text}.`);
+  else if (spine.lead === "told") parts.push("They know the way to the lair, and will tell it once they trust the heroes.");
+  const ending = frame.endings?.[spine.ending];
+  parts.push(ending ? `The story ends when ${ending}.` : spine.ending === "fight" ? "The story ends with the fight at the lair." : "");
+  return parts.filter(Boolean).join(" ");
+}
 
 export function frameById(id: string): StoryFrame | undefined {
   return STORY_FRAMES.find((f) => f.id === id);
 }
 
-export function pickFrame(rng: Rng): StoryFrame {
-  return rng.pick(STORY_FRAMES);
+/**
+ * Pick the kind of story for a voyage. `recent` is the crew's last voyages'
+ * frame ids, newest first: the most recent half of the frames are skipped,
+ * so a crew never sails the same kind of story twice running and works
+ * through the others before one comes round again.
+ */
+export function pickFrame(rng: Rng, recent: string[] = []): StoryFrame {
+  const skip = new Set(recent.slice(0, Math.floor(STORY_FRAMES.length / 2)));
+  const fresh = STORY_FRAMES.filter((f) => !skip.has(f.id));
+  return rng.pick(fresh.length > 0 ? fresh : STORY_FRAMES);
 }
 
-export function pickDemand(frame: StoryFrame, rng: Rng): Demand {
-  return rng.pick(frame.demands);
+/** Pick what the islander asks, avoiding the ask `recent` names (the crew's last) when there is another. */
+export function pickDemand(frame: StoryFrame, rng: Rng, recent?: string, spine: Spine = defaultSpine(frame)): Demand {
+  const suits = demandsFor(frame, spine);
+  const fresh = suits.filter((d) => d.id !== recent);
+  return rng.pick(fresh.length > 0 ? fresh : suits);
 }
 
 /** Stands in for a demand on stories saved before demands existed: nothing is asked. */
@@ -495,11 +744,17 @@ export function factPoi(fact: string | null): string | null {
  * without one the choice is fixed by the story's title, so the same fill
  * always builds the same bible.
  */
-export function buildBible(frame: StoryFrame, fill: StoryFill, demand: Demand = frame.demands[0], rng: Rng = makeRng(seedFromString(fill.title))): StoryBible {
-  const { capabilities, poiNames, route, ...plan } = frame.plan(fill, rng);
+export function buildBible(
+  frame: StoryFrame,
+  fill: StoryFill,
+  demand: Demand = frame.demands[0],
+  rng: Rng = makeRng(seedFromString(fill.title)),
+  spine: Spine = defaultSpine(frame),
+): StoryBible {
+  const { capabilities, poiNames, route, ...plan } = frame.plan(fill, rng, spine);
   const npc: NpcSheet = {
     id: "npc1",
-    poi: "hut",
+    poi: spine.npcAt,
     name: fill.npc_name,
     role: fill.npc_role,
     persona: fill.npc_persona,
@@ -520,9 +775,11 @@ export function buildBible(frame: StoryFrame, fill: StoryFill, demand: Demand = 
     islandName: fill.island_name,
     villain: { name: fill.villain_name, description: fill.villain_description },
     relicName: fill.relic_name,
-    poiNames: { lair: fill.lair_name, hut: `${fill.npc_name}'s hut`, landing: "The Landing", ...poiNames },
+    // The hut is only someone's when the islander lives there.
+    poiNames: { lair: fill.lair_name, ...(spine.npcAt === "hut" ? { hut: `${fill.npc_name}'s hut` } : {}), landing: "The Landing", ...poiNames },
     npcs: [npc],
     demand,
+    spine,
     route: fullRoute,
     doomRounds: frame.doomRounds,
     ...plan,
@@ -754,6 +1011,86 @@ export const CANNED_FILLS: Record<string, StoryFill[]> = {
       npc_secret: "He was the Selwick's last mate, and was ashore drunk the night she was lost.",
       npc_knowledge: ["The raiders camp in the wilds and think the wheel is worth selling.", "The Empty Coat only strikes those who try to carry something out.", "The old shrine is where broken things on Morran are made whole."],
       charm_name: "Harbourmaster's Brass Rule",
+    },
+  ],
+  rival_crew: [
+    {
+      title: "The Saltwife's Silver",
+      premise:
+        "Everyone on Quell knows the story of the Saltwife, who sank her husband's silver in a vault under the hills rather than let him drink it. " +
+        "Nobody believed it until this morning, when a strange ship dropped anchor in the next cove and its crew went inland with spades.",
+      island_name: "Quell",
+      villain_name: "Captain Rusk",
+      villain_description: "A grinning salvager who has never once been beaten to a prize, and talks about it constantly.",
+      relic_name: "the Saltwife's silver",
+      lair_name: "the Sunken Strongroom",
+      npc_name: "Dilly Marr",
+      npc_role: "net-weaver and the Saltwife's great-granddaughter",
+      npc_persona: "Sharp, practical and suspicious of anyone who mentions the silver too quickly. Respects people who ask about her family first.",
+      npc_voice: "Quick and teasing, answers questions with questions, calls the silver 'Gran's sulk'.",
+      npc_goal: "Wants the island to see some of that silver for once, and Rusk to sail home with nothing.",
+      npc_secret: "She sold Rusk half the chart herself, before she understood what it was.",
+      npc_knowledge: ["Rusk's crew are camped in the wilds and squabbling over the chart.", "The other half of the chart was hidden near the shore, under the old net store.", "The strongroom's door only opens to someone holding the whole chart."],
+      charm_name: "Gran's Silver Thimble",
+    },
+    {
+      title: "Bells Under Brackwater",
+      premise:
+        "A hundred years ago a ship carrying new bells for the mainland churches wrecked off Brackwater, and the islanders hid the bells in the hills to sell later. " +
+        "They never did. Now a rival crew has come with half a chart, and they have a head start.",
+      island_name: "Brackwater",
+      villain_name: "Mother Teague",
+      villain_description: "A hard old captain who lost her last ship and means to pay her crew with these bells or not go home.",
+      relic_name: "the wreck bells",
+      lair_name: "the Bell Cellar",
+      npc_name: "Owain Pellow",
+      npc_role: "retired bell-ringer",
+      npc_persona: "Gentle, deaf in one ear and full of stories. Grows serious and careful once he thinks someone means business.",
+      npc_voice: "Slow and musical, hums between sentences, calls the bells by their names.",
+      npc_goal: "Wants the bells rung again, here, before he dies; not sold off to strangers.",
+      npc_secret: "His grandfather was one of the men who hid the bells, and he has always known roughly where.",
+      npc_knowledge: ["Teague's crew camp in the wilds and keep their half of the chart close.", "The other half was left near the shore by his grandfather.", "The cellar was built to be found only by someone with both halves."],
+      charm_name: "Bell-rope Bracelet",
+    },
+  ],
+  lift_curse: [
+    {
+      title: "The Sleepless Isle",
+      premise:
+        "Nobody on Lunna has slept in nine nights. The old standing stones that ring the island went cold the night it started, and the islanders say the curse " +
+        "the Lantern Witch laid on them, a hundred years ago, has finally woken.",
+      island_name: "Lunna",
+      villain_name: "the Lantern Witch",
+      villain_description: "A woman the islanders refused shelter in a storm, a hundred years ago, who cursed them as she drowned.",
+      relic_name: "the island's sleep",
+      lair_name: "the Witch's Step",
+      npc_name: "Nan Corrow",
+      npc_role: "the last person who knows the stone-words",
+      npc_persona: "Tiny, ancient and wide awake; finds the whole thing grimly funny. Trusts people who are polite to her cat.",
+      npc_voice: "Dry and sing-song, drops into old words without explaining them, calls everyone 'duck'.",
+      npc_goal: "Wants the curse broken properly, with the words said right, before she forgets them.",
+      npc_secret: "Her own grandmother was one of the people who turned the witch away.",
+      npc_knowledge: ["The stones must be woken in no particular order, but all three before the curse can break.", "Raiders have camped around the third stone in the wilds.", "The Witch's Step is the old shrine, where she was turned away."],
+      charm_name: "Nan's Thread of Rowan",
+    },
+    {
+      title: "No Fish at Harrowmouth",
+      premise:
+        "The nets of Harrowmouth have come up empty since midsummer, every one, every day. The three stones on the island have gone cold, " +
+        "and the old people say the drowned saint's curse is back.",
+      island_name: "Harrowmouth",
+      villain_name: "Saint Ebba",
+      villain_description: "A saint who prayed the island would never go hungry, and was drowned by the people she prayed for.",
+      relic_name: "the fish",
+      lair_name: "Ebba's Rock",
+      npc_name: "Pascoe Bligh",
+      npc_role: "lay preacher and failed fisherman",
+      npc_persona: "Nervous, kind and full of apologies, but steady as a rock when it comes to the old words.",
+      npc_voice: "Halting, quotes scripture nobody else has heard of, counts on his fingers when anxious.",
+      npc_goal: "Wants the island to remember Ebba kindly once the curse is lifted.",
+      npc_secret: "He has been praying for the curse to come back for years, so the island would remember her.",
+      npc_knowledge: ["Each of the three stones answers to the same words.", "Raiders squat by the third stone in the wilds.", "Ebba's Rock is the old shrine, where she was drowned."],
+      charm_name: "Ebba's Fishbone Cross",
     },
   ],
 };

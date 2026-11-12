@@ -139,10 +139,10 @@ What starts it:
 
 - **Production:** push a tag `game-v*`, for example
   ```bash
-  git tag game-v2026.11.12 origin/overworld-revamp && git push origin game-v2026.11.12
+  git tag game-v2026.11.12 origin/main && git push origin game-v2026.11.12
   ```
-  Or use a manual run once the workflow is on `main`, since GitHub only lists manual workflows from the default branch.
-- **Staging:** a manual run. Or set the repo variable `GAME_STAGING_AUTODEPLOY=true` and it deploys on every push to `overworld-revamp` that touches the game. It's off by default so hand deploys keep working.
+  Or use a manual run from the Actions tab.
+- **Staging:** a manual run. Or set the repo variable `GAME_STAGING_AUTODEPLOY=true` and it deploys on every push to `main` that touches the game. It's off by default so hand deploys keep working.
 - Before the first CI production run:
   - create the GitHub Environment `production` with yourself as a required reviewer (Settings > Environments), so every production run waits for your approval;
   - set `WRANGLER_GAME_CONFIG` (section 3).

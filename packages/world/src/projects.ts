@@ -24,23 +24,20 @@ export interface ProjectDef {
   cost: ProjectAmounts;
   /** False while the project is only announced: it is listed but cannot be funded. */
   open: boolean;
+  /** Projects the crew must have built before this one can be paid into. */
+  requires?: string[];
   /** Extra days on the doom clock of every voyage. */
   doomDays?: number;
+  /** Every voyage opens with the island's whole coast already seen (see `coastHexes` in world.ts). */
+  chartsCoast?: boolean;
   /** Line shown as a voyage opens, saying what the project did for it. */
   voyageLine?: string;
 }
 
+// The Apothecary and the Smithy are the Harbor's first buildings and open from
+// the start. The Lighthouse and the Galley are the second tier: they unlock
+// once both workshops stand (see `projectLock`).
 export const PROJECTS: ProjectDef[] = [
-  {
-    id: "lighthouse",
-    name: "Lighthouse",
-    blurb: "A lamp on a stone tower, to see ships out past the shoals and home again.",
-    benefit: "Every voyage gets one more day on its clock.",
-    cost: { gold: 300, wood: 30, stone: 30, iron: 10 },
-    open: true,
-    doomDays: 1,
-    voyageLine: "The Harbor's lighthouse saw you out past the shoals before dawn: one more day on the clock.",
-  },
   {
     id: "apothecary",
     name: "Apothecary",
@@ -58,12 +55,25 @@ export const PROJECTS: ProjectDef[] = [
     open: true,
   },
   {
+    id: "lighthouse",
+    name: "Lighthouse",
+    blurb: "A lamp on a stone tower, to see ships out past the shoals and home again.",
+    benefit: "Every voyage gets one more day on its clock, and opens with the island's coast charted through the fog.",
+    cost: { gold: 300, wood: 30, stone: 30, iron: 10 },
+    open: true,
+    requires: ["apothecary", "smithy"],
+    doomDays: 1,
+    chartsCoast: true,
+    voyageLine: "The Harbor's lighthouse saw you out past the shoals before dawn, and its keeper's chart shows the island's whole coast: one more day on the clock.",
+  },
+  {
     id: "galley",
     name: "Galley",
     blurb: "A cookhouse that provisions ships before they sail.",
-    benefit: "Provisions for the crew before a voyage.",
+    benefit: "Cook chowder and ship's stores into a larder the whole crew sails with.",
     cost: { gold: 250, wood: 30, fur: 15, bone: 10 },
-    open: false,
+    open: true,
+    requires: ["apothecary", "smithy"],
   },
 ];
 
@@ -89,6 +99,13 @@ export function projectComplete(def: ProjectDef, paid: ProjectAmounts): boolean 
   return projectCostKinds(def).every((k) => (paid[k] ?? 0) >= def.cost[k]!);
 }
 
+/** How far along a project is, 0 to 1: each cost counts the same, and over-payment of one does not make up for another. */
+export function projectProgress(def: ProjectDef, paid: ProjectAmounts): number {
+  const kinds = projectCostKinds(def);
+  if (kinds.length === 0) return 0;
+  return kinds.reduce((sum, k) => sum + Math.min(1, (paid[k] ?? 0) / def.cost[k]!), 0) / kinds.length;
+}
+
 /** The most a player could give right now: what the project still needs, held to what they have. */
 export function projectGivable(def: ProjectDef, paid: ProjectAmounts, holdings: ProjectAmounts): ProjectAmounts {
   const left = projectRemaining(def, paid);
@@ -98,6 +115,41 @@ export function projectGivable(def: ProjectDef, paid: ProjectAmounts, holdings: 
     if (n > 0) out[kind] = n;
   }
   return out;
+}
+
+/** A crew's progress on one project, as far as the unlock rule cares. */
+export type ProjectProgress = Pick<CrewProject, "id" | "paid" | "builtAt">;
+
+/** Why a project cannot be paid into yet. */
+export interface ProjectLock {
+  /** The required projects the crew has not built, in catalogue order. */
+  needs: string[];
+}
+
+/**
+ * Whether a crew may pay into a project yet, given its progress on every
+ * project: null when it may, or what it still needs built.
+ *
+ * A project with `requires` is locked until every one of them is built.
+ * A project the crew has already built, or already paid anything into, is
+ * never locked: crews that started the Lighthouse or the Galley before the
+ * unlock rule existed keep it, and can finish what they began.
+ */
+export function projectLock(projectId: string, crew: readonly ProjectProgress[]): ProjectLock | null {
+  const def = projectById(projectId);
+  if (!def?.requires?.length) return null;
+  const own = crew.find((p) => p.id === projectId);
+  if (own && (own.builtAt !== null || Object.values(own.paid).some((n) => (n ?? 0) > 0))) return null;
+  const built = new Set(crew.filter((p) => p.builtAt !== null).map((p) => p.id));
+  const needs = PROJECTS.filter((p) => def.requires!.includes(p.id) && !built.has(p.id)).map((p) => p.id);
+  return needs.length ? { needs } : null;
+}
+
+/** "Unlocks once the Apothecary and the Smithy are built." */
+export function projectLockText(lock: ProjectLock): string {
+  const names = lock.needs.map((id) => `the ${projectById(id)?.name ?? id}`);
+  const list = names.length > 1 ? `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}` : names[0];
+  return `Unlocks once ${list} ${names.length > 1 ? "are" : "is"} built.`;
 }
 
 export type ContributionCheck =
@@ -117,18 +169,22 @@ export type ContributionCheck =
  * trusted: every amount must be a whole, non-negative number, the giver must
  * hold it, and the project must still need it. A gift that would over-pay
  * any cost is refused outright rather than trimmed, so nobody gives more or
- * less than they meant to.
+ * less than they meant to. `crew` is the crew's progress on every project,
+ * for the unlock rule (`projectLock`).
  */
 export function checkContribution(
   projectId: string,
   state: { paid: ProjectAmounts; built: boolean },
   holdings: ProjectAmounts,
   give: unknown,
+  crew: readonly ProjectProgress[],
 ): ContributionCheck {
   const def = projectById(projectId);
   if (!def) return { ok: false, error: "No such project." };
   if (!def.open) return { ok: false, error: `The ${def.name} is not yet open.` };
   if (state.built || projectComplete(def, state.paid)) return { ok: false, error: `The ${def.name} is already built.` };
+  const lock = projectLock(projectId, crew);
+  if (lock) return { ok: false, error: `The ${def.name} is locked. ${projectLockText(lock)}` };
   if (typeof give !== "object" || give === null || Array.isArray(give)) return { ok: false, error: "Nothing was given." };
 
   const left = projectRemaining(def, state.paid);
@@ -160,17 +216,20 @@ export function projectAmountsText(amounts: ProjectAmounts): string {
 export interface VoyageBoons {
   /** Days added to the doom clock. */
   doomDays: number;
+  /** The island's coast starts out seen, fog lifted all the way round. */
+  chartCoast: boolean;
   /** One line per project that did something, for the voyage's opening feed. */
   lines: { projectId: string; text: string }[];
 }
 
 /** The benefits of a crew's built projects. Unknown and unopened ids give nothing. */
 export function voyageBoons(built: readonly string[] | undefined): VoyageBoons {
-  const boons: VoyageBoons = { doomDays: 0, lines: [] };
+  const boons: VoyageBoons = { doomDays: 0, chartCoast: false, lines: [] };
   for (const id of new Set(built ?? [])) {
     const def = projectById(id);
     if (!def?.open) continue;
     boons.doomDays += def.doomDays ?? 0;
+    if (def.chartsCoast) boons.chartCoast = true;
     if (def.voyageLine) boons.lines.push({ projectId: def.id, text: def.voyageLine });
   }
   return boons;

@@ -5,7 +5,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { FURNISHINGS, RARITY_COLOR, SLOT_LABEL, dueIn, equipProblem, resourcesText, salesGoodsName, salesman, type SalesEntry } from "@gantt-quest/world";
 import { api, type Me, type SalesmanView } from "./api";
 import { DragPanel } from "./DragPanel";
-import { Icon, ItemTile, VerdictTag, bonusSummary, compare, powerLabel, toOwned } from "./items";
+import { ItemTile, VerdictTag, bonusSummary, compare, powerLabel, toOwned } from "./items";
+import { GoodsIcon } from "./thingIcons";
 import { blurb, itemName, label } from "./labels";
 
 /** What the buyer is told once something changes hands. */
@@ -63,9 +64,7 @@ export function SalesmanPanel({ me, refresh }: { me: Me; refresh(): Promise<unkn
               return (
                 <div key={e.index} className={`shop-row ${e.bought ? "sold" : ""}`}>
                   {g.kind === "item" ? <ItemTile item={g.item} locked={!!equipProblem(g.item, c.class_id, c.level)} />
-                    : g.kind === "blueprint" ? <Icon name="scroll-unfurled" color="#3f6fa8" size={36} />
-                    : g.kind === "furnishing" ? <Icon name="crowned-heart" color="#e0b12e" size={36} />
-                    : <Icon name={`res-${e.materials.herbs ? "herbs" : "mushrooms"}`} color="#6fae4a" size={36} />}
+                    : <span className="thing-tile"><GoodsIcon goods={g} materials={e.materials} size={36} /></span>}
                   <div className="shop-info">
                     {g.kind === "item" ? <strong style={{ color: RARITY_COLOR[g.item.rarity] }}>{itemName(g.item)}</strong>
                       : selling ? <strong>{resourcesText(e.materials)}</strong>

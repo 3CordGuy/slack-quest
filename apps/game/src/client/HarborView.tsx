@@ -4,9 +4,10 @@
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { HexPos } from "@gantt-quest/core";
-import { GATHER_SPOTS, GATHER_SPOT_IDS, HARBOR_APOTHECARY, HARBOR_BOARD, HARBOR_SMITHY, HARBOR_GATHER, HARBOR_NAME, HARBOR_PIERS, HARBOR_PLOTS, HARBOR_PUB, HARBOR_RING, HARBOR_SHOP, HARBOR_WORKS, MAX_PARTY, PLOT_PRICE, RESOURCE_KINDS, SHACK_COST, binFill, binNeeds, builtProjects, generateHarbor, harborPoi, hutTier, poiAt, salesman, type GatherSpot, type HarborShip, type Resources } from "@gantt-quest/world";
+import { GATHER_SPOTS, GATHER_SPOT_IDS, HARBOR_APOTHECARY, HARBOR_BOARD, HARBOR_GALLEY, HARBOR_LIGHTHOUSE, HARBOR_SMITHY, HARBOR_GATHER, HARBOR_NAME, HARBOR_PIERS, HARBOR_PLOTS, HARBOR_PUB, HARBOR_RING, HARBOR_SHOP, HARBOR_WORKS, MAX_PARTY, PLOT_PRICE, RESOURCE_KINDS, SHACK_COST, binFill, binNeeds, builtProjects, generateHarbor, projectById, projectProgress, harborPoi, hutTier, poiAt, salesman, type GatherSpot, type HarborShip, type Resources } from "@gantt-quest/world";
 import { api, type Me } from "./api";
 import { AccountPanel } from "./Account";
+import { CrewRoster, type RosterMember } from "./CrewRoster";
 import { NoticeBoard } from "./board/NoticeBoard";
 import { DragPanel } from "./DragPanel";
 import { GatherPanel } from "./GatherPanel";
@@ -20,11 +21,10 @@ import { WorldRenderer, type RenderState } from "./render/WorldRenderer";
 import { useHarbor } from "./useHarbor";
 import { useSalesman } from "./salesmanClock";
 import { WorksPanel } from "./works/WorksPanel";
-import { ApothecaryPanel, SmithyPanel } from "./works/WorkshopPanels";
+import { ApothecaryPanel, GalleyPanel, SmithyPanel } from "./works/WorkshopPanels";
 import { label } from "./labels";
 import { xpEvents } from "./xpEvents";
 
-const className = (id: string) => label("class", id);
 const same = (a: HexPos, b: HexPos) => a.q === b.q && a.r === b.r;
 /** "10 wood and 6 stone". */
 const costText = (r: Resources) => {
@@ -42,7 +42,7 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
   const [spar, setSpar] = useState(false);
   const [gather, setGather] = useState<GatherSpot | null>(null);
   const [works, setWorks] = useState(false);
-  const [workshop, setWorkshop] = useState<"apothecary" | "smithy" | null>(null);
+  const [workshop, setWorkshop] = useState<"apothecary" | "smithy" | "galley" | null>(null);
   const [account, setAccount] = useState(false);
   const [tradeWith, setTradeWith] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
@@ -60,20 +60,31 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
   const send = useRef(harbor.send);
   send.current = harbor.send;
   const base = useMemo(generateHarbor, []);
+  /** Your gathering outings left today, drawn as lightning bolts on your plate. Read on the way in and after anything that spends or restores them. */
+  const [stamina, setStamina] = useState<{ left: number; max: number } | null>(null);
   const { board, players, you } = harbor;
+  // The whole crew, with whoever is walking the Harbor right now marked here (and drawn in what they wear).
+  const roster: RosterMember[] = useMemo(() => board.members.map((m) => {
+    const p = players.find((x) => x.id === m.id);
+    return { id: m.id, name: m.name, classId: m.classId, level: p?.level ?? m.level, here: !!p, outfit: p?.outfit };
+  }), [board.members, players]);
+  const hereCount = roster.filter((m) => m.here).length;
   const moored = board.ships.filter((s) => s.pier !== null);
   const built = builtProjects(board.works);
   const lit = built.includes("lighthouse");
   const apothecaryBuilt = built.includes("apothecary");
   const smithyBuilt = built.includes("smithy");
+  const galleyBuilt = built.includes("galley");
+  // How far the crew has got with the lighthouse, which sets which stage of building is drawn on its spit.
+  const lighthousePaid = board.works?.projects.find((p) => p.id === "lighthouse")?.paid;
+  const lighthouseFill = lit ? 1 : lighthousePaid ? Math.round(projectProgress(projectById("lighthouse")!, lighthousePaid) * 100) / 100 : 0;
 
   // The Harbor as the renderer sees it: the fixed map plus a hut per member and a ship per moored voyage.
   const scene = useMemo<RenderState | null>(() => {
     if (!you) return null;
     const pois = [
-      // The works are a building site until the lighthouse stands there.
-      // So are the apothecary's and smithy's spots until the crew has paid for them.
-      ...base.pois.map((p) => (p.id === "works" ? { ...p, cleared: lit } : p.id === "apothecary" ? { ...p, cleared: apothecaryBuilt } : p.id === "smithy" ? { ...p, cleared: smithyBuilt } : p)),
+      // The lighthouse's spit, and the apothecary's, smithy's and galley's spots, are building sites until the crew has paid for them.
+      ...base.pois.map((p) => (p.id === "lighthouse" ? { ...p, cleared: lit, fill: lighthouseFill } : p.id === "apothecary" ? { ...p, cleared: apothecaryBuilt } : p.id === "smithy" ? { ...p, cleared: smithyBuilt } : p.id === "galley" ? { ...p, cleared: galleyBuilt } : p)),
       // A plot someone has bought has their hut on it, or a resource bin while the shack is still to go up; the rest are staked out and for sale.
       ...HARBOR_PLOTS.map((pos, i) => {
         const owner = board.members.find((m) => m.plot === i);
@@ -97,9 +108,10 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
       freeRoam: true,
       // Bedrolls laid out by whoever is resting.
       props: players.filter((p) => p.bedroll).map((p, i) => ({ id: 9000 + i, model: "bedroll", pos: p.bedroll!, facing: 0 })),
+      stamina: stamina ?? undefined,
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [base, board, players, you]);
+  }, [base, board, players, you, stamina]);
   const latest = useRef(scene);
   latest.current = scene;
   const heroSheet = useHeroSheet();
@@ -140,9 +152,11 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
     : hoverPoi.kind === "rocks" ? "Rocks. Ships that miss the channel find them."
     : hoverPoi.kind === "wreck" ? "A wreck on the rocks. Nobody remembers her name."
     : hoverPoi.kind === "pub" ? (visitor ? `The pub: a traveling salesman is in. ${visitor.name}, ${visitor.trade}` : "The pub: food, drink, Old Tam and the dice table")
-    : hoverPoi.kind === "works" ? (lit ? "The lighthouse: crew projects" : "The works: crew projects")
+    : hoverPoi.kind === "works" ? "The works: crew projects"
+    : hoverPoi.kind === "lighthouse" ? (lit ? "The lighthouse: it sees every ship out past the shoals" : lighthouseFill > 0 ? "The lighthouse going up: a crew project at the works" : "A bare point over the wreck, where the lighthouse will stand")
     : hoverPoi.kind === "apothecary" ? (apothecaryBuilt ? "The apothecary: brew herbs and mushrooms for your next voyage" : "The apothecary's building site: a crew project at the works")
     : hoverPoi.kind === "smithy" ? (smithyBuilt ? "The smithy: sharpen weapons, reinforce armour" : "The smithy's building site: a crew project at the works")
+    : hoverPoi.kind === "galley" ? (galleyBuilt ? "The galley: cook chowder and stores into the crew's larder" : "The galley's building site: a crew project at the works")
     : hoverPoi.kind === "lot" ? (myPlot === null ? `A plot for sale: ${PLOT_PRICE} gold` : "An empty plot")
     : hoverPoi.kind === "site" ? (hoverPoi.id === `site:${you}` ? "Your plot: fill the bin and the shack goes up" : `${board.members.find((m) => `site:${m.id}` === hoverPoi.id)?.name ?? "Someone"}'s plot: building a shack`)
     : hoverPoi.kind === "plot" ? `${board.members.find((m) => `plot:${m.id}` === hoverPoi.id)?.name ?? "Someone"}'s ${hutTier(hoverPoi.tier ?? 1).name.toLowerCase()}`
@@ -187,12 +201,17 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
   const atWorks = !!self && same(self.pos, HARBOR_WORKS);
   const atApothecary = !!self && same(self.pos, HARBOR_APOTHECARY);
   const atSmithy = !!self && same(self.pos, HARBOR_SMITHY);
+  const atGalley = !!self && same(self.pos, HARBOR_GALLEY);
+  const atLighthouse = !!self && same(self.pos, HARBOR_LIGHTHOUSE);
   // Resting: the server keeps the clock; this is only what it last told us, counted down for show.
   const [restReadyAt, setRestReadyAt] = useState(0);
   const [note, setNote] = useState<string | null>(null);
   const [, tick] = useState(0);
   useEffect(() => {
-    api.gather().then((g) => setRestReadyAt(g.restReadyAt), () => undefined);
+    api.gather().then((g) => {
+      setRestReadyAt(g.restReadyAt);
+      setStamina({ left: g.stamina.left, max: g.stamina.max });
+    }, () => undefined);
     const timer = setInterval(() => tick((n) => n + 1), 30_000);
     return () => clearInterval(timer);
   }, []);
@@ -205,6 +224,7 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
     try {
       const res = await api.rest("bedroll");
       setRestReadyAt(res.restReadyAt);
+      setStamina({ left: res.stamina.left, max: res.stamina.max });
       harbor.send({ type: "bedroll" });
       say_(`You sleep a while. ${res.regained} gathering outing${res.regained === 1 ? "" : "s"} back: ${res.stamina.left} of ${res.stamina.max} left today.`);
     } catch (e) {
@@ -267,7 +287,8 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
         run: () => setGather(gatherHere),
       }
     : atPub ? { title: visitor ? <>The pub <span className="pub-visitor">· {visitor.name}, {visitor.trade}, is in</span></> : "The pub", label: "Go in", run: () => goInside("pub", "pub") }
-    : atWorks ? { title: lit ? "The lighthouse" : "The works", label: "See the crew's projects", run: () => setWorks(true) }
+    : atWorks ? { title: "The works", label: "See the crew's projects", run: () => setWorks(true) }
+    : atLighthouse ? { title: lit ? "The lighthouse" : <>The lighthouse's point <span className="muted">· paid for at the works</span></>, label: "See the crew's projects", run: () => setWorks(true) }
     // A workshop still to be built points to the works, where the crew pays for it.
     : atApothecary ? (apothecaryBuilt
         ? { title: "The apothecary", label: "Brew something", run: () => setWorkshop("apothecary") }
@@ -275,6 +296,9 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
     : atSmithy ? (smithyBuilt
         ? { title: "The smithy", label: "Work your gear", run: () => setWorkshop("smithy") }
         : { title: <>The smithy's building site <span className="muted">· paid for at the works</span></>, label: "See the crew's projects", run: () => setWorks(true) })
+    : atGalley ? (galleyBuilt
+        ? { title: "The galley", label: "Cook for the ship", run: () => setWorkshop("galley") }
+        : { title: <>The galley's building site <span className="muted">· paid for at the works</span></>, label: "See the crew's projects", run: () => setWorks(true) })
     : myBin ? {
         title: (
           <>Your plot <span className="muted">· the shack's resource bin: {RESOURCE_KINDS.filter((k) => SHACK_COST[k]).map((k) => `${myBin[k] ?? 0}/${SHACK_COST[k]} ${label("resource", k).toLowerCase()}`).join(", ")}{held ? ` · you hold ${RESOURCE_KINDS.filter((k) => SHACK_COST[k]).map((k) => `${held[k] ?? 0} ${label("resource", k).toLowerCase()}`).join(", ")}` : ""}</span></>
@@ -360,24 +384,15 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
         </ul>
       </DragPanel>
 
-      <DragPanel id="harbor.crew" title="Crew" foldOnPhone className="crew">
-        <div className="panel">
-          <h3>{players.length} here now</h3>
-          <ul className="roster">
-            {board.members.map((m) => {
-              const here = players.some((p) => p.id === m.id);
-              return (
-                <li key={m.id} className={here ? "" : "away"}>
-                  <span><i className={`dot ${here ? "on" : ""}`} /> <strong>{m.name}</strong>{m.id === you && <span className="tag">you</span>}</span>
-                  <span className="muted">
-                    {className(m.classId)} · {m.level}
-                    {m.id !== you && <button className="small trade-btn" title={`Give or trade with ${m.name}`} onClick={() => setTradeWith(m.id)}>Trade</button>}
-                  </span>
-                </li>
-              );
-            })}
-          </ul>
-        </div>
+      <DragPanel id="harbor.crew" title="Crew" foldOnPhone className="crew roster-panel roster-trade">
+        <CrewRoster
+          you={you}
+          heading={<>{hereCount} of {roster.length} here</>}
+          members={roster}
+          onOpen={heroSheet.onHeroClick}
+          openId={heroSheet.open}
+          onTrade={setTradeWith}
+        />
       </DragPanel>
 
       <DragPanel id="harbor.chat" title="Crew chat" foldOnPhone className="chat panel harbor-chat">
@@ -412,9 +427,10 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
       {notices && <NoticeBoard refresh={refresh} onClose={() => setNotices(false)} />}
       {works && <WorksPanel works={board.works} refresh={refresh} onClose={() => setWorks(false)} />}
       {workshop === "apothecary" && <ApothecaryPanel onClose={() => setWorkshop(null)} />}
+      {workshop === "galley" && <GalleyPanel onClose={() => setWorkshop(null)} />}
       {workshop === "smithy" && <SmithyPanel refresh={refreshAll} onClose={() => setWorkshop(null)} />}
       {spar && scene && me.character && <SparView me={me} scene={scene} renderer={renderer} onClose={() => setSpar(false)} />}
-      {gather && me.character && <GatherPanel spot={gather} onClose={() => setGather(null)} />}
+      {gather && me.character && <GatherPanel spot={gather} onClose={() => setGather(null)} onStamina={setStamina} />}
       {shop && me.character && <ShopScreen me={me} refresh={refreshAll} onClose={() => setShop(false)} />}
       {me.character && <Trading me={me} partners={board.members.filter((m) => m.id !== you)} withId={tradeWith} onWith={setTradeWith} refresh={refresh} />}
       {heroSheet.open && you && !spar && <HeroSheet id={heroSheet.open} you={you} pinned={heroSheet.pinned} onClose={heroSheet.close} />}

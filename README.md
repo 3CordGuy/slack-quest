@@ -17,7 +17,7 @@ It runs entirely on Cloudflare: Workers, Durable Objects, D1, Workers AI and Ema
 - **Gathering:** fish off the shore, fell trees, work the quarry. Each is a short timing game, swayed by your stats.
 - **Your hut:** buy a plot, fill a resource bin to raise a shack, then furnish it, craft for it and upgrade it. Rest there to recover.
 - **The pub:** food and drink that boost your next voyage, dice and Shoals at the tables, and traveling salesmen who drop in from time to time.
-- **Crew projects:** pay together into the Lighthouse, Apothecary (brews for the voyage) and Smithy (sharpen and reinforce gear).
+- **Crew projects:** pay together into the Apothecary (brews for the voyage) and Smithy (sharpen and reinforce gear) first; once both stand, the Lighthouse (a day more on every voyage, and the island's coast charted) and the Galley (a shared larder) unlock.
 - **Around town:** the market stall, the notice board's contracts and crew goal, the sparring ring, and trading or giving gear to crewmates.
 
 **A voyage** is one session. The crew sails to a seeded hex island with a generated story:
@@ -103,8 +103,8 @@ npx wrangler deploy                                           # 3. deploy what w
 
 ### Branches
 
-- `overworld-revamp` is the game's integration branch. Feature branches open PRs into it.
-- `main` gets `overworld-revamp` merged in as a separate step. A push to `main` runs `.github/workflows/deploy.yml`, which deploys the **legacy** web app and Slack bot; it does not deploy the game.
+- `main` is the only long-lived branch. Feature branches open PRs into it.
+- A push to `main` runs `.github/workflows/deploy.yml`, which deploys the **legacy** web app and Slack bot. It skips pushes that only touch the game (`apps/game`, `packages/world`) or docs, and it never deploys the game.
 
 ## How the code is built
 

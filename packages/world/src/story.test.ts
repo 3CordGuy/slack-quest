@@ -10,7 +10,14 @@ import {
   demandMet,
   factPoi,
   frameById,
+  allSpines,
+  defaultSpine,
+  demandsFor,
   generateMap,
+  pickDemand,
+  pickFrame,
+  pickSpine,
+  storyBrief,
   makeRng,
   poiById,
   requiredDoom,
@@ -20,6 +27,7 @@ import {
   validateBible,
   type Demand,
   type HeroInit,
+  type Spine,
   type StoryFrame,
   type WorldAction,
   type WorldState,
@@ -35,7 +43,7 @@ function must(state: WorldState, action: WorldAction): WorldState {
   return res.state;
 }
 
-function begin(frame: StoryFrame, demand: Demand, seed: string): WorldState {
+function begin(frame: StoryFrame, demand: Demand, seed: string, spine: Spine = defaultSpine(frame)): WorldState {
   let s = createWorld("TEST", seed);
   s = must(s, { type: "join", hero: hero("p1", "qa_paladin", "mace") });
   s = must(s, { type: "join", hero: hero("p2", "devops_mage", "staff") });
@@ -43,7 +51,7 @@ function begin(frame: StoryFrame, demand: Demand, seed: string): WorldState {
   s = must(s, { type: "start", heroId: "p1" });
   const rng = makeRng(seedFromString(`story|${seed}`));
   const fill = rng.pick(CANNED_FILLS[frame.id]);
-  s = must(s, { type: "begin", bible: buildBible(frame, fill, demand, rng) });
+  s = must(s, { type: "begin", bible: buildBible(frame, fill, demand, rng, spine) });
   // Strong enough that fights are won whatever the dice do: these tests are about the story's shape.
   // No fog and nothing roaming either: only the story is under test.
   return { ...s, roamers: undefined, seen: undefined, heroes: s.heroes.map((h) => ({ ...h, base: { str: 12, int_stat: 12, vit: 12, agi: 12, dex: 12 }, hp: 900, maxHp: 900 })) };
@@ -54,8 +62,8 @@ function begin(frame: StoryFrame, demand: Demand, seed: string): WorldState {
  * time, teleporting instead of walking. Returns the final state and the
  * order things were done in.
  */
-function playThrough(frame: StoryFrame, demand: Demand, seed: string): { state: WorldState; steps: string[] } {
-  let s = begin(frame, demand, seed);
+function playThrough(frame: StoryFrame, demand: Demand, seed: string, spine: Spine = defaultSpine(frame)): { state: WorldState; steps: string[] } {
+  let s = begin(frame, demand, seed, spine);
   const steps: string[] = [];
   const goTo = (poiId: string) => {
     const pos = poiById(s.map, poiId)!.pos;
@@ -69,7 +77,7 @@ function playThrough(frame: StoryFrame, demand: Demand, seed: string): { state: 
     steps.push(`act:${poiId}`);
   };
   const talk = (intent: { verb: string; args: Record<string, unknown> } | null) => {
-    goTo("hut");
+    goTo(s.bible!.npcs[0].poi);
     s = must(s, { type: "talk", heroId: "p1", npcId: "npc1", text: "hello" });
     s = must(s, { type: "npc_reply", npcId: "npc1", heroId: "p1", output: { say: "…", intent, attitudeDelta: 0 } });
     steps.push(intent ? `talk:${intent.verb}` : "talk");
@@ -101,7 +109,7 @@ function playThrough(frame: StoryFrame, demand: Demand, seed: string): { state: 
 
 describe("story shapes", () => {
   it("offers several different kinds of story", () => {
-    expect(STORY_FRAMES.map((f) => f.id)).toEqual(["stolen_relic", "rescue", "beast_hunt", "broken_relic"]);
+    expect(STORY_FRAMES.map((f) => f.id)).toEqual(["stolen_relic", "rescue", "beast_hunt", "broken_relic", "rival_crew", "lift_curse"]);
     // They differ in how they end, not only in their words.
     const finals = STORY_FRAMES.map((f) => {
       const b = buildBible(f, CANNED_FILLS[f.id][0]);
@@ -158,7 +166,7 @@ describe("story shapes", () => {
         expect(s.doom).toBeGreaterThanOrEqual(requiredDoom(s.map, s.bible!, s.heroes));
         // An errand for the islander puts the trip out and back on the route.
         const errand = factPoi(demand.fact);
-        if (errand && !frame.plan(CANNED_FILLS[frame.id][0], makeRng(1)).route.includes(errand)) {
+        if (errand && !frame.plan(CANNED_FILLS[frame.id][0], makeRng(1), defaultSpine(frame)).route.includes(errand)) {
           const route = s.bible!.route;
           expect(route.slice(route.indexOf("hut"), route.indexOf("hut") + 3)).toEqual(["hut", errand, "hut"]);
         }
@@ -241,5 +249,143 @@ describe("hints", () => {
       expect(rescue.hints!.relic).toContain(h.relic);
       expect(rescue.hints!.villain).toContain(h.villain);
     }
+  });
+});
+
+describe("variety between voyages", () => {
+  it("never repeats the crew's last kinds of story, and cycles through them all", () => {
+    const recent: string[] = [];
+    const seen = new Set<string>();
+    for (let i = 0; i < 40; i++) {
+      const frame = pickFrame(makeRng(seedFromString(`voyage-${i}`)), recent);
+      expect(recent.slice(0, Math.floor(STORY_FRAMES.length / 2))).not.toContain(frame.id);
+      recent.unshift(frame.id);
+      seen.add(frame.id);
+    }
+    expect(seen.size).toBe(STORY_FRAMES.length);
+  });
+
+  it("picks freely for a crew with no voyages, and copes with every frame being recent", () => {
+    const ids = STORY_FRAMES.map((f) => f.id);
+    expect(ids).toContain(pickFrame(makeRng(1)).id);
+    expect(ids).toContain(pickFrame(makeRng(1), [...ids, ...ids]).id);
+  });
+
+  it("asks something different of the crew than last time, when the story allows it", () => {
+    for (const frame of STORY_FRAMES) {
+      for (const last of frame.demands) {
+        for (let i = 0; i < 10; i++) expect(pickDemand(frame, makeRng(i), last.id).id).not.toBe(last.id);
+      }
+    }
+  });
+});
+
+describe("paths through a story", () => {
+  it("gives every kind of story more than one path", () => {
+    for (const frame of STORY_FRAMES) expect(allSpines(frame).length, frame.id).toBeGreaterThanOrEqual(2);
+    // Across them, the islander is found in different places, and stories end in different ways.
+    expect(new Set(STORY_FRAMES.flatMap((f) => f.spines.npcAt)).size).toBe(3);
+    expect(new Set(STORY_FRAMES.flatMap((f) => f.spines.ending)).size).toBe(4);
+  });
+
+  it("builds a completable story on every path, for every ask that suits it, on many islands", () => {
+    for (const frame of STORY_FRAMES) {
+      for (const spine of allSpines(frame)) {
+        for (const demand of demandsFor(frame, spine)) {
+          for (let i = 0; i < 6; i++) {
+            const seed = `${frame.id}-${JSON.stringify(spine)}-${demand.id}-${i}`;
+            const bible = buildBible(frame, CANNED_FILLS[frame.id][i % 2], demand, makeRng(seedFromString(seed)), spine);
+            expect(validateBible(bible, generateMap(seed)), seed).toEqual([]);
+            expect(bible.npcs[0].poi).toBe(spine.npcAt);
+          }
+        }
+      }
+    }
+  });
+
+  it("can be played to victory on every path", () => {
+    for (const frame of STORY_FRAMES) {
+      for (const spine of allSpines(frame)) {
+        for (const demand of demandsFor(frame, spine)) {
+          const label = `${frame.id} ${JSON.stringify(spine)} ${demand.id}`;
+          const { state, steps } = playThrough(frame, demand, `path-${label}`, spine);
+          expect(state.result?.outcome, `${label}: ${steps.join(" ")}`).toBe("victory");
+        }
+      }
+    }
+  });
+
+  it("follows a different route depending on the path", () => {
+    const stolen = frameById("stolen_relic")!;
+    const trust = stolen.demands.find((d) => d.id === "earn_trust")!;
+    const steps = (spine: Spine) => playThrough(stolen, trust, "routes", spine).steps.join(" ");
+    expect(steps({ npcAt: "hut", lead: "told", ending: "fight" })).toBe("talk talk:reveal_location act:lair");
+    // Nobody tells the way: the party finds the trail inland, and that shows them the lair.
+    expect(steps({ npcAt: "shrine", lead: "trail", ending: "fight" })).toBe("talk act:cache2 act:lair");
+    // Won back, it still has to be carried somewhere.
+    expect(steps({ npcAt: "hut", lead: "told", ending: "shrine" })).toBe("talk talk:reveal_location act:lair act:shrine");
+    expect(steps({ npcAt: "landing", lead: "trail", ending: "ship" })).toBe("talk act:cache2 act:lair act:landing");
+  });
+
+  it("does not ask for what the path already does", () => {
+    const stolen = frameById("stolen_relic")!;
+    expect(demandsFor(stolen, { npcAt: "shrine", lead: "told", ending: "fight" }).map((d) => d.id)).not.toContain("pray");
+    const broken = frameById("broken_relic")!;
+    expect(demandsFor(broken, { npcAt: "hut", lead: "trail", ending: "shrine" }).map((d) => d.id)).not.toContain("fetch");
+    for (let i = 0; i < 20; i++) {
+      const spine = pickSpine(broken, makeRng(i));
+      expect(demandsFor(broken, spine)).toContainEqual(pickDemand(broken, makeRng(i), undefined, spine));
+    }
+  });
+
+  it("tells the model where the islander is and how the story ends", () => {
+    const stolen = frameById("stolen_relic")!;
+    const brief = storyBrief(stolen, { npcAt: "landing", lead: "trail", ending: "ship" });
+    expect(brief).toContain("waiting at the landing");
+    expect(brief).toContain("cannot say where the lair is");
+    expect(brief).toContain("aboard the heroes' ship");
+    expect(storyBrief(stolen, defaultSpine(stolen))).toContain("hut near the shore");
+    // Only the islander's own hut is named for them.
+    const bible = buildBible(stolen, CANNED_FILLS.stolen_relic[0], undefined, undefined, { npcAt: "shrine", lead: "told", ending: "fight" });
+    expect(bible.poiNames.hut).toBeUndefined();
+  });
+});
+
+describe("the race and the curse", () => {
+  it("makes the rival crew's captain the boss at their camp, and shows the vault once both halves of the chart are found", () => {
+    const race = frameById("rival_crew")!;
+    let s = begin(race, race.demands[0], "race");
+    for (const poi of ["cache1", "camp"]) {
+      expect(poiById(s.map, "lair")!.hidden).toBe(true);
+      s = { ...s, heroes: s.heroes.map((h) => ({ ...h, pos: poiById(s.map, poi)!.pos })) };
+      if (s.turn!.acted) s = must(s, { type: "end_turn", heroId: s.turn!.heroId });
+      s = must(s, { type: "interact", heroId: s.turn!.heroId });
+      if (poi === "camp") {
+        expect(s.battle!.boss).toBe(true);
+        expect(s.battle!.combatants.find((c) => c.kind === "villain")!.name).toBe(s.bible!.villain.name);
+      }
+      for (let i = 0; i < 200 && s.phase === "battle"; i++) s = must(s, { type: "timeout" });
+    }
+    expect(poiById(s.map, "lair")!.hidden).toBe(false);
+  });
+
+  it("ends the race at the ship, not at the vault", () => {
+    const race = frameById("rival_crew")!;
+    const { steps } = playThrough(race, race.demands[0], "race-steps");
+    expect(steps.join(" ")).toBe("talk act:cache1 act:camp act:lair act:landing");
+  });
+
+  it("wakes three stones with the islander's words, then breaks the curse with no boss to fight", () => {
+    const curse = frameById("lift_curse")!;
+    let s = begin(curse, curse.demands[0], "curse");
+    // Without the words, a stone is only a place to search.
+    s = { ...s, heroes: s.heroes.map((h) => ({ ...h, pos: poiById(s.map, "cache1")!.pos })) };
+    s = must(s, { type: "interact", heroId: s.turn!.heroId });
+    expect(s.facts["woken:cache1"]).toBeUndefined();
+    const { state, steps } = playThrough(curse, curse.demands[0], "curse-steps");
+    expect(steps.join(" ")).toBe("talk act:cache1 act:cache2 act:camp act:camp act:shrine");
+    expect(state.result?.outcome).toBe("victory");
+    expect(Object.values(state.bible!.encounters).flat().some((k) => ENEMIES[k].boss)).toBe(false);
+    expect(clientView(state, "p1").story!.poiNames.shrine).toBe(state.bible!.poiNames.shrine);
   });
 });

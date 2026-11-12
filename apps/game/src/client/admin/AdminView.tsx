@@ -5,12 +5,13 @@
 // server checks every call.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { CATALOGUE, CATALOGUE_KINDS, GEAR_BASES, RARITY_COLOR, SLOT_ICON, SLOT_LABEL, WEAPON_ICON, type CatalogueKind, type Slot } from "@gantt-quest/world";
+import { BREWS, CATALOGUE, DISHES, CATALOGUE_KINDS, GEAR_BASES, RARITY_COLOR, SLOT_ICON, SLOT_LABEL, WEAPON_ICON, type CatalogueKind, type Slot } from "@gantt-quest/world";
 import type { ImageValue, LogRow, NameValue, OverrideKind, OverrideRow, OverrideValue, PaletteValue } from "../../server/content";
 import type { Me } from "../api";
 import { loadContent } from "../content";
 import { ITEM_ART_NAMES, itemArtUrl } from "../itemArt";
 import { label } from "../labels";
+import { thingIconUsers } from "../thingIcons";
 import { previewSpriteUrl } from "../render/sprites";
 import { adminApi } from "./adminApi";
 import { IconEditor, IconThumb } from "./IconEditor";
@@ -44,6 +45,7 @@ const ICON_USERS: Record<string, string[]> = (() => {
   for (const [id, icon] of Object.entries(WEAPON_ICON)) if (CATALOGUE.weapon[id]) add(icon, `weapon:${id}`);
   for (const b of GEAR_BASES) add(b.icon, `gear:${b.ref}`);
   for (const [slot, icon] of Object.entries(SLOT_ICON)) add(icon, `slot:${slot}`);
+  for (const [icon, who] of thingIconUsers()) add(icon, who);
   return out;
 })();
 
@@ -51,7 +53,10 @@ const ICON_USERS: Record<string, string[]> = (() => {
 const iconUsers = (icon: string) =>
   (ICON_USERS[icon] ?? []).map((u) => {
     const [k, id] = u.split(":");
-    return k === "slot" ? `empty ${SLOT_LABEL[id as Slot].toLowerCase()} slot` : label(k as CatalogueKind, id);
+    if (k === "slot") return `empty ${SLOT_LABEL[id as Slot].toLowerCase()} slot`;
+    if (k === "brew") return BREWS.find((b) => b.id === id)?.name ?? id;
+    if (k === "dish") return DISHES.find((d) => d.id === id)?.name ?? id;
+    return label(k as CatalogueKind, id);
   });
 
 const keyOf = (kind: OverrideKind, target: string) => `${kind}|${target}`;

@@ -15,13 +15,16 @@ import {
   describeBearing,
   parseNpcOutput,
   poiById,
+  storyBrief,
   validateFill,
   type CheckResult,
   type ChatLine,
   type Demand,
   type NpcOutput,
   type NpcRun,
+  type NpcPlace,
   type NpcSheet,
+  type Spine,
   type StoryBible,
   type StoryFill,
   type StoryFrame,
@@ -71,18 +74,20 @@ async function runText(env: Env, messages: Message[], maxTokens: number): Promis
 
 // ---------- story ----------
 
-/** True things about this island, so the model's prose matches the map the players walk on. */
-export function islandFacts(map: WorldMap): string[] {
+/** True things about this island, so the model's prose matches the map the players walk on. `npcAt` is where the islander is found. */
+export function islandFacts(map: WorldMap, npcAt: NpcPlace = "hut"): string[] {
   const at = (id: string) => poiById(map, id)?.pos;
   const landing = at("landing");
-  const hut = at("hut");
+  const here = at(npcAt);
   const lair = at("lair");
   const camp = at("camp");
   const biome = (b: string) => map.tiles.filter((t) => t.biome === b).length;
   const facts: string[] = [];
-  if (landing && hut) facts.push(`The islander's hut is ${describeBearing(landing, hut)} of where the ship lands.`);
-  if (hut && lair) facts.push(`The hidden place the story leads to (the lair, den, hideout or vault) is in the hills, ${describeBearing(hut, lair)} of the hut.`);
-  if (hut && camp) facts.push(`A camp of brigands lies ${describeBearing(hut, camp)} of the hut.`);
+  const place = npcAt === "shrine" ? "the old shrine" : npcAt === "hut" ? "the hut" : "the landing";
+  if (npcAt === "landing") facts.push("The islander waits at the landing, where the ship comes in.");
+  else if (landing && here) facts.push(`The islander is found at ${place}, ${describeBearing(landing, here)} of where the ship lands.`);
+  if (here && lair) facts.push(`The hidden place the story leads to (the lair, den, hideout or vault) is in the hills, ${describeBearing(here, lair)} of ${place}.`);
+  if (here && camp) facts.push(`A camp of brigands lies ${describeBearing(here, camp)} of ${place}.`);
   facts.push(
     biome("forest") > biome("hills") ? "The island is mostly woodland and meadow, with some rocky hills." : "The island is mostly rocky hills and meadow, with some woodland.",
     "There are no towns, caves, swamps, rivers, mountains or other islands. Do not mention any.",
@@ -93,6 +98,7 @@ export function islandFacts(map: WorldMap): string[] {
 export async function generateFill(
   env: Env,
   frame: StoryFrame,
+  spine: Spine,
   partyNames: string[],
   demand: Demand,
   facts: string[],
@@ -110,7 +116,7 @@ export async function generateFill(
     {
       role: "user",
       content:
-        `Story shape (do not change it): ${frame.brief}\n\n` +
+        `Story shape (do not change it): ${storyBrief(frame, spine)}\n\n` +
         `The heroes arriving by ship: ${partyNames.join(", ")}.\n\n` +
         `True facts about this island. Everything you write must agree with them:\n${facts.map((f) => `- ${f}`).join("\n")}\n\n` +
         "What makes THIS voyage different from every other. Build the story around these, not around generic fantasy:\n" +
@@ -118,19 +124,19 @@ export async function generateFill(
         `- The island is ${hints.island}\n` +
         `- At the heart of it: ${hints.relic}. The islanders depend on it for something specific and practical\n` +
         `- The threat: ${hints.villain}\n` +
-        `- The islander in the hut is ${hints.islander}\n` +
+        `- The islander who can help is ${hints.islander}\n` +
         `- Naming style: ${hints.naming}\n` +
         `- The island's name starts with ${hints.initials.island}, the villain's with ${hints.initials.villain}, the islander's with ${hints.initials.islander}\n` +
         "- Do not use the words relic, ancient, shadow, dark, sacred, balance or prosperity anywhere. No apostrophes inside names. No sorcerers.\n\n" +
         `The islander will not help until the heroes: ${demand.text}. That is the only thing the islander asks for.\n\n` +
         "Fill in:\n" +
         "- title: the adventure's title, 2-6 words, naming what is at stake or the island rather than describing a quest\n" +
-        "- premise: 2-3 sentences the players read on arrival; say what was stolen and why it matters\n" +
+        "- premise: 2-3 sentences the players read on arrival; say what has happened and why it matters\n" +
         "- island_name\n" +
         `- villain_name, villain_description (one sentence): ${frame.fields.villain}\n` +
         `- relic_name: ${frame.fields.relic}\n` +
         `- lair_name: ${frame.fields.lair}\n` +
-        "- npc_name, npc_role: the islander in the hut\n" +
+        "- npc_name, npc_role: the islander who can help\n" +
         "- npc_persona: one or two sentences of temperament\n" +
         "- npc_voice: how they talk\n" +
         "- npc_goal: why that one request matters so much to them (do not add any other request)\n" +
@@ -164,11 +170,11 @@ function npcSystemPrompt(input: NpcTurnInput): string {
   const { bible, sheet, run, state } = input;
   const met = demandMet(bible, state.facts, run.persuaded);
   const caps = availableCapabilities(sheet, run, { demandMet: met });
-  const hut = poiById(state.map, sheet.poi)?.pos;
+  const here = poiById(state.map, sheet.poi)?.pos;
   const actions = caps.map((c) => {
     if (c.verb === "reveal_location") {
       const target = poiById(state.map, c.poi)?.pos;
-      const where = hut && target ? ` It lies ${describeBearing(hut, target)} of your hut; say so.` : "";
+      const where = here && target ? ` It lies ${describeBearing(here, target)} of where you are standing; say so.` : "";
       return `- {"verb":"reveal_location","args":{"poi":"${c.poi}"}} : tell them how to reach ${c.poiName}.${where} They have done what you asked, so do this when they ask.`;
     }
     if (c.verb === "give_item") {

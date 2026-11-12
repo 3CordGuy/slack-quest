@@ -7,6 +7,7 @@
 import * as THREE from "three";
 import { ENEMIES, WEAPONS, RARITY_COLOR, barPixels, healthBand, outfitKey, type HealthBand, type Outfit, type Slot } from "@gantt-quest/world";
 import { LOOKS, mergeLook, type Look, type LookPalette } from "./looks";
+import { PIXEL_LINE_ROWS, canDrawPixelText, drawPixelText, drawSmallDigits, pixelTextWidth } from "./pixelFont";
 
 const W = 18;
 const H = 22;
@@ -589,36 +590,72 @@ export function textTexture(text: string, color: string): THREE.CanvasTexture {
   return tex;
 }
 
-/** What a hero's overhead plate shows under their name: level, and how full their HP and XP are (0 to 1). */
+/** What a hero's overhead plate shows beside their name: level, how full their HP and XP are (0 to 1), and outings left. */
 export interface PlateStats {
   level: number;
   hp: number;
   xp: number;
   /** Just earned XP: the XP bar is drawn lit up for a moment. */
   glow?: boolean;
+  /** Gathering outings: one lightning bolt each, lit for those left. Only on your own plate. */
+  bolts?: { left: number; max: number };
 }
 
 const PLATE_BG: [number, number, number, number] = [27, 24, 48, 225];
-const NAME_INK: [number, number, number] = [241, 238, 228];
-const LEVEL_INK: [number, number, number] = [255, 210, 63];
+const PLATE_EDGE = "#0e0b1c";
+const PLATE_FILL = "rgba(27, 24, 48, 0.9)";
+const PLATE_SHEEN = "rgba(74, 69, 112, 0.55)";
+const NAME_INK = "#f1eee4";
 const BAR_TRACK = "#3b3560";
 const HP_COLOR: Record<HealthBand, string> = { good: "#6ee06e", hurt: "#ffd23f", low: "#ff6b6b" };
 const XP_COLOR = "#7d8cff";
 /** The XP bar as it lights up on a gain: pale blue track, near-white fill. */
 const XP_GLOW_TRACK = "#5f7fd8";
 const XP_GLOW_COLOR = "#e4f4ff";
-/** Rows of the name line, then the HP bar (3 rows), a gap, the XP bar (2 rows) and a margin. */
-const NAME_ROWS = 15;
-const PLATE_ROWS = NAME_ROWS + 6;
+
+/** A small heater shield for the level: gold rim, dark field. 11 by 12. */
+const SHIELD = [
+  "###########",
+  "#.........#",
+  "#.........#",
+  "#.........#",
+  "#.........#",
+  "#.........#",
+  "#.........#",
+  "#.........#",
+  ".#.......#.",
+  "..#.....#..",
+  "...#...#...",
+  "....###....",
+];
+/** The rim lit from above: one colour per row. */
+const SHIELD_RIM = ["#fff1a8", "#ffe27a", "#ffd23f", "#ffd23f", "#ffd23f", "#f5b93a", "#f5b93a", "#e8a22e", "#e8a22e", "#d48a24", "#d48a24", "#b8741c"];
+const SHIELD_FIELD = "#33295f";
+const SHIELD_FIELD_LIT = "#40357a";
+const SHIELD_INK = "#fff6d8";
+
+/** A lightning bolt for one gathering outing. 5 by 7. */
+const BOLT = ["...##", "..##.", ".##..", "#####", "..##.", ".##..", "##..."];
+const BOLT_ON = ["#fff1a8", "#ffe066", "#ffe066", "#ffd23f", "#f5b93a", "#e8a22e", "#d48a24"];
+const BOLT_OFF = "#4a4570";
+
+/** Rows of a plain name tag: a line of text with a row of margin above and below. */
+const TAG_ROWS = PIXEL_LINE_ROWS + 3;
+/** A plate: border, the name line, the HP bar, a gap, the XP bar, border. */
+const PLATE_ROWS = 18;
+const TEXT_X = 14;
+const TEXT_Y = 3;
+const HP_Y = 12;
+const XP_Y = 15;
 /** Bars never shorter than this, so a short name still gets a readable bar. */
-const MIN_PLATE_WIDTH = 34;
+const MIN_BAR = 26;
 
 /** The key a plate is cached and redrawn by: it changes only when a pixel of it would. */
 export function plateKey(text: string, plate?: PlateStats): string {
   if (!plate) return text;
-  const width = plateWidth(text, plate);
-  const inner = width - 6;
-  return `${text}|${plate.level}|${barPixels(plate.hp, inner)}:${healthBand(plate.hp)}|${barPixels(plate.xp, inner)}${plate.glow ? "|glow" : ""}`;
+  const inner = plateWidth(text, plate) - TEXT_X - 3;
+  const bolts = plate.bolts ? `|${plate.bolts.left}/${plate.bolts.max}` : "";
+  return `${text}|${plate.level}|${barPixels(plate.hp, inner)}:${healthBand(plate.hp)}|${barPixels(plate.xp, inner)}${bolts}${plate.glow ? "|glow" : ""}`;
 }
 
 const LABEL_FONT = "12px ui-monospace, Menlo, Consolas, monospace";
@@ -631,81 +668,153 @@ function measure(text: string): number {
   }
   return Math.ceil(measurer.measureText(text).width);
 }
-const levelText = (plate: PlateStats) => `Lv${plate.level}`;
-function plateWidth(text: string, plate?: PlateStats): number {
-  if (!plate) return measure(text) + 8;
-  return Math.max(MIN_PLATE_WIDTH, measure(levelText(plate)) + 6 + measure(text) + 8);
+
+/** Width of the bolts after a name, with the gap before them. */
+const boltsWidth = (plate: PlateStats) => (plate.bolts && plate.bolts.max > 0 ? 4 + plate.bolts.max * 6 - 1 : 0);
+/** A name's width: in the bitmap font, or the system font for a name it cannot draw. */
+const nameWidth = (text: string) => (canDrawPixelText(text) ? pixelTextWidth(text) : measure(text));
+function plateWidth(text: string, plate: PlateStats): number {
+  const line = nameWidth(text) + boltsWidth(plate);
+  return TEXT_X + Math.max(MIN_BAR, line) + 3;
 }
 
-/**
- * A name tag, and with `plate` a hero's overhead plate: their level in gold
- * beside the name, then a thin HP bar (green, yellow, red as it drops) and a
- * thinner XP bar. Every pixel is solid, so it stays as crisp as the sprite.
- * Returns the texture, its width-to-height ratio, and how many of its rows
- * are the name line (the rest sit under it).
- */
-export function labelTexture(text: string, plate?: PlateStats): { texture: THREE.CanvasTexture; aspect: number } {
-  // Drawn small and then snapped to solid pixels, so a name is as hard-edged as the sprite under it.
-  // Regular weight at this size gives strokes one pixel wide; bold fills the letters in.
-  const canvas = document.createElement("canvas");
-  canvas.width = plateWidth(text, plate);
-  canvas.height = plate ? PLATE_ROWS : NAME_ROWS;
-  const ctx = canvas.getContext("2d", { willReadFrequently: true })!;
-  ctx.font = LABEL_FONT;
-  (ctx as CanvasRenderingContext2D & { letterSpacing?: string }).letterSpacing = "1px";
-  ctx.textBaseline = "middle";
-  ctx.fillStyle = "#ffffff";
-  const mid = NAME_ROWS / 2 + 1;
-  // Where the gold level ends and the name begins.
-  let split = 0;
-  if (plate) {
-    const lv = levelText(plate);
-    const lvW = measure(lv);
-    const nameW = measure(text);
-    const left = Math.floor((canvas.width - (lvW + 6 + nameW)) / 2);
-    ctx.textAlign = "left";
-    ctx.fillText(lv, left, mid);
-    ctx.fillText(text, left + lvW + 6, mid);
-    split = left + lvW + 3;
-  } else {
-    ctx.textAlign = "center";
-    ctx.fillText(text, canvas.width / 2, mid);
-  }
-  // Every pixel becomes either text or plate: no soft edges for the sampler to smear.
-  const image = ctx.getImageData(0, 0, canvas.width, canvas.height);
-  const px = image.data;
-  for (let k = 0; k < px.length; k += 4) {
-    const ink = px[k + 3] >= 96;
-    const x = (k / 4) % canvas.width;
-    const colour = x < split ? LEVEL_INK : NAME_INK;
-    px[k] = ink ? colour[0] : PLATE_BG[0];
-    px[k + 1] = ink ? colour[1] : PLATE_BG[1];
-    px[k + 2] = ink ? colour[2] : PLATE_BG[2];
-    px[k + 3] = ink ? 255 : PLATE_BG[3];
-  }
-  ctx.putImageData(image, 0, 0);
-  if (plate) {
-    const x0 = 3;
-    const inner = canvas.width - 6;
-    const bar = (y: number, rows: number, fraction: number, colour: string, track = BAR_TRACK) => {
-      ctx.fillStyle = track;
-      ctx.fillRect(x0, y, inner, rows);
-      const filled = barPixels(fraction, inner);
-      if (filled > 0) {
-        ctx.fillStyle = colour;
-        ctx.fillRect(x0, y, filled, rows);
-      }
-    };
-    bar(NAME_ROWS - 1, 3, plate.hp, HP_COLOR[healthBand(plate.hp)]);
-    if (plate.glow) bar(NAME_ROWS + 3, 2, plate.xp, XP_GLOW_COLOR, XP_GLOW_TRACK);
-    else bar(NAME_ROWS + 3, 2, plate.xp, XP_COLOR);
-  }
+function makeTexture(canvas: HTMLCanvasElement): THREE.CanvasTexture {
   const texture = new THREE.CanvasTexture(canvas);
   texture.magFilter = THREE.NearestFilter;
   texture.minFilter = THREE.NearestFilter;
   texture.generateMipmaps = false;
   texture.colorSpace = THREE.SRGBColorSpace;
-  return { texture, aspect: canvas.width / canvas.height };
+  return texture;
+}
+
+/** Fill the cells of a pixel pattern at (x, y), one colour per row or one for all. */
+function stamp(ctx: CanvasRenderingContext2D, rows: string[], x: number, y: number, ink: string | string[], mark = "#") {
+  rows.forEach((row, r) => {
+    ctx.fillStyle = typeof ink === "string" ? ink : ink[r];
+    for (let c = 0; c < row.length; c++) if (row[c] === mark) ctx.fillRect(x + c, y + r, 1, 1);
+  });
+}
+
+/** The level shield at (x, y): rim, field with a lit top-left, and the number. */
+function drawShield(ctx: CanvasRenderingContext2D, level: number, x: number, y: number) {
+  // The field is everything inside the rim, row by row.
+  SHIELD.forEach((row, r) => {
+    const first = row.indexOf("#");
+    const last = row.lastIndexOf("#");
+    if (r === 0 || last - first < 2) return;
+    ctx.fillStyle = r <= 2 ? SHIELD_FIELD_LIT : SHIELD_FIELD;
+    ctx.fillRect(x + first + 1, y + r, last - first - 1, 1);
+  });
+  stamp(ctx, SHIELD, x, y, SHIELD_RIM);
+  const digits = String(Math.min(99, Math.max(0, level)));
+  if (digits.length === 1) {
+    drawPixelText(ctx, digits, x + 3, y + 2, SHIELD_INK);
+  } else {
+    drawSmallDigits(ctx, digits, x + 2, y + 3, SHIELD_INK);
+  }
+}
+
+/** Text the bitmap font cannot draw, in the system font snapped to solid pixels, top-left at (x, y). */
+function drawSystemText(ctx: CanvasRenderingContext2D, text: string, x: number, y: number) {
+  const scratch = document.createElement("canvas");
+  scratch.width = measure(text) + 2;
+  scratch.height = 13;
+  const sc = scratch.getContext("2d", { willReadFrequently: true })!;
+  sc.font = LABEL_FONT;
+  (sc as CanvasRenderingContext2D & { letterSpacing?: string }).letterSpacing = "1px";
+  sc.textBaseline = "middle";
+  sc.fillStyle = "#ffffff";
+  sc.fillText(text, 0, 7);
+  const px = sc.getImageData(0, 0, scratch.width, scratch.height).data;
+  ctx.fillStyle = NAME_INK;
+  for (let k = 0; k < px.length; k += 4) {
+    if (px[k + 3] < 96) continue;
+    const i = k / 4;
+    ctx.fillRect(x + (i % scratch.width), y + Math.floor(i / scratch.width), 1, 1);
+  }
+}
+
+/** A plain name tag, in the bitmap font where it can draw the name and the system font where it cannot. */
+function tagTexture(text: string): { texture: THREE.CanvasTexture; aspect: number } {
+  const canvas = document.createElement("canvas");
+  if (canDrawPixelText(text)) {
+    canvas.width = pixelTextWidth(text) + 6;
+    canvas.height = TAG_ROWS;
+    const ctx = canvas.getContext("2d")!;
+    ctx.fillStyle = `rgba(${PLATE_BG[0]}, ${PLATE_BG[1]}, ${PLATE_BG[2]}, ${PLATE_BG[3] / 255})`;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    drawPixelText(ctx, text, 3, 1, NAME_INK);
+    return { texture: makeTexture(canvas), aspect: canvas.width / canvas.height };
+  }
+  // A name the bitmap font cannot draw: the system font, snapped to solid pixels.
+  canvas.width = measure(text) + 8;
+  canvas.height = 15;
+  const ctx = canvas.getContext("2d", { willReadFrequently: true })!;
+  ctx.font = LABEL_FONT;
+  (ctx as CanvasRenderingContext2D & { letterSpacing?: string }).letterSpacing = "1px";
+  ctx.textBaseline = "middle";
+  ctx.textAlign = "center";
+  ctx.fillStyle = "#ffffff";
+  ctx.fillText(text, canvas.width / 2, 15 / 2 + 1);
+  const image = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const px = image.data;
+  for (let k = 0; k < px.length; k += 4) {
+    const ink = px[k + 3] >= 96;
+    px[k] = ink ? 241 : PLATE_BG[0];
+    px[k + 1] = ink ? 238 : PLATE_BG[1];
+    px[k + 2] = ink ? 228 : PLATE_BG[2];
+    px[k + 3] = ink ? 255 : PLATE_BG[3];
+  }
+  ctx.putImageData(image, 0, 0);
+  return { texture: makeTexture(canvas), aspect: canvas.width / canvas.height };
+}
+
+/**
+ * A name tag, and with `plate` a hero's overhead plate: their level on a
+ * little gold shield, the name in the bitmap font, then a thin HP bar
+ * (green, yellow, red as it drops) and a thinner XP bar. On your own plate,
+ * a lightning bolt for each gathering outing, lit for those left. Every
+ * pixel is solid, so it stays as crisp as the sprite under it.
+ */
+export function labelTexture(text: string, plate?: PlateStats): { texture: THREE.CanvasTexture; aspect: number } {
+  if (!plate) return tagTexture(text);
+  const canvas = document.createElement("canvas");
+  canvas.width = plateWidth(text, plate);
+  canvas.height = PLATE_ROWS;
+  const ctx = canvas.getContext("2d")!;
+  const p = plate;
+  const w = canvas.width;
+  // The plate: a dark rim, its field, and a faint sheen along the top.
+  ctx.fillStyle = PLATE_EDGE;
+  ctx.fillRect(6, 1, w - 6, PLATE_ROWS - 1);
+  ctx.fillStyle = PLATE_FILL;
+  ctx.fillRect(7, 2, w - 8, PLATE_ROWS - 3);
+  ctx.fillStyle = PLATE_SHEEN;
+  ctx.fillRect(12, 2, w - 14, 1);
+  drawShield(ctx, p.level, 1, 3);
+  if (canDrawPixelText(text)) drawPixelText(ctx, text, TEXT_X, TEXT_Y, NAME_INK);
+  else drawSystemText(ctx, text, TEXT_X, TEXT_Y - 2);
+  if (p.bolts && p.bolts.max > 0) {
+    let x = TEXT_X + nameWidth(text) + 4;
+    for (let i = 0; i < p.bolts.max; i++) {
+      stamp(ctx, BOLT, x, TEXT_Y, i < p.bolts.left ? BOLT_ON : BOLT_OFF);
+      x += 6;
+    }
+  }
+  const inner = w - TEXT_X - 3;
+  const bar = (y: number, rows: number, fraction: number, colour: string, track = BAR_TRACK) => {
+    ctx.fillStyle = track;
+    ctx.fillRect(TEXT_X, y, inner, rows);
+    const filled = barPixels(fraction, inner);
+    if (filled > 0) {
+      ctx.fillStyle = colour;
+      ctx.fillRect(TEXT_X, y, filled, rows);
+    }
+  };
+  bar(HP_Y, 2, p.hp, HP_COLOR[healthBand(p.hp)]);
+  if (p.glow) bar(XP_Y, 2, p.xp, XP_GLOW_COLOR, XP_GLOW_TRACK);
+  else bar(XP_Y, 2, p.xp, XP_COLOR);
+  return { texture: makeTexture(canvas), aspect: canvas.width / canvas.height };
 }
 
 // ---------- speech bubbles ----------
