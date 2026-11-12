@@ -74,7 +74,7 @@ describe("brewing", () => {
 });
 
 describe("the smithy", () => {
-  const weapon = { kind: "weapon" as const, name: "Audit Mace" };
+  const weapon = { kind: "weapon" as const, name: "Anchor Mace" };
   const armour = { kind: "armor" as const, name: "Ledger Mail" };
   const rich = { built: true, gold: 1000, resources: { iron: 100, copper: 100 } };
 
@@ -106,8 +106,8 @@ describe("the smithy", () => {
   });
 
   it("shows the upgrade in the name", () => {
-    expect(upgradedName("Audit Mace", 2)).toBe("Audit Mace +2");
-    expect(upgradedName("Audit Mace", 0)).toBe("Audit Mace");
-    expect(upgradedName("Audit Mace", undefined)).toBe("Audit Mace");
+    expect(upgradedName("Anchor Mace", 2)).toBe("Anchor Mace +2");
+    expect(upgradedName("Anchor Mace", 0)).toBe("Anchor Mace");
+    expect(upgradedName("Anchor Mace", undefined)).toBe("Anchor Mace");
   });
 });

@@ -113,7 +113,7 @@ export function createBattle(setup: BattleSetup, rng: Rng): { state: BattleState
       down: false,
     };
   });
-  // The SRE Warden comes into every fight already guarded (see advance for how long it lasts).
+  // The Lighthouse Warden comes into every fight already guarded (see advance for how long it lasts).
   const combatants = [
     ...setup.heroes.map((h) => {
       const down = h.hp <= 0;
@@ -188,7 +188,7 @@ function advance(state: BattleState, rng: Rng, events: BattleEvent[]) {
     if (actor.down) continue;
 
     // Guard and taunt last until the start of the combatant's next turn. The
-    // SRE Warden's opening guard holds through its first turn, to its second.
+    // Lighthouse Warden's opening guard holds through its first turn, to its second.
     const keepGuard = actor.kind === "sre_warden" && actor.side === "hero" && state.round === 1;
     actor.effects = actor.effects.filter((e) => e.kind !== "taunting" && (keepGuard || e.kind !== "guarded"));
     for (const e of [...actor.effects]) {
@@ -203,7 +203,7 @@ function advance(state: BattleState, rng: Rng, events: BattleEvent[]) {
     if (state.status !== "active") break;
     if (actor.down) continue;
 
-    // The Backend Druid grows back a little at the start of each of its turns, stunned or not.
+    // The Reef Druid grows back a little at the start of each of its turns, stunned or not.
     if (actor.side === "hero" && actor.kind === "backend_druid" && actor.hp < actor.maxHp) {
       const amount = Math.min(actor.maxHp - actor.hp, DRUID_REGEN);
       actor.hp += amount;
@@ -285,7 +285,7 @@ function resolveAbility(
   });
   events.push({ t: "check", actor: actor.id, check });
   const scale = check.successes / def.rolls;
-  // While a Frontend Bard stands, every other hero hits a little harder.
+  // While a Shanty Bard stands, every other hero hits a little harder.
   const aura = actor.side === "hero" && actor.kind !== "frontend_bard" && living(state, "hero").some((h) => h.kind === "frontend_bard") ? BARD_AURA : 0;
 
   for (const target of targets) {
@@ -300,7 +300,7 @@ function resolveAbility(
       const amount = damage(state, target, Math.round((def.damage + actor.level + actor.power + aura + armorBonus + sizeBonus) * scale), events);
       events.push({ t: "hit", actor: actor.id, target: target.id, amount, ability: def.name, perfect: check.perfect });
       if (check.perfect && def.perfect && !target.down) addEffect(target, def.perfect.effect, def.perfect.turns, events);
-      // The Data Warlock's perfect hits leave the target bleeding.
+      // The Wreck Warlock's perfect hits leave the target bleeding.
       if (check.perfect && actor.side === "hero" && actor.kind === "data_warlock" && !target.down) addEffect(target, "bleeding", WARLOCK_BLEED_TURNS, events);
       if (def.drain && amount > 0 && !actor.down && actor.hp < actor.maxHp) {
         const healed = Math.min(actor.maxHp - actor.hp, Math.max(1, Math.round(amount * def.drain)));

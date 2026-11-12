@@ -3,7 +3,7 @@
 // A weapon can be sharpened and a piece of armour reinforced, one step at a
 // time, each step adding 1 to its power, up to SMITHY_MAX_STEPS. Each step
 // costs more than the last. The upgrade lives on the item, so it goes with
-// it through trades and shows in its name ("Audit Mace +2").
+// it through trades and shows in its name ("Anchor Mace +2").
 
 import type { ItemDef } from "./gear";
 import type { Resources } from "./hut";
@@ -56,7 +56,7 @@ export function smithyProblem(
   return null;
 }
 
-/** The name with its upgrade: "Audit Mace +2". */
+/** The name with its upgrade: "Anchor Mace +2". */
 export function upgradedName(name: string, upgrades: number | undefined): string {
   return upgrades && upgrades > 0 ? `${name} +${upgrades}` : name;
 }
