@@ -61,6 +61,9 @@ export function hutFloor(room: WorldMap): HexPos[] {
   return room.tiles.filter((t) => t.biome === "floor" && poiAt(room, t)?.kind !== "door").map((t) => ({ q: t.q, r: t.r }));
 }
 
+/** True for something small enough to sit anywhere in a hex or on a surface. */
+export const isSmall = (defId: string): boolean => FURNISHINGS[defId]?.size === "small";
+
 /** The furnishings that are standing in the room, not in storage. */
 export function placedFurnishings<T extends Pick<Furnishing, "q" | "r">>(furnishings: T[]): (T & { q: number; r: number })[] {
   return furnishings.filter((f): f is T & { q: number; r: number } => f.q !== null && f.r !== null);
@@ -68,20 +71,84 @@ export function placedFurnishings<T extends Pick<Furnishing, "q" | "r">>(furnish
 
 export const validFacing = (facing: unknown): facing is number => Number.isInteger(facing) && (facing as number) >= 0 && (facing as number) <= 5;
 
-/**
- * Why `defId` cannot be put down on `pos`, or null if it can. One furnishing
- * per floor hex, never on the door, a wall or off the map. To move a piece
- * that is already placed, leave it out of `placed`.
- */
-export function placeProblem(room: WorldMap, placed: Pick<Furnishing, "q" | "r">[], defId: string, pos: HexPos): string | null {
-  if (!FURNISHINGS[defId]) return "There is no such furnishing.";
+type Placed = Pick<Furnishing, "q" | "r"> & Partial<Pick<Furnishing, "defId" | "onId">>;
+
+/** A small thing on the floor stays this close to the middle of its hex (whose flat sides are about 0.87 away). */
+export const SMALL_REACH = 0.7;
+/** The most small things one hex of floor, or one surface, takes. */
+export const SMALL_PER_SPOT = 8;
+
+/** Why the floor hex `pos` cannot be stood on by a furnishing, or null. */
+function floorProblem(room: WorldMap, pos: HexPos): string | null {
   if (!Number.isInteger(pos.q) || !Number.isInteger(pos.r)) return "That is not a place in the room.";
   const tile = tileAt(room, pos);
   if (!tile) return "That is outside the room.";
   if (tile.biome !== "floor") return "That is a wall.";
   if (poiAt(room, pos)?.kind === "door") return "The doorway has to stay clear.";
-  if (placed.some((f) => f.q === pos.q && f.r === pos.r)) return "Something already stands there.";
   return null;
+}
+
+/**
+ * Why `defId` cannot be put down on `pos`, or null if it can. One piece of
+ * furniture per floor hex, never on the door, a wall or off the map, and not
+ * on top of small things left on the floor. To move a piece that is already
+ * placed, leave it out of `placed`.
+ */
+export function placeProblem(room: WorldMap, placed: Placed[], defId: string, pos: HexPos): string | null {
+  if (!FURNISHINGS[defId]) return "There is no such furnishing.";
+  const floor = floorProblem(room, pos);
+  if (floor) return floor;
+  const here = placed.filter((f) => f.q === pos.q && f.r === pos.r);
+  // Callers that only know positions (older tests, the path finder) count everything as furniture.
+  if (here.some((f) => !f.defId || !isSmall(f.defId))) return "Something already stands there.";
+  if (here.some((f) => f.onId == null)) return "Clear the small things off that spot first.";
+  return null;
+}
+
+/** Where a small thing is to go: a spot on a floor hex, or a spot on another piece's surface. */
+export type SmallSpot =
+  | { on?: undefined; pos: HexPos; x: number; z: number; angle: number }
+  | { on: number; x: number; z: number; angle: number };
+
+/**
+ * Why the small thing `defId` cannot go on `spot`, or null if it can. On the
+ * floor it keeps near the middle of a free hex (no furniture there); on a
+ * piece it stands within that piece's top. `others` is everything owned but
+ * the thing being moved.
+ */
+export function smallPlaceProblem(room: WorldMap, others: Furnishing[], defId: string, spot: SmallSpot): string | null {
+  if (!isSmall(defId)) return "That is too big to set down there.";
+  const nums = [spot.x, spot.z, spot.angle];
+  if (!nums.every((n) => typeof n === "number" && Number.isFinite(n))) return "That is not a place in the room.";
+  if (spot.on !== undefined) {
+    const base = others.find((f) => f.id === spot.on);
+    const top = base && FURNISHINGS[base.defId]?.surface;
+    if (!base || base.q === null) return "That is not in the room.";
+    if (!top) return "Nothing can stand on that.";
+    if (Math.abs(spot.x - (top.x ?? 0)) > top.w / 2 + 1e-6 || Math.abs(spot.z - (top.z ?? 0)) > top.d / 2 + 1e-6) return "That would fall off the edge.";
+    if (others.filter((f) => f.onId === base.id).length >= SMALL_PER_SPOT) return "There is no room left on top.";
+    return null;
+  }
+  const floor = floorProblem(room, spot.pos);
+  if (floor) return floor;
+  if (Math.hypot(spot.x, spot.z) > SMALL_REACH + 1e-6) return "Keep it inside the hex.";
+  const here = placedFurnishings(others).filter((f) => f.q === spot.pos.q && f.r === spot.pos.r);
+  if (here.some((f) => !isSmall(f.defId))) return "Something already stands there. Set it on top, if it has a top.";
+  if (here.filter((f) => f.onId === null).length >= SMALL_PER_SPOT) return "That spot is full.";
+  return null;
+}
+
+/** How many slots a container has free, given what is already in it (decorations, gear, stacks of materials). */
+export function storageFree(defId: string, used: number): number {
+  return Math.max(0, (FURNISHINGS[defId]?.storage ?? 0) - used);
+}
+
+/** Why `piece` cannot be put into `container`, or null if it can. `used` is how many slots the container already fills. */
+export function putInProblem(piece: Pick<Furnishing, "id" | "defId">, container: Pick<Furnishing, "id" | "defId"> | undefined, used: number): string | null {
+  if (!container || !FURNISHINGS[container.defId]?.storage) return "That does not hold anything.";
+  if (piece.id === container.id) return "It cannot go inside itself.";
+  if (FURNISHINGS[piece.defId]?.storage) return "Containers do not go inside other containers.";
+  return storageFree(container.defId, used) > 0 ? null : "It is full.";
 }
 
 /**
@@ -89,13 +156,24 @@ export function placeProblem(room: WorldMap, placed: Pick<Furnishing, "q" | "r">
  * floor, on the doorway, or sharing a hex with an earlier piece. When a hut
  * changes size these go back to storage and the rest stay where they are.
  */
-export function displacedFurnishings<T extends Pick<Furnishing, "defId" | "q" | "r">>(tier: number, furnishings: T[]): T[] {
+export function displacedFurnishings<T extends Pick<Furnishing, "defId" | "q" | "r"> & Partial<Pick<Furnishing, "id" | "onId">>>(tier: number, furnishings: T[]): T[] {
   const room = hutRoom(tier);
   const kept: { q: number; r: number }[] = [];
   const out: T[] = [];
-  for (const f of placedFurnishings(furnishings)) {
+  const placed = placedFurnishings(furnishings);
+  // Furniture first: one to a hex. Then small things: on the floor, the hex
+  // must be floor and free of furniture; on a piece, that piece must stay.
+  for (const f of placed) {
+    if (isSmall(f.defId)) continue;
     if (placeProblem(room, kept, f.defId, f)) out.push(f);
     else kept.push({ q: f.q, r: f.r });
+  }
+  for (const f of placed) {
+    if (!isSmall(f.defId)) continue;
+    const lost = f.onId != null
+      ? !placed.some((b) => b.id === f.onId) || out.some((b) => b.id === f.onId)
+      : floorProblem(room, f) !== null || kept.some((k) => k.q === f.q && k.r === f.r);
+    if (lost) out.push(f);
   }
   return out;
 }
@@ -104,8 +182,9 @@ export function displacedFurnishings<T extends Pick<Furnishing, "defId" | "q" | 
 export const HUT_MAX_PATH = 40;
 
 /** A walkable route between two hexes of the room, or null. Walls and placed furniture are walked around. */
-export function hutPath(room: WorldMap, placed: Pick<Furnishing, "q" | "r">[], from: HexPos, to: HexPos): HexPos[] | null {
-  const blocked = new Set(placedFurnishings(placed).map(posKey));
+export function hutPath(room: WorldMap, placed: Placed[], from: HexPos, to: HexPos): HexPos[] | null {
+  // Small things are stepped over.
+  const blocked = new Set(placedFurnishings(placed).filter((f) => !f.defId || !isSmall(f.defId)).map(posKey));
   const route = findPath(room, from, to, HUT_MAX_PATH, (t) => (t.biome !== "floor" || blocked.has(posKey(t)) ? Infinity : 1));
   return route && route.path.length > 0 ? route.path : null;
 }
@@ -135,9 +214,15 @@ export type HutServerMessage =
 export type HutClientMessage =
   | { type: "move"; to: HexPos }
   | { type: "say"; text: string }
-  /** Owner only. Put a stored furnishing down, or move a placed one. */
-  | { type: "place"; id: number; to: HexPos; facing?: number }
+  /**
+   * Owner only. Put a stored furnishing down, or move a placed one. Furniture
+   * goes on hex `to`; a small thing also takes an offset `x`/`z` and an
+   * `angle`, and with `on` stands on that piece's top (then `to` is ignored).
+   */
+  | { type: "place"; id: number; to: HexPos; facing?: number; x?: number; z?: number; angle?: number; on?: number }
+  /** Owner only. Into a container. */
+  | { type: "put_in"; id: number; into: number }
   /** Owner only. Back into storage. */
   | { type: "pick_up"; id: number }
-  /** Owner only. Turn a placed furnishing; one step clockwise unless `facing` is given. */
-  | { type: "rotate"; id: number; facing?: number };
+  /** Owner only. Turn a placed furnishing; one step clockwise unless `facing` (or, for a small thing, `angle`) is given. */
+  | { type: "rotate"; id: number; facing?: number; angle?: number };
