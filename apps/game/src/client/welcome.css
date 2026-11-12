@@ -29,8 +29,8 @@
 .anchor-mark svg { width: 100%; height: 100%; display: block; }
 .harbor-title { margin: 0; display: flex; flex-direction: column; align-items: center; gap: 6px; }
 .harbor-title svg { display: block; max-width: 100%; height: auto; }
-.harbor-title-the { display: flex; align-items: center; gap: 10px; }
-.harbor-title-the .rule { width: 48px; height: 3px; background: #ffd23f; box-shadow: 0 3px 0 #1b1830; }
+.harbor-title-ribbon { display: flex; align-items: center; gap: 10px; }
+.harbor-title-ribbon .rule { width: 48px; height: 3px; background: #ffd23f; box-shadow: 0 3px 0 #1b1830; }
 .harbor-title-plain { font-size: 40px; color: var(--gold); text-shadow: 3px 3px 0 #1b1830; letter-spacing: 0.04em; }
 .harbor-tagline { color: #e8dcc0; text-shadow: 0 2px 0 #0e0b1c; margin: 6px 0 0; font-size: 15px; }
 .harbor-returning-hint { margin: 2px 0 0; color: var(--muted); text-shadow: 0 2px 0 #0e0b1c; font-size: 13px; }

@@ -15,6 +15,7 @@ import "./welcome.css";
 const GLYPHS: Record<string, string[]> = {
   A: [".###.", "#...#", "#...#", "#####", "#...#", "#...#", "#...#"],
   B: ["####.", "#...#", "#...#", "####.", "#...#", "#...#", "####."],
+  F: ["#####", "#....", "#....", "####.", "#....", "#....", "#...."],
   E: ["#####", "#....", "#....", "####.", "#....", "#....", "#####"],
   H: ["#...#", "#...#", "#...#", "#####", "#...#", "#...#", "#...#"],
   L: ["#....", "#....", "#....", "#....", "#....", "#....", "#####"],
@@ -88,24 +89,37 @@ export function AnchorMark() {
   return <span className="anchor-mark" aria-hidden dangerouslySetInnerHTML={{ __html: ANCHOR }} />;
 }
 
-/** "The Heylets Harbor" as a pixel-art title, with the name as real text for screen readers and search. */
+/** A small ribbon line of the title: pixel text between two gold rules. */
+function Ribbon({ text, scale }: { text: string; scale: number }) {
+  return (
+    <span className="harbor-title-ribbon">
+      <span className="rule" />
+      <PixelText text={text} scale={scale} />
+      <span className="rule" />
+    </span>
+  );
+}
+
+/**
+ * The game's name as a pixel-art title, with the name as real text for screen
+ * readers. "The Harbor of Heylets" stacks as THE / HARBOR / OF HEYLETS; any
+ * other name is drawn on one line, or as plain text if the font lacks a letter.
+ */
 export function HarborTitle({ name }: { name: string }) {
-  const full = /^the /i.test(name) ? name : `The ${name}`;
-  const rest = full.replace(/^the /i, "");
+  const m = /^the (\S+) (of .+)$/i.exec(name);
   return (
     <h1 className="harbor-title">
-      <span className="visually-hidden">{full}</span>
-      {canPixelText(rest) ? (
+      <span className="visually-hidden">{name}</span>
+      {m && canPixelText(m[1]) && canPixelText(m[2]) ? (
         <>
-          <span className="harbor-title-the">
-            <span className="rule" />
-            <PixelText text="THE" scale={3} />
-            <span className="rule" />
-          </span>
-          <PixelText className="harbor-title-name" text={rest} scale={7} />
+          <Ribbon text="THE" scale={3} />
+          <PixelText className="harbor-title-name" text={m[1]} scale={8} />
+          <Ribbon text={m[2]} scale={4} />
         </>
+      ) : canPixelText(name) ? (
+        <PixelText className="harbor-title-name" text={name} scale={6} />
       ) : (
-        <span aria-hidden className="harbor-title-plain">{full}</span>
+        <span aria-hidden className="harbor-title-plain">{name}</span>
       )}
     </h1>
   );

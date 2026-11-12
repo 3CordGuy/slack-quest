@@ -4,13 +4,16 @@
 
 import { useMemo, useRef, useState } from "react";
 import { STARTING_STATS } from "@gantt-quest/core";
-import { HARBOR_NAME, HERO_CLASSES, RARITY_COLOR, STAT_BLURB, STAT_KEYS, STAT_LABEL, WEAPON_ICON, statPct } from "@gantt-quest/world";
+import { HERO_CLASSES, RARITY_COLOR, STAT_BLURB, STAT_KEYS, STAT_LABEL, WEAPON_ICON, statPct } from "@gantt-quest/world";
 import { EmailSignIn } from "./Account";
 import { api, type Character, type Me, type StatKey } from "./api";
 import { Icon } from "./items";
 import { blurb, label } from "./labels";
 import { spriteDataUrl } from "./render/sprites";
 import { AnchorMark, HarborBackdrop, HarborTitle } from "./Welcome";
+
+/** The game's name, as the browser tab shows it (index.html). */
+const GAME_TITLE = "The Harbor of Heylets";
 
 type Act = (fn: () => Promise<unknown>) => Promise<void>;
 
@@ -59,7 +62,7 @@ export function Harbor({ me, refresh, invite }: Props) {
       <div className="harbor">
         <header className="harbor-hero">
           <AnchorMark />
-          <HarborTitle name={HARBOR_NAME} />
+          <HarborTitle name={GAME_TITLE} />
           <p className="harbor-tagline">Your crew's base between voyages. Every island is a new story.</p>
           {!me.player.email && !hasCharacter && (
             <p className="harbor-returning-hint">
