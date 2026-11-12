@@ -378,6 +378,7 @@ export class Ambience {
         const under = 0.06 + r(8) * 0.06;
         const underBeat = 3 + r(9) * 3;
         const drift = (r(12) - 0.5) * 0.8;
+        const life = smooth(0, 0.12, head) * (1 - smooth(0.66, 1, head));
         for (let i = 0; i < TRAIL; i++) {
           // Each pixel follows the head a little further back along the same path.
           const s = head - i * 0.0095;
@@ -385,8 +386,8 @@ export class Ambience {
           const up = Math.sin(s * beat + r(13) * 6) * swell + Math.sin(s * underBeat + r(6) * 6) * under + (s - 0.5) * drift;
           const k = n * TRAIL + i;
           pos.setXYZ(k, x0 + cos * along, y0 + up, z0 - sin * along);
-          // Fades toward the tail, and in and out at the ends of the crossing.
-          const fade = s <= 0 ? 0 : Math.sin(Math.PI * Math.min(1, s)) ** 0.6 * (1 - i / TRAIL) ** 0.8;
+          // Fades toward the tail, and the whole trail fades in at the start of a crossing and out over its last third.
+          const fade = s <= 0 ? 0 : life * (1 - i / TRAIL) ** 0.8;
           col.setXYZW(k, 1, 0.95 + 0.05 * this.daylight, glow, fade * (0.55 + 0.35 * this.daylight));
         }
       });
