@@ -457,16 +457,33 @@ export function spriteKey(kind: string, outfit?: Outfit, asleep = false): string
   return (outfit ? `${kind}|${outfitKey(outfit)}` : kind) + (asleep ? "|zz" : "") + `|r${revision}`;
 }
 
+/** Flip the canvas left to right, in place. */
+function mirror(ctx: CanvasRenderingContext2D) {
+  const img = ctx.getImageData(0, 0, W, H);
+  const out = ctx.createImageData(W, H);
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const from = (y * W + x) * 4;
+      const to = (y * W + (W - 1 - x)) * 4;
+      for (let k = 0; k < 4; k++) out.data[to + k] = img.data[from + k];
+    }
+  }
+  ctx.putImageData(out, 0, 0);
+}
+
 /** Draw one sprite onto a fresh canvas. Shared by the cached textures and the admin preview. */
 function drawSprite(kind: string, look: Look, outfit: Outfit | undefined, asleep: boolean): HTMLCanvasElement {
   const canvas = document.createElement("canvas");
   canvas.width = W;
   canvas.height = H;
   const ctx = canvas.getContext("2d", { willReadFrequently: true })!;
-  if (kind === "wolf") drawWolf(ctx);
-  // The pack leader: the same animal, darker, with a red eye. The renderer draws it larger.
-  else if (kind === "alpha") drawWolf(ctx, "#4a4f5c", "#2c3039", "#ff4d4d");
-  else if (kind === "dummy") drawDummy(ctx);
+  if (kind === "wolf" || kind === "alpha") {
+    // The pack leader: the same animal, darker, with a red eye. The renderer draws it larger.
+    if (kind === "wolf") drawWolf(ctx);
+    else drawWolf(ctx, "#4a4f5c", "#2c3039", "#ff4d4d");
+    // Drawn nose-right; turn it round so it faces left, at the heroes across the arena.
+    mirror(ctx);
+  } else if (kind === "dummy") drawDummy(ctx);
   else if (outfit) drawHero(ctx, look, outfit);
   else drawHumanoid(ctx, look);
   // Asleep: the eyes are shut, a short dark line where each one was.
