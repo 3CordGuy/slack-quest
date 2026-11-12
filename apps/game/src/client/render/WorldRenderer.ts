@@ -60,6 +60,11 @@ function nearestTurn(from: number, to: number): number {
   const full = Math.PI * 2;
   return to + Math.round((from - to) / full) * full;
 }
+/** Keys that slide the view, as [right, forward]. */
+const PAN_KEYS: Record<string, [number, number]> = {
+  w: [0, 1], s: [0, -1], a: [-1, 0], d: [1, 0],
+  arrowup: [0, 1], arrowdown: [0, -1], arrowleft: [-1, 0], arrowright: [1, 0],
+};
 const PLAYER_COLORS = ["#ffd23f", "#5ce1e6", "#ff7ab6", "#9dff6b"];
 const BIOME_COLOR: Record<string, string> = { plains: "#7cb856", forest: "#4c9a52", hills: "#a39672", water: "#3f86dc", dock: "#9a7748" };
 
@@ -187,6 +192,8 @@ export class WorldRenderer {
   private userYaw = 0;
   /** The current drag turns the camera instead of panning it. */
   private rotating = false;
+  /** Movement keys held down right now (W A S D and the arrows), for sliding the view. */
+  private heldKeys = new Set<string>();
   private rotateButtons: HTMLDivElement;
   private pointer = { x: 0, y: 0, downX: 0, downY: 0, down: false, dragged: false, dirty: false, inside: false };
 
@@ -236,6 +243,8 @@ export class WorldRenderer {
     canvas.addEventListener("wheel", this.onWheel, { passive: false });
     canvas.addEventListener("contextmenu", this.onContextMenu);
     addEventListener("keydown", this.onKeyDown);
+    addEventListener("keyup", this.onKeyUp);
+    addEventListener("blur", this.onBlur);
 
     // Two small buttons at the right edge, for those without a right mouse button or a keyboard.
     this.rotateButtons = document.createElement("div");
@@ -268,6 +277,8 @@ export class WorldRenderer {
     canvas.removeEventListener("wheel", this.onWheel);
     canvas.removeEventListener("contextmenu", this.onContextMenu);
     removeEventListener("keydown", this.onKeyDown);
+    removeEventListener("keyup", this.onKeyUp);
+    removeEventListener("blur", this.onBlur);
     this.rotateButtons.remove();
     this.renderer.dispose();
     canvas.remove();
@@ -890,7 +901,19 @@ export class WorldRenderer {
     if (e.metaKey || e.ctrlKey || e.altKey || (el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName)))) return;
     if (e.key === "q" || e.key === "Q") this.rotateBy(-1);
     else if (e.key === "e" || e.key === "E") this.rotateBy(1);
+    else if (PAN_KEYS[e.key.toLowerCase()]) {
+      this.heldKeys.add(e.key.toLowerCase());
+      // Arrow keys would otherwise scroll whatever panel has focus.
+      if (e.key.startsWith("Arrow")) e.preventDefault();
+    }
   };
+
+  private onKeyUp = (e: KeyboardEvent) => {
+    this.heldKeys.delete(e.key.toLowerCase());
+  };
+
+  /** A key released while the window is elsewhere never sends keyup; do not keep sliding. */
+  private onBlur = () => this.heldKeys.clear();
 
   private panBy(dx: number, dy: number) {
     if (this.state?.battle) return;
@@ -1012,6 +1035,19 @@ export class WorldRenderer {
 
     for (let i = this.pending.length - 1; i >= 0; i--) {
       if (this.pending[i].at <= this.clock) this.pending.splice(i, 1)[0].run();
+    }
+
+    // Held movement keys slide the view, at a speed that covers the screen in about a second and a half.
+    if (this.heldKeys.size > 0 && !this.state?.battle) {
+      let x = 0;
+      let y = 0;
+      for (const key of this.heldKeys) {
+        x += PAN_KEYS[key]?.[0] ?? 0;
+        y += PAN_KEYS[key]?.[1] ?? 0;
+      }
+      const speed = this.container.clientHeight * 0.7 * dt;
+      // panBy takes a drag: dragging left moves the view right, so the signs are flipped.
+      if (x || y) this.panBy(-x * speed, y * speed);
     }
 
     this.target.lerp(this.targetGoal, ease);
