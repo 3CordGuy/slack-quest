@@ -1,32 +1,120 @@
-/* The Harbor's works panel: crew projects, their costs and who gave what. */
+/* The Harbor's works panel: a tab per crew project, its costs, and who gave what. */
 
 /* Leaves room for the top bar, which sits above the overlay. */
-.overlay .panel.works-panel { max-width: 760px; max-height: calc(100% - 56px); overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
+/* A fixed height, so switching tabs never moves the panel or its tabs; the project scrolls inside it. */
+.overlay .panel.works-panel { width: min(680px, calc(100vw - 16px)); max-width: none; height: min(600px, calc(100% - 56px)); overflow: hidden; display: flex; flex-direction: column; gap: 8px; }
+.overlay .panel.works-panel.folded { height: auto; }
 .works-head { display: flex; align-items: center; gap: 10px; padding-right: 46px; }
 .works-head h2 { margin: 0; }
-.works-panel h3 { margin: 8px 0 0; }
 .works-panel p { margin: 0; }
-.works-list, .works-gifts { list-style: none; margin: 0; padding: 0; }
-.works-list { display: flex; flex-direction: column; gap: 8px; }
-/* The apothecary and the smithy open together, so they sit side by side. */
-.works-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-.works-pair .works-cost { grid-template-columns: 54px minmax(60px, 1fr) 52px auto; gap: 5px; }
-.works-project { border: 1px solid var(--line); padding: 10px; display: flex; flex-direction: column; gap: 4px; }
-.works-project.built { border-color: var(--good); }
-.works-project.closed { opacity: 0.7; }
-.works-title { display: flex; align-items: center; }
-.works-title .tag.good { color: var(--good); border-color: var(--good); }
-.works-costs { display: flex; flex-direction: column; gap: 2px; margin: 4px 0; }
-.works-cost { display: grid; grid-template-columns: 58px minmax(80px, 1fr) 72px auto; align-items: center; gap: 8px; }
-.works-project.closed .works-cost { grid-template-columns: 58px 1fr; }
-.works-kind { font-size: 13px; }
-.works-cost input { width: 100%; min-width: 0; }
-.works-cost button { white-space: nowrap; }
-.works-fill { background: #8a6d1f; }
+.works-intro { font-size: 13px; }
+.works-panel .small-note { font-size: 12px; }
+
+/* ---- tabs: a picture, a name and a state for each project, then the log ---- */
+.works-tabs { flex: none; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 4px; border-bottom: 1px solid var(--line); padding-bottom: 6px; }
+.works-tab { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 6px 2px 4px; min-width: 0; background: rgba(20, 18, 42, 0.6); border: 1px solid var(--line); }
+.works-tab .pixel-icon { image-rendering: pixelated; }
+.works-tab.selected { border-color: var(--gold); background: #2e2a50; box-shadow: inset 0 -3px 0 var(--gold); }
+.works-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.works-tab-name { font-size: 12px; line-height: 1.2; max-width: 100%; overflow-wrap: anywhere; text-align: center; }
+.works-tab-state { display: inline-flex; align-items: center; gap: 3px; font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.works-tab-state.built { color: var(--good); }
+.works-tab-state.locked { color: var(--gold); }
+.works-tab-state.locked .pixel-icon { width: 12px; height: 12px; }
+.works-mini-bar { display: inline-block; width: 30px; height: 5px; background: #14122a; border: 1px solid var(--line); position: relative; }
+.works-mini-bar > span { position: absolute; inset: 0 auto 0 0; background: #c99a2a; }
+.works-log-icon { display: grid; place-items: center; width: 36px; height: 36px; font-size: 22px; color: var(--muted); }
+.building-icon.dim { filter: grayscale(0.85) brightness(0.75); }
+
+.works-notice { color: var(--good); border: 1px solid #2f6f4a; background: rgba(47, 111, 74, 0.18); padding: 6px 8px; animation: works-pop 0.35s ease-out; }
+@keyframes works-pop { from { transform: translateY(-3px); opacity: 0; } to { transform: none; opacity: 1; } }
+
+/* ---- one project ---- */
+.works-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden; display: flex; flex-direction: column; gap: 8px; min-width: 0; padding-right: 2px; }
+.works-project { display: flex; flex-direction: column; gap: 8px; }
+.works-project-head { display: flex; gap: 12px; align-items: flex-start; }
+.works-picture { flex: none; padding: 4px; border: 1px solid var(--line); background: #14122a; }
+.works-picture.built { border-color: var(--good); }
+.works-picture.locked { border-style: dashed; }
+.works-project-text { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.works-project-text h3 { margin: 0; color: var(--text); text-transform: none; letter-spacing: 0; font-size: 16px; display: flex; align-items: center; flex-wrap: wrap; gap: 4px; }
+.works-project-text h3 .tag { margin-left: 4px; }
+.works-panel .tag.good { color: var(--good); border-color: var(--good); }
+.works-panel .tag.locked { color: var(--gold); border-color: var(--gold); }
+.works-benefit strong { color: var(--gold); font-weight: normal; }
+
+.works-lockbox { display: flex; gap: 10px; align-items: flex-start; border: 1px dashed var(--gold); background: rgba(255, 210, 63, 0.06); padding: 8px 10px; }
+.works-lockbox > div { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.works-lockbox strong { color: var(--gold); }
+.works-needs { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 13px; }
+.works-needs li { display: inline-flex; align-items: center; gap: 4px; color: var(--muted); }
+.works-needs li.done { color: var(--good); }
+
+/* A row per cost: what it is, what is paid, what you have, and how much to give. */
+.works-costs { display: flex; flex-direction: column; gap: 4px; }
+.works-cost {
+  display: grid;
+  grid-template-columns: 112px minmax(80px, 1fr) 92px 196px;
+  grid-template-areas: "kind bar held give";
+  align-items: center;
+  gap: 8px;
+  padding: 3px 6px;
+  border: 1px solid transparent;
+  transition: background 0.4s, border-color 0.4s;
+}
+.works-cost.lit { background: rgba(125, 255, 154, 0.12); border-color: #2f6f4a; }
+.works-kind { grid-area: kind; display: inline-flex; align-items: center; gap: 5px; font-size: 13px; white-space: nowrap; }
+.works-bar { grid-area: bar; margin: 0; }
+.works-fill { background: #8a6d1f; transition: width 0.5s ease-out; }
 .works-fill.met { background: #2f6f4a; }
-.works-project > button.primary { align-self: flex-start; }
-.works-gifts li { display: flex; justify-content: space-between; gap: 10px; padding: 4px 0; border-bottom: 1px dashed #37335a; font-size: 13px; }
+.works-fill-chosen { background: repeating-linear-gradient(135deg, #c9a24a 0 3px, #8a6d1f 3px 6px); opacity: 0.85; }
+.works-held { grid-area: held; font-size: 12px; white-space: nowrap; text-align: right; }
+.works-held strong { color: var(--text); }
+.works-give { grid-area: give; display: flex; align-items: center; gap: 6px; min-width: 0; }
+.works-stepper { display: inline-flex; align-items: stretch; }
+.works-stepper button { width: 26px; padding: 0; font-size: 15px; line-height: 1; }
+.works-stepper input { width: 6ch; text-align: center; border-left: none; border-right: none; padding: 2px 2px; -moz-appearance: textfield; }
+.works-stepper input::-webkit-outer-spin-button, .works-stepper input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.works-fill-btn { white-space: nowrap; font-size: 12px; }
+
+/* Pinned to the foot of the panel, so Give is always in reach however long the list of costs. */
+.works-actions { position: sticky; bottom: 0; z-index: 1; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 0 2px; border-top: 1px dashed #37335a; background: #1d1a36; }
+.works-give-btn { min-width: 140px; font-weight: bold; }
+
+/* ---- the log ---- */
+.works-log-title { margin: 0 0 4px; }
+.works-gifts { list-style: none; margin: 0; padding: 0; }
+.works-gifts li { display: flex; align-items: center; gap: 8px; padding: 5px 0; border-bottom: 1px dashed #37335a; font-size: 13px; }
+.works-gifts .grow { flex: 1; min-width: 0; }
 .works-gifts .muted { white-space: nowrap; }
+.works-gift-amount { display: inline-flex; align-items: center; gap: 2px; vertical-align: middle; }
+
+@media (max-width: 640px) {
+  .works-head { padding-right: 68px; }
+  .works-tab { padding: 4px 1px 3px; }
+  .works-tab-name { font-size: 10px; }
+  .works-mini-bar { width: 18px; }
+  .works-picture .pixel-icon { width: 54px; height: 54px; }
+  /* A cost row folds onto two lines: what and how far along, then what you have and the stepper. */
+  .works-cost {
+    grid-template-columns: 100px minmax(0, 1fr);
+    grid-template-areas: "kind bar" "held give";
+    row-gap: 4px;
+    padding: 6px 4px;
+    border-bottom: 1px dashed #37335a;
+  }
+  .works-held { text-align: left; }
+  .works-give { justify-content: flex-end; flex-wrap: wrap; }
+  .works-intro { display: none; }
+  .works-give-btn { flex: 1 1 0; min-width: 0; }
+}
+@media (max-width: 400px) {
+  .works-tab-name { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .works-notice { animation: none; }
+  .works-fill, .works-cost { transition: none; }
+}
 
 /* The apothecary's and smithy's own panels. */
 .overlay .panel.workshop-panel { max-width: 520px; }
@@ -39,10 +127,4 @@
 .works-bag-brew { display: inline-flex; align-items: center; gap: 3px; margin-right: 8px; vertical-align: middle; }
 .workshop-list .small-note { font-size: 12px; }
 
-@media (max-width: 640px) {
-  .works-pair { grid-template-columns: 1fr; }
-  .works-head { padding-right: 68px; }
-  .works-cost { grid-template-columns: 50px minmax(60px, 1fr) 56px auto; gap: 5px; }
-}
-.works-pair-row { list-style: none; }
-.works-pair { list-style: none; margin: 0; padding: 0; }
+

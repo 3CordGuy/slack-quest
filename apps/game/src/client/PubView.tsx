@@ -10,6 +10,7 @@ import { DiceTable } from "./DiceTable";
 import { ShoalsTable } from "./ShoalsTable";
 import { SalesmanPanel } from "./SalesmanPanel";
 import { useSalesman } from "./salesmanClock";
+import { CrewRoster } from "./CrewRoster";
 import { DragPanel } from "./DragPanel";
 import { perkText } from "./hutDrops";
 import { ThingIcon, pubIcon } from "./thingIcons";
@@ -22,7 +23,6 @@ import { xpEvents } from "./xpEvents";
 import "./hut.css";
 import "./pub.css";
 
-const className = (id: string) => label("class", id);
 const same = (a: HexPos, b: HexPos) => a.q === b.q && a.r === b.r;
 const ROOM = pubRoom();
 const DOOR = ROOM.pois.find((p) => p.kind === "door")!.pos;
@@ -266,18 +266,14 @@ export function PubView({ me, refresh, onLeave }: { me: Me; refresh(): Promise<u
       {you && atDice && <DiceTable table={pub.dice} you={you} gold={gold} error={pub.diceError} lastXp={pub.lastXp} send={(action) => pub.send({ type: "dice", action })} />}
 
       {you && <>
-      <DragPanel id="pub.crew" title="Inside" foldOnPhone className="crew">
-        <div className="panel">
-          <h3>{players.length} here now</h3>
-          <ul className="roster">
-            {players.map((p) => (
-              <li key={p.id}>
-                <span><i className="dot on" /> <strong>{p.name}</strong>{p.id === you && <span className="tag">you</span>}</span>
-                <span className="muted">{className(p.classId)} · {p.level}</span>
-              </li>
-            ))}
-          </ul>
-        </div>
+      <DragPanel id="pub.crew" title="Inside" foldOnPhone className="crew roster-panel">
+        <CrewRoster
+          you={you}
+          heading={<>{players.length} in the pub</>}
+          members={players.map((p) => ({ id: p.id, name: p.name, classId: p.classId, level: p.level, outfit: p.outfit, here: true }))}
+          onOpen={heroSheet.onHeroClick}
+          openId={heroSheet.open}
+        />
       </DragPanel>
 
       <DragPanel id="pub.chat" title="Pub chat" foldOnPhone className="chat panel harbor-chat">

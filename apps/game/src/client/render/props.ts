@@ -2,8 +2,10 @@
 // in the same style as the places on the map (WorldRenderer.poiModel). One
 // per `model` key in the FURNISHINGS catalogue.
 //
-// Each model sits on the origin of its hex, fits inside it, and faces the
-// camera (+z) at facing 0. The renderer turns the whole group to face it.
+// Each model sits on the origin of its hex, fits inside its catalogue
+// footprint, and faces the camera (+z) at facing 0. The renderer turns the
+// whole group to face it. Wall pieces hang from their origin instead (see
+// "on the walls").
 
 import * as THREE from "three";
 
@@ -86,6 +88,11 @@ class Builder {
     const mesh = this.mesh(new THREE.CylinderGeometry(radius, radius, length, sides), new THREE.MeshLambertMaterial({ color, flatShading: true }), x, y, z);
     mesh.rotation.z = Math.PI / 2;
     return mesh;
+  }
+
+  /** A ring standing upright, facing +z, its middle at (x, y, z). */
+  ring(color: string, radius: number, tube: number, x = 0, y = 0, z = 0): THREE.Mesh {
+    return this.mesh(new THREE.TorusGeometry(radius, tube, 4, 16), new THREE.MeshLambertMaterial({ color, flatShading: true }), x, y, z);
   }
 
   /** See-through, for glass. */
@@ -414,6 +421,88 @@ const MODELS: Record<string, (b: Builder) => void> = {
     const coins: [number, number, number][] = [[0, 0, 0], [0, 0.016, 0], [0.005, 0.032, 0.004], [0.06, 0, 0.03], [0.06, 0.016, 0.03], [-0.05, 0, 0.04], [-0.02, 0, -0.06], [0.04, 0, -0.05]];
     for (const [x, y, z] of coins) b.post(GOLD, 0.035, 0.035, 0.015, x, y, z, 8);
   },
+  // ---- on the walls ----
+  // Each hangs with its back flat on the wall at z = 0, facing the room (+z),
+  // centred on the point it hangs from. Its `surface` and `mount` in the
+  // catalogue are measured from that point.
+  wall_shelf(b) {
+    // The plank's top is the catalogue's surface, at y = 0.13.
+    b.box(PALE_WOOD, 0.8, 0.04, 0.26, 0, 0.09, 0.13);
+    b.box(DARK_WOOD, 0.8, 0.03, 0.03, 0, 0.09, 0.255);
+    for (const x of [-0.28, 0.28]) {
+      b.box(DARK_WOOD, 0.04, 0.24, 0.04, x, -0.15, 0.02);
+      b.box(DARK_WOOD, 0.04, 0.04, 0.2, x, 0.05, 0.1);
+      b.box(IRON, 0.035, 0.035, 0.16, x, -0.06, 0.07).rotation.x = Math.PI / 4;
+    }
+  },
+  painting(b) {
+    b.box(GOLD, 0.62, 0.46, 0.04, 0, -0.23, 0.02);
+    b.box("#8fc3e6", 0.52, 0.2, 0.02, 0, -0.01, 0.04);
+    b.box("#2f6aa3", 0.52, 0.16, 0.02, 0, -0.17, 0.04);
+    b.box("#f4efe1", 0.06, 0.1, 0.02, 0.08, -0.07, 0.05);
+    b.box("#6a4a2a", 0.14, 0.03, 0.02, 0.08, -0.1, 0.05);
+    b.box("#fff3c4", 0.07, 0.07, 0.015, -0.17, 0.12, 0.05);
+  },
+  wall_chart(b) {
+    b.box("#e6d7a8", 0.62, 0.42, 0.015, 0, -0.21, 0.01);
+    for (const [w, h, x, y] of [[0.16, 0.12, -0.14, 0.04], [0.12, 0.1, 0.14, -0.08], [0.08, 0.06, -0.02, -0.12], [0.06, 0.05, 0.18, 0.1]]) b.box("#6b8c5a", w, h, 0.01, x, y - h / 2, 0.02);
+    b.box("#b9433d", 0.03, 0.03, 0.01, 0.06, 0.04, 0.025);
+    for (const [x, y] of [[-0.28, 0.18], [0.28, 0.18], [-0.28, -0.18], [0.28, -0.18]]) b.box(IRON, 0.03, 0.03, 0.02, x, y - 0.015, 0.02);
+    b.roll("#d8c48e", 0.022, 0.66, 0, 0.21, 0.025);
+    b.roll("#d8c48e", 0.022, 0.66, 0, -0.21, 0.025);
+  },
+  sconce(b) {
+    b.box(IRON, 0.12, 0.22, 0.03, 0, -0.2, 0.015);
+    b.box(IRON, 0.04, 0.04, 0.16, 0, -0.14, 0.09);
+    b.post(IRON, 0.07, 0.05, 0.03, 0, -0.12, 0.17);
+    b.post("#efe6c8", 0.03, 0.03, 0.12, 0, -0.09, 0.17);
+    b.flame("#ffb03a", 0.035, 0.06, 0.035, 0, 0.03, 0.17);
+    b.flame("#fff0a0", 0.018, 0.035, 0.018, 0, 0.035, 0.174);
+    b.light("candle", 0, 0.13, 0.22);
+  },
+  wall_lantern(b) {
+    b.box(IRON, 0.1, 0.16, 0.03, 0, 0.06, 0.015);
+    b.box(IRON, 0.03, 0.03, 0.2, 0, 0.18, 0.11);
+    b.box(IRON, 0.02, 0.06, 0.02, 0, 0.12, 0.2);
+    b.box("#b87333", 0.18, 0.03, 0.18, 0, -0.18, 0.2);
+    b.glow("#ffd98a", new THREE.BoxGeometry(0.14, 0.17, 0.14), 0, -0.06, 0.2);
+    for (const [x, z] of [[-0.075, 0.125], [0.075, 0.125], [-0.075, 0.275], [0.075, 0.275]]) b.box("#8a5a2a", 0.02, 0.17, 0.02, x, -0.15, z);
+    b.cone("#b87333", 0.13, 0.08, 0, 0.02, 0.2);
+    b.light("lamp", 0, -0.06, 0.32);
+  },
+  ship_wheel(b) {
+    b.ball(DARK_WOOD, 0.08, 0, 0, 0.07);
+    for (let i = 0; i < 8; i++) {
+      const a = (i * Math.PI) / 4;
+      const spoke = b.box(WOOD, 0.035, 0.66, 0.035, 0, -0.33, 0.07);
+      spoke.position.set(0, 0, 0.07);
+      spoke.rotation.z = a;
+      // A handle past the rim.
+      b.post(PALE_WOOD, 0.022, 0.022, 0.06, Math.sin(a) * 0.33, Math.cos(a) * 0.33 - 0.03, 0.07, 5).rotation.z = -a;
+    }
+    b.ring(WOOD, 0.25, 0.03, 0, 0, 0.07);
+  },
+  crossed_blades(b) {
+    b.box(DARK_WOOD, 0.34, 0.4, 0.04, 0, -0.2, 0.02);
+    b.box(GOLD, 0.2, 0.22, 0.02, 0, -0.11, 0.045);
+    for (const turn of [0.7, -0.7]) {
+      const blade = b.box("#cfd6e0", 0.05, 0.62, 0.02, 0, -0.31, 0.07);
+      blade.position.set(0, 0, 0.07);
+      blade.rotation.z = turn;
+      const guard = b.box(GOLD, 0.14, 0.03, 0.03, 0, 0, 0.075);
+      guard.position.set(Math.sin(turn) * 0.2, -Math.cos(turn) * 0.2, 0.075);
+      guard.rotation.z = turn;
+    }
+  },
+  mounted_fish(b) {
+    b.box(DARK_WOOD, 0.52, 0.3, 0.04, 0, -0.15, 0.02);
+    b.box(GOLD, 0.12, 0.03, 0.01, 0, -0.13, 0.045);
+    b.box("#6f9cb0", 0.36, 0.13, 0.08, -0.02, -0.03, 0.08);
+    b.box("#8fb8c8", 0.12, 0.1, 0.07, 0.16, -0.025, 0.08);
+    b.cone("#5f8a9c", 0.08, 0.12, -0.25, -0.0, 0.08, 3).rotation.z = Math.PI / 2;
+    b.box("#1f2430", 0.02, 0.02, 0.01, 0.19, 0.0, 0.12);
+  },
+
   // Far goods, sold only by a traveling salesman.
   globe(b) {
     b.post(DARK_WOOD, 0.08, 0.2, 0.08);

@@ -508,6 +508,24 @@ function look(state: WorldState, also: HexPos[] = []) {
   state.seen = [...seen];
 }
 
+/**
+ * The island's coast: every land hex that touches the sea, and the sea hexes
+ * beside them, as "q,r". The lighthouse's chart: with it built, a voyage opens
+ * with all of these already seen. Fixed by the map, so it draws on no rolls.
+ */
+export function coastHexes(map: WorldMap): string[] {
+  const water = map.tiles.filter((t) => t.biome === "water");
+  const out = new Set<string>();
+  for (const t of map.tiles) {
+    if (t.biome === "water") continue;
+    const sea = water.filter((w) => hexDistance(w, t) === 1);
+    if (sea.length === 0) continue;
+    out.add(posKeyOf(t));
+    for (const w of sea) out.add(posKeyOf(w));
+  }
+  return [...out];
+}
+
 /** Whether a hero standing at `from` may step onto `tile`: it has been seen, or is in plain sight right now. */
 function inSight(state: WorldState, tile: HexPos, from: HexPos): boolean {
   return !state.seen || hexDistance(tile, from) <= VISION || state.seen.includes(posKeyOf(tile));
@@ -1036,6 +1054,8 @@ export function stepWorld(prev: WorldState, action: WorldAction): StepResult {
       state.seen = [];
       state.roamers = [];
       look(state);
+      // The lighthouse's chart: the whole coast is already known. Bands still come ashore out of the heroes' own sight.
+      if (boons.chartCoast) state.seen = [...new Set([...state.seen, ...coastHexes(state.map)])];
       for (let i = 0; i < ROAMERS_AT_START; i++) spawnRoamer(ctx);
       ctx.events.push({ t: "phase", phase: "overworld" });
       for (const line of boons.lines) ctx.events.push({ t: "harbor_boon", ...line });

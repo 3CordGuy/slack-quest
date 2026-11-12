@@ -82,6 +82,25 @@ export interface Surface {
   z?: number;
 }
 
+/**
+ * What a piece of floor furniture covers, in its own space (facing 0, +z
+ * toward the camera): a w by d rectangle centred on (x, z), or with `round` a
+ * circle w across. Two pieces may share a hex as long as these do not overlap.
+ */
+export interface Footprint {
+  w: number;
+  d: number;
+  x?: number;
+  z?: number;
+  round?: boolean;
+}
+
+/** A wall piece's face: w wide and h tall, centred on where it hangs. */
+export interface Mount {
+  w: number;
+  h: number;
+}
+
 export interface FurnishingDef {
   id: string;
   name: string;
@@ -89,10 +108,15 @@ export interface FurnishingDef {
   /**
    * "small" things (a candle, a mug) go anywhere inside a hex, at any angle,
    * several to a hex, and can stand on a surface. They do not block walking.
-   * Everything else is one to a hex and turns in sixths.
+   * Everything else stands anywhere inside its hex, at any angle, as long as
+   * its `footprint` stays in the room and clear of other pieces.
    */
   size?: "small";
-  /** Its top takes small things. */
+  /** Floor furniture: what it covers. Without one it is taken to fill most of its hex. */
+  footprint?: Footprint;
+  /** It hangs on a wall rather than standing on the floor (see hutroom.ts, wallPlaceProblem). */
+  mount?: Mount;
+  /** Its top takes small things (in its own space; for a wall piece, from where it hangs). */
   surface?: Surface;
   /** It gives off light in the room. "fire" also throws shadows. */
   light?: "fire" | "candle" | "lamp";
@@ -111,29 +135,29 @@ export interface FurnishingDef {
 }
 
 export const FURNISHINGS: Record<string, FurnishingDef> = {
-  table: { id: "table", name: "Plank Table", kind: "furniture", model: "table", blurb: "Somewhere to put things down.", price: 30, recipe: { wood: 6 }, surface: { y: 0.5, w: 0.96, d: 0.66 } },
-  chair: { id: "chair", name: "Stool", kind: "furniture", model: "chair", blurb: "Three legs and no back.", price: 15, recipe: { wood: 3 } },
-  rug: { id: "rug", name: "Fur Rug", kind: "furniture", model: "rug", blurb: "Warm underfoot.", price: 35, recipe: { fur: 4 } },
-  lantern: { id: "lantern", name: "Copper Lantern", kind: "furniture", model: "lantern", blurb: "Keeps the corners lit.", price: 40, recipe: { copper: 3, wood: 1 }, light: "lamp" },
-  banner: { id: "banner", name: "Crew Banner", kind: "furniture", model: "banner", blurb: "Your crew's colours.", price: 45, recipe: { fur: 2, wood: 2 } },
-  bed: { id: "bed", name: "Bunk", kind: "furniture", model: "bed", blurb: "A proper night's sleep before sailing. +1 focus.", recipe: { wood: 8, fur: 4 }, needsBlueprint: true, perk: { focus: 1 } },
-  chest: { id: "chest", name: "Sea Chest", kind: "furniture", model: "chest", blurb: "Room for a spare bottle. +1 potion. Holds 12 things.", recipe: { wood: 6, iron: 3 }, needsBlueprint: true, perk: { potions: 1 }, storage: 12, surface: { y: 0.48, w: 0.74, d: 0.5 } },
-  hearth: { id: "hearth", name: "Stone Hearth", kind: "furniture", model: "hearth", blurb: "A hot meal before the voyage. +4 max HP.", recipe: { stone: 10, iron: 2 }, needsBlueprint: true, perk: { maxHp: 4 }, light: "fire" },
-  bookshelf: { id: "bookshelf", name: "Bookshelf", kind: "furniture", model: "bookshelf", blurb: "Other people's mistakes, written down. +2% XP.", recipe: { wood: 8, bone: 2 }, needsBlueprint: true, perk: { xpPct: 2 } },
-  workbench: { id: "workbench", name: "Workbench", kind: "furniture", model: "workbench", blurb: "Where the next thing gets made.", recipe: { wood: 6, iron: 4 }, needsBlueprint: true, surface: { y: 0.6, w: 1.1, d: 0.56 } },
+  table: { id: "table", name: "Plank Table", kind: "furniture", footprint: { w: 1.0, d: 0.7 }, model: "table", blurb: "Somewhere to put things down.", price: 30, recipe: { wood: 6 }, surface: { y: 0.5, w: 0.96, d: 0.66 } },
+  chair: { id: "chair", name: "Stool", kind: "furniture", footprint: { w: 0.48, d: 0.48, round: true }, model: "chair", blurb: "Three legs and no back.", price: 15, recipe: { wood: 3 } },
+  rug: { id: "rug", name: "Fur Rug", kind: "furniture", footprint: { w: 1.2, d: 0.98, z: 0.09 }, model: "rug", blurb: "Warm underfoot.", price: 35, recipe: { fur: 4 } },
+  lantern: { id: "lantern", name: "Copper Lantern", kind: "furniture", footprint: { w: 0.4, d: 0.4, round: true }, model: "lantern", blurb: "Keeps the corners lit.", price: 40, recipe: { copper: 3, wood: 1 }, light: "lamp" },
+  banner: { id: "banner", name: "Crew Banner", kind: "furniture", footprint: { w: 0.7, d: 0.36 }, model: "banner", blurb: "Your crew's colours.", price: 45, recipe: { fur: 2, wood: 2 } },
+  bed: { id: "bed", name: "Bunk", kind: "furniture", footprint: { w: 0.84, d: 1.3, z: -0.02 }, model: "bed", blurb: "A proper night's sleep before sailing. +1 focus.", recipe: { wood: 8, fur: 4 }, needsBlueprint: true, perk: { focus: 1 } },
+  chest: { id: "chest", name: "Sea Chest", kind: "furniture", footprint: { w: 0.79, d: 0.56 }, model: "chest", blurb: "Room for a spare bottle. +1 potion. Holds 12 things.", recipe: { wood: 6, iron: 3 }, needsBlueprint: true, perk: { potions: 1 }, storage: 12, surface: { y: 0.48, w: 0.74, d: 0.5 } },
+  hearth: { id: "hearth", name: "Stone Hearth", kind: "furniture", footprint: { w: 1.2, d: 0.72 }, model: "hearth", blurb: "A hot meal before the voyage. +4 max HP.", recipe: { stone: 10, iron: 2 }, needsBlueprint: true, perk: { maxHp: 4 }, light: "fire" },
+  bookshelf: { id: "bookshelf", name: "Bookshelf", kind: "furniture", footprint: { w: 0.95, d: 0.34, z: -0.1 }, model: "bookshelf", blurb: "Other people's mistakes, written down. +2% XP.", recipe: { wood: 8, bone: 2 }, needsBlueprint: true, perk: { xpPct: 2 } },
+  workbench: { id: "workbench", name: "Workbench", kind: "furniture", footprint: { w: 1.15, d: 0.6 }, model: "workbench", blurb: "Where the next thing gets made.", recipe: { wood: 6, iron: 4 }, needsBlueprint: true, surface: { y: 0.6, w: 1.1, d: 0.56 } },
   // Every home gets one, free, standing in the room: where gear the hero cannot carry waits (carry.ts).
   // Never sold or crafted, and it gives no perk. A container like the others, and moved like any piece.
-  storage_chest: { id: "storage_chest", name: "Storage Chest", kind: "furniture", model: "small_chest", blurb: "Every home's own chest, for the gear you cannot carry. Holds 10 things.", storage: 10, surface: { y: 0.42, w: 0.54, d: 0.4 } },
-  weapon_rack: { id: "weapon_rack", name: "Weapon Rack", kind: "furniture", model: "weapon_rack", blurb: "Everything in reach.", recipe: { wood: 4, iron: 4, copper: 2 }, needsBlueprint: true },
+  storage_chest: { id: "storage_chest", name: "Storage Chest", kind: "furniture", footprint: { w: 0.58, d: 0.45 }, model: "small_chest", blurb: "Every home's own chest, for the gear you cannot carry. Holds 10 things.", storage: 10, surface: { y: 0.42, w: 0.54, d: 0.4 } },
+  weapon_rack: { id: "weapon_rack", name: "Weapon Rack", kind: "furniture", footprint: { w: 1.0, d: 0.22, z: -0.08 }, model: "weapon_rack", blurb: "Everything in reach.", recipe: { wood: 4, iron: 4, copper: 2 }, needsBlueprint: true },
 
   // ---- more furniture: tops to put things on, and places to keep things ----
-  desk: { id: "desk", name: "Writing Desk", kind: "furniture", model: "desk", blurb: "A wide top and a drawer that sticks.", price: 40, recipe: { wood: 7 }, surface: { y: 0.62, w: 1.06, d: 0.52 } },
-  side_table: { id: "side_table", name: "Side Table", kind: "furniture", model: "side_table", blurb: "Just big enough for a candle and a mug.", price: 18, recipe: { wood: 3 }, surface: { y: 0.55, w: 0.52, d: 0.48 } },
-  dresser: { id: "dresser", name: "Dresser", kind: "furniture", model: "dresser", blurb: "Three drawers and a top for odds and ends. Holds 12 things.", price: 60, recipe: { wood: 8, iron: 1 }, storage: 12, surface: { y: 0.84, w: 0.98, d: 0.46, z: -0.1 } },
-  cupboard: { id: "cupboard", name: "Tall Cupboard", kind: "furniture", model: "cupboard", blurb: "Floor to rafters. Holds 20 things.", recipe: { wood: 10, iron: 2 }, needsBlueprint: true, storage: 20, surface: { y: 1.52, w: 0.86, d: 0.42, z: -0.12 } },
-  crate: { id: "crate", name: "Storage Crate", kind: "furniture", model: "crate", blurb: "Nailed shut, then not. Holds 8 things.", price: 12, recipe: { wood: 3 }, storage: 8, surface: { y: 0.56, w: 0.66, d: 0.66 } },
-  barrel: { id: "barrel", name: "Barrel", kind: "furniture", model: "barrel", blurb: "Smells faintly of fish. Holds 6 things.", price: 16, recipe: { wood: 4, iron: 1 }, storage: 6, surface: { y: 0.78, w: 0.42, d: 0.42 } },
-  fireplace: { id: "fireplace", name: "Great Fireplace", kind: "furniture", model: "fireplace", blurb: "A roaring fire and a mantel for your treasures.", recipe: { stone: 14, iron: 3 }, needsBlueprint: true, light: "fire", surface: { y: 1.06, w: 1.5, d: 0.24, z: 0.24 } },
+  desk: { id: "desk", name: "Writing Desk", kind: "furniture", footprint: { w: 1.1, d: 0.56 }, model: "desk", blurb: "A wide top and a drawer that sticks.", price: 40, recipe: { wood: 7 }, surface: { y: 0.62, w: 1.06, d: 0.52 } },
+  side_table: { id: "side_table", name: "Side Table", kind: "furniture", footprint: { w: 0.56, d: 0.52 }, model: "side_table", blurb: "Just big enough for a candle and a mug.", price: 18, recipe: { wood: 3 }, surface: { y: 0.55, w: 0.52, d: 0.48 } },
+  dresser: { id: "dresser", name: "Dresser", kind: "furniture", footprint: { w: 1.04, d: 0.52, z: -0.1 }, model: "dresser", blurb: "Three drawers and a top for odds and ends. Holds 12 things.", price: 60, recipe: { wood: 8, iron: 1 }, storage: 12, surface: { y: 0.84, w: 0.98, d: 0.46, z: -0.1 } },
+  cupboard: { id: "cupboard", name: "Tall Cupboard", kind: "furniture", footprint: { w: 0.96, d: 0.48, z: -0.12 }, model: "cupboard", blurb: "Floor to rafters. Holds 20 things.", recipe: { wood: 10, iron: 2 }, needsBlueprint: true, storage: 20, surface: { y: 1.52, w: 0.86, d: 0.42, z: -0.12 } },
+  crate: { id: "crate", name: "Storage Crate", kind: "furniture", footprint: { w: 0.7, d: 0.7 }, model: "crate", blurb: "Nailed shut, then not. Holds 8 things.", price: 12, recipe: { wood: 3 }, storage: 8, surface: { y: 0.56, w: 0.66, d: 0.66 } },
+  barrel: { id: "barrel", name: "Barrel", kind: "furniture", footprint: { w: 0.58, d: 0.58, round: true }, model: "barrel", blurb: "Smells faintly of fish. Holds 6 things.", price: 16, recipe: { wood: 4, iron: 1 }, storage: 6, surface: { y: 0.78, w: 0.42, d: 0.42 } },
+  fireplace: { id: "fireplace", name: "Great Fireplace", kind: "furniture", footprint: { w: 1.7, d: 0.8 }, model: "fireplace", blurb: "A roaring fire and a mantel for your treasures.", recipe: { stone: 14, iron: 3 }, needsBlueprint: true, light: "fire", surface: { y: 1.06, w: 1.5, d: 0.24, z: 0.24 } },
 
   // ---- small things: anywhere in a hex, at any angle, or on a surface ----
   candle: { id: "candle", name: "Tallow Candle", kind: "furniture", size: "small", model: "candle", blurb: "A small, steady flame.", price: 5, recipe: { fur: 1 }, light: "candle" },
@@ -151,15 +175,25 @@ export const FURNISHINGS: Record<string, FurnishingDef> = {
   writing_set: { id: "writing_set", name: "Ink and Quill", kind: "furniture", size: "small", model: "writing_set", blurb: "For the voyage log.", price: 10, recipe: { bone: 1, copper: 1 } },
   coin_pile: { id: "coin_pile", name: "Pile of Coins", kind: "furniture", size: "small", model: "coin_pile", blurb: "For show, not for spending.", price: 30 },
 
+  // ---- on the walls: hung on the back or side walls, at any height and anywhere along a face ----
+  wall_shelf: { id: "wall_shelf", name: "Wall Shelf", kind: "furniture", mount: { w: 0.8, h: 0.3 }, model: "wall_shelf", blurb: "A plank on two brackets, for small things to stand on.", price: 15, recipe: { wood: 3 }, surface: { y: 0.13, w: 0.76, d: 0.22, z: 0.13 } },
+  painting: { id: "painting", name: "Seascape", kind: "furniture", mount: { w: 0.62, h: 0.46 }, model: "painting", blurb: "Somebody's idea of a calm sea.", price: 35 },
+  wall_chart: { id: "wall_chart", name: "Chart of the Isles", kind: "furniture", mount: { w: 0.66, h: 0.48 }, model: "wall_chart", blurb: "Pinned up where everyone can argue over it.", price: 30, recipe: { fur: 2, copper: 1 } },
+  sconce: { id: "sconce", name: "Iron Sconce", kind: "furniture", mount: { w: 0.22, h: 0.42 }, model: "sconce", blurb: "A candle held out from the wall.", price: 15, recipe: { iron: 1, fur: 1 }, light: "candle" },
+  wall_lantern: { id: "wall_lantern", name: "Hanging Lantern", kind: "furniture", mount: { w: 0.26, h: 0.5 }, model: "wall_lantern", blurb: "A lantern on an iron arm.", price: 25, recipe: { copper: 2, iron: 1 }, light: "lamp" },
+  ship_wheel: { id: "ship_wheel", name: "Ship's Wheel", kind: "furniture", mount: { w: 0.72, h: 0.72 }, model: "ship_wheel", blurb: "From a ship that will not be needing it.", price: 50, recipe: { wood: 6, iron: 1 } },
+  crossed_blades: { id: "crossed_blades", name: "Crossed Cutlasses", kind: "furniture", mount: { w: 0.72, h: 0.52 }, model: "crossed_blades", blurb: "Hung up, for now.", recipe: { iron: 4, wood: 1 } },
+  mounted_fish: { id: "mounted_fish", name: "Mounted Fish", kind: "furniture", mount: { w: 0.62, h: 0.34 }, model: "mounted_fish", blurb: "It was this big. Bigger, really.", price: 40, recipe: { bone: 1, wood: 2 } },
+
   // Far goods: never at the stall and never crafted. Only a traveling salesman carries them (see salesman.ts).
-  globe: { id: "globe", name: "Sea Globe", kind: "furniture", model: "globe", blurb: "Some of the coastlines are guesses. +1% XP.", perk: { xpPct: 1 } },
-  ship_bottle: { id: "ship_bottle", name: "Ship in a Bottle", kind: "furniture", model: "ship_bottle", blurb: "Nobody knows how it got in there." },
-  shell_chimes: { id: "shell_chimes", name: "Shell Chimes", kind: "furniture", model: "shell_chimes", blurb: "They ring when the wind is from the sea." },
+  globe: { id: "globe", name: "Sea Globe", kind: "furniture", footprint: { w: 0.56, d: 0.56, round: true }, model: "globe", blurb: "Some of the coastlines are guesses. +1% XP.", perk: { xpPct: 1 } },
+  ship_bottle: { id: "ship_bottle", name: "Ship in a Bottle", kind: "furniture", footprint: { w: 0.74, d: 0.36 }, model: "ship_bottle", blurb: "Nobody knows how it got in there." },
+  shell_chimes: { id: "shell_chimes", name: "Shell Chimes", kind: "furniture", footprint: { w: 0.66, d: 0.36 }, model: "shell_chimes", blurb: "They ring when the wind is from the sea." },
   // Trophies come only from finishing a story, one kind per story shape.
-  trophy_relic: { id: "trophy_relic", name: "Recovered Relic", kind: "trophy", model: "trophy_relic", blurb: "A replica of what was won back. +1% XP.", perk: { xpPct: 1 } },
-  trophy_token: { id: "trophy_token", name: "Keepsake of Thanks", kind: "trophy", model: "trophy_token", blurb: "Given by someone brought home. +1% XP.", perk: { xpPct: 1 } },
-  trophy_pelt: { id: "trophy_pelt", name: "Beast's Pelt", kind: "trophy", model: "trophy_pelt", blurb: "It is bigger than it looked in the dark. +1% XP.", perk: { xpPct: 1 } },
-  trophy_core: { id: "trophy_core", name: "Guardian's Core", kind: "trophy", model: "trophy_core", blurb: "Still faintly warm. +1% XP.", perk: { xpPct: 1 } },
+  trophy_relic: { id: "trophy_relic", name: "Recovered Relic", kind: "trophy", footprint: { w: 0.84, d: 0.84, round: true }, model: "trophy_relic", blurb: "A replica of what was won back. +1% XP.", perk: { xpPct: 1 } },
+  trophy_token: { id: "trophy_token", name: "Keepsake of Thanks", kind: "trophy", footprint: { w: 0.84, d: 0.84, round: true }, model: "trophy_token", blurb: "Given by someone brought home. +1% XP.", perk: { xpPct: 1 } },
+  trophy_pelt: { id: "trophy_pelt", name: "Beast's Pelt", kind: "trophy", footprint: { w: 0.84, d: 0.84, round: true }, model: "trophy_pelt", blurb: "It is bigger than it looked in the dark. +1% XP.", perk: { xpPct: 1 } },
+  trophy_core: { id: "trophy_core", name: "Guardian's Core", kind: "trophy", footprint: { w: 0.84, d: 0.84, round: true }, model: "trophy_core", blurb: "Still faintly warm. +1% XP.", perk: { xpPct: 1 } },
 };
 
 /** The free storage chest every home has. */
@@ -264,9 +298,17 @@ export function binDeposit(bin: Resources, have: Resources): Resources {
 
 /**
  * One owned furnishing. `q`/`r` are null while it is in storage (or inside a
- * container, `inId`). A small thing also has an offset and an angle: from the
- * middle of its hex, or, standing on a surface (`onId`), from the middle of
- * that piece in its own turned frame; its `q`/`r` are then its support's.
+ * container, `inId`).
+ *
+ * On the floor, a piece has an offset (`x`/`z`) from the middle of its hex
+ * and a turn: `facing` sixths plus `angle` radians (pieces placed before free
+ * turning only have a facing; new turns are kept whole in `angle`). A small
+ * thing standing on a surface (`onId`) is offset from the middle of that
+ * piece in its own turned frame, and its `q`/`r` are its support's.
+ *
+ * A wall piece (`mount` in the catalogue) has `q`/`r` on the wall hex it
+ * hangs on, `facing` for which side of that hex (toward the room's floor),
+ * `x` along that side and `y` up from the floor.
  */
 export interface Furnishing {
   id: number;
@@ -275,12 +317,14 @@ export interface Furnishing {
   label: string;
   q: number | null;
   r: number | null;
-  /** 0 to 5: which way it faces, in sixths of a turn. */
+  /** 0 to 5: which way it faces, in sixths of a turn. A wall piece: which side of its wall hex. */
   facing: number;
-  /** A small thing's offset, in world units. 0 for furniture. */
+  /** Offset from the middle of its hex (or its support's top), in world units. A wall piece: `x` along its wall. */
   x: number;
   z: number;
-  /** A small thing's turn, in radians. */
+  /** A wall piece's height above the floor, to its middle. 0 for everything else. */
+  y: number;
+  /** Turn in radians, on top of `facing`. */
   angle: number;
   /** The furnishing it stands on, or null. */
   onId: number | null;
