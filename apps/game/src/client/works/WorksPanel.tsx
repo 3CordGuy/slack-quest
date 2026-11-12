@@ -10,7 +10,10 @@ import {
   projectAmountsText,
   projectCostKinds,
   projectGivable,
+  projectLock,
+  projectLockText,
   type HarborWorks,
+  type ProjectLock,
   type ProjectAmounts,
   type ProjectCostKind,
   type ProjectDef,
@@ -31,11 +34,12 @@ function ago(at: number): string {
   return hours < 24 ? `${hours} h ago` : `${Math.floor(hours / 24)} d ago`;
 }
 
-function ProjectCard({ def, paid, builtAt, stock, onGive }: { def: ProjectDef; paid: ProjectAmounts; builtAt: number | null; stock: ProjectAmounts | null; onGive(give: ProjectAmounts): Promise<void> }) {
+function ProjectCard({ def, paid, builtAt, lock, stock, onGive }: { def: ProjectDef; paid: ProjectAmounts; builtAt: number | null; lock: ProjectLock | null; stock: ProjectAmounts | null; onGive(give: ProjectAmounts): Promise<void> }) {
   const [amounts, setAmounts] = useState<Partial<Record<ProjectCostKind, string>>>({});
   const [busy, setBusy] = useState(false);
   const built = builtAt !== null;
-  const fundable = def.open && !built;
+  const locked = !built && lock !== null;
+  const fundable = def.open && !built && !locked;
   const givable = stock ? projectGivable(def, paid, stock) : {};
   // What is typed, held to what can be given right now (a crewmate may have just covered some of it).
   const give: ProjectAmounts = {};
@@ -54,11 +58,12 @@ function ProjectCard({ def, paid, builtAt, stock, onGive }: { def: ProjectDef; p
   };
 
   return (
-    <li className={`works-project ${built ? "built" : ""} ${def.open ? "" : "closed"}`} data-project={def.id}>
+    <li className={`works-project ${built ? "built" : ""} ${fundable || built ? "" : "closed"} ${locked ? "locked" : ""}`} data-project={def.id}>
       <div className="works-title">
         <strong>{label("project", def.id)}</strong>
-        {built ? <span className="tag good">Built</span> : !def.open && <span className="tag">Not yet open</span>}
+        {built ? <span className="tag good">Built</span> : !def.open ? <span className="tag">Not yet open</span> : locked && <span className="tag locked">Locked</span>}
       </div>
+      {locked && <span className="works-lock">{projectLockText(lock)}</span>}
       <span className="muted">{blurb("project", def.id)}</span>
       <span>{built ? "" : "Once built: "}{def.benefit}</span>
       {!built && (
@@ -159,9 +164,9 @@ export function WorksPanel({ works, refresh, onClose }: { works: HarborWorks | u
               {PROJECTS.filter((def) => !PAIRED.includes(def.id) || def.id === PAIRED[0]).map((def) => {
                 const card = (d: ProjectDef) => {
                   const p = shown.projects.find((x) => x.id === d.id);
-                  return <ProjectCard key={d.id} def={d} paid={p?.paid ?? {}} builtAt={p?.builtAt ?? null} stock={stock} onGive={give(d)} />;
+                  return <ProjectCard key={d.id} def={d} paid={p?.paid ?? {}} builtAt={p?.builtAt ?? null} lock={projectLock(d.id, shown.projects)} stock={stock} onGive={give(d)} />;
                 };
-                // The apothecary and the smithy open together and are shown as a pair.
+                // The apothecary and the smithy open first, together, and are shown as a pair.
                 if (def.id === PAIRED[0]) return <li key="pair" className="works-pair-row"><ul className="works-pair">{PROJECTS.filter((d) => PAIRED.includes(d.id)).map(card)}</ul></li>;
                 return card(def);
               })}

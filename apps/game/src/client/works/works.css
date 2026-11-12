@@ -16,6 +16,10 @@
 .works-project.closed { opacity: 0.7; }
 .works-title { display: flex; align-items: center; }
 .works-title .tag.good { color: var(--good); border-color: var(--good); }
+.works-title .tag.locked { color: var(--gold); border-color: var(--gold); }
+/* What unlocks a locked project: the one line on the card that should not be dimmed. */
+.works-project.locked { opacity: 0.85; border-style: dashed; }
+.works-lock { color: var(--gold); font-size: 13px; }
 .works-costs { display: flex; flex-direction: column; gap: 2px; margin: 4px 0; }
 .works-cost { display: grid; grid-template-columns: 58px minmax(80px, 1fr) 72px auto; align-items: center; gap: 8px; }
 .works-project.closed .works-cost { grid-template-columns: 58px 1fr; }

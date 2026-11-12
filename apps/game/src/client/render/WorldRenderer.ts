@@ -1065,12 +1065,14 @@ export class WorldRenderer {
   // ---------- points of interest ----------
 
   private buildPois(state: RenderState) {
-    const sig = state.map.pois.map((p) => `${p.id}:${p.cleared}:${p.tier ?? ""}`).join("|");
+    const sig = state.map.pois.map((p) => `${p.id}:${p.cleared}:${p.tier ?? ""}:${p.fill ?? ""}`).join("|");
     if (sig === this.poiSig) return;
     this.poiSig = sig;
     this.poiGroup.clear();
     /** Chimney tops, which the ambience draws smoke from. */
     const stacks: THREE.Vector3[] = [];
+    /** A lighthouse's lantern, which the ambience turns a beam from. */
+    let beacon: THREE.Vector3 | null = null;
     for (const poi of state.map.pois) {
       const g = this.poiModel(poi);
       const at = this.standAt(poi.pos);
@@ -1081,8 +1083,10 @@ export class WorldRenderer {
       });
       this.poiGroup.add(g);
       if (g.userData.smoke) stacks.push((g.userData.smoke as THREE.Vector3).clone().add(g.position));
+      if (g.userData.beacon) beacon = (g.userData.beacon as THREE.Vector3).clone().add(g.position);
     }
     this.ambience.setSmoke(stacks);
+    this.ambience.setBeacon(beacon);
     // The sea breaks around rocks standing out of it, and the wreck on them.
     this.ambience.setSeaRocks(state.map.pois.filter((p) => p.kind === "rocks" || p.kind === "wreck").map((p) => this.standAt(p.pos)));
   }
@@ -1620,30 +1624,120 @@ export class WorldRenderer {
         break;
       }
       case "works": {
-        const stone = lambert("#b9b4a8");
+        // The works: the builders' yard where the crew's projects are paid for. Kept low, as it stands in the plaza:
+        // a trestle table with the plans weighted down on it, a slate of pledges, and timber and stone waiting to go.
+        const wood = lambert("#7a5230");
+        for (const x of [-0.32, 0.32]) {
+          for (const z of [-0.14, 0.14]) add(box(0.05, 0.36, 0.05), wood, x, 0.18, z - 0.12).rotation.z = x < 0 ? 0.12 : -0.12;
+        }
+        add(box(0.84, 0.05, 0.44), lambert("#a07a4c"), 0, 0.38, -0.12);
+        // The plans: a sheet of blue paper with white lines, a rolled plan, and a stone on the corner.
+        add(box(0.42, 0.012, 0.3), lambert("#3f6fa8"), -0.08, 0.41, -0.1, 0.12);
+        for (const dz of [-0.06, 0.0, 0.06]) add(box(0.3, 0.014, 0.012), lambert("#dce8f5"), -0.08, 0.416, -0.1 + dz, 0.12);
+        add(box(0.06, 0.014, 0.2), lambert("#dce8f5"), -0.02, 0.416, -0.1, 0.12);
+        add(new THREE.CylinderGeometry(0.035, 0.035, 0.36, 6), lambert("#e8dcc0"), 0.28, 0.44, -0.16).rotation.x = Math.PI / 2;
+        add(new THREE.DodecahedronGeometry(0.05), lambert("#8b95a5"), -0.26, 0.44, -0.2);
+        // A slate on an easel, chalked with the tally.
+        add(box(0.04, 0.6, 0.04), wood, 0.58, 0.3, -0.28).rotation.z = 0.15;
+        add(box(0.3, 0.24, 0.03), lambert("#2e3138"), 0.54, 0.44, -0.24, -0.3);
+        for (const dy of [-0.05, 0.0, 0.05]) add(box(0.18, 0.015, 0.032), lambert("#e8e4da"), 0.54, 0.44 + dy, -0.236, -0.3);
+        // Squared stone and planks, stacked by the table.
+        for (const [x, z] of [[-0.6, 0.3], [-0.42, 0.42], [-0.58, 0.5]]) add(box(0.16, 0.14, 0.16), lambert("#a3acba"), x, 0.07, z, 0.3);
+        for (let i = 0; i < 3; i++) add(box(0.5, 0.05, 0.12), lambert(i % 2 ? "#c9a877" : "#8a6a44"), 0.32, 0.03 + i * 0.05, 0.38, 0.2 + 0.08 * i);
+        break;
+      }
+      case "lighthouse": {
+        // The lighthouse, on the rocks at the end of the east spit. Every stage stands on the same rocky base.
+        const rock = lambert("#5d6270");
+        const pale = lambert("#7b8291");
+        add(new THREE.DodecahedronGeometry(0.42, 0), rock, -0.05, 0.02, 0.02, 0.3).scale.y = 0.55;
+        add(new THREE.DodecahedronGeometry(0.3, 0), pale, 0.36, 0.0, 0.22, 1.2).scale.y = 0.6;
+        add(new THREE.DodecahedronGeometry(0.26, 0), rock, -0.42, -0.02, 0.3, 0.8).scale.y = 0.5;
+        add(new THREE.DodecahedronGeometry(0.2, 0), pale, 0.3, 0.0, -0.36, 2.1).scale.y = 0.6;
+        const base = 0.2;
+        const fill = Math.max(0, Math.min(1, poi.fill ?? 0));
+        const white = lambert("#f1ece0");
+        const red = lambert("#b9433d");
+        /** One band of the striped tower: radius at the bottom and top, height, and the course it starts on. */
+        const course = (r0: number, r1: number, h: number, y: number, m: THREE.Material) => add(new THREE.CylinderGeometry(r1, r0, h, 8), m, 0, y + h / 2, 0);
+        // The tower in four bands, tapering, alternately white and red.
+        const BANDS = [0.34, 0.31, 0.28, 0.25, 0.22];
+        const BAND_H = 0.36;
+        const scaffold = (height: number) => {
+          const pole = lambert("#7a5230");
+          const plank = lambert("#8a6a44");
+          for (const [x, z] of [[-0.42, -0.36], [0.42, -0.36], [-0.42, 0.36], [0.42, 0.36]]) add(new THREE.CylinderGeometry(0.03, 0.03, height, 5), pole, x, base + height / 2, z);
+          for (let y = base + 0.35; y < base + height - 0.05; y += 0.4) {
+            add(box(0.88, 0.035, 0.05), plank, 0, y, -0.36);
+            add(box(0.88, 0.035, 0.05), plank, 0, y, 0.36);
+            add(box(0.05, 0.035, 0.76), plank, 0.42, y, 0);
+          }
+        };
         if (poi.cleared) {
-          // The lighthouse: a tapering white tower with a red band, a gallery and a lit lamp.
-          add(new THREE.CylinderGeometry(0.5, 0.56, 0.22, 8), stone, 0, 0.11, 0);
-          add(new THREE.CylinderGeometry(0.3, 0.42, 0.7, 8), lambert("#f4efe1"), 0, 0.57, 0);
-          add(new THREE.CylinderGeometry(0.25, 0.3, 0.35, 8), lambert("#b9433d"), 0, 1.095, 0);
-          add(new THREE.CylinderGeometry(0.21, 0.25, 0.4, 8), lambert("#f4efe1"), 0, 1.47, 0);
-          add(new THREE.CylinderGeometry(0.34, 0.34, 0.06, 8), lambert("#4a4458"), 0, 1.7, 0);
-          add(new THREE.CylinderGeometry(0.15, 0.15, 0.24, 6), new THREE.MeshBasicMaterial({ color: "#ffd23f" }), 0, 1.85, 0);
-          add(new THREE.ConeGeometry(0.26, 0.24, 8), lambert("#8c3b2f"), 0, 2.09, 0);
-          add(box(0.16, 0.28, 0.04), lambert("#5a3d22"), 0, 0.36, 0.41);
-          // Tall enough to stand over the huts when seen from the tilted camera.
-          g.scale.y = 1.3;
+          // Built: a striped stone tower on a plinth, a door and two small windows, a gallery with its rail,
+          // the lantern room of glass, and a red cap with a vane. The ambience turns the beam and lights the glow.
+          add(new THREE.CylinderGeometry(0.4, 0.44, 0.14, 8), lambert("#9a958a"), 0, base + 0.07, 0);
+          let y = base + 0.14;
+          for (let i = 0; i < 4; i++) {
+            course(BANDS[i], BANDS[i + 1], BAND_H, y, i % 2 ? red : white);
+            y += BAND_H;
+          }
+          add(box(0.14, 0.24, 0.04), lambert("#4a3a2a"), 0, base + 0.26, 0.37);
+          add(box(0.18, 0.04, 0.05), lambert("#9a958a"), 0, base + 0.4, 0.37);
+          for (const [wy, wr] of [[base + 0.75, 0.31], [base + 1.2, 0.27]]) add(box(0.07, 0.1, 0.03), lambert("#2b2f3d"), 0, wy, wr);
+          // The gallery: a broad slab, eight posts and a rail round it.
+          const gy = y;
+          add(new THREE.CylinderGeometry(0.33, 0.27, 0.07, 8), lambert("#4a4458"), 0, gy + 0.035, 0);
+          const iron = lambert("#2b2a33");
+          for (let i = 0; i < 8; i++) {
+            const a = (i / 8) * Math.PI * 2 + Math.PI / 8;
+            add(box(0.02, 0.14, 0.02), iron, Math.cos(a) * 0.3, gy + 0.14, Math.sin(a) * 0.3);
+          }
+          add(new THREE.CylinderGeometry(0.31, 0.31, 0.025, 8, 1, true), new THREE.MeshLambertMaterial({ color: "#2b2a33", flatShading: true, side: THREE.DoubleSide }), 0, gy + 0.21, 0);
+          // The lantern room: a warm core behind glass, with dark glazing bars.
+          const ly = gy + 0.07;
+          const core = add(new THREE.CylinderGeometry(0.09, 0.09, 0.16, 6), new THREE.MeshBasicMaterial({ color: "#ffe9a8" }), 0, ly + 0.13, 0);
+          core.userData.glow = true;
+          const glass = add(new THREE.CylinderGeometry(0.17, 0.17, 0.26, 8), new THREE.MeshBasicMaterial({ color: "#ffd77a", transparent: true, opacity: 0.45, depthWrite: false }), 0, ly + 0.13, 0);
+          glass.userData.glow = true;
+          for (let i = 0; i < 4; i++) {
+            const a = (i / 4) * Math.PI * 2;
+            add(box(0.025, 0.26, 0.025), iron, Math.cos(a) * 0.17, ly + 0.13, Math.sin(a) * 0.17);
+          }
+          // The cap: a dark red dome-ish cone, a ball and a little vane.
+          add(new THREE.CylinderGeometry(0.2, 0.2, 0.03, 8), iron, 0, ly + 0.275, 0);
+          add(new THREE.ConeGeometry(0.21, 0.2, 8), lambert("#8c3b2f"), 0, ly + 0.39, 0);
+          add(new THREE.SphereGeometry(0.035, 6, 4), iron, 0, ly + 0.5, 0);
+          add(box(0.012, 0.1, 0.012), iron, 0, ly + 0.56, 0);
+          add(box(0.08, 0.03, 0.008), iron, 0.03, ly + 0.59, 0);
+          // Where the beam turns from: the middle of the lantern.
+          g.userData.beacon = new THREE.Vector3(0, ly + 0.13, 0);
+        } else if (fill >= 0.5) {
+          // More than half paid for: the lower half of the tower is up, inside its scaffold, with a hoist and a bucket of mortar.
+          add(new THREE.CylinderGeometry(0.4, 0.44, 0.14, 8), lambert("#9a958a"), 0, base + 0.07, 0);
+          course(BANDS[0], BANDS[1], BAND_H, base + 0.14, white);
+          course(BANDS[1], BANDS[2], BAND_H * 0.6, base + 0.14 + BAND_H, lambert("#c9c3b5"));
+          scaffold(1.1);
+          add(box(0.04, 0.04, 0.5), lambert("#7a5230"), 0.42, base + 1.12, 0.12);
+          add(box(0.008, 0.5, 0.008), lambert("#d9c9a0"), 0.42, base + 0.86, 0.34);
+          add(new THREE.CylinderGeometry(0.05, 0.04, 0.07, 6), lambert("#5a3d22"), 0.42, base + 0.6, 0.34);
+          for (const [x, z] of [[-0.5, 0.42], [-0.34, 0.5]]) add(box(0.14, 0.12, 0.14), lambert("#a3acba"), x, base + 0.06, z, 0.4);
+        } else if (fill > 0) {
+          // Begun: the plinth and the first course, the scaffold's corner poles, and stone stacked ready.
+          add(new THREE.CylinderGeometry(0.4, 0.44, 0.14, 8), lambert("#9a958a"), 0, base + 0.07, 0);
+          course(BANDS[0], 0.33, 0.12, base + 0.14, lambert("#c9c3b5"));
+          scaffold(0.7);
+          for (const [x, z] of [[-0.5, 0.42], [-0.34, 0.5], [-0.46, 0.56]]) add(box(0.14, 0.12, 0.14), lambert("#a3acba"), x, base + 0.06, z, 0.4);
+          for (let i = 0; i < 3; i++) add(box(0.46, 0.04, 0.1), lambert(i % 2 ? "#c9a877" : "#8a6a44"), 0.36, base + 0.02 + i * 0.04, 0.48, 0.5 + 0.1 * i);
         } else {
-          // A building site: the first course of the foundation, scaffold poles, planks and a crate.
-          add(new THREE.CylinderGeometry(0.5, 0.56, 0.16, 8), stone, 0, 0.08, 0);
-          for (const [x, z] of [[-0.42, -0.3], [0.42, -0.3], [-0.42, 0.34], [0.42, 0.34]]) add(new THREE.CylinderGeometry(0.035, 0.035, 0.95, 5), lambert("#7a5230"), x, 0.47, z);
-          add(box(0.9, 0.04, 0.05), lambert("#8a6a44"), 0, 0.62, -0.3);
-          add(box(0.9, 0.04, 0.05), lambert("#8a6a44"), 0, 0.62, 0.34);
-          add(box(0.05, 0.04, 0.68), lambert("#8a6a44"), -0.42, 0.9, 0.02);
-          add(box(0.05, 0.04, 0.68), lambert("#8a6a44"), 0.42, 0.9, 0.02);
-          add(box(0.34, 0.14, 0.26), stone, -0.08, 0.23, 0.05, 0.3);
-          for (let i = 0; i < 3; i++) add(box(0.6, 0.05, 0.14), lambert(i % 2 ? "#a07a4c" : "#8a6a44"), 0.72, 0.03 + i * 0.05, 0.3, 0.25 * i);
-          add(box(0.24, 0.22, 0.24), lambert("#9a6b2f"), -0.72, 0.11, 0.35, 0.4);
+          // Not begun: the point is only surveyed. A ring of stakes marks where the tower will stand, with a flag on one.
+          const stake = lambert("#a07a4c");
+          for (let i = 0; i < 6; i++) {
+            const a = (i / 6) * Math.PI * 2;
+            add(box(0.035, 0.22, 0.035), stake, Math.cos(a) * 0.34, base + 0.08, Math.sin(a) * 0.34);
+          }
+          add(box(0.025, 0.5, 0.025), stake, 0.34, base + 0.22, 0);
+          add(box(0.012, 0.12, 0.16), lambert("#b9433d"), 0.34, base + 0.4, 0.08);
         }
         break;
       }

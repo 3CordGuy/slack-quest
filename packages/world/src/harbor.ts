@@ -36,8 +36,15 @@ export const HARBOR_RING: HexPos = at(3, 5);
 export const HARBOR_GATHER = { fishing: at(0, 7), felling: at(0, 3), quarry: at(12, 2) } as const;
 /** The pub: food, drink, the barkeep and the dice table are inside. */
 export const HARBOR_PUB: HexPos = at(8, 6);
-/** The works: where the crew's shared projects are paid for, and where the lighthouse goes up. */
+/** The works: the builders' yard where the crew's shared projects are paid for. */
 export const HARBOR_WORKS: HexPos = at(5, 6);
+/**
+ * The lighthouse's spot: out on the east spit, over the wreck, where ships
+ * pass out of the harbour. Not in the plaza, where a tall tower would hide the
+ * town. A bare point (then a building site) until the crew has paid for it at
+ * the works.
+ */
+export const HARBOR_LIGHTHOUSE: HexPos = at(11, 8);
 /** The apothecary's spot, beside the market stall. A building site until the crew has paid for it. */
 export const HARBOR_APOTHECARY: HexPos = at(10, 5);
 /** The smithy's spot, beside the sparring ring. A building site until the crew has paid for it. */
@@ -115,6 +122,7 @@ export function generateHarbor(): WorldMap {
       harborPoi("pub", "pub", HARBOR_PUB), harborPoi("works", "works", HARBOR_WORKS),
       harborPoi("apothecary", "apothecary", HARBOR_APOTHECARY), harborPoi("smithy", "smithy", HARBOR_SMITHY),
       harborPoi("galley", "galley", HARBOR_GALLEY),
+      harborPoi("lighthouse", "lighthouse", HARBOR_LIGHTHOUSE),
       harborPoi("fishing", "fishing", HARBOR_GATHER.fishing),
       harborPoi("felling", "felling", HARBOR_GATHER.felling),
       harborPoi("quarry", "quarry", HARBOR_GATHER.quarry),

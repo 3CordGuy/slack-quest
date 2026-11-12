@@ -84,7 +84,9 @@ export async function projectStock(db: D1Database, playerId: string): Promise<Pr
 export async function contribute(db: D1Database, crewId: string, playerId: string, projectId: string, give: unknown): Promise<{ error: string } | { completed: boolean; xp?: XpResult }> {
   const [works, stock] = await Promise.all([crewWorks(db, crewId), projectStock(db, playerId)]);
   const project = works.projects.find((p) => p.id === projectId);
-  const check = checkContribution(projectId, { paid: project?.paid ?? {}, built: !!project && project.builtAt !== null }, stock, give);
+  // The unlock rule reads the crew's progress on every project. Built never goes back, so a stale read
+  // can only refuse a gift that a crewmate's finishing touch had just unlocked, never let a locked one in.
+  const check = checkContribution(projectId, { paid: project?.paid ?? {}, built: !!project && project.builtAt !== null }, stock, give, works.projects);
   if (!check.ok) return { error: check.error };
   const def = projectById(projectId)!;
   const at = Date.now();

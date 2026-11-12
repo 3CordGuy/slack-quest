@@ -17,7 +17,7 @@ It runs entirely on Cloudflare: Workers, Durable Objects, D1, Workers AI and Ema
 - **Gathering:** fish off the shore, fell trees, work the quarry. Each is a short timing game, swayed by your stats.
 - **Your hut:** buy a plot, fill a resource bin to raise a shack, then furnish it, craft for it and upgrade it. Rest there to recover.
 - **The pub:** food and drink that boost your next voyage, dice and Shoals at the tables, and traveling salesmen who drop in from time to time.
-- **Crew projects:** pay together into the Lighthouse, Apothecary (brews for the voyage) and Smithy (sharpen and reinforce gear).
+- **Crew projects:** pay together into the Apothecary (brews for the voyage) and Smithy (sharpen and reinforce gear) first; once both stand, the Lighthouse (a day more on every voyage, and the island's coast charted) and the Galley (a shared larder) unlock.
 - **Around town:** the market stall, the notice board's contracts and crew goal, the sparring ring, and trading or giving gear to crewmates.
 
 **A voyage** is one session. The crew sails to a seeded hex island with a generated story:

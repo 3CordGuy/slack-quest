@@ -4,7 +4,7 @@
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { HexPos } from "@gantt-quest/core";
-import { GATHER_SPOTS, GATHER_SPOT_IDS, HARBOR_APOTHECARY, HARBOR_BOARD, HARBOR_GALLEY, HARBOR_SMITHY, HARBOR_GATHER, HARBOR_NAME, HARBOR_PIERS, HARBOR_PLOTS, HARBOR_PUB, HARBOR_RING, HARBOR_SHOP, HARBOR_WORKS, MAX_PARTY, PLOT_PRICE, RESOURCE_KINDS, SHACK_COST, binFill, binNeeds, builtProjects, generateHarbor, harborPoi, hutTier, poiAt, salesman, type GatherSpot, type HarborShip, type Resources } from "@gantt-quest/world";
+import { GATHER_SPOTS, GATHER_SPOT_IDS, HARBOR_APOTHECARY, HARBOR_BOARD, HARBOR_GALLEY, HARBOR_LIGHTHOUSE, HARBOR_SMITHY, HARBOR_GATHER, HARBOR_NAME, HARBOR_PIERS, HARBOR_PLOTS, HARBOR_PUB, HARBOR_RING, HARBOR_SHOP, HARBOR_WORKS, MAX_PARTY, PLOT_PRICE, RESOURCE_KINDS, SHACK_COST, binFill, binNeeds, builtProjects, generateHarbor, projectById, projectProgress, harborPoi, hutTier, poiAt, salesman, type GatherSpot, type HarborShip, type Resources } from "@gantt-quest/world";
 import { api, type Me } from "./api";
 import { AccountPanel } from "./Account";
 import { NoticeBoard } from "./board/NoticeBoard";
@@ -67,14 +67,16 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
   const apothecaryBuilt = built.includes("apothecary");
   const smithyBuilt = built.includes("smithy");
   const galleyBuilt = built.includes("galley");
+  // How far the crew has got with the lighthouse, which sets which stage of building is drawn on its spit.
+  const lighthousePaid = board.works?.projects.find((p) => p.id === "lighthouse")?.paid;
+  const lighthouseFill = lit ? 1 : lighthousePaid ? Math.round(projectProgress(projectById("lighthouse")!, lighthousePaid) * 100) / 100 : 0;
 
   // The Harbor as the renderer sees it: the fixed map plus a hut per member and a ship per moored voyage.
   const scene = useMemo<RenderState | null>(() => {
     if (!you) return null;
     const pois = [
-      // The works are a building site until the lighthouse stands there.
-      // So are the apothecary's, smithy's and galley's spots until the crew has paid for them.
-      ...base.pois.map((p) => (p.id === "works" ? { ...p, cleared: lit } : p.id === "apothecary" ? { ...p, cleared: apothecaryBuilt } : p.id === "smithy" ? { ...p, cleared: smithyBuilt } : p.id === "galley" ? { ...p, cleared: galleyBuilt } : p)),
+      // The lighthouse's spit, and the apothecary's, smithy's and galley's spots, are building sites until the crew has paid for them.
+      ...base.pois.map((p) => (p.id === "lighthouse" ? { ...p, cleared: lit, fill: lighthouseFill } : p.id === "apothecary" ? { ...p, cleared: apothecaryBuilt } : p.id === "smithy" ? { ...p, cleared: smithyBuilt } : p.id === "galley" ? { ...p, cleared: galleyBuilt } : p)),
       // A plot someone has bought has their hut on it, or a resource bin while the shack is still to go up; the rest are staked out and for sale.
       ...HARBOR_PLOTS.map((pos, i) => {
         const owner = board.members.find((m) => m.plot === i);
@@ -141,7 +143,8 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
     : hoverPoi.kind === "rocks" ? "Rocks. Ships that miss the channel find them."
     : hoverPoi.kind === "wreck" ? "A wreck on the rocks. Nobody remembers her name."
     : hoverPoi.kind === "pub" ? (visitor ? `The pub: a traveling salesman is in. ${visitor.name}, ${visitor.trade}` : "The pub: food, drink, Old Tam and the dice table")
-    : hoverPoi.kind === "works" ? (lit ? "The lighthouse: crew projects" : "The works: crew projects")
+    : hoverPoi.kind === "works" ? "The works: crew projects"
+    : hoverPoi.kind === "lighthouse" ? (lit ? "The lighthouse: it sees every ship out past the shoals" : lighthouseFill > 0 ? "The lighthouse going up: a crew project at the works" : "A bare point over the wreck, where the lighthouse will stand")
     : hoverPoi.kind === "apothecary" ? (apothecaryBuilt ? "The apothecary: brew herbs and mushrooms for your next voyage" : "The apothecary's building site: a crew project at the works")
     : hoverPoi.kind === "smithy" ? (smithyBuilt ? "The smithy: sharpen weapons, reinforce armour" : "The smithy's building site: a crew project at the works")
     : hoverPoi.kind === "galley" ? (galleyBuilt ? "The galley: cook chowder and stores into the crew's larder" : "The galley's building site: a crew project at the works")
@@ -190,6 +193,7 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
   const atApothecary = !!self && same(self.pos, HARBOR_APOTHECARY);
   const atSmithy = !!self && same(self.pos, HARBOR_SMITHY);
   const atGalley = !!self && same(self.pos, HARBOR_GALLEY);
+  const atLighthouse = !!self && same(self.pos, HARBOR_LIGHTHOUSE);
   // Resting: the server keeps the clock; this is only what it last told us, counted down for show.
   const [restReadyAt, setRestReadyAt] = useState(0);
   const [note, setNote] = useState<string | null>(null);
@@ -270,7 +274,8 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
         run: () => setGather(gatherHere),
       }
     : atPub ? { title: visitor ? <>The pub <span className="pub-visitor">· {visitor.name}, {visitor.trade}, is in</span></> : "The pub", label: "Go in", run: () => goInside("pub", "pub") }
-    : atWorks ? { title: lit ? "The lighthouse" : "The works", label: "See the crew's projects", run: () => setWorks(true) }
+    : atWorks ? { title: "The works", label: "See the crew's projects", run: () => setWorks(true) }
+    : atLighthouse ? { title: lit ? "The lighthouse" : <>The lighthouse's point <span className="muted">· paid for at the works</span></>, label: "See the crew's projects", run: () => setWorks(true) }
     // A workshop still to be built points to the works, where the crew pays for it.
     : atApothecary ? (apothecaryBuilt
         ? { title: "The apothecary", label: "Brew something", run: () => setWorkshop("apothecary") }

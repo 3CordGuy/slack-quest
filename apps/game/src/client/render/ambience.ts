@@ -338,6 +338,11 @@ export class Ambience {
   /** Chimney smoke: a column of pixel puffs over each stack. Outlives a map rebuild, so it is kept out of `group`. */
   private smoke: THREE.Points | null = null;
   private stacks: THREE.Vector3[] = [];
+  /**
+   * A lighthouse's lamp: two soft beams turning slowly round it and a glow on the lantern. Additive meshes and a
+   * sprite, no light of its own, so the light count never changes. Kept out of `group`, like the smoke.
+   */
+  private beacon: { root: THREE.Group; spin: THREE.Group; beams: THREE.MeshBasicMaterial; glow: THREE.SpriteMaterial; halo: THREE.Sprite } | null = null;
   private flatTint = new THREE.Color();
   private still = typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
   private m = new THREE.Matrix4();
@@ -720,6 +725,7 @@ export class Ambience {
   dispose() {
     this.clear();
     this.setSmoke([]);
+    this.setBeacon(null);
     this.scene.remove(this.hemi, this.sun, this.sun.target, this.lamp, this.fireLight, ...this.glows, this.group);
     this.lamp.shadow.map?.dispose();
     this.fireLight.shadow.map?.dispose();
@@ -758,6 +764,7 @@ export class Ambience {
     this.light(target, clock);
     this.fall(clock, target);
     this.puff(clock);
+    this.sweep(clock);
     this.splash(clock);
     this.flicker(clock, target);
     const motion = this.still ? 0 : 1;
@@ -940,6 +947,91 @@ export class Ambience {
     this.smoke = new THREE.Points(geometry, new THREE.PointsMaterial({ size: 3, sizeAttenuation: false, vertexColors: true, transparent: true, depthWrite: false }));
     this.smoke.frustumCulled = false;
     this.scene.add(this.smoke);
+  }
+
+  /**
+   * Put a lighthouse's turning beam at `at` (the middle of its lantern), or take it away with null.
+   * Each beam is an open cone lying on its side, apex in the lantern, coloured by a ramp that fades to black
+   * along its length: drawn additively, black adds nothing, so it thins out to nothing with no hard end.
+   */
+  setBeacon(at: THREE.Vector3 | null) {
+    if (this.beacon) {
+      this.scene.remove(this.beacon.root);
+      this.beacon.root.traverse((o) => {
+        if (o instanceof THREE.Mesh || o instanceof THREE.Sprite) o.geometry.dispose();
+      });
+      this.beacon.beams.map?.dispose();
+      this.beacon.beams.dispose();
+      this.beacon.glow.map?.dispose();
+      this.beacon.glow.dispose();
+      this.beacon = null;
+    }
+    if (!at) return;
+    const ramp = (stops: [number, string][], w: number, h: number, radial: boolean) => {
+      const canvas = document.createElement("canvas");
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext("2d")!;
+      const grad = radial ? ctx.createRadialGradient(w / 2, h / 2, 0, w / 2, h / 2, w / 2) : ctx.createLinearGradient(0, 0, 0, h);
+      for (const [o, c] of stops) grad.addColorStop(o, c);
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, 0, w, h);
+      const tex = new THREE.CanvasTexture(canvas);
+      tex.colorSpace = THREE.SRGBColorSpace;
+      return tex;
+    };
+    // A cone's apex is the top of the texture (the canvas's first row), its open end the bottom.
+    const beams = new THREE.MeshBasicMaterial({
+      map: ramp([[0, "#fff1c0"], [0.1, "#c9a650"], [0.45, "#3a2f14"], [1, "#000000"]], 2, 64, false),
+      transparent: true,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+      fog: false,
+    });
+    const root = new THREE.Group();
+    root.position.copy(at);
+    const spin = new THREE.Group();
+    root.add(spin);
+    const LENGTH = 3.4;
+    for (const side of [1, -1]) {
+      const cone = new THREE.Mesh(new THREE.ConeGeometry(0.42, LENGTH, 14, 1, true), beams);
+      // Lay it on its side with the apex at the lantern, pointing out along x (and back, for the second beam).
+      cone.rotation.z = (side * Math.PI) / 2;
+      cone.position.x = (side * LENGTH) / 2;
+      // A touch below the lamp, so the beam reads as sweeping the water rather than the sky.
+      cone.position.y = -0.12;
+      cone.renderOrder = 2;
+      spin.add(cone);
+    }
+    const glow = new THREE.SpriteMaterial({
+      map: ramp([[0, "#fff4cc"], [0.25, "#ffd77a"], [0.6, "#5a3f10"], [1, "#000000"]], 64, 64, true),
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      transparent: true,
+      fog: false,
+    });
+    const halo = new THREE.Sprite(glow);
+    halo.renderOrder = 2;
+    root.add(halo);
+    root.traverse((o) => (o.frustumCulled = false));
+    this.scene.add(root);
+    this.beacon = { root, spin, beams, glow, halo };
+  }
+
+  /** The lighthouse's beam turns slowly; faint by day, plain at dusk and night. */
+  private sweep(clock: number) {
+    const b = this.beacon;
+    if (!b) return;
+    const dark = this.night;
+    // A full turn every 24 seconds or so: slow enough to be calm, never a strobe. Held still when motion is reduced.
+    b.spin.rotation.y = this.still ? 0.6 : clock * 0.26;
+    b.beams.opacity = 0.06 + 0.5 * dark;
+    // The glow breathes very gently, and is barely there at noon.
+    const breathe = this.still ? 1 : 0.92 + 0.08 * Math.sin(clock * 1.3);
+    b.glow.opacity = (0.18 + 0.72 * dark) * breathe;
+    const size = 0.8 + 0.5 * dark;
+    b.halo.scale.set(size, size, 1);
   }
 
   /** Puffs leave the stack one after another, drift with the wind as they climb, and thin out. */
