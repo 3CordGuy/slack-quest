@@ -156,6 +156,10 @@ const PLAYER_COLORS = ["#ffd23f", "#5ce1e6", "#ff7ab6", "#9dff6b"];
 const BIOME_COLOR: Record<string, string> = { plains: "#7cb856", forest: "#4c9a52", hills: "#a39672", water: "#3f86dc", dock: "#9a7748", cobble: "#6f7279", mud: "#5f5140", rampart: "#62656d", floor: "#b08a5c", wall: "#6e5a48", fog: "#2b3140" };
 /** What grass and trees are pulled toward under the Harbor's low cloud. */
 const DRAB = new THREE.Color("#5d6a5c");
+/** The open sea at the dead of night, and the fog by day and by night. */
+const NIGHT_SEA = new THREE.Color("#0f1a33");
+const FOG_DAY = new THREE.Color("#3a4358");
+const FOG_NIGHT = new THREE.Color("#141824");
 /** And the sea there: cold and grey-green. */
 const GREY_SEA = new THREE.Color("#2f4a5f");
 
@@ -365,6 +369,10 @@ export class WorldRenderer {
   /** What the battleground was last dressed for, so it is only rebuilt when the fight moves. */
   private arenaSig = "";
   private units = new Map<string, Unit>();
+  /** The sea's daytime colour for this map; night deepens it toward navy. */
+  private seaBase = new THREE.Color("#3577cf");
+  /** How dark the tiles were last painted for, in steps, so they are only repainted when night moves on. */
+  private paintedNight = -1;
   private pulsing = new Set<string>();
   private floaters: Floater[] = [];
   private sleepZs: SleepZ[] = [];
@@ -856,7 +864,8 @@ export class WorldRenderer {
   private buildTerrain(state: RenderState, recentre = true) {
     this.mapCode = state.code;
     this.sodden = state.map.tiles.some((t) => t.biome === "cobble");
-    (this.sea.material as THREE.MeshLambertMaterial).color.set(this.sodden ? "#2b4558" : "#3577cf");
+    this.seaBase.set(this.sodden ? "#2b4558" : "#3577cf");
+    (this.sea.material as THREE.MeshLambertMaterial).color.copy(this.seaBase);
     this.wallTurn = NaN;
     this.tiles = state.map.tiles;
     if (this.terrain) {
@@ -978,9 +987,12 @@ export class WorldRenderer {
     const white = new THREE.Color("#ffffff");
     this.tiles.forEach((t, i) => {
       c.set(BIOME_COLOR[t.biome]);
+      // Fog is a pale mist by day and all but black by night.
+      if (t.biome === "fog") c.set(FOG_DAY).lerp(FOG_NIGHT, Math.max(0, this.paintedNight) / 10);
       // In a wet, walled port the green is tired.
       if (this.sodden && (t.biome === "plains" || t.biome === "forest")) c.lerp(DRAB, 0.5);
       if (this.sodden && t.biome === "water") c.lerp(GREY_SEA, 0.65);
+      if (t.biome === "water") c.lerp(NIGHT_SEA, (Math.max(0, this.paintedNight) / 10) * 0.7);
       c.offsetHSL(0, 0, (noise(t.q, t.r, 9) - 0.5) * (t.biome === "rampart" ? 0.1 : 0.06));
       const r = this.reach.get(key(t));
       if (r && r.cost > 0 && !this.state?.freeRoam) c.lerp(white, 0.3);
@@ -2401,6 +2413,14 @@ export class WorldRenderer {
     );
     this.camera.lookAt(this.target);
     this.ambience.update(this.clock, this.yaw, this.target);
+    // Night reaches the open sea and the fog too, not just the lit ground.
+    const night = this.ambience.night;
+    (this.sea.material as THREE.MeshLambertMaterial).color.copy(this.seaBase).lerp(NIGHT_SEA, night * 0.8);
+    const step = Math.round(night * 10);
+    if (step !== this.paintedNight) {
+      this.paintedNight = step;
+      this.paintTiles();
+    }
     if (this.state?.indoors) this.lowerNearWalls();
 
     // The height of one view pixel, in the units an unattenuated sprite is sized in.
