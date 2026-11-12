@@ -133,14 +133,19 @@ function payoutStatements(db: D1Database, playerId: string, claim: string, paid:
   );
 }
 
-/** How far behind the server's own clock a reported stop may be: a round trip, and a little over. */
-const TIMING_SLACK_MS = 600;
+/**
+ * How far behind the server's own clock a reported stop may be. The client's
+ * clock starts when the marker reaches it, after the aim has been saved and
+ * sent, so a fair report trails the server by that delay plus the trip back.
+ * Too tight and honest players on a slow line are overruled.
+ */
+const TIMING_SLACK_MS = 3000;
 
 /**
  * Put the server's clock on a timed choice. An aim is stamped with now. A stop
- * is judged by when the client says the player pressed, but only believed if
- * it falls between when the marker started and when the request arrived,
- * less a round trip at most. Anything else (a stop "from the future", or one
+ * is judged by when the client says the player pressed, which is what the
+ * player saw, and is believed if it falls between when the request arrived
+ * and a few seconds before that. Anything else (a stop "from the future", or one
  * far older than the request) is judged at the server's own estimate.
  */
 function timed(state: GatherState, choice: GatherChoice, now: number): GatherChoice {
