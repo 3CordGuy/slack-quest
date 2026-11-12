@@ -1,0 +1,127 @@
+// Template for apps/game/wrangler.jsonc. The real file is gitignored. CI writes
+// it from the WRANGLER_GAME_CONFIG repo secret (see .github/workflows/deploy-game.yml),
+// so a change to bindings, vars or routes must be made in that secret too.
+//
+// Three places this worker runs:
+//   - top level:        local development only (`vite dev`). Mock AI, local D1,
+//                       no email. It is never deployed.
+//   - env.staging:      gantt-quest-game-staging at harbor-staging.heylets.party.
+//   - env.production:   gantt-quest-game at harbor.heylets.party.
+// Pick one at build time with CLOUDFLARE_ENV=staging|production; `wrangler deploy`
+// then ships what that build produced. See docs/game-production-checklist.md.
+//
+// Local development needs no Cloudflare resources:
+//   1. cp apps/game/wrangler.example.jsonc apps/game/wrangler.jsonc
+//   2. pnpm --filter @gantt-quest/game db:migrate:local
+//   3. pnpm --filter @gantt-quest/game dev
+//
+// AI_MODE "mock" swaps Workers AI for a scripted stand-in so the game runs
+// offline and for free. "live" uses real models for the story, NPC replies,
+// the barkeep and the epilogue, billed to the account's Workers AI allocation.
+//
+// Admin side (content overrides): put ADMIN_EMAILS=you@example.com in
+// apps/game/.dev.vars locally, and `wrangler secret put ADMIN_EMAILS --name <worker>`
+// for a deployed Worker. Comma-separate several. Unset means nobody is an admin.
+//
+// This worker has its own D1 databases. They are not the legacy gantt-quest
+// database used by apps/web and apps/slack.
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "gantt-quest-game",
+  "main": "src/worker.ts",
+  "compatibility_date": "2025-05-01",
+  "workers_dev": true,
+  "observability": { "enabled": true },
+  "assets": {
+    "directory": "./dist/client",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application"
+  },
+  // Local only. The all-zeros id matches no real database, so a deploy built
+  // without CLOUDFLARE_ENV fails here instead of reaching production.
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "gantt-quest-game",
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "./migrations"
+    }
+  ],
+  "ai": { "binding": "AI" },
+  "vars": { "AI_MODE": "mock" },
+  "durable_objects": {
+    "bindings": [
+      { "name": "RUN_ROOM", "class_name": "RunRoom" },
+      { "name": "HARBOR_ROOM", "class_name": "HarborRoom" },
+      { "name": "HUT_ROOM", "class_name": "HutRoom" },
+      { "name": "PUB_ROOM", "class_name": "PubRoom" }
+    ]
+  },
+  // Durable Object migrations are shared by every environment. Append a new tag
+  // for each new class (or rename/delete); never edit or reorder an applied one.
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["RunRoom"] },
+    { "tag": "v2", "new_sqlite_classes": ["HarborRoom"] },
+    { "tag": "v3", "new_sqlite_classes": ["HutRoom"] },
+    { "tag": "v4", "new_sqlite_classes": ["PubRoom"] }
+  ],
+  // Environments do not inherit bindings or vars, so each one repeats them.
+  "env": {
+    "staging": {
+      "name": "gantt-quest-game-staging",
+      "workers_dev": true,
+      // Cloudflare makes the DNS record and certificate on deploy.
+      "routes": [{ "pattern": "harbor-staging.heylets.party", "custom_domain": true }],
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "gantt-quest-game-staging",
+          "database_id": "REPLACE_WITH_STAGING_D1_ID",
+          "migrations_dir": "./migrations"
+        }
+      ],
+      "ai": { "binding": "AI" },
+      // Email sign-in codes. Needs the sending domain onboarded under Email
+      // Service > Send Emails. Leave both out and codes are written to the log.
+      "send_email": [{ "name": "EMAIL", "remote": true }],
+      "vars": { "AI_MODE": "live", "MAIL_FROM_ADDRESS": "noreply@heylets.party", "MAIL_FROM_NAME": "Gantt Quest" },
+      "durable_objects": {
+        "bindings": [
+          { "name": "RUN_ROOM", "class_name": "RunRoom" },
+          { "name": "HARBOR_ROOM", "class_name": "HarborRoom" },
+          { "name": "HUT_ROOM", "class_name": "HutRoom" },
+          { "name": "PUB_ROOM", "class_name": "PubRoom" }
+        ]
+      }
+    },
+    "production": {
+      // Explicit, so wrangler does not name it gantt-quest-game-production.
+      "name": "gantt-quest-game",
+      // Only the custom domain serves production: no *.workers.dev address and
+      // no per-version preview URLs that skip the domain.
+      "workers_dev": false,
+      "preview_urls": false,
+      "routes": [{ "pattern": "harbor.heylets.party", "custom_domain": true }],
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "gantt-quest-game",
+          // From `wrangler d1 create gantt-quest-game`.
+          "database_id": "REPLACE_WITH_PRODUCTION_D1_ID",
+          "migrations_dir": "./migrations"
+        }
+      ],
+      "ai": { "binding": "AI" },
+      "send_email": [{ "name": "EMAIL", "remote": true }],
+      "vars": { "AI_MODE": "live", "MAIL_FROM_ADDRESS": "noreply@heylets.party", "MAIL_FROM_NAME": "Gantt Quest" },
+      "durable_objects": {
+        "bindings": [
+          { "name": "RUN_ROOM", "class_name": "RunRoom" },
+          { "name": "HARBOR_ROOM", "class_name": "HarborRoom" },
+          { "name": "HUT_ROOM", "class_name": "HutRoom" },
+          { "name": "PUB_ROOM", "class_name": "PubRoom" }
+        ]
+      }
+    }
+  }
+}

@@ -1,0 +1,97 @@
+.admin { display: flex; flex-direction: column; height: 100vh; }
+/* The shared top bar floats over the game; here it sits in the page flow. */
+.admin > .topbar { position: static; }
+.admin > .topbar > strong { flex-shrink: 0; }
+.admin .topbar label.button-like {
+  border: 2px solid var(--line);
+  padding: 2px 8px;
+  cursor: pointer;
+}
+.admin-msg { margin: 8px 16px 0; }
+.admin-body {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 180px minmax(220px, 1fr) minmax(280px, 1.2fr);
+  gap: 12px;
+  padding: 12px;
+}
+.admin-kinds, .admin-list, .admin-editor { overflow: auto; min-height: 0; }
+.admin-kinds { display: flex; flex-direction: column; gap: 4px; }
+.admin-kinds button { text-align: left; display: flex; justify-content: space-between; align-items: center; }
+.admin-kinds button.selected, .admin-row.selected { border-color: var(--accent); }
+.admin-search { width: 100%; margin-bottom: 8px; }
+.admin-list ul, .admin-history { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.admin-row { width: 100%; text-align: left; display: flex; flex-direction: column; gap: 2px; }
+.admin-row .tag { margin-left: 6px; }
+.admin-field { display: flex; flex-direction: column; gap: 4px; margin-top: 12px; }
+.admin-field span:first-child { display: flex; justify-content: space-between; }
+.admin-field input, .admin-field textarea { width: 100%; font: inherit; }
+.admin-actions { display: flex; gap: 8px; margin-top: 12px; }
+.admin-history li { display: grid; grid-template-columns: 1fr auto auto; gap: 8px; align-items: center; padding: 4px 0; border-bottom: 1px solid var(--line); }
+
+@media (max-width: 760px) {
+  .admin { height: auto; }
+  .admin-body { grid-template-columns: 1fr; }
+  .admin-kinds { flex-direction: row; flex-wrap: wrap; }
+}
+
+/* ---- parts 3–4: looks, icons, change log, filters ---- */
+.admin .pixel { image-rendering: pixelated; display: block; flex: none; }
+.admin .topbar { flex-wrap: wrap; row-gap: 6px; }
+.admin-nav-head { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; margin-top: 8px; }
+.admin-nav-head:first-child { margin-top: 0; }
+.admin-search-row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
+.admin-search-row .admin-search { margin: 0; flex: 1; min-width: 0; }
+.admin-check { display: flex; gap: 4px; align-items: center; white-space: nowrap; font-size: 12px; }
+.admin-filters { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 8px; }
+.admin-filters .selected, .admin-tools .selected { border-color: var(--accent); }
+.admin-row.with-thumb { flex-direction: row; align-items: center; gap: 8px; }
+.admin-row.with-thumb > span { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 6px; }
+.admin-row:disabled { opacity: 1; cursor: default; }
+.admin-editor-wrap { min-height: 0; overflow: auto; display: flex; flex-direction: column; }
+.admin-editor-wrap .admin-editor { overflow: visible; }
+.admin-close { display: none; align-self: flex-start; margin-bottom: 8px; }
+
+.admin-icon-grid { display: grid !important; grid-template-columns: repeat(auto-fill, minmax(86px, 1fr)); gap: 6px; }
+.admin-icon-cell { width: 100%; display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 6px 2px; font-size: 11px; word-break: break-word; }
+.admin-icon-cell.selected { border-color: var(--accent); }
+.admin-icon-cell.modified { box-shadow: inset 0 0 0 2px var(--good); }
+
+.admin-sprite-previews, .admin-icon-previews { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; margin: 8px 0; }
+.admin-sprite-previews figure, .admin-icon-previews figure { margin: 0; display: flex; flex-direction: column; align-items: center; gap: 2px; font-size: 11px; }
+.admin-sprite-previews img, .admin-icon-previews img { background: #2e2b48; }
+
+.admin-colours { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 8px; margin-top: 8px; }
+.admin-colour { display: flex; align-items: center; gap: 6px; }
+.admin-colour input[type="color"] { width: 36px; height: 28px; padding: 0; border: 2px solid var(--line); background: none; }
+.admin-selects { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.admin-selects select { width: 100%; font: inherit; }
+.admin-swatches { display: inline-flex; gap: 3px; vertical-align: middle; flex-wrap: wrap; }
+.admin-swatches i { display: inline-block; width: 14px; height: 14px; border: 1px solid var(--line); }
+
+.admin-pixel-wrap { max-width: 320px; margin: 8px 0; }
+.admin-pixels { width: 100%; aspect-ratio: 1; display: block; border: 2px solid var(--line); touch-action: none; cursor: crosshair; image-rendering: pixelated; }
+.admin-pixels.tool-pick { cursor: copy; }
+.admin-tools { display: flex; flex-wrap: wrap; gap: 4px; }
+.admin-tools label.button-like { border: 2px solid var(--line); padding: 2px 8px; cursor: pointer; }
+.admin-palette { display: flex; flex-wrap: wrap; gap: 4px; margin: 8px 0; }
+.admin-chip { width: 26px; height: 26px; padding: 0; border: 2px solid var(--line); min-width: 0; }
+.admin-chip.is-marker { width: auto; padding: 0 6px; font-size: 11px; color: #fff; text-shadow: 0 1px 0 #000; }
+.admin-chip.selected { outline: 2px solid var(--gold); outline-offset: 1px; }
+.admin-chip.custom { display: inline-flex; overflow: hidden; }
+.admin-chip.custom input { width: 100%; height: 100%; border: 0; padding: 0; background: none; }
+
+.admin-log .admin-row { gap: 4px; }
+
+@media (max-width: 760px) {
+  .admin-hint { display: none; }
+  .admin-kinds { gap: 4px; }
+  .admin-nav-head { width: 100%; margin: 4px 0 0; }
+  /* On a phone the list and the editor take turns: picking a row shows its editor, with a way back. */
+  .admin.has-selection .admin-list { display: none; }
+  .admin.has-selection .admin-kinds { display: none; }
+  .admin-close { display: inline-block; }
+  .admin-history li { grid-template-columns: 1fr auto; }
+  .admin-history li > span:nth-child(2) { grid-column: 1 / -1; grid-row: 2; }
+}

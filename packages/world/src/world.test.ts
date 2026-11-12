@@ -1,0 +1,971 @@
+import { describe, expect, it } from "vitest";
+import { STARTING_STATS, hexDistance } from "@gantt-quest/core";
+import { upcomingTurns, BATTLE_JOIN_RANGE, BERRY_HEAL, FORAGE_ODDS, ROAMERS_AT_START, ROAMERS_MAX, ROAMER_SCENT, VISION,
+  PERK_CAPS, PUB_BUFF_CAPS, pubBuff,
+  xpWithBonus,
+  CANNED_FILLS,
+  STORY_FRAMES,
+  applyXp,
+  buildBible,
+  clientView,
+  createBattle,
+  createWorld,
+  currentActor,
+  demandMet,
+  describeBearing,
+  findPath,
+  PICKUPS,
+  PICKUP_MAX,
+  generateMap,
+  poiAt,
+  makeRng,
+  newNpcRun,
+  parseNpcOutput,
+  poiById,
+  reachable,
+  requiredDoom,
+  rollCheck,
+  rollStartingStats,
+  statPct,
+  stepBattle,
+  seedFromString,
+  stepWorld,
+  storyHints,
+  tileAt,
+  upgradeWorld,
+  validateBible,
+  validateFill,
+  validateIntent,
+  xpToNext,
+  type BattleState,
+  type Combatant,
+  type HeroInit,
+  type StoryBible,
+  type WorldAction,
+  type WorldEffect,
+  type WorldEvent,
+  type WorldState,
+} from "./index";
+
+const frame = STORY_FRAMES[0];
+const fill = CANNED_FILLS.stolen_relic[0];
+
+function heroInit(id: string, classId: string, weapon: string): HeroInit {
+  return { id, name: id.toUpperCase(), classId, level: 1, xp: 0, unspent: 0, base: { ...STARTING_STATS[classId] }, bonus: {}, weapon, weaponPower: 0, armor: 0 };
+}
+
+/** Apply an action that must succeed; collect events and effects. */
+function must(state: WorldState, action: WorldAction, sink?: { events: WorldEvent[]; effects: WorldEffect[] }): WorldState {
+  const res = stepWorld(state, action);
+  if (!res.ok) throw new Error(`${action.type} failed: ${res.error}`);
+  sink?.events.push(...res.events);
+  sink?.effects.push(...res.effects);
+  return res.state;
+}
+
+function startedWorld(seed = "test-seed"): WorldState {
+  let s = createWorld("ABCD", seed);
+  s = must(s, { type: "join", hero: heroInit("p1", "qa_paladin", "mace") });
+  s = must(s, { type: "join", hero: heroInit("p2", "devops_mage", "staff") });
+  s = must(s, { type: "ready", heroId: "p2", ready: true });
+  s = must(s, { type: "start", heroId: "p1" });
+  // Most tests here are about one rule at a time, so the island is clear: no fog, nothing roaming. Fog and roamers have their own tests.
+  return { ...must(s, { type: "begin", bible: buildBible(frame, fill) }), roamers: undefined, seen: undefined };
+}
+
+/** Teleport helper for tests: put every hero on a hex. */
+function placeAll(s: WorldState, poiId: string): WorldState {
+  const pos = poiById(s.map, poiId)!.pos;
+  return { ...s, heroes: s.heroes.map((h) => ({ ...h, pos })) };
+}
+
+describe("rng and rollCheck", () => {
+  it("is deterministic and resumable from its state", () => {
+    const a = makeRng(42);
+    const first = [a.next(), a.next(), a.next()];
+    const b = makeRng(42);
+    b.next();
+    const resumed = makeRng(b.state());
+    expect([resumed.next(), resumed.next()]).toEqual(first.slice(1));
+  });
+
+  it("guarantees focus rolls and reports perfect / fumble", () => {
+    const sure = rollCheck(makeRng(1), { label: "x", pct: 0, count: 3, focus: 2 });
+    expect(sure.rolls).toEqual([true, true, false]);
+    expect(sure.successes).toBe(2);
+    expect(rollCheck(makeRng(1), { label: "x", pct: 100, count: 4 }).perfect).toBe(true);
+    expect(rollCheck(makeRng(1), { label: "x", pct: 0, count: 4 }).fumble).toBe(true);
+  });
+
+  it("lands near the stated percentage", () => {
+    const rng = makeRng(7);
+    let hits = 0;
+    for (let i = 0; i < 4000; i++) hits += rollCheck(rng, { label: "x", pct: 70, count: 1 }).successes;
+    expect(hits / 4000).toBeGreaterThan(0.67);
+    expect(hits / 4000).toBeLessThan(0.73);
+  });
+
+  it("maps stats to a clamped percentage", () => {
+    expect(statPct(4)).toBe(42);
+    expect(statPct(9)).toBe(57);
+    expect(statPct(22)).toBe(95);
+    expect(statPct(40)).toBe(95);
+    expect(statPct(-5)).toBe(20);
+  });
+});
+
+describe("island generation", () => {
+  it("is deterministic per seed and differs across seeds", () => {
+    expect(generateMap("a")).toEqual(generateMap("a"));
+    expect(generateMap("a")).not.toEqual(generateMap("b"));
+  });
+
+  it("always yields a playable island", () => {
+    for (let i = 0; i < 40; i++) {
+      const map = generateMap(`seed-${i}`);
+      const landing = poiById(map, "landing")!;
+      const lair = poiById(map, "lair")!;
+      expect(lair.hidden).toBe(true);
+      expect(hexDistance(landing.pos, lair.pos)).toBeGreaterThanOrEqual(5);
+      const reach = reachable(map, landing.pos);
+      for (const poi of map.pois) {
+        expect(tileAt(map, poi.pos)!.biome).not.toBe("water");
+        expect(reach.has(`${poi.pos.q},${poi.pos.r}`), `${poi.id} reachable on seed-${i}`).toBe(true);
+      }
+      const keys = new Set(map.pois.map((p) => `${p.pos.q},${p.pos.r}`));
+      expect(keys.size).toBe(map.pois.length);
+      // Sea at the rim: the island should be mostly, but not entirely, land.
+      const water = map.tiles.filter((t) => t.biome === "water").length / map.tiles.length;
+      expect(water).toBeGreaterThan(0.1);
+      expect(water).toBeLessThan(0.6);
+    }
+  });
+
+  it("charges terrain cost and refuses water", () => {
+    const map = generateMap("cost");
+    const landing = poiById(map, "landing")!.pos;
+    const hut = poiById(map, "hut")!.pos;
+    const route = findPath(map, landing, hut)!;
+    expect(route.path.at(-1)).toEqual(hut);
+    expect(route.cost).toBeGreaterThanOrEqual(route.path.length);
+    expect(route.path.every((p) => tileAt(map, p)!.biome !== "water")).toBe(true);
+    expect(findPath(map, landing, hut, 1)).toBeNull();
+  });
+});
+
+describe("battle", () => {
+  const fighter = (id: string, over: Partial<Combatant> = {}): Combatant => ({
+    id, side: "hero", name: id, kind: "qa_paladin", level: 1, hp: 30, maxHp: 30,
+    pct: { str: 100, vit: 100, agi: 100, dex: 100, int_stat: 100 },
+    power: 0, armor: 0, speed: 200, focus: 2, potions: 1, abilities: ["smite", "shield_wall", "cleave"], effects: [], down: false, ...over,
+  });
+  const setup = (heroes: Combatant[], enemyKinds: string[], seed = 3) =>
+    createBattle({ heroes, enemyKinds, avgLevel: 1, poiId: "camp" }, makeRng(seed));
+
+  it("orders by speed and stops on a hero turn", () => {
+    const { state } = setup([fighter("h1")], ["bandit", "wolf"]);
+    expect(upcomingTurns(state)[0].id).toBe("h1");
+    expect(currentActor(state)!.id).toBe("h1");
+    expect(state.xp).toBe(22);
+  });
+
+  it("rejects out-of-turn and unknown actions", () => {
+    const { state } = setup([fighter("h1"), fighter("h2", { speed: 150 })], ["bandit"]);
+    const rng = makeRng(1);
+    const me = state.actor!;
+    const other = me === "h1" ? "h2" : "h1";
+    expect(stepBattle(state, other, { type: "ability", ability: "smite" }, rng).ok).toBe(false);
+    expect(stepBattle(state, me, { type: "ability", ability: "firebolt" }, rng).ok).toBe(false);
+    expect(stepBattle(state, me, { type: "ability", ability: "smite", focus: 9 }, rng).ok).toBe(false);
+    expect(stepBattle(state, me, { type: "ability", ability: "smite", target: other }, rng).ok).toBe(false);
+  });
+
+  it("runs to victory, with perfect results applying effects", () => {
+    let { state } = setup([fighter("h1")], ["bandit"]);
+    const rng = makeRng(9);
+    const first = stepBattle(state, "h1", { type: "ability", ability: "smite", target: "e0" }, rng);
+    if (!first.ok) throw new Error(first.error);
+    // 100% over 3 rolls is perfect: full damage (9 + level) and a stun.
+    expect(first.events).toContainEqual(expect.objectContaining({ t: "hit", amount: 10, perfect: true }));
+    expect(first.events).toContainEqual({ t: "effect", target: "e0", effect: "stunned", turns: 1 });
+    // The hero is so fast it acts again before the bandit comes round, still stunned.
+    expect(first.state.actor).toBe("h1");
+    expect(first.state.combatants.find((c) => c.id === "e0")!.effects).toContainEqual({ kind: "stunned", turns: 1 });
+    state = first.state;
+    const second = stepBattle(state, "h1", { type: "ability", ability: "smite", target: "e0" }, rng);
+    if (!second.ok) throw new Error(second.error);
+    expect(second.state.status).toBe("victory");
+    expect(second.events.at(-1)).toEqual({ t: "end", status: "victory" });
+    expect(stepBattle(second.state, "h1", { type: "potion" }, rng).ok).toBe(false);
+  });
+
+  it("ends in defeat when every hero is down, and enemies act without a client", () => {
+    const { state, events } = setup([fighter("h1", { hp: 1, speed: 0, pct: { str: 0 } })], ["wolf", "wolf", "wolf"], 5);
+    // Enemies were faster, so they have already acted by the time createBattle returns.
+    expect(events.some((e) => e.t === "check")).toBe(true);
+    let s: BattleState = state;
+    const rng = makeRng(11);
+    for (let i = 0; i < 30 && s.status === "active"; i++) {
+      const r = stepBattle(s, "h1", { type: "ability", ability: "smite" }, rng);
+      if (!r.ok) throw new Error(r.error);
+      s = r.state;
+    }
+    expect(s.status).toBe("defeat");
+  });
+
+  it("spends focus, heals with a potion, and can flee a normal fight but not a boss", () => {
+    const { state } = setup([fighter("h1", { hp: 10 })], ["bandit"]);
+    const rng = makeRng(2);
+    const hit = stepBattle(state, "h1", { type: "ability", ability: "cleave", focus: 2 }, rng);
+    if (!hit.ok) throw new Error(hit.error);
+    expect(hit.state.combatants[0].focus).toBe(0);
+    const pot = stepBattle(state, "h1", { type: "potion" }, rng);
+    if (!pot.ok) throw new Error(pot.error);
+    expect(pot.events[0]).toEqual({ t: "heal", actor: "h1", target: "h1", amount: 12, ability: "Potion" });
+    const flee = stepBattle(state, "h1", { type: "flee" }, rng);
+    expect(flee.ok && flee.state.status).toBe("fled");
+    const boss = setup([fighter("h1")], ["villain"]);
+    expect(stepBattle(boss.state, "h1", { type: "flee" }, rng).ok).toBe(false);
+  });
+
+  it("scales a boss with party size", () => {
+    const solo = setup([fighter("h1")], ["villain"]).state.combatants.find((c) => c.side === "enemy")!;
+    const trio = setup([fighter("h1"), fighter("h2"), fighter("h3")], ["villain"]).state.combatants.find((c) => c.side === "enemy")!;
+    expect(trio.maxHp).toBeGreaterThan(solo.maxHp);
+  });
+});
+
+describe("progression", () => {
+  it("rolls starting stats around the class baseline", () => {
+    const rng = makeRng(5);
+    for (let i = 0; i < 50; i++) {
+      const s = rollStartingStats(rng, "qa_paladin");
+      expect(s.str).toBeGreaterThanOrEqual(8);
+      expect(s.str).toBeLessThanOrEqual(11);
+    }
+  });
+
+  it("levels up with class auto-allocation and a free point", () => {
+    const p = { classId: "qa_paladin", level: 1, xp: 0, stats: { ...STARTING_STATS.qa_paladin }, unspent: 0 };
+    const out = applyXp(p, xpToNext(1) + xpToNext(2) + 5);
+    expect(out.level).toBe(3);
+    expect(out.xp).toBe(5);
+    expect(out.levelsGained).toBe(2);
+    expect(out.unspent).toBe(2);
+    expect(out.stats.str).toBe(p.stats.str + 2);
+    expect(out.stats.vit).toBe(p.stats.vit + 2);
+    expect(p.stats.str).toBe(STARTING_STATS.qa_paladin.str);
+  });
+});
+
+describe("story bible", () => {
+  it("accepts every canned fill and builds a completable bible", () => {
+    const map = generateMap("bible");
+    for (const f of CANNED_FILLS.stolen_relic) {
+      expect(validateFill(f)).not.toBeNull();
+      expect(validateBible(buildBible(frame, f), map)).toEqual([]);
+    }
+  });
+
+  it("gives each voyage its own seeded flavour", () => {
+    const hintsFor = (seed: string) => storyHints(makeRng(seedFromString(seed)));
+    expect(hintsFor("a")).toEqual(hintsFor("a"));
+    const many = Array.from({ length: 40 }, (_, i) => hintsFor(`voyage-${i}`));
+    for (const h of many) {
+      const { island, villain, islander } = h.initials;
+      expect(new Set([island, villain, islander]).size).toBe(3);
+    }
+    // Nearly every voyage should differ from every other in the combination it gets.
+    const combos = new Set(many.map((h) => `${h.relic}|${h.villain}|${h.island}|${h.initials.island}`));
+    expect(combos.size).toBeGreaterThanOrEqual(38);
+    expect(new Set(many.map((h) => h.relic)).size).toBeGreaterThanOrEqual(8);
+  });
+
+  it("rejects malformed model output", () => {
+    expect(validateFill(null)).toBeNull();
+    expect(validateFill("a story")).toBeNull();
+    expect(validateFill({ ...fill, villain_name: 7 })).toBeNull();
+    expect(validateFill({ ...fill, title: "" })).toBeNull();
+    expect(validateFill({ ...fill, premise: "x".repeat(2000) })).toBeNull();
+    expect(validateFill({ ...fill, npc_knowledge: [] })).toBeNull();
+    const { relic_name: _dropped, ...missing } = fill;
+    expect(validateFill(missing)).toBeNull();
+  });
+
+  it("reports a bible that cannot be completed", () => {
+    const map = generateMap("bible");
+    const bible = buildBible(frame, fill);
+    bible.objectives.push({ id: "ghost", text: "?", fact: "defeated:nowhere" });
+    bible.npcs[0].poi = "atlantis";
+    const problems = validateBible(bible, map);
+    expect(problems.some((p) => p.includes("nowhere"))).toBe(true);
+    expect(problems.some((p) => p.includes("atlantis"))).toBe(true);
+  });
+});
+
+describe("npc output and intent validation", () => {
+  const sheet = buildBible(frame, fill).npcs[0];
+  const met = { demandMet: true };
+
+  it("parses objects, JSON strings and fenced JSON; rejects junk", () => {
+    expect(parseNpcOutput({ say: " hi  there " })).toEqual({ say: "hi there", intent: null, attitudeDelta: 0 });
+    expect(parseNpcOutput('```json\n{"say":"hi","attitude_delta":5}\n```')).toEqual({ say: "hi", intent: null, attitudeDelta: 1 });
+    expect(parseNpcOutput('Sure! {"say":"ok","intent":{"verb":"give_item","args":{"item":"charm"}}}')!.intent).toEqual({
+      verb: "give_item",
+      args: { item: "charm" },
+    });
+    expect(parseNpcOutput("I am not JSON")).toBeNull();
+    expect(parseNpcOutput({ intent: { verb: "give_item" } })).toBeNull();
+    expect(parseNpcOutput({ say: "x".repeat(5000) })!.say.length).toBe(600);
+  });
+
+  it("refuses everything the model might invent", () => {
+    const run = newNpcRun();
+    const bad = [
+      { verb: "give_gold", args: { amount: 1000 } },
+      { verb: "give_item", args: { item: "1000 gold" } },
+      { verb: "give_item", args: { item: "tidewatch_lantern" } },
+      { verb: "give_item", args: {} },
+      { verb: "reveal_location", args: { poi: "treasure_vault" } },
+      { verb: "set_fact", args: { fact: "defeated:lair" } },
+      { verb: "__proto__", args: {} },
+    ];
+    for (const intent of bad) expect(validateIntent(sheet, run, intent, met).ok, JSON.stringify(intent)).toBe(false);
+  });
+
+  it("gates persuasion-locked capabilities, and each fires once", () => {
+    const run = newNpcRun();
+    const give = { verb: "give_item", args: { item: "charm" } };
+    expect(validateIntent(sheet, run, give, met).ok).toBe(false);
+    run.persuaded = true;
+    expect(validateIntent(sheet, run, give, met).ok).toBe(true);
+    run.used.push("give_charm");
+    expect(validateIntent(sheet, run, give, met).ok).toBe(false);
+    const reveal = { verb: "reveal_location", args: { poi: "lair" } };
+    expect(validateIntent(sheet, newNpcRun(), reveal, met).ok).toBe(true);
+    expect(validateIntent(sheet, { ...newNpcRun(), hostile: true }, reveal, met).ok).toBe(false);
+    // The lair is only given up once the NPC's demand has been met.
+    expect(validateIntent(sheet, newNpcRun(), reveal, { demandMet: false }).ok).toBe(false);
+    const fight = { verb: "start_combat", args: {} };
+    expect(validateIntent(sheet, newNpcRun(), fight, met).ok).toBe(false);
+    expect(validateIntent(sheet, { ...newNpcRun(), attitude: -1 }, fight, met).ok).toBe(true);
+  });
+});
+
+describe("world reducer", () => {
+  it("runs the lobby rules", () => {
+    let s = createWorld("ABCD", "lobby");
+    s = must(s, { type: "join", hero: heroInit("p1", "qa_paladin", "mace") });
+    s = must(s, { type: "join", hero: heroInit("p2", "devops_mage", "staff") });
+    expect(s.hostId).toBe("p1");
+    expect(stepWorld(s, { type: "start", heroId: "p2" }).ok).toBe(false);
+    expect(stepWorld(s, { type: "start", heroId: "p1" }).ok).toBe(false);
+    s = must(s, { type: "ready", heroId: "p2", ready: true });
+    const sink = { events: [] as WorldEvent[], effects: [] as WorldEffect[] };
+    s = must(s, { type: "start", heroId: "p1" }, sink);
+    expect(s.phase).toBe("generating");
+    expect(sink.effects).toEqual([{ kind: "story_gen" }]);
+    expect(stepWorld(s, { type: "join", hero: heroInit("p3", "refactor_rogue", "daggers") }).ok).toBe(false);
+    // Rejoining an existing hero is a no-op, not an error.
+    expect(stepWorld(s, { type: "join", hero: heroInit("p2", "devops_mage", "staff") }).ok).toBe(true);
+  });
+
+  it("is deterministic: same seed and actions give the same state", () => {
+    expect(startedWorld("same")).toEqual(startedWorld("same"));
+  });
+
+  it("enforces turn order, movement points and one action per turn", () => {
+    let s = startedWorld();
+    const doomAtStart = s.doom;
+    const turn = s.turn!;
+    const other = s.heroes.find((h) => h.id !== turn.heroId)!;
+    expect(turn.mp).toBeGreaterThanOrEqual(2);
+    expect(turn.mp).toBeLessThanOrEqual(6);
+    expect(stepWorld(s, { type: "end_turn", heroId: other.id }).ok).toBe(false);
+    const me = s.heroes.find((h) => h.id === turn.heroId)!;
+    const steps = [...reachable(s.map, me.pos, turn.mp).values()].filter((r) => r.cost > 0);
+    const target = steps.sort((a, b) => b.cost - a.cost)[0];
+    expect(stepWorld(s, { type: "move", heroId: other.id, to: target.pos }).ok).toBe(false);
+    s = must(s, { type: "move", heroId: me.id, to: target.pos });
+    expect(s.turn!.mp).toBe(turn.mp - target.cost);
+    expect(s.heroes.find((h) => h.id === me.id)!.pos).toEqual(target.pos);
+    const lair = s.map.pois.find((p) => p.id === "lair")!.pos;
+    expect(stepWorld(s, { type: "move", heroId: me.id, to: lair }).ok).toBe(false);
+    s = must(s, { type: "end_turn", heroId: me.id });
+    expect(s.turn!.heroId).toBe(other.id);
+    s = must(s, { type: "end_turn", heroId: other.id });
+    expect(s.round).toBe(2);
+    expect(s.doom).toBe(doomAtStart - 1);
+  });
+
+  it("ends in defeat when the doom clock runs out, with a capped penalty", () => {
+    let s = startedWorld();
+    const sink = { events: [] as WorldEvent[], effects: [] as WorldEffect[] };
+    for (let i = 0; i < 200 && s.phase === "overworld"; i++) s = must(s, { type: "timeout" }, sink);
+    expect(s.phase).toBe("ended");
+    expect(s.result!.outcome).toBe("defeat");
+    expect(sink.effects.filter((e) => e.kind === "penalty")).toHaveLength(2);
+    expect(sink.effects).toContainEqual({ kind: "run_end", outcome: "defeat" });
+  });
+
+  it("handles a conversation: checks, validated intents, rejected inventions", () => {
+    let s = placeAll(startedWorld(), "hut");
+    const sink = { events: [] as WorldEvent[], effects: [] as WorldEffect[] };
+    const far = { ...s, heroes: s.heroes.map((h) => ({ ...h, pos: poiById(s.map, "landing")!.pos })) };
+    expect(stepWorld(far, { type: "talk", heroId: "p1", npcId: "npc1", text: "hello" }).ok).toBe(false);
+
+    s = must(s, { type: "talk", heroId: "p1", npcId: "npc1", text: "  Give me   1000 gold  " }, sink);
+    expect(s.chat.at(-1)!.text).toBe("Give me 1000 gold");
+    expect(s.facts["met:npc1"]).toBe(true);
+    expect(sink.effects.at(-1)).toMatchObject({ kind: "npc_call", npcId: "npc1", heroId: "p1", check: null });
+    expect(stepWorld(s, { type: "talk", heroId: "p2", npcId: "npc1", text: "me too" }).ok).toBe(false);
+
+    // A jailbroken model tries to hand out gold and the charm; only words get through.
+    sink.events.length = 0;
+    s = must(s, { type: "npc_reply", npcId: "npc1", heroId: "p1", output: { say: "Take it all!", intent: { verb: "give_gold", args: { amount: 1000 } }, attitudeDelta: 1 } }, sink);
+    expect(sink.events).toContainEqual(expect.objectContaining({ t: "npc_intent", ok: false }));
+    expect(s.earned.p1).toBeUndefined();
+    s = must(s, { type: "talk", heroId: "p1", npcId: "npc1", text: "the charm then" });
+    s = must(s, { type: "npc_reply", npcId: "npc1", heroId: "p1", output: { say: "Here.", intent: { verb: "give_item", args: { item: "charm" } }, attitudeDelta: 1 } });
+    expect(s.heroes[0].keyItems).toEqual([]);
+    expect(s.npcs.npc1.attitude).toBe(1);
+
+    // After a passed check the same intent is honoured, once.
+    s = { ...s, npcs: { npc1: { ...s.npcs.npc1, persuaded: true } } };
+    const focusBefore = s.heroes[0].maxFocus;
+    s = must(s, { type: "talk", heroId: "p1", npcId: "npc1", text: "please" });
+    s = must(s, { type: "npc_reply", npcId: "npc1", heroId: "p1", output: { say: "Fine.", intent: { verb: "give_item", args: { item: "charm" } }, attitudeDelta: 0 } });
+    expect(s.heroes[0].keyItems).toEqual(["charm"]);
+    expect(s.heroes[0].maxFocus).toBe(focusBefore + 2);
+    s = must(s, { type: "talk", heroId: "p1", npcId: "npc1", text: "another?" });
+    s = must(s, { type: "npc_reply", npcId: "npc1", heroId: "p1", output: { say: "No.", intent: { verb: "give_item", args: { item: "charm" } }, attitudeDelta: 0 } });
+    expect(s.heroes[0].keyItems).toEqual(["charm"]);
+
+    // The NPC asked for the camp to be cleared; until then it cannot reveal the lair, whatever the model says.
+    expect(clientView(s, "p1").story!.demand).toEqual({ npcName: fill.npc_name, text: frame.demands[0].text, done: false });
+    const tell: WorldAction = { type: "npc_reply", npcId: "npc1", heroId: "p2", output: { say: "East.", intent: { verb: "reveal_location", args: { poi: "lair" } }, attitudeDelta: 0 } };
+    s = must(s, { type: "talk", heroId: "p2", npcId: "npc1", text: "just tell us" });
+    s = must(s, tell);
+    expect(poiById(s.map, "lair")!.hidden).toBe(true);
+    s = { ...s, facts: { ...s.facts, "defeated:camp": true } };
+    expect(clientView(s, "p1").story!.demand!.done).toBe(true);
+
+    // Revealing the lair completes an objective and pays XP to everyone.
+    sink.events.length = 0;
+    s = must(s, { type: "talk", heroId: "p2", npcId: "npc1", text: "where is the lair?" });
+    s = must(s, { type: "npc_reply", npcId: "npc1", heroId: "p2", output: { say: "East.", intent: { verb: "reveal_location", args: { poi: "lair" } }, attitudeDelta: 0 } }, sink);
+    expect(poiById(s.map, "lair")!.hidden).toBe(false);
+    expect(sink.events).toContainEqual({ t: "objective", id: "locate" });
+    expect(s.earned.p1.xp).toBe(15);
+    expect(s.earned.p2.xp).toBe(15);
+  });
+
+  it("rolls persuasion with focus and limits attempts", () => {
+    let s = placeAll(startedWorld(), "hut");
+    const sink = { events: [] as WorldEvent[], effects: [] as WorldEffect[] };
+    s = must(s, { type: "talk", heroId: "p2", npcId: "npc1", text: "trust me", persuade: true, focus: 2 }, sink);
+    const call = sink.effects.find((e) => e.kind === "npc_call")!;
+    expect(call.kind === "npc_call" && call.check!.successes).toBeGreaterThanOrEqual(2);
+    expect(s.npcs.npc1.persuaded).toBe(true);
+    expect(s.heroes.find((h) => h.id === "p2")!.focus).toBe(0);
+    const reply: WorldAction = { type: "npc_reply", npcId: "npc1", heroId: "p2", output: { say: "Hm.", intent: null, attitudeDelta: 0 } };
+    s = must(s, reply);
+    s = must(s, { type: "talk", heroId: "p2", npcId: "npc1", text: "again", persuade: true });
+    s = must(s, reply);
+    expect(stepWorld(s, { type: "talk", heroId: "p2", npcId: "npc1", text: "third", persuade: true }).ok).toBe(false);
+  });
+
+  it("lets an NPC start a fight, then refuses to talk", () => {
+    let s = placeAll(startedWorld(), "hut");
+    const threat: WorldAction = { type: "npc_reply", npcId: "npc1", heroId: "p1", output: { say: "Guards!", intent: { verb: "start_combat", args: {} }, attitudeDelta: -1 } };
+    // The first bad exchange only sours the NPC; it takes a second to start a fight.
+    s = must(s, { type: "talk", heroId: "p1", npcId: "npc1", text: "hand it over or else" });
+    s = must(s, threat);
+    expect(s.phase).toBe("overworld");
+    expect(s.npcs.npc1.attitude).toBe(-1);
+    s = must(s, { type: "talk", heroId: "p1", npcId: "npc1", text: "I said hand it over" });
+    s = must(s, threat);
+    expect(s.phase).toBe("battle");
+    expect(s.battle!.npcId).toBe("npc1");
+    expect(s.npcs.npc1.hostile).toBe(true);
+    expect(stepWorld(s, { type: "talk", heroId: "p1", npcId: "npc1", text: "sorry" }).ok).toBe(false);
+  });
+
+  it("carries a hero beaten alone back to the ship, and the voyage goes on for the rest", () => {
+    let s = startedWorld("alone");
+    const me = s.turn!.heroId;
+    const other = s.heroes.find((h) => h.id !== me)!.id;
+    const camp = poiById(s.map, "camp")!.pos;
+    const landing = poiById(s.map, "landing")!.pos;
+    expect(hexDistance(camp, landing)).toBeGreaterThan(BATTLE_JOIN_RANGE);
+    // The one at the camp is on their last legs; the other is far off at the landing, out of the fight.
+    s = { ...s, heroes: s.heroes.map((h) => (h.id === me ? { ...h, pos: camp, hp: 1, potions: 0 } : { ...h, pos: landing })) };
+    const sink = { events: [] as WorldEvent[], effects: [] as WorldEffect[] };
+    s = must(s, { type: "interact", heroId: me }, sink);
+    expect(s.phase).toBe("battle");
+    expect(s.battle!.combatants.filter((c) => c.side === "hero").map((c) => c.id)).toEqual([me]);
+    for (let i = 0; i < 100 && s.phase === "battle"; i++) s = must(s, { type: "timeout" }, sink);
+    expect(sink.events).toContainEqual({ t: "battle_end", status: "defeat" });
+    expect(s.phase).toBe("overworld");
+    expect(s.result).toBeNull();
+    expect(sink.events).toContainEqual({ t: "carried_back", heroIds: [me] });
+    const beaten = s.heroes.find((h) => h.id === me)!;
+    expect(beaten.pos).toEqual(landing);
+    expect(beaten.hp).toBe(1);
+    expect(s.heroes.find((h) => h.id === other)!.hp).toBeGreaterThan(1);
+    expect(poiById(s.map, "camp")!.cleared).toBe(false);
+  });
+
+  it("plays a fight at the lair through to victory, rewards and the ending", () => {
+    let s = placeAll(startedWorld("win"), "lair");
+    // Make the party strong enough that the outcome does not depend on the seed.
+    s = { ...s, heroes: s.heroes.map((h) => ({ ...h, base: { str: 12, int_stat: 12, vit: 12, agi: 12, dex: 12 }, hp: 200, maxHp: 200 })) };
+    const sink = { events: [] as WorldEvent[], effects: [] as WorldEffect[] };
+    s = must(s, { type: "interact", heroId: s.turn!.heroId }, sink);
+    expect(s.phase).toBe("battle");
+    expect(s.battle!.combatants.find((c) => c.kind === "villain")!.name).toBe(fill.villain_name);
+    for (let i = 0; i < 100 && s.phase === "battle"; i++) s = must(s, { type: "timeout" }, sink);
+    expect(s.phase).toBe("ended");
+    expect(s.result!.outcome).toBe("victory");
+    expect(s.facts["defeated:lair"]).toBe(true);
+    for (const id of ["p1", "p2"]) {
+      // The villain (40) plus whichever lieutenant the story rolled (13 to 18), plus the story bonus (50).
+      expect(s.earned[id].xp).toBeGreaterThanOrEqual(40 + 13 + 50);
+      expect(s.earned[id].gold).toBeGreaterThan(30);
+      expect(s.earned[id].items.length).toBeGreaterThanOrEqual(2);
+    }
+    // Enough XP to level: the hero and the D1 effect must agree.
+    expect(s.heroes[0].level).toBeGreaterThan(1);
+    const granted = sink.effects.filter((e) => e.kind === "grant" && e.heroId === "p1").reduce((a, e) => a + (e.kind === "grant" ? e.xp : 0), 0);
+    expect(granted).toBe(s.earned.p1.xp);
+    expect(sink.effects).toContainEqual({ kind: "epilogue" });
+    s = must(s, { type: "epilogue", text: " And so it ended. " });
+    expect(s.result!.epilogue).toBe("And so it ended.");
+  });
+
+  it("lets a hero change gear on the island, but not in a fight and not to heal", () => {
+    let s = startedWorld("gear");
+    const before = s.heroes.find((h) => h.id === "p1")!;
+    const gear = { base: before.base, unspent: 0, bonus: { vit: 3, str: 1 }, weapon: "greatsword", weaponPower: 2, armor: 7, outfit: {} };
+    s = { ...s, heroes: s.heroes.map((h) => (h.id === "p1" ? { ...h, hp: 10 } : h)) };
+    s = must(s, { type: "gear", heroId: "p1", gear });
+    const after = s.heroes.find((h) => h.id === "p1")!;
+    expect(after.weapon).toBe("greatsword");
+    expect(after.armor).toBe(7);
+    expect(after.maxHp).toBe(before.maxHp + 6);
+    expect(after.hp).toBe(10);
+    // Taking the Vitality back off clamps HP to the lower ceiling, and never raises it.
+    s = { ...s, heroes: s.heroes.map((h) => (h.id === "p1" ? { ...h, hp: h.maxHp } : h)) };
+    s = must(s, { type: "gear", heroId: "p1", gear: { ...gear, bonus: {} } });
+    expect(s.heroes.find((h) => h.id === "p1")!.hp).toBe(before.maxHp);
+    // The new weapon and armor are what the hero fights with.
+    s = placeAll(s, "camp");
+    s = must(s, { type: "interact", heroId: s.turn!.heroId });
+    const fighter = s.battle!.combatants.find((c) => c.id === "p1")!;
+    expect(fighter.abilities).toContain("cleave");
+    expect(fighter.power).toBe(2);
+    expect(fighter.armor).toBe(7);
+    expect(stepWorld(s, { type: "gear", heroId: "p1", gear }).ok).toBe(false);
+  });
+
+  it("gives a hero their hut's perks on boarding, held to the caps, and nobody else's", () => {
+    let s = createWorld("ABCD", "perks");
+    s = must(s, { type: "join", hero: heroInit("p0", "qa_paladin", "mace") });
+    s = must(s, { type: "join", hero: { ...heroInit("p1", "qa_paladin", "mace"), hutPerks: { focus: 1, potions: 1 } } });
+    // More than any hut could give: a caller cannot hand out bigger perks.
+    s = must(s, { type: "join", hero: { ...heroInit("p2", "qa_paladin", "mace"), hutPerks: { focus: 5, potions: 9, maxHp: 400, xpPct: 80 } } });
+    const [plain, bedAndChest, greedy] = s.heroes;
+    expect(plain.hutPerks).toEqual({ focus: 0, potions: 0, maxHp: 0, xpPct: 0 });
+    expect(plain.potions).toBe(1);
+
+    expect(bedAndChest.focus).toBe(plain.focus + 1);
+    expect(bedAndChest.maxFocus).toBe(plain.maxFocus + 1);
+    expect(bedAndChest.potions).toBe(plain.potions + 1);
+    expect(bedAndChest.maxHp).toBe(plain.maxHp);
+
+    expect(greedy.hutPerks).toEqual(PERK_CAPS);
+    expect(greedy.focus).toBe(plain.focus + PERK_CAPS.focus);
+    expect(greedy.potions).toBe(plain.potions + PERK_CAPS.potions);
+    expect(greedy.maxHp).toBe(plain.maxHp + PERK_CAPS.maxHp);
+    expect(greedy.hp).toBe(greedy.maxHp);
+  });
+
+  it("adds what a hero ate and drank at the pub on top of their hut, within the menu's limits", () => {
+    let s = createWorld("ABCD", "pub");
+    s = must(s, { type: "join", hero: heroInit("p0", "qa_paladin", "mace") });
+    s = must(s, { type: "join", hero: { ...heroInit("p1", "qa_paladin", "mace"), hutPerks: { focus: 1, maxHp: 4 }, pubBuff: pubBuff(["rum", "stew"]) } });
+    // More than the menu sells: a caller cannot hand out a bigger meal.
+    s = must(s, { type: "join", hero: { ...heroInit("p2", "qa_paladin", "mace"), pubBuff: { focus: 9, potions: 9, maxHp: 99, xpPct: 99 } } });
+    const [plain, fed, greedy] = s.heroes;
+    expect(plain.pubBuff).toEqual({ focus: 0, potions: 0, maxHp: 0, xpPct: 0 });
+    expect(fed.focus).toBe(plain.focus + 2);
+    expect(fed.maxHp).toBe(plain.maxHp + 8);
+    expect(fed.hp).toBe(fed.maxHp);
+    expect(greedy.pubBuff).toEqual(PUB_BUFF_CAPS);
+    expect(greedy.potions).toBe(plain.potions);
+    expect(greedy.maxHp).toBe(plain.maxHp + PUB_BUFF_CAPS.maxHp);
+  });
+
+  it("keeps the hearth's HP through a gear change and takes potions and focus into a fight", () => {
+    let s = createWorld("ABCD", "perk-gear");
+    s = must(s, { type: "join", hero: { ...heroInit("p1", "qa_paladin", "mace"), hutPerks: { focus: 1, potions: 1, maxHp: 4 } } });
+    s = must(s, { type: "join", hero: heroInit("p2", "devops_mage", "staff") });
+    s = must(s, { type: "ready", heroId: "p2", ready: true });
+    s = must(s, { type: "start", heroId: "p1" });
+    s = must(s, { type: "begin", bible: buildBible(frame, fill) });
+    const h = s.heroes.find((x) => x.id === "p1")!;
+    const gear = { base: h.base, unspent: 0, bonus: { vit: 1 }, weapon: h.weapon, weaponPower: 0, armor: 0, outfit: {} };
+    s = must(s, { type: "gear", heroId: "p1", gear });
+    expect(s.heroes.find((x) => x.id === "p1")!.maxHp).toBe(h.maxHp + 2);
+    s = must(s, { type: "gear", heroId: "p1", gear: { ...gear, bonus: {} } });
+    expect(s.heroes.find((x) => x.id === "p1")!.maxHp).toBe(h.maxHp);
+    s = placeAll(s, "camp");
+    s = must(s, { type: "interact", heroId: s.turn!.heroId });
+    const [me, mate] = ["p1", "p2"].map((id) => s.battle!.combatants.find((c) => c.id === id)!);
+    expect(me.potions).toBe(2);
+    expect(mate.potions).toBe(1);
+    expect(me.focus).toBe(h.maxFocus);
+    expect(me.maxHp).toBe(h.maxHp);
+  });
+
+  it("adds the hut's XP bonus to every award, for that hero only", () => {
+    const play = (perk?: { xpPct: number }) => {
+      let s = createWorld("ABCD", "xp-bonus");
+      s = must(s, { type: "join", hero: { ...heroInit("p1", "qa_paladin", "mace"), hutPerks: perk } });
+      s = must(s, { type: "join", hero: heroInit("p2", "devops_mage", "staff") });
+      s = must(s, { type: "ready", heroId: "p2", ready: true });
+      s = must(s, { type: "start", heroId: "p1" });
+      s = placeAll(must(s, { type: "begin", bible: buildBible(frame, fill) }), "lair");
+      s = { ...s, heroes: s.heroes.map((h) => ({ ...h, base: { str: 12, int_stat: 12, vit: 12, agi: 12, dex: 12 }, hp: 200, maxHp: 200 })) };
+      const sink = { events: [] as WorldEvent[], effects: [] as WorldEffect[] };
+      s = must(s, { type: "interact", heroId: s.turn!.heroId }, sink);
+      for (let i = 0; i < 100 && s.phase === "battle"; i++) s = must(s, { type: "timeout" }, sink);
+      expect(s.result?.outcome).toBe("victory");
+      const xp = (id: string) => sink.effects.flatMap((e) => (e.kind === "grant" && e.heroId === id && e.xp > 0 ? [e.xp] : []));
+      return { s, p1: xp("p1"), p2: xp("p2") };
+    };
+    const base = play();
+    const boosted = play({ xpPct: 5 });
+    expect(base.p1.length).toBeGreaterThanOrEqual(2);
+    expect(boosted.p1).toEqual(base.p1.map((xp) => xpWithBonus(xp, 5)));
+    expect(boosted.p1.reduce((a, b) => a + b, 0)).toBeGreaterThan(base.p1.reduce((a, b) => a + b, 0));
+    // The D1 effect, the run's tally and the crewmate without a bookshelf all agree.
+    expect(boosted.s.earned.p1.xp).toBe(boosted.p1.reduce((a, b) => a + b, 0));
+    expect(boosted.p2).toEqual(base.p2);
+    // A bonus above the cap is cut down to it.
+    expect(play({ xpPct: 90 }).p1).toEqual(boosted.p1);
+  });
+
+  it("applies a stat point spent mid-voyage", () => {
+    let s = startedWorld("spend");
+    const h = s.heroes.find((x) => x.id === "p1")!;
+    const gear = { base: { ...h.base, vit: h.base.vit + 1 }, unspent: 0, bonus: h.bonus, weapon: h.weapon, weaponPower: 0, armor: 0, outfit: {} };
+    s = must(s, { type: "gear", heroId: "p1", gear });
+    expect(s.heroes.find((x) => x.id === "p1")!.maxHp).toBe(h.maxHp + 2);
+  });
+
+  it("reveals the hidden lair when a hero walks next to it", () => {
+    let s = startedWorld("walk");
+    const lair = poiById(s.map, "lair")!.pos;
+    const me = s.turn!.heroId;
+    const next = [...reachable(s.map, lair, 8).values()].find((r) => hexDistance(r.pos, lair) === 2)!;
+    s = { ...s, heroes: s.heroes.map((h) => (h.id === me ? { ...h, pos: next.pos } : h)), turn: { ...s.turn!, mp: 8 } };
+    const adjacent = [...reachable(s.map, next.pos, 8).values()].find((r) => r.cost > 0 && hexDistance(r.pos, lair) === 1)!;
+    s = must(s, { type: "move", heroId: me, to: adjacent.pos });
+    expect(poiById(s.map, "lair")!.hidden).toBe(false);
+    expect(s.facts["revealed:lair"]).toBe(true);
+  });
+});
+
+describe("fog of war and roaming bands", () => {
+  /** A voyage as it really begins: under fog, with bands loose. */
+  function foggy(seed: string): WorldState {
+    let s = createWorld("ABCD", seed);
+    s = must(s, { type: "join", hero: heroInit("p1", "qa_paladin", "mace") });
+    s = must(s, { type: "join", hero: heroInit("p2", "devops_mage", "staff") });
+    s = must(s, { type: "ready", heroId: "p2", ready: true });
+    s = must(s, { type: "start", heroId: "p1" });
+    return must(s, { type: "begin", bible: buildBible(frame, fill) });
+  }
+  const keyOf = (p: { q: number; r: number }) => `${p.q},${p.r}`;
+
+  it("starts with only the landing in view, and hides the rest from clients", () => {
+    for (let i = 0; i < 20; i++) {
+      const s = foggy(`fog-${i}`);
+      const landing = poiById(s.map, "landing")!.pos;
+      expect(s.seen!.length).toBeGreaterThan(3);
+      for (const k of s.seen!) {
+        const [q, r] = k.split(",").map(Number);
+        expect(hexDistance({ q, r }, landing)).toBeLessThanOrEqual(VISION + 1);
+      }
+      const view = clientView(s, "p1");
+      const fogged = view.map.tiles.filter((t) => t.biome === "fog");
+      expect(fogged.length).toBe(s.map.tiles.length - s.seen!.length);
+      // Nothing about fogged ground leaves the server: not its terrain, not what stands on it.
+      for (const t of fogged) expect(view.map.pois.some((p) => p.pos.q === t.q && p.pos.r === t.r)).toBe(false);
+      expect(view).not.toHaveProperty("seen");
+      expect(view.roamers!.every((r) => s.heroes.some((h) => hexDistance(h.pos, r.pos) <= VISION + 1))).toBe(true);
+    }
+  });
+
+  it("will not let a hero walk into fog, and lifts it as they go", () => {
+    let s = foggy("fog-walk");
+    const me = s.turn!.heroId;
+    const hero = s.heroes.find((h) => h.id === me)!;
+    const far = s.map.tiles.find((t) => !s.seen!.includes(keyOf(t)) && t.biome !== "water" && hexDistance(t, hero.pos) > VISION + 1)!;
+    s = { ...s, turn: { ...s.turn!, mp: 99 }, roamers: [] };
+    expect(stepWorld(s, { type: "move", heroId: me, to: { q: far.q, r: far.r } }).ok).toBe(false);
+    const step = [...reachable(s.map, hero.pos, 2).values()].find((r) => r.cost > 0 && s.seen!.includes(keyOf(r.pos)))!;
+    const before = s.seen!.length;
+    s = must(s, { type: "move", heroId: me, to: step.pos });
+    expect(s.seen!.length).toBeGreaterThanOrEqual(before);
+    for (const t of s.map.tiles) if (hexDistance(t, step.pos) <= VISION) expect(s.seen).toContain(keyOf(t));
+  });
+
+  it("puts bands ashore out of sight at the start, clear of every place", () => {
+    for (let i = 0; i < 30; i++) {
+      const s = foggy(`bands-${i}`);
+      expect(s.roamers!.length).toBeLessThanOrEqual(ROAMERS_AT_START);
+      for (const r of s.roamers!) {
+        expect(s.heroes.every((h) => hexDistance(h.pos, r.pos) >= VISION + 2)).toBe(true);
+        expect(s.map.pois.some((p) => p.pos.q === r.pos.q && p.pos.r === r.pos.r)).toBe(false);
+        expect(tileAt(s.map, r.pos)!.biome).not.toBe("water");
+        expect(r.kinds.length).toBe(2);
+      }
+    }
+  });
+
+  it("a band that scents a hero closes on them overnight and attacks when it arrives", () => {
+    let s = foggy("hunt");
+    const me = s.turn!.heroId;
+    const hero = s.heroes.find((h) => h.id === me)!;
+    // Stand a band three hexes off, with a clear run in.
+    const spot = [...reachable(s.map, hero.pos, 12).values()].find((r) => hexDistance(r.pos, hero.pos) === 3 && !s.map.pois.some((p) => p.pos.q === r.pos.q && p.pos.r === r.pos.r))!;
+    s = { ...s, roamers: [{ id: "r9", kinds: ["wolf"], pos: spot.pos }] };
+    const sink = { events: [] as WorldEvent[], effects: [] as WorldEffect[] };
+    // The first night it comes into view and stops there: nobody is jumped by a band they could not have seen.
+    for (let i = 0; i < s.heroes.length && s.phase === "overworld"; i++) s = must(s, { type: "end_turn", heroId: s.turn!.heroId }, sink);
+    expect(s.phase).toBe("overworld");
+    expect(Math.min(...s.heroes.map((h) => hexDistance(h.pos, s.roamers![0].pos)))).toBe(VISION);
+    expect(clientView(s, me).roamers).toHaveLength(1);
+    // The second night it attacks.
+    for (let i = 0; i < s.heroes.length && s.phase === "overworld"; i++) s = must(s, { type: "end_turn", heroId: s.turn!.heroId }, sink);
+    expect(s.phase).toBe("battle");
+    expect(s.roamers).toEqual([]);
+    expect(sink.events.some((e) => e.t === "ambush" && e.by === "band")).toBe(true);
+    expect(s.battle!.combatants.filter((c) => c.side === "enemy").map((c) => c.kind)).toEqual(["wolf"]);
+  });
+
+  it("a hero who walks up to a band starts the fight there", () => {
+    let s = foggy("bump");
+    const me = s.turn!.heroId;
+    const hero = s.heroes.find((h) => h.id === me)!;
+    const two = [...reachable(s.map, hero.pos, 6).values()].find((r) => hexDistance(r.pos, hero.pos) === 2 && s.seen!.includes(keyOf(r.pos)) && !s.map.pois.some((p) => p.pos.q === r.pos.q && p.pos.r === r.pos.r))!;
+    s = { ...s, turn: { ...s.turn!, mp: 9 }, roamers: [{ id: "r9", kinds: ["bandit"], pos: two.pos }], forest: s.map.tiles.map(keyOf) };
+    const sink = { events: [] as WorldEvent[], effects: [] as WorldEffect[] };
+    s = must(s, { type: "move", heroId: me, to: two.pos }, sink);
+    expect(s.phase).toBe("battle");
+    expect(sink.events.some((e) => e.t === "ambush" && e.by === "hero")).toBe(true);
+    // They stopped beside the band, not on top of it.
+    expect(hexDistance(s.heroes.find((h) => h.id === me)!.pos, two.pos)).toBeLessThanOrEqual(1);
+    expect(s.turn!.mp).toBe(0);
+  });
+
+  it("more bands come ashore as the days pass, up to a limit", () => {
+    let s = foggy("tide");
+    // Park the party on the landing and let the days run, moving any band that gets close back out of the way.
+    let most = 0;
+    for (let day = 0; day < 14 && s.phase === "overworld"; day++) {
+      s = { ...s, roamers: (s.roamers ?? []).filter((r) => s.heroes.every((h) => hexDistance(h.pos, r.pos) > ROAMER_SCENT + 2)), doom: 99 };
+      for (let i = 0; i < s.heroes.length && s.phase === "overworld"; i++) s = must(s, { type: "end_turn", heroId: s.turn!.heroId });
+      most = Math.max(most, s.roamers?.length ?? 0);
+      expect(s.roamers!.length).toBeLessThanOrEqual(ROAMERS_MAX);
+    }
+    expect(most).toBeGreaterThan(0);
+  });
+});
+
+describe("forest finds", () => {
+  /** Put the hero whose turn it is beside a plain forest hex and walk onto it. */
+  function walkIntoForest(seed: string) {
+    let s = startedWorld(seed);
+    const me = s.turn!.heroId;
+    const target = s.map.tiles.find((t) => t.biome === "forest" && !s.map.pois.some((p) => p.pos.q === t.q && p.pos.r === t.r) && [...reachable(s.map, t, 3).values()].some((r) => r.cost > 0 && hexDistance(r.pos, t) === 1));
+    if (!target) return null;
+    const from = [...reachable(s.map, target, 3).values()].find((r) => r.cost > 0 && hexDistance(r.pos, target) === 1 && tileAt(s.map, r.pos)?.biome !== "forest");
+    if (!from) return null;
+    // Hurt, so berries have something to mend.
+    s = { ...s, heroes: s.heroes.map((h) => (h.id === me ? { ...h, pos: from.pos, hp: h.maxHp - 5 } : h)), turn: { ...s.turn!, mp: 8 } };
+    const before = s.heroes.find((h) => h.id === me)!;
+    const sink = { events: [] as WorldEvent[], effects: [] as WorldEffect[] };
+    const after = must(s, { type: "move", heroId: me, to: { q: target.q, r: target.r } }, sink);
+    return { before, after, me, target, from: from.pos, sink };
+  }
+
+  it("turns up wood, berries, bones, gold or wolves, and each find does what it says", () => {
+    const seen = new Set<string>();
+    for (let i = 0; i < 400; i++) {
+      const w = walkIntoForest(`forest-${i}`);
+      if (!w) continue;
+      const hero = w.after.heroes.find((h) => h.id === w.me)!;
+      expect(w.after.forest).toContain(`${w.target.q},${w.target.r}`);
+      const found = w.sink.events.find((e) => e.t === "forage") as Extract<WorldEvent, { t: "forage" }> | undefined;
+      if (!found) {
+        expect(w.after.phase).toBe("overworld");
+        continue;
+      }
+      seen.add(found.kind);
+      if (found.kind === "wolves") {
+        expect(w.after.phase).toBe("battle");
+        expect(w.after.turn!.mp).toBe(0);
+        expect(hero.pos).toEqual({ q: w.target.q, r: w.target.r });
+      } else if (found.kind === "berries") {
+        expect(hero.hp).toBe(w.before.hp + BERRY_HEAL);
+        expect(found.hp).toBe(BERRY_HEAL);
+      } else if (found.kind === "treasure") {
+        const gold = w.sink.effects.find((e) => e.kind === "grant" && e.heroId === w.me) as Extract<WorldEffect, { kind: "grant" }>;
+        expect(gold.gold).toBeGreaterThanOrEqual(8);
+        expect(gold.gold).toBeLessThanOrEqual(20);
+      } else {
+        const got = w.sink.effects.find((e) => e.kind === "grant" && e.heroId === w.me) as Extract<WorldEffect, { kind: "grant" }>;
+        const n = got.resources?.[found.kind === "wood" ? "wood" : "bone"] ?? 0;
+        expect(n).toBeGreaterThanOrEqual(1);
+        expect(n).toBeLessThanOrEqual(2);
+      }
+    }
+    expect([...seen].sort()).toEqual(["berries", "bones", "treasure", "wolves", "wood"]);
+  });
+
+  it("gives the same find for the same seed, and nothing the second time through", () => {
+    for (let i = 0; i < 60; i++) {
+      const a = walkIntoForest(`again-${i}`);
+      const b = walkIntoForest(`again-${i}`);
+      if (!a || !b) continue;
+      expect(a.sink.events).toEqual(b.sink.events);
+      if (a.after.phase !== "overworld") continue;
+      // Step out and back in: the hex has been searched.
+      let s: WorldState = { ...a.after, turn: { ...a.after.turn!, mp: 8 } };
+      s = must(s, { type: "move", heroId: a.me, to: a.from });
+      const sink = { events: [] as WorldEvent[], effects: [] as WorldEffect[] };
+      s = { ...s, turn: { ...s.turn!, mp: 8 } };
+      must(s, { type: "move", heroId: a.me, to: { q: a.target.q, r: a.target.r } }, sink);
+      expect(sink.events.filter((e) => e.t === "forage")).toEqual([]);
+    }
+  });
+
+  it("keeps the odds modest: most forest hexes are just trees", () => {
+    expect(Object.values(FORAGE_ODDS).reduce((a, n) => a + n, 0)).toBeLessThanOrEqual(45);
+    expect(FORAGE_ODDS.wolves).toBeLessThanOrEqual(8);
+  });
+});
+
+describe("story fits the island", () => {
+  it("gives the doom clock room for the walk the story needs", () => {
+    for (let i = 0; i < 30; i++) {
+      const s = startedWorld(`doom-${i}`);
+      const stops = ["landing", "hut", "camp", "hut", "lair"].map((id) => poiById(s.map, id)!.pos);
+      let cost = 0;
+      for (let j = 1; j < stops.length; j++) cost += findPath(s.map, stops[j - 1], stops[j])!.cost;
+      // Even at the minimum of 2 movement a turn, plus slack, the party is not asked for the impossible.
+      expect(s.doom).toBeGreaterThanOrEqual(frame.doomRounds);
+      expect(s.doom).toBeGreaterThanOrEqual(requiredDoom(s.map, s.bible!, s.heroes));
+      expect(s.doom, `seed doom-${i}`).toBeGreaterThanOrEqual(Math.ceil(cost / 4.4) + 4);
+    }
+  });
+
+  it("needs fewer days when the NPC only wants persuading", () => {
+    const s = startedWorld("demand");
+    const trust = buildBible(frame, fill, frame.demands[1]);
+    expect(requiredDoom(s.map, trust, s.heroes)).toBeLessThanOrEqual(requiredDoom(s.map, s.bible!, s.heroes));
+    expect(validateBible(trust, s.map)).toEqual([]);
+    expect(demandMet(trust, {}, false)).toBe(false);
+    expect(demandMet(trust, {}, true)).toBe(true);
+    expect(demandMet(s.bible!, { "defeated:camp": true }, false)).toBe(true);
+  });
+
+  it("upgrades a story saved before demands existed", () => {
+    const s = placeAll(startedWorld("legacy"), "hut");
+    const saved = JSON.parse(JSON.stringify(s)) as WorldState;
+    delete (saved.bible as Partial<StoryBible>).demand;
+    let old = upgradeWorld(saved);
+    expect(demandMet(old.bible!, {}, false)).toBe(true);
+    old = must(old, { type: "talk", heroId: "p1", npcId: "npc1", text: "hello" });
+    expect(clientView(old, "p1").story!.demand).toBeNull();
+  });
+
+  it("rejects a demand the island cannot satisfy", () => {
+    const s = startedWorld("demand");
+    const bad = buildBible(frame, fill, { id: "x", text: "slay the dragon", fact: "defeated:dragon_roost" });
+    expect(validateBible(bad, s.map).some((p) => p.includes("demand"))).toBe(true);
+  });
+
+  it("describes bearings the way the map is drawn", () => {
+    expect(describeBearing({ q: 0, r: 0 }, { q: 3, r: 0 })).toBe("about 3 hexes to the east");
+    expect(describeBearing({ q: 0, r: 4 }, { q: 2, r: 0 })).toBe("about 4 hexes to the north");
+    expect(describeBearing({ q: 2, r: 0 }, { q: 0, r: 4 })).toBe("about 4 hexes to the south");
+    expect(describeBearing({ q: 0, r: 0 }, { q: 0, r: 1 })).toBe("about 1 hex to the south-east");
+    expect(describeBearing({ q: 1, r: 1 }, { q: 1, r: 1 })).toBe("right here");
+  });
+});
+
+describe("client view", () => {
+  it("hides the lair, NPC secrets and the RNG", () => {
+    const s = startedWorld();
+    const view = clientView(s, "p1");
+    const json = JSON.stringify(view);
+    expect(view.map.pois.some((p) => p.id === "lair")).toBe(false);
+    expect(view.story!.poiNames.lair).toBeUndefined();
+    expect(json).not.toContain(fill.npc_secret);
+    expect(json).not.toContain(fill.npc_knowledge[1]);
+    expect(json).not.toContain('"capabilities"');
+    expect("rng" in view).toBe(false);
+    expect("seed" in view).toBe(false);
+    expect(view.you).toBe("p1");
+    expect(view.story!.objectives.map((o) => o.done)).toEqual([false, false, false]);
+    // The NPC's ask is not shown until the party has actually met them.
+    expect(view.story!.demand).toBeNull();
+    // The source state is untouched.
+    expect(poiById(s.map, "lair")).toBeDefined();
+  });
+});
+
+describe("herbs, mushrooms and piles on the island", () => {
+  it("lays every kind out on ground a hero can reach, clear of the story's places", () => {
+    for (let i = 0; i < 30; i++) {
+      const map = generateMap(`pickups-${i}`);
+      const landing = poiById(map, "landing")!.pos;
+      const onFoot = reachable(map, landing);
+      const pickups = map.pois.filter((p) => p.kind === "pickup");
+      expect(pickups.length).toBe(PICKUPS.reduce((n, k) => n + k.count, 0));
+      for (const want of PICKUPS) expect(pickups.filter((p) => p.find === want.find).length).toBe(want.count);
+      for (const p of pickups) {
+        expect(onFoot.has(`${p.pos.q},${p.pos.r}`)).toBe(true);
+        for (const other of map.pois) if (other !== p && other.kind !== "pickup") expect(hexDistance(other.pos, p.pos)).toBeGreaterThanOrEqual(2);
+      }
+      expect(new Set(map.pois.map((p) => p.id)).size).toBe(map.pois.length);
+    }
+  });
+
+  it("gives one to three of it to whoever walks over it, once", () => {
+    let s = startedWorld();
+    const me = s.turn!.heroId;
+    const pickup = s.map.pois.find((p) => p.kind === "pickup")!;
+    const next = [...reachable(s.map, pickup.pos, 3).values()].find((r) => r.cost > 0 && hexDistance(r.pos, pickup.pos) === 1 && !poiAt(s.map, r.pos))!;
+    s = { ...s, heroes: s.heroes.map((h) => (h.id === me ? { ...h, pos: next.pos } : h)), turn: { ...s.turn!, mp: 8 } };
+    const sink = { events: [] as WorldEvent[], effects: [] as WorldEffect[] };
+    s = must(s, { type: "move", heroId: me, to: pickup.pos }, sink);
+    expect(sink.events).toContainEqual({ t: "pickup", heroId: me, poiId: pickup.id, find: pickup.find });
+    const got = sink.effects.find((e) => e.kind === "grant" && e.heroId === me) as Extract<WorldEffect, { kind: "grant" }>;
+    const n = got.resources?.[pickup.find!] ?? 0;
+    expect(n).toBeGreaterThanOrEqual(1);
+    expect(n).toBeLessThanOrEqual(PICKUP_MAX);
+    expect(poiById(s.map, pickup.id)!.cleared).toBe(true);
+    // Back off and step on it again: nothing left.
+    s = { ...s, turn: { ...s.turn!, mp: 8 } };
+    s = must(s, { type: "move", heroId: me, to: next.pos });
+    const again = { events: [] as WorldEvent[], effects: [] as WorldEffect[] };
+    s = { ...s, turn: { ...s.turn!, mp: 8 } };
+    must(s, { type: "move", heroId: me, to: pickup.pos }, again);
+    expect(again.events.filter((e) => e.t === "pickup")).toEqual([]);
+  });
+});

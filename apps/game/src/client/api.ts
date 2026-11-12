@@ -1,0 +1,188 @@
+// HTTP helpers for the Harbor screens.
+
+import type { StatKey } from "@gantt-quest/core";
+import type { NoticeBoard } from "../server/board";
+
+/** What the Harbor's notice board shows: the crew goal and the contracts on offer. */
+export type Board = NoticeBoard;
+import type { CarryState, GatherChoice, HarborXpStatus, GatherSpot, HarborWorks, HutSummary, ItemDef, Perk, ProjectAmounts, PublicHero, Resources, SalesEntry, SalesmanId, SalesmanVisit, ShopEntry, TradeOffer } from "@gantt-quest/world";
+import { forcedSalesman } from "./salesmanClock";
+import type { GatherStatus } from "../server/gather";
+import type { XpResult } from "../server/harbor-xp";
+import type { TradeList } from "../server/trade";
+import type { ApothecaryView, SmithyView } from "../server/workshops";
+
+export type { ApothecaryView, SmithyView };
+
+export type { GatherStatus, XpResult };
+
+/** What a hero has ordered at the pub and what it gives on their next voyage. */
+export interface PubTab {
+  orders: string[];
+  buff: Required<Perk>;
+  /** Set on an order: the meal gave back one gathering outing. */
+  rested?: boolean;
+}
+
+/** The crew's projects and what this player has to give toward them. */
+export interface Works {
+  works: HarborWorks;
+  stock: ProjectAmounts;
+}
+
+/** Optional ?p=2 gives this tab its own guest session, for testing two players on one machine. */
+export const PROFILE = new URLSearchParams(location.search).get("p") ?? "";
+
+export interface Character {
+  name: string;
+  class_id: string;
+  status: "draft" | "active";
+  level: number;
+  xp: number;
+  str: number;
+  int_stat: number;
+  vit: number;
+  agi: number;
+  dex: number;
+  unspent_points: number;
+  gold: number;
+  /** JSON list of picked class trait ids (parse with parseTraits). */
+  traits?: string;
+}
+
+export interface InventoryItem {
+  id: number;
+  kind: ItemDef["kind"];
+  ref: string;
+  name: string;
+  rarity: ItemDef["rarity"];
+  slot: ItemDef["slot"];
+  power: number;
+  level_req: number;
+  icon: string;
+  stat_bonus_json: string;
+  equipped: number;
+  /** Steps of work at the smithy, already counted in `power`. */
+  upgrades?: number;
+}
+
+/** The traveling salesman in the pub, if one is in, and their stock for this player; otherwise who is due next. */
+export interface SalesmanView {
+  here: (SalesmanVisit & { entries: (SalesEntry & { bought: boolean; problem: string | null })[] }) | null;
+  next: { salesmanId: SalesmanId; startsAt: number } | null;
+}
+
+/** In the dev server, a forced visitor (see salesmanClock.ts) is passed on so the server agrees. */
+const salesmanHeader = (): Record<string, string> => {
+  const forced = forcedSalesman();
+  return forced ? { "x-gq-salesman": forced } : {};
+};
+
+export interface Shop {
+  refreshAt: number;
+  entries: (ShopEntry & { bought: boolean })[];
+}
+
+/** What the player owns for their hut, the perks it gives right now, and their gold. */
+export type Hut = HutSummary & { perks: Required<Perk>; gold: number };
+
+export interface Me {
+  /** `email` is null for a guest, whose account lives only in this browser. */
+  player: { id: string; name: string; email: string | null };
+  character: Character | null;
+  /** What the hero has with them, worn and in the pack. Stored items are only listed inside their hut. */
+  inventory: InventoryItem[];
+  /** How full the pack is, its size, what is in storage and whether there is a home for it. Null without a character. */
+  carry: CarryState | null;
+  /** The crew whose Harbor this player shares, if any. The id doubles as the invite code. */
+  crew: { id: string; name: string } | null;
+  /** Harbor XP still to be had today, from any pastime. Absent from an older server. */
+  harborXp?: HarborXpStatus;
+  /** On the ADMIN_EMAILS allow-list. Only shows the admin link; the server checks every admin call. */
+  isAdmin: boolean;
+}
+
+export type { StatKey };
+
+async function request<T>(path: string, body?: unknown, extra: Record<string, string> = {}): Promise<T> {
+  const res = await fetch(path, {
+    method: body === undefined ? "GET" : "POST",
+    headers: { "content-type": "application/json", ...(PROFILE ? { "x-gq-profile": PROFILE } : {}), ...extra },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  const data = (await res.json().catch(() => ({}))) as { error?: string };
+  if (!res.ok) throw Object.assign(new Error(data.error ?? `Request failed (${res.status})`), { status: res.status });
+  return data as T;
+}
+
+let signingIn: Promise<unknown> | null = null;
+
+/** Load the signed-in player, creating a guest account on first visit. */
+export async function loadMe(): Promise<Me> {
+  try {
+    return await request<Me>("/api/me");
+  } catch (err) {
+    if ((err as { status?: number }).status !== 401) throw err;
+    // Single-flight, so concurrent first loads share one guest account.
+    signingIn ??= request("/api/auth/guest", {});
+    await signingIn;
+    return request<Me>("/api/me");
+  }
+}
+
+export const api = {
+  /** Another hero's public sheet (or your own): name, level, stats and worn gear. */
+  hero: (id: string) => request<{ hero: PublicHero }>(`/api/hero/${encodeURIComponent(id)}`),
+  suggestName: (classId: string, avoid: string[]) => request<{ name: string }>("/api/character/name", { classId, avoid }),
+  roll: (classId: string, name: string) => request<{ character: Character }>("/api/character/roll", { classId, name }),
+  confirm: () => request("/api/character/confirm", {}),
+  reroll: () => request("/api/character/reroll", {}),
+  spend: (stat: StatKey) => request("/api/character/spend", { stat }),
+  pickTrait: (trait: string) => request("/api/character/trait", { trait }),
+  equip: (itemId: number) => request("/api/character/equip", { itemId }),
+  unequip: (itemId: number) => request("/api/character/unequip", { itemId }),
+  store: (itemId: number) => request("/api/inventory/store", { itemId }),
+  sell: (itemId: number) => request<{ gold: number }>("/api/inventory/sell", { itemId }),
+  sellMaterial: (kind: string, qty: number) => request<{ gold: number }>("/api/shop/materials/sell", { kind, qty }),
+  shop: () => request<Shop>("/api/shop"),
+  buy: (index: number) => request("/api/shop/buy", { index }),
+  board: () => request<Board>("/api/board"),
+  createRun: () => request<{ code: string }>("/api/run", {}),
+  requestCode: (email: string) => request("/api/auth/email/request", { email }),
+  verifyCode: (email: string, code: string) => request<{ outcome: "linked" | "signed_in" | "created" | "already" }>("/api/auth/email/verify", { email, code }),
+  signOut: () => request("/api/auth/signout", {}),
+  createCrew: (name: string) => request("/api/crew", { name }),
+  joinCrew: (code: string) => request("/api/crew/join", { code }),
+  leaveCrew: () => request("/api/crew/leave", {}),
+  gather: () => request<GatherStatus>("/api/gather"),
+  rest: (place: "bedroll" | "hut") => request<GatherStatus & { regained: number }>("/api/rest", { place }),
+  buyPlot: (plot: number) => request<{ plot: number }>("/api/hut/plot", { plot }),
+  fillBin: () => request<{ put: Resources; bin: Resources | null }>("/api/hut/bin", {}),
+  gatherStart: (spot: GatherSpot) => request<GatherStatus>("/api/gather/start", { spot }),
+  gatherStep: (choice: GatherChoice) => request<GatherStatus & { paid?: Resources; xp?: XpResult }>("/api/gather/step", { choice }),
+  pub: () => request<PubTab>("/api/pub"),
+  pubOrder: (itemId: string) => request<PubTab>("/api/pub/order", { itemId }),
+  pubTalk: (text: string) => request<{ say: string }>("/api/pub/talk", { text }),
+  salesman: () => request<SalesmanView>("/api/pub/salesman", undefined, salesmanHeader()),
+  buyFromSalesman: (index: number) => request<{ got: SalesEntry }>("/api/pub/salesman/buy", { index }, salesmanHeader()),
+  projects: () => request<Works>("/api/projects"),
+  apothecary: () => request<ApothecaryView>("/api/apothecary"),
+  brew: (brewId: string) => request<ApothecaryView & { xp?: XpResult }>("/api/apothecary/brew", { brewId }),
+  smithy: () => request<SmithyView>("/api/smithy"),
+  smith: (itemId: number) => request<SmithyView & { worked: string; xp?: XpResult }>("/api/smithy/work", { itemId }),
+  giveToProject: (projectId: string, give: ProjectAmounts) => request<Works & { completed: boolean; xp?: XpResult }>("/api/projects/give", { projectId, give }),
+  hut: () => request<Hut>("/api/hut"),
+  craft: (defId: string) => request<{ ok: true; xp?: XpResult }>("/api/hut/craft", { defId }),
+  /** A bout at the sparring ring is over: its few XP, if today still has room. */
+  sparDone: () => request<{ xp?: XpResult }>("/api/spar/done", {}),
+  /** Materials into (qty > 0) or out of (qty < 0) one of your hut's containers. */
+  stash: (container: number, kind: string, qty: number) => request("/api/hut/stash", { container, kind, qty }),
+  /** Gear from the bag into a container, or (container null) back into the bag. */
+  stow: (container: number | null, itemId: number) => request("/api/hut/stow", { container, itemId }),
+  upgradeHut: () => request<{ tier: number }>("/api/hut/upgrade", {}),
+  buyFurniture: (defId: string) => request("/api/shop/furniture", { defId }),
+  trades: () => request<TradeList>("/api/trade"),
+  proposeTrade: (offer: TradeOffer, run?: string) => request<{ id: number }>("/api/trade/propose", { ...offer, run }),
+  acceptTrade: (id: number) => request("/api/trade/accept", { id }),
+  closeTrade: (id: number) => request("/api/trade/close", { id }),
+};
