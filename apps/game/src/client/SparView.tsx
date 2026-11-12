@@ -11,9 +11,7 @@ import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import {
   ABILITIES,
   DUMMY_KIND,
-  EFFECT_INFO,
   ENEMIES,
-  HERO_CLASSES,
   STAT_LABEL,
   WEAPONS,
   createBattle,
@@ -35,6 +33,7 @@ import { toOwned } from "./items";
 import { spriteDataUrl } from "./render/sprites";
 import type { RenderState, WorldRenderer } from "./render/WorldRenderer";
 import "./spar.css";
+import { blurb, label } from "./labels";
 
 /** The Harbor POI a bout is staged over. */
 const RING_POI = "ring";
@@ -66,8 +65,8 @@ function describe(ev: BattleEvent, n: (id: string) => string): string | null {
     case "hit": return `${n(ev.actor)}: ${ev.ability} hits ${n(ev.target)} for ${ev.amount}${ev.perfect ? " (perfect!)" : ""}.`;
     case "miss": return `${n(ev.actor)}: ${ev.ability} misses ${n(ev.target)}.`;
     case "heal": return `${n(ev.actor)}: ${ev.ability} restores ${ev.amount} HP to ${n(ev.target)}.`;
-    case "effect": return `${n(ev.target)} is ${EFFECT_INFO[ev.effect].name.toLowerCase()}.`;
-    case "tick": return `${n(ev.target)} takes ${ev.amount} from ${EFFECT_INFO[ev.effect].name.toLowerCase()}.`;
+    case "effect": return `${n(ev.target)} is ${label("effect", ev.effect).toLowerCase()}.`;
+    case "tick": return `${n(ev.target)} takes ${ev.amount} from ${label("effect", ev.effect).toLowerCase()}.`;
     case "skip": return `${n(ev.id)} is stunned and loses the turn.`;
     case "down": return `${n(ev.id)} goes down!`;
     case "flee": return ev.ok ? `${n(ev.actor)} steps out of the ring.` : `${n(ev.actor)} fails to break away.`;
@@ -161,7 +160,7 @@ export function SparView({ me, scene, renderer, onClose }: Props) {
       rng,
     );
     queue.current = [];
-    setFeed([`${sheet.name} squares up to ${many > 1 ? `${many} × ` : ""}${def.name}.`]);
+    setFeed([`${sheet.name} squares up to ${many > 1 ? `${many} × ` : ""}${label("enemy", kind)}.`]);
     setResult(null);
     setShown(null);
     report(created.state, created.events);
@@ -183,7 +182,7 @@ export function SparView({ me, scene, renderer, onClose }: Props) {
   };
 
   const weapon = WEAPONS[sheet.weapon];
-  const className = HERO_CLASSES.find((c) => c.id === sheet.classId)?.name ?? sheet.classId;
+  const className = label("class", sheet.classId);
 
   return (
     <div className="spar">
@@ -196,11 +195,11 @@ export function SparView({ me, scene, renderer, onClose }: Props) {
               <img className="pixel-icon" alt="" src={spriteDataUrl(sheet.classId, sheet.outfit)} />
               <div>
                 <strong>{sheet.name}</strong> <span className="muted">{className} · Level {sheet.level}</span>
-                <div className="muted">{weapon?.name ?? "Unarmed"}{sheet.weaponPower > 0 ? ` · +${sheet.weaponPower} damage` : ""}{sheet.armor > 0 ? ` · armor ${sheet.armor}` : ""}</div>
+                <div className="muted">{weapon ? label("weapon", sheet.weapon) : "Unarmed"}{sheet.weaponPower > 0 ? ` · +${sheet.weaponPower} damage` : ""}{sheet.armor > 0 ? ` · armor ${sheet.armor}` : ""}</div>
                 <ul className="spar-abilities">
                   {(weapon?.abilities ?? []).map((id) => {
                     const a = ABILITIES[id];
-                    return <li key={id}><strong>{a.name}</strong> <span className="muted">{a.rolls} × {STAT_LABEL[a.stat]} · {a.blurb}</span></li>;
+                    return <li key={id}><strong>{label("ability", id)}</strong> <span className="muted">{a.rolls} × {STAT_LABEL[a.stat]} · {blurb("ability", id)}</span></li>;
                   })}
                 </ul>
               </div>
@@ -210,7 +209,7 @@ export function SparView({ me, scene, renderer, onClose }: Props) {
               {OPPONENTS.map((e) => (
                 <button key={e.kind} className={`spar-opponent ${kind === e.kind ? "selected" : ""}`} aria-pressed={kind === e.kind} onClick={() => setKind(e.kind)}>
                   <img className="pixel-icon" alt="" src={spriteDataUrl(e.kind)} />
-                  <strong>{e.name}</strong>
+                  <strong>{label("enemy", e.kind)}</strong>
                   <span className="muted">{e.kind === DUMMY_KIND ? "Barely hits back" : e.boss ? "Boss · no fleeing" : e.attacks.map((a) => a.name).join(", ")}</span>
                 </button>
               ))}

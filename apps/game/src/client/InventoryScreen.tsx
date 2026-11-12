@@ -31,6 +31,7 @@ import { useAct } from "./Harbor";
 import { Icon, ItemDetail, ItemTile, toOwned, type OwnedItem } from "./items";
 import { Materials } from "./Materials";
 import { spriteDataUrl } from "./render/sprites";
+import { label } from "./labels";
 
 const LEFT: Slot[] = ["helmet", "body", "amulet", "ring"];
 const RIGHT: Slot[] = ["main_hand", "off_hand", "legs", "boots"];
@@ -127,7 +128,7 @@ export function InventoryScreen({ me, refresh, onClose, onIsland = false }: Prop
     <div className="overlay inv-overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
       <DragPanel id="inventory" title="Inventory" compact resizable className="inv panel" role="dialog" aria-label="Inventory">
         <header className="inv-head">
-          <h2>{c.name} <span className="muted">· {cls?.name} · Level {c.level}</span></h2>
+          <h2>{c.name} <span className="muted">· {label("class", c.class_id)} · Level {c.level}</span></h2>
           <span className="spacer" />
           <span className="gold"><Icon name="cash" color="#ffd23f" size={18} /> {c.gold} gold</span>
           <button onClick={onClose}>Close</button>

@@ -4,7 +4,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { HexPos } from "@gantt-quest/core";
-import { HERO_CLASSES, PUB_BARKEEP, PUB_BARKEEP_POS, PUB_COUNTER, PUB_DICE, PUB_FITTINGS, PUB_MAX_TALK, PUB_MENU, PUB_SALESMAN_POS, PUB_SHOALS, PUB_TRADER, dueIn, poiAt, pubRoom, salesman, type Perk } from "@gantt-quest/world";
+import { PUB_BARKEEP, PUB_BARKEEP_POS, PUB_COUNTER, PUB_DICE, PUB_FITTINGS, PUB_MAX_TALK, PUB_MENU, PUB_SALESMAN_POS, PUB_SHOALS, PUB_TRADER, dueIn, poiAt, pubRoom, salesman, type Perk } from "@gantt-quest/world";
 import { api, type Me, type PubTab } from "./api";
 import { DiceTable } from "./DiceTable";
 import { ShoalsTable } from "./ShoalsTable";
@@ -15,10 +15,11 @@ import { perkText } from "./hutDrops";
 import { TileAction } from "./TileAction";
 import { WorldRenderer, type RenderState } from "./render/WorldRenderer";
 import { usePub } from "./usePub";
+import { blurb, label } from "./labels";
 import "./hut.css";
 import "./pub.css";
 
-const className = (id: string) => HERO_CLASSES.find((c) => c.id === id)?.name ?? id;
+const className = (id: string) => label("class", id);
 const same = (a: HexPos, b: HexPos) => a.q === b.q && a.r === b.r;
 const ROOM = pubRoom();
 const DOOR = ROOM.pois.find((p) => p.kind === "door")!.pos;
@@ -207,8 +208,8 @@ export function PubView({ me, refresh, onLeave }: { me: Me; refresh(): Promise<u
               return (
                 <li key={item.id} className={mine ? "having" : ""}>
                   <div>
-                    <strong>{item.name}</strong> <span className="tag">{item.kind}</span>
-                    <div className="muted">{item.blurb} <span className="good">{buffText(item.buff)}</span></div>
+                    <strong>{label("pub", item.id)}</strong> <span className="tag">{item.kind}</span>
+                    <div className="muted">{blurb("pub", item.id)} <span className="good">{buffText(item.buff)}</span></div>
                   </div>
                   <button className="small primary" disabled={busy || mine || gold < item.price} title={mine ? "You have this already" : gold < item.price ? "You cannot afford it" : ""} onClick={() => void order(item.id)}>
                     {mine ? "Having it" : `${item.price}g`}

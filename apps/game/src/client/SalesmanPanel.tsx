@@ -6,13 +6,14 @@ import { FURNISHINGS, RARITY_COLOR, SLOT_LABEL, dueIn, equipProblem, resourcesTe
 import { api, type Me, type SalesmanView } from "./api";
 import { DragPanel } from "./DragPanel";
 import { Icon, ItemTile, VerdictTag, bonusSummary, compare, powerLabel, toOwned } from "./items";
+import { blurb, itemName, label } from "./labels";
 
 /** What the buyer is told once something changes hands. */
 function gotText(entry: SalesEntry): string {
   const g = entry.goods;
-  if (g.kind === "item") return `${g.item.name} is in your pack.`;
-  if (g.kind === "blueprint") return `You know how to build a ${FURNISHINGS[g.defId]?.name ?? g.defId} now. Craft it in your hut.`;
-  if (g.kind === "furnishing") return `${FURNISHINGS[g.defId]?.name ?? g.defId} is in your hut's storage.`;
+  if (g.kind === "item") return `${itemName(g.item)} is in your pack.`;
+  if (g.kind === "blueprint") return `You know how to build a ${label("furnishing", g.defId)} now. Craft it in your hut.`;
+  if (g.kind === "furnishing") return `${label("furnishing", g.defId)} is in your hut's storage.`;
   return `${g.gold} gold for ${resourcesText(entry.materials)}.`;
 }
 
@@ -66,13 +67,13 @@ export function SalesmanPanel({ me, refresh }: { me: Me; refresh(): Promise<unkn
                     : g.kind === "furnishing" ? <Icon name="crowned-heart" color="#e0b12e" size={36} />
                     : <Icon name={`res-${e.materials.herbs ? "herbs" : "mushrooms"}`} color="#6fae4a" size={36} />}
                   <div className="shop-info">
-                    {g.kind === "item" ? <strong style={{ color: RARITY_COLOR[g.item.rarity] }}>{g.item.name}</strong>
+                    {g.kind === "item" ? <strong style={{ color: RARITY_COLOR[g.item.rarity] }}>{itemName(g.item)}</strong>
                       : selling ? <strong>{resourcesText(e.materials)}</strong>
                       : <strong>{salesGoodsName(g)}</strong>}
                     <span className="muted">
                       {g.kind === "item" ? <>{SLOT_LABEL[g.item.slot]}{g.item.power > 0 && ` · +${g.item.power} ${powerLabel(g.item).toLowerCase()}`}{bonusSummary(g.item) && ` · ${bonusSummary(g.item)}`}</>
-                        : g.kind === "blueprint" ? <>Build it from {resourcesText(FURNISHINGS[g.defId]?.recipe ?? {})}. {FURNISHINGS[g.defId]?.blurb}</>
-                        : g.kind === "furnishing" ? <>{FURNISHINGS[g.defId]?.blurb} Not sold at the stall.</>
+                        : g.kind === "blueprint" ? <>Build it from {resourcesText(FURNISHINGS[g.defId]?.recipe ?? {})}. {blurb("furnishing", g.defId)}</>
+                        : g.kind === "furnishing" ? <>{blurb("furnishing", g.defId)} Not sold at the stall.</>
                         : <>{Math.round((g.gold / ((e.materials.herbs ?? 0) + (e.materials.mushrooms ?? 0))) * 10) / 10}g a piece; the stall pays 3.</>}
                     </span>
                     {!e.bought && e.problem && <span className="bad small-note">{e.problem}</span>}

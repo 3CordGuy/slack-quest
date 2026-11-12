@@ -4,8 +4,9 @@
 // out of (and go back into) the bag and the material pool.
 
 import { useState } from "react";
-import { CARRY_FORMULA, FURNISHINGS, RESOURCE_KINDS, RESOURCE_LABEL, carryProblem, type Furnishing, type HutClientMessage, type ResourceKind } from "@gantt-quest/world";
+import { CARRY_FORMULA, FURNISHINGS, RESOURCE_KINDS, carryProblem, type Furnishing, type HutClientMessage, type ResourceKind } from "@gantt-quest/world";
 import { api, type Hut, type InventoryItem, type Me } from "./api";
+import { label } from "./labels";
 
 export function HutContainer({
   box,
@@ -79,7 +80,7 @@ export function HutContainer({
             const room = kept > 0 || !full;
             return (
               <li key={k} className="hut-box-row">
-                <span>{RESOURCE_LABEL[k]}: <strong>{kept}</strong> in here <span className="muted">· {have} on you</span></span>
+                <span>{label("resource", k)}: <strong>{kept}</strong> in here <span className="muted">· {have} on you</span></span>
                 <button className="small" disabled={!have || !room} onClick={() => act(() => api.stash(box.id, k, 1))}>+1</button>
                 <button className="small" disabled={!have || !room} onClick={() => act(() => api.stash(box.id, k, have))}>All in</button>
                 <button className="small" disabled={!kept} onClick={() => act(() => api.stash(box.id, k, -1))}>−1</button>
