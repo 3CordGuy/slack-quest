@@ -25,6 +25,7 @@ export * from "./projects";
 export * from "./pub";
 export * from "./apothecary";
 export * from "./smithy";
+export * from "./galley";
 export * from "./salesman";
 export * from "./shoals";
 export * from "./trade";

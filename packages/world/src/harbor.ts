@@ -42,6 +42,8 @@ export const HARBOR_WORKS: HexPos = at(5, 6);
 export const HARBOR_APOTHECARY: HexPos = at(10, 5);
 /** The smithy's spot, beside the sparring ring. A building site until the crew has paid for it. */
 export const HARBOR_SMITHY: HexPos = at(2, 5);
+/** The galley's spot, on the quay below the pub between the middle and east piers, where ships take on provisions. A building site until the crew has paid for it. */
+export const HARBOR_GALLEY: HexPos = at(8, 7);
 
 /** Rocks standing out of the water, and the wreck on them. Scenery: nobody can reach them. */
 export const HARBOR_ROCKS: HexPos[] = [at(0, 9), at(4, 9), at(8, 10), at(1, 10), at(12, 10)];
@@ -72,7 +74,7 @@ const grit = (col: number, r: number) => {
 export function generateHarbor(): WorldMap {
   const pierKeys = new Set(HARBOR_PIERS.map((p) => `${p.q},${p.r}`));
   // Only the ground a place stands on is paved; everything else is packed earth and grass, so the town reads quietly.
-  const paved = new Set([HARBOR_BOARD, HARBOR_SHOP, HARBOR_RING, HARBOR_PUB, HARBOR_WORKS, HARBOR_APOTHECARY, HARBOR_SMITHY, HARBOR_SPAWN].map((p) => `${p.q},${p.r}`));
+  const paved = new Set([HARBOR_BOARD, HARBOR_SHOP, HARBOR_RING, HARBOR_PUB, HARBOR_WORKS, HARBOR_APOTHECARY, HARBOR_SMITHY, HARBOR_GALLEY, HARBOR_SPAWN].map((p) => `${p.q},${p.r}`));
   const same = (a: HexPos, b: HexPos) => a.q === b.q && a.r === b.r;
   const tiles: Tile[] = allHexesInGrid(HARBOR_GRID).map((pos) => {
     const col = colOf(pos);
@@ -112,6 +114,7 @@ export function generateHarbor(): WorldMap {
       harborPoi("board", "board", HARBOR_BOARD), harborPoi("shop", "shop", HARBOR_SHOP), harborPoi("ring", "ring", HARBOR_RING),
       harborPoi("pub", "pub", HARBOR_PUB), harborPoi("works", "works", HARBOR_WORKS),
       harborPoi("apothecary", "apothecary", HARBOR_APOTHECARY), harborPoi("smithy", "smithy", HARBOR_SMITHY),
+      harborPoi("galley", "galley", HARBOR_GALLEY),
       harborPoi("fishing", "fishing", HARBOR_GATHER.fishing),
       harborPoi("felling", "felling", HARBOR_GATHER.felling),
       harborPoi("quarry", "quarry", HARBOR_GATHER.quarry),

@@ -29,9 +29,9 @@ const rich = { gold: 1000, wood: 100, stone: 100, iron: 100, copper: 100, fur: 1
 const fresh = { paid: {}, built: false };
 
 describe("project catalogue", () => {
-  it("lists four projects; the galley is the one not yet open", () => {
+  it("lists four projects, all open", () => {
     expect(PROJECTS.map((p) => p.id)).toEqual(["lighthouse", "apothecary", "smithy", "galley"]);
-    expect(PROJECTS.filter((p) => p.open).map((p) => p.id)).toEqual(["lighthouse", "apothecary", "smithy"]);
+    expect(PROJECTS.filter((p) => p.open).map((p) => p.id)).toEqual(["lighthouse", "apothecary", "smithy", "galley"]);
     for (const p of PROJECTS) {
       expect(Object.values(p.cost).every((n) => Number.isInteger(n) && n! > 0), p.id).toBe(true);
       expect(p.benefit.length).toBeGreaterThan(0);
@@ -75,9 +75,9 @@ describe("contributions", () => {
     }
   });
 
-  it("refuses unknown projects and ones that are not yet open", () => {
+  it("refuses unknown projects, and takes gifts for the galley now it is open", () => {
     expect(checkContribution("castle", fresh, rich, { gold: 1 })).toEqual({ ok: false, error: "No such project." });
-    expect(checkContribution("galley", fresh, rich, { gold: 1 })).toEqual({ ok: false, error: "The Galley is not yet open." });
+    expect(checkContribution("galley", fresh, rich, { gold: 1, fur: 15 })).toMatchObject({ ok: true, give: { gold: 1, fur: 15 }, completes: false });
   });
 
   it("completes when the last cost is met, and takes nothing after that", () => {

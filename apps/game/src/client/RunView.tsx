@@ -12,6 +12,7 @@ import {
   brewById,
   STAT_LABEL,
   findPath,
+  eatsChowder,
   heroPct,
   poiAt,
   tileAt,
@@ -38,7 +39,7 @@ import { WorldRenderer } from "./render/WorldRenderer";
 import { useRun, type RunConnection } from "./useRun";
 import { itemName, label } from "./labels";
 import { Icon } from "./items";
-import { GOLD_ICON, ThingIcon } from "./thingIcons";
+import { GOLD_ICON, ThingIcon, dishIcon } from "./thingIcons";
 
 /** The least time the crossing stays on screen once a ship has sailed. */
 const MIN_CROSSING_MS = 4500;
@@ -72,7 +73,13 @@ function describe(events: WorldEvent[], state: ClientState, names: Map<string, s
         out.push(`Discovered ${poi ? poiName(state, poi) : "something"}!`);
         break;
       }
-      case "rest": out.push(`${n(ev.heroId)} rests at the ${ev.where}: +${ev.hp} HP${ev.focus ? `, +${ev.focus} focus` : ""}.`); break;
+      case "rest":
+        out.push(
+          ev.ate === "chowder"
+            ? `${n(ev.heroId)} eats a bowl of the galley's chowder at the ${ev.where}: +${ev.hp} HP${ev.focus ? `, +${ev.focus} focus` : ""}. ${ev.left ? `${ev.left} left in the hold.` : "That was the last of it."}`
+            : `${n(ev.heroId)} rests at the ${ev.where}: +${ev.hp} HP${ev.focus ? `, +${ev.focus} focus` : ""}.`,
+        );
+        break;
       case "ambush": {
         const who = ev.kinds.length > 1 ? `${ev.kinds.length} ${ev.kinds[0] === "wolf" ? "wolves" : "raiders"}` : ev.kinds[0] === "wolf" ? "a wolf" : "a raider";
         out.push(ev.by === "band" ? `In the night ${who} ${ev.kinds.length > 1 ? "find" : "finds"} ${n(ev.heroId)}!` : `${n(ev.heroId)} runs into ${who} on the road!`);
@@ -371,6 +378,11 @@ function TopBar({ state, code, status, onLeave, onInventory }: { state: ClientSt
       {state.round > 0 && state.phase !== "ended" && (
         <span className={state.doom <= 3 ? "bad" : ""}>Day {state.round} · {state.doom} day{state.doom === 1 ? "" : "s"} left</span>
       )}
+      {state.larder && state.larder.chowder > 0 && state.phase !== "ended" && (
+        <span className="larder-chip" title="From the galley's larder. A hero resting at the landing eats one when the plain rest would leave them short: back to full HP and focus.">
+          <ThingIcon icon={dishIcon("chowder")} size={18} />Chowder ×{state.larder.chowder}
+        </span>
+      )}
       <span className="spacer" />
       {status !== "open" && <span className="bad">reconnecting…</span>}
       <span className="muted wide-only">Ship {code}</span>
@@ -505,7 +517,7 @@ function TurnBar({ state, run }: { state: ClientState; run: RunConnection }) {
   const rite = poi && state.story?.rites.find((r) => r.poi === poi.id && r.ready && !r.done);
   const action = !poi || turn.acted ? null
     : rite ? rite.label
-    : poi.kind === "landing" ? "Rest at the ship"
+    : poi.kind === "landing" ? (state.larder && eatsChowder(hero, state.larder.chowder) ? "Rest and eat a chowder" : "Rest at the ship")
     : poi.kind === "shrine" ? (poi.usedBy.includes(hero.id) ? null : "Pray at the shrine")
     : poi.kind === "cache" ? (poi.cleared ? null : "Search the cache")
     : poi.kind === "camp" ? (poi.cleared ? null : "Attack the camp")

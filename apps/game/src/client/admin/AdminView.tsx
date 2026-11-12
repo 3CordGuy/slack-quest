@@ -5,7 +5,7 @@
 // server checks every call.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { BREWS, CATALOGUE, CATALOGUE_KINDS, GEAR_BASES, RARITY_COLOR, SLOT_ICON, SLOT_LABEL, WEAPON_ICON, type CatalogueKind, type Slot } from "@gantt-quest/world";
+import { BREWS, CATALOGUE, DISHES, CATALOGUE_KINDS, GEAR_BASES, RARITY_COLOR, SLOT_ICON, SLOT_LABEL, WEAPON_ICON, type CatalogueKind, type Slot } from "@gantt-quest/world";
 import type { ImageValue, LogRow, NameValue, OverrideKind, OverrideRow, OverrideValue, PaletteValue } from "../../server/content";
 import type { Me } from "../api";
 import { loadContent } from "../content";
@@ -55,6 +55,7 @@ const iconUsers = (icon: string) =>
     const [k, id] = u.split(":");
     if (k === "slot") return `empty ${SLOT_LABEL[id as Slot].toLowerCase()} slot`;
     if (k === "brew") return BREWS.find((b) => b.id === id)?.name ?? id;
+    if (k === "dish") return DISHES.find((d) => d.id === id)?.name ?? id;
     return label(k as CatalogueKind, id);
   });
 

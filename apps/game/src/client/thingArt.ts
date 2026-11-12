@@ -1,9 +1,9 @@
 // Pixel-art icons for things that are not gear: pub fare, apothecary brews,
-// hut furniture, small things and trophies. Same 16x16 grid, palette and
+// galley dishes, hut furniture, small things and trophies. Same 16x16 grid, palette and
 // outline as the gear in itemArt.ts, which merges this table into its own,
 // so admin overrides and the icon editor cover these too.
 //
-// Each entry is keyed `pub-<id>`, `brew-<id>` or `furn-<id>` after the
+// Each entry is keyed `pub-<id>`, `brew-<id>`, `dish-<id>` or `furn-<id>` after the
 // catalogue id, so an admin can redraw one piece without touching the
 // others. Pieces of one kind share a drawing helper with their own colours.
 // The accent colour (chosen per thing in thingIcons.tsx) paints one detail:
@@ -194,6 +194,38 @@ export const THING_ART: Record<string, Art> = {
     p.r(2, 8, 12, 3, p.accent);
     p.r(2, 10, 12, 1, p.shade);
     p.r(6, 8, 4, 1, C.paper);
+  },
+
+  // ---- galley dishes ----
+  "dish-chowder": (p) => {
+    // A cast-iron pot of chowder on short legs, steaming.
+    p.r(5, 1, 1, 3, K.foam);
+    p.r(9, 0, 1, 3, K.foam);
+    p.r(2, 5, 12, 1, "#efe2c0");
+    p.r(4, 5, 2, 1, K.copperLit);
+    p.r(9, 5, 1, 1, K.leafLit);
+    p.r(1, 6, 14, 1, C.iron);
+    p.r(0, 7, 1, 2, C.iron);
+    p.r(15, 7, 1, 2, C.iron);
+    spans(p, "#4a4e5c", [[7, 1, 14], [8, 1, 14], [9, 1, 14], [10, 1, 14], [11, 2, 13], [12, 3, 12], [13, 4, 11]]);
+    p.r(2, 7, 1, 4, "#646d7c");
+    p.r(2, 9, 12, 1, p.accent);
+    p.r(4, 14, 2, 1, C.dark);
+    p.r(10, 14, 2, 1, C.dark);
+  },
+  "dish-stores": (p) => {
+    // Hard tack and dried mushrooms bundled in a hide, tied with rope.
+    spans(p, C.leather, [[4, 3, 12], [5, 2, 13], [6, 1, 14], [7, 1, 14], [8, 1, 14], [9, 1, 14], [10, 1, 14], [11, 1, 14], [12, 2, 13], [13, 3, 12]]);
+    p.r(2, 5, 1, 7, "#c08050");
+    p.r(3, 13, 10, 1, C.hide);
+    p.r(4, 2, 3, 2, K.crust);
+    p.r(10, 2, 2, 2, K.cap);
+    p.r(10, 3, 1, 1, "#e07a5f");
+    p.r(7, 4, 2, 10, "#d6c49d");
+    p.r(1, 8, 14, 1, "#d6c49d");
+    p.r(6, 1, 4, 3, "#d6c49d");
+    p.r(7, 2, 2, 1, C.bark);
+    p.r(11, 10, 2, 2, p.accent);
   },
 
   // ---- furniture ----

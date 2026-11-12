@@ -1,5 +1,6 @@
 // Which pixel icon, in which accent colour, each non-gear thing is drawn
-// with: hut materials and gold, pub fare, apothecary brews, furniture and
+// with: hut materials and gold, pub fare, apothecary brews, galley dishes,
+// furniture and
 // trophies, blueprints. Every menu that lists one of these asks here, so a
 // thing looks the same everywhere and an admin override of its icon (keyed
 // by the icon name, see itemArt.ts) reaches every list at once.
@@ -42,6 +43,11 @@ export const pubIcon = (id: string): IconRef => ({ name: drawn(`pub-${id}`, "pub
 const BREW_ACCENT: Record<string, string> = { healing: "#4fbf5a", focus: "#5b8fd8", stoneskin: "#9a7fb8" };
 
 export const brewIcon = (id: string): IconRef => ({ name: drawn(`brew-${id}`, "brew-healing"), color: BREW_ACCENT[id] ?? "#4fbf5a" });
+
+/** The galley's dishes: the band on the chowder pot, the tag on the bundle of stores. */
+const DISH_ACCENT: Record<string, string> = { chowder: "#3f6fa8", stores: "#b8452f" };
+
+export const dishIcon = (id: string): IconRef => ({ name: drawn(`dish-${id}`, "dish-chowder"), color: DISH_ACCENT[id] ?? "#3f6fa8" });
 
 /** The one painted detail on each piece: a cushion, a blanket, a jewel, the sand in the glass. */
 const FURN_ACCENT: Record<string, string> = {
@@ -93,12 +99,13 @@ export function furnishingIcon(defId: string): IconRef {
   return { name: drawn(`furn-${defId}`, fallback), color: FURN_ACCENT[defId] ?? "#b8452f" };
 }
 
-/** Every icon the furnishings, pub, brews and resources use, with what uses it: for the admin page. */
+/** Every icon the furnishings, pub, brews, dishes and resources use, with what uses it: for the admin page. */
 export function thingIconUsers(): [icon: string, user: string][] {
   return [
     ...RESOURCE_KINDS.map((k) => [resourceIcon(k).name, `resource:${k}`] as [string, string]),
     ...Object.keys(PUB_ACCENT).map((id) => [pubIcon(id).name, `pub:${id}`] as [string, string]),
     ...Object.keys(BREW_ACCENT).map((id) => [brewIcon(id).name, `brew:${id}`] as [string, string]),
+    ...Object.keys(DISH_ACCENT).map((id) => [dishIcon(id).name, `dish:${id}`] as [string, string]),
     ...Object.keys(FURNISHINGS).map((id) => [furnishingIcon(id).name, `furnishing:${id}`] as [string, string]),
   ];
 }
