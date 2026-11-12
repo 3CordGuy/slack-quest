@@ -4,7 +4,7 @@
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { HexPos } from "@gantt-quest/core";
-import { GATHER_SPOTS, GATHER_SPOT_IDS, HARBOR_BOARD, HARBOR_GATHER, HARBOR_NAME, HARBOR_PIERS, HARBOR_PLOTS, HARBOR_PUB, HARBOR_RING, HARBOR_SHOP, HARBOR_WORKS, HERO_CLASSES, MAX_PARTY, PLOT_PRICE, RESOURCE_KINDS, RESOURCE_LABEL, SHACK_COST, binFill, binNeeds, builtProjects, generateHarbor, harborPoi, hutTier, poiAt, type GatherSpot, type HarborShip, type Resources } from "@gantt-quest/world";
+import { GATHER_SPOTS, GATHER_SPOT_IDS, HARBOR_BOARD, HARBOR_GATHER, HARBOR_NAME, HARBOR_PIERS, HARBOR_PLOTS, HARBOR_PUB, HARBOR_RING, HARBOR_SHOP, HARBOR_WORKS, HERO_CLASSES, MAX_PARTY, PLOT_PRICE, RESOURCE_KINDS, RESOURCE_LABEL, SHACK_COST, binFill, binNeeds, builtProjects, generateHarbor, harborPoi, hutTier, poiAt, salesman, type GatherSpot, type HarborShip, type Resources } from "@gantt-quest/world";
 import { api, type Me } from "./api";
 import { AccountPanel } from "./Account";
 import { NoticeBoard } from "./board/NoticeBoard";
@@ -17,6 +17,7 @@ import { TileAction } from "./TileAction";
 import { Trading } from "./TradePanel";
 import { WorldRenderer, type RenderState } from "./render/WorldRenderer";
 import { useHarbor } from "./useHarbor";
+import { useSalesman } from "./salesmanClock";
 import { WorksPanel } from "./works/WorksPanel";
 
 const className = (id: string) => HERO_CLASSES.find((c) => c.id === id)?.name ?? id;
@@ -45,6 +46,8 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
   const chatEnd = useRef<HTMLDivElement>(null);
 
   const harbor = useHarbor((id, path) => renderer.current?.playEvents([{ t: "moved", heroId: id, path }]));
+  // A traveling salesman in the pub is worth a mention out here.
+  const salesmanNow = useSalesman(me.crew?.id);
   const send = useRef(harbor.send);
   send.current = harbor.send;
   const base = useMemo(generateHarbor, []);
@@ -113,6 +116,8 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
   const myPlot = board.members.find((m) => m.id === you)?.plot ?? null;
   const gold = me.character?.gold ?? 0;
   const hoverPoi = scene && hover ? poiAt(scene.map, hover) : undefined;
+  const visitHere = salesmanNow.here;
+  const visitor = visitHere ? salesman(visitHere.salesmanId) : undefined;
   const tip = !hoverPoi ? null
     : hoverPoi.kind === "board" ? "Notice board: the crew goal and contracts"
     : hoverPoi.kind === "shop" ? "Market stall: gear, and furniture for your hut"
@@ -120,7 +125,7 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
     : hoverPoi.kind === "fishing" || hoverPoi.kind === "felling" || hoverPoi.kind === "quarry" ? `${GATHER_SPOTS[hoverPoi.kind].name}: gather hut materials`
     : hoverPoi.kind === "rocks" ? "Rocks. Ships that miss the channel find them."
     : hoverPoi.kind === "wreck" ? "A wreck on the rocks. Nobody remembers her name."
-    : hoverPoi.kind === "pub" ? "The pub: food, drink, Old Tam and the dice table"
+    : hoverPoi.kind === "pub" ? (visitor ? `The pub: a traveling salesman is in. ${visitor.name}, ${visitor.trade}` : "The pub: food, drink, Old Tam and the dice table")
     : hoverPoi.kind === "works" ? (lit ? "The lighthouse: crew projects" : "The works: crew projects")
     : hoverPoi.kind === "lot" ? (myPlot === null ? `A plot for sale: ${PLOT_PRICE} gold` : "An empty plot")
     : hoverPoi.kind === "site" ? (hoverPoi.id === `site:${you}` ? "Your plot: fill the bin and the shack goes up" : `${board.members.find((m) => `site:${m.id}` === hoverPoi.id)?.name ?? "Someone"}'s plot: building a shack`)
@@ -243,7 +248,7 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
         label: gatherHere === "fishing" ? "Cast a line" : gatherHere === "felling" ? "Take up the axe" : "Work the seam",
         run: () => setGather(gatherHere),
       }
-    : atPub ? { title: "The pub", label: "Go in", run: () => goInside("pub", "pub") }
+    : atPub ? { title: visitor ? <>The pub <span className="pub-visitor">· {visitor.name}, {visitor.trade}, is in</span></> : "The pub", label: "Go in", run: () => goInside("pub", "pub") }
     : atWorks ? { title: lit ? "The lighthouse" : "The works", label: "See the crew's projects", run: () => setWorks(true) }
     : myBin ? {
         title: (

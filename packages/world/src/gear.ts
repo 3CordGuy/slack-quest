@@ -168,9 +168,9 @@ export function weaponItem(weaponId: string, rarity: Rarity = "common", level = 
 /**
  * Roll one item for a hero of `classId` at `level`. Weapons are always ones
  * the class can use. Pass `slot` to force where it goes (the shop does, to
- * stock one of everything).
+ * stock one of everything). `minRarity` lifts anything rolled below it.
  */
-export function rollItem(rng: Rng, classId: string, quality: number, level: number, slot?: Slot): ItemDef {
+export function rollItem(rng: Rng, classId: string, quality: number, level: number, slot?: Slot, minRarity?: Rarity): ItemDef {
   if (!slot) {
     const total = SLOT_WEIGHT.reduce((a, [, w]) => a + w, 0);
     let r = rng.next() * total;
@@ -183,7 +183,9 @@ export function rollItem(rng: Rng, classId: string, quality: number, level: numb
       }
     }
   }
-  const rarity = rollRarity(rng, quality);
+  const rolled = rollRarity(rng, quality);
+  // A floor on the rarity lifts the roll without drawing again, so it never changes what follows.
+  const rarity = minRarity && rarityIndex(rolled) < rarityIndex(minRarity) ? minRarity : rolled;
   const ri = rarityIndex(rarity);
   const kind = kindOfSlot(slot);
 

@@ -120,6 +120,15 @@ export function rowToItem(row: InventoryRow): ItemDef {
   };
 }
 
+/** A new unequipped item, but only if the statement before it in the batch changed a row. */
+export function paidItemStatement(db: D1Database, playerId: string, item: ItemDef): D1PreparedStatement {
+  return db
+    .prepare(
+      "INSERT INTO inventory (player_id, kind, ref, name, rarity, slot, power, level_req, icon, stat_bonus_json, equipped, created_at) SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ? WHERE changes() > 0",
+    )
+    .bind(playerId, item.kind, item.ref, item.name, item.rarity, item.slot, item.power, item.levelReq, item.icon, JSON.stringify(item.statBonus), Date.now());
+}
+
 function insertItem(db: D1Database, playerId: string, item: ItemDef, equipped: boolean): D1PreparedStatement {
   return db
     .prepare(
@@ -851,7 +860,7 @@ export async function refreshHut(env: Env, ownerId: string): Promise<void> {
  * Amounts and `alsoIf` are inlined, so they must come from the catalogue,
  * never from a request.
  */
-function spendStatements(db: D1Database, playerId: string, gold: number, resources: Resources, alsoIf = "1"): D1PreparedStatement[] {
+export function spendStatements(db: D1Database, playerId: string, gold: number, resources: Resources, alsoIf = "1"): D1PreparedStatement[] {
   const kinds = RESOURCE_KINDS.filter((k) => (resources[k] ?? 0) > 0);
   const amount = (n: number) => Math.max(0, Math.floor(n));
   const enough = kinds.map((k) => `COALESCE((SELECT qty FROM resources WHERE player_id = ?1 AND kind = '${k}'), 0) >= ${amount(resources[k]!)}`);
@@ -865,7 +874,7 @@ function spendStatements(db: D1Database, playerId: string, gold: number, resourc
 }
 
 /** A new furnishing into storage, but only if the statement before it in the batch changed a row. */
-function paidFurnishingStatement(db: D1Database, playerId: string, defId: string): D1PreparedStatement {
+export function paidFurnishingStatement(db: D1Database, playerId: string, defId: string): D1PreparedStatement {
   return db
     .prepare("INSERT INTO furnishings (player_id, def_id, label, meta_json, created_at) SELECT ?, ?, ?, '{}', ? WHERE changes() > 0")
     .bind(playerId, defId, FURNISHINGS[defId].name, now());

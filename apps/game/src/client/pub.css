@@ -15,3 +15,11 @@
 @media (max-width: 760px) {
   .pub-bar { width: 70vw; max-height: 55vh; font-size: 12px; }
 }
+
+/* The traveling salesman's table (SalesmanPanel). */
+.story.pub-bar.salesman { width: min(440px, calc(100% - 24px)); }
+.salesman-says { font-style: italic; }
+.salesman-wares { display: flex; flex-direction: column; gap: 4px; margin-bottom: 6px; }
+.salesman-wares .shop-row { cursor: default; border: 1px solid var(--line); }
+.salesman-wares .shop-row button { flex: none; min-width: 64px; }
+.salesman .small-note { font-size: 11px; }
