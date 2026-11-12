@@ -150,6 +150,11 @@ export function InventoryScreen({ me, refresh, onClose, onIsland = false }: Prop
               <div className="bar-fill xp" style={{ width: `${(100 * c.xp) / xpToNext(c.level)}%` }} />
               <span>{c.xp} / {xpToNext(c.level)} XP</span>
             </div>
+            {me.harborXp && (
+              <p className="muted hint-line" title="Gathering, the pub's tables, the sparring ring, crafting, the Apothecary, the Smithy and crew projects each give a few XP. Voyages are not capped.">
+                Harbor XP today: {me.harborXp.cap - me.harborXp.left} of {me.harborXp.cap} from pastimes.
+              </p>
+            )}
             <div className="totals">
               <div title="Hit points at the start of a voyage"><strong>{maxHpFor(stats, c.level)}</strong><span>Max HP</span></div>
               <div title={`Each enemy hit is reduced by ${armorBlock(loadout.armor)}, up to half the hit`}><strong>{loadout.armor}</strong><span>Armor · blocks {armorBlock(loadout.armor)}</span></div>

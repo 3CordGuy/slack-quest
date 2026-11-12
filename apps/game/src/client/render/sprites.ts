@@ -563,18 +563,22 @@ export function sleepZTexture(): THREE.CanvasTexture {
 
 /** A short text label as a pixel-crisp texture, for floating combat numbers. */
 export function textTexture(text: string, color: string): THREE.CanvasTexture {
+  const font = "bold 18px ui-monospace, Menlo, monospace";
   const canvas = document.createElement("canvas");
-  canvas.width = 64;
+  // 64 wide fits a damage number; longer text ("+10 XP", "LEVEL UP") gets a wider canvas, so the sprite's aspect follows it.
+  const measureCtx = canvas.getContext("2d")!;
+  measureCtx.font = font;
+  canvas.width = Math.max(64, Math.ceil(measureCtx.measureText(text).width) + 10);
   canvas.height = 24;
   const ctx = canvas.getContext("2d")!;
-  ctx.font = "bold 18px ui-monospace, Menlo, monospace";
+  ctx.font = font;
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
   ctx.lineWidth = 4;
   ctx.strokeStyle = OUTLINE;
-  ctx.strokeText(text, 32, 12);
+  ctx.strokeText(text, canvas.width / 2, 12);
   ctx.fillStyle = color;
-  ctx.fillText(text, 32, 12);
+  ctx.fillText(text, canvas.width / 2, 12);
   const tex = new THREE.CanvasTexture(canvas);
   tex.magFilter = THREE.NearestFilter;
   tex.minFilter = THREE.NearestFilter;
@@ -588,6 +592,8 @@ export interface PlateStats {
   level: number;
   hp: number;
   xp: number;
+  /** Just earned XP: the XP bar is drawn lit up for a moment. */
+  glow?: boolean;
 }
 
 const PLATE_BG: [number, number, number, number] = [27, 24, 48, 225];
@@ -596,6 +602,9 @@ const LEVEL_INK: [number, number, number] = [255, 210, 63];
 const BAR_TRACK = "#3b3560";
 const HP_COLOR: Record<HealthBand, string> = { good: "#6ee06e", hurt: "#ffd23f", low: "#ff6b6b" };
 const XP_COLOR = "#7d8cff";
+/** The XP bar as it lights up on a gain: pale blue track, near-white fill. */
+const XP_GLOW_TRACK = "#5f7fd8";
+const XP_GLOW_COLOR = "#e4f4ff";
 /** Rows of the name line, then the HP bar (3 rows), a gap, the XP bar (2 rows) and a margin. */
 const NAME_ROWS = 15;
 const PLATE_ROWS = NAME_ROWS + 6;
@@ -607,7 +616,7 @@ export function plateKey(text: string, plate?: PlateStats): string {
   if (!plate) return text;
   const width = plateWidth(text, plate);
   const inner = width - 6;
-  return `${text}|${plate.level}|${barPixels(plate.hp, inner)}:${healthBand(plate.hp)}|${barPixels(plate.xp, inner)}`;
+  return `${text}|${plate.level}|${barPixels(plate.hp, inner)}:${healthBand(plate.hp)}|${barPixels(plate.xp, inner)}${plate.glow ? "|glow" : ""}`;
 }
 
 const LABEL_FONT = "12px ui-monospace, Menlo, Consolas, monospace";
@@ -676,8 +685,8 @@ export function labelTexture(text: string, plate?: PlateStats): { texture: THREE
   if (plate) {
     const x0 = 3;
     const inner = canvas.width - 6;
-    const bar = (y: number, rows: number, fraction: number, colour: string) => {
-      ctx.fillStyle = BAR_TRACK;
+    const bar = (y: number, rows: number, fraction: number, colour: string, track = BAR_TRACK) => {
+      ctx.fillStyle = track;
       ctx.fillRect(x0, y, inner, rows);
       const filled = barPixels(fraction, inner);
       if (filled > 0) {
@@ -686,7 +695,8 @@ export function labelTexture(text: string, plate?: PlateStats): { texture: THREE
       }
     };
     bar(NAME_ROWS - 1, 3, plate.hp, HP_COLOR[healthBand(plate.hp)]);
-    bar(NAME_ROWS + 3, 2, plate.xp, XP_COLOR);
+    if (plate.glow) bar(NAME_ROWS + 3, 2, plate.xp, XP_GLOW_COLOR, XP_GLOW_TRACK);
+    else bar(NAME_ROWS + 3, 2, plate.xp, XP_COLOR);
   }
   const texture = new THREE.CanvasTexture(canvas);
   texture.magFilter = THREE.NearestFilter;
@@ -820,7 +830,7 @@ export function bubbleTexture(text: string): { texture: THREE.CanvasTexture; wid
 
 // ---------- battle effects ----------
 
-export type FxKind = "slash" | "bolt" | "arrow" | "burst" | "spark";
+export type FxKind = "slash" | "bolt" | "arrow" | "burst" | "spark" | "mote";
 
 const fxCache = new Map<string, THREE.CanvasTexture>();
 
@@ -891,6 +901,11 @@ export function fxTexture(kind: FxKind, color: string, flip = false): THREE.Canv
     }
     ctx.fillStyle = "#ffffff";
     ctx.fillRect(7, 7, 2, 2);
+  } else if (kind === "mote") {
+    // One XP mote: a solid 4x4 pixel, a white glint in its corner, in the middle of the tile.
+    ctx.fillStyle = color;
+    ctx.fillRect(6, 6, 4, 4);
+    dot(6, 6, "#ffffff");
   } else {
     for (const [cx, cy] of [[4, 4], [11, 6], [6, 11], [12, 12]]) {
       dot(cx, cy, "#ffffff");

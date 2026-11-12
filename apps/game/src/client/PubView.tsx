@@ -17,6 +17,7 @@ import { WorldRenderer, type RenderState } from "./render/WorldRenderer";
 import { usePub } from "./usePub";
 import { HeroSheet, useHeroSheet } from "./HeroSheet";
 import { blurb, label } from "./labels";
+import { xpEvents } from "./xpEvents";
 import "./hut.css";
 import "./pub.css";
 
@@ -60,6 +61,11 @@ export function PubView({ me, refresh, onLeave }: { me: Me; refresh(): Promise<u
 
   const pub = usePub(
     (id, path) => renderer.current?.playEvents([{ t: "moved", heroId: id, path }]),
+    (m) => {
+      renderer.current?.playEvents(xpEvents(m));
+      // Your own win: your sheet's level and XP are stale.
+      if (m.id === pub.you) void refresh();
+    },
     (id, text) => renderer.current?.say(id, text),
   );
   const { you, players } = pub;
@@ -248,8 +254,8 @@ export function PubView({ me, refresh, onLeave }: { me: Me; refresh(): Promise<u
       )}
 
       {you && atTrader && seller && <SalesmanPanel me={me} refresh={refresh} />}
-      {you && atShoals && <ShoalsTable table={pub.shoals} you={you} gold={gold} error={pub.shoalsError} send={(action) => pub.send({ type: "shoals", action })} />}
-      {you && atDice && <DiceTable table={pub.dice} you={you} gold={gold} error={pub.diceError} send={(action) => pub.send({ type: "dice", action })} />}
+      {you && atShoals && <ShoalsTable table={pub.shoals} you={you} gold={gold} error={pub.shoalsError} lastXp={pub.lastXp} send={(action) => pub.send({ type: "shoals", action })} />}
+      {you && atDice && <DiceTable table={pub.dice} you={you} gold={gold} error={pub.diceError} lastXp={pub.lastXp} send={(action) => pub.send({ type: "dice", action })} />}
 
       {you && <>
       <DragPanel id="pub.crew" title="Inside" foldOnPhone className="crew">

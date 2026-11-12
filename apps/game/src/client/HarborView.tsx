@@ -22,6 +22,7 @@ import { useSalesman } from "./salesmanClock";
 import { WorksPanel } from "./works/WorksPanel";
 import { ApothecaryPanel, SmithyPanel } from "./works/WorkshopPanels";
 import { label } from "./labels";
+import { xpEvents } from "./xpEvents";
 
 const className = (id: string) => label("class", id);
 const same = (a: HexPos, b: HexPos) => a.q === b.q && a.r === b.r;
@@ -51,6 +52,7 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
 
   const harbor = useHarbor(
     (id, path) => renderer.current?.playEvents([{ t: "moved", heroId: id, path }]),
+    (m) => renderer.current?.playEvents(xpEvents(m)),
     (id, text) => renderer.current?.say(id, text),
   );
   // A traveling salesman in the pub is worth a mention out here.

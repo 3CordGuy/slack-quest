@@ -195,6 +195,11 @@ interface Unit {
   stride: number;
   bob: number;
   kind: string;
+  /** What its tag should show, kept so the XP glow can redraw it between updates. */
+  labelWant?: { label?: string; plate?: PlateStats; size: number; asleep?: boolean; stack?: number };
+  /** The XP bar glows until this time on the render clock; `glowing` is whether it is drawn so now. */
+  glowUntil: number;
+  glowing: boolean;
   /** Lying down asleep; `nextZ` is when its next z rises, on the render clock. */
   asleep: boolean;
   nextZ: number;
@@ -257,7 +262,14 @@ interface Want {
 interface Floater {
   sprite: THREE.Sprite;
   age: number;
+  /** Seconds before it has faded out; 1 unless set. */
+  life?: number;
+  /** World units it rises per second; 1.4 unless set. */
+  rise?: number;
 }
+
+/** XP motes: gold and pale blue, like the XP bar lighting up. */
+const XP_MOTES = ["#ffd23f", "#ffe98a", "#bfe6ff", "#8fd3ff"];
 
 /** A z rising from a sleeper: drifts up and sideways, grows, and fades. */
 interface SleepZ {
@@ -546,6 +558,15 @@ export class WorldRenderer {
   /** Animate what just happened. `startBeat` holds the first blow back, for a fight's opening card. */
   playEvents(events: WorldEvent[], startBeat = 0) {
     let beat = startBeat;
+    // XP comes in one award at a time (each foe, each rite); one sparkle per hero per update, for the sum.
+    const xp = new Map<string, { amount: number; levelUp: boolean }>();
+    for (const ev of events) {
+      if (ev.t !== "xp" && ev.t !== "level_up") continue;
+      const got = xp.get(ev.heroId) ?? { amount: 0, levelUp: false };
+      if (ev.t === "xp") got.amount += ev.amount;
+      else got.levelUp = true;
+      xp.set(ev.heroId, got);
+    }
     for (const ev of events) {
       if (ev.t === "moved") {
         const unit = this.units.get(ev.heroId);
@@ -565,6 +586,8 @@ export class WorldRenderer {
         else if (b.t === "tick") this.later(beat++, () => this.float(b.target, `-${b.amount}`, "#ffa94d"));
       }
     }
+    // After the last blow has landed.
+    for (const [heroId, got] of xp) this.later(beat, () => this.xpGain(heroId, got.amount, got.levelUp));
   }
 
   /**
@@ -776,16 +799,53 @@ export class WorldRenderer {
     this.fx.push({ sprite, age: 0, ...opts });
   }
 
-  private float(unitId: string, text: string, color: string) {
+  private float(unitId: string, text: string, color: string, opts: { life?: number; rise?: number; height?: number; lift?: number; at?: THREE.Vector3 } = {}) {
     const unit = this.units.get(unitId);
     if (!unit) return;
-    const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: textTexture(text, color), transparent: true, depthTest: false }));
-    sprite.renderOrder = 8;
-    sprite.scale.set(1.2, 0.45, 1);
-    sprite.position.copy(unit.sprite.position).add(new THREE.Vector3(0, unit.sprite.scale.y + 0.5, 0));
+    const map = textTexture(text, color);
+    const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map, transparent: true, depthTest: false }));
+    const height = opts.height ?? 0.45;
+    // The texture is 24 rows tall and as wide as the text needs: keep its pixels square.
+    sprite.scale.set((height * map.image.width) / 24, height, 1);
+    sprite.position.copy(opts.at ?? unit.sprite.position.clone().add(new THREE.Vector3(0, unit.sprite.scale.y + 0.5, 0))).add(new THREE.Vector3(0, opts.lift ?? 0, 0));
     sprite.renderOrder = 10;
     this.fxGroup.add(sprite);
-    this.floaters.push({ sprite, age: 0 });
+    this.floaters.push({ sprite, age: 0, life: opts.life, rise: opts.rise });
+  }
+
+  /**
+   * A hero earned XP: a short burst of gold and pale-blue pixel motes rising
+   * off their head and fading, a crisp "+N XP", and their plate's XP bar lit
+   * up for a moment. `levelUp` adds a bigger flourish: more motes, a gold
+   * burst, a ring of motes thrown outward and "LEVEL UP" over the top.
+   */
+  xpGain(unitId: string, amount: number, levelUp = false) {
+    const unit = this.units.get(unitId);
+    if (!unit || !(amount > 0 || levelUp)) return;
+    const head = unit.goal.clone().add(new THREE.Vector3(0, unit.sprite.scale.y * 0.85, 0.05));
+    // Everything rises clear of the plate, which floats a fixed number of screen pixels over the head.
+    const top = Math.max(head.y + 0.4, this.plateTop(unit) ?? 0);
+    const above = (y: number) => new THREE.Vector3(head.x, y, head.z);
+    const count = levelUp ? 22 : 10;
+    for (let i = 0; i < count; i++) {
+      const a = (i / count) * Math.PI * 2 + Math.random() * 0.6;
+      const spread = levelUp ? 0.55 : 0.35;
+      const from = head.clone().add(new THREE.Vector3(Math.cos(a) * spread * Math.random(), Math.random() * 0.25, Math.sin(a) * 0.1));
+      const to = new THREE.Vector3(from.x + Math.cos(a) * (levelUp ? 0.45 : 0.15), top + 0.15 + Math.random() * (levelUp ? 0.9 : 0.45), from.z);
+      const life = 0.7 + Math.random() * 0.4;
+      // The mote is 4 of its tile's 16 pixels: about two of a hero sprite's pixels across.
+      const size = 0.4 + Math.random() * 0.25;
+      // Each mote starts a little late, so the burst ripples rather than pops.
+      const delay = Math.random() * 0.18;
+      this.pending.push({ at: this.clock + delay, run: () => this.spawnFx("mote", XP_MOTES[i % XP_MOTES.length], false, { from, to, life, size: [size, size * 0.5], spin: 0, fade: true }) });
+    }
+    if (amount > 0) this.float(unitId, `+${amount} XP`, "#ffe27a", { life: 1.1, rise: 0.6, height: 0.4, at: above(top + 0.3) });
+    unit.glowUntil = this.clock + (levelUp ? 1.2 : 0.7);
+    this.applyLabel(unit);
+    if (levelUp) {
+      this.spawnFx("burst", "#ffd23f", false, { from: head, to: head, life: 0.45, size: [0.8, 2.4], spin: 0.6, fade: true });
+      this.pending.push({ at: this.clock + 0.25, run: () => this.float(unitId, "LEVEL UP", "#ffd23f", { life: 1.6, rise: 0.5, height: 0.5, at: above(top + 0.8) }) });
+    }
   }
 
   // ---------- terrain ----------
@@ -1880,7 +1940,7 @@ export class WorldRenderer {
         caster.customDepthMaterial = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking, map: sprite.material.map, alphaTest: 0.5, side: THREE.DoubleSide });
         caster.castShadow = true;
         this.unitGroup.add(sprite, caster);
-        unit = { sprite, caster, ring: null, hpBack: null, hpFill: null, label: null, labelText: "", goal: w.pos.clone(), path: [], kick: new THREE.Vector3(), lean: 0, baseRot: 0, stride: 0, bob: 0, kind: spriteKey(w.kind, w.outfit, w.asleep), asleep: false, nextZ: 0, zCount: 0, head: w.size + 0.3, stack: 0, feet: w.pos.clone() };
+        unit = { sprite, caster, ring: null, hpBack: null, hpFill: null, label: null, labelText: "", goal: w.pos.clone(), path: [], kick: new THREE.Vector3(), lean: 0, baseRot: 0, stride: 0, bob: 0, kind: spriteKey(w.kind, w.outfit, w.asleep), asleep: false, nextZ: 0, zCount: 0, glowUntil: 0, glowing: false, head: w.size + 0.3, stack: 0, feet: w.pos.clone() };
         this.units.set(id, unit);
       }
       unit.goal.copy(w.pos);
@@ -1911,27 +1971,8 @@ export class WorldRenderer {
       }
       if (w.pulse) this.pulsing.add(id);
 
-      const labelKey = w.label ? plateKey(w.label, w.plate) : "";
-      if (labelKey !== unit.labelText) {
-        this.dropLabel(unit);
-        unit.labelText = labelKey;
-        if (w.label) {
-          const { texture, aspect } = labelTexture(w.label, w.plate);
-          // A fixed size on screen, whatever the zoom: each pixel of the label lands on exactly one pixel of the view.
-          unit.label = new THREE.Sprite(new THREE.SpriteMaterial({ map: texture, transparent: true, depthTest: false, sizeAttenuation: false }));
-          unit.label.userData.aspect = aspect;
-          unit.label.userData.rows = texture.image.height;
-          unit.label.userData.lift = w.asleep ? w.size * SPRITE_ASPECT + 0.3 : w.size + 0.3;
-          unit.label.renderOrder = 7;
-          this.unitGroup.add(unit.label);
-        }
-      }
-      if (unit.label) {
-        // Held five of its own pixels clear of the head, at any zoom, however tall the plate;
-        // a second hero on the same hex has theirs a plate higher, so neither hides the other.
-        const rows = unit.label.userData.rows as number;
-        unit.label.center.set(0.5, -(5 + (w.stack ?? 0) * (rows + 2)) / rows);
-      }
+      unit.labelWant = { label: w.label, plate: w.plate, size: w.size, asleep: w.asleep, stack: w.stack };
+      this.applyLabel(unit);
 
       if (w.hp !== undefined && !unit.hpBack) {
         unit.hpBack = new THREE.Sprite(new THREE.SpriteMaterial({ color: "#1b1830", depthTest: false }));
@@ -1952,6 +1993,50 @@ export class WorldRenderer {
           unit.hpBack.userData.lift = unit.hpFill.userData.lift = w.size + 0.25;
         }
       }
+    }
+  }
+
+  /** Where the top of a unit's plate is, in world height, as it is drawn now. Null without a plate. */
+  private plateTop(unit: Unit): number | null {
+    const label = unit.label;
+    if (!label) return null;
+    const rows = label.userData.rows as number;
+    const stack = unit.labelWant?.stack ?? 0;
+    // An unattenuated sprite's size scales with its distance in front of the camera.
+    const depth = -label.position.clone().applyMatrix4(this.camera.matrixWorldInverse).z;
+    const row = (2 * Math.tan(THREE.MathUtils.degToRad(this.camera.fov / 2))) / this.renderer.domElement.height;
+    if (!(depth > 0) || !(rows > 0)) return null;
+    // The plate is offset straight up the screen; a world-height rise looks shorter by the camera's tilt.
+    const tilt = Math.max(0.3, Math.cos(this.pitch));
+    return label.position.y + ((5 + stack * (rows + 2) + rows) * row * depth) / tilt;
+  }
+
+  /** Draw (or redraw) a unit's name tag or plate: on a change, and as an XP glow on its bar starts and ends. */
+  private applyLabel(unit: Unit) {
+    const lw = unit.labelWant;
+    if (!lw) return;
+    unit.glowing = this.clock < unit.glowUntil;
+    const plate = lw.plate && unit.glowing ? { ...lw.plate, glow: true } : lw.plate;
+    const labelKey = lw.label ? plateKey(lw.label, plate) : "";
+    if (labelKey !== unit.labelText) {
+      this.dropLabel(unit);
+      unit.labelText = labelKey;
+      if (lw.label) {
+        const { texture, aspect } = labelTexture(lw.label, plate);
+        // A fixed size on screen, whatever the zoom: each pixel of the label lands on exactly one pixel of the view.
+        unit.label = new THREE.Sprite(new THREE.SpriteMaterial({ map: texture, transparent: true, depthTest: false, sizeAttenuation: false }));
+        unit.label.userData.aspect = aspect;
+        unit.label.userData.rows = texture.image.height;
+        unit.label.userData.lift = lw.asleep ? lw.size * SPRITE_ASPECT + 0.3 : lw.size + 0.3;
+        unit.label.renderOrder = 7;
+        this.unitGroup.add(unit.label);
+      }
+    }
+    if (unit.label) {
+      // Held five of its own pixels clear of the head, at any zoom, however tall the plate;
+      // a second hero on the same hex has theirs a plate higher, so neither hides the other.
+      const rows = unit.label.userData.rows as number;
+      unit.label.center.set(0.5, -(5 + (lw.stack ?? 0) * (rows + 2)) / rows);
     }
   }
 
@@ -2371,6 +2456,9 @@ export class WorldRenderer {
 
     this.placeBubbles(dt, labelRow);
 
+    // An XP glow on a plate has run its course: draw the bar plain again.
+    for (const unit of this.units.values()) if (unit.glowing && this.clock >= unit.glowUntil) this.applyLabel(unit);
+
     for (let i = this.fx.length - 1; i >= 0; i--) {
       const f = this.fx[i];
       f.age += dt;
@@ -2418,9 +2506,11 @@ export class WorldRenderer {
     for (let i = this.floaters.length - 1; i >= 0; i--) {
       const f = this.floaters[i];
       f.age += dt;
-      f.sprite.position.y += dt * 1.4;
-      f.sprite.material.opacity = Math.max(0, 1 - f.age / 1.0);
-      if (f.age >= 1.0) {
+      const life = f.life ?? 1.0;
+      f.sprite.position.y += dt * (f.rise ?? 1.4);
+      // Holds solid for the first part of its life, then fades.
+      f.sprite.material.opacity = Math.max(0, Math.min(1, (1 - f.age / life) * 1.6));
+      if (f.age >= life) {
         this.fxGroup.remove(f.sprite);
         f.sprite.material.map?.dispose();
         f.sprite.material.dispose();

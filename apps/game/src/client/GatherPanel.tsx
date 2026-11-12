@@ -4,7 +4,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { FELLING_SIDE, GATHER_SPOTS, QUARRY_SIDE, TIMING, TIMING_LIMIT_MS, markerAt, timingGrade, type TimingGrade, STAT_LABEL, type GatherChoice, type GatherSpot, type GatherView, type Resources } from "@gantt-quest/world";
-import { api, type GatherStatus } from "./api";
+import { api, type GatherStatus, type XpResult } from "./api";
 import { DragPanel } from "./DragPanel";
 import { ResourceChips, resourceText } from "./hutDrops";
 import "./gather.css";
@@ -167,19 +167,22 @@ function TimingBar({ aim, spot, busy, stop }: { aim: NonNullable<GatherView["aim
 export function GatherPanel({ spot, onClose }: { spot: GatherSpot; onClose(): void }) {
   const [status, setStatus] = useState<GatherStatus | null>(null);
   const [paid, setPaid] = useState<Resources | null>(null);
+  /** What the outing just ended paid in XP. */
+  const [xp, setXp] = useState<XpResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   useEffect(() => {
     api.gather().then(setStatus, (e: Error) => setError(e.message));
   }, []);
 
-  const run = async (call: () => Promise<GatherStatus & { paid?: Resources }>) => {
+  const run = async (call: () => Promise<GatherStatus & { paid?: Resources; xp?: XpResult }>) => {
     setBusy(true);
     setError(null);
     try {
       const next = await call();
       setStatus(next);
       setPaid(next.paid ?? null);
+      setXp(next.xp ?? null);
     } catch (e) {
       setError((e as Error).message);
       // Whatever went wrong, show where the outing really stands.
@@ -239,6 +242,13 @@ export function GatherPanel({ spot, onClose }: { spot: GatherSpot; onClose(): vo
               <span className="muted">{left} of {status.stamina.max} left · resets in {resetIn(status.stamina.resetsAt)}</span>
             </div>
             <div><span className="muted">Pays</span><strong>{def.pays.join(", ")}</strong><span className="muted">banking always pays at least 1</span></div>
+            {status.harborXp && (
+              <div>
+                <span className="muted">Harbor XP</span>
+                <strong>{status.harborXp.left} of {status.harborXp.cap}</strong>
+                <span className="muted">left today, from any pastime · voyages are not capped</span>
+              </div>
+            )}
           </div>
         )}
         {error && <p className="bad">{error}</p>}
@@ -319,6 +329,7 @@ export function GatherPanel({ spot, onClose }: { spot: GatherSpot; onClose(): vo
                 <strong className={outing.status === "banked" ? "good" : "bad"}>
                   {outing.status === "banked" ? `Added to your materials: ${resourceText(paid ?? outing.payout)}.` : "Nothing comes home this time."}
                 </strong>
+                {xp?.text && <span className={xp.granted > 0 ? "xp-gain" : "muted"}>{xp.text}</span>}
                 <span className="spacer" />
                 {left > 0 && <button className="primary" disabled={busy} onClick={() => run(() => api.gatherStart(spot))}>{outing.spot === spot ? "Go again" : WORDS[spot].start} · uses 1 stamina</button>}
                 <button onClick={onClose}>Done</button>

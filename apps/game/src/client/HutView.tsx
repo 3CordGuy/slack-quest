@@ -19,6 +19,7 @@ import { HeroSheet, useHeroSheet } from "./HeroSheet";
 import { useHut } from "./useHut";
 import "./hut.css";
 import { blurb, label } from "./labels";
+import { xpEvents } from "./xpEvents";
 
 const className = (id: string) => label("class", id);
 const same = (a: HexPos, b: HexPos) => a.q === b.q && a.r === b.r;
@@ -75,6 +76,7 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
   const hut = useHut(
     ownerId,
     (id, path) => renderer.current?.playEvents([{ t: "moved", heroId: id, path }]),
+    (m) => renderer.current?.playEvents(xpEvents(m)),
     (id, text) => renderer.current?.say(id, text),
   );
   const { you, players, furnishings, canEdit, tier, owner } = hut;
@@ -240,8 +242,9 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
     setBusy(true);
     setNote(null);
     try {
-      await fn();
-      setNote({ where, text: done, ok: true });
+      // Crafting pays a little Harbor XP; say so after what was done.
+      const xp = ((await fn()) as { xp?: { text?: string } } | undefined)?.xp?.text;
+      setNote({ where, text: xp ? `${done} ${xp}` : done, ok: true });
     } catch (e) {
       setNote({ where, text: (e as Error).message, ok: false });
     } finally {

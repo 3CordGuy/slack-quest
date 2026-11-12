@@ -19,6 +19,8 @@ import {
   gatherPayout,
   gatherResetAt,
   gatherView,
+  gatherXp,
+  harborXpStatus,
   outingsLeft,
   startGather,
   statPct,
@@ -27,12 +29,16 @@ import {
   type GatherSpot,
   type GatherState,
   type GatherView,
+  type HarborXpStatus,
   type Resources,
 } from "@gantt-quest/world";
 import { heroInitFor } from "./db";
+import { prepareXp, readHarborXp, xpOutcome, type XpResult } from "./harbor-xp";
 
 export interface GatherStatus {
   stamina: { left: number; max: number; resetsAt: number };
+  /** Harbor XP still to be had today, from any pastime. */
+  harborXp: HarborXpStatus;
   /** When the player may next rest, in ms (0 or past: now). */
   restReadyAt: number;
   /** The hero's chance per roll at each spot, from their stats and gear. */
@@ -60,10 +66,11 @@ async function gatherStats(db: D1Database, playerId: string): Promise<Record<Gat
 }
 
 async function status(db: D1Database, playerId: string, stats: Record<GatherSpot, number>, ended?: GatherState): Promise<GatherStatus> {
-  const row = await readRow(db, playerId);
+  const [row, xpRecord] = await Promise.all([readRow(db, playerId), readHarborXp(db, playerId)]);
   const now = Date.now();
   return {
     stamina: { left: outingsLeft(row, now), max: GATHER_DAILY_OUTINGS, resetsAt: gatherResetAt(now) },
+    harborXp: harborXpStatus(xpRecord, now),
     restReadyAt: restReadyAt(row?.rested_at),
     chances: { fishing: statPct(stats.fishing), felling: statPct(stats.felling), quarry: statPct(stats.quarry) },
     outing: ended ? gatherView(ended) : row?.session_json ? gatherView(JSON.parse(row.session_json) as GatherState) : null,
@@ -158,7 +165,7 @@ function timed(state: GatherState, choice: GatherChoice, now: number): GatherCho
 }
 
 /** Apply one choice to the outing in progress. A finished outing is paid and cleared in the same batch. */
-export async function stepOuting(db: D1Database, playerId: string, choice: unknown): Promise<(GatherStatus & { paid?: Resources }) | string> {
+export async function stepOuting(db: D1Database, playerId: string, choice: unknown): Promise<(GatherStatus & { paid?: Resources; xp?: XpResult }) | string> {
   const stats = await gatherStats(db, playerId);
   if (!stats) return "Create a character first.";
   const row = await readRow(db, playerId);
@@ -179,10 +186,14 @@ export async function stepOuting(db: D1Database, playerId: string, choice: unkno
 
   const paid = gatherPayout(next);
   const claim = crypto.randomUUID();
-  const [closed] = await db.batch([
+  // A little XP, more for a good haul, only if this request is the one that closed the outing.
+  const xp = await prepareXp(db, playerId, gatherXp(next, Object.values(paid).reduce((a, n) => a + (n ?? 0), 0)));
+  const xpStatements = xp?.statements(`EXISTS (SELECT 1 FROM gathering WHERE player_id = ?1 AND claim = '${claim}')`) ?? [];
+  const results = await db.batch([
     db.prepare("UPDATE gathering SET session_json = NULL, claim = ?1 WHERE player_id = ?2 AND session_json = ?3").bind(claim, playerId, row.session_json),
     ...payoutStatements(db, playerId, claim, paid),
+    ...xpStatements,
   ]);
-  if (closed.meta.changes === 0) return "That was already played. Try again.";
-  return { ...(await status(db, playerId, stats, next)), paid };
+  if (results[0].meta.changes === 0) return "That was already played. Try again.";
+  return { ...(await status(db, playerId, stats, next)), paid, xp: xpOutcome(xp, results) };
 }

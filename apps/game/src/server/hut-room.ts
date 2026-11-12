@@ -31,6 +31,7 @@ import {
   type WorldMap,
 } from "@gantt-quest/world";
 import { containerUsed, crewFor, furnishingStatement, getCharacter, getHut, hasShack, heroInitFor, homeOf, type Env, type Player } from "./db";
+import { readXpPost, relayXp } from "./harbor-xp";
 
 /** What a player with nothing at all is given the first time they open their own hut. */
 const STARTER_SET = ["table", "chair", "rug"];
@@ -166,6 +167,13 @@ export class HutRoom extends DurableObject<Env> {
     if (new URL(request.url).pathname === "/present") {
       const who = request.headers.get("x-player-id");
       return new Response(who && this.ctx.getWebSockets(who).length > 0 ? "yes" : "no");
+    }
+
+    // A hero earned XP: show it over their head, if they are here.
+    if (new URL(request.url).pathname === "/xp") {
+      const msg = await readXpPost(request);
+      if (msg) relayXp(this.ctx, msg, (m) => this.broadcast(m));
+      return new Response("ok");
     }
 
     // The hut changed from outside this room (a new furnishing, a bigger hut): re-read it.
