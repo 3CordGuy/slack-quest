@@ -28,6 +28,8 @@ const SPELL_COLOR: Record<string, string> = {
   Immolate: "#ff6a3c",
 };
 const isBoss = (kind: string) => !!ENEMIES[kind]?.boss;
+/** Rank-and-file drawn a size up: the heavy hitters. */
+const isBig = (kind: string) => kind === "brute" || kind === "bear";
 
 /**
  * What the renderer needs to draw a scene. An island's ClientState satisfies
@@ -2505,7 +2507,7 @@ export class WorldRenderer {
             outfit: c.outfit,
             // Staggered diagonally so the tall sprites do not hide each other.
             pos: new THREE.Vector3(centre.x + dir * (1.2 + i * 1.05), centre.y, centre.z + (i - (line.length - 1) / 2) * 1.25),
-            size: isBoss(c.kind) ? 2.5 : c.kind === "brute" ? 2.2 : 1.9,
+            size: isBoss(c.kind) ? 2.5 : isBig(c.kind) ? 2.2 : 1.9,
             ring: side === "hero" ? colorOf(c.id) : "#e23b3b",
             pulse: c.id === actor,
             hp: c.hp / c.maxHp,
@@ -2546,7 +2548,7 @@ export class WorldRenderer {
           const pos = this.standAt(band.pos);
           pos.x += (i - (band.kinds.length - 1) / 2) * 0.55;
           pos.z += 0.15;
-          want.set(`roam:${band.id}:${i}`, { kind, pos, size: 1.3, ring: i === 0 ? "#ff3b3b" : undefined, pulse: i === 0 });
+          want.set(`roam:${band.id}:${i}`, { kind, pos, size: isBig(kind) ? 1.5 : 1.3, ring: i === 0 ? "#ff3b3b" : undefined, pulse: i === 0 });
         });
       }
       for (const poi of state.map.pois) {
@@ -2555,7 +2557,7 @@ export class WorldRenderer {
           const pos = this.standAt(poi.pos);
           pos.x += (i - (poi.enemies.length - 1) / 2) * 0.6 + 0.2;
           pos.z += 0.05;
-          want.set(`poi:${poi.id}:${i}`, { kind, pos, size: isBoss(kind) ? 1.7 : kind === "brute" ? 1.5 : 1.3 });
+          want.set(`poi:${poi.id}:${i}`, { kind, pos, size: isBoss(kind) ? 1.7 : isBig(kind) ? 1.5 : 1.3 });
         });
       }
     }

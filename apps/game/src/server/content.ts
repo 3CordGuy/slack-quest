@@ -41,7 +41,7 @@ export const PNG_MAX_BYTES = 4096;
 export const ICON_SIZE = { w: 16, h: 16 };
 export const SPRITE_SIZE = { w: 18, h: 22 };
 /** Kinds drawn by their own functions rather than from LOOKS; a whole-sprite override may still replace them. */
-const SPRITE_ONLY_KINDS = ["wolf", "alpha", "dummy"];
+const SPRITE_ONLY_KINDS = ["wolf", "alpha", "bear", "great_bear", "dummy"];
 
 // ---------- who is an admin ----------
 

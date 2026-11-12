@@ -499,6 +499,8 @@ describe("world reducer", () => {
     const landing = poiById(s.map, "landing")!.pos;
     expect(hexDistance(camp, landing)).toBeGreaterThan(BATTLE_JOIN_RANGE);
     // The one at the camp is on their last legs; the other is far off at the landing, out of the fight.
+    // A slow camp, so the fight is still on after its first exchange.
+    s = { ...s, map: { ...s.map, pois: s.map.pois.map((p) => (p.id === "camp" ? { ...p, enemies: ["brute"] } : p)) } };
     s = { ...s, heroes: s.heroes.map((h) => (h.id === me ? { ...h, pos: camp, hp: 1, potions: 0 } : { ...h, pos: landing })) };
     const sink = { events: [] as WorldEvent[], effects: [] as WorldEffect[] };
     s = must(s, { type: "interact", heroId: me }, sink);
@@ -730,7 +732,8 @@ describe("fog of war and roaming bands", () => {
         expect(s.heroes.every((h) => hexDistance(h.pos, r.pos) >= VISION + 2)).toBe(true);
         expect(s.map.pois.some((p) => p.pos.q === r.pos.q && p.pos.r === r.pos.r)).toBe(false);
         expect(tileAt(s.map, r.pos)!.biome).not.toBe("water");
-        expect(r.kinds.length).toBe(2);
+        // A pair for a party of two, or a bear on its own.
+        expect(r.kinds.length).toBe(r.kinds[0] === "bear" ? 1 : 2);
       }
     }
   });

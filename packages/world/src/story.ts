@@ -236,7 +236,13 @@ const DEMANDS = {
   pray: { id: "pray", text: "pay your respects at the old shrine", fact: "prayed:shrine" },
 } satisfies Record<string, Demand>;
 
-const CAMP_ENCOUNTERS = [["bandit", "wolf"], ["bandit", "bandit"], ["archer", "bandit"], ["brute"], ["wolf", "wolf", "wolf"], ["cultist", "archer"]];
+const CAMP_ENCOUNTERS = [["bandit", "wolf"], ["bandit", "bandit"], ["archer", "bandit"], ["brute"], ["wolf", "wolf", "wolf"], ["cultist", "archer"], ["bear"]];
+/**
+ * A beast hunt whose beast is a bear (its description says so), so the den
+ * holds a Great Bear and not a pack leader. Singular only: one beast is "a
+ * bear", while "bears" is as often the verb ("bears a grudge").
+ */
+export const isBearHunt = (fill: Pick<StoryFill, "villain_description">) => /\bbear\b/i.test(fill.villain_description);
 const charm = (fill: StoryFill, gate: Gate): Capability => ({ id: "give_charm", verb: "give_item", item: "charm", itemName: fill.charm_name, gate });
 const revealLair = (fill: StoryFill): Capability => ({ id: "reveal_lair", verb: "reveal_location", poi: "lair", poiName: fill.lair_name, gate: "demand" });
 const callGuard: Capability = { id: "call_guard", verb: "start_combat", enemies: ["bandit"], gate: "provoked" };
@@ -367,12 +373,21 @@ export const STORY_FRAMES: StoryFrame[] = [
       "its signs, which lie at two spots on the island, and owns a protective charm. There is no human villain: the beast is the threat.",
     fields: {
       relic: "what the beast has been taking or ruining, starting with \"the\" (the flocks, the night catch)",
-      villain: "what islanders call the beast, e.g. \"the Grey Widow\"; its description says what kind of animal it is",
+      villain: "what islanders call the beast, e.g. \"the Grey Widow\"; its description says plainly what kind of animal it is (a wolf or a bear)",
       lair: "the beast's den, starting with \"the\"",
     },
     hints: {
       relic: ["the flocks", "the night catch", "the hives", "the orchard pickers' nerve", "the island's hounds", "the winter stores"],
-      villain: ["an enormous old wolf with one white eye", "a wolf-mother leading a starving pack", "a hound gone feral and grown huge", "a pale wolf the islanders think is a ghost", "a scarred pack leader that has learned to open gates"],
+      villain: [
+        "an enormous old wolf with one white eye",
+        "a wolf-mother leading a starving pack",
+        "a hound gone feral and grown huge",
+        "a pale wolf the islanders think is a ghost",
+        "a scarred pack leader that has learned to open gates",
+        "a great cave bear woken too early from its winter sleep",
+        "an old one-eared bear that tears open storehouse doors",
+        "a she-bear grown bold and enormous on stolen stores",
+      ],
     },
     doomRounds: 18,
     demands: [DEMANDS.clear_camp, DEMANDS.earn_trust, DEMANDS.pray],
@@ -394,7 +409,10 @@ export const STORY_FRAMES: StoryFrame[] = [
         finalObjective: home ? "return" : "slay",
         rites: home ? [{ id: "return", poi: home, requires: ["defeated:lair"], sets: `returned:${home}`, label: `Show ${fill.npc_name} the kill`, text: `${fill.npc_name} turns the trophy over in their hands and nods.` }] : [],
         triggers: [{ requires: ["searched:cache1", "searched:cache2"], reveal: "lair" }],
-        encounters: { lair: ["alpha", "wolf"], camp: [["wolf", "wolf"], ["bandit", "wolf"], ["archer", "bandit"]][fill.title.length % 3] },
+        // A bear dens alone and its country has bears in it; anything else is a wolf and its pack.
+        encounters: isBearHunt(fill)
+          ? { lair: ["great_bear"], camp: [["bear"], ["bandit", "wolf"], ["bear"]][fill.title.length % 3] }
+          : { lair: ["alpha", "wolf"], camp: [["wolf", "wolf"], ["bandit", "wolf"], ["archer", "bandit"]][fill.title.length % 3] },
         route: ["landing", spine.npcAt, "cache1", "cache2", "lair", ...(home ? [home] : [])],
         poiNames: { cache1: "Tracks near the shore", cache2: "The kill site" },
         victoryLine: `${fill.villain_name} is dead, and ${fill.relic_name} can rest easy.`,
@@ -971,6 +989,25 @@ export const CANNED_FILLS: Record<string, StoryFill[]> = {
       npc_secret: "She left the first gate unlatched herself, the night it started.",
       npc_knowledge: ["The pack takes hounds alive more often than not.", "There are signs near the shore and a kill site inland.", "The leader is always last to leave and first to turn."],
       charm_name: "Kennel-keeper's Whistle",
+    },
+    {
+      title: "The Sleepless Sow",
+      premise:
+        "The winter stores of Hollin have been broken open three nights running, the doors torn off their pins and the barrels rolled away. " +
+        "Something that should be asleep in a cave until spring is awake, hungry and huge, and nobody has found where it lies up.",
+      island_name: "Hollin",
+      villain_name: "the Sleepless Sow",
+      villain_description: "A great cave bear woken too early from her winter sleep, grown bold on the island's stores.",
+      relic_name: "the winter stores",
+      lair_name: "the Sow's Barrow",
+      npc_name: "Wenna Crale",
+      npc_role: "beekeeper and trapper",
+      npc_persona: "Calm, weathered and wry, more worried for the bear than afraid of it. Hates waste.",
+      npc_voice: "Low and even, speaks in short sentences, hums when she is thinking.",
+      npc_goal: "Wants hunters steady enough to finish the bear before the island starves or someone gets killed trying.",
+      npc_secret: "Her smoke drove the bear out of its cave in the first place, when she went after a wild hive.",
+      npc_knowledge: ["The bear raids by night and sleeps off the day.", "There are tracks near the shore and a torn-open store inland.", "Her roar can freeze a grown man where he stands."],
+      charm_name: "Trapper's Bear Claw",
     },
   ],
   broken_relic: [

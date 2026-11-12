@@ -81,7 +81,8 @@ function describe(events: WorldEvent[], state: ClientState, names: Map<string, s
         );
         break;
       case "ambush": {
-        const who = ev.kinds.length > 1 ? `${ev.kinds.length} ${ev.kinds[0] === "wolf" ? "wolves" : "raiders"}` : ev.kinds[0] === "wolf" ? "a wolf" : "a raider";
+        const [one, many] = ev.kinds[0] === "wolf" ? ["a wolf", "wolves"] : ev.kinds[0] === "bear" ? ["a bear", "bears"] : ["a raider", "raiders"];
+        const who = ev.kinds.length > 1 ? `${ev.kinds.length} ${many}` : one;
         out.push(ev.by === "band" ? `In the night ${who} ${ev.kinds.length > 1 ? "find" : "finds"} ${n(ev.heroId)}!` : `${n(ev.heroId)} runs into ${who} on the road!`);
         break;
       }
