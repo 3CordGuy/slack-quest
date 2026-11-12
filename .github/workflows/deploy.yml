@@ -3,6 +3,14 @@ name: Deploy
 on:
   push:
     branches: [main]
+    # The game (apps/game, packages/world) deploys by deploy-game.yml or by hand;
+    # a push that only touches it, or only docs, leaves the legacy apps alone.
+    paths-ignore:
+      - "apps/game/**"
+      - "packages/world/**"
+      - "docs/**"
+      - "**/*.md"
+      - ".github/workflows/deploy-game.yml"
 
 jobs:
   # Apply D1 migrations BEFORE deploying workers, so a worker is never live

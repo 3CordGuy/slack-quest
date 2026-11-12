@@ -4,11 +4,9 @@ name: Deploy game
 # deploy.yml, which deploys the legacy apps/web and apps/slack on pushes to main.
 #
 #   - Manual run (Actions tab, or `gh workflow run deploy-game.yml -f target=…`):
-#     either environment. GitHub only lists a manual workflow once this file is
-#     on the default branch (main); until then use the tag below.
-#   - A tag `game-v*` (e.g. game-v2026.11.12): production. Tag pushes use the
-#     workflow at the tagged commit, so this works from overworld-revamp.
-#   - A push to overworld-revamp: staging, but ONLY when the repo variable
+#     either environment.
+#   - A tag `game-v*` (e.g. game-v2026.11.12): production.
+#   - A push to main: staging, but ONLY when the repo variable
 #     GAME_STAGING_AUTODEPLOY is "true". Off by default, so the hand-deploy
 #     flow keeps working until you switch it on.
 #
@@ -29,7 +27,7 @@ on:
         options: [staging, production]
         default: staging
   push:
-    branches: [overworld-revamp]
+    branches: [main]
     tags: ["game-v*"]
     paths:
       - "apps/game/**"
@@ -57,7 +55,7 @@ jobs:
         run: |
           if [ "$EVENT" = "workflow_dispatch" ]; then t="$INPUT"
           elif [[ "$REF" == refs/tags/game-v* ]]; then t=production
-          elif [ "$REF" = "refs/heads/overworld-revamp" ] && [ "$AUTODEPLOY" = "true" ]; then t=staging
+          elif [ "$REF" = "refs/heads/main" ] && [ "$AUTODEPLOY" = "true" ]; then t=staging
           else t=none
           fi
           echo "target=$t" >> "$GITHUB_OUTPUT"

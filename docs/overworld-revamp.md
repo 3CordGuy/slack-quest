@@ -1,7 +1,7 @@
 # Overworld Revamp — Design Doc
 
 **Status:** Approved plan / pre-implementation. Last touched 2026-11-11.
-**Branch:** `overworld-revamp` — shared integration branch; open PRs against it.
+**Branch:** built on `overworld-revamp`, which was merged into `main` and retired in November 2026. Open PRs against `main`.
 
 ## Context
 

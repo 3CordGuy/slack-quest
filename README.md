@@ -103,8 +103,8 @@ npx wrangler deploy                                           # 3. deploy what w
 
 ### Branches
 
-- `overworld-revamp` is the game's integration branch. Feature branches open PRs into it.
-- `main` gets `overworld-revamp` merged in as a separate step. A push to `main` runs `.github/workflows/deploy.yml`, which deploys the **legacy** web app and Slack bot; it does not deploy the game.
+- `main` is the only long-lived branch. Feature branches open PRs into it.
+- A push to `main` runs `.github/workflows/deploy.yml`, which deploys the **legacy** web app and Slack bot. It skips pushes that only touch the game (`apps/game`, `packages/world`) or docs, and it never deploys the game.
 
 ## How the code is built
 
