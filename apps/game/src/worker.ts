@@ -42,6 +42,7 @@ import {
 } from "./server/db";
 
 import { enterHut } from "./server/hut-room";
+import { builtProjectIds, contribute, crewWorks, projectStock } from "./server/projects";
 
 export { HarborRoom } from "./server/harbor-room";
 export { HutRoom } from "./server/hut-room";
@@ -221,6 +222,30 @@ app.get("/api/board", async (c) => {
   return c.json(await noticeBoard(c.env.DB, crew?.id ?? null));
 });
 
+// ---------- Harbor projects ----------
+
+// The crew's shared projects, and what this player has to give toward them.
+app.get("/api/projects", async (c) => {
+  const player = c.get("player");
+  const crew = await crewFor(c.env.DB, player.id);
+  if (!crew) return c.json({ error: "Join a crew first." }, 409);
+  const [works, stock] = await Promise.all([crewWorks(c.env.DB, crew.id), projectStock(c.env.DB, player.id)]);
+  return c.json({ works, stock });
+});
+
+// Give gold or materials toward a project. The server checks the gift; everyone in the Harbor then sees it.
+app.post("/api/projects/give", async (c) => {
+  const player = c.get("player");
+  const body = await c.req.json<{ projectId?: unknown; give?: unknown }>().catch(() => ({}) as { projectId?: unknown; give?: unknown });
+  const crew = await crewFor(c.env.DB, player.id);
+  if (!crew) return c.json({ error: "Join a crew first." }, 409);
+  const result = await contribute(c.env.DB, crew.id, player.id, String(body.projectId ?? ""), body.give);
+  if ("error" in result) return c.json({ error: result.error }, 409);
+  c.executionCtx.waitUntil(refreshHarbor(c.env, crew.id));
+  const [works, stock] = await Promise.all([crewWorks(c.env.DB, crew.id), projectStock(c.env.DB, player.id)]);
+  return c.json({ works, stock, completed: result.completed });
+});
+
 // ---------- crews and the shared Harbor ----------
 
 app.post("/api/crew", async (c) => {
@@ -267,7 +292,8 @@ app.post("/api/run", async (c) => {
   const player = c.get("player");
   const [character, crew] = await Promise.all([getCharacter(c.env.DB, player.id), crewFor(c.env.DB, player.id)]);
   if (character?.status !== "active") return c.json({ error: "Create a character first." }, 409);
-  const code = await createRun(c.env.DB, player.id, crew?.id ?? null);
+  // What the crew has built at the Harbor sails with the ship.
+  const code = await createRun(c.env.DB, player.id, crew?.id ?? null, await builtProjectIds(c.env.DB, crew?.id ?? null));
   c.executionCtx.waitUntil(refreshHarbor(c.env, crew?.id ?? null));
   return c.json({ code });
 });

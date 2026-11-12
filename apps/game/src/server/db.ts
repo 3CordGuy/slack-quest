@@ -28,6 +28,7 @@ import {
   type WorldState,
 } from "@gantt-quest/world";
 import type { HarborRoom } from "./harbor-room";
+import { crewWorks } from "./projects";
 import type { HutRoom } from "./hut-room";
 import type { RunRoom } from "./run-room";
 
@@ -417,9 +418,12 @@ export interface RunRow {
   status: string;
   state_json: string | null;
   crew_id: string | null;
+  /** JSON array of the Harbor projects the crew had built at launch. */
+  projects_json: string;
 }
 
-export async function createRun(db: D1Database, playerId: string, crewId: string | null): Promise<string> {
+/** `projects` are the Harbor projects the crew has built; they are fixed on the run at launch. */
+export async function createRun(db: D1Database, playerId: string, crewId: string | null, projects: string[] = []): Promise<string> {
   // No vowels, so codes never spell anything.
   const alphabet = "BCDFGHJKLMNPQRSTVWXZ";
   for (let attempt = 0; attempt < 5; attempt++) {
@@ -427,8 +431,8 @@ export async function createRun(db: D1Database, playerId: string, crewId: string
     const code = [...bytes].map((b) => alphabet[b % alphabet.length]).join("");
     try {
       await db
-        .prepare("INSERT INTO runs (code, seed, status, created_by, crew_id, created_at, updated_at) VALUES (?, ?, 'lobby', ?, ?, ?, ?)")
-        .bind(code, crypto.randomUUID(), playerId, crewId, now(), now())
+        .prepare("INSERT INTO runs (code, seed, status, created_by, crew_id, projects_json, created_at, updated_at) VALUES (?, ?, 'lobby', ?, ?, ?, ?, ?)")
+        .bind(code, crypto.randomUUID(), playerId, crewId, JSON.stringify(projects), now(), now())
         .run();
       return code;
     } catch {
@@ -439,7 +443,7 @@ export async function createRun(db: D1Database, playerId: string, crewId: string
 }
 
 export async function getRun(db: D1Database, code: string): Promise<RunRow | null> {
-  return db.prepare("SELECT code, seed, status, state_json, crew_id FROM runs WHERE code = ?").bind(code).first<RunRow>();
+  return db.prepare("SELECT code, seed, status, state_json, crew_id, projects_json FROM runs WHERE code = ?").bind(code).first<RunRow>();
 }
 
 export function saveRunStatements(db: D1Database, state: WorldState, action: unknown): D1PreparedStatement[] {
@@ -529,7 +533,8 @@ const VOYAGE_STALE_MS = 12 * 60 * 60_000;
 
 /** Everything on a Harbor's notice board: who is in the crew, which ships are moored or away, and recent voyages. */
 export async function harborBoard(db: D1Database, crewId: string, pierCount: number): Promise<HarborBoard> {
-  const [members, runs] = await Promise.all([
+  const [works, members, runs] = await Promise.all([
+    crewWorks(db, crewId),
     db
       .prepare(
         `SELECT m.player_id AS id, c.name, c.class_id AS classId, c.level
@@ -567,7 +572,7 @@ export async function harborBoard(db: D1Database, crewId: string, pierCount: num
   ships.reverse();
   let pier = 0;
   for (const ship of ships) if (ship.phase === "lobby" && pier < pierCount) ship.pier = pier++;
-  return { members: members.results, ships, log };
+  return { members: members.results, ships, log, works };
 }
 
 /** Ask a crew's Harbor to re-read its notice board and tell everyone present. Never throws. */

@@ -6,6 +6,7 @@
 
 import { allHexesInGrid, type HexGrid, type HexPos } from "@gantt-quest/core";
 import type { Outfit } from "./gear";
+import type { HarborWorks } from "./projects";
 import { findPath, type Biome, type Poi, type PoiKind, type Tile, type WorldMap } from "./map";
 
 export const HARBOR_GRID: HexGrid = { cols: 13, rows: 11 };
@@ -25,6 +26,8 @@ export const HARBOR_BOARD: HexPos = at(6, 4);
 export const HARBOR_SHOP: HexPos = at(9, 5);
 /** The sparring ring, where crewmates try out their gear. */
 export const HARBOR_RING: HexPos = at(3, 5);
+/** The works: where the crew's shared projects are paid for, and where the lighthouse goes up. */
+export const HARBOR_WORKS: HexPos = at(5, 6);
 
 const HEIGHT: Record<Biome, number> = { water: 0.05, plains: 0.3, forest: 0.42, hills: 0.75, dock: 0.1, floor: 0.1, wall: 0.9 };
 
@@ -49,7 +52,7 @@ export function generateHarbor(): WorldMap {
     const ripple = ((pos.q * 7 + pos.r * 13) % 5) * 0.012;
     return { q: pos.q, r: pos.r, biome, h: HEIGHT[biome] + (biome === "plains" ? ripple : 0) };
   });
-  return { grid: HARBOR_GRID, tiles, pois: [harborPoi("board", "board", HARBOR_BOARD), harborPoi("shop", "shop", HARBOR_SHOP), harborPoi("ring", "ring", HARBOR_RING)] };
+  return { grid: HARBOR_GRID, tiles, pois: [harborPoi("board", "board", HARBOR_BOARD), harborPoi("shop", "shop", HARBOR_SHOP), harborPoi("ring", "ring", HARBOR_RING), harborPoi("works", "works", HARBOR_WORKS)] };
 }
 
 /** Longest walk the server will accept in one request. */
@@ -105,6 +108,8 @@ export interface HarborBoard {
   members: HarborMember[];
   ships: HarborShip[];
   log: HarborLogEntry[];
+  /** The crew's shared projects and who gave what lately. */
+  works?: HarborWorks;
 }
 
 export type HarborServerMessage =
