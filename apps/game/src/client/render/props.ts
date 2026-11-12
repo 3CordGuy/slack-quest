@@ -82,8 +82,9 @@ const MODELS: Record<string, (b: Builder) => void> = {
     b.box("#d8d2c0", 0.2, 0.05, 0.2, 0.22, 0.5, 0.05);
   },
   chair(b) {
-    b.post(PALE_WOOD, 0.24, 0.24, 0.07, 0, 0.3);
-    for (const a of [0.5, 2.6, 4.7]) b.post(DARK_WOOD, 0.035, 0.045, 0.3, Math.sin(a) * 0.16, 0, Math.cos(a) * 0.16, 5);
+    // Dark wood like the tables, so a stool stands out from the floor.
+    b.post("#5e3d24", 0.24, 0.24, 0.07, 0, 0.3);
+    for (const a of [0.5, 2.6, 4.7]) b.post("#3b2616", 0.035, 0.045, 0.3, Math.sin(a) * 0.16, 0, Math.cos(a) * 0.16, 5);
   },
   rug(b) {
     b.box("#8a5a3c", 1.2, 0.03, 0.8);
