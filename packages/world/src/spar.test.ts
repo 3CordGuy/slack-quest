@@ -7,6 +7,7 @@ import {
   DUMMY_KIND,
   ENEMIES,
   STORY_FRAMES,
+  pickSpine,
   WEAPONS,
   buildBible,
   createBattle,
@@ -142,7 +143,7 @@ describe("the training dummy", () => {
     for (const frame of STORY_FRAMES) {
       for (const fill of CANNED_FILLS[frame.id]) {
         for (let seed = 0; seed < 40; seed++) {
-          const plan = frame.plan(fill, makeRng(seed));
+          const plan = frame.plan(fill, makeRng(seed), pickSpine(frame, makeRng(seed)));
           expect(Object.values(plan.encounters).flat()).not.toContain(DUMMY_KIND);
           for (const cap of plan.capabilities) if (cap.verb === "start_combat") expect(cap.enemies).not.toContain(DUMMY_KIND);
         }
