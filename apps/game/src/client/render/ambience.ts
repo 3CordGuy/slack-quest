@@ -271,6 +271,15 @@ export class Ambience {
   readonly sunDir = new THREE.Vector3(-0.4, 0.8, 0.4);
   /** A hut's hanging lamp: the one light indoors, and what the furniture's shadows fall away from. */
   private lamp = new THREE.PointLight("#ffd7a1", 0, 0, 0);
+  /**
+   * Firelight: one warm light for the hearth (or campfire) nearest the camera's
+   * target. Indoors it casts shadows alongside the lamp; outdoors it only glows,
+   * and only once the light starts to go. Always in the scene, so adding a fire
+   * never changes the number of lights (and recompiles every material).
+   */
+  private fireLight = new THREE.PointLight("#ff9548", 0, 6, 2);
+  private fires: THREE.Vector3[] = [];
+  private flames: THREE.Mesh[] = [];
 
   private grass: THREE.InstancedMesh | null = null;
   private tufts: Tuft[] = [];
@@ -317,7 +326,11 @@ export class Ambience {
     this.lamp.shadow.camera.far = 30;
     this.lamp.shadow.bias = -0.004;
     this.lamp.visible = false;
-    scene.add(this.hemi, this.sun, this.sun.target, this.lamp, this.group);
+    this.fireLight.shadow.mapSize.set(512, 512);
+    this.fireLight.shadow.camera.near = 0.1;
+    this.fireLight.shadow.camera.far = 8;
+    this.fireLight.shadow.bias = -0.004;
+    scene.add(this.hemi, this.sun, this.sun.target, this.lamp, this.fireLight, this.group);
   }
 
   /** Lay out the decoration for a map. `skip` holds the hexes to leave clear. */
@@ -630,8 +643,9 @@ export class Ambience {
   dispose() {
     this.clear();
     this.setSmoke([]);
-    this.scene.remove(this.hemi, this.sun, this.sun.target, this.lamp, this.group);
+    this.scene.remove(this.hemi, this.sun, this.sun.target, this.lamp, this.fireLight, this.group);
     this.lamp.shadow.map?.dispose();
+    this.fireLight.shadow.map?.dispose();
     this.sun.shadow.map?.dispose();
   }
 
@@ -667,6 +681,7 @@ export class Ambience {
     this.light(target, clock);
     this.fall(clock, target);
     this.puff(clock);
+    this.flicker(clock, target);
     const motion = this.still ? 0 : 1;
 
     if (this.grass) {
@@ -774,6 +789,41 @@ export class Ambience {
   }
 
   /** Draw smoke rising from these points (chimney tops). An empty list clears it. */
+  /** The fires in the scene (hearths, campfires) and their flames, which flicker each frame. The meshes belong to the caller. */
+  setFires(fires: THREE.Vector3[], flames: THREE.Mesh[]) {
+    this.fires = fires;
+    this.flames = flames;
+  }
+
+  /** Lick the flames up and down, and let the firelight breathe with them. */
+  private flicker(clock: number, target: THREE.Vector3) {
+    const motion = this.still ? 0 : 1;
+    for (const f of this.flames) {
+      const k = f.userData.flame as number;
+      const seed = k * 1.7 + f.position.x * 9.1 + f.position.z * 5.3;
+      // Steps rather than a smooth swell, so it reads as pixel fire.
+      const step = Math.floor(clock * 9 + seed);
+      const jitter = hash(step, k, 900);
+      f.scale.y = 1 + motion * (Math.sin(clock * 6.3 + seed) * 0.18 + (jitter - 0.5) * 0.45);
+      f.scale.x = f.scale.z = 1 + motion * (hash(step, k, 901) - 0.5) * 0.25;
+    }
+    const light = this.fireLight;
+    // Kept visible (at no strength) rather than hidden, so the scene's light count stays fixed.
+    if (this.fires.length === 0) {
+      light.intensity = 0;
+      light.castShadow = false;
+      return;
+    }
+    let near = this.fires[0];
+    for (const p of this.fires) if (p.distanceToSquared(target) < near.distanceToSquared(target)) near = p;
+    light.position.copy(near);
+    const flick = 1 + motion * (Math.sin(clock * 8.1) * 0.07 + Math.sin(clock * 13.7 + 1.3) * 0.05 + (hash(Math.floor(clock * 9), 3, 902) - 0.5) * 0.1);
+    // Indoors it is the second light in the room; outdoors it shows only as the day goes.
+    const strength = this.indoors ? 3.2 : 2.4 * (1 - this.daylight);
+    light.castShadow = this.indoors;
+    light.intensity = strength * flick;
+  }
+
   setSmoke(stacks: THREE.Vector3[]) {
     if (this.smoke) {
       this.scene.remove(this.smoke);
@@ -841,8 +891,10 @@ export class Ambience {
     if (this.indoors) {
       // The lamp does the work; a low fill keeps the corners readable. It wavers a little, like a flame.
       this.sun.intensity = 0;
-      this.lamp.intensity = 1.5 * (this.still ? 1 : 1 + Math.sin(clock * 7) * 0.035 + Math.sin(clock * 13.3) * 0.02);
-      this.hemi.intensity = 0.95;
+      // With a fire going, the lamp and fill step back so the room is not overlit.
+      const fire = this.fires.length > 0;
+      this.lamp.intensity = (fire ? 1.15 : 1.5) * (this.still ? 1 : 1 + Math.sin(clock * 7) * 0.035 + Math.sin(clock * 13.3) * 0.02);
+      this.hemi.intensity = fire ? 0.8 : 0.95;
       this.hemi.color.set("#ffe9c9");
       this.hemi.groundColor.set("#3b2f2a");
       this.background.set("#1d1a2b");
