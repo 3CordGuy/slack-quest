@@ -58,7 +58,10 @@ export function PubView({ me, refresh, onLeave }: { me: Me; refresh(): Promise<u
   const sellerHere = useRef(!!seller);
   sellerHere.current = !!seller;
 
-  const pub = usePub((id, path) => renderer.current?.playEvents([{ t: "moved", heroId: id, path }]));
+  const pub = usePub(
+    (id, path) => renderer.current?.playEvents([{ t: "moved", heroId: id, path }]),
+    (id, text) => renderer.current?.say(id, text),
+  );
   const { you, players } = pub;
   const self = players.find((p) => p.id === you);
 

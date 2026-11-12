@@ -24,8 +24,8 @@ export interface HarborConnection {
 
 const EMPTY: HarborBoard = { members: [], ships: [], log: [] };
 
-/** `onMoved` fires for every walk, including your own, so the renderer can animate it. */
-export function useHarbor(onMoved: (id: string, path: HexPos[]) => void): HarborConnection {
+/** `onMoved` fires for every walk, including your own, so the renderer can animate it; `onSaid` for every chat line, yours too, so it can show it over the speaker. */
+export function useHarbor(onMoved: (id: string, path: HexPos[]) => void, onSaid?: (id: string, text: string) => void): HarborConnection {
   const [you, setYou] = useState<string | null>(null);
   const [crew, setCrew] = useState<HarborConnection["crew"]>(null);
   const [players, setPlayers] = useState<HarborPlayer[]>([]);
@@ -36,6 +36,8 @@ export function useHarbor(onMoved: (id: string, path: HexPos[]) => void): Harbor
   const socket = useRef<WebSocket | null>(null);
   const moved = useRef(onMoved);
   moved.current = onMoved;
+  const said = useRef(onSaid);
+  said.current = onSaid;
 
   useEffect(() => {
     let closed = false;
@@ -88,6 +90,8 @@ export function useHarbor(onMoved: (id: string, path: HexPos[]) => void): Harbor
           queueMicrotask(() => moved.current(msg.id, msg.path));
         } else if (msg.type === "said") {
           setChat((c) => [...c, { name: msg.name, text: msg.text }].slice(-30));
+          // Over their head too, for everyone who can see them.
+          said.current?.(msg.id, msg.text);
         }
       };
       ws.onclose = (e) => {

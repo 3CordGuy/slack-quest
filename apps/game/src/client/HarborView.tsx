@@ -49,7 +49,10 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
   const [launchError, setLaunchError] = useState<string | null>(null);
   const chatEnd = useRef<HTMLDivElement>(null);
 
-  const harbor = useHarbor((id, path) => renderer.current?.playEvents([{ t: "moved", heroId: id, path }]));
+  const harbor = useHarbor(
+    (id, path) => renderer.current?.playEvents([{ t: "moved", heroId: id, path }]),
+    (id, text) => renderer.current?.say(id, text),
+  );
   // A traveling salesman in the pub is worth a mention out here.
   const salesmanNow = useSalesman(me.crew?.id);
   const send = useRef(harbor.send);

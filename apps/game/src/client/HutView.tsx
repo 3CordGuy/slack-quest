@@ -72,7 +72,11 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
   const [note, setNote] = useState<{ where: Where; text: string; ok: boolean } | null>(null);
   const noteIn = (where: Where) => note && note.where === where ? <p className={note.ok ? "good" : "bad"}>{note.text}</p> : null;
 
-  const hut = useHut(ownerId, (id, path) => renderer.current?.playEvents([{ t: "moved", heroId: id, path }]));
+  const hut = useHut(
+    ownerId,
+    (id, path) => renderer.current?.playEvents([{ t: "moved", heroId: id, path }]),
+    (id, text) => renderer.current?.say(id, text),
+  );
   const { you, players, furnishings, canEdit, tier, owner } = hut;
   const room = useMemo(() => (tier === null ? null : hutRoom(tier)), [tier]);
   const placed = useMemo(() => placedFurnishings(furnishings), [furnishings]);

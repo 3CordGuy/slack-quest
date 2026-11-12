@@ -25,8 +25,8 @@ export interface HutConnection {
   send(message: HutClientMessage): void;
 }
 
-/** `onMoved` fires for every walk, including your own, so the renderer can animate it. */
-export function useHut(ownerId: string, onMoved: (id: string, path: HexPos[]) => void): HutConnection {
+/** `onMoved` fires for every walk, including your own, so the renderer can animate it; `onSaid` for every chat line, yours too, so it can show it over the speaker. */
+export function useHut(ownerId: string, onMoved: (id: string, path: HexPos[]) => void, onSaid?: (id: string, text: string) => void): HutConnection {
   const [you, setYou] = useState<string | null>(null);
   const [owner, setOwner] = useState<HutConnection["owner"]>(null);
   const [tier, setTier] = useState<number | null>(null);
@@ -40,6 +40,8 @@ export function useHut(ownerId: string, onMoved: (id: string, path: HexPos[]) =>
   const socket = useRef<WebSocket | null>(null);
   const moved = useRef(onMoved);
   moved.current = onMoved;
+  const said = useRef(onSaid);
+  said.current = onSaid;
 
   useEffect(() => {
     let closed = false;
@@ -86,6 +88,8 @@ export function useHut(ownerId: string, onMoved: (id: string, path: HexPos[]) =>
           queueMicrotask(() => moved.current(msg.id, msg.path));
         } else if (msg.type === "said") {
           setChat((c) => [...c, { name: msg.name, text: msg.text }].slice(-30));
+          // Over their head too, for everyone who can see them.
+          said.current?.(msg.id, msg.text);
         }
       };
       ws.onclose = async (e) => {

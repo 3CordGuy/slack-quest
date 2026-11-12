@@ -13,7 +13,7 @@ import type { HexPos } from "@gantt-quest/core";
 import { hexDistance } from "@gantt-quest/core";
 import { BATTLE_JOIN_RANGE, ENEMIES, MOVE_COST, findPath, xpProgress, reachable, tileAt, type ClientState, type Outfit, type Phase, type Poi, type Tile, type WorldEvent, type WorldMap } from "@gantt-quest/world";
 import { ghostModel, propModel, tintGhost, type LightKind } from "./props";
-import { SPRITE_ASPECT, fxTexture, labelTexture, plateKey, sleepZTexture, spriteKey, spriteTexture, textTexture, type FxKind, type PlateStats } from "./sprites";
+import { SPRITE_ASPECT, bubbleTexture, fxTexture, labelTexture, plateKey, sleepZTexture, spriteKey, spriteTexture, textTexture, type FxKind, type PlateStats } from "./sprites";
 
 /** Spells fly as a coloured bolt; these are their colours, by ability name. */
 const SPELL_COLOR: Record<string, string> = {
@@ -201,7 +201,29 @@ interface Unit {
   zCount: number;
   /** Arrows that hit it and stayed in, until it goes down or the fight ends. */
   arrows?: StuckArrow[];
+  /** How far above its feet the head is, in world units: where its tag and speech hang from. */
+  head: number;
+  /** Which of the heroes on its hex it is, so its speech clears every plate stacked there. */
+  stack: number;
+  /** Where its feet are this frame, the hop left out. */
+  feet: THREE.Vector3;
 }
+
+/** Something a unit just said, hanging over its head for a few seconds. */
+interface Bubble {
+  sprite: THREE.Sprite;
+  width: number;
+  rows: number;
+  age: number;
+  life: number;
+  /** Pixels it has been lifted (and, at the top of the view, moved aside) to clear other bubbles and tags; eased. */
+  raise: number;
+  shift: number;
+}
+
+/** Seconds a bubble stays up: a little longer for a longer line. */
+const bubbleLife = (text: string) => Math.min(7, 4 + text.length / 40);
+const BUBBLE_FADE = 0.6;
 
 /** An arrow left standing in a combatant: where on the sprite it sits, and its tilt. */
 interface StuckArrow {
@@ -335,6 +357,8 @@ export class WorldRenderer {
   private floaters: Floater[] = [];
   private sleepZs: SleepZ[] = [];
   private fx: Fx[] = [];
+  /** Speech over units' heads, by unit id; kept apart from the unit so a change of gear does not cut it short. */
+  private bubbles = new Map<string, Bubble>();
   private pending: { at: number; run: () => void }[] = [];
 
   private state: RenderState | null = null;
@@ -526,6 +550,13 @@ export class WorldRenderer {
       if (ev.t === "moved") {
         const unit = this.units.get(ev.heroId);
         if (unit) unit.path = ev.path.map((p) => this.standAt(p));
+      } else if (ev.t === "chat") {
+        const line = ev.line;
+        if (line.who === "npc") this.say(`npc:${line.npcId}`, line.text);
+        else if (line.who === "hero") {
+          const id = line.heroId ?? this.state?.heroes.find((h) => h.name === line.name)?.id;
+          if (id) this.say(id, line.text);
+        }
       } else if (ev.t === "battle") {
         const b = ev.ev;
         if (b.t === "hit") this.later(beat++, () => this.attack(b.actor, b.target, b.ability, b.perfect, () => this.float(b.target, `-${b.amount}`, b.perfect ? "#ffd23f" : "#ff6b6b"), true));
@@ -533,6 +564,124 @@ export class WorldRenderer {
         else if (b.t === "heal") this.later(beat++, () => { this.sparkle(b.target, "#7dff9a"); this.float(b.target, `+${b.amount}`, "#7dff9a"); });
         else if (b.t === "tick") this.later(beat++, () => this.float(b.target, `-${b.amount}`, "#ffa94d"));
       }
+    }
+  }
+
+  /**
+   * Show a line of chat in a speech bubble over a unit (a hero's id, or `npc:<id>`)
+   * for a few seconds. A new line from the same unit replaces the last. Text only.
+   */
+  say(unitId: string, text: string) {
+    const clean = text.replace(/\s+/g, " ").trim();
+    if (!clean || !this.units.has(unitId)) return;
+    this.dropBubble(unitId);
+    const { texture, width, rows } = bubbleTexture(clean);
+    const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: texture, transparent: true, depthTest: false, sizeAttenuation: false, opacity: 0 }));
+    sprite.renderOrder = 8;
+    sprite.visible = false;
+    this.unitGroup.add(sprite);
+    this.bubbles.set(unitId, { sprite, width, rows, age: 0, life: bubbleLife(clean), raise: 0, shift: 0 });
+  }
+
+  private dropBubble(unitId: string) {
+    const b = this.bubbles.get(unitId);
+    if (!b) return;
+    this.unitGroup.remove(b.sprite);
+    b.sprite.material.map?.dispose();
+    b.sprite.material.dispose();
+    this.bubbles.delete(unitId);
+  }
+
+  /**
+   * Hang each bubble over its speaker's head, above their tag, and lift any that
+   * would cover another bubble or a tag, lowest on screen first. Worked in view
+   * pixels, so a bubble's pixels stay on the view's.
+   */
+  private placeBubbles(dt: number, labelRow: number) {
+    if (this.bubbles.size === 0) return;
+    const W = this.renderer.domElement.width;
+    const H = this.renderer.domElement.height;
+    const v = new THREE.Vector3();
+    const screen = (unit: Unit) => {
+      v.set(unit.feet.x, unit.feet.y + unit.head, unit.feet.z).project(this.camera);
+      return { x: ((v.x + 1) / 2) * W, y: ((v.y + 1) / 2) * H, behind: v.z > 1 };
+    };
+    type Box = { l: number; r: number; b: number; t: number };
+    const taken: Box[] = [];
+    // Tags, where each one sits (see the label's centre in syncUnits).
+    const tagTop = new Map<Unit, number>();
+    for (const unit of this.units.values()) {
+      if (!unit.label) continue;
+      const at = screen(unit);
+      const rows = unit.label.userData.rows as number;
+      const w = rows * (unit.label.userData.aspect as number);
+      const bottom = at.y + 5 + unit.stack * (rows + 2);
+      tagTop.set(unit, 5 + unit.stack * (rows + 2) + rows);
+      taken.push({ l: at.x - w / 2, r: at.x + w / 2, b: bottom, t: bottom + rows });
+    }
+    const placing: { id: string; b: Bubble; unit: Unit; x: number; y: number; base: number }[] = [];
+    for (const [id, b] of this.bubbles) {
+      b.age += dt;
+      const unit = this.units.get(id);
+      if (b.age >= b.life) {
+        this.dropBubble(id);
+        continue;
+      }
+      if (!unit) {
+        b.sprite.visible = false;
+        continue;
+      }
+      const at = screen(unit);
+      if (at.behind) {
+        b.sprite.visible = false;
+        continue;
+      }
+      placing.push({ id, b, unit, x: at.x, y: at.y, base: (tagTop.get(unit) ?? 3) + 2 });
+    }
+    placing.sort((p, q) => p.y + p.base - (q.y + q.base));
+    const overlaps = (l: number, r: number, bottom: number, rows: number) => taken.find((o) => o.l < r && o.r > l && o.b < bottom + rows && o.t > bottom);
+    for (const p of placing) {
+      const { b, unit } = p;
+      const half = b.width / 2;
+      let bottom = p.y + p.base;
+      let shift = 0;
+      for (let pass = 0; pass < 24; pass++) {
+        const hit = overlaps(p.x - half, p.x + half, bottom, b.rows);
+        if (!hit) break;
+        bottom = hit.t + 1;
+      }
+      // Lifted off the top of the view: stay on screen, and step aside instead.
+      const ceiling = H - 2 - b.rows;
+      if (bottom > ceiling && ceiling > p.y + p.base) {
+        bottom = ceiling;
+        let side = 0;
+        for (let pass = 0; pass < 24; pass++) {
+          const hit = overlaps(p.x + shift - half, p.x + shift + half, bottom, b.rows);
+          if (!hit) break;
+          const right = hit.r + 1 - (p.x + shift - half);
+          const left = hit.l - 1 - (p.x + shift + half);
+          // Pick a side once, the nearer one, so it does not bounce between two neighbours.
+          if (!side) side = right <= -left ? 1 : -1;
+          shift += side > 0 ? right : left;
+        }
+      }
+      // Kept inside the view sideways too.
+      shift = Math.max(2 + half - p.x, Math.min(W - 2 - half - p.x, shift));
+      taken.push({ l: p.x + shift - half, r: p.x + shift + half, b: bottom, t: bottom + b.rows });
+      const want = bottom - (p.y + p.base);
+      // Eased so a bubble slides out of the way instead of jumping, but snapped to whole pixels.
+      const k = 1 - Math.exp(-dt * 14);
+      b.raise += (want - b.raise) * k;
+      b.shift += (shift - b.shift) * k;
+      if (Math.abs(want - b.raise) < 0.5) b.raise = want;
+      if (Math.abs(shift - b.shift) < 0.5) b.shift = shift;
+      const s = b.sprite;
+      s.visible = true;
+      s.position.set(unit.feet.x, unit.feet.y + unit.head, unit.feet.z);
+      s.center.set(0.5 - Math.round(b.shift) / b.width, -(p.base + Math.round(b.raise)) / b.rows);
+      const tall = b.rows * labelRow;
+      s.scale.set(tall * (b.width / b.rows), tall, 1);
+      s.material.opacity = Math.min(1, b.age / 0.15, (b.life - b.age) / BUBBLE_FADE);
     }
   }
 
@@ -1731,7 +1880,7 @@ export class WorldRenderer {
         caster.customDepthMaterial = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking, map: sprite.material.map, alphaTest: 0.5, side: THREE.DoubleSide });
         caster.castShadow = true;
         this.unitGroup.add(sprite, caster);
-        unit = { sprite, caster, ring: null, hpBack: null, hpFill: null, label: null, labelText: "", goal: w.pos.clone(), path: [], kick: new THREE.Vector3(), lean: 0, baseRot: 0, stride: 0, bob: 0, kind: spriteKey(w.kind, w.outfit, w.asleep), asleep: false, nextZ: 0, zCount: 0 };
+        unit = { sprite, caster, ring: null, hpBack: null, hpFill: null, label: null, labelText: "", goal: w.pos.clone(), path: [], kick: new THREE.Vector3(), lean: 0, baseRot: 0, stride: 0, bob: 0, kind: spriteKey(w.kind, w.outfit, w.asleep), asleep: false, nextZ: 0, zCount: 0, head: w.size + 0.3, stack: 0, feet: w.pos.clone() };
         this.units.set(id, unit);
       }
       unit.goal.copy(w.pos);
@@ -1739,6 +1888,8 @@ export class WorldRenderer {
       if (w.asleep) unit.goal.y += (w.size * SPRITE_ASPECT) / 2 - 0.05;
       if (w.asleep && !unit.asleep) unit.nextZ = this.clock + 0.4;
       unit.asleep = !!w.asleep;
+      unit.head = w.asleep ? w.size * SPRITE_ASPECT + 0.3 : w.size + 0.3;
+      unit.stack = w.stack ?? 0;
       unit.sprite.scale.set(w.size * SPRITE_ASPECT, w.size, 1);
       unit.caster.scale.copy(unit.sprite.scale);
       unit.caster.visible = !w.down && !w.asleep;
@@ -2193,6 +2344,7 @@ export class WorldRenderer {
       unit.lean *= Math.exp(-dt * 8);
       unit.sprite.material.rotation = unit.baseRot + unit.lean;
       const ground = p.y;
+      unit.feet.set(p.x, ground, p.z);
       p.y += unit.bob;
       unit.caster.position.copy(p);
       unit.caster.rotation.y = this.ambience.towardLight(p.x, p.z);
@@ -2216,6 +2368,8 @@ export class WorldRenderer {
         unit.hpFill.position.set(p.x - 0.57, ground + lift, p.z);
       }
     }
+
+    this.placeBubbles(dt, labelRow);
 
     for (let i = this.fx.length - 1; i >= 0; i--) {
       const f = this.fx[i];
