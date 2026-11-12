@@ -7,7 +7,8 @@
 
 import { FREE_POINTS_PER_LEVEL, LEVELUP_AUTO_ALLOC, STARTING_STATS, type Stats } from "@gantt-quest/core";
 import { createBattle, currentActor, stepBattle, type BattleAction, type BattleEvent, type BattleState, type Combatant } from "./battle";
-import { ABILITIES, ENEMIES, HERO_CLASSES, heroClass } from "./content";
+import { ABILITIES, ENEMIES, HERO_CLASSES, WEAPONS, heroClass } from "./content";
+import { DEBUFFS, traitsFor } from "./traits";
 import { heroCombatant, type HeroSheet } from "./hero";
 import { makeRng } from "./rng";
 
@@ -46,6 +47,8 @@ export interface SimHero {
   weapon?: string;
   weaponPower?: number;
   armor?: number;
+  /** Class traits picked (traits.ts). */
+  traits?: string[];
 }
 
 /** Stats at `level`: the class baseline, its auto-allocation, and free points into its main stat. */
@@ -68,18 +71,30 @@ function sheet(h: SimHero, i: number): HeroSheet {
     weapon: h.weapon ?? heroClass(h.classId)!.weapons[0],
     weaponPower: h.weaponPower ?? 0,
     armor: h.armor ?? 0,
+    traits: h.traits ?? [],
   };
 }
 
 const living = (s: BattleState, side: "hero" | "enemy") => s.combatants.filter((c) => c.side === side && !c.down);
 
 /** Expected damage of one use, summed over the targets it would hit. */
-function expectedDamage(s: BattleState, actor: Combatant, abilityId: string): number {
+function expectedDamage(s: BattleState, actor: Combatant, abilityId: string, target?: Combatant): number {
   const def = ABILITIES[abilityId];
   if (!def.damage) return 0;
   const p = (actor.pct[def.stat] ?? 45) / 100;
   const targets = def.target === "all_enemies" ? living(s, "enemy").length : 1;
-  return (def.damage + actor.level + actor.power) * p * targets;
+  // What the ability gets from the state of the one it's aimed at (a player would see this).
+  let flat = 0;
+  let mult = 1;
+  if (target && def.target === "enemy") {
+    const debuffs = target.effects.filter((e) => DEBUFFS.includes(e.kind)).length;
+    if (def.perDebuffDamage) flat += def.perDebuffDamage * debuffs;
+    if (def.vsEffect && target.effects.some((e) => e.kind === def.vsEffect!.effect)) flat += def.vsEffect.bonus;
+    if (def.bleedPayoff) flat += def.bleedPayoff * (target.effects.find((e) => e.kind === "bleeding")?.turns ?? 0);
+    if (def.finisher && target.hp * 4 < target.maxHp) mult *= def.finisher;
+    if (def.ignoreGuard && target.effects.some((e) => e.kind === "guarded")) mult *= 2;
+  }
+  return ((def.damage + actor.level + actor.power) * p + flat) * mult * targets;
 }
 
 /** An enemy whose next move is a heavy single-target attack (8+ base damage) aimed at someone other than `not`. */
@@ -96,7 +111,8 @@ function bigSwingAt(e: Combatant, not: string): boolean {
  * spent one at a time, only against a boss.
  */
 export function choose(s: BattleState, actor: Combatant): BattleAction {
-  const heals = actor.abilities.filter((a) => ABILITIES[a].target === "ally");
+  // The biggest heal first (All Hands heals little; it's for the turn it gives).
+  const heals = actor.abilities.filter((a) => ABILITIES[a].target === "ally").sort((a, b) => (ABILITIES[b].heal ?? 0) - (ABILITIES[a].heal ?? 0));
   const allies = living(s, "hero").sort((a, b) => a.hp / a.maxHp - b.hp / b.maxHp);
   const hurt = allies[0];
   if (heals.length && hurt && hurt.hp / hurt.maxHp < 0.5) {
@@ -112,8 +128,8 @@ export function choose(s: BattleState, actor: Combatant): BattleAction {
   const guard = actor.abilities.find((a) => ABILITIES[a].target === "self");
   if (guard && actor.hp / actor.maxHp < 0.34) return { type: "ability", ability: guard, focus: 0 };
   const attacks = actor.abilities.filter((a) => ABILITIES[a].damage);
-  const best = attacks.sort((a, b) => expectedDamage(s, actor, b) - expectedDamage(s, actor, a))[0];
   const target = living(s, "enemy").sort((a, b) => a.hp - b.hp)[0];
+  const best = attacks.sort((a, b) => expectedDamage(s, actor, b, target) - expectedDamage(s, actor, a, target))[0];
   const focus = s.boss && actor.focus > 0 ? 1 : 0;
   return { type: "ability", ability: best, target: target.id, focus };
 }
@@ -376,6 +392,23 @@ export function balanceReport(seeds = 40, level = 1): string {
     const sorted = [...rows].sort((a, b) => a.v.clearRate - b.v.clearRate);
     lines.push(`  weakest: ${sorted.slice(0, 4).map((r) => `${r.p.join("+")} ${pct(r.v.clearRate).trim()}`).join(", ")}`);
     lines.push(`  strongest: ${sorted.slice(-4).reverse().map((r) => `${r.p.join("+")} ${pct(r.v.clearRate).trim()}`).join(", ")}`);
+  }
+  if (level >= 4) {
+    lines.push("");
+    lines.push(`TRAITS: solo voyages, ${g} seeds; clear rate with no traits, then each level-2 pick x level-4 pick (a1/a2 = first level-4 option, b1/b2 = second)`);
+    for (const c of SIM_CLASSES) {
+      const [t1a, t1b] = traitsFor(c).filter((t) => t.tier === 1);
+      const [t2a, t2b] = traitsFor(c).filter((t) => t.tier === 2);
+      const run = (traits: string[]) => pct(gauntletRow([{ ...at(c), traits }], g, {}, c).clearRate).trim();
+      lines.push(`  ${c.padEnd(16)} none ${run([])} | ${t1a.name} + ${t2a.name} ${run([t1a.id, t2a.id])}, + ${t2b.name} ${run([t1a.id, t2b.id])} | ${t1b.name} + ${t2a.name} ${run([t1b.id, t2a.id])}, + ${t2b.name} ${run([t1b.id, t2b.id])}`);
+    }
+    lines.push("");
+    lines.push(`SIGNATURE WEAPONS: solo voyages, ${g} seeds; clear rate with the starting weapon, the loot weapon, and the signature weapon`);
+    for (const c of SIM_CLASSES) {
+      const cls = heroClass(c)!;
+      const row = (weapon: string) => pct(gauntletRow([{ ...at(c), weapon }], g, {}, c).clearRate).trim();
+      lines.push(`  ${c.padEnd(16)} ${WEAPONS[cls.weapons[0]].name} ${row(cls.weapons[0])} | ${WEAPONS[cls.weapons[1]].name} ${row(cls.weapons[1])} | ${WEAPONS[cls.signature].name} ${row(cls.signature)}`);
+    }
   }
   lines.push("");
   lines.push(`PASSIVES: voyages in a party of 2, ${g} seeds; clear rate with the passive vs without it, and its share of the party's damage or healing`);

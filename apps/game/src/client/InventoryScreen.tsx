@@ -13,7 +13,11 @@ import {
   STAT_BLURB,
   STAT_KEYS,
   STAT_LABEL,
+  TRAIT_LEVELS,
   armorBlock,
+  parseTraits,
+  pendingTraitTiers,
+  traitsFor,
   equipProblem,
   loadoutOf,
   maxFocusFor,
@@ -176,6 +180,7 @@ export function InventoryScreen({ me, refresh, onClose, onIsland = false }: Prop
                 </div>
               ))}
             </div>
+            <Traits classId={c.class_id} level={c.level} picked={parseTraits(c.traits)} busy={busy} pick={(id) => act(() => api.pickTrait(id))} />
           </section>
 
           <section className={`inv-pack ${over === "pack" ? "over" : ""}`} {...dropTarget("pack", (id) => { if (items.find((i) => i.id === id)?.equipped) void unequip(id); })}>
@@ -271,6 +276,45 @@ export function InventoryScreen({ me, refresh, onClose, onIsland = false }: Prop
           </button>
         </footer>
       </DragPanel>
+    </div>
+  );
+}
+
+/** Class traits: one of two at each trait level, picked for keeps. */
+function Traits({ classId, level, picked, busy, pick }: { classId: string; level: number; picked: string[]; busy: boolean; pick(id: string): void }) {
+  const all = traitsFor(classId);
+  const waiting = pendingTraitTiers(classId, level, picked);
+  return (
+    <div className="traits">
+      <h3>Traits {waiting.length > 0 && <span className="good">· a pick is waiting</span>}</h3>
+      {TRAIT_LEVELS.map((at, i) => {
+        const tier = (i + 1) as 1 | 2;
+        const options = all.filter((t) => t.tier === tier);
+        const open = waiting.includes(tier);
+        const locked = level < at;
+        return (
+          <div key={tier} className={`trait-tier ${locked ? "locked" : ""}`}>
+            <span className="muted">Level {at}{locked ? " · locked" : open ? " · pick one, for keeps" : ""}</span>
+            <div className="trait-options">
+              {options.map((t) => {
+                const mine = picked.includes(t.id);
+                return (
+                  <button
+                    key={t.id}
+                    className={`trait ${mine ? "selected" : ""} ${!open && !mine ? "passed" : ""}`}
+                    disabled={!open || busy}
+                    onClick={() => pick(t.id)}
+                    title={t.blurb}
+                  >
+                    <strong>{t.name}</strong>
+                    <span>{t.blurb}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }

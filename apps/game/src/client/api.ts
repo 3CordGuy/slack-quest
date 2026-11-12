@@ -46,6 +46,8 @@ export interface Character {
   dex: number;
   unspent_points: number;
   gold: number;
+  /** JSON list of picked class trait ids (parse with parseTraits). */
+  traits?: string;
 }
 
 export interface InventoryItem {
@@ -136,6 +138,7 @@ export const api = {
   confirm: () => request("/api/character/confirm", {}),
   reroll: () => request("/api/character/reroll", {}),
   spend: (stat: StatKey) => request("/api/character/spend", { stat }),
+  pickTrait: (trait: string) => request("/api/character/trait", { trait }),
   equip: (itemId: number) => request("/api/character/equip", { itemId }),
   unequip: (itemId: number) => request("/api/character/unequip", { itemId }),
   store: (itemId: number) => request("/api/inventory/store", { itemId }),

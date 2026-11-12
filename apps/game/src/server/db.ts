@@ -38,6 +38,8 @@ import {
   loadoutOf,
   lootPlace,
   storeProblem,
+  parseTraits,
+  traitPickError,
   type CarryState,
   type LootPlace,
   type FurnishingGrant,
@@ -104,6 +106,8 @@ export interface CharacterRow {
   dex: number;
   unspent_points: number;
   gold: number;
+  /** JSON list of picked class trait ids. */
+  traits: string;
 }
 
 export interface InventoryRow {
@@ -400,6 +404,21 @@ export async function deleteCharacter(db: D1Database, playerId: string): Promise
   ]);
 }
 
+/** Pick a class trait. Null on success, else why not. Picks are for keeps. */
+export async function pickTrait(db: D1Database, playerId: string, traitId: string): Promise<string | null> {
+  const c = await getCharacter(db, playerId);
+  if (!c || c.status !== "active") return "No character.";
+  const picked = parseTraits(c.traits);
+  const error = traitPickError(c.class_id, c.level, picked, traitId);
+  if (error) return error;
+  // Only if the list is still what was read, so two quick clicks can't both land.
+  const res = await db
+    .prepare("UPDATE characters SET traits = ? WHERE player_id = ? AND status = 'active' AND traits = ?")
+    .bind(JSON.stringify([...picked, traitId]), playerId, c.traits)
+    .run();
+  return res.meta.changes > 0 ? null : "Try again.";
+}
+
 export async function spendPoint(db: D1Database, playerId: string, stat: string): Promise<boolean> {
   if (!STAT_COLUMNS.includes(stat as StatKey)) return false;
   // `stat` is checked against the fixed column list above before being inlined.
@@ -547,6 +566,7 @@ export async function heroInitFor(db: D1Database, playerId: string): Promise<Her
     xp: c.xp,
     unspent: c.unspent_points,
     base: statsOf(c),
+    traits: parseTraits(c.traits),
     ...gearSheet(c.class_id, worn),
     // What the furniture standing in their hut gives them on a voyage.
     hutPerks: hutPerks(placed.results),

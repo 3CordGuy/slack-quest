@@ -5,7 +5,7 @@
 // a texture per `kind`.
 
 import * as THREE from "three";
-import { ENEMIES, RARITY_COLOR, barPixels, healthBand, outfitKey, type HealthBand, type Outfit, type Slot } from "@gantt-quest/world";
+import { ENEMIES, WEAPONS, RARITY_COLOR, barPixels, healthBand, outfitKey, type HealthBand, type Outfit, type Slot } from "@gantt-quest/world";
 import { LOOKS, mergeLook, type Look, type LookPalette } from "./looks";
 
 const W = 18;
@@ -282,7 +282,9 @@ function drawHero(ctx: CanvasRenderingContext2D, look: Look, outfit: Outfit) {
   }
 
   // Main hand: at the right of the picture.
-  const weapon = outfit.main_hand?.ref;
+  const held = outfit.main_hand?.ref;
+  // Signature weapons are drawn like a weapon the class already has.
+  const weapon = (held && WEAPONS[held]?.looksLike) || held;
   if (weapon === "mace") {
     px(13, 8, 1, 8, GEAR.wood);
     px(12, 5, 3, 3, GEAR.iron);

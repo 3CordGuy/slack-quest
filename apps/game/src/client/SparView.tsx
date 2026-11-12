@@ -17,6 +17,8 @@ import {
   WEAPONS,
   createBattle,
   gearSheet,
+  parseTraits,
+  TRAIT_BY_ID,
   heroCombatant,
   makeRng,
   stepBattle,
@@ -58,6 +60,7 @@ function sheetOf(me: Me, id: string): HeroSheet {
     level: c.level,
     base: { str: c.str, int_stat: c.int_stat, vit: c.vit, agi: c.agi, dex: c.dex },
     ...gearSheet(c.class_id, worn),
+    traits: parseTraits(c.traits),
   };
 }
 
@@ -69,6 +72,7 @@ function describe(ev: BattleEvent, n: (id: string) => string): string | null {
     case "effect": return `${n(ev.target)} is ${label("effect", ev.effect).toLowerCase()}.`;
     case "tick": return `${n(ev.target)} takes ${ev.amount} from ${label("effect", ev.effect).toLowerCase()}.`;
     case "skip": return `${n(ev.id)} is stunned and loses the turn.`;
+    case "trait": return `${n(ev.id)}: ${TRAIT_BY_ID[ev.trait]?.name ?? ev.trait}!`;
     case "down": return `${n(ev.id)} goes down!`;
     case "flee": return ev.ok ? `${n(ev.actor)} steps out of the ring.` : `${n(ev.actor)} fails to break away.`;
     default: return null;

@@ -11,7 +11,7 @@ import { Ambience } from "./ambience";
 import "./camera.css";
 import type { HexPos } from "@gantt-quest/core";
 import { hexDistance } from "@gantt-quest/core";
-import { BATTLE_JOIN_RANGE, ENEMIES, MOVE_COST, findPath, xpProgress, reachable, tileAt, type ClientState, type Outfit, type Phase, type Poi, type Tile, type WorldEvent, type WorldMap } from "@gantt-quest/world";
+import { BATTLE_JOIN_RANGE, ENEMIES, TRAIT_BY_ID, MOVE_COST, findPath, xpProgress, reachable, tileAt, type ClientState, type Outfit, type Phase, type Poi, type Tile, type WorldEvent, type WorldMap } from "@gantt-quest/world";
 import { ghostModel, propModel, tintGhost, type LightKind } from "./props";
 import { SPRITE_ASPECT, bubbleTexture, fxTexture, labelTexture, plateKey, sleepZTexture, spriteKey, spriteTexture, textTexture, type FxKind, type PlateStats } from "./sprites";
 
@@ -585,6 +585,8 @@ export class WorldRenderer {
         else if (b.t === "miss") this.later(beat++, () => this.attack(b.actor, b.target, b.ability, false, () => this.float(b.target, "miss", "#c9d1e0")));
         else if (b.t === "heal") this.later(beat++, () => { this.sparkle(b.target, "#7dff9a"); this.float(b.target, `+${b.amount}`, "#7dff9a"); });
         else if (b.t === "tick") this.later(beat++, () => this.float(b.target, `-${b.amount}`, "#ffa94d"));
+        // A class trait kicking in gets its name over the hero.
+        else if (b.t === "trait") this.later(beat++, () => this.float(b.id, TRAIT_BY_ID[b.trait]?.name ?? b.trait, "#facc15"));
       }
     }
     // After the last blow has landed.
