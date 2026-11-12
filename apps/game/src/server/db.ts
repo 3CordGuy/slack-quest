@@ -23,6 +23,8 @@ import {
   upgradeProblem,
   weaponItem,
   RESOURCE_KINDS,
+  STALL_BUYS,
+  sellMaterialProblem,
   RESOURCE_LABEL,
   SHACK_COST,
   binDeposit,
@@ -318,6 +320,26 @@ export async function sellItem(db: D1Database, playerId: string, itemId: number)
     db.prepare("UPDATE characters SET gold = gold + ? WHERE player_id = ? AND changes() > 0").bind(gold, playerId),
   ]);
   return res[0].meta.changes > 0 ? gold : "No such item.";
+}
+
+/**
+ * Sell foraged materials to the market stall. Returns the gold paid, or an
+ * error. The price is the catalogue's; the materials and the gold move in one
+ * batch, and the gold only if the materials were there to take.
+ */
+export async function sellMaterial(db: D1Database, playerId: string, kind: unknown, qty: unknown): Promise<number | string> {
+  const [c, hut] = await Promise.all([getCharacter(db, playerId), getHut(db, playerId)]);
+  if (c?.status !== "active") return "Create a character first.";
+  const problem = sellMaterialProblem(kind, qty, hut.resources);
+  if (problem) return problem;
+  const k = kind as ResourceKind;
+  const n = qty as number;
+  const gold = STALL_BUYS[k]! * n;
+  const [taken] = await db.batch([
+    db.prepare("UPDATE resources SET qty = qty - ?3 WHERE player_id = ?1 AND kind = ?2 AND qty >= ?3").bind(playerId, k, n),
+    db.prepare("UPDATE characters SET gold = gold + ?2 WHERE player_id = ?1 AND status = 'active' AND changes() > 0").bind(playerId, gold),
+  ]);
+  return taken.meta.changes > 0 ? gold : "You no longer have that many.";
 }
 
 // ---------- the market stall ----------

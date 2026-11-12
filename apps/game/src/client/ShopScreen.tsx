@@ -4,7 +4,7 @@
 // pieces for a hut, always in stock, at the catalogue's price.
 
 import { useEffect, useMemo, useState } from "react";
-import { RARITY_COLOR, SLOT_LABEL, STALL_FURNITURE, equipProblem, sellPrice } from "@gantt-quest/world";
+import { RARITY_COLOR, RESOURCE_KINDS, RESOURCE_LABEL, SLOT_LABEL, STALL_BUYS, STALL_FURNITURE, equipProblem, sellPrice, type Resources } from "@gantt-quest/world";
 import { api, type Me, type Shop } from "./api";
 import { DragPanel } from "./DragPanel";
 import { useAct } from "./Harbor";
@@ -18,7 +18,13 @@ export function ShopScreen({ me, refresh, onClose }: { me: Me; refresh(): Promis
   /** The furnishing last bought, and how many of it are now owned, so a purchase is visible. */
   const [bought, setBought] = useState<string | null>(null);
   const [picked, setPicked] = useState<{ tab: "buy" | "sell"; key: number } | null>(null);
-  const load = () => api.shop().then(setShop, (e: Error) => setLoadError(e.message));
+  /** The player's materials, for the foraged goods the stall will buy. */
+  const [stock, setStock] = useState<Resources>({});
+  const load = () =>
+    Promise.all([
+      api.shop().then(setShop, (e: Error) => setLoadError(e.message)),
+      api.hut().then((h) => setStock(h.resources), () => undefined),
+    ]);
   const { busy, error, act } = useAct(async () => {
     await Promise.all([refresh(), load()]);
   });
@@ -29,6 +35,8 @@ export function ShopScreen({ me, refresh, onClose }: { me: Me; refresh(): Promis
   const items = useMemo(() => me.inventory.map(toOwned), [me.inventory]);
   const worn = useMemo(() => new Map(items.filter((i) => i.equipped).map((i) => [i.slot, i])), [items]);
   const sellable = items.filter((i) => !i.equipped);
+  const forage = RESOURCE_KINDS.filter((k) => STALL_BUYS[k] !== undefined);
+  const forageHeld = forage.reduce((n, k) => n + (stock[k] ?? 0), 0);
   const buying = picked?.tab === "buy" ? shop?.entries.find((e) => e.index === picked.key) : undefined;
   const selling = picked?.tab === "sell" ? sellable.find((i) => i.id === picked.key) : undefined;
   const hours = shop ? Math.max(0, Math.ceil((shop.refreshAt - Date.now()) / 3_600_000)) : 0;
@@ -39,7 +47,7 @@ export function ShopScreen({ me, refresh, onClose }: { me: Me; refresh(): Promis
         <header className="inv-head">
           <h2>Market stall</h2>
           <button className={`small ${tab === "buy" ? "selected" : ""}`} onClick={() => setTab("buy")}>Buy</button>
-          <button className={`small ${tab === "sell" ? "selected" : ""}`} onClick={() => setTab("sell")}>Sell <span className="muted">{sellable.length}</span></button>
+          <button className={`small ${tab === "sell" ? "selected" : ""}`} onClick={() => setTab("sell")}>Sell <span className="muted">{sellable.length + (forageHeld > 0 ? 1 : 0)}</span></button>
           <button className={`small ${tab === "furniture" ? "selected" : ""}`} onClick={() => setTab("furniture")}>Furniture</button>
           <span className="spacer" />
           <span className="gold"><Icon name="cash" color="#ffd23f" size={18} /> {c.gold} gold</span>
@@ -98,6 +106,23 @@ export function ShopScreen({ me, refresh, onClose }: { me: Me; refresh(): Promis
               </>
             ) : (
               <>
+                <h3 className="shop-subhead">Herbs and mushrooms</h3>
+                {forage.map((k) => {
+                  const have = stock[k] ?? 0;
+                  const each = STALL_BUYS[k]!;
+                  return (
+                    <div key={k} className="shop-row">
+                      <Icon name={`res-${k}`} color="#6fae4a" size={32} />
+                      <div className="shop-info">
+                        <strong>{RESOURCE_LABEL[k]}</strong>
+                        <span className="muted">You have {have} · {each}g each</span>
+                      </div>
+                      <button disabled={busy || have < 1} onClick={() => void act(() => api.sellMaterial(k, 1))}>Sell 1 · {each}g</button>
+                      <button disabled={busy || have < 2} onClick={() => void act(() => api.sellMaterial(k, have))}>Sell all · {each * have}g</button>
+                    </div>
+                  );
+                })}
+                <h3 className="shop-subhead">Gear</h3>
                 {sellable.length === 0 && <p className="muted">Nothing to sell. Equipped gear has to be taken off first.</p>}
                 {sellable.map((item) => (
                   <div key={item.id} className={`shop-row ${picked?.tab === "sell" && picked.key === item.id ? "selected" : ""}`} onClick={() => setPicked({ tab: "sell", key: item.id })}>

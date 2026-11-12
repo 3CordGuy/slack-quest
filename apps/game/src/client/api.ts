@@ -110,6 +110,7 @@ export const api = {
   equip: (itemId: number) => request("/api/character/equip", { itemId }),
   unequip: (itemId: number) => request("/api/character/unequip", { itemId }),
   sell: (itemId: number) => request<{ gold: number }>("/api/inventory/sell", { itemId }),
+  sellMaterial: (kind: string, qty: number) => request<{ gold: number }>("/api/shop/materials/sell", { kind, qty }),
   shop: () => request<Shop>("/api/shop"),
   buy: (index: number) => request("/api/shop/buy", { index }),
   board: () => request<Board>("/api/board"),

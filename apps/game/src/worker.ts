@@ -39,6 +39,7 @@ import {
   refreshHut,
   saveDraft,
   sellItem,
+  sellMaterial,
   spendPoint,
   unequipItem,
   upgradeHut,
@@ -204,6 +205,13 @@ app.post("/api/character/unequip", async (c) => {
 app.post("/api/inventory/sell", async (c) => {
   const body = await c.req.json<{ itemId?: number }>().catch(() => ({}) as { itemId?: number });
   const result = await sellItem(c.env.DB, c.get("player").id, Number(body.itemId));
+  return typeof result === "string" ? c.json({ error: result }, 409) : c.json({ gold: result });
+});
+
+// Sell foraged materials (herbs, mushrooms) to the stall. The price is the catalogue's.
+app.post("/api/shop/materials/sell", async (c) => {
+  const body = await c.req.json<{ kind?: unknown; qty?: unknown }>().catch(() => ({}) as { kind?: unknown; qty?: unknown });
+  const result = await sellMaterial(c.env.DB, c.get("player").id, body.kind, body.qty);
   return typeof result === "string" ? c.json({ error: result }, 409) : c.json({ gold: result });
 });
 

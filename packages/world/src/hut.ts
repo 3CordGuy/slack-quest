@@ -132,6 +132,21 @@ export const HUT_TIERS: HutTier[] = [
   { tier: 3, name: "Lodge", cols: 8, rows: 6, gold: 400, resources: { wood: 40, stone: 30, iron: 10 } },
 ];
 
+/**
+ * Materials the market stall buys, and what it pays for each piece. Only
+ * what islanders forage: the stall has no use for timber or ore.
+ */
+export const STALL_BUYS: Partial<Record<ResourceKind, number>> = { herbs: 3, mushrooms: 3 };
+
+/** Why `qty` of `kind` cannot be sold to the stall by someone holding `have`, or null if it can. */
+export function sellMaterialProblem(kind: unknown, qty: unknown, have: Resources): string | null {
+  const k = RESOURCE_KINDS.find((r) => r === kind);
+  if (!k || STALL_BUYS[k] === undefined) return "The stall does not buy that.";
+  if (typeof qty !== "number" || !Number.isSafeInteger(qty) || qty < 1) return "Sell at least one.";
+  if ((have[k] ?? 0) < qty) return `You only have ${have[k] ?? 0} ${RESOURCE_LABEL[k].toLowerCase()}.`;
+  return null;
+}
+
 /** What a plot of land in the Harbor costs. A hut can only be built, entered or furnished once its owner has one. */
 export const PLOT_PRICE = 120;
 
