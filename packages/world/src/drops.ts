@@ -89,13 +89,13 @@ export function cacheDrops(rng: Rng, known: readonly string[] = []): CacheDrops 
 const capital = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
 /** The trophy every hero takes home for winning this story, named after it. */
-export function storyTrophy(bible: Pick<StoryBible, "frameId" | "title" | "relicName" | "villain">): FurnishingGrant | undefined {
+export function storyTrophy(bible: Pick<StoryBible, "frameId" | "title" | "relicName" | "villain"> & Partial<Pick<StoryBible, "islandName">>): FurnishingGrant | undefined {
   const defId = TROPHY_FOR_FRAME[bible.frameId];
   if (!defId || !FURNISHINGS[defId]) return undefined;
   const what =
     defId === "trophy_pelt" ? `Pelt of ${bible.villain.name}`
     : defId === "trophy_core" ? `Core of ${bible.villain.name}`
-    : defId === "trophy_token" ? `Thanks from ${bible.relicName}`
+    : defId === "trophy_token" ? `Thanks from ${bible.frameId === "lift_curse" ? (bible.islandName ?? "the island") : bible.relicName}`
     : capital(bible.relicName);
   return { defId, label: `${what} · ${bible.title}` };
 }

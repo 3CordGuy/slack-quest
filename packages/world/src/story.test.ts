@@ -109,7 +109,7 @@ function playThrough(frame: StoryFrame, demand: Demand, seed: string, spine: Spi
 
 describe("story shapes", () => {
   it("offers several different kinds of story", () => {
-    expect(STORY_FRAMES.map((f) => f.id)).toEqual(["stolen_relic", "rescue", "beast_hunt", "broken_relic"]);
+    expect(STORY_FRAMES.map((f) => f.id)).toEqual(["stolen_relic", "rescue", "beast_hunt", "broken_relic", "rival_crew", "lift_curse"]);
     // They differ in how they end, not only in their words.
     const finals = STORY_FRAMES.map((f) => {
       const b = buildBible(f, CANNED_FILLS[f.id][0]);
@@ -348,5 +348,44 @@ describe("paths through a story", () => {
     // Only the islander's own hut is named for them.
     const bible = buildBible(stolen, CANNED_FILLS.stolen_relic[0], undefined, undefined, { npcAt: "shrine", lead: "told", ending: "fight" });
     expect(bible.poiNames.hut).toBeUndefined();
+  });
+});
+
+describe("the race and the curse", () => {
+  it("makes the rival crew's captain the boss at their camp, and shows the vault once both halves of the chart are found", () => {
+    const race = frameById("rival_crew")!;
+    let s = begin(race, race.demands[0], "race");
+    for (const poi of ["cache1", "camp"]) {
+      expect(poiById(s.map, "lair")!.hidden).toBe(true);
+      s = { ...s, heroes: s.heroes.map((h) => ({ ...h, pos: poiById(s.map, poi)!.pos })) };
+      if (s.turn!.acted) s = must(s, { type: "end_turn", heroId: s.turn!.heroId });
+      s = must(s, { type: "interact", heroId: s.turn!.heroId });
+      if (poi === "camp") {
+        expect(s.battle!.boss).toBe(true);
+        expect(s.battle!.combatants.find((c) => c.kind === "villain")!.name).toBe(s.bible!.villain.name);
+      }
+      for (let i = 0; i < 200 && s.phase === "battle"; i++) s = must(s, { type: "timeout" });
+    }
+    expect(poiById(s.map, "lair")!.hidden).toBe(false);
+  });
+
+  it("ends the race at the ship, not at the vault", () => {
+    const race = frameById("rival_crew")!;
+    const { steps } = playThrough(race, race.demands[0], "race-steps");
+    expect(steps.join(" ")).toBe("talk act:cache1 act:camp act:lair act:landing");
+  });
+
+  it("wakes three stones with the islander's words, then breaks the curse with no boss to fight", () => {
+    const curse = frameById("lift_curse")!;
+    let s = begin(curse, curse.demands[0], "curse");
+    // Without the words, a stone is only a place to search.
+    s = { ...s, heroes: s.heroes.map((h) => ({ ...h, pos: poiById(s.map, "cache1")!.pos })) };
+    s = must(s, { type: "interact", heroId: s.turn!.heroId });
+    expect(s.facts["woken:cache1"]).toBeUndefined();
+    const { state, steps } = playThrough(curse, curse.demands[0], "curse-steps");
+    expect(steps.join(" ")).toBe("talk act:cache1 act:cache2 act:camp act:camp act:shrine");
+    expect(state.result?.outcome).toBe("victory");
+    expect(Object.values(state.bible!.encounters).flat().some((k) => ENEMIES[k].boss)).toBe(false);
+    expect(clientView(state, "p1").story!.poiNames.shrine).toBe(state.bible!.poiNames.shrine);
   });
 });

@@ -224,6 +224,8 @@ export interface StoryFrame {
   trail?: { poi: "cache1" | "cache2"; name: string; text: string };
   /** How the brief describes each ending, completing "The story ends when …". */
   endings?: Partial<Record<Ending, string>>;
+  /** How the brief describes what the islander knows, when it is not the way to a lair. */
+  leads?: Partial<Record<Lead, string>>;
   plan(fill: StoryFill, rng: Rng, spine: Spine): FramePlan;
 }
 
@@ -446,6 +448,113 @@ export const STORY_FRAMES: StoryFrame[] = [
       };
     },
   },
+  {
+    // A race: two halves of a chart, a rival crew to beat to the vault, and a run back to the ship.
+    id: "rival_crew",
+    brief:
+      "A rival crew of treasure-seekers landed on the island just ahead of the heroes, after the same hoard, which lies in a " +
+      "sealed vault nobody has opened in living memory. The way to the vault is on a chart torn in two: one half was hidden " +
+      "near the shore, and the rivals hold the other at their camp in the wilds. Their captain means to reach the vault first. " +
+      "One islander can help, and owns a protective charm.",
+    fields: {
+      relic: "the hoard, starting with \"the\" (what it is and whose it was, e.g. \"the Saltwife's silver\")",
+      villain: "the rival crew's captain",
+      lair: "the sealed vault, starting with \"the\"",
+    },
+    hints: {
+      relic: ["a drowned king's silver", "a lighthouse keeper's hidden savings", "a cargo of spices nobody came back for", "a chest of ship's bells", "a smuggler's stash of fine glass", "the island's old tithe, never paid"],
+      villain: ["a cheerful rogue who thinks this is all a game", "a captain who lost everything and needs this to pay her crew", "a cold-eyed salvager who takes what he finds", "an old rival of every captain in the Harbor", "a pair of twins who never agree on anything"],
+    },
+    doomRounds: 18,
+    // Clearing the camp and searching the shore are already the story, so the islander asks something else.
+    demands: [DEMANDS.earn_trust, DEMANDS.pray],
+    spines: { npcAt: ["hut", "shrine", "landing"], lead: ["told"], ending: ["ship", "homecoming"] },
+    leads: { told: "They know a way into the vault and will tell it once they trust the heroes, though the two halves of the chart show it too." },
+    endings: {
+      ship: "the hoard is safely aboard the heroes' ship",
+      homecoming: "the islanders are given their share of the hoard",
+    },
+    plan: (fill, rng, spine) => {
+      const at = spine.ending === "homecoming" ? spine.npcAt : "landing";
+      return {
+        capabilities: [revealLair(fill), charm(fill, "persuade"), callGuard],
+        objectives: [
+          meet(fill, spine),
+          { id: "chart1", text: "Find the half of the chart hidden near the shore", fact: "searched:cache1" },
+          { id: "chart2", text: `Take the other half from ${fill.villain_name}'s crew at their camp`, fact: "defeated:camp" },
+          { id: "vault", text: `Beat ${fill.villain_name} to ${fill.relic_name} at ${fill.lair_name}`, fact: "defeated:lair" },
+          spine.ending === "homecoming"
+            ? { id: "return", text: `Give ${fill.npc_name} the island's share of ${fill.relic_name}`, fact: `returned:${at}` }
+            : { id: "return", text: `Get ${fill.relic_name} aboard the ship`, fact: `returned:${at}` },
+        ],
+        finalObjective: "return",
+        rites: [
+          spine.ending === "homecoming"
+            ? { id: "return", poi: at, requires: ["defeated:lair"], sets: `returned:${at}`, label: `Share out ${fill.relic_name}`, text: `${fill.npc_name} counts out the island's share, and laughs for the first time in days.` }
+            : { id: "return", poi: at, requires: ["defeated:lair"], sets: `returned:${at}`, label: `Load ${fill.relic_name} aboard`, text: `${fill.relic_name} is stowed below decks.` },
+        ],
+        // Both halves of the chart show the way, as the islander can.
+        triggers: [{ requires: ["searched:cache1", "defeated:camp"], reveal: "lair" }],
+        // The captain holds the camp; the crew's best went ahead to the vault.
+        encounters: { camp: ["villain", rng.pick(["bandit", "archer"])], lair: rng.pick([["brute", "bandit"], ["archer", "archer", "bandit"], ["brute", "archer"]]) },
+        route: ["landing", spine.npcAt, "cache1", "camp", "lair", at],
+        poiNames: { cache1: "Half a chart", camp: `${fill.villain_name}'s camp` },
+        victoryLine: `${fill.villain_name} sails home empty-handed, and ${fill.relic_name} is yours.`,
+        defeatLine: `${fill.villain_name}'s crew got away with ${fill.relic_name}.`,
+      };
+    },
+  },
+  {
+    // No villain to fight: three stones to wake, then the curse broken where it began.
+    id: "lift_curse",
+    brief:
+      "A curse lies on the island and has taken something its people cannot live without. It is held in place by three old " +
+      "standing stones that have gone cold: one near the shore, one inland, and one in the wilds where raiders have made camp. " +
+      "Each must be woken with words only one islander still knows, and then the curse broken at the place where it began. " +
+      "Whoever laid the curse is long gone and cannot be fought. The islander owns a protective charm.",
+    fields: {
+      relic: "what the curse has taken from the island, starting with \"the\" (the island's sleep, the fish, the children's voices)",
+      villain: "who laid the curse long ago; they are gone or dead and cannot be fought",
+      lair: "the place where the curse began and must be broken, starting with \"the\"",
+    },
+    hints: {
+      relic: ["the island's sleep", "the fish from the bay", "every bird's song", "the colour from the flowers", "the warmth from the hearths", "the children's laughter"],
+      villain: ["a drowned witch nobody would help", "a saint whose prayer went wrong", "a jilted lighthouse keeper", "a merchant cheated by the whole island", "a sea-spirit whose shrine was neglected"],
+    },
+    doomRounds: 20,
+    // The camp is one of the stones, so the islander does not ask for it twice.
+    demands: [DEMANDS.earn_trust, DEMANDS.fetch, DEMANDS.pray],
+    spines: { npcAt: ["hut", "landing"], lead: ["told"], ending: ["shrine"] },
+    leads: { told: "They know the old words that wake the stones, and teach them to anyone who comes to speak with them." },
+    endings: { shrine: "the curse is broken at the place where it began, the island's old shrine" },
+    plan: (fill, rng, spine) => {
+      const words = "met:npc1";
+      return {
+        capabilities: [charm(fill, "persuade"), callGuard],
+        objectives: [
+          { ...meet(fill, spine), text: `Learn the old words from ${fill.npc_name}` },
+          { id: "stone1", text: "Wake the standing stone near the shore", fact: "woken:cache1" },
+          { id: "stone2", text: "Wake the standing stone inland", fact: "woken:cache2" },
+          { id: "stone3", text: "Drive the raiders off the third stone and wake it", fact: "woken:camp" },
+          { id: "break", text: `Break the curse at ${fill.lair_name}`, fact: "broken:shrine" },
+        ],
+        finalObjective: "break",
+        rites: [
+          { id: "stone1", poi: "cache1", requires: [words], sets: "woken:cache1", label: "Speak the words to the stone", text: "The shore stone hums, and warms under your hand." },
+          { id: "stone2", poi: "cache2", requires: [words], sets: "woken:cache2", label: "Speak the words to the stone", text: "The inland stone hums, and warms under your hand." },
+          { id: "stone3", poi: "camp", requires: [words, "defeated:camp"], sets: "woken:camp", label: "Speak the words to the stone", text: "The last stone hums. All three are awake." },
+          { id: "break", poi: "shrine", requires: ["woken:cache1", "woken:cache2", "woken:camp"], sets: "broken:shrine", label: "Break the curse", text: `The air cracks like ice on a pond, and ${fill.relic_name} comes back to the island.` },
+        ],
+        triggers: [],
+        // Nobody is the boss here: the hidden place in the hills holds only the curse's last followers.
+        encounters: { camp: rng.pick(CAMP_ENCOUNTERS), lair: ["cultist", rng.pick(["cultist", "archer"])] },
+        route: ["landing", spine.npcAt, "cache1", "camp", "cache2", "shrine"],
+        poiNames: { cache1: "The shore stone", cache2: "The inland stone", shrine: fill.lair_name, lair: "A hidden coven" },
+        victoryLine: `The curse is broken, and ${fill.relic_name} is the island's again.`,
+        defeatLine: `The stones went cold again, and the curse kept ${fill.relic_name}.`,
+      };
+    },
+  },
 ];
 
 /** The spine a frame takes when none is picked: the first of each of its options. */
@@ -478,7 +587,9 @@ export function demandsFor(frame: StoryFrame, spine: Spine): Demand[] {
 /** The brief handed to the model: the frame's own, plus where the islander is, how the way is found, and how it ends. */
 export function storyBrief(frame: StoryFrame, spine: Spine): string {
   const parts = [frame.brief, `The islander who can help ${NPC_PLACE_TEXT[spine.npcAt].brief}.`];
-  if (spine.lead === "trail" && frame.trail) parts.push(`They cannot say where the lair is, but they know ${frame.trail.text}.`);
+  const lead = frame.leads?.[spine.lead];
+  if (lead) parts.push(lead);
+  else if (spine.lead === "trail" && frame.trail) parts.push(`They cannot say where the lair is, but they know ${frame.trail.text}.`);
   else if (spine.lead === "told") parts.push("They know the way to the lair, and will tell it once they trust the heroes.");
   const ending = frame.endings?.[spine.ending];
   parts.push(ending ? `The story ends when ${ending}.` : spine.ending === "fight" ? "The story ends with the fight at the lair." : "");
@@ -900,6 +1011,86 @@ export const CANNED_FILLS: Record<string, StoryFill[]> = {
       npc_secret: "He was the Selwick's last mate, and was ashore drunk the night she was lost.",
       npc_knowledge: ["The raiders camp in the wilds and think the wheel is worth selling.", "The Empty Coat only strikes those who try to carry something out.", "The old shrine is where broken things on Morran are made whole."],
       charm_name: "Harbourmaster's Brass Rule",
+    },
+  ],
+  rival_crew: [
+    {
+      title: "The Saltwife's Silver",
+      premise:
+        "Everyone on Quell knows the story of the Saltwife, who sank her husband's silver in a vault under the hills rather than let him drink it. " +
+        "Nobody believed it until this morning, when a strange ship dropped anchor in the next cove and its crew went inland with spades.",
+      island_name: "Quell",
+      villain_name: "Captain Rusk",
+      villain_description: "A grinning salvager who has never once been beaten to a prize, and talks about it constantly.",
+      relic_name: "the Saltwife's silver",
+      lair_name: "the Sunken Strongroom",
+      npc_name: "Dilly Marr",
+      npc_role: "net-weaver and the Saltwife's great-granddaughter",
+      npc_persona: "Sharp, practical and suspicious of anyone who mentions the silver too quickly. Respects people who ask about her family first.",
+      npc_voice: "Quick and teasing, answers questions with questions, calls the silver 'Gran's sulk'.",
+      npc_goal: "Wants the island to see some of that silver for once, and Rusk to sail home with nothing.",
+      npc_secret: "She sold Rusk half the chart herself, before she understood what it was.",
+      npc_knowledge: ["Rusk's crew are camped in the wilds and squabbling over the chart.", "The other half of the chart was hidden near the shore, under the old net store.", "The strongroom's door only opens to someone holding the whole chart."],
+      charm_name: "Gran's Silver Thimble",
+    },
+    {
+      title: "Bells Under Brackwater",
+      premise:
+        "A hundred years ago a ship carrying new bells for the mainland churches wrecked off Brackwater, and the islanders hid the bells in the hills to sell later. " +
+        "They never did. Now a rival crew has come with half a chart, and they have a head start.",
+      island_name: "Brackwater",
+      villain_name: "Mother Teague",
+      villain_description: "A hard old captain who lost her last ship and means to pay her crew with these bells or not go home.",
+      relic_name: "the wreck bells",
+      lair_name: "the Bell Cellar",
+      npc_name: "Owain Pellow",
+      npc_role: "retired bell-ringer",
+      npc_persona: "Gentle, deaf in one ear and full of stories. Grows serious and careful once he thinks someone means business.",
+      npc_voice: "Slow and musical, hums between sentences, calls the bells by their names.",
+      npc_goal: "Wants the bells rung again, here, before he dies; not sold off to strangers.",
+      npc_secret: "His grandfather was one of the men who hid the bells, and he has always known roughly where.",
+      npc_knowledge: ["Teague's crew camp in the wilds and keep their half of the chart close.", "The other half was left near the shore by his grandfather.", "The cellar was built to be found only by someone with both halves."],
+      charm_name: "Bell-rope Bracelet",
+    },
+  ],
+  lift_curse: [
+    {
+      title: "The Sleepless Isle",
+      premise:
+        "Nobody on Lunna has slept in nine nights. The old standing stones that ring the island went cold the night it started, and the islanders say the curse " +
+        "the Lantern Witch laid on them, a hundred years ago, has finally woken.",
+      island_name: "Lunna",
+      villain_name: "the Lantern Witch",
+      villain_description: "A woman the islanders refused shelter in a storm, a hundred years ago, who cursed them as she drowned.",
+      relic_name: "the island's sleep",
+      lair_name: "the Witch's Step",
+      npc_name: "Nan Corrow",
+      npc_role: "the last person who knows the stone-words",
+      npc_persona: "Tiny, ancient and wide awake; finds the whole thing grimly funny. Trusts people who are polite to her cat.",
+      npc_voice: "Dry and sing-song, drops into old words without explaining them, calls everyone 'duck'.",
+      npc_goal: "Wants the curse broken properly, with the words said right, before she forgets them.",
+      npc_secret: "Her own grandmother was one of the people who turned the witch away.",
+      npc_knowledge: ["The stones must be woken in no particular order, but all three before the curse can break.", "Raiders have camped around the third stone in the wilds.", "The Witch's Step is the old shrine, where she was turned away."],
+      charm_name: "Nan's Thread of Rowan",
+    },
+    {
+      title: "No Fish at Harrowmouth",
+      premise:
+        "The nets of Harrowmouth have come up empty since midsummer, every one, every day. The three stones on the island have gone cold, " +
+        "and the old people say the drowned saint's curse is back.",
+      island_name: "Harrowmouth",
+      villain_name: "Saint Ebba",
+      villain_description: "A saint who prayed the island would never go hungry, and was drowned by the people she prayed for.",
+      relic_name: "the fish",
+      lair_name: "Ebba's Rock",
+      npc_name: "Pascoe Bligh",
+      npc_role: "lay preacher and failed fisherman",
+      npc_persona: "Nervous, kind and full of apologies, but steady as a rock when it comes to the old words.",
+      npc_voice: "Halting, quotes scripture nobody else has heard of, counts on his fingers when anxious.",
+      npc_goal: "Wants the island to remember Ebba kindly once the curse is lifted.",
+      npc_secret: "He has been praying for the curse to come back for years, so the island would remember her.",
+      npc_knowledge: ["Each of the three stones answers to the same words.", "Raiders squat by the third stone in the wilds.", "Ebba's Rock is the old shrine, where she was drowned."],
+      charm_name: "Ebba's Fishbone Cross",
     },
   ],
 };
