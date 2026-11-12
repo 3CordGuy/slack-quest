@@ -457,11 +457,14 @@ body { touch-action: manipulation; overscroll-behavior: none; }
 .signed-in { margin-top: 16px; }
 button.nudge { border-color: var(--gold); color: var(--gold); }
 
-/* The crossing, shown while an island's story is written (SailingView). */
-.sailing { position: absolute; inset: 0; z-index: 18; background: #2b4558; }
-.sailing-stage { position: absolute; inset: 0; }
-.sailing-stage .camera-rotate { display: none; }
-.sailing-caption { position: absolute; left: 50%; bottom: 14%; transform: translateX(-50%); text-align: center; max-width: min(520px, calc(100% - 32px)); }
+/* The ship at sea: aboard in the lobby, the crossing while an island's story is written, and the landfall (SailingView). */
+.run.at-sea .camera-rotate { display: none; }
+/* Lighter than other overlays, so the ship shows round the lobby panel. */
+.overlay.at-sea { background: rgba(15, 14, 30, 0.38); }
+.landfall { position: absolute; inset: 0; z-index: 18; cursor: pointer; }
+.sea-veil { position: absolute; inset: 0; z-index: 40; background: #0f0e1e; opacity: 0; pointer-events: none; transition: opacity 260ms ease; }
+.sea-veil.on { opacity: 1; }
+.sailing-caption { position: absolute; z-index: 18; left: 50%; bottom: 14%; transform: translateX(-50%); text-align: center; width: max-content; max-width: min(520px, calc(100% - 32px)); }
 .sailing-caption h2 { margin: 0 0 4px; }
 .sailing-caption p { margin: 0; }
 

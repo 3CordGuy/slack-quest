@@ -1194,6 +1194,17 @@ export class WorldRenderer {
     this.targetGoal.copy(this.standAt(pos));
   }
 
+  /** Centre the camera over a point on the map, in world units; `snap` puts it there at once instead of easing. */
+  focusAt(x: number, z: number, snap = false) {
+    this.targetGoal.set(x, 0.14, z);
+    if (snap) this.target.copy(this.targetGoal);
+  }
+
+  /** A point of interest's model, by id, for a scene that moves one about itself (the crew's ship at sea). */
+  poiObject(id: string): THREE.Object3D | undefined {
+    return this.poiGroup.children.find((g) => g.userData.poiId === id);
+  }
+
   /** Whether a unit is still on its way along a walked path. */
   isWalking(id: string): boolean {
     return (this.units.get(id)?.path.length ?? 0) > 0;
@@ -1215,6 +1226,7 @@ export class WorldRenderer {
     const panes: THREE.MeshBasicMaterial[] = [];
     for (const poi of state.map.pois) {
       const g = this.poiModel(poi);
+      g.userData.poiId = poi.id;
       const at = this.standAt(poi.pos);
       g.position.set(at.x, at.y, at.z - 0.28);
       g.traverse((o) => {
@@ -1544,10 +1556,10 @@ export class WorldRenderer {
     switch (poi.kind) {
       case "landing": {
         add(box(1.0, 0.08, 0.5), lambert("#8a6a44"), 0, 0.05, 0.1);
-        // The party's ship, moored just offshore to the west.
-        add(box(1.1, 0.32, 0.5), lambert("#6b4a2b"), -1.5, -0.05, 0.3);
-        add(new THREE.CylinderGeometry(0.04, 0.04, 1.1, 5), lambert("#4a3520"), -1.5, 0.6, 0.3);
-        add(box(0.05, 0.6, 0.55), lambert("#f4efe1"), -1.42, 0.75, 0.3);
+        // The party's ship, moored just offshore to the west. Named, so the landfall can hide it while she is still coming in.
+        add(box(1.1, 0.32, 0.5), lambert("#6b4a2b"), -1.5, -0.05, 0.3).name = "moored";
+        add(new THREE.CylinderGeometry(0.04, 0.04, 1.1, 5), lambert("#4a3520"), -1.5, 0.6, 0.3).name = "moored";
+        add(box(0.05, 0.6, 0.55), lambert("#f4efe1"), -1.42, 0.75, 0.3).name = "moored";
         break;
       }
       case "hut":
