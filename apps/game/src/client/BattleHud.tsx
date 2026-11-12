@@ -5,6 +5,7 @@
 import { useEffect, useState } from "react";
 import { ABILITIES, EFFECT_INFO, STAT_LABEL, type AbilityDef, type BattleAction, type BattleState, type Combatant } from "@gantt-quest/world";
 import { DragPanel } from "./DragPanel";
+import { blurb, label } from "./labels";
 
 /** Whole seconds until `deadline` (epoch ms), re-rendering each second. Null when there is no deadline. */
 export function useCountdown(deadline: number | null | undefined): number | null {
@@ -21,7 +22,7 @@ function CombatantChip({ c, active, onClick, selectable }: { c: Combatant; activ
     <button className={`chip ${c.side} ${active ? "active" : ""} ${c.down ? "down" : ""} ${selectable ? "selectable" : ""}`} disabled={!selectable} onClick={onClick}>
       <strong>{c.name}</strong>
       <span className="bar"><span className="bar-fill hp" style={{ width: `${(100 * c.hp) / c.maxHp}%` }} /><span>{c.hp} / {c.maxHp}</span></span>
-      {c.effects.length > 0 && <span className="effects">{c.effects.map((e) => <i key={e.kind} style={{ color: EFFECT_INFO[e.kind].color }} title={EFFECT_INFO[e.kind].blurb}>{EFFECT_INFO[e.kind].name}</i>)}</span>}
+      {c.effects.length > 0 && <span className="effects">{c.effects.map((e) => <i key={e.kind} style={{ color: EFFECT_INFO[e.kind].color }} title={blurb("effect", e.kind)}>{label("effect", e.kind)}</i>)}</span>}
     </button>
   );
 }
@@ -79,9 +80,9 @@ export function BattleHud({ battle, you, onAction }: Props) {
                 const a = ABILITIES[id];
                 return (
                   <button key={id} className={`ability ${abilityId === id ? "selected" : ""}`} onClick={() => { setAbilityId(id); setFocus((f) => Math.min(f, a.rolls)); }}>
-                    <strong>{a.name}</strong>
+                    <strong>{label("ability", id)}</strong>
                     <span>{a.rolls} × {me.pct[a.stat]}% {STAT_LABEL[a.stat]}</span>
-                    <span className="muted">{a.blurb}</span>
+                    <span className="muted">{blurb("ability", id)}</span>
                   </button>
                 );
               })}
@@ -93,7 +94,7 @@ export function BattleHud({ battle, you, onAction }: Props) {
                   {Array.from({ length: Math.min(me.focus, ability.rolls) + 1 }, (_, i) => (
                     <button key={i} className={`small ${focus === i ? "selected" : ""}`} onClick={() => setFocus(i)}>{i}</button>
                   ))}
-                  {targetSide ? <span className="muted">Now pick {targetSide === "enemy" ? "an enemy" : "an ally"} above.</span> : <button className="primary" onClick={() => fire()}>Use {ability.name}</button>}
+                  {targetSide ? <span className="muted">Now pick {targetSide === "enemy" ? "an enemy" : "an ally"} above.</span> : <button className="primary" onClick={() => fire()}>Use {label("ability", ability.id)}</button>}
                 </>
               ) : (
                 <span className="muted">Your turn. Choose an ability.</span>

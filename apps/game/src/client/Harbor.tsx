@@ -4,9 +4,10 @@
 
 import { useState } from "react";
 import { STARTING_STATS } from "@gantt-quest/core";
-import { HARBOR_NAME, HERO_CLASSES, STAT_BLURB, STAT_KEYS, STAT_LABEL, WEAPONS, statPct } from "@gantt-quest/world";
+import { HARBOR_NAME, HERO_CLASSES, STAT_BLURB, STAT_KEYS, STAT_LABEL, statPct } from "@gantt-quest/world";
 import { EmailSignIn } from "./Account";
 import { api, type Character, type Me, type StatKey } from "./api";
+import { blurb, label } from "./labels";
 
 type Act = (fn: () => Promise<unknown>) => Promise<void>;
 
@@ -120,10 +121,10 @@ function Creation({ draft, busy, act, invite }: { draft: Character | null; busy:
       <div className="class-grid">
         {HERO_CLASSES.map((c) => (
           <button key={c.id} className={`class-card ${classId === c.id ? "selected" : ""}`} onClick={() => setClassId(c.id)}>
-            <strong>{c.name}</strong>
-            <span>{c.blurb}</span>
+            <strong>{label("class", c.id)}</strong>
+            <span>{blurb("class", c.id)}</span>
             {c.passive && <span className="class-passive">{c.passive}</span>}
-            <span className="muted">Starts with {WEAPONS[c.weapons[0]].name}</span>
+            <span className="muted">Starts with {label("weapon", c.weapons[0])}</span>
           </button>
         ))}
       </div>

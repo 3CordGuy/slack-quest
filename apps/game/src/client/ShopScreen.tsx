@@ -4,11 +4,12 @@
 // pieces for a hut, always in stock, at the catalogue's price.
 
 import { useEffect, useMemo, useState } from "react";
-import { RARITY_COLOR, RESOURCE_KINDS, RESOURCE_LABEL, SLOT_LABEL, STALL_BUYS, STALL_FURNITURE, equipProblem, sellPrice, type Resources } from "@gantt-quest/world";
+import { RARITY_COLOR, RESOURCE_KINDS, SLOT_LABEL, STALL_BUYS, STALL_FURNITURE, equipProblem, sellPrice, type Resources } from "@gantt-quest/world";
 import { api, type Me, type Shop } from "./api";
 import { DragPanel } from "./DragPanel";
 import { useAct } from "./Harbor";
 import { Icon, ItemDetail, ItemTile, VerdictTag, bonusSummary, compare, powerLabel, toOwned } from "./items";
+import { blurb, itemName, label } from "./labels";
 
 export function ShopScreen({ me, refresh, onClose }: { me: Me; refresh(): Promise<unknown>; onClose(): void }) {
   const c = me.character!;
@@ -66,7 +67,7 @@ export function ShopScreen({ me, refresh, onClose }: { me: Me; refresh(): Promis
                     <div key={e.index} className={`shop-row ${e.bought ? "sold" : ""} ${picked?.tab === "buy" && picked.key === e.index ? "selected" : ""}`} onClick={() => setPicked({ tab: "buy", key: e.index })}>
                       <ItemTile item={e.item} locked={!!equipProblem(e.item, c.class_id, c.level)} />
                       <div className="shop-info">
-                        <strong style={{ color: RARITY_COLOR[e.item.rarity] }}>{e.item.name}</strong>
+                        <strong style={{ color: RARITY_COLOR[e.item.rarity] }}>{itemName(e.item)}</strong>
                         <span className="muted">
                           {SLOT_LABEL[e.item.slot]}{e.item.power > 0 && ` · +${e.item.power} ${powerLabel(e.item).toLowerCase()}`}{bonusSummary(e.item) && ` · ${bonusSummary(e.item)}`}
                         </span>
@@ -90,13 +91,13 @@ export function ShopScreen({ me, refresh, onClose }: { me: Me; refresh(): Promis
                 {STALL_FURNITURE.map((def) => (
                   <div key={def.id} className="shop-row">
                     <div className="shop-info">
-                      <strong>{def.name}</strong>
-                      <span className="muted">{def.blurb}</span>
+                      <strong>{label("furnishing", def.id)}</strong>
+                      <span className="muted">{blurb("furnishing", def.id)}</span>
                     </div>
                     <button
                       className="primary"
                       disabled={busy || c.gold < def.price!}
-                      onClick={() => { setBought(null); void act(() => api.buyFurniture(def.id).then(() => setBought(def.name))); }}
+                      onClick={() => { setBought(null); void act(() => api.buyFurniture(def.id).then(() => setBought(label("furnishing", def.id)))); }}
                     >
                       {def.price}g
                     </button>
@@ -114,7 +115,7 @@ export function ShopScreen({ me, refresh, onClose }: { me: Me; refresh(): Promis
                     <div key={k} className="shop-row">
                       <Icon name={`res-${k}`} color="#6fae4a" size={32} />
                       <div className="shop-info">
-                        <strong>{RESOURCE_LABEL[k]}</strong>
+                        <strong>{label("resource", k)}</strong>
                         <span className="muted">You have {have} · {each}g each</span>
                       </div>
                       <button disabled={busy || have < 1} onClick={() => void act(() => api.sellMaterial(k, 1))}>Sell 1 · {each}g</button>
@@ -128,7 +129,7 @@ export function ShopScreen({ me, refresh, onClose }: { me: Me; refresh(): Promis
                   <div key={item.id} className={`shop-row ${picked?.tab === "sell" && picked.key === item.id ? "selected" : ""}`} onClick={() => setPicked({ tab: "sell", key: item.id })}>
                     <ItemTile item={item} />
                     <div className="shop-info">
-                      <strong style={{ color: RARITY_COLOR[item.rarity] }}>{item.name}</strong>
+                      <strong style={{ color: RARITY_COLOR[item.rarity] }}>{itemName(item)}</strong>
                       <span className="muted">
                         {SLOT_LABEL[item.slot]}{item.power > 0 && ` · +${item.power} ${powerLabel(item).toLowerCase()}`}{bonusSummary(item) && ` · ${bonusSummary(item)}`}
                       </span>

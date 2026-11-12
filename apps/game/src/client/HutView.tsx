@@ -4,7 +4,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { HexPos } from "@gantt-quest/core";
-import { FURNISHINGS, HERO_CLASSES, craftProblem, hutPerks, hutRoom, hutTier, isSmall, nextHutTier, placeProblem, placedFurnishings, poiAt, smallPlaceProblem, upgradeProblem, type Furnishing } from "@gantt-quest/world";
+import { FURNISHINGS, craftProblem, hutPerks, hutRoom, hutTier, isSmall, nextHutTier, placeProblem, placedFurnishings, poiAt, smallPlaceProblem, upgradeProblem, type Furnishing } from "@gantt-quest/world";
 import { api, type Hut, type Me } from "./api";
 import { DragPanel } from "./DragPanel";
 import { CostChips, PerkMeter, ResourceChips } from "./hutDrops";
@@ -13,8 +13,9 @@ import { WorldRenderer, type PlaceTarget, type RenderState } from "./render/Worl
 import { HutContainer } from "./HutContainer";
 import { useHut } from "./useHut";
 import "./hut.css";
+import { blurb, label } from "./labels";
 
-const className = (id: string) => HERO_CLASSES.find((c) => c.id === id)?.name ?? id;
+const className = (id: string) => label("class", id);
 const same = (a: HexPos, b: HexPos) => a.q === b.q && a.r === b.r;
 const defOf = (f: Furnishing) => FURNISHINGS[f.defId];
 /** One notch of a small thing's turn: a twenty-fourth of a circle. */
@@ -299,7 +300,7 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
             <div className="hut-chosen">
               <strong>{chosen.label}</strong>
               <div className="hut-tags">{tags(chosen.defId).map((t) => <span key={t} className="tag">{t}</span>)}</div>
-              <p className="muted">{defOf(chosen)?.blurb}</p>
+              <p className="muted">{blurb("furnishing", chosen.defId)}</p>
               <div className="row">
                 <button className="small" title="Turn left ( [ )" onClick={() => turnBy.current(-1)}>⟲</button>
                 <button className="small" title="Turn right ( ] )" onClick={() => turnBy.current(1)}>⟳</button>
@@ -325,7 +326,7 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
               <ul className="hut-list">
                 {(list as Furnishing[]).map((f) => (
                   <li key={f.id}>
-                    <button className={holding === f.id ? "selected" : ""} title={defOf(f)?.blurb} onClick={() => pick(f.id)}>
+                    <button className={holding === f.id ? "selected" : ""} title={blurb("furnishing", f.defId)} onClick={() => pick(f.id)}>
                       {f.label}{tags(f.defId).filter((t) => t !== "small").map((t) => <span key={t} className="tag">{t}</span>)}
                     </button>
                   </li>
@@ -339,7 +340,7 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
           <ul className="hut-list">
             {placed.map((f) => (
               <li key={f.id}>
-                <button className={selected === f.id || holding === f.id ? "selected" : ""} title={defOf(f)?.blurb} onClick={() => (setHolding(null), setSelected((s) => (s === f.id ? null : f.id)))}>
+                <button className={selected === f.id || holding === f.id ? "selected" : ""} title={blurb("furnishing", f.defId)} onClick={() => (setHolding(null), setSelected((s) => (s === f.id ? null : f.id)))}>
                   {f.label}
                 </button>
               </li>
@@ -361,13 +362,13 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
                   return (
                     <li key={def.id} className={known ? "" : "locked"}>
                       <div>
-                        <strong>{def.name}</strong>
-                        <span className="muted"> · {known ? def.blurb : "Blueprint not found yet. Islands hide them."}</span>
+                        <strong>{label("furnishing", def.id)}</strong>
+                        <span className="muted"> · {known ? blurb("furnishing", def.id) : "Blueprint not found yet. Islands hide them."}</span>
                       </div>
                       <div className="row">
                         <CostChips cost={def.recipe!} have={own.resources} />
                         <span className="spacer" />
-                        <button className="small primary" disabled={busy || !!problem} title={problem ?? "Goes into storage"} onClick={() => void spend(() => api.craft(def.id), `${def.name} crafted. It is in storage.`)}>
+                        <button className="small primary" disabled={busy || !!problem} title={problem ?? "Goes into storage"} onClick={() => void spend(() => api.craft(def.id), `${label("furnishing", def.id)} crafted. It is in storage.`)}>
                           Craft
                         </button>
                       </div>

@@ -15,6 +15,7 @@
 import type { ClientState, ItemDef, Resources, WorldEvent } from "@gantt-quest/world";
 import { ENEMIES, RARITY_COLOR } from "@gantt-quest/world";
 import { blueprintName, resourceText } from "./hutDrops";
+import { itemName, label } from "./labels";
 
 type Battle = NonNullable<ClientState["battle"]>;
 
@@ -51,7 +52,7 @@ export const blowsIn = (events: WorldEvent[]) => events.filter((e) => e.t === "b
 function groupNames(kinds: string[]): string {
   const count = new Map<string, number>();
   for (const k of kinds) count.set(k, (count.get(k) ?? 0) + 1);
-  return [...count].map(([k, n]) => (n > 1 ? `${n} × ${ENEMIES[k]?.name ?? k}` : (ENEMIES[k]?.name ?? k))).join(", ");
+  return [...count].map(([k, n]) => (n > 1 ? `${n} × ${label("enemy", k)}` : label("enemy", k))).join(", ");
 }
 
 export interface Intro {
@@ -164,7 +165,7 @@ export function BattleRecap({ recap, you, onDone }: { recap: Recap; you: string;
                   {h.xp > 0 && <span className="chip">+{h.xp} XP</span>}
                   {h.gold > 0 && <span className="chip gold">+{h.gold} gold</span>}
                   {Object.keys(h.resources).length > 0 && <span className="chip">{resourceText(h.resources)}</span>}
-                  {h.items.map((item, i) => <span key={i} className="chip" style={{ borderColor: RARITY_COLOR[item.rarity], color: RARITY_COLOR[item.rarity] }}>{item.name}</span>)}
+                  {h.items.map((item, i) => <span key={i} className="chip" style={{ borderColor: RARITY_COLOR[item.rarity], color: RARITY_COLOR[item.rarity] }}>{itemName(item)}</span>)}
                   {h.blueprints.map((b, i) => <span key={`b${i}`} className="chip">Blueprint: {b}</span>)}
                   {h.furnishings.map((f, i) => <span key={`f${i}`} className="chip">{f}</span>)}
                 </div>
@@ -227,7 +228,7 @@ export function FindCard({ find, onDone }: { find: Find; onDone(): void }) {
       <div className="recap-gains find-gains">
         {find.gold > 0 && <span className="chip gold">+{find.gold} gold</span>}
         {find.potion && <span className="chip">A potion</span>}
-        {find.items.map((item, i) => <span key={i} className="chip" style={{ borderColor: RARITY_COLOR[item.rarity], color: RARITY_COLOR[item.rarity] }}>{item.name}</span>)}
+        {find.items.map((item, i) => <span key={i} className="chip" style={{ borderColor: RARITY_COLOR[item.rarity], color: RARITY_COLOR[item.rarity] }}>{itemName(item)}</span>)}
         {Object.keys(find.resources).length > 0 && <span className="chip">{resourceText(find.resources)}</span>}
         {find.blueprints.map((b, i) => <span key={`b${i}`} className="chip">Blueprint: {b}</span>)}
         {find.furnishings.map((f, i) => <span key={`f${i}`} className="chip">{f}</span>)}
