@@ -57,7 +57,7 @@ Build before deploying: `wrangler deploy` ships whatever the last build produced
 | `apps/game/src/server/db.ts` | D1 access |
 | `apps/game/src/client/render/` | Three.js island renderer and placeholder sprites |
 | `apps/game/src/client/*.tsx` | Character creation, crew gate, shared Harbor, inventory, market stall and in-voyage HUD (React) |
-| `apps/game/public/icons/` | Item icons from game-icons.net (CC BY 3.0), drawn as tinted masks |
+| `apps/game/src/client/itemArt.ts` | Pixel-art item icons drawn in code, in the style of the hero sprites; the accent colour is the item's rarity |
 
 ## Rules worth knowing before changing things
 

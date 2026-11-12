@@ -101,7 +101,7 @@ export function InventoryScreen({ me, refresh, onClose }: { me: Me; refresh(): P
           <ItemTile item={item} selected={selectedId === item.id} onClick={() => { setSelectedId(item.id); setSlotHint(null); }} onDragStart={dragStart(item)} />
         ) : (
           <button className="tile empty" title={`${SLOT_LABEL[slot]}: empty`} onClick={() => { setSlotHint(slotHint === slot ? null : slot); setSelectedId(null); }}>
-            <Icon name={SLOT_ICON[slot]} color="#4a4570" size={34} />
+            <Icon name={SLOT_ICON[slot]} color="#4a4570" size={36} silhouette />
           </button>
         )}
         <span className="slot-name">{SLOT_LABEL[slot]}</span>

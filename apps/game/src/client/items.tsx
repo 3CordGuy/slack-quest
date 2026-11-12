@@ -1,8 +1,8 @@
-// Shared item UI: the tinted icon, the item tile, and the detail panel with
+// Shared item UI: the pixel-art icon, the item tile, and the detail panel with
 // its comparison against what is equipped. Used by the inventory screen and
 // the market stall.
 
-import type { CSSProperties, DragEvent, ReactNode } from "react";
+import type { DragEvent, ReactNode } from "react";
 import type { StatKey } from "@gantt-quest/core";
 import {
   ABILITIES,
@@ -16,6 +16,7 @@ import {
   type ItemDef,
 } from "@gantt-quest/world";
 import type { InventoryItem } from "./api";
+import { itemArtUrl } from "./itemArt";
 
 /** An inventory row as the game rules see it, keeping its id and equipped flag. */
 export type OwnedItem = ItemDef & { id: number; equipped: boolean };
@@ -36,24 +37,12 @@ export function toOwned(row: InventoryItem): OwnedItem {
   };
 }
 
-/** A game-icons SVG drawn as a mask, so any colour can be applied. */
-export function Icon({ name, color, size = 28 }: { name: string; color: string; size?: number }) {
-  const url = `url(/icons/${name}.svg)`;
-  const style: CSSProperties = {
-    width: size,
-    height: size,
-    display: "inline-block",
-    backgroundColor: color,
-    maskImage: url,
-    WebkitMaskImage: url,
-    maskRepeat: "no-repeat",
-    WebkitMaskRepeat: "no-repeat",
-    maskPosition: "center",
-    WebkitMaskPosition: "center",
-    maskSize: "contain",
-    WebkitMaskSize: "contain",
-  };
-  return <span aria-hidden style={style} />;
+/**
+ * A pixel-art item icon. `color` is the accent (the item's rarity colour).
+ * Sizes that are a multiple of 18 keep every art pixel the same size.
+ */
+export function Icon({ name, color, size = 36, silhouette = false }: { name: string; color: string; size?: number; silhouette?: boolean }) {
+  return <img className="pixel-icon" aria-hidden alt="" draggable={false} width={size} height={size} src={itemArtUrl(name, color, silhouette)} />;
 }
 
 export const powerLabel = (item: ItemDef) => (item.kind === "weapon" ? "Power" : "Armor");
@@ -85,7 +74,7 @@ export function ItemTile({ item, selected, locked, match, onClick, onDragStart, 
       onDragStart={onDragStart}
       onClick={onClick}
     >
-      <Icon name={item.icon} color={color} size={34} />
+      <Icon name={item.icon} color={color} size={36} />
       {item.levelReq > 1 && <span className="badge tl">L{item.levelReq}</span>}
       {item.power > 0 && <span className="badge br">+{item.power}</span>}
       {children}
@@ -132,7 +121,7 @@ export function ItemDetail({ item, current, equipped, classId, level, children }
   return (
     <div className="detail">
       <div className="detail-head">
-        <span className="detail-icon" style={{ borderColor: color }}><Icon name={item.icon} color={color} size={44} /></span>
+        <span className="detail-icon" style={{ borderColor: color }}><Icon name={item.icon} color={color} size={54} /></span>
         <div>
           <strong style={{ color }}>{item.name}</strong>
           <div>

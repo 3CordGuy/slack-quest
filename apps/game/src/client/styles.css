@@ -204,7 +204,8 @@ input:focus, button:focus-visible, select:focus { outline: 2px solid var(--accen
 .rarity-legendary strong { color: #f59e0b; }
 .gold { display: inline-flex; align-items: center; gap: 6px; color: var(--gold); }
 
-.tile { position: relative; width: 60px; height: 60px; padding: 0; display: grid; place-items: center; background: #14122a; border-width: 2px; flex: none; }
+.pixel-icon { image-rendering: pixelated; display: block; flex: none; }
+.tile { position: relative; width: 60px; height: 60px; padding: 0; display: grid; place-items: center; background: #26223f; border-width: 2px; flex: none; }
 .tile.empty { border-style: dashed; }
 .tile.selected { box-shadow: 0 0 0 2px var(--gold); }
 .tile.locked { opacity: 0.45; }
@@ -242,7 +243,7 @@ input:focus, button:focus-visible, select:focus { outline: 2px solid var(--accen
 .detail { display: flex; flex-direction: column; gap: 6px; }
 .detail p { margin: 0; }
 .detail-head { display: flex; gap: 10px; align-items: center; }
-.detail-icon { width: 60px; height: 60px; display: grid; place-items: center; border: 2px solid; background: #14122a; flex: none; }
+.detail-icon { width: 70px; height: 70px; display: grid; place-items: center; border: 2px solid; background: #26223f; flex: none; }
 .abilities li { padding: 3px 0; font-size: 12px; border-bottom: 1px dashed #37335a; }
 .diff { border: 2px solid var(--line); padding: 6px 8px; margin-top: 4px; }
 .diff.upgrade { border-color: var(--good); }

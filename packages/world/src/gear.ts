@@ -24,7 +24,7 @@ export const SLOT_LABEL: Record<Slot, string> = {
   amulet: "Amulet",
 };
 
-/** Icon shown in an empty slot. Names refer to files in apps/game/public/icons. */
+/** Icon shown in an empty slot. Names are keys into the client's pixel art (itemArt.ts). */
 export const SLOT_ICON: Record<Slot, string> = {
   main_hand: "hand",
   off_hand: "round-shield",
