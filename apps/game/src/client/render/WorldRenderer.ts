@@ -898,10 +898,11 @@ export class WorldRenderer {
           const { texture, aspect } = labelTexture(w.label);
           // A fixed size on screen, whatever the zoom: each pixel of the label lands on exactly one pixel of the view.
           unit.label = new THREE.Sprite(new THREE.SpriteMaterial({ map: texture, transparent: true, depthTest: false, sizeAttenuation: false }));
-          unit.label.center.set(0.5, 0);
+          // Held a third of its own height clear of the head, at any zoom.
+          unit.label.center.set(0.5, -0.35);
           unit.label.userData.aspect = aspect;
           unit.label.userData.rows = texture.image.height;
-          unit.label.userData.lift = w.size + 0.28;
+          unit.label.userData.lift = w.size + 0.3;
           unit.label.renderOrder = 7;
           this.unitGroup.add(unit.label);
         }

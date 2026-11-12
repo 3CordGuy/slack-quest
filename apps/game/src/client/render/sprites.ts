@@ -368,14 +368,17 @@ export function textTexture(text: string, color: string): THREE.CanvasTexture {
 /** A name tag. Returns the texture and its width-to-height ratio so the caller can size the sprite. */
 export function labelTexture(text: string): { texture: THREE.CanvasTexture; aspect: number } {
   // Drawn small and then snapped to solid pixels, so a name is as hard-edged as the sprite under it.
-  const font = "bold 10px ui-monospace, Menlo, Consolas, monospace";
+  // Regular weight at this size gives strokes one pixel wide; bold fills the letters in.
+  const font = "12px ui-monospace, Menlo, Consolas, monospace";
   const probe = document.createElement("canvas").getContext("2d")!;
   probe.font = font;
+  (probe as CanvasRenderingContext2D & { letterSpacing?: string }).letterSpacing = "1px";
   const canvas = document.createElement("canvas");
-  canvas.width = Math.ceil(probe.measureText(text).width) + 6;
-  canvas.height = 13;
+  canvas.width = Math.ceil(probe.measureText(text).width) + 8;
+  canvas.height = 15;
   const ctx = canvas.getContext("2d", { willReadFrequently: true })!;
   ctx.font = font;
+  (ctx as CanvasRenderingContext2D & { letterSpacing?: string }).letterSpacing = "1px";
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
   ctx.fillStyle = "#ffffff";
@@ -384,11 +387,11 @@ export function labelTexture(text: string): { texture: THREE.CanvasTexture; aspe
   const image = ctx.getImageData(0, 0, canvas.width, canvas.height);
   const px = image.data;
   for (let k = 0; k < px.length; k += 4) {
-    const ink = px[k + 3] >= 110;
+    const ink = px[k + 3] >= 96;
     px[k] = ink ? 241 : 27;
     px[k + 1] = ink ? 238 : 24;
     px[k + 2] = ink ? 228 : 48;
-    px[k + 3] = ink ? 255 : 205;
+    px[k + 3] = ink ? 255 : 225;
   }
   ctx.putImageData(image, 0, 0);
   const texture = new THREE.CanvasTexture(canvas);
