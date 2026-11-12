@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { HARBOR_APOTHECARY, HARBOR_GALLEY, HARBOR_GATHER, HARBOR_SMITHY, HARBOR_GRID, HARBOR_BOARD, HARBOR_PIERS, HARBOR_PLOTS, HARBOR_RING, HARBOR_SHOP, HARBOR_SPAWN, HARBOR_WORKS, generateHarbor, harborPath, tileAt } from "./index";
+import { HARBOR_APOTHECARY, HARBOR_GALLEY, HARBOR_GATHER, HARBOR_LIGHTHOUSE, HARBOR_WRECK, HARBOR_SMITHY, HARBOR_GRID, HARBOR_BOARD, HARBOR_PIERS, HARBOR_PLOTS, HARBOR_RING, HARBOR_SHOP, HARBOR_SPAWN, HARBOR_WORKS, generateHarbor, harborPath, tileAt } from "./index";
 
 describe("harbor map", () => {
   const map = generateHarbor();
@@ -87,5 +87,17 @@ describe("harbor map", () => {
     expect(map.pois.find((p) => p.id === "galley")).toMatchObject({ kind: "galley", pos: HARBOR_GALLEY });
     // Every pier can still be walked to without crossing the galley.
     for (const pier of HARBOR_PIERS) expect(harborPath(map, HARBOR_SPAWN, pier)!.some((p) => p.q === HARBOR_GALLEY.q && p.r === HARBOR_GALLEY.r)).toBe(false);
+  });
+
+  it("stands the lighthouse on the east spit over the wreck, reachable and clear of every other place", () => {
+    const taken = [...HARBOR_PLOTS, ...HARBOR_PIERS, HARBOR_BOARD, HARBOR_SHOP, HARBOR_RING, HARBOR_SPAWN, HARBOR_WORKS, HARBOR_APOTHECARY, HARBOR_SMITHY, HARBOR_GALLEY, ...Object.values(HARBOR_GATHER)];
+    expect(taken.some((p) => p.q === HARBOR_LIGHTHOUSE.q && p.r === HARBOR_LIGHTHOUSE.r)).toBe(false);
+    expect(map.pois.find((p) => p.id === "lighthouse")).toMatchObject({ kind: "lighthouse", pos: HARBOR_LIGHTHOUSE });
+    // On the shore, not the plaza: bare ground with the sea beside it, and the wreck one hex off.
+    expect(tileAt(map, HARBOR_LIGHTHOUSE)!.biome).toBe("mud");
+    const dist = (a: { q: number; r: number }, b: { q: number; r: number }) => Math.max(Math.abs(a.q - b.q), Math.abs(a.r - b.r), Math.abs(a.q + a.r - b.q - b.r));
+    expect(dist(HARBOR_LIGHTHOUSE, HARBOR_WRECK)).toBe(1);
+    expect(map.tiles.some((t) => t.biome === "water" && dist(t, HARBOR_LIGHTHOUSE) === 1)).toBe(true);
+    expect(harborPath(map, HARBOR_SPAWN, HARBOR_LIGHTHOUSE)!.at(-1)).toEqual(HARBOR_LIGHTHOUSE);
   });
 });
