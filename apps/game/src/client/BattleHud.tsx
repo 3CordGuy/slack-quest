@@ -35,7 +35,7 @@ function CombatantChip({ c, active, onClick, selectable, nameOf }: { c: Combatan
       <span className="bar"><span className="bar-fill hp" style={{ width: `${(100 * c.hp) / c.maxHp}%` }} /><span>{c.hp} / {c.maxHp}</span></span>
       {intent && (
         <span className={`intent ${intent.heavy ? "heavy" : ""}`} title="What it will do on its next turn. A taunt or a stun can change it.">
-          Next: {intent.text}{glitched ? " (glitched)" : ""}
+          Next: {intent.text}{glitched ? ` (${label("effect", "glitched").toLowerCase()})` : ""}
         </span>
       )}
       {c.effects.length > 0 && <span className="effects">{c.effects.map((e) => <i key={e.kind} style={{ color: EFFECT_INFO[e.kind]?.color }} title={blurb("effect", e.kind)}>{label("effect", e.kind)}</i>)}</span>}

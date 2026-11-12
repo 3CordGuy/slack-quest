@@ -300,7 +300,7 @@ function glitchable(actor: Combatant, opts: Parameters<typeof rollCheck>[1], rng
   const rolls = [...rest, false];
   const successes = rolls.filter(Boolean).length;
   return {
-    label: `${opts.label} (glitched)`,
+    label: `${opts.label} (fouled)`,
     stat: opts.stat ?? null,
     pct: opts.pct,
     rolls,
