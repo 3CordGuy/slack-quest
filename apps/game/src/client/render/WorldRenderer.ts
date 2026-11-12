@@ -51,6 +51,8 @@ export interface RenderState {
   props?: SceneProp[];
   /** Inside a building: no sea or sky around the map, and the camera starts closer. */
   indoors?: boolean;
+  /** Inside a hut with its hanging lamp put out: the room is lit by its own candles, lanterns and fires. */
+  lampOff?: boolean;
   /** A piece being carried: a ghost of it follows the pointer, and a click sets it down (RendererCallbacks.onPlace). */
   holding?: Holding | null;
 }
@@ -549,6 +551,7 @@ export class WorldRenderer {
     if (first || lifted !== this.lifted) this.buildTerrain(state, first);
     this.lifted = lifted;
     this.state = state;
+    this.ambience.setLampOn(!state.lampOff);
     this.buildPois(state);
     this.buildProps(state);
     this.updateGhost();
@@ -2179,6 +2182,7 @@ export class WorldRenderer {
       this.unitGroup.remove(unit.sprite, unit.caster);
       unit.caster.material instanceof THREE.Material && unit.caster.material.dispose();
       unit.caster.customDepthMaterial?.dispose();
+      unit.caster.customDistanceMaterial?.dispose();
       if (unit.ring) this.unitGroup.remove(unit.ring);
       if (unit.hpBack) this.unitGroup.remove(unit.hpBack);
       if (unit.hpFill) this.unitGroup.remove(unit.hpFill);
@@ -2197,6 +2201,8 @@ export class WorldRenderer {
         sprite.position.copy(w.pos);
         const caster = new THREE.Mesh(CASTER_PLANE, new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false, side: THREE.DoubleSide, map: sprite.material.map, alphaTest: 0.5 }));
         caster.customDepthMaterial = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking, map: sprite.material.map, alphaTest: 0.5, side: THREE.DoubleSide });
+        // Point lights (a hut's lamp, its fires and candles) draw shadows with a distance pass, which needs its own cut-out.
+        caster.customDistanceMaterial = new THREE.MeshDistanceMaterial({ map: sprite.material.map, alphaTest: 0.5, side: THREE.DoubleSide });
         caster.castShadow = true;
         this.unitGroup.add(sprite, caster);
         unit = { sprite, caster, ring: null, hpBack: null, hpFill: null, label: null, labelText: "", goal: w.pos.clone(), path: [], kick: new THREE.Vector3(), lean: 0, baseRot: 0, stride: 0, bob: 0, kind: spriteKey(w.kind, w.outfit, w.asleep), asleep: false, nextZ: 0, zCount: 0, glowUntil: 0, glowing: false, head: w.size + 0.3, stack: 0, feet: w.pos.clone() };
@@ -2652,7 +2658,7 @@ export class WorldRenderer {
       this.target.z + Math.cos(this.yaw) * flat,
     );
     this.camera.lookAt(this.target);
-    this.ambience.update(this.clock, this.yaw, this.target);
+    this.ambience.update(this.clock, this.yaw, this.target, this.state?.you ? this.units.get(this.state.you)?.sprite.position : undefined);
     // Night reaches the open sea and the fog too, not just the lit ground.
     const night = this.ambience.night;
     (this.sea.material as THREE.MeshLambertMaterial).color.copy(this.seaBase).lerp(NIGHT_SEA, night * 0.8);

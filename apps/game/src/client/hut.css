@@ -95,3 +95,4 @@
 .toast.fade { animation: toast-fade 4s ease forwards; }
 @keyframes toast-fade { 0%, 75% { opacity: 1; } 100% { opacity: 0; } }
 @media (prefers-reduced-motion: reduce) { .toast.fade { animation: none; } }
+.hut-here-row .lamp-on { border-color: var(--gold); color: var(--gold); }
