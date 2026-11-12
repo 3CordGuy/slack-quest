@@ -24,3 +24,4 @@ export * from "./projects";
 export * from "./pub";
 export * from "./shoals";
 export * from "./trade";
+export * from "./catalogue";

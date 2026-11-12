@@ -9,6 +9,10 @@
 // offline and for free. Set it to "live" (and be logged in to wrangler) to
 // use real models for the story, NPC replies and the epilogue.
 //
+// Admin side (content overrides): put ADMIN_EMAILS=you@example.com in
+// apps/game/.dev.vars locally, and `wrangler secret put ADMIN_EMAILS [--env staging]`
+// for a deployed Worker. Comma-separate several. Unset means nobody is an admin.
+//
 // This worker has its own D1 database. It does not share the legacy
 // slack-quest database used by apps/web and apps/slack.
 {
