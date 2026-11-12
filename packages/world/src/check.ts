@@ -20,9 +20,13 @@ export interface CheckResult {
 export const MIN_PCT = 20;
 export const MAX_PCT = 95;
 
-/** Stat value → success chance per roll. 4 → 55%, 9 → 80%, 12 → 95%. */
+/**
+ * Stat value → success chance per roll. 4 → 42%, 9 → 57%, 15 → 75%, 22 → 95%.
+ * Shallow on purpose: a class's main stat starts near 9 and gains about one
+ * point a level, so there is room to grow until roughly level 12.
+ */
 export function statPct(stat: number, bonus = 0): number {
-  return Math.max(MIN_PCT, Math.min(MAX_PCT, 35 + stat * 5 + bonus));
+  return Math.max(MIN_PCT, Math.min(MAX_PCT, 30 + stat * 3 + bonus));
 }
 
 export function rollCheck(

@@ -87,7 +87,7 @@ Built to bring the new game closer to the original's inventory and economy.
 ### Characters and progression
 - Created at account creation: pick a class, roll starting stats around that class's `STARTING_STATS` baseline, re-roll until happy. A later re-roll discards the character and its gear, as `POST /api/character/reroll` does today.
 - A run loads each hero from `characters` + equipped `inventory` into run state. Inside the run, HP, focus and consumables are run-scoped.
-- XP comes from fights, discoveries on the overworld and story objectives, with a bonus for finishing the story. Levelling follows the existing auto-allocation plus one free point per level.
+- XP comes from fights, discoveries on the overworld and story objectives, with a bonus for finishing the story. Levelling follows the existing auto-allocation plus one free point per level. The XP needed per level is the original game's curve (`xpForLevel`: 100, 248, 374, 490…), against very roughly 150 to 200 XP for a won voyage. The creation roll nudges each stat by −1 to +1.
 - Loot drops from fights, searches, NPC gifts and the story reward. Gear found mid-run can be equipped straight away.
 - Rewards are written to D1 as they are earned (persist-then-broadcast), so a dropped connection or abandoned run never loses loot. Defeat follows the existing soft-death rule: capped loss, no character wipe.
 - Encounter difficulty scales from the party's average level when the run is generated.
@@ -102,6 +102,7 @@ Built to bring the new game closer to the original's inventory and economy.
 ### One roll mechanic everywhere
 - A **check** is N independent rolls against one of the hero's five existing stats, converted to a percentage (for example 3 rolls at 70% from `str`). Gear bonuses raise the percentage. The number of successes scales the result; all successes is a perfect result with a bonus effect; zero is a fumble.
 - Heroes carry a small pool of **focus** points; spending one before a check turns a roll into a guaranteed success. Focus refills at camps and inns.
+- **The curve is shallow on purpose:** a roll succeeds at `30 + 3 × stat` percent, between 20% and 95%. A class's main stat starts near 9 (57%) and reaches the cap at 22, around level 8 if every free point goes into it and level 12 or so otherwise. Enemy health and accuracy are set against that starting point.
 - The same `rollCheck()` resolves weapon attacks, NPC persuasion, and overworld actions (search, sneak past, disarm). One function, one UI component, seeded RNG.
 
 ### Combat (line-up)

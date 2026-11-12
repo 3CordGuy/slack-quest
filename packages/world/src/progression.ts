@@ -8,6 +8,7 @@ import {
   LEVELUP_AUTO_ALLOC,
   STARTING_STATS,
   deriveMaxHp,
+  xpForLevel,
   type StatKey,
   type Stats,
 } from "@gantt-quest/core";
@@ -34,13 +35,14 @@ export const STAT_BLURB: Record<StatKey, string> = {
 
 /**
  * Starting stats for a new character: the class baseline with each stat
- * nudged by -1..+2. Re-rolling just calls this again.
+ * nudged by -1..+1, so a lucky roll is worth about a level, not three.
+ * Re-rolling just calls this again.
  */
 export function rollStartingStats(rng: Rng, classId: string): Stats {
   const base = STARTING_STATS[classId] ?? DEFAULT_STATS;
   const out = { ...base };
   for (const key of STAT_KEYS) {
-    out[key] = Math.max(2, base[key] + rng.pick([-1, 0, 0, 1, 1, 2]));
+    out[key] = Math.max(2, base[key] + rng.pick([-1, 0, 0, 1]));
   }
   return out;
 }
@@ -53,9 +55,14 @@ export function addStats(base: Stats, ...bonuses: Partial<Stats>[]): Stats {
   return out;
 }
 
-/** XP needed to go from `level` to `level + 1`. */
+/**
+ * XP needed to go from `level` to `level + 1`, on the original game's curve
+ * (`xpForLevel`): 100, 248, 374, 490, 599… A won voyage pays very roughly 150
+ * to 200, so the first level comes in one voyage and each later one takes
+ * longer than the last.
+ */
 export function xpToNext(level: number): number {
-  return 30 + level * 20;
+  return xpForLevel(level + 1) - xpForLevel(level);
 }
 
 export interface Progress {

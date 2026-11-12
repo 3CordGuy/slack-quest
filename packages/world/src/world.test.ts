@@ -100,8 +100,9 @@ describe("rng and rollCheck", () => {
   });
 
   it("maps stats to a clamped percentage", () => {
-    expect(statPct(4)).toBe(55);
-    expect(statPct(9)).toBe(80);
+    expect(statPct(4)).toBe(42);
+    expect(statPct(9)).toBe(57);
+    expect(statPct(22)).toBe(95);
     expect(statPct(40)).toBe(95);
     expect(statPct(-5)).toBe(20);
   });
