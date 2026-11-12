@@ -14,7 +14,8 @@ import type { HexPos } from "@gantt-quest/core";
 import { hexDistance } from "@gantt-quest/core";
 import { BASE_HEIGHT, BATTLE_JOIN_RANGE, BIG_REACH, ENEMIES, HEX_DIRS, TRAIT_BY_ID, MOVE_COST, WALL_FACE_HALF, WALL_ITEM_BOTTOM, WALL_ITEM_TOP, findPath, xpProgress, reachable, tileAt, wallFace, wallFaces, type ClientState, type Outfit, type Phase, type Poi, type Tile, type WorldEvent, type WorldMap } from "@gantt-quest/world";
 import { ghostModel, propModel, tintGhost, type LightKind } from "./props";
-import { armAudio, isMuted, onMuteChange, playFootstep, setMuted } from "../audio";
+import { armAudio, isMuted, onMuteChange, playCombat, playFootstep, setMuted } from "../audio";
+import { ARROW_ABILITIES, blowKind, effectSound, hitSound, launchSound, missSound } from "./combatSounds";
 import { PUFFS, footfalls, stepGround, stepVolume, worldToHex } from "./footsteps";
 import { SPRITE_ASPECT, bubbleTexture, fxTexture, labelTexture, plateKey, sleepZTexture, spriteKey, spriteTexture, textTexture, type FxKind, type PlateStats } from "./sprites";
 
@@ -26,7 +27,6 @@ const SPELL_COLOR: Record<string, string> = {
   "Dark Bolt": "#b06cff",
   Immolate: "#ff6a3c",
 };
-const ARROW_ABILITIES = new Set(["Aimed Shot", "Pin Down", "Volley", "Barbed Arrow"]);
 const isBoss = (kind: string) => !!ENEMIES[kind]?.boss;
 
 /**
@@ -553,6 +553,8 @@ export class WorldRenderer {
   /** How high the last wall piece was aimed, for when the pointer is on top of a wall. */
   private wallY = 1.1;
   private rotateButtons: HTMLDivElement;
+  /** The view-turning buttons in that column, hidden in a fight; the sound button stays. */
+  private turnButtons: HTMLButtonElement[] = [];
   private pointer = { x: 0, y: 0, downX: 0, downY: 0, down: false, dragged: false, dirty: false, inside: false };
 
   constructor(private container: HTMLElement, private callbacks: RendererCallbacks) {
@@ -624,8 +626,9 @@ export class WorldRenderer {
       b.setAttribute("aria-label", title);
       b.addEventListener("click", run);
       this.rotateButtons.appendChild(b);
+      this.turnButtons.push(b);
     }
-    // And one to hush the footsteps, remembered between visits.
+    // And one to hush the game's sounds, remembered between visits. It stays in a fight.
     armAudio();
     this.muteButton = document.createElement("button");
     this.muteButton.type = "button";
@@ -672,6 +675,8 @@ export class WorldRenderer {
   // ---------- state ----------
 
   setState(state: RenderState) {
+    // Dev server only: the view being fed state is the live one (a view torn down after it was made would otherwise be left in the hook).
+    if (import.meta.env.DEV) (globalThis as { __gqWorld?: WorldRenderer }).__gqWorld = this;
     const first = this.mapCode !== state.code;
     // The ground is redrawn for a new map, and whenever fog lifts off more of this one.
     const lifted = state.map.tiles.reduce((n, t) => n + (t.biome === "fog" ? 0 : 1), 0);
@@ -703,12 +708,12 @@ export class WorldRenderer {
       // The line-up is laid out for the default view, so a fight always faces the same way.
       this.yawGoal = nearestTurn(this.yaw, 0);
       this.pitchGoal = DEFAULT_PITCH;
-      this.rotateButtons.hidden = true;
+      for (const b of this.turnButtons) b.hidden = true;
     } else {
       this.dist = this.userDist;
       this.yawGoal = nearestTurn(this.yaw, this.userYaw);
       this.pitchGoal = this.userPitch;
-      this.rotateButtons.hidden = false;
+      for (const b of this.turnButtons) b.hidden = false;
       const turnKey = `${state.phase}:${state.round}:${state.turn?.heroId ?? ""}`;
       // A room is small enough to see whole, so indoors the camera stays on its middle.
       if (first && me && !state.indoors) this.target.copy(this.standAt(me.pos));
@@ -730,8 +735,17 @@ export class WorldRenderer {
       else got.levelUp = true;
       xp.set(ev.heroId, got);
     }
+    // Effects and falls are heard just after the blow that caused them lands (a bolt or arrow takes a moment to fly).
+    let lastLand = { beat, delay: 0 };
+    const flies = (ability: string) => !!SPELL_COLOR[ability] || ARROW_ABILITIES.has(ability);
+    const ending = events.find((e) => e.t === "battle_end");
+    // Your turn coming round gets a soft tick, once, and not as the fight ends.
+    let myTurnAt: number | null = null;
     for (const ev of events) {
-      if (ev.t === "moved") {
+      if (ev.t === "battle_start") {
+        // A boss's first appearance: a low swell as the opening card goes up.
+        if (this.state?.battle?.combatants.some((c) => c.side === "enemy" && isBoss(c.kind))) this.later(0, () => playCombat("boss"), 0.15);
+      } else if (ev.t === "moved") {
         const unit = this.units.get(ev.heroId);
         if (unit) unit.path = ev.path.map((p) => this.standAt(p));
       } else if (ev.t === "chat") {
@@ -743,17 +757,37 @@ export class WorldRenderer {
         }
       } else if (ev.t === "battle") {
         const b = ev.ev;
-        if (b.t === "hit") this.later(beat++, () => this.attack(b.actor, b.target, b.ability, b.perfect, () => this.float(b.target, `-${b.amount}`, b.perfect ? "#ffd23f" : "#ff6b6b"), true));
-        else if (b.t === "miss" && b.heal) this.later(beat++, () => this.float(b.actor, "fails", "#c9d1e0"));
-        else if (b.t === "miss") this.later(beat++, () => this.attack(b.actor, b.target, b.ability, false, () => this.float(b.target, "miss", "#c9d1e0")));
-        else if (b.t === "heal") this.later(beat++, () => { this.sparkle(b.target, "#7dff9a"); this.float(b.target, `+${b.amount}`, "#7dff9a"); });
-        else if (b.t === "tick") this.later(beat++, () => this.float(b.target, `-${b.amount}`, "#ffa94d"));
+        if (b.t === "hit") {
+          lastLand = { beat, delay: flies(b.ability) ? 0.24 : 0 };
+          this.later(beat++, () => this.attack(b.actor, b.target, b.ability, b.perfect, () => this.float(b.target, `-${b.amount}`, b.perfect ? "#ffd23f" : "#ff6b6b"), true));
+        } else if (b.t === "miss" && b.heal) {
+          lastLand = { beat, delay: 0 };
+          this.later(beat++, () => { playCombat("heal_fail"); this.float(b.actor, "fails", "#c9d1e0"); });
+        } else if (b.t === "miss") {
+          lastLand = { beat, delay: flies(b.ability) ? 0.24 : 0 };
+          this.later(beat++, () => this.attack(b.actor, b.target, b.ability, false, () => this.float(b.target, "miss", "#c9d1e0")));
+        } else if (b.t === "heal") {
+          lastLand = { beat, delay: 0 };
+          this.later(beat++, () => { playCombat("heal"); this.sparkle(b.target, "#7dff9a"); this.float(b.target, `+${b.amount}`, "#7dff9a"); });
+        } else if (b.t === "tick") {
+          lastLand = { beat, delay: 0 };
+          this.later(beat++, () => { playCombat(effectSound(b.effect)); this.float(b.target, `-${b.amount}`, "#ffa94d"); });
+        } else if (b.t === "effect") this.later(lastLand.beat, () => playCombat(effectSound(b.effect)), lastLand.delay + 0.12);
+        else if (b.t === "down") {
+          const who = this.state?.battle?.combatants.find((c) => c.id === b.id);
+          const sound = who?.side === "hero" ? "hero_down" : who && isBoss(who.kind) ? "boss_down" : "enemy_down";
+          this.later(lastLand.beat, () => playCombat(sound), lastLand.delay + 0.2);
+        } else if (b.t === "turn" && b.id === this.state?.you) myTurnAt = beat;
         // A class trait kicking in gets its name over the hero.
         else if (b.t === "trait") this.later(beat++, () => this.float(b.id, TRAIT_BY_ID[b.trait]?.name ?? b.trait, "#facc15"));
       }
     }
     // After the last blow has landed.
     for (const [heroId, got] of xp) this.later(beat, () => this.xpGain(heroId, got.amount, got.levelUp));
+    if (ending?.t === "battle_end" && (ending.status === "victory" || ending.status === "defeat")) {
+      const sting = ending.status;
+      this.later(beat, () => playCombat(sting), 0.35);
+    } else if (myTurnAt !== null) this.later(myTurnAt, () => playCombat("your_turn"), 0.1);
   }
 
   /**
@@ -874,8 +908,9 @@ export class WorldRenderer {
     }
   }
 
-  private later(beat: number, run: () => void) {
-    this.pending.push({ at: this.clock + beat * 0.38, run });
+  /** Run `run` on beat `beat` of what is being played out, `extra` seconds after it. */
+  private later(beat: number, run: () => void, extra = 0) {
+    this.pending.push({ at: this.clock + beat * 0.38 + extra, run });
   }
 
   private lunge(actorId: string, targetId: string) {
@@ -892,7 +927,12 @@ export class WorldRenderer {
   private attack(actorId: string, targetId: string, ability: string, perfect: boolean, onImpact: () => void, landed = false) {
     const a = this.units.get(actorId);
     const t = this.units.get(targetId);
-    if (!a || !t || a === t) return onImpact();
+    const blow = blowKind(ability);
+    const impact = () => playCombat(landed ? hitSound(blow) : missSound(blow), landed && perfect);
+    if (!a || !t || a === t) {
+      impact();
+      return onImpact();
+    }
     const dir = t.goal.x >= a.goal.x ? 1 : -1;
     const flip = dir < 0;
     a.lean = -dir * 0.5;
@@ -903,10 +943,13 @@ export class WorldRenderer {
       const kind: FxKind = spell ? "bolt" : "arrow";
       const color = spell ?? "#e8dcc0";
       const from = a.goal.clone().add(new THREE.Vector3(dir * 0.5, a.sprite.scale.y * 0.6, 0.05));
+      const loose = launchSound(blow);
+      if (loose) playCombat(loose);
       this.spawnFx(kind, color, flip, { from, to: hitAt, life: 0.24, size: [1.0, 1.0], spin: 0, fade: false, onEnd: () => {
         this.spawnFx("burst", perfect ? "#ffd23f" : color, false, { from: hitAt, to: hitAt, life: 0.22, size: [0.7, 1.7], spin: 0.5, fade: true });
         // An arrow that lands stays in: point first, the shaft toward whoever shot it.
         if (kind === "arrow" && landed) this.stickArrow(t, dir);
+        impact();
         onImpact();
       } });
       return;
@@ -914,6 +957,7 @@ export class WorldRenderer {
     // Melee: step in and swipe across the target.
     this.lunge(actorId, targetId);
     this.spawnFx("slash", perfect ? "#ffd23f" : "#dfe9ff", flip, { from: hitAt, to: hitAt, life: 0.26, size: [1.3, 2.3], spin: -dir * 0.9, fade: true });
+    impact();
     onImpact();
   }
 
