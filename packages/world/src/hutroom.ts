@@ -35,12 +35,12 @@ export function hutDoor(tier: number): HexPos {
 const FRONT_WALL_HEIGHT = 0.22;
 
 /**
- * The room for a hut of this tier. The same every time: floor hexes ringed
- * by wall, with the door (a `door` POI on a floor hex) in the front wall.
+ * A room on `grid`: floor hexes ringed by wall, with the door (a `door` POI on
+ * a floor hex) in the middle of the front wall. Huts and the pub are both built this way.
  */
-export function hutRoom(tier: number): WorldMap {
-  const grid = hutGrid(tier);
-  const door = hutDoor(tier);
+export function buildRoom(grid: HexGrid): WorldMap {
+  const r = grid.rows - 1;
+  const door = { q: Math.floor(rowWidth(grid, r) / 2) - Math.floor(r / 2), r };
   const tiles: Tile[] = allHexesInGrid(grid).map((pos) => {
     const col = colOf(pos);
     const front = pos.r === grid.rows - 1;
@@ -49,6 +49,11 @@ export function hutRoom(tier: number): WorldMap {
     return { q: pos.q, r: pos.r, biome: "wall", h: front ? FRONT_WALL_HEIGHT : BASE_HEIGHT.wall };
   });
   return { grid, tiles, pois: [harborPoi("door", "door", door)] };
+}
+
+/** The room for a hut of this tier. The same every time. */
+export function hutRoom(tier: number): WorldMap {
+  return buildRoom(hutGrid(tier));
 }
 
 /** Floor hexes a furnishing could stand on: every floor hex but the door. */

@@ -261,6 +261,7 @@ function Lobby({ state, run, code }: { state: ClientState; run: RunConnection; c
               <span>
                 <strong>{h.name}</strong> <span className="muted">{className(h.classId)} · Level {h.level}{h.contract ? ` · ${contractName(h.contract.id)}` : ""}</span>
                 {perkText(h.hutPerks) && <span className="hut-perks" title="From the furniture in their hut"> · Hut: {perkText(h.hutPerks)}</span>}
+                {perkText(h.pubBuff) && <span className="hut-perks" title="From what they ate and drank at the pub. This voyage only."> · Pub: {perkText(h.pubBuff)}</span>}
               </span>
               <span className={h.id === state.hostId || h.ready ? "good" : "muted"}>{h.id === state.hostId ? "captain" : h.ready ? "ready" : "not ready"}</span>
             </li>

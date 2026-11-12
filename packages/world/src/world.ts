@@ -22,6 +22,7 @@ import { battleDrops, cacheDrops, storyTrophy } from "./drops";
 import { rollItem, type ItemDef, type Outfit } from "./gear";
 import { freshVitals, heroCombatant } from "./hero";
 import { addResources, capPerks, xpWithBonus, type Perk, type Resources } from "./hut";
+import { capPubBuff } from "./pub";
 import { findPath, generateMap, poiAt, poiById, type Poi, type WorldMap } from "./map";
 import {
   MAX_NPC_MESSAGES,
@@ -62,6 +63,8 @@ export interface HeroInit {
   outfit?: Outfit;
   /** What their furnished hut gives them for this voyage. Held to PERK_CAPS when they board. */
   hutPerks?: Perk;
+  /** What they ate and drank at the pub before sailing. Lasts this voyage only. */
+  pubBuff?: Perk;
 }
 
 export interface Hero extends HeroInit {
@@ -311,7 +314,7 @@ interface Ctx {
 const fail = (error: string): StepResult => ({ ok: false, error });
 
 /** A hero's maximum HP: from stats and level, plus what their hut's hearth adds. */
-const heroMaxHp = (hero: Hero) => maxHpFor(heroStats(hero), hero.level) + capPerks(hero.hutPerks).maxHp;
+const heroMaxHp = (hero: Hero) => maxHpFor(heroStats(hero), hero.level) + capPerks(hero.hutPerks).maxHp + capPubBuff(hero.pubBuff).maxHp;
 const heroById = (state: WorldState, id: string) => state.heroes.find((h) => h.id === id);
 
 function grant(
@@ -320,7 +323,10 @@ function grant(
   g: { xp?: number; gold?: number; item?: ItemDef | null; resources?: Resources; blueprint?: string; furnishing?: FurnishingGrant },
 ) {
   // A furnished hut adds a few percent to every XP award.
-  const xp = xpWithBonus(g.xp ?? 0, hero.hutPerks?.xpPct ?? 0);
+  const pubXp = capPubBuff(hero.pubBuff).xpPct;
+  const hutXp = xpWithBonus(g.xp ?? 0, hero.hutPerks?.xpPct ?? 0);
+  // A meal at the pub adds its own few percent on top.
+  const xp = hutXp + Math.round(((g.xp ?? 0) * pubXp) / 100);
   const gold = g.gold ?? 0;
   const item = g.item ?? null;
   const earned = (ctx.state.earned[hero.id] ??= { xp: 0, gold: 0, items: [] });
@@ -721,8 +727,11 @@ export function stepWorld(prev: WorldState, action: WorldAction): StepResult {
       if (state.phase !== "lobby") return fail("this ship has already sailed");
       if (state.heroes.length >= MAX_PARTY) return fail("the ship is full");
       // Whatever the caller sends, a hut never gives more than its caps.
-      const perks = capPerks(action.hero.hutPerks);
-      const init: HeroInit = { ...action.hero, hutPerks: perks };
+      const hut = capPerks(action.hero.hutPerks);
+      // Food and drink from the pub count on top, within what the menu can give.
+      const pub = capPubBuff(action.hero.pubBuff);
+      const perks = { focus: hut.focus + pub.focus, potions: hut.potions + pub.potions, maxHp: hut.maxHp + pub.maxHp };
+      const init: HeroInit = { ...action.hero, hutPerks: hut, pubBuff: pub };
       const rested = freshVitals(init);
       state.heroes.push({
         ...init,

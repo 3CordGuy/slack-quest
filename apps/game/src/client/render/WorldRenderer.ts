@@ -340,7 +340,8 @@ export class WorldRenderer {
     if (first) {
       this.sea.visible = !state.indoors;
       (this.scene.background as THREE.Color).set(state.indoors ? "#1d1a2b" : "#a9dcf7");
-      if (state.indoors) this.userDist = this.camDist = 15;
+      // A room is framed whole: closer for a hut, further back for the pub.
+      if (state.indoors) this.userDist = this.camDist = state.map.grid.cols > 10 ? 21 : 15;
     }
 
     const me = state.heroes.find((h) => h.id === state.you);
@@ -572,6 +573,8 @@ export class WorldRenderer {
     if (sig === this.poiSig) return;
     this.poiSig = sig;
     this.poiGroup.clear();
+    /** Chimney tops, which the ambience draws smoke from. */
+    const stacks: THREE.Vector3[] = [];
     for (const poi of state.map.pois) {
       const g = this.poiModel(poi);
       const at = this.standAt(poi.pos);
@@ -580,7 +583,9 @@ export class WorldRenderer {
         if (o instanceof THREE.Mesh) o.castShadow = o.receiveShadow = true;
       });
       this.poiGroup.add(g);
+      if (g.userData.smoke) stacks.push((g.userData.smoke as THREE.Vector3).clone().add(g.position));
     }
+    this.ambience.setSmoke(stacks);
   }
 
   /** Furniture: rebuilt whenever a piece is added, moved, turned or selected. */
@@ -736,6 +741,32 @@ export class WorldRenderer {
           add(box(0.5, 0.42, 0.5), lambert("#c9a877"), -0.72, 0.21, 0.08);
           add(new THREE.ConeGeometry(0.46, 0.3, 4), roof, -0.72, 0.57, 0.08, Math.PI / 4);
         }
+        break;
+      }
+      case "pub": {
+        // The pub: a long hall, wider and taller than any hut, with lit windows, a sign and a stone chimney.
+        const wall = lambert("#b89668");
+        const roof = lambert("#5d3a2a");
+        add(box(1.5, 0.72, 0.95), wall, 0, 0.36, 0);
+        add(box(1.62, 0.08, 1.07), lambert("#4a2f22"), 0, 0.76, 0);
+        const ridge = add(new THREE.ConeGeometry(0.78, 0.6, 4), roof, 0, 1.1, 0, Math.PI / 4);
+        ridge.scale.x = 1.5;
+        add(box(0.22, 0.36, 0.04), lambert("#4a2f22"), 0, 0.18, 0.48);
+        for (const x of [-0.48, 0.48]) add(box(0.2, 0.2, 0.03), new THREE.MeshBasicMaterial({ color: "#ffd98a" }), x, 0.42, 0.48);
+        // A sign on a bracket by the door.
+        add(box(0.04, 0.04, 0.3), lambert("#3a2c22"), 0.26, 0.62, 0.62);
+        add(box(0.03, 0.2, 0.26), lambert("#d9b45a"), 0.26, 0.48, 0.66);
+        // The chimney stands proud of the roof; its smoke is drawn by the ambience.
+        add(box(0.24, 1.3, 0.24), lambert("#8b8f96"), 0.5, 0.65, -0.22);
+        add(box(0.3, 0.07, 0.3), lambert("#6f737a"), 0.5, 1.33, -0.22);
+        g.userData.smoke = new THREE.Vector3(0.5, 1.4, -0.22);
+        break;
+      }
+      case "counter": {
+        // The menu board, on a post where customers stand to order.
+        add(box(0.05, 0.7, 0.05), lambert("#5a3d22"), 0.55, 0.35, -0.1);
+        add(box(0.5, 0.36, 0.04), lambert("#2c2a3a"), 0.55, 0.78, -0.1);
+        for (let i = 0; i < 4; i++) add(box(0.34, 0.03, 0.01), new THREE.MeshBasicMaterial({ color: "#e8dcc0" }), 0.55, 0.9 - i * 0.08, -0.075);
         break;
       }
       case "shop": {

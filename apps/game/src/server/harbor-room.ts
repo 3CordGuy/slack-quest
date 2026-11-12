@@ -13,6 +13,7 @@ import {
   HARBOR_MAX_SAY,
   HARBOR_PIERS,
   HARBOR_PLOTS,
+  HARBOR_PUB,
   HARBOR_SPAWN,
   generateHarbor,
   harborPath,
@@ -21,16 +22,13 @@ import {
   type HarborServerMessage,
 } from "@gantt-quest/world";
 import { getCrew, harborBoard, heroInitFor, type Env } from "./db";
-import { DiceTable } from "./harbor-dice";
 
 const MAP = generateHarbor();
 
 export class HarborRoom extends DurableObject<Env> {
-  private dice: DiceTable;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
-    this.dice = new DiceTable(ctx, env);
     ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair("ping", "pong"));
   }
 
@@ -74,9 +72,9 @@ export class HarborRoom extends DurableObject<Env> {
     if (!id || !crew) return new Response("missing player or crew", { status: 400 });
 
     // One socket per player. A new tab takes over, standing where the old one stood.
-    // Someone stepping out of a hut arrives at that hut's door.
+    // Someone stepping out of a hut or the pub arrives at its door.
     const at = new URL(request.url).searchParams.get("at");
-    let pos = (at !== null && /^\d{1,2}$/.test(at) ? HARBOR_PLOTS[Number(at)] : undefined) ?? HARBOR_SPAWN;
+    let pos = (at === "pub" ? HARBOR_PUB : at !== null && /^\d{1,2}$/.test(at) ? HARBOR_PLOTS[Number(at)] : undefined) ?? HARBOR_SPAWN;
     for (const old of this.ctx.getWebSockets(id)) {
       pos = (old.deserializeAttachment() as HarborPlayer | null)?.pos ?? pos;
       old.serializeAttachment(null);
@@ -100,7 +98,6 @@ export class HarborRoom extends DurableObject<Env> {
     this.broadcast({ type: "joined", player }, pair[1]);
     // Their arrival may also be news for the roster (a brand-new member).
     this.broadcast({ type: "board", ...board }, pair[1]);
-    await this.dice.welcome(pair[1], player);
     return new Response(null, { status: 101, webSocket: pair[0] });
   }
 
@@ -122,8 +119,6 @@ export class HarborRoom extends DurableObject<Env> {
       if (!path) return;
       ws.serializeAttachment({ ...player, pos: path[path.length - 1] } satisfies HarborPlayer);
       this.broadcast({ type: "moved", id: player.id, path });
-      // Walking away from the dice table gives up a seat there.
-      await this.dice.reconcile();
     } else if (msg.type === "refresh") {
       // They changed gear or levelled: re-read the character and show everyone the new look.
       const hero = await heroInitFor(this.env.DB, player.id);
@@ -134,8 +129,6 @@ export class HarborRoom extends DurableObject<Env> {
     } else if (msg.type === "say") {
       const text = String(msg.text ?? "").replace(/\s+/g, " ").trim().slice(0, HARBOR_MAX_SAY);
       if (text) this.broadcast({ type: "said", id: player.id, name: player.name, text });
-    } else if (msg.type === "dice") {
-      await this.dice.handle(ws, player, msg.action);
     }
   }
 
@@ -147,10 +140,7 @@ export class HarborRoom extends DurableObject<Env> {
       // Already closed.
     }
     // A replaced socket has its attachment cleared, so the player has not really left.
-    if (player) {
-      this.broadcast({ type: "left", id: player.id }, ws);
-      await this.dice.reconcile(ws);
-    }
+    if (player) this.broadcast({ type: "left", id: player.id }, ws);
   }
 
   async webSocketError(ws: WebSocket): Promise<void> {

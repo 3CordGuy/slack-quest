@@ -10,6 +10,12 @@ import type { GatherStatus } from "../server/gather";
 
 export type { GatherStatus };
 
+/** What a hero has ordered at the pub and what it gives on their next voyage. */
+export interface PubTab {
+  orders: string[];
+  buff: Required<Perk>;
+}
+
 /** The crew's projects and what this player has to give toward them. */
 export interface Works {
   works: HarborWorks;
@@ -114,6 +120,9 @@ export const api = {
   gather: () => request<GatherStatus>("/api/gather"),
   gatherStart: (spot: GatherSpot) => request<GatherStatus>("/api/gather/start", { spot }),
   gatherStep: (choice: GatherChoice) => request<GatherStatus & { paid?: Resources }>("/api/gather/step", { choice }),
+  pub: () => request<PubTab>("/api/pub"),
+  pubOrder: (itemId: string) => request<PubTab>("/api/pub/order", { itemId }),
+  pubTalk: (text: string) => request<{ say: string }>("/api/pub/talk", { text }),
   projects: () => request<Works>("/api/projects"),
   giveToProject: (projectId: string, give: ProjectAmounts) => request<Works & { completed: boolean }>("/api/projects/give", { projectId, give }),
   hut: () => request<Hut>("/api/hut"),

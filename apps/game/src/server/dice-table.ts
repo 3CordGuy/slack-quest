@@ -1,4 +1,4 @@
-// The Harbor's dice table, run inside the crew's HarborRoom.
+// The dice table, run inside the crew's PubRoom.
 //
 // The rules are the pure reducer in packages/world/src/dice.ts. This file
 // owns the table's state (in Durable Object storage, so it survives
@@ -12,7 +12,7 @@
 // ends. Both are written to D1 before the table's state is saved and
 // before anyone is told.
 
-import { DICE_MAX_PLAYERS, HARBOR_DICE, createDiceGame, diceSplit, diceView, isDiceAnte, stepDice, type DiceAction, type DiceGame, type DiceRequest, type HarborPlayer, type HarborServerMessage } from "@gantt-quest/world";
+import { DICE_MAX_PLAYERS, PUB_DICE, createDiceGame, diceSplit, diceView, isDiceAnte, stepDice, type DiceAction, type DiceGame, type DiceRequest, type HarborPlayer, type PubServerMessage } from "@gantt-quest/world";
 import type { Env } from "./db";
 
 const KEY = "dice";
@@ -46,7 +46,7 @@ export class DiceTable {
     else await this.ctx.storage.delete(KEY);
   }
 
-  private send(ws: WebSocket, message: HarborServerMessage) {
+  private send(ws: WebSocket, message: PubServerMessage) {
     try {
       ws.send(JSON.stringify(message));
     } catch {
@@ -60,12 +60,12 @@ export class DiceTable {
     for (const ws of this.ctx.getWebSockets()) {
       if (ws === except) continue;
       const player = ws.deserializeAttachment() as HarborPlayer | null;
-      if (player) out.push({ ws, player, atTable: player.pos.q === HARBOR_DICE.q && player.pos.r === HARBOR_DICE.r });
+      if (player) out.push({ ws, player, atTable: player.pos.q === PUB_DICE.q && player.pos.r === PUB_DICE.r });
     }
     return out;
   }
 
-  /** Tell everyone in the Harbor what they may see of the table. */
+  /** Tell everyone in the pub what they may see of the table. */
   private publish(game: DiceGame | null, except?: WebSocket) {
     for (const { ws, player } of this.sockets(except)) this.send(ws, { type: "dice", table: game && diceView(game, player.id) });
   }
@@ -138,7 +138,7 @@ export class DiceTable {
 
   private async request(player: HarborPlayer, request: DiceRequest): Promise<string | null> {
     const game = await this.load();
-    const atTable = player.pos.q === HARBOR_DICE.q && player.pos.r === HARBOR_DICE.r;
+    const atTable = player.pos.q === PUB_DICE.q && player.pos.r === PUB_DICE.r;
     if (!atTable) return "Walk up to the dice table first.";
 
     if (request.type === "open") {
@@ -160,7 +160,7 @@ export class DiceTable {
 
   /**
    * Seated players must be standing at the table. Anyone who is not (they
-   * walked off, left the Harbor, or dropped) gives up their seat, which
+   * walked off, left the pub, or dropped) gives up their seat, which
    * during a game is a forfeit. `gone` is a socket that is closing.
    */
   reconcile(gone?: WebSocket): Promise<void> {
