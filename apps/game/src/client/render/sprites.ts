@@ -958,7 +958,7 @@ export function bubbleTexture(text: string): { texture: THREE.CanvasTexture; wid
 
 // ---------- battle effects ----------
 
-export type FxKind = "slash" | "bolt" | "arrow" | "burst" | "spark" | "mote";
+export type FxKind = "slash" | "bolt" | "arrow" | "burst" | "spark" | "mote" | "dust" | "fleck" | "splash";
 
 const fxCache = new Map<string, THREE.CanvasTexture>();
 
@@ -1029,6 +1029,30 @@ export function fxTexture(kind: FxKind, color: string, flip = false): THREE.Canv
     }
     ctx.fillStyle = "#ffffff";
     ctx.fillRect(7, 7, 2, 2);
+  } else if (kind === "dust") {
+    // A footfall's puff: a lumpy little cloud, paler at the top, with a speck thrown off each side.
+    for (const [x, y, w] of [[6, 7, 3], [5, 8, 6], [4, 9, 8], [5, 10, 6]] as const) {
+      ctx.fillStyle = color;
+      ctx.fillRect(x, y, w, 1);
+    }
+    dot(7, 7, "#ffffff");
+    dot(2, 9);
+    dot(13, 8);
+  } else if (kind === "fleck") {
+    // Grass kicked up: short blades, each a bright tip over a dark root so they read against the grass.
+    for (const [x, y] of [[3, 9], [5, 7], [8, 8], [10, 6], [12, 8], [6, 10]] as const) {
+      dot(x, y);
+      dot(x, y + 1, "#3f7a2c");
+    }
+    dot(4, 8, "#3f7a2c");
+    dot(11, 7);
+  } else if (kind === "splash") {
+    // A splash: drops flung up and out from a flat ring.
+    for (let x = 4; x < 12; x++) dot(x, 11);
+    dot(3, 10);
+    dot(12, 10);
+    for (const [x, y] of [[4, 7], [3, 5], [11, 7], [12, 5], [7, 6], [8, 4]] as const) dot(x, y);
+    dot(8, 5, "#ffffff");
   } else if (kind === "mote") {
     // One XP mote: a solid 4x4 pixel, a white glint in its corner, in the middle of the tile.
     ctx.fillStyle = color;
