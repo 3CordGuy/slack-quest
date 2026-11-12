@@ -37,7 +37,7 @@ What the code review found that shapes the plan:
 - Room to grow, not in milestone 1: choosing between several islands on a sea chart (difficulty, biome, story frame), provisioning the ship with gold before sailing (potions, focus, extra doom-clock days), and Harbor upgrades paid for with island loot.
 
 ### The Harbor as a shared, walkable place
-Decided 2026-11-11: **one Harbor per crew**. The first slice is built; huts are plots only so far.
+Decided 2026-11-11: **one Harbor per crew**. Built so far: the shared map, ships, chat, walk-in huts, the notice board and the sparring ring.
 
 - **Crews.** A crew is a group of players (up to 40) sharing one Harbor. A player founds one or joins by invite code or link (`#crew/CODE`) and belongs to one crew at a time. Crew size is independent of party size: a ship still carries at most four.
 - **A place, not a menu.** The Harbor is a fixed hex map drawn by the same renderer as the islands. Everyone present sees everyone else's sprite, with a name tag, walking around in real time.
@@ -47,10 +47,15 @@ Decided 2026-11-11: **one Harbor per crew**. The first slice is built; huts are 
 - **Voyage log.** Finished voyages (title, outcome, who went) are listed for the whole crew.
 - **Crew chat.** Free text among crew members, relayed to whoever is in the Harbor and not stored.
 - **Hut plots.** Each member gets a hut on a plot, handed out in join order (12 plots drawn so far).
+- **Walk-in huts.** Standing on a plot offers "Enter". Inside is a small hex room drawn by the same renderer, served by one `HutRoom` Durable Object per owner (presence, walking and chat as in the Harbor). The owner and their crewmates may enter; only the owner can place, turn or put away furniture, and each change is written to D1 before it is broadcast. Everyone starts with a table, a stool and a rug. The view can be turned: walls on the camera's side drop to a kerb, like a doll's house. Leaving returns you to that hut's door in the Harbor.
+- **Things to bring home.** Voyages now pay hut materials as well as gear and gold. Fights drop materials by enemy kind (fur and bone from beasts, iron and copper from armed enemies, stone from the guardian), cache searches drop wood, stone or copper and occasionally a blueprint or a piece of decor, and winning a story gives each hero a trophy named for it. Drops use the run's seeded RNG and are written as they are earned. The inventory has a Materials row.
+- **Notice board.** A hero may take one **contract** in the ship's lobby: a side bet such as searching every cache, finishing with days to spare or winning without a potion. It is settled by the reducer from the voyage's own facts and tallies, and pays gold (and sometimes materials) only if the story is won. The crew also shares one **goal per calendar week** (win voyages, fulfil contracts, hunt an enemy, haul a material); every member is paid once when it fills. Progress comes only from voyage events on the server, and there is no timer: a week's row is created the first time it is read or advanced.
+- **Sparring ring.** A practice fight for one hero, in their real gear, against a training dummy or a chosen enemy. It runs entirely in the browser on the voyage battle rules; nothing is sent, won, lost or saved, and crewmates do not see it.
 
 Still to build:
-- **Hut interiors, decorating and upgrades.** The inside is a small room others can visit. Players place trophies and furniture on a grid and buy hut tiers with gold.
-- **Loot to bring home.** Islands need a third loot category beside gear and gold: trophies and decor (each story's relic, a villain's mask, biome-themed furniture) and building materials.
+- **Crafting, furniture for gold and hut tiers.** The catalogue, recipes, blueprints and three tiers exist as rules (`hut.ts`), and larger rooms are unit-tested, but nothing in the game spends materials or gold on them yet.
+- **Hut perks on a voyage.** The capped perks (`hutPerks`) are returned by `/api/hut` but not yet shown in the game or applied when a hero boards.
+- **More Harbor activities:** gathering spots, crew building projects and dice at the plaza are planned, not built.
 - **Upgrades stay modest.** Mostly cosmetic, plus conveniences (storage, a display shelf, starting a voyage rested). Anything stronger would make new players weaker than veterans on the same ship.
 - **Durable accounts are in place** (see Accounts below), so hut customisation can now be built on them.
 - **More than 12 huts**, and several ships beyond three piers, need a larger or scrolling Harbor.
@@ -116,7 +121,13 @@ Built to bring the new game closer to the original's inventory and economy.
 - Plain Three.js in an imperative `WorldRenderer` class mounted by a thin React component; HUD, chat and menus stay in React DOM on top.
 - Terrain is one `InstancedMesh` of flat-shaded hex prisms with a limited palette. Props (trees, huts) are low-poly glTF exported from Blockbench.
 - Heroes, NPCs and monsters are sprite quads that rotate around Y to face the camera, with `NearestFilter` and a fixed pixels-per-unit so texel size is consistent.
-- Fixed tilted camera with pan and zoom.
+- Tilted camera with pan, zoom and rotation. Pan by dragging, with one finger, or by holding W/A/S/D or the arrow keys; turn with Q/E, a right-drag, a two-finger twist or the on-screen buttons. Fights always face the default way.
+- **Ambience** (`render/ambience.ts`) is decoration only and reads no game state. It keeps the flat, low-texture look:
+  - A ten-minute day and night taken from the wall clock, so a crew shares one sky. The sun crosses, warms at dusk and hands over to a moon. Terrain, trees, rocks and buildings cast hard-edged shadows. Indoors the light is steady.
+  - Characters cast shadows shaped like their sprites, through an unseen cut-out turned to the sun. Their sprites are drawn over the scenery so nobody is hidden inside a building.
+  - Hills carry one to three rocks in four shapes and five greys.
+  - Flat pixel-art motion: two rows of paper cut-out waves on each water hex, grass tufts that lean with the wind, and wisps (trails of single pixels that curl through a loop). No wisps indoors, and no motion under `prefers-reduced-motion`.
+  - In dev builds, set `window.__gqTime` to a number from 0 to 1 to pin the time of day.
 - Combat uses the same renderer: the camera pushes in on the hex where the fight started, heroes and enemies line up facing each other on that terrain, and the roll check plays as a row of slots in the HUD.
 - Sprites: use a placeholder CC0 16-bit pack for the first milestone. Flux is not reliable for consistent animated sheets; keep it for NPC dialogue portraits with a new pixel-art prompt prefix through the existing R2 cache approach (`generateAndCacheArt` in `apps/web/src/ai.ts` is the reference).
 
