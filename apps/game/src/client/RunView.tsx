@@ -298,6 +298,7 @@ export function RunView({ code, me, refresh, onLeave }: { code: string; me: Me; 
               <Crew state={state} online={run.online} onTrade={ashore ? setTradeWith : undefined} />
               <Feed lines={feed} />
               {state.phase === "overworld" && <TurnBar state={state} run={run} />}
+              <SkipVoteBar state={state} run={run} />
               {ashore && me.character && <Trading me={me} partners={state.heroes.filter((h) => h.id !== state.you)} withId={tradeWith} onWith={setTradeWith} refresh={refresh} run={code} />}
               {state.phase === "overworld" && <Chat state={state} run={run} talkTo={talkTo} onTalked={() => setTalkTo(null)} />}
               {state.phase === "battle" && !held && !intro && <BattleHud battle={state.battle!} you={state.you} onAction={(action) => run.send({ type: "battle", action })} />}
@@ -623,6 +624,33 @@ function Ending({ state, onLeave }: { state: ClientState; onLeave(): void }) {
         {!won && <p className="muted">A little gold was lost in the retreat. Your character is safe.</p>}
         <button className="primary" onClick={onLeave}>Sail back to the Harbor</button>
       </div>
+    </div>
+  );
+}
+
+/**
+ * While the crew waits on someone else's turn, a vote to skip it. One vote
+ * does it if they have left; otherwise more than half of the others here.
+ * The server ends the turn exactly as its own timer would.
+ */
+function SkipVoteBar({ state, run }: { state: ClientState; run: ReturnType<typeof useRun> }) {
+  const skip = run.skip;
+  if (!skip || skip.heroId === state.you) return null;
+  const name = state.heroes.find((h) => h.id === skip.heroId)?.name ?? "this hero";
+  const away = !run.online.includes(skip.heroId);
+  const voted = skip.votes.includes(state.you);
+  // Someone still here can only be skipped if enough of the rest are here to outvote them.
+  const others = state.heroes.filter((h) => h.id !== skip.heroId && run.online.includes(h.id)).length;
+  if (!away && others < skip.needed) return null;
+  return (
+    <div className="panel skip-vote" role="status">
+      <span>
+        Waiting on <strong>{name}</strong>{away ? <span className="bad"> · away</span> : null}
+        {skip.votes.length > 0 && <span className="muted"> · {skip.votes.length} of {skip.needed} voted to skip</span>}
+      </span>
+      <button className="small" disabled={voted} onClick={run.voteSkip}>
+        {voted ? "You voted to skip" : skip.needed <= 1 ? `Skip ${name}'s turn` : `Vote to skip ${name}'s turn`}
+      </button>
     </div>
   );
 }
