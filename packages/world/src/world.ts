@@ -249,7 +249,9 @@ export type WorldEvent =
   | { t: "battle_start"; heroes: string[]; enemies: string[] }
   | { t: "battle"; ev: BattleEvent }
   | { t: "battle_end"; status: string }
-  | { t: "ended"; outcome: "victory" | "defeat"; reason: string };
+  | { t: "ended"; outcome: "victory" | "defeat"; reason: string }
+  /** Heroes beaten in a fight the rest of the crew was not in: back at the ship on 1 HP, and the voyage goes on. */
+  | { t: "carried_back"; heroIds: string[] };
 
 export type WorldEffect =
   | { kind: "story_gen" }
@@ -694,7 +696,18 @@ function finishBattle(ctx: Ctx) {
   const beaten = battle.combatants.filter((c) => c.side === "enemy").map((c) => c.kind);
 
   if (battle.status === "defeat") {
-    endRun(ctx, "defeat", "The party fell in battle.");
+    // Only the whole crew falling ends the voyage. A hero caught alone (an ambush, a band out of the others'
+    // reach) is carried back to the ship on 1 HP while the rest carry on.
+    const standing = state.heroes.filter((h) => !fighters.includes(h) && h.hp > 0);
+    if (standing.length === 0) {
+      endRun(ctx, "defeat", "The party fell in battle.");
+      return;
+    }
+    const landing = poiById(state.map, "landing")?.pos;
+    for (const hero of fighters) if (landing) hero.pos = { q: landing.q, r: landing.r };
+    ctx.events.push({ t: "carried_back", heroIds: fighters.map((h) => h.id) });
+    state.phase = "overworld";
+    if (state.turn) state.turn.acted = true;
     return;
   }
   state.phase = "overworld";

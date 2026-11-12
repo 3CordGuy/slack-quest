@@ -104,6 +104,8 @@ export interface Spoils {
 
 export interface Recap {
   status: "victory" | "defeat" | "fled";
+  /** Lost, but the rest of the crew was not in it: the beaten are back at the ship and the voyage goes on. */
+  carriedBack: boolean;
   /** Who was beaten, for the heading. */
   enemies: string;
   heroes: Spoils[];
@@ -135,12 +137,16 @@ export function recapFor(events: WorldEvent[], settled: Battle, state: ClientSta
       if (h) for (const [kind, n] of Object.entries(ev.resources)) h.resources[kind as keyof Resources] = (h.resources[kind as keyof Resources] ?? 0) + (n ?? 0);
     }
   }
-  return { status, enemies: groupNames(settled.combatants.filter((c) => c.side === "enemy").map((c) => c.kind)), heroes };
+  return { status, carriedBack: events.some((e) => e.t === "carried_back"), enemies: groupNames(settled.combatants.filter((c) => c.side === "enemy").map((c) => c.kind)), heroes };
 }
 
 export function BattleRecap({ recap, you, onDone }: { recap: Recap; you: string; onDone(): void }) {
-  const title = recap.status === "victory" ? "Victory" : recap.status === "fled" ? "You got away" : "The party has fallen";
-  const sub = recap.status === "victory" ? `${recap.enemies} beaten.` : recap.status === "fled" ? `${recap.enemies} did not follow.` : `${recap.enemies} had the better of it.`;
+  const title = recap.status === "victory" ? "Victory" : recap.status === "fled" ? "You got away" : recap.carriedBack ? "Carried back to the ship" : "The party has fallen";
+  const sub =
+    recap.status === "victory" ? `${recap.enemies} beaten.`
+    : recap.status === "fled" ? `${recap.enemies} did not follow.`
+    : recap.carriedBack ? `${recap.enemies} had the better of it. The rest of the crew is still out there, so the voyage goes on.`
+    : `${recap.enemies} had the better of it.`;
   // Your own hero first.
   const heroes = [...recap.heroes].sort((a, b) => Number(b.id === you) - Number(a.id === you));
   return (
