@@ -9,6 +9,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { HexPos } from "@gantt-quest/core";
 import { FURNISHINGS, craftProblem, hutPerks, hutRoom, hutTier, isSmall, nextHutTier, placeProblem, placedFurnishings, poiAt, smallPlaceProblem, upgradeProblem, type Furnishing } from "@gantt-quest/world";
 import { api, type Hut, type Me } from "./api";
+import { CrewRoster } from "./CrewRoster";
 import { DragPanel } from "./DragPanel";
 import { CostChips, PerkMeter, ResourceChips } from "./hutDrops";
 import { TileAction } from "./TileAction";
@@ -21,7 +22,6 @@ import "./hut.css";
 import { blurb, label } from "./labels";
 import { xpEvents } from "./xpEvents";
 
-const className = (id: string) => label("class", id);
 const same = (a: HexPos, b: HexPos) => a.q === b.q && a.r === b.r;
 const defOf = (f: Furnishing) => FURNISHINGS[f.defId];
 /** One notch of a small thing's turn: a twenty-fourth of a circle. */
@@ -463,18 +463,14 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
       {refusal && <div className="toast" role="status">{refusal}</div>}
 
       {you && <>
-      <DragPanel id="hut.crew" title="Inside" foldOnPhone className="crew">
-        <div className="panel">
-          <h3>{players.length} here now</h3>
-          <ul className="roster">
-            {players.map((p) => (
-              <li key={p.id}>
-                <span><i className="dot on" /> <strong>{p.name}</strong>{p.id === you && <span className="tag">you</span>}{p.id === ownerId && p.id !== you && <span className="tag">owner</span>}</span>
-                <span className="muted">{className(p.classId)} · {p.level}</span>
-              </li>
-            ))}
-          </ul>
-        </div>
+      <DragPanel id="hut.crew" title="Inside" foldOnPhone className="crew roster-panel">
+        <CrewRoster
+          you={you}
+          heading={<>{players.length} in the hut</>}
+          members={players.map((p) => ({ id: p.id, name: p.name, classId: p.classId, level: p.level, outfit: p.outfit, here: true, tags: p.id === ownerId && p.id !== you ? ["owner"] : undefined }))}
+          onOpen={heroSheet.onHeroClick}
+          openId={heroSheet.open}
+        />
       </DragPanel>
 
       <DragPanel id="hut.chat" title="Hut chat" foldOnPhone className="chat panel harbor-chat">

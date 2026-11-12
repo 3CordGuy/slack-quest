@@ -7,6 +7,7 @@ import type { HexPos } from "@gantt-quest/core";
 import { GATHER_SPOTS, GATHER_SPOT_IDS, HARBOR_APOTHECARY, HARBOR_BOARD, HARBOR_GALLEY, HARBOR_SMITHY, HARBOR_GATHER, HARBOR_NAME, HARBOR_PIERS, HARBOR_PLOTS, HARBOR_PUB, HARBOR_RING, HARBOR_SHOP, HARBOR_WORKS, MAX_PARTY, PLOT_PRICE, RESOURCE_KINDS, SHACK_COST, binFill, binNeeds, builtProjects, generateHarbor, harborPoi, hutTier, poiAt, salesman, type GatherSpot, type HarborShip, type Resources } from "@gantt-quest/world";
 import { api, type Me } from "./api";
 import { AccountPanel } from "./Account";
+import { CrewRoster, type RosterMember } from "./CrewRoster";
 import { NoticeBoard } from "./board/NoticeBoard";
 import { DragPanel } from "./DragPanel";
 import { GatherPanel } from "./GatherPanel";
@@ -24,7 +25,6 @@ import { ApothecaryPanel, GalleyPanel, SmithyPanel } from "./works/WorkshopPanel
 import { label } from "./labels";
 import { xpEvents } from "./xpEvents";
 
-const className = (id: string) => label("class", id);
 const same = (a: HexPos, b: HexPos) => a.q === b.q && a.r === b.r;
 /** "10 wood and 6 stone". */
 const costText = (r: Resources) => {
@@ -61,6 +61,12 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
   send.current = harbor.send;
   const base = useMemo(generateHarbor, []);
   const { board, players, you } = harbor;
+  // The whole crew, with whoever is walking the Harbor right now marked here (and drawn in what they wear).
+  const roster: RosterMember[] = useMemo(() => board.members.map((m) => {
+    const p = players.find((x) => x.id === m.id);
+    return { id: m.id, name: m.name, classId: m.classId, level: p?.level ?? m.level, here: !!p, outfit: p?.outfit };
+  }), [board.members, players]);
+  const hereCount = roster.filter((m) => m.here).length;
   const moored = board.ships.filter((s) => s.pier !== null);
   const built = builtProjects(board.works);
   const lit = built.includes("lighthouse");
@@ -366,24 +372,15 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
         </ul>
       </DragPanel>
 
-      <DragPanel id="harbor.crew" title="Crew" foldOnPhone className="crew">
-        <div className="panel">
-          <h3>{players.length} here now</h3>
-          <ul className="roster">
-            {board.members.map((m) => {
-              const here = players.some((p) => p.id === m.id);
-              return (
-                <li key={m.id} className={here ? "" : "away"}>
-                  <span><i className={`dot ${here ? "on" : ""}`} /> <strong>{m.name}</strong>{m.id === you && <span className="tag">you</span>}</span>
-                  <span className="muted">
-                    {className(m.classId)} · {m.level}
-                    {m.id !== you && <button className="small trade-btn" title={`Give or trade with ${m.name}`} onClick={() => setTradeWith(m.id)}>Trade</button>}
-                  </span>
-                </li>
-              );
-            })}
-          </ul>
-        </div>
+      <DragPanel id="harbor.crew" title="Crew" foldOnPhone className="crew roster-panel roster-trade">
+        <CrewRoster
+          you={you}
+          heading={<>{hereCount} of {roster.length} here</>}
+          members={roster}
+          onOpen={heroSheet.onHeroClick}
+          openId={heroSheet.open}
+          onTrade={setTradeWith}
+        />
       </DragPanel>
 
       <DragPanel id="harbor.chat" title="Crew chat" foldOnPhone className="chat panel harbor-chat">
