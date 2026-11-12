@@ -160,7 +160,7 @@ export function SparView({ me, scene, renderer, onClose }: Props) {
       rng,
     );
     queue.current = [];
-    setFeed([`${sheet.name} squares up to ${many > 1 ? `${many} × ` : ""}${def.name}.`]);
+    setFeed([`${sheet.name} squares up to ${many > 1 ? `${many} × ` : ""}${label("enemy", kind)}.`]);
     setResult(null);
     setShown(null);
     report(created.state, created.events);
