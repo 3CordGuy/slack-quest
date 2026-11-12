@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { HARBOR_GATHER, HARBOR_GRID, HARBOR_BOARD, HARBOR_PIERS, HARBOR_PLOTS, HARBOR_RING, HARBOR_SHOP, HARBOR_SPAWN, generateHarbor, harborPath, tileAt } from "./index";
+import { HARBOR_GATHER, HARBOR_GRID, HARBOR_BOARD, HARBOR_PIERS, HARBOR_PLOTS, HARBOR_RING, HARBOR_SHOP, HARBOR_SPAWN, HARBOR_WORKS, generateHarbor, harborPath, tileAt } from "./index";
 
 describe("harbor map", () => {
   const map = generateHarbor();
@@ -19,7 +19,7 @@ describe("harbor map", () => {
   it("lets a player walk from the plaza to every plot, pier and the notice board", () => {
     expect(HARBOR_PLOTS).toHaveLength(12);
     expect(new Set(HARBOR_PLOTS.map((p) => `${p.q},${p.r}`)).size).toBe(12);
-    for (const target of [...HARBOR_PLOTS, ...HARBOR_PIERS, HARBOR_BOARD, HARBOR_SHOP, HARBOR_RING]) {
+    for (const target of [...HARBOR_PLOTS, ...HARBOR_PIERS, HARBOR_BOARD, HARBOR_SHOP, HARBOR_RING, HARBOR_WORKS]) {
       const path = harborPath(map, HARBOR_SPAWN, target);
       expect(path, `${target.q},${target.r}`).not.toBeNull();
       expect(path!.at(-1)).toEqual(target);

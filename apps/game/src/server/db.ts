@@ -3,12 +3,20 @@
 
 import type { StatKey, Stats } from "@gantt-quest/core";
 import {
+  FURNISHINGS,
+  HUT_TIERS,
   applyXp,
+  buyFurnitureProblem,
+  craftProblem,
+  displacedFurnishings,
   equipProblem,
   gearSheet,
   heroClass,
+  hutPerks,
+  nextHutTier,
   sellPrice,
   shopStock,
+  upgradeProblem,
   weaponItem,
   RESOURCE_KINDS,
   STARTER_BLUEPRINTS,
@@ -28,6 +36,7 @@ import {
   type WorldState,
 } from "@gantt-quest/world";
 import type { HarborRoom } from "./harbor-room";
+import { crewWorks } from "./projects";
 import type { HutRoom } from "./hut-room";
 import type { RunRoom } from "./run-room";
 
@@ -356,7 +365,11 @@ export async function buyShopItem(db: D1Database, playerId: string, index: numbe
 export async function heroInitFor(db: D1Database, playerId: string): Promise<HeroInit | null> {
   const c = await getCharacter(db, playerId);
   if (!c || c.status !== "active") return null;
-  const worn = (await getInventory(db, playerId)).filter((i) => i.equipped).map(rowToItem);
+  const [inventory, placed] = await Promise.all([
+    getInventory(db, playerId),
+    db.prepare("SELECT def_id AS defId, q FROM furnishings WHERE player_id = ? AND q IS NOT NULL").bind(playerId).all<{ defId: string; q: number }>(),
+  ]);
+  const worn = inventory.filter((i) => i.equipped).map(rowToItem);
   return {
     id: c.player_id,
     name: c.name,
@@ -366,6 +379,8 @@ export async function heroInitFor(db: D1Database, playerId: string): Promise<Her
     unspent: c.unspent_points,
     base: statsOf(c),
     ...gearSheet(c.class_id, worn),
+    // What the furniture standing in their hut gives them on a voyage.
+    hutPerks: hutPerks(placed.results),
   };
 }
 
@@ -417,9 +432,12 @@ export interface RunRow {
   status: string;
   state_json: string | null;
   crew_id: string | null;
+  /** JSON array of the Harbor projects the crew had built at launch. */
+  projects_json: string;
 }
 
-export async function createRun(db: D1Database, playerId: string, crewId: string | null): Promise<string> {
+/** `projects` are the Harbor projects the crew has built; they are fixed on the run at launch. */
+export async function createRun(db: D1Database, playerId: string, crewId: string | null, projects: string[] = []): Promise<string> {
   // No vowels, so codes never spell anything.
   const alphabet = "BCDFGHJKLMNPQRSTVWXZ";
   for (let attempt = 0; attempt < 5; attempt++) {
@@ -427,8 +445,8 @@ export async function createRun(db: D1Database, playerId: string, crewId: string
     const code = [...bytes].map((b) => alphabet[b % alphabet.length]).join("");
     try {
       await db
-        .prepare("INSERT INTO runs (code, seed, status, created_by, crew_id, created_at, updated_at) VALUES (?, ?, 'lobby', ?, ?, ?, ?)")
-        .bind(code, crypto.randomUUID(), playerId, crewId, now(), now())
+        .prepare("INSERT INTO runs (code, seed, status, created_by, crew_id, projects_json, created_at, updated_at) VALUES (?, ?, 'lobby', ?, ?, ?, ?, ?)")
+        .bind(code, crypto.randomUUID(), playerId, crewId, JSON.stringify(projects), now(), now())
         .run();
       return code;
     } catch {
@@ -439,7 +457,7 @@ export async function createRun(db: D1Database, playerId: string, crewId: string
 }
 
 export async function getRun(db: D1Database, code: string): Promise<RunRow | null> {
-  return db.prepare("SELECT code, seed, status, state_json, crew_id FROM runs WHERE code = ?").bind(code).first<RunRow>();
+  return db.prepare("SELECT code, seed, status, state_json, crew_id, projects_json FROM runs WHERE code = ?").bind(code).first<RunRow>();
 }
 
 export function saveRunStatements(db: D1Database, state: WorldState, action: unknown): D1PreparedStatement[] {
@@ -529,15 +547,17 @@ const VOYAGE_STALE_MS = 12 * 60 * 60_000;
 
 /** Everything on a Harbor's notice board: who is in the crew, which ships are moored or away, and recent voyages. */
 export async function harborBoard(db: D1Database, crewId: string, pierCount: number): Promise<HarborBoard> {
-  const [members, runs] = await Promise.all([
+  const [works, members, runs] = await Promise.all([
+    crewWorks(db, crewId),
     db
       .prepare(
-        `SELECT m.player_id AS id, c.name, c.class_id AS classId, c.level
+        `SELECT m.player_id AS id, c.name, c.class_id AS classId, c.level, COALESCE(h.tier, 1) AS hutTier
          FROM crew_members m JOIN characters c ON c.player_id = m.player_id AND c.status = 'active'
+         LEFT JOIN huts h ON h.player_id = m.player_id
          WHERE m.crew_id = ? ORDER BY m.joined_at, m.player_id`,
       )
       .bind(crewId)
-      .all<{ id: string; name: string; classId: string; level: number }>(),
+      .all<{ id: string; name: string; classId: string; level: number; hutTier: number }>(),
     db
       .prepare(
         `SELECT r.code, r.status, r.state_json, r.updated_at, c.name AS creator
@@ -567,7 +587,7 @@ export async function harborBoard(db: D1Database, crewId: string, pierCount: num
   ships.reverse();
   let pier = 0;
   for (const ship of ships) if (ship.phase === "lobby" && pier < pierCount) ship.pier = pier++;
-  return { members: members.results, ships, log };
+  return { members: members.results, ships, log, works };
 }
 
 /** Ask a crew's Harbor to re-read its notice board and tell everyone present. Never throws. */
@@ -622,4 +642,93 @@ export async function getHut(db: D1Database, playerId: string): Promise<HutSumma
     blueprints: [...new Set([...STARTER_BLUEPRINTS, ...blueprints.results.map((b) => b.blueprint_id)])],
     furnishings: furnishings.results,
   };
+}
+
+/** Ask a hut's room to re-read the hut from D1 and tell everyone inside. Never throws. */
+export async function refreshHut(env: Env, ownerId: string): Promise<void> {
+  try {
+    await env.HUT_ROOM.get(env.HUT_ROOM.idFromName(ownerId)).fetch("https://hut/refresh", { headers: { "x-hut-owner": ownerId } });
+  } catch (err) {
+    console.warn("hut:refresh-failed", { err: err instanceof Error ? err.message : String(err) });
+  }
+}
+
+// ---------- huts: spending gold and materials ----------
+
+/**
+ * Statements that take `gold` and `resources` from a player, all or nothing.
+ * The first checks every amount (and `alsoIf`, if given) and takes the gold;
+ * each one after it runs only if the one before it changed a row. Follow them
+ * with whatever is being paid for, guarded by `changes() > 0` in the same way,
+ * and run the lot as one batch: either everything happens or nothing does.
+ *
+ * Amounts and `alsoIf` are inlined, so they must come from the catalogue,
+ * never from a request.
+ */
+function spendStatements(db: D1Database, playerId: string, gold: number, resources: Resources, alsoIf = "1"): D1PreparedStatement[] {
+  const kinds = RESOURCE_KINDS.filter((k) => (resources[k] ?? 0) > 0);
+  const amount = (n: number) => Math.max(0, Math.floor(n));
+  const enough = kinds.map((k) => `COALESCE((SELECT qty FROM resources WHERE player_id = ?1 AND kind = '${k}'), 0) >= ${amount(resources[k]!)}`);
+  const price = amount(gold);
+  return [
+    db
+      .prepare(`UPDATE characters SET gold = gold - ${price} WHERE player_id = ?1 AND status = 'active' AND gold >= ${price} AND ${["(" + alsoIf + ")", ...enough].join(" AND ")}`)
+      .bind(playerId),
+    ...kinds.map((k) => db.prepare(`UPDATE resources SET qty = qty - ${amount(resources[k]!)} WHERE player_id = ?1 AND kind = '${k}' AND changes() > 0`).bind(playerId)),
+  ];
+}
+
+/** A new furnishing into storage, but only if the statement before it in the batch changed a row. */
+function paidFurnishingStatement(db: D1Database, playerId: string, defId: string): D1PreparedStatement {
+  return db
+    .prepare("INSERT INTO furnishings (player_id, def_id, label, meta_json, created_at) SELECT ?, ?, ?, '{}', ? WHERE changes() > 0")
+    .bind(playerId, defId, FURNISHINGS[defId].name, now());
+}
+
+/** Craft a furnishing from materials. Returns an error message, or null once it is in storage. */
+export async function craftFurnishing(db: D1Database, playerId: string, defId: string): Promise<string | null> {
+  const [c, hut] = await Promise.all([getCharacter(db, playerId), getHut(db, playerId)]);
+  if (c?.status !== "active") return "Create a character first.";
+  const problem = craftProblem(defId, hut.blueprints, hut.resources);
+  if (problem) return problem;
+  const res = await db.batch([...spendStatements(db, playerId, 0, FURNISHINGS[defId].recipe!), paidFurnishingStatement(db, playerId, defId)]);
+  // The materials went elsewhere between the check and the batch: nothing was spent.
+  return res[res.length - 1].meta.changes > 0 ? null : "You no longer have the materials for that.";
+}
+
+/** Buy a furnishing at the market stall. The price is the catalogue's; the client names only the piece. */
+export async function buyFurniture(db: D1Database, playerId: string, defId: string): Promise<string | null> {
+  const c = await getCharacter(db, playerId);
+  if (c?.status !== "active") return "Create a character first.";
+  const problem = buyFurnitureProblem(defId, c.gold);
+  if (problem) return problem;
+  const res = await db.batch([...spendStatements(db, playerId, FURNISHINGS[defId].price!, {}), paidFurnishingStatement(db, playerId, defId)]);
+  return res[res.length - 1].meta.changes > 0 ? null : "Not enough gold.";
+}
+
+/**
+ * Make the player's hut one tier bigger. Returns an error message, or the new
+ * tier. Furniture the new room has no place for goes back to storage in the
+ * same batch (growing never displaces anything, but the rule is kept here so
+ * a change to the room shapes cannot strand a piece inside a wall).
+ */
+export async function upgradeHut(db: D1Database, playerId: string): Promise<string | { tier: number }> {
+  const [c, hut] = await Promise.all([getCharacter(db, playerId), getHut(db, playerId)]);
+  if (c?.status !== "active") return "Create a character first.";
+  const problem = upgradeProblem(hut.tier, c.gold, hut.resources);
+  if (problem) return problem;
+  const next = nextHutTier(hut.tier)!;
+  // The tier is checked again inside the batch, so two requests at once cannot both pay.
+  const stillThisTier = `COALESCE((SELECT tier FROM huts WHERE player_id = ?1), ${HUT_TIERS[0].tier}) = ${Math.floor(hut.tier)}`;
+  const spend = spendStatements(db, playerId, next.gold, next.resources, stillThisTier);
+  const res = await db.batch([
+    ...spend,
+    db
+      .prepare("INSERT INTO huts (player_id, tier) SELECT ?1, ?2 WHERE changes() > 0 ON CONFLICT(player_id) DO UPDATE SET tier = ?2")
+      .bind(playerId, next.tier),
+    ...displacedFurnishings(next.tier, hut.furnishings).map((f) =>
+      db.prepare("UPDATE furnishings SET q = NULL, r = NULL WHERE id = ?1 AND player_id = ?2 AND (SELECT tier FROM huts WHERE player_id = ?2) = ?3").bind(f.id, playerId, next.tier),
+    ),
+  ]);
+  return res[spend.length].meta.changes > 0 ? { tier: next.tier } : "You no longer have what that costs.";
 }

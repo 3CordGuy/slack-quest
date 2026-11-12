@@ -4,9 +4,10 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { HexPos } from "@gantt-quest/core";
-import { FURNISHINGS, HERO_CLASSES, hutRoom, hutTier, placedFurnishings, poiAt, type Furnishing } from "@gantt-quest/world";
-import type { Me } from "./api";
+import { FURNISHINGS, HERO_CLASSES, craftProblem, hutPerks, hutRoom, hutTier, nextHutTier, placedFurnishings, poiAt, upgradeProblem, type Furnishing } from "@gantt-quest/world";
+import { api, type Hut, type Me } from "./api";
 import { DragPanel } from "./DragPanel";
+import { CostChips, PerkMeter, ResourceChips } from "./hutDrops";
 import { WorldRenderer, type RenderState } from "./render/WorldRenderer";
 import { useHut } from "./useHut";
 import "./hut.css";
@@ -15,7 +16,12 @@ const className = (id: string) => HERO_CLASSES.find((c) => c.id === id)?.name ??
 const same = (a: HexPos, b: HexPos) => a.q === b.q && a.r === b.r;
 const defOf = (f: Furnishing) => FURNISHINGS[f.defId];
 
-export function HutView({ ownerId, me, onLeave }: { ownerId: string; me: Me; onLeave(): void }) {
+/** Everything that can be crafted, starter recipes first. */
+const RECIPES = Object.values(FURNISHINGS).filter((f) => f.recipe).sort((a, b) => Number(!!a.needsBlueprint) - Number(!!b.needsBlueprint));
+
+type Tab = "furnish" | "craft" | "upgrade";
+
+export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me: Me; refresh(): Promise<unknown>; onLeave(): void }) {
   const mount = useRef<HTMLDivElement>(null);
   const renderer = useRef<WorldRenderer | null>(null);
   const [hover, setHover] = useState<HexPos | null>(null);
@@ -25,6 +31,12 @@ export function HutView({ ownerId, me, onLeave }: { ownerId: string; me: Me; onL
   /** The placed furnishing whose controls are showing. */
   const [selected, setSelected] = useState<number | null>(null);
   const chatEnd = useRef<HTMLDivElement>(null);
+  const [tab, setTab] = useState<Tab>("furnish");
+  /** The owner's materials, blueprints and gold. Re-read after anything is spent. */
+  const [own, setOwn] = useState<Hut | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [spendError, setSpendError] = useState<string | null>(null);
+  const [made, setMade] = useState<string | null>(null);
 
   const hut = useHut(ownerId, (id, path) => renderer.current?.playEvents([{ t: "moved", heroId: id, path }]));
   const { you, players, furnishings, canEdit, tier, owner } = hut;
@@ -97,6 +109,27 @@ export function HutView({ ownerId, me, onLeave }: { ownerId: string; me: Me; onL
   if (import.meta.env.DEV) (window as unknown as { __hut: unknown }).__hut = { hut };
 
   const mine = ownerId === me.player.id;
+  const loadOwn = () => api.hut().then(setOwn, (e: Error) => setSpendError(e.message));
+  useEffect(() => {
+    if (mine) void loadOwn();
+  }, [mine]);
+  /** Craft or upgrade: the server decides, then the panel re-reads what is left. */
+  const spend = async (fn: () => Promise<unknown>, done: string) => {
+    setBusy(true);
+    setSpendError(null);
+    setMade(null);
+    try {
+      await fn();
+      setMade(done);
+    } catch (e) {
+      setSpendError((e as Error).message);
+    } finally {
+      await Promise.all([loadOwn(), refresh()]);
+      setBusy(false);
+    }
+  };
+  const perks = useMemo(() => hutPerks(furnishings), [furnishings]);
+  const bigger = tier === null ? null : nextHutTier(tier);
   const title = mine ? "Your hut" : owner ? `${owner.name}'s hut` : "A hut";
   const self = players.find((p) => p.id === you);
   const atDoor = !!self && !!room && poiAt(room, self.pos)?.kind === "door";
@@ -125,6 +158,17 @@ export function HutView({ ownerId, me, onLeave }: { ownerId: string; me: Me; onL
 
       {canEdit && (
         <DragPanel id="hut.furnish" title="Furnish" foldOnPhone className="story panel hut-furnish">
+          <div className="hut-tabs">
+            {(["furnish", "craft", "upgrade"] as Tab[]).map((t) => (
+              <button key={t} className={`small ${tab === t ? "selected" : ""}`} onClick={() => (setTab(t), setMade(null), setSpendError(null))}>
+                {t === "furnish" ? "Furnish" : t === "craft" ? "Craft" : "Upgrade"}
+              </button>
+            ))}
+          </div>
+          {tab !== "furnish" && spendError && <p className="bad">{spendError}</p>}
+          {tab !== "furnish" && made && <p className="good">{made}</p>}
+
+          {tab === "furnish" && <>
           {chosen ? (
             <div className="hut-chosen">
               <strong>{chosen.label}</strong>
@@ -165,6 +209,53 @@ export function HutView({ ownerId, me, onLeave }: { ownerId: string; me: Me; onL
               </li>
             ))}
           </ul>
+
+          <h3>Voyage perks</h3>
+          <p className="muted">What the pieces standing in the room give you when you board a ship, and the most a hut can give.</p>
+          <PerkMeter perks={perks} />
+          </>}
+
+          {tab === "craft" && <>
+            {!own ? <p className="muted">Counting your materials…</p> : <>
+              <ResourceChips resources={own.resources} all />
+              <ul className="hut-recipes">
+                {RECIPES.map((def) => {
+                  const known = !def.needsBlueprint || own.blueprints.includes(def.id);
+                  const problem = craftProblem(def.id, own.blueprints, own.resources);
+                  return (
+                    <li key={def.id} className={known ? "" : "locked"}>
+                      <div>
+                        <strong>{def.name}</strong>
+                        <span className="muted"> · {known ? def.blurb : "Blueprint not found yet. Islands hide them."}</span>
+                      </div>
+                      <div className="row">
+                        <CostChips cost={def.recipe!} have={own.resources} />
+                        <span className="spacer" />
+                        <button className="small primary" disabled={busy || !!problem} title={problem ?? "Goes into storage"} onClick={() => void spend(() => api.craft(def.id), `${def.name} crafted. It is in storage.`)}>
+                          Craft
+                        </button>
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            </>}
+          </>}
+
+          {tab === "upgrade" && tier !== null && <>
+            <p>Your hut is a <strong>{hutTier(tier).name}</strong>: a floor of {hutTier(tier).cols} by {hutTier(tier).rows}.</p>
+            {!bigger ? <p className="muted">It is as big as huts get.</p> : !own ? <p className="muted">Counting your materials…</p> : <>
+              <h3>{bigger.name}</h3>
+              <p className="muted">A floor of {bigger.cols} by {bigger.rows}, and a bigger building in the Harbor. Everything placed stays where it stands.</p>
+              <div className="row">
+                <CostChips cost={bigger.resources} have={own.resources} gold={bigger.gold} haveGold={own.gold} />
+              </div>
+              {upgradeProblem(tier, own.gold, own.resources) && <p className="muted">{upgradeProblem(tier, own.gold, own.resources)}</p>}
+              <button className="primary" disabled={busy || !!upgradeProblem(tier, own.gold, own.resources)} onClick={() => void spend(() => api.upgradeHut(), `Your hut is now a ${bigger.name}.`)}>
+                Build the {bigger.name}
+              </button>
+            </>}
+          </>}
         </DragPanel>
       )}
 

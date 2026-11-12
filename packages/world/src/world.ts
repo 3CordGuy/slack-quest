@@ -21,7 +21,7 @@ import { bumpTally, contractById, tallyBattle, type TakenContract, type TallyKey
 import { battleDrops, cacheDrops, storyTrophy } from "./drops";
 import { rollItem, type ItemDef, type Outfit } from "./gear";
 import { freshVitals, heroCombatant } from "./hero";
-import { addResources, type Resources } from "./hut";
+import { addResources, capPerks, xpWithBonus, type Perk, type Resources } from "./hut";
 import { findPath, generateMap, poiAt, poiById, type Poi, type WorldMap } from "./map";
 import {
   MAX_NPC_MESSAGES,
@@ -32,6 +32,7 @@ import {
   type NpcOutput,
   type NpcRun,
 } from "./npc";
+import { voyageBoons } from "./projects";
 import { addStats, applyXp, maxFocusFor, maxHpFor } from "./progression";
 import { makeRng, seedFromString, type Rng } from "./rng";
 import { NO_DEMAND, demandMet, validateBible, type StoryBible } from "./story";
@@ -59,6 +60,8 @@ export interface HeroInit {
   armor: number;
   /** What the hero is visibly wearing, for drawing the sprite. */
   outfit?: Outfit;
+  /** What their furnished hut gives them for this voyage. Held to PERK_CAPS when they board. */
+  hutPerks?: Perk;
 }
 
 export interface Hero extends HeroInit {
@@ -136,6 +139,8 @@ export interface WorldState {
   battle: (BattleState & { npcId: string | null; deadline: number | null }) | null;
   result: { outcome: "victory" | "defeat"; reason: string; epilogue: string | null } | null;
   earned: Record<string, Earned>;
+  /** Harbor projects the crew had built when this voyage was launched. Absent on voyages saved before projects. */
+  projects?: string[];
 }
 
 export type WorldAction =
@@ -169,6 +174,8 @@ export const CLIENT_ACTIONS: ReadonlySet<WorldAction["type"]> = new Set([
 export type WorldEvent =
   | { t: "joined"; heroId: string; name: string }
   | { t: "phase"; phase: Phase }
+  /** Something a built Harbor project did for this voyage, said once as it opens. */
+  | { t: "harbor_boon"; projectId: string; text: string }
   | { t: "turn_start"; heroId: string; mp: number; check: CheckResult }
   | { t: "round"; round: number; doom: number }
   | { t: "moved"; heroId: string; path: HexPos[] }
@@ -207,7 +214,8 @@ export type StepResult =
   | { ok: true; state: WorldState; events: WorldEvent[]; effects: WorldEffect[] }
   | { ok: false; error: string };
 
-export function createWorld(code: string, seed: string): WorldState {
+/** `projects` are the Harbor projects the launching crew has built; their benefits apply when the story begins. */
+export function createWorld(code: string, seed: string, projects: readonly string[] = []): WorldState {
   return {
     v: 1,
     code,
@@ -229,6 +237,7 @@ export function createWorld(code: string, seed: string): WorldState {
     battle: null,
     result: null,
     earned: {},
+    projects: [...projects],
   };
 }
 
@@ -300,6 +309,9 @@ interface Ctx {
 }
 
 const fail = (error: string): StepResult => ({ ok: false, error });
+
+/** A hero's maximum HP: from stats and level, plus what their hut's hearth adds. */
+const heroMaxHp = (hero: Hero) => maxHpFor(heroStats(hero), hero.level) + capPerks(hero.hutPerks).maxHp;
 const heroById = (state: WorldState, id: string) => state.heroes.find((h) => h.id === id);
 
 function grant(
@@ -307,7 +319,8 @@ function grant(
   hero: Hero,
   g: { xp?: number; gold?: number; item?: ItemDef | null; resources?: Resources; blueprint?: string; furnishing?: FurnishingGrant },
 ) {
-  const xp = g.xp ?? 0;
+  // A furnished hut adds a few percent to every XP award.
+  const xp = xpWithBonus(g.xp ?? 0, hero.hutPerks?.xpPct ?? 0);
   const gold = g.gold ?? 0;
   const item = g.item ?? null;
   const earned = (ctx.state.earned[hero.id] ??= { xp: 0, gold: 0, items: [] });
@@ -322,7 +335,7 @@ function grant(
       hero.base = next.stats;
       hero.level = next.level;
       hero.unspent = next.unspent;
-      hero.maxHp = maxHpFor(heroStats(hero), hero.level);
+      hero.maxHp = heroMaxHp(hero);
       hero.hp += hero.maxHp - oldMax;
       const focusGain = maxFocusFor(hero.level) - maxFocusFor(hero.level - next.levelsGained);
       hero.maxFocus += focusGain;
@@ -707,10 +720,17 @@ export function stepWorld(prev: WorldState, action: WorldAction): StepResult {
       if (heroById(state, action.hero.id)) return done(null);
       if (state.phase !== "lobby") return fail("this ship has already sailed");
       if (state.heroes.length >= MAX_PARTY) return fail("the ship is full");
-      const init = action.hero;
+      // Whatever the caller sends, a hut never gives more than its caps.
+      const perks = capPerks(action.hero.hutPerks);
+      const init: HeroInit = { ...action.hero, hutPerks: perks };
+      const rested = freshVitals(init);
       state.heroes.push({
         ...init,
-        ...freshVitals(init),
+        hp: rested.hp + perks.maxHp,
+        maxHp: rested.maxHp + perks.maxHp,
+        focus: rested.focus + perks.focus,
+        maxFocus: rested.maxFocus + perks.focus,
+        potions: rested.potions + perks.potions,
         keyItems: [],
         pos: poiById(state.map, "landing")!.pos,
         ready: false,
@@ -762,7 +782,9 @@ export function stepWorld(prev: WorldState, action: WorldAction): StepResult {
         const poi = poiById(state.map, poiId);
         if (poi) poi.enemies = enemies;
       }
-      state.doom = Math.max(action.bible.doomRounds, requiredDoom(state.map, action.bible, state.heroes));
+      // What the crew has built at the Harbor comes along: the lighthouse lengthens the clock.
+      const boons = voyageBoons(state.projects);
+      state.doom = Math.max(action.bible.doomRounds, requiredDoom(state.map, action.bible, state.heroes)) + boons.doomDays;
       state.npcs = Object.fromEntries(action.bible.npcs.map((n) => [n.id, newNpcRun()]));
       state.order = [...state.heroes]
         .sort((a, b) => heroStats(b).agi - heroStats(a).agi || a.id.localeCompare(b.id))
@@ -770,6 +792,7 @@ export function stepWorld(prev: WorldState, action: WorldAction): StepResult {
       state.phase = "overworld";
       state.round = 1;
       ctx.events.push({ t: "phase", phase: "overworld" });
+      for (const line of boons.lines) ctx.events.push({ t: "harbor_boon", ...line });
       startTurn(ctx);
       return done(null);
     }
@@ -826,7 +849,7 @@ export function stepWorld(prev: WorldState, action: WorldAction): StepResult {
       const hero = heroById(state, action.heroId);
       if (!hero) return fail("not aboard");
       Object.assign(hero, action.gear);
-      hero.maxHp = maxHpFor(heroStats(hero), hero.level);
+      hero.maxHp = heroMaxHp(hero);
       // Extra Vitality raises the ceiling but does not heal, or swapping gear back and forth would.
       hero.hp = Math.min(hero.hp, hero.maxHp);
       ctx.events.push({ t: "geared", heroId: hero.id });

@@ -79,6 +79,22 @@ export function placeProblem(room: WorldMap, placed: Pick<Furnishing, "q" | "r">
   return null;
 }
 
+/**
+ * The placed furnishings that have no legal spot in a room of `tier`: off the
+ * floor, on the doorway, or sharing a hex with an earlier piece. When a hut
+ * changes size these go back to storage and the rest stay where they are.
+ */
+export function displacedFurnishings<T extends Pick<Furnishing, "defId" | "q" | "r">>(tier: number, furnishings: T[]): T[] {
+  const room = hutRoom(tier);
+  const kept: { q: number; r: number }[] = [];
+  const out: T[] = [];
+  for (const f of placedFurnishings(furnishings)) {
+    if (placeProblem(room, kept, f.defId, f)) out.push(f);
+    else kept.push({ q: f.q, r: f.r });
+  }
+  return out;
+}
+
 /** Longest walk the server will accept in one request. */
 export const HUT_MAX_PATH = 40;
 

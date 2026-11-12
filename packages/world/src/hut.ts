@@ -48,6 +48,23 @@ export interface Perk {
 /** The most a hut can give, however it is furnished. Kept small on purpose. */
 export const PERK_CAPS: Required<Perk> = { focus: 1, potions: 1, maxHp: 4, xpPct: 5 };
 
+const PERK_KEYS = Object.keys(PERK_CAPS) as (keyof Perk)[];
+
+/** A perk with every field present, whole, and held between zero and its cap. */
+export function capPerks(perk: Perk | undefined): Required<Perk> {
+  const out = { focus: 0, potions: 0, maxHp: 0, xpPct: 0 };
+  for (const key of PERK_KEYS) {
+    const n = Math.floor(Number(perk?.[key] ?? 0));
+    out[key] = Number.isFinite(n) ? Math.max(0, Math.min(PERK_CAPS[key], n)) : 0;
+  }
+  return out;
+}
+
+/** XP after a hut's bonus. The bonus is rounded to the nearest point, so a small bonus on a small award may add nothing. */
+export function xpWithBonus(xp: number, xpPct: number): number {
+  return xp + Math.round((xp * capPerks({ xpPct }).xpPct) / 100);
+}
+
 // ---------- catalogue ----------
 
 export interface FurnishingDef {
@@ -142,7 +159,52 @@ export function hutPerks(furnishings: Pick<Furnishing, "defId" | "q">[]): Requir
     if (f.q === null) continue;
     const perk = FURNISHINGS[f.defId]?.perk;
     if (!perk) continue;
-    for (const key of Object.keys(total) as (keyof Perk)[]) total[key] = Math.min(PERK_CAPS[key], total[key] + (perk[key] ?? 0));
+    for (const key of PERK_KEYS) total[key] = Math.min(PERK_CAPS[key], total[key] + (perk[key] ?? 0));
   }
   return total;
+}
+
+// ---------- spending: crafting, the stall, and a bigger hut ----------
+
+/** "6 wood, 3 iron" for the kinds in `cost` that `have` falls short on, or "" if it covers them all. */
+function shortfall(have: Resources, cost: Resources): string {
+  return RESOURCE_KINDS.filter((k) => (have[k] ?? 0) < (cost[k] ?? 0))
+    .map((k) => `${(cost[k] ?? 0) - (have[k] ?? 0)} more ${RESOURCE_LABEL[k].toLowerCase()}`)
+    .join(", ");
+}
+
+/**
+ * Why this player cannot craft `defId`, or null if they can. They need its
+ * blueprint (starter blueprints are known to everyone) and its materials.
+ */
+export function craftProblem(defId: string, blueprints: string[], resources: Resources): string | null {
+  const def = Object.hasOwn(FURNISHINGS, defId) ? FURNISHINGS[defId] : undefined;
+  if (!def) return "There is no such furnishing.";
+  if (!def.recipe) return "That cannot be crafted.";
+  if (def.needsBlueprint && !blueprints.includes(defId)) return "You have not found that blueprint yet.";
+  const short = shortfall(resources, def.recipe);
+  return short ? `You need ${short}.` : null;
+}
+
+/** The furnishings the market stall sells for gold, in catalogue order. */
+export const STALL_FURNITURE: FurnishingDef[] = Object.values(FURNISHINGS).filter((f) => f.price !== undefined);
+
+/** Why this player cannot buy `defId` at the stall, or null if they can. The price is the catalogue's. */
+export function buyFurnitureProblem(defId: string, gold: number): string | null {
+  const def = Object.hasOwn(FURNISHINGS, defId) ? FURNISHINGS[defId] : undefined;
+  if (!def || def.price === undefined) return "The stall does not sell that.";
+  return gold < def.price ? "Not enough gold." : null;
+}
+
+/** The tier above this one, with what it costs, or null at the top. */
+export function nextHutTier(tier: number): HutTier | null {
+  return HUT_TIERS.find((t) => t.tier === tier + 1) ?? null;
+}
+
+/** Why a hut of this tier cannot be made bigger with what the player holds, or null if it can. */
+export function upgradeProblem(tier: number, gold: number, resources: Resources): string | null {
+  const next = nextHutTier(tier);
+  if (!next) return "Your hut is as big as huts get.";
+  const short = [gold < next.gold ? `${next.gold - gold} more gold` : "", shortfall(resources, next.resources)].filter(Boolean).join(", ");
+  return short ? `You need ${short}.` : null;
 }

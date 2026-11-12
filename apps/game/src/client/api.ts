@@ -5,10 +5,16 @@ import type { NoticeBoard } from "../server/board";
 
 /** What the Harbor's notice board shows: the crew goal and the contracts on offer. */
 export type Board = NoticeBoard;
-import type { GatherChoice, GatherSpot, HutSummary, ItemDef, Perk, Resources, ShopEntry } from "@gantt-quest/world";
+import type { GatherChoice, GatherSpot, HarborWorks, HutSummary, ItemDef, Perk, ProjectAmounts, Resources, ShopEntry } from "@gantt-quest/world";
 import type { GatherStatus } from "../server/gather";
 
 export type { GatherStatus };
+
+/** The crew's projects and what this player has to give toward them. */
+export interface Works {
+  works: HarborWorks;
+  stock: ProjectAmounts;
+}
 
 /** Optional ?p=2 gives this tab its own guest session, for testing two players on one machine. */
 export const PROFILE = new URLSearchParams(location.search).get("p") ?? "";
@@ -46,6 +52,9 @@ export interface Shop {
   refreshAt: number;
   entries: (ShopEntry & { bought: boolean })[];
 }
+
+/** What the player owns for their hut, the perks it gives right now, and their gold. */
+export type Hut = HutSummary & { perks: Required<Perk>; gold: number };
 
 export interface Me {
   /** `email` is null for a guest, whose account lives only in this browser. */
@@ -105,5 +114,10 @@ export const api = {
   gather: () => request<GatherStatus>("/api/gather"),
   gatherStart: (spot: GatherSpot) => request<GatherStatus>("/api/gather/start", { spot }),
   gatherStep: (choice: GatherChoice) => request<GatherStatus & { paid?: Resources }>("/api/gather/step", { choice }),
-  hut: () => request<HutSummary & { perks: Required<Perk> }>("/api/hut"),
+  projects: () => request<Works>("/api/projects"),
+  giveToProject: (projectId: string, give: ProjectAmounts) => request<Works & { completed: boolean }>("/api/projects/give", { projectId, give }),
+  hut: () => request<Hut>("/api/hut"),
+  craft: (defId: string) => request("/api/hut/craft", { defId }),
+  upgradeHut: () => request<{ tier: number }>("/api/hut/upgrade", {}),
+  buyFurniture: (defId: string) => request("/api/shop/furniture", { defId }),
 };
