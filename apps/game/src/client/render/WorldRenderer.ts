@@ -419,6 +419,7 @@ export class WorldRenderer {
 
   private spawnFx(kind: FxKind, color: string, flip: boolean, opts: Omit<Fx, "sprite" | "age">) {
     const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: fxTexture(kind, color, flip), transparent: true, depthTest: false }));
+    sprite.renderOrder = 4;
     sprite.position.copy(opts.from);
     sprite.scale.set(opts.size[0], opts.size[0], 1);
     sprite.renderOrder = 9;
@@ -430,6 +431,7 @@ export class WorldRenderer {
     const unit = this.units.get(unitId);
     if (!unit) return;
     const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: textTexture(text, color), transparent: true, depthTest: false }));
+    sprite.renderOrder = 8;
     sprite.scale.set(1.2, 0.45, 1);
     sprite.position.copy(unit.sprite.position).add(new THREE.Vector3(0, unit.sprite.scale.y + 0.5, 0));
     sprite.renderOrder = 10;
@@ -839,7 +841,9 @@ export class WorldRenderer {
     for (const [id, w] of want) {
       let unit = this.units.get(id);
       if (!unit) {
-        const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: spriteTexture(w.kind, w.outfit), transparent: true, alphaTest: 0.5 }));
+        const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: spriteTexture(w.kind, w.outfit), transparent: true, alphaTest: 0.5, depthTest: false }));
+        // Drawn over the scenery, so nobody is lost inside a building or behind a tree.
+        sprite.renderOrder = 2;
         sprite.center.set(0.5, 0);
         sprite.position.copy(w.pos);
         const caster = new THREE.Mesh(CASTER_PLANE, new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false, side: THREE.DoubleSide, map: sprite.material.map, alphaTest: 0.5 }));
