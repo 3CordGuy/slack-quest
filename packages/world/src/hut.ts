@@ -205,6 +205,9 @@ export const TROPHY_FOR_FRAME: Record<string, string> = {
   rescue: "trophy_token",
   beast_hunt: "trophy_pelt",
   broken_relic: "trophy_core",
+  // A share of the hoard, and the island's thanks for lifting its curse.
+  rival_crew: "trophy_relic",
+  lift_curse: "trophy_token",
 };
 
 /** Blueprints every player knows from the start. Others are found or bought. */
