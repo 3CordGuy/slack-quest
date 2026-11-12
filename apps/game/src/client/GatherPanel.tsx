@@ -185,7 +185,11 @@ export function GatherPanel({ spot, onClose }: { spot: GatherSpot; onClose(): vo
   };
   const step = (choice: GatherChoice) => run(() => api.gatherStep(choice));
 
-  const outing = status?.outing ?? null;
+  const latest = status?.outing ?? null;
+  // An outing still open is shown wherever the player stands. One already finished at another spot is not:
+  // this spot is shown instead, with a line saying what came home from there.
+  const outing = latest && (latest.spot === spot || latest.status === "active") ? latest : null;
+  const finishedElsewhere = latest && !outing ? latest : null;
   // Keep the newest check in view as the log grows.
   const logEnd = useRef<HTMLLIElement>(null);
   useEffect(() => {
@@ -235,6 +239,13 @@ export function GatherPanel({ spot, onClose }: { spot: GatherSpot; onClose(): vo
         {error && <p className="bad">{error}</p>}
         {!status && !error && <p className="muted">Looking around…</p>}
 
+        {finishedElsewhere && (
+          <p className={finishedElsewhere.status === "banked" ? "good" : "muted"}>
+            {finishedElsewhere.status === "banked"
+              ? `Brought home from ${GATHER_SPOTS[finishedElsewhere.spot].name.replace(/^The /, "the ")}: ${resourceText(paid ?? finishedElsewhere.payout)}.`
+              : `Nothing came home from ${GATHER_SPOTS[finishedElsewhere.spot].name.replace(/^The /, "the ")}.`}
+          </p>
+        )}
         {status && !outing && (
           left > 0
             ? <button className="primary" disabled={busy} onClick={() => run(() => api.gatherStart(spot))}>{words.start} · uses 1 stamina</button>
