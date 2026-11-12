@@ -35,7 +35,7 @@ export const CACHE_DROP_UNITS: [number, number] = [2, 4];
 export const CACHE_BLUEPRINT_CHANCE = 0.15;
 export const CACHE_DECOR_CHANCE = 0.06;
 /** Decor that can be found ready-made. */
-export const CACHE_DECOR: string[] = ["lantern", "banner", "rug"];
+export const CACHE_DECOR: string[] = ["lantern", "banner", "rug", "candle", "mug", "books", "skull", "bottle", "coin_pile"];
 /** Blueprints that have to be found: everything that cannot be crafted without one. */
 export const FOUND_BLUEPRINTS: string[] = Object.values(FURNISHINGS).filter((f) => f.needsBlueprint).map((f) => f.id);
 

@@ -151,6 +151,10 @@ export const api = {
   giveToProject: (projectId: string, give: ProjectAmounts) => request<Works & { completed: boolean }>("/api/projects/give", { projectId, give }),
   hut: () => request<Hut>("/api/hut"),
   craft: (defId: string) => request("/api/hut/craft", { defId }),
+  /** Materials into (qty > 0) or out of (qty < 0) one of your hut's containers. */
+  stash: (container: number, kind: string, qty: number) => request("/api/hut/stash", { container, kind, qty }),
+  /** Gear from the bag into a container, or (container null) back into the bag. */
+  stow: (container: number | null, itemId: number) => request("/api/hut/stow", { container, itemId }),
   upgradeHut: () => request<{ tier: number }>("/api/hut/upgrade", {}),
   buyFurniture: (defId: string) => request("/api/shop/furniture", { defId }),
   trades: () => request<TradeList>("/api/trade"),
