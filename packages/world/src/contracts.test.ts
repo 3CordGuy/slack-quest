@@ -197,7 +197,8 @@ describe("settling contracts", () => {
     s = { ...s, facts: { ...s.facts, "searched:cache1": true, "searched:cache2": true } };
     const sink = newSink();
     s = fightLair(s, sink);
-    expect(s.earned.p1.resources).toEqual(contractById("scavenger")!.reward.resources);
+    // The fight pays its own materials too, so the contract's are a floor.
+    expect(s.earned.p1.resources?.wood ?? 0).toBeGreaterThanOrEqual(contractById("scavenger")!.reward.resources!.wood!);
     expect(sink.effects).toContainEqual(expect.objectContaining({ kind: "grant", heroId: "p1", gold: 25, resources: { wood: 2 } }));
   });
 

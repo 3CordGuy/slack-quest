@@ -18,7 +18,9 @@ import {
 import { rollCheck, statPct, type CheckResult } from "./check";
 import { ENEMIES, KEY_ITEMS, WEAPONS } from "./content";
 import { bumpTally, contractById, tallyBattle, type TakenContract, type TallyKey } from "./contracts";
+import { battleDrops, cacheDrops, storyTrophy } from "./drops";
 import { rollItem, type ItemDef, type Outfit } from "./gear";
+import { freshVitals, heroCombatant } from "./hero";
 import { addResources, type Resources } from "./hut";
 import { findPath, generateMap, poiAt, poiById, type Poi, type WorldMap } from "./map";
 import {
@@ -397,7 +399,12 @@ function endRun(ctx: Ctx, outcome: "victory" | "defeat", reason: string) {
   state.result = { outcome, reason, epilogue: null };
   for (const hero of state.heroes) {
     if (outcome === "victory") {
-      grant(ctx, hero, { xp: 50, gold: 30, item: rollItem(ctx.rng, hero.classId, 0.8, hero.level) });
+      grant(ctx, hero, {
+        xp: 50,
+        gold: 30,
+        item: rollItem(ctx.rng, hero.classId, 0.8, hero.level),
+        furnishing: state.bible ? storyTrophy(state.bible) : undefined,
+      });
     } else {
       // Soft death: a capped gold loss, never the character.
       ctx.effects.push({ kind: "penalty", heroId: hero.id, goldPct: 0.1, cap: 25 });
@@ -432,27 +439,9 @@ function startTurn(ctx: Ctx) {
   }
 }
 
+/** The hero as they stand right now: the shared combatant, with this voyage's wounds and spent focus. */
 function toCombatant(hero: Hero): Combatant {
-  const stats = heroStats(hero);
-  return {
-    id: hero.id,
-    side: "hero",
-    name: hero.name,
-    kind: hero.classId,
-    level: hero.level,
-    hp: hero.hp,
-    maxHp: hero.maxHp,
-    pct: { str: statPct(stats.str), int_stat: statPct(stats.int_stat), vit: statPct(stats.vit), agi: statPct(stats.agi), dex: statPct(stats.dex) },
-    outfit: hero.outfit,
-    power: hero.weaponPower ?? 0,
-    armor: hero.armor ?? 0,
-    speed: statPct(stats.agi),
-    focus: hero.focus,
-    potions: hero.potions,
-    abilities: WEAPONS[hero.weapon]?.abilities ?? [],
-    effects: [],
-    down: false,
-  };
+  return heroCombatant(hero, hero);
 }
 
 function startBattle(ctx: Ctx, at: HexPos, enemies: string[], poiId: string | null, npcId: string | null) {
@@ -493,6 +482,7 @@ function finishBattle(ctx: Ctx) {
   }
   ctx.events.push({ t: "battle_end", status: battle.status });
   state.battle = null;
+  const beaten = battle.combatants.filter((c) => c.side === "enemy").map((c) => c.kind);
 
   if (battle.status === "defeat") {
     endRun(ctx, "defeat", "The party fell in battle.");
@@ -507,6 +497,7 @@ function finishBattle(ctx: Ctx) {
       xp: battle.xp,
       gold: rng.int(5, 12) * (battle.boss ? 3 : 1),
       item: battle.boss || rng.chance(0.4) ? rollItem(rng, hero.classId, battle.boss ? 0.6 : 0.2, hero.level) : null,
+      resources: battleDrops(rng, beaten),
     });
   }
   if (battle.npcId) setFact(ctx, `fought:${battle.npcId}`);
@@ -566,6 +557,7 @@ function interact(ctx: Ctx, hero: Hero): string | null {
         xp: 10,
         gold: rng.int(6, 14) * check.successes,
         item: check.perfect ? rollItem(rng, hero.classId, 0.4, hero.level) : null,
+        ...cacheDrops(rng, state.earned[hero.id]?.blueprints),
       });
     }
     // Whatever the story needed from this place is found by anyone who looks, loot or no loot.
@@ -716,15 +708,9 @@ export function stepWorld(prev: WorldState, action: WorldAction): StepResult {
       if (state.phase !== "lobby") return fail("this ship has already sailed");
       if (state.heroes.length >= MAX_PARTY) return fail("the ship is full");
       const init = action.hero;
-      const maxHp = maxHpFor(addStats(init.base, init.bonus), init.level);
-      const maxFocus = maxFocusFor(init.level);
       state.heroes.push({
         ...init,
-        hp: maxHp,
-        maxHp,
-        focus: maxFocus,
-        maxFocus,
-        potions: 1,
+        ...freshVitals(init),
         keyItems: [],
         pos: poiById(state.map, "landing")!.pos,
         ready: false,
