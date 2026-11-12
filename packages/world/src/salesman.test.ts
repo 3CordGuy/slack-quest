@@ -83,23 +83,27 @@ describe("when traveling salesmen visit", () => {
 describe("what salesmen sell", () => {
   it("is seeded: the same visit gives the same stock, another visit another", () => {
     for (const s of SALESMEN) {
-      expect(salesmanStock("crew-a", visitOf(s.id), "qa_paladin", 5)).toEqual(salesmanStock("crew-a", visitOf(s.id), "qa_paladin", 5));
+      expect(salesmanStock("crew-a", visitOf(s.id), "p1", "qa_paladin", 5)).toEqual(salesmanStock("crew-a", visitOf(s.id), "p1", "qa_paladin", 5));
     }
-    const runs = new Set(Array.from({ length: 6 }, (_, i) => JSON.stringify(salesmanStock("crew-a", visitOf("curio", 1000 + i), "qa_paladin", 5))));
+    const runs = new Set(Array.from({ length: 6 }, (_, i) => JSON.stringify(salesmanStock("crew-a", visitOf("curio", 1000 + i), "p1", "qa_paladin", 5))));
     expect(runs.size).toBeGreaterThan(1);
   });
 
-  it("shows the whole crew the same wares, except gear rolled for the buyer's class", () => {
+  it("shows the whole crew the same wares, except the curio dealer's gear", () => {
     for (const id of ["plans", "far", "herbs"] as const) {
-      expect(salesmanStock("crew-a", visitOf(id), "qa_paladin", 3)).toEqual(salesmanStock("crew-a", visitOf(id), "devops_mage", 9));
+      expect(salesmanStock("crew-a", visitOf(id), "p1", "qa_paladin", 3)).toEqual(salesmanStock("crew-a", visitOf(id), "p2", "devops_mage", 9));
     }
-    const curios = salesmanStock("crew-a", visitOf("curio"), "devops_mage", 5);
+    // Gear is each player's own: two crewmates of the same class and level see different pieces.
+    const names = (player: string) => salesmanStock("crew-a", visitOf("curio"), player, "qa_paladin", 5).map((e) => (e.goods.kind === "item" ? e.goods.item.name + JSON.stringify(e.goods.item.statBonus) : ""));
+    expect(names("p1")).toEqual(names("p1"));
+    expect(names("p1")).not.toEqual(names("p2"));
+    const curios = salesmanStock("crew-a", visitOf("curio"), "p1", "devops_mage", 5);
     for (const e of curios) if (e.goods.kind === "item" && e.goods.item.kind === "weapon") expect(["staff"]).toContain(e.goods.item.ref);
   });
 
   it("gives the curio dealer only rare or better gear, dearer than the stall", () => {
     for (let v = 0; v < 30; v++) {
-      for (const e of salesmanStock("crew-a", visitOf("curio", v), "refactor_rogue", 4)) {
+      for (const e of salesmanStock("crew-a", visitOf("curio", v), "p1", "refactor_rogue", 4)) {
         expect(e.goods.kind).toBe("item");
         if (e.goods.kind !== "item") continue;
         expect(rarityIndex(e.goods.item.rarity)).toBeGreaterThanOrEqual(rarityIndex("rare"));
@@ -109,7 +113,7 @@ describe("what salesmen sell", () => {
   });
 
   it("gives the plans peddler only blueprints that are otherwise found, three different ones", () => {
-    const stock = salesmanStock("crew-a", visitOf("plans"), "qa_paladin", 1);
+    const stock = salesmanStock("crew-a", visitOf("plans"), "p1", "qa_paladin", 1);
     expect(stock).toHaveLength(3);
     const ids = stock.map((e) => (e.goods.kind === "blueprint" ? e.goods.defId : ""));
     expect(new Set(ids).size).toBe(3);
@@ -122,12 +126,12 @@ describe("what salesmen sell", () => {
       expect(FURNISHINGS[id].recipe).toBeUndefined();
       expect(STALL_FURNITURE.map((f) => f.id)).not.toContain(id);
     }
-    for (const e of salesmanStock("crew-a", visitOf("far"), "qa_paladin", 1)) expect(e.goods.kind === "furnishing" && FAR_GOODS[e.goods.defId]).toBe(e.price);
+    for (const e of salesmanStock("crew-a", visitOf("far"), "p1", "qa_paladin", 1)) expect(e.goods.kind === "furnishing" && FAR_GOODS[e.goods.defId]).toBe(e.price);
   });
 
   it("has the herbalist pay more a piece than the stall does", () => {
     for (let v = 0; v < 30; v++) {
-      for (const e of salesmanStock("crew-a", visitOf("herbs", v), "qa_paladin", 1)) {
+      for (const e of salesmanStock("crew-a", visitOf("herbs", v), "p1", "qa_paladin", 1)) {
         expect(e.price).toBe(0);
         const pieces = (e.materials.herbs ?? 0) + (e.materials.mushrooms ?? 0);
         expect(pieces).toBeGreaterThan(0);
@@ -138,9 +142,9 @@ describe("what salesmen sell", () => {
 });
 
 describe("buying from a salesman", () => {
-  const curio = salesmanStock("crew-a", visitOf("curio"), "qa_paladin", 5)[0];
-  const plan = salesmanStock("crew-a", visitOf("plans"), "qa_paladin", 5)[0];
-  const herbs = salesmanStock("crew-a", visitOf("herbs"), "qa_paladin", 5)[0];
+  const curio = salesmanStock("crew-a", visitOf("curio"), "p1", "qa_paladin", 5)[0];
+  const plan = salesmanStock("crew-a", visitOf("plans"), "p1", "qa_paladin", 5)[0];
+  const herbs = salesmanStock("crew-a", visitOf("herbs"), "p1", "qa_paladin", 5)[0];
 
   it("lets a buyer with the means take each entry once", () => {
     expect(salesProblem(curio, buyer())).toBeNull();

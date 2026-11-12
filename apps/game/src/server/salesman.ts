@@ -52,7 +52,7 @@ export async function getSalesman(db: D1Database, playerId: string, force?: stri
   }
   const [bought, hut] = await Promise.all([boughtOn(db, playerId, crew.id, visit), getHut(db, playerId)]);
   const buyer = { gold: c.gold, resources: hut.resources, blueprints: hut.blueprints, bought };
-  const entries = salesmanStock(crew.id, visit, c.class_id, c.level).map((e) => ({ ...e, bought: bought.includes(e.index), problem: salesProblem(e, buyer) }));
+  const entries = salesmanStock(crew.id, visit, playerId, c.class_id, c.level).map((e) => ({ ...e, bought: bought.includes(e.index), problem: salesProblem(e, buyer) }));
   return { here: { ...visit, entries }, next: null };
 }
 
@@ -63,7 +63,7 @@ export async function buyFromSalesman(db: D1Database, playerId: string, index: u
   const { c, crew, visit } = ctx;
   if (!visit) return "Nobody is selling in the pub just now.";
   const [bought, hut] = await Promise.all([boughtOn(db, playerId, crew.id, visit), getHut(db, playerId)]);
-  const entry = salesmanStock(crew.id, visit, c.class_id, c.level).find((e) => e.index === index);
+  const entry = salesmanStock(crew.id, visit, playerId, c.class_id, c.level).find((e) => e.index === index);
   const problem = salesProblem(entry, { gold: c.gold, resources: hut.resources, blueprints: hut.blueprints, bought });
   if (problem || !entry) return problem ?? "There is nothing like that on the table.";
 

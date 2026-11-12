@@ -5,7 +5,7 @@
 // Nothing schedules them. Who is in, and when the next one is due, follow
 // from the wall clock and the crew's id alone, so every crewmate sees the
 // same visitor and no Durable Object needs a timer. Their stock follows from
-// the same seed (plus the buyer's class and level, for gear), so the server
+// the same seed (plus the buyer, for the curio dealer's gear), so the server
 // re-derives it to check a purchase instead of storing it, as the stall does.
 
 import { FURNISHINGS, RESOURCE_KINDS, RESOURCE_LABEL, canAfford, type Resources } from "./hut";
@@ -127,11 +127,12 @@ function some<T>(rng: Rng, items: readonly T[], count: number): T[] {
 
 /**
  * One visit's stock, as the buyer sees it. Everyone in the crew sees the same
- * stock, except that the curio dealer's gear is rolled for the buyer's class
- * and level. Deterministic in its arguments.
+ * stock, except the curio dealer's gear: each player gets pieces of their own,
+ * rolled for their class and level. Deterministic in its arguments.
  */
-export function salesmanStock(crewId: string, visit: SalesmanVisit, classId: string, level: number): SalesEntry[] {
-  const rng = makeRng(seedFromString(`salesman-stock|${crewId}|${visit.visit}|${visit.salesmanId}${visit.salesmanId === "curio" ? `|${classId}` : ""}`));
+export function salesmanStock(crewId: string, visit: SalesmanVisit, playerId: string, classId: string, level: number): SalesEntry[] {
+  const own = visit.salesmanId === "curio" ? `|${playerId}|${classId}` : "";
+  const rng = makeRng(seedFromString(`salesman-stock|${crewId}|${visit.visit}|${visit.salesmanId}${own}`));
   const entry = (index: number, goods: SalesGoods, price: number, materials: Resources = {}): SalesEntry => ({ index, goods, price, materials });
 
   switch (visit.salesmanId) {
