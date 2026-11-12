@@ -501,3 +501,17 @@ button.nudge { border-color: var(--gold); color: var(--gold); }
 /* Waiting on someone else's turn: a vote to skip it, under the top bar. */
 .skip-vote { position: absolute; top: 46px; left: 50%; transform: translateX(-50%); z-index: 15; display: flex; align-items: center; gap: 10px; padding: 6px 10px; font-size: 12px; max-width: calc(100% - 24px); flex-wrap: wrap; justify-content: center; }
 .in-battle .skip-vote { top: auto; bottom: 168px; }
+
+/* Your turn: a gold frame round the whole screen. Flashes as the turn arrives, then holds softly. Never takes clicks. */
+.your-turn-frame {
+  position: fixed; inset: 0; z-index: 40; pointer-events: none;
+  border: 4px solid rgba(255, 210, 63, 0.85);
+  box-shadow: inset 0 0 18px rgba(255, 210, 63, 0.45), inset 0 0 2px rgba(255, 210, 63, 0.9);
+  animation: your-turn-in 0.9s ease-out;
+}
+@keyframes your-turn-in {
+  0% { border-color: rgba(255, 236, 160, 1); box-shadow: inset 0 0 60px rgba(255, 210, 63, 0.75); opacity: 0; }
+  20% { opacity: 1; }
+  100% { border-color: rgba(255, 210, 63, 0.85); box-shadow: inset 0 0 18px rgba(255, 210, 63, 0.45), inset 0 0 2px rgba(255, 210, 63, 0.9); }
+}
+@media (prefers-reduced-motion: reduce) { .your-turn-frame { animation: none; } }
