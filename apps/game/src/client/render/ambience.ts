@@ -124,6 +124,8 @@ const floorTexture = () =>
     ctx.fillRect(21, 11, 2, 2);
   });
 
+/** Puffs of smoke in the air over one chimney at a time. */
+const PUFFS = 12;
 /** Pixels in one wisp's trail. */
 const TRAIL = 34;
 
@@ -169,6 +171,9 @@ export class Ambience {
   /** The map's extent, which gusts are scattered over. */
   private bounds = { minX: 0, maxX: 0, minZ: 0, maxZ: 0 };
   private wispPoints: THREE.Points | null = null;
+  /** Chimney smoke: a column of pixel puffs over each stack. Outlives a map rebuild, so it is kept out of `group`. */
+  private smoke: THREE.Points | null = null;
+  private stacks: THREE.Vector3[] = [];
   private flatTint = new THREE.Color();
   private still = typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
   private m = new THREE.Matrix4();
@@ -388,6 +393,7 @@ export class Ambience {
 
   dispose() {
     this.clear();
+    this.setSmoke([]);
     this.scene.remove(this.hemi, this.sun, this.sun.target, this.lamp, this.group);
     this.lamp.shadow.map?.dispose();
     this.sun.shadow.map?.dispose();
@@ -405,6 +411,7 @@ export class Ambience {
   /** Advance the sky and everything that sways. `yaw` is the camera's turn; `target` is what it looks at. */
   update(clock: number, yaw: number, target: THREE.Vector3) {
     this.light(target, clock);
+    this.puff(clock);
     const motion = this.still ? 0 : 1;
 
     if (this.grass) {
@@ -485,6 +492,43 @@ export class Ambience {
       pos.needsUpdate = true;
       col.needsUpdate = true;
     }
+  }
+
+  /** Draw smoke rising from these points (chimney tops). An empty list clears it. */
+  setSmoke(stacks: THREE.Vector3[]) {
+    if (this.smoke) {
+      this.scene.remove(this.smoke);
+      this.smoke.geometry.dispose();
+      (this.smoke.material as THREE.Material).dispose();
+      this.smoke = null;
+    }
+    this.stacks = stacks;
+    if (stacks.length === 0) return;
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute("position", new THREE.BufferAttribute(new Float32Array(stacks.length * PUFFS * 3), 3));
+    geometry.setAttribute("color", new THREE.BufferAttribute(new Float32Array(stacks.length * PUFFS * 4), 4));
+    this.smoke = new THREE.Points(geometry, new THREE.PointsMaterial({ size: 3, sizeAttenuation: false, vertexColors: true, transparent: true, depthWrite: false }));
+    this.smoke.frustumCulled = false;
+    this.scene.add(this.smoke);
+  }
+
+  /** Puffs leave the stack one after another, drift with the wind as they climb, and thin out. */
+  private puff(clock: number) {
+    if (!this.smoke) return;
+    const pos = this.smoke.geometry.getAttribute("position") as THREE.BufferAttribute;
+    const col = this.smoke.geometry.getAttribute("color") as THREE.BufferAttribute;
+    const shade = 0.55 + 0.4 * this.daylight;
+    this.stacks.forEach((stack, n) => {
+      for (let i = 0; i < PUFFS; i++) {
+        const life = this.still ? i / PUFFS : (clock * 0.16 + i / PUFFS + n * 0.37) % 1;
+        const sway = Math.sin(life * 5 + i * 1.7 + n) * 0.1 * life;
+        const k = n * PUFFS + i;
+        pos.setXYZ(k, stack.x + life * life * 0.55 + sway, stack.y + life * 1.5, stack.z + Math.cos(i * 2.3) * 0.05 * life);
+        col.setXYZW(k, shade, shade, shade * 1.03, Math.sin(Math.PI * Math.min(1, life * 1.15)) * 0.6 * (1 - life * 0.5));
+      }
+    });
+    pos.needsUpdate = true;
+    col.needsUpdate = true;
   }
 
   /** The turn, about the vertical, that faces something at (x, z) toward whatever lights it. */

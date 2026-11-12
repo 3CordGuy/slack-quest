@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DICE_START, HARBOR_DICE, HARBOR_SPAWN, createDiceGame, diceSplit, diceView, generateHarbor, harborPath, poiAt, stepDice, type DiceAction, type DiceGame } from "./index";
+import { DICE_START, PUB_DICE, createDiceGame, diceSplit, diceView, pubPath, pubRoom, poiAt, stepDice, type DiceAction, type DiceGame } from "./index";
 
 const A = { id: "a", name: "Ada" };
 const B = { id: "b", name: "Bo" };
@@ -35,10 +35,11 @@ function playOut(g: DiceGame): DiceGame {
 
 describe("dice table", () => {
   it("puts the table on a free hex a player can walk to", () => {
-    const map = generateHarbor();
-    expect(poiAt(map, HARBOR_DICE)?.kind).toBe("dice");
-    expect(map.pois.filter((p) => p.pos.q === HARBOR_DICE.q && p.pos.r === HARBOR_DICE.r)).toHaveLength(1);
-    expect(harborPath(map, HARBOR_SPAWN, HARBOR_DICE)!.at(-1)).toEqual(HARBOR_DICE);
+    const room = pubRoom();
+    const door = room.pois.find((p) => p.kind === "door")!.pos;
+    expect(poiAt(room, PUB_DICE)?.kind).toBe("dice");
+    expect(room.pois.filter((p) => p.pos.q === PUB_DICE.q && p.pos.r === PUB_DICE.r)).toHaveLength(1);
+    expect(pubPath(room, door, PUB_DICE)!.at(-1)).toEqual(PUB_DICE);
   });
 
   it("seats two to four players and only lets the opener start", () => {

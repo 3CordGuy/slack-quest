@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { STARTING_STATS, hexDistance } from "@gantt-quest/core";
-import {
-  PERK_CAPS,
+import { BERRY_HEAL, FORAGE_ODDS,
+  PERK_CAPS, PUB_BUFF_CAPS, pubBuff,
   xpWithBonus,
   CANNED_FILLS,
   STORY_FRAMES,
@@ -557,6 +557,22 @@ describe("world reducer", () => {
     expect(greedy.hp).toBe(greedy.maxHp);
   });
 
+  it("adds what a hero ate and drank at the pub on top of their hut, within the menu's limits", () => {
+    let s = createWorld("ABCD", "pub");
+    s = must(s, { type: "join", hero: heroInit("p0", "qa_paladin", "mace") });
+    s = must(s, { type: "join", hero: { ...heroInit("p1", "qa_paladin", "mace"), hutPerks: { focus: 1, maxHp: 4 }, pubBuff: pubBuff(["rum", "stew"]) } });
+    // More than the menu sells: a caller cannot hand out a bigger meal.
+    s = must(s, { type: "join", hero: { ...heroInit("p2", "qa_paladin", "mace"), pubBuff: { focus: 9, potions: 9, maxHp: 99, xpPct: 99 } } });
+    const [plain, fed, greedy] = s.heroes;
+    expect(plain.pubBuff).toEqual({ focus: 0, potions: 0, maxHp: 0, xpPct: 0 });
+    expect(fed.focus).toBe(plain.focus + 2);
+    expect(fed.maxHp).toBe(plain.maxHp + 8);
+    expect(fed.hp).toBe(fed.maxHp);
+    expect(greedy.pubBuff).toEqual(PUB_BUFF_CAPS);
+    expect(greedy.potions).toBe(plain.potions);
+    expect(greedy.maxHp).toBe(plain.maxHp + PUB_BUFF_CAPS.maxHp);
+  });
+
   it("keeps the hearth's HP through a gear change and takes potions and focus into a fight", () => {
     let s = createWorld("ABCD", "perk-gear");
     s = must(s, { type: "join", hero: { ...heroInit("p1", "qa_paladin", "mace"), hutPerks: { focus: 1, potions: 1, maxHp: 4 } } });
@@ -625,6 +641,80 @@ describe("world reducer", () => {
     s = must(s, { type: "move", heroId: me, to: adjacent.pos });
     expect(poiById(s.map, "lair")!.hidden).toBe(false);
     expect(s.facts["revealed:lair"]).toBe(true);
+  });
+});
+
+describe("forest finds", () => {
+  /** Put the hero whose turn it is beside a plain forest hex and walk onto it. */
+  function walkIntoForest(seed: string) {
+    let s = startedWorld(seed);
+    const me = s.turn!.heroId;
+    const target = s.map.tiles.find((t) => t.biome === "forest" && !s.map.pois.some((p) => p.pos.q === t.q && p.pos.r === t.r) && [...reachable(s.map, t, 3).values()].some((r) => r.cost > 0 && hexDistance(r.pos, t) === 1));
+    if (!target) return null;
+    const from = [...reachable(s.map, target, 3).values()].find((r) => r.cost > 0 && hexDistance(r.pos, target) === 1 && tileAt(s.map, r.pos)?.biome !== "forest");
+    if (!from) return null;
+    // Hurt, so berries have something to mend.
+    s = { ...s, heroes: s.heroes.map((h) => (h.id === me ? { ...h, pos: from.pos, hp: h.maxHp - 5 } : h)), turn: { ...s.turn!, mp: 8 } };
+    const before = s.heroes.find((h) => h.id === me)!;
+    const sink = { events: [] as WorldEvent[], effects: [] as WorldEffect[] };
+    const after = must(s, { type: "move", heroId: me, to: { q: target.q, r: target.r } }, sink);
+    return { before, after, me, target, from: from.pos, sink };
+  }
+
+  it("turns up wood, berries, bones, gold or wolves, and each find does what it says", () => {
+    const seen = new Set<string>();
+    for (let i = 0; i < 400; i++) {
+      const w = walkIntoForest(`forest-${i}`);
+      if (!w) continue;
+      const hero = w.after.heroes.find((h) => h.id === w.me)!;
+      expect(w.after.forest).toContain(`${w.target.q},${w.target.r}`);
+      const found = w.sink.events.find((e) => e.t === "forage") as Extract<WorldEvent, { t: "forage" }> | undefined;
+      if (!found) {
+        expect(w.after.phase).toBe("overworld");
+        continue;
+      }
+      seen.add(found.kind);
+      if (found.kind === "wolves") {
+        expect(w.after.phase).toBe("battle");
+        expect(w.after.turn!.mp).toBe(0);
+        expect(hero.pos).toEqual({ q: w.target.q, r: w.target.r });
+      } else if (found.kind === "berries") {
+        expect(hero.hp).toBe(w.before.hp + BERRY_HEAL);
+        expect(found.hp).toBe(BERRY_HEAL);
+      } else if (found.kind === "treasure") {
+        const gold = w.sink.effects.find((e) => e.kind === "grant" && e.heroId === w.me) as Extract<WorldEffect, { kind: "grant" }>;
+        expect(gold.gold).toBeGreaterThanOrEqual(8);
+        expect(gold.gold).toBeLessThanOrEqual(20);
+      } else {
+        const got = w.sink.effects.find((e) => e.kind === "grant" && e.heroId === w.me) as Extract<WorldEffect, { kind: "grant" }>;
+        const n = got.resources?.[found.kind === "wood" ? "wood" : "bone"] ?? 0;
+        expect(n).toBeGreaterThanOrEqual(1);
+        expect(n).toBeLessThanOrEqual(2);
+      }
+    }
+    expect([...seen].sort()).toEqual(["berries", "bones", "treasure", "wolves", "wood"]);
+  });
+
+  it("gives the same find for the same seed, and nothing the second time through", () => {
+    for (let i = 0; i < 60; i++) {
+      const a = walkIntoForest(`again-${i}`);
+      const b = walkIntoForest(`again-${i}`);
+      if (!a || !b) continue;
+      expect(a.sink.events).toEqual(b.sink.events);
+      if (a.after.phase !== "overworld") continue;
+      // Step out and back in: the hex has been searched.
+      let s: WorldState = { ...a.after, turn: { ...a.after.turn!, mp: 8 } };
+      s = must(s, { type: "move", heroId: a.me, to: a.from });
+      const sink = { events: [] as WorldEvent[], effects: [] as WorldEffect[] };
+      s = { ...s, turn: { ...s.turn!, mp: 8 } };
+      must(s, { type: "move", heroId: a.me, to: { q: a.target.q, r: a.target.r } }, sink);
+      expect(sink.events.filter((e) => e.t === "forage")).toEqual([]);
+    }
+  });
+
+  it("keeps the odds modest: most forest hexes are just trees", () => {
+    expect(Object.values(FORAGE_ODDS).reduce((a, n) => a + n, 0)).toBeLessThanOrEqual(45);
+    expect(FORAGE_ODDS.wolves).toBeLessThanOrEqual(8);
   });
 });
 

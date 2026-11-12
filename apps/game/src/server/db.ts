@@ -13,6 +13,8 @@ import {
   gearSheet,
   heroClass,
   hutPerks,
+  pubBuff,
+  pubItem,
   nextHutTier,
   sellPrice,
   shopStock,
@@ -38,6 +40,7 @@ import {
 import type { HarborRoom } from "./harbor-room";
 import { crewWorks } from "./projects";
 import type { HutRoom } from "./hut-room";
+import type { PubRoom } from "./pub-room";
 import type { RunRoom } from "./run-room";
 
 export interface Env {
@@ -47,6 +50,7 @@ export interface Env {
   RUN_ROOM: DurableObjectNamespace<RunRoom>;
   HARBOR_ROOM: DurableObjectNamespace<HarborRoom>;
   HUT_ROOM: DurableObjectNamespace<HutRoom>;
+  PUB_ROOM: DurableObjectNamespace<PubRoom>;
   /** "mock" replaces Workers AI with a scripted stand-in. */
   AI_MODE?: string;
   /** Email Sending binding. Without it (and MAIL_FROM_ADDRESS) sign-in codes go to the log. */
@@ -365,8 +369,9 @@ export async function buyShopItem(db: D1Database, playerId: string, index: numbe
 export async function heroInitFor(db: D1Database, playerId: string): Promise<HeroInit | null> {
   const c = await getCharacter(db, playerId);
   if (!c || c.status !== "active") return null;
-  const [inventory, placed] = await Promise.all([
+  const [inventory, orders, placed] = await Promise.all([
     getInventory(db, playerId),
+    pubOrders(db, playerId),
     db.prepare("SELECT def_id AS defId, q FROM furnishings WHERE player_id = ? AND q IS NOT NULL").bind(playerId).all<{ defId: string; q: number }>(),
   ]);
   const worn = inventory.filter((i) => i.equipped).map(rowToItem);
@@ -381,7 +386,40 @@ export async function heroInitFor(db: D1Database, playerId: string): Promise<Her
     ...gearSheet(c.class_id, worn),
     // What the furniture standing in their hut gives them on a voyage.
     hutPerks: hutPerks(placed.results),
+    // And what they have eaten and drunk at the pub since their last one.
+    pubBuff: pubBuff(orders),
   };
+}
+
+// ---------- the pub ----------
+
+/** The ids of what a hero has eaten and drunk and not yet used: at most one drink and one meal. */
+export async function pubOrders(db: D1Database, playerId: string): Promise<string[]> {
+  const rows = await db.prepare("SELECT item_id FROM pub_buffs WHERE player_id = ? ORDER BY kind").bind(playerId).all<{ item_id: string }>();
+  return rows.results.map((r) => r.item_id);
+}
+
+/**
+ * Buy something off the pub's menu. The price comes from the menu, never the
+ * caller. Gold is taken and the order recorded together: the second
+ * statement only writes if the first one found the gold.
+ */
+export async function orderAtPub(db: D1Database, playerId: string, itemId: string): Promise<string | null> {
+  const item = pubItem(itemId);
+  if (!item) return "That is not on the menu.";
+  const [paid] = await db.batch([
+    db.prepare("UPDATE characters SET gold = gold - ?1 WHERE player_id = ?2 AND status = 'active' AND gold >= ?1").bind(item.price, playerId),
+    db
+      .prepare("INSERT INTO pub_buffs (player_id, kind, item_id, bought_at) SELECT ?1, ?2, ?3, ?4 WHERE changes() > 0 ON CONFLICT (player_id, kind) DO UPDATE SET item_id = excluded.item_id, bought_at = excluded.bought_at")
+      .bind(playerId, item.kind, item.id, Date.now()),
+  ]);
+  return paid.meta.changes > 0 ? null : "You cannot afford that.";
+}
+
+/** A voyage has begun: what these heroes ate and drank is used up. */
+export async function clearPubOrders(db: D1Database, playerIds: string[]): Promise<void> {
+  if (playerIds.length === 0) return;
+  await db.prepare(`DELETE FROM pub_buffs WHERE player_id IN (${playerIds.map(() => "?").join(",")})`).bind(...playerIds).run();
 }
 
 // ---------- rewards ----------

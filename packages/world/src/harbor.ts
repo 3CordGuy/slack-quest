@@ -5,7 +5,6 @@
 // them. This file holds the fixed map and the message shapes both sides use.
 
 import { allHexesInGrid, type HexGrid, type HexPos } from "@gantt-quest/core";
-import type { DiceRequest, DiceView } from "./dice";
 import type { Outfit } from "./gear";
 import type { HarborWorks } from "./projects";
 import { findPath, type Biome, type Poi, type PoiKind, type Tile, type WorldMap } from "./map";
@@ -32,8 +31,8 @@ export const HARBOR_SHOP: HexPos = at(9, 5);
 export const HARBOR_RING: HexPos = at(3, 5);
 /** Gathering spots at the edges: the west shore, the western tree line, and an outcrop in the east. */
 export const HARBOR_GATHER = { fishing: at(0, 7), felling: at(0, 3), quarry: at(12, 2) } as const;
-/** The dice table, where crewmates gamble a small stake. */
-export const HARBOR_DICE: HexPos = at(8, 6);
+/** The pub: food, drink, the barkeep and the dice table are inside. */
+export const HARBOR_PUB: HexPos = at(8, 6);
 /** The works: where the crew's shared projects are paid for, and where the lighthouse goes up. */
 export const HARBOR_WORKS: HexPos = at(5, 6);
 
@@ -66,7 +65,7 @@ export function generateHarbor(): WorldMap {
     tiles,
     pois: [
       harborPoi("board", "board", HARBOR_BOARD), harborPoi("shop", "shop", HARBOR_SHOP), harborPoi("ring", "ring", HARBOR_RING),
-      harborPoi("dice", "dice", HARBOR_DICE), harborPoi("works", "works", HARBOR_WORKS),
+      harborPoi("pub", "pub", HARBOR_PUB), harborPoi("works", "works", HARBOR_WORKS),
       harborPoi("fishing", "fishing", HARBOR_GATHER.fishing),
       harborPoi("felling", "felling", HARBOR_GATHER.felling),
       harborPoi("quarry", "quarry", HARBOR_GATHER.quarry),
@@ -140,17 +139,14 @@ export type HarborServerMessage =
   | { type: "left"; id: string }
   | { type: "moved"; id: string; path: HexPos[] }
   | { type: "said"; id: string; name: string; text: string }
-  /** The dice table as the receiver may see it, or null when there is none. */
-  | { type: "dice"; table: DiceView | null }
-  /** Why the receiver's last dice request was refused. */
-  | { type: "diceError"; text: string };
+;
 
 export type HarborClientMessage =
   | { type: "move"; to: HexPos }
   | { type: "say"; text: string }
   /** "I changed my gear or level": the server re-reads the sender's character and tells everyone. */
   | { type: "refresh" }
-  | { type: "dice"; action: DiceRequest };
+;
 
 export const HARBOR_MAX_SAY = 200;
 export const MAX_CREW = 40;

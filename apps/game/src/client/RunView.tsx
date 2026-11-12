@@ -58,6 +58,15 @@ function describe(events: WorldEvent[], state: ClientState, names: Map<string, s
         break;
       }
       case "rest": out.push(`${n(ev.heroId)} rests at the ${ev.where}: +${ev.hp} HP${ev.focus ? `, +${ev.focus} focus` : ""}.`); break;
+      case "forage":
+        out.push(
+          ev.kind === "wolves" ? `Wolves break from the trees at ${n(ev.heroId)}!`
+            : ev.kind === "berries" ? (ev.hp ? `${n(ev.heroId)} finds a bramble heavy with berries. +${ev.hp} HP.` : `${n(ev.heroId)} finds berries, but is not hungry.`)
+            : ev.kind === "wood" ? `${n(ev.heroId)} comes on a fallen tree, dry enough to carry off.`
+            : ev.kind === "bones" ? `${n(ev.heroId)} finds an old carcass picked clean, and takes the bones.`
+            : `${n(ev.heroId)} catches a glint under the roots: someone buried coin here.`,
+        );
+        break;
       case "search": out.push(ev.found ? `${n(ev.heroId)} turns up something in the cache.` : `${n(ev.heroId)} finds nothing but dust.`); break;
       case "level_up": out.push(`${n(ev.heroId)} reached level ${ev.level}!`); break;
       case "gold": out.push(`${n(ev.heroId)} gains ${ev.amount} gold.`); break;
@@ -261,6 +270,7 @@ function Lobby({ state, run, code }: { state: ClientState; run: RunConnection; c
               <span>
                 <strong>{h.name}</strong> <span className="muted">{className(h.classId)} · Level {h.level}{h.contract ? ` · ${contractName(h.contract.id)}` : ""}</span>
                 {perkText(h.hutPerks) && <span className="hut-perks" title="From the furniture in their hut"> · Hut: {perkText(h.hutPerks)}</span>}
+                {perkText(h.pubBuff) && <span className="hut-perks" title="From what they ate and drank at the pub. This voyage only."> · Pub: {perkText(h.pubBuff)}</span>}
               </span>
               <span className={h.id === state.hostId || h.ready ? "good" : "muted"}>{h.id === state.hostId ? "captain" : h.ready ? "ready" : "not ready"}</span>
             </li>

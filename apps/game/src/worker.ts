@@ -4,7 +4,8 @@
 
 import { Hono, type Context } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
-import { HERO_CLASSES, MAX_CREW, hutPerks, makeRng, rollStartingStats } from "@gantt-quest/world";
+import { HARBOR_PIERS, HERO_CLASSES, MAX_CREW, PUB_MAX_TALK, PUB_MENU, hutPerks, makeRng, pubBuff, rollStartingStats } from "@gantt-quest/world";
+import { barkeepReply } from "./server/ai";
 import { noticeBoard } from "./server/board";
 import { sendSignInCode } from "./server/email";
 import {
@@ -43,14 +44,19 @@ import {
   upgradeHut,
   type Env,
   type Player,
+  harborBoard,
+  orderAtPub,
+  pubOrders,
 } from "./server/db";
 
 import { enterHut } from "./server/hut-room";
+import { enterPub } from "./server/pub-room";
 import { gatherStatus, startOuting, stepOuting } from "./server/gather";
 import { builtProjectIds, contribute, crewWorks, projectStock } from "./server/projects";
 
 export { HarborRoom } from "./server/harbor-room";
 export { HutRoom } from "./server/hut-room";
+export { PubRoom } from "./server/pub-room";
 export { RunRoom } from "./server/run-room";
 
 type App = { Bindings: Env; Variables: { player: Player } };
@@ -252,6 +258,45 @@ app.post("/api/hut/upgrade", async (c) => {
 
 // Walk into a hut's room: your own, or a crewmate's.
 app.get("/api/hut/:owner/ws", (c) => enterHut(c.env, c.get("player"), c.req.param("owner"), c.req.raw));
+
+// ---------- the pub ----------
+
+app.get("/api/pub/ws", (c) => enterPub(c.env, c.get("player"), c.req.raw));
+
+// What this hero has eaten and drunk, and what it will give them on their next voyage.
+app.get("/api/pub", async (c) => {
+  const orders = await pubOrders(c.env.DB, c.get("player").id);
+  return c.json({ orders, buff: pubBuff(orders) });
+});
+
+// Order off the menu. The price is the menu's; a second drink or meal replaces the first.
+app.post("/api/pub/order", async (c) => {
+  const player = c.get("player");
+  const body = await c.req.json<{ itemId?: unknown }>().catch(() => ({}) as { itemId?: unknown });
+  const error = await orderAtPub(c.env.DB, player.id, String(body.itemId ?? ""));
+  if (error) return c.json({ error }, 409);
+  const orders = await pubOrders(c.env.DB, player.id);
+  return c.json({ orders, buff: pubBuff(orders) });
+});
+
+// A word with the barkeep. He only talks: nothing he says changes anything.
+app.post("/api/pub/talk", async (c) => {
+  const player = c.get("player");
+  const body = await c.req.json<{ text?: unknown }>().catch(() => ({}) as { text?: unknown });
+  const text = String(body.text ?? "").replace(/\s+/g, " ").trim().slice(0, PUB_MAX_TALK);
+  if (!text) return c.json({ error: "Say something first." }, 400);
+  const [character, crew] = await Promise.all([getCharacter(c.env.DB, player.id), crewFor(c.env.DB, player.id)]);
+  if (character?.status !== "active" || !crew) return c.json({ error: "The pub is for crews." }, 409);
+  const [board, harbor] = await Promise.all([noticeBoard(c.env.DB, crew.id), harborBoard(c.env.DB, crew.id, HARBOR_PIERS.length)]);
+  const facts = [
+    ...PUB_MENU.map((i) => `On the board: ${i.name}, ${i.price} gold (${i.kind}). ${i.blurb}`),
+    "A hero can carry one drink and one meal into their next voyage; they do a little good there and are gone after.",
+    "There is a dice table in the pub where crewmates bluff each other for a small stake.",
+    ...(board.goal ? [`The crew's goal this week: ${board.goal.text}.`] : []),
+    ...harbor.log.slice(0, 3).map((v) => `Recent voyage: "${v.title}" ended in ${v.outcome === "victory" ? "a win" : v.outcome === "defeat" ? "a loss" : v.outcome}, sailed by ${v.crew.join(", ") || "nobody he knows"}.`),
+  ];
+  return c.json({ say: await barkeepReply(c.env, { hero: character.name, crew: crew.name, text, facts }) });
+});
 
 // ---------- the notice board ----------
 
