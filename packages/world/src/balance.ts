@@ -7,7 +7,7 @@
 
 import { FREE_POINTS_PER_LEVEL, LEVELUP_AUTO_ALLOC, STARTING_STATS, type Stats } from "@gantt-quest/core";
 import { createBattle, currentActor, stepBattle, type BattleAction, type BattleEvent, type BattleState, type Combatant } from "./battle";
-import { ABILITIES, HERO_CLASSES, heroClass } from "./content";
+import { ABILITIES, ENEMIES, HERO_CLASSES, heroClass } from "./content";
 import { heroCombatant, type HeroSheet } from "./hero";
 import { makeRng } from "./rng";
 
@@ -82,6 +82,13 @@ function expectedDamage(s: BattleState, actor: Combatant, abilityId: string): nu
   return (def.damage + actor.level + actor.power) * p * targets;
 }
 
+/** An enemy whose next move is a heavy single-target attack (8+ base damage) aimed at someone other than `not`. */
+function bigSwingAt(e: Combatant, not: string): boolean {
+  if (!e.intent || !e.intent.target || e.intent.target === not) return false;
+  const a = ENEMIES[e.kind].attacks[e.intent.attack];
+  return !!a && a.target === "hero" && a.damage >= 8;
+}
+
 /**
  * A plain, sensible player: heal an ally under half HP if you can; drink a
  * potion under a quarter; guard under a third if you have a guard; otherwise
@@ -95,7 +102,13 @@ export function choose(s: BattleState, actor: Combatant): BattleAction {
   if (heals.length && hurt && hurt.hp / hurt.maxHp < 0.5) {
     return { type: "ability", ability: heals[0], target: hurt.id, focus: 0 };
   }
-  if (actor.potions > 0 && actor.hp / actor.maxHp < 0.25) return { type: "potion" };
+  // Potions are free (once a turn): drink, then still act.
+  if (actor.potions > 0 && !s.itemUsed && actor.hp / actor.maxHp < 0.25) return { type: "potion" };
+  // A taunter steps in front of a big swing it can see coming at someone else.
+  const taunt = actor.abilities.find((a) => ABILITIES[a].selfEffect?.effect === "taunting");
+  if (taunt && living(s, "hero").length > 1 && living(s, "enemy").some((e) => bigSwingAt(e, actor.id))) {
+    return { type: "ability", ability: taunt, target: living(s, "enemy")[0].id, focus: 0 };
+  }
   const guard = actor.abilities.find((a) => ABILITIES[a].target === "self");
   if (guard && actor.hp / actor.maxHp < 0.34) return { type: "ability", ability: guard, focus: 0 };
   const attacks = actor.abilities.filter((a) => ABILITIES[a].damage);
@@ -180,15 +193,19 @@ export function simFight(party: SimHero[], enemyKinds: string[], seed: number, o
     const action = choose(state, actor);
     const res = stepBattle(state, actor.id, action, rng);
     if (!res.ok) throw new Error(`${actor.kind}: ${res.error}`);
-    tally.heroTurns += 1;
-    add(tally.turns, actor.id, 1);
+    // A potion is free and keeps the turn, so it isn't a turn of its own.
+    if (action.type !== "potion") {
+      tally.heroTurns += 1;
+      add(tally.turns, actor.id, 1);
+    }
     // A Bard's aura counts only if a Bard is standing when the blow lands.
     const bardUp = living(state, "hero").some((h) => h.kind === "frontend_bard");
     read(res.events, action.type === "ability" && bardUp ? { actor, ability: action.ability } : action.type === "ability" ? { actor: { ...actor, kind: "frontend_bard" }, ability: action.ability } : undefined);
     state = res.state;
   }
   tally.won = state.status === "victory";
-  tally.rounds = state.round;
+  // Turns per combatant: the timeline has no rounds, so this stands in for them.
+  tally.rounds = state.turnNo / state.combatants.length;
   tally.standing = living(state, "hero").length;
   tally.after = state.combatants.filter((c) => c.side === "hero").map((c) => ({ hp: Math.max(1, c.hp), focus: c.focus, potions: c.potions }));
   return tally;

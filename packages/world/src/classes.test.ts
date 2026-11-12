@@ -169,7 +169,9 @@ describe("Lighthouse Warden", () => {
       const hits = new Set<number>();
       for (let seed = 0; seed < 60; seed++) {
         const { events } = spar([{ ...hero("w", "sre_warden"), armor }], { w: "bulwark_strike" }, seed, 2);
-        for (const e of events) if (e.t === "hit" && e.actor === "w" && e.perfect) hits.add(e.amount);
+        // Only the opening blow: a perfect one leaves the target exposed, which adds to the ones after.
+        const first = events.find((e) => e.t === "hit" && e.actor === "w");
+        if (first?.t === "hit" && first.perfect) hits.add(first.amount);
       }
       expect(hits.size).toBe(1);
       return [...hits][0];
@@ -199,11 +201,13 @@ describe("Wreck Warlock", () => {
       const { events } = spar([hero("k", "data_warlock")], { k: "hex" }, seed, 6, [DUMMY_KIND], 500);
       events.forEach((e, i) => {
         if (e.t !== "hit" || e.actor !== "k") return;
-        const next = events[i + 1];
-        const bled = next?.t === "effect" && next.effect === "bleeding";
+        // The effects this hit applied: Hex's own (glitched) and the Warlock's bleed.
+        const after: BattleEvent[] = [];
+        for (let j = i + 1; j < events.length && events[j].t === "effect"; j++) after.push(events[j]);
+        const bled = after.some((x) => x.t === "effect" && x.effect === "bleeding");
         if (e.perfect) {
           perfects += 1;
-          expect(events[i + 1]).toEqual({ t: "effect", target: e.target, effect: "bleeding", turns: WARLOCK_BLEED_TURNS });
+          expect(after).toContainEqual({ t: "effect", target: e.target, effect: "bleeding", turns: WARLOCK_BLEED_TURNS });
         } else {
           plain += 1;
           expect(bled).toBe(false);

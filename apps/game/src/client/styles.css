@@ -478,3 +478,7 @@ button.nudge { border-color: var(--gold); color: var(--gold); }
 .find-gains { margin: 10px 0; }
 .shop-subhead { margin: 10px 0 4px; font-size: 13px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted, #9a96b8); }
 .pub-visitor { color: var(--gold); }
+/* Combat timeline: an enemy's next move, and turns a stun will skip. */
+.chip .intent { font-size: 12px; color: var(--muted, #b8b0a0); }
+.chip .intent.heavy { color: #ff8a7a; font-weight: 600; }
+.turn-chip.skip { opacity: 0.5; text-decoration: line-through; }
