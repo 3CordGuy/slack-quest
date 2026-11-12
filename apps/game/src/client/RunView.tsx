@@ -24,6 +24,9 @@ import {
 } from "@gantt-quest/world";
 import * as World from "@gantt-quest/world";
 import type { Me } from "./api";
+import { ContractPicker, contractName } from "./board/ContractPicker";
+import { ContractResult } from "./board/ContractResult";
+import { ContractStatus } from "./board/ContractStatus";
 import { DragPanel } from "./DragPanel";
 import { InventoryScreen } from "./InventoryScreen";
 import { WorldRenderer } from "./render/WorldRenderer";
@@ -67,6 +70,7 @@ function describe(events: WorldEvent[], state: ClientState, names: Map<string, s
       case "battle_start": out.push("Battle!"); break;
       case "battle_end": out.push(ev.status === "victory" ? "The fight is won." : ev.status === "fled" ? "The party got away." : "The party has fallen."); break;
       case "ended": out.push(ev.reason); break;
+      case "contract": out.push(`${n(ev.heroId)}'s contract (${contractName(ev.contractId) ?? ev.contractId}) ${ev.met ? "is fulfilled!" : "went unfulfilled."}`); break;
       case "battle": {
         const b = ev.ev;
         if (b.t === "hit") out.push(`${n(b.actor)}: ${b.ability} hits ${n(b.target)} for ${b.amount}${b.perfect ? " (perfect!)" : ""}.`);
@@ -260,11 +264,12 @@ function Lobby({ state, run, code }: { state: ClientState; run: RunConnection; c
         <ul className="crew-list">
           {state.heroes.map((h) => (
             <li key={h.id}>
-              <span><strong>{h.name}</strong> <span className="muted">{className(h.classId)} · Level {h.level}</span></span>
+              <span><strong>{h.name}</strong> <span className="muted">{className(h.classId)} · Level {h.level}{h.contract ? ` · ${contractName(h.contract.id)}` : ""}</span></span>
               <span className={h.id === state.hostId || h.ready ? "good" : "muted"}>{h.id === state.hostId ? "captain" : h.ready ? "ready" : "not ready"}</span>
             </li>
           ))}
         </ul>
+        <ContractPicker state={state} run={run} />
         {host ? (
           <button className="primary" disabled={waiting > 0} onClick={() => run.send({ type: "start" })}>
             {waiting > 0 ? `Waiting on ${waiting} crew…` : "Set sail"}
@@ -294,6 +299,7 @@ function Story({ state }: { state: ClientState }) {
           {state.story.demand.done ? "☑" : "☐"} {state.story.demand.npcName} asks that you {state.story.demand.text}.
         </p>
       )}
+      <ContractStatus state={state} />
     </DragPanel>
   );
 }
@@ -543,6 +549,7 @@ function Ending({ state, onLeave }: { state: ClientState; onLeave(): void }) {
         <h2 className={won ? "good" : "bad"}>{won ? "Victory" : "Defeat"}</h2>
         <p><strong>{state.story?.title}</strong></p>
         <p>{result.epilogue ?? "The tale is being written…"}</p>
+        <ContractResult state={state} />
         <h3>What you bring home</h3>
         {earned ? (
           <ul className="gear">

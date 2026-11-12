@@ -2,6 +2,10 @@
 
 import type { StatKey } from "@gantt-quest/core";
 import type { ItemDef, ShopEntry } from "@gantt-quest/world";
+import type { NoticeBoard } from "../server/board";
+
+/** What the Harbor's notice board shows: the crew goal and the contracts on offer. */
+export type Board = NoticeBoard;
 
 /** Optional ?p=2 gives this tab its own guest session, for testing two players on one machine. */
 export const PROFILE = new URLSearchParams(location.search).get("p") ?? "";
@@ -87,6 +91,7 @@ export const api = {
   sell: (itemId: number) => request<{ gold: number }>("/api/inventory/sell", { itemId }),
   shop: () => request<Shop>("/api/shop"),
   buy: (index: number) => request("/api/shop/buy", { index }),
+  board: () => request<Board>("/api/board"),
   createRun: () => request<{ code: string }>("/api/run", {}),
   requestCode: (email: string) => request("/api/auth/email/request", { email }),
   verifyCode: (email: string, code: string) => request<{ outcome: "linked" | "signed_in" | "created" | "already" }>("/api/auth/email/verify", { email, code }),

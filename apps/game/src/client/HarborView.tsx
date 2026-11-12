@@ -4,9 +4,10 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { HexPos } from "@gantt-quest/core";
-import { HARBOR_PIERS, HARBOR_PLOTS, HARBOR_SHOP, HERO_CLASSES, MAX_PARTY, generateHarbor, harborPoi, poiAt, type HarborShip } from "@gantt-quest/world";
+import { HARBOR_BOARD, HARBOR_PIERS, HARBOR_PLOTS, HARBOR_SHOP, HERO_CLASSES, MAX_PARTY, generateHarbor, harborPoi, poiAt, type HarborShip } from "@gantt-quest/world";
 import { api, type Me } from "./api";
 import { AccountPanel } from "./Account";
+import { NoticeBoard } from "./board/NoticeBoard";
 import { DragPanel } from "./DragPanel";
 import { InventoryScreen } from "./InventoryScreen";
 import { ShopScreen } from "./ShopScreen";
@@ -22,6 +23,7 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
   const [hover, setHover] = useState<HexPos | null>(null);
   const [sheet, setSheet] = useState(false);
   const [shop, setShop] = useState(false);
+  const [notices, setNotices] = useState(false);
   const [account, setAccount] = useState(false);
   const [copied, setCopied] = useState(false);
   const [text, setText] = useState("");
@@ -85,7 +87,7 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
   const hutOwner = plotIndex >= 0 ? board.members[plotIndex] : undefined;
   const hoverPoi = scene && hover ? poiAt(scene.map, hover) : undefined;
   const tip = !hoverPoi ? null
-    : hoverPoi.kind === "board" ? "Notice board"
+    : hoverPoi.kind === "board" ? "Notice board: the crew goal and contracts"
     : hoverPoi.kind === "shop" ? "Market stall: buy and sell gear"
     : hoverPoi.kind === "ring" ? "Sparring ring"
     : hoverPoi.kind === "plot" ? `${board.members.find((m) => `plot:${m.id}` === hoverPoi.id)?.name ?? "Someone"}'s hut`
@@ -123,6 +125,7 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
     harbor.send({ type: "refresh" });
   };
   const atShop = !!self && same(self.pos, HARBOR_SHOP);
+  const atBoard = !!self && same(self.pos, HARBOR_BOARD);
   const error = harbor.error ?? launchError;
 
   return (
@@ -206,7 +209,12 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
       </DragPanel>
 
       <DragPanel id="harbor.turn" title="Here" compact className="turnbar panel">
-        {shipHere ? (
+        {atBoard ? (
+          <>
+            <span>The notice board</span>
+            <button className="primary" onClick={() => setNotices(true)}>Read the notice board</button>
+          </>
+        ) : shipHere ? (
           <>
             <span>{shipHere.captain}'s ship · {shipHere.aboard.length}/{MAX_PARTY} aboard</span>
             <button className="primary" onClick={() => board_(shipHere)}>Walk aboard</button>
@@ -227,6 +235,7 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
       {error && <div className="toast">{error}</div>}
       {sheet && me.character && <InventoryScreen me={me} refresh={refreshAll} onClose={() => setSheet(false)} />}
       {account && <AccountPanel me={me} refresh={refresh} onClose={() => setAccount(false)} />}
+      {notices && <NoticeBoard refresh={refresh} onClose={() => setNotices(false)} />}
       {shop && me.character && <ShopScreen me={me} refresh={refreshAll} onClose={() => setShop(false)} />}
     </div>
   );
