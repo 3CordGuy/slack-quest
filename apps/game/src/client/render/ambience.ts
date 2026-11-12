@@ -127,6 +127,8 @@ const floorTexture = () =>
 
 /** Raindrops in the air at once. */
 const DROPS = 150;
+/** Droplets in one splash against the rocks. */
+const SPLASH_DROPS = 6;
 /** How long one spell of weather lasts before the sky starts turning to the next. */
 const WEATHER_SPELL_MS = 7 * 60 * 1000;
 /** Puffs of smoke in the air over one chimney at a time. */
@@ -324,6 +326,11 @@ export class Ambience {
   private cloud = 0;
   private rainfall = 0;
   private rain: THREE.Points | null = null;
+  /** Where the sea breaks on rock: a point on the shared edge, the way out to sea, and its own rhythm. */
+  private splashes: { x: number; y: number; z: number; nx: number; nz: number; phase: number; period: number }[] = [];
+  private splashPoints: THREE.Points | null = null;
+  private shoreSplashes: typeof this.splashes = [];
+  private rockSplashes: typeof this.splashes = [];
   /** Chimney smoke: a column of pixel puffs over each stack. Outlives a map rebuild, so it is kept out of `group`. */
   private smoke: THREE.Points | null = null;
   private stacks: THREE.Vector3[] = [];
@@ -621,6 +628,41 @@ export class Ambience {
       this.group.add(mesh);
     }
 
+    // ---- splashes: where the sea meets rock (hills, the rampart), it breaks in little pixel bursts ----
+    {
+      const byKey = new Map(tiles.map((t) => [`${t.q},${t.r}`, t]));
+      const rocky = new Set(["hills", "rampart"]);
+      const splashes: typeof this.splashes = [];
+      for (const t of tiles) {
+        if (!rocky.has(t.biome as string) || skip(t)) continue;
+        const p = place(t);
+        for (const [dq, dr] of [[1, 0], [1, -1], [0, -1], [-1, 0], [-1, 1], [0, 1]]) {
+          const nb = byKey.get(`${t.q + dq},${t.r + dr}`);
+          if (!nb || (nb.biome as string) !== "water") continue;
+          const o = place(nb);
+          const dx = o.x - p.x, dz = o.z - p.z;
+          const len = Math.hypot(dx, dz) || 1;
+          // One or two spots along each wet edge, a little apart, so a long shore does not pulse in step.
+          const count = 1 + (hash(t.q * 3 + dq, t.r * 5 + dr, 700) < 0.4 ? 1 : 0);
+          for (let i = 0; i < count; i++) {
+            const along = (hash(t.q + i, t.r + dq * 7 + dr, 701) - 0.5) * 0.9;
+            splashes.push({
+              x: (p.x + o.x) / 2 - (dz / len) * along,
+              z: (p.z + o.z) / 2 + (dx / len) * along,
+              y: o.y + 0.02,
+              nx: dx / len,
+              nz: dz / len,
+              phase: hash(t.q, t.r, 702 + i * 3 + dq) * 10,
+              period: 2.2 + hash(t.q, t.r, 703 + i + dr) * 2.6,
+            });
+          }
+        }
+      }
+      this.shoreSplashes = splashes;
+      this.rockSplashes = [];
+      this.layOutSplashes();
+    }
+
     // ---- weather: outdoors the sky changes with the clock (see weather()); a port with streets is wetter than an island ----
     this.wetPort = tiles.some((t) => (t.biome as string) === "cobble");
     this.outdoors = !tiles.some((t) => (t.biome as string) === "floor");
@@ -662,6 +704,10 @@ export class Ambience {
     this.waves = [];
     this.wispPoints = null;
     this.rain = null;
+    this.splashPoints = null;
+    this.splashes = [];
+    this.shoreSplashes = [];
+    this.rockSplashes = [];
     this.tufts = [];
     this.crests = [];
     this.wisps = [];
@@ -708,6 +754,7 @@ export class Ambience {
     this.light(target, clock);
     this.fall(clock, target);
     this.puff(clock);
+    this.splash(clock);
     this.flicker(clock, target);
     const motion = this.still ? 0 : 1;
 
@@ -892,6 +939,76 @@ export class Ambience {
   }
 
   /** Puffs leave the stack one after another, drift with the wind as they climb, and thin out. */
+  /**
+   * Rocks standing out of the sea (and the wreck on them): the water breaks
+   * around each one too. `rocks` are their bases at the water line.
+   */
+  setSeaRocks(rocks: THREE.Vector3[]) {
+    const out: typeof this.splashes = [];
+    rocks.forEach((r, n) => {
+      // Three spots around each rock, never in step.
+      for (let i = 0; i < 3; i++) {
+        const a = (i / 3) * Math.PI * 2 + hash(n, i, 720) * 1.2;
+        const nx = Math.cos(a), nz = Math.sin(a);
+        out.push({ x: r.x + nx * 0.42, y: r.y + 0.02, z: r.z + nz * 0.42, nx, nz, phase: hash(n, i, 721) * 10, period: 1.8 + hash(n, i, 722) * 2.4 });
+      }
+    });
+    this.rockSplashes = out;
+    this.layOutSplashes();
+  }
+
+  /** (Re)build the splash points for the shore and the rocks together. */
+  private layOutSplashes() {
+    if (this.splashPoints) {
+      this.group.remove(this.splashPoints);
+      this.splashPoints.geometry.dispose();
+      (this.splashPoints.material as THREE.Material).dispose();
+      this.splashPoints = null;
+    }
+    this.splashes = [...this.shoreSplashes, ...this.rockSplashes];
+    if (this.splashes.length === 0 || this.still) return;
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute("position", new THREE.BufferAttribute(new Float32Array(this.splashes.length * SPLASH_DROPS * 3), 3));
+    geometry.setAttribute("color", new THREE.BufferAttribute(new Float32Array(this.splashes.length * SPLASH_DROPS * 4), 4));
+    this.splashPoints = new THREE.Points(geometry, new THREE.PointsMaterial({ size: 3, sizeAttenuation: false, vertexColors: true, transparent: true, depthWrite: false }));
+    this.splashPoints.frustumCulled = false;
+    this.group.add(this.splashPoints);
+  }
+
+  /**
+   * The sea breaking on rock: every few seconds each spot throws up a handful
+   * of white pixels that arc out over the water and drop back, quick and small.
+   */
+  private splash(clock: number) {
+    if (!this.splashPoints) return;
+    const pos = this.splashPoints.geometry.getAttribute("position") as THREE.BufferAttribute;
+    const col = this.splashPoints.geometry.getAttribute("color") as THREE.BufferAttribute;
+    const glow = 0.75 + 0.25 * this.daylight;
+    this.splashes.forEach((s, n) => {
+      const cycle = (clock + s.phase) / s.period;
+      const burst = Math.floor(cycle);
+      // The burst lasts the first fifth of each cycle; the rest of the time the water is calm.
+      const t = (cycle - burst) / 0.2;
+      for (let i = 0; i < SPLASH_DROPS; i++) {
+        const k = n * SPLASH_DROPS + i;
+        if (t >= 1) {
+          col.setXYZW(k, 1, 1, 1, 0);
+          continue;
+        }
+        const r = (salt: number) => hash(n + i * 13, burst, 710 + salt);
+        // Thrown out to sea and to either side, up, then falling back.
+        const out = (0.1 + r(1) * 0.25) * t;
+        const side = (r(2) - 0.5) * 0.5 * t;
+        const up = (0.25 + r(3) * 0.35) * (4 * t * (1 - t));
+        pos.setXYZ(k, s.x + s.nx * out - s.nz * side, s.y + up, s.z + s.nz * out + s.nx * side);
+        // Whiter at the top of the throw, fading as it falls.
+        col.setXYZW(k, glow, glow, glow + 0.05, (1 - t) * 0.9);
+      }
+    });
+    pos.needsUpdate = true;
+    col.needsUpdate = true;
+  }
+
   private puff(clock: number) {
     if (!this.smoke) return;
     const pos = this.smoke.geometry.getAttribute("position") as THREE.BufferAttribute;

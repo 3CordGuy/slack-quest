@@ -773,6 +773,8 @@ export class WorldRenderer {
       if (g.userData.smoke) stacks.push((g.userData.smoke as THREE.Vector3).clone().add(g.position));
     }
     this.ambience.setSmoke(stacks);
+    // The sea breaks around rocks standing out of it, and the wreck on them.
+    this.ambience.setSeaRocks(state.map.pois.filter((p) => p.kind === "rocks" || p.kind === "wreck").map((p) => this.standAt(p.pos)));
   }
 
   /** Furniture: rebuilt whenever a piece is added, moved, turned or selected. */
