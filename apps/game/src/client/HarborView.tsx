@@ -73,7 +73,7 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
       phase: "overworld",
       round: 0,
       map: { ...base, pois },
-      heroes: players.map((p) => ({ id: p.id, classId: p.classId, pos: p.pos, label: p.name, outfit: p.outfit })),
+      heroes: players.map((p) => ({ id: p.id, classId: p.classId, pos: p.pos, label: p.name, outfit: p.outfit, asleep: !!p.bedroll && same(p.bedroll, p.pos) })),
       turn: null,
       battle: null,
       story: null,

@@ -13,7 +13,7 @@ import type { HexPos } from "@gantt-quest/core";
 import { hexDistance } from "@gantt-quest/core";
 import { BATTLE_JOIN_RANGE, ENEMIES, MOVE_COST, findPath, reachable, tileAt, type ClientState, type Outfit, type Phase, type Poi, type Tile, type WorldEvent, type WorldMap } from "@gantt-quest/world";
 import { propModel } from "./props";
-import { SPRITE_ASPECT, fxTexture, labelTexture, spriteKey, spriteTexture, textTexture, type FxKind } from "./sprites";
+import { SPRITE_ASPECT, fxTexture, labelTexture, sleepZTexture, spriteKey, spriteTexture, textTexture, type FxKind } from "./sprites";
 
 /** Spells fly as a coloured bolt; these are their colours, by ability name. */
 const SPELL_COLOR: Record<string, string> = {
@@ -37,7 +37,8 @@ export interface RenderState {
   phase: Phase;
   round: number;
   map: WorldMap;
-  heroes: { id: string; classId: string; pos: HexPos; label?: string; outfit?: Outfit }[];
+  /** `asleep`: lying down with eyes shut, z's rising, as on a bedroll in the Harbor. */
+  heroes: { id: string; classId: string; pos: HexPos; label?: string; outfit?: Outfit; asleep?: boolean }[];
   turn: { heroId: string; mp: number } | null;
   battle: ClientState["battle"];
   story: { npcs: { id: string; poi: string }[] } | null;
@@ -133,6 +134,10 @@ interface Unit {
   stride: number;
   bob: number;
   kind: string;
+  /** Lying down asleep; `nextZ` is when its next z rises, on the render clock. */
+  asleep: boolean;
+  nextZ: number;
+  zCount: number;
 }
 
 interface Want {
@@ -146,12 +151,26 @@ interface Want {
   pulse?: boolean;
   hp?: number;
   down?: boolean;
+  asleep?: boolean;
 }
 
 interface Floater {
   sprite: THREE.Sprite;
   age: number;
 }
+
+/** A z rising from a sleeper: drifts up and sideways, grows, and fades. */
+interface SleepZ {
+  sprite: THREE.Sprite;
+  age: number;
+  x: number;
+  z: number;
+  y: number;
+  size: number;
+  sway: number;
+}
+
+const Z_LIFE = 2.6;
 
 /** A short-lived effect sprite: a swipe, a projectile in flight, a burst. */
 interface Fx {
@@ -208,6 +227,7 @@ export class WorldRenderer {
   private units = new Map<string, Unit>();
   private pulsing = new Set<string>();
   private floaters: Floater[] = [];
+  private sleepZs: SleepZ[] = [];
   private fx: Fx[] = [];
   private pending: { at: number; run: () => void }[] = [];
 
@@ -1286,7 +1306,7 @@ export class WorldRenderer {
         const pos = this.standAt(h.pos);
         pos.x += (i - (n - 1) / 2) * 0.6;
         pos.z += 0.25;
-        want.set(h.id, { kind: h.classId, outfit: h.outfit, pos, size: 1.5, label: h.label, ring: colorOf(h.id), pulse: state.turn?.heroId === h.id });
+        want.set(h.id, { kind: h.classId, outfit: h.outfit, pos, size: 1.5, label: h.label, ring: colorOf(h.id), pulse: state.turn?.heroId === h.id, asleep: h.asleep });
       }
       for (const npc of state.story?.npcs ?? []) {
         const poi = state.map.pois.find((p) => p.id === npc.poi);
@@ -1318,7 +1338,7 @@ export class WorldRenderer {
     for (const [id, unit] of this.units) {
       const w = want.get(id);
       // A change of gear is a different sprite, so the unit is rebuilt.
-      if (w && spriteKey(w.kind, w.outfit) === unit.kind) continue;
+      if (w && spriteKey(w.kind, w.outfit, w.asleep) === unit.kind) continue;
       this.unitGroup.remove(unit.sprite, unit.caster);
       unit.caster.material instanceof THREE.Material && unit.caster.material.dispose();
       unit.caster.customDepthMaterial?.dispose();
@@ -1332,7 +1352,7 @@ export class WorldRenderer {
     for (const [id, w] of want) {
       let unit = this.units.get(id);
       if (!unit) {
-        const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: spriteTexture(w.kind, w.outfit), transparent: true, alphaTest: 0.5, depthTest: false }));
+        const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: spriteTexture(w.kind, w.outfit, w.asleep), transparent: true, alphaTest: 0.5, depthTest: false }));
         // Drawn over the scenery, so nobody is lost inside a building or behind a tree.
         sprite.renderOrder = 2;
         sprite.center.set(0.5, 0);
@@ -1341,17 +1361,21 @@ export class WorldRenderer {
         caster.customDepthMaterial = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking, map: sprite.material.map, alphaTest: 0.5, side: THREE.DoubleSide });
         caster.castShadow = true;
         this.unitGroup.add(sprite, caster);
-        unit = { sprite, caster, ring: null, hpBack: null, hpFill: null, label: null, labelText: "", goal: w.pos.clone(), path: [], kick: new THREE.Vector3(), lean: 0, baseRot: 0, stride: 0, bob: 0, kind: spriteKey(w.kind, w.outfit) };
+        unit = { sprite, caster, ring: null, hpBack: null, hpFill: null, label: null, labelText: "", goal: w.pos.clone(), path: [], kick: new THREE.Vector3(), lean: 0, baseRot: 0, stride: 0, bob: 0, kind: spriteKey(w.kind, w.outfit, w.asleep), asleep: false, nextZ: 0, zCount: 0 };
         this.units.set(id, unit);
       }
       unit.goal.copy(w.pos);
+      // Asleep: on their side across the bedroll, low to the ground, the head toward the left.
+      if (w.asleep) unit.goal.y += (w.size * SPRITE_ASPECT) / 2 - 0.05;
+      if (w.asleep && !unit.asleep) unit.nextZ = this.clock + 0.4;
+      unit.asleep = !!w.asleep;
       unit.sprite.scale.set(w.size * SPRITE_ASPECT, w.size, 1);
       unit.caster.scale.copy(unit.sprite.scale);
-      unit.caster.visible = !w.down;
+      unit.caster.visible = !w.down && !w.asleep;
       const mat = unit.sprite.material;
-      unit.baseRot = w.down ? Math.PI / 2 : 0;
+      unit.baseRot = w.down ? Math.PI / 2 : w.asleep ? Math.PI / 2 : 0;
       mat.opacity = w.down ? 0.55 : 1;
-      unit.sprite.center.set(0.5, w.down ? 0.5 : 0);
+      unit.sprite.center.set(0.5, w.down || w.asleep ? 0.5 : 0);
 
       if (w.ring && !unit.ring) {
         unit.ring = new THREE.Mesh(new THREE.RingGeometry(0.3, 0.44, 6), new THREE.MeshBasicMaterial({ side: THREE.DoubleSide }));
@@ -1375,7 +1399,7 @@ export class WorldRenderer {
           unit.label.center.set(0.5, -0.35);
           unit.label.userData.aspect = aspect;
           unit.label.userData.rows = texture.image.height;
-          unit.label.userData.lift = w.size + 0.3;
+          unit.label.userData.lift = w.asleep ? w.size * SPRITE_ASPECT + 0.3 : w.size + 0.3;
           unit.label.renderOrder = 7;
           this.unitGroup.add(unit.label);
         }
@@ -1764,6 +1788,33 @@ export class WorldRenderer {
         f.sprite.material.dispose();
         this.fx.splice(i, 1);
         f.onEnd?.();
+      }
+    }
+
+    // Sleepers breathe out a z now and then: small, small, then a big one.
+    for (const unit of this.units.values()) {
+      if (!unit.asleep || this.clock < unit.nextZ) continue;
+      unit.nextZ = this.clock + 0.85;
+      unit.zCount += 1;
+      const big = unit.zCount % 3 === 0;
+      const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: sleepZTexture(), transparent: true, depthTest: false }));
+      sprite.renderOrder = 10;
+      const p = unit.sprite.position;
+      this.fxGroup.add(sprite);
+      this.sleepZs.push({ sprite, age: 0, x: p.x - 0.35, z: p.z, y: p.y + 0.25, size: big ? 0.42 : 0.26, sway: unit.zCount * 1.7 });
+    }
+    for (let i = this.sleepZs.length - 1; i >= 0; i--) {
+      const z = this.sleepZs[i];
+      z.age += dt;
+      const t = z.age / Z_LIFE;
+      z.sprite.position.set(z.x + t * 0.5 + Math.sin(z.sway + z.age * 2.4) * 0.12, z.y + t * 1.3, z.z);
+      const s = z.size * (0.7 + t * 0.6);
+      z.sprite.scale.set(s, s, 1);
+      z.sprite.material.opacity = Math.min(1, z.age / 0.25) * (1 - Math.max(0, (t - 0.6) / 0.4));
+      if (t >= 1) {
+        this.fxGroup.remove(z.sprite);
+        z.sprite.material.dispose();
+        this.sleepZs.splice(i, 1);
       }
     }
 

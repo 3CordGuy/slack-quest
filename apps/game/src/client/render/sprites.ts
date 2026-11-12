@@ -360,9 +360,9 @@ function drawDummy(ctx: CanvasRenderingContext2D) {
 
 const cache = new Map<string, THREE.CanvasTexture>();
 
-/** Cache key for a sprite: the kind plus whatever is being worn. */
-export function spriteKey(kind: string, outfit?: Outfit): string {
-  return outfit ? `${kind}|${outfitKey(outfit)}` : kind;
+/** Cache key for a sprite: the kind plus whatever is being worn, and whether they are asleep. */
+export function spriteKey(kind: string, outfit?: Outfit, asleep = false): string {
+  return (outfit ? `${kind}|${outfitKey(outfit)}` : kind) + (asleep ? "|zz" : "");
 }
 
 /**
@@ -370,8 +370,8 @@ export function spriteKey(kind: string, outfit?: Outfit): string {
  * bandit. Pass a hero's outfit to draw them wearing it; without one the
  * kind's stock look is used.
  */
-export function spriteTexture(kind: string, outfit?: Outfit): THREE.CanvasTexture {
-  const key = spriteKey(kind, outfit);
+export function spriteTexture(kind: string, outfit?: Outfit, asleep = false): THREE.CanvasTexture {
+  const key = spriteKey(kind, outfit, asleep);
   const hit = cache.get(key);
   if (hit) return hit;
   const canvas = document.createElement("canvas");
@@ -384,6 +384,15 @@ export function spriteTexture(kind: string, outfit?: Outfit): THREE.CanvasTextur
   else if (kind === "dummy") drawDummy(ctx);
   else if (outfit) drawHero(ctx, LOOKS[kind] ?? LOOKS.bandit, outfit);
   else drawHumanoid(ctx, LOOKS[kind] ?? LOOKS.bandit);
+  // Asleep: the eyes are shut, a short dark line where each one was.
+  if (asleep && LOOKS[kind]) {
+    ctx.fillStyle = LOOKS[kind].skin;
+    ctx.fillRect(8, 7, 1, 1);
+    ctx.fillRect(10, 7, 1, 1);
+    ctx.fillStyle = OUTLINE;
+    ctx.fillRect(7, 7, 2, 1);
+    ctx.fillRect(10, 7, 2, 1);
+  }
   finish(ctx);
   const tex = new THREE.CanvasTexture(canvas);
   tex.magFilter = THREE.NearestFilter;
@@ -399,6 +408,34 @@ export const SPRITE_ASPECT = W / H;
 /** The same sprite as an image URL, for use in the HUD. */
 export function spriteDataUrl(kind: string, outfit?: Outfit): string {
   return (spriteTexture(kind, outfit).image as HTMLCanvasElement).toDataURL();
+}
+
+let zTexture: THREE.CanvasTexture | null = null;
+
+/** A pixel-art "Z" for someone asleep: pale blue with a dark outline. Shared by every sleeper. */
+export function sleepZTexture(): THREE.CanvasTexture {
+  if (zTexture) return zTexture;
+  const canvas = document.createElement("canvas");
+  canvas.width = 9;
+  canvas.height = 9;
+  const ctx = canvas.getContext("2d")!;
+  ctx.fillStyle = "#dbe9ff";
+  ctx.fillRect(2, 2, 5, 1);
+  ctx.fillRect(5, 3, 1, 1);
+  ctx.fillRect(4, 4, 1, 1);
+  ctx.fillRect(3, 5, 1, 1);
+  ctx.fillRect(2, 6, 5, 1);
+  // A one-pixel dark outline around the letter.
+  const img = ctx.getImageData(0, 0, 9, 9);
+  const on = (x: number, y: number) => x >= 0 && y >= 0 && x < 9 && y < 9 && img.data[(y * 9 + x) * 4 + 3] > 0;
+  ctx.fillStyle = OUTLINE;
+  for (let y = 0; y < 9; y++) for (let x = 0; x < 9; x++) if (!on(x, y) && (on(x - 1, y) || on(x + 1, y) || on(x, y - 1) || on(x, y + 1))) ctx.fillRect(x, y, 1, 1);
+  zTexture = new THREE.CanvasTexture(canvas);
+  zTexture.magFilter = THREE.NearestFilter;
+  zTexture.minFilter = THREE.NearestFilter;
+  zTexture.generateMipmaps = false;
+  zTexture.colorSpace = THREE.SRGBColorSpace;
+  return zTexture;
 }
 
 /** A short text label as a pixel-crisp texture, for floating combat numbers. */
