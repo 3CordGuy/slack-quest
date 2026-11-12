@@ -145,6 +145,37 @@ export const ENEMIES: Record<string, EnemyDef> = {
       { name: "Immolate", rolls: 2, pct: 50, damage: 4, target: "hero", perfect: { effect: "burning", turns: 2 }, weight: 1 },
     ],
   },
+  brute: {
+    kind: "brute", name: "Brute", hp: 24, speed: 35, xp: 18,
+    attacks: [
+      { name: "Maul", rolls: 2, pct: 60, damage: 11, target: "hero", perfect: { effect: "stunned", turns: 1 }, weight: 3 },
+      { name: "Shove", rolls: 3, pct: 65, damage: 6, target: "hero", weight: 1 },
+    ],
+  },
+  archer: {
+    kind: "archer", name: "Archer", hp: 12, speed: 70, xp: 13,
+    attacks: [
+      { name: "Volley", rolls: 3, pct: 65, damage: 6, target: "hero", weight: 3 },
+      { name: "Barbed Arrow", rolls: 2, pct: 55, damage: 5, target: "hero", perfect: { effect: "bleeding", turns: 3 }, weight: 2 },
+    ],
+  },
+  // A beast boss: fast, and it makes its victims bleed.
+  alpha: {
+    kind: "alpha", name: "Pack Leader", hp: 36, speed: 75, xp: 40, boss: true,
+    attacks: [
+      { name: "Savage Bite", rolls: 3, pct: 70, damage: 9, target: "hero", perfect: { effect: "bleeding", turns: 3 }, weight: 3 },
+      { name: "Pounce", rolls: 2, pct: 65, damage: 8, target: "hero", perfect: { effect: "stunned", turns: 1 }, weight: 2 },
+      { name: "Rending Howl", rolls: 4, pct: 55, damage: 5, target: "all_heroes", weight: 1 },
+    ],
+  },
+  // A guardian boss: slow and alone, but each blow lands like a wall.
+  guardian: {
+    kind: "guardian", name: "Guardian", hp: 46, speed: 30, xp: 44, boss: true,
+    attacks: [
+      { name: "Stone Fist", rolls: 2, pct: 70, damage: 12, target: "hero", perfect: { effect: "stunned", turns: 1 }, weight: 3 },
+      { name: "Quake", rolls: 4, pct: 60, damage: 6, target: "all_heroes", weight: 2 },
+    ],
+  },
   villain: {
     kind: "villain", name: "Villain", hp: 34, speed: 55, xp: 40, boss: true,
     attacks: [

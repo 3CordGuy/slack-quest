@@ -255,12 +255,12 @@ export class RunRoom extends DurableObject<Env> {
     const fallback = cannedFill(frame, rng);
     // The NPC's ask is chosen by the game, then handed to the model so the prose agrees with it.
     const demand = pickDemand(frame, rng);
-    const hints = storyHints(rng);
+    const hints = storyHints(rng, frame);
     const fill = (await generateFill(this.env, frame, world.heroes.map((h) => h.name), demand, islandFacts(world.map), hints)) ?? fallback;
-    const error = await this.serial(() => this.apply({ type: "begin", bible: buildBible(frame, fill, demand) }));
+    const error = await this.serial(() => this.apply({ type: "begin", bible: buildBible(frame, fill, demand, rng) }));
     if (error) {
       console.warn("run-room:story-rejected", { error });
-      await this.serial(() => this.apply({ type: "begin", bible: buildBible(frame, fallback, demand) }));
+      await this.serial(() => this.apply({ type: "begin", bible: buildBible(frame, fallback, demand, rng) }));
     }
   }
 

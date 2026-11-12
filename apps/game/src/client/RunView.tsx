@@ -62,6 +62,7 @@ function describe(events: WorldEvent[], state: ClientState, names: Map<string, s
       case "xp": out.push(`${n(ev.heroId)} gains ${ev.amount} XP.`); break;
       case "loot": out.push(`${n(ev.heroId)} found ${ev.item.name} (${ev.item.rarity}).`); break;
       case "key_item": out.push(`${n(ev.heroId)} now carries ${ev.name}.`); break;
+      case "rite": out.push(ev.text); break;
       case "objective": out.push(`Objective complete: ${state.story?.objectives.find((o) => o.id === ev.id)?.text ?? ev.id}`); break;
       case "battle_start": out.push("Battle!"); break;
       case "battle_end": out.push(ev.status === "victory" ? "The fight is won." : ev.status === "fled" ? "The party got away." : "The party has fallen."); break;
@@ -210,6 +211,7 @@ function HexTip({ state, hover }: { state: ClientState; hover: HexPos }) {
       {poi && <span className="muted"> · {BIOME_LABEL[tile.biome]}</span>}
       <span className="muted"> · {Number.isFinite(cost) ? `${cost} movement to enter` : "cannot be crossed"}</span>
       {walk && <span className={walk.startsWith("out") ? "bad" : "good"}> · {walk}</span>}
+      {poi && !poi.cleared && poi.enemies.length > 0 && <span className="bad"> · heroes inside the red line join a fight here</span>}
     </div>
   );
 }
@@ -353,7 +355,9 @@ function TurnBar({ state, run }: { state: ClientState; run: RunConnection }) {
   const mine = turn.heroId === state.you;
   const hero = state.heroes.find((h) => h.id === turn.heroId)!;
   const poi = poiAt(state.map, hero.pos);
+  const rite = poi && state.story?.rites.find((r) => r.poi === poi.id && r.ready && !r.done);
   const action = !poi || turn.acted ? null
+    : rite ? rite.label
     : poi.kind === "landing" ? "Rest at the ship"
     : poi.kind === "shrine" ? (poi.usedBy.includes(hero.id) ? null : "Pray at the shrine")
     : poi.kind === "cache" ? (poi.cleared ? null : "Search the cache")

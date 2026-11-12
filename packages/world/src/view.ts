@@ -13,6 +13,8 @@ export interface PublicStory {
   poiNames: Record<string, string>;
   npcs: { id: string; name: string; role: string; poi: string }[];
   objectives: { id: string; text: string; done: boolean }[];
+  /** Story steps performed at a place. `ready` once everything it needs is done. */
+  rites: { id: string; poi: string; label: string; ready: boolean; done: boolean }[];
   /** What the NPC has asked of the party; null until they have met. */
   demand: { npcName: string; text: string; done: boolean } | null;
 }
@@ -36,6 +38,9 @@ export function clientView(state: WorldState, playerId: string): ClientState {
     poiNames: Object.fromEntries(Object.entries(bible.poiNames).filter(([id]) => visibleIds.has(id))),
     npcs: bible.npcs.map((n) => ({ id: n.id, name: n.name, role: n.role, poi: n.poi })),
     objectives: bible.objectives.map((o) => ({ id: o.id, text: o.text, done: !!state.facts[o.fact] })),
+    rites: bible.rites
+      .filter((r) => visibleIds.has(r.poi))
+      .map((r) => ({ id: r.id, poi: r.poi, label: r.label, ready: r.requires.every((f) => state.facts[f]), done: !!state.facts[r.sets] })),
     demand: bible.demand.text && state.facts[`met:${bible.npcs[0].id}`]
       ? { npcName: bible.npcs[0].name, text: bible.demand.text, done: demandMet(bible, state.facts, !!state.npcs[bible.npcs[0].id]?.persuaded) }
       : null,

@@ -8,7 +8,8 @@
 
 import * as THREE from "three";
 import type { HexPos } from "@gantt-quest/core";
-import { findPath, reachable, tileAt, type ClientState, type Outfit, type Phase, type Poi, type Tile, type WorldEvent, type WorldMap } from "@gantt-quest/world";
+import { hexDistance } from "@gantt-quest/core";
+import { BATTLE_JOIN_RANGE, ENEMIES, findPath, reachable, tileAt, type ClientState, type Outfit, type Phase, type Poi, type Tile, type WorldEvent, type WorldMap } from "@gantt-quest/world";
 import { SPRITE_ASPECT, fxTexture, labelTexture, spriteKey, spriteTexture, textTexture, type FxKind } from "./sprites";
 
 /** Spells fly as a coloured bolt; these are their colours, by ability name. */
@@ -19,7 +20,8 @@ const SPELL_COLOR: Record<string, string> = {
   "Dark Bolt": "#b06cff",
   Immolate: "#ff6a3c",
 };
-const ARROW_ABILITIES = new Set(["Aimed Shot", "Pin Down"]);
+const ARROW_ABILITIES = new Set(["Aimed Shot", "Pin Down", "Volley", "Barbed Arrow"]);
+const isBoss = (kind: string) => !!ENEMIES[kind]?.boss;
 
 /**
  * What the renderer needs to draw a scene. An island's ClientState satisfies
@@ -146,6 +148,9 @@ export class WorldRenderer {
   private unitGroup = new THREE.Group();
   private fxGroup = new THREE.Group();
   private pathGroup = new THREE.Group();
+  /** Red outlines around the hexes close enough to join a fight at each camp or lair. */
+  private rangeGroup = new THREE.Group();
+  private rangeSig = "";
   private hoverRing: THREE.Mesh;
   private arena: THREE.Mesh;
   private units = new Map<string, Unit>();
@@ -204,7 +209,7 @@ export class WorldRenderer {
     );
     this.arena.visible = false;
 
-    this.scene.add(this.decor, this.poiGroup, this.pathGroup, this.hoverRing, this.arena, this.unitGroup, this.fxGroup);
+    this.scene.add(this.decor, this.poiGroup, this.rangeGroup, this.pathGroup, this.hoverRing, this.arena, this.unitGroup, this.fxGroup);
 
     canvas.addEventListener("pointerdown", this.onPointerDown);
     canvas.addEventListener("pointermove", this.onPointerMove);
@@ -239,6 +244,7 @@ export class WorldRenderer {
     if (first) this.buildTerrain(state);
     this.state = state;
     this.buildPois(state);
+    this.buildJoinRanges(state);
 
     const me = state.heroes.find((h) => h.id === state.you);
     const myTurn = !!me && (state.freeRoam || (state.phase === "overworld" && state.turn?.heroId === state.you));
@@ -449,6 +455,56 @@ export class WorldRenderer {
     }
   }
 
+  /**
+   * Outline, in red, the area around a place with enemies still in it: a
+   * hero standing inside the line when a fight starts there is pulled in.
+   * Shown only when it matters: while the pointer is over the place or its
+   * surroundings, or while a hero is standing inside the area.
+   */
+  private buildJoinRanges(state: RenderState) {
+    const near = (p: HexPos, poi: Poi) => hexDistance(p, poi.pos) <= BATTLE_JOIN_RANGE;
+    const hostile = state.battle
+      ? []
+      : state.map.pois.filter(
+          (poi) => !poi.cleared && poi.enemies.length > 0 && ((this.hovered && near(this.hovered, poi)) || state.heroes.some((h) => near(h.pos, poi))),
+        );
+    const sig = `${state.code}|${hostile.map((p) => p.id).join(",")}`;
+    if (sig === this.rangeSig) return;
+    this.rangeSig = sig;
+    for (const child of this.rangeGroup.children) (child as THREE.LineSegments).geometry.dispose();
+    this.rangeGroup.clear();
+
+    const points: number[] = [];
+    for (const poi of hostile) {
+      const inside = (p: HexPos) => hexDistance(p, poi.pos) <= BATTLE_JOIN_RANGE;
+      for (const t of this.tiles) {
+        if (!inside(t)) continue;
+        const { x, z } = hexToWorld(t);
+        const y = tileTop(t) + 0.05;
+        for (let i = 0; i < 6; i++) {
+          // Edge i runs between corners i and i+1; the neighbour across it lies along the bisector.
+          const a = (i * Math.PI) / 3;
+          const b = ((i + 1) * Math.PI) / 3;
+          const mid = (a + b) / 2;
+          const nx = x + Math.sin(mid) * SQRT3;
+          const nz = z + Math.cos(mid) * SQRT3;
+          const nr = Math.round(nz / 1.5);
+          const nq = Math.round(nx / SQRT3 - nr / 2);
+          const neighbour = { q: nq, r: nr };
+          // Draw only the edges on the boundary; the map's own edge counts as boundary.
+          if (inside(neighbour) && tileAt(state.map, neighbour)) continue;
+          points.push(x + Math.sin(a), y, z + Math.cos(a), x + Math.sin(b), y, z + Math.cos(b));
+        }
+      }
+    }
+    if (points.length === 0) return;
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute("position", new THREE.Float32BufferAttribute(points, 3));
+    const lines = new THREE.LineSegments(geometry, new THREE.LineBasicMaterial({ color: "#ff3b3b", transparent: true, opacity: 0.9, depthTest: false }));
+    lines.renderOrder = 2;
+    this.rangeGroup.add(lines);
+  }
+
   private poiModel(poi: Poi): THREE.Group {
     const g = new THREE.Group();
     const lambert = (color: string) => new THREE.MeshLambertMaterial({ color, flatShading: true });
@@ -565,7 +621,7 @@ export class WorldRenderer {
             outfit: c.outfit,
             // Staggered diagonally so the tall sprites do not hide each other.
             pos: new THREE.Vector3(centre.x + dir * (1.2 + i * 1.05), centre.y, centre.z + (i - (line.length - 1) / 2) * 1.25),
-            size: c.kind === "villain" ? 2.5 : 1.9,
+            size: isBoss(c.kind) ? 2.5 : c.kind === "brute" ? 2.2 : 1.9,
             ring: side === "hero" ? colorOf(c.id) : "#e23b3b",
             pulse: c.id === actor,
             hp: c.hp / c.maxHp,
@@ -601,7 +657,7 @@ export class WorldRenderer {
           const pos = this.standAt(poi.pos);
           pos.x += (i - (poi.enemies.length - 1) / 2) * 0.6 + 0.2;
           pos.z += 0.05;
-          want.set(`poi:${poi.id}:${i}`, { kind, pos, size: kind === "villain" ? 1.7 : 1.3 });
+          want.set(`poi:${poi.id}:${i}`, { kind, pos, size: isBoss(kind) ? 1.7 : kind === "brute" ? 1.5 : 1.3 });
         });
       }
     }
@@ -831,6 +887,7 @@ export class WorldRenderer {
     if ((pos && this.hovered && key(pos) === key(this.hovered)) || (!pos && !this.hovered)) return;
     this.hovered = pos;
     this.updatePath();
+    if (this.state) this.buildJoinRanges(this.state);
     this.callbacks.onHover(pos);
   }
 

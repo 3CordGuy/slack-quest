@@ -64,6 +64,7 @@ Built to bring the new game closer to the original's inventory and economy.
 - **Armor in battle.** Each enemy hit is reduced by a third of the hero's armor, never by more than half the hit and never below 1. Bleeding and burning ignore armor.
 - **Item icons are pixel art drawn in code** (`itemArt.ts`), matching the hero sprites: a 16×16 figure with a dark outline, with one accent colour taken from the item's rarity.
 - **Heroes wear what they have equipped.** The hero sprite is drawn with its gear on: helmet or hood over the head (the class's own hat shows until one is equipped), armor on the torso and legs, boots, the main-hand weapon at the right of the picture and a shield at the left, each trimmed in its rarity colour. This shows on the inventory's paper doll, in the Harbor (other players see a change of gear straight away), on islands and in battle.
+- **A red line marks who joins a fight.** Around every camp or lair with enemies still in it, the hexes within joining range (two) are outlined in red while the pointer is over that area or a hero is standing in it.
 - **Movement and attacks are animated.** Sprites hop as they walk. In battle the attacker leans in; melee abilities draw a crescent swipe across the target, spells fly as a coloured bolt and bow shots as an arrow, each ending in a burst, and healing shows rising sparkles. Perfect results are drawn in gold.
 - **Inventory screen.** A paper doll around the hero's sprite, the pack with filter tabs and sorting, and a detail panel comparing any item against what is worn (per-stat deltas and an upgrade / downgrade / sidegrade verdict). Drag onto the doll to equip, back to the pack to unequip; click an empty slot to highlight what fits. Stat points are spent here.
 - **The inventory opens on an island too.** Gear found mid-voyage can be put on straight away, and stat points spent; the voyage re-reads the hero from the database rather than trusting the client. Not during a fight, and extra Vitality raises the HP ceiling without healing.
@@ -123,6 +124,14 @@ Built to bring the new game closer to the original's inventory and economy.
 3. A validator checks every reference resolves and the objective graph is completable. On failure retry once, then fall back to a canned fill for that frame.
 4. The result is the **story bible**, pinned in `runs` for the whole run. Objectives are conditions over world facts (`has_item`, `fact_set`, `at_hex`, `defeated`).
 5. At the end, one call writes an epilogue from the action log.
+
+Four story shapes ship so far, differing in what the party does and how it ends:
+- **Stolen relic** — find who knows, learn where, defeat the thief.
+- **Rescue** — the fight is in the middle; the story ends by walking the captive home.
+- **Beast hunt** — nobody can point the way: search two places for signs and the den reveals itself. The boss is a beast, not a person.
+- **Broken relic** — gather three pieces in any order (a camp fight, a search, a guardian), then restore it at the shrine. The ending is not a fight.
+
+A frame's `plan` supplies its objectives, the NPC's capabilities, **rites** (a story step done at a place once certain facts are true), **triggers** (a hidden place revealed by facts), who is fought where, and the rough route for sizing the doom clock. Who is fought varies by seed, from seven enemy types including two extra bosses (a pack leader and a guardian). The islander's ask is drawn from four checkable demands: clear the camp, earn trust, fetch from a cache, or visit the shrine.
 
 Keeping the story completable and the prose honest:
 - **The NPC's ask is a fixed, checkable demand.** Each frame lists the demands an NPC may make (clear the brigand camp; or win them over with a persuasion check). The game picks one, tells the model, and gates the lair reveal on it. The model words the request but cannot ask for anything else, and the HUD shows the ask with a tick once it is met.
