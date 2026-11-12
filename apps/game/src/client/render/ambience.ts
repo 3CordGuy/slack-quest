@@ -158,6 +158,8 @@ export class Ambience {
   private indoors = false;
   /** Direction to the sun (or the moon), for anything that must face it. */
   readonly sunDir = new THREE.Vector3(-0.4, 0.8, 0.4);
+  /** A hut's hanging lamp: the one light indoors, and what the furniture's shadows fall away from. */
+  private lamp = new THREE.PointLight("#ffd7a1", 0, 0, 0);
 
   private grass: THREE.InstancedMesh | null = null;
   private tufts: Tuft[] = [];
@@ -188,7 +190,12 @@ export class Ambience {
     cam.far = 120;
     this.sun.shadow.bias = -0.0015;
     this.sun.shadow.normalBias = 0.04;
-    scene.add(this.hemi, this.sun, this.sun.target, this.group);
+    this.lamp.shadow.mapSize.set(512, 512);
+    this.lamp.shadow.camera.near = 0.2;
+    this.lamp.shadow.camera.far = 30;
+    this.lamp.shadow.bias = -0.004;
+    this.lamp.visible = false;
+    scene.add(this.hemi, this.sun, this.sun.target, this.lamp, this.group);
   }
 
   /** Lay out the decoration for a map. `skip` holds the hexes to leave clear. */
@@ -303,6 +310,21 @@ export class Ambience {
 
     this.bounds = { minX, maxX, minZ, maxZ };
 
+    // ---- a hut is lit by a lamp hung over the middle of the room, not by the sky ----
+    const inside = tiles.some((t) => (t.biome as string) === "floor");
+    this.lamp.visible = this.lamp.castShadow = inside;
+    this.sun.castShadow = !inside;
+    if (inside) {
+      this.lamp.position.set((minX + maxX) / 2, 2.7, (minZ + maxZ) / 2);
+      const lantern = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.26, 0.2), new THREE.MeshBasicMaterial({ color: "#ffe2a8" }));
+      lantern.position.copy(this.lamp.position);
+      const cap = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.06, 0.28), new THREE.MeshBasicMaterial({ color: "#3a2c22" }));
+      cap.position.copy(this.lamp.position).setY(this.lamp.position.y + 0.16);
+      const chain = new THREE.Mesh(new THREE.BoxGeometry(0.04, 1.6, 0.04), new THREE.MeshBasicMaterial({ color: "#3a2c22" }));
+      chain.position.copy(this.lamp.position).setY(this.lamp.position.y + 0.99);
+      this.group.add(lantern, cap, chain);
+    }
+
     // ---- floorboards: a hut's floor hexes get a plank top, laid as one sheet so the boards run across hexes ----
     const floor = tiles.filter((t) => (t.biome as string) === "floor");
     if (floor.length > 0) {
@@ -366,7 +388,8 @@ export class Ambience {
 
   dispose() {
     this.clear();
-    this.scene.remove(this.hemi, this.sun, this.sun.target, this.group);
+    this.scene.remove(this.hemi, this.sun, this.sun.target, this.lamp, this.group);
+    this.lamp.shadow.map?.dispose();
     this.sun.shadow.map?.dispose();
   }
 
@@ -381,7 +404,7 @@ export class Ambience {
 
   /** Advance the sky and everything that sways. `yaw` is the camera's turn; `target` is what it looks at. */
   update(clock: number, yaw: number, target: THREE.Vector3) {
-    this.light(target);
+    this.light(target, clock);
     const motion = this.still ? 0 : 1;
 
     if (this.grass) {
@@ -464,7 +487,12 @@ export class Ambience {
     }
   }
 
-  private light(target: THREE.Vector3) {
+  /** The turn, about the vertical, that faces something at (x, z) toward whatever lights it. */
+  towardLight(x: number, z: number): number {
+    return this.indoors ? Math.atan2(this.lamp.position.x - x, this.lamp.position.z - z) : Math.atan2(this.sunDir.x, this.sunDir.z);
+  }
+
+  private light(target: THREE.Vector3, clock: number) {
     const t = this.indoors ? 0.42 : this.timeOfDay();
     const angle = (t - 0.25) * Math.PI * 2;
     // Nudged up so the day is a little longer than the night.
@@ -487,6 +515,16 @@ export class Ambience {
       this.sun.intensity = 0.7 * smooth(0, 0.35, -height);
     }
 
+    if (this.indoors) {
+      // The lamp does the work; a low fill keeps the corners readable. It wavers a little, like a flame.
+      this.sun.intensity = 0;
+      this.lamp.intensity = 1.5 * (this.still ? 1 : 1 + Math.sin(clock * 7) * 0.035 + Math.sin(clock * 13.3) * 0.02);
+      this.hemi.intensity = 0.95;
+      this.hemi.color.set("#ffe9c9");
+      this.hemi.groundColor.set("#3b2f2a");
+      this.background.set("#1d1a2b");
+      return;
+    }
     this.hemi.intensity = 1.0 + 0.5 * daylight;
     this.hemi.color.set("#7686c8").lerp(WHITE, daylight).lerp(DUSK, glow * 0.4);
     this.hemi.groundColor.set("#232a4d").lerp(GROUND_DAY, daylight);

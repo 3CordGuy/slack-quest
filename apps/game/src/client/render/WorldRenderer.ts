@@ -600,6 +600,9 @@ export class WorldRenderer {
       const at = this.standAt(prop.pos);
       g.position.copy(at);
       g.rotation.y = -(prop.facing * Math.PI) / 3;
+      g.traverse((o) => {
+        if (o instanceof THREE.Mesh) o.castShadow = o.receiveShadow = true;
+      });
       this.propGroup.add(g);
       if (prop.selected) {
         const ring = new THREE.Mesh(new THREE.RingGeometry(0.8, 0.95, 6), new THREE.MeshBasicMaterial({ color: "#ffd23f", side: THREE.DoubleSide }));
@@ -1213,7 +1216,6 @@ export class WorldRenderer {
 
     // The height of one view pixel, in the units an unattenuated sprite is sized in.
     const labelRow = (2 * Math.tan(THREE.MathUtils.degToRad(this.camera.fov / 2))) / this.renderer.domElement.height;
-    const sunTurn = Math.atan2(this.ambience.sunDir.x, this.ambience.sunDir.z);
     for (const [id, unit] of this.units) {
       const p = unit.sprite.position;
       // The hop is drawn on top of where the unit really is; take it off before moving.
@@ -1243,7 +1245,7 @@ export class WorldRenderer {
       const ground = p.y;
       p.y += unit.bob;
       unit.caster.position.copy(p);
-      unit.caster.rotation.y = sunTurn;
+      unit.caster.rotation.y = this.ambience.towardLight(p.x, p.z);
       if (unit.ring) {
         unit.ring.position.set(p.x, ground + 0.04, p.z);
         const s = this.pulsing.has(id) ? 1.25 + Math.sin(this.clock * 6) * 0.2 : 1;
