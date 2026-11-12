@@ -30,7 +30,7 @@ export interface HeroClass {
 }
 
 /** HP the Backend Druid grows back at the start of each of its turns in a fight. */
-export const DRUID_REGEN = 2;
+export const DRUID_REGEN = 1;
 /** Extra damage on every other hero's attacks while a Frontend Bard is standing. One Bard's worth, however many there are. */
 export const BARD_AURA = 2;
 /** Bulwark Strike adds the Warden's armor divided by this to its damage. */
@@ -136,13 +136,13 @@ export const ABILITIES: Record<string, AbilityDef> = {
   quick_stab: { id: "quick_stab", name: "Quick Stab", stat: "dex", rolls: 2, target: "enemy", damage: 8, perfect: { effect: "bleeding", turns: 3 }, blurb: "Reliable. Perfect: bleeding." },
   flurry: { id: "flurry", name: "Flurry", stat: "dex", rolls: 4, target: "enemy", damage: 12, blurb: "Four cuts; every one has to land." },
   aimed_shot: { id: "aimed_shot", name: "Aimed Shot", stat: "dex", rolls: 3, target: "enemy", damage: 10, blurb: "A careful, heavy shot." },
-  thornlash: { id: "thornlash", name: "Thornlash", stat: "int_stat", rolls: 3, target: "enemy", damage: 8, perfect: { effect: "bleeding", turns: 3 }, blurb: "Thorns that dig in. Perfect: bleeding." },
+  thornlash: { id: "thornlash", name: "Thornlash", stat: "int_stat", rolls: 3, target: "enemy", damage: 9, perfect: { effect: "bleeding", turns: 3 }, blurb: "Thorns that dig in. Perfect: bleeding." },
   rejuvenate: { id: "rejuvenate", name: "Rejuvenate", stat: "int_stat", rolls: 2, target: "ally", heal: 9, blurb: "Heal an ally (or yourself)." },
   overgrowth: { id: "overgrowth", name: "Overgrowth", stat: "int_stat", rolls: 3, target: "all_enemies", damage: 5, blurb: "Roots burst up under every enemy." },
-  dissonance: { id: "dissonance", name: "Dissonance", stat: "int_stat", rolls: 3, target: "enemy", damage: 7, perfect: { effect: "stunned", turns: 1 }, blurb: "A note nobody can think through. Perfect: stuns." },
-  encore: { id: "encore", name: "Second Wind", stat: "int_stat", rolls: 2, target: "ally", heal: 7, blurb: "A tune that gets an ally (or yourself) back on their feet." },
+  dissonance: { id: "dissonance", name: "Dissonance", stat: "int_stat", rolls: 3, target: "enemy", damage: 9, perfect: { effect: "stunned", turns: 1 }, blurb: "A note nobody can think through. Perfect: stuns." },
+  encore: { id: "encore", name: "Second Wind", stat: "int_stat", rolls: 2, target: "ally", heal: 9, blurb: "A tune that gets an ally (or yourself) back on their feet." },
   cacophony: { id: "cacophony", name: "Cacophony", stat: "int_stat", rolls: 4, target: "all_enemies", damage: 5, blurb: "Every enemy hears it." },
-  manifest: { id: "manifest", name: "Manifest", stat: "int_stat", rolls: 3, target: "enemy", damage: 13, blurb: "Raw force. The heaviest single spell there is." },
+  manifest: { id: "manifest", name: "Manifest", stat: "int_stat", rolls: 3, target: "enemy", damage: 12, blurb: "Raw force. The heaviest single spell there is." },
   arcane_ward: { id: "arcane_ward", name: "Arcane Ward", stat: "int_stat", rolls: 2, target: "self", heal: 3, selfEffect: { effect: "guarded", turns: 1 }, blurb: "Wrap yourself in a ward and steady your breath." },
   meteor: { id: "meteor", name: "Meteor", stat: "int_stat", rolls: 4, target: "all_enemies", damage: 9, perfect: { effect: "burning", turns: 3 }, blurb: "Everything has to land. Perfect: sets them all burning." },
   bulwark_strike: { id: "bulwark_strike", name: "Bulwark Strike", stat: "str", rolls: 3, target: "enemy", damage: 6, armorDamage: true, blurb: "Your whole weight behind the blow: adds a third of your armor to the damage." },
