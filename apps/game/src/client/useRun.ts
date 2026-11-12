@@ -6,9 +6,19 @@ import { PROFILE } from "./api";
 
 type Outgoing = WorldAction extends infer A ? (A extends { heroId: string } ? Omit<A, "heroId"> : never) : never;
 
+/** Votes to skip the turn in progress: whose turn, who has voted, and how many votes it takes. */
+export interface SkipVote {
+  heroId: string;
+  votes: string[];
+  needed: number;
+}
+
 export interface RunConnection {
   state: ClientState | null;
   online: string[];
+  skip: SkipVote | null;
+  /** Vote to end the current hero's turn now, as the turn timer would. */
+  voteSkip(): void;
   status: "connecting" | "open" | "closed";
   error: string | null;
   send(action: Outgoing): void;
@@ -20,6 +30,7 @@ export interface RunConnection {
 export function useRun(code: string, onEvents: (events: WorldEvent[], state: ClientState) => void): RunConnection {
   const [state, setState] = useState<ClientState | null>(null);
   const [online, setOnline] = useState<string[]>([]);
+  const [skip, setSkip] = useState<SkipVote | null>(null);
   const [status, setStatus] = useState<RunConnection["status"]>("connecting");
   const [error, setError] = useState<string | null>(null);
   const socket = useRef<WebSocket | null>(null);
@@ -48,6 +59,7 @@ export function useRun(code: string, onEvents: (events: WorldEvent[], state: Cli
         if (msg.type === "update") {
           setState(msg.state);
           setOnline(msg.online);
+          setSkip(msg.skip ?? null);
           handler.current(msg.events, msg.state);
         } else if (msg.type === "error") {
           setError(msg.message);
@@ -77,6 +89,9 @@ export function useRun(code: string, onEvents: (events: WorldEvent[], state: Cli
   const regear = useCallback(() => {
     if (socket.current?.readyState === WebSocket.OPEN) socket.current.send(JSON.stringify({ type: "regear" }));
   }, []);
+  const voteSkip = useCallback(() => {
+    if (socket.current?.readyState === WebSocket.OPEN) socket.current.send(JSON.stringify({ type: "vote_skip" }));
+  }, []);
   const clearError = useCallback(() => setError(null), []);
-  return { state, online, status, error, send, regear, clearError };
+  return { state, online, skip, voteSkip, status, error, send, regear, clearError };
 }

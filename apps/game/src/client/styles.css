@@ -497,3 +497,7 @@ button.nudge { border-color: var(--gold); color: var(--gold); }
 .trait.passed { opacity: 0.45; }
 .trait:disabled { cursor: default; }
 .trait.selected:disabled { opacity: 1; }
+
+/* Waiting on someone else's turn: a vote to skip it, under the top bar. */
+.skip-vote { position: absolute; top: 46px; left: 50%; transform: translateX(-50%); z-index: 15; display: flex; align-items: center; gap: 10px; padding: 6px 10px; font-size: 12px; max-width: calc(100% - 24px); flex-wrap: wrap; justify-content: center; }
+.in-battle .skip-vote { top: auto; bottom: 168px; }
