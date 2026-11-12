@@ -53,7 +53,13 @@ export function HutToolbar({ renderer, propId, name, tags, actions }: {
       if (!el) return;
       const at = renderer.current?.screenAboveProp(propId) ?? null;
       el.style.visibility = at ? "visible" : "hidden";
-      if (at) el.style.transform = `translate(${Math.round(at.x)}px, ${Math.round(at.y)}px)`;
+      if (!at) return;
+      // Kept inside the view (a phone is narrow), with its little pointer still aimed at the piece.
+      const half = (el.firstElementChild as HTMLElement | null)?.offsetWidth ?? 0;
+      const room = el.parentElement?.clientWidth ?? Infinity;
+      const x = Math.max(half / 2 + 6, Math.min(room - half / 2 - 6, at.x));
+      el.style.transform = `translate(${Math.round(x)}px, ${Math.round(at.y)}px)`;
+      el.style.setProperty("--aim", `${Math.round(at.x - x)}px`);
     };
     raf = requestAnimationFrame(place);
     return () => cancelAnimationFrame(raf);
