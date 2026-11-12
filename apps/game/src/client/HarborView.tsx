@@ -4,12 +4,13 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { HexPos } from "@gantt-quest/core";
-import { HARBOR_BOARD, HARBOR_DICE, HARBOR_PIERS, HARBOR_PLOTS, HARBOR_RING, HARBOR_SHOP, HARBOR_WORKS, HERO_CLASSES, MAX_PARTY, builtProjects, generateHarbor, harborPoi, hutTier, poiAt, type HarborShip } from "@gantt-quest/world";
+import { GATHER_SPOTS, GATHER_SPOT_IDS, HARBOR_BOARD, HARBOR_DICE, HARBOR_GATHER, HARBOR_PIERS, HARBOR_PLOTS, HARBOR_RING, HARBOR_SHOP, HARBOR_WORKS, HERO_CLASSES, MAX_PARTY, builtProjects, generateHarbor, harborPoi, hutTier, poiAt, type GatherSpot, type HarborShip } from "@gantt-quest/world";
 import { api, type Me } from "./api";
 import { AccountPanel } from "./Account";
 import { DiceTable } from "./DiceTable";
 import { NoticeBoard } from "./board/NoticeBoard";
 import { DragPanel } from "./DragPanel";
+import { GatherPanel } from "./GatherPanel";
 import { InventoryScreen } from "./InventoryScreen";
 import { ShopScreen } from "./ShopScreen";
 import { SparView } from "./SparView";
@@ -28,6 +29,7 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
   const [shop, setShop] = useState(false);
   const [notices, setNotices] = useState(false);
   const [spar, setSpar] = useState(false);
+  const [gather, setGather] = useState<GatherSpot | null>(null);
   const [works, setWorks] = useState(false);
   const [account, setAccount] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -108,6 +110,7 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
     : hoverPoi.kind === "board" ? "Notice board: the crew goal and contracts"
     : hoverPoi.kind === "shop" ? "Market stall: gear, and furniture for your hut"
     : hoverPoi.kind === "ring" ? "Sparring ring"
+    : hoverPoi.kind === "fishing" || hoverPoi.kind === "felling" || hoverPoi.kind === "quarry" ? `${GATHER_SPOTS[hoverPoi.kind].name}: gather hut materials`
     : hoverPoi.kind === "dice" ? "Dice table: a bluffing game for a small stake"
     : hoverPoi.kind === "works" ? (lit ? "The lighthouse: crew projects" : "The works: crew projects")
     : hoverPoi.kind === "plot" ? `${board.members.find((m) => `plot:${m.id}` === hoverPoi.id)?.name ?? "Someone"}'s ${hutTier(hoverPoi.tier ?? 1).name.toLowerCase()}`
@@ -147,6 +150,7 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
   const atShop = !!self && same(self.pos, HARBOR_SHOP);
   const atBoard = !!self && same(self.pos, HARBOR_BOARD);
   const atRing = !!self && same(self.pos, HARBOR_RING);
+  const gatherHere = self ? GATHER_SPOT_IDS.find((id) => same(self.pos, HARBOR_GATHER[id])) : undefined;
   const atDice = !!self && same(self.pos, HARBOR_DICE);
   const atWorks = !!self && same(self.pos, HARBOR_WORKS);
   const error = harbor.error ?? launchError;
@@ -252,6 +256,13 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
             <span>The sparring ring</span>
             <button className="primary" onClick={() => setSpar(true)}>Spar</button>
           </>
+        ) : gatherHere ? (
+          <>
+            <span>{GATHER_SPOTS[gatherHere].name}</span>
+            <button className="primary" onClick={() => setGather(gatherHere)}>
+              {gatherHere === "fishing" ? "Cast a line" : gatherHere === "felling" ? "Take up the axe" : "Work the seam"}
+            </button>
+          </>
         ) : atDice ? (
           <span>The dice table{holdingDice ? " · you are in a game" : ""}</span>
         ) : atWorks ? (
@@ -285,6 +296,7 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
       {notices && <NoticeBoard refresh={refresh} onClose={() => setNotices(false)} />}
       {works && <WorksPanel works={board.works} refresh={refresh} onClose={() => setWorks(false)} />}
       {spar && scene && me.character && <SparView me={me} scene={scene} renderer={renderer} onClose={() => setSpar(false)} />}
+      {gather && me.character && <GatherPanel spot={gather} onClose={() => setGather(null)} />}
       {shop && me.character && <ShopScreen me={me} refresh={refreshAll} onClose={() => setShop(false)} />}
     </div>
   );

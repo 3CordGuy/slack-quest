@@ -1,0 +1,36 @@
+/* Gathering outings: fishing, felling and the quarry. */
+.overlay .panel.gather { max-width: 540px; max-height: calc(100% - 56px); overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }
+.gather-head { display: flex; align-items: center; gap: 10px; padding-right: 46px; }
+.gather-head h2 { margin: 0; }
+.gather p { margin: 0; }
+.gather-facts { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.gather-facts > div { border: 1px solid var(--line); padding: 5px 8px; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.gather-facts strong { font-size: 18px; }
+.gather-facts .muted { font-size: 11px; }
+.gather-pips, .gather-meter { display: flex; align-items: center; gap: 5px; }
+.gather-pips { min-height: 24px; }
+.gather-pips i, .gather-meter i { width: 16px; height: 16px; border: 2px solid var(--line); background: #14122a; }
+.gather-pips i.on { background: var(--good); border-color: var(--good); }
+.gather-meter i.on { background: var(--bad); border-color: var(--bad); }
+.gather-meter .muted { font-size: 12px; }
+.gather-haul { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-height: 30px; }
+.gather-log { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; max-height: 190px; overflow-y: auto; }
+.gather-log li { padding: 4px 0; border-bottom: 1px dashed #37335a; opacity: 0.7; }
+.gather-log li.latest { opacity: 1; }
+.gather-log .tag { margin: 0 6px 0 0; }
+.gather-rolls { display: inline-flex; gap: 3px; margin-right: 8px; vertical-align: middle; }
+.gather-rolls .slot { width: 22px; height: 22px; font-size: 13px; font-style: normal; }
+.gather-trees { display: grid; gap: 6px; }
+.gather-tree { display: flex; flex-direction: column; align-items: center; gap: 1px; padding: 6px 2px; min-height: 74px; font-size: 12px; }
+.gather-tree .tree-glyph { font-size: 20px; line-height: 1; color: #4c9a52; }
+.gather-tree.picked .tree-glyph { color: #8a5a2b; }
+.gather-tree.rotten { border-color: var(--bad); }
+.gather-tree.rotten .tree-glyph { color: var(--bad); }
+.gather-tree.den { border-color: #a0683a; }
+.gather-tree:disabled { opacity: 0.75; cursor: default; }
+.gather-tree.hidden:disabled { opacity: 0.4; }
+
+@media (max-width: 640px) {
+  .gather-head { padding-right: 68px; }
+  .gather-facts { grid-template-columns: 1fr; }
+}

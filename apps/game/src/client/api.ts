@@ -5,7 +5,10 @@ import type { NoticeBoard } from "../server/board";
 
 /** What the Harbor's notice board shows: the crew goal and the contracts on offer. */
 export type Board = NoticeBoard;
-import type { HarborWorks, HutSummary, ItemDef, Perk, ProjectAmounts, ShopEntry } from "@gantt-quest/world";
+import type { GatherChoice, GatherSpot, HarborWorks, HutSummary, ItemDef, Perk, ProjectAmounts, Resources, ShopEntry } from "@gantt-quest/world";
+import type { GatherStatus } from "../server/gather";
+
+export type { GatherStatus };
 
 /** The crew's projects and what this player has to give toward them. */
 export interface Works {
@@ -108,6 +111,9 @@ export const api = {
   createCrew: (name: string) => request("/api/crew", { name }),
   joinCrew: (code: string) => request("/api/crew/join", { code }),
   leaveCrew: () => request("/api/crew/leave", {}),
+  gather: () => request<GatherStatus>("/api/gather"),
+  gatherStart: (spot: GatherSpot) => request<GatherStatus>("/api/gather/start", { spot }),
+  gatherStep: (choice: GatherChoice) => request<GatherStatus & { paid?: Resources }>("/api/gather/step", { choice }),
   projects: () => request<Works>("/api/projects"),
   giveToProject: (projectId: string, give: ProjectAmounts) => request<Works & { completed: boolean }>("/api/projects/give", { projectId, give }),
   hut: () => request<Hut>("/api/hut"),

@@ -759,6 +759,40 @@ export class WorldRenderer {
         add(box(0.5, 0.06, 0.06), lambert("#7a5230"), 0.2, 0.45, 0.1);
         break;
       }
+      case "fishing": {
+        // A plank out over the water, a rod propped on it with its line in the sea, and a bucket.
+        add(box(0.5, 0.06, 1.0), lambert("#8a6a44"), 0, 0.03, 0.75);
+        for (const x of [-0.2, 0.2]) add(new THREE.CylinderGeometry(0.04, 0.04, 0.5, 5), lambert("#5a3d22"), x, -0.2, 1.15);
+        add(new THREE.CylinderGeometry(0.02, 0.03, 1.2, 5), lambert("#c9a877"), 0.1, 0.5, 1.3).rotation.x = Math.PI / 4;
+        add(box(0.015, 0.95, 0.015), lambert("#f4efe1"), 0.1, 0.44, 1.72);
+        add(new THREE.OctahedronGeometry(0.06), lambert("#b9433d"), 0.1, -0.02, 1.72);
+        add(new THREE.CylinderGeometry(0.11, 0.09, 0.18, 6), lambert("#6f7f95"), -0.12, 0.15, 0.6);
+        break;
+      }
+      case "felling": {
+        // A stump with an axe in it, and a stack of cut logs.
+        add(new THREE.CylinderGeometry(0.2, 0.24, 0.24, 7), lambert("#7a5230"), -0.3, 0.12, 0.35);
+        add(new THREE.CylinderGeometry(0.19, 0.19, 0.02, 7), lambert("#d9b45a"), -0.3, 0.25, 0.35);
+        add(box(0.04, 0.42, 0.04), lambert("#5a3d22"), -0.3, 0.46, 0.35).rotation.z = -0.5;
+        add(box(0.16, 0.12, 0.03), lambert("#c9d1dc"), -0.36, 0.33, 0.35).rotation.z = -0.5;
+        for (const [x, y] of [[0.2, 0.08], [0.38, 0.08], [0.56, 0.08], [0.29, 0.23], [0.47, 0.23]]) {
+          add(new THREE.CylinderGeometry(0.085, 0.085, 0.6, 6), lambert("#8a5a2b"), x, y, 0.4).rotation.x = Math.PI / 2;
+          add(new THREE.CylinderGeometry(0.06, 0.06, 0.61, 6), lambert("#d9b45a"), x, y, 0.4).rotation.x = Math.PI / 2;
+        }
+        break;
+      }
+      case "quarry": {
+        // A cut rock face with squared blocks at its foot and a pick leaning on them.
+        add(box(0.95, 0.6, 0.3), lambert("#8b95a5"), 0, 0.3, -0.05);
+        add(box(0.5, 0.3, 0.28), lambert("#7b8494"), -0.2, 0.75, -0.05);
+        add(box(0.14, 0.1, 0.02), lambert("#c8743a"), 0.25, 0.4, 0.11);
+        add(box(0.1, 0.08, 0.02), lambert("#c9d1dc"), -0.25, 0.3, 0.11);
+        add(box(0.28, 0.2, 0.24), lambert("#a3acba"), -0.3, 0.1, 0.45);
+        add(box(0.22, 0.16, 0.2), lambert("#959eac"), 0.0, 0.08, 0.55);
+        add(box(0.04, 0.5, 0.04), lambert("#5a3d22"), 0.35, 0.25, 0.4).rotation.z = 0.35;
+        add(box(0.34, 0.05, 0.05), lambert("#4a4f5a"), 0.27, 0.49, 0.4).rotation.z = 0.35;
+        break;
+      }
       case "dice": {
         // Dice table: a round top on a barrel, a stool either side, and a pair of dice. Set back so whoever stands here is seen to sit at it.
         add(new THREE.CylinderGeometry(0.18, 0.22, 0.4, 7), lambert("#6b4a2b"), 0, 0.2, -0.3);

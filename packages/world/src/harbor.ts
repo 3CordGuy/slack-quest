@@ -27,6 +27,8 @@ export const HARBOR_BOARD: HexPos = at(6, 4);
 export const HARBOR_SHOP: HexPos = at(9, 5);
 /** The sparring ring, where crewmates try out their gear. */
 export const HARBOR_RING: HexPos = at(3, 5);
+/** Gathering spots at the edges: the west shore, the western tree line, and an outcrop in the east. */
+export const HARBOR_GATHER = { fishing: at(0, 7), felling: at(0, 3), quarry: at(12, 2) } as const;
 /** The dice table, where crewmates gamble a small stake. */
 export const HARBOR_DICE: HexPos = at(8, 6);
 /** The works: where the crew's shared projects are paid for, and where the lighthouse goes up. */
@@ -51,11 +53,22 @@ export function generateHarbor(): WorldMap {
     if (pos.r === 0) biome = col % 4 === 1 ? "hills" : "forest";
     else if (pos.r >= 8) biome = pierKeys.has(`${pos.q},${pos.r}`) ? "dock" : "water";
     else if ((col === 0 || col >= 12) && pos.r <= 5) biome = "forest";
+    if (pos.q === HARBOR_GATHER.quarry.q && pos.r === HARBOR_GATHER.quarry.r) biome = "hills";
     // A fixed ripple so the ground is not perfectly flat.
     const ripple = ((pos.q * 7 + pos.r * 13) % 5) * 0.012;
     return { q: pos.q, r: pos.r, biome, h: HEIGHT[biome] + (biome === "plains" ? ripple : 0) };
   });
-  return { grid: HARBOR_GRID, tiles, pois: [harborPoi("board", "board", HARBOR_BOARD), harborPoi("shop", "shop", HARBOR_SHOP), harborPoi("ring", "ring", HARBOR_RING), harborPoi("dice", "dice", HARBOR_DICE), harborPoi("works", "works", HARBOR_WORKS)] };
+  return {
+    grid: HARBOR_GRID,
+    tiles,
+    pois: [
+      harborPoi("board", "board", HARBOR_BOARD), harborPoi("shop", "shop", HARBOR_SHOP), harborPoi("ring", "ring", HARBOR_RING),
+      harborPoi("dice", "dice", HARBOR_DICE), harborPoi("works", "works", HARBOR_WORKS),
+      harborPoi("fishing", "fishing", HARBOR_GATHER.fishing),
+      harborPoi("felling", "felling", HARBOR_GATHER.felling),
+      harborPoi("quarry", "quarry", HARBOR_GATHER.quarry),
+    ],
+  };
 }
 
 /** Longest walk the server will accept in one request. */
