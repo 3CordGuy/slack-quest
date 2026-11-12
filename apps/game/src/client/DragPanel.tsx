@@ -94,6 +94,8 @@ interface Props extends HTMLAttributes<HTMLDivElement> {
   resizable?: boolean;
   /** Start folded on narrow screens. The player's own choice, once made, wins. */
   foldOnPhone?: boolean;
+  /** Start folded everywhere, until the player unfolds it once. */
+  startFolded?: boolean;
   /** Change this number to unfold the panel from outside (it does not change the remembered choice). */
   unfold?: number;
   children: ReactNode;
@@ -101,21 +103,21 @@ interface Props extends HTMLAttributes<HTMLDivElement> {
 
 const isPhone = () => typeof matchMedia === "function" && matchMedia("(max-width: 760px)").matches;
 
-function loadFolded(id: string, foldOnPhone: boolean): boolean {
+function loadFolded(id: string, foldOnPhone: boolean, startFolded = false): boolean {
   try {
     const raw = localStorage.getItem(`${storageKey(id)}.folded`);
     if (raw !== null) return raw === "1";
   } catch {
     // Fall through to the default.
   }
-  return foldOnPhone && isPhone();
+  return startFolded || (foldOnPhone && isPhone());
 }
 
-export function DragPanel({ id, title, compact = false, resizable = false, foldOnPhone = false, unfold = 0, className = "", children, style, ...rest }: Props) {
+export function DragPanel({ id, title, compact = false, resizable = false, foldOnPhone = false, startFolded = false, unfold = 0, className = "", children, style, ...rest }: Props) {
   const [size, setSize] = useState<Size | null>(() => (resizable ? loadSize(id) : null));
   /** While a corner is being dragged: where the opposite corner must stay. */
   const pin = useRef<{ sx: number; sy: number; x: number; y: number } | null>(null);
-  const [folded, setFolded] = useState(() => loadFolded(id, foldOnPhone));
+  const [folded, setFolded] = useState(() => loadFolded(id, foldOnPhone, startFolded));
   const toggle = () => {
     setFolded((f) => {
       try {

@@ -73,22 +73,33 @@ export function HutContainer({
 
       <h4>Materials</h4>
       {!own ? <p className="muted">Counting…</p> : kinds.length === 0 ? <p className="muted">You have no materials to keep here.</p> : (
-        <ul className="hut-list">
+        <div className="hut-mats" role="table" aria-label="Materials">
+          <div className="hut-mats-head" role="row">
+            <span role="columnheader">Material</span>
+            <span role="columnheader" title="In this container">Here</span>
+            <span role="columnheader" title="On you">You</span>
+            <span role="columnheader" />
+          </div>
           {kinds.map((k) => {
             const have = own.resources[k] ?? 0;
             const kept = had(k);
             const room = kept > 0 || !full;
+            const name = label("resource", k);
             return (
-              <li key={k} className="hut-box-row">
-                <span>{label("resource", k)}: <strong>{kept}</strong> in here <span className="muted">· {have} on you</span></span>
-                <button className="small" disabled={!have || !room} onClick={() => act(() => api.stash(box.id, k, 1))}>+1</button>
-                <button className="small" disabled={!have || !room} onClick={() => act(() => api.stash(box.id, k, have))}>All in</button>
-                <button className="small" disabled={!kept} onClick={() => act(() => api.stash(box.id, k, -1))}>−1</button>
-                <button className="small" disabled={!kept} onClick={() => act(() => api.stash(box.id, k, -kept))}>All out</button>
-              </li>
+              <div key={k} role="row" className="hut-mats-row">
+                <span role="cell">{name}</span>
+                <strong role="cell">{kept}</strong>
+                <span role="cell" className="muted">{have}</span>
+                <span role="cell" className="hut-mats-btns">
+                  <button className="small" disabled={!have || !room} title={`Put 1 ${name.toLowerCase()} in`} onClick={() => act(() => api.stash(box.id, k, 1))}>+1</button>
+                  <button className="small" disabled={!have || !room} title={`Put all ${have} in`} onClick={() => act(() => api.stash(box.id, k, have))}>In</button>
+                  <button className="small" disabled={!kept} title={`Take 1 ${name.toLowerCase()} out`} onClick={() => act(() => api.stash(box.id, k, -1))}>−1</button>
+                  <button className="small" disabled={!kept} title={`Take all ${kept} out`} onClick={() => act(() => api.stash(box.id, k, -kept))}>Out</button>
+                </span>
+              </div>
             );
           })}
-        </ul>
+        </div>
       )}
 
       <h4>Gear</h4>

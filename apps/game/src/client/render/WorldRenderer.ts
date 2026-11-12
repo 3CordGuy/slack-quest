@@ -702,6 +702,21 @@ export class WorldRenderer {
    * `lift` is how far above the ground to aim; the default is where a hero's name label hangs.
    * Null when the point is behind the camera or outside the view.
    */
+  /**
+   * Just above the top of a prop, in container pixels, wherever it stands
+   * (on the floor or on another piece's top). Null when it is not drawn or not on screen.
+   */
+  screenAboveProp(id: string | number, lift = 0.15): { x: number; y: number } | null {
+    const g = this.propModels.get(id);
+    if (!g) return null;
+    const box = new THREE.Box3().setFromObject(g);
+    if (box.isEmpty()) return null;
+    const v = new THREE.Vector3((box.min.x + box.max.x) / 2, box.max.y + lift, (box.min.z + box.max.z) / 2);
+    v.project(this.camera);
+    if (v.z < -1 || v.z > 1 || Math.abs(v.x) > 1 || Math.abs(v.y) > 1) return null;
+    return { x: ((v.x + 1) / 2) * this.container.clientWidth, y: ((1 - v.y) / 2) * this.container.clientHeight };
+  }
+
   screenAbove(pos: HexPos, lift = 1.8): { x: number; y: number } | null {
     if (!this.state) return null;
     const v = this.standAt(pos);
