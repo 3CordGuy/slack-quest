@@ -65,13 +65,16 @@ function isStreet(col: number, r: number): boolean {
  * The Harbor map. The same for every crew, and not a tidy rectangle: the sea
  * comes round its back corners and into its sides, and the shore runs out
  * in spits of shingle. An old stone rampart at the back and down the sides,
- * fallen in places; two rows of hut plots with a cobbled
+ * fallen in places; two rows of hut plots with a dirt
  * lane between them; a plaza; a quay along the shore with three piers; and
  * beyond them the sea, with rocks standing out of it and a wreck on the rocks.
- * Off the cobbles the ground is mud and scrub.
+ * Only the ground under each place is cobbled; the streets are dirt paths
+ * and the rest is grass.
  */
 export function generateHarbor(): WorldMap {
   const pierKeys = new Set(HARBOR_PIERS.map((p) => `${p.q},${p.r}`));
+  // Only the ground a place stands on is paved; everything else is packed earth and grass, so the town reads quietly.
+  const paved = new Set([HARBOR_BOARD, HARBOR_SHOP, HARBOR_RING, HARBOR_PUB, HARBOR_WORKS, HARBOR_SPAWN].map((p) => `${p.q},${p.r}`));
   const same = (a: HexPos, b: HexPos) => a.q === b.q && a.r === b.r;
   const tiles: Tile[] = allHexesInGrid(HARBOR_GRID).map((pos) => {
     const col = colOf(pos);
@@ -86,8 +89,10 @@ export function generateHarbor(): WorldMap {
       // The sides: trees at the back where the wall never reached, then wall down to the shore, broken low near the water.
       biome = pos.r <= 3 ? "forest" : pos.r <= 6 ? "rampart" : "mud";
       if (biome === "rampart" && pos.r === 6) h = 0.7;
-    } else if (isStreet(col, pos.r)) biome = "cobble";
-    else biome = grit(col, pos.r) < (pos.r >= 5 ? 0.6 : 0.35) ? "mud" : "plains";
+    } else if (paved.has(`${pos.q},${pos.r}`)) biome = "cobble";
+    // The old streets are worn dirt paths; off them it is grass, with the odd bare patch near the water.
+    else if (isStreet(col, pos.r)) biome = "mud";
+    else biome = pos.r >= 6 && grit(col, pos.r) < 0.3 ? "mud" : "plains";
     // The coast is not square. The sea comes round the back corners of the wall and bites into both sides,
     // and between and beyond the piers the shore runs out into shingle.
     if (pos.r === 0 && (col <= 1 || col >= last - 1)) biome = "water";
