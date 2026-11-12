@@ -123,6 +123,7 @@ export const api = {
   gather: () => request<GatherStatus>("/api/gather"),
   rest: (place: "bedroll" | "hut") => request<GatherStatus & { regained: number }>("/api/rest", { place }),
   buyPlot: (plot: number) => request<{ plot: number }>("/api/hut/plot", { plot }),
+  fillBin: () => request<{ put: Resources; bin: Resources | null }>("/api/hut/bin", {}),
   gatherStart: (spot: GatherSpot) => request<GatherStatus>("/api/gather/start", { spot }),
   gatherStep: (choice: GatherChoice) => request<GatherStatus & { paid?: Resources }>("/api/gather/step", { choice }),
   pub: () => request<PubTab>("/api/pub"),

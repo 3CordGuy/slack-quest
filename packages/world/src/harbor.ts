@@ -6,6 +6,7 @@
 
 import { allHexesInGrid, type HexGrid, type HexPos } from "@gantt-quest/core";
 import type { Outfit } from "./gear";
+import type { Resources } from "./hut";
 import type { HarborWorks } from "./projects";
 import { findPath, type Biome, type Poi, type PoiKind, type Tile, type WorldMap } from "./map";
 
@@ -150,6 +151,11 @@ export interface HarborMember {
   hutTier?: number;
   /** Which plot they have bought (an index into HARBOR_PLOTS), or null while they sleep on a bedroll. */
   plot?: number | null;
+  /**
+   * What is in the resource bin on their plot while the shack is still to be
+   * raised. Absent once the shack stands (and on boards saved before bins).
+   */
+  bin?: Resources;
 }
 
 export interface HarborShip {

@@ -845,6 +845,32 @@ export class WorldRenderer {
         add(box(0.42, 0.24, 0.04), lambert("#c9a877"), 0, 0.55, 0.0);
         break;
       }
+      case "site": {
+        // A bought plot with no shack yet: the stakes and twine, and an open wooden bin that fills with planks and stones.
+        const stake = lambert("#7a5230");
+        for (const [x, z] of [[-0.5, -0.15], [0.5, -0.15], [-0.5, 0.65], [0.5, 0.65]]) add(box(0.06, 0.3, 0.06), stake, x, 0.15, z);
+        add(box(1.0, 0.02, 0.02), lambert("#d8d2c0"), 0, 0.26, -0.15);
+        add(box(1.0, 0.02, 0.02), lambert("#d8d2c0"), 0, 0.26, 0.65);
+        const boards = lambert("#8a5f36");
+        const W = 0.56, D = 0.4, H = 0.3, T = 0.04;
+        add(box(W, 0.03, D), lambert("#5e4026"), 0, 0.015, 0.25);
+        add(box(W, H, T), boards, 0, H / 2, 0.25 - D / 2);
+        add(box(W, H, T), boards, 0, H / 2, 0.25 + D / 2);
+        add(box(T, H, D), boards, -W / 2, H / 2, 0.25);
+        add(box(T, H, D), boards, W / 2, H / 2, 0.25);
+        // A darker band round the rim so the bin reads as a box, not a block.
+        add(box(W + 0.02, 0.04, T + 0.01), lambert("#5e4026"), 0, H - 0.02, 0.25 + D / 2);
+        const fill = Math.max(0, Math.min(1, poi.fill ?? 0));
+        if (fill > 0) {
+          // Planks on the left, stones on the right, rising together; full, they heap over the rim.
+          const top = 0.03 + fill * (H + 0.06);
+          const plank = lambert("#c9a877");
+          const stone = lambert("#8b8f96");
+          for (let i = 0; i < 3; i++) add(box(0.22, 0.04, 0.07), plank, -0.12, Math.max(0.05, top - 0.03 - i * 0.05), 0.15 + i * 0.09);
+          for (const [x, z, s] of [[0.13, 0.17, 0.09], [0.18, 0.31, 0.08], [0.08, 0.33, 0.07]]) add(box(s, s * 0.8, s), stone, x, Math.max(0.05, top - s / 2), z, 0.5);
+        }
+        break;
+      }
       case "plot": {
         // Roof colour is picked from the owner's id so each hut is recognisable.
         const roofs = ["#8c3b2f", "#2f6f8c", "#6b8c2f", "#8c6a2f", "#6a2f8c", "#2f8c7a"];
