@@ -3,14 +3,14 @@
 // Presence, walking and chat work as they do in the Harbor and the huts: a
 // relay with no tick loop and no alarm, with who is here kept in each
 // socket's attachment so it survives hibernation. The room and its fittings
-// are fixed, so nothing about them is stored. The dice table lives here too
-// (see dice-table.ts). Ordering food and drink, and talking to the barkeep,
+// are fixed, so nothing about them is stored. The two game tables live here
+// too (see stake-table.ts). Ordering food and drink, and talking to the barkeep,
 // are plain HTTP routes in worker.ts; this object only relays people.
 
 import { DurableObject } from "cloudflare:workers";
-import { HARBOR_MAX_SAY, pubPath, pubRoom, type HarborPlayer, type PubClientMessage, type PubServerMessage } from "@gantt-quest/world";
+import { HARBOR_MAX_SAY, pubPath, pubRoom, type DiceGame, type DiceRequest, type HarborPlayer, type PubClientMessage, type PubServerMessage, type ShoalsGame, type ShoalsRequest } from "@gantt-quest/world";
 import { crewFor, getCharacter, heroInitFor, type Env, type Player } from "./db";
-import { DiceTable } from "./dice-table";
+import { DICE_RULES, SHOALS_RULES, StakeTable } from "./stake-table";
 
 const ROOM = pubRoom();
 const DOOR = ROOM.pois.find((p) => p.kind === "door")!.pos;
@@ -29,12 +29,14 @@ export async function enterPub(env: Env, player: Player, request: Request): Prom
 }
 
 export class PubRoom extends DurableObject<Env> {
-  private dice: DiceTable;
+  private dice: StakeTable<DiceGame, DiceRequest>;
+  private shoals: StakeTable<ShoalsGame, ShoalsRequest>;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair("ping", "pong"));
-    this.dice = new DiceTable(ctx, env);
+    this.dice = new StakeTable(ctx, env, DICE_RULES);
+    this.shoals = new StakeTable(ctx, env, SHOALS_RULES);
   }
 
   private players(except?: WebSocket): HarborPlayer[] {
@@ -86,6 +88,7 @@ export class PubRoom extends DurableObject<Env> {
     this.send(pair[1], { type: "snapshot", you: id, players: this.players() });
     this.broadcast({ type: "joined", player }, pair[1]);
     await this.dice.welcome(pair[1], player);
+    await this.shoals.welcome(pair[1], player);
     return new Response(null, { status: 101, webSocket: pair[0] });
   }
 
@@ -107,13 +110,16 @@ export class PubRoom extends DurableObject<Env> {
       if (!path) return;
       ws.serializeAttachment({ ...player, pos: path[path.length - 1] } satisfies HarborPlayer);
       this.broadcast({ type: "moved", id: player.id, path });
-      // Walking away from the dice table gives up a seat there.
+      // Walking away from a game table gives up a seat there.
       await this.dice.reconcile();
+      await this.shoals.reconcile();
     } else if (msg.type === "say") {
       const text = String(msg.text ?? "").replace(/\s+/g, " ").trim().slice(0, HARBOR_MAX_SAY);
       if (text) this.broadcast({ type: "said", id: player.id, name: player.name, text });
     } else if (msg.type === "dice") {
       await this.dice.handle(ws, player, msg.action);
+    } else if (msg.type === "shoals") {
+      await this.shoals.handle(ws, player, msg.action);
     }
   }
 
@@ -128,6 +134,7 @@ export class PubRoom extends DurableObject<Env> {
     if (player) {
       this.broadcast({ type: "left", id: player.id }, ws);
       await this.dice.reconcile(ws);
+      await this.shoals.reconcile(ws);
     }
   }
 

@@ -4,9 +4,10 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { HexPos } from "@gantt-quest/core";
-import { HERO_CLASSES, PUB_BARKEEP, PUB_BARKEEP_POS, PUB_COUNTER, PUB_DICE, PUB_FITTINGS, PUB_MAX_TALK, PUB_MENU, poiAt, pubRoom, type Perk } from "@gantt-quest/world";
+import { HERO_CLASSES, PUB_BARKEEP, PUB_BARKEEP_POS, PUB_COUNTER, PUB_DICE, PUB_FITTINGS, PUB_MAX_TALK, PUB_MENU, PUB_SHOALS, poiAt, pubRoom, type Perk } from "@gantt-quest/world";
 import { api, type Me, type PubTab } from "./api";
 import { DiceTable } from "./DiceTable";
+import { ShoalsTable } from "./ShoalsTable";
 import { DragPanel } from "./DragPanel";
 import { perkText } from "./hutDrops";
 import { WorldRenderer, type RenderState } from "./render/WorldRenderer";
@@ -45,13 +46,15 @@ export function PubView({ me, refresh, onLeave }: { me: Me; refresh(): Promise<u
   const self = players.find((p) => p.id === you);
 
   // Holding dice: a stray click on the floor would walk away from the table and forfeit, so the floor is ignored until the game is over.
-  const holdingDice = pub.dice?.phase === "playing" && pub.dice.seats.some((s) => s.id === you && s.count > 0);
+  const holdingDice =
+    (pub.dice?.phase === "playing" && pub.dice.seats.some((s) => s.id === you && s.count > 0)) ||
+    (pub.shoals?.phase === "playing" && pub.shoals.seats.some((s) => s.id === you && s.count > 0));
   const pinned = useRef(holdingDice);
   pinned.current = holdingDice;
   // Gold moves when a dice game starts and when it ends.
-  const dicePhase = pub.dice?.phase;
+  const dicePhase = `${pub.dice?.phase}|${pub.shoals?.phase}`;
   useEffect(() => {
-    if (dicePhase === "playing" || dicePhase === "done") void refresh();
+    if (/playing|done/.test(dicePhase)) void refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dicePhase]);
 
@@ -109,6 +112,7 @@ export function PubView({ me, refresh, onLeave }: { me: Me; refresh(): Promise<u
 
   const atCounter = !!self && same(self.pos, PUB_COUNTER);
   const atDice = !!self && same(self.pos, PUB_DICE);
+  const atShoals = !!self && same(self.pos, PUB_SHOALS);
   const atDoor = !!self && same(self.pos, DOOR);
   const gold = me.character?.gold ?? 0;
   const hoverPoi = hover ? poiAt(ROOM, hover) : undefined;
@@ -116,6 +120,7 @@ export function PubView({ me, refresh, onLeave }: { me: Me; refresh(): Promise<u
     : !hoverPoi ? null
     : hoverPoi.kind === "counter" ? "The menu board: order here, or have a word with the barkeep"
     : hoverPoi.kind === "dice" ? "Dice table: a bluffing game for a small stake"
+    : hoverPoi.kind === "shoals" ? "Shoals: lay your markers, bid, and sail without running aground"
     : hoverPoi.kind === "door" ? "The door back to the Harbor"
     : null;
 
@@ -206,6 +211,7 @@ export function PubView({ me, refresh, onLeave }: { me: Me; refresh(): Promise<u
         </DragPanel>
       )}
 
+      {you && atShoals && <ShoalsTable table={pub.shoals} you={you} gold={gold} error={pub.shoalsError} send={(action) => pub.send({ type: "shoals", action })} />}
       {you && atDice && <DiceTable table={pub.dice} you={you} gold={gold} error={pub.diceError} send={(action) => pub.send({ type: "dice", action })} />}
 
       {you && <>
@@ -236,11 +242,12 @@ export function PubView({ me, refresh, onLeave }: { me: Me; refresh(): Promise<u
       </DragPanel>
 
       <DragPanel id="pub.turn" title="Here" compact className="turnbar panel">
-        {holdingDice ? <span>You are in a dice game. Walking away forfeits it.</span>
+        {holdingDice ? <span>You are in a game. Walking away forfeits it.</span>
           : atDoor ? <span>The door back to the Harbor.</span>
           : atCounter ? <span>At the bar.</span>
           : atDice ? <span>At the dice table.</span>
-          : <span className="muted">Click a hex to walk. Order at the menu board; the dice table is across the room.</span>}
+          : atShoals ? <span>At the Shoals table.</span>
+          : <span className="muted">Click a hex to walk. Order at the menu board; the game tables are across the room.</span>}
         <button className={atDoor ? "primary" : ""} disabled={holdingDice} onClick={onLeave}>Leave</button>
       </DragPanel>
       </>}
