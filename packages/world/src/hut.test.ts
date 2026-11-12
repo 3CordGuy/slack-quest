@@ -161,3 +161,17 @@ describe("the resource bin on a new plot", () => {
     expect(binDeposit({}, { wood: -3, stone: 2.7 })).toEqual({ stone: 2 });
   });
 });
+
+describe("selling foraged goods to the stall", () => {
+  it("buys herbs and mushrooms only, whole amounts the seller holds", async () => {
+    const { STALL_BUYS, sellMaterialProblem } = await import("./index");
+    expect(Object.keys(STALL_BUYS).sort()).toEqual(["herbs", "mushrooms"]);
+    const have = { herbs: 4, mushrooms: 1, wood: 9 };
+    expect(sellMaterialProblem("herbs", 4, have)).toBeNull();
+    expect(sellMaterialProblem("mushrooms", 1, have)).toBeNull();
+    expect(sellMaterialProblem("herbs", 5, have)).toMatch(/only have 4/);
+    expect(sellMaterialProblem("wood", 1, have)).toMatch(/does not buy/);
+    expect(sellMaterialProblem("gold", 1, have)).toMatch(/does not buy/);
+    for (const bad of [0, -1, 1.5, "2", null]) expect(sellMaterialProblem("herbs", bad, have)).toMatch(/at least one/);
+  });
+});
