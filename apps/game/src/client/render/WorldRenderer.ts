@@ -878,9 +878,12 @@ export class WorldRenderer {
         unit.labelText = w.label ?? "";
         if (w.label) {
           const { texture, aspect } = labelTexture(w.label);
-          unit.label = new THREE.Sprite(new THREE.SpriteMaterial({ map: texture, transparent: true, depthTest: false }));
-          unit.label.scale.set(0.42 * aspect, 0.42, 1);
-          unit.label.userData.lift = w.size + 0.55;
+          // A fixed size on screen, whatever the zoom: each pixel of the label lands on exactly one pixel of the view.
+          unit.label = new THREE.Sprite(new THREE.SpriteMaterial({ map: texture, transparent: true, depthTest: false, sizeAttenuation: false }));
+          unit.label.center.set(0.5, 0);
+          unit.label.userData.aspect = aspect;
+          unit.label.userData.rows = texture.image.height;
+          unit.label.userData.lift = w.size + 0.28;
           unit.label.renderOrder = 7;
           this.unitGroup.add(unit.label);
         }
@@ -1170,6 +1173,8 @@ export class WorldRenderer {
     this.ambience.update(this.clock, this.yaw, this.target);
     if (this.state?.indoors) this.lowerNearWalls();
 
+    // The height of one view pixel, in the units an unattenuated sprite is sized in.
+    const labelRow = (2 * Math.tan(THREE.MathUtils.degToRad(this.camera.fov / 2))) / this.renderer.domElement.height;
     const sunTurn = Math.atan2(this.ambience.sunDir.x, this.ambience.sunDir.z);
     for (const [id, unit] of this.units) {
       const p = unit.sprite.position;
@@ -1206,7 +1211,11 @@ export class WorldRenderer {
         const s = this.pulsing.has(id) ? 1.25 + Math.sin(this.clock * 6) * 0.2 : 1;
         unit.ring.scale.set(s, s, 1);
       }
-      if (unit.label) unit.label.position.set(p.x, ground + unit.label.userData.lift, p.z);
+      if (unit.label) {
+        unit.label.position.set(p.x, ground + unit.label.userData.lift, p.z);
+        const tall = unit.label.userData.rows * labelRow;
+        unit.label.scale.set(tall * unit.label.userData.aspect, tall, 1);
+      }
       if (unit.hpBack && unit.hpFill) {
         const lift = unit.hpBack.userData.lift ?? 2;
         unit.hpBack.position.set(p.x - 0.6, ground + lift, p.z);
