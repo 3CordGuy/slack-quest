@@ -29,67 +29,67 @@ export interface HeroClass {
   passive?: string;
 }
 
-/** HP the Backend Druid grows back at the start of each of its turns in a fight. */
+/** HP the Reef Druid grows back at the start of each of its turns in a fight. */
 export const DRUID_REGEN = 1;
-/** Extra damage on every other hero's attacks while a Frontend Bard is standing. One Bard's worth, however many there are. */
+/** Extra damage on every other hero's attacks while a Shanty Bard is standing. One Bard's worth, however many there are. */
 export const BARD_AURA = 2;
 /** Bulwark Strike adds the Warden's armor divided by this to its damage. */
 export const ARMOR_DAMAGE_DIVISOR = 3;
-/** Turns of bleeding the Data Warlock's perfect hits leave behind. */
+/** Turns of bleeding the Wreck Warlock's perfect hits leave behind. */
 export const WARLOCK_BLEED_TURNS = 3;
 
 export const HERO_CLASSES: HeroClass[] = [
   {
     id: "qa_paladin",
-    name: "QA Paladin",
+    name: "Tidewall Paladin",
     blurb: "Tough front-liner. Hits hard with Strength and shrugs off blows.",
     weapons: ["mace", "greatsword"],
   },
   {
     id: "devops_mage",
-    name: "DevOps Mage",
+    name: "Stormcall Mage",
     blurb: "Fragile caster. Burns enemies and patches up allies with Intelligence.",
     weapons: ["staff", "tome"],
   },
   {
     id: "refactor_rogue",
-    name: "Refactor Rogue",
+    name: "Smuggler Rogue",
     blurb: "Fast and precise. Opens wounds with Dexterity and usually acts first.",
     weapons: ["daggers", "shortbow"],
   },
   {
     id: "backend_druid",
-    name: "Backend Druid",
-    blurb: "Hardy healer. Mends allies and tangles enemies with Intelligence, and slowly grows back.",
+    name: "Reef Druid",
+    blurb: "Hardy healer. Mends allies and tangles enemies with Intelligence, and regrows like coral.",
     weapons: ["root_staff", "sickle"],
     passive: `Deep roots: heals ${DRUID_REGEN} HP at the start of each of its turns in a fight.`,
   },
   {
     id: "frontend_bard",
-    name: "Frontend Bard",
+    name: "Shanty Bard",
     blurb: "Makes everyone better. Plays the party up and the enemy down with Intelligence.",
     weapons: ["lute", "flute"],
     passive: `Encore: while the Bard is standing, every other hero's attacks do +${BARD_AURA} damage.`,
   },
   {
     id: "staff_sage",
-    name: "Staff Sage",
+    name: "Starchart Sage",
     blurb: "Raw power. The hardest-hitting spells of any class, and little else to fall back on.",
     weapons: ["orb", "scepter"],
   },
   {
     id: "sre_warden",
-    name: "SRE Warden",
+    name: "Lighthouse Warden",
     blurb: "The wall. Draws every blow onto itself and hits back with Strength and the weight of its armor.",
     weapons: ["pager_axe", "maul"],
-    passive: "Always on call: starts every fight guarded (half damage) until its second turn.",
+    passive: "Night watch: starts every fight guarded (half damage) until its second turn.",
   },
   {
     id: "data_warlock",
-    name: "Data Warlock",
+    name: "Wreck Warlock",
     blurb: "Curses and drains with Intelligence. The bigger the enemy, the harder its Hex lands.",
     weapons: ["grimoire", "void_staff"],
-    passive: `Corrupted data: every perfect hit also leaves the target bleeding for ${WARLOCK_BLEED_TURNS} turns.`,
+    passive: `Riptide: every perfect hit also leaves the target bleeding for ${WARLOCK_BLEED_TURNS} turns.`,
   },
 ];
 
@@ -163,22 +163,22 @@ export interface WeaponDef {
 }
 
 export const WEAPONS: Record<string, WeaponDef> = {
-  mace: { id: "mace", name: "Audit Mace", classId: "qa_paladin", abilities: ["smite", "shield_wall"] },
-  greatsword: { id: "greatsword", name: "Regression Greatsword", classId: "qa_paladin", abilities: ["cleave", "heavy_blow", "shield_wall"] },
-  staff: { id: "staff", name: "Pipeline Staff", classId: "devops_mage", abilities: ["firebolt", "mend"] },
-  tome: { id: "tome", name: "Runbook Tome", classId: "devops_mage", abilities: ["chain_spark", "hex_bolt", "mend"] },
-  daggers: { id: "daggers", name: "Twin Diff Daggers", classId: "refactor_rogue", abilities: ["quick_stab", "flurry"] },
-  shortbow: { id: "shortbow", name: "Hotfix Shortbow", classId: "refactor_rogue", abilities: ["aimed_shot", "pin_down", "quick_stab"] },
-  root_staff: { id: "root_staff", name: "Root Cause Staff", classId: "backend_druid", abilities: ["thornlash", "rejuvenate"] },
-  sickle: { id: "sickle", name: "Garbage Collector's Sickle", classId: "backend_druid", abilities: ["overgrowth", "thornlash", "rejuvenate"] },
-  lute: { id: "lute", name: "Responsive Lute", classId: "frontend_bard", abilities: ["dissonance", "encore"] },
-  flute: { id: "flute", name: "Hot-Reload Flute", classId: "frontend_bard", abilities: ["cacophony", "dissonance", "encore"] },
-  orb: { id: "orb", name: "Monolith Orb", classId: "staff_sage", abilities: ["manifest", "arcane_ward"] },
-  scepter: { id: "scepter", name: "Legacy Scepter", classId: "staff_sage", abilities: ["meteor", "manifest", "arcane_ward"] },
-  pager_axe: { id: "pager_axe", name: "Pager Axe", classId: "sre_warden", abilities: ["bulwark_strike", "taunt", "hold_the_line"] },
-  maul: { id: "maul", name: "Five-Nines Maul", classId: "sre_warden", abilities: ["shockwave", "bulwark_strike", "taunt"] },
-  grimoire: { id: "grimoire", name: "Query Grimoire", classId: "data_warlock", abilities: ["hex", "soul_drain"] },
-  void_staff: { id: "void_staff", name: "Null Pointer Staff", classId: "data_warlock", abilities: ["blight", "hex", "soul_drain"] },
+  mace: { id: "mace", name: "Anchor Mace", classId: "qa_paladin", abilities: ["smite", "shield_wall"] },
+  greatsword: { id: "greatsword", name: "Breakwater Greatsword", classId: "qa_paladin", abilities: ["cleave", "heavy_blow", "shield_wall"] },
+  staff: { id: "staff", name: "Squall Staff", classId: "devops_mage", abilities: ["firebolt", "mend"] },
+  tome: { id: "tome", name: "Logbook of Gales", classId: "devops_mage", abilities: ["chain_spark", "hex_bolt", "mend"] },
+  daggers: { id: "daggers", name: "Twin Gutting Knives", classId: "refactor_rogue", abilities: ["quick_stab", "flurry"] },
+  shortbow: { id: "shortbow", name: "Crow's Nest Shortbow", classId: "refactor_rogue", abilities: ["aimed_shot", "pin_down", "quick_stab"] },
+  root_staff: { id: "root_staff", name: "Driftwood Staff", classId: "backend_druid", abilities: ["thornlash", "rejuvenate"] },
+  sickle: { id: "sickle", name: "Kelp Sickle", classId: "backend_druid", abilities: ["overgrowth", "thornlash", "rejuvenate"] },
+  lute: { id: "lute", name: "Dockside Lute", classId: "frontend_bard", abilities: ["dissonance", "encore"] },
+  flute: { id: "flute", name: "Bosun's Pipe", classId: "frontend_bard", abilities: ["cacophony", "dissonance", "encore"] },
+  orb: { id: "orb", name: "Sextant Orb", classId: "staff_sage", abilities: ["manifest", "arcane_ward"] },
+  scepter: { id: "scepter", name: "Tidestone Scepter", classId: "staff_sage", abilities: ["meteor", "manifest", "arcane_ward"] },
+  pager_axe: { id: "pager_axe", name: "Foghorn Axe", classId: "sre_warden", abilities: ["bulwark_strike", "taunt", "hold_the_line"] },
+  maul: { id: "maul", name: "Bell-Buoy Maul", classId: "sre_warden", abilities: ["shockwave", "bulwark_strike", "taunt"] },
+  grimoire: { id: "grimoire", name: "Drowned Grimoire", classId: "data_warlock", abilities: ["hex", "soul_drain"] },
+  void_staff: { id: "void_staff", name: "Undertow Staff", classId: "data_warlock", abilities: ["blight", "hex", "soul_drain"] },
 };
 
 // ---------- enemies ----------

@@ -99,41 +99,41 @@ export interface Base {
 
 const BASES: Record<Exclude<Slot, "main_hand">, Base[]> = {
   off_hand: [
-    { ref: "buckler", name: "Rollback Buckler", icon: "round-shield" },
-    { ref: "firewall", name: "Firewall Shield", icon: "shield" },
+    { ref: "buckler", name: "Barrel-Lid Buckler", icon: "round-shield" },
+    { ref: "firewall", name: "Seawall Shield", icon: "shield" },
   ],
   body: [
-    { ref: "hauberk", name: "Hauberk of Uptime", icon: "chest-armor" },
-    { ref: "greatcoat", name: "On-call Greatcoat", icon: "chest-armor" },
+    { ref: "hauberk", name: "Hauberk of Calm Seas", icon: "chest-armor" },
+    { ref: "greatcoat", name: "Oilskin Greatcoat", icon: "chest-armor" },
   ],
   helmet: [
-    { ref: "hardhat", name: "Hard Hat of Review", icon: "heavy-helm" },
-    { ref: "hood", name: "Incident Hood", icon: "hood" },
-    { ref: "visor", name: "Blame Visor", icon: "brutal-helm" },
+    { ref: "hardhat", name: "Diving Helm", icon: "heavy-helm" },
+    { ref: "hood", name: "Squall Hood", icon: "hood" },
+    { ref: "visor", name: "Spyglass Visor", icon: "brutal-helm" },
   ],
   legs: [
-    { ref: "greaves", name: "Sprint Greaves", icon: "armored-pants" },
-    { ref: "trousers", name: "Padded Trousers", icon: "armored-pants" },
+    { ref: "greaves", name: "Deckhand Greaves", icon: "armored-pants" },
+    { ref: "trousers", name: "Sailcloth Trousers", icon: "armored-pants" },
   ],
   boots: [
-    { ref: "boots", name: "Stand-up Boots", icon: "boots" },
-    { ref: "treads", name: "Deploy Treads", icon: "boots" },
+    { ref: "boots", name: "Sea Boots", icon: "boots" },
+    { ref: "treads", name: "Gangplank Treads", icon: "boots" },
   ],
   ring: [
-    { ref: "ring", name: "Ring of Idempotence", icon: "ring" },
-    { ref: "bands", name: "Linked Bands", icon: "linked-rings" },
+    { ref: "ring", name: "Ring of Steady Tides", icon: "ring" },
+    { ref: "bands", name: "Mooring Bands", icon: "linked-rings" },
   ],
   amulet: [
     { ref: "lanyard", name: "Lucky Lanyard", icon: "gem-chain" },
-    { ref: "keystone", name: "Legacy Keystone", icon: "key" },
-    { ref: "badge", name: "Blameless Badge", icon: "crowned-heart" },
+    { ref: "keystone", name: "Lighthouse Key", icon: "key" },
+    { ref: "badge", name: "Harbormaster's Badge", icon: "crowned-heart" },
   ],
 };
 
 /** Every armor and trinket base, for the content catalogue. Read-only: the rules use BASES. */
 export const GEAR_BASES: readonly Base[] = Object.values(BASES).flat();
 
-/** Word put in front of a base name for each rarity: "Fine Audit Mace". */
+/** Word put in front of a base name for each rarity: "Fine Anchor Mace". */
 export const RARITY_PREFIX: Record<Rarity, string> = { common: "", uncommon: "Sturdy ", rare: "Fine ", epic: "Masterwork ", legendary: "Mythic " };
 const ARMOR_BASE: Partial<Record<Slot, number>> = { body: 3, helmet: 2, legs: 2, off_hand: 2 };
 const ARMOR_SLOTS: Slot[] = ["off_hand", "body", "helmet", "legs"];

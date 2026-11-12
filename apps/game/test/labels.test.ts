@@ -26,7 +26,7 @@ beforeAll(() => {
 describe("labels", () => {
   it("uses the override, then the code default, then the id", () => {
     expect(label("class", "qa_paladin")).toBe("Test Paladin");
-    expect(label("class", "devops_mage")).toBe("DevOps Mage");
+    expect(label("class", "devops_mage")).toBe("Stormcall Mage");
     expect(label("class", "nobody")).toBe("nobody");
     expect(blurb("class", "qa_paladin")).toMatch(/front-liner/);
     expect(costLabel("wood")).toBe("Timber");
@@ -34,10 +34,10 @@ describe("labels", () => {
   });
 
   it("rebuilds an owned item's name from its rarity and renamed base", () => {
-    expect(itemName({ kind: "weapon", ref: "mace", rarity: "rare", name: "Fine Audit Mace" })).toBe("Fine Bug Mace");
-    expect(itemName({ kind: "weapon", ref: "mace", rarity: "common", name: "Audit Mace" })).toBe("Bug Mace");
+    expect(itemName({ kind: "weapon", ref: "mace", rarity: "rare", name: "Fine Anchor Mace" })).toBe("Fine Bug Mace");
+    expect(itemName({ kind: "weapon", ref: "mace", rarity: "common", name: "Anchor Mace" })).toBe("Bug Mace");
     // Not renamed (only its blurb changed), or not overridden at all: the stored name stands.
-    expect(itemName({ kind: "armor", ref: "hauberk", rarity: "epic", name: "Masterwork Hauberk of Uptime" })).toBe("Masterwork Hauberk of Uptime");
-    expect(itemName({ kind: "weapon", ref: "staff", rarity: "rare", name: "Fine Pipeline Staff" })).toBe("Fine Pipeline Staff");
+    expect(itemName({ kind: "armor", ref: "hauberk", rarity: "epic", name: "Masterwork Hauberk of Calm Seas" })).toBe("Masterwork Hauberk of Calm Seas");
+    expect(itemName({ kind: "weapon", ref: "staff", rarity: "rare", name: "Fine Squall Staff" })).toBe("Fine Squall Staff");
   });
 });

@@ -109,7 +109,7 @@ In dev builds the page exposes `window.__gq` (`state`, `send`, and the `World` m
 
 - Placeholder art: sprites are drawn in code (`render/sprites.ts`), props are primitive shapes.
 - Four story frames, one talkable NPC per story.
-- Three hero classes (QA Paladin, DevOps Mage, Refactor Rogue). The original game had eight; Backend Druid, Frontend Bard, Staff Sage, SRE Warden and Data Warlock have stats in `packages/core` but no weapons, abilities or sprites here yet.
+- Eight hero classes: Tidewall Paladin, Stormcall Mage, Smuggler Rogue, Reef Druid, Shanty Bard, Starchart Sage, Lighthouse Warden and Wreck Warlock, each with two weapons, its own abilities and a code-drawn sprite.
 - Battle numbers are not tuned; a focused party can stun-lock the boss.
 - Battle events animate in sequence but HP bars jump to the final value.
 - The Harbor has twelve plots; a crew larger than that cannot all own one.

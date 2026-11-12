@@ -28,7 +28,7 @@ export function toOwned(row: InventoryItem): OwnedItem {
     equipped: !!row.equipped,
     kind: row.kind,
     ref: row.ref,
-    // The name already carries any smithy work ("Audit Mace +2"), so `upgrades` is not copied over.
+    // The name already carries any smithy work ("Anchor Mace +2"), so `upgrades` is not copied over.
     name: itemName(row),
     rarity: row.rarity,
     slot: row.slot,

@@ -33,7 +33,7 @@ const item = (over: Partial<ItemDef>): ItemDef => ({ kind: "armor", ref: "x", na
 
 /** A level 3 paladin in real gear: a greatsword, a breastplate and a ring. */
 const WORN: ItemDef[] = [
-  item({ kind: "weapon", ref: "greatsword", name: "Regression Greatsword", slot: "main_hand", power: 3, statBonus: { str: 2 }, icon: "greatsword" }),
+  item({ kind: "weapon", ref: "greatsword", name: "Breakwater Greatsword", slot: "main_hand", power: 3, statBonus: { str: 2 }, icon: "greatsword" }),
   item({ kind: "armor", ref: "plate", name: "Breastplate", slot: "body", power: 6, statBonus: { vit: 2 }, icon: "plate" }),
   item({ kind: "armor", ref: "cap", name: "Cap", slot: "helmet", power: 2, icon: "cap" }),
   item({ kind: "trinket", ref: "band", name: "Band", slot: "ring", statBonus: { agi: 1, vit: 1 }, icon: "band" }),

@@ -76,7 +76,7 @@ function spar(heroes: HeroInit[], ability: Record<string, string>, seed: number,
 }
 
 describe("class passives", () => {
-  it("lets the Backend Druid grow back at the start of each of its turns", () => {
+  it("lets the Reef Druid grow back at the start of each of its turns", () => {
     const { events } = spar([hero("d", "backend_druid")], { d: "thornlash" }, 3);
     const regrowth = events.filter((e) => e.t === "heal" && e.ability === "Deep Roots");
     expect(regrowth.length).toBeGreaterThan(0);
@@ -88,7 +88,7 @@ describe("class passives", () => {
     expect(events.some((e) => e.t === "heal" && e.ability === "Deep Roots")).toBe(false);
   });
 
-  it("makes the other heroes hit harder while a Frontend Bard stands, but not the Bard itself", () => {
+  it("makes the other heroes hit harder while a Shanty Bard stands, but not the Bard itself", () => {
     // The same rolls with and without a Bard aboard: the paladin's hits differ by exactly the aura when every roll lands.
     const perfectHits = (withBard: boolean) => {
       const party = withBard ? [hero("p", "qa_paladin"), hero("b", "frontend_bard")] : [hero("p", "qa_paladin")];
@@ -107,7 +107,7 @@ describe("class passives", () => {
   });
 });
 
-describe("SRE Warden", () => {
+describe("Lighthouse Warden", () => {
   it("starts every fight guarded, and keeps the guard through its first turn until its second", () => {
     for (let seed = 0; seed < 20; seed++) {
       const rng = makeRng(seed);
@@ -178,7 +178,7 @@ describe("SRE Warden", () => {
   });
 });
 
-describe("Data Warlock", () => {
+describe("Wreck Warlock", () => {
   it("lands Hex harder on bigger enemies: about 5% of their max HP", () => {
     const perfect = (hp: number) => {
       const hits = new Set<number>();

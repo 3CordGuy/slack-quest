@@ -27,7 +27,7 @@ export function blurb(kind: CatalogueKind, id: string): string {
 export function itemName(item: Pick<ItemDef, "kind" | "ref" | "rarity" | "name" | "upgrades">): string {
   const kind: CatalogueKind = item.kind === "weapon" ? "weapon" : "gear";
   const renamed = override(kind, item.ref)?.name;
-  // Work done at the smithy shows after the name: "Audit Mace +2".
+  // Work done at the smithy shows after the name: "Anchor Mace +2".
   return upgradedName(renamed ? `${RARITY_PREFIX[item.rarity] ?? ""}${renamed}` : item.name, item.upgrades);
 }
 

@@ -64,7 +64,7 @@ describe("item generation", () => {
     const staff = weaponItem("staff", "rare", 6);
     expect(equipProblem(staff, "devops_mage", 6)).toBeNull();
     expect(equipProblem(staff, "devops_mage", 2)).toMatch(/level 5/);
-    expect(equipProblem(staff, "qa_paladin", 9)).toMatch(/DevOps Mage/);
+    expect(equipProblem(staff, "qa_paladin", 9)).toMatch(/Stormcall Mage/);
   });
 });
 
