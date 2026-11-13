@@ -161,8 +161,9 @@ function FishingIntro({ pier, status, ended, busy, error, onStart, onClose }: {
 }
 
 /** The HUD over a sitting under way. */
-function Sitting({ outing, world, pier, at: here, vessel, shipBeside, apply, onRod, onClose }: {
+function Sitting({ outing, world, pier, at: here, vessel, gilded, shipBeside, apply, onRod, onClose }: {
   outing: GatherView;
+  gilded: boolean;
   at: HexPos;
   vessel: Vessel | null;
   onRod?(on: boolean): void;
@@ -296,7 +297,7 @@ function Sitting({ outing, world, pier, at: here, vessel, shipBeside, apply, onR
     };
     // Afloat, in whatever boat the hero has; ashore, on the pier.
     const boat = FISH_SPOTS[pier].vessel ? vessel ?? FISH_SPOTS[pier].vessel! : null;
-    const s = world.startMinigame((g) => new FishingStage(world, g, pier, seaward, hooks, boat), here, pier === "shore" ? "fishing" : undefined);
+    const s = world.startMinigame((g) => new FishingStage(world, g, pier, seaward, hooks, boat, gilded), here, pier === "shore" ? "fishing" : undefined);
     s.ease = sitting.ease;
     stage.current = s;
     document.body.classList.add("fishing");
@@ -477,10 +478,11 @@ function Sitting({ outing, world, pier, at: here, vessel, shipBeside, apply, onR
 }
 
 /** Fishing at a pier or the shore: the card, or the sitting under way. */
-export function Fishing({ pier, at, vessel = null, world, shipBeside, onRod, onClose, onStamina }: {
+export function Fishing({ pier, at, vessel = null, gilded = false, world, shipBeside, onRod, onClose, onStamina }: {
   pier: Pier;
   at: HexPos;
   vessel?: Vessel | null;
+  gilded?: boolean;
   world: WorldRenderer;
   shipBeside: boolean;
   onRod?(on: boolean): void;
@@ -533,6 +535,6 @@ export function Fishing({ pier, at, vessel = null, world, shipBeside, onRod, onC
     if (active && !playing) setPlaying(active);
   }, [active, playing]);
   const shown = playing ?? active;
-  if (shown) return <Sitting outing={shown} world={world} pier={pier} at={at} vessel={vessel} shipBeside={shipBeside} apply={apply} onRod={onRod} onClose={onClose} />;
+  if (shown) return <Sitting outing={shown} world={world} pier={pier} at={at} vessel={vessel} gilded={gilded} shipBeside={shipBeside} apply={apply} onRod={onRod} onClose={onClose} />;
   return <FishingIntro pier={pier} status={status} ended={ended} busy={busy} error={error} onStart={() => void start()} onClose={onClose} />;
 }

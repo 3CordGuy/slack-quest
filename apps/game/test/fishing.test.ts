@@ -6,12 +6,12 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { FISH, PAGE_REWARD, SITTING_IDLE_MS, gatherDay, type GatherChoice, type GatherView } from "@gantt-quest/world";
+import { BOOK_TITLE, FISH, PAGE_REWARD, SITTING_IDLE_MS, gatherDay, type GatherChoice, type GatherView } from "@gantt-quest/world";
 import { catchBook, hangAtHome, mountInPub, unmountInPub } from "../src/server/catchbook";
 import { getHut, type Env } from "../src/server/db";
 import { playFight } from "../../../packages/world/src/fishbot";
 import { gatherStatus, startOuting, stepOuting } from "../src/server/gather";
-import { fishStock, moveFish, sellFish } from "../src/server/fishmarket";
+import { fishStock, gildedRod, moveFish, sellFish } from "../src/server/fishmarket";
 
 type Row = Record<string, unknown>;
 
@@ -373,5 +373,14 @@ describe("fishing from a boat", () => {
     const cast = await stepOuting(db, "ann", { t: "cast", power: 0.5 });
     if (typeof cast === "string") throw new Error(cast);
     expect(cast.outing!.sitting!.spot).toBe("sea");
+  });
+});
+
+describe("the gilded rod", () => {
+  it("goes to whoever has filled the Catch Book", async () => {
+    expect(await gildedRod(db, "ann")).toBe(false);
+    sql.prepare("UPDATE characters SET title = ? WHERE player_id = 'ann'").run(BOOK_TITLE);
+    expect(await gildedRod(db, "ann")).toBe(true);
+    expect(await gildedRod(db, "bo")).toBe(false);
   });
 });

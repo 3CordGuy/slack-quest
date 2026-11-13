@@ -16,6 +16,7 @@ import {
   type FishSpot,
   type Vessel,
   bestVessel,
+  BOOK_TITLE,
 } from "@gantt-quest/world";
 import { crewFor } from "./db";
 
@@ -59,6 +60,12 @@ interface Row {
 export async function ownedVessel(db: D1Database, playerId: string): Promise<Vessel | null> {
   const rows = await db.prepare("SELECT def_id FROM furnishings WHERE player_id = ? AND def_id IN ('rowboat', 'float_barrel')").bind(playerId).all<{ def_id: string }>();
   return bestVessel(rows.results.map((r) => r.def_id));
+}
+
+/** Whether a player has filled the Catch Book, and so fishes with a gilded rod. */
+export async function gildedRod(db: D1Database, playerId: string): Promise<boolean> {
+  const row = await db.prepare("SELECT title FROM characters WHERE player_id = ?").bind(playerId).first<{ title: string | null }>();
+  return row?.title === BOOK_TITLE;
 }
 
 /** The board a player sees: their crew's, or their own if they have no crew. */
