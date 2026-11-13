@@ -25,3 +25,22 @@
 .salesman-wares .shop-row { cursor: default; border: 1px solid var(--line); }
 .salesman-wares .shop-row button { flex: none; min-width: 64px; }
 .salesman .small-note { font-size: 11px; }
+
+/* A word with one of the regulars (RegularPanel). */
+.story.pub-bar.regular-panel { width: min(380px, calc(100% - 24px)); }
+.regular-head { display: flex; gap: 10px; align-items: flex-start; margin-bottom: 6px; }
+.regular-face { width: 48px; height: 72px; object-fit: contain; object-position: top; image-rendering: pixelated; flex: none; background: rgba(0, 0, 0, 0.25); border: 1px solid var(--line); }
+.regular-head h3 { margin: 0 0 2px; }
+.errand-card { border: 1px solid var(--line); padding: 6px 8px; margin-bottom: 6px; }
+.errand-card.ready { border-color: var(--good); }
+.errand-kind { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--gold); margin-bottom: 2px; }
+.errand-ask { font-style: italic; }
+.errand-needs { list-style: none; margin: 0 0 4px; padding: 0; display: flex; flex-wrap: wrap; gap: 4px 12px; }
+.errand-needs li { display: inline-flex; align-items: center; gap: 4px; }
+.errand-goal { margin: 0 0 4px; }
+.errand-for { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin-bottom: 6px; }
+.errand-pay { display: inline-flex; flex-wrap: wrap; gap: 4px 10px; }
+.errand-chip { display: inline-flex; align-items: center; gap: 3px; }
+.errand-chip.xp { color: var(--gold); font-weight: bold; }
+.regular-panel .small-note { font-size: 11px; }
+.regular-panel .row button { flex: none; }

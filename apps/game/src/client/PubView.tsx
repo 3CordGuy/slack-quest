@@ -2,10 +2,11 @@
 // where the crew sees each other. Stand at the menu board to order food and
 // drink or have a word with Old Tam; stand at the dice table to play.
 
-import { useEffect, useMemo, useRef, useState } from "react";
-import type { HexPos } from "@gantt-quest/core";
-import { PUB_BARKEEP, PUB_BARKEEP_POS, PUB_COUNTER, PUB_DICE, PUB_FITTINGS, PUB_MAX_TALK, PUB_MENU, PUB_SALESMAN_POS, PUB_SHOALS, PUB_TRADER, dueIn, poiAt, pubRoom, salesman, type Perk } from "@gantt-quest/world";
-import { api, type Me, type PubTab } from "./api";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { hexDistance, type HexPos } from "@gantt-quest/core";
+import { PUB_BARKEEP, PUB_BARKEEP_POS, PUB_COUNTER, PUB_DICE, PUB_FITTINGS, PUB_MAX_TALK, PUB_MENU, PUB_REGULAR_SPOTS, PUB_SALESMAN_POS, PUB_SHOALS, PUB_TRADER, dueIn, gatherDay, poiAt, pubRoom, regularsOn, salesman, type Perk, type RegularId } from "@gantt-quest/world";
+import { api, type Me, type PubTab, type RegularsView } from "./api";
+import { RegularPanel } from "./RegularPanel";
 import { DiceTable } from "./DiceTable";
 import { ShoalsTable } from "./ShoalsTable";
 import { SalesmanPanel } from "./SalesmanPanel";
@@ -25,6 +26,8 @@ import "./hut.css";
 import "./pub.css";
 
 const same = (a: HexPos, b: HexPos) => a.q === b.q && a.r === b.r;
+/** A regular's unit id in the scene. */
+const regularUnit = (id: string) => `regular:${id}`;
 const ROOM = pubRoom();
 const DOOR = ROOM.pois.find((p) => p.kind === "door")!.pos;
 
@@ -67,6 +70,34 @@ export function PubView({ me, refresh, onLeave }: { me: Me; refresh(): Promise<u
   const sellerHere = useRef(!!seller);
   sellerHere.current = !!seller;
 
+  /** The day the regulars are for: who is in follows from it and the crew, as on the server. */
+  const [day, setDay] = useState(() => gatherDay(Date.now()));
+  useEffect(() => {
+    const t = setInterval(() => setDay(gatherDay(Date.now())), 60_000);
+    return () => clearInterval(t);
+  }, []);
+  const cast = useMemo(() => (me.crew ? regularsOn(me.crew.id, day) : []), [me.crew, day]);
+  /** Where this player stands with each regular, from the server. */
+  const [regs, setRegs] = useState<RegularsView | null>(null);
+  const loadRegs = useCallback(() => api.regulars().then(setRegs, () => undefined), []);
+  useEffect(() => {
+    void loadRegs();
+  }, [loadRegs, day, me.character?.gold]);
+  /** The regular whose panel is open. */
+  const [talkTo, setTalkTo] = useState<RegularId | null>(null);
+  // Opening a regular's panel reads the job again (a quest may have been done elsewhere since),
+  // and brings them to the middle of the screen, clear of the panel.
+  useEffect(() => {
+    if (!talkTo) return;
+    void loadRegs();
+    const spot = castRef.current.findIndex((r) => r.id === talkTo);
+    if (spot >= 0) renderer.current?.lookAt(PUB_REGULAR_SPOTS[spot].pos);
+  }, [talkTo, loadRegs]);
+  /** The regular just clicked: their panel opens once you are beside them. */
+  const wantTalk = useRef<RegularId | null>(null);
+  const castRef = useRef(cast);
+  castRef.current = cast;
+
   const pub = usePub(
     (id, path) => renderer.current?.playEvents([{ t: "moved", heroId: id, path }]),
     (m) => {
@@ -108,6 +139,8 @@ export function PubView({ me, refresh, onLeave }: { me: Me; refresh(): Promise<u
         { id: PUB_BARKEEP.id, classId: "npc", pos: PUB_BARKEEP_POS, label: PUB_BARKEEP.name },
         // A traveling salesman, when one is in, takes the corner by the far wall.
         ...(seller ? [{ id: "salesman", classId: seller.look, pos: PUB_SALESMAN_POS, label: seller.name }] : []),
+        // The day's regulars, each on their own spot.
+        ...cast.map((r, i) => ({ id: regularUnit(r.id), classId: r.look, pos: PUB_REGULAR_SPOTS[i].pos, label: r.name })),
       ],
       turn: null,
       battle: null,
@@ -117,7 +150,7 @@ export function PubView({ me, refresh, onLeave }: { me: Me; refresh(): Promise<u
       indoors: true,
       props: PUB_FITTINGS.map((f) => ({ id: f.id, model: f.model, pos: { q: f.q, r: f.r }, facing: f.facing })),
     };
-  }, [players, you, seller]);
+  }, [players, you, seller, cast]);
   const latest = useRef(scene);
   latest.current = scene;
   const send = useRef(pub.send);
@@ -128,6 +161,11 @@ export function PubView({ me, refresh, onLeave }: { me: Me; refresh(): Promise<u
   useEffect(() => {
     const r = new WorldRenderer(mount.current!, { onHexClick: (to) => {
         if (pinned.current) return;
+        // Clicking a regular walks you up beside them, and opens a word with them once there.
+        const spot = PUB_REGULAR_SPOTS.findIndex((s) => same(s.pos, to));
+        const who = spot >= 0 ? castRef.current[spot] : undefined;
+        wantTalk.current = who?.id ?? null;
+        if (who) return send.current({ type: "move", to: PUB_REGULAR_SPOTS[spot].stand });
         // Clicking the salesman walks you up to their table.
         send.current({ type: "move", to: sellerHere.current && same(to, PUB_SALESMAN_POS) ? PUB_TRADER : to });
       }, onHover: setHover });
@@ -159,9 +197,27 @@ export function PubView({ me, refresh, onLeave }: { me: Me; refresh(): Promise<u
   const atShoals = !!self && same(self.pos, PUB_SHOALS);
   const atDoor = !!self && same(self.pos, DOOR);
   const atTrader = !!self && same(self.pos, PUB_TRADER);
+  /** The regular you are standing beside, if any. */
+  const nearSpot = self ? PUB_REGULAR_SPOTS.findIndex((s) => hexDistance(s.pos, self.pos) === 1) : -1;
+  const near = nearSpot >= 0 ? cast[nearSpot] : undefined;
+  const talking = talkTo && near?.id === talkTo ? regs?.regulars.find((v) => v.regular === talkTo) : undefined;
+  const hoverRegular = hover ? cast[PUB_REGULAR_SPOTS.findIndex((s) => same(s.pos, hover))] : undefined;
+  // Walking up to a regular: they say hello, and if you clicked them, their panel opens. Walking away closes it.
+  const nearId = near?.id ?? null;
+  useEffect(() => {
+    if (!nearId) {
+      setTalkTo(null);
+      return;
+    }
+    const who = castRef.current.find((r) => r.id === nearId);
+    if (who) renderer.current?.say(regularUnit(who.id), who.hello);
+    if (wantTalk.current === nearId) setTalkTo(nearId);
+    wantTalk.current = null;
+  }, [nearId]);
   const gold = me.character?.gold ?? 0;
   const hoverPoi = hover ? poiAt(ROOM, hover) : undefined;
-  const tip = hover && same(hover, PUB_BARKEEP_POS) ? `${PUB_BARKEEP.name}, the barkeep. Stand at the menu board to talk to him.`
+  const tip = hoverRegular ? `${hoverRegular.name}, ${hoverRegular.trade}. Click to walk up and talk.`
+    : hover && same(hover, PUB_BARKEEP_POS) ? `${PUB_BARKEEP.name}, the barkeep. Stand at the menu board to talk to him.`
     : hover && seller && same(hover, PUB_SALESMAN_POS) ? `${seller.name}, ${seller.trade}. Click to walk up and trade.`
     : !hoverPoi ? null
     : hoverPoi.kind === "counter" ? "The menu board: order here, or have a word with the barkeep"
@@ -274,6 +330,7 @@ export function PubView({ me, refresh, onLeave }: { me: Me; refresh(): Promise<u
       )}
 
       {you && atTrader && seller && <SalesmanPanel me={me} refresh={refresh} />}
+      {you && talking && regs && <RegularPanel key={talking.regular} view={talking} handedIn={regs.handedIn} cap={regs.cap} reload={loadRegs} refresh={refresh} onClose={() => setTalkTo(null)} />}
       {you && atShoals && <ShoalsTable table={pub.shoals} you={you} gold={gold} error={pub.shoalsError} lastXp={pub.lastXp} looks={looks} send={(action) => pub.send({ type: "shoals", action })} />}
       {you && atDice && <DiceTable table={pub.dice} you={you} gold={gold} error={pub.diceError} lastXp={pub.lastXp} send={(action) => pub.send({ type: "dice", action })} />}
 
@@ -306,12 +363,14 @@ export function PubView({ me, refresh, onLeave }: { me: Me; refresh(): Promise<u
           : atCounter ? <span>At the bar.</span>
           : atDice ? <span>At the dice table.</span>
           : atShoals ? <span>At the Shoals table.</span>
+          : near ? <span>Beside {near.name}, {near.trade}.</span>
           : atTrader ? (seller ? <span>At {seller.name}'s table.</span> : <span className="muted">The corner is empty.{due && ` ${due.name} is due ${dueIn(visitor.next!.startsAt - visitor.now)}.`}</span>)
           : seller ? <span className="pub-visitor">{seller.name}, {seller.trade}, is in the corner by the far wall.</span>
           : <span className="muted">Click a hex to walk. Order at the menu board; the game tables are across the room.</span>}
         <button className={atDoor ? "primary" : ""} disabled={holdingDice} onClick={onLeave}>Leave</button>
       </DragPanel>
       {atDoor && self && !holdingDice && <TileAction renderer={renderer} pos={self.pos} unitId={self.id} label="Leave" run={onLeave} />}
+      {near && self && !talking && !holdingDice && <TileAction renderer={renderer} pos={self.pos} unitId={self.id} label={`Talk to ${near.short}`} run={() => setTalkTo(near.id)} />}
       </>}
 
       {tip && <div className="tip">{tip}</div>}

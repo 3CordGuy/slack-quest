@@ -12,8 +12,9 @@ import type { XpResult } from "../server/harbor-xp";
 import type { TradeList } from "../server/trade";
 import type { ApothecaryView, SmithyView } from "../server/workshops";
 import type { GalleyView } from "../server/galley";
+import type { ErrandPaid, RegularsView } from "../server/errands";
 
-export type { ApothecaryView, SmithyView, GalleyView };
+export type { ApothecaryView, SmithyView, GalleyView, ErrandPaid, RegularsView };
 
 export type { GatherStatus, XpResult };
 
@@ -166,6 +167,8 @@ export const api = {
   pubTalk: (text: string) => request<{ say: string }>("/api/pub/talk", { text }),
   salesman: () => request<SalesmanView>("/api/pub/salesman", undefined, salesmanHeader()),
   buyFromSalesman: (index: number) => request<{ got: SalesEntry }>("/api/pub/salesman/buy", { index }, salesmanHeader()),
+  regulars: () => request<RegularsView>("/api/pub/regulars"),
+  errand: (regular: string, action: "accept" | "handin" | "trade" | "drop") => request<Partial<ErrandPaid> & { ok?: true }>("/api/pub/errand", { regular, action }),
   projects: () => request<Works>("/api/projects"),
   apothecary: () => request<ApothecaryView>("/api/apothecary"),
   brew: (brewId: string) => request<ApothecaryView & { xp?: XpResult }>("/api/apothecary/brew", { brewId }),

@@ -35,6 +35,12 @@ export const LOOKS: Record<string, Look> = {
   salesman_plans: { skin: "#d9a67c", hair: "#9a9aa2", body: "#2f5f73", legs: "#24323a", accent: "#e8dcc0", hat: "kerchief", hatColor: "#3f6fa8", weapon: "scroll" },
   salesman_far: { skin: "#b07a52", hair: "#2a1c14", body: "#c96a2a", legs: "#4a2f1e", accent: "#2f8c8a", hat: "turban", hatColor: "#f2e6c8", weapon: "pack", coat: true },
   salesman_herbs: { skin: "#e3c2a2", hair: "#ececec", body: "#5a6b3a", legs: "#3e4a2a", accent: "#a6d06a", hat: "hood", weapon: "basket" },
+  // The pub's regulars (packages/world/src/regulars.ts): Harbor folk, plainer than the salesmen.
+  regular_gretta: { skin: "#e8b891", hair: "#c9743a", body: "#2f8c8a", legs: "#3a404c", accent: "#e8dcc0", hat: "kerchief", hatColor: "#b9433d", weapon: "basket" },
+  regular_pike: { skin: "#d9a67c", hair: "#d9d9e3", body: "#2d3a5a", legs: "#1f2433", accent: "#e0b12e", hat: "brim", hatColor: "#1f2433", weapon: "none", coat: true },
+  regular_wen: { skin: "#c9a27c", hair: "#5a3d22", body: "#a0683a", legs: "#4a3a26", accent: "#e8dcc0", hat: "none", weapon: "club" },
+  regular_moss: { skin: "#f1c9a5", hair: "#ececec", body: "#3f6fa8", legs: "#2d357a", accent: "#f2d675", hat: "hood", hatColor: "#5b6475", weapon: "lantern", coat: true },
+  regular_dacey: { skin: "#b07a52", hair: "#1a1424", body: "#3a3030", legs: "#1f1f1f", accent: "#b9433d", hat: "hood", hatColor: "#2a2a35", weapon: "pack" },
   npc: { skin: "#e8b891", hair: "#b9b9b9", body: "#a0683a", legs: "#5a4632", accent: "#e8dcc0", hat: "none", weapon: "none" },
   bandit: { skin: "#d9a67c", hair: "#3a2a20", body: "#7a2f2f", legs: "#3a3030", accent: "#1f1f1f", hat: "hood", weapon: "club" },
   cultist: { skin: "#cdb7d6", hair: "#2a1838", body: "#5b2a7a", legs: "#34194a", accent: "#e04fd0", hat: "hood", weapon: "staff" },
