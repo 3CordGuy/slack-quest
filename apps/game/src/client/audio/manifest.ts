@@ -66,25 +66,39 @@ export const AUDIO: AudioManifest = {
     "stinger.defeat": { files: "music/stingers/defeat", group: "music" },
   },
 
+  // A level can follow the sky: "night" (0 day to 1 deep night), "rain" (0 dry to 1 pouring)
+  // or "time" (0 midnight, 0.5 noon). A curve is [value, level] points; see audio/README.md.
   music: {
-    harbor: { file: "music/harbor", fadeIn: 3, fadeOut: 3 },
-    island: { file: "music/island", fadeIn: 3, fadeOut: 3 },
-    battle: { file: "music/battle", fadeIn: 0.5, fadeOut: 2 },
+    harbor: {
+      file: "music/harbor",
+      fadeIn: 3,
+      fadeOut: 3,
+      bpm: 84,
+      // A stem in sync with the main file, fading in through dusk.
+      layers: [{ file: "music/harbor_night", follow: { param: "night", curve: [[0.3, 0], [0.8, 1]] } }],
+    },
+    island: { file: "music/island", fadeIn: 3, fadeOut: 3, bpm: 96 },
+    // Comes in on the next bar of whatever was playing.
+    battle: { file: "music/battle", fadeIn: 0.05, fadeOut: 2, bpm: 138, enter: "bar" },
   },
 
   ambience: {
     shore: { file: "ambience/shore", fadeIn: 4, fadeOut: 4 },
     room: { file: "ambience/room", gainDb: -6, fadeIn: 2, fadeOut: 2 },
+    night: { file: "ambience/night", gainDb: -8, follow: { param: "night", curve: [[0.5, 0], [0.9, 1]] } },
+    rain: { file: "ambience/rain", gainDb: -4, follow: { param: "rain", curve: [[0, 0], [1, 1]] } },
+    // The same rain heard from indoors: lower. Swap in a roof recording when you have one.
+    rain_indoors: { file: "ambience/rain", gainDb: -14, follow: { param: "rain", curve: [[0, 0], [1, 1]] } },
   },
 
   scenes: {
     title: { music: "harbor" },
-    harbor: { music: "harbor", ambience: ["shore"] },
-    hut: { music: "harbor", ambience: ["room"] },
-    pub: { music: "harbor", ambience: ["room"] },
-    sailing: { music: "island", ambience: ["shore"] },
-    island: { music: "island", ambience: ["shore"] },
-    battle: { music: "battle", ambience: ["shore"] },
-    spar: { music: "battle", ambience: ["shore"] },
+    harbor: { music: "harbor", ambience: ["shore", "night", "rain"] },
+    hut: { music: "harbor", ambience: ["room", "rain_indoors"] },
+    pub: { music: "harbor", ambience: ["room", "rain_indoors"] },
+    sailing: { music: "island", ambience: ["shore", "rain"] },
+    island: { music: "island", ambience: ["shore", "night", "rain"] },
+    battle: { music: "battle", ambience: ["shore", "night", "rain"] },
+    spar: { music: "battle", ambience: ["shore", "night", "rain"] },
   },
 };

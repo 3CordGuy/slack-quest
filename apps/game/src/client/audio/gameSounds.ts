@@ -57,6 +57,12 @@ export const sounds = {
     const names = soundName.world(ev, you);
     if (names) audio.play(names);
   },
+  /** The sky outside, every frame: it drives whatever in the manifest follows "time", "night" or "rain". */
+  sky(sky: { time: number; night: number; rain: number }) {
+    audio.setParam("time", sky.time);
+    audio.setParam("night", sky.night);
+    audio.setParam("rain", sky.rain);
+  },
   /** Where you stand, every frame. */
   listener(x: number, z: number) {
     audio.setListener(x, z);

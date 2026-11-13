@@ -13,8 +13,8 @@
 import { AUDIO } from "./manifest";
 import { Library } from "./library";
 import { MixStore, dbToGain, faderGain } from "./mixer";
-import { TakePicker, distanceGain, expandFiles, inRange, resolveName } from "./select";
-import type { AudioFile, AudioManifest, Group, Loop, SceneName, SoundEvent } from "./types";
+import { TakePicker, curveAt, distanceGain, expandFiles, inRange, resolveName, untilNextLine } from "./select";
+import type { AudioFile, AudioManifest, Follow, Group, Loop, ParamName, SceneName, SoundEvent } from "./types";
 
 const GROUPS: Group[] = ["music", "atmosphere", "sfx"];
 /** The most one-shots sounding at once; past it the oldest fades out. */
@@ -42,9 +42,16 @@ interface LoopVoice {
   id: string;
   def: Loop;
   group: Group;
-  url: string;
-  gain: GainNode;
-  src: AudioBufferSourceNode | null;
+  /** The URLs of its files, to tell when one has changed. */
+  urls: string;
+  /** The whole loop: its level and its fades. */
+  out: GainNode;
+  /** The main file, then each layer: its own level and whatever its curve gives. */
+  parts: { file: string; src: AudioBufferSourceNode; gain: GainNode; gainDb: number; follow?: Follow }[];
+  /** When it started on the audio clock (null while loading), and where in the file. */
+  startedAt: number | null;
+  offset: number;
+  region: { start: number; end: number };
 }
 
 interface Bus {
@@ -89,9 +96,10 @@ export function loopRegion(def: Loop, file: AudioFile | undefined, duration: num
   return { start: 0, end: duration };
 }
 
-/** Whether a loop that keeps playing across a change can carry on as it is (a level change can). */
+/** Whether a loop that keeps playing across a change can carry on as it is (a change of level or curve can). */
 function sameTake(a: Loop, b: Loop) {
-  return a.file === b.file && a.startAt === b.startAt && JSON.stringify(a.loop) === JSON.stringify(b.loop);
+  const files = (l: Loop) => [l.file, ...(l.layers ?? []).map((x) => x.file)].join("|");
+  return files(a) === files(b) && a.startAt === b.startAt && JSON.stringify(a.loop) === JSON.stringify(b.loop);
 }
 
 function safeStorage(): Storage | null {
@@ -123,6 +131,7 @@ export class AudioEngine {
   private scenes: { id: number; scene: SceneName | null }[] = [];
   private nextScene = 1;
   private listener: { x: number; z: number } | null = null;
+  private params = new Map<ParamName, number>();
   private reported = new Set<string>();
   private suspendTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -359,6 +368,26 @@ export class AudioEngine {
 
   // ---------- scenes and loops ----------
 
+  /** Tell the engine a value loops can follow (see ParamName). Call as often as you like. */
+  setParam(name: ParamName, value: number) {
+    if (Math.abs((this.params.get(name) ?? -1) - value) < 0.002) return;
+    this.params.set(name, value);
+    if (!this.ctx) return;
+    for (const lv of this.loops.values()) if (lv.parts.some((p) => p.follow?.param === name)) this.levelParts(lv, 0.15);
+  }
+
+  /** Set each stem of a loop to its own level times whatever its curve gives right now. */
+  private levelParts(lv: LoopVoice, glide: number) {
+    const now = this.ctx!.currentTime;
+    for (const part of lv.parts) {
+      const follow = part.follow ? curveAt(part.follow.curve, this.params.get(part.follow.param) ?? 0) : 1;
+      const level = dbToGain(part.gainDb) * Math.max(0, Math.min(1, follow));
+      part.gain.gain.cancelScheduledValues(now);
+      if (glide > 0) part.gain.gain.setTargetAtTime(level, now, glide);
+      else part.gain.gain.setValueAtTime(level, now);
+    }
+  }
+
   private applyScene() {
     if (!this.ctx || !this.lib || !this.indexed) return;
     const scene = this.scene ? this.manifest.scenes[this.scene] : undefined;
@@ -368,61 +397,104 @@ export class AudioEngine {
       if (this.manifest.ambience[name]) want.set(`ambience:${name}`, { def: this.manifest.ambience[name], group: "atmosphere" });
     }
     const now = this.ctx.currentTime;
+    const incoming = [...want].filter(([id]) => !this.loops.has(id)).map(([, w]) => w);
+    // New music can wait for the next bar or beat of the music it replaces.
+    const enter = incoming.find((w) => w.group === "music")?.def.enter ?? "now";
+    let wait = 0;
     for (const [id, lv] of [...this.loops]) {
       const next = want.get(id);
-      if (!next || !sameTake(lv.def, next.def)) this.stopLoop(lv);
-      else if (next.def.gainDb !== lv.def.gainDb) {
-        // Only its level changed (the manifest was edited): glide there and keep playing.
+      if (next && sameTake(lv.def, next.def)) {
+        // Only levels or curves changed (the manifest was edited): glide there and keep playing.
+        const levelChanged = next.def.gainDb !== lv.def.gainDb;
         lv.def = next.def;
-        if (lv.src) fade(lv.gain.gain, now, dbToGain(next.def.gainDb ?? 0), 0.3);
-      } else lv.def = next.def;
+        const defs = [next.def, ...(next.def.layers ?? [])];
+        lv.parts.forEach((part) => {
+          const d = defs.find((x) => x.file === part.file);
+          part.follow = d?.follow;
+          part.gainDb = d === next.def ? 0 : (d?.gainDb ?? 0);
+        });
+        if (lv.startedAt !== null) {
+          this.levelParts(lv, 0.15);
+          if (levelChanged) fade(lv.out.gain, now, dbToGain(next.def.gainDb ?? 0), 0.3);
+        }
+        continue;
+      }
+      if (lv.group === "music" && enter !== "now" && lv.def.bpm && lv.startedAt !== null && lv.startedAt <= now) {
+        const unit = (60 / lv.def.bpm) * (enter === "bar" ? (lv.def.beatsPerBar ?? 4) : 1);
+        wait = untilNextLine(now - lv.startedAt, lv.offset, lv.region, lv.def.startAt === "loop" ? lv.region.start : 0, unit);
+      }
     }
-    for (const [id, w] of want) if (!this.loops.has(id)) void this.startLoop(id, w.def, w.group);
+    for (const [id, lv] of [...this.loops]) {
+      const next = want.get(id);
+      if (!next || !sameTake(lv.def, next.def)) this.stopLoop(lv, undefined, lv.group === "music" ? wait : 0);
+    }
+    for (const [id, w] of want) if (!this.loops.has(id)) void this.startLoop(id, w.def, w.group, undefined, w.group === "music" ? now + wait : now);
   }
 
-  private async startLoop(id: string, def: Loop, group: Group, fadeIn = def.fadeIn ?? 2) {
+  private async startLoop(id: string, def: Loop, group: Group, fadeIn = def.fadeIn ?? 2, at = 0) {
     const { ctx, lib, bus } = this;
     if (!ctx || !lib || !bus) return;
-    const url = lib.url(def.file);
-    if (!url) return this.report([`${id} (file "${def.file}")`]);
-    const gain = ctx.createGain();
-    gain.gain.value = 0;
-    gain.connect(bus.groups[group].trim);
-    const lv: LoopVoice = { id, def, group, url, gain, src: null };
+    const defs = [{ file: def.file, gainDb: 0, follow: def.follow }, ...(def.layers ?? [])];
+    // A stem with no file yet is left out; the rest still play.
+    const have = defs.filter((d, i) => {
+      if (lib.url(d.file)) return true;
+      this.report([`${id} (${i === 0 ? "file" : "layer"} "${d.file}")`]);
+      return false;
+    });
+    if (have.length === 0 || have[0] !== defs[0]) return;
+    const out = ctx.createGain();
+    out.gain.value = 0;
+    out.connect(bus.groups[group].trim);
+    const lv: LoopVoice = { id, def, group, urls: have.map((d) => lib.url(d.file)).join("|"), out, parts: [], startedAt: null, offset: 0, region: { start: 0, end: 0 } };
     this.loops.set(id, lv);
-    lib.pin(def.file);
-    const buffer = await lib.load(def.file);
-    // The scene moved on while it loaded, or it would not load.
-    if (this.loops.get(id) !== lv || !buffer) {
+    const files = have.map((d) => d.file);
+    files.forEach((f) => lib.pin(f));
+    const buffers = await Promise.all(files.map((f) => lib.load(f)));
+    // The scene moved on while it loaded, or the main file would not load.
+    if (this.loops.get(id) !== lv || !buffers[0]) {
       if (this.loops.get(id) === lv) this.loops.delete(id);
-      lib.unpin(def.file);
-      gain.disconnect();
+      files.forEach((f) => lib.unpin(f));
+      out.disconnect();
       return;
     }
-    const src = ctx.createBufferSource();
-    src.buffer = buffer;
-    src.loop = true;
-    const region = loopRegion(def, lib.file(def.file), buffer.duration);
-    src.loopStart = region.start;
-    src.loopEnd = region.end;
-    src.connect(gain);
-    src.onended = () => {
-      gain.disconnect();
-      lib.unpin(def.file);
-    };
-    const now = ctx.currentTime;
-    src.start(now, def.startAt === "loop" ? region.start : 0);
-    lv.src = src;
-    fade(gain.gain, now, dbToGain(def.gainDb ?? 0), fadeIn);
+    const region = loopRegion(def, lib.file(def.file), buffers[0].duration);
+    const offset = def.startAt === "loop" ? region.start : 0;
+    // Every stem starts on the same sample, a moment ahead so none of them is late.
+    const when = Math.max(at, ctx.currentTime + 0.05);
+    have.forEach((d, i) => {
+      const buffer = buffers[i];
+      if (!buffer) return lib.unpin(d.file);
+      const src = ctx.createBufferSource();
+      src.buffer = buffer;
+      src.loop = true;
+      src.loopStart = region.start;
+      src.loopEnd = Math.min(region.end, buffer.duration);
+      const gain = ctx.createGain();
+      src.connect(gain).connect(out);
+      src.onended = () => {
+        gain.disconnect();
+        lib.unpin(d.file);
+        if (i === 0) out.disconnect();
+      };
+      src.start(when, offset);
+      lv.parts.push({ file: d.file, src, gain, gainDb: i === 0 ? 0 : (d.gainDb ?? 0), follow: d.follow });
+    });
+    lv.startedAt = when;
+    lv.offset = offset;
+    lv.region = region;
+    this.levelParts(lv, 0);
+    fade(out.gain, when, dbToGain(def.gainDb ?? 0), fadeIn);
   }
 
-  private stopLoop(lv: LoopVoice, fadeOut = lv.def.fadeOut ?? 2) {
+  private stopLoop(lv: LoopVoice, fadeOut = lv.def.fadeOut ?? 2, wait = 0) {
     const ctx = this.ctx!;
     if (this.loops.get(lv.id) === lv) this.loops.delete(lv.id);
-    if (!lv.src) return; // still loading: startLoop sees it was dropped and lets go
-    const now = ctx.currentTime;
-    fade(lv.gain.gain, now, 0, fadeOut);
-    lv.src.stop(now + fadeOut + 0.05);
+    if (lv.startedAt === null) return; // still loading: startLoop sees it was dropped and lets go
+    // Switching on a bar line, the old music gets out of the way quickly.
+    const seconds = wait > 0 ? Math.min(fadeOut, 0.4) : fadeOut;
+    const when = Math.max(ctx.currentTime + wait, lv.startedAt);
+    fade(lv.out.gain, when, 0, seconds);
+    for (const part of lv.parts) part.src.stop(when + seconds + 0.05);
   }
 
   // ---------- developing ----------
@@ -434,7 +506,11 @@ export class AudioEngine {
     await lib.loadIndex();
     this.expanded.clear();
     for (const lv of [...this.loops.values()]) {
-      if (lib.url(lv.def.file) === lv.url) continue;
+      const urls = [lv.def.file, ...(lv.def.layers ?? []).map((l) => l.file)]
+        .map((f) => lib.url(f))
+        .filter(Boolean)
+        .join("|");
+      if (urls === lv.urls) continue;
       this.stopLoop(lv, 0.3);
       void this.startLoop(lv.id, lv.def, lv.group, 0.3);
     }
@@ -469,6 +545,7 @@ export class AudioEngine {
       loops: [...this.loops.keys()],
       voices: this.voices.map((v) => v.event),
       listener: this.listener,
+      params: Object.fromEntries(this.params),
       library: this.lib?.stats() ?? null,
     };
   }

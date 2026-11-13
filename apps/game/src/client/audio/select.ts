@@ -78,6 +78,34 @@ export class TakePicker {
   }
 }
 
+/** The level a curve gives at `x`: straight lines between its points, flat beyond its ends. */
+export function curveAt(curve: [number, number][], x: number): number {
+  if (curve.length === 0) return 1;
+  if (x <= curve[0][0]) return curve[0][1];
+  for (let i = 1; i < curve.length; i++) {
+    const [x1, y1] = curve[i];
+    if (x > x1) continue;
+    const [x0, y0] = curve[i - 1];
+    return x1 === x0 ? y1 : y0 + ((y1 - y0) * (x - x0)) / (x1 - x0);
+  }
+  return curve[curve.length - 1][1];
+}
+
+/**
+ * Seconds until the next bar (or beat) line of a playing loop. `elapsed` is
+ * how long it has played and `offset` where in the file it started; bars are
+ * counted from `origin` (the file's start, or its loop start).
+ */
+export function untilNextLine(elapsed: number, offset: number, region: { start: number; end: number }, origin: number, unit: number): number {
+  let pos = offset + elapsed;
+  const span = region.end - region.start;
+  if (pos >= region.end && span > 0) pos = region.start + ((pos - region.start) % span);
+  const into = (((pos - origin) % unit) + unit) % unit;
+  const wait = unit - into;
+  // Too close to make cleanly: take the line after.
+  return wait < 0.03 ? wait + unit : wait;
+}
+
 /** A random value in a range, or `fallback` without one. */
 export function inRange(range: [number, number] | undefined, rng: () => number = Math.random, fallback = 0): number {
   if (!range) return fallback;

@@ -8,7 +8,7 @@ import { describe, expect, it } from "vitest";
 import { AUDIO } from "../src/client/audio/manifest";
 import { MixStore, faderDb, faderGain, parseSettings } from "../src/client/audio/mixer";
 import { soundName, soundNames } from "../src/client/audio/names";
-import { TakePicker, distanceGain, expandFiles, resolveName, slug } from "../src/client/audio/select";
+import { TakePicker, curveAt, distanceGain, expandFiles, resolveName, slug, untilNextLine } from "../src/client/audio/select";
 import { readWav } from "../scripts/audio/wav";
 
 describe("the manifest", () => {
@@ -22,6 +22,36 @@ describe("the manifest", () => {
       if (scene.music) expect(AUDIO.music[scene.music], `${name} music`).toBeDefined();
       for (const a of scene.ambience ?? []) expect(AUDIO.ambience[a], `${name} ambience ${a}`).toBeDefined();
     }
+  });
+  it("gives every curve rising points and levels between 0 and 1", () => {
+    const loops = [...Object.entries(AUDIO.music), ...Object.entries(AUDIO.ambience)];
+    for (const [name, loop] of loops) {
+      for (const f of [loop.follow, ...(loop.layers ?? []).map((l) => l.follow)]) {
+        if (!f) continue;
+        expect(f.curve.length, name).toBeGreaterThan(0);
+        f.curve.forEach(([x, y], i) => {
+          if (i > 0) expect(x, name).toBeGreaterThanOrEqual(f.curve[i - 1][0]);
+          expect(y, name).toBeGreaterThanOrEqual(0);
+          expect(y, name).toBeLessThanOrEqual(1);
+        });
+      }
+    }
+  });
+  it("follows curves in straight lines, flat past the ends", () => {
+    const curve: [number, number][] = [[0.3, 0], [0.8, 1]];
+    expect(curveAt(curve, 0)).toBe(0);
+    expect(curveAt(curve, 0.55)).toBeCloseTo(0.5);
+    expect(curveAt(curve, 1)).toBe(1);
+  });
+  it("finds the next bar line, through the loop point", () => {
+    const region = { start: 0, end: 8 };
+    expect(untilNextLine(1, 0, region, 0, 2)).toBeCloseTo(1);
+    // 9s in, an 8s loop has gone round: 1s into it again.
+    expect(untilNextLine(9, 0, region, 0, 2)).toBeCloseTo(1);
+    // Bars counted from a loop start one second into the file.
+    expect(untilNextLine(0.5, 1, { start: 1, end: 9 }, 1, 2)).toBeCloseTo(1.5);
+    // Right on the line: take the next one.
+    expect(untilNextLine(2, 0, region, 0, 2)).toBeCloseTo(2);
   });
   it("keeps slider defaults between 0 and 1", () => {
     for (const d of Object.values(AUDIO.mix)) {

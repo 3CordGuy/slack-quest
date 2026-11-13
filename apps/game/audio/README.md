@@ -48,6 +48,41 @@ Compressed files carry a little padding at each end, so for a loop that must be 
 
 Each scene (`harbor`, `hut`, `pub`, `sailing`, `island`, `battle`, `spar`, `title`) names one music loop and any number of atmosphere loops. Moving between scenes crossfades; a loop that both scenes share keeps playing.
 
+## Following the sky
+
+The game keeps three values up to date, and any loop's level can follow one:
+
+| Parameter | Range |
+|---|---|
+| `night` | 0 in full day to 1 in deep night |
+| `rain` | 0 dry to 1 pouring |
+| `time` | The time of day: 0 midnight, 0.25 dawn, 0.5 noon, 0.75 dusk |
+
+They describe the sky outside and hold indoors too, so a hut can have rain on its roof. A curve is a list of `[value, level]` points joined by straight lines, with level 0 silent and 1 full:
+
+```ts
+night: { file: "ambience/night", follow: { param: "night", curve: [[0.5, 0], [0.9, 1]] } },
+```
+
+A day takes ten minutes. To hear a moment without waiting, type `__gqTime = 0.8` (dusk) or `__gqWeather = 1` (rain) in the browser console; `delete __gqTime` hands it back to the clock.
+
+## Stems
+
+A loop can carry `layers`: stems that start on the same sample as its main file and stay locked to it. Bounce them the same length. Each can follow a parameter, which is how one piece of music changes from day to night:
+
+```ts
+harbor: {
+  file: "music/harbor",
+  layers: [{ file: "music/harbor_night", follow: { param: "night", curve: [[0.3, 0], [0.8, 1]] } }],
+},
+```
+
+Every stem is held decoded in memory (about 23 MB a minute in stereo), so keep them few and no longer than they need to be.
+
+## Switching on the bar
+
+Give music its `bpm` (and `beatsPerBar` if not 4), and music that replaces it can set `enter: "bar"` or `enter: "beat"` to come in on its next bar or beat line instead of at once. Bars are counted from the start of the file (or from the loop start with `startAt: "loop"`), so start loops on a bar line and make them whole bars long.
+
 ## The mix
 
 `mix` in the manifest holds, for Master, Music, Atmosphere and Sound effects, where the player's slider starts (`volume`, 0–1) and your own trim in dB (`trimDb`), which players never see. Only sliders a player has moved are saved, so changing a default or a trim reaches everyone who has not.

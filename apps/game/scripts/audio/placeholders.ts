@@ -157,8 +157,16 @@ const C = [262, 330, 392, 523];
 const G = [196, 247, 294, 392];
 const E = [165, 208, 247, 330];
 files["music/harbor"] = () => tune(84, [C, A, F, G], Math.sin);
+// A stem for the Harbor tune that comes in at night: the same chords, held, an octave up. Exactly as long as the tune.
+files["music/harbor_night"] = () => {
+  const bar = (60 / 84) * 4;
+  return mix(...[C, A, F, G].flatMap((chord, i) => [chord[2] * 2, chord[3] * 2].map((f) => after(i * bar, tone(bar, (t) => f * (1 + 0.004 * Math.sin(t * 30)), (t) => 0.12 * Math.sin((t / bar) * Math.PI)))))).slice(0, Math.round(4 * bar * RATE));
+};
 files["music/island"] = () => tune(96, [A, F, C, E], Math.sin);
 files["music/battle"] = () => tune(138, [A, A, F, E], square);
+// Rain: bright hiss. Night: a cricket-like chirp, pulsing.
+files["ambience/rain"] = () => seamless(mix(filtered(10, () => 9000, () => 0.5), filtered(10, () => 1200, () => 0.6)), 2);
+files["ambience/night"] = () => tone(8, () => 4200, (t) => 0.12 * (Math.sin(t * 2 * Math.PI * 22) > 0.2 ? 1 : 0) * (Math.sin(t * 2 * Math.PI * 1.5) > 0 ? 1 : 0));
 files["ambience/shore"] = () => seamless(filtered(14, (t) => 500 + 700 * (0.5 + 0.5 * Math.sin((t / 6) * 2 * Math.PI)), (t) => 1.2 * (0.45 + 0.55 * Math.sin((t / 6) * Math.PI) ** 2)), 2);
 files["ambience/room"] = () => seamless(filtered(8, () => 180, () => 1.5), 2);
 

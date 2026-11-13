@@ -45,12 +45,52 @@ export interface SoundEvent {
   delay?: number;
 }
 
+/**
+ * A value the game keeps up to date, which a loop's level can follow:
+ * "night" (0 full day to 1 deep night), "rain" (0 dry to 1 pouring) and
+ * "time" (the time of day: 0 midnight, 0.25 dawn, 0.5 noon, 0.75 dusk).
+ * They describe the sky outside, and hold indoors too.
+ */
+export type ParamName = "night" | "rain" | "time";
+
+/**
+ * An automation curve: the level (0 silent to 1 full) at each value of a
+ * parameter, as [value, level] points in rising order, joined by straight lines.
+ * `{ param: "night", curve: [[0.3, 0], [0.7, 1]] }` fades in through dusk.
+ */
+export interface Follow {
+  param: ParamName;
+  curve: [value: number, level: number][];
+}
+
+/** A stem played in sync with a loop's main file: the same length, started on the same sample. */
+export interface Layer {
+  file: string;
+  /** Level, in dB. Default 0. */
+  gainDb?: number;
+  /** Its level follows a parameter. Without one it always plays. */
+  follow?: Follow;
+}
+
 /** A looping music cue or atmosphere bed. */
 export interface Loop {
   /** The file: a path under apps/game/audio without the extension, such as "music/harbor". */
   file: string;
   /** Level, in dB. Default 0. */
   gainDb?: number;
+  /** The main file's level follows a parameter (a night bed, a rain bed, a day stem). */
+  follow?: Follow;
+  /** Stems laid over the main file, in sync with it. */
+  layers?: Layer[];
+  /** Tempo, for music that others switch to on its bar or beat. The loop should start on a bar line and be whole bars long. */
+  bpm?: number;
+  /** Beats in a bar. Default 4. */
+  beatsPerBar?: number;
+  /**
+   * When this music comes in over music already playing: "now" (the default), or on the
+   * next "bar" or "beat" of the music it replaces, if that music gives its `bpm`.
+   */
+  enter?: "now" | "bar" | "beat";
   /** Seconds to fade in when its scene starts. Default 2. */
   fadeIn?: number;
   /** Seconds to fade out when its scene ends. Default 2. */
