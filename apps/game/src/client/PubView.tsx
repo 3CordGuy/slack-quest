@@ -77,6 +77,8 @@ export function PubView({ me, refresh, onLeave }: { me: Me; refresh(): Promise<u
   );
   const { you, players } = pub;
   const self = players.find((p) => p.id === you);
+  /** How each player is drawn, for their seat at the Shoals table. */
+  const looks = useMemo(() => Object.fromEntries(players.map((p) => [p.id, { classId: p.classId, outfit: p.outfit }])), [players]);
 
   // Holding dice: a stray click on the floor would walk away from the table and forfeit, so the floor is ignored until the game is over.
   const holdingDice =
@@ -261,7 +263,7 @@ export function PubView({ me, refresh, onLeave }: { me: Me; refresh(): Promise<u
       )}
 
       {you && atTrader && seller && <SalesmanPanel me={me} refresh={refresh} />}
-      {you && atShoals && <ShoalsTable table={pub.shoals} you={you} gold={gold} error={pub.shoalsError} lastXp={pub.lastXp} send={(action) => pub.send({ type: "shoals", action })} />}
+      {you && atShoals && <ShoalsTable table={pub.shoals} you={you} gold={gold} error={pub.shoalsError} lastXp={pub.lastXp} looks={looks} send={(action) => pub.send({ type: "shoals", action })} />}
       {you && atDice && <DiceTable table={pub.dice} you={you} gold={gold} error={pub.diceError} lastXp={pub.lastXp} send={(action) => pub.send({ type: "dice", action })} />}
 
       {you && <>
