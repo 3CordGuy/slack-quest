@@ -83,7 +83,7 @@ export interface Hero extends HeroInit {
   keyItems: string[];
   pos: HexPos;
   ready: boolean;
-  /** The notice-board contract taken in the lobby. Absent on voyages saved before contracts. */
+  /** The contract (from the dealer in the pub) taken in the lobby. Absent on voyages saved before contracts. */
   contract?: TakenContract;
   /** Counts that contracts are judged on. Absent until something is counted. */
   tally?: Partial<Record<TallyKey, number>>;
@@ -478,7 +478,7 @@ function revealPoi(ctx: Ctx, poi: Poi) {
   setFact(ctx, `revealed:${poi.id}`);
 }
 
-/** Settle every hero's notice-board contract, once. Only a won story pays. */
+/** Settle every hero's contract, once. Only a won story pays. */
 function settleContracts(ctx: Ctx, outcome: "victory" | "defeat") {
   for (const hero of ctx.state.heroes) {
     const taken = hero.contract;
@@ -1137,7 +1137,7 @@ export function stepWorld(prev: WorldState, action: WorldAction): StepResult {
     }
 
     case "contract": {
-      // Take (or, with null, put back) a notice-board contract. Only before the ship sails.
+      // Take (or, with null, put back) a contract. Only before the ship sails.
       const hero = heroById(state, action.heroId);
       if (!hero) return fail("not aboard");
       if (state.phase !== "lobby") return fail("contracts are taken before the ship sails");

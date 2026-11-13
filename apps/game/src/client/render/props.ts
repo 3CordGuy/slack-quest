@@ -153,6 +153,27 @@ const MODELS: Record<string, (b: Builder) => void> = {
     b.post("#4a4f5a", 0.355, 0.355, 0.06, 0, 0.52, 0, 8);
     b.box(DARK_WOOD, 0.08, 0.08, 0.12, 0, 0.26, 0.36);
   },
+  // The pub's pillar at the end of the bar (packages/world/src/pub.ts): a squared timber post on a stone footing,
+  // up past the walls to a beam, with the contract dealer's notices pinned to its face and a lamp on a hook.
+  pillar(b) {
+    b.box(STONE, 0.46, 0.14, 0.46);
+    b.box(DARK_WOOD, 0.3, 2.2, 0.3, 0, 0.14);
+    b.box("#4a321c", 0.34, 0.06, 0.34, 0, 0.6);
+    b.box(DARK_WOOD, 0.46, 0.12, 0.46, 0, 2.34);
+    b.box(DARK_WOOD, 0.2, 0.16, 1.3, 0, 2.46, -0.4);
+    // Notices, a little askew, each with a red pin.
+    for (const [x, y, w, h, tilt] of [[-0.06, 1.08, 0.2, 0.26, 0.08], [0.07, 1.36, 0.17, 0.22, -0.12], [-0.03, 0.8, 0.16, 0.18, -0.05]] as const) {
+      b.box(CLOTH, w, h, 0.015, x, y, 0.158).rotation.z = tilt;
+      b.box("#b9433d", 0.03, 0.03, 0.02, x, y + h - 0.05, 0.17);
+    }
+    // A lamp hung from a hook on the side the bar is not.
+    b.box(IRON, 0.18, 0.025, 0.025, 0.24, 1.86, 0);
+    b.box(IRON, 0.015, 0.1, 0.015, 0.32, 1.76, 0);
+    b.box("#b87333", 0.14, 0.03, 0.14, 0.32, 1.73);
+    b.glow("#ffd98a", new THREE.BoxGeometry(0.11, 0.14, 0.11), 0.32, 1.66, 0);
+    b.box("#b87333", 0.14, 0.03, 0.14, 0.32, 1.56);
+    // No light of its own: a lamp's light makes its whole piece cast no shadow, and the pillar should.
+  },
   table(b) {
     // Dark, oiled wood, so it stands out from the pale floorboards it sits on.
     b.box("#5e3d24", 1.0, 0.08, 0.7, 0, 0.42);

@@ -1,9 +1,10 @@
-// The notice board's bookkeeping: how each hero's contract came out, and
-// the crew's shared goal for the week.
+// The contract dealer's bookkeeping (the dealer stands by the pillar in the
+// pub): how each hero's contract came out, and the crew's shared goal for the
+// week.
 //
 // A crew has one goal per period (packages/world/src/contracts.ts decides
 // what a period is and which goal it gets). There is no timer: the row for a
-// period is created the first time anyone reads the board or a voyage makes
+// period is created the first time anyone asks the dealer or a voyage makes
 // progress in it. Progress only ever comes from a voyage's own events and
 // effects, on the server.
 
@@ -42,7 +43,7 @@ export interface CrewGoalView {
   endsAt: number;
 }
 
-export interface NoticeBoard {
+export interface ContractBoard {
   goal: CrewGoalView | null;
   contracts: { id: string; name: string; text: string; reward: ContractReward }[];
 }
@@ -65,7 +66,7 @@ async function activeGoal(db: D1Database, crewId: string, at: number): Promise<G
   return select();
 }
 
-export async function noticeBoard(db: D1Database, crewId: string | null, at = Date.now()): Promise<NoticeBoard> {
+export async function contractBoard(db: D1Database, crewId: string | null, at = Date.now()): Promise<ContractBoard> {
   const row = crewId ? await activeGoal(db, crewId, at) : null;
   const def = row ? crewGoalById(row.goal_id) : undefined;
   return {

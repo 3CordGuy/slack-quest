@@ -1,30 +1,63 @@
-// The Harbor's notice board: the crew's shared goal for the week, and the
-// contracts a hero can take aboard a ship.
+// The Harbor's notice board: what changed in each release of the game, newest
+// first (see src/releases.ts). Reading it marks the newest release as read, so
+// the "!" over the board goes until the next one.
+//
+// Contracts and the crew's goal moved to the contract dealer in the pub.
 
-import { useEffect, useState } from "react";
-import { rewardText } from "@gantt-quest/world";
-import { api, type Board } from "../api";
+import { useEffect, useRef, useState } from "react";
+import { RELEASES, releaseTitle, unseenCount, type Release } from "../../releases";
+import { api } from "../api";
 import { DragPanel } from "../DragPanel";
-import { RewardChips } from "../hutDrops";
-import { ErrandsNotice } from "./ErrandsNotice";
 import "./board.css";
 
-function timeLeft(endsAt: number): string {
-  const hours = Math.max(1, Math.ceil((endsAt - Date.now()) / 3_600_000));
-  return hours >= 48 ? `${Math.floor(hours / 24)} days` : `${hours} hour${hours === 1 ? "" : "s"}`;
+/** Releases shown before "Older notices". */
+const SHOWN = 5;
+
+function ReleaseNotes({ release, fresh }: { release: Release; fresh: boolean }) {
+  return (
+    <li className={`release ${fresh ? "fresh" : ""} ${release.unreleased ? "unreleased" : ""}`}>
+      <h3>
+        {releaseTitle(release)}
+        {fresh && <span className="release-new">New</span>}
+      </h3>
+      {release.first ? (
+        <p className="muted">The Harbor of Heylets opens its doors. Everything before this is the game itself.</p>
+      ) : release.notes.length === 0 ? (
+        <p className="muted">Fixes and small changes behind the scenes.</p>
+      ) : (
+        <ul className="release-notes">
+          {release.notes.map((n, i) => (
+            <li key={i}>
+              {n.area && <strong>{n.area}: </strong>}
+              {n.text}
+            </li>
+          ))}
+        </ul>
+      )}
+    </li>
+  );
 }
 
-export function NoticeBoard({ refresh, onClose }: { refresh(): Promise<unknown>; onClose(): void }) {
-  const [board, setBoard] = useState<Board | null>(null);
-  const [error, setError] = useState<string | null>(null);
+export function NoticeBoard({ seen, onSeen, onClose }: {
+  /** The newest release this player had read before opening the board. */
+  seen: string | null | undefined;
+  /** Called once the server has the newest release down as read. */
+  onSeen(): void;
+  onClose(): void;
+}) {
+  // What was new when the board was opened stays marked while it is open, though it is now read.
+  const [fresh] = useState(() => unseenCount(seen));
+  const [older, setOlder] = useState(false);
+  const marked = useRef(false);
+  const latest = RELEASES[0];
   useEffect(() => {
-    api.board().then(setBoard, (e: Error) => setError(e.message));
-    // A filled goal pays gold while you are away; pick up the new total.
-    void refresh();
+    if (!latest || latest.id === seen || marked.current) return;
+    marked.current = true;
+    api.releaseSeen(latest.id).then(onSeen, () => undefined);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-  const goal = board?.goal;
 
+  const shown = older ? RELEASES : RELEASES.slice(0, Math.max(SHOWN, fresh));
   return (
     <div className="overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
       <DragPanel id="harbor.notices" title="Notice board" compact className="panel notice-board" role="dialog" aria-label="Notice board">
@@ -33,44 +66,16 @@ export function NoticeBoard({ refresh, onClose }: { refresh(): Promise<unknown>;
           <span className="spacer" />
           <button className="small" onClick={onClose}>Close</button>
         </header>
-        {error && <p className="bad">{error}</p>}
-        {!board && !error && <p className="muted">Reading the notices…</p>}
-        {board && (
-          <>
-            <h3>Crew goal this week</h3>
-            {goal ? (
-              <div className={`crew-goal ${goal.rewarded ? "filled" : ""}`}>
-                <strong>{goal.text}</strong>
-                <span className="bar" role="progressbar" aria-valuemin={0} aria-valuemax={goal.target} aria-valuenow={goal.progress}>
-                  <span className="bar-fill goal" style={{ width: `${(100 * goal.progress) / goal.target}%` }} />
-                  <span>{goal.progress} / {goal.target}</span>
-                </span>
-                {goal.rewarded ? (
-                  <span className="good">Filled. Every crew member was paid {goal.reward} gold.</span>
-                ) : (
-                  <span className="with-icon">Pays every crew member <RewardChips gold={goal.reward} /> when it is filled.</span>
-                )}
-                <span className="muted">Any voyage from this Harbor counts. A new goal is posted in {timeLeft(goal.endsAt)}.</span>
-              </div>
-            ) : (
-              <p className="muted">No goal is posted right now.</p>
-            )}
-
-            <h3>Contracts</h3>
-            <p className="muted">Take one aboard a ship before it sails. It pays if you meet its terms and the story is won.</p>
-            <ul className="notice-list">
-              {board.contracts.map((c) => (
-                <li key={c.id}>
-                  <strong>{c.name}</strong>
-                  <span className="contract-reward" title={rewardText(c.reward)}><RewardChips gold={c.reward.gold} resources={c.reward.resources} /></span>
-                  <span className="muted">{c.text}</span>
-                </li>
-              ))}
-            </ul>
-
-            <h3>Errands at the pub</h3>
-            <ErrandsNotice />
-          </>
+        <p className="muted">News from the Harbor: what has changed with each new release. Contracts and the crew's goal are with the dealer in the pub now.</p>
+        {RELEASES.length === 0 ? (
+          <p className="muted">Nothing pinned up yet.</p>
+        ) : (
+          <ul className="release-list">
+            {shown.map((r, i) => <ReleaseNotes key={r.id} release={r} fresh={i < fresh} />)}
+          </ul>
+        )}
+        {!older && RELEASES.length > shown.length && (
+          <button className="small release-older" onClick={() => setOlder(true)}>Older notices ({RELEASES.length - shown.length})</button>
         )}
       </DragPanel>
     </div>

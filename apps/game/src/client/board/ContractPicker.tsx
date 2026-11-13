@@ -1,4 +1,4 @@
-// Ship lobby: each hero may take one notice-board contract before sailing.
+// Ship lobby: each hero may take one of the contract dealer's contracts before sailing.
 
 import { CONTRACTS, contractsFor, rewardText, type ClientState } from "@gantt-quest/world";
 import type { RunConnection } from "../useRun";
@@ -10,7 +10,7 @@ export function ContractPicker({ state, run }: { state: ClientState; run: RunCon
   return (
     <div className="contracts">
       <h3>Take a contract</h3>
-      <p className="muted">One each, from the notice board. It pays a bonus if you meet its terms and {state.kind === "caverns" ? "the whole crew climbs back out" : "the story is won"}.</p>
+      <p className="muted">One each, from the contract dealer in the pub. It pays a bonus if you meet its terms and {state.kind === "caverns" ? "the whole crew climbs back out" : "the story is won"}.</p>
       <ul className="contract-list">
         {contractsFor(state.kind).map((c) => (
           <li key={c.id}>

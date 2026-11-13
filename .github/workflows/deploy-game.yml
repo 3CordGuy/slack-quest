@@ -17,6 +17,9 @@ name: Deploy game
 # Order, per environment: write config -> tests -> D1 bookmark -> migrate ->
 # confirm the newest migration is recorded -> build -> deploy -> smoke test.
 # A failure at any step stops before the Worker changes.
+#
+# After a production deploy from a tag, the `release` job writes that tag's
+# GitHub release from the same notes the game shows on its notice board.
 
 on:
   workflow_dispatch:
@@ -83,7 +86,11 @@ jobs:
       run:
         working-directory: apps/game
     steps:
+      # The whole history and every tag: the build reads the notice board's
+      # release notes out of git (apps/game/scripts/release-notes.ts).
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
 
       - uses: pnpm/action-setup@v5
         with:
@@ -164,3 +171,34 @@ jobs:
           api="$(curl -s -o /dev/null -w '%{http_code}' "https://$HOST/api/me")"
           [ "$api" = 401 ] || { echo "::error::GET /api/me returned $api, expected 401"; exit 1; }
           echo "Smoke test passed for https://$HOST"
+
+  release:
+    name: GitHub release notes
+    needs: [pick, deploy]
+    if: needs.pick.outputs.target == 'production' && startsWith(github.ref, 'refs/tags/game-v')
+    runs-on: ubuntu-latest
+    # Only this job may write to the repository, and only its releases.
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+
+      # No install needed: the script only uses Node and git.
+      - name: Write the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          node --experimental-strip-types apps/game/scripts/release-notes.ts --markdown "$TAG" > notes.md
+          cat notes.md
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            gh release edit "$TAG" --notes-file notes.md
+          else
+            gh release create "$TAG" --title "$TAG" --notes-file notes.md --verify-tag
+          fi

@@ -1,6 +1,7 @@
 // The crew's shared Harbor: a walkable place where everyone present sees
 // each other. Ships are moored and boarded at the docks, each member has a
-// hut, and the notice board keeps the crew roster and voyage log.
+// hut, and the notice board carries the news of each release of the game (with
+// a bouncing "!" over it until you have read the newest).
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useAudioScene } from "./audio/useAudioScene";
@@ -10,6 +11,8 @@ import { api, type Me } from "./api";
 import { AccountPanel } from "./Account";
 import { CrewRoster, type RosterMember } from "./CrewRoster";
 import { NoticeBoard } from "./board/NoticeBoard";
+import { AttentionMark } from "./AttentionMark";
+import { hasUnseen } from "../releases";
 import { OptionsMenu } from "./OptionsMenu";
 import { DragPanel } from "./DragPanel";
 import { GatherPanel } from "./GatherPanel";
@@ -147,9 +150,11 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
   const hoverPoi = scene && hover ? poiAt(scene.map, hover) : undefined;
   const visitHere = salesmanNow.here;
   const visitor = visitHere ? salesman(visitHere.salesmanId) : undefined;
+  /** A release with notes this player has not read: the board wears a "!". An older server sends no seenRelease, and then there is none. */
+  const unseen = me.seenRelease !== undefined && hasUnseen(me.seenRelease);
   const tip = !hoverPoi ? null
     : hoverPoi.kind === "cave" ? "The Haunted Caverns: a short delve under the rocks, different every time"
-    : hoverPoi.kind === "board" ? "Notice board: the crew goal and contracts"
+    : hoverPoi.kind === "board" ? (unseen ? "Notice board: news of what has changed. Something new is pinned up!" : "Notice board: news of what has changed")
     : hoverPoi.kind === "shop" ? "Market stall: gear, and furniture for your hut"
     : hoverPoi.kind === "ring" ? "Sparring ring"
     : hoverPoi.kind === "fishing" || hoverPoi.kind === "felling" || hoverPoi.kind === "quarry" ? `${GATHER_SPOTS[hoverPoi.kind].name}: gather hut materials`
@@ -284,7 +289,7 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
   };
   // The place under your feet and the one thing to do there, shown in the bar below and floated over the hex.
   const here: { title: ReactNode; label: string; run(): void; quiet?: boolean } | null =
-    atBoard ? { title: "The notice board", label: "Read the notice board", run: () => setNotices(true) }
+    atBoard ? { title: unseen ? "The notice board · something new is pinned up" : "The notice board", label: "Read the notice board", run: () => setNotices(true) }
     : atCave ? (delveHere
         ? { title: <>The Haunted Caverns <span className="muted">· {delveHere.captain}'s party, {delveHere.aboard.length}/{MAX_PARTY}</span></>, label: "Join the delve", run: () => board_(delveHere) }
         : { title: <>The Haunted Caverns <span className="muted">· a short delve, different every time</span></>, label: "Gather a party", run: () => void launch("caverns") })
@@ -444,7 +449,8 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
       {note && !error && <div className="toast note">{note}</div>}
       {sheet && me.character && <InventoryScreen me={me} refresh={refreshAll} onClose={() => setSheet(false)} />}
       {account && <AccountPanel me={me} refresh={refresh} onClose={() => setAccount(false)} />}
-      {notices && <NoticeBoard refresh={refresh} onClose={() => setNotices(false)} />}
+      {notices && <NoticeBoard seen={me.seenRelease} onSeen={() => void refresh()} onClose={() => setNotices(false)} />}
+      {unseen && !panelOpen && !atBoard && <AttentionMark renderer={renderer} pos={HARBOR_BOARD} label="Something new on the notice board" />}
       {works && <WorksPanel works={board.works} refresh={refresh} onClose={() => setWorks(false)} />}
       {workshop === "apothecary" && <ApothecaryPanel onClose={() => setWorkshop(null)} />}
       {workshop === "galley" && <GalleyPanel onClose={() => setWorkshop(null)} />}

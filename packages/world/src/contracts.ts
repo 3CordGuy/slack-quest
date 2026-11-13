@@ -1,4 +1,4 @@
-// The notice board: personal contracts and the crew's shared goal.
+// The contract dealer in the pub: personal contracts and the crew's shared goal.
 //
 // A contract is a side bet one hero takes in the ship's lobby. It pays a
 // bonus if its terms are met on that voyage, and only if the story is won.
@@ -216,7 +216,7 @@ export type CrewGoalDef = CrewGoalKind & {
 
 export const CREW_GOALS: CrewGoalDef[] = [
   { id: "voyages", kind: "voyages", text: "Win 3 voyages", target: 3, reward: 40 },
-  { id: "contracts", kind: "contracts", text: "Fulfil 4 notice-board contracts", target: 4, reward: 40 },
+  { id: "contracts", kind: "contracts", text: "Fulfil 4 contracts", target: 4, reward: 40 },
   { id: "hunt_wolf", kind: "hunt", enemy: "wolf", text: "Put down 6 dire wolves", target: 6, reward: 35 },
   { id: "hunt_bandit", kind: "hunt", enemy: "bandit", text: "Defeat 8 bandits", target: 8, reward: 35 },
   { id: "haul_wood", kind: "haul", resource: "wood", text: "Bring home 10 wood", target: 10, reward: 35 },

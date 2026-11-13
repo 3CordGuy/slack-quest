@@ -14,7 +14,7 @@
 //   trade  swap some of one material for another at a fair-to-kind rate,
 //          a few times a day;
 //   quest  do one small thing elsewhere (rest, give to a crew project, come
-//          home from a won voyage, meet a notice-board contract), checked
+//          home from a won voyage, meet a contract from the dealer), checked
 //          against what the game already records after the job was taken.
 //
 // Pay is a little XP (under the daily Harbor XP cap, like every pastime)
@@ -175,7 +175,7 @@ export type Errand =
  * favour, and a little over.
  */
 export const MATERIAL_WORTH: Record<ResourceKind, number> = { wood: 1, stone: 1, bone: 1, herbs: 1, mushrooms: 1, fur: 1.5, copper: 2, iron: 2, gem: 6 };
-/** The most gold a fetch pays: about a notice-board contract, at the low end. */
+/** The most gold a fetch pays: about a contract, at the low end. */
 export const FETCH_GOLD_MAX = 30;
 /** A trade gives this much more worth than it takes. */
 export const TRADE_GENEROSITY = 1.2;
@@ -185,7 +185,7 @@ export const QUEST_TEXT: Record<QuestGoal, string> = {
   rest: "Rest on a bedroll or at home in your hut",
   give: "Give something to one of the crew's Harbor projects",
   voyage: "Come home from a voyage the crew won",
-  contract: "Meet a notice-board contract on a voyage",
+  contract: "Meet one of the contract dealer's contracts on a voyage",
 };
 
 /** What the regular says when asking. */

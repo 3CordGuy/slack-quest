@@ -259,7 +259,7 @@ export class RunRoom extends DurableObject<Env> {
       }
       else if (effect.kind === "penalty") await applyPenalty(db, effect.heroId, effect.goldPct, effect.cap);
     }
-    // Notice board: contract outcomes when the run ends, and the crew's goal.
+    // Contracts: their outcomes when the run ends, and the crew's goal.
     await recordStep(db, this.crewId, prev, res);
 
     this.broadcast(res.events);

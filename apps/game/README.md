@@ -46,6 +46,19 @@ Apply the migrations first and confirm they are recorded (`SELECT name FROM d1_m
 
 Build before deploying: `wrangler deploy` ships whatever the last build produced, for whichever environment it was built for. Sign-in is an ungated guest account, so anyone with the URL can use the Workers AI allocation.
 
+## Release notes
+
+Every `game-v*` tag is a release. The build reads its notes out of git (the commits since the tag before it) and the game pins them on the Harbor's notice board, which wears a bouncing "!" until a player has read the newest. Production deploys also write the tag's GitHub release from the same notes. Development and staging builds add a "Coming next" entry for commits not yet tagged.
+
+A commit makes a line when it changes code that ships in the game (tests, docs and CI are left out). The line is its subject, so write subjects for players: `Felling: chops cut a notch` shows as **Felling:** Chops cut a notch. To say something better, or nothing, put trailer lines in the commit message (for a squash merge, in the PR description):
+
+```
+Release-note: Fishing pays a little more for a perfect catch.
+Release-note: skip
+```
+
+Preview what the next tag would say with `node apps/game/scripts/release-notes.ts --unreleased`.
+
 ## Where things live
 
 | Path | What |
@@ -62,7 +75,7 @@ Build before deploying: `wrangler deploy` ships whatever the last build produced
 | `…/gear.ts` | Slots, rarities, item generation, armor, prices and the stall's stock |
 | `…/hut.ts`, `…/hutroom.ts` | Hut materials, furnishings, tiers and perks; the walk-in room, placement and its message types |
 | `…/drops.ts` | Materials, blueprints, decor and trophies paid out by fights, caches and a won story |
-| `…/contracts.ts` | Notice-board contracts and the crew's weekly goal |
+| `…/contracts.ts` | The contract dealer's contracts (in the pub) and the crew's weekly goal |
 | `…/hero.ts` | A hero as the battle rules see one; shared by voyages and the sparring ring |
 | `…/gather.ts` | Fishing, felling and the quarry: outings, timing, payouts, stamina and resting |
 | `…/felling.ts` | Felling's two rounds: trees, chops, regrowth, the marker over each log, and replaying a round's report |
@@ -71,6 +84,7 @@ Build before deploying: `wrangler deploy` ships whatever the last build produced
 | `…/pub.ts` | The pub's room, menu and food-and-drink boosts |
 | `…/dice.ts`, `…/shoals.ts` | The pub's two table games, each a pure reducer with a per-player view |
 | `…/trade.ts` | Offers between crewmates and their validation |
+| `apps/game/src/releases.ts`, `scripts/release-notes.ts` | Release notes on the Harbor's notice board, read out of git at build time |
 | `apps/game/src/worker.ts` | Harbor HTTP API and the WebSocket route |
 | `apps/game/src/server/run-room.ts` | One Durable Object per voyage: persist, broadcast, timers |
 | `apps/game/src/server/harbor-room.ts` | One Durable Object per crew: presence, walking, chat, dock board |
