@@ -12,6 +12,9 @@
 // the panel's size while the opposite corner stays put; double-click a
 // handle to go back to the default size.
 //
+// The title and tools sit outside `.panel-body`. A panel whose content can
+// run long scrolls only its body (see styles.css), so they stay at the top.
+//
 // The offset is applied with the CSS `translate` property, which stacks with
 // whatever `transform` the panel's own styles use for centring.
 
@@ -281,7 +284,8 @@ export function DragPanel({ id, title, compact = false, resizable = false, foldO
           {title}
         </button>
       )}
-      {children}
+      {/* The panel's own content. Long panels scroll this, not the whole frame, so the title and tools stay put. */}
+      <div className="panel-body">{children}</div>
       {resizable &&
         !folded &&
         CORNERS.map((c) => (

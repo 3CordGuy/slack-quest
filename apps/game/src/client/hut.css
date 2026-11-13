@@ -43,11 +43,11 @@
 .pixel-glyph { display: block; image-rendering: pixelated; }
 
 /* The split furnishing panels. */
-.hut-storage { position: absolute; top: 48px; left: 10px; width: min(300px, 40vw); z-index: 10; max-height: calc(100vh - 270px); overflow-y: auto; }
-.hut-craft { position: absolute; top: 48px; left: calc(min(300px, 40vw) + 20px); width: min(330px, 40vw); z-index: 10; max-height: calc(100vh - 200px); overflow-y: auto; }
-.hut-info { position: absolute; top: 240px; right: 10px; width: 240px; z-index: 10; max-height: calc(100vh - 340px); overflow-y: auto; }
+.hut-storage { position: absolute; top: 48px; left: 10px; width: min(300px, 40vw); z-index: 10; max-height: calc(100vh - 270px); }
+.hut-craft { position: absolute; top: 48px; left: calc(min(300px, 40vw) + 20px); width: min(330px, 40vw); z-index: 10; max-height: calc(100vh - 200px); }
+.hut-info { position: absolute; top: 240px; right: 10px; width: 240px; z-index: 10; max-height: calc(100vh - 340px); }
 /* Above the floating piece toolbar and the tile-action chips (16): the chest that toolbar opened must not sit under it. */
-.hut-boxpanel { position: absolute; top: 48px; right: 250px; width: min(364px, 44vw); z-index: 17; max-height: calc(100vh - 200px); overflow-y: auto; }
+.hut-boxpanel { position: absolute; top: 48px; right: 250px; width: min(364px, 44vw); z-index: 17; max-height: calc(100vh - 200px); }
 .hut-storage h3, .hut-craft h3, .hut-info h3, .hut-boxpanel h3 { margin: 10px 0 4px; }
 .hut-storage p, .hut-craft p, .hut-info p, .hut-boxpanel p { margin: 0 0 6px; }
 .hut-storage h4, .hut-info h4, .hut-boxpanel h4 { margin: 10px 0 4px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted, #9aa); }
