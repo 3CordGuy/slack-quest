@@ -32,8 +32,16 @@ import {
   type GatherView,
   type HarborXpStatus,
   type Resources,
+  FISH_SPOTS,
+  FISH_SPOT_IDS,
+  closeIdleSitting,
+  sittingIdle,
+  startSitting,
+  type AnglerStats,
+  type FishSpot,
 } from "@gantt-quest/world";
 import { heroInitFor } from "./db";
+import { closeSitting, type SittingPaid } from "./fishing";
 import { prepareXp, readHarborXp, xpOutcome, type XpResult } from "./harbor-xp";
 
 export interface GatherStatus {
@@ -66,6 +74,29 @@ async function gatherStats(db: D1Database, playerId: string): Promise<Record<Gat
   return { fishing: of("fishing"), felling: of("felling"), quarry: of("quarry") };
 }
 
+/** What a hero brings to the pier: Strength and Dexterity, gear included. */
+async function anglerStats(db: D1Database, playerId: string): Promise<AnglerStats | null> {
+  const hero = await heroInitFor(db, playerId);
+  if (!hero) return null;
+  return { str: hero.base.str + (hero.bonus.str ?? 0), dex: hero.base.dex + (hero.bonus.dex ?? 0) };
+}
+
+/**
+ * A fishing sitting left alone too long ends by itself, the catch kept and
+ * the stamina spent. Nothing ticks to do it: it is noticed here, the next
+ * time the player's gathering is looked at. Returns the sitting it closed and
+ * what that paid, if it closed one.
+ */
+async function settleIdle(db: D1Database, playerId: string, row: Row | null): Promise<{ ended: GatherState; paid: SittingPaid } | null> {
+  if (!row?.session_json) return null;
+  const state = JSON.parse(row.session_json) as GatherState;
+  const now = Date.now();
+  if (!sittingIdle(state, now)) return null;
+  const ended = closeIdleSitting(state, now);
+  const paid = await closeSitting(db, playerId, row.session_json, ended);
+  return paid ? { ended, paid } : null;
+}
+
 async function status(db: D1Database, playerId: string, stats: Record<GatherSpot, number>, ended?: GatherState): Promise<GatherStatus> {
   const [row, xpRecord] = await Promise.all([readRow(db, playerId), readHarborXp(db, playerId)]);
   const now = Date.now();
@@ -78,9 +109,12 @@ async function status(db: D1Database, playerId: string, stats: Record<GatherSpot
   };
 }
 
-export async function gatherStatus(db: D1Database, playerId: string): Promise<GatherStatus | string> {
+export async function gatherStatus(db: D1Database, playerId: string): Promise<(GatherStatus & { sitting?: SittingPaid }) | string> {
   const stats = await gatherStats(db, playerId);
-  return stats ? status(db, playerId, stats) : "Create a character first.";
+  if (!stats) return "Create a character first.";
+  const idle = await settleIdle(db, playerId, await readRow(db, playerId));
+  if (idle) return { ...(await status(db, playerId, stats, idle.ended)), sitting: idle.paid };
+  return status(db, playerId, stats);
 }
 
 /**
@@ -104,11 +138,17 @@ export async function rest(db: D1Database, playerId: string, place: RestPlace): 
   return { ...after, regained: after.stamina.left - outingsLeft(before, now) };
 }
 
-/** Start an outing, spending one of the day's three. Returns an error string if refused. */
-export async function startOuting(db: D1Database, playerId: string, spot: unknown): Promise<GatherStatus | string> {
+/**
+ * Start an outing, spending one of the day's three. Fishing from a pier
+ * (`pier` given) starts a sitting instead, which needs stamina left but only
+ * spends it when it ends. Returns an error string if refused.
+ */
+export async function startOuting(db: D1Database, playerId: string, spot: unknown, pier?: unknown): Promise<GatherStatus | string> {
   if (!GATHER_SPOT_IDS.includes(spot as GatherSpot)) return "There is nothing to gather there.";
   const stats = await gatherStats(db, playerId);
   if (!stats) return "Create a character first.";
+  await settleIdle(db, playerId, await readRow(db, playerId));
+  if (spot === "fishing" && pier !== undefined) return startSittingOuting(db, playerId, pier, stats);
   const seed = crypto.getRandomValues(new Uint32Array(1))[0];
   const state = startGather(spot as GatherSpot, seed, stats[spot as GatherSpot]);
   const today = gatherDay(Date.now());
@@ -117,6 +157,32 @@ export async function startOuting(db: D1Database, playerId: string, spot: unknow
     .prepare(
       `INSERT INTO gathering (player_id, day, used, session_json) VALUES (?1, ?2, 1, ?3)
        ON CONFLICT(player_id) DO UPDATE SET used = CASE WHEN day = ?2 THEN used + 1 ELSE 1 END, day = ?2, session_json = ?3
+       WHERE session_json IS NULL AND (day <> ?2 OR used < ?4)`,
+    )
+    .bind(playerId, today, JSON.stringify(state), GATHER_DAILY_OUTINGS)
+    .run();
+  if (res.meta.changes === 0) {
+    const row = await readRow(db, playerId);
+    return row?.session_json ? "Finish the outing you are on first." : "You are worn out. Come back tomorrow.";
+  }
+  return status(db, playerId, stats);
+}
+
+/** Sit down to fish at `pier`. Stamina is checked, not spent: the sitting spends it when it ends. */
+async function startSittingOuting(db: D1Database, playerId: string, pier: unknown, stats: Record<GatherSpot, number>): Promise<GatherStatus | string> {
+  if (!FISH_SPOT_IDS.includes(pier as FishSpot)) return "You cannot fish from there.";
+  const spot = FISH_SPOTS[pier as FishSpot];
+  if (spot.closed) return spot.closed;
+  const angler = await anglerStats(db, playerId);
+  if (!angler) return "Create a character first.";
+  const now = Date.now();
+  const state = startSitting(spot.id, crypto.getRandomValues(new Uint32Array(1))[0], angler, now);
+  const today = gatherDay(now);
+  // As a start: no outing already under way, and stamina left today. Unlike a start, nothing is spent yet.
+  const res = await db
+    .prepare(
+      `INSERT INTO gathering (player_id, day, used, session_json) VALUES (?1, ?2, 0, ?3)
+       ON CONFLICT(player_id) DO UPDATE SET used = CASE WHEN day = ?2 THEN used ELSE 0 END, day = ?2, session_json = ?3
        WHERE session_json IS NULL AND (day <> ?2 OR used < ?4)`,
     )
     .bind(playerId, today, JSON.stringify(state), GATHER_DAILY_OUTINGS)
@@ -157,6 +223,8 @@ const TIMING_SLACK_MS = 3000;
  * far older than the request) is judged at the server's own estimate.
  */
 function timed(state: GatherState, choice: GatherChoice, now: number): GatherChoice {
+  // A sitting judges its own hook against the clock (sitting.ts): every choice in one just carries the server's time.
+  if (state.sitting) return { ...choice, now } as GatherChoice;
   // Felling's rounds and the quarry's clock and blows: when one begins and when its report arrives are always the server's clock, never the client's.
   if (choice.t === "aim" || choice.t === "begin" || choice.t === "chopped" || choice.t === "split" || choice.t === "dig" || choice.t === "blows") return { ...choice, now };
   if (choice.t !== "push" || !state.aim) return choice;
@@ -167,11 +235,13 @@ function timed(state: GatherState, choice: GatherChoice, now: number): GatherCho
 }
 
 /** Apply one choice to the outing in progress. A finished outing is paid and cleared in the same batch. */
-export async function stepOuting(db: D1Database, playerId: string, choice: unknown): Promise<(GatherStatus & { paid?: Resources; xp?: XpResult }) | string> {
+export async function stepOuting(db: D1Database, playerId: string, choice: unknown): Promise<(GatherStatus & { paid?: Resources; xp?: XpResult; sitting?: SittingPaid }) | string> {
   const stats = await gatherStats(db, playerId);
   if (!stats) return "Create a character first.";
   const row = await readRow(db, playerId);
   if (!row?.session_json) return "You are not out gathering.";
+  const idle = await settleIdle(db, playerId, row);
+  if (idle) return { ...(await status(db, playerId, stats, idle.ended)), paid: idle.paid.paid, xp: idle.paid.xp, sitting: idle.paid };
   const current = JSON.parse(row.session_json) as GatherState;
   const step = stepGather(current, timed(current, (choice ?? {}) as GatherChoice, Date.now()));
   if (step.error) return step.error;
@@ -184,6 +254,12 @@ export async function stepOuting(db: D1Database, playerId: string, choice: unkno
       .run();
     if (res.meta.changes === 0) return "That was already played. Try again.";
     return status(db, playerId, stats);
+  }
+
+  if (next.sitting) {
+    const closed = await closeSitting(db, playerId, row.session_json, next);
+    if (!closed) return "That was already played. Try again.";
+    return { ...(await status(db, playerId, stats, next)), paid: closed.paid, xp: closed.xp, sitting: closed };
   }
 
   const paid = gatherPayout(next);

@@ -565,8 +565,8 @@ app.get("/api/gather", async (c) => {
 });
 
 app.post("/api/gather/start", async (c) => {
-  const body = await c.req.json<{ spot?: string }>().catch(() => ({}) as { spot?: string });
-  const result = await startOuting(c.env.DB, c.get("player").id, body.spot);
+  const body = await c.req.json<{ spot?: string; pier?: string }>().catch(() => ({}) as { spot?: string; pier?: string });
+  const result = await startOuting(c.env.DB, c.get("player").id, body.spot, body.pier);
   return typeof result === "string" ? c.json({ error: result }, 409) : c.json(result);
 });
 
