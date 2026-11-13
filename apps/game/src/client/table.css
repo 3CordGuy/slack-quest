@@ -1,0 +1,36 @@
+/* What lies over the first-person game tables (DiceTable, ShoalsTable): a dock along the bottom of the view. */
+.table-dock {
+  position: absolute; left: 50%; bottom: 10px; transform: translateX(-50%); z-index: 14;
+  width: min(580px, calc(100vw / var(--ui-z, 1) - 20px)); max-height: calc(48vh / var(--ui-z, 1));
+  display: flex; flex-direction: column; gap: 6px; overflow-y: auto;
+}
+.table-dock p { margin: 0; }
+.td-status { display: flex; align-items: baseline; gap: 8px; min-height: 22px; flex-wrap: wrap; }
+.td-status-text { flex: 1; min-width: 160px; }
+.td-pot { flex: none; color: var(--gold); font-size: 12px; }
+.td-phase {
+  flex: none; font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em;
+  padding: 1px 6px; border: 1px solid var(--line); color: var(--muted); background: #24203f;
+}
+.td-phase.playing { color: var(--accent); border-color: #2f8f94; }
+.td-phase.playing.lay { color: #a9d4fb; border-color: #3f7fd0; }
+.td-phase.playing.sail, .td-phase.done { color: var(--gold); border-color: #a8862a; }
+.td-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.td-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+.td-log { font-size: 12px; }
+.td-foot { display: flex; align-items: center; gap: 8px; }
+.td-foot .spacer { flex: 1; }
+.td-rules { margin: 0; padding-left: 18px; font-size: 12px; }
+.table-dock select { padding: 2px 6px; }
+.sh-outcome { font-size: 12px; }
+.sh-outcome.aground { color: #f08a8a; }
+.sh-outcome.clear { color: var(--accent); }
+
+/* Sitting at a table: the pub's usual bottom bar and the other panels give way, so the view is the table. */
+.pub-view.seated .turnbar { display: none; }
+
+/* On a phone the dock and the view are all there is room for. */
+@media (max-width: 760px) {
+  .pub-view.seated .roster-panel, .pub-view.seated .harbor-chat { display: none; }
+  .table-dock { font-size: 12px; max-height: calc(42vh / var(--ui-z, 1)); }
+}
