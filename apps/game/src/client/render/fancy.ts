@@ -1,6 +1,6 @@
-// "Fancy graphics": the finishing pass (glow, tilt-shift blur, colour grade)
-// and characters that take the light where they stand. One setting for every
-// view, remembered on this device. Off unless the player turns it on: it
+// "Fancy graphics": the world drawn at full resolution, the finishing pass
+// (glow, tilt-shift blur, colour grade) and the water and weather that go with it. One setting for every view,
+// remembered on this device. Off unless the player turns it on: it
 // costs a phone some battery.
 
 const KEY = "gq.graphics.fancy";
