@@ -15,7 +15,8 @@
 import * as THREE from "three";
 import type { Marker, Outfit } from "@gantt-quest/world";
 import { markerUrl, type MarkerFace } from "../shoalsArt";
-import { SPRITE_ASPECT, labelTexture, spriteTexture, textTexture } from "./sprites";
+import { PIXEL_LINE_ROWS, canDrawPixelText, drawPixelText, pixelTextWidth } from "./pixelFont";
+import { SPRITE_ASPECT, labelTexture, spriteTexture } from "./sprites";
 import type { WorldMinigame, WorldRenderer } from "./WorldRenderer";
 
 export type TableKind = "dice" | "shoals";
@@ -70,7 +71,9 @@ export interface TableCallbacks {
 const TABLE_R = 0.75;
 /** The height of the tabletop. */
 const TOP = 0.62;
-const SEAT_R = 1.55;
+/** How high the card hangs, over the middle of the table. */
+const CARD_Y = TOP + 0.5;
+const SEAT_R = 1.35;
 const STOOL_H = 0.3;
 /** How tall a seated character is drawn. */
 const FOLK_H = 1.05;
@@ -173,48 +176,83 @@ function markerTexture(face: MarkerFace, peek = false): THREE.CanvasTexture {
   return tex;
 }
 
-/** The card laid on the table: a caption over a line in large type. */
-function cardTexture(caption: string, main: string): THREE.CanvasTexture {
-  return canvasTexture(256, 128, (ctx) => {
-    ctx.fillStyle = "#efe4c8";
-    ctx.fillRect(4, 4, 248, 120);
-    ctx.strokeStyle = "#6b4a2b";
-    ctx.lineWidth = 6;
-    ctx.strokeRect(4, 4, 248, 120);
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
+/** Pixel text (the game's bitmap font), `scale` canvas pixels to a glyph pixel, with its capitals' top-left at (x, y). Returns its width. */
+function bigText(ctx: CanvasRenderingContext2D, text: string, x: number, y: number, ink: string, scale: number): number {
+  if (!canDrawPixelText(text)) {
+    // A name the bitmap font cannot draw: the system font, as small as it will go.
+    ctx.font = `bold ${7 * scale}px ui-monospace, Menlo, monospace`;
+    ctx.fillStyle = ink;
+    ctx.textBaseline = "top";
+    ctx.fillText(text, x, y);
+    return ctx.measureText(text).width;
+  }
+  const w = pixelTextWidth(text);
+  const tmp = document.createElement("canvas");
+  tmp.width = Math.max(1, w);
+  tmp.height = PIXEL_LINE_ROWS;
+  drawPixelText(tmp.getContext("2d")!, text, 0, 0, ink);
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(tmp, x, y, w * scale, PIXEL_LINE_ROWS * scale);
+  return w * scale;
+}
+
+const textWidth = (text: string, scale: number) => (canDrawPixelText(text) ? pixelTextWidth(text) * scale : text.length * 5 * scale);
+
+/** A die face as a 21-pixel picture (as tall as the card's large type): ivory, a dark rim, its pips. */
+function drawDie(ctx: CanvasRenderingContext2D, value: number, x: number, y: number) {
+  ctx.fillStyle = INK;
+  ctx.fillRect(x, y, 21, 21);
+  ctx.fillStyle = IVORY;
+  ctx.fillRect(x + 1, y + 1, 19, 19);
+  ctx.fillStyle = value === 1 ? "#b9433d" : INK;
+  const size = value === 1 ? 5 : 3;
+  for (const [fx, fy] of PIPS[value] ?? []) ctx.fillRect(Math.round(x + 1 + fx * 19 - size / 2), Math.round(y + 1 + fy * 19 - size / 2), size, size);
+}
+
+/** The card hung over the table: a caption over a line in large type, ending in a die if there is one. Drawn at the font's own size and shown unsmoothed, so it stays crisp. */
+function cardTexture(caption: string, main: string, die?: number): THREE.CanvasTexture {
+  return canvasTexture(112, 56, (ctx) => {
     ctx.fillStyle = "#6b4a2b";
-    ctx.font = "bold 26px ui-monospace, Menlo, monospace";
-    ctx.fillText(caption, 128, 32);
-    ctx.fillStyle = INK;
-    ctx.font = "bold 58px ui-monospace, Menlo, monospace";
-    ctx.fillText(main, 128, 84);
-  });
+    ctx.fillRect(0, 0, 112, 56);
+    ctx.fillStyle = "#efe4c8";
+    ctx.fillRect(2, 2, 108, 52);
+    const cw = textWidth(caption, 1);
+    bigText(ctx, caption, Math.round((112 - cw) / 2), 7, "#6b4a2b", 1);
+    const total = textWidth(main, 3) + (die ? 6 + 21 : 0);
+    const x = Math.round((112 - total) / 2);
+    bigText(ctx, main, x, 24, INK, 3);
+    if (die) drawDie(ctx, die, x + textWidth(main, 3) + 6, 24);
+  }, true);
 }
 
 /** A row of pips (dice or markers left) and passage stars, small, under a name. */
 function tallyTexture(pips: SeatInfo["pips"], stars: SeatInfo["stars"]): THREE.CanvasTexture {
-  return canvasTexture(128, 20, (ctx) => {
-    let x = 64 - ((pips?.of ?? 0) * 11 + (stars ? 6 + stars.of * 13 : 0)) / 2;
-    for (let i = 0; i < (pips?.of ?? 0); i++, x += 11) {
+  const STAR = ["..#..", ".###.", "#####", ".###.", "#...#"];
+  const w = (pips?.of ?? 0) * 7 + (stars ? 3 + stars.of * 7 : 0);
+  return canvasTexture(Math.max(8, w), 9, (ctx) => {
+    let x = 0;
+    for (let i = 0; i < (pips?.of ?? 0); i++, x += 7) {
+      ctx.fillStyle = "#1b1830";
+      ctx.fillRect(x, 1, 7, 7);
       ctx.fillStyle = i < pips!.on ? "#ffd23f" : "#3a3558";
-      ctx.strokeStyle = "#1b1830";
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.arc(x + 5, 10, 4.5, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.stroke();
+      ctx.fillRect(x + 1, 2, 5, 5);
     }
     if (stars) {
-      x += 6;
-      ctx.font = "bold 15px system-ui, sans-serif";
-      ctx.textAlign = "left";
-      ctx.textBaseline = "middle";
-      for (let i = 0; i < stars.of; i++, x += 13) {
+      x += 3;
+      for (let i = 0; i < stars.of; i++, x += 7) {
         ctx.fillStyle = i < stars.on ? "#ffd23f" : "#3a3558";
-        ctx.fillText("★", x, 11);
+        STAR.forEach((row, r) => [...row].forEach((c, k) => c === "#" && ctx.fillRect(x + k, 2 + r, 1, 1)));
       }
     }
+  }, true);
+}
+
+/** A word over someone's head in the bitmap font, with a dark outline. */
+function chipTexture(text: string, ink: string): THREE.CanvasTexture {
+  const w = textWidth(text, 1);
+  return canvasTexture(w + 4, PIXEL_LINE_ROWS + 4, (ctx) => {
+    for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1], [-1, -1], [1, 1], [-1, 1], [1, -1]]) bigText(ctx, text, 2 + dx, 2 + dy, "#1b1830", 1);
+    bigText(ctx, text, 2, 2, ink, 1);
   }, true);
 }
 
@@ -265,7 +303,7 @@ export class TableStage implements WorldMinigame {
   private cache = new Map<string, THREE.Texture>();
   private pot = new THREE.Group();
   private potKey = "";
-  private card: THREE.Mesh;
+  private card: THREE.Sprite;
   private cardKey = "";
   private chairs = 0;
   private order: (SeatInfo | undefined)[] = [];
@@ -280,11 +318,14 @@ export class TableStage implements WorldMinigame {
   private discGeo = new THREE.CylinderGeometry(DISC_R, DISC_R, DISC_T, 20);
 
   constructor(private world: WorldRenderer, private group: THREE.Group, private kind: TableKind, private cb: TableCallbacks) {
+    // Dice and markers are read up close: draw them at full resolution, not the chunky half.
+    world.setSharp(true);
     this.buildTable();
     this.group.add(this.stools, this.pot);
-    this.card = new THREE.Mesh(new THREE.PlaneGeometry(0.56, 0.28), new THREE.MeshBasicMaterial({ transparent: true }));
-    this.card.rotation.x = -Math.PI / 2;
-    this.card.position.set(0, TOP + 0.02, 0.04);
+    // Hung above the middle of the table, turned to face whoever looks at it (a sprite faces each viewer's own camera).
+    this.card = new THREE.Sprite(new THREE.SpriteMaterial({ transparent: true }));
+    this.card.scale.set(0.64, 0.32, 1);
+    this.card.position.set(0, CARD_Y, 0);
     this.card.visible = false;
     this.group.add(this.card);
   }
@@ -426,10 +467,10 @@ export class TableStage implements WorldMinigame {
     if (r.chipKey !== chipKey) {
       r.chipKey = chipKey;
       if (info.chip) {
-        const t = this.own(textTexture(info.chip, CHIP_COLOR[info.chip.split(" ")[0]] ?? "#a9d4fb"));
+        const t = this.own(chipTexture(info.chip, CHIP_COLOR[info.chip.split(" ")[0]] ?? "#a9d4fb"));
         r.chip.material.map = t;
         r.chip.material.needsUpdate = true;
-        r.chip.scale.set(0.13 * (t.image.width / t.image.height), 0.13, 1);
+        r.chip.scale.set(0.18 * (t.image.width / t.image.height), 0.18, 1);
       }
       r.chip.visible = !!info.chip;
     }
@@ -441,7 +482,7 @@ export class TableStage implements WorldMinigame {
         const t = this.own(tallyTexture(info.pips, info.stars));
         r.tally.material.map = t;
         r.tally.material.needsUpdate = true;
-        r.tally.scale.set(0.5, 0.5 * (20 / 128), 1);
+        r.tally.scale.set(0.016 * t.image.width, 0.016 * t.image.height, 1);
       }
     }
   }
@@ -467,16 +508,16 @@ export class TableStage implements WorldMinigame {
     }
   }
 
-  /** The card on the table in front of you: what the bid is, or what the last call found. Null puts it away. */
-  setCard(card: { caption: string; main: string } | null) {
-    const key = card ? `${card.caption}|${card.main}` : "";
+  /** The card hanging over the table, facing everyone: what the bid is, or what the last call found. Null puts it away. */
+  setCard(card: { caption: string; main: string; die?: number } | null) {
+    const key = card ? `${card.caption}|${card.main}|${card.die ?? ""}` : "";
     if (key === this.cardKey) return;
     this.cardKey = key;
     this.card.visible = !!card;
     if (!card) return;
-    const mat = this.card.material as THREE.MeshBasicMaterial;
+    const mat = this.card.material;
     const old = mat.map;
-    mat.map = cardTexture(card.caption, card.main);
+    mat.map = cardTexture(card.caption, card.main, card.die);
     mat.needsUpdate = true;
     old?.dispose();
   }
@@ -628,6 +669,7 @@ export class TableStage implements WorldMinigame {
     this.inT = this.leaving ? Math.max(0, this.inT - dt / OUT_S) : Math.min(1, this.inT + dt / IN_S);
     if (this.leaving && this.inT <= 0) setTimeout(() => this.finish(), 0);
     this.animate(dt);
+    this.card.position.y = CARD_Y + Math.sin(this.clock * 1.6) * 0.012;
     const base = this.group.position;
     const sway = Math.sin(this.clock * 0.9) * 0.006;
     // A tall window (a phone) sees little across: back the eye off and open the lens until the stools at either side are in.
@@ -689,10 +731,12 @@ export class TableStage implements WorldMinigame {
   dispose() {
     if (this.disposed) return;
     this.disposed = true;
+    this.world.setSharp(false);
     for (const r of this.rigs.values()) this.disposeRig(r);
     this.discGeo.dispose();
     for (const mats of [this.dieMats, this.dieBack, this.dieLit]) for (const m of mats ?? []) m.dispose();
     for (const t of this.textures) t.dispose();
-    (this.card.material as THREE.MeshBasicMaterial).map?.dispose();
+    this.card.material.map?.dispose();
+    this.card.material.dispose();
   }
 }

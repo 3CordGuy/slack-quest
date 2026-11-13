@@ -507,6 +507,8 @@ export class WorldRenderer {
   /** A backdrop's fixed point of view (see setVantage), and the lightning it is lent by the view showing it. */
   private vantage: { from: THREE.Vector3; to: THREE.Vector3 } | null = null;
   /** A game being played in the world, the group its things stand in, and how your own hero looked before it hid them. */
+  /** How many screen pixels one drawn pixel covers. */
+  private pixel = PIXEL;
   /** Units a minigame is drawing for itself. */
   private stageHidden: string[] = [];
   private minigame: { game: WorldMinigame; group: THREE.Group; hidden: { obj: THREE.Object3D; was: boolean }[]; felled: { i: number; m: THREE.Matrix4 }[] } | null = null;
@@ -3647,11 +3649,17 @@ export class WorldRenderer {
 
   // ---------- frame loop ----------
 
+  /** Draw at full resolution (a game that is read up close, like a table) instead of the chunky half. */
+  setSharp(sharp: boolean) {
+    this.pixel = sharp ? 1 : PIXEL;
+    this.resize();
+  }
+
   private resize() {
     const w = Math.max(1, this.container.clientWidth);
     const h = Math.max(1, this.container.clientHeight);
-    this.renderer.setSize(Math.ceil(w / PIXEL), Math.ceil(h / PIXEL), false);
-    this.post?.setSize(Math.ceil(w / PIXEL), Math.ceil(h / PIXEL));
+    this.renderer.setSize(Math.ceil(w / this.pixel), Math.ceil(h / this.pixel), false);
+    this.post?.setSize(Math.ceil(w / this.pixel), Math.ceil(h / this.pixel));
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
   }

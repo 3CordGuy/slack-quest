@@ -78,8 +78,8 @@ export function DiceTable({ table, you, gold, error, lastXp, looks, world, host,
     stage.setPot(table ? (table.phase === "open" ? table.ante * seats.length : table.phase === "done" ? table.prize : table.pot) : 0);
     stage.setCard(
       !table || table.phase === "open" ? null
-        : showReveal ? { caption: `${table.reveal!.actual} showed`, main: `${table.reveal!.actual} × ${PIPS[table.reveal!.bid.face]}` }
-        : last ? { caption: `${short(last.by)} bid`, main: bidText(last) }
+        : showReveal ? { caption: `${table.reveal!.actual} showed`, main: `${table.reveal!.actual} x`, die: table.reveal!.bid.face }
+        : last ? { caption: `${short(last.by)} bid`, main: `${last.count} x`, die: last.face }
         : table.phase === "playing" ? { caption: `Round ${table.round}`, main: "no bid" } : null,
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
