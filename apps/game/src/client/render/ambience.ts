@@ -64,6 +64,47 @@ export function stamp(ctx: CanvasRenderingContext2D, rows: string[], colors: Rec
   });
 }
 
+/** The radius a hex is drawn at: a hair under 1, so neighbours do not fight over a shared wall. */
+export const TILE_RADIUS = 0.985;
+/** The radius of the rounding where a hex's top turns down into its wall. */
+export const TILE_FILLET = 0.09;
+/** How many flat strips the rounding is made of. Their normals turn smoothly, so it is lit as a curve. */
+const FILLET_STEPS = 5;
+
+/**
+ * The top of one hex, centred on the origin with its flat at y = 0 and a point toward +z: the flat itself and,
+ * round its rim, a quarter-round fillet turning down to the vertical at `TILE_RADIUS`, `TILE_FILLET` below.
+ * So where two hexes meet the light rolls off one and onto the next instead of snapping at a hard corner.
+ * Calls `vertex` three times a triangle with a point and its normal.
+ */
+export function hexTop(vertex: (x: number, y: number, z: number, nx: number, ny: number, nz: number) => void) {
+  const inner = TILE_RADIUS - TILE_FILLET;
+  const corner = (i: number) => [Math.sin((i * Math.PI) / 3), Math.cos((i * Math.PI) / 3)];
+  for (let i = 0; i < 6; i++) {
+    const [ax, az] = corner(i);
+    const [bx, bz] = corner(i + 1);
+    vertex(0, 0, 0, 0, 1, 0);
+    vertex(ax * inner, 0, az * inner, 0, 1, 0);
+    vertex(bx * inner, 0, bz * inner, 0, 1, 0);
+    // This side's own way out: the fillet rolls toward it, and keeps a crisp crease at the hex's corners.
+    const ox = Math.sin(((i + 0.5) * Math.PI) / 3);
+    const oz = Math.cos(((i + 0.5) * Math.PI) / 3);
+    for (let k = 0; k < FILLET_STEPS; k++) {
+      const ring = (step: number, x: number, z: number) => {
+        const a = (step / FILLET_STEPS) * (Math.PI / 2);
+        const r = inner + TILE_FILLET * Math.sin(a);
+        vertex(x * r, -TILE_FILLET * (1 - Math.cos(a)), z * r, ox * Math.sin(a), Math.cos(a), oz * Math.sin(a));
+      };
+      ring(k, ax, az);
+      ring(k + 1, ax, az);
+      ring(k + 1, bx, bz);
+      ring(k, ax, az);
+      ring(k + 1, bx, bz);
+      ring(k, bx, bz);
+    }
+  }
+}
+
 const grassTexture = () =>
   pixelTexture(9, 6, (ctx) =>
     stamp(
@@ -324,14 +365,6 @@ export const SHADOW_SLOTS = 6;
  * plain lights outdoors (shared with the props' lights, so the light count never changes).
  */
 export type BuildingGlow = { pos: THREE.Vector3; /** The halo's width; 0 for a light with no halo. */ size: number; light?: LightKind };
-/**
- * The layer heroes' shadow cards for the sun and the hanging lamp sit on. Not
- * layer 0, so the main view never draws them; each light's shadow camera looks
- * at layer 0 (the room) plus the layer of the cards turned toward it.
- */
-export const CARD_LAYER = 9;
-/** Shadow slot `i` sees the cards on layer `SLOT_LAYER + i`, each turned to face it. */
-export const SLOT_LAYER = 10;
 /** Shadow maps a moving hero may redraw in one frame. Others wait their turn (a frame or two), oldest first. */
 const MOVE_REDRAWS = 2;
 /** How far past a light's reach a hero can stand and still throw a shadow it draws: about a hero's height. */
@@ -481,13 +514,10 @@ export class Ambience {
     cam.far = 120;
     this.sun.shadow.bias = -0.0015;
     this.sun.shadow.normalBias = 0.04;
-    // The sun and the lamp see the room and the heroes' cards turned toward them.
-    this.sun.shadow.camera.layers.enable(CARD_LAYER);
     this.lamp.shadow.mapSize.set(512, 512);
     this.lamp.shadow.camera.near = 0.2;
     this.lamp.shadow.camera.far = 30;
     this.lamp.shadow.bias = -0.004;
-    this.lamp.shadow.camera.layers.enable(CARD_LAYER);
     // A room stands still: the lamp's shadows are redrawn only when something changes (see stir).
     this.lamp.shadow.autoUpdate = false;
     this.lamp.visible = false;
@@ -497,7 +527,6 @@ export class Ambience {
       s.shadow.camera.near = 0.1;
       s.shadow.bias = -0.004;
       s.shadow.autoUpdate = false;
-      s.shadow.camera.layers.enable(SLOT_LAYER + i);
       // Always casting while indoors: only the light's place and strength change, so no material ever recompiles.
       s.castShadow = true;
       s.visible = false;
@@ -639,23 +668,21 @@ export class Ambience {
       const under = tiles.filter((t) => (t.biome as string) === biome);
       if (under.length === 0) return;
       const positions: number[] = [];
+      const normals: number[] = [];
       const uvs: number[] = [];
       for (const t of under) {
         const p = place(t);
-        const y = p.y + 0.006;
-        for (let i = 0; i < 6; i++) {
-          const a = (i * Math.PI) / 3;
-          const b = ((i + 1) * Math.PI) / 3;
-          for (const [x, z] of [[p.x, p.z], [p.x + Math.sin(a) * 0.985, p.z + Math.cos(a) * 0.985], [p.x + Math.sin(b) * 0.985, p.z + Math.cos(b) * 0.985]]) {
-            positions.push(x, y, z);
-            uvs.push(x / span, z / span);
-          }
-        }
+        // Draped over the hex, fillet and all, a hair off its surface. The pattern is still laid straight down from above.
+        hexTop((x, y, z, nx, ny, nz) => {
+          positions.push(p.x + x + nx * 0.006, p.y + y + ny * 0.006, p.z + z + nz * 0.006);
+          normals.push(nx, ny, nz);
+          uvs.push((p.x + x) / span, (p.z + z) / span);
+        });
       }
       const sheet = new THREE.BufferGeometry();
       sheet.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
       sheet.setAttribute("uv", new THREE.Float32BufferAttribute(uvs, 2));
-      sheet.computeVertexNormals();
+      sheet.setAttribute("normal", new THREE.Float32BufferAttribute(normals, 3));
       map.wrapS = map.wrapT = THREE.RepeatWrapping;
       const mesh = new THREE.Mesh(sheet, material ?? new THREE.MeshLambertMaterial({ map }));
       mesh.receiveShadow = true;
@@ -1135,12 +1162,6 @@ export class Ambience {
     }
   }
 
-  /** The turn, about the vertical, that faces something at (x, z) toward shadow slot `i`'s light. */
-  slotFacing(i: number, x: number, z: number): number {
-    const p = this.slots[i].position;
-    return Math.atan2(p.x - x, p.z - z);
-  }
-
   /**
    * Give the slots to these lights (the nearest few). A slot keeps its light while that light is still wanted,
    * so walking hands over only the slot whose light fell out. That slot's shadow fades out first (its weight
@@ -1541,55 +1562,6 @@ export class Ambience {
   }
 
   /**
-   * The turn, about the vertical, that faces something at (x, z) toward the sun or, indoors, the hanging lamp:
-   * for the shadow card the sun and the lamp see (CARD_LAYER). Each shadow slot has a card of its own (slotFacing).
-   */
-  /**
-   * The light falling on someone standing at `at`, for sprites (which the lights themselves do not touch).
-   * `tint` gets the colour to multiply the sprite by: 1 is an ordinary day. `rim` gets the colour of the strongest
-   * single light there and `toward` the direction to it, for a highlight on the side facing it.
-   * Shadows are not counted: someone in a building's shade is lit as if in the open.
-   */
-  lightAt(at: THREE.Vector3, tint: THREE.Color, rim: THREE.Color, toward: THREE.Vector3) {
-    const c = this.lightScratch;
-    tint.setRGB(0, 0, 0);
-    let best = 0;
-    rim.setRGB(0, 0, 0);
-    toward.set(0, 1, 0);
-    // Mostly sky, a little of the ground's bounce.
-    if (this.hemi.visible) tint.copy(this.hemi.groundColor).lerp(this.hemi.color, 0.65).multiplyScalar(this.hemi.intensity);
-    if (this.sun.visible && this.sun.intensity > 0) {
-      c.copy(this.sun.color).multiplyScalar(this.sun.intensity * 0.7);
-      tint.add(c);
-      best = c.r + c.g + c.b;
-      rim.copy(c);
-      toward.copy(this.sunDir);
-    }
-    const chestY = at.y + 0.5;
-    for (const light of this.spriteLights) {
-      if (!light.visible || light.intensity <= 0) continue;
-      const dx = light.position.x - at.x;
-      const dy = light.position.y - chestY;
-      const dz = light.position.z - at.z;
-      const d = Math.hypot(dx, dy, dz);
-      if (light.distance > 0 && d >= light.distance) continue;
-      // The same falloff the lights use on the ground.
-      let fall = 1 / Math.max(Math.pow(d, light.decay), 0.01);
-      if (light.distance > 0) fall *= Math.pow(Math.min(1, Math.max(0, 1 - Math.pow(d / light.distance, 4))), 2);
-      c.copy(light.color).multiplyScalar(light.intensity * fall * 0.8);
-      tint.add(c);
-      const strength = c.r + c.g + c.b;
-      if (strength > best) {
-        best = strength;
-        rim.copy(c);
-        toward.set(dx, dy, dz).divideScalar(Math.max(d, 1e-4));
-      }
-    }
-    // 2.4 is about what the sun and sky add up to at noon.
-    tint.multiplyScalar(1 / 2.4);
-    rim.multiplyScalar(1 / 2.4);
-  }
-  /**
    * How high the sun stands: about 1.2 at noon, 0 as it crosses the horizon, down to about -0.8 at midnight.
    * A large number indoors, where there is no sun to be low.
    */
@@ -1624,14 +1596,6 @@ export class Ambience {
   sunGlint(out: THREE.Color): THREE.Color {
     return out.copy(this.sun.color).multiplyScalar(this.sun.visible ? this.sun.intensity * 0.6 : 0);
   }
-  private lightScratch = new THREE.Color();
-  private spriteLights = [this.lamp, this.fireLight, ...this.slots, ...this.glows, ...this.fadeGlows, ...this.torches];
-
-  towardLight(x: number, z: number): number {
-    if (!this.indoors) return Math.atan2(this.sunDir.x, this.sunDir.z);
-    return Math.atan2(this.lamp.position.x - x, this.lamp.position.z - z);
-  }
-
   /**
    * The sky outside right now, for the sound: the time of day (0 midnight, 0.5 noon), how dark it is and how
    * hard it rains, 0 to 1 each. Unlike `night`, it holds indoors too, where the rain is still on the roof.

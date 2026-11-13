@@ -128,10 +128,14 @@ void main() {`;
 // all one unbroken surface.
 const VERT_BEGIN = /* glsl */ `#include <begin_vertex>
 #ifdef WATER_TILES
-if (aWater.x > 0.5 && waterFancy > 0.5) {
-  transformed.xz *= 1.0 / 0.985;
-  // Flattened to a sheet at the hex's top, so no side of a hex shows along the edge.
-  transformed.y = 1.0;
+if (aWater.x > 0.5) {
+  if (waterFancy > 0.5) transformed.xz *= 1.0 / 0.985;
+  // Flattened to a sheet at the hex's top (y = 0 in a hex's own space), facing straight up: neither the side of a
+  // hex nor the rounding of its rim shows, so water has no hexes in it.
+  transformed.y = 0.0;
+  #ifndef FLAT_SHADED
+  vNormal = normalize( normalMatrix * vec3( 0.0, 1.0, 0.0 ) );
+  #endif
 }
 #endif`;
 
@@ -146,7 +150,7 @@ const VERT_BODY = /* glsl */ `#include <project_vertex>
   vWaterTile = aWater.xy;
   vGround = aWater.z;
   vWaterLocal = position.xz;
-  vWaterTop = step(0.5, normal.y);
+  vWaterTop = aWater.x > 0.5 ? 1.0 : step(0.5, normal.y);
   #endif
 }`;
 
