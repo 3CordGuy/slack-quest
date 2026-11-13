@@ -88,7 +88,7 @@ function Summary({ view, paid, xp, sitting }: { view: GatherView; paid?: Resourc
           {s.landed.filter((f) => f.kept).map((f, i) => <img key={i} src={catchIcon(f.species)} alt={FISH[f.species].name} title={`${FISH[f.species].name}, ${formatWeight(f.grams, u)}`} width={40} height={40} />)}
         </div>
       )}
-      <p>{kept.length === 0 ? "Nothing in the creel this time." : `${kept.length} in the creel, ${formatLoad(s.creelGrams, u)} in all${released ? `, and ${released} thrown back` : ""}.`}</p>
+      <p>{kept.length === 0 ? "Nothing in the basket this time." : `${kept.length} in the basket, ${formatLoad(s.creelGrams, u)} in all${released ? `, and ${released} thrown back` : ""}.`}</p>
       {heaviest && <p className="muted">Biggest: {FISH[heaviest.species].name}, {formatWeight(heaviest.grams, u)}.</p>}
       {(sitting?.newSpecies.length ?? 0) > 0 && <p className="good">New in your Catch Book: {sitting!.newSpecies.map((id) => FISH[id].name).join(", ")}.</p>}
       {(sitting?.records.length ?? 0) > 0 && <p className="fish-record">Crew record: {sitting!.records.map((id) => FISH[id].name).join(", ")}!</p>}
@@ -382,8 +382,8 @@ function Sitting({ outing, world, pier, shipBeside, apply, onRod, onClose }: {
       />
 
       <div className="fish-top">
-        <div className="fish-creel" title="How full the creel is">
-          <span>Creel</span>
+        <div className="fish-creel" title="How full your basket is">
+          <span>Basket</span>
           <div className="fish-creel-bar"><div style={{ width: `${Math.min(100, (live.creelGrams / live.creelLimitG) * 100)}%` }} /></div>
           <span className="tabular">{formatLoad(live.creelGrams, u)} / {formatLoad(live.creelLimitG, u)}</span>
         </div>
@@ -431,9 +431,9 @@ function Sitting({ outing, world, pier, shipBeside, apply, onRod, onClose }: {
             {def.kind !== "haul" && <span> · {formatLength(pending.mm, u)}</span>}
           </p>
           <p className="muted fish-blurb">{def.blurb}</p>
-          {fills && <p className="fish-fill">That fills your creel. You will head home with it.</p>}
+          {fills && <p className="fish-fill">That fills your basket. You will head home with it.</p>}
           <div className="row">
-            <button className="primary" disabled={busy} onClick={() => void putAway("keep")} autoFocus>{def.kind === "haul" ? "Keep it" : "Into the creel"}</button>
+            <button className="primary" disabled={busy} onClick={() => void putAway("keep")} autoFocus>{def.kind === "haul" ? "Keep it" : "Into the basket"}</button>
             <button disabled={busy} onClick={() => void putAway("release")}>{def.kind === "haul" ? "Toss it back" : "Throw it back"}</button>
           </div>
         </div>

@@ -73,6 +73,8 @@ export function GatherPanel({ spot, pier, shipBeside = false, onRod, renderer, o
   onStamina?(s: { left: number; max: number }): void;
 }) {
   const [status, setStatus] = useState<GatherStatus | null>(null);
+  const [atPier] = useState(pier);
+  const [shipAtOpen] = useState(shipBeside);
   const [paid, setPaid] = useState<Resources | null>(null);
   /** What the outing just ended paid in XP. */
   const [xp, setXp] = useState<XpResult | null>(null);
@@ -126,10 +128,15 @@ export function GatherPanel({ spot, pier, shipBeside = false, onRod, renderer, o
   const left = status?.stamina.left ?? 0;
   // Fishing is played from the pier in the Harbor itself. An old shore outing still open, or an outing open
   // somewhere else, is finished in the panel first.
-  if (spot === "fishing" && pier && renderer.current) {
+  // Where it was opened, held for as long as it is open: a reconnect to the Harbor puts the hero back where heroes
+  // arrive, and the sitting must not fall back to the old panel because of it. An open sitting with no pier to hand
+  // is fished from its own.
+  const open = latest?.status === "active" ? latest : null;
+  const sittingAt = open?.sitting && open.sitting.spot !== "sea" ? open.sitting.spot : undefined;
+  const fishFrom = atPier ?? sittingAt;
+  if (spot === "fishing" && fishFrom && renderer.current) {
     if (!status && !error) return null;
-    const open = latest?.status === "active" ? latest : null;
-    if (!open || open.sitting) return <Fishing pier={pier} world={renderer.current} shipBeside={shipBeside} onRod={onRod} onClose={onClose} onStamina={onStamina} />;
+    if (!open || open.sitting) return <Fishing pier={fishFrom} world={renderer.current} shipBeside={shipAtOpen} onRod={onRod} onClose={onClose} onStamina={onStamina} />;
   }
   // Felling is played in the Harbor itself, through the hero's eyes: no panel over it.
   if (outing?.felling && outing.spot === spot) {

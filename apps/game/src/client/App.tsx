@@ -7,6 +7,7 @@ import { useCallback, useEffect, useState } from "react";
 import { loadMe, type Me } from "./api";
 import { loadContent } from "./content";
 import { AdminView } from "./admin/AdminView";
+import { CatchGallery } from "./CatchGallery";
 import { Harbor } from "./Harbor";
 import { HarborView } from "./HarborView";
 import { HutView } from "./HutView";
@@ -16,6 +17,7 @@ import { RunView } from "./RunView";
 const runCodeFromHash = () => /^#run\/([A-Za-z]{4})$/.exec(location.hash)?.[1].toUpperCase() ?? null;
 const pubFromHash = () => location.hash === "#pub";
 const adminFromHash = () => location.hash === "#admin";
+const catchesFromHash = () => location.hash === "#catches";
 const hutFromHash = () => /^#hut\/([A-Za-z0-9-]{1,64})$/.exec(location.hash)?.[1] ?? null;
 const inviteFromHash = () => /^#crew\/([A-Za-z]{6})$/.exec(location.hash)?.[1].toUpperCase() ?? null;
 
@@ -27,6 +29,7 @@ export function App() {
   const [hut, setHut] = useState(hutFromHash);
   const [pub, setPub] = useState(pubFromHash);
   const [admin, setAdmin] = useState(adminFromHash);
+  const [catches, setCatches] = useState(catchesFromHash);
 
   const refresh = useCallback(() => loadMe().then(setMe, (e: Error) => setError(e.message)), []);
   useEffect(() => {
@@ -44,6 +47,7 @@ export function App() {
       setHut(hutFromHash());
       setPub(pubFromHash());
       setAdmin(adminFromHash());
+      setCatches(catchesFromHash());
     };
     window.addEventListener("hashchange", onHash);
     return () => window.removeEventListener("hashchange", onHash);
@@ -53,6 +57,8 @@ export function App() {
   if (!me) return <div className="centre"><div className="panel">Rowing ashore…</div></div>;
   const ready = me.character?.status === "active";
   if (admin) return <AdminView me={me} onLeave={() => (location.hash = "")} />;
+  // Every catch's sprite and model, side by side: for admins, and on the dev server.
+  if (catches && (me.isAdmin || import.meta.env.DEV)) return <CatchGallery onLeave={() => (location.hash = "")} />;
   if (code && ready) {
     return (
       <RunView

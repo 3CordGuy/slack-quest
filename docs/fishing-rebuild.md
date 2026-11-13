@@ -621,6 +621,11 @@ Two craftable boats let you walk off a pier or the shore onto the water, and fis
      - The fight's report cap was raised to 3000 presses and releases.
      - The catch model is a stand-in, coloured from the catalog palette, until phase 3.
 3. **Fish art.** `fishArt.ts`: the parametric shape to 3D mesh and pixel sprite, all 45 creature shapes, bespoke builders for the ray, squid, crabs, sunfish, oarfish and hauls, and the admin side-by-side preview. *It can run in parallel with phase 1, because it only needs the catalog's `shape` ids.*
+   - **Built, 2026-11-13:**
+     - **Models:** `render/fishModels.ts` builds every fish from its shape: a side outline, girth, tail type, back and belly fins, side fins and extras (barbels, whiskers, bills, a lure, scutes, spines, gill slits, finlets, a filament, wings). The ray, squid, sunfish and oarfish are built by hand. The hauls, crabs and lobster are in `render/catchArt.ts`.
+     - **Sprites:** each sprite is rendered from the catch's own model rather than rasterized from a profile, so the two can't drift apart.
+     - **Preview:** the side-by-side preview is a `#catches` page (admins, or anyone on the dev server) rather than an admin tab.
+     - **In the water:** fish in the water stay dark silhouettes. The client doesn't know the species until it's landed.
 4. **Selling.** The fishmonger stall and its seeded rates board, Old Tam buying, the icebox and trophy chest UI in the inventory screen, and sell routes.
 5. **Records and mounts.** The Catch Book (pages, slot states, page and book rewards, the bonus slot, `characters.title`), the crew Record Board, pub mounts, hut "Mount a trophy" via `meta_json`, the ship's bell piece, and the record line on the notice board.
 

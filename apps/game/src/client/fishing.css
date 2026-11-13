@@ -74,3 +74,18 @@ body.fishing .draggable:not(.gather), body.fishing .tip { display: none !importa
 .fish-bottom { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); width: min(520px, calc(100% - 32px)); display: flex; align-items: center; gap: 8px; padding: 6px 8px; background: rgba(20, 18, 42, 0.75); pointer-events: auto; }
 .fish-bottom .spacer { flex: 1; }
 .fish-hint { font-size: 12px; }
+
+/* ---------- the catch gallery (#catches) ---------- */
+.catch-gallery { height: 100%; overflow-y: auto; padding: 12px 16px 40px; background: #15132a; }
+.catch-gallery header { display: flex; align-items: baseline; gap: 12px; position: sticky; top: -12px; padding: 8px 0; background: #15132a; z-index: 1; }
+.catch-gallery h1 { margin: 0; font-size: 22px; color: var(--gold); }
+.catch-gallery h2 { margin: 18px 0 8px; font-size: 16px; }
+.catch-gallery .spacer { flex: 1; }
+.catch-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 8px; }
+.catch-grid figure { margin: 0; padding: 6px; background: #1d1a36; border: 1px solid #2f2b52; }
+.catch-grid figure.rare { border-color: #3f5f9a; }
+.catch-grid figure.legendary, .catch-grid figure.mythic { border-color: #9a7a3a; }
+.catch-shots { display: flex; align-items: center; gap: 4px; }
+.catch-shots img { background: #26304f; }
+.catch-sprite { image-rendering: pixelated; }
+.catch-grid figcaption { display: flex; flex-direction: column; gap: 2px; padding-top: 4px; font-size: 12px; }

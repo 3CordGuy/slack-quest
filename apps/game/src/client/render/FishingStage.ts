@@ -233,7 +233,9 @@ export class FishingStage implements WorldMinigame {
       joint.add(mesh);
       if (i > 1 && i % 2 === 0) {
         const guide = new THREE.Mesh(new THREE.TorusGeometry(0.012, 0.003, 4, 8), wrap);
-        guide.position.set(0, seg * 0.5, -r0 - 0.008);
+        // Stood up off the rod, the ring square to it, so the line runs through.
+        guide.rotation.x = Math.PI / 2;
+        guide.position.set(0, seg * 0.5, -r0 - 0.012);
         joint.add(guide);
       }
       parent.add(joint);
