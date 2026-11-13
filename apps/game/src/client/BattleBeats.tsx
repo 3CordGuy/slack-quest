@@ -18,6 +18,7 @@ import { blueprintName } from "./hutDrops";
 import { Icon } from "./items";
 import { BlueprintIcon, GOLD_ICON, ThingIcon, brewIcon, furnishingIcon, resourceIcon } from "./thingIcons";
 import { itemName, label } from "./labels";
+import { foeNames, sentenceCase } from "./foes";
 
 type Battle = NonNullable<ClientState["battle"]>;
 
@@ -51,12 +52,6 @@ export function settleBattle(battle: Battle, events: WorldEvent[]): Battle {
 /** Blows in a batch of events: how long the renderer will take to play them. */
 export const blowsIn = (events: WorldEvent[]) => events.filter((e) => e.t === "battle" && (e.ev.t === "hit" || e.ev.t === "miss" || e.ev.t === "heal" || e.ev.t === "tick")).length;
 
-function groupNames(kinds: string[]): string {
-  const count = new Map<string, number>();
-  for (const k of kinds) count.set(k, (count.get(k) ?? 0) + 1);
-  return [...count].map(([k, n]) => (n > 1 ? `${n} × ${label("enemy", k)}` : label("enemy", k))).join(", ");
-}
-
 export interface Intro {
   title: string;
   line: string;
@@ -67,14 +62,14 @@ export function introFor(events: WorldEvent[], state: ClientState, names: Map<st
   const start = events.find((e) => e.t === "battle_start");
   if (!start || start.t !== "battle_start" || !state.battle) return null;
   const enemies = state.battle.combatants.filter((c) => c.side === "enemy");
-  const who = enemies.some((c) => ENEMIES[c.kind]?.boss) ? enemies.map((c) => c.name).join(", ") : groupNames(enemies.map((c) => c.kind));
+  const who = foeNames(enemies);
   const ambush = events.find((e) => e.t === "ambush");
   const forage = events.find((e) => e.t === "forage" && e.kind === "wolves");
   const n = (id: string) => names.get(id) ?? "Someone";
   if (ambush && ambush.t === "ambush") {
-    return ambush.by === "band" ? { title: "Ambush!", line: `${who} came out of the dark at ${n(ambush.heroId)}.` } : { title: "A band on the road", line: `${n(ambush.heroId)} has run into ${who}.` };
+    return ambush.by === "band" ? { title: "Ambush!", line: `${sentenceCase(who)} came out of the dark at ${n(ambush.heroId)}.` } : { title: "A band on the road", line: `${n(ambush.heroId)} has run into ${who}.` };
   }
-  if (forage && forage.t === "forage") return { title: "Wolves!", line: `${who} broke from the trees at ${n(forage.heroId)}.` };
+  if (forage && forage.t === "forage") return { title: "Wolves!", line: `${sentenceCase(who)} broke from the trees at ${n(forage.heroId)}.` };
   return { title: enemies.some((c) => ENEMIES[c.kind]?.boss) ? "The reckoning" : "Battle", line: `Facing ${who}.` };
 }
 
@@ -165,16 +160,17 @@ export function recapFor(events: WorldEvent[], settled: Battle, state: ClientSta
       if (h) for (const [kind, n] of Object.entries(ev.resources)) h.resources[kind as keyof Resources] = (h.resources[kind as keyof Resources] ?? 0) + (n ?? 0);
     }
   }
-  return { status, carriedBack: events.some((e) => e.t === "carried_back"), enemies: groupNames(settled.combatants.filter((c) => c.side === "enemy").map((c) => c.kind)), heroes };
+  return { status, carriedBack: events.some((e) => e.t === "carried_back"), enemies: foeNames(settled.combatants.filter((c) => c.side === "enemy")), heroes };
 }
 
 export function BattleRecap({ recap, you, onDone }: { recap: Recap; you: string; onDone(): void }) {
   const title = recap.status === "victory" ? "Victory" : recap.status === "fled" ? "You got away" : recap.carriedBack ? "Carried back to the ship" : "The party has fallen";
+  const who = sentenceCase(recap.enemies);
   const sub =
-    recap.status === "victory" ? `${recap.enemies} beaten.`
-    : recap.status === "fled" ? `${recap.enemies} did not follow.`
-    : recap.carriedBack ? `${recap.enemies} had the better of it. The rest of the crew is still out there, so the voyage goes on.`
-    : `${recap.enemies} had the better of it.`;
+    recap.status === "victory" ? `${who} beaten.`
+    : recap.status === "fled" ? `${who} did not follow.`
+    : recap.carriedBack ? `${who} had the better of it. The rest of the crew is still out there, so the voyage goes on.`
+    : `${who} had the better of it.`;
   // Your own hero first.
   const heroes = [...recap.heroes].sort((a, b) => Number(b.id === you) - Number(a.id === you));
   return (
