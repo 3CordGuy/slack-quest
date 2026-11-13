@@ -44,3 +44,8 @@
 .errand-chip.xp { color: var(--gold); font-weight: bold; }
 .regular-panel .small-note { font-size: 11px; }
 .regular-panel .row button { flex: none; }
+@media (max-width: 760px) {
+  /* On a phone the camera eases the regular to the middle of the screen, so their panel docks at the bottom instead of covering them, over the "Here" bar. */
+  .story.pub-bar.regular-panel:not(.folded) { top: auto; bottom: 8px; max-height: calc(46vh / var(--ui-z, 1)); z-index: 14; }
+  .pub-view:has(.regular-panel:not(.folded)) .turnbar { display: none; }
+}
