@@ -6,8 +6,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAudioScene } from "./audio/useAudioScene";
-import { hexDistance, type HexPos } from "@gantt-quest/core";
-import { PUB_BARKEEP, PUB_BARKEEP_POS, PUB_COUNTER, PUB_DEALER, PUB_DEALER_POS, PUB_DEALER_STAND, PUB_DICE, PUB_FITTINGS, PUB_MAX_TALK, PUB_MENU, PUB_REGULAR_SPOTS, PUB_SALESMAN_POS, PUB_SHOALS, PUB_TRADER, dueIn, gatherDay, poiAt, pubRoom, regularsOn, salesman, type Perk, type RegularId } from "@gantt-quest/world";
+import { hexDistance, hexNeighbors, type HexPos } from "@gantt-quest/core";
+import { PUB_BARKEEP, PUB_BARKEEP_POS, PUB_COUNTER, PUB_DEALER, PUB_DEALER_POS, PUB_DEALER_STAND, PUB_DICE, PUB_FITTINGS, PUB_GRID, PUB_MAX_TALK, PUB_MENU, PUB_REGULAR_SPOTS, PUB_SALESMAN_POS, PUB_SHOALS, PUB_TRADER, dueIn, gatherDay, poiAt, pubPath, pubRoom, regularsOn, salesman, type Perk, type RegularId } from "@gantt-quest/world";
 import { CatchPanel } from "./CatchPanel";
 import { api, type Me, type PubTab, type RegularsView } from "./api";
 import { RegularPanel } from "./RegularPanel";
@@ -230,6 +230,21 @@ export function PubView({ me, refresh, onLeave }: { me: Me; refresh(): Promise<u
   const atDice = !!self && same(self.pos, PUB_DICE);
   const atShoals = !!self && same(self.pos, PUB_SHOALS);
   const atDoor = !!self && same(self.pos, DOOR);
+  // Sitting at a table: first person, until you stand up. Standing up walks you out to the floor beside it.
+  const [stood, setStood] = useState<"dice" | "shoals" | null>(null);
+  const seatedAt: "dice" | "shoals" | null = atDice && stood !== "dice" ? "dice" : atShoals && stood !== "shoals" ? "shoals" : null;
+  useEffect(() => {
+    if (stood === "dice" && !atDice) setStood(null);
+    if (stood === "shoals" && !atShoals) setStood(null);
+  }, [stood, atDice, atShoals]);
+  const standFrom = (table: "dice" | "shoals") => {
+    setStood(table);
+    const from = table === "dice" ? PUB_DICE : PUB_SHOALS;
+    const away = hexNeighbors(from, PUB_GRID).filter((n) => ![PUB_COUNTER, PUB_DICE, PUB_SHOALS, PUB_TRADER, PUB_DEALER_STAND].some((p) => same(p, n)) && pubPath(ROOM, from, n));
+    // The floor south of the table first, toward the room.
+    away.sort((a, b) => b.r - a.r);
+    if (away[0]) pub.send({ type: "move", to: away[0] });
+  };
   const atTrader = !!self && same(self.pos, PUB_TRADER);
   const atDealer = !!self && same(self.pos, PUB_DEALER_STAND);
   // Walking up to the dealer: a word of greeting, and their papers if you clicked them. Walking away puts them away.
@@ -312,7 +327,7 @@ export function PubView({ me, refresh, onLeave }: { me: Me; refresh(): Promise<u
   const buffText = (buff: Perk) => perkText(buff) || "nothing";
 
   return (
-    <div className="run hut-view pub-view">
+    <div className={`run hut-view pub-view${seatedAt ? " seated" : ""}`}>
       <div className="stage" ref={mount} />
       <div className="topbar">
         <strong>The pub</strong>
@@ -384,8 +399,8 @@ export function PubView({ me, refresh, onLeave }: { me: Me; refresh(): Promise<u
       {you && atTrader && seller && <SalesmanPanel me={me} refresh={refresh} />}
       {you && atDealer && dealing && <DealerPanel refresh={refresh} onClose={() => setDealing(false)} />}
       {you && talking && regs && <RegularPanel key={talking.regular} view={talking} handedIn={regs.handedIn} cap={regs.cap} reload={loadRegs} refresh={refresh} onClose={() => setTalkTo(null)} />}
-      {you && atShoals && <ShoalsTable table={pub.shoals} you={you} gold={gold} error={pub.shoalsError} lastXp={pub.lastXp} looks={looks} send={(action) => pub.send({ type: "shoals", action })} />}
-      {you && atDice && <DiceTable table={pub.dice} you={you} gold={gold} error={pub.diceError} lastXp={pub.lastXp} send={(action) => pub.send({ type: "dice", action })} />}
+      {you && seatedAt === "shoals" && <ShoalsTable table={pub.shoals} you={you} gold={gold} error={pub.shoalsError} lastXp={pub.lastXp} looks={looks} world={renderer} host={{ hex: PUB_SHOALS, hide: players.filter((p) => same(p.pos, PUB_SHOALS)).map((p) => p.id), onStand: () => standFrom("shoals") }} send={(action) => pub.send({ type: "shoals", action })} />}
+      {you && seatedAt === "dice" && <DiceTable table={pub.dice} you={you} gold={gold} error={pub.diceError} lastXp={pub.lastXp} looks={looks} world={renderer} host={{ hex: PUB_DICE, hide: players.filter((p) => same(p.pos, PUB_DICE)).map((p) => p.id), onStand: () => standFrom("dice") }} send={(action) => pub.send({ type: "dice", action })} />}
 
       {you && <>
       <DragPanel id="pub.crew" title="Inside" foldOnPhone className="crew roster-panel">
