@@ -52,8 +52,11 @@ const EYE_HEIGHT = 0.64;
 /** How far in front the trees stand, and how far apart. */
 const TREE_DIST = 1.9;
 const TREE_GAP = 0.62;
-/** How far off the chopping block stands. */
+/** How far off the chopping block stands, and how far you step toward it to split. */
 const BLOCK_DIST = 1.15;
+const BLOCK_STEP = 0.45;
+/** How far off the line of the split the axe's handle comes in, from the right (radians). */
+const SPLIT_YAW = 0.35;
 /** The log on the block: its radius, and how far across its face the marker sweeps (end to end). */
 const LOG_R = 0.11;
 const SWEEP = 0.19;
@@ -64,6 +67,21 @@ const ARRIVE_S = 1.9;
 const TURN_S = 1.1;
 const LEAVE_S = 1.4;
 const easeInOut = (t: number) => (t < 0.5 ? 2 * t * t : 1 - (-2 * t + 2) ** 2 / 2);
+/** The axe, from the grip: the handle's length, where the head sits up it, how far out the edge is, and its size in the view. */
+const AXE_LEN = 0.38;
+const AXE_HEAD = 0.345;
+const AXE_EDGE = 0.1;
+const AXE_SCALE = 0.85;
+/** How long a swing takes, and how much of it is the blow (the rest is bringing the axe back). */
+const SWING_S = 0.3;
+const STRIKE_PART = 0.35;
+/** How a swing goes, 0 at rest to 1 at the blow: quick down, slower back. */
+function swingCurve(t: number): number {
+  if (t < 0) return 0;
+  const u = t / SWING_S;
+  if (u < STRIKE_PART) return (u / STRIKE_PART) ** 2;
+  return 1 - easeInOut((u - STRIKE_PART) / (1 - STRIKE_PART));
+}
 
 interface TreeObj {
   root: THREE.Group;
@@ -138,6 +156,8 @@ export class FellingScene implements WorldMinigame {
   private trees: TreeObj[] = [];
   private current = 2;
   private axe: THREE.Group;
+  /** Where the split axe's edge comes down: on the marker, or where it last was. */
+  private axeOver = new THREE.Vector3();
   /** Seconds into the axe's swing, or -1 at rest. */
   private swingT = -1;
   private bits: Bit[] = [];
@@ -182,7 +202,8 @@ export class FellingScene implements WorldMinigame {
     const toBlock = this.chooseBlock();
     this.blockAt = origin.clone().addScaledVector(toBlock, BLOCK_DIST);
     this.blockAt.y = this.heightAt(this.blockAt);
-    this.blockLook = this.blockAt.clone().setY(this.blockAt.y + 0.28);
+    this.blockLook = this.blockAt.clone().setY(this.blockAt.y + 0.5);
+    this.axeOver.copy(this.blockAt).setY(this.blockAt.y + 0.43);
     this.inland = toBlock;
 
     TREE_SLOTS.forEach((size, slot) => {
@@ -233,14 +254,18 @@ export class FellingScene implements WorldMinigame {
     this.bead.visible = false;
     group.add(this.bead);
 
+    // Held at the grip (the group's origin): the handle runs up its +Y to the head, and the blade points along +X, so
+    // a pose is a basis of (the way the edge faces, the way the handle runs) about the hands.
     this.axe = new THREE.Group();
-    const handle = new THREE.Mesh(new THREE.BoxGeometry(0.025, 0.36, 0.025), lambert("#8a6a44"));
-    handle.position.y = -0.18;
+    const handle = new THREE.Mesh(new THREE.BoxGeometry(0.025, AXE_LEN, 0.025), lambert("#8a6a44"));
+    handle.position.y = AXE_LEN / 2;
     const head = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.07, 0.02), lambert("#d9dee6"));
-    head.position.set(0.045, -0.02, 0);
-    const edge = new THREE.Mesh(new THREE.BoxGeometry(0.012, 0.075, 0.022), new THREE.MeshBasicMaterial({ color: "#ffffff" }));
-    edge.position.set(0.1, -0.02, 0);
-    this.axe.add(handle, head, edge);
+    head.position.set(0.04, AXE_HEAD, 0);
+    const poll = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.05, 0.03), lambert("#9aa1ad"));
+    poll.position.set(-0.02, AXE_HEAD, 0);
+    const edge = new THREE.Mesh(new THREE.BoxGeometry(0.012, 0.085, 0.022), new THREE.MeshBasicMaterial({ color: "#ffffff" }));
+    edge.position.set(AXE_EDGE, AXE_HEAD, 0);
+    this.axe.add(handle, head, poll, edge);
     this.axe.traverse((o) => (o.renderOrder = 11));
     group.add(this.axe);
     this.emit(true);
@@ -677,8 +702,10 @@ export class FellingScene implements WorldMinigame {
 
   private view(): { eye: THREE.Vector3; look: THREE.Vector3 } {
     const t = easeInOut(this.turn);
+    // Turning to the block is also stepping up to it, close enough to bring the axe down on the log.
+    const eye = this.eye.clone().addScaledVector(this.inland, BLOCK_STEP * t).setY(EYE_HEIGHT + 0.06 * t);
     const a = this.aim.clone().sub(this.eye);
-    const b = this.blockLook.clone().sub(this.eye);
+    const b = this.blockLook.clone().sub(this.eye.clone().addScaledVector(this.inland, BLOCK_STEP));
     // Turn the short way round.
     const from = Math.atan2(a.x, a.z);
     let to = Math.atan2(b.x, b.z);
@@ -686,36 +713,49 @@ export class FellingScene implements WorldMinigame {
     while (to - from < -Math.PI) to += 2 * Math.PI;
     const ang = from + (to - from) * t;
     const flat = THREE.MathUtils.lerp(Math.hypot(a.x, a.z), Math.hypot(b.x, b.z), t);
-    const look = this.eye.clone().add(new THREE.Vector3(Math.sin(ang) * flat, THREE.MathUtils.lerp(a.y, b.y, t), Math.cos(ang) * flat));
-    return { eye: this.eye.clone().setY(EYE_HEIGHT + 0.06 * t), look };
+    const look = eye.clone().add(new THREE.Vector3(Math.sin(ang) * flat, THREE.MathUtils.lerp(a.y, b.y, t), Math.cos(ang) * flat));
+    return { eye, look };
   }
 
   private stepAxe(dt: number, view: { eye: THREE.Vector3; look: THREE.Vector3 }) {
     this.axe.visible = this.blend > 0.85 && this.mode !== "leaving";
     if (this.swingT >= 0) {
       this.swingT += dt;
-      if (this.swingT > 0.28) this.swingT = -1;
+      if (this.swingT > SWING_S) this.swingT = -1;
     }
-    const k = this.swingT < 0 ? 0 : Math.sin((this.swingT / 0.28) * Math.PI);
+    const k = swingCurve(this.swingT);
     const splitting = this.turn > 0.5 && this.mode !== "chop" && this.mode !== "intro-chop";
-    this.axe.scale.setScalar(splitting ? 0.55 : 1);
-    if (splitting && this.bead.visible) {
-      // Held over the log, its edge riding the marker; a strike brings it down.
-      const p = this.bead.position.clone();
-      p.y = this.blockAt.y + 0.43 + 0.16 - k * 0.14;
-      this.axe.position.copy(p);
-      this.axe.rotation.set(0, Math.atan2(this.splitRight().x, this.splitRight().z) + Math.PI / 2, -Math.PI / 2 + 0.2 - k * 0.3);
+    this.axe.scale.setScalar(AXE_SCALE);
+    if (splitting) {
+      // Between logs it waits, raised, where the marker last was.
+      if (this.bead.visible) this.axeOver.copy(this.bead.position);
+      // In the right hand, raised over the log with the edge down, riding the marker across; a strike brings it
+      // down about the hand until the edge meets the log's face where the marker is. The handle comes in from the
+      // lower right, a little off the line of the split, so it never hides the mark.
+      const h = this.inland.clone().multiplyScalar(Math.cos(SPLIT_YAW)).addScaledVector(this.splitRight(), -Math.sin(SPLIT_YAW));
+      const pose = (lift: number) => {
+        const along = h.clone().multiplyScalar(Math.cos(lift)).addScaledVector(UP, Math.sin(lift));
+        const blade = h.clone().multiplyScalar(Math.sin(lift)).addScaledVector(UP, -Math.cos(lift));
+        return new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(blade, along, new THREE.Vector3().crossVectors(blade, along)));
+      };
+      // Where the hand is at the blow: the edge on the marker, the handle rising a little to it.
+      const blow = pose(0.3);
+      const grip = this.axeOver.clone().sub(new THREE.Vector3(AXE_EDGE, AXE_HEAD, 0).multiplyScalar(AXE_SCALE).applyQuaternion(blow));
+      this.axe.quaternion.copy(pose(0.3 + 0.65 * (1 - k)));
+      this.axe.position.copy(grip).addScaledVector(UP, 0.04 * (1 - k));
       return;
     }
-    // In the right hand, low in the view; a chop swings it forward.
+    // In the right hand, low in the view, the blade toward the trees; a chop brings the head across and down into
+    // the middle of the view, edge first.
     const fwd = view.look.clone().sub(view.eye).normalize();
     const right = new THREE.Vector3().crossVectors(fwd, UP).normalize();
     const up = new THREE.Vector3().crossVectors(right, fwd);
-    this.axe.position.copy(view.eye).addScaledVector(fwd, 0.42 + k * 0.1).addScaledVector(right, 0.16 - k * 0.06).addScaledVector(up, -0.15 - k * 0.04);
-    const basis = new THREE.Matrix4().makeBasis(right, up, fwd.clone().negate());
-    this.axe.quaternion.setFromRotationMatrix(basis);
-    this.axe.rotateX(-0.5 + k * 1.3);
-    this.axe.rotateZ(0.35);
+    this.axe.position.copy(view.eye).addScaledVector(fwd, 0.55 + k * 0.1).addScaledVector(right, 0.3 - k * 0.1).addScaledVector(up, -0.38 + k * 0.03);
+    // Blade to the left (toward the middle), handle up, the head's flat face to you.
+    this.axe.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(right.clone().negate(), up, fwd));
+    // Leaning in at rest; the blow swings the top over to the left and down, and away from you.
+    this.axe.rotateZ(-0.25 - k * 0.85);
+    this.axe.rotateX(-0.2 + k * 0.5);
   }
 
   private bit(kind: FxKind, color: string, at: THREE.Vector3, vel: THREE.Vector3, life: number, size: number) {
