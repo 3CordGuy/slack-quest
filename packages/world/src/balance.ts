@@ -7,7 +7,7 @@
 
 import { FREE_POINTS_PER_LEVEL, LEVELUP_AUTO_ALLOC, STARTING_STATS, type Stats } from "@gantt-quest/core";
 import { createBattle, currentActor, stepBattle, type BattleAction, type BattleEvent, type BattleState, type Combatant } from "./battle";
-import { ABILITIES, ENEMIES, HERO_CLASSES, WEAPONS, bandKinds, heroClass, type RoamerLead } from "./content";
+import { ABILITIES, ENEMIES, HERO_CLASSES, WEAPONS, bandKinds, cavernBand, heroClass, type CavernLead, type RoamerLead } from "./content";
 import { DEBUFFS, traitsFor } from "./traits";
 import { heroCombatant, type HeroSheet } from "./hero";
 import { makeRng } from "./rng";
@@ -38,6 +38,20 @@ export const SIM_ENCOUNTERS: SimEncounter[] = [
   fixed("lair:alpha+wolf", ["alpha", "wolf"]),
   fixed("lair:great_bear", ["great_bear"]),
   fixed("lair:guardian", ["guardian"]),
+];
+
+/** The fights a delve into the Haunted Caverns throws at a party (world.ts cave bands, story.ts's cavern camp and lair). Kept apart from the voyage's. */
+const caveBand = (lead: CavernLead): SimEncounter => ({ id: `band:${lead}`, kinds: (n) => cavernBand(lead, n) });
+export const CAVE_SIM_ENCOUNTERS: SimEncounter[] = [
+  caveBand("shade"),
+  caveBand("bat"),
+  caveBand("skeleton"),
+  caveBand("slime"),
+  fixed("camp:2 skeletons", ["skeleton", "skeleton"]),
+  fixed("camp:skeleton+bats", ["skeleton", "bat", "bat"]),
+  fixed("camp:skeleton+slime", ["skeleton", "slime"]),
+  fixed("lair:haunt+shade", ["haunt", "shade"]),
+  fixed("lair:haunt+skeleton", ["haunt", "skeleton"]),
 ];
 
 export interface SimHero {

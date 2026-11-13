@@ -25,6 +25,12 @@ export const ENEMY_DROPS: Record<string, ResourceKind[]> = {
   cultist: ARMED,
   villain: ARMED,
   guardian: ["stone"],
+  // The dead leave bones behind.
+  shade: ["bone"],
+  skeleton: ["bone", "iron"],
+  bat: ["fur"],
+  slime: ["mushrooms"],
+  haunt: ["bone"],
 };
 
 /** Units of material from one enemy: [min, max]. */

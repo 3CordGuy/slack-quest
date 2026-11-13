@@ -148,7 +148,8 @@ export const api = {
   shop: () => request<Shop>("/api/shop"),
   buy: (index: number) => request("/api/shop/buy", { index }),
   board: () => request<Board>("/api/board"),
-  createRun: () => request<{ code: string }>("/api/run", {}),
+  /** A voyage to an island, or with "caverns" a delve into the Haunted Caverns. */
+  createRun: (kind: "voyage" | "caverns" = "voyage") => request<{ code: string }>("/api/run", { kind }),
   requestCode: (email: string) => request("/api/auth/email/request", { email }),
   verifyCode: (email: string, code: string) => request<{ outcome: "linked" | "signed_in" | "created" | "already" }>("/api/auth/email/verify", { email, code }),
   signOut: () => request("/api/auth/signout", {}),

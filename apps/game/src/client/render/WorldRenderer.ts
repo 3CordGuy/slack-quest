@@ -38,6 +38,8 @@ const isBig = (kind: string) => kind === "brute" || kind === "bear";
 export interface RenderState {
   /** Identifies the map; the terrain is rebuilt when it changes. */
   code: string;
+  /** A voyage's island, or the Haunted Caverns: the caverns' mouth shows no moored ship, and its heroes carry torches. */
+  kind?: "voyage" | "caverns";
   you: string;
   phase: Phase;
   round: number;
@@ -180,7 +182,7 @@ const MAX_PITCH = 1.25;
 /** Camera distance per unit of zoom, kept from when the tilt was fixed. */
 const CAMERA_REACH = Math.hypot(0.72, 0.78);
 const PLAYER_COLORS = ["#ffd23f", "#5ce1e6", "#ff7ab6", "#9dff6b"];
-const BIOME_COLOR: Record<string, string> = { plains: "#7cb856", forest: "#4c9a52", hills: "#a39672", water: "#3f86dc", dock: "#9a7748", cobble: "#6f7279", mud: "#5f5140", rampart: "#62656d", floor: "#b08a5c", wall: "#6e5a48", fog: "#2b3140" };
+const BIOME_COLOR: Record<string, string> = { plains: "#7cb856", forest: "#4c9a52", hills: "#a39672", water: "#3f86dc", dock: "#9a7748", cobble: "#6f7279", mud: "#5f5140", rampart: "#62656d", floor: "#b08a5c", wall: "#6e5a48", cave: "#4a4552", rock: "#2a2730", fog: "#2b3140" };
 /** What grass and trees are pulled toward under the Harbor's low cloud. */
 const DRAB = new THREE.Color("#5d6a5c");
 /** The pub's painted sign: a foaming tankard on an oxblood board with a gold edge. Made once and shared. */
@@ -670,7 +672,8 @@ export class WorldRenderer {
     this.updateGhost();
     this.buildJoinRanges(state);
     if (first) {
-      this.sea.visible = !state.indoors;
+      // No sea under a hut's floor, nor in the caverns.
+      this.sea.visible = !state.indoors && state.kind !== "caverns";
       (this.scene.background as THREE.Color).set(state.indoors ? "#1d1a2b" : "#a9dcf7");
       // A room is framed whole: closer for a hut, further back for the pub.
       if (state.indoors) this.userDist = this.camDist = state.map.grid.cols > 10 ? 21 : 15;
@@ -1691,6 +1694,13 @@ export class WorldRenderer {
 
     switch (poi.kind) {
       case "landing": {
+        if (this.state?.kind === "caverns") {
+          // The way back out of the caverns: a rope down the rock and a lantern on a spike.
+          add(box(0.04, 0.9, 0.04), lambert("#c9a877"), -0.35, 0.45, -0.3);
+          add(box(0.05, 0.5, 0.05), lambert("#3d4048"), 0.35, 0.25, -0.2);
+          add(box(0.16, 0.18, 0.16), new THREE.MeshBasicMaterial({ color: "#ffd98a" }), 0.35, 0.58, -0.2).userData.glow = true;
+          break;
+        }
         add(box(1.0, 0.08, 0.5), lambert("#8a6a44"), 0, 0.05, 0.1);
         // The party's ship, moored just offshore to the west. Named, so the landfall can hide it while she is still coming in.
         add(box(1.1, 0.32, 0.5), lambert("#6b4a2b"), -1.5, -0.05, 0.3).name = "moored";
@@ -1995,6 +2005,22 @@ export class WorldRenderer {
         add(new THREE.CylinderGeometry(0.09, 0.09, 0.04, 8), lambert("#7db6f2"), -0.16, 0.43, -0.28);
         add(new THREE.CylinderGeometry(0.09, 0.09, 0.04, 8), lambert("#d9b45a"), 0.14, 0.43, -0.4);
         add(new THREE.CylinderGeometry(0.09, 0.09, 0.08, 8), lambert("#6b4a2b"), 0.04, 0.45, -0.16);
+        break;
+      }
+      case "cave": {
+        // The Haunted Caverns' mouth in the back wall: a heap of dark rock with a black arch in it, and a torch either side.
+        const rock = lambert("#3d4048");
+        const pale = lambert("#565a63");
+        add(new THREE.DodecahedronGeometry(0.62, 0), rock, 0, 0.42, -0.25, 0.3);
+        add(new THREE.ConeGeometry(0.42, 1.1, 5), pale, -0.55, 0.45, -0.15, 0.8);
+        add(new THREE.ConeGeometry(0.36, 0.95, 5), rock, 0.55, 0.38, -0.2, 1.7);
+        // The arch: a black opening at the foot of the rock.
+        add(box(0.46, 0.5, 0.06), new THREE.MeshBasicMaterial({ color: "#050409" }), 0, 0.25, 0.32).userData.glow = true;
+        add(new THREE.CylinderGeometry(0.23, 0.23, 0.06, 8, 1, false, 0, Math.PI), new THREE.MeshBasicMaterial({ color: "#050409" }), 0, 0.5, 0.32).rotation.set(Math.PI / 2, 0, Math.PI / 2);
+        for (const x of [-0.34, 0.34]) {
+          add(box(0.04, 0.42, 0.04), lambert("#5a3d22"), x, 0.21, 0.4);
+          add(box(0.08, 0.1, 0.08), new THREE.MeshBasicMaterial({ color: "#ffb347" }), x, 0.46, 0.4).userData.glow = true;
+        }
         break;
       }
       case "rocks": {
@@ -3017,6 +3043,15 @@ export class WorldRenderer {
     );
     this.camera.lookAt(this.target);
     this.ambience.update(this.clock, this.yaw, this.target, this.state?.you ? this.units.get(this.state.you)?.sprite.position : undefined);
+    // In the caverns every hero carries a torch: the lights follow them as they walk.
+    if (this.state?.kind === "caverns") {
+      const torches: THREE.Vector3[] = [];
+      for (const h of this.state.heroes) {
+        const unit = this.units.get(h.id);
+        if (unit) torches.push(unit.sprite.position);
+      }
+      this.ambience.setTorches(torches);
+    }
     // Night reaches the open sea and the fog too, not just the lit ground.
     const night = this.ambience.night;
     (this.sea.material as THREE.MeshLambertMaterial).color.copy(this.seaBase).lerp(NIGHT_SEA, night * 0.8);

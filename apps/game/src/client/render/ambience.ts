@@ -351,6 +351,11 @@ export class Ambience {
   private lamp = new THREE.PointLight("#ffd7a1", 0, 0, 0);
   /** Whether the hut's hanging lamp is lit. Off, the room is lit only by its candles, lanterns and fires. */
   private lampOn = true;
+  /** In the Haunted Caverns: dark as indoors, no hanging lamp, and a torch carried by each hero. */
+  private cave = false;
+  /** One warm, flickering torch per hero in the caverns (at most four). No shadows: they move with every step. */
+  private torches = Array.from({ length: 4 }, () => new THREE.PointLight("#ffb070", 0, 7, 1.4));
+  private torchCount = 0;
   /** The lamp's glowing lantern, dimmed when the lamp is put out. */
   private lanternMat: THREE.MeshBasicMaterial | null = null;
   /**
@@ -474,7 +479,8 @@ export class Ambience {
       s.visible = false;
     });
     for (const g of this.fadeGlows) g.visible = false;
-    scene.add(this.hemi, this.sun, this.sun.target, this.lamp, this.fireLight, ...this.slots, ...this.glows, ...this.fadeGlows, this.group);
+    for (const t of this.torches) t.visible = false;
+    scene.add(this.hemi, this.sun, this.sun.target, this.lamp, this.fireLight, ...this.slots, ...this.glows, ...this.fadeGlows, ...this.torches, this.group);
   }
 
   /** Lay out the decoration for a map. `skip` holds the hexes to leave clear. */
@@ -577,7 +583,10 @@ export class Ambience {
     this.bounds = { minX, maxX, minZ, maxZ };
 
     // ---- a hut is lit by a lamp hung over the middle of the room, not by the sky ----
-    const inside = tiles.some((t) => (t.biome as string) === "floor");
+    // The caverns light like a room with its lamp out: no sun, no sky, and the heroes' torches doing the work.
+    const cave = (this.cave = tiles.some((t) => (t.biome as string) === "cave"));
+    for (const t of this.torches) t.visible = cave;
+    const inside = cave || tiles.some((t) => (t.biome as string) === "floor");
     this.lamp.visible = inside;
     // Casting even while it is out (at no strength, its map not redrawn), so putting it out never recompiles a material.
     this.lamp.castShadow = inside;
@@ -589,8 +598,8 @@ export class Ambience {
     this.slotWeight.fill(0);
     this.freshRoom = inside;
     this.stirAll();
-    if (inside) {
-      this.lamp.position.set((minX + maxX) / 2, 2.7, (minZ + maxZ) / 2);
+    if (inside) this.lamp.position.set((minX + maxX) / 2, 2.7, (minZ + maxZ) / 2);
+    if (inside && !cave) {
       this.lanternMat = new THREE.MeshBasicMaterial({ color: this.lampOn ? "#ffe2a8" : "#4a3f30" });
       const lantern = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.26, 0.2), this.lanternMat);
       lantern.position.copy(this.lamp.position);
@@ -796,7 +805,7 @@ export class Ambience {
 
     // ---- wisps: trails of single pixels that sway gently as they cross ----
     // No wind indoors.
-    const indoors = (this.indoors = tiles.some((t) => (t.biome as string) === "floor"));
+    const indoors = (this.indoors = tiles.some((t) => (t.biome as string) === "floor" || (t.biome as string) === "cave"));
     const count = this.still || indoors ? 0 : Math.min(14, Math.max(7, Math.round(tiles.length / 30)));
     for (let i = 0; i < count; i++) {
       this.wisps.push({ offset: hash(i, 4, 100), speed: 0.1 + hash(i, 5, 100) * 0.07 });
@@ -991,6 +1000,13 @@ export class Ambience {
 
   /** Draw smoke rising from these points (chimney tops). An empty list clears it. */
   /** Light or put out a hut's hanging lamp. */
+  /** Where each hero's torch is in the caverns this frame (at most four). Ignored outside them. */
+  setTorches(at: THREE.Vector3[]) {
+    if (!this.cave) return;
+    this.torchCount = Math.min(at.length, this.torches.length);
+    for (let i = 0; i < this.torchCount; i++) this.torches[i].position.set(at[i].x + 0.25, at[i].y + 1.15, at[i].z + 0.15);
+  }
+
   setLampOn(on: boolean) {
     if (on === this.lampOn) return;
     this.lampOn = on;
@@ -1489,6 +1505,19 @@ export class Ambience {
       this.sun.intensity = 0.7 * smooth(0, 0.35, -height);
     }
 
+    if (this.indoors && this.cave) {
+      // The caverns: cold dark stone, and a warm torch around each hero.
+      this.sun.intensity = 0;
+      this.lamp.intensity = 0;
+      this.hemi.intensity = 0.28;
+      this.hemi.color.set("#8ea0c8");
+      this.hemi.groundColor.set("#141018");
+      this.background.set("#07060b");
+      this.torches.forEach((t, i) => {
+        t.intensity = i < this.torchCount ? 2.4 * (this.still ? 1 : 1 + Math.sin(clock * 9 + i * 2.1) * 0.06 + Math.sin(clock * 15.7 + i) * 0.04) : 0;
+      });
+      return;
+    }
     if (this.indoors) {
       // The lamp does the work; a low fill keeps the corners readable. It wavers a little, like a flame.
       this.sun.intensity = 0;

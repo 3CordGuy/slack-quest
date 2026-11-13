@@ -589,3 +589,42 @@ button.nudge { border-color: var(--gold); color: var(--gold); }
   .options-menu button { min-height: 40px; }
   .options-row button.small { min-width: 40px; }
 }
+
+/* The Haunted Caverns' mouth, behind the delve's lobby: a dark arch in the rock, lit by two torches. Drawn in CSS: nothing to load. */
+.cave-mouth {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse 18% 26% at 50% 62%, #050409 0 62%, transparent 63%),
+    radial-gradient(ellipse 26% 34% at 50% 62%, #1b1720 0 60%, transparent 61%),
+    radial-gradient(circle at 26% 46%, rgba(255, 160, 70, 0.32) 0, transparent 14%),
+    radial-gradient(circle at 74% 46%, rgba(255, 160, 70, 0.32) 0, transparent 14%),
+    linear-gradient(180deg, #23202b 0%, #2c2833 45%, #1a1720 100%);
+  image-rendering: pixelated;
+  animation: cave-torch 2.6s steps(6) infinite alternate;
+}
+.cave-mouth::before, .cave-mouth::after {
+  /* The torches: a bracket and a flame either side of the arch. */
+  content: "";
+  position: absolute;
+  top: 42%;
+  width: 10px;
+  height: 22px;
+  background: linear-gradient(180deg, #ffe066 0 30%, #ff9548 30% 55%, #4a3a2a 55% 100%);
+  box-shadow: 0 0 18px 6px rgba(255, 149, 72, 0.35);
+}
+.cave-mouth::before { left: calc(26% - 5px); }
+.cave-mouth::after { left: calc(74% - 5px); }
+.cave-going-down {
+  position: absolute;
+  left: 50%;
+  top: 62%;
+  transform: translate(-50%, -50%);
+  color: #f1eee4;
+  letter-spacing: 1px;
+  text-shadow: 0 2px 0 #000;
+}
+@keyframes cave-torch { from { filter: brightness(0.92); } to { filter: brightness(1.06); } }
+@media (prefers-reduced-motion: reduce) { .cave-mouth { animation: none; } }

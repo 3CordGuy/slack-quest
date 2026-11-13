@@ -19,10 +19,11 @@ import type { ResourceKind } from "./hut";
  * `dock`, `cobble`, `mud` and `rampart` belong to the Harbor: the wooden pier
  * surface, its streets, its wet ground, and the old stone wall around it
  * (which cannot be climbed). `floor` and `wall` make up the inside of a hut.
+ * `cave` and `rock` are the Haunted Caverns: a stone floor, and the living rock around it.
  * `fog` is never part of a real map: it is what a client is sent in place of
  * ground the party has not seen yet.
  */
-export type Biome = "plains" | "forest" | "hills" | "water" | "dock" | "cobble" | "mud" | "rampart" | "floor" | "wall" | "fog";
+export type Biome = "plains" | "forest" | "hills" | "water" | "dock" | "cobble" | "mud" | "rampart" | "floor" | "wall" | "cave" | "rock" | "fog";
 
 export const MOVE_COST: Record<Biome, number> = {
   plains: 1,
@@ -35,6 +36,8 @@ export const MOVE_COST: Record<Biome, number> = {
   rampart: Infinity,
   floor: 1,
   wall: Infinity,
+  cave: 1,
+  rock: Infinity,
   fog: Infinity,
 };
 
@@ -51,7 +54,7 @@ export interface Tile {
  * `board` and `shop` exist only in the Harbor: a moored ship, a crew member's
  * hut, the notice board and the market stall. `door` is the way out of a hut's room.
  */
-export type PoiKind = "landing" | "hut" | "lair" | "shrine" | "cache" | "camp" | "pier" | "plot" | "board" | "shop" | "ring" | "dice" | "door" | "works" | "pub" | "counter" | "shoals" | "trader" | "rocks" | "wreck" | "lot" | "site" | "ship" | "pickup" | "fishing" | "felling" | "quarry" | "apothecary" | "smithy" | "galley" | "lighthouse";
+export type PoiKind = "cave" | "landing" | "hut" | "lair" | "shrine" | "cache" | "camp" | "pier" | "plot" | "board" | "shop" | "ring" | "dice" | "door" | "works" | "pub" | "counter" | "shoals" | "trader" | "rocks" | "wreck" | "lot" | "site" | "ship" | "pickup" | "fishing" | "felling" | "quarry" | "apothecary" | "smithy" | "galley" | "lighthouse";
 
 export interface Poi {
   id: string;
@@ -202,7 +205,7 @@ function pickBiome(rng: Rng): Biome {
   return "plains";
 }
 
-export const BASE_HEIGHT: Record<Biome, number> = { water: 0.05, plains: 0.3, forest: 0.4, hills: 0.75, dock: 0.1, cobble: 0.26, mud: 0.2, rampart: 1.25, floor: 0.1, wall: 0.9, fog: 0.3 };
+export const BASE_HEIGHT: Record<Biome, number> = { water: 0.05, plains: 0.3, forest: 0.4, hills: 0.75, dock: 0.1, cobble: 0.26, mud: 0.2, rampart: 1.25, floor: 0.1, wall: 0.9, cave: 0.18, rock: 1.4, fog: 0.3 };
 
 /** Offset-space position of a hex, used for the island outline. */
 function flatPos(pos: HexPos): { x: number; y: number } {
@@ -318,12 +321,12 @@ export const PICKUP_MAX = 3;
  * random stream, so the rest of the island comes out the same as before
  * pickups existed.
  */
-function scatterPickups(map: WorldMap, seed: string, landing: HexPos) {
+export function scatterPickups(map: WorldMap, seed: string, landing: HexPos, table: { find: ResourceKind; count: number; ground: Biome[] }[] = PICKUPS) {
   const rng = makeRng(seedFromString(`pickups|${seed}`));
   const onFoot = reachable(map, landing);
   const places = map.pois.map((p) => p.pos);
   const spots: HexPos[] = [];
-  for (const { find, count, ground } of PICKUPS) {
+  for (const { find, count, ground } of table) {
     for (let n = 0; n < count; n++) {
       const open = map.tiles.filter(
         (t) =>
