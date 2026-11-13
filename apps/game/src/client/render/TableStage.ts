@@ -16,7 +16,7 @@ import * as THREE from "three";
 import type { Marker, Outfit } from "@gantt-quest/world";
 import { markerUrl, type MarkerFace } from "../shoalsArt";
 import { PIXEL_LINE_ROWS, canDrawPixelText, drawPixelText, pixelTextWidth } from "./pixelFont";
-import { makeFigure, type Figure } from "./figures";
+import { SITTING_DROP, makeFigure, type Figure } from "./figures";
 import { labelTexture, lookFor, spriteKey } from "./sprites";
 import type { WorldMinigame, WorldRenderer } from "./WorldRenderer";
 
@@ -78,8 +78,8 @@ const SEAT_R = 1.35;
 const STOOL_H = 0.3;
 /** How tall a seated character is drawn. */
 const FOLK_H = 1.05;
-/** Where a player's feet are: their hips rest on the stool's top, the legs down in front of it, behind the table. */
-const SEAT_Y = STOOL_H - 0.2;
+/** Where a seated player's model stands so that they sit on the stool's top. */
+const SEAT_Y = STOOL_H - FOLK_H * SITTING_DROP;
 /** From the middle of the table out to a seat's stack or dice, and to the hand. */
 const STACK_Z = 0.46;
 const HAND_Z = 0.6;
@@ -703,7 +703,7 @@ export class TableStage implements WorldMinigame {
       (r.ring.material as THREE.MeshBasicMaterial).opacity = glow;
       // The one who won bounces a little.
       r.seat.position.y = SEAT_Y + (info?.won ? Math.abs(Math.sin(this.clock * 5)) * 0.06 : 0);
-      r.figure?.update({ time: this.clock, stride: 0, walking: false, lean: 0, lying: false });
+      r.figure?.update({ time: this.clock, stride: 0, walking: false, lean: 0, lying: false, sitting: true });
       if (r.roll > 0) r.roll = Math.max(0, r.roll - dt);
       for (const wrap of r.items.children) {
         if (wrap.userData.baseY === undefined || wrap.userData.pulse) continue;

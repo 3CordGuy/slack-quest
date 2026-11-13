@@ -194,6 +194,8 @@ interface Anim {
   strike: number;
   /** Down, or asleep. */
   lying: boolean;
+  /** On a seat: the hips stay where they are, the thighs go forward and the shins hang from the knee. */
+  sitting: boolean;
 }
 
 interface Rig {
@@ -216,8 +218,14 @@ function biped(top: THREE.Group, parts: Part[]) {
   const head = part(torso.joint, 0, 6, 0);
   const armR = part(torso.joint, -4.5, 5.5, 0);
   const armL = part(torso.joint, 4.5, 5.5, 0);
-  const legR = part(top, -1.7, 5, 0);
-  const legL = part(top, 1.7, 5, 0);
+  // A leg is a thigh from the hip and a shin from the knee. It is drawn as one limb in the hip's space (see
+  // `limb`), and whatever crosses the knee is cut in two there, so it can bend.
+  const thighR = part(top, -1.7, 5, 0);
+  const thighL = part(top, 1.7, 5, 0);
+  const shinR = part(thighR.joint, 0, KNEE, 0);
+  const shinL = part(thighL.joint, 0, KNEE, 0);
+  const legR = limb(thighR, shinR);
+  const legL = limb(thighL, shinL);
   // What each hand holds, kept upright while the arm hangs forward.
   const heldR = part(armR.joint, 0, -5, 0);
   const heldL = part(armL.joint, 0, -5, 0);
@@ -230,7 +238,7 @@ function biped(top: THREE.Group, parts: Part[]) {
       // On their back, the head toward -z, centred on where they stood.
       top.rotation.set(-HALF_PI, 0, 0);
       top.position.set(0, 2.4, 9);
-      legL.joint.rotation.x = legR.joint.rotation.x = 0;
+      for (const leg of [thighL, thighR, shinL, shinR]) leg.joint.rotation.x = 0;
       armL.joint.rotation.set(rest.armL, 0, 0.12);
       armR.joint.rotation.set(rest.armR, 0, -0.12);
       head.joint.rotation.x = 0;
@@ -238,8 +246,23 @@ function biped(top: THREE.Group, parts: Part[]) {
     }
     top.position.set(0, (a.breath + 1) * 0.07, 0);
     top.rotation.set(a.strike * 0.3, 0, 0);
-    legL.joint.rotation.x = a.swing * 0.8;
-    legR.joint.rotation.x = -a.swing * 0.8;
+    if (a.sitting) {
+      // Thighs out along the seat, a little apart, shins hanging; the free hand forward, as if on the table.
+      thighL.joint.rotation.set(-SIT, 0, 0.12);
+      thighR.joint.rotation.set(-SIT, 0, -0.12);
+      shinL.joint.rotation.x = shinR.joint.rotation.x = SIT - 0.1;
+      const reach = rest.armL < -0.3 ? rest.armL : -0.95;
+      heldL.joint.rotation.x = -reach + rest.tiltL;
+      armL.joint.rotation.set(reach + a.breath * 0.02, 0, 0.05);
+      armR.joint.rotation.set(rest.armR, 0, -0.1 - a.breath * 0.015);
+      head.joint.rotation.x = a.breath * 0.02;
+      return;
+    }
+    thighL.joint.rotation.set(a.swing * 0.8, 0, 0);
+    thighR.joint.rotation.set(-a.swing * 0.8, 0, 0);
+    // The knee of the leg swinging back bends a little.
+    shinL.joint.rotation.x = Math.max(0, a.swing) * 0.6;
+    shinR.joint.rotation.x = Math.max(0, -a.swing) * 0.6;
     armL.joint.rotation.set(rest.armL - a.swing * 0.6, 0, 0.1 + a.breath * 0.015);
     // The weapon arm swings less on the march, and comes up and over in an attack.
     armR.joint.rotation.set(rest.armR + a.swing * 0.3 - a.strike * 1.7, 0, -0.1 - a.breath * 0.015);
@@ -249,6 +272,26 @@ function biped(top: THREE.Group, parts: Part[]) {
 }
 
 type Biped = ReturnType<typeof biped>;
+
+/** Where the knee is, below the hip, and how far a thigh swings forward to sit. */
+const KNEE = -2.5;
+const SIT = HALF_PI - 0.08;
+
+/** A leg to draw boxes on in the hip's space: each goes to the thigh or the shin, and one that crosses the knee is cut there. */
+function limb(thigh: Part, shin: Part) {
+  return {
+    box(color: string, w: number, h: number, d: number, x = 0, y = 0, z = 0) {
+      const high = y + h / 2;
+      const low = y - h / 2;
+      if (low >= KNEE) thigh.box(color, w, h, d, x, y, z);
+      else if (high <= KNEE) shin.box(color, w, h, d, x, y - KNEE, z);
+      else {
+        thigh.box(color, w, high - KNEE, d, x, (high + KNEE) / 2, z);
+        shin.box(color, w, KNEE - low, d, x, (KNEE + low) / 2 - KNEE, z);
+      }
+    },
+  };
+}
 
 /** A head: skin, ears, hair, and a face. */
 function drawHead(head: Part, look: Look, asleep: boolean) {
@@ -1115,7 +1158,12 @@ export interface FigurePose {
   lean: number;
   /** Down in a fight, or asleep. */
   lying: boolean;
+  /** Seated: stand the figure with its feet `SITTING_DROP` of its size below the seat's top. Only people sit; a creature stands. */
+  sitting?: boolean;
 }
+
+/** How far below a seat's top a seated figure's origin goes, as a share of its size: its hips, less half a thigh. */
+export const SITTING_DROP = 3.7 / FRAME;
 
 export interface Figure {
   /** Stands on its origin, facing +z: place it and turn it about y. */
@@ -1166,7 +1214,7 @@ export function makeFigure(kind: string, look: Look, outfit?: Outfit, opts: Figu
     last = p.time;
     const want = p.walking ? Math.sin(p.stride * 3.6) : 0;
     swing += (want - swing) * Math.min(1, dt * 20);
-    rig.animate({ t: p.time, swing, breath: Math.sin(p.time * 2.2 + beat), strike: Math.min(1, Math.abs(p.lean) * 2), lying: p.lying });
+    rig.animate({ t: p.time, swing, breath: Math.sin(p.time * 2.2 + beat), strike: Math.min(1, Math.abs(p.lean) * 2), lying: p.lying, sitting: !!p.sitting });
   };
   update({ time: 0, stride: 0, walking: false, lean: 0, lying: false });
   last = -1;
