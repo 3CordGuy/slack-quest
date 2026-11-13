@@ -176,3 +176,12 @@ describe("a sitting", () => {
     expect(gatherPayout(ended(3))).toEqual({});
   });
 });
+
+describe("moving about", () => {
+  it("casts from another pier when told to, and refuses the open sea", () => {
+    const s = step(startSitting("west", 20, STATS, T0), { t: "cast", power: 0.5, spot: "east", now: T0 });
+    expect(s.sitting!.spot).toBe("east");
+    expect(s.sitting!.cast!.fish.spot).toBe("east");
+    expect(stepGather(startSitting("west", 20, STATS, T0), { t: "cast", power: 0.5, spot: "sea", now: T0 }).error).toMatch(/boat/);
+  });
+});

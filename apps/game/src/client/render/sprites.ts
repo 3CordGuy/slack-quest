@@ -32,10 +32,10 @@ export function lookFor(kind: string): Look {
   return mergeLook(LOOKS[kind] ?? LOOKS.bandit, palettes[kind]);
 }
 
-/** What tells one figure from another: the kind plus whatever is being worn, whether they are asleep, and the overrides in force. */
-export function spriteKey(kind: string, outfit?: Outfit, asleep = false): string {
+/** What tells one figure from another: the kind plus whatever is being worn, whether they are asleep or fishing, and the overrides in force. */
+export function spriteKey(kind: string, outfit?: Outfit, asleep = false, rod = false): string {
   const worn = outfit ? `|${SLOTS.map((s) => (outfit[s] ? `${outfit[s]!.ref}:${outfit[s]!.rarity[0]}` : "-")).join(",")}` : "";
-  return `${kind}${worn}${asleep ? "|zz" : ""}|r${revision}`;
+  return `${kind}${worn}${asleep ? "|zz" : ""}${rod ? "|rod" : ""}|r${revision}`;
 }
 
 /**

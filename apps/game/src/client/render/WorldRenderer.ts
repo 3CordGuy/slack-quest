@@ -92,6 +92,8 @@ export interface RenderHero {
   outfit?: Outfit;
   /** `asleep`: lying down with eyes shut, z's rising, as on a bedroll in the Harbor. */
   asleep?: boolean;
+  /** Holding a fishing rod (fishing off a pier). */
+  rod?: boolean;
   /** Drawn at this point of its hex instead of the middle, `y` above the floor: lying on a bed in a hut. */
   at?: { x: number; z: number; y: number };
   level?: number;
@@ -428,6 +430,7 @@ interface Want {
   hp?: number;
   down?: boolean;
   asleep?: boolean;
+  rod?: boolean;
   /** The way to face, about y: the two sides of a fight face each other. Otherwise a unit keeps the way it last walked. */
   face?: number;
 }
@@ -3208,7 +3211,7 @@ export class WorldRenderer {
         // A plate shows a first name only: full names run long over a crowd.
         const full = h.label ?? (plate ? h.name : undefined);
         const label = plate && full ? firstName(full) : full;
-        want.set(h.id, { kind: h.classId, outfit: h.outfit, pos, size: 1.5, label, plate: label ? plate : undefined, stack: i, ring: colorOf(h.id), pulse: state.turn?.heroId === h.id, asleep: h.asleep });
+        want.set(h.id, { kind: h.classId, outfit: h.outfit, pos, size: 1.5, label, plate: label ? plate : undefined, stack: i, ring: colorOf(h.id), pulse: state.turn?.heroId === h.id, asleep: h.asleep, rod: h.rod });
       }
       for (const npc of state.story?.npcs ?? []) {
         const poi = state.map.pois.find((p) => p.id === npc.poi);
@@ -3241,7 +3244,7 @@ export class WorldRenderer {
     for (const [id, unit] of this.units) {
       const w = want.get(id);
       // A change of gear is a different model, so the unit is rebuilt, facing the way it was.
-      if (w && spriteKey(w.kind, w.outfit, w.asleep) === unit.kind) continue;
+      if (w && spriteKey(w.kind, w.outfit, w.asleep, w.rod) === unit.kind) continue;
       if (w) turned.set(id, unit.turn);
       this.unitGroup.remove(unit.root);
       unit.figure.dispose();
@@ -3257,12 +3260,12 @@ export class WorldRenderer {
     for (const [id, w] of want) {
       let unit = this.units.get(id);
       if (!unit) {
-        const figure = makeFigure(w.kind, lookFor(w.kind), w.outfit, { asleep: w.asleep });
+        const figure = makeFigure(w.kind, lookFor(w.kind), w.outfit, { asleep: w.asleep, rod: w.rod });
         figure.root.position.copy(w.pos);
         this.unitGroup.add(figure.root);
         // New arrivals face the camera, turned a little so what they carry shows.
         const turn = turned.get(id) ?? w.face ?? this.yaw + 0.35;
-        unit = { figure, root: figure.root, size: w.size, turn, turnGoal: turn, lying: false, shadowAt: w.pos.clone(), shadowTurn: turn, shadowSize: 0, ring: null, hpBack: null, hpFill: null, label: null, labelText: "", goal: w.pos.clone(), path: [], kick: new THREE.Vector3(), lean: 0, stride: 0, bob: 0, kind: spriteKey(w.kind, w.outfit, w.asleep), asleep: false, nextZ: 0, zCount: 0, glowUntil: 0, glowing: false, head: w.size + 0.3, stack: 0, feet: w.pos.clone() };
+        unit = { figure, root: figure.root, size: w.size, turn, turnGoal: turn, lying: false, shadowAt: w.pos.clone(), shadowTurn: turn, shadowSize: 0, ring: null, hpBack: null, hpFill: null, label: null, labelText: "", goal: w.pos.clone(), path: [], kick: new THREE.Vector3(), lean: 0, stride: 0, bob: 0, kind: spriteKey(w.kind, w.outfit, w.asleep, w.rod), asleep: false, nextZ: 0, zCount: 0, glowUntil: 0, glowing: false, head: w.size + 0.3, stack: 0, feet: w.pos.clone() };
         this.units.set(id, unit);
       }
       unit.goal.copy(w.pos);

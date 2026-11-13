@@ -3,10 +3,11 @@
 // posts the player's choice to push on or bank.
 
 import { useEffect, useRef, useState, type RefObject } from "react";
-import { GATHER_SPOTS, TIMING, STAT_LABEL, type GatherChoice, type GatherSpot, type GatherView, type Resources } from "@gantt-quest/world";
+import { GATHER_SPOTS, TIMING, STAT_LABEL, type FishSpot, type GatherChoice, type GatherSpot, type GatherView, type Resources } from "@gantt-quest/world";
 import { api, type GatherStatus, type XpResult } from "./api";
 import { DragPanel } from "./DragPanel";
 import { FellingGame } from "./FellingGame";
+import { Fishing } from "./Fishing";
 import type { WorldRenderer } from "./render/WorldRenderer";
 import { TimingBar } from "./TimingBar";
 import { Quarry } from "./Quarry";
@@ -57,8 +58,14 @@ function Water({ outing, busy, cast }: { outing: GatherView; busy: boolean; cast
   );
 }
 
-export function GatherPanel({ spot, renderer, onClose, onStamina }: {
+export function GatherPanel({ spot, pier, shipBeside = false, onRod, renderer, onClose, onStamina }: {
   spot: GatherSpot;
+  /** Fishing: the pier (or the shore) the hero is standing on. */
+  pier?: Exclude<FishSpot, "sea">;
+  /** A crew's ship is moored off that pier. */
+  shipBeside?: boolean;
+  /** Fishing: show the hero with a rod in hand to everyone in the Harbor, or put it down. */
+  onRod?(on: boolean): void;
   /** The Harbor's renderer: felling is played in it, through the hero's eyes. */
   renderer: RefObject<WorldRenderer | null>;
   onClose(): void;
@@ -117,6 +124,13 @@ export function GatherPanel({ spot, renderer, onClose, onStamina }: {
   const active = outing?.status === "active";
   const pct = outing && active ? outing.pct : status?.chances[shown];
   const left = status?.stamina.left ?? 0;
+  // Fishing is played from the pier in the Harbor itself. An old shore outing still open, or an outing open
+  // somewhere else, is finished in the panel first.
+  if (spot === "fishing" && pier && renderer.current) {
+    if (!status && !error) return null;
+    const open = latest?.status === "active" ? latest : null;
+    if (!open || open.sitting) return <Fishing pier={pier} world={renderer.current} shipBeside={shipBeside} onRod={onRod} onClose={onClose} onStamina={onStamina} />;
+  }
   // Felling is played in the Harbor itself, through the hero's eyes: no panel over it.
   if (outing?.felling && outing.spot === spot) {
     return (

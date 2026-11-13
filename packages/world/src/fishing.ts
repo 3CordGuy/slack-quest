@@ -100,12 +100,41 @@ export function tamPrice(def: FishDef, grams: number): number | null {
   return Math.max(1, Math.round(0.8 * def.pricePerKg * Math.pow(grams / 1000, 0.9)));
 }
 
-/** "1.24 kg", "860 g". */
-export function formatWeight(grams: number): string {
+/** The measures a player reads catches in. Weights and lengths are always stored in grams and millimetres. */
+export type Units = "metric" | "imperial";
+
+const GRAMS_PER_OZ = 28.349523125;
+const MM_PER_INCH = 25.4;
+
+/** Metric "1.24 kg", "860 g"; imperial "12 lb 4 oz", "5.3 oz". */
+export function formatWeight(grams: number, units: Units = "metric"): string {
+  if (units === "imperial") {
+    const oz = grams / GRAMS_PER_OZ;
+    // Rounded first, so 15.98 oz reads as a pound, not "16 oz".
+    if (Math.round(oz) < 16) return `${oz < 10 ? oz.toFixed(1) : Math.round(oz)} oz`;
+    const lb = Math.floor(oz / 16);
+    const rest = Math.round(oz - lb * 16);
+    return rest === 16 ? `${lb + 1} lb` : rest === 0 || lb >= 100 ? `${lb} lb` : `${lb} lb ${rest} oz`;
+  }
   return grams >= 1000 ? `${(grams / 1000).toFixed(grams >= 100_000 ? 0 : grams >= 10_000 ? 1 : 2)} kg` : `${grams} g`;
 }
 
-/** "62 cm", "2.4 m". */
-export function formatLength(mm: number): string {
+/** Metric "62 cm", "2.4 m"; imperial "24 in", "7 ft 10 in". */
+export function formatLength(mm: number, units: Units = "metric"): string {
+  if (units === "imperial") {
+    const inches = Math.round(mm / MM_PER_INCH);
+    if (inches < 60) return `${inches} in`;
+    const ft = Math.floor(inches / 12);
+    return inches % 12 === 0 ? `${ft} ft` : `${ft} ft ${inches % 12} in`;
+  }
   return mm >= 1000 ? `${(mm / 1000).toFixed(1)} m` : `${Math.round(mm / 10)} cm`;
+}
+
+/** A load, as the creel shows it: "11.4 kg" or "25 lb". */
+export function formatLoad(grams: number, units: Units = "metric"): string {
+  if (units === "imperial") {
+    const lb = grams / (GRAMS_PER_OZ * 16);
+    return `${lb < 10 ? lb.toFixed(1) : Math.round(lb)} lb`;
+  }
+  return `${(grams / 1000).toFixed(grams >= 10_000 ? 0 : 1)} kg`;
 }

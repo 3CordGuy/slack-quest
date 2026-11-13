@@ -207,3 +207,20 @@ describe("the fight", () => {
     expect(deft).toBeLessThan(clumsy);
   });
 });
+
+describe("measures", () => {
+  it("writes weights and lengths in metric or imperial", async () => {
+    const { formatLength, formatLoad, formatWeight } = await import("./fishing");
+    expect(formatWeight(860)).toBe("860 g");
+    expect(formatWeight(1240)).toBe("1.24 kg");
+    expect(formatWeight(150, "imperial")).toBe("5.3 oz");
+    expect(formatWeight(5556, "imperial")).toBe("12 lb 4 oz");
+    expect(formatWeight(453, "imperial")).toBe("1 lb");
+    expect(formatLength(620)).toBe("62 cm");
+    expect(formatLength(2400)).toBe("2.4 m");
+    expect(formatLength(610, "imperial")).toBe("24 in");
+    expect(formatLength(2388, "imperial")).toBe("7 ft 10 in");
+    expect(formatLoad(34_000)).toBe("34 kg");
+    expect(formatLoad(34_000, "imperial")).toBe("75 lb");
+  });
+});

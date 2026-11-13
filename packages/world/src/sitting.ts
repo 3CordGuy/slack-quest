@@ -15,7 +15,7 @@
 import { statPct } from "./check";
 import { FISH, type FishDef } from "./fishcatalog";
 import { FIGHT_OUTCOME_TEXT, edgesProblem, fightEase, makeFightScript, replayFight, type FightEase, type FightOutcome, type FightScript } from "./fishfight";
-import { FISH_SPOTS, castMetres, formatLength, formatWeight, rollCatch, rollSize, type FishSpot } from "./fishing";
+import { FISH_SPOTS, FISH_SPOT_IDS, castMetres, formatLength, formatWeight, rollCatch, rollSize, type FishSpot } from "./fishing";
 import type { GatherChoice, GatherState, GatherStep } from "./gather";
 import type { Resources } from "./hut";
 import { makeRng } from "./rng";
@@ -188,7 +188,11 @@ export function stepSitting(state: GatherState, choice: GatherChoice): GatherSte
   if (choice.t === "cast") {
     if (s.pending) return { state, error: "Keep it or throw it back first." };
     if (s.cast?.hookedAt != null) return { state, error: "You have one on the line." };
-    const spot = FISH_SPOTS[s.spot];
+    // A sitting is not tied to one spot: walk to another pier and cast from there.
+    const from = choice.spot ?? s.spot;
+    if (!FISH_SPOT_IDS.includes(from)) return { state, error: "You cannot fish from there." };
+    if (FISH_SPOTS[from].closed) return { state, error: FISH_SPOTS[from].closed };
+    const spot = FISH_SPOTS[from];
     const power = Math.max(0, Math.min(1, Number(choice.power) || 0));
     const reach = power * spot.maxCast;
     const rng = makeRng(state.rng);
@@ -197,10 +201,10 @@ export function stepSitting(state: GatherState, choice: GatherChoice): GatherSte
     const metres = castMetres(reach);
     const biteMs = rng.int(BITE_MS[0], BITE_MS[1]);
     const nibbles = Array.from({ length: rng.int(0, NIBBLES_MAX) }, () => rng.int(800, Math.max(900, biteMs - 600))).sort((a, b) => a - b);
-    const fish: CaughtFish = { species: caught.id, ...size, spot: s.spot, at: now, ...(caught.gold ? { gold: rng.int(caught.gold[0], caught.gold[1]) } : {}) };
+    const fish: CaughtFish = { species: caught.id, ...size, spot: from, at: now, ...(caught.gold ? { gold: rng.int(caught.gold[0], caught.gold[1]) } : {}) };
     const script = makeFightScript(rng, caught, size.grams / 1000, metres);
     const cast: CastState = { at: now, power, metres, biteMs, nibbles, windowMs: Math.round(HOOK_WINDOW_MS + HOOK_WINDOW_DEX_MS * s.ease.dex), fish, script, hookedAt: null };
-    return { state: { ...state, rng: rng.state(), step: state.step + 1, sitting: { ...busy, cast, last: null } } };
+    return { state: { ...state, rng: rng.state(), step: state.step + 1, sitting: { ...busy, spot: from, cast, last: null } } };
   }
 
   if (choice.t === "reel") {

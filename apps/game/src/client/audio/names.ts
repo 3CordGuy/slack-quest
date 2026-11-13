@@ -26,6 +26,9 @@ const FORAGE: Record<ForageKind, true> = { berries: true, wood: true, bones: tru
 const voice = (f: Fighter, what: "attack" | "hurt" | "down") =>
   f.side === "enemy" ? [`enemy.${f.kind}.${what}`, `enemy.${what}`] : [`hero.${f.kind}.${what}`, `hero.${what}`];
 
+export const FISHING_SOUNDS = ["cast", "plop", "nibble", "plunge", "bite", "splash", "snap", "reel", "land"] as const;
+export type FishingSound = (typeof FISHING_SOUNDS)[number];
+
 export const soundName = {
   /** A foot landing, by the ground under it. */
   footstep: (biome: string) => [`footstep.${biome}`, "footstep"],
@@ -61,6 +64,8 @@ export const soundName = {
   /** The quarry: the pick striking (a full charge is heavy), a rock giving way, and what it gave. */
   pick: (heavy: boolean) => (heavy ? ["gather.pick.heavy", "gather.pick"] : ["gather.pick"]),
   rockBreak: () => ["gather.rock"],
+  /** Fishing: the cast, the float landing, a nibble, the bite, a fish jumping, the line snapping, reeling it in, landing it. */
+  fishing: (what: FishingSound) => [`gather.fish.${what}`],
   find: (what: "ore" | "gem") => [`gather.${what}`],
 
   /**
@@ -137,6 +142,7 @@ export function soundNames(): Set<string> {
   for (const g of ["perfect", "good", "miss"] as const) add(soundName.chop(g));
   add(soundName.fall("timber"));
   [soundName.pick(true), soundName.rockBreak(), soundName.find("ore"), soundName.find("gem")].forEach(add);
+  for (const f of FISHING_SOUNDS) add(soundName.fishing(f));
   add(["forage", ...Object.keys(FORAGE).map((k) => `forage.${k}`), "search.found", "search.empty", "rest", "discover"]);
   return names;
 }

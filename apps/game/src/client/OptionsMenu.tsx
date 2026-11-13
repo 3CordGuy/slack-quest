@@ -12,6 +12,7 @@ import { FADERS, FADER_LABELS } from "./audio/mixer";
 import { resetPanels } from "./DragPanel";
 import { PixelIcon } from "./PixelIcon";
 import { fancy } from "./render/fancy";
+import { units } from "./units";
 import { UI_SCALE_MAX, UI_SCALE_MIN, UI_SCALE_STEP, getUiScale, onUiScaleChange, setUiScale, uiZoom } from "./uiScale";
 
 const GEAR = [
@@ -66,6 +67,17 @@ const SPARKLE = [
   ".###........",
 ];
 
+const RULER = [
+  "............",
+  "............",
+  "############",
+  "#.#.#.#.#.##",
+  "#.#...#...##",
+  "#.........##",
+  "############",
+  "............",
+];
+
 const READOUT_KEY = "gq.dev.readout";
 function readoutOpen(): boolean {
   try {
@@ -94,6 +106,7 @@ export function OptionsMenu({ reset, resetBlocked }: {
   const muted = mix.muted;
   const volume = audio.mix.volume("master");
   const fancyOn = useSyncExternalStore(fancy.subscribe, fancy.get);
+  const measures = useSyncExternalStore(units.subscribe, units.get);
   // Dev server only: the audio engine's readout, with the time-of-day and weather holds. It stays open from view to view.
   const [readout, setReadout] = useState(() => import.meta.env.DEV && readoutOpen());
   const showReadout = (on: boolean) => {
@@ -239,6 +252,22 @@ export function OptionsMenu({ reset, resetBlocked }: {
               <span className="grow">Fancy graphics</span>
               <span className={`options-switch ${fancyOn ? "on" : ""}`} aria-hidden>
                 {fancyOn ? "On" : "Off"}
+              </span>
+            </button>
+          </div>
+
+          <div className="options-row">
+            <button
+              className="options-sound"
+              role="switch"
+              aria-checked={measures === "imperial"}
+              title="How catches are weighed and measured: kilograms and centimetres, or pounds and inches."
+              onClick={() => units.set(measures === "imperial" ? "metric" : "imperial")}
+            >
+              <PixelIcon rows={RULER} size={18} />
+              <span className="grow">Measures</span>
+              <span className="options-switch on" aria-hidden>
+                {measures === "imperial" ? "Imperial" : "Metric"}
               </span>
             </button>
           </div>

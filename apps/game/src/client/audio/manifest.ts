@@ -109,6 +109,16 @@ export const AUDIO: AudioManifest = {
     "gather.rock": { files: "sfx/gather/rock_*", fallback: built("enemy_down"), pitch: [-7, -4], gainDb: -3, reverb: -8 },
     "gather.ore": { files: "sfx/gather/ore_*", fallback: built("heal"), pitch: [2, 4], gainDb: -4 },
     "gather.gem": { files: "sfx/gather/gem_*", fallback: built("heal"), pitch: [7, 9], gainDb: -1, reverb: -6 },
+    // ----- fishing from the piers -----
+    "gather.fish.cast": { files: "sfx/fishing/cast_*", fallback: built("swing"), pitch: [2, 4], gainDb: -4 },
+    "gather.fish.plop": { files: "sfx/fishing/plop_*", fallback: built("arrow_hit"), pitch: [5, 8], gainDb: -6, volume: [-2, 0] },
+    "gather.fish.nibble": { files: "sfx/fishing/nibble_*", fallback: built("arrow_hit"), pitch: [9, 12], gainDb: -12 },
+    "gather.fish.plunge": { files: "sfx/fishing/plunge_*", fallback: built("spell_hit"), pitch: [-2, 0], gainDb: -4 },
+    "gather.fish.bite": { files: "sfx/fishing/bite_*", fallback: built("blunt"), pitch: [-1, 1], gainDb: -3 },
+    "gather.fish.splash": { files: "sfx/fishing/splash_*", fallback: built("spell_hit"), pitch: [-5, -3], gainDb: -3 },
+    "gather.fish.snap": { files: "sfx/fishing/snap_*", fallback: built("crit"), pitch: [6, 9], gainDb: -3 },
+    "gather.fish.reel": { files: "sfx/fishing/reel_*", fallback: built("swing"), pitch: [-6, -4], gainDb: -6 },
+    "gather.fish.land": { files: "sfx/fishing/land_*", fallback: built("heal"), pitch: [0, 2], gainDb: -3 },
 
     // Stingers follow the Music slider.
     "stinger.battle_start": { files: "music/stingers/battle_start", group: "music" },
