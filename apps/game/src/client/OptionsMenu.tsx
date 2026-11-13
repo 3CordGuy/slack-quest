@@ -1,5 +1,5 @@
 // The gear at the right end of every view's top bar, and the small menu it
-// opens: the sound, how big the HTML is drawn, putting the panels back, and
+// opens: the sound, how big the HTML is drawn, fancy graphics, putting the panels back, and
 // getting a lost or stuck hero back to somewhere safe.
 //
 // The menu closes on a press anywhere outside it, or on Escape (which hands
@@ -7,9 +7,11 @@
 
 import { useEffect, useId, useRef, useState, useSyncExternalStore } from "react";
 import { audio } from "./audio/engine";
+import { AudioReadout } from "./audio/SoundButton";
 import { FADERS, FADER_LABELS } from "./audio/mixer";
 import { resetPanels } from "./DragPanel";
 import { PixelIcon } from "./PixelIcon";
+import { fancy } from "./render/fancy";
 import { UI_SCALE_MAX, UI_SCALE_MIN, UI_SCALE_STEP, getUiScale, onUiScaleChange, setUiScale, uiZoom } from "./uiScale";
 
 const GEAR = [
@@ -51,6 +53,28 @@ const SPEAKER_OFF = [
   ".....#......",
 ];
 
+const SPARKLE = [
+  "....#.......",
+  "....#.......",
+  "...###...#..",
+  "#########...",
+  "...###......",
+  "....#...#...",
+  "....#..###..",
+  "........#...",
+  "..#.........",
+  ".###........",
+];
+
+const READOUT_KEY = "gq.dev.readout";
+function readoutOpen(): boolean {
+  try {
+    return localStorage.getItem(READOUT_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
 export interface ResetPosition {
   /** Ask the server to put your hero back. */
   run(): void;
@@ -69,6 +93,18 @@ export function OptionsMenu({ reset, resetBlocked }: {
   const mix = useSyncExternalStore(audio.mix.subscribe, audio.mix.get);
   const muted = mix.muted;
   const volume = audio.mix.volume("master");
+  const fancyOn = useSyncExternalStore(fancy.subscribe, fancy.get);
+  // Dev server only: the audio engine's readout, with the time-of-day and weather holds. It stays open from view to view.
+  const [readout, setReadout] = useState(() => import.meta.env.DEV && readoutOpen());
+  const showReadout = (on: boolean) => {
+    try {
+      if (on) localStorage.setItem(READOUT_KEY, "1");
+      else localStorage.removeItem(READOUT_KEY);
+    } catch {
+      // Blocked storage: it stays open until this view closes.
+    }
+    setReadout(on);
+  };
   const [scale, setScale] = useState(getUiScale);
   const [zoom, setZoom] = useState(uiZoom);
   const wrap = useRef<HTMLSpanElement>(null);
@@ -191,6 +227,27 @@ export function OptionsMenu({ reset, resetBlocked }: {
           </div>
           {zoom !== scale && <p className="options-note muted">Drawn at {pct(zoom)} on a screen this narrow.</p>}
 
+          <div className="options-row">
+            <button
+              className="options-sound"
+              role="switch"
+              aria-checked={fancyOn}
+              title="Glowing lights, a soft blur into the distance, and characters lit by the scene. Uses more battery."
+              onClick={() => fancy.set(!fancyOn)}
+            >
+              <PixelIcon rows={SPARKLE} size={18} />
+              <span className="grow">Fancy graphics</span>
+              <span className={`options-switch ${fancyOn ? "on" : ""}`} aria-hidden>
+                {fancyOn ? "On" : "Off"}
+              </span>
+            </button>
+          </div>
+
+          {import.meta.env.DEV && (
+            <button className="options-action" onClick={() => showReadout(!readout)}>
+              {readout ? "Hide" : "Show"} audio engine and sky (dev)
+            </button>
+          )}
           <button
             className="options-action"
             onClick={() => {
@@ -214,6 +271,7 @@ export function OptionsMenu({ reset, resetBlocked }: {
           <p className="options-note muted">{reset ? `Stuck or lost? This puts your hero back at ${reset.to}.` : resetBlocked}</p>
         </div>
       )}
+      {import.meta.env.DEV && readout && <AudioReadout onClose={() => showReadout(false)} />}
     </span>
   );
 }

@@ -14,6 +14,12 @@ import { PINCH_PAN_SLACK, followIconSvg, readFollow, writeFollow } from "./camer
 import type { HexPos } from "@gantt-quest/core";
 import { hexDistance } from "@gantt-quest/core";
 import { BASE_HEIGHT, BATTLE_JOIN_RANGE, BIG_REACH, ENEMIES, HEX_DIRS, TRAIT_BY_ID, MOVE_COST, WALL_FACE_HALF, WALL_ITEM_BOTTOM, WALL_ITEM_TOP, findPath, hexAt, xpProgress, reachable, tileAt, wallFace, wallFaces, type ClientState, type Outfit, type Phase, type Poi, type Tile, type WorldEvent, type WorldMap } from "@gantt-quest/world";
+import { fancy } from "./fancy";
+import { NightLife } from "./nightlife";
+import { Storm } from "./storm";
+import { addWindSway, updateWind } from "./wind";
+import { LIT, OVERLAY_LAYER, PostFx, addSpriteRim, type Air, type SpriteRim } from "./post";
+import { GROUND_KIND, addFancyWater, addWaterRipple, setGroundWet, setWaterNight, setWaterStanding, shoreSide, updateWater, waterAttribute, type Standing } from "./water";
 import { ghostModel, propModel, tintGhost, type LightKind } from "./props";
 import { nearWater, openEar, sounds } from "../audio/gameSounds";
 import type { AttackStyle, Fighter } from "../audio/names";
@@ -181,6 +187,13 @@ function nearestTurn(from: number, to: number): number {
   return to + Math.round((from - to) / full) * full;
 }
 /** Keys that slide the view, as [right, forward]. */
+/** A backdrop's place in the sound: none. It hears nothing and is not heard. */
+const DEAF: ReturnType<typeof openEar> = { listener() {}, sky() {}, lights() {}, ground() {}, sea() {}, close() {} };
+/** How many windows wide the view through a room's windows is: they show one picture between them, side by side. */
+const OUTLOOK_PANES = 4;
+/** A window's size on the wall, and how far up the wall its middle is. */
+const PANE = { w: 0.78, h: 0.62, y: 1.12 };
+
 const PAN_KEYS: Record<string, [number, number]> = {
   w: [0, 1], s: [0, -1], a: [-1, 0], d: [1, 0],
   arrowup: [0, 1], arrowdown: [0, -1], arrowleft: [-1, 0], arrowright: [1, 0],
@@ -468,13 +481,41 @@ export class WorldRenderer {
   private raycaster = new THREE.Raycaster();
   private resizeObserver: ResizeObserver;
   private raf = 0;
+  /** The finishing pass (bloom, tilt-shift, grade), there while "Fancy graphics" is on. On the dev server P switches it alone, to compare. */
+  post: PostFx | null = null;
+  /** Character sprites take the light where they stand, with a highlight on the lit edge. Also "Fancy graphics"; L on the dev server. */
+  private litSprites = fancy.get();
+  private unwatchFancy: () => void;
+  /** The lit sprites' knobs, for tuning from the console. */
+  readonly lit = LIT;
+  /** A backdrop's fixed point of view (see setVantage), and the lightning it is lent by the view showing it. */
+  private vantage: { from: THREE.Vector3; to: THREE.Vector3 } | null = null;
+  private lentFlash = 0;
+  /** A room's windows: the backdrop seen through them, its picture as a texture, and the panes on the wall. */
+  private outlook: WorldRenderer | null = null;
+  private outlookMap: THREE.CanvasTexture | null = null;
+  private panes = new THREE.Group();
+  /** Fireflies and moths, out at night with "Fancy graphics". */
+  private nightLife = new NightLife();
+  /** Lightning in a storm. On the dev server, `__gqWorld.strike()` sets one off. */
+  private storm = new Storm();
+  /** How wet the ground is, 0 to 1: it follows the rain up quickly and down slowly. */
+  private wet = 0;
+  /** The middle of this map's land and how far it reaches, for placing the moon's reflection off its shore. */
+  private land = { x: 0, z: 0, reach: 6 };
+  /** The sky as the finishing pass is told of it each frame. */
+  private air: Air = { outdoors: true, clock: 0, sunDir: new THREE.Vector3(0, 1, 0), sun: new THREE.Color(), sky: new THREE.Color(), overcast: 0, sunHeight: 9, flash: 0 };
+  private litTint = new THREE.Color();
+  private litRim = new THREE.Color();
+  private litToward = new THREE.Vector3();
+  private litAxis = new THREE.Vector3();
   private last = performance.now();
   private clock = 0;
 
   private terrain: THREE.InstancedMesh | null = null;
   private tiles: Tile[] = [];
   /** This map's place in the sound: where you stand, its sky, its fires and its water. */
-  private ear = openEar();
+  private ear: ReturnType<typeof openEar>;
   /** The middle of every water hex, for hearing where the sea is. */
   private water: { x: number; z: number }[] = [];
   private frames = 0;
@@ -587,11 +628,16 @@ export class WorldRenderer {
   private panFrom: { x: number; y: number } | null = null;
   private pointer = { x: 0, y: 0, downX: 0, downY: 0, down: false, dragged: false, dirty: false, inside: false };
 
-  constructor(private container: HTMLElement, private callbacks: RendererCallbacks) {
+  /**
+   * `backdrop`: a second view drawn off screen for another to show (the Harbor seen through the pub's
+   * windows). It makes no sound, takes no keys, and draws only when the view showing it asks (see `step`).
+   */
+  constructor(private container: HTMLElement, private callbacks: RendererCallbacks, private opts: { backdrop?: boolean } = {}) {
+    this.ear = opts.backdrop ? DEAF : openEar();
     this.renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: "low-power" });
     this.renderer.setPixelRatio(1);
     // Dev server only: the latest view, for reading draw calls (`__gqWorld.renderer.info.render.calls`) from the console.
-    if (import.meta.env.DEV) (globalThis as { __gqWorld?: WorldRenderer }).__gqWorld = this;
+    if (import.meta.env.DEV && !this.opts.backdrop) (globalThis as { __gqWorld?: WorldRenderer }).__gqWorld = this;
     const canvas = this.renderer.domElement;
     canvas.style.width = "100%";
     canvas.style.height = "100%";
@@ -602,8 +648,10 @@ export class WorldRenderer {
 
     // Sky, sun and moon, shadows, and the moving decoration.
     this.ambience = new Ambience(this.scene, this.renderer);
+    this.scene.add(this.nightLife.group, this.storm.bolt, this.panes);
 
     const sea = new THREE.Mesh(new THREE.PlaneGeometry(240, 240), new THREE.MeshLambertMaterial({ color: "#3577cf" }));
+    addFancyWater(sea.material);
     sea.rotation.x = -Math.PI / 2;
     sea.position.y = 0.1;
     sea.receiveShadow = true;
@@ -635,9 +683,11 @@ export class WorldRenderer {
     canvas.addEventListener("pointerleave", this.onPointerLeave);
     canvas.addEventListener("wheel", this.onWheel, { passive: false });
     canvas.addEventListener("contextmenu", this.onContextMenu);
-    addEventListener("keydown", this.onKeyDown);
-    addEventListener("keyup", this.onKeyUp);
-    addEventListener("blur", this.onBlur);
+    if (!opts.backdrop) {
+      addEventListener("keydown", this.onKeyDown);
+      addEventListener("keyup", this.onKeyUp);
+      addEventListener("blur", this.onBlur);
+    }
 
     // Two small buttons at the right edge, for those without a right mouse button or a keyboard.
     this.rotateButtons = document.createElement("div");
@@ -669,8 +719,16 @@ export class WorldRenderer {
     container.appendChild(this.rotateButtons);
     this.resizeObserver = new ResizeObserver(() => this.resize());
     this.resizeObserver.observe(container);
+    // Name plates, speech bubbles and health bars sit on their own layer, so the finishing pass can leave them alone.
+    this.camera.layers.enable(OVERLAY_LAYER);
+    this.raycaster.layers.enable(OVERLAY_LAYER);
+    if (fancy.get()) this.post = new PostFx(this.renderer);
+    this.unwatchFancy = fancy.subscribe(() => {
+      this.setPost(fancy.get());
+      this.setLit(fancy.get());
+    });
     this.resize();
-    this.raf = requestAnimationFrame(this.frame);
+    if (!opts.backdrop) this.raf = requestAnimationFrame(this.frame);
   }
 
   dispose() {
@@ -689,7 +747,12 @@ export class WorldRenderer {
     removeEventListener("keyup", this.onKeyUp);
     removeEventListener("blur", this.onBlur);
     this.rotateButtons.remove();
+    this.unwatchFancy();
+    this.nightLife.dispose();
+    this.storm.dispose();
+    this.outlookMap?.dispose();
     this.ambience.dispose();
+    this.post?.dispose();
     this.renderer.dispose();
     canvas.remove();
   }
@@ -698,11 +761,12 @@ export class WorldRenderer {
 
   setState(state: RenderState) {
     // Dev server only: the view being fed state is the live one (a view torn down after it was made would otherwise be left in the hook).
-    if (import.meta.env.DEV) (globalThis as { __gqWorld?: WorldRenderer }).__gqWorld = this;
+    if (import.meta.env.DEV && !this.opts.backdrop) (globalThis as { __gqWorld?: WorldRenderer }).__gqWorld = this;
     const first = this.mapCode !== state.code;
     // The ground is redrawn for a new map, and whenever fog lifts off more of this one.
     const lifted = state.map.tiles.reduce((n, t) => n + (t.biome === "fog" ? 0 : 1), 0);
     if (first || lifted !== this.lifted) this.buildTerrain(state, first);
+    if (first) this.buildPanes(state);
     this.lifted = lifted;
     this.state = state;
     this.ambience.setLampOn(!state.lampOff);
@@ -815,6 +879,7 @@ export class WorldRenderer {
     const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: texture, transparent: true, depthTest: false, sizeAttenuation: false, opacity: 0 }));
     sprite.renderOrder = 8;
     sprite.visible = false;
+    sprite.layers.set(OVERLAY_LAYER);
     this.unitGroup.add(sprite);
     this.bubbles.set(unitId, { sprite, width, rows, age: 0, life: bubbleLife(clean), raise: 0, shift: 0 });
   }
@@ -1062,7 +1127,31 @@ export class WorldRenderer {
     const seen = feet.clone().project(this.camera);
     if (seen.z > 1 || Math.abs(seen.x) > 1.05 || Math.abs(seen.y) > 1.05) return;
     // Heroes stand a quarter hex toward the camera from the middle of their hex (see syncUnits).
-    const biome = tileAt(state.map, worldToHex(feet.x, feet.z - 0.25))?.biome;
+    const under = worldToHex(feet.x, feet.z - 0.25);
+    const biome = tileAt(state.map, under)?.biome;
+    // At the water's edge the step sets a ring going on the sea beside it.
+    if (fancy.get() && biome && biome !== "water") {
+      const here = hexToWorld(under);
+      let nearest: { x: number; z: number } | null = null;
+      let best = Infinity;
+      for (const dir of HEX_DIRS) {
+        const next = { q: under.q + dir.q, r: under.r + dir.r };
+        if (tileAt(state.map, next)?.biome !== "water") continue;
+        const there = hexToWorld(next);
+        const d = Math.hypot(there.x - feet.x, there.z - feet.z);
+        if (d < best) {
+          best = d;
+          nearest = there;
+        }
+      }
+      // Just over the shared edge, a little along it either way so the rings are not all in one spot.
+      if (nearest) {
+        const along = (Math.random() - 0.5) * 0.5;
+        const dx = nearest.x - here.x;
+        const dz = nearest.z - here.z;
+        addWaterRipple(here.x + dx * 0.6 - dz * along * 0.5, here.z + dz * 0.6 + dx * along * 0.5);
+      }
+    }
     const ground = stepGround(biome);
     if (!ground || !biome) return;
     // The audio engine plays it, placed where the foot lands and falling off with distance from you.
@@ -1162,6 +1251,17 @@ export class WorldRenderer {
     // Open sea is left to the sea itself: only water within a couple of hexes of land is drawn as hexes,
     // with a ragged edge, so the map does not end in a straight-sided block of water.
     const land = this.tiles.filter((t) => t.biome !== "water");
+    // For the night life: where the grass is, and where the land lies.
+    this.nightLife.setGrass(
+      this.tiles.filter((t) => t.biome === "plains" || t.biome === "forest").map((t) => {
+        const { x, z } = hexToWorld(t);
+        return new THREE.Vector3(x, tileTop(t), z);
+      }),
+    );
+    const spots = (land.length > 0 ? land : this.tiles).map(hexToWorld);
+    this.land.x = spots.reduce((n, s) => n + s.x, 0) / Math.max(1, spots.length);
+    this.land.z = spots.reduce((n, s) => n + s.z, 0) / Math.max(1, spots.length);
+    this.land.reach = Math.max(2, ...spots.map((s) => Math.hypot(s.x - this.land.x, s.z - this.land.z)));
     this.deep = new Set(
       this.tiles
         .filter((t) => {
@@ -1174,12 +1274,30 @@ export class WorldRenderer {
         })
         .map(key),
     );
+    // For the fancy water: which hexes are water, how near the shore, and which of their sides touch land.
+    addFancyWater(terrain.material as THREE.MeshLambertMaterial, true);
+    const water = waterAttribute(this.tiles.length);
+    const byKey = new Map(this.tiles.map((t) => [key(t), t]));
+    const isLand = (t: Tile | undefined) => !!t && t.biome !== "water" && t.biome !== "fog";
     this.tiles.forEach((t, i) => {
       const { x, z } = hexToWorld(t);
       const shown = this.deep.has(key(t)) ? 0 : 1;
       m.compose(new THREE.Vector3(x, 0, z), new THREE.Quaternion(), new THREE.Vector3(shown, tileTop(t) * shown, shown));
       terrain.setMatrixAt(i, m);
+      if (t.biome !== "water") {
+        water.setXYZ(i, 0, 0, GROUND_KIND[t.biome] ?? 0);
+        return;
+      }
+      let sides = 0;
+      for (const dir of HEX_DIRS) {
+        const next = { q: t.q + dir.q, r: t.r + dir.r };
+        if (!isLand(byKey.get(key(next)))) continue;
+        const to = hexToWorld(next);
+        sides |= 1 << shoreSide(to.x - x, to.z - z);
+      }
+      water.setXYZ(i, 1, sides, 0);
     });
+    geo.setAttribute("aWater", water);
     terrain.castShadow = true;
     terrain.receiveShadow = true;
     this.terrain = terrain;
@@ -1228,8 +1346,10 @@ export class WorldRenderer {
       mesh.castShadow = true;
       mesh.receiveShadow = true;
       this.decor.add(mesh);
+      return mesh;
     };
-    instanced(new THREE.ConeGeometry(0.34, 0.9, 5), this.sodden ? "#3a5d41" : "#2f7a3d", trees);
+    // The trees bend in the wind (fancy graphics): 0.9 is the cone's height.
+    addWindSway(instanced(new THREE.ConeGeometry(0.34, 0.9, 5), this.sodden ? "#3a5d41" : "#2f7a3d", trees).material as THREE.Material, 0.9);
     if (merlons.length > 0) instanced(new THREE.BoxGeometry(1, 1, 1), "#6a6d75", merlons);
 
     // Start centred on the island. Fog lifting redraws the ground but leaves the camera where the player put it.
@@ -1276,6 +1396,106 @@ export class WorldRenderer {
       const wall = g.userData.wallKey as string | undefined;
       if (wall) g.visible = !this.lowered.has(wall);
     }
+    for (const pane of this.panes.children) pane.visible = !this.lowered.has(pane.userData.wallKey as string);
+  }
+
+  // ---------- windows ----------
+
+  /** The picture this view is drawn into, for another view to show. */
+  get canvas(): HTMLCanvasElement {
+    return this.renderer.domElement;
+  }
+
+  /** For a backdrop: where it is seen from and what it looks at, and how wide a view that is (degrees, top to bottom). */
+  setVantage(from: THREE.Vector3, to: THREE.Vector3, fov: number) {
+    this.vantage = { from, to };
+    this.camera.fov = fov;
+    this.camera.updateProjectionMatrix();
+  }
+
+  /** For a backdrop: draw one frame now. The view showing it calls this, so the picture is fresh when it is copied. */
+  step(now: number, flash: number) {
+    this.lentFlash = flash;
+    this.frame(now);
+  }
+
+  /**
+   * Gives a room windows onto another view: `outside` is a backdrop (the Harbor), drawn off screen and
+   * shown through panes set into the back wall. Null takes them away.
+   */
+  setOutlook(outside: WorldRenderer | null) {
+    this.outlook = outside;
+    this.outlookMap?.dispose();
+    this.outlookMap = null;
+    if (outside) {
+      const map = new THREE.CanvasTexture(outside.canvas);
+      map.magFilter = THREE.NearestFilter;
+      map.minFilter = THREE.NearestFilter;
+      map.generateMipmaps = false;
+      map.colorSpace = THREE.SRGBColorSpace;
+      this.outlookMap = map;
+    }
+    this.buildPanes(this.state);
+  }
+
+  /** The windows themselves: a few panes along the back wall, each showing its own slice of the one picture. */
+  private buildPanes(state: RenderState | null) {
+    for (const pane of this.panes.children) {
+      pane.traverse((o) => {
+        if (o instanceof THREE.Mesh) {
+          o.geometry.dispose();
+          (o.material as THREE.Material).dispose();
+        }
+      });
+    }
+    this.panes.clear();
+    if (!this.outlookMap || !state?.indoors) return;
+    // The back wall is the row furthest from the door. Its faces, left to right as seen from the room.
+    const back = wallFaces(state.map)
+      .filter((f) => f.pos.r === 0)
+      .map((f) => ({ ...f, at: wallFace(f.pos, f.side) }))
+      .sort((a, b) => a.at.x - b.at.x);
+    if (back.length === 0) return;
+    const count = Math.min(OUTLOOK_PANES, back.length);
+    const frame = new THREE.MeshLambertMaterial({ color: "#4a3520", flatShading: true });
+    for (let i = 0; i < count; i++) {
+      // Spread evenly along the wall, leaving its ends clear.
+      const face = back[Math.round(((i + 0.5) / count) * (back.length - 1))];
+      const spot = this.wallSpot(face.pos, face.side, 0, PANE.y);
+      const pane = new THREE.Group();
+      pane.position.copy(spot.at).addScaledVector(new THREE.Vector3(face.at.nx, 0, face.at.nz), 0.03);
+      pane.rotation.y = spot.yaw;
+      pane.userData.wallKey = key(face.pos);
+      // The glass: this pane's slice of the picture, lit from outside and not by the room.
+      const glass = new THREE.PlaneGeometry(PANE.w, PANE.h);
+      const uv = glass.getAttribute("uv") as THREE.BufferAttribute;
+      for (let v = 0; v < uv.count; v++) uv.setX(v, (i + uv.getX(v)) / count);
+      const view = new THREE.Mesh(glass, new THREE.MeshBasicMaterial({ map: this.outlookMap, toneMapped: false }));
+      view.userData.glow = true;
+      pane.add(view);
+      // A wooden frame round it, and a bar down and across the middle.
+      const bar = (w: number, h: number, x: number, y: number) => {
+        const piece = new THREE.Mesh(new THREE.BoxGeometry(w, h, 0.05), frame);
+        piece.position.set(x, y, 0.01);
+        pane.add(piece);
+      };
+      bar(PANE.w + 0.1, 0.06, 0, PANE.h / 2 + 0.02);
+      bar(PANE.w + 0.1, 0.06, 0, -PANE.h / 2 - 0.02);
+      bar(0.06, PANE.h + 0.1, -PANE.w / 2 - 0.02, 0);
+      bar(0.06, PANE.h + 0.1, PANE.w / 2 + 0.02, 0);
+      bar(0.03, PANE.h, 0, 0);
+      bar(PANE.w, 0.03, 0, 0);
+      this.panes.add(pane);
+    }
+    this.hideLoweredWallProps();
+  }
+
+  /** Once a frame: has the backdrop draw itself, every other frame, and takes its new picture. */
+  private showOutlook() {
+    if (!this.outlook || !this.outlookMap || this.panes.children.length === 0) return;
+    if (this.frames % 2 !== 0) return;
+    this.outlook.step(this.last, this.storm.flash);
+    this.outlookMap.needsUpdate = true;
   }
 
   /** Where a wall piece hangs: on side `side` of wall hex `pos`, `x` along it and `y` up from the floor; and which way it faces. */
@@ -1405,6 +1625,16 @@ export class WorldRenderer {
     if (sig === this.poiSig) return;
     this.poiSig = sig;
     this.poiGroup.clear();
+    // What stands in the water, for the fancy sea to foam round. Each model sits a little back from its hex's middle.
+    const standing: Standing[] = [];
+    for (const poi of state.map.pois) {
+      const { x, z } = hexToWorld(poi.pos);
+      if (poi.kind === "rocks") standing.push({ x: x - 0.05, z: z - 0.2, half: 0.25, radius: 0.5 });
+      else if (poi.kind === "wreck") standing.push({ x: x + 0.2, z: z - 0.2, half: 0.75, radius: 0.45 });
+      // A moored ship lies off the end of its pier.
+      else if (poi.kind === "pier") standing.push({ x, z: z + 1.47, half: 0.72, radius: 0.36 });
+    }
+    setWaterStanding(standing);
     /** Chimney tops, which the ambience draws smoke from. */
     const stacks: THREE.Vector3[] = [];
     /** A lighthouse's lantern, which the ambience turns a beam from. */
@@ -2721,6 +2951,7 @@ export class WorldRenderer {
         sprite.renderOrder = 2;
         sprite.center.set(0.5, 0);
         sprite.position.copy(w.pos);
+        addSpriteRim(sprite.material);
         const material = new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false, side: THREE.DoubleSide, map: sprite.material.map, alphaTest: 0.5 });
         const depth = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking, map: sprite.material.map, alphaTest: 0.5, side: THREE.DoubleSide });
         // Point lights (a hut's lamp, its fires and candles) draw shadows with a distance pass, which needs its own cut-out.
@@ -2777,6 +3008,8 @@ export class WorldRenderer {
         unit.hpFill.center.set(0, 0.5);
         unit.hpBack.renderOrder = 5;
         unit.hpFill.renderOrder = 6;
+        unit.hpBack.layers.set(OVERLAY_LAYER);
+        unit.hpFill.layers.set(OVERLAY_LAYER);
         this.unitGroup.add(unit.hpBack, unit.hpFill);
       }
       if (unit.hpBack && unit.hpFill) {
@@ -2821,6 +3054,7 @@ export class WorldRenderer {
         const { texture, aspect } = labelTexture(lw.label, plate);
         // A fixed size on screen, whatever the zoom: each pixel of the label lands on exactly one pixel of the view.
         unit.label = new THREE.Sprite(new THREE.SpriteMaterial({ map: texture, transparent: true, depthTest: false, sizeAttenuation: false }));
+        unit.label.layers.set(OVERLAY_LAYER);
         unit.label.userData.aspect = aspect;
         unit.label.userData.rows = texture.image.height;
         unit.label.userData.lift = lw.asleep ? lw.size * SPRITE_ASPECT + 0.3 : lw.size + 0.3;
@@ -2969,6 +3203,8 @@ export class WorldRenderer {
     else if (e.key === "r" || e.key === "R") this.tiltBy(0.18, true);
     else if (e.key === "f" || e.key === "F") this.tiltBy(-0.18, true);
     else if (e.key === "c" || e.key === "C") this.setFollow(!this.follow || this.followHeld);
+    else if (import.meta.env.DEV && (e.key === "p" || e.key === "P")) this.setPost(!this.post);
+    else if (import.meta.env.DEV && (e.key === "l" || e.key === "L")) this.setLit(!this.litSprites);
     else if (PAN_KEYS[e.key.toLowerCase()]) {
       this.heldKeys.add(e.key.toLowerCase());
       // Arrow keys would otherwise scroll whatever panel has focus.
@@ -3119,14 +3355,71 @@ export class WorldRenderer {
     const w = Math.max(1, this.container.clientWidth);
     const h = Math.max(1, this.container.clientHeight);
     this.renderer.setSize(Math.ceil(w / PIXEL), Math.ceil(h / PIXEL), false);
+    this.post?.setSize(Math.ceil(w / PIXEL), Math.ceil(h / PIXEL));
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
+  }
+
+  /** Dev server only: a lightning strike now, whatever the weather, for trying thunder takes against the flash. */
+  strike() {
+    if (import.meta.env.DEV) this.storm.strikeNow(this.camera, this.target);
+  }
+
+  /** Turns the lit sprites on or off in this view. The setting players keep is "Fancy graphics" (fancy.ts). */
+  setLit(on: boolean) {
+    this.litSprites = on;
+  }
+
+  /** Tints a character by the light at their feet and aims their edge highlight at the strongest light. */
+  private lightSprite(sprite: THREE.Sprite, feet: THREE.Vector3) {
+    const rim = sprite.material.userData.rim as SpriteRim | undefined;
+    if (!rim) return;
+    if (!this.litSprites) {
+      sprite.material.color.setRGB(1, 1, 1);
+      rim.color.setRGB(0, 0, 0);
+      return;
+    }
+    const k = this.lit;
+    const tint = this.litTint;
+    this.ambience.lightAt(feet, tint, this.litRim, this.litToward);
+    // Keep the light's colour but hold its brightness within bounds, so nobody is lost in the dark.
+    const peak = Math.max(tint.r, tint.g, tint.b, 1e-4);
+    tint.multiplyScalar(Math.min(k.ceiling, Math.max(k.floor, peak)) / peak);
+    sprite.material.color.setRGB(1, 1, 1).lerp(tint, k.strength);
+
+    // The way to the light as the camera sees it, turned with the sprite if it leans or lies down.
+    const e = this.camera.matrixWorld.elements;
+    const x = this.litToward.dot(this.litAxis.set(e[0], e[1], e[2]));
+    const y = this.litToward.dot(this.litAxis.set(e[4], e[5], e[6]));
+    const len = Math.hypot(x, y);
+    const rot = -sprite.material.rotation;
+    const ux = len < 0.15 ? 0 : (x * Math.cos(rot) - y * Math.sin(rot)) / len;
+    const uy = len < 0.15 ? 1 : (x * Math.sin(rot) + y * Math.cos(rot)) / len;
+    rim.step.set(Math.round(ux * 1.3), Math.round(uy * 1.3));
+    const image = sprite.material.map?.image as { width: number; height: number } | undefined;
+    if (image) rim.texel.set(1 / image.width, 1 / image.height);
+    const glow = Math.min(1, Math.max(this.litRim.r, this.litRim.g, this.litRim.b) * 2.5);
+    const top = Math.max(this.litRim.r, this.litRim.g, this.litRim.b, 1e-4);
+    rim.color.copy(this.litRim).multiplyScalar((glow * k.rim) / top);
+  }
+
+  /** Turns the finishing pass on or off in this view. The setting players keep is "Fancy graphics" (fancy.ts). */
+  setPost(on: boolean) {
+    if (on === !!this.post) return;
+    if (on) {
+      this.post = new PostFx(this.renderer);
+      this.resize();
+    } else {
+      this.post!.dispose();
+      this.post = null;
+      this.renderer.setRenderTarget(null);
+    }
   }
 
   private camDist = 24;
 
   private frame = (now: number) => {
-    this.raf = requestAnimationFrame(this.frame);
+    if (!this.opts.backdrop) this.raf = requestAnimationFrame(this.frame);
     const dt = Math.min(0.1, (now - this.last) / 1000);
     this.last = now;
     this.clock += dt;
@@ -3181,6 +3474,12 @@ export class WorldRenderer {
       this.target.z + Math.cos(this.yaw) * flat,
     );
     this.camera.lookAt(this.target);
+    // A backdrop is seen from one fixed spot, as through a window, not from the roving camera.
+    if (this.vantage) {
+      this.camera.position.copy(this.vantage.from);
+      this.camera.lookAt(this.vantage.to);
+      this.target.copy(this.vantage.to);
+    }
     this.ambience.update(this.clock, this.yaw, this.target, this.state?.you ? this.units.get(this.state.you)?.sprite.position : undefined);
     // Sounds are heard from where your hero stands, or from the middle of the view without one.
     const ear = (this.state?.you ? this.units.get(this.state.you)?.sprite.position : undefined) ?? this.target;
@@ -3203,6 +3502,33 @@ export class WorldRenderer {
     // Night reaches the open sea and the fog too, not just the lit ground.
     const night = this.ambience.night;
     (this.sea.material as THREE.MeshLambertMaterial).color.copy(this.seaBase).lerp(NIGHT_SEA, night * 0.8);
+    // Night life and the night sky on the water: out under an open sky as the light goes, and hidden by cloud.
+    // Rain on the land: the ground wets in a few seconds and takes most of a minute to dry.
+    const raining = this.ambience.openSky ? this.ambience.raining : 0;
+    // Wind: a breeze on a clear day, stronger in rain, and a gale in a storm. None indoors or underground.
+    updateWind(this.clock, fancy.get() && this.ambience.openSky ? 0.35 + 0.45 * raining + 0.6 * this.ambience.storming : 0);
+    this.wet += (raining - this.wet) * Math.min(1, dt * (raining > this.wet ? 0.3 : 0.04));
+    setGroundWet(this.wet);
+    // And lightning, in a storm only: a downpour has none. The thunder is heard either way; the flash and
+    // the bolt are fancy graphics.
+    // Indoors the storm is still going on outside: the thunder comes through the walls and the flash
+    // through the windows. Underground there is neither.
+    const inRoom = !this.ambience.openSky && !this.ambience.underground;
+    // A backdrop has no storm of its own (the thunder would be heard twice): it is lent the flash of the view showing it.
+    if (!this.opts.backdrop) this.storm.update(dt, this.ambience.underground ? 0 : this.ambience.sky().storm, this.camera, this.target, inRoom);
+    this.showOutlook();
+    this.storm.bolt.visible &&= fancy.get();
+    const lively = fancy.get() && this.ambience.openSky ? night : 0;
+    this.nightLife.setLamps(this.ambience.lampSpots());
+    this.nightLife.update(this.clock, lively);
+    const clearSky = lively * (1 - this.ambience.overcast);
+    // The moon's reflection lies on the sea off the island's shore, on the side the moon is on.
+    const moon = this.ambience.sunDir;
+    const across = Math.hypot(moon.x, moon.z) || 1;
+    const offshore = this.land.reach + 4;
+    setWaterNight(clearSky, this.land.x + (moon.x / across) * offshore, this.land.z + (moon.z / across) * offshore, Math.max(0, (clearSky - 0.55) / 0.45));
+    this.ambience.smoothSea = fancy.get();
+    updateWater(fancy.get(), this.clock, this.ambience.sunDir, this.ambience.sunGlint(this.litRim), (this.sea.material as THREE.MeshLambertMaterial).color, this.scene.background as THREE.Color, this.ambience.raining);
     const step = Math.round(night * 10);
     if (step !== this.paintedNight) {
       this.paintedNight = step;
@@ -3243,6 +3569,7 @@ export class WorldRenderer {
       const ground = p.y;
       unit.feet.set(p.x, ground, p.z);
       if (landed) this.footfall(id, unit);
+      this.lightSprite(unit.sprite, unit.feet);
       p.y += unit.bob;
       unit.casters.forEach((caster, i) => {
         caster.position.copy(p);
@@ -3362,6 +3689,18 @@ export class WorldRenderer {
     }
 
     this.ambience.settleShadows();
-    this.renderer.render(this.scene, this.camera);
+    if (this.post) {
+      this.air.outdoors = this.ambience.openSky;
+      this.air.clock = this.clock;
+      this.air.sunDir = this.ambience.sunDir;
+      this.ambience.sunGlint(this.air.sun);
+      this.air.sky = this.scene.background as THREE.Color;
+      this.air.overcast = this.ambience.overcast;
+      this.air.sunHeight = this.ambience.sunHeight;
+      // In a room the flash is only what comes in at the windows.
+      this.air.flash = this.opts.backdrop ? this.lentFlash : this.storm.flash * (this.ambience.openSky ? 1 : 0.4);
+      this.post.render(this.scene, this.camera, this.camera.position.distanceTo(this.target), this.ambience.night, this.air);
+    }
+    else this.renderer.render(this.scene, this.camera);
   };
 }

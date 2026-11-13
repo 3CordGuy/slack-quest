@@ -19,6 +19,8 @@ import { perkText } from "./hutDrops";
 import { ThingIcon, pubIcon } from "./thingIcons";
 import { TileAction } from "./TileAction";
 import { WorldRenderer, type RenderState } from "./render/WorldRenderer";
+import { fancy } from "./render/fancy";
+import { harborOutlook, type Outlook } from "./render/harborOutlook";
 import { usePub } from "./usePub";
 import { HeroSheet, useHeroSheet } from "./HeroSheet";
 import { blurb, label } from "./labels";
@@ -173,7 +175,24 @@ export function PubView({ me, refresh, onLeave }: { me: Me; refresh(): Promise<u
       }, onHover: setHover });
     renderer.current = r;
     if (latest.current) r.setState(latest.current);
+    // With fancy graphics, the pub has windows onto the real Harbor outside: a second view of it, drawn off screen.
+    let outlook: Outlook | null = null;
+    const windows = () => {
+      if (fancy.get() && !outlook) {
+        outlook = harborOutlook();
+        r.setOutlook(outlook.view);
+      } else if (!fancy.get() && outlook) {
+        r.setOutlook(null);
+        outlook.dispose();
+        outlook = null;
+      }
+    };
+    windows();
+    const unwatch = fancy.subscribe(windows);
     return () => {
+      unwatch();
+      r.setOutlook(null);
+      outlook?.dispose();
       r.dispose();
       renderer.current = null;
     };

@@ -33,6 +33,21 @@ export interface PlayOptions {
   gainDb?: number;
   /** Extra seconds before it sounds, on top of the event's own delay. */
   delay?: number;
+  /**
+   * Called once the take is chosen and scheduled, for anything that must move in time with it (lightning
+   * with its thunder). Not called when nothing plays: no files, sound not started yet, or a cooldown.
+   */
+  onStart?: (take: StartedTake) => void;
+}
+
+/** A one-shot that has just been scheduled: the take that was picked, and a clock that runs with it. */
+export interface StartedTake {
+  /** The decoded take. */
+  buffer: AudioBuffer;
+  /** How fast it is played (1 is as recorded), from the event's random pitch. */
+  rate: number;
+  /** Seconds since it began to sound: negative until it starts. */
+  elapsed(): number;
 }
 
 interface Voice {
@@ -329,11 +344,15 @@ export class AudioEngine {
     const when = now + (ev.delay ?? 0) + (opts.delay ?? 0);
     const rate = 2 ** (inRange(ev.pitch) / 12);
 
+    const start = (buffer: AudioBuffer, at: number) => {
+      this.voice(name, ev, buffer, at, gain, rate, placed);
+      opts.onStart?.({ buffer, rate, elapsed: () => ctx.currentTime - at });
+    };
     const ready = lib.ready(key);
-    if (ready) this.voice(name, ev, ready, when, gain, rate, placed);
+    if (ready) start(ready, when);
     else
       void lib.load(key).then((buffer) => {
-        if (buffer && ctx.currentTime - when < LATE_LIMIT) this.voice(name, ev, buffer, Math.max(when, ctx.currentTime), gain, rate, placed);
+        if (buffer && ctx.currentTime - when < LATE_LIMIT) start(buffer, Math.max(when, ctx.currentTime));
       });
   }
 

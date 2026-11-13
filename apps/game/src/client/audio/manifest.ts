@@ -14,6 +14,12 @@ import type { AudioManifest, Follow, SoundEvent } from "./types";
 
 /** "shore" is hexes to the nearest water. Level 0.7 is 3 dB down. */
 const BY_THE_SEA: Follow = { param: "shore", curve: [[0.5, 0.7], [2, 1]] };
+/**
+ * Birds and crickets take cover from the rain: thinning out as it starts, about 12 dB down in light
+ * rain (35% on "rain"), and gone by the time it is coming down properly. A storm is heavy rain, so it
+ * silences them too. At silence the bed is not played or held in memory.
+ */
+const OUT_OF_THE_RAIN: Follow = { param: "rain", curve: [[0, 1], [0.15, 0.6], [0.35, 0.25], [0.6, 0]] };
 
 // Every event also names a built-in sound in `fallback` (audio/synth.ts): what plays until a recording
 // is added to `files`. Those are the game's sounds today, so nothing goes quiet while recordings arrive.
@@ -83,6 +89,13 @@ export const AUDIO: AudioManifest = {
     gold: { files: "sfx/ui/gold", gainDb: -6, cooldown: 0.2 },
     pickup: { files: "sfx/ui/pickup", gainDb: -6, pitch: [-1, 1] },
 
+    // ----- weather -----
+    // Lightning strikes. Only a storm has them: a downpour, however heavy, has none. Bounce each strike (crack and rumble together) as its own take:
+    // sfx/weather/thunder_01.wav, thunder_02.wav, and so on. "shuffle" plays every take once before any
+    // comes round again. The flash on screen follows the loudness of whichever take plays, so a take
+    // with two cracks flickers twice. Follows the Atmosphere slider.
+    "weather.thunder": { files: "sfx/weather/thunder_*", group: "atmosphere", order: "shuffle", maxVoices: 2, reverb: -10 },
+
     // Stingers follow the Music slider.
     "stinger.battle_start": { files: "music/stingers/battle_start", group: "music" },
     // A boss's first appearance.
@@ -140,25 +153,30 @@ export const AUDIO: AudioManifest = {
     // The land by day and by night, crossing over through dusk and dawn. A bed whose curve has it at
     // silence is not played or held in memory at all.
     // Both also dip a little by the water, to leave room for the sea: 3 dB down at the edge, back to full two hexes inland.
-    day: { file: "ambience/forest_day", gainDb: -3, fadeIn: 4, fadeOut: 4, follow: [{ param: "night", curve: [[0.3, 1], [0.7, 0]] }, BY_THE_SEA] },
-    night: { file: "ambience/forest_night", fadeIn: 4, fadeOut: 4, follow: [{ param: "night", curve: [[0.3, 0], [0.7, 1]] }, BY_THE_SEA] },
-    rain: { file: "ambience/rain", fadeIn: 3, fadeOut: 3, follow: { param: "rain", curve: [[0, 0], [1, 1]] } },
+    day: { file: "ambience/forest_day", gainDb: -3, fadeIn: 4, fadeOut: 4, follow: [{ param: "night", curve: [[0.3, 1], [0.7, 0]] }, BY_THE_SEA, OUT_OF_THE_RAIN] },
+    night: { file: "ambience/forest_night", fadeIn: 4, fadeOut: 4, follow: [{ param: "night", curve: [[0.3, 0], [0.7, 1]] }, BY_THE_SEA, OUT_OF_THE_RAIN] },
+    // Rain comes up fast: light rain (about 35% on the "rain" value) is already 2.5 dB under full, where a
+    // straight line had it 9 dB under. `gainDb` lifts the whole bed.
+    rain: { file: "ambience/rain", gainDb: 3, fadeIn: 3, fadeOut: 3, follow: { param: "rain", curve: [[0, 0], [0.15, 0.55], [0.5, 0.9], [1, 1]] } },
+    // The storm's own rain, laid over the rain bed in a storm only: it follows "storm", which stays at 0
+    // in a plain downpour however hard it rains. The thunder ("weather.thunder") comes with it.
+    rainstorm: { file: "ambience/rainstorm", gainDb: 2, fadeIn: 3, fadeOut: 3, follow: { param: "storm", curve: [[0.1, 0], [0.7, 1]] } },
   },
 
   scenes: {
     title: { music: "harbor" },
-    harbor: { music: "harbor", ambience: ["day", "night", "rain"] },
+    harbor: { music: "harbor", ambience: ["day", "night", "rain", "rainstorm"] },
     // Indoors: the Harbor's music, atmosphere and sea carry on, muffled, as through the walls. `cutoff`
     // is the high cut in Hz. A building's own sound goes here too and is heard clean: ambience: ["pub_crowd"],
     // or music: "pub" to replace the music from outside.
     hut: { inside: { of: "harbor", cutoff: 700, gainDb: -3 } },
     pub: { inside: { of: "harbor", cutoff: 700, gainDb: -3 } },
-    sailing: { music: "island", ambience: ["rain"] },
-    island: { music: "island", ambience: ["day", "night", "rain"] },
+    sailing: { music: "island", ambience: ["rain", "rainstorm"] },
+    island: { music: "island", ambience: ["day", "night", "rain", "rainstorm"] },
     // Under the rocks: no sky, no weather. The island's music until the caverns have their own.
     caverns: { music: "island" },
-    battle: { music: "battle", ambience: ["day", "night", "rain"] },
-    spar: { music: "battle", ambience: ["day", "night", "rain"] },
+    battle: { music: "battle", ambience: ["day", "night", "rain", "rainstorm"] },
+    spar: { music: "battle", ambience: ["day", "night", "rain", "rainstorm"] },
   },
 };
 

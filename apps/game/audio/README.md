@@ -36,6 +36,7 @@ The game asks for sounds by name, most specific first, and plays the first one t
 | `effect.<effect>` → `effect`, `tick.<effect>` → `tick` | An effect takes hold; bleeding or burning ticks. |
 | `down`, `flee.ok`, `flee.fail`, `trait.<trait>` → `trait` | Someone goes down; a flee; a class trait kicks in. |
 | `turn.yours`, `level_up`, `gold`, `loot.<rarity>` → `loot`, `key_item`, `pickup.<resource>` → `pickup`, `forage.<kind>` → `forage`, `search.found`, `search.empty`, `rest`, `discover` | Moments on a voyage, heard only by the hero they belong to. |
+| `weather.thunder` | Lightning strikes in a storm. A storm is its own weather: heavy rain with thunder, where a downpour is heavy rain without. The flash on screen follows the loudness of the take that plays, so bounce each strike, crack and rumble together, as one take: `sfx/weather/thunder_01.wav`, `thunder_02.wav`, and so on. |
 | `stinger.battle_start`, `stinger.victory`, `stinger.defeat`, `stinger.fled`, `stinger.ambush`, `stinger.voyage_won`, `stinger.voyage_lost` | Musical stings. |
 
 Ability, class, enemy and trait names are lower case with underscores (`Aimed Shot` is `aimed_shot`). While developing, the browser console says once which names were asked for and found nothing, and `pnpm test` fails if the manifest has an event name the game never asks for.
@@ -62,16 +63,17 @@ A building's own sound goes in the same scene and is heard clean over the muffle
 
 ## Following the sky
 
-The game keeps three values up to date, and any loop's level can follow one:
+The game keeps these values up to date, and any loop's level can follow one:
 
 | Parameter | Range |
 |---|---|
 | `night` | 0 in full day to 1 in deep night |
 | `rain` | 0 dry to 1 pouring |
+| `storm` | 0 in any other weather to 1 in a full storm (heavy rain with thunder). A downpour without thunder leaves it at 0 |
 | `time` | The time of day: 0 midnight, 0.25 dawn, 0.5 noon, 0.75 dusk |
 | `shore` | How far you stand from the nearest water, in hexes: 0 at the edge, a large number with none in reach |
 
-The first three describe the sky outside and hold indoors too, so a hut can have rain on its roof. A curve is a list of `[value, level]` points joined by straight lines, with level 0 silent and 1 full:
+All but `shore` describe the sky outside and hold indoors too, so a hut can have rain on its roof. A curve is a list of `[value, level]` points joined by straight lines, with level 0 silent and 1 full:
 
 ```ts
 night: { file: "ambience/forest_night", follow: { param: "night", curve: [[0.3, 0], [0.7, 1]] } },
@@ -85,7 +87,7 @@ follow: [{ param: "night", curve: [[0.3, 0], [0.7, 1]] }, { param: "shore", curv
 
 A bed whose curve has it at silence is not played, or held in memory, until the curve brings it up.
 
-A day takes ten minutes. To hear a moment without waiting, type `__gqTime = 0.8` (dusk) or `__gqWeather = 1` (rain) in the browser console; `delete __gqTime` hands it back to the clock.
+A day takes ten minutes. To hear a moment without waiting, type `__gqTime = 0.8` (dusk) or `__gqWeather = 1` (rain) in the browser console; `delete __gqTime` hands it back to the clock. `__gqStorm = 1` with `__gqWeather = 1` is a storm. The sky controls in the engine readout do the same with buttons.
 
 ## Stems
 
