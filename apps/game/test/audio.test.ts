@@ -8,8 +8,41 @@ import { describe, expect, it } from "vitest";
 import { AUDIO } from "../src/client/audio/manifest";
 import { MixStore, faderDb, faderGain, parseSettings } from "../src/client/audio/mixer";
 import { soundName, soundNames } from "../src/client/audio/names";
-import { TakePicker, curveAt, distanceGain, expandFiles, resolveName, slug, untilNextLine } from "../src/client/audio/select";
+import { nearWater } from "../src/client/audio/gameSounds";
+import { TakePicker, curveAt, distanceGain, expandFiles, placeSound, resolveName, slug, untilNextLine } from "../src/client/audio/select";
 import { readWav } from "../scripts/audio/wav";
+
+describe("sounds placed in the world", () => {
+  it("pan by where they are on screen, whichever way the camera is turned", () => {
+    // Camera at its starting angle: +x on the map is the right of the screen.
+    expect(placeSound(10, 0, 0).pan).toBeGreaterThan(0.8);
+    expect(placeSound(-10, 0, 0).pan).toBeLessThan(-0.8);
+    expect(placeSound(0, -10, 0).pan).toBeCloseTo(0);
+    // Turned a quarter: the camera looks along -x, so -z is now its right.
+    expect(placeSound(0, -10, Math.PI / 2).pan).toBeGreaterThan(0.8);
+    expect(placeSound(10, 0, Math.PI / 2).pan).toBeCloseTo(0);
+  });
+  it("stay near the middle when close, and get quieter and duller with distance", () => {
+    expect(Math.abs(placeSound(1, 0, 0).pan)).toBeLessThan(0.4);
+    const near = placeSound(2, 0, 0);
+    const far = placeSound(20, 0, 0);
+    expect(near.gain).toBe(1);
+    expect(near.cutoff).toBe(20000);
+    expect(far.gain).toBeLessThan(0.3);
+    expect(far.cutoff).toBeLessThan(8000);
+    expect(placeSound(40, 0, 0).gain).toBe(0);
+  });
+  it("hear the sea from the side it lies on, and all around when it surrounds you", () => {
+    const east = [3, 4, 5].flatMap((x) => [-2, 0, 2].map((z) => ({ x, z })));
+    const shore = nearWater(0, 0, east)!;
+    expect(shore.distance).toBe(3);
+    expect(shore.dx).toBeGreaterThan(0.8);
+    expect(shore.spread).toBeLessThan(0.2);
+    const ring = Array.from({ length: 12 }, (_, i) => ({ x: 2 * Math.cos((i * Math.PI) / 6), z: 2 * Math.sin((i * Math.PI) / 6) }));
+    expect(nearWater(0, 0, ring)!.spread).toBeGreaterThan(0.95);
+    expect(nearWater(0, 0, [{ x: 50, z: 0 }])).toBeNull();
+  });
+});
 
 describe("the manifest", () => {
   const known = soundNames();
@@ -22,6 +55,12 @@ describe("the manifest", () => {
       if (scene.music) expect(AUDIO.music[scene.music], `${name} music`).toBeDefined();
       for (const a of scene.ambience ?? []) expect(AUDIO.ambience[a], `${name} ambience ${a}`).toBeDefined();
     }
+  });
+  it("points every reverb zone at a reverb that exists, on ground the game has", () => {
+    const zones = AUDIO.zones ?? {};
+    const named = [...Object.values(zones.ground ?? {}), ...Object.values(zones.scene ?? {}), zones.default].filter((z): z is string => !!z);
+    for (const z of named) expect(AUDIO.reverbs?.[z], `reverb ${z}`).toBeDefined();
+    for (const ground of Object.keys(zones.ground ?? {})) expect(known.has(`footstep.${ground}`), `ground ${ground}`).toBe(true);
   });
   it("gives every curve rising points and levels between 0 and 1", () => {
     const loops = [...Object.entries(AUDIO.music), ...Object.entries(AUDIO.ambience)];
@@ -143,8 +182,8 @@ describe("the mix", () => {
     expect(again.volume("music")).toBe(defaults.music.volume);
   });
   it("ignores malformed saved settings", () => {
-    expect(parseSettings("not json")).toEqual({ volumes: {}, muted: false });
-    expect(parseSettings('{"volumes":{"music":7,"sfx":"x"},"muted":true}')).toEqual({ volumes: { music: 1 }, muted: true });
+    expect(parseSettings("not json")).toEqual({ volumes: {}, muted: false, headphones: false });
+    expect(parseSettings('{"volumes":{"music":7,"sfx":"x"},"muted":true}')).toEqual({ volumes: { music: 1 }, muted: true, headphones: false });
   });
   it("fades sounds with distance", () => {
     expect(distanceGain(0)).toBe(1);

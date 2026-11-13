@@ -78,6 +78,30 @@ export class TakePicker {
   }
 }
 
+/**
+ * How a sound placed in the world reaches you. `dx`, `dz` is where it is from
+ * where you stand, and `yaw` how the camera is turned about the map, so that
+ * left and right match the screen. Gives its level, its pan (−1 left to 1
+ * right; near sounds stay close to the middle) and a low-pass cutoff in Hz
+ * that comes down with distance, as air takes the top off.
+ */
+export function placeSound(dx: number, dz: number, yaw: number, ref = 4, max = 32): Placed {
+  const dist = Math.hypot(dx, dz);
+  const side = dx * Math.cos(yaw) - dz * Math.sin(yaw);
+  const ahead = -(dx * Math.sin(yaw) + dz * Math.cos(yaw));
+  const far = Math.max(0, Math.min(1, (dist - ref) / (max - ref)));
+  return { gain: distanceGain(dist, ref, max), pan: Math.max(-1, Math.min(1, (side / Math.hypot(dist, 2.5)) * 0.9)), cutoff: 20000 * 2 ** (-3 * far), side, ahead };
+}
+
+/** A sound's place around you. `side` and `ahead` are map units to the right of the screen and up it, for headphone (HRTF) placing. */
+export interface Placed {
+  gain: number;
+  pan: number;
+  cutoff: number;
+  side: number;
+  ahead: number;
+}
+
 /** The level a curve gives at `x`: straight lines between its points, flat beyond its ends. */
 export function curveAt(curve: [number, number][], x: number): number {
   if (curve.length === 0) return 1;

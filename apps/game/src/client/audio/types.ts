@@ -43,6 +43,30 @@ export interface SoundEvent {
   cooldown?: number;
   /** Seconds to wait before it sounds. Default 0. */
   delay?: number;
+  /**
+   * How much of it is sent to the reverb of the place you are in, in dB (0 sends it all; −12 a little).
+   * Leave it out for a sound that should stay dry, such as a menu click or a musical sting.
+   */
+  reverb?: number;
+}
+
+/** A reverb: an impulse response the sound of a place is made with. */
+export interface Reverb {
+  /** The impulse response: a path under apps/game/audio without the extension, such as "ir/small_room". */
+  file: string;
+  /** Level of the reverb's return, in dB. Default 0. */
+  gainDb?: number;
+}
+
+/**
+ * Which reverb is heard where. The ground you stand on decides first, then
+ * the scene, then `default`. Name a key of `reverbs`, or null for none.
+ */
+export interface ReverbZones {
+  /** By the ground underfoot: "plains", "forest", "hills", "cobble", "dock", "mud", "rampart", "floor". */
+  ground?: Record<string, string | null>;
+  scene?: Partial<Record<SceneName, string | null>>;
+  default?: string | null;
 }
 
 /**
@@ -117,8 +141,34 @@ export interface Scene {
   ambience?: string[];
 }
 
+/**
+ * Things in the world that make a continuous sound from where they are:
+ * "fire" (campfires, fireplaces, stoves), "candle", "lamp" (lanterns), and
+ * "sea", which is the water as a whole rather than a point.
+ */
+export type EmitterKind = "fire" | "candle" | "lamp" | "sea";
+
+export interface Emitter {
+  /** The loop: a path under apps/game/audio without the extension. Mono; any stereo is folded down. */
+  file: string;
+  /** Level, in dB. Default 0. */
+  gainDb?: number;
+  /** Within this distance it is at full level (a hex is about 1.7 across). Default 1.5, or 3 for the sea. */
+  ref?: number;
+  /** Past this distance it is silent. Default 14, or 18 for the sea. */
+  max?: number;
+  /** How many of the nearest sources sound at once. Default 3. The sea is always one. */
+  voices?: number;
+}
+
 export interface AudioManifest {
   mix: Record<Fader, FaderDefault>;
+  /** Looping sounds placed in the world. Follows the Atmosphere slider. */
+  emitters?: Partial<Record<EmitterKind, Emitter>>;
+  /** The reverbs there are, by name. Heard on one-shots that set `reverb`. */
+  reverbs?: Record<string, Reverb>;
+  /** Which reverb is heard where. */
+  zones?: ReverbZones;
   events: Record<string, SoundEvent>;
   music: Record<string, Loop>;
   ambience: Record<string, Loop>;

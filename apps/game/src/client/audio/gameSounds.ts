@@ -3,7 +3,7 @@
 // asks the engine for the names in names.ts, most specific first.
 
 import type { WorldEvent } from "@gantt-quest/world";
-import { audio } from "./engine";
+import { audio, type SeaArea } from "./engine";
 import { soundName, type AttackStyle, type Fighter } from "./names";
 
 /** Where on the map it happens, for distance falloff. */
@@ -57,14 +57,100 @@ export const sounds = {
     const names = soundName.world(ev, you);
     if (names) audio.play(names);
   },
-  /** The sky outside, every frame: it drives whatever in the manifest follows "time", "night" or "rain". */
-  sky(sky: { time: number; night: number; rain: number }) {
-    audio.setParam("time", sky.time);
-    audio.setParam("night", sky.night);
-    audio.setParam("rain", sky.rain);
-  },
-  /** Where you stand, every frame. */
-  listener(x: number, z: number) {
-    audio.setListener(x, z);
-  },
 };
+
+type Point = { x: number; z: number };
+const LIGHT_KINDS = ["fire", "candle", "lamp"] as const;
+
+/** Every map on screen, oldest first. Only the newest is heard from. */
+const ears: object[] = [];
+let heard: object | null = null;
+
+/**
+ * A map's place in the sound: where you stand on it, its sky, its fires and
+ * its water. Each renderer opens one. When one map is drawn over another (the
+ * crossing over the ship's deck), the one on top is heard, and the one under
+ * it takes over again when that closes.
+ */
+export function openEar() {
+  const me = {};
+  ears.push(me);
+  let lights: Record<(typeof LIGHT_KINDS)[number], Point[]> = { fire: [], candle: [], lamp: [] };
+  const send = () => {
+    for (const kind of LIGHT_KINDS) audio.setEmitters(kind, lights[kind]);
+  };
+  const top = () => {
+    if (ears.at(-1) !== me) return false;
+    // Newly on top: the engine still has the last map's fires.
+    if (heard !== me) {
+      heard = me;
+      audio.clearWorld();
+      send();
+    }
+    return true;
+  };
+  return {
+    /** Where you stand and how the camera is turned, every frame. */
+    listener(x: number, z: number, yaw: number) {
+      if (top()) audio.setListener(x, z, yaw);
+    },
+    /** The sky outside, every frame: it drives whatever in the manifest follows "time", "night" or "rain". */
+    sky(sky: { time: number; night: number; rain: number }) {
+      if (!top()) return;
+      audio.setParam("time", sky.time);
+      audio.setParam("night", sky.night);
+      audio.setParam("rain", sky.rain);
+    },
+    /** Every fire, candle and lamp on the map, whenever they change. */
+    lights(all: { kind: string; x: number; z: number }[]) {
+      lights = { fire: [], candle: [], lamp: [] };
+      for (const l of all) if (l.kind in lights) lights[l.kind as keyof typeof lights].push({ x: l.x, z: l.z });
+      if (top()) send();
+    },
+    /** The ground you stand on (a biome), a few times a second: it picks the reverb. */
+    ground(biome: string | null) {
+      if (top()) audio.setGround(biome);
+    },
+    /** Where the water is from where you stand (see nearWater), a few times a second. */
+    sea(area: SeaArea | null) {
+      if (top()) audio.setSea(area);
+    },
+    close() {
+      const i = ears.indexOf(me);
+      if (i >= 0) ears.splice(i, 1);
+      if (heard === me) {
+        heard = null;
+        audio.clearWorld();
+        audio.setGround(null);
+      }
+    },
+  };
+}
+
+/**
+ * The sea from where you stand: the nearest water, which way most of the
+ * water within reach lies, and how much it surrounds you. Null with none in reach.
+ */
+export function nearWater(x: number, z: number, water: Point[], reach = 18): SeaArea | null {
+  let nearest = Infinity;
+  let sx = 0;
+  let sz = 0;
+  let total = 0;
+  for (const w of water) {
+    const dx = w.x - x;
+    const dz = w.z - z;
+    const d = Math.hypot(dx, dz);
+    if (d > reach) continue;
+    nearest = Math.min(nearest, d);
+    // Nearer water counts for much more, so the shore you stand on outweighs a bay across the island.
+    const weight = 1 / (1 + d) ** 2;
+    total += weight;
+    if (d > 1e-6) {
+      sx += (weight * dx) / d;
+      sz += (weight * dz) / d;
+    }
+  }
+  if (total === 0) return null;
+  const pull = Math.hypot(sx, sz) / total;
+  return { distance: nearest, dx: sx / total, dz: sz / total, spread: 1 - Math.min(1, pull) };
+}

@@ -23,6 +23,8 @@ const RATES: Record<string, { opus: [mono: number, stereo: number]; aac: [mono: 
   music: { opus: [64, 112], aac: [96, 160] },
   ambience: { opus: [56, 80], aac: [80, 128] },
   sfx: { opus: [56, 80], aac: [72, 112] },
+  // Impulse responses: short, and every sound with reverb passes through them, so they get the most.
+  ir: { opus: [96, 160], aac: [128, 192] },
 };
 const DEFAULT_RATES = RATES.sfx;
 /** Bump to encode everything again after changing how files are encoded. */

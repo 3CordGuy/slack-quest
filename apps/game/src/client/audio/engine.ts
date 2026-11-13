@@ -13,8 +13,8 @@
 import { AUDIO } from "./manifest";
 import { Library } from "./library";
 import { MixStore, dbToGain, faderGain } from "./mixer";
-import { TakePicker, curveAt, distanceGain, expandFiles, inRange, resolveName, untilNextLine } from "./select";
-import type { AudioFile, AudioManifest, Follow, Group, Loop, ParamName, SceneName, SoundEvent } from "./types";
+import { TakePicker, curveAt, distanceGain, expandFiles, inRange, placeSound, resolveName, untilNextLine, type Placed } from "./select";
+import type { AudioFile, AudioManifest, Emitter, EmitterKind, Follow, Group, Loop, ParamName, SceneName, SoundEvent } from "./types";
 
 const GROUPS: Group[] = ["music", "atmosphere", "sfx"];
 /** The most one-shots sounding at once; past it the oldest fades out. */
@@ -52,6 +52,78 @@ interface LoopVoice {
   startedAt: number | null;
   offset: number;
   region: { start: number; end: number };
+}
+
+/**
+ * Where the sea is from where you stand: how far the nearest water is, which way most of it lies
+ * (dx, dz: a direction on the map, shorter the more the water is all around), and `spread`, 0 when it
+ * is all to one side and 1 when it surrounds you.
+ */
+export interface SeaArea {
+  distance: number;
+  dx: number;
+  dz: number;
+  spread: number;
+}
+
+/** Where a placed sound sits: all the placer needs, whichever way it places. */
+type Spot = Pick<Placed, "pan" | "side" | "ahead">;
+
+/** Puts a sound to one side: panned between two speakers, or around the head for headphones. */
+interface Placer {
+  node: AudioNode;
+  move(at: Spot, now: number, glide: number): void;
+}
+
+/** How far above the ground your ears are, in map units. A sound right where you stand is then below you, not nowhere. */
+const EAR_HEIGHT = 1.5;
+
+function makePlacer(ctx: AudioContext, headphones: boolean): Placer {
+  const set = (p: AudioParam, v: number, now: number, glide: number) => (glide > 0 ? p.setTargetAtTime(v, now, glide) : p.setValueAtTime(v, now));
+  if (headphones) {
+    // HRTF: the browser filters the sound as each ear would hear it from that direction. Level and
+    // dulling with distance are still ours, so the panner's own distance falloff is switched off.
+    const node = ctx.createPanner();
+    node.panningModel = "HRTF";
+    node.distanceModel = "linear";
+    node.rolloffFactor = 0;
+    node.positionY.value = -EAR_HEIGHT;
+    return {
+      node,
+      move(at, now, glide) {
+        set(node.positionX, at.side, now, glide);
+        // Up the screen is in front of you; Web Audio's listener faces down its −z.
+        set(node.positionZ, -at.ahead, now, glide);
+      },
+    };
+  }
+  const node = ctx.createStereoPanner();
+  return { node, move: (at, now, glide) => set(node.pan, Math.max(-1, Math.min(1, at.pan)), now, glide) };
+}
+
+/** The reverb of the place you are in: two convolvers, so one can fade in with the next place as the other fades out. */
+interface ReverbBus {
+  input: GainNode;
+  units: { conv: ConvolverNode; out: GainNode }[];
+  active: number;
+}
+
+interface EmitterSlot {
+  src: AudioBufferSourceNode;
+  gain: GainNode;
+  filter: BiquadFilterNode;
+  placer: Placer;
+  /** Where it was last put, for the debug readout. */
+  pan: number;
+  /** The source it is sounding for, by position; null while free. */
+  key: string | null;
+}
+
+interface EmitterGroup {
+  file: string;
+  out: GainNode | null;
+  slots: EmitterSlot[];
+  ready: boolean;
 }
 
 interface Bus {
@@ -131,13 +203,34 @@ export class AudioEngine {
   private scenes: { id: number; scene: SceneName | null }[] = [];
   private nextScene = 1;
   private listener: { x: number; z: number } | null = null;
+  /** The camera's turn about the map, which decides what is left and what is right. */
+  private yaw = 0;
+  private points = new Map<EmitterKind, { x: number; z: number }[]>();
+  private sea: SeaArea | null = null;
+  private emitters = new Map<EmitterKind, EmitterGroup>();
+  private worldAt = 0;
+  private headphones = false;
+  private reverb: ReverbBus | null = null;
+  /** The ground you stand on, and the reverb zone now heard (undefined before the first is chosen). */
+  private ground: string | null = null;
+  private zone: string | null | undefined = undefined;
+  private zoneTimer: ReturnType<typeof setTimeout> | undefined;
+  private zoneAt = 0;
   private params = new Map<ParamName, number>();
   private reported = new Set<string>();
   private suspendTimer: ReturnType<typeof setTimeout> | undefined;
 
   constructor(private manifest: AudioManifest) {
     this.mix = new MixStore(manifest.mix, safeStorage());
-    this.mix.subscribe(() => this.applyMix());
+    this.headphones = this.mix.get().headphones;
+    this.mix.subscribe(() => {
+      this.applyMix();
+      // Switching between speakers and headphones: placed loops are rebuilt with the other kind of placer.
+      if (this.mix.get().headphones !== this.headphones) {
+        this.headphones = this.mix.get().headphones;
+        for (const kind of [...this.emitters.keys()]) this.dropEmitter(kind);
+      }
+    });
     if (typeof window === "undefined") return;
     // iOS counts only some events as permission to play, so listen for all of them until one works.
     for (const type of ["pointerdown", "pointerup", "touchend", "keydown"]) window.addEventListener(type, this.unlock, { capture: true });
@@ -161,10 +254,13 @@ export class AudioEngine {
     if (ev.cooldown && now - (this.lastPlayed.get(name) ?? -Infinity) < ev.cooldown) return;
 
     let gain = dbToGain((ev.gainDb ?? 0) + inRange(ev.volume) + (opts.gainDb ?? 0));
+    // Placed in the world: quieter, duller and off to one side, by where it is from you and how the camera is turned.
+    let placed: Placed | undefined;
     if (opts.at && this.listener) {
-      const falloff = distanceGain(Math.hypot(opts.at.x - this.listener.x, opts.at.z - this.listener.z));
-      if (falloff < 0.01) return;
-      gain *= falloff;
+      const p = placeSound(opts.at.x - this.listener.x, opts.at.z - this.listener.z, this.yaw);
+      if (p.gain < 0.01) return;
+      gain *= p.gain;
+      placed = p;
     }
     this.lastPlayed.set(name, now);
     const files = this.takesOf(name);
@@ -175,19 +271,21 @@ export class AudioEngine {
     const rate = 2 ** (inRange(ev.pitch) / 12);
 
     const ready = lib.ready(key);
-    if (ready) this.voice(name, ev, ready, when, gain, rate);
+    if (ready) this.voice(name, ev, ready, when, gain, rate, placed);
     else
       void lib.load(key).then((buffer) => {
-        if (buffer && ctx.currentTime - when < LATE_LIMIT) this.voice(name, ev, buffer, Math.max(when, ctx.currentTime), gain, rate);
+        if (buffer && ctx.currentTime - when < LATE_LIMIT) this.voice(name, ev, buffer, Math.max(when, ctx.currentTime), gain, rate, placed);
       });
   }
 
-  /** Where you stand, in world x and z, for distance falloff. The renderer sets it every frame. */
-  setListener(x: number, z: number) {
+  /** Where you stand, in world x and z, and how the camera is turned about the map. The renderer sets it every frame. */
+  setListener(x: number, z: number, yaw = 0) {
     if (this.listener) {
       this.listener.x = x;
       this.listener.z = z;
     } else this.listener = { x, z };
+    this.yaw = yaw;
+    this.updateWorld();
   }
 
   /** Enter a scene. The newest scene still entered is the one heard; leave it with popScene. */
@@ -254,6 +352,16 @@ export class AudioEngine {
     }
     this.bus = { groups, masterTrim, masterFader, hush };
     this.applyMix(true);
+    // The reverb returns into the SFX group, so its slider turns the room down with the sounds in it.
+    const input = ctx.createGain();
+    const units = [0, 1].map(() => {
+      const conv = ctx.createConvolver();
+      const out = ctx.createGain();
+      out.gain.value = 0;
+      input.connect(conv).connect(out).connect(groups.sfx.trim);
+      return { conv, out };
+    });
+    this.reverb = { input, units, active: 0 };
 
     this.lib = new Library(ctx, memoryBudget());
     void this.lib.loadIndex().then(() => {
@@ -331,7 +439,7 @@ export class AudioEngine {
     return files;
   }
 
-  private voice(name: string, ev: SoundEvent, buffer: AudioBuffer, when: number, gain: number, rate: number) {
+  private voice(name: string, ev: SoundEvent, buffer: AudioBuffer, when: number, gain: number, rate: number, placed?: Placed) {
     const { ctx, bus } = this;
     if (!ctx || !bus) return;
     const same = this.voices.filter((v) => v.event === name);
@@ -342,13 +450,33 @@ export class AudioEngine {
     src.playbackRate.value = rate;
     const g = ctx.createGain();
     g.gain.value = gain;
-    src.connect(g).connect(bus.groups[ev.group ?? "sfx"].trim);
+    const dest = bus.groups[ev.group ?? "sfx"].trim;
+    let tail: AudioNode = g;
+    if (placed) {
+      const filter = ctx.createBiquadFilter();
+      filter.type = "lowpass";
+      filter.frequency.value = placed.cutoff;
+      const placer = makePlacer(ctx, this.headphones);
+      placer.move(placed, ctx.currentTime, 0);
+      g.connect(filter).connect(placer.node);
+      tail = placer.node;
+    }
+    src.connect(g);
+    tail.connect(dest);
+    // A share of it goes to the reverb of the place you are in, before it is panned: a room answers from all round.
+    let send: GainNode | null = null;
+    if (ev.reverb !== undefined && this.reverb) {
+      send = ctx.createGain();
+      send.gain.value = dbToGain(ev.reverb);
+      g.connect(send).connect(this.reverb.input);
+    }
     const voice: Voice = { event: name, src, gain: g };
     this.voices.push(voice);
     src.onended = () => {
       const i = this.voices.indexOf(voice);
       if (i >= 0) this.voices.splice(i, 1);
-      g.disconnect();
+      tail.disconnect();
+      send?.disconnect();
     };
     src.start(when);
   }
@@ -429,6 +557,7 @@ export class AudioEngine {
       if (!next || !sameTake(lv.def, next.def)) this.stopLoop(lv, undefined, lv.group === "music" ? wait : 0);
     }
     for (const [id, w] of want) if (!this.loops.has(id)) void this.startLoop(id, w.def, w.group, undefined, w.group === "music" ? now + wait : now);
+    this.scheduleZone();
   }
 
   private async startLoop(id: string, def: Loop, group: Group, fadeIn = def.fadeIn ?? 2, at = 0) {
@@ -497,6 +626,188 @@ export class AudioEngine {
     for (const part of lv.parts) part.src.stop(when + seconds + 0.05);
   }
 
+  // ---------- sounds placed in the world ----------
+
+  /** Where the looping sources of one kind are (every fire, say). Only the nearest few are heard. */
+  setEmitters(kind: EmitterKind, points: { x: number; z: number }[]) {
+    this.points.set(kind, points);
+    if (points.length === 0) this.dropEmitter(kind);
+  }
+
+  /** Where the sea is from where you stand, or null with no water near. */
+  setSea(area: SeaArea | null) {
+    this.sea = area;
+    if (!area) this.dropEmitter("sea");
+  }
+
+  /** Forget everything placed in the world (the map is going away). */
+  clearWorld() {
+    this.points.clear();
+    this.sea = null;
+    for (const kind of [...this.emitters.keys()]) this.dropEmitter(kind);
+  }
+
+  /** Move every placed loop to where it now sits around you. Runs as the listener moves, a few times a second. */
+  private updateWorld() {
+    const { ctx, lib } = this;
+    const ear = this.listener;
+    if (!ctx || !lib || !this.indexed || !ear || ctx.state !== "running") return;
+    if (ctx.currentTime - this.worldAt < 0.05) return;
+    this.worldAt = ctx.currentTime;
+    const defs = this.manifest.emitters ?? {};
+    for (const kind of Object.keys(defs) as EmitterKind[]) {
+      const def = defs[kind]!;
+      if (kind === "sea") {
+        const sea = this.sea;
+        if (!sea) continue;
+        const group = this.emitter(kind, def, 1);
+        if (!group.ready) continue;
+        // Close to the water, or with it all around, the sea stops coming from one side.
+        const side = sea.dx * Math.cos(this.yaw) - sea.dz * Math.sin(this.yaw);
+        const far = Math.min(1, sea.distance / (def.max ?? 18));
+        const ahead = -(sea.dx * Math.sin(this.yaw) + sea.dz * Math.cos(this.yaw));
+        const wide = 1 - sea.spread;
+        this.place(group.slots[0], distanceGain(sea.distance, def.ref ?? 3, def.max ?? 18), 20000 * 2 ** (-2 * far), { pan: side * 0.8 * wide, side: side * 4 * wide, ahead: ahead * 4 * wide });
+        continue;
+      }
+      const points = this.points.get(kind);
+      if (!points || points.length === 0) continue;
+      const group = this.emitter(kind, def, def.voices ?? 3);
+      if (!group.ready) continue;
+      const max = def.max ?? 14;
+      const near = points
+        .map((p) => ({ key: `${p.x.toFixed(2)},${p.z.toFixed(2)}`, dx: p.x - ear.x, dz: p.z - ear.z }))
+        .filter((p) => Math.hypot(p.dx, p.dz) < max)
+        .sort((a, b) => Math.hypot(a.dx, a.dz) - Math.hypot(b.dx, b.dz))
+        .slice(0, group.slots.length);
+      // A source keeps its voice while it stays among the nearest; a newcomer takes one that fell free.
+      for (const slot of group.slots) if (slot.key && !near.some((p) => p.key === slot.key)) slot.key = null;
+      for (const p of near) {
+        const slot = group.slots.find((s) => s.key === p.key) ?? group.slots.find((s) => s.key === null);
+        if (!slot) continue;
+        slot.key = p.key;
+        const placed = placeSound(p.dx, p.dz, this.yaw, def.ref ?? 1.5, max);
+        this.place(slot, placed.gain, placed.cutoff, placed);
+      }
+      for (const slot of group.slots) if (slot.key === null) this.place(slot, 0, 20000, { pan: 0, side: 0, ahead: 0 });
+    }
+  }
+
+  private place(slot: EmitterSlot, gain: number, cutoff: number, at: Spot) {
+    const now = this.ctx!.currentTime;
+    slot.gain.gain.setTargetAtTime(gain, now, 0.12);
+    slot.filter.frequency.setTargetAtTime(cutoff, now, 0.12);
+    slot.placer.move(at, now, 0.12);
+    slot.pan = at.pan;
+  }
+
+  // ---------- the reverb of the place you are in ----------
+
+  /** The ground you stand on (a biome), or null. With the scene, it decides which reverb is heard. */
+  setGround(ground: string | null) {
+    if (ground === this.ground) return;
+    this.ground = ground;
+    this.scheduleZone();
+  }
+
+  /** The reverb for where you are: by the ground first, then the scene, then the default. */
+  private zoneName(): string | null {
+    const zones = this.manifest.zones;
+    if (!zones) return null;
+    if (this.ground && zones.ground && this.ground in zones.ground) return zones.ground[this.ground];
+    const scene = this.scene;
+    if (scene && zones.scene && scene in zones.scene) return zones.scene[scene] ?? null;
+    return zones.default ?? null;
+  }
+
+  /**
+   * Change reverb once the place has held for a moment, and never twice within a crossfade:
+   * walking along the edge of a wood would otherwise flick between two rooms.
+   */
+  private scheduleZone() {
+    if (!this.ctx || !this.reverb || !this.indexed) return;
+    clearTimeout(this.zoneTimer);
+    if (this.zoneName() === this.zone) return;
+    const wait = Math.max(this.zone === undefined ? 0 : 400, this.zoneAt + 1100 - performance.now());
+    this.zoneTimer = setTimeout(() => this.applyZone(), wait);
+  }
+
+  private applyZone() {
+    const { ctx, lib, reverb } = this;
+    if (!ctx || !lib || !reverb) return;
+    const name = this.zoneName();
+    if (name === this.zone) return;
+    this.zone = name;
+    this.zoneAt = performance.now();
+    const def = name ? this.manifest.reverbs?.[name] : undefined;
+    if (!def) {
+      if (name) this.report([`reverb "${name}"`]);
+      for (const unit of reverb.units) fade(unit.out.gain, ctx.currentTime, 0, 1);
+      return;
+    }
+    void lib.load(def.file).then((buffer) => {
+      if (this.zone !== name) return;
+      if (!buffer) return this.report([`reverb "${name}" (file "${def.file}")`]);
+      // The idle convolver takes the new room and the two cross over.
+      const next = reverb.units[1 - reverb.active];
+      next.conv.buffer = buffer;
+      const now = ctx.currentTime;
+      fade(next.out.gain, now, dbToGain(def.gainDb ?? 0), 1);
+      fade(reverb.units[reverb.active].out.gain, now, 0, 1);
+      reverb.active = 1 - reverb.active;
+    });
+  }
+
+  /** The voices for one kind of source, made the first time one is near: the same loop, each started at a different point. */
+  private emitter(kind: EmitterKind, def: Emitter, voices: number): EmitterGroup {
+    const { ctx, lib, bus } = this;
+    let group = this.emitters.get(kind);
+    if (group || !ctx || !lib || !bus) return group ?? { file: def.file, out: null, slots: [], ready: false };
+    const out = ctx.createGain();
+    out.gain.value = dbToGain(def.gainDb ?? 0);
+    out.connect(bus.groups.atmosphere.trim);
+    const made: EmitterGroup = { file: def.file, out, slots: [], ready: false };
+    group = made;
+    this.emitters.set(kind, made);
+    if (!lib.url(def.file)) {
+      this.report([`emitter ${kind} (file "${def.file}")`]);
+      return made;
+    }
+    lib.pin(def.file);
+    void lib.load(def.file).then((buffer) => {
+      if (this.emitters.get(kind) !== made || !buffer) return lib.unpin(def.file);
+      for (let i = 0; i < voices; i++) {
+        const src = ctx.createBufferSource();
+        src.buffer = buffer;
+        src.loop = true;
+        const gain = ctx.createGain();
+        gain.gain.value = 0;
+        const filter = ctx.createBiquadFilter();
+        filter.type = "lowpass";
+        filter.frequency.value = 20000;
+        const placer = makePlacer(ctx, this.headphones);
+        src.connect(gain).connect(filter).connect(placer.node).connect(out);
+        src.start(ctx.currentTime, Math.random() * buffer.duration);
+        made.slots.push({ src, gain, filter, placer, pan: 0, key: null });
+      }
+      made.ready = true;
+    });
+    return made;
+  }
+
+  private dropEmitter(kind: EmitterKind) {
+    const group = this.emitters.get(kind);
+    const { ctx, lib } = this;
+    if (!group || !ctx || !lib) return;
+    this.emitters.delete(kind);
+    if (!group.out) return;
+    const out = group.out;
+    fade(out.gain, ctx.currentTime, 0, 0.4);
+    for (const slot of group.slots) slot.src.stop(ctx.currentTime + 0.5);
+    setTimeout(() => out.disconnect(), 700);
+    if (group.ready) lib.unpin(group.file);
+  }
+
   // ---------- developing ----------
 
   /** Read the index again and restart any loop whose file changed. The dev server asks for this when a master changes. */
@@ -505,6 +816,7 @@ export class AudioEngine {
     if (!lib) return;
     await lib.loadIndex();
     this.expanded.clear();
+    for (const kind of [...this.emitters.keys()]) this.dropEmitter(kind);
     for (const lv of [...this.loops.values()]) {
       const urls = [lv.def.file, ...(lv.def.layers ?? []).map((l) => l.file)]
         .map((f) => lib.url(f))
@@ -523,6 +835,9 @@ export class AudioEngine {
     Object.assign(this.mix.defaults, next.mix);
     this.expanded.clear();
     this.reported.clear();
+    for (const kind of [...this.emitters.keys()]) this.dropEmitter(kind);
+    // The reverb may have a new file or level: choose it afresh.
+    if (this.zone !== undefined) this.zone = undefined;
     this.applyMix();
     this.applyScene();
     this.preloadEffects();
@@ -542,10 +857,16 @@ export class AudioEngine {
     return {
       state: this.ctx?.state ?? "not started",
       scene: this.scene,
-      loops: [...this.loops.keys()],
+      loops: [...this.loops.values()].map((lv) => ({ id: lv.id, parts: lv.parts.map((p) => `${p.file.split("/").pop()} ${(p.gain.gain.value * lv.out.gain.value).toFixed(2)}`) })),
       voices: this.voices.map((v) => v.event),
       listener: this.listener,
-      params: Object.fromEntries(this.params),
+      params: Object.fromEntries(this.params) as Partial<Record<ParamName, number>>,
+      yaw: this.yaw,
+      headphones: this.headphones,
+      ground: this.ground,
+      reverb: this.zone ?? null,
+      sea: this.sea,
+      emitters: Object.fromEntries([...this.emitters].map(([kind, g]) => [kind, g.slots.map((sl) => `${sl.gain.gain.value.toFixed(2)} pan ${sl.pan.toFixed(2)}`)])),
       library: this.lib?.stats() ?? null,
     };
   }

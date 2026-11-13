@@ -13,7 +13,7 @@ import type { HexPos } from "@gantt-quest/core";
 import { hexDistance } from "@gantt-quest/core";
 import { BASE_HEIGHT, BATTLE_JOIN_RANGE, BIG_REACH, ENEMIES, HEX_DIRS, TRAIT_BY_ID, MOVE_COST, WALL_FACE_HALF, WALL_ITEM_BOTTOM, WALL_ITEM_TOP, findPath, xpProgress, reachable, tileAt, wallFace, wallFaces, type ClientState, type Outfit, type Phase, type Poi, type Tile, type WorldEvent, type WorldMap } from "@gantt-quest/world";
 import { ghostModel, propModel, tintGhost, type LightKind } from "./props";
-import { sounds } from "../audio/gameSounds";
+import { nearWater, openEar, sounds } from "../audio/gameSounds";
 import type { AttackStyle, Fighter } from "../audio/names";
 import { SPRITE_ASPECT, bubbleTexture, fxTexture, labelTexture, plateKey, sleepZTexture, spriteKey, spriteTexture, textTexture, type FxKind, type PlateStats } from "./sprites";
 
@@ -392,6 +392,11 @@ export class WorldRenderer {
 
   private terrain: THREE.InstancedMesh | null = null;
   private tiles: Tile[] = [];
+  /** This map's place in the sound: where you stand, its sky, its fires and its water. */
+  private ear = openEar();
+  /** The middle of every water hex, for hearing where the sea is. */
+  private water: { x: number; z: number }[] = [];
+  private frames = 0;
   private mapCode = "";
   private ambience: Ambience;
   private decor = new THREE.Group();
@@ -560,6 +565,7 @@ export class WorldRenderer {
 
   dispose() {
     cancelAnimationFrame(this.raf);
+    this.ear.close();
     this.resizeObserver.disconnect();
     const canvas = this.renderer.domElement;
     canvas.removeEventListener("pointerdown", this.onPointerDown);
@@ -960,6 +966,7 @@ export class WorldRenderer {
     this.hangable.clear();
     if (state.indoors) for (const f of wallFaces(state.map)) this.hangable.set(key(f.pos), [...(this.hangable.get(key(f.pos)) ?? []), f.side]);
     this.tiles = state.map.tiles;
+    this.water = state.map.tiles.filter((t) => t.biome === "water").map(hexToWorld);
     if (this.terrain) {
       this.scene.remove(this.terrain);
       this.terrain.geometry.dispose();
@@ -1292,6 +1299,7 @@ export class WorldRenderer {
     }
     this.hideLoweredWallProps();
     this.ambience.setLights(lights, flames);
+    this.ear.lights(lights.map((l) => ({ kind: l.kind, x: l.pos.x, z: l.pos.z })));
   }
 
   // ---------- carrying a piece: the ghost that follows the pointer ----------
@@ -2740,8 +2748,13 @@ export class WorldRenderer {
     this.ambience.update(this.clock, this.yaw, this.target, this.state?.you ? this.units.get(this.state.you)?.sprite.position : undefined);
     // Sounds are heard from where your hero stands, or from the middle of the view without one.
     const ear = (this.state?.you ? this.units.get(this.state.you)?.sprite.position : undefined) ?? this.target;
-    sounds.listener(ear.x, ear.z);
-    sounds.sky(this.ambience.sky());
+    this.ear.listener(ear.x, ear.z, this.yaw);
+    this.ear.sky(this.ambience.sky());
+    // Where the sea lies changes slowly: work it out a few times a second.
+    if (this.frames++ % 8 === 0) {
+      this.ear.sea(nearWater(ear.x, ear.z, this.water));
+      this.ear.ground(this.state ? (tileAt(this.state.map, worldToHex(ear.x, ear.z - 0.25))?.biome ?? null) : null);
+    }
     // Night reaches the open sea and the fog too, not just the lit ground.
     const night = this.ambience.night;
     (this.sea.material as THREE.MeshLambertMaterial).color.copy(this.seaBase).lerp(NIGHT_SEA, night * 0.8);

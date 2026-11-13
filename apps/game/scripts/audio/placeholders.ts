@@ -168,7 +168,28 @@ files["music/battle"] = () => tune(138, [A, A, F, E], square);
 files["ambience/rain"] = () => seamless(mix(filtered(10, () => 9000, () => 0.5), filtered(10, () => 1200, () => 0.6)), 2);
 files["ambience/night"] = () => tone(8, () => 4200, (t) => 0.12 * (Math.sin(t * 2 * Math.PI * 22) > 0.2 ? 1 : 0) * (Math.sin(t * 2 * Math.PI * 1.5) > 0 ? 1 : 0));
 files["ambience/shore"] = () => seamless(filtered(14, (t) => 500 + 700 * (0.5 + 0.5 * Math.sin((t / 6) * 2 * Math.PI)), (t) => 1.2 * (0.45 + 0.55 * Math.sin((t / 6) * Math.PI) ** 2)), 2);
+// A fire: a low roar with sharp crackles scattered over it.
+files["ambience/fire"] = () => {
+  const pops = render(6, () => (rand() < 0.0009 ? 1 : 0));
+  let env = 0;
+  let y = 0;
+  const crackle = render(6, (_t, i) => {
+    env = Math.max(pops[i], env * 0.996);
+    y += 0.6 * (noise() - y);
+    return y * env * 0.9;
+  });
+  return seamless(mix(crackle, filtered(6, () => 260, (t) => 1.1 * (0.8 + 0.2 * Math.sin(t * 9)))), 1);
+};
 files["ambience/room"] = () => seamless(filtered(8, () => 180, () => 1.5), 2);
+
+// Impulse responses: a burst of noise dying away, longer and brighter or shorter and duller by the place.
+const impulse = (seconds: number, cutoff: number, early = 0) =>
+  filtered(seconds, (t) => cutoff * Math.exp(-t * (1.5 / seconds)) + 300, (t) => (t < 0.004 ? 0 : Math.exp(-t * (6.9 / seconds))) * (1 + early * Math.exp(-t * 60)));
+files["ir/room"] = () => impulse(0.45, 5000, 2);
+files["ir/hall"] = () => impulse(1.1, 4000, 1);
+files["ir/open"] = () => impulse(0.3, 2500, 3);
+files["ir/woods"] = () => impulse(0.8, 1800);
+files["ir/stone"] = () => impulse(1.4, 7000, 1);
 
 let written = 0;
 let kept = 0;

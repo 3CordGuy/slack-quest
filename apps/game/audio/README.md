@@ -8,7 +8,7 @@ This folder holds the WAV masters for the game's sound. The engine that plays th
 2. Point at it from the manifest. An event's `files` can end in `*`, so `sfx/footsteps/stone_*` picks up every take in that folder with no further edit.
 3. With `pnpm dev:game` running, the game plays the WAV as it is. Overwriting a file or saving the manifest is heard at once, with no reload.
 
-The top folder decides how a file is encoded: `music/`, `ambience/` or `sfx/`. Sounds placed in the world should be mono.
+The top folder decides how a file is encoded: `music/`, `ambience/`, `sfx/` or `ir/` (impulse responses). Sounds placed in the world should be mono.
 
 The WAVs here are not committed (they are in `.gitignore`). What ships is the encoded copy made in the last step below.
 
@@ -82,6 +82,55 @@ Every stem is held decoded in memory (about 23 MB a minute in stereo), so keep t
 ## Switching on the bar
 
 Give music its `bpm` (and `beatsPerBar` if not 4), and music that replaces it can set `enter: "bar"` or `enter: "beat"` to come in on its next bar or beat line instead of at once. Bars are counted from the start of the file (or from the loop start with `startAt: "loop"`), so start loops on a bar line and make them whole bars long.
+
+## Sounds placed in the world
+
+You are the listener: sounds are heard from where your hero stands, and left and right follow the camera, so a fire on the right of the screen is in the right speaker however the view is turned. A placed sound gets quieter with distance, loses its top end, and moves to its side; close by, it stays near the middle.
+
+One-shots are placed automatically: other heroes' footsteps and every blow in a fight play from where they happen. Your own footsteps are not placed.
+
+`emitters` in the manifest are loops that play from things on the map:
+
+| Emitter | Where |
+|---|---|
+| `fire` | Every campfire, fireplace and stove |
+| `candle`, `lamp` | Every candle; every lantern |
+| `sea` | The water as a whole: louder toward the shore, from the side it lies on, and all around you when it surrounds you |
+
+```ts
+fire: { file: "ambience/fire", gainDb: -6, ref: 1.5, max: 12, voices: 3 },
+```
+
+`ref` is the distance within which it is at full level and `max` the distance past which it is silent, in map units (a hex is about 1.7 across). Only the nearest `voices` sources sound at once, each starting the loop at a different point so they do not phase. Bounce these mono. They follow the Atmosphere slider.
+
+Players choose how placed sounds are rendered with **Headphones (3D sound)** in the Sound panel. Off (the default), sounds are panned between two speakers. On, the browser places them around the head (HRTF): up the screen is in front of you, down it is behind. Level and dulling with distance are the same either way.
+
+## Reverb
+
+A one-shot is heard in the reverb of the place you are in if its event sets `reverb`, its send level in dB:
+
+```ts
+"footstep.cobble": { files: "sfx/footsteps/stone_*", reverb: -6 },
+```
+
+Events without it stay dry, which is right for stings and interface sounds. Music and atmosphere are never sent.
+
+`reverbs` names each reverb and its impulse response, a WAV under `ir/`, with `gainDb` for the level of its return. `zones` says which is heard where: the ground underfoot decides first, then the scene, then `default`. Use `null` for no reverb.
+
+```ts
+reverbs: { woods: { file: "ir/woods", gainDb: -5 }, room: { file: "ir/room", gainDb: -3 } },
+zones: {
+  ground: { forest: "woods" },
+  scene: { hut: "room" },
+  default: "open",
+},
+```
+
+Moving from one zone to another crossfades the two over a second, once you have been in the new one for a moment. The return comes back into the Sound effects group, so that slider turns the room down along with the sounds in it. Impulse responses can be mono or stereo; the browser evens out their loudness, so set the level with `gainDb`.
+
+## The engine readout
+
+While developing, the Sound panel has **Show engine readout**: the scene, the ground and reverb zone, the sky values, where the sea is, the level of every loop, stem and emitter voice, the one-shots sounding, and how much decoded audio is in memory. `__gqAudio.debug()` in the browser console gives the same as data.
 
 ## The mix
 

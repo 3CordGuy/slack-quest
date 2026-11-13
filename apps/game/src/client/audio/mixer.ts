@@ -1,4 +1,5 @@
-// The player's side of the mix: a slider per group plus a master, and a mute.
+// The player's side of the mix: a slider per group plus a master, a mute, and
+// whether placed sounds are rendered for headphones.
 //
 // Each group has two gain stages. Your trim (manifest.mix[group].trimDb) sets
 // the balance and players never see it; their slider sits after it. Only the
@@ -35,6 +36,8 @@ export interface MixSettings {
   /** Only the sliders the player has moved. */
   volumes: Partial<Record<Fader, number>>;
   muted: boolean;
+  /** Place sounds around the head for headphones (HRTF) rather than panning them between two speakers. */
+  headphones: boolean;
 }
 
 const KEY = "gq.audio.v1";
@@ -45,15 +48,16 @@ function clamp01(n: unknown): number | undefined {
 
 /** Read saved settings, dropping anything malformed. */
 export function parseSettings(raw: string | null): MixSettings {
-  const out: MixSettings = { volumes: {}, muted: false };
+  const out: MixSettings = { volumes: {}, muted: false, headphones: false };
   if (!raw) return out;
   try {
-    const data = JSON.parse(raw) as { volumes?: Record<string, unknown>; muted?: unknown };
+    const data = JSON.parse(raw) as { volumes?: Record<string, unknown>; muted?: unknown; headphones?: unknown };
     for (const f of FADERS) {
       const v = clamp01(data.volumes?.[f]);
       if (v !== undefined) out.volumes[f] = v;
     }
     out.muted = data.muted === true;
+    out.headphones = data.headphones === true;
   } catch {
     /* unreadable: start from the defaults */
   }
@@ -99,15 +103,24 @@ export class MixStore {
     this.update({ ...this.settings, muted });
   }
 
+  setHeadphones(headphones: boolean) {
+    this.update({ ...this.settings, headphones });
+  }
+
+  /** Whether the player has changed anything from what the game ships with. */
+  get changed(): boolean {
+    return this.settings.muted || this.settings.headphones || Object.keys(this.settings.volumes).length > 0;
+  }
+
   /** Forget everything the player set: every slider back to your defaults. */
   reset() {
-    this.update({ volumes: {}, muted: false });
+    this.update({ volumes: {}, muted: false, headphones: false });
   }
 
   private update(next: MixSettings) {
     this.settings = next;
     try {
-      if (Object.keys(next.volumes).length === 0 && !next.muted) this.storage?.removeItem(KEY);
+      if (!this.changed) this.storage?.removeItem(KEY);
       else this.storage?.setItem(KEY, JSON.stringify(next));
     } catch {
       /* storage full or blocked: the setting still holds for this visit */
