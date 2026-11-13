@@ -19,6 +19,7 @@ import { NightLife } from "./nightlife";
 import { Storm } from "./storm";
 import { addWindSway, updateWind } from "./wind";
 import { OVERLAY_LAYER, PostFx, type Air } from "./post";
+import { fishMount } from "./catchArt";
 import { makeFigure, type Figure } from "./figures";
 import { GROUND_KIND, addFancyWater, addWaterRipple, setGroundWet, setWaterNight, setWaterStanding, shoreSide, updateWater, waterAttribute, type Standing } from "./water";
 import { ghostModel, propModel, tintGhost, type LightKind } from "./props";
@@ -125,6 +126,8 @@ export interface SceneProp {
   facing: number;
   /** Ringed, to show it is the one being handled. */
   selected?: boolean;
+  /** A mounted fish: the catch hung on it, drawn at its real size in place of the empty board. */
+  fish?: { species: string; mm: number } | null;
   /** A small thing: stepped over, not walked around. */
   small?: boolean;
   /** Hung on a wall: `pos` is the wall hex, `facing` the side, `x` along it and `y` up from the floor. */
@@ -1904,7 +1907,7 @@ export class WorldRenderer {
     // Pieces on the floor first, then the small things standing on them, which are hung on their support so they turn and move with it.
     const ordered = [...props.filter((p) => p.on === undefined), ...props.filter((p) => p.on !== undefined)];
     for (const prop of ordered) {
-      const g = propModel(prop.model);
+      const g = prop.fish ? fishMount(prop.fish) : propModel(prop.model);
       const base = prop.on !== undefined ? this.propModels.get(prop.on) : undefined;
       if (prop.on !== undefined && !base) continue;
       if (base) {

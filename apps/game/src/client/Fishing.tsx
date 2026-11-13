@@ -6,8 +6,11 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import * as THREE from "three";
 import {
+  BOOK_TITLE,
   FISH,
   FISH_SPOTS,
+  FURNISHINGS,
+  PAGE_REWARD,
   HARBOR_FISH_SPOTS,
   HARBOR_SPAWN,
   formatLength,
@@ -21,6 +24,7 @@ import {
 } from "@gantt-quest/world";
 import { api, type GatherStatus, type SittingPaid, type XpResult } from "./api";
 import { ResourceChips } from "./hutDrops";
+import { CatchBookPanel } from "./CatchBook";
 import { catchIcon } from "./render/catchArt";
 import { FishingStage, type FishHooks, type FishPhase } from "./render/FishingStage";
 import { hexToWorld, type WorldRenderer } from "./render/WorldRenderer";
@@ -90,6 +94,8 @@ function Summary({ view, paid, xp, sitting }: { view: GatherView; paid?: Resourc
       )}
       <p>{kept.length === 0 ? "Nothing in the basket this time." : `${kept.length} in the basket, ${formatLoad(s.creelGrams, u)} in all${released ? `, and ${released} thrown back` : ""}.`}</p>
       {heaviest && <p className="muted">Biggest: {FISH[heaviest.species].name}, {formatWeight(heaviest.grams, u)}.</p>}
+      {sitting?.book.pages.map((page) => <p key={page} className="fish-record">Catch Book page finished! {FURNISHINGS[PAGE_REWARD[page]].name} is waiting for you at home.</p>)}
+      {sitting?.book.full && <p className="fish-record">The whole Catch Book! You are a {BOOK_TITLE}.</p>}
       {(sitting?.newSpecies.length ?? 0) > 0 && <p className="good">New in your Catch Book: {sitting!.newSpecies.map((id) => FISH[id].name).join(", ")}.</p>}
       {(sitting?.records.length ?? 0) > 0 && <p className="fish-record">Crew record: {sitting!.records.map((id) => FISH[id].name).join(", ")}!</p>}
       {paid && Object.keys(paid).length > 0 && <ResourceChips resources={paid} />}
@@ -172,6 +178,7 @@ function Sitting({ outing, world, pier, shipBeside, apply, onRod, onClose }: {
   const [busy, setBusy] = useState(false);
   /** The sitting as the server last sent it. */
   const [view, setView] = useState(outing);
+  const [book, setBook] = useState(false);
   const tensionFill = useRef<HTMLDivElement>(null);
   const strengthFill = useRef<HTMLDivElement>(null);
   const lineFill = useRef<HTMLDivElement>(null);
@@ -417,6 +424,7 @@ function Sitting({ outing, world, pier, shipBeside, apply, onRod, onClose }: {
       )}
 
       {msg && <div className={`fish-msg ${msg.tone}`} role="status">{msg.text}</div>}
+      {book && <CatchBookPanel onClose={() => setBook(false)} />}
 
       {pending && def && !ended && (
         <div className={`fish-card ${def.rarity}`} role="dialog" aria-label={def.name}>
@@ -453,6 +461,7 @@ function Sitting({ outing, world, pier, shipBeside, apply, onRod, onClose }: {
         <div className="fish-bottom">
           <span className="muted fish-hint">{fighting ? "Tap while it runs · Hold while it rests" : `${live.landed.filter((f) => f.kept).length} kept`}</span>
           <span className="spacer" />
+          <button className="small" onClick={() => setBook(true)} title="Every kind you have caught">Catch Book</button>
           <button className="small" disabled={busy} onClick={onClose} title="Leave the sitting open and walk about. It ends by itself after 15 minutes left alone.">Step away</button>
           <button className="small" disabled={busy || fighting || !!pending} onClick={() => void stop()}>Done fishing</button>
         </div>

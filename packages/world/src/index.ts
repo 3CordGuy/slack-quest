@@ -26,6 +26,7 @@ export * from "./fishing";
 export * from "./fishfight";
 export * from "./sitting";
 export * from "./fishmarket";
+export * from "./catchbook";
 export * from "./mine";
 export * from "./felling";
 export * from "./timing";

@@ -108,3 +108,25 @@ body.fishing .draggable:not(.gather), body.fishing .tip { display: none !importa
 .catch-wanted-one { display: flex; align-items: center; gap: 6px; }
 .catch-wanted-one small { display: block; }
 .catch-foot { margin-top: 8px; }
+
+/* ---------- the Catch Book and the Record Board (CatchBook.tsx) ---------- */
+.catch-book { width: min(620px, calc(100vw - 24px)); }
+.book-tabs { display: flex; flex-wrap: wrap; gap: 4px; margin: 4px 0 6px; }
+.book-tabs button.done { border-color: #8a6a2a; }
+.book-reward { margin: 0 0 6px; font-size: 12px; }
+.book-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 6px; }
+.book-slot { position: relative; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 6px 4px; background: rgba(255, 255, 255, 0.03); border: 1px solid #2a2750; }
+.book-slot img { image-rendering: pixelated; }
+.book-slot small { font-size: 10px; line-height: 1.2; text-align: center; }
+.book-slot.unknown img { filter: brightness(0) opacity(0.45); }
+.book-slot.lost img { filter: brightness(0) opacity(0.6) drop-shadow(0 0 1px #8ac6e8) drop-shadow(0 0 1px #8ac6e8); }
+.book-slot.rare.caught { border-color: #3f5f9a; }
+.book-slot.legendary.caught, .book-slot.mythic.caught { border-color: #9a7a3a; }
+.book-slot.selected { outline: 2px solid var(--gold); }
+.book-star, .book-crown { position: absolute; top: 2px; font-size: 13px; color: var(--gold); text-shadow: 0 1px 0 #000; }
+.book-star { left: 4px; }
+.book-crown { right: 4px; }
+.book-detail { display: flex; gap: 12px; align-items: flex-start; margin-top: 8px; padding: 8px; background: #1a1838; border: 1px solid #2f2b52; }
+.book-detail p { margin: 4px 0 0; font-size: 12px; }
+.book-shadow { image-rendering: pixelated; filter: brightness(0) opacity(0.45); }
+.book-shadow.lost { filter: brightness(0) opacity(0.6) drop-shadow(0 0 1px #8ac6e8); }

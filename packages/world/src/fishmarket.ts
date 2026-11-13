@@ -20,7 +20,7 @@ export const FISH_WANTED = 2;
 export const FISH_WANTED_BONUS = 2;
 /** The icebox holds this much fresh fish. Treasure from the sea (a ship's bell) is kept apart and does not count. */
 export const ICEBOX_G = 60_000;
-/** The trophy chest: specimens only, kept until mounted or sold. */
+/** The trophy chest: specimens and treasure, kept until mounted or sold. */
 export const TROPHY_SLOTS = 6;
 
 export type FishBuyer = "market" | "tam";
@@ -66,8 +66,10 @@ export function fishSalePrice(fish: { species: string; grams: number; specimen: 
 
 /** Why a fish cannot go into the trophy chest, or null if it can. */
 export function trophyProblem(fish: { species: string; specimen: boolean }, inChest: number): string | null {
-  if (!FISH[fish.species] || FISH[fish.species].kind === "haul") return "Only fish go in the trophy chest.";
-  if (!fish.specimen) return "Only a specimen is worth keeping for good.";
+  const def = FISH[fish.species];
+  if (!def || (def.kind === "haul" && !def.keep)) return "Only fish and treasure go in the trophy chest.";
+  // Treasure from the sea (a ship's bell) is always worth keeping; a fish only if it is a specimen.
+  if (def.kind !== "haul" && !fish.specimen) return "Only a specimen is worth keeping for good.";
   if (inChest >= TROPHY_SLOTS) return `The trophy chest holds ${TROPHY_SLOTS}. Sell or mount one first.`;
   return null;
 }

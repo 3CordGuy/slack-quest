@@ -68,6 +68,7 @@ import { enterPub } from "./server/pub-room";
 import { buyFromSalesman, getSalesman } from "./server/salesman";
 import { gatherStatus, rest, startOuting, stepOuting } from "./server/gather";
 import { fishStock, moveFish, sellFish } from "./server/fishmarket";
+import { catchBook, hangAtHome, mountInPub, pubWall, unmountInPub } from "./server/catchbook";
 import { builtProjectIds, contribute, crewWorks, projectStock } from "./server/projects";
 import { acceptTrade, closeTrade, listTrades, proposeTrade } from "./server/trade";
 import { apothecaryView, brew, smithItem, smithyView } from "./server/workshops";
@@ -602,6 +603,24 @@ app.post("/api/fish/sell", async (c) => {
 app.post("/api/fish/move", async (c) => {
   const body = await c.req.json<{ id?: unknown; to?: unknown }>().catch(() => ({}) as { id?: unknown; to?: unknown });
   const result = await moveFish(c.env.DB, c.get("player").id, body.id, body.to);
+  return typeof result === "string" ? c.json({ error: result }, 409) : c.json(result);
+});
+
+// The Catch Book, the crew's records and the pub wall, and hanging fish at home.
+app.get("/api/fish/book", async (c) => c.json(await catchBook(c.env.DB, c.get("player").id)));
+app.get("/api/fish/wall", async (c) => {
+  const result = await pubWall(c.env.DB, c.get("player").id);
+  return typeof result === "string" ? c.json({ error: result }, 409) : c.json(result);
+});
+app.post("/api/fish/wall", async (c) => {
+  const body = await c.req.json<{ fishId?: unknown; down?: boolean }>().catch(() => ({}) as { fishId?: unknown; down?: boolean });
+  const id = c.get("player").id;
+  const result = body.down ? await unmountInPub(c.env.DB, id, body.fishId) : await mountInPub(c.env.DB, id, body.fishId);
+  return typeof result === "string" ? c.json({ error: result }, 409) : c.json(result);
+});
+app.post("/api/fish/hang", async (c) => {
+  const body = await c.req.json<{ furnishingId?: unknown; fishId?: unknown }>().catch(() => ({}) as { furnishingId?: unknown; fishId?: unknown });
+  const result = await hangAtHome(c.env, c.get("player").id, body.furnishingId, body.fishId ?? null);
   return typeof result === "string" ? c.json({ error: result }, 409) : c.json(result);
 });
 

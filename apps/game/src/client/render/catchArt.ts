@@ -337,3 +337,31 @@ export function catchIcon(species: string): string {
   icons.set(species, url);
   return url;
 }
+
+
+/** World units to a metre, indoors: a hero is a little under a unit tall. */
+const WALL_M = 0.42;
+
+/**
+ * A catch mounted on a board for a wall, at its real size (up to what a wall will take): the board, the fish
+ * side-on on it, and a brass plate. Built facing out of the wall (+z), its middle at the origin, like the wall pieces.
+ */
+export function fishMount(fish: { species: string; mm: number }): THREE.Group {
+  const g = new THREE.Group();
+  const len = Math.max(0.24, Math.min(1.3, (fish.mm / 1000) * WALL_M));
+  const model = catchMesh(fish.species, "side");
+  model.scale.setScalar(len);
+  model.updateMatrixWorld(true);
+  const bounds = new THREE.Box3().setFromObject(model);
+  const size = bounds.getSize(new THREE.Vector3());
+  const centre = bounds.getCenter(new THREE.Vector3());
+  const w = size.x + 0.12;
+  const h = Math.max(0.2, size.y + 0.1);
+  g.add(part(box(w, h, 0.04), "#4a3322", { pos: [0, 0, 0.02] }));
+  g.add(part(box(w + 0.03, 0.025, 0.045), "#6b4a2a", { pos: [0, h / 2, 0.022] }));
+  g.add(part(box(w + 0.03, 0.025, 0.045), "#6b4a2a", { pos: [0, -h / 2, 0.022] }));
+  g.add(part(box(Math.min(0.14, w * 0.4), 0.035, 0.01), "#c8a040", { pos: [0, -h / 2 + 0.04, 0.045] }));
+  model.position.set(-centre.x, -centre.y + 0.01, 0.05 + size.z / 2 - centre.z);
+  g.add(model);
+  return g;
+}
