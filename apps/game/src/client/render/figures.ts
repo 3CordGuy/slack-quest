@@ -798,7 +798,8 @@ function person(top: THREE.Group, look: Look, outfit: Outfit | undefined, asleep
   const shield = outfit?.off_hand;
   if (shield) drawShield(armL, shield.ref, shield.icon, trim("off_hand"));
   if (rodInHand) {
-    apply(b, drawHeld("rod", b, trim("main_hand"), look, !!shield));
+    // A townsperson, or a hero with nothing in hand, has no trim for it: the look's accent instead.
+    apply(b, drawHeld("rod", b, outfit?.main_hand ? trim("main_hand") : look.accent, look, !!shield));
   } else if (outfit) {
     const held = outfit.main_hand;
     if (held) {
