@@ -65,7 +65,8 @@ Build before deploying: `wrangler deploy` ships whatever the last build produced
 | `…/contracts.ts` | Notice-board contracts and the crew's weekly goal |
 | `…/hero.ts` | A hero as the battle rules see one; shared by voyages and the sparring ring |
 | `…/gather.ts` | Fishing, felling and the quarry: outings, timing, payouts, stamina and resting |
-| `…/grove.ts` | Felling's grove: where a felled tree comes down (wind, fall lines, the creek and the pile) |
+| `…/felling.ts` | Felling's two rounds: trees, chops, regrowth, the marker over each log, and replaying a round's report |
+| `…/timing.ts` | The timed stop shared by fishing, the quarry and the splitting block: markers, grades and how a stat eases them |
 | `…/projects.ts` | Crew projects (the lighthouse and those still to open) |
 | `…/pub.ts` | The pub's room, menu and food-and-drink boosts |
 | `…/dice.ts`, `…/shoals.ts` | The pub's two table games, each a pure reducer with a per-player view |
@@ -81,7 +82,7 @@ Build before deploying: `wrangler deploy` ships whatever the last build produced
 | `apps/game/src/server/ai.ts` | Prompts and the Workers AI calls (and the mock) |
 | `apps/game/src/server/db.ts` | D1 access |
 | `apps/game/src/server/email.ts` | Sending sign-in codes |
-| `apps/game/src/client/render/` | Three.js renderer, placeholder sprites, furniture models (`props.ts`), the sky, weather, shadows and moving decoration (`ambience.ts`), and the felling grove (`GroveStage.ts`, its own small scene drawn full screen behind the gather panel) |
+| `apps/game/src/client/render/` | Three.js renderer, placeholder sprites, furniture models (`props.ts`), the sky, weather, shadows and moving decoration (`ambience.ts`), and felling (`fellingScene.ts`, a `WorldMinigame`: the renderer swings its camera into the hero's eyes and hands it the input while it runs) |
 | `apps/game/src/client/*.tsx` | Character creation, crew gate, shared Harbor, huts, the pub, notice board (`board/`), works (`works/`), sparring, gathering, trading, inventory, market stall, the crossing, fight pacing (`BattleBeats.tsx`) and the in-voyage HUD (React) |
 | `apps/game/src/client/itemArt.ts` | Pixel-art item icons drawn in code, in the style of the hero sprites; the accent colour is the item's rarity |
 
@@ -106,7 +107,7 @@ pnpm --filter @gantt-quest/game test
 
 The game's own tests (`apps/game/test/`) run the trading server code against SQLite with the migrations applied, using Node's built-in `node:sqlite` as a stand-in for D1.
 
-In dev builds the page exposes `window.__gq` (`state`, `send`, and the `World` module) on a voyage and `window.__harbor` in the Harbor, for driving either from the console. Set `window.__gqTime` to a number from 0 to 1 to pin the time of day (0 is midnight, 0.5 is noon), and `window.__gqWeather` from 0 (clear) to 1 (heavy rain) to pin the weather. The pub and huts expose `window.__pub` and `window.__hut` the same way. `window.__gqWorld` is the world renderer and `window.__gqGrove` the felling grove while it is open; each has `renderer.info.render.calls` for draw calls.
+In dev builds the page exposes `window.__gq` (`state`, `send`, and the `World` module) on a voyage and `window.__harbor` in the Harbor, for driving either from the console. Set `window.__gqTime` to a number from 0 to 1 to pin the time of day (0 is midnight, 0.5 is noon), and `window.__gqWeather` from 0 (clear) to 1 (heavy rain) to pin the weather. The pub and huts expose `window.__pub` and `window.__hut` the same way. `window.__gqWorld` is the world renderer (`renderer.info.render.calls` for draw calls).
 
 ## Known gaps
 
@@ -116,7 +117,6 @@ In dev builds the page exposes `window.__gq` (`state`, `send`, and the `World` m
 - The Harbor has twelve plots: a crew larger than that can't all own one.
 - The Galley project is still locked. Crew chat isn't stored.
 - The doom clock doesn't allow for time lost to fog and roaming bands.
-- Timing in fishing, felling and the quarry trusts the client's reported moment within a round trip, so a script can always hit dead centre (capped at +20% a roll, and a felled tree falling true).
-- The world renderer has no pause, so it keeps drawing underneath the full-screen felling grove.
+- Timing in fishing and the quarry trusts the client's reported moment within a round trip, so a script can always hit dead centre (capped at +20% a roll). Felling's report is replayed against what an axe could do (swing speed, regrowth, the round's length by the server's clock), but a script can still chop at the fastest swing and strike every log dead centre: at most the payout cap.
 - Gear has no affixes, uniques, sets or elements.
 - Felling's sounds are synth stand-ins until recordings are added under `sfx/gather/` (see `audio/manifest.ts`).

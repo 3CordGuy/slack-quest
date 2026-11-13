@@ -2,11 +2,12 @@
 // outing and rolls every check; this panel shows what it sends back and
 // posts the player's choice to push on or bank.
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type RefObject } from "react";
 import { GATHER_SPOTS, QUARRY_SIDE, TIMING, STAT_LABEL, type GatherChoice, type GatherSpot, type GatherView, type Resources } from "@gantt-quest/world";
 import { api, type GatherStatus, type XpResult } from "./api";
 import { DragPanel } from "./DragPanel";
-import { Grove, type GroveHero } from "./Grove";
+import { FellingGame } from "./FellingGame";
+import type { WorldRenderer } from "./render/WorldRenderer";
 import { TimingBar } from "./TimingBar";
 import { ResourceChips, resourceText } from "./hutDrops";
 import "./gather.css";
@@ -78,10 +79,10 @@ function Face({ outing, busy, cut }: { outing: GatherView; busy: boolean; cut(ce
   );
 }
 
-export function GatherPanel({ spot, hero, onClose, onStamina }: {
+export function GatherPanel({ spot, renderer, onClose, onStamina }: {
   spot: GatherSpot;
-  /** How the hero looks, for the grove. */
-  hero: GroveHero;
+  /** The Harbor's renderer: felling is played in it, through the hero's eyes. */
+  renderer: RefObject<WorldRenderer | null>;
   onClose(): void;
   /** Told each time the outings left change, so the plate can follow. */
   onStamina?(s: { left: number; max: number }): void;
@@ -136,13 +137,26 @@ export function GatherPanel({ spot, hero, onClose, onStamina }: {
   const active = outing?.status === "active";
   const pct = outing && active ? outing.pct : status?.chances[shown];
   const left = status?.stamina.left ?? 0;
-  // Felling with a grove: the stand fills the screen and the panel floats over it, docked to one side.
-  const groveMode = !!outing?.grove;
-  const [host, setHost] = useState<HTMLDivElement | null>(null);
+  // Felling is played in the Harbor itself, through the hero's eyes: no panel over it.
+  if (outing?.felling && outing.spot === spot) {
+    return (
+      <FellingGame
+        outing={outing}
+        busy={busy}
+        error={error}
+        paid={paid}
+        xp={xp}
+        staminaLeft={left}
+        renderer={renderer}
+        step={step}
+        again={() => void run(() => api.gatherStart(spot))}
+        onClose={onClose}
+      />
+    );
+  }
 
   return (
-    <div className={`overlay ${groveMode ? "grove-mode" : ""}`} onClick={(e) => e.target === e.currentTarget && onClose()}>
-      {groveMode && <div className="grove-backdrop" ref={setHost} aria-label="The grove: tap a tree" />}
+    <div className="overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
       <DragPanel id="harbor.gather" title={def.name} compact className={`panel gather ${shown}`} role="dialog" aria-label={def.name}>
         <header className="gather-head">
           <h2>{def.name}</h2>
@@ -159,14 +173,7 @@ export function GatherPanel({ spot, hero, onClose, onStamina }: {
             <button disabled={busy} onClick={() => step({ t: "bank" })}>{words.bank}</button>
           </div>
         )}
-        {groveMode ? (
-          <details className="gather-blurb">
-            <summary className="muted">How it works</summary>
-            <p className="muted">{def.blurb}</p>
-          </details>
-        ) : (
-          <p className="muted gather-blurb">{def.blurb}</p>
-        )}
+        <p className="muted gather-blurb">{def.blurb}</p>
 
         {status && (
           <div className="gather-facts">
@@ -220,8 +227,7 @@ export function GatherPanel({ spot, hero, onClose, onStamina }: {
                 <span className="muted">cast {outing.step} of {outing.maxSteps}</span>
               </div>
             )}
-            {outing.grove && <Grove outing={outing} busy={busy} hero={hero} host={host} step={step} />}
-            {outing.spot === "felling" && !outing.grove && active && <p className="muted gather-hint">This outing was started in the old tree line, before the grove. Carry what you have home and start a new one.</p>}
+            {outing.spot === "felling" && !outing.felling && active && <p className="muted gather-hint">This outing was started before felling changed. Carry what you have home and start a new one.</p>}
             {outing.water && (
               <>
                 <Water outing={outing} busy={busy || !!outing.aim} cast={(cell) => step({ t: "aim", cell })} />
@@ -253,7 +259,7 @@ export function GatherPanel({ spot, hero, onClose, onStamina }: {
                   {Object.keys(entry.gained).length > 0 && <span className="good"> +{resourceText(entry.gained)}</span>}
                 </li>
               ))}
-              {outing.log.length === 0 && <li className="muted">{outing.spot === "felling" ? "Nine trees. Read the wind, knock if you are unsure, and pick one to fell." : outing.spot === "fishing" ? "Gulls are circling. The school is under them or right beside. Pick where to cast, then reel when the fish is on the hook." : "Nine blocks. Read the dust, pick one to cut, then strike when the pick is on the mark."}</li>}
+              {outing.log.length === 0 && <li className="muted">{outing.spot === "felling" ? "The old tree line." : outing.spot === "fishing" ? "Gulls are circling. The school is under them or right beside. Pick where to cast, then reel when the fish is on the hook." : "Nine blocks. Read the dust, pick one to cut, then strike when the pick is on the mark."}</li>}
             </ol>
 
             {active ? (
