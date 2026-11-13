@@ -172,7 +172,9 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
   const usePiece = useRef<(id: number) => void>(() => {});
   const room = useMemo(() => (tier === null ? null : hutRoom(tier)), [tier]);
   const placed = useMemo(() => placedFurnishings(furnishings), [furnishings]);
-  const stored = furnishings.filter((f) => f.q === null && f.inId === null);
+  // Boats are kept at the pier, not in the hut.
+  const boats = furnishings.filter((f) => defOf(f)?.kind === "vessel");
+  const stored = furnishings.filter((f) => f.q === null && f.inId === null && defOf(f)?.kind !== "vessel");
   const storedBig = stored.filter((f) => !isSmall(f.defId) && !isMounted(f.defId));
   const storedWall = stored.filter((f) => isMounted(f.defId));
   const storedSmall = stored.filter((f) => isSmall(f.defId));
@@ -676,6 +678,7 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
           )}
           {noteIn("storage")}
           {stored.length === 0 && <p className="muted">Nothing in storage. Make something in the Craft panel.</p>}
+          {boats.length > 0 && <p className="muted">Tied up at the pier: {boats.map((b) => b.label).join(", ")}. Walk off the end of a pier to take it out.</p>}
           {[["Furniture", storedBig], ["On the walls", storedWall], ["Small things", storedSmall]].map(([heading, list]) => (list as Furnishing[]).length > 0 && (
             <div key={heading as string}>
               <h4>{heading as string}</h4>
@@ -715,7 +718,7 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
                     <div className="row">
                       <CostChips cost={def.recipe!} have={own.resources} />
                       <span className="spacer" />
-                      <button className="small primary" disabled={busy || !!problem} title={problem ?? "Goes into storage"} onClick={() => void spend("craft", () => api.craft(def.id), `${label("furnishing", def.id)} crafted. It is in storage.`)}>
+                      <button className="small primary" disabled={busy || !!problem} title={problem ?? (def.kind === "vessel" ? "Tied up at the pier when it is done" : "Goes into storage")} onClick={() => void spend("craft", () => api.craft(def.id), def.kind === "vessel" ? `${label("furnishing", def.id)} built. It is tied up at the pier: walk off the end of one to take it out.` : `${label("furnishing", def.id)} crafted. It is in storage.`)}>
                         Craft
                       </button>
                     </div>

@@ -110,7 +110,7 @@ export interface Mount {
 export interface FurnishingDef {
   id: string;
   name: string;
-  kind: "furniture" | "trophy";
+  kind: "furniture" | "trophy" | "vessel";
   /**
    * "small" things (a candle, a mug) go anywhere inside a hex, at any angle,
    * several to a hex, and can stand on a surface. They do not block walking.
@@ -220,6 +220,10 @@ export const FURNISHINGS: Record<string, FurnishingDef> = {
   lobster_pot: { id: "lobster_pot", name: "Lobster Pot", kind: "furniture", mount: { w: 0.5, h: 0.36 }, model: "lobster_pot", blurb: "Hung up empty. Everything that went in it went in the book." },
   glass_floats: { id: "glass_floats", name: "Net of Glass Floats", kind: "furniture", mount: { w: 0.72, h: 0.5 }, model: "glass_floats", blurb: "Green and blue glass in a knotted net, from everything the sea gave back." },
   ironjaw_jaw: { id: "ironjaw_jaw", name: "Old Ironjaw's Jaw", kind: "furniture", mount: { w: 0.78, h: 0.56 }, model: "ironjaw_jaw", blurb: "Every hook he ever took is still in it." },
+
+  // Boats: crafted at home, kept tied up at the pier, never placed in a room. Owning one lets a hero walk out onto the water.
+  float_barrel: { id: "float_barrel", name: "Floating Barrel", kind: "vessel", model: "float_barrel", blurb: "A barrel big enough to sit in. It goes where the water is shallow enough to push off the bottom: the coast, the rocks, the wreck.", recipe: { wood: 6, iron: 1 } },
+  rowboat: { id: "rowboat", name: "Rowboat", kind: "vessel", model: "rowboat", blurb: "A proper boat, with oars. It goes anywhere on the water, and out past the Harbor to the open sea. Your basket holds 20 kg more in it.", recipe: { wood: 20, copper: 4, fur: 2 } },
 
   // Far goods: never at the stall and never crafted. Only a traveling salesman carries them (see salesman.ts).
   globe: { id: "globe", name: "Sea Globe", kind: "furniture", footprint: { w: 0.56, d: 0.56, round: true }, model: "globe", blurb: "Some of the coastlines are guesses. +1% XP.", perk: { xpPct: 1 } },
@@ -476,4 +480,15 @@ export function upgradeProblem(tier: number, gold: number, resources: Resources)
   if (!next) return "Your hut is as big as huts get.";
   const short = [gold < next.gold ? `${next.gold - gold} more gold` : "", shortfall(resources, next.resources)].filter(Boolean).join(", ");
   return short ? `You need ${short}.` : null;
+}
+
+
+/** Which boat each vessel furnishing is. */
+export const VESSEL_OF: Record<string, "barrel" | "rowboat"> = { float_barrel: "barrel", rowboat: "rowboat" };
+
+/** The best boat among a player's furnishings: a rowboat over a barrel. */
+export function bestVessel(defIds: readonly string[]): "barrel" | "rowboat" | null {
+  if (defIds.includes("rowboat")) return "rowboat";
+  if (defIds.includes("float_barrel")) return "barrel";
+  return null;
 }

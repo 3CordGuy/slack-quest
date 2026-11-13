@@ -18,12 +18,14 @@ import {
   UNSTICK_COOLDOWN_MS,
   generateHarbor,
   fishSpotAt,
+  waterSpotAt,
   harborPath,
   type HarborClientMessage,
   type HarborPlayer,
   type HarborServerMessage,
 } from "@gantt-quest/world";
 import { getCrew, harborBoard, heroInitFor, type Env } from "./db";
+import { ownedVessel } from "./fishmarket";
 import { readXpPost, relayXp } from "./harbor-xp";
 
 const MAP = generateHarbor();
@@ -101,6 +103,7 @@ export class HarborRoom extends DurableObject<Env> {
       xp: hero?.xp,
       pos,
       outfit: hero?.outfit,
+      vessel: await ownedVessel(this.env.DB, id),
     };
 
     const pair = new WebSocketPair();
@@ -129,7 +132,8 @@ export class HarborRoom extends DurableObject<Env> {
     if (msg.type === "move") {
       const to = { q: Number(msg.to?.q), r: Number(msg.to?.r) };
       if (!Number.isInteger(to.q) || !Number.isInteger(to.r)) return;
-      const path = harborPath(MAP, player.pos, to);
+      // With a boat, out onto the water: a barrel along the coast, a rowboat anywhere.
+      const path = harborPath(MAP, player.pos, to, player.vessel ?? null);
       if (!path) return;
       // Walking off rolls the bedroll back up.
       ws.serializeAttachment({ ...player, pos: path[path.length - 1], bedroll: undefined, fishing: undefined } satisfies HarborPlayer);
@@ -138,7 +142,7 @@ export class HarborRoom extends DurableObject<Env> {
       // They changed gear or levelled: re-read the character and show everyone the new look.
       const hero = await heroInitFor(this.env.DB, player.id);
       if (!hero) return;
-      const next: HarborPlayer = { ...player, name: hero.name, classId: hero.classId, level: hero.level, xp: hero.xp, outfit: hero.outfit };
+      const next: HarborPlayer = { ...player, name: hero.name, classId: hero.classId, level: hero.level, xp: hero.xp, outfit: hero.outfit, vessel: await ownedVessel(this.env.DB, player.id) };
       ws.serializeAttachment(next);
       this.broadcast({ type: "joined", player: next });
     } else if (msg.type === "bedroll") {
@@ -149,7 +153,7 @@ export class HarborRoom extends DurableObject<Env> {
       this.broadcast({ type: "joined", player: next });
     } else if (msg.type === "fishing") {
       // Purely for show, like the bedroll: the sitting itself is the server's over HTTP. Only at a fishing spot.
-      const on = msg.on === true && fishSpotAt(player.pos) !== null;
+      const on = msg.on === true && (fishSpotAt(player.pos) !== null || waterSpotAt(MAP, player.pos) !== null);
       if (!!player.fishing === on) return;
       const next: HarborPlayer = { ...player, fishing: on || undefined };
       ws.serializeAttachment(next);

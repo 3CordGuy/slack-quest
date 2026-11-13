@@ -25,7 +25,7 @@ import { FELL_ROUND_MS, MAX_REPORTED, TREES, newFelling, replayChops, replayStri
 import { TIMING, timingEase, timingGrade, type Motion, type TimingGrade } from "./timing";
 import { MINE_CHARGE_MS, landBlows, mineView, rockYield, seedMine, type Blow, type MineState, type MineView } from "./mine";
 import { sittingMaterials, sittingView, stepSitting, type Sitting, type SittingView } from "./sitting";
-import type { FishSpot } from "./fishing";
+import type { FishSpot, Vessel } from "./fishing";
 
 export type GatherSpot = "fishing" | "felling" | "quarry";
 export const GATHER_SPOT_IDS: GatherSpot[] = ["fishing", "felling", "quarry"];
@@ -149,7 +149,7 @@ export type GatherChoice =
   /** Quarry: the blows struck since the last report, each with when it landed. `now` is the server's clock. */
   | { t: "blows"; blows: Blow[]; now?: number }
   /** A sitting: throw the line, `power` 0 to 1 of the spot's reach, from `spot` if the player has moved to another. `now` is the server's clock, filled in by the server. */
-  | { t: "cast"; power: number; spot?: FishSpot; now?: number }
+  | { t: "cast"; power: number; spot?: FishSpot; now?: number; vessel?: Vessel | null }
   /** A sitting: set the hook, `at` ms after the cast as the client saw it. */
   | { t: "hook"; at: number; now?: number }
   /** A sitting: wind the line in (cutting it, if something is on). */

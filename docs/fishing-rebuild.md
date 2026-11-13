@@ -650,6 +650,14 @@ Two craftable boats let you walk off a pier or the shore onto the water, and fis
    - The Open Sea page and Old Ironjaw switch on: the catalog has their entries from phase 1, but they're never rolled until this phase ships.
    - Tests: path rules for each vessel, `waterAt` zones, sea requiring a rowboat, and `afloat` set and cleared.
 
+   - **Built, 2026-11-13:**
+     - **Spots afloat:** `coast_west` (shallows), `coast_south` (mouth), `coast_east` (deep), `wreck` (deep, Wreck grouper and blue lobster ×2), each needing a barrel, and `sea`, needing a rowboat. `waterSpotAt` and `seaEdge` work out which one a hex is.
+     - **Rules:** `harborPath(map, from, to, vessel)` lets a barrel onto water next to land and a rowboat anywhere; neither goes onto the rocks or the wreck. `vesselProblem` checks the boat a spot needs.
+     - **Server:** it fills in the boat a hero owns on every cast, so the client is never trusted for it. A rowboat sitting carries `ROWBOAT_CREEL_G` (20 kg) more.
+     - **Boats:** they're `vessel` furnishings (`float_barrel`, `rowboat`), crafted at home and never placed. The hut lists them as tied up at the pier.
+     - **Deviation:** the rowboat needs no blueprint (it's just costly), so it can actually be got.
+     - **On screen:** boats are drawn under heroes on the water (the renderer's `syncBoat`/`rideBoat`). The fishing view afloat sits lower, rolls with the swell, and shows the barrel's rim or the rowboat's gunwales.
+
 Per the house rules:
 
 - Sync with `main` before each phase.

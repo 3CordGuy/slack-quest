@@ -46,7 +46,7 @@ describe("the catalogue", () => {
   it("keeps the open sea's fish, and Old Ironjaw, to the open sea", () => {
     for (const f of bookPage("sea")) expect(f.water).toEqual(["sea"]);
     expect(FISH.ironjaw.water).toEqual(["sea"]);
-    expect(FISH_SPOTS.sea.closed).toBeTruthy();
+    expect(FISH_SPOTS.sea.vessel).toBe("rowboat");
   });
 });
 

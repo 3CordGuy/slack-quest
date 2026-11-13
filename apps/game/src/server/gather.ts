@@ -39,9 +39,12 @@ import {
   startSitting,
   type AnglerStats,
   type FishSpot,
+  ROWBOAT_CREEL_G,
+  vesselProblem,
 } from "@gantt-quest/world";
 import { heroInitFor } from "./db";
 import { closeSitting, type SittingPaid } from "./fishing";
+import { ownedVessel } from "./fishmarket";
 import { prepareXp, readHarborXp, xpOutcome, type XpResult } from "./harbor-xp";
 
 export interface GatherStatus {
@@ -173,10 +176,14 @@ async function startSittingOuting(db: D1Database, playerId: string, pier: unknow
   if (!FISH_SPOT_IDS.includes(pier as FishSpot)) return "You cannot fish from there.";
   const spot = FISH_SPOTS[pier as FishSpot];
   if (spot.closed) return spot.closed;
-  const angler = await anglerStats(db, playerId);
+  const [angler, vessel] = await Promise.all([anglerStats(db, playerId), ownedVessel(db, playerId)]);
   if (!angler) return "Create a character first.";
+  const afloat = vesselProblem(spot.id, vessel);
+  if (afloat) return afloat;
   const now = Date.now();
-  const state = startSitting(spot.id, crypto.getRandomValues(new Uint32Array(1))[0], angler, now);
+  // Begun in a rowboat, the boat carries more.
+  const extra = spot.vessel && vessel === "rowboat" ? ROWBOAT_CREEL_G : 0;
+  const state = startSitting(spot.id, crypto.getRandomValues(new Uint32Array(1))[0], angler, now, extra);
   const today = gatherDay(now);
   // As a start: no outing already under way, and stamina left today. Unlike a start, nothing is spent yet.
   const res = await db
@@ -243,7 +250,11 @@ export async function stepOuting(db: D1Database, playerId: string, choice: unkno
   const idle = await settleIdle(db, playerId, row);
   if (idle) return { ...(await status(db, playerId, stats, idle.ended)), paid: idle.paid.paid, xp: idle.paid.xp, sitting: idle.paid };
   const current = JSON.parse(row.session_json) as GatherState;
-  const step = stepGather(current, timed(current, (choice ?? {}) as GatherChoice, Date.now()));
+  let asked = (choice ?? {}) as GatherChoice;
+  // A cast afloat is judged against the boat the hero really owns, never one the client names.
+  if (current.sitting && asked.t === "cast") asked = { ...asked, vessel: await ownedVessel(db, playerId) };
+  else if (asked.t === "cast") asked = { ...asked, vessel: null };
+  const step = stepGather(current, timed(current, asked, Date.now()));
   if (step.error) return step.error;
   const next = step.state;
 

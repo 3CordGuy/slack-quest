@@ -363,6 +363,7 @@ const smallPoint = (f: { q: number; r: number; x?: number; z?: number }): Pt => 
  */
 export function placeProblem(room: WorldMap, placed: Placed[], defId: string, pos: HexPos, spot: FloorSpot = { x: 0, z: 0, angle: 0 }): string | null {
   if (!FURNISHINGS[defId]) return "There is no such furnishing.";
+  if (FURNISHINGS[defId].kind === "vessel") return "A boat is kept tied up at the pier.";
   if (isMounted(defId)) return "That hangs on a wall.";
   const floor = floorProblem(room, pos);
   if (floor) return floor;

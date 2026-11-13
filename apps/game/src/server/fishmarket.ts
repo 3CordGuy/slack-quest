@@ -14,6 +14,8 @@ import {
   type FishBoard,
   type FishBuyer,
   type FishSpot,
+  type Vessel,
+  bestVessel,
 } from "@gantt-quest/world";
 import { crewFor } from "./db";
 
@@ -51,6 +53,12 @@ interface Row {
   spot: FishSpot;
   caught_at: number;
   place: "icebox" | "trophy";
+}
+
+/** The best boat a player owns (crafted at home, kept at the pier), or null. */
+export async function ownedVessel(db: D1Database, playerId: string): Promise<Vessel | null> {
+  const rows = await db.prepare("SELECT def_id FROM furnishings WHERE player_id = ? AND def_id IN ('rowboat', 'float_barrel')").bind(playerId).all<{ def_id: string }>();
+  return bestVessel(rows.results.map((r) => r.def_id));
 }
 
 /** The board a player sees: their crew's, or their own if they have no crew. */

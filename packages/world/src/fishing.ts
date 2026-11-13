@@ -8,9 +8,24 @@
 import { FISH, FISH_IDS, KEPT_HAUL_PRICE, type FishDef, type FishRarity, type Water } from "./fishcatalog";
 import type { Rng } from "./rng";
 
-/** Where a sitting is fished from: a pier head, the old shore spot, or (by rowboat) the open sea. */
-export type FishSpot = "west" | "middle" | "east" | "shore" | "sea";
-export const FISH_SPOT_IDS: FishSpot[] = ["west", "middle", "east", "shore", "sea"];
+/**
+ * Where a sitting is fished from: a pier head or the old shore spot; afloat, the coast's waters (by barrel or
+ * rowboat), by the rocks and the wreck; or, by rowboat, the open sea.
+ */
+export type FishSpot = "west" | "middle" | "east" | "shore" | "coast_west" | "coast_south" | "coast_east" | "wreck" | "sea";
+export const FISH_SPOT_IDS: FishSpot[] = ["west", "middle", "east", "shore", "coast_west", "coast_south", "coast_east", "wreck", "sea"];
+
+/** A boat a hero can take out: a barrel keeps to the coast; a rowboat goes anywhere, and out to sea. */
+export type Vessel = "barrel" | "rowboat";
+
+/** Why `vessel` cannot take a hero to `spot`, or null if it can (or the spot is ashore). */
+export function vesselProblem(spot: FishSpot, vessel: Vessel | null | undefined): string | null {
+  const need = FISH_SPOTS[spot]?.vessel;
+  if (!need) return null;
+  if (!vessel) return "You need a boat to fish out there.";
+  if (need === "rowboat" && vessel !== "rowboat") return "A barrel will not get you out to the open sea. You need a rowboat.";
+  return null;
+}
 
 export interface FishSpotDef {
   id: FishSpot;
@@ -18,8 +33,12 @@ export interface FishSpotDef {
   water: Water;
   /** How far a full cast reaches, 0 to 1: the shore only gets short casts. */
   maxCast: number;
-  /** Not yet fishable: the open sea waits for boats. */
+  /** Not yet fishable. */
   closed?: string;
+  /** Fished afloat: the least boat that gets there. */
+  vessel?: Vessel;
+  /** Kinds that bite more often here, and by how much. */
+  bonus?: Record<string, number>;
 }
 
 export const FISH_SPOTS: Record<FishSpot, FishSpotDef> = {
@@ -27,7 +46,11 @@ export const FISH_SPOTS: Record<FishSpot, FishSpotDef> = {
   middle: { id: "middle", name: "The middle pier", water: "mouth", maxCast: 1 },
   east: { id: "east", name: "The east pier", water: "deep", maxCast: 1 },
   shore: { id: "shore", name: "The shore", water: "shallows", maxCast: 0.5 },
-  sea: { id: "sea", name: "The open sea", water: "sea", maxCast: 1, closed: "You need a boat to get out there." },
+  coast_west: { id: "coast_west", name: "Off the west coast", water: "shallows", maxCast: 1, vessel: "barrel" },
+  coast_south: { id: "coast_south", name: "In the harbor mouth", water: "mouth", maxCast: 1, vessel: "barrel" },
+  coast_east: { id: "coast_east", name: "Off the east coast", water: "deep", maxCast: 1, vessel: "barrel" },
+  wreck: { id: "wreck", name: "By the rocks and the wreck", water: "deep", maxCast: 1, vessel: "barrel", bonus: { wreck_grouper: 2, blue_lobster: 2 } },
+  sea: { id: "sea", name: "The open sea", water: "sea", maxCast: 1, vessel: "rowboat" },
 };
 
 /** Bites per hundred, by rarity, before a cast's reach shifts them. */
@@ -57,10 +80,10 @@ function weighted<T>(rng: Rng, items: [T, number][]): T {
 }
 
 /** What bites on a cast into `water` that reached `reach` (0 to 1) of the way out. */
-export function rollCatch(rng: Rng, water: Water, reach: number): FishDef {
+export function rollCatch(rng: Rng, water: Water, reach: number, bonus: Record<string, number> = {}): FishDef {
   const haul = rng.next() < HAUL_SHARE;
   const pool = FISH_IDS.map((id) => FISH[id]).filter((f) => f.water.includes(water) && (f.kind === "haul") === haul);
-  return weighted(rng, pool.map((f) => [f, haul ? RARITY_WEIGHT[f.rarity] : reachWeight(f.rarity, reach)] as [FishDef, number]));
+  return weighted(rng, pool.map((f) => [f, (haul ? RARITY_WEIGHT[f.rarity] : reachWeight(f.rarity, reach)) * (bonus[f.id] ?? 1)] as [FishDef, number]));
 }
 
 export interface FishSize {

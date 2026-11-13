@@ -6,12 +6,12 @@
 
 import { allHexesInGrid, type HexGrid, type HexPos } from "@gantt-quest/core";
 import type { Outfit } from "./gear";
-import type { FishSpot } from "./fishing";
+import type { FishSpot, Vessel } from "./fishing";
 import type { Perk, Resources } from "./hut";
 import type { ItemDef } from "./gear";
 import type { Stats } from "@gantt-quest/core";
 import type { HarborWorks } from "./projects";
-import { findPath, type Biome, type Poi, type PoiKind, type Tile, type WorldMap } from "./map";
+import { findPath, tileAt, type Biome, type Poi, type PoiKind, type Tile, type WorldMap } from "./map";
 
 /** What the crew's home port is called, wherever its name is shown. */
 export const HARBOR_NAME = "Heylets Harbor";
@@ -42,15 +42,17 @@ export const HARBOR_RING: HexPos = at(4, 7);
 /** Gathering spots at the edges: the south-west shore, the western trees, and an outcrop in the east wall. */
 export const HARBOR_GATHER = { fishing: at(4, 12), felling: at(1, 7), quarry: at(12, 5) } as const;
 /** Where a fishing sitting can be started: each pier head, and the old spot on the south-west shore. The open sea is reached by boat. */
-export const HARBOR_FISH_SPOTS: Record<Exclude<FishSpot, "sea">, HexPos> = {
+/** The piers and the shore spot. (Afloat, any water hex is a spot: see waterSpotAt.) */
+export type ShoreSpot = "west" | "middle" | "east" | "shore";
+export const HARBOR_FISH_SPOTS: Record<ShoreSpot, HexPos> = {
   west: HARBOR_PIERS[0],
   middle: HARBOR_PIERS[1],
   east: HARBOR_PIERS[2],
   shore: HARBOR_GATHER.fishing,
 };
 /** The fishing spot on a hex, if there is one. */
-export function fishSpotAt(pos: HexPos): Exclude<FishSpot, "sea"> | null {
-  for (const [id, p] of Object.entries(HARBOR_FISH_SPOTS) as [Exclude<FishSpot, "sea">, HexPos][]) if (p.q === pos.q && p.r === pos.r) return id;
+export function fishSpotAt(pos: HexPos): ShoreSpot | null {
+  for (const [id, p] of Object.entries(HARBOR_FISH_SPOTS) as [ShoreSpot, HexPos][]) if (p.q === pos.q && p.r === pos.r) return id;
   return null;
 }
 /** The pub: food, drink, the barkeep and the dice table are inside. */
@@ -160,10 +162,49 @@ export function generateHarbor(): WorldMap {
 /** Longest walk the server will accept in one request. */
 export const HARBOR_MAX_PATH = 60;
 
-/** A walkable route between two Harbor hexes, or null. Every step costs the same here; the sea and the rampart cannot be crossed. */
-export function harborPath(map: WorldMap, from: HexPos, to: HexPos): HexPos[] | null {
-  const route = findPath(map, from, to, HARBOR_MAX_PATH, (t) => (t.biome === "water" || t.biome === "rampart" ? Infinity : 1));
+/**
+ * A walkable route between two Harbor hexes, or null. Every step costs the same here; the rampart cannot be
+ * crossed, nor the water without a boat. A barrel keeps to water beside the land; a rowboat goes anywhere on it.
+ * Neither goes onto the rocks or the wreck.
+ */
+export function harborPath(map: WorldMap, from: HexPos, to: HexPos, vessel: Vessel | null = null): HexPos[] | null {
+  const route = findPath(map, from, to, HARBOR_MAX_PATH, (t) => {
+    if (t.biome === "rampart") return Infinity;
+    if (t.biome !== "water") return 1;
+    if (!vessel || HAZARDS.has(`${t.q},${t.r}`)) return Infinity;
+    return vessel === "rowboat" || coastal(map, t) ? 1 : Infinity;
+  });
   return route && route.path.length > 0 ? route.path : null;
+}
+
+/** The rocks and the wreck stand in the water: no boat goes onto them. */
+const HAZARDS = new Set([...HARBOR_ROCKS, HARBOR_WRECK].map((p) => `${p.q},${p.r}`));
+const NEIGHBOURS: HexPos[] = [{ q: 1, r: 0 }, { q: 1, r: -1 }, { q: 0, r: -1 }, { q: -1, r: 0 }, { q: -1, r: 1 }, { q: 0, r: 1 }];
+const around = (p: HexPos) => NEIGHBOURS.map((d) => ({ q: p.q + d.q, r: p.r + d.r }));
+
+/** Water beside land (or a pier): where a barrel can go. */
+export function coastal(map: WorldMap, p: HexPos): boolean {
+  return around(p).some((n) => {
+    const t = tileAt(map, n);
+    return !!t && t.biome !== "water";
+  });
+}
+
+/** A water hex at the edge of the map: from here a rowboat can row out to the open sea. */
+export function seaEdge(map: WorldMap, p: HexPos): boolean {
+  return tileAt(map, p)?.biome === "water" && around(p).some((n) => !tileAt(map, n));
+}
+
+/**
+ * The fishing spot for a hero afloat on a water hex: by the rocks or the wreck; otherwise the coast's water by
+ * which side of the island it is on. Null on land.
+ */
+export function waterSpotAt(map: WorldMap, p: HexPos): Exclude<FishSpot, "west" | "middle" | "east" | "shore" | "sea"> | null {
+  if (tileAt(map, p)?.biome !== "water") return null;
+  if ([...HAZARDS].some((k) => around(p).some((n) => `${n.q},${n.r}` === k))) return "wreck";
+  const col = p.q + Math.floor(p.r / 2);
+  const mid = HARBOR_SPAWN.q + Math.floor(HARBOR_SPAWN.r / 2);
+  return col <= mid - 2 ? "coast_west" : col >= mid + 3 ? "coast_east" : "coast_south";
 }
 
 // ---------- wire types ----------
@@ -182,6 +223,8 @@ export interface HarborPlayer {
   bedroll?: HexPos;
   /** Fishing at the pier they stand on, rod in hand, until they stop or walk off. */
   fishing?: boolean;
+  /** The best boat they own: drawn under them whenever they are on the water. */
+  vessel?: Vessel | null;
   /** In a hut: the bed (a furnishing id) they are lying on after a rest, until they walk off. */
   bed?: number;
 }

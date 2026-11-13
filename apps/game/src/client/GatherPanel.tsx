@@ -3,7 +3,8 @@
 // posts the player's choice to push on or bank.
 
 import { useEffect, useRef, useState, type RefObject } from "react";
-import { GATHER_SPOTS, TIMING, STAT_LABEL, type FishSpot, type GatherChoice, type GatherSpot, type GatherView, type Resources } from "@gantt-quest/world";
+import type { HexPos } from "@gantt-quest/core";
+import { GATHER_SPOTS, HARBOR_FISH_SPOTS, TIMING, STAT_LABEL, type ShoreSpot, type Vessel, type FishSpot, type GatherChoice, type GatherSpot, type GatherView, type Resources } from "@gantt-quest/world";
 import { api, type GatherStatus, type XpResult } from "./api";
 import { DragPanel } from "./DragPanel";
 import { FellingGame } from "./FellingGame";
@@ -58,10 +59,13 @@ function Water({ outing, busy, cast }: { outing: GatherView; busy: boolean; cast
   );
 }
 
-export function GatherPanel({ spot, pier, shipBeside = false, onRod, renderer, onClose, onStamina }: {
+export function GatherPanel({ spot, pier, at, vessel = null, shipBeside = false, onRod, renderer, onClose, onStamina }: {
   spot: GatherSpot;
-  /** Fishing: the pier (or the shore) the hero is standing on. */
-  pier?: Exclude<FishSpot, "sea">;
+  /** Fishing: where the hero is fishing from (a pier, the shore, or afloat), and the hex they are on. */
+  pier?: FishSpot;
+  at?: HexPos;
+  /** The best boat the hero owns. */
+  vessel?: Vessel | null;
   /** A crew's ship is moored off that pier. */
   shipBeside?: boolean;
   /** Fishing: show the hero with a rod in hand to everyone in the Harbor, or put it down. */
@@ -74,6 +78,7 @@ export function GatherPanel({ spot, pier, shipBeside = false, onRod, renderer, o
 }) {
   const [status, setStatus] = useState<GatherStatus | null>(null);
   const [atPier] = useState(pier);
+  const [atHex] = useState(at);
   const [shipAtOpen] = useState(shipBeside);
   const [paid, setPaid] = useState<Resources | null>(null);
   /** What the outing just ended paid in XP. */
@@ -132,11 +137,18 @@ export function GatherPanel({ spot, pier, shipBeside = false, onRod, renderer, o
   // arrive, and the sitting must not fall back to the old panel because of it. An open sitting with no pier to hand
   // is fished from its own.
   const open = latest?.status === "active" ? latest : null;
-  const sittingAt = open?.sitting && open.sitting.spot !== "sea" ? open.sitting.spot : undefined;
-  const fishFrom = atPier ?? sittingAt;
-  if (spot === "fishing" && fishFrom && renderer.current) {
+  const sitting = open?.sitting?.spot;
+  // Somewhere to stand: where the panel was opened; else the sitting's own pier; else (a sitting begun afloat, the
+  // hero now ashore) the middle pier.
+  const shore = (s: FishSpot | undefined): s is ShoreSpot => !!s && s in HARBOR_FISH_SPOTS;
+  const from: { spot: FishSpot; at: HexPos } | null =
+    atPier && atHex ? { spot: atPier, at: atHex }
+    : shore(sitting) ? { spot: sitting, at: HARBOR_FISH_SPOTS[sitting] }
+    : sitting ? { spot: "middle", at: HARBOR_FISH_SPOTS.middle }
+    : null;
+  if (spot === "fishing" && from && renderer.current) {
     if (!status && !error) return null;
-    if (!open || open.sitting) return <Fishing pier={fishFrom} world={renderer.current} shipBeside={shipAtOpen} onRod={onRod} onClose={onClose} onStamina={onStamina} />;
+    if (!open || open.sitting) return <Fishing pier={from.spot} at={from.at} vessel={vessel} world={renderer.current} shipBeside={shipAtOpen} onRod={onRod} onClose={onClose} onStamina={onStamina} />;
   }
   // Felling is played in the Harbor itself, through the hero's eyes: no panel over it.
   if (outing?.felling && outing.spot === spot) {
