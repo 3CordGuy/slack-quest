@@ -21,6 +21,7 @@ import {
 } from "@gantt-quest/world";
 import { api, type GatherStatus, type SittingPaid, type XpResult } from "./api";
 import { ResourceChips } from "./hutDrops";
+import { catchIcon } from "./render/catchArt";
 import { FishingStage, type FishHooks, type FishPhase } from "./render/FishingStage";
 import { hexToWorld, type WorldRenderer } from "./render/WorldRenderer";
 import { StaminaBolts } from "./StaminaBolts";
@@ -82,6 +83,11 @@ function Summary({ view, paid, xp, sitting }: { view: GatherView; paid?: Resourc
   const heaviest = [...kept].sort((a, b) => b.grams - a.grams)[0];
   return (
     <div className="qa-result fish-summary">
+      {s.landed.some((f) => f.kept) && (
+        <div className="fish-icons">
+          {s.landed.filter((f) => f.kept).map((f, i) => <img key={i} src={catchIcon(f.species)} alt={FISH[f.species].name} title={`${FISH[f.species].name}, ${formatWeight(f.grams, u)}`} width={40} height={40} />)}
+        </div>
+      )}
       <p>{kept.length === 0 ? "Nothing in the creel this time." : `${kept.length} in the creel, ${formatLoad(s.creelGrams, u)} in all${released ? `, and ${released} thrown back` : ""}.`}</p>
       {heaviest && <p className="muted">Biggest: {FISH[heaviest.species].name}, {formatWeight(heaviest.grams, u)}.</p>}
       {(sitting?.newSpecies.length ?? 0) > 0 && <p className="good">New in your Catch Book: {sitting!.newSpecies.map((id) => FISH[id].name).join(", ")}.</p>}
@@ -202,7 +208,7 @@ function Sitting({ outing, world, pier, shipBeside, apply, onRod, onClose }: {
           tensionFill.current.style.height = `${Math.min(100, (h.tension / 1.2) * 100)}%`;
           tensionFill.current.dataset.zone = h.tension >= 0.95 ? "red" : h.tension >= 0.7 ? "amber" : "green";
         }
-        if (strengthFill.current) strengthFill.current.style.width = `${Math.round(h.strength * 100)}%`;
+        if (strengthFill.current) strengthFill.current.style.height = `${Math.round(h.strength * 100)}%`;
         if (lineFill.current) {
           lineFill.current.style.width = `${Math.round(Math.min(1, h.lineOut) * 100)}%`;
           lineFill.current.dataset.low = h.lineOut > 0.8 ? "1" : "0";
@@ -381,12 +387,6 @@ function Sitting({ outing, world, pier, shipBeside, apply, onRod, onClose }: {
           <div className="fish-creel-bar"><div style={{ width: `${Math.min(100, (live.creelGrams / live.creelLimitG) * 100)}%` }} /></div>
           <span className="tabular">{formatLoad(live.creelGrams, u)} / {formatLoad(live.creelLimitG, u)}</span>
         </div>
-        {fighting && (
-          <div className="fish-strength" aria-label="The fish's strength">
-            <span className="fish-q">?</span>
-            <div className="fish-strength-bar"><div ref={strengthFill} /></div>
-          </div>
-        )}
         {prompt && <span className="fish-prompt">{prompt}</span>}
         {phase === "charging" && <div className="fish-charge"><div ref={chargeFill} /></div>}
         {fighting && <span className="fish-mode-word" ref={modeWord} />}
@@ -394,11 +394,23 @@ function Sitting({ outing, world, pier, shipBeside, apply, onRod, onClose }: {
 
       {fighting && (
         <div className="fish-side">
-          <div className="fish-tension" aria-label="Line tension">
-            <div className="fish-tension-zones"><i className="red" /><i className="amber" /></div>
-            <div className="fish-tension-fill" ref={tensionFill} />
+          {/* The fish's strength and the line's tension side by side: tire the one without breaking the other. */}
+          <div className="fish-meters">
+            <div className="fish-meter">
+              <div className="fish-bar fish-strength" aria-label="The fish's strength">
+                <div className="fish-strength-fill" ref={strengthFill} />
+              </div>
+              <span className="fish-side-label">Fish</span>
+            </div>
+            <div className="fish-meter">
+              <div className="fish-bar fish-tension" aria-label="Line tension">
+                <div className="fish-tension-zones"><i className="red" /><i className="amber" /></div>
+                <div className="fish-tension-fill" ref={tensionFill} />
+              </div>
+              <span className="fish-side-label">Line</span>
+            </div>
           </div>
-          <span className="fish-side-label">Line</span>
+          <span className="fish-side-label">Line out</span>
           <div className="fish-line" title="Line out"><div ref={lineFill} /></div>
         </div>
       )}
@@ -407,8 +419,13 @@ function Sitting({ outing, world, pier, shipBeside, apply, onRod, onClose }: {
 
       {pending && def && !ended && (
         <div className={`fish-card ${def.rarity}`} role="dialog" aria-label={def.name}>
-          <span className="fish-rarity">{def.rarity}{pending.specimen ? " · specimen" : ""}</span>
-          <h3>{def.name}</h3>
+          <div className="fish-card-head">
+            <img className="fish-icon" src={catchIcon(pending.species)} alt="" width={64} height={64} />
+            <div>
+              <span className="fish-rarity">{def.rarity}{pending.specimen ? " · specimen" : ""}</span>
+              <h3>{def.name}</h3>
+            </div>
+          </div>
           <p className="fish-size">
             <strong>{formatWeight(pending.grams, u)}</strong>
             {def.kind !== "haul" && <span> · {formatLength(pending.mm, u)}</span>}

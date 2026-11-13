@@ -16,7 +16,6 @@ import * as THREE from "three";
 import {
   FIGHT_MAX_EDGES,
   FIGHT_TICK_MS,
-  FISH,
   FISH_SPOTS,
   LINE_M,
   castMetres,
@@ -34,6 +33,7 @@ import {
 import { audio } from "../audio/engine";
 import { soundName } from "../audio/names";
 import { OVERLAY_LAYER } from "./post";
+import { catchModel } from "./catchArt";
 import { addWaterRipple } from "./water";
 import type { WorldMinigame, WorldRenderer } from "./WorldRenderer";
 
@@ -256,7 +256,7 @@ export class FishingStage implements WorldMinigame {
     this.reelHandle.add(arm, knob);
     this.joints[0].add(reel, this.reelHandle);
 
-    // Hands: one round the grip, the other at the reel.
+    // One hand, round the grip.
     const hand = (x: number, y: number, z: number) => {
       const g = new THREE.Group();
       const fist = new THREE.Mesh(new THREE.BoxGeometry(0.045, 0.055, 0.045), skin);
@@ -266,7 +266,7 @@ export class FishingStage implements WorldMinigame {
       g.position.set(x, y, z);
       return g;
     };
-    this.joints[0].add(hand(0, 0.06, 0), hand(0.05, 0.2, 0.06));
+    this.joints[0].add(hand(0, 0.06, 0));
 
     this.rod.traverse((o) => {
       if (o instanceof THREE.Mesh) {
@@ -809,50 +809,4 @@ function disposeTree(obj: THREE.Object3D) {
     const mats = Array.isArray(mesh.material) ? mesh.material : mesh.material ? [mesh.material] : [];
     for (const m of mats) m.dispose();
   });
-}
-
-/**
- * A stand-in model of a catch, in its colours, sized to fit in front of the
- * eye (a bigger fish still looks bigger). The real models, one per kind,
- * come with the fish art; this is a body, a tail, a fin and an eye.
- */
-export function catchModel(fish: Pick<CaughtFish, "species" | "mm">): THREE.Group {
-  const def = FISH[fish.species];
-  const outer = new THREE.Group();
-  const g = new THREE.Group();
-  outer.add(g);
-  const [body, belly, accent] = def.palette.map((c) => new THREE.MeshBasicMaterial({ color: c }));
-  // How long it looks: a sprat is small in the hand, a shark fills the view.
-  const size = 0.07 + 0.25 * clamp01((Math.log10(Math.max(60, fish.mm)) - 2) / 1.6);
-  if (def.kind === "haul") {
-    const box = new THREE.Mesh(new THREE.BoxGeometry(size * 0.7, size * 0.55, size * 0.45), body);
-    const band = new THREE.Mesh(new THREE.BoxGeometry(size * 0.72, size * 0.08, size * 0.47), accent);
-    g.add(box, band);
-    // Hung from the line by a loop.
-    const loop = new THREE.Mesh(new THREE.TorusGeometry(size * 0.12, size * 0.02, 4, 10), belly);
-    loop.position.y = size * 0.36;
-    g.add(loop);
-    return outer;
-  }
-  // Hung by the mouth: the head up, the tail down.
-  const slim = ["eel", "ribbon", "gar", "pike", "sword", "sail"].includes(def.shape);
-  const flat = ["flat", "ray"].includes(def.shape);
-  const deep = ["deep", "moon", "sunfish"].includes(def.shape);
-  const h = size * (slim ? 0.14 : deep ? 0.5 : flat ? 0.4 : 0.26);
-  const w = size * (flat ? 0.06 : slim ? 0.08 : 0.14);
-  const b = new THREE.Mesh(new THREE.SphereGeometry(0.5, 14, 10), body);
-  b.scale.set(h, size, w);
-  const under = new THREE.Mesh(new THREE.SphereGeometry(0.5, 14, 10), belly);
-  under.scale.set(h * 0.8, size * 0.85, w * 1.02);
-  under.position.x = h * 0.12;
-  const tail = new THREE.Mesh(new THREE.ConeGeometry(h * 0.6, size * 0.25, 4), accent);
-  tail.position.y = -size * 0.55;
-  tail.rotation.y = Math.PI / 4;
-  const fin = new THREE.Mesh(new THREE.ConeGeometry(size * 0.08, size * 0.18, 3), accent);
-  fin.position.set(-h * 0.5, size * 0.05, 0);
-  fin.rotation.z = Math.PI / 2;
-  const eye = new THREE.Mesh(new THREE.SphereGeometry(Math.max(0.006, size * 0.035), 6, 4), new THREE.MeshBasicMaterial({ color: "#111" }));
-  eye.position.set(h * 0.2, size * 0.36, w * 0.5);
-  g.add(b, under, tail, fin, eye);
-  return outer;
 }
