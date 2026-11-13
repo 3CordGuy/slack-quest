@@ -51,7 +51,7 @@ export const PROJECTS: ProjectDef[] = [
     name: "Smithy",
     blurb: "A forge and an anvil by the sparring ring.",
     benefit: "Sharpen weapons and reinforce armour, up to +3 an item.",
-    cost: { gold: 400, stone: 30, iron: 30, copper: 15 },
+    cost: { gold: 800, stone: 60, iron: 60, copper: 15 },
     open: true,
   },
   {
