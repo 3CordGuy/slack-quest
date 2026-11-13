@@ -611,6 +611,15 @@ Two craftable boats let you walk off a pier or the shore onto the water, and fis
    - Sounds.
    - Placeholder fish (one generic model).
    - This phase flips the live spot.
+   - **Built, 2026-11-13:**
+     - `render/FishingStage.ts` and `Fishing.tsx` (the card, HUD and catch card), plus `fishing.css`.
+     - Piers via `HARBOR_FISH_SPOTS` and `fishSpotAt`. A pier with a moored ship offers "Cast a line" as a second button beside "Walk aboard", and the cast turns off the side of the hull.
+     - A cast may carry `spot`, so one sitting follows you from pier to pier.
+     - **What others see:** while you fish, crewmates see a rod on your sprite. This is HarborRoom presence (`fishing`), cleared when you walk off.
+     - **Fancy graphics:** the line and float are drawn on the overlay layer, so they stay crisp under the finishing pass.
+     - **Measures:** a new Options toggle (Metric or Imperial; it defaults to the browser's region) governs weights, lengths and the creel.
+     - The fight's report cap was raised to 3000 presses and releases.
+     - The catch model is a stand-in, coloured from the catalog palette, until phase 3.
 3. **Fish art.** `fishArt.ts`: the parametric shape to 3D mesh and pixel sprite, all 45 creature shapes, bespoke builders for the ray, squid, crabs, sunfish, oarfish and hauls, and the admin side-by-side preview. *It can run in parallel with phase 1, because it only needs the catalog's `shape` ids.*
 4. **Selling.** The fishmonger stall and its seeded rates board, Old Tam buying, the icebox and trophy chest UI in the inventory screen, and sell routes.
 5. **Records and mounts.** The Catch Book (pages, slot states, page and book rewards, the bonus slot, `characters.title`), the crew Record Board, pub mounts, hut "Mount a trophy" via `meta_json`, the ship's bell piece, and the record line on the notice board.
@@ -640,7 +649,8 @@ Per the house rules:
 3. **The old shore spot:** it becomes the fishmonger's stall and rates board, and you can still fish there (shallows, short casts).
 4. **Records:** personal bests in the Catch Book plus one crew record per species on the pub wall. There are no all-Harbors records.
 5. **Catch Book:** 58 slots on six pages. Old Ironjaw is a bonus slot outside the count.
-6. **Boats:** a craftable barrel (coastal water, rocks, wreck) and rowboat (anywhere, plus the open sea) are phase 6. The big ocean fish move to a rowboat-only **Open Sea** page, and the middle pier becomes the **Harbor Mouth**.
+6. **Measures:** an Options toggle switches catches between Metric and Imperial. Weights are stored in grams and lengths in millimetres either way.
+7. **Boats:** a craftable barrel (coastal water, rocks, wreck) and rowboat (anywhere, plus the open sea) are phase 6. The big ocean fish move to a rowboat-only **Open Sea** page, and the middle pier becomes the **Harbor Mouth**.
 
 ## Still to tune in play
 

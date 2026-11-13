@@ -82,14 +82,15 @@ async function catchOne(): Promise<GatherView> {
   return (await step({ t: "fought", edges })).outing!;
 }
 
-/** Fish until a living catch (not a haul) is landed, then keep it. */
+/** Fish until a living catch (not a haul, and not one that fills the creel) is landed, then keep it. */
 async function keepAFish(): Promise<string> {
   for (let i = 0; i < 60; i++) {
     at(clock + 1000);
     const view = await catchOne();
     const pending = view.sitting!.pending;
     if (!pending) continue;
-    if (FISH[pending.species].kind === "haul") {
+    // Hauls are not fish; and one big enough to fill the creel would end the sitting before the test wants it to.
+    if (FISH[pending.species].kind === "haul" || pending.grams > 20_000) {
       await step({ t: "release" });
       continue;
     }

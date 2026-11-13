@@ -6,6 +6,7 @@
 
 import { allHexesInGrid, type HexGrid, type HexPos } from "@gantt-quest/core";
 import type { Outfit } from "./gear";
+import type { FishSpot } from "./fishing";
 import type { Perk, Resources } from "./hut";
 import type { ItemDef } from "./gear";
 import type { Stats } from "@gantt-quest/core";
@@ -40,6 +41,18 @@ export const HARBOR_SHOP: HexPos = at(10, 6);
 export const HARBOR_RING: HexPos = at(4, 7);
 /** Gathering spots at the edges: the south-west shore, the western trees, and an outcrop in the east wall. */
 export const HARBOR_GATHER = { fishing: at(4, 12), felling: at(1, 7), quarry: at(12, 5) } as const;
+/** Where a fishing sitting can be started: each pier head, and the old spot on the south-west shore. The open sea is reached by boat. */
+export const HARBOR_FISH_SPOTS: Record<Exclude<FishSpot, "sea">, HexPos> = {
+  west: HARBOR_PIERS[0],
+  middle: HARBOR_PIERS[1],
+  east: HARBOR_PIERS[2],
+  shore: HARBOR_GATHER.fishing,
+};
+/** The fishing spot on a hex, if there is one. */
+export function fishSpotAt(pos: HexPos): Exclude<FishSpot, "sea"> | null {
+  for (const [id, p] of Object.entries(HARBOR_FISH_SPOTS) as [Exclude<FishSpot, "sea">, HexPos][]) if (p.q === pos.q && p.r === pos.r) return id;
+  return null;
+}
 /** The pub: food, drink, the barkeep and the dice table are inside. */
 export const HARBOR_PUB: HexPos = at(9, 8);
 /** The works: the builders' yard where the crew's shared projects are paid for. */
@@ -167,6 +180,8 @@ export interface HarborPlayer {
   outfit?: Outfit;
   /** Where their bedroll is laid out, until they walk off. */
   bedroll?: HexPos;
+  /** Fishing at the pier they stand on, rod in hand, until they stop or walk off. */
+  fishing?: boolean;
   /** In a hut: the bed (a furnishing id) they are lying on after a rest, until they walk off. */
   bed?: number;
 }
@@ -273,6 +288,8 @@ export type HarborClientMessage =
   | { type: "refresh" }
   /** "I have just rested here": lay the sender's bedroll out where they stand, for everyone to see. */
   | { type: "bedroll" }
+  /** "I have sat down to fish here" (or stood up again): the sender's hero holds a rod, for everyone to see. */
+  | { type: "fishing"; on: boolean }
   /** "I am stuck or lost": put the sender's own hero back where heroes arrive. At most once per UNSTICK_COOLDOWN_MS. */
   | { type: "unstick" };
 

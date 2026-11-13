@@ -588,8 +588,8 @@ export function lookFor(kind: string): Look {
 }
 
 /** Cache key for a sprite: the kind plus whatever is being worn, whether they are asleep, and the overrides in force. */
-export function spriteKey(kind: string, outfit?: Outfit, asleep = false): string {
-  return (outfit ? `${kind}|${outfitKey(outfit)}` : kind) + (asleep ? "|zz" : "") + `|r${revision}`;
+export function spriteKey(kind: string, outfit?: Outfit, asleep = false, rod = false): string {
+  return (outfit ? `${kind}|${outfitKey(outfit)}` : kind) + (asleep ? "|zz" : "") + (rod ? "|rod" : "") + `|r${revision}`;
 }
 
 /** Flip the canvas left to right, in place. */
@@ -607,7 +607,7 @@ function mirror(ctx: CanvasRenderingContext2D) {
 }
 
 /** Draw one sprite onto a fresh canvas. Shared by the cached textures and the admin preview. */
-function drawSprite(kind: string, look: Look, outfit: Outfit | undefined, asleep: boolean): HTMLCanvasElement {
+function drawSprite(kind: string, look: Look, outfit: Outfit | undefined, asleep: boolean, rod = false): HTMLCanvasElement {
   const canvas = document.createElement("canvas");
   canvas.width = W;
   canvas.height = H;
@@ -627,6 +627,16 @@ function drawSprite(kind: string, look: Look, outfit: Outfit | undefined, asleep
   else if (kind === "slime") drawSlime(ctx);
   else if (outfit) drawHero(ctx, look, outfit);
   else drawHumanoid(ctx, look);
+  // Fishing: whatever is in the right hand is put down for a rod, held up and out, the line hanging from its tip.
+  if (rod && LOOKS[kind]) {
+    ctx.clearRect(14, 0, W - 14, 17);
+    ctx.fillStyle = "#6b4a2a";
+    for (const [x, y] of [[14, 15], [14, 14], [15, 13], [15, 12], [16, 11], [16, 10], [16, 9], [17, 8], [17, 7]]) ctx.fillRect(x, y, 1, 1);
+    ctx.fillStyle = "#d8e2e8";
+    ctx.fillRect(17, 9, 1, 7);
+    ctx.fillStyle = "#d8352a";
+    ctx.fillRect(17, 16, 1, 1);
+  }
   // Asleep: the eyes are shut, a short dark line where each one was.
   if (asleep && LOOKS[kind]) {
     ctx.fillStyle = look.skin;
@@ -648,11 +658,11 @@ function drawSprite(kind: string, look: Look, outfit: Outfit | undefined, asleep
  * bandit. Pass a hero's outfit to draw them wearing it; without one the
  * kind's stock look is used.
  */
-export function spriteTexture(kind: string, outfit?: Outfit, asleep = false): THREE.CanvasTexture {
-  const key = spriteKey(kind, outfit, asleep);
+export function spriteTexture(kind: string, outfit?: Outfit, asleep = false, rod = false): THREE.CanvasTexture {
+  const key = spriteKey(kind, outfit, asleep, rod);
   const hit = cache.get(key);
   if (hit) return hit;
-  const tex = new THREE.CanvasTexture(drawSprite(kind, lookFor(kind), outfit, asleep));
+  const tex = new THREE.CanvasTexture(drawSprite(kind, lookFor(kind), outfit, asleep, rod));
   tex.magFilter = THREE.NearestFilter;
   tex.minFilter = THREE.NearestFilter;
   tex.generateMipmaps = false;

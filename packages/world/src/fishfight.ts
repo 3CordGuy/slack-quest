@@ -23,8 +23,8 @@ export const LINE_M = 60;
 export const LAND_M = 1;
 /** A fight this long ends with the fish slipping the hook. */
 export const FIGHT_MAX_MS = 180_000;
-/** Presses and releases a report may carry. */
-export const FIGHT_MAX_EDGES = 600;
+/** Presses and releases a report may carry: enough to tap eight times a second for the longest fight. */
+export const FIGHT_MAX_EDGES = 3000;
 /** A press shorter than this is a tap: half pressure, for a pulse. Longer, it is a hold. */
 export const TAP_MS = 200;
 /** How long a tap's half pressure lasts, from the press. */
