@@ -139,6 +139,13 @@ export interface Loop {
    * loop start is an intro heard once. "loop" starts at the loop start, for files rendered with margins.
    */
   startAt?: "file" | "loop";
+  /**
+   * Rest between plays, in seconds: the piece plays through from the top, is silent for this long, then
+   * plays again. Give a range, such as [120, 240], for a rest of a different length each time. With a gap
+   * the whole file is one play: loop markers, `loop` and `startAt` are not used, and other music cannot
+   * come in on its bar. If you leave while it rests and come back, it waits out what is left of the rest.
+   */
+  gap?: number | Range;
 }
 
 /** The places the game can be, each with its own music and atmosphere. */

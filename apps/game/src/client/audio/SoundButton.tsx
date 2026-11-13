@@ -189,7 +189,7 @@ function AudioReadout({ onClose }: { onClose(): void }) {
     ["Placing", d.headphones ? "headphones (HRTF)" : "speakers (pan)"],
     ["Sea", d.sea ? `${d.sea.distance.toFixed(1)} away, ${Math.round(d.sea.spread * 100)}% around` : "none in reach"],
     ...Object.entries(d.emitters).map(([kind, slots]): [string, string] => [`Emitter: ${kind}`, slots.join(", ") || "loading"]),
-    ...d.loops.map((l): [string, string] => [`Loop: ${l.id}`, l.parts.join(", ") || "loading"]),
+    ...d.loops.map((l): [string, string] => [`Loop: ${l.id}`, l.rest > 0 ? `resting, plays again in ${Math.floor(l.rest / 60)}:${String(Math.floor(l.rest % 60)).padStart(2, "0")}` : l.parts.join(", ") || "loading"]),
     ["One-shots", d.voices.length ? d.voices.join(", ") : "none"],
     ["Memory", d.library ? `${d.library.megabytes} of ${d.library.budget} MB, ${d.library.decoded}/${d.library.files} files, ${d.library.format}` : "–"],
   ];

@@ -9,7 +9,7 @@ import { AUDIO } from "../src/client/audio/manifest";
 import { MixStore, faderDb, faderGain, parseSettings } from "../src/client/audio/mixer";
 import { soundName, soundNames } from "../src/client/audio/names";
 import { nearWater } from "../src/client/audio/gameSounds";
-import { TakePicker, chooseTakes, curveAt, distanceGain, expandFiles, placeSound, resolveName, slug, untilNextLine } from "../src/client/audio/select";
+import { TakePicker, chooseTakes, curveAt, distanceGain, expandFiles, nextGap, placeSound, resolveName, slug, untilNextLine } from "../src/client/audio/select";
 import { synthIndex } from "../src/client/audio/synth";
 import { readWav } from "../scripts/audio/wav";
 
@@ -64,6 +64,19 @@ describe("the manifest", () => {
     const named = [...Object.values(zones.ground ?? {}), ...Object.values(zones.scene ?? {}), zones.default].filter((z): z is string => !!z);
     for (const z of named) expect(AUDIO.reverbs?.[z], `reverb ${z}`).toBeDefined();
     for (const ground of Object.keys(zones.ground ?? {})) expect(known.has(`footstep.${ground}`), `ground ${ground}`).toBe(true);
+  });
+  it("rests a piece for its gap, or somewhere in its range", () => {
+    expect(nextGap(undefined)).toBe(0);
+    expect(nextGap(120)).toBe(120);
+    expect(nextGap([120, 240], () => 0)).toBe(120);
+    expect(nextGap([120, 240], () => 0.5)).toBe(180);
+    expect(nextGap(-5)).toBe(0);
+    for (const [name, loop] of [...Object.entries(AUDIO.music), ...Object.entries(AUDIO.ambience)]) {
+      if (loop.gap === undefined) continue;
+      const [low, high] = typeof loop.gap === "number" ? [loop.gap, loop.gap] : loop.gap;
+      expect(low, name).toBeGreaterThanOrEqual(0);
+      expect(high, name).toBeGreaterThanOrEqual(low);
+    }
   });
   it("gives every curve rising points and levels between 0 and 1", () => {
     const loops = [...Object.entries(AUDIO.music), ...Object.entries(AUDIO.ambience)];

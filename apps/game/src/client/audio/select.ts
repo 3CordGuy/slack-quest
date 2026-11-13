@@ -143,6 +143,12 @@ export function untilNextLine(elapsed: number, offset: number, region: { start: 
   return wait < 0.03 ? wait + unit : wait;
 }
 
+/** How long a piece rests before its next play, in seconds: its `gap` as it is, or somewhere in its range. Never less than nothing. */
+export function nextGap(gap: number | [number, number] | undefined, rng: () => number = Math.random): number {
+  if (gap === undefined) return 0;
+  return Math.max(0, typeof gap === "number" ? gap : inRange(gap, rng));
+}
+
 /** A random value in a range, or `fallback` without one. */
 export function inRange(range: [number, number] | undefined, rng: () => number = Math.random, fallback = 0): number {
   if (!range) return fallback;

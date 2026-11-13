@@ -128,7 +128,9 @@ export const AUDIO: AudioManifest = {
     // The town's night music, by day too for now. A day version can be a second cue, or a stem laid
     // over this one: layers: [{ file: "music/harbor_day", follow: { param: "night", curve: [[0.3, 1], [0.7, 0]] } }]
     // Give it its bpm and the battle music will come in on its bar.
-    harbor: { file: "music/harbor", fadeIn: 3, fadeOut: 3 },
+    // `gap` is the rest between plays, in seconds: it plays through, leaves the town to its atmosphere for
+    // two minutes, then plays again. A range, such as [120, 240], rests a different length each time.
+    harbor: { file: "music/harbor", fadeIn: 3, fadeOut: 3, gap: 120 },
     island: { file: "music/island", fadeIn: 3, fadeOut: 3, bpm: 96 },
     // Comes in on the next bar of whatever was playing.
     battle: { file: "music/battle", fadeIn: 0.05, fadeOut: 2, bpm: 138, enter: "bar" },

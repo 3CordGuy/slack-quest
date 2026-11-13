@@ -108,6 +108,16 @@ Every loop that is playing is held fully decoded: about 23 MB for each minute of
 - Beds at silence are not loaded.
 - A loop is let go as soon as nothing is playing it.
 
+## Resting between plays
+
+Give a piece a `gap` and it stops looping: it plays through from the top, is silent for that many seconds, then plays again. The town music does this, so the Harbor has two minutes of atmosphere alone between plays:
+
+```ts
+harbor: { file: "music/harbor", gap: 120 },
+```
+
+A range rests a different length each time: `gap: [120, 240]`. With a gap the whole file is one play, so loop markers are not used, and other music cannot come in on its bar. Scenes that share the piece (the Harbor, the hut, the pub) share its rest. If you leave while it is resting and come back, it waits out what is left; if you leave while it is playing, it starts from the top when you return. The engine readout shows how long a resting piece has left.
+
 ## Switching on the bar
 
 Give music its `bpm` (and `beatsPerBar` if not 4), and music that replaces it can set `enter: "bar"` or `enter: "beat"` to come in on its next bar or beat line instead of at once. Bars are counted from the start of the file (or from the loop start with `startAt: "loop"`), so start loops on a bar line and make them whole bars long.
