@@ -4,8 +4,9 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { beforeEach, describe, expect, it } from "vitest";
-import { CARRY_BASE, FURNISHINGS, STORAGE_CHEST, type ItemDef } from "@gantt-quest/world";
+import { CARRY_BASE, FURNISHINGS, GATHER_DAILY_OUTINGS, STORAGE_CHEST, gatherDay, type ItemDef } from "@gantt-quest/world";
 import { applyGrant, buyShopItem, carryState, equipItem, getInventory, getShop, sellItem, storeItem, stowGear, unstowGear } from "../src/server/db";
+import { rest } from "../src/server/gather";
 import { buyFromSalesman, getSalesman } from "../src/server/salesman";
 import { acceptTrade, proposeTrade } from "../src/server/trade";
 
@@ -257,5 +258,22 @@ describe("the pub's curio dealer", () => {
     sql.prepare("DELETE FROM inventory WHERE id = ?").run(packIds()[0]);
     expect(await buyFromSalesman(db, "ann", gear.index, "curio")).toMatchObject({ got: { index: gear.index } });
     expect(carried()).toBe(LIMIT);
+  });
+});
+
+// Resting in your bed (or from the hut's bar) is the same server call: the
+// cooldown is decided here, whatever the client shows.
+describe("resting at home", () => {
+  it("gives every outing back, then refuses until the cooldown is over", async () => {
+    buildShack();
+    sql.prepare("INSERT INTO gathering (player_id, day, used) VALUES ('ann', ?, ?)").run(gatherDay(Date.now()), GATHER_DAILY_OUTINGS);
+    const first = await rest(db, "ann", "hut");
+    expect(typeof first).toBe("object");
+    expect((first as { stamina: { left: number } }).stamina.left).toBe(GATHER_DAILY_OUTINGS);
+    // Tired again straight away: still too soon.
+    sql.prepare("UPDATE gathering SET used = 2 WHERE player_id = 'ann'").run();
+    const again = await rest(db, "ann", "hut");
+    expect(again).toMatch(/rest again|just rested/i);
+    expect(one<{ used: number }>("SELECT used FROM gathering WHERE player_id = 'ann'").used).toBe(2);
   });
 });

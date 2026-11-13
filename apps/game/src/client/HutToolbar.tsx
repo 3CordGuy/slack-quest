@@ -6,7 +6,7 @@ import { useEffect, useRef, type ReactNode, type RefObject } from "react";
 import type { WorldRenderer } from "./render/WorldRenderer";
 
 /** A pixel icon on an 8 by 8 grid: each string is a row, "#" a filled cell. */
-function PixelIcon({ rows }: { rows: string[] }) {
+export function PixelIcon({ rows }: { rows: string[] }) {
   const cells: ReactNode[] = [];
   rows.forEach((row, y) => [...row].forEach((c, x) => c === "#" && cells.push(<rect key={`${x},${y}`} x={x} y={y} width={1} height={1} />)));
   return (
@@ -16,7 +16,7 @@ function PixelIcon({ rows }: { rows: string[] }) {
   );
 }
 
-const ICON = {
+export const ICON = {
   move: ["...#....", "..###...", ".#.#.#..", "#######.", ".#.#.#..", "..###...", "...#....", "........"],
   left: ["..#.....", ".##.....", "#######.", ".##....#", "..#....#", ".......#", "..#####.", "........"],
   right: [".....#..", ".....##.", ".#######", "#....##.", "#....#..", "#.......", ".#####..", "........"],
@@ -25,6 +25,8 @@ const ICON = {
   open: ["........", ".######.", "#......#", "########", "#..##..#", "#......#", "########", "........"],
   rest: ["....###.", "......#.", ".....#..", "....###.", "........", "#.......", "#######.", "#.....#."],
   snap: ["#.#.#.#.", "........", "#.###.#.", "..#.#...", "#.###.#.", "........", "#.#.#.#.", "........"],
+  /** Edit mode: decorating the room. */
+  hammer: ["#######.", "########", "#######.", "...##...", "...##...", "...##...", "...##...", "...##..."],
   away: ["...##...", "...##...", ".######.", "..####..", "...##...", "#......#", "#......#", "########"],
 };
 

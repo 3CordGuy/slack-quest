@@ -540,6 +540,8 @@ app.post("/api/rest", async (c) => {
   const body = await c.req.json<{ place?: unknown }>().catch(() => ({}) as { place?: unknown });
   const place = body.place === "hut" ? "hut" : "bedroll";
   if (place === "hut" && !(await hasShack(c.env.DB, player.id))) return c.json({ error: "You have no hut to rest in yet." }, 409);
+  // A rest at home is taken at home: in your own hut, not a crewmate's and not from the Harbor.
+  if (place === "hut" && !(await inOwnHut(c.env, player.id))) return c.json({ error: "Walk into your own hut to rest there." }, 409);
   const result = await rest(c.env.DB, player.id, place);
   return typeof result === "string" ? c.json({ error: result }, 409) : c.json(result);
 });

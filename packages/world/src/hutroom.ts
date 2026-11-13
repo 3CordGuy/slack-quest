@@ -519,6 +519,76 @@ export function hutPath(room: WorldMap, placed: Placed[], from: HexPos, to: HexP
   return route && route.path.length > 0 ? route.path : null;
 }
 
+// ---------- using a piece ----------
+//
+// Outside edit mode a click on a piece uses it. Most only show what they are;
+// a bed and a container are the owner's own. The rest itself and what comes
+// in and out of a container are decided by the server over HTTP (gather.ts,
+// the stash and stow routes); the room only checks who may lie down where.
+
+/** What clicking a piece does: rest in a bed, open a container, warm up at a fire, read a shelf, or just look. */
+export type FurnishingUse = "rest" | "open" | "warm" | "read" | "look";
+
+export function useOf(defId: string): FurnishingUse {
+  const def = FURNISHINGS[defId];
+  if (!def) return "look";
+  if (defId === "bed") return "rest";
+  if (def.storage) return "open";
+  if (def.light === "fire") return "warm";
+  if (defId === "bookshelf" || defId === "books") return "read";
+  return "look";
+}
+
+/** Uses that are the owner's alone: a visitor may not sleep in their bed or open their chests. */
+export const OWNER_USES: readonly FurnishingUse[] = ["rest", "open"];
+
+/** Why this player may not use `defId` this way, or null if they may. `ownerName` words the refusal for a visitor. */
+export function useProblem(defId: string, isOwner: boolean, ownerName = "the owner"): string | null {
+  const use = useOf(defId);
+  if (isOwner || !OWNER_USES.includes(use)) return null;
+  return use === "rest" ? `Only ${ownerName} sleeps here.` : `Only ${ownerName} can open that.`;
+}
+
+/**
+ * The hexes someone can stand on to use a placed piece: its own hex (for a
+ * small thing or a wall piece, which do not block it) and every walkable
+ * neighbour of what it covers. A small thing on a top is reached from beside
+ * the piece it stands on.
+ */
+export function besideHexes(room: WorldMap, furnishings: Furnishing[], piece: Furnishing): HexPos[] {
+  const base = piece.onId !== null ? furnishings.find((f) => f.id === piece.onId) ?? piece : piece;
+  if (base.q === null || base.r === null) return [];
+  const pos = { q: base.q, r: base.r };
+  const covers = isFloorPiece(base.defId) ? coveredHexes(base.defId, pos, spotOf(base)) : [pos];
+  const blocked = blockedHexes(furnishings);
+  const out = new Map<string, HexPos>();
+  for (const c of covers) {
+    for (const d of [{ q: 0, r: 0 }, ...HEX_DIRS]) {
+      const h = { q: c.q + d.q, r: c.r + d.r };
+      if (tileAt(room, h)?.biome === "floor" && !blocked.has(posKey(h))) out.set(posKey(h), h);
+    }
+  }
+  return [...out.values()];
+}
+
+/** True if someone standing on `pos` is close enough to use the piece. */
+export function isBeside(room: WorldMap, furnishings: Furnishing[], piece: Furnishing, pos: HexPos): boolean {
+  return besideHexes(room, furnishings, piece).some((h) => h.q === pos.q && h.r === pos.r);
+}
+
+/**
+ * Why this player may not lie down on bed `id`, or null. Only the owner, on
+ * their own placed bed, standing beside it. It is only for show (the rest
+ * itself is the server's `/api/rest`), but visitors still may not.
+ */
+export function lieDownProblem(room: WorldMap, furnishings: Furnishing[], id: number, pos: HexPos, isOwner: boolean): string | null {
+  const bed = furnishings.find((f) => f.id === id);
+  if (!bed || bed.defId !== "bed" || bed.q === null) return "There is no bed there.";
+  if (!isOwner) return useProblem(bed.defId, false);
+  if (!isBeside(room, furnishings, bed, pos)) return "Walk over to the bed first.";
+  return null;
+}
+
 // ---------- wire types ----------
 
 export type HutServerMessage =
@@ -558,6 +628,8 @@ export type HutClientMessage =
   | { type: "put_in"; id: number; into: number }
   /** Owner only. Back into storage. */
   | { type: "pick_up"; id: number }
+  /** Owner only, standing beside their bed, after resting: lie down on it for everyone to see, until they walk off. */
+  | { type: "lie_down"; id: number }
   /**
    * Owner only. Turn a placed floor piece to `angle` radians (or `facing`
    * sixths); without either, one step clockwise: a sixth for furniture, a
