@@ -14,7 +14,7 @@ It runs entirely on Cloudflare: Workers, Durable Objects, D1, Workers AI and Ema
 ## The game
 
 **The Harbor** is your crew's home, a shared town you all walk around in together.
-- **Gathering:** fish off the shore, fell trees, work the quarry. Each is a short push-your-luck timing game, swayed by your stats. Felling plays out in its own full-screen 3D grove: read the wind, notch a tree and time the swing so it lands clear.
+- **Gathering:** fish off the shore, fell trees, work the quarry. Fishing and the quarry are short push-your-luck timing games, swayed by your stats. Felling is played in the Harbor through your hero's eyes: thirty seconds chopping (small, medium or large trees, a race and a choice), then thirty seconds splitting the logs on a block, where a well-timed strike pays wood.
 - **Your hut:** buy a plot, fill a resource bin to raise a shack, then furnish it, craft for it and upgrade it. Rest there to recover.
 - **The pub:** food and drink that boost your next voyage, dice and Shoals at the tables, and traveling salesmen who drop in from time to time.
 - **Crew projects:** pay together into the Apothecary (brews for the voyage) and Smithy (sharpen and reinforce gear) first; once both stand, the Lighthouse (a day more on every voyage, and the island's coast charted) and the Galley (a shared larder) unlock.
@@ -65,7 +65,7 @@ Some local defaults:
 Dev builds expose a few console handles:
 - **Driving the game:** `window.__gq` (on a voyage) and `window.__harbor`.
 - **Pinning the sky:** `window.__gqTime` (0 is midnight, 0.5 is noon) and `window.__gqWeather` (0 is clear, 1 is heavy rain).
-- **The renderers:** `window.__gqWorld` (the world; `__gqWorld.renderer.info.render.calls` for draw calls) and `window.__gqGrove` (the felling grove, while it is open).
+- **The renderer:** `window.__gqWorld` (`__gqWorld.renderer.info.render.calls` for draw calls).
 
 ## Tests
 
