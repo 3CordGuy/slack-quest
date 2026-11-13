@@ -11,7 +11,11 @@
 // them, putting them away. There, clicking a placed piece floats its controls
 // above it (HutToolbar). Leaving the mode lets go of anything carried.
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { FISH, formatLength, formatWeight } from "@gantt-quest/world";
+import type { FishStock } from "./api";
+import { catchIcon } from "./render/catchArt";
+import { units } from "./units";
 import { useAudioScene } from "./audio/useAudioScene";
 import type { HexPos } from "@gantt-quest/core";
 import { FURNISHINGS, besideHexes, coveredHexes, hutPath, isBeside, useOf, useProblem, type FurnishingUse, craftProblem, footprintCentre, footprintOf, hexCentre, hexSpan, hutDoor, hutPerks, hutRoom, hutTier, isFlat, isMounted, isSmall, nextHutTier, placeProblem, placedFurnishings, poiAt, smallPlaceProblem, turnOf, upgradeProblem, wallPlaceProblem, wrapAngle, type Furnishing } from "@gantt-quest/world";
@@ -160,13 +164,17 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
   /** Edit mode: the owner is decorating. Everything that changes the room happens only here; outside it a click uses a piece. */
   const [editing, setEditing] = useState(false);
   const decorating = canEdit && editing;
+  /** The Mounted Fish whose fish is being chosen. */
+  const [hanging, setHanging] = useState<number | null>(null);
   /** A piece to use once the hero has walked over to it. */
   const [pending, setPending] = useState<number | null>(null);
   /** Use a placed piece: walk over to it first if need be. Set further down, where everything it needs is known. */
   const usePiece = useRef<(id: number) => void>(() => {});
   const room = useMemo(() => (tier === null ? null : hutRoom(tier)), [tier]);
   const placed = useMemo(() => placedFurnishings(furnishings), [furnishings]);
-  const stored = furnishings.filter((f) => f.q === null && f.inId === null);
+  // Boats are kept at the pier, not in the hut.
+  const boats = furnishings.filter((f) => defOf(f)?.kind === "vessel");
+  const stored = furnishings.filter((f) => f.q === null && f.inId === null && defOf(f)?.kind !== "vessel");
   const storedBig = stored.filter((f) => !isSmall(f.defId) && !isMounted(f.defId));
   const storedWall = stored.filter((f) => isMounted(f.defId));
   const storedSmall = stored.filter((f) => isSmall(f.defId));
@@ -210,6 +218,7 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
           pos: { q: f.q, r: f.r },
           ...(mount ? { facing: f.facing, angle: 0 } : turned),
           selected: f.id === selected || f.id === holding,
+          fish: f.fish ? { species: f.fish.species, mm: f.fish.mm } : undefined,
           small,
           mount: !!mount,
           flat: isFlat(f.defId),
@@ -615,12 +624,14 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
       tools.push({ key: "open", icon: "open", title: opened === chosen.id ? "Close: hide what it holds" : "Open: see what it holds", active: opened === chosen.id, run: () => setOpened((o) => (o === chosen.id ? null : chosen.id)) });
     }
     const riders = onTop.length > 0 ? ` (and what stands on it: ${onTop.map((f) => f.label).join(", ")})` : "";
+    if (chosen.defId === "mounted_fish") tools.push({ key: "fish", icon: "fish", title: chosen.fish ? "Change the fish, or take it down" : "Hang a fish from your trophy chest", active: hanging === chosen.id, run: () => setHanging((h) => (h === chosen.id ? null : chosen.id)) });
     tools.push({ key: "away", icon: "away", title: `Put away: back into storage${riders}`, run: () => (hut.send({ type: "pick_up", id: chosen.id }), setSelected(null)) });
   }
 
   return (
     <div className={`run hut-view ${canEdit && box ? "box-open" : ""}`}>
       <div className="stage" ref={mount} />
+      {hanging !== null && <HangFish mountId={hanging} current={furnishings.find((f) => f.id === hanging)?.fish ?? null} onClose={() => setHanging(null)} />}
       <div className="topbar">
         <strong>{title}</strong>
         {tier !== null && <span className="muted">{hutTier(tier).name}</span>}
@@ -667,6 +678,7 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
           )}
           {noteIn("storage")}
           {stored.length === 0 && <p className="muted">Nothing in storage. Make something in the Craft panel.</p>}
+          {boats.length > 0 && <p className="muted">Tied up at the pier: {boats.map((b) => b.label).join(", ")}. Walk off the end of a pier to take it out.</p>}
           {[["Furniture", storedBig], ["On the walls", storedWall], ["Small things", storedSmall]].map(([heading, list]) => (list as Furnishing[]).length > 0 && (
             <div key={heading as string}>
               <h4>{heading as string}</h4>
@@ -706,7 +718,7 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
                     <div className="row">
                       <CostChips cost={def.recipe!} have={own.resources} />
                       <span className="spacer" />
-                      <button className="small primary" disabled={busy || !!problem} title={problem ?? "Goes into storage"} onClick={() => void spend("craft", () => api.craft(def.id), `${label("furnishing", def.id)} crafted. It is in storage.`)}>
+                      <button className="small primary" disabled={busy || !!problem} title={problem ?? (def.kind === "vessel" ? "Tied up at the pier when it is done" : "Goes into storage")} onClick={() => void spend("craft", () => api.craft(def.id), def.kind === "vessel" ? `${label("furnishing", def.id)} built. It is tied up at the pier: walk off the end of one to take it out.` : `${label("furnishing", def.id)} crafted. It is in storage.`)}>
                         Craft
                       </button>
                     </div>
@@ -843,6 +855,63 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
         </div>
       )}
       {heroSheet.open && you && <HeroSheet id={heroSheet.open} you={you} onClose={heroSheet.close} />}
+    </div>
+  );
+}
+
+
+/** Pick a fish from the trophy chest to hang on a Mounted Fish, or take down the one that is there. */
+function HangFish({ mountId, current, onClose }: { mountId: number; current: { id: string; species: string; grams: number } | null; onClose(): void }) {
+  const u = useSyncExternalStore(units.subscribe, units.get);
+  const [stock, setStock] = useState<FishStock | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    api.fish().then(setStock, (e: Error) => setError(e.message));
+  }, []);
+  const hang = async (fishId: string | null) => {
+    setBusy(true);
+    setError(null);
+    try {
+      await api.hangFish(mountId, fishId);
+      onClose();
+    } catch (e) {
+      setError((e as Error).message);
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
+      <DragPanel id="hut.hangfish" title="Mount a trophy" compact className="panel catch-panel" role="dialog" aria-label="Mount a trophy">
+        <header className="gather-head">
+          <h2>Mount a trophy</h2>
+          <span className="spacer" />
+          <button className="small" onClick={onClose}>Close</button>
+        </header>
+        {current && (
+          <p className="row">
+            <span className="grow">On it now: <strong>{FISH[current.species]?.name}</strong>, {formatWeight(current.grams, u)}.</span>
+            <button className="small" disabled={busy} onClick={() => void hang(null)}>Take it down</button>
+          </p>
+        )}
+        {error && <p className="bad">{error}</p>}
+        {!stock && !error && <p className="muted">Opening the trophy chest…</p>}
+        {stock && (
+          <ul className="catch-list">
+            {stock.trophy.map((f) => (
+              <li key={f.id} className="catch-row">
+                <img src={catchIcon(f.species)} alt="" width={40} height={40} className="catch-row-icon" />
+                <span className="grow">
+                  <strong>{FISH[f.species].name}</strong>
+                  <small className="muted"> {formatWeight(f.grams, u)} · {formatLength(f.mm, u)}</small>
+                </span>
+                <button className="small primary" disabled={busy} onClick={() => void hang(f.id)}>Hang it</button>
+              </li>
+            ))}
+            {stock.trophy.length === 0 && <li className="muted">Nothing in your trophy chest. Keep a specimen in it from "Your catch", then hang it here.</li>}
+          </ul>
+        )}
+      </DragPanel>
     </div>
   );
 }

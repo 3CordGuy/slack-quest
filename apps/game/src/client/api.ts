@@ -5,9 +5,12 @@ import type { ContractBoard } from "../server/board";
 
 /** What the contract dealer in the pub has: the crew goal and the contracts on offer. */
 export type Board = ContractBoard;
-import type { CarryState, GatherChoice, HarborXpStatus, GatherSpot, HarborWorks, HutSummary, ItemDef, Perk, ProjectAmounts, PublicHero, Resources, SalesEntry, SalesmanId, SalesmanVisit, ShopEntry, TradeOffer } from "@gantt-quest/world";
+import type { CarryState, FishSpot, GatherChoice, HarborXpStatus, GatherSpot, HarborWorks, HutSummary, ItemDef, Perk, ProjectAmounts, PublicHero, Resources, SalesEntry, SalesmanId, SalesmanVisit, ShopEntry, TradeOffer } from "@gantt-quest/world";
 import { forcedSalesman } from "./salesmanClock";
 import type { GatherStatus } from "../server/gather";
+import type { SittingPaid } from "../server/fishing";
+import type { FishStock } from "../server/fishmarket";
+import type { CatchBook, PubWall } from "../server/catchbook";
 import type { XpResult } from "../server/harbor-xp";
 import type { TradeList } from "../server/trade";
 import type { ApothecaryView, SmithyView } from "../server/workshops";
@@ -16,7 +19,7 @@ import type { ErrandPaid, RegularsView } from "../server/errands";
 
 export type { ApothecaryView, SmithyView, GalleyView, ErrandPaid, RegularsView };
 
-export type { GatherStatus, XpResult };
+export type { CatchBook, FishStock, GatherStatus, PubWall, SittingPaid, XpResult };
 
 /** What a hero has ordered at the pub and what it gives on their next voyage. */
 export interface PubTab {
@@ -37,6 +40,8 @@ export const PROFILE = new URLSearchParams(location.search).get("p") ?? "";
 
 export interface Character {
   name: string;
+  /** Earned by filling the Catch Book. */
+  title?: string | null;
   class_id: string;
   status: "draft" | "active";
   level: number;
@@ -161,12 +166,24 @@ export const api = {
   createCrew: (name: string) => request("/api/crew", { name }),
   joinCrew: (code: string) => request("/api/crew/join", { code }),
   leaveCrew: () => request("/api/crew/leave", {}),
-  gather: () => request<GatherStatus>("/api/gather"),
+  gather: () => request<GatherStatus & { sitting?: SittingPaid }>("/api/gather"),
+  /** Kept fish: the icebox and the trophy chest, with today's prices. */
+  fish: () => request<FishStock>("/api/fish"),
+  sellFish: (ids: string[], to: "market" | "tam") => request<FishStock & { sold: { id: string; gold: number }[] }>("/api/fish/sell", { ids, to }),
+  moveFish: (id: string, to: "trophy" | "icebox") => request<FishStock>("/api/fish/move", { id, to }),
+  /** The Catch Book, with the crew's records. */
+  catchBook: () => request<CatchBook>("/api/fish/book"),
+  /** The pub's wall of record fish: hang yours, or take it down. */
+  pubWall: () => request<PubWall>("/api/fish/wall"),
+  wallFish: (fishId: string, down = false) => request<PubWall>("/api/fish/wall", { fishId, down }),
+  /** Hang a fish from the trophy chest on a Mounted Fish at home, or take it down (null). */
+  hangFish: (furnishingId: number, fishId: string | null) => request<{ ok: true }>("/api/fish/hang", { furnishingId, fishId }),
   rest: (place: "bedroll" | "hut") => request<GatherStatus & { regained: number }>("/api/rest", { place }),
   buyPlot: (plot: number) => request<{ plot: number }>("/api/hut/plot", { plot }),
   fillBin: () => request<{ put: Resources; bin: Resources | null }>("/api/hut/bin", {}),
-  gatherStart: (spot: GatherSpot) => request<GatherStatus>("/api/gather/start", { spot }),
-  gatherStep: (choice: GatherChoice) => request<GatherStatus & { paid?: Resources; xp?: XpResult }>("/api/gather/step", { choice }),
+  /** Start an outing. Fishing with a `pier` starts a sitting there. */
+  gatherStart: (spot: GatherSpot, pier?: FishSpot) => request<GatherStatus>("/api/gather/start", { spot, pier }),
+  gatherStep: (choice: GatherChoice) => request<GatherStatus & { paid?: Resources; xp?: XpResult; sitting?: SittingPaid }>("/api/gather/step", { choice }),
   pub: () => request<PubTab>("/api/pub"),
   pubOrder: (itemId: string) => request<PubTab>("/api/pub/order", { itemId }),
   pubTalk: (text: string) => request<{ say: string }>("/api/pub/talk", { text }),

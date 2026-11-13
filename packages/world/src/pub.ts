@@ -14,7 +14,7 @@ import type { DiceRequest, DiceView } from "./dice";
 import type { ShoalsRequest, ShoalsView } from "./shoals";
 import { harborPoi, type HarborPlayer, type XpMessage } from "./harbor";
 import type { Perk } from "./hut";
-import { buildRoom, hutPath } from "./hutroom";
+import { HEX_DIRS, buildRoom, hutPath, wallFaces } from "./hutroom";
 import type { WorldMap } from "./map";
 
 /** The floor is 10 by 7: larger than the biggest hut (8 by 6). */
@@ -167,6 +167,8 @@ export type PubServerMessage =
   | { type: "moved"; id: string; path: HexPos[] }
   | { type: "placed"; id: string; pos: HexPos }
   | { type: "said"; id: string; name: string; text: string }
+  /** A line over someone's head with no entry in the chat log: a word with the barkeep, and his answer. */
+  | { type: "bubble"; id: string; text: string }
   | { type: "dice"; table: DiceView | null }
   | { type: "diceError"; text: string }
   | { type: "shoals"; table: ShoalsView | null }
@@ -180,3 +182,16 @@ export type PubClientMessage =
   | { type: "unstick" }
   | { type: "dice"; action: DiceRequest }
   | { type: "shoals"; action: ShoalsRequest };
+
+
+/** Where the crew's record fish hang on the pub's walls: faces spread round the room, in a fixed order. */
+export function pubMountSpots(count: number): { pos: HexPos; side: number }[] {
+  // Only walls with clear floor in front: not behind the bar, the kegs or the hearth, nor where anyone stands to work.
+  const busy = new Set([...PUB_FITTINGS.map((f) => `${f.q},${f.r}`), ...[PUB_BARKEEP_POS, PUB_COUNTER, PUB_DICE, PUB_SHOALS, PUB_TRADER, PUB_DEALER_STAND, PUB_SALESMAN_POS, PUB_DEALER_POS].map((p) => `${p.q},${p.r}`)]);
+  const faces = wallFaces(pubRoom())
+    .filter((f) => !busy.has(`${f.pos.q + HEX_DIRS[f.side].q},${f.pos.r + HEX_DIRS[f.side].r}`))
+    .sort((a, b) => a.pos.r - b.pos.r || a.pos.q - b.pos.q || a.side - b.side);
+  if (faces.length <= count) return faces;
+  const step = faces.length / count;
+  return Array.from({ length: count }, (_, i) => faces[Math.floor(i * step + step / 2)]);
+}

@@ -91,7 +91,7 @@ export function useHarbor(onMoved: (id: string, path: HexPos[]) => void, onXp?: 
         } else if (msg.type === "moved") {
           const end = msg.path[msg.path.length - 1];
           // Walking off rolls their bedroll back up.
-          setPlayers((ps) => ps.map((p) => (p.id === msg.id ? { ...p, pos: end, bedroll: undefined } : p)));
+          setPlayers((ps) => ps.map((p) => (p.id === msg.id ? { ...p, pos: end, bedroll: undefined, fishing: undefined } : p)));
           // After React has applied the new position, so the walk is not snapped over.
           queueMicrotask(() => moved.current(msg.id, msg.path));
         } else if (msg.type === "xp") {

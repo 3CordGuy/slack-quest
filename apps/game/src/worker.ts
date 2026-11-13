@@ -4,7 +4,7 @@
 
 import { Hono, type Context } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
-import { HARBOR_PIERS, HARBOR_PLOTS, HARBOR_XP, HERO_CLASSES, MAX_CREW, PUB_DEALER, PUB_MAX_TALK, PUB_MENU, dueIn, hutPerks, nextSalesmanVisit, salesman, salesmanVisitAt, makeRng, pubBuff, rollStartingStats, type RunKind } from "@gantt-quest/world";
+import { HARBOR_PIERS, HARBOR_PLOTS, HARBOR_XP, HERO_CLASSES, MAX_CREW, PUB_BARKEEP, PUB_DEALER, PUB_MAX_TALK, PUB_MENU, dueIn, hutPerks, nextSalesmanVisit, salesman, salesmanVisitAt, makeRng, pubBuff, rollStartingStats, type RunKind } from "@gantt-quest/world";
 import { barkeepReply, heroName } from "./server/ai";
 import { contractBoard } from "./server/board";
 import { markReleaseSeen, seenRelease } from "./server/releases";
@@ -67,6 +67,8 @@ import { enterHut } from "./server/hut-room";
 import { enterPub } from "./server/pub-room";
 import { buyFromSalesman, getSalesman } from "./server/salesman";
 import { gatherStatus, rest, startOuting, stepOuting } from "./server/gather";
+import { fishStock, moveFish, sellFish } from "./server/fishmarket";
+import { catchBook, hangAtHome, mountInPub, pubWall, unmountInPub } from "./server/catchbook";
 import { builtProjectIds, contribute, crewWorks, projectStock } from "./server/projects";
 import { acceptTrade, closeTrade, listTrades, proposeTrade } from "./server/trade";
 import { apothecaryView, brew, smithItem, smithyView } from "./server/workshops";
@@ -523,6 +525,10 @@ app.post("/api/pub/talk", async (c) => {
   if (!text) return c.json({ error: "Say something first." }, 400);
   const [character, crew] = await Promise.all([getCharacter(c.env.DB, player.id), crewFor(c.env.DB, player.id)]);
   if (character?.status !== "active" || !crew) return c.json({ error: "The pub is for crews." }, 409);
+  // Everyone in the pub sees the exchange over the two heads; the conversation itself stays in the asker's panel.
+  const room = c.env.PUB_ROOM.get(c.env.PUB_ROOM.idFromName(crew.id));
+  const bubble = (id: string, line: string) => room.fetch("https://pub/bubble", { method: "POST", body: JSON.stringify({ id, text: line }) }).then(() => {}, () => {});
+  c.executionCtx.waitUntil(bubble(player.id, text));
   const [board, harbor] = await Promise.all([contractBoard(c.env.DB, crew.id), harborBoard(c.env.DB, crew.id, HARBOR_PIERS.length)]);
   const news = RELEASES.find((r) => !r.unreleased && r.notes.length > 0);
   const facts = [
@@ -535,7 +541,9 @@ app.post("/api/pub/talk", async (c) => {
     ...(news ? news.notes.slice(0, 4).map((n) => `News pinned on the Harbor's notice board: ${n.area ? `${n.area}: ` : ""}${n.text}.`) : []),
     ...harbor.log.slice(0, 3).map((v) => `Recent voyage: "${v.title}" ended in ${v.outcome === "victory" ? "a win" : v.outcome === "defeat" ? "a loss" : v.outcome}, sailed by ${v.crew.join(", ") || "nobody he knows"}.`),
   ];
-  return c.json({ say: await barkeepReply(c.env, { hero: character.name, crew: crew.name, text, facts }) });
+  const say = await barkeepReply(c.env, { hero: character.name, crew: crew.name, text, facts });
+  c.executionCtx.waitUntil(bubble(PUB_BARKEEP.id, say));
+  return c.json({ say });
 });
 
 // ---------- the contract dealer ----------
@@ -565,8 +573,8 @@ app.get("/api/gather", async (c) => {
 });
 
 app.post("/api/gather/start", async (c) => {
-  const body = await c.req.json<{ spot?: string }>().catch(() => ({}) as { spot?: string });
-  const result = await startOuting(c.env.DB, c.get("player").id, body.spot);
+  const body = await c.req.json<{ spot?: string; pier?: string }>().catch(() => ({}) as { spot?: string; pier?: string });
+  const result = await startOuting(c.env.DB, c.get("player").id, body.spot, body.pier);
   return typeof result === "string" ? c.json({ error: result }, 409) : c.json(result);
 });
 
@@ -578,6 +586,42 @@ app.post("/api/gather/step", async (c) => {
   if (typeof result === "string") return c.json({ error: result }, 409);
   if (result.xp) c.executionCtx.waitUntil(announceXp(c.env, player.id, result.xp));
   return c.json(result);
+});
+
+// ---------- fish: the icebox, the trophy chest, and selling them ----------
+
+app.get("/api/fish", async (c) => c.json(await fishStock(c.env.DB, c.get("player").id)));
+
+// Sell kept fish to the fishmonger ("market") or Old Tam ("tam"). The server prices every one.
+app.post("/api/fish/sell", async (c) => {
+  const body = await c.req.json<{ ids?: unknown; to?: unknown }>().catch(() => ({}) as { ids?: unknown; to?: unknown });
+  const result = await sellFish(c.env.DB, c.get("player").id, body.ids, body.to);
+  return typeof result === "string" ? c.json({ error: result }, 409) : c.json(result);
+});
+
+// Move a kept fish between the icebox and the trophy chest.
+app.post("/api/fish/move", async (c) => {
+  const body = await c.req.json<{ id?: unknown; to?: unknown }>().catch(() => ({}) as { id?: unknown; to?: unknown });
+  const result = await moveFish(c.env.DB, c.get("player").id, body.id, body.to);
+  return typeof result === "string" ? c.json({ error: result }, 409) : c.json(result);
+});
+
+// The Catch Book, the crew's records and the pub wall, and hanging fish at home.
+app.get("/api/fish/book", async (c) => c.json(await catchBook(c.env.DB, c.get("player").id)));
+app.get("/api/fish/wall", async (c) => {
+  const result = await pubWall(c.env.DB, c.get("player").id);
+  return typeof result === "string" ? c.json({ error: result }, 409) : c.json(result);
+});
+app.post("/api/fish/wall", async (c) => {
+  const body = await c.req.json<{ fishId?: unknown; down?: boolean }>().catch(() => ({}) as { fishId?: unknown; down?: boolean });
+  const id = c.get("player").id;
+  const result = body.down ? await unmountInPub(c.env.DB, id, body.fishId) : await mountInPub(c.env.DB, id, body.fishId);
+  return typeof result === "string" ? c.json({ error: result }, 409) : c.json(result);
+});
+app.post("/api/fish/hang", async (c) => {
+  const body = await c.req.json<{ furnishingId?: unknown; fishId?: unknown }>().catch(() => ({}) as { furnishingId?: unknown; fishId?: unknown });
+  const result = await hangAtHome(c.env, c.get("player").id, body.furnishingId, body.fishId ?? null);
+  return typeof result === "string" ? c.json({ error: result }, 409) : c.json(result);
 });
 
 // Rest: on a bedroll in the Harbor, or at home if you have a hut. Gives back gathering stamina, on a cooldown.

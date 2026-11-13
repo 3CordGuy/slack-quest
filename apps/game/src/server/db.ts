@@ -95,6 +95,8 @@ export interface Player {
 
 export interface CharacterRow {
   player_id: string;
+  /** Earned by filling the Catch Book. */
+  title?: string | null;
   name: string;
   class_id: string;
   status: "draft" | "active";
@@ -1038,9 +1040,9 @@ export async function getHut(db: D1Database, playerId: string): Promise<HutSumma
     db.prepare("SELECT kind, qty FROM resources WHERE player_id = ? AND qty > 0").bind(playerId).all<{ kind: ResourceKind; qty: number }>(),
     db.prepare("SELECT blueprint_id FROM blueprints WHERE player_id = ?").bind(playerId).all<{ blueprint_id: string }>(),
     db
-      .prepare("SELECT id, def_id AS defId, label, q, r, facing, x, z, y, angle, on_id AS onId, in_id AS inId FROM furnishings WHERE player_id = ? ORDER BY id")
+      .prepare("SELECT id, def_id AS defId, label, q, r, facing, x, z, y, angle, on_id AS onId, in_id AS inId, meta_json AS meta FROM furnishings WHERE player_id = ? ORDER BY id")
       .bind(playerId)
-      .all<HutSummary["furnishings"][number]>(),
+      .all<HutSummary["furnishings"][number] & { meta?: string | null }>(),
     db
       .prepare("SELECT furnishing_id AS containerId, kind, qty FROM stash WHERE player_id = ? AND qty > 0 ORDER BY furnishing_id, kind")
       .bind(playerId)
@@ -1054,7 +1056,8 @@ export async function getHut(db: D1Database, playerId: string): Promise<HutSumma
     tier: hut?.tier ?? 1,
     resources: Object.fromEntries(resources.results.map((r) => [r.kind, r.qty])),
     blueprints: [...new Set([...STARTER_BLUEPRINTS, ...blueprints.results.map((b) => b.blueprint_id)])],
-    furnishings: furnishings.results,
+    // A Mounted Fish carries the catch hung on it; nothing else uses its meta yet.
+    furnishings: furnishings.results.map(({ meta, ...f }) => (f.defId === "mounted_fish" ? { ...f, fish: (JSON.parse(meta || "{}") as { fish?: HutSummary["furnishings"][number]["fish"] }).fish ?? null } : f)),
     stash: stash.results,
     stowed: stowed.results,
   };

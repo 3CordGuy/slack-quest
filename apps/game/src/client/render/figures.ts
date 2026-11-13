@@ -17,6 +17,8 @@ import { RARITY_COLOR, WEAPONS, type Outfit, type Slot } from "@gantt-quest/worl
 import type { Look } from "./looks";
 
 const OUTLINE = "#1b1830";
+/** Set by makeFigure for the figure being built: a fishing rod goes in its right hand. */
+let rodInHand = false;
 const GEAR = { steel: "#c9d1dc", shine: "#f1f5fa", iron: "#8b95a5", wood: "#8a5a2b", leather: "#a0683a", gold: "#e0b12e", paper: "#e8dcc0", bone: "#eee6cf", dark: "#2a2740" };
 /** The frame a figure is modelled in, in model units: `setSize(1)` makes this one world unit tall. */
 const FRAME = 22;
@@ -560,6 +562,16 @@ function drawHeld(id: string, b: Biped, trim: string, look: Look, shield: boolea
       w.box(tone(GEAR.wood, -0.1), 0.6, 0.6, 0.6, 0.8, 5.2, 0.3);
       w.box(tone(GEAR.wood, -0.1), 0.6, 0.6, 0.6, -0.7, 4, -0.4);
       return { tilt: 0.5 };
+    case "rod": {
+      // A fishing rod held out over the water: cork grip and reel, a long tapering blank, the line hanging
+      // from its tip with a float on the end.
+      w.cyl("#b8875a", 0.5, 0.5, 2.4, 0, 0.6, 0, 6);
+      w.cyl(GEAR.iron, 0.8, 0.8, 0.5, 0.7, 1.4, 0, 8, [0, 0, HALF_PI]);
+      w.cyl("#3a2a1c", 0.18, 0.38, 15, 0, 9.3, 0, 5);
+      w.box("#e8eef2", 0.12, 7, 0.12, 0, 13.4, 1.4, [0.95, 0, 0]);
+      w.ball("#d8352a", 0.5, 0, 11.4, 4.3);
+      return { arm: -0.85, tilt: 0.75 };
+    }
     case "lantern":
       w.ring(GEAR.iron, 0.6, 0.18, 0, -0.9, 0.9, [0, HALF_PI, 0]);
       lantern(-3.4, 0.9);
@@ -858,7 +870,10 @@ function person(top: THREE.Group, look: Look, outfit: Outfit | undefined, asleep
   // Hands: a hero's weapon (signature weapons that have no shape of their own are drawn as the one they are like).
   const shield = outfit?.off_hand;
   if (shield) drawShield(armL, shield.ref, shield.icon, trim("off_hand"));
-  if (outfit) {
+  if (rodInHand) {
+    // A townsperson, or a hero with nothing in hand, has no trim for it: the look's accent instead.
+    apply(b, drawHeld("rod", b, outfit?.main_hand ? trim("main_hand") : look.accent, look, !!shield));
+  } else if (outfit) {
     const held = outfit.main_hand;
     if (held) {
       apply(b, drawHeld(held.ref, b, trim("main_hand"), look, !!shield));
@@ -1244,6 +1259,8 @@ export interface Figure {
 export interface FigureOptions {
   /** Eyes shut. */
   asleep?: boolean;
+  /** Fishing: a rod in the right hand in place of whatever weapon is there. */
+  rod?: boolean;
   /** Outline thickness, in model units. */
   edge?: number;
 }
@@ -1261,6 +1278,7 @@ export function makeFigure(kind: string, look: Look, outfit?: Outfit, opts: Figu
   scaler.scale.setScalar(1 / FRAME);
   edge = opts.edge ?? 0.12;
   seed = 20261113;
+  rodInHand = !!opts.rod;
   const rig = rigFor(kind, top, look, outfit, !!opts.asleep);
   const fade = { value: 1 };
   const mats: Mats = {

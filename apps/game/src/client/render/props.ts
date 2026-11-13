@@ -600,6 +600,82 @@ const MODELS: Record<string, (b: Builder) => void> = {
     b.box("#1f2430", 0.02, 0.02, 0.01, 0.19, 0.0, 0.12);
   },
 
+  // Boats, as they show in the craft list (on the water they are drawn under the hero by the renderer).
+  float_barrel(b) {
+    b.post(WOOD, 0.26, 0.23, 0.36);
+    for (const y of [0.06, 0.28]) b.ring(IRON, 0.25, 0.012, 0, y, 0).rotation.x = Math.PI / 2;
+  },
+  rowboat(b) {
+    b.box(WOOD, 0.46, 0.16, 0.9, 0, 0, 0);
+    b.box(DARK_WOOD, 0.38, 0.01, 0.8, 0, 0.16, 0);
+    b.box(PALE_WOOD, 0.9, 0.02, 0.05, 0, 0.15, -0.05);
+  },
+
+  // The Catch Book's rewards, one per page, and Old Ironjaw's jaw.
+  shallows_chart(b) {
+    b.box("#e6d7a8", 0.62, 0.44, 0.015, 0, -0.22, 0.01);
+    b.box("#7fb0b8", 0.56, 0.38, 0.01, 0, -0.19, 0.02);
+    for (const [w, h, x, y] of [[0.2, 0.05, -0.12, 0.08], [0.14, 0.04, 0.12, -0.04], [0.1, 0.035, -0.05, -0.12]]) b.box("#e8dcb0", w, h, 0.01, x, y - h / 2, 0.026);
+    for (const [x, y] of [[0.16, 0.1], [-0.18, -0.06], [0.02, 0.0], [0.2, -0.13]]) b.box("#4a7a3a", 0.035, 0.035, 0.01, x, y, 0.028);
+    b.box("#b9433d", 0.025, 0.025, 0.01, -0.22, 0.12, 0.03);
+    b.roll("#d8c48e", 0.022, 0.66, 0, 0.22, 0.025);
+    b.roll("#d8c48e", 0.022, 0.66, 0, -0.22, 0.025);
+  },
+  brass_spyglass(b) {
+    for (const x of [-0.18, 0.18]) b.box(DARK_WOOD, 0.04, 0.1, 0.1, x, -0.12, 0.05);
+    b.roll(GOLD, 0.05, 0.26, -0.16, 0.0, 0.1);
+    b.roll("#c89a2a", 0.04, 0.2, 0.06, 0.0, 0.1);
+    b.roll(GOLD, 0.03, 0.16, 0.22, 0.0, 0.1);
+    b.roll(DARK_WOOD, 0.052, 0.05, -0.08, 0.0, 0.1);
+  },
+  lamp_lens(b) {
+    b.box(IRON, 0.08, 0.06, 0.04, 0, 0.18, 0.02);
+    for (const [r, t] of [[0.2, 0.025], [0.15, 0.022], [0.1, 0.02], [0.05, 0.018]]) b.glass(b.ring("#bfe6f0", r, t, 0, -0.05, 0.07), 0.6);
+    b.glow("#fff3c0", new THREE.SphereGeometry(0.035, 8, 6), 0, -0.05, 0.08);
+  },
+  crossed_oars(b) {
+    for (const s of [-1, 1]) {
+      const shaft = b.box(PALE_WOOD, 0.035, 0.86, 0.03, 0, -0.43, 0.04);
+      shaft.position.set(0, 0, 0.04);
+      shaft.rotation.z = s * 0.62;
+      const blade = b.box(WOOD, 0.1, 0.24, 0.02, 0, 0, 0.05);
+      // At the lower end of the shaft: turned by a, its +y end goes to (-sin a, cos a), so the lower end is the opposite.
+      blade.position.set(Math.sin(s * 0.62) * 0.33, -Math.cos(0.62) * 0.33, 0.05);
+      blade.rotation.z = s * 0.62;
+    }
+    b.box("#8a6a3a", 0.08, 0.05, 0.06, 0, -0.03, 0.06);
+  },
+  lobster_pot(b) {
+    b.box(DARK_WOOD, 0.46, 0.04, 0.24, 0, -0.18, 0.12);
+    for (const x of [-0.2, -0.07, 0.07, 0.2]) {
+      const hoop = b.ring(PALE_WOOD, 0.13, 0.012, x, -0.16, 0.12);
+      hoop.rotation.y = Math.PI / 2;
+    }
+    for (let i = 0; i < 5; i++) {
+      const a = (i / 4) * Math.PI;
+      b.box("#c8b88a", 0.44, 0.012, 0.012, 0, -0.16 + Math.sin(a) * 0.13 - 0.006, 0.12 + Math.cos(a) * 0.13);
+    }
+    b.ring("#8a8a6a", 0.06, 0.012, 0.23, -0.1, 0.12).rotation.y = Math.PI / 2;
+  },
+  glass_floats(b) {
+    for (let i = 0; i < 5; i++) b.box("#3a3020", 0.66, 0.008, 0.008, 0, -0.2 + i * 0.1, 0.03);
+    for (let i = 0; i < 7; i++) b.box("#3a3020", 0.008, 0.46, 0.008, -0.3 + i * 0.1, -0.23, 0.03);
+    for (const [x, y, r, c] of [[-0.18, 0.0, 0.08, "#4a9a7a"], [0.04, -0.06, 0.1, "#3a7ab0"], [0.22, 0.04, 0.07, "#6ab0a0"], [-0.06, 0.1, 0.06, "#4a6ab0"], [0.14, -0.15, 0.06, "#5aa080"]] as const) {
+      b.glass(b.ball(c, r, x, y, 0.08, 2), 0.75);
+    }
+  },
+  ironjaw_jaw(b) {
+    const jaw = b.ring("#d8d0bc", 0.27, 0.045, 0, -0.04, 0.06);
+    jaw.scale.set(1, 0.7, 1);
+    for (let i = 0; i < 13; i++) {
+      const a = Math.PI * 0.15 + (i / 12) * Math.PI * 1.7;
+      const tooth = b.cone("#f4f0e4", 0.025, 0.08, Math.cos(a) * 0.22, -0.04 + Math.sin(a) * 0.15, 0.07, 3);
+      tooth.rotation.z = a + Math.PI / 2;
+    }
+    for (const [x, y] of [[-0.18, 0.1], [0.05, 0.17], [0.2, -0.12], [-0.1, -0.2]]) b.ring(IRON, 0.025, 0.006, x, y, 0.1);
+    b.box(DARK_WOOD, 0.62, 0.5, 0.03, 0, -0.29, 0.0);
+  },
+
   // Far goods, sold only by a traveling salesman.
   globe(b) {
     b.post(DARK_WOOD, 0.08, 0.2, 0.08);

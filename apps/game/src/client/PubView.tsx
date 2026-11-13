@@ -7,8 +7,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAudioScene } from "./audio/useAudioScene";
 import { hexDistance, hexNeighbors, type HexPos } from "@gantt-quest/core";
-import { PUB_BARKEEP, PUB_BARKEEP_POS, PUB_COUNTER, PUB_DEALER, PUB_DEALER_POS, PUB_DEALER_STAND, PUB_DICE, PUB_FITTINGS, PUB_GRID, PUB_MAX_TALK, PUB_MENU, PUB_REGULAR_SPOTS, PUB_SALESMAN_POS, PUB_SHOALS, PUB_TRADER, dueIn, gatherDay, poiAt, pubPath, pubRoom, regularsOn, salesman, type Perk, type RegularId } from "@gantt-quest/world";
-import { api, type Me, type PubTab, type RegularsView } from "./api";
+import { PUB_BARKEEP, PUB_BARKEEP_POS, PUB_COUNTER, PUB_DEALER, PUB_DEALER_POS, PUB_DEALER_STAND, PUB_DICE, PUB_FITTINGS, PUB_GRID, PUB_MAX_TALK, PUB_MENU, PUB_REGULAR_SPOTS, PUB_SALESMAN_POS, PUB_SHOALS, PUB_TRADER, dueIn, gatherDay, poiAt, pubMountSpots, pubPath, pubRoom, PUB_MOUNT_SLOTS, regularsOn, salesman, type Perk, type RegularId } from "@gantt-quest/world";
+import { CatchPanel } from "./CatchPanel";
+import { RecordBoard } from "./CatchBook";
+import { api, type Me, type PubTab, type PubWall, type RegularsView } from "./api";
 import { RegularPanel } from "./RegularPanel";
 import { DealerPanel } from "./board/DealerPanel";
 import { DiceTable } from "./DiceTable";
@@ -30,6 +32,9 @@ import { blurb, label } from "./labels";
 import { xpEvents } from "./xpEvents";
 import "./hut.css";
 import "./pub.css";
+
+/** Where the record fish hang, by wall slot. */
+const MOUNT_SPOTS = pubMountSpots(PUB_MOUNT_SLOTS);
 
 const same = (a: HexPos, b: HexPos) => a.q === b.q && a.r === b.r;
 /** A regular's unit id in the scene. */
@@ -92,6 +97,12 @@ export function PubView({ me, refresh, onLeave }: { me: Me; refresh(): Promise<u
   }, [loadRegs, day, me.character?.gold]);
   /** The regular whose panel is open. */
   const [talkTo, setTalkTo] = useState<RegularId | null>(null);
+  const [sellingFish, setSellingFish] = useState(false);
+  const [records, setRecords] = useState(false);
+  /** The crew's record fish on the wall. Read when the pub opens, and again after the board is used. */
+  const [wall, setWall] = useState<PubWall | null>(null);
+  const loadWall = useCallback(() => void api.pubWall().then(setWall, () => undefined), []);
+  useEffect(loadWall, [loadWall]);
   // Opening a regular's panel reads the job again (a quest may have been done elsewhere since),
   // and brings them to the middle of the screen, clear of the panel.
   useEffect(() => {
@@ -160,9 +171,16 @@ export function PubView({ me, refresh, onLeave }: { me: Me; refresh(): Promise<u
       npcs: {},
       freeRoam: true,
       indoors: true,
-      props: PUB_FITTINGS.map((f) => ({ id: f.id, model: f.model, pos: { q: f.q, r: f.r }, facing: f.facing })),
+      props: [
+        ...PUB_FITTINGS.map((f) => ({ id: f.id, model: f.model, pos: { q: f.q, r: f.r }, facing: f.facing })),
+        // The crew's record fish, each on its board on the wall.
+        ...(wall?.mounts ?? []).flatMap((m) => {
+          const spot = MOUNT_SPOTS[m.slot];
+          return spot ? [{ id: `fish-${m.slot}`, model: "mounted_fish", pos: spot.pos, facing: spot.side, mount: true, x: 0, y: 0.62, fish: { species: m.species, mm: m.mm } }] : [];
+        }),
+      ],
     };
-  }, [players, you, seller, cast]);
+  }, [players, you, seller, cast, wall]);
   const latest = useRef(scene);
   latest.current = scene;
   const send = useRef(pub.send);
@@ -375,6 +393,11 @@ export function PubView({ me, refresh, onLeave }: { me: Me; refresh(): Promise<u
           </p>
 
           <h3>{PUB_BARKEEP.name}</h3>
+          <p className="row">
+            <span className="muted grow">He buys fish for the stew, at the same price every day.</span>
+            <button className="small" onClick={() => setSellingFish(true)}>Sell him fish</button>
+            <button className="small" onClick={() => setRecords(true)}>Crew records</button>
+          </p>
           <div className="pub-talk">
             {talk.length === 0 && <div className="muted">He is wiping a mug that is already clean. Say something.</div>}
             {talk.length === 0 && <div className="line npc"><strong>{PUB_BARKEEP.name}: </strong>{word}</div>}
@@ -389,6 +412,8 @@ export function PubView({ me, refresh, onLeave }: { me: Me; refresh(): Promise<u
         </DragPanel>
       )}
 
+      {you && records && <RecordBoard you={you} onClose={() => (setRecords(false), loadWall())} />}
+      {you && sellingFish && <CatchPanel buyer="tam" onGold={() => void refresh()} onClose={() => setSellingFish(false)} />}
       {you && atTrader && seller && <SalesmanPanel me={me} refresh={refresh} />}
       {you && atDealer && dealing && <DealerPanel refresh={refresh} onClose={() => setDealing(false)} />}
       {you && talking && regs && <RegularPanel key={talking.regular} view={talking} handedIn={regs.handedIn} cap={regs.cap} reload={loadRegs} refresh={refresh} onClose={() => setTalkTo(null)} />}

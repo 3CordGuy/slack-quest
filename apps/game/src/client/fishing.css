@@ -1,0 +1,132 @@
+/* Fishing: the card at a pier (FishingIntro in Fishing.tsx) and the HUD over a sitting under way. */
+
+/* While fishing, the Harbor's own panels step aside, as at the quarry. */
+body.fishing .draggable:not(.gather), body.fishing .tip { display: none !important; }
+
+/* ---------- the card ---------- */
+.fish-art .fa-wave { fill: #2c5670; animation: fa-wave 2.2s ease-in-out infinite; }
+@keyframes fa-wave { 50% { transform: translateX(6px); opacity: 0.5; } }
+.fish-art .fa-float { animation: fa-bob 1.8s ease-in-out infinite; }
+@keyframes fa-bob { 50% { transform: translateY(2px); } }
+.fish-art .fa-fish { animation: fa-swim 4s ease-in-out infinite; }
+@keyframes fa-swim { 50% { transform: translateX(-14px); } }
+.fish-glyph { flex: none; width: 34px; height: 34px; display: grid; place-items: center; font-size: 20px; color: #8ac6e8; background: rgba(138, 198, 232, 0.08); border: 1px solid #2f4b66; }
+.fish-summary .fish-record { color: var(--gold); font-weight: bold; }
+
+/* ---------- the sitting ---------- */
+.overlay.fish-mode { background: none; padding: 0; display: block; pointer-events: none; }
+.fish-hit { position: absolute; inset: 0; pointer-events: auto; cursor: pointer; touch-action: none; user-select: none; -webkit-user-select: none; }
+.overlay.fish-mode.arrive .fish-hit, .overlay.fish-mode.leaving .fish-hit { cursor: default; }
+
+.fish-top { position: absolute; top: 56px; left: 50%; transform: translateX(-50%); width: min(520px, calc(100% - 32px)); display: flex; flex-direction: column; align-items: center; gap: 8px; pointer-events: none; }
+.fish-creel { display: flex; align-items: center; gap: 8px; padding: 3px 10px; background: rgba(20, 18, 42, 0.75); font-size: 12px; }
+.fish-creel-bar { width: 120px; height: 8px; border: 1px solid var(--line); background: #0e1424; }
+.fish-creel-bar div { height: 100%; background: linear-gradient(90deg, #4a8ab0, #8ac6e8); transition: width 0.4s; }
+.tabular { font-variant-numeric: tabular-nums; }
+
+
+.fish-prompt { padding: 5px 12px; background: rgba(20, 18, 42, 0.75); font-size: 14px; text-shadow: 0 1px 0 #000; }
+.fish-charge { width: min(260px, 100%); height: 14px; border: 2px solid var(--line); background: rgba(14, 20, 36, 0.85); }
+.fish-charge div { height: 100%; background: linear-gradient(90deg, #e0b12e, #f4d76a); }
+.fish-mode-word { min-height: 1.4em; font-size: 16px; font-weight: bold; letter-spacing: 0.02em; text-shadow: 0 2px 0 #000, 0 0 4px #000; }
+.fish-mode-word[data-mode="run"], .fish-mode-word[data-mode="shake"] { color: #ff9a6a; }
+.fish-mode-word[data-mode="jump"] { color: #ffd66a; }
+.fish-mode-word[data-mode="rest"], .fish-mode-word[data-mode="drag"] { color: #8ad0a8; }
+
+.fish-side { position: absolute; right: 16px; top: 50%; transform: translateY(-50%); display: flex; flex-direction: column; align-items: center; gap: 6px; pointer-events: none; }
+.fish-meters { display: flex; gap: 8px; padding: 6px; background: rgba(20, 18, 42, 0.6); }
+.fish-meter { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.fish-bar { position: relative; width: 22px; height: min(240px, 38vh); border: 2px solid var(--line); background: rgba(14, 20, 36, 0.85); overflow: hidden; }
+.fish-strength-fill { position: absolute; left: 0; right: 0; bottom: 0; background: linear-gradient(0deg, #3a7ab0, #8ac6e8); }
+.fish-tension-zones { position: absolute; inset: 0; display: flex; flex-direction: column; }
+.fish-tension-zones .red { height: calc(100% * (0.25 / 1.2)); background: rgba(224, 80, 58, 0.25); border-bottom: 1px dashed #e0503a; }
+.fish-tension-zones .amber { height: calc(100% * (0.25 / 1.2)); background: rgba(224, 177, 46, 0.15); }
+.fish-tension-fill { position: absolute; left: 0; right: 0; bottom: 0; background: #6ad08a; }
+.fish-tension-fill[data-zone="amber"] { background: #e0b12e; }
+.fish-tension-fill[data-zone="red"] { background: #e0503a; animation: fish-pulse 0.25s steps(2) infinite; }
+@keyframes fish-pulse { 50% { opacity: 0.6; } }
+.fish-side-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted); }
+.fish-line { width: 48px; height: 8px; border: 1px solid var(--line); background: #0e1424; }
+.fish-line div { height: 100%; background: #c6ccd6; }
+.fish-line div[data-low="1"] { background: #e0503a; animation: fish-pulse 0.4s steps(2) infinite; }
+
+.fish-msg { position: absolute; top: 34%; left: 50%; transform: translateX(-50%); max-width: calc(100% - 32px); padding: 8px 14px; background: rgba(20, 18, 42, 0.85); border: 2px solid var(--line); font-size: 15px; text-align: center; pointer-events: none; animation: qa-rise 0.2s ease-out; }
+.fish-msg.good { border-color: #4a9a6a; color: #b8f0c8; }
+.fish-msg.bad { border-color: #9a4a3a; color: #ffc8b8; }
+
+.fish-card { position: absolute; left: 50%; bottom: 64px; transform: translateX(-50%); width: min(340px, calc(100% - 32px)); padding: 12px 14px; display: flex; flex-direction: column; gap: 4px; background: linear-gradient(#1d1a36, #15132a); border: 2px solid var(--line); box-shadow: 0 0 0 2px #0c0b18, 0 12px 40px rgba(0, 0, 0, 0.55); pointer-events: auto; animation: qa-rise 0.22s ease-out; }
+.fish-card-head { display: flex; align-items: center; gap: 10px; }
+.fish-icon, .fish-icons img { image-rendering: pixelated; flex: none; }
+.fish-icon { width: 64px; height: 64px; background: rgba(138, 198, 232, 0.08); border: 1px solid #2f4b66; }
+.fish-icons { display: flex; flex-wrap: wrap; justify-content: center; gap: 4px; }
+.fish-card h3 { margin: 0; font-size: 20px; color: var(--gold); text-shadow: 0 2px 0 #000; }
+.fish-card .fish-rarity { font-size: 11px; text-transform: uppercase; letter-spacing: 0.12em; color: var(--muted); }
+.fish-card.uncommon .fish-rarity { color: #7fd08a; }
+.fish-card.rare .fish-rarity { color: #7fb8ff; }
+.fish-card.legendary .fish-rarity, .fish-card.mythic .fish-rarity { color: #ffb84a; }
+.fish-size { margin: 0; font-size: 15px; }
+.fish-blurb { margin: 0; font-size: 12px; line-height: 1.35; }
+.fish-fill { margin: 0; font-size: 12px; color: #ffd66a; }
+.fish-card .row { margin-top: 6px; }
+
+.fish-end { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(380px, calc(100% - 32px)); pointer-events: auto; }
+
+.fish-bottom { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); width: min(520px, calc(100% - 32px)); display: flex; align-items: center; gap: 8px; padding: 6px 8px; background: rgba(20, 18, 42, 0.75); pointer-events: auto; }
+.fish-bottom .spacer { flex: 1; }
+.fish-hint { font-size: 12px; }
+
+/* ---------- the catch gallery (#catches) ---------- */
+.catch-gallery { height: 100%; overflow-y: auto; padding: 12px 16px 40px; background: #15132a; }
+.catch-gallery header { display: flex; align-items: baseline; gap: 12px; position: sticky; top: -12px; padding: 8px 0; background: #15132a; z-index: 1; }
+.catch-gallery h1 { margin: 0; font-size: 22px; color: var(--gold); }
+.catch-gallery h2 { margin: 18px 0 8px; font-size: 16px; }
+.catch-gallery .spacer { flex: 1; }
+.catch-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 8px; }
+.catch-grid figure { margin: 0; padding: 6px; background: #1d1a36; border: 1px solid #2f2b52; }
+.catch-grid figure.rare { border-color: #3f5f9a; }
+.catch-grid figure.legendary, .catch-grid figure.mythic { border-color: #9a7a3a; }
+.catch-shots { display: flex; align-items: center; gap: 4px; }
+.catch-shots img { background: #26304f; }
+.catch-sprite { image-rendering: pixelated; }
+.catch-grid figcaption { display: flex; flex-direction: column; gap: 2px; padding-top: 4px; font-size: 12px; }
+
+/* ---------- the icebox, the trophy chest, and selling (CatchPanel.tsx) ---------- */
+.catch-panel { width: min(520px, calc(100vw - 24px)); }
+.catch-panel h3 { margin: 12px 0 4px; font-size: 14px; }
+.catch-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 3px; max-height: 34vh; overflow-y: auto; }
+.catch-row { display: flex; align-items: center; gap: 8px; padding: 3px 6px; background: rgba(255, 255, 255, 0.03); border: 1px solid #2a2750; }
+.catch-row.picked { border-color: #4a9a6a; background: rgba(74, 154, 106, 0.1); }
+.catch-row .grow { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px; }
+.catch-row-icon { image-rendering: pixelated; flex: none; }
+.catch-price { font-variant-numeric: tabular-nums; min-width: 56px; text-align: right; }
+.tag.specimen { color: var(--gold); border-color: #8a6a2a; }
+.tag.wanted { color: #8ad0a8; border-color: #3a7a5a; }
+.catch-ice { width: 100%; margin-bottom: 4px; }
+.catch-board { padding: 8px; background: #1a2a22; border: 2px solid #2f4a3a; margin-bottom: 6px; }
+.catch-board p { margin: 4px 0 0; font-size: 12px; }
+.catch-wanted { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 4px; }
+.catch-wanted-one { display: flex; align-items: center; gap: 6px; }
+.catch-wanted-one small { display: block; }
+.catch-foot { margin-top: 8px; }
+
+/* ---------- the Catch Book and the Record Board (CatchBook.tsx) ---------- */
+.catch-book { width: min(620px, calc(100vw - 24px)); }
+.book-tabs { display: flex; flex-wrap: wrap; gap: 4px; margin: 4px 0 6px; }
+.book-tabs button.done { border-color: #8a6a2a; }
+.book-reward { margin: 0 0 6px; font-size: 12px; }
+.book-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 6px; }
+.book-slot { position: relative; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 6px 4px; background: rgba(255, 255, 255, 0.03); border: 1px solid #2a2750; }
+.book-slot img { image-rendering: pixelated; }
+.book-slot small { font-size: 10px; line-height: 1.2; text-align: center; }
+.book-slot.unknown img { filter: brightness(0) opacity(0.45); }
+.book-slot.lost img { filter: brightness(0) opacity(0.6) drop-shadow(0 0 1px #8ac6e8) drop-shadow(0 0 1px #8ac6e8); }
+.book-slot.rare.caught { border-color: #3f5f9a; }
+.book-slot.legendary.caught, .book-slot.mythic.caught { border-color: #9a7a3a; }
+.book-slot.selected { outline: 2px solid var(--gold); }
+.book-star, .book-crown { position: absolute; top: 2px; font-size: 13px; color: var(--gold); text-shadow: 0 1px 0 #000; }
+.book-star { left: 4px; }
+.book-crown { right: 4px; }
+.book-detail { display: flex; gap: 12px; align-items: flex-start; margin-top: 8px; padding: 8px; background: #1a1838; border: 1px solid #2f2b52; }
+.book-detail p { margin: 4px 0 0; font-size: 12px; }
+.book-shadow { image-rendering: pixelated; filter: brightness(0) opacity(0.45); }
+.book-shadow.lost { filter: brightness(0) opacity(0.6) drop-shadow(0 0 1px #8ac6e8); }
