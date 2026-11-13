@@ -167,6 +167,8 @@ export type PubServerMessage =
   | { type: "moved"; id: string; path: HexPos[] }
   | { type: "placed"; id: string; pos: HexPos }
   | { type: "said"; id: string; name: string; text: string }
+  /** A line over someone's head with no entry in the chat log: a word with the barkeep, and his answer. */
+  | { type: "bubble"; id: string; text: string }
   | { type: "dice"; table: DiceView | null }
   | { type: "diceError"; text: string }
   | { type: "shoals"; table: ShoalsView | null }

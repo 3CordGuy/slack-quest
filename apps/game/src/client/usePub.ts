@@ -91,6 +91,9 @@ export function usePub(onMoved: (id: string, path: HexPos[]) => void, onXp?: (m:
           setChat((c) => [...c, { name: msg.name, text: msg.text }].slice(-30));
           // Over their head too, for everyone who can see them.
           said.current?.(msg.id, msg.text);
+        } else if (msg.type === "bubble") {
+          // Over their head only: a word with the barkeep, which stays out of the room's chat log.
+          said.current?.(msg.id, msg.text);
         } else if (msg.type === "dice") {
           setDice(msg.table);
           setDiceError(null);

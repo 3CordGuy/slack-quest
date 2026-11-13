@@ -4,7 +4,7 @@
 
 import { Hono, type Context } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
-import { HARBOR_PIERS, HARBOR_PLOTS, HARBOR_XP, HERO_CLASSES, MAX_CREW, PUB_DEALER, PUB_MAX_TALK, PUB_MENU, dueIn, hutPerks, nextSalesmanVisit, salesman, salesmanVisitAt, makeRng, pubBuff, rollStartingStats, type RunKind } from "@gantt-quest/world";
+import { HARBOR_PIERS, HARBOR_PLOTS, HARBOR_XP, HERO_CLASSES, MAX_CREW, PUB_BARKEEP, PUB_DEALER, PUB_MAX_TALK, PUB_MENU, dueIn, hutPerks, nextSalesmanVisit, salesman, salesmanVisitAt, makeRng, pubBuff, rollStartingStats, type RunKind } from "@gantt-quest/world";
 import { barkeepReply, heroName } from "./server/ai";
 import { contractBoard } from "./server/board";
 import { markReleaseSeen, seenRelease } from "./server/releases";
@@ -525,6 +525,10 @@ app.post("/api/pub/talk", async (c) => {
   if (!text) return c.json({ error: "Say something first." }, 400);
   const [character, crew] = await Promise.all([getCharacter(c.env.DB, player.id), crewFor(c.env.DB, player.id)]);
   if (character?.status !== "active" || !crew) return c.json({ error: "The pub is for crews." }, 409);
+  // Everyone in the pub sees the exchange over the two heads; the conversation itself stays in the asker's panel.
+  const room = c.env.PUB_ROOM.get(c.env.PUB_ROOM.idFromName(crew.id));
+  const bubble = (id: string, line: string) => room.fetch("https://pub/bubble", { method: "POST", body: JSON.stringify({ id, text: line }) }).then(() => {}, () => {});
+  c.executionCtx.waitUntil(bubble(player.id, text));
   const [board, harbor] = await Promise.all([contractBoard(c.env.DB, crew.id), harborBoard(c.env.DB, crew.id, HARBOR_PIERS.length)]);
   const news = RELEASES.find((r) => !r.unreleased && r.notes.length > 0);
   const facts = [
@@ -537,7 +541,9 @@ app.post("/api/pub/talk", async (c) => {
     ...(news ? news.notes.slice(0, 4).map((n) => `News pinned on the Harbor's notice board: ${n.area ? `${n.area}: ` : ""}${n.text}.`) : []),
     ...harbor.log.slice(0, 3).map((v) => `Recent voyage: "${v.title}" ended in ${v.outcome === "victory" ? "a win" : v.outcome === "defeat" ? "a loss" : v.outcome}, sailed by ${v.crew.join(", ") || "nobody he knows"}.`),
   ];
-  return c.json({ say: await barkeepReply(c.env, { hero: character.name, crew: crew.name, text, facts }) });
+  const say = await barkeepReply(c.env, { hero: character.name, crew: crew.name, text, facts });
+  c.executionCtx.waitUntil(bubble(PUB_BARKEEP.id, say));
+  return c.json({ say });
 });
 
 // ---------- the contract dealer ----------
