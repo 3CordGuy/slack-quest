@@ -22,7 +22,7 @@ const GOLD = "#e0b12e";
 /** From a hex's middle to the side it shares with the next one along: where a two-hex piece's middle sits from its anchor. */
 const HX = Math.sqrt(3) / 2;
 
-class Builder {
+export class Builder {
   readonly group = new THREE.Group();
 
   private mesh(geometry: THREE.BufferGeometry, material: THREE.Material, x: number, y: number, z: number): THREE.Mesh {

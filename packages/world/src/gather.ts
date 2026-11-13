@@ -2,8 +2,9 @@
 // that pay hut materials. Fishing off the shore (Dexterity), felling in the
 // tree line (Strength) and the quarry (Vitality).
 //
-// Each one gives the player something to read. Felling: a felled tree says
-// how many rotten ones stand beside it. Fishing: every cast says how near the
+// Each one gives the player something to read. Felling: the wind, fungus on
+// a trunk, and a knock on the bark; the grove (grove.ts) decides where a
+// felled tree comes down. Fishing: every cast says how near the
 // school was and which way, and the school drifts. The quarry: dust falling
 // along each row and column says how many weak blocks are in it, and a cut
 // block says how much ore is beside it. The hero's stat sets the chance of
@@ -18,6 +19,7 @@ import type { StatKey } from "@gantt-quest/core";
 import { rollCheck, statPct, MAX_PCT, MIN_PCT, type CheckResult } from "./check";
 import type { ResourceKind, Resources } from "./hut";
 import { makeRng, type Rng } from "./rng";
+import { DIR_NAMES, GROVE_KNOCKS, NOTCH_DIRS, fallDir, fallOutcome, isDir8, seedGrove, shiftWind, type Dir8, type Fall, type Grove, type Wind } from "./grove";
 
 export type GatherSpot = "fishing" | "felling" | "quarry";
 export const GATHER_SPOT_IDS: GatherSpot[] = ["fishing", "felling", "quarry"];
@@ -44,7 +46,7 @@ export const GATHER_SPOTS: Record<GatherSpot, GatherSpotDef> = {
     name: "Felling in the tree line",
     stat: "str",
     pays: ["wood", "fur"],
-    blurb: "Pick a tree to fell. Two of the nine are rotten: unless both rolls land, one comes down on your pile. A felled tree tells you how many rotten ones stand next to it.",
+    blurb: "Pick a tree, the side to notch it, then stop the axe on the mark. A clean swing drops it where you notched it; a poor one lets the wind carry it round. It must land clear: in a standing tree it hangs up, in the creek it washes away, and on your log pile it smashes the lot unless both rolls land. Two of the nine are rotten and pay nothing; knock to tell.",
   },
   quarry: {
     id: "quarry",
@@ -185,31 +187,35 @@ export interface GatherState {
   face?: BlockKind[];
   /** Fishing: where the school is now (hidden), where the gulls were at the start, and each cast so far. */
   water?: { school: number; gulls: number; casts: Cast[] };
-  /** Fishing and the quarry: where the player has chosen, and the marker they now have to stop. Cleared by the stop. */
-  aim?: { cell: number; startedAt: number; motion: Motion };
+  /** Where the player has chosen (and, felling, the side notched), and the marker they now have to stop. Cleared by the stop. */
+  aim?: { cell: number; startedAt: number; motion: Motion; dir?: Dir8 };
+  /** Felling: heights, fungus, the wind, knocks and falls. Missing on outings from before the grove. */
+  grove?: Grove;
   /** Set on outings that are timed. Older outings in progress are played without it. */
   timed?: boolean;
 }
 
 export type GatherChoice =
   /**
-   * Fishing and the quarry: choose where (a place along the shore, 0 to 4, or a block, 0 to 8) and set the
-   * marker moving. `now` is the server's clock, filled in by the server.
+   * Choose where (a place along the shore, 0 to 4, a block or a tree, 0 to 8) and set the marker moving.
+   * Felling also names the side to notch (`dir`: 0 north, 2 east, 4 south, 6 west). `now` is the server's
+   * clock, filled in by the server.
    */
-  | { t: "aim"; cell: number; now?: number }
-  /**
-   * Fell a tree (`cell`, 0 to 8), or stop the marker. `at` is how long after it started, in ms, as the
-   * server has judged it.
-   */
+  | { t: "aim"; cell: number; dir?: number; now?: number }
+  /** Stop the marker. `at` is how long after it started, in ms, as the server has judged it. */
   | { t: "push"; cell?: number; at?: number }
+  /** Felling: knock on a tree to tell what it is. Free, a few times an outing. */
+  | { t: "knock"; cell: number }
   | { t: "bank" };
 
-/** A tree as the client sees it. Unpicked trees say nothing until the outing is over. */
-export interface TreeView {
+/** A tree as the client sees it. What it is stays hidden until it is knocked, felled, or the outing is over. */
+export interface GroveTreeView {
   picked: boolean;
   kind: TreeKind | null;
-  /** For a picked tree that was not rotten: rotten trees next to it, diagonals included. */
-  near: number | null;
+  tall: boolean;
+  fungus: boolean;
+  knocked: boolean;
+  fall: Fall | null;
 }
 
 /** A block of the quarry face as the client sees it. Uncut blocks say nothing until the outing is over. */
@@ -232,13 +238,14 @@ export interface GatherView {
   /** What the outing paid. Empty until it is over. */
   payout: Resources;
   log: GatherEntry[];
-  trees: TreeView[] | null;
+  /** Felling: the grove, its wind and knocks. Null elsewhere, and on a felling outing from before the grove. */
+  grove: { trees: GroveTreeView[]; wind: Wind; knocksLeft: number } | null;
   cracks: number | null;
   maxCracks: number | null;
   /** Quarry: the face, and how many weak blocks are in each row and each column. */
   face: { blocks: BlockView[]; rows: number[]; cols: number[] } | null;
   /** The marker to stop, while one is moving. The client starts it when it receives this. */
-  aim: { cell: number; motion: Motion } | null;
+  aim: { cell: number; motion: Motion; dir: Dir8 | null } | null;
   /** Fishing: where the gulls were circling at the start (within one place of the school), each cast, and the school itself once it is over. */
   water: { cells: number; gulls: number; casts: Cast[]; school: number | null; read: number } | null;
 }
@@ -258,6 +265,7 @@ function shuffled<T>(rng: Rng, items: T[]): T[] {
 export function startGather(spot: GatherSpot, seed: number, stat: number): GatherState {
   const rng = makeRng(seed);
   let trees: TreeKind[] = [];
+  let grove: Grove | undefined;
   if (spot === "felling") {
     const cells = FELLING_SIDE * FELLING_SIDE;
     trees = shuffled(rng, [
@@ -265,6 +273,7 @@ export function startGather(spot: GatherSpot, seed: number, stat: number): Gathe
       ...Array<TreeKind>(FELLING_DENS).fill("den"),
       ...Array<TreeKind>(cells - FELLING_ROTTEN - FELLING_DENS).fill("sound"),
     ]);
+    grove = seedGrove(rng, trees.map((k) => k === "rotten"));
   }
   let face: BlockKind[] | undefined;
   if (spot === "quarry") {
@@ -276,25 +285,12 @@ export function startGather(spot: GatherSpot, seed: number, stat: number): Gathe
     const school = rng.int(0, FISHING_CELLS - 1);
     water = { school, gulls: Math.max(0, Math.min(FISHING_CELLS - 1, school + rng.int(-1, 1))), casts: [] };
   }
-  return { spot, seed: seed >>> 0, rng: rng.state(), pct: statPct(stat), status: "active", step: 0, haul: {}, log: [], trees, picked: [], cracks: 0, face, water, timed: spot !== "felling" };
+  return { spot, seed: seed >>> 0, rng: rng.state(), pct: statPct(stat), status: "active", step: 0, haul: {}, log: [], trees, picked: [], cracks: 0, face, water, grove, timed: true };
 }
 
 /** Chance per roll of the next push, before what the cast's place does to it. Only fishing changes it as the outing goes on. */
 export function gatherPct(state: Pick<GatherState, "spot" | "pct" | "step">): number {
   return state.spot === "fishing" ? Math.max(MIN_PCT, state.pct - FISHING_TENSION * state.step) : state.pct;
-}
-
-function rottenNear(trees: readonly TreeKind[], cell: number): number {
-  const row = Math.floor(cell / FELLING_SIDE);
-  const col = cell % FELLING_SIDE;
-  let n = 0;
-  for (let r = row - 1; r <= row + 1; r++) {
-    for (let c = col - 1; c <= col + 1; c++) {
-      if (r < 0 || c < 0 || r >= FELLING_SIDE || c >= FELLING_SIDE || (r === row && c === col)) continue;
-      if (trees[r * FELLING_SIDE + c] === "rotten") n++;
-    }
-  }
-  return n;
 }
 
 /** Count of `kind` in the cells around `cell` of a square grid, diagonals included. */
@@ -338,14 +334,25 @@ export function stepGather(state: GatherState, choice: GatherChoice): GatherStep
     const empty = units(state.haul) === 0;
     return { state: { ...state, status: "banked", log: [...state.log, { text: empty ? "You head back with what little you can carry." : "You pack up and head back.", check: null, gained: {} }] } };
   }
+  // A felling outing from before the grove can only be carried home.
+  if (state.spot === "felling" && !state.grove) return { state, error: "The light has gone on this stand. Carry it home." };
+  if (choice.t === "knock") return knock(state, choice.cell);
   if (choice.t === "aim") {
-    if (!state.timed) return { state, error: state.spot === "felling" ? "Pick a tree." : "Unknown choice." };
+    if (!state.timed) return { state, error: "Unknown choice." };
     if (state.aim) return { state, error: "Stop the one you have going first." };
     const cell = Number(choice.cell);
     if (state.spot === "fishing" && !(Number.isInteger(cell) && cell >= 0 && cell < FISHING_CELLS)) return { state, error: "Pick a place to cast." };
     if (state.spot === "quarry") {
       if (!Number.isInteger(cell) || cell < 0 || cell >= (state.face?.length ?? 0)) return { state, error: "Pick a block." };
       if (state.picked.includes(cell)) return { state, error: "That block is already cut." };
+    }
+    let dir: Dir8 | undefined;
+    if (state.spot === "felling") {
+      if (!Number.isInteger(cell) || cell < 0 || cell >= state.trees.length) return { state, error: "Pick a tree." };
+      if (state.picked.includes(cell)) return { state, error: "That tree is already down." };
+      const d = Number(choice.dir);
+      if (!isDir8(d) || !NOTCH_DIRS.includes(d)) return { state, error: "Pick the side to notch it." };
+      dir = d;
     }
     const r = makeRng(state.rng);
     // The hero's stat for the spot (Dexterity for fishing, Vitality for the quarry) makes the mark wider and the marker slower.
@@ -355,10 +362,10 @@ export function stepGather(state: GatherState, choice: GatherChoice): GatherStep
         ? // The fish gets livelier with every cast, as the line tightens.
           { kind: "dart", period: Math.round(Math.max(800, 1700 - 200 * state.step) * pace), phase: r.next(), zone: 0.3 + r.next() * 0.4, width: 0.18 * width }
         : { kind: "swing", period: Math.round(1500 * pace), phase: r.next(), zone: 0.15 + r.next() * 0.7, width: 0.16 * width };
-    return { state: { ...state, rng: r.state(), aim: { cell, startedAt: Math.floor(Number(choice.now) || 0), motion } } };
+    return { state: { ...state, rng: r.state(), aim: { cell, startedAt: Math.floor(Number(choice.now) || 0), motion, ...(dir !== undefined ? { dir } : {}) } } };
   }
   if (choice.t !== "push") return { state, error: "Unknown choice." };
-  if (state.timed && !state.aim) return { state, error: state.spot === "fishing" ? "Pick a place to cast." : "Pick a block." };
+  if (state.timed && !state.aim) return { state, error: state.spot === "fishing" ? "Pick a place to cast." : state.spot === "felling" ? "Pick a tree and the side to notch it." : "Pick a block." };
   // A timed stop shifts every roll of this check; an untimed push (felling, or an older outing) does not.
   const timing = state.aim ? timingGrade(state.aim.motion, choice.at) : undefined;
   const bonus = timing ? TIMING[timing].bonus : 0;
@@ -398,26 +405,34 @@ export function stepGather(state: GatherState, choice: GatherChoice): GatherStep
     const drift = rng.pick([-1, 0, 0, 1]);
     next.water = { school: Math.max(0, Math.min(FISHING_CELLS - 1, water.school + drift)), gulls: water.gulls, casts: [...water.casts, { cell, read, dir }] };
   } else if (state.spot === "felling") {
-    const cell = Number(choice.cell);
-    if (!Number.isInteger(cell) || cell < 0 || cell >= state.trees.length) return { state, error: "Pick a tree." };
-    if (state.picked.includes(cell)) return { state, error: "That tree is already down." };
+    const grove = state.grove!;
+    const cell = state.aim!.cell;
+    const aimed = state.aim!.dir ?? 4;
     next.picked.push(cell);
     const kind = state.trees[cell];
     check = roll(`Tree ${next.step}`);
-    if (kind === "rotten") {
-      if (check.perfect) text = "Rotten through. You drop it clear of the pile and get nothing from it.";
+    const dir = fallDir(aimed, grove.wind, timing ?? "close", kind === "rotten", rng);
+    const outcome = fallOutcome(cell, dir, grove.tall[cell] ? 2 : 1, state.picked);
+    const turned = dir === aimed ? "" : kind === "rotten" ? `It goes ${DIR_NAMES[dir]}. ` : `The wind takes it ${DIR_NAMES[dir]}. `;
+    const rot = kind === "rotten" ? "Rotten through, it twists as it goes. " : "";
+    if (outcome === "pile") {
+      if (check.perfect) text = `${rot}${turned}It comes down across the pile, but you had it under control: not a log out of place.`;
       else {
         bust = true;
-        text = "Rotten through. It twists as it falls and smashes the pile.";
+        text = `${rot}${turned}It comes down on the pile and smashes the lot.`;
       }
-    } else {
+    } else if (outcome === "hung") text = `${rot}${turned}It hangs up in the next tree and won't come free.`;
+    else if (outcome === "creek") text = `${rot}${turned}It drops in the creek and the water takes it.`;
+    else if (kind === "rotten") text = `${rot}${turned}It lands clear, but there is nothing in it worth carrying.`;
+    else {
       const what: ResourceKind = kind === "den" ? "fur" : "wood";
-      if (check.successes > 0) gained = { [what]: check.successes };
-      const near = `${plural(rottenNear(state.trees, cell), "rotten tree")} next to it.`;
-      text = check.fumble ? `The axe glances off and the trunk splits to nothing. ${near}`
-        : kind === "den" ? `An old den in the roots, lined with fur. ${near}`
-        : `Down it comes. ${near}`;
+      const n = check.successes + (check.successes > 0 && grove.tall[cell] ? 1 : 0);
+      if (n > 0) gained = { [what]: n };
+      text = check.fumble ? `${turned}It lands clear, but the axe split it to kindling.`
+        : kind === "den" ? `${turned}Down it comes, and an old den in the roots is lined with fur.`
+        : `${turned}Timber! It lands clear${grove.tall[cell] ? ", a good long trunk" : ""}.`;
     }
+    next.grove = { ...grove, falls: { ...grove.falls, [cell]: { aimed, dir, outcome } }, wind: shiftWind(grove.wind, rng) };
   } else {
     // An outing saved before the face had blocks is cut as plain stone.
     const face = state.face ?? Array<BlockKind>(QUARRY_SIDE * QUARRY_SIDE).fill("stone");
@@ -456,6 +471,20 @@ export function stepGather(state: GatherState, choice: GatherChoice): GatherStep
   return { state: next };
 }
 
+/** Felling: knock on a standing tree. Says what it is; uses up one of the outing's knocks and nothing else. */
+function knock(state: GatherState, asked: number): GatherStep {
+  if (state.spot !== "felling" || !state.grove) return { state, error: "There is nothing to knock on here." };
+  if (state.aim) return { state, error: "Swing first." };
+  const cell = Number(asked);
+  if (!Number.isInteger(cell) || cell < 0 || cell >= state.trees.length) return { state, error: "Pick a tree." };
+  if (state.picked.includes(cell)) return { state, error: "That tree is already down." };
+  if (state.grove.knocked.includes(cell)) return { state, error: "You have knocked on that one." };
+  if (state.grove.knocked.length >= GROVE_KNOCKS) return { state, error: "Your knuckles are raw. No more knocking." };
+  const kind = state.trees[cell];
+  const text = kind === "rotten" ? "Bonk. Hollow: it's rotten." : kind === "den" ? "Tok, and something scurries in the roots." : "Tok. Sound wood.";
+  return { state: { ...state, grove: { ...state.grove, knocked: [...state.grove.knocked, cell] }, log: [...state.log, { text, check: null, gained: {} }] } };
+}
+
 /**
  * What an outing pays. Nothing while it is still going or after a bust; a
  * banked haul pays itself, and never less than GATHER_MIN_BANK.
@@ -486,10 +515,15 @@ export function gatherView(state: GatherState): GatherView {
     haul: { ...state.haul },
     payout: gatherPayout(state),
     log: state.log,
-    trees: state.spot !== "felling" ? null : state.trees.map((kind, cell) => {
-      const picked = state.picked.includes(cell);
-      return { picked, kind: picked || over ? kind : null, near: picked && kind !== "rotten" ? rottenNear(state.trees, cell) : null };
-    }),
+    grove: !state.grove ? null : {
+      trees: state.trees.map((kind, cell) => {
+        const picked = state.picked.includes(cell);
+        const knocked = state.grove!.knocked.includes(cell);
+        return { picked, kind: picked || knocked || over ? kind : null, tall: state.grove!.tall[cell], fungus: state.grove!.fungus[cell], knocked, fall: state.grove!.falls[cell] ?? null };
+      }),
+      wind: state.grove.wind,
+      knocksLeft: Math.max(0, GROVE_KNOCKS - state.grove.knocked.length),
+    },
     cracks: state.spot === "quarry" ? state.cracks : null,
     maxCracks: state.spot === "quarry" ? QUARRY_MAX_CRACKS : null,
     face: !state.face ? null : {
@@ -500,7 +534,7 @@ export function gatherView(state: GatherState): GatherView {
       rows: Array.from({ length: QUARRY_SIDE }, (_, r) => state.face!.filter((k, i) => k === "weak" && Math.floor(i / QUARRY_SIDE) === r).length),
       cols: Array.from({ length: QUARRY_SIDE }, (_, c) => state.face!.filter((k, i) => k === "weak" && i % QUARRY_SIDE === c).length),
     },
-    aim: state.aim ? { cell: state.aim.cell, motion: state.aim.motion } : null,
+    aim: state.aim ? { cell: state.aim.cell, motion: state.aim.motion, dir: state.aim.dir ?? null } : null,
     water: !state.water ? null : { cells: FISHING_CELLS, gulls: state.water.gulls, casts: state.water.casts, school: over ? state.water.school : null, read: FISHING_READ },
   };
 }

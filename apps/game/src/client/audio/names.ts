@@ -53,6 +53,10 @@ export const soundName = {
   /** A boss's first appearance in a fight. */
   boss: () => ["stinger.boss", "stinger.battle_start"],
   levelUp: () => ["level_up"],
+  /** Felling in the grove: the axe biting (by how well the swing was stopped), a knock on the bark, a tree coming down. */
+  chop: (grade: "perfect" | "good" | "close" | "miss" | "late") => [`gather.chop.${grade === "late" ? "miss" : grade === "close" ? "good" : grade}`, "gather.chop"],
+  knock: (kind: "sound" | "den" | "rotten") => [`gather.knock.${kind === "rotten" ? "hollow" : kind === "den" ? "scurry" : "solid"}`, "gather.knock"],
+  fall: (what: "creak" | "timber" | "hung" | "creek" | "pile") => [`gather.${what}`],
 
   /**
    * Something that happened on a voyage. Rewards and finds sound only for the
@@ -125,6 +129,9 @@ export function soundNames(): Set<string> {
   [soundName.crit(), soundName.healFailed(), soundName.flee(true), soundName.flee(false), soundName.yourTurn(), soundName.levelUp()].forEach(add);
   add(["stinger.boss", "stinger.battle_start", "stinger.victory", "stinger.defeat", "stinger.fled", "stinger.voyage_won", "stinger.voyage_lost", "stinger.ambush"]);
   add(["loot", ...RARITIES.map((r) => `loot.${r}`), "key_item", "gold", "pickup", ...RESOURCE_KINDS.map((k) => `pickup.${k}`)]);
+  for (const g of ["perfect", "good", "close", "miss", "late"] as const) add(soundName.chop(g));
+  for (const k of ["sound", "den", "rotten"] as const) add(soundName.knock(k));
+  for (const f of ["creak", "timber", "hung", "creek", "pile"] as const) add(soundName.fall(f));
   add(["forage", ...Object.keys(FORAGE).map((k) => `forage.${k}`), "search.found", "search.empty", "rest", "discover"]);
   return names;
 }

@@ -63,6 +63,7 @@ Build before deploying: `wrangler deploy` ships whatever the last build produced
 | `…/contracts.ts` | Notice-board contracts and the crew's weekly goal |
 | `…/hero.ts` | A hero as the battle rules see one; shared by voyages and the sparring ring |
 | `…/gather.ts` | Fishing, felling and the quarry: outings, timing, payouts, stamina and resting |
+| `…/grove.ts` | Felling's grove: where a felled tree comes down (wind, fall lines, the creek and the pile) |
 | `…/projects.ts` | Crew projects (the lighthouse and those still to open) |
 | `…/pub.ts` | The pub's room, menu and food-and-drink boosts |
 | `…/dice.ts`, `…/shoals.ts` | The pub's two table games, each a pure reducer with a per-player view |

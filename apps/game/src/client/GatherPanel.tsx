@@ -3,9 +3,11 @@
 // posts the player's choice to push on or bank.
 
 import { useEffect, useRef, useState } from "react";
-import { FELLING_SIDE, GATHER_SPOTS, QUARRY_SIDE, TIMING, TIMING_LIMIT_MS, markerAt, timingGrade, type TimingGrade, STAT_LABEL, type GatherChoice, type GatherSpot, type GatherView, type Resources } from "@gantt-quest/world";
+import { GATHER_SPOTS, QUARRY_SIDE, TIMING, STAT_LABEL, type GatherChoice, type GatherSpot, type GatherView, type Resources } from "@gantt-quest/world";
 import { api, type GatherStatus, type XpResult } from "./api";
 import { DragPanel } from "./DragPanel";
+import { Grove, type GroveHero } from "./Grove";
+import { TimingBar } from "./TimingBar";
 import { ResourceChips, resourceText } from "./hutDrops";
 import "./gather.css";
 import { StaminaBolts } from "./StaminaBolts";
@@ -26,24 +28,6 @@ function Rolls({ rolls }: { rolls: boolean[] }) {
     <span className="gather-rolls">
       {rolls.map((hit, i) => <i key={i} className={`slot ${hit ? "hit" : "miss"}`}>{hit ? "✓" : "✗"}</i>)}
     </span>
-  );
-}
-
-function Trees({ outing, busy, pick }: { outing: GatherView; busy: boolean; pick(cell: number): void }) {
-  return (
-    <div className="gather-trees" style={{ gridTemplateColumns: `repeat(${FELLING_SIDE}, 1fr)` }}>
-      {outing.trees!.map((tree, cell) => {
-        const open = outing.status === "active" && !tree.picked;
-        const label = tree.kind === null ? "Standing" : tree.kind === "rotten" ? "Rotten" : tree.kind === "den" ? "Den" : tree.picked ? "Felled" : "Sound";
-        return (
-          <button key={cell} className={`gather-tree ${tree.kind ?? "hidden"} ${tree.picked ? "picked" : ""}`} disabled={!open || busy} onClick={() => pick(cell)} aria-label={`Tree ${cell + 1}: ${label}`}>
-            <span className="tree-glyph">{tree.kind === "rotten" ? "☠" : tree.picked ? "▂" : "▲"}</span>
-            <span>{label}</span>
-            {tree.near !== null && <span className="muted">{tree.near} rotten near</span>}
-          </button>
-        );
-      })}
-    </div>
   );
 }
 
@@ -94,78 +78,14 @@ function Face({ outing, busy, cut }: { outing: GatherView; busy: boolean; cut(ce
   );
 }
 
-/**
- * The timing bar: a marker moving along it and the mark to stop it on. It starts moving when it is shown, and the
- * player stops it with the button or the space bar. What is sent is how long after it started they pressed; the
- * server checks that against its own clock.
- */
-function TimingBar({ aim, spot, busy, stop }: { aim: NonNullable<GatherView["aim"]>; spot: "fishing" | "quarry"; busy: boolean; stop(at: number): void }) {
-  const marker = useRef<HTMLDivElement>(null);
-  const started = useRef(performance.now());
-  /** When the player pressed, in ms after the marker started; null until they do. The marker stops there at once. */
-  const stopped = useRef<number | null>(null);
-  const [verdict, setVerdict] = useState<TimingGrade | null>(null);
-  /** Past the time limit: any stop now counts as too slow, so say so instead of letting the marker run on silently. */
-  const [overdue, setOverdue] = useState(false);
-  const { motion } = aim;
-  useEffect(() => {
-    started.current = performance.now();
-    stopped.current = null;
-    setVerdict(null);
-    setOverdue(false);
-    let raf = 0;
-    const frame = () => {
-      raf = requestAnimationFrame(frame);
-      const at = stopped.current ?? performance.now() - started.current;
-      if (stopped.current === null && at > TIMING_LIMIT_MS) setOverdue(true);
-      if (marker.current) marker.current.style.left = `${markerAt(motion, at) * 100}%`;
-    };
-    raf = requestAnimationFrame(frame);
-    return () => cancelAnimationFrame(raf);
-  }, [motion]);
-  // On a short screen the bar can open below the fold: bring it into view.
-  const box = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    box.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
-  }, [motion]);
-  // Acts on the press itself (pointer down, key down), not the release, and freezes the marker where it was.
-  const press = (e?: { preventDefault(): void }) => {
-    e?.preventDefault();
-    if (stopped.current !== null || busy) return;
-    const at = Math.round(performance.now() - started.current);
-    stopped.current = at;
-    // What it looks like from here; the server decides, on the same moment.
-    setVerdict(timingGrade(motion, at));
-    stop(at);
-  };
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.code !== "Space" || e.repeat || (e.target as HTMLElement)?.closest?.("input, textarea")) return;
-      press(e);
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  });
-  const left = (motion.zone - motion.width / 2) * 100;
-  return (
-    <div className={`timing ${spot}`} ref={box}>
-      <div className="timing-bar" onPointerDown={press}>
-        <div className="timing-zone" style={{ left: `${left}%`, width: `${motion.width * 100}%` }}>
-          <div className="timing-sweet" />
-        </div>
-        <div className={`timing-marker ${verdict ? "stopped" : ""}`} ref={marker}>{spot === "fishing" ? "🐟" : "⛏"}</div>
-        {verdict && <div className={`timing-verdict timing-${verdict}`}>{TIMING[verdict].label}!</div>}
-      </div>
-      <div className="row">
-        <button className="primary" disabled={busy || verdict !== null} onPointerDown={press} onKeyDown={(e) => (e.key === "Enter" ? press(e) : undefined)}>{spot === "fishing" ? "Reel!" : "Strike!"}</button>
-        {overdue && !verdict && <span className="bad">Too slow now: whenever you stop it, the roll is {TIMING.late.bonus}%.</span>}
-        <span className="muted">Stop it on the mark (or press space). Bang on the middle: +{TIMING.perfect.bonus}% a roll. On the mark: +{TIMING.good.bonus}%. Off it: {TIMING.miss.bonus}%.</span>
-      </div>
-    </div>
-  );
-}
-
-export function GatherPanel({ spot, onClose, onStamina }: { spot: GatherSpot; onClose(): void; /** Told each time the outings left change, so the plate can follow. */ onStamina?(s: { left: number; max: number }): void }) {
+export function GatherPanel({ spot, hero, onClose, onStamina }: {
+  spot: GatherSpot;
+  /** How the hero looks, for the grove. */
+  hero: GroveHero;
+  onClose(): void;
+  /** Told each time the outings left change, so the plate can follow. */
+  onStamina?(s: { left: number; max: number }): void;
+}) {
   const [status, setStatus] = useState<GatherStatus | null>(null);
   const [paid, setPaid] = useState<Resources | null>(null);
   /** What the outing just ended paid in XP. */
@@ -216,10 +136,14 @@ export function GatherPanel({ spot, onClose, onStamina }: { spot: GatherSpot; on
   const active = outing?.status === "active";
   const pct = outing && active ? outing.pct : status?.chances[shown];
   const left = status?.stamina.left ?? 0;
+  // Felling with a grove: the stand fills the screen and the panel floats over it, docked to one side.
+  const groveMode = !!outing?.grove;
+  const [host, setHost] = useState<HTMLDivElement | null>(null);
 
   return (
-    <div className="overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
-      <DragPanel id="harbor.gather" title={def.name} compact className="panel gather" role="dialog" aria-label={def.name}>
+    <div className={`overlay ${groveMode ? "grove-mode" : ""}`} onClick={(e) => e.target === e.currentTarget && onClose()}>
+      {groveMode && <div className="grove-backdrop" ref={setHost} aria-label="The grove: tap a tree" />}
+      <DragPanel id="harbor.gather" title={def.name} compact className={`panel gather ${shown}`} role="dialog" aria-label={def.name}>
         <header className="gather-head">
           <h2>{def.name}</h2>
           <span className="spacer" />
@@ -235,7 +159,14 @@ export function GatherPanel({ spot, onClose, onStamina }: { spot: GatherSpot; on
             <button disabled={busy} onClick={() => step({ t: "bank" })}>{words.bank}</button>
           </div>
         )}
-        <p className="muted">{def.blurb}</p>
+        {groveMode ? (
+          <details className="gather-blurb">
+            <summary className="muted">How it works</summary>
+            <p className="muted">{def.blurb}</p>
+          </details>
+        ) : (
+          <p className="muted gather-blurb">{def.blurb}</p>
+        )}
 
         {status && (
           <div className="gather-facts">
@@ -289,7 +220,8 @@ export function GatherPanel({ spot, onClose, onStamina }: { spot: GatherSpot; on
                 <span className="muted">cast {outing.step} of {outing.maxSteps}</span>
               </div>
             )}
-            {outing.trees && <Trees outing={outing} busy={busy} pick={(cell) => step({ t: "push", cell })} />}
+            {outing.grove && <Grove outing={outing} busy={busy} hero={hero} host={host} step={step} />}
+            {outing.spot === "felling" && !outing.grove && active && <p className="muted gather-hint">This outing was started in the old tree line, before the grove. Carry what you have home and start a new one.</p>}
             {outing.water && (
               <>
                 <Water outing={outing} busy={busy || !!outing.aim} cast={(cell) => step({ t: "aim", cell })} />
@@ -321,7 +253,7 @@ export function GatherPanel({ spot, onClose, onStamina }: { spot: GatherSpot; on
                   {Object.keys(entry.gained).length > 0 && <span className="good"> +{resourceText(entry.gained)}</span>}
                 </li>
               ))}
-              {outing.log.length === 0 && <li className="muted">{outing.spot === "felling" ? "Nine trees. Pick one." : outing.spot === "fishing" ? "Gulls are circling. The school is under them or right beside. Pick where to cast, then reel when the fish is on the hook." : "Nine blocks. Read the dust, pick one to cut, then strike when the pick is on the mark."}</li>}
+              {outing.log.length === 0 && <li className="muted">{outing.spot === "felling" ? "Nine trees. Read the wind, knock if you are unsure, and pick one to fell." : outing.spot === "fishing" ? "Gulls are circling. The school is under them or right beside. Pick where to cast, then reel when the fish is on the hook." : "Nine blocks. Read the dust, pick one to cut, then strike when the pick is on the mark."}</li>}
             </ol>
 
             {active ? (

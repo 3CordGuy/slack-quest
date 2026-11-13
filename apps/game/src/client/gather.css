@@ -20,19 +20,38 @@
 .gather-log .tag { margin: 0 6px 0 0; }
 .gather-rolls { display: inline-flex; gap: 3px; margin-right: 8px; vertical-align: middle; }
 .gather-rolls .slot { width: 22px; height: 22px; font-size: 13px; font-style: normal; }
-.gather-trees { display: grid; gap: 6px; }
+/* Grid cells, used by the quarry's face. */
 .gather-tree { display: flex; flex-direction: column; align-items: center; gap: 1px; padding: 6px 2px; min-height: 74px; font-size: 12px; }
 .gather-tree .tree-glyph { font-size: 20px; line-height: 1; color: #4c9a52; }
 .gather-tree.picked .tree-glyph { color: #8a5a2b; }
-.gather-tree.rotten { border-color: var(--bad); }
-.gather-tree.rotten .tree-glyph { color: var(--bad); }
-.gather-tree.den { border-color: #a0683a; }
 .gather-tree:disabled { opacity: 0.75; cursor: default; }
 .gather-tree.hidden:disabled { opacity: 0.4; }
+
+/* Felling: the grove fills the screen and the panel floats over it, docked to the right (the bottom on a phone). */
+.overlay.grove-mode { background: none; justify-content: flex-end; align-items: flex-start; padding: 52px 12px 12px; }
+.grove-backdrop { position: absolute; inset: 0; z-index: 0; zoom: calc(1 / var(--ui-z, 1)); background: #9cc7e0; cursor: grab; touch-action: none; }
+.overlay.grove-mode .panel.gather { position: relative; z-index: 1; max-width: 360px; max-height: 100%; overflow-y: auto; background: rgba(23, 21, 44, 0.92); }
+.overlay.grove-mode .gather-facts { grid-template-columns: repeat(2, 1fr); }
+.overlay.grove-mode .gather-facts strong { font-size: 15px; }
+.gather-blurb summary { cursor: pointer; font-size: 12px; }
+.gather-blurb p { margin-top: 4px; }
+.grove { display: flex; flex-direction: column; gap: 8px; }
+.grove-info { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 12px; }
+.grove-wind { display: inline-flex; align-items: center; gap: 6px; font-weight: bold; }
+.grove-wind-arrow { display: inline-grid; place-items: center; width: 22px; height: 22px; border: 1px solid var(--line); background: #17152c; font-size: 15px; }
+.grove-legend { display: inline-flex; gap: 8px; flex-wrap: wrap; }
+.grove-legend span { display: inline-flex; align-items: center; gap: 4px; }
+.grove-legend i { width: 10px; height: 10px; display: inline-block; }
+.grove-choose { display: flex; flex-direction: column; gap: 6px; padding: 8px; border: 1px solid var(--line); background: #17152c; }
+.grove-choose .row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12px; }
+.grove-dirs { display: grid !important; grid-template-columns: repeat(2, 1fr); }
+.grove-dirs button { border-width: 2px; text-align: left; font-size: 12px; }
+.timing.felling .timing-bar { background: #3c5a2e; border-color: #6f9a4a; }
 
 @media (max-width: 640px) {
   .gather-head { padding-right: 68px; }
   .gather-facts { grid-template-columns: 1fr; }
+  .grove-legend { display: none; }
 }
 
 /* Fishing: the row of places to cast. */
@@ -76,3 +95,10 @@
 /* An outing still open at another spot: a calm note with the way out. */
 .gather-elsewhere { display: flex; align-items: center; gap: 12px; padding: 8px 10px; margin: 6px 0; border: 1px solid var(--gold); background: rgba(224, 177, 46, 0.08); }
 .gather-elsewhere p { margin: 0; flex: 1; }
+
+@media (max-width: 760px) {
+  .overlay.grove-mode { justify-content: center; align-items: flex-end; padding: 52px 6px 6px; }
+  .overlay.grove-mode .panel.gather { max-width: none; max-height: 46%; gap: 6px; }
+  /* Room for the stand: the rules and the facts give way to the choices. */
+  .overlay.grove-mode .gather-blurb, .overlay.grove-mode .gather-facts { display: none; }
+}
