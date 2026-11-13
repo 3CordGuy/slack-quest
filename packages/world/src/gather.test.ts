@@ -5,7 +5,9 @@ import {
   MAX_REPORTED,
   NEXT_LOG_MS,
   REGROW_MS,
-  SPLIT_ROLLS,
+  SPLIT_WOOD,
+  perfectSplitXp,
+  splitWood,
   SWING_MS,
   TREES,
   TREE_SLOTS,
@@ -399,33 +401,47 @@ describe("gathering", () => {
     expect(early.felling!.felled.length).toBeGreaterThan(0);
   });
 
-  it("felling: a split lands by the marker; a perfect rolls twice, a good once, and a miss leaves the log on the block", () => {
+  it("felling: a split lands by the marker; a perfect is two wood, a good one, and a miss leaves the log on the block", () => {
     const m: Motion = { kind: "swing", period: 1250, phase: 0, zone: 0.5, width: 0.24 };
     expect(splitGrade(m, momentFor(m, "perfect"))).toBe("perfect");
     // The marker never stops: no "too slow" on the block.
     expect(splitGrade(m, momentFor(m, "perfect", 60_000))).toBe("perfect");
-    expect(SPLIT_ROLLS).toEqual({ perfect: 2, good: 1, miss: 0 });
-    const motions = [m, m, m];
+    expect(SPLIT_WOOD).toEqual({ perfect: 2, good: 1, miss: 0 });
     const miss = momentFor(m, "miss");
     const hit = momentFor(m, "perfect", miss + SWING_MS);
-    const { splits, misses } = replayStrikes([miss, hit], 3, () => m, FELL_ROUND_MS);
+    const { splits, misses } = replayStrikes([miss, hit], 3, () => m, FELL_ROUND_MS, GATHER_MAX_UNITS);
     expect(misses).toBe(1);
-    expect(splits).toEqual([{ log: 0, at: hit, grade: "perfect" }]);
+    expect(splits).toEqual([{ log: 0, at: hit, grade: "perfect", wood: 2, check: null }]);
     // The next log's marker starts after it is up on the block.
     const next = hit + NEXT_LOG_MS + momentFor(m, "good");
-    expect(replayStrikes([hit, next], 3, () => m, FELL_ROUND_MS).splits.map((x) => x.grade)).toEqual(["perfect", "good"]);
+    expect(replayStrikes([hit, next], 3, () => m, FELL_ROUND_MS, GATHER_MAX_UNITS).splits.map((x) => [x.grade, x.wood])).toEqual([["perfect", 2], ["good", 1]]);
     // No more splits than logs, and none quicker than a swing.
-    expect(replayStrikes(strikesFor([m, m, m, m, m], ["perfect"]), 2, () => m, FELL_ROUND_MS).splits).toHaveLength(2);
-    expect(replayStrikes([hit, hit + 10], 3, () => m, FELL_ROUND_MS).splits).toHaveLength(1);
-    void motions;
-    for (let seed = 1; seed <= 100; seed++) {
+    expect(replayStrikes(strikesFor([m, m, m, m, m], ["perfect"]), 2, () => m, FELL_ROUND_MS, GATHER_MAX_UNITS).splits).toHaveLength(2);
+    expect(replayStrikes([hit, hit + 10], 3, () => m, FELL_ROUND_MS, GATHER_MAX_UNITS).splits).toHaveLength(1);
+    // The same strikes always pay the same: no dice on the block.
+    for (let seed = 1; seed <= 50; seed++) {
       const end = fellOut(seed, 9, { trees: [2, 2], grades: ["perfect", "good"] });
-      for (const sp of end.felling!.splits) {
-        expect(sp.check.rolls).toHaveLength(SPLIT_ROLLS[sp.grade]);
-        expect(sp.wood).toBe(sp.check.successes);
-      }
+      for (const sp of end.felling!.splits) expect(sp.check).toBeNull();
       expect(end.felling!.wood).toBe(end.felling!.splits.reduce((a, x) => a + x.wood, 0));
     }
+  });
+
+  it("felling: the pile holds one outing's carry; splits after it fills pay no wood but go on, and every perfect earns XP", () => {
+    expect(splitWood("perfect", 0, 8)).toBe(2);
+    expect(splitWood("perfect", 7, 8)).toBe(1);
+    expect(splitWood("good", 8, 8)).toBe(0);
+    const m: Motion = { kind: "swing", period: 1250, phase: 0, zone: 0.5, width: 0.24 };
+    const strikes = strikesFor(Array(7).fill(m), ["perfect"]);
+    const { splits } = replayStrikes(strikes, 7, () => m, FELL_ROUND_MS * 2, GATHER_MAX_UNITS);
+    expect(splits).toHaveLength(7);
+    expect(splits.map((x) => x.wood)).toEqual([2, 2, 2, 2, 0, 0, 0]);
+    // Through a whole outing: the pile tops out at the cap, and the perfects all count for XP.
+    const end = fellOut(3, 9, { trees: [0, 0, 0, 0, 0, 0, 0, 0], grades: ["perfect"] });
+    expect(end.status).toBe("banked");
+    expect(end.felling!.wood).toBeLessThanOrEqual(GATHER_MAX_UNITS);
+    expect(units(gatherPayout(end))).toBe(end.felling!.wood);
+    expect(perfectSplitXp(end)).toBe(end.felling!.splits.filter((x) => x.grade === "perfect").length);
+    expect(perfectSplitXp({ status: "active", felling: end.felling })).toBe(0);
   });
 
   it("felling: accuracy and speed both pay", () => {
@@ -434,7 +450,13 @@ describe("gathering", () => {
       for (let seed = 1; seed <= 300; seed++) sum += units(gatherPayout(fellOut(seed, 9, { grades, trees })));
       return sum;
     };
-    expect(wood(["perfect"])).toBeGreaterThan(wood(["good"]));
+    // Short of logs, perfects fill the pile where goods cannot.
+    const saplings = [0, 0, 0, 0, 0, 0];
+    expect(wood(["perfect"], saplings)).toBeGreaterThan(wood(["good"], saplings));
+    // With logs to spare, goods fill it too, and the perfects still tell: in XP.
+    const xp = (grades: ("perfect" | "good")[]) => perfectSplitXp(fellOut(5, 9, { grades }));
+    expect(xp(["perfect"])).toBeGreaterThan(xp(["good"]));
+    expect(xp(["good"])).toBe(0);
     // A handful of saplings is not the haul of a round spent on old oaks.
     expect(wood(["perfect"], [0, 0])).toBeLessThan(wood(["perfect"]));
   });

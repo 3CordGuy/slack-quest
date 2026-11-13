@@ -12,7 +12,7 @@
 // each log) are applied here first, so what you see is what is paid.
 
 import * as THREE from "three";
-import { FELL_ROUND_MS, NEXT_LOG_MS, REGROW_MS, SWING_MS, TREES, TREE_SLOTS, markerAt, splitGrade, type Chop, type Motion, type SplitGrade } from "@gantt-quest/world";
+import { FELL_ROUND_MS, GATHER_MAX_UNITS, NEXT_LOG_MS, REGROW_MS, SWING_MS, TREES, TREE_SLOTS, markerAt, splitGrade, splitWood, type Chop, type Motion, type SplitGrade } from "@gantt-quest/world";
 import { audio } from "../audio/engine";
 import { soundName } from "../audio/names";
 import type { WorldMinigame } from "./WorldRenderer";
@@ -31,6 +31,11 @@ export interface FellingHud {
   felled: number;
   logsLeft: number;
   struck: Record<SplitGrade, number>;
+  /** Wood on the pile so far this round, of at most `pileMax`. */
+  pile: number;
+  pileMax: number;
+  /** The last strike, for the pop over the view: `n` counts strikes, so each is a new pop. */
+  pop: { n: number; grade: SplitGrade; wood: number } | null;
   /** The marker over the log on the block, for the bar under the view: its motion and when it started (performance.now). */
   marker: { motion: Motion; startedAt: number } | null;
 }
@@ -86,7 +91,7 @@ function swingCurve(t: number): number {
 interface TreeObj {
   root: THREE.Group;
   body: THREE.Group;
-  notch: THREE.Mesh;
+  trunk: Trunk;
   ring: THREE.Mesh;
   bar: THREE.Mesh;
   done: number;
@@ -106,7 +111,81 @@ interface Bit {
 
 const lambert = (color: string) => new THREE.MeshLambertMaterial({ color, flatShading: true });
 
-function treeModel(size: (typeof TREE_SLOTS)[number]): { body: THREE.Group; height: number } {
+/** Where the axe bites, up the trunk, and the pale wood a cut shows. */
+const CUT_Y = 0.12;
+const HEARTWOOD = new THREE.Color("#ecd096");
+/** The cut's upper face, in its own shadow. */
+const HEARTWOOD_SHADE = new THREE.Color("#a07a45");
+
+/**
+ * A trunk that takes a felling cut: a many-sided column, tapering, whose ring
+ * of corners at the height of the cut is pulled in on the side facing you, so
+ * the chops open a V into it, pale wood inside, deeper with every chop.
+ */
+class Trunk {
+  readonly mesh: THREE.Mesh;
+  private rows: { y: number; r: number }[];
+  private bark: THREE.Color;
+  private frontAngle: number;
+  private depth = -1;
+
+  constructor(rBottom: number, rTop: number, height: number, private sides: number, bark: string, front: THREE.Vector3) {
+    const half = rBottom * 0.7;
+    this.rows = [0, CUT_Y - half, CUT_Y, CUT_Y + half, height].map((y) => ({ y, r: THREE.MathUtils.lerp(rBottom, rTop, y / height) }));
+    this.bark = new THREE.Color(bark);
+    this.frontAngle = Math.atan2(front.z, front.x);
+    const tris = (this.rows.length - 1) * sides * 2 * 3;
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.BufferAttribute(new Float32Array(tris * 3), 3));
+    geo.setAttribute("color", new THREE.BufferAttribute(new Float32Array(tris * 3), 3));
+    this.mesh = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true }));
+    this.mesh.castShadow = true;
+    this.cut(0);
+  }
+
+  /** How far through the cut is, 0 (none) to 1 (the most a felling notch goes). */
+  cut(frac: number) {
+    const depth = Math.max(0, Math.min(1, frac));
+    if (depth === this.depth) return;
+    this.depth = depth;
+    const n = this.sides;
+    // How much each corner of the cut ring faces you: 1 straight on, 0 from the sides round the back, so the cut is
+    // a notch in the front and not a band round the trunk.
+    const facing = Array.from({ length: n }, (_, j) => Math.max(0, (Math.cos((j / n) * Math.PI * 2 - this.frontAngle) - 0.3) / 0.7));
+    const at = (i: number, j: number) => {
+      const row = this.rows[i];
+      const a = ((j % n) / n) * Math.PI * 2;
+      const r = i === 2 ? row.r * (1 - 0.85 * depth * facing[j % n]) : row.r;
+      return [Math.cos(a) * r, row.y, Math.sin(a) * r];
+    };
+    const pos = this.mesh.geometry.getAttribute("position") as THREE.BufferAttribute;
+    const col = this.mesh.geometry.getAttribute("color") as THREE.BufferAttribute;
+    let v = 0;
+    const tri = (corners: [number, number][], c: THREE.Color) => {
+      for (const [i, j] of corners) {
+        pos.setXYZ(v, ...(at(i, j) as [number, number, number]));
+        col.setXYZ(v, c.r, c.g, c.b);
+        v++;
+      }
+    };
+    for (let i = 0; i < this.rows.length - 1; i++) {
+      for (let j = 0; j < n; j++) {
+        // Either face of the V, where its corner on the cut ring has been pulled in.
+        const open = depth > 0 && (i === 1 || i === 2) && (facing[j] > 0 || facing[(j + 1) % n] > 0);
+        const c = !open ? this.bark : i === 1 ? HEARTWOOD : HEARTWOOD_SHADE;
+        tri([[i, j], [i + 1, j], [i, j + 1]], c);
+        tri([[i, j + 1], [i + 1, j], [i + 1, j + 1]], c);
+      }
+    }
+    pos.needsUpdate = true;
+    col.needsUpdate = true;
+    this.mesh.geometry.computeVertexNormals();
+    this.mesh.geometry.computeBoundingSphere();
+  }
+}
+
+/** A tree for a slot, its trunk facing `front` (the way you look at it from, in its own space). */
+function treeModel(size: (typeof TREE_SLOTS)[number], front: THREE.Vector3): { body: THREE.Group; height: number; trunk: Trunk } {
   const body = new THREE.Group();
   const add = (geo: THREE.BufferGeometry, color: string, y: number) => {
     const m = new THREE.Mesh(geo, lambert(color));
@@ -115,23 +194,28 @@ function treeModel(size: (typeof TREE_SLOTS)[number]): { body: THREE.Group; heig
     body.add(m);
     return m;
   };
+  const trunk = (rTop: number, rBottom: number, height: number, sides: number, bark: string) => {
+    const t = new Trunk(rBottom, rTop, height, sides, bark, front);
+    body.add(t.mesh);
+    return t;
+  };
   if (size === "small") {
-    add(new THREE.CylinderGeometry(0.03, 0.04, 0.3, 6), "#7a5230", 0.15);
+    const t = trunk(0.03, 0.04, 0.3, 6, "#7a5230");
     add(new THREE.ConeGeometry(0.17, 0.32, 6), "#4f9a46", 0.42);
     add(new THREE.ConeGeometry(0.12, 0.24, 6), "#5cad4f", 0.58);
-    return { body, height: 0.72 };
+    return { body, height: 0.72, trunk: t };
   }
   if (size === "medium") {
-    add(new THREE.CylinderGeometry(0.045, 0.06, 0.5, 6), "#d6cfbf", 0.25);
+    const t = trunk(0.045, 0.06, 0.5, 6, "#d6cfbf");
     add(new THREE.IcosahedronGeometry(0.26, 1), "#86b84a", 0.66);
     add(new THREE.IcosahedronGeometry(0.18, 1), "#9cc957", 0.9);
-    return { body, height: 1.08 };
+    return { body, height: 1.08, trunk: t };
   }
-  add(new THREE.CylinderGeometry(0.075, 0.1, 0.7, 7), "#5e3f22", 0.35);
+  const t = trunk(0.075, 0.1, 0.7, 7, "#5e3f22");
   add(new THREE.IcosahedronGeometry(0.4, 1), "#2f7a3d", 0.95);
   add(new THREE.IcosahedronGeometry(0.28, 1), "#3a8743", 1.2).position.x = 0.15;
   add(new THREE.IcosahedronGeometry(0.26, 1), "#2a6e36", 1.05).position.x = -0.22;
-  return { body, height: 1.45 };
+  return { body, height: 1.45, trunk: t };
 }
 
 export class FellingScene implements WorldMinigame {
@@ -180,6 +264,9 @@ export class FellingScene implements WorldMinigame {
   private logAt = 0;
   private strikes: number[] = [];
   private struck: Record<SplitGrade, number> = { perfect: 0, good: 0, miss: 0 };
+  /** Wood on the pile (the server works out the same from the strikes reported). */
+  private piled = 0;
+  private pop: FellingHud["pop"] = null;
   private hudAt = 0;
   private still = typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
   private raycaster = new THREE.Raycaster();
@@ -210,13 +297,10 @@ export class FellingScene implements WorldMinigame {
       const root = new THREE.Group();
       root.position.copy(this.treeSpot(this.out, slot));
       root.position.y = this.heightAt(root.position);
-      const { body, height } = treeModel(size);
+      const { body, height, trunk } = treeModel(size, this.out.clone().negate());
       root.add(body);
       body.userData.slot = slot;
       body.traverse((o) => (o.userData.slot = slot));
-      const notch = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.05, 0.04), lambert("#e8c88a"));
-      notch.visible = false;
-      body.add(notch);
       const ring = new THREE.Mesh(new THREE.RingGeometry(0.16 + slot * 0.03, 0.2 + slot * 0.03, 24).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: "#ffe27a", transparent: true, opacity: 0.85, depthWrite: false }));
       ring.position.y = 0.02;
       root.add(ring);
@@ -231,7 +315,7 @@ export class FellingScene implements WorldMinigame {
       barAt.add(back, bar);
       root.add(barAt);
       group.add(root);
-      this.trees.push({ root, body, notch, ring, bar, done: 0, fellAt: -Infinity, shake: 0 });
+      this.trees.push({ root, body, trunk, ring, bar, done: 0, fellAt: -Infinity, shake: 0 });
     });
 
     // The chopping block, and the logs waiting beside it.
@@ -368,6 +452,8 @@ export class FellingScene implements WorldMinigame {
     this.motions = motions;
     this.logIndex = 0;
     this.struck = { perfect: 0, good: 0, miss: 0 };
+    this.piled = 0;
+    this.pop = null;
     this.turnGoal = 1;
     this.mode = "intro-split";
     this.fillPile(logs);
@@ -409,7 +495,7 @@ export class FellingScene implements WorldMinigame {
     for (const t of this.trees) {
       t.done = 0;
       t.fellAt = -Infinity;
-      t.notch.visible = false;
+      t.trunk.cut(0);
     }
     this.current = 2;
     this.emit(true);
@@ -536,11 +622,8 @@ export class FellingScene implements WorldMinigame {
     tree.done++;
     tree.shake = 0.25;
     const need = TREES[TREE_SLOTS[slot]].chops;
-    tree.notch.visible = true;
-    tree.notch.position.set(0, 0.12, 0).addScaledVector(this.out, -0.03 - 0.03 * (tree.done / need));
-    tree.notch.scale.set(1 + tree.done / need, 1, 1);
-    tree.notch.lookAt(tree.notch.position.clone().add(this.out));
-    for (let i = 0; i < 4; i++) this.bit("fleck", "#e8c88a", tree.root.position.clone().setY(0.14).addScaledVector(this.out, -0.06), new THREE.Vector3((Math.random() - 0.5) * 1.2, 0.8 + Math.random(), (Math.random() - 0.5) * 1.2).addScaledVector(this.out, -0.6), 0.45, 0.05);
+    tree.trunk.cut(tree.done / need);
+    for (let i = 0; i < 4; i++) this.bit("fleck", "#e8c88a", tree.root.position.clone().setY(tree.root.position.y + CUT_Y).addScaledVector(this.out, -0.06), new THREE.Vector3((Math.random() - 0.5) * 1.2, 0.8 + Math.random(), (Math.random() - 0.5) * 1.2).addScaledVector(this.out, -0.6), 0.45, 0.05);
     audio.play(soundName.chop("good"));
     if (tree.done >= need) {
       tree.done = 0;
@@ -566,7 +649,7 @@ export class FellingScene implements WorldMinigame {
           const rise = Math.min(1, (since - 550) / Math.max(1, REGROW_MS - 550));
           t.body.quaternion.identity();
           t.body.scale.setScalar(Math.max(0.001, rise * rise));
-          t.notch.visible = false;
+          t.trunk.cut(0);
         }
       } else {
         t.body.scale.setScalar(1);
@@ -646,6 +729,9 @@ export class FellingScene implements WorldMinigame {
     this.swingT = 0;
     const grade = splitGrade(this.motions[this.logIndex], at - this.logAt);
     this.struck[grade]++;
+    const wood = splitWood(grade, this.piled, GATHER_MAX_UNITS);
+    this.piled += wood;
+    this.pop = { n: (this.pop?.n ?? 0) + 1, grade, wood };
     audio.play(soundName.chop(grade));
     const topAt = this.blockAt.clone().setY(this.blockAt.y + 0.42);
     if (grade === "miss") {
@@ -803,6 +889,9 @@ export class FellingScene implements WorldMinigame {
       felled: this.felled,
       logsLeft: Math.max(0, this.logs - this.logIndex),
       struck: { ...this.struck },
+      pile: this.piled,
+      pileMax: GATHER_MAX_UNITS,
+      pop: this.pop,
       marker: this.logIndex < this.logs && this.motions[this.logIndex] ? { motion: this.motions[this.logIndex], startedAt: this.mode === "split" ? this.roundStart + this.logAt : performance.now() } : null,
     });
   }

@@ -9,14 +9,16 @@
 //    time is up gives nothing.
 // 2. Splitting. Each log goes on the block in turn, and a marker sweeps across
 //    it. Strike when it is over the split: bang on the middle is a perfect,
-//    two rolls at a piece of wood each; anywhere on the mark is good, one
-//    roll. Off the mark the axe just bites, and you go again on the same log.
+//    two pieces of wood; anywhere on the mark is good, one piece. Off the mark
+//    the axe just bites, and you go again on the same log. The wood goes on a
+//    pile that holds what one outing can carry home; once it is full, splits
+//    pay no more wood, but a perfect still earns XP (harborxp.ts).
 //
 // The client plays each round and reports what it did with times measured
 // from the round's start: every chop, then every strike. The server stamps
 // when each round began and replays the report against these rules,
 // dropping anything an axe could not have done (too fast, too late, before a
-// new tree stood). Logs and wood are rolled on the server.
+// new tree stood). Logs are rolled on the server; wood follows from the grades.
 
 import { rollCheck, type CheckResult } from "./check";
 import type { Rng } from "./rng";
@@ -58,8 +60,11 @@ export const TREES: Record<TreeSize, TreeDef> = {
 };
 
 export type SplitGrade = "perfect" | "good" | "miss";
-/** Rolls a split gets, each for one piece of wood. A miss gets none and the log stays on the block. */
-export const SPLIT_ROLLS: Record<SplitGrade, number> = { perfect: 2, good: 1, miss: 0 };
+/** Wood a split puts on the pile. A miss gets none and the log stays on the block. */
+export const SPLIT_WOOD: Record<SplitGrade, number> = { perfect: 2, good: 1, miss: 0 };
+
+/** Wood a split adds to a pile holding `piled` of at most `pile`. */
+export const splitWood = (grade: SplitGrade, piled: number, pile: number): number => Math.max(0, Math.min(SPLIT_WOOD[grade], pile - piled));
 
 /** One swing in the chopping round: at which tree, and when (ms after the round began). */
 export interface Chop {
@@ -79,8 +84,10 @@ export interface Split {
   log: number;
   at: number;
   grade: Exclude<SplitGrade, "miss">;
+  /** What it put on the pile: its grade's share, less whatever did not fit. */
   wood: number;
-  check: CheckResult;
+  /** Outings split before wood was fixed by the grade rolled for it here; null since. */
+  check: CheckResult | null;
 }
 
 export type FellingPhase = "ready-chop" | "chop" | "ready-split" | "split" | "done";
@@ -148,13 +155,16 @@ export function splitGrade(m: Motion, ms: number): SplitGrade {
 
 /**
  * Replay the splitting round: each strike against the marker over the log on
- * the block. A split brings the next log up after NEXT_LOG_MS, its marker
- * starting then; a miss leaves the log where it is. Strikes an axe could not
- * have made are dropped, as are any after the last log.
+ * the block. A split puts its wood on the pile (up to `pile`) and brings the
+ * next log up after NEXT_LOG_MS, its marker starting then; a miss leaves the
+ * log where it is. Strikes an axe could not have made are dropped, as are any
+ * after the last log. A full pile does not end the round: splits go on, for
+ * the perfects.
  */
-export function replayStrikes(strikes: readonly number[], logs: number, motion: (log: number) => Motion, windowMs: number): { splits: { log: number; at: number; grade: Exclude<SplitGrade, "miss"> }[]; misses: number } {
-  const splits: { log: number; at: number; grade: Exclude<SplitGrade, "miss"> }[] = [];
+export function replayStrikes(strikes: readonly number[], logs: number, motion: (log: number) => Motion, windowMs: number, pile: number): { splits: Split[]; misses: number } {
+  const splits: Split[] = [];
   let misses = 0;
+  let piled = 0;
   let log = 0;
   let logAt = 0;
   let last = -Infinity;
@@ -168,7 +178,9 @@ export function replayStrikes(strikes: readonly number[], logs: number, motion: 
       misses++;
       continue;
     }
-    splits.push({ log, at, grade });
+    const wood = splitWood(grade, piled, pile);
+    piled += wood;
+    splits.push({ log, at, grade, wood, check: null });
     log++;
     logAt = at + NEXT_LOG_MS;
   }
@@ -181,13 +193,5 @@ export function rollLogs(rng: Rng, felled: readonly { size: TreeSize; at: number
     const def = TREES[size];
     const check = def.rolls > 0 ? rollCheck(rng, { label: def.name, stat: "str", pct, count: def.rolls }) : null;
     return { size, at, logs: def.logs + (check?.successes ?? 0), check };
-  });
-}
-
-/** Wood from the splits: one roll per piece a split could give. */
-export function rollWood(rng: Rng, splits: readonly { log: number; at: number; grade: Exclude<SplitGrade, "miss"> }[], pct: number): Split[] {
-  return splits.map((s) => {
-    const check = rollCheck(rng, { label: s.grade === "perfect" ? "Perfect split" : "Good split", stat: "str", pct, count: SPLIT_ROLLS[s.grade] });
-    return { ...s, wood: check.successes, check };
   });
 }
