@@ -79,8 +79,10 @@ export interface ReverbZones {
  * "night" (0 full day to 1 deep night), "rain" (0 dry to 1 pouring) and
  * "time" (the time of day: 0 midnight, 0.25 dawn, 0.5 noon, 0.75 dusk).
  * They describe the sky outside, and hold indoors too.
+ * "shore" is how far you stand from the nearest water, in hexes: 0 at the water's edge, and
+ * a large number with no water in reach or indoors.
  */
-export type ParamName = "night" | "rain" | "time";
+export type ParamName = "night" | "rain" | "time" | "shore";
 
 /**
  * An automation curve: the level (0 silent to 1 full) at each value of a
@@ -97,8 +99,8 @@ export interface Layer {
   file: string;
   /** Level, in dB. Default 0. */
   gainDb?: number;
-  /** Its level follows a parameter. Without one it always plays. */
-  follow?: Follow;
+  /** Its level follows a parameter, or several (their levels multiply). Without one it always plays. */
+  follow?: Follow | Follow[];
 }
 
 /** A looping music cue or atmosphere bed. */
@@ -107,8 +109,11 @@ export interface Loop {
   file: string;
   /** Level, in dB. Default 0. */
   gainDb?: number;
-  /** The main file's level follows a parameter (a night bed, a rain bed, a day stem). */
-  follow?: Follow;
+  /**
+   * The main file's level follows a parameter (a night bed, a rain bed, a day stem). Give a list
+   * to follow several at once: their levels multiply, so a bed can fade in at night and also dip by the sea.
+   */
+  follow?: Follow | Follow[];
   /** Stems laid over the main file, in sync with it. */
   layers?: Layer[];
   /** Tempo, for music that others switch to on its bar or beat. The loop should start on a bar line and be whole bars long. */

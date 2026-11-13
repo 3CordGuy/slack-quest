@@ -10,7 +10,10 @@
 
 import { ABILITIES, ENEMIES, type EffectKind } from "@gantt-quest/world";
 import { slug } from "./select";
-import type { AudioManifest, SoundEvent } from "./types";
+import type { AudioManifest, Follow, SoundEvent } from "./types";
+
+/** "shore" is hexes to the nearest water. Level 0.7 is 3 dB down. */
+const BY_THE_SEA: Follow = { param: "shore", curve: [[0.5, 0.7], [2, 1]] };
 
 // Every event also names a built-in sound in `fallback` (audio/synth.ts): what plays until a recording
 // is added to `files`. Those are the game's sounds today, so nothing goes quiet while recordings arrive.
@@ -134,8 +137,9 @@ export const AUDIO: AudioManifest = {
   ambience: {
     // The land by day and by night, crossing over through dusk and dawn. A bed whose curve has it at
     // silence is not played or held in memory at all.
-    day: { file: "ambience/forest_day", gainDb: -3, fadeIn: 4, fadeOut: 4, follow: { param: "night", curve: [[0.3, 1], [0.7, 0]] } },
-    night: { file: "ambience/forest_night", fadeIn: 4, fadeOut: 4, follow: { param: "night", curve: [[0.3, 0], [0.7, 1]] } },
+    // Both also dip a little by the water, to leave room for the sea: 3 dB down at the edge, back to full two hexes inland.
+    day: { file: "ambience/forest_day", gainDb: -3, fadeIn: 4, fadeOut: 4, follow: [{ param: "night", curve: [[0.3, 1], [0.7, 0]] }, BY_THE_SEA] },
+    night: { file: "ambience/forest_night", fadeIn: 4, fadeOut: 4, follow: [{ param: "night", curve: [[0.3, 0], [0.7, 1]] }, BY_THE_SEA] },
     rain: { file: "ambience/rain", fadeIn: 3, fadeOut: 3, follow: { param: "rain", curve: [[0, 0], [1, 1]] } },
   },
 

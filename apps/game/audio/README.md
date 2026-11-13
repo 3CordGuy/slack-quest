@@ -69,11 +69,18 @@ The game keeps three values up to date, and any loop's level can follow one:
 | `night` | 0 in full day to 1 in deep night |
 | `rain` | 0 dry to 1 pouring |
 | `time` | The time of day: 0 midnight, 0.25 dawn, 0.5 noon, 0.75 dusk |
+| `shore` | How far you stand from the nearest water, in hexes: 0 at the edge, a large number with none in reach |
 
-They describe the sky outside and hold indoors too, so a hut can have rain on its roof. A curve is a list of `[value, level]` points joined by straight lines, with level 0 silent and 1 full:
+The first three describe the sky outside and hold indoors too, so a hut can have rain on its roof. A curve is a list of `[value, level]` points joined by straight lines, with level 0 silent and 1 full:
 
 ```ts
 night: { file: "ambience/forest_night", follow: { param: "night", curve: [[0.3, 0], [0.7, 1]] } },
+```
+
+`follow` can also be a list, and the levels multiply. This bed fades in at night and dips 3 dB at the water's edge, back to full two hexes inland:
+
+```ts
+follow: [{ param: "night", curve: [[0.3, 0], [0.7, 1]] }, { param: "shore", curve: [[0.5, 0.7], [2, 1]] }],
 ```
 
 A bed whose curve has it at silence is not played, or held in memory, until the curve brings it up.
