@@ -13,13 +13,15 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { HexPos } from "@gantt-quest/core";
-import { FURNISHINGS, besideHexes, coveredHexes, hutPath, isBeside, useOf, useProblem, type FurnishingUse, craftProblem, footprintOf, hutPerks, hutRoom, hutTier, isMounted, isSmall, nextHutTier, placeProblem, placedFurnishings, poiAt, smallPlaceProblem, turnOf, upgradeProblem, wallPlaceProblem, wrapAngle, type Furnishing } from "@gantt-quest/world";
+import { FURNISHINGS, besideHexes, coveredHexes, hutPath, isBeside, useOf, useProblem, type FurnishingUse, craftProblem, footprintOf, hutDoor, hutPerks, hutRoom, hutTier, isMounted, isSmall, nextHutTier, placeProblem, placedFurnishings, poiAt, smallPlaceProblem, turnOf, upgradeProblem, wallPlaceProblem, wrapAngle, type Furnishing } from "@gantt-quest/world";
 import { api, type Hut, type Me } from "./api";
 import { CrewRoster } from "./CrewRoster";
 import { DragPanel } from "./DragPanel";
+import { OptionsMenu } from "./OptionsMenu";
 import { CostChips, PerkMeter, ResourceChips } from "./hutDrops";
 import { TileAction } from "./TileAction";
-import { HutToolbar, ICON, PixelIcon, type ToolAction } from "./HutToolbar";
+import { HutToolbar, ICON, type ToolAction } from "./HutToolbar";
+import { PixelIcon } from "./PixelIcon";
 import { WorldRenderer, type PlaceTarget, type RenderState } from "./render/WorldRenderer";
 import { HutContainer } from "./HutContainer";
 import { HeroSheet, useHeroSheet } from "./HeroSheet";
@@ -611,6 +613,16 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
         <span className="spacer" />
         {hut.status !== "open" && !hut.error && <span className="bad">connecting…</span>}
         <button className="small" onClick={onLeave}>Leave</button>
+        <OptionsMenu
+          reset={hut.status !== "open" || tier === null ? undefined : {
+            to: "the door",
+            run: () => {
+              hut.send({ type: "unstick" });
+              renderer.current?.lookAt(hutDoor(tier));
+            },
+          }}
+          resetBlocked="Waiting for the hut to connect."
+        />
       </div>
 
       {decorating && (

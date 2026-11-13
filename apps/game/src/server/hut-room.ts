@@ -14,6 +14,7 @@ import {
   FURNISHINGS,
   HARBOR_MAX_SAY,
   STORAGE_CHEST,
+  UNSTICK_COOLDOWN_MS,
   coveredHexes,
   freeSpot,
   placedFurnishings,
@@ -88,6 +89,8 @@ export class HutRoom extends DurableObject<Env> {
   /** Cached copy of the hut. Gone after hibernation; D1 has the truth. */
   private hut: Hut | null = null;
   private loading: Promise<Hut> | null = null;
+  /** When each player last asked to be put back at the door. In memory only: a light limit. */
+  private unstuckAt = new Map<string, number>();
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -271,6 +274,17 @@ export class HutRoom extends DurableObject<Env> {
       const next: HarborPlayer = { ...player, bed: Number(msg.id) };
       ws.serializeAttachment(next);
       this.broadcast({ type: "joined", player: next });
+      return;
+    }
+
+    if (msg.type === "unstick") {
+      // A stuck or lost hero goes back to the door. Only ever the sender's own hero.
+      const now = Date.now();
+      if (now - (this.unstuckAt.get(player.id) ?? -Infinity) < UNSTICK_COOLDOWN_MS) return;
+      this.unstuckAt.set(player.id, now);
+      const door = hutDoor(hut.tier);
+      ws.serializeAttachment({ ...player, pos: door } satisfies HarborPlayer);
+      this.broadcast({ type: "placed", id: player.id, pos: door });
       return;
     }
 

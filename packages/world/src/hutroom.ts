@@ -607,6 +607,7 @@ export type HutServerMessage =
   | { type: "joined"; player: HarborPlayer }
   | { type: "left"; id: string }
   | { type: "moved"; id: string; path: HexPos[] }
+  | { type: "placed"; id: string; pos: HexPos }
   | { type: "said"; id: string; name: string; text: string }
   /** Sent only to whoever asked for something that was not allowed. */
   | { type: "refused"; reason: string }
@@ -615,6 +616,8 @@ export type HutServerMessage =
 export type HutClientMessage =
   | { type: "move"; to: HexPos }
   | { type: "say"; text: string }
+  /** Back to the door, for a stuck or lost hero. */
+  | { type: "unstick" }
   /**
    * Owner only. Put a stored furnishing down, or move a placed one. On the
    * floor it goes on hex `to` at offset `x`/`z`, turned `angle` radians

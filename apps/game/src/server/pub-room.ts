@@ -8,7 +8,7 @@
 // are plain HTTP routes in worker.ts; this object only relays people.
 
 import { DurableObject } from "cloudflare:workers";
-import { HARBOR_MAX_SAY, pubPath, pubRoom, type DiceGame, type DiceRequest, type HarborPlayer, type PubClientMessage, type PubServerMessage, type ShoalsGame, type ShoalsRequest } from "@gantt-quest/world";
+import { HARBOR_MAX_SAY, UNSTICK_COOLDOWN_MS, pubPath, pubRoom, type DiceGame, type DiceRequest, type HarborPlayer, type PubClientMessage, type PubServerMessage, type ShoalsGame, type ShoalsRequest } from "@gantt-quest/world";
 import { crewFor, getCharacter, heroInitFor, type Env, type Player } from "./db";
 import { DICE_RULES, SHOALS_RULES, StakeTable } from "./stake-table";
 import { readXpPost, relayXp } from "./harbor-xp";
@@ -32,6 +32,8 @@ export async function enterPub(env: Env, player: Player, request: Request): Prom
 export class PubRoom extends DurableObject<Env> {
   private dice: StakeTable<DiceGame, DiceRequest>;
   private shoals: StakeTable<ShoalsGame, ShoalsRequest>;
+  /** When each player last asked to be put back at the door. In memory only: a light limit. */
+  private unstuckAt = new Map<string, number>();
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -120,6 +122,16 @@ export class PubRoom extends DurableObject<Env> {
       ws.serializeAttachment({ ...player, pos: path[path.length - 1] } satisfies HarborPlayer);
       this.broadcast({ type: "moved", id: player.id, path });
       // Walking away from a game table gives up a seat there.
+      await this.dice.reconcile();
+      await this.shoals.reconcile();
+    } else if (msg.type === "unstick") {
+      // A stuck or lost hero goes back to the door. Only ever the sender's own hero.
+      const now = Date.now();
+      if (now - (this.unstuckAt.get(player.id) ?? -Infinity) < UNSTICK_COOLDOWN_MS) return;
+      this.unstuckAt.set(player.id, now);
+      ws.serializeAttachment({ ...player, pos: DOOR } satisfies HarborPlayer);
+      this.broadcast({ type: "placed", id: player.id, pos: DOOR });
+      // Like walking away, it gives up a seat at a game table.
       await this.dice.reconcile();
       await this.shoals.reconcile();
     } else if (msg.type === "say") {

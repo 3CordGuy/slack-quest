@@ -15,6 +15,7 @@ import {
   HARBOR_PLOTS,
   HARBOR_PUB,
   HARBOR_SPAWN,
+  UNSTICK_COOLDOWN_MS,
   generateHarbor,
   harborPath,
   type HarborClientMessage,
@@ -27,6 +28,8 @@ import { readXpPost, relayXp } from "./harbor-xp";
 const MAP = generateHarbor();
 
 export class HarborRoom extends DurableObject<Env> {
+  /** When each player last asked to be put back at the spawn. In memory only: a light limit, and a hibernation resets it. */
+  private unstuckAt = new Map<string, number>();
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -143,6 +146,13 @@ export class HarborRoom extends DurableObject<Env> {
       const next: HarborPlayer = { ...player, bedroll: player.pos };
       ws.serializeAttachment(next);
       this.broadcast({ type: "joined", player: next });
+    } else if (msg.type === "unstick") {
+      // A stuck or lost hero goes back where heroes arrive. Only ever the sender's own hero: the socket says who that is.
+      const now = Date.now();
+      if (now - (this.unstuckAt.get(player.id) ?? -Infinity) < UNSTICK_COOLDOWN_MS) return;
+      this.unstuckAt.set(player.id, now);
+      ws.serializeAttachment({ ...player, pos: HARBOR_SPAWN, bedroll: undefined } satisfies HarborPlayer);
+      this.broadcast({ type: "placed", id: player.id, pos: HARBOR_SPAWN });
     } else if (msg.type === "say") {
       const text = String(msg.text ?? "").replace(/\s+/g, " ").trim().slice(0, HARBOR_MAX_SAY);
       if (text) this.broadcast({ type: "said", id: player.id, name: player.name, text });

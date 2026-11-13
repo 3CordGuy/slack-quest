@@ -12,6 +12,7 @@ import { SalesmanPanel } from "./SalesmanPanel";
 import { useSalesman } from "./salesmanClock";
 import { CrewRoster } from "./CrewRoster";
 import { DragPanel } from "./DragPanel";
+import { OptionsMenu } from "./OptionsMenu";
 import { perkText } from "./hutDrops";
 import { ThingIcon, pubIcon } from "./thingIcons";
 import { TileAction } from "./TileAction";
@@ -217,6 +218,16 @@ export function PubView({ me, refresh, onLeave }: { me: Me; refresh(): Promise<u
         <span className="gold">{gold} gold</span>
         {pub.status !== "open" && !pub.error && <span className="bad">connecting…</span>}
         <button className="small" onClick={onLeave}>Leave</button>
+        <OptionsMenu
+          reset={pub.status !== "open" ? undefined : {
+            to: "the door",
+            run: () => {
+              pub.send({ type: "unstick" });
+              renderer.current?.lookAt(DOOR);
+            },
+          }}
+          resetBlocked="Waiting for the pub to connect."
+        />
       </div>
 
       {you && atCounter && (

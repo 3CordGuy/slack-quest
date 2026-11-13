@@ -4,11 +4,12 @@
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { HexPos } from "@gantt-quest/core";
-import { GATHER_SPOTS, GATHER_SPOT_IDS, HARBOR_APOTHECARY, HARBOR_BOARD, HARBOR_GALLEY, HARBOR_LIGHTHOUSE, HARBOR_SMITHY, HARBOR_GATHER, HARBOR_NAME, HARBOR_PIERS, HARBOR_PLOTS, HARBOR_PUB, HARBOR_RING, HARBOR_SHOP, HARBOR_WORKS, MAX_PARTY, PLOT_PRICE, RESOURCE_KINDS, SHACK_COST, binFill, binNeeds, builtProjects, generateHarbor, projectById, projectProgress, harborPoi, hutTier, poiAt, salesman, type GatherSpot, type HarborShip, type Resources } from "@gantt-quest/world";
+import { GATHER_SPOTS, GATHER_SPOT_IDS, HARBOR_APOTHECARY, HARBOR_BOARD, HARBOR_GALLEY, HARBOR_LIGHTHOUSE, HARBOR_SMITHY, HARBOR_GATHER, HARBOR_NAME, HARBOR_PIERS, HARBOR_PLOTS, HARBOR_PUB, HARBOR_RING, HARBOR_SHOP, HARBOR_SPAWN, HARBOR_WORKS, MAX_PARTY, PLOT_PRICE, RESOURCE_KINDS, SHACK_COST, binFill, binNeeds, builtProjects, generateHarbor, projectById, projectProgress, harborPoi, hutTier, poiAt, salesman, type GatherSpot, type HarborShip, type Resources } from "@gantt-quest/world";
 import { api, type Me } from "./api";
 import { AccountPanel } from "./Account";
 import { CrewRoster, type RosterMember } from "./CrewRoster";
 import { NoticeBoard } from "./board/NoticeBoard";
+import { OptionsMenu } from "./OptionsMenu";
 import { DragPanel } from "./DragPanel";
 import { GatherPanel } from "./GatherPanel";
 import { HeroSheet, useHeroSheet } from "./HeroSheet";
@@ -343,12 +344,22 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
         {harbor.crew && <span className="muted wide-only">Invite code {harbor.crew.id}</span>}
         <button className="small" onClick={copy}>{copied ? "Copied" : <>Invite<span className="wide-only"> link</span></>}</button>
         <button className={`small ${me.player.email ? "" : "nudge"}`} title={me.player.email ?? "Guest account: not saved yet"} onClick={() => setAccount(true)}>
-          {me.player.email ? "Account" : "Save progress"}
+          {me.player.email ? "Account" : <>Save<span className="wide-only"> progress</span></>}
         </button>
         {me.isAdmin && <button className="small" onClick={() => (location.hash = "#admin")}>Admin</button>}
         <button className="small" onClick={() => setSheet(true)}>
           Inventory<span className="wide-only"> · {me.character?.name}</span>{me.character && me.character.unspent_points > 0 ? " ●" : ""}
         </button>
+        <OptionsMenu
+          reset={spar || harbor.status !== "open" ? undefined : {
+            to: "the plaza, where everyone arrives",
+            run: () => {
+              harbor.send({ type: "unstick" });
+              renderer.current?.lookAt(HARBOR_SPAWN);
+            },
+          }}
+          resetBlocked={spar ? "Not during a sparring bout." : "Waiting for the Harbor to connect."}
+        />
       </div>
 
       <DragPanel id="harbor.docks" title="Docks" foldOnPhone className="story panel docks">

@@ -247,6 +247,8 @@ export type HarborServerMessage =
   | { type: "joined"; player: HarborPlayer }
   | { type: "left"; id: string }
   | { type: "moved"; id: string; path: HexPos[] }
+  /** Someone was put straight onto `pos` (no walk): a stuck hero sent back by "unstick". */
+  | { type: "placed"; id: string; pos: HexPos }
   | { type: "said"; id: string; name: string; text: string }
   | XpMessage;
 
@@ -256,7 +258,12 @@ export type HarborClientMessage =
   /** "I changed my gear or level": the server re-reads the sender's character and tells everyone. */
   | { type: "refresh" }
   /** "I have just rested here": lay the sender's bedroll out where they stand, for everyone to see. */
-  | { type: "bedroll" };
+  | { type: "bedroll" }
+  /** "I am stuck or lost": put the sender's own hero back where heroes arrive. At most once per UNSTICK_COOLDOWN_MS. */
+  | { type: "unstick" };
+
+/** How often a hero may ask to be put back where they arrive (Harbor, hut or pub), per connection. */
+export const UNSTICK_COOLDOWN_MS = 3000;
 
 export const HARBOR_MAX_SAY = 200;
 export const MAX_CREW = 40;

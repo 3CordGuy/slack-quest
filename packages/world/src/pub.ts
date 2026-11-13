@@ -144,6 +144,7 @@ export type PubServerMessage =
   | { type: "joined"; player: HarborPlayer }
   | { type: "left"; id: string }
   | { type: "moved"; id: string; path: HexPos[] }
+  | { type: "placed"; id: string; pos: HexPos }
   | { type: "said"; id: string; name: string; text: string }
   | { type: "dice"; table: DiceView | null }
   | { type: "diceError"; text: string }
@@ -154,5 +155,7 @@ export type PubServerMessage =
 export type PubClientMessage =
   | { type: "move"; to: HexPos }
   | { type: "say"; text: string }
+  /** Back to the door, for a stuck or lost hero. */
+  | { type: "unstick" }
   | { type: "dice"; action: DiceRequest }
   | { type: "shoals"; action: ShoalsRequest };
