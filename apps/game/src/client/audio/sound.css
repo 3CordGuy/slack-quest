@@ -25,3 +25,4 @@
 .sound-sky .sound-row { grid-template-columns: 90px 1fr 40px; }
 .sound-presets { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 2px 0 8px; }
 .sound-presets button.link:disabled { color: var(--muted); }
+.sound-source { padding-bottom: 8px; margin-bottom: 8px; border-bottom: 1px solid var(--line); }

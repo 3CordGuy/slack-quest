@@ -20,6 +20,29 @@ const LONG_BYTES = 8e6;
 export const SHIPPED_INDEX = "/audio/index.json";
 export const DEV_INDEX = "/__audio/index.json";
 
+const AUDITION_KEY = "gq.audio.shipped";
+
+/**
+ * Development only: play the encoded files in public/audio, exactly as a deployed game would,
+ * rather than the masters. For hearing what the encoding did before it ships.
+ */
+export function auditionShipped(): boolean {
+  try {
+    return localStorage.getItem(AUDITION_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+export function setAuditionShipped(on: boolean) {
+  try {
+    if (on) localStorage.setItem(AUDITION_KEY, "1");
+    else localStorage.removeItem(AUDITION_KEY);
+  } catch {
+    /* storage blocked */
+  }
+}
+
 async function fetchIndex(url: string): Promise<AudioIndex> {
   try {
     const res = await fetch(url, { cache: "no-cache" });
@@ -65,7 +88,7 @@ export class Library {
     const shipped = await fetchIndex(SHIPPED_INDEX);
     // The built-in sounds are always there: whatever is shipped or bounced sits alongside them.
     const files: Record<string, AudioFile> = { ...synthIndex(), ...shipped.files };
-    if (import.meta.env.DEV) Object.assign(files, (await fetchIndex(DEV_INDEX)).files);
+    if (import.meta.env.DEV && !auditionShipped()) Object.assign(files, (await fetchIndex(DEV_INDEX)).files);
     this.index = { version: 1, files };
     this.sortedKeys = Object.keys(files).sort();
   }

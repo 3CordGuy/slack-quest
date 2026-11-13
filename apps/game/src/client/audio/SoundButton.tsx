@@ -4,6 +4,7 @@
 
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { audio } from "./engine";
+import { auditionShipped, setAuditionShipped } from "./library";
 import { FADERS, FADER_LABELS } from "./mixer";
 import "./sound.css";
 
@@ -146,6 +147,31 @@ function SkyControls() {
   );
 }
 
+/**
+ * Development only: switch between the WAV masters and the encoded files a deployed game plays, to
+ * compare them. Playing loops restart from the other source. Placeholders are never encoded, so
+ * sounds that are still placeholders fall silent on the encoded side.
+ */
+function SourceSwitch() {
+  const [shipped, setShipped] = useState(auditionShipped);
+  const pick = (on: boolean) => {
+    setAuditionShipped(on);
+    setShipped(on);
+    void audio.reload();
+  };
+  return (
+    <div className="sound-presets sound-source">
+      <span className="muted">Playing</span>
+      <button className={`small ${shipped ? "" : "selected"}`} onClick={() => pick(false)}>
+        Masters (WAV)
+      </button>
+      <button className={`small ${shipped ? "selected" : ""}`} onClick={() => pick(true)}>
+        Encoded (as shipped)
+      </button>
+    </div>
+  );
+}
+
 /** Development only: what the engine is doing right now, refreshed a few times a second. */
 function AudioReadout({ onClose }: { onClose(): void }) {
   const [d, setD] = useState(() => audio.debug());
@@ -176,6 +202,7 @@ function AudioReadout({ onClose }: { onClose(): void }) {
         </button>
       </div>
       <SkyControls />
+      <SourceSwitch />
       <dl>
         {rows.map(([k, v]) => (
           <div key={k}>
