@@ -90,6 +90,9 @@ const VFOV = 50;
 const IN_S = 1.5;
 /** Seconds to get onto a stool, and how far in front of it you stand to do so. */
 const SIT_S = 0.5;
+/** How far down to your seat the camera is as your own figure starts to thin away, and when it is gone. */
+const FADE_FROM = 0.3;
+const FADE_TO = 0.8;
 /** Seconds for the room's table to go and this one to come in. */
 const SWAP_S = 0.8;
 /** How far in from your stool the room has your hero standing: a quarter hex toward the camera from the middle of the table's hex. */
@@ -765,7 +768,9 @@ export class TableStage implements WorldMinigame {
       // Leaving, they are still sat as the camera backs out far enough to show them, and get up before the tables swap back.
       if (r.mine) r.sit = this.leaving ? Math.min(r.sit, Math.max(0, (this.inT - 0.3) / 0.2)) : this.swap >= 1 ? Math.min(1, r.sit + dt / SIT_S) : 0;
       if (r.mine && r.sit >= 1) this.sat = true;
-      r.folk.visible = r.mine ? this.swap >= 0.5 && smoother(this.inT) < 0.5 : this.swap >= 1;
+      // The camera comes down through you to your own eyes: you thin away as it nears instead of blinking out.
+      r.folk.visible = this.swap >= (r.mine ? 0.5 : 1);
+      if (r.mine) r.figure?.setFade(1 - (smoother(this.inT) - FADE_FROM) / (FADE_TO - FADE_FROM));
       r.plate.visible = !r.mine;
       r.items.visible = this.swap >= 1;
       const info = r.info;

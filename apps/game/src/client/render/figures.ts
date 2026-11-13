@@ -72,6 +72,33 @@ function rand(): number {
   return seed / 4294967296;
 }
 
+/**
+ * Lets a figure fade away: a share of its pixels, in a fine fixed pattern, are simply not drawn, more of them
+ * the further it has faded. It stays solid where it is drawn, so its parts still hide each other properly
+ * (which see-through materials would not), and the pattern suits the pixels. `fade.value` is how much of it
+ * is left, 1 to 0. Keeps any shader changes the material already has.
+ */
+function fadeable<M extends THREE.Material>(material: M, fade: { value: number }, key: string): M {
+  const before = material.onBeforeCompile;
+  material.onBeforeCompile = function (shader, renderer) {
+    before.call(this, shader, renderer);
+    shader.uniforms.figureFade = fade;
+    shader.fragmentShader = shader.fragmentShader.replace(
+      "void main() {",
+      /* glsl */ `uniform float figureFade;
+float figureDither() {
+  ivec2 p = ivec2( mod( gl_FragCoord.xy, 4.0 ) );
+  float m[16] = float[16]( 0.0, 8.0, 2.0, 10.0, 12.0, 4.0, 14.0, 6.0, 3.0, 11.0, 1.0, 9.0, 15.0, 7.0, 13.0, 5.0 );
+  return ( m[ p.x + p.y * 4 ] + 0.5 ) / 16.0;
+}
+void main() {
+  if ( figureFade < 1.0 && figureFade <= figureDither() ) discard;`,
+    );
+  };
+  material.customProgramCacheKey = () => key;
+  return material;
+}
+
 interface Mats {
   body: THREE.MeshLambertMaterial;
   outline: THREE.MeshBasicMaterial;
@@ -1209,6 +1236,8 @@ export interface Figure {
   update(pose: FigurePose): void;
   /** Greyed, for someone down in a fight. */
   setDim(on: boolean): void;
+  /** How much of it is left to see, 1 (all there) to 0 (gone): it thins out pixel by pixel as a camera passes through it. */
+  setFade(left: number): void;
   dispose(): void;
 }
 
@@ -1233,10 +1262,11 @@ export function makeFigure(kind: string, look: Look, outfit?: Outfit, opts: Figu
   edge = opts.edge ?? 0.12;
   seed = 20261113;
   const rig = rigFor(kind, top, look, outfit, !!opts.asleep);
+  const fade = { value: 1 };
   const mats: Mats = {
-    body: bodyMaterial(),
-    outline: new THREE.MeshBasicMaterial({ color: OUTLINE, side: THREE.BackSide }),
-    glow: new THREE.MeshBasicMaterial({ vertexColors: true }),
+    body: fadeable(bodyMaterial(), fade, "gq-figure-body"),
+    outline: fadeable(new THREE.MeshBasicMaterial({ color: OUTLINE, side: THREE.BackSide }), fade, "gq-figure-line"),
+    glow: fadeable(new THREE.MeshBasicMaterial({ vertexColors: true }), fade, "gq-figure-glow"),
   };
   const made: THREE.BufferGeometry[] = [];
   for (const part of rig.parts) part.build(mats, made);
@@ -1263,6 +1293,10 @@ export function makeFigure(kind: string, look: Look, outfit?: Outfit, opts: Figu
     setDim(on) {
       mats.body.color.setScalar(on ? 0.5 : 1);
       mats.glow.color.setScalar(on ? 0.4 : 1);
+    },
+    setFade(left) {
+      fade.value = Math.max(0, Math.min(1, left));
+      root.visible = fade.value > 0;
     },
     dispose() {
       for (const g of made) g.dispose();
