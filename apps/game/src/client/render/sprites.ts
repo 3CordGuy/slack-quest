@@ -440,6 +440,108 @@ function drawBear(ctx: CanvasRenderingContext2D, fur = "#7a5232", dark = "#4f342
   px(10, 19, 1, 1, "#e8dcc0");
 }
 
+/**
+ * A ghost of the Haunted Caverns, facing right: a pale hooded shape with a
+ * ragged tail, black eyes and a reaching hand. `crown` gives the bound Haunt
+ * the tarnished crown of whoever it was in life.
+ */
+function drawGhost(ctx: CanvasRenderingContext2D, body = "#dfe8f2", shade = "#a7b6cc", eye = "#24203a", crown?: string) {
+  const px = (x: number, y: number, w: number, h: number, c: string) => {
+    ctx.fillStyle = c;
+    ctx.fillRect(x + 1, y + 1, w, h);
+  };
+  if (crown) {
+    px(5, 1, 7, 1, crown);
+    px(5, 0, 1, 1, crown);
+    px(8, 0, 1, 1, crown);
+    px(11, 0, 1, 1, crown);
+  }
+  px(5, 2, 7, 2, body); // crown of the head
+  px(4, 4, 9, 2, body);
+  px(3, 6, 11, 9, body); // body
+  px(12, 6, 2, 9, shade); // the far side, in shadow
+  px(14, 9, 3, 2, body); // a hand reaching out
+  px(3, 15, 3, 3, body); // the ragged tail
+  px(7, 15, 3, 2, body);
+  px(11, 15, 3, 3, shade);
+  px(4, 18, 2, 2, body);
+  px(12, 18, 1, 2, shade);
+  px(8, 7, 2, 2, eye); // hollow eyes and an open mouth
+  px(11, 7, 2, 2, eye);
+  px(9, 11, 3, 2, eye);
+}
+
+/** A cave bat, wings spread, hanging in the air mid-flap: small, dark and red-eyed. */
+function drawBat(ctx: CanvasRenderingContext2D) {
+  const px = (x: number, y: number, w: number, h: number, c: string) => {
+    ctx.fillStyle = c;
+    ctx.fillRect(x + 1, y + 1, w, h);
+  };
+  const body = "#4a3b52";
+  const wing = "#2f2538";
+  px(7, 9, 4, 5, body); // body
+  px(7, 7, 1, 2, body); // ears
+  px(10, 7, 1, 2, body);
+  px(8, 10, 1, 1, "#ff4d4d"); // eyes
+  px(10, 10, 1, 1, "#ff4d4d");
+  px(9, 12, 1, 1, "#e8dcc0"); // a fang
+  px(2, 9, 5, 2, wing); // the left wing, scalloped
+  px(1, 11, 3, 2, wing);
+  px(4, 11, 2, 1, wing);
+  px(0, 13, 2, 1, wing);
+  px(11, 9, 5, 2, wing); // the right wing
+  px(14, 11, 3, 2, wing);
+  px(12, 11, 2, 1, wing);
+  px(16, 13, 1, 1, wing);
+}
+
+/** One of the smugglers' dead: a skeleton with a rusted cutlass, facing right. */
+function drawSkeleton(ctx: CanvasRenderingContext2D) {
+  const px = (x: number, y: number, w: number, h: number, c: string) => {
+    ctx.fillStyle = c;
+    ctx.fillRect(x + 1, y + 1, w, h);
+  };
+  const bone = "#e8e2d0";
+  const dim = "#c9c1aa";
+  px(6, 1, 6, 5, bone); // skull
+  px(7, 3, 2, 2, OUTLINE); // eye sockets
+  px(10, 3, 2, 2, OUTLINE);
+  px(7, 6, 4, 1, dim); // jaw
+  px(8, 7, 2, 8, bone); // spine
+  px(6, 8, 6, 1, dim); // ribs
+  px(6, 10, 6, 1, dim);
+  px(6, 12, 6, 1, dim);
+  px(4, 8, 2, 6, bone); // arms
+  px(12, 8, 2, 5, bone);
+  px(6, 15, 6, 2, dim); // pelvis
+  px(6, 17, 2, 4, bone); // legs
+  px(10, 17, 2, 4, bone);
+  px(14, 6, 1, 7, "#a3896a"); // the cutlass, rusted
+  px(15, 5, 1, 2, "#a3896a");
+  px(13, 12, 3, 1, "#6b4a2b"); // its hilt
+  px(5, 0, 2, 1, "#8a3b2f"); // a scrap of the old bandana
+}
+
+/** A cave slime: a green blob with a shine on it, two dark eyes, and a drip. */
+function drawSlime(ctx: CanvasRenderingContext2D) {
+  const px = (x: number, y: number, w: number, h: number, c: string) => {
+    ctx.fillStyle = c;
+    ctx.fillRect(x + 1, y + 1, w, h);
+  };
+  const green = "#6fcf5a";
+  const deep = "#3f8f36";
+  px(6, 9, 6, 2, green); // the top of the blob
+  px(4, 11, 10, 2, green);
+  px(3, 13, 12, 6, green);
+  px(3, 18, 12, 2, deep); // its underside
+  px(13, 12, 2, 6, deep);
+  px(6, 11, 2, 1, "#c9f5b8"); // the shine
+  px(5, 13, 1, 2, "#c9f5b8");
+  px(8, 13, 2, 2, "#14301a"); // eyes
+  px(12, 13, 2, 2, "#14301a");
+  px(2, 19, 1, 2, green); // a drip
+}
+
 /** The sparring ring's training dummy: a straw sack on a post, with a target painted on its chest. */
 function drawDummy(ctx: CanvasRenderingContext2D) {
   const px = (x: number, y: number, w: number, h: number, c: string) => {
@@ -517,6 +619,12 @@ function drawSprite(kind: string, look: Look, outfit: Outfit | undefined, asleep
   // The Great Bear: darker and grizzled, with a red eye. The renderer draws it larger.
   else if (kind === "great_bear") drawBear(ctx, "#4a3426", "#2a1d15", "#8a7a6a", "#ff4d4d", "#9a8f86");
   else if (kind === "dummy") drawDummy(ctx);
+  // The Haunted Caverns.
+  else if (kind === "shade") drawGhost(ctx);
+  else if (kind === "haunt") drawGhost(ctx, "#c7b8f0", "#8b74c9", "#ff4d4d", "#c9a24a");
+  else if (kind === "bat") drawBat(ctx);
+  else if (kind === "skeleton") drawSkeleton(ctx);
+  else if (kind === "slime") drawSlime(ctx);
   else if (outfit) drawHero(ctx, look, outfit);
   else drawHumanoid(ctx, look);
   // Asleep: the eyes are shut, a short dark line where each one was.

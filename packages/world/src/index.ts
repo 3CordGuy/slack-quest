@@ -6,6 +6,7 @@ export * from "./check";
 export * from "./content";
 export * from "./gear";
 export * from "./map";
+export * from "./caverns";
 export * from "./battle";
 export * from "./hero";
 export * from "./progression";

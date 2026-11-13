@@ -4,7 +4,7 @@
 
 import { Hono, type Context } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
-import { HARBOR_PIERS, HARBOR_PLOTS, HARBOR_XP, HERO_CLASSES, MAX_CREW, PUB_MAX_TALK, PUB_MENU, dueIn, hutPerks, nextSalesmanVisit, salesman, salesmanVisitAt, makeRng, pubBuff, rollStartingStats } from "@gantt-quest/world";
+import { HARBOR_PIERS, HARBOR_PLOTS, HARBOR_XP, HERO_CLASSES, MAX_CREW, PUB_MAX_TALK, PUB_MENU, dueIn, hutPerks, nextSalesmanVisit, salesman, salesmanVisitAt, makeRng, pubBuff, rollStartingStats, type RunKind } from "@gantt-quest/world";
 import { barkeepReply, heroName } from "./server/ai";
 import { noticeBoard } from "./server/board";
 import { dropErrand, handInErrand, regularsView, takeErrand, tradeWithRegular } from "./server/errands";
@@ -757,7 +757,10 @@ app.post("/api/run", async (c) => {
   const [character, crew] = await Promise.all([getCharacter(c.env.DB, player.id), crewFor(c.env.DB, player.id)]);
   if (character?.status !== "active") return c.json({ error: "Create a character first." }, 409);
   // What the crew has built at the Harbor sails with the ship.
-  const code = await createRun(c.env.DB, player.id, crew?.id ?? null, await builtProjectIds(c.env.DB, crew?.id ?? null));
+  // A voyage to an island by default; a delve into the Haunted Caverns when asked for.
+  const body = await c.req.json<{ kind?: string }>().catch(() => ({}) as { kind?: string });
+  const kind: RunKind = body.kind === "caverns" ? "caverns" : "voyage";
+  const code = await createRun(c.env.DB, player.id, crew?.id ?? null, await builtProjectIds(c.env.DB, crew?.id ?? null), kind);
   c.executionCtx.waitUntil(refreshHarbor(c.env, crew?.id ?? null));
   return c.json({ code });
 });

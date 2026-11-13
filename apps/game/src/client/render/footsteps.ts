@@ -15,6 +15,7 @@ export function stepGround(biome: Biome | undefined): StepGround | null {
     case "hills":
     case "cobble":
     case "rampart":
+    case "cave":
       return "stone";
     case "dock":
       return "wood";

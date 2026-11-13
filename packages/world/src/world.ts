@@ -16,7 +16,8 @@ import {
   type Combatant,
 } from "./battle";
 import { rollCheck, statPct, type CheckResult } from "./check";
-import { ENEMIES, KEY_ITEMS, ROAMER_LEADS, WEAPONS, bandKinds } from "./content";
+import { CAVERN_LEADS, ENEMIES, KEY_ITEMS, ROAMER_LEADS, WEAPONS, bandKinds, cavernBand } from "./content";
+import { generateCaverns } from "./caverns";
 import { bumpTally, contractById, tallyBattle, type TakenContract, type TallyKey } from "./contracts";
 import { battleDrops, cacheDrops, storyTrophy } from "./drops";
 import { rollItem, type ItemDef, type Outfit } from "./gear";
@@ -190,6 +191,8 @@ export interface WorldState {
   earned: Record<string, Earned>;
   /** Harbor projects the crew had built when this voyage was launched. Absent on voyages saved before projects. */
   projects?: string[];
+  /** A voyage to an island, or a delve into the Haunted Caverns behind the Harbor. Absent on runs saved before caverns: a voyage. */
+  kind?: RunKind;
   /** What the galley put in the hold for this voyage and is not yet eaten. Absent when it sailed with none. */
   larder?: { chowder: number };
 }
@@ -278,15 +281,19 @@ export type StepResult =
   | { ok: false; error: string };
 
 /** `projects` are the Harbor projects the launching crew has built; their benefits apply when the story begins. */
-export function createWorld(code: string, seed: string, projects: readonly string[] = []): WorldState {
+/** What kind of run: a voyage to a generated island, or a shorter delve into the Haunted Caverns. */
+export type RunKind = "voyage" | "caverns";
+
+export function createWorld(code: string, seed: string, projects: readonly string[] = [], kind: RunKind = "voyage"): WorldState {
   return {
+    kind,
     v: 1,
     code,
     seed,
     rng: seedFromString(`run|${seed}`),
     phase: "lobby",
     hostId: null,
-    map: generateMap(seed),
+    map: kind === "caverns" ? generateCaverns(seed) : generateMap(seed),
     bible: null,
     heroes: [],
     order: [],
@@ -547,7 +554,8 @@ function spawnRoamer(ctx: Ctx): boolean {
   );
   if (open.length === 0) return false;
   const at = rng.pick(open);
-  const kinds = bandKinds(rng.pick(ROAMER_LEADS), state.heroes.length);
+  // In the caverns, what wanders the tunnels is the restless dead.
+  const kinds = state.kind === "caverns" ? cavernBand(rng.pick(CAVERN_LEADS), state.heroes.length) : bandKinds(rng.pick(ROAMER_LEADS), state.heroes.length);
   state.roamerSeq = (state.roamerSeq ?? 0) + 1;
   roamers.push({ id: `r${state.roamerSeq}`, kinds, pos: { q: at.q, r: at.r } });
   return true;

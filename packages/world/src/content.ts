@@ -333,6 +333,46 @@ export const ENEMIES: Record<string, EnemyDef> = {
       { name: "Quake", rolls: 4, pct: 49, damage: 6, target: "all_heroes", weight: 2 },
     ],
   },
+  // The Haunted Caverns' dead. A shade is quick and weak, and its touch chills (becalms) whoever it lays a hand on.
+  shade: {
+    kind: "shade", name: "Shade", hp: 10, speed: 70, xp: 12,
+    attacks: [
+      { name: "Chill Touch", rolls: 3, pct: 49, damage: 5, target: "hero", perfect: { effect: "slowed", turns: 2 }, weight: 3 },
+      { name: "Wail", rolls: 3, pct: 45, damage: 3, target: "all_heroes", weight: 1 },
+    ],
+  },
+  // Cave bats: weak alone, but quick, and they come in swarms.
+  bat: {
+    kind: "bat", name: "Cave Bat", hp: 6, speed: 90, xp: 7,
+    attacks: [
+      { name: "Bite", rolls: 3, pct: 53, damage: 4, target: "hero", perfect: { effect: "bleeding", turns: 2 }, weight: 3 },
+      { name: "Screech", rolls: 3, pct: 45, damage: 2, target: "all_heroes", weight: 1 },
+    ],
+  },
+  // The smugglers' dead, still guarding their camp: slow and steady, and hard to put down.
+  skeleton: {
+    kind: "skeleton", name: "Skeleton", hp: 15, speed: 45, xp: 14,
+    attacks: [
+      { name: "Rusted Cutlass", rolls: 3, pct: 53, damage: 7, target: "hero", weight: 3 },
+      { name: "Bone Rattle", rolls: 2, pct: 45, damage: 4, target: "hero", perfect: { effect: "stunned", turns: 1 }, weight: 1 },
+    ],
+  },
+  // A cave slime: very slow and very tough, and its acid leaves its prey holed (taking more from every hit).
+  slime: {
+    kind: "slime", name: "Cave Slime", hp: 20, speed: 25, xp: 13,
+    attacks: [
+      { name: "Engulf", rolls: 3, pct: 49, damage: 6, target: "hero", perfect: { effect: "slowed", turns: 2 }, weight: 3 },
+      { name: "Acid Splash", rolls: 2, pct: 49, damage: 4, target: "hero", perfect: { effect: "exposed", turns: 2 }, weight: 2 },
+    ],
+  },
+  // What is bound in the deep chamber: named after the story's villain, like every boss.
+  haunt: {
+    kind: "haunt", name: "Haunt", hp: 30, speed: 55, xp: 44, boss: true,
+    attacks: [
+      { name: "Grave Grasp", rolls: 3, pct: 57, damage: 9, target: "hero", perfect: { effect: "stunned", turns: 1 }, weight: 3 },
+      { name: "Keening", rolls: 4, pct: 49, damage: 5, target: "all_heroes", perfect: { effect: "slowed", turns: 2 }, weight: 2 },
+    ],
+  },
   villain: {
     kind: "villain", name: "Villain", hp: 26, speed: 55, xp: 40, boss: true,
     attacks: [
@@ -341,6 +381,21 @@ export const ENEMIES: Record<string, EnemyDef> = {
     ],
   },
 };
+
+/** What wanders the caverns' tunnels, as an even pick. */
+export const CAVERN_LEADS = ["shade", "bat", "skeleton", "slime"] as const;
+export type CavernLead = (typeof CAVERN_LEADS)[number];
+
+/**
+ * A band in the caverns for a crew of `party` heroes, sized like one on an
+ * island: one enemy for a lone hero, a pair for a party, a third for a full
+ * ship. Bats are half an enemy each and come as a swarm.
+ */
+export function cavernBand(lead: CavernLead, party: number): string[] {
+  if (lead === "bat") return ["bat", "bat", ...(party >= 2 ? ["bat"] : []), ...(party >= 4 ? ["bat", "bat"] : [])];
+  const second = lead === "skeleton" ? "bat" : lead;
+  return [lead, ...(party >= 2 ? [second] : []), ...(party >= 4 ? [lead] : [])];
+}
 
 /** What leads a roaming band ashore, as an even pick: wolves and bandits twice as often as a bear. */
 export const ROAMER_LEADS = ["wolf", "bandit", "wolf", "bandit", "bear"] as const;
