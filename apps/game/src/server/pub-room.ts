@@ -5,7 +5,8 @@
 // socket's attachment so it survives hibernation. The room and its fittings
 // are fixed, so nothing about them is stored. The two game tables live here
 // too (see stake-table.ts). Ordering food and drink, and talking to the barkeep,
-// are plain HTTP routes in worker.ts; this object only relays people.
+// are plain HTTP routes in worker.ts; this object only relays people (and,
+// via /bubble, what is said to and by the barkeep).
 
 import { DurableObject } from "cloudflare:workers";
 import { HARBOR_MAX_SAY, UNSTICK_COOLDOWN_MS, pubPath, pubRoom, type DiceGame, type DiceRequest, type HarborPlayer, type PubClientMessage, type PubServerMessage, type ShoalsGame, type ShoalsRequest } from "@gantt-quest/world";
@@ -69,6 +70,14 @@ export class PubRoom extends DurableObject<Env> {
     if (new URL(request.url).pathname === "/xp") {
       const msg = await readXpPost(request);
       if (msg) relayXp(this.ctx, msg, (m) => this.broadcast(m));
+      return new Response("ok");
+    }
+    // A word with the barkeep (said over HTTP): hang it over the speaker for everyone here.
+    if (new URL(request.url).pathname === "/bubble") {
+      const body = (await request.json().catch(() => null)) as { id?: unknown; text?: unknown } | null;
+      const id = typeof body?.id === "string" ? body.id : "";
+      const text = String(body?.text ?? "").replace(/\s+/g, " ").trim().slice(0, 400);
+      if (id && text) this.broadcast({ type: "bubble", id, text });
       return new Response("ok");
     }
     if (request.headers.get("Upgrade") !== "websocket") return new Response("expected websocket", { status: 426 });
