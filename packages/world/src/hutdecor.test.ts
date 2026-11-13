@@ -17,6 +17,7 @@ import {
   hutDoor,
   hutFloor,
   hutPath,
+  hexSpan,
   hutRoom,
   isFloorPiece,
   isMounted,
@@ -201,8 +202,8 @@ describe("turning floor pieces freely", () => {
     expect(placeProblem(room, [], "chair", middle, { x: 0, z: 0, angle: Number.POSITIVE_INFINITY })).not.toBeNull();
   });
 
-  it("keeps every old layout legal: each footprint fits its own hex at every facing", () => {
-    for (const def of Object.values(FURNISHINGS).filter((f) => isFloorPiece(f.id))) {
+  it("keeps every old layout legal: each one-hex footprint fits its own hex at every facing", () => {
+    for (const def of Object.values(FURNISHINGS).filter((f) => isFloorPiece(f.id) && hexSpan(f.id) === 1)) {
       for (let facing = 0; facing < 6; facing++) {
         for (const c of footprintCorners(def.id, { q: 0, r: 0 }, { x: 0, z: 0, angle: turnOf({ facing }) })) expect(hexAt(c.x, c.z)).toEqual({ q: 0, r: 0 });
       }

@@ -142,7 +142,7 @@ describe("a hut changing size", () => {
     for (const f of big) expect(out.includes(f)).toBe(placeProblem(small, [], f.defId, f) !== null);
     // Two pieces on one hex: the later one goes. Stored pieces are never touched.
     const spot = hutFloor(small)[0];
-    const twin = [{ defId: "table", ...spot }, { defId: "rug", ...spot }, { defId: "bed", q: null, r: null }];
+    const twin = [{ defId: "table", ...spot }, { defId: "chair", ...spot }, { defId: "bed", q: null, r: null }];
     expect(displacedFurnishings(1, twin)).toEqual([twin[1]]);
   });
 });

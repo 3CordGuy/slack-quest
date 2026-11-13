@@ -86,6 +86,11 @@ export interface Surface {
  * What a piece of floor furniture covers, in its own space (facing 0, +z
  * toward the camera): a w by d rectangle centred on (x, z), or with `round` a
  * circle w across. Two pieces may share a hex as long as these do not overlap.
+ *
+ * A footprint may be bigger than a hex. A long piece is anchored on the hex it
+ * is placed on and reaches across its neighbours the way it is turned: a
+ * footprint about two hexes long, centred half a hex-width to the right
+ * (`x` = √3/2), covers its own hex and the one to its right at facing 0.
  */
 export interface Footprint {
   w: number;
@@ -114,6 +119,16 @@ export interface FurnishingDef {
   size?: "small";
   /** Floor furniture: what it covers. Without one it is taken to fill most of its hex. */
   footprint?: Footprint;
+  /**
+   * Floor decor (a rug): laid flat on the floor, so it is walked over and
+   * other furniture and small things stand on top of it. Flat pieces still
+   * keep clear of each other.
+   */
+  flat?: boolean;
+  /** Somewhere to sleep: clicking it rests the owner (see hutroom.ts, useOf). */
+  bed?: boolean;
+  /** Only sold or crafted once the hut is at least this tier (a piece too big for a Shack). */
+  minTier?: number;
   /** It hangs on a wall rather than standing on the floor (see hutroom.ts, wallPlaceProblem). */
   mount?: Mount;
   /** Its top takes small things (in its own space; for a wall piece, from where it hangs). */
@@ -134,13 +149,16 @@ export interface FurnishingDef {
   perk?: Perk;
 }
 
+/** Half the distance between the middles of two neighbouring hexes: where a two-hex piece's middle sits from its anchor. */
+const HALF_HEX = Math.sqrt(3) / 2;
+
 export const FURNISHINGS: Record<string, FurnishingDef> = {
   table: { id: "table", name: "Plank Table", kind: "furniture", footprint: { w: 1.0, d: 0.7 }, model: "table", blurb: "Somewhere to put things down.", price: 30, recipe: { wood: 6 }, surface: { y: 0.5, w: 0.96, d: 0.66 } },
   chair: { id: "chair", name: "Stool", kind: "furniture", footprint: { w: 0.48, d: 0.48, round: true }, model: "chair", blurb: "Three legs and no back.", price: 15, recipe: { wood: 3 } },
-  rug: { id: "rug", name: "Fur Rug", kind: "furniture", footprint: { w: 1.2, d: 0.98, z: 0.09 }, model: "rug", blurb: "Warm underfoot.", price: 35, recipe: { fur: 4 } },
+  rug: { id: "rug", name: "Fur Rug", kind: "furniture", footprint: { w: 1.2, d: 0.98, z: 0.09 }, flat: true, model: "rug", blurb: "Warm underfoot.", price: 35, recipe: { fur: 4 } },
   lantern: { id: "lantern", name: "Copper Lantern", kind: "furniture", footprint: { w: 0.4, d: 0.4, round: true }, model: "lantern", blurb: "Keeps the corners lit.", price: 40, recipe: { copper: 3, wood: 1 }, light: "lamp" },
   banner: { id: "banner", name: "Crew Banner", kind: "furniture", footprint: { w: 0.7, d: 0.36 }, model: "banner", blurb: "Your crew's colours.", price: 45, recipe: { fur: 2, wood: 2 } },
-  bed: { id: "bed", name: "Bunk", kind: "furniture", footprint: { w: 0.84, d: 1.3, z: -0.02 }, model: "bed", blurb: "A proper night's sleep before sailing. +1 focus.", recipe: { wood: 8, fur: 4 }, needsBlueprint: true, perk: { focus: 1 } },
+  bed: { id: "bed", name: "Bunk", kind: "furniture", bed: true, footprint: { w: 0.84, d: 1.3, z: -0.02 }, model: "bed", blurb: "A proper night's sleep before sailing. +1 focus.", recipe: { wood: 8, fur: 4 }, needsBlueprint: true, perk: { focus: 1 } },
   chest: { id: "chest", name: "Sea Chest", kind: "furniture", footprint: { w: 0.79, d: 0.56 }, model: "chest", blurb: "Room for a spare bottle. +1 potion. Holds 12 things.", recipe: { wood: 6, iron: 3 }, needsBlueprint: true, perk: { potions: 1 }, storage: 12, surface: { y: 0.48, w: 0.74, d: 0.5 } },
   hearth: { id: "hearth", name: "Stone Hearth", kind: "furniture", footprint: { w: 1.2, d: 0.72 }, model: "hearth", blurb: "A hot meal before the voyage. +4 max HP.", recipe: { stone: 10, iron: 2 }, needsBlueprint: true, perk: { maxHp: 4 }, light: "fire" },
   bookshelf: { id: "bookshelf", name: "Bookshelf", kind: "furniture", footprint: { w: 0.95, d: 0.34, z: -0.1 }, model: "bookshelf", blurb: "Other people's mistakes, written down. +2% XP.", recipe: { wood: 8, bone: 2 }, needsBlueprint: true, perk: { xpPct: 2 } },
@@ -158,6 +176,14 @@ export const FURNISHINGS: Record<string, FurnishingDef> = {
   crate: { id: "crate", name: "Storage Crate", kind: "furniture", footprint: { w: 0.7, d: 0.7 }, model: "crate", blurb: "Nailed shut, then not. Holds 8 things.", price: 12, recipe: { wood: 3 }, storage: 8, surface: { y: 0.56, w: 0.66, d: 0.66 } },
   barrel: { id: "barrel", name: "Barrel", kind: "furniture", footprint: { w: 0.58, d: 0.58, round: true }, model: "barrel", blurb: "Smells faintly of fish. Holds 6 things.", price: 16, recipe: { wood: 4, iron: 1 }, storage: 6, surface: { y: 0.78, w: 0.42, d: 0.42 } },
   fireplace: { id: "fireplace", name: "Great Fireplace", kind: "furniture", footprint: { w: 1.7, d: 0.8 }, model: "fireplace", blurb: "A roaring fire and a mantel for your treasures.", recipe: { stone: 14, iron: 3 }, needsBlueprint: true, light: "fire", surface: { y: 1.06, w: 1.5, d: 0.24, z: 0.24 } },
+
+  // ---- big pieces: anchored on one hex and reaching across the next (see Footprint) ----
+  long_table: { id: "long_table", name: "Long Table", kind: "furniture", footprint: { w: 2.5, d: 0.76, x: HALF_HEX }, model: "long_table", blurb: "Seats the whole crew, if they squeeze. Two hexes long.", price: 70, recipe: { wood: 12 }, surface: { y: 0.5, w: 2.44, d: 0.7, x: HALF_HEX } },
+  long_bench: { id: "long_bench", name: "Long Bench", kind: "furniture", footprint: { w: 2.3, d: 0.42, x: HALF_HEX }, model: "long_bench", blurb: "For sitting along a long table. Two hexes long.", price: 30, recipe: { wood: 6 } },
+  runner_rug: { id: "runner_rug", name: "Sailcloth Runner", kind: "furniture", flat: true, footprint: { w: 4.6, d: 1.0, x: 2 * HALF_HEX }, model: "runner_rug", blurb: "An old sail, striped and hemmed. Three hexes long; furniture stands on it.", price: 55, recipe: { fur: 6 } },
+  round_rug: { id: "round_rug", name: "Braided Rug", kind: "furniture", flat: true, footprint: { w: 2.7, d: 2.7, x: HALF_HEX, z: 0.5, round: true }, model: "round_rug", blurb: "Rope and rags, braided round. Covers three hexes; furniture stands on it.", price: 65, recipe: { fur: 7, herbs: 2 } },
+  four_poster: { id: "four_poster", name: "Four-Poster Bed", kind: "furniture", bed: true, minTier: 2, footprint: { w: 2.4, d: 1.1, x: HALF_HEX }, model: "four_poster", blurb: "Curtains, a canopy and room to stretch out. Two hexes long. +1 focus.", recipe: { wood: 14, fur: 6 }, perk: { focus: 1 } },
+  great_bookcase: { id: "great_bookcase", name: "Great Bookcase", kind: "furniture", minTier: 2, footprint: { w: 2.4, d: 0.5, x: HALF_HEX, z: -0.1 }, model: "great_bookcase", blurb: "A wall of books and a ladder to reach them. Two hexes long. +1% XP.", recipe: { wood: 14, bone: 3 }, perk: { xpPct: 1 }, surface: { y: 1.62, w: 2.36, d: 0.36, x: HALF_HEX, z: -0.15 } },
 
   // ---- small things: anywhere in a hex, at any angle, or on a surface ----
   candle: { id: "candle", name: "Tallow Candle", kind: "furniture", size: "small", model: "candle", blurb: "A small, steady flame.", price: 5, recipe: { fur: 1 }, light: "candle" },
@@ -384,15 +410,25 @@ function shortfall(have: Resources, cost: Resources): string {
     .join(", ");
 }
 
+/** Why a hut of `tier` is too small for `def`, or null. Without a tier nothing is checked (catalogue listings). */
+function tierProblem(def: FurnishingDef, tier: number | undefined): string | null {
+  if (tier === undefined || !def.minTier || tier >= def.minTier) return null;
+  const needed = HUT_TIERS.find((t) => t.tier === def.minTier);
+  return `That needs a bigger hut${needed ? `: a ${needed.name}` : ""}.`;
+}
+
 /**
  * Why this player cannot craft `defId`, or null if they can. They need its
- * blueprint (starter blueprints are known to everyone) and its materials.
+ * blueprint (starter blueprints are known to everyone), its materials, and a
+ * hut of at least its `minTier` (the server always passes `tier`).
  */
-export function craftProblem(defId: string, blueprints: string[], resources: Resources): string | null {
+export function craftProblem(defId: string, blueprints: string[], resources: Resources, tier?: number): string | null {
   const def = Object.hasOwn(FURNISHINGS, defId) ? FURNISHINGS[defId] : undefined;
   if (!def) return "There is no such furnishing.";
   if (!def.recipe) return "That cannot be crafted.";
   if (def.needsBlueprint && !blueprints.includes(defId)) return "You have not found that blueprint yet.";
+  const small = tierProblem(def, tier);
+  if (small) return small;
   const short = shortfall(resources, def.recipe);
   return short ? `You need ${short}.` : null;
 }
@@ -400,10 +436,12 @@ export function craftProblem(defId: string, blueprints: string[], resources: Res
 /** The furnishings the market stall sells for gold, in catalogue order. */
 export const STALL_FURNITURE: FurnishingDef[] = Object.values(FURNISHINGS).filter((f) => f.price !== undefined);
 
-/** Why this player cannot buy `defId` at the stall, or null if they can. The price is the catalogue's. */
-export function buyFurnitureProblem(defId: string, gold: number): string | null {
+/** Why this player cannot buy `defId` at the stall, or null if they can. The price is the catalogue's; `tier` is their hut's (see craftProblem). */
+export function buyFurnitureProblem(defId: string, gold: number, tier?: number): string | null {
   const def = Object.hasOwn(FURNISHINGS, defId) ? FURNISHINGS[defId] : undefined;
   if (!def || def.price === undefined) return "The stall does not sell that.";
+  const small = tierProblem(def, tier);
+  if (small) return small;
   return gold < def.price ? "Not enough gold." : null;
 }
 
