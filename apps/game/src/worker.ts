@@ -4,9 +4,11 @@
 
 import { Hono, type Context } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
-import { HARBOR_PIERS, HARBOR_PLOTS, HARBOR_XP, HERO_CLASSES, MAX_CREW, PUB_MAX_TALK, PUB_MENU, dueIn, hutPerks, nextSalesmanVisit, salesman, salesmanVisitAt, makeRng, pubBuff, rollStartingStats, type RunKind } from "@gantt-quest/world";
+import { HARBOR_PIERS, HARBOR_PLOTS, HARBOR_XP, HERO_CLASSES, MAX_CREW, PUB_DEALER, PUB_MAX_TALK, PUB_MENU, dueIn, hutPerks, nextSalesmanVisit, salesman, salesmanVisitAt, makeRng, pubBuff, rollStartingStats, type RunKind } from "@gantt-quest/world";
 import { barkeepReply, heroName } from "./server/ai";
-import { noticeBoard } from "./server/board";
+import { contractBoard } from "./server/board";
+import { markReleaseSeen, seenRelease } from "./server/releases";
+import { RELEASES } from "./releases";
 import { dropErrand, handInErrand, regularsView, takeErrand, tradeWithRegular } from "./server/errands";
 import { sendSignInCode } from "./server/email";
 import {
@@ -172,16 +174,18 @@ app.use("/api/*", async (c, next) => {
 
 app.get("/api/me", async (c) => {
   const player = c.get("player");
-  const [character, inventory, crew, carry, harborXp] = await Promise.all([
+  const [character, inventory, crew, carry, harborXp, seen] = await Promise.all([
     getCharacter(c.env.DB, player.id),
     getInventory(c.env.DB, player.id),
     crewFor(c.env.DB, player.id),
     carryState(c.env.DB, player.id),
     harborXpFor(c.env.DB, player.id),
+    seenRelease(c.env.DB, player.id),
   ]);
   // `inventory` is what the hero has with them; what is in storage at home is only listed inside their hut.
   // `isAdmin` only decides whether the client shows the admin link: every admin route checks again.
-  return c.json({ player, character, inventory, crew, carry, harborXp, isAdmin: isAdmin(c.env, player) });
+  // `seenRelease` is the newest release whose notes they have read on the notice board.
+  return c.json({ player, character, inventory, crew, carry, harborXp, seenRelease: seen, isAdmin: isAdmin(c.env, player) });
 });
 
 // A crewmate's or shipmate's hero sheet, read-only: what the overhead plate opens on a click.
@@ -519,24 +523,37 @@ app.post("/api/pub/talk", async (c) => {
   if (!text) return c.json({ error: "Say something first." }, 400);
   const [character, crew] = await Promise.all([getCharacter(c.env.DB, player.id), crewFor(c.env.DB, player.id)]);
   if (character?.status !== "active" || !crew) return c.json({ error: "The pub is for crews." }, 409);
-  const [board, harbor] = await Promise.all([noticeBoard(c.env.DB, crew.id), harborBoard(c.env.DB, crew.id, HARBOR_PIERS.length)]);
+  const [board, harbor] = await Promise.all([contractBoard(c.env.DB, crew.id), harborBoard(c.env.DB, crew.id, HARBOR_PIERS.length)]);
+  const news = RELEASES.find((r) => !r.unreleased && r.notes.length > 0);
   const facts = [
     ...PUB_MENU.map((i) => `On the board: ${i.name}, ${i.price} gold (${i.kind}). ${i.blurb}`),
     "A hero can carry one drink and one meal into their next voyage; they do a little good there and are gone after.",
     "There is a dice table in the pub where crewmates bluff each other for a small stake.",
     salesmanFact(crew.id),
     ...(board.goal ? [`The crew's goal this week: ${board.goal.text}.`] : []),
+    `${PUB_DEALER.name}, ${PUB_DEALER.trade}, leans on the pillar at the end of the bar and hands out contracts and news of the crew's goal. The Harbor's notice board outside is for news of the Harbor itself.`,
+    ...(news ? news.notes.slice(0, 4).map((n) => `News pinned on the Harbor's notice board: ${n.area ? `${n.area}: ` : ""}${n.text}.`) : []),
     ...harbor.log.slice(0, 3).map((v) => `Recent voyage: "${v.title}" ended in ${v.outcome === "victory" ? "a win" : v.outcome === "defeat" ? "a loss" : v.outcome}, sailed by ${v.crew.join(", ") || "nobody he knows"}.`),
   ];
   return c.json({ say: await barkeepReply(c.env, { hero: character.name, crew: crew.name, text, facts }) });
 });
 
-// ---------- the notice board ----------
+// ---------- the contract dealer ----------
 
-// The crew's goal for the week and the contracts a hero can take aboard a ship.
-app.get("/api/board", async (c) => {
+// The crew's goal for the week and the contracts a hero can take aboard a ship, from the dealer in the pub.
+app.get("/api/contracts", async (c) => {
   const crew = await crewFor(c.env.DB, c.get("player").id);
-  return c.json(await noticeBoard(c.env.DB, crew?.id ?? null));
+  return c.json(await contractBoard(c.env.DB, crew?.id ?? null));
+});
+
+// ---------- the notice board: release notes ----------
+
+// The player has read the board's notes up to this release; the "!" over the board goes.
+app.post("/api/releases/seen", async (c) => {
+  const body = await c.req.json<{ id?: unknown }>().catch(() => ({}) as { id?: unknown });
+  const id = typeof body.id === "string" ? body.id : "";
+  if (!(await markReleaseSeen(c.env.DB, c.get("player").id, id))) return c.json({ error: "No such release." }, 400);
+  return c.json({ seenRelease: id });
 });
 
 // ---------- gathering: fishing, felling and the quarry ----------

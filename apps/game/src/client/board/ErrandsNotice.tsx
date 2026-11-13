@@ -1,4 +1,4 @@
-// The notice board's word on the pub's regulars: who is in today, what each
+// The contract dealer's word on the pub's regulars: who is in today, what each
 // wants, and where this hero stands with each job (including jobs held with
 // regulars who are not in today). Read-only; the jobs are taken and handed in
 // at the pub.

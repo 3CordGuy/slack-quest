@@ -1,10 +1,10 @@
 // HTTP helpers for the Harbor screens.
 
 import type { StatKey } from "@gantt-quest/core";
-import type { NoticeBoard } from "../server/board";
+import type { ContractBoard } from "../server/board";
 
-/** What the Harbor's notice board shows: the crew goal and the contracts on offer. */
-export type Board = NoticeBoard;
+/** What the contract dealer in the pub has: the crew goal and the contracts on offer. */
+export type Board = ContractBoard;
 import type { CarryState, GatherChoice, HarborXpStatus, GatherSpot, HarborWorks, HutSummary, ItemDef, Perk, ProjectAmounts, PublicHero, Resources, SalesEntry, SalesmanId, SalesmanVisit, ShopEntry, TradeOffer } from "@gantt-quest/world";
 import { forcedSalesman } from "./salesmanClock";
 import type { GatherStatus } from "../server/gather";
@@ -102,6 +102,8 @@ export interface Me {
   harborXp?: HarborXpStatus;
   /** On the ADMIN_EMAILS allow-list. Only shows the admin link; the server checks every admin call. */
   isAdmin: boolean;
+  /** The newest release whose notes this player has read on the notice board. Null if never; absent from an older server. */
+  seenRelease?: string | null;
 }
 
 export type { StatKey };
@@ -148,7 +150,9 @@ export const api = {
   sellMaterial: (kind: string, qty: number) => request<{ gold: number }>("/api/shop/materials/sell", { kind, qty }),
   shop: () => request<Shop>("/api/shop"),
   buy: (index: number) => request("/api/shop/buy", { index }),
-  board: () => request<Board>("/api/board"),
+  contracts: () => request<Board>("/api/contracts"),
+  /** The notice board's release notes are read up to this release. */
+  releaseSeen: (id: string) => request<{ seenRelease: string }>("/api/releases/seen", { id }),
   /** A voyage to an island, or with "caverns" a delve into the Haunted Caverns. */
   createRun: (kind: "voyage" | "caverns" = "voyage") => request<{ code: string }>("/api/run", { kind }),
   requestCode: (email: string) => request("/api/auth/email/request", { email }),

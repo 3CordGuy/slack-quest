@@ -122,6 +122,20 @@ input:focus, button:focus-visible, select:focus { outline: 2px solid var(--accen
 .tile-action button { position: absolute; left: 0; bottom: 52px; transform: translateX(-50%); pointer-events: auto; white-space: nowrap; padding: 3px 10px; font-size: 13px; box-shadow: 0 2px 0 rgba(0, 0, 0, 0.45); }
 .tile-action button::after { content: ""; position: absolute; left: 50%; top: 100%; margin: 2px 0 0 -6px; border: 6px solid transparent; border-bottom-width: 0; border-top-color: #58c486; }
 .tile-action button:hover::after { border-top-color: var(--accent); }
+/* A bouncing "!" over something with news: the Harbor's notice board. */
+.attention-mark { position: absolute; left: 0; top: 0; width: 0; height: 0; z-index: 6; pointer-events: none; visibility: hidden; will-change: transform; }
+/* Drawn in blocks rather than a glyph, so it is chunky and pixel-sharp at any zoom: a bar and a dot, outlined. */
+.attention-mark span {
+  display: block; position: relative; width: 10px; height: 34px; transform: translate(-50%, -100%);
+  font-size: 0; filter: drop-shadow(0 3px 0 rgba(0, 0, 0, 0.4));
+  animation: attention-bounce 0.45s cubic-bezier(0.3, 0, 0.4, 1) infinite alternate;
+}
+.attention-mark span::before, .attention-mark span::after { content: ""; position: absolute; left: 0; width: 10px; background: #ffd84a; box-shadow: 0 0 0 3px #3a2a10, inset -3px -3px 0 #e09a2e; }
+.attention-mark span::before { top: 0; height: 21px; }
+.attention-mark span::after { bottom: 0; height: 8px; }
+@keyframes attention-bounce { from { translate: 0 0; } to { translate: 0 -10px; } }
+@media (prefers-reduced-motion: reduce) { .attention-mark span { animation: none; } }
+
 .toast.note { background: #1f3a2c; border-color: var(--good); }
 .toast { position: absolute; left: 50%; top: 52px; transform: translateX(-50%); z-index: 40; background: #4a2020; border: 2px solid var(--bad); padding: 6px 14px; }
 

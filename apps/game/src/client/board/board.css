@@ -46,3 +46,21 @@
 .errands-list .contract-reward { display: inline-flex; align-items: center; gap: 6px; }
 .errands-list .errand-xp { color: var(--gold); font-weight: bold; }
 .errands-list li.away { opacity: 0.85; }
+
+/* The notice board's release notes. */
+.release-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.release { border: 1px solid var(--line); padding: 8px 10px; }
+.release.fresh { border-color: var(--gold); }
+.release.unreleased { border-style: dashed; }
+.release h3 { margin: 0 0 4px; display: flex; align-items: center; gap: 8px; font-size: 15px; }
+.release-new { font-size: 11px; padding: 1px 6px; color: #1a1424; background: var(--gold); text-transform: uppercase; letter-spacing: 0.05em; }
+.release-notes { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 3px; font-size: 14px; white-space: normal; }
+.release-older { align-self: flex-start; }
+
+/* The contract dealer's panel in the pub: the old notice board's contents. */
+.story.pub-bar.dealer-panel { width: min(460px, calc(100% - 24px)); }
+.dealer-panel .regular-head .grow { flex: 1; min-width: 0; }
+.dealer-body { display: flex; flex-direction: column; gap: 8px; }
+.dealer-body h3 { margin: 8px 0 0; }
+.dealer-body p { margin: 0; }
+

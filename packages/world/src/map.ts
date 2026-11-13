@@ -55,10 +55,10 @@ export interface Tile {
 /**
  * `landing` is where the party's ship puts in on an island. `pier`, `plot`
  * `board` and `shop` exist only in the Harbor: a moored ship, a crew member's
- * hut, the notice board and the market stall. `door` is the way out of a hut's room.
+ * hut, the notice board, the market stall and the pub's contract dealer. `door` is the way out of a hut's room.
  * `gate` is a locked door in the Haunted Caverns, standing on a `gate` tile.
  */
-export type PoiKind = "cave" | "landing" | "hut" | "lair" | "shrine" | "cache" | "camp" | "pier" | "plot" | "board" | "shop" | "ring" | "dice" | "door" | "works" | "pub" | "counter" | "shoals" | "trader" | "rocks" | "wreck" | "lot" | "site" | "ship" | "pickup" | "fishing" | "felling" | "quarry" | "apothecary" | "smithy" | "galley" | "lighthouse" | "gate";
+export type PoiKind = "cave" | "landing" | "hut" | "lair" | "shrine" | "cache" | "camp" | "pier" | "plot" | "board" | "shop" | "ring" | "dice" | "door" | "works" | "pub" | "counter" | "shoals" | "trader" | "rocks" | "wreck" | "lot" | "site" | "ship" | "pickup" | "fishing" | "felling" | "quarry" | "apothecary" | "smithy" | "galley" | "lighthouse" | "gate" | "dealer";
 
 export interface Poi {
   id: string;

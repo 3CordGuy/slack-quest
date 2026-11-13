@@ -37,6 +37,15 @@ export const PUB_SALESMAN_POS: HexPos = at(10, 4);
 /** Where a customer stands to trade with the salesman. */
 export const PUB_TRADER: HexPos = at(9, 4);
 /**
+ * The contract dealer: the crew's goal for the week and the contracts a hero
+ * takes aboard a ship (see contracts.ts). They lean on the pillar at the end
+ * of the bar (the "pillar" fitting); a customer walks up to the hex in front.
+ */
+export const PUB_DEALER = { id: "dealer", name: "Hollis Crane", short: "Hollis", trade: "the contract dealer", look: "dealer", hello: "Work for the brave, pay for the lucky." } as const;
+export const PUB_DEALER_POS: HexPos = at(6, 2);
+/** Where a customer stands to deal with the contract dealer. */
+export const PUB_DEALER_STAND: HexPos = at(6, 3);
+/**
  * Where the day's regulars (see regulars.ts) stand, in the order they take
  * them, each with the hex a customer walks to when the regular is clicked.
  * Nobody else stands on a regular's spot, whether or not one is in.
@@ -75,17 +84,19 @@ export const PUB_FITTINGS: PubFitting[] = [
   fit(14, "chair", 8, 6, 1),
   // The salesmen's sea chest, beside the corner they take.
   fit(15, "chest", 10, 6, 5),
+  // A timber pillar at the end of the bar, holding up the roof, with contracts pinned to it. The contract dealer leans on it.
+  fit(16, "pillar", 5, 2),
 ];
 
-/** The room: the same every time. The counter, the two game tables and the trader's spot are places to stand, not obstacles. */
+/** The room: the same every time. The counter, the two game tables, the trader's spot and the dealer's are places to stand, not obstacles. */
 export function pubRoom(): WorldMap {
   const room = buildRoom(PUB_GRID);
-  return { ...room, pois: [...room.pois, harborPoi("counter", "counter", PUB_COUNTER), harborPoi("dice", "dice", PUB_DICE), harborPoi("shoals", "shoals", PUB_SHOALS), harborPoi("trader", "trader", PUB_TRADER)] };
+  return { ...room, pois: [...room.pois, harborPoi("counter", "counter", PUB_COUNTER), harborPoi("dice", "dice", PUB_DICE), harborPoi("shoals", "shoals", PUB_SHOALS), harborPoi("trader", "trader", PUB_TRADER), harborPoi("dealer", "dealer", PUB_DEALER_STAND)] };
 }
 
-/** A walkable route across the pub, or null. The barkeep's side of the bar is his alone, the salesmen's corner theirs, and the regulars' spots theirs. */
+/** A walkable route across the pub, or null. The barkeep's side of the bar is his alone, the salesmen's corner theirs, and the dealer's and the regulars' spots theirs. */
 export function pubPath(room: WorldMap, from: HexPos, to: HexPos): HexPos[] | null {
-  return hutPath(room, [...PUB_FITTINGS, PUB_BARKEEP_POS, PUB_SALESMAN_POS, ...PUB_REGULAR_SPOTS.map((s) => s.pos)], from, to);
+  return hutPath(room, [...PUB_FITTINGS, PUB_BARKEEP_POS, PUB_SALESMAN_POS, PUB_DEALER_POS, ...PUB_REGULAR_SPOTS.map((s) => s.pos)], from, to);
 }
 
 // ---------- the menu ----------

@@ -135,7 +135,7 @@ describe("the jobs", () => {
     expect(pay("voyage")).toBeGreaterThan(pay("rest"));
   });
 
-  it("stay modest: no job pays more than a notice-board contract", () => {
+  it("stay modest: no job pays more than a contract", () => {
     // A third of the day's Harbor XP at most, and no more gold than a contract (25 to 40).
     for (const e of ALL) expect(e.reward.xp).toBeLessThanOrEqual(10);
     for (const e of ALL) expect(e.reward.gold).toBeLessThanOrEqual(35);
