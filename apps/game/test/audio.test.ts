@@ -68,7 +68,7 @@ describe("the manifest", () => {
   it("gives every curve rising points and levels between 0 and 1", () => {
     const loops = [...Object.entries(AUDIO.music), ...Object.entries(AUDIO.ambience)];
     for (const [name, loop] of loops) {
-      for (const f of [loop.follow, ...(loop.layers ?? []).map((l) => l.follow)]) {
+      for (const f of [loop.follow, ...(loop.layers ?? []).map((l) => l.follow)].flat()) {
         if (!f) continue;
         expect(f.curve.length, name).toBeGreaterThan(0);
         f.curve.forEach(([x, y], i) => {

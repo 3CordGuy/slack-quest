@@ -17,6 +17,10 @@ import { TakePicker, chooseTakes, curveAt, distanceGain, expandFiles, inRange, p
 import type { AudioFile, AudioManifest, Emitter, EmitterKind, Follow, Group, Loop, ParamName, Scene, SceneName, SoundEvent } from "./types";
 
 const GROUPS: Group[] = ["music", "atmosphere", "sfx"];
+/** The distance between the middles of two neighbouring hexes, in map units. */
+const HEX_ACROSS = Math.sqrt(3);
+/** What "shore" reads with no water in reach. */
+const FAR_FROM_SHORE = 99;
 /** The most one-shots sounding at once; past it the oldest fades out. */
 const MAX_VOICES = 48;
 /** A one-shot still loading when it is asked for plays if it is ready within this many seconds, else it is dropped. */
@@ -50,7 +54,7 @@ interface LoopVoice {
   filter: BiquadFilterNode;
   dim: GainNode;
   /** The main file, then each layer: its own level and whatever its curve gives. */
-  parts: { file: string; src: AudioBufferSourceNode; gain: GainNode; gainDb: number; follow?: Follow }[];
+  parts: { file: string; src: AudioBufferSourceNode; gain: GainNode; gainDb: number; follow?: Follow | Follow[] }[];
   /** When it started on the audio clock (null while loading), and where in the file. */
   startedAt: number | null;
   offset: number;
@@ -202,6 +206,9 @@ export function loopRegion(def: Loop, file: AudioFile | undefined, duration: num
   return { start: 0, end: duration };
 }
 
+/** A loop's `follow` as a list, whichever way it was written. */
+const follows = (f: Follow | Follow[] | undefined): Follow[] => (!f ? [] : Array.isArray(f) ? f : [f]);
+
 /** Whether a loop that keeps playing across a change can carry on as it is (a change of level or curve can). */
 function sameTake(a: Loop, b: Loop) {
   const files = (l: Loop) => [l.file, ...(l.layers ?? []).map((x) => x.file)].join("|");
@@ -264,12 +271,14 @@ export class AudioEngine {
 
   constructor(private manifest: AudioManifest) {
     this.mix = new MixStore(manifest.mix, safeStorage());
+    this.params.set("shore", FAR_FROM_SHORE);
     this.headphones = this.mix.get().headphones;
     this.mix.subscribe(() => {
       this.applyMix();
       // Switching between speakers and headphones: placed loops are rebuilt with the other kind of placer.
       if (this.mix.get().headphones !== this.headphones) {
-        this.headphones = this.mix.get().headphones;
+        this.params.set("shore", FAR_FROM_SHORE);
+    this.headphones = this.mix.get().headphones;
         for (const kind of [...this.emitters.keys()]) this.dropEmitter(kind);
       }
     });
@@ -564,7 +573,7 @@ export class AudioEngine {
     if (Math.abs((this.params.get(name) ?? -1) - value) < 0.002) return;
     this.params.set(name, value);
     if (!this.ctx) return;
-    for (const lv of this.loops.values()) if (lv.parts.some((p) => p.follow?.param === name)) this.levelParts(lv, 0.15);
+    for (const lv of this.loops.values()) if (lv.parts.some((p) => follows(p.follow).some((f) => f.param === name))) this.levelParts(lv, name === "shore" ? 0.4 : 0.15);
     // A bed has come up from silence, or gone down to it: start it, or let it go.
     if (this.indexed && this.resting() !== this.rested) this.applyScene();
   }
@@ -575,7 +584,7 @@ export class AudioEngine {
    */
   private silent(id: string, def: Loop): boolean {
     if (!def.follow || def.layers?.length) return false;
-    const level = curveAt(def.follow.curve, this.params.get(def.follow.param) ?? 0);
+    const level = this.followLevel(def.follow);
     // A little slack, so one hovering at the foot of its curve does not start and stop.
     return level <= (this.loops.has(id) ? 0.001 : 0.01);
   }
@@ -600,6 +609,13 @@ export class AudioEngine {
       outside.add(`ambience:${name}`);
     }
     return { music, ambience, outside, inside: outer ? scene?.inside : undefined };
+  }
+
+  /** The level a loop's curves give right now: each one's level, multiplied together. */
+  private followLevel(f: Follow | Follow[] | undefined): number {
+    let level = 1;
+    for (const one of follows(f)) level *= Math.max(0, Math.min(1, curveAt(one.curve, this.params.get(one.param) ?? 0)));
+    return level;
   }
 
   /** Which of the scene's beds are at silence, as one string to compare. */
@@ -631,8 +647,7 @@ export class AudioEngine {
   private levelParts(lv: LoopVoice, glide: number) {
     const now = this.ctx!.currentTime;
     for (const part of lv.parts) {
-      const follow = part.follow ? curveAt(part.follow.curve, this.params.get(part.follow.param) ?? 0) : 1;
-      const level = dbToGain(part.gainDb) * Math.max(0, Math.min(1, follow));
+      const level = dbToGain(part.gainDb) * this.followLevel(part.follow);
       part.gain.gain.cancelScheduledValues(now);
       if (glide > 0) part.gain.gain.setTargetAtTime(level, now, glide);
       else part.gain.gain.setValueAtTime(level, now);
@@ -773,6 +788,7 @@ export class AudioEngine {
     this.sea = area;
     // Outdoors, remember it: indoors it is heard through the walls, from no side in particular.
     if (area && !this.muffle) this.heldSea = { distance: area.distance, dx: 0, dz: 0, spread: 1 };
+    this.setParam("shore", area ? area.distance / HEX_ACROSS : FAR_FROM_SHORE);
     if (!this.seaNow()) this.dropEmitter("sea");
   }
 
