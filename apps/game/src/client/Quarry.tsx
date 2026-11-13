@@ -196,7 +196,11 @@ export function Quarry({ outing, world, apply, onLeave }: {
         aria-label="The rock face: press on a rock to swing, hold to charge"
         onPointerDown={(e) => {
           if (phase !== "digging") return;
-          hit.current?.setPointerCapture(e.pointerId);
+          try {
+            hit.current?.setPointerCapture(e.pointerId);
+          } catch {
+            // Capture only keeps a held swing alive off the layer; swing without it.
+          }
           stage.current?.pressDown(e.clientX, e.clientY);
         }}
         onPointerMove={(e) => stage.current?.pointerMove(e.clientX, e.clientY)}

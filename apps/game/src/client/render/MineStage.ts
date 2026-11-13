@@ -304,6 +304,8 @@ export class MineStage implements WorldMinigame {
   private pick = new THREE.Group();
   private pickPivot = new THREE.Group();
   private rocks: RockObj[] = [];
+  /** An unseen sheet across the face: a press between two rocks lands on it and goes to the nearer. */
+  private sheet: THREE.Mesh;
   private bits: Bit[] = [];
   private light: SetLight;
   private materials: THREE.Material[] = [];
@@ -360,7 +362,10 @@ export class MineStage implements WorldMinigame {
     this.lastAt = view.lastAt;
     this.buildRocks(view);
     this.buildPick();
-    this.group.add(this.face, this.surround, this.fx);
+    this.sheet = new THREE.Mesh(new THREE.PlaneGeometry(MINE_COLS * CELL + CELL, MINE_ROWS * CELL + CELL), new THREE.MeshBasicMaterial());
+    this.sheet.visible = false;
+    this.sheet.position.set(0, FACE_FOOT + (MINE_ROWS * CELL) / 2, FACE_Z + CELL * 0.2);
+    this.group.add(this.face, this.surround, this.fx, this.sheet);
     // The pick is placed in front of the camera each frame, in world space, so it stands outside the group.
     world.addObject(this.pick);
     this.stopTick = world.addTicker((dt, camera, clock) => this.tick(dt, camera, clock));
@@ -594,8 +599,20 @@ export class MineStage implements WorldMinigame {
 
   /** The rock under a point on screen, if it is still standing. */
   private rockAt(x: number, y: number): number | null {
-    const hit = this.world.pickAt(this.rocks.filter((r) => !r.broken).map((r) => r.mesh), x, y);
-    return hit ? (hit.object.userData.id as number) : null;
+    const standing = this.rocks.filter((r) => !r.broken);
+    const hit = this.world.pickAt(standing.map((r) => r.mesh), x, y);
+    if (hit) return hit.object.userData.id as number;
+    // Between rocks: the nearest one standing, if the press is near enough to it.
+    const onSheet = this.world.pickAt([this.sheet], x, y);
+    if (!onSheet) return null;
+    const at = this.group.worldToLocal(onSheet.point.clone());
+    let best: RockObj | null = null;
+    let bestD = CELL * 0.85;
+    for (const r of standing) {
+      const d = Math.hypot(r.home.x - at.x, r.home.y - at.y);
+      if (d < bestD) (best = r), (bestD = d);
+    }
+    return best?.id ?? null;
   }
 
   /** The swing is pressed: start charging (once the pick is free). */
@@ -841,6 +858,11 @@ export class MineStage implements WorldMinigame {
 
   private tick(dt: number, camera: THREE.PerspectiveCamera, clock: number) {
     if (this.disposed) return;
+    // Replaced by another game (or a second mount of this one): the renderer has taken our group down; free the rest.
+    if (this.world.playing !== this) {
+      this.dispose();
+      return;
+    }
     this.clock = clock;
     if (!this.laidOut) this.layout();
     const close = this.close;
