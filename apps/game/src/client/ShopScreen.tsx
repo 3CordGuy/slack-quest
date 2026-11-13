@@ -117,7 +117,7 @@ export function ShopScreen({ me, refresh, onClose }: { me: Me; refresh(): Promis
               </>
             ) : (
               <>
-                <h3 className="shop-subhead">Herbs and mushrooms</h3>
+                <h3 className="shop-subhead">Herbs, mushrooms and gems</h3>
                 {forage.map((k) => {
                   const have = stock[k] ?? 0;
                   const each = STALL_BUYS[k]!;

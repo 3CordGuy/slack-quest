@@ -3,12 +3,14 @@
 // posts the player's choice to push on or bank.
 
 import { useEffect, useRef, useState, type RefObject } from "react";
-import { GATHER_SPOTS, QUARRY_SIDE, TIMING, STAT_LABEL, type GatherChoice, type GatherSpot, type GatherView, type Resources } from "@gantt-quest/world";
+import { GATHER_SPOTS, TIMING, STAT_LABEL, type GatherChoice, type GatherSpot, type GatherView, type Resources } from "@gantt-quest/world";
 import { api, type GatherStatus, type XpResult } from "./api";
 import { DragPanel } from "./DragPanel";
 import { FellingGame } from "./FellingGame";
 import type { WorldRenderer } from "./render/WorldRenderer";
 import { TimingBar } from "./TimingBar";
+import { Quarry } from "./Quarry";
+import { QuarryIntro } from "./QuarryIntro";
 import { ResourceChips, resourceText } from "./hutDrops";
 import "./gather.css";
 import { StaminaBolts } from "./StaminaBolts";
@@ -16,7 +18,7 @@ import { StaminaBolts } from "./StaminaBolts";
 const WORDS: Record<GatherSpot, { start: string; push: string; bank: string; meter: string }> = {
   fishing: { start: "Go fishing", push: "", bank: "Land what you have", meter: "Line tension" },
   felling: { start: "Start felling", push: "", bank: "Carry it home", meter: "" },
-  quarry: { start: "Start cutting", push: "", bank: "Haul it out", meter: "Cracks in the roof" },
+  quarry: { start: "Go to the face", push: "", bank: "Haul it out", meter: "" },
 };
 
 function resetIn(at: number): string {
@@ -55,30 +57,6 @@ function Water({ outing, busy, cast }: { outing: GatherView; busy: boolean; cast
   );
 }
 
-/** The quarry face: nine blocks, with the dust count for each row down the side and each column along the bottom. */
-function Face({ outing, busy, cut }: { outing: GatherView; busy: boolean; cut(cell: number): void }) {
-  const face = outing.face!;
-  const dust = (n: number) => (n === 0 ? "no dust" : n === 1 ? "· dust" : "·· dust");
-  return (
-    <div className="gather-face" style={{ gridTemplateColumns: `repeat(${QUARRY_SIDE}, 1fr) auto` }}>
-      {face.blocks.map((block, cell) => {
-        const open = outing.status === "active" && !block.cut;
-        const label = block.kind === null ? "Uncut" : block.kind === "weak" ? "Weak" : block.kind === "ore" ? "Ore" : "Stone";
-        return [
-          <button key={cell} className={`gather-tree gather-block ${block.kind ?? "hidden"} ${block.cut ? "picked" : ""}`} disabled={!open || busy} onClick={() => cut(cell)} aria-label={`Block ${cell + 1}: ${label}`}>
-            <span className="tree-glyph">{block.kind === "weak" ? "☠" : block.kind === "ore" ? "◆" : block.cut ? "▫" : "▩"}</span>
-            <span>{label}</span>
-            {block.oreNear !== null && <span className="muted">{block.oreNear} ore near</span>}
-          </button>,
-          cell % QUARRY_SIDE === QUARRY_SIDE - 1 && <span key={`r${cell}`} className={`gather-dust ${face.rows[Math.floor(cell / QUARRY_SIDE)] ? "on" : ""}`} title="Weak blocks in this row">{dust(face.rows[Math.floor(cell / QUARRY_SIDE)])}</span>,
-        ];
-      })}
-      {face.cols.map((n, c) => <span key={`c${c}`} className={`gather-dust ${n ? "on" : ""}`} title="Weak blocks in this column">{dust(n)}</span>)}
-      <span />
-    </div>
-  );
-}
-
 export function GatherPanel({ spot, renderer, onClose, onStamina }: {
   spot: GatherSpot;
   /** The Harbor's renderer: felling is played in it, through the hero's eyes. */
@@ -102,14 +80,16 @@ export function GatherPanel({ spot, renderer, onClose, onStamina }: {
     if (status) tell.current?.({ left: status.stamina.left, max: status.stamina.max });
   }, [status?.stamina.left, status?.stamina.max]);
 
+  const apply = (next: GatherStatus & { paid?: Resources; xp?: XpResult }) => {
+    setStatus(next);
+    setPaid(next.paid ?? null);
+    setXp(next.xp ?? null);
+  };
   const run = async (call: () => Promise<GatherStatus & { paid?: Resources; xp?: XpResult }>) => {
     setBusy(true);
     setError(null);
     try {
-      const next = await call();
-      setStatus(next);
-      setPaid(next.paid ?? null);
-      setXp(next.xp ?? null);
+      apply(await call());
     } catch (e) {
       setError((e as Error).message);
       // Whatever went wrong, show where the outing really stands.
@@ -150,6 +130,24 @@ export function GatherPanel({ spot, renderer, onClose, onStamina }: {
         renderer={renderer}
         step={step}
         again={() => void run(() => api.gatherStart(spot))}
+        onClose={onClose}
+      />
+    );
+  }
+
+  // The quarry is played at the face itself, in the Harbor: the panel gives way to the camera and a small HUD.
+  if (outing?.mine && active && outing.spot === spot && renderer.current) return <Quarry outing={outing} world={renderer.current} apply={apply} onLeave={onClose} />;
+  // Before a run, and after one, the quarry has its own card. (An old-style outing, or one open elsewhere, falls through to the panel.)
+  if (spot === "quarry" && !active && !finishedElsewhere && (!outing || outing.mine)) {
+    return (
+      <QuarryIntro
+        status={status}
+        outing={outing}
+        paid={paid}
+        xp={xp}
+        busy={busy}
+        error={error}
+        onStart={() => void run(() => api.gatherStart(spot))}
         onClose={onClose}
       />
     );
@@ -213,13 +211,6 @@ export function GatherPanel({ spot, renderer, onClose, onStamina }: {
 
         {outing && (
           <>
-            {outing.cracks !== null && (
-              <div className="gather-meter" aria-label={`${outing.cracks} of ${outing.maxCracks} cracks`}>
-                <span className="muted">{words.meter}</span>
-                {Array.from({ length: outing.maxCracks! }, (_, i) => <i key={i} className={i < outing.cracks! ? "on" : ""} />)}
-                <span className="muted">{outing.cracks} of {outing.maxCracks}</span>
-              </div>
-            )}
             {outing.spot === "fishing" && (
               <div className="gather-meter" aria-label={`Reel ${outing.step} of ${outing.maxSteps}`}>
                 <span className="muted">{words.meter}</span>
@@ -234,12 +225,8 @@ export function GatherPanel({ spot, renderer, onClose, onStamina }: {
                 {active && <p className="muted gather-hint">On the school: +{outing.water.read}% a roll and one more fish. Two or more places off: −{outing.water.read}%. The school drifts a place at most between casts.</p>}
               </>
             )}
-            {outing.face && (
-              <>
-                <Face outing={outing} busy={busy || !!outing.aim} cut={(cell) => step({ t: "aim", cell })} />
-                {active && <p className="muted gather-hint">Dust marks a row or column with a weak block in it (two dots: both). A weak block is two cracks; missing both rolls is one.</p>}
-              </>
-            )}
+            {outing.spot === "quarry" && !outing.mine && active && <p className="muted gather-hint">This outing was started at the old face, before it was reworked. Haul out what you have and start again.</p>}
+            {outing.spot === "quarry" && outing.mine && active && !renderer.current && <p className="muted gather-hint">The rock face can only be worked from the Harbor.</p>}
 
             {outing.aim && active && outing.spot !== "felling" && <TimingBar aim={outing.aim} spot={outing.spot} busy={busy} stop={(at) => step({ t: "push", at })} />}
 
@@ -259,7 +246,7 @@ export function GatherPanel({ spot, renderer, onClose, onStamina }: {
                   {Object.keys(entry.gained).length > 0 && <span className="good"> +{resourceText(entry.gained)}</span>}
                 </li>
               ))}
-              {outing.log.length === 0 && <li className="muted">{outing.spot === "felling" ? "The old tree line." : outing.spot === "fishing" ? "Gulls are circling. The school is under them or right beside. Pick where to cast, then reel when the fish is on the hook." : "Nine blocks. Read the dust, pick one to cut, then strike when the pick is on the mark."}</li>}
+              {outing.log.length === 0 && <li className="muted">{outing.spot === "felling" ? "The old tree line." : outing.spot === "fishing" ? "Gulls are circling. The school is under them or right beside. Pick where to cast, then reel when the fish is on the hook." : "Thirty seconds at the rock face."}</li>}
             </ol>
 
             {active ? (

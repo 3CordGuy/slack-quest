@@ -25,13 +25,13 @@ import {
   GATHER_SPOT_IDS,
   FISHING_CELLS,
   FISHING_READ,
-  QUARRY_ORE,
+  MINE_MS,
+  MINE_RECOVER_MS,
   TIMING,
   TIMING_LIMIT_MS,
   markerAt,
   timingEase,
   timingGrade,
-  QUARRY_WEAK,
   gatherDay,
   gatherPayout,
   gatherPct,
@@ -51,7 +51,8 @@ import {
 
 
 /** The spots played a push at a time. Felling is two timed rounds instead (see fellOut). */
-const PUSH_SPOTS = ["fishing", "quarry"] as const;
+/** The spots played by pushing on: only fishing now. Felling and the quarry are played in the world (felling.test, mine.test). */
+const PUSH_SPOTS = ["fishing"] as const;
 
 /** Chops that bring down the given trees (by slot) one after another, as fast as an axe swings, waiting out any regrowth. */
 function chopsFor(trees: number[], from = 0): Chop[] {
@@ -107,13 +108,12 @@ function fellOut(seed: number, stat: number, opts: { trees?: number[]; grades?: 
 }
 
 /**
- * Step an outing as a player would. A push first aims at the cell (for fishing, where it last cast or under the
- * gulls; for the quarry, the first block standing) and then stops the marker with no moment given, which counts as
- * "close" and leaves the chance as it is.
+ * Step an outing as a player would. A push first aims at the cell (where it last cast or under the gulls) and then
+ * stops the marker with no moment given, which counts as "close" and leaves the chance as it is.
  */
 function play(state: GatherState, choice: GatherChoice): ReturnType<typeof stepGather> {
   if (choice.t === "push" && state.timed && !state.aim && state.status === "active") {
-    const cell = choice.cell ?? (state.spot === "fishing" ? (state.water!.casts.at(-1)?.cell ?? state.water!.gulls) : state.face!.findIndex((_, i) => !state.picked.includes(i)));
+    const cell = choice.cell ?? state.water!.casts.at(-1)?.cell ?? state.water!.gulls;
     const aimed = stepGather(state, { t: "aim", cell });
     if (aimed.error) return aimed;
     return stepGather(aimed.state, { t: "push", at: choice.at });
@@ -123,9 +123,26 @@ function play(state: GatherState, choice: GatherChoice): ReturnType<typeof stepG
 
 const units = (r: Resources) => Object.values(r).reduce((a, n) => a + (n ?? 0), 0);
 
-/** Push until the outing ends (the quarry the first block still standing, fishing where it last cast). Felling plays both rounds. */
+/**
+ * The quarry, played plainly: start the clock and tap the first rock still standing as fast as the pick allows,
+ * hauling out once `bankAfter` rocks have given way or the clock runs out.
+ */
+function mineOut(seed: number, stat: number, bankAfter = Infinity): GatherState {
+  let state = stepGather(startGather("quarry", seed, stat), { t: "dig", now: 0 }).state;
+  for (let at = 0; at <= MINE_MS && state.step < bankAfter; at += MINE_RECOVER_MS) {
+    const id = state.mine!.rocks.findIndex((r) => !r.broken);
+    if (id < 0) break;
+    const step = stepGather(state, { t: "blows", blows: [{ cell: state.mine!.rocks[id].cell, power: 1, at }], now: at });
+    expect(step.error).toBeUndefined();
+    state = step.state;
+  }
+  return stepGather(state, { t: "bank" }).state;
+}
+
+/** Push until the outing ends (fishing where it last cast). Felling plays both rounds; the quarry taps away at its face. */
 function playOut(spot: GatherSpot, seed: number, stat: number, bankAfter = Infinity): GatherState {
   if (spot === "felling") return bankAfter === 0 ? stepGather(startGather(spot, seed, stat), { t: "bank" }).state : fellOut(seed, stat, { bankAfterChop: bankAfter === 1 });
+  if (spot === "quarry") return mineOut(seed, stat, bankAfter);
   let state = startGather(spot, seed, stat);
   while (state.status === "active") {
     const choice: GatherChoice = state.step >= bankAfter ? { t: "bank" } : { t: "push" };
@@ -180,7 +197,7 @@ describe("gathering", () => {
       expect(step.log[0].check!.rolls).toHaveLength(2);
     }
     // A stronger hero busts less often.
-    const busts = (stat: number) => Array.from({ length: 400 }, (_, s) => playOut("quarry", s + 1, stat)).filter((s) => s.status === "bust").length;
+    const busts = (stat: number) => Array.from({ length: 400 }, (_, s) => playOut("fishing", s + 1, stat)).filter((s) => s.status === "bust").length;
     expect(busts(20)).toBeLessThan(busts(4));
   });
 
@@ -196,7 +213,7 @@ describe("gathering", () => {
             expect(Object.keys(paid).every((k) => pays.includes(k))).toBe(true);
             expect(Object.values(paid).every((n) => Number.isInteger(n) && n! > 0)).toBe(true);
             expect(units(paid)).toBeLessThanOrEqual(GATHER_MAX_UNITS);
-            expect(end.step).toBeLessThanOrEqual(GATHER_MAX_STEPS);
+            if (spot === "fishing") expect(end.step).toBeLessThanOrEqual(GATHER_MAX_STEPS);
             if (end.status === "banked") expect(units(paid)).toBeGreaterThanOrEqual(GATHER_MIN_BANK);
             else expect(paid).toEqual({});
             best = Math.max(best, units(paid));
@@ -212,8 +229,8 @@ describe("gathering", () => {
   }, 30_000);
 
   it("caps the payout even if a stored haul were inflated", () => {
-    const state = { ...startGather("quarry", 1, 9), status: "banked" as const, haul: { stone: 50, iron: 50, wood: 9 } };
-    expect(gatherPayout(state)).toEqual({ stone: GATHER_MAX_UNITS });
+    const state = { ...startGather("fishing", 1, 9), status: "banked" as const, haul: { bone: 50, copper: 50, wood: 9 } };
+    expect(gatherPayout(state)).toEqual({ bone: GATHER_MAX_UNITS });
   });
 
   it("banks: an early bank always pays something and keeps the haul", () => {
@@ -451,63 +468,6 @@ describe("gathering", () => {
     }
   });
 
-  it("quarry: a fixed mix of blocks; a weak one is two cracks, a double miss is one", () => {
-    for (let seed = 1; seed <= 300; seed++) {
-      const start = startGather("quarry", seed, 9);
-      expect(start.face).toHaveLength(9);
-      expect(start.face!.filter((k) => k === "weak")).toHaveLength(QUARRY_WEAK);
-      expect(start.face!.filter((k) => k === "ore")).toHaveLength(QUARRY_ORE);
-      const weak = play(start, { t: "push", cell: start.face!.indexOf("weak") }).state;
-      expect(weak.cracks).toBe(2);
-      expect(weak.haul).toEqual({});
-      const stone = play(start, { t: "push", cell: start.face!.indexOf("stone") }).state;
-      const check = stone.log[0].check!;
-      expect(stone.cracks).toBe(check.fumble ? 1 : 0);
-      expect(stone.haul).toEqual(check.successes ? { stone: check.successes } : {});
-      const ore = play(start, { t: "push", cell: start.face!.indexOf("ore") }).state;
-      expect(Object.keys(ore.haul).every((k) => k === "iron" || k === "copper")).toBe(true);
-      // The second weak block brings the roof down.
-      const both = play(weak, { t: "push", cell: start.face!.lastIndexOf("weak") }).state;
-      expect(both.status).toBe("bust");
-      expect(play(weak, { t: "push", cell: start.face!.indexOf("weak") }).error).toBeDefined();
-    }
-  });
-
-  it("quarry: the dust along each row and column counts its weak blocks, and never names them", () => {
-    for (let seed = 1; seed <= 100; seed++) {
-      const state = startGather("quarry", seed, 9);
-      const view = gatherView(state);
-      expect(view.face!.rows.reduce((a, n) => a + n, 0)).toBe(QUARRY_WEAK);
-      expect(view.face!.cols.reduce((a, n) => a + n, 0)).toBe(QUARRY_WEAK);
-      state.face!.forEach((kind, i) => {
-        if (kind === "weak") expect(view.face!.rows[Math.floor(i / 3)]).toBeGreaterThan(0);
-      });
-      expect(view.face!.blocks.every((b) => b.kind === null && b.oreNear === null)).toBe(true);
-      const cut = gatherView(play(state, { t: "push", cell: state.face!.indexOf("stone") }).state);
-      expect(cut.face!.blocks.filter((b) => b.kind !== null)).toHaveLength(1);
-      expect(cut.face!.blocks[state.face!.indexOf("stone")].oreNear).toBeTypeOf("number");
-    }
-  });
-
-  it("quarry: reading the dust caves in far less often than cutting blind", () => {
-    const busts = (read: boolean) => {
-      let n = 0;
-      for (let seed = 1; seed <= 600; seed++) {
-        let state = startGather("quarry", seed, 9);
-        const view = gatherView(state).face!;
-        // A block is certainly safe if its row or its column has no dust.
-        const safe = state.face!.map((_, i) => i).filter((i) => view.rows[Math.floor(i / 3)] === 0 || view.cols[i % 3] === 0);
-        while (state.status === "active") {
-          const open = (read ? safe : state.face!.map((_, i) => i)).filter((i) => !state.picked.includes(i));
-          state = play(state, open.length > 0 ? { t: "push", cell: open[0] } : { t: "bank" }).state;
-        }
-        if (state.status === "bust") n++;
-      }
-      return n;
-    };
-    expect(busts(true)).toBeLessThan(busts(false) / 2);
-  });
-
   it("shows the client no seed and no RNG", () => {
     const one = fellOut(2_946_311_877, 30);
     const view = gatherView(one);
@@ -568,7 +528,7 @@ describe("resting", () => {
 });
 
 describe("timed gathering", () => {
-  it("makes fishing and the quarry aim first", () => {
+  it("makes fishing aim first", () => {
     for (const spot of PUSH_SPOTS) {
       const state = startGather(spot, 4, 9);
       expect(state.timed).toBe(true);
@@ -598,7 +558,7 @@ describe("timed gathering", () => {
   });
 
   it("moves the chance per roll by the grade", () => {
-    const aimed = stepGather(startGather("quarry", 8, 9), { t: "aim", cell: 0, now: 0 }).state;
+    const aimed = stepGather(startGather("fishing", 8, 9), { t: "aim", cell: 1, now: 0 }).state;
     const m = aimed.aim!.motion;
     // Find a perfect moment and a missed one in the first cycle.
     let perfect = -1;
@@ -616,7 +576,7 @@ describe("timed gathering", () => {
   });
 
   it("gives a stronger hero a wider mark and a slower marker", () => {
-    for (const spot of ["fishing", "quarry"] as const) {
+    for (const spot of ["fishing"] as const) {
       const weak = stepGather(startGather(spot, 6, 2), { t: "aim", cell: 0 }).state.aim!.motion;
       const strong = stepGather(startGather(spot, 6, 20), { t: "aim", cell: 0 }).state.aim!.motion;
       expect(strong.width).toBeGreaterThan(weak.width);

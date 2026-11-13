@@ -73,7 +73,7 @@ async function status(db: D1Database, playerId: string, stats: Record<GatherSpot
     harborXp: harborXpStatus(xpRecord, now),
     restReadyAt: restReadyAt(row?.rested_at),
     chances: { fishing: statPct(stats.fishing), felling: statPct(stats.felling), quarry: statPct(stats.quarry) },
-    outing: ended ? gatherView(ended) : row?.session_json ? gatherView(JSON.parse(row.session_json) as GatherState) : null,
+    outing: ended ? gatherView(ended, now) : row?.session_json ? gatherView(JSON.parse(row.session_json) as GatherState, now) : null,
   };
 }
 
@@ -149,15 +149,15 @@ function payoutStatements(db: D1Database, playerId: string, claim: string, paid:
 const TIMING_SLACK_MS = 3000;
 
 /**
- * Put the server's clock on a timed choice. An aim is stamped with now. A stop
+ * Put the server's clock on a timed choice. An aim, the quarry's start and its blows are stamped with now. A stop
  * is judged by when the client says the player pressed, which is what the
  * player saw, and is believed if it falls between when the request arrived
  * and a few seconds before that. Anything else (a stop "from the future", or one
  * far older than the request) is judged at the server's own estimate.
  */
 function timed(state: GatherState, choice: GatherChoice, now: number): GatherChoice {
-  // Felling's rounds: when one begins and when its report arrives are always the server's clock, never the client's.
-  if (choice.t === "aim" || choice.t === "begin" || choice.t === "chopped" || choice.t === "split") return { ...choice, now };
+  // Felling's rounds and the quarry's clock and blows: when one begins and when its report arrives are always the server's clock, never the client's.
+  if (choice.t === "aim" || choice.t === "begin" || choice.t === "chopped" || choice.t === "split" || choice.t === "dig" || choice.t === "blows") return { ...choice, now };
   if (choice.t !== "push" || !state.aim) return choice;
   const elapsed = now - state.aim.startedAt;
   const said = Number(choice.at);

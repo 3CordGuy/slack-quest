@@ -4,7 +4,7 @@
 // furnishings catalogue, hut sizes, and the perks a furnished hut grants.
 // Rules that act on a hut (room layout, placement, crafting) build on it.
 
-export const RESOURCE_KINDS = ["wood", "stone", "iron", "copper", "fur", "bone", "herbs", "mushrooms"] as const;
+export const RESOURCE_KINDS = ["wood", "stone", "iron", "copper", "fur", "bone", "herbs", "mushrooms", "gem"] as const;
 export type ResourceKind = (typeof RESOURCE_KINDS)[number];
 export type Resources = Partial<Record<ResourceKind, number>>;
 
@@ -17,6 +17,7 @@ export const RESOURCE_LABEL: Record<ResourceKind, string> = {
   bone: "Bone",
   herbs: "Herbs",
   mushrooms: "Mushrooms",
+  gem: "Gems",
 };
 
 /** Add `more` into `into`, returning `into`. Zero and negative results are dropped. */
@@ -257,8 +258,16 @@ export const HUT_TIERS: HutTier[] = [
 ];
 
 /**
- * Materials the market stall buys, and what it pays for each piece. Only
- * what islanders forage: the stall has no use for timber or ore.
+ * A gem from the quarry. Rare (a good thirty seconds at the face finds one or
+ * two, a poor one none), so it is worth a few herbs' worth more than a meal:
+ * selling the gems from a lucky day's outings buys a pub meal or two.
+ */
+export const STALL_GEM_PRICE = 12;
+
+/**
+ * Materials the market stall buys, and what it pays for each piece: what
+ * islanders forage, and gems from the quarry. The stall has no use for
+ * timber or ore.
  *
  * 3 gold is pitched at what the Apothecary's brews are worth at pub prices:
  * a Focus Tonic's 4 pieces sell for 12 against Spiced Rum's 14 for the same
@@ -267,7 +276,7 @@ export const HUT_TIERS: HutTier[] = [
  * and a Healing Draught (a potion, which nobody sells) is better. The herbalist
  * salesman pays 5 to 7 a piece, so the stall stays the everyday floor.
  */
-export const STALL_BUYS: Partial<Record<ResourceKind, number>> = { herbs: 3, mushrooms: 3 };
+export const STALL_BUYS: Partial<Record<ResourceKind, number>> = { herbs: 3, mushrooms: 3, gem: STALL_GEM_PRICE };
 
 /** Why `qty` of `kind` cannot be sold to the stall by someone holding `have`, or null if it can. */
 export function sellMaterialProblem(kind: unknown, qty: unknown, have: Resources): string | null {

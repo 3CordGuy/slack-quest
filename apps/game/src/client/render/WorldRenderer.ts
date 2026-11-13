@@ -649,6 +649,8 @@ export class WorldRenderer {
    */
   private panFrom: { x: number; y: number } | null = null;
   private pointer = { x: 0, y: 0, downX: 0, downY: 0, down: false, dragged: false, dirty: false, inside: false };
+  /** Called every frame before drawing, after the camera is placed, by things a view has added to the scene (see addTicker). */
+  private tickers = new Set<(dt: number, camera: THREE.PerspectiveCamera, clock: number) => void>();
 
   /**
    * `backdrop`: a second view drawn off screen for another to show (the Harbor seen through the pub's
@@ -1734,6 +1736,47 @@ export class WorldRenderer {
   /** Whether a unit is still on its way along a walked path. */
   isWalking(id: string): boolean {
     return (this.units.get(id)?.path.length ?? 0) > 0;
+  }
+
+  // ---------- for a minigame's own things ----------
+
+  /** The minigame being played, if any. */
+  get playing(): WorldMinigame | null {
+    return this.minigame?.game ?? null;
+  }
+
+  /** How dark it is outdoors, 0 (day) to 1 (dead of night). */
+  get night(): number {
+    return this.ambience.night;
+  }
+
+  /** Whether the finishing pass (glow and the rest) is on in this view. */
+  get glowing(): boolean {
+    return !!this.post;
+  }
+
+  /** Add something to the scene outside the minigame's own group (a pick held in front of the camera), or take it away. */
+  addObject(obj: THREE.Object3D) {
+    this.scene.add(obj);
+  }
+
+  removeObject(obj: THREE.Object3D) {
+    this.scene.remove(obj);
+  }
+
+  /** Run `fn` every frame before drawing, with the frame's time step, the camera and the render clock. Returns the way to stop. */
+  addTicker(fn: (dt: number, camera: THREE.PerspectiveCamera, clock: number) => void): () => void {
+    this.tickers.add(fn);
+    return () => this.tickers.delete(fn);
+  }
+
+  /** The nearest of `objects` (and their children) under a point on screen, in client pixels. */
+  pickAt(objects: THREE.Object3D[], clientX: number, clientY: number): THREE.Intersection | null {
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0) return null;
+    const ndc = new THREE.Vector2(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1);
+    this.raycaster.setFromCamera(ndc, this.camera);
+    return this.raycaster.intersectObjects(objects, true)[0] ?? null;
   }
 
   // ---------- points of interest ----------
@@ -3944,6 +3987,7 @@ export class WorldRenderer {
       }
     }
 
+    for (const tick of this.tickers) tick(dt, this.camera, this.clock);
     this.ambience.settleShadows();
     if (this.post) {
       this.air.outdoors = this.ambience.openSky;

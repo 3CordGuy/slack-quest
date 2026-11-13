@@ -103,6 +103,12 @@ export const AUDIO: AudioManifest = {
     "gather.chop.good": { files: "sfx/gather/chop_*", fallback: built("blunt"), pitch: [-3, -1], volume: [-2, 0], reverb: -10 },
     "gather.chop.miss": { files: "sfx/gather/glance_*", fallback: built("whiff"), pitch: [-2, 0], gainDb: -3 },
     "gather.timber": { files: "sfx/gather/timber_*", fallback: built("enemy_down"), pitch: [-9, -6], reverb: -4 },
+    // ----- the quarry's rock face -----
+    "gather.pick": { files: "sfx/gather/pick_*", fallback: built("blunt"), pitch: [3, 5], gainDb: -4, volume: [-2, 0], reverb: -10 },
+    "gather.pick.heavy": { files: "sfx/gather/pick_heavy_*", fallback: built("crit"), pitch: [-4, -2], gainDb: -2, reverb: -8 },
+    "gather.rock": { files: "sfx/gather/rock_*", fallback: built("enemy_down"), pitch: [-7, -4], gainDb: -3, reverb: -8 },
+    "gather.ore": { files: "sfx/gather/ore_*", fallback: built("heal"), pitch: [2, 4], gainDb: -4 },
+    "gather.gem": { files: "sfx/gather/gem_*", fallback: built("heal"), pitch: [7, 9], gainDb: -1, reverb: -6 },
 
     // Stingers follow the Music slider.
     "stinger.battle_start": { files: "music/stingers/battle_start", group: "music" },

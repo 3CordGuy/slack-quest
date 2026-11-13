@@ -58,6 +58,10 @@ export const soundName = {
   /** Felling: the axe biting a trunk or a log (by how well a split was struck), and a tree coming down. */
   chop: (grade: "perfect" | "good" | "miss") => [`gather.chop.${grade}`, "gather.chop"],
   fall: (what: "timber") => [`gather.${what}`],
+  /** The quarry: the pick striking (a full charge is heavy), a rock giving way, and what it gave. */
+  pick: (heavy: boolean) => (heavy ? ["gather.pick.heavy", "gather.pick"] : ["gather.pick"]),
+  rockBreak: () => ["gather.rock"],
+  find: (what: "ore" | "gem") => [`gather.${what}`],
 
   /**
    * Something that happened on a voyage. Rewards and finds sound only for the
@@ -132,6 +136,7 @@ export function soundNames(): Set<string> {
   add(["loot", ...RARITIES.map((r) => `loot.${r}`), "key_item", "gold", "pickup", ...RESOURCE_KINDS.map((k) => `pickup.${k}`)]);
   for (const g of ["perfect", "good", "miss"] as const) add(soundName.chop(g));
   add(soundName.fall("timber"));
+  [soundName.pick(true), soundName.rockBreak(), soundName.find("ore"), soundName.find("gem")].forEach(add);
   add(["forage", ...Object.keys(FORAGE).map((k) => `forage.${k}`), "search.found", "search.empty", "rest", "discover"]);
   return names;
 }

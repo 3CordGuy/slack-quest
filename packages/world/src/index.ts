@@ -21,6 +21,7 @@ export * from "./hutroom";
 export * from "./contracts";
 export * from "./drops";
 export * from "./gather";
+export * from "./mine";
 export * from "./felling";
 export * from "./timing";
 export * from "./harborxp";
