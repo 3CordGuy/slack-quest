@@ -21,6 +21,7 @@ import {
   hutDoor,
   hutPath,
   hutRoom,
+  isFlat,
   isMounted,
   isSmall,
   lieDownProblem,
@@ -304,7 +305,8 @@ export class HutRoom extends DurableObject<Env> {
     const floorProblem = (to: { q: number; r: number }, spot: { x: number; z: number; angle: number }, turningInPlace = false) => {
       const problem = placeProblem(hut.room, rest, piece.defId, to, spot);
       if (problem) return problem;
-      // Turning a piece where it stands never pushes out someone standing on its own hex.
+      // A rug goes down under people's feet. Turning a piece where it stands never pushes out someone standing on its own hex.
+      if (isFlat(piece.defId)) return null;
       const covered = coveredHexes(piece.defId, to, spot).filter((h) => !turningInPlace || h.q !== to.q || h.r !== to.r);
       return this.players().some((p) => covered.some((h) => h.q === p.pos.q && h.r === p.pos.r)) ? "Someone is standing there." : null;
     };

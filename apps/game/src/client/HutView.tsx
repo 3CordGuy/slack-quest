@@ -13,7 +13,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { HexPos } from "@gantt-quest/core";
-import { FURNISHINGS, besideHexes, coveredHexes, hutPath, isBeside, useOf, useProblem, type FurnishingUse, craftProblem, footprintOf, hutDoor, hutPerks, hutRoom, hutTier, isMounted, isSmall, nextHutTier, placeProblem, placedFurnishings, poiAt, smallPlaceProblem, turnOf, upgradeProblem, wallPlaceProblem, wrapAngle, type Furnishing } from "@gantt-quest/world";
+import { FURNISHINGS, besideHexes, coveredHexes, hutPath, isBeside, useOf, useProblem, type FurnishingUse, craftProblem, footprintCentre, footprintOf, hexCentre, hexSpan, hutDoor, hutPerks, hutRoom, hutTier, isFlat, isMounted, isSmall, nextHutTier, placeProblem, placedFurnishings, poiAt, smallPlaceProblem, turnOf, upgradeProblem, wallPlaceProblem, wrapAngle, type Furnishing } from "@gantt-quest/world";
 import { api, type Hut, type Me } from "./api";
 import { CrewRoster } from "./CrewRoster";
 import { DragPanel } from "./DragPanel";
@@ -64,6 +64,8 @@ function tags(defId: string): string[] {
   const out: string[] = [];
   if (def.size === "small") out.push("small");
   if (def.mount) out.push("wall");
+  if (def.flat) out.push("rug");
+  if (hexSpan(defId) > 1) out.push(`${hexSpan(defId)} hexes`);
   if (def.light) out.push(def.light === "fire" ? "fire" : "light");
   if (def.surface) out.push("top");
   if (def.storage) out.push(`holds ${def.storage}`);
@@ -180,7 +182,10 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
       heroes: players.map((p) => {
         // Lying on their bed after a rest, until they walk off (HutRoom's lie_down).
         const bed = p.bed !== undefined ? placed.find((f) => f.id === p.bed) : undefined;
-        const lying = bed ? { pos: { q: bed.q, r: bed.r }, asleep: true, at: { x: bed.x, z: bed.z, y: 0.3 } } : { pos: p.pos };
+        // In the middle of the bed: for a long one, between the hexes it covers rather than on its anchor.
+        const pillow = bed && footprintCentre(bed.defId, bed, { x: bed.x, z: bed.z, angle: turnOf(bed) });
+        const mid = bed && hexCentre(bed);
+        const lying = bed && pillow && mid ? { pos: { q: bed.q, r: bed.r }, asleep: true, at: { x: pillow.x - mid.x, z: pillow.z - mid.z, y: 0.3 } } : { pos: p.pos };
         return { id: p.id, classId: p.classId, label: p.name, outfit: p.outfit, level: p.level, xp: p.xp, ...lying };
       }),
       turn: null,
@@ -205,6 +210,7 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
           selected: f.id === selected || f.id === holding,
           small,
           mount: !!mount,
+          flat: isFlat(f.defId),
           x: f.x,
           z: f.z,
           y: f.y,
@@ -214,7 +220,9 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
           covers: !small && !mount && f.onId === null ? coveredHexes(f.defId, f, { x: f.x, z: f.z, angle: turnOf(turned) }) : undefined,
         };
       }),
-      holding: held && decorating ? { model: defOf(held)?.model ?? held.defId, small: isSmall(held.defId), mount: defOf(held)?.mount, facing: 0, angle: turn } : null,
+      holding: held && decorating
+        ? { model: defOf(held)?.model ?? held.defId, small: isSmall(held.defId), mount: defOf(held)?.mount, footprint: isSmall(held.defId) || defOf(held)?.mount ? undefined : footprintOf(held.defId), facing: 0, angle: turn }
+        : null,
     };
   }, [ownerId, tier, room, players, you, placed, selected, holding, held, decorating, turn, turning, lampOff, stamina]);
   const latest = useRef(scene);
@@ -225,7 +233,7 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
   // The renderer is created once; its click handler reads the current state through this ref.
   const click = useRef<(pos: HexPos) => void>(() => {});
   click.current = (pos) => {
-    const piece = placed.find((f) => same({ q: f.q, r: f.r }, pos));
+    const piece = placed.find((f) => same({ q: f.q, r: f.r }, pos) && (decorating || !isFlat(f.defId)));
     setPending(null);
     if (!decorating && piece) {
       usePiece.current(piece.id);
@@ -266,6 +274,8 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
     if (!room) return "Nothing is being carried.";
     const problem = placeProblem(room, rest, piece.defId, pos, spot);
     if (problem) return problem;
+    // A rug goes down under people's feet.
+    if (isFlat(piece.defId)) return null;
     const covered = coveredHexes(piece.defId, pos, spot).filter((h) => !turningInPlace || !same(h, pos));
     return players.some((p) => covered.some((h) => same(h, p.pos))) ? "Someone is standing there." : null;
   };
@@ -333,6 +343,8 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
   };
   const propClick = useRef<(id: number) => boolean>(() => false);
   propClick.current = (id) => {
+    // Outside edit mode a rug is floor: a click on it walks there, like a click on bare boards.
+    if (!decorating && isFlat(placed.find((f) => f.id === id)?.defId ?? "")) return false;
     if (!decorating) {
       setPending(null);
       usePiece.current(id);
@@ -540,7 +552,7 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
     setEditing((on) => !on);
   };
   /** The bar's Rest: to the bed if there is one placed, else right where you stand. */
-  const bed = placed.find((f) => f.defId === "bed");
+  const bed = placed.find((f) => FURNISHINGS[f.defId]?.bed);
   const restFromBar = () => (bed ? usePiece.current(bed.id) : void restAtHome());
 
   const pick = (id: number) => {
@@ -678,7 +690,7 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
             <ul className="hut-recipes">
               {RECIPES.map((def) => {
                 const known = !def.needsBlueprint || own.blueprints.includes(def.id);
-                const problem = craftProblem(def.id, own.blueprints, own.resources);
+                const problem = craftProblem(def.id, own.blueprints, own.resources, tier ?? undefined);
                 return (
                   <li key={def.id} className={known ? "" : "locked"}>
                     <div className="with-icon">
@@ -686,6 +698,7 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
                       <span className="grow">
                       <strong>{label("furnishing", def.id)}</strong>
                       <span className="muted"> · {known ? blurb("furnishing", def.id) : "Blueprint not found yet. Islands hide them."}</span>
+                      {def.minTier && tier !== null && tier < def.minTier && <span className="muted"> Needs a {hutTier(def.minTier).name}.</span>}
                       </span>
                     </div>
                     <div className="row">
