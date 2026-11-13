@@ -20,6 +20,7 @@ import { Storm } from "./storm";
 import { addWindSway, updateWind } from "./wind";
 import { OVERLAY_LAYER, PostFx, type Air } from "./post";
 import { makeFigure, type Figure } from "./figures";
+import { NIGHT, VEIL_OPEN_S, Veil } from "./veil";
 import { GROUND_KIND, addFancyWater, addWaterRipple, setGroundWet, setWaterNight, setWaterStanding, shoreSide, updateWater, waterAttribute, type Standing } from "./water";
 import { ghostModel, propModel, tintGhost, type LightKind } from "./props";
 import { nearWater, openEar, sounds } from "../audio/gameSounds";
@@ -306,8 +307,7 @@ const round = (n: number) => Math.round(n * 1000) / 1000;
 const GAME_STOOLS = [[-0.54, 0.24], [0.54, 0.24], [-0.54, -0.84], [0.54, -0.84]];
 /** Nothing of the ground is drawn below this: y = 0. */
 const GROUND_FLOOR = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
-/** How long a view takes to fade up once its place is ready, and how many frames it is drawn dark first. */
-const REVEAL_MS = 450;
+/** How many frames a view is drawn under its veil once its place is built, before the veil opens: time for shadows and lights to settle. */
 const REVEAL_FRAMES = 4;
 /** A hex of ground reaches this far down from its top: further than the tallest rock stands, so its foot is always under the sea. */
 const TILE_DEPTH = 3;
@@ -585,8 +585,11 @@ export class WorldRenderer {
   /** The middle of every water hex, for hearing where the sea is. */
   private water: { x: number; z: number }[] = [];
   private frames = 0;
-  /** Frames drawn with the place built, until the view is shown; -1 once it has been. */
+  /** Frames drawn with the place built, until the veil starts to open; -1 once it has. */
   private settling = 0;
+  /** The veil over the view while its place is built (a backdrop, seen only through windows, has none), and when it began to open. */
+  private veil: Veil | null = null;
+  private openedAt = 0;
   private mapCode = "";
   private ambience: Ambience;
   private decor = new THREE.Group();
@@ -707,6 +710,7 @@ export class WorldRenderer {
     this.renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: "low-power" });
     this.renderer.setPixelRatio(1);
     this.renderer.localClippingEnabled = true;
+    if (!this.opts.backdrop) this.veil = new Veil();
     // Dev server only: the latest view, for reading draw calls (`__gqWorld.renderer.info.render.calls`) from the console.
     if (import.meta.env.DEV && !this.opts.backdrop) (globalThis as { __gqWorld?: WorldRenderer }).__gqWorld = this;
     const canvas = this.renderer.domElement;
@@ -715,10 +719,9 @@ export class WorldRenderer {
     canvas.style.display = "block";
     canvas.style.imageRendering = "pixelated";
     canvas.style.touchAction = "none";
-    // Kept dark until there is a place to show (see `reveal`), then faded up: going in or out of a building
-    // dips to dark and comes up on the new place, rather than flashing an empty sea before the room is built.
-    canvas.style.opacity = "0";
-    canvas.style.transition = `opacity ${REVEAL_MS}ms ease-out`;
+    // Under a veil until there is a place to show (see `reveal`): going in or out of a building never flashes
+    // an empty sea before the room is built. The canvas itself is the veil's dark until the first frame is drawn.
+    canvas.style.background = NIGHT;
     container.appendChild(canvas);
 
     // Sky, sun and moon, shadows, and the moving decoration.
@@ -808,6 +811,7 @@ export class WorldRenderer {
 
   dispose() {
     cancelAnimationFrame(this.raf);
+    this.veil?.dispose();
     this.ear.close();
     this.resizeObserver.disconnect();
     const canvas = this.renderer.domElement;
@@ -4040,11 +4044,22 @@ export class WorldRenderer {
     this.reveal();
   };
 
-  /** Fade the view up once its place is built and has been drawn a few times (so shadows and lights have settled). */
+  /**
+   * The veil over the view: whole, with its loading mark, until the place is built and has been drawn a few
+   * times; then it opens, and once open it is put away.
+   */
   private reveal() {
-    if (this.settling < 0 || !this.terrain) return;
-    if (++this.settling < REVEAL_FRAMES) return;
-    this.settling = -1;
-    this.renderer.domElement.style.opacity = "1";
+    if (!this.veil) return;
+    if (this.settling >= 0 && this.terrain && ++this.settling >= REVEAL_FRAMES) {
+      this.settling = -1;
+      this.openedAt = this.clock;
+    }
+    const cover = this.settling >= 0 ? 1 : 1 - (this.clock - this.openedAt) / VEIL_OPEN_S;
+    if (cover <= 0) {
+      this.veil.dispose();
+      this.veil = null;
+      return;
+    }
+    this.veil.draw(this.renderer, cover, this.clock, this.camera.aspect);
   }
 }
