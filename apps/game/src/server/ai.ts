@@ -95,16 +95,6 @@ export function islandFacts(map: WorldMap, npcAt: NpcPlace = "hut"): string[] {
   return facts;
 }
 
-/** True things about the Haunted Caverns, so the model's prose matches the cave the players walk. */
-export function cavernFacts(): string[] {
-  return [
-    "The caverns open in the rocks at the back of the heroes' own home port, Heylets Harbor; the townsfolk can hear them at night.",
-    "The one who can help sits at the cave mouth.",
-    "Past the first chamber the tunnels fork: the west passage runs by an old smugglers' camp, the east passage down to a drowned shrine. Both climb to the deep chamber at the top.",
-    "It is dark below: no daylight, no forests, no fields, no sea. Only stone, damp, old smugglers' things and the dead.",
-  ];
-}
-
 export async function generateFill(
   env: Env,
   frame: StoryFrame,
@@ -113,17 +103,13 @@ export async function generateFill(
   demand: Demand,
   facts: string[],
   hints: StoryHints,
-  setting: "island" | "caverns" = "island",
 ): Promise<StoryFill | null> {
   if (isMock(env)) return null;
-  const cave = setting === "caverns";
   const messages: Message[] = [
     {
       role: "system",
       content:
-        (cave
-          ? "You write short, vivid setups for a co-op fantasy adventure game played in one sitting in haunted caverns under the heroes' home port. "
-          : "You write short, vivid setups for a co-op fantasy adventure game played in one sitting on a small island. ") +
+        "You write short, vivid setups for a co-op fantasy adventure game played in one sitting on a small island. " +
         "Tone: 16-bit era RPG, earnest with a little dry humour. No modern technology, no real-world references. " +
         "Names must be original. Return only the JSON object.",
     },
@@ -131,22 +117,22 @@ export async function generateFill(
       role: "user",
       content:
         `Story shape (do not change it): ${storyBrief(frame, spine)}\n\n` +
-        (cave ? `The heroes going down: ${partyNames.join(", ")}.\n\n` : `The heroes arriving by ship: ${partyNames.join(", ")}.\n\n`) +
-        `True facts about ${cave ? "these caverns" : "this island"}. Everything you write must agree with them:\n${facts.map((f) => `- ${f}`).join("\n")}\n\n` +
-        `What makes THIS ${cave ? "delve" : "voyage"} different from every other. Build the story around these, not around generic fantasy:\n` +
+        `The heroes arriving by ship: ${partyNames.join(", ")}.\n\n` +
+        `True facts about this island. Everything you write must agree with them:\n${facts.map((f) => `- ${f}`).join("\n")}\n\n` +
+        "What makes THIS voyage different from every other. Build the story around these, not around generic fantasy:\n" +
         `- Mood: ${hints.mood}\n` +
-        (cave ? "" : `- The island is ${hints.island}\n`) +
-        (cave ? `- What binds the haunt: ${hints.relic}\n` : `- At the heart of it: ${hints.relic}. The islanders depend on it for something specific and practical\n`) +
+        `- The island is ${hints.island}\n` +
+        `- At the heart of it: ${hints.relic}. The islanders depend on it for something specific and practical\n` +
         `- The threat: ${hints.villain}\n` +
         `- The islander who can help is ${hints.islander}\n` +
         `- Naming style: ${hints.naming}\n` +
-        `- The ${cave ? "caverns'" : "island's"} name starts with ${hints.initials.island}, the villain's with ${hints.initials.villain}, the islander's with ${hints.initials.islander}\n` +
+        `- The island's name starts with ${hints.initials.island}, the villain's with ${hints.initials.villain}, the islander's with ${hints.initials.islander}\n` +
         "- Do not use the words relic, ancient, shadow, dark, sacred, balance or prosperity anywhere. No apostrophes inside names. No sorcerers.\n\n" +
         `The islander will not help until the heroes: ${demand.text}. That is the only thing the islander asks for.\n\n` +
         "Fill in:\n" +
-        `- title: the adventure's title, 2-6 words, naming what is at stake or the ${cave ? "haunt" : "island"} rather than describing a quest\n` +
+        "- title: the adventure's title, 2-6 words, naming what is at stake or the island rather than describing a quest\n" +
         "- premise: 2-3 sentences the players read on arrival; say what has happened and why it matters\n" +
-        (cave ? "- island_name: what the townsfolk call these caverns, starting with \"the\"\n" : "- island_name\n") +
+        "- island_name\n" +
         `- villain_name, villain_description (one sentence): ${frame.fields.villain}\n` +
         `- relic_name: ${frame.fields.relic}\n` +
         `- lair_name: ${frame.fields.lair}\n` +
@@ -202,9 +188,7 @@ function npcSystemPrompt(input: NpcTurnInput): string {
   const objectives = bible.objectives.map((o) => `- ${o.text}${state.facts[o.fact] ? " (done)" : ""}`).join("\n");
 
   return [
-    state.kind === "caverns"
-      ? `You are ${sheet.name}, ${sheet.role}, a person of Heylets Harbor who sits at the mouth of ${bible.islandName} in a fantasy adventure game. Stay in character in every reply.`
-      : `You are ${sheet.name}, ${sheet.role}, a person living on the island of ${bible.islandName} in a fantasy adventure game. Stay in character in every reply.`,
+    `You are ${sheet.name}, ${sheet.role}, a person living on the island of ${bible.islandName} in a fantasy adventure game. Stay in character in every reply.`,
     `PERSONA: ${sheet.persona}`,
     `HOW YOU SPEAK: ${sheet.voice}`,
     `WHAT YOU CARE ABOUT: ${sheet.goal}`,
@@ -317,11 +301,7 @@ export async function writeEpilogue(env: Env, state: WorldState): Promise<string
   const fallback = won
     ? `${bible.victoryLine} ${bible.islandName} will remember the crew that came ashore. The ship turns back toward the Harbor, heavier than it arrived.`
     : `${state.result?.reason ?? "The island proved too much."} The crew limps back to the ship, and ${bible.islandName} slips below the horizon. There will be other tides.`;
-  const caveEnd = won
-    ? `${bible.victoryLine} The crew climbs back out of ${bible.islandName} into the lamplight of the Harbor.`
-    : `${state.result?.reason ?? "The caverns proved too much."} The crew stumbles back out into the Harbor, and behind them something in the dark goes on singing.`;
-  const cave = state.kind === "caverns";
-  if (isMock(env)) return cave ? caveEnd : fallback;
+  if (isMock(env)) return fallback;
 
   const heroes = state.heroes.map((h) => `${h.name} (level ${h.level})`).join(", ");
   const beats = [
@@ -339,12 +319,12 @@ export async function writeEpilogue(env: Env, state: WorldState): Promise<string
       { role: "system", content: "You are the narrator of a 16-bit fantasy adventure. Write a 3-4 sentence epilogue in past tense. Plain prose only: no lists, no headings, no quotation marks around the whole thing." },
       {
         role: "user",
-        content: `${cave ? "Caverns" : "Island"}: ${bible.islandName}. Premise: ${bible.premise}\nHeroes: ${heroes}.\nWhat happened: ${beats}\nOutcome: ${won ? `Victory. ${bible.victoryLine}` : `Defeat. ${state.result?.reason}`}\n${cave ? "End with the crew climbing back out into the Harbor." : "End with the ship sailing back to the Harbor."}`,
+        content: `Island: ${bible.islandName}. Premise: ${bible.premise}\nHeroes: ${heroes}.\nWhat happened: ${beats}\nOutcome: ${won ? `Victory. ${bible.victoryLine}` : `Defeat. ${state.result?.reason}`}\nEnd with the ship sailing back to the Harbor.`,
       },
     ],
     260,
   );
-  return text ?? (cave ? caveEnd : fallback);
+  return text ?? fallback;
 }
 
 // ---------- the barkeep ----------

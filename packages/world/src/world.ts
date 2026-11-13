@@ -17,7 +17,7 @@ import {
 } from "./battle";
 import { rollCheck, statPct, type CheckResult } from "./check";
 import { CAVERN_LEADS, ENEMIES, KEY_ITEMS, ROAMER_LEADS, WEAPONS, bandKinds, cavernBand } from "./content";
-import { generateCaverns } from "./caverns";
+import { generateCaverns, torchDays } from "./caverns";
 import { bumpTally, contractById, tallyBattle, type TakenContract, type TallyKey } from "./contracts";
 import { battleDrops, cacheDrops, storyTrophy } from "./drops";
 import { rollItem, type ItemDef, type Outfit } from "./gear";
@@ -25,7 +25,7 @@ import { freshVitals, heroCombatant } from "./hero";
 import { addResources, capPerks, xpWithBonus, type Perk, type ResourceKind, type Resources } from "./hut";
 import { capPubBuff } from "./pub";
 import { brewBag, brewBuff } from "./apothecary";
-import { MOVE_COST, PICKUP_MAX, findPath, generateMap, poiAt, poiById, tileAt, type Poi, type WorldMap } from "./map";
+import { BASE_HEIGHT, MOVE_COST, PICKUP_MAX, findPath, generateMap, poiAt, poiById, tileAt, type ChestLoot, type Poi, type WorldMap } from "./map";
 import {
   MAX_NPC_MESSAGES,
   MAX_PERSUADE_ATTEMPTS,
@@ -87,6 +87,8 @@ export interface Hero extends HeroInit {
   contract?: TakenContract;
   /** Counts that contracts are judged on. Absent until something is counted. */
   tally?: Partial<Record<TallyKey, number>>;
+  /** In the caverns: has climbed back out into the Harbor, and takes no more turns. */
+  out?: boolean;
 }
 
 export interface ChatLine {
@@ -195,6 +197,8 @@ export interface WorldState {
   kind?: RunKind;
   /** What the galley put in the hold for this voyage and is not yet eaten. Absent when it sailed with none. */
   larder?: { chowder: number };
+  /** In the caverns: keys the crew has found and not yet used. Any key opens any locked door. */
+  keys?: number;
 }
 
 export type WorldAction =
@@ -203,10 +207,12 @@ export type WorldAction =
   | { type: "start"; heroId: string }
   | { type: "contract"; heroId: string; contractId: string | null }
   /** `larder` is the crew's galley larder, taken aboard as the ship sailed (server-only, like the rest of `begin`). */
-  | { type: "begin"; bible: StoryBible; larder?: unknown }
+  | { type: "begin"; bible: StoryBible | null; larder?: unknown }
   | { type: "move"; heroId: string; to: HexPos }
   | { type: "interact"; heroId: string }
   | { type: "end_turn"; heroId: string }
+  /** In the caverns, standing at the mouth: climb back out into the Harbor. The delve ends once everyone is out. */
+  | { type: "climb_out"; heroId: string }
   | { type: "timeout" }
   | { type: "talk"; heroId: string; npcId: string; text: string; persuade?: boolean; focus?: number }
   | { type: "npc_reply"; npcId: string; heroId: string; output: NpcOutput }
@@ -222,6 +228,7 @@ export const CLIENT_ACTIONS: ReadonlySet<WorldAction["type"]> = new Set([
   "move",
   "interact",
   "end_turn",
+  "climb_out",
   "talk",
   "battle",
 ]);
@@ -239,8 +246,16 @@ export type WorldEvent =
   /** `ate` is set when the hero ate a chowder from the galley's larder; `left` is how many are still in the hold. */
   | { t: "rest"; heroId: string; hp: number; focus: number; where: string; ate?: "chowder"; left?: number }
   | { t: "search"; heroId: string; found: boolean }
-  /** A roaming band has caught a hero, or a hero has walked into one. */
-  | { t: "ambush"; heroId: string; kinds: string[]; by: "band" | "hero" }
+  /** A roaming band has caught a hero, a hero has walked into one, or (in the caverns) has come too close to what lurks in a chamber. */
+  | { t: "ambush"; heroId: string; kinds: string[]; by: "band" | "hero" | "lurk" }
+  /** A chest in the caverns opened. What was in it follows as gold, loot and resources. */
+  | { t: "chest"; heroId: string; poiId: string; loot: ChestLoot }
+  /** A key to a locked door, found in a chest or on a beaten band. */
+  | { t: "key"; heroId: string; keys: number }
+  /** A locked door unlocked, forced, or holding against a hero's shoulder. */
+  | { t: "gate"; heroId: string; poiId: string; how: "key" | "forced" | "held" }
+  /** A hero climbed back out of the caverns into the Harbor. */
+  | { t: "climbed_out"; heroId: string }
   /** Something turned up while crossing a forest hex. `hp` is what berries restored. */
   | { t: "forage"; heroId: string; kind: ForageKind; hp?: number }
   /** A hero walked over herbs, mushrooms or a pile of wood or stone and took it. What it gave follows as `resources`. */
@@ -482,9 +497,14 @@ function endRun(ctx: Ctx, outcome: "victory" | "defeat", reason: string) {
   state.phase = "ended";
   state.turn = null;
   state.battle = null;
-  state.result = { outcome, reason, epilogue: null };
+  const delve = state.kind === "caverns";
+  // A delve has no story to write up: its ending is what the crew did down there.
+  state.result = { outcome, reason, epilogue: delve ? delveSummary(state) : null };
   for (const hero of state.heroes) {
-    if (outcome === "victory") {
+    if (outcome === "victory" && delve) {
+      // Out in one piece: a little for the climb, on top of everything found below.
+      grant(ctx, hero, { xp: DELVE_EXIT_XP, gold: DELVE_EXIT_GOLD });
+    } else if (outcome === "victory") {
       grant(ctx, hero, {
         xp: 50,
         gold: 30,
@@ -498,7 +518,28 @@ function endRun(ctx: Ctx, outcome: "victory" | "defeat", reason: string) {
   }
   settleContracts(ctx, outcome);
   ctx.events.push({ t: "ended", outcome, reason });
-  ctx.effects.push({ kind: "epilogue" }, { kind: "run_end", outcome });
+  if (!delve) ctx.effects.push({ kind: "epilogue" });
+  ctx.effects.push({ kind: "run_end", outcome });
+}
+
+/** What every hero gets for climbing back out of the caverns. */
+export const DELVE_EXIT_XP = 20;
+export const DELVE_EXIT_GOLD = 10;
+/** Roaming bands in the caverns when a delve begins, and the most there can be at once. */
+export const DELVE_ROAMERS_AT_START = 1;
+export const DELVE_ROAMERS_MAX = 2;
+
+/** A line on how a delve went: chests opened, things beaten, doors opened. */
+export function delveSummary(state: WorldState): string {
+  const pois = state.map.pois;
+  const count = (kind: string) => [pois.filter((p) => p.kind === kind && p.cleared).length, pois.filter((p) => p.kind === kind).length];
+  const [chests, ofChests] = count("cache");
+  const [bands, ofBands] = [pois.filter((p) => (p.kind === "camp" || p.kind === "lair") && p.cleared).length, pois.filter((p) => p.kind === "camp" || p.kind === "lair").length];
+  const [doors, ofDoors] = count("gate");
+  const hoard = pois.find((p) => p.loot === "hoard")?.cleared;
+  const parts = [`${chests} of ${ofChests} chests opened`, `${bands} of ${ofBands} lurking things put down`];
+  if (ofDoors > 0) parts.push(`${doors} of ${ofDoors} locked door${ofDoors === 1 ? "" : "s"} opened`);
+  return `${parts.join(", ")}.${hoard ? " The hoard in the deepest chamber came up with them." : ""}`;
 }
 
 const posKeyOf = (p: HexPos) => `${p.q},${p.r}`;
@@ -579,7 +620,7 @@ function roam(ctx: Ctx) {
   if (!state.roamers || state.phase !== "overworld") return;
   const taken = (pos: HexPos, self: Roamer) => !!poiAt(state.map, pos) || state.roamers!.some((r) => r !== self && r.pos.q === pos.q && r.pos.r === pos.r);
   for (const roamer of [...state.roamers]) {
-    const prey = [...state.heroes].filter((h) => h.hp > 0).sort((a, b) => hexDistance(a.pos, roamer.pos) - hexDistance(b.pos, roamer.pos) || a.id.localeCompare(b.id))[0];
+    const prey = [...state.heroes].filter((h) => h.hp > 0 && !h.out).sort((a, b) => hexDistance(a.pos, roamer.pos) - hexDistance(b.pos, roamer.pos) || a.id.localeCompare(b.id))[0];
     if (!prey) return;
     if (hexDistance(prey.pos, roamer.pos) <= ROAMER_SCENT) {
       const route = findPath(state.map, roamer.pos, prey.pos, 30);
@@ -604,7 +645,8 @@ function roam(ctx: Ctx) {
       return;
     }
   }
-  if (state.round % ROAMER_EVERY_DAYS === 0 && state.roamers.length < ROAMERS_MAX) spawnRoamer(ctx);
+  const most = state.kind === "caverns" ? DELVE_ROAMERS_MAX : ROAMERS_MAX;
+  if (state.round % ROAMER_EVERY_DAYS === 0 && state.roamers.length < most) spawnRoamer(ctx);
 }
 
 function startTurn(ctx: Ctx) {
@@ -617,14 +659,21 @@ function startTurn(ctx: Ctx) {
       state.doom -= 1;
       ctx.events.push({ t: "round", round: state.round, doom: state.doom });
       if (state.doom <= 0) {
-        endRun(ctx, "defeat", state.bible?.defeatLine ?? "Time ran out.");
+        endRun(
+          ctx,
+          "defeat",
+          state.kind === "caverns"
+            ? "The last torch gutters out. The crew feels its way back to the mouth in the dark, and leaves some of what it carried behind."
+            : state.bible?.defeatLine ?? "Time ran out.",
+        );
         return;
       }
       // Overnight the island's bands move, and one may find the party.
       roam(ctx);
     }
     const hero = heroById(state, state.order[state.turnIdx]);
-    if (!hero) continue;
+    // Out of the caverns already: nothing more to do down there.
+    if (!hero || hero.out) continue;
     const check = rollCheck(rng, { label: "Movement", stat: "agi", pct: heroPct(hero, "agi"), count: 4 });
     const mp = 2 + check.successes;
     state.turn = { heroId: hero.id, mp, rolls: check.rolls, acted: false, deadline: null };
@@ -693,7 +742,7 @@ function pickUp(ctx: Ctx, hero: Hero, path: HexPos[]) {
 
 function startBattle(ctx: Ctx, at: HexPos, enemies: string[], poiId: string | null, npcId: string | null) {
   const { state } = ctx;
-  const fighters = state.heroes.filter((h) => hexDistance(h.pos, at) <= BATTLE_JOIN_RANGE);
+  const fighters = state.heroes.filter((h) => !h.out && hexDistance(h.pos, at) <= BATTLE_JOIN_RANGE);
   if (fighters.length === 0) return;
   const boss = enemies.some((k) => ENEMIES[k]?.boss);
   const created = createBattle(
@@ -761,9 +810,69 @@ function finishBattle(ctx: Ctx) {
   if (battle.npcId) setFact(ctx, `fought:${battle.npcId}`);
   if (battle.poiId) {
     const poi = poiById(state.map, battle.poiId);
-    if (poi) poi.cleared = true;
+    if (poi) {
+      poi.cleared = true;
+      // A band in the caverns carrying a key to a locked door drops it.
+      if (poi.key && fighters[0]) findKey(ctx, fighters[0]);
+    }
     setFact(ctx, `defeated:${battle.poiId}`);
   }
+}
+
+function findKey(ctx: Ctx, hero: Hero) {
+  ctx.state.keys = (ctx.state.keys ?? 0) + 1;
+  ctx.events.push({ t: "key", heroId: hero.id, keys: ctx.state.keys });
+}
+
+/** A locked door beside where the hero stands, if there is one. */
+export function gateBeside(map: WorldMap, pos: HexPos): Poi | undefined {
+  return map.pois.find((p) => p.kind === "gate" && !p.cleared && hexDistance(p.pos, pos) === 1);
+}
+
+/** Successes on three Strength rolls that burst a locked door. */
+export const FORCE_DOOR_SUCCESSES = 2;
+
+/** Unlock a door with one of the crew's keys, or put a shoulder to it. */
+function openGate(ctx: Ctx, hero: Hero, gate: Poi) {
+  const { state } = ctx;
+  let how: "key" | "forced" | "held";
+  if ((state.keys ?? 0) > 0) {
+    state.keys! -= 1;
+    how = "key";
+  } else {
+    const check = rollCheck(ctx.rng, { label: "Force the door", stat: "str", pct: heroPct(hero, "str"), count: 3 });
+    ctx.events.push({ t: "check", heroId: hero.id, check });
+    how = check.successes >= FORCE_DOOR_SUCCESSES ? "forced" : "held";
+  }
+  ctx.events.push({ t: "gate", heroId: hero.id, poiId: gate.id, how });
+  if (how === "held") return;
+  gate.cleared = true;
+  const tile = tileAt(state.map, gate.pos);
+  if (tile) {
+    tile.biome = "cave";
+    tile.h = BASE_HEIGHT.cave;
+  }
+  look(state);
+}
+
+/** What a chest in the caverns gives whoever opens it; the hoard gives every hero still below. */
+function openChest(ctx: Ctx, hero: Hero, chest: Poi) {
+  const { state, rng } = ctx;
+  const loot = chest.loot ?? "chest";
+  chest.cleared = true;
+  ctx.events.push({ t: "chest", heroId: hero.id, poiId: chest.id, loot });
+  if (loot === "hoard") {
+    for (const h of state.heroes.filter((x) => !x.out)) {
+      grant(ctx, h, { xp: 30, gold: rng.int(30, 50), item: rollItem(rng, h.classId, 0.7, h.level), ...cacheDrops(rng, state.earned[h.id]?.blueprints) });
+    }
+  } else if (loot === "vault") {
+    hero.potions += 1;
+    grant(ctx, hero, { xp: 20, gold: rng.int(20, 35), item: rollItem(rng, hero.classId, 0.5, hero.level), ...cacheDrops(rng, state.earned[hero.id]?.blueprints) });
+  } else {
+    if (rng.chance(0.3)) hero.potions += 1;
+    grant(ctx, hero, { xp: 10, gold: rng.int(6, 16), item: rng.chance(0.25) ? rollItem(rng, hero.classId, 0.3, hero.level) : null, ...cacheDrops(rng, state.earned[hero.id]?.blueprints) });
+  }
+  if (chest.key) findKey(ctx, hero);
 }
 
 function pushChat(ctx: Ctx, line: ChatLine) {
@@ -776,9 +885,17 @@ function pushChat(ctx: Ctx, line: ChatLine) {
 
 function interact(ctx: Ctx, hero: Hero): string | null {
   const { state, rng } = ctx;
-  const poi = poiAt(state.map, hero.pos);
-  if (!poi) return "nothing here";
+  const here = poiAt(state.map, hero.pos);
   const turn = state.turn!;
+  // In the caverns, a locked door is worked on from beside it: nobody can stand in the doorway until it opens.
+  const gate = !here || here.kind === "pickup" ? gateBeside(state.map, hero.pos) : undefined;
+  if (gate) {
+    turn.acted = true;
+    openGate(ctx, hero, gate);
+    return null;
+  }
+  const poi = here;
+  if (!poi) return "nothing here";
 
   // A story step that happens here comes before whatever the place normally offers.
   const rite = state.bible?.rites.find((r) => r.poi === poi.id && !state.facts[r.sets] && r.requires.every((f) => state.facts[f]));
@@ -813,6 +930,16 @@ function interact(ctx: Ctx, hero: Hero): string | null {
       hero.hp += hp;
       ctx.events.push({ t: "rest", heroId: hero.id, hp, focus: 0, where: "landing" });
     }
+  } else if (poi.kind === "cache" && state.kind === "caverns") {
+    if (poi.cleared) return "already opened";
+    const guard = poi.guard ? poiById(state.map, poi.guard) : undefined;
+    // What guards a chest has to be dealt with first: reaching for it starts the fight.
+    if (guard && !guard.cleared) {
+      turn.acted = true;
+      startBattle(ctx, guard.pos, guard.enemies, guard.id, null);
+      return null;
+    }
+    openChest(ctx, hero, poi);
   } else if (poi.kind === "cache") {
     if (poi.cleared) return "already searched";
     poi.cleared = true;
@@ -1019,7 +1146,7 @@ export function stepWorld(prev: WorldState, action: WorldAction): StepResult {
         return done(null);
       }
       const def = contractById(String(action.contractId));
-      if (!def) return fail("no such contract");
+      if (!def || !(def.runs ?? ["voyage"]).includes(state.kind ?? "voyage")) return fail("no such contract");
       hero.contract = { id: def.id };
       return done(null);
     }
@@ -1036,21 +1163,34 @@ export function stepWorld(prev: WorldState, action: WorldAction): StepResult {
 
     case "begin": {
       if (state.phase !== "generating") return fail("not waiting for a story");
-      const problems = validateBible(action.bible, state.map);
-      if (problems.length > 0) return fail(`story rejected: ${problems.join("; ")}`);
-      state.bible = action.bible;
-      for (const [poiId, enemies] of Object.entries(action.bible.encounters)) {
-        const poi = poiById(state.map, poiId);
-        if (poi) poi.enemies = enemies;
-      }
       // What the crew has built at the Harbor comes along: the lighthouse lengthens the clock.
       const boons = voyageBoons(state.projects);
-      // And the galley's larder: stores lengthen it too, and chowder goes in the hold for the landing.
-      const galley = galleyBoon(action.larder);
-      state.doom = Math.max(action.bible.doomRounds, requiredDoom(state.map, action.bible, state.heroes)) + boons.doomDays + galley.doomDays;
-      if (galley.chowder > 0) state.larder = { chowder: galley.chowder };
-      else delete state.larder;
-      state.npcs = Object.fromEntries(action.bible.npcs.map((n) => [n.id, newNpcRun()]));
+      const delve = state.kind === "caverns";
+      let galleyLine: string | null = null;
+      if (delve) {
+        // A delve has no story: the crew goes straight down, with torchlight for the way there and back.
+        state.bible = null;
+        const pace = Math.min(...state.heroes.map((h) => 2 + (4 * heroPct(h, "agi")) / 100), 6);
+        state.doom = torchDays(state.map, pace) + boons.doomDays;
+        state.keys = 0;
+        delete state.larder;
+      } else {
+        if (!action.bible) return fail("a voyage needs a story");
+        const problems = validateBible(action.bible, state.map);
+        if (problems.length > 0) return fail(`story rejected: ${problems.join("; ")}`);
+        state.bible = action.bible;
+        for (const [poiId, enemies] of Object.entries(action.bible.encounters)) {
+          const poi = poiById(state.map, poiId);
+          if (poi) poi.enemies = enemies;
+        }
+        // And the galley's larder: stores lengthen it too, and chowder goes in the hold for the landing.
+        const galley = galleyBoon(action.larder);
+        state.doom = Math.max(action.bible.doomRounds, requiredDoom(state.map, action.bible, state.heroes)) + boons.doomDays + galley.doomDays;
+        if (galley.chowder > 0) state.larder = { chowder: galley.chowder };
+        else delete state.larder;
+        state.npcs = Object.fromEntries(action.bible.npcs.map((n) => [n.id, newNpcRun()]));
+        galleyLine = galley.line;
+      }
       state.order = [...state.heroes]
         .sort((a, b) => heroStats(b).agi - heroStats(a).agi || a.id.localeCompare(b.id))
         .map((h) => h.id);
@@ -1061,11 +1201,11 @@ export function stepWorld(prev: WorldState, action: WorldAction): StepResult {
       state.roamers = [];
       look(state);
       // The lighthouse's chart: the whole coast is already known. Bands still come ashore out of the heroes' own sight.
-      if (boons.chartCoast) state.seen = [...new Set([...state.seen, ...coastHexes(state.map)])];
-      for (let i = 0; i < ROAMERS_AT_START; i++) spawnRoamer(ctx);
+      if (boons.chartCoast && !delve) state.seen = [...new Set([...state.seen, ...coastHexes(state.map)])];
+      for (let i = 0; i < (delve ? DELVE_ROAMERS_AT_START : ROAMERS_AT_START); i++) spawnRoamer(ctx);
       ctx.events.push({ t: "phase", phase: "overworld" });
       for (const line of boons.lines) ctx.events.push({ t: "harbor_boon", ...line });
-      if (galley.line) ctx.events.push({ t: "harbor_boon", projectId: "galley", text: galley.line });
+      if (galleyLine) ctx.events.push({ t: "harbor_boon", projectId: "galley", text: galleyLine });
       startTurn(ctx);
       return done(null);
     }
@@ -1079,13 +1219,16 @@ export function stepWorld(prev: WorldState, action: WorldAction): StepResult {
       const route = findPath(state.map, from, action.to, state.turn.mp, (t) => (inSight(state, t, from) ? MOVE_COST[t.biome] : Infinity));
       if (!route || route.path.length === 0) return fail("out of reach");
       // Walking up to a roaming band starts the fight there, on the hex where they meet.
-      const metAt = route.path.findIndex((p) => (state.roamers ?? []).some((r) => hexDistance(r.pos, p) <= 1));
+      // In the caverns, so does coming within a hex of whatever lurks in a chamber.
+      const lurkers = state.kind === "caverns" ? state.map.pois.filter((p) => (p.kind === "camp" || p.kind === "lair") && !p.cleared && p.enemies.length > 0) : [];
+      const metAt = route.path.findIndex((p) => (state.roamers ?? []).some((r) => hexDistance(r.pos, p) <= 1) || lurkers.some((l) => hexDistance(l.pos, p) <= 1));
       const band = metAt < 0 ? undefined : (state.roamers ?? []).find((r) => hexDistance(r.pos, route.path[metAt]) <= 1);
+      const lurker = metAt < 0 || band ? undefined : lurkers.find((l) => hexDistance(l.pos, route.path[metAt]) <= 1);
       const open = metAt < 0 ? route.path : route.path.slice(0, metAt + 1);
       // The forest may have something in it. Wolves stop the walk where they spring.
       const walk = forage(ctx, hero, open);
       const walked = walk.ambushAt === null ? open : open.slice(0, walk.ambushAt + 1);
-      const stopped = walk.ambushAt !== null || band !== undefined;
+      const stopped = walk.ambushAt !== null || band !== undefined || lurker !== undefined;
       state.turn.mp = stopped ? 0 : state.turn.mp - route.cost;
       hero.pos = walked[walked.length - 1];
       ctx.events.push({ t: "moved", heroId: hero.id, path: walked });
@@ -1098,6 +1241,10 @@ export function stepWorld(prev: WorldState, action: WorldAction): StepResult {
       }
       if (walk.ambushAt !== null) startBattle(ctx, hero.pos, state.heroes.length >= 3 ? ["wolf", "wolf"] : ["wolf"], null, null);
       else if (band) clash(ctx, band, hero, "hero");
+      else if (lurker) {
+        ctx.events.push({ t: "ambush", heroId: hero.id, kinds: lurker.enemies, by: "lurk" });
+        startBattle(ctx, lurker.pos, lurker.enemies, lurker.id, null);
+      }
       return done(null);
     }
 
@@ -1112,6 +1259,19 @@ export function stepWorld(prev: WorldState, action: WorldAction): StepResult {
       if (state.phase !== "overworld" || !state.turn) return fail("no turn to end");
       if (state.turn.heroId !== action.heroId) return fail("not your turn");
       startTurn(ctx);
+      return done(null);
+    }
+
+    case "climb_out": {
+      if (state.kind !== "caverns") return fail("there is nothing to climb out of");
+      if (state.phase !== "overworld" || !state.turn) return fail("you cannot climb out right now");
+      if (state.turn.heroId !== action.heroId) return fail("not your turn");
+      const hero = heroById(state, action.heroId)!;
+      if (poiAt(state.map, hero.pos)?.kind !== "landing") return fail("the way out is at the cave mouth");
+      hero.out = true;
+      ctx.events.push({ t: "climbed_out", heroId: hero.id });
+      if (state.heroes.every((h) => h.out)) endRun(ctx, "victory", "The crew climbs back out into the Harbor, blinking, with everything it carried up.");
+      else startTurn(ctx);
       return done(null);
     }
 

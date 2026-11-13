@@ -8,12 +8,15 @@ import {
   PERFECTS_NEEDED,
   STORY_FRAMES,
   SWIFT_DAYS,
+  TORCH_SPARE_DAYS,
   buildBible,
   clientView,
   contractById,
   contractMet,
+  contractsFor,
   createWorld,
   crewGoalProgress,
+  generateCaverns,
   generateMap,
   goalPeriod,
   goalPeriodEnd,
@@ -84,6 +87,12 @@ const goldTo = (sink: Sink, heroId: string) =>
 describe("contract checks", () => {
   const map = generateMap("checks");
   const view = (over: Partial<ContractView> = {}): ContractView => ({ facts: {}, doom: 0, map: structuredClone(map), ...over });
+  const cave = generateCaverns("checks");
+  const delveView = (edit?: (m: typeof cave) => void, doom = 0): ContractView => {
+    const m = structuredClone(cave);
+    edit?.(m);
+    return { facts: {}, doom, map: m };
+  };
   const hero = (tally: Hero["tally"] = undefined) => ({ id: "p1", tally });
   const prayed = () => {
     const v = view();
@@ -104,6 +113,12 @@ describe("contract checks", () => {
     pilgrim: { met: [prayed(), hero()], unmet: [prayed(), { id: "p2", tally: undefined }] },
     unbowed: { met: [view(), hero()], unmet: [view(), hero({ downs: 1 })] },
     silver: { met: [view(), hero({ persuaded: 1 })], unmet: [view(), hero()] },
+    hoard: { met: [delveView((m) => (poiById(m, "hoard")!.cleared = true)), hero()], unmet: [delveView(), hero()] },
+    chests: {
+      met: [delveView((m) => m.pois.filter((p) => p.kind === "cache").forEach((p) => (p.cleared = true))), hero()],
+      unmet: [delveView((m) => (poiById(m, "hoard")!.cleared = true)), hero()],
+    },
+    torchlight: { met: [delveView(undefined, TORCH_SPARE_DAYS), hero()], unmet: [delveView(undefined, TORCH_SPARE_DAYS - 1), hero()] },
   };
 
   it("has a case for every contract, with unique ids and a reward", () => {
@@ -119,6 +134,20 @@ describe("contract checks", () => {
       expect(def.check(...cases[def.id].unmet)).toBe(false);
     });
   }
+
+  it("offers each kind of run only the contracts that can be met on it", () => {
+    const voyage = contractsFor("voyage").map((c) => c.id);
+    const delve = contractsFor("caverns").map((c) => c.id);
+    expect(voyage).toContain("scavenger");
+    expect(voyage).not.toContain("hoard");
+    expect(delve).toEqual(expect.arrayContaining(["hoard", "chests", "torchlight", "sober", "unbowed"]));
+    for (const id of ["scavenger", "camp", "silver", "swift"]) expect(delve).not.toContain(id);
+    // And a hero cannot take one meant for the other kind.
+    let s = createWorld("CAVE", "picky", [], "caverns");
+    s = must(s, { type: "join", hero: heroInit("p1", "qa_paladin", "mace") });
+    expect(stepWorld(s, { type: "contract", heroId: "p1", contractId: "scavenger" }).ok).toBe(false);
+    expect(stepWorld(s, { type: "contract", heroId: "p1", contractId: "hoard" }).ok).toBe(true);
+  });
 
   it("describes a reward in words", () => {
     expect(rewardText({ gold: 30, resources: { fur: 2, wood: 1 } })).toBe("30 gold, 1 Wood, 2 Fur");

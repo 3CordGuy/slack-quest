@@ -1,6 +1,6 @@
 // Ship lobby: each hero may take one notice-board contract before sailing.
 
-import { CONTRACTS, rewardText, type ClientState } from "@gantt-quest/world";
+import { CONTRACTS, contractsFor, rewardText, type ClientState } from "@gantt-quest/world";
 import type { RunConnection } from "../useRun";
 import { RewardChips } from "../hutDrops";
 import "./board.css";
@@ -10,9 +10,9 @@ export function ContractPicker({ state, run }: { state: ClientState; run: RunCon
   return (
     <div className="contracts">
       <h3>Take a contract</h3>
-      <p className="muted">One each, from the notice board. It pays a bonus if you meet its terms and the story is won.</p>
+      <p className="muted">One each, from the notice board. It pays a bonus if you meet its terms and {state.kind === "caverns" ? "the whole crew climbs back out" : "the story is won"}.</p>
       <ul className="contract-list">
-        {CONTRACTS.map((c) => (
+        {contractsFor(state.kind).map((c) => (
           <li key={c.id}>
             <button
               className={`contract ${taken === c.id ? "selected" : ""}`}
