@@ -12,7 +12,7 @@ import { Ambience, CARD_LAYER, SHADOW_SLOTS, SLOT_LAYER, pixelTexture, stamp, ty
 import "./camera.css";
 import type { HexPos } from "@gantt-quest/core";
 import { hexDistance } from "@gantt-quest/core";
-import { BASE_HEIGHT, BATTLE_JOIN_RANGE, BIG_REACH, ENEMIES, HEX_DIRS, TRAIT_BY_ID, MOVE_COST, WALL_FACE_HALF, WALL_ITEM_BOTTOM, WALL_ITEM_TOP, findPath, xpProgress, reachable, tileAt, wallFace, wallFaces, type ClientState, type Outfit, type Phase, type Poi, type Tile, type WorldEvent, type WorldMap } from "@gantt-quest/world";
+import { BASE_HEIGHT, BATTLE_JOIN_RANGE, BIG_REACH, ENEMIES, HEX_DIRS, TRAIT_BY_ID, MOVE_COST, WALL_FACE_HALF, WALL_ITEM_BOTTOM, WALL_ITEM_TOP, findPath, hexAt, xpProgress, reachable, tileAt, wallFace, wallFaces, type ClientState, type Outfit, type Phase, type Poi, type Tile, type WorldEvent, type WorldMap } from "@gantt-quest/world";
 import { ghostModel, propModel, tintGhost, type LightKind } from "./props";
 import { armAudio, playCombat, playFootstep } from "../audio";
 import { ARROW_ABILITIES, blowKind, effectSound, hitSound, launchSound, missSound } from "./combatSounds";
@@ -121,8 +121,10 @@ export interface SceneProp {
   angle?: number;
   /** How far out its selection ring goes. */
   ring?: number;
-  /** The hexes it keeps people out of, when that is more than its own (see hutroom.ts, coveredHexes). Small things and wall pieces keep nobody out. */
+  /** The hexes it covers, when that is more than its own (see hutroom.ts, coveredHexes): kept clear of people unless it is `flat`, and outlined when selected. Small things and wall pieces cover none. */
   covers?: HexPos[];
+  /** Floor decor (a rug): walked over, and other pieces stand on it. */
+  flat?: boolean;
   /** The prop it stands on; then x/z/angle are in that prop's own frame. */
   on?: string | number;
   /** Its flat top, in its own frame, for small things to stand on. */
@@ -145,6 +147,12 @@ export interface Holding {
   small: boolean;
   /** A wall piece's face, w wide and h tall: it is aimed at the walls, not the floor. */
   mount?: { w: number; h: number };
+  /**
+   * A floor piece's footprint, in its own frame (see hut.ts, Footprint): drawn
+   * under the ghost, and for a long piece reaching across hexes, held by its
+   * middle rather than by the hex it is anchored on.
+   */
+  footprint?: { w: number; d: number; x?: number; z?: number; round?: boolean };
   /** Its turn: `facing` sixths plus `angle` radians. */
   facing: number;
   angle: number;
@@ -1450,7 +1458,10 @@ export class WorldRenderer {
       g.traverse((o) => {
         if (o.userData.light) lights.push({ pos: o.getWorldPosition(new THREE.Vector3()), kind: o.userData.light as LightKind });
       });
-      if (prop.selected) {
+      if (prop.selected && !prop.mount && (prop.covers?.length ?? 0) > 1) {
+        // A piece reaching across hexes: outline every hex it covers, as one shape.
+        this.propGroup.add(this.coverOutline(prop.covers!));
+      } else if (prop.selected) {
         const outer = prop.small ? 0.24 : prop.ring ?? 0.95;
         const inner = prop.small ? 0.18 : outer - 0.13;
         const ring = new THREE.Mesh(new THREE.RingGeometry(inner, outer, prop.mount ? 16 : 6), new THREE.MeshBasicMaterial({ color: "#ffd23f", side: THREE.DoubleSide, depthTest: !prop.small && !prop.mount }));
@@ -1471,12 +1482,38 @@ export class WorldRenderer {
     this.ambience.setLights(lights, flames);
   }
 
+  /** A flat gold band just inside the outer edges of a group of hexes, on the floor: the selection ring of a piece covering more than one. */
+  private coverOutline(hexes: HexPos[]): THREE.Mesh {
+    const inside = new Set(hexes.map(key));
+    const points: number[] = [];
+    const y = FLOOR_TOP + 0.03;
+    for (const h of hexes) {
+      const { x, z } = hexToWorld(h);
+      for (let i = 0; i < 6; i++) {
+        // Edge i runs between corners i and i+1; the neighbour across it lies along the bisector (as in buildJoinRanges).
+        const [a, b] = [(i * Math.PI) / 3, ((i + 1) * Math.PI) / 3];
+        const mid = (a + b) / 2;
+        const nr = Math.round((z + Math.cos(mid) * SQRT3) / 1.5);
+        const nq = Math.round((x + Math.sin(mid) * SQRT3) / SQRT3 - nr / 2);
+        if (inside.has(key({ q: nq, r: nr }))) continue;
+        const corner = (t: number, k: number) => [x + Math.sin(t) * k, y, z + Math.cos(t) * k];
+        const [ao, bo, bi, ai] = [corner(a, 0.97), corner(b, 0.97), corner(b, 0.84), corner(a, 0.84)];
+        points.push(...ao, ...bo, ...bi, ...ao, ...bi, ...ai);
+      }
+    }
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute("position", new THREE.Float32BufferAttribute(points, 3));
+    const band = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({ color: "#ffd23f", side: THREE.DoubleSide }));
+    band.renderOrder = 2;
+    return band;
+  }
+
   // ---------- carrying a piece: the ghost that follows the pointer ----------
 
   /** The ghost of whatever is being carried, rebuilt when that changes. */
   private updateGhost() {
     const holding = this.state?.holding ?? null;
-    const sig = holding ? holding.model : "";
+    const sig = holding ? `${holding.model}:${JSON.stringify(holding.footprint ?? null)}` : "";
     if (sig !== this.ghostSig) {
       this.ghostSig = sig;
       if (this.ghost) {
@@ -1490,6 +1527,17 @@ export class WorldRenderer {
       }
       if (holding) {
         this.ghost = ghostModel(holding.model);
+        const fp = holding.footprint;
+        if (fp) {
+          // What it will cover, laid on the floor under it: tinted with the ghost, red where it does not fit.
+          const plate = new THREE.Mesh(
+            fp.round ? new THREE.CircleGeometry(fp.w / 2, 32) : new THREE.PlaneGeometry(fp.w, fp.d),
+            new THREE.MeshBasicMaterial({ color: "#bfe8ff", transparent: true, opacity: 0.35, depthWrite: false, side: THREE.DoubleSide }),
+          );
+          plate.rotation.x = -Math.PI / 2;
+          plate.position.set(fp.x ?? 0, 0.015, fp.z ?? 0);
+          this.ghost.add(plate);
+        }
         this.ghost.visible = false;
         this.scene.add(this.ghost);
       }
@@ -1522,10 +1570,20 @@ export class WorldRenderer {
     const hit = this.raycaster.intersectObject(this.terrain)[0];
     if (!hit || hit.instanceId === undefined) return null;
     const t = this.tiles[hit.instanceId];
-    const pos = { q: t.q, r: t.r };
+    let pos = { q: t.q, r: t.r };
+    let [px, pz] = [hit.point.x, hit.point.z];
+    const fp = holding.footprint;
+    if (!holding.small && fp && Math.hypot(fp.x ?? 0, fp.z ?? 0) > 0.3) {
+      // A long piece is held by its middle: the hex it is anchored on is back along it from the pointer.
+      const turn = -yawOf(holding.facing, holding.angle);
+      const [c, s] = [Math.cos(turn), Math.sin(turn)];
+      const [fx, fz] = [fp.x ?? 0, fp.z ?? 0];
+      [px, pz] = [px - (fx * c - fz * s), pz - (fx * s + fz * c)];
+      pos = hexAt(px, pz);
+    }
     const mid = hexToWorld(pos);
-    let x = hit.point.x - mid.x;
-    let z = hit.point.z - mid.z;
+    let x = px - mid.x;
+    let z = pz - mid.z;
     const d = Math.hypot(x, z);
     // Furniture goes anywhere in its hex too, but settles in the middle when brought near it, the way it always stood.
     if (!holding.small && d < 0.15) return { pos, x: 0, z: 0 };
@@ -1604,7 +1662,9 @@ export class WorldRenderer {
       ghost.rotation.y = new THREE.Euler().setFromQuaternion(base.getWorldQuaternion(new THREE.Quaternion()), "YXZ").y - holding.angle;
     } else {
       const at = this.standAt(target.pos);
-      ghost.position.set(at.x + target.x, at.y + 0.004, at.z + target.z);
+      // Anchored off the floor (a long piece held near a wall): drawn at floor height all the same, and red.
+      const y = this.state && tileAt(this.state.map, target.pos)?.biome === "floor" ? at.y : FLOOR_TOP;
+      ghost.position.set(at.x + target.x, y + 0.004, at.z + target.z);
       ghost.rotation.y = yawOf(holding.facing, holding.angle);
     }
     tintGhost(ghost, this.callbacks.canPlace?.(target) ?? true);
@@ -1622,8 +1682,8 @@ export class WorldRenderer {
   /** Cost of stepping onto a tile: the terrain's, except that furniture cannot be walked through. */
   private stepCost(state: RenderState): ((t: Tile) => number) | undefined {
     if (!state.props?.length) return undefined;
-    // Small things are stepped over.
-    const blocked = new Set(state.props.filter((p) => !p.small && !p.mount && p.on === undefined).flatMap((p) => (p.covers ?? [p.pos]).map(key)));
+    // Small things are stepped over, and so are rugs.
+    const blocked = new Set(state.props.filter((p) => !p.small && !p.mount && !p.flat && p.on === undefined).flatMap((p) => (p.covers ?? [p.pos]).map(key)));
     return (t) => (blocked.has(key(t)) ? Infinity : MOVE_COST[t.biome]);
   }
 

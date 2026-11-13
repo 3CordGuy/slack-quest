@@ -1192,7 +1192,7 @@ export function paidFurnishingStatement(db: D1Database, playerId: string, defId:
 export async function craftFurnishing(db: D1Database, playerId: string, defId: string): Promise<string | { xp?: XpResult }> {
   const [c, hut] = await Promise.all([getCharacter(db, playerId), getHut(db, playerId)]);
   if (c?.status !== "active") return "Create a character first.";
-  const problem = craftProblem(defId, hut.blueprints, hut.resources);
+  const problem = craftProblem(defId, hut.blueprints, hut.resources, hut.tier);
   if (problem) return problem;
   const xp = await prepareXp(db, playerId, HARBOR_XP.craft);
   const made = [...spendStatements(db, playerId, 0, FURNISHINGS[defId].recipe!), paidFurnishingStatement(db, playerId, defId)];
@@ -1203,9 +1203,10 @@ export async function craftFurnishing(db: D1Database, playerId: string, defId: s
 
 /** Buy a furnishing at the market stall. The price is the catalogue's; the client names only the piece. */
 export async function buyFurniture(db: D1Database, playerId: string, defId: string): Promise<string | null> {
-  const c = await getCharacter(db, playerId);
+  const [c, hut] = await Promise.all([getCharacter(db, playerId), db.prepare("SELECT tier FROM huts WHERE player_id = ?").bind(playerId).first<{ tier: number }>()]);
   if (c?.status !== "active") return "Create a character first.";
-  const problem = buyFurnitureProblem(defId, c.gold);
+  // The biggest pieces wait for a bigger hut (a player with no hut yet has a Shack's worth of room).
+  const problem = buyFurnitureProblem(defId, c.gold, hut?.tier ?? 1);
   if (problem) return problem;
   const res = await db.batch([...spendStatements(db, playerId, FURNISHINGS[defId].price!, {}), paidFurnishingStatement(db, playerId, defId)]);
   return res[res.length - 1].meta.changes > 0 ? null : "Not enough gold.";
