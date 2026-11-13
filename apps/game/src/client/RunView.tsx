@@ -418,7 +418,8 @@ function TopBar({ state, code, status, onLeave, onInventory }: { state: ClientSt
           Inventory
         </button>
       )}
-      <button className="small" onClick={onLeave}>Harbor</button>
+      {/* The Harbor is behind you once the ship has sailed: only from the docked lobby, or once the voyage is over. */}
+      {(state.phase === "lobby" || state.phase === "ended") && <button className="small" onClick={onLeave}>Harbor</button>}
     </div>
   );
 }
