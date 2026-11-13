@@ -21,6 +21,8 @@ import { addWindSway, updateWind } from "./wind";
 import { OVERLAY_LAYER, PostFx, type Air } from "./post";
 import { fishMount } from "./catchArt";
 import { makeFigure, type Figure } from "./figures";
+import { Rise } from "./rise";
+import { NIGHT, VEIL_CLEAR_S, Veil } from "./veil";
 import { GROUND_KIND, addFancyWater, addWaterRipple, setGroundWet, setWaterNight, setWaterStanding, shoreSide, updateWater, waterAttribute, type Standing } from "./water";
 import { ghostModel, propModel, tintGhost, type LightKind } from "./props";
 import { nearWater, openEar, sounds } from "../audio/gameSounds";
@@ -309,6 +311,12 @@ const yawOf = (facing: number, angle = 0) => -((facing * Math.PI) / 3 + angle);
 const key = (p: HexPos) => `${p.q},${p.r}`;
 /** To the nearest thousandth, so offsets sent to the server stay short. */
 const round = (n: number) => Math.round(n * 1000) / 1000;
+/** Where the stools stand round a game table in the pub (its middle is at z = -0.3): four, as many as can play, clear of whoever stands at the front. */
+const GAME_STOOLS = [[-0.54, 0.24], [0.54, 0.24], [-0.54, -0.84], [0.54, -0.84]];
+/** Nothing of the ground is drawn below this: y = 0. */
+const GROUND_FLOOR = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+/** How many frames a view is drawn under its veil once its place is built, before the veil opens: time for shadows and lights to settle. */
+const REVEAL_FRAMES = 4;
 /** A hex of ground reaches this far down from its top: further than the tallest rock stands, so its foot is always under the sea. */
 const TILE_DEPTH = 3;
 /**
@@ -512,6 +520,8 @@ interface Fx {
  */
 export interface WorldMinigame {
   frame(dt: number, now: number, aspect: number): { eye: THREE.Vector3; look: THREE.Vector3; blend: number; fov?: number };
+  /** True while the room should still draw your own hero: a game that waits for them to walk up before taking over. Left out, they are hidden from the start. */
+  ownHero?(): boolean;
   /** A press on the canvas, in normalized device coordinates, and the camera it was seen through. */
   press?(ndc: THREE.Vector2, camera: THREE.Camera): void;
   /** A key pressed; true if the game used it. */
@@ -590,6 +600,13 @@ export class WorldRenderer {
   /** The middle of every water hex, for hearing where the sea is. */
   private water: { x: number; z: number }[] = [];
   private frames = 0;
+  /** Frames drawn with the place built, until the veil starts to open; -1 once it has. */
+  private settling = 0;
+  /** The veil over the view while its place is built (a backdrop, seen only through windows, has none), and when it began to clear. */
+  private veil: Veil | null = null;
+  private openedAt = 0;
+  /** The place growing up round your hex as the veil clears; null once it is all up. */
+  private rise: Rise | null = null;
   private mapCode = "";
   private ambience: Ambience;
   private decor = new THREE.Group();
@@ -709,6 +726,11 @@ export class WorldRenderer {
     this.ear = opts.backdrop ? DEAF : openEar();
     this.renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: "low-power" });
     this.renderer.setPixelRatio(1);
+    this.renderer.localClippingEnabled = true;
+    if (!this.opts.backdrop) {
+      this.veil = new Veil();
+      this.rise = new Rise();
+    }
     // Dev server only: the latest view, for reading draw calls (`__gqWorld.renderer.info.render.calls`) from the console.
     if (import.meta.env.DEV && !this.opts.backdrop) (globalThis as { __gqWorld?: WorldRenderer }).__gqWorld = this;
     const canvas = this.renderer.domElement;
@@ -717,6 +739,9 @@ export class WorldRenderer {
     canvas.style.display = "block";
     canvas.style.imageRendering = "pixelated";
     canvas.style.touchAction = "none";
+    // Under a veil until there is a place to show (see `reveal`): going in or out of a building never flashes
+    // an empty sea before the room is built. The canvas itself is the veil's dark until the first frame is drawn.
+    canvas.style.background = NIGHT;
     container.appendChild(canvas);
 
     // Sky, sun and moon, shadows, and the moving decoration.
@@ -806,6 +831,7 @@ export class WorldRenderer {
 
   dispose() {
     cancelAnimationFrame(this.raf);
+    this.veil?.dispose();
     this.ear.close();
     this.resizeObserver.disconnect();
     const canvas = this.renderer.domElement;
@@ -1320,8 +1346,9 @@ export class WorldRenderer {
     this.poiSig = "";
 
     const geo = hexColumn();
-    // Its normals are its own: flat on the flats, turning smoothly over the fillet.
-    const terrain = new THREE.InstancedMesh(geo, new THREE.MeshLambertMaterial(), this.tiles.length);
+    // Its normals are its own: flat on the flats, turning smoothly over the fillet. A hex's column is cut off
+    // at y = 0, where the old ones ended: a room's walls and floor do not hang down into the dark under it.
+    const terrain = new THREE.InstancedMesh(geo, new THREE.MeshLambertMaterial({ clippingPlanes: [GROUND_FLOOR], clipShadows: true }), this.tiles.length);
     const m = new THREE.Matrix4();
     // Open sea is left to the sea itself: only water within a couple of hexes of land is drawn as hexes,
     // with a ragged edge, so the map does not end in a straight-sided block of water.
@@ -1713,6 +1740,12 @@ export class WorldRenderer {
     this.targetGoal.set(x, 0.14, z);
     this.heldKeys.clear();
     return game;
+  }
+
+  /** Whether your own hero has finished walking and stands where they were going (true if there is none to wait for). */
+  heroSettled(): boolean {
+    const mine = this.state?.you ? this.units.get(this.state.you) : undefined;
+    return !mine || (mine.path.length === 0 && mine.root.position.distanceToSquared(mine.goal) < 0.02);
   }
 
   /** Give the view back: the game's group is taken down and everything it hid is shown again. */
@@ -2720,10 +2753,10 @@ export class WorldRenderer {
         break;
       }
       case "shoals": {
-        // The Shoals table: a low square table under a sea-blue cloth, with a few markers on it and a stool either side.
+        // The Shoals table: a low square table under a sea-blue cloth, with a few markers on it and a stool for each of the four who can play.
         add(box(0.7, 0.36, 0.7), lambert("#6b4a2b"), 0, 0.18, -0.3, Math.PI / 4);
         add(box(0.82, 0.05, 0.82), lambert("#2f6f8c"), 0, 0.385, -0.3, Math.PI / 4);
-        for (const x of [-0.74, 0.74]) add(new THREE.CylinderGeometry(0.14, 0.12, 0.24, 6), lambert("#5a3d22"), x, 0.12, -0.15);
+        for (const [x, z] of GAME_STOOLS) add(new THREE.CylinderGeometry(0.14, 0.12, 0.24, 6), lambert("#5a3d22"), x, 0.12, z);
         add(new THREE.CylinderGeometry(0.09, 0.09, 0.04, 8), lambert("#7db6f2"), -0.16, 0.43, -0.28);
         add(new THREE.CylinderGeometry(0.09, 0.09, 0.04, 8), lambert("#d9b45a"), 0.14, 0.43, -0.4);
         add(new THREE.CylinderGeometry(0.09, 0.09, 0.08, 8), lambert("#6b4a2b"), 0.04, 0.45, -0.16);
@@ -2863,10 +2896,10 @@ export class WorldRenderer {
         break;
       }
       case "dice": {
-        // Dice table: a round top on a barrel, a stool either side, and a pair of dice. Set back so whoever stands here is seen to sit at it.
+        // Dice table: a round top on a barrel, a stool for each of the four who can play, and a pair of dice. Set back so whoever stands here is seen to sit at it.
         add(new THREE.CylinderGeometry(0.18, 0.22, 0.4, 7), lambert("#6b4a2b"), 0, 0.2, -0.3);
         add(new THREE.CylinderGeometry(0.5, 0.5, 0.07, 8), lambert("#a07a4c"), 0, 0.43, -0.3);
-        for (const x of [-0.72, 0.72]) add(new THREE.CylinderGeometry(0.14, 0.12, 0.24, 6), lambert("#5a3d22"), x, 0.12, -0.15);
+        for (const [x, z] of GAME_STOOLS) add(new THREE.CylinderGeometry(0.14, 0.12, 0.24, 6), lambert("#5a3d22"), x, 0.12, z);
         add(box(0.13, 0.13, 0.13), lambert("#f4efe1"), -0.12, 0.53, -0.25, 0.4);
         add(box(0.13, 0.13, 0.13), lambert("#b9433d"), 0.14, 0.53, -0.38, 1.1);
         break;
@@ -3895,6 +3928,9 @@ export class WorldRenderer {
         this.camera.updateProjectionMatrix();
       }
       this.hideOwnHero();
+      // Unless the game is still waiting for your hero to walk up: till then the room draws them as ever.
+      const mine = this.state?.you ? this.units.get(this.state.you) : undefined;
+      if (mine && this.minigame.game.ownHero?.()) for (const obj of [mine.root, mine.label, mine.ring]) if (obj) obj.visible = true;
     }
     this.ambience.update(this.clock, this.yaw, this.target, this.state?.you ? this.units.get(this.state.you)?.root.position : undefined);
     // Sounds are heard from where your hero stands, or from the middle of the view without one.
@@ -3924,7 +3960,7 @@ export class WorldRenderer {
     // Wind: a breeze on a clear day, stronger in rain, and a gale in a storm. None indoors or underground.
     updateWind(this.clock, fancy.get() && this.ambience.openSky ? 0.35 + 0.45 * raining + 0.6 * this.ambience.storming : 0);
     this.wet += (raining - this.wet) * Math.min(1, dt * (raining > this.wet ? 0.3 : 0.04));
-    setGroundWet(this.wet);
+    if (this.terrain) setGroundWet(this.terrain.material as THREE.Material, this.wet);
     // And lightning, in a storm only: a downpour has none. The thunder is heard either way; the flash and
     // the bolt are fancy graphics.
     // Indoors the storm is still going on outside: the thunder comes through the walls and the flash
@@ -4011,6 +4047,8 @@ export class WorldRenderer {
         unit.ring.scale.set(s, s, 1);
       }
       if (unit.label) {
+        // A plate waits for the ground under it to come up.
+        if (this.rise) unit.label.visible = unit.root.visible && this.rise.reached(p.x, p.z);
         unit.label.position.set(p.x, ground + unit.label.userData.lift, p.z);
         const tall = unit.label.userData.rows * labelRow;
         unit.label.scale.set(tall * unit.label.userData.aspect, tall, 1);
@@ -4110,6 +4148,15 @@ export class WorldRenderer {
 
     for (const tick of this.tickers) tick(dt, this.camera, this.clock);
     this.ambience.settleShadows();
+    // Until the veil starts to clear, the place is all down but the hex you stand on (or the middle of the view).
+    if (this.rise) {
+      if (this.settling >= 0) {
+        const mine = this.state?.you ? this.units.get(this.state.you) : undefined;
+        const at = mine?.root.position ?? this.target;
+        this.rise.from(at.x, at.z - (mine ? 0.25 : 0));
+      }
+      this.rise.apply();
+    }
     if (this.post) {
       this.air.outdoors = this.ambience.openSky;
       this.air.clock = this.clock;
@@ -4123,5 +4170,36 @@ export class WorldRenderer {
       this.post.render(this.scene, this.camera, focus, this.ambience.night, this.air);
     }
     else this.renderer.render(this.scene, this.camera);
+    this.rise?.clear();
+    this.reveal(dt);
   };
+
+  /**
+   * Arriving. The veil is whole, with the game's mark on it, until the place is built and has been drawn a few
+   * times. Then it clears, and under it the place grows up from the hex you stand on (see rise.ts).
+   */
+  private reveal(dt: number) {
+    if (this.settling >= 0 && this.terrain && ++this.settling >= REVEAL_FRAMES) {
+      this.settling = -1;
+      this.openedAt = this.clock;
+    }
+    // The ring sets out once the veil is half gone, so the growing is seen rather than done behind it.
+    if (this.rise && this.settling < 0 && this.clock - this.openedAt > VEIL_CLEAR_S * 0.5) {
+      // As far as the furthest of the land from where it began, and a hex or two of shore beyond.
+      this.rise.step(dt, Math.hypot(this.land.x - this.rise.centre.x, this.land.z - this.rise.centre.y) + this.land.reach + 4);
+      if (!this.rise.active) {
+        this.rise = null;
+        for (const unit of this.units.values()) if (unit.label && unit.root.visible) unit.label.visible = true;
+      }
+    }
+    if (!this.veil) return;
+    const cover = this.settling >= 0 ? 1 : 1 - (this.clock - this.openedAt) / VEIL_CLEAR_S;
+    if (cover <= 0) {
+      this.veil.dispose();
+      this.veil = null;
+      return;
+    }
+    // Four screen pixels to one of the veil's, however finely the world is drawn.
+    this.veil.draw(this.renderer, cover, this.clock, this.fine * 2);
+  }
 }

@@ -7,7 +7,7 @@ import { useEffect, useMemo, useState, type RefObject } from "react";
 import { DICE_ANTES, DICE_MAX_PLAYERS, DICE_MIN_PLAYERS, DICE_START, type DiceBid, type DiceRequest, type DiceView } from "@gantt-quest/world";
 import type { SeatInfo } from "./render/TableStage";
 import type { WorldRenderer } from "./render/WorldRenderer";
-import { placeSeats, seatInfo, useTableStage, type SeatLook, type StageHost } from "./useTableStage";
+import { placeSeats, withSelf, seatInfo, useTableStage, type SeatLook, type StageHost } from "./useTableStage";
 import "./table.css";
 
 const PIPS = ["", "⚀", "⚁", "⚂", "⚃", "⚄", "⚅"];
@@ -69,7 +69,7 @@ export function DiceTable({ table, you, gold, error, lastXp, looks, world, host,
       const chip = won ? "winner" : out ? (s.forfeited ? "left" : "out") : table?.phase === "open" && s.id === table.host ? "opened" : turn ? "to play" : null;
       return seatInfo(s, looks?.[s.id], { turn, out, won, chip, pips: table && table.phase !== "open" ? { on: s.count, of: DICE_START } : undefined });
     });
-    stage.setSeats(placement.chairs, infos);
+    stage.setSeats(placement.chairs, withSelf(infos, you, looks));
     stage.syncDice(
       table && table.phase !== "open"
         ? { round: table.round, seats: table.seats.map((s) => ({ id: s.id, count: s.count, dice: s.dice })), reveal: showReveal ? { hands: table.reveal!.hands, face: table.reveal!.bid.face } : null }

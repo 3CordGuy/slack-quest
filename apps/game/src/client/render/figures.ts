@@ -74,6 +74,33 @@ function rand(): number {
   return seed / 4294967296;
 }
 
+/**
+ * Lets a figure fade away: a share of its pixels, in a fine fixed pattern, are simply not drawn, more of them
+ * the further it has faded. It stays solid where it is drawn, so its parts still hide each other properly
+ * (which see-through materials would not), and the pattern suits the pixels. `fade.value` is how much of it
+ * is left, 1 to 0. Keeps any shader changes the material already has.
+ */
+function fadeable<M extends THREE.Material>(material: M, fade: { value: number }, key: string): M {
+  const before = material.onBeforeCompile;
+  material.onBeforeCompile = function (shader, renderer) {
+    before.call(this, shader, renderer);
+    shader.uniforms.figureFade = fade;
+    shader.fragmentShader = shader.fragmentShader.replace(
+      "void main() {",
+      /* glsl */ `uniform float figureFade;
+float figureDither() {
+  ivec2 p = ivec2( mod( gl_FragCoord.xy, 4.0 ) );
+  float m[16] = float[16]( 0.0, 8.0, 2.0, 10.0, 12.0, 4.0, 14.0, 6.0, 3.0, 11.0, 1.0, 9.0, 15.0, 7.0, 13.0, 5.0 );
+  return ( m[ p.x + p.y * 4 ] + 0.5 ) / 16.0;
+}
+void main() {
+  if ( figureFade < 1.0 && figureFade <= figureDither() ) discard;`,
+    );
+  };
+  material.customProgramCacheKey = () => key;
+  return material;
+}
+
 interface Mats {
   body: THREE.MeshLambertMaterial;
   outline: THREE.MeshBasicMaterial;
@@ -168,8 +195,9 @@ class Part {
     };
     if (this.solid.length > 0) {
       const mesh = new THREE.Mesh(merged(this.solid), mats.body);
-      // It throws a shadow but takes none: at this size, its own hat's shadow across its face is only noise.
-      mesh.castShadow = true;
+      // It takes no shadows (at this size, its own hat's shadow across its face is only noise) and throws
+      // none itself: the figure's one still shape does that (see castShape).
+      mesh.userData.body = true;
       this.joint.add(mesh, new THREE.Mesh(merged(this.hull), mats.outline));
     }
     if (this.lit.length > 0) {
@@ -196,6 +224,8 @@ interface Anim {
   strike: number;
   /** Down, or asleep. */
   lying: boolean;
+  /** On a seat, 0 (standing) to 1: the hips stay where they are, the thighs go forward and the shins hang from the knee. */
+  sitting: number;
 }
 
 interface Rig {
@@ -218,8 +248,14 @@ function biped(top: THREE.Group, parts: Part[]) {
   const head = part(torso.joint, 0, 6, 0);
   const armR = part(torso.joint, -4.5, 5.5, 0);
   const armL = part(torso.joint, 4.5, 5.5, 0);
-  const legR = part(top, -1.7, 5, 0);
-  const legL = part(top, 1.7, 5, 0);
+  // A leg is a thigh from the hip and a shin from the knee. It is drawn as one limb in the hip's space (see
+  // `limb`), and whatever crosses the knee is cut in two there, so it can bend.
+  const thighR = part(top, -1.7, 5, 0);
+  const thighL = part(top, 1.7, 5, 0);
+  const shinR = part(thighR.joint, 0, KNEE, 0);
+  const shinL = part(thighL.joint, 0, KNEE, 0);
+  const legR = limb(thighR, shinR);
+  const legL = limb(thighL, shinL);
   // What each hand holds, kept upright while the arm hangs forward.
   const heldR = part(armR.joint, 0, -5, 0);
   const heldL = part(armL.joint, 0, -5, 0);
@@ -232,7 +268,7 @@ function biped(top: THREE.Group, parts: Part[]) {
       // On their back, the head toward -z, centred on where they stood.
       top.rotation.set(-HALF_PI, 0, 0);
       top.position.set(0, 2.4, 9);
-      legL.joint.rotation.x = legR.joint.rotation.x = 0;
+      for (const leg of [thighL, thighR, shinL, shinR]) leg.joint.rotation.x = 0;
       armL.joint.rotation.set(rest.armL, 0, 0.12);
       armR.joint.rotation.set(rest.armR, 0, -0.12);
       head.joint.rotation.x = 0;
@@ -240,8 +276,25 @@ function biped(top: THREE.Group, parts: Part[]) {
     }
     top.position.set(0, (a.breath + 1) * 0.07, 0);
     top.rotation.set(a.strike * 0.3, 0, 0);
-    legL.joint.rotation.x = a.swing * 0.8;
-    legR.joint.rotation.x = -a.swing * 0.8;
+    if (a.sitting > 0) {
+      // Thighs out along the seat, a little apart, shins hanging; the free hand forward, as if on the table.
+      // Part way there, on the way down onto the seat or up off it, everything is that share of the way.
+      const k = a.sitting;
+      thighL.joint.rotation.set(-SIT * k, 0, 0.12 * k);
+      thighR.joint.rotation.set(-SIT * k, 0, -0.12 * k);
+      shinL.joint.rotation.x = shinR.joint.rotation.x = (SIT - 0.1) * k;
+      const reach = rest.armL + ((rest.armL < -0.3 ? rest.armL : -0.95) - rest.armL) * k;
+      heldL.joint.rotation.x = -reach + rest.tiltL;
+      armL.joint.rotation.set(reach + a.breath * 0.02, 0, 0.1 - 0.05 * k);
+      armR.joint.rotation.set(rest.armR, 0, -0.1 - a.breath * 0.015);
+      head.joint.rotation.x = a.breath * 0.02;
+      return;
+    }
+    thighL.joint.rotation.set(a.swing * 0.8, 0, 0);
+    thighR.joint.rotation.set(-a.swing * 0.8, 0, 0);
+    // The knee of the leg swinging back bends a little.
+    shinL.joint.rotation.x = Math.max(0, a.swing) * 0.6;
+    shinR.joint.rotation.x = Math.max(0, -a.swing) * 0.6;
     armL.joint.rotation.set(rest.armL - a.swing * 0.6, 0, 0.1 + a.breath * 0.015);
     // The weapon arm swings less on the march, and comes up and over in an attack.
     armR.joint.rotation.set(rest.armR + a.swing * 0.3 - a.strike * 1.7, 0, -0.1 - a.breath * 0.015);
@@ -251,6 +304,26 @@ function biped(top: THREE.Group, parts: Part[]) {
 }
 
 type Biped = ReturnType<typeof biped>;
+
+/** Where the knee is, below the hip, and how far a thigh swings forward to sit. */
+const KNEE = -2.5;
+const SIT = HALF_PI - 0.08;
+
+/** A leg to draw boxes on in the hip's space: each goes to the thigh or the shin, and one that crosses the knee is cut there. */
+function limb(thigh: Part, shin: Part) {
+  return {
+    box(color: string, w: number, h: number, d: number, x = 0, y = 0, z = 0) {
+      const high = y + h / 2;
+      const low = y - h / 2;
+      if (low >= KNEE) thigh.box(color, w, h, d, x, y, z);
+      else if (high <= KNEE) shin.box(color, w, h, d, x, y - KNEE, z);
+      else {
+        thigh.box(color, w, high - KNEE, d, x, (high + KNEE) / 2, z);
+        shin.box(color, w, KNEE - low, d, x, (KNEE + low) / 2 - KNEE, z);
+      }
+    },
+  };
+}
 
 /** A head: skin, ears, hair, and a face. */
 function drawHead(head: Part, look: Look, asleep: boolean) {
@@ -1115,6 +1188,36 @@ function muddy(scaler: THREE.Group, body: THREE.Material) {
   });
 }
 
+/** Seen by the lights only: it is drawn into their shadow maps and nowhere else. */
+const SHADOW_ONLY = new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false });
+
+/**
+ * What throws a figure's shadow: its whole body as it stands at rest, in one piece that never moves a limb.
+ * Indoors the lights' shadow maps are small and are redrawn while someone walks; a striding figure's arms
+ * and legs, redrawn into them a light or two a frame, threw rough shadows that jumped about the walls. A
+ * still shape slides across them evenly, as the old shadow cards did. It lies down with the figure.
+ */
+function castShape(top: THREE.Group, made: THREE.BufferGeometry[]): THREE.Mesh | null {
+  top.updateMatrixWorld(true);
+  const toTop = new THREE.Matrix4().copy(top.matrixWorld).invert();
+  const pieces: THREE.BufferGeometry[] = [];
+  top.traverse((o) => {
+    if (!(o instanceof THREE.Mesh) || !o.userData.body) return;
+    const piece = o.geometry.clone();
+    piece.deleteAttribute("color");
+    piece.deleteAttribute("normal");
+    piece.applyMatrix4(new THREE.Matrix4().multiplyMatrices(toTop, o.matrixWorld));
+    pieces.push(piece);
+  });
+  if (pieces.length === 0) return null;
+  const shape = mergeGeometries(pieces)!;
+  for (const piece of pieces) piece.dispose();
+  made.push(shape);
+  const mesh = new THREE.Mesh(shape, SHADOW_ONLY);
+  mesh.castShadow = true;
+  return mesh;
+}
+
 /** The animals that stand side-on in a portrait, as they did in their sprites. */
 export const FOUR_LEGGED = new Set(["wolf", "alpha", "bear", "great_bear"]);
 
@@ -1130,7 +1233,15 @@ export interface FigurePose {
   lean: number;
   /** Down in a fight, or asleep. */
   lying: boolean;
+  /**
+   * Seated: stand the figure with its feet `SITTING_DROP` of its size below the seat's top. A number is how far
+   * into the pose it is, 0 (standing) to 1, for sitting down and getting up. Only people sit; a creature stands.
+   */
+  sitting?: boolean | number;
 }
+
+/** How far below a seat's top a seated figure's origin goes, as a share of its size: its hips, less half a thigh. */
+export const SITTING_DROP = 3.7 / FRAME;
 
 export interface Figure {
   /** Stands on its origin, facing +z: place it and turn it about y. */
@@ -1140,6 +1251,8 @@ export interface Figure {
   update(pose: FigurePose): void;
   /** Greyed, for someone down in a fight. */
   setDim(on: boolean): void;
+  /** How much of it is left to see, 1 (all there) to 0 (gone): it thins out pixel by pixel as a camera passes through it. */
+  setFade(left: number): void;
   dispose(): void;
 }
 
@@ -1167,10 +1280,11 @@ export function makeFigure(kind: string, look: Look, outfit?: Outfit, opts: Figu
   seed = 20261113;
   rodInHand = opts.rod ?? false;
   const rig = rigFor(kind, top, look, outfit, !!opts.asleep);
+  const fade = { value: 1 };
   const mats: Mats = {
-    body: bodyMaterial(),
-    outline: new THREE.MeshBasicMaterial({ color: OUTLINE, side: THREE.BackSide }),
-    glow: new THREE.MeshBasicMaterial({ vertexColors: true }),
+    body: fadeable(bodyMaterial(), fade, "gq-figure-body"),
+    outline: fadeable(new THREE.MeshBasicMaterial({ color: OUTLINE, side: THREE.BackSide }), fade, "gq-figure-line"),
+    glow: fadeable(new THREE.MeshBasicMaterial({ vertexColors: true }), fade, "gq-figure-glow"),
   };
   const made: THREE.BufferGeometry[] = [];
   for (const part of rig.parts) part.build(mats, made);
@@ -1184,10 +1298,12 @@ export function makeFigure(kind: string, look: Look, outfit?: Outfit, opts: Figu
     last = p.time;
     const want = p.walking ? Math.sin(p.stride * 3.6) : 0;
     swing += (want - swing) * Math.min(1, dt * 20);
-    rig.animate({ t: p.time, swing, breath: Math.sin(p.time * 2.2 + beat), strike: Math.min(1, Math.abs(p.lean) * 2), lying: p.lying });
+    rig.animate({ t: p.time, swing, breath: Math.sin(p.time * 2.2 + beat), strike: Math.min(1, Math.abs(p.lean) * 2), lying: p.lying, sitting: typeof p.sitting === "number" ? Math.max(0, Math.min(1, p.sitting)) : p.sitting ? 1 : 0 });
   };
   update({ time: 0, stride: 0, walking: false, lean: 0, lying: false });
   last = -1;
+  const shadow = castShape(top, made);
+  if (shadow) top.add(shadow);
   return {
     root,
     setSize: (size) => scaler.scale.setScalar(size / FRAME),
@@ -1195,6 +1311,10 @@ export function makeFigure(kind: string, look: Look, outfit?: Outfit, opts: Figu
     setDim(on) {
       mats.body.color.setScalar(on ? 0.5 : 1);
       mats.glow.color.setScalar(on ? 0.4 : 1);
+    },
+    setFade(left) {
+      fade.value = Math.max(0, Math.min(1, left));
+      root.visible = fade.value > 0;
     },
     dispose() {
       for (const g of made) g.dispose();

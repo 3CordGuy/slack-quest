@@ -10,7 +10,7 @@ import { SHOALS_ANTES, SHOALS_MAX_PLAYERS, SHOALS_MIN_PLAYERS, SHOALS_PASSAGES, 
 import type { SeatInfo } from "./render/TableStage";
 import type { WorldRenderer } from "./render/WorldRenderer";
 import { markerUrl, type MarkerFace } from "./shoalsArt";
-import { placeSeats, seatInfo, useTableStage, type SeatLook, type StageHost } from "./useTableStage";
+import { placeSeats, withSelf, seatInfo, useTableStage, type SeatLook, type StageHost } from "./useTableStage";
 import "./table.css";
 import "./shoals.css";
 
@@ -140,7 +140,7 @@ export function ShoalsTable({ table, you, gold, error, lastXp, looks, world, hos
         stars: table && table.phase !== "open" ? { on: s.passages, of: SHOALS_PASSAGES } : undefined,
       });
     });
-    stage.setSeats(placement.chairs, infos);
+    stage.setSeats(placement.chairs, withSelf(infos, you, looks));
     if (!table || table.phase === "open") {
       stage.syncShoals(null);
     } else {
