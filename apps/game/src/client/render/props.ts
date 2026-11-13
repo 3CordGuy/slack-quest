@@ -51,7 +51,10 @@ class Builder {
 
   /** Something that glows: drawn unlit, centred on the point given. */
   glow(color: string, geometry: THREE.BufferGeometry, x: number, y: number, z: number): THREE.Mesh {
-    return this.mesh(geometry, new THREE.MeshBasicMaterial({ color }), x, y, z);
+    const mesh = this.mesh(geometry, new THREE.MeshBasicMaterial({ color }), x, y, z);
+    // Lit from within: it gives light, so it must never cast a shadow over its own lamp.
+    mesh.userData.selfLit = true;
+    return mesh;
   }
 
   /**
