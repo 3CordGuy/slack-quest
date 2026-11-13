@@ -16,7 +16,8 @@ import * as THREE from "three";
 import type { Marker, Outfit } from "@gantt-quest/world";
 import { markerUrl, type MarkerFace } from "../shoalsArt";
 import { PIXEL_LINE_ROWS, canDrawPixelText, drawPixelText, pixelTextWidth } from "./pixelFont";
-import { SPRITE_ASPECT, labelTexture, spriteTexture } from "./sprites";
+import { makeFigure, type Figure } from "./figures";
+import { labelTexture, lookFor, spriteKey } from "./sprites";
 import type { WorldMinigame, WorldRenderer } from "./WorldRenderer";
 
 export type TableKind = "dice" | "shoals";
@@ -77,6 +78,8 @@ const SEAT_R = 1.35;
 const STOOL_H = 0.3;
 /** How tall a seated character is drawn. */
 const FOLK_H = 1.05;
+/** Where a player's feet are: their hips rest on the stool's top, the legs down in front of it, behind the table. */
+const SEAT_Y = STOOL_H - 0.2;
 /** From the middle of the table out to a seat's stack or dice, and to the hand. */
 const STACK_Z = 0.46;
 const HAND_Z = 0.6;
@@ -265,7 +268,9 @@ interface Rig {
   /** Turned about y so its local +z points from the middle of the table out to the seat. */
   rig: THREE.Group;
   folk: THREE.Group;
-  sprite: THREE.Sprite;
+  /** Where the player sits, facing the table, and their model once they have a look. */
+  seat: THREE.Group;
+  figure: Figure | null;
   plate: THREE.Sprite;
   chip: THREE.Sprite;
   tally: THREE.Sprite;
@@ -386,10 +391,10 @@ export class TableStage implements WorldMinigame {
     const rig = new THREE.Group();
     const folk = new THREE.Group();
     folk.position.z = SEAT_R + 0.05;
-    const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ transparent: true, alphaTest: 0.4 }));
-    sprite.center.set(0.5, 0);
-    sprite.position.y = STOOL_H - 0.06;
-    sprite.scale.set(FOLK_H * SPRITE_ASPECT, FOLK_H, 1);
+    const seat = new THREE.Group();
+    seat.position.y = SEAT_Y;
+    // The rig's +z points out from the table: they sit facing in.
+    seat.rotation.y = Math.PI;
     const overlay = (map: THREE.Texture | null, y: number, order: number) => {
       const s = new THREE.Sprite(new THREE.SpriteMaterial({ map, transparent: true, depthTest: false }));
       s.renderOrder = order;
@@ -404,11 +409,11 @@ export class TableStage implements WorldMinigame {
     ring.position.set(0, 0.012, SEAT_R + 0.05);
     chip.visible = false;
     tally.visible = false;
-    folk.add(sprite, plate, tally, chip);
+    folk.add(seat, plate, tally, chip);
     const items = new THREE.Group();
     rig.add(folk, ring, items);
     this.group.add(rig);
-    return { id, rig, folk, sprite, plate, chip, tally, ring, items, yaw: 0, goal: 0, look: "", plateKey: "", chipKey: "", tallyKey: "", info: null, itemsKey: "", roll: 0 };
+    return { id, rig, folk, seat, figure: null, plate, chip, tally, ring, items, yaw: 0, goal: 0, look: "", plateKey: "", chipKey: "", tallyKey: "", info: null, itemsKey: "", roll: 0 };
   }
 
   // ---------- what the panel tells it ----------
@@ -444,15 +449,19 @@ export class TableStage implements WorldMinigame {
   /** The look of a seat: the character, their name, a word over their head, what they have left. */
   private dress(r: Rig, info: SeatInfo, mine: boolean) {
     r.folk.visible = !mine;
-    const look = `${info.classId}|${info.outfit ? JSON.stringify(info.outfit) : ""}`;
+    const look = spriteKey(info.classId, info.outfit);
     if (r.look !== look) {
       r.look = look;
-      const mat = r.sprite.material;
-      mat.map = spriteTexture(info.classId, info.outfit);
-      mat.needsUpdate = true;
+      if (r.figure) {
+        r.seat.remove(r.figure.root);
+        r.figure.dispose();
+      }
+      r.figure = makeFigure(info.classId, lookFor(info.classId), info.outfit);
+      r.figure.setSize(FOLK_H);
+      r.seat.add(r.figure.root);
     }
-    r.sprite.material.opacity = info.out ? 0.45 : 1;
-    r.sprite.material.transparent = true;
+    // Out of the game: greyed.
+    r.figure?.setDim(!!info.out);
     const plateKey = firstName(info.name);
     if (r.plateKey !== plateKey) {
       r.plateKey = plateKey;
@@ -693,7 +702,8 @@ export class TableStage implements WorldMinigame {
       const glow = info && (info.turn || info.won) ? 0.55 + 0.35 * Math.sin(this.clock * 4) : 0;
       (r.ring.material as THREE.MeshBasicMaterial).opacity = glow;
       // The one who won bounces a little.
-      r.sprite.position.y = STOOL_H - 0.06 + (info?.won ? Math.abs(Math.sin(this.clock * 5)) * 0.06 : 0);
+      r.seat.position.y = SEAT_Y + (info?.won ? Math.abs(Math.sin(this.clock * 5)) * 0.06 : 0);
+      r.figure?.update({ time: this.clock, stride: 0, walking: false, lean: 0, lying: false });
       if (r.roll > 0) r.roll = Math.max(0, r.roll - dt);
       for (const wrap of r.items.children) {
         if (wrap.userData.baseY === undefined || wrap.userData.pulse) continue;
@@ -723,7 +733,8 @@ export class TableStage implements WorldMinigame {
   }
 
   private disposeRig(r: Rig) {
-    for (const s of [r.sprite, r.plate, r.chip, r.tally]) s.material.dispose();
+    r.figure?.dispose();
+    for (const s of [r.plate, r.chip, r.tally]) s.material.dispose();
     r.ring.geometry.dispose();
     (r.ring.material as THREE.Material).dispose();
   }

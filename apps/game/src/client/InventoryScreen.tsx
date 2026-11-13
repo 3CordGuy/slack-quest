@@ -146,7 +146,7 @@ export function InventoryScreen({ me, refresh, onClose, onIsland = false }: Prop
           <section className="inv-left">
             <div className="doll">
               <div className="doll-col">{LEFT.map(slotCell)}</div>
-              <div className="figure"><img src={spriteDataUrl(c.class_id, outfitOf([...worn.values()]))} alt="" /></div>
+              <div className="figure"><img src={spriteDataUrl(c.class_id, outfitOf([...worn.values()]), true)} alt="" /></div>
               <div className="doll-col">{RIGHT.map(slotCell)}</div>
             </div>
             <p className="muted hint-line">
