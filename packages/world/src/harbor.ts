@@ -155,6 +155,8 @@ export interface HarborPlayer {
   outfit?: Outfit;
   /** Where their bedroll is laid out, until they walk off. */
   bedroll?: HexPos;
+  /** In a hut: the bed (a furnishing id) they are lying on after a rest, until they walk off. */
+  bed?: number;
 }
 
 /**

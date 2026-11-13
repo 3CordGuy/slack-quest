@@ -23,6 +23,7 @@ import {
   hutRoom,
   isMounted,
   isSmall,
+  lieDownProblem,
   placeProblem,
   putInProblem,
   smallPlaceProblem,
@@ -259,8 +260,20 @@ export class HutRoom extends DurableObject<Env> {
       if (!Number.isInteger(to.q) || !Number.isInteger(to.r)) return;
       const path = hutPath(hut.room, hut.furnishings, player.pos, to);
       if (!path) return;
-      ws.serializeAttachment({ ...player, pos: path[path.length - 1] } satisfies HarborPlayer);
+      // Walking off gets them up out of bed.
+      ws.serializeAttachment({ ...player, pos: path[path.length - 1], bed: undefined } satisfies HarborPlayer);
       this.broadcast({ type: "moved", id: player.id, path });
+      if (player.bed !== undefined) this.broadcast({ type: "joined", player: { ...player, pos: path[path.length - 1], bed: undefined } });
+      return;
+    }
+
+    if (msg.type === "lie_down") {
+      // Purely for show, like a bedroll in the Harbor: the rest itself is `/api/rest`, which checks the cooldown.
+      const problem = lieDownProblem(hut.room, hut.furnishings, Number(msg.id), player.pos, player.id === ownerId);
+      if (problem) return this.send(ws, { type: "refused", reason: problem });
+      const next: HarborPlayer = { ...player, bed: Number(msg.id) };
+      ws.serializeAttachment(next);
+      this.broadcast({ type: "joined", player: next });
       return;
     }
 

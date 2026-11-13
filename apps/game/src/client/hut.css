@@ -79,12 +79,12 @@
 .hut-mats-btns button { padding: 1px 5px; min-width: 0; }
 
 /* The bar at the bottom: a short hint on one line, then stamina, Rest and Leave. Kept to the right so the chat on the left never runs under it. */
-.hut-view .turnbar.hut-here { left: auto; right: 12px; transform: none; flex-direction: column; align-items: stretch; gap: 6px; white-space: normal; width: max-content; max-width: min(460px, calc(100vw / var(--ui-z, 1) - min(340px, calc(40vw / var(--ui-z, 1))) - 44px)); }
+.hut-view .turnbar.hut-here { left: auto; right: 12px; transform: none; flex-direction: column; align-items: stretch; gap: 6px; white-space: normal; width: max-content; max-width: min(560px, calc(100vw / var(--ui-z, 1) - min(340px, calc(40vw / var(--ui-z, 1))) - 44px)); }
 .hut-here-hint { margin: 0; font-size: 12px; }
-.hut-here-row { display: flex; gap: 8px; align-items: center; }
+.hut-here-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .hut-here-row > button { flex: none; }
-/* The stamina line wraps rather than pushing Rest and Leave off the row. */
-.hut-stamina { font-size: 12px; color: var(--gold); flex: 1 1 auto; min-width: 0; }
+/* The stamina gets a line of its own, so Rest, Decorate, the lamp and Leave stay on one row. */
+.hut-stamina { font-size: 12px; color: var(--gold); flex: 1 1 100%; min-width: 0; white-space: nowrap; }
 @media (max-width: 760px) {
   .hut-view .turnbar.hut-here { left: 6px; right: 6px; width: auto; max-width: none; }
   /* Room under the chat for the two-line bar. */
@@ -96,3 +96,15 @@
 @keyframes toast-fade { 0%, 75% { opacity: 1; } 100% { opacity: 0; } }
 @media (prefers-reduced-motion: reduce) { .toast.fade { animation: none; } }
 .hut-here-row .lamp-on { border-color: var(--gold); color: var(--gold); }
+/* Edit mode's switch: a hammer and its word. */
+.hut-here-row .hut-decorate { display: inline-flex; align-items: center; gap: 5px; }
+.hut-here-row .hut-decorate.selected { border-color: var(--gold); color: var(--gold); }
+@media (max-width: 760px) {
+  /* A phone: Decorate down to its hammer, and the buttons a little narrower, so they stay on one row. */
+  .hut-here-row { gap: 6px; }
+  .hut-here-row > button { padding-left: 8px; padding-right: 8px; }
+  .hut-here-row .hut-decorate-label { display: none; }
+  .hut-here-row .hut-decorate { min-width: 36px; justify-content: center; }
+  .hut-view .harbor-chat { bottom: 146px; }
+  .hut-view .hut-craft { bottom: 190px; }
+}
