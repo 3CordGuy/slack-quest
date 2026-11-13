@@ -70,6 +70,82 @@ export function SoundButton() {
   );
 }
 
+/** The renderer's own development overrides (render/ambience.ts): a held time of day and a held weather. */
+type SkyHold = { __gqTime?: number; __gqWeather?: number };
+const sky = globalThis as SkyHold;
+const clock = (t: number) => {
+  const mins = Math.round(t * 24 * 60) % (24 * 60);
+  return `${String(Math.floor(mins / 60)).padStart(2, "0")}:${String(mins % 60).padStart(2, "0")}`;
+};
+
+/**
+ * Development only: hold the time of day and the weather where you want them, to hear and see any
+ * moment without waiting for it. They change the sky in this tab alone; "Follow the clock" lets go.
+ */
+function SkyControls() {
+  const [time, setTime] = useState<number | undefined>(sky.__gqTime);
+  const [weather, setWeather] = useState<number | undefined>(sky.__gqWeather);
+  const holdTime = (t: number | undefined) => {
+    if (t === undefined) delete sky.__gqTime;
+    else sky.__gqTime = t;
+    setTime(t);
+  };
+  const holdWeather = (w: number | undefined) => {
+    if (w === undefined) delete sky.__gqWeather;
+    else sky.__gqWeather = w;
+    setWeather(w);
+  };
+  const live = audio.debug().params;
+  return (
+    <div className="sound-sky">
+      <label className="sound-row">
+        <span>Time of day</span>
+        <input type="range" min={0} max={1} step={0.005} value={time ?? live.time ?? 0.5} onChange={(e) => holdTime(Number(e.target.value))} />
+        <span className="sound-value">{clock(time ?? live.time ?? 0.5)}</span>
+      </label>
+      <div className="sound-presets">
+        {(
+          [
+            ["Dawn", 0.24],
+            ["Noon", 0.5],
+            ["Dusk", 0.78],
+            ["Midnight", 0],
+          ] as const
+        ).map(([name, t]) => (
+          <button key={name} className={`small ${time === t ? "selected" : ""}`} onClick={() => holdTime(t)}>
+            {name}
+          </button>
+        ))}
+        <button className="link" disabled={time === undefined} onClick={() => holdTime(undefined)}>
+          Follow the clock
+        </button>
+      </div>
+      <label className="sound-row">
+        <span>Weather</span>
+        <input type="range" min={0} max={1} step={0.01} value={weather ?? 0} onChange={(e) => holdWeather(Number(e.target.value))} />
+        <span className="sound-value">{weather === undefined ? "auto" : Math.round(weather * 100)}</span>
+      </label>
+      <div className="sound-presets">
+        {(
+          [
+            ["Clear", 0],
+            ["Overcast", 0.55],
+            ["Light rain", 0.72],
+            ["Downpour", 1],
+          ] as const
+        ).map(([name, w]) => (
+          <button key={name} className={`small ${weather === w ? "selected" : ""}`} onClick={() => holdWeather(w)}>
+            {name}
+          </button>
+        ))}
+        <button className="link" disabled={weather === undefined} onClick={() => holdWeather(undefined)}>
+          Follow the clock
+        </button>
+      </div>
+    </div>
+  );
+}
+
 /** Development only: what the engine is doing right now, refreshed a few times a second. */
 function AudioReadout({ onClose }: { onClose(): void }) {
   const [d, setD] = useState(() => audio.debug());
@@ -99,6 +175,7 @@ function AudioReadout({ onClose }: { onClose(): void }) {
           Close
         </button>
       </div>
+      <SkyControls />
       <dl>
         {rows.map(([k, v]) => (
           <div key={k}>

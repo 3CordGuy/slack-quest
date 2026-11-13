@@ -21,3 +21,7 @@
 .sound-readout dl > div { display: grid; grid-template-columns: 130px 1fr; gap: 8px; padding: 2px 0; border-top: 1px dashed var(--line); }
 .sound-readout dt { color: var(--muted); }
 .sound-readout dd { margin: 0; overflow-wrap: anywhere; }
+.sound-sky { margin-bottom: 8px; padding-bottom: 8px; border-bottom: 1px solid var(--line); }
+.sound-sky .sound-row { grid-template-columns: 90px 1fr 40px; }
+.sound-presets { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 2px 0 8px; }
+.sound-presets button.link:disabled { color: var(--muted); }

@@ -54,6 +54,8 @@ describe("the manifest", () => {
     for (const [name, scene] of Object.entries(AUDIO.scenes)) {
       if (scene.music) expect(AUDIO.music[scene.music], `${name} music`).toBeDefined();
       for (const a of scene.ambience ?? []) expect(AUDIO.ambience[a], `${name} ambience ${a}`).toBeDefined();
+      // An indoor scene sits inside an outdoor one, not inside another room.
+      if (scene.inside) expect(AUDIO.scenes[scene.inside.of]?.inside, `${name} is inside ${scene.inside.of}`).toBeUndefined();
     }
   });
   it("points every reverb zone at a reverb that exists, on ground the game has", () => {

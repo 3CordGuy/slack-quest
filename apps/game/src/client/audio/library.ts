@@ -6,13 +6,16 @@
 // apps/game/audio as they are, and those win, so a bounce is heard on the next
 // play without encoding anything.
 //
-// Decoded audio is raw 32-bit float whatever it was stored as, so it is held
-// within a memory budget: past it, the buffers used longest ago are let go
-// (never one a playing loop holds) and decoded again if they are wanted.
+// Decoded audio is raw 32-bit float whatever it was stored as. One-shots are
+// held within a memory budget: past it, the ones used longest ago are let go
+// and decoded again if they are wanted. What a playing loop holds is outside
+// that budget (it cannot be let go), so long loops never push the one-shots out.
 
 import type { AudioFile, AudioIndex } from "./types";
 
 const EMPTY: AudioIndex = { version: 1, files: {} };
+/** Decoded size past which a file counts as a long loop: about 20 seconds of stereo. */
+const LONG_BYTES = 8e6;
 export const SHIPPED_INDEX = "/audio/index.json";
 export const DEV_INDEX = "/__audio/index.json";
 
@@ -89,17 +92,22 @@ export class Library {
     return hit.buffer;
   }
 
-  /** Fetch and decode a file (once; later calls share it). Null if it is missing or will not decode. */
-  load(key: string): Promise<AudioBuffer | null> {
-    const url = this.url(key);
-    if (!url) return Promise.resolve(null);
+  /**
+   * Fetch and decode a file (once; later calls share it). Null if it is missing or will not decode.
+   * `mono` folds it down to one channel, which halves what a stereo file takes in memory:
+   * for sounds placed in the world, which are heard from a point anyway.
+   */
+  load(key: string, mono = false): Promise<AudioBuffer | null> {
+    const source = this.url(key);
+    if (!source) return Promise.resolve(null);
+    const url = mono ? `${source}#mono` : source;
     const hit = this.cache.get(url);
     if (hit) {
       hit.used = ++this.tick;
       return hit.promise;
     }
     const entry: Cached = { key, promise: Promise.resolve(null), buffer: null, bytes: 0, used: ++this.tick };
-    entry.promise = this.decode(url).then(
+    entry.promise = this.decode(source, mono).then(
       (buffer) => {
         entry.buffer = buffer;
         entry.bytes = buffer.length * buffer.numberOfChannels * 4;
@@ -111,12 +119,12 @@ export class Library {
         this.cache.delete(url);
         // Opus refused: this browser cannot decode it after all, so use AAC from now on.
         const aac = this.index.files[key]?.urls.aac;
-        if (this.format === "opus" && url === this.index.files[key]?.urls.opus && aac) {
+        if (this.format === "opus" && source === this.index.files[key]?.urls.opus && aac) {
           this.format = "aac";
           if (import.meta.env.DEV) console.info("[audio] this browser will not decode Opus; using AAC");
-          return this.load(key);
+          return this.load(key, mono);
         }
-        if (import.meta.env.DEV) console.warn(`[audio] could not load ${key} (${url})`, err);
+        if (import.meta.env.DEV) console.warn(`[audio] could not load ${key} (${source})`, err);
         return null;
       },
     );
@@ -132,7 +140,15 @@ export class Library {
   unpin(key: string) {
     const n = (this.pins.get(key) ?? 0) - 1;
     if (n > 0) this.pins.set(key, n);
-    else this.pins.delete(key);
+    else {
+      this.pins.delete(key);
+      // A long loop nothing is playing any more is let go at once, rather than left to crowd the one-shots out.
+      for (const [url, c] of [...this.cache]) {
+        if (c.key !== key || !c.buffer || c.bytes < LONG_BYTES) continue;
+        this.cache.delete(url);
+        this.bytes -= c.bytes;
+      }
+    }
     this.trim();
   }
 
@@ -140,21 +156,32 @@ export class Library {
     return { format: this.format, files: this.sortedKeys.length, decoded: this.cache.size, megabytes: Math.round(this.bytes / 1e5) / 10, budget: this.budget / 1e6 };
   }
 
-  private async decode(url: string): Promise<AudioBuffer> {
+  private async decode(url: string, mono: boolean): Promise<AudioBuffer> {
     const res = await fetch(url);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.arrayBuffer();
-    return await this.ctx.decodeAudioData(data);
+    const buffer = await this.ctx.decodeAudioData(data);
+    if (!mono || buffer.numberOfChannels === 1) return buffer;
+    // Average the channels into one, at −3 dB a channel so a wide recording does not come out louder.
+    const out = this.ctx.createBuffer(1, buffer.length, buffer.sampleRate);
+    const sum = out.getChannelData(0);
+    const scale = Math.SQRT1_2 / Math.sqrt(buffer.numberOfChannels / 2) / buffer.numberOfChannels * 2;
+    for (let c = 0; c < buffer.numberOfChannels; c++) {
+      const ch = buffer.getChannelData(c);
+      for (let i = 0; i < ch.length; i++) sum[i] += ch[i] * scale;
+    }
+    return out;
   }
 
-  /** Let go of the buffers used longest ago until the decoded audio fits the budget. */
+  /** Let go of the buffers used longest ago until what no loop is holding fits the budget. */
   private trim() {
-    if (this.bytes <= this.budget) return;
     const idle = [...this.cache.entries()].filter(([, c]) => c.buffer && !this.pins.has(c.key)).sort((a, b) => a[1].used - b[1].used);
+    let loose = idle.reduce((n, [, c]) => n + c.bytes, 0);
     for (const [url, c] of idle) {
-      if (this.bytes <= this.budget) break;
+      if (loose <= this.budget) break;
       this.cache.delete(url);
       this.bytes -= c.bytes;
+      loose -= c.bytes;
     }
   }
 }

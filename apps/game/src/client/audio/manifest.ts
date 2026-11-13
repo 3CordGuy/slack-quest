@@ -23,10 +23,10 @@ const step = (surface: string, gainDb = -6): SoundEvent => ({
 export const AUDIO: AudioManifest = {
   // Where each slider starts for a new player, and your trim for each group.
   mix: {
-    master: { volume: 0.8, trimDb: 0 },
-    music: { volume: 0.7, trimDb: -6 },
-    atmosphere: { volume: 0.8, trimDb: -6 },
-    sfx: { volume: 0.8, trimDb: 0 },
+    master: { volume: 1, trimDb: 0 },
+    music: { volume: 0.5, trimDb: 0 },
+    atmosphere: { volume: 0.6, trimDb: 0 },
+    sfx: { volume: 0.25, trimDb: 0 },
   },
 
   events: {
@@ -70,10 +70,15 @@ export const AUDIO: AudioManifest = {
   // Loops that play from where things are on the map: quieter, duller and off to one side as you
   // move away, by how the camera is turned. Distances are in map units (a hex is about 1.7 across).
   // "candle" and "lamp" can have one too.
+  // How far to one side a placed sound can go: 0 is no direction, 1 is hard left or right.
+  placing: { width: 0.45 },
+
   emitters: {
-    fire: { file: "ambience/fire", gainDb: -6, ref: 1.5, max: 12, voices: 3 },
+    // Stereo files here are folded to mono when loaded: they are heard from a point.
+    fire: { file: "ambience/fire", ref: 1.5, max: 12, voices: 3 },
     // The water as a whole: louder toward the shore, from the side it lies on, all around you at sea.
-    sea: { file: "ambience/shore", gainDb: -3, ref: 3, max: 18 },
+    // `stereo` keeps the recording as wide as it is and leans it toward the water.
+    sea: { file: "ambience/ocean", gainDb: 6, ref: 3, max: 18, stereo: true },
   },
 
   // The sound of each place: an impulse response per reverb. Only one-shots that set `reverb` (their
@@ -96,35 +101,34 @@ export const AUDIO: AudioManifest = {
   // A level can follow the sky: "night" (0 day to 1 deep night), "rain" (0 dry to 1 pouring)
   // or "time" (0 midnight, 0.5 noon). A curve is [value, level] points; see audio/README.md.
   music: {
-    harbor: {
-      file: "music/harbor",
-      fadeIn: 3,
-      fadeOut: 3,
-      bpm: 84,
-      // A stem in sync with the main file, fading in through dusk.
-      layers: [{ file: "music/harbor_night", follow: { param: "night", curve: [[0.3, 0], [0.8, 1]] } }],
-    },
+    // The town's night music, by day too for now. A day version can be a second cue, or a stem laid
+    // over this one: layers: [{ file: "music/harbor_day", follow: { param: "night", curve: [[0.3, 1], [0.7, 0]] } }]
+    // Give it its bpm and the battle music will come in on its bar.
+    harbor: { file: "music/harbor", fadeIn: 3, fadeOut: 3 },
     island: { file: "music/island", fadeIn: 3, fadeOut: 3, bpm: 96 },
     // Comes in on the next bar of whatever was playing.
     battle: { file: "music/battle", fadeIn: 0.05, fadeOut: 2, bpm: 138, enter: "bar" },
   },
 
   ambience: {
-    room: { file: "ambience/room", gainDb: -6, fadeIn: 2, fadeOut: 2 },
-    night: { file: "ambience/night", gainDb: -8, follow: { param: "night", curve: [[0.5, 0], [0.9, 1]] } },
-    rain: { file: "ambience/rain", gainDb: -4, follow: { param: "rain", curve: [[0, 0], [1, 1]] } },
-    // The same rain heard from indoors: lower. Swap in a roof recording when you have one.
-    rain_indoors: { file: "ambience/rain", gainDb: -14, follow: { param: "rain", curve: [[0, 0], [1, 1]] } },
+    // The land by day and by night, crossing over through dusk and dawn. A bed whose curve has it at
+    // silence is not played or held in memory at all.
+    day: { file: "ambience/forest_day", gainDb: -3, fadeIn: 4, fadeOut: 4, follow: { param: "night", curve: [[0.3, 1], [0.7, 0]] } },
+    night: { file: "ambience/forest_night", fadeIn: 4, fadeOut: 4, follow: { param: "night", curve: [[0.3, 0], [0.7, 1]] } },
+    rain: { file: "ambience/rain", fadeIn: 3, fadeOut: 3, follow: { param: "rain", curve: [[0, 0], [1, 1]] } },
   },
 
   scenes: {
     title: { music: "harbor" },
-    harbor: { music: "harbor", ambience: ["night", "rain"] },
-    hut: { music: "harbor", ambience: ["room", "rain_indoors"] },
-    pub: { music: "harbor", ambience: ["room", "rain_indoors"] },
+    harbor: { music: "harbor", ambience: ["day", "night", "rain"] },
+    // Indoors: the Harbor's music, atmosphere and sea carry on, muffled, as through the walls. `cutoff`
+    // is the high cut in Hz. A building's own sound goes here too and is heard clean: ambience: ["pub_crowd"],
+    // or music: "pub" to replace the music from outside.
+    hut: { inside: { of: "harbor", cutoff: 700, gainDb: -3 } },
+    pub: { inside: { of: "harbor", cutoff: 700, gainDb: -3 } },
     sailing: { music: "island", ambience: ["rain"] },
-    island: { music: "island", ambience: ["night", "rain"] },
-    battle: { music: "battle", ambience: ["night", "rain"] },
-    spar: { music: "battle", ambience: ["night", "rain"] },
+    island: { music: "island", ambience: ["day", "night", "rain"] },
+    battle: { music: "battle", ambience: ["day", "night", "rain"] },
+    spar: { music: "battle", ambience: ["day", "night", "rain"] },
   },
 };

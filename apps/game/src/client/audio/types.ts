@@ -139,6 +139,21 @@ export interface Scene {
   music?: string | null;
   /** Keys of `ambience`, all playing at once. */
   ambience?: string[];
+  /**
+   * This place is indoors, inside another scene. That scene's music, atmosphere and sea carry on
+   * playing, muffled, as heard through the walls. Anything this scene names itself is heard clean
+   * on top; giving it its own `music` (or `music: null`) replaces the music from outside.
+   */
+  inside?: Inside;
+}
+
+export interface Inside {
+  /** The scene outside the walls. */
+  of: SceneName;
+  /** The high cut on what comes from outside, in Hz. Default 700. Lower is more muffled. */
+  cutoff?: number;
+  /** How much quieter it is as well, in dB. Default -3. */
+  gainDb?: number;
 }
 
 /**
@@ -159,12 +174,29 @@ export interface Emitter {
   max?: number;
   /** How many of the nearest sources sound at once. Default 3. The sea is always one. */
   voices?: number;
+  /**
+   * Keep a stereo file stereo: it stays as wide as you made it and leans toward the side it is on.
+   * For something that is all around rather than at a point, such as the sea. Without it the file
+   * is folded to mono, which takes half the memory.
+   */
+  stereo?: boolean;
+}
+
+/** How placed sounds are spread between left and right. */
+export interface Placing {
+  /**
+   * How far to one side a sound can go: 0 gives no sense of direction at all, 1 puts a sound on your
+   * right in the right speaker alone. Default 0.45: clearly louder on its own side, still heard in both.
+   */
+  width?: number;
 }
 
 export interface AudioManifest {
   mix: Record<Fader, FaderDefault>;
   /** Looping sounds placed in the world. Follows the Atmosphere slider. */
   emitters?: Partial<Record<EmitterKind, Emitter>>;
+  /** How placed sounds are spread between left and right. */
+  placing?: Placing;
   /** The reverbs there are, by name. Heard on one-shots that set `reverb`. */
   reverbs?: Record<string, Reverb>;
   /** Which reverb is heard where. */

@@ -48,6 +48,18 @@ Compressed files carry a little padding at each end, so for a loop that must be 
 
 Each scene (`harbor`, `hut`, `pub`, `sailing`, `island`, `battle`, `spar`, `title`) names one music loop and any number of atmosphere loops. Moving between scenes crossfades; a loop that both scenes share keeps playing.
 
+## Indoors
+
+A scene can be inside another:
+
+```ts
+pub: { inside: { of: "harbor", cutoff: 700, gainDb: -3 } },
+```
+
+Walking in, the Harbor's music, atmosphere and sea carry on without a break, with a high cut at `cutoff` Hz and `gainDb` quieter, as heard through the walls. Walking out opens them up again. The sea loses its direction indoors.
+
+A building's own sound goes in the same scene and is heard clean over the muffled outside: `ambience: ["pub_crowd"]`. Giving the scene its own `music` replaces the music from outside (`music: null` for none), while the outside atmosphere stays, muffled.
+
 ## Following the sky
 
 The game keeps three values up to date, and any loop's level can follow one:
@@ -61,8 +73,10 @@ The game keeps three values up to date, and any loop's level can follow one:
 They describe the sky outside and hold indoors too, so a hut can have rain on its roof. A curve is a list of `[value, level]` points joined by straight lines, with level 0 silent and 1 full:
 
 ```ts
-night: { file: "ambience/night", follow: { param: "night", curve: [[0.5, 0], [0.9, 1]] } },
+night: { file: "ambience/forest_night", follow: { param: "night", curve: [[0.3, 0], [0.7, 1]] } },
 ```
+
+A bed whose curve has it at silence is not played, or held in memory, until the curve brings it up.
 
 A day takes ten minutes. To hear a moment without waiting, type `__gqTime = 0.8` (dusk) or `__gqWeather = 1` (rain) in the browser console; `delete __gqTime` hands it back to the clock.
 
@@ -78,6 +92,14 @@ harbor: {
 ```
 
 Every stem is held decoded in memory (about 23 MB a minute in stereo), so keep them few and no longer than they need to be.
+
+## Memory
+
+Every loop that is playing is held fully decoded: about 23 MB for each minute of stereo, whatever the file's own sample rate or bit depth (the engine runs at 48 kHz). A three-minute stereo bed is 74 MB. The engine readout shows the total. Phones start to struggle past roughly 100 MB, so loop length is the thing to watch:
+
+- Loops for emitters (fire, the sea) are folded to mono when loaded, which halves them.
+- Beds at silence are not loaded.
+- A loop is let go as soon as nothing is playing it.
 
 ## Switching on the bar
 
@@ -101,7 +123,7 @@ One-shots are placed automatically: other heroes' footsteps and every blow in a 
 fire: { file: "ambience/fire", gainDb: -6, ref: 1.5, max: 12, voices: 3 },
 ```
 
-`ref` is the distance within which it is at full level and `max` the distance past which it is silent, in map units (a hex is about 1.7 across). Only the nearest `voices` sources sound at once, each starting the loop at a different point so they do not phase. Bounce these mono. They follow the Atmosphere slider.
+`ref` is the distance within which it is at full level and `max` the distance past which it is silent, in map units (a hex is about 1.7 across). Only the nearest `voices` sources sound at once, each starting the loop at a different point so they do not phase. A stereo file is folded to mono when it is loaded. They follow the Atmosphere slider.
 
 Players choose how placed sounds are rendered with **Headphones (3D sound)** in the Sound panel. Off (the default), sounds are panned between two speakers. On, the browser places them around the head (HRTF): up the screen is in front of you, down it is behind. Level and dulling with distance are the same either way.
 
