@@ -450,7 +450,7 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
       {workshop === "galley" && <GalleyPanel onClose={() => setWorkshop(null)} />}
       {workshop === "smithy" && <SmithyPanel refresh={refreshAll} onClose={() => setWorkshop(null)} />}
       {spar && scene && me.character && <SparView me={me} scene={scene} renderer={renderer} onClose={() => setSpar(false)} />}
-      {gather && me.character && <GatherPanel spot={gather} hero={{ kind: self?.classId ?? me.character.class_id, outfit: self?.outfit }} world={renderer.current} onClose={() => setGather(null)} onStamina={setStamina} />}
+      {gather && me.character && <GatherPanel spot={gather} renderer={renderer} onClose={() => setGather(null)} onStamina={setStamina} />}
       {shop && me.character && <ShopScreen me={me} refresh={refreshAll} onClose={() => setShop(false)} />}
       {me.character && <Trading me={me} partners={board.members.filter((m) => m.id !== you)} withId={tradeWith} onWith={setTradeWith} refresh={refresh} />}
       {heroSheet.open && you && !spar && <HeroSheet id={heroSheet.open} you={you} onClose={heroSheet.close} />}

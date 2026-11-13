@@ -156,8 +156,8 @@ const TIMING_SLACK_MS = 3000;
  * far older than the request) is judged at the server's own estimate.
  */
 function timed(state: GatherState, choice: GatherChoice, now: number): GatherChoice {
-  // The quarry's clock starts, and its blows are judged, by the server's clock alone: whatever `now` a client sends is replaced.
-  if (choice.t === "aim" || choice.t === "dig" || choice.t === "blows") return { ...choice, now };
+  // Felling's rounds and the quarry's clock and blows: when one begins and when its report arrives are always the server's clock, never the client's.
+  if (choice.t === "aim" || choice.t === "begin" || choice.t === "chopped" || choice.t === "split" || choice.t === "dig" || choice.t === "blows") return { ...choice, now };
   if (choice.t !== "push" || !state.aim) return choice;
   const elapsed = now - state.aim.startedAt;
   const said = Number(choice.at);

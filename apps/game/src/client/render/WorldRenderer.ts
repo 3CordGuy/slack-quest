@@ -452,6 +452,21 @@ interface Fx {
   onEnd?: () => void;
 }
 
+/**
+ * A small game played in the world, seen through its own eyes (felling in the
+ * tree line). While it runs it has the view and the input: each frame it says
+ * where the eye is, what it looks at and how far over to that view the camera
+ * has gone, and the renderer swings there from its usual view; presses on the
+ * canvas and keys go to it instead of moving the camera.
+ */
+export interface WorldMinigame {
+  frame(dt: number, now: number, aspect: number): { eye: THREE.Vector3; look: THREE.Vector3; blend: number; fov?: number };
+  /** A press on the canvas, in normalized device coordinates, and the camera it was seen through. */
+  press?(ndc: THREE.Vector2, camera: THREE.Camera): void;
+  /** A key pressed; true if the game used it. */
+  key?(e: KeyboardEvent): boolean;
+}
+
 export interface RendererCallbacks {
   onHexClick(pos: HexPos): void;
   onHover(pos: HexPos | null): void;
@@ -474,20 +489,6 @@ export interface RendererCallbacks {
 /** A small thing on the floor keeps this close to the middle of its hex. */
 const SMALL_REACH = 0.7;
 
-/**
- * A close-up the camera flies into and out of (the quarry's rock face, seen first person). `shot` is asked
- * every frame with the view's shape, so the framing can follow a resized or turned window.
- */
-export interface Closeup {
-  shot(aspect: number): { eye: THREE.Vector3; look: THREE.Vector3; fov: number };
-}
-/** Seconds to fly into a close-up, and back out of one. */
-const CLOSE_IN_S = 1.6;
-const CLOSE_OUT_S = 1.2;
-/** The camera's usual field of view, which a close-up widens. */
-const BASE_FOV = 35;
-const smoother = (t: number) => t * t * t * (t * (t * 6 - 15) + 10);
-
 export class WorldRenderer {
   private scene = new THREE.Scene();
   private camera = new THREE.PerspectiveCamera(35, 1, 0.1, 200);
@@ -504,6 +505,12 @@ export class WorldRenderer {
   readonly lit = LIT;
   /** A backdrop's fixed point of view (see setVantage), and the lightning it is lent by the view showing it. */
   private vantage: { from: THREE.Vector3; to: THREE.Vector3 } | null = null;
+  /** A game being played in the world, the group its things stand in, and how your own hero looked before it hid them. */
+  private minigame: { game: WorldMinigame; group: THREE.Group; hidden: { obj: THREE.Object3D; was: boolean }[]; felled: { i: number; m: THREE.Matrix4 }[] } | null = null;
+  /** The trees on forest hexes, one instanced mesh; a minigame may clear some for room. */
+  private forest: THREE.InstancedMesh | null = null;
+  /** The camera's normal field of view, which a minigame may widen. */
+  private baseFov = 35;
   private lentFlash = 0;
   /** A room's windows: the backdrop seen through them, its picture as a texture, and the panes on the wall. */
   private outlook: WorldRenderer | null = null;
@@ -641,15 +648,7 @@ export class WorldRenderer {
    */
   private panFrom: { x: number; y: number } | null = null;
   private pointer = { x: 0, y: 0, downX: 0, downY: 0, down: false, dragged: false, dirty: false, inside: false };
-  /** The close-up asked for (null: none), the last one (kept while flying back out of it), and how far in the camera is, 0 to 1. */
-  private closeup: Closeup | null = null;
-  private closeLast: Closeup | null = null;
-  private closeT = 0;
-  /** What the camera looks at this frame: the target, or a point on the way into a close-up. */
-  private focusPoint = new THREE.Vector3();
-  private closeLook = new THREE.Vector3();
-  private closeRel = new THREE.Vector3();
-  /** Called every frame before drawing, by things a view has added to the scene (see addTicker). */
+  /** Called every frame before drawing, after the camera is placed, by things a view has added to the scene (see addTicker). */
   private tickers = new Set<(dt: number, camera: THREE.PerspectiveCamera, clock: number) => void>();
 
   /**
@@ -776,6 +775,7 @@ export class WorldRenderer {
     this.storm.dispose();
     this.outlookMap?.dispose();
     this.ambience.dispose();
+    this.endMinigame();
     this.post?.dispose();
     this.renderer.dispose();
     canvas.remove();
@@ -1373,7 +1373,8 @@ export class WorldRenderer {
       return mesh;
     };
     // The trees bend in the wind (fancy graphics): 0.9 is the cone's height.
-    addWindSway(instanced(new THREE.ConeGeometry(0.34, 0.9, 5), this.sodden ? "#3a5d41" : "#2f7a3d", trees).material as THREE.Material, 0.9);
+    this.forest = instanced(new THREE.ConeGeometry(0.34, 0.9, 5), this.sodden ? "#3a5d41" : "#2f7a3d", trees);
+    addWindSway(this.forest.material as THREE.Material, 0.9);
     if (merlons.length > 0) instanced(new THREE.BoxGeometry(1, 1, 1), "#6a6d75", merlons);
 
     // Start centred on the island. Fog lifting redraws the ground but leaves the camera where the player put it.
@@ -1433,6 +1434,7 @@ export class WorldRenderer {
   /** For a backdrop: where it is seen from and what it looks at, and how wide a view that is (degrees, top to bottom). */
   setVantage(from: THREE.Vector3, to: THREE.Vector3, fov: number) {
     this.vantage = { from, to };
+    this.baseFov = fov;
     this.camera.fov = fov;
     this.camera.updateProjectionMatrix();
   }
@@ -1632,6 +1634,99 @@ export class WorldRenderer {
     if (snap) this.target.copy(this.targetGoal);
   }
 
+  /**
+   * Hand the view to a game played on a hex: `make` gets a group standing on
+   * that hex to build in, and the camera and input until `endMinigame`. Your hero
+   * is hidden meanwhile (you are seeing through their eyes), as are the
+   * point of interest on the hex (the game brings its own) and the camera
+   * buttons.
+   */
+  startMinigame<T extends WorldMinigame>(make: (group: THREE.Group) => T, at: HexPos, hidePoi?: string): T {
+    this.endMinigame();
+    const group = new THREE.Group();
+    group.position.copy(this.standAt(at));
+    this.scene.add(group);
+    const game = make(group);
+    const hidden: { obj: THREE.Object3D; was: boolean }[] = [];
+    const hide = (obj: THREE.Object3D | null | undefined) => {
+      if (!obj) return;
+      hidden.push({ obj, was: obj.visible });
+      obj.visible = false;
+    };
+    hide(hidePoi ? this.poiObject(hidePoi) : undefined);
+    this.minigame = { game, group, hidden, felled: [] };
+    this.hideOwnHero();
+    for (const b of [this.followButton, ...this.turnButtons]) b.style.visibility = "hidden";
+    // Bring the usual view over the hex first, so the swing in starts from somewhere near.
+    const { x, z } = hexToWorld(at);
+    this.targetGoal.set(x, 0.14, z);
+    this.heldKeys.clear();
+    return game;
+  }
+
+  /** Give the view back: the game's group is taken down and everything it hid is shown again. */
+  endMinigame() {
+    const m = this.minigame;
+    if (!m) return;
+    this.minigame = null;
+    this.scene.remove(m.group);
+    m.group.traverse((o) => {
+      const mesh = o as THREE.Mesh;
+      mesh.geometry?.dispose();
+      // Sprite and effect textures are shared caches: free the materials, not their maps.
+      const mats = Array.isArray(mesh.material) ? mesh.material : mesh.material ? [mesh.material] : [];
+      for (const mat of mats) mat.dispose();
+    });
+    for (const h of m.hidden) h.obj.visible = h.was;
+    if (this.forest && m.felled.length) {
+      for (const { i, m: mat } of m.felled) this.forest.setMatrixAt(i, mat);
+      this.forest.instanceMatrix.needsUpdate = true;
+    }
+    const mine = this.state?.you ? this.units.get(this.state.you) : undefined;
+    if (mine) for (const obj of [mine.sprite, mine.label, mine.ring]) if (obj) obj.visible = true;
+    for (const b of [this.followButton, ...this.turnButtons]) b.style.visibility = "";
+    if (this.camera.fov !== this.baseFov) {
+      this.camera.fov = this.baseFov;
+      this.camera.updateProjectionMatrix();
+    }
+  }
+
+  /**
+   * What is under a point of the map, in world units: the ground there, how
+   * high its top stands, and whether a point of interest (a building, a spot)
+   * is on that hex. Null off the map.
+   */
+  groundAt(x: number, z: number): { biome: string; top: number; poi: boolean } | null {
+    if (!this.state) return null;
+    const pos = worldToHex(x, z);
+    const tile = tileAt(this.state.map, pos);
+    if (!tile) return null;
+    return { biome: tile.biome, top: tileTop(tile), poi: this.state.map.pois.some((p) => p.pos.q === pos.q && p.pos.r === pos.r) };
+  }
+
+  /** For the minigame under way: take the forest's own trees out of a circle (world units) so its things stand clear. Put back when it ends. */
+  clearTrees(x: number, z: number, radius: number) {
+    const m = this.minigame;
+    const forest = this.forest;
+    if (!m || !forest) return;
+    const mat = new THREE.Matrix4();
+    const at = new THREE.Vector3();
+    for (let i = 0; i < forest.count; i++) {
+      forest.getMatrixAt(i, mat);
+      at.setFromMatrixPosition(mat);
+      if (Math.hypot(at.x - x, at.z - z) > radius || mat.elements[0] === 0) continue;
+      m.felled.push({ i, m: mat.clone() });
+      forest.setMatrixAt(i, new THREE.Matrix4().makeScale(0, 0, 0));
+    }
+    forest.instanceMatrix.needsUpdate = true;
+  }
+
+  /** While a minigame runs you see through your hero's eyes: their sprite, tag and ring are not drawn. */
+  private hideOwnHero() {
+    const mine = this.state?.you ? this.units.get(this.state.you) : undefined;
+    if (mine) for (const obj of [mine.sprite, mine.label, mine.ring]) if (obj) obj.visible = false;
+  }
+
   /** A point of interest's model, by id, for a scene that moves one about itself (the crew's ship at sea). */
   poiObject(id: string): THREE.Object3D | undefined {
     return this.poiGroup.children.find((g) => g.userData.poiId === id);
@@ -1642,27 +1737,11 @@ export class WorldRenderer {
     return (this.units.get(id)?.path.length ?? 0) > 0;
   }
 
-  // ---------- close-ups ----------
+  // ---------- for a minigame's own things ----------
 
-  /**
-   * Fly the camera into a close-up (orbiting round as it comes down), or back out to the map with null. While
-   * one is set the map takes no clicks, drags or keys, its camera buttons are hidden, and your own hero (who
-   * would be standing in the shot) is not drawn.
-   */
-  setCloseup(closeup: Closeup | null) {
-    this.closeup = closeup;
-    if (closeup) this.closeLast = closeup;
-    this.rotateButtons.style.display = closeup ? "none" : "";
-    this.touches.clear();
-    this.pinch = null;
-    this.pointer.down = false;
-    this.heldKeys.clear();
-    if (closeup) this.setHovered(null);
-  }
-
-  /** How far into a close-up the camera is: 0 out on the map, 1 all the way in. */
-  get closeness(): number {
-    return this.closeT;
+  /** The minigame being played, if any. */
+  get playing(): WorldMinigame | null {
+    return this.minigame?.game ?? null;
   }
 
   /** How dark it is outdoors, 0 (day) to 1 (dead of night). */
@@ -1675,7 +1754,7 @@ export class WorldRenderer {
     return !!this.post;
   }
 
-  /** Add something of a view's own to the scene (a close-up's set), or take it away. */
+  /** Add something to the scene outside the minigame's own group (a pick held in front of the camera), or take it away. */
   addObject(obj: THREE.Object3D) {
     this.scene.add(obj);
   }
@@ -1697,51 +1776,6 @@ export class WorldRenderer {
     const ndc = new THREE.Vector2(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1);
     this.raycaster.setFromCamera(ndc, this.camera);
     return this.raycaster.intersectObjects(objects, true)[0] ?? null;
-  }
-
-  /** Where a point in the world is on screen, in container pixels, or null if it is behind the camera. */
-  toScreen(p: THREE.Vector3): { x: number; y: number } | null {
-    const v = p.clone().project(this.camera);
-    if (v.z < -1 || v.z > 1) return null;
-    return { x: ((v.x + 1) / 2) * this.container.clientWidth, y: ((1 - v.y) / 2) * this.container.clientHeight };
-  }
-
-  /** Where a hex's ground is, in world units. */
-  groundAt(pos: HexPos): THREE.Vector3 {
-    return this.standAt(pos);
-  }
-
-  /** Ease toward the close-up (or out of it) and put the camera on the way there, orbiting in as it comes down. */
-  private flyCloseup(dt: number) {
-    const goal = this.closeup ? 1 : 0;
-    if (this.closeT !== goal) this.closeT = goal > this.closeT ? Math.min(1, this.closeT + dt / CLOSE_IN_S) : Math.max(0, this.closeT - dt / CLOSE_OUT_S);
-    this.focusPoint.copy(this.target);
-    if (this.closeT <= 0 || !this.closeLast) {
-      if (this.camera.fov !== BASE_FOV && !this.vantage) {
-        this.camera.fov = BASE_FOV;
-        this.camera.updateProjectionMatrix();
-      }
-      return;
-    }
-    const s = smoother(this.closeT);
-    const shot = this.closeLast.shot(this.camera.aspect);
-    const look = this.closeLook.copy(this.target).lerp(shot.look, s);
-    const rel = this.closeRel.copy(shot.eye).sub(shot.look);
-    const d1 = Math.max(0.01, rel.length());
-    const yaw1 = Math.atan2(rel.x, rel.z);
-    const pitch1 = Math.asin(Math.max(-1, Math.min(1, rel.y / d1)));
-    const d0 = Math.max(0.01, this.camera.position.distanceTo(this.target));
-    // Turn the short way round to the shot, with a little extra swing on the way so it always orbits in.
-    let turn = yaw1 - this.yaw;
-    turn = Math.atan2(Math.sin(turn), Math.cos(turn));
-    const yaw = this.yaw + turn * s + Math.sin(Math.PI * s) * 0.5;
-    const pitch = this.pitch + (pitch1 - this.pitch) * s;
-    const d = Math.exp(Math.log(d0) + (Math.log(d1) - Math.log(d0)) * s);
-    this.camera.position.set(look.x + Math.sin(yaw) * Math.cos(pitch) * d, look.y + Math.sin(pitch) * d, look.z + Math.cos(yaw) * Math.cos(pitch) * d);
-    this.camera.lookAt(look);
-    this.camera.fov = BASE_FOV + (shot.fov - BASE_FOV) * s;
-    this.camera.updateProjectionMatrix();
-    this.focusPoint.copy(look);
   }
 
   // ---------- points of interest ----------
@@ -3355,8 +3389,14 @@ export class WorldRenderer {
   // hex if it barely moves); two pointers pinch to zoom and pan together.
 
   private onPointerDown = (e: PointerEvent) => {
-    if (this.closeup) return;
     const canvas = this.renderer.domElement;
+    if (this.minigame) {
+      e.preventDefault();
+      const rect = canvas.getBoundingClientRect();
+      const ndc = new THREE.Vector2(((e.clientX - rect.left) / rect.width) * 2 - 1, -((e.clientY - rect.top) / rect.height) * 2 + 1);
+      this.minigame.game.press?.(ndc, this.camera);
+      return;
+    }
     try {
       canvas.setPointerCapture(e.pointerId);
     } catch {
@@ -3416,9 +3456,12 @@ export class WorldRenderer {
   private onContextMenu = (e: Event) => e.preventDefault();
 
   private onKeyDown = (e: KeyboardEvent) => {
-    if (this.closeup) return;
     const el = e.target as HTMLElement | null;
     if (e.metaKey || e.ctrlKey || e.altKey || (el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName)))) return;
+    if (this.minigame) {
+      if (this.minigame.game.key?.(e)) e.preventDefault();
+      return;
+    }
     if (e.key === "q" || e.key === "Q") this.rotateBy(-1);
     else if (e.key === "e" || e.key === "E") this.rotateBy(1);
     else if (e.key === "r" || e.key === "R") this.tiltBy(0.18, true);
@@ -3465,7 +3508,7 @@ export class WorldRenderer {
   }
 
   private onPointerMove = (e: PointerEvent) => {
-    if (this.closeup) return;
+    if (this.minigame) return;
     const touch = this.touches.get(e.pointerId);
     if (touch) {
       touch.x = e.clientX;
@@ -3512,6 +3555,10 @@ export class WorldRenderer {
   private onPointerUp = (e: PointerEvent) => {
     const canvas = this.renderer.domElement;
     if (canvas.hasPointerCapture(e.pointerId)) canvas.releasePointerCapture(e.pointerId);
+    if (this.minigame) {
+      this.touches.delete(e.pointerId);
+      return;
+    }
     this.touches.delete(e.pointerId);
     if (this.touches.size >= 1) {
       // One finger of a pinch lifted: carry on panning with the other, without a jump.
@@ -3550,7 +3597,7 @@ export class WorldRenderer {
 
   private onWheel = (e: WheelEvent) => {
     e.preventDefault();
-    if (this.closeup) return;
+    if (this.minigame) return;
     // Shift and the wheel turn whatever is being carried: a notch at a time, or (snapping off) as far as the wheel moves.
     if (e.shiftKey && this.state?.holding && this.callbacks.onTurnHeld) {
       const delta = e.deltaY || e.deltaX;
@@ -3648,7 +3695,7 @@ export class WorldRenderer {
     this.clock += dt;
     const ease = 1 - Math.exp(-dt * 6);
 
-    if (this.pointer.dirty && this.pointer.inside && !this.closeup) {
+    if (this.pointer.dirty && this.pointer.inside && !this.minigame) {
       this.pointer.dirty = false;
       this.setHovered(this.pick());
       if (this.state?.holding) this.placeGhost();
@@ -3663,7 +3710,7 @@ export class WorldRenderer {
     }
 
     // Held movement keys slide the view, at a speed that covers the screen in about a second and a half.
-    if (this.heldKeys.size > 0 && !this.state?.battle && !this.closeup) {
+    if (this.heldKeys.size > 0 && !this.state?.battle) {
       let x = 0;
       let y = 0;
       for (const key of this.heldKeys) {
@@ -3702,7 +3749,34 @@ export class WorldRenderer {
       this.camera.position.copy(this.vantage.from);
       this.camera.lookAt(this.vantage.to);
       this.target.copy(this.vantage.to);
-    } else this.flyCloseup(dt);
+    }
+    // A game in the world swings the camera from the usual view round and down into its own: the bearing, distance
+    // and height about the game's look point all ease over together, so it orbits in rather than sliding.
+    let focus = this.camera.position.distanceTo(this.target);
+    if (this.minigame) {
+      const v = this.minigame.game.frame(dt, now, this.camera.aspect);
+      const b = Math.max(0, Math.min(1, v.blend));
+      if (b > 0) {
+        const rel0 = this.camera.position.clone().sub(v.look);
+        const rel1 = v.eye.clone().sub(v.look);
+        const a0 = Math.atan2(rel0.x, rel0.z);
+        let turn = Math.atan2(rel1.x, rel1.z) - a0;
+        while (turn > Math.PI) turn -= 2 * Math.PI;
+        while (turn < -Math.PI) turn += 2 * Math.PI;
+        const bearing = a0 + turn * b;
+        const flat = THREE.MathUtils.lerp(Math.hypot(rel0.x, rel0.z), Math.hypot(rel1.x, rel1.z), b);
+        const look = this.target.clone().lerp(v.look, b);
+        this.camera.position.set(v.look.x + Math.sin(bearing) * flat, v.look.y + THREE.MathUtils.lerp(rel0.y, rel1.y, b), v.look.z + Math.cos(bearing) * flat);
+        this.camera.lookAt(look);
+        focus = this.camera.position.distanceTo(look);
+      }
+      const fov = THREE.MathUtils.lerp(this.baseFov, v.fov ?? this.baseFov, b);
+      if (Math.abs(fov - this.camera.fov) > 0.01) {
+        this.camera.fov = fov;
+        this.camera.updateProjectionMatrix();
+      }
+      this.hideOwnHero();
+    }
     this.ambience.update(this.clock, this.yaw, this.target, this.state?.you ? this.units.get(this.state.you)?.sprite.position : undefined);
     // Sounds are heard from where your hero stands, or from the middle of the view without one.
     const ear = (this.state?.you ? this.units.get(this.state.you)?.sprite.position : undefined) ?? this.target;
@@ -3912,10 +3986,6 @@ export class WorldRenderer {
     }
 
     for (const tick of this.tickers) tick(dt, this.camera, this.clock);
-    // In a close-up the camera stands where your hero does: do not draw them in the way.
-    const you = this.closeT > 0.35 && this.state?.you ? this.units.get(this.state.you) : undefined;
-    const hidden = you ? [you.sprite, you.label, you.ring, you.hpBack, you.hpFill].filter((o): o is THREE.Sprite | THREE.Mesh => !!o && o.visible) : [];
-    for (const o of hidden) o.visible = false;
     this.ambience.settleShadows();
     if (this.post) {
       this.air.outdoors = this.ambience.openSky;
@@ -3927,9 +3997,8 @@ export class WorldRenderer {
       this.air.sunHeight = this.ambience.sunHeight;
       // In a room the flash is only what comes in at the windows.
       this.air.flash = this.opts.backdrop ? this.lentFlash : this.storm.flash * (this.ambience.openSky ? 1 : 0.4);
-      this.post.render(this.scene, this.camera, this.camera.position.distanceTo(this.focusPoint), this.ambience.night, this.air);
+      this.post.render(this.scene, this.camera, focus, this.ambience.night, this.air);
     }
     else this.renderer.render(this.scene, this.camera);
-    for (const o of hidden) o.visible = true;
   };
 }

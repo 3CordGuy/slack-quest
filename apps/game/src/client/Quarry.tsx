@@ -8,15 +8,11 @@ import { useEffect, useRef, useState } from "react";
 import { HARBOR_GATHER, MINE_RARITY, RESOURCE_KINDS, type Blow, type GatherChoice, type GatherView, type Resources } from "@gantt-quest/world";
 import { api, type GatherStatus, type XpResult } from "./api";
 import { ResourceChips } from "./hutDrops";
-import { MineStage } from "./render/MineStage";
+import { MineStage, type MineCallbacks } from "./render/MineStage";
 import type { WorldRenderer } from "./render/WorldRenderer";
 
 type Status = GatherStatus & { paid?: Resources; xp?: XpResult };
 
-/** Stages still standing in the world, for keeping the quarry's own model hidden until the last is gone. */
-let live = 0;
-/** How long the camera takes to fly back out, before the set is taken down. */
-const TEARDOWN_MS = 1400;
 /** How long "Time!" shows before the haul is carried out. */
 const TIME_UP_MS = 1300;
 
@@ -96,7 +92,7 @@ export function Quarry({ outing, world, apply, onLeave }: {
 
   // The set goes up at the quarry when the panel opens on an outing there, and the camera flies down into it.
   useEffect(() => {
-    const s = new MineStage(world, world.groundAt(HARBOR_GATHER.quarry), mine, {
+    const callbacks: MineCallbacks = {
       onBlow: (blow, broken) => {
         pending.current.push(blow);
         if (broken.length > 0) {
@@ -112,40 +108,22 @@ export function Quarry({ outing, world, apply, onLeave }: {
         }
         if (chargeWord.current) chargeWord.current.textContent = !ready ? "…" : charge >= 1 ? "Heavy! (3 + knocks)" : charge >= 0.5 ? "Hard (2)" : charge > 0 ? "Charging" : "Tap (1)";
       },
-    });
+    };
+    // The set goes up on the quarry's hex (whose own model it stands in for) and the camera orbits down into it.
+    const s = world.startMinigame((group) => new MineStage(world, group, mine, callbacks), HARBOR_GATHER.quarry, "quarry");
     stage.current = s;
-    live++;
     // The Harbor's own panels (docks, chat, crew) step aside while the face fills the screen.
     document.body.classList.add("mining");
-    world.setCloseup(s.closeup);
     // Back after a reload part way through: pick the clock up where the server has it.
     if (mine.leftMs !== null) s.start(mine.ms - mine.leftMs);
     return () => {
       document.body.classList.remove("mining");
-      world.setCloseup(null);
       stage.current = null;
-      s.stop();
-      setTimeout(() => {
-        s.dispose();
-        if (--live === 0) {
-          const poi = world.poiObject("quarry");
-          if (poi) poi.visible = true;
-        }
-      }, TEARDOWN_MS);
+      // Fly back out to the map; the set comes down once the camera is clear of it.
+      s.leave();
     };
     // One stage for the life of this view of the outing.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [world]);
-
-  // The quarry's own model would stand in the middle of the set.
-  useEffect(() => {
-    const id = setInterval(() => {
-      const poi = world.poiObject("quarry");
-      if (poi) poi.visible = false;
-    }, 250);
-    const poi = world.poiObject("quarry");
-    if (poi) poi.visible = false;
-    return () => clearInterval(id);
   }, [world]);
 
   // The clock, drawn straight into the bar.

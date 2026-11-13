@@ -1,6 +1,6 @@
-// The quarry's rock face, seen first person. Not a scene of its own: a set
-// added to the Harbor's renderer at the quarry, which the camera flies down
-// into (WorldRenderer.setCloseup) and back out of when the clock runs out.
+// The quarry's rock face, seen first person. Not a scene of its own: a
+// minigame played in the Harbor's renderer (WorldRenderer.startMinigame),
+// built at the quarry, which the camera orbits down into and back out of.
 //
 // It shows what the server sends (MineView) and plays the swings. The swings
 // are timed here, by the same rules the server replays them with (landBlows
@@ -24,7 +24,7 @@ import { audio } from "../audio/engine";
 import { soundName } from "../audio/names";
 import { OVERLAY_LAYER } from "./post";
 import { textTexture } from "./sprites";
-import type { Closeup, WorldRenderer } from "./WorldRenderer";
+import type { WorldMinigame, WorldRenderer } from "./WorldRenderer";
 
 /** World units per rock in the face. */
 const CELL = 0.2;
@@ -33,6 +33,10 @@ const FACE_Z = -0.5;
 /** Height of the bottom row's foot above the ground. */
 const FACE_FOOT = 0.06;
 const VFOV = 52;
+/** Seconds to fly down into the face, and back out of it. */
+const IN_S = 1.6;
+const OUT_S = 1.2;
+const smoother = (t: number) => t * t * t * (t * (t * 6 - 15) + 10);
 
 /** How each hardness looks: rock colour by how many blows it takes. */
 const LOOK_COLOR: Record<number, string> = { 1: "#a39684", 2: "#8d857b", 3: "#6e7380", 4: "#565c6a" };
@@ -292,10 +296,9 @@ export interface MineCallbacks {
   onCharge?(charge: number, ready: boolean): void;
 }
 
-export class MineStage {
-  private group = new THREE.Group();
+export class MineStage implements WorldMinigame {
   private face = new THREE.Group();
-  private frame = new THREE.Group();
+  private surround = new THREE.Group();
   private fx = new THREE.Group();
   /** The pick, drawn in front of the camera. */
   private pick = new THREE.Group();
@@ -320,7 +323,7 @@ export class MineStage {
   private running = false;
   private timeUp = false;
   /** A swing being held: on which rock it started and when (ms on the clock). */
-  private press: { downAt: number } | null = null;
+  private held: { downAt: number } | null = null;
   /** A tap made while the pick was still coming back: it lands as soon as the pick is free. */
   private buffered: number | null = null;
   private hovered: number | null = null;
@@ -334,10 +337,14 @@ export class MineStage {
   private clock = 0;
   private disposed = false;
 
-  readonly closeup: Closeup;
+  /** How far the camera has come down into the face, 0 to 1 (before easing), and whether it is on its way back out. */
+  private inT = 0;
+  private leaving = false;
+  /** That, eased: what the renderer is told, and what the pick and hover follow. */
+  private close = 0;
 
-  constructor(private world: WorldRenderer, at: THREE.Vector3, view: MineView, private cb: MineCallbacks) {
-    this.group.position.copy(at);
+  /** Built by WorldRenderer.startMinigame, in the group it stands on the quarry's hex. */
+  constructor(private world: WorldRenderer, private group: THREE.Group, view: MineView, private cb: MineCallbacks) {
     this.light = {
       uKeyDir: { value: new THREE.Vector3(-0.35, 0.8, 0.5).normalize() },
       uKey: { value: new THREE.Color() },
@@ -353,10 +360,9 @@ export class MineStage {
     this.lastAt = view.lastAt;
     this.buildRocks(view);
     this.buildPick();
-    this.group.add(this.face, this.frame, this.fx);
-    world.addObject(this.group);
+    this.group.add(this.face, this.surround, this.fx);
+    // The pick is placed in front of the camera each frame, in world space, so it stands outside the group.
     world.addObject(this.pick);
-    this.closeup = { shot: (aspect) => this.shot(aspect) };
     this.stopTick = world.addTicker((dt, camera, clock) => this.tick(dt, camera, clock));
   }
 
@@ -404,17 +410,17 @@ export class MineStage {
 
   /** The rock round the face, the dark behind it, the floor and a lantern. */
   private buildFrame(w: number, h: number) {
-    for (const o of this.frame.children) {
+    for (const o of this.surround.children) {
       if (o instanceof THREE.Mesh) {
         o.geometry.dispose();
         (o.material as THREE.Material).dispose();
       }
     }
-    this.frame.clear();
+    this.surround.clear();
     const add = (geo: THREE.BufferGeometry, mat: THREE.Material, x: number, y: number, z: number) => {
       const m = new THREE.Mesh(geo, mat);
       m.position.set(x, y, z);
-      this.frame.add(m);
+      this.surround.add(m);
       return m;
     };
     // The dark beyond the face, seen where rocks have come away.
@@ -571,7 +577,7 @@ export class MineStage {
   /** Stop taking swings (the outing is being hauled out). */
   stop() {
     this.running = false;
-    this.press = null;
+    this.held = null;
     this.buffered = null;
   }
 
@@ -597,16 +603,16 @@ export class MineStage {
     this.pointerMove(x, y);
     const now = this.now();
     if (!this.running || now === null) return;
-    this.press = { downAt: now };
+    this.held = { downAt: now };
   }
 
   /** The swing is let go: it lands on the rock under the pointer, as hard as it was charged. */
   pressUp(x: number, y: number) {
     this.pointerMove(x, y);
-    const press = this.press;
-    this.press = null;
+    const held = this.held;
+    this.held = null;
     const now = this.now();
-    if (!press || !this.running || now === null) return;
+    if (!held || !this.running || now === null) return;
     const id = this.rockAt(x, y);
     const free = this.freeAt();
     if (now < free) {
@@ -614,7 +620,7 @@ export class MineStage {
       if (id !== null) this.buffered = id;
       return;
     }
-    const power = powerFor(now - Math.max(press.downAt, free), this.chargeMs);
+    const power = powerFor(now - Math.max(held.downAt, free), this.chargeMs);
     if (id === null) {
       this.whiff(power);
       return;
@@ -794,6 +800,27 @@ export class MineStage {
 
   // ---------- the camera ----------
 
+  /** WorldMinigame: where the eye is this frame, and how far over to it the camera has come. */
+  frame(dt: number, _now: number, aspect: number): { eye: THREE.Vector3; look: THREE.Vector3; blend: number; fov: number } {
+    this.inT = this.leaving ? Math.max(0, this.inT - dt / OUT_S) : Math.min(1, this.inT + dt / IN_S);
+    this.close = smoother(this.inT);
+    if (this.leaving && this.inT <= 0) setTimeout(() => this.finish(), 0);
+    return { ...this.shot(aspect), blend: this.close };
+  }
+
+  /** Fly back out to the map, then take the set down and give the view back. */
+  leave() {
+    this.stop();
+    this.leaving = true;
+  }
+
+  private finish() {
+    if (this.disposed) return;
+    this.dispose();
+    // Only if the view is still ours: another game may have taken it over meanwhile.
+    if (this.world.playing === this) this.world.endMinigame();
+  }
+
   /** Where the eye stands to see the whole face, and what it looks at, in world units. */
   private shot(aspect: number): { eye: THREE.Vector3; look: THREE.Vector3; fov: number } {
     if (!this.laidOut) this.layout();
@@ -816,7 +843,7 @@ export class MineStage {
     if (this.disposed) return;
     this.clock = clock;
     if (!this.laidOut) this.layout();
-    const close = this.world.closeness;
+    const close = this.close;
     const night = this.world.night;
     // The light: a soft key from the sky that fades at night, and the lantern, which carries the face after dark.
     const L = this.light;
@@ -833,7 +860,7 @@ export class MineStage {
       if (now >= this.ms) {
         this.running = false;
         this.timeUp = true;
-        this.press = null;
+        this.held = null;
         this.buffered = null;
         this.cb.onTimeUp();
       } else if (this.buffered !== null && now >= this.freeAt()) {
@@ -843,7 +870,7 @@ export class MineStage {
       }
     }
     const free = now !== null && now >= this.freeAt();
-    this.charge = this.press && now !== null ? Math.min(1, Math.max(0, now - Math.max(this.press.downAt, this.freeAt())) / this.chargeMs) : 0;
+    this.charge = this.held && now !== null ? Math.min(1, Math.max(0, now - Math.max(this.held.downAt, this.freeAt())) / this.chargeMs) : 0;
     this.cb.onCharge?.(this.charge, free);
 
     // The rock under the pointer lights up, more as the swing charges.
@@ -961,11 +988,11 @@ export class MineStage {
     if (raise > 0.98) p.rotation.z += (Math.random() - 0.5) * 0.03;
   }
 
+  /** Free what this set made. The group itself is the renderer's, taken down by endMinigame. */
   dispose() {
     if (this.disposed) return;
     this.disposed = true;
     this.stopTick();
-    this.world.removeObject(this.group);
     this.world.removeObject(this.pick);
     for (const b of this.bits) if (b.obj instanceof THREE.Sprite) b.obj.material.dispose();
     for (const rock of this.rocks) for (const s of rock.stars) s.material.dispose();
