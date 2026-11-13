@@ -86,6 +86,20 @@ The game has two environments, both set in `apps/game/wrangler.jsonc`:
 
 `wrangler.jsonc` is **gitignored**. `wrangler.example.jsonc` is the tracked template. Copy it and fill in the real database IDs.
 
+### From GitHub Actions (the normal way)
+
+`.github/workflows/deploy-game.yml` deploys the game. For each environment it writes the config, runs the tests, takes a D1 Time Travel bookmark, applies and confirms migrations, builds, deploys and smoke-tests.
+
+- **Staging** deploys automatically on every push to `main` that touches the game (`apps/game`, `packages/world`, `packages/core`, the lockfile or the workflow). The repo variable `GAME_STAGING_AUTODEPLOY=true` turns this on. To deploy staging by hand: `gh workflow run deploy-game.yml --ref main -f target=staging`.
+- **Production** deploys when you push a `game-v*` tag:
+  ```bash
+  git tag game-v2026.11.13 origin/main && git push origin game-v2026.11.13
+  ```
+  The job runs in the `production` GitHub Environment, which has a required reviewer, so it waits for approval in the Actions tab.
+- **Config:** CI gets the whole `apps/game/wrangler.jsonc` from the repo secret `WRANGLER_GAME_CONFIG`. When you change an environment block (a new binding, var or Durable Object), update the secret too, or CI keeps deploying the old config: `gh secret set WRANGLER_GAME_CONFIG < apps/game/wrangler.jsonc`.
+
+### By hand (fallback)
+
 Deploy one environment at a time, in this order:
 
 ```bash
@@ -99,12 +113,12 @@ npx wrangler deploy                                           # 3. deploy what w
 - **Build every time.** `wrangler deploy` ships whatever the last build produced, for whichever environment it was built for.
 - **Production:** use `--env production` and `CLOUDFLARE_ENV=production`. The full checklist (secrets, the first deploy, smoke test, rollback) is [`docs/game-production-checklist.md`](docs/game-production-checklist.md).
 - **Secrets:** `ADMIN_EMAILS` is a Worker secret per environment: `npx wrangler secret put ADMIN_EMAILS --env staging`.
-- **CI deploys:** `.github/workflows/deploy-game.yml` can deploy from GitHub Actions. It's off by default: it needs the `WRANGLER_GAME_CONFIG` secret, and the repo variable `GAME_STAGING_AUTODEPLOY=true` for automatic staging deploys. Until then, deploys are by hand.
 
 ### Branches
 
 - `main` is the only long-lived branch. Feature branches open PRs into it.
-- A push to `main` runs `.github/workflows/deploy.yml`, which deploys the **legacy** web app and Slack bot. It skips pushes that only touch the game (`apps/game`, `packages/world`) or docs, and it never deploys the game.
+- A push to `main` that touches the game deploys it to **staging** (see above). Production only ever deploys from a `game-v*` tag.
+- A push to `main` also runs `.github/workflows/deploy.yml`, which deploys the **legacy** web app and Slack bot. It skips pushes that only touch the game (`apps/game`, `packages/world`) or docs, and it never deploys the game.
 
 ## How the code is built
 
