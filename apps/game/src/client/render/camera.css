@@ -2,5 +2,3 @@
 .camera-rotate { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); z-index: 8; display: flex; flex-direction: column; gap: 6px; }
 .camera-rotate button { width: 34px; height: 34px; padding: 0; font-size: 18px; line-height: 1; background: rgba(27, 24, 48, 0.9); }
 @media (pointer: coarse) { .camera-rotate button { width: 44px; height: 44px; font-size: 22px; } }
-.camera-rotate .camera-mute { margin-top: 10px; font-size: 15px; }
-@media (pointer: coarse) { .camera-rotate .camera-mute { font-size: 19px; } }

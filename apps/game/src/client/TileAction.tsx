@@ -6,6 +6,7 @@
 import { useEffect, useRef, type RefObject } from "react";
 import type { HexPos } from "@gantt-quest/core";
 import type { WorldRenderer } from "./render/WorldRenderer";
+import { uiZoom } from "./uiScale";
 
 export function TileAction({ renderer, pos, unitId, label, run }: {
   renderer: RefObject<WorldRenderer | null>;
@@ -29,7 +30,9 @@ export function TileAction({ renderer, pos, unitId, label, run }: {
       // Over the character's own head (and name), falling back to the hex if they are not drawn yet.
       const at = world && !world.isWalking(unitId) ? (world.screenAboveUnit(unitId) ?? world.screenAbove({ q, r })) : null;
       el.style.visibility = at ? "visible" : "hidden";
-      if (at) el.style.transform = `translate(${Math.round(at.x)}px, ${Math.round(at.y)}px)`;
+      // The scene's pixels are the screen's; this button sits in the (possibly zoomed) view.
+      const z = uiZoom();
+      if (at) el.style.transform = `translate(${Math.round(at.x / z)}px, ${Math.round(at.y / z)}px)`;
     };
     raf = requestAnimationFrame(place);
     return () => cancelAnimationFrame(raf);

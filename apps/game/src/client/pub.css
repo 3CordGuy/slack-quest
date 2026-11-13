@@ -1,6 +1,6 @@
 /* Inside the pub (PubView). Shared layout classes come from styles.css and hut.css. */
 
-.pub-bar { max-height: calc(100vh - 230px); width: min(360px, calc(100% - 24px)); }
+.pub-bar { max-height: calc(100vh / var(--ui-z, 1) - 230px); width: min(360px, calc(100% - 24px)); }
 .pub-bar h3 { margin: 12px 0 4px; }
 .pub-bar h3:first-of-type { margin-top: 0; }
 .pub-bar p { margin: 0 0 6px; }
@@ -15,7 +15,7 @@
 .pub-bar .row input { flex: 1; min-width: 0; }
 
 @media (max-width: 760px) {
-  .pub-bar { width: 70vw; max-height: 55vh; font-size: 12px; }
+  .pub-bar { width: calc(70vw / var(--ui-z, 1)); max-height: calc(55vh / var(--ui-z, 1)); font-size: 12px; }
 }
 
 /* The traveling salesman's table (SalesmanPanel). */

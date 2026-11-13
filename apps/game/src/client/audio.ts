@@ -7,19 +7,43 @@
 import type { StepGround } from "./render/footsteps";
 
 const MUTE_KEY = "gq.muted";
+const VOLUME_KEY = "gq.volume";
 
 let ctx: AudioContext | null = null;
 let master: GainNode | null = null;
 let noise: AudioBuffer | null = null;
 let armed = false;
 let muted = readMuted();
+let volume = readVolume();
 const muteListeners = new Set<(muted: boolean) => void>();
+const volumeListeners = new Set<(volume: number) => void>();
 
 function readMuted(): boolean {
   try {
     return localStorage.getItem(MUTE_KEY) === "1";
   } catch {
     return false;
+  }
+}
+
+function readVolume(): number {
+  try {
+    const raw = Number(localStorage.getItem(VOLUME_KEY));
+    return localStorage.getItem(VOLUME_KEY) !== null && Number.isFinite(raw) ? Math.max(0, Math.min(1, raw)) : 1;
+  } catch {
+    return 1;
+  }
+}
+
+/** What the master gain should be: nothing while muted, else the chosen volume. */
+// Squared, so the slider feels even to the ear rather than all happening at the top.
+const level = () => (muted ? 0 : volume * volume);
+
+function applyLevel() {
+  try {
+    if (master && ctx) master.gain.setTargetAtTime(level(), ctx.currentTime, 0.02);
+  } catch {
+    // Nothing to quiet.
   }
 }
 
@@ -34,12 +58,30 @@ export function setMuted(next: boolean) {
   } catch {
     // Private windows and blocked storage: the choice lasts for this visit only.
   }
-  try {
-    if (master && ctx) master.gain.setTargetAtTime(next ? 0 : 1, ctx.currentTime, 0.02);
-  } catch {
-    // Nothing to quiet.
-  }
+  applyLevel();
   for (const fn of muteListeners) fn(next);
+}
+
+/** The overall volume, 0 to 1 (full, by default). Kept apart from the mute, so unmuting brings back the level that was chosen. */
+export function getVolume(): number {
+  return volume;
+}
+
+export function setVolume(next: number) {
+  volume = Math.max(0, Math.min(1, Number.isFinite(next) ? next : 1));
+  try {
+    localStorage.setItem(VOLUME_KEY, String(volume));
+  } catch {
+    // This visit only.
+  }
+  applyLevel();
+  for (const fn of volumeListeners) fn(volume);
+}
+
+/** Hear about the volume changing. Returns a function that stops listening. */
+export function onVolumeChange(fn: (volume: number) => void): () => void {
+  volumeListeners.add(fn);
+  return () => volumeListeners.delete(fn);
 }
 
 /** Hear about the sound being muted or unmuted (from any button). Returns a function that stops listening. */
@@ -59,7 +101,7 @@ export function armAudio() {
         if (!Ctor) return;
         ctx = new Ctor();
         master = ctx.createGain();
-        master.gain.value = muted ? 0 : 1;
+        master.gain.value = level();
         master.connect(ctx.destination);
         // A quarter second of white noise, the stuff every step is cut from.
         noise = ctx.createBuffer(1, Math.floor(ctx.sampleRate * 0.25), ctx.sampleRate);

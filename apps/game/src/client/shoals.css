@@ -1,7 +1,7 @@
 /* The pub's Shoals table (ShoalsTable): a round table from above with the pilots seated around it. */
 .shoals-table {
   position: absolute; left: 50%; top: 52px; transform: translateX(-50%); z-index: 14;
-  width: min(440px, calc(100vw - 32px)); max-height: calc(100vh - 120px);
+  width: min(440px, calc(100vw / var(--ui-z, 1) - 32px)); max-height: calc(100vh / var(--ui-z, 1) - 120px);
   display: flex; flex-direction: column; gap: 8px;
 }
 .shoals-table p { margin: 0; }

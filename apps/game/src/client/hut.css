@@ -43,11 +43,11 @@
 .pixel-glyph { display: block; image-rendering: pixelated; }
 
 /* The split furnishing panels. */
-.hut-storage { position: absolute; top: 48px; left: 10px; width: min(300px, 40vw); z-index: 10; max-height: calc(100vh - 270px); }
-.hut-craft { position: absolute; top: 48px; left: calc(min(300px, 40vw) + 20px); width: min(330px, 40vw); z-index: 10; max-height: calc(100vh - 200px); }
-.hut-info { position: absolute; top: 240px; right: 10px; width: 240px; z-index: 10; max-height: calc(100vh - 340px); }
+.hut-storage { position: absolute; top: 48px; left: 10px; width: min(300px, calc(40vw / var(--ui-z, 1))); z-index: 10; max-height: calc(100vh / var(--ui-z, 1) - 270px); }
+.hut-craft { position: absolute; top: 48px; left: calc(min(300px, calc(40vw / var(--ui-z, 1))) + 20px); width: min(330px, calc(40vw / var(--ui-z, 1))); z-index: 10; max-height: calc(100vh / var(--ui-z, 1) - 200px); }
+.hut-info { position: absolute; top: 240px; right: 10px; width: 240px; z-index: 10; max-height: calc(100vh / var(--ui-z, 1) - 340px); }
 /* Above the floating piece toolbar and the tile-action chips (16): the chest that toolbar opened must not sit under it. */
-.hut-boxpanel { position: absolute; top: 48px; right: 250px; width: min(364px, 44vw); z-index: 17; max-height: calc(100vh - 200px); }
+.hut-boxpanel { position: absolute; top: 48px; right: 250px; width: min(364px, calc(44vw / var(--ui-z, 1))); z-index: 17; max-height: calc(100vh / var(--ui-z, 1) - 200px); }
 .hut-storage h3, .hut-craft h3, .hut-info h3, .hut-boxpanel h3 { margin: 10px 0 4px; }
 .hut-storage p, .hut-craft p, .hut-info p, .hut-boxpanel p { margin: 0 0 6px; }
 .hut-storage h4, .hut-info h4, .hut-boxpanel h4 { margin: 10px 0 4px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted, #9aa); }
@@ -57,11 +57,11 @@
 
 @media (max-width: 760px) {
   /* Phones: Storage top left, Craft bottom left (growing upward, clear of the chat tab), Hut on the right under Inside. */
-  .hut-storage { top: 46px; left: 6px; width: 64vw; max-height: 45vh; font-size: 12px; }
-  .hut-craft { top: auto; bottom: 146px; left: 6px; width: calc(100vw - 12px); max-height: 45vh; font-size: 12px; }
-  .hut-info { top: 230px; right: 6px; width: 64vw; max-height: 45vh; font-size: 12px; }
+  .hut-storage { top: 46px; left: 6px; width: calc(64vw / var(--ui-z, 1)); max-height: calc(45vh / var(--ui-z, 1)); font-size: 12px; }
+  .hut-craft { top: auto; bottom: 146px; left: 6px; width: calc(100vw / var(--ui-z, 1) - 12px); max-height: calc(45vh / var(--ui-z, 1)); font-size: 12px; }
+  .hut-info { top: 230px; right: 6px; width: calc(64vw / var(--ui-z, 1)); max-height: calc(45vh / var(--ui-z, 1)); font-size: 12px; }
   /* An opened container is the thing in hand: across the top, over the rest. */
-  .hut-boxpanel { top: 46px; left: 6px; right: 6px; width: auto; max-height: 55vh; font-size: 12px; z-index: 17; }
+  .hut-boxpanel { top: 46px; left: 6px; right: 6px; width: auto; max-height: calc(55vh / var(--ui-z, 1)); font-size: 12px; z-index: 17; }
   .hut-toolbar .icon-btn { width: 32px; height: 32px; }
   /* An unfolded panel sits over the folded tabs around it. */
   .hut-storage:not(.folded), .hut-craft:not(.folded), .hut-info:not(.folded) { z-index: 13; }
@@ -79,7 +79,7 @@
 .hut-mats-btns button { padding: 1px 5px; min-width: 0; }
 
 /* The bar at the bottom: a short hint on one line, then stamina, Rest and Leave. Kept to the right so the chat on the left never runs under it. */
-.hut-view .turnbar.hut-here { left: auto; right: 12px; transform: none; flex-direction: column; align-items: stretch; gap: 6px; white-space: normal; width: max-content; max-width: min(460px, calc(100vw - min(340px, 40vw) - 44px)); }
+.hut-view .turnbar.hut-here { left: auto; right: 12px; transform: none; flex-direction: column; align-items: stretch; gap: 6px; white-space: normal; width: max-content; max-width: min(460px, calc(100vw / var(--ui-z, 1) - min(340px, calc(40vw / var(--ui-z, 1))) - 44px)); }
 .hut-here-hint { margin: 0; font-size: 12px; }
 .hut-here-row { display: flex; gap: 8px; align-items: center; }
 .hut-here-row > button { flex: none; }

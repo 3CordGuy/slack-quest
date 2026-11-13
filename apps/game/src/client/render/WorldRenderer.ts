@@ -14,7 +14,7 @@ import type { HexPos } from "@gantt-quest/core";
 import { hexDistance } from "@gantt-quest/core";
 import { BASE_HEIGHT, BATTLE_JOIN_RANGE, BIG_REACH, ENEMIES, HEX_DIRS, TRAIT_BY_ID, MOVE_COST, WALL_FACE_HALF, WALL_ITEM_BOTTOM, WALL_ITEM_TOP, findPath, xpProgress, reachable, tileAt, wallFace, wallFaces, type ClientState, type Outfit, type Phase, type Poi, type Tile, type WorldEvent, type WorldMap } from "@gantt-quest/world";
 import { ghostModel, propModel, tintGhost, type LightKind } from "./props";
-import { armAudio, isMuted, onMuteChange, playCombat, playFootstep, setMuted } from "../audio";
+import { armAudio, playCombat, playFootstep } from "../audio";
 import { ARROW_ABILITIES, blowKind, effectSound, hitSound, launchSound, missSound } from "./combatSounds";
 import { PUFFS, footfalls, stepGround, stepVolume, worldToHex } from "./footsteps";
 import { SPRITE_ASPECT, bubbleTexture, fxTexture, labelTexture, plateKey, sleepZTexture, spriteKey, spriteTexture, textTexture, type FxKind, type PlateStats } from "./sprites";
@@ -499,8 +499,6 @@ export class WorldRenderer {
   private nextPuff = 0;
   /** The player asked for less motion: footsteps are still heard, but kick up no puffs. */
   private still = typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
-  private muteButton: HTMLButtonElement;
-  private stopMuteWatch: () => void;
   private fx: Fx[] = [];
   /** Speech over units' heads, by unit id; kept apart from the unit so a change of gear does not cut it short. */
   private bubbles = new Map<string, Bubble>();
@@ -624,22 +622,8 @@ export class WorldRenderer {
       this.rotateButtons.appendChild(b);
       this.turnButtons.push(b);
     }
-    // And one to hush the game's sounds, remembered between visits. It stays in a fight.
+    // The sound wakes on the first press. Muting it and its volume are in the Options menu.
     armAudio();
-    this.muteButton = document.createElement("button");
-    this.muteButton.type = "button";
-    this.muteButton.className = "camera-mute";
-    const showMute = (muted: boolean) => {
-      this.muteButton.textContent = muted ? "🔇" : "🔊";
-      const title = muted ? "Turn the sound on" : "Turn the sound off";
-      this.muteButton.title = title;
-      this.muteButton.setAttribute("aria-label", title);
-      this.muteButton.setAttribute("aria-pressed", String(muted));
-    };
-    showMute(isMuted());
-    this.stopMuteWatch = onMuteChange(showMute);
-    this.muteButton.addEventListener("click", () => setMuted(!isMuted()));
-    this.rotateButtons.appendChild(this.muteButton);
     container.appendChild(this.rotateButtons);
     this.resizeObserver = new ResizeObserver(() => this.resize());
     this.resizeObserver.observe(container);
@@ -662,7 +646,6 @@ export class WorldRenderer {
     removeEventListener("keyup", this.onKeyUp);
     removeEventListener("blur", this.onBlur);
     this.rotateButtons.remove();
-    this.stopMuteWatch();
     this.ambience.dispose();
     this.renderer.dispose();
     canvas.remove();

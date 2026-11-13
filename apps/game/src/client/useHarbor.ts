@@ -84,6 +84,10 @@ export function useHarbor(onMoved: (id: string, path: HexPos[]) => void, onXp?: 
           setPlayers((ps) => [...ps.filter((p) => p.id !== msg.player.id), msg.player]);
         } else if (msg.type === "left") {
           setPlayers((ps) => ps.filter((p) => p.id !== msg.id));
+        } else if (msg.type === "placed") {
+          // Put straight there (a stuck hero sent back): an empty walk stops any walk under way, and the unit slides over.
+          setPlayers((ps) => ps.map((p) => (p.id === msg.id ? { ...p, pos: msg.pos, bedroll: undefined } : p)));
+          queueMicrotask(() => moved.current(msg.id, []));
         } else if (msg.type === "moved") {
           const end = msg.path[msg.path.length - 1];
           // Walking off rolls their bedroll back up.

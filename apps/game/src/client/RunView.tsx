@@ -30,6 +30,7 @@ import { ContractStatus } from "./board/ContractStatus";
 import { BEAT_MS, BattleIntro, BattleRecap, FindCard, INTRO_BEATS, INTRO_MS, blowsIn, findFor, introFor, recapFor, settleBattle, type Find, type Intro, type Recap } from "./BattleBeats";
 import { BattleHud, useCountdown } from "./BattleHud";
 import { DragPanel } from "./DragPanel";
+import { OptionsMenu } from "./OptionsMenu";
 import { SailingView, type SeaMode } from "./SailingView";
 import { HutSpoils, blueprintName, isTrophy, perkText, resourceText } from "./hutDrops";
 import { InventoryScreen } from "./InventoryScreen";
@@ -418,6 +419,8 @@ function TopBar({ state, code, status, onLeave, onInventory }: { state: ClientSt
       )}
       {/* The Harbor is behind you once the ship has sailed: only from the docked lobby, or once the voyage is over. */}
       {(state.phase === "lobby" || state.phase === "ended") && <button className="small" onClick={onLeave}>Harbor</button>}
+      {/* No putting a hero back on a voyage: where they stand is part of the game. */}
+      <OptionsMenu resetBlocked="Not on a voyage: your hero stays where the island has them. It works in the Harbor, a hut or the pub." />
     </div>
   );
 }
