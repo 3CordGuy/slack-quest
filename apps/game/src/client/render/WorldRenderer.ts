@@ -502,6 +502,8 @@ interface Fx {
  */
 export interface WorldMinigame {
   frame(dt: number, now: number, aspect: number): { eye: THREE.Vector3; look: THREE.Vector3; blend: number; fov?: number };
+  /** True while the room should still draw your own hero: a game that waits for them to walk up before taking over. Left out, they are hidden from the start. */
+  ownHero?(): boolean;
   /** A press on the canvas, in normalized device coordinates, and the camera it was seen through. */
   press?(ndc: THREE.Vector2, camera: THREE.Camera): void;
   /** A key pressed; true if the game used it. */
@@ -1705,6 +1707,12 @@ export class WorldRenderer {
     this.targetGoal.set(x, 0.14, z);
     this.heldKeys.clear();
     return game;
+  }
+
+  /** Whether your own hero has finished walking and stands where they were going (true if there is none to wait for). */
+  heroSettled(): boolean {
+    const mine = this.state?.you ? this.units.get(this.state.you) : undefined;
+    return !mine || (mine.path.length === 0 && mine.root.position.distanceToSquared(mine.goal) < 0.02);
   }
 
   /** Give the view back: the game's group is taken down and everything it hid is shown again. */
@@ -3792,6 +3800,9 @@ export class WorldRenderer {
         this.camera.updateProjectionMatrix();
       }
       this.hideOwnHero();
+      // Unless the game is still waiting for your hero to walk up: till then the room draws them as ever.
+      const mine = this.state?.you ? this.units.get(this.state.you) : undefined;
+      if (mine && this.minigame.game.ownHero?.()) for (const obj of [mine.root, mine.label, mine.ring]) if (obj) obj.visible = true;
     }
     this.ambience.update(this.clock, this.yaw, this.target, this.state?.you ? this.units.get(this.state.you)?.root.position : undefined);
     // Sounds are heard from where your hero stands, or from the middle of the view without one.

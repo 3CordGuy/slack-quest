@@ -47,7 +47,6 @@ export function useTableStage(kind: TableKind, host: StageHost, pick: (a: TableA
           left: () => latest.current.host.onStand(),
         }),
       latest.current.host.hex,
-      kind,
     );
     const standUp = () => s.leave();
     standRef.current = standUp;

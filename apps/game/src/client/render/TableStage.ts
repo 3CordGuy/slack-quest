@@ -88,6 +88,13 @@ const DISC_R = 0.07;
 const DISC_T = 0.022;
 const VFOV = 50;
 const IN_S = 1.5;
+/** Seconds to get onto a stool, and how far in front of it you stand to do so. */
+const SIT_S = 0.5;
+/** Seconds for the room's table to go and this one to come in. */
+const SWAP_S = 0.8;
+/** How far in from your stool the room has your hero standing: a quarter hex toward the camera from the middle of the table's hex. */
+const STOOD_AT = SEAT_R + 0.05 - 0.25;
+const STEP_IN = 0.4;
 const OUT_S = 1.0;
 const smoother = (t: number) => t * t * t * (t * (t * 6 - 15) + 10);
 const lambert = (color: string, emissive?: string) => new THREE.MeshLambertMaterial({ color, flatShading: true, emissive: emissive ?? "#000000" });
@@ -270,6 +277,8 @@ interface Rig {
   folk: THREE.Group;
   /** Your own seat: drawn while the camera comes down to it and goes back up, not while it looks out from it. */
   mine: boolean;
+  /** How far onto the stool they are, 0 (standing in front of it) to 1 (sat). Everyone but you is found sitting. */
+  sit: number;
   /** Where the player sits, facing the table, and their model once they have a look. */
   seat: THREE.Group;
   figure: Figure | null;
@@ -309,12 +318,21 @@ export class TableStage implements WorldMinigame {
   private textures: THREE.Texture[] = [];
   private cache = new Map<string, THREE.Texture>();
   private pot = new THREE.Group();
+  /** The table itself. With the stools, it grows up out of the floor as the room's own table shrinks away. */
+  private furniture = new THREE.Group();
+  /** The room's table at this hex, which this one takes the place of while you sit at it. */
+  private old: THREE.Object3D | undefined;
+  /** How far the swap has gone, 0 to 1: the room's table goes in the first half, this one comes in the second. */
+  private swap = 0;
   private potKey = "";
   private card: THREE.Sprite;
   private cardKey = "";
   private chairs = 0;
   private order: (SeatInfo | undefined)[] = [];
   private inT = 0;
+  /** Your hero has walked up to the table, and has sat down once. */
+  private arrived = false;
+  private sat = false;
   private leaving = false;
   private disposed = false;
   private clock = 0;
@@ -328,7 +346,9 @@ export class TableStage implements WorldMinigame {
     // Dice and markers are read up close: draw them at full resolution, not the chunky half.
     world.setSharp(true);
     this.buildTable();
-    this.group.add(this.stools, this.pot);
+    this.group.add(this.furniture, this.stools, this.pot);
+    this.old = world.poiObject(kind);
+    this.showSwap();
     // Hung above the middle of the table, turned to face whoever looks at it (a sprite faces each viewer's own camera).
     this.card = new THREE.Sprite(new THREE.SpriteMaterial({ transparent: true }));
     this.card.scale.set(0.64, 0.32, 1);
@@ -361,7 +381,7 @@ export class TableStage implements WorldMinigame {
     const add = (geo: THREE.BufferGeometry, mat: THREE.Material, x: number, y: number, z: number) => {
       const m = new THREE.Mesh(geo, mat);
       m.position.set(x, y, z);
-      this.group.add(m);
+      this.furniture.add(m);
       return m;
     };
     // A pedestal and a broad foot, a wooden top with a cloth let into it.
@@ -415,7 +435,7 @@ export class TableStage implements WorldMinigame {
     const items = new THREE.Group();
     rig.add(folk, ring, items);
     this.group.add(rig);
-    return { id, rig, folk, mine: false, seat, figure: null, plate, chip, tally, ring, items, yaw: 0, goal: 0, look: "", plateKey: "", chipKey: "", tallyKey: "", info: null, itemsKey: "", roll: 0 };
+    return { id, rig, folk, mine: false, sit: 1, seat, figure: null, plate, chip, tally, ring, items, yaw: 0, goal: 0, look: "", plateKey: "", chipKey: "", tallyKey: "", info: null, itemsKey: "", roll: 0 };
   }
 
   // ---------- what the panel tells it ----------
@@ -450,6 +470,8 @@ export class TableStage implements WorldMinigame {
 
   /** The look of a seat: the character, their name, a word over their head, what they have left. */
   private dress(r: Rig, info: SeatInfo, mine: boolean) {
+    // You are seen to sit down: your seat starts with you on your feet.
+    if (mine && !r.mine && !this.sat) r.sit = 0;
     r.mine = mine;
     const look = spriteKey(info.classId, info.outfit);
     if (r.look !== look) {
@@ -672,12 +694,50 @@ export class TableStage implements WorldMinigame {
     return true;
   }
 
+  /**
+   * The room keeps drawing your hero while they walk up and its own table goes; once that is gone they are
+   * the table's to draw, stepping back as it comes in and then up onto their stool.
+   */
+  ownHero(): boolean {
+    return this.swap < 0.5;
+  }
+
+  /** How much of the room's table is left, and how much of this one is in, each 0 to 1. */
+  private oldShare(): number {
+    return 1 - smoother(Math.min(1, this.swap * 2));
+  }
+  private newShare(): number {
+    return smoother(Math.max(0, this.swap * 2 - 1));
+  }
+
+  /** Size the two tables by how far the swap has gone. */
+  private showSwap() {
+    const gone = this.oldShare();
+    if (this.old) {
+      this.old.visible = gone > 0.001;
+      this.old.scale.setScalar(Math.max(0.001, gone));
+    }
+    const here = this.newShare();
+    for (const g of [this.furniture, this.stools]) {
+      g.visible = here > 0.001;
+      g.scale.setScalar(Math.max(0.001, here));
+    }
+    this.pot.visible = this.swap >= 1;
+  }
+
   // ---------- each frame ----------
 
   frame(dt: number, now: number, aspect: number): { eye: THREE.Vector3; look: THREE.Vector3; blend: number; fov: number } {
     void now;
     this.clock += dt;
-    this.inT = this.leaving ? Math.max(0, this.inT - dt / OUT_S) : Math.min(1, this.inT + dt / IN_S);
+    // The camera waits for you to walk up to the table, and comes down as you take your seat.
+    if (!this.arrived && this.world.heroSettled()) this.arrived = true;
+    // Sitting down: you walk up, the tables swap, you take your stool, and the camera comes down as you do.
+    // Getting up runs it backwards as the camera goes: off the stool, then the tables swap back.
+    if (this.leaving) this.swap = Math.min(this.swap, this.inT / 0.3);
+    else if (this.arrived) this.swap = Math.min(1, this.swap + dt / SWAP_S);
+    this.showSwap();
+    this.inT = this.leaving ? Math.max(0, this.inT - dt / OUT_S) : this.swap >= 1 ? Math.min(1, this.inT + dt / IN_S) : 0;
     if (this.leaving && this.inT <= 0) setTimeout(() => this.finish(), 0);
     this.animate(dt);
     this.card.position.y = CARD_Y + Math.sin(this.clock * 1.6) * 0.012;
@@ -701,14 +761,23 @@ export class TableStage implements WorldMinigame {
       r.yaw += d * ease;
       r.rig.rotation.y = r.yaw;
       // You watch yourself sit down as the camera drops in; from your seat, your own head would be in the way.
-      r.folk.visible = !r.mine || smoother(this.inT) < 0.5;
+      // Until you have walked up, the room is still drawing you; then you get onto the stool, and off it to leave.
+      // Leaving, they are still sat as the camera backs out far enough to show them, and get up before the tables swap back.
+      if (r.mine) r.sit = this.leaving ? Math.min(r.sit, Math.max(0, (this.inT - 0.3) / 0.2)) : this.swap >= 1 ? Math.min(1, r.sit + dt / SIT_S) : 0;
+      if (r.mine && r.sit >= 1) this.sat = true;
+      r.folk.visible = r.mine ? this.swap >= 0.5 && smoother(this.inT) < 0.5 : this.swap >= 1;
       r.plate.visible = !r.mine;
+      r.items.visible = this.swap >= 1;
       const info = r.info;
       const glow = info && (info.turn || info.won) ? 0.55 + 0.35 * Math.sin(this.clock * 4) : 0;
       (r.ring.material as THREE.MeshBasicMaterial).opacity = glow;
       // The one who won bounces a little.
-      r.seat.position.y = SEAT_Y + (info?.won ? Math.abs(Math.sin(this.clock * 5)) * 0.06 : 0);
-      r.figure?.update({ time: this.clock, stride: 0, walking: false, lean: 0, lying: false, sitting: true });
+      // Getting on: from where the room had them standing, back a step as the table comes in, then from their
+      // feet in front of the stool a small hop up and back onto it.
+      const on = smoother(r.sit);
+      const stand = r.mine ? STOOD_AT + (STEP_IN - STOOD_AT) * this.newShare() : STEP_IN;
+      r.seat.position.set(0, SEAT_Y * on + Math.sin(r.sit * Math.PI) * 0.1 + (info?.won ? Math.abs(Math.sin(this.clock * 5)) * 0.06 : 0), -stand * (1 - on));
+      r.figure?.update({ time: this.clock, stride: 0, walking: false, lean: 0, lying: false, sitting: r.sit });
       if (r.roll > 0) r.roll = Math.max(0, r.roll - dt);
       for (const wrap of r.items.children) {
         if (wrap.userData.baseY === undefined || wrap.userData.pulse) continue;
@@ -747,6 +816,11 @@ export class TableStage implements WorldMinigame {
   dispose() {
     if (this.disposed) return;
     this.disposed = true;
+    // The room's table back as it was.
+    if (this.old) {
+      this.old.visible = true;
+      this.old.scale.setScalar(1);
+    }
     this.world.setSharp(false);
     for (const r of this.rigs.values()) this.disposeRig(r);
     this.discGeo.dispose();

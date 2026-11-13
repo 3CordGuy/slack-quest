@@ -195,8 +195,8 @@ interface Anim {
   strike: number;
   /** Down, or asleep. */
   lying: boolean;
-  /** On a seat: the hips stay where they are, the thighs go forward and the shins hang from the knee. */
-  sitting: boolean;
+  /** On a seat, 0 (standing) to 1: the hips stay where they are, the thighs go forward and the shins hang from the knee. */
+  sitting: number;
 }
 
 interface Rig {
@@ -247,14 +247,16 @@ function biped(top: THREE.Group, parts: Part[]) {
     }
     top.position.set(0, (a.breath + 1) * 0.07, 0);
     top.rotation.set(a.strike * 0.3, 0, 0);
-    if (a.sitting) {
+    if (a.sitting > 0) {
       // Thighs out along the seat, a little apart, shins hanging; the free hand forward, as if on the table.
-      thighL.joint.rotation.set(-SIT, 0, 0.12);
-      thighR.joint.rotation.set(-SIT, 0, -0.12);
-      shinL.joint.rotation.x = shinR.joint.rotation.x = SIT - 0.1;
-      const reach = rest.armL < -0.3 ? rest.armL : -0.95;
+      // Part way there, on the way down onto the seat or up off it, everything is that share of the way.
+      const k = a.sitting;
+      thighL.joint.rotation.set(-SIT * k, 0, 0.12 * k);
+      thighR.joint.rotation.set(-SIT * k, 0, -0.12 * k);
+      shinL.joint.rotation.x = shinR.joint.rotation.x = (SIT - 0.1) * k;
+      const reach = rest.armL + ((rest.armL < -0.3 ? rest.armL : -0.95) - rest.armL) * k;
       heldL.joint.rotation.x = -reach + rest.tiltL;
-      armL.joint.rotation.set(reach + a.breath * 0.02, 0, 0.05);
+      armL.joint.rotation.set(reach + a.breath * 0.02, 0, 0.1 - 0.05 * k);
       armR.joint.rotation.set(rest.armR, 0, -0.1 - a.breath * 0.015);
       head.joint.rotation.x = a.breath * 0.02;
       return;
@@ -1189,8 +1191,11 @@ export interface FigurePose {
   lean: number;
   /** Down in a fight, or asleep. */
   lying: boolean;
-  /** Seated: stand the figure with its feet `SITTING_DROP` of its size below the seat's top. Only people sit; a creature stands. */
-  sitting?: boolean;
+  /**
+   * Seated: stand the figure with its feet `SITTING_DROP` of its size below the seat's top. A number is how far
+   * into the pose it is, 0 (standing) to 1, for sitting down and getting up. Only people sit; a creature stands.
+   */
+  sitting?: boolean | number;
 }
 
 /** How far below a seat's top a seated figure's origin goes, as a share of its size: its hips, less half a thigh. */
@@ -1245,7 +1250,7 @@ export function makeFigure(kind: string, look: Look, outfit?: Outfit, opts: Figu
     last = p.time;
     const want = p.walking ? Math.sin(p.stride * 3.6) : 0;
     swing += (want - swing) * Math.min(1, dt * 20);
-    rig.animate({ t: p.time, swing, breath: Math.sin(p.time * 2.2 + beat), strike: Math.min(1, Math.abs(p.lean) * 2), lying: p.lying, sitting: !!p.sitting });
+    rig.animate({ t: p.time, swing, breath: Math.sin(p.time * 2.2 + beat), strike: Math.min(1, Math.abs(p.lean) * 2), lying: p.lying, sitting: typeof p.sitting === "number" ? Math.max(0, Math.min(1, p.sitting)) : p.sitting ? 1 : 0 });
   };
   update({ time: 0, stride: 0, walking: false, lean: 0, lying: false });
   last = -1;
