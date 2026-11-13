@@ -18,6 +18,7 @@
 //   Release-note: Fishing pays out a little more on a perfect catch.
 //   Release-note: skip
 // Several Release-note lines make several lines; "skip" leaves it out.
+// Commits already merged are corrected in release-note-overrides.ts instead.
 //
 // Needs the whole history and the tags (actions/checkout with fetch-depth: 0).
 // Without git it returns no releases rather than failing the build.
@@ -27,6 +28,7 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Plugin } from "vite";
 import type { Release, ReleaseNote } from "../src/releases.ts";
+import { OVERRIDES } from "./release-note-overrides.ts";
 
 const TAG_GLOB = "game-v*";
 /** Code that ships in the game, from the repository root. */
@@ -59,13 +61,17 @@ export function noteFrom(line: string): ReleaseNote | null {
 }
 
 interface Commit {
+  /** Full hash, to look up an override. */
+  hash?: string;
   subject: string;
   body: string;
   files: string[];
 }
 
 /** What one commit adds to its release's notes: nothing, its subject, or its Release-note lines. */
-export function notesFor(c: Commit): ReleaseNote[] {
+export function notesFor(c: Commit, overrides: Record<string, string[]> = OVERRIDES): ReleaseNote[] {
+  const fixed = c.hash ? overrides[c.hash] : undefined;
+  if (fixed) return fixed.map(noteFrom).filter((n): n is ReleaseNote => !!n);
   if (/^(Revert|Merge|Bump) /.test(c.subject)) return [];
   const trailers = [...c.body.matchAll(/^Release-note:[ \t]*(.*)$/gim)].map((m) => m[1].trim());
   if (trailers.some((t) => /^skip\.?$/i.test(t))) return [];
@@ -77,15 +83,15 @@ export function notesFor(c: Commit): ReleaseNote[] {
 
 /** Commits in a range, oldest first. */
 function commits(cwd: string | undefined, range: string): Commit[] {
-  // Each commit: RS, subject, US, body, GS, then --name-only's file list.
-  const out = git(cwd, ["log", "--no-merges", "--reverse", "--name-only", "--format=%x1e%s%x1f%B%x1d", range]);
+  // Each commit: RS, hash, US, subject, US, body, GS, then --name-only's file list.
+  const out = git(cwd, ["log", "--no-merges", "--reverse", "--name-only", "--format=%x1e%H%x1f%s%x1f%B%x1d", range]);
   return out
     .split("\x1e")
     .slice(1)
     .map((chunk) => {
       const [head, files = ""] = chunk.split("\x1d");
-      const [subject, body = ""] = head.split("\x1f");
-      return { subject: subject.trim(), body, files: files.split("\n").map((f) => f.trim()).filter(Boolean) };
+      const [hash, subject, body = ""] = head.split("\x1f");
+      return { hash: hash.trim(), subject: subject.trim(), body, files: files.split("\n").map((f) => f.trim()).filter(Boolean) };
     });
 }
 
@@ -98,12 +104,12 @@ export function readReleases(opts: ReadOptions = {}): Release[] {
   const releases: Release[] = tags.map((tag, i) =>
     i === 0
       ? { id: tag, date: dateOf(tag), notes: [], first: true }
-      : { id: tag, date: dateOf(tag), notes: commits(cwd, `${tags[i - 1]}..${tag}`).flatMap(notesFor) },
+      : { id: tag, date: dateOf(tag), notes: commits(cwd, `${tags[i - 1]}..${tag}`).flatMap((c) => notesFor(c)) },
   );
 
   if (opts.unreleased) {
     const range = tags.length > 0 ? `${tags.at(-1)}..HEAD` : "HEAD";
-    const notes = commits(cwd, range).flatMap(notesFor);
+    const notes = commits(cwd, range).flatMap((c) => notesFor(c));
     if (notes.length > 0) {
       const head = git(cwd, ["rev-parse", "--short", "HEAD"]).trim();
       releases.push({ id: `next-${head}`, date: dateOf("HEAD"), notes, unreleased: true });

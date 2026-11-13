@@ -57,6 +57,8 @@ Release-note: Fishing pays a little more for a perfect catch.
 Release-note: skip
 ```
 
+A commit already merged can't be reworded, so its lines are corrected in `apps/game/scripts/release-note-overrides.ts`, keyed by commit hash.
+
 Preview what the next tag would say with `node apps/game/scripts/release-notes.ts --unreleased`.
 
 ## Where things live

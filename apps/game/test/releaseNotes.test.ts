@@ -41,6 +41,13 @@ describe("notesFor", () => {
     ]);
   });
 
+  it("takes an override for a commit already merged, over everything else", () => {
+    const c = { hash: "abc123", subject: "Game: fix sign-in (#9)", body: "Release-note: skip", files: game };
+    expect(notesFor(c, { abc123: ["Sign-in: fix sign-in"] })).toEqual([{ area: "Sign-in", text: "Fix sign-in" }]);
+    expect(notesFor(c, { abc123: [] })).toEqual([]);
+    expect(notesFor({ ...c, body: "" }, {})).toEqual([{ area: "Game", text: "Fix sign-in" }]);
+  });
+
   it("leaves out reverts", () => {
     expect(notesFor({ subject: 'Revert "Quarry: gems"', body: "", files: game })).toEqual([]);
   });
