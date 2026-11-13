@@ -65,7 +65,7 @@ export const HARBOR_CAVE: HexPos = at(7, 1);
 export const HARBOR_ROCKS: HexPos[] = [at(2, 11), at(3, 13), at(13, 13), at(13, 3), at(2, 4)];
 export const HARBOR_WRECK: HexPos = at(13, 12);
 
-const HEIGHT: Record<Biome, number> = { water: 0.05, plains: 0.3, forest: 0.42, hills: 0.75, dock: 0.1, cobble: 0.26, mud: 0.2, rampart: 1.25, floor: 0.1, wall: 0.9, cave: 0.18, rock: 1.4, fog: 0.3 };
+const HEIGHT: Record<Biome, number> = { water: 0.05, plains: 0.3, forest: 0.42, hills: 0.75, dock: 0.1, cobble: 0.26, mud: 0.2, rampart: 1.25, floor: 0.1, wall: 0.9, cave: 0.18, rock: 1.4, gate: 0.18, fog: 0.3 };
 
 export function harborPoi(id: string, kind: PoiKind, pos: HexPos): Poi {
   return { id, kind, pos, hidden: false, cleared: false, usedBy: [], enemies: [] };

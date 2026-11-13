@@ -20,7 +20,7 @@ import {
   currentActor,
   makeRng,
   pickDemand,
-  framesFor,
+  STORY_FRAMES,
   pickFrame,
   pickSpine,
   seedFromString,
@@ -32,7 +32,7 @@ import {
   type WorldEvent,
   type WorldState,
 } from "@gantt-quest/world";
-import { cavernFacts, generateFill, islandFacts, npcTurn, writeEpilogue } from "./ai";
+import { generateFill, islandFacts, npcTurn, writeEpilogue } from "./ai";
 import { recordStep } from "./board";
 import { clearPubOrders, restoreGathering, applyGrant, applyPenalty, conversationStatement, getRun, heroInitFor, recentStories, refreshHarbor, saveRunStatements, type Env } from "./db";
 import { clearBrews } from "./workshops";
@@ -327,30 +327,40 @@ export class RunRoom extends DurableObject<Env> {
 
   // ---------- model-backed effects ----------
 
+  /** Whatever a crew used up by setting out: the pub meals and drinks, and the brews taken along. */
+  private async useUpProvisions(world: WorldState) {
+    await clearPubOrders(this.env.DB, world.heroes.map((h) => h.id)).catch((err) => console.warn("run-room:pub-clear-failed", { err: err instanceof Error ? err.message : String(err) }));
+    // One brewed since boarding stays in the bag for next time.
+    await clearBrews(this.env.DB, world.heroes).catch((err) => console.warn("run-room:brew-clear-failed", { err: err instanceof Error ? err.message : String(err) }));
+  }
+
   private async generateStory() {
     const world = this.world!;
+    // A delve into the caverns has no story to write: the crew goes straight down.
+    if (world.kind === "caverns") {
+      await this.useUpProvisions(world);
+      await this.serial(() => this.apply({ type: "begin", bible: null }));
+      return;
+    }
     const rng = makeRng(seedFromString(`story|${world.seed}`));
     // Not the kind of story, nor the ask, the crew has just had.
     const recent = await recentStories(this.env.DB, this.crewId).catch((err) => {
       console.warn("run-room:recent-stories-failed", { err: err instanceof Error ? err.message : String(err) });
       return { frames: [] as string[], demand: undefined };
     });
-    const caverns = world.kind === "caverns";
-    const frame = pickFrame(rng, recent.frames, framesFor(world.kind));
+    const frame = pickFrame(rng, recent.frames, STORY_FRAMES);
     const fallback = cannedFill(frame, rng);
     // Where the islander is, how the way is found and how it ends, so two stories of a kind still differ.
     const spine = pickSpine(frame, rng);
     // The NPC's ask is chosen by the game, then handed to the model so the prose agrees with it.
     const demand = pickDemand(frame, rng, recent.demand, spine);
     const hints = storyHints(rng, frame);
-    const facts = caverns ? cavernFacts() : islandFacts(world.map, spine.npcAt);
-    const fill = (await generateFill(this.env, frame, spine, world.heroes.map((h) => h.name), demand, facts, hints, caverns ? "caverns" : "island")) ?? fallback;
-    // The ship has sailed: what the heroes ate and drank at the pub is used up on this voyage.
-    await clearPubOrders(this.env.DB, world.heroes.map((h) => h.id)).catch((err) => console.warn("run-room:pub-clear-failed", { err: err instanceof Error ? err.message : String(err) }));
-    // So are the brews they took aboard from the apothecary. One brewed since boarding stays in the bag for next time.
-    await clearBrews(this.env.DB, world.heroes).catch((err) => console.warn("run-room:brew-clear-failed", { err: err instanceof Error ? err.message : String(err) }));
-    // And the crew's galley larder goes aboard: the larder is emptied as the ship sails. A delve takes no ship, and no larder.
-    const larder = caverns ? undefined : await takeLarder(this.env.DB, this.crewId).catch((err) => {
+    const facts = islandFacts(world.map, spine.npcAt);
+    const fill = (await generateFill(this.env, frame, spine, world.heroes.map((h) => h.name), demand, facts, hints)) ?? fallback;
+    // The ship has sailed: what the heroes ate and drank at the pub is used up on this voyage, and the brews they took aboard.
+    await this.useUpProvisions(world);
+    // And the crew's galley larder goes aboard: the larder is emptied as the ship sails.
+    const larder = await takeLarder(this.env.DB, this.crewId).catch((err) => {
       console.warn("run-room:larder-take-failed", { err: err instanceof Error ? err.message : String(err) });
       return undefined;
     });

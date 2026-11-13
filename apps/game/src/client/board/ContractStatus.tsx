@@ -11,7 +11,7 @@ export function ContractStatus({ state }: { state: ClientState }) {
   return (
     <p className={`contract-status ${met ? "met" : ""}`}>
       {met ? "☑" : "☐"} Contract: <strong>{def.name}</strong>. {def.text}
-      <span className="muted">{met ? "Met as things stand" : "Not met yet"} · pays {rewardText(def.reward)} if the story is won</span>
+      <span className="muted">{met ? "Met as things stand" : "Not met yet"} · pays {rewardText(def.reward)} {state.kind === "caverns" ? "once the crew climbs out" : "if the story is won"}</span>
     </p>
   );
 }

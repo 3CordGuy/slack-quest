@@ -142,12 +142,9 @@ What starts it:
   git tag game-v2026.11.12 origin/main && git push origin game-v2026.11.12
   ```
   Or use a manual run from the Actions tab.
-- **Staging:** a manual run. Or set the repo variable `GAME_STAGING_AUTODEPLOY=true` and it deploys on every push to `main` that touches the game. It's off by default so hand deploys keep working.
-- Before the first CI production run:
-  - create the GitHub Environment `production` with yourself as a required reviewer (Settings > Environments), so every production run waits for your approval;
-  - set `WRANGLER_GAME_CONFIG` (section 3).
+- **Staging:** every push to `main` that touches the game, because the repo variable `GAME_STAGING_AUTODEPLOY` is `true`. Set it to anything else to go back to manual runs only.
 
-The workflow has not run yet. The first real test is a manual staging run.
+Set up on 2026-11-13: `WRANGLER_GAME_CONFIG` is set (section 3), and the GitHub Environment `production` has a required reviewer, so every production run waits for approval. The first manual staging run passed every step, so the existing `CLOUDFLARE_API_TOKEN` has the permissions it needs. When an environment block in `wrangler.jsonc` changes, set `WRANGLER_GAME_CONFIG` again.
 
 ## 8. Risk review (what assumes staging)
 

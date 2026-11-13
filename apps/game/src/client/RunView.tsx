@@ -14,6 +14,7 @@ import {
   STAT_LABEL,
   findPath,
   eatsChowder,
+  gateBeside,
   heroPct,
   poiAt,
   tileAt,
@@ -51,10 +52,36 @@ const POI_LABEL: Record<string, string> = { landing: "The Landing", hut: "Hut", 
 
 const PICKUP_LABEL: Record<string, string> = { herbs: "A patch of herbs", mushrooms: "A ring of mushrooms", wood: "A pile of wood", stone: "A pile of stones" };
 
+const PICKUP_LABEL_CAVE: Record<string, string> = { mushrooms: "Pale mushrooms", stone: "Loose stone", bone: "Old bones", copper: "A vein of copper", iron: "A vein of iron" };
+
+/** What lurks in a cave chamber, by who leads it. */
+const LURKER_LABEL: Record<string, string> = { skeleton: "A heap of bones", bat: "A bat roost", slime: "A slime pool", shade: "A cold spot" };
+
+/** The caverns' places have no story to name them: they are named for what they are. */
+function caveName(poi: Poi): string {
+  switch (poi.kind) {
+    case "landing": return "The cave mouth";
+    case "camp": return poi.cleared ? "A quiet chamber" : LURKER_LABEL[poi.enemies[0]] ?? "Something stirring";
+    case "lair": return poi.cleared ? "The deepest chamber" : "The deepest chamber, and what guards it";
+    case "cache": return poi.loot === "hoard" ? "The hoard" : poi.loot === "vault" ? "A strongbox" : "An old chest";
+    case "gate": return poi.cleared ? "An open door" : "A locked door";
+    case "shrine": return "A drowned shrine";
+    case "pickup": return PICKUP_LABEL_CAVE[poi.find ?? ""] ?? "Something lying about";
+    default: return poi.kind;
+  }
+}
+
 function poiName(state: ClientState, poi: Poi): string {
+  if (state.kind === "caverns" && !state.story) return caveName(poi);
   if (poi.kind === "pickup") return PICKUP_LABEL[poi.find ?? ""] ?? "Something lying about";
   return state.story?.poiNames[poi.id] ?? POI_LABEL[poi.kind] ?? poi.kind;
 }
+
+const CHEST_LINE: Record<string, string> = {
+  chest: "prises open an old chest",
+  vault: "opens the strongbox behind the locked door",
+  hoard: "throws back the lid of the hoard. There is enough for everyone",
+};
 
 interface Shown {
   who: string;
@@ -68,7 +95,11 @@ function describe(events: WorldEvent[], state: ClientState, names: Map<string, s
   for (const ev of events) {
     switch (ev.t) {
       case "joined": out.push(`${ev.name} came aboard.`); break;
-      case "round": out.push(`Day ${ev.round}. ${ev.doom} day${ev.doom === 1 ? "" : "s"} remain.`); break;
+      case "round":
+        out.push(state.kind === "caverns"
+          ? `Day ${ev.round}. The torches will last ${ev.doom} more day${ev.doom === 1 ? "" : "s"}.`
+          : `Day ${ev.round}. ${ev.doom} day${ev.doom === 1 ? "" : "s"} remain.`);
+        break;
       case "turn_start": out.push(`${n(ev.heroId)}'s turn: ${ev.mp} movement.`); break;
       case "poi_revealed": {
         const poi = state.map.pois.find((p) => p.id === ev.poiId);
@@ -85,11 +116,16 @@ function describe(events: WorldEvent[], state: ClientState, names: Map<string, s
       case "ambush": {
         const NAMES: Record<string, [string, string]> = {
           wolf: ["a wolf", "wolves"], bear: ["a bear", "bears"],
-          shade: ["a shade", "shades"], bat: ["a bat", "bats"], skeleton: ["a skeleton", "skeletons"], slime: ["a slime", "slimes"],
+          shade: ["a shade", "shades"], bat: ["a bat", "bats"], skeleton: ["a skeleton", "skeletons"], slime: ["a slime", "slimes"], haunt: ["the haunt", "haunts"],
         };
         const [one, many] = NAMES[ev.kinds[0]] ?? ["a raider", "raiders"];
         const who = ev.kinds.length > 1 ? `${ev.kinds.length} ${many}` : one;
-        out.push(ev.by === "band" ? `In the night ${who} ${ev.kinds.length > 1 ? "find" : "finds"} ${n(ev.heroId)}!` : `${n(ev.heroId)} runs into ${who} on the road!`);
+        out.push(
+          ev.by === "lurk" ? `${who.charAt(0).toUpperCase()}${who.slice(1)} ${ev.kinds.length > 1 ? "stir" : "stirs"} in the dark as ${n(ev.heroId)} comes close!`
+            : ev.by === "band" ? `In the night ${who} ${ev.kinds.length > 1 ? "find" : "finds"} ${n(ev.heroId)}!`
+            : state.kind === "caverns" ? `${n(ev.heroId)} runs into ${who} in the tunnels!`
+            : `${n(ev.heroId)} runs into ${who} on the road!`,
+        );
         break;
       }
       case "forage":
@@ -106,9 +142,19 @@ function describe(events: WorldEvent[], state: ClientState, names: Map<string, s
           ev.find === "herbs" ? `${n(ev.heroId)} stops to pick herbs.`
             : ev.find === "mushrooms" ? `${n(ev.heroId)} gathers a handful of mushrooms.`
             : ev.find === "wood" ? `${n(ev.heroId)} shoulders some of a woodpile.`
+            : ev.find === "bone" ? `${n(ev.heroId)} gathers up some old bones.`
+            : ev.find === "copper" || ev.find === "iron" ? `${n(ev.heroId)} chips ${ev.find} out of a vein in the wall.`
             : `${n(ev.heroId)} loads up a few good stones.`,
         );
         break;
+      case "chest": out.push(`${n(ev.heroId)} ${CHEST_LINE[ev.loot] ?? CHEST_LINE.chest}.`); break;
+      case "key": out.push(`${n(ev.heroId)} finds a key. The crew has ${ev.keys} to open a locked door with.`); break;
+      case "gate":
+        out.push(ev.how === "key" ? `${n(ev.heroId)} turns a key in the lock, and the door swings open.`
+          : ev.how === "forced" ? `${n(ev.heroId)} puts a shoulder to the door, and it bursts open!`
+          : `${n(ev.heroId)} throws a shoulder at the door. It holds.`);
+        break;
+      case "climbed_out": out.push(`${n(ev.heroId)} climbs back out into the Harbor.`); break;
       case "search": out.push(ev.found ? `${n(ev.heroId)} turns up something in the cache.` : `${n(ev.heroId)} finds nothing but dust.`); break;
       case "level_up": out.push(`${n(ev.heroId)} reached level ${ev.level}!`); break;
       case "gold": out.push(`${n(ev.heroId)} gains ${ev.amount} gold.`); break;
@@ -128,7 +174,11 @@ function describe(events: WorldEvent[], state: ClientState, names: Map<string, s
       case "objective": out.push(`Objective complete: ${state.story?.objectives.find((o) => o.id === ev.id)?.text ?? ev.id}`); break;
       case "battle_start": out.push("Battle!"); break;
       case "battle_end": out.push(ev.status === "victory" ? "The fight is won." : ev.status === "fled" ? "The party got away." : "The fight is lost."); break;
-      case "carried_back": out.push(`${ev.heroIds.map(n).join(" and ")} ${ev.heroIds.length === 1 ? "is" : "are"} carried back to the ship on their last legs. The voyage goes on.`); break;
+      case "carried_back":
+        out.push(state.kind === "caverns"
+          ? `${ev.heroIds.map(n).join(" and ")} ${ev.heroIds.length === 1 ? "is" : "are"} dragged back to the cave mouth on their last legs. The delve goes on.`
+          : `${ev.heroIds.map(n).join(" and ")} ${ev.heroIds.length === 1 ? "is" : "are"} carried back to the ship on their last legs. The voyage goes on.`);
+        break;
       case "ended": out.push(ev.reason); break;
       case "contract": out.push(`${n(ev.heroId)}'s contract (${contractName(ev.contractId) ?? ev.contractId}) ${ev.met ? "is fulfilled!" : "went unfulfilled."}`); break;
       case "battle": {
@@ -389,7 +439,7 @@ export function RunView({ code, me, refresh, onLeave }: { code: string; me: Me; 
   );
 }
 
-const BIOME_LABEL: Record<string, string> = { plains: "Plains", forest: "Forest", hills: "Hills", water: "Sea", dock: "Dock", cave: "Cave floor", rock: "Solid rock" };
+const BIOME_LABEL: Record<string, string> = { plains: "Plains", forest: "Forest", hills: "Hills", water: "Sea", dock: "Dock", cave: "Cave floor", rock: "Solid rock", gate: "A locked door" };
 
 /** What the hovered hex is, what it costs to enter, and what walking there would cost this turn. */
 function HexTip({ state, hover }: { state: ClientState; hover: HexPos }) {
@@ -408,9 +458,10 @@ function HexTip({ state, hover }: { state: ClientState; hover: HexPos }) {
     <div className="tip">
       <strong>{poi ? `${poiName(state, poi)}${poi.cleared ? " (cleared)" : ""}` : BIOME_LABEL[tile.biome]}</strong>
       {poi && <span className="muted"> · {BIOME_LABEL[tile.biome]}</span>}
-      <span className="muted"> · {Number.isFinite(cost) ? `${cost} movement to enter` : "cannot be crossed"}</span>
+      <span className="muted"> · {Number.isFinite(cost) ? `${cost} movement to enter` : poi?.kind === "gate" ? "stand beside it to unlock or force it" : "cannot be crossed"}</span>
       {walk && <span className={walk.startsWith("out") ? "bad" : "good"}> · {walk}</span>}
-      {poi && !poi.cleared && poi.enemies.length > 0 && <span className="bad"> · heroes inside the red line join a fight here</span>}
+      {poi && !poi.cleared && poi.enemies.length > 0 && <span className="bad"> · {state.kind === "caverns" ? "they set on anyone who comes within a hex" : "heroes inside the red line join a fight here"}</span>}
+      {poi?.kind === "cache" && poi.guard && !state.map.pois.find((p) => p.id === poi.guard)?.cleared && <span className="bad"> · guarded</span>}
     </div>
   );
 }
@@ -422,7 +473,12 @@ function TopBar({ state, code, status, onLeave, onInventory }: { state: ClientSt
       <strong>{state.story?.title ?? (state.kind === "caverns" ? "The Haunted Caverns" : "A ship at the Harbor")}</strong>
       {state.story && <span className="muted wide-only">{state.story.islandName}</span>}
       {state.round > 0 && state.phase !== "ended" && (
-        <span className={state.doom <= 3 ? "bad" : ""}>Day {state.round} · {state.doom} day{state.doom === 1 ? "" : "s"} left</span>
+        state.kind === "caverns"
+          ? <span className={state.doom <= 3 ? "bad" : ""} title="When the torches burn out, the crew gropes its way out in the dark and loses some of what it carried. Climb out at the cave mouth before then."><span className="wide-only">Day {state.round} · torchlight for </span>{state.doom}<span className="wide-only"> more</span> day{state.doom === 1 ? "" : "s"}<span className="narrow-only"> of torchlight</span></span>
+          : <span className={state.doom <= 3 ? "bad" : ""}>Day {state.round} · {state.doom} day{state.doom === 1 ? "" : "s"} left</span>
+      )}
+      {state.kind === "caverns" && (state.keys ?? 0) > 0 && state.phase !== "ended" && (
+        <span className="larder-chip" title="Any key opens any locked door.">Keys ×{state.keys}</span>
       )}
       {state.larder && state.larder.chowder > 0 && state.phase !== "ended" && (
         <span className="larder-chip" title="From the galley's larder. A hero resting at the landing eats one when the plain rest would leave them short: back to full HP and focus.">
@@ -483,6 +539,15 @@ function Lobby({ state, run, code }: { state: ClientState; run: RunConnection; c
 
 function Story({ state }: { state: ClientState }) {
   const [open, setOpen] = useState(true);
+  if (!state.story && state.kind === "caverns") {
+    // A delve has no story: just what it is for, and the contract taken at the mouth.
+    return (
+      <DragPanel id="run.story" title="Delve" foldOnPhone className="story panel">
+        <p>Explore, open what you find, and climb back out at the cave mouth before the torches burn down.</p>
+        <ContractStatus state={state} />
+      </DragPanel>
+    );
+  }
   if (!state.story) return null;
   return (
     <DragPanel id="run.story" title="Story" foldOnPhone className="story panel">
@@ -552,7 +617,7 @@ function Crew({ state, online, onTrade, onOpen, openId }: CrewProps) {
                 </button>
               )}
             </div>
-            <div className="muted">{className(h.classId)} · Lv {h.level}{(h.armor ?? 0) > 0 ? ` · armor ${h.armor}` : ""}{online.includes(h.id) ? "" : " · away"}</div>
+            <div className="muted">{className(h.classId)} · Lv {h.level}{(h.armor ?? 0) > 0 ? ` · armor ${h.armor}` : ""}{online.includes(h.id) ? "" : " · away"}{h.out ? " · climbed out" : ""}</div>
             <div className="bar"><div className="bar-fill hp" style={{ width: `${(100 * hp) / h.maxHp}%` }} /><span>{hp} / {h.maxHp}</span></div>
             <div className="muted"><Pips n={focus} max={h.maxFocus} /> · {c?.potions ?? h.potions} potion{(c?.potions ?? h.potions) === 1 ? "" : "s"}</div>
           </div>
@@ -594,10 +659,19 @@ function TurnBar({ state, run }: { state: ClientState; run: RunConnection }) {
   if (!turn) return null;
   const mine = turn.heroId === state.you;
   const hero = state.heroes.find((h) => h.id === turn.heroId)!;
-  const poi = poiAt(state.map, hero.pos);
+  const here = poiAt(state.map, hero.pos);
+  const caverns = state.kind === "caverns";
+  // In the caverns a locked door is worked from beside it.
+  const gate = caverns && (!here || here.kind === "pickup") ? gateBeside(state.map, hero.pos) : undefined;
+  const poi = gate ?? here;
   const rite = poi && state.story?.rites.find((r) => r.poi === poi.id && r.ready && !r.done);
+  const guard = poi?.kind === "cache" && poi.guard ? state.map.pois.find((p) => p.id === poi.guard) : undefined;
   const action = !poi || turn.acted ? null
     : rite ? rite.label
+    : poi.kind === "gate" ? ((state.keys ?? 0) > 0 ? "Unlock the door" : `Force the door (Strength, ${heroPct(hero, "str")}%)`)
+    : caverns && poi.kind === "cache" ? (poi.cleared ? null : guard && !guard.cleared ? `Reach for ${poiName(state, poi).replace(/^An? |^The /, "the ")}: fight what guards it` : `Open ${poiName(state, poi).replace(/^An? |^The /, "the ")}`)
+    : caverns && poi.kind === "camp" ? (poi.cleared ? null : `Fight the ${{ skeleton: "skeletons", bat: "bats", slime: "slimes", shade: "shades" }[poi.enemies[0]] ?? "things here"}`)
+    : caverns && poi.kind === "lair" ? (poi.cleared ? null : "Fight what guards the hoard")
     : poi.kind === "landing" ? (state.larder && eatsChowder(hero, state.larder.chowder) ? "Rest and eat a chowder" : state.kind === "caverns" ? "Rest at the cave mouth" : "Rest at the ship")
     : poi.kind === "shrine" ? (poi.usedBy.includes(hero.id) ? null : "Pray at the shrine")
     : poi.kind === "cache" ? (poi.cleared ? null : "Search the cache")
@@ -612,6 +686,9 @@ function TurnBar({ state, run }: { state: ClientState; run: RunConnection }) {
           <span>{turn.mp} movement left</span>
           <span className="muted">{state.kind === "caverns" ? "Click a lit hex to move. Cave floor costs 1; the rock cannot be crossed." : "Click a lit hex to move. Plains cost 1, forest and hills 2."}</span>
           {action && <button className="primary" onClick={() => run.send({ type: "interact" })}>{action}</button>}
+          {caverns && here?.kind === "landing" && (
+            <button title="Leave the caverns for good. The delve ends once the whole crew is out." onClick={() => run.send({ type: "climb_out" })}>Climb out</button>
+          )}
           <button onClick={() => run.send({ type: "end_turn" })}>End turn</button>
         </>
       ) : (
@@ -703,9 +780,16 @@ function Ending({ state, onLeave }: { state: ClientState; onLeave(): void }) {
   return (
     <div className="overlay">
       <div className="panel ending">
-        <h2 className={won ? "good" : "bad"}>{won ? "Victory" : "Defeat"}</h2>
-        <p><strong>{state.story?.title}</strong></p>
-        <p>{result.epilogue ?? "The tale is being written…"}</p>
+        <h2 className={won ? "good" : "bad"}>{state.kind === "caverns" ? (won ? "Back in the lamplight" : "Lost in the dark") : won ? "Victory" : "Defeat"}</h2>
+        <p><strong>{state.story?.title ?? (state.kind === "caverns" ? "The Haunted Caverns" : null)}</strong></p>
+        {state.kind === "caverns" && !state.story ? (
+          <>
+            <p>{result.reason}</p>
+            {result.epilogue && <p className="muted">{result.epilogue}</p>}
+          </>
+        ) : (
+          <p>{result.epilogue ?? "The tale is being written…"}</p>
+        )}
         <ContractResult state={state} />
         <h3>What you bring home</h3>
         {earned ? (
@@ -722,7 +806,7 @@ function Ending({ state, onLeave }: { state: ClientState; onLeave(): void }) {
         )}
         {earned && <HutSpoils earned={earned} />}
         {!won && <p className="muted">A little gold was lost in the retreat. Your character is safe.</p>}
-        <button className="primary" onClick={onLeave}>Sail back to the Harbor</button>
+        <button className="primary" onClick={onLeave}>{state.kind === "caverns" ? "Back to the Harbor" : "Sail back to the Harbor"}</button>
       </div>
     </div>
   );

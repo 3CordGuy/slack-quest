@@ -19,7 +19,7 @@ export interface Fighter {
   kind: string;
 }
 
-const BIOMES: Record<Biome, true> = { plains: true, forest: true, hills: true, water: true, dock: true, cobble: true, mud: true, rampart: true, floor: true, wall: true, cave: true, rock: true, fog: true };
+const BIOMES: Record<Biome, true> = { plains: true, forest: true, hills: true, water: true, dock: true, cobble: true, mud: true, rampart: true, floor: true, wall: true, cave: true, rock: true, gate: true, fog: true };
 const EFFECTS: Record<EffectKind, true> = { bleeding: true, burning: true, stunned: true, guarded: true, taunting: true, slowed: true, hasted: true, glitched: true, exposed: true };
 const FORAGE: Record<ForageKind, true> = { berries: true, wood: true, bones: true, treasure: true, wolves: true };
 
@@ -55,6 +55,10 @@ export const soundName = {
   levelUp: () => ["level_up"],
   /** A lightning strike and its thunder, in a storm. The flash on screen follows the take that plays. */
   thunder: () => ["weather.thunder"],
+  /** Felling in the grove: the axe biting (by how well the swing was stopped), a knock on the bark, a tree coming down. */
+  chop: (grade: "perfect" | "good" | "close" | "miss" | "late") => [`gather.chop.${grade === "late" ? "miss" : grade === "close" ? "good" : grade}`, "gather.chop"],
+  knock: (kind: "sound" | "den" | "rotten") => [`gather.knock.${kind === "rotten" ? "hollow" : kind === "den" ? "scurry" : "solid"}`, "gather.knock"],
+  fall: (what: "creak" | "timber" | "hung" | "creek" | "pile") => [`gather.${what}`],
 
   /**
    * Something that happened on a voyage. Rewards and finds sound only for the
@@ -127,6 +131,9 @@ export function soundNames(): Set<string> {
   [soundName.crit(), soundName.healFailed(), soundName.flee(true), soundName.flee(false), soundName.yourTurn(), soundName.levelUp(), soundName.thunder()].forEach(add);
   add(["stinger.boss", "stinger.battle_start", "stinger.victory", "stinger.defeat", "stinger.fled", "stinger.voyage_won", "stinger.voyage_lost", "stinger.ambush"]);
   add(["loot", ...RARITIES.map((r) => `loot.${r}`), "key_item", "gold", "pickup", ...RESOURCE_KINDS.map((k) => `pickup.${k}`)]);
+  for (const g of ["perfect", "good", "close", "miss", "late"] as const) add(soundName.chop(g));
+  for (const k of ["sound", "den", "rotten"] as const) add(soundName.knock(k));
+  for (const f of ["creak", "timber", "hung", "creek", "pile"] as const) add(soundName.fall(f));
   add(["forage", ...Object.keys(FORAGE).map((k) => `forage.${k}`), "search.found", "search.empty", "rest", "discover"]);
   return names;
 }

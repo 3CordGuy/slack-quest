@@ -577,66 +577,6 @@ export const STORY_FRAMES: StoryFrame[] = [
   },
 ];
 
-/**
- * Stories for the Haunted Caverns. Shorter than an island's: the haunt is
- * bound by something lost down one passage or the other, and either will do.
- * The party picks a way at the fork (past the smugglers' camp or the drowned
- * shrine), finds what binds the haunt, faces it in the deep chamber, and lays
- * it to rest with what they found.
- */
-export const CAVERN_FRAMES: StoryFrame[] = [
-  {
-    id: "restless_haunt",
-    brief:
-      "Behind the heroes' home port, an old smugglers' cave runs back into the rocks. Something down there has woken and haunts the " +
-      "town at night. Past the first chamber the tunnels fork: one way runs by the smugglers' old camp, the other down to a drowned " +
-      "shrine. Somewhere down one passage or the other lies what binds the haunt; with it, the haunt can be faced in the deep chamber " +
-      "and laid to rest. The one who can help owns a protective charm.",
-    fields: {
-      relic: "what binds the haunt, starting with \"the\" (its bones, a drowned bell, a smuggler's ledger)",
-      villain: "the haunt: who it was in life, e.g. \"Black Annet, the smugglers' queen\"; its description says how it haunts the town",
-      lair: "the deep chamber where it is bound, starting with \"the\"",
-    },
-    hints: {
-      relic: ["its own bones", "a drowned ship's bell", "a smuggler's ledger of debts", "a lantern that never went out", "a wedding ring", "a sealed letter never sent"],
-      villain: ["a smugglers' queen betrayed by her crew", "a lamplighter who drowned in the tunnels", "a miner who dug too deep", "a child who hid from the press-gang and was never found", "a harbourmaster who sold the town out"],
-    },
-    npcPlace: "is an old smuggler who sits at the cave mouth and knows the stories",
-    leads: { told: "They know the way to the deep chamber, and will tell it once they trust the heroes." },
-    endings: { fight: "the haunt is faced in the deep chamber and laid to rest with what binds it" },
-    doomRounds: 9,
-    demands: [DEMANDS.earn_trust, DEMANDS.clear_camp, DEMANDS.pray],
-    spines: { npcAt: ["landing"], lead: ["told"], ending: ["fight"] },
-    plan: (fill, rng) => ({
-      capabilities: [revealLair(fill), charm(fill, "persuade")],
-      objectives: [
-        { id: "meet", text: `Hear ${fill.npc_name} out at the cave mouth`, fact: "met:npc1" },
-        { id: "bind", text: `Find ${fill.relic_name}, down one passage or the other`, fact: "found:binding" },
-        { id: "face", text: `Face ${fill.villain_name} in ${fill.lair_name}`, fact: "defeated:lair" },
-        { id: "rest", text: `Lay ${fill.villain_name} to rest with ${fill.relic_name}`, fact: "rested:lair" },
-      ],
-      finalObjective: "rest",
-      rites: [
-        // Either passage's cache holds it; whichever the party reaches first.
-        { id: "find_west", poi: "cache1", requires: [], sets: "found:binding", label: `Take up ${fill.relic_name}`, text: `${fill.relic_name}, found at last in the west passage.` },
-        { id: "find_east", poi: "cache2", requires: [], sets: "found:binding", label: `Take up ${fill.relic_name}`, text: `${fill.relic_name}, found at last in the east passage.` },
-        { id: "rest", poi: "lair", requires: ["found:binding", "defeated:lair"], sets: "rested:lair", label: `Lay ${fill.villain_name} to rest`, text: `${fill.villain_name} goes quiet, and the caverns with it.` },
-      ],
-      // What binds the haunt knows the way down.
-      triggers: [{ requires: ["found:binding"], reveal: "lair" }],
-      encounters: {
-        // The smugglers' camp is held by the smugglers, long dead.
-        camp: rng.pick([["skeleton", "skeleton"], ["skeleton", "bat", "bat"], ["skeleton", "slime"]]),
-        lair: ["haunt", rng.pick(["shade", "skeleton"])],
-      },
-      route: ["landing", "cache1", "lair"],
-      poiNames: { landing: "The cave mouth", camp: "The smugglers' camp", cache1: "The west passage", cache2: "The east passage", shrine: "The drowned shrine" },
-      victoryLine: `${fill.villain_name} is laid to rest, and the Harbor sleeps easy again.`,
-      defeatLine: `${fill.villain_name} still walks the caverns, and the Harbor lies awake.`,
-    }),
-  },
-];
-
 /** The spine a frame takes when none is picked: the first of each of its options. */
 export function defaultSpine(frame: StoryFrame): Spine {
   return { npcAt: frame.spines.npcAt[0], lead: frame.spines.lead[0], ending: frame.spines.ending[0] };
@@ -677,12 +617,7 @@ export function storyBrief(frame: StoryFrame, spine: Spine): string {
 }
 
 export function frameById(id: string): StoryFrame | undefined {
-  return STORY_FRAMES.find((f) => f.id === id) ?? CAVERN_FRAMES.find((f) => f.id === id);
-}
-
-/** The kinds of story a run can tell: an island's, or the Haunted Caverns'. */
-export function framesFor(kind: "voyage" | "caverns" = "voyage"): StoryFrame[] {
-  return kind === "caverns" ? CAVERN_FRAMES : STORY_FRAMES;
+  return STORY_FRAMES.find((f) => f.id === id);
 }
 
 /**

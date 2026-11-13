@@ -96,6 +96,21 @@ export const AUDIO: AudioManifest = {
     // with two cracks flickers twice. Follows the Atmosphere slider.
     "weather.thunder": { files: "sfx/weather/thunder_*", group: "atmosphere", order: "shuffle", maxVoices: 2, reverb: -10 },
 
+    // ----- felling in the grove -----
+    "gather.chop": { files: "sfx/gather/chop_*", fallback: built("blunt"), pitch: [-3, -1], volume: [-2, 0], reverb: -10 },
+    "gather.chop.perfect": { files: "sfx/gather/chop_clean_*", fallback: built("blade"), pitch: [-4, -2], reverb: -10 },
+    "gather.chop.good": { files: "sfx/gather/chop_*", fallback: built("blunt"), pitch: [-3, -1], volume: [-2, 0], reverb: -10 },
+    "gather.chop.miss": { files: "sfx/gather/glance_*", fallback: built("whiff"), pitch: [-2, 0], gainDb: -3 },
+    "gather.knock": { files: "sfx/gather/knock_*", fallback: "synth/step/wood_*", gainDb: -2, reverb: -10 },
+    "gather.knock.solid": { files: "sfx/gather/knock_solid_*", fallback: "synth/step/wood_*", gainDb: -2, pitch: [1, 2], reverb: -10 },
+    "gather.knock.hollow": { files: "sfx/gather/knock_hollow_*", fallback: "synth/step/floor_*", gainDb: 0, pitch: [-7, -5], reverb: -4 },
+    "gather.knock.scurry": { files: "sfx/gather/scurry_*", fallback: built("whiff"), gainDb: -6, pitch: [5, 7] },
+    "gather.creak": { files: "sfx/gather/creak_*", fallback: built("debuff"), gainDb: -6, pitch: [-12, -9], reverb: -8 },
+    "gather.timber": { files: "sfx/gather/timber_*", fallback: built("enemy_down"), pitch: [-9, -6], reverb: -4 },
+    "gather.hung": { files: "sfx/gather/hung_*", fallback: built("blunt"), pitch: [-8, -6], gainDb: -2, reverb: -6 },
+    "gather.creek": { files: "sfx/gather/splash_*", fallback: "synth/step/water_*", gainDb: 2, pitch: [-6, -4], reverb: -6 },
+    "gather.pile": { files: "sfx/gather/smash_*", fallback: built("boss_down"), pitch: [-4, -2], reverb: -4 },
+
     // Stingers follow the Music slider.
     "stinger.battle_start": { files: "music/stingers/battle_start", group: "music" },
     // A boss's first appearance.

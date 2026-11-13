@@ -207,7 +207,7 @@ const MAX_PITCH = 1.25;
 /** Camera distance per unit of zoom, kept from when the tilt was fixed. */
 const CAMERA_REACH = Math.hypot(0.72, 0.78);
 const PLAYER_COLORS = ["#ffd23f", "#5ce1e6", "#ff7ab6", "#9dff6b"];
-const BIOME_COLOR: Record<string, string> = { plains: "#7cb856", forest: "#4c9a52", hills: "#a39672", water: "#3f86dc", dock: "#9a7748", cobble: "#6f7279", mud: "#5f5140", rampart: "#62656d", floor: "#b08a5c", wall: "#6e5a48", cave: "#4a4552", rock: "#2a2730", fog: "#2b3140" };
+const BIOME_COLOR: Record<string, string> = { plains: "#7cb856", forest: "#4c9a52", hills: "#a39672", water: "#3f86dc", dock: "#9a7748", cobble: "#6f7279", mud: "#5f5140", rampart: "#62656d", floor: "#b08a5c", wall: "#6e5a48", cave: "#4a4552", rock: "#2a2730", gate: "#4a4552", fog: "#2b3140" };
 /** What grass and trees are pulled toward under the Harbor's low cloud. */
 const DRAB = new THREE.Color("#5d6a5c");
 /** The pub's painted sign: a foaming tankard on an oxblood board with a gold edge. Made once and shared. */
@@ -2116,10 +2116,79 @@ export class WorldRenderer {
         }
         break;
       }
-      case "cache":
+      case "cache": {
+        if (this.state?.kind === "caverns" && poi.loot) {
+          // An old chest, an iron-bound strongbox, or the hoard: bigger, and banded, and (until it is opened) glinting.
+          const k = poi.loot === "hoard" ? 1.45 : poi.loot === "vault" ? 1.2 : 1;
+          const wood = lambert(poi.cleared ? "#5b4a3a" : poi.loot === "chest" ? "#8a5a2b" : "#6b3f22");
+          const iron = lambert(poi.loot === "chest" ? "#6e6250" : "#3f4248");
+          add(box(0.44 * k, 0.24 * k, 0.3 * k), wood, 0, 0.12 * k, 0.2);
+          for (const x of [-0.15 * k, 0.15 * k]) add(box(0.04 * k, 0.25 * k, 0.31 * k), iron, x, 0.125 * k, 0.2);
+          if (poi.cleared) {
+            // Thrown open: the lid stands up at the back, and nothing glints.
+            const lid = add(box(0.44 * k, 0.04 * k, 0.3 * k), wood, 0, 0.3 * k, 0.05);
+            lid.rotation.x = -1.2;
+          } else {
+            add(box(0.46 * k, 0.07 * k, 0.32 * k), wood, 0, 0.27 * k, 0.2);
+            add(box(0.06, 0.07, 0.02), lambert("#d8b45a"), 0, 0.2 * k, 0.2 + 0.155 * k);
+            if (poi.loot !== "chest") {
+              // Coin spilling out at its foot, lit so it catches the torchlight from across a chamber.
+              const coin = new THREE.MeshBasicMaterial({ color: "#ffd45e" });
+              for (const [x, z] of [[-0.3, 0.42], [-0.18, 0.5], [0.26, 0.46], [0.34, 0.36], [0.05, 0.52]]) add(box(0.07, 0.025, 0.07), coin, x * k, 0.015, z).userData.glow = true;
+            }
+          }
+          break;
+        }
         add(box(0.38, 0.24, 0.26), lambert(poi.cleared ? "#6b6b6b" : "#9a6b2f"), 0, 0.12, 0.2);
         if (!poi.cleared) add(box(0.4, 0.05, 0.28), lambert("#e0b12e"), 0, 0.26, 0.2);
         break;
+      }
+      case "gate": {
+        // A heavy timber door across a cave tunnel, in a frame of old beams. Swung back against the rock once it is open.
+        const frame = new THREE.Group();
+        // Centred on its hex (places are drawn a little toward the camera), and turned to stand across the passage.
+        frame.position.z = 0.28;
+        if (poi.into) {
+          const a = hexToWorld(poi.pos);
+          const b = hexToWorld({ q: poi.pos.q + poi.into.q, r: poi.pos.r + poi.into.r });
+          frame.rotation.y = Math.atan2(b.x - a.x, b.z - a.z);
+        }
+        g.add(frame);
+        const beam = lambert("#4a3420");
+        const put = (geometry: THREE.BufferGeometry, material: THREE.Material, x: number, y: number, z: number) => {
+          const mesh = new THREE.Mesh(geometry, material);
+          mesh.position.set(x, y, z);
+          frame.add(mesh);
+          return mesh;
+        };
+        for (const x of [-0.72, 0.72]) put(box(0.18, 1.25, 0.2), beam, x, 0.62, 0);
+        put(box(1.66, 0.18, 0.24), beam, 0, 1.3, 0);
+        // The door hangs from its left post.
+        const hinge = new THREE.Group();
+        hinge.position.set(-0.62, 0, 0);
+        hinge.rotation.y = poi.cleared ? -1.45 : 0;
+        frame.add(hinge);
+        const plank = lambert(poi.cleared ? "#5b4632" : "#6b4a2b");
+        const band = lambert("#30333a");
+        for (let i = 0; i < 4; i++) {
+          const m = new THREE.Mesh(box(0.3, 1.1, 0.1), plank);
+          m.position.set(0.16 + i * 0.31, 0.56, 0);
+          hinge.add(m);
+        }
+        for (const y of [0.25, 0.85]) {
+          const m = new THREE.Mesh(box(1.26, 0.07, 0.13), band);
+          m.position.set(0.62, y, 0);
+          hinge.add(m);
+        }
+        if (!poi.cleared) {
+          // A brass lock plate that catches the torchlight.
+          const lock = new THREE.Mesh(box(0.12, 0.16, 0.04), new THREE.MeshBasicMaterial({ color: "#d8b45a" }));
+          lock.position.set(1.05, 0.56, 0.07);
+          lock.userData.glow = true;
+          hinge.add(lock);
+        }
+        break;
+      }
       case "pier": {
         // A crew ship moored off the end of the pier, toward the open sea.
         add(box(1.5, 0.4, 0.62), lambert("#6b4a2b"), 0, -0.02, 1.75);
@@ -2723,6 +2792,19 @@ export class WorldRenderer {
         add(box(0.8, 0.5, 0.06), lambert("#e8dcc0"), 0, 0.7, 0);
         break;
       case "camp":
+        if (this.state?.kind === "caverns") {
+          // What lurks in a cave chamber: a heap of old bones and rubble, and (until it is beaten) eyes in the dark.
+          const lead = poi.enemies[0];
+          for (const [x, z, s] of [[-0.25, 0.05, 0.3], [0.2, 0.15, 0.24], [0.02, -0.12, 0.2]]) add(new THREE.DodecahedronGeometry(s, 0), lambert("#3a3640"), x, s * 0.6, z, x * 5);
+          for (const [x, z, r] of [[-0.05, 0.38, 0.4], [0.28, 0.42, -0.7], [-0.32, 0.4, 1.2]]) add(box(0.3, 0.04, 0.05), lambert("#d6cfbd"), x, 0.03, z, r);
+          if (lead === "slime" && !poi.cleared) add(new THREE.SphereGeometry(0.26, 8, 5, 0, Math.PI * 2, 0, Math.PI / 2), lambert("#5fbf4a"), 0.05, 0.02, 0.3);
+          if (lead === "bat" && !poi.cleared) for (const x of [-0.2, 0.2]) add(new THREE.ConeGeometry(0.12, 0.28, 3), lambert("#2a2430"), x, 0.95, -0.1, Math.PI);
+          if (!poi.cleared) {
+            const eye = new THREE.MeshBasicMaterial({ color: { bat: "#ff4d3a", skeleton: "#9fd8ff", slime: "#b8ff6a", shade: "#c79bff" }[lead] ?? "#ff4d3a" });
+            for (const x of [-0.07, 0.07]) add(box(0.05, 0.04, 0.02), eye, x, lead === "bat" ? 0.82 : 0.42, 0.12).userData.glow = true;
+          }
+          break;
+        }
         add(new THREE.ConeGeometry(0.48, 0.6, 4), lambert(poi.cleared ? "#777777" : "#b9433d"), -0.2, 0.3, 0, Math.PI / 4);
         if (!poi.cleared) add(new THREE.ConeGeometry(0.1, 0.22, 4), new THREE.MeshBasicMaterial({ color: "#ff9a3c" }), 0.4, 0.11, 0.25);
         break;
@@ -2784,14 +2866,25 @@ export class WorldRenderer {
       for (const [dx, lean] of [[-0.08, -0.25], [0, 0], [0.08, 0.25]]) put(new THREE.ConeGeometry(0.05, 0.34, 3), "#a6dd6f", x + dx, 0.17 * s, z, 0, s).rotation.z = -lean;
     };
 
-    if (poi?.kind === "camp") {
+    if (state.kind === "caverns") {
+      // Under the rocks: stalagmites crowding the back and sides, rubble, and the bones of whoever came down before.
+      for (let i = 0; i < 9; i++) {
+        const [x, z] = spot(i);
+        const h = 0.9 + rnd(i, 30) * 1.6;
+        put(new THREE.ConeGeometry(0.22 + rnd(i, 31) * 0.2, h, 5), i % 2 ? "#3d3946" : "#4a4552", x, h / 2, z, rnd(i, 32) * 3);
+      }
+      for (let i = 0; i < 5; i++) rock(spot(i + 10)[0], spot(i + 10)[1], 0.4 + rnd(i, 33) * 0.5, "#35323c");
+      for (let i = 0; i < 5; i++) put(new THREE.BoxGeometry(0.4, 0.05, 0.06), "#d6cfbd", (rnd(i, 34) - 0.5) * 5, 0.03, -2.4 + rnd(i, 35) * 1.2, rnd(i, 36) * 3);
+      put(new THREE.DodecahedronGeometry(0.16, 0), "#e8e2d2", -2.6, 0.14, -2.0);
+    } else if (poi?.kind === "camp") {
       // A raiders' camp: two tents, a fire ringed with stones, crates.
       for (const [x, z, r] of [[-2.0, -2.6, 0.3], [1.7, -2.9, -0.4]]) put(new THREE.ConeGeometry(0.85, 1.1, 4), "#8a7a5a", x, 0.55, z, Math.PI / 4 + r);
       put(new THREE.ConeGeometry(0.22, 0.5, 5), "#ff9b3d", 0, 0.25, -2.4);
       for (let i = 0; i < 6; i++) put(new THREE.DodecahedronGeometry(0.11, 0), "#6d6960", Math.sin(i) * 0.42, 0.06, -2.4 + Math.cos(i) * 0.42);
       put(new THREE.BoxGeometry(0.5, 0.42, 0.5), "#9a6b2f", 3.0, 0.21, -0.9, 0.4);
       put(new THREE.BoxGeometry(0.36, 0.3, 0.36), "#8a6a44", -3.1, 0.15, 0.2, 0.9);
-    } else if (poi?.kind === "lair") {
+    }
+    if (poi?.kind === "lair") {
       // The lair: leaning standing stones and old bones.
       for (let i = 0; i < 6; i++) {
         const a = Math.PI + ((i - 2.5) / 6) * Math.PI * 1.1;
@@ -2824,7 +2917,7 @@ export class WorldRenderer {
       for (let i = 0; i < 3; i++) rock(spot(i + 20)[0], spot(i + 20)[1], 0.5 + rnd(i, 21) * 0.4);
       for (let i = 0; i < 4; i++) put(new THREE.BoxGeometry(0.09, 0.09, 0.09), i % 2 ? "#ffd23f" : "#f4efe1", (rnd(i, 22) - 0.5) * 5.5, 0.22, -2.6 + rnd(i, 23) * 0.9);
       tree(3.2, -2.5, 1.2);
-    } else {
+    } else if (state.kind !== "caverns") {
       // Bare ground (mud, boards, stone): a few rocks and a broken crate.
       for (let i = 0; i < 5; i++) rock(spot(i)[0], spot(i)[1], 0.6 + rnd(i, 24) * 0.6, "#6d6960");
       put(new THREE.BoxGeometry(0.5, 0.4, 0.5), "#8a6a44", -2.9, 0.2, -2.3, 0.5);

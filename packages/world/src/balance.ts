@@ -40,7 +40,7 @@ export const SIM_ENCOUNTERS: SimEncounter[] = [
   fixed("lair:guardian", ["guardian"]),
 ];
 
-/** The fights a delve into the Haunted Caverns throws at a party (world.ts cave bands, story.ts's cavern camp and lair). Kept apart from the voyage's. */
+/** The fights a delve into the Haunted Caverns throws at a party (world.ts cave bands, caverns.ts's lurkers and the hoard's guards). Kept apart from the voyage's. */
 const caveBand = (lead: CavernLead): SimEncounter => ({ id: `band:${lead}`, kinds: (n) => cavernBand(lead, n) });
 export const CAVE_SIM_ENCOUNTERS: SimEncounter[] = [
   caveBand("shade"),
@@ -50,6 +50,8 @@ export const CAVE_SIM_ENCOUNTERS: SimEncounter[] = [
   fixed("camp:2 skeletons", ["skeleton", "skeleton"]),
   fixed("camp:skeleton+bats", ["skeleton", "bat", "bat"]),
   fixed("camp:skeleton+slime", ["skeleton", "slime"]),
+  fixed("camp:3 bats", ["bat", "bat", "bat"]),
+  fixed("camp:2 shades", ["shade", "shade"]),
   fixed("lair:haunt+shade", ["haunt", "shade"]),
   fixed("lair:haunt+skeleton", ["haunt", "skeleton"]),
 ];
