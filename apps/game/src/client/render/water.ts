@@ -22,8 +22,6 @@ const UNIFORMS = {
   waterSky: { value: new THREE.Color("#a9dcf7") },
   waterRain: { value: 0 },
   waterStars: { value: 0 },
-  // How wet the ground is, 0 (dry) to 1 (soaked).
-  waterWet: { value: 0 },
   // The moon's reflection: where it lies (x, z) and how bright it is.
   waterMoon: { value: new THREE.Vector3(0, 0, 0) },
   // Things standing in the water, which the sea breaks round: where (x, z), half their length along x, and how wide.
@@ -56,9 +54,15 @@ export function setWaterNight(stars: number, moonX: number, moonZ: number, moon:
   UNIFORMS.waterMoon.value.set(moonX, moonZ, moon);
 }
 
-/** How wet the ground is, 0 (dry) to 1 (soaked): it darkens, puddles gather, and lights glint off it. */
-export function setGroundWet(wet: number) {
-  UNIFORMS.waterWet.value = wet;
+/**
+ * How wet one view's ground is, 0 (dry) to 1 (soaked): it darkens, puddles gather, and lights glint off it.
+ * Each ground has its own (unlike the clock and the sky, which every view shares): with one for all, the
+ * rain on the Harbor seen through the pub's windows put puddles on the tops of the pub's walls, coming and
+ * going as the two views took turns to draw.
+ */
+export function setGroundWet(ground: THREE.Material, wet: number) {
+  const own = ground.userData.wet as { value: number } | undefined;
+  if (own) own.value = wet;
 }
 
 let nextRipple = 0;
@@ -500,8 +504,10 @@ const FRAG_BODY = /* glsl */ `#include <color_fragment>
  */
 export function addFancyWater(material: THREE.MeshLambertMaterial, tiles = false) {
   if (tiles) material.defines = { ...material.defines, WATER_TILES: "" };
+  const wet = { value: 0 };
+  material.userData.wet = wet;
   material.onBeforeCompile = (shader) => {
-    Object.assign(shader.uniforms, UNIFORMS);
+    Object.assign(shader.uniforms, UNIFORMS, { waterWet: wet });
     shader.vertexShader = shader.vertexShader
       .replace("void main() {", VERT_HEAD)
       .replace("#include <begin_vertex>", VERT_BEGIN)

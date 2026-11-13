@@ -306,6 +306,9 @@ const round = (n: number) => Math.round(n * 1000) / 1000;
 const GAME_STOOLS = [[-0.54, 0.24], [0.54, 0.24], [-0.54, -0.84], [0.54, -0.84]];
 /** Nothing of the ground is drawn below this: y = 0. */
 const GROUND_FLOOR = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+/** How long a view takes to fade up once its place is ready, and how many frames it is drawn dark first. */
+const REVEAL_MS = 450;
+const REVEAL_FRAMES = 4;
 /** A hex of ground reaches this far down from its top: further than the tallest rock stands, so its foot is always under the sea. */
 const TILE_DEPTH = 3;
 /**
@@ -582,6 +585,8 @@ export class WorldRenderer {
   /** The middle of every water hex, for hearing where the sea is. */
   private water: { x: number; z: number }[] = [];
   private frames = 0;
+  /** Frames drawn with the place built, until the view is shown; -1 once it has been. */
+  private settling = 0;
   private mapCode = "";
   private ambience: Ambience;
   private decor = new THREE.Group();
@@ -710,6 +715,10 @@ export class WorldRenderer {
     canvas.style.display = "block";
     canvas.style.imageRendering = "pixelated";
     canvas.style.touchAction = "none";
+    // Kept dark until there is a place to show (see `reveal`), then faded up: going in or out of a building
+    // dips to dark and comes up on the new place, rather than flashing an empty sea before the room is built.
+    canvas.style.opacity = "0";
+    canvas.style.transition = `opacity ${REVEAL_MS}ms ease-out`;
     container.appendChild(canvas);
 
     // Sky, sun and moon, shadows, and the moving decoration.
@@ -3832,7 +3841,7 @@ export class WorldRenderer {
     // Wind: a breeze on a clear day, stronger in rain, and a gale in a storm. None indoors or underground.
     updateWind(this.clock, fancy.get() && this.ambience.openSky ? 0.35 + 0.45 * raining + 0.6 * this.ambience.storming : 0);
     this.wet += (raining - this.wet) * Math.min(1, dt * (raining > this.wet ? 0.3 : 0.04));
-    setGroundWet(this.wet);
+    if (this.terrain) setGroundWet(this.terrain.material as THREE.Material, this.wet);
     // And lightning, in a storm only: a downpour has none. The thunder is heard either way; the flash and
     // the bolt are fancy graphics.
     // Indoors the storm is still going on outside: the thunder comes through the walls and the flash
@@ -4028,5 +4037,14 @@ export class WorldRenderer {
       this.post.render(this.scene, this.camera, focus, this.ambience.night, this.air);
     }
     else this.renderer.render(this.scene, this.camera);
+    this.reveal();
   };
+
+  /** Fade the view up once its place is built and has been drawn a few times (so shadows and lights have settled). */
+  private reveal() {
+    if (this.settling < 0 || !this.terrain) return;
+    if (++this.settling < REVEAL_FRAMES) return;
+    this.settling = -1;
+    this.renderer.domElement.style.opacity = "1";
+  }
 }
