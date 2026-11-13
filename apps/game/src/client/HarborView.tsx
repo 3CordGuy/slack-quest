@@ -3,6 +3,8 @@
 // hut, and the notice board keeps the crew roster and voyage log.
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { SoundButton } from "./audio/SoundButton";
+import { useAudioScene } from "./audio/useAudioScene";
 import type { HexPos } from "@gantt-quest/core";
 import { GATHER_SPOTS, GATHER_SPOT_IDS, HARBOR_APOTHECARY, HARBOR_BOARD, HARBOR_GALLEY, HARBOR_LIGHTHOUSE, HARBOR_SMITHY, HARBOR_GATHER, HARBOR_NAME, HARBOR_PIERS, HARBOR_PLOTS, HARBOR_PUB, HARBOR_RING, HARBOR_SHOP, HARBOR_WORKS, MAX_PARTY, PLOT_PRICE, RESOURCE_KINDS, SHACK_COST, binFill, binNeeds, builtProjects, generateHarbor, projectById, projectProgress, harborPoi, hutTier, poiAt, salesman, type GatherSpot, type HarborShip, type Resources } from "@gantt-quest/world";
 import { api, type Me } from "./api";
@@ -33,6 +35,7 @@ const costText = (r: Resources) => {
 };
 
 export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown> }) {
+  useAudioScene("harbor");
   const mount = useRef<HTMLDivElement>(null);
   const renderer = useRef<WorldRenderer | null>(null);
   const [hover, setHover] = useState<HexPos | null>(null);
@@ -345,6 +348,7 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
         <button className={`small ${me.player.email ? "" : "nudge"}`} title={me.player.email ?? "Guest account: not saved yet"} onClick={() => setAccount(true)}>
           {me.player.email ? "Account" : "Save progress"}
         </button>
+        <SoundButton />
         {me.isAdmin && <button className="small" onClick={() => (location.hash = "#admin")}>Admin</button>}
         <button className="small" onClick={() => setSheet(true)}>
           Inventory<span className="wide-only"> · {me.character?.name}</span>{me.character && me.character.unspent_points > 0 ? " ●" : ""}

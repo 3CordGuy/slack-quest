@@ -2,6 +2,8 @@
 // the ship (lobby), the overworld, NPC conversation, battle and the ending.
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { SoundButton } from "./audio/SoundButton";
+import { useAudioScene } from "./audio/useAudioScene";
 import { hexDistance, type HexPos } from "@gantt-quest/core";
 import {
   MAX_NPC_MESSAGES,
@@ -281,6 +283,8 @@ export function RunView({ code, me, refresh, onLeave }: { code: string; me: Me; 
   const [sailing, setSailing] = useState(false);
   const sailedAt = useRef(0);
   const writing = state?.phase === "generating";
+  // In the lobby the ship is still moored at the Harbor; the crossing has its own scene (SailingView).
+  useAudioScene(!state || state.phase === "lobby" ? "harbor" : state.phase === "battle" ? "battle" : "island");
   useEffect(() => {
     if (writing) {
       sailedAt.current = Date.now();
@@ -386,6 +390,7 @@ function TopBar({ state, code, status, onLeave, onInventory }: { state: ClientSt
       <span className="spacer" />
       {status !== "open" && <span className="bad">reconnecting…</span>}
       <span className="muted wide-only">Ship {code}</span>
+      <SoundButton />
       {state.phase !== "ended" && (
         <button className="small" disabled={fighting} title={fighting ? "Not during a fight" : "Your gear and stats"} onClick={onInventory}>
           Inventory

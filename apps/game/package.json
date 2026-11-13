@@ -8,7 +8,9 @@
     "build": "vite build",
     "db:migrate:local": "wrangler d1 migrations apply DB --local",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run --passWithNoTests"
+    "test": "vitest run --passWithNoTests",
+    "audio:build": "node scripts/audio/build.ts",
+    "audio:placeholders": "node scripts/audio/placeholders.ts"
   },
   "dependencies": {
     "@gantt-quest/core": "workspace:*",

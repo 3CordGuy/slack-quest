@@ -1,0 +1,12 @@
+.sound { position: relative; display: inline-flex; }
+.sound-panel { position: absolute; top: calc(100% + 8px); right: 0; z-index: 60; width: min(280px, calc(100vw - 16px)); white-space: normal; cursor: default; }
+.sound-row { display: grid; grid-template-columns: 112px 1fr 28px; gap: 8px; align-items: center; padding: 4px 0; }
+.sound-row input[type="range"] { width: 100%; min-width: 0; padding: 0; border: none; background: none; accent-color: var(--gold); }
+.sound-row > span:first-child { white-space: nowrap; }
+.sound-value { text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; }
+.sound-foot { display: flex; justify-content: space-between; align-items: center; margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--line); }
+.sound-mute { display: inline-flex; align-items: center; gap: 6px; }
+.sound-mute input { width: auto; padding: 0; accent-color: var(--gold); }
+.sound-foot button.link:disabled { color: var(--muted); }
+/* On the title screens, where there is no top bar. */
+.sound-corner { position: fixed; top: 8px; right: 8px; z-index: 60; }

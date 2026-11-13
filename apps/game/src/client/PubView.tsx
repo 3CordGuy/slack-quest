@@ -3,6 +3,8 @@
 // drink or have a word with Old Tam; stand at the dice table to play.
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { SoundButton } from "./audio/SoundButton";
+import { useAudioScene } from "./audio/useAudioScene";
 import type { HexPos } from "@gantt-quest/core";
 import { PUB_BARKEEP, PUB_BARKEEP_POS, PUB_COUNTER, PUB_DICE, PUB_FITTINGS, PUB_MAX_TALK, PUB_MENU, PUB_SALESMAN_POS, PUB_SHOALS, PUB_TRADER, dueIn, poiAt, pubRoom, salesman, type Perk } from "@gantt-quest/world";
 import { api, type Me, type PubTab } from "./api";
@@ -39,6 +41,7 @@ function Having({ item, none }: { item: { id: string } | undefined; none: string
 }
 
 export function PubView({ me, refresh, onLeave }: { me: Me; refresh(): Promise<unknown>; onLeave(): void }) {
+  useAudioScene("pub");
   const mount = useRef<HTMLDivElement>(null);
   const renderer = useRef<WorldRenderer | null>(null);
   const [hover, setHover] = useState<HexPos | null>(null);
@@ -215,6 +218,7 @@ export function PubView({ me, refresh, onLeave }: { me: Me; refresh(): Promise<u
         <span className="spacer" />
         <span className="gold">{gold} gold</span>
         {pub.status !== "open" && !pub.error && <span className="bad">connecting…</span>}
+        <SoundButton />
         <button className="small" onClick={onLeave}>Leave</button>
       </div>
 

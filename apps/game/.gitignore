@@ -1,1 +1,4 @@
 wrangler.jsonc
+
+# Audio masters (WAV) stay out of git; what ships is the encoded copy in public/audio (see audio/README.md).
+audio/**/*.wav

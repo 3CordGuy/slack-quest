@@ -4,6 +4,7 @@
 // and it ends when the voyage's phase changes.
 
 import { useEffect, useMemo, useRef } from "react";
+import { useAudioScene } from "./audio/useAudioScene";
 import type { HexPos } from "@gantt-quest/core";
 import type { Poi, Tile, WorldMap } from "@gantt-quest/world";
 import { WorldRenderer, type RenderState } from "./render/WorldRenderer";
@@ -25,6 +26,7 @@ function sea(): WorldMap {
 }
 
 export function SailingView({ names }: { names: string[] }) {
+  useAudioScene("sailing");
   const mount = useRef<HTMLDivElement>(null);
   const base = useMemo(sea, []);
 

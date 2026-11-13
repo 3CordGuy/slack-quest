@@ -6,6 +6,8 @@
 // A visiting crewmate can only look.
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { SoundButton } from "./audio/SoundButton";
+import { useAudioScene } from "./audio/useAudioScene";
 import type { HexPos } from "@gantt-quest/core";
 import { FURNISHINGS, coveredHexes, craftProblem, footprintOf, hutPerks, hutRoom, hutTier, isMounted, isSmall, nextHutTier, placeProblem, placedFurnishings, poiAt, smallPlaceProblem, turnOf, upgradeProblem, wallPlaceProblem, wrapAngle, type Furnishing } from "@gantt-quest/world";
 import { api, type Hut, type Me } from "./api";
@@ -70,6 +72,7 @@ const RECIPES = Object.values(FURNISHINGS).filter((f) => f.recipe).sort((a, b) =
 type Where = "storage" | "craft" | "hut" | "box";
 
 export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me: Me; refresh(): Promise<unknown>; onLeave(): void }) {
+  useAudioScene("hut");
   const mount = useRef<HTMLDivElement>(null);
   const renderer = useRef<WorldRenderer | null>(null);
   const [hover, setHover] = useState<HexPos | null>(null);
@@ -489,6 +492,7 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
         {tier !== null && <span className="muted">{hutTier(tier).name}</span>}
         <span className="spacer" />
         {hut.status !== "open" && !hut.error && <span className="bad">connecting…</span>}
+        <SoundButton />
         <button className="small" onClick={onLeave}>Leave</button>
       </div>
 
