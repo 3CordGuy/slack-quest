@@ -4,7 +4,7 @@
 // server begins each one and is told what happened when it ends.
 
 import { useEffect, useRef, useState, type RefObject } from "react";
-import { FELL_ROUND_MS, GATHER_MAX_UNITS, HARBOR_GATHER, HARBOR_SPAWN, RESOURCE_KINDS, SPLIT_ROLLS, TREES, TREE_SLOTS, markerAt, type GatherChoice, type GatherView, type Resources } from "@gantt-quest/world";
+import { FELL_ROUND_MS, GATHER_MAX_UNITS, HARBOR_GATHER, HARBOR_SPAWN, PERFECT_SPLIT_XP, RESOURCE_KINDS, SPLIT_WOOD, TREES, TREE_SLOTS, markerAt, type GatherChoice, type GatherView, type Resources } from "@gantt-quest/world";
 import * as THREE from "three";
 import type { XpResult } from "./api";
 import { label } from "./labels";
@@ -43,6 +43,32 @@ function TreeGlyph({ size }: { size: (typeof TREE_SLOTS)[number] }) {
 /** A key or a tap, as a little cap. (On a touch screen the keyboard hints, wrapped in `.keys`, are hidden.) */
 const Key = ({ k }: { k: string }) => <kbd>{k}</kbd>;
 
+/** The pile of split wood, filling toward what one outing can carry. */
+function PileMeter({ pile, max }: { pile: number; max: number }) {
+  const full = pile >= max;
+  return (
+    <div className={`fc-pile ${full ? "full" : ""}`}>
+      <span className="fc-pile-label">Wood</span>
+      <span className="fc-pile-cells" aria-hidden>
+        {Array.from({ length: max }, (_, i) => <i key={i} className={i < pile ? "on" : ""} />)}
+      </span>
+      <strong>{pile}/{max}</strong>
+      {full && <span className="fc-pile-note">Pile full · perfects still earn XP</span>}
+    </div>
+  );
+}
+
+/** What a strike just did, popping up over the block. */
+function StrikePop({ pop }: { pop: NonNullable<FellingHud["pop"]> }) {
+  const bits = pop.grade === "miss" ? [] : [pop.wood > 0 ? `+${pop.wood} wood` : "", pop.grade === "perfect" ? `+${PERFECT_SPLIT_XP} XP` : ""].filter(Boolean);
+  return (
+    <div className={`fc-pop ${pop.grade}`} aria-live="polite">
+      <b>{pop.grade === "perfect" ? "Perfect!" : pop.grade === "good" ? "Good" : "Off the mark"}</b>
+      {bits.length > 0 && <span>{bits.join(" · ")}</span>}
+    </div>
+  );
+}
+
 /** The marker over a log, sweeping on its own, to show what a strike is judged by. */
 function SplitLegend() {
   return (
@@ -54,8 +80,8 @@ function SplitLegend() {
         <div className="split-dot" />
       </div>
       <ul className="fc-grades">
-        <li><b className="perfect"><i className="sw" />Perfect</b><span>dead centre</span><em>{plural(SPLIT_ROLLS.perfect, "roll")}</em></li>
-        <li><b className="good"><i className="sw" />Good</b><span>on the mark</span><em>{plural(SPLIT_ROLLS.good, "roll")}</em></li>
+        <li><b className="perfect"><i className="sw" />Perfect</b><span>dead centre</span><em>{SPLIT_WOOD.perfect} wood · +{PERFECT_SPLIT_XP} XP</em></li>
+        <li><b className="good"><i className="sw" />Good</b><span>on the mark</span><em>{plural(SPLIT_WOOD.good, "wood", "wood")}</em></li>
         <li><b className="off"><i className="sw" />Off</b><span>missed it</span><em>swing again</em></li>
       </ul>
     </div>
@@ -188,6 +214,7 @@ export function FellingGame({ outing, busy, error, paid, xp, staminaLeft, render
   const splitting = mode === "split";
   const running = chopping || splitting;
   const wood = f.splits.reduce((a, s) => a + s.wood, 0);
+  const perfects = f.splits.filter((x) => x.grade === "perfect").length;
   const paidOut = paid ?? outing.payout;
   const haul = RESOURCE_KINDS.filter((k) => paidOut[k]).map((k) => [k, paidOut[k]!] as const);
 
@@ -235,7 +262,7 @@ export function FellingGame({ outing, busy, error, paid, xp, staminaLeft, render
           <h2 className="fc-title">Split!</h2>
           <p className="fc-lead">
             <span className="fc-logs" aria-hidden>{Array.from({ length: Math.min(f.logs, 10) }, (_, i) => <i key={i} />)}</span>
-            <strong>{plural(f.logs, "log")}</strong> to split. Strike when the marker is over the split.
+            <strong>{plural(f.logs, "log")}</strong> to split. Fill the pile: {GATHER_MAX_UNITS} wood is all you can carry, and every perfect earns XP.
           </p>
           <SplitLegend />
           <p className="fc-keys"><Key k="Tap" /> <span className="keys"><Key k="Space" /></span> to strike</p>
@@ -270,8 +297,11 @@ export function FellingGame({ outing, busy, error, paid, xp, staminaLeft, render
         </div>
       )}
 
+      {splitting && hud?.pop && <StrikePop key={hud.pop.n} pop={hud.pop} />}
+
       {splitting && hud && (
         <div className="felling-bottom">
+          <PileMeter pile={hud.pile} max={hud.pileMax} />
           {hud.marker && <SplitBar marker={hud.marker} />}
           <div className="row">
             <button className="primary big" onPointerDown={(e) => { e.preventDefault(); scene.current?.strikeNow(); }}>Split!</button>
@@ -319,15 +349,14 @@ export function FellingGame({ outing, busy, error, paid, xp, staminaLeft, render
               <section>
                 <h3>Split</h3>
                 <ul>
-                  <li><span className="perfect">Perfect</span><b>{f.splits.filter((x) => x.grade === "perfect").length}</b></li>
+                  <li><span className="perfect">Perfect</span><b>{perfects}</b></li>
                   <li><span className="good">Good</span><b>{f.splits.filter((x) => x.grade === "good").length}</b></li>
                   <li><span className="off">Off the mark</span><b>{f.misses}</b></li>
                 </ul>
-                <p className="fc-sum">{plural(wood, "piece")} of wood</p>
+                <p className="fc-sum">{wood}/{GATHER_MAX_UNITS} wood{perfects > 0 ? ` · +${perfects * PERFECT_SPLIT_XP} XP` : ""}</p>
               </section>
             </div>
           )}
-          {wood > (paidOut.wood ?? 0) && haul.length > 0 && <p className="fc-note">{GATHER_MAX_UNITS} is the most one outing can carry home.</p>}
           {xp?.text && <p className={`fc-xp ${xp.granted > 0 ? "gain" : ""}`}>{xp.text}</p>}
           <div className="fc-actions">
             {staminaLeft > 0 && <button className="primary big" disabled={busy} onClick={again}>Go again <small>· 1 stamina</small></button>}

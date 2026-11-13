@@ -142,5 +142,22 @@ describe("the result line", () => {
     expect(harborXpText({ granted: 4, asked: 4 })).toBe("+4 XP.");
     expect(harborXpText({ granted: 2, asked: 5 })).toBe("+2 XP (daily Harbor XP reached).");
     expect(harborXpText({ granted: 0, asked: 0 })).toBe("");
+    expect(harborXpText({ granted: 6, asked: 6, bonus: 3 })).toBe("+9 XP (3 for perfect splits).");
+    expect(harborXpText({ granted: 0, asked: 6, bonus: 2 })).toBe("+2 XP (2 for perfect splits; daily Harbor XP reached).");
+    expect(harborXpText({ granted: 0, asked: 0, bonus: 0 })).toBe("");
+  });
+
+  it("gives a bonus (perfect splits) whatever the cap, without using any of the day's", () => {
+    const full: HarborXpRecord = { day: gatherDay(NOON), used: HARBOR_XP_DAILY_CAP, spars: 0 };
+    const capped = harborXpAward(hero(), full, 6, NOON, false, 3);
+    expect(capped.granted).toBe(0);
+    expect(capped.bonus).toBe(3);
+    expect(capped.next.xp).toBe(hero().xp + 3);
+    expect(capped.record.used).toBe(HARBOR_XP_DAILY_CAP);
+    const fresh = harborXpAward(hero(), null, 6, NOON, false, 2);
+    expect(fresh.granted).toBe(6);
+    expect(fresh.record.used).toBe(6);
+    expect(fresh.next.xp).toBe(hero().xp + 8);
+    expect(harborXpAward(hero(), null, 0, NOON, false, Number.NaN).bonus).toBe(0);
   });
 });

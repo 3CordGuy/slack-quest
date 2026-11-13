@@ -20,6 +20,7 @@ import {
   gatherResetAt,
   gatherView,
   gatherXp,
+  perfectSplitXp,
   harborXpStatus,
   outingsLeft,
   startGather,
@@ -187,8 +188,9 @@ export async function stepOuting(db: D1Database, playerId: string, choice: unkno
 
   const paid = gatherPayout(next);
   const claim = crypto.randomUUID();
-  // A little XP, more for a good haul, only if this request is the one that closed the outing.
-  const xp = await prepareXp(db, playerId, gatherXp(next, Object.values(paid).reduce((a, n) => a + (n ?? 0), 0)));
+  // A little XP, more for a good haul, only if this request is the one that closed the outing; and one for every
+  // perfect split, outside the daily cap.
+  const xp = await prepareXp(db, playerId, gatherXp(next, Object.values(paid).reduce((a, n) => a + (n ?? 0), 0)), { bonus: perfectSplitXp(next) });
   const xpStatements = xp?.statements(`EXISTS (SELECT 1 FROM gathering WHERE player_id = ?1 AND claim = '${claim}')`) ?? [];
   const results = await db.batch([
     db.prepare("UPDATE gathering SET session_json = NULL, claim = ?1 WHERE player_id = ?2 AND session_json = ?3").bind(claim, playerId, row.session_json),

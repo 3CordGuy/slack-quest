@@ -21,7 +21,7 @@ import type { StatKey } from "@gantt-quest/core";
 import { rollCheck, statPct, MAX_PCT, MIN_PCT, type CheckResult } from "./check";
 import type { ResourceKind, Resources } from "./hut";
 import { makeRng, type Rng } from "./rng";
-import { FELL_ROUND_MS, MAX_REPORTED, TREES, newFelling, replayChops, replayStrikes, rollLogs, rollWood, splitMotion, type Chop, type FellingState, type FelledTree, type Split } from "./felling";
+import { FELL_ROUND_MS, MAX_REPORTED, TREES, newFelling, replayChops, replayStrikes, rollLogs, splitMotion, type Chop, type FellingState, type FelledTree, type Split } from "./felling";
 import { TIMING, timingEase, timingGrade, type Motion, type TimingGrade } from "./timing";
 import { MINE_CHARGE_MS, landBlows, mineView, rockYield, seedMine, type Blow, type MineState, type MineView } from "./mine";
 
@@ -50,7 +50,7 @@ export const GATHER_SPOTS: Record<GatherSpot, GatherSpotDef> = {
     name: "Felling in the tree line",
     stat: "str",
     pays: ["wood"],
-    blurb: "Two rounds of thirty seconds. First chop: three trees, small, medium and large. Small falls fastest; the old oak takes longest but gives the most logs, and a tree still standing at the end gives nothing. Then split: strike each log when the marker is over the split. A perfect is two rolls at a piece of wood, a good is one, and a miss means swinging again.",
+    blurb: "Two rounds of thirty seconds. First chop: three trees, small, medium and large. Small falls fastest; the old oak takes longest but gives the most logs, and a tree still standing at the end gives nothing. Then split: strike each log when the marker is over the split. A perfect is two pieces of wood and a good is one, onto a pile of eight; a miss means swinging again. Every perfect also earns XP, past the daily Harbor cap.",
   },
   quarry: {
     id: "quarry",
@@ -381,15 +381,14 @@ function stepFelling(state: GatherState, f: FellingState, choice: GatherChoice):
   if (choice.t === "split") {
     if (f.phase !== "split") return { state, error: "You are not splitting." };
     const strikes = Array.isArray(choice.strikes) ? choice.strikes.slice(0, MAX_REPORTED) : [];
-    const { splits: graded, misses } = replayStrikes(strikes, f.logs, (log) => splitMotion(state.seed, log, state.pct), ran);
-    const splits = rollWood(rng, graded, state.pct);
+    const { splits, misses } = replayStrikes(strikes, f.logs, (log) => splitMotion(state.seed, log, state.pct), ran, GATHER_MAX_UNITS);
     const wood = splits.reduce((a, s) => a + s.wood, 0);
     const perfect = splits.filter((s) => s.grade === "perfect").length;
-    const text = splits.length === 0 ? "Not one log split clean." : `${plural(splits.length, "log")} split (${perfect} perfect)${misses ? `, ${plural(misses, "swing")} off the mark` : ""}: ${plural(wood, "piece")} of firewood.`;
+    const full = wood >= GATHER_MAX_UNITS ? ", and the pile is full" : "";
+    const text = splits.length === 0 ? "Not one log split clean." : `${plural(splits.length, "log")} split (${perfect} perfect)${misses ? `, ${plural(misses, "swing")} off the mark` : ""}: ${plural(wood, "piece")} of firewood${full}.`;
     return {
       state: {
         ...state,
-        rng: rng.state(),
         step: state.step + 1,
         status: "banked",
         haul: wood > 0 ? { wood } : {},

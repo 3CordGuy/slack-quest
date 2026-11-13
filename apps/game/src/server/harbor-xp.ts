@@ -13,12 +13,16 @@
 //      as it was read, so a level-up is never applied twice.
 //
 // If either does not apply, the pastime still happens; it just pays no XP.
+//
+// A `bonus` (a felling outing's perfect splits) is given on top, whatever the
+// cap: it goes to the character but not into the day's record.
 
 import { HARBOR_XP_DAILY_CAP, SPAR_XP_DAILY_BOUTS, gatherDay, harborXpAward, harborXpStatus, harborXpText, sparBoutsLeft, type HarborXpRecord, type HarborPlayer, type HarborXpStatus, type XpMessage } from "@gantt-quest/world";
 import { crewFor, getCharacter, statsOf, type Env } from "./db";
 
 /** What the client is told about an award, and what the rooms broadcast. */
 export interface XpResult {
+  /** All XP given, the bonus included. */
   granted: number;
   asked: number;
   level: number;
@@ -48,28 +52,28 @@ export async function harborXpFor(db: D1Database, playerId: string): Promise<Har
 }
 
 /**
- * Work out an award of `amount` Harbor XP and the statements that write it.
- * Null without an active character. `guard` (SQL, may use ?1 for the player)
- * decides whether the pastime went through; the default is that the
- * statement just before these changed a row.
+ * Work out an award of `amount` Harbor XP (plus `opts.bonus` outside the cap)
+ * and the statements that write it. Null without an active character.
+ * `guard` (SQL, may use ?1 for the player) decides whether the pastime went
+ * through; the default is that the statement just before these changed a row.
  */
-export async function prepareXp(db: D1Database, playerId: string, amount: number, opts: { spar?: boolean } = {}): Promise<PreparedXp | null> {
+export async function prepareXp(db: D1Database, playerId: string, amount: number, opts: { spar?: boolean; bonus?: number } = {}): Promise<PreparedXp | null> {
   const [c, record] = await Promise.all([getCharacter(db, playerId), readHarborXp(db, playerId)]);
   if (c?.status !== "active") return null;
   const now = Date.now();
-  const award = harborXpAward({ classId: c.class_id, level: c.level, xp: c.xp, stats: statsOf(c), unspent: c.unspent_points }, record, amount, now, opts.spar);
+  const award = harborXpAward({ classId: c.class_id, level: c.level, xp: c.xp, stats: statsOf(c), unspent: c.unspent_points }, record, amount, now, opts.spar, opts.bonus);
   const result: XpResult = {
-    granted: award.granted,
+    granted: award.granted + award.bonus,
     asked: award.asked,
     level: award.next.level,
     xp: award.next.xp,
     levelsGained: award.next.levelsGained,
     left: HARBOR_XP_DAILY_CAP - award.record.used,
-    text: harborXpText({ granted: award.granted, asked: award.asked, levelsGained: award.next.levelsGained }),
+    text: harborXpText({ granted: award.granted, asked: award.asked, bonus: award.bonus, levelsGained: award.next.levelsGained }),
   };
   const spars = opts.spar ? 1 : 0;
-  // Nothing to give (the cap is reached, or the day's bouts are used up): nothing to write.
-  if (award.granted <= 0) {
+  // Nothing to give (the cap is reached, or the day's bouts are used up, and no bonus): nothing to write.
+  if (award.granted + award.bonus <= 0) {
     const text = opts.spar && award.asked > 0 && sparBoutsLeft(record, now) === 0 ? `No XP: only ${SPAR_XP_DAILY_BOUTS} bouts a day count.` : result.text;
     return { statements: () => [], result: { ...result, level: c.level, xp: c.xp, text }, applied: () => false };
   }
