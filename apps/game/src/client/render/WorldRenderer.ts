@@ -430,10 +430,6 @@ export interface RendererCallbacks {
   onPropClick?(id: string | number): boolean;
   /** The prop under the pointer changed. */
   onPropHover?(id: string | number | null): void;
-  /** A click on a hero standing on the map (yourself included). Return true if it was handled; otherwise it falls through to their hex. */
-  onHeroClick?(id: string): boolean;
-  /** The hero under the pointer changed. Never yourself. */
-  onHeroHover?(id: string | null): void;
   /** While carrying something: a click on a spot to set it down. */
   onPlace?(target: PlaceTarget): void;
   /** While carrying something: whether it may go at that spot (the ghost turns red if not). */
@@ -477,8 +473,6 @@ export class WorldRenderer {
   private aimedAt: PlaceTarget | null = null;
   /** The prop under the pointer, for its tooltip. */
   private hoverProp: string | number | null = null;
-  /** The hero under the pointer, for their sheet. */
-  private hoverHero: string | null = null;
   private sea: THREE.Mesh;
   private unitGroup = new THREE.Group();
   private fxGroup = new THREE.Group();
@@ -2738,39 +2732,17 @@ export class WorldRenderer {
     }
   }
 
-  /** The hero (a figure in `state.heroes`, yourself included) under the pointer, by their figure or their plate. Never in a fight. */
-  private pickHero(): string | null {
-    const state = this.state;
-    if (!state || state.battle || state.holding) return null;
-    const rect = this.renderer.domElement.getBoundingClientRect();
-    const ndc = new THREE.Vector2(((this.pointer.x - rect.left) / rect.width) * 2 - 1, -((this.pointer.y - rect.top) / rect.height) * 2 + 1);
-    this.raycaster.setFromCamera(ndc, this.camera);
-    const targets: THREE.Object3D[] = [];
-    const owner = new Map<THREE.Object3D, string>();
-    for (const h of state.heroes) {
-      const u = this.units.get(h.id);
-      if (!u || !u.sprite.visible) continue;
-      for (const o of [u.sprite, u.label]) {
-        if (!o) continue;
-        targets.push(o);
-        owner.set(o, h.id);
-      }
-    }
-    const hit = this.raycaster.intersectObjects(targets, false)[0];
-    return hit ? (owner.get(hit.object) ?? null) : null;
-  }
-
   private pick(): HexPos | null {
     if (!this.terrain) return null;
     const rect = this.renderer.domElement.getBoundingClientRect();
     const ndc = new THREE.Vector2(((this.pointer.x - rect.left) / rect.width) * 2 - 1, -((this.pointer.y - rect.top) / rect.height) * 2 + 1);
     this.raycaster.setFromCamera(ndc, this.camera);
-    // A figure stands up out of its hex, so a click on it would otherwise land on the ground behind.
-    // Clicking someone (other than yourself) means the hex they stand on.
+    // A figure stands up out of its hex, so a click on it (or on the plate over its head) would
+    // otherwise land on the ground behind. Clicking someone (other than yourself) means the hex they stand on.
     if (!this.state?.battle) {
-      const others = [...this.units.entries()].filter(([id, u]) => id !== this.state?.you && u.sprite.visible);
-      const onFigure = this.raycaster.intersectObjects(others.map(([, u]) => u.sprite), false)[0];
-      const unit = onFigure && others.find(([, u]) => u.sprite === onFigure.object)?.[1];
+      const others = [...this.units.entries()].filter(([id, u]) => id !== this.state?.you && u.sprite.visible).map(([, u]) => u);
+      const onFigure = this.raycaster.intersectObjects(others.flatMap((u) => (u.label ? [u.sprite, u.label] : [u.sprite])), false)[0];
+      const unit = onFigure && others.find((u) => u.sprite === onFigure.object || u.label === onFigure.object);
       if (unit) {
         let best: Tile | null = null;
         let bestD = Infinity;
@@ -2949,11 +2921,6 @@ export class WorldRenderer {
       if (target) this.callbacks.onPlace(target);
       return;
     }
-    if (this.callbacks.onHeroClick) {
-      const hero = this.pickHero();
-      // Opening someone's sheet is all a click on them does: nobody walks off as well.
-      if (hero !== null && this.callbacks.onHeroClick(hero)) return;
-    }
     if (this.callbacks.onPropClick && !this.state?.battle) {
       const prop = this.pickProp();
       if (prop !== null && this.callbacks.onPropClick(prop)) return;
@@ -2967,7 +2934,6 @@ export class WorldRenderer {
     if (this.touches.size > 0) return;
     this.pointer.inside = false;
     this.setHovered(null);
-    if (this.hoverHero !== null) this.callbacks.onHeroHover?.((this.hoverHero = null));
   };
 
   private onWheel = (e: WheelEvent) => {
@@ -3016,12 +2982,6 @@ export class WorldRenderer {
       this.pointer.dirty = false;
       this.setHovered(this.pick());
       if (this.state?.holding) this.placeGhost();
-      if (this.callbacks.onHeroHover) {
-        // Your own figure walks to wherever the pointer clicked, so it is not hovered: a click opens your sheet instead.
-        const picked = this.pickHero();
-        const hero = picked === this.state?.you ? null : picked;
-        if (hero !== this.hoverHero) this.callbacks.onHeroHover((this.hoverHero = hero));
-      }
       if (this.callbacks.onPropHover) {
         const prop = this.state?.battle ? null : this.pickProp();
         if (prop !== this.hoverProp) this.callbacks.onPropHover((this.hoverProp = prop));

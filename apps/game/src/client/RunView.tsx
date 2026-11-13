@@ -257,8 +257,6 @@ export function RunView({ code, me, refresh, onLeave }: { code: string; me: Me; 
         if (s?.phase === "overworld" && s.turn?.heroId === s.you) send.current({ type: "move", to: pos });
       },
       onHover: setHover,
-      onHeroClick: heroSheet.onHeroClick,
-      onHeroHover: heroSheet.onHeroHover,
     });
     renderer.current = r;
     setView(r);
@@ -331,7 +329,7 @@ export function RunView({ code, me, refresh, onLeave }: { code: string; me: Me; 
           {(state.phase === "overworld" || state.phase === "battle") && !sea && (
             <>
               <Story state={state} />
-              <Crew state={state} online={run.online} onTrade={ashore ? setTradeWith : undefined} />
+              <Crew state={state} online={run.online} onTrade={ashore ? setTradeWith : undefined} onOpen={state.phase === "overworld" ? heroSheet.toggle : undefined} openId={heroSheet.open} />
               <Feed lines={feed} />
               {state.phase === "overworld" && <TurnBar state={state} run={run} />}
               <SkipVoteBar state={state} run={run} />
@@ -344,7 +342,7 @@ export function RunView({ code, me, refresh, onLeave }: { code: string; me: Me; 
               {find && !held && !intro && <FindCard find={find} onDone={() => setFind(null)} />}
               {state.phase === "overworld" && heroSheet.open && (() => {
                 const h = state.heroes.find((x) => x.id === heroSheet.open);
-                return h && <HeroSheet id={h.id} you={state.you} pinned={heroSheet.pinned} onClose={heroSheet.close} live={{ hp: h.hp, maxHp: h.maxHp, focus: h.focus, maxFocus: h.maxFocus }} />;
+                return h && <HeroSheet id={h.id} you={state.you} onClose={heroSheet.close} live={{ hp: h.hp, maxHp: h.maxHp, focus: h.focus, maxFocus: h.maxFocus }} />;
               })()}
               {hover && state.phase === "overworld" && <HexTip state={state} hover={hover} />}
             </>
@@ -486,7 +484,16 @@ function Pips({ n, max }: { n: number; max: number }) {
   return <span className="pips" title={`${n} / ${max} focus`}>{Array.from({ length: max }, (_, i) => <i key={i} className={i < n ? "on" : ""} />)}</span>;
 }
 
-function Crew({ state, online, onTrade }: { state: ClientState; online: string[]; onTrade?: (id: string) => void }) {
+interface CrewProps {
+  state: ClientState;
+  online: string[];
+  onTrade?(id: string): void;
+  /** Open this hero's sheet (not during a fight). */
+  onOpen?(id: string): void;
+  openId?: string | null;
+}
+
+function Crew({ state, online, onTrade, onOpen, openId }: CrewProps) {
   return (
     <DragPanel id="run.crew" title="Crew" foldOnPhone className="crew">
       {state.heroes.map((h) => {
@@ -494,10 +501,33 @@ function Crew({ state, online, onTrade }: { state: ClientState; online: string[]
         const hp = c?.hp ?? h.hp;
         const focus = c?.focus ?? h.focus;
         return (
-          <div key={h.id} className={`panel hero-card ${state.turn?.heroId === h.id && state.phase === "overworld" ? "active" : ""} ${online.includes(h.id) ? "" : "offline"}`}>
+          <div
+            key={h.id}
+            className={`panel hero-card ${state.turn?.heroId === h.id && state.phase === "overworld" ? "active" : ""} ${online.includes(h.id) ? "" : "offline"}${onOpen ? " openable" : ""}${h.id === openId ? " open" : ""}`}
+            role={onOpen ? "button" : undefined}
+            tabIndex={onOpen ? 0 : undefined}
+            title={onOpen ? `Look ${h.name} over` : undefined}
+            onClick={onOpen && (() => onOpen(h.id))}
+            onKeyDown={onOpen && ((e) => {
+              if (e.target !== e.currentTarget || (e.key !== "Enter" && e.key !== " ")) return;
+              e.preventDefault();
+              onOpen(h.id);
+            })}
+          >
             <div>
               <strong>{h.name}</strong>{h.id === state.you && <span className="tag">you</span>}
-              {onTrade && h.id !== state.you && <button className="small trade-btn" title={`Give or trade with ${h.name}`} onClick={() => onTrade(h.id)}>Trade</button>}
+              {onTrade && h.id !== state.you && (
+                <button
+                  className="small trade-btn"
+                  title={`Give or trade with ${h.name}`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onTrade(h.id);
+                  }}
+                >
+                  Trade
+                </button>
+              )}
             </div>
             <div className="muted">{className(h.classId)} · Lv {h.level}{(h.armor ?? 0) > 0 ? ` · armor ${h.armor}` : ""}{online.includes(h.id) ? "" : " · away"}</div>
             <div className="bar"><div className="bar-fill hp" style={{ width: `${(100 * hp) / h.maxHp}%` }} /><span>{hp} / {h.maxHp}</span></div>
