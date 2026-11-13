@@ -13,7 +13,7 @@ export function ContractResult({ state }: { state: ClientState }) {
     <div className={`contract-result ${met ? "met" : ""}`}>
       <p>Contract: <strong>{def.name}</strong> · <span className={met ? "good" : "bad"}>{met ? "fulfilled" : "not fulfilled"}</span></p>
       <p className="muted">
-        {met ? `Bonus paid: ${rewardText(def.reward)} (included below).` : won ? `${def.text} No bonus this time.` : "Contracts only pay on a won story."}
+        {met ? `Bonus paid: ${rewardText(def.reward)} (included below).` : won ? `${def.text} No bonus this time.` : state.kind === "caverns" ? "Contracts only pay when the crew climbs back out." : "Contracts only pay on a won story."}
       </p>
     </div>
   );

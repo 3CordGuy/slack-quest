@@ -352,8 +352,11 @@ body { touch-action: manipulation; overscroll-behavior: none; }
 /* ---------- Phones ---------- */
 .topbar { white-space: nowrap; min-height: 36px; }
 .topbar > strong, .topbar > span.muted { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+/* Shown only on a phone: the short form of something .wide-only spells out. */
+.narrow-only { display: none; }
 @media (max-width: 760px) {
   .wide-only { display: none; }
+  .narrow-only { display: inline; }
   .topbar { gap: 8px; padding: 6px 8px; }
   /* Minimized panels line up as chips under the top bar and above the bottom edge. */
   .story { top: 46px; left: 6px; }
@@ -631,3 +634,4 @@ button.nudge { border-color: var(--gold); color: var(--gold); }
 /* The engine's own sliders under the master volume, set in a little. */
 .options-sub { padding-left: 12px; font-size: 0.92em; }
 .options-check { flex: 1; display: flex; align-items: center; gap: 6px; }
+

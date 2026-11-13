@@ -19,7 +19,7 @@ export interface Fighter {
   kind: string;
 }
 
-const BIOMES: Record<Biome, true> = { plains: true, forest: true, hills: true, water: true, dock: true, cobble: true, mud: true, rampart: true, floor: true, wall: true, cave: true, rock: true, fog: true };
+const BIOMES: Record<Biome, true> = { plains: true, forest: true, hills: true, water: true, dock: true, cobble: true, mud: true, rampart: true, floor: true, wall: true, cave: true, rock: true, gate: true, fog: true };
 const EFFECTS: Record<EffectKind, true> = { bleeding: true, burning: true, stunned: true, guarded: true, taunting: true, slowed: true, hasted: true, glitched: true, exposed: true };
 const FORAGE: Record<ForageKind, true> = { berries: true, wood: true, bones: true, treasure: true, wolves: true };
 

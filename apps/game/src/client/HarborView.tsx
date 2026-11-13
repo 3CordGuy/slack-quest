@@ -148,7 +148,7 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
   const visitHere = salesmanNow.here;
   const visitor = visitHere ? salesman(visitHere.salesmanId) : undefined;
   const tip = !hoverPoi ? null
-    : hoverPoi.kind === "cave" ? "The Haunted Caverns: a shorter delve under the rocks"
+    : hoverPoi.kind === "cave" ? "The Haunted Caverns: a short delve under the rocks, different every time"
     : hoverPoi.kind === "board" ? "Notice board: the crew goal and contracts"
     : hoverPoi.kind === "shop" ? "Market stall: gear, and furniture for your hut"
     : hoverPoi.kind === "ring" ? "Sparring ring"
@@ -287,7 +287,7 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
     atBoard ? { title: "The notice board", label: "Read the notice board", run: () => setNotices(true) }
     : atCave ? (delveHere
         ? { title: <>The Haunted Caverns <span className="muted">· {delveHere.captain}'s party, {delveHere.aboard.length}/{MAX_PARTY}</span></>, label: "Join the delve", run: () => board_(delveHere) }
-        : { title: <>The Haunted Caverns <span className="muted">· about half a voyage</span></>, label: "Gather a party", run: () => void launch("caverns") })
+        : { title: <>The Haunted Caverns <span className="muted">· a short delve, different every time</span></>, label: "Gather a party", run: () => void launch("caverns") })
     : shipHere ? { title: `${shipHere.captain}'s ship · ${shipHere.aboard.length}/${MAX_PARTY} aboard`, label: "Walk aboard", run: () => board_(shipHere) }
     : atShop ? { title: "The market stall", label: "Browse the wares", run: () => setShop(true) }
     : atRing ? { title: "The sparring ring", label: "Spar", run: () => setSpar(true) }
