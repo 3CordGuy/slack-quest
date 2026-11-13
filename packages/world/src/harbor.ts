@@ -15,49 +15,55 @@ import { findPath, type Biome, type Poi, type PoiKind, type Tile, type WorldMap 
 /** What the crew's home port is called, wherever its name is shown. */
 export const HARBOR_NAME = "Heylets Harbor";
 
-export const HARBOR_GRID: HexGrid = { cols: 13, rows: 11 };
+export const HARBOR_GRID: HexGrid = { cols: 16, rows: 17 };
 
 /** Offset column (visual left-to-right index) of an axial hex. */
 const colOf = (p: HexPos) => p.q + Math.floor(p.r / 2);
 const at = (col: number, r: number): HexPos => ({ q: col - Math.floor(r / 2), r });
 
-/** Where a player appears on arrival: the middle of the plaza. */
-export const HARBOR_SPAWN: HexPos = at(6, 6);
-/** Pier heads. A moored ship sits in the water just beyond each one. */
-export const HARBOR_PIERS: HexPos[] = [at(2, 8), at(6, 8), at(10, 8)];
-/** Hut plots, handed out to crew members in the order they joined: front row first, from the middle outward. */
-export const HARBOR_PLOTS: HexPos[] = [3, 1].flatMap((r) => [5, 7, 3, 9, 1, 11].map((col) => at(col, r)));
-export const HARBOR_BOARD: HexPos = at(6, 4);
-/** The market stall, where gear is bought and sold. */
-export const HARBOR_SHOP: HexPos = at(9, 5);
-/** The sparring ring, where crewmates try out their gear. */
-export const HARBOR_RING: HexPos = at(3, 5);
-/** Gathering spots at the edges: the west shore, the western tree line, and an outcrop in the east. */
-export const HARBOR_GATHER = { fishing: at(0, 7), felling: at(0, 3), quarry: at(12, 2) } as const;
-/** The pub: food, drink, the barkeep and the dice table are inside. */
-export const HARBOR_PUB: HexPos = at(8, 6);
-/** The works: the builders' yard where the crew's shared projects are paid for. */
-export const HARBOR_WORKS: HexPos = at(5, 6);
+/** Where a player appears on arrival: the middle of the plaza, at the island's heart. */
+export const HARBOR_SPAWN: HexPos = at(7, 7);
+/** Pier heads, off the south shore. A moored ship sits in the water just beyond each one. */
+export const HARBOR_PIERS: HexPos[] = [at(5, 14), at(8, 14), at(11, 14)];
 /**
- * The lighthouse's spot: out on the east spit, over the wreck, where ships
- * pass out of the harbour. Not in the plaza, where a tall tower would hide the
- * town. A bare point (then a building site) until the crew has paid for it at
- * the works.
+ * Hut plots, handed out to crew members in the order they joined. Scattered round the island the way a village
+ * grows, not laid out in rows: the first few near the plaza, the later ones out toward the trees and the shore.
  */
-export const HARBOR_LIGHTHOUSE: HexPos = at(11, 8);
+export const HARBOR_PLOTS: HexPos[] = [
+  at(6, 3), at(9, 4), at(5, 5), at(8, 3), at(10, 5), at(4, 4),
+  at(6, 9), at(11, 8), at(3, 8), at(9, 2), at(10, 10), at(5, 10),
+];
+export const HARBOR_BOARD: HexPos = at(7, 5);
+/** The market stall, where gear is bought and sold. */
+export const HARBOR_SHOP: HexPos = at(10, 6);
+/** The sparring ring, where crewmates try out their gear. */
+export const HARBOR_RING: HexPos = at(4, 7);
+/** Gathering spots at the edges: the south-west shore, the western trees, and an outcrop in the east wall. */
+export const HARBOR_GATHER = { fishing: at(4, 12), felling: at(1, 7), quarry: at(12, 5) } as const;
+/** The pub: food, drink, the barkeep and the dice table are inside. */
+export const HARBOR_PUB: HexPos = at(9, 8);
+/** The works: the builders' yard where the crew's shared projects are paid for. */
+export const HARBOR_WORKS: HexPos = at(5, 8);
+/**
+ * The lighthouse's spot: out on the south-east point, over the wreck, where
+ * ships pass out of the harbour. Not in the plaza, where a tall tower would
+ * hide the town. A bare point (then a building site) until the crew has paid
+ * for it at the works.
+ */
+export const HARBOR_LIGHTHOUSE: HexPos = at(12, 11);
 /** The apothecary's spot, beside the market stall. A building site until the crew has paid for it. */
-export const HARBOR_APOTHECARY: HexPos = at(10, 5);
+export const HARBOR_APOTHECARY: HexPos = at(11, 6);
 /** The smithy's spot, beside the sparring ring. A building site until the crew has paid for it. */
-export const HARBOR_SMITHY: HexPos = at(2, 5);
-/** The galley's spot, on the quay below the pub between the middle and east piers, where ships take on provisions. A building site until the crew has paid for it. */
-export const HARBOR_GALLEY: HexPos = at(8, 7);
+export const HARBOR_SMITHY: HexPos = at(4, 6);
+/** The galley's spot, above the quay between the middle and east piers, where ships take on provisions. A building site until the crew has paid for it. */
+export const HARBOR_GALLEY: HexPos = at(10, 11);
 
-/** The mouth of the Haunted Caverns: a way into the rocks through the back wall, at the head of the lane between the hut plots. */
-export const HARBOR_CAVE: HexPos = at(6, 0);
+/** The mouth of the Haunted Caverns: a way into the rocks through the north wall. */
+export const HARBOR_CAVE: HexPos = at(7, 1);
 
 /** Rocks standing out of the water, and the wreck on them. Scenery: nobody can reach them. */
-export const HARBOR_ROCKS: HexPos[] = [at(0, 9), at(4, 9), at(8, 10), at(1, 10), at(12, 10)];
-export const HARBOR_WRECK: HexPos = at(11, 9);
+export const HARBOR_ROCKS: HexPos[] = [at(2, 11), at(3, 13), at(13, 13), at(13, 3), at(2, 4)];
+export const HARBOR_WRECK: HexPos = at(13, 12);
 
 const HEIGHT: Record<Biome, number> = { water: 0.05, plains: 0.3, forest: 0.42, hills: 0.75, dock: 0.1, cobble: 0.26, mud: 0.2, rampart: 1.25, floor: 0.1, wall: 0.9, cave: 0.18, rock: 1.4, fog: 0.3 };
 
@@ -71,15 +77,18 @@ const grit = (col: number, r: number) => {
   return n - Math.floor(n);
 };
 
+/** The middle of the island, in hex widths across and down. */
+const HEART = { x: 7.5, z: 7 * 0.866 };
+
 /**
- * The Harbor map. The same for every crew, and not a tidy rectangle: the sea
- * comes round its back corners and into its sides, and the shore runs out
- * in spits of shingle. An old stone rampart at the back and down the sides,
- * fallen in places; two rows of hut plots with a
- * lane between them; a plaza; a quay along the shore with three piers; and
- * beyond them the sea, with rocks standing out of it and a wreck on the rocks.
- * Only the ground under each place is cobbled; inland the rest is grass,
- * and the quay along the shore is bare earth.
+ * The Harbor map. The same for every crew: a round island with the sea all
+ * about it, its coast a little ragged. An old stone rampart curves round the
+ * north, fallen in places, with the caverns' mouth in the middle of it; trees
+ * stand on the west and east shoulders where the wall never reached; and the
+ * south shore is a quay of bare earth with three piers, the sea beyond them
+ * dotted with rocks and a wreck. Inland it is grass, with a plaza at the
+ * heart, the crew's places round it, and hut plots scattered between.
+ * Only the ground under each place is cobbled.
  */
 export function generateHarbor(): WorldMap {
   const pierKeys = new Set(HARBOR_PIERS.map((p) => `${p.q},${p.r}`));
@@ -88,26 +97,23 @@ export function generateHarbor(): WorldMap {
   const same = (a: HexPos, b: HexPos) => a.q === b.q && a.r === b.r;
   const tiles: Tile[] = allHexesInGrid(HARBOR_GRID).map((pos) => {
     const col = colOf(pos);
-    const last = (pos.r % 2 === 0 ? HARBOR_GRID.cols : HARBOR_GRID.cols - 1) - 1;
     let biome: Biome;
     let h: number | null = null;
-    if (pos.r >= 8) biome = pierKeys.has(`${pos.q},${pos.r}`) ? "dock" : "water";
-    else if (pos.r === 0) {
-      // The back wall, breached in two places where it has come down into rubble.
-      biome = col === 3 || col === 9 ? "hills" : "rampart";
-    } else if (col === 0 || col >= last) {
-      // The sides: trees at the back where the wall never reached, then wall down to the shore, broken low near the water.
-      biome = pos.r <= 3 ? "forest" : pos.r <= 6 ? "rampart" : "mud";
-      if (biome === "rampart" && pos.r === 6) h = 0.7;
+    // How far this hex is from the island's heart, and which way: 0 is due north, turning either way to π at south.
+    const dx = col + (pos.r % 2 ? 0.5 : 0) - HEART.x;
+    const dz = pos.r * 0.866 - HEART.z;
+    const out = Math.hypot(dx, dz);
+    const turn = Math.atan2(dx, -dz);
+    const north = Math.abs(turn);
+    // The coast: a circle, pushed in and out a little so it is not drawn with a compass.
+    const coast = 5.9 + 0.25 * Math.sin(3 * turn + 1.0) + 0.2 * Math.sin(5 * turn + 2.2);
+    if (out > coast) biome = pierKeys.has(`${pos.q},${pos.r}`) ? "dock" : "water";
+    else if (out > coast - 1) {
+      // The rim: wall round the north (rubble where it has come down), trees on the shoulders, bare shore to the south.
+      biome = north < 1.25 ? (grit(col, pos.r) < 0.2 ? "hills" : "rampart") : north < 2 ? "forest" : "mud";
     } else if (paved.has(`${pos.q},${pos.r}`)) biome = "cobble";
-    // Inland it is all grass. Only the quay along the shore is worn bare.
-    else biome = pos.r >= 7 ? "mud" : "plains";
-    // The coast is not square. The sea comes round the back corners of the wall and bites into both sides,
-    // and between and beyond the piers the shore runs out into shingle.
-    if (pos.r === 0 && (col <= 1 || col >= last - 1)) biome = "water";
-    if (pos.r === 6 && (col === 0 || col === last)) biome = "water";
-    if (pos.r === 8 && biome === "water" && [4, 8, 11, 12].includes(col)) biome = "mud";
-    if (biome !== "rampart") h = null;
+    // Inland it is all grass. Only the quay behind the south shore is worn bare.
+    else biome = north > 2 && out > coast - 2 ? "mud" : "plains";
     // The caverns' mouth: rubble underfoot where the wall gives way to the rock.
     if (same(pos, HARBOR_CAVE)) biome = "hills";
     // The gathering spots keep the ground they are about.

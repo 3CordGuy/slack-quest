@@ -34,9 +34,9 @@ describe("harbor map", () => {
     for (const spot of spots) {
       expect(used).not.toContain(`${spot.q},${spot.r}`);
       expect(tileAt(map, spot)!.biome).not.toBe("water");
-      const col = spot.q + Math.floor(spot.r / 2);
-      const onShore = tileAt(map, { q: spot.q, r: spot.r + 1 })?.biome === "water";
-      expect(col <= 1 || col >= HARBOR_GRID.cols - 2 || onShore).toBe(true);
+      // At the island's edge: the sea is beside each of them.
+      const beside = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, -1], [-1, 1]].map(([q, r]) => tileAt(map, { q: spot.q + q, r: spot.r + r })?.biome);
+      expect(beside).toContain("water");
       expect(harborPath(map, HARBOR_SPAWN, spot)!.at(-1)).toEqual(spot);
     }
     expect(tileAt(map, { q: HARBOR_GATHER.fishing.q, r: HARBOR_GATHER.fishing.r + 1 })!.biome).toBe("water");
@@ -83,13 +83,37 @@ describe("harbor map", () => {
   it("puts the galley on the quay by the piers, off the plots and the other places", () => {
     const taken = [...HARBOR_PLOTS, ...HARBOR_PIERS, HARBOR_BOARD, HARBOR_SHOP, HARBOR_RING, HARBOR_SPAWN, HARBOR_WORKS, HARBOR_APOTHECARY, HARBOR_SMITHY, ...Object.values(HARBOR_GATHER)];
     expect(taken.some((p) => p.q === HARBOR_GALLEY.q && p.r === HARBOR_GALLEY.r)).toBe(false);
-    expect(HARBOR_GALLEY.r).toBe(7);
+    // Down by the water: south of the plaza, a short walk from a pier.
+    const dist = (a: { q: number; r: number }, b: { q: number; r: number }) => Math.max(Math.abs(a.q - b.q), Math.abs(a.r - b.r), Math.abs(a.q + a.r - b.q - b.r));
+    expect(HARBOR_GALLEY.r).toBeGreaterThan(HARBOR_SPAWN.r);
+    expect(Math.min(...HARBOR_PIERS.map((p) => dist(p, HARBOR_GALLEY)))).toBeLessThanOrEqual(3);
     expect(map.pois.find((p) => p.id === "galley")).toMatchObject({ kind: "galley", pos: HARBOR_GALLEY });
     // Every pier can still be walked to without crossing the galley.
     for (const pier of HARBOR_PIERS) expect(harborPath(map, HARBOR_SPAWN, pier)!.some((p) => p.q === HARBOR_GALLEY.q && p.r === HARBOR_GALLEY.r)).toBe(false);
   });
 
-  it("stands the lighthouse on the east spit over the wreck, reachable and clear of every other place", () => {
+  it("is a round island: sea on every side, and hut plots that are not laid out in rows", () => {
+    const land = map.tiles.filter((t) => t.biome !== "water" && t.biome !== "dock");
+    const col = (t: { q: number; r: number }) => t.q + Math.floor(t.r / 2);
+    // No land on the map's border, so the sea goes all the way round.
+    for (const t of land) {
+      expect(t.r).toBeGreaterThanOrEqual(0);
+      expect(t.r).toBeLessThan(HARBOR_GRID.rows - 1);
+      expect(col(t)).toBeGreaterThan(0);
+      expect(col(t)).toBeLessThan(HARBOR_GRID.cols - 2);
+    }
+    // About as wide as it is deep (a row is 0.866 of a column).
+    const wide = Math.max(...land.map(col)) - Math.min(...land.map(col));
+    const deep = (Math.max(...land.map((t) => t.r)) - Math.min(...land.map((t) => t.r))) * 0.866;
+    expect(Math.abs(wide - deep)).toBeLessThan(1.5);
+    // The plots are scattered: no row holds more than three of them.
+    const perRow = new Map<number, number>();
+    for (const p of HARBOR_PLOTS) perRow.set(p.r, (perRow.get(p.r) ?? 0) + 1);
+    expect(Math.max(...perRow.values())).toBeLessThanOrEqual(3);
+    expect(perRow.size).toBeGreaterThanOrEqual(6);
+  });
+
+  it("stands the lighthouse on the south-east point over the wreck, reachable and clear of every other place", () => {
     const taken = [...HARBOR_PLOTS, ...HARBOR_PIERS, HARBOR_BOARD, HARBOR_SHOP, HARBOR_RING, HARBOR_SPAWN, HARBOR_WORKS, HARBOR_APOTHECARY, HARBOR_SMITHY, HARBOR_GALLEY, ...Object.values(HARBOR_GATHER)];
     expect(taken.some((p) => p.q === HARBOR_LIGHTHOUSE.q && p.r === HARBOR_LIGHTHOUSE.r)).toBe(false);
     expect(map.pois.find((p) => p.id === "lighthouse")).toMatchObject({ kind: "lighthouse", pos: HARBOR_LIGHTHOUSE });
