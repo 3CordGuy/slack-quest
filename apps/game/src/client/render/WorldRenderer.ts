@@ -95,6 +95,8 @@ export interface RenderHero {
   asleep?: boolean;
   /** Holding a fishing rod (fishing off a pier). */
   rod?: boolean;
+  /** Afloat: the boat drawn under them. */
+  boat?: "barrel" | "rowboat";
   /** Drawn at this point of its hex instead of the middle, `y` above the floor: lying on a bed in a hut. */
   at?: { x: number; z: number; y: number };
   level?: number;
@@ -341,6 +343,10 @@ const noise = (q: number, r: number, salt: number) => {
 };
 
 interface Unit {
+  /** Afloat: the boat under them, which kind it is, and how far it sits them down. */
+  boat?: THREE.Group | null;
+  boatKind?: "barrel" | "rowboat";
+  sunk?: number;
   /** The model, and its root: where the unit stands (its feet) and which way it is turned. */
   figure: Figure;
   root: THREE.Group;
@@ -434,6 +440,8 @@ interface Want {
   down?: boolean;
   asleep?: boolean;
   rod?: boolean;
+  /** Afloat: the boat drawn under them. */
+  boat?: "barrel" | "rowboat";
   /** The way to face, about y: the two sides of a fight face each other. Otherwise a unit keeps the way it last walked. */
   face?: number;
 }
@@ -1794,6 +1802,84 @@ export class WorldRenderer {
   /** A point of interest's model, by id, for a scene that moves one about itself (the crew's ship at sea). */
   poiObject(id: string): THREE.Object3D | undefined {
     return this.poiGroup.children.find((g) => g.userData.poiId === id);
+  }
+
+  /** Give a unit its boat (made once), or take it away. */
+  private syncBoat(unit: Unit, kind: "barrel" | "rowboat" | undefined) {
+    if (unit.boatKind === kind) return;
+    if (unit.boat) {
+      this.unitGroup.remove(unit.boat);
+      unit.boat.traverse((o) => {
+        if (o instanceof THREE.Mesh) {
+          o.geometry.dispose();
+          (o.material as THREE.Material).dispose();
+        }
+      });
+      unit.boat = null;
+    }
+    unit.boatKind = kind;
+    if (!kind) return;
+    const g = new THREE.Group();
+    const wood = new THREE.MeshLambertMaterial({ color: "#7a5a3a" });
+    const dark = new THREE.MeshLambertMaterial({ color: "#4a3322" });
+    const iron = new THREE.MeshLambertMaterial({ color: "#5a5e66" });
+    if (kind === "barrel") {
+      const body = new THREE.Mesh(new THREE.CylinderGeometry(0.24, 0.21, 0.34, 10), wood);
+      body.position.y = 0.05;
+      const top = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, 0.01, 10), dark);
+      top.position.y = 0.215;
+      g.add(body, top);
+      for (const y of [-0.04, 0.16]) {
+        const hoop = new THREE.Mesh(new THREE.TorusGeometry(0.235, 0.012, 4, 14), iron);
+        hoop.rotation.x = Math.PI / 2;
+        hoop.position.y = y;
+        g.add(hoop);
+      }
+    } else {
+      const hull = new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.16, 0.95), wood);
+      hull.position.y = 0.04;
+      const bow = new THREE.Mesh(new THREE.ConeGeometry(0.23, 0.32, 4), wood);
+      bow.rotation.x = Math.PI / 2;
+      bow.rotation.y = Math.PI / 4;
+      bow.scale.set(1, 1, 0.5);
+      bow.position.set(0, 0.04, 0.62);
+      const inside = new THREE.Mesh(new THREE.BoxGeometry(0.38, 0.01, 0.85), dark);
+      inside.position.y = 0.125;
+      g.add(hull, bow, inside);
+      for (const s of [-1, 1]) {
+        const oar = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.02, 0.05), new THREE.MeshLambertMaterial({ color: "#b98b5a" }));
+        oar.position.set(s * 0.42, 0.12, -0.05);
+        oar.rotation.z = -s * 0.25;
+        oar.name = "oar";
+        g.add(oar);
+      }
+    }
+    g.visible = false;
+    this.unitGroup.add(g);
+    unit.boat = g;
+  }
+
+  /** Afloat on a water hex: the boat bobs under the unit, sitting it down in it, turned the way it is going. */
+  private rideBoat(unit: Unit, p: THREE.Vector3, dt: number) {
+    const boat = unit.boat;
+    if (!boat) return;
+    const ground = this.groundAt(p.x, p.z);
+    const afloat = ground?.biome === "water";
+    boat.visible = afloat && unit.root.visible;
+    if (!afloat) return;
+    const swell = Math.sin(this.clock * 1.4 + p.x) * 0.025;
+    boat.position.set(p.x, ground!.top + swell, p.z - 0.1);
+    const moving = unit.path.length > 0;
+    if (moving) {
+      const to = unit.path[0];
+      boat.rotation.y = Math.atan2(to.x - p.x, to.z - p.z);
+    }
+    boat.rotation.z = Math.sin(this.clock * 1.1 + p.z) * 0.06;
+    // Oars stroke while rowing.
+    for (const oar of boat.children.filter((c) => c.name === "oar")) oar.rotation.y = moving ? Math.sin(this.clock * 7) * 0.4 : oar.rotation.y * Math.exp(-dt * 4);
+    // Sat down in it: a barrel to the chest, a rowboat to the waist.
+    unit.sunk = (unit.boatKind === "barrel" ? 0.24 : 0.16) - swell;
+    p.y -= unit.sunk;
   }
 
   /** Whether a unit is still on its way along a walked path. */
@@ -3229,7 +3315,7 @@ export class WorldRenderer {
         // A plate shows a first name only: full names run long over a crowd.
         const full = h.label ?? (plate ? h.name : undefined);
         const label = plate && full ? firstName(full) : full;
-        want.set(h.id, { kind: h.classId, outfit: h.outfit, pos, size: 1.5, label, plate: label ? plate : undefined, stack: i, ring: colorOf(h.id), pulse: state.turn?.heroId === h.id, asleep: h.asleep, rod: h.rod });
+        want.set(h.id, { kind: h.classId, outfit: h.outfit, pos, size: 1.5, label, plate: label ? plate : undefined, stack: i, ring: colorOf(h.id), pulse: state.turn?.heroId === h.id, asleep: h.asleep, rod: h.rod, boat: h.boat });
       }
       for (const npc of state.story?.npcs ?? []) {
         const poi = state.map.pois.find((p) => p.id === npc.poi);
@@ -3267,6 +3353,7 @@ export class WorldRenderer {
       this.unitGroup.remove(unit.root);
       unit.figure.dispose();
       this.ambience.stir(unit.shadowAt);
+      this.syncBoat(unit, undefined);
       if (unit.ring) this.unitGroup.remove(unit.ring);
       if (unit.hpBack) this.unitGroup.remove(unit.hpBack);
       if (unit.hpFill) this.unitGroup.remove(unit.hpFill);
@@ -3289,6 +3376,7 @@ export class WorldRenderer {
       unit.goal.copy(w.pos);
       if (w.asleep && !unit.asleep) unit.nextZ = this.clock + 0.4;
       unit.asleep = !!w.asleep;
+      this.syncBoat(unit, w.boat);
       // Down or asleep: on their back, low to the ground.
       unit.lying = !!w.down || !!w.asleep;
       unit.head = unit.lying ? w.size * LYING + 0.3 : w.size + 0.3;
@@ -3868,8 +3956,10 @@ export class WorldRenderer {
     const labelRow = (this.fine * 2 * Math.tan(THREE.MathUtils.degToRad(this.camera.fov / 2))) / this.renderer.domElement.height;
     for (const [id, unit] of this.units) {
       const p = unit.root.position;
-      // The hop is drawn on top of where the unit really is; take it off before moving.
+      // The hop is drawn on top of where the unit really is, and a boat sits it lower: take both off before moving.
       p.y -= unit.bob;
+      p.y += unit.sunk ?? 0;
+      unit.sunk = 0;
       let landed = 0;
       if (unit.path.length > 0) {
         const next = unit.path[0].clone();
@@ -3903,6 +3993,7 @@ export class WorldRenderer {
       const ground = p.y;
       unit.feet.set(p.x, ground, p.z);
       if (landed) this.footfall(id, unit);
+      this.rideBoat(unit, p, dt);
       p.y += unit.bob;
       // Indoors the shadow maps are drawn only when something changes: a hero that moved, turned, lay down or
       // stood up asks the lights in reach of where it was and where it is now to redraw.

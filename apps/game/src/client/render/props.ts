@@ -600,6 +600,17 @@ const MODELS: Record<string, (b: Builder) => void> = {
     b.box("#1f2430", 0.02, 0.02, 0.01, 0.19, 0.0, 0.12);
   },
 
+  // Boats, as they show in the craft list (on the water they are drawn under the hero by the renderer).
+  float_barrel(b) {
+    b.post(WOOD, 0.26, 0.23, 0.36);
+    for (const y of [0.06, 0.28]) b.ring(IRON, 0.25, 0.012, 0, y, 0).rotation.x = Math.PI / 2;
+  },
+  rowboat(b) {
+    b.box(WOOD, 0.46, 0.16, 0.9, 0, 0, 0);
+    b.box(DARK_WOOD, 0.38, 0.01, 0.8, 0, 0.16, 0);
+    b.box(PALE_WOOD, 0.9, 0.02, 0.05, 0, 0.15, -0.05);
+  },
+
   // The Catch Book's rewards, one per page, and Old Ironjaw's jaw.
   shallows_chart(b) {
     b.box("#e6d7a8", 0.62, 0.44, 0.015, 0, -0.22, 0.01);

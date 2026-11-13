@@ -29,6 +29,7 @@ import {
   type FightScript,
   type FightState,
   type FishSpot,
+  type Vessel,
 } from "@gantt-quest/world";
 import { audio } from "../audio/engine";
 import { soundName } from "../audio/names";
@@ -164,11 +165,14 @@ export class FishingStage implements WorldMinigame {
     private spot: FishSpot,
     seaward: THREE.Vector3,
     private hooks: FishHooks,
+    /** Afloat in this boat; null on a pier or the shore. */
+    private boat: Vessel | null = null,
   ) {
     this.fwd = seaward.clone().setY(0).normalize();
     this.right = new THREE.Vector3().crossVectors(this.fwd, UP).normalize();
     // Stand at the very end of the pier.
-    this.pierEnd = group.position.clone().addScaledVector(this.fwd, 0.45);
+    // Stand at the very end of the pier; afloat, sit in the middle of the boat.
+    this.pierEnd = boat ? group.position.clone() : group.position.clone().addScaledVector(this.fwd, 0.45);
     this.look.copy(this.pierEnd).addScaledVector(this.fwd, 6).setY(SEA_Y + 0.2);
 
     this.buildRod();
@@ -313,6 +317,64 @@ export class FishingStage implements WorldMinigame {
     this.rod.updateMatrixWorld(true);
   }
 
+  // ---------- the boat ----------
+
+  /** The boat's edge along the bottom of the view: a barrel's rim, or a rowboat's gunwales and bow. */
+  private hull: THREE.Group | null = null;
+
+  private buildHull(): THREE.Group {
+    const g = new THREE.Group();
+    const wood = new THREE.MeshBasicMaterial({ color: "#7a5a3a" });
+    const dark = new THREE.MeshBasicMaterial({ color: "#4a3322" });
+    const iron = new THREE.MeshBasicMaterial({ color: "#5a5e66" });
+    if (this.boat === "barrel") {
+      // The rim of the barrel, round in front of the eye, with an iron hoop.
+      const rim = new THREE.Mesh(new THREE.TorusGeometry(0.42, 0.035, 5, 24, Math.PI), wood);
+      rim.rotation.x = Math.PI / 2;
+      rim.rotation.z = Math.PI;
+      const hoop = new THREE.Mesh(new THREE.TorusGeometry(0.43, 0.012, 4, 24, Math.PI), iron);
+      hoop.rotation.x = Math.PI / 2;
+      hoop.rotation.z = Math.PI;
+      hoop.position.y = -0.04;
+      g.add(rim, hoop);
+      g.position.set(0, -0.3, -0.05);
+    } else {
+      // The two gunwales running forward to the bow, with a thwart across.
+      for (const s of [-1, 1]) {
+        const side = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.06, 1.3), wood);
+        side.position.set(s * 0.42, 0, -0.5);
+        side.rotation.y = -s * 0.32;
+        g.add(side);
+      }
+      const bow = new THREE.Mesh(new THREE.ConeGeometry(0.06, 0.16, 4), dark);
+      bow.position.set(0, 0.02, -1.12);
+      const thwart = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.04, 0.12), dark);
+      thwart.position.set(0, -0.05, -0.35);
+      g.add(bow, thwart);
+      g.position.set(0, -0.36, 0);
+    }
+    g.traverse((o) => {
+      if (o instanceof THREE.Mesh) {
+        o.layers.set(OVERLAY_LAYER);
+        o.renderOrder = 995;
+        o.frustumCulled = false;
+        (o.material as THREE.Material).depthTest = false;
+      }
+    });
+    const outer = new THREE.Group();
+    outer.add(g);
+    this.world.addObject(outer);
+    return outer;
+  }
+
+  private poseHull(camera: THREE.PerspectiveCamera) {
+    if (!this.boat) return;
+    this.hull ??= this.buildHull();
+    this.hull.visible = this.close > 0.85 && !this.leaving;
+    this.hull.position.copy(camera.position);
+    this.hull.quaternion.copy(camera.quaternion);
+  }
+
   // ---------- input ----------
 
   pressDown() {
@@ -455,7 +517,7 @@ export class FishingStage implements WorldMinigame {
     this.close = smoother(this.inT);
     if (this.leaving && this.inT <= 0) setTimeout(() => this.finish(), 0);
     if (!this.leaving && this.phase === "arrive" && this.inT >= 1) this.setPhase(this.shown ? "landed" : "idle");
-    const eye = this.pierEnd.clone().setY(this.group.position.y + EYE);
+    const eye = this.pierEnd.clone().setY(this.group.position.y + (this.boat === "barrel" ? 0.34 : this.boat ? 0.4 : EYE));
     // During a fight the eye follows the fish a little.
     const goal = this.pierEnd.clone().addScaledVector(this.fwd, 6).setY(SEA_Y + 0.25);
     if (this.fight) goal.lerp(this.fishAt(), 0.35);
@@ -601,8 +663,16 @@ export class FishingStage implements WorldMinigame {
       const tense = this.fight ? Math.max(0, this.fight.state.T - 0.8) * 0.01 : 0;
       camera.position.x += Math.sin(clock * 0.7) * 0.004 + (Math.random() - 0.5) * (this.shake * 0.01 + tense);
       camera.position.y += Math.sin(clock * 1.3) * 0.003 + (Math.random() - 0.5) * (this.shake * 0.01 + tense);
+      // Afloat, the swell lifts and rolls the boat (a barrel more than a rowboat).
+      if (this.boat && !this.still) {
+        const k = this.boat === "barrel" ? 1.6 : 1;
+        camera.position.y += Math.sin(clock * 0.9) * 0.02 * k;
+        camera.rotateZ(Math.sin(clock * 0.75) * 0.03 * k);
+        camera.rotateX(Math.sin(clock * 0.55 + 1) * 0.015 * k);
+      }
       camera.updateMatrixWorld();
     }
+    this.poseHull(camera);
 
     this.poseRod(camera, dt);
     this.drawLine();
@@ -790,7 +860,7 @@ export class FishingStage implements WorldMinigame {
     if (this.disposed) return;
     this.disposed = true;
     this.stopTick();
-    for (const obj of [this.rod, this.line, this.float, this.shadow]) {
+    for (const obj of [this.rod, this.line, this.float, this.shadow, ...(this.hull ? [this.hull] : [])]) {
       this.world.removeObject(obj);
       disposeTree(obj);
     }

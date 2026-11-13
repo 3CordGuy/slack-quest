@@ -4,6 +4,7 @@
 // and fight on to the server and shows what came of it.
 
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import type { HexPos } from "@gantt-quest/core";
 import * as THREE from "three";
 import {
   BOOK_TITLE,
@@ -11,13 +12,13 @@ import {
   FISH_SPOTS,
   FURNISHINGS,
   PAGE_REWARD,
-  HARBOR_FISH_SPOTS,
   HARBOR_SPAWN,
   formatLength,
   formatLoad,
   formatWeight,
   type CaughtFish,
   type FishSpot,
+  type Vessel,
   type GatherChoice,
   type GatherView,
   type Resources,
@@ -34,7 +35,8 @@ import "./quarry.css";
 import "./fishing.css";
 
 type Status = GatherStatus & { paid?: Resources; xp?: XpResult; sitting?: SittingPaid };
-type Pier = Exclude<FishSpot, "sea">;
+/** Where the hero fishes from: the spot, and the hex they stand (or float) on. */
+type Pier = FishSpot;
 
 const WATER_WORDS: Record<string, string> = {
   shallows: "Weed and sand. Small fish, flatfish, eels, and something old and whiskered.",
@@ -159,8 +161,10 @@ function FishingIntro({ pier, status, ended, busy, error, onStart, onClose }: {
 }
 
 /** The HUD over a sitting under way. */
-function Sitting({ outing, world, pier, shipBeside, apply, onRod, onClose }: {
+function Sitting({ outing, world, pier, at: here, vessel, shipBeside, apply, onRod, onClose }: {
   outing: GatherView;
+  at: HexPos;
+  vessel: Vessel | null;
   onRod?(on: boolean): void;
   world: WorldRenderer;
   pier: Pier;
@@ -204,7 +208,7 @@ function Sitting({ outing, world, pier, shipBeside, apply, onRod, onClose }: {
   };
 
   useEffect(() => {
-    const at = hexToWorld(HARBOR_FISH_SPOTS[pier]);
+    const at = hexToWorld(here);
     const town = hexToWorld(HARBOR_SPAWN);
     const seaward = new THREE.Vector3(at.x - town.x, 0, at.z - town.z).normalize();
     // A crew's ship moored off this pier: cast off the side of it instead.
@@ -290,7 +294,9 @@ function Sitting({ outing, world, pier, shipBeside, apply, onRod, onClose }: {
       missed: () => say("Too slow. It spat the hook out.", "bad"),
       left: () => undefined,
     };
-    const s = world.startMinigame((g) => new FishingStage(world, g, pier, seaward, hooks), HARBOR_FISH_SPOTS[pier], pier === "shore" ? "fishing" : undefined);
+    // Afloat, in whatever boat the hero has; ashore, on the pier.
+    const boat = FISH_SPOTS[pier].vessel ? vessel ?? FISH_SPOTS[pier].vessel! : null;
+    const s = world.startMinigame((g) => new FishingStage(world, g, pier, seaward, hooks, boat), here, pier === "shore" ? "fishing" : undefined);
     s.ease = sitting.ease;
     stage.current = s;
     document.body.classList.add("fishing");
@@ -471,8 +477,10 @@ function Sitting({ outing, world, pier, shipBeside, apply, onRod, onClose }: {
 }
 
 /** Fishing at a pier or the shore: the card, or the sitting under way. */
-export function Fishing({ pier, world, shipBeside, onRod, onClose, onStamina }: {
+export function Fishing({ pier, at, vessel = null, world, shipBeside, onRod, onClose, onStamina }: {
   pier: Pier;
+  at: HexPos;
+  vessel?: Vessel | null;
   world: WorldRenderer;
   shipBeside: boolean;
   onRod?(on: boolean): void;
@@ -525,6 +533,6 @@ export function Fishing({ pier, world, shipBeside, onRod, onClose, onStamina }: 
     if (active && !playing) setPlaying(active);
   }, [active, playing]);
   const shown = playing ?? active;
-  if (shown) return <Sitting outing={shown} world={world} pier={pier} shipBeside={shipBeside} apply={apply} onRod={onRod} onClose={onClose} />;
+  if (shown) return <Sitting outing={shown} world={world} pier={pier} at={at} vessel={vessel} shipBeside={shipBeside} apply={apply} onRod={onRod} onClose={onClose} />;
   return <FishingIntro pier={pier} status={status} ended={ended} busy={busy} error={error} onStart={() => void start()} onClose={onClose} />;
 }

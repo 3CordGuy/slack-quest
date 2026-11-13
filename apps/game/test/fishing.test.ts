@@ -350,3 +350,28 @@ describe("the Catch Book, records and mounts", () => {
     expect((await getHut(db, "ann")).furnishings.find((f) => f.id === mount)?.fish).toBeNull();
   });
 });
+
+describe("fishing from a boat", () => {
+  const boat = (defId: string) => sql.prepare("INSERT INTO furnishings (player_id, def_id, label, meta_json, created_at) VALUES ('ann', ?, ?, '{}', 0)").run(defId, defId);
+
+  it("needs a boat to fish afloat, and a rowboat for the open sea", async () => {
+    expect(await startOuting(db, "ann", "fishing", "coast_west")).toMatch(/need a boat/);
+    boat("float_barrel");
+    expect(await startOuting(db, "ann", "fishing", "sea")).toMatch(/rowboat/);
+    const r = await startOuting(db, "ann", "fishing", "wreck");
+    if (typeof r === "string") throw new Error(r);
+    // Cast out to sea from there: the server knows it is only a barrel.
+    expect(await stepOuting(db, "ann", { t: "cast", power: 0.5, spot: "sea", vessel: "rowboat" })).toMatch(/rowboat/);
+  });
+
+  it("carries more in a rowboat, and brings up the open sea's fish", async () => {
+    boat("rowboat");
+    const r = await startOuting(db, "ann", "fishing", "sea");
+    if (typeof r === "string") throw new Error(r);
+    const plain = 25_000 + 9 * 1000;
+    expect(r.outing!.sitting!.creelLimitG).toBe(plain + 20_000);
+    const cast = await stepOuting(db, "ann", { t: "cast", power: 0.5 });
+    if (typeof cast === "string") throw new Error(cast);
+    expect(cast.outing!.sitting!.spot).toBe("sea");
+  });
+});

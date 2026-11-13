@@ -15,13 +15,15 @@
 import { statPct } from "./check";
 import { FISH, aFish, type FishDef } from "./fishcatalog";
 import { FIGHT_OUTCOME_TEXT, edgesProblem, fightEase, makeFightScript, replayFight, type FightEase, type FightOutcome, type FightScript } from "./fishfight";
-import { FISH_SPOTS, FISH_SPOT_IDS, castMetres, formatLength, formatWeight, rollCatch, rollSize, type FishSpot } from "./fishing";
+import { FISH_SPOTS, FISH_SPOT_IDS, castMetres, vesselProblem, type Vessel, formatLength, formatWeight, rollCatch, rollSize, type FishSpot } from "./fishing";
 import type { GatherChoice, GatherState, GatherStep } from "./gather";
 import type { Resources } from "./hut";
 import { makeRng } from "./rng";
 
 /** A sitting left this long without a cast, a reel or a choice ends by itself, the catch kept. */
 export const SITTING_IDLE_MS = 15 * 60_000;
+/** A rowboat carries this much more, on a sitting begun in one. */
+export const ROWBOAT_CREEL_G = 20_000;
 /** The creel holds this much, plus CREEL_PER_STR_G for each point of Strength. */
 export const CREEL_BASE_G = 25_000;
 export const CREEL_PER_STR_G = 1_000;
@@ -70,8 +72,8 @@ export interface CastState {
 
 export interface Sitting {
   spot: FishSpot;
-  /** Afloat in a boat. Always null until boats. */
-  vessel: null;
+  /** Afloat: the boat the last cast was made from. Null ashore. */
+  vessel: Vessel | null;
   startedAt: number;
   lastActiveAt: number;
   ease: FightEase;
@@ -112,7 +114,7 @@ export interface AnglerStats {
 const def = (species: string): FishDef => FISH[species];
 
 /** Begin a sitting at `spot`. The caller has checked the spot is open and the hero has stamina left. */
-export function startSitting(spot: FishSpot, seed: number, stats: AnglerStats, now: number): GatherState {
+export function startSitting(spot: FishSpot, seed: number, stats: AnglerStats, now: number, extraCreelG = 0): GatherState {
   const dex = statPct(stats.dex);
   const sitting: Sitting = {
     spot,
@@ -120,7 +122,7 @@ export function startSitting(spot: FishSpot, seed: number, stats: AnglerStats, n
     startedAt: now,
     lastActiveAt: now,
     ease: fightEase(statPct(stats.str), dex),
-    creelLimitG: CREEL_BASE_G + CREEL_PER_STR_G * Math.max(0, Math.floor(stats.str)),
+    creelLimitG: CREEL_BASE_G + CREEL_PER_STR_G * Math.max(0, Math.floor(stats.str)) + extraCreelG,
     creelGrams: 0,
     landed: [],
     lost: [],
@@ -192,11 +194,14 @@ export function stepSitting(state: GatherState, choice: GatherChoice): GatherSte
     const from = choice.spot ?? s.spot;
     if (!FISH_SPOT_IDS.includes(from)) return { state, error: "You cannot fish from there." };
     if (FISH_SPOTS[from].closed) return { state, error: FISH_SPOTS[from].closed };
+    // Afloat, the server has filled in the best boat the hero owns.
+    const afloat = vesselProblem(from, choice.vessel);
+    if (afloat) return { state, error: afloat };
     const spot = FISH_SPOTS[from];
     const power = Math.max(0, Math.min(1, Number(choice.power) || 0));
     const reach = power * spot.maxCast;
     const rng = makeRng(state.rng);
-    const caught = rollCatch(rng, spot.water, reach);
+    const caught = rollCatch(rng, spot.water, reach, spot.bonus);
     const size = rollSize(rng, caught, reach);
     const metres = castMetres(reach);
     const biteMs = rng.int(BITE_MS[0], BITE_MS[1]);
@@ -204,7 +209,7 @@ export function stepSitting(state: GatherState, choice: GatherChoice): GatherSte
     const fish: CaughtFish = { species: caught.id, ...size, spot: from, at: now, ...(caught.gold ? { gold: rng.int(caught.gold[0], caught.gold[1]) } : {}) };
     const script = makeFightScript(rng, caught, size.grams / 1000, metres);
     const cast: CastState = { at: now, power, metres, biteMs, nibbles, windowMs: Math.round(HOOK_WINDOW_MS + HOOK_WINDOW_DEX_MS * s.ease.dex), fish, script, hookedAt: null };
-    return { state: { ...state, rng: rng.state(), step: state.step + 1, sitting: { ...busy, spot: from, cast, last: null } } };
+    return { state: { ...state, rng: rng.state(), step: state.step + 1, sitting: { ...busy, spot: from, vessel: spot.vessel ? choice.vessel ?? null : null, cast, last: null } } };
   }
 
   if (choice.t === "reel") {
