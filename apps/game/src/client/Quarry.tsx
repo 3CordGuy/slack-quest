@@ -5,18 +5,18 @@
 // server, one report at a time, whenever one breaks a rock.
 
 import { useEffect, useRef, useState } from "react";
-import { HARBOR_GATHER, MINE_RARITY, RESOURCE_KINDS, type Blow, type GatherChoice, type GatherView, type Resources } from "@gantt-quest/world";
+import { HARBOR_GATHER, RESOURCE_KINDS, type Blow, type GatherChoice, type GatherView, type Resources } from "@gantt-quest/world";
 import { api, type GatherStatus, type XpResult } from "./api";
 import { ResourceChips } from "./hutDrops";
 import { MineStage, type MineCallbacks } from "./render/MineStage";
 import type { WorldRenderer } from "./render/WorldRenderer";
+import "./quarry.css";
 
 type Status = GatherStatus & { paid?: Resources; xp?: XpResult };
 
 /** How long "Time!" shows before the haul is carried out. */
 const TIME_UP_MS = 1300;
 
-const RARITY_ORDER = ["stone", "iron", "copper", "gem"] as const;
 
 export function Quarry({ outing, world, apply, onLeave }: {
   outing: GatherView;
@@ -211,39 +211,29 @@ export function Quarry({ outing, world, apply, onLeave }: {
           <div className="mine-clock-fill" ref={timerBar} />
           <span ref={timerText} className="mine-clock-text">30.0s</span>
         </div>
-        <div className="mine-haul">
-          {any ? <ResourceChips resources={haul} /> : <span className="muted">Nothing yet</span>}
-        </div>
+        {any && (
+          <div className="mine-haul">
+            <ResourceChips resources={haul} />
+          </div>
+        )}
       </div>
 
       <div className="mine-side">
-        <div className="mine-rarity" aria-label="What the face gives, commonest first">
-          {RARITY_ORDER.map((k) => (
-            <span key={k} style={{ color: MINE_RARITY[k].color }}>
-              <i style={{ background: MINE_RARITY[k].color }} />
-              {k === "gem" ? "Gem" : k[0].toUpperCase() + k.slice(1)} <span className="muted">{MINE_RARITY[k].label}</span>
-            </span>
-          ))}
-        </div>
         <ul className="mine-finds">
           {finds.map((f, i) => <li key={`${outing.log.length}-${i}`} className={f.gained.gem ? "gem" : ""}>{f.text}</li>)}
         </ul>
       </div>
 
       {phase === "ready" && (
-        <div className="mine-card panel">
-          <h2>The rock face</h2>
-          <p>A seam of ore runs through this wall somewhere. It <strong>glints</strong> through the junk around it, though loose mica glints too.</p>
-          <ul className="muted">
-            <li><strong>Tap</strong> a rock for a quick blow. <strong>Hold</strong> to charge: half a charge hits for 2, a full one for 3 and cracks the rocks around it too.</li>
-            <li>Rubble breaks fast and sometimes gives stone. Hard rock wants a charged swing.</li>
-            <li>Breaking a rock shows what is in the ones beside it: follow the seam. Gems sparkle.</li>
-            <li><strong>Mind what is above.</strong> Rocks fall into any gap, cracking as they drop, and one the fall breaks is lost with whatever was in it. The rocks that would fall glow red as you aim.</li>
-          </ul>
-          <div className="row">
-            <button className="primary" disabled={starting} onClick={() => void begin()}>Start the clock · 30s</button>
-            <button onClick={onLeave}>Step away</button>
+        <div className="mine-ready">
+          <span className="mine-kicker">Find the seam</span>
+          <div className="mine-keys">
+            <span><kbd>Tap</kbd> strike</span>
+            <span><kbd>Hold</kbd> heavy swing</span>
+            <span className="warn"><kbd>▼</kbd> falls smash finds</span>
           </div>
+          <button className="primary big" disabled={starting} onClick={() => void begin()} autoFocus>Start · 30s</button>
+          <button className="link" onClick={onLeave}>Step away</button>
           {error && <p className="bad">{error}</p>}
         </div>
       )}

@@ -969,7 +969,7 @@ export class MineStage implements WorldMinigame {
 
   /** The pick, held at the bottom right of the view: raised back as the swing charges, snapping down on a blow. */
   private posePick(camera: THREE.PerspectiveCamera, close: number) {
-    this.pick.visible = close > 0.85 && !this.timeUp;
+    this.pick.visible = close > 0.85 && !this.timeUp && !this.leaving;
     if (!this.pick.visible) return;
     this.pick.position.copy(camera.position);
     this.pick.quaternion.copy(camera.quaternion);

@@ -10,6 +10,7 @@ import { FellingGame } from "./FellingGame";
 import type { WorldRenderer } from "./render/WorldRenderer";
 import { TimingBar } from "./TimingBar";
 import { Quarry } from "./Quarry";
+import { QuarryIntro } from "./QuarryIntro";
 import { ResourceChips, resourceText } from "./hutDrops";
 import "./gather.css";
 import { StaminaBolts } from "./StaminaBolts";
@@ -136,6 +137,21 @@ export function GatherPanel({ spot, renderer, onClose, onStamina }: {
 
   // The quarry is played at the face itself, in the Harbor: the panel gives way to the camera and a small HUD.
   if (outing?.mine && active && outing.spot === spot && renderer.current) return <Quarry outing={outing} world={renderer.current} apply={apply} onLeave={onClose} />;
+  // Before a run, and after one, the quarry has its own card. (An old-style outing, or one open elsewhere, falls through to the panel.)
+  if (spot === "quarry" && !active && !finishedElsewhere && (!outing || outing.mine)) {
+    return (
+      <QuarryIntro
+        status={status}
+        outing={outing}
+        paid={paid}
+        xp={xp}
+        busy={busy}
+        error={error}
+        onStart={() => void run(() => api.gatherStart(spot))}
+        onClose={onClose}
+      />
+    );
+  }
 
   return (
     <div className="overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
