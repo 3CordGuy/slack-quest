@@ -174,7 +174,7 @@ export type Errand =
  * outing turns it up. A trade swaps equal worth, rounded in the player's
  * favour, and a little over.
  */
-export const MATERIAL_WORTH: Record<ResourceKind, number> = { wood: 1, stone: 1, bone: 1, herbs: 1, mushrooms: 1, fur: 1.5, copper: 2, iron: 2 };
+export const MATERIAL_WORTH: Record<ResourceKind, number> = { wood: 1, stone: 1, bone: 1, herbs: 1, mushrooms: 1, fur: 1.5, copper: 2, iron: 2, gem: 6 };
 /** The most gold a fetch pays: about a notice-board contract, at the low end. */
 export const FETCH_GOLD_MAX = 30;
 /** A trade gives this much more worth than it takes. */

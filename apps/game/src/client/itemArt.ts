@@ -289,6 +289,15 @@ const ART: Record<string, Art> = {
   },
   "res-iron": (p) => ingot(p, C.steel, C.iron, "#646d7c", C.shine),
   "res-copper": (p) => ingot(p, "#e39a5c", "#c8743a", "#8f4d24", "#f6c79a"),
+  "res-gem": (p) => {
+    // A cut gem: a flat table on top, the crown's facets, and the pavilion tapering to a point.
+    spans(p, "#ff9be8", [[3, 5, 10], [4, 4, 11], [5, 3, 12]]);
+    spans(p, "#ff6fe0", [[6, 2, 13], [7, 3, 12], [8, 4, 11], [9, 5, 10], [10, 6, 9], [11, 7, 8]]);
+    spans(p, "#c23fa8", [[6, 9, 13], [7, 9, 12], [8, 8, 11], [9, 8, 10], [10, 8, 9]]);
+    spans(p, "#fff4fc", [[3, 6, 7], [4, 5, 5], [6, 4, 5]]);
+    p.r(12, 1, 1, 1, "#fff4fc");
+    p.r(13, 2, 1, 1, "#ff9be8");
+  },
   "res-fur": (p) => {
     // A pelt stretched flat: four legs, a tail, darker along the spine.
     spans(p, C.leather, [[1, 6, 9], [2, 2, 3], [2, 5, 10], [2, 12, 13], [3, 2, 13], [4, 3, 12], [5, 4, 11], [6, 4, 11], [7, 4, 11], [8, 4, 11], [9, 3, 12], [10, 2, 13], [11, 2, 3], [11, 5, 10], [11, 12, 13], [12, 7, 8], [13, 7, 8], [14, 7, 7]]);

@@ -59,6 +59,10 @@ export const soundName = {
   chop: (grade: "perfect" | "good" | "close" | "miss" | "late") => [`gather.chop.${grade === "late" ? "miss" : grade === "close" ? "good" : grade}`, "gather.chop"],
   knock: (kind: "sound" | "den" | "rotten") => [`gather.knock.${kind === "rotten" ? "hollow" : kind === "den" ? "scurry" : "solid"}`, "gather.knock"],
   fall: (what: "creak" | "timber" | "hung" | "creek" | "pile") => [`gather.${what}`],
+  /** The quarry: the pick striking (a full charge is heavy), a rock giving way, and what it gave. */
+  pick: (heavy: boolean) => (heavy ? ["gather.pick.heavy", "gather.pick"] : ["gather.pick"]),
+  rockBreak: () => ["gather.rock"],
+  find: (what: "ore" | "gem") => [`gather.${what}`],
 
   /**
    * Something that happened on a voyage. Rewards and finds sound only for the
@@ -134,6 +138,7 @@ export function soundNames(): Set<string> {
   for (const g of ["perfect", "good", "close", "miss", "late"] as const) add(soundName.chop(g));
   for (const k of ["sound", "den", "rotten"] as const) add(soundName.knock(k));
   for (const f of ["creak", "timber", "hung", "creek", "pile"] as const) add(soundName.fall(f));
+  [soundName.pick(true), soundName.rockBreak(), soundName.find("ore"), soundName.find("gem")].forEach(add);
   add(["forage", ...Object.keys(FORAGE).map((k) => `forage.${k}`), "search.found", "search.empty", "rest", "discover"]);
   return names;
 }

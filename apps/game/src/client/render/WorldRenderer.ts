@@ -474,6 +474,20 @@ export interface RendererCallbacks {
 /** A small thing on the floor keeps this close to the middle of its hex. */
 const SMALL_REACH = 0.7;
 
+/**
+ * A close-up the camera flies into and out of (the quarry's rock face, seen first person). `shot` is asked
+ * every frame with the view's shape, so the framing can follow a resized or turned window.
+ */
+export interface Closeup {
+  shot(aspect: number): { eye: THREE.Vector3; look: THREE.Vector3; fov: number };
+}
+/** Seconds to fly into a close-up, and back out of one. */
+const CLOSE_IN_S = 1.6;
+const CLOSE_OUT_S = 1.2;
+/** The camera's usual field of view, which a close-up widens. */
+const BASE_FOV = 35;
+const smoother = (t: number) => t * t * t * (t * (t * 6 - 15) + 10);
+
 export class WorldRenderer {
   private scene = new THREE.Scene();
   private camera = new THREE.PerspectiveCamera(35, 1, 0.1, 200);
@@ -627,6 +641,16 @@ export class WorldRenderer {
    */
   private panFrom: { x: number; y: number } | null = null;
   private pointer = { x: 0, y: 0, downX: 0, downY: 0, down: false, dragged: false, dirty: false, inside: false };
+  /** The close-up asked for (null: none), the last one (kept while flying back out of it), and how far in the camera is, 0 to 1. */
+  private closeup: Closeup | null = null;
+  private closeLast: Closeup | null = null;
+  private closeT = 0;
+  /** What the camera looks at this frame: the target, or a point on the way into a close-up. */
+  private focusPoint = new THREE.Vector3();
+  private closeLook = new THREE.Vector3();
+  private closeRel = new THREE.Vector3();
+  /** Called every frame before drawing, by things a view has added to the scene (see addTicker). */
+  private tickers = new Set<(dt: number, camera: THREE.PerspectiveCamera, clock: number) => void>();
 
   /**
    * `backdrop`: a second view drawn off screen for another to show (the Harbor seen through the pub's
@@ -1616,6 +1640,108 @@ export class WorldRenderer {
   /** Whether a unit is still on its way along a walked path. */
   isWalking(id: string): boolean {
     return (this.units.get(id)?.path.length ?? 0) > 0;
+  }
+
+  // ---------- close-ups ----------
+
+  /**
+   * Fly the camera into a close-up (orbiting round as it comes down), or back out to the map with null. While
+   * one is set the map takes no clicks, drags or keys, its camera buttons are hidden, and your own hero (who
+   * would be standing in the shot) is not drawn.
+   */
+  setCloseup(closeup: Closeup | null) {
+    this.closeup = closeup;
+    if (closeup) this.closeLast = closeup;
+    this.rotateButtons.style.display = closeup ? "none" : "";
+    this.touches.clear();
+    this.pinch = null;
+    this.pointer.down = false;
+    this.heldKeys.clear();
+    if (closeup) this.setHovered(null);
+  }
+
+  /** How far into a close-up the camera is: 0 out on the map, 1 all the way in. */
+  get closeness(): number {
+    return this.closeT;
+  }
+
+  /** How dark it is outdoors, 0 (day) to 1 (dead of night). */
+  get night(): number {
+    return this.ambience.night;
+  }
+
+  /** Whether the finishing pass (glow and the rest) is on in this view. */
+  get glowing(): boolean {
+    return !!this.post;
+  }
+
+  /** Add something of a view's own to the scene (a close-up's set), or take it away. */
+  addObject(obj: THREE.Object3D) {
+    this.scene.add(obj);
+  }
+
+  removeObject(obj: THREE.Object3D) {
+    this.scene.remove(obj);
+  }
+
+  /** Run `fn` every frame before drawing, with the frame's time step, the camera and the render clock. Returns the way to stop. */
+  addTicker(fn: (dt: number, camera: THREE.PerspectiveCamera, clock: number) => void): () => void {
+    this.tickers.add(fn);
+    return () => this.tickers.delete(fn);
+  }
+
+  /** The nearest of `objects` (and their children) under a point on screen, in client pixels. */
+  pickAt(objects: THREE.Object3D[], clientX: number, clientY: number): THREE.Intersection | null {
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0) return null;
+    const ndc = new THREE.Vector2(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1);
+    this.raycaster.setFromCamera(ndc, this.camera);
+    return this.raycaster.intersectObjects(objects, true)[0] ?? null;
+  }
+
+  /** Where a point in the world is on screen, in container pixels, or null if it is behind the camera. */
+  toScreen(p: THREE.Vector3): { x: number; y: number } | null {
+    const v = p.clone().project(this.camera);
+    if (v.z < -1 || v.z > 1) return null;
+    return { x: ((v.x + 1) / 2) * this.container.clientWidth, y: ((1 - v.y) / 2) * this.container.clientHeight };
+  }
+
+  /** Where a hex's ground is, in world units. */
+  groundAt(pos: HexPos): THREE.Vector3 {
+    return this.standAt(pos);
+  }
+
+  /** Ease toward the close-up (or out of it) and put the camera on the way there, orbiting in as it comes down. */
+  private flyCloseup(dt: number) {
+    const goal = this.closeup ? 1 : 0;
+    if (this.closeT !== goal) this.closeT = goal > this.closeT ? Math.min(1, this.closeT + dt / CLOSE_IN_S) : Math.max(0, this.closeT - dt / CLOSE_OUT_S);
+    this.focusPoint.copy(this.target);
+    if (this.closeT <= 0 || !this.closeLast) {
+      if (this.camera.fov !== BASE_FOV && !this.vantage) {
+        this.camera.fov = BASE_FOV;
+        this.camera.updateProjectionMatrix();
+      }
+      return;
+    }
+    const s = smoother(this.closeT);
+    const shot = this.closeLast.shot(this.camera.aspect);
+    const look = this.closeLook.copy(this.target).lerp(shot.look, s);
+    const rel = this.closeRel.copy(shot.eye).sub(shot.look);
+    const d1 = Math.max(0.01, rel.length());
+    const yaw1 = Math.atan2(rel.x, rel.z);
+    const pitch1 = Math.asin(Math.max(-1, Math.min(1, rel.y / d1)));
+    const d0 = Math.max(0.01, this.camera.position.distanceTo(this.target));
+    // Turn the short way round to the shot, with a little extra swing on the way so it always orbits in.
+    let turn = yaw1 - this.yaw;
+    turn = Math.atan2(Math.sin(turn), Math.cos(turn));
+    const yaw = this.yaw + turn * s + Math.sin(Math.PI * s) * 0.5;
+    const pitch = this.pitch + (pitch1 - this.pitch) * s;
+    const d = Math.exp(Math.log(d0) + (Math.log(d1) - Math.log(d0)) * s);
+    this.camera.position.set(look.x + Math.sin(yaw) * Math.cos(pitch) * d, look.y + Math.sin(pitch) * d, look.z + Math.cos(yaw) * Math.cos(pitch) * d);
+    this.camera.lookAt(look);
+    this.camera.fov = BASE_FOV + (shot.fov - BASE_FOV) * s;
+    this.camera.updateProjectionMatrix();
+    this.focusPoint.copy(look);
   }
 
   // ---------- points of interest ----------
@@ -3229,6 +3355,7 @@ export class WorldRenderer {
   // hex if it barely moves); two pointers pinch to zoom and pan together.
 
   private onPointerDown = (e: PointerEvent) => {
+    if (this.closeup) return;
     const canvas = this.renderer.domElement;
     try {
       canvas.setPointerCapture(e.pointerId);
@@ -3289,6 +3416,7 @@ export class WorldRenderer {
   private onContextMenu = (e: Event) => e.preventDefault();
 
   private onKeyDown = (e: KeyboardEvent) => {
+    if (this.closeup) return;
     const el = e.target as HTMLElement | null;
     if (e.metaKey || e.ctrlKey || e.altKey || (el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName)))) return;
     if (e.key === "q" || e.key === "Q") this.rotateBy(-1);
@@ -3337,6 +3465,7 @@ export class WorldRenderer {
   }
 
   private onPointerMove = (e: PointerEvent) => {
+    if (this.closeup) return;
     const touch = this.touches.get(e.pointerId);
     if (touch) {
       touch.x = e.clientX;
@@ -3421,6 +3550,7 @@ export class WorldRenderer {
 
   private onWheel = (e: WheelEvent) => {
     e.preventDefault();
+    if (this.closeup) return;
     // Shift and the wheel turn whatever is being carried: a notch at a time, or (snapping off) as far as the wheel moves.
     if (e.shiftKey && this.state?.holding && this.callbacks.onTurnHeld) {
       const delta = e.deltaY || e.deltaX;
@@ -3518,7 +3648,7 @@ export class WorldRenderer {
     this.clock += dt;
     const ease = 1 - Math.exp(-dt * 6);
 
-    if (this.pointer.dirty && this.pointer.inside) {
+    if (this.pointer.dirty && this.pointer.inside && !this.closeup) {
       this.pointer.dirty = false;
       this.setHovered(this.pick());
       if (this.state?.holding) this.placeGhost();
@@ -3533,7 +3663,7 @@ export class WorldRenderer {
     }
 
     // Held movement keys slide the view, at a speed that covers the screen in about a second and a half.
-    if (this.heldKeys.size > 0 && !this.state?.battle) {
+    if (this.heldKeys.size > 0 && !this.state?.battle && !this.closeup) {
       let x = 0;
       let y = 0;
       for (const key of this.heldKeys) {
@@ -3572,7 +3702,7 @@ export class WorldRenderer {
       this.camera.position.copy(this.vantage.from);
       this.camera.lookAt(this.vantage.to);
       this.target.copy(this.vantage.to);
-    }
+    } else this.flyCloseup(dt);
     this.ambience.update(this.clock, this.yaw, this.target, this.state?.you ? this.units.get(this.state.you)?.sprite.position : undefined);
     // Sounds are heard from where your hero stands, or from the middle of the view without one.
     const ear = (this.state?.you ? this.units.get(this.state.you)?.sprite.position : undefined) ?? this.target;
@@ -3781,6 +3911,11 @@ export class WorldRenderer {
       }
     }
 
+    for (const tick of this.tickers) tick(dt, this.camera, this.clock);
+    // In a close-up the camera stands where your hero does: do not draw them in the way.
+    const you = this.closeT > 0.35 && this.state?.you ? this.units.get(this.state.you) : undefined;
+    const hidden = you ? [you.sprite, you.label, you.ring, you.hpBack, you.hpFill].filter((o): o is THREE.Sprite | THREE.Mesh => !!o && o.visible) : [];
+    for (const o of hidden) o.visible = false;
     this.ambience.settleShadows();
     if (this.post) {
       this.air.outdoors = this.ambience.openSky;
@@ -3792,8 +3927,9 @@ export class WorldRenderer {
       this.air.sunHeight = this.ambience.sunHeight;
       // In a room the flash is only what comes in at the windows.
       this.air.flash = this.opts.backdrop ? this.lentFlash : this.storm.flash * (this.ambience.openSky ? 1 : 0.4);
-      this.post.render(this.scene, this.camera, this.camera.position.distanceTo(this.target), this.ambience.night, this.air);
+      this.post.render(this.scene, this.camera, this.camera.position.distanceTo(this.focusPoint), this.ambience.night, this.air);
     }
     else this.renderer.render(this.scene, this.camera);
+    for (const o of hidden) o.visible = true;
   };
 }

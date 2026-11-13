@@ -30,6 +30,7 @@ const RESOURCE_COLOR: Record<ResourceKind, string> = {
   bone: "#eee6cf",
   herbs: "#6fae4a",
   mushrooms: "#b8452f",
+  gem: "#ff7ae0",
 };
 
 export const resourceIcon = (kind: string): IconRef => ({ name: drawn(`res-${kind}`, "res-stone"), color: RESOURCE_COLOR[kind as ResourceKind] ?? "#8b95a5" });

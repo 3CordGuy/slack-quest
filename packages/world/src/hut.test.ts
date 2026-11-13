@@ -163,10 +163,13 @@ describe("the resource bin on a new plot", () => {
 });
 
 describe("selling foraged goods to the stall", () => {
-  it("buys herbs and mushrooms only, whole amounts the seller holds", async () => {
-    const { STALL_BUYS, sellMaterialProblem } = await import("./index");
-    expect(Object.keys(STALL_BUYS).sort()).toEqual(["herbs", "mushrooms"]);
-    const have = { herbs: 4, mushrooms: 1, wood: 9 };
+  it("buys herbs, mushrooms and gems only, whole amounts the seller holds", async () => {
+    const { STALL_BUYS, STALL_GEM_PRICE, sellMaterialProblem } = await import("./index");
+    expect(Object.keys(STALL_BUYS).sort()).toEqual(["gem", "herbs", "mushrooms"]);
+    expect(STALL_BUYS.gem).toBe(STALL_GEM_PRICE);
+    const have = { herbs: 4, mushrooms: 1, wood: 9, gem: 2, iron: 3 };
+    expect(sellMaterialProblem("gem", 2, have)).toBeNull();
+    expect(sellMaterialProblem("iron", 1, have)).toMatch(/does not buy/);
     expect(sellMaterialProblem("herbs", 4, have)).toBeNull();
     expect(sellMaterialProblem("mushrooms", 1, have)).toBeNull();
     expect(sellMaterialProblem("herbs", 5, have)).toMatch(/only have 4/);
