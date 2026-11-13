@@ -59,13 +59,15 @@ function Water({ outing, busy, cast }: { outing: GatherView; busy: boolean; cast
   );
 }
 
-export function GatherPanel({ spot, pier, at, vessel = null, shipBeside = false, onRod, renderer, onClose, onStamina }: {
+export function GatherPanel({ spot, pier, at, vessel = null, gilded = false, shipBeside = false, onRod, renderer, onClose, onStamina }: {
   spot: GatherSpot;
   /** Fishing: where the hero is fishing from (a pier, the shore, or afloat), and the hex they are on. */
   pier?: FishSpot;
   at?: HexPos;
   /** The best boat the hero owns. */
   vessel?: Vessel | null;
+  /** The Catch Book is full: the rod is gilded. */
+  gilded?: boolean;
   /** A crew's ship is moored off that pier. */
   shipBeside?: boolean;
   /** Fishing: show the hero with a rod in hand to everyone in the Harbor, or put it down. */
@@ -148,7 +150,7 @@ export function GatherPanel({ spot, pier, at, vessel = null, shipBeside = false,
     : null;
   if (spot === "fishing" && from && renderer.current) {
     if (!status && !error) return null;
-    if (!open || open.sitting) return <Fishing pier={from.spot} at={from.at} vessel={vessel} world={renderer.current} shipBeside={shipAtOpen} onRod={onRod} onClose={onClose} onStamina={onStamina} />;
+    if (!open || open.sitting) return <Fishing pier={from.spot} at={from.at} vessel={vessel} gilded={gilded} world={renderer.current} shipBeside={shipAtOpen} onRod={onRod} onClose={onClose} onStamina={onStamina} />;
   }
   // Felling is played in the Harbor itself, through the hero's eyes: no panel over it.
   if (outing?.felling && outing.spot === spot) {

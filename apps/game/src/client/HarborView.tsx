@@ -6,7 +6,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useAudioScene } from "./audio/useAudioScene";
 import type { HexPos } from "@gantt-quest/core";
-import { GATHER_SPOTS, GATHER_SPOT_IDS, HARBOR_APOTHECARY, HARBOR_BOARD, HARBOR_CAVE, HARBOR_GALLEY, HARBOR_LIGHTHOUSE, HARBOR_SMITHY, HARBOR_GATHER, HARBOR_NAME, HARBOR_PIERS, HARBOR_PLOTS, HARBOR_PUB, HARBOR_RING, HARBOR_SHOP, HARBOR_SPAWN, HARBOR_WORKS, MAX_PARTY, PLOT_PRICE, RESOURCE_KINDS, SHACK_COST, binFill, binNeeds, builtProjects, fishSpotAt, seaEdge, tileAt, waterSpotAt, type FishSpot, FISH_SPOTS, generateHarbor, projectById, projectProgress, harborPoi, hutTier, poiAt, salesman, type GatherSpot, type HarborShip, type Resources } from "@gantt-quest/world";
+import { GATHER_SPOTS, GATHER_SPOT_IDS, HARBOR_APOTHECARY, HARBOR_BOARD, HARBOR_CAVE, HARBOR_GALLEY, HARBOR_LIGHTHOUSE, HARBOR_SMITHY, HARBOR_GATHER, HARBOR_NAME, HARBOR_PIERS, HARBOR_PLOTS, HARBOR_PUB, HARBOR_RING, HARBOR_SHOP, HARBOR_SPAWN, HARBOR_WORKS, MAX_PARTY, PLOT_PRICE, RESOURCE_KINDS, SHACK_COST, binFill, binNeeds, builtProjects, BOOK_TITLE, fishSpotAt, seaEdge, tileAt, waterSpotAt, type FishSpot, FISH_SPOTS, generateHarbor, projectById, projectProgress, harborPoi, hutTier, poiAt, salesman, type GatherSpot, type HarborShip, type Resources } from "@gantt-quest/world";
 import { api, type Me } from "./api";
 import { CatchPanel } from "./CatchPanel";
 import { AccountPanel } from "./Account";
@@ -108,7 +108,7 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
       phase: "overworld",
       round: 0,
       map: { ...base, pois },
-      heroes: players.map((p) => ({ id: p.id, classId: p.classId, pos: p.pos, label: p.name, outfit: p.outfit, asleep: !!p.bedroll && same(p.bedroll, p.pos), rod: !!p.fishing, boat: tileAt(base, p.pos)?.biome === "water" ? p.vessel ?? "barrel" : undefined, level: p.level, xp: p.xp })),
+      heroes: players.map((p) => ({ id: p.id, classId: p.classId, pos: p.pos, label: p.name, outfit: p.outfit, asleep: !!p.bedroll && same(p.bedroll, p.pos), rod: p.fishing ? (p.gilded ? "gilded" : true) : false, boat: tileAt(base, p.pos)?.biome === "water" ? p.vessel ?? "barrel" : undefined, level: p.level, xp: p.xp })),
       turn: null,
       battle: null,
       story: null,
@@ -469,7 +469,7 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
       {workshop === "galley" && <GalleyPanel onClose={() => setWorkshop(null)} />}
       {workshop === "smithy" && <SmithyPanel refresh={refreshAll} onClose={() => setWorkshop(null)} />}
       {spar && scene && me.character && <SparView me={me} scene={scene} renderer={renderer} onClose={() => setSpar(false)} />}
-      {gather && me.character && <GatherPanel spot={gather} onRod={(on) => harbor.send({ type: "fishing", on })} pier={pierHere ?? undefined} at={self?.pos} vessel={self?.vessel ?? null} shipBeside={!!shipHere} renderer={renderer} onClose={() => setGather(null)} onStamina={setStamina} />}
+      {gather && me.character && <GatherPanel spot={gather} onRod={(on) => harbor.send({ type: "fishing", on })} pier={pierHere ?? undefined} at={self?.pos} vessel={self?.vessel ?? null} gilded={me.character?.title === BOOK_TITLE} shipBeside={!!shipHere} renderer={renderer} onClose={() => setGather(null)} onStamina={setStamina} />}
       {fishmonger && me.character && <CatchPanel buyer="market" onGold={() => void refresh()} onClose={() => setFishmonger(false)} />}
       {shop && me.character && <ShopScreen me={me} refresh={refreshAll} onClose={() => setShop(false)} />}
       {me.character && <Trading me={me} partners={board.members.filter((m) => m.id !== you)} withId={tradeWith} onWith={setTradeWith} refresh={refresh} />}

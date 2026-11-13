@@ -25,7 +25,7 @@ import {
   type HarborServerMessage,
 } from "@gantt-quest/world";
 import { getCrew, harborBoard, heroInitFor, type Env } from "./db";
-import { ownedVessel } from "./fishmarket";
+import { gildedRod, ownedVessel } from "./fishmarket";
 import { readXpPost, relayXp } from "./harbor-xp";
 
 const MAP = generateHarbor();
@@ -104,6 +104,7 @@ export class HarborRoom extends DurableObject<Env> {
       pos,
       outfit: hero?.outfit,
       vessel: await ownedVessel(this.env.DB, id),
+      gilded: await gildedRod(this.env.DB, id),
     };
 
     const pair = new WebSocketPair();
@@ -142,7 +143,7 @@ export class HarborRoom extends DurableObject<Env> {
       // They changed gear or levelled: re-read the character and show everyone the new look.
       const hero = await heroInitFor(this.env.DB, player.id);
       if (!hero) return;
-      const next: HarborPlayer = { ...player, name: hero.name, classId: hero.classId, level: hero.level, xp: hero.xp, outfit: hero.outfit, vessel: await ownedVessel(this.env.DB, player.id) };
+      const next: HarborPlayer = { ...player, name: hero.name, classId: hero.classId, level: hero.level, xp: hero.xp, outfit: hero.outfit, vessel: await ownedVessel(this.env.DB, player.id), gilded: await gildedRod(this.env.DB, player.id) };
       ws.serializeAttachment(next);
       this.broadcast({ type: "joined", player: next });
     } else if (msg.type === "bedroll") {

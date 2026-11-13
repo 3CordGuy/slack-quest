@@ -640,7 +640,9 @@ Two craftable boats let you walk off a pier or the shore onto the water, and fis
      - **Server:** `server/catchbook.ts`, plus page rewards granted as a sitting closes. A beaten record's pub mount comes down to its owner's trophy chest in the same claim-guarded batch.
      - **Client:** the Catch Book panel (from the inventory and the fishing HUD), the Record Board at the bar, record fish drawn on the pub wall, and "Mount a trophy" on a Mounted Fish at home. Mounts show the real fish at real length (`fishMount` in `catchArt.ts`).
      - **Treasure:** the ship's bell and the mermaid's comb can go in the trophy chest and be mounted the same way, so the bell got no wall piece of its own.
-     - **Not done:** a notice-board line for new records. The gilded rod is also left for later; the title is shown in the inventory header.
+     - **Added, 2026-11-13:**
+       - **Notice board:** a **Crew records** section at the top shows the newest five records (who, what, how heavy, when).
+       - **Gilded rod:** a full book earns it, on the first-person rod and on the figure crewmates see (`HarborPlayer.gilded`, from the title).
 6. **Boats.**
    - The barrel and rowboat as `vessel` furnishings with recipes (the rowboat needs a blueprint).
    - `harborPath` takes a vessel, and HarborRoom presence gains `afloat`.

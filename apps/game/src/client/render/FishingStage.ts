@@ -167,6 +167,8 @@ export class FishingStage implements WorldMinigame {
     private hooks: FishHooks,
     /** Afloat in this boat; null on a pier or the shore. */
     private boat: Vessel | null = null,
+    /** The rod is gilded: the Catch Book is full. */
+    private gilded = false,
   ) {
     this.fwd = seaward.clone().setY(0).normalize();
     this.right = new THREE.Vector3().crossVectors(this.fwd, UP).normalize();
@@ -220,7 +222,8 @@ export class FishingStage implements WorldMinigame {
   /** A tapered rod in segments, each a joint the next hangs from, so it can bend along its length; a reel and two hands at the grip. */
   private buildRod() {
     const cork = new THREE.MeshBasicMaterial({ color: "#b8875a" });
-    const blank = new THREE.MeshBasicMaterial({ color: "#3a2a1c" });
+    // A full Catch Book earns a gilded rod.
+    const blank = new THREE.MeshBasicMaterial({ color: this.gilded ? "#e0b12e" : "#3a2a1c" });
     const wrap = new THREE.MeshBasicMaterial({ color: "#8a2a24" });
     const metal = new THREE.MeshBasicMaterial({ color: "#9aa4ae" });
     const skin = new THREE.MeshBasicMaterial({ color: "#d9a27a" });

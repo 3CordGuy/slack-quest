@@ -94,7 +94,7 @@ export interface RenderHero {
   /** `asleep`: lying down with eyes shut, z's rising, as on a bedroll in the Harbor. */
   asleep?: boolean;
   /** Holding a fishing rod (fishing off a pier). */
-  rod?: boolean;
+  rod?: boolean | "gilded";
   /** Afloat: the boat drawn under them. */
   boat?: "barrel" | "rowboat";
   /** Drawn at this point of its hex instead of the middle, `y` above the floor: lying on a bed in a hut. */
@@ -439,7 +439,7 @@ interface Want {
   hp?: number;
   down?: boolean;
   asleep?: boolean;
-  rod?: boolean;
+  rod?: boolean | "gilded";
   /** Afloat: the boat drawn under them. */
   boat?: "barrel" | "rowboat";
   /** The way to face, about y: the two sides of a fight face each other. Otherwise a unit keeps the way it last walked. */

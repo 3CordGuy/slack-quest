@@ -225,6 +225,8 @@ export interface HarborPlayer {
   fishing?: boolean;
   /** The best boat they own: drawn under them whenever they are on the water. */
   vessel?: Vessel | null;
+  /** They have filled the Catch Book: their rod is gilded. */
+  gilded?: boolean;
   /** In a hut: the bed (a furnishing id) they are lying on after a rest, until they walk off. */
   bed?: number;
 }

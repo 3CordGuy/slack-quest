@@ -17,8 +17,8 @@ import { RARITY_COLOR, WEAPONS, type Outfit, type Slot } from "@gantt-quest/worl
 import type { Look } from "./looks";
 
 const OUTLINE = "#1b1830";
-/** Set by makeFigure for the figure being built: a fishing rod goes in its right hand. */
-let rodInHand = false;
+/** Set by makeFigure for the figure being built: a fishing rod goes in its right hand (gilded, for a full Catch Book). */
+let rodInHand: boolean | "gilded" = false;
 const GEAR = { steel: "#c9d1dc", shine: "#f1f5fa", iron: "#8b95a5", wood: "#8a5a2b", leather: "#a0683a", gold: "#e0b12e", paper: "#e8dcc0", bone: "#eee6cf", dark: "#2a2740" };
 /** The frame a figure is modelled in, in model units: `setSize(1)` makes this one world unit tall. */
 const FRAME = 22;
@@ -494,7 +494,7 @@ function drawHeld(id: string, b: Biped, trim: string, look: Look, shield: boolea
       // from its tip with a float on the end.
       w.cyl("#b8875a", 0.5, 0.5, 2.4, 0, 0.6, 0, 6);
       w.cyl(GEAR.iron, 0.8, 0.8, 0.5, 0.7, 1.4, 0, 8, [0, 0, HALF_PI]);
-      w.cyl("#3a2a1c", 0.18, 0.38, 15, 0, 9.3, 0, 5);
+      w.cyl(rodInHand === "gilded" ? GEAR.gold : "#3a2a1c", 0.18, 0.38, 15, 0, 9.3, 0, 5);
       w.box("#e8eef2", 0.12, 7, 0.12, 0, 13.4, 1.4, [0.95, 0, 0]);
       w.ball("#d8352a", 0.5, 0, 11.4, 4.3);
       return { arm: -0.85, tilt: 0.75 };
@@ -1146,8 +1146,8 @@ export interface Figure {
 export interface FigureOptions {
   /** Eyes shut. */
   asleep?: boolean;
-  /** Fishing: a rod in the right hand in place of whatever weapon is there. */
-  rod?: boolean;
+  /** Fishing: a rod in the right hand in place of whatever weapon is there. "gilded" for a full Catch Book. */
+  rod?: boolean | "gilded";
   /** Outline thickness, in model units. */
   edge?: number;
 }
@@ -1165,7 +1165,7 @@ export function makeFigure(kind: string, look: Look, outfit?: Outfit, opts: Figu
   scaler.scale.setScalar(1 / FRAME);
   edge = opts.edge ?? 0.12;
   seed = 20261113;
-  rodInHand = !!opts.rod;
+  rodInHand = opts.rod ?? false;
   const rig = rigFor(kind, top, look, outfit, !!opts.asleep);
   const mats: Mats = {
     body: bodyMaterial(),

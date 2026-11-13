@@ -3,15 +3,60 @@
 // the "!" over the board goes until the next one.
 //
 // Contracts and the crew's goal moved to the contract dealer in the pub.
+//
+// Above the releases, the crew's newest fishing records: who landed what, and
+// when. Every kind's full list is on the Record Board at the bar.
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { FISH, formatLength, formatWeight } from "@gantt-quest/world";
 import { RELEASES, releaseTitle, unseenCount, type Release } from "../../releases";
-import { api } from "../api";
+import { api, type PubWall } from "../api";
+import { catchIcon } from "../render/catchArt";
+import { units } from "../units";
 import { DragPanel } from "../DragPanel";
 import "./board.css";
 
 /** Releases shown before "Older notices". */
 const SHOWN = 5;
+/** Crew records pinned up: the newest few. */
+const RECORDS_SHOWN = 5;
+
+const ago = (at: number): string => {
+  const mins = Math.max(1, Math.round((Date.now() - at) / 60_000));
+  if (mins < 60) return `${mins} min ago`;
+  const hours = Math.round(mins / 60);
+  if (hours < 48) return `${hours} h ago`;
+  return new Date(at).toLocaleDateString(undefined, { day: "numeric", month: "short" });
+};
+
+/** The crew's newest fishing records, one line each. */
+function CrewRecords() {
+  const u = useSyncExternalStore(units.subscribe, units.get);
+  const [wall, setWall] = useState<PubWall | null>(null);
+  useEffect(() => {
+    // A crewless hero has no records to show; say nothing rather than an error.
+    api.pubWall().then(setWall, () => undefined);
+  }, []);
+  const newest = (wall?.records ?? []).slice(0, RECORDS_SHOWN);
+  if (newest.length === 0) return null;
+  return (
+    <section className="crew-records">
+      <h3>Crew records</h3>
+      <ul>
+        {newest.map((r) => (
+          <li key={r.species}>
+            <img src={catchIcon(r.species)} alt="" width={32} height={32} />
+            <span>
+              <strong>{r.name}</strong> {FISH[r.species].rarity === "mythic" ? "landed" : "set the record for"} <strong>{FISH[r.species].name}</strong>: {formatWeight(r.grams, u)}, {formatLength(r.mm, u)}.
+            </span>
+            <small className="muted">{ago(r.caughtAt)}</small>
+          </li>
+        ))}
+      </ul>
+      <p className="muted">Every record, and the fish on the pub's wall, are on the Record Board at the bar.</p>
+    </section>
+  );
+}
 
 function ReleaseNotes({ release, fresh }: { release: Release; fresh: boolean }) {
   return (
@@ -67,6 +112,7 @@ export function NoticeBoard({ seen, onSeen, onClose }: {
           <button className="small" onClick={onClose}>Close</button>
         </header>
         <p className="muted">News from the Harbor: what has changed with each new release. Contracts and the crew's goal are with the dealer in the pub now.</p>
+        <CrewRecords />
         {RELEASES.length === 0 ? (
           <p className="muted">Nothing pinned up yet.</p>
         ) : (
