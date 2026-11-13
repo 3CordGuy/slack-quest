@@ -207,7 +207,9 @@ describe("gathering", () => {
       expect(best).toBeGreaterThanOrEqual(4);
       expect(best).toBeLessThanOrEqual(3 * ENEMY_DROP_UNITS[1]);
     }
-  });
+    // Tens of thousands of outings: about 2s locally, but past the 5s default
+    // on a busy CI runner, where it failed a staging deploy.
+  }, 30_000);
 
   it("caps the payout even if a stored haul were inflated", () => {
     const state = { ...startGather("quarry", 1, 9), status: "banked" as const, haul: { stone: 50, iron: 50, wood: 9 } };
