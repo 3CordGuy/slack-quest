@@ -25,7 +25,7 @@ import {
 describe("the apothecary and smithy projects", () => {
   it("are open, with the agreed costs", () => {
     expect(projectById(APOTHECARY_PROJECT)).toMatchObject({ open: true, cost: { gold: 250, wood: 25, stone: 15, herbs: 20, mushrooms: 20 } });
-    expect(projectById(SMITHY_PROJECT)).toMatchObject({ open: true, cost: { gold: 400, stone: 30, iron: 30, copper: 15 } });
+    expect(projectById(SMITHY_PROJECT)).toMatchObject({ open: true, cost: { gold: 800, stone: 60, iron: 60, copper: 15 } });
   });
 });
 
