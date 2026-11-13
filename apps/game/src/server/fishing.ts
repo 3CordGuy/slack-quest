@@ -16,11 +16,14 @@ import {
   sittingItems,
   sittingMaterials,
   sittingXp,
+  stowCatch,
   type CaughtFish,
+  type FishBuyer,
   type GatherState,
   type Resources,
 } from "@gantt-quest/world";
 import { crewFor } from "./db";
+import { boardFor, iceboxGrams } from "./fishmarket";
 import { prepareXp, xpOutcome, type XpResult } from "./harbor-xp";
 
 /** What a closed sitting gave, for the client to show. */
@@ -29,6 +32,8 @@ export interface SittingPaid {
   gold: number;
   /** The catches kept as items, with the ids they were stored under. */
   fish: (CaughtFish & { id: string })[];
+  /** Catches that would not fit in the icebox, sold on the quay as the sitting ended (their gold is in `gold`). */
+  sold: { id: string; species: string; gold: number; buyer: FishBuyer }[];
   /** Species caught for the first time, and the crew records set. */
   newSpecies: string[];
   records: string[];
@@ -57,7 +62,11 @@ export async function closeSitting(db: D1Database, playerId: string, before: str
   const landed = s.landed.filter((f) => f.kept !== undefined).map((f) => ({ ...f, id: kept.has(f) ? (crypto.randomUUID() as string) : null }));
   const items = landed.filter((f): f is CaughtFish & { id: string } => f.id !== null);
   const paid = sittingMaterials(s.landed);
-  const gold = sittingGold(s.landed);
+  // Into the icebox while there is room; what will not fit is sold on the quay as the sitting ends.
+  const [board, iceboxG] = await Promise.all([boardFor(db, playerId, now), iceboxGrams(db, playerId)]);
+  const { sold: overflow } = stowCatch(items, iceboxG, board);
+  const soldIds = new Set(overflow.map((f) => f.id));
+  const gold = sittingGold(s.landed) + overflow.reduce((a, f) => a + f.gold, 0);
 
   // What was new: species never caught before, and crew records beaten.
   const crew = await crewFor(db, playerId);
@@ -93,8 +102,8 @@ export async function closeSitting(db: D1Database, playerId: string, before: str
     ...(gold > 0 ? [db.prepare(`UPDATE characters SET gold = gold + ?2 WHERE player_id = ?1 AND ${guard}`).bind(playerId, gold)] : []),
     ...items.map((f) =>
       db
-        .prepare(`INSERT INTO fish (id, player_id, species, grams, mm, specimen, spot, caught_at) SELECT ?2, ?1, ?3, ?4, ?5, ?6, ?7, ?8 WHERE ${guard}`)
-        .bind(playerId, f.id, f.species, f.grams, f.mm, f.specimen ? 1 : 0, f.spot, f.at),
+        .prepare(`INSERT INTO fish (id, player_id, species, grams, mm, specimen, spot, caught_at, place) SELECT ?2, ?1, ?3, ?4, ?5, ?6, ?7, ?8, ?9 WHERE ${guard}`)
+        .bind(playerId, f.id, f.species, f.grams, f.mm, f.specimen ? 1 : 0, f.spot, f.at, soldIds.has(f.id) ? "sold" : "icebox"),
     ),
     // The Catch Book: every catch landed counts, kept or thrown back; the heaviest is the best.
     ...landed.map((f) =>
@@ -136,5 +145,5 @@ export async function closeSitting(db: D1Database, playerId: string, before: str
   ];
   const results = await db.batch(statements);
   if (results[0].meta.changes === 0) return null;
-  return { paid, gold, fish: items, newSpecies, records: beaten.map((f) => f.species), xp: xpOutcome(xp, results) };
+  return { paid, gold, fish: items, sold: overflow.map((f) => ({ id: f.id, species: f.species, gold: f.gold, buyer: f.buyer })), newSpecies, records: beaten.map((f) => f.species), xp: xpOutcome(xp, results) };
 }

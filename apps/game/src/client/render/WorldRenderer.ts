@@ -2732,6 +2732,21 @@ export class WorldRenderer {
         add(box(0.015, 0.95, 0.015), lambert("#f4efe1"), 0.1, 0.44, 1.72);
         add(new THREE.OctahedronGeometry(0.06), lambert("#b9433d"), 0.1, -0.02, 1.72);
         add(new THREE.CylinderGeometry(0.11, 0.09, 0.18, 6), lambert("#6f7f95"), -0.12, 0.15, 0.6);
+        // The fishmonger's stall, back from the water: a counter with ice and the day's fish on it, a striped
+        // awning on poles, and the board where the day's prices and wanted fish are chalked up.
+        add(box(0.9, 0.34, 0.34), lambert("#7a5a3a"), 0, 0.17, -0.3);
+        add(box(0.92, 0.04, 0.36), lambert("#9a7a52"), 0, 0.35, -0.3);
+        add(box(0.8, 0.03, 0.28), lambert("#dfeef2"), 0, 0.385, -0.3);
+        for (const [x, c] of [[-0.28, "#9fb3c4"], [-0.08, "#c4473a"], [0.12, "#3d7a7a"], [0.3, "#a9b4ba"]] as const) {
+          add(new THREE.SphereGeometry(0.07, 6, 4), lambert(c), x, 0.42, -0.3).scale.set(1, 0.35, 0.45);
+        }
+        for (const x of [-0.44, 0.44]) add(new THREE.CylinderGeometry(0.025, 0.025, 0.95, 5), lambert("#5a3d22"), x, 0.47, -0.46);
+        for (let i = 0; i < 6; i++) {
+          add(box(0.16, 0.03, 0.42), lambert(i % 2 ? "#f4efe1" : "#3f6fa8"), -0.4 + i * 0.16, 0.95, -0.36).rotation.x = 0.35;
+        }
+        add(box(0.36, 0.42, 0.04), lambert("#3a2a1c"), 0.62, 0.4, -0.15).rotation.y = -0.4;
+        add(box(0.3, 0.34, 0.045), lambert("#22302a"), 0.62, 0.42, -0.15).rotation.y = -0.4;
+        for (let i = 0; i < 3; i++) add(box(0.2 - i * 0.04, 0.02, 0.05), lambert("#e8e4d8"), 0.62, 0.52 - i * 0.08, -0.15).rotation.y = -0.4;
         break;
       }
       case "felling": {

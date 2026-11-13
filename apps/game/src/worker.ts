@@ -67,6 +67,7 @@ import { enterHut } from "./server/hut-room";
 import { enterPub } from "./server/pub-room";
 import { buyFromSalesman, getSalesman } from "./server/salesman";
 import { gatherStatus, rest, startOuting, stepOuting } from "./server/gather";
+import { fishStock, moveFish, sellFish } from "./server/fishmarket";
 import { builtProjectIds, contribute, crewWorks, projectStock } from "./server/projects";
 import { acceptTrade, closeTrade, listTrades, proposeTrade } from "./server/trade";
 import { apothecaryView, brew, smithItem, smithyView } from "./server/workshops";
@@ -578,6 +579,24 @@ app.post("/api/gather/step", async (c) => {
   if (typeof result === "string") return c.json({ error: result }, 409);
   if (result.xp) c.executionCtx.waitUntil(announceXp(c.env, player.id, result.xp));
   return c.json(result);
+});
+
+// ---------- fish: the icebox, the trophy chest, and selling them ----------
+
+app.get("/api/fish", async (c) => c.json(await fishStock(c.env.DB, c.get("player").id)));
+
+// Sell kept fish to the fishmonger ("market") or Old Tam ("tam"). The server prices every one.
+app.post("/api/fish/sell", async (c) => {
+  const body = await c.req.json<{ ids?: unknown; to?: unknown }>().catch(() => ({}) as { ids?: unknown; to?: unknown });
+  const result = await sellFish(c.env.DB, c.get("player").id, body.ids, body.to);
+  return typeof result === "string" ? c.json({ error: result }, 409) : c.json(result);
+});
+
+// Move a kept fish between the icebox and the trophy chest.
+app.post("/api/fish/move", async (c) => {
+  const body = await c.req.json<{ id?: unknown; to?: unknown }>().catch(() => ({}) as { id?: unknown; to?: unknown });
+  const result = await moveFish(c.env.DB, c.get("player").id, body.id, body.to);
+  return typeof result === "string" ? c.json({ error: result }, 409) : c.json(result);
 });
 
 // Rest: on a bedroll in the Harbor, or at home if you have a hut. Gives back gathering stamina, on a cooldown.
