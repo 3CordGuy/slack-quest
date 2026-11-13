@@ -89,6 +89,15 @@ export function placeSeats<S extends { id: string }>(seats: S[], you: string, op
   return { chairs, placed };
 }
 
+/**
+ * Slot 0 is yours even before you have joined a game, when no seat of the game's is: give it your own look, so
+ * you are seen sitting down at the table rather than vanishing as the camera drops in.
+ */
+export function withSelf(infos: (SeatInfo | undefined)[], you: string, looks: Record<string, SeatLook> | undefined): (SeatInfo | undefined)[] {
+  if (infos[0] || !looks?.[you]) return infos;
+  return [seatInfo({ id: you, name: "" }, looks[you], { turn: false, out: false, won: false, chip: null }), ...infos.slice(1)];
+}
+
 /** The pieces of a seat's look that do not depend on the game. */
 export function seatInfo(s: { id: string; name: string }, look: SeatLook | undefined, rest: Pick<SeatInfo, "turn" | "out" | "won" | "chip" | "pips" | "stars">): SeatInfo {
   return { id: s.id, name: s.name, classId: look?.classId ?? "npc", outfit: look?.outfit, ...rest };

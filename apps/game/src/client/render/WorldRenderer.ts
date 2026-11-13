@@ -302,6 +302,10 @@ const yawOf = (facing: number, angle = 0) => -((facing * Math.PI) / 3 + angle);
 const key = (p: HexPos) => `${p.q},${p.r}`;
 /** To the nearest thousandth, so offsets sent to the server stay short. */
 const round = (n: number) => Math.round(n * 1000) / 1000;
+/** Where the stools stand round a game table in the pub (its middle is at z = -0.3): four, as many as can play, clear of whoever stands at the front. */
+const GAME_STOOLS = [[-0.54, 0.24], [0.54, 0.24], [-0.54, -0.84], [0.54, -0.84]];
+/** Nothing of the ground is drawn below this: y = 0. */
+const GROUND_FLOOR = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
 /** A hex of ground reaches this far down from its top: further than the tallest rock stands, so its foot is always under the sea. */
 const TILE_DEPTH = 3;
 /**
@@ -695,6 +699,7 @@ export class WorldRenderer {
     this.ear = opts.backdrop ? DEAF : openEar();
     this.renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: "low-power" });
     this.renderer.setPixelRatio(1);
+    this.renderer.localClippingEnabled = true;
     // Dev server only: the latest view, for reading draw calls (`__gqWorld.renderer.info.render.calls`) from the console.
     if (import.meta.env.DEV && !this.opts.backdrop) (globalThis as { __gqWorld?: WorldRenderer }).__gqWorld = this;
     const canvas = this.renderer.domElement;
@@ -1306,8 +1311,9 @@ export class WorldRenderer {
     this.poiSig = "";
 
     const geo = hexColumn();
-    // Its normals are its own: flat on the flats, turning smoothly over the fillet.
-    const terrain = new THREE.InstancedMesh(geo, new THREE.MeshLambertMaterial(), this.tiles.length);
+    // Its normals are its own: flat on the flats, turning smoothly over the fillet. A hex's column is cut off
+    // at y = 0, where the old ones ended: a room's walls and floor do not hang down into the dark under it.
+    const terrain = new THREE.InstancedMesh(geo, new THREE.MeshLambertMaterial({ clippingPlanes: [GROUND_FLOOR], clipShadows: true }), this.tiles.length);
     const m = new THREE.Matrix4();
     // Open sea is left to the sea itself: only water within a couple of hexes of land is drawn as hexes,
     // with a ragged edge, so the map does not end in a straight-sided block of water.
@@ -2628,10 +2634,10 @@ export class WorldRenderer {
         break;
       }
       case "shoals": {
-        // The Shoals table: a low square table under a sea-blue cloth, with a few markers on it and a stool either side.
+        // The Shoals table: a low square table under a sea-blue cloth, with a few markers on it and a stool for each of the four who can play.
         add(box(0.7, 0.36, 0.7), lambert("#6b4a2b"), 0, 0.18, -0.3, Math.PI / 4);
         add(box(0.82, 0.05, 0.82), lambert("#2f6f8c"), 0, 0.385, -0.3, Math.PI / 4);
-        for (const x of [-0.74, 0.74]) add(new THREE.CylinderGeometry(0.14, 0.12, 0.24, 6), lambert("#5a3d22"), x, 0.12, -0.15);
+        for (const [x, z] of GAME_STOOLS) add(new THREE.CylinderGeometry(0.14, 0.12, 0.24, 6), lambert("#5a3d22"), x, 0.12, z);
         add(new THREE.CylinderGeometry(0.09, 0.09, 0.04, 8), lambert("#7db6f2"), -0.16, 0.43, -0.28);
         add(new THREE.CylinderGeometry(0.09, 0.09, 0.04, 8), lambert("#d9b45a"), 0.14, 0.43, -0.4);
         add(new THREE.CylinderGeometry(0.09, 0.09, 0.08, 8), lambert("#6b4a2b"), 0.04, 0.45, -0.16);
@@ -2756,10 +2762,10 @@ export class WorldRenderer {
         break;
       }
       case "dice": {
-        // Dice table: a round top on a barrel, a stool either side, and a pair of dice. Set back so whoever stands here is seen to sit at it.
+        // Dice table: a round top on a barrel, a stool for each of the four who can play, and a pair of dice. Set back so whoever stands here is seen to sit at it.
         add(new THREE.CylinderGeometry(0.18, 0.22, 0.4, 7), lambert("#6b4a2b"), 0, 0.2, -0.3);
         add(new THREE.CylinderGeometry(0.5, 0.5, 0.07, 8), lambert("#a07a4c"), 0, 0.43, -0.3);
-        for (const x of [-0.72, 0.72]) add(new THREE.CylinderGeometry(0.14, 0.12, 0.24, 6), lambert("#5a3d22"), x, 0.12, -0.15);
+        for (const [x, z] of GAME_STOOLS) add(new THREE.CylinderGeometry(0.14, 0.12, 0.24, 6), lambert("#5a3d22"), x, 0.12, z);
         add(box(0.13, 0.13, 0.13), lambert("#f4efe1"), -0.12, 0.53, -0.25, 0.4);
         add(box(0.13, 0.13, 0.13), lambert("#b9433d"), 0.14, 0.53, -0.38, 1.1);
         break;

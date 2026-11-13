@@ -166,8 +166,9 @@ class Part {
     };
     if (this.solid.length > 0) {
       const mesh = new THREE.Mesh(merged(this.solid), mats.body);
-      // It throws a shadow but takes none: at this size, its own hat's shadow across its face is only noise.
-      mesh.castShadow = true;
+      // It takes no shadows (at this size, its own hat's shadow across its face is only noise) and throws
+      // none itself: the figure's one still shape does that (see castShape).
+      mesh.userData.body = true;
       this.joint.add(mesh, new THREE.Mesh(merged(this.hull), mats.outline));
     }
     if (this.lit.length > 0) {
@@ -1143,6 +1144,36 @@ function muddy(scaler: THREE.Group, body: THREE.Material) {
   });
 }
 
+/** Seen by the lights only: it is drawn into their shadow maps and nowhere else. */
+const SHADOW_ONLY = new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false });
+
+/**
+ * What throws a figure's shadow: its whole body as it stands at rest, in one piece that never moves a limb.
+ * Indoors the lights' shadow maps are small and are redrawn while someone walks; a striding figure's arms
+ * and legs, redrawn into them a light or two a frame, threw rough shadows that jumped about the walls. A
+ * still shape slides across them evenly, as the old shadow cards did. It lies down with the figure.
+ */
+function castShape(top: THREE.Group, made: THREE.BufferGeometry[]): THREE.Mesh | null {
+  top.updateMatrixWorld(true);
+  const toTop = new THREE.Matrix4().copy(top.matrixWorld).invert();
+  const pieces: THREE.BufferGeometry[] = [];
+  top.traverse((o) => {
+    if (!(o instanceof THREE.Mesh) || !o.userData.body) return;
+    const piece = o.geometry.clone();
+    piece.deleteAttribute("color");
+    piece.deleteAttribute("normal");
+    piece.applyMatrix4(new THREE.Matrix4().multiplyMatrices(toTop, o.matrixWorld));
+    pieces.push(piece);
+  });
+  if (pieces.length === 0) return null;
+  const shape = mergeGeometries(pieces)!;
+  for (const piece of pieces) piece.dispose();
+  made.push(shape);
+  const mesh = new THREE.Mesh(shape, SHADOW_ONLY);
+  mesh.castShadow = true;
+  return mesh;
+}
+
 /** The animals that stand side-on in a portrait, as they did in their sprites. */
 export const FOUR_LEGGED = new Set(["wolf", "alpha", "bear", "great_bear"]);
 
@@ -1218,6 +1249,8 @@ export function makeFigure(kind: string, look: Look, outfit?: Outfit, opts: Figu
   };
   update({ time: 0, stride: 0, walking: false, lean: 0, lying: false });
   last = -1;
+  const shadow = castShape(top, made);
+  if (shadow) top.add(shadow);
   return {
     root,
     setSize: (size) => scaler.scale.setScalar(size / FRAME),

@@ -268,6 +268,8 @@ interface Rig {
   /** Turned about y so its local +z points from the middle of the table out to the seat. */
   rig: THREE.Group;
   folk: THREE.Group;
+  /** Your own seat: drawn while the camera comes down to it and goes back up, not while it looks out from it. */
+  mine: boolean;
   /** Where the player sits, facing the table, and their model once they have a look. */
   seat: THREE.Group;
   figure: Figure | null;
@@ -413,7 +415,7 @@ export class TableStage implements WorldMinigame {
     const items = new THREE.Group();
     rig.add(folk, ring, items);
     this.group.add(rig);
-    return { id, rig, folk, seat, figure: null, plate, chip, tally, ring, items, yaw: 0, goal: 0, look: "", plateKey: "", chipKey: "", tallyKey: "", info: null, itemsKey: "", roll: 0 };
+    return { id, rig, folk, mine: false, seat, figure: null, plate, chip, tally, ring, items, yaw: 0, goal: 0, look: "", plateKey: "", chipKey: "", tallyKey: "", info: null, itemsKey: "", roll: 0 };
   }
 
   // ---------- what the panel tells it ----------
@@ -448,7 +450,7 @@ export class TableStage implements WorldMinigame {
 
   /** The look of a seat: the character, their name, a word over their head, what they have left. */
   private dress(r: Rig, info: SeatInfo, mine: boolean) {
-    r.folk.visible = !mine;
+    r.mine = mine;
     const look = spriteKey(info.classId, info.outfit);
     if (r.look !== look) {
       r.look = look;
@@ -698,6 +700,9 @@ export class TableStage implements WorldMinigame {
       while (d < -Math.PI) d += Math.PI * 2;
       r.yaw += d * ease;
       r.rig.rotation.y = r.yaw;
+      // You watch yourself sit down as the camera drops in; from your seat, your own head would be in the way.
+      r.folk.visible = !r.mine || smoother(this.inT) < 0.5;
+      r.plate.visible = !r.mine;
       const info = r.info;
       const glow = info && (info.turn || info.won) ? 0.55 + 0.35 * Math.sin(this.clock * 4) : 0;
       (r.ring.material as THREE.MeshBasicMaterial).opacity = glow;
