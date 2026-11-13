@@ -5,6 +5,15 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>The Harbor of Heylets</title>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <script>
+      // The session cookie is Secure once a player has visited over https, and
+      // a browser will not let an http page replace it, so on http every load
+      // fails with "not signed in". Move to https before anything runs.
+      // Local hosts (vite dev, LAN testing on a phone) stay on http.
+      if (location.protocol === "http:" && !/^(localhost|127\.0\.0\.1|\[::1\]|\d+\.\d+\.\d+\.\d+)$|\.(localhost|local)$/.test(location.hostname)) {
+        location.replace("https://" + location.host + location.pathname + location.search + location.hash);
+      }
+    </script>
   </head>
   <body>
     <div id="root"></div>
