@@ -48,10 +48,10 @@
   },
   "music/harbor": {
    "urls": {
-    "opus": "/audio/music/harbor.3d54382aea.ogg",
-    "aac": "/audio/music/harbor.3d54382aea.m4a"
+    "opus": "/audio/music/harbor.6ec7bc3487.ogg",
+    "aac": "/audio/music/harbor.6ec7bc3487.m4a"
    },
-   "duration": 200,
+   "duration": 192,
    "sampleRate": 44100,
    "channels": 2
   }
