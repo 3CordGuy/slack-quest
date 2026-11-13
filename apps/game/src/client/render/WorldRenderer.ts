@@ -1429,12 +1429,23 @@ export class WorldRenderer {
       }
       g.userData.surface = prop.surface;
       this.propModels.set(prop.id, g);
+      // A lamp or candle holds its light inside its own frame (a lantern's cage, a candle's wick),
+      // so its parts would shadow their own light: it casts none. A fire's light sits in front of
+      // the hearth, so a hearth or fireplace still casts shadows from the other lights in the room.
+      let lamplike = false;
+      g.traverse((o) => {
+        if (o.userData.light && o.userData.light !== "fire") lamplike = true;
+      });
       g.traverse((o) => {
         if (!(o instanceof THREE.Mesh)) return;
         o.userData.propId = prop.id;
-        // Flames give light rather than block it; glass lets it through.
+        // Flames and glowing panes give light rather than block it; glass lets it through.
         if (o.userData.flame !== undefined) flames.push(o);
-        else if (!o.userData.glass) o.castShadow = o.receiveShadow = true;
+        else if (o.userData.selfLit || o.userData.glass) return;
+        else {
+          o.castShadow = !lamplike;
+          o.receiveShadow = true;
+        }
       });
       if (prop.surface) {
         // An unseen sheet over its top, which a carried small thing is aimed at.
