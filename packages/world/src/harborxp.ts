@@ -56,6 +56,17 @@ export function gatherXp(state: Pick<GatherState, "status" | "haul">, paidUnits:
   return HARBOR_XP.gatherBanked + Math.min(4, Math.floor(Math.max(0, paidUnits) / 2));
 }
 
+/** Fishing: each species caught for the first time, and each new crew record, outside the daily cap. */
+export const NEW_SPECIES_XP = 1;
+export const CREW_RECORD_XP = 2;
+
+/** XP for a fishing sitting that has ended, under the cap: as a banked haul, with one per two kept catches standing in for units. */
+export function sittingXp(state: Pick<GatherState, "status" | "sitting">): number {
+  if (state.status !== "banked" || !state.sitting) return 0;
+  const kept = state.sitting.landed.filter((f) => f.kept).length;
+  return HARBOR_XP.gatherBanked + Math.min(4, Math.floor(kept / 2));
+}
+
 /** A hero's Harbor XP for the day, as stored. */
 export interface HarborXpRecord {
   day: string;

@@ -24,6 +24,7 @@ import { makeRng, type Rng } from "./rng";
 import { FELL_ROUND_MS, MAX_REPORTED, TREES, newFelling, replayChops, replayStrikes, rollLogs, splitMotion, type Chop, type FellingState, type FelledTree, type Split } from "./felling";
 import { TIMING, timingEase, timingGrade, type Motion, type TimingGrade } from "./timing";
 import { MINE_CHARGE_MS, landBlows, mineView, rockYield, seedMine, type Blow, type MineState, type MineView } from "./mine";
+import { sittingMaterials, sittingView, stepSitting, type Sitting, type SittingView } from "./sitting";
 
 export type GatherSpot = "fishing" | "felling" | "quarry";
 export const GATHER_SPOT_IDS: GatherSpot[] = ["fishing", "felling", "quarry"];
@@ -127,6 +128,8 @@ export interface GatherState {
   felling?: FellingState;
   /** Set on outings that are timed. Older outings in progress are played without it. */
   timed?: boolean;
+  /** Fishing, rebuilt: a sitting at a pier, that lasts until the player stops (sitting.ts). Fishing outings without it are the old casts along the shore. */
+  sitting?: Sitting;
 }
 
 export type GatherChoice =
@@ -144,7 +147,18 @@ export type GatherChoice =
   | { t: "dig"; now?: number }
   /** Quarry: the blows struck since the last report, each with when it landed. `now` is the server's clock. */
   | { t: "blows"; blows: Blow[]; now?: number }
-  | { t: "bank" };
+  /** A sitting: throw the line, `power` 0 to 1 of the spot's reach. `now` is the server's clock, filled in by the server. */
+  | { t: "cast"; power: number; now?: number }
+  /** A sitting: set the hook, `at` ms after the cast as the client saw it. */
+  | { t: "hook"; at: number; now?: number }
+  /** A sitting: wind the line in (cutting it, if something is on). */
+  | { t: "reel"; now?: number }
+  /** A sitting: the fight is over; every press and release in it, ms from the hook (down, up, down, up…). */
+  | { t: "fought"; edges: number[]; now?: number }
+  /** A sitting: put the landed catch in the creel, or throw it back. */
+  | { t: "keep"; now?: number }
+  | { t: "release"; now?: number }
+  | { t: "bank"; now?: number };
 
 /** Felling as the client sees it: the round it is on, what came of the chopping, and the markers for each log. */
 export interface FellingView {
@@ -179,6 +193,8 @@ export interface GatherView {
   aim: { cell: number; motion: Motion } | null;
   /** Fishing: where the gulls were circling at the start (within one place of the school), each cast, and the school itself once it is over. */
   water: { cells: number; gulls: number; casts: Cast[]; school: number | null; read: number } | null;
+  /** Fishing at a pier: the sitting. Null elsewhere, and on the old shore casts. */
+  sitting: SittingView | null;
 }
 
 const units = (r: Resources) => Object.values(r).reduce((a, n) => a + (n ?? 0), 0);
@@ -225,6 +241,7 @@ export interface GatherStep {
 /** Apply one choice. Never mutates `state`. */
 export function stepGather(state: GatherState, choice: GatherChoice): GatherStep {
   if (state.status !== "active") return { state, error: "That outing is over." };
+  if (state.sitting) return stepSitting(state, choice);
   if (choice.t === "bank") {
     const empty = units(state.haul) === 0;
     return { state: { ...state, status: "banked", log: [...state.log, { text: empty ? "You head back with what little you can carry." : "You pack up and head back.", check: null, gained: {} }] } };
@@ -406,6 +423,8 @@ function stepFelling(state: GatherState, f: FellingState, choice: GatherChoice):
  */
 export function gatherPayout(state: GatherState): Resources {
   if (state.status !== "banked") return {};
+  // A sitting pays what its kept hauls are worth, and no more: the fish themselves are kept as fish.
+  if (state.sitting) return sittingMaterials(state.sitting.landed);
   const out: Resources = {};
   let left = GATHER_MAX_UNITS;
   // At the quarry the cap keeps the rarest finds: a gem is never left behind for a piece of stone.
@@ -445,6 +464,7 @@ export function gatherView(state: GatherState, now?: number): GatherView {
     mine: state.mine ? mineView(state.mine, over, now) : null,
     aim: state.aim ? { cell: state.aim.cell, motion: state.aim.motion } : null,
     water: !state.water ? null : { cells: FISHING_CELLS, gulls: state.water.gulls, casts: state.water.casts, school: over ? state.water.school : null, read: FISHING_READ },
+    sitting: state.sitting ? sittingView(state.sitting) : null,
   };
 }
 
