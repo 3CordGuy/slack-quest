@@ -7,6 +7,7 @@ import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import { HARBOR_PIERS, HARBOR_PLOTS, HARBOR_XP, HERO_CLASSES, MAX_CREW, PUB_MAX_TALK, PUB_MENU, dueIn, hutPerks, nextSalesmanVisit, salesman, salesmanVisitAt, makeRng, pubBuff, rollStartingStats } from "@gantt-quest/world";
 import { barkeepReply, heroName } from "./server/ai";
 import { noticeBoard } from "./server/board";
+import { dropErrand, handInErrand, regularsView, takeErrand, tradeWithRegular } from "./server/errands";
 import { sendSignInCode } from "./server/email";
 import {
   attachEmail,
@@ -468,6 +469,34 @@ app.post("/api/pub/salesman/buy", async (c) => {
   // A blueprint or a furnishing shows up in their hut, if they have it open in another tab.
   if (result.got.goods.kind === "blueprint" || result.got.goods.kind === "furnishing") c.executionCtx.waitUntil(refreshHut(c.env, player.id));
   return c.json(result);
+});
+
+// The pub's regulars: who is in today, the job each has going, and where this player stands with each.
+app.get("/api/pub/regulars", async (c) => {
+  const result = await regularsView(c.env.DB, c.get("player").id);
+  return typeof result === "string" ? c.json({ error: result }, 409) : c.json(result);
+});
+
+// Take on, hand in, trade or give up a regular's job. Only the regular is named; the terms are derived here.
+app.post("/api/pub/errand", async (c) => {
+  const player = c.get("player");
+  const body = await c.req.json<{ regular?: unknown; action?: unknown }>().catch(() => ({}) as { regular?: unknown; action?: unknown });
+  const db = c.env.DB;
+  if (body.action === "accept") {
+    const result = await takeErrand(db, player.id, body.regular);
+    return typeof result === "string" ? c.json({ error: result }, 409) : c.json(result);
+  }
+  if (body.action === "drop") {
+    const error = await dropErrand(db, player.id, body.regular);
+    return error ? c.json({ error }, 409) : c.json({ ok: true });
+  }
+  if (body.action === "handin" || body.action === "trade") {
+    const result = body.action === "handin" ? await handInErrand(db, player.id, body.regular) : await tradeWithRegular(db, player.id, body.regular);
+    if (typeof result === "string") return c.json({ error: result }, 409);
+    if (result.xp) c.executionCtx.waitUntil(announceXp(c.env, player.id, result.xp));
+    return c.json(result);
+  }
+  return c.json({ error: "Accept, hand in, trade or drop." }, 400);
 });
 
 /** What the barkeep knows about traveling salesmen: who is in, or who is due next. */

@@ -40,3 +40,9 @@
   .contract-list { grid-template-columns: 1fr; max-height: calc(30vh / var(--ui-z, 1)); }
   .notice-head { padding-right: 68px; }
 }
+
+/* Errands at the pub (ErrandsNotice). */
+.errands-list .gold-text { color: var(--gold); }
+.errands-list .contract-reward { display: inline-flex; align-items: center; gap: 6px; }
+.errands-list .errand-xp { color: var(--gold); font-weight: bold; }
+.errands-list li.away { opacity: 0.85; }
