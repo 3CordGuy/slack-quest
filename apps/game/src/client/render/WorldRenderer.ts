@@ -19,6 +19,7 @@ import { NightLife } from "./nightlife";
 import { Storm } from "./storm";
 import { addWindSway, updateWind } from "./wind";
 import { LIT, OVERLAY_LAYER, PostFx, addSpriteRim, type Air, type SpriteRim } from "./post";
+import { standUpright } from "./upright";
 import { GROUND_KIND, addFancyWater, addWaterRipple, setGroundWet, setWaterNight, setWaterStanding, shoreSide, updateWater, waterAttribute, type Standing } from "./water";
 import { ghostModel, propModel, tintGhost, type LightKind } from "./props";
 import { nearWater, openEar, sounds } from "../audio/gameSounds";
@@ -3156,12 +3157,13 @@ export class WorldRenderer {
     for (const [id, w] of want) {
       let unit = this.units.get(id);
       if (!unit) {
-        const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: spriteTexture(w.kind, w.outfit, w.asleep), transparent: true, alphaTest: 0.5, depthTest: false }));
-        // Drawn over the scenery, so nobody is lost inside a building or behind a tree.
+        const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: spriteTexture(w.kind, w.outfit, w.asleep), transparent: true, alphaTest: 0.5 }));
+        // Depth-tested as an upright card at their feet, so a building in front hides them and one behind does not.
         sprite.renderOrder = 2;
         sprite.center.set(0.5, 0);
         sprite.position.copy(w.pos);
         addSpriteRim(sprite.material);
+        standUpright(sprite.material);
         const material = new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false, side: THREE.DoubleSide, map: sprite.material.map, alphaTest: 0.5 });
         const depth = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking, map: sprite.material.map, alphaTest: 0.5, side: THREE.DoubleSide });
         // Point lights (a hut's lamp, its fires and candles) draw shadows with a distance pass, which needs its own cut-out.
