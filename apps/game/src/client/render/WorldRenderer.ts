@@ -79,6 +79,8 @@ export interface RenderHero {
   outfit?: Outfit;
   /** `asleep`: lying down with eyes shut, z's rising, as on a bedroll in the Harbor. */
   asleep?: boolean;
+  /** Drawn at this point of its hex instead of the middle, `y` above the floor: lying on a bed in a hut. */
+  at?: { x: number; z: number; y: number };
   level?: number;
   /** XP into the current level. */
   xp?: number;
@@ -2520,8 +2522,11 @@ export class WorldRenderer {
         const i = seen.get(key(h.pos)) ?? 0;
         seen.set(key(h.pos), i + 1);
         const pos = this.standAt(h.pos);
-        pos.x += (i - (n - 1) / 2) * 0.6;
-        pos.z += 0.25;
+        if (h.at) pos.add(new THREE.Vector3(h.at.x, h.at.y, h.at.z));
+        else {
+          pos.x += (i - (n - 1) / 2) * 0.6;
+          pos.z += 0.25;
+        }
         const base = plateOf(h);
         const plate = base && h.id === state.you && state.stamina ? { ...base, bolts: state.stamina } : base;
         // A plate shows a first name only: full names run long over a crowd.
