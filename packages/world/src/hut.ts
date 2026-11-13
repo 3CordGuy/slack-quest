@@ -212,6 +212,15 @@ export const FURNISHINGS: Record<string, FurnishingDef> = {
   crossed_blades: { id: "crossed_blades", name: "Crossed Cutlasses", kind: "furniture", mount: { w: 0.72, h: 0.52 }, model: "crossed_blades", blurb: "Hung up, for now.", recipe: { iron: 4, wood: 1 } },
   mounted_fish: { id: "mounted_fish", name: "Mounted Fish", kind: "furniture", mount: { w: 0.62, h: 0.34 }, model: "mounted_fish", blurb: "It was this big. Bigger, really.", price: 40, recipe: { bone: 1, wood: 2 } },
 
+  // The Catch Book's rewards: one for finishing each page, and Old Ironjaw's jaw. Never sold, never crafted.
+  shallows_chart: { id: "shallows_chart", name: "Chart of the Shallows", kind: "furniture", mount: { w: 0.66, h: 0.48 }, model: "shallows_chart", blurb: "Every weed bed and sandbar off the west pier, inked by someone who fished them all." },
+  brass_spyglass: { id: "brass_spyglass", name: "Brass Spyglass", kind: "furniture", mount: { w: 0.7, h: 0.26 }, model: "brass_spyglass", blurb: "On two pegs, pointed at the harbor mouth." },
+  lamp_lens: { id: "lamp_lens", name: "Lighthouse Lens", kind: "furniture", mount: { w: 0.46, h: 0.5 }, model: "lamp_lens", blurb: "A ring of glass from an old lamp. It still throws the light about." },
+  crossed_oars: { id: "crossed_oars", name: "Crossed Oars", kind: "furniture", mount: { w: 0.8, h: 0.6 }, model: "crossed_oars", blurb: "Rowed out past the Harbor and back again." },
+  lobster_pot: { id: "lobster_pot", name: "Lobster Pot", kind: "furniture", mount: { w: 0.5, h: 0.36 }, model: "lobster_pot", blurb: "Hung up empty. Everything that went in it went in the book." },
+  glass_floats: { id: "glass_floats", name: "Net of Glass Floats", kind: "furniture", mount: { w: 0.72, h: 0.5 }, model: "glass_floats", blurb: "Green and blue glass in a knotted net, from everything the sea gave back." },
+  ironjaw_jaw: { id: "ironjaw_jaw", name: "Old Ironjaw's Jaw", kind: "furniture", mount: { w: 0.78, h: 0.56 }, model: "ironjaw_jaw", blurb: "Every hook he ever took is still in it." },
+
   // Far goods: never at the stall and never crafted. Only a traveling salesman carries them (see salesman.ts).
   globe: { id: "globe", name: "Sea Globe", kind: "furniture", footprint: { w: 0.56, d: 0.56, round: true }, model: "globe", blurb: "Some of the coastlines are guesses. +1% XP.", perk: { xpPct: 1 } },
   ship_bottle: { id: "ship_bottle", name: "Ship in a Bottle", kind: "furniture", footprint: { w: 0.74, d: 0.36 }, model: "ship_bottle", blurb: "Nobody knows how it got in there." },
@@ -368,6 +377,8 @@ export interface Furnishing {
   onId: number | null;
   /** The container it is kept in, or null. */
   inId: number | null;
+  /** A mounted fish: the catch hung on it, if one is. */
+  fish?: { id: string; species: string; grams: number; mm: number } | null;
 }
 
 /** A stack of materials kept in a container. */

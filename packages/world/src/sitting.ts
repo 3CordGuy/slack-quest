@@ -13,7 +13,7 @@
 // it learns that when the fish is landed, or after it gets away.
 
 import { statPct } from "./check";
-import { FISH, type FishDef } from "./fishcatalog";
+import { FISH, aFish, type FishDef } from "./fishcatalog";
 import { FIGHT_OUTCOME_TEXT, edgesProblem, fightEase, makeFightScript, replayFight, type FightEase, type FightOutcome, type FightScript } from "./fishfight";
 import { FISH_SPOTS, FISH_SPOT_IDS, castMetres, formatLength, formatWeight, rollCatch, rollSize, type FishSpot } from "./fishing";
 import type { GatherChoice, GatherState, GatherStep } from "./gather";
@@ -244,7 +244,7 @@ export function stepSitting(state: GatherState, choice: GatherChoice): GatherSte
     if (end.outcome === "landed") {
       return { state: { ...state, log: log(`Landed: ${describe(cast.fish)}.`), sitting: { ...busy, cast: null, pending: { ...cast.fish, at: now }, last } } };
     }
-    return { state: { ...state, log: log(`${FIGHT_OUTCOME_TEXT[end.outcome!]} It was a ${def(species).name}.`), sitting: { ...busy, cast: null, lost: [...s.lost, species], last } } };
+    return { state: { ...state, log: log(`${FIGHT_OUTCOME_TEXT[end.outcome!]} It was ${aFish(species)}.`), sitting: { ...busy, cast: null, lost: [...s.lost, species], last } } };
   }
 
   if (choice.t === "keep" || choice.t === "release") {

@@ -634,6 +634,13 @@ Two craftable boats let you walk off a pier or the shore onto the water, and fis
      - **Client:** one `CatchPanel` serves the fishmonger (the second button at the shore spot), Tam ("Sell him fish" at the bar) and the inventory ("Your catch"). A stall with an awning and a chalkboard stands at the shore spot.
 5. **Records and mounts.** The Catch Book (pages, slot states, page and book rewards, the bonus slot, `characters.title`), the crew Record Board, pub mounts, hut "Mount a trophy" via `meta_json`, the ship's bell piece, and the record line on the notice board.
 
+   - **Built, 2026-11-13:**
+     - **Rules:** `catchbook.ts` covers pages, rewards, `BOOK_TITLE` and bite hints. There are seven new reward wall pieces, never sold, and `pubMountSpots` picks pub walls with clear floor in front.
+     - **Migration:** `0026_fish_records` adds `book_rewards`, `pub_mounts` (one per kind per crew) and `characters.title`.
+     - **Server:** `server/catchbook.ts`, plus page rewards granted as a sitting closes. A beaten record's pub mount comes down to its owner's trophy chest in the same claim-guarded batch.
+     - **Client:** the Catch Book panel (from the inventory and the fishing HUD), the Record Board at the bar, record fish drawn on the pub wall, and "Mount a trophy" on a Mounted Fish at home. Mounts show the real fish at real length (`fishMount` in `catchArt.ts`).
+     - **Treasure:** the ship's bell and the mermaid's comb can go in the trophy chest and be mounted the same way, so the bell got no wall piece of its own.
+     - **Not done:** a notice-board line for new records. The gilded rod is also left for later; the title is shown in the inventory header.
 6. **Boats.**
    - The barrel and rowboat as `vessel` furnishings with recipes (the rowboat needs a blueprint).
    - `harborPath` takes a vessel, and HarborRoom presence gains `afloat`.

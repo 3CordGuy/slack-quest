@@ -17,6 +17,12 @@ import {
   sittingMaterials,
   sittingXp,
   stowCatch,
+  bookRewards,
+  BOOK_TITLE,
+  FURNISHINGS,
+  PAGE_REWARD,
+  PAGE_XP,
+  type BookPage,
   type CaughtFish,
   type FishBuyer,
   type GatherState,
@@ -34,6 +40,8 @@ export interface SittingPaid {
   fish: (CaughtFish & { id: string })[];
   /** Catches that would not fit in the icebox, sold on the quay as the sitting ended (their gold is in `gold`). */
   sold: { id: string; species: string; gold: number; buyer: FishBuyer }[];
+  /** Catch Book pages this sitting finished (each earns its wall piece), and whether it filled the book. */
+  book: { pages: BookPage[]; full: boolean };
   /** Species caught for the first time, and the crew records set. */
   newSpecies: string[];
   records: string[];
@@ -72,18 +80,18 @@ export async function closeSitting(db: D1Database, playerId: string, before: str
   const crew = await crewFor(db, playerId);
   const species = [...new Set(landed.map((f) => f.species))];
   const [known, records] = await Promise.all([
-    species.length
-      ? db.prepare(`SELECT species FROM fish_bests WHERE player_id = ? AND caught > 0 AND species IN (${species.map(() => "?").join(",")})`).bind(playerId, ...species).all<{ species: string }>()
-      : null,
+    db.prepare("SELECT species FROM fish_bests WHERE player_id = ? AND caught > 0").bind(playerId).all<{ species: string }>(),
     crew && items.length ? db.prepare("SELECT species, grams FROM fish_records WHERE crew_id = ?").bind(crew.id).all<{ species: string; grams: number }>() : null,
   ]);
-  const caughtBefore = new Set((known?.results ?? []).map((r) => r.species));
+  const caughtBefore = new Set(known.results.map((r) => r.species));
   const newSpecies = species.filter((id) => !caughtBefore.has(id));
+  // The Catch Book: pages this sitting finished, and whether it filled the book.
+  const book = bookRewards(caughtBefore, new Set([...caughtBefore, ...species]));
   const recordFor = new Map((records?.results ?? []).map((r) => [r.species, r.grams]));
   const best = heaviest(items);
   const beaten = crew ? [...best.values()].filter((f) => FISH[f.species].kind !== "haul" && f.grams > (recordFor.get(f.species) ?? 0)) : [];
 
-  const xp = await prepareXp(db, playerId, sittingXp(next), { bonus: newSpecies.length * NEW_SPECIES_XP + beaten.length * CREW_RECORD_XP });
+  const xp = await prepareXp(db, playerId, sittingXp(next), { bonus: newSpecies.length * NEW_SPECIES_XP + beaten.length * CREW_RECORD_XP + book.pages.length * PAGE_XP });
   const today = gatherDay(now);
   const statements: D1PreparedStatement[] = [
     // The sitting ends, and only now spends its stamina.
@@ -141,9 +149,32 @@ export async function closeSitting(db: D1Database, playerId: string, before: str
         )
         .bind(playerId, f.species, crew!.id, f.grams, f.mm, f.id, f.at),
     ),
+    // A beaten record's mount comes down off the pub wall, back to its owner's trophy chest.
+    ...beaten.flatMap((f) => [
+      db
+        .prepare(`UPDATE fish SET place = 'trophy' WHERE id IN (SELECT fish_id FROM pub_mounts WHERE crew_id = ?2 AND species = ?3) AND ${guard}`)
+        .bind(playerId, crew!.id, f.species),
+      db.prepare(`DELETE FROM pub_mounts WHERE crew_id = ?2 AND species = ?3 AND ${guard}`).bind(playerId, crew!.id, f.species),
+    ]),
+    // A finished page: its wall piece, once ever, in storage at home.
+    ...book.pages.flatMap((page) => [
+      db
+        .prepare(`INSERT INTO book_rewards (player_id, page, claimed_at) SELECT ?1, ?2, ?3 WHERE ${guard} AND NOT EXISTS (SELECT 1 FROM book_rewards WHERE player_id = ?1 AND page = ?2)`)
+        .bind(playerId, page, now),
+      db
+        .prepare("INSERT INTO furnishings (player_id, def_id, label, meta_json, created_at) SELECT ?1, ?2, ?3, '{}', ?4 WHERE changes() > 0")
+        .bind(playerId, PAGE_REWARD[page], FURNISHINGS[PAGE_REWARD[page]].name, now),
+    ]),
+    // The whole book: the title.
+    ...(book.full
+      ? [
+          db.prepare(`INSERT INTO book_rewards (player_id, page, claimed_at) SELECT ?1, 'book', ?2 WHERE ${guard} AND NOT EXISTS (SELECT 1 FROM book_rewards WHERE player_id = ?1 AND page = 'book')`).bind(playerId, now),
+          db.prepare("UPDATE characters SET title = ?2 WHERE player_id = ?1 AND changes() > 0").bind(playerId, BOOK_TITLE),
+        ]
+      : []),
     ...(xp?.statements(guard) ?? []),
   ];
   const results = await db.batch(statements);
   if (results[0].meta.changes === 0) return null;
-  return { paid, gold, fish: items, sold: overflow.map((f) => ({ id: f.id, species: f.species, gold: f.gold, buyer: f.buyer })), newSpecies, records: beaten.map((f) => f.species), xp: xpOutcome(xp, results) };
+  return { paid, gold, book, fish: items, sold: overflow.map((f) => ({ id: f.id, species: f.species, gold: f.gold, buyer: f.buyer })), newSpecies, records: beaten.map((f) => f.species), xp: xpOutcome(xp, results) };
 }

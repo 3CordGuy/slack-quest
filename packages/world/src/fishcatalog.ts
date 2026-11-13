@@ -151,3 +151,10 @@ export function bookPage(page: BookPage): FishDef[] {
 
 /** Slots that count towards a full Catch Book: every page but the bonus. */
 export const BOOK_SLOTS = FISH_IDS.filter((id) => FISH[id].page !== "bonus").length;
+
+/** "a mackerel", "an albacore", or a named fish as it is: "Old Ironjaw". */
+export function aFish(id: string): string {
+  const name = FISH[id]?.name ?? id;
+  if (/^Old /.test(name)) return name;
+  return `${/^[AEIOU]/i.test(name) ? "an" : "a"} ${name.toLowerCase()}`;
+}

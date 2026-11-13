@@ -89,7 +89,7 @@ export function CatchPanel({ buyer, onClose, onGold }: {
             {f.market === null ? "stall —" : `stall ${f.market}g`} · {f.tam === null ? "Tam —" : `Tam ${f.tam}g`}
           </span>
         )}
-        {f.place === "icebox" && f.specimen && def.kind !== "haul" && <button className="small" disabled={busy} onClick={() => move(f.id, "trophy")} title="Keep it for good, to mount or sell later">To chest</button>}
+        {f.place === "icebox" && ((f.specimen && def.kind !== "haul") || def.keep) && <button className="small" disabled={busy} onClick={() => move(f.id, "trophy")} title="Keep it for good, to mount or sell later">To chest</button>}
         {f.place === "trophy" && <button className="small" disabled={busy} onClick={() => move(f.id, "icebox")}>To icebox</button>}
       </li>
     );

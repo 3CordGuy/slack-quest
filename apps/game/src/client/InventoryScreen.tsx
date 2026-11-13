@@ -5,6 +5,7 @@
 
 import { useMemo, useState, type DragEvent } from "react";
 import { CatchPanel } from "./CatchPanel";
+import { CatchBookPanel } from "./CatchBook";
 import {
   CARRY_FORMULA,
   HERO_CLASSES,
@@ -68,6 +69,7 @@ export function InventoryScreen({ me, refresh, onClose, onIsland = false }: Prop
   const c = me.character!;
   const { busy, error, act } = useAct(refresh);
   const [catchOpen, setCatchOpen] = useState(false);
+  const [bookOpen, setBookOpen] = useState(false);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [slotHint, setSlotHint] = useState<Slot | null>(null);
   const [filter, setFilter] = useState<(typeof FILTERS)[number]["id"]>("all");
@@ -134,10 +136,11 @@ export function InventoryScreen({ me, refresh, onClose, onIsland = false }: Prop
     <div className="overlay inv-overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
       <DragPanel id="inventory" title="Inventory" compact resizable className="inv panel" role="dialog" aria-label="Inventory">
         <header className="inv-head">
-          <h2>{c.name} <span className="muted">· {label("class", c.class_id)} · Level {c.level}</span></h2>
+          <h2>{c.name} <span className="muted">· {c.title ? <>{c.title} · </> : null}{label("class", c.class_id)} · Level {c.level}</span></h2>
           <span className="spacer" />
           <span className="gold"><Icon name="cash" color="#ffd23f" size={18} /> {c.gold} gold</span>
           {!onIsland && <button onClick={() => setCatchOpen(true)} title="The icebox and the trophy chest">Your catch</button>}
+          {!onIsland && <button onClick={() => setBookOpen(true)} title="Every kind you have caught, page by page">Catch Book</button>}
           <button onClick={onClose}>Close</button>
         </header>
         {error && <div className="banner error">{error}</div>}
@@ -280,6 +283,7 @@ export function InventoryScreen({ me, refresh, onClose, onIsland = false }: Prop
         </footer>
       </DragPanel>
       {catchOpen && <CatchPanel buyer={null} onClose={() => setCatchOpen(false)} />}
+      {bookOpen && <CatchBookPanel onClose={() => setBookOpen(false)} />}
     </div>
   );
 }

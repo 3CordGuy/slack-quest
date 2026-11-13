@@ -58,7 +58,8 @@ describe("keeping fish", () => {
     expect(trophyProblem({ species: "herring", specimen: false }, 0)).toMatch(/specimen/);
     expect(trophyProblem({ species: "bluefin", specimen: true }, 0)).toBeNull();
     expect(trophyProblem({ species: "bluefin", specimen: true }, TROPHY_SLOTS)).toMatch(/holds/);
-    expect(trophyProblem({ species: "ships_bell", specimen: false }, 0)).toMatch(/Only fish/);
+    expect(trophyProblem({ species: "ships_bell", specimen: false }, 0)).toBeNull();
+    expect(trophyProblem({ species: "boot", specimen: false }, 0)).toMatch(/Only fish and treasure/);
   });
 
   it("will not overfill the icebox", () => {

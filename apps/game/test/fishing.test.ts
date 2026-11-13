@@ -6,7 +6,9 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { FISH, SITTING_IDLE_MS, gatherDay, type GatherChoice, type GatherView } from "@gantt-quest/world";
+import { FISH, PAGE_REWARD, SITTING_IDLE_MS, gatherDay, type GatherChoice, type GatherView } from "@gantt-quest/world";
+import { catchBook, hangAtHome, mountInPub, unmountInPub } from "../src/server/catchbook";
+import { getHut, type Env } from "../src/server/db";
 import { playFight } from "../../../packages/world/src/fishbot";
 import { gatherStatus, startOuting, stepOuting } from "../src/server/gather";
 import { fishStock, moveFish, sellFish } from "../src/server/fishmarket";
@@ -291,5 +293,59 @@ describe("selling and keeping fish", () => {
     expect(gold()).toBeGreaterThan(before);
     const sold = done.sitting!.sold[0].id;
     expect(place(sold)).toBe("sold");
+  });
+});
+
+describe("the Catch Book, records and mounts", () => {
+  const caught = (species: string, who = "ann") => sql.prepare("INSERT OR IGNORE INTO fish_bests (player_id, species, grams, mm, caught, first_at) VALUES (?, ?, 100, 100, 1, 0)").run(who, species);
+
+  it("rewards the page a sitting finishes: its wall piece, once, and the book for the last", async () => {
+    await startOuting(db, "ann", "fishing", "west");
+    // Land something, then have everything else on its page already in the book.
+    let pending: string | undefined;
+    for (let i = 0; i < 60 && !pending; i++) {
+      at(clock + 1000);
+      pending = (await catchOne()).sitting!.pending?.species;
+    }
+    const page = FISH[pending!].page;
+    for (const f of Object.values(FISH)) if (f.page === page && f.id !== pending) caught(f.id);
+    await step({ t: "keep" });
+    const done = await step({ t: "bank" });
+    expect(done.sitting!.book.pages).toEqual([page]);
+    expect(one("SELECT page FROM book_rewards WHERE player_id = 'ann'")).toMatchObject({ page });
+    expect((sql.prepare("SELECT def_id FROM furnishings WHERE player_id = 'ann'").all() as { def_id: string }[]).map((r) => r.def_id)).toContain(PAGE_REWARD[page]);
+    const book = await catchBook(db, "ann");
+    expect(book.claimed).toContain(page);
+    expect(book.title).toBeNull();
+  });
+
+  it("hangs only the crew's record fish on the pub wall, by the one who caught it", async () => {
+    sql.prepare("INSERT INTO fish (id, player_id, species, grams, mm, specimen, spot, caught_at, place) VALUES ('rec', 'ann', 'bluefin', 90000, 1900, 1, 'middle', 0, 'trophy'), ('other', 'ann', 'bluefin', 20000, 1100, 1, 'middle', 0, 'trophy')").run();
+    sql.prepare("INSERT INTO fish_records (crew_id, species, grams, mm, fish_id, player_id, caught_at) VALUES ('CREWAA', 'bluefin', 90000, 1900, 'rec', 'ann', 0)").run();
+    expect(await mountInPub(db, "ann", "other")).toMatch(/record fish/);
+    expect(await mountInPub(db, "bo", "rec")).toMatch(/not yours/);
+    const wall = await mountInPub(db, "ann", "rec");
+    if (typeof wall === "string") throw new Error(wall);
+    expect(wall.mounts).toMatchObject([{ slot: 0, fishId: "rec", species: "bluefin", name: "Ann" }]);
+    expect(one("SELECT place FROM fish WHERE id = 'rec'")).toMatchObject({ place: "pub" });
+    expect(await unmountInPub(db, "bo", "rec")).toMatch(/not yours/);
+    const down = await unmountInPub(db, "ann", "rec");
+    if (typeof down === "string") throw new Error(down);
+    expect(down.mounts).toEqual([]);
+    expect(one("SELECT place FROM fish WHERE id = 'rec'")).toMatchObject({ place: "trophy" });
+  });
+
+  it("hangs a fish from the trophy chest on a Mounted Fish at home, and takes it down again", async () => {
+    const env = { DB: db } as unknown as Env;
+    sql.prepare("INSERT INTO fish (id, player_id, species, grams, mm, specimen, spot, caught_at, place) VALUES ('t1', 'ann', 'halibut', 60000, 1800, 1, 'east', 0, 'trophy'), ('i1', 'ann', 'herring', 300, 250, 0, 'middle', 0, 'icebox')").run();
+    const mount = Number(sql.prepare("INSERT INTO furnishings (player_id, def_id, label, meta_json, created_at) VALUES ('ann', 'mounted_fish', 'Mounted Fish', '{}', 0)").run().lastInsertRowid);
+    expect(await hangAtHome(env, "ann", mount, "i1")).toMatch(/trophy chest/);
+    expect(await hangAtHome(env, "ann", mount, "t1")).toEqual({ ok: true });
+    expect(one("SELECT place, furnishing_id FROM fish WHERE id = 't1'")).toMatchObject({ place: "hut", furnishing_id: mount });
+    const hut = await getHut(db, "ann");
+    expect(hut.furnishings.find((f) => f.id === mount)?.fish).toMatchObject({ id: "t1", species: "halibut", mm: 1800 });
+    expect(await hangAtHome(env, "ann", mount, null)).toEqual({ ok: true });
+    expect(one("SELECT place FROM fish WHERE id = 't1'")).toMatchObject({ place: "trophy" });
+    expect((await getHut(db, "ann")).furnishings.find((f) => f.id === mount)?.fish).toBeNull();
   });
 });
