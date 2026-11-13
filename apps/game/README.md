@@ -32,7 +32,9 @@ To send real mail (staging does), the environment needs a `send_email` binding n
 
 ## Staging
 
-A hand-deployed test copy runs as the `gantt-quest-game-staging` Worker with its own D1 database and live Workers AI. It is defined as the `staging` environment in `wrangler.jsonc` (put the real database id in your local, gitignored copy).
+A test copy runs as the `gantt-quest-game-staging` Worker with its own D1 database and live Workers AI. It is defined as the `staging` environment in `wrangler.jsonc` (put the real database id in your local, gitignored copy).
+
+CI deploys it on every merge to `main` that touches the game, and production from a `game-v*` tag after a reviewer approves; the root README has the steps. To deploy staging by hand instead (the fallback):
 
 ```bash
 pnpm --filter @gantt-quest/game exec wrangler d1 migrations apply DB --remote --env staging
@@ -79,7 +81,7 @@ Build before deploying: `wrangler deploy` ships whatever the last build produced
 | `apps/game/src/server/ai.ts` | Prompts and the Workers AI calls (and the mock) |
 | `apps/game/src/server/db.ts` | D1 access |
 | `apps/game/src/server/email.ts` | Sending sign-in codes |
-| `apps/game/src/client/render/` | Three.js renderer, placeholder sprites, furniture models (`props.ts`) and the sky, weather, shadows and moving decoration (`ambience.ts`) |
+| `apps/game/src/client/render/` | Three.js renderer, placeholder sprites, furniture models (`props.ts`), the sky, weather, shadows and moving decoration (`ambience.ts`), and the felling grove (`GroveStage.ts`, its own small scene drawn full screen behind the gather panel) |
 | `apps/game/src/client/*.tsx` | Character creation, crew gate, shared Harbor, huts, the pub, notice board (`board/`), works (`works/`), sparring, gathering, trading, inventory, market stall, the crossing, fight pacing (`BattleBeats.tsx`) and the in-voyage HUD (React) |
 | `apps/game/src/client/itemArt.ts` | Pixel-art item icons drawn in code, in the style of the hero sprites; the accent colour is the item's rarity |
 
@@ -104,7 +106,7 @@ pnpm --filter @gantt-quest/game test
 
 The game's own tests (`apps/game/test/`) run the trading server code against SQLite with the migrations applied, using Node's built-in `node:sqlite` as a stand-in for D1.
 
-In dev builds the page exposes `window.__gq` (`state`, `send`, and the `World` module) on a voyage and `window.__harbor` in the Harbor, for driving either from the console. Set `window.__gqTime` to a number from 0 to 1 to pin the time of day (0 is midnight, 0.5 is noon), and `window.__gqWeather` from 0 (clear) to 1 (heavy rain) to pin the weather. The pub and huts expose `window.__pub` and `window.__hut` the same way.
+In dev builds the page exposes `window.__gq` (`state`, `send`, and the `World` module) on a voyage and `window.__harbor` in the Harbor, for driving either from the console. Set `window.__gqTime` to a number from 0 to 1 to pin the time of day (0 is midnight, 0.5 is noon), and `window.__gqWeather` from 0 (clear) to 1 (heavy rain) to pin the weather. The pub and huts expose `window.__pub` and `window.__hut` the same way. `window.__gqWorld` is the world renderer and `window.__gqGrove` the felling grove while it is open; each has `renderer.info.render.calls` for draw calls.
 
 ## Known gaps
 
@@ -114,6 +116,7 @@ In dev builds the page exposes `window.__gq` (`state`, `send`, and the `World` m
 - The Harbor has twelve plots: a crew larger than that can't all own one.
 - The Galley project is still locked. Crew chat isn't stored.
 - The doom clock doesn't allow for time lost to fog and roaming bands.
-- Timing in fishing and the quarry trusts the client's reported moment within a round trip, so a script can always hit dead centre (capped at +20% a roll).
+- Timing in fishing, felling and the quarry trusts the client's reported moment within a round trip, so a script can always hit dead centre (capped at +20% a roll, and a felled tree falling true).
+- The world renderer has no pause, so it keeps drawing underneath the full-screen felling grove.
 - Gear has no affixes, uniques, sets or elements.
-- Deploys are by hand unless the CI workflow is switched on (see the root README).
+- Felling's sounds are synth stand-ins until recordings are added under `sfx/gather/` (see `audio/manifest.ts`).
