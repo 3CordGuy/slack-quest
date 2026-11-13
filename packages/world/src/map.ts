@@ -20,10 +20,12 @@ import type { ResourceKind } from "./hut";
  * surface, its streets, its wet ground, and the old stone wall around it
  * (which cannot be climbed). `floor` and `wall` make up the inside of a hut.
  * `cave` and `rock` are the Haunted Caverns: a stone floor, and the living rock around it.
+ * `gate` is a locked door across a cave tunnel: it cannot be walked through until it is opened,
+ * when it becomes cave floor.
  * `fog` is never part of a real map: it is what a client is sent in place of
  * ground the party has not seen yet.
  */
-export type Biome = "plains" | "forest" | "hills" | "water" | "dock" | "cobble" | "mud" | "rampart" | "floor" | "wall" | "cave" | "rock" | "fog";
+export type Biome = "plains" | "forest" | "hills" | "water" | "dock" | "cobble" | "mud" | "rampart" | "floor" | "wall" | "cave" | "rock" | "gate" | "fog";
 
 export const MOVE_COST: Record<Biome, number> = {
   plains: 1,
@@ -38,6 +40,7 @@ export const MOVE_COST: Record<Biome, number> = {
   wall: Infinity,
   cave: 1,
   rock: Infinity,
+  gate: Infinity,
   fog: Infinity,
 };
 
@@ -53,8 +56,9 @@ export interface Tile {
  * `landing` is where the party's ship puts in on an island. `pier`, `plot`
  * `board` and `shop` exist only in the Harbor: a moored ship, a crew member's
  * hut, the notice board and the market stall. `door` is the way out of a hut's room.
+ * `gate` is a locked door in the Haunted Caverns, standing on a `gate` tile.
  */
-export type PoiKind = "cave" | "landing" | "hut" | "lair" | "shrine" | "cache" | "camp" | "pier" | "plot" | "board" | "shop" | "ring" | "dice" | "door" | "works" | "pub" | "counter" | "shoals" | "trader" | "rocks" | "wreck" | "lot" | "site" | "ship" | "pickup" | "fishing" | "felling" | "quarry" | "apothecary" | "smithy" | "galley" | "lighthouse";
+export type PoiKind = "cave" | "landing" | "hut" | "lair" | "shrine" | "cache" | "camp" | "pier" | "plot" | "board" | "shop" | "ring" | "dice" | "door" | "works" | "pub" | "counter" | "shoals" | "trader" | "rocks" | "wreck" | "lot" | "site" | "ship" | "pickup" | "fishing" | "felling" | "quarry" | "apothecary" | "smithy" | "galley" | "lighthouse" | "gate";
 
 export interface Poi {
   id: string;
@@ -74,7 +78,17 @@ export interface Poi {
   find?: ResourceKind;
   /** For a bought plot whose shack is not up yet: how full its resource bin is, 0 to 1. */
   fill?: number;
+  /** For a chest in the caverns: an old chest, a strongbox behind a locked door, or the hoard in the deepest chamber. */
+  loot?: ChestLoot;
+  /** For a chest in the caverns: the id of the band that guards it. It cannot be opened while they stand. */
+  guard?: string;
+  /** For a chest or a band in the caverns: holds a key to a locked door, found by whoever opens or beats it. */
+  key?: boolean;
+  /** For a locked door: the step from it into the room it shuts (a neighbour's offset), so it can be drawn across its tunnel. */
+  into?: HexPos;
 }
+
+export type ChestLoot = "chest" | "vault" | "hoard";
 
 export interface WorldMap {
   grid: HexGrid;
@@ -205,7 +219,7 @@ function pickBiome(rng: Rng): Biome {
   return "plains";
 }
 
-export const BASE_HEIGHT: Record<Biome, number> = { water: 0.05, plains: 0.3, forest: 0.4, hills: 0.75, dock: 0.1, cobble: 0.26, mud: 0.2, rampart: 1.25, floor: 0.1, wall: 0.9, cave: 0.18, rock: 1.4, fog: 0.3 };
+export const BASE_HEIGHT: Record<Biome, number> = { water: 0.05, plains: 0.3, forest: 0.4, hills: 0.75, dock: 0.1, cobble: 0.26, mud: 0.2, rampart: 1.25, floor: 0.1, wall: 0.9, cave: 0.18, rock: 1.4, gate: 0.18, fog: 0.3 };
 
 /** Offset-space position of a hex, used for the island outline. */
 function flatPos(pos: HexPos): { x: number; y: number } {
@@ -319,9 +333,10 @@ export const PICKUP_MAX = 3;
  * Lay herbs, mushrooms and piles of wood and stone about the island, on
  * ground a hero can walk to and clear of the story's places. Uses its own
  * random stream, so the rest of the island comes out the same as before
- * pickups existed.
+ * pickups existed. `gap` is how far a pickup keeps from the map's places (two
+ * on an island; the cramped caverns use one).
  */
-export function scatterPickups(map: WorldMap, seed: string, landing: HexPos, table: { find: ResourceKind; count: number; ground: Biome[] }[] = PICKUPS) {
+export function scatterPickups(map: WorldMap, seed: string, landing: HexPos, table: { find: ResourceKind; count: number; ground: Biome[] }[] = PICKUPS, gap = 2) {
   const rng = makeRng(seedFromString(`pickups|${seed}`));
   const onFoot = reachable(map, landing);
   const places = map.pois.map((p) => p.pos);
@@ -331,7 +346,7 @@ export function scatterPickups(map: WorldMap, seed: string, landing: HexPos, tab
       const open = map.tiles.filter(
         (t) =>
           onFoot.has(posKey(t)) &&
-          places.every((p) => hexDistance(p, t) >= 2) &&
+          places.every((p) => hexDistance(p, t) >= gap) &&
           spots.every((p) => hexDistance(p, t) >= 2),
       );
       // The first kind of ground that has room, else anywhere open.
