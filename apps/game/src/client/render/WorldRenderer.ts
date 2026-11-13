@@ -536,11 +536,15 @@ export class WorldRenderer {
   /** The finishing pass (bloom, tilt-shift, grade), there while "Fancy graphics" is on. On the dev server P switches it alone, to compare. */
   post: PostFx | null = null;
   private unwatchFancy: () => void;
-  /** How many of the view's pixels make one chunky pixel: 1 as a rule, PIXEL while "Fancy graphics" draws the world at full resolution. */
+  /** How many of the view's pixels make one chunky pixel: 1 as a rule, PIXEL while the world is drawn at full resolution ("Fancy graphics", or a game that asked for it). */
   private fine = 1;
   /** A backdrop's fixed point of view (see setVantage), and the lightning it is lent by the view showing it. */
   private vantage: { from: THREE.Vector3; to: THREE.Vector3 } | null = null;
   /** A game being played in the world, the group its things stand in, and how your own hero looked before it hid them. */
+  /** How many screen pixels one drawn pixel covers. */
+  private pixel = PIXEL;
+  /** Units a minigame is drawing for itself. */
+  private stageHidden: string[] = [];
   private minigame: { game: WorldMinigame; group: THREE.Group; hidden: { obj: THREE.Object3D; was: boolean }[]; felled: { i: number; m: THREE.Matrix4 }[] } | null = null;
   /** The trees on forest hexes, one instanced mesh; a minigame may clear some for room. */
   private forest: THREE.InstancedMesh | null = null;
@@ -1717,6 +1721,8 @@ export class WorldRenderer {
     }
     const mine = this.state?.you ? this.units.get(this.state.you) : undefined;
     if (mine) for (const obj of [mine.root, mine.label, mine.ring]) if (obj) obj.visible = true;
+    for (const id of this.stageHidden) this.showUnit(id);
+    this.stageHidden = [];
     for (const b of [this.followButton, ...this.turnButtons]) b.style.visibility = "";
     if (this.camera.fov !== this.baseFov) {
       this.camera.fov = this.baseFov;
@@ -1754,10 +1760,29 @@ export class WorldRenderer {
     forest.instanceMatrix.needsUpdate = true;
   }
 
-  /** While a minigame runs you see through your hero's eyes: their figure, tag and ring are not drawn. */
+  /** While a minigame runs you see through your hero's eyes: their figure, tag and ring are not drawn. So are the units a game draws itself (a table's players, who all stand on its one hex). */
   private hideOwnHero() {
     const mine = this.state?.you ? this.units.get(this.state.you) : undefined;
     if (mine) for (const obj of [mine.root, mine.label, mine.ring]) if (obj) obj.visible = false;
+    for (const id of this.stageHidden) {
+      const u = this.units.get(id);
+      if (!u) continue;
+      for (const obj of [u.root, u.label, u.ring]) if (obj) obj.visible = false;
+    }
+  }
+
+  /** Units a minigame draws for itself: hidden while it runs (see hideOwnHero), shown again by the next list or when it ends. */
+  setStageHidden(ids: string[]) {
+    const gone = this.stageHidden.filter((id) => !ids.includes(id));
+    this.stageHidden = ids;
+    for (const id of gone) this.showUnit(id);
+    if (this.minigame) this.hideOwnHero();
+  }
+
+  private showUnit(id: string) {
+    const u = this.units.get(id);
+    if (!u) return;
+    for (const obj of [u.root, u.label, u.ring]) if (obj) obj.visible = true;
   }
 
   /** A point of interest's model, by id, for a scene that moves one about itself (the crew's ship at sea). */
@@ -3635,11 +3660,18 @@ export class WorldRenderer {
 
   // ---------- frame loop ----------
 
+  /** Draw at full resolution (a game that is read up close, like a table) instead of the chunky half. */
+  setSharp(sharp: boolean) {
+    this.pixel = sharp ? 1 : PIXEL;
+    this.resize();
+  }
+
   private resize() {
     const w = Math.max(1, this.container.clientWidth);
     const h = Math.max(1, this.container.clientHeight);
-    this.fine = fancy.get() ? PIXEL : 1;
-    const px = PIXEL / this.fine;
+    // Full resolution with "Fancy graphics" on, or while a game asks for it (setSharp); the chunky half otherwise.
+    const px = fancy.get() ? 1 : this.pixel;
+    this.fine = PIXEL / px;
     this.renderer.setSize(Math.ceil(w / px), Math.ceil(h / px), false);
     this.post?.setSize(Math.ceil(w / px), Math.ceil(h / px));
     this.camera.aspect = w / h;
