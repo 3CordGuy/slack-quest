@@ -8,55 +8,9 @@ import * as THREE from "three";
 
 /**
  * The layer for what is read rather than looked at (name plates, speech bubbles, health bars). The finishing pass
- * draws it afterwards, crisp, over the finished picture. Clear of the shadow cards' layers (9 to 15).
+ * draws it afterwards, crisp, over the finished picture.
  */
 export const OVERLAY_LAYER = 31;
-
-/** The knobs for lit sprites, for tuning from the console: `__gqWorld.lit.rim = 0.8`. */
-export const LIT = {
-  /** How far a sprite follows the light, 0 (always full colour) to 1. */
-  strength: 0.85,
-  /** The darkest and brightest a sprite may go, so nobody is lost at night or blown out by a fire. */
-  floor: 0.42,
-  ceiling: 1.2,
-  /** How bright the highlight on the lit edge is. */
-  rim: 0.6,
-};
-
-/** What a lit sprite's shader reads: its highlight colour, which neighbouring pixel is "toward the light", and a pixel's size. */
-export type SpriteRim = { color: THREE.Color; step: THREE.Vector2; texel: THREE.Vector2 };
-
-/**
- * Gives a character sprite a highlight along the edge facing the light: a pixel of the sprite whose neighbour
- * toward the light is empty takes the light's colour. Whole sprite pixels only, so it stays pixel art.
- */
-export function addSpriteRim(material: THREE.SpriteMaterial): SpriteRim {
-  const rim: SpriteRim = { color: new THREE.Color(0, 0, 0), step: new THREE.Vector2(0, 1), texel: new THREE.Vector2(1 / 18, 1 / 22) };
-  material.userData.rim = rim;
-  material.onBeforeCompile = rimShader;
-  return rim;
-}
-
-function rimShader(this: THREE.Material, shader: { uniforms: Record<string, THREE.IUniform>; fragmentShader: string }) {
-  const rim = this.userData.rim as SpriteRim;
-  shader.uniforms.rimColor = { value: rim.color };
-  shader.uniforms.rimStep = { value: rim.step };
-  shader.uniforms.rimTexel = { value: rim.texel };
-  shader.fragmentShader = shader.fragmentShader
-    .replace("void main() {", "uniform vec3 rimColor;\nuniform vec2 rimStep;\nuniform vec2 rimTexel;\nvoid main() {")
-    .replace(
-      "#include <map_fragment>",
-      /* glsl */ `#include <map_fragment>
-      #ifdef USE_MAP
-      {
-        vec2 rimUv = (floor(vMapUv / rimTexel) + 0.5 + rimStep) * rimTexel;
-        bool outside = rimUv.x < 0.0 || rimUv.x > 1.0 || rimUv.y < 0.0 || rimUv.y > 1.0;
-        float beyond = outside ? 0.0 : texture2D(map, rimUv).a;
-        if (diffuseColor.a >= 0.5 && beyond < 0.5) diffuseColor.rgb += rimColor;
-      }
-      #endif`,
-    );
-}
 
 const VERT = /* glsl */ `
 varying vec2 vUv;
@@ -103,6 +57,7 @@ uniform float far;
 uniform float focus;
 uniform vec2 focusRange;
 uniform float dof;
+uniform float focusSlack;
 uniform float bloom;
 uniform float grade;
 uniform float vignette;
@@ -161,8 +116,11 @@ void main() {
   vec3 sharp = min(texture2D(tScene, vUv).rgb, vec3(1.0));
   vec3 soft = min(texture2D(tBlur, vUv).rgb, vec3(1.0));
   // Tilt-shift: sharp at the distance the camera looks at, softer the further from it.
-  float off = abs(distanceAt(vUv) - focus) / focus;
-  vec3 c = mix(sharp, soft, smoothstep(focusRange.x, focusRange.y, off) * dof);
+  // The sharp band is a share of the focus distance, but never thinner than focusSlack: zoomed right in and
+  // tilted low, a figure's head is a good way nearer than its feet, and it must stay sharp with them.
+  float off = abs(distanceAt(vUv) - focus);
+  float slack = max(0.0, focusSlack - focusRange.x * focus);
+  vec3 c = mix(sharp, soft, smoothstep(focusRange.x * focus + slack, focusRange.y * focus + slack * 2.0, off) * dof);
 
   // Where in the world this pixel is, from how deep it lies.
   float depth = texture2D(tDepth, vUv).x;
@@ -229,6 +187,8 @@ export type PostParams = {
   /** Where the blur starts and where it is full, as a share of the focus distance. */
   focusNear: number;
   focusFar: number;
+  /** The least the sharp band may reach either side of the focus, in world units, however close the camera is. */
+  focusSlack: number;
   /** How much of the colour grade to apply, 0 to 1. */
   grade: number;
   /** How dark the corners go, 0 to 1. */
@@ -293,7 +253,7 @@ const smooth = (a: number, b: number, x: number) => {
 const BLOOM_LEVELS = 3;
 
 export class PostFx {
-  readonly params: PostParams = { bloom: 0.55, bloomNight: 1.1, threshold: 0.82, thresholdNight: 0.5, dof: 0.85, focusNear: 0.1, focusFar: 0.42, grade: 1, vignette: 0.2, nightLift: 0.03, goldenHour: 1, contrast: 0.11, lowSunContrast: 0.22, cloudShadow: 0.3, shafts: 0.9, haze: 0.5 };
+  readonly params: PostParams = { bloom: 0.55, bloomNight: 1.1, threshold: 0.82, thresholdNight: 0.5, dof: 0.85, focusNear: 0.1, focusFar: 0.42, focusSlack: 3, grade: 1, vignette: 0.2, nightLift: 0.03, goldenHour: 1, contrast: 0.11, lowSunContrast: 0.22, cloudShadow: 0.3, shafts: 0.9, haze: 0.5 };
   private scene: THREE.WebGLRenderTarget;
   /** Half-size soft copy of the scene, for the tilt-shift. */
   private soft: [THREE.WebGLRenderTarget, THREE.WebGLRenderTarget];
@@ -308,8 +268,9 @@ export class PostFx {
   constructor(private renderer: THREE.WebGLRenderer) {
     // Room above 1 and no banding in the dark, where the phone allows it.
     const type = renderer.extensions.has("EXT_color_buffer_float") || renderer.extensions.has("EXT_color_buffer_half_float") ? THREE.HalfFloatType : THREE.UnsignedByteType;
+    // The scene itself is drawn with four samples a pixel, so the edges of hexes, roofs and figures are smooth.
     const target = (depth = false) => {
-      const t = new THREE.WebGLRenderTarget(1, 1, { type, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, depthBuffer: depth });
+      const t = new THREE.WebGLRenderTarget(1, 1, { type, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, depthBuffer: depth, samples: depth ? 4 : 0 });
       if (depth) t.depthTexture = new THREE.DepthTexture(1, 1);
       return t;
     };
@@ -333,6 +294,7 @@ export class PostFx {
       focus: { value: 20 },
       focusRange: { value: new THREE.Vector2() },
       dof: { value: 0 },
+      focusSlack: { value: 0 },
       bloom: { value: 0 },
       grade: { value: 0 },
       vignette: { value: 0 },
@@ -420,6 +382,7 @@ export class PostFx {
     u.focus.value = focus;
     (u.focusRange.value as THREE.Vector2).set(p.focusNear, p.focusFar);
     u.dof.value = p.dof;
+    u.focusSlack.value = p.focusSlack;
     u.bloom.value = p.bloom + (p.bloomNight - p.bloom) * night;
     u.grade.value = p.grade;
     u.vignette.value = p.vignette;

@@ -8,7 +8,7 @@
 
 import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
-import { Ambience, CARD_LAYER, SHADOW_SLOTS, SLOT_LAYER, pixelTexture, stamp, type BuildingGlow } from "./ambience";
+import { Ambience, TILE_FILLET, TILE_RADIUS, hexTop, pixelTexture, stamp, type BuildingGlow } from "./ambience";
 import "./camera.css";
 import { PINCH_PAN_SLACK, followIconSvg, readFollow, writeFollow } from "./cameraFollow";
 import type { HexPos } from "@gantt-quest/core";
@@ -18,14 +18,14 @@ import { fancy } from "./fancy";
 import { NightLife } from "./nightlife";
 import { Storm } from "./storm";
 import { addWindSway, updateWind } from "./wind";
-import { LIT, OVERLAY_LAYER, PostFx, addSpriteRim, type Air, type SpriteRim } from "./post";
-import { standUpright } from "./upright";
+import { OVERLAY_LAYER, PostFx, type Air } from "./post";
+import { makeFigure, type Figure } from "./figures";
 import { GROUND_KIND, addFancyWater, addWaterRipple, setGroundWet, setWaterNight, setWaterStanding, shoreSide, updateWater, waterAttribute, type Standing } from "./water";
 import { ghostModel, propModel, tintGhost, type LightKind } from "./props";
 import { nearWater, openEar, sounds } from "../audio/gameSounds";
 import type { AttackStyle, Fighter } from "../audio/names";
 import { PUFFS, footfalls, stepGround, worldToHex } from "./footsteps";
-import { SPRITE_ASPECT, bubbleTexture, fxTexture, labelTexture, plateKey, sleepZTexture, spriteKey, spriteTexture, textTexture, type FxKind, type PlateStats } from "./sprites";
+import { bubbleTexture, fxTexture, labelTexture, lookFor, plateKey, sleepZTexture, spriteKey, textTexture, type FxKind, type PlateStats } from "./sprites";
 
 /** Spells fly as a coloured bolt; these are their colours, by ability name. */
 const SPELL_COLOR: Record<string, string> = {
@@ -175,7 +175,11 @@ export interface Holding {
 const FREE_ROAM_REACH = 60;
 
 const SQRT3 = Math.sqrt(3);
-/** Render at 1/PIXEL resolution and scale up unsmoothed for a chunky look. */
+/**
+ * Render at 1/PIXEL resolution and scale up unsmoothed for a chunky look. With "Fancy graphics" on the world is
+ * drawn at full resolution instead, so the figures' faces and gear can be made out; what is read (plates, speech)
+ * keeps its chunky pixels and its size either way.
+ */
 const PIXEL = 2;
 /** Nearest and farthest the camera may sit from what it looks at. */
 const MIN_ZOOM = 7;
@@ -199,8 +203,10 @@ const PAN_KEYS: Record<string, [number, number]> = {
   w: [0, 1], s: [0, -1], a: [-1, 0], d: [1, 0],
   arrowup: [0, 1], arrowdown: [0, -1], arrowleft: [-1, 0], arrowright: [1, 0],
 };
-/** A unit square standing on its bottom edge, like a sprite. */
-const CASTER_PLANE = new THREE.PlaneGeometry(1, 1).translate(0, 0.5, 0);
+/** How long a figure lying down is, as a share of its size: its tag hangs over the middle of it. */
+const LYING = 0.45;
+/** The turn, about y, from `from` to `to` by the shorter way round. */
+const turnBy = (from: number, to: number) => Math.atan2(Math.sin(to - from), Math.cos(to - from));
 /** The camera's usual tilt (about 47° above the horizon) and how far it may be tipped. */
 const DEFAULT_PITCH = Math.atan2(0.78, 0.72);
 const MIN_PITCH = 0.42;
@@ -296,6 +302,33 @@ const yawOf = (facing: number, angle = 0) => -((facing * Math.PI) / 3 + angle);
 const key = (p: HexPos) => `${p.q},${p.r}`;
 /** To the nearest thousandth, so offsets sent to the server stay short. */
 const round = (n: number) => Math.round(n * 1000) / 1000;
+/** A hex of ground reaches this far down from its top: further than the tallest rock stands, so its foot is always under the sea. */
+const TILE_DEPTH = 3;
+/**
+ * One hex of ground: a column with its top at y = 0, the rim of the top rounded over into the wall (see hexTop).
+ * A point toward +z, like the cylinder it replaces. Its height is never scaled (an instance is placed with its
+ * top where it belongs), so the rounding is the same on a low hex as on a high one.
+ */
+function hexColumn(): THREE.BufferGeometry {
+  const positions: number[] = [];
+  const normals: number[] = [];
+  const vertex = (x: number, y: number, z: number, nx: number, ny: number, nz: number) => {
+    positions.push(x, y, z);
+    normals.push(nx, ny, nz);
+  };
+  hexTop(vertex);
+  for (let i = 0; i < 6; i++) {
+    const [ax, az] = [Math.sin((i * Math.PI) / 3) * TILE_RADIUS, Math.cos((i * Math.PI) / 3) * TILE_RADIUS];
+    const [bx, bz] = [Math.sin(((i + 1) * Math.PI) / 3) * TILE_RADIUS, Math.cos(((i + 1) * Math.PI) / 3) * TILE_RADIUS];
+    const [ox, oz] = [Math.sin(((i + 0.5) * Math.PI) / 3), Math.cos(((i + 0.5) * Math.PI) / 3)];
+    for (const [x, y, z] of [[ax, -TILE_FILLET, az], [ax, -TILE_DEPTH, az], [bx, -TILE_DEPTH, bz], [ax, -TILE_FILLET, az], [bx, -TILE_DEPTH, bz], [bx, -TILE_FILLET, bz]]) vertex(x, y, z, ox, 0, oz);
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+  geo.setAttribute("normal", new THREE.Float32BufferAttribute(normals, 3));
+  return geo;
+}
+
 /** Small deterministic hash for per-tile variation. */
 const noise = (q: number, r: number, salt: number) => {
   const n = Math.sin(q * 127.1 + r * 311.7 + salt * 74.7) * 43758.5453;
@@ -303,16 +336,19 @@ const noise = (q: number, r: number, salt: number) => {
 };
 
 interface Unit {
-  sprite: THREE.Sprite;
-  /**
-   * Unseen cut-outs of the sprite that throw its shadow, each turned to face one light: the first for the sun
-   * (or a hut's hanging lamp), then one per shadow slot indoors. Each sits on its own layer, which only its
-   * light's shadow camera looks at, so every light sees the hero face on and none sees another light's card.
-   */
-  casters: THREE.Mesh[];
-  /** Where its shadow was last drawn from, and whether it threw one: a change asks the lights near it to redraw. */
+  /** The model, and its root: where the unit stands (its feet) and which way it is turned. */
+  figure: Figure;
+  root: THREE.Group;
+  /** How tall it is drawn, in world units. */
+  size: number;
+  /** Which way it faces, about y (0 is toward +z), and the way it is turning to. */
+  turn: number;
+  turnGoal: number;
+  /** Lying down: out of the fight, or asleep. */
+  lying: boolean;
+  /** Where, which way round and how big its shadow was last drawn: a change asks the lights near it to redraw. */
   shadowAt: THREE.Vector3;
-  shadowShown: boolean;
+  shadowTurn: number;
   shadowSize: number;
   ring: THREE.Mesh | null;
   hpBack: THREE.Sprite | null;
@@ -326,8 +362,6 @@ interface Unit {
   kick: THREE.Vector3;
   /** Lean into an attack, in radians; decays to zero. */
   lean: number;
-  /** Resting rotation: upright, or on their side when down. */
-  baseRot: number;
   /** Distance walked, which drives the hop, and the current hop height. */
   stride: number;
   bob: number;
@@ -367,7 +401,7 @@ interface Bubble {
 const bubbleLife = (text: string) => Math.min(7, 4 + text.length / 40);
 const BUBBLE_FADE = 0.6;
 
-/** An arrow left standing in a combatant: where on the sprite it sits, and its tilt. */
+/** An arrow left standing in a combatant: where on the figure it sits, and its tilt. */
 interface StuckArrow {
   sprite: THREE.Sprite;
   /** Offset from the unit's feet, in world units. */
@@ -394,6 +428,8 @@ interface Want {
   hp?: number;
   down?: boolean;
   asleep?: boolean;
+  /** The way to face, about y: the two sides of a fight face each other. Otherwise a unit keeps the way it last walked. */
+  face?: number;
 }
 
 interface Floater {
@@ -499,11 +535,9 @@ export class WorldRenderer {
   private raf = 0;
   /** The finishing pass (bloom, tilt-shift, grade), there while "Fancy graphics" is on. On the dev server P switches it alone, to compare. */
   post: PostFx | null = null;
-  /** Character sprites take the light where they stand, with a highlight on the lit edge. Also "Fancy graphics"; L on the dev server. */
-  private litSprites = fancy.get();
   private unwatchFancy: () => void;
-  /** The lit sprites' knobs, for tuning from the console. */
-  readonly lit = LIT;
+  /** How many of the view's pixels make one chunky pixel: 1 as a rule, PIXEL while the world is drawn at full resolution ("Fancy graphics", or a game that asked for it). */
+  private fine = 1;
   /** A backdrop's fixed point of view (see setVantage), and the lightning it is lent by the view showing it. */
   private vantage: { from: THREE.Vector3; to: THREE.Vector3 } | null = null;
   /** A game being played in the world, the group its things stand in, and how your own hero looked before it hid them. */
@@ -531,10 +565,7 @@ export class WorldRenderer {
   private land = { x: 0, z: 0, reach: 6 };
   /** The sky as the finishing pass is told of it each frame. */
   private air: Air = { outdoors: true, clock: 0, sunDir: new THREE.Vector3(0, 1, 0), sun: new THREE.Color(), sky: new THREE.Color(), overcast: 0, sunHeight: 9, flash: 0 };
-  private litTint = new THREE.Color();
   private litRim = new THREE.Color();
-  private litToward = new THREE.Vector3();
-  private litAxis = new THREE.Vector3();
   private last = performance.now();
   private clock = 0;
 
@@ -753,7 +784,7 @@ export class WorldRenderer {
     if (fancy.get()) this.post = new PostFx(this.renderer);
     this.unwatchFancy = fancy.subscribe(() => {
       this.setPost(fancy.get());
-      this.setLit(fancy.get());
+      this.resize();
     });
     this.resize();
     if (!opts.backdrop) this.raf = requestAnimationFrame(this.frame);
@@ -929,8 +960,9 @@ export class WorldRenderer {
    */
   private placeBubbles(dt: number, labelRow: number) {
     if (this.bubbles.size === 0) return;
-    const W = this.renderer.domElement.width;
-    const H = this.renderer.domElement.height;
+    // In plate pixels, which are PIXEL screen pixels each however finely the world is drawn.
+    const W = this.renderer.domElement.width / this.fine;
+    const H = this.renderer.domElement.height / this.fine;
     const v = new THREE.Vector3();
     const screen = (unit: Unit) => {
       v.set(unit.feet.x, unit.feet.y + unit.head, unit.feet.z).project(this.camera);
@@ -1036,7 +1068,7 @@ export class WorldRenderer {
 
   /** Where a unit stands on the map, for a sound's distance. */
   private spot(id: string): { x: number; z: number } | undefined {
-    const p = this.units.get(id)?.sprite.position;
+    const p = this.units.get(id)?.root.position;
     return p ? { x: p.x, z: p.z } : undefined;
   }
 
@@ -1053,13 +1085,13 @@ export class WorldRenderer {
     const dir = t.goal.x >= a.goal.x ? 1 : -1;
     const flip = dir < 0;
     a.lean = -dir * 0.5;
-    const hitAt = t.goal.clone().add(new THREE.Vector3(0, t.sprite.scale.y * 0.5, 0.05));
+    const hitAt = t.goal.clone().add(new THREE.Vector3(0, t.size * 0.4, 0.05));
     const spell = SPELL_COLOR[ability];
 
     if (spell || ARROW_ABILITIES.has(ability)) {
       const kind: FxKind = spell ? "bolt" : "arrow";
       const color = spell ?? "#e8dcc0";
-      const from = a.goal.clone().add(new THREE.Vector3(dir * 0.5, a.sprite.scale.y * 0.6, 0.05));
+      const from = a.goal.clone().add(new THREE.Vector3(dir * 0.5, a.size * 0.5, 0.05));
       this.spawnFx(kind, color, flip, { from, to: hitAt, life: 0.24, size: [1.0, 1.0], spin: 0, fade: false, onEnd: () => {
         this.spawnFx("burst", perfect ? "#ffd23f" : color, false, { from: hitAt, to: hitAt, life: 0.22, size: [0.7, 1.7], spin: 0.5, fade: true });
         // An arrow that lands stays in: point first, the shaft toward whoever shot it.
@@ -1082,8 +1114,8 @@ export class WorldRenderer {
     const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: fxTexture("arrow", "#e8dcc0", dir < 0), transparent: true, depthTest: false }));
     sprite.scale.set(size, size, 1);
     sprite.renderOrder = 5;
-    const h = unit.sprite.scale.y;
-    const w = unit.sprite.scale.x;
+    const h = unit.size * 0.8;
+    const w = unit.size * 0.5;
     // Somewhere on the body, the point a little inside it, the shaft drooping a touch.
     // Spread over the body: each new one avoids the height of the last so they don't bunch up.
     const last = arrows.at(-1)?.off.y ?? -1;
@@ -1108,7 +1140,7 @@ export class WorldRenderer {
   private sparkle(unitId: string, color: string) {
     const unit = this.units.get(unitId);
     if (!unit) return;
-    const from = unit.goal.clone().add(new THREE.Vector3(0, unit.sprite.scale.y * 0.4, 0.05));
+    const from = unit.goal.clone().add(new THREE.Vector3(0, unit.size * 0.4, 0.05));
     this.spawnFx("spark", color, false, { from, to: from.clone().add(new THREE.Vector3(0, 0.9, 0)), life: 0.6, size: [1.2, 1.5], spin: 0, fade: true });
   }
 
@@ -1130,7 +1162,7 @@ export class WorldRenderer {
     const height = opts.height ?? 0.45;
     // The texture is 24 rows tall and as wide as the text needs: keep its pixels square.
     sprite.scale.set((height * map.image.width) / 24, height, 1);
-    sprite.position.copy(opts.at ?? unit.sprite.position.clone().add(new THREE.Vector3(0, unit.sprite.scale.y + 0.5, 0))).add(new THREE.Vector3(0, opts.lift ?? 0, 0));
+    sprite.position.copy(opts.at ?? unit.root.position.clone().add(new THREE.Vector3(0, unit.size + 0.5, 0))).add(new THREE.Vector3(0, opts.lift ?? 0, 0));
     sprite.renderOrder = 10;
     this.fxGroup.add(sprite);
     this.floaters.push({ sprite, age: 0, life: opts.life, rise: opts.rise });
@@ -1148,7 +1180,7 @@ export class WorldRenderer {
    */
   private footfall(id: string, unit: Unit) {
     const state = this.state;
-    if (!state || state.battle || unit.asleep || !unit.sprite.visible) return;
+    if (!state || state.battle || unit.asleep) return;
     const hero = state.heroes.find((h) => h.id === id);
     if (!hero || hero.asleep) return;
     const feet = unit.feet;
@@ -1227,7 +1259,7 @@ export class WorldRenderer {
     const unit = this.units.get(unitId);
     if (!unit || !(amount > 0 || levelUp)) return;
     if (levelUp && unitId === this.state?.you) sounds.levelUp();
-    const head = unit.goal.clone().add(new THREE.Vector3(0, unit.sprite.scale.y * 0.85, 0.05));
+    const head = unit.goal.clone().add(new THREE.Vector3(0, unit.size * 0.75, 0.05));
     // Everything rises clear of the plate, which floats a fixed number of screen pixels over the head.
     const top = Math.max(head.y + 0.4, this.plateTop(unit) ?? 0);
     const above = (y: number) => new THREE.Vector3(head.x, y, head.z);
@@ -1273,9 +1305,9 @@ export class WorldRenderer {
     this.decor.clear();
     this.poiSig = "";
 
-    const geo = new THREE.CylinderGeometry(0.985, 0.985, 1, 6);
-    geo.translate(0, 0.5, 0);
-    const terrain = new THREE.InstancedMesh(geo, new THREE.MeshLambertMaterial({ flatShading: true }), this.tiles.length);
+    const geo = hexColumn();
+    // Its normals are its own: flat on the flats, turning smoothly over the fillet.
+    const terrain = new THREE.InstancedMesh(geo, new THREE.MeshLambertMaterial(), this.tiles.length);
     const m = new THREE.Matrix4();
     // Open sea is left to the sea itself: only water within a couple of hexes of land is drawn as hexes,
     // with a ragged edge, so the map does not end in a straight-sided block of water.
@@ -1311,7 +1343,7 @@ export class WorldRenderer {
     this.tiles.forEach((t, i) => {
       const { x, z } = hexToWorld(t);
       const shown = this.deep.has(key(t)) ? 0 : 1;
-      m.compose(new THREE.Vector3(x, 0, z), new THREE.Quaternion(), new THREE.Vector3(shown, tileTop(t) * shown, shown));
+      m.compose(new THREE.Vector3(x, tileTop(t), z), new THREE.Quaternion(), new THREE.Vector3(shown, shown ? 1 : 0, shown));
       terrain.setMatrixAt(i, m);
       if (t.biome !== "water") {
         water.setXYZ(i, 0, 0, GROUND_KIND[t.biome] ?? 0);
@@ -1411,7 +1443,7 @@ export class WorldRenderer {
       const { x, z } = hexToWorld(t);
       const toward = (x - this.middle.x) * Math.sin(this.yaw) + (z - this.middle.z) * Math.cos(this.yaw);
       if (toward > 0.6) this.lowered.add(key(t));
-      m.compose(new THREE.Vector3(x, 0, z), upright, new THREE.Vector3(1, toward > 0.6 ? kerb : Math.max(raised, tileTop(t)), 1));
+      m.compose(new THREE.Vector3(x, toward > 0.6 ? kerb : Math.max(raised, tileTop(t)), z), upright, new THREE.Vector3(1, 1, 1));
       this.terrain!.setMatrixAt(i, m);
     });
     this.terrain.instanceMatrix.needsUpdate = true;
@@ -1599,8 +1631,8 @@ export class WorldRenderer {
   screenAboveUnit(id: string): { x: number; y: number } | null {
     const unit = this.units.get(id);
     if (!unit) return null;
-    const v = unit.sprite.position.clone();
-    v.y += unit.sprite.scale.y + 0.3 - unit.bob;
+    const v = unit.root.position.clone();
+    v.y += unit.head - unit.bob;
     v.project(this.camera);
     if (v.z < -1 || v.z > 1 || Math.abs(v.x) > 1 || Math.abs(v.y) > 1) return null;
     return { x: ((v.x + 1) / 2) * this.container.clientWidth, y: ((1 - v.y) / 2) * this.container.clientHeight };
@@ -1688,7 +1720,7 @@ export class WorldRenderer {
       this.forest.instanceMatrix.needsUpdate = true;
     }
     const mine = this.state?.you ? this.units.get(this.state.you) : undefined;
-    if (mine) for (const obj of [mine.sprite, mine.label, mine.ring]) if (obj) obj.visible = true;
+    if (mine) for (const obj of [mine.root, mine.label, mine.ring]) if (obj) obj.visible = true;
     for (const id of this.stageHidden) this.showUnit(id);
     this.stageHidden = [];
     for (const b of [this.followButton, ...this.turnButtons]) b.style.visibility = "";
@@ -1728,14 +1760,14 @@ export class WorldRenderer {
     forest.instanceMatrix.needsUpdate = true;
   }
 
-  /** While a minigame runs you see through your hero's eyes: their sprite, tag and ring are not drawn. So are the units a game draws itself (a table's players, who all stand on its one hex). */
+  /** While a minigame runs you see through your hero's eyes: their figure, tag and ring are not drawn. So are the units a game draws itself (a table's players, who all stand on its one hex). */
   private hideOwnHero() {
     const mine = this.state?.you ? this.units.get(this.state.you) : undefined;
-    if (mine) for (const obj of [mine.sprite, mine.label, mine.ring]) if (obj) obj.visible = false;
+    if (mine) for (const obj of [mine.root, mine.label, mine.ring]) if (obj) obj.visible = false;
     for (const id of this.stageHidden) {
       const u = this.units.get(id);
       if (!u) continue;
-      for (const obj of [u.sprite, u.label, u.ring, ...u.casters]) if (obj) obj.visible = false;
+      for (const obj of [u.root, u.label, u.ring]) if (obj) obj.visible = false;
     }
   }
 
@@ -1750,8 +1782,7 @@ export class WorldRenderer {
   private showUnit(id: string) {
     const u = this.units.get(id);
     if (!u) return;
-    for (const obj of [u.sprite, u.label, u.ring]) if (obj) obj.visible = true;
-    for (const c of u.casters) c.visible = !u.asleep;
+    for (const obj of [u.root, u.label, u.ring]) if (obj) obj.visible = true;
   }
 
   /** A point of interest's model, by id, for a scene that moves one about itself (the crew's ship at sea). */
@@ -3144,13 +3175,15 @@ export class WorldRenderer {
           want.set(c.id, {
             kind: c.kind,
             outfit: c.outfit,
-            // Staggered diagonally so the tall sprites do not hide each other.
+            // Staggered diagonally so the tall figures do not hide each other.
             pos: new THREE.Vector3(centre.x + dir * (1.2 + i * 1.05), centre.y, centre.z + (i - (line.length - 1) / 2) * 1.25),
             size: isBoss(c.kind) ? 2.5 : isBig(c.kind) ? 2.2 : 1.9,
             ring: side === "hero" ? colorOf(c.id) : "#e23b3b",
             pulse: c.id === actor,
             hp: c.hp / c.maxHp,
             down: c.down,
+            // Facing the other side, turned a little toward the camera (which a fight swings round to the south).
+            face: -dir * (Math.PI / 2 - 0.5),
           });
         });
       }
@@ -3204,17 +3237,15 @@ export class WorldRenderer {
       }
     }
 
+    const turned = new Map<string, number>();
     for (const [id, unit] of this.units) {
       const w = want.get(id);
-      // A change of gear is a different sprite, so the unit is rebuilt.
+      // A change of gear is a different model, so the unit is rebuilt, facing the way it was.
       if (w && spriteKey(w.kind, w.outfit, w.asleep) === unit.kind) continue;
-      this.unitGroup.remove(unit.sprite, ...unit.casters);
-      // The cards share one set of materials.
-      const card = unit.casters[0];
-      card.material instanceof THREE.Material && card.material.dispose();
-      card.customDepthMaterial?.dispose();
-      card.customDistanceMaterial?.dispose();
-      if (unit.shadowShown) this.ambience.stir(unit.shadowAt);
+      if (w) turned.set(id, unit.turn);
+      this.unitGroup.remove(unit.root);
+      unit.figure.dispose();
+      this.ambience.stir(unit.shadowAt);
       if (unit.ring) this.unitGroup.remove(unit.ring);
       if (unit.hpBack) this.unitGroup.remove(unit.hpBack);
       if (unit.hpFill) this.unitGroup.remove(unit.hpFill);
@@ -3226,45 +3257,25 @@ export class WorldRenderer {
     for (const [id, w] of want) {
       let unit = this.units.get(id);
       if (!unit) {
-        const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: spriteTexture(w.kind, w.outfit, w.asleep), transparent: true, alphaTest: 0.5 }));
-        // Depth-tested as an upright card at their feet, so a building in front hides them and one behind does not.
-        sprite.renderOrder = 2;
-        sprite.center.set(0.5, 0);
-        sprite.position.copy(w.pos);
-        addSpriteRim(sprite.material);
-        standUpright(sprite.material);
-        const material = new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false, side: THREE.DoubleSide, map: sprite.material.map, alphaTest: 0.5 });
-        const depth = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking, map: sprite.material.map, alphaTest: 0.5, side: THREE.DoubleSide });
-        // Point lights (a hut's lamp, its fires and candles) draw shadows with a distance pass, which needs its own cut-out.
-        const distance = new THREE.MeshDistanceMaterial({ map: sprite.material.map, alphaTest: 0.5, side: THREE.DoubleSide });
-        const casters = Array.from({ length: 1 + SHADOW_SLOTS }, (_, i) => {
-          const caster = new THREE.Mesh(CASTER_PLANE, material);
-          caster.customDepthMaterial = depth;
-          caster.customDistanceMaterial = distance;
-          caster.castShadow = true;
-          caster.layers.set(i === 0 ? CARD_LAYER : SLOT_LAYER + i - 1);
-          return caster;
-        });
-        this.unitGroup.add(sprite, ...casters);
-        unit = { sprite, casters, shadowAt: w.pos.clone(), shadowShown: false, shadowSize: 0, ring: null, hpBack: null, hpFill: null, label: null, labelText: "", goal: w.pos.clone(), path: [], kick: new THREE.Vector3(), lean: 0, baseRot: 0, stride: 0, bob: 0, kind: spriteKey(w.kind, w.outfit, w.asleep), asleep: false, nextZ: 0, zCount: 0, glowUntil: 0, glowing: false, head: w.size + 0.3, stack: 0, feet: w.pos.clone() };
+        const figure = makeFigure(w.kind, lookFor(w.kind), w.outfit, { asleep: w.asleep });
+        figure.root.position.copy(w.pos);
+        this.unitGroup.add(figure.root);
+        // New arrivals face the camera, turned a little so what they carry shows.
+        const turn = turned.get(id) ?? w.face ?? this.yaw + 0.35;
+        unit = { figure, root: figure.root, size: w.size, turn, turnGoal: turn, lying: false, shadowAt: w.pos.clone(), shadowTurn: turn, shadowSize: 0, ring: null, hpBack: null, hpFill: null, label: null, labelText: "", goal: w.pos.clone(), path: [], kick: new THREE.Vector3(), lean: 0, stride: 0, bob: 0, kind: spriteKey(w.kind, w.outfit, w.asleep), asleep: false, nextZ: 0, zCount: 0, glowUntil: 0, glowing: false, head: w.size + 0.3, stack: 0, feet: w.pos.clone() };
         this.units.set(id, unit);
       }
       unit.goal.copy(w.pos);
-      // Asleep: on their side across the bedroll, low to the ground, the head toward the left.
-      if (w.asleep) unit.goal.y += (w.size * SPRITE_ASPECT) / 2 - 0.05;
       if (w.asleep && !unit.asleep) unit.nextZ = this.clock + 0.4;
       unit.asleep = !!w.asleep;
-      unit.head = w.asleep ? w.size * SPRITE_ASPECT + 0.3 : w.size + 0.3;
+      // Down or asleep: on their back, low to the ground.
+      unit.lying = !!w.down || !!w.asleep;
+      unit.head = unit.lying ? w.size * LYING + 0.3 : w.size + 0.3;
       unit.stack = w.stack ?? 0;
-      unit.sprite.scale.set(w.size * SPRITE_ASPECT, w.size, 1);
-      for (const caster of unit.casters) {
-        caster.scale.copy(unit.sprite.scale);
-        caster.visible = !w.down && !w.asleep;
-      }
-      const mat = unit.sprite.material;
-      unit.baseRot = w.down ? Math.PI / 2 : w.asleep ? Math.PI / 2 : 0;
-      mat.opacity = w.down ? 0.55 : 1;
-      unit.sprite.center.set(0.5, w.down || w.asleep ? 0.5 : 0);
+      unit.size = w.size;
+      unit.figure.setSize(w.size);
+      unit.figure.setDim(!!w.down);
+      if (w.face !== undefined) unit.turnGoal = w.face;
       // Arrows stay in until the one they hit goes down, or the fight is over.
       if (w.down || !state.battle) this.clearArrows(unit);
 
@@ -3314,7 +3325,7 @@ export class WorldRenderer {
     const stack = unit.labelWant?.stack ?? 0;
     // An unattenuated sprite's size scales with its distance in front of the camera.
     const depth = -label.position.clone().applyMatrix4(this.camera.matrixWorldInverse).z;
-    const row = (2 * Math.tan(THREE.MathUtils.degToRad(this.camera.fov / 2))) / this.renderer.domElement.height;
+    const row = (this.fine * 2 * Math.tan(THREE.MathUtils.degToRad(this.camera.fov / 2))) / this.renderer.domElement.height;
     if (!(depth > 0) || !(rows > 0)) return null;
     // The plate is offset straight up the screen; a world-height rise looks shorter by the camera's tilt.
     const tilt = Math.max(0.3, Math.cos(this.pitch));
@@ -3338,7 +3349,7 @@ export class WorldRenderer {
         unit.label.layers.set(OVERLAY_LAYER);
         unit.label.userData.aspect = aspect;
         unit.label.userData.rows = texture.image.height;
-        unit.label.userData.lift = lw.asleep ? lw.size * SPRITE_ASPECT + 0.3 : lw.size + 0.3;
+        unit.label.userData.lift = lw.asleep ? lw.size * LYING + 0.3 : lw.size + 0.3;
         unit.label.renderOrder = 7;
         this.unitGroup.add(unit.label);
       }
@@ -3393,9 +3404,10 @@ export class WorldRenderer {
     // A figure stands up out of its hex, so a click on it (or on the plate over its head) would
     // otherwise land on the ground behind. Clicking someone (other than yourself) means the hex they stand on.
     if (!this.state?.battle) {
-      const others = [...this.units.entries()].filter(([id, u]) => id !== this.state?.you && u.sprite.visible).map(([, u]) => u);
-      const onFigure = this.raycaster.intersectObjects(others.flatMap((u) => (u.label ? [u.sprite, u.label] : [u.sprite])), false)[0];
-      const unit = onFigure && others.find((u) => u.sprite === onFigure.object || u.label === onFigure.object);
+      const others = [...this.units.entries()].filter(([id]) => id !== this.state?.you).map(([, u]) => u);
+      const onFigure = this.raycaster.intersectObjects(others.flatMap((u) => (u.label ? [u.root, u.label] : [u.root])), true)[0];
+      const within = (root: THREE.Object3D, o: THREE.Object3D | null): boolean => !!o && (o === root || within(root, o.parent));
+      const unit = onFigure && others.find((u) => u.label === onFigure.object || within(u.root, onFigure.object));
       if (unit) {
         let best: Tile | null = null;
         let bestD = Infinity;
@@ -3496,7 +3508,6 @@ export class WorldRenderer {
     else if (e.key === "f" || e.key === "F") this.tiltBy(-0.18, true);
     else if (e.key === "c" || e.key === "C") this.setFollow(!this.follow || this.followHeld);
     else if (import.meta.env.DEV && (e.key === "p" || e.key === "P")) this.setPost(!this.post);
-    else if (import.meta.env.DEV && (e.key === "l" || e.key === "L")) this.setLit(!this.litSprites);
     else if (PAN_KEYS[e.key.toLowerCase()]) {
       this.heldKeys.add(e.key.toLowerCase());
       // Arrow keys would otherwise scroll whatever panel has focus.
@@ -3658,8 +3669,11 @@ export class WorldRenderer {
   private resize() {
     const w = Math.max(1, this.container.clientWidth);
     const h = Math.max(1, this.container.clientHeight);
-    this.renderer.setSize(Math.ceil(w / this.pixel), Math.ceil(h / this.pixel), false);
-    this.post?.setSize(Math.ceil(w / this.pixel), Math.ceil(h / this.pixel));
+    // Full resolution with "Fancy graphics" on, or while a game asks for it (setSharp); the chunky half otherwise.
+    const px = fancy.get() ? 1 : this.pixel;
+    this.fine = PIXEL / px;
+    this.renderer.setSize(Math.ceil(w / px), Math.ceil(h / px), false);
+    this.post?.setSize(Math.ceil(w / px), Math.ceil(h / px));
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
   }
@@ -3667,44 +3681,6 @@ export class WorldRenderer {
   /** Dev server only: a lightning strike now, whatever the weather, for trying thunder takes against the flash. */
   strike() {
     if (import.meta.env.DEV) this.storm.strikeNow(this.camera, this.target);
-  }
-
-  /** Turns the lit sprites on or off in this view. The setting players keep is "Fancy graphics" (fancy.ts). */
-  setLit(on: boolean) {
-    this.litSprites = on;
-  }
-
-  /** Tints a character by the light at their feet and aims their edge highlight at the strongest light. */
-  private lightSprite(sprite: THREE.Sprite, feet: THREE.Vector3) {
-    const rim = sprite.material.userData.rim as SpriteRim | undefined;
-    if (!rim) return;
-    if (!this.litSprites) {
-      sprite.material.color.setRGB(1, 1, 1);
-      rim.color.setRGB(0, 0, 0);
-      return;
-    }
-    const k = this.lit;
-    const tint = this.litTint;
-    this.ambience.lightAt(feet, tint, this.litRim, this.litToward);
-    // Keep the light's colour but hold its brightness within bounds, so nobody is lost in the dark.
-    const peak = Math.max(tint.r, tint.g, tint.b, 1e-4);
-    tint.multiplyScalar(Math.min(k.ceiling, Math.max(k.floor, peak)) / peak);
-    sprite.material.color.setRGB(1, 1, 1).lerp(tint, k.strength);
-
-    // The way to the light as the camera sees it, turned with the sprite if it leans or lies down.
-    const e = this.camera.matrixWorld.elements;
-    const x = this.litToward.dot(this.litAxis.set(e[0], e[1], e[2]));
-    const y = this.litToward.dot(this.litAxis.set(e[4], e[5], e[6]));
-    const len = Math.hypot(x, y);
-    const rot = -sprite.material.rotation;
-    const ux = len < 0.15 ? 0 : (x * Math.cos(rot) - y * Math.sin(rot)) / len;
-    const uy = len < 0.15 ? 1 : (x * Math.sin(rot) + y * Math.cos(rot)) / len;
-    rim.step.set(Math.round(ux * 1.3), Math.round(uy * 1.3));
-    const image = sprite.material.map?.image as { width: number; height: number } | undefined;
-    if (image) rim.texel.set(1 / image.width, 1 / image.height);
-    const glow = Math.min(1, Math.max(this.litRim.r, this.litRim.g, this.litRim.b) * 2.5);
-    const top = Math.max(this.litRim.r, this.litRim.g, this.litRim.b, 1e-4);
-    rim.color.copy(this.litRim).multiplyScalar((glow * k.rim) / top);
   }
 
   /** Turns the finishing pass on or off in this view. The setting players keep is "Fancy graphics" (fancy.ts). */
@@ -3811,9 +3787,9 @@ export class WorldRenderer {
       }
       this.hideOwnHero();
     }
-    this.ambience.update(this.clock, this.yaw, this.target, this.state?.you ? this.units.get(this.state.you)?.sprite.position : undefined);
+    this.ambience.update(this.clock, this.yaw, this.target, this.state?.you ? this.units.get(this.state.you)?.root.position : undefined);
     // Sounds are heard from where your hero stands, or from the middle of the view without one.
-    const ear = (this.state?.you ? this.units.get(this.state.you)?.sprite.position : undefined) ?? this.target;
+    const ear = (this.state?.you ? this.units.get(this.state.you)?.root.position : undefined) ?? this.target;
     this.ear.listener(ear.x, ear.z, this.yaw);
     this.ear.sky(this.ambience.sky());
     // Where the sea lies changes slowly: work it out a few times a second.
@@ -3826,7 +3802,7 @@ export class WorldRenderer {
       const torches: THREE.Vector3[] = [];
       for (const h of this.state.heroes) {
         const unit = this.units.get(h.id);
-        if (unit) torches.push(unit.sprite.position);
+        if (unit) torches.push(unit.root.position);
       }
       this.ambience.setTorches(torches);
     }
@@ -3868,9 +3844,9 @@ export class WorldRenderer {
     if (this.state?.indoors) this.lowerNearWalls();
 
     // The height of one view pixel, in the units an unattenuated sprite is sized in.
-    const labelRow = (2 * Math.tan(THREE.MathUtils.degToRad(this.camera.fov / 2))) / this.renderer.domElement.height;
+    const labelRow = (this.fine * 2 * Math.tan(THREE.MathUtils.degToRad(this.camera.fov / 2))) / this.renderer.domElement.height;
     for (const [id, unit] of this.units) {
-      const p = unit.sprite.position;
+      const p = unit.root.position;
       // The hop is drawn on top of where the unit really is; take it off before moving.
       p.y -= unit.bob;
       let landed = 0;
@@ -3880,14 +3856,16 @@ export class WorldRenderer {
         const step = 4.2 * dt;
         landed = footfalls(unit.stride, unit.stride + step);
         unit.stride += step;
+        // They turn to face the way they are walking.
+        if (Math.hypot(next.x - p.x, next.z - p.z) > 1e-4) unit.turnGoal = Math.atan2(next.x - p.x, next.z - p.z);
         if (p.distanceTo(next) <= step) {
           p.copy(next);
           unit.path.shift();
         } else {
           p.add(next.sub(p).setLength(step));
         }
-        // Two hops per hex, landing as each hex is reached.
-        unit.bob = Math.abs(Math.sin(unit.stride * 3.6)) * 0.2;
+        // Two steps per hex, with a little bounce in each, landing as each hex is reached.
+        unit.bob = Math.abs(Math.sin(unit.stride * 3.6)) * 0.07;
       } else {
         unit.bob *= Math.exp(-dt * 18);
         unit.stride = 0;
@@ -3896,25 +3874,24 @@ export class WorldRenderer {
         unit.kick.multiplyScalar(Math.exp(-dt * 9));
       }
       unit.lean *= Math.exp(-dt * 8);
-      unit.sprite.material.rotation = unit.baseRot + unit.lean;
+      // A sleeper lies with their head toward the left of the view, as the bedrolls are laid.
+      if (unit.asleep) unit.turnGoal = this.yaw + Math.PI / 2;
+      unit.turn += turnBy(unit.turn, unit.turnGoal) * (1 - Math.exp(-dt * 12));
+      unit.root.rotation.y = unit.turn;
+      unit.figure.update({ time: this.clock, stride: unit.stride, walking: unit.path.length > 0, lean: unit.lean, lying: unit.lying });
       const ground = p.y;
       unit.feet.set(p.x, ground, p.z);
       if (landed) this.footfall(id, unit);
-      this.lightSprite(unit.sprite, unit.feet);
       p.y += unit.bob;
-      unit.casters.forEach((caster, i) => {
-        caster.position.copy(p);
-        caster.rotation.y = i === 0 ? this.ambience.towardLight(p.x, p.z) : this.ambience.slotFacing(i - 1, p.x, p.z);
-      });
-      // Indoors the shadow maps are drawn only when something changes: a hero that moved (or lay down, or stood up)
-      // asks the lights in reach of where it was and where it is now to redraw.
-      const shown = unit.casters[0].visible;
-      if (shown !== unit.shadowShown || (shown && (unit.shadowAt.distanceToSquared(p) > 1e-6 || unit.shadowSize !== unit.sprite.scale.y))) {
-        if (unit.shadowShown) this.ambience.stir(unit.shadowAt);
-        if (shown) this.ambience.stir(p);
+      // Indoors the shadow maps are drawn only when something changes: a hero that moved, turned, lay down or
+      // stood up asks the lights in reach of where it was and where it is now to redraw.
+      const size = unit.lying ? -unit.size : unit.size;
+      if (unit.shadowAt.distanceToSquared(p) > 1e-6 || Math.abs(unit.shadowTurn - unit.turn) > 0.02 || unit.shadowSize !== size) {
+        this.ambience.stir(unit.shadowAt);
+        this.ambience.stir(p);
         unit.shadowAt.copy(p);
-        unit.shadowShown = shown;
-        unit.shadowSize = unit.sprite.scale.y;
+        unit.shadowTurn = unit.turn;
+        unit.shadowSize = size;
       }
       if (unit.ring) {
         unit.ring.position.set(p.x, ground + 0.04, p.z);
@@ -3985,7 +3962,7 @@ export class WorldRenderer {
       const big = unit.zCount % 3 === 0;
       const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: sleepZTexture(), transparent: true, depthTest: false }));
       sprite.renderOrder = 10;
-      const p = unit.sprite.position;
+      const p = unit.root.position;
       this.fxGroup.add(sprite);
       this.sleepZs.push({ sprite, age: 0, x: p.x - 0.35, z: p.z, y: p.y + 0.25, size: big ? 0.42 : 0.26, sway: unit.zCount * 1.7 });
     }
