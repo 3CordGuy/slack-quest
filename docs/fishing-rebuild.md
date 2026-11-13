@@ -627,6 +627,11 @@ Two craftable boats let you walk off a pier or the shore onto the water, and fis
      - **Preview:** the side-by-side preview is a `#catches` page (admins, or anyone on the dev server) rather than an admin tab.
      - **In the water:** fish in the water stay dark silhouettes. The client doesn't know the species until it's landed.
 4. **Selling.** The fishmonger stall and its seeded rates board, Old Tam buying, the icebox and trophy chest UI in the inventory screen, and sell routes.
+   - **Built, 2026-11-13:**
+     - **Rules:** `fishmarket.ts` has the seeded board (two common or uncommon fish wanted at 2×; Old Ironjaw is never on it) and the icebox and trophy-chest rules. Treasure such as the ship's bell doesn't count toward the icebox.
+     - **Server and routes:** `server/fishmarket.ts`, with `GET /api/fish`, `POST /api/fish/sell` and `POST /api/fish/move`.
+     - **Ending a sitting:** fish that won't fit in the icebox are sold on the quay, to Tam if he cooks them, otherwise to the fishmonger.
+     - **Client:** one `CatchPanel` serves the fishmonger (the second button at the shore spot), Tam ("Sell him fish" at the bar) and the inventory ("Your catch"). A stall with an awning and a chalkboard stands at the shore spot.
 5. **Records and mounts.** The Catch Book (pages, slot states, page and book rewards, the bonus slot, `characters.title`), the crew Record Board, pub mounts, hut "Mount a trophy" via `meta_json`, the ship's bell piece, and the record line on the notice board.
 
 6. **Boats.**

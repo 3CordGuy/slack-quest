@@ -8,6 +8,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAudioScene } from "./audio/useAudioScene";
 import { hexDistance, type HexPos } from "@gantt-quest/core";
 import { PUB_BARKEEP, PUB_BARKEEP_POS, PUB_COUNTER, PUB_DEALER, PUB_DEALER_POS, PUB_DEALER_STAND, PUB_DICE, PUB_FITTINGS, PUB_MAX_TALK, PUB_MENU, PUB_REGULAR_SPOTS, PUB_SALESMAN_POS, PUB_SHOALS, PUB_TRADER, dueIn, gatherDay, poiAt, pubRoom, regularsOn, salesman, type Perk, type RegularId } from "@gantt-quest/world";
+import { CatchPanel } from "./CatchPanel";
 import { api, type Me, type PubTab, type RegularsView } from "./api";
 import { RegularPanel } from "./RegularPanel";
 import { DealerPanel } from "./board/DealerPanel";
@@ -92,6 +93,7 @@ export function PubView({ me, refresh, onLeave }: { me: Me; refresh(): Promise<u
   }, [loadRegs, day, me.character?.gold]);
   /** The regular whose panel is open. */
   const [talkTo, setTalkTo] = useState<RegularId | null>(null);
+  const [sellingFish, setSellingFish] = useState(false);
   // Opening a regular's panel reads the job again (a quest may have been done elsewhere since),
   // and brings them to the middle of the screen, clear of the panel.
   useEffect(() => {
@@ -360,6 +362,10 @@ export function PubView({ me, refresh, onLeave }: { me: Me; refresh(): Promise<u
           </p>
 
           <h3>{PUB_BARKEEP.name}</h3>
+          <p className="row">
+            <span className="muted grow">He buys fish for the stew, at the same price every day.</span>
+            <button className="small" onClick={() => setSellingFish(true)}>Sell him fish</button>
+          </p>
           <div className="pub-talk">
             {talk.length === 0 && <div className="muted">He is wiping a mug that is already clean. Say something.</div>}
             {talk.length === 0 && <div className="line npc"><strong>{PUB_BARKEEP.name}: </strong>{word}</div>}
@@ -374,6 +380,7 @@ export function PubView({ me, refresh, onLeave }: { me: Me; refresh(): Promise<u
         </DragPanel>
       )}
 
+      {you && sellingFish && <CatchPanel buyer="tam" onGold={() => void refresh()} onClose={() => setSellingFish(false)} />}
       {you && atTrader && seller && <SalesmanPanel me={me} refresh={refresh} />}
       {you && atDealer && dealing && <DealerPanel refresh={refresh} onClose={() => setDealing(false)} />}
       {you && talking && regs && <RegularPanel key={talking.regular} view={talking} handedIn={regs.handedIn} cap={regs.cap} reload={loadRegs} refresh={refresh} onClose={() => setTalkTo(null)} />}

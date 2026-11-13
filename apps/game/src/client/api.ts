@@ -9,6 +9,7 @@ import type { CarryState, FishSpot, GatherChoice, HarborXpStatus, GatherSpot, Ha
 import { forcedSalesman } from "./salesmanClock";
 import type { GatherStatus } from "../server/gather";
 import type { SittingPaid } from "../server/fishing";
+import type { FishStock } from "../server/fishmarket";
 import type { XpResult } from "../server/harbor-xp";
 import type { TradeList } from "../server/trade";
 import type { ApothecaryView, SmithyView } from "../server/workshops";
@@ -17,7 +18,7 @@ import type { ErrandPaid, RegularsView } from "../server/errands";
 
 export type { ApothecaryView, SmithyView, GalleyView, ErrandPaid, RegularsView };
 
-export type { GatherStatus, SittingPaid, XpResult };
+export type { FishStock, GatherStatus, SittingPaid, XpResult };
 
 /** What a hero has ordered at the pub and what it gives on their next voyage. */
 export interface PubTab {
@@ -163,6 +164,10 @@ export const api = {
   joinCrew: (code: string) => request("/api/crew/join", { code }),
   leaveCrew: () => request("/api/crew/leave", {}),
   gather: () => request<GatherStatus & { sitting?: SittingPaid }>("/api/gather"),
+  /** Kept fish: the icebox and the trophy chest, with today's prices. */
+  fish: () => request<FishStock>("/api/fish"),
+  sellFish: (ids: string[], to: "market" | "tam") => request<FishStock & { sold: { id: string; gold: number }[] }>("/api/fish/sell", { ids, to }),
+  moveFish: (id: string, to: "trophy" | "icebox") => request<FishStock>("/api/fish/move", { id, to }),
   rest: (place: "bedroll" | "hut") => request<GatherStatus & { regained: number }>("/api/rest", { place }),
   buyPlot: (plot: number) => request<{ plot: number }>("/api/hut/plot", { plot }),
   fillBin: () => request<{ put: Resources; bin: Resources | null }>("/api/hut/bin", {}),

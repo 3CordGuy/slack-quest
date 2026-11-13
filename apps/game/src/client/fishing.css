@@ -89,3 +89,22 @@ body.fishing .draggable:not(.gather), body.fishing .tip { display: none !importa
 .catch-shots img { background: #26304f; }
 .catch-sprite { image-rendering: pixelated; }
 .catch-grid figcaption { display: flex; flex-direction: column; gap: 2px; padding-top: 4px; font-size: 12px; }
+
+/* ---------- the icebox, the trophy chest, and selling (CatchPanel.tsx) ---------- */
+.catch-panel { width: min(520px, calc(100vw - 24px)); }
+.catch-panel h3 { margin: 12px 0 4px; font-size: 14px; }
+.catch-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 3px; max-height: 34vh; overflow-y: auto; }
+.catch-row { display: flex; align-items: center; gap: 8px; padding: 3px 6px; background: rgba(255, 255, 255, 0.03); border: 1px solid #2a2750; }
+.catch-row.picked { border-color: #4a9a6a; background: rgba(74, 154, 106, 0.1); }
+.catch-row .grow { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px; }
+.catch-row-icon { image-rendering: pixelated; flex: none; }
+.catch-price { font-variant-numeric: tabular-nums; min-width: 56px; text-align: right; }
+.tag.specimen { color: var(--gold); border-color: #8a6a2a; }
+.tag.wanted { color: #8ad0a8; border-color: #3a7a5a; }
+.catch-ice { width: 100%; margin-bottom: 4px; }
+.catch-board { padding: 8px; background: #1a2a22; border: 2px solid #2f4a3a; margin-bottom: 6px; }
+.catch-board p { margin: 4px 0 0; font-size: 12px; }
+.catch-wanted { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 4px; }
+.catch-wanted-one { display: flex; align-items: center; gap: 6px; }
+.catch-wanted-one small { display: block; }
+.catch-foot { margin-top: 8px; }

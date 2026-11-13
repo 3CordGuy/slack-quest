@@ -93,7 +93,8 @@ function Summary({ view, paid, xp, sitting }: { view: GatherView; paid?: Resourc
       {(sitting?.newSpecies.length ?? 0) > 0 && <p className="good">New in your Catch Book: {sitting!.newSpecies.map((id) => FISH[id].name).join(", ")}.</p>}
       {(sitting?.records.length ?? 0) > 0 && <p className="fish-record">Crew record: {sitting!.records.map((id) => FISH[id].name).join(", ")}!</p>}
       {paid && Object.keys(paid).length > 0 && <ResourceChips resources={paid} />}
-      {(sitting?.gold ?? 0) > 0 && <p className="good">+{sitting!.gold} gold from what came up.</p>}
+      {(sitting?.sold.length ?? 0) > 0 && <p className="muted">No room in your icebox: {sitting!.sold.map((f) => `${FISH[f.species].name} to ${f.buyer === "tam" ? "Old Tam" : "the fishmonger"}`).join(", ")}, sold as you came in.</p>}
+      {(sitting?.gold ?? 0) > 0 && <p className="good">+{sitting!.gold} gold.</p>}
       {s.lost.length > 0 && <p className="muted">Got away: {s.lost.map((id) => FISH[id].name).join(", ")}.</p>}
       {xp?.text && <span className={xp.granted > 0 ? "xp-gain" : "muted"}>{xp.text}</span>}
     </div>

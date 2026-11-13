@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FISH, SITTING_IDLE_MS, gatherDay, type GatherChoice, type GatherView } from "@gantt-quest/world";
 import { playFight } from "../../../packages/world/src/fishbot";
 import { gatherStatus, startOuting, stepOuting } from "../src/server/gather";
+import { fishStock, moveFish, sellFish } from "../src/server/fishmarket";
 
 type Row = Record<string, unknown>;
 
@@ -224,5 +225,71 @@ describe("ending a sitting", () => {
     const species = cut.outing!.sitting!.lost[0];
     await step({ t: "bank" });
     expect(one("SELECT caught, lost FROM fish_bests WHERE player_id = 'ann' AND species = ?", species)).toMatchObject({ caught: 0, lost: 1 });
+  });
+});
+
+describe("selling and keeping fish", () => {
+  const put = (id: string, species: string, grams: number, specimen = 0, place = "icebox", who = "ann") =>
+    sql.prepare("INSERT INTO fish (id, player_id, species, grams, mm, specimen, spot, caught_at, place) VALUES (?, ?, ?, ?, 300, ?, 'west', ?, ?)").run(id, who, species, grams, specimen, T0, place);
+  const gold = () => one<{ gold: number }>("SELECT gold FROM characters WHERE player_id = 'ann'").gold;
+  const place = (id: string) => one<{ place: string }>("SELECT place FROM fish WHERE id = ?", id).place;
+
+  it("lists the icebox and the chest with what each buyer would pay", async () => {
+    put("h1", "herring", 400);
+    put("s1", "silver_king", 30_000, 1, "trophy");
+    const stock = await fishStock(db, "ann");
+    expect(stock.icebox.map((f) => f.id)).toEqual(["h1"]);
+    expect(stock.trophy.map((f) => f.id)).toEqual(["s1"]);
+    expect(stock.icebox[0].tam).toBeGreaterThan(0);
+    expect(stock.trophy[0].tam).toBeNull();
+    expect(stock.trophy[0].market).toBeGreaterThan(0);
+    expect(stock.iceboxG).toBe(400);
+  });
+
+  it("sells to Old Tam what he cooks, and pays once however often it is asked", async () => {
+    put("h1", "herring", 400);
+    put("s1", "silver_king", 30_000, 1);
+    const before = gold();
+    expect(await sellFish(db, "ann", ["s1"], "tam")).toMatch(/Old Tam will not take/);
+    const r = await sellFish(db, "ann", ["h1"], "tam");
+    if (typeof r === "string") throw new Error(r);
+    expect(r.sold).toHaveLength(1);
+    expect(gold()).toBe(before + r.sold[0].gold);
+    expect(place("h1")).toBe("sold");
+    expect(await sellFish(db, "ann", ["h1"], "tam")).toMatch(/not yours/);
+    expect(gold()).toBe(before + r.sold[0].gold);
+  });
+
+  it("sells to the fishmonger at the board's price, and will not sell someone else's fish", async () => {
+    put("s1", "silver_king", 30_000, 1);
+    put("b1", "herring", 300, 0, "icebox", "bo");
+    const r = await sellFish(db, "ann", ["s1"], "market");
+    if (typeof r === "string") throw new Error(r);
+    expect(r.sold[0].gold).toBeGreaterThan(0);
+    expect(await sellFish(db, "ann", ["b1"], "market")).toMatch(/not yours/);
+  });
+
+  it("keeps only specimens in the trophy chest, up to its size", async () => {
+    put("h1", "herring", 400);
+    expect(await moveFish(db, "ann", "h1", "trophy")).toMatch(/specimen/);
+    for (let i = 0; i < 6; i++) put(`t${i}`, "bluefin", 20_000, 1, "trophy");
+    put("s1", "silver_king", 30_000, 1);
+    expect(await moveFish(db, "ann", "s1", "trophy")).toMatch(/holds 6/);
+    const back = await moveFish(db, "ann", "t0", "icebox");
+    expect(typeof back === "string" ? back : "ok").toBe("ok");
+    expect(typeof (await moveFish(db, "ann", "s1", "trophy"))).not.toBe("string");
+    expect(place("s1")).toBe("trophy");
+  });
+
+  it("sells what will not fit in the icebox when a sitting ends", async () => {
+    put("full", "halibut", 59_900);
+    await startOuting(db, "ann", "fishing", "middle");
+    await keepAFish();
+    const before = gold();
+    const done = await step({ t: "bank" });
+    expect(done.sitting!.sold.length).toBeGreaterThan(0);
+    expect(gold()).toBeGreaterThan(before);
+    const sold = done.sitting!.sold[0].id;
+    expect(place(sold)).toBe("sold");
   });
 });
