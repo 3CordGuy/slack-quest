@@ -57,7 +57,7 @@ export const GATHER_SPOTS: Record<GatherSpot, GatherSpotDef> = {
     name: "The quarry",
     stat: "vit",
     pays: ["stone", "iron", "copper", "gem"],
-    blurb: "Thirty seconds at the rock face. Somewhere in it a seam of ore runs across, and it glints through the junk around it (though loose mica glints too). Tap the pick for a quick blow; hold it to charge a heavy one that cracks the rocks around as well. Rubble breaks easily and sometimes gives stone; hard rock wants a charged swing. Breaking a rock shows what is in the ones beside it, so follow the seam once you find it. Mind what is above: a gap brings the rocks over it down, and one the fall breaks is lost with whatever was in it. Gems are rare: look for the sparkle.",
+    blurb: "Twenty-five seconds at the rock face. Somewhere in it a seam of ore runs across, and it glints through the junk around it (though loose mica glints too). Tap the pick for a quick blow; hold it to charge a heavy one that cracks the rocks around as well. Rubble breaks easily and sometimes gives stone; hard rock wants a charged swing. Breaking a rock shows what is in the ones beside it, so follow the seam once you find it. Mind the columns: a gap brings the rocks above it down onto the rock below, and any rock the fall or the landing breaks is lost with whatever was in it. Gems are rare: look for the sparkle.",
   },
 };
 
@@ -323,11 +323,13 @@ function mineStep(state: GatherState, choice: GatherChoice): GatherStep {
   if (typeof landed === "string") return { state, error: landed };
   const rng = makeRng(state.rng);
   const next: GatherState = { ...state, haul: { ...state.haul }, log: [...state.log], step: state.step + landed.broken.filter((id) => !landed.mine.rocks[id].lost).length, mine: landed.mine };
+  const crushed = new Set(landed.crushes.filter((c) => c.lost).map((c) => c.id));
   for (const id of landed.broken) {
     const rock = landed.mine.rocks[id];
     if (rock.lost) {
-      if (rock.kind === "geode") next.log.push({ text: "The geode came down and burst on the floor. The gems in it are dust.", check: null, gained: {} });
-      else if (rock.kind === "seam") next.log.push({ text: "A piece of the seam came down and smashed. Its ore is lost.", check: null, gained: {} });
+      const how = crushed.has(id) ? "was crushed under a falling rock" : "came down and smashed";
+      if (rock.kind === "geode") next.log.push({ text: `The geode ${how}. The gems in it are dust.`, check: null, gained: {} });
+      else if (rock.kind === "seam") next.log.push({ text: `A piece of the seam ${how}. Its ore is lost.`, check: null, gained: {} });
       continue;
     }
     const got = rockYield(rng, rock);

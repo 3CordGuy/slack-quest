@@ -213,7 +213,7 @@ export function Quarry({ outing, world, apply, onLeave }: {
       <div className="mine-top">
         <div className="mine-clock" aria-label="Time left">
           <div className="mine-clock-fill" ref={timerBar} />
-          <span ref={timerText} className="mine-clock-text">30.0s</span>
+          <span ref={timerText} className="mine-clock-text">{(mine.ms / 1000).toFixed(1)}s</span>
         </div>
         {any && (
           <div className="mine-haul">
@@ -234,9 +234,9 @@ export function Quarry({ outing, world, apply, onLeave }: {
           <div className="mine-keys">
             <span><kbd>Tap</kbd> strike</span>
             <span><kbd>Hold</kbd> heavy swing</span>
-            <span className="warn"><kbd>▼</kbd> falls smash finds</span>
+            <span className="warn"><kbd>▼</kbd> falling rocks crush finds</span>
           </div>
-          <button className="primary big" disabled={starting} onClick={() => void begin()} autoFocus>Start · 30s</button>
+          <button className="primary big" disabled={starting} onClick={() => void begin()} autoFocus>Start · {Math.round(mine.ms / 1000)}s</button>
           <button className="link" onClick={onLeave}>Step away</button>
           {error && <p className="bad">{error}</p>}
         </div>

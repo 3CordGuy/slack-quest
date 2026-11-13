@@ -14,12 +14,12 @@
 // player hunts the seam by. Gems are brighter still, with star sparkles on top;
 // with "Fancy graphics" on, the finishing pass blooms all of it.
 //
-// Break a rock and what is above it comes down (the rules do it; this plays it
-// out), and a rock the fall smashes takes what was in it to the floor. The
-// rocks that would fall are tinted red while the pick hovers under them.
+// Break a rock and what is above it comes down onto the rock below (the rules
+// do it; this plays it out). A rock the fall smashes, or one crushed where it
+// lands, takes what was in it to the floor.
 
 import * as THREE from "three";
-import { MINE_COLS, MINE_ROWS, MINE_RARITY, landBlows, mineGrid, powerFor, type BlowPower, type MineState, type MineView, type ResourceKind, type Resources, type RockKind } from "@gantt-quest/world";
+import { MINE_COLS, MINE_ROWS, MINE_RARITY, landBlows, powerFor, type BlowPower, type MineState, type MineView, type ResourceKind, type Resources, type RockKind } from "@gantt-quest/world";
 import { audio } from "../audio/engine";
 import { soundName } from "../audio/names";
 import { OVERLAY_LAYER } from "./post";
@@ -68,7 +68,6 @@ uniform float uFleckScale;
 uniform float uCrack;
 uniform float uFlash;
 uniform float uHover;
-uniform float uWarn;
 uniform float uTime;
 uniform float uSeed;
 uniform vec3 uKeyDir;
@@ -153,8 +152,6 @@ void main() {
 
   float rim = pow(1.0 - max(dot(n, v), 0.0), 2.0);
   lit += vec3(1.0, 0.85, 0.55) * (rim * 0.5 + 0.08) * uHover;
-  // Would come down if the rock under the pick goes.
-  lit = mix(lit, lit * vec3(1.25, 0.55, 0.45) + vec3(0.25, 0.02, 0.0) * rim, uWarn);
   lit += vec3(1.0, 0.95, 0.85) * uFlash;
   gl_FragColor = vec4(lit, 1.0);
   #include <tonemapping_fragment>
@@ -184,7 +181,6 @@ function rockMaterial(light: SetLight, base: string, seed: number, opts: { glint
       uCrack: { value: 0 },
       uFlash: { value: 0 },
       uHover: { value: 0 },
-      uWarn: { value: 0 },
       uSeed: { value: seed },
     },
     depthTest: !opts.overlay,
@@ -273,7 +269,7 @@ interface RockObj {
   /** What it gave (or that it was lost) has been shown. */
   told: boolean;
   /** Coming down into a gap: from where, how far through, how long it takes, and whether it smashes on landing. */
-  drop: { from: THREE.Vector3; t: number; dur: number; lost: boolean } | null;
+  drop: { from: THREE.Vector3; t: number; dur: number; lost: boolean; crush: number[] } | null;
   lost: boolean;
 }
 
@@ -675,6 +671,9 @@ export class MineStage implements WorldMinigame {
     this.shake = Math.max(this.shake, power === 3 ? 1 : power === 2 ? 0.5 : 0.25);
     this.sparks(struck.mesh.getWorldPosition(new THREE.Vector3()), power);
     const fell = new Set(landed.falls.map((f) => f.id));
+    // A rock landed on shows it when the faller arrives, not before.
+    const crushedBy = new Map<number, number>();
+    for (const c of landed.crushes) crushedBy.set(c.id, c.by);
     this.local.rocks.forEach((now, rid) => {
       const was = before[rid];
       const rock = this.rocks[rid];
@@ -687,13 +686,14 @@ export class MineStage implements WorldMinigame {
         rock.cell = now.cell;
         this.placeOf(now.cell, rid, rock.home);
         const rows = Math.max(1, Math.round((from.y - rock.home.y) / CELL));
-        rock.drop = { from, t: 0, dur: 0.16 * Math.sqrt(rows) + 0.06, lost: !!now.lost };
+        rock.drop = { from, t: 0, dur: 0.16 * Math.sqrt(rows) + 0.06, lost: !!now.lost, crush: [] };
         if (now.lost) rock.broken = true;
         // The damage shows when it lands.
         rock.dmg = was.dmg;
         rock.mat.uniforms.uCrack.value = was.dmg / rock.hp;
         return;
       }
+      if (crushedBy.has(rid)) return;
       rock.shake = rid === id ? 1 : 0.5;
       rock.flash = rid === id ? 0.7 : 0.3;
       if (now.broken && !rock.broken) {
@@ -702,6 +702,11 @@ export class MineStage implements WorldMinigame {
       }
       this.dress(rock);
     });
+    for (const [rid, by] of crushedBy) {
+      const faller = this.rocks[by];
+      if (faller.drop) faller.drop.crush.push(rid);
+      else this.crush(this.rocks[rid]);
+    }
     this.cb.onBlow({ cell, power, at }, landed.broken);
   }
 
@@ -712,6 +717,7 @@ export class MineStage implements WorldMinigame {
     rock.mesh.position.copy(rock.home);
     rock.dmg = this.local.rocks[rock.id].dmg;
     this.puff(rock.home.clone().add(new THREE.Vector3(0, -CELL * 0.45, 0.05)), 2);
+    for (const rid of drop.crush) this.crush(this.rocks[rid]);
     if (drop.lost) {
       this.shatter(rock, 1);
       const precious = rock.kind === "seam" || rock.kind === "geode";
@@ -751,6 +757,23 @@ export class MineStage implements WorldMinigame {
     rock.mesh.visible = false;
   }
 
+  /** A rock landed on: it cracks, or bursts under the weight with what was in it. */
+  private crush(rock: RockObj) {
+    const now = this.local.rocks[rock.id];
+    rock.dmg = now.dmg;
+    rock.lost = !!now.lost;
+    rock.shake = 1;
+    rock.flash = 0.25;
+    if (now.broken && !rock.broken) {
+      rock.broken = true;
+      this.shatter(rock, 1);
+      const precious = rock.kind === "seam" || rock.kind === "geode";
+      this.showLost(rock, rock.kind === "seam" ? "Ore crushed!" : rock.kind === "geode" ? "Gems crushed!" : "Crushed");
+      if (precious) rock.told = true;
+    }
+    this.dress(rock);
+  }
+
   /** Dust kicked up at a point in the set. */
   private puff(at: THREE.Vector3, n: number) {
     for (let i = 0; i < n; i++) {
@@ -763,8 +786,8 @@ export class MineStage implements WorldMinigame {
 
   /** A word in red over a rock a fall smashed. */
   private showLost(rock: RockObj, text: string) {
-    if (rock.told && text === "Smashed") return;
-    const precious = text !== "Smashed";
+    if (rock.told && (text === "Smashed" || text === "Crushed")) return;
+    const precious = text !== "Smashed" && text !== "Crushed";
     const tex = textTexture(text, precious ? "#ff5a4a" : "#a89f94");
     const label = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false }));
     const img = tex.image as HTMLCanvasElement;
@@ -898,18 +921,9 @@ export class MineStage implements WorldMinigame {
     // The rock under the pointer lights up, more as the swing charges.
     const hovered = this.pointer.inside && close > 0.95 && this.running ? this.rockAt(this.pointer.x, this.pointer.y) : null;
     this.hovered = hovered;
-    // Everything above the rock under the pick, in its column, would come down if it went: tint it.
-    const above = new Set<number>();
-    if (hovered !== null) {
-      const grid = mineGrid(this.local.rocks);
-      const cell = this.rocks[hovered].cell;
-      for (let c = cell - MINE_COLS; c >= 0; c -= MINE_COLS) if (grid[c] !== -1) above.add(grid[c]);
-    }
-    const warn = 0.35 + 0.35 * Math.sin(clock * 6) ** 2;
     for (const rock of this.rocks) {
       const u = rock.mat.uniforms;
       u.uHover.value = rock.id === hovered ? 0.6 + this.charge * 1.4 : 0;
-      u.uWarn.value = above.has(rock.id) ? warn : 0;
       rock.flash = Math.max(0, rock.flash - dt * 4);
       u.uFlash.value = rock.flash;
       if (rock.drop) {

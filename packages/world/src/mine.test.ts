@@ -3,6 +3,7 @@ import {
   GATHER_MAX_UNITS,
   GATHER_SPOTS,
   MINE_COLS,
+  MINE_CRUSH_DAMAGE,
   MINE_FALL_DAMAGE,
   MINE_MS,
   MINE_RECOVER_MS,
@@ -85,7 +86,11 @@ const careful = (state: GatherState) => {
   const rocks = gatherView(state).mine!.rocks.filter((r) => !r.broken);
   if (rocks.length === 0) return null;
   const precious = (r: SeenRock) => r.kind === "seam" || r.kind === "geode" || (r.kind === null && r.glint >= 2);
-  const undermines = (r: SeenRock) => rocks.some((o) => o !== r && precious(o) && colOf(o.cell) === colOf(r.cell) && rowOf(o.cell) < rowOf(r.cell));
+  // Breaking a rock drops what is above it, and the lowest of that lands on the rock below it.
+  const at = (cell: number) => rocks.find((o) => o.cell === cell);
+  const undermines = (r: SeenRock) =>
+    rocks.some((o) => o !== r && precious(o) && colOf(o.cell) === colOf(r.cell) && rowOf(o.cell) < rowOf(r.cell)) ||
+    (!!at(r.cell - MINE_COLS) && !!at(r.cell + MINE_COLS) && precious(at(r.cell + MINE_COLS)!));
   return rocks.sort((a, b) => value(b) - 200 * +undermines(b) - (value(a) - 200 * +undermines(a)))[0].id;
 };
 /** Swings at whatever, taps only. */
@@ -101,7 +106,7 @@ describe("the quarry's rock face", () => {
       expect(mine.rocks).toHaveLength(MINE_COLS * MINE_ROWS);
       expect(mine.rocks.map((r) => r.cell)).toEqual(mine.rocks.map((_, i) => i));
       const seam = mine.rocks.flatMap((r, i) => (r.kind === "seam" ? [i] : []));
-      expect(seam.length).toBeGreaterThanOrEqual(5);
+      expect(seam.length).toBeGreaterThanOrEqual(MINE_COLS - 4);
       // Never at the very top or bottom.
       for (const c of seam) expect(rowOf(c) > 0 && rowOf(c) < MINE_ROWS - 1).toBe(true);
       // Joined: every seam rock reaches every other through seam rocks.
@@ -112,9 +117,9 @@ describe("the quarry's rock face", () => {
       const geodes = mine.rocks.flatMap((r, i) => (r.kind === "geode" ? [i] : []));
       expect(geodes.length).toBeLessThanOrEqual(1);
       for (const g of geodes) expect(mineNeighbours(g).some((n) => seam.includes(n))).toBe(true);
-      // The seam always glints; how hard a rock is never says what it is for sure.
+      // The seam always glints, if not always brightly; how hard a rock is never says what it is for sure.
       for (const r of mine.rocks) {
-        if (r.kind === "seam") expect(r.glint).toBeGreaterThanOrEqual(2);
+        if (r.kind === "seam") expect(r.glint).toBeGreaterThanOrEqual(1);
         expect(r.hp).toBeGreaterThanOrEqual(1);
         expect(r.hp).toBeLessThanOrEqual(4);
       }
@@ -213,6 +218,34 @@ describe("the quarry's rock face", () => {
     expect(after.mine!.rocks[seam].got).toBeUndefined();
     expect(after.log.at(-1)!.text).toMatch(/lost/);
     expect(gatherView(after).mine!.rocks[seam]).toMatchObject({ lost: true, broken: true, got: null });
+  });
+
+  it("crushes the rock a falling rock lands on, and loses what is in it if that breaks it", () => {
+    // Column 5: break a rock in the middle. The two above it drop a row onto the rock below the gap.
+    const mid = at(3, 5);
+    const below = at(4, 5);
+    const sturdy = landBlows(face({ [mid]: { hp: 1 } }), [{ cell: mid, power: 1, at: 0 }], MINE_MS);
+    if (typeof sturdy === "string") throw new Error(sturdy);
+    expect(sturdy.mine.rocks[below]).toMatchObject({ cell: below, dmg: MINE_CRUSH_DAMAGE, broken: false });
+    // Only the lowest of the falling stack lands on it.
+    expect(sturdy.crushes).toEqual([{ id: below, by: at(2, 5), lost: false }]);
+    // Nothing falls on a rock when the gap is at the floor.
+    const floor = landBlows(face({ [at(MINE_ROWS - 1, 5)]: { hp: 1 } }), [{ cell: at(MINE_ROWS - 1, 5), power: 1, at: 0 }], MINE_MS);
+    if (typeof floor === "string") throw new Error(floor);
+    expect(floor.crushes).toEqual([]);
+
+    // A seam rock under the gap with one hit left is crushed, its ore lost, and the stack comes down further onto the next.
+    const crushed = landBlows(face({ [mid]: { hp: 1 }, [below]: { kind: "seam", hp: 2, dmg: 1 } }), [{ cell: mid, power: 1, at: 0 }], MINE_MS);
+    if (typeof crushed === "string") throw new Error(crushed);
+    expect(crushed.mine.rocks[below]).toMatchObject({ broken: true, lost: true });
+    expect(crushed.crushes[0]).toMatchObject({ id: below, lost: true });
+    expect(crushed.mine.rocks[at(2, 5)]).toMatchObject({ cell: below, fell: 2 });
+    expect(crushed.mine.rocks[at(5, 5)].dmg).toBe(MINE_CRUSH_DAMAGE);
+    // Through the server: the crushed rock pays nothing and says so.
+    const s = { ...dug(1), mine: { ...face({ [mid]: { hp: 1 }, [below]: { kind: "seam", hp: 2, dmg: 1 } }) } };
+    const after = hit(s, [{ cell: mid, power: 1, at: 0 }]).state;
+    expect(after.mine!.rocks[below].got).toBeUndefined();
+    expect(after.log.at(-1)!.text).toMatch(/lost/);
   });
 
   it("shows the hardness and glints, and what a rock is only once it has been opened up", () => {

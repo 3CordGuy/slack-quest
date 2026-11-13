@@ -2,7 +2,7 @@
 // the rules as four pictures with a few words each, what the face can give,
 // and the way in. The run itself is played in the Harbor (Quarry.tsx).
 
-import { MINE_RARITY, STALL_GEM_PRICE, type GatherView, type Resources } from "@gantt-quest/world";
+import { MINE_MS, MINE_RARITY, STALL_GEM_PRICE, type GatherView, type Resources } from "@gantt-quest/world";
 import type { GatherStatus, XpResult } from "./api";
 import { ResourceChips } from "./hutDrops";
 import { StaminaBolts } from "./StaminaBolts";
@@ -101,7 +101,7 @@ const RULES: { icon: string; title: string; sub: string; tone?: string }[] = [
     // A rock dropping into a gap, with a crack.
     icon: "M3 0h6v4h-6z|M5 5h2v2h-2zM3 7h6v1h-6zM4 8h4v1h-4zM5 9h2v1h-2z|M0 11h12v1h-12z",
     title: "Mind the drop",
-    sub: "A fall smashes finds",
+    sub: "Falling rocks crush finds",
     tone: "bad",
   },
   {
@@ -164,7 +164,7 @@ export function QuarryIntro({ status, outing, paid, xp, busy, error, onStart, on
         <button className="small qa-close" onClick={onClose} aria-label="Close">✕</button>
         <header className="qa-head">
           <h2>{over ? "Hauled out" : "The Quarry"}</h2>
-          <span className="qa-sub">{over ? `${broken === 0 ? "Nothing broken" : broken === 1 ? "1 rock broken" : `${broken} rocks broken`}${smashed ? ` · ${smashed} smashed in falls` : ""}` : "30 seconds to find the seam"}</span>
+          <span className="qa-sub">{over ? `${broken === 0 ? "Nothing broken" : broken === 1 ? "1 rock broken" : `${broken} rocks broken`}${smashed ? ` · ${smashed} lost to falls` : ""}` : `${Math.round(MINE_MS / 1000)} seconds to find the seam`}</span>
         </header>
 
         {over ? (
