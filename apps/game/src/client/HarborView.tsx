@@ -117,7 +117,7 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
   const heroSheet = useHeroSheet();
 
   useEffect(() => {
-    const r = new WorldRenderer(mount.current!, { onHexClick: (to) => send.current({ type: "move", to }), onHover: setHover, onHeroClick: heroSheet.onHeroClick, onHeroHover: heroSheet.onHeroHover });
+    const r = new WorldRenderer(mount.current!, { onHexClick: (to) => send.current({ type: "move", to }), onHover: setHover });
     renderer.current = r;
     if (latest.current) r.setState(latest.current);
     return () => {
@@ -389,7 +389,7 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
           you={you}
           heading={<>{hereCount} of {roster.length} here</>}
           members={roster}
-          onOpen={heroSheet.onHeroClick}
+          onOpen={heroSheet.toggle}
           openId={heroSheet.open}
           onTrade={setTradeWith}
         />
@@ -433,7 +433,7 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
       {gather && me.character && <GatherPanel spot={gather} onClose={() => setGather(null)} onStamina={setStamina} />}
       {shop && me.character && <ShopScreen me={me} refresh={refreshAll} onClose={() => setShop(false)} />}
       {me.character && <Trading me={me} partners={board.members.filter((m) => m.id !== you)} withId={tradeWith} onWith={setTradeWith} refresh={refresh} />}
-      {heroSheet.open && you && !spar && <HeroSheet id={heroSheet.open} you={you} pinned={heroSheet.pinned} onClose={heroSheet.close} />}
+      {heroSheet.open && you && !spar && <HeroSheet id={heroSheet.open} you={you} onClose={heroSheet.close} />}
     </div>
   );
 }

@@ -120,15 +120,14 @@ export function PubView({ me, refresh, onLeave }: { me: Me; refresh(): Promise<u
   const send = useRef(pub.send);
   send.current = pub.send;
 
-  // The barkeep and the salesman are drawn like heroes, but only players have a sheet.
-  const heroSheet = useHeroSheet((id) => players.some((p) => p.id === id));
+  const heroSheet = useHeroSheet();
 
   useEffect(() => {
     const r = new WorldRenderer(mount.current!, { onHexClick: (to) => {
         if (pinned.current) return;
         // Clicking the salesman walks you up to their table.
         send.current({ type: "move", to: sellerHere.current && same(to, PUB_SALESMAN_POS) ? PUB_TRADER : to });
-      }, onHover: setHover, onHeroClick: heroSheet.onHeroClick, onHeroHover: heroSheet.onHeroHover });
+      }, onHover: setHover });
     renderer.current = r;
     if (latest.current) r.setState(latest.current);
     return () => {
@@ -271,7 +270,7 @@ export function PubView({ me, refresh, onLeave }: { me: Me; refresh(): Promise<u
           you={you}
           heading={<>{players.length} in the pub</>}
           members={players.map((p) => ({ id: p.id, name: p.name, classId: p.classId, level: p.level, outfit: p.outfit, here: true }))}
-          onOpen={heroSheet.onHeroClick}
+          onOpen={heroSheet.toggle}
           openId={heroSheet.open}
         />
       </DragPanel>
@@ -309,7 +308,7 @@ export function PubView({ me, refresh, onLeave }: { me: Me; refresh(): Promise<u
           <button className="primary" onClick={onLeave}>Back to the Harbor</button>
         </div>
       )}
-      {heroSheet.open && you && <HeroSheet id={heroSheet.open} you={you} pinned={heroSheet.pinned} onClose={heroSheet.close} />}
+      {heroSheet.open && you && <HeroSheet id={heroSheet.open} you={you} onClose={heroSheet.close} />}
     </div>
   );
 }

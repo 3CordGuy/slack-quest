@@ -316,8 +316,6 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
     const r = new WorldRenderer(mount.current!, {
       onHexClick: (pos) => click.current(pos),
       onHover: setHover,
-      onHeroClick: heroSheet.onHeroClick,
-      onHeroHover: heroSheet.onHeroHover,
       onPropClick: (id) => propClick.current(Number(id)),
       onPropHover: (id) => setHoverProp(id === null ? null : Number(id)),
       onPlace: (target) => place.current(target),
@@ -637,7 +635,7 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
           you={you}
           heading={<>{players.length} in the hut</>}
           members={players.map((p) => ({ id: p.id, name: p.name, classId: p.classId, level: p.level, outfit: p.outfit, here: true, tags: p.id === ownerId && p.id !== you ? ["owner"] : undefined }))}
-          onOpen={heroSheet.onHeroClick}
+          onOpen={heroSheet.toggle}
           openId={heroSheet.open}
         />
       </DragPanel>
@@ -687,7 +685,7 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
           <button className="primary" onClick={onLeave}>Back to the Harbor</button>
         </div>
       )}
-      {heroSheet.open && you && <HeroSheet id={heroSheet.open} you={you} pinned={heroSheet.pinned} onClose={heroSheet.close} />}
+      {heroSheet.open && you && <HeroSheet id={heroSheet.open} you={you} onClose={heroSheet.close} />}
     </div>
   );
 }

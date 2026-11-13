@@ -104,6 +104,10 @@ input:focus, button:focus-visible, select:focus { outline: 2px solid var(--accen
 .hero-card { padding: 8px 10px; }
 .hero-card.active { border-color: var(--gold); }
 .hero-card.offline { opacity: 0.6; }
+.hero-card.openable { cursor: pointer; }
+/* On a voyage, a crew card opens that hero's sheet; the open one is outlined (the gold outline is whose turn it is). */
+.hero-card.openable:hover { border-color: var(--muted); }
+.hero-card.open { border-color: var(--accent); }
 .pips { display: inline-flex; gap: 3px; vertical-align: middle; }
 .pips i { width: 8px; height: 8px; background: #14122a; border: 1px solid var(--accent); transform: rotate(45deg); }
 .pips i.on { background: var(--accent); }
