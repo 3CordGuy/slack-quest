@@ -284,7 +284,8 @@ describe("selling and keeping fish", () => {
   });
 
   it("sells what will not fit in the icebox when a sitting ends", async () => {
-    put("full", "halibut", 59_900);
+    // Full to the brim, so whatever is kept, however small, will not fit.
+    put("full", "halibut", 60_000);
     await startOuting(db, "ann", "fishing", "middle");
     await keepAFish();
     const before = gold();
