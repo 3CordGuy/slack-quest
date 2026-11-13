@@ -127,7 +127,10 @@ export function RegularPanel({ view, handedIn, cap, reload, refresh, onClose }: 
           </div>
         </div>
       ) : view.doneToday ? (
-        <p className="muted">“That's my job done for today. Same time tomorrow?”</p>
+        <>
+          <p className="muted">“That's my job done for today. Same time tomorrow?”</p>
+          <div className="row"><button onClick={onClose}>Goodbye</button></div>
+        </>
       ) : (
         <div className="errand-card">
           <div className="errand-kind">{offer.kind === "fetch" ? "Fetch" : offer.kind === "trade" ? `Trade · ${offer.times - view.traded} of ${offer.times} left today` : "A small job"}</div>

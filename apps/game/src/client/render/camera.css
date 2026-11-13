@@ -2,3 +2,7 @@
 .camera-rotate { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); z-index: 8; display: flex; flex-direction: column; gap: 6px; }
 .camera-rotate button { width: 34px; height: 34px; padding: 0; font-size: 18px; line-height: 1; background: rgba(27, 24, 48, 0.9); }
 @media (pointer: coarse) { .camera-rotate button { width: 44px; height: 44px; font-size: 22px; } }
+/* Follow my hero: lit gold while it is on. */
+.camera-rotate .camera-follow { display: grid; place-items: center; color: #c9c3e6; }
+.camera-rotate .camera-follow[aria-pressed="true"] { color: var(--gold, #ffd23f); border-color: var(--gold, #ffd23f); background: #4a4320; }
+.camera-rotate .camera-follow[hidden] { display: none; }

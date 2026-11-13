@@ -10,6 +10,7 @@ import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { Ambience, CARD_LAYER, SHADOW_SLOTS, SLOT_LAYER, pixelTexture, stamp, type BuildingGlow } from "./ambience";
 import "./camera.css";
+import { PINCH_PAN_SLACK, followIconSvg, readFollow, writeFollow } from "./cameraFollow";
 import type { HexPos } from "@gantt-quest/core";
 import { hexDistance } from "@gantt-quest/core";
 import { BASE_HEIGHT, BATTLE_JOIN_RANGE, BIG_REACH, ENEMIES, HEX_DIRS, TRAIT_BY_ID, MOVE_COST, WALL_FACE_HALF, WALL_ITEM_BOTTOM, WALL_ITEM_TOP, findPath, hexAt, xpProgress, reachable, tileAt, wallFace, wallFaces, type ClientState, type Outfit, type Phase, type Poi, type Tile, type WorldEvent, type WorldMap } from "@gantt-quest/world";
@@ -560,6 +561,8 @@ export class WorldRenderer {
   private deep = new Set<string>();
   /** The camera turn the indoor walls were last cut for. */
   private wallTurn = NaN;
+  /** The middle of the map's ground. Indoors the walls are cut about it, wherever the camera has gone (following a hero, or panned). */
+  private middle = new THREE.Vector3();
   /** Indoors, the walls cut down to a kerb so the camera can see in, by hex key. Things hung on them are hidden. */
   private lowered = new Set<string>();
   /** Indoors, the wall sides things can hang on, by hex key: which sides of that hex. */
@@ -567,8 +570,21 @@ export class WorldRenderer {
   /** How high the last wall piece was aimed, for when the pointer is on top of a wall. */
   private wallY = 1.1;
   private rotateButtons: HTMLDivElement;
-  /** The view-turning buttons in that column, hidden in a fight; the sound button stays. */
+  /** The camera buttons in that column, hidden in a fight. */
   private turnButtons: HTMLButtonElement[] = [];
+  /**
+   * The camera keeps your own hero centred as they walk (see cameraFollow.ts). Panning the map turns it off;
+   * the button turns it back on. A fight's framing wins while it lasts.
+   */
+  private follow = readFollow();
+  /** Following is paused because the view was sent somewhere else (lookAt); it picks up when your hero next walks. */
+  private followHeld = false;
+  private followButton: HTMLButtonElement;
+  /**
+   * While following, where a pinch started (its midpoint), or where the finger left down after one is: touches
+   * near it only zoom and turn. Once they wander PINCH_PAN_SLACK away it is a pan, and following stops.
+   */
+  private panFrom: { x: number; y: number } | null = null;
   private pointer = { x: 0, y: 0, downX: 0, downY: 0, down: false, dragged: false, dirty: false, inside: false };
 
   constructor(private container: HTMLElement, private callbacks: RendererCallbacks) {
@@ -626,6 +642,14 @@ export class WorldRenderer {
     // Two small buttons at the right edge, for those without a right mouse button or a keyboard.
     this.rotateButtons = document.createElement("div");
     this.rotateButtons.className = "camera-rotate";
+    this.followButton = document.createElement("button");
+    this.followButton.type = "button";
+    this.followButton.className = "camera-follow";
+    this.followButton.appendChild(followIconSvg());
+    this.followButton.addEventListener("click", () => this.setFollow(!this.follow || this.followHeld));
+    this.rotateButtons.appendChild(this.followButton);
+    this.turnButtons.push(this.followButton);
+    this.showFollow();
     const buttons: [string, string, () => void][] = [
       ["⟲", "Turn the view left (Q)", () => this.rotateBy(-1)],
       ["⟳", "Turn the view right (E)", () => this.rotateBy(1)],
@@ -715,7 +739,8 @@ export class WorldRenderer {
       for (const b of this.turnButtons) b.hidden = false;
       const turnKey = `${state.phase}:${state.round}:${state.turn?.heroId ?? ""}`;
       // A room is small enough to see whole, so indoors the camera stays on its middle.
-      if (first && me && !state.indoors) this.target.copy(this.standAt(me.pos));
+      // Following, the camera starts on your hero indoors too.
+      if (first && me && (this.follow || !state.indoors)) this.target.copy(this.standAt(me.pos));
       if ((first || turnKey !== this.turnKey) && me && (myTurn || first) && !state.indoors) this.targetGoal.copy(this.standAt(me.pos));
       this.turnKey = turnKey;
     }
@@ -1211,7 +1236,8 @@ export class WorldRenderer {
     if (!recentre) return;
     const xs = this.tiles.map((t) => hexToWorld(t).x);
     const zs = this.tiles.map((t) => hexToWorld(t).z);
-    this.target.set((Math.min(...xs) + Math.max(...xs)) / 2, 0, (Math.min(...zs) + Math.max(...zs)) / 2);
+    this.middle.set((Math.min(...xs) + Math.max(...xs)) / 2, 0, (Math.min(...zs) + Math.max(...zs)) / 2);
+    this.target.copy(this.middle);
     this.targetGoal.copy(this.target);
   }
 
@@ -1233,7 +1259,7 @@ export class WorldRenderer {
     this.tiles.forEach((t, i) => {
       if ((t.biome as string) !== "wall") return;
       const { x, z } = hexToWorld(t);
-      const toward = (x - this.target.x) * Math.sin(this.yaw) + (z - this.target.z) * Math.cos(this.yaw);
+      const toward = (x - this.middle.x) * Math.sin(this.yaw) + (z - this.middle.z) * Math.cos(this.yaw);
       if (toward > 0.6) this.lowered.add(key(t));
       m.compose(new THREE.Vector3(x, 0, z), upright, new THREE.Vector3(1, toward > 0.6 ? kerb : Math.max(raised, tileTop(t)), 1));
       this.terrain!.setMatrixAt(i, m);
@@ -1329,9 +1355,31 @@ export class WorldRenderer {
     return { x: ((v.x + 1) / 2) * this.container.clientWidth, y: ((1 - v.y) / 2) * this.container.clientHeight };
   }
 
-  /** Ease the camera over to a hex. */
+  /** Ease the camera over to a hex. Following your hero pauses there until they next walk. */
   lookAt(pos: HexPos) {
     this.targetGoal.copy(this.standAt(pos));
+    if (this.follow && !this.followHeld) {
+      this.followHeld = true;
+      this.showFollow();
+    }
+  }
+
+  /** Keep your hero centred (or stop). Turning it on brings the camera back to them, easing there. */
+  setFollow(on: boolean) {
+    this.follow = on;
+    this.followHeld = false;
+    writeFollow(on);
+    this.showFollow();
+  }
+
+  /** The follow button lit (and pressed) while following. */
+  private showFollow() {
+    const b = this.followButton;
+    const on = this.follow && !this.followHeld;
+    const title = on ? "Following your hero; drag the map to look around (C)" : "Follow your hero (C)";
+    b.setAttribute("aria-pressed", String(on));
+    b.title = title;
+    b.setAttribute("aria-label", "Follow your hero");
   }
 
   /** Centre the camera over a point on the map, in world units; `snap` puts it there at once instead of easing. */
@@ -2876,6 +2924,7 @@ export class WorldRenderer {
       this.pointer.dragged = true;
       this.rotating = false;
       this.pinch = { ...this.pinchState(), zoom: this.userDist };
+      this.panFrom = { x: this.pinch.x, y: this.pinch.y };
     }
   };
 
@@ -2919,6 +2968,7 @@ export class WorldRenderer {
     else if (e.key === "e" || e.key === "E") this.rotateBy(1);
     else if (e.key === "r" || e.key === "R") this.tiltBy(0.18, true);
     else if (e.key === "f" || e.key === "F") this.tiltBy(-0.18, true);
+    else if (e.key === "c" || e.key === "C") this.setFollow(!this.follow || this.followHeld);
     else if (PAN_KEYS[e.key.toLowerCase()]) {
       this.heldKeys.add(e.key.toLowerCase());
       // Arrow keys would otherwise scroll whatever panel has focus.
@@ -2933,8 +2983,19 @@ export class WorldRenderer {
   /** A key released while the window is elsewhere never sends keyup; do not keep sliding. */
   private onBlur = () => this.heldKeys.clear();
 
+  /** True while a touch is still within the slack of where a pinch began (see `panFrom`): it does not pan. */
+  private holdPan(x: number, y: number): boolean {
+    if (!this.panFrom) return false;
+    if (this.follow && !this.followHeld && Math.hypot(x - this.panFrom.x, y - this.panFrom.y) < PINCH_PAN_SLACK) return true;
+    this.panFrom = null;
+    return false;
+  }
+
   private panBy(dx: number, dy: number) {
     if (this.state?.battle) return;
+    if (dx === 0 && dy === 0) return;
+    // Looking around is the player taking the camera: stop following until they ask again.
+    if (this.follow) this.setFollow(false);
     const k = (this.dist / this.container.clientHeight) * 0.75;
     // Slide along the screen's own right and up, whichever way the camera is turned.
     const cos = Math.cos(this.yaw);
@@ -2958,7 +3019,8 @@ export class WorldRenderer {
       // Damped: doubling the spread zooms by about a half, not by two.
       this.userDist = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, this.pinch.zoom * Math.pow(this.pinch.dist / now.dist, PINCH_DAMPING)));
       if (!this.state?.battle) this.dist = this.userDist;
-      this.panBy(now.x - this.pinch.x, now.y - this.pinch.y);
+      // While following, a pinch only zooms: the little drift of spreading fingers is not a pan.
+      if (!this.holdPan(now.x, now.y)) this.panBy(now.x - this.pinch.x, now.y - this.pinch.y);
       // Twisting the two fingers turns the view with them.
       let twist = now.angle - this.pinch.angle;
       if (twist > Math.PI) twist -= 2 * Math.PI;
@@ -2982,7 +3044,7 @@ export class WorldRenderer {
           // Dragging down lifts the camera to look more steeply; up drops it toward the horizon.
           this.tiltBy(dy * 0.006);
         }
-        else this.panBy(dx, dy);
+        else if (!this.holdPan(e.clientX, e.clientY)) this.panBy(dx, dy);
       }
     } else {
       this.pointer.dirty = true;
@@ -2999,9 +3061,11 @@ export class WorldRenderer {
       const [rest] = [...this.touches.values()];
       this.pointer.x = rest.x;
       this.pointer.y = rest.y;
+      if (this.panFrom) this.panFrom = { x: rest.x, y: rest.y };
       return;
     }
     this.pinch = null;
+    this.panFrom = null;
     // A right-click, or a Shift/Alt click, is the start of a turn, not an order to walk.
     const wasClick = this.pointer.down && !this.pointer.dragged && !this.rotating && e.type === "pointerup";
     this.pointer.down = false;
@@ -3093,6 +3157,16 @@ export class WorldRenderer {
       const speed = this.container.clientHeight * 0.7 * dt;
       // panBy takes a drag: dragging left moves the view right, so the signs are flipped.
       if (x || y) this.panBy(-x * speed, y * speed);
+    }
+
+    // Following: the camera's goal is your hero's feet (the middle of the hex they stand on), wherever they have got to.
+    const mine = this.follow && !this.state?.battle && this.state?.you ? this.units.get(this.state.you) : undefined;
+    if (mine) {
+      if (this.followHeld && mine.path.length > 0) {
+        this.followHeld = false;
+        this.showFollow();
+      }
+      if (!this.followHeld) this.targetGoal.set(mine.feet.x, mine.feet.y, mine.feet.z - 0.25);
     }
 
     this.target.lerp(this.targetGoal, ease);

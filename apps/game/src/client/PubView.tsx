@@ -369,6 +369,7 @@ export function PubView({ me, refresh, onLeave }: { me: Me; refresh(): Promise<u
           : atTrader ? (seller ? <span>At {seller.name}'s table.</span> : <span className="muted">The corner is empty.{due && ` ${due.name} is due ${dueIn(visitor.next!.startsAt - visitor.now)}.`}</span>)
           : seller ? <span className="pub-visitor">{seller.name}, {seller.trade}, is in the corner by the far wall.</span>
           : <span className="muted">Click a hex to walk. Order at the menu board; the game tables are across the room.</span>}
+        {near && !holdingDice && <button className="primary" disabled={!!talking} onClick={() => setTalkTo(near.id)}>Talk to {near.short}</button>}
         <button className={atDoor ? "primary" : ""} disabled={holdingDice} onClick={onLeave}>Leave</button>
       </DragPanel>
       {atDoor && self && !holdingDice && <TileAction renderer={renderer} pos={self.pos} unitId={self.id} label="Leave" run={onLeave} />}
