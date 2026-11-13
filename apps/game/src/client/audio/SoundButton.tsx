@@ -72,7 +72,7 @@ export function SoundButton() {
 }
 
 /** The renderer's own development overrides (render/ambience.ts): a held time of day and a held weather. */
-type SkyHold = { __gqTime?: number; __gqWeather?: number };
+type SkyHold = { __gqTime?: number; __gqWeather?: number; __gqStorm?: number };
 const sky = globalThis as SkyHold;
 const clock = (t: number) => {
   const mins = Math.round(t * 24 * 60) % (24 * 60);
@@ -91,10 +91,15 @@ function SkyControls() {
     else sky.__gqTime = t;
     setTime(t);
   };
-  const holdWeather = (w: number | undefined) => {
+  const [storm, setStorm] = useState(sky.__gqStorm === 1);
+  /** A storm is its own weather: a downpour with thunder and lightning. Any other held weather has none. */
+  const holdWeather = (w: number | undefined, stormy = false) => {
     if (w === undefined) delete sky.__gqWeather;
     else sky.__gqWeather = w;
+    if (stormy) sky.__gqStorm = 1;
+    else delete sky.__gqStorm;
     setWeather(w);
+    setStorm(stormy);
   };
   const live = audio.debug().params;
   return (
@@ -123,7 +128,7 @@ function SkyControls() {
       </div>
       <label className="sound-row">
         <span>Weather</span>
-        <input type="range" min={0} max={1} step={0.01} value={weather ?? 0} onChange={(e) => holdWeather(Number(e.target.value))} />
+        <input type="range" min={0} max={1} step={0.01} value={weather ?? 0} onChange={(e) => holdWeather(Number(e.target.value), storm)} />
         <span className="sound-value">{weather === undefined ? "auto" : Math.round(weather * 100)}</span>
       </label>
       <div className="sound-presets">
@@ -135,10 +140,13 @@ function SkyControls() {
             ["Downpour", 1],
           ] as const
         ).map(([name, w]) => (
-          <button key={name} className={`small ${weather === w ? "selected" : ""}`} onClick={() => holdWeather(w)}>
+          <button key={name} className={`small ${weather === w && !storm ? "selected" : ""}`} onClick={() => holdWeather(w)}>
             {name}
           </button>
         ))}
+        <button className={`small ${storm ? "selected" : ""}`} onClick={() => holdWeather(1, true)}>
+          Storm
+        </button>
         <button className="link" disabled={weather === undefined} onClick={() => holdWeather(undefined)}>
           Follow the clock
         </button>
@@ -173,7 +181,7 @@ function SourceSwitch() {
 }
 
 /** Development only: what the engine is doing right now, refreshed a few times a second. */
-function AudioReadout({ onClose }: { onClose(): void }) {
+export function AudioReadout({ onClose }: { onClose(): void }) {
   const [d, setD] = useState(() => audio.debug());
   useEffect(() => {
     const t = setInterval(() => setD(audio.debug()), 250);
@@ -189,7 +197,7 @@ function AudioReadout({ onClose }: { onClose(): void }) {
     ["Placing", d.headphones ? "headphones (HRTF)" : "speakers (pan)"],
     ["Sea", d.sea ? `${d.sea.distance.toFixed(1)} away, ${Math.round(d.sea.spread * 100)}% around` : "none in reach"],
     ...Object.entries(d.emitters).map(([kind, slots]): [string, string] => [`Emitter: ${kind}`, slots.join(", ") || "loading"]),
-    ...d.loops.map((l): [string, string] => [`Loop: ${l.id}`, l.parts.join(", ") || "loading"]),
+    ...d.loops.map((l): [string, string] => [`Loop: ${l.id}`, l.rest > 0 ? `resting, plays again in ${Math.floor(l.rest / 60)}:${String(Math.floor(l.rest % 60)).padStart(2, "0")}` : l.parts.join(", ") || "loading"]),
     ["One-shots", d.voices.length ? d.voices.join(", ") : "none"],
     ["Memory", d.library ? `${d.library.megabytes} of ${d.library.budget} MB, ${d.library.decoded}/${d.library.files} files, ${d.library.format}` : "–"],
   ];

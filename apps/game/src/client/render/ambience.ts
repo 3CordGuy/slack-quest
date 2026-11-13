@@ -8,6 +8,7 @@
 // sky.
 
 import * as THREE from "three";
+import { WIND_DIR, gustAt, windPower } from "./wind";
 import type { Tile } from "@gantt-quest/world";
 import type { LightKind } from "./props";
 
@@ -241,17 +242,40 @@ const mudTexture = () =>
  * A puddle: a blocky pixel blob of dark water, stepped at the ends rather than
  * round, with a pale glint along its far edge.
  */
-const puddleTexture = () =>
-  pixelTexture(12, 8, (ctx) => {
-    const water: [number, number, number][] = [[0, 3, 8], [1, 1, 10], [2, 0, 11], [3, 0, 11], [4, 0, 10], [5, 1, 10], [6, 2, 8], [7, 4, 6]];
-    ctx.fillStyle = "#3b4a63";
-    for (const [y, a, b] of water) ctx.fillRect(a, y, b - a + 1, 1);
-    ctx.fillStyle = "#33405a";
-    ctx.fillRect(2, 5, 6, 1);
-    ctx.fillStyle = "#6f86a8";
-    ctx.fillRect(4, 1, 3, 1);
-    ctx.fillRect(8, 2, 1, 1);
-  });
+/**
+ * A hollow in the ground, one unit across and one unit high, to be scaled to size: a bank that rises
+ * from the ground to a lip and falls away inside to the water, and the water lying in it. The outline
+ * is a rough nine-sided ring, not a circle, so it reads as dug earth.
+ */
+function hollowGeometry(): { bank: THREE.BufferGeometry; water: THREE.BufferGeometry } {
+  const SIDES = 9;
+  const WATER_LEVEL = 0.3;
+  const ring = (reach: number, y: number) =>
+    Array.from({ length: SIDES + 1 }, (_, i) => {
+      const k = i % SIDES;
+      const a = (k / SIDES) * Math.PI * 2;
+      const r = reach * (0.85 + 0.3 * hash(k, 1, 410));
+      return [Math.cos(a) * r, y, Math.sin(a) * r];
+    });
+  const foot = ring(1, 0);
+  const lip = ring(0.8, 1);
+  const shore = ring(0.6, WATER_LEVEL);
+  const bank: number[] = [];
+  const water: number[] = [];
+  for (let i = 0; i < SIDES; i++) {
+    // Up the outside of the bank, then down the inside to the water's edge.
+    bank.push(...foot[i], ...lip[i], ...foot[i + 1], ...lip[i], ...lip[i + 1], ...foot[i + 1]);
+    bank.push(...lip[i], ...shore[i], ...lip[i + 1], ...shore[i], ...shore[i + 1], ...lip[i + 1]);
+    water.push(0, WATER_LEVEL, 0, ...shore[i + 1], ...shore[i]);
+  }
+  const make = (points: number[]) => {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.Float32BufferAttribute(points, 3));
+    g.computeVertexNormals();
+    return g;
+  };
+  return { bank: make(bank), water: make(water) };
+}
 
 /**
  * Which way the wind blows across the map, as a unit vector on the ground:
@@ -735,26 +759,39 @@ export class Ambience {
     this.group.add(this.grass);
 
     // ---- puddles: standing water on the mud and in the dips of the street ----
-    const pools: THREE.Matrix4[] = [];
+    // Each is a real hollow, not a picture of one: a low bank of earth or stone thrown up round a dip,
+    // with the water lying in it below the lip. The bank takes the light and the shadows like the ground does.
+    const pools: { m: THREE.Matrix4; stone: boolean }[] = [];
     for (const t of tiles) {
-      const wet = (t.biome as string) === "mud" ? 0.45 : (t.biome as string) === "cobble" ? 0.22 : 0;
+      const stone = (t.biome as string) === "cobble";
+      const wet = (t.biome as string) === "mud" ? 0.45 : stone ? 0.22 : 0;
       if (wet === 0 || skip(t) || hash(t.q, t.r, 400) > wet) continue;
       const p = place(t);
       const size = 0.28 + hash(t.q, t.r, 401) * 0.3;
-      pools.push(
-        new THREE.Matrix4().compose(
-          new THREE.Vector3(p.x + (hash(t.q, t.r, 402) - 0.5) * 0.7, p.y + 0.014, p.z + (hash(t.q, t.r, 403) - 0.5) * 0.7),
-          // Square to the ground's pixels, never turned, so the blocky edge stays crisp; some are flipped for variety.
-          new THREE.Quaternion().setFromEuler(new THREE.Euler(-Math.PI / 2, 0, 0)),
-          new THREE.Vector3(size * (hash(t.q, t.r, 404) < 0.5 ? -1 : 1), size, 1),
+      pools.push({
+        stone,
+        m: new THREE.Matrix4().compose(
+          new THREE.Vector3(p.x + (hash(t.q, t.r, 402) - 0.5) * 0.7, p.y, p.z + (hash(t.q, t.r, 403) - 0.5) * 0.7),
+          // Turned any way round: each hollow is longer than it is wide, and no two lie alike.
+          new THREE.Quaternion().setFromEuler(new THREE.Euler(0, hash(t.q, t.r, 404) * Math.PI * 2, 0)),
+          new THREE.Vector3(size * 0.95, 0.035 + size * 0.06, size * 0.62),
         ),
-      );
+      });
     }
     if (pools.length > 0) {
-      const mesh = new THREE.InstancedMesh(new THREE.PlaneGeometry(1.5, 1), new THREE.MeshLambertMaterial({ map: puddleTexture(), alphaTest: 0.5, side: THREE.DoubleSide }), pools.length);
-      pools.forEach((m, i) => mesh.setMatrixAt(i, m));
-      mesh.receiveShadow = true;
-      this.group.add(mesh);
+      const { bank, water } = hollowGeometry();
+      const banks = new THREE.InstancedMesh(bank, new THREE.MeshLambertMaterial({ flatShading: true, side: THREE.DoubleSide }), pools.length);
+      const waters = new THREE.InstancedMesh(water, new THREE.MeshLambertMaterial({ color: "#3b4a63", flatShading: true, side: THREE.DoubleSide }), pools.length);
+      const earth = new THREE.Color("#4f4335");
+      const cobble = new THREE.Color("#5c5f66");
+      pools.forEach((pool, i) => {
+        banks.setMatrixAt(i, pool.m);
+        banks.setColorAt(i, pool.stone ? cobble : earth);
+        waters.setMatrixAt(i, pool.m);
+      });
+      banks.receiveShadow = true;
+      waters.receiveShadow = true;
+      this.group.add(banks, waters);
     }
 
     // ---- splashes: where the sea meets rock (hills, the rampart), it breaks in little pixel bursts ----
@@ -873,6 +910,26 @@ export class Ambience {
     return of(spell) * (1 - blend) + of(spell + 1) * blend;
   }
 
+  /**
+   * Whether this spell of weather is a storm, 0 to 1: a downpour with thunder and lightning. Its own
+   * kind of weather, not just the heaviest rain: about half of the heaviest spells are storms, and the
+   * rest are plain downpours. Shared by a crew, like the weather itself.
+   */
+  private stormy(): number {
+    if (import.meta.env.DEV) {
+      const forced = (globalThis as { __gqStorm?: number }).__gqStorm;
+      if (typeof forced === "number") return forced;
+      // Holding the weather by hand holds the storm off too, unless it is asked for.
+      if (typeof (globalThis as { __gqWeather?: number }).__gqWeather === "number") return 0;
+    }
+    const at = Date.now() / WEATHER_SPELL_MS;
+    const spell = Math.floor(at);
+    const bias = this.wetPort ? 0.12 : -0.08;
+    const of = (k: number) => (hash(k, 7, 700) + bias > 0.85 && hash(k, 11, 700) < 0.5 ? 1 : 0);
+    const blend = smooth(0.7, 1, at - spell);
+    return of(spell) * (1 - blend) + of(spell + 1) * blend;
+  }
+
   private timeOfDay(): number {
     if (import.meta.env.DEV) {
       const forced = (globalThis as { __gqTime?: number }).__gqTime;
@@ -896,15 +953,23 @@ export class Ambience {
     if (this.grass) {
       const cos = Math.cos(yaw);
       const sin = Math.sin(yaw);
+      // With the fancy wind, every tuft leans the way the wind blows, by the gust passing over it, so the
+      // gusts can be seen crossing the grass. Without it, each sways to and fro in its own time.
+      const blowing = windPower() > 0;
       this.tufts.forEach((t, i) => {
         // A slow swell with a quicker flutter on top, rolling across the island.
-        const lean = motion * (Math.sin(clock * 1.3 + t.phase) * 0.22 + Math.sin(clock * 3.1 + t.phase * 1.7) * 0.07 + 0.08);
+        const lean = blowing
+          ? gustAt(t.x, t.z) * 0.55 + Math.sin(clock * 3.1 + t.phase * 1.7) * 0.05 * windPower()
+          : motion * (Math.sin(clock * 1.3 + t.phase) * 0.22 + Math.sin(clock * 3.1 + t.phase * 1.7) * 0.07 + 0.08);
         const w = t.size;
+        // Which way the top is pushed: downwind, or to the right of the screen without the fancy wind.
+        const lx = blowing ? WIND_DIR.x : cos;
+        const lz = blowing ? WIND_DIR.z : -sin;
         // Columns: right, up (sheared toward the wind), and the facing normal.
         this.m.set(
-          cos * w, cos * lean * w, sin, t.x,
+          cos * w, lx * lean * w, sin, t.x,
           0, w, 0, t.y,
-          -sin * w, -sin * lean * w, cos, t.z,
+          -sin * w, lz * lean * w, cos, t.z,
           0, 0, 0, 1,
         );
         this.grass!.setMatrixAt(i, this.m);
@@ -916,6 +981,8 @@ export class Ambience {
     const cos = Math.cos(yaw);
     const sin = Math.sin(yaw);
     this.waves.forEach((mesh, row) => {
+      // The fancy water makes its own waves; the paper crests would sit oddly on it.
+      mesh.visible = !this.smoothSea;
       // Front row (toward the camera) is row 1.
       const off = row ? WAVE_ROW : -WAVE_ROW;
       this.crests.forEach((c, i) => {
@@ -1477,6 +1544,89 @@ export class Ambience {
    * The turn, about the vertical, that faces something at (x, z) toward the sun or, indoors, the hanging lamp:
    * for the shadow card the sun and the lamp see (CARD_LAYER). Each shadow slot has a card of its own (slotFacing).
    */
+  /**
+   * The light falling on someone standing at `at`, for sprites (which the lights themselves do not touch).
+   * `tint` gets the colour to multiply the sprite by: 1 is an ordinary day. `rim` gets the colour of the strongest
+   * single light there and `toward` the direction to it, for a highlight on the side facing it.
+   * Shadows are not counted: someone in a building's shade is lit as if in the open.
+   */
+  lightAt(at: THREE.Vector3, tint: THREE.Color, rim: THREE.Color, toward: THREE.Vector3) {
+    const c = this.lightScratch;
+    tint.setRGB(0, 0, 0);
+    let best = 0;
+    rim.setRGB(0, 0, 0);
+    toward.set(0, 1, 0);
+    // Mostly sky, a little of the ground's bounce.
+    if (this.hemi.visible) tint.copy(this.hemi.groundColor).lerp(this.hemi.color, 0.65).multiplyScalar(this.hemi.intensity);
+    if (this.sun.visible && this.sun.intensity > 0) {
+      c.copy(this.sun.color).multiplyScalar(this.sun.intensity * 0.7);
+      tint.add(c);
+      best = c.r + c.g + c.b;
+      rim.copy(c);
+      toward.copy(this.sunDir);
+    }
+    const chestY = at.y + 0.5;
+    for (const light of this.spriteLights) {
+      if (!light.visible || light.intensity <= 0) continue;
+      const dx = light.position.x - at.x;
+      const dy = light.position.y - chestY;
+      const dz = light.position.z - at.z;
+      const d = Math.hypot(dx, dy, dz);
+      if (light.distance > 0 && d >= light.distance) continue;
+      // The same falloff the lights use on the ground.
+      let fall = 1 / Math.max(Math.pow(d, light.decay), 0.01);
+      if (light.distance > 0) fall *= Math.pow(Math.min(1, Math.max(0, 1 - Math.pow(d / light.distance, 4))), 2);
+      c.copy(light.color).multiplyScalar(light.intensity * fall * 0.8);
+      tint.add(c);
+      const strength = c.r + c.g + c.b;
+      if (strength > best) {
+        best = strength;
+        rim.copy(c);
+        toward.set(dx, dy, dz).divideScalar(Math.max(d, 1e-4));
+      }
+    }
+    // 2.4 is about what the sun and sky add up to at noon.
+    tint.multiplyScalar(1 / 2.4);
+    rim.multiplyScalar(1 / 2.4);
+  }
+  /**
+   * How high the sun stands: about 1.2 at noon, 0 as it crosses the horizon, down to about -0.8 at midnight.
+   * A large number indoors, where there is no sun to be low.
+   */
+  sunHeight = 9;
+  /** In the caverns: under the rock, where no weather reaches. */
+  get underground(): boolean {
+    return this.cave;
+  }
+  /** Where every candle, lantern, fire and lit building on this map is. */
+  lampSpots(): THREE.Vector3[] {
+    return [...this.poiLights, ...this.lights].map((l) => l.pos);
+  }
+  /** Under the open sky: not in a room, not in the caverns. */
+  get openSky(): boolean {
+    return this.outdoors && !this.cave;
+  }
+  /** How overcast it is right now, 0 (clear) to 1. */
+  get overcast(): number {
+    return this.cloud;
+  }
+  /** How much of a storm it is outdoors right now, 0 to 1: thunder and lightning, on top of heavy rain. */
+  get storming(): number {
+    return this.outdoors ? this.stormy() * this.rainfall : 0;
+  }
+  /** How hard it is raining outdoors right now, 0 to 1. */
+  get raining(): number {
+    return this.outdoors ? this.rainfall : 0;
+  }
+  /** Set while the fancy water is on: the paper wave crests are put away. */
+  smoothSea = false;
+  /** The sun's or moon's light, colour and strength together, for glints on the water. Fills and returns `out`. */
+  sunGlint(out: THREE.Color): THREE.Color {
+    return out.copy(this.sun.color).multiplyScalar(this.sun.visible ? this.sun.intensity * 0.6 : 0);
+  }
+  private lightScratch = new THREE.Color();
+  private spriteLights = [this.lamp, this.fireLight, ...this.slots, ...this.glows, ...this.fadeGlows, ...this.torches];
+
   towardLight(x: number, z: number): number {
     if (!this.indoors) return Math.atan2(this.sunDir.x, this.sunDir.z);
     return Math.atan2(this.lamp.position.x - x, this.lamp.position.z - z);
@@ -1486,10 +1636,11 @@ export class Ambience {
    * The sky outside right now, for the sound: the time of day (0 midnight, 0.5 noon), how dark it is and how
    * hard it rains, 0 to 1 each. Unlike `night`, it holds indoors too, where the rain is still on the roof.
    */
-  sky(): { time: number; night: number; rain: number } {
+  sky(): { time: number; night: number; rain: number; storm: number } {
     const time = this.timeOfDay();
     const height = Math.sin((time - 0.25) * Math.PI * 2) + 0.2;
-    return { time, night: 1 - smooth(-0.25, 0.3, height), rain: smooth(0.6, 0.9, this.weather()) };
+    const rain = smooth(0.6, 0.9, this.weather());
+    return { time, night: 1 - smooth(-0.25, 0.3, height), rain, storm: this.stormy() * rain };
   }
 
   private light(target: THREE.Vector3, clock: number) {
@@ -1501,6 +1652,8 @@ export class Ambience {
     const daylight = smooth(-0.25, 0.3, height);
     const glow = 1 - smooth(0, 0.5, Math.abs(height));
     this.daylight = daylight;
+    // For the colour grade, which has its own, longer golden hour than the sky's glow.
+    this.sunHeight = this.indoors ? 9 : height;
 
     // By night the same light is the moon, on the other side of the sky.
     const side = day ? -Math.cos(angle) : Math.cos(angle);

@@ -46,12 +46,66 @@
    "sampleRate": 44100,
    "channels": 2
   },
+  "ambience/rainstorm": {
+   "urls": {
+    "opus": "/audio/ambience/rainstorm.58c78af42d.ogg",
+    "aac": "/audio/ambience/rainstorm.58c78af42d.m4a"
+   },
+   "duration": 24,
+   "sampleRate": 44100,
+   "channels": 2
+  },
   "music/harbor": {
    "urls": {
     "opus": "/audio/music/harbor.6ec7bc3487.ogg",
     "aac": "/audio/music/harbor.6ec7bc3487.m4a"
    },
    "duration": 192,
+   "sampleRate": 44100,
+   "channels": 2
+  },
+  "sfx/weather/thunder_01": {
+   "urls": {
+    "opus": "/audio/sfx/weather/thunder_01.2a0b642fc5.ogg",
+    "aac": "/audio/sfx/weather/thunder_01.2a0b642fc5.m4a"
+   },
+   "duration": 10.6518,
+   "sampleRate": 44100,
+   "channels": 2
+  },
+  "sfx/weather/thunder_02": {
+   "urls": {
+    "opus": "/audio/sfx/weather/thunder_02.bb5b5dc0d4.ogg",
+    "aac": "/audio/sfx/weather/thunder_02.bb5b5dc0d4.m4a"
+   },
+   "duration": 8.0587,
+   "sampleRate": 44100,
+   "channels": 2
+  },
+  "sfx/weather/thunder_03": {
+   "urls": {
+    "opus": "/audio/sfx/weather/thunder_03.0a46069792.ogg",
+    "aac": "/audio/sfx/weather/thunder_03.0a46069792.m4a"
+   },
+   "duration": 10.4541,
+   "sampleRate": 44100,
+   "channels": 2
+  },
+  "sfx/weather/thunder_04": {
+   "urls": {
+    "opus": "/audio/sfx/weather/thunder_04.a74e8b5672.ogg",
+    "aac": "/audio/sfx/weather/thunder_04.a74e8b5672.m4a"
+   },
+   "duration": 9.5194,
+   "sampleRate": 44100,
+   "channels": 2
+  },
+  "sfx/weather/thunder_05": {
+   "urls": {
+    "opus": "/audio/sfx/weather/thunder_05.9e7f6bd39b.ogg",
+    "aac": "/audio/sfx/weather/thunder_05.9e7f6bd39b.m4a"
+   },
+   "duration": 6.6378,
    "sampleRate": 44100,
    "channels": 2
   }

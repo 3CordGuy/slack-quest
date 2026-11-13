@@ -3,7 +3,7 @@
 // asks the engine for the names in names.ts, most specific first.
 
 import type { WorldEvent } from "@gantt-quest/world";
-import { audio, type SeaArea } from "./engine";
+import { audio, type SeaArea, type StartedTake } from "./engine";
 import { soundName, type AttackStyle, type Fighter } from "./names";
 
 /** Where on the map it happens, for distance falloff. */
@@ -57,6 +57,14 @@ export const sounds = {
   levelUp() {
     audio.play(soundName.levelUp());
   },
+  /**
+   * A lightning strike. `onStart` is handed the take that was picked as it is scheduled, so the flash
+   * can follow that recording; it is not called if nothing plays. Give `at` for a strike heard from
+   * indoors: it is placed off in that direction, so it comes through the walls quieter and duller.
+   */
+  thunder(onStart: (take: StartedTake) => void, at?: At) {
+    audio.play(soundName.thunder(), { onStart, at });
+  },
   world(ev: WorldEvent, you: string) {
     const names = soundName.world(ev, you);
     if (names) audio.play(names);
@@ -98,12 +106,13 @@ export function openEar() {
     listener(x: number, z: number, yaw: number) {
       if (top()) audio.setListener(x, z, yaw);
     },
-    /** The sky outside, every frame: it drives whatever in the manifest follows "time", "night" or "rain". */
-    sky(sky: { time: number; night: number; rain: number }) {
+    /** The sky outside, every frame: it drives whatever in the manifest follows "time", "night", "rain" or "storm". */
+    sky(sky: { time: number; night: number; rain: number; storm: number }) {
       if (!top()) return;
       audio.setParam("time", sky.time);
       audio.setParam("night", sky.night);
       audio.setParam("rain", sky.rain);
+      audio.setParam("storm", sky.storm);
     },
     /** Every fire, candle and lamp on the map, whenever they change. */
     lights(all: { kind: string; x: number; z: number }[]) {

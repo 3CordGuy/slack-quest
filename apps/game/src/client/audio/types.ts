@@ -76,13 +76,15 @@ export interface ReverbZones {
 
 /**
  * A value the game keeps up to date, which a loop's level can follow:
- * "night" (0 full day to 1 deep night), "rain" (0 dry to 1 pouring) and
+ * "night" (0 full day to 1 deep night), "rain" (0 dry to 1 pouring),
+ * "storm" (0 in any other weather to 1 in a full storm: heavy rain with thunder; a
+ * downpour without thunder leaves it at 0) and
  * "time" (the time of day: 0 midnight, 0.25 dawn, 0.5 noon, 0.75 dusk).
  * They describe the sky outside, and hold indoors too.
  * "shore" is how far you stand from the nearest water, in hexes: 0 at the water's edge, and
  * a large number with no water in reach or indoors.
  */
-export type ParamName = "night" | "rain" | "time" | "shore";
+export type ParamName = "night" | "rain" | "storm" | "time" | "shore";
 
 /**
  * An automation curve: the level (0 silent to 1 full) at each value of a
@@ -139,6 +141,13 @@ export interface Loop {
    * loop start is an intro heard once. "loop" starts at the loop start, for files rendered with margins.
    */
   startAt?: "file" | "loop";
+  /**
+   * Rest between plays, in seconds: the piece plays through from the top, is silent for this long, then
+   * plays again. Give a range, such as [120, 240], for a rest of a different length each time. With a gap
+   * the whole file is one play: loop markers, `loop` and `startAt` are not used, and other music cannot
+   * come in on its bar. If you leave while it rests and come back, it waits out what is left of the rest.
+   */
+  gap?: number | Range;
 }
 
 /** The places the game can be, each with its own music and atmosphere. */
