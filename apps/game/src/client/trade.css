@@ -5,7 +5,7 @@
 .trade-notice.incoming { border-color: var(--gold); }
 
 /* Leaves room for the top bar, which sits above the overlay. */
-.overlay .panel.trade-panel { max-width: 560px; max-height: calc(100% - 56px); overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
+.overlay .panel.trade-panel { max-width: 560px; max-height: calc(100% - 56px); display: flex; flex-direction: column; gap: 8px; }
 .trade-head { display: flex; align-items: center; gap: 10px; padding-right: 46px; }
 .trade-head h2 { margin: 0; }
 .trade-panel h3 { margin: 8px 0 0; }

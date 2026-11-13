@@ -21,7 +21,7 @@
 .contract-result p + p { margin-top: 2px; font-size: 13px; }
 
 /* Leaves room for the top bar, which sits above the overlay. */
-.overlay .panel.notice-board { max-width: 560px; max-height: calc(100% - 56px); overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
+.overlay .panel.notice-board { max-width: 560px; max-height: calc(100% - 56px); display: flex; flex-direction: column; gap: 8px; }
 .notice-head { display: flex; align-items: center; gap: 10px; padding-right: 46px; }
 .notice-head h2 { margin: 0; }
 .notice-board h3 { margin: 8px 0 0; }

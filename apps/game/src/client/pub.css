@@ -1,6 +1,6 @@
 /* Inside the pub (PubView). Shared layout classes come from styles.css and hut.css. */
 
-.pub-bar { max-height: calc(100vh - 230px); overflow-y: auto; width: min(360px, calc(100% - 24px)); }
+.pub-bar { max-height: calc(100vh - 230px); width: min(360px, calc(100% - 24px)); }
 .pub-bar h3 { margin: 12px 0 4px; }
 .pub-bar h3:first-of-type { margin-top: 0; }
 .pub-bar p { margin: 0 0 6px; }

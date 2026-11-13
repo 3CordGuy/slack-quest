@@ -184,7 +184,7 @@ input:focus, button:focus-visible, select:focus { outline: 2px solid var(--accen
 }
 
 /* ---------- Shared Harbor ---------- */
-.docks { width: min(340px, 40vw); max-height: calc(100vh - 270px); overflow-y: auto; }
+.docks { width: min(340px, 40vw); max-height: calc(100vh - 270px); }
 .docks h3:first-child { margin-top: 0; }
 .ships li { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 5px 0; border-bottom: 1px dashed #37335a; }
 .ships { margin-bottom: 10px; }
@@ -312,7 +312,7 @@ body { touch-action: manipulation; overscroll-behavior: none; }
 .panel-title { display: block; width: calc(100% - 48px); text-align: left; background: none; border: none; padding: 0 0 4px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; font-size: 12px; }
 .panel-title:hover { color: var(--gold); border: none; }
 .crew > .panel-title { background: var(--panel); border: 2px solid var(--line); padding: 3px 8px; width: 100%; }
-.folded > :not(.panel-tools):not(.panel-title) { display: none !important; }
+.folded > .panel-body { display: none !important; }
 .draggable.folded { width: auto; min-width: 150px; min-height: 26px; max-height: none; overflow: visible; display: block; padding: 4px 56px 4px 10px; }
 .folded .panel-title { padding: 0; width: 100%; white-space: nowrap; }
 .crew.folded { width: 150px; padding: 0; }
@@ -325,6 +325,20 @@ body { touch-action: manipulation; overscroll-behavior: none; }
   .draggable.folded { min-height: 34px; padding: 7px 72px 7px 10px; }
   .crew.folded > .panel-title { padding: 7px 72px 7px 8px; }
 }
+/* The body adds nothing to a panel's layout, unless the panel is one that can run long. */
+.panel-body { display: contents; }
+/* Panels that can run long: the frame holds still and only the body scrolls, so the
+   title and the tools (and a panel's own header, below) stay at the top.
+   :where() keeps this from beating rules that hide these panels. */
+:where(.story, .docks, .pub-bar, .hut-storage, .hut-craft, .hut-info, .hut-boxpanel, .dice-table, .shoals-table, .gather, .trade-panel, .notice-board):not(.folded) { display: flex; flex-direction: column; overflow: hidden; }
+:where(.story, .docks, .pub-bar, .hut-storage, .hut-craft, .hut-info, .hut-boxpanel, .dice-table, .shoals-table, .gather, .trade-panel, .notice-board):not(.folded) > .panel-body {
+  display: block; flex: 0 1 auto; min-height: 0; overflow-y: auto;
+  /* Out to the frame's edges, so the scrollbar sits where it always did. */
+  margin: 0 -14px -12px; padding: 0 14px 12px;
+}
+:where(.dice-table, .shoals-table, .gather, .trade-panel, .notice-board):not(.folded) > .panel-body { display: flex; flex-direction: column; gap: inherit; }
+/* Panels with a header row of their own (and its Close button) keep it in view. */
+.gather-head, .trade-head, .notice-head { position: sticky; top: 0; z-index: 1; background: var(--panel); }
 /* Leave room for the tools on panels that have no header row. */
 .turnbar.draggable:not(.folded), .timeline.draggable:not(.folded) { padding-right: 56px; }
 .actions.draggable:not(.folded) { padding-top: 26px; }
@@ -344,7 +358,7 @@ body { touch-action: manipulation; overscroll-behavior: none; }
   /* Minimized panels line up as chips under the top bar and above the bottom edge. */
   .story { top: 46px; left: 6px; }
   .crew { top: 46px; right: 6px; }
-  .story:not(.folded) { width: calc(100vw - 12px); max-height: 55vh; overflow-y: auto; }
+  .story:not(.folded) { width: calc(100vw - 12px); max-height: 55vh; }
   .crew:not(.folded) { width: min(240px, 70vw); top: 88px; }
   .harbor-chat { left: 6px; bottom: 96px; }
   .harbor-chat:not(.folded), .chat:not(.folded) { left: 6px; right: 6px; width: auto; }
