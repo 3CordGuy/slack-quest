@@ -15,9 +15,9 @@ import type { HexPos } from "@gantt-quest/core";
 import { hexDistance } from "@gantt-quest/core";
 import { BASE_HEIGHT, BATTLE_JOIN_RANGE, BIG_REACH, ENEMIES, HEX_DIRS, TRAIT_BY_ID, MOVE_COST, WALL_FACE_HALF, WALL_ITEM_BOTTOM, WALL_ITEM_TOP, findPath, hexAt, xpProgress, reachable, tileAt, wallFace, wallFaces, type ClientState, type Outfit, type Phase, type Poi, type Tile, type WorldEvent, type WorldMap } from "@gantt-quest/world";
 import { ghostModel, propModel, tintGhost, type LightKind } from "./props";
-import { armAudio, playCombat, playFootstep } from "../audio";
-import { ARROW_ABILITIES, blowKind, effectSound, hitSound, launchSound, missSound } from "./combatSounds";
-import { PUFFS, footfalls, stepGround, stepVolume, worldToHex } from "./footsteps";
+import { nearWater, openEar, sounds } from "../audio/gameSounds";
+import type { AttackStyle, Fighter } from "../audio/names";
+import { PUFFS, footfalls, stepGround, worldToHex } from "./footsteps";
 import { SPRITE_ASPECT, bubbleTexture, fxTexture, labelTexture, plateKey, sleepZTexture, spriteKey, spriteTexture, textTexture, type FxKind, type PlateStats } from "./sprites";
 
 /** Spells fly as a coloured bolt; these are their colours, by ability name. */
@@ -28,6 +28,9 @@ const SPELL_COLOR: Record<string, string> = {
   "Dark Bolt": "#b06cff",
   Immolate: "#ff6a3c",
 };
+const ARROW_ABILITIES = new Set(["Aimed Shot", "Pin Down", "Volley", "Barbed Arrow"]);
+/** How an attack travels, for its sound: the same split the effects above are drawn by. */
+const attackStyle = (ability: string): AttackStyle => (SPELL_COLOR[ability] ? "magic" : ARROW_ABILITIES.has(ability) ? "ranged" : "melee");
 const isBoss = (kind: string) => !!ENEMIES[kind]?.boss;
 /** Rank-and-file drawn a size up: the heavy hitters. */
 const isBig = (kind: string) => kind === "brute" || kind === "bear";
@@ -470,6 +473,11 @@ export class WorldRenderer {
 
   private terrain: THREE.InstancedMesh | null = null;
   private tiles: Tile[] = [];
+  /** This map's place in the sound: where you stand, its sky, its fires and its water. */
+  private ear = openEar();
+  /** The middle of every water hex, for hearing where the sea is. */
+  private water: { x: number; z: number }[] = [];
+  private frames = 0;
   private mapCode = "";
   private ambience: Ambience;
   private decor = new THREE.Group();
@@ -658,8 +666,6 @@ export class WorldRenderer {
       this.rotateButtons.appendChild(b);
       this.turnButtons.push(b);
     }
-    // The sound wakes on the first press. Muting it and its volume are in the Options menu.
-    armAudio();
     container.appendChild(this.rotateButtons);
     this.resizeObserver = new ResizeObserver(() => this.resize());
     this.resizeObserver.observe(container);
@@ -669,6 +675,7 @@ export class WorldRenderer {
 
   dispose() {
     cancelAnimationFrame(this.raf);
+    this.ear.close();
     this.resizeObserver.disconnect();
     const canvas = this.renderer.domElement;
     canvas.removeEventListener("pointerdown", this.onPointerDown);
@@ -752,16 +759,13 @@ export class WorldRenderer {
       else got.levelUp = true;
       xp.set(ev.heroId, got);
     }
-    // Effects and falls are heard just after the blow that caused them lands (a bolt or arrow takes a moment to fly).
-    let lastLand = { beat, delay: 0 };
-    const flies = (ability: string) => !!SPELL_COLOR[ability] || ARROW_ABILITIES.has(ability);
     const ending = events.find((e) => e.t === "battle_end");
     // Your turn coming round gets a soft tick, once, and not as the fight ends.
     let myTurnAt: number | null = null;
     for (const ev of events) {
       if (ev.t === "battle_start") {
         // A boss's first appearance: a low swell as the opening card goes up.
-        if (this.state?.battle?.combatants.some((c) => c.side === "enemy" && isBoss(c.kind))) this.later(0, () => playCombat("boss"), 0.15);
+        if (this.state?.battle?.combatants.some((c) => c.side === "enemy" && isBoss(c.kind))) this.later(0, () => sounds.boss(), 0.15);
       } else if (ev.t === "moved") {
         const unit = this.units.get(ev.heroId);
         if (unit) unit.path = ev.path.map((p) => this.standAt(p));
@@ -774,37 +778,29 @@ export class WorldRenderer {
         }
       } else if (ev.t === "battle") {
         const b = ev.ev;
-        if (b.t === "hit") {
-          lastLand = { beat, delay: flies(b.ability) ? 0.24 : 0 };
-          this.later(beat++, () => this.attack(b.actor, b.target, b.ability, b.perfect, () => this.float(b.target, `-${b.amount}`, b.perfect ? "#ffd23f" : "#ff6b6b"), true));
-        } else if (b.t === "miss" && b.heal) {
-          lastLand = { beat, delay: 0 };
-          this.later(beat++, () => { playCombat("heal_fail"); this.float(b.actor, "fails", "#c9d1e0"); });
-        } else if (b.t === "miss") {
-          lastLand = { beat, delay: flies(b.ability) ? 0.24 : 0 };
-          this.later(beat++, () => this.attack(b.actor, b.target, b.ability, false, () => this.float(b.target, "miss", "#c9d1e0")));
-        } else if (b.t === "heal") {
-          lastLand = { beat, delay: 0 };
-          this.later(beat++, () => { playCombat("heal"); this.sparkle(b.target, "#7dff9a"); this.float(b.target, `+${b.amount}`, "#7dff9a"); });
-        } else if (b.t === "tick") {
-          lastLand = { beat, delay: 0 };
-          this.later(beat++, () => { playCombat(effectSound(b.effect)); this.float(b.target, `-${b.amount}`, "#ffa94d"); });
-        } else if (b.t === "effect") this.later(lastLand.beat, () => playCombat(effectSound(b.effect)), lastLand.delay + 0.12);
-        else if (b.t === "down") {
-          const who = this.state?.battle?.combatants.find((c) => c.id === b.id);
-          const sound = who?.side === "hero" ? "hero_down" : who && isBoss(who.kind) ? "boss_down" : "enemy_down";
-          this.later(lastLand.beat, () => playCombat(sound), lastLand.delay + 0.2);
-        } else if (b.t === "turn" && b.id === this.state?.you) myTurnAt = beat;
+        // Sounds are asked for inside each beat, so they land with the picture, not when the message arrived.
+        if (b.t === "hit") this.later(beat++, () => this.attack(b.actor, b.target, b.ability, b.perfect, () => { sounds.impact(b.ability, attackStyle(b.ability), b.perfect, this.fighter(b.target), this.spot(b.target)); this.float(b.target, `-${b.amount}`, b.perfect ? "#ffd23f" : "#ff6b6b"); }, true));
+        else if (b.t === "miss" && b.heal) this.later(beat++, () => { sounds.healFailed(this.spot(b.actor)); this.float(b.actor, "fails", "#c9d1e0"); });
+        else if (b.t === "miss") this.later(beat++, () => this.attack(b.actor, b.target, b.ability, false, () => { sounds.miss(b.ability, attackStyle(b.ability), this.spot(b.target)); this.float(b.target, "miss", "#c9d1e0"); }));
+        else if (b.t === "heal") this.later(beat++, () => { sounds.heal(b.ability, this.spot(b.target)); this.sparkle(b.target, "#7dff9a"); this.float(b.target, `+${b.amount}`, "#7dff9a"); });
+        else if (b.t === "tick") this.later(beat++, () => { sounds.tick(b.effect, this.spot(b.target)); this.float(b.target, `-${b.amount}`, "#ffa94d"); });
+        else if (b.t === "turn" && b.id === this.state?.you) myTurnAt = beat;
         // A class trait kicking in gets its name over the hero.
-        else if (b.t === "trait") this.later(beat++, () => this.float(b.id, TRAIT_BY_ID[b.trait]?.name ?? b.trait, "#facc15"));
+        else if (b.t === "trait") this.later(beat++, () => { const name = TRAIT_BY_ID[b.trait]?.name ?? b.trait; sounds.trait(name, this.spot(b.id)); this.float(b.id, name, "#facc15"); });
+        // These ride on the blow before them rather than taking a beat of their own.
+        else if (b.t === "effect") { this.later(Math.max(startBeat, beat - 1) + 0.4, () => sounds.effect(b.effect, this.spot(b.target))); }
+        else if (b.t === "down") { const who = this.fighter(b.id); this.later(Math.max(startBeat, beat - 1) + 0.6, () => sounds.down(who, this.spot(b.id))); }
+        else if (b.t === "flee") this.later(beat, () => sounds.flee(b.ok, this.spot(b.actor)));
+      } else if (this.state) {
+        // After the blows queued so far, so a fight's closing sting does not cut across its last hit.
+        const you = this.state.you;
+        this.later(beat, () => sounds.world(ev, you));
       }
     }
     // After the last blow has landed.
     for (const [heroId, got] of xp) this.later(beat, () => this.xpGain(heroId, got.amount, got.levelUp));
-    if (ending?.t === "battle_end" && (ending.status === "victory" || ending.status === "defeat")) {
-      const sting = ending.status;
-      this.later(beat, () => playCombat(sting), 0.35);
-    } else if (myTurnAt !== null) this.later(myTurnAt, () => playCombat("your_turn"), 0.1);
+    // Your turn coming round in a fight gets a soft tick (the closing sting comes from the battle's end event).
+    if (!ending && myTurnAt !== null) this.later(myTurnAt, () => sounds.yourTurn(), 0.1);
   }
 
   /**
@@ -936,6 +932,20 @@ export class WorldRenderer {
     if (a && t && a !== t) a.kick.copy(t.goal).sub(a.goal).setLength(0.7);
   }
 
+  /** Who a unit is in the fight, for its voice: looked up when asked, as the fight's line-up can change. */
+  private fighter(id: string): Fighter | undefined {
+    const c = this.state?.battle?.combatants.find((x) => x.id === id);
+    if (c) return { side: c.side, kind: c.kind };
+    const h = this.state?.heroes.find((x) => x.id === id);
+    return h ? { side: "hero", kind: h.classId } : undefined;
+  }
+
+  /** Where a unit stands on the map, for a sound's distance. */
+  private spot(id: string): { x: number; z: number } | undefined {
+    const p = this.units.get(id)?.sprite.position;
+    return p ? { x: p.x, z: p.z } : undefined;
+  }
+
   /**
    * Play one attack: the attacker leans in, then either a melee swipe lands
    * on the target at once, or a bolt or arrow flies across first. `onImpact`
@@ -944,12 +954,8 @@ export class WorldRenderer {
   private attack(actorId: string, targetId: string, ability: string, perfect: boolean, onImpact: () => void, landed = false) {
     const a = this.units.get(actorId);
     const t = this.units.get(targetId);
-    const blow = blowKind(ability);
-    const impact = () => playCombat(landed ? hitSound(blow) : missSound(blow), landed && perfect);
-    if (!a || !t || a === t) {
-      impact();
-      return onImpact();
-    }
+    if (!a || !t || a === t) return onImpact();
+    sounds.attack(ability, attackStyle(ability), this.fighter(actorId), this.spot(actorId));
     const dir = t.goal.x >= a.goal.x ? 1 : -1;
     const flip = dir < 0;
     a.lean = -dir * 0.5;
@@ -960,13 +966,10 @@ export class WorldRenderer {
       const kind: FxKind = spell ? "bolt" : "arrow";
       const color = spell ?? "#e8dcc0";
       const from = a.goal.clone().add(new THREE.Vector3(dir * 0.5, a.sprite.scale.y * 0.6, 0.05));
-      const loose = launchSound(blow);
-      if (loose) playCombat(loose);
       this.spawnFx(kind, color, flip, { from, to: hitAt, life: 0.24, size: [1.0, 1.0], spin: 0, fade: false, onEnd: () => {
         this.spawnFx("burst", perfect ? "#ffd23f" : color, false, { from: hitAt, to: hitAt, life: 0.22, size: [0.7, 1.7], spin: 0.5, fade: true });
         // An arrow that lands stays in: point first, the shaft toward whoever shot it.
         if (kind === "arrow" && landed) this.stickArrow(t, dir);
-        impact();
         onImpact();
       } });
       return;
@@ -974,7 +977,6 @@ export class WorldRenderer {
     // Melee: step in and swipe across the target.
     this.lunge(actorId, targetId);
     this.spawnFx("slash", perfect ? "#ffd23f" : "#dfe9ff", flip, { from: hitAt, to: hitAt, life: 0.26, size: [1.3, 2.3], spin: -dir * 0.9, fade: true });
-    impact();
     onImpact();
   }
 
@@ -1060,11 +1062,11 @@ export class WorldRenderer {
     const seen = feet.clone().project(this.camera);
     if (seen.z > 1 || Math.abs(seen.x) > 1.05 || Math.abs(seen.y) > 1.05) return;
     // Heroes stand a quarter hex toward the camera from the middle of their hex (see syncUnits).
-    const ground = stepGround(tileAt(state.map, worldToHex(feet.x, feet.z - 0.25))?.biome);
-    if (!ground) return;
-    const mine = id === state.you;
-    const away = Math.hypot(feet.x - this.target.x, feet.z - this.target.z);
-    playFootstep(ground, stepVolume(mine, away), mine);
+    const biome = tileAt(state.map, worldToHex(feet.x, feet.z - 0.25))?.biome;
+    const ground = stepGround(biome);
+    if (!ground || !biome) return;
+    // The audio engine plays it, placed where the foot lands and falling off with distance from you.
+    sounds.footstep(biome, { x: feet.x, z: feet.z }, id === state.you);
     if (!this.still) this.puff(ground, feet);
   }
 
@@ -1106,6 +1108,7 @@ export class WorldRenderer {
   xpGain(unitId: string, amount: number, levelUp = false) {
     const unit = this.units.get(unitId);
     if (!unit || !(amount > 0 || levelUp)) return;
+    if (levelUp && unitId === this.state?.you) sounds.levelUp();
     const head = unit.goal.clone().add(new THREE.Vector3(0, unit.sprite.scale.y * 0.85, 0.05));
     // Everything rises clear of the plate, which floats a fixed number of screen pixels over the head.
     const top = Math.max(head.y + 0.4, this.plateTop(unit) ?? 0);
@@ -1144,6 +1147,7 @@ export class WorldRenderer {
     this.hangable.clear();
     if (state.indoors) for (const f of wallFaces(state.map)) this.hangable.set(key(f.pos), [...(this.hangable.get(key(f.pos)) ?? []), f.side]);
     this.tiles = state.map.tiles;
+    this.water = state.map.tiles.filter((t) => t.biome === "water").map(hexToWorld);
     if (this.terrain) {
       this.scene.remove(this.terrain);
       this.terrain.geometry.dispose();
@@ -1531,6 +1535,7 @@ export class WorldRenderer {
     }
     this.hideLoweredWallProps();
     this.ambience.setLights(lights, flames);
+    this.ear.lights(lights.map((l) => ({ kind: l.kind, x: l.pos.x, z: l.pos.z })));
   }
 
   /** A flat gold band just inside the outer edges of a group of hexes, on the floor: the selection ring of a piece covering more than one. */
@@ -3177,6 +3182,15 @@ export class WorldRenderer {
     );
     this.camera.lookAt(this.target);
     this.ambience.update(this.clock, this.yaw, this.target, this.state?.you ? this.units.get(this.state.you)?.sprite.position : undefined);
+    // Sounds are heard from where your hero stands, or from the middle of the view without one.
+    const ear = (this.state?.you ? this.units.get(this.state.you)?.sprite.position : undefined) ?? this.target;
+    this.ear.listener(ear.x, ear.z, this.yaw);
+    this.ear.sky(this.ambience.sky());
+    // Where the sea lies changes slowly: work it out a few times a second.
+    if (this.frames++ % 8 === 0) {
+      this.ear.sea(nearWater(ear.x, ear.z, this.water));
+      this.ear.ground(this.state ? (tileAt(this.state.map, worldToHex(ear.x, ear.z - 0.25))?.biome ?? null) : null);
+    }
     // In the caverns every hero carries a torch: the lights follow them as they walk.
     if (this.state?.kind === "caverns") {
       const torches: THREE.Vector3[] = [];

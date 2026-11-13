@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { hexToWorld } from "../src/client/render/WorldRenderer";
-import { HOP_RATE, footfalls, stepGround, stepVolume, worldToHex } from "../src/client/render/footsteps";
+import { HOP_RATE, footfalls, stepGround, worldToHex } from "../src/client/render/footsteps";
 
 describe("footsteps", () => {
   it("lands twice per hex walked", () => {
@@ -38,10 +38,4 @@ describe("footsteps", () => {
     expect(stepGround("fog")).toBeNull();
   });
 
-  it("keeps other heroes softer and fades them with distance", () => {
-    expect(stepVolume(true, 20)).toBe(1);
-    expect(stepVolume(false, 0)).toBeLessThan(1);
-    expect(stepVolume(false, 6)).toBeLessThan(stepVolume(false, 2));
-    expect(stepVolume(false, 20)).toBe(0);
-  });
 });

@@ -75,8 +75,3 @@ export const PUFFS: Record<StepGround, PuffLook> = {
   floor: { kind: "dust", colors: ["#d9c4a0"], count: 1, alpha: 0.3, size: 1.0 },
 };
 
-/** How loud another hero's step is, from how far they are from the middle of the view: softer than your own, gone by 14 units. */
-export function stepVolume(mine: boolean, distance: number): number {
-  if (mine) return 1;
-  return 0.45 * Math.max(0, 1 - distance / 14);
-}

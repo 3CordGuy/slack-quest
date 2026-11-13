@@ -3,6 +3,8 @@
 // The character sheet itself lives in InventoryScreen.tsx.
 
 import { useMemo, useRef, useState } from "react";
+import { SoundButton } from "./audio/SoundButton";
+import { useAudioScene } from "./audio/useAudioScene";
 import { STARTING_STATS } from "@gantt-quest/core";
 import { HERO_CLASSES, RARITY_COLOR, STAT_BLURB, STAT_KEYS, STAT_LABEL, WEAPON_ICON, statPct } from "@gantt-quest/world";
 import { EmailSignIn } from "./Account";
@@ -44,6 +46,7 @@ interface Props {
 }
 
 export function Harbor({ me, refresh, invite }: Props) {
+  useAudioScene("title");
   const { busy, error, act } = useAct(refresh);
   const hasCharacter = me.character?.status === "active";
   const [signInOpen, setSignInOpen] = useState(false);
@@ -59,6 +62,7 @@ export function Harbor({ me, refresh, invite }: Props) {
   return (
     <>
       <HarborBackdrop />
+      <span className="sound-corner"><SoundButton /></span>
       <div className="harbor">
         <header className="harbor-hero">
           <AnchorMark />

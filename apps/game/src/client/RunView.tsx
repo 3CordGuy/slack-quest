@@ -2,6 +2,7 @@
 // the ship (lobby), the overworld, NPC conversation, battle and the ending.
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useAudioScene } from "./audio/useAudioScene";
 import { hexDistance, type HexPos } from "@gantt-quest/core";
 import {
   MAX_NPC_MESSAGES,
@@ -313,6 +314,13 @@ export function RunView({ code, me, refresh, onLeave }: { code: string; me: Me; 
   }, [arriving]);
   const sea: SeaMode | null = caverns ? null : phase === "lobby" ? "moored" : phase === "generating" || (arriving && !makingLand) ? "crossing" : arriving ? "landfall" : null;
   atSea.current = sea !== null;
+  // What is heard: the sea while the ship is out on it, the caverns or the island once ashore, the fight's music in a fight.
+  useAudioScene(
+    !state ? "harbor"
+    : caverns ? (aboard ? "harbor" : state.phase === "battle" ? "battle" : "caverns")
+    : sea ? "sailing"
+    : state.phase === "battle" ? "battle" : "island",
+  );
   // A fight that breaks out while she is still coming in (a shipmate went ashore first) is not kept waiting.
   useEffect(() => {
     if (sea === "landfall" && phase === "battle") setLanded(true);

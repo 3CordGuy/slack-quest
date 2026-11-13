@@ -1,0 +1,59 @@
+{
+ "version": 1,
+ "files": {
+  "ambience/fire": {
+   "urls": {
+    "opus": "/audio/ambience/fire.ee0418167b.ogg",
+    "aac": "/audio/ambience/fire.ee0418167b.m4a"
+   },
+   "duration": 36,
+   "sampleRate": 44100,
+   "channels": 2
+  },
+  "ambience/forest_day": {
+   "urls": {
+    "opus": "/audio/ambience/forest_day.77eca8cc8d.ogg",
+    "aac": "/audio/ambience/forest_day.77eca8cc8d.m4a"
+   },
+   "duration": 64,
+   "sampleRate": 44100,
+   "channels": 2
+  },
+  "ambience/forest_night": {
+   "urls": {
+    "opus": "/audio/ambience/forest_night.da4f3bef64.ogg",
+    "aac": "/audio/ambience/forest_night.da4f3bef64.m4a"
+   },
+   "duration": 192,
+   "sampleRate": 44100,
+   "channels": 2
+  },
+  "ambience/ocean": {
+   "urls": {
+    "opus": "/audio/ambience/ocean.279c3f48c4.ogg",
+    "aac": "/audio/ambience/ocean.279c3f48c4.m4a"
+   },
+   "duration": 192,
+   "sampleRate": 44100,
+   "channels": 2
+  },
+  "ambience/rain": {
+   "urls": {
+    "opus": "/audio/ambience/rain.72596c4588.ogg",
+    "aac": "/audio/ambience/rain.72596c4588.m4a"
+   },
+   "duration": 64,
+   "sampleRate": 44100,
+   "channels": 2
+  },
+  "music/harbor": {
+   "urls": {
+    "opus": "/audio/music/harbor.3d54382aea.ogg",
+    "aac": "/audio/music/harbor.3d54382aea.m4a"
+   },
+   "duration": 200,
+   "sampleRate": 44100,
+   "channels": 2
+  }
+ }
+}

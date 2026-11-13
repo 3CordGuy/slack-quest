@@ -1,0 +1,28 @@
+.sound { position: relative; display: inline-flex; }
+.sound-panel { position: absolute; top: calc(100% + 8px); right: 0; z-index: 60; width: min(280px, calc(100vw - 16px)); white-space: normal; cursor: default; }
+.sound-row { display: grid; grid-template-columns: 112px 1fr 28px; gap: 8px; align-items: center; padding: 4px 0; }
+.sound-row input[type="range"] { width: 100%; min-width: 0; padding: 0; border: none; background: none; accent-color: var(--gold); }
+.sound-row > span:first-child { white-space: nowrap; }
+.sound-value { text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; }
+.sound-foot { display: flex; justify-content: space-between; align-items: center; margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--line); }
+.sound-mute { display: inline-flex; align-items: center; gap: 6px; }
+.sound-mute input { width: auto; padding: 0; accent-color: var(--gold); }
+.sound-foot button.link:disabled { color: var(--muted); }
+/* On the title screens, where there is no top bar. */
+.sound-corner { position: fixed; top: 8px; right: 8px; z-index: 60; }
+.sound-check { display: flex; align-items: center; gap: 6px; padding: 6px 0 2px; }
+.sound-check input { width: auto; padding: 0; accent-color: var(--gold); }
+.sound-foot .sound-check { padding: 0; }
+.sound-debug-toggle { margin-top: 8px; font-size: 12px; }
+/* Development only: the engine readout. */
+.sound-readout { position: fixed; left: 8px; bottom: 8px; z-index: 70; width: min(420px, calc(100vw - 16px)); max-height: 60vh; overflow-y: auto; white-space: normal; font-size: 12px; cursor: default; }
+.sound-readout-head { display: flex; justify-content: space-between; margin-bottom: 6px; }
+.sound-readout dl { margin: 0; }
+.sound-readout dl > div { display: grid; grid-template-columns: 130px 1fr; gap: 8px; padding: 2px 0; border-top: 1px dashed var(--line); }
+.sound-readout dt { color: var(--muted); }
+.sound-readout dd { margin: 0; overflow-wrap: anywhere; }
+.sound-sky { margin-bottom: 8px; padding-bottom: 8px; border-bottom: 1px solid var(--line); }
+.sound-sky .sound-row { grid-template-columns: 90px 1fr 40px; }
+.sound-presets { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 2px 0 8px; }
+.sound-presets button.link:disabled { color: var(--muted); }
+.sound-source { padding-bottom: 8px; margin-bottom: 8px; border-bottom: 1px solid var(--line); }

@@ -8,6 +8,7 @@
 // a battle attached.
 
 import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { useAudioScene } from "./audio/useAudioScene";
 import {
   ABILITIES,
   DUMMY_KIND,
@@ -102,6 +103,8 @@ export function SparView({ me, scene, renderer, onClose }: Props) {
   const [kind, setKind] = useState(DUMMY_KIND);
   const [count, setCount] = useState(1);
   const [bout, setBout] = useState<Bout | null>(null);
+  // The ring is quiet Harbor until a bout is on.
+  useAudioScene(bout ? "spar" : "harbor");
   const [feed, setFeed] = useState<string[]>([]);
   const [shown, setShown] = useState<{ who: string; check: CheckResult } | null>(null);
   const [result, setResult] = useState<Exclude<BattleStatus, "active"> | null>(null);

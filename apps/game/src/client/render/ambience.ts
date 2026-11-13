@@ -1482,6 +1482,16 @@ export class Ambience {
     return Math.atan2(this.lamp.position.x - x, this.lamp.position.z - z);
   }
 
+  /**
+   * The sky outside right now, for the sound: the time of day (0 midnight, 0.5 noon), how dark it is and how
+   * hard it rains, 0 to 1 each. Unlike `night`, it holds indoors too, where the rain is still on the roof.
+   */
+  sky(): { time: number; night: number; rain: number } {
+    const time = this.timeOfDay();
+    const height = Math.sin((time - 0.25) * Math.PI * 2) + 0.2;
+    return { time, night: 1 - smooth(-0.25, 0.3, height), rain: smooth(0.6, 0.9, this.weather()) };
+  }
+
   private light(target: THREE.Vector3, clock: number) {
     const t = this.indoors ? 0.42 : this.timeOfDay();
     const angle = (t - 0.25) * Math.PI * 2;

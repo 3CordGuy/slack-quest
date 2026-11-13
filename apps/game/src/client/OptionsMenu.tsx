@@ -5,8 +5,9 @@
 // The menu closes on a press anywhere outside it, or on Escape (which hands
 // focus back to the gear).
 
-import { useEffect, useId, useRef, useState } from "react";
-import { getVolume, isMuted, onMuteChange, onVolumeChange, setMuted, setVolume } from "./audio";
+import { useEffect, useId, useRef, useState, useSyncExternalStore } from "react";
+import { audio } from "./audio/engine";
+import { FADERS, FADER_LABELS } from "./audio/mixer";
 import { resetPanels } from "./DragPanel";
 import { PixelIcon } from "./PixelIcon";
 import { UI_SCALE_MAX, UI_SCALE_MIN, UI_SCALE_STEP, getUiScale, onUiScaleChange, setUiScale, uiZoom } from "./uiScale";
@@ -64,8 +65,10 @@ export function OptionsMenu({ reset, resetBlocked }: {
   resetBlocked?: string;
 }) {
   const [open, setOpen] = useState(false);
-  const [muted, setMutedState] = useState(isMuted);
-  const [volume, setVolumeState] = useState(getVolume);
+  // The sound is the audio engine's mix: a master, and a slider for each group under it.
+  const mix = useSyncExternalStore(audio.mix.subscribe, audio.mix.get);
+  const muted = mix.muted;
+  const volume = audio.mix.volume("master");
   const [scale, setScale] = useState(getUiScale);
   const [zoom, setZoom] = useState(uiZoom);
   const wrap = useRef<HTMLSpanElement>(null);
@@ -73,8 +76,6 @@ export function OptionsMenu({ reset, resetBlocked }: {
   const first = useRef<HTMLButtonElement>(null);
   const menuId = useId();
 
-  useEffect(() => onMuteChange(setMutedState), []);
-  useEffect(() => onVolumeChange(setVolumeState), []);
   useEffect(
     () =>
       onUiScaleChange(() => {
@@ -128,7 +129,7 @@ export function OptionsMenu({ reset, resetBlocked }: {
           <h4>Options</h4>
 
           <div className="options-row">
-            <button ref={first} className="options-sound" role="switch" aria-checked={!muted} onClick={() => setMuted(!muted)}>
+            <button ref={first} className="options-sound" role="switch" aria-checked={!muted} onClick={() => audio.mix.setMuted(!muted)}>
               <PixelIcon rows={muted ? SPEAKER_OFF : SPEAKER_ON} size={18} />
               <span className="grow">Sound</span>
               <span className={`options-switch ${muted ? "" : "on"}`} aria-hidden>
@@ -146,10 +147,37 @@ export function OptionsMenu({ reset, resetBlocked }: {
               value={Math.round(volume * 100)}
               disabled={muted}
               aria-valuetext={pct(volume)}
-              onChange={(e) => setVolume(Number(e.target.value) / 100)}
+              onChange={(e) => audio.mix.setVolume("master", Number(e.target.value) / 100)}
             />
             <output className="options-value">{pct(volume)}</output>
           </label>
+          {FADERS.filter((f) => f !== "master").map((f) => {
+            const level = audio.mix.volume(f);
+            return (
+              <label key={f} className="options-row options-sub">
+                <span className="options-label">{FADER_LABELS[f]}</span>
+                <input
+                  type="range"
+                  min={0}
+                  max={100}
+                  step={5}
+                  value={Math.round(level * 100)}
+                  disabled={muted}
+                  aria-valuetext={pct(level)}
+                  onChange={(e) => audio.mix.setVolume(f, Number(e.target.value) / 100)}
+                />
+                <output className="options-value">{pct(level)}</output>
+              </label>
+            );
+          })}
+          <div className="options-row options-sub">
+            <label className="options-check" title="Places sounds around your head instead of between two speakers. Best on headphones.">
+              <input type="checkbox" checked={mix.headphones} onChange={(e) => audio.mix.setHeadphones(e.target.checked)} /> Headphones (3D sound)
+            </label>
+            <button className="link" disabled={!audio.mix.changed} onClick={() => audio.mix.reset()}>
+              Reset sound
+            </button>
+          </div>
 
           <div className="options-row" role="group" aria-label="UI scale">
             <span className="options-label">UI scale</span>
