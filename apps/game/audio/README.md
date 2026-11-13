@@ -144,7 +144,7 @@ fire: { file: "ambience/fire", gainDb: -6, ref: 1.5, max: 12, voices: 3 },
 
 `ref` is the distance within which it is at full level and `max` the distance past which it is silent, in map units (a hex is about 1.7 across). Only the nearest `voices` sources sound at once, each starting the loop at a different point so they do not phase. A stereo file is folded to mono when it is loaded. They follow the Atmosphere slider.
 
-Players choose how placed sounds are rendered with **Headphones (3D sound)** in the Sound panel. Off (the default), sounds are panned between two speakers. On, the browser places them around the head (HRTF): up the screen is in front of you, down it is behind. Level and dulling with distance are the same either way.
+Players choose how placed sounds are rendered with **Headphones (3D sound)** in the Sound panel. On (the default), the browser places them around the head (HRTF): up the screen is in front of you, down it is behind. Off, sounds are panned between two speakers. Level and dulling with distance are the same either way.
 
 ## Reverb
 

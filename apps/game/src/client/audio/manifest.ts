@@ -39,11 +39,12 @@ const step = (surface: string, ground: string, gainDb = -6): SoundEvent => ({
 export const AUDIO: AudioManifest = {
   // Where each slider starts for a new player, and your trim for each group.
   mix: {
-    master: { volume: 1, trimDb: 0 },
-    music: { volume: 0.5, trimDb: 0 },
-    atmosphere: { volume: 0.6, trimDb: 0 },
-    // Set for the built-in sounds, which are what plays until recordings are added: about as loud as they were before this engine.
-    sfx: { volume: 0.7, trimDb: 0 },
+    // The three groups start wide open and balanced against each other by their own levels and trims;
+    // the master starts at half, which leaves a player room to turn the game up as well as down.
+    master: { volume: 0.5, trimDb: 0 },
+    music: { volume: 1, trimDb: 0 },
+    atmosphere: { volume: 1, trimDb: 0 },
+    sfx: { volume: 1, trimDb: 0 },
   },
 
   events: {

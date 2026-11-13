@@ -41,6 +41,8 @@ export interface MixSettings {
 }
 
 const KEY = "gq.audio.v1";
+/** Whether sounds are placed around the head (HRTF) for a player who has not chosen. On: most play on headphones. */
+const HEADPHONES_DEFAULT = true;
 
 function clamp01(n: unknown): number | undefined {
   return typeof n === "number" && Number.isFinite(n) ? Math.min(1, Math.max(0, n)) : undefined;
@@ -48,7 +50,7 @@ function clamp01(n: unknown): number | undefined {
 
 /** Read saved settings, dropping anything malformed. */
 export function parseSettings(raw: string | null): MixSettings {
-  const out: MixSettings = { volumes: {}, muted: false, headphones: false };
+  const out: MixSettings = { volumes: {}, muted: false, headphones: HEADPHONES_DEFAULT };
   if (!raw) return out;
   try {
     const data = JSON.parse(raw) as { volumes?: Record<string, unknown>; muted?: unknown; headphones?: unknown };
@@ -57,7 +59,8 @@ export function parseSettings(raw: string | null): MixSettings {
       if (v !== undefined) out.volumes[f] = v;
     }
     out.muted = data.muted === true;
-    out.headphones = data.headphones === true;
+    // Settings saved before there was a choice have none recorded: they take the default.
+    out.headphones = typeof data.headphones === "boolean" ? data.headphones : HEADPHONES_DEFAULT;
   } catch {
     /* unreadable: start from the defaults */
   }
@@ -109,12 +112,12 @@ export class MixStore {
 
   /** Whether the player has changed anything from what the game ships with. */
   get changed(): boolean {
-    return this.settings.muted || this.settings.headphones || Object.keys(this.settings.volumes).length > 0;
+    return this.settings.muted || this.settings.headphones !== HEADPHONES_DEFAULT || Object.keys(this.settings.volumes).length > 0;
   }
 
   /** Forget everything the player set: every slider back to your defaults. */
   reset() {
-    this.update({ volumes: {}, muted: false, headphones: false });
+    this.update({ volumes: {}, muted: false, headphones: HEADPHONES_DEFAULT });
   }
 
   private update(next: MixSettings) {

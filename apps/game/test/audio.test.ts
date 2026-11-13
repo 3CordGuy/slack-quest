@@ -198,8 +198,10 @@ describe("the mix", () => {
     expect(again.volume("music")).toBe(defaults.music.volume);
   });
   it("ignores malformed saved settings", () => {
-    expect(parseSettings("not json")).toEqual({ volumes: {}, muted: false, headphones: false });
-    expect(parseSettings('{"volumes":{"music":7,"sfx":"x"},"muted":true}')).toEqual({ volumes: { music: 1 }, muted: true, headphones: false });
+    expect(parseSettings("not json")).toEqual({ volumes: {}, muted: false, headphones: true });
+    expect(parseSettings('{"volumes":{"music":7,"sfx":"x"},"muted":true}')).toEqual({ volumes: { music: 1 }, muted: true, headphones: true });
+    // A player who turned headphones off keeps it off.
+    expect(parseSettings('{"headphones":false}').headphones).toBe(false);
   });
   it("fades sounds with distance", () => {
     expect(distanceGain(0)).toBe(1);
