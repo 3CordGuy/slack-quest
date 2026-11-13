@@ -22,6 +22,14 @@ import {
   timingEase,
   timingGrade,
   QUARRY_WEAK,
+  DRIFT,
+  GROVE_KNOCKS,
+  GROVE_PILE,
+  NOTCH_DIRS,
+  fallLine,
+  fallOutcome,
+  groundAt,
+  windDrift,
   gatherDay,
   gatherPayout,
   gatherPct,
@@ -34,19 +42,27 @@ import {
   type GatherChoice,
   type GatherSpot,
   type GatherState,
+  type Dir8,
   type Resources,
 } from "./index";
 
 
+/** Felling: the first side to notch that would land clear as things stand, or south if none would. */
+function clearSide(state: GatherState, cell: number): Dir8 {
+  const length = state.grove?.tall[cell] ? 2 : 1;
+  return [4, 6, 2, 0].find((d) => fallOutcome(cell, d as Dir8, length, state.picked) === "clear") as Dir8 ?? 4;
+}
+
 /**
- * Step an outing as a player would. A push on a timed spot (fishing, the quarry) first aims at the cell (for fishing,
- * where it last cast or under the gulls; for the quarry, the first block standing) and then stops the marker with no
- * moment given, which counts as "close" and leaves the chance as it is.
+ * Step an outing as a player would. A push first aims at the cell (for fishing, where it last cast or under the
+ * gulls; for the quarry, the first block standing; felling, notched on a side that would land clear) and then stops
+ * the marker with no moment given, which counts as "close" and leaves the chance as it is.
  */
 function play(state: GatherState, choice: GatherChoice): ReturnType<typeof stepGather> {
   if (choice.t === "push" && state.timed && !state.aim && state.status === "active") {
-    const cell = choice.cell ?? (state.spot === "fishing" ? (state.water!.casts.at(-1)?.cell ?? state.water!.gulls) : state.face!.findIndex((_, i) => !state.picked.includes(i)));
-    const aimed = stepGather(state, { t: "aim", cell });
+    const cell = choice.cell ?? (state.spot === "fishing" ? (state.water!.casts.at(-1)?.cell ?? state.water!.gulls) : state.spot === "felling" ? state.trees.findIndex((_, i) => !state.picked.includes(i)) : state.face!.findIndex((_, i) => !state.picked.includes(i)));
+    const dir = state.spot === "felling" && Number.isInteger(cell) && cell >= 0 && cell < 9 ? clearSide(state, cell) : undefined;
+    const aimed = stepGather(state, { t: "aim", cell, ...(dir !== undefined ? { dir } : {}) });
     if (aimed.error) return aimed;
     return stepGather(aimed.state, { t: "push", at: choice.at });
   }
@@ -59,8 +75,9 @@ const units = (r: Resources) => Object.values(r).reduce((a, n) => a + (n ?? 0), 
 function playOut(spot: GatherSpot, seed: number, stat: number, bankAfter = Infinity): GatherState {
   let state = startGather(spot, seed, stat);
   while (state.status === "active") {
-    // Felling and the quarry take the first tree or block still standing; fishing casts where it last did.
-    const cell = state.spot === "felling" ? state.trees.findIndex((_, i) => !state.picked.includes(i)) : undefined;
+    // Felling takes the last tree still standing, nearest the pile, so some outings smash it; the quarry the first
+    // block still standing; fishing casts where it last did.
+    const cell = state.spot === "felling" ? [...state.trees.keys()].reverse().find((i) => !state.picked.includes(i)) : undefined;
     const choice: GatherChoice = state.step >= bankAfter ? { t: "bank" } : { t: "push", cell };
     const step = play(state, choice);
     expect(step.error).toBeUndefined();
@@ -188,7 +205,7 @@ describe("gathering", () => {
     expect(play(over, { t: "bank" }).error).toBeDefined();
 
     const trees = startGather("felling", 5, 30);
-    for (const cell of [-1, 9, 1.5, undefined]) expect(play(trees, { t: "push", cell }).error).toBeDefined();
+    for (const cell of [-1, 9, 1.5]) expect(play(trees, { t: "push", cell }).error).toBeDefined();
     const safe = trees.trees.findIndex((k) => k !== "rotten");
     const one = play(trees, { t: "push", cell: safe }).state;
     expect(play(one, { t: "push", cell: safe })).toEqual({ state: one, error: expect.any(String) });
@@ -242,19 +259,179 @@ describe("gathering", () => {
     expect(total(true)).toBeGreaterThan(total(false) * 1.3);
   });
 
-  it("felling: a fixed mix of trees; a rotten one needs both rolls", () => {
+  it("felling: a fixed mix of trees, each with a height, fungus only on rotten ones, and a wind", () => {
     for (let seed = 1; seed <= 200; seed++) {
       const state = startGather("felling", seed, 9);
       expect(state.trees).toHaveLength(9);
       expect(state.trees.filter((k) => k === "rotten")).toHaveLength(FELLING_ROTTEN);
       expect(state.trees.filter((k) => k === "den")).toHaveLength(FELLING_DENS);
-      const rotten = play(state, { t: "push", cell: state.trees.indexOf("rotten") }).state;
-      const check = rotten.log[0].check!;
-      expect(rotten.status).toBe(check.perfect ? "active" : "bust");
-      expect(rotten.haul).toEqual({});
-      const den = play(state, { t: "push", cell: state.trees.indexOf("den") }).state;
-      expect(den.haul).toEqual(den.log[0].check!.successes ? { fur: den.log[0].check!.successes } : {});
+      const grove = state.grove!;
+      expect(grove.tall).toHaveLength(9);
+      grove.fungus.forEach((f, i) => f && expect(state.trees[i]).toBe("rotten"));
+      expect(grove.wind.dir).toBeGreaterThanOrEqual(0);
+      expect(grove.wind.dir).toBeLessThan(8);
+      expect(state.timed).toBe(true);
     }
+  });
+
+  it("felling: knocking tells what a tree is, a few times an outing, and costs nothing else", () => {
+    const state = startGather("felling", 21, 9);
+    const rotten = state.trees.indexOf("rotten");
+    const one = stepGather(state, { t: "knock", cell: rotten }).state;
+    expect(one.step).toBe(0);
+    expect(one.rng).toBe(state.rng);
+    expect(one.log.at(-1)!.text).toMatch(/hollow/i);
+    const view = gatherView(one).grove!;
+    expect(view.trees[rotten]).toMatchObject({ kind: "rotten", knocked: true, picked: false });
+    expect(view.trees.filter((t) => t.kind !== null)).toHaveLength(1);
+    expect(view.knocksLeft).toBe(GROVE_KNOCKS - 1);
+    // Not twice on one tree, and no more than the allowance.
+    expect(stepGather(one, { t: "knock", cell: rotten }).error).toBeDefined();
+    let many = one;
+    for (let cell = 0; many.grove!.knocked.length < GROVE_KNOCKS; cell++) if (cell !== rotten) many = stepGather(many, { t: "knock", cell }).state;
+    const spare = [...Array(9).keys()].find((c) => !many.grove!.knocked.includes(c))!;
+    expect(stepGather(many, { t: "knock", cell: spare }).error).toMatch(/no more/i);
+    for (const cell of [-1, 9, 0.5]) expect(stepGather(state, { t: "knock", cell }).error).toBeDefined();
+    expect(stepGather(startGather("quarry", 1, 9), { t: "knock", cell: 0 }).error).toBeDefined();
+    // Not mid-swing.
+    const aimed = stepGather(state, { t: "aim", cell: 0, dir: 4 }).state;
+    expect(stepGather(aimed, { t: "knock", cell: 1 }).error).toBeDefined();
+  });
+
+  it("felling: an aim names a side to notch, north, east, south or west", () => {
+    const state = startGather("felling", 4, 9);
+    expect(stepGather(state, { t: "aim", cell: 0 }).error).toBeDefined();
+    for (const dir of [1, 3, 8, -1, 2.5]) expect(stepGather(state, { t: "aim", cell: 0, dir }).error).toBeDefined();
+    for (const dir of NOTCH_DIRS) {
+      const aimed = stepGather(state, { t: "aim", cell: 0, dir, now: 5 }).state;
+      expect(aimed.aim).toMatchObject({ cell: 0, dir, startedAt: 5 });
+      expect(gatherView(aimed).aim).toMatchObject({ cell: 0, dir });
+    }
+    expect(stepGather(state, { t: "push" }).error).toBeDefined();
+  });
+
+  it("felling: the wind turns a fall by the stop, towards where it blows and never past it", () => {
+    for (const s of [0, 1, 2] as const) {
+      expect(DRIFT[s].perfect).toBe(0);
+      expect(DRIFT[s].miss).toBeGreaterThanOrEqual(DRIFT[s].good);
+    }
+    expect(DRIFT[0].good).toBe(0);
+    // Wind east, a tree notched north: one step goes north-east, two go east, and no further.
+    expect(windDrift(0, { dir: 2, strength: 1 }, 1)).toBe(1);
+    expect(windDrift(0, { dir: 2, strength: 1 }, 2)).toBe(2);
+    expect(windDrift(0, { dir: 1, strength: 1 }, 2)).toBe(1);
+    // Wind west turns it the other way.
+    expect(windDrift(0, { dir: 6, strength: 2 }, 1)).toBe(7);
+    // Along the line or straight against it: no turn.
+    expect(windDrift(4, { dir: 4, strength: 2 }, 2)).toBe(4);
+    expect(windDrift(4, { dir: 0, strength: 2 }, 2)).toBe(4);
+    expect(windDrift(4, { dir: 2, strength: 2 }, 0)).toBe(4);
+  });
+
+  it("felling: what a fall meets first decides it: open ground, a standing tree, the creek or the pile", () => {
+    expect(fallLine(4, 0, 2)).toEqual([[0, 1], [-1, 1]]);
+    expect(groundAt(-1, 1)).toBe("creek");
+    expect(groundAt(1, -1)).toBe("open");
+    expect(groundAt(4, 4)).toBe("open");
+    for (const [r, c] of GROVE_PILE) expect(groundAt(r, c)).toBe("pile");
+    expect(groundAt(1, 1)).toBe(4);
+    // The west edge falls clear to the west; a tall middle tree hangs up in the one beyond.
+    expect(fallOutcome(3, 6, 2, [])).toBe("clear");
+    expect(fallOutcome(4, 6, 1, [])).toBe("hung");
+    expect(fallOutcome(4, 6, 2, [3])).toBe("clear");
+    // North into the creek; the south-east corner onto the pile.
+    expect(fallOutcome(1, 0, 1, [])).toBe("creek");
+    expect(fallOutcome(8, 4, 1, [])).toBe("pile");
+    expect(fallOutcome(8, 2, 1, [])).toBe("pile");
+    expect(fallOutcome(6, 4, 2, [])).toBe("clear");
+  });
+
+  /** A grove made to order: the given tree, notched `dir`, stopped bang on the mark. */
+  function fell(seed: number, cell: number, dir: Dir8, edit: (s: GatherState) => void = () => undefined) {
+    const state = startGather("felling", seed, 30);
+    edit(state);
+    const aimed = stepGather(state, { t: "aim", cell, dir }).state;
+    const m = aimed.aim!.motion;
+    let at = 0;
+    while (timingGrade(m, at) !== "perfect") at++;
+    return stepGather(aimed, { t: "push", at }).state;
+  }
+
+  it("felling: a clean swing lands where notched and pays wood, one more for a tall tree", () => {
+    let tallSeen = false;
+    for (let seed = 1; seed <= 100; seed++) {
+      const end = fell(seed, 3, 6, (s) => (s.trees[3] = "sound"));
+      const fall = end.grove!.falls[3];
+      expect(fall).toEqual({ aimed: 6, dir: 6, outcome: "clear" });
+      const check = end.log.at(-1)!.check!;
+      const tall = end.grove!.tall[3];
+      expect(end.haul).toEqual(check.successes ? { wood: check.successes + (tall ? 1 : 0) } : {});
+      if (tall && check.successes) tallSeen = true;
+    }
+    expect(tallSeen).toBe(true);
+  });
+
+  it("felling: hung up or in the creek pays nothing; a den pays fur; a rotten tree never pays", () => {
+    for (let seed = 1; seed <= 60; seed++) {
+      const hung = fell(seed, 4, 6, (s) => (s.trees[4] = "sound"));
+      expect(hung.grove!.falls[4].outcome).toBe("hung");
+      expect(hung.haul).toEqual({});
+      expect(hung.status).toBe("active");
+      expect(hung.picked).toContain(4);
+      const creek = fell(seed, 1, 0, (s) => (s.trees[1] = "sound"));
+      expect(creek.grove!.falls[1].outcome).toBe("creek");
+      expect(creek.haul).toEqual({});
+      const den = fell(seed, 3, 6, (s) => (s.trees[3] = "den"));
+      expect(Object.keys(den.haul).every((k) => k === "fur")).toBe(true);
+      const rotten = fell(seed, 3, 6, (s) => (s.trees[3] = "rotten"));
+      expect(rotten.haul).toEqual({});
+      // A rotten tree twists 45° or 90° whatever the stop.
+      expect(rotten.grove!.falls[3].dir).not.toBe(6);
+    }
+  });
+
+  it("felling: onto the pile smashes the haul, unless both rolls landed", () => {
+    let busts = 0;
+    let saved = 0;
+    for (let seed = 1; seed <= 200; seed++) {
+      const end = fell(seed, 8, 4, (s) => {
+        s.trees[8] = "sound";
+        s.haul = { wood: 3 };
+      });
+      expect(end.grove!.falls[8].outcome).toBe("pile");
+      if (end.log.at(-1)!.check!.perfect) {
+        saved++;
+        expect(end.status).toBe("active");
+        expect(end.haul).toEqual({ wood: 3 });
+      } else {
+        busts++;
+        expect(end.status).toBe("bust");
+        expect(end.haul).toEqual({});
+      }
+    }
+    expect(busts).toBeGreaterThan(0);
+    expect(saved).toBeGreaterThan(0);
+  });
+
+  it("felling: the wind veers a step at most between trees", () => {
+    for (let seed = 1; seed <= 100; seed++) {
+      const end = fell(seed, 3, 6);
+      const before = startGather("felling", seed, 30).grove!.wind;
+      const after = end.grove!.wind;
+      const turn = Math.min((after.dir - before.dir + 8) % 8, (before.dir - after.dir + 8) % 8);
+      expect(turn).toBeLessThanOrEqual(1);
+      expect(Math.abs(after.strength - before.strength)).toBeLessThanOrEqual(1);
+    }
+  });
+
+  it("felling: an outing from before the grove can only be carried home", () => {
+    const old = { ...startGather("felling", 9, 9), grove: undefined, timed: false, haul: { wood: 2 } };
+    expect(stepGather(old, { t: "push", cell: 0 }).error).toMatch(/carry it home/i);
+    expect(stepGather(old, { t: "aim", cell: 0, dir: 4 }).error).toBeDefined();
+    expect(stepGather(old, { t: "knock", cell: 0 }).error).toBeDefined();
+    expect(gatherView(old).grove).toBeNull();
+    const banked = stepGather(old, { t: "bank" }).state;
+    expect(gatherPayout(banked)).toEqual({ wood: 2 });
   });
 
   it("quarry: a fixed mix of blocks; a weak one is two cracks, a double miss is one", () => {
@@ -322,12 +499,12 @@ describe("gathering", () => {
     expect(view).not.toHaveProperty("seed");
     expect(view).not.toHaveProperty("rng");
     expect(JSON.stringify(view)).not.toContain(String(one.seed));
-    expect(view.trees!.filter((t) => t.kind !== null)).toHaveLength(1);
-    expect(view.trees![safe]).toMatchObject({ picked: true, kind: "sound" });
-    expect(view.trees![safe].near).toBeTypeOf("number");
+    expect(view.grove!.trees.filter((t) => t.kind !== null)).toHaveLength(1);
+    expect(view.grove!.trees[safe]).toMatchObject({ picked: true, kind: "sound" });
+    expect(view.grove!.trees[safe].fall).not.toBeNull();
     // Once it is over the whole stand is shown.
-    expect(gatherView(play(one, { t: "bank" }).state).trees!.every((t) => t.kind !== null)).toBe(true);
-    expect(gatherView(startGather("fishing", 1, 9)).trees).toBeNull();
+    expect(gatherView(play(one, { t: "bank" }).state).grove!.trees.every((t) => t.kind !== null)).toBe(true);
+    expect(gatherView(startGather("fishing", 1, 9)).grove).toBeNull();
     // Nor where the school is, until the outing is over.
     const water = startGather("fishing", 7, 9);
     expect(gatherView(water).water!.school).toBeNull();
@@ -380,22 +557,21 @@ describe("resting", () => {
 });
 
 describe("timed gathering", () => {
-  it("makes fishing and the quarry aim first, and felling not", () => {
-    for (const spot of ["fishing", "quarry"] as const) {
+  it("makes every spot aim first", () => {
+    for (const spot of ["fishing", "quarry", "felling"] as const) {
       const state = startGather(spot, 4, 9);
       expect(state.timed).toBe(true);
       expect(stepGather(state, { t: "push" }).error).toBeDefined();
-      const aimed = stepGather(state, { t: "aim", cell: 1, now: 1000 }).state;
+      const aimed = stepGather(state, { t: "aim", cell: 1, now: 1000, ...(spot === "felling" ? { dir: 4 } : {}) }).state;
       expect(aimed.aim).toMatchObject({ cell: 1, startedAt: 1000 });
       expect(gatherView(aimed).aim!.motion).toEqual(aimed.aim!.motion);
       expect(gatherView(aimed)).not.toHaveProperty("aim.startedAt");
       // One marker at a time.
-      expect(stepGather(aimed, { t: "aim", cell: 2 }).error).toBeDefined();
+      expect(stepGather(aimed, { t: "aim", cell: 2, dir: 4 }).error).toBeDefined();
       const stopped = stepGather(aimed, { t: "push", at: 300 }).state;
       expect(stopped.aim).toBeUndefined();
       expect(stopped.log.at(-1)!.timing).toBeDefined();
     }
-    expect(stepGather(startGather("felling", 4, 9), { t: "aim", cell: 0 }).error).toBeDefined();
   });
 
   it("grades a stop by how near the marker was to the mark, and too slow is a miss", () => {
