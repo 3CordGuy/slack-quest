@@ -20,7 +20,8 @@ import { Storm } from "./storm";
 import { addWindSway, updateWind } from "./wind";
 import { OVERLAY_LAYER, PostFx, type Air } from "./post";
 import { makeFigure, type Figure } from "./figures";
-import { NIGHT, VEIL_OPEN_S, Veil } from "./veil";
+import { Rise } from "./rise";
+import { NIGHT, VEIL_CLEAR_S, Veil } from "./veil";
 import { GROUND_KIND, addFancyWater, addWaterRipple, setGroundWet, setWaterNight, setWaterStanding, shoreSide, updateWater, waterAttribute, type Standing } from "./water";
 import { ghostModel, propModel, tintGhost, type LightKind } from "./props";
 import { nearWater, openEar, sounds } from "../audio/gameSounds";
@@ -587,9 +588,11 @@ export class WorldRenderer {
   private frames = 0;
   /** Frames drawn with the place built, until the veil starts to open; -1 once it has. */
   private settling = 0;
-  /** The veil over the view while its place is built (a backdrop, seen only through windows, has none), and when it began to open. */
+  /** The veil over the view while its place is built (a backdrop, seen only through windows, has none), and when it began to clear. */
   private veil: Veil | null = null;
   private openedAt = 0;
+  /** The place growing up round your hex as the veil clears; null once it is all up. */
+  private rise: Rise | null = null;
   private mapCode = "";
   private ambience: Ambience;
   private decor = new THREE.Group();
@@ -710,7 +713,10 @@ export class WorldRenderer {
     this.renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: "low-power" });
     this.renderer.setPixelRatio(1);
     this.renderer.localClippingEnabled = true;
-    if (!this.opts.backdrop) this.veil = new Veil();
+    if (!this.opts.backdrop) {
+      this.veil = new Veil();
+      this.rise = new Rise();
+    }
     // Dev server only: the latest view, for reading draw calls (`__gqWorld.renderer.info.render.calls`) from the console.
     if (import.meta.env.DEV && !this.opts.backdrop) (globalThis as { __gqWorld?: WorldRenderer }).__gqWorld = this;
     const canvas = this.renderer.domElement;
@@ -3929,6 +3935,8 @@ export class WorldRenderer {
         unit.ring.scale.set(s, s, 1);
       }
       if (unit.label) {
+        // A plate waits for the ground under it to come up.
+        if (this.rise) unit.label.visible = unit.root.visible && this.rise.reached(p.x, p.z);
         unit.label.position.set(p.x, ground + unit.label.userData.lift, p.z);
         const tall = unit.label.userData.rows * labelRow;
         unit.label.scale.set(tall * unit.label.userData.aspect, tall, 1);
@@ -4028,6 +4036,15 @@ export class WorldRenderer {
 
     for (const tick of this.tickers) tick(dt, this.camera, this.clock);
     this.ambience.settleShadows();
+    // Until the veil starts to clear, the place is all down but the hex you stand on (or the middle of the view).
+    if (this.rise) {
+      if (this.settling >= 0) {
+        const mine = this.state?.you ? this.units.get(this.state.you) : undefined;
+        const at = mine?.root.position ?? this.target;
+        this.rise.from(at.x, at.z - (mine ? 0.25 : 0));
+      }
+      this.rise.apply();
+    }
     if (this.post) {
       this.air.outdoors = this.ambience.openSky;
       this.air.clock = this.clock;
@@ -4041,25 +4058,36 @@ export class WorldRenderer {
       this.post.render(this.scene, this.camera, focus, this.ambience.night, this.air);
     }
     else this.renderer.render(this.scene, this.camera);
-    this.reveal();
+    this.rise?.clear();
+    this.reveal(dt);
   };
 
   /**
-   * The veil over the view: whole, with its loading mark, until the place is built and has been drawn a few
-   * times; then it opens, and once open it is put away.
+   * Arriving. The veil is whole, with the game's mark on it, until the place is built and has been drawn a few
+   * times. Then it clears, and under it the place grows up from the hex you stand on (see rise.ts).
    */
-  private reveal() {
-    if (!this.veil) return;
+  private reveal(dt: number) {
     if (this.settling >= 0 && this.terrain && ++this.settling >= REVEAL_FRAMES) {
       this.settling = -1;
       this.openedAt = this.clock;
     }
-    const cover = this.settling >= 0 ? 1 : 1 - (this.clock - this.openedAt) / VEIL_OPEN_S;
+    // The ring sets out once the veil is half gone, so the growing is seen rather than done behind it.
+    if (this.rise && this.settling < 0 && this.clock - this.openedAt > VEIL_CLEAR_S * 0.5) {
+      // As far as the furthest of the land from where it began, and a hex or two of shore beyond.
+      this.rise.step(dt, Math.hypot(this.land.x - this.rise.centre.x, this.land.z - this.rise.centre.y) + this.land.reach + 4);
+      if (!this.rise.active) {
+        this.rise = null;
+        for (const unit of this.units.values()) if (unit.label && unit.root.visible) unit.label.visible = true;
+      }
+    }
+    if (!this.veil) return;
+    const cover = this.settling >= 0 ? 1 : 1 - (this.clock - this.openedAt) / VEIL_CLEAR_S;
     if (cover <= 0) {
       this.veil.dispose();
       this.veil = null;
       return;
     }
-    this.veil.draw(this.renderer, cover, this.clock, this.camera.aspect);
+    // Four screen pixels to one of the veil's, however finely the world is drawn.
+    this.veil.draw(this.renderer, cover, this.clock, this.fine * 2);
   }
 }
