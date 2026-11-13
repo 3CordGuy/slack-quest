@@ -222,6 +222,8 @@ export interface StoryFrame {
   spines: { npcAt: NpcPlace[]; lead: Lead[]; ending: Ending[] };
   /** For a trail: the cache that reveals the lair, its name on the map, and what the islander says it is. */
   trail?: { poi: "cache1" | "cache2"; name: string; text: string };
+  /** Where the brief says the one who can help is found, when it is not one of the island places (a cave mouth). */
+  npcPlace?: string;
   /** How the brief describes each ending, completing "The story ends when …". */
   endings?: Partial<Record<Ending, string>>;
   /** How the brief describes what the islander knows, when it is not the way to a lair. */
@@ -236,7 +238,13 @@ const DEMANDS = {
   pray: { id: "pray", text: "pay your respects at the old shrine", fact: "prayed:shrine" },
 } satisfies Record<string, Demand>;
 
-const CAMP_ENCOUNTERS = [["bandit", "wolf"], ["bandit", "bandit"], ["archer", "bandit"], ["brute"], ["wolf", "wolf", "wolf"], ["cultist", "archer"]];
+const CAMP_ENCOUNTERS = [["bandit", "wolf"], ["bandit", "bandit"], ["archer", "bandit"], ["brute"], ["wolf", "wolf", "wolf"], ["cultist", "archer"], ["bear"]];
+/**
+ * A beast hunt whose beast is a bear (its description says so), so the den
+ * holds a Great Bear and not a pack leader. Singular only: one beast is "a
+ * bear", while "bears" is as often the verb ("bears a grudge").
+ */
+export const isBearHunt = (fill: Pick<StoryFill, "villain_description">) => /\bbear\b/i.test(fill.villain_description);
 const charm = (fill: StoryFill, gate: Gate): Capability => ({ id: "give_charm", verb: "give_item", item: "charm", itemName: fill.charm_name, gate });
 const revealLair = (fill: StoryFill): Capability => ({ id: "reveal_lair", verb: "reveal_location", poi: "lair", poiName: fill.lair_name, gate: "demand" });
 const callGuard: Capability = { id: "call_guard", verb: "start_combat", enemies: ["bandit"], gate: "provoked" };
@@ -367,12 +375,21 @@ export const STORY_FRAMES: StoryFrame[] = [
       "its signs, which lie at two spots on the island, and owns a protective charm. There is no human villain: the beast is the threat.",
     fields: {
       relic: "what the beast has been taking or ruining, starting with \"the\" (the flocks, the night catch)",
-      villain: "what islanders call the beast, e.g. \"the Grey Widow\"; its description says what kind of animal it is",
+      villain: "what islanders call the beast, e.g. \"the Grey Widow\"; its description says plainly what kind of animal it is (a wolf or a bear)",
       lair: "the beast's den, starting with \"the\"",
     },
     hints: {
       relic: ["the flocks", "the night catch", "the hives", "the orchard pickers' nerve", "the island's hounds", "the winter stores"],
-      villain: ["an enormous old wolf with one white eye", "a wolf-mother leading a starving pack", "a hound gone feral and grown huge", "a pale wolf the islanders think is a ghost", "a scarred pack leader that has learned to open gates"],
+      villain: [
+        "an enormous old wolf with one white eye",
+        "a wolf-mother leading a starving pack",
+        "a hound gone feral and grown huge",
+        "a pale wolf the islanders think is a ghost",
+        "a scarred pack leader that has learned to open gates",
+        "a great cave bear woken too early from its winter sleep",
+        "an old one-eared bear that tears open storehouse doors",
+        "a she-bear grown bold and enormous on stolen stores",
+      ],
     },
     doomRounds: 18,
     demands: [DEMANDS.clear_camp, DEMANDS.earn_trust, DEMANDS.pray],
@@ -394,7 +411,10 @@ export const STORY_FRAMES: StoryFrame[] = [
         finalObjective: home ? "return" : "slay",
         rites: home ? [{ id: "return", poi: home, requires: ["defeated:lair"], sets: `returned:${home}`, label: `Show ${fill.npc_name} the kill`, text: `${fill.npc_name} turns the trophy over in their hands and nods.` }] : [],
         triggers: [{ requires: ["searched:cache1", "searched:cache2"], reveal: "lair" }],
-        encounters: { lair: ["alpha", "wolf"], camp: [["wolf", "wolf"], ["bandit", "wolf"], ["archer", "bandit"]][fill.title.length % 3] },
+        // A bear dens alone and its country has bears in it; anything else is a wolf and its pack.
+        encounters: isBearHunt(fill)
+          ? { lair: ["great_bear"], camp: [["bear"], ["bandit", "wolf"], ["bear"]][fill.title.length % 3] }
+          : { lair: ["alpha", "wolf"], camp: [["wolf", "wolf"], ["bandit", "wolf"], ["archer", "bandit"]][fill.title.length % 3] },
         route: ["landing", spine.npcAt, "cache1", "cache2", "lair", ...(home ? [home] : [])],
         poiNames: { cache1: "Tracks near the shore", cache2: "The kill site" },
         victoryLine: `${fill.villain_name} is dead, and ${fill.relic_name} can rest easy.`,
@@ -557,6 +577,66 @@ export const STORY_FRAMES: StoryFrame[] = [
   },
 ];
 
+/**
+ * Stories for the Haunted Caverns. Shorter than an island's: the haunt is
+ * bound by something lost down one passage or the other, and either will do.
+ * The party picks a way at the fork (past the smugglers' camp or the drowned
+ * shrine), finds what binds the haunt, faces it in the deep chamber, and lays
+ * it to rest with what they found.
+ */
+export const CAVERN_FRAMES: StoryFrame[] = [
+  {
+    id: "restless_haunt",
+    brief:
+      "Behind the heroes' home port, an old smugglers' cave runs back into the rocks. Something down there has woken and haunts the " +
+      "town at night. Past the first chamber the tunnels fork: one way runs by the smugglers' old camp, the other down to a drowned " +
+      "shrine. Somewhere down one passage or the other lies what binds the haunt; with it, the haunt can be faced in the deep chamber " +
+      "and laid to rest. The one who can help owns a protective charm.",
+    fields: {
+      relic: "what binds the haunt, starting with \"the\" (its bones, a drowned bell, a smuggler's ledger)",
+      villain: "the haunt: who it was in life, e.g. \"Black Annet, the smugglers' queen\"; its description says how it haunts the town",
+      lair: "the deep chamber where it is bound, starting with \"the\"",
+    },
+    hints: {
+      relic: ["its own bones", "a drowned ship's bell", "a smuggler's ledger of debts", "a lantern that never went out", "a wedding ring", "a sealed letter never sent"],
+      villain: ["a smugglers' queen betrayed by her crew", "a lamplighter who drowned in the tunnels", "a miner who dug too deep", "a child who hid from the press-gang and was never found", "a harbourmaster who sold the town out"],
+    },
+    npcPlace: "is an old smuggler who sits at the cave mouth and knows the stories",
+    leads: { told: "They know the way to the deep chamber, and will tell it once they trust the heroes." },
+    endings: { fight: "the haunt is faced in the deep chamber and laid to rest with what binds it" },
+    doomRounds: 9,
+    demands: [DEMANDS.earn_trust, DEMANDS.clear_camp, DEMANDS.pray],
+    spines: { npcAt: ["landing"], lead: ["told"], ending: ["fight"] },
+    plan: (fill, rng) => ({
+      capabilities: [revealLair(fill), charm(fill, "persuade")],
+      objectives: [
+        { id: "meet", text: `Hear ${fill.npc_name} out at the cave mouth`, fact: "met:npc1" },
+        { id: "bind", text: `Find ${fill.relic_name}, down one passage or the other`, fact: "found:binding" },
+        { id: "face", text: `Face ${fill.villain_name} in ${fill.lair_name}`, fact: "defeated:lair" },
+        { id: "rest", text: `Lay ${fill.villain_name} to rest with ${fill.relic_name}`, fact: "rested:lair" },
+      ],
+      finalObjective: "rest",
+      rites: [
+        // Either passage's cache holds it; whichever the party reaches first.
+        { id: "find_west", poi: "cache1", requires: [], sets: "found:binding", label: `Take up ${fill.relic_name}`, text: `${fill.relic_name}, found at last in the west passage.` },
+        { id: "find_east", poi: "cache2", requires: [], sets: "found:binding", label: `Take up ${fill.relic_name}`, text: `${fill.relic_name}, found at last in the east passage.` },
+        { id: "rest", poi: "lair", requires: ["found:binding", "defeated:lair"], sets: "rested:lair", label: `Lay ${fill.villain_name} to rest`, text: `${fill.villain_name} goes quiet, and the caverns with it.` },
+      ],
+      // What binds the haunt knows the way down.
+      triggers: [{ requires: ["found:binding"], reveal: "lair" }],
+      encounters: {
+        // The smugglers' camp is held by the smugglers, long dead.
+        camp: rng.pick([["skeleton", "skeleton"], ["skeleton", "bat", "bat"], ["skeleton", "slime"]]),
+        lair: ["haunt", rng.pick(["shade", "skeleton"])],
+      },
+      route: ["landing", "cache1", "lair"],
+      poiNames: { landing: "The cave mouth", camp: "The smugglers' camp", cache1: "The west passage", cache2: "The east passage", shrine: "The drowned shrine" },
+      victoryLine: `${fill.villain_name} is laid to rest, and the Harbor sleeps easy again.`,
+      defeatLine: `${fill.villain_name} still walks the caverns, and the Harbor lies awake.`,
+    }),
+  },
+];
+
 /** The spine a frame takes when none is picked: the first of each of its options. */
 export function defaultSpine(frame: StoryFrame): Spine {
   return { npcAt: frame.spines.npcAt[0], lead: frame.spines.lead[0], ending: frame.spines.ending[0] };
@@ -586,7 +666,7 @@ export function demandsFor(frame: StoryFrame, spine: Spine): Demand[] {
 
 /** The brief handed to the model: the frame's own, plus where the islander is, how the way is found, and how it ends. */
 export function storyBrief(frame: StoryFrame, spine: Spine): string {
-  const parts = [frame.brief, `The islander who can help ${NPC_PLACE_TEXT[spine.npcAt].brief}.`];
+  const parts = [frame.brief, frame.npcPlace ? `The one who can help ${frame.npcPlace}.` : `The islander who can help ${NPC_PLACE_TEXT[spine.npcAt].brief}.`];
   const lead = frame.leads?.[spine.lead];
   if (lead) parts.push(lead);
   else if (spine.lead === "trail" && frame.trail) parts.push(`They cannot say where the lair is, but they know ${frame.trail.text}.`);
@@ -597,7 +677,12 @@ export function storyBrief(frame: StoryFrame, spine: Spine): string {
 }
 
 export function frameById(id: string): StoryFrame | undefined {
-  return STORY_FRAMES.find((f) => f.id === id);
+  return STORY_FRAMES.find((f) => f.id === id) ?? CAVERN_FRAMES.find((f) => f.id === id);
+}
+
+/** The kinds of story a run can tell: an island's, or the Haunted Caverns'. */
+export function framesFor(kind: "voyage" | "caverns" = "voyage"): StoryFrame[] {
+  return kind === "caverns" ? CAVERN_FRAMES : STORY_FRAMES;
 }
 
 /**
@@ -606,10 +691,10 @@ export function frameById(id: string): StoryFrame | undefined {
  * so a crew never sails the same kind of story twice running and works
  * through the others before one comes round again.
  */
-export function pickFrame(rng: Rng, recent: string[] = []): StoryFrame {
-  const skip = new Set(recent.slice(0, Math.floor(STORY_FRAMES.length / 2)));
-  const fresh = STORY_FRAMES.filter((f) => !skip.has(f.id));
-  return rng.pick(fresh.length > 0 ? fresh : STORY_FRAMES);
+export function pickFrame(rng: Rng, recent: string[] = [], frames: StoryFrame[] = STORY_FRAMES): StoryFrame {
+  const skip = new Set(recent.slice(0, Math.floor(frames.length / 2)));
+  const fresh = frames.filter((f) => !skip.has(f.id));
+  return rng.pick(fresh.length > 0 ? fresh : frames);
 }
 
 /** Pick what the islander asks, avoiding the ask `recent` names (the crew's last) when there is another. */
@@ -972,6 +1057,25 @@ export const CANNED_FILLS: Record<string, StoryFill[]> = {
       npc_knowledge: ["The pack takes hounds alive more often than not.", "There are signs near the shore and a kill site inland.", "The leader is always last to leave and first to turn."],
       charm_name: "Kennel-keeper's Whistle",
     },
+    {
+      title: "The Sleepless Sow",
+      premise:
+        "The winter stores of Hollin have been broken open three nights running, the doors torn off their pins and the barrels rolled away. " +
+        "Something that should be asleep in a cave until spring is awake, hungry and huge, and nobody has found where it lies up.",
+      island_name: "Hollin",
+      villain_name: "the Sleepless Sow",
+      villain_description: "A great cave bear woken too early from her winter sleep, grown bold on the island's stores.",
+      relic_name: "the winter stores",
+      lair_name: "the Sow's Barrow",
+      npc_name: "Wenna Crale",
+      npc_role: "beekeeper and trapper",
+      npc_persona: "Calm, weathered and wry, more worried for the bear than afraid of it. Hates waste.",
+      npc_voice: "Low and even, speaks in short sentences, hums when she is thinking.",
+      npc_goal: "Wants hunters steady enough to finish the bear before the island starves or someone gets killed trying.",
+      npc_secret: "Her smoke drove the bear out of its cave in the first place, when she went after a wild hive.",
+      npc_knowledge: ["The bear raids by night and sleeps off the day.", "There are tracks near the shore and a torn-open store inland.", "Her roar can freeze a grown man where he stands."],
+      charm_name: "Trapper's Bear Claw",
+    },
   ],
   broken_relic: [
     {
@@ -1091,6 +1195,46 @@ export const CANNED_FILLS: Record<string, StoryFill[]> = {
       npc_secret: "He has been praying for the curse to come back for years, so the island would remember her.",
       npc_knowledge: ["Each of the three stones answers to the same words.", "Raiders squat by the third stone in the wilds.", "Ebba's Rock is the old shrine, where she was drowned."],
       charm_name: "Ebba's Fishbone Cross",
+    },
+  ],
+  restless_haunt: [
+    {
+      title: "The Queen Under the Rock",
+      premise:
+        "Every night this week the Harbor's lamps have gone out at the same hour, and something has been heard singing in the rocks behind the town. " +
+        "The old folk say Black Annet is awake again: the smugglers' queen whose crew sealed her in the caves rather than share her silver.",
+      island_name: "the Smugglers' Caves",
+      villain_name: "Black Annet",
+      villain_description: "A smugglers' queen betrayed and walled in by her own crew, who now puts out every lamp in the Harbor looking for them.",
+      relic_name: "Annet's own bones",
+      lair_name: "the Sealed Vault",
+      npc_name: "Old Teague",
+      npc_role: "retired smuggler",
+      npc_persona: "Wheezing, sly and secretly terrified. Tells the truth only to people who buy him a drink first, in spirit if not in fact.",
+      npc_voice: "Low and conspiratorial, calls everyone 'matey', taps his nose when he lies.",
+      npc_goal: "Wants Annet laid to rest before she finds out who helped wall her in.",
+      npc_secret: "He was the youngest of the crew that sealed her in.",
+      npc_knowledge: ["The tunnels fork past the first chamber; both ways lead down eventually.", "Her bones were never buried, only left where she fell.", "She hates the light, and worse, she hates traitors."],
+      charm_name: "Teague's Lucky Doubloon",
+    },
+    {
+      title: "The Lamplighter's Last Round",
+      premise:
+        "Wick Harrow lit the Harbor's lamps for forty years until the night he went into the caves after a lost child and never came out. " +
+        "Now his lantern is seen moving in the rocks at night, and the lamps he lit will not stay lit.",
+      island_name: "the Lamplighter's Caves",
+      villain_name: "Wick Harrow",
+      villain_description: "A drowned lamplighter still making his last round through the caves, dragging the living along to light his way.",
+      relic_name: "the lantern that never went out",
+      lair_name: "the Flooded Gallery",
+      npc_name: "Moll Ashby",
+      npc_role: "the child Wick went looking for, now grown and grey",
+      npc_persona: "Quiet, guilty and stubborn. Brings a fresh candle to the cave mouth every evening.",
+      npc_voice: "Soft and careful, never says his name aloud, calls him 'the old man'.",
+      npc_goal: "Wants the old man to finish his round and rest, and to say sorry to him somehow.",
+      npc_secret: "She wasn't lost that night; she was hiding from him because she had broken his lamp.",
+      npc_knowledge: ["Past the first chamber the tunnels split, but both come together again further down.", "His lantern is still down there somewhere.", "He can't abide being in the dark himself."],
+      charm_name: "Moll's Evening Candle",
     },
   ],
 };

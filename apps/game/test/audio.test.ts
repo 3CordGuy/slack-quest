@@ -9,7 +9,8 @@ import { AUDIO } from "../src/client/audio/manifest";
 import { MixStore, faderDb, faderGain, parseSettings } from "../src/client/audio/mixer";
 import { soundName, soundNames } from "../src/client/audio/names";
 import { nearWater } from "../src/client/audio/gameSounds";
-import { TakePicker, curveAt, distanceGain, expandFiles, placeSound, resolveName, slug, untilNextLine } from "../src/client/audio/select";
+import { TakePicker, chooseTakes, curveAt, distanceGain, expandFiles, placeSound, resolveName, slug, untilNextLine } from "../src/client/audio/select";
+import { synthIndex } from "../src/client/audio/synth";
 import { readWav } from "../scripts/audio/wav";
 
 describe("sounds placed in the world", () => {
@@ -222,5 +223,57 @@ describe("reading masters", () => {
     const path = join(mkdtempSync(join(tmpdir(), "gq-audio-")), "loop.wav");
     writeFileSync(path, Buffer.concat([head, fmt, data, smpl]));
     expect(readWav(path)).toEqual({ sampleRate: 48000, channels: 2, duration: 1, loop: { start: 0.25, end: 0.75 }, placeholder: false });
+  });
+});
+
+describe("built-in sounds", () => {
+  // A stand-in for the library: what synth.ts lists, beside a recording and a placeholder.
+  const index = synthIndex();
+  const keys = Object.keys(index);
+
+  it("gives every event that names a fallback something to play", () => {
+    for (const [name, ev] of Object.entries(AUDIO.events)) {
+      if (!ev.fallback) continue;
+      expect(expandFiles(ev.fallback, keys).length, name).toBeGreaterThan(0);
+    }
+  });
+
+  it("covers every footstep and combat sound the game asks for, so nothing is silent before recordings arrive", () => {
+    const covered = (names: string[]) => names.some((n) => AUDIO.events[n]?.fallback);
+    for (const biome of ["plains", "forest", "hills", "cobble", "rampart", "dock", "floor", "mud", "cave"]) expect(covered(soundName.footstep(biome)), biome).toBe(true);
+    for (const style of ["melee", "ranged", "magic"] as const) {
+      expect(covered(soundName.attack("Anything", style)), `attack ${style}`).toBe(true);
+      expect(covered(soundName.impact("Anything", style)), `impact ${style}`).toBe(true);
+      expect(covered(soundName.miss("Anything", style)), `miss ${style}`).toBe(true);
+    }
+    expect(covered(soundName.heal("Mend"))).toBe(true);
+    expect(covered(soundName.down({ side: "enemy", kind: "bandit" }))).toBe(true);
+    expect(covered(soundName.down({ side: "hero", kind: "qa_paladin" }))).toBe(true);
+    expect(covered(soundName.boss())).toBe(true);
+    expect(covered(["stinger.victory"])).toBe(true);
+    expect(covered(soundName.yourTurn())).toBe(true);
+  });
+
+  it("cuts with a blade and thumps with a mace, as before", () => {
+    expect(AUDIO.events[`impact.${slug("Quick Stab")}`]?.fallback).toBe("synth/combat/blade_*");
+    expect(AUDIO.events[`impact.${slug("Smite")}`]).toBeUndefined();
+    expect(AUDIO.events.impact.fallback).toBe("synth/combat/blunt_*");
+  });
+
+  it("plays a recording over a built-in sound, and a built-in sound over a placeholder", () => {
+    const ev = { files: "sfx/combat/hit_*", fallback: "synth/combat/blunt_*" };
+    const builtIn = keys.filter((k) => k.startsWith("synth/combat/blunt_"));
+    expect(chooseTakes(ev, [...keys, "sfx/combat/hit_1"], () => false)).toEqual(["sfx/combat/hit_1"]);
+    expect(chooseTakes(ev, [...keys, "sfx/combat/hit_1"], (k) => k === "sfx/combat/hit_1")).toEqual(builtIn);
+    expect(chooseTakes({ files: "sfx/combat/hit_*" }, [...keys, "sfx/combat/hit_1"], () => true)).toEqual(["sfx/combat/hit_1"]);
+    expect(builtIn.length).toBeGreaterThan(1);
+  });
+
+  it("lists each built-in take as a one-channel file the library renders rather than fetches", () => {
+    for (const key of keys) {
+      expect(index[key].synth, key).toBe(true);
+      expect(index[key].channels).toBe(1);
+      expect(index[key].duration).toBeGreaterThan(0);
+    }
   });
 });

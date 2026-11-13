@@ -17,12 +17,20 @@ const ARMED: ResourceKind[] = ["iron", "copper"];
 export const ENEMY_DROPS: Record<string, ResourceKind[]> = {
   wolf: BEAST,
   alpha: BEAST,
+  bear: BEAST,
+  great_bear: BEAST,
   bandit: ARMED,
   archer: ARMED,
   brute: ARMED,
   cultist: ARMED,
   villain: ARMED,
   guardian: ["stone"],
+  // The dead leave bones behind.
+  shade: ["bone"],
+  skeleton: ["bone", "iron"],
+  bat: ["fur"],
+  slime: ["mushrooms"],
+  haunt: ["bone"],
 };
 
 /** Units of material from one enemy: [min, max]. */

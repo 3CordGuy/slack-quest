@@ -36,6 +36,16 @@ export const PUB_BARKEEP = { id: "barkeep", name: "Old Tam" } as const;
 export const PUB_SALESMAN_POS: HexPos = at(10, 4);
 /** Where a customer stands to trade with the salesman. */
 export const PUB_TRADER: HexPos = at(9, 4);
+/**
+ * Where the day's regulars (see regulars.ts) stand, in the order they take
+ * them, each with the hex a customer walks to when the regular is clicked.
+ * Nobody else stands on a regular's spot, whether or not one is in.
+ */
+export const PUB_REGULAR_SPOTS: { pos: HexPos; stand: HexPos }[] = [
+  { pos: at(8, 2), stand: at(7, 2) },
+  { pos: at(1, 4), stand: at(2, 4) },
+  { pos: at(4, 7), stand: at(4, 6) },
+];
 
 export interface PubFitting {
   id: number;
@@ -73,9 +83,9 @@ export function pubRoom(): WorldMap {
   return { ...room, pois: [...room.pois, harborPoi("counter", "counter", PUB_COUNTER), harborPoi("dice", "dice", PUB_DICE), harborPoi("shoals", "shoals", PUB_SHOALS), harborPoi("trader", "trader", PUB_TRADER)] };
 }
 
-/** A walkable route across the pub, or null. The barkeep's side of the bar is his alone, and the salesmen's corner theirs. */
+/** A walkable route across the pub, or null. The barkeep's side of the bar is his alone, the salesmen's corner theirs, and the regulars' spots theirs. */
 export function pubPath(room: WorldMap, from: HexPos, to: HexPos): HexPos[] | null {
-  return hutPath(room, [...PUB_FITTINGS, PUB_BARKEEP_POS, PUB_SALESMAN_POS], from, to);
+  return hutPath(room, [...PUB_FITTINGS, PUB_BARKEEP_POS, PUB_SALESMAN_POS, ...PUB_REGULAR_SPOTS.map((s) => s.pos)], from, to);
 }
 
 // ---------- the menu ----------
@@ -144,6 +154,7 @@ export type PubServerMessage =
   | { type: "joined"; player: HarborPlayer }
   | { type: "left"; id: string }
   | { type: "moved"; id: string; path: HexPos[] }
+  | { type: "placed"; id: string; pos: HexPos }
   | { type: "said"; id: string; name: string; text: string }
   | { type: "dice"; table: DiceView | null }
   | { type: "diceError"; text: string }
@@ -154,5 +165,7 @@ export type PubServerMessage =
 export type PubClientMessage =
   | { type: "move"; to: HexPos }
   | { type: "say"; text: string }
+  /** Back to the door, for a stuck or lost hero. */
+  | { type: "unstick" }
   | { type: "dice"; action: DiceRequest }
   | { type: "shoals"; action: ShoalsRequest };

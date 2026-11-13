@@ -1,21 +1,28 @@
 // Inside a hut: a small room drawn by the same renderer as the Harbor, where
-// everyone present sees each other and the furniture. The owner picks pieces
-// out of the Storage panel to place them, makes new ones in the Craft panel,
-// and grows the hut from the Hut panel. Clicking a placed piece floats its
-// controls above it (HutToolbar); a container opens into a panel of its own.
-// A visiting crewmate can only look.
+// everyone present sees each other and the furniture.
+//
+// Clicking a piece uses it: the owner rests in their bed and opens their
+// chests, and anyone can warm up at a fire, read a shelf or look at the rest
+// (useOf in hutroom.ts). The hero walks over first, and while they stand
+// beside something usable its action floats over their head (TileAction).
+//
+// Decorating is a mode of its own, the owner's alone ("Decorate" in the bar):
+// the Storage and Craft panels, picking pieces up, setting them down, turning
+// them, putting them away. There, clicking a placed piece floats its controls
+// above it (HutToolbar). Leaving the mode lets go of anything carried.
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { SoundButton } from "./audio/SoundButton";
 import { useAudioScene } from "./audio/useAudioScene";
 import type { HexPos } from "@gantt-quest/core";
-import { FURNISHINGS, coveredHexes, craftProblem, footprintOf, hutPerks, hutRoom, hutTier, isMounted, isSmall, nextHutTier, placeProblem, placedFurnishings, poiAt, smallPlaceProblem, turnOf, upgradeProblem, wallPlaceProblem, wrapAngle, type Furnishing } from "@gantt-quest/world";
+import { FURNISHINGS, besideHexes, coveredHexes, hutPath, isBeside, useOf, useProblem, type FurnishingUse, craftProblem, footprintCentre, footprintOf, hexCentre, hexSpan, hutDoor, hutPerks, hutRoom, hutTier, isFlat, isMounted, isSmall, nextHutTier, placeProblem, placedFurnishings, poiAt, smallPlaceProblem, turnOf, upgradeProblem, wallPlaceProblem, wrapAngle, type Furnishing } from "@gantt-quest/world";
 import { api, type Hut, type Me } from "./api";
 import { CrewRoster } from "./CrewRoster";
 import { DragPanel } from "./DragPanel";
+import { OptionsMenu } from "./OptionsMenu";
 import { CostChips, PerkMeter, ResourceChips } from "./hutDrops";
 import { TileAction } from "./TileAction";
-import { HutToolbar, type ToolAction } from "./HutToolbar";
+import { HutToolbar, ICON, type ToolAction } from "./HutToolbar";
+import { PixelIcon } from "./PixelIcon";
 import { WorldRenderer, type PlaceTarget, type RenderState } from "./render/WorldRenderer";
 import { HutContainer } from "./HutContainer";
 import { HeroSheet, useHeroSheet } from "./HeroSheet";
@@ -58,6 +65,8 @@ function tags(defId: string): string[] {
   const out: string[] = [];
   if (def.size === "small") out.push("small");
   if (def.mount) out.push("wall");
+  if (def.flat) out.push("rug");
+  if (hexSpan(defId) > 1) out.push(`${hexSpan(defId)} hexes`);
   if (def.light) out.push(def.light === "fire" ? "fire" : "light");
   if (def.surface) out.push("top");
   if (def.storage) out.push(`holds ${def.storage}`);
@@ -67,6 +76,11 @@ function tags(defId: string): string[] {
 
 /** Everything that can be crafted, starter recipes first. */
 const RECIPES = Object.values(FURNISHINGS).filter((f) => f.recipe).sort((a, b) => Number(!!a.needsBlueprint) - Number(!!b.needsBlueprint));
+
+/** What a use is called, on the button over the hero's head and in the tooltip. */
+const USE_VERB: Record<FurnishingUse, string> = { rest: "Rest", open: "Open", warm: "Warm up", read: "Read", look: "Look" };
+/** Which use wins when the hero stands beside several things at once. */
+const USE_ORDER: FurnishingUse[] = ["rest", "open", "warm", "read"];
 
 /** Which panel a message belongs in. */
 type Where = "storage" | "craft" | "hut" | "box";
@@ -143,6 +157,13 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
     (id, text) => renderer.current?.say(id, text),
   );
   const { you, players, furnishings, canEdit, tier, owner } = hut;
+  /** Edit mode: the owner is decorating. Everything that changes the room happens only here; outside it a click uses a piece. */
+  const [editing, setEditing] = useState(false);
+  const decorating = canEdit && editing;
+  /** A piece to use once the hero has walked over to it. */
+  const [pending, setPending] = useState<number | null>(null);
+  /** Use a placed piece: walk over to it first if need be. Set further down, where everything it needs is known. */
+  const usePiece = useRef<(id: number) => void>(() => {});
   const room = useMemo(() => (tier === null ? null : hutRoom(tier)), [tier]);
   const placed = useMemo(() => placedFurnishings(furnishings), [furnishings]);
   const stored = furnishings.filter((f) => f.q === null && f.inId === null);
@@ -160,7 +181,15 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
       phase: "overworld",
       round: 0,
       map: room,
-      heroes: players.map((p) => ({ id: p.id, classId: p.classId, pos: p.pos, label: p.name, outfit: p.outfit, level: p.level, xp: p.xp })),
+      heroes: players.map((p) => {
+        // Lying on their bed after a rest, until they walk off (HutRoom's lie_down).
+        const bed = p.bed !== undefined ? placed.find((f) => f.id === p.bed) : undefined;
+        // In the middle of the bed: for a long one, between the hexes it covers rather than on its anchor.
+        const pillow = bed && footprintCentre(bed.defId, bed, { x: bed.x, z: bed.z, angle: turnOf(bed) });
+        const mid = bed && hexCentre(bed);
+        const lying = bed && pillow && mid ? { pos: { q: bed.q, r: bed.r }, asleep: true, at: { x: pillow.x - mid.x, z: pillow.z - mid.z, y: 0.3 } } : { pos: p.pos };
+        return { id: p.id, classId: p.classId, label: p.name, outfit: p.outfit, level: p.level, xp: p.xp, ...lying };
+      }),
       turn: null,
       battle: null,
       story: null,
@@ -183,6 +212,7 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
           selected: f.id === selected || f.id === holding,
           small,
           mount: !!mount,
+          flat: isFlat(f.defId),
           x: f.x,
           z: f.z,
           y: f.y,
@@ -192,9 +222,11 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
           covers: !small && !mount && f.onId === null ? coveredHexes(f.defId, f, { x: f.x, z: f.z, angle: turnOf(turned) }) : undefined,
         };
       }),
-      holding: held && canEdit ? { model: defOf(held)?.model ?? held.defId, small: isSmall(held.defId), mount: defOf(held)?.mount, facing: 0, angle: turn } : null,
+      holding: held && decorating
+        ? { model: defOf(held)?.model ?? held.defId, small: isSmall(held.defId), mount: defOf(held)?.mount, footprint: isSmall(held.defId) || defOf(held)?.mount ? undefined : footprintOf(held.defId), facing: 0, angle: turn }
+        : null,
     };
-  }, [ownerId, tier, room, players, you, placed, selected, holding, held, canEdit, turn, turning, lampOff, stamina]);
+  }, [ownerId, tier, room, players, you, placed, selected, holding, held, decorating, turn, turning, lampOff, stamina]);
   const latest = useRef(scene);
   latest.current = scene;
   const snapRef = useRef(snap);
@@ -203,12 +235,15 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
   // The renderer is created once; its click handler reads the current state through this ref.
   const click = useRef<(pos: HexPos) => void>(() => {});
   click.current = (pos) => {
-    const piece = placed.find((f) => same({ q: f.q, r: f.r }, pos));
-    if (canEdit && holding !== null) {
+    const piece = placed.find((f) => same({ q: f.q, r: f.r }, pos) && (decorating || !isFlat(f.defId)));
+    setPending(null);
+    if (!decorating && piece) {
+      usePiece.current(piece.id);
+    } else if (decorating && holding !== null) {
       // Clicking the piece being moved puts it back where it was. (Setting it down goes through `place`.)
       setSelected(holding);
       setHolding(null);
-    } else if (canEdit && piece) {
+    } else if (decorating && piece) {
       setSelected(piece.id);
     } else if (selected !== null) {
       // With a piece chosen, a click on the floor only lets go of it.
@@ -241,6 +276,8 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
     if (!room) return "Nothing is being carried.";
     const problem = placeProblem(room, rest, piece.defId, pos, spot);
     if (problem) return problem;
+    // A rug goes down under people's feet.
+    if (isFlat(piece.defId)) return null;
     const covered = coveredHexes(piece.defId, pos, spot).filter((h) => !turningInPlace || !same(h, pos));
     return players.some((p) => covered.some((h) => same(h, p.pos))) ? "Someone is standing there." : null;
   };
@@ -308,7 +345,14 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
   };
   const propClick = useRef<(id: number) => boolean>(() => false);
   propClick.current = (id) => {
-    if (!canEdit || holding !== null) return false;
+    // Outside edit mode a rug is floor: a click on it walks there, like a click on bare boards.
+    if (!decorating && isFlat(placed.find((f) => f.id === id)?.defId ?? "")) return false;
+    if (!decorating) {
+      setPending(null);
+      usePiece.current(id);
+      return true;
+    }
+    if (holding !== null) return false;
     setSelected((s) => (s === id ? null : id));
     return true;
   };
@@ -319,8 +363,6 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
     const r = new WorldRenderer(mount.current!, {
       onHexClick: (pos) => click.current(pos),
       onHover: setHover,
-      onHeroClick: heroSheet.onHeroClick,
-      onHeroHover: heroSheet.onHeroHover,
       onPropClick: (id) => propClick.current(Number(id)),
       onPropHover: (id) => setHoverProp(id === null ? null : Number(id)),
       onPlace: (target) => place.current(target),
@@ -385,7 +427,15 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
   const self = players.find((p) => p.id === you);
   const atDoor = !!self && !!room && poiAt(room, self.pos)?.kind === "door";
   const hoverPiece = (hoverProp !== null ? placed.find((f) => f.id === hoverProp) : undefined) ?? (hover ? placed.find((f) => same({ q: f.q, r: f.r }, hover) && f.onId === null && !isSmall(f.defId)) : undefined);
-  const tip = hoverPiece ? hoverPiece.label : hover && room && poiAt(room, hover)?.kind === "door" ? "The door" : null;
+  /** Over a piece: what it is and gives, and outside edit mode what a click does (or whose it is). */
+  const pieceTip = (f: Furnishing) => {
+    const about = `${f.label}: ${blurb("furnishing", f.defId)}`;
+    if (decorating) return about;
+    const use = useOf(f.defId);
+    const problem = useProblem(f.defId, canEdit, owner?.name);
+    return problem ? `${about} ${problem}` : use === "look" ? about : `${about} Click to ${USE_VERB[use].toLowerCase()}.`;
+  };
+  const tip = hoverPiece ? pieceTip(hoverPiece) : hover && room && poiAt(room, hover)?.kind === "door" ? "The door" : null;
   /** Ticks once a minute while a rest is cooling down, so "rest again in" counts down. */
   const [clock, setClock] = useState(() => Date.now());
   const coolingUntil = stamina?.restReadyAt ?? 0;
@@ -407,12 +457,14 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
     return () => clearTimeout(t);
   }, [notice]);
   const [resting, setResting] = useState(false);
-  const restAtHome = async () => {
+  /** Rest at home (the server checks the cooldown and that you are in your own hut). On a bed, lie down on it for everyone to see. */
+  const restAtHome = async (bedId?: number) => {
     setResting(true);
     try {
       const res = await api.rest("hut");
       setStamina(res);
       setClock(Date.now());
+      if (bedId !== undefined) hut.send({ type: "lie_down", id: bedId });
       setNotice({ text: `You wake rested: ${res.stamina.left} of ${res.stamina.max} outings.`, ok: true, n: Date.now() });
     } catch (e) {
       setNotice({ text: (e as Error).message, ok: false, n: Date.now() });
@@ -425,6 +477,86 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
     hut.send({ type: "say", text });
     setText("");
   };
+  /** Do what a piece does, standing beside it (or, for a look, from anywhere). */
+  const doUse = useRef<(piece: Furnishing) => void>(() => {});
+  doUse.current = (piece) => {
+    const about = blurb("furnishing", piece.defId);
+    const use = useOf(piece.defId);
+    if (use === "rest") {
+      if (restBlocked) return setNotice({ text: restBlocked, ok: false, n: Date.now() });
+      void restAtHome(piece.id);
+    } else if (use === "open") {
+      setOpened(piece.id);
+    } else if (use === "warm") {
+      setNotice({ text: `You warm your hands at the ${piece.label}. ${about}`, ok: true, n: Date.now() });
+    } else if (use === "read") {
+      setNotice({ text: `You leaf through the ${piece.label}. ${about}`, ok: true, n: Date.now() });
+    } else {
+      setNotice({ text: `${piece.label}: ${about}`, ok: true, n: Date.now() });
+    }
+  };
+  usePiece.current = (id) => {
+    const piece = placed.find((f) => f.id === id);
+    if (!piece || !room || !self) return;
+    const use = useOf(piece.defId);
+    // A visitor is told what it is and whose it is; the server would refuse them anyway.
+    const problem = useProblem(piece.defId, canEdit, owner?.name);
+    if (problem) return setNotice({ text: `${piece.label}: ${problem}`, ok: false, n: Date.now() });
+    if (use === "look") return doUse.current(piece);
+    // No walk across the room for a rest that will not happen.
+    if (use === "rest" && restBlocked) return setNotice({ text: restBlocked, ok: false, n: Date.now() });
+    if (isBeside(room, furnishings, piece, self.pos)) return doUse.current(piece);
+    const routes = besideHexes(room, furnishings, piece)
+      .map((h) => hutPath(room, furnishings, self.pos, h))
+      .filter((r): r is HexPos[] => !!r)
+      .sort((a, b) => a.length - b.length);
+    if (routes.length === 0) return setNotice({ text: `You cannot get to the ${piece.label}.`, ok: false, n: Date.now() });
+    hut.send({ type: "move", to: routes[0][routes[0].length - 1] });
+    setPending(piece.id);
+  };
+  // Once the hero has walked over and stopped, use what they walked to. Given up after a while (a refused walk).
+  useEffect(() => {
+    if (pending === null) return;
+    const piece = placed.find((f) => f.id === pending);
+    if (!piece || !room || !self || !isBeside(room, furnishings, piece, self.pos)) return;
+    // The walk is drawn frame by frame; a tab in the background barely draws, so do not wait on it for ever.
+    const since = Date.now();
+    const wait = setInterval(() => {
+      if (renderer.current?.isWalking(self.id) && Date.now() - since < 3000) return;
+      clearInterval(wait);
+      setPending(null);
+      doUse.current(piece);
+    }, 80);
+    return () => clearInterval(wait);
+  }, [pending, self?.pos.q, self?.pos.r, placed, furnishings, room]);
+  useEffect(() => {
+    if (pending === null) return;
+    const t = setTimeout(() => setPending(null), 10_000);
+    return () => clearTimeout(t);
+  }, [pending]);
+  /** Lying on their bed after a rest: the bar and the button over their head wait until they get up. */
+  const asleep = self?.bed !== undefined && placed.some((f) => f.id === self.bed);
+  /** What the hero stands beside and may use, for the button over their head: the most useful first. */
+  const besideUse = (() => {
+    if (decorating || !room || !self || asleep || pending !== null) return null;
+    const near = placed.filter((f) => useOf(f.defId) !== "look" && !useProblem(f.defId, canEdit) && isBeside(room, furnishings, f, self.pos));
+    near.sort((a, b) => USE_ORDER.indexOf(useOf(a.defId)) - USE_ORDER.indexOf(useOf(b.defId)));
+    const piece = near[0];
+    if (!piece) return null;
+    const use = useOf(piece.defId);
+    return { piece, label: use === "open" ? `Open ${piece.label}` : USE_VERB[use] };
+  })();
+  /** Leave edit mode: whatever was being carried goes back where it was, as Cancel does. */
+  const toggleEditing = () => {
+    setHolding(null);
+    setSelected(null);
+    setPending(null);
+    setEditing((on) => !on);
+  };
+  /** The bar's Rest: to the bed if there is one placed, else right where you stand. */
+  const bed = placed.find((f) => FURNISHINGS[f.defId]?.bed);
+  const restFromBar = () => (bed ? usePiece.current(bed.id) : void restAtHome());
+
   const pick = (id: number) => {
     const piece = furnishings.find((f) => f.id === id);
     if (piece) setTurn(turnOf(piece));
@@ -448,6 +580,11 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
   useEffect(() => {
     if (opened !== null && (!box || box.q === null)) setOpened(null);
   }, [opened, box]);
+  // Outside edit mode a chest is used standing beside it: walking away closes it.
+  const besideBox = !!box && !!room && !!self && isBeside(room, furnishings, box, self.pos);
+  useEffect(() => {
+    if (!decorating && opened !== null && box && !besideBox) setOpened(null);
+  }, [decorating, opened, box, besideBox]);
 
   // A refusal from the room shows as a toast, and goes after a few seconds.
   useEffect(() => setRefusal(hut.refused), [hut.refused]);
@@ -471,12 +608,9 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
 
   /** The floating controls for the chosen piece. */
   const tools: ToolAction[] = [];
-  if (chosen && canEdit && !held) {
+  if (chosen && decorating && !held) {
     tools.push({ key: "move", icon: "move", title: isMounted(chosen.defId) ? "Move: take it down and hang it somewhere else" : "Move: pick it up and set it down somewhere else", run: () => pick(chosen.id) });
     if (!isMounted(chosen.defId)) tools.push(...turnTools(chosen.defId));
-    if (chosen.defId === "bed") {
-      tools.push({ key: "rest", icon: "rest", title: restBlocked ?? "Rest: sleep here and wake with all your outings back", run: () => void restAtHome() });
-    }
     if (defOf(chosen)?.storage) {
       tools.push({ key: "open", icon: "open", title: opened === chosen.id ? "Close: hide what it holds" : "Open: see what it holds", active: opened === chosen.id, run: () => setOpened((o) => (o === chosen.id ? null : chosen.id)) });
     }
@@ -492,11 +626,20 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
         {tier !== null && <span className="muted">{hutTier(tier).name}</span>}
         <span className="spacer" />
         {hut.status !== "open" && !hut.error && <span className="bad">connecting…</span>}
-        <SoundButton />
         <button className="small" onClick={onLeave}>Leave</button>
+        <OptionsMenu
+          reset={hut.status !== "open" || tier === null ? undefined : {
+            to: "the door",
+            run: () => {
+              hut.send({ type: "unstick" });
+              renderer.current?.lookAt(hutDoor(tier));
+            },
+          }}
+          resetBlocked="Waiting for the hut to connect."
+        />
       </div>
 
-      {canEdit && (
+      {decorating && (
         <DragPanel id="hut.storage" title="Storage" foldOnPhone className="story panel hut-storage">
           {held ? (
             isMounted(held.defId) ? (
@@ -541,7 +684,7 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
         </DragPanel>
       )}
 
-      {canEdit && (
+      {decorating && (
         <DragPanel id="hut.craft" title="Craft" foldOnPhone startFolded className="panel hut-craft">
           {noteIn("craft")}
           {!own ? <p className="muted">Counting your materials…</p> : <>
@@ -549,7 +692,7 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
             <ul className="hut-recipes">
               {RECIPES.map((def) => {
                 const known = !def.needsBlueprint || own.blueprints.includes(def.id);
-                const problem = craftProblem(def.id, own.blueprints, own.resources);
+                const problem = craftProblem(def.id, own.blueprints, own.resources, tier ?? undefined);
                 return (
                   <li key={def.id} className={known ? "" : "locked"}>
                     <div className="with-icon">
@@ -557,6 +700,7 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
                       <span className="grow">
                       <strong>{label("furnishing", def.id)}</strong>
                       <span className="muted"> · {known ? blurb("furnishing", def.id) : "Blueprint not found yet. Islands hide them."}</span>
+                      {def.minTier && tier !== null && tier < def.minTier && <span className="muted"> Needs a {hutTier(def.minTier).name}.</span>}
                       </span>
                     </div>
                     <div className="row">
@@ -599,7 +743,7 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
           <ul className="hut-list">
             {placed.map((f) => (
               <li key={f.id}>
-                {canEdit ? (
+                {decorating ? (
                   <button className={selected === f.id || holding === f.id ? "selected" : ""} title={blurb("furnishing", f.defId)} onClick={() => {
                     setHolding(null);
                     setSelected((s) => (s === f.id ? null : f.id));
@@ -625,7 +769,7 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
             <button className="small" onClick={() => setOpened(null)}>Close</button>
           </div>
           {noteIn("box")}
-          <HutContainer box={box} furnishings={furnishings} own={own} bag={me.inventory} pack={me.carry} send={hut.send} act={act} carry={pick} />
+          <HutContainer box={box} furnishings={furnishings} own={own} bag={me.inventory} pack={me.carry} send={hut.send} act={act} carry={(id) => (setEditing(true), pick(id))} />
         </DragPanel>
       )}
 
@@ -641,7 +785,7 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
           you={you}
           heading={<>{players.length} in the hut</>}
           members={players.map((p) => ({ id: p.id, name: p.name, classId: p.classId, level: p.level, outfit: p.outfit, here: true, tags: p.id === ownerId && p.id !== you ? ["owner"] : undefined }))}
-          onOpen={heroSheet.onHeroClick}
+          onOpen={heroSheet.toggle}
           openId={heroSheet.open}
         />
       </DragPanel>
@@ -660,7 +804,10 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
 
       <DragPanel id="hut.turn" title="Here" compact className="turnbar panel hut-here">
         <p className={`hut-here-hint ${atDoor ? "" : "muted"}`}>
-          {atDoor ? "The door back to the Harbor." : canEdit ? "Click a hex to walk, or a piece for its controls." : `Only ${owner?.name ?? "the owner"} can move the furniture.`}
+          {atDoor ? "The door back to the Harbor."
+            : decorating ? "Decorating: click a piece for its controls, or pick one out of Storage. Done when you are finished."
+            : canEdit ? "Click a hex to walk, or a piece to use it: sleep in the bed, open a chest."
+            : `Click a piece to look at it. Only ${owner?.name ?? "the owner"} can move the furniture.`}
         </p>
         <div className="hut-here-row">
           {canEdit && (
@@ -671,7 +818,10 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
                   {restIn > 0 && <span className="muted"> rest in {restIn} min</span>}
                 </span>
               )}
-              <button disabled={resting || !!restBlocked} title={restBlocked ?? "Sleep here: all your gathering outings back, once every twenty minutes"} onClick={() => void restAtHome()}>Rest</button>
+              <button disabled={resting || !!restBlocked || asleep} title={restBlocked ?? (bed ? `Walk to your ${bed.label} and sleep: all your gathering outings back, once every twenty minutes` : "Sleep here: all your gathering outings back, once every twenty minutes")} onClick={restFromBar}>Rest</button>
+              <button className={`hut-decorate ${decorating ? "selected" : ""}`} aria-pressed={decorating} aria-label={decorating ? "Done decorating" : "Decorate"} title={decorating ? "Done decorating: back to using things (anything carried goes back where it was)" : "Decorate: move, turn, put away and craft furniture"} onClick={toggleEditing}>
+                <PixelIcon rows={ICON.hammer} /><span className="hut-decorate-label">{decorating ? "Done" : "Decorate"}</span>
+              </button>
             </>
           )}
           <span className="spacer" />
@@ -682,6 +832,7 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
         </div>
       </DragPanel>
       {atDoor && self && <TileAction renderer={renderer} pos={self.pos} unitId={self.id} label="Leave" run={onLeave} />}
+      {!atDoor && self && besideUse && <TileAction renderer={renderer} pos={self.pos} unitId={self.id} label={besideUse.label} run={() => doUse.current(besideUse.piece)} />}
       </>}
 
       {tip && <div className="tip">{tip}</div>}
@@ -691,7 +842,7 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
           <button className="primary" onClick={onLeave}>Back to the Harbor</button>
         </div>
       )}
-      {heroSheet.open && you && <HeroSheet id={heroSheet.open} you={you} pinned={heroSheet.pinned} onClose={heroSheet.close} />}
+      {heroSheet.open && you && <HeroSheet id={heroSheet.open} you={you} onClose={heroSheet.close} />}
     </div>
   );
 }

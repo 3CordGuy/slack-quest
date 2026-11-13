@@ -6,6 +6,7 @@ import { rewardText } from "@gantt-quest/world";
 import { api, type Board } from "../api";
 import { DragPanel } from "../DragPanel";
 import { RewardChips } from "../hutDrops";
+import { ErrandsNotice } from "./ErrandsNotice";
 import "./board.css";
 
 function timeLeft(endsAt: number): string {
@@ -66,6 +67,9 @@ export function NoticeBoard({ refresh, onClose }: { refresh(): Promise<unknown>;
                 </li>
               ))}
             </ul>
+
+            <h3>Errands at the pub</h3>
+            <ErrandsNotice />
           </>
         )}
       </DragPanel>

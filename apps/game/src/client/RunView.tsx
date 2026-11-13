@@ -2,7 +2,6 @@
 // the ship (lobby), the overworld, NPC conversation, battle and the ending.
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { SoundButton } from "./audio/SoundButton";
 import { useAudioScene } from "./audio/useAudioScene";
 import { hexDistance, type HexPos } from "@gantt-quest/core";
 import {
@@ -32,7 +31,8 @@ import { ContractStatus } from "./board/ContractStatus";
 import { BEAT_MS, BattleIntro, BattleRecap, FindCard, INTRO_BEATS, INTRO_MS, blowsIn, findFor, introFor, recapFor, settleBattle, type Find, type Intro, type Recap } from "./BattleBeats";
 import { BattleHud, useCountdown } from "./BattleHud";
 import { DragPanel } from "./DragPanel";
-import { SailingView } from "./SailingView";
+import { OptionsMenu } from "./OptionsMenu";
+import { SailingView, type SeaMode } from "./SailingView";
 import { HutSpoils, blueprintName, isTrophy, perkText, resourceText } from "./hutDrops";
 import { InventoryScreen } from "./InventoryScreen";
 import { Trading } from "./TradePanel";
@@ -43,8 +43,8 @@ import { itemName, label } from "./labels";
 import { Icon } from "./items";
 import { GOLD_ICON, ThingIcon, dishIcon } from "./thingIcons";
 
-/** The least time the crossing stays on screen once a ship has sailed. */
-const MIN_CROSSING_MS = 4500;
+/** The least time the ship is seen under way once she has sailed, before she makes landfall, so a quick story does not flash by. */
+const MIN_CROSSING_MS = 1200;
 
 const className = (id: string) => label("class", id);
 const POI_LABEL: Record<string, string> = { landing: "The Landing", hut: "Hut", lair: "Lair", shrine: "Old shrine", cache: "Hidden cache", camp: "Brigand camp" };
@@ -83,7 +83,12 @@ function describe(events: WorldEvent[], state: ClientState, names: Map<string, s
         );
         break;
       case "ambush": {
-        const who = ev.kinds.length > 1 ? `${ev.kinds.length} ${ev.kinds[0] === "wolf" ? "wolves" : "raiders"}` : ev.kinds[0] === "wolf" ? "a wolf" : "a raider";
+        const NAMES: Record<string, [string, string]> = {
+          wolf: ["a wolf", "wolves"], bear: ["a bear", "bears"],
+          shade: ["a shade", "shades"], bat: ["a bat", "bats"], skeleton: ["a skeleton", "skeletons"], slime: ["a slime", "slimes"],
+        };
+        const [one, many] = NAMES[ev.kinds[0]] ?? ["a raider", "raiders"];
+        const who = ev.kinds.length > 1 ? `${ev.kinds.length} ${many}` : one;
         out.push(ev.by === "band" ? `In the night ${who} ${ev.kinds.length > 1 ? "find" : "finds"} ${n(ev.heroId)}!` : `${n(ev.heroId)} runs into ${who} on the road!`);
         break;
       }
@@ -159,6 +164,13 @@ export function RunView({ code, me, refresh, onLeave }: { code: string; me: Me; 
   const [tradeWith, setTradeWith] = useState<string | null>(null);
   const mount = useRef<HTMLDivElement>(null);
   const renderer = useRef<WorldRenderer | null>(null);
+  /** The same renderer, as state, for the ship at sea to draw on once it exists. */
+  const [view, setView] = useState<WorldRenderer | null>(null);
+  /**
+   * The view is the crew's ship at sea (aboard, under way, or making landfall), not the island:
+   * the island's state is kept from the renderer until the ship is in. Set from the render below.
+   */
+  const atSea = useRef(false);
   const latest = useRef<ClientState | null>(null);
   const names = useRef(new Map<string, string>());
   const [feed, setFeed] = useState<string[]>([]);
@@ -179,7 +191,7 @@ export function RunView({ code, me, refresh, onLeave }: { code: string; me: Me; 
     holding.current = null;
     setHeld(null);
     setRecap(null);
-    if (latest.current) renderer.current?.setState(latest.current);
+    if (latest.current && !atSea.current) renderer.current?.setState(latest.current);
   };
   const [shown, setShown] = useState<Shown | null>(null);
   const [hover, setHover] = useState<HexPos | null>(null);
@@ -187,6 +199,8 @@ export function RunView({ code, me, refresh, onLeave }: { code: string; me: Me; 
   const run = useRun(code, (events, state) => {
     const prev = latest.current;
     latest.current = state;
+    // While the ship is at sea the island is not drawn; it is put on the view as she comes in (see `onIsland` below).
+    const island = atSea.current || state.phase === "lobby" || state.phase === "generating" ? null : renderer.current;
     for (const h of state.heroes) names.current.set(h.id, h.name);
     for (const c of state.battle?.combatants ?? []) names.current.set(c.id, c.name);
 
@@ -203,8 +217,8 @@ export function RunView({ code, me, refresh, onLeave }: { code: string; me: Me; 
       const frozen: ClientState = { ...prev, phase: "battle", battle: settled };
       holding.current = frozen;
       setHeld(frozen);
-      renderer.current?.setState(frozen);
-      renderer.current?.playEvents(events);
+      island?.setState(frozen);
+      island?.playEvents(events);
       const summary = recapFor(events, settled, state);
       clearTimeout(recapTimer.current);
       recapTimer.current = setTimeout(() => setRecap(summary), blowsIn(events) * BEAT_MS + 1100);
@@ -214,11 +228,11 @@ export function RunView({ code, me, refresh, onLeave }: { code: string; me: Me; 
       setIntro(opening);
       clearTimeout(introTimer.current);
       introTimer.current = setTimeout(() => setIntro(null), INTRO_MS);
-      renderer.current?.setState(state);
-      renderer.current?.playEvents(events, INTRO_BEATS);
+      island?.setState(state);
+      island?.playEvents(events, INTRO_BEATS);
     } else if (!holding.current) {
-      renderer.current?.setState(state);
-      renderer.current?.playEvents(events);
+      island?.setState(state);
+      island?.playEvents(events);
     }
     const lines = describe(events, state, names.current);
     if (lines.length) setFeed((f) => [...f, ...lines].slice(-40));
@@ -234,6 +248,8 @@ export function RunView({ code, me, refresh, onLeave }: { code: string; me: Me; 
   useEffect(() => {
     const r = new WorldRenderer(mount.current!, {
       onHexClick: (pos) => {
+        // At sea a click is for the landfall (it goes ashore), not for the island underneath.
+        if (atSea.current) return;
         const s = latest.current;
         // Clicking where an islander stands means "talk to them": the chat opens with its box ready to type in.
         const npc = s?.story?.npcs.find((n) => {
@@ -247,14 +263,13 @@ export function RunView({ code, me, refresh, onLeave }: { code: string; me: Me; 
         if (s?.phase === "overworld" && s.turn?.heroId === s.you) send.current({ type: "move", to: pos });
       },
       onHover: setHover,
-      onHeroClick: heroSheet.onHeroClick,
-      onHeroHover: heroSheet.onHeroHover,
     });
     renderer.current = r;
-    if (latest.current) r.setState(latest.current);
+    setView(r);
     return () => {
       r.dispose();
       renderer.current = null;
+      setView(null);
     };
   }, []);
 
@@ -279,36 +294,63 @@ export function RunView({ code, me, refresh, onLeave }: { code: string; me: Me; 
   // Dev-only handle for driving a run from the console or a test script.
   if (import.meta.env.DEV) (window as unknown as { __gq: unknown }).__gq = { state, send: run.send, World };
 
-  // The crossing is shown while the story is written, and for a few seconds at least, so a quick answer does not flash by.
-  const [sailing, setSailing] = useState(false);
+  // The ship at sea: aboard in the lobby, under way while the story is written, then landfall at the island.
+  // Only a crew that was aboard sees the landfall: anyone who arrives (or reloads) once the voyage is ashore goes straight to the island.
+  const phase = run.state?.phase;
+  // A delve into the Haunted Caverns takes no ship: no sea, no landfall. The party gathers at the cave mouth and goes down.
+  const caverns = run.state?.kind === "caverns";
+  const aboard = phase === "lobby" || phase === "generating";
+  const sawSea = useRef(false);
   const sailedAt = useRef(0);
-  const writing = state?.phase === "generating";
-  // In the lobby the ship is still moored at the Harbor; the crossing has its own scene (SailingView).
-  useAudioScene(!state || state.phase === "lobby" ? "harbor" : state.phase === "battle" ? "battle" : "island");
+  if (aboard) sawSea.current = true;
+  if (phase === "generating" && !sailedAt.current) sailedAt.current = Date.now();
+  const [landed, setLanded] = useState(false);
+  const arriving = !!phase && !aboard && sawSea.current && !landed;
+  const [makingLand, setMakingLand] = useState(false);
   useEffect(() => {
-    if (writing) {
-      sailedAt.current = Date.now();
-      setSailing(true);
-      return;
-    }
-    const left = Math.max(0, MIN_CROSSING_MS - (Date.now() - sailedAt.current));
-    const timer = setTimeout(() => setSailing(false), left);
+    if (!arriving) return;
+    const timer = setTimeout(() => setMakingLand(true), Math.max(0, MIN_CROSSING_MS - (Date.now() - sailedAt.current)));
     return () => clearTimeout(timer);
-  }, [writing]);
+  }, [arriving]);
+  const sea: SeaMode | null = caverns ? null : phase === "lobby" ? "moored" : phase === "generating" || (arriving && !makingLand) ? "crossing" : arriving ? "landfall" : null;
+  atSea.current = sea !== null;
+  // What is heard: the sea while the ship is out on it, the caverns or the island once ashore, the fight's music in a fight.
+  useAudioScene(
+    !state ? "harbor"
+    : caverns ? (aboard ? "harbor" : state.phase === "battle" ? "battle" : "caverns")
+    : sea ? "sailing"
+    : state.phase === "battle" ? "battle" : "island",
+  );
+  // A fight that breaks out while she is still coming in (a shipmate went ashore first) is not kept waiting.
+  useEffect(() => {
+    if (sea === "landfall" && phase === "battle") setLanded(true);
+  }, [sea, phase]);
+  // Ashore (or never at sea): the island goes on the view as it now is.
+  const atMouth = caverns && aboard;
+  const onIsland = !!phase && sea === null && !atMouth;
+  useEffect(() => {
+    const s = holding.current ?? latest.current;
+    if (onIsland && view && s) view.setState(s);
+  }, [onIsland, view]);
 
   return (
-    <div className={`run ${state?.phase === "battle" ? "in-battle" : ""}`}>
+    <div className={`run ${state?.phase === "battle" ? "in-battle" : ""} ${sea ? "at-sea" : ""}`}>
       <div className="stage" ref={mount} />
       {!state && <div className="overlay"><div className="panel">{run.error ?? "Hailing the ship…"}{run.error && <p><button onClick={onLeave}>Back to the Harbor</button></p>}</div></div>}
       {state && (
         <>
           <TopBar state={state} code={code} status={run.status} onLeave={onLeave} onInventory={() => { void refresh(); setInventory(true); }} />
           {state.phase === "lobby" && <Lobby state={state} run={run} code={code} />}
-          {sailing && <SailingView names={state.heroes.map((h) => h.name)} />}
-          {(state.phase === "overworld" || state.phase === "battle") && (
+          {!caverns && <SailingView view={view} mode={sea} island={run.state} names={state.heroes.map((h) => h.name)} onLanded={() => setLanded(true)} />}
+          {atMouth && (
+            <div className="cave-mouth" aria-hidden>
+              {state.phase === "generating" && <p className="cave-going-down">Lighting the torches and going down…</p>}
+            </div>
+          )}
+          {(state.phase === "overworld" || state.phase === "battle") && !sea && (
             <>
               <Story state={state} />
-              <Crew state={state} online={run.online} onTrade={ashore ? setTradeWith : undefined} />
+              <Crew state={state} online={run.online} onTrade={ashore ? setTradeWith : undefined} onOpen={state.phase === "overworld" ? heroSheet.toggle : undefined} openId={heroSheet.open} />
               <Feed lines={feed} />
               {state.phase === "overworld" && <TurnBar state={state} run={run} />}
               <SkipVoteBar state={state} run={run} />
@@ -321,7 +363,7 @@ export function RunView({ code, me, refresh, onLeave }: { code: string; me: Me; 
               {find && !held && !intro && <FindCard find={find} onDone={() => setFind(null)} />}
               {state.phase === "overworld" && heroSheet.open && (() => {
                 const h = state.heroes.find((x) => x.id === heroSheet.open);
-                return h && <HeroSheet id={h.id} you={state.you} pinned={heroSheet.pinned} onClose={heroSheet.close} live={{ hp: h.hp, maxHp: h.maxHp, focus: h.focus, maxFocus: h.maxFocus }} />;
+                return h && <HeroSheet id={h.id} you={state.you} onClose={heroSheet.close} live={{ hp: h.hp, maxHp: h.maxHp, focus: h.focus, maxFocus: h.maxFocus }} />;
               })()}
               {hover && state.phase === "overworld" && <HexTip state={state} hover={hover} />}
             </>
@@ -347,7 +389,7 @@ export function RunView({ code, me, refresh, onLeave }: { code: string; me: Me; 
   );
 }
 
-const BIOME_LABEL: Record<string, string> = { plains: "Plains", forest: "Forest", hills: "Hills", water: "Sea", dock: "Dock" };
+const BIOME_LABEL: Record<string, string> = { plains: "Plains", forest: "Forest", hills: "Hills", water: "Sea", dock: "Dock", cave: "Cave floor", rock: "Solid rock" };
 
 /** What the hovered hex is, what it costs to enter, and what walking there would cost this turn. */
 function HexTip({ state, hover }: { state: ClientState; hover: HexPos }) {
@@ -377,7 +419,7 @@ function TopBar({ state, code, status, onLeave, onInventory }: { state: ClientSt
   const fighting = state.phase === "battle";
   return (
     <div className="topbar">
-      <strong>{state.story?.title ?? "A ship at the Harbor"}</strong>
+      <strong>{state.story?.title ?? (state.kind === "caverns" ? "The Haunted Caverns" : "A ship at the Harbor")}</strong>
       {state.story && <span className="muted wide-only">{state.story.islandName}</span>}
       {state.round > 0 && state.phase !== "ended" && (
         <span className={state.doom <= 3 ? "bad" : ""}>Day {state.round} · {state.doom} day{state.doom === 1 ? "" : "s"} left</span>
@@ -389,14 +431,16 @@ function TopBar({ state, code, status, onLeave, onInventory }: { state: ClientSt
       )}
       <span className="spacer" />
       {status !== "open" && <span className="bad">reconnecting…</span>}
-      <span className="muted wide-only">Ship {code}</span>
-      <SoundButton />
+      <span className="muted wide-only">{state.kind === "caverns" ? "Delve" : "Ship"} {code}</span>
       {state.phase !== "ended" && (
         <button className="small" disabled={fighting} title={fighting ? "Not during a fight" : "Your gear and stats"} onClick={onInventory}>
           Inventory
         </button>
       )}
-      <button className="small" onClick={onLeave}>Harbor</button>
+      {/* The Harbor is behind you once the ship has sailed: only from the docked lobby, or once the voyage is over. */}
+      {(state.phase === "lobby" || state.phase === "ended") && <button className="small" onClick={onLeave}>Harbor</button>}
+      {/* No putting a hero back on a voyage: where they stand is part of the game. */}
+      <OptionsMenu resetBlocked="Not on a voyage: your hero stays where the island has them. It works in the Harbor, a hut or the pub." />
     </div>
   );
 }
@@ -406,10 +450,10 @@ function Lobby({ state, run, code }: { state: ClientState; run: RunConnection; c
   const host = state.hostId === state.you;
   const waiting = state.heroes.filter((h) => h.id !== state.hostId && !h.ready).length;
   return (
-    <div className="overlay">
+    <div className="overlay at-sea">
       <div className="panel lobby">
-        <h2>Aboard the ship</h2>
-        <p className="muted">Share this code so your crew can board:</p>
+        <h2>{state.kind === "caverns" ? "At the cave mouth" : "Aboard the ship"}</h2>
+        <p className="muted">{state.kind === "caverns" ? "Share this code so your crew can join the delve:" : "Share this code so your crew can board:"}</p>
         <div className="code">{code}</div>
         <ul className="crew-list">
           {state.heroes.map((h) => (
@@ -427,7 +471,7 @@ function Lobby({ state, run, code }: { state: ClientState; run: RunConnection; c
         <ContractPicker state={state} run={run} />
         {host ? (
           <button className="primary" disabled={waiting > 0} onClick={() => run.send({ type: "start" })}>
-            {waiting > 0 ? `Waiting on ${waiting} crew…` : "Set sail"}
+            {waiting > 0 ? `Waiting on ${waiting} crew…` : state.kind === "caverns" ? "Go down" : "Set sail"}
           </button>
         ) : (
           <button className="primary" onClick={() => run.send({ type: "ready", ready: !me?.ready })}>{me?.ready ? "Not ready" : "Ready"}</button>
@@ -463,7 +507,16 @@ function Pips({ n, max }: { n: number; max: number }) {
   return <span className="pips" title={`${n} / ${max} focus`}>{Array.from({ length: max }, (_, i) => <i key={i} className={i < n ? "on" : ""} />)}</span>;
 }
 
-function Crew({ state, online, onTrade }: { state: ClientState; online: string[]; onTrade?: (id: string) => void }) {
+interface CrewProps {
+  state: ClientState;
+  online: string[];
+  onTrade?(id: string): void;
+  /** Open this hero's sheet (not during a fight). */
+  onOpen?(id: string): void;
+  openId?: string | null;
+}
+
+function Crew({ state, online, onTrade, onOpen, openId }: CrewProps) {
   return (
     <DragPanel id="run.crew" title="Crew" foldOnPhone className="crew">
       {state.heroes.map((h) => {
@@ -471,10 +524,33 @@ function Crew({ state, online, onTrade }: { state: ClientState; online: string[]
         const hp = c?.hp ?? h.hp;
         const focus = c?.focus ?? h.focus;
         return (
-          <div key={h.id} className={`panel hero-card ${state.turn?.heroId === h.id && state.phase === "overworld" ? "active" : ""} ${online.includes(h.id) ? "" : "offline"}`}>
+          <div
+            key={h.id}
+            className={`panel hero-card ${state.turn?.heroId === h.id && state.phase === "overworld" ? "active" : ""} ${online.includes(h.id) ? "" : "offline"}${onOpen ? " openable" : ""}${h.id === openId ? " open" : ""}`}
+            role={onOpen ? "button" : undefined}
+            tabIndex={onOpen ? 0 : undefined}
+            title={onOpen ? `Look ${h.name} over` : undefined}
+            onClick={onOpen && (() => onOpen(h.id))}
+            onKeyDown={onOpen && ((e) => {
+              if (e.target !== e.currentTarget || (e.key !== "Enter" && e.key !== " ")) return;
+              e.preventDefault();
+              onOpen(h.id);
+            })}
+          >
             <div>
               <strong>{h.name}</strong>{h.id === state.you && <span className="tag">you</span>}
-              {onTrade && h.id !== state.you && <button className="small trade-btn" title={`Give or trade with ${h.name}`} onClick={() => onTrade(h.id)}>Trade</button>}
+              {onTrade && h.id !== state.you && (
+                <button
+                  className="small trade-btn"
+                  title={`Give or trade with ${h.name}`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onTrade(h.id);
+                  }}
+                >
+                  Trade
+                </button>
+              )}
             </div>
             <div className="muted">{className(h.classId)} · Lv {h.level}{(h.armor ?? 0) > 0 ? ` · armor ${h.armor}` : ""}{online.includes(h.id) ? "" : " · away"}</div>
             <div className="bar"><div className="bar-fill hp" style={{ width: `${(100 * hp) / h.maxHp}%` }} /><span>{hp} / {h.maxHp}</span></div>
@@ -522,7 +598,7 @@ function TurnBar({ state, run }: { state: ClientState; run: RunConnection }) {
   const rite = poi && state.story?.rites.find((r) => r.poi === poi.id && r.ready && !r.done);
   const action = !poi || turn.acted ? null
     : rite ? rite.label
-    : poi.kind === "landing" ? (state.larder && eatsChowder(hero, state.larder.chowder) ? "Rest and eat a chowder" : "Rest at the ship")
+    : poi.kind === "landing" ? (state.larder && eatsChowder(hero, state.larder.chowder) ? "Rest and eat a chowder" : state.kind === "caverns" ? "Rest at the cave mouth" : "Rest at the ship")
     : poi.kind === "shrine" ? (poi.usedBy.includes(hero.id) ? null : "Pray at the shrine")
     : poi.kind === "cache" ? (poi.cleared ? null : "Search the cache")
     : poi.kind === "camp" ? (poi.cleared ? null : "Attack the camp")
@@ -534,7 +610,7 @@ function TurnBar({ state, run }: { state: ClientState; run: RunConnection }) {
         <>
           <strong>Your turn</strong>
           <span>{turn.mp} movement left</span>
-          <span className="muted">Click a lit hex to move. Plains cost 1, forest and hills 2.</span>
+          <span className="muted">{state.kind === "caverns" ? "Click a lit hex to move. Cave floor costs 1; the rock cannot be crossed." : "Click a lit hex to move. Plains cost 1, forest and hills 2."}</span>
           {action && <button className="primary" onClick={() => run.send({ type: "interact" })}>{action}</button>}
           <button onClick={() => run.send({ type: "end_turn" })}>End turn</button>
         </>

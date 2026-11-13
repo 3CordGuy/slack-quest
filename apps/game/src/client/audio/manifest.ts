@@ -8,11 +8,18 @@
 // specific first). You only need the general ones to start: "impact" covers
 // every blow until you add "impact.melee" or "impact.firebolt".
 
+import { ABILITIES, ENEMIES, type EffectKind } from "@gantt-quest/world";
+import { slug } from "./select";
 import type { AudioManifest, SoundEvent } from "./types";
 
+// Every event also names a built-in sound in `fallback` (audio/synth.ts): what plays until a recording
+// is added to `files`. Those are the game's sounds today, so nothing goes quiet while recordings arrive.
+const built = (sound: string) => `synth/combat/${sound}_*`;
+
 /** Footsteps share one shape: a pool of takes, a little pitch and level variation. */
-const step = (surface: string, gainDb = -6): SoundEvent => ({
+const step = (surface: string, ground: string, gainDb = -6): SoundEvent => ({
   files: `sfx/footsteps/${surface}_*`,
+  fallback: `synth/step/${ground}_*`,
   gainDb,
   reverb: -6,
   pitch: [-1.5, 1.5],
@@ -26,36 +33,48 @@ export const AUDIO: AudioManifest = {
     master: { volume: 1, trimDb: 0 },
     music: { volume: 0.5, trimDb: 0 },
     atmosphere: { volume: 0.6, trimDb: 0 },
-    sfx: { volume: 0.25, trimDb: 0 },
+    // Set for the built-in sounds, which are what plays until recordings are added: about as loud as they were before this engine.
+    sfx: { volume: 0.7, trimDb: 0 },
   },
 
   events: {
     // ----- footsteps, by the ground underfoot -----
-    footstep: step("grass"),
-    "footstep.plains": step("grass"),
-    "footstep.forest": step("grass"),
-    "footstep.hills": step("stone"),
-    "footstep.cobble": step("stone"),
-    "footstep.rampart": step("stone"),
-    "footstep.dock": step("wood"),
-    "footstep.floor": step("wood"),
-    "footstep.mud": step("mud"),
+    footstep: step("grass", "grass"),
+    "footstep.plains": step("grass", "grass"),
+    "footstep.forest": step("grass", "grass"),
+    "footstep.hills": step("stone", "stone"),
+    "footstep.cobble": step("stone", "stone"),
+    "footstep.rampart": step("stone", "stone"),
+    "footstep.cave": step("stone", "stone"),
+    "footstep.dock": step("wood", "wood"),
+    "footstep.floor": step("wood", "floor"),
+    "footstep.mud": step("mud", "mud"),
 
     // ----- combat -----
-    "attack.melee": { files: "sfx/combat/swing_*", pitch: [-2, 2], volume: [-2, 0], reverb: -12 },
-    "attack.ranged": { files: "sfx/combat/bow_*", pitch: [-1, 1], reverb: -12 },
-    "attack.magic": { files: "sfx/combat/cast_*", pitch: [-1, 1], reverb: -8 },
-    impact: { files: "sfx/combat/hit_*", pitch: [-2, 2], volume: [-2, 0], reverb: -8 },
-    "impact.magic": { files: "sfx/combat/magic_hit_*", pitch: [-2, 2], reverb: -6 },
-    "impact.crit": { files: "sfx/combat/crit_*", gainDb: -3 },
-    miss: { files: "sfx/combat/miss_*", pitch: [-2, 2], gainDb: -4 },
-    heal: { files: "sfx/combat/heal_*" },
-    "heal.fail": { files: "sfx/combat/miss_*", gainDb: -8, pitch: [-5, -3] },
-    tick: { files: "sfx/combat/tick_*", gainDb: -6, pitch: [-2, 2] },
-    down: { files: "sfx/combat/down_*", reverb: -8 },
+    "attack.melee": { files: "sfx/combat/swing_*", fallback: built("swing"), pitch: [-2, 2], volume: [-2, 0], reverb: -12 },
+    "attack.ranged": { files: "sfx/combat/bow_*", fallback: built("arrow_loose"), pitch: [-1, 1], reverb: -12 },
+    "attack.magic": { files: "sfx/combat/cast_*", fallback: built("spell_cast"), pitch: [-1, 1], reverb: -8 },
+    // A blow landing: a blunt thump by hand, unless it cuts or bites (blade abilities, below).
+    impact: { files: "sfx/combat/hit_*", fallback: built("blunt"), pitch: [-2, 2], volume: [-2, 0], reverb: -8 },
+    "impact.ranged": { files: "sfx/combat/arrow_hit_*", fallback: built("arrow_hit"), pitch: [-2, 2], reverb: -8 },
+    "impact.magic": { files: "sfx/combat/magic_hit_*", fallback: built("spell_hit"), pitch: [-2, 2], reverb: -6 },
+    ...bladeImpacts(),
+    "impact.crit": { files: "sfx/combat/crit_*", fallback: built("crit"), gainDb: -3 },
+    miss: { files: "sfx/combat/miss_*", fallback: built("whiff"), pitch: [-2, 2], gainDb: -4 },
+    "miss.magic": { files: "sfx/combat/fizzle_*", fallback: built("fizzle"), pitch: [-2, 2], gainDb: -4 },
+    heal: { files: "sfx/combat/heal_*", fallback: built("heal") },
+    "heal.fail": { files: "sfx/combat/miss_*", fallback: built("heal_fail"), gainDb: -8, pitch: [-5, -3] },
+    tick: { files: "sfx/combat/tick_*", fallback: built("bleed"), gainDb: -6, pitch: [-2, 2] },
+    "tick.bleeding": { files: "sfx/combat/tick_*", fallback: built("bleed"), gainDb: -6, pitch: [-2, 2] },
+    "tick.burning": { files: "sfx/combat/tick_*", fallback: built("burn"), gainDb: -6, pitch: [-2, 2] },
+    ...effectTells(),
+    down: { files: "sfx/combat/down_*", fallback: built("enemy_down"), reverb: -8 },
+    "enemy.down": { files: "sfx/combat/down_*", fallback: built("enemy_down"), reverb: -8 },
+    "hero.down": { files: "sfx/combat/hero_down_*", fallback: built("hero_down"), reverb: -8 },
+    ...bossFalls(),
 
     // ----- moments -----
-    "turn.yours": { files: "sfx/ui/your_turn", gainDb: -6, cooldown: 1 },
+    "turn.yours": { files: "sfx/ui/your_turn", fallback: built("your_turn"), gainDb: -6, cooldown: 1 },
     level_up: { files: "sfx/ui/level_up", cooldown: 2 },
     loot: { files: "sfx/ui/loot", gainDb: -4 },
     gold: { files: "sfx/ui/gold", gainDb: -6, cooldown: 0.2 },
@@ -63,8 +82,10 @@ export const AUDIO: AudioManifest = {
 
     // Stingers follow the Music slider.
     "stinger.battle_start": { files: "music/stingers/battle_start", group: "music" },
-    "stinger.victory": { files: "music/stingers/victory", group: "music" },
-    "stinger.defeat": { files: "music/stingers/defeat", group: "music" },
+    // A boss's first appearance.
+    "stinger.boss": { files: "music/stingers/boss", fallback: built("boss"), group: "music", cooldown: 2 },
+    "stinger.victory": { files: "music/stingers/victory", fallback: built("victory"), group: "music" },
+    "stinger.defeat": { files: "music/stingers/defeat", fallback: built("defeat"), group: "music" },
   },
 
   // Loops that play from where things are on the map: quieter, duller and off to one side as you
@@ -128,7 +149,38 @@ export const AUDIO: AudioManifest = {
     pub: { inside: { of: "harbor", cutoff: 700, gainDb: -3 } },
     sailing: { music: "island", ambience: ["rain"] },
     island: { music: "island", ambience: ["day", "night", "rain"] },
+    // Under the rocks: no sky, no weather. The island's music until the caverns have their own.
+    caverns: { music: "island" },
     battle: { music: "battle", ambience: ["day", "night", "rain"] },
     spar: { music: "battle", ambience: ["day", "night", "rain"] },
   },
 };
+
+// ---------- the built-in sounds' finer choices ----------
+
+function bladeImpacts(): Record<string, SoundEvent> {
+  /** Cutting and biting blows, heroes' and enemies': these land with a blade's bite rather than a thump. */
+  const BLADE = new Set(["Cleave", "Quick Stab", "Flurry", "Land the Catch", "Slash", "Cheap Shot", "Bite", "Savage Bite", "Pounce", "Sweeping Ruin"]);
+  const names = new Set([...Object.values(ABILITIES).map((a) => a.name), ...Object.values(ENEMIES).flatMap((e) => e.attacks.map((a) => a.name))]);
+  const out: Record<string, SoundEvent> = {};
+  for (const name of names) {
+    if (BLADE.has(name)) out[`impact.${slug(name)}`] = { files: "sfx/combat/hit_*", fallback: built("blade"), pitch: [-2, 2], volume: [-2, 0], reverb: -8 };
+  }
+  return out;
+}
+
+/** The short tell of each effect taking hold: a drip, a crackle, stars, and a rise or fall for the rest. */
+function effectTells(): Record<string, SoundEvent> {
+  const tell = (e: EffectKind) => (e === "bleeding" ? "bleed" : e === "burning" ? "burn" : e === "stunned" ? "stun" : e === "guarded" || e === "taunting" || e === "hasted" ? "buff" : "debuff");
+  const out: Record<string, SoundEvent> = { effect: { files: "sfx/combat/effect_*", fallback: built("debuff"), gainDb: -4 } };
+  const all: EffectKind[] = ["bleeding", "burning", "stunned", "guarded", "taunting", "slowed", "hasted", "glitched", "exposed"];
+  for (const e of all) out[`effect.${e}`] = { files: `sfx/combat/effect_${e}_*`, fallback: built(tell(e)), gainDb: -4 };
+  return out;
+}
+
+/** A boss going down is heard as more than a puff. */
+function bossFalls(): Record<string, SoundEvent> {
+  const out: Record<string, SoundEvent> = {};
+  for (const [kind, def] of Object.entries(ENEMIES)) if (def.boss) out[`enemy.${kind}.down`] = { files: "sfx/combat/boss_down_*", fallback: built("boss_down"), reverb: -6 };
+  return out;
+}

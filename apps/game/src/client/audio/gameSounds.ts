@@ -50,6 +50,10 @@ export const sounds = {
   yourTurn() {
     audio.play(soundName.yourTurn());
   },
+  /** A boss has turned up: heard as the battle's opening card goes up. */
+  boss() {
+    audio.play(soundName.boss());
+  },
   levelUp() {
     audio.play(soundName.levelUp());
   },

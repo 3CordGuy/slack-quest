@@ -278,6 +278,15 @@ export const ENEMIES: Record<string, EnemyDef> = {
     kind: "wolf", name: "Dire Wolf", hp: 9, speed: 75, xp: 10,
     attacks: [{ name: "Bite", rolls: 2, pct: 57, damage: 5, target: "hero", perfect: { effect: "bleeding", turns: 2 }, weight: 1 }],
   },
+  // A beast bruiser: slow and thick-hided, and every blow lands like a falling tree.
+  // Where the Brute stuns with a club, the bear tears (bleeding) and only its roar stuns.
+  bear: {
+    kind: "bear", name: "Cave Bear", hp: 26, speed: 30, xp: 20,
+    attacks: [
+      { name: "Mauling Swipe", rolls: 2, pct: 53, damage: 12, target: "hero", perfect: { effect: "bleeding", turns: 2 }, weight: 3 },
+      { name: "Roar", rolls: 2, pct: 45, damage: 4, target: "hero", perfect: { effect: "stunned", turns: 1 }, weight: 1 },
+    ],
+  },
   cultist: {
     kind: "cultist", name: "Cultist", hp: 11, speed: 50, xp: 14,
     attacks: [
@@ -308,12 +317,60 @@ export const ENEMIES: Record<string, EnemyDef> = {
       { name: "Rending Howl", rolls: 4, pct: 45, damage: 5, target: "all_heroes", weight: 1 },
     ],
   },
+  // A beast boss that comes alone: slow, huge, and it tears; its roar can stun the whole crew.
+  great_bear: {
+    kind: "great_bear", name: "Great Bear", hp: 42, speed: 35, xp: 44, boss: true,
+    attacks: [
+      { name: "Crushing Maul", rolls: 3, pct: 57, damage: 13, target: "hero", perfect: { effect: "bleeding", turns: 3 }, weight: 3 },
+      { name: "Thunderous Roar", rolls: 4, pct: 45, damage: 5, target: "all_heroes", perfect: { effect: "stunned", turns: 1 }, weight: 2 },
+    ],
+  },
   // A guardian boss: slow and alone, but each blow lands like a wall.
   guardian: {
     kind: "guardian", name: "Guardian", hp: 35, speed: 30, xp: 44, boss: true,
     attacks: [
       { name: "Stone Fist", rolls: 2, pct: 57, damage: 12, target: "hero", perfect: { effect: "stunned", turns: 1 }, weight: 3 },
       { name: "Quake", rolls: 4, pct: 49, damage: 6, target: "all_heroes", weight: 2 },
+    ],
+  },
+  // The Haunted Caverns' dead. A shade is quick and weak, and its touch chills (becalms) whoever it lays a hand on.
+  shade: {
+    kind: "shade", name: "Shade", hp: 10, speed: 70, xp: 12,
+    attacks: [
+      { name: "Chill Touch", rolls: 3, pct: 49, damage: 5, target: "hero", perfect: { effect: "slowed", turns: 2 }, weight: 3 },
+      { name: "Wail", rolls: 3, pct: 45, damage: 3, target: "all_heroes", weight: 1 },
+    ],
+  },
+  // Cave bats: weak alone, but quick, and they come in swarms.
+  bat: {
+    kind: "bat", name: "Cave Bat", hp: 6, speed: 90, xp: 7,
+    attacks: [
+      { name: "Bite", rolls: 3, pct: 53, damage: 4, target: "hero", perfect: { effect: "bleeding", turns: 2 }, weight: 3 },
+      { name: "Screech", rolls: 3, pct: 45, damage: 2, target: "all_heroes", weight: 1 },
+    ],
+  },
+  // The smugglers' dead, still guarding their camp: slow and steady, and hard to put down.
+  skeleton: {
+    kind: "skeleton", name: "Skeleton", hp: 15, speed: 45, xp: 14,
+    attacks: [
+      { name: "Rusted Cutlass", rolls: 3, pct: 53, damage: 7, target: "hero", weight: 3 },
+      { name: "Bone Rattle", rolls: 2, pct: 45, damage: 4, target: "hero", perfect: { effect: "stunned", turns: 1 }, weight: 1 },
+    ],
+  },
+  // A cave slime: very slow and very tough, and its acid leaves its prey holed (taking more from every hit).
+  slime: {
+    kind: "slime", name: "Cave Slime", hp: 20, speed: 25, xp: 13,
+    attacks: [
+      { name: "Engulf", rolls: 3, pct: 49, damage: 6, target: "hero", perfect: { effect: "slowed", turns: 2 }, weight: 3 },
+      { name: "Acid Splash", rolls: 2, pct: 49, damage: 4, target: "hero", perfect: { effect: "exposed", turns: 2 }, weight: 2 },
+    ],
+  },
+  // What is bound in the deep chamber: named after the story's villain, like every boss.
+  haunt: {
+    kind: "haunt", name: "Haunt", hp: 30, speed: 55, xp: 44, boss: true,
+    attacks: [
+      { name: "Grave Grasp", rolls: 3, pct: 57, damage: 9, target: "hero", perfect: { effect: "stunned", turns: 1 }, weight: 3 },
+      { name: "Keening", rolls: 4, pct: 49, damage: 5, target: "all_heroes", perfect: { effect: "slowed", turns: 2 }, weight: 2 },
     ],
   },
   villain: {
@@ -324,6 +381,35 @@ export const ENEMIES: Record<string, EnemyDef> = {
     ],
   },
 };
+
+/** What wanders the caverns' tunnels, as an even pick. */
+export const CAVERN_LEADS = ["shade", "bat", "skeleton", "slime"] as const;
+export type CavernLead = (typeof CAVERN_LEADS)[number];
+
+/**
+ * A band in the caverns for a crew of `party` heroes, sized like one on an
+ * island: one enemy for a lone hero, a pair for a party, a third for a full
+ * ship. Bats are half an enemy each and come as a swarm.
+ */
+export function cavernBand(lead: CavernLead, party: number): string[] {
+  if (lead === "bat") return ["bat", "bat", ...(party >= 2 ? ["bat"] : []), ...(party >= 4 ? ["bat", "bat"] : [])];
+  const second = lead === "skeleton" ? "bat" : lead;
+  return [lead, ...(party >= 2 ? [second] : []), ...(party >= 4 ? [lead] : [])];
+}
+
+/** What leads a roaming band ashore, as an even pick: wolves and bandits twice as often as a bear. */
+export const ROAMER_LEADS = ["wolf", "bandit", "wolf", "bandit", "bear"] as const;
+export type RoamerLead = (typeof ROAMER_LEADS)[number];
+
+/**
+ * A roaming band for a crew of `party` heroes: a lone hero meets one enemy, a
+ * party a pair, a full ship a third. A bear is a pair's worth on its own, so
+ * it comes alone until the ship is full, and then with a second.
+ */
+export function bandKinds(lead: RoamerLead, party: number): string[] {
+  if (lead === "bear") return party >= 4 ? ["bear", "bear"] : ["bear"];
+  return [lead, ...(party >= 2 ? [lead === "bandit" ? "archer" : "wolf"] : []), ...(party >= 4 ? [lead] : [])];
+}
 
 // ---------- run-scoped key items ----------
 

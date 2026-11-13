@@ -42,6 +42,19 @@ export function expandFiles(patterns: string | string[], keys: Iterable<string>)
   return out;
 }
 
+/**
+ * Which takes an event plays: its real recordings when it has any; else its built-in sounds
+ * (`fallback`); a placeholder only when there is nothing else at all.
+ */
+export function chooseTakes(ev: { files: string | string[]; fallback?: string | string[] }, keys: Iterable<string>, isPlaceholder: (key: string) => boolean): string[] {
+  const all = [...keys];
+  const takes = expandFiles(ev.files, all);
+  const real = takes.filter((k) => !isPlaceholder(k));
+  if (real.length > 0) return real;
+  const built = ev.fallback ? expandFiles(ev.fallback, all) : [];
+  return built.length > 0 ? built : takes;
+}
+
 /** The first name that can sound, most specific first; null when none can. */
 export function resolveName(candidates: string[], playable: (name: string) => boolean): string | null {
   for (const name of candidates) if (playable(name)) return name;

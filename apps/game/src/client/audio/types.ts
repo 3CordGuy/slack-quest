@@ -24,6 +24,11 @@ export interface SoundEvent {
    * A `*` in the last part matches anything, so "sfx/footsteps/cobble_*" picks up every take you add.
    */
   files: string | string[];
+  /**
+   * Built-in sounds (`synth/...` keys, see synth.ts) to play when `files` has no real recording yet.
+   * A recording always wins over them; they always win over a placeholder.
+   */
+  fallback?: string | string[];
   /** Which slider it follows. Default "sfx". */
   group?: Group;
   /** Level, in dB. Default 0. */
@@ -132,7 +137,7 @@ export interface Loop {
 }
 
 /** The places the game can be, each with its own music and atmosphere. */
-export type SceneName = "title" | "harbor" | "hut" | "pub" | "sailing" | "island" | "battle" | "spar";
+export type SceneName = "title" | "harbor" | "hut" | "pub" | "sailing" | "island" | "caverns" | "battle" | "spar";
 
 export interface Scene {
   /** A key of `music`, or null for no music. */
@@ -223,6 +228,8 @@ export interface AudioFile {
   loop?: { start: number; end: number };
   /** Made by the placeholder script: heard while developing, never shipped. */
   placeholder?: boolean;
+  /** One of the engine's built-in sounds (synth.ts): rendered in the browser, never fetched. */
+  synth?: boolean;
 }
 
 export interface AudioIndex {

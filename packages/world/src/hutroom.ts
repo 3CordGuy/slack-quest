@@ -91,6 +91,12 @@ export const isSmall = (defId: string): boolean => FURNISHINGS[defId]?.size === 
 export const isMounted = (defId: string): boolean => !!FURNISHINGS[defId]?.mount;
 /** True for furniture standing on the floor: neither small nor hung on a wall. Each covers its footprint. */
 export const isFloorPiece = (defId: string): boolean => !!FURNISHINGS[defId] && !isSmall(defId) && !isMounted(defId);
+/**
+ * True for floor decor laid flat (a rug): a floor piece that is walked over
+ * and that other furniture and small things stand on. Flat pieces only keep
+ * clear of each other; everything else only keeps clear of what is not flat.
+ */
+export const isFlat = (defId: string): boolean => isFloorPiece(defId) && !!FURNISHINGS[defId]?.flat;
 
 /** The furnishings that are standing in the room, not in storage. */
 export function placedFurnishings<T extends Pick<Furnishing, "q" | "r">>(furnishings: T[]): (T & { q: number; r: number })[] {
@@ -281,19 +287,43 @@ function distanceTo(poly: Pt[], p: Pt): number {
 /** A hero standing in a hex takes up about this much room around its middle. */
 const STANDING_ROOM = 0.35;
 
+/** How many hexes out from its anchor a footprint can reach, however it is placed and turned. */
+function footprintRadius(defId: string): number {
+  const fp = footprintOf(defId);
+  const far = Math.hypot(Math.abs(fp.x ?? 0) + fp.w / 2, Math.abs(fp.z ?? 0) + (fp.round ? fp.w : fp.d) / 2) + BIG_REACH + STANDING_ROOM;
+  return Math.ceil(far / SQRT3);
+}
+
 /**
- * The hexes a floor piece keeps people out of: its own, and any neighbour
- * whose middle it comes too close to for anyone to stand there (a bed pushed
- * toward the next hex).
+ * The hexes a floor piece covers: its own, and every hex whose middle it
+ * comes too close to for anyone to stand there (a bed pushed toward the next
+ * hex, or a long table reaching right across it). These are what a piece
+ * that is not flat keeps people out of, and what its selection ring outlines.
  */
 export function coveredHexes(defId: string, pos: HexPos, spot: FloorSpot): HexPos[] {
   const shape = footprintShape(defId, pos, spot);
   const out = [pos];
-  for (const d of HEX_DIRS) {
-    const n = { q: pos.q + d.q, r: pos.r + d.r };
-    if (shapeDistance(shape, hexCentre(n)) < STANDING_ROOM) out.push(n);
+  const n = footprintRadius(defId);
+  for (let dq = -n; dq <= n; dq++) {
+    for (let dr = Math.max(-n, -dq - n); dr <= Math.min(n, -dq + n); dr++) {
+      if (dq === 0 && dr === 0) continue;
+      const h = { q: pos.q + dq, r: pos.r + dr };
+      if (shapeDistance(shape, hexCentre(h)) < STANDING_ROOM) out.push(h);
+    }
   }
   return out;
+}
+
+/** How many hexes a floor piece covers when set down in the middle of its hex, unturned: 1 for most, 2 or more for a long piece. */
+export function hexSpan(defId: string): number {
+  return isFloorPiece(defId) ? coveredHexes(defId, { q: 0, r: 0 }, { x: 0, z: 0, angle: 0 }).length : 1;
+}
+
+/** The middle of a floor piece's footprint, in room units: where a long piece's middle is, away from its anchor. */
+export function footprintCentre(defId: string, pos: HexPos, spot: FloorSpot): { x: number; z: number } {
+  const fp = footprintOf(defId);
+  const mid = hexCentre(pos);
+  return toRoom(fp.x ?? 0, fp.z ?? 0, spot.angle, mid.x + spot.x, mid.z + spot.z);
 }
 
 /** Why the floor hex `pos` cannot be stood on by a furnishing, or null. */
@@ -306,8 +336,15 @@ function floorProblem(room: WorldMap, pos: HexPos): string | null {
   return null;
 }
 
-/** The floor pieces among `placed`, with where they stand. Entries without a `defId` are left out (see `Placed`). */
-const floorPieces = (placed: Placed[]) => placedFurnishings(placed).filter((f): f is Placed & { q: number; r: number; defId: string } => !!f.defId && isFloorPiece(f.defId));
+/**
+ * The floor pieces among `placed`, with where they stand. Entries without a
+ * `defId` are left out (see `Placed`). With `flat`, only the flat ones (true)
+ * or only those that are not (false).
+ */
+const floorPieces = (placed: Placed[], flat?: boolean) =>
+  placedFurnishings(placed).filter(
+    (f): f is Placed & { q: number; r: number; defId: string } => !!f.defId && isFloorPiece(f.defId) && (flat === undefined || isFlat(f.defId) === flat),
+  );
 
 /** Where a small thing on the floor is, in room units. */
 const smallPoint = (f: { q: number; r: number; x?: number; z?: number }): Pt => {
@@ -317,10 +354,12 @@ const smallPoint = (f: { q: number; r: number; x?: number; z?: number }): Pt => 
 
 /**
  * Why `defId` cannot be put down on `pos`, or null if it can. Floor
- * furniture stands anywhere inside its hex (`spot`, default its middle, facing
- * 0) as long as its footprint stays on the floor, off the doorway, clear of
- * the other pieces' footprints and of small things left on the floor. To move
- * a piece that is already placed, leave it out of `placed`.
+ * furniture is anchored anywhere inside its hex (`spot`, default its middle,
+ * facing 0) as long as its whole footprint, across however many hexes it
+ * reaches, stays on the floor, off the doorway, clear of the other pieces'
+ * footprints and of small things left on the floor. Flat decor (a rug) only
+ * keeps clear of other flat decor: furniture and small things stand on it.
+ * To move a piece that is already placed, leave it out of `placed`.
  */
 export function placeProblem(room: WorldMap, placed: Placed[], defId: string, pos: HexPos, spot: FloorSpot = { x: 0, z: 0, angle: 0 }): string | null {
   if (!FURNISHINGS[defId]) return "There is no such furnishing.";
@@ -338,7 +377,9 @@ export function placeProblem(room: WorldMap, placed: Placed[], defId: string, po
     if (problem === "The doorway has to stay clear.") return problem;
     if (problem) return "It would go through the wall.";
   }
-  if (floorPieces(placed).some((f) => shapesOverlap(shape, footprintShape(f.defId, f, spotOf(f))))) return "Something already stands there.";
+  const flat = isFlat(defId);
+  if (floorPieces(placed, flat).some((f) => shapesOverlap(shape, footprintShape(f.defId, f, spotOf(f))))) return flat ? "There is already a rug there." : "Something already stands there.";
+  if (flat) return null;
   const floorSmall = placedFurnishings(placed).filter((f) => f.defId && isSmall(f.defId) && f.onId == null);
   if (floorSmall.some((f) => shapeContains(shape, smallPoint(f)))) return "Clear the small things off that spot first.";
   return null;
@@ -372,7 +413,7 @@ export function smallPlaceProblem(room: WorldMap, others: Furnishing[], defId: s
   if (floor) return floor;
   if (Math.hypot(spot.x, spot.z) > SMALL_REACH + 1e-6) return "Keep it inside the hex.";
   const at = smallPoint({ ...spot.pos, x: spot.x, z: spot.z });
-  if (floorPieces(others).some((f) => shapeContains(footprintShape(f.defId, f, spotOf(f)), at))) return "Something already stands there. Set it on top, if it has a top.";
+  if (floorPieces(others, false).some((f) => shapeContains(footprintShape(f.defId, f, spotOf(f)), at))) return "Something already stands there. Set it on top, if it has a top.";
   const here = placedFurnishings(others).filter((f) => f.q === spot.pos.q && f.r === spot.pos.r && isSmall(f.defId));
   if (here.filter((f) => f.onId === null).length >= SMALL_PER_SPOT) return "That spot is full.";
   return null;
@@ -477,8 +518,9 @@ export function displacedFurnishings<T extends Placed & Pick<Furnishing, "defId"
   const out: T[] = [];
   const placed = placedFurnishings(furnishings);
   // Floor furniture first, then wall pieces, each checked against those kept
-  // before it. Then small things: on the floor, the hex must be floor and
-  // out from under furniture; on a piece, that piece must stay.
+  // before it (flat decor against flat decor, the rest against the rest).
+  // Then small things: on the floor, the hex must be floor and out from under
+  // furniture; on a piece, that piece must stay.
   for (const f of placed) {
     if (!isFloorPiece(f.defId)) continue;
     if (placeProblem(room, kept, f.defId, f, spotOf(f))) out.push(f);
@@ -493,7 +535,7 @@ export function displacedFurnishings<T extends Placed & Pick<Furnishing, "defId"
     if (!isSmall(f.defId)) continue;
     const lost = f.onId != null
       ? !placed.some((b) => b.id === f.onId) || out.some((b) => b.id === f.onId)
-      : floorProblem(room, f) !== null || floorPieces(kept).some((k) => shapeContains(footprintShape(k.defId, k, spotOf(k)), smallPoint(f)));
+      : floorProblem(room, f) !== null || floorPieces(kept, false).some((k) => shapeContains(footprintShape(k.defId, k, spotOf(k)), smallPoint(f)));
     if (lost) out.push(f);
   }
   return out;
@@ -502,12 +544,12 @@ export function displacedFurnishings<T extends Placed & Pick<Furnishing, "defId"
 /** Longest walk the server will accept in one request. */
 export const HUT_MAX_PATH = 40;
 
-/** The hexes nobody can walk onto for the furniture standing on them. Small things are stepped over; wall pieces hang out of the way. */
+/** The hexes nobody can walk onto for the furniture standing on them, every hex a long piece covers. Small things and rugs are stepped over; wall pieces hang out of the way. */
 export function blockedHexes(placed: Placed[]): Set<string> {
   const blocked = new Set<string>();
   for (const f of placedFurnishings(placed)) {
     if (!f.defId) blocked.add(posKey(f));
-    else if (isFloorPiece(f.defId)) for (const h of coveredHexes(f.defId, f, spotOf(f))) blocked.add(posKey(h));
+    else if (isFloorPiece(f.defId) && !isFlat(f.defId)) for (const h of coveredHexes(f.defId, f, spotOf(f))) blocked.add(posKey(h));
   }
   return blocked;
 }
@@ -517,6 +559,76 @@ export function hutPath(room: WorldMap, placed: Placed[], from: HexPos, to: HexP
   const blocked = blockedHexes(placed);
   const route = findPath(room, from, to, HUT_MAX_PATH, (t) => (t.biome !== "floor" || blocked.has(posKey(t)) ? Infinity : 1));
   return route && route.path.length > 0 ? route.path : null;
+}
+
+// ---------- using a piece ----------
+//
+// Outside edit mode a click on a piece uses it. Most only show what they are;
+// a bed and a container are the owner's own. The rest itself and what comes
+// in and out of a container are decided by the server over HTTP (gather.ts,
+// the stash and stow routes); the room only checks who may lie down where.
+
+/** What clicking a piece does: rest in a bed, open a container, warm up at a fire, read a shelf, or just look. */
+export type FurnishingUse = "rest" | "open" | "warm" | "read" | "look";
+
+export function useOf(defId: string): FurnishingUse {
+  const def = FURNISHINGS[defId];
+  if (!def) return "look";
+  if (def.bed) return "rest";
+  if (def.storage) return "open";
+  if (def.light === "fire") return "warm";
+  if (defId === "bookshelf" || defId === "great_bookcase" || defId === "books") return "read";
+  return "look";
+}
+
+/** Uses that are the owner's alone: a visitor may not sleep in their bed or open their chests. */
+export const OWNER_USES: readonly FurnishingUse[] = ["rest", "open"];
+
+/** Why this player may not use `defId` this way, or null if they may. `ownerName` words the refusal for a visitor. */
+export function useProblem(defId: string, isOwner: boolean, ownerName = "the owner"): string | null {
+  const use = useOf(defId);
+  if (isOwner || !OWNER_USES.includes(use)) return null;
+  return use === "rest" ? `Only ${ownerName} sleeps here.` : `Only ${ownerName} can open that.`;
+}
+
+/**
+ * The hexes someone can stand on to use a placed piece: its own hex (for a
+ * small thing or a wall piece, which do not block it) and every walkable
+ * neighbour of what it covers. A small thing on a top is reached from beside
+ * the piece it stands on.
+ */
+export function besideHexes(room: WorldMap, furnishings: Furnishing[], piece: Furnishing): HexPos[] {
+  const base = piece.onId !== null ? furnishings.find((f) => f.id === piece.onId) ?? piece : piece;
+  if (base.q === null || base.r === null) return [];
+  const pos = { q: base.q, r: base.r };
+  const covers = isFloorPiece(base.defId) ? coveredHexes(base.defId, pos, spotOf(base)) : [pos];
+  const blocked = blockedHexes(furnishings);
+  const out = new Map<string, HexPos>();
+  for (const c of covers) {
+    for (const d of [{ q: 0, r: 0 }, ...HEX_DIRS]) {
+      const h = { q: c.q + d.q, r: c.r + d.r };
+      if (tileAt(room, h)?.biome === "floor" && !blocked.has(posKey(h))) out.set(posKey(h), h);
+    }
+  }
+  return [...out.values()];
+}
+
+/** True if someone standing on `pos` is close enough to use the piece. */
+export function isBeside(room: WorldMap, furnishings: Furnishing[], piece: Furnishing, pos: HexPos): boolean {
+  return besideHexes(room, furnishings, piece).some((h) => h.q === pos.q && h.r === pos.r);
+}
+
+/**
+ * Why this player may not lie down on bed `id`, or null. Only the owner, on
+ * their own placed bed, standing beside it. It is only for show (the rest
+ * itself is the server's `/api/rest`), but visitors still may not.
+ */
+export function lieDownProblem(room: WorldMap, furnishings: Furnishing[], id: number, pos: HexPos, isOwner: boolean): string | null {
+  const bed = furnishings.find((f) => f.id === id);
+  if (!bed || !FURNISHINGS[bed.defId]?.bed || bed.q === null) return "There is no bed there.";
+  if (!isOwner) return useProblem(bed.defId, false);
+  if (!isBeside(room, furnishings, bed, pos)) return "Walk over to the bed first.";
+  return null;
 }
 
 // ---------- wire types ----------
@@ -537,6 +649,7 @@ export type HutServerMessage =
   | { type: "joined"; player: HarborPlayer }
   | { type: "left"; id: string }
   | { type: "moved"; id: string; path: HexPos[] }
+  | { type: "placed"; id: string; pos: HexPos }
   | { type: "said"; id: string; name: string; text: string }
   /** Sent only to whoever asked for something that was not allowed. */
   | { type: "refused"; reason: string }
@@ -545,6 +658,8 @@ export type HutServerMessage =
 export type HutClientMessage =
   | { type: "move"; to: HexPos }
   | { type: "say"; text: string }
+  /** Back to the door, for a stuck or lost hero. */
+  | { type: "unstick" }
   /**
    * Owner only. Put a stored furnishing down, or move a placed one. On the
    * floor it goes on hex `to` at offset `x`/`z`, turned `angle` radians
@@ -558,6 +673,8 @@ export type HutClientMessage =
   | { type: "put_in"; id: number; into: number }
   /** Owner only. Back into storage. */
   | { type: "pick_up"; id: number }
+  /** Owner only, standing beside their bed, after resting: lie down on it for everyone to see, until they walk off. */
+  | { type: "lie_down"; id: number }
   /**
    * Owner only. Turn a placed floor piece to `angle` radians (or `facing`
    * sixths); without either, one step clockwise: a sixth for furniture, a

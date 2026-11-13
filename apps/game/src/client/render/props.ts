@@ -19,6 +19,8 @@ const IRON = "#6f7480";
 const STONE = "#9a968c";
 const CLOTH = "#e8dcc0";
 const GOLD = "#e0b12e";
+/** From a hex's middle to the side it shares with the next one along: where a two-hex piece's middle sits from its anchor. */
+const HX = Math.sqrt(3) / 2;
 
 class Builder {
   readonly group = new THREE.Group();
@@ -51,7 +53,10 @@ class Builder {
 
   /** Something that glows: drawn unlit, centred on the point given. */
   glow(color: string, geometry: THREE.BufferGeometry, x: number, y: number, z: number): THREE.Mesh {
-    return this.mesh(geometry, new THREE.MeshBasicMaterial({ color }), x, y, z);
+    const mesh = this.mesh(geometry, new THREE.MeshBasicMaterial({ color }), x, y, z);
+    // Lit from within: it gives light, so it must never cast a shadow over its own lamp.
+    mesh.userData.selfLit = true;
+    return mesh;
   }
 
   /**
@@ -326,6 +331,77 @@ const MODELS: Record<string, (b: Builder) => void> = {
   },
 
   // ---- small things ----
+  // ---- big pieces: built from their anchor hex's middle out across the next (see hut.ts, Footprint) ----
+  long_table(b) {
+    // A trestle table two hexes long, in the same dark wood as the Plank Table, with a cloth runner down it.
+    b.box("#5e3d24", 2.5, 0.08, 0.76, HX, 0.42);
+    for (const x of [HX - 1.12, HX + 1.12]) for (const z of [-0.29, 0.29]) b.box("#3b2616", 0.08, 0.42, 0.08, x, 0, z);
+    b.box("#3b2616", 0.08, 0.42, 0.5, HX, 0);
+    b.box("#3b2616", 2.2, 0.06, 0.06, HX, 0.16);
+    b.box(CLOTH, 2.1, 0.012, 0.26, HX, 0.5);
+  },
+  long_bench(b) {
+    b.box("#5e3d24", 2.3, 0.07, 0.4, HX, 0.28);
+    for (const x of [HX - 1.04, HX, HX + 1.04]) b.box("#3b2616", 0.07, 0.28, 0.34, x, 0);
+    b.box("#3b2616", 2.08, 0.05, 0.05, HX, 0.12);
+  },
+  four_poster(b) {
+    const [head, foot] = [HX - 1.14, HX + 1.14];
+    // The frame, the mattress at a bunk's height, pillows at the head and a deep red blanket.
+    b.box(WOOD, 2.3, 0.2, 1.04, HX);
+    b.box(CLOTH, 2.16, 0.1, 0.96, HX, 0.2);
+    b.box("#9c3f36", 1.4, 0.12, 1.0, HX + 0.36, 0.2);
+    b.box("#7a2f2a", 0.08, 0.13, 1.0, HX - 0.34, 0.2);
+    for (const z of [-0.24, 0.24]) b.box("#f4efe1", 0.28, 0.1, 0.38, head + 0.28, 0.3, z);
+    b.box(DARK_WOOD, 0.08, 0.75, 1.04, head, 0);
+    b.box(DARK_WOOD, 0.08, 0.42, 1.04, foot, 0);
+    // Four posts, rails across the top with a valance hanging off them, and curtains tied back at each post.
+    for (const x of [head, foot]) {
+      for (const z of [-0.5, 0.5]) {
+        b.post(DARK_WOOD, 0.045, 0.055, 1.78, x, 0, z);
+        b.box("#9c3f36", 0.13, 1.1, 0.13, x + (x === head ? 0.09 : -0.09), 0.5, z * 0.9);
+        b.box(GOLD, 0.15, 0.04, 0.15, x + (x === head ? 0.09 : -0.09), 0.86, z * 0.9);
+      }
+      b.box(DARK_WOOD, 0.06, 0.06, 1.04, x, 1.74);
+    }
+    for (const z of [-0.5, 0.5]) {
+      b.box(DARK_WOOD, 2.34, 0.06, 0.06, HX, 1.74, z);
+      b.box("#9c3f36", 2.34, 0.2, 0.03, HX, 1.56, z * 1.02);
+    }
+  },
+  great_bookcase(b) {
+    // Two bays of shelves under one cornice, and a ladder leaning on the right-hand bay.
+    b.box(DARK_WOOD, 2.4, 1.62, 0.4, HX, 0, -0.15);
+    b.box("#4a3220", 2.46, 0.08, 0.44, HX, 1.54, -0.15);
+    const books = ["#b9433d", "#3f6fa8", "#6b8c2f", GOLD, "#6a2f8c", "#8a5a3c"];
+    for (let shelf = 0; shelf < 4; shelf++) {
+      const y = 0.1 + shelf * 0.36;
+      for (const bay of [-1, 1]) {
+        const mid = HX + bay * 0.58;
+        b.box("#2a2018", 1.04, 0.3, 0.06, mid, y, 0.03);
+        for (let i = 0; i < 7; i++) {
+          if ((i + shelf + (bay > 0 ? 2 : 0)) % 6 === 5) continue;
+          b.box(books[(i + shelf * 2 + (bay > 0 ? 3 : 0)) % books.length], 0.11, 0.2 + ((i + shelf) % 3) * 0.03, 0.08, mid - 0.42 + i * 0.14, y, 0.06);
+        }
+      }
+    }
+    b.box(DARK_WOOD, 0.06, 1.5, 0.08, HX, 0.06, 0.04);
+    for (const x of [HX + 0.62, HX + 0.94]) b.box(PALE_WOOD, 0.04, 1.58, 0.04, x, 0, 0.11);
+    for (let i = 0; i < 5; i++) b.box(PALE_WOOD, 0.36, 0.03, 0.03, HX + 0.78, 0.2 + i * 0.3, 0.11);
+  },
+  runner_rug(b) {
+    // An old sail, three hexes long: cream canvas, a blue stripe down the middle and red ones either side.
+    b.box("#d8cdb0", 4.6, 0.025, 1.0, 2 * HX);
+    b.box("#3f6fa8", 4.4, 0.03, 0.18, 2 * HX);
+    for (const z of [-0.3, 0.3]) b.box("#b8452f", 4.4, 0.03, 0.1, 2 * HX, 0, z);
+    for (const x of [2 * HX - 2.27, 2 * HX + 2.27]) b.box("#a89a78", 0.06, 0.032, 1.0, x);
+  },
+  round_rug(b) {
+    // Rings of braided rope and rag, laid over three hexes.
+    const rings: [string, number][] = [["#8a5a3c", 1.35], ["#4f8a3a", 1.08], [CLOTH, 0.8], ["#b8452f", 0.52], ["#3f6fa8", 0.22]];
+    rings.forEach(([color, radius], i) => b.post(color, radius, radius, 0.02 + i * 0.004, HX, 0, 0.5, 24));
+  },
+
   candle(b) {
     b.post(GOLD, 0.07, 0.08, 0.025);
     b.post("#efe6c8", 0.035, 0.035, 0.14, 0, 0.025);

@@ -7,14 +7,16 @@
 // in on the fight and lines the two sides up facing each other.
 
 import * as THREE from "three";
-import { Ambience, CARD_LAYER, SHADOW_SLOTS, SLOT_LAYER } from "./ambience";
+import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
+import { Ambience, CARD_LAYER, SHADOW_SLOTS, SLOT_LAYER, pixelTexture, stamp, type BuildingGlow } from "./ambience";
 import "./camera.css";
 import type { HexPos } from "@gantt-quest/core";
 import { hexDistance } from "@gantt-quest/core";
-import { BASE_HEIGHT, BATTLE_JOIN_RANGE, BIG_REACH, ENEMIES, HEX_DIRS, TRAIT_BY_ID, MOVE_COST, WALL_FACE_HALF, WALL_ITEM_BOTTOM, WALL_ITEM_TOP, findPath, xpProgress, reachable, tileAt, wallFace, wallFaces, type ClientState, type Outfit, type Phase, type Poi, type Tile, type WorldEvent, type WorldMap } from "@gantt-quest/world";
+import { BASE_HEIGHT, BATTLE_JOIN_RANGE, BIG_REACH, ENEMIES, HEX_DIRS, TRAIT_BY_ID, MOVE_COST, WALL_FACE_HALF, WALL_ITEM_BOTTOM, WALL_ITEM_TOP, findPath, hexAt, xpProgress, reachable, tileAt, wallFace, wallFaces, type ClientState, type Outfit, type Phase, type Poi, type Tile, type WorldEvent, type WorldMap } from "@gantt-quest/world";
 import { ghostModel, propModel, tintGhost, type LightKind } from "./props";
 import { nearWater, openEar, sounds } from "../audio/gameSounds";
 import type { AttackStyle, Fighter } from "../audio/names";
+import { PUFFS, footfalls, stepGround, worldToHex } from "./footsteps";
 import { SPRITE_ASPECT, bubbleTexture, fxTexture, labelTexture, plateKey, sleepZTexture, spriteKey, spriteTexture, textTexture, type FxKind, type PlateStats } from "./sprites";
 
 /** Spells fly as a coloured bolt; these are their colours, by ability name. */
@@ -28,22 +30,9 @@ const SPELL_COLOR: Record<string, string> = {
 const ARROW_ABILITIES = new Set(["Aimed Shot", "Pin Down", "Volley", "Barbed Arrow"]);
 /** How an attack travels, for its sound: the same split the effects above are drawn by. */
 const attackStyle = (ability: string): AttackStyle => (SPELL_COLOR[ability] ? "magic" : ARROW_ABILITIES.has(ability) ? "ranged" : "melee");
-/** The hex a point on the map is over. */
-function worldToHex(x: number, z: number): HexPos {
-  const fr = z / 1.5;
-  const fq = x / SQRT3 - fr / 2;
-  const fs = -fq - fr;
-  let q = Math.round(fq);
-  let r = Math.round(fr);
-  const s = Math.round(fs);
-  const dq = Math.abs(q - fq);
-  const dr = Math.abs(r - fr);
-  const ds = Math.abs(s - fs);
-  if (dq > dr && dq > ds) q = -r - s;
-  else if (dr > ds) r = -q - s;
-  return { q, r };
-}
 const isBoss = (kind: string) => !!ENEMIES[kind]?.boss;
+/** Rank-and-file drawn a size up: the heavy hitters. */
+const isBig = (kind: string) => kind === "brute" || kind === "bear";
 
 /**
  * What the renderer needs to draw a scene. An island's ClientState satisfies
@@ -52,6 +41,8 @@ const isBoss = (kind: string) => !!ENEMIES[kind]?.boss;
 export interface RenderState {
   /** Identifies the map; the terrain is rebuilt when it changes. */
   code: string;
+  /** A voyage's island, or the Haunted Caverns: the caverns' mouth shows no moored ship, and its heroes carry torches. */
+  kind?: "voyage" | "caverns";
   you: string;
   phase: Phase;
   round: number;
@@ -93,6 +84,8 @@ export interface RenderHero {
   outfit?: Outfit;
   /** `asleep`: lying down with eyes shut, z's rising, as on a bedroll in the Harbor. */
   asleep?: boolean;
+  /** Drawn at this point of its hex instead of the middle, `y` above the floor: lying on a bed in a hut. */
+  at?: { x: number; z: number; y: number };
   level?: number;
   /** XP into the current level. */
   xp?: number;
@@ -133,8 +126,10 @@ export interface SceneProp {
   angle?: number;
   /** How far out its selection ring goes. */
   ring?: number;
-  /** The hexes it keeps people out of, when that is more than its own (see hutroom.ts, coveredHexes). Small things and wall pieces keep nobody out. */
+  /** The hexes it covers, when that is more than its own (see hutroom.ts, coveredHexes): kept clear of people unless it is `flat`, and outlined when selected. Small things and wall pieces cover none. */
   covers?: HexPos[];
+  /** Floor decor (a rug): walked over, and other pieces stand on it. */
+  flat?: boolean;
   /** The prop it stands on; then x/z/angle are in that prop's own frame. */
   on?: string | number;
   /** Its flat top, in its own frame, for small things to stand on. */
@@ -157,6 +152,12 @@ export interface Holding {
   small: boolean;
   /** A wall piece's face, w wide and h tall: it is aimed at the walls, not the floor. */
   mount?: { w: number; h: number };
+  /**
+   * A floor piece's footprint, in its own frame (see hut.ts, Footprint): drawn
+   * under the ghost, and for a long piece reaching across hexes, held by its
+   * middle rather than by the hex it is anchored on.
+   */
+  footprint?: { w: number; d: number; x?: number; z?: number; round?: boolean };
   /** Its turn: `facing` sixths plus `angle` radians. */
   facing: number;
   angle: number;
@@ -192,9 +193,75 @@ const MAX_PITCH = 1.25;
 /** Camera distance per unit of zoom, kept from when the tilt was fixed. */
 const CAMERA_REACH = Math.hypot(0.72, 0.78);
 const PLAYER_COLORS = ["#ffd23f", "#5ce1e6", "#ff7ab6", "#9dff6b"];
-const BIOME_COLOR: Record<string, string> = { plains: "#7cb856", forest: "#4c9a52", hills: "#a39672", water: "#3f86dc", dock: "#9a7748", cobble: "#6f7279", mud: "#5f5140", rampart: "#62656d", floor: "#b08a5c", wall: "#6e5a48", fog: "#2b3140" };
+const BIOME_COLOR: Record<string, string> = { plains: "#7cb856", forest: "#4c9a52", hills: "#a39672", water: "#3f86dc", dock: "#9a7748", cobble: "#6f7279", mud: "#5f5140", rampart: "#62656d", floor: "#b08a5c", wall: "#6e5a48", cave: "#4a4552", rock: "#2a2730", fog: "#2b3140" };
 /** What grass and trees are pulled toward under the Harbor's low cloud. */
 const DRAB = new THREE.Color("#5d6a5c");
+/** The pub's painted sign: a foaming tankard on an oxblood board with a gold edge. Made once and shared. */
+let pubSignTexture: THREE.CanvasTexture | null = null;
+function pubSign(): THREE.CanvasTexture {
+  pubSignTexture ??= pixelTexture(16, 14, (ctx) => {
+    ctx.fillStyle = "#6e2b26";
+    ctx.fillRect(0, 0, 16, 14);
+    stamp(ctx, [
+      "BBBBBBBBBBBBBBBB",
+      "B              B",
+      "B    W  WW     B",
+      "B   WWWWWWW    B",
+      "B  WWWWWWWWW   B",
+      "B   hhhhhhh    B",
+      "B   YyYYyYYYY  B",
+      "B   YyYYyYY  Y B",
+      "B   hhhhhhh  Y B",
+      "B   YyYYyYY  Y B",
+      "B   YyYYyYYYY  B",
+      "B   hhhhhhh    B",
+      "B              B",
+      "BBBBBBBBBBBBBBBB",
+    ], { B: "#d9b45a", W: "#f4efe1", Y: "#d08a3a", y: "#a8662a", h: "#3a2c22" });
+  });
+  return pubSignTexture;
+}
+/**
+ * Fold a model's pieces that share a look into one mesh each, so a detailed building costs a handful of draw calls
+ * rather than one a piece. Plain lambert pieces of the same colour fold together; a piece with any other material
+ * (a pane the ambience warms, the painted sign) folds only with pieces using that very material. Glows stay apart.
+ */
+function foldByLook(g: THREE.Group) {
+  const sets = new Map<string, THREE.Mesh[]>();
+  for (const o of g.children) {
+    if (!(o instanceof THREE.Mesh)) continue;
+    const m = o.material as THREE.Material;
+    const key = (m instanceof THREE.MeshLambertMaterial && !m.map ? `lambert:${m.color.getHexString()}` : m.uuid) + (o.userData.glow ? ":glow" : "");
+    const set = sets.get(key);
+    if (set) set.push(o);
+    else sets.set(key, [o]);
+  }
+  for (const meshes of sets.values()) {
+    if (meshes.length < 2) continue;
+    const parts = meshes.map((mesh) => {
+      mesh.updateMatrix();
+      const geo = (mesh.geometry.index ? mesh.geometry.toNonIndexed() : mesh.geometry.clone()).applyMatrix4(mesh.matrix);
+      geo.clearGroups();
+      return geo;
+    });
+    const folded = mergeGeometries(parts);
+    for (const p of parts) p.dispose();
+    if (!folded) continue;
+    const mesh = new THREE.Mesh(folded, meshes[0].material);
+    mesh.userData.glow = meshes[0].userData.glow;
+    for (const m of meshes) {
+      g.remove(m);
+      m.geometry.dispose();
+    }
+    g.add(mesh);
+  }
+}
+/** Window glass that warms with the dusk: `unlit` by day, `lit` by night (the ambience moves it between the two; see `setGlows`). */
+function warmPane(unlit: string, lit: string): THREE.MeshBasicMaterial {
+  const m = new THREE.MeshBasicMaterial({ color: lit });
+  m.userData = { unlit, lit };
+  return m;
+}
 /** The open sea at the dead of night, and the fog by day and by night. */
 const NIGHT_SEA = new THREE.Color("#0f1a33");
 const FOG_DAY = new THREE.Color("#3a4358");
@@ -339,6 +406,23 @@ interface SleepZ {
 
 const Z_LIFE = 2.6;
 
+/** A puff kicked up by a footfall: drifts out and up a little and fades. Pooled, so walking makes no garbage. */
+interface Puff {
+  sprite: THREE.Sprite;
+  age: number;
+  life: number;
+  x: number;
+  y: number;
+  z: number;
+  vx: number;
+  vy: number;
+  size: number;
+  alpha: number;
+}
+
+/** No more puffs than this are ever out at once; past it the oldest is reused. */
+const PUFF_POOL = 36;
+
 /** A short-lived effect sprite: a swipe, a projectile in flight, a burst. */
 interface Fx {
   sprite: THREE.Sprite;
@@ -361,10 +445,6 @@ export interface RendererCallbacks {
   onPropClick?(id: string | number): boolean;
   /** The prop under the pointer changed. */
   onPropHover?(id: string | number | null): void;
-  /** A click on a hero standing on the map (yourself included). Return true if it was handled; otherwise it falls through to their hex. */
-  onHeroClick?(id: string): boolean;
-  /** The hero under the pointer changed. Never yourself. */
-  onHeroHover?(id: string | null): void;
   /** While carrying something: a click on a spot to set it down. */
   onPlace?(target: PlaceTarget): void;
   /** While carrying something: whether it may go at that spot (the ghost turns red if not). */
@@ -413,8 +493,6 @@ export class WorldRenderer {
   private aimedAt: PlaceTarget | null = null;
   /** The prop under the pointer, for its tooltip. */
   private hoverProp: string | number | null = null;
-  /** The hero under the pointer, for their sheet. */
-  private hoverHero: string | null = null;
   private sea: THREE.Mesh;
   private unitGroup = new THREE.Group();
   private fxGroup = new THREE.Group();
@@ -436,6 +514,11 @@ export class WorldRenderer {
   private pulsing = new Set<string>();
   private floaters: Floater[] = [];
   private sleepZs: SleepZ[] = [];
+  /** Footfall puffs, made as needed up to PUFF_POOL and then reused; `nextPuff` is the one to reuse next. */
+  private puffs: Puff[] = [];
+  private nextPuff = 0;
+  /** The player asked for less motion: footsteps are still heard, but kick up no puffs. */
+  private still = typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
   private fx: Fx[] = [];
   /** Speech over units' heads, by unit id; kept apart from the unit so a change of gear does not cut it short. */
   private bubbles = new Map<string, Bubble>();
@@ -484,6 +567,8 @@ export class WorldRenderer {
   /** How high the last wall piece was aimed, for when the pointer is on top of a wall. */
   private wallY = 1.1;
   private rotateButtons: HTMLDivElement;
+  /** The view-turning buttons in that column, hidden in a fight; the sound button stays. */
+  private turnButtons: HTMLButtonElement[] = [];
   private pointer = { x: 0, y: 0, downX: 0, downY: 0, down: false, dragged: false, dirty: false, inside: false };
 
   constructor(private container: HTMLElement, private callbacks: RendererCallbacks) {
@@ -555,6 +640,7 @@ export class WorldRenderer {
       b.setAttribute("aria-label", title);
       b.addEventListener("click", run);
       this.rotateButtons.appendChild(b);
+      this.turnButtons.push(b);
     }
     container.appendChild(this.rotateButtons);
     this.resizeObserver = new ResizeObserver(() => this.resize());
@@ -587,6 +673,8 @@ export class WorldRenderer {
   // ---------- state ----------
 
   setState(state: RenderState) {
+    // Dev server only: the view being fed state is the live one (a view torn down after it was made would otherwise be left in the hook).
+    if (import.meta.env.DEV) (globalThis as { __gqWorld?: WorldRenderer }).__gqWorld = this;
     const first = this.mapCode !== state.code;
     // The ground is redrawn for a new map, and whenever fog lifts off more of this one.
     const lifted = state.map.tiles.reduce((n, t) => n + (t.biome === "fog" ? 0 : 1), 0);
@@ -599,7 +687,8 @@ export class WorldRenderer {
     this.updateGhost();
     this.buildJoinRanges(state);
     if (first) {
-      this.sea.visible = !state.indoors;
+      // No sea under a hut's floor, nor in the caverns.
+      this.sea.visible = !state.indoors && state.kind !== "caverns";
       (this.scene.background as THREE.Color).set(state.indoors ? "#1d1a2b" : "#a9dcf7");
       // A room is framed whole: closer for a hut, further back for the pub.
       if (state.indoors) this.userDist = this.camDist = state.map.grid.cols > 10 ? 21 : 15;
@@ -618,12 +707,12 @@ export class WorldRenderer {
       // The line-up is laid out for the default view, so a fight always faces the same way.
       this.yawGoal = nearestTurn(this.yaw, 0);
       this.pitchGoal = DEFAULT_PITCH;
-      this.rotateButtons.hidden = true;
+      for (const b of this.turnButtons) b.hidden = true;
     } else {
       this.dist = this.userDist;
       this.yawGoal = nearestTurn(this.yaw, this.userYaw);
       this.pitchGoal = this.userPitch;
-      this.rotateButtons.hidden = false;
+      for (const b of this.turnButtons) b.hidden = false;
       const turnKey = `${state.phase}:${state.round}:${state.turn?.heroId ?? ""}`;
       // A room is small enough to see whole, so indoors the camera stays on its middle.
       if (first && me && !state.indoors) this.target.copy(this.standAt(me.pos));
@@ -645,8 +734,14 @@ export class WorldRenderer {
       else got.levelUp = true;
       xp.set(ev.heroId, got);
     }
+    const ending = events.find((e) => e.t === "battle_end");
+    // Your turn coming round gets a soft tick, once, and not as the fight ends.
+    let myTurnAt: number | null = null;
     for (const ev of events) {
-      if (ev.t === "moved") {
+      if (ev.t === "battle_start") {
+        // A boss's first appearance: a low swell as the opening card goes up.
+        if (this.state?.battle?.combatants.some((c) => c.side === "enemy" && isBoss(c.kind))) this.later(0, () => sounds.boss(), 0.15);
+      } else if (ev.t === "moved") {
         const unit = this.units.get(ev.heroId);
         if (unit) unit.path = ev.path.map((p) => this.standAt(p));
       } else if (ev.t === "chat") {
@@ -664,6 +759,7 @@ export class WorldRenderer {
         else if (b.t === "miss") this.later(beat++, () => this.attack(b.actor, b.target, b.ability, false, () => { sounds.miss(b.ability, attackStyle(b.ability), this.spot(b.target)); this.float(b.target, "miss", "#c9d1e0"); }));
         else if (b.t === "heal") this.later(beat++, () => { sounds.heal(b.ability, this.spot(b.target)); this.sparkle(b.target, "#7dff9a"); this.float(b.target, `+${b.amount}`, "#7dff9a"); });
         else if (b.t === "tick") this.later(beat++, () => { sounds.tick(b.effect, this.spot(b.target)); this.float(b.target, `-${b.amount}`, "#ffa94d"); });
+        else if (b.t === "turn" && b.id === this.state?.you) myTurnAt = beat;
         // A class trait kicking in gets its name over the hero.
         else if (b.t === "trait") this.later(beat++, () => { const name = TRAIT_BY_ID[b.trait]?.name ?? b.trait; sounds.trait(name, this.spot(b.id)); this.float(b.id, name, "#facc15"); });
         // These ride on the blow before them rather than taking a beat of their own.
@@ -678,6 +774,8 @@ export class WorldRenderer {
     }
     // After the last blow has landed.
     for (const [heroId, got] of xp) this.later(beat, () => this.xpGain(heroId, got.amount, got.levelUp));
+    // Your turn coming round in a fight gets a soft tick (the closing sting comes from the battle's end event).
+    if (!ending && myTurnAt !== null) this.later(myTurnAt, () => sounds.yourTurn(), 0.1);
   }
 
   /**
@@ -798,8 +896,9 @@ export class WorldRenderer {
     }
   }
 
-  private later(beat: number, run: () => void) {
-    this.pending.push({ at: this.clock + beat * 0.38, run });
+  /** Run `run` on beat `beat` of what is being played out, `extra` seconds after it. */
+  private later(beat: number, run: () => void, extra = 0) {
+    this.pending.push({ at: this.clock + beat * 0.38 + extra, run });
   }
 
   private lunge(actorId: string, targetId: string) {
@@ -924,6 +1023,63 @@ export class WorldRenderer {
    * up for a moment. `levelUp` adds a bigger flourish: more motes, a gold
    * burst, a ring of motes thrown outward and "LEVEL UP" over the top.
    */
+  /**
+   * A walking hero's hop has just touched the ground: a step sounds, by what they stepped on, and a little
+   * puff is kicked up at their feet. Only heroes out of a fight, awake, and in view.
+   */
+  private footfall(id: string, unit: Unit) {
+    const state = this.state;
+    if (!state || state.battle || unit.asleep || !unit.sprite.visible) return;
+    const hero = state.heroes.find((h) => h.id === id);
+    if (!hero || hero.asleep) return;
+    const feet = unit.feet;
+    // Nothing off screen is heard or drawn.
+    const seen = feet.clone().project(this.camera);
+    if (seen.z > 1 || Math.abs(seen.x) > 1.05 || Math.abs(seen.y) > 1.05) return;
+    // Heroes stand a quarter hex toward the camera from the middle of their hex (see syncUnits).
+    const biome = tileAt(state.map, worldToHex(feet.x, feet.z - 0.25))?.biome;
+    const ground = stepGround(biome);
+    if (!ground || !biome) return;
+    // The audio engine plays it, placed where the foot lands and falling off with distance from you.
+    sounds.footstep(biome, { x: feet.x, z: feet.z }, id === state.you);
+    if (!this.still) this.puff(ground, feet);
+  }
+
+  private puff(ground: keyof typeof PUFFS, at: THREE.Vector3) {
+    const look = PUFFS[ground];
+    for (let i = 0; i < look.count; i++) {
+      let puff = this.puffs.find((p) => !p.sprite.visible);
+      if (!puff && this.puffs.length < PUFF_POOL) {
+        const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ transparent: true, depthWrite: false }));
+        // Drawn before the hero cards (renderOrder 2), so a hero is always in front of the dust at their feet.
+        sprite.renderOrder = 1;
+        this.fxGroup.add(sprite);
+        puff = { sprite, age: 0, life: 0, x: 0, y: 0, z: 0, vx: 0, vy: 0, size: 0, alpha: 0 };
+        this.puffs.push(puff);
+      }
+      if (!puff) puff = this.puffs[(this.nextPuff = (this.nextPuff + 1) % this.puffs.length)];
+      // Kicked out to either side of the foot, the second the other way.
+      const side = (i % 2 ? 1 : -1) * (0.5 + Math.random() * 0.5);
+      const color = look.colors[(Math.random() * look.colors.length) | 0];
+      puff.sprite.material.map = fxTexture(look.kind, color, side > 0);
+      puff.sprite.material.needsUpdate = true;
+      puff.sprite.visible = true;
+      puff.age = 0;
+      puff.life = 0.32 + Math.random() * 0.14;
+      puff.x = at.x + side * 0.22;
+      puff.z = at.z + 0.06;
+      // The shapes are drawn low in their tile (rows 4 to 11 of 16): lift it so the lowest row rests on the ground.
+      puff.y = at.y + look.size * 0.26;
+      puff.vx = side * 0.9;
+      puff.vy = look.kind === "splash" ? 0.6 : 0.3;
+      puff.size = look.size * (0.85 + Math.random() * 0.3);
+      puff.alpha = look.alpha;
+      puff.sprite.position.set(puff.x, puff.y, puff.z);
+      puff.sprite.scale.set(puff.size * 0.8, puff.size * 0.8, 1);
+      puff.sprite.material.opacity = puff.alpha;
+    }
+  }
+
   xpGain(unitId: string, amount: number, levelUp = false) {
     const unit = this.units.get(unitId);
     if (!unit || !(amount > 0 || levelUp)) return;
@@ -1178,6 +1334,17 @@ export class WorldRenderer {
     this.targetGoal.copy(this.standAt(pos));
   }
 
+  /** Centre the camera over a point on the map, in world units; `snap` puts it there at once instead of easing. */
+  focusAt(x: number, z: number, snap = false) {
+    this.targetGoal.set(x, 0.14, z);
+    if (snap) this.target.copy(this.targetGoal);
+  }
+
+  /** A point of interest's model, by id, for a scene that moves one about itself (the crew's ship at sea). */
+  poiObject(id: string): THREE.Object3D | undefined {
+    return this.poiGroup.children.find((g) => g.userData.poiId === id);
+  }
+
   /** Whether a unit is still on its way along a walked path. */
   isWalking(id: string): boolean {
     return (this.units.get(id)?.path.length ?? 0) > 0;
@@ -1194,8 +1361,12 @@ export class WorldRenderer {
     const stacks: THREE.Vector3[] = [];
     /** A lighthouse's lantern, which the ambience turns a beam from. */
     let beacon: THREE.Vector3 | null = null;
+    /** Buildings' lit windows and lanterns, and the panes that warm at dusk. */
+    const glows: BuildingGlow[] = [];
+    const panes: THREE.MeshBasicMaterial[] = [];
     for (const poi of state.map.pois) {
       const g = this.poiModel(poi);
+      g.userData.poiId = poi.id;
       const at = this.standAt(poi.pos);
       g.position.set(at.x, at.y, at.z - 0.28);
       g.traverse((o) => {
@@ -1205,9 +1376,12 @@ export class WorldRenderer {
       this.poiGroup.add(g);
       if (g.userData.smoke) stacks.push((g.userData.smoke as THREE.Vector3).clone().add(g.position));
       if (g.userData.beacon) beacon = (g.userData.beacon as THREE.Vector3).clone().add(g.position);
+      for (const glow of (g.userData.glows as BuildingGlow[] | undefined) ?? []) glows.push({ ...glow, pos: glow.pos.clone().add(g.position) });
+      panes.push(...((g.userData.panes as THREE.MeshBasicMaterial[] | undefined) ?? []));
     }
     this.ambience.setSmoke(stacks);
     this.ambience.setBeacon(beacon);
+    this.ambience.setGlows(glows, panes);
     // The sea breaks around rocks standing out of it, and the wreck on them.
     this.ambience.setSeaRocks(state.map.pois.filter((p) => p.kind === "rocks" || p.kind === "wreck").map((p) => this.standAt(p.pos)));
   }
@@ -1253,12 +1427,23 @@ export class WorldRenderer {
       }
       g.userData.surface = prop.surface;
       this.propModels.set(prop.id, g);
+      // A lamp or candle holds its light inside its own frame (a lantern's cage, a candle's wick),
+      // so its parts would shadow their own light: it casts none. A fire's light sits in front of
+      // the hearth, so a hearth or fireplace still casts shadows from the other lights in the room.
+      let lamplike = false;
+      g.traverse((o) => {
+        if (o.userData.light && o.userData.light !== "fire") lamplike = true;
+      });
       g.traverse((o) => {
         if (!(o instanceof THREE.Mesh)) return;
         o.userData.propId = prop.id;
-        // Flames give light rather than block it; glass lets it through.
+        // Flames and glowing panes give light rather than block it; glass lets it through.
         if (o.userData.flame !== undefined) flames.push(o);
-        else if (!o.userData.glass) o.castShadow = o.receiveShadow = true;
+        else if (o.userData.selfLit || o.userData.glass) return;
+        else {
+          o.castShadow = !lamplike;
+          o.receiveShadow = true;
+        }
       });
       if (prop.surface) {
         // An unseen sheet over its top, which a carried small thing is aimed at.
@@ -1280,7 +1465,10 @@ export class WorldRenderer {
       g.traverse((o) => {
         if (o.userData.light) lights.push({ pos: o.getWorldPosition(new THREE.Vector3()), kind: o.userData.light as LightKind });
       });
-      if (prop.selected) {
+      if (prop.selected && !prop.mount && (prop.covers?.length ?? 0) > 1) {
+        // A piece reaching across hexes: outline every hex it covers, as one shape.
+        this.propGroup.add(this.coverOutline(prop.covers!));
+      } else if (prop.selected) {
         const outer = prop.small ? 0.24 : prop.ring ?? 0.95;
         const inner = prop.small ? 0.18 : outer - 0.13;
         const ring = new THREE.Mesh(new THREE.RingGeometry(inner, outer, prop.mount ? 16 : 6), new THREE.MeshBasicMaterial({ color: "#ffd23f", side: THREE.DoubleSide, depthTest: !prop.small && !prop.mount }));
@@ -1302,12 +1490,38 @@ export class WorldRenderer {
     this.ear.lights(lights.map((l) => ({ kind: l.kind, x: l.pos.x, z: l.pos.z })));
   }
 
+  /** A flat gold band just inside the outer edges of a group of hexes, on the floor: the selection ring of a piece covering more than one. */
+  private coverOutline(hexes: HexPos[]): THREE.Mesh {
+    const inside = new Set(hexes.map(key));
+    const points: number[] = [];
+    const y = FLOOR_TOP + 0.03;
+    for (const h of hexes) {
+      const { x, z } = hexToWorld(h);
+      for (let i = 0; i < 6; i++) {
+        // Edge i runs between corners i and i+1; the neighbour across it lies along the bisector (as in buildJoinRanges).
+        const [a, b] = [(i * Math.PI) / 3, ((i + 1) * Math.PI) / 3];
+        const mid = (a + b) / 2;
+        const nr = Math.round((z + Math.cos(mid) * SQRT3) / 1.5);
+        const nq = Math.round((x + Math.sin(mid) * SQRT3) / SQRT3 - nr / 2);
+        if (inside.has(key({ q: nq, r: nr }))) continue;
+        const corner = (t: number, k: number) => [x + Math.sin(t) * k, y, z + Math.cos(t) * k];
+        const [ao, bo, bi, ai] = [corner(a, 0.97), corner(b, 0.97), corner(b, 0.84), corner(a, 0.84)];
+        points.push(...ao, ...bo, ...bi, ...ao, ...bi, ...ai);
+      }
+    }
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute("position", new THREE.Float32BufferAttribute(points, 3));
+    const band = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({ color: "#ffd23f", side: THREE.DoubleSide }));
+    band.renderOrder = 2;
+    return band;
+  }
+
   // ---------- carrying a piece: the ghost that follows the pointer ----------
 
   /** The ghost of whatever is being carried, rebuilt when that changes. */
   private updateGhost() {
     const holding = this.state?.holding ?? null;
-    const sig = holding ? holding.model : "";
+    const sig = holding ? `${holding.model}:${JSON.stringify(holding.footprint ?? null)}` : "";
     if (sig !== this.ghostSig) {
       this.ghostSig = sig;
       if (this.ghost) {
@@ -1321,6 +1535,17 @@ export class WorldRenderer {
       }
       if (holding) {
         this.ghost = ghostModel(holding.model);
+        const fp = holding.footprint;
+        if (fp) {
+          // What it will cover, laid on the floor under it: tinted with the ghost, red where it does not fit.
+          const plate = new THREE.Mesh(
+            fp.round ? new THREE.CircleGeometry(fp.w / 2, 32) : new THREE.PlaneGeometry(fp.w, fp.d),
+            new THREE.MeshBasicMaterial({ color: "#bfe8ff", transparent: true, opacity: 0.35, depthWrite: false, side: THREE.DoubleSide }),
+          );
+          plate.rotation.x = -Math.PI / 2;
+          plate.position.set(fp.x ?? 0, 0.015, fp.z ?? 0);
+          this.ghost.add(plate);
+        }
         this.ghost.visible = false;
         this.scene.add(this.ghost);
       }
@@ -1353,10 +1578,20 @@ export class WorldRenderer {
     const hit = this.raycaster.intersectObject(this.terrain)[0];
     if (!hit || hit.instanceId === undefined) return null;
     const t = this.tiles[hit.instanceId];
-    const pos = { q: t.q, r: t.r };
+    let pos = { q: t.q, r: t.r };
+    let [px, pz] = [hit.point.x, hit.point.z];
+    const fp = holding.footprint;
+    if (!holding.small && fp && Math.hypot(fp.x ?? 0, fp.z ?? 0) > 0.3) {
+      // A long piece is held by its middle: the hex it is anchored on is back along it from the pointer.
+      const turn = -yawOf(holding.facing, holding.angle);
+      const [c, s] = [Math.cos(turn), Math.sin(turn)];
+      const [fx, fz] = [fp.x ?? 0, fp.z ?? 0];
+      [px, pz] = [px - (fx * c - fz * s), pz - (fx * s + fz * c)];
+      pos = hexAt(px, pz);
+    }
     const mid = hexToWorld(pos);
-    let x = hit.point.x - mid.x;
-    let z = hit.point.z - mid.z;
+    let x = px - mid.x;
+    let z = pz - mid.z;
     const d = Math.hypot(x, z);
     // Furniture goes anywhere in its hex too, but settles in the middle when brought near it, the way it always stood.
     if (!holding.small && d < 0.15) return { pos, x: 0, z: 0 };
@@ -1435,7 +1670,9 @@ export class WorldRenderer {
       ghost.rotation.y = new THREE.Euler().setFromQuaternion(base.getWorldQuaternion(new THREE.Quaternion()), "YXZ").y - holding.angle;
     } else {
       const at = this.standAt(target.pos);
-      ghost.position.set(at.x + target.x, at.y + 0.004, at.z + target.z);
+      // Anchored off the floor (a long piece held near a wall): drawn at floor height all the same, and red.
+      const y = this.state && tileAt(this.state.map, target.pos)?.biome === "floor" ? at.y : FLOOR_TOP;
+      ghost.position.set(at.x + target.x, y + 0.004, at.z + target.z);
       ghost.rotation.y = yawOf(holding.facing, holding.angle);
     }
     tintGhost(ghost, this.callbacks.canPlace?.(target) ?? true);
@@ -1453,8 +1690,8 @@ export class WorldRenderer {
   /** Cost of stepping onto a tile: the terrain's, except that furniture cannot be walked through. */
   private stepCost(state: RenderState): ((t: Tile) => number) | undefined {
     if (!state.props?.length) return undefined;
-    // Small things are stepped over.
-    const blocked = new Set(state.props.filter((p) => !p.small && !p.mount && p.on === undefined).flatMap((p) => (p.covers ?? [p.pos]).map(key)));
+    // Small things are stepped over, and so are rugs.
+    const blocked = new Set(state.props.filter((p) => !p.small && !p.mount && !p.flat && p.on === undefined).flatMap((p) => (p.covers ?? [p.pos]).map(key)));
     return (t) => (blocked.has(key(t)) ? Infinity : MOVE_COST[t.biome]);
   }
 
@@ -1522,11 +1759,18 @@ export class WorldRenderer {
 
     switch (poi.kind) {
       case "landing": {
+        if (this.state?.kind === "caverns") {
+          // The way back out of the caverns: a rope down the rock and a lantern on a spike.
+          add(box(0.04, 0.9, 0.04), lambert("#c9a877"), -0.35, 0.45, -0.3);
+          add(box(0.05, 0.5, 0.05), lambert("#3d4048"), 0.35, 0.25, -0.2);
+          add(box(0.16, 0.18, 0.16), new THREE.MeshBasicMaterial({ color: "#ffd98a" }), 0.35, 0.58, -0.2).userData.glow = true;
+          break;
+        }
         add(box(1.0, 0.08, 0.5), lambert("#8a6a44"), 0, 0.05, 0.1);
-        // The party's ship, moored just offshore to the west.
-        add(box(1.1, 0.32, 0.5), lambert("#6b4a2b"), -1.5, -0.05, 0.3);
-        add(new THREE.CylinderGeometry(0.04, 0.04, 1.1, 5), lambert("#4a3520"), -1.5, 0.6, 0.3);
-        add(box(0.05, 0.6, 0.55), lambert("#f4efe1"), -1.42, 0.75, 0.3);
+        // The party's ship, moored just offshore to the west. Named, so the landfall can hide it while she is still coming in.
+        add(box(1.1, 0.32, 0.5), lambert("#6b4a2b"), -1.5, -0.05, 0.3).name = "moored";
+        add(new THREE.CylinderGeometry(0.04, 0.04, 1.1, 5), lambert("#4a3520"), -1.5, 0.6, 0.3).name = "moored";
+        add(box(0.05, 0.6, 0.55), lambert("#f4efe1"), -1.42, 0.75, 0.3).name = "moored";
         break;
       }
       case "hut":
@@ -1677,22 +1921,145 @@ export class WorldRenderer {
         break;
       }
       case "pub": {
-        // The pub: a long hall, wider and taller than any hut, with lit windows, a sign and a stone chimney.
-        const wall = lambert("#b89668");
-        const roof = lambert("#5d3a2a");
-        add(box(1.5, 0.72, 0.95), wall, 0, 0.36, 0);
-        add(box(1.62, 0.08, 1.07), lambert("#4a2f22"), 0, 0.76, 0);
-        const ridge = add(new THREE.ConeGeometry(0.78, 0.6, 4), roof, 0, 1.1, 0, Math.PI / 4);
-        ridge.scale.x = 1.5;
-        add(box(0.22, 0.36, 0.04), lambert("#4a2f22"), 0, 0.18, 0.48);
-        for (const x of [-0.48, 0.48]) add(box(0.2, 0.2, 0.03), new THREE.MeshBasicMaterial({ color: "#ffd98a" }), x, 0.42, 0.48);
-        // A sign on a bracket by the door.
-        add(box(0.04, 0.04, 0.3), lambert("#3a2c22"), 0.26, 0.62, 0.62);
-        add(box(0.03, 0.2, 0.26), lambert("#d9b45a"), 0.26, 0.48, 0.66);
-        // The chimney stands proud of the roof; its smoke is drawn by the ambience.
-        add(box(0.24, 1.3, 0.24), lambert("#8b8f96"), 0.5, 0.65, -0.22);
-        add(box(0.3, 0.07, 0.3), lambert("#6f737a"), 0.5, 1.33, -0.22);
-        g.userData.smoke = new THREE.Vector3(0.5, 1.4, -0.22);
+        // The pub: the warm heart of the town. A two-storey inn, bigger than any hut: a stone ground floor, a jettied
+        // upper floor of cream plaster and dark timbers under a steep gabled roof, windows that warm and glow as the
+        // light goes, a painted sign on a bracket, a lantern, and barrels and a bench out front.
+        const timber = lambert("#4a2f22");
+        const plaster = lambert("#e8d9b5");
+        const stone = lambert("#a8977a");
+        const roofMat = lambert("#7a3a2c");
+        const glows: BuildingGlow[] = [];
+        const panes: THREE.MeshBasicMaterial[] = [];
+        /** A window's glass: dim amber by day, lamplit by night. */
+        const pane = (unlit: string, lit: string) => {
+          const m = warmPane(unlit, lit);
+          panes.push(m);
+          return m;
+        };
+        const lowerGlass = pane("#c99a52", "#ffd98a");
+        const upperGlass = pane("#b98a4a", "#ffc870");
+        /** A framed window on the front, with a cross of glazing bars. */
+        const framed = (x: number, y: number, w: number, h: number, z: number, glass: THREE.Material) => {
+          add(box(w + 0.05, h + 0.05, 0.012), timber, x, y, z);
+          add(box(w, h, 0.01), glass, x, y, z + 0.008).userData.glow = true;
+          add(box(0.02, h, 0.012), timber, x, y, z + 0.014);
+          add(box(w, 0.02, 0.012), timber, x, y, z + 0.014);
+          glows.push({ pos: new THREE.Vector3(x, y, z + 0.18), size: w * 2.2 });
+        };
+
+        // The ground floor: a stone plinth and stone walls.
+        add(box(1.6, 0.08, 1.0), lambert("#7b8494"), 0, 0.04, 0);
+        add(box(1.5, 0.46, 0.92), stone, 0, 0.31, 0);
+        for (const x of [-0.48, 0.48]) {
+          framed(x, 0.31, 0.26, 0.2, 0.46, lowerGlass);
+          add(box(0.32, 0.03, 0.06), timber, x, 0.19, 0.48);
+        }
+        // The door: a red door in a timber frame, a lit fanlight over it, a brass handle and a stone step.
+        add(box(0.3, 0.42, 0.02), timber, 0, 0.29, 0.465);
+        add(box(0.22, 0.35, 0.03), lambert("#7a3a24"), 0, 0.255, 0.47);
+        add(box(0.2, 0.035, 0.02), lowerGlass, 0, 0.472, 0.475).userData.glow = true;
+        add(box(0.03, 0.03, 0.02), lambert("#e0b12e"), 0.07, 0.25, 0.49);
+        add(box(0.4, 0.04, 0.12), lambert("#8b8f96"), 0, 0.02, 0.56);
+        // A little gabled hood over the door on two brackets.
+        const hood = add(box(0.46, 0.035, 0.24), roofMat, 0, 0.53, 0.57);
+        hood.rotation.x = 0.35;
+        for (const x of [-0.19, 0.19]) add(box(0.03, 0.03, 0.16), timber, x, 0.47, 0.52).rotation.x = -0.75;
+
+        // The jettied upper floor: a beam, cream plaster, and a frame of dark timbers.
+        add(box(1.62, 0.07, 1.04), timber, 0, 0.575, 0);
+        add(box(1.58, 0.38, 1.0), plaster, 0, 0.8, 0);
+        add(box(1.64, 0.05, 1.04), timber, 0, 1.0, 0);
+        for (const x of [-0.79, 0.79]) for (const z of [-0.5, 0.5]) add(box(0.06, 0.38, 0.06), timber, x, 0.8, z);
+        for (const x of [-0.25, 0.25]) for (const z of [-0.505, 0.505]) add(box(0.05, 0.38, 0.02), timber, x, 0.8, z);
+        for (const x of [-0.795, 0.795]) add(box(0.02, 0.38, 0.05), timber, x, 0.8, 0);
+        // A cross brace in the middle bay, front and back.
+        for (const z of [-0.507, 0.507]) for (const tilt of [-0.66, 0.66]) add(box(0.56, 0.04, 0.015), timber, 0, 0.8, z).rotation.z = tilt;
+        // Two windows upstairs, each with a box of flowers under it.
+        for (const [x, bloom] of [[-0.52, "#d0473a"], [0.52, "#e8c53a"]] as [number, string][]) {
+          framed(x, 0.82, 0.22, 0.18, 0.5, upperGlass);
+          add(box(0.28, 0.06, 0.08), lambert("#6b4a2b"), x, 0.68, 0.54);
+          add(box(0.24, 0.04, 0.06), lambert("#4f8a3a"), x, 0.725, 0.54);
+          for (const dx of [-0.08, 0, 0.08]) add(box(0.04, 0.04, 0.04), lambert(bloom), x + dx, 0.755, 0.55 + (dx === 0 ? 0.01 : 0));
+        }
+
+        // The roof: a long gabled roof with eaves that overhang all round, and a smaller gable over the door,
+        // standing out of the front slab, with a lit window in it.
+        const eaves = 1.02;
+        /** A gabled roof: a plaster prism `len` long, `half` out to each eave and `rise` high, under two overhanging slabs. Its ridge runs along x, or along z with `alongZ`. */
+        const gabled = (cx: number, cz: number, len: number, half: number, rise: number, alongZ: boolean) => {
+          const shape = new THREE.Shape([new THREE.Vector2(-half, 0), new THREE.Vector2(half, 0), new THREE.Vector2(0, rise)]);
+          const prism = new THREE.ExtrudeGeometry(shape, { depth: len, bevelEnabled: false }).translate(0, 0, -len / 2);
+          if (!alongZ) prism.rotateY(Math.PI / 2);
+          add(prism, plaster, cx, eaves, cz);
+          const pitch = Math.atan2(rise, half);
+          const slope = Math.hypot(rise, half) * 1.18;
+          for (const side of [1, -1]) {
+            // Half way down the slope, lifted half a slab's thickness off the gable.
+            const along = slope / 2;
+            const out = side * (along * Math.cos(pitch) + 0.03 * Math.sin(pitch));
+            const y = eaves + rise - along * Math.sin(pitch) + 0.03 * Math.cos(pitch);
+            if (alongZ) add(box(slope, 0.06, len + 0.1), roofMat, cx + out, y, cz).rotation.z = -side * pitch;
+            else add(box(len + 0.2, 0.06, slope), roofMat, cx, y, cz + out).rotation.x = side * pitch;
+          }
+          return pitch;
+        };
+        const rise = 0.44;
+        const pitch = gabled(0, 0, 1.56, 0.5, rise, false);
+        // A darker course of shingles part way down each slope, and a ridge cap.
+        for (const side of [1, -1]) {
+          const d = 0.24;
+          add(box(1.77, 0.065, 0.06), lambert("#5d2a20"), 0, eaves + rise - d * Math.sin(pitch) + 0.035 * Math.cos(pitch), side * (d * Math.cos(pitch) + 0.035 * Math.sin(pitch))).rotation.x = side * pitch;
+        }
+        add(box(1.82, 0.07, 0.1), lambert("#4a2018"), 0, eaves + rise + 0.03, 0);
+        gabled(0, 0.32, 0.48, 0.32, 0.34, true);
+        add(box(0.08, 0.06, 0.58), lambert("#4a2018"), 0, eaves + 0.37, 0.32);
+        framed(0, eaves + 0.13, 0.16, 0.13, 0.565, upperGlass);
+        // A small window in each end gable, under the peak.
+        for (const x of [-0.785, 0.785]) {
+          add(box(0.015, 0.14, 0.14), timber, x, eaves + 0.15, 0);
+          add(box(0.012, 0.1, 0.1), upperGlass, x + Math.sign(x) * 0.006, eaves + 0.15, 0).userData.glow = true;
+        }
+
+        // The chimney stands proud of the roof, with a pot on top; its smoke is drawn by the ambience.
+        add(box(0.22, 0.92, 0.22), lambert("#8b8f96"), 0.52, 1.36, -0.24);
+        add(box(0.28, 0.06, 0.28), lambert("#6f737a"), 0.52, 1.83, -0.24);
+        add(new THREE.CylinderGeometry(0.05, 0.06, 0.08, 6), lambert("#b8643a"), 0.52, 1.9, -0.24);
+        g.userData.smoke = new THREE.Vector3(0.52, 1.96, -0.24);
+
+        // The sign: an iron bracket off the front corner, under the eaves, and a painted board hanging from it, face on to the street.
+        const iron = lambert("#2b2a33");
+        add(box(0.32, 0.03, 0.03), iron, 0.94, 0.6, 0.47);
+        add(box(0.2, 0.025, 0.025), iron, 0.85, 0.54, 0.47).rotation.z = 0.6;
+        for (const x of [0.84, 1.04]) add(box(0.012, 0.05, 0.012), iron, x, 0.565, 0.47);
+        add(box(0.32, 0.28, 0.025), lambert("#3a2c22"), 0.94, 0.4, 0.47);
+        const face = new THREE.MeshLambertMaterial({ map: pubSign() });
+        add(new THREE.PlaneGeometry(0.3, 0.26), face, 0.94, 0.4, 0.484);
+        add(new THREE.PlaneGeometry(0.3, 0.26), face, 0.94, 0.4, 0.456, Math.PI);
+
+        // A lantern on a bracket by the door, lit at dusk.
+        add(box(0.03, 0.03, 0.14), iron, -0.66, 0.5, 0.53);
+        add(box(0.08, 0.02, 0.08), iron, -0.66, 0.485, 0.6);
+        const flame = add(box(0.05, 0.07, 0.05), new THREE.MeshBasicMaterial({ color: "#ffd77a" }), -0.66, 0.44, 0.6);
+        flame.userData.glow = true;
+        for (const [dx, dz] of [[-0.035, -0.035], [0.035, -0.035], [-0.035, 0.035], [0.035, 0.035]]) add(box(0.012, 0.09, 0.012), iron, -0.66 + dx, 0.44, 0.6 + dz);
+        add(new THREE.ConeGeometry(0.06, 0.05, 4), iron, -0.66, 0.51, 0.6, Math.PI / 4);
+        glows.push({ pos: new THREE.Vector3(-0.66, 0.44, 0.72), size: 0.42, light: "candle" });
+        // The lamplight spilling out of the front, onto the street: held high and well out, so a hero at the door
+        // is lit evenly rather than with a hot spot.
+        glows.push({ pos: new THREE.Vector3(0, 1.1, 1.4), size: 0, light: "lamp" });
+
+        // Barrels by the lantern, and a bench under the sign with a tankard left on it.
+        for (const [x, z] of [[-0.62, 0.68], [-0.42, 0.74]]) {
+          add(new THREE.CylinderGeometry(0.1, 0.1, 0.22, 8), lambert("#7a5230"), x, 0.11, z);
+          for (const y of [0.05, 0.17]) add(new THREE.CylinderGeometry(0.104, 0.104, 0.02, 8), timber, x, y, z);
+        }
+        add(box(0.4, 0.035, 0.11), lambert("#8a6a44"), 0.52, 0.15, 0.62);
+        for (const x of [0.36, 0.68]) add(box(0.04, 0.13, 0.08), timber, x, 0.065, 0.62);
+        add(new THREE.CylinderGeometry(0.025, 0.025, 0.05, 6), lambert("#d08a3a"), 0.6, 0.193, 0.62);
+        add(new THREE.CylinderGeometry(0.026, 0.026, 0.012, 6), lambert("#f4efe1"), 0.6, 0.223, 0.62);
+        g.userData.glows = glows;
+        g.userData.panes = panes;
+        foldByLook(g);
         break;
       }
       case "shoals": {
@@ -1703,6 +2070,22 @@ export class WorldRenderer {
         add(new THREE.CylinderGeometry(0.09, 0.09, 0.04, 8), lambert("#7db6f2"), -0.16, 0.43, -0.28);
         add(new THREE.CylinderGeometry(0.09, 0.09, 0.04, 8), lambert("#d9b45a"), 0.14, 0.43, -0.4);
         add(new THREE.CylinderGeometry(0.09, 0.09, 0.08, 8), lambert("#6b4a2b"), 0.04, 0.45, -0.16);
+        break;
+      }
+      case "cave": {
+        // The Haunted Caverns' mouth in the back wall: a heap of dark rock with a black arch in it, and a torch either side.
+        const rock = lambert("#3d4048");
+        const pale = lambert("#565a63");
+        add(new THREE.DodecahedronGeometry(0.62, 0), rock, 0, 0.42, -0.25, 0.3);
+        add(new THREE.ConeGeometry(0.42, 1.1, 5), pale, -0.55, 0.45, -0.15, 0.8);
+        add(new THREE.ConeGeometry(0.36, 0.95, 5), rock, 0.55, 0.38, -0.2, 1.7);
+        // The arch: a black opening at the foot of the rock.
+        add(box(0.46, 0.5, 0.06), new THREE.MeshBasicMaterial({ color: "#050409" }), 0, 0.25, 0.32).userData.glow = true;
+        add(new THREE.CylinderGeometry(0.23, 0.23, 0.06, 8, 1, false, 0, Math.PI), new THREE.MeshBasicMaterial({ color: "#050409" }), 0, 0.5, 0.32).rotation.set(Math.PI / 2, 0, Math.PI / 2);
+        for (const x of [-0.34, 0.34]) {
+          add(box(0.04, 0.42, 0.04), lambert("#5a3d22"), x, 0.21, 0.4);
+          add(box(0.08, 0.1, 0.08), new THREE.MeshBasicMaterial({ color: "#ffb347" }), x, 0.46, 0.4).userData.glow = true;
+        }
         break;
       }
       case "rocks": {
@@ -1974,7 +2357,10 @@ export class WorldRenderer {
           const roof = add(new THREE.ConeGeometry(0.7, 0.42, 4), lambert("#a0522d"), 0, 0.8, -0.04, Math.PI / 4);
           roof.scale.z = 0.75;
           add(box(0.22, 0.34, 0.04), lambert("#3a2c22"), 0.12, 0.17, 0.3);
-          add(box(0.2, 0.14, 0.03), new THREE.MeshBasicMaterial({ color: "#ffd08a" }), -0.24, 0.36, 0.3);
+          // The window warms at dusk, with a soft glow over it.
+          const glass = warmPane("#c99a52", "#ffd08a");
+          add(box(0.2, 0.14, 0.03), glass, -0.24, 0.36, 0.3).userData.glow = true;
+          g.userData.panes = [glass];
           // The chimney: broad and stone, up the west end. The ambience draws its smoke.
           add(box(0.26, 1.15, 0.26), lambert("#8b95a5"), -0.38, 0.58, -0.22);
           add(box(0.32, 0.06, 0.32), lambert("#6f7f95"), -0.38, 1.17, -0.22);
@@ -1983,6 +2369,11 @@ export class WorldRenderer {
           add(new THREE.ConeGeometry(0.1, 0.12, 5), new THREE.MeshBasicMaterial({ color: "#ff9a3c" }), 0.5, 0.06, 0.42);
           add(new THREE.SphereGeometry(0.14, 7, 5), lambert("#2e2a2a"), 0.5, 0.2, 0.42);
           add(new THREE.CylinderGeometry(0.11, 0.11, 0.02, 7), lambert("#d9b45a"), 0.5, 0.3, 0.42);
+          // After dark the fire glows and throws flickering firelight over the quay; the window glows too.
+          g.userData.glows = [
+            { pos: new THREE.Vector3(-0.24, 0.36, 0.48), size: 0.44 },
+            { pos: new THREE.Vector3(0.5, 0.12, 0.6), size: 0.36, light: "fire" },
+          ] satisfies BuildingGlow[];
           // Barrels of provisions, ready to go aboard.
           for (const [x, z] of [[-0.62, 0.3], [-0.5, 0.48]]) add(new THREE.CylinderGeometry(0.1, 0.1, 0.24, 7), lambert("#7a5230"), x, 0.12, z);
           // Fish hung to dry from the eaves.
@@ -2027,6 +2418,8 @@ export class WorldRenderer {
         add(new THREE.ConeGeometry(0.08, 0.16, 5), new THREE.MeshBasicMaterial({ color: "#ffc04a" }), -0.2, 0.39, -0.12);
         const glow = add(new THREE.SphereGeometry(0.32, 8, 6), new THREE.MeshBasicMaterial({ color: "#ff8a3a", transparent: true, opacity: 0.22, depthWrite: false }), -0.2, 0.36, -0.1);
         glow.userData.glow = true;
+        // After dark the coals glow out of the open front and their firelight fills the shed.
+        g.userData.glows = [{ pos: new THREE.Vector3(-0.2, 0.42, 0.14), size: 0.62, light: "fire" }] satisfies BuildingGlow[];
         // The chimney rises from the back of the forge; the ambience draws its smoke.
         add(box(0.2, 1.05, 0.2), lambert("#6f737a"), -0.2, 0.75, -0.26);
         add(box(0.26, 0.06, 0.26), lambert("#5d6168"), -0.2, 1.28, -0.26);
@@ -2195,7 +2588,7 @@ export class WorldRenderer {
             outfit: c.outfit,
             // Staggered diagonally so the tall sprites do not hide each other.
             pos: new THREE.Vector3(centre.x + dir * (1.2 + i * 1.05), centre.y, centre.z + (i - (line.length - 1) / 2) * 1.25),
-            size: isBoss(c.kind) ? 2.5 : c.kind === "brute" ? 2.2 : 1.9,
+            size: isBoss(c.kind) ? 2.5 : isBig(c.kind) ? 2.2 : 1.9,
             ring: side === "hero" ? colorOf(c.id) : "#e23b3b",
             pulse: c.id === actor,
             hp: c.hp / c.maxHp,
@@ -2214,8 +2607,11 @@ export class WorldRenderer {
         const i = seen.get(key(h.pos)) ?? 0;
         seen.set(key(h.pos), i + 1);
         const pos = this.standAt(h.pos);
-        pos.x += (i - (n - 1) / 2) * 0.6;
-        pos.z += 0.25;
+        if (h.at) pos.add(new THREE.Vector3(h.at.x, h.at.y, h.at.z));
+        else {
+          pos.x += (i - (n - 1) / 2) * 0.6;
+          pos.z += 0.25;
+        }
         const base = plateOf(h);
         const plate = base && h.id === state.you && state.stamina ? { ...base, bolts: state.stamina } : base;
         // A plate shows a first name only: full names run long over a crowd.
@@ -2236,7 +2632,7 @@ export class WorldRenderer {
           const pos = this.standAt(band.pos);
           pos.x += (i - (band.kinds.length - 1) / 2) * 0.55;
           pos.z += 0.15;
-          want.set(`roam:${band.id}:${i}`, { kind, pos, size: 1.3, ring: i === 0 ? "#ff3b3b" : undefined, pulse: i === 0 });
+          want.set(`roam:${band.id}:${i}`, { kind, pos, size: isBig(kind) ? 1.5 : 1.3, ring: i === 0 ? "#ff3b3b" : undefined, pulse: i === 0 });
         });
       }
       for (const poi of state.map.pois) {
@@ -2245,7 +2641,7 @@ export class WorldRenderer {
           const pos = this.standAt(poi.pos);
           pos.x += (i - (poi.enemies.length - 1) / 2) * 0.6 + 0.2;
           pos.z += 0.05;
-          want.set(`poi:${poi.id}:${i}`, { kind, pos, size: isBoss(kind) ? 1.7 : kind === "brute" ? 1.5 : 1.3 });
+          want.set(`poi:${poi.id}:${i}`, { kind, pos, size: isBoss(kind) ? 1.7 : isBig(kind) ? 1.5 : 1.3 });
         });
       }
     }
@@ -2426,39 +2822,17 @@ export class WorldRenderer {
     }
   }
 
-  /** The hero (a figure in `state.heroes`, yourself included) under the pointer, by their figure or their plate. Never in a fight. */
-  private pickHero(): string | null {
-    const state = this.state;
-    if (!state || state.battle || state.holding) return null;
-    const rect = this.renderer.domElement.getBoundingClientRect();
-    const ndc = new THREE.Vector2(((this.pointer.x - rect.left) / rect.width) * 2 - 1, -((this.pointer.y - rect.top) / rect.height) * 2 + 1);
-    this.raycaster.setFromCamera(ndc, this.camera);
-    const targets: THREE.Object3D[] = [];
-    const owner = new Map<THREE.Object3D, string>();
-    for (const h of state.heroes) {
-      const u = this.units.get(h.id);
-      if (!u || !u.sprite.visible) continue;
-      for (const o of [u.sprite, u.label]) {
-        if (!o) continue;
-        targets.push(o);
-        owner.set(o, h.id);
-      }
-    }
-    const hit = this.raycaster.intersectObjects(targets, false)[0];
-    return hit ? (owner.get(hit.object) ?? null) : null;
-  }
-
   private pick(): HexPos | null {
     if (!this.terrain) return null;
     const rect = this.renderer.domElement.getBoundingClientRect();
     const ndc = new THREE.Vector2(((this.pointer.x - rect.left) / rect.width) * 2 - 1, -((this.pointer.y - rect.top) / rect.height) * 2 + 1);
     this.raycaster.setFromCamera(ndc, this.camera);
-    // A figure stands up out of its hex, so a click on it would otherwise land on the ground behind.
-    // Clicking someone (other than yourself) means the hex they stand on.
+    // A figure stands up out of its hex, so a click on it (or on the plate over its head) would
+    // otherwise land on the ground behind. Clicking someone (other than yourself) means the hex they stand on.
     if (!this.state?.battle) {
-      const others = [...this.units.entries()].filter(([id, u]) => id !== this.state?.you && u.sprite.visible);
-      const onFigure = this.raycaster.intersectObjects(others.map(([, u]) => u.sprite), false)[0];
-      const unit = onFigure && others.find(([, u]) => u.sprite === onFigure.object)?.[1];
+      const others = [...this.units.entries()].filter(([id, u]) => id !== this.state?.you && u.sprite.visible).map(([, u]) => u);
+      const onFigure = this.raycaster.intersectObjects(others.flatMap((u) => (u.label ? [u.sprite, u.label] : [u.sprite])), false)[0];
+      const unit = onFigure && others.find((u) => u.sprite === onFigure.object || u.label === onFigure.object);
       if (unit) {
         let best: Tile | null = null;
         let bestD = Infinity;
@@ -2637,11 +3011,6 @@ export class WorldRenderer {
       if (target) this.callbacks.onPlace(target);
       return;
     }
-    if (this.callbacks.onHeroClick) {
-      const hero = this.pickHero();
-      // Opening someone's sheet is all a click on them does: nobody walks off as well.
-      if (hero !== null && this.callbacks.onHeroClick(hero)) return;
-    }
     if (this.callbacks.onPropClick && !this.state?.battle) {
       const prop = this.pickProp();
       if (prop !== null && this.callbacks.onPropClick(prop)) return;
@@ -2655,7 +3024,6 @@ export class WorldRenderer {
     if (this.touches.size > 0) return;
     this.pointer.inside = false;
     this.setHovered(null);
-    if (this.hoverHero !== null) this.callbacks.onHeroHover?.((this.hoverHero = null));
   };
 
   private onWheel = (e: WheelEvent) => {
@@ -2704,12 +3072,6 @@ export class WorldRenderer {
       this.pointer.dirty = false;
       this.setHovered(this.pick());
       if (this.state?.holding) this.placeGhost();
-      if (this.callbacks.onHeroHover) {
-        // Your own figure walks to wherever the pointer clicked, so it is not hovered: a click opens your sheet instead.
-        const picked = this.pickHero();
-        const hero = picked === this.state?.you ? null : picked;
-        if (hero !== this.hoverHero) this.callbacks.onHeroHover((this.hoverHero = hero));
-      }
       if (this.callbacks.onPropHover) {
         const prop = this.state?.battle ? null : this.pickProp();
         if (prop !== this.hoverProp) this.callbacks.onPropHover((this.hoverProp = prop));
@@ -2755,6 +3117,15 @@ export class WorldRenderer {
       this.ear.sea(nearWater(ear.x, ear.z, this.water));
       this.ear.ground(this.state ? (tileAt(this.state.map, worldToHex(ear.x, ear.z - 0.25))?.biome ?? null) : null);
     }
+    // In the caverns every hero carries a torch: the lights follow them as they walk.
+    if (this.state?.kind === "caverns") {
+      const torches: THREE.Vector3[] = [];
+      for (const h of this.state.heroes) {
+        const unit = this.units.get(h.id);
+        if (unit) torches.push(unit.sprite.position);
+      }
+      this.ambience.setTorches(torches);
+    }
     // Night reaches the open sea and the fog too, not just the lit ground.
     const night = this.ambience.night;
     (this.sea.material as THREE.MeshLambertMaterial).color.copy(this.seaBase).lerp(NIGHT_SEA, night * 0.8);
@@ -2771,17 +3142,13 @@ export class WorldRenderer {
       const p = unit.sprite.position;
       // The hop is drawn on top of where the unit really is; take it off before moving.
       p.y -= unit.bob;
+      let landed = 0;
       if (unit.path.length > 0) {
         const next = unit.path[0].clone();
         next.z += 0.25;
         const step = 4.2 * dt;
-        // A foot lands each time the hop below comes back to the ground.
-        const landed = Math.floor(((unit.stride + step) * 3.6) / Math.PI) > Math.floor((unit.stride * 3.6) / Math.PI);
+        landed = footfalls(unit.stride, unit.stride + step);
         unit.stride += step;
-        if (landed && this.state) {
-          const biome = tileAt(this.state.map, worldToHex(p.x, p.z - 0.25))?.biome ?? "plains";
-          sounds.footstep(biome, { x: p.x, z: p.z }, id === this.state.you);
-        }
         if (p.distanceTo(next) <= step) {
           p.copy(next);
           unit.path.shift();
@@ -2801,6 +3168,7 @@ export class WorldRenderer {
       unit.sprite.material.rotation = unit.baseRot + unit.lean;
       const ground = p.y;
       unit.feet.set(p.x, ground, p.z);
+      if (landed) this.footfall(id, unit);
       p.y += unit.bob;
       unit.casters.forEach((caster, i) => {
         caster.position.copy(p);
@@ -2857,6 +3225,24 @@ export class WorldRenderer {
         this.fx.splice(i, 1);
         f.onEnd?.();
       }
+    }
+
+    for (const puff of this.puffs) {
+      if (!puff.sprite.visible) continue;
+      puff.age += dt;
+      const t = puff.age / puff.life;
+      if (t >= 1) {
+        puff.sprite.visible = false;
+        continue;
+      }
+      puff.x += puff.vx * dt;
+      puff.y += puff.vy * dt;
+      puff.vx *= Math.exp(-dt * 5);
+      puff.vy *= Math.exp(-dt * 4);
+      puff.sprite.position.set(puff.x, puff.y, puff.z);
+      const s = puff.size * (0.8 + t * 0.45);
+      puff.sprite.scale.set(s, s, 1);
+      puff.sprite.material.opacity = puff.alpha * (1 - t * t);
     }
 
     // Sleepers breathe out a z now and then: small, small, then a big one.

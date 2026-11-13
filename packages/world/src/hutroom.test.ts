@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { hexNeighbors } from "@gantt-quest/core";
-import { FURNISHINGS, HUT_TIERS, SMALL_PER_SPOT, STORAGE_CHEST, displacedFurnishings, freeSpot, hutDoor, hutFloor, hutPath, hutRoom, hutTier, placeProblem, placedFurnishings, poiAt, putInProblem, smallPlaceProblem, tileAt, validFacing, type Furnishing } from "./index";
+import { FURNISHINGS, HUT_TIERS, SMALL_PER_SPOT, STORAGE_CHEST, displacedFurnishings, freeSpot, hutDoor, hutFloor, hutPath, hutRoom, hutTier, HEX_DIRS, besideHexes, isBeside, lieDownProblem, useOf, useProblem, placeProblem, placedFurnishings, poiAt, putInProblem, smallPlaceProblem, tileAt, validFacing, type Furnishing } from "./index";
 
 const at = (q: number, r: number) => ({ q, r });
 
@@ -142,7 +142,7 @@ describe("a hut changing size", () => {
     for (const f of big) expect(out.includes(f)).toBe(placeProblem(small, [], f.defId, f) !== null);
     // Two pieces on one hex: the later one goes. Stored pieces are never touched.
     const spot = hutFloor(small)[0];
-    const twin = [{ defId: "table", ...spot }, { defId: "rug", ...spot }, { defId: "bed", q: null, r: null }];
+    const twin = [{ defId: "table", ...spot }, { defId: "chair", ...spot }, { defId: "bed", q: null, r: null }];
     expect(displacedFurnishings(1, twin)).toEqual([twin[1]]);
   });
 });
@@ -248,5 +248,71 @@ describe("small things and containers", () => {
     const candle = piece("candle", a);
     const out = displacedFurnishings(1, [table, mug, candle]);
     expect(out.map((f) => f.id).sort()).toEqual([table.id, mug.id].sort());
+  });
+});
+
+describe("using pieces outside edit mode", () => {
+  const room = hutRoom(2);
+  const floor = hutFloor(room).filter((p) => poiAt(room, p)?.kind !== "door");
+  // A hex in the middle of the room, every neighbour of it floor too.
+  const mid = floor.find((p) => HEX_DIRS.map((d) => ({ q: p.q + d.q, r: p.r + d.r })).every((n) => tileAt(room, n)?.biome === "floor" && poiAt(room, n)?.kind !== "door"))!;
+  let next = 100;
+  const piece = (defId: string, at: { q: number; r: number } | null, more: Partial<Furnishing> = {}): Furnishing => ({
+    id: next++, defId, label: defId, q: at?.q ?? null, r: at?.r ?? null, facing: 0, x: 0, z: 0, y: 0, angle: 0, onId: null, inId: null, ...more,
+  });
+
+  it("rests in a bed, opens containers, warms up at a fire, reads books and otherwise looks", () => {
+    expect(useOf("bed")).toBe("rest");
+    for (const id of ["chest", "storage_chest", "dresser", "crate", "barrel", "cupboard"]) expect(useOf(id), id).toBe("open");
+    expect(useOf("hearth")).toBe("warm");
+    expect(useOf("fireplace")).toBe("warm");
+    expect(useOf("bookshelf")).toBe("read");
+    expect(useOf("chair")).toBe("look");
+    expect(useOf("nonsense")).toBe("look");
+  });
+
+  it("keeps the bed and the chests to the owner, and lets visitors use the rest", () => {
+    expect(useProblem("bed", true)).toBeNull();
+    expect(useProblem("storage_chest", true)).toBeNull();
+    expect(useProblem("bed", false, "Ada")).toMatch(/Only Ada sleeps here/);
+    expect(useProblem("chest", false)).toMatch(/can open/);
+    expect(useProblem("dresser", false)).not.toBeNull();
+    expect(useProblem("hearth", false)).toBeNull();
+    expect(useProblem("bookshelf", false)).toBeNull();
+    expect(useProblem("chair", false)).toBeNull();
+  });
+
+  it("is used from beside it: never from a wall, a blocked hex or across the room", () => {
+    const bed = piece("bed", mid);
+    const beside = besideHexes(room, [bed], bed);
+    expect(beside.length).toBeGreaterThan(0);
+    for (const h of beside) {
+      expect(tileAt(room, h)?.biome).toBe("floor");
+      expect(h).not.toEqual(mid);
+    }
+    const far = floor.find((p) => !beside.some((h) => h.q === p.q && h.r === p.r) && (p.q !== mid.q || p.r !== mid.r))!;
+    expect(isBeside(room, [bed], bed, far)).toBe(false);
+    expect(isBeside(room, [bed], bed, beside[0])).toBe(true);
+    // A small thing on a table is reached from beside the table.
+    const table = piece("table", mid);
+    const mug = piece("mug", mid, { onId: table.id });
+    expect(besideHexes(room, [table, mug], mug)).toEqual(besideHexes(room, [table, mug], table));
+    // Something stored is nowhere.
+    expect(besideHexes(room, [piece("bed", null)], piece("bed", null))).toEqual([]);
+  });
+
+  it("lets only the owner lie down, on a placed bed, standing next to it", () => {
+    const bed = piece("bed", mid);
+    const chair = piece("chair", floor.find((p) => p.q !== mid.q || p.r !== mid.r)!);
+    const stored = piece("bed", null);
+    const all = [bed, chair, stored];
+    const near = besideHexes(room, all, bed)[0];
+    const far = floor.find((p) => !isBeside(room, all, bed, p) && (p.q !== mid.q || p.r !== mid.r))!;
+    expect(lieDownProblem(room, all, bed.id, near, true)).toBeNull();
+    expect(lieDownProblem(room, all, bed.id, near, false)).toMatch(/sleeps here/);
+    expect(lieDownProblem(room, all, bed.id, far, true)).toMatch(/Walk over/);
+    expect(lieDownProblem(room, all, chair.id, near, true)).toMatch(/no bed/);
+    expect(lieDownProblem(room, all, stored.id, near, true)).toMatch(/no bed/);
+    expect(lieDownProblem(room, all, 9999, near, true)).toMatch(/no bed/);
   });
 });

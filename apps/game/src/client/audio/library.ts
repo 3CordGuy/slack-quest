@@ -11,6 +11,7 @@
 // and decoded again if they are wanted. What a playing loop holds is outside
 // that budget (it cannot be let go), so long loops never push the one-shots out.
 
+import { renderSynth, synthIndex } from "./synth";
 import type { AudioFile, AudioIndex } from "./types";
 
 const EMPTY: AudioIndex = { version: 1, files: {} };
@@ -62,7 +63,8 @@ export class Library {
   /** Fetch the index again: the shipped one, and while developing the masters on top of it. */
   async loadIndex(): Promise<void> {
     const shipped = await fetchIndex(SHIPPED_INDEX);
-    const files: Record<string, AudioFile> = { ...shipped.files };
+    // The built-in sounds are always there: whatever is shipped or bounced sits alongside them.
+    const files: Record<string, AudioFile> = { ...synthIndex(), ...shipped.files };
     if (import.meta.env.DEV) Object.assign(files, (await fetchIndex(DEV_INDEX)).files);
     this.index = { version: 1, files };
     this.sortedKeys = Object.keys(files).sort();
@@ -78,6 +80,7 @@ export class Library {
 
   /** The URL a file is fetched from: a master while developing, else the encoding this browser decodes. */
   url(key: string): string | null {
+    if (this.index.files[key]?.synth) return `synth:${key}`;
     const urls = this.index.files[key]?.urls;
     if (!urls) return null;
     return urls.wav ?? urls[this.format] ?? urls.opus ?? urls.aac ?? null;
@@ -157,6 +160,12 @@ export class Library {
   }
 
   private async decode(url: string, mono: boolean): Promise<AudioBuffer> {
+    // A built-in sound is rendered rather than fetched; it is one channel already.
+    if (url.startsWith("synth:")) {
+      const made = await renderSynth(url.slice("synth:".length));
+      if (!made) throw new Error("no such built-in sound");
+      return made;
+    }
     const res = await fetch(url);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.arrayBuffer();

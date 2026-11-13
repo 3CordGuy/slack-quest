@@ -1,5 +1,5 @@
 /* The Harbor's dice table (DiceTable). */
-.dice-table { position: absolute; left: 50%; top: 52px; transform: translateX(-50%); z-index: 14; width: min(440px, calc(100vw - 20px)); max-height: calc(100vh - 140px); overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
+.dice-table { position: absolute; left: 50%; top: 52px; transform: translateX(-50%); z-index: 14; width: min(440px, calc(100vw / var(--ui-z, 1) - 20px)); max-height: calc(100vh / var(--ui-z, 1) - 140px); display: flex; flex-direction: column; gap: 8px; }
 .dice-table p { margin: 0; }
 .dice-rules { margin: 0; padding-left: 18px; font-size: 12px; }
 .dice-seats { margin: 0; }

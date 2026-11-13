@@ -14,14 +14,17 @@ import {
   FURNISHINGS,
   HARBOR_MAX_SAY,
   STORAGE_CHEST,
+  UNSTICK_COOLDOWN_MS,
   coveredHexes,
   freeSpot,
   placedFurnishings,
   hutDoor,
   hutPath,
   hutRoom,
+  isFlat,
   isMounted,
   isSmall,
+  lieDownProblem,
   placeProblem,
   putInProblem,
   smallPlaceProblem,
@@ -87,6 +90,8 @@ export class HutRoom extends DurableObject<Env> {
   /** Cached copy of the hut. Gone after hibernation; D1 has the truth. */
   private hut: Hut | null = null;
   private loading: Promise<Hut> | null = null;
+  /** When each player last asked to be put back at the door. In memory only: a light limit. */
+  private unstuckAt = new Map<string, number>();
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -256,8 +261,31 @@ export class HutRoom extends DurableObject<Env> {
       if (!Number.isInteger(to.q) || !Number.isInteger(to.r)) return;
       const path = hutPath(hut.room, hut.furnishings, player.pos, to);
       if (!path) return;
-      ws.serializeAttachment({ ...player, pos: path[path.length - 1] } satisfies HarborPlayer);
+      // Walking off gets them up out of bed.
+      ws.serializeAttachment({ ...player, pos: path[path.length - 1], bed: undefined } satisfies HarborPlayer);
       this.broadcast({ type: "moved", id: player.id, path });
+      if (player.bed !== undefined) this.broadcast({ type: "joined", player: { ...player, pos: path[path.length - 1], bed: undefined } });
+      return;
+    }
+
+    if (msg.type === "lie_down") {
+      // Purely for show, like a bedroll in the Harbor: the rest itself is `/api/rest`, which checks the cooldown.
+      const problem = lieDownProblem(hut.room, hut.furnishings, Number(msg.id), player.pos, player.id === ownerId);
+      if (problem) return this.send(ws, { type: "refused", reason: problem });
+      const next: HarborPlayer = { ...player, bed: Number(msg.id) };
+      ws.serializeAttachment(next);
+      this.broadcast({ type: "joined", player: next });
+      return;
+    }
+
+    if (msg.type === "unstick") {
+      // A stuck or lost hero goes back to the door. Only ever the sender's own hero.
+      const now = Date.now();
+      if (now - (this.unstuckAt.get(player.id) ?? -Infinity) < UNSTICK_COOLDOWN_MS) return;
+      this.unstuckAt.set(player.id, now);
+      const door = hutDoor(hut.tier);
+      ws.serializeAttachment({ ...player, pos: door } satisfies HarborPlayer);
+      this.broadcast({ type: "placed", id: player.id, pos: door });
       return;
     }
 
@@ -277,7 +305,8 @@ export class HutRoom extends DurableObject<Env> {
     const floorProblem = (to: { q: number; r: number }, spot: { x: number; z: number; angle: number }, turningInPlace = false) => {
       const problem = placeProblem(hut.room, rest, piece.defId, to, spot);
       if (problem) return problem;
-      // Turning a piece where it stands never pushes out someone standing on its own hex.
+      // A rug goes down under people's feet. Turning a piece where it stands never pushes out someone standing on its own hex.
+      if (isFlat(piece.defId)) return null;
       const covered = coveredHexes(piece.defId, to, spot).filter((h) => !turningInPlace || h.q !== to.q || h.r !== to.r);
       return this.players().some((p) => covered.some((h) => h.q === p.pos.q && h.r === p.pos.r)) ? "Someone is standing there." : null;
     };

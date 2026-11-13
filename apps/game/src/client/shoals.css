@@ -1,12 +1,177 @@
-/* The pub's Shoals table (ShoalsTable). Shares its frame with the dice table. */
+/* The pub's Shoals table (ShoalsTable): a round table from above with the pilots seated around it. */
+.shoals-table {
+  position: absolute; left: 50%; top: 52px; transform: translateX(-50%); z-index: 14;
+  width: min(440px, calc(100vw / var(--ui-z, 1) - 32px)); max-height: calc(100vh / var(--ui-z, 1) - 120px);
+  display: flex; flex-direction: column; gap: 8px;
+}
+.shoals-table p { margin: 0; }
 
-/* A marker is a small pixel disc: blue water for a Channel, sand and rock for a Shoal, rope-ringed wood face down. */
-.marker { display: inline-block; width: 22px; height: 22px; border-radius: 50%; border: 2px solid #1b1830; vertical-align: middle; image-rendering: pixelated; box-shadow: inset 0 -3px 0 rgba(0, 0, 0, 0.22); }
-.marker.small { width: 16px; height: 16px; }
-.marker.channel { background: repeating-linear-gradient(180deg, #4f95e4 0 4px, #7db6f2 4px 6px); }
-.marker.shoal { background: radial-gradient(circle at 50% 55%, #5d5648 0 28%, #d9b45a 30% 100%); }
-.marker.back { background: #6b4a2b; border-color: #c9a877; border-style: dashed; }
+/* What is happening, in a line. */
+.sh-status { display: flex; align-items: baseline; gap: 8px; min-height: 22px; }
+.sh-status-text { flex: 1; min-width: 0; }
+.sh-phase {
+  flex: none; font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em;
+  padding: 1px 6px; border: 1px solid var(--line); color: var(--muted); background: #24203f;
+}
+.sh-phase.playing.lay { color: #a9d4fb; border-color: #3f7fd0; }
+.sh-phase.playing.bid { color: var(--accent); border-color: #2f8f94; }
+.sh-phase.playing.sail { color: var(--gold); border-color: #a8862a; }
+.sh-phase.done { color: var(--gold); border-color: #a8862a; }
 
-.shoals-table .stack { display: inline-flex; align-items: center; gap: 3px; flex-wrap: wrap; justify-content: flex-end; }
-.shoals-hand { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 6px; border: 1px solid var(--line); }
-.shoals-hand .lay { display: inline-flex; align-items: center; gap: 6px; }
+/* The board: the table art in the middle, seats on an ellipse around it, stacks on the felt. */
+.sh-board {
+  --seat-x: 46px; --seat-y: 60px;
+  --stack-x: 17%; --stack-y: 15.5%;
+  position: relative; width: 100%; aspect-ratio: 1 / 1; flex: none; container-type: inline-size;
+  background: radial-gradient(ellipse at 50% 55%, rgba(255, 196, 120, 0.10), transparent 70%);
+}
+.sh-felt {
+  position: absolute; left: 19%; top: 50%; width: 62%; height: auto; transform: translateY(-50%);
+  filter: drop-shadow(0 5px 0 rgba(0, 0, 0, 0.35));
+  user-select: none;
+}
+
+/* A seat: who is sitting there, what they have left, and a chip for what they are doing. */
+.sh-seat {
+  position: absolute; z-index: 2; width: 92px;
+  left: calc(50% + (50% - var(--seat-x)) * var(--cx));
+  top: calc(50% + (50% - var(--seat-y)) * var(--cy));
+  transform: translate(-50%, -50%);
+  display: flex; flex-direction: column; align-items: center; gap: 2px;
+}
+.sh-seat > * { flex: none; }
+.sh-seat.at-top .sh-chip { order: 0; }
+.sh-seat.at-top .sh-plate { order: 1; }
+.sh-seat.at-top .sh-tally { order: 2; }
+.sh-seat.at-top .sh-portrait { order: 3; }
+/* Your seat, at the bottom: the chip goes under the name, clear of your stack. */
+.sh-seat.at-bottom .sh-chip { order: 4; }
+
+.sh-portrait { position: relative; display: block; width: 54px; height: 66px; }
+.sh-portrait img { position: relative; z-index: 1; width: 100%; height: 100%; }
+/* A shadow on the floor under each pilot. */
+.sh-portrait::after {
+  content: ""; position: absolute; left: 8px; right: 8px; bottom: -3px; height: 8px;
+  background: rgba(0, 0, 0, 0.35); border-radius: 50%;
+}
+/* Whose turn it is: a warm glow behind them that breathes. */
+.sh-seat.turn .sh-portrait::before, .sh-seat.won .sh-portrait::before {
+  content: ""; position: absolute; inset: -10px -12px -6px; z-index: 0; border-radius: 50%;
+  background: radial-gradient(closest-side, rgba(255, 210, 63, 0.55), rgba(255, 210, 63, 0.18) 60%, transparent);
+  animation: sh-glow 1.6s ease-in-out infinite;
+}
+.sh-seat.won .sh-portrait::before { animation: none; background: radial-gradient(closest-side, rgba(255, 210, 63, 0.75), rgba(255, 210, 63, 0.25) 60%, transparent); }
+@keyframes sh-glow { 50% { opacity: 0.45; transform: scale(0.92); } }
+@media (prefers-reduced-motion: reduce) { .sh-seat.turn .sh-portrait::before, .sh-flip { animation: none !important; } }
+.sh-seat.out .sh-portrait img { filter: grayscale(1) brightness(0.7); }
+.sh-seat.out .sh-plate { opacity: 0.6; }
+
+.sh-plate {
+  display: flex; align-items: center; justify-content: center; max-width: 92px; overflow: hidden;
+  padding: 2px 4px; background: rgba(20, 18, 38, 0.88); border: 1px solid #37335a;
+}
+.sh-seat.mine .sh-plate { border-color: #a8862a; }
+.sh-seat.turn .sh-plate { border-color: var(--gold); box-shadow: 0 0 0 1px rgba(255, 210, 63, 0.35); }
+.sh-name-img { display: block; }
+.sh-name-text { font-size: 12px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sh-name-text.gold { color: var(--gold); }
+
+.sh-tally { display: flex; align-items: center; gap: 5px; padding: 1px 4px; background: rgba(20, 18, 38, 0.7); }
+.sh-pips { display: inline-flex; gap: 2px; }
+.sh-pips i { width: 6px; height: 6px; border: 1px solid #c9a877; opacity: 0.35; }
+.sh-pips i.on { background: #c9a877; opacity: 1; box-shadow: inset -1px -1px 0 #6b4a2b; }
+.sh-stars { display: inline-flex; gap: 1px; }
+
+.sh-chip {
+  font-size: 10px; line-height: 14px; padding: 0 5px; white-space: nowrap;
+  background: #2e2a4d; border: 1px solid var(--line); color: var(--muted);
+}
+.sh-chip.helm, .sh-chip.winner { color: var(--ink); background: var(--gold); border-color: #a8862a; font-weight: 700; }
+.sh-chip.to { color: var(--gold); border-color: #a8862a; }
+.sh-chip.says { color: var(--accent); border-color: #2f8f94; }
+.sh-chip.out, .sh-chip.left { color: var(--bad); border-color: #a04848; }
+
+.sh-seat.empty { gap: 4px; }
+.sh-seat.empty.at-top { flex-direction: column-reverse; }
+.sh-chair { width: 30px; height: 30px; border: 2px dashed #4a4570; border-radius: 50%; background: rgba(20, 18, 38, 0.5); }
+.sh-empty-label { font-size: 10px; color: var(--muted); }
+
+/* A stack on the felt, in front of its pilot. */
+.sh-stack {
+  position: absolute; z-index: 3;
+  left: calc(50% + var(--stack-x) * var(--cx));
+  top: calc(50% + var(--stack-y) * var(--cy));
+  transform: translate(-50%, -50%);
+  display: flex; align-items: flex-end; gap: 4px;
+}
+/* Left over from the last sail: dimmed, all but the Shoal that ended it. */
+.sh-stack.ghost .sh-pile, .sh-stack.ghost .sh-shown > span:not(.struck) { opacity: 0.55; }
+.sh-pile { position: relative; display: block; width: 24px; }
+.sh-pile-disc { position: absolute; left: 0; display: block; filter: drop-shadow(0 2px 0 rgba(0, 0, 0, 0.5)); }
+.sh-pile-count {
+  position: absolute; z-index: 1; right: -9px; bottom: -4px; min-width: 14px; padding: 0 2px;
+  font-size: 10px; line-height: 12px; font-weight: 700; text-align: center;
+  color: var(--ink); background: #e2c48f; border: 1px solid var(--ink);
+}
+.sh-shown { display: flex; gap: 2px; padding: 2px; background: rgba(10, 30, 26, 0.5); }
+.sh-shown .struck { display: block; border-radius: 50%; box-shadow: 0 0 0 2px var(--bad), 0 0 8px 2px rgba(255, 123, 123, 0.6); }
+.sh-disc.peek { opacity: 0.9; border-radius: 50%; outline: 2px dashed #e2c48f; outline-offset: -1px; }
+
+/* A stack the helm may turn: a gold ring that pulses, and a hint under it. */
+button.sh-flip {
+  position: relative; display: flex; flex-direction: column; align-items: center; gap: 2px;
+  padding: 3px; background: rgba(255, 210, 63, 0.12); border: 2px solid var(--gold);
+  animation: sh-flip 1.2s ease-in-out infinite;
+}
+button.sh-flip:hover:not(:disabled) { border-color: #fff2a8; background: rgba(255, 210, 63, 0.25); }
+@keyframes sh-flip { 50% { box-shadow: 0 0 10px 2px rgba(255, 210, 63, 0.55); } }
+
+/* The pot in the middle. */
+.sh-pot {
+  position: absolute; z-index: 1; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  display: flex; flex-direction: column; align-items: center; gap: 1px; pointer-events: auto;
+  text-shadow: 0 1px 0 #0b1f1b; white-space: nowrap;
+}
+.sh-pot img { margin-bottom: 2px; }
+.sh-pot strong { color: var(--gold); font-size: 13px; line-height: 1.1; }
+.sh-pot span { font-size: 10px; color: #b9d8cf; line-height: 1.1; }
+.sh-pot .sh-course { display: flex; gap: 3px; margin-bottom: 4px; }
+.sh-course i { width: 8px; height: 8px; border: 1px solid #a9d4fb; background: rgba(10, 30, 26, 0.6); }
+.sh-course i.on { background: #6aa6ec; box-shadow: inset 0 -2px 0 #2c5e9e; }
+
+.sh-outcome { font-size: 12px; color: var(--muted); text-align: center; }
+.sh-outcome.clear { color: var(--good); }
+.sh-outcome.aground { color: var(--bad); }
+.sh-winner { color: var(--gold); text-align: center; }
+
+/* Your hand and your bid. */
+.sh-dock { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 8px 14px; padding: 8px; border: 1px solid var(--line); background: rgba(20, 18, 38, 0.5); }
+.sh-dock.live { border-color: #a8862a; box-shadow: inset 0 0 0 1px rgba(255, 210, 63, 0.15); }
+.sh-label { display: block; font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin-bottom: 3px; }
+.sh-hand-discs { display: flex; gap: 4px; align-items: center; min-height: 40px; }
+button.sh-lay { padding: 0; background: none; border: 2px solid transparent; border-radius: 50%; line-height: 0; transition: transform 0.1s; }
+button.sh-lay:hover:not(:disabled) { transform: translateY(-3px); border-color: var(--accent); }
+button.sh-lay:disabled { opacity: 0.6; }
+.sh-bid { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.sh-bid .sh-label { width: 100%; margin: 0; }
+.sh-stepper { display: inline-flex; align-items: stretch; border: 2px solid var(--line); }
+.sh-stepper button { border: none; padding: 4px 9px; }
+.sh-stepper output { min-width: 28px; display: grid; place-items: center; font-weight: 700; font-size: 16px; color: var(--gold); background: #1f1c38; }
+
+.sh-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+
+.sh-log { font-size: 12px; color: var(--muted); }
+.sh-log li { padding: 1px 0; }
+.sh-log:not(.open) li { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.sh-foot { display: flex; align-items: center; gap: 14px; font-size: 12px; }
+.sh-foot button.link { font-size: 12px; }
+.sh-rules { margin: 0; padding-left: 18px; font-size: 12px; color: var(--muted); display: flex; flex-direction: column; gap: 3px; }
+.sh-rules .sh-disc { display: inline-block; vertical-align: -4px; }
+
+/* A narrow table (a phone): pilots at twice their size instead of three times, sat closer, and the stacks drawn in a little. */
+@container (max-width: 380px) {
+  .sh-seat { width: 84px; --seat-x: 42px; --seat-y: 50px; }
+  .sh-portrait { width: 36px; height: 44px; }
+  .sh-stack { --stack-x: 16%; --stack-y: 13.5%; }
+}

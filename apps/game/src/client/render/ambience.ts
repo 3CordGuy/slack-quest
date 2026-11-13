@@ -25,7 +25,7 @@ const hash = (a: number, b: number, salt: number) => {
   return n - Math.floor(n);
 };
 
-function pixelTexture(w: number, h: number, draw: (ctx: CanvasRenderingContext2D) => void): THREE.CanvasTexture {
+export function pixelTexture(w: number, h: number, draw: (ctx: CanvasRenderingContext2D) => void): THREE.CanvasTexture {
   const canvas = document.createElement("canvas");
   canvas.width = w;
   canvas.height = h;
@@ -37,8 +37,23 @@ function pixelTexture(w: number, h: number, draw: (ctx: CanvasRenderingContext2D
   return tex;
 }
 
+/** A smooth colour ramp, top to bottom or (radial) from the middle out: for additive glows, which fade to black. */
+function ramp(stops: [number, string][], w: number, h: number, radial: boolean): THREE.CanvasTexture {
+  const canvas = document.createElement("canvas");
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext("2d")!;
+  const grad = radial ? ctx.createRadialGradient(w / 2, h / 2, 0, w / 2, h / 2, w / 2) : ctx.createLinearGradient(0, 0, 0, h);
+  for (const [o, c] of stops) grad.addColorStop(o, c);
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, w, h);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
 /** Fill single pixels from rows of text: any non-space character is a pixel, and letters pick the colour. */
-function stamp(ctx: CanvasRenderingContext2D, rows: string[], colors: Record<string, string>) {
+export function stamp(ctx: CanvasRenderingContext2D, rows: string[], colors: Record<string, string>) {
   rows.forEach((row, y) => {
     [...row].forEach((ch, x) => {
       if (ch === " ") return;
@@ -281,6 +296,11 @@ const GLOW_LIGHTS = 4;
  */
 export const SHADOW_SLOTS = 6;
 /**
+ * A lit window or lantern on a building: a soft halo that comes up as the light goes, and, with `light`, one of the
+ * plain lights outdoors (shared with the props' lights, so the light count never changes).
+ */
+export type BuildingGlow = { pos: THREE.Vector3; /** The halo's width; 0 for a light with no halo. */ size: number; light?: LightKind };
+/**
  * The layer heroes' shadow cards for the sun and the hanging lamp sit on. Not
  * layer 0, so the main view never draws them; each light's shadow camera looks
  * at layer 0 (the room) plus the layer of the cards turned toward it.
@@ -331,6 +351,11 @@ export class Ambience {
   private lamp = new THREE.PointLight("#ffd7a1", 0, 0, 0);
   /** Whether the hut's hanging lamp is lit. Off, the room is lit only by its candles, lanterns and fires. */
   private lampOn = true;
+  /** In the Haunted Caverns: dark as indoors, no hanging lamp, and a torch carried by each hero. */
+  private cave = false;
+  /** One warm, flickering torch per hero in the caverns (at most four). No shadows: they move with every step. */
+  private torches = Array.from({ length: 4 }, () => new THREE.PointLight("#ffb070", 0, 7, 1.4));
+  private torchCount = 0;
   /** The lamp's glowing lantern, dimmed when the lamp is put out. */
   private lanternMat: THREE.MeshBasicMaterial | null = null;
   /**
@@ -403,6 +428,14 @@ export class Ambience {
    * sprite, no light of its own, so the light count never changes. Kept out of `group`, like the smoke.
    */
   private beacon: { root: THREE.Group; spin: THREE.Group; beams: THREE.MeshBasicMaterial; glow: THREE.SpriteMaterial; halo: THREE.Sprite } | null = null;
+  /**
+   * Buildings' lit windows and lanterns: additive halos that come up at dusk, and the window panes, which warm from
+   * their daytime colour (`userData.unlit`) to their lit one (`userData.lit`) with them. Kept out of `group`, like the smoke.
+   */
+  private lamps: { root: THREE.Group; glow: THREE.SpriteMaterial; halos: THREE.Sprite[]; sizes: number[]; panes: THREE.MeshBasicMaterial[] } | null = null;
+  /** The lights buildings ask for, lit outdoors along with the props' lights. */
+  private poiLights: { pos: THREE.Vector3; kind: LightKind }[] = [];
+  private paneLit = new THREE.Color();
   private flatTint = new THREE.Color();
   private still = typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
   private m = new THREE.Matrix4();
@@ -446,7 +479,8 @@ export class Ambience {
       s.visible = false;
     });
     for (const g of this.fadeGlows) g.visible = false;
-    scene.add(this.hemi, this.sun, this.sun.target, this.lamp, this.fireLight, ...this.slots, ...this.glows, ...this.fadeGlows, this.group);
+    for (const t of this.torches) t.visible = false;
+    scene.add(this.hemi, this.sun, this.sun.target, this.lamp, this.fireLight, ...this.slots, ...this.glows, ...this.fadeGlows, ...this.torches, this.group);
   }
 
   /** Lay out the decoration for a map. `skip` holds the hexes to leave clear. */
@@ -549,7 +583,10 @@ export class Ambience {
     this.bounds = { minX, maxX, minZ, maxZ };
 
     // ---- a hut is lit by a lamp hung over the middle of the room, not by the sky ----
-    const inside = tiles.some((t) => (t.biome as string) === "floor");
+    // The caverns light like a room with its lamp out: no sun, no sky, and the heroes' torches doing the work.
+    const cave = (this.cave = tiles.some((t) => (t.biome as string) === "cave"));
+    for (const t of this.torches) t.visible = cave;
+    const inside = cave || tiles.some((t) => (t.biome as string) === "floor");
     this.lamp.visible = inside;
     // Casting even while it is out (at no strength, its map not redrawn), so putting it out never recompiles a material.
     this.lamp.castShadow = inside;
@@ -561,8 +598,8 @@ export class Ambience {
     this.slotWeight.fill(0);
     this.freshRoom = inside;
     this.stirAll();
-    if (inside) {
-      this.lamp.position.set((minX + maxX) / 2, 2.7, (minZ + maxZ) / 2);
+    if (inside) this.lamp.position.set((minX + maxX) / 2, 2.7, (minZ + maxZ) / 2);
+    if (inside && !cave) {
       this.lanternMat = new THREE.MeshBasicMaterial({ color: this.lampOn ? "#ffe2a8" : "#4a3f30" });
       const lantern = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.26, 0.2), this.lanternMat);
       lantern.position.copy(this.lamp.position);
@@ -768,7 +805,7 @@ export class Ambience {
 
     // ---- wisps: trails of single pixels that sway gently as they cross ----
     // No wind indoors.
-    const indoors = (this.indoors = tiles.some((t) => (t.biome as string) === "floor"));
+    const indoors = (this.indoors = tiles.some((t) => (t.biome as string) === "floor" || (t.biome as string) === "cave"));
     const count = this.still || indoors ? 0 : Math.min(14, Math.max(7, Math.round(tiles.length / 30)));
     for (let i = 0; i < count; i++) {
       this.wisps.push({ offset: hash(i, 4, 100), speed: 0.1 + hash(i, 5, 100) * 0.07 });
@@ -809,6 +846,7 @@ export class Ambience {
     this.clear();
     this.setSmoke([]);
     this.setBeacon(null);
+    this.setGlows([], []);
     this.scene.remove(this.hemi, this.sun, this.sun.target, this.lamp, this.fireLight, ...this.slots, ...this.glows, ...this.fadeGlows, this.group);
     this.lamp.shadow.map?.dispose();
     this.fireLight.shadow.map?.dispose();
@@ -850,6 +888,7 @@ export class Ambience {
     this.fall(clock, target);
     this.puff(clock);
     this.sweep(clock);
+    this.glimmer(clock);
     this.splash(clock);
     this.flicker(clock, focus ?? target);
     const motion = this.still ? 0 : 1;
@@ -961,6 +1000,13 @@ export class Ambience {
 
   /** Draw smoke rising from these points (chimney tops). An empty list clears it. */
   /** Light or put out a hut's hanging lamp. */
+  /** Where each hero's torch is in the caverns this frame (at most four). Ignored outside them. */
+  setTorches(at: THREE.Vector3[]) {
+    if (!this.cave) return;
+    this.torchCount = Math.min(at.length, this.torches.length);
+    for (let i = 0; i < this.torchCount; i++) this.torches[i].position.set(at[i].x + 0.25, at[i].y + 1.15, at[i].z + 0.15);
+  }
+
   setLampOn(on: boolean) {
     if (on === this.lampOn) return;
     this.lampOn = on;
@@ -1087,7 +1133,7 @@ export class Ambience {
     // Indoors the lights are part of the room; outdoors they show only as the day goes.
     const dusk = this.indoors ? 1 : 1 - this.daylight;
     const near = (a: { pos: THREE.Vector3 }, b: { pos: THREE.Vector3 }) => a.pos.distanceToSquared(target) - b.pos.distanceToSquared(target);
-    const sorted = [...this.lights].sort(near);
+    const sorted = (this.indoors ? [...this.lights] : [...this.lights, ...this.poiLights]).sort(near);
     this.focus.copy(target);
 
     if (this.indoors) {
@@ -1236,19 +1282,6 @@ export class Ambience {
       this.beacon = null;
     }
     if (!at) return;
-    const ramp = (stops: [number, string][], w: number, h: number, radial: boolean) => {
-      const canvas = document.createElement("canvas");
-      canvas.width = w;
-      canvas.height = h;
-      const ctx = canvas.getContext("2d")!;
-      const grad = radial ? ctx.createRadialGradient(w / 2, h / 2, 0, w / 2, h / 2, w / 2) : ctx.createLinearGradient(0, 0, 0, h);
-      for (const [o, c] of stops) grad.addColorStop(o, c);
-      ctx.fillStyle = grad;
-      ctx.fillRect(0, 0, w, h);
-      const tex = new THREE.CanvasTexture(canvas);
-      tex.colorSpace = THREE.SRGBColorSpace;
-      return tex;
-    };
     // A cone's apex is the top of the texture (the canvas's first row), its open end the bottom.
     const beams = new THREE.MeshBasicMaterial({
       map: ramp([[0, "#fff1c0"], [0.1, "#c9a650"], [0.45, "#3a2f14"], [1, "#000000"]], 2, 64, false),
@@ -1301,6 +1334,54 @@ export class Ambience {
     b.glow.opacity = (0.18 + 0.72 * dark) * breathe;
     const size = 0.8 + 0.5 * dark;
     b.halo.scale.set(size, size, 1);
+  }
+
+  /** Light buildings' windows and lanterns (see `BuildingGlow`), and warm these panes with the dusk. Empty lists clear them. */
+  setGlows(glows: BuildingGlow[], panes: THREE.MeshBasicMaterial[]) {
+    if (this.lamps) {
+      this.scene.remove(this.lamps.root);
+      this.lamps.glow.map?.dispose();
+      this.lamps.glow.dispose();
+      this.lamps = null;
+    }
+    this.poiLights = glows.flatMap((g) => (g.light ? [{ pos: g.pos.clone(), kind: g.light }] : []));
+    if (glows.length === 0 && panes.length === 0) return;
+    const glow = new THREE.SpriteMaterial({
+      map: ramp([[0, "#ffe2a0"], [0.3, "#d98a3a"], [0.65, "#4a2a10"], [1, "#000000"]], 64, 64, true),
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      transparent: true,
+      fog: false,
+    });
+    const root = new THREE.Group();
+    // A glow of no size is only a light: it has no halo.
+    const shown = glows.filter((g) => g.size > 0);
+    const halos = shown.map((g) => {
+      const halo = new THREE.Sprite(glow);
+      halo.position.copy(g.pos);
+      // Drawn before the heroes (order 2), whose cards ignore depth: a hero at the door stands in front of the glow, not under it.
+      halo.renderOrder = 1;
+      root.add(halo);
+      return halo;
+    });
+    this.scene.add(root);
+    this.lamps = { root, glow, halos, sizes: shown.map((g) => g.size), panes };
+  }
+
+  /** Windows and lanterns come up as the light goes, each breathing a little on its own. */
+  private glimmer(clock: number) {
+    const l = this.lamps;
+    if (!l) return;
+    const dark = this.night;
+    l.glow.opacity = 0.85 * smooth(0.12, 0.8, dark);
+    l.root.visible = l.glow.opacity > 0.01;
+    const motion = this.still ? 0 : 0.6;
+    l.halos.forEach((h, i) => {
+      const s = l.sizes[i] * (0.8 + 0.3 * dark) * this.waver(clock, i + 5, motion);
+      h.scale.set(s, s, 1);
+    });
+    const warm = smooth(0.05, 0.7, dark);
+    for (const p of l.panes) p.color.set(p.userData.unlit as string).lerp(this.paneLit.set(p.userData.lit as string), warm);
   }
 
   /** Puffs leave the stack one after another, drift with the wind as they climb, and thin out. */
@@ -1434,6 +1515,19 @@ export class Ambience {
       this.sun.intensity = 0.7 * smooth(0, 0.35, -height);
     }
 
+    if (this.indoors && this.cave) {
+      // The caverns: cold dark stone, and a warm torch around each hero.
+      this.sun.intensity = 0;
+      this.lamp.intensity = 0;
+      this.hemi.intensity = 0.28;
+      this.hemi.color.set("#8ea0c8");
+      this.hemi.groundColor.set("#141018");
+      this.background.set("#07060b");
+      this.torches.forEach((t, i) => {
+        t.intensity = i < this.torchCount ? 2.4 * (this.still ? 1 : 1 + Math.sin(clock * 9 + i * 2.1) * 0.06 + Math.sin(clock * 15.7 + i) * 0.04) : 0;
+      });
+      return;
+    }
     if (this.indoors) {
       // The lamp does the work; a low fill keeps the corners readable. It wavers a little, like a flame.
       this.sun.intensity = 0;

@@ -410,6 +410,138 @@ function drawWolf(ctx: CanvasRenderingContext2D, fur = "#7d8793", dark = "#59616
   px(9, 15, 2, 4, dark);
 }
 
+/**
+ * A bear on all fours, facing right: a heavier animal than the wolf, with a
+ * hump at the shoulders, round ears, a pale muzzle and thick clawed legs.
+ * `frost` greys the hump and brow for the old Great Bear.
+ */
+function drawBear(ctx: CanvasRenderingContext2D, fur = "#7a5232", dark = "#4f3420", muzzle = "#b98a5a", eye = "#f2a33a", frost?: string) {
+  const px = (x: number, y: number, w: number, h: number, c: string) => {
+    ctx.fillStyle = c;
+    ctx.fillRect(x + 1, y + 1, w, h);
+  };
+  px(0, 10, 1, 2, dark); // stub of a tail
+  px(1, 9, 10, 7, fur); // body
+  px(5, 7, 5, 2, fur); // shoulder hump
+  px(2, 15, 8, 1, dark); // belly shadow
+  px(10, 7, 5, 5, fur); // head
+  px(10, 5, 2, 2, dark); // round ears
+  px(13, 5, 2, 2, dark);
+  px(14, 9, 2, 3, muzzle); // snout
+  px(15, 9, 1, 1, OUTLINE); // nose
+  px(13, 8, 1, 1, eye);
+  if (frost) {
+    px(5, 7, 5, 1, frost);
+    px(11, 7, 3, 1, frost);
+  }
+  px(1, 16, 3, 4, dark); // legs, thick
+  px(8, 16, 3, 4, dark);
+  px(3, 19, 1, 1, "#e8dcc0"); // claws
+  px(10, 19, 1, 1, "#e8dcc0");
+}
+
+/**
+ * A ghost of the Haunted Caverns, facing right: a pale hooded shape with a
+ * ragged tail, black eyes and a reaching hand. `crown` gives the bound Haunt
+ * the tarnished crown of whoever it was in life.
+ */
+function drawGhost(ctx: CanvasRenderingContext2D, body = "#dfe8f2", shade = "#a7b6cc", eye = "#24203a", crown?: string) {
+  const px = (x: number, y: number, w: number, h: number, c: string) => {
+    ctx.fillStyle = c;
+    ctx.fillRect(x + 1, y + 1, w, h);
+  };
+  if (crown) {
+    px(5, 1, 7, 1, crown);
+    px(5, 0, 1, 1, crown);
+    px(8, 0, 1, 1, crown);
+    px(11, 0, 1, 1, crown);
+  }
+  px(5, 2, 7, 2, body); // crown of the head
+  px(4, 4, 9, 2, body);
+  px(3, 6, 11, 9, body); // body
+  px(12, 6, 2, 9, shade); // the far side, in shadow
+  px(14, 9, 3, 2, body); // a hand reaching out
+  px(3, 15, 3, 3, body); // the ragged tail
+  px(7, 15, 3, 2, body);
+  px(11, 15, 3, 3, shade);
+  px(4, 18, 2, 2, body);
+  px(12, 18, 1, 2, shade);
+  px(8, 7, 2, 2, eye); // hollow eyes and an open mouth
+  px(11, 7, 2, 2, eye);
+  px(9, 11, 3, 2, eye);
+}
+
+/** A cave bat, wings spread, hanging in the air mid-flap: small, dark and red-eyed. */
+function drawBat(ctx: CanvasRenderingContext2D) {
+  const px = (x: number, y: number, w: number, h: number, c: string) => {
+    ctx.fillStyle = c;
+    ctx.fillRect(x + 1, y + 1, w, h);
+  };
+  const body = "#4a3b52";
+  const wing = "#2f2538";
+  px(7, 9, 4, 5, body); // body
+  px(7, 7, 1, 2, body); // ears
+  px(10, 7, 1, 2, body);
+  px(8, 10, 1, 1, "#ff4d4d"); // eyes
+  px(10, 10, 1, 1, "#ff4d4d");
+  px(9, 12, 1, 1, "#e8dcc0"); // a fang
+  px(2, 9, 5, 2, wing); // the left wing, scalloped
+  px(1, 11, 3, 2, wing);
+  px(4, 11, 2, 1, wing);
+  px(0, 13, 2, 1, wing);
+  px(11, 9, 5, 2, wing); // the right wing
+  px(14, 11, 3, 2, wing);
+  px(12, 11, 2, 1, wing);
+  px(16, 13, 1, 1, wing);
+}
+
+/** One of the smugglers' dead: a skeleton with a rusted cutlass, facing right. */
+function drawSkeleton(ctx: CanvasRenderingContext2D) {
+  const px = (x: number, y: number, w: number, h: number, c: string) => {
+    ctx.fillStyle = c;
+    ctx.fillRect(x + 1, y + 1, w, h);
+  };
+  const bone = "#e8e2d0";
+  const dim = "#c9c1aa";
+  px(6, 1, 6, 5, bone); // skull
+  px(7, 3, 2, 2, OUTLINE); // eye sockets
+  px(10, 3, 2, 2, OUTLINE);
+  px(7, 6, 4, 1, dim); // jaw
+  px(8, 7, 2, 8, bone); // spine
+  px(6, 8, 6, 1, dim); // ribs
+  px(6, 10, 6, 1, dim);
+  px(6, 12, 6, 1, dim);
+  px(4, 8, 2, 6, bone); // arms
+  px(12, 8, 2, 5, bone);
+  px(6, 15, 6, 2, dim); // pelvis
+  px(6, 17, 2, 4, bone); // legs
+  px(10, 17, 2, 4, bone);
+  px(14, 6, 1, 7, "#a3896a"); // the cutlass, rusted
+  px(15, 5, 1, 2, "#a3896a");
+  px(13, 12, 3, 1, "#6b4a2b"); // its hilt
+  px(5, 0, 2, 1, "#8a3b2f"); // a scrap of the old bandana
+}
+
+/** A cave slime: a green blob with a shine on it, two dark eyes, and a drip. */
+function drawSlime(ctx: CanvasRenderingContext2D) {
+  const px = (x: number, y: number, w: number, h: number, c: string) => {
+    ctx.fillStyle = c;
+    ctx.fillRect(x + 1, y + 1, w, h);
+  };
+  const green = "#6fcf5a";
+  const deep = "#3f8f36";
+  px(6, 9, 6, 2, green); // the top of the blob
+  px(4, 11, 10, 2, green);
+  px(3, 13, 12, 6, green);
+  px(3, 18, 12, 2, deep); // its underside
+  px(13, 12, 2, 6, deep);
+  px(6, 11, 2, 1, "#c9f5b8"); // the shine
+  px(5, 13, 1, 2, "#c9f5b8");
+  px(8, 13, 2, 2, "#14301a"); // eyes
+  px(12, 13, 2, 2, "#14301a");
+  px(2, 19, 1, 2, green); // a drip
+}
+
 /** The sparring ring's training dummy: a straw sack on a post, with a target painted on its chest. */
 function drawDummy(ctx: CanvasRenderingContext2D) {
   const px = (x: number, y: number, w: number, h: number, c: string) => {
@@ -483,7 +615,16 @@ function drawSprite(kind: string, look: Look, outfit: Outfit | undefined, asleep
   if (kind === "wolf") drawWolf(ctx);
   // The pack leader: the same animal, darker, with a red eye. The renderer draws it larger.
   else if (kind === "alpha") drawWolf(ctx, "#4a4f5c", "#2c3039", "#ff4d4d");
+  else if (kind === "bear") drawBear(ctx);
+  // The Great Bear: darker and grizzled, with a red eye. The renderer draws it larger.
+  else if (kind === "great_bear") drawBear(ctx, "#4a3426", "#2a1d15", "#8a7a6a", "#ff4d4d", "#9a8f86");
   else if (kind === "dummy") drawDummy(ctx);
+  // The Haunted Caverns.
+  else if (kind === "shade") drawGhost(ctx);
+  else if (kind === "haunt") drawGhost(ctx, "#c7b8f0", "#8b74c9", "#ff4d4d", "#c9a24a");
+  else if (kind === "bat") drawBat(ctx);
+  else if (kind === "skeleton") drawSkeleton(ctx);
+  else if (kind === "slime") drawSlime(ctx);
   else if (outfit) drawHero(ctx, look, outfit);
   else drawHumanoid(ctx, look);
   // Asleep: the eyes are shut, a short dark line where each one was.
@@ -958,7 +1099,7 @@ export function bubbleTexture(text: string): { texture: THREE.CanvasTexture; wid
 
 // ---------- battle effects ----------
 
-export type FxKind = "slash" | "bolt" | "arrow" | "burst" | "spark" | "mote";
+export type FxKind = "slash" | "bolt" | "arrow" | "burst" | "spark" | "mote" | "dust" | "fleck" | "splash";
 
 const fxCache = new Map<string, THREE.CanvasTexture>();
 
@@ -1029,6 +1170,30 @@ export function fxTexture(kind: FxKind, color: string, flip = false): THREE.Canv
     }
     ctx.fillStyle = "#ffffff";
     ctx.fillRect(7, 7, 2, 2);
+  } else if (kind === "dust") {
+    // A footfall's puff: a lumpy little cloud, paler at the top, with a speck thrown off each side.
+    for (const [x, y, w] of [[6, 7, 3], [5, 8, 6], [4, 9, 8], [5, 10, 6]] as const) {
+      ctx.fillStyle = color;
+      ctx.fillRect(x, y, w, 1);
+    }
+    dot(7, 7, "#ffffff");
+    dot(2, 9);
+    dot(13, 8);
+  } else if (kind === "fleck") {
+    // Grass kicked up: short blades, each a bright tip over a dark root so they read against the grass.
+    for (const [x, y] of [[3, 9], [5, 7], [8, 8], [10, 6], [12, 8], [6, 10]] as const) {
+      dot(x, y);
+      dot(x, y + 1, "#3f7a2c");
+    }
+    dot(4, 8, "#3f7a2c");
+    dot(11, 7);
+  } else if (kind === "splash") {
+    // A splash: drops flung up and out from a flat ring.
+    for (let x = 4; x < 12; x++) dot(x, 11);
+    dot(3, 10);
+    dot(12, 10);
+    for (const [x, y] of [[4, 7], [3, 5], [11, 7], [12, 5], [7, 6], [8, 4]] as const) dot(x, y);
+    dot(8, 5, "#ffffff");
   } else if (kind === "mote") {
     // One XP mote: a solid 4x4 pixel, a white glint in its corner, in the middle of the tile.
     ctx.fillStyle = color;

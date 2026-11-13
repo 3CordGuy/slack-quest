@@ -46,6 +46,7 @@ import {
   type HarborBoard,
   type HarborLogEntry,
   type HarborShip,
+  type RunKind,
   type HeroInit,
   type PublicHero,
   type HutSummary,
@@ -714,10 +715,12 @@ export interface RunRow {
   crew_id: string | null;
   /** JSON array of the Harbor projects the crew had built at launch. */
   projects_json: string;
+  /** "voyage" or "caverns". */
+  kind: RunKind;
 }
 
 /** `projects` are the Harbor projects the crew has built; they are fixed on the run at launch. */
-export async function createRun(db: D1Database, playerId: string, crewId: string | null, projects: string[] = []): Promise<string> {
+export async function createRun(db: D1Database, playerId: string, crewId: string | null, projects: string[] = [], kind: RunKind = "voyage"): Promise<string> {
   // No vowels, so codes never spell anything.
   const alphabet = "BCDFGHJKLMNPQRSTVWXZ";
   for (let attempt = 0; attempt < 5; attempt++) {
@@ -725,8 +728,8 @@ export async function createRun(db: D1Database, playerId: string, crewId: string
     const code = [...bytes].map((b) => alphabet[b % alphabet.length]).join("");
     try {
       await db
-        .prepare("INSERT INTO runs (code, seed, status, created_by, crew_id, projects_json, created_at, updated_at) VALUES (?, ?, 'lobby', ?, ?, ?, ?, ?)")
-        .bind(code, crypto.randomUUID(), playerId, crewId, JSON.stringify(projects), now(), now())
+        .prepare("INSERT INTO runs (code, seed, status, created_by, crew_id, projects_json, kind, created_at, updated_at) VALUES (?, ?, 'lobby', ?, ?, ?, ?, ?, ?)")
+        .bind(code, crypto.randomUUID(), playerId, crewId, JSON.stringify(projects), kind, now(), now())
         .run();
       return code;
     } catch {
@@ -737,7 +740,7 @@ export async function createRun(db: D1Database, playerId: string, crewId: string
 }
 
 export async function getRun(db: D1Database, code: string): Promise<RunRow | null> {
-  return db.prepare("SELECT code, seed, status, state_json, crew_id, projects_json FROM runs WHERE code = ?").bind(code).first<RunRow>();
+  return db.prepare("SELECT code, seed, status, state_json, crew_id, projects_json, kind FROM runs WHERE code = ?").bind(code).first<RunRow>();
 }
 
 /**
@@ -961,12 +964,12 @@ export async function harborBoard(db: D1Database, crewId: string, pierCount: num
       .all<{ id: string; name: string; classId: string; level: number; hutTier: number; plot: number | null; bin: string | null }>(),
     db
       .prepare(
-        `SELECT r.code, r.status, r.state_json, r.updated_at, c.name AS creator
+        `SELECT r.code, r.status, r.state_json, r.updated_at, r.kind, c.name AS creator
          FROM runs r LEFT JOIN characters c ON c.player_id = r.created_by
          WHERE r.crew_id = ? ORDER BY r.created_at DESC LIMIT 30`,
       )
       .bind(crewId)
-      .all<{ code: string; status: string; state_json: string | null; updated_at: number; creator: string | null }>(),
+      .all<{ code: string; status: string; state_json: string | null; updated_at: number; kind: RunKind; creator: string | null }>(),
   ]);
 
   const ships: HarborShip[] = [];
@@ -977,17 +980,17 @@ export async function harborBoard(db: D1Database, crewId: string, pierCount: num
     const aboard = state?.heroes.map((h) => h.name) ?? [];
     const captain = state?.heroes.find((h) => h.id === state.hostId)?.name ?? row.creator ?? "Someone";
     if (row.status === "victory" || row.status === "defeat") {
-      if (log.length < 8) log.push({ code: row.code, title: state?.bible?.title ?? "An uncharted island", outcome: row.status, crew: aboard, at: row.updated_at });
+      if (log.length < 8) log.push({ code: row.code, title: state?.bible?.title ?? (row.kind === "caverns" ? "The Haunted Caverns" : "An uncharted island"), outcome: row.status, crew: aboard, at: row.updated_at });
       continue;
     }
     const age = now() - row.updated_at;
     if (age > (row.status === "lobby" ? LOBBY_STALE_MS : VOYAGE_STALE_MS)) continue;
-    ships.push({ code: row.code, captain, aboard, phase: row.status, title: state?.bible?.title ?? null, day: state && state.round > 0 ? state.round : null, pier: null });
+    ships.push({ code: row.code, captain, aboard, phase: row.status, title: state?.bible?.title ?? null, day: state && state.round > 0 ? state.round : null, pier: null, kind: row.kind });
   }
-  // Oldest moored ship takes the first pier.
+  // Oldest moored ship takes the first pier. A party gathering at the cave mouth needs no pier.
   ships.reverse();
   let pier = 0;
-  for (const ship of ships) if (ship.phase === "lobby" && pier < pierCount) ship.pier = pier++;
+  for (const ship of ships) if (ship.phase === "lobby" && ship.kind !== "caverns" && pier < pierCount) ship.pier = pier++;
   // Members whose shack is not up yet carry what is in its bin, so the site can be drawn filling up.
   const roster = members.results.map(({ bin, ...m }) => (m.plot !== null && bin !== null ? { ...m, bin: parseBin(bin) } : m));
   return { members: roster, ships, log, works };
@@ -1192,7 +1195,7 @@ export function paidFurnishingStatement(db: D1Database, playerId: string, defId:
 export async function craftFurnishing(db: D1Database, playerId: string, defId: string): Promise<string | { xp?: XpResult }> {
   const [c, hut] = await Promise.all([getCharacter(db, playerId), getHut(db, playerId)]);
   if (c?.status !== "active") return "Create a character first.";
-  const problem = craftProblem(defId, hut.blueprints, hut.resources);
+  const problem = craftProblem(defId, hut.blueprints, hut.resources, hut.tier);
   if (problem) return problem;
   const xp = await prepareXp(db, playerId, HARBOR_XP.craft);
   const made = [...spendStatements(db, playerId, 0, FURNISHINGS[defId].recipe!), paidFurnishingStatement(db, playerId, defId)];
@@ -1203,9 +1206,10 @@ export async function craftFurnishing(db: D1Database, playerId: string, defId: s
 
 /** Buy a furnishing at the market stall. The price is the catalogue's; the client names only the piece. */
 export async function buyFurniture(db: D1Database, playerId: string, defId: string): Promise<string | null> {
-  const c = await getCharacter(db, playerId);
+  const [c, hut] = await Promise.all([getCharacter(db, playerId), db.prepare("SELECT tier FROM huts WHERE player_id = ?").bind(playerId).first<{ tier: number }>()]);
   if (c?.status !== "active") return "Create a character first.";
-  const problem = buyFurnitureProblem(defId, c.gold);
+  // The biggest pieces wait for a bigger hut (a player with no hut yet has a Shack's worth of room).
+  const problem = buyFurnitureProblem(defId, c.gold, hut?.tier ?? 1);
   if (problem) return problem;
   const res = await db.batch([...spendStatements(db, playerId, FURNISHINGS[defId].price!, {}), paidFurnishingStatement(db, playerId, defId)]);
   return res[res.length - 1].meta.changes > 0 ? null : "Not enough gold.";

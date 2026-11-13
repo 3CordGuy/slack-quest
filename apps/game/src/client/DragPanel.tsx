@@ -12,10 +12,18 @@
 // the panel's size while the opposite corner stays put; double-click a
 // handle to go back to the default size.
 //
+// The title and tools sit outside `.panel-body`. A panel whose content can
+// run long scrolls only its body (see styles.css), so they stay at the top.
+//
 // The offset is applied with the CSS `translate` property, which stacks with
-// whatever `transform` the panel's own styles use for centring.
+// whatever `transform` the panel's own styles use for centring. The view the
+// panel sits in may be zoomed (the UI scale in Options), so pointer movement,
+// which is in screen pixels, is divided by that zoom before it is applied.
+//
+// Options can also put every panel back as it started: `resetPanels()`.
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type HTMLAttributes, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { onUiScaleChange, uiZoom } from "./uiScale";
 
 interface Offset {
   x: number;
@@ -29,7 +37,29 @@ const THRESHOLD = 5;
 /** How much of a panel must stay on screen. */
 const KEEP = 48;
 
-const storageKey = (id: string) => `gq.panel.${id}`;
+const PREFIX = "gq.panel.";
+const storageKey = (id: string) => `${PREFIX}${id}`;
+
+const resetListeners = new Set<() => void>();
+
+/**
+ * Forget where every panel was left, its size and whether it was minimized,
+ * and put the open ones back as they start. Panels not on screen pick up
+ * their defaults the next time they are shown.
+ */
+export function resetPanels() {
+  try {
+    const keys: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k?.startsWith(PREFIX)) keys.push(k);
+    }
+    for (const k of keys) localStorage.removeItem(k);
+  } catch {
+    // Nothing remembered to forget.
+  }
+  for (const fn of resetListeners) fn();
+}
 
 interface Size {
   w: number;
@@ -49,8 +79,9 @@ function loadSize(id: string): Size | null {
   try {
     const raw = JSON.parse(localStorage.getItem(`${storageKey(id)}.size`) ?? "null") as Size | null;
     if (!raw || !Number.isFinite(raw.w) || !Number.isFinite(raw.h)) return null;
-    // A size saved on a bigger screen is trimmed to fit this one.
-    return { w: Math.min(raw.w, innerWidth), h: Math.min(raw.h, innerHeight) };
+    // A size saved on a bigger screen (or at a smaller UI scale) is trimmed to fit this one.
+    const z = uiZoom();
+    return { w: Math.min(raw.w, innerWidth / z), h: Math.min(raw.h, innerHeight / z) };
   } catch {
     return null;
   }
@@ -151,8 +182,26 @@ export function DragPanel({ id, title, compact = false, resizable = false, foldO
     };
     check();
     addEventListener("resize", check);
-    return () => removeEventListener("resize", check);
+    const stop = onUiScaleChange(() => requestAnimationFrame(check));
+    return () => {
+      removeEventListener("resize", check);
+      stop();
+    };
   }, [reset]);
+
+  // Options asked for every panel to go back as it started.
+  useEffect(() => {
+    const back = () => {
+      pin.current = null;
+      setOffset(ZERO);
+      setSize(null);
+      setFolded(loadFolded(id, foldOnPhone, startFolded));
+    };
+    resetListeners.add(back);
+    return () => {
+      resetListeners.delete(back);
+    };
+  }, [id, foldOnPhone, startFolded]);
 
   // The panel may be centred by its parent, so growing it would move both edges.
   // After each size change, shift the panel so the pinned corner is back where it was.
@@ -160,8 +209,9 @@ export function DragPanel({ id, title, compact = false, resizable = false, foldO
     const p = pin.current;
     const r = el.current?.getBoundingClientRect();
     if (!p || !r) return;
-    const dx = p.x - (p.sx > 0 ? r.left : r.right);
-    const dy = p.y - (p.sy > 0 ? r.top : r.bottom);
+    const z = uiZoom();
+    const dx = (p.x - (p.sx > 0 ? r.left : r.right)) / z;
+    const dy = (p.y - (p.sy > 0 ? r.top : r.bottom)) / z;
     if (Math.abs(dx) > 0.5 || Math.abs(dy) > 0.5) setOffset((o) => ({ x: Math.round(o.x + dx), y: Math.round(o.y + dy) }));
   });
 
@@ -172,16 +222,18 @@ export function DragPanel({ id, title, compact = false, resizable = false, foldO
     const start = { x: e.clientX, y: e.clientY };
     const rect = el.current.getBoundingClientRect();
     pin.current = { sx, sy, x: sx > 0 ? rect.left : rect.right, y: sy > 0 ? rect.top : rect.bottom };
-    let latest: Size = { w: rect.width, h: rect.height };
+    // Measured on screen, applied in the panel's own (zoomed) pixels.
+    const z = uiZoom();
+    let latest: Size = { w: rect.width / z, h: rect.height / z };
     setDragging(true);
 
     const move = (ev: PointerEvent) => {
       // The dragged corner cannot pass the pinned one, nor leave the screen.
-      const maxW = sx > 0 ? innerWidth - rect.left : rect.right;
-      const maxH = sy > 0 ? innerHeight - rect.top : rect.bottom;
+      const maxW = (sx > 0 ? innerWidth - rect.left : rect.right) / z;
+      const maxH = (sy > 0 ? innerHeight - rect.top : rect.bottom) / z;
       latest = {
-        w: Math.round(Math.max(Math.min(MIN_SIZE.w, maxW), Math.min(maxW, rect.width + sx * (ev.clientX - start.x)))),
-        h: Math.round(Math.max(Math.min(MIN_SIZE.h, maxH), Math.min(maxH, rect.height + sy * (ev.clientY - start.y)))),
+        w: Math.round(Math.max(Math.min(MIN_SIZE.w, maxW), Math.min(maxW, (rect.width + sx * (ev.clientX - start.x)) / z))),
+        h: Math.round(Math.max(Math.min(MIN_SIZE.h, maxH), Math.min(maxH, (rect.height + sy * (ev.clientY - start.y)) / z))),
       };
       setSize(latest);
     };
@@ -219,6 +271,7 @@ export function DragPanel({ id, title, compact = false, resizable = false, foldO
     const start = { x: e.clientX, y: e.clientY };
     const from = live.current;
     const rect = el.current.getBoundingClientRect();
+    const z = uiZoom();
     let moved = false;
     // Tracked here as well as in state, so the release saves the final position even if React has not re-rendered yet.
     let latest = from;
@@ -232,7 +285,7 @@ export function DragPanel({ id, title, compact = false, resizable = false, foldO
       // Keep a strip of the panel on screen so it can always be grabbed again.
       dx = Math.max(KEEP - rect.right, Math.min(innerWidth - KEEP - rect.left, dx));
       dy = Math.max(-rect.top, Math.min(innerHeight - KEEP - rect.top, dy));
-      latest = { x: Math.round(from.x + dx), y: Math.round(from.y + dy) };
+      latest = { x: Math.round(from.x + dx / z), y: Math.round(from.y + dy / z) };
       setOffset(latest);
     };
     const up = () => {
@@ -281,7 +334,8 @@ export function DragPanel({ id, title, compact = false, resizable = false, foldO
           {title}
         </button>
       )}
-      {children}
+      {/* The panel's own content. Long panels scroll this, not the whole frame, so the title and tools stay put. */}
+      <div className="panel-body">{children}</div>
       {resizable &&
         !folded &&
         CORNERS.map((c) => (

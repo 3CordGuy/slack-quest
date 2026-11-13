@@ -52,11 +52,14 @@ export const HARBOR_SMITHY: HexPos = at(2, 5);
 /** The galley's spot, on the quay below the pub between the middle and east piers, where ships take on provisions. A building site until the crew has paid for it. */
 export const HARBOR_GALLEY: HexPos = at(8, 7);
 
+/** The mouth of the Haunted Caverns: a way into the rocks through the back wall, at the head of the lane between the hut plots. */
+export const HARBOR_CAVE: HexPos = at(6, 0);
+
 /** Rocks standing out of the water, and the wreck on them. Scenery: nobody can reach them. */
 export const HARBOR_ROCKS: HexPos[] = [at(0, 9), at(4, 9), at(8, 10), at(1, 10), at(12, 10)];
 export const HARBOR_WRECK: HexPos = at(11, 9);
 
-const HEIGHT: Record<Biome, number> = { water: 0.05, plains: 0.3, forest: 0.42, hills: 0.75, dock: 0.1, cobble: 0.26, mud: 0.2, rampart: 1.25, floor: 0.1, wall: 0.9, fog: 0.3 };
+const HEIGHT: Record<Biome, number> = { water: 0.05, plains: 0.3, forest: 0.42, hills: 0.75, dock: 0.1, cobble: 0.26, mud: 0.2, rampart: 1.25, floor: 0.1, wall: 0.9, cave: 0.18, rock: 1.4, fog: 0.3 };
 
 export function harborPoi(id: string, kind: PoiKind, pos: HexPos): Poi {
   return { id, kind, pos, hidden: false, cleared: false, usedBy: [], enemies: [] };
@@ -105,6 +108,8 @@ export function generateHarbor(): WorldMap {
     if (pos.r === 6 && (col === 0 || col === last)) biome = "water";
     if (pos.r === 8 && biome === "water" && [4, 8, 11, 12].includes(col)) biome = "mud";
     if (biome !== "rampart") h = null;
+    // The caverns' mouth: rubble underfoot where the wall gives way to the rock.
+    if (same(pos, HARBOR_CAVE)) biome = "hills";
     // The gathering spots keep the ground they are about.
     if (same(pos, HARBOR_GATHER.quarry)) biome = "hills";
     if (same(pos, HARBOR_GATHER.felling)) biome = "forest";
@@ -126,6 +131,7 @@ export function generateHarbor(): WorldMap {
       harborPoi("fishing", "fishing", HARBOR_GATHER.fishing),
       harborPoi("felling", "felling", HARBOR_GATHER.felling),
       harborPoi("quarry", "quarry", HARBOR_GATHER.quarry),
+      harborPoi("cave", "cave", HARBOR_CAVE),
       ...HARBOR_ROCKS.map((p, i) => harborPoi(`rocks:${i}`, "rocks", p)),
       harborPoi("wreck", "wreck", HARBOR_WRECK),
     ],
@@ -155,6 +161,8 @@ export interface HarborPlayer {
   outfit?: Outfit;
   /** Where their bedroll is laid out, until they walk off. */
   bedroll?: HexPos;
+  /** In a hut: the bed (a furnishing id) they are lying on after a rest, until they walk off. */
+  bed?: number;
 }
 
 /**
@@ -205,8 +213,10 @@ export interface HarborShip {
   /** Story title once the voyage is under way. */
   title: string | null;
   day: number | null;
-  /** Index into HARBOR_PIERS while moored, else null. */
+  /** Index into HARBOR_PIERS while moored, else null. Never set for a delve, which gathers at the cave mouth. */
   pier: number | null;
+  /** A voyage, or a delve into the Haunted Caverns. Absent from boards sent before caverns: a voyage. */
+  kind?: "voyage" | "caverns";
 }
 
 export interface HarborLogEntry {
@@ -245,6 +255,8 @@ export type HarborServerMessage =
   | { type: "joined"; player: HarborPlayer }
   | { type: "left"; id: string }
   | { type: "moved"; id: string; path: HexPos[] }
+  /** Someone was put straight onto `pos` (no walk): a stuck hero sent back by "unstick". */
+  | { type: "placed"; id: string; pos: HexPos }
   | { type: "said"; id: string; name: string; text: string }
   | XpMessage;
 
@@ -254,7 +266,12 @@ export type HarborClientMessage =
   /** "I changed my gear or level": the server re-reads the sender's character and tells everyone. */
   | { type: "refresh" }
   /** "I have just rested here": lay the sender's bedroll out where they stand, for everyone to see. */
-  | { type: "bedroll" };
+  | { type: "bedroll" }
+  /** "I am stuck or lost": put the sender's own hero back where heroes arrive. At most once per UNSTICK_COOLDOWN_MS. */
+  | { type: "unstick" };
+
+/** How often a hero may ask to be put back where they arrive (Harbor, hut or pub), per connection. */
+export const UNSTICK_COOLDOWN_MS = 3000;
 
 export const HARBOR_MAX_SAY = 200;
 export const MAX_CREW = 40;

@@ -6,7 +6,7 @@
 .crew-roster .roster-head { margin: 0 0 6px; font-size: 12px; }
 
 .roster {
-  max-height: min(420px, calc(100vh - 230px));
+  max-height: min(420px, calc(100vh / var(--ui-z, 1) - 230px));
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-width: thin;
@@ -64,9 +64,9 @@ button.cm-main:hover:not(:disabled) { border-color: var(--line); background: rgb
 .cm.away .cm-trade { opacity: 0.8; }
 
 @media (max-width: 760px) {
-  .crew.roster-panel:not(.folded) { width: min(230px, calc(100vw - 12px)); }
-  .crew.roster-panel.roster-trade:not(.folded) { width: min(270px, calc(100vw - 12px)); }
-  .roster { max-height: calc(100vh - 340px); }
+  .crew.roster-panel:not(.folded) { width: min(230px, calc(100vw / var(--ui-z, 1) - 12px)); }
+  .crew.roster-panel.roster-trade:not(.folded) { width: min(270px, calc(100vw / var(--ui-z, 1) - 12px)); }
+  .roster { max-height: calc(100vh / var(--ui-z, 1) - 340px); }
 }
 @media (pointer: coarse) {
   .cm-trade { width: 36px; height: 36px; }
@@ -74,6 +74,6 @@ button.cm-main:hover:not(:disabled) { border-color: var(--line); background: rgb
 
 /* A sheet opened from the roster sits beside it rather than on top of it. */
 @media (min-width: 900px) {
-  :has(> .roster-panel:not(.folded)) > .hero-card { right: 252px; }
-  :has(> .roster-panel.roster-trade:not(.folded)) > .hero-card { right: 292px; }
+  :has(> .roster-panel:not(.folded)) > .hs-sheet { right: 252px; }
+  :has(> .roster-panel.roster-trade:not(.folded)) > .hs-sheet { right: 292px; }
 }

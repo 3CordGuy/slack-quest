@@ -20,6 +20,7 @@ import {
   currentActor,
   makeRng,
   pickDemand,
+  framesFor,
   pickFrame,
   pickSpine,
   seedFromString,
@@ -31,7 +32,7 @@ import {
   type WorldEvent,
   type WorldState,
 } from "@gantt-quest/world";
-import { generateFill, islandFacts, npcTurn, writeEpilogue } from "./ai";
+import { cavernFacts, generateFill, islandFacts, npcTurn, writeEpilogue } from "./ai";
 import { recordStep } from "./board";
 import { clearPubOrders, restoreGathering, applyGrant, applyPenalty, conversationStatement, getRun, heroInitFor, recentStories, refreshHarbor, saveRunStatements, type Env } from "./db";
 import { clearBrews } from "./workshops";
@@ -104,7 +105,7 @@ export class RunRoom extends DurableObject<Env> {
     if (!runCode) throw new Error("run room has no code");
     const row = await getRun(this.env.DB, runCode);
     if (!row) throw new Error(`run ${runCode} not found`);
-    this.world = row.state_json ? upgradeWorld(JSON.parse(row.state_json) as WorldState) : createWorld(row.code, row.seed, launchProjects(row.projects_json));
+    this.world = row.state_json ? upgradeWorld(JSON.parse(row.state_json) as WorldState) : createWorld(row.code, row.seed, launchProjects(row.projects_json), row.kind ?? "voyage");
     this.crewId = row.crew_id;
     if (code) await this.ctx.storage.put("code", code);
     return this.world;
@@ -334,20 +335,22 @@ export class RunRoom extends DurableObject<Env> {
       console.warn("run-room:recent-stories-failed", { err: err instanceof Error ? err.message : String(err) });
       return { frames: [] as string[], demand: undefined };
     });
-    const frame = pickFrame(rng, recent.frames);
+    const caverns = world.kind === "caverns";
+    const frame = pickFrame(rng, recent.frames, framesFor(world.kind));
     const fallback = cannedFill(frame, rng);
     // Where the islander is, how the way is found and how it ends, so two stories of a kind still differ.
     const spine = pickSpine(frame, rng);
     // The NPC's ask is chosen by the game, then handed to the model so the prose agrees with it.
     const demand = pickDemand(frame, rng, recent.demand, spine);
     const hints = storyHints(rng, frame);
-    const fill = (await generateFill(this.env, frame, spine, world.heroes.map((h) => h.name), demand, islandFacts(world.map, spine.npcAt), hints)) ?? fallback;
+    const facts = caverns ? cavernFacts() : islandFacts(world.map, spine.npcAt);
+    const fill = (await generateFill(this.env, frame, spine, world.heroes.map((h) => h.name), demand, facts, hints, caverns ? "caverns" : "island")) ?? fallback;
     // The ship has sailed: what the heroes ate and drank at the pub is used up on this voyage.
     await clearPubOrders(this.env.DB, world.heroes.map((h) => h.id)).catch((err) => console.warn("run-room:pub-clear-failed", { err: err instanceof Error ? err.message : String(err) }));
     // So are the brews they took aboard from the apothecary. One brewed since boarding stays in the bag for next time.
     await clearBrews(this.env.DB, world.heroes).catch((err) => console.warn("run-room:brew-clear-failed", { err: err instanceof Error ? err.message : String(err) }));
-    // And the crew's galley larder goes aboard: the larder is emptied as the ship sails.
-    const larder = await takeLarder(this.env.DB, this.crewId).catch((err) => {
+    // And the crew's galley larder goes aboard: the larder is emptied as the ship sails. A delve takes no ship, and no larder.
+    const larder = caverns ? undefined : await takeLarder(this.env.DB, this.crewId).catch((err) => {
       console.warn("run-room:larder-take-failed", { err: err instanceof Error ? err.message : String(err) });
       return undefined;
     });

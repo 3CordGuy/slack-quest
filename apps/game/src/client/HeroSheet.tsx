@@ -1,11 +1,11 @@
-// A hero's sheet, read-only: what opens on hovering over a hero (with a
-// mouse) or clicking them (anywhere, and the only way on a phone). Their
+// A hero's sheet, read-only: what opens on picking someone in the Crew
+// panel (a tap on the map is for walking, never for this). Their
 // level, HP, focus and XP, the five stats with what gear adds, what they wear
 // on the paper doll, their weapon's abilities, the class passive and what
 // their hut gives them. Works for anyone in your crew or on your voyage, and
 // for yourself.
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   ABILITIES,
   HERO_CLASSES,
@@ -39,8 +39,6 @@ const LEFT: Slot[] = ["helmet", "body", "amulet", "ring"];
 const RIGHT: Slot[] = ["main_hand", "off_hand", "legs", "boots"];
 /** A sheet fetched this recently is shown as it is; older ones are fetched again (gear changes). */
 const FRESH_MS = 20_000;
-/** A mouse resting on a hero this long opens their sheet; passing over does not. */
-const HOVER_MS = 250;
 
 /** On a voyage, how they stand right now. Off one, everyone is rested: full HP and focus. */
 export interface LiveVitals {
@@ -75,64 +73,37 @@ function useHero(id: string | null): { hero: PublicHero | null; error: string | 
   return { hero: id ? (cache.get(id)?.hero ?? null) : null, error };
 }
 
-/**
- * Which hero's sheet is open, and the renderer callbacks that open it. A click
- * pins it open (another click on them, or Close, shuts it); with a mouse,
- * resting on a hero shows it until the pointer moves off.
- */
-export function useHeroSheet(isHero: (id: string) => boolean = () => true) {
-  const [pinned, setPinned] = useState<string | null>(null);
-  const [hovered, setHovered] = useState<string | null>(null);
-  const timer = useRef<ReturnType<typeof setTimeout>>();
-  const check = useRef(isHero);
-  check.current = isHero;
-  // A touch screen has no hover: a tap is a click, and the sheet waits for it.
-  const canHover = useRef(typeof matchMedia === "function" && matchMedia("(hover: hover) and (pointer: fine)").matches);
-
-  const onHeroClick = useCallback((id: string) => {
-    if (!check.current(id)) return false;
-    setPinned((p) => (p === id ? null : id));
-    return true;
-  }, []);
-  const onHeroHover = useCallback((id: string | null) => {
-    clearTimeout(timer.current);
-    if (!canHover.current) return;
-    if (id === null || !check.current(id)) {
-      setHovered(null);
-      return;
-    }
-    timer.current = setTimeout(() => setHovered(id), HOVER_MS);
-  }, []);
-  useEffect(() => () => clearTimeout(timer.current), []);
-  const close = useCallback(() => setPinned(null), []);
-  return { open: pinned ?? hovered, pinned: pinned !== null, onHeroClick, onHeroHover, close };
+/** Whose sheet is open. Picking someone opens theirs; picking them again, or Close, shuts it. */
+export function useHeroSheet() {
+  const [open, setOpen] = useState<string | null>(null);
+  const toggle = useCallback((id: string) => setOpen((o) => (o === id ? null : id)), []);
+  const close = useCallback(() => setOpen(null), []);
+  return { open, toggle, close };
 }
 
 interface Props {
   id: string;
   you: string;
-  pinned: boolean;
   onClose(): void;
   /** On a voyage: their HP and focus as they are now. */
   live?: LiveVitals;
 }
 
-export function HeroSheet({ id, you, pinned, onClose, live }: Props) {
+export function HeroSheet({ id, you, onClose, live }: Props) {
   const { hero, error } = useHero(id);
   const [picked, setPicked] = useState<Slot | null>(null);
   useEffect(() => setPicked(null), [id]);
   useEffect(() => {
-    if (!pinned) return;
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [pinned, onClose]);
+  }, [onClose]);
 
   if (!hero) {
     return (
-      <aside className={`hero-card panel ${pinned ? "pinned" : ""}`} aria-label="Hero">
+      <aside className="hs-sheet panel" aria-label="Hero">
         <p className="muted">{error ?? "Looking them over…"}</p>
-        {pinned && <button className="small" onClick={onClose}>Close</button>}
+        <button className="small" onClick={onClose}>Close</button>
       </aside>
     );
   }
@@ -156,7 +127,7 @@ export function HeroSheet({ id, you, pinned, onClose, live }: Props) {
     return (
       <div key={s} className="hs-slot">
         {item ? (
-          <ItemTile item={item} selected={picked === s} onClick={pinned ? () => setPicked(picked === s ? null : s) : undefined} />
+          <ItemTile item={item} selected={picked === s} onClick={() => setPicked(picked === s ? null : s)} />
         ) : (
           <span className="tile empty" title={`${SLOT_LABEL[s]}: empty`}><Icon name={SLOT_ICON[s]} color="#4a4570" size={36} silhouette /></span>
         )}
@@ -165,14 +136,14 @@ export function HeroSheet({ id, you, pinned, onClose, live }: Props) {
   };
 
   return (
-    <aside className={`hero-card panel ${pinned ? "pinned" : ""}`} role={pinned ? "dialog" : undefined} aria-label={`${hero.name}'s sheet`}>
+    <aside className="hs-sheet panel" role="dialog" aria-label={`${hero.name}'s sheet`}>
       <header className="hs-head">
         <img className="hs-face" src={spriteDataUrl(hero.classId, outfitOf(hero.gear))} alt="" />
         <div className="hs-title">
           <strong>{hero.name}{hero.id === you && <span className="muted"> (you)</span>}</strong>
           <span className="muted">{label("class", hero.classId)} · <span className="hs-level">Lv {hero.level}</span></span>
         </div>
-        {pinned && <button className="small" onClick={onClose} aria-label="Close">✕</button>}
+        <button className="small" onClick={onClose} aria-label="Close">✕</button>
       </header>
 
       <div className="hs-bars">
@@ -199,7 +170,6 @@ export function HeroSheet({ id, you, pinned, onClose, live }: Props) {
         <div className="hs-col">{RIGHT.map(slot)}</div>
       </div>
       {pickedItem && <ItemDetail item={pickedItem} equipped classId={hero.classId} level={hero.level} />}
-      {!pinned && <p className="muted hs-hint">Click them to keep this open.</p>}
 
       <div className="hs-stats">
         {STAT_KEYS.map((k) => (

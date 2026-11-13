@@ -4,9 +4,10 @@
 
 import { Hono, type Context } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
-import { HARBOR_PIERS, HARBOR_PLOTS, HARBOR_XP, HERO_CLASSES, MAX_CREW, PUB_MAX_TALK, PUB_MENU, dueIn, hutPerks, nextSalesmanVisit, salesman, salesmanVisitAt, makeRng, pubBuff, rollStartingStats } from "@gantt-quest/world";
+import { HARBOR_PIERS, HARBOR_PLOTS, HARBOR_XP, HERO_CLASSES, MAX_CREW, PUB_MAX_TALK, PUB_MENU, dueIn, hutPerks, nextSalesmanVisit, salesman, salesmanVisitAt, makeRng, pubBuff, rollStartingStats, type RunKind } from "@gantt-quest/world";
 import { barkeepReply, heroName } from "./server/ai";
 import { noticeBoard } from "./server/board";
+import { dropErrand, handInErrand, regularsView, takeErrand, tradeWithRegular } from "./server/errands";
 import { sendSignInCode } from "./server/email";
 import {
   attachEmail,
@@ -470,6 +471,34 @@ app.post("/api/pub/salesman/buy", async (c) => {
   return c.json(result);
 });
 
+// The pub's regulars: who is in today, the job each has going, and where this player stands with each.
+app.get("/api/pub/regulars", async (c) => {
+  const result = await regularsView(c.env.DB, c.get("player").id);
+  return typeof result === "string" ? c.json({ error: result }, 409) : c.json(result);
+});
+
+// Take on, hand in, trade or give up a regular's job. Only the regular is named; the terms are derived here.
+app.post("/api/pub/errand", async (c) => {
+  const player = c.get("player");
+  const body = await c.req.json<{ regular?: unknown; action?: unknown }>().catch(() => ({}) as { regular?: unknown; action?: unknown });
+  const db = c.env.DB;
+  if (body.action === "accept") {
+    const result = await takeErrand(db, player.id, body.regular);
+    return typeof result === "string" ? c.json({ error: result }, 409) : c.json(result);
+  }
+  if (body.action === "drop") {
+    const error = await dropErrand(db, player.id, body.regular);
+    return error ? c.json({ error }, 409) : c.json({ ok: true });
+  }
+  if (body.action === "handin" || body.action === "trade") {
+    const result = body.action === "handin" ? await handInErrand(db, player.id, body.regular) : await tradeWithRegular(db, player.id, body.regular);
+    if (typeof result === "string") return c.json({ error: result }, 409);
+    if (result.xp) c.executionCtx.waitUntil(announceXp(c.env, player.id, result.xp));
+    return c.json(result);
+  }
+  return c.json({ error: "Accept, hand in, trade or drop." }, 400);
+});
+
 /** What the barkeep knows about traveling salesmen: who is in, or who is due next. */
 function salesmanFact(crewId: string): string {
   const at = Date.now();
@@ -540,6 +569,8 @@ app.post("/api/rest", async (c) => {
   const body = await c.req.json<{ place?: unknown }>().catch(() => ({}) as { place?: unknown });
   const place = body.place === "hut" ? "hut" : "bedroll";
   if (place === "hut" && !(await hasShack(c.env.DB, player.id))) return c.json({ error: "You have no hut to rest in yet." }, 409);
+  // A rest at home is taken at home: in your own hut, not a crewmate's and not from the Harbor.
+  if (place === "hut" && !(await inOwnHut(c.env, player.id))) return c.json({ error: "Walk into your own hut to rest there." }, 409);
   const result = await rest(c.env.DB, player.id, place);
   return typeof result === "string" ? c.json({ error: result }, 409) : c.json(result);
 });
@@ -726,7 +757,10 @@ app.post("/api/run", async (c) => {
   const [character, crew] = await Promise.all([getCharacter(c.env.DB, player.id), crewFor(c.env.DB, player.id)]);
   if (character?.status !== "active") return c.json({ error: "Create a character first." }, 409);
   // What the crew has built at the Harbor sails with the ship.
-  const code = await createRun(c.env.DB, player.id, crew?.id ?? null, await builtProjectIds(c.env.DB, crew?.id ?? null));
+  // A voyage to an island by default; a delve into the Haunted Caverns when asked for.
+  const body = await c.req.json<{ kind?: string }>().catch(() => ({}) as { kind?: string });
+  const kind: RunKind = body.kind === "caverns" ? "caverns" : "voyage";
+  const code = await createRun(c.env.DB, player.id, crew?.id ?? null, await builtProjectIds(c.env.DB, crew?.id ?? null), kind);
   c.executionCtx.waitUntil(refreshHarbor(c.env, crew?.id ?? null));
   return c.json({ code });
 });

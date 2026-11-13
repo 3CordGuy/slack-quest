@@ -13,7 +13,7 @@
 import { AUDIO } from "./manifest";
 import { Library } from "./library";
 import { MixStore, dbToGain, faderGain } from "./mixer";
-import { TakePicker, curveAt, distanceGain, expandFiles, inRange, placeSound, resolveName, untilNextLine, type Placed } from "./select";
+import { TakePicker, chooseTakes, curveAt, distanceGain, expandFiles, inRange, placeSound, resolveName, untilNextLine, type Placed } from "./select";
 import type { AudioFile, AudioManifest, Emitter, EmitterKind, Follow, Group, Loop, ParamName, Scene, SceneName, SoundEvent } from "./types";
 
 const GROUPS: Group[] = ["music", "atmosphere", "sfx"];
@@ -494,7 +494,9 @@ export class AudioEngine {
     let files = this.expanded.get(name);
     if (!files) {
       const ev = this.manifest.events[name];
-      files = ev && this.lib ? expandFiles(ev.files, this.lib.keys()) : [];
+      const lib = this.lib;
+      // A real recording first; else the built-in sound; a placeholder only when there is nothing else.
+      files = ev && lib ? chooseTakes(ev, lib.keys(), (k) => !!lib.file(k)?.placeholder) : [];
       this.expanded.set(name, files);
     }
     return files;
@@ -1028,6 +1030,28 @@ export class AudioEngine {
 }
 
 export const audio = new AudioEngine(AUDIO);
+
+/**
+ * Sound settings from before this engine (an on/off and one volume, under their own keys): carried over
+ * once, so a player who had turned the sound off or down finds it as they left it.
+ */
+function carryOverOldSettings() {
+  try {
+    const muted = localStorage.getItem("gq.muted");
+    const volume = localStorage.getItem("gq.volume");
+    if (muted === null && volume === null) return;
+    if (!audio.mix.changed) {
+      if (muted === "1") audio.mix.setMuted(true);
+      const v = Number(volume);
+      if (volume !== null && Number.isFinite(v)) audio.mix.setVolume("master", Math.min(1, Math.max(0, v)));
+    }
+    localStorage.removeItem("gq.muted");
+    localStorage.removeItem("gq.volume");
+  } catch {
+    // Storage is off: nothing to carry over.
+  }
+}
+if (typeof window !== "undefined") carryOverOldSettings();
 
 if (import.meta.hot) {
   import.meta.hot.accept("./manifest", (mod) => {

@@ -19,7 +19,7 @@ export interface Fighter {
   kind: string;
 }
 
-const BIOMES: Record<Biome, true> = { plains: true, forest: true, hills: true, water: true, dock: true, cobble: true, mud: true, rampart: true, floor: true, wall: true, fog: true };
+const BIOMES: Record<Biome, true> = { plains: true, forest: true, hills: true, water: true, dock: true, cobble: true, mud: true, rampart: true, floor: true, wall: true, cave: true, rock: true, fog: true };
 const EFFECTS: Record<EffectKind, true> = { bleeding: true, burning: true, stunned: true, guarded: true, taunting: true, slowed: true, hasted: true, glitched: true, exposed: true };
 const FORAGE: Record<ForageKind, true> = { berries: true, wood: true, bones: true, treasure: true, wolves: true };
 
@@ -50,6 +50,8 @@ export const soundName = {
   flee: (ok: boolean) => [ok ? "flee.ok" : "flee.fail", "flee"],
   trait: (name: string) => [`trait.${slug(name)}`, "trait"],
   yourTurn: () => ["turn.yours"],
+  /** A boss's first appearance in a fight. */
+  boss: () => ["stinger.boss", "stinger.battle_start"],
   levelUp: () => ["level_up"],
 
   /**
@@ -121,7 +123,7 @@ export function soundNames(): Set<string> {
   }
   for (const t of TRAITS) add(soundName.trait(t.name));
   [soundName.crit(), soundName.healFailed(), soundName.flee(true), soundName.flee(false), soundName.yourTurn(), soundName.levelUp()].forEach(add);
-  add(["stinger.battle_start", "stinger.victory", "stinger.defeat", "stinger.fled", "stinger.voyage_won", "stinger.voyage_lost", "stinger.ambush"]);
+  add(["stinger.boss", "stinger.battle_start", "stinger.victory", "stinger.defeat", "stinger.fled", "stinger.voyage_won", "stinger.voyage_lost", "stinger.ambush"]);
   add(["loot", ...RARITIES.map((r) => `loot.${r}`), "key_item", "gold", "pickup", ...RESOURCE_KINDS.map((k) => `pickup.${k}`)]);
   add(["forage", ...Object.keys(FORAGE).map((k) => `forage.${k}`), "search.found", "search.empty", "rest", "discover"]);
   return names;

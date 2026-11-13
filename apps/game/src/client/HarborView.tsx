@@ -3,14 +3,14 @@
 // hut, and the notice board keeps the crew roster and voyage log.
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { SoundButton } from "./audio/SoundButton";
 import { useAudioScene } from "./audio/useAudioScene";
 import type { HexPos } from "@gantt-quest/core";
-import { GATHER_SPOTS, GATHER_SPOT_IDS, HARBOR_APOTHECARY, HARBOR_BOARD, HARBOR_GALLEY, HARBOR_LIGHTHOUSE, HARBOR_SMITHY, HARBOR_GATHER, HARBOR_NAME, HARBOR_PIERS, HARBOR_PLOTS, HARBOR_PUB, HARBOR_RING, HARBOR_SHOP, HARBOR_WORKS, MAX_PARTY, PLOT_PRICE, RESOURCE_KINDS, SHACK_COST, binFill, binNeeds, builtProjects, generateHarbor, projectById, projectProgress, harborPoi, hutTier, poiAt, salesman, type GatherSpot, type HarborShip, type Resources } from "@gantt-quest/world";
+import { GATHER_SPOTS, GATHER_SPOT_IDS, HARBOR_APOTHECARY, HARBOR_BOARD, HARBOR_CAVE, HARBOR_GALLEY, HARBOR_LIGHTHOUSE, HARBOR_SMITHY, HARBOR_GATHER, HARBOR_NAME, HARBOR_PIERS, HARBOR_PLOTS, HARBOR_PUB, HARBOR_RING, HARBOR_SHOP, HARBOR_SPAWN, HARBOR_WORKS, MAX_PARTY, PLOT_PRICE, RESOURCE_KINDS, SHACK_COST, binFill, binNeeds, builtProjects, generateHarbor, projectById, projectProgress, harborPoi, hutTier, poiAt, salesman, type GatherSpot, type HarborShip, type Resources } from "@gantt-quest/world";
 import { api, type Me } from "./api";
 import { AccountPanel } from "./Account";
 import { CrewRoster, type RosterMember } from "./CrewRoster";
 import { NoticeBoard } from "./board/NoticeBoard";
+import { OptionsMenu } from "./OptionsMenu";
 import { DragPanel } from "./DragPanel";
 import { GatherPanel } from "./GatherPanel";
 import { HeroSheet, useHeroSheet } from "./HeroSheet";
@@ -120,7 +120,7 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
   const heroSheet = useHeroSheet();
 
   useEffect(() => {
-    const r = new WorldRenderer(mount.current!, { onHexClick: (to) => send.current({ type: "move", to }), onHover: setHover, onHeroClick: heroSheet.onHeroClick, onHeroHover: heroSheet.onHeroHover });
+    const r = new WorldRenderer(mount.current!, { onHexClick: (to) => send.current({ type: "move", to }), onHover: setHover });
     renderer.current = r;
     if (latest.current) r.setState(latest.current);
     return () => {
@@ -148,6 +148,7 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
   const visitHere = salesmanNow.here;
   const visitor = visitHere ? salesman(visitHere.salesmanId) : undefined;
   const tip = !hoverPoi ? null
+    : hoverPoi.kind === "cave" ? "The Haunted Caverns: a shorter delve under the rocks"
     : hoverPoi.kind === "board" ? "Notice board: the crew goal and contracts"
     : hoverPoi.kind === "shop" ? "Market stall: gear, and furniture for your hut"
     : hoverPoi.kind === "ring" ? "Sparring ring"
@@ -167,10 +168,10 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
     : null;
 
   const board_ = (ship: HarborShip) => (location.hash = `run/${ship.code}`);
-  const launch = async () => {
+  const launch = async (kind: "voyage" | "caverns" = "voyage") => {
     setLaunchError(null);
     try {
-      const { code } = await api.createRun();
+      const { code } = await api.createRun(kind);
       location.hash = `run/${code}`;
     } catch (e) {
       setLaunchError((e as Error).message);
@@ -201,6 +202,9 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
   const atRing = !!self && same(self.pos, HARBOR_RING);
   const gatherHere = self ? GATHER_SPOT_IDS.find((id) => same(self.pos, HARBOR_GATHER[id])) : undefined;
   const atPub = !!self && same(self.pos, HARBOR_PUB);
+  const atCave = !!self && same(self.pos, HARBOR_CAVE);
+  // A crewmate's party gathering at the cave mouth, if there is one with room.
+  const delveHere = board.ships.find((s) => s.kind === "caverns" && s.phase === "lobby" && s.aboard.length < MAX_PARTY);
   const atWorks = !!self && same(self.pos, HARBOR_WORKS);
   const atApothecary = !!self && same(self.pos, HARBOR_APOTHECARY);
   const atSmithy = !!self && same(self.pos, HARBOR_SMITHY);
@@ -281,6 +285,9 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
   // The place under your feet and the one thing to do there, shown in the bar below and floated over the hex.
   const here: { title: ReactNode; label: string; run(): void; quiet?: boolean } | null =
     atBoard ? { title: "The notice board", label: "Read the notice board", run: () => setNotices(true) }
+    : atCave ? (delveHere
+        ? { title: <>The Haunted Caverns <span className="muted">· {delveHere.captain}'s party, {delveHere.aboard.length}/{MAX_PARTY}</span></>, label: "Join the delve", run: () => board_(delveHere) }
+        : { title: <>The Haunted Caverns <span className="muted">· about half a voyage</span></>, label: "Gather a party", run: () => void launch("caverns") })
     : shipHere ? { title: `${shipHere.captain}'s ship · ${shipHere.aboard.length}/${MAX_PARTY} aboard`, label: "Walk aboard", run: () => board_(shipHere) }
     : atShop ? { title: "The market stall", label: "Browse the wares", run: () => setShop(true) }
     : atRing ? { title: "The sparring ring", label: "Spar", run: () => setSpar(true) }
@@ -346,13 +353,22 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
         {harbor.crew && <span className="muted wide-only">Invite code {harbor.crew.id}</span>}
         <button className="small" onClick={copy}>{copied ? "Copied" : <>Invite<span className="wide-only"> link</span></>}</button>
         <button className={`small ${me.player.email ? "" : "nudge"}`} title={me.player.email ?? "Guest account: not saved yet"} onClick={() => setAccount(true)}>
-          {me.player.email ? "Account" : "Save progress"}
+          {me.player.email ? "Account" : <>Save<span className="wide-only"> progress</span></>}
         </button>
-        <SoundButton />
         {me.isAdmin && <button className="small" onClick={() => (location.hash = "#admin")}>Admin</button>}
         <button className="small" onClick={() => setSheet(true)}>
           Inventory<span className="wide-only"> · {me.character?.name}</span>{me.character && me.character.unspent_points > 0 ? " ●" : ""}
         </button>
+        <OptionsMenu
+          reset={spar || harbor.status !== "open" ? undefined : {
+            to: "the plaza, where everyone arrives",
+            run: () => {
+              harbor.send({ type: "unstick" });
+              renderer.current?.lookAt(HARBOR_SPAWN);
+            },
+          }}
+          resetBlocked={spar ? "Not during a sparring bout." : "Waiting for the Harbor to connect."}
+        />
       </div>
 
       <DragPanel id="harbor.docks" title="Docks" foldOnPhone className="story panel docks">
@@ -363,19 +379,19 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
             return (
               <li key={s.code}>
                 <span>
-                  <strong>{s.phase === "lobby" ? `${s.captain}'s ship` : (s.title ?? "Setting out")}</strong>
+                  <strong>{s.phase === "lobby" ? (s.kind === "caverns" ? `${s.captain}'s delve` : `${s.captain}'s ship`) : (s.title ?? (s.kind === "caverns" ? "Going down" : "Setting out"))}</strong>
                   <span className="muted">
-                    {" "}{s.phase === "lobby" ? `${s.aboard.length}/${MAX_PARTY} aboard` : `at sea${s.day ? ` · day ${s.day}` : ""}`}
+                    {" "}{s.phase === "lobby" ? `${s.aboard.length}/${MAX_PARTY} ${s.kind === "caverns" ? "at the cave mouth" : "aboard"}` : s.kind === "caverns" ? `in the caverns${s.day ? ` · day ${s.day}` : ""}` : `at sea${s.day ? ` · day ${s.day}` : ""}`}
                     {s.aboard.length > 0 && ` · ${s.aboard.join(", ")}`}
                   </span>
                 </span>
-                {s.phase === "lobby" && (mine || s.aboard.length < MAX_PARTY) && <button className="small" onClick={() => board_(s)}>{mine ? "Return" : "Board"}</button>}
+                {s.phase === "lobby" && (mine || s.aboard.length < MAX_PARTY) && <button className="small" onClick={() => board_(s)}>{mine ? "Return" : s.kind === "caverns" ? "Join" : "Board"}</button>}
                 {s.phase !== "lobby" && mine && <button className="small" onClick={() => board_(s)}>Rejoin</button>}
               </li>
             );
           })}
         </ul>
-        <button className="primary" onClick={launch}>Moor a new ship</button>
+        <button className="primary" onClick={() => void launch()}>Moor a new ship</button>
         <h3>Voyage log</h3>
         {board.log.length === 0 && <p className="muted">No voyages yet.</p>}
         <ul className="log">
@@ -393,7 +409,7 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
           you={you}
           heading={<>{hereCount} of {roster.length} here</>}
           members={roster}
-          onOpen={heroSheet.onHeroClick}
+          onOpen={heroSheet.toggle}
           openId={heroSheet.open}
           onTrade={setTradeWith}
         />
@@ -437,7 +453,7 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
       {gather && me.character && <GatherPanel spot={gather} onClose={() => setGather(null)} onStamina={setStamina} />}
       {shop && me.character && <ShopScreen me={me} refresh={refreshAll} onClose={() => setShop(false)} />}
       {me.character && <Trading me={me} partners={board.members.filter((m) => m.id !== you)} withId={tradeWith} onWith={setTradeWith} refresh={refresh} />}
-      {heroSheet.open && you && !spar && <HeroSheet id={heroSheet.open} you={you} pinned={heroSheet.pinned} onClose={heroSheet.close} />}
+      {heroSheet.open && you && !spar && <HeroSheet id={heroSheet.open} you={you} onClose={heroSheet.close} />}
     </div>
   );
 }

@@ -125,6 +125,13 @@ function lantern(p: Pen) {
   p.r(6, 14, 4, 1, p.accent);
 }
 
+/** A small tankard seen from the side, two by three, its foot on row `y + 2`, standing on a table top. */
+function tankardTop(p: Pen, x: number, y: number) {
+  p.r(x, y, 2, 3, C.wood);
+  p.r(x, y, 2, 1, K.foam);
+  p.r(x + 2, y + 1, 1, 1, C.bark);
+}
+
 /** A round-bottomed flask, the liquid in the accent. */
 function flask(p: Pen) {
   p.r(6, 0, 4, 2, C.leather);
@@ -335,6 +342,72 @@ export const THING_ART: Record<string, Art> = {
     shelf(1, 4, [K.cap, K.sea, K.sea, p.accent, C.paper, "", K.leaf, K.cap, C.leather, ""]);
     shelf(6, 4, [C.leather, p.accent, p.accent, "", K.sea, K.leaf, K.leaf, C.paper, K.cap, K.sea]);
     shelf(11, 4, [K.leaf, K.cap, "", C.paper, C.paper, p.accent, K.sea, C.leather, "", K.cap]);
+  },
+  // ---- big pieces, more than a hex ----
+  "furn-long_table": (p) => {
+    // A trestle table running the width of the icon, laid for a crew.
+    p.r(0, 7, 16, 2, C.wood);
+    p.r(0, 7, 16, 1, C.leather);
+    for (const x of [1, 7, 13]) p.r(x, 9, 2, 6, C.bark);
+    p.r(1, 12, 14, 1, C.bark);
+    tankardTop(p, 2, 4);
+    p.r(6, 5, 4, 2, C.paper);
+    p.r(7, 4, 2, 1, K.crust);
+    tankardTop(p, 11, 4);
+  },
+  "furn-long_bench": (p) => {
+    // A plain plank bench, seen from the side, with a cushion at one end.
+    p.r(0, 8, 16, 2, C.wood);
+    p.r(0, 8, 16, 1, C.leather);
+    for (const x of [1, 7, 13]) p.r(x, 10, 2, 5, C.bark);
+    p.r(2, 7, 5, 1, p.accent);
+    p.r(1, 12, 14, 1, C.bark);
+  },
+  "furn-four_poster": (p) => {
+    // Four posts, a canopy with a fringe, curtains drawn back and a deep blanket.
+    p.r(0, 1, 16, 2, p.accent);
+    p.r(0, 3, 16, 1, p.shade);
+    for (let x = 1; x < 16; x += 3) p.r(x, 4, 1, 1, C.gold);
+    p.r(0, 1, 2, 15, C.bark);
+    p.r(14, 1, 2, 15, C.bark);
+    p.r(2, 4, 2, 6, p.shade);
+    p.r(12, 4, 2, 6, p.shade);
+    p.r(2, 12, 12, 2, C.wood);
+    p.r(2, 10, 12, 2, C.paper);
+    p.r(2, 9, 4, 2, C.shine);
+    p.r(6, 9, 8, 3, p.accent);
+    p.r(6, 11, 8, 1, p.shade);
+  },
+  "furn-great_bookcase": (p) => {
+    // A bookcase the whole width of the icon, and a ladder leaning on it.
+    p.r(0, 0, 16, 16, C.wood);
+    p.r(1, 1, 14, 14, C.dark);
+    for (const y of [5, 10]) p.r(1, y, 14, 1, C.wood);
+    const colours = [K.cap, K.sea, p.accent, C.paper, K.leaf, C.leather, K.sea, K.cap, p.accent, K.leaf, C.paper, K.cap, K.sea, C.leather];
+    for (const y of [1, 6, 11]) colours.forEach((c, i) => (i + y) % 5 !== 0 && p.r(1 + i, y + (i % 3 === 1 ? 1 : 0), 1, 4 - (i % 3 === 1 ? 1 : 0), c));
+    p.l(9, 2, 6, 15, C.leather);
+    p.l(12, 2, 9, 15, C.leather);
+    for (let y = 4; y <= 14; y += 3) p.r(Math.round(9 - (y - 2) * 0.23), y, 4, 1, C.leather);
+  },
+  "furn-runner_rug": (p) => {
+    // A long striped runner, seen from above, with a fringe at each end.
+    p.r(0, 5, 16, 6, C.paper);
+    p.r(0, 6, 16, 1, p.accent);
+    p.r(0, 9, 16, 1, p.accent);
+    p.r(0, 7, 16, 2, K.seaLit);
+    for (let x = 0; x < 16; x += 2) {
+      p.r(x, 4, 1, 1, C.paper);
+      p.r(x, 11, 1, 1, C.paper);
+    }
+    p.r(0, 10, 16, 1, p.shade);
+  },
+  "furn-round_rug": (p) => {
+    // A round braided rug from above: rings of rope and rag.
+    spans(p, C.leather, [[1, 5, 10], [2, 3, 12], [3, 2, 13], [4, 1, 14], [5, 1, 14], [6, 0, 15], [7, 0, 15], [8, 0, 15], [9, 0, 15], [10, 1, 14], [11, 1, 14], [12, 2, 13], [13, 3, 12], [14, 5, 10]]);
+    spans(p, p.accent, [[3, 5, 10], [4, 4, 11], [5, 3, 12], [6, 3, 12], [7, 2, 13], [8, 2, 13], [9, 3, 12], [10, 3, 12], [11, 4, 11], [12, 5, 10]]);
+    spans(p, C.paper, [[5, 6, 9], [6, 5, 10], [7, 5, 10], [8, 5, 10], [9, 5, 10], [10, 6, 9]]);
+    spans(p, K.sea, [[7, 7, 8], [8, 7, 8]]);
+    p.r(1, 13, 14, 1, p.shade);
   },
   "furn-books": (p) => {
     const book = (x: number, y: number, w: number, cover: string) => {

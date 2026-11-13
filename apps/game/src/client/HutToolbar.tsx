@@ -2,21 +2,12 @@
 // scene and following the camera, the way TileAction floats a button over a
 // hex. Each action is a small pixel icon with a tooltip.
 
-import { useEffect, useRef, type ReactNode, type RefObject } from "react";
+import { useEffect, useRef, type RefObject } from "react";
+import { PixelIcon } from "./PixelIcon";
 import type { WorldRenderer } from "./render/WorldRenderer";
+import { uiZoom } from "./uiScale";
 
-/** A pixel icon on an 8 by 8 grid: each string is a row, "#" a filled cell. */
-function PixelIcon({ rows }: { rows: string[] }) {
-  const cells: ReactNode[] = [];
-  rows.forEach((row, y) => [...row].forEach((c, x) => c === "#" && cells.push(<rect key={`${x},${y}`} x={x} y={y} width={1} height={1} />)));
-  return (
-    <svg className="pixel-glyph" viewBox="0 0 8 8" width={16} height={16} shapeRendering="crispEdges" aria-hidden fill="currentColor">
-      {cells}
-    </svg>
-  );
-}
-
-const ICON = {
+export const ICON = {
   move: ["...#....", "..###...", ".#.#.#..", "#######.", ".#.#.#..", "..###...", "...#....", "........"],
   left: ["..#.....", ".##.....", "#######.", ".##....#", "..#....#", ".......#", "..#####.", "........"],
   right: [".....#..", ".....##.", ".#######", "#....##.", "#....#..", "#.......", ".#####..", "........"],
@@ -25,6 +16,8 @@ const ICON = {
   open: ["........", ".######.", "#......#", "########", "#..##..#", "#......#", "########", "........"],
   rest: ["....###.", "......#.", ".....#..", "....###.", "........", "#.......", "#######.", "#.....#."],
   snap: ["#.#.#.#.", "........", "#.###.#.", "..#.#...", "#.###.#.", "........", "#.#.#.#.", "........"],
+  /** Edit mode: decorating the room. */
+  hammer: ["#######.", "########", "#######.", "...##...", "...##...", "...##...", "...##...", "...##..."],
   away: ["...##...", "...##...", ".######.", "..####..", "...##...", "#......#", "#......#", "########"],
 };
 
@@ -53,9 +46,12 @@ export function HutToolbar({ renderer, propId, name, tags, actions }: {
       raf = requestAnimationFrame(place);
       const el = wrap.current;
       if (!el) return;
-      const at = renderer.current?.screenAboveProp(propId) ?? null;
-      el.style.visibility = at ? "visible" : "hidden";
-      if (!at) return;
+      const seen = renderer.current?.screenAboveProp(propId) ?? null;
+      el.style.visibility = seen ? "visible" : "hidden";
+      if (!seen) return;
+      // The scene's pixels are the screen's; the toolbar sits in the (possibly zoomed) view.
+      const z = uiZoom();
+      const at = { x: seen.x / z, y: seen.y / z };
       // Kept inside the view (a phone is narrow), with its little pointer still aimed at the piece.
       const half = (el.firstElementChild as HTMLElement | null)?.offsetWidth ?? 0;
       const room = el.parentElement?.clientWidth ?? Infinity;
