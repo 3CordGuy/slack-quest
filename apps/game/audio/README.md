@@ -165,3 +165,5 @@ pnpm --filter @gantt-quest/game audio:build
 ```
 
 encodes every master to Ogg Opus and AAC in `public/audio`, and writes `public/audio/index.json`. It needs [ffmpeg](https://ffmpeg.org/download.html) on your PATH. Commit `public/audio`: the deployed game plays only what is there. Until this has been run, the deployed game is silent.
+
+To hear what the encoding did before committing it, open the engine readout in the Sound panel and switch **Playing** from *Masters (WAV)* to *Encoded (as shipped)*. Playing loops restart from the other source, so you can go back and forth. Sounds that are still placeholders are silent on the encoded side, since placeholders are never encoded. The bitrates are the `RATES` table at the top of `scripts/audio/build.ts`; change one and run `audio:build` again.
