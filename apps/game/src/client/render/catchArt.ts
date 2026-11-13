@@ -12,50 +12,10 @@
 
 import * as THREE from "three";
 import { FISH, type CaughtFish } from "@gantt-quest/world";
+import { fishModel } from "./fishModels";
+import { DARK, ball, box, cone, cyl, part, ring } from "./meshKit";
 
-const LIGHT = new THREE.Vector3(0.45, 0.8, 0.55).normalize();
 const clamp01 = (v: number) => Math.max(0, Math.min(1, v));
-
-interface At {
-  pos?: [number, number, number];
-  rot?: [number, number, number];
-  scale?: [number, number, number];
-}
-
-/** One part of a model: `geo` moved into place, its faces shaded by how they face the light. */
-function part(geo: THREE.BufferGeometry, color: THREE.ColorRepresentation, at: At = {}, material: { opacity?: number } = {}): THREE.Mesh {
-  if (at.scale) geo.scale(...at.scale);
-  if (at.rot) {
-    geo.rotateX(at.rot[0]);
-    geo.rotateY(at.rot[1]);
-    geo.rotateZ(at.rot[2]);
-  }
-  if (at.pos) geo.translate(...at.pos);
-  const g = geo.index ? geo.toNonIndexed() : geo;
-  if (g !== geo) geo.dispose();
-  g.computeVertexNormals();
-  const n = g.attributes.normal;
-  const base = new THREE.Color(color);
-  const colors = new Float32Array(n.count * 3);
-  for (let i = 0; i < n.count; i++) {
-    const lit = Math.max(0, n.getX(i) * LIGHT.x + n.getY(i) * LIGHT.y + n.getZ(i) * LIGHT.z);
-    const k = 0.5 + 0.55 * lit;
-    colors[i * 3] = base.r * k;
-    colors[i * 3 + 1] = base.g * k;
-    colors[i * 3 + 2] = base.b * k;
-  }
-  g.setAttribute("color", new THREE.BufferAttribute(colors, 3));
-  const opacity = material.opacity ?? 1;
-  return new THREE.Mesh(g, new THREE.MeshBasicMaterial({ vertexColors: true, transparent: opacity < 1, opacity, depthWrite: opacity >= 1 }));
-}
-
-const box = (w: number, h: number, d: number) => new THREE.BoxGeometry(w, h, d);
-const cyl = (r0: number, r1: number, h: number, sides = 8) => new THREE.CylinderGeometry(r0, r1, h, sides);
-const ball = (r: number, w = 10, h = 8) => new THREE.SphereGeometry(r, w, h);
-const ring = (r: number, tube: number, arc = Math.PI * 2) => new THREE.TorusGeometry(r, tube, 5, 12, arc);
-const cone = (r: number, h: number, sides = 6) => new THREE.ConeGeometry(r, h, sides);
-
-const DARK = "#1b1830";
 
 /** Each bespoke model, about a unit across at its longest, hung from the line at its top. */
 const BUILD: Record<string, (p: string[]) => THREE.Mesh[]> = {
@@ -204,64 +164,73 @@ const BUILD: Record<string, (p: string[]) => THREE.Mesh[]> = {
   },
 };
 
-/** A crab, hung by a leg: a shell, eight legs, two claws, eyes on stalks. */
+/** A rod of radius `r` from point a to point b. */
+function between(a: THREE.Vector3, b: THREE.Vector3, r0: number, r1 = r0): THREE.BufferGeometry {
+  const d = b.clone().sub(a);
+  const geo = cyl(r1, r0, d.length(), 5);
+  geo.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), d.clone().normalize()));
+  geo.translate((a.x + b.x) / 2, (a.y + b.y) / 2, (a.z + b.z) / 2);
+  return geo;
+}
+
+/**
+ * A crab: a shell (x across, z front to back), four legs a side that each start on the shell's rim and bend at the
+ * knee down to the foot, two claws reaching forward from the front of the shell, and eyes on stalks.
+ */
 function crab(shell: string, under: string, dark: string, r: number, leg: number): THREE.Mesh[] {
+  const rz = r * 0.8;
+  const ry = r * 0.45;
+  const V = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z);
+  // A point on the shell's rim at depth z (just inside it, so the leg is seated).
+  const rimX = (z: number) => r * 0.92 * Math.sqrt(Math.max(0, 1 - (z / rz) ** 2));
   const out = [
     part(ball(r, 12, 8), shell, { scale: [1, 0.45, 0.8] }),
     part(ball(r * 0.95, 12, 8), under, { scale: [1, 0.3, 0.78], pos: [0, -r * 0.08, 0] }),
   ];
   for (const s of [-1, 1]) {
     for (let k = 0; k < 4; k++) {
-      const z = (k - 1.5) * r * 0.42;
-      out.push(part(cyl(0.012, 0.016, leg, 4), shell, { rot: [0, 0, s * (1.0 + k * 0.12)], pos: [s * (r + leg * 0.4), -leg * 0.15, z] }));
+      const z = (0.25 - k * 0.3) * rz;
+      const hip = V(s * rimX(z), -ry * 0.15, z);
+      // Out and a little up to the knee, then out and down to the foot, the back legs swept back.
+      const sweep = (k - 1) * 0.12;
+      const knee = hip.clone().add(V(s * leg * 0.5, leg * 0.18, sweep * leg * 0.5));
+      const foot = knee.clone().add(V(s * leg * 0.35, -leg * 0.55, sweep * leg * 0.6));
+      out.push(part(between(hip, knee, 0.016, 0.013), shell));
+      out.push(part(between(knee, foot, 0.013, 0.006), shell));
     }
-    out.push(part(cyl(0.018, 0.02, r * 0.8, 5), shell, { rot: [0, 0, -s * 0.9], pos: [s * r * 0.9, r * 0.35, r * 0.5] }));
-    out.push(part(ball(r * 0.32, 8, 6), shell, { scale: [1.3, 0.8, 0.8], pos: [s * r * 1.25, r * 0.7, r * 0.6] }));
-    out.push(part(cone(r * 0.1, r * 0.35, 4), dark, { rot: [0, 0, -s * 0.4], pos: [s * r * 1.45, r * 0.95, r * 0.6] }));
-    out.push(part(cyl(0.008, 0.008, r * 0.3, 4), dark, { pos: [s * r * 0.25, r * 0.5, r * 0.55] }));
-    out.push(part(ball(0.018, 6, 4), DARK, { pos: [s * r * 0.25, r * 0.66, r * 0.55] }));
+    // The claw arm from the front of the shell, and the claw at its end.
+    const shoulder = V(s * r * 0.45, -ry * 0.1, rz * 0.85);
+    const elbow = shoulder.clone().add(V(s * r * 0.45, ry * 0.3, r * 0.25));
+    out.push(part(between(shoulder, elbow, 0.02, 0.018), shell));
+    out.push(part(ball(r * 0.3, 8, 6), shell, { scale: [1.2, 0.8, 1.4], pos: [elbow.x, elbow.y, elbow.z + r * 0.25] }));
+    out.push(part(cone(r * 0.09, r * 0.3, 4), dark, { rot: [Math.PI / 2, 0, 0], pos: [elbow.x + s * r * 0.08, elbow.y, elbow.z + r * 0.6] }));
+    out.push(part(cone(r * 0.07, r * 0.24, 4), dark, { rot: [Math.PI / 2, 0, 0], pos: [elbow.x - s * r * 0.08, elbow.y, elbow.z + r * 0.56] }));
+    // Eyes on stalks, at the front edge of the shell.
+    const base = V(s * r * 0.22, ry * 0.6, rz * 0.8);
+    const tip = base.clone().add(V(0, r * 0.25, r * 0.05));
+    out.push(part(between(base, tip, 0.008), dark));
+    out.push(part(ball(0.02, 6, 4), DARK, { pos: [tip.x, tip.y, tip.z] }));
   }
   return out;
-}
-
-/**
- * The stand-in for a fish, hung by the mouth with the head up: a body, a belly, an eye, and fins that sweep
- * back toward the tail. The tail is a fan, narrow where it meets the body and widest at its end. Fins are flat
- * plates in the plane of the flank, so they read from the side.
- */
-function fishParts(shape: string, [body, belly, accent]: string[]): THREE.Mesh[] {
-  const slim = ["eel", "ribbon", "gar", "pike", "sword", "sail"].includes(shape);
-  const flat = ["flat", "ray"].includes(shape);
-  const deep = ["deep", "moon", "sunfish"].includes(shape);
-  const h = slim ? 0.14 : deep ? 0.5 : flat ? 0.4 : 0.26;
-  const w = flat ? 0.06 : slim ? 0.08 : 0.14;
-  // A cone's point is +y; turned by `a` about z it points along (-sin a, cos a). Down and back is a little past half a turn.
-  const fin = (r: number, len: number, a: number, x: number, y: number, z = 0) => part(cone(r, len, 4), accent, { scale: [1, 1, 0.22], rot: [0, 0, a], pos: [x, y, z] });
-  return [
-    part(ball(0.5, 14, 10), body, { scale: [h, 1, w] }),
-    part(ball(0.5, 14, 10), belly, { scale: [h * 0.8, 0.85, w * 1.02], pos: [h * 0.12, 0, 0] }),
-    // The tail: point into the body, wide end out.
-    part(cone(h * 0.75, 0.26, 4), accent, { scale: [1, 1, 0.22], pos: [0, -0.6, 0] }),
-    // Dorsal fin along the back, raked toward the tail.
-    fin(0.08, 0.2, Math.PI - 0.7, -h * 0.5 - 0.04, 0.06),
-    // A pectoral fin behind the gill on each flank, lying back along the body.
-    fin(0.045, 0.13, Math.PI - 0.25, h * 0.08, 0.2, w * 0.5),
-    fin(0.045, 0.13, Math.PI - 0.25, h * 0.08, 0.2, -w * 0.5),
-    // The anal fin, under toward the tail.
-    fin(0.04, 0.1, Math.PI + 0.6, h * 0.42, -0.25),
-    part(ball(0.035, 6, 4), DARK, { pos: [h * 0.2, 0.36, w * 0.5] }),
-  ];
 }
 
 /** Whether a catch has a model of its own (the rest share the fish stand-in). */
 export const hasOwnModel = (species: string): boolean => !!BUILD[FISH[species]?.shape];
 
-/** A catch's model, about a unit at its longest, centred, hung from its top. */
-export function catchMesh(species: string): THREE.Group {
+/**
+ * A catch's model, about a unit at its longest. Posed to `hang` from the line (a fish head-up, by its mouth; a
+ * haul as it was built, from its top) or side-on (a fish head to the right, as the sprites face).
+ */
+export function catchMesh(species: string, pose: "hang" | "side" = "hang"): THREE.Group {
   const def = FISH[species];
   const g = new THREE.Group();
-  const parts = BUILD[def.shape] ? BUILD[def.shape](def.palette) : fishParts(def.shape, def.palette);
-  g.add(...parts);
+  const inner = new THREE.Group();
+  g.add(inner);
+  if (BUILD[def.shape]) inner.add(...BUILD[def.shape](def.palette));
+  else {
+    inner.add(...fishModel(def));
+    if (pose === "hang") inner.rotation.z = Math.PI / 2;
+  }
   return g;
 }
 
@@ -275,12 +244,52 @@ export function catchModel(fish: Pick<CaughtFish, "species" | "mm">): THREE.Grou
   const inner = catchMesh(fish.species);
   const size = 0.07 + 0.25 * clamp01((Math.log10(Math.max(60, fish.mm)) - 2) / 1.6);
   // Hauls are drawn a little bigger than their length says: a boot's 30 cm is all boot.
-  inner.scale.setScalar(size * (hasOwnModel(fish.species) ? 1.5 : 1));
+  inner.scale.setScalar(size * (hasOwnModel(fish.species) ? 1.5 : 1.1));
   outer.add(inner);
   return outer;
 }
 
 // ---------- the sprites ----------
+
+/** Which way a picture of a catch looks at it: the sprite's angle (a fish side-on, a haul from three-quarters), or straight side-on or from three-quarters. */
+export type CatchView = "sprite" | "side" | "three";
+
+/** Draw a catch's model, `px` square, framed to fit, onto the shared offscreen renderer's canvas, and return it. */
+function renderCatch(species: string, px: number, view: CatchView): HTMLCanvasElement {
+  if (!iconRenderer) {
+    iconRenderer = new THREE.WebGLRenderer({ alpha: true, antialias: false, preserveDrawingBuffer: true });
+    iconRenderer.setPixelRatio(1);
+    iconRenderer.setClearColor(0x000000, 0);
+  }
+  iconRenderer.setSize(px, px, false);
+  const scene = new THREE.Scene();
+  const model = catchMesh(species, "side");
+  // A crab is seen from above, shell up, as it would lie on the deck.
+  if (["crab", "spider_crab"].includes(FISH[species].shape)) model.rotation.x = 1.15;
+  scene.add(model);
+  model.updateMatrixWorld(true);
+  const bounds = new THREE.Box3().setFromObject(model);
+  const centre = bounds.getCenter(new THREE.Vector3());
+  const radius = bounds.getBoundingSphere(new THREE.Sphere()).radius;
+  const cam = new THREE.OrthographicCamera(-radius, radius, radius, -radius, 0.01, radius * 10);
+  const fish = !hasOwnModel(species);
+  const dir = view === "side" ? new THREE.Vector3(0, 0.08, 1) : view === "three" || !fish ? new THREE.Vector3(0.55, 0.45, 1) : new THREE.Vector3(0.12, 0.3, 1);
+  cam.position.copy(centre).add(dir.normalize().multiplyScalar(radius * 4));
+  cam.lookAt(centre);
+  iconRenderer.render(scene, cam);
+  model.traverse((o) => {
+    if (o instanceof THREE.Mesh) {
+      o.geometry.dispose();
+      (o.material as THREE.Material).dispose();
+    }
+  });
+  return iconRenderer.domElement;
+}
+
+/** A larger, plain picture of a catch's model (no pixelling or outline), for the admin gallery. */
+export function catchPicture(species: string, px: number, view: CatchView): string {
+  return renderCatch(species, px, view).toDataURL();
+}
 
 /** The sprite's size in pixels, before it is scaled up (pixelated) wherever it is shown. */
 export const ICON_PX = 40;
@@ -296,34 +305,14 @@ let iconRenderer: THREE.WebGLRenderer | null = null;
 export function catchIcon(species: string): string {
   const hit = icons.get(species);
   if (hit) return hit;
-  if (!iconRenderer) {
-    iconRenderer = new THREE.WebGLRenderer({ alpha: true, antialias: false, preserveDrawingBuffer: true });
-    iconRenderer.setPixelRatio(1);
-    iconRenderer.setSize(ICON_PX, ICON_PX, false);
-    iconRenderer.setClearColor(0x000000, 0);
-  }
-  const scene = new THREE.Scene();
-  const model = catchMesh(species);
-  // Lie a fish along the picture, head to the right, as the character sprites face; hauls as they hang.
-  if (!hasOwnModel(species)) model.rotation.z = -Math.PI / 2;
-  // A crab is seen from above, shell up, as it would lie on the deck.
-  if (["crab", "spider_crab"].includes(FISH[species].shape)) model.rotation.x = 1.15;
-  scene.add(model);
-  model.updateMatrixWorld(true);
-  const bounds = new THREE.Box3().setFromObject(model);
-  const centre = bounds.getCenter(new THREE.Vector3());
-  const radius = bounds.getBoundingSphere(new THREE.Sphere()).radius;
-  const cam = new THREE.OrthographicCamera(-radius, radius, radius, -radius, 0.01, radius * 10);
-  cam.position.copy(centre).add(new THREE.Vector3(0.55, 0.45, 1).normalize().multiplyScalar(radius * 4));
-  cam.lookAt(centre);
-  iconRenderer.render(scene, cam);
+  const shot = renderCatch(species, ICON_PX, "sprite");
 
   // Pixel it up: copy, then outline every empty pixel that touches a filled one.
   const canvas = document.createElement("canvas");
   canvas.width = ICON_PX;
   canvas.height = ICON_PX;
   const ctx = canvas.getContext("2d", { willReadFrequently: true })!;
-  ctx.drawImage(iconRenderer.domElement, 0, 0);
+  ctx.drawImage(shot, 0, 0);
   const img = ctx.getImageData(0, 0, ICON_PX, ICON_PX);
   const solid = (x: number, y: number) => x >= 0 && y >= 0 && x < ICON_PX && y < ICON_PX && img.data[(y * ICON_PX + x) * 4 + 3] > 96;
   const out = ctx.createImageData(ICON_PX, ICON_PX);
@@ -344,12 +333,6 @@ export function catchIcon(species: string): string {
     }
   }
   ctx.putImageData(out, 0, 0);
-  model.traverse((o) => {
-    if (o instanceof THREE.Mesh) {
-      o.geometry.dispose();
-      (o.material as THREE.Material).dispose();
-    }
-  });
   const url = canvas.toDataURL();
   icons.set(species, url);
   return url;

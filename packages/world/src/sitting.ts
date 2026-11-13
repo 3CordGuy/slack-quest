@@ -182,7 +182,7 @@ export function stepSitting(state: GatherState, choice: GatherChoice): GatherSte
 
   if (choice.t === "bank") {
     const caught = s.landed.filter((f) => f.kept).length + (s.pending ? 1 : 0);
-    return { state: close(state, s, caught === 0 ? "You wind in and head back with nothing but the walk." : "You wind in, pack the creel and head back.", now) };
+    return { state: close(state, s, caught === 0 ? "You wind in and head back with nothing but the walk." : "You wind in, pack the basket and head back.", now) };
   }
 
   if (choice.t === "cast") {
@@ -254,9 +254,9 @@ export function stepSitting(state: GatherState, choice: GatherChoice): GatherSte
       return { state: { ...state, log: log(`You let the ${def(fish.species).name.toLowerCase()} go.`), sitting: { ...busy, pending: null, landed: [...s.landed, { ...fish, kept: false }] } } };
     }
     const next: Sitting = { ...busy, pending: null, landed: [...s.landed, { ...fish, kept: true }], creelGrams: s.creelGrams + fish.grams };
-    const kept: GatherState = { ...state, log: log(`Into the creel: ${describe(fish)}.`), haul: sittingMaterials(next.landed), sitting: next };
+    const kept: GatherState = { ...state, log: log(`Into the basket: ${describe(fish)}.`), haul: sittingMaterials(next.landed), sitting: next };
     // The one that fills it is kept, however big it is.
-    if (next.creelGrams >= next.creelLimitG) return { state: close(kept, next, "That is all you can carry. You head back with a full creel.", now) };
+    if (next.creelGrams >= next.creelLimitG) return { state: close(kept, next, "That is all you can carry. You head back with a full basket.", now) };
     return { state: kept };
   }
 
