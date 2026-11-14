@@ -17,7 +17,7 @@ import {
 } from "./battle";
 import { rollCheck, statPct, type CheckResult } from "./check";
 import { CAVERN_LEADS, ENEMIES, KEY_ITEMS, ROAMER_LEADS, WEAPONS, bandKinds, cavernBand } from "./content";
-import { generateCaverns, torchDays } from "./caverns";
+import { generateCaverns, TORCH_DAYS, TORCHES_EACH } from "./caverns";
 import { bumpTally, contractById, tallyBattle, type TakenContract, type TallyKey } from "./contracts";
 import { battleDrops, cacheDrops, storyTrophy } from "./drops";
 import { rollItem, type ItemDef, type Outfit } from "./gear";
@@ -85,6 +85,8 @@ export interface Hero extends HeroInit {
   ready: boolean;
   /** The contract (from the dealer in the pub) taken in the lobby. Absent on voyages saved before contracts. */
   contract?: TakenContract;
+  /** In the caverns: torches this hero bought at the cave mouth. Each lights TORCH_DAYS days for the whole crew. */
+  torches?: number;
   /** Counts that contracts are judged on. Absent until something is counted. */
   tally?: Partial<Record<TallyKey, number>>;
   /** In the caverns: has climbed back out into the Harbor, and takes no more turns. */
@@ -208,6 +210,8 @@ export type WorldAction =
   | { type: "ready"; heroId: string; ready: boolean }
   | { type: "start"; heroId: string }
   | { type: "contract"; heroId: string; contractId: string | null }
+  /** A torch bought at the cave mouth. The server takes the gold first, then applies this. */
+  | { type: "torch"; heroId: string; craft?: boolean }
   /** `larder` is the crew's galley larder, taken aboard as the ship sailed (server-only, like the rest of `begin`). */
   | { type: "begin"; bible: StoryBible | null; larder?: unknown }
   | { type: "move"; heroId: string; to: HexPos }
@@ -229,6 +233,7 @@ export const CLIENT_ACTIONS: ReadonlySet<WorldAction["type"]> = new Set([
   "ready",
   "start",
   "contract",
+  "torch",
   "move",
   "interact",
   "end_turn",
@@ -1161,10 +1166,20 @@ export function stepWorld(prev: WorldState, action: WorldAction): StepResult {
       return done(null);
     }
 
+    case "torch": {
+      const hero = heroById(state, action.heroId);
+      if (!hero) return fail("not aboard");
+      if (state.kind !== "caverns" || state.phase !== "lobby") return fail("torches are bought at the cave mouth, before going down");
+      if ((hero.torches ?? 0) >= TORCHES_EACH) return fail(`you can carry only ${TORCHES_EACH} torches`);
+      hero.torches = (hero.torches ?? 0) + 1;
+      return done(null);
+    }
+
     case "start": {
       if (state.phase !== "lobby") return fail("already under way");
       if (action.heroId !== state.hostId) return fail("only the captain can set sail");
       if (state.heroes.some((h) => h.id !== state.hostId && !h.ready)) return fail("not everyone is ready");
+      if (state.kind === "caverns" && !state.heroes.some((h) => (h.torches ?? 0) > 0)) return fail("no one has a torch: buy one at the cave mouth first");
       state.phase = "generating";
       ctx.events.push({ t: "phase", phase: "generating" });
       ctx.effects.push({ kind: "story_gen" });
@@ -1180,8 +1195,8 @@ export function stepWorld(prev: WorldState, action: WorldAction): StepResult {
       if (delve) {
         // A delve has no story: the crew goes straight down, with torchlight for the way there and back.
         state.bible = null;
-        const pace = Math.min(...state.heroes.map((h) => 2 + (4 * heroPct(h, "agi")) / 100), 6);
-        state.doom = torchDays(state.map, pace) + boons.doomDays;
+        // Torchlight is what the crew bought at the mouth, and nothing more.
+        state.doom = state.heroes.reduce((n, h) => n + (h.torches ?? 0), 0) * TORCH_DAYS + boons.doomDays;
         state.keys = 0;
         delete state.larder;
       } else {

@@ -23,6 +23,10 @@ import {
   type Poi,
   type WorldEvent,
   TRAIT_BY_ID,
+  TORCH_DAYS,
+  TORCH_PRICE,
+  TORCH_WOOD,
+  TORCHES_EACH,
 } from "@gantt-quest/world";
 import * as World from "@gantt-quest/world";
 import type { Me } from "./api";
@@ -524,6 +528,7 @@ function Lobby({ state, run, code }: { state: ClientState; run: RunConnection; c
   const me = state.heroes.find((h) => h.id === state.you);
   const host = state.hostId === state.you;
   const waiting = state.heroes.filter((h) => h.id !== state.hostId && !h.ready).length;
+  const torchDays = state.heroes.reduce((n, h) => n + (h.torches ?? 0), 0) * TORCH_DAYS;
   return (
     <div className="overlay at-sea">
       <div className="panel lobby">
@@ -544,8 +549,9 @@ function Lobby({ state, run, code }: { state: ClientState; run: RunConnection; c
           ))}
         </ul>
         <ContractPicker state={state} run={run} />
+        {state.kind === "caverns" && <TorchStall state={state} run={run} />}
         {host ? (
-          <button className="primary" disabled={waiting > 0} onClick={() => run.send({ type: "start" })}>
+          <button className="primary" disabled={waiting > 0 || (state.kind === "caverns" && torchDays === 0)} onClick={() => run.send({ type: "start" })}>
             {waiting > 0 ? `Waiting on ${waiting} crew…` : state.kind === "caverns" ? "Go down" : "Set sail"}
           </button>
         ) : (
@@ -556,14 +562,32 @@ function Lobby({ state, run, code }: { state: ClientState; run: RunConnection; c
   );
 }
 
+/** The torch seller at the cave mouth: the crew's time below is the light they buy. */
+function TorchStall({ state, run }: { state: ClientState; run: RunConnection }) {
+  const me = state.heroes.find((h) => h.id === state.you);
+  const mine = me?.torches ?? 0;
+  const days = state.heroes.reduce((n, h) => n + (h.torches ?? 0), 0) * TORCH_DAYS;
+  return (
+    <div className="contracts">
+      <h3>Torches</h3>
+      <p className="muted">The caverns are pitch dark. Each torch costs {TORCH_PRICE} gold, or {TORCH_WOOD} wood to craft, and lights {TORCH_DAYS} days for the whole crew; when the last one gutters, you are lost. You can carry {TORCHES_EACH}.</p>
+      <p>
+        You carry <strong>{mine}</strong> · the crew has <strong>{days}</strong> days of light
+        {" "}<button disabled={mine >= TORCHES_EACH} onClick={() => run.send({ type: "torch" })}>Buy a torch ({TORCH_PRICE} gold)</button>
+        {" "}<button disabled={mine >= TORCHES_EACH} onClick={() => run.send({ type: "torch", craft: true })}>Craft a torch ({TORCH_WOOD} wood)</button>
+      </p>
+      {days === 0 && <p className="bad">No one has a torch yet. Someone must buy one before the crew can go down.</p>}
+    </div>
+  );
+}
+
 function Story({ state }: { state: ClientState }) {
   const [open, setOpen] = useState(true);
   if (!state.story && state.kind === "caverns") {
-    // A delve has no story: just what it is for, and the contract taken at the mouth.
+    // A delve has no story: just what it is for.
     return (
       <DragPanel id="run.story" title="Delve" foldOnPhone className="story panel">
         <p>Explore, open what you find, and climb back out at the cave mouth before the torches burn down.</p>
-        <ContractStatus state={state} />
       </DragPanel>
     );
   }

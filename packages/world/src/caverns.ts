@@ -295,3 +295,11 @@ export function torchDays(map: WorldMap, pace: number): number {
   const cost = findPath(map, mouth, hoard, Infinity, (t) => (t.biome === "cave" || t.biome === "gate" ? 1 : Infinity))?.cost ?? 10;
   return Math.max(10, Math.ceil(((2 * cost) / pace) * 1.5) + 3);
 }
+
+/** A torch bought at the cave mouth: what it costs, and the days of light it gives the whole crew. */
+export const TORCH_PRICE = 15;
+/** Or crafted from this much wood instead of paying. */
+export const TORCH_WOOD = 2;
+export const TORCH_DAYS = 5;
+/** The most torches one hero can carry down. */
+export const TORCHES_EACH = 4;

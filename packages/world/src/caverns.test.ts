@@ -11,6 +11,8 @@ import {
   createWorld,
   findPath,
   generateCaverns,
+  TORCH_DAYS,
+  TORCHES_EACH,
   poiAt,
   poiById,
   reachable,
@@ -44,6 +46,8 @@ function delve(seed: string, n = 2): WorldState {
   let s = createWorld("CAVE", seed, [], "caverns");
   for (let i = 1; i <= n; i++) s = must(s, { type: "join", hero: hero(`p${i}`) });
   for (let i = 2; i <= n; i++) s = must(s, { type: "ready", heroId: `p${i}`, ready: true });
+  // Torchlight is bought at the mouth: three each.
+  for (let i = 1; i <= n; i++) for (let t = 0; t < 3; t++) s = must(s, { type: "torch", heroId: `p${i}` });
   s = must(s, { type: "start", heroId: "p1" });
   return must(s, { type: "begin", bible: null });
 }
@@ -141,13 +145,27 @@ describe("the caverns map", () => {
 });
 
 describe("a delve", () => {
-  it("goes straight down: no story, and torchlight sized to the cave", () => {
+  it("needs a torch to go down, and the light is the torches bought", () => {
+    let s = createWorld("CAVE", "torches", [], "caverns");
+    s = must(s, { type: "join", hero: hero("p1") });
+    expect(stepWorld(s, { type: "start", heroId: "p1" }).ok).toBe(false);
+    for (let t = 0; t < TORCHES_EACH; t++) s = must(s, { type: "torch", heroId: "p1" });
+    expect(stepWorld(s, { type: "torch", heroId: "p1" }).ok).toBe(false);
+    s = must(s, { type: "start", heroId: "p1" });
+    s = must(s, { type: "begin", bible: null });
+    expect(s.doom).toBe(TORCHES_EACH * TORCH_DAYS);
+    // And a voyage sells none.
+    let v = createWorld("SHIP", "none", []);
+    v = must(v, { type: "join", hero: hero("p1") });
+    expect(stepWorld(v, { type: "torch", heroId: "p1" }).ok).toBe(false);
+  });
+
+  it("goes straight down: no story, and torchlight from what the crew bought", () => {
     for (let i = 0; i < 10; i++) {
       const s = delve(`down-${i}`);
       expect(s.phase).toBe("overworld");
       expect(s.bible).toBeNull();
-      expect(s.doom).toBeGreaterThanOrEqual(10);
-      expect(s.doom).toBeLessThanOrEqual(24);
+      expect(s.doom).toBe(6 * TORCH_DAYS);
       expect(s.keys).toBe(0);
       expect((s.roamers ?? []).length).toBeLessThanOrEqual(1);
       for (const band of s.roamers ?? []) for (const k of band.kinds) expect(["shade", "bat", "skeleton", "slime"]).toContain(k);

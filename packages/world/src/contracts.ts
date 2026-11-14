@@ -77,10 +77,6 @@ export interface TakenContract {
 }
 
 export const SWIFT_DAYS = 5;
-/** Days of torchlight still left when the crew climbs out, for the delve's own "quick" contract. */
-export const TORCH_SPARE_DAYS = 4;
-const BOTH: RunKind[] = ["voyage", "caverns"];
-const DELVE: RunKind[] = ["caverns"];
 export const PERFECTS_NEEDED = 3;
 
 export const CONTRACTS: ContractDef[] = [
@@ -107,7 +103,6 @@ export const CONTRACTS: ContractDef[] = [
   },
   {
     id: "sober",
-    runs: BOTH,
     name: "Dry voyage",
     text: "Do not drink a single potion in battle.",
     reward: { gold: 30 },
@@ -115,7 +110,6 @@ export const CONTRACTS: ContractDef[] = [
   },
   {
     id: "flawless",
-    runs: BOTH,
     name: "Clean work",
     text: `Use abilities in battle with every roll landing, ${PERFECTS_NEEDED} times.`,
     reward: { gold: 35, resources: { iron: 1 } },
@@ -130,7 +124,6 @@ export const CONTRACTS: ContractDef[] = [
   },
   {
     id: "unbowed",
-    runs: BOTH,
     name: "Still standing",
     text: "Never be knocked down in a fight.",
     reward: { gold: 35 },
@@ -142,34 +135,6 @@ export const CONTRACTS: ContractDef[] = [
     text: "Win someone over with a Persuade roll of your own.",
     reward: { gold: 30, resources: { copper: 1 } },
     check: (_s, hero) => tallyOf(hero, "persuaded") >= 1,
-  },
-  // The Haunted Caverns' own.
-  {
-    id: "hoard",
-    runs: DELVE,
-    name: "Bring up the hoard",
-    text: "See the hoard in the deepest chamber opened before the crew climbs out.",
-    reward: { gold: 40, resources: { iron: 1 } },
-    check: (s) => !!s.map.pois.find((p) => p.loot === "hoard")?.cleared,
-  },
-  {
-    id: "chests",
-    runs: DELVE,
-    name: "Turn out every chest",
-    text: "See every chest in the caverns opened, locked doors and all.",
-    reward: { gold: 45, resources: { copper: 2 } },
-    check: (s) => {
-      const chests = s.map.pois.filter((p) => p.kind === "cache");
-      return chests.length > 0 && chests.every((p) => p.cleared);
-    },
-  },
-  {
-    id: "torchlight",
-    runs: DELVE,
-    name: "Torches to spare",
-    text: `Climb out with ${TORCH_SPARE_DAYS} or more days of torchlight left.`,
-    reward: { gold: 30 },
-    check: (s) => s.doom >= TORCH_SPARE_DAYS,
   },
 ];
 
