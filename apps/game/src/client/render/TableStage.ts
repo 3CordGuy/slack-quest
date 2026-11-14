@@ -43,7 +43,7 @@ export interface SeatInfo {
   chip: string | null;
   /** The chip's colour, when its first word does not decide it. */
   chipInk?: string;
-  /** A score in a crate beside the name (Ship, Captain & Kraken's cargo), gold-banded for whoever leads. */
+  /** A score in a crate beside the name (Cargo and Krakens' cargo), gold-banded for whoever leads. */
   crate?: { score: number; lead: boolean };
   /** Dice or markers left, of how many they began with. */
   pips?: { on: number; of: number };
@@ -74,7 +74,8 @@ export interface CrewScene {
   /**
    * Each seat's dice: ship and captain held (drawn as pictures), and the rest. `fresh`: how many of the held came in on
    * this roll; `thrown`: which of the rest were thrown in it (all, if not given). Once the cargo is in (`cargo`), a 1 in
-   * it is the Kraken. Your own cargo dice can be clicked to keep them (`canKeep`), and those you keep (`keep`) are lit.
+   * it is the Kraken. `keep`: which of the rest are held; they sit lit in the held pool beside the ship. Your own dice can be
+   * clicked (`canKeep`) to hold a loose one or let a held one go. The ship cannot be let go.
    */
   seats: { id: string; held: number[]; free: number[]; fresh?: number; thrown?: number[]; cargo?: boolean; keep?: number[]; canKeep?: boolean }[];
   /** The latest throw left a Kraken in the cargo as the rolls ran out. */
@@ -537,7 +538,7 @@ export class TableStage implements WorldMinigame {
   private dieMats: THREE.Material[] | null = null;
   private dieBack: THREE.Material[] | null = null;
   private dieLit: THREE.Material[] | null = null;
-  /** Ship, Captain & Kraken's dice: the ship printed on the 6, the captain on the 5 and the Kraken on the 1, pips on the rest; and the same lit, for a kept die. */
+  /** Cargo and Krakens' dice: the ship printed on the 6, the captain on the 5 and the Kraken on the 1, pips on the rest; and the same lit, for a kept die. */
   private crewDice: { shown: THREE.Material[]; lit: THREE.Material[] } | null = null;
   private lastRoll = "";
   /** The dice have been told what is on the table at least once: a change after that is a roll to be seen and heard, not the state you sat down to. */
@@ -900,26 +901,38 @@ export class TableStage implements WorldMinigame {
       const held = new Set<THREE.Object3D>();
       const keep = new Set(seat.keep ?? []);
       const throwFree = new Set(seat.thrown ?? seat.free.map((_, i) => i));
-      // Ship and captain, in a row toward the ship, a size larger and reading the right way up from the seat.
       const crew = this.crewMaterials();
-      seat.held.forEach((v, i) => {
+      /** A die you may click: to hold it on your next roll, or to put back one you picked. A Kraken cannot be held. */
+      const clickable = (wrap: THREE.Group, i: number, w: number) => {
+        wrap.userData.action = { type: "keep", index: i } satisfies TableAction;
+        wrap.userData.baseY = wrap.position.y;
+        // A click anywhere near the die does it: an invisible, generous box round it.
+        wrap.add(new THREE.Mesh(new THREE.BoxGeometry(w * 1.5, w * 2, w * 1.5), new THREE.MeshBasicMaterial({ visible: false })));
+        this.clickables.push(wrap);
+      };
+      // The held pool, in a row toward the ship, a size larger and reading the right way up from the seat: the ship,
+      // then (lit) the dice held.
+      const pool = [...seat.held.map((v) => ({ v, i: -1 })), ...seat.free.map((v, i) => ({ v, i })).filter(({ i }) => keep.has(i))];
+      pool.forEach(({ v, i }, slot) => {
+        const picked = i >= 0;
         const wrap = new THREE.Group();
-        wrap.position.set((i - (seat.held.length - 1) / 2) * big * 1.35, TOP + big / 2 + 0.01, STACK_Z - 0.1);
-        const die = new THREE.Mesh(heldGeo, crew.shown);
+        wrap.position.set((slot - (pool.length - 1) / 2) * big * 1.35, TOP + big / 2 + 0.01, STACK_Z - 0.1);
+        const die = new THREE.Mesh(heldGeo, picked ? crew.lit : crew.shown);
         die.quaternion.copy(faceUpright(v));
         wrap.add(die);
         r.items.add(wrap);
-        if (tumble && i >= seat.held.length - (seat.fresh ?? 0)) {
+        if (tumble && slot < seat.held.length && slot >= seat.held.length - (seat.fresh ?? 0)) {
           thrown.push(wrap);
           held.add(wrap);
         }
+        if (picked && seat.canKeep) clickable(wrap, i, big);
       });
-      // The rest nearest the seat, each lying on the face it rolled: a picture face square to the seat so it reads, pips any old way. Kept dice are lit and lifted a little.
-      seat.free.forEach((v, i) => {
-        const kept = keep.has(i);
+      // The loose dice, to be rolled again, nearest the seat, each lying on the face it rolled: a picture face square to the seat so it reads, pips any old way.
+      const loose = seat.free.map((v, i) => ({ v, i })).filter(({ i }) => !keep.has(i));
+      loose.forEach(({ v, i }, slot) => {
         const wrap = new THREE.Group();
-        wrap.position.set((i - (seat.free.length - 1) / 2) * size * 1.5, TOP + size / 2 + 0.01 + (kept ? 0.03 : 0), STACK_Z + 0.06);
-        const die = new THREE.Mesh(geo, v === 0 ? mats.back : kept ? crew.lit : crew.shown);
+        wrap.position.set((slot - (loose.length - 1) / 2) * size * 1.5, TOP + size / 2 + 0.01, STACK_Z + 0.06);
+        const die = new THREE.Mesh(geo, v === 0 ? mats.back : crew.shown);
         if (isCrewFace(v)) die.quaternion.copy(faceUpright(v));
         else if (v > 0) {
           die.quaternion.setFromUnitVectors(FACE_NORMAL[v], UP);
@@ -928,14 +941,7 @@ export class TableStage implements WorldMinigame {
         wrap.add(die);
         r.items.add(wrap);
         if (tumble && throwFree.has(i)) thrown.push(wrap);
-        if (seat.canKeep) {
-          wrap.userData.action = { type: "keep", index: i } satisfies TableAction;
-          wrap.userData.baseY = wrap.position.y;
-          // A click anywhere near the die keeps it: an invisible, generous box round it.
-          const hit = new THREE.Mesh(new THREE.BoxGeometry(size * 1.5, size * 2, size * 1.5), new THREE.MeshBasicMaterial({ visible: false }));
-          wrap.add(hit);
-          this.clickables.push(wrap);
-        }
+        if (seat.canKeep && !(seat.cargo && v === 1)) clickable(wrap, i, size);
       });
       if (tumble) this.throwDice(thrown, { held, yours: r.mine, sunk: !!scene?.sunk });
     }

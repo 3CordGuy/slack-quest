@@ -18,7 +18,7 @@ export interface PubConnection {
   /** The Shoals table, likewise. */
   shoals: ShoalsView | null;
   shoalsError: string | null;
-  /** The Ship, Captain & Kraken table, likewise. */
+  /** The Cargo and Krakens table, likewise. */
   crew: CrewView | null;
   crewError: string | null;
   /** The last XP anyone here earned, for the tables' "won" line. */

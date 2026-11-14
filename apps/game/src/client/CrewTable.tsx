@@ -1,9 +1,10 @@
-// The Ship, Captain & Kraken table. You sit at it in the pub, first person
+// The Cargo and Krakens table. You sit at it in the pub, first person
 // (render/TableStage.ts draws the table, the model ship, the others round it
 // and everyone's dice), and this is what lies over the view: what is
 // happening, and the moves open to you. Like the dice table's panel, it only
 // shows the view the server sent and asks for moves. The one choice it holds
-// itself is which of your cargo dice you mean to keep, until you roll.
+// itself is which of your dice you mean to hold on your next roll. What you
+// held last roll starts out held again, until you let it go. The ship can't be let go.
 
 import { useEffect, useMemo, useState, type RefObject } from "react";
 import { CREW_ANTES, CREW_CAPTAIN, CREW_KRAKEN, CREW_MAX_PLAYERS, CREW_MIN_PLAYERS, CREW_NEEDS, CREW_ROLLS, crewHold, type CrewRequest, type CrewSeatView, type CrewView } from "@gantt-quest/world";
@@ -62,18 +63,26 @@ export function CrewTable({ table, you, gold, error, lastXp, looks, world, host,
   const leaders = seats.filter((s) => s.contending && !s.forfeited && best > 0 && s.score === best);
   const leadText = leaders.map((l) => short(l.id)).join(" and ");
 
-  // The cargo dice you mean to keep on your next roll. A new throw clears it.
-  const [keep, setKeep] = useState<number[]>([]);
+  // The dice you mean to hold on your next roll. Each throw starts it from what that throw held back, so a die you
+  // hold stays held from roll to roll until you click it again.
+  const [keep, setKeep] = useState<{ n: number; dice: number[] } | null>(null);
   const throwN = table?.lastThrow?.n ?? 0;
-  useEffect(() => setKeep([]), [throwN, table?.turn]);
+  const heldLast = loading ? (table?.kept ?? []) : [];
+  // A choice made before the latest throw no longer counts: start again from what it held.
+  const holding = keep && keep.n === throwN ? keep.dice : heldLast;
   const canKeep = myTurn && loading && left > 0;
+  const dice = table?.dice ?? [];
   const toggle = (i: number) => {
-    if (!canKeep) return;
-    // At least one die is always rolled: keeping all three is standing.
-    setKeep((k) => (k.includes(i) ? k.filter((x) => x !== i) : k.length + 1 >= (table?.dice.length ?? 0) ? k : [...k, i].sort()));
+    if (!canKeep || dice[i] === CREW_KRAKEN) return;
+    // At least one die is always rolled: holding them all is standing.
+    const k = holding;
+    setKeep({ n: throwN, dice: k.includes(i) ? k.filter((x) => x !== i) : k.length + 1 >= dice.length ? k : [...k, i].sort() });
   };
-  const rolling = (table?.dice.length ?? 0) - keep.length;
-  const krakens = loading ? (table?.dice.filter((d) => d === CREW_KRAKEN).length ?? 0) : 0;
+  const rolling = dice.length - holding.length;
+  const krakens = loading ? dice.filter((d) => d === CREW_KRAKEN).length : 0;
+  /** Which die is the captain: a 5 in the held pool if there is one, else the first 5 showing. The other three are cargo. */
+  const captainIx = loading ? (holding.find((i) => dice[i] === CREW_CAPTAIN) ?? dice.indexOf(CREW_CAPTAIN)) : -1;
+  const cargoDice = captainIx >= 0 ? dice.filter((_, i) => i !== captainIx) : [];
 
   const confirmStand = () => !inGame || confirm("Walk away? You forfeit your stake.");
   const { stage, standUp } = useTableStage("crew", { ...host, world }, (a) => a.type === "keep" && toggle(a.index), confirmStand);
@@ -98,7 +107,7 @@ export function CrewTable({ table, you, gold, error, lastXp, looks, world, host,
       if (loading) {
         const kraken = krakens > 0 ? ` ${krakens === 1 ? "A Kraken is" : `${krakens} Krakens are`} among them: roll ${krakens === 1 ? "it" : "them"} away or lose the lot.` : "";
         const aboard = table.captain ? `Captain aboard, cargo ${table.cargo}.` : "No captain yet: you need a 5 among your dice.";
-        const end = left > 0 ? ` Pick dice to keep and roll the rest${table.captain && !krakens ? ", or stand" : ""}. ${rollsLeft(left)}.` : "";
+        const end = left > 0 ? ` Tap dice to hold them; they stay held until you tap them again. Roll the rest${table.captain && !krakens ? ", or stand" : ""}. ${rollsLeft(left)}.` : "";
         return `${aboard}${kraken}${beat}${end}`;
       }
       return `Still looking for a 6 (ship). ${rollsLeft(left)}.`;
@@ -145,7 +154,8 @@ export function CrewTable({ table, you, gold, error, lastXp, looks, world, host,
               // The player rolling now shows this turn's dice; everyone else, the five they last ended a turn on.
               if (table.phase === "playing" && table.turn === s.id && table.rolls > 0) {
                 const cargo = table.held >= CREW_NEEDS.length;
-                return { id: s.id, held: CREW_NEEDS.slice(0, table.held), free: table.dice, cargo, ...thrown, ...(s.id === you ? { keep, canKeep } : {}) };
+                // Your own held dice are the ones you have picked; anyone else's, what their last roll held back.
+                return { id: s.id, held: CREW_NEEDS.slice(0, table.held), free: table.dice, cargo, ...thrown, ...(s.id === you ? { keep: holding, canKeep } : { keep: cargo ? table.kept : [] }) };
               }
               const { held } = crewHold(0, s.hand);
               return { id: s.id, held: s.hand.slice(0, held), free: s.hand.slice(held), cargo: held >= CREW_NEEDS.length, ...thrown };
@@ -164,7 +174,25 @@ export function CrewTable({ table, you, gold, error, lastXp, looks, world, host,
     const xp = table?.phase === "done" && lastXp?.id === table.winner && lastXp.amount > 0 ? `+${lastXp.amount} XP` : undefined;
     stage.setCard({ caption, ...main, prompt: reading, foot: xp, yours: myTurn });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [stage, table, placement, looks, lastXp, reading, keep, canKeep]);
+  }, [stage, table, placement, looks, lastXp, reading, holding.join(","), canKeep]);
+
+  /** One of your dice once the ship is in, as a tile: what it is, and whether it is held or to be rolled. */
+  const tile = (i: number) => {
+    const d = dice[i];
+    const kraken = d === CREW_KRAKEN;
+    const held = holding.includes(i);
+    const role = kraken ? "Kraken" : i === captainIx ? "Captain" : "Cargo";
+    const title = kraken ? "A Kraken can't be held: roll it away, or it takes your cargo"
+      : held ? `${role}: held, and stays held roll after roll. Click to roll it again`
+      : `${role}: click to hold it. It stays held until you click it again`;
+    return (
+      <button key={i} type="button" className={`crew-die${held ? " held" : " loose"}${kraken ? " kraken" : ""}`} aria-pressed={held} disabled={!canKeep || kraken} title={title} onClick={() => toggle(i)}>
+        <span className="crew-die-role">{role}</span>
+        <img className="pixel-icon" src={d === 1 || d === 5 || d === 6 ? crewFaceUrl(d) : dieFaceUrl(d, held)} width={28} height={28} alt={kraken ? "Kraken" : String(d)} draggable={false} />
+        <span className="crew-die-state">{held ? "held" : kraken ? "must roll" : "↻ roll"}</span>
+      </button>
+    );
+  };
 
   return (
     <div className="table-dock panel dice-table crew-table">
@@ -210,26 +238,32 @@ export function CrewTable({ table, you, gold, error, lastXp, looks, world, host,
       )}
 
       {myTurn && loading && (
-        <div className="td-row">
-          <Needs ship captain={table!.captain} />
-          <span className="crew-cargo" role="group" aria-label="Your dice after the ship: pick the ones to keep">
-            {table!.dice.map((d, i) => {
-              const kraken = d === CREW_KRAKEN;
-              const kept = keep.includes(i);
-              return (
-                <button key={i} type="button" className={`crew-die${kept ? " kept" : ""}${kraken ? " kraken" : ""}`} aria-pressed={kept} disabled={!canKeep} title={kraken ? "A Kraken: roll it away, or it takes your cargo" : kept ? "Kept: click to roll it again" : "Click to keep this die"} onClick={() => toggle(i)}>
-                  <img className="pixel-icon" src={d === 1 || d === 5 || d === 6 ? crewFaceUrl(d) : dieFaceUrl(d, kept)} width={36} height={36} alt={kraken ? "Kraken" : String(d)} draggable={false} />
-                  <span>{kept ? "keep" : "roll"}</span>
-                </button>
-              );
-            })}
-          </span>
-          <button className="primary" disabled={!canKeep || rolling < 1} onClick={() => send({ type: "roll", keep })}>
-            Roll {rolling === table!.dice.length ? "all" : rolling} ({left} left)
-          </button>
-          <button disabled={krakens > 0 || !table!.captain} title={krakens > 0 ? "Not with a Kraken among your dice: roll it away first" : !table!.captain ? "You need a captain (a 5) first" : undefined} onClick={() => send({ type: "stand" })}>
-            {table!.cargo !== null ? `Stand on ${table!.cargo}` : "Stand"}
-          </button>
+        <div className="crew-board">
+          <div className="crew-pool" role="group" aria-label="Held: the ship, which stays all turn, and the dice you hold. Click a held die to roll it again">
+            <span className="td-label">Held <span className="crew-sum">{captainIx < 0 ? "· no captain yet" : `· cargo ${cargoDice.join("+")} = ${table!.cargo}`}</span></span>
+            <div className="crew-pool-dice">
+              <span className="crew-die held ship" title="Ship: needed, so it stays held for the rest of your turn">
+                <span className="crew-die-role">Ship</span>
+                <img className="pixel-icon" src={crewFaceUrl(6)} width={28} height={28} alt="Ship" draggable={false} />
+                <span className="crew-die-state">held</span>
+              </span>
+              {holding.slice().sort((a, b) => a - b).map(tile)}
+            </div>
+          </div>
+          {rolling > 0 && (
+            <div className="crew-loose" role="group" aria-label="Your loose dice: click one to hold it">
+              <span className="td-label">Rolls next</span>
+              <div className="crew-pool-dice">{dice.map((_, i) => i).filter((i) => !holding.includes(i)).map(tile)}</div>
+            </div>
+          )}
+          <div className="crew-moves">
+            <button className="primary" disabled={!canKeep || rolling < 1} onClick={() => send({ type: "roll", keep: holding })}>
+              Roll {rolling} {rolling === 1 ? "die" : "dice"} <small>({rollsLeft(left)})</small>
+            </button>
+            <button disabled={krakens > 0 || !table!.captain} title={krakens > 0 ? "Not with a Kraken among your dice: roll it away first" : !table!.captain ? "You need a captain (a 5) first" : undefined} onClick={() => send({ type: "stand" })}>
+              {table!.cargo !== null ? `Stand on ${table!.cargo}` : "Stand"}
+            </button>
+          </div>
         </div>
       )}
 
@@ -244,9 +278,9 @@ export function CrewTable({ table, you, gold, error, lastXp, looks, world, host,
         <ol className="td-rules muted">
           <li><strong>The dice:</strong> the 6 is printed with a ship, the 5 with a captain and the 1 with the Kraken; 2, 3 and 4 are plain pips.</li>
           <li><strong>Ship first:</strong> on your turn you roll five dice, up to {CREW_ROLLS} times. Nothing counts until a 6 comes up: the first one is your ship, and it is set aside.</li>
-          <li><strong>Then it is up to you:</strong> the other four dice are yours to play with. With rolls left, click the ones you want to keep (on the table or below) and roll the rest again, or press <strong>Stand</strong>.</li>
+          <li><strong>Then it is up to you:</strong> the other four dice are yours to play with. With rolls left, click the ones you want to hold (on the table or below) and roll the rest again, or press <strong>Stand</strong>. A die you hold joins the ship in the held pool and stays held from roll to roll; click it again to roll it. The ship stays held all turn.</li>
           <li><strong>Captain and cargo:</strong> among those four you need a 5, your captain. The other three are your cargo, added up for your score (up to 18). You need not keep a captain first: land good cargo and gamble your last rolls on a 5 coming up. End without a captain and your cargo goes nowhere: you score nothing.</li>
-          <li><strong>The Kraken:</strong> a 1 is the Kraken. You can roll it again, but if a Kraken is still among your dice when your rolls run out, it takes everything and you score nothing. You cannot stand with one showing, or without a captain. Every die you roll again could raise your score, bring in your captain, or sink you.</li>
+          <li><strong>The Kraken:</strong> a 1 is the Kraken. It can't be held, but you can roll it again, but if a Kraken is still among your dice when your rolls run out, it takes everything and you score nothing. You cannot stand with one showing, or without a captain. Every die you roll again could raise your score, bring in your captain, or sink you.</li>
           <li><strong>Winning:</strong> when everyone has had a turn, the highest cargo takes the pot (the house keeps 10%). The scores so far are in the crates by everyone's names, the best banded in gold. If the best is tied, only those tied roll again. If nobody scored, everyone rolls again.</li>
         </ol>
       )}

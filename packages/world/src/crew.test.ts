@@ -30,13 +30,13 @@ function playOut(g: CrewGame): CrewGame {
     const id = turnId(g);
     const keep = g.held === 1 ? g.dice.flatMap((d, k) => (d >= 4 ? [k] : [])) : [];
     const done = g.held === 1 && keep.length === g.dice.length;
-    g = done && crewCaptain(g.held, g.dice) ? must(g, id, { type: "stand" }) : must(g, id, { type: "roll", keep: done ? keep.slice(1) : keep });
+    g = done && crewCaptain(g.held, g.dice) ? must(g, id, { type: "stand" }) : must(g, id, { type: "roll", keep: done ? (g.kept ?? []) : keep });
   }
   return g;
 }
 
 /** A game state with the player on turn already holding these dice, for testing what follows. */
-const holding = (g: CrewGame, held: number, dice: number[], rolls: number): CrewGame => ({ ...g, held, dice, rolls });
+const holding = (g: CrewGame, held: number, dice: number[], rolls: number, kept: number[] = []): CrewGame => ({ ...g, held, dice, rolls, kept });
 
 /** Roll from `g` with seeds until the result passes `ok`. */
 function rollUntil(g: CrewGame, id: string, action: CrewAction, ok: (n: CrewGame) => boolean): CrewGame {
@@ -123,6 +123,27 @@ describe("ship, captain and kraken", () => {
     expect(err(holding(g, 1, [6, 2, 5, 4], 1), first, { type: "roll", keep: [0, 1, 2, 3] })).toMatch(/stand/);
     g = must(holding(g, 1, [6, 2, 5, 4], 1), first, { type: "roll", keep: [9, -1, 0] });
     expect(g.lastThrow!.thrown).toEqual([1, 2, 3]);
+  });
+
+  it("remembers the dice you held, and lets you let them go", () => {
+    let g = started(11);
+    const first = turnId(g);
+    g = must(holding(g, 1, [6, 2, 5, 4], 1), first, { type: "roll", keep: [0, 2] });
+    expect(g.kept).toEqual([0, 2]);
+    expect(crewView(g).kept).toEqual([0, 2]);
+    // Next roll, let the 6 go and hold the 4 instead.
+    g = must(holding(g, 1, [6, 2, 5, 4], 1, [0, 2]), first, { type: "roll", keep: [2, 3] });
+    expect(g.lastThrow!.thrown).toEqual([0, 1]);
+    expect(g.kept).toEqual([2, 3]);
+    // The next player starts with nothing held.
+    const next = must(holding(g, 1, [6, 3, 5, 4], 2, [2, 3]), first, { type: "stand" });
+    expect(next.kept).toEqual([]);
+  });
+
+  it("will not hold a Kraken", () => {
+    const g = started(11);
+    const first = turnId(g);
+    expect(err(holding(g, 1, [6, 1, 5, 4], 1), first, { type: "roll", keep: [1] })).toMatch(/Kraken/);
   });
 
   it("will not stand without a ship, without a captain, or with a Kraken showing, and stands on the cargo otherwise", () => {
