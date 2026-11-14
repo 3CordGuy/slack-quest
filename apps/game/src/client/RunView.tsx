@@ -155,6 +155,7 @@ function describe(events: WorldEvent[], state: ClientState, names: Map<string, s
           : `${n(ev.heroId)} throws a shoulder at the door. It holds.`);
         break;
       case "climbed_out": out.push(`${n(ev.heroId)} climbs back out into the Harbor.`); break;
+      case "abandoned": out.push(`${n(ev.heroId)} gives up the quest and heads for the Harbor, empty-handed.`); break;
       case "search": out.push(ev.found ? `${n(ev.heroId)} turns up something in the cache.` : `${n(ev.heroId)} finds nothing but dust.`); break;
       case "level_up": out.push(`${n(ev.heroId)} reached level ${ev.level}!`); break;
       case "gold": out.push(`${n(ev.heroId)} gains ${ev.amount} gold.`); break;
@@ -249,6 +250,12 @@ export function RunView({ code, me, refresh, onLeave }: { code: string; me: Me; 
   const run = useRun(code, (events, state) => {
     const prev = latest.current;
     latest.current = state;
+    // You gave up the quest: nothing more to do here.
+    if (events.some((e) => e.t === "abandoned" && e.heroId === state.you)) {
+      void refresh();
+      onLeave();
+      return;
+    }
     // While the ship is at sea the island is not drawn; it is put on the view as she comes in (see `onIsland` below).
     const island = atSea.current || state.phase === "lobby" || state.phase === "generating" ? null : renderer.current;
     for (const h of state.heroes) names.current.set(h.id, h.name);
@@ -389,7 +396,7 @@ export function RunView({ code, me, refresh, onLeave }: { code: string; me: Me; 
       {!state && <div className="overlay"><div className="panel">{run.error ?? "Hailing the ship…"}{run.error && <p><button onClick={onLeave}>Back to the Harbor</button></p>}</div></div>}
       {state && (
         <>
-          <TopBar state={state} code={code} status={run.status} onLeave={onLeave} onInventory={() => { void refresh(); setInventory(true); }} />
+          <TopBar state={state} code={code} status={run.status} onLeave={onLeave} onAbandon={() => run.send({ type: "abandon" })} onInventory={() => { void refresh(); setInventory(true); }} />
           {state.phase === "lobby" && <Lobby state={state} run={run} code={code} />}
           {!caverns && <SailingView view={view} mode={sea} island={run.state} names={state.heroes.map((h) => h.name)} onLanded={() => setLanded(true)} />}
           {atMouth && (
@@ -466,8 +473,10 @@ function HexTip({ state, hover }: { state: ClientState; hover: HexPos }) {
   );
 }
 
-function TopBar({ state, code, status, onLeave, onInventory }: { state: ClientState; code: string; status: string; onLeave(): void; onInventory(): void }) {
+function TopBar({ state, code, status, onLeave, onAbandon, onInventory }: { state: ClientState; code: string; status: string; onLeave(): void; onAbandon(): void; onInventory(): void }) {
   const fighting = state.phase === "battle";
+  const you = state.heroes.find((h) => h.id === state.you);
+  const gone = !!you?.out;
   return (
     <div className="topbar">
       <strong>{state.story?.title ?? (state.kind === "caverns" ? "The Haunted Caverns" : "A ship at the Harbor")}</strong>
@@ -494,7 +503,17 @@ function TopBar({ state, code, status, onLeave, onInventory }: { state: ClientSt
         </button>
       )}
       {/* The Harbor is behind you once the ship has sailed: only from the docked lobby, or once the voyage is over. */}
-      {(state.phase === "lobby" || state.phase === "ended") && <button className="small" onClick={onLeave}>Harbor</button>}
+      {(state.phase === "lobby" || state.phase === "ended" || gone) && <button className="small" onClick={onLeave}>Harbor</button>}
+      {/* The way back, at a price: everything this quest paid out is given up. */}
+      {state.phase === "overworld" && you && !gone && (
+        <button
+          className="small"
+          title="Head back to the Harbor now. You keep nothing you earned on this quest."
+          onClick={() => { if (window.confirm("Abandon the quest and return to the Harbor? You will forfeit all the loot, XP and gold you earned on it.")) onAbandon(); }}
+        >
+          Abandon quest
+        </button>
+      )}
       {/* No putting a hero back on a voyage: where they stand is part of the game. */}
       <OptionsMenu resetBlocked="Not on a voyage: your hero stays where the island has them. It works in the Harbor, a hut or the pub." />
     </div>

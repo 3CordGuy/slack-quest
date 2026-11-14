@@ -89,6 +89,8 @@ export interface Hero extends HeroInit {
   tally?: Partial<Record<TallyKey, number>>;
   /** In the caverns: has climbed back out into the Harbor, and takes no more turns. */
   out?: boolean;
+  /** Left the quest early, giving up everything earned on it. Always set with `out`. */
+  abandoned?: boolean;
 }
 
 export interface ChatLine {
@@ -213,6 +215,8 @@ export type WorldAction =
   | { type: "end_turn"; heroId: string }
   /** In the caverns, standing at the mouth: climb back out into the Harbor. The delve ends once everyone is out. */
   | { type: "climb_out"; heroId: string }
+  /** Give up the quest: back to the Harbor at once, with nothing earned on it. */
+  | { type: "abandon"; heroId: string }
   | { type: "timeout" }
   | { type: "talk"; heroId: string; npcId: string; text: string; persuade?: boolean; focus?: number }
   | { type: "npc_reply"; npcId: string; heroId: string; output: NpcOutput }
@@ -229,6 +233,7 @@ export const CLIENT_ACTIONS: ReadonlySet<WorldAction["type"]> = new Set([
   "interact",
   "end_turn",
   "climb_out",
+  "abandon",
   "talk",
   "battle",
 ]);
@@ -256,6 +261,7 @@ export type WorldEvent =
   | { t: "gate"; heroId: string; poiId: string; how: "key" | "forced" | "held" }
   /** A hero climbed back out of the caverns into the Harbor. */
   | { t: "climbed_out"; heroId: string }
+  | { t: "abandoned"; heroId: string }
   /** Something turned up while crossing a forest hex. `hp` is what berries restored. */
   | { t: "forage"; heroId: string; kind: ForageKind; hp?: number }
   /** A hero walked over herbs, mushrooms or a pile of wood or stone and took it. What it gave follows as `resources`. */
@@ -288,6 +294,8 @@ export type WorldEffect =
   | { kind: "npc_call"; npcId: string; heroId: string; text: string; check: CheckResult | null }
   | { kind: "grant"; heroId: string; xp: number; gold: number; item: ItemDef | null; resources?: Resources; blueprint?: string; furnishing?: FurnishingGrant }
   | { kind: "penalty"; heroId: string; goldPct: number; cap: number }
+  /** The hero abandoned the quest: take back what was written to their character as they earned it. `resources` is the hut materials to remove. */
+  | { kind: "forfeit"; heroId: string; resources: Resources }
   | { kind: "epilogue" }
   | { kind: "run_end"; outcome: "victory" | "defeat" };
 
@@ -482,7 +490,7 @@ function revealPoi(ctx: Ctx, poi: Poi) {
 function settleContracts(ctx: Ctx, outcome: "victory" | "defeat") {
   for (const hero of ctx.state.heroes) {
     const taken = hero.contract;
-    if (!taken || taken.outcome) continue;
+    if (!taken || taken.outcome || hero.abandoned) continue;
     const def = contractById(taken.id);
     const met = outcome === "victory" && !!def && def.check(ctx.state, hero);
     taken.outcome = met ? "met" : "failed";
@@ -501,6 +509,8 @@ function endRun(ctx: Ctx, outcome: "victory" | "defeat", reason: string) {
   // A delve has no story to write up: its ending is what the crew did down there.
   state.result = { outcome, reason, epilogue: delve ? delveSummary(state) : null };
   for (const hero of state.heroes) {
+    // Gone before the end: no reward, and no penalty either.
+    if (hero.abandoned) continue;
     if (outcome === "victory" && delve) {
       // Out in one piece: a little for the climb, on top of everything found below.
       grant(ctx, hero, { xp: DELVE_EXIT_XP, gold: DELVE_EXIT_GOLD });
@@ -1270,8 +1280,24 @@ export function stepWorld(prev: WorldState, action: WorldAction): StepResult {
       if (poiAt(state.map, hero.pos)?.kind !== "landing") return fail("the way out is at the cave mouth");
       hero.out = true;
       ctx.events.push({ t: "climbed_out", heroId: hero.id });
-      if (state.heroes.every((h) => h.out)) endRun(ctx, "victory", "The crew climbs back out into the Harbor, blinking, with everything it carried up.");
+      if (state.heroes.every((h) => h.out)) endRun(ctx, state.heroes.some((h) => !h.abandoned) ? "victory" : "defeat", "The crew climbs back out into the Harbor, blinking, with everything it carried up.");
       else startTurn(ctx);
+      return done(null);
+    }
+
+    case "abandon": {
+      if (state.phase !== "overworld") return fail(state.phase === "battle" ? "you cannot abandon the quest in the middle of a fight" : "there is no quest to abandon");
+      const hero = heroById(state, action.heroId);
+      if (!hero) return fail("not aboard");
+      if (hero.out) return fail("you have already left");
+      const resources = state.earned[hero.id]?.resources ?? {};
+      state.earned[hero.id] = { xp: 0, gold: 0, items: [] };
+      hero.out = true;
+      hero.abandoned = true;
+      ctx.effects.push({ kind: "forfeit", heroId: hero.id, resources });
+      ctx.events.push({ t: "abandoned", heroId: hero.id });
+      if (state.heroes.every((h) => h.out)) endRun(ctx, state.heroes.some((h) => !h.abandoned) ? "victory" : "defeat", "The crew gave up the quest and made for the Harbor.");
+      else if (state.turn?.heroId === hero.id) startTurn(ctx);
       return done(null);
     }
 

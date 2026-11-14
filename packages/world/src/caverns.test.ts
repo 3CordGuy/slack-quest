@@ -233,6 +233,29 @@ describe("a delve", () => {
     expect(s.keys).toBe(1);
   });
 
+  it("lets a hero abandon the quest from anywhere, forfeiting what they earned", () => {
+    let s = calm(delve("quit"));
+    const quitter = s.turn!.heroId;
+    s = { ...s, earned: { ...s.earned, [quitter]: { xp: 40, gold: 25, items: [], resources: { wood: 3 } } } };
+    const sink: Sink = { events: [], effects: [] };
+    s = must(s, { type: "abandon", heroId: quitter }, sink);
+    const gone = s.heroes.find((h) => h.id === quitter)!;
+    expect(gone.out && gone.abandoned).toBe(true);
+    expect(s.earned[quitter]).toEqual({ xp: 0, gold: 0, items: [] });
+    expect(sink.effects).toContainEqual({ kind: "forfeit", heroId: quitter, resources: { wood: 3 } });
+    expect(sink.events).toContainEqual({ t: "abandoned", heroId: quitter });
+    // Their turn passes on, and they never get another.
+    expect(s.turn!.heroId).not.toBe(quitter);
+    expect(stepWorld(s, { type: "abandon", heroId: quitter }).ok).toBe(false);
+    // The last one out ends the delve, and nobody is paid or fined for leaving.
+    const other = s.turn!.heroId;
+    const end: Sink = { events: [], effects: [] };
+    s = must(s, { type: "abandon", heroId: other }, end);
+    expect(s.phase).toBe("ended");
+    expect(s.result?.outcome).toBe("defeat");
+    expect(end.effects.some((e) => e.kind === "grant" || e.kind === "penalty")).toBe(false);
+  });
+
   it("ends well once everyone has climbed out at the mouth, one at a time", () => {
     let s = calm(delve("out"));
     const mouth = landing(s.map);
