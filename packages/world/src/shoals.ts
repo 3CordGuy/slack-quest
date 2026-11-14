@@ -20,8 +20,8 @@
 // `shoalsView` of it, so nobody is told what is face down in another stack.
 
 import { makeRng } from "./rng";
+import { isStake, prizeText, stakeText } from "./stakes";
 
-export const SHOALS_ANTES = [5, 10, 20] as const;
 export const SHOALS_MIN_PLAYERS = 2;
 export const SHOALS_MAX_PLAYERS = 4;
 /** Markers each pilot starts with. */
@@ -100,7 +100,8 @@ export function shoalsSplit(pot: number): { house: number; prize: number } {
   return { house, prize: pot - house };
 }
 
-export const isShoalsAnte = (n: unknown): n is (typeof SHOALS_ANTES)[number] => (SHOALS_ANTES as readonly unknown[]).includes(n);
+/** Free, or any whole stake up to STAKE_MAX (see stakes.ts). */
+export const isShoalsAnte = isStake;
 
 const newSeat = (id: string, name: string): ShoalsSeat => ({ id, name, own: { channel: 0, shoal: 0 }, stack: [], flipped: 0, passages: 0, passed: false, forfeited: false });
 
@@ -119,7 +120,7 @@ export function createShoalsGame(seed: number, ante: number, host: { id: string;
     last: null,
     winner: null,
     pot: 0,
-    log: [`${host.name} set out the markers at ${ante} gold a seat.`],
+    log: [`${host.name} set out the markers at ${stakeText(ante)}.`],
     rng: seed >>> 0,
   };
 }
@@ -162,7 +163,7 @@ function settle(state: ShoalsGame): boolean {
   if (!champion) return false;
   state.phase = "done";
   state.winner = champion.id;
-  state.log.push(`${champion.name} wins the table: ${shoalsSplit(state.pot).prize} gold.`);
+  state.log.push(`${champion.name} wins the table: ${prizeText(shoalsSplit(state.pot).prize)}.`);
   return true;
 }
 

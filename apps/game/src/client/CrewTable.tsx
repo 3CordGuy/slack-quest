@@ -7,7 +7,9 @@
 // held last roll starts out held again, until you let it go. The ship can't be let go.
 
 import { useEffect, useMemo, useState, type RefObject } from "react";
-import { CREW_ANTES, CREW_CAPTAIN, CREW_DEFAULT_ROUNDS, CREW_ROUND_CHOICES, CREW_KRAKEN, CREW_MAX_PLAYERS, CREW_MIN_PLAYERS, CREW_NEEDS, CREW_ROLLS, crewHold, isCrewCargo, type CrewRequest, type CrewSeatView, type CrewView } from "@gantt-quest/world";
+import { CREW_CAPTAIN, CREW_DEFAULT_ROUNDS, CREW_ROUND_CHOICES, CREW_KRAKEN, CREW_MAX_PLAYERS, CREW_MIN_PLAYERS, CREW_NEEDS, CREW_ROLLS, crewHold, isCrewCargo, type CrewRequest, type CrewSeatView, type CrewView } from "@gantt-quest/world";
+import { prizeText, stakeLabel, stakeText } from "@gantt-quest/world";
+import { StakePicker, anteNote } from "./StakePicker";
 import type { SeatInfo } from "./render/TableStage";
 import type { WorldRenderer } from "./render/WorldRenderer";
 import { CREW_FACE_NAME, crewFaceUrl, dieFaceUrl } from "./crewArt";
@@ -106,13 +108,13 @@ export function CrewTable({ table, you, gold, error, lastXp, looks, world, host,
   const status = (() => {
     if (!table) return "Nobody is playing. Open a table and the others may sit.";
     const over = `${rounds === 1 ? "one round" : `${rounds} rounds`}`;
-    if (table.phase === "open") return seated ? (table.host === you ? (seats.length < CREW_MIN_PLAYERS ? "Waiting for someone to sit." : `Start when everyone is seated. ${over[0].toUpperCase()}${over.slice(1)}, cargo added up.`) : `Waiting for ${name(table.host)} to start: ${over}.`) : `A table is open at ${table.ante} gold a seat, for ${over}.`;
+    if (table.phase === "open") return seated ? (table.host === you ? (seats.length < CREW_MIN_PLAYERS ? "Waiting for someone to sit." : `Start when everyone is seated. ${over[0].toUpperCase()}${over.slice(1)}, cargo added up.`) : `Waiting for ${name(table.host)} to start: ${over}.`) : `A table is open at ${stakeText(table.ante)}, for ${over}.`;
     if (table.phase === "done") {
       const w = table.seats.find((s) => s.id === table.winner);
       const rolledOff = (table.last?.round ?? 0) > rounds;
       const top = rolledOff ? table.last?.scores.find((s) => s.id === table.winner)?.score : rounds > 1 ? w?.total : table.last?.scores.find((s) => s.id === table.winner)?.score;
       const how = !top ? "" : rolledOff ? ` in a roll-off, on ${top}` : rounds > 1 ? ` with ${top} cargo over ${rounds} rounds` : ` with a cargo of ${top}`;
-      return table.winner ? `${name(table.winner)} ${table.winner === you ? "win" : "wins"} ${table.prize} gold${how}.` : "The game is over.";
+      return table.winner ? `${name(table.winner)} ${table.winner === you ? "win" : "wins"} ${prizeText(table.prize)}${how}.` : "The game is over.";
     }
     if (myTurn) {
       const yourTotal = mine ? mine.total : 0;
@@ -181,9 +183,9 @@ export function CrewTable({ table, you, gold, error, lastXp, looks, world, host,
     );
     stage.setPot(table ? (table.phase === "open" ? table.ante * seats.length : table.phase === "done" ? table.prize : table.pot) : 0);
     // Everything there is to read hangs on the card under your dice, where your eyes already are; the dock below holds only the controls.
-    const caption = !table ? "No game" : table.phase === "open" ? `Seating: ${table.ante} gold a seat` : table.phase === "done" ? "Game over" : `${!regular ? "Roll-off" : rounds > 1 ? `Round ${table.round} of ${rounds}` : table.round > 1 ? `Round ${table.round}` : "Playing"}: pot ${table.pot} gold`;
+    const caption = !table ? "No game" : table.phase === "open" ? `Seating: ${stakeText(table.ante)}` : table.phase === "done" ? "Game over" : `${!regular ? "Roll-off" : rounds > 1 ? `Round ${table.round} of ${rounds}` : table.round > 1 ? `Round ${table.round}` : "Playing"}: ${table.pot > 0 ? `pot ${table.pot} gold` : "free game"}`;
     const main = !table || table.phase === "open" ? {}
-      : table.phase === "done" ? { main: `${table.prize} gold` }
+      : table.phase === "done" ? { main: table.pot > 0 ? `${table.prize} gold` : "Won" }
       : table.cargo !== null ? { main: table.kraken ? `cargo ${table.cargo}?` : `cargo ${table.cargo}` }
       : loading ? { main: "no captain" }
       : { main: rollsLeft(left) };
@@ -228,13 +230,7 @@ export function CrewTable({ table, you, gold, error, lastXp, looks, world, host,
               </button>
             ))}
           </span>
-          <span>{table ? "Another game:" : "Open a table:"}</span>
-          {CREW_ANTES.map((a) => (
-            <button key={a} className="small" disabled={gold < a} title={gold < a ? "You cannot afford this ante" : `Open a table at ${a} gold a seat, for ${pickRounds === 1 ? "one round" : `${pickRounds} rounds`}`} onClick={() => send({ type: "open", ante: a, rounds: pickRounds })}>
-              {a} gold
-            </button>
-          ))}
-          <span className="muted">You have {gold}.</span>
+          <StakePicker gold={gold} again={!!table} also={`, for ${pickRounds === 1 ? "one round" : `${pickRounds} rounds`}`} open={(ante) => send({ type: "open", ante, rounds: pickRounds })} />
         </div>
       )}
 
@@ -242,7 +238,7 @@ export function CrewTable({ table, you, gold, error, lastXp, looks, world, host,
         <div className="td-row">
           {!seated && (
             <button className="primary" disabled={gold < table.ante || seats.length >= CREW_MAX_PLAYERS} onClick={() => send({ type: "sit" })}>
-              {gold < table.ante ? `You need ${table.ante} gold to sit` : `Sit (${table.ante} gold)`}
+              {gold < table.ante ? `You need ${table.ante} gold to sit` : `Sit (${stakeLabel(table.ante)})`}
             </button>
           )}
           {table.host === you && (
@@ -251,7 +247,7 @@ export function CrewTable({ table, you, gold, error, lastXp, looks, world, host,
             </button>
           )}
           {seated && <button className="small" onClick={() => send({ type: "leave" })}>Give up the seat</button>}
-          {seated && <span className="muted">The ante is taken when the game starts.</span>}
+          {seated && <span className="muted">{anteNote(table.ante)}</span>}
         </div>
       )}
 

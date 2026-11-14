@@ -33,8 +33,8 @@
 // a player's view is the whole game but for the generator's state.
 
 import { makeRng } from "./rng";
+import { isStake, potText, prizeText, stakeText } from "./stakes";
 
-export const CREW_ANTES = [5, 10, 20] as const;
 export const CREW_MIN_PLAYERS = 2;
 export const CREW_MAX_PLAYERS = 6;
 /** How many rounds a table can be opened for, and how many unless the opener says. */
@@ -147,7 +147,8 @@ export function crewSplit(pot: number): { house: number; prize: number } {
   return { house, prize: pot - house };
 }
 
-export const isCrewAnte = (n: unknown): n is (typeof CREW_ANTES)[number] => (CREW_ANTES as readonly unknown[]).includes(n);
+/** Free, or any whole stake up to STAKE_MAX (see stakes.ts). */
+export const isCrewAnte = isStake;
 
 /** The ship is in and a captain is among the dice after it. */
 export const crewCaptain = (held: number, dice: readonly number[]): boolean => held >= CREW_NEEDS.length && dice.includes(CREW_CAPTAIN);
@@ -203,7 +204,7 @@ export function createCrewGame(seed: number, ante: number, host: { id: string; n
     winner: null,
     rounds,
     pot: 0,
-    log: [`${host.name} set out the dice cup at ${ante} gold a seat, for ${rounds === 1 ? "one round" : `${rounds} rounds`}.`],
+    log: [`${host.name} set out the dice cup at ${stakeText(ante)}, for ${rounds === 1 ? "one round" : `${rounds} rounds`}.`],
     rng: seed >>> 0,
   };
 }
@@ -227,7 +228,7 @@ function nextDue(seats: CrewSeat[], from: number): number {
 function win(state: CrewGame, id: string): CrewGame {
   const seat = state.seats.find((s) => s.id === id)!;
   const { prize } = crewSplit(state.pot);
-  return { ...state, ...fresh, phase: "done", winner: id, log: say(state, `${seat.name} wins ${prize} gold.`) };
+  return { ...state, ...fresh, phase: "done", winner: id, log: say(state, `${seat.name} wins ${prizeText(prize)}.`) };
 }
 
 /** Everyone in the running has played: settle the round, or start another for those still in it. */
@@ -308,7 +309,7 @@ export function stepCrew(state: CrewGame, playerId: string, action: CrewAction):
       if (state.seats.length < CREW_MIN_PLAYERS) return fail("It takes at least two to play.");
       const pot = state.ante * state.seats.length;
       const seats = state.seats.map((s) => ({ ...s, contending: true, score: null, total: 0, lost: null, hand: [] }));
-      return { ok: true, state: { ...state, ...fresh, phase: "playing", seats, turn: 0, round: 1, pot, log: say(state, `The cup goes round. The pot is ${pot} gold.`) } };
+      return { ok: true, state: { ...state, ...fresh, phase: "playing", seats, turn: 0, round: 1, pot, log: say(state, `The cup goes round. ${potText(pot)}`) } };
     }
 
     case "roll": {

@@ -6,7 +6,9 @@
 // asks for moves.
 
 import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
-import { SHOALS_ANTES, SHOALS_MAX_PLAYERS, SHOALS_MIN_PLAYERS, SHOALS_PASSAGES, SHOALS_START, type Marker, type ShoalsRequest, type ShoalsView } from "@gantt-quest/world";
+import { SHOALS_MAX_PLAYERS, SHOALS_MIN_PLAYERS, SHOALS_PASSAGES, SHOALS_START, type Marker, type ShoalsRequest, type ShoalsView } from "@gantt-quest/world";
+import { stakeLabel, stakeText } from "@gantt-quest/world";
+import { StakePicker, anteNote } from "./StakePicker";
 import type { SeatInfo } from "./render/TableStage";
 import type { WorldRenderer } from "./render/WorldRenderer";
 import { markerUrl, type MarkerFace } from "./shoalsArt";
@@ -126,8 +128,8 @@ export function ShoalsTable({ table, you, gold, error, lastXp, looks, world, hos
 
   const status = (() => {
     if (!table) return "Nobody is playing. Open a table to set out the markers.";
-    if (table.phase === "open") return seated ? (table.host === you ? (seats.length < SHOALS_MIN_PLAYERS ? "Waiting for a second pilot to sit." : "Start when everyone is seated.") : `Waiting for ${name(table.host)} to start.`) : `A table is open at ${table.ante} gold a seat.`;
-    if (table.phase === "done") return table.winner ? `${name(table.winner)} ${table.winner === you ? "win" : "wins"} the table! ${table.winner === you ? "You take" : "They take"} ${table.prize} gold from a pot of ${table.pot}.` : "The game is over.";
+    if (table.phase === "open") return seated ? (table.host === you ? (seats.length < SHOALS_MIN_PLAYERS ? "Waiting for a second pilot to sit." : "Start when everyone is seated.") : `Waiting for ${name(table.host)} to start.`) : `A table is open at ${stakeText(table.ante)}.`;
+    if (table.phase === "done") return table.winner ? `${name(table.winner)} ${table.winner === you ? "win" : "wins"} the table! ${table.pot > 0 ? `${table.winner === you ? "You take" : "They take"} ${table.prize} gold from a pot of ${table.pot}.` : "A free game: no gold changed hands."}` : "The game is over.";
     const who = table.turn ? short(table.turn) : "";
     const bid = table.bid;
     if (table.step === "lay") {
@@ -193,9 +195,9 @@ export function ShoalsTable({ table, you, gold, error, lastXp, looks, world, hos
     }
     stage.setPot(potGold);
     // Everything there is to read hangs on the card over the table, where your eyes already are; the dock below holds only the controls.
-    const caption = !table ? "No game" : table.phase === "open" ? `Seating: ${table.ante} gold a seat` : table.phase === "done" ? "Game over: pot paid out" : `${phaseLabel}: pot ${potGold} gold`;
+    const caption = !table ? "No game" : table.phase === "open" ? `Seating: ${stakeText(table.ante)}` : table.phase === "done" ? table.pot > 0 ? "Game over: pot paid out" : "Game over" : `${phaseLabel}: ${potGold > 0 ? `pot ${potGold} gold` : "free game"}`;
     const main = !table || table.phase === "open" ? undefined
-      : table.phase === "done" ? `${table.prize} gold`
+      : table.phase === "done" ? (table.pot > 0 ? `${table.prize} gold` : "Won")
       : table.step === "sail" && table.bid ? `${table.sailed} / ${table.bid.count}`
       : table.bid ? `says ${table.bid.count}`
       : `${table.total} laid`;
@@ -232,20 +234,14 @@ export function ShoalsTable({ table, you, gold, error, lastXp, looks, world, hos
       {/* Before and after a game: the stakes and the seats. */}
       {(!table || table.phase === "done") && (
         <div className="td-row">
-          <span>{table ? "Another game:" : "Open a table:"}</span>
-          {SHOALS_ANTES.map((a) => (
-            <button key={a} className="small" disabled={gold < a} title={gold < a ? "You cannot afford this ante" : `Open a table at ${a} gold a seat`} onClick={() => send({ type: "open", ante: a })}>
-              {a} gold
-            </button>
-          ))}
-          <span className="muted">You have {gold}.</span>
+          <StakePicker gold={gold} again={!!table} open={(ante) => send({ type: "open", ante })} />
         </div>
       )}
       {table?.phase === "open" && (
         <div className="td-row">
           {!seated && (
             <button className="primary" disabled={gold < table.ante || seats.length >= SHOALS_MAX_PLAYERS} onClick={() => send({ type: "sit" })}>
-              {gold < table.ante ? `You need ${table.ante} gold to sit` : `Sit (${table.ante} gold)`}
+              {gold < table.ante ? `You need ${table.ante} gold to sit` : `Sit (${stakeLabel(table.ante)})`}
             </button>
           )}
           {table.host === you && (
@@ -254,7 +250,7 @@ export function ShoalsTable({ table, you, gold, error, lastXp, looks, world, hos
             </button>
           )}
           {seated && <button className="small" onClick={() => send({ type: "leave" })}>Give up the seat</button>}
-          {seated && <span className="muted">The ante is taken when the game starts.</span>}
+          {seated && <span className="muted">{anteNote(table.ante)}</span>}
         </div>
       )}
 

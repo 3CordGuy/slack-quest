@@ -44,6 +44,7 @@ import {
   type ShoalsGame,
   type ShoalsRequest,
   HARBOR_XP,
+  STAKE_MAX,
 } from "@gantt-quest/world";
 import type { Env } from "./db";
 import { prepareXp, relayXp, xpMessage, xpOutcome } from "./harbor-xp";
@@ -289,7 +290,7 @@ export class StakeTable<G extends StakeGame, R extends { type: string }> {
     if (request.type === "open") {
       const ante = (request as { ante?: unknown }).ante;
       if (game && game.phase !== "done") return "There is already a table open.";
-      if (!this.rules.isAnte(ante)) return "Pick a stake of 5, 10 or 20 gold.";
+      if (!this.rules.isAnte(ante)) return `Pick a stake: free, or a whole number of gold up to ${STAKE_MAX}.`;
       if ((await this.gold(player.id)) < (ante as number)) return "You cannot afford that ante.";
       const seed = crypto.getRandomValues(new Uint32Array(1))[0];
       await this.save(this.rules.create(seed, ante as number, { id: player.id, name: player.name }, request));

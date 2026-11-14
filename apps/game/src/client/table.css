@@ -75,3 +75,7 @@
 .crew-rounds { display: inline-flex; align-items: center; gap: 3px; margin-right: 6px; }
 .crew-rounds button { min-width: 26px; }
 .crew-rounds button.on { border-color: var(--gold); color: var(--gold); background: rgba(217, 164, 58, 0.14); }
+
+/* Any stake, typed in (StakePicker). */
+.stake-own { display: inline-flex; align-items: center; gap: 3px; }
+.stake-own input { width: 72px; padding: 3px 6px; }
