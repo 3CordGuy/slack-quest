@@ -39,3 +39,8 @@
   .pub-view.seated .roster-panel, .pub-view.seated .harbor-chat { display: none; }
   .table-dock { font-size: 12px; max-height: calc(42vh / var(--ui-z, 1)); }
 }
+
+/* Ship, Captain & Crew: the three you need, lit as they come in. */
+.crew-needs { display: inline-flex; gap: 4px; margin-right: 4px; }
+.crew-needs img { image-rendering: pixelated; }
+.crew-needs .crew-missing { opacity: 0.3; filter: grayscale(1); }

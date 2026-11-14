@@ -10,6 +10,7 @@
 // used up when that hero's next voyage begins.
 
 import type { HexGrid, HexPos } from "@gantt-quest/core";
+import type { CrewRequest, CrewView } from "./crew";
 import type { DiceRequest, DiceView } from "./dice";
 import type { ShoalsRequest, ShoalsView } from "./shoals";
 import { harborPoi, type HarborPlayer, type XpMessage } from "./harbor";
@@ -29,6 +30,8 @@ export const PUB_COUNTER: HexPos = at(3, 3);
 export const PUB_DICE: HexPos = at(7, 5);
 /** Where players stand to sit at the Shoals table. */
 export const PUB_SHOALS: HexPos = at(5, 5);
+/** Where players stand to sit at the Ship, Captain & Crew table. */
+export const PUB_CREW: HexPos = at(3, 5);
 /** The barkeep's spot, behind the bar. */
 export const PUB_BARKEEP_POS: HexPos = at(3, 1);
 export const PUB_BARKEEP = { id: "barkeep", name: "Old Tam" } as const;
@@ -88,10 +91,10 @@ export const PUB_FITTINGS: PubFitting[] = [
   fit(16, "pillar", 5, 2),
 ];
 
-/** The room: the same every time. The counter, the two game tables, the trader's spot and the dealer's are places to stand, not obstacles. */
+/** The room: the same every time. The counter, the three game tables, the trader's spot and the dealer's are places to stand, not obstacles. */
 export function pubRoom(): WorldMap {
   const room = buildRoom(PUB_GRID);
-  return { ...room, pois: [...room.pois, harborPoi("counter", "counter", PUB_COUNTER), harborPoi("dice", "dice", PUB_DICE), harborPoi("shoals", "shoals", PUB_SHOALS), harborPoi("trader", "trader", PUB_TRADER), harborPoi("dealer", "dealer", PUB_DEALER_STAND)] };
+  return { ...room, pois: [...room.pois, harborPoi("counter", "counter", PUB_COUNTER), harborPoi("dice", "dice", PUB_DICE), harborPoi("shoals", "shoals", PUB_SHOALS), harborPoi("crew", "crew", PUB_CREW), harborPoi("trader", "trader", PUB_TRADER), harborPoi("dealer", "dealer", PUB_DEALER_STAND)] };
 }
 
 /** A walkable route across the pub, or null. The barkeep's side of the bar is his alone, the salesmen's corner theirs, and the dealer's and the regulars' spots theirs. */
@@ -173,6 +176,8 @@ export type PubServerMessage =
   | { type: "diceError"; text: string }
   | { type: "shoals"; table: ShoalsView | null }
   | { type: "shoalsError"; text: string }
+  | { type: "crew"; table: CrewView | null }
+  | { type: "crewError"; text: string }
   | XpMessage;
 
 export type PubClientMessage =
@@ -181,13 +186,14 @@ export type PubClientMessage =
   /** Back to the door, for a stuck or lost hero. */
   | { type: "unstick" }
   | { type: "dice"; action: DiceRequest }
-  | { type: "shoals"; action: ShoalsRequest };
+  | { type: "shoals"; action: ShoalsRequest }
+  | { type: "crew"; action: CrewRequest };
 
 
 /** Where the crew's record fish hang on the pub's walls: faces spread round the room, in a fixed order. */
 export function pubMountSpots(count: number): { pos: HexPos; side: number }[] {
   // Only walls with clear floor in front: not behind the bar, the kegs or the hearth, nor where anyone stands to work.
-  const busy = new Set([...PUB_FITTINGS.map((f) => `${f.q},${f.r}`), ...[PUB_BARKEEP_POS, PUB_COUNTER, PUB_DICE, PUB_SHOALS, PUB_TRADER, PUB_DEALER_STAND, PUB_SALESMAN_POS, PUB_DEALER_POS].map((p) => `${p.q},${p.r}`)]);
+  const busy = new Set([...PUB_FITTINGS.map((f) => `${f.q},${f.r}`), ...[PUB_BARKEEP_POS, PUB_COUNTER, PUB_DICE, PUB_SHOALS, PUB_CREW, PUB_TRADER, PUB_DEALER_STAND, PUB_SALESMAN_POS, PUB_DEALER_POS].map((p) => `${p.q},${p.r}`)]);
   const faces = wallFaces(pubRoom())
     .filter((f) => !busy.has(`${f.pos.q + HEX_DIRS[f.side].q},${f.pos.r + HEX_DIRS[f.side].r}`))
     .sort((a, b) => a.pos.r - b.pos.r || a.pos.q - b.pos.q || a.side - b.side);

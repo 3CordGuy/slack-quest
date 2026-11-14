@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { hexDistance } from "@gantt-quest/core";
-import { PUB_BARKEEP_POS, PUB_BUFF_CAPS, PUB_COUNTER, PUB_DEALER_POS, PUB_DEALER_STAND, PUB_DICE, PUB_FITTINGS, PUB_GRID, PUB_MENU, PUB_REGULAR_SPOTS, PUB_SALESMAN_POS, PUB_SHOALS, PUB_TRADER, capPubBuff, hutGrid, poiAt, pubBuff, pubPath, pubRoom, tileAt } from "./index";
+import { PUB_BARKEEP_POS, PUB_BUFF_CAPS, PUB_COUNTER, PUB_CREW, PUB_DEALER_POS, PUB_DEALER_STAND, PUB_DICE, PUB_FITTINGS, PUB_GRID, PUB_MENU, PUB_REGULAR_SPOTS, PUB_SALESMAN_POS, PUB_SHOALS, PUB_TRADER, capPubBuff, hutGrid, poiAt, pubBuff, pubPath, pubRoom, tileAt } from "./index";
 
 describe("the pub", () => {
   const room = pubRoom();
@@ -35,7 +35,7 @@ describe("the pub", () => {
   });
 
   it("still lets a customer reach every place to stand", () => {
-    for (const to of [PUB_COUNTER, PUB_DICE, PUB_SHOALS, PUB_TRADER, PUB_DEALER_STAND, ...PUB_REGULAR_SPOTS.map((s) => s.stand)]) {
+    for (const to of [PUB_COUNTER, PUB_DICE, PUB_SHOALS, PUB_CREW, PUB_TRADER, PUB_DEALER_STAND, ...PUB_REGULAR_SPOTS.map((s) => s.stand)]) {
       expect(pubPath(room, door, to), `${to.q},${to.r}`).not.toBeNull();
     }
   });

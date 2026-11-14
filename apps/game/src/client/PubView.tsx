@@ -7,7 +7,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAudioScene } from "./audio/useAudioScene";
 import { hexDistance, hexNeighbors, type HexPos } from "@gantt-quest/core";
-import { PUB_BARKEEP, PUB_BARKEEP_POS, PUB_COUNTER, PUB_DEALER, PUB_DEALER_POS, PUB_DEALER_STAND, PUB_DICE, PUB_FITTINGS, PUB_GRID, PUB_MAX_TALK, PUB_MENU, PUB_REGULAR_SPOTS, PUB_SALESMAN_POS, PUB_SHOALS, PUB_TRADER, dueIn, gatherDay, poiAt, pubMountSpots, pubPath, pubRoom, PUB_MOUNT_SLOTS, regularsOn, salesman, type Perk, type RegularId } from "@gantt-quest/world";
+import { PUB_BARKEEP, PUB_BARKEEP_POS, PUB_COUNTER, PUB_CREW, PUB_DEALER, PUB_DEALER_POS, PUB_DEALER_STAND, PUB_DICE, PUB_FITTINGS, PUB_GRID, PUB_MAX_TALK, PUB_MENU, PUB_REGULAR_SPOTS, PUB_SALESMAN_POS, PUB_SHOALS, PUB_TRADER, dueIn, gatherDay, poiAt, pubMountSpots, pubPath, pubRoom, PUB_MOUNT_SLOTS, regularsOn, salesman, type Perk, type RegularId } from "@gantt-quest/world";
 import { CatchPanel } from "./CatchPanel";
 import { RecordBoard } from "./CatchBook";
 import { api, type Me, type PubTab, type PubWall, type RegularsView } from "./api";
@@ -15,6 +15,7 @@ import { RegularPanel } from "./RegularPanel";
 import { DealerPanel } from "./board/DealerPanel";
 import { DiceTable } from "./DiceTable";
 import { ShoalsTable } from "./ShoalsTable";
+import { CrewTable } from "./CrewTable";
 import { SalesmanPanel } from "./SalesmanPanel";
 import { useSalesman } from "./salesmanClock";
 import { CrewRoster } from "./CrewRoster";
@@ -41,6 +42,8 @@ const same = (a: HexPos, b: HexPos) => a.q === b.q && a.r === b.r;
 const regularUnit = (id: string) => `regular:${id}`;
 const ROOM = pubRoom();
 const DOOR = ROOM.pois.find((p) => p.kind === "door")!.pos;
+type TableName = "dice" | "shoals" | "crew";
+const TABLE_HEX: Record<TableName, HexPos> = { dice: PUB_DICE, shoals: PUB_SHOALS, crew: PUB_CREW };
 
 interface TalkLine {
   who: string;
@@ -136,11 +139,12 @@ export function PubView({ me, refresh, onLeave }: { me: Me; refresh(): Promise<u
   // Holding dice: a stray click on the floor would walk away from the table and forfeit, so the floor is ignored until the game is over.
   const holdingDice =
     (pub.dice?.phase === "playing" && pub.dice.seats.some((s) => s.id === you && s.count > 0)) ||
-    (pub.shoals?.phase === "playing" && pub.shoals.seats.some((s) => s.id === you && s.count > 0));
+    (pub.shoals?.phase === "playing" && pub.shoals.seats.some((s) => s.id === you && s.count > 0)) ||
+    (pub.crew?.phase === "playing" && pub.crew.seats.some((s) => s.id === you && s.contending && !s.forfeited));
   const pinned = useRef(holdingDice);
   pinned.current = holdingDice;
   // Gold moves when a dice game starts and when it ends.
-  const dicePhase = `${pub.dice?.phase}|${pub.shoals?.phase}`;
+  const dicePhase = `${pub.dice?.phase}|${pub.shoals?.phase}|${pub.crew?.phase}`;
   useEffect(() => {
     if (/playing|done/.test(dicePhase)) void refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -245,18 +249,20 @@ export function PubView({ me, refresh, onLeave }: { me: Me; refresh(): Promise<u
   const atCounter = !!self && same(self.pos, PUB_COUNTER);
   const atDice = !!self && same(self.pos, PUB_DICE);
   const atShoals = !!self && same(self.pos, PUB_SHOALS);
+  const atCrew = !!self && same(self.pos, PUB_CREW);
   const atDoor = !!self && same(self.pos, DOOR);
   // Sitting at a table: first person, until you stand up. Standing up walks you out to the floor beside it.
-  const [stood, setStood] = useState<"dice" | "shoals" | null>(null);
-  const seatedAt: "dice" | "shoals" | null = atDice && stood !== "dice" ? "dice" : atShoals && stood !== "shoals" ? "shoals" : null;
+  const [stood, setStood] = useState<TableName | null>(null);
+  const seatedAt: TableName | null = atDice && stood !== "dice" ? "dice" : atShoals && stood !== "shoals" ? "shoals" : atCrew && stood !== "crew" ? "crew" : null;
   useEffect(() => {
     if (stood === "dice" && !atDice) setStood(null);
     if (stood === "shoals" && !atShoals) setStood(null);
-  }, [stood, atDice, atShoals]);
-  const standFrom = (table: "dice" | "shoals") => {
+    if (stood === "crew" && !atCrew) setStood(null);
+  }, [stood, atDice, atShoals, atCrew]);
+  const standFrom = (table: TableName) => {
     setStood(table);
-    const from = table === "dice" ? PUB_DICE : PUB_SHOALS;
-    const away = hexNeighbors(from, PUB_GRID).filter((n) => ![PUB_COUNTER, PUB_DICE, PUB_SHOALS, PUB_TRADER, PUB_DEALER_STAND].some((p) => same(p, n)) && pubPath(ROOM, from, n));
+    const from = TABLE_HEX[table];
+    const away = hexNeighbors(from, PUB_GRID).filter((n) => ![PUB_COUNTER, PUB_DICE, PUB_SHOALS, PUB_CREW, PUB_TRADER, PUB_DEALER_STAND].some((p) => same(p, n)) && pubPath(ROOM, from, n));
     // The floor south of the table first, toward the room.
     away.sort((a, b) => b.r - a.r);
     if (away[0]) pub.send({ type: "move", to: away[0] });
@@ -302,6 +308,7 @@ export function PubView({ me, refresh, onLeave }: { me: Me; refresh(): Promise<u
     : hoverPoi.kind === "dealer" ? `Where you stand to deal with ${PUB_DEALER.name}: contracts and the crew's goal`
     : hoverPoi.kind === "trader" ? (seller ? `Trade with ${seller.name}, ${seller.trade}` : "The corner where traveling salesmen set up. Empty for now.")
     : hoverPoi.kind === "shoals" ? "Shoals: lay your markers, bid, and sail without running aground"
+    : hoverPoi.kind === "crew" ? "Ship, Captain & Crew: roll a 6, a 5 and a 4, then the best cargo wins"
     : hoverPoi.kind === "door" ? "The door back to the Harbor"
     : null;
 
@@ -418,6 +425,7 @@ export function PubView({ me, refresh, onLeave }: { me: Me; refresh(): Promise<u
       {you && atDealer && dealing && <DealerPanel refresh={refresh} onClose={() => setDealing(false)} />}
       {you && talking && regs && <RegularPanel key={talking.regular} view={talking} handedIn={regs.handedIn} cap={regs.cap} reload={loadRegs} refresh={refresh} onClose={() => setTalkTo(null)} />}
       {you && seatedAt === "shoals" && <ShoalsTable table={pub.shoals} you={you} gold={gold} error={pub.shoalsError} lastXp={pub.lastXp} looks={looks} world={renderer} host={{ hex: PUB_SHOALS, hide: players.filter((p) => same(p.pos, PUB_SHOALS)).map((p) => p.id), onStand: () => standFrom("shoals") }} send={(action) => pub.send({ type: "shoals", action })} />}
+      {you && seatedAt === "crew" && <CrewTable table={pub.crew} you={you} gold={gold} error={pub.crewError} lastXp={pub.lastXp} looks={looks} world={renderer} host={{ hex: PUB_CREW, hide: players.filter((p) => same(p.pos, PUB_CREW)).map((p) => p.id), onStand: () => standFrom("crew") }} send={(action) => pub.send({ type: "crew", action })} />}
       {you && seatedAt === "dice" && <DiceTable table={pub.dice} you={you} gold={gold} error={pub.diceError} lastXp={pub.lastXp} looks={looks} world={renderer} host={{ hex: PUB_DICE, hide: players.filter((p) => same(p.pos, PUB_DICE)).map((p) => p.id), onStand: () => standFrom("dice") }} send={(action) => pub.send({ type: "dice", action })} />}
 
       {you && <>
@@ -449,6 +457,7 @@ export function PubView({ me, refresh, onLeave }: { me: Me; refresh(): Promise<u
           : atCounter ? <span>At the bar.</span>
           : atDice ? <span>At the dice table.</span>
           : atShoals ? <span>At the Shoals table.</span>
+          : atCrew ? <span>At the Ship, Captain &amp; Crew table.</span>
           : near ? <span>Beside {near.name}, {near.trade}.</span>
           : atDealer ? <span>Beside {PUB_DEALER.name}, {PUB_DEALER.trade}.</span>
           : atTrader ? (seller ? <span>At {seller.name}'s table.</span> : <span className="muted">The corner is empty.{due && ` ${due.name} is due ${dueIn(visitor.next!.startsAt - visitor.now)}.`}</span>)
