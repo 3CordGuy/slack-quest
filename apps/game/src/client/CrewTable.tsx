@@ -6,7 +6,7 @@
 // itself is which of your cargo dice you mean to keep, until you roll.
 
 import { useEffect, useMemo, useState, type RefObject } from "react";
-import { CREW_ANTES, CREW_KRAKEN, CREW_MAX_PLAYERS, CREW_MIN_PLAYERS, CREW_NEEDS, CREW_ROLLS, crewHold, type CrewRequest, type CrewSeatView, type CrewView } from "@gantt-quest/world";
+import { CREW_ANTES, CREW_CAPTAIN, CREW_KRAKEN, CREW_MAX_PLAYERS, CREW_MIN_PLAYERS, CREW_NEEDS, CREW_ROLLS, crewHold, type CrewRequest, type CrewSeatView, type CrewView } from "@gantt-quest/world";
 import type { SeatInfo } from "./render/TableStage";
 import type { WorldRenderer } from "./render/WorldRenderer";
 import { CREW_FACE_NAME, crewFaceUrl, dieFaceUrl } from "./crewArt";
@@ -31,19 +31,19 @@ interface Props {
   send(action: CrewRequest): void;
 }
 
-/** Ship and captain as small pictures, lit as they come in. */
-function Needs({ held }: { held: number }) {
+/** Ship and captain as small pictures, lit while you have them. */
+function Needs({ ship, captain }: { ship: boolean; captain: boolean }) {
   return (
     <span className="crew-needs">
-      {CREW_NEEDS.map((face, i) => (
-        <img key={face} className={`pixel-icon${i < held ? "" : " crew-missing"}`} src={crewFaceUrl(face)} width={40} height={40} alt={CREW_FACE_NAME[face]} title={`${CREW_FACE_NAME[face]} (${face})${i < held ? ": in" : ""}`} draggable={false} />
+      {([[6, ship], [CREW_CAPTAIN, captain]] as const).map(([face, have]) => (
+        <img key={face} className={`pixel-icon${have ? "" : " crew-missing"}`} src={crewFaceUrl(face)} width={40} height={40} alt={CREW_FACE_NAME[face]} title={`${CREW_FACE_NAME[face]} (${face})${have ? ": in" : ""}`} draggable={false} />
       ))}
     </span>
   );
 }
 
 /** A turn that came to nothing, said over their head. A cargo goes in a crate by their name instead. */
-const lossChip = (s: CrewSeatView) => (s.score === 0 ? (s.lost === "kraken" ? "kraken" : "adrift") : null);
+const lossChip = (s: CrewSeatView) => (s.score === 0 ? (s.lost === "kraken" ? "kraken" : s.lost === "captainless" ? "no captain" : "adrift") : null);
 
 export function CrewTable({ table, you, gold, error, lastXp, looks, world, host, send }: Props) {
   const [rules, setRules] = useState(false);
@@ -55,7 +55,7 @@ export function CrewTable({ table, you, gold, error, lastXp, looks, world, host,
   const myTurn = table?.phase === "playing" && table.turn === you;
   const inGame = table?.phase === "playing" && !!mine && mine.contending && !mine.forfeited;
   const left = table ? CREW_ROLLS - table.rolls : 0;
-  /** Ship and captain are in, so the other three dice are cargo. */
+  /** The ship is in, so the other four dice are yours to keep or roll: a captain and three of cargo. */
   const loading = !!table && table.phase === "playing" && table.held >= CREW_NEEDS.length && table.rolls > 0;
   /** The best cargo made so far this round, and who made it. */
   const best = Math.max(0, ...seats.filter((s) => s.contending && !s.forfeited).map((s) => s.score ?? 0));
@@ -94,19 +94,20 @@ export function CrewTable({ table, you, gold, error, lastXp, looks, world, host,
     }
     if (myTurn) {
       const beat = best > 0 ? ` ${leadText} ${leaders.length > 1 ? "have" : "has"} ${best} to beat.` : "";
-      if (table.rolls === 0) return `Your turn: roll. You need a 6 (ship), then a 5 (captain).${beat}`;
+      if (table.rolls === 0) return `Your turn: roll. First you need a 6 (ship).${beat}`;
       if (loading) {
-        const kraken = krakens > 0 ? ` ${krakens === 1 ? "A Kraken is" : `${krakens} Krakens are`} in it: roll ${krakens === 1 ? "it" : "them"} away or lose the lot.` : "";
-        return `Cargo ${table.cargo}.${kraken}${beat} Pick dice to keep and roll the rest, or stand. ${rollsLeft(left)}.`;
+        const kraken = krakens > 0 ? ` ${krakens === 1 ? "A Kraken is" : `${krakens} Krakens are`} among them: roll ${krakens === 1 ? "it" : "them"} away or lose the lot.` : "";
+        const aboard = table.captain ? `Captain aboard, cargo ${table.cargo}.` : "No captain yet: you need a 5 among your dice.";
+        const end = left > 0 ? ` Pick dice to keep and roll the rest${table.captain && !krakens ? ", or stand" : ""}. ${rollsLeft(left)}.` : "";
+        return `${aboard}${kraken}${beat}${end}`;
       }
-      const need = CREW_NEEDS[table.held];
-      return `Still looking for a ${need} (${CREW_FACE_NAME[need].toLowerCase()}). ${rollsLeft(left)}.`;
+      return `Still looking for a 6 (ship). ${rollsLeft(left)}.`;
     }
     if (mine && !mine.contending && !mine.forfeited) return `You are out of this roll-off. Waiting for ${name(table.turn!)}.`;
     // Your own score is not over your head (it would hang in front of your eyes), so it is said here.
     const yours = mine?.score === null || mine?.score === undefined ? ""
       : mine.score > 0 ? `Your cargo is ${mine.score}${leaders.some((l) => l.id === you) ? ", the best so far" : ""}. `
-      : mine.lost === "kraken" ? "The Kraken took your cargo. " : "No ship and captain for you this round. ";
+      : mine.lost === "kraken" ? "The Kraken took your cargo. " : mine.lost === "captainless" ? "No captain for your cargo this round. " : "No ship for you this round. ";
     const toBeat = best > 0 && !leaders.some((l) => l.id === you) ? `${leadText} ${leaders.length > 1 ? "lead" : "leads"} with ${best}. ` : "";
     return mine && mine.contending ? `${yours}${toBeat}Waiting for ${name(table.turn!)}.` : "You are watching.";
   })();
@@ -158,6 +159,7 @@ export function CrewTable({ table, you, gold, error, lastXp, looks, world, host,
     const main = !table || table.phase === "open" ? {}
       : table.phase === "done" ? { main: `${table.prize} gold` }
       : table.cargo !== null ? { main: table.kraken ? `cargo ${table.cargo}?` : `cargo ${table.cargo}` }
+      : loading ? { main: "no captain" }
       : { main: rollsLeft(left) };
     const xp = table?.phase === "done" && lastXp?.id === table.winner && lastXp.amount > 0 ? `+${lastXp.amount} XP` : undefined;
     stage.setCard({ caption, ...main, prompt: reading, foot: xp, yours: myTurn });
@@ -200,7 +202,7 @@ export function CrewTable({ table, you, gold, error, lastXp, looks, world, host,
 
       {myTurn && !loading && (
         <div className="td-row">
-          <Needs held={table!.rolls > 0 ? table!.held : 0} />
+          <Needs ship={false} captain={false} />
           <button className="primary" disabled={left <= 0} onClick={() => send({ type: "roll" })}>
             {table!.rolls === 0 ? "Roll" : "Roll again"} ({left} left)
           </button>
@@ -209,8 +211,8 @@ export function CrewTable({ table, you, gold, error, lastXp, looks, world, host,
 
       {myTurn && loading && (
         <div className="td-row">
-          <span className="td-label">Cargo</span>
-          <span className="crew-cargo" role="group" aria-label="Your cargo dice: pick the ones to keep">
+          <Needs ship captain={table!.captain} />
+          <span className="crew-cargo" role="group" aria-label="Your dice after the ship: pick the ones to keep">
             {table!.dice.map((d, i) => {
               const kraken = d === CREW_KRAKEN;
               const kept = keep.includes(i);
@@ -225,8 +227,8 @@ export function CrewTable({ table, you, gold, error, lastXp, looks, world, host,
           <button className="primary" disabled={!canKeep || rolling < 1} onClick={() => send({ type: "roll", keep })}>
             Roll {rolling === table!.dice.length ? "all" : rolling} ({left} left)
           </button>
-          <button disabled={krakens > 0} title={krakens > 0 ? "Not with a Kraken in your cargo: roll it away first" : undefined} onClick={() => send({ type: "stand" })}>
-            Stand on {table!.cargo}
+          <button disabled={krakens > 0 || !table!.captain} title={krakens > 0 ? "Not with a Kraken among your dice: roll it away first" : !table!.captain ? "You need a captain (a 5) first" : undefined} onClick={() => send({ type: "stand" })}>
+            {table!.cargo !== null ? `Stand on ${table!.cargo}` : "Stand"}
           </button>
         </div>
       )}
@@ -240,12 +242,11 @@ export function CrewTable({ table, you, gold, error, lastXp, looks, world, host,
       </div>
       {rules && (
         <ol className="td-rules muted">
-          <li><strong>The dice:</strong> the 6 is printed with a ship, the 5 with a captain and the 1 with the Kraken; 2, 3 and 4 are plain pips. A ship or captain in your cargo just counts 6 or 5.</li>
-          <li><strong>The idea:</strong> on your turn you roll five dice, up to {CREW_ROLLS} times. First you need a <em>6 (the ship)</em>, then a <em>5 (the captain)</em>. Each is set aside as soon as you roll it, and a 5 does not count until you have your 6. A lucky roll brings in both at once.</li>
-          <li><strong>Cargo:</strong> once ship and captain are in, your other three dice are the cargo, and they add up to your score (up to 18).</li>
-          <li><strong>The choice:</strong> with rolls left, click the cargo dice you want to keep (on the table or below), and roll the rest again. Or press <strong>Stand</strong> to end your turn on what you have.</li>
-          <li><strong>The Kraken:</strong> a 1 in your cargo is the Kraken. You can roll it again, but if a Kraken is still there when your rolls run out, it takes your whole cargo and you score nothing. You cannot stand with one showing. Every die you roll again could raise your score or bring up a Kraken, so the more you chase, the more you risk.</li>
-          <li><strong>No ship and captain, no score:</strong> run out of rolls before you have both, and you score nothing too.</li>
+          <li><strong>The dice:</strong> the 6 is printed with a ship, the 5 with a captain and the 1 with the Kraken; 2, 3 and 4 are plain pips.</li>
+          <li><strong>Ship first:</strong> on your turn you roll five dice, up to {CREW_ROLLS} times. Nothing counts until a 6 comes up: the first one is your ship, and it is set aside.</li>
+          <li><strong>Then it is up to you:</strong> the other four dice are yours to play with. With rolls left, click the ones you want to keep (on the table or below) and roll the rest again, or press <strong>Stand</strong>.</li>
+          <li><strong>Captain and cargo:</strong> among those four you need a 5, your captain. The other three are your cargo, added up for your score (up to 18). You need not keep a captain first: land good cargo and gamble your last rolls on a 5 coming up. End without a captain and your cargo goes nowhere: you score nothing.</li>
+          <li><strong>The Kraken:</strong> a 1 is the Kraken. You can roll it again, but if a Kraken is still among your dice when your rolls run out, it takes everything and you score nothing. You cannot stand with one showing, or without a captain. Every die you roll again could raise your score, bring in your captain, or sink you.</li>
           <li><strong>Winning:</strong> when everyone has had a turn, the highest cargo takes the pot (the house keeps 10%). The scores so far are in the crates by everyone's names, the best banded in gold. If the best is tied, only those tied roll again. If nobody scored, everyone rolls again.</li>
         </ol>
       )}
