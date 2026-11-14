@@ -308,7 +308,7 @@ export function PubView({ me, refresh, onLeave }: { me: Me; refresh(): Promise<u
     : hoverPoi.kind === "dealer" ? `Where you stand to deal with ${PUB_DEALER.name}: contracts and the crew's goal`
     : hoverPoi.kind === "trader" ? (seller ? `Trade with ${seller.name}, ${seller.trade}` : "The corner where traveling salesmen set up. Empty for now.")
     : hoverPoi.kind === "shoals" ? "Shoals: lay your markers, bid, and sail without running aground"
-    : hoverPoi.kind === "crew" ? "Ship, Captain & Kraken: roll a ship and a captain, then push your luck on the cargo"
+    : hoverPoi.kind === "crew" ? "Ship, Captain & Kraken: roll a ship, then gamble for a captain and cargo, and beware the Kraken"
     : hoverPoi.kind === "door" ? "The door back to the Harbor"
     : null;
 
