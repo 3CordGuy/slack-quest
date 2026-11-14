@@ -55,7 +55,10 @@ export function CrewTable({ table, you, gold, error, lastXp, looks, world, host,
   const seats = table?.seats ?? [];
   const seated = seats.some((s) => s.id === you);
   const mine = seats.find((s) => s.id === you);
-  const myTurn = table?.phase === "playing" && table.turn === you;
+  /** Everyone plays each round at once: you are still rolling this one. */
+  const myTurn = table?.phase === "playing" && table.due.includes(you);
+  /** Who else is still rolling this round, by name. */
+  const waiting = (table?.due ?? []).filter((id) => id !== you).map(short).join(" and ");
   const inGame = table?.phase === "playing" && !!mine && mine.contending && !mine.forfeited;
   const left = table ? CREW_ROLLS - table.rolls : 0;
   /** The ship is in, so the other four dice are yours to keep or roll: a captain and three of cargo. */
@@ -73,10 +76,10 @@ export function CrewTable({ table, you, gold, error, lastXp, looks, world, host,
   // How many rounds to open the next table for.
   const [pickRounds, setPickRounds] = useState<number>(CREW_DEFAULT_ROUNDS);
 
-  // The dice you mean to hold on your next roll. Each throw starts it from what that throw held back, so a die you
-  // hold stays held from roll to roll until you click it again.
-  const [keep, setKeep] = useState<{ n: number; dice: number[] } | null>(null);
-  const throwN = table?.lastThrow?.n ?? 0;
+  // The dice you mean to hold on your next roll. Each of your throws starts it from what that throw held back, so a die
+  // you hold stays held from roll to roll until you click it again. Others throwing at the same time leave it be.
+  const [keep, setKeep] = useState<{ n: string; dice: number[] } | null>(null);
+  const throwN = table ? `${table.round}:${table.rolls}` : "";
   const heldLast = loading ? (table?.kept ?? []) : [];
   // A choice made before the latest throw no longer counts: start again from what it held.
   const holding = keep && keep.n === throwN ? keep.dice : heldLast;
@@ -119,7 +122,7 @@ export function CrewTable({ table, you, gold, error, lastXp, looks, world, host,
     if (myTurn) {
       const yourTotal = mine ? mine.total : 0;
       const beat = best <= 0 ? "" : many ? ` ${leadText} ${leaders.length > 1 ? "lead" : "leads"} with ${best} in all${leaders.some((l) => l.id === you) ? "" : `; you have ${yourTotal}`}.` : ` ${leadText} ${leaders.length > 1 ? "have" : "has"} ${best} to beat.`;
-      if (table.rolls === 0) return `Your turn: roll. First you need a 6 (ship).${beat}`;
+      if (table.rolls === 0) return `${table.round > 1 ? "A new round: everyone" : "Everyone"} rolls at once. Roll: first you need a 6 (ship).${beat}`;
       if (loading) {
         const kraken = krakens > 0 ? ` ${krakens === 1 ? "A Kraken is" : `${krakens} Krakens are`} among them: roll ${krakens === 1 ? "it" : "them"} away or lose the lot.` : "";
         const aboard = table.captain ? `Captain aboard, cargo ${table.cargo}.` : "No captain yet: you need a 5 among your dice.";
@@ -128,14 +131,14 @@ export function CrewTable({ table, you, gold, error, lastXp, looks, world, host,
       }
       return `Still looking for a 6 (ship). ${rollsLeft(left)}.`;
     }
-    if (mine && !mine.contending && !mine.forfeited) return `You are out of this roll-off. Waiting for ${name(table.turn!)}.`;
+    if (mine && !mine.contending && !mine.forfeited) return `You are out of this roll-off. ${waiting ? `Waiting for ${waiting}.` : ""}`;
     // Your own score is not over your head (it would hang in front of your eyes), so it is said here.
     const inAll = many && mine ? ` (${standing(mine)} in all)` : "";
     const yours = mine?.score === null || mine?.score === undefined ? (many && mine && mine.total > 0 ? `You have ${mine.total} in all. ` : "")
       : mine.score > 0 ? `Your cargo ${many ? "this round " : ""}is ${mine.score}${inAll}${leaders.some((l) => l.id === you) ? ", the best so far" : ""}. `
       : `${mine.lost === "kraken" ? "The Kraken took your cargo" : mine.lost === "captainless" ? "No captain for your cargo this round" : mine.lost === "empty" ? "Your captain came home with an empty hold" : "No ship for you this round"}${inAll}. `;
     const toBeat = best > 0 && !leaders.some((l) => l.id === you) ? `${leadText} ${leaders.length > 1 ? "lead" : "leads"} with ${best}. ` : "";
-    return mine && mine.contending ? `${yours}${toBeat}Waiting for ${name(table.turn!)}.` : "You are watching.";
+    return mine && mine.contending ? `${yours}${toBeat}${waiting ? `Waiting for ${waiting} to finish.` : ""}` : "You are watching.";
   })();
 
   const reading = lastLine ? `${lastLine} ${status}` : status;
@@ -148,10 +151,10 @@ export function CrewTable({ table, you, gold, error, lastXp, looks, world, host,
       const playing = table?.phase === "playing";
       const out = !!table && table.phase !== "open" && (s.forfeited || (playing && !s.contending));
       const won = table?.phase === "done" && table.winner === s.id;
-      const turn = playing && table!.turn === s.id;
-      // The scoreboard is by everyone's names: each one's cargo in a crate (over the table's rounds, their running total), the best gold-banded, and a lost turn said in red over their head.
+      const turn = playing && table!.due.includes(s.id);
+      // The scoreboard is by everyone's names: each one's cargo in a crate (over the table's rounds, their running total), the best gold-banded, and a lost round said in red over their head.
       const lost = s.contending ? lossChip(s) : null;
-      const chip = won ? "winner" : out ? (s.forfeited ? "left" : "out") : table?.phase === "open" && s.id === table.host ? "opened" : turn ? "to play" : lost;
+      const chip = won ? "winner" : out ? (s.forfeited ? "left" : "out") : table?.phase === "open" && s.id === table.host ? "opened" : turn ? "rolling" : lost;
       const chipInk = chip && chip === lost ? "#f08a8a" : undefined;
       const shown = table?.phase === "done" ? (rounds > 1 && (table.last?.round ?? 0) <= rounds ? s.total : (s.score ?? 0)) : standing(s);
       const crate = (s.contending || won) && shown > 0 ? { score: shown, lead: shown === best || won } : undefined;
@@ -162,7 +165,7 @@ export function CrewTable({ table, you, gold, error, lastXp, looks, world, host,
     stage.syncCrew(
       table && table.phase !== "open"
         ? {
-            // Every throw is seen, even one that ended a turn (the turn has already passed on): its dice are then the hand the player ended on.
+            // Every throw is seen, anyone's, even one that ended their round: its dice are then the hand they finished on.
             rollKey: String(lt?.n ?? 0),
             rolled: lt?.by ?? null,
             sunk: !!lt?.kraken,
@@ -170,11 +173,11 @@ export function CrewTable({ table, you, gold, error, lastXp, looks, world, host,
             seats: table.seats.map((s) => {
               const theirs = lt?.by === s.id;
               const thrown = { fresh: theirs ? lt.fresh : 0, thrown: theirs ? lt.thrown : undefined };
-              // The player rolling now shows this turn's dice; everyone else, the five they last ended a turn on.
-              if (table.phase === "playing" && table.turn === s.id && table.rolls > 0) {
-                const cargo = table.held >= CREW_NEEDS.length;
+              // Anyone rolling this round shows this round's dice once they have thrown; everyone else, the five they last finished on.
+              if (table.phase === "playing" && s.due && s.play.rolls > 0) {
+                const cargo = s.play.held >= CREW_NEEDS.length;
                 // Your own held dice are the ones you have picked; anyone else's, what their last roll held back.
-                return { id: s.id, held: CREW_NEEDS.slice(0, table.held), free: table.dice, cargo, ...thrown, ...(s.id === you ? { keep: holding, canKeep } : { keep: cargo ? table.kept : [] }) };
+                return { id: s.id, held: CREW_NEEDS.slice(0, s.play.held), free: s.play.dice, cargo, ...thrown, ...(s.id === you ? { keep: holding, canKeep } : { keep: cargo ? s.play.kept : [] }) };
               }
               const { held } = crewHold(0, s.hand);
               // Dice the Kraken took are under the table, not on it.
@@ -267,7 +270,7 @@ export function CrewTable({ table, you, gold, error, lastXp, looks, world, host,
           <div className="crew-pool" role="group" aria-label="Held: the ship, which stays all turn, and the dice you hold. Click a held die to roll it again">
             <span className="td-label">Held <span className="crew-sum">{captainIx < 0 ? "· no captain yet" : cargoDice.length ? `· cargo ${cargoDice.join("+")} = ${table!.cargo}` : "· empty hold"}</span></span>
             <div className="crew-pool-dice">
-              <span className="crew-die held ship" title="Ship: needed, so it stays held for the rest of your turn">
+              <span className="crew-die held ship" title="Ship: needed, so it stays held for the rest of the round">
                 <span className="crew-die-role">Ship</span>
                 <img className="pixel-icon" src={crewFaceUrl(6)} width={28} height={28} alt="Ship" draggable={false} />
                 <span className="crew-die-state">held</span>
@@ -302,11 +305,12 @@ export function CrewTable({ table, you, gold, error, lastXp, looks, world, host,
       {rules && (
         <ol className="td-rules muted">
           <li><strong>The dice:</strong> the 6 is printed with a ship, the 5 with a captain and the 1 with the Kraken; 2, 3 and 4 are plain pips.</li>
-          <li><strong>Ship first:</strong> on your turn you roll five dice, up to {CREW_ROLLS} times. Nothing counts until a 6 comes up: the first one is your ship, and it is set aside.</li>
+          <li><strong>Everyone at once:</strong> each round, everyone still in rolls their own dice at the same time; nobody waits for a turn. The round is over when everyone has stood or run out of rolls.</li>
+          <li><strong>Ship first:</strong> you roll five dice, up to {CREW_ROLLS} times. Nothing counts until a 6 comes up: the first one is your ship, and it is set aside.</li>
           <li><strong>Then it is up to you:</strong> the other four dice are yours to play with. With rolls left, click the ones you want to hold (on the table or below) and roll the rest again, or press <strong>Stand</strong>. A die you hold joins the ship in the held pool and stays held from roll to roll; click it again to roll it. The ship stays held all turn.</li>
           <li><strong>Captain and cargo:</strong> among those four you need a 5, your captain. Your cargo is the pip dice beside it, the 2s, 3s and 4s, added up for your score (up to 12). A second ship or a second captain keeps its picture but carries nothing, and neither does a Kraken. You need not keep a captain first: land good cargo and gamble your last rolls on a 5 coming up. End without a captain and your cargo goes nowhere: you score nothing.</li>
           <li><strong>The Kraken:</strong> a 1 is the Kraken. It can't be held, but you can roll it again, but if a Kraken is still among your dice when your rolls run out, it takes everything and you score nothing. You cannot stand with one showing, or without a captain. Every die you roll again could raise your score, bring in your captain, or sink you.</li>
-          <li><strong>Rounds:</strong> whoever opens the table picks how many rounds ({CREW_ROUND_CHOICES.join(", ")}; {CREW_DEFAULT_ROUNDS} unless they say). Each round everyone has a turn, and your cargo adds up from round to round.</li>
+          <li><strong>Rounds:</strong> whoever opens the table picks how many rounds ({CREW_ROUND_CHOICES.join(", ")}; {CREW_DEFAULT_ROUNDS} unless they say). Your cargo adds up from round to round.</li>
           <li><strong>Winning:</strong> after the last round, the highest total takes the pot (the house keeps 10%). The totals so far are in the crates by everyone's names, the best banded in gold. If the best is tied, only those tied roll off, a round at a time, on that round's cargo alone. If nobody has scored, everyone rolls again.</li>
         </ol>
       )}
