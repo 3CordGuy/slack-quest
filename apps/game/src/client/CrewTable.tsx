@@ -166,6 +166,7 @@ export function CrewTable({ table, you, gold, error, lastXp, looks, world, host,
             rollKey: String(lt?.n ?? 0),
             rolled: lt?.by ?? null,
             sunk: !!lt?.kraken,
+            round: table.round,
             seats: table.seats.map((s) => {
               const theirs = lt?.by === s.id;
               const thrown = { fresh: theirs ? lt.fresh : 0, thrown: theirs ? lt.thrown : undefined };
@@ -176,7 +177,8 @@ export function CrewTable({ table, you, gold, error, lastXp, looks, world, host,
                 return { id: s.id, held: CREW_NEEDS.slice(0, table.held), free: table.dice, cargo, ...thrown, ...(s.id === you ? { keep: holding, canKeep } : { keep: cargo ? table.kept : [] }) };
               }
               const { held } = crewHold(0, s.hand);
-              return { id: s.id, held: s.hand.slice(0, held), free: s.hand.slice(held), cargo: held >= CREW_NEEDS.length, ...thrown };
+              // Dice the Kraken took are under the table, not on it.
+              return { id: s.id, held: s.hand.slice(0, held), free: s.hand.slice(held), cargo: held >= CREW_NEEDS.length, taken: s.lost === "kraken", ...thrown };
             }),
           }
         : null,

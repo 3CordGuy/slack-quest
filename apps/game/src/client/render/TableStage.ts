@@ -76,11 +76,14 @@ export interface CrewScene {
    * Each seat's dice: ship and captain held (drawn as pictures), and the rest. `fresh`: how many of the held came in on
    * this roll; `thrown`: which of the rest were thrown in it (all, if not given). Once the cargo is in (`cargo`), a 1 in
    * it is the Kraken. `keep`: which of the rest are held; they sit lit in the held pool beside the ship. Your own dice can be
-   * clicked (`canKeep`) to hold a loose one or let a held one go. The ship cannot be let go.
+   * clicked (`canKeep`) to hold a loose one or let a held one go. The ship cannot be let go. `taken`: the Kraken has
+   * this seat's dice, so there are none to draw.
    */
-  seats: { id: string; held: number[]; free: number[]; fresh?: number; thrown?: number[]; cargo?: boolean; keep?: number[]; canKeep?: boolean }[];
+  seats: { id: string; held: number[]; free: number[]; fresh?: number; thrown?: number[]; cargo?: boolean; keep?: number[]; canKeep?: boolean; taken?: boolean }[];
   /** The latest throw left a Kraken in the cargo as the rolls ran out. */
   sunk?: boolean;
+  /** The round being played: when it changes, anyone the Kraken robbed is dealt their dice again. */
+  round?: number;
 }
 
 export interface TideScene {
@@ -181,6 +184,25 @@ const THROW_S = 0.95;
 const LANDINGS = [0.36, 0.62, 0.8, 0.92];
 const BOUNCES = [0.07, 0.03, 0.01];
 
+/** When the Kraken comes for a sunk throw: just after its last die has stopped. */
+const KRAKEN_AT = SHAKE_S + THROW_S + 0.25;
+/** The Kraken's visit, in seconds: its arms come up out of the table, close over the dice, drag them under, and the water shuts. */
+const ARMS_UP_S = 0.45;
+const ARMS_CURL_S = 0.3;
+const ARMS_PULL_S = 0.55;
+const POOL_SHUT_S = 0.25;
+const SINK_S = ARMS_UP_S + ARMS_CURL_S + ARMS_PULL_S + POOL_SHUT_S;
+/** The dark water it comes out of, across and deep (the rig's x and z), round the seat's dice. */
+const POOL_X = 0.3;
+const POOL_Z = 0.19;
+const ARMS = 6;
+const ARM_JOINTS = 7;
+const ARM_SEG = 0.05;
+/** New dice for a seat the Kraken robbed: how high over the table they appear, how long they hang there, and the pause before them. */
+const DROP_H = 0.42;
+const HANG_S = 0.22;
+const REDEAL_S = 0.35;
+
 /** A die in the air: where it left the cup and where it comes to rest (in its seat's frame), how it tumbles, and when. */
 interface Throw {
   from: THREE.Vector3;
@@ -190,6 +212,22 @@ interface Throw {
   delay: number;
   /** Seconds since the throw was made, the shake included. */
   t: number;
+  /** Seconds it hangs where it starts, popping into being, before it falls (dice dealt out of the air). */
+  hang?: number;
+}
+
+/** The Kraken at a seat's dice (in the rig's frame). */
+interface Sink {
+  group: THREE.Group;
+  /** Seconds since it came up; below zero, it is waiting for the dice to stop. */
+  t: number;
+  pool: THREE.Mesh;
+  ripple: THREE.Mesh;
+  /** Each arm's joints from the water up, every one a child of the one before. */
+  arms: { joints: THREE.Group[]; phase: number }[];
+  /** The dice it is taking and the height each lay at, once it has come up. */
+  dice: { o: THREE.Object3D; y: number }[] | null;
+  dispose(): void;
 }
 
 /** Height over its resting place a die is at, `k` of the way through a throw that began `drop` above it: an arc down to the felt, then a few bounces. */
@@ -209,6 +247,9 @@ function throwHeight(k: number, drop: number): number {
 }
 
 const smoother = (t: number) => t * t * t * (t * (t * 6 - 15) + 10);
+const clamp01 = (t: number) => Math.min(1, Math.max(0, t));
+/** 0 to 1, overshooting a little before it settles. */
+const popOut = (t: number) => 1 + 2.7 * (t - 1) ** 3 + 1.7 * (t - 1) ** 2;
 const lambert = (color: string, emissive?: string) => new THREE.MeshLambertMaterial({ color, flatShading: true, emissive: emissive ?? "#000000" });
 /** A material showing a texture that also lights itself a little, so the art reads in the pub's dim light. */
 const glowing = (map: THREE.Texture, glow = 0.45) => new THREE.MeshLambertMaterial({ map, flatShading: true, emissive: "#ffffff", emissiveMap: map, emissiveIntensity: glow });
@@ -519,7 +560,14 @@ interface Rig {
   tallyKey: string;
   info: SeatInfo | null;
   itemsKey: string;
-
+  /** The Kraken, while it is at this seat's dice. */
+  sink: Sink | null;
+  /** The hand the Kraken took (or is taking): while the seat still has it, there are no dice to draw. */
+  sunkHand: string | null;
+  /** New dice are due: seconds until they drop, once the Kraken has gone. */
+  redeal: number | null;
+  /** The next dice built here fall out of the air. */
+  dropIn: boolean;
 }
 
 const FACE_NORMAL: Record<number, THREE.Vector3> = {
@@ -587,6 +635,8 @@ export class TableStage implements WorldMinigame {
   /** Cargo and Krakens' dice: the ship printed on the 6, the captain on the 5 and the Kraken on the 1, pips on the rest; and the same lit, for a kept die. */
   private crewDice: { shown: THREE.Material[]; lit: THREE.Material[] } | null = null;
   private lastRoll = "";
+  private crewScene: CrewScene | null = null;
+  private lastCrewRound: number | undefined;
   /** The dice have been told what is on the table at least once: a change after that is a roll to be seen and heard, not the state you sat down to. */
   private primed = false;
   private lastReveal = "";
@@ -712,7 +762,7 @@ export class TableStage implements WorldMinigame {
     const items = new THREE.Group();
     rig.add(folk, ring, items);
     this.group.add(rig);
-    return { id, rig, folk, mine: false, sit: 1, seat, figure: null, plate, chip, tally, ring, items, yaw: 0, goal: 0, look: "", plateKey: "", chipKey: "", tallyKey: "", info: null, itemsKey: "" };
+    return { id, rig, folk, mine: false, sit: 1, seat, figure: null, plate, chip, tally, ring, items, yaw: 0, goal: 0, look: "", plateKey: "", chipKey: "", tallyKey: "", info: null, itemsKey: "", sink: null, sunkHand: null, redeal: null, dropIn: false };
   }
 
   // ---------- what the panel tells it ----------
@@ -888,7 +938,131 @@ export class TableStage implements WorldMinigame {
     });
     sounds.table("roll", { delay: SHAKE_S + THROW_S * LANDINGS[0], gainDb: quiet });
     // The Kraken rises as the last die stops.
-    if (opts.sunk) sounds.table("kraken", { delay: SHAKE_S + THROW_S + 0.25 });
+    if (opts.sunk) sounds.table("kraken", { delay: KRAKEN_AT });
+  }
+
+  /** Deal these dice (wrappers standing where they will rest) out of the air: each pops into being over its place, hangs a moment, and drops. */
+  private dropDice(wraps: THREE.Object3D[], yours: boolean) {
+    const quiet = yours ? -3 : -8;
+    wraps.forEach((wrap, i) => {
+      const to = wrap.position.clone();
+      const from = to.clone().setY(to.y + DROP_H + Math.random() * 0.05);
+      const axis = new THREE.Vector3(Math.random() - 0.5, Math.random() * 0.3, Math.random() - 0.5).normalize();
+      const delay = i * 0.06 + Math.random() * 0.03;
+      wrap.userData.throw = { from, to, axis, turns: 1 + Math.random(), delay, t: 0, hang: HANG_S } satisfies Throw;
+      wrap.position.copy(from);
+      wrap.scale.setScalar(0.001);
+      wrap.visible = false;
+      sounds.table("settle", { delay: delay + HANG_S + THROW_S * 0.9, gainDb: quiet });
+    });
+    if (wraps.length) sounds.table("roll", { delay: HANG_S + THROW_S * LANDINGS[0], gainDb: quiet });
+  }
+
+  /** The Kraken for this seat's dice: a pool of dark water round them and its arms, all still under the table. */
+  private makeSink(r: Rig): Sink {
+    const group = new THREE.Group();
+    group.position.set(0, TOP + 0.01, STACK_Z - 0.02);
+    const flat = (geo: THREE.BufferGeometry, color: string) => {
+      // Lying on the cloth: nudged toward the eye so the two do not fight.
+      const m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }));
+      m.rotation.x = -Math.PI / 2;
+      group.add(m);
+      return m;
+    };
+    const pool = flat(new THREE.CircleGeometry(1, 28), "#07131c");
+    const ripple = flat(new THREE.RingGeometry(0.86, 1, 28), "#8fd6e6");
+    ripple.visible = false;
+    const skin = lambert("#8a3fa0", "#2b1033");
+    // An arm's pieces, thick at the water and thin at the tip, each standing on its own foot.
+    const segs = Array.from({ length: ARM_JOINTS }, (_, i) => {
+      const at = (j: number) => 0.024 - (0.019 * j) / ARM_JOINTS;
+      return new THREE.CylinderGeometry(at(i + 1), at(i), ARM_SEG, 6).translate(0, ARM_SEG / 2, 0);
+    });
+    const arms = Array.from({ length: ARMS }, (_, a) => {
+      const angle = (a / ARMS) * Math.PI * 2 + 0.3;
+      const root = new THREE.Group();
+      root.position.set(Math.cos(angle) * POOL_X * 0.82, 0, Math.sin(angle) * POOL_Z * 0.82);
+      // Its +z toward the middle of the pool, which is the way it curls.
+      root.rotation.y = Math.atan2(-root.position.x, -root.position.z);
+      root.scale.setScalar(a % 2 ? 0.8 : 1);
+      group.add(root);
+      const joints: THREE.Group[] = [];
+      let parent: THREE.Object3D = root;
+      for (let i = 0; i < ARM_JOINTS; i++) {
+        const joint = new THREE.Group();
+        joint.position.y = i ? ARM_SEG : 0;
+        joint.scale.setScalar(0.001);
+        joint.add(new THREE.Mesh(segs[i], skin));
+        parent.add(joint);
+        parent = joint;
+        joints.push(joint);
+      }
+      return { joints, phase: a * 1.9 };
+    });
+    group.visible = false;
+    r.rig.add(group);
+    const dispose = () => {
+      r.rig.remove(group);
+      for (const g of [...segs, pool.geometry, ripple.geometry]) g.dispose();
+      for (const m of [skin, pool.material, ripple.material]) (m as THREE.Material).dispose();
+    };
+    return { group, t: -KRAKEN_AT, pool, ripple, arms, dice: null, dispose };
+  }
+
+  /** The Kraken is done with this seat (or its dice have changed under it): take it away. `keep`: the dice stay gone. */
+  private endSink(r: Rig, keep = false) {
+    r.sink?.dispose();
+    r.sink = null;
+    if (!keep) {
+      r.sunkHand = null;
+      r.redeal = null;
+    }
+  }
+
+  /** A frame of the Kraken's visit: up out of the table, over the dice, and under with them. */
+  private animateSink(r: Rig, dt: number) {
+    const s = r.sink!;
+    s.t += dt;
+    if (s.t < 0) return;
+    const t = s.t;
+    s.group.visible = true;
+    s.dice ??= r.items.children.map((o) => ({ o, y: (o.userData.throw as Throw | undefined)?.to.y ?? o.position.y }));
+    const up = clamp01(t / ARMS_UP_S);
+    const curl = smoother(clamp01((t - ARMS_UP_S) / ARMS_CURL_S));
+    const pull = clamp01((t - ARMS_UP_S - ARMS_CURL_S) / ARMS_PULL_S) ** 2;
+    const shut = smoother(clamp01((t - (SINK_S - POOL_SHUT_S)) / POOL_SHUT_S));
+    const open = smoother(clamp01(t / 0.2)) * (1 - shut);
+    s.pool.scale.set(Math.max(0.001, POOL_X * open), Math.max(0.001, POOL_Z * open), 1);
+    (s.pool.material as THREE.MeshBasicMaterial).opacity = 0.92;
+    // A ring of foam runs out from where the arms close on the dice.
+    const wave = clamp01((t - ARMS_UP_S - ARMS_CURL_S * 0.6) / 0.45);
+    s.ripple.visible = wave > 0 && wave < 1;
+    s.ripple.scale.set(POOL_X * (0.7 + wave * 0.7), POOL_Z * (0.7 + wave * 0.7), 1);
+    (s.ripple.material as THREE.MeshBasicMaterial).opacity = 0.75 * (1 - wave);
+    // The arms grow from the water up, and go back down into it tip first.
+    const grown = (1 - (1 - up) ** 2) * (1 - smoother(clamp01((pull - 0.25) / 0.75)));
+    s.group.position.y = TOP + 0.01;
+    for (const arm of s.arms) {
+      arm.joints.forEach((joint, i) => {
+        joint.scale.setScalar(THREE.MathUtils.clamp(grown * ARM_JOINTS - i, 0.001, 1));
+        // Leaning out and swaying as it comes up; then every joint bends in over the dice.
+        const sway = Math.sin(t * 11 + arm.phase + i * 0.9) * 0.11 * (1 - curl);
+        joint.rotation.x = (i ? 0.05 : -0.4) + sway + curl * (i ? 0.44 + pull * 0.12 : 0.45);
+      });
+    }
+    s.dice.forEach(({ o, y }, i) => {
+      if (o.userData.throw) return;
+      // Rattled as the arms close; then down through the cloth, shrinking away as it goes under.
+      const drop = pull * 0.17;
+      o.position.y = y + Math.sin(t * 45 + i * 2.1) * 0.004 * curl * (1 - pull) - drop;
+      o.rotation.z = Math.sin(i * 3.7) * 0.5 * pull;
+      o.scale.setScalar(Math.max(0.001, 1 - smoother(clamp01((drop - 0.03) / 0.1))));
+    });
+    if (t < SINK_S) return;
+    // Gone, dice and all: the seat is bare until it is dealt new ones.
+    this.endSink(r, true);
+    r.items.clear();
+    r.itemsKey = "";
   }
 
   syncDice(scene: DiceScene | null) {
@@ -938,8 +1112,14 @@ export class TableStage implements WorldMinigame {
   syncCrew(scene: CrewScene | null) {
     const mats = this.dieMaterials();
     const rolled = !!scene && scene.rollKey !== this.lastRoll && this.primed;
+    // A new round (seen to begin, not found begun): whoever the Kraken robbed is dealt their dice again.
+    const newRound = !!scene && this.primed && this.lastCrewRound !== undefined && scene.round !== this.lastCrewRound;
     this.primed = true;
-    if (scene) this.lastRoll = scene.rollKey;
+    this.crewScene = scene;
+    if (scene) {
+      this.lastRoll = scene.rollKey;
+      this.lastCrewRound = scene.round;
+    }
     this.clickables = [];
     const size = DIE * 0.85;
     const geo = new THREE.BoxGeometry(size, size, size);
@@ -949,6 +1129,18 @@ export class TableStage implements WorldMinigame {
       const seat = scene?.seats.find((s) => s.id === r.id);
       const key = seat ? `${seat.held.join("")}|${seat.free.join("")}|${seat.cargo}|${seat.keep?.join(",")}|${seat.canKeep}` : "";
       const tumble = rolled && scene?.rolled === r.id;
+      // The Kraken has these dice, or is taking them: they are its to move, and then there are none, for as long as
+      // the seat's hand is the one it took.
+      const hand = seat ? `${seat.held.join("")}|${seat.free.join("")}` : "";
+      if (r.sunkHand !== null && (tumble || r.sunkHand !== hand)) this.endSink(r);
+      if (r.sunkHand === null && seat?.taken && !tumble) r.sunkHand = hand;
+      if (r.sunkHand !== null) {
+        if (!r.sink) {
+          r.items.clear();
+          r.itemsKey = "";
+        }
+        continue;
+      }
       if (key === r.itemsKey && !tumble) {
         // Clickables are rebuilt each time, so gather them again from what stays.
         r.items.traverse((o) => o.userData.action && this.clickables.push(o));
@@ -1004,7 +1196,13 @@ export class TableStage implements WorldMinigame {
         if (seat.canKeep && !(seat.cargo && v === 1)) clickable(wrap, i, size);
       });
       if (tumble) this.throwDice(thrown, { held, yours: r.mine, sunk: !!scene?.sunk });
+      if (tumble && scene?.sunk) {
+        r.sunkHand = hand;
+        r.sink = this.makeSink(r);
+      } else if (r.dropIn) this.dropDice([...r.items.children], r.mine);
+      r.dropIn = false;
     }
+    if (newRound) for (const r of this.rigs.values()) if (r.sunkHand !== null) r.redeal = REDEAL_S;
   }
 
   // ---------- shoals ----------
@@ -1580,14 +1778,25 @@ export class TableStage implements WorldMinigame {
       const stand = r.mine ? STOOD_AT + (STEP_IN - STOOD_AT) * this.newShare() : STEP_IN;
       r.seat.position.set(0, SEAT_Y * on + Math.sin(r.sit * Math.PI) * 0.1 + (info?.won ? Math.abs(Math.sin(this.clock * 5)) * 0.06 : 0), -stand * (1 - on));
       r.figure?.update({ time: this.clock, stride: 0, walking: false, lean: 0, lying: false, sitting: r.sit });
+      if (r.sink) this.animateSink(r, dt);
+      else if (r.redeal !== null && (r.redeal -= dt) <= 0) {
+        // The Kraken has gone and a new round is on: this seat's dice come back, out of the air.
+        r.redeal = null;
+        r.sunkHand = null;
+        r.dropIn = true;
+        this.syncCrew(this.crewScene);
+        r.dropIn = false;
+      }
       for (const wrap of r.items.children) {
         this.stepCard(wrap, dt);
         const th = wrap.userData.throw as Throw | undefined;
         if (!th) continue;
         th.t += dt;
-        const k = Math.min(1, Math.max(0, (th.t - th.delay) / THROW_S));
+        const k = clamp01((th.t - th.delay - (th.hang ?? 0)) / THROW_S);
         // Still in the cup until its moment comes.
         wrap.visible = th.t >= th.delay;
+        // Dealt out of the air: it swells into being where it hangs.
+        if (th.hang) wrap.scale.setScalar(Math.max(0.001, popOut(clamp01((th.t - th.delay) / th.hang))));
         // Out over the felt, slowing as it goes; down onto the cloth, then smaller and smaller bounces.
         const go = 1 - (1 - k) ** 3;
         wrap.position.x = th.from.x + (th.to.x - th.from.x) * go;
@@ -1598,6 +1807,7 @@ export class TableStage implements WorldMinigame {
         if (k >= 1) {
           wrap.position.copy(th.to);
           wrap.quaternion.identity();
+          wrap.scale.setScalar(1);
           wrap.visible = true;
           delete wrap.userData.throw;
         }
@@ -1652,6 +1862,7 @@ export class TableStage implements WorldMinigame {
   }
 
   private disposeRig(r: Rig) {
+    r.sink?.dispose();
     r.figure?.dispose();
     for (const s of [r.plate, r.chip, r.tally]) s.material.dispose();
     r.ring.geometry.dispose();
