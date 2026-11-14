@@ -772,6 +772,8 @@ export class TableStage implements WorldMinigame {
       r.folk.visible = this.swap >= (r.mine ? 0.5 : 1);
       if (r.mine) r.figure?.setFade(1 - (smoother(this.inT) - FADE_FROM) / (FADE_TO - FADE_FROM));
       r.plate.visible = !r.mine;
+      // Your own tally sits right under the camera and fills the screen over the table; it is in the dock instead.
+      r.tally.visible = !r.mine && !!(r.info?.pips || r.info?.stars);
       r.items.visible = this.swap >= 1;
       const info = r.info;
       const glow = info && (info.turn || info.won) ? 0.55 + 0.35 * Math.sin(this.clock * 4) : 0;

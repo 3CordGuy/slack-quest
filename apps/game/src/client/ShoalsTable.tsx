@@ -206,6 +206,7 @@ export function ShoalsTable({ table, you, gold, error, lastXp, looks, world, hos
       <div className="td-status" aria-live="polite">
         <span className={`td-phase ${table?.phase ?? "none"} ${table?.step ?? ""}`}>{phaseLabel}</span>
         <span className="td-status-text">{status}</span>
+        {inGame && <span className="td-pot" title="Your markers left, and passages sailed">markers {mine!.count}/{START} · passages {mine!.passages}/{SHOALS_PASSAGES}</span>}
         {table && table.phase !== "open" && <span className="td-pot" title="The house keeps 10%">pot {potGold} gold</span>}
       </div>
       {playing && last && table!.step === "lay" && <p className={`sh-outcome ${last.result}`}>Last round: {outcome}</p>}

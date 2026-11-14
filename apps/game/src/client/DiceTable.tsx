@@ -102,7 +102,7 @@ export function DiceTable({ table, you, gold, error, lastXp, looks, world, host,
       <div className="td-status" aria-live="polite">
         <span className={`td-phase ${table?.phase ?? "none"}`}>{!table ? "No game" : table.phase === "open" ? "Seating" : table.phase === "done" ? "Game over" : `Round ${table.round}`}</span>
         <span className="td-status-text">{status}</span>
-        {table?.phase === "playing" && <span className="td-pot" title="The house keeps 10%">pot {table.pot} gold · {total} dice</span>}
+        {table?.phase === "playing" && <span className="td-pot" title="The house keeps 10%">pot {table.pot} gold · {total} dice{mine && mine.count > 0 ? ` · yours ${mine.count}/${DICE_START}` : ""}</span>}
       </div>
       {table?.phase === "done" && lastXp?.id === table.winner && lastXp.amount > 0 && <p className="xp-gain">+{lastXp.amount} XP</p>}
 
