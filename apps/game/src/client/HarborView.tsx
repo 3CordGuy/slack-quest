@@ -84,15 +84,19 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
   const smithyBuilt = built.includes("smithy");
   const galleyBuilt = built.includes("galley");
   // How far the crew has got with the lighthouse, which sets which stage of building is drawn on its spit.
-  const lighthousePaid = board.works?.projects.find((p) => p.id === "lighthouse")?.paid;
-  const lighthouseFill = lit ? 1 : lighthousePaid ? Math.round(projectProgress(projectById("lighthouse")!, lighthousePaid) * 100) / 100 : 0;
+  const projectFill = (id: string) => {
+    if (built.includes(id)) return 1;
+    const paid = board.works?.projects.find((p) => p.id === id)?.paid;
+    return paid ? Math.round(projectProgress(projectById(id)!, paid) * 100) / 100 : 0;
+  };
+  const lighthouseFill = projectFill("lighthouse");
 
   // The Harbor as the renderer sees it: the fixed map plus a hut per member and a ship per moored voyage.
   const scene = useMemo<RenderState | null>(() => {
     if (!you) return null;
     const pois = [
       // The lighthouse's spit, and the apothecary's, smithy's and galley's spots, are building sites until the crew has paid for them.
-      ...base.pois.map((p) => (p.id === "lighthouse" ? { ...p, cleared: lit, fill: lighthouseFill } : p.id === "apothecary" ? { ...p, cleared: apothecaryBuilt } : p.id === "smithy" ? { ...p, cleared: smithyBuilt } : p.id === "galley" ? { ...p, cleared: galleyBuilt } : p)),
+      ...base.pois.map((p) => (p.id === "lighthouse" ? { ...p, cleared: lit, fill: lighthouseFill } : p.id === "apothecary" ? { ...p, cleared: apothecaryBuilt, fill: projectFill("apothecary") } : p.id === "smithy" ? { ...p, cleared: smithyBuilt, fill: projectFill("smithy") } : p.id === "galley" ? { ...p, cleared: galleyBuilt, fill: projectFill("galley") } : p)),
       // A plot someone has bought has their hut on it, or a resource bin while the shack is still to go up; the rest are staked out and for sale.
       ...HARBOR_PLOTS.map((pos, i) => {
         const owner = board.members.find((m) => m.plot === i);
