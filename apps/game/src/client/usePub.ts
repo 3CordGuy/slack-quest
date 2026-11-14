@@ -3,7 +3,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { HexPos } from "@gantt-quest/core";
-import type { DiceView, HarborPlayer, PubClientMessage, PubServerMessage, ShoalsView, XpMessage } from "@gantt-quest/world";
+import type { CrewView, DiceView, HarborPlayer, PubClientMessage, PubServerMessage, ShoalsView, XpMessage } from "@gantt-quest/world";
 import { PROFILE } from "./api";
 import type { HarborChatLine } from "./useHarbor";
 
@@ -18,6 +18,9 @@ export interface PubConnection {
   /** The Shoals table, likewise. */
   shoals: ShoalsView | null;
   shoalsError: string | null;
+  /** The Ship, Captain & Crew table, likewise. */
+  crew: CrewView | null;
+  crewError: string | null;
   /** The last XP anyone here earned, for the tables' "won" line. */
   lastXp: XpMessage | null;
   status: "connecting" | "open" | "closed";
@@ -34,6 +37,8 @@ export function usePub(onMoved: (id: string, path: HexPos[]) => void, onXp?: (m:
   const [diceError, setDiceError] = useState<string | null>(null);
   const [shoals, setShoals] = useState<ShoalsView | null>(null);
   const [shoalsError, setShoalsError] = useState<string | null>(null);
+  const [crew, setCrew] = useState<CrewView | null>(null);
+  const [crewError, setCrewError] = useState<string | null>(null);
   const [lastXp, setLastXp] = useState<XpMessage | null>(null);
   const [status, setStatus] = useState<PubConnection["status"]>("connecting");
   const [error, setError] = useState<string | null>(null);
@@ -104,6 +109,11 @@ export function usePub(onMoved: (id: string, path: HexPos[]) => void, onXp?: (m:
           setShoalsError(null);
         } else if (msg.type === "shoalsError") {
           setShoalsError(msg.text);
+        } else if (msg.type === "crew") {
+          setCrew(msg.table);
+          setCrewError(null);
+        } else if (msg.type === "crewError") {
+          setCrewError(msg.text);
         }
       };
       ws.onclose = async (e) => {
@@ -133,5 +143,5 @@ export function usePub(onMoved: (id: string, path: HexPos[]) => void, onXp?: (m:
   const send = useCallback((message: PubClientMessage) => {
     if (socket.current?.readyState === WebSocket.OPEN) socket.current.send(JSON.stringify(message));
   }, []);
-  return { you, players, chat, dice, diceError, shoals, shoalsError, lastXp, status, error, send };
+  return { you, players, chat, dice, diceError, shoals, shoalsError, crew, crewError, lastXp, status, error, send };
 }

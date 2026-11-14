@@ -22,7 +22,7 @@ export const HARBOR_XP = {
   gatherBust: 2,
   /** A banked haul: this, plus one per two units brought home (up to GATHER_MAX_UNITS / 2). */
   gatherBanked: 4,
-  /** Winning a game of dice or Shoals at the pub. */
+  /** Winning a game at one of the pub's tables: dice, Shoals, or Ship, Captain & Crew. */
   pubWin: 5,
   /** Finishing a bout at the sparring ring, won or lost. */
   spar: 3,

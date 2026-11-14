@@ -1,7 +1,7 @@
 // The pub's game tables, run inside the crew's PubRoom.
 //
 // Each game's rules are a pure reducer in packages/world (dice.ts,
-// shoals.ts). This file owns a table's state (in Durable Object storage, so
+// shoals.ts, crew.ts). This file owns a table's state (in Durable Object storage, so
 // it survives hibernation), moves the gold in D1, and sends each socket only
 // its own view of the game. There is no turn timer and no alarm: a seated
 // player who is no longer standing at the table forfeits, which is checked
@@ -14,7 +14,16 @@
 
 import type { HexPos } from "@gantt-quest/core";
 import {
+  CREW_MAX_PLAYERS,
   DICE_MAX_PLAYERS,
+  PUB_CREW,
+  createCrewGame,
+  crewSplit,
+  crewView,
+  isCrewAnte,
+  stepCrew,
+  type CrewGame,
+  type CrewRequest,
   PUB_DICE,
   PUB_SHOALS,
   SHOALS_MAX_PLAYERS,
@@ -52,7 +61,7 @@ type Outcome<G> = { ok: true; state: G } | { ok: false; error: string };
 /** One game, as the table needs to know it. */
 interface Rules<G extends StakeGame, R extends { type: string }> {
   /** Storage key, and the `type` of the messages that carry the table to clients. */
-  name: "dice" | "shoals";
+  name: "dice" | "shoals" | "crew";
   /** Where a player stands to be at this table. */
   spot: HexPos;
   maxPlayers: number;
@@ -108,6 +117,27 @@ export const SHOALS_RULES: Rules<ShoalsGame, ShoalsRequest> = {
   isOut(game, seatId) {
     const seat = game.seats.find((s) => s.id === seatId);
     return !!seat && seat.own.channel + seat.own.shoal === 0;
+  },
+};
+
+export const CREW_RULES: Rules<CrewGame, CrewRequest> = {
+  name: "crew",
+  spot: PUB_CREW,
+  maxPlayers: CREW_MAX_PLAYERS,
+  requests: new Set(["open", "sit", "leave", "start", "roll", "stand"]),
+  isAnte: isCrewAnte,
+  create: createCrewGame,
+  step(game, player, request) {
+    if (request.type === "sit") return stepCrew(game, player.id, { type: "sit", name: player.name });
+    if (request.type === "open") return { ok: false, error: "There is already a table open." };
+    return stepCrew(game, player.id, { type: request.type });
+  },
+  leave: (game, playerId) => stepCrew(game, playerId, { type: "leave" }),
+  view: crewView,
+  prize: (pot) => crewSplit(pot).prize,
+  isOut(game, seatId) {
+    const seat = game.seats.find((s) => s.id === seatId);
+    return !!seat && (seat.forfeited || !seat.contending);
   },
 };
 

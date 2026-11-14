@@ -7,6 +7,7 @@
 // in on the fight and lines the two sides up facing each other.
 
 import * as THREE from "three";
+import { makeModelShip } from "./modelShip";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { Ambience, TILE_FILLET, TILE_RADIUS, hexTop, pixelTexture, stamp, type BuildingGlow } from "./ambience";
 import "./camera.css";
@@ -3127,6 +3128,24 @@ export class WorldRenderer {
         add(box(0.22, 0.16, 0.2), lambert("#959eac"), 0.0, 0.08, 0.55);
         add(box(0.04, 0.5, 0.04), lambert("#5a3d22"), 0.35, 0.25, 0.4).rotation.z = 0.35;
         add(box(0.34, 0.05, 0.05), lambert("#4a4f5a"), 0.27, 0.49, 0.4).rotation.z = 0.35;
+        break;
+      }
+      case "crew": {
+        // Ship, Captain & Crew: a broad round table under a tarred-rope rim, a stool for each of the six who can play,
+        // a model ship in full sail in the middle, and the dice cup beside it with a die spilled out.
+        add(new THREE.CylinderGeometry(0.2, 0.26, 0.4, 8), lambert("#5a3d22"), 0, 0.2, -0.3);
+        add(new THREE.CylinderGeometry(0.56, 0.56, 0.07, 10), lambert("#8a6a44"), 0, 0.43, -0.3);
+        add(new THREE.TorusGeometry(0.55, 0.025, 4, 20), lambert("#3a2a1a"), 0, 0.465, -0.3).rotation.x = Math.PI / 2;
+        for (let i = 0; i < 6; i++) {
+          const a = Math.PI / 6 + (i * Math.PI) / 3;
+          add(new THREE.CylinderGeometry(0.13, 0.11, 0.24, 6), lambert("#5a3d22"), Math.cos(a) * 0.74, 0.12, -0.3 + Math.sin(a) * 0.62);
+        }
+        const ship = makeModelShip(1.15);
+        ship.position.set(-0.02, 0.465, -0.36);
+        ship.rotation.y = 0.5;
+        g.add(ship);
+        add(new THREE.CylinderGeometry(0.07, 0.06, 0.13, 8), lambert("#3a2414"), 0.32, 0.53, -0.18);
+        add(box(0.08, 0.08, 0.08), lambert("#f4efe1"), 0.2, 0.505, -0.06, 0.6);
         break;
       }
       case "dice": {

@@ -15,13 +15,15 @@
 import * as THREE from "three";
 import type { Marker, Outfit } from "@gantt-quest/world";
 import { markerUrl, type MarkerFace } from "../shoalsArt";
+import { isCrewFace, paintCrewFace } from "../crewArt";
+import { makeModelShip } from "./modelShip";
 import { PIXEL_CAP_ROWS, PIXEL_LINE_ROWS, canDrawPixelText, drawPixelText, pixelTextWidth } from "./pixelFont";
 import { SITTING_DROP, makeFigure, type Figure } from "./figures";
 import { labelTexture, lookFor, spriteKey } from "./sprites";
 import { OVERLAY_LAYER } from "./post";
 import type { WorldMinigame, WorldRenderer } from "./WorldRenderer";
 
-export type TableKind = "dice" | "shoals";
+export type TableKind = "dice" | "shoals" | "crew";
 
 /** Something clicked in the scene. */
 export type TableAction = { type: "lay"; marker: Marker } | { type: "flip"; seat: string };
@@ -57,6 +59,15 @@ export interface ShoalsScene {
   hand: Record<Marker, number> | null;
   canLay: boolean;
   seats: { id: string; down: number; shown: Marker[]; peeks: Marker[]; struck: boolean; ghost: boolean; canFlip: boolean }[];
+}
+
+export interface CrewScene {
+  /** Changes with every roll: the dice of whoever just rolled tumble. */
+  rollKey: string;
+  /** Who rolled last, if their dice should tumble now. */
+  rolled: string | null;
+  /** Each seat's dice: ship, captain and crew held (drawn as pictures), and the rest as plain dice. */
+  seats: { id: string; held: number[]; free: number[] }[];
 }
 
 export interface TableCallbacks {
@@ -139,8 +150,17 @@ function canvasTexture(w: number, h: number, paint: (ctx: CanvasRenderingContext
   return tex;
 }
 
-/** One face of a die: ivory with its pips, or (0) the back of a die you cannot see: a walnut face with a gold mark. */
-function dieFace(value: number, lit = false): THREE.CanvasTexture {
+/** One face of a die: ivory with its pips, or (0) the back of a die you cannot see: a walnut face with a gold mark. `icon`: a held ship, captain or crew, drawn as its picture in a gold rim. */
+function dieFace(value: number, lit = false, icon = false): THREE.CanvasTexture {
+  if (icon && isCrewFace(value)) {
+    return canvasTexture(64, 64, (ctx) => {
+      ctx.fillStyle = "#c99a3a";
+      ctx.fillRect(0, 0, 64, 64);
+      ctx.fillStyle = IVORY;
+      ctx.fillRect(4, 4, 56, 56);
+      paintCrewFace(ctx, value, 8, 8, 3);
+    }, true);
+  }
   return canvasTexture(64, 64, (ctx) => {
     ctx.fillStyle = value === 0 ? "#5a3d22" : lit ? "#ffe9a0" : IVORY;
     ctx.fillRect(0, 0, 64, 64);
@@ -420,6 +440,9 @@ export class TableStage implements WorldMinigame {
   private dieMats: THREE.Material[] | null = null;
   private dieBack: THREE.Material[] | null = null;
   private dieLit: THREE.Material[] | null = null;
+  /** A held ship, captain or crew: its picture on every face, so it reads the right way up from the seat whichever face is seen. */
+  private dieIcons = new Map<number, THREE.Material[]>();
+  private lastRoll = "";
   private discGeo = new THREE.CylinderGeometry(DISC_R, DISC_R, DISC_T, 20);
 
   constructor(private world: WorldRenderer, private group: THREE.Group, private kind: TableKind, private cb: TableCallbacks) {
@@ -462,7 +485,7 @@ export class TableStage implements WorldMinigame {
   private buildTable() {
     const wood = lambert("#6b4a2b");
     const rim = lambert("#a07a4c");
-    const cloth = lambert(this.kind === "shoals" ? "#2f6f8c" : "#2f6b4a");
+    const cloth = lambert(this.kind === "shoals" ? "#2f6f8c" : this.kind === "crew" ? "#6b2f35" : "#2f6b4a");
     const add = (geo: THREE.BufferGeometry, mat: THREE.Material, x: number, y: number, z: number) => {
       const m = new THREE.Mesh(geo, mat);
       m.position.set(x, y, z);
@@ -474,6 +497,13 @@ export class TableStage implements WorldMinigame {
     add(new THREE.CylinderGeometry(0.42, 0.46, 0.05, 10), wood, 0, 0.025, 0);
     add(new THREE.CylinderGeometry(TABLE_R, TABLE_R * 0.92, 0.07, 28), rim, 0, TOP - 0.035, 0);
     add(new THREE.CylinderGeometry(TABLE_R - 0.07, TABLE_R - 0.07, 0.01, 28), cloth, 0, TOP + 0.002, 0);
+    if (this.kind === "crew") {
+      // The model ship in full sail, in the middle of the table where everyone's dice face it.
+      const ship = makeModelShip(0.62);
+      ship.position.set(0, TOP + 0.008, -0.02);
+      ship.rotation.y = 0.35;
+      this.furniture.add(ship);
+    }
   }
 
   /** A set of stools, one for every chair. */
@@ -622,7 +652,9 @@ export class TableStage implements WorldMinigame {
       const stack = Math.floor(c / per);
       const a = stack * 2.4;
       const m = new THREE.Mesh(geo, mat);
-      m.position.set(Math.cos(a) * (stack ? 0.085 : 0), TOP + 0.014 + (c % per) * 0.013, -0.34 + Math.sin(a) * (stack ? 0.085 : 0));
+      // Crew: the far side has a seat's dice and the middle the ship, so the pot goes beside the ship.
+      const [px, pz] = this.kind === "crew" ? [0.24, -0.16] : [0, -0.34];
+      m.position.set(px + Math.cos(a) * (stack ? 0.085 : 0), TOP + 0.014 + (c % per) * 0.013, pz + Math.sin(a) * (stack ? 0.085 : 0));
       m.rotation.y = c * 0.7;
       this.pot.add(m);
     }
@@ -647,9 +679,19 @@ export class TableStage implements WorldMinigame {
 
   // ---------- dice ----------
 
+  private iconMaterials(v: number): THREE.Material[] {
+    let mats = this.dieIcons.get(v);
+    if (!mats) {
+      const m = glowing(this.tex(`die:${v}:icon`, () => dieFace(v, false, true)), 0.55);
+      mats = Array<THREE.Material>(6).fill(m);
+      this.dieIcons.set(v, mats);
+    }
+    return mats;
+  }
+
   private dieMaterials(): { shown: THREE.Material[]; back: THREE.Material[]; lit: THREE.Material[] } {
     if (!this.dieMats) {
-      const face = (v: number, lit = false) => glowing(this.tex(`die:${v}:${lit}`, () => dieFace(v, lit)), lit ? 0.8 : 0.4);
+      const face = (v: number, lit = false, icon = false) => glowing(this.tex(`die:${v}:${lit}:${icon}`, () => dieFace(v, lit, icon)), lit ? 0.8 : icon ? 0.55 : 0.4);
       // BoxGeometry's faces are +x, -x, +y, -y, +z, -z.
       const order = [2, 5, 1, 6, 3, 4];
       this.dieMats = order.map((v) => face(v));
@@ -688,6 +730,53 @@ export class TableStage implements WorldMinigame {
         r.items.add(wrap);
       }
       if (rolled) r.roll = 0.7;
+    }
+  }
+
+  // ---------- ship, captain and crew ----------
+
+  /**
+   * Each seat's five dice in front of them: the cargo (or, before the crew is
+   * in, the dice still rolling) in a row nearest the seat, and behind it, toward
+   * the ship, ship, captain and crew showing their pictures, a size larger so
+   * they stand out over the loose dice.
+   */
+  syncCrew(scene: CrewScene | null) {
+    const mats = this.dieMaterials();
+    const rolled = !!scene && scene.rollKey !== this.lastRoll;
+    if (scene) this.lastRoll = scene.rollKey;
+    this.clickables = [];
+    const size = DIE * 0.85;
+    const geo = new THREE.BoxGeometry(size, size, size);
+    const big = DIE * 1.15;
+    const heldGeo = new THREE.BoxGeometry(big, big, big);
+    for (const r of this.rigs.values()) {
+      const seat = scene?.seats.find((s) => s.id === r.id);
+      const key = seat ? `${seat.held.join("")}|${seat.free.join("")}` : "";
+      const tumble = rolled && scene?.rolled === r.id;
+      if (key === r.itemsKey && !tumble) continue;
+      r.itemsKey = key;
+      r.items.clear();
+      if (!seat) continue;
+      const row = (values: number[], z: number, icon: boolean, spin: boolean) =>
+        values.forEach((v, i) => {
+          const s = icon ? big : size;
+          const wrap = new THREE.Group();
+          wrap.position.set((i - (values.length - 1) / 2) * s * 1.35, TOP + s / 2 + 0.01, z);
+          // Held pictures sit square to the seat, so they read the right way up from it; loose dice lie as they fell.
+          const die = new THREE.Mesh(icon ? heldGeo : geo, icon ? this.iconMaterials(v) : v === 0 ? mats.back : mats.shown);
+          if (!icon) {
+            if (v > 0) die.quaternion.setFromUnitVectors(FACE_NORMAL[v], UP);
+            die.rotateOnWorldAxis(UP, 0.5 + i * 1.7 + v);
+          }
+          wrap.add(die);
+          // Only the dice that were rolled tumble.
+          if (spin) wrap.userData.baseY = wrap.position.y;
+          r.items.add(wrap);
+        });
+      row(seat.held, STACK_Z - 0.1, true, false);
+      row(seat.free, STACK_Z + 0.06, false, true);
+      if (tumble) r.roll = 0.7;
     }
   }
 
@@ -920,6 +1009,7 @@ export class TableStage implements WorldMinigame {
     this.world.setSharp(false);
     for (const r of this.rigs.values()) this.disposeRig(r);
     this.discGeo.dispose();
+    for (const [m] of this.dieIcons.values()) m.dispose();
     for (const mats of [this.dieMats, this.dieBack, this.dieLit]) for (const m of mats ?? []) m.dispose();
     for (const t of this.textures) t.dispose();
     this.card.material.map?.dispose();
