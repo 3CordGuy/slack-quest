@@ -13,7 +13,8 @@ import "./table.css";
 const PIPS = ["", "⚀", "⚁", "⚂", "⚃", "⚄", "⚅"];
 /** How long a called round's dice stay face up before the next roll is shown. */
 const REVEAL_MS = 5000;
-const bidText = (b: DiceBid) => `${b.count} × ${PIPS[b.face]}`;
+/** A bid as the card over the table can draw it: "4 x 3", four 3s. */
+const bidText = (b: DiceBid) => `${b.count} x ${b.face}`;
 const firstName = (name: string) => name.trim().split(/\s+/)[0] || name;
 
 interface Props {
@@ -67,8 +68,20 @@ export function DiceTable({ table, you, gold, error, lastXp, looks, world, host,
   const confirmStand = () => !inGame || confirm("Walk away? You forfeit your stake.");
   const { stage, standUp } = useTableStage("dice", { ...host, world }, () => undefined, confirmStand);
 
-  // Everyone round the table, from your seat.
   const seats = table?.seats ?? [];
+  const status = (() => {
+    if (!table) return "Nobody is playing. Open a table and the others may sit.";
+    if (table.phase === "open") return seated ? (table.host === you ? (seats.length < DICE_MIN_PLAYERS ? "Waiting for someone to sit." : "Start when everyone is seated.") : `Waiting for ${name(table.host)} to start.`) : `A table is open at ${table.ante} gold a seat.`;
+    if (table.phase === "done") return table.winner ? `${name(table.winner)} ${table.winner === you ? "win" : "wins"} ${table.prize} gold from a pot of ${table.pot}.` : "The game is over.";
+    if (showReveal) {
+      const r = table.reveal!;
+      return `${short(r.caller)} called ${r.bid.by === you ? "your" : `${short(r.bid.by)}'s`} ${bidText(r.bid)}: there ${r.actual === 1 ? "was" : "were"} ${r.actual}. ${name(r.loser)} lost a die.`;
+    }
+    if (myTurn) return last ? `Your turn: raise ${last.by === you ? "your" : `${short(last.by)}'s`} guess of ${bidText(last)}, or press Call if you think it is too high.` : "Your turn: make a guess of how many dice of one number are on the table.";
+    return mine && mine.count > 0 ? `Waiting for ${name(table.turn!)}.` : "You are watching.";
+  })();
+
+  // Everyone round the table, from your seat.
   const placement = useMemo(() => placeSeats(drawnSeats(seats, table?.phase, host.hide, you), you, !table || table.phase === "open", DICE_MAX_PLAYERS), [seats, you, table, host.hide.join(",")]);
   useEffect(() => {
     if (!stage) return;
@@ -87,35 +100,31 @@ export function DiceTable({ table, you, gold, error, lastXp, looks, world, host,
         : null,
     );
     stage.setPot(table ? (table.phase === "open" ? table.ante * seats.length : table.phase === "done" ? table.prize : table.pot) : 0);
-    stage.setCard(
-      !table || table.phase === "open" ? null
-        : showReveal ? { caption: `${table.reveal!.actual} showed`, main: `${table.reveal!.actual} x`, die: table.reveal!.bid.face }
-        : last ? { caption: `${short(last.by)} bid`, main: `${last.count} x`, die: last.face }
-        : table.phase === "playing" ? { caption: `Round ${table.round}`, main: "no bid" } : null,
-    );
+    // Everything there is to read hangs on the card over the table, where your eyes already are; the dock below holds only the controls.
+    const playing = table?.phase === "playing";
+    const caption = !table ? "No game" : table.phase === "open" ? `Seating: ${table.ante} gold a seat` : table.phase === "done" ? "Game over" : showReveal ? `Round ${table.round - 1}: called` : `Round ${table.round}: pot ${table.pot} gold, ${total} dice`;
+    const main = !table || table.phase === "open" ? {}
+      : table.phase === "done" ? { main: `${table.prize} gold` }
+      : showReveal ? { main: `${table.reveal!.actual} x`, die: table.reveal!.bid.face }
+      : last ? { main: `${last.count} x`, die: last.face }
+      : { main: "no bid" };
+    const xp = table?.phase === "done" && lastXp?.id === table.winner && lastXp.amount > 0 ? `+${lastXp.amount} XP` : undefined;
+    stage.setCard({
+      caption,
+      ...main,
+      prompt: status,
+      // Your own dice are on the felt right above the card, so only what you won goes underneath.
+      foot: xp,
+      yours: playing && myTurn && !showReveal,
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [stage, table, placement, looks, showReveal]);
+  }, [stage, table, placement, looks, showReveal, lastXp, status]);
 
-  const status = (() => {
-    if (!table) return "Nobody is playing. Open a table and the others may sit.";
-    if (table.phase === "open") return seated ? (table.host === you ? (seats.length < DICE_MIN_PLAYERS ? "Waiting for someone to sit." : "Start when everyone is seated.") : `Waiting for ${name(table.host)} to start.`) : `A table is open at ${table.ante} gold a seat.`;
-    if (table.phase === "done") return table.winner ? `${name(table.winner)} ${table.winner === you ? "win" : "wins"} ${table.prize} gold from a pot of ${table.pot}.` : "The game is over.";
-    if (showReveal) {
-      const r = table.reveal!;
-      return `${short(r.caller)} called ${r.bid.by === you ? "your" : `${short(r.bid.by)}'s`} ${bidText(r.bid)}: there ${r.actual === 1 ? "was" : "were"} ${r.actual}. ${name(r.loser)} lost a die.`;
-    }
-    if (myTurn) return last ? `${short(last.by)} guessed ${bidText(last)}. Raise the guess, or press Call if you think it is too high.` : "Your turn: make a guess of how many dice of one number are on the table.";
-    return mine && mine.count > 0 ? `Waiting for ${name(table.turn!)}.` : "You are watching.";
-  })();
 
   return (
     <div className="table-dock panel dice-table">
-      <div className="td-status" aria-live="polite">
-        <span className={`td-phase ${table?.phase ?? "none"}`}>{!table ? "No game" : table.phase === "open" ? "Seating" : table.phase === "done" ? "Game over" : `Round ${table.round}`}</span>
-        <span className="td-status-text">{status}</span>
-        {table?.phase === "playing" && <span className="td-pot" title="The house keeps 10%">pot {table.pot} gold · {total} dice{mine && mine.count > 0 ? ` · yours ${mine.count}/${DICE_START}` : ""}</span>}
-      </div>
-      {table?.phase === "done" && lastXp?.id === table.winner && lastXp.amount > 0 && <p className="xp-gain">+{lastXp.amount} XP</p>}
+      {/* What is happening is on the card over the table; this copy is for screen readers. */}
+      <p className="td-sr" aria-live="polite">{status}</p>
 
       {(!table || table.phase === "done") && (
         <div className="td-row">
@@ -164,7 +173,6 @@ export function DiceTable({ table, you, gold, error, lastXp, looks, world, host,
       )}
 
       {error && <p className="bad">{error}</p>}
-      {table && table.log.length > 0 && <p className="td-log muted">{table.log[table.log.length - 1]}</p>}
 
       <div className="td-foot">
         <button type="button" className="link" aria-expanded={rules} onClick={() => setRules((r) => !r)}>{rules ? "Hide the rules" : "How to play"}</button>

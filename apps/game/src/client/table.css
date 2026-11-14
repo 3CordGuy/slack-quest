@@ -5,6 +5,11 @@
   display: flex; flex-direction: column; gap: 6px; overflow-y: auto;
 }
 .table-dock p { margin: 0; }
+/* Read out, not shown: what is happening hangs on the card over the table. */
+.td-sr {
+  position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; border: 0;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap;
+}
 .td-status { display: flex; align-items: baseline; gap: 8px; min-height: 22px; flex-wrap: wrap; }
 .td-status-text { flex: 1; min-width: 160px; }
 .td-pot { flex: none; color: var(--gold); font-size: 12px; }
