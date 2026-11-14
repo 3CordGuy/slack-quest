@@ -93,7 +93,7 @@ export function DiceTable({ table, you, gold, error, lastXp, looks, world, host,
       const r = table.reveal!;
       return `${short(r.caller)} called ${r.bid.by === you ? "your" : `${short(r.bid.by)}'s`} ${bidText(r.bid)}: there ${r.actual === 1 ? "was" : "were"} ${r.actual}. ${name(r.loser)} lost a die.`;
     }
-    if (myTurn) return last ? `Your turn: raise ${short(last.by)}'s ${bidText(last)}, or call it.` : "Your turn: open the bidding.";
+    if (myTurn) return last ? `${short(last.by)} guessed ${bidText(last)}. Raise the guess, or press Call if you think it is too high.` : "Your turn: make a guess of how many dice of one number are on the table.";
     return mine && mine.count > 0 ? `Waiting for ${name(table.turn!)}.` : "You are watching.";
   })();
 
@@ -162,9 +162,11 @@ export function DiceTable({ table, you, gold, error, lastXp, looks, world, host,
       </div>
       {rules && (
         <ol className="td-rules muted">
-          <li>Everyone antes the same stake and rolls {DICE_START} hidden dice. You see yours; the others are under their hands.</li>
-          <li>On your turn, raise the bid (how many dice of one face are on the whole table) or call the last bid.</li>
-          <li>A call shows every die and whoever was wrong loses one. Last with dice takes the pot; the house keeps 10%.</li>
+          <li><strong>The idea:</strong> everyone secretly rolls {DICE_START} dice. You can see only your own. Each turn you make a guess about how many dice of one number are on the <em>whole table</em>, yours and everyone else's together. You can lie about what you hold.</li>
+          <li><strong>Making a guess (a "bid"):</strong> say a count and a number, like <em>"4 × 3"</em>, which means "there are at least four 3s out there". The first player opens with any guess. After that, each guess must beat the last one: <em>more dice</em> (5 × 3 beats 4 × 6), or the <em>same count of a higher number</em> (4 × 5 beats 4 × 3).</li>
+          <li><strong>Or call it:</strong> if you think the last guess is too high, press <strong>Call</strong> instead of raising. Everyone's dice are shown and counted. If the guess was true (there are at least that many), <em>you</em> lose a die. If it was too high, the <em>player who made it</em> loses a die.</li>
+          <li><strong>Winning:</strong> a new round starts with fresh rolls, and fewer dice for whoever lost. When you are out of dice you are out of the game. The last player with dice takes the pot (the house keeps 10%).</li>
+          <li><strong>Tip:</strong> with several players, about one die in six shows any given number. Guesses far above that are risky, and a bluff gets harder to sell the higher it climbs.</li>
         </ol>
       )}
     </div>
