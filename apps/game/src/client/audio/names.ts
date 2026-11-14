@@ -30,7 +30,7 @@ export const FISHING_SOUNDS = ["cast", "plop", "nibble", "plunge", "bite", "spla
 export type FishingSound = (typeof FISHING_SOUNDS)[number];
 
 /** The pub's game tables. */
-export const TABLE_SOUNDS = ["shake", "roll", "settle", "hold", "reveal", "coins"] as const;
+export const TABLE_SOUNDS = ["shake", "roll", "settle", "hold", "reveal", "coins", "kraken"] as const;
 export type TableSound = (typeof TABLE_SOUNDS)[number];
 
 export const soundName = {
@@ -73,7 +73,7 @@ export const soundName = {
   find: (what: "ore" | "gem") => [`gather.${what}`],
   /**
    * The pub's tables: the dice cup shaken, dice thrown onto the felt, one coming to rest, a die set
-   * aside (ship, captain or crew), every die shown after a call, and gold going onto the pot.
+   * aside (ship or captain), every die shown after a call, gold going onto the pot, and the Kraken taking a cargo.
    */
   table: (what: TableSound) => [`table.${what}`],
   /** You won a game at a table. */

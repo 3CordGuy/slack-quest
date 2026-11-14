@@ -1,17 +1,25 @@
-// Ship, Captain & Crew: the pub's third table game, the old tavern dice game,
-// for two to six crewmates.
+// Ship, Captain & Kraken: the pub's third table game, a push-your-luck take
+// on the old tavern dice game Ship, Captain & Crew, for two to six.
 //
 // On your turn you have up to three rolls of five dice. You need a 6 (the
-// ship), then a 5 (the captain), then a 4 (the crew), in that order: each is
-// set aside as soon as a roll turns it up, and a 5 is no use before the ship
-// is in, nor a 4 before the captain. One roll can bring in all three. Once
-// all three are in, the other two dice are your cargo, and any rolls you have
-// left may go on rolling the cargo again to raise it, or you can stand on it.
-// Never get the three and you score nothing.
+// ship), then a 5 (the captain), in that order: each is set aside as soon as
+// a roll turns it up, and a 5 is no use before the ship is in. One roll can
+// bring in both. Once both are in, the other three dice are your cargo, and
+// the choice is yours: keep the cargo dice you like and roll the rest again
+// with any rolls left, or stand on what you have.
+//
+// A 1 in your cargo is the Kraken. Roll one and you can roll it again, but if
+// a Kraken is still in your cargo when your rolls run out, it takes the lot
+// and you score nothing; and you cannot stand with one showing. So every
+// cargo die you roll again might raise your score or sink it. Never get your
+// ship and captain and you score nothing too.
 //
 // When everyone has had a turn, the highest cargo takes the pot, less the
 // house's cut. A tie for the top is rolled off by those tied; if nobody
 // scored, everyone still in goes again.
+//
+// The module, the pub's table and the messages keep the name "crew" from the
+// game this one grew out of.
 //
 // This file is the whole game as a pure reducer. The PubRoom Durable Object
 // owns the state and moves the gold. Every die here is rolled in the open, so
@@ -25,22 +33,29 @@ export const CREW_MAX_PLAYERS = 6;
 /** Dice in a roll, and rolls in a turn. */
 export const CREW_DICE = 5;
 export const CREW_ROLLS = 3;
-/** Ship, captain and crew, in the order they must come in. */
-export const CREW_NEEDS = [6, 5, 4] as const;
-/** The best cargo there is: two sixes. */
-export const CREW_MAX_CARGO = 12;
+/** Ship and captain, in the order they must come in. */
+export const CREW_NEEDS = [6, 5] as const;
+/** The face that is the Kraken, once it is in your cargo. */
+export const CREW_KRAKEN = 1;
+/** The best cargo there is: three sixes. */
+export const CREW_MAX_CARGO = 18;
 /** The house's share of the pot, in percent, rounded down. */
 export const CREW_HOUSE_PCT = 10;
 const LOG_LINES = 8;
+
+/** Why a turn scored nothing: no ship and captain, or the Kraken took the cargo. */
+export type CrewLoss = "adrift" | "kraken";
 
 export interface CrewSeat {
   id: string;
   name: string;
   /** Still in the running this round: everyone at first, only those tied in a roll-off. */
   contending: boolean;
-  /** This round's score once their turn is over (0 for no ship, captain and crew), or null before. */
+  /** This round's score once their turn is over (0 for nothing), or null before. */
   score: number | null;
-  /** The five dice they last ended a turn on, held ones first. Empty before their first turn. */
+  /** Why it was 0, when it was. */
+  lost?: CrewLoss | null;
+  /** The five dice they last ended a turn on, ship and captain first. Empty before their first turn. */
   hand: number[];
   /** Left mid-game. */
   forfeited: boolean;
@@ -55,10 +70,14 @@ export interface CrewRoundResult {
   ids: string[];
 }
 
+/** One roll, for the table to show: who threw, how many of ship and captain it brought in, which cargo dice were thrown, and whether the Kraken ended the turn. */
 export interface CrewThrow {
   n: number;
   by: string;
   fresh: number;
+  /** Indexes into the cargo (`dice`) that were thrown; the rest were kept. */
+  thrown?: number[];
+  kraken?: boolean;
 }
 
 export interface CrewGame {
@@ -71,14 +90,14 @@ export interface CrewGame {
   turn: number;
   /** Rolls used so far this turn. */
   rolls: number;
-  /** How many of ship, captain and crew are in this turn: 0 to 3. */
+  /** How many of ship and captain are in this turn: 0 to 2. */
   held: number;
-  /** The dice that are not held, as last rolled. Empty before the turn's first roll. */
+  /** The dice that are not held, as last rolled. Once ship and captain are in, the cargo, each in its place. Empty before the turn's first roll. */
   dice: number[];
   round: number;
   /** The last round's outcome, once there has been one. */
   last: CrewRoundResult | null;
-  /** The latest roll of the game, numbered from 1: who threw, and how many of ship, captain and crew it brought in. For the table to animate, even a roll that ended a turn. */
+  /** The latest roll of the game, numbered from 1. For the table to animate, even a roll that ended a turn. */
   lastThrow: CrewThrow | null;
   winner: string | null;
   /** Gold anted, set when the game starts. */
@@ -93,7 +112,8 @@ export type CrewAction =
   /** Before the start: give up the seat. During play: forfeit. */
   | { type: "leave" }
   | { type: "start" }
-  | { type: "roll" }
+  /** Roll. Once ship and captain are in, `keep` lists the cargo dice (by index) to hold back; the rest are rolled again. */
+  | { type: "roll"; keep?: number[] }
   /** Keep the cargo you have and end your turn. */
   | { type: "stand" };
 
@@ -106,11 +126,22 @@ export function crewSplit(pot: number): { house: number; prize: number } {
 
 export const isCrewAnte = (n: unknown): n is (typeof CREW_ANTES)[number] => (CREW_ANTES as readonly unknown[]).includes(n);
 
-/** The cargo of a turn with ship, captain and crew in: the free dice added up. Null until all three are in. */
+/** The cargo of a turn with ship and captain in: its dice added up, Krakens and all. Null until both are in. */
 export const crewCargo = (held: number, dice: readonly number[]): number | null => (held >= CREW_NEEDS.length && dice.length > 0 ? dice.reduce((a, d) => a + d, 0) : null);
 
+/** A Kraken is in the cargo. */
+export const crewKraken = (held: number, dice: readonly number[]): boolean => held >= CREW_NEEDS.length && dice.includes(CREW_KRAKEN);
+
+/** What a turn ending now would score: the cargo, unless there is none or the Kraken has it. */
+export function crewScore(held: number, dice: readonly number[]): { score: number; lost: CrewLoss | null } {
+  const cargo = crewCargo(held, dice);
+  if (cargo === null) return { score: 0, lost: "adrift" };
+  if (crewKraken(held, dice)) return { score: 0, lost: "kraken" };
+  return { score: cargo, lost: null };
+}
+
 /**
- * Take ship, captain and crew out of a roll, in order, as far as it goes.
+ * Take ship and captain out of a roll, in order, as far as it goes.
  * Returns how many are held after it, and the dice left over.
  */
 export function crewHold(held: number, dice: readonly number[]): { held: number; dice: number[] } {
@@ -124,7 +155,7 @@ export function crewHold(held: number, dice: readonly number[]): { held: number;
   return { held, dice: left };
 }
 
-const newSeat = (id: string, name: string): CrewSeat => ({ id, name, contending: false, score: null, hand: [], forfeited: false });
+const newSeat = (id: string, name: string): CrewSeat => ({ id, name, contending: false, score: null, lost: null, hand: [], forfeited: false });
 
 /** A fresh table with its opener in the first seat. */
 export function createCrewGame(seed: number, ante: number, host: { id: string; name: string }): CrewGame {
@@ -179,23 +210,22 @@ function endRound(state: CrewGame): CrewGame {
   const last: CrewRoundResult = { round: state.round, scores, result, ids: top };
   if (result === "win") return win({ ...state, last }, top[0]);
   const names = state.seats.filter((s) => top.includes(s.id)).map((s) => s.name);
-  const line = result === "bust" ? "Nobody brought in a cargo. Everyone rolls again." : `${names.join(" and ")} tie on ${best}. They roll off.`;
+  const line = result === "bust" ? "Nobody brought a cargo home. Everyone rolls again." : `${names.join(" and ")} tie on ${best}. They roll off.`;
   // Hands stay on the table, so everyone can see how the round went, until each player rolls again.
-  const seats = state.seats.map((s) => ({ ...s, contending: top.includes(s.id), score: null }));
+  const seats = state.seats.map((s) => ({ ...s, contending: top.includes(s.id), score: null, lost: null }));
   const turn = nextDue(seats, 0);
   return { ...state, ...fresh, seats, turn, round: state.round + 1, last, log: say(state, line) };
 }
 
-/** The player on turn is done, on `score`, with these five dice: on to the next, or the end of the round. */
-function endTurn(state: CrewGame, score: number, hand: number[]): CrewGame {
-  const seats = state.seats.map((s, i) => (i === state.turn ? { ...s, score, hand } : s));
+/** The player on turn is done: on to the next, or the end of the round. */
+function endTurn(state: CrewGame): CrewGame {
+  const { score, lost } = crewScore(state.held, state.dice);
+  const hand = [...CREW_NEEDS.slice(0, state.held), ...state.dice];
+  const seats = state.seats.map((s, i) => (i === state.turn ? { ...s, score, lost, hand } : s));
   const next = { ...state, ...fresh, seats };
   const ix = nextDue(seats, state.turn);
   return ix < 0 ? endRound(next) : { ...next, turn: ix };
 }
-
-/** The five dice a turn ends on, held ship, captain and crew first. */
-const handOf = (held: number, dice: readonly number[]) => [...CREW_NEEDS.slice(0, held), ...dice];
 
 export function stepCrew(state: CrewGame, playerId: string, action: CrewAction): CrewResult {
   const ix = state.seats.findIndex((s) => s.id === playerId);
@@ -232,7 +262,7 @@ export function stepCrew(state: CrewGame, playerId: string, action: CrewAction):
       if (state.host !== playerId) return fail("Only whoever opened the table can start.");
       if (state.seats.length < CREW_MIN_PLAYERS) return fail("It takes at least two to play.");
       const pot = state.ante * state.seats.length;
-      const seats = state.seats.map((s) => ({ ...s, contending: true, score: null, hand: [] }));
+      const seats = state.seats.map((s) => ({ ...s, contending: true, score: null, lost: null, hand: [] }));
       return { ok: true, state: { ...state, ...fresh, phase: "playing", seats, turn: 0, round: 1, pot, log: say(state, `The cup goes round. The pot is ${pot} gold.`) } };
     }
 
@@ -241,29 +271,46 @@ export function stepCrew(state: CrewGame, playerId: string, action: CrewAction):
       if (state.turn !== ix || !seat) return fail("It is not your turn.");
       if (state.rolls >= CREW_ROLLS) return fail("You have no rolls left.");
       const rng = makeRng(state.rng);
-      const free = state.held >= CREW_NEEDS.length ? state.dice.length : CREW_DICE - state.held;
-      const rolled = Array.from({ length: free }, () => rng.int(1, 6));
-      const { held, dice } = crewHold(state.held, rolled);
+      const loading = state.held >= CREW_NEEDS.length;
+      let held = state.held;
+      let dice: number[];
+      let thrown: number[];
+      if (loading) {
+        // The cargo is in: the dice kept stay where they are, and the rest are rolled again in their places.
+        const keep = new Set((action.keep ?? []).filter((k) => Number.isInteger(k) && k >= 0 && k < state.dice.length));
+        if (keep.size >= state.dice.length) return fail("Keep fewer dice, or stand.");
+        thrown = state.dice.map((_, i) => i).filter((i) => !keep.has(i));
+        dice = state.dice.map((d, i) => (keep.has(i) ? d : rng.int(1, 6)));
+      } else {
+        // Still looking for the ship or the captain: every die not held is rolled.
+        const rolled = Array.from({ length: CREW_DICE - state.held }, () => rng.int(1, 6));
+        ({ held, dice } = crewHold(state.held, rolled));
+        thrown = dice.map((_, i) => i);
+      }
       const rolls = state.rolls + 1;
       const cargo = crewCargo(held, dice);
-      const got = CREW_NEEDS.slice(state.held, held).map((n) => ({ 6: "ship", 5: "captain", 4: "crew" })[n]);
-      const line = `${seat.name} rolls ${rolled.join(" ")}${got.length ? `: ${got.join(", ")} in` : ""}${cargo !== null ? `. Cargo ${cargo}.` : "."}`;
-      const lastThrow: CrewThrow = { n: (state.lastThrow?.n ?? 0) + 1, by: playerId, fresh: held - state.held };
-      const next = { ...state, rolls, held, dice, lastThrow, rng: rng.state(), log: say(state, line) };
-      // Out of rolls, or no better cargo to be had: the turn is over.
-      if (rolls >= CREW_ROLLS || cargo === CREW_MAX_CARGO) {
-        const done = cargo === null ? { ...next, log: say(next, `${seat.name} never found a full crew and scores nothing.`) } : next;
-        return { ok: true, state: endTurn(done, cargo ?? 0, handOf(held, dice)) };
-      }
-      return { ok: true, state: next };
+      const got = CREW_NEEDS.slice(state.held, held).map((n) => ({ 6: "ship", 5: "captain" })[n]);
+      const krakens = cargo === null ? 0 : dice.filter((d) => d === CREW_KRAKEN).length;
+      const rolledNow = loading ? thrown.map((i) => dice[i]) : [...CREW_NEEDS.slice(state.held, held), ...dice];
+      const line = `${seat.name} rolls ${rolledNow.join(" ")}${got.length ? `: ${got.join(" and ")} in` : ""}${cargo !== null ? `. Cargo ${cargo}${krakens ? `, with ${krakens === 1 ? "a Kraken" : `${krakens} Krakens`}` : ""}.` : "."}`;
+      // Out of rolls, or no better cargo to be had: the turn is over, and the Kraken has whatever it is still holding.
+      const over = rolls >= CREW_ROLLS || cargo === CREW_MAX_CARGO;
+      const kraken = over && crewKraken(held, dice);
+      const lastThrow: CrewThrow = { n: (state.lastThrow?.n ?? 0) + 1, by: playerId, fresh: held - state.held, thrown, kraken };
+      let next: CrewGame = { ...state, rolls, held, dice, lastThrow, rng: rng.state(), log: say(state, line) };
+      if (!over) return { ok: true, state: next };
+      if (cargo === null) next = { ...next, log: say(next, `${seat.name} never got a ship and a captain, and scores nothing.`) };
+      else if (kraken) next = { ...next, log: say(next, `The Kraken takes ${seat.name}'s cargo.`) };
+      return { ok: true, state: endTurn(next) };
     }
 
     case "stand": {
       if (state.phase !== "playing") return fail("No game is being played.");
       if (state.turn !== ix || !seat) return fail("It is not your turn.");
       const cargo = crewCargo(state.held, state.dice);
-      if (cargo === null) return fail("You need a ship, a captain and a crew before you can stand.");
-      return { ok: true, state: endTurn({ ...state, log: say(state, `${seat.name} stands on ${cargo}.`) }, cargo, handOf(state.held, state.dice)) };
+      if (cargo === null) return fail("You need a ship and a captain before you can stand.");
+      if (crewKraken(state.held, state.dice)) return fail("Not with a Kraken in your cargo: roll it away first.");
+      return { ok: true, state: endTurn({ ...state, log: say(state, `${seat.name} stands on ${cargo}.`) }) };
     }
   }
 }
@@ -275,6 +322,7 @@ export interface CrewSeatView {
   name: string;
   contending: boolean;
   score: number | null;
+  lost: CrewLoss | null;
   hand: number[];
   forfeited: boolean;
 }
@@ -289,8 +337,10 @@ export interface CrewView {
   rolls: number;
   held: number;
   dice: number[];
-  /** The cargo the player on turn has now, once ship, captain and crew are in. */
+  /** The cargo the player on turn has now (Krakens counted at face), once ship and captain are in. */
   cargo: number | null;
+  /** A Kraken is in that cargo. */
+  kraken: boolean;
   round: number;
   last: CrewRoundResult | null;
   lastThrow: CrewThrow | null;
@@ -309,12 +359,13 @@ export function crewView(state: CrewGame, viewerId?: string | null): CrewView {
     ante: state.ante,
     phase: state.phase,
     host: state.host,
-    seats: state.seats.map((s) => ({ id: s.id, name: s.name, contending: s.contending, score: s.score, hand: [...s.hand], forfeited: s.forfeited })),
+    seats: state.seats.map((s) => ({ id: s.id, name: s.name, contending: s.contending, score: s.score, lost: s.lost ?? null, hand: [...s.hand], forfeited: s.forfeited })),
     turn: playing ? state.seats[state.turn].id : null,
     rolls: state.rolls,
     held: state.held,
     dice: [...state.dice],
     cargo: playing ? crewCargo(state.held, state.dice) : null,
+    kraken: playing && crewKraken(state.held, state.dice),
     round: state.round,
     last: state.last,
     lastThrow: state.lastThrow,
@@ -328,4 +379,4 @@ export function crewView(state: CrewGame, viewerId?: string | null): CrewView {
 // ---------- wire types (carried inside the pub's messages) ----------
 
 /** What a client may ask of the table. The server fills in names and checks gold. */
-export type CrewRequest = { type: "open"; ante: number } | { type: "sit" } | { type: "leave" } | { type: "start" } | { type: "roll" } | { type: "stand" };
+export type CrewRequest = { type: "open"; ante: number } | { type: "sit" } | { type: "leave" } | { type: "start" } | { type: "roll"; keep?: number[] } | { type: "stand" };

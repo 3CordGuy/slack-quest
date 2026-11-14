@@ -128,6 +128,8 @@ export const AUDIO: AudioManifest = {
     "table.hold": { files: "sfx/table/hold_*", fallback: "synth/table/hold_*", gainDb: -4, pitch: [-1, 1], maxVoices: 3 },
     "table.reveal": { files: "sfx/table/reveal_*", fallback: "synth/table/hold_*", gainDb: -6, pitch: [-3, -1], cooldown: 0.5 },
     "table.coins": { files: "sfx/table/coins_*", fallback: "synth/table/coins_*", gainDb: -6, pitch: [-1, 1], cooldown: 0.4 },
+    // The Kraken takes a cargo: something big and wet rolling over below the table.
+    "table.kraken": { files: "sfx/table/kraken_*", fallback: built("boss_down"), gainDb: -4, pitch: [-3, -1], reverb: -6, cooldown: 1 },
     "table.win": { files: "music/stingers/table_win", fallback: built("victory"), group: "music", cooldown: 2 },
 
     // Stingers follow the Music slider.

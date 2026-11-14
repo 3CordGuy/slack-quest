@@ -40,7 +40,14 @@
   .table-dock { font-size: 12px; max-height: calc(42vh / var(--ui-z, 1)); }
 }
 
-/* Ship, Captain & Crew: the three you need, lit as they come in. */
+/* Ship, Captain & Kraken: the ship and captain you need, lit as they come in. */
 .crew-needs { display: inline-flex; gap: 4px; margin-right: 4px; }
 .crew-needs img { image-rendering: pixelated; }
 .crew-needs .crew-missing { opacity: 0.3; filter: grayscale(1); }
+
+/* Ship, Captain & Kraken: your cargo dice, each a toggle between keeping it and rolling it again. */
+.crew-cargo { display: inline-flex; gap: 4px; }
+.crew-die { display: inline-flex; flex-direction: column; align-items: center; gap: 1px; padding: 2px 3px; font-size: 10px; line-height: 1; }
+.crew-die img { image-rendering: pixelated; }
+.crew-die.kept { border-color: var(--gold); color: var(--gold); }
+.crew-die.kraken { border-color: #a01818; color: #f08a8a; }

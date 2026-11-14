@@ -15,7 +15,7 @@
 import * as THREE from "three";
 import type { Marker, Outfit } from "@gantt-quest/world";
 import { markerUrl, type MarkerFace } from "../shoalsArt";
-import { isCrewFace, paintCrewFace } from "../crewArt";
+import { crewRim, isCrewFace, paintCrewFace } from "../crewArt";
 import { makeModelShip } from "./modelShip";
 import { sounds } from "../audio/gameSounds";
 import { PIXEL_CAP_ROWS, PIXEL_LINE_ROWS, canDrawPixelText, drawPixelText, pixelTextWidth } from "./pixelFont";
@@ -27,7 +27,7 @@ import type { WorldMinigame, WorldRenderer } from "./WorldRenderer";
 export type TableKind = "dice" | "shoals" | "crew";
 
 /** Something clicked in the scene. */
-export type TableAction = { type: "lay"; marker: Marker } | { type: "flip"; seat: string };
+export type TableAction = { type: "lay"; marker: Marker } | { type: "flip"; seat: string } | { type: "keep"; index: number };
 
 /** Who is in a seat, and how they look and are doing. */
 export interface SeatInfo {
@@ -69,8 +69,14 @@ export interface CrewScene {
   rollKey: string;
   /** Who rolled last, if their dice should tumble now. */
   rolled: string | null;
-  /** Each seat's dice: ship, captain and crew held (drawn as pictures), and the rest as plain dice. `fresh`: how many of the held came in on this roll. */
-  seats: { id: string; held: number[]; free: number[]; fresh?: number }[];
+  /**
+   * Each seat's dice: ship and captain held (drawn as pictures), and the rest. `fresh`: how many of the held came in on
+   * this roll; `thrown`: which of the rest were thrown in it (all, if not given). Once the cargo is in (`cargo`), a 1 in
+   * it is the Kraken. Your own cargo dice can be clicked to keep them (`canKeep`), and those you keep (`keep`) are lit.
+   */
+  seats: { id: string; held: number[]; free: number[]; fresh?: number; thrown?: number[]; cargo?: boolean; keep?: number[]; canKeep?: boolean }[];
+  /** The latest throw left a Kraken in the cargo as the rolls ran out. */
+  sunk?: boolean;
 }
 
 export interface TableCallbacks {
@@ -191,7 +197,7 @@ function canvasTexture(w: number, h: number, paint: (ctx: CanvasRenderingContext
 function dieFace(value: number, lit = false, icon = false): THREE.CanvasTexture {
   if (icon && isCrewFace(value)) {
     return canvasTexture(64, 64, (ctx) => {
-      ctx.fillStyle = "#c99a3a";
+      ctx.fillStyle = crewRim(value);
       ctx.fillRect(0, 0, 64, 64);
       ctx.fillStyle = IVORY;
       ctx.fillRect(4, 4, 56, 56);
@@ -746,7 +752,7 @@ export class TableStage implements WorldMinigame {
    * face. The sounds are timed to it. `held` are set aside as they land, with a firmer clack; `yours`
    * is louder than anyone else's throw.
    */
-  private throwDice(wraps: THREE.Object3D[], opts: { held?: Set<THREE.Object3D>; yours: boolean }) {
+  private throwDice(wraps: THREE.Object3D[], opts: { held?: Set<THREE.Object3D>; yours: boolean; sunk?: boolean }) {
     if (wraps.length === 0) return;
     const quiet = opts.yours ? 0 : -5;
     sounds.table("shake", { gainDb: quiet });
@@ -765,6 +771,8 @@ export class TableStage implements WorldMinigame {
       if (held) sounds.table("hold", { delay: delay + THROW_S + 0.12, gainDb: quiet });
     });
     sounds.table("roll", { delay: SHAKE_S + THROW_S * LANDINGS[0], gainDb: quiet });
+    // The Kraken rises as the last die stops.
+    if (opts.sunk) sounds.table("kraken", { delay: SHAKE_S + THROW_S + 0.25 });
   }
 
   syncDice(scene: DiceScene | null) {
@@ -823,37 +831,55 @@ export class TableStage implements WorldMinigame {
     const heldGeo = new THREE.BoxGeometry(big, big, big);
     for (const r of this.rigs.values()) {
       const seat = scene?.seats.find((s) => s.id === r.id);
-      const key = seat ? `${seat.held.join("")}|${seat.free.join("")}` : "";
+      const key = seat ? `${seat.held.join("")}|${seat.free.join("")}|${seat.cargo}|${seat.keep?.join(",")}|${seat.canKeep}` : "";
       const tumble = rolled && scene?.rolled === r.id;
-      if (key === r.itemsKey && !tumble) continue;
+      if (key === r.itemsKey && !tumble) {
+        // Clickables are rebuilt each time, so gather them again from what stays.
+        r.items.traverse((o) => o.userData.action && this.clickables.push(o));
+        continue;
+      }
       r.itemsKey = key;
       r.items.clear();
       if (!seat) continue;
       const thrown: THREE.Object3D[] = [];
       const held = new Set<THREE.Object3D>();
-      /** `spin`: how many of the row, from its end, were in this roll. */
-      const row = (values: number[], z: number, icon: boolean, spin: number) =>
-        values.forEach((v, i) => {
-          const s = icon ? big : size;
-          const wrap = new THREE.Group();
-          wrap.position.set((i - (values.length - 1) / 2) * s * 1.35, TOP + s / 2 + 0.01, z);
-          // Held pictures sit square to the seat, so they read the right way up from it; loose dice lie as they fell.
-          const die = new THREE.Mesh(icon ? heldGeo : geo, icon ? this.iconMaterials(v) : v === 0 ? mats.back : mats.shown);
-          if (!icon) {
-            if (v > 0) die.quaternion.setFromUnitVectors(FACE_NORMAL[v], UP);
-            die.rotateOnWorldAxis(UP, 0.5 + i * 1.7 + v);
-          }
-          wrap.add(die);
-          r.items.add(wrap);
-          // Only the dice that were in the roll are thrown: the cargo or the dice still looking, and whatever of ship, captain and crew came in on it.
-          if (i >= values.length - spin) {
-            thrown.push(wrap);
-            if (icon) held.add(wrap);
-          }
-        });
-      row(seat.held, STACK_Z - 0.1, true, tumble ? (seat.fresh ?? 0) : 0);
-      row(seat.free, STACK_Z + 0.06, false, tumble ? seat.free.length : 0);
-      if (tumble) this.throwDice(thrown, { held, yours: r.mine });
+      const keep = new Set(seat.keep ?? []);
+      const throwFree = new Set(seat.thrown ?? seat.free.map((_, i) => i));
+      // Ship and captain, in a row toward the ship, a size larger and reading the right way up from the seat.
+      seat.held.forEach((v, i) => {
+        const wrap = new THREE.Group();
+        wrap.position.set((i - (seat.held.length - 1) / 2) * big * 1.35, TOP + big / 2 + 0.01, STACK_Z - 0.1);
+        wrap.add(new THREE.Mesh(heldGeo, this.iconMaterials(v)));
+        r.items.add(wrap);
+        if (tumble && i >= seat.held.length - (seat.fresh ?? 0)) {
+          thrown.push(wrap);
+          held.add(wrap);
+        }
+      });
+      // The rest nearest the seat. In the cargo a 1 is the Kraken, upright and red-rimmed; kept dice are lit and lifted a little.
+      seat.free.forEach((v, i) => {
+        const kraken = !!seat.cargo && v === 1;
+        const kept = keep.has(i);
+        const wrap = new THREE.Group();
+        wrap.position.set((i - (seat.free.length - 1) / 2) * size * 1.5, TOP + size / 2 + 0.01 + (kept ? 0.03 : 0), STACK_Z + 0.06);
+        const die = new THREE.Mesh(geo, kraken ? this.iconMaterials(1) : kept ? mats.lit : v === 0 ? mats.back : mats.shown);
+        if (!kraken) {
+          if (v > 0) die.quaternion.setFromUnitVectors(FACE_NORMAL[v], UP);
+          die.rotateOnWorldAxis(UP, 0.5 + i * 1.7 + v);
+        }
+        wrap.add(die);
+        r.items.add(wrap);
+        if (tumble && throwFree.has(i)) thrown.push(wrap);
+        if (seat.canKeep) {
+          wrap.userData.action = { type: "keep", index: i } satisfies TableAction;
+          wrap.userData.baseY = wrap.position.y;
+          // A click anywhere near the die keeps it: an invisible, generous box round it.
+          const hit = new THREE.Mesh(new THREE.BoxGeometry(size * 1.5, size * 2, size * 1.5), new THREE.MeshBasicMaterial({ visible: false }));
+          wrap.add(hit);
+          this.clickables.push(wrap);
+        }
+      });
+      if (tumble) this.throwDice(thrown, { held, yours: r.mine, sunk: !!scene?.sunk });
     }
   }
 
@@ -1070,6 +1096,8 @@ export class TableStage implements WorldMinigame {
       }
     }
     for (const o of this.clickables) {
+      // A die still in the air is the throw's to move.
+      if (o.userData.throw) continue;
       const base = o.userData.baseY as number | undefined;
       if (base !== undefined) o.position.y = base + (0.5 + 0.5 * Math.sin(this.clock * 5)) * 0.018;
     }

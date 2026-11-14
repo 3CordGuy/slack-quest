@@ -1,13 +1,15 @@
-// Pixel art for the pub's Ship, Captain & Crew table: what a held die shows in
-// place of its pips. The 6 is the ship, the 5 the captain, the 4 the crew. Each
-// is a 16-pixel picture, painted straight onto a die's face in the table scene
+// Pixel art for the pub's Ship, Captain & Kraken table: what a die shows in
+// place of its pips. The 6 is the ship and the 5 the captain once each is set
+// aside, and a 1 in the cargo is the Kraken. Each is a 16-pixel picture, painted straight onto a die's face in the table scene
 // (render/TableStage.ts) and handed to the panel as an image URL, shown at a
 // whole multiple with `image-rendering: pixelated` to match the sprites.
 
-export type CrewFace = 4 | 5 | 6;
+export type CrewFace = 1 | 5 | 6;
 export const CREW_ART_PX = 16;
-export const CREW_FACE_NAME: Record<CrewFace, string> = { 6: "Ship", 5: "Captain", 4: "Crew" };
-export const isCrewFace = (v: number): v is CrewFace => v === 4 || v === 5 || v === 6;
+export const CREW_FACE_NAME: Record<CrewFace, string> = { 6: "Ship", 5: "Captain", 1: "Kraken" };
+export const isCrewFace = (v: number): v is CrewFace => v === 1 || v === 5 || v === 6;
+/** The rim round a picture: gold for ship and captain, red for the Kraken. */
+export const crewRim = (face: CrewFace) => (face === 1 ? "#a01818" : "#c99a3a");
 
 const PALETTE: Record<string, string> = {
   k: "#1b1830", // ink
@@ -19,6 +21,9 @@ const PALETTE: Record<string, string> = {
   b: "#3f6fa8", // sea, stripes
   c: "#7db6f2", // wave caps
   s: "#e8b38a", // skin
+  P: "#8a3fa0", // the Kraken
+  p: "#4f1d62", // its shadow
+  y: "#ffd23f", // its eye
   e: "#1b1830", // eyes
   n: "#22202e", // hat
 };
@@ -60,22 +65,22 @@ const ART: Record<CrewFace, string[]> = {
     "..rrrgrrrrgrrr..",
     "................",
   ],
-  4: [
-    "................",
-    ".....rrrrrr.....",
-    "....rrrrrrrr....",
-    "....rrrrrrrrr.r.",
-    "....kssssssk.rr.",
-    "....sesssses....",
-    "....ssssssss....",
-    "....sssmmsss....",
-    ".....ssssss.....",
-    "......ssss......",
-    "...wwwwwwwwww...",
-    "..bbbbbbbbbbbb..",
-    "..wwwwwwwwwwww..",
-    "..bbbbbbbbbbbb..",
-    "..wwwwwwwwwwww..",
+  1: [
+    "......pppp......",
+    ".....pPPPPp.....",
+    "....pPPPPPPp....",
+    "....PPPPPPPP....",
+    "....PyyPPyyP....",
+    "....PykPPkyP....",
+    "....pPPPPPPp....",
+    ".....PPPPPP.....",
+    "..P.PP.PP.PP.P..",
+    ".PP.P..PP..P.PP.",
+    ".P..P.P..P.P..P.",
+    ".P.PP.P..P.PP.P.",
+    ".PPp..PP.PP..pP.",
+    "..bbbcbbbbcbbbb.",
+    ".bbcbbbbcbbbbcbb",
     "................",
   ],
 };
@@ -94,21 +99,46 @@ export function paintCrewFace(ctx: CanvasRenderingContext2D, face: CrewFace, x: 
 
 const cache = new Map<string, string>();
 
-/** A held die face, 20 pixels square: the picture on ivory in a gold rim. */
-export function crewFaceUrl(face: CrewFace): string {
-  const key = String(face);
+function drawn(key: string, paint: (ctx: CanvasRenderingContext2D) => void): string {
   let url = cache.get(key);
   if (url) return url;
   const canvas = document.createElement("canvas");
   canvas.width = 20;
   canvas.height = 20;
-  const ctx = canvas.getContext("2d")!;
-  ctx.fillStyle = "#c99a3a";
-  ctx.fillRect(0, 0, 20, 20);
-  ctx.fillStyle = "#f4efe1";
-  ctx.fillRect(1, 1, 18, 18);
-  paintCrewFace(ctx, face, 2, 2, 1);
+  paint(canvas.getContext("2d")!);
   url = canvas.toDataURL();
   cache.set(key, url);
   return url;
+}
+
+/** A picture die face, 20 pixels square: the picture on ivory in its rim. */
+export function crewFaceUrl(face: CrewFace): string {
+  return drawn(`face:${face}`, (ctx) => {
+    ctx.fillStyle = crewRim(face);
+    ctx.fillRect(0, 0, 20, 20);
+    ctx.fillStyle = "#f4efe1";
+    ctx.fillRect(1, 1, 18, 18);
+    paintCrewFace(ctx, face, 2, 2, 1);
+  });
+}
+
+const PIP: Record<number, [number, number][]> = {
+  1: [[9, 9]],
+  2: [[5, 5], [13, 13]],
+  3: [[5, 5], [9, 9], [13, 13]],
+  4: [[5, 5], [13, 5], [5, 13], [13, 13]],
+  5: [[5, 5], [13, 5], [9, 9], [5, 13], [13, 13]],
+  6: [[5, 4], [13, 4], [5, 9], [13, 9], [5, 14], [13, 14]],
+};
+
+/** A plain die face, 20 pixels square, for the panel: ivory with its pips, or warm and gold-rimmed when it is kept. */
+export function dieFaceUrl(value: number, kept = false): string {
+  return drawn(`die:${value}:${kept}`, (ctx) => {
+    ctx.fillStyle = kept ? "#c99a3a" : "#2a2118";
+    ctx.fillRect(0, 0, 20, 20);
+    ctx.fillStyle = kept ? "#ffe9a0" : "#f4efe1";
+    ctx.fillRect(1, 1, 18, 18);
+    ctx.fillStyle = "#2a2118";
+    for (const [x, y] of PIP[value] ?? []) ctx.fillRect(x, y, 2, 2);
+  });
 }

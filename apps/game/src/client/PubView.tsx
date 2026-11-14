@@ -308,7 +308,7 @@ export function PubView({ me, refresh, onLeave }: { me: Me; refresh(): Promise<u
     : hoverPoi.kind === "dealer" ? `Where you stand to deal with ${PUB_DEALER.name}: contracts and the crew's goal`
     : hoverPoi.kind === "trader" ? (seller ? `Trade with ${seller.name}, ${seller.trade}` : "The corner where traveling salesmen set up. Empty for now.")
     : hoverPoi.kind === "shoals" ? "Shoals: lay your markers, bid, and sail without running aground"
-    : hoverPoi.kind === "crew" ? "Ship, Captain & Crew: roll a 6, a 5 and a 4, then the best cargo wins"
+    : hoverPoi.kind === "crew" ? "Ship, Captain & Kraken: roll a ship and a captain, then push your luck on the cargo"
     : hoverPoi.kind === "door" ? "The door back to the Harbor"
     : null;
 
@@ -457,7 +457,7 @@ export function PubView({ me, refresh, onLeave }: { me: Me; refresh(): Promise<u
           : atCounter ? <span>At the bar.</span>
           : atDice ? <span>At the dice table.</span>
           : atShoals ? <span>At the Shoals table.</span>
-          : atCrew ? <span>At the Ship, Captain &amp; Crew table.</span>
+          : atCrew ? <span>At the Ship, Captain &amp; Kraken table.</span>
           : near ? <span>Beside {near.name}, {near.trade}.</span>
           : atDealer ? <span>Beside {PUB_DEALER.name}, {PUB_DEALER.trade}.</span>
           : atTrader ? (seller ? <span>At {seller.name}'s table.</span> : <span className="muted">The corner is empty.{due && ` ${due.name} is due ${dueIn(visitor.next!.startsAt - visitor.now)}.`}</span>)
