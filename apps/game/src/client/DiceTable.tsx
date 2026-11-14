@@ -7,7 +7,7 @@ import { useEffect, useMemo, useState, type RefObject } from "react";
 import { DICE_ANTES, DICE_MAX_PLAYERS, DICE_MIN_PLAYERS, DICE_START, type DiceBid, type DiceRequest, type DiceView } from "@gantt-quest/world";
 import type { SeatInfo } from "./render/TableStage";
 import type { WorldRenderer } from "./render/WorldRenderer";
-import { placeSeats, withSelf, seatInfo, useTableStage, type SeatLook, type StageHost } from "./useTableStage";
+import { drawnSeats, placeSeats, withSelf, seatInfo, useTableStage, type SeatLook, type StageHost } from "./useTableStage";
 import "./table.css";
 
 const PIPS = ["", "⚀", "⚁", "⚂", "⚃", "⚄", "⚅"];
@@ -69,7 +69,7 @@ export function DiceTable({ table, you, gold, error, lastXp, looks, world, host,
 
   // Everyone round the table, from your seat.
   const seats = table?.seats ?? [];
-  const placement = useMemo(() => placeSeats(seats, you, !table || table.phase === "open", DICE_MAX_PLAYERS), [seats, you, table]);
+  const placement = useMemo(() => placeSeats(drawnSeats(seats, table?.phase, host.hide, you), you, !table || table.phase === "open", DICE_MAX_PLAYERS), [seats, you, table, host.hide.join(",")]);
   useEffect(() => {
     if (!stage) return;
     const infos = placement.placed.map((s): SeatInfo | undefined => {
