@@ -9,9 +9,9 @@
 // via /bubble, what is said to and by the barkeep).
 
 import { DurableObject } from "cloudflare:workers";
-import { HARBOR_MAX_SAY, UNSTICK_COOLDOWN_MS, pubPath, pubRoom, type CrewGame, type CrewRequest, type DiceGame, type DiceRequest, type HarborPlayer, type PubClientMessage, type PubServerMessage, type ShoalsGame, type ShoalsRequest } from "@gantt-quest/world";
+import { HARBOR_MAX_SAY, UNSTICK_COOLDOWN_MS, pubPath, pubRoom, type CrewGame, type CrewRequest, type DiceGame, type DiceRequest, type HarborPlayer, type PubClientMessage, type PubServerMessage, type ShoalsGame, type ShoalsRequest, type TideGame, type TideRequest } from "@gantt-quest/world";
 import { crewFor, getCharacter, heroInitFor, type Env, type Player } from "./db";
-import { CREW_RULES, DICE_RULES, SHOALS_RULES, StakeTable } from "./stake-table";
+import { CREW_RULES, DICE_RULES, SHOALS_RULES, TIDE_RULES, StakeTable } from "./stake-table";
 import { readXpPost, relayXp } from "./harbor-xp";
 
 const ROOM = pubRoom();
@@ -34,6 +34,7 @@ export class PubRoom extends DurableObject<Env> {
   private dice: StakeTable<DiceGame, DiceRequest>;
   private shoals: StakeTable<ShoalsGame, ShoalsRequest>;
   private crew: StakeTable<CrewGame, CrewRequest>;
+  private tide: StakeTable<TideGame, TideRequest>;
   /** When each player last asked to be put back at the door. In memory only: a light limit. */
   private unstuckAt = new Map<string, number>();
 
@@ -43,6 +44,7 @@ export class PubRoom extends DurableObject<Env> {
     this.dice = new StakeTable(ctx, env, DICE_RULES);
     this.shoals = new StakeTable(ctx, env, SHOALS_RULES);
     this.crew = new StakeTable(ctx, env, CREW_RULES);
+    this.tide = new StakeTable(ctx, env, TIDE_RULES);
   }
 
   private players(except?: WebSocket): HarborPlayer[] {
@@ -112,6 +114,7 @@ export class PubRoom extends DurableObject<Env> {
     await this.dice.welcome(pair[1], player);
     await this.shoals.welcome(pair[1], player);
     await this.crew.welcome(pair[1], player);
+    await this.tide.welcome(pair[1], player);
     return new Response(null, { status: 101, webSocket: pair[0] });
   }
 
@@ -137,6 +140,7 @@ export class PubRoom extends DurableObject<Env> {
       await this.dice.reconcile();
       await this.shoals.reconcile();
       await this.crew.reconcile();
+      await this.tide.reconcile();
     } else if (msg.type === "unstick") {
       // A stuck or lost hero goes back to the door. Only ever the sender's own hero.
       const now = Date.now();
@@ -148,6 +152,7 @@ export class PubRoom extends DurableObject<Env> {
       await this.dice.reconcile();
       await this.shoals.reconcile();
       await this.crew.reconcile();
+      await this.tide.reconcile();
     } else if (msg.type === "say") {
       const text = String(msg.text ?? "").replace(/\s+/g, " ").trim().slice(0, HARBOR_MAX_SAY);
       if (text) this.broadcast({ type: "said", id: player.id, name: player.name, text });
@@ -157,6 +162,8 @@ export class PubRoom extends DurableObject<Env> {
       await this.shoals.handle(ws, player, msg.action);
     } else if (msg.type === "crew") {
       await this.crew.handle(ws, player, msg.action);
+    } else if (msg.type === "tide") {
+      await this.tide.handle(ws, player, msg.action);
     }
   }
 
@@ -173,6 +180,7 @@ export class PubRoom extends DurableObject<Env> {
       await this.dice.reconcile(ws);
       await this.shoals.reconcile(ws);
       await this.crew.reconcile(ws);
+      await this.tide.reconcile(ws);
     }
   }
 
