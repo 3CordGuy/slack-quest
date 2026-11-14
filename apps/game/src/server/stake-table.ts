@@ -1,7 +1,7 @@
 // The pub's game tables, run inside the crew's PubRoom.
 //
 // Each game's rules are a pure reducer in packages/world (dice.ts,
-// shoals.ts, crew.ts). This file owns a table's state (in Durable Object storage, so
+// shoals.ts, crew.ts, tide.ts). This file owns a table's state (in Durable Object storage, so
 // it survives hibernation), moves the gold in D1, and sends each socket only
 // its own view of the game. There is no turn timer and no alarm: a seated
 // player who is no longer standing at the table forfeits, which is checked
@@ -44,6 +44,16 @@ import {
   type ShoalsGame,
   type ShoalsRequest,
   HARBOR_XP,
+  PUB_TIDE,
+  TIDE_MAX_PLAYERS,
+  createTideGame,
+  isTideAnte,
+  stepTide,
+  tideSplit,
+  tideView,
+  tideWins,
+  type TideGame,
+  type TideRequest,
 } from "@gantt-quest/world";
 import type { Env } from "./db";
 import { prepareXp, relayXp, xpMessage, xpOutcome } from "./harbor-xp";
@@ -62,7 +72,7 @@ type Outcome<G> = { ok: true; state: G } | { ok: false; error: string };
 /** One game, as the table needs to know it. */
 interface Rules<G extends StakeGame, R extends { type: string }> {
   /** Storage key, and the `type` of the messages that carry the table to clients. */
-  name: "dice" | "shoals" | "crew";
+  name: "dice" | "shoals" | "crew" | "tide";
   /** Where a player stands to be at this table. */
   spot: HexPos;
   maxPlayers: number;
@@ -147,6 +157,28 @@ export const CREW_RULES: Rules<CrewGame, CrewRequest> = {
     const seat = game.seats.find((s) => s.id === seatId);
     return !!seat && (seat.forfeited || !seat.contending);
   },
+};
+
+export const TIDE_RULES: Rules<TideGame, TideRequest> = {
+  name: "tide",
+  spot: PUB_TIDE,
+  maxPlayers: TIDE_MAX_PLAYERS,
+  requests: new Set(["open", "sit", "leave", "start", "play", "smuggle", "deal"]),
+  isAnte: isTideAnte,
+  // How many hands to win: one of the choices, or the default, whatever was sent.
+  create: (seed, ante, host, request) => createTideGame(seed, ante, host, tideWins((request as { wins?: unknown }).wins)),
+  step(game, player, request) {
+    if (request.type === "sit") return stepTide(game, player.id, { type: "sit", name: player.name });
+    if (request.type === "open") return { ok: false, error: "There is already a table open." };
+    if (request.type === "play") return stepTide(game, player.id, { type: "play", card: Number(request.card), target: request.target === undefined ? undefined : String(request.target), guess: request.guess === undefined ? undefined : Number(request.guess) });
+    if (request.type === "smuggle") return stepTide(game, player.id, { type: "smuggle", swap: request.swap === true });
+    return stepTide(game, player.id, { type: request.type });
+  },
+  leave: (game, playerId) => stepTide(game, playerId, { type: "leave" }),
+  view: tideView,
+  prize: (pot) => tideSplit(pot).prize,
+  // Out of a hand is not out of the game: only someone who has walked away need not be at the table.
+  isOut: (game, seatId) => !!game.seats.find((s) => s.id === seatId)?.forfeited,
 };
 
 export class StakeTable<G extends StakeGame, R extends { type: string }> {

@@ -13,9 +13,10 @@
 // the view, and the rest go round the table from there.
 
 import * as THREE from "three";
-import type { Marker, Outfit } from "@gantt-quest/world";
+import type { Marker, Outfit, Tide, TidePlay } from "@gantt-quest/world";
 import { markerUrl, type MarkerFace } from "../shoalsArt";
 import { crewRim, isCrewFace, paintCrewFace } from "../crewArt";
+import { TIDE_CARD_H, TIDE_CARD_W, TIDE_TOKEN_PX, tideCardCanvas, tideTokenCanvas, type TideFace } from "../tideArt";
 import { makeModelShip } from "./modelShip";
 import { sounds } from "../audio/gameSounds";
 import { PIXEL_CAP_ROWS, PIXEL_LINE_ROWS, canDrawPixelText, drawPixelText, pixelTextWidth } from "./pixelFont";
@@ -24,10 +25,10 @@ import { labelTexture, lookFor, spriteKey } from "./sprites";
 import { OVERLAY_LAYER } from "./post";
 import type { WorldMinigame, WorldRenderer } from "./WorldRenderer";
 
-export type TableKind = "dice" | "shoals" | "crew";
+export type TableKind = "dice" | "shoals" | "crew" | "tide";
 
 /** Something clicked in the scene. */
-export type TableAction = { type: "lay"; marker: Marker } | { type: "flip"; seat: string } | { type: "keep"; index: number };
+export type TableAction = { type: "lay"; marker: Marker } | { type: "flip"; seat: string } | { type: "keep"; index: number } | { type: "card"; index: number };
 
 /** Who is in a seat, and how they look and are doing. */
 export interface SeatInfo {
@@ -82,6 +83,39 @@ export interface CrewScene {
   sunk?: boolean;
 }
 
+export interface TideScene {
+  /** Which hand this is: a new number is a fresh deal, seen to come off the deck. */
+  hand: number;
+  /** Changes with every card played: the card just played is seen to go down, and what it did is acted out. */
+  playKey: string;
+  /** The card just played and what came of it. */
+  play: TidePlay | null;
+  tide: Tide;
+  /** Cards left to draw. */
+  deck: number;
+  /** The buried card: face down (null) unless you may see it. */
+  buried: number | null;
+  dealt: boolean;
+  /** The hand is over and the cards are shown; `winners` took it. */
+  shown: boolean;
+  winners: string[];
+  /** Each seat's hand (a rank, or "back" for a card you cannot see) and what they have played, oldest first. `pick`: your own cards can be clicked, and which one is picked. */
+  seats: { id: string; hand: TideFace[]; known?: boolean; played: number[]; pick?: { can: boolean; index: number | null } }[];
+}
+
+/** A card on its way somewhere: from `from` to `to` over `dur` seconds once `t` reaches 0, lifting `lift` on the way, turning face up as it goes if `flip`, unseen until it sets off if `hide`. */
+interface Slide {
+  t: number;
+  dur: number;
+  from: THREE.Vector3;
+  to: THREE.Vector3;
+  lift: number;
+  flip: boolean;
+  hide: boolean;
+  /** Whole turns it spins flat on the way, for a card caught by the Storm. */
+  spin: number;
+}
+
 export interface TableCallbacks {
   /** A click on something in the scene. */
   pick(action: TableAction): void;
@@ -115,6 +149,18 @@ const HAND_Z = 0.6;
 const DIE = 0.1;
 const DISC_R = 0.07;
 const DISC_T = 0.022;
+/** A playing card lying on the table: across, along, and how thick. */
+const CARD_AX = 0.105;
+const CARD_AL = (CARD_AX * TIDE_CARD_H) / TIDE_CARD_W;
+const CARD_T = 0.004;
+/** Seconds for a played card to go from the hand to the table. */
+const PLAY_S = 0.45;
+/** Where the deck, the buried card and the tide token lie, from the middle of the table. */
+const DECK_AT = new THREE.Vector3(-0.15, TOP + 0.008 + CARD_T / 2, 0.04);
+const BURIED_AT = new THREE.Vector3(-0.01, TOP + 0.008 + CARD_T / 2, 0.06);
+const TOKEN_AT = new THREE.Vector3(0.17, TOP + 0.018, 0.04);
+/** What an aimed card draws across the table in: gold for a Gull, blue for a Spyglass, red for a Cutlass. */
+const AIM_INK: Record<number, string> = { 2: "#ffd23f", 3: "#7db6f2", 4: "#f0625a" };
 const VFOV = 50;
 const IN_S = 1.5;
 /** Seconds to get onto a stool, and how far in front of it you stand to do so. */
@@ -443,7 +489,7 @@ function withCrate(plate: { texture: THREE.CanvasTexture; aspect: number }, crat
   return { texture, aspect: texture.image.width / texture.image.height };
 }
 
-const CHIP_COLOR: Record<string, string> = { winner: "#ffd23f", helm: "#ffd23f", "to play": "#ffd23f", out: "#f08a8a", left: "#f08a8a", passed: "#a8a3c4", opened: "#a9d4fb" };
+const CHIP_COLOR: Record<string, string> = { anchored: "#7db6f2",  winner: "#ffd23f", helm: "#ffd23f", "to play": "#ffd23f", out: "#f08a8a", left: "#f08a8a", passed: "#a8a3c4", opened: "#a9d4fb" };
 
 // ---------- the scene ----------
 
@@ -545,12 +591,25 @@ export class TableStage implements WorldMinigame {
   private primed = false;
   private lastReveal = "";
   private discGeo = new THREE.CylinderGeometry(DISC_R, DISC_R, DISC_T, 20);
+  private cardGeo = new THREE.BoxGeometry(CARD_AX, CARD_T, CARD_AL);
+  /** Turn the Tide: the deck, the buried card and the tide token in the middle of the table. */
+  private middle = new THREE.Group();
+  private middleKey = "";
+  /** What the card table last showed, to tell what has changed, and the key of the last thing acted out. */
+  private tidePrev: TideScene | null = null;
+  private tideEv = "";
+  /** The card table has been told what is on it at least once: what it is told after that is a change to act out. */
+  private tideTold = false;
+  /** Things that are on the table only for a moment: a line from a player to whoever they played on, a card called out, a clash. */
+  private fx = new THREE.Group();
+  private lineGeo = new THREE.BoxGeometry(0.014, 0.004, 1).translate(0, 0, 0.5);
+  private ringGeo = new THREE.RingGeometry(0.075, 0.092, 28);
 
   constructor(private world: WorldRenderer, private group: THREE.Group, private kind: TableKind, private cb: TableCallbacks) {
     // Dice and markers are read up close: draw them at full resolution, not the chunky half.
     world.setSharp(true);
     this.buildTable();
-    this.group.add(this.furniture, this.stools, this.pot);
+    this.group.add(this.furniture, this.stools, this.pot, this.middle, this.fx);
     this.old = world.poiObject(kind);
     this.showSwap();
     // Hung above the middle of the table, turned to face whoever looks at it (a sprite faces each viewer's own camera).
@@ -586,7 +645,7 @@ export class TableStage implements WorldMinigame {
   private buildTable() {
     const wood = lambert("#6b4a2b");
     const rim = lambert("#a07a4c");
-    const cloth = lambert(this.kind === "shoals" ? "#2f6f8c" : this.kind === "crew" ? "#6b2f35" : "#2f6b4a");
+    const cloth = lambert(this.kind === "shoals" ? "#2f6f8c" : this.kind === "crew" ? "#6b2f35" : this.kind === "tide" ? "#3a3570" : "#2f6b4a");
     const add = (geo: THREE.BufferGeometry, mat: THREE.Material, x: number, y: number, z: number) => {
       const m = new THREE.Mesh(geo, mat);
       m.position.set(x, y, z);
@@ -754,7 +813,8 @@ export class TableStage implements WorldMinigame {
       const a = stack * 2.4;
       const m = new THREE.Mesh(geo, mat);
       // Crew: the far side has a seat's dice and the middle the ship, so the pot goes beside the ship.
-      const [px, pz] = this.kind === "crew" ? [0.24, -0.16] : [0, -0.34];
+      // Tide: the deck and the tide token have the middle, so the pot sits just beyond them.
+      const [px, pz] = this.kind === "crew" ? [0.24, -0.16] : this.kind === "tide" ? [0, -0.19] : [0, -0.34];
       m.position.set(px + Math.cos(a) * (stack ? 0.085 : 0), TOP + 0.014 + (c % per) * 0.013, pz + Math.sin(a) * (stack ? 0.085 : 0));
       m.rotation.y = c * 0.7;
       this.pot.add(m);
@@ -1023,6 +1083,389 @@ export class TableStage implements WorldMinigame {
     }
   }
 
+  // ---------- turn the tide ----------
+
+  private cardTex(face: TideFace): THREE.CanvasTexture {
+    return this.tex(`tc:${face}`, () =>
+      canvasTexture(TIDE_CARD_W * 4, TIDE_CARD_H * 4, (ctx) => {
+        ctx.imageSmoothingEnabled = false;
+        ctx.drawImage(tideCardCanvas(face), 0, 0, TIDE_CARD_W * 4, TIDE_CARD_H * 4);
+      }),
+    );
+  }
+
+  /** A card lying flat, its top toward the middle of the table: `face` up, the back underneath. `dim`: a card that is out of play. */
+  private playingCard(face: TideFace, glow = 0.5): THREE.Mesh {
+    const edge = lambert("#d8ccb0");
+    const top = glowing(this.cardTex(face), glow);
+    const under = glowing(this.cardTex("back"), 0.3);
+    return new THREE.Mesh(this.cardGeo, [edge, edge, top, under, edge, edge]);
+  }
+
+  /** A point by a seat (the seat's own bearings: +z out toward them) as a point on the table, and back. */
+  private toTable(r: Rig, p: THREE.Vector3): THREE.Vector3 {
+    return p.clone().applyAxisAngle(UP, r.goal);
+  }
+  private toSeat(r: Rig, p: THREE.Vector3): THREE.Vector3 {
+    return p.clone().applyAxisAngle(UP, -r.goal);
+  }
+
+  /** Send `o` on its way to where it lies now, after `delay` seconds. */
+  private slide(o: THREE.Object3D, from: THREE.Vector3, opts: { delay?: number; dur?: number; lift?: number; flip?: boolean; hide?: boolean; spin?: number } = {}) {
+    const sl: Slide = { t: -(opts.delay ?? 0), dur: opts.dur ?? PLAY_S, from: from.clone(), to: o.position.clone(), lift: opts.lift ?? 0.08, flip: !!opts.flip, hide: !!opts.hide, spin: opts.spin ?? 0 };
+    o.userData.slide = sl;
+    this.stepCard(o, 0);
+  }
+
+  /** Move a card along its way, and lift the one that won the hand. */
+  private stepCard(o: THREE.Object3D, dt: number) {
+    const sl = o.userData.slide as Slide | undefined;
+    if (sl) {
+      sl.t += dt;
+      const k = smoother(Math.min(1, Math.max(0, sl.t / sl.dur)));
+      o.visible = !(sl.hide && sl.t < 0);
+      o.position.lerpVectors(sl.from, sl.to, k);
+      o.position.y += Math.sin(k * Math.PI) * sl.lift;
+      o.rotation.z = sl.flip ? (1 - k) * Math.PI : 0;
+      if (sl.spin) o.rotation.y = k * sl.spin * Math.PI * 2;
+      if (sl.t >= sl.dur) delete o.userData.slide;
+    }
+    const w = o.userData.win as { t: number; y: number; s: number } | undefined;
+    if (w) {
+      w.t += dt;
+      if (w.t > 0) {
+        const up = Math.min(1, w.t / 0.3);
+        o.position.y = w.y + up * 0.04 + Math.sin(this.clock * 5) * 0.008 * up;
+        o.scale.setScalar(w.s * (1 + 0.2 * up));
+      }
+    }
+  }
+
+  /** Put `o` on the table for `life` seconds, starting after `delay`; `tick` is told how far through it is, 0 to 1. */
+  private addFx(o: THREE.Object3D, delay: number, life: number, tick: (k: number) => void) {
+    o.userData.fx = { t: -delay, life, tick };
+    o.visible = false;
+    this.fx.add(o);
+  }
+
+  /** A line drawn across the table from `from` to `to`, and a ring round where it lands. */
+  private aim(from: THREE.Vector3, to: THREE.Vector3, ink: string, delay: number) {
+    const d = to.clone().sub(from);
+    const len = Math.hypot(d.x, d.z);
+    const mat = new THREE.MeshBasicMaterial({ color: ink, transparent: true, opacity: 0.9 });
+    const line = new THREE.Mesh(this.lineGeo, mat);
+    line.position.set(from.x, TOP + 0.03, from.z);
+    line.rotation.y = Math.atan2(d.x, d.z);
+    this.addFx(line, delay, 1.4, (k) => {
+      line.scale.z = Math.max(0.001, len * Math.min(1, k / 0.22));
+      mat.opacity = 0.9 * Math.min(1, (1 - k) / 0.3);
+    });
+    this.ring(to, ink, delay + 0.25, 1.2);
+  }
+
+  /** A ring pulsing on the cloth round `at`. */
+  private ring(at: THREE.Vector3, ink: string, delay: number, life: number) {
+    const mat = new THREE.MeshBasicMaterial({ color: ink, transparent: true, opacity: 0.9, side: THREE.DoubleSide });
+    const ring = new THREE.Mesh(this.ringGeo, mat);
+    ring.rotation.x = -Math.PI / 2;
+    ring.position.set(at.x, TOP + 0.028, at.z);
+    this.addFx(ring, delay, life, (k) => {
+      ring.scale.setScalar(1 + 0.2 * Math.sin(k * Math.PI * 4));
+      mat.opacity = 0.9 * Math.min(1, (1 - k) / 0.3);
+    });
+  }
+
+  /** A picture hung in the air over `at`, `up` above the table, facing whoever looks: it pops in, drifts up a little and fades. */
+  private float(map: THREE.Texture, at: THREE.Vector3, up: number, height: number, delay: number, life: number) {
+    const mat = new THREE.SpriteMaterial({ map, transparent: true, depthTest: false });
+    const s = new THREE.Sprite(mat);
+    s.renderOrder = 10;
+    s.layers.set(OVERLAY_LAYER);
+    const aspect = (map.image as { width: number; height: number }).width / (map.image as { width: number; height: number }).height;
+    this.addFx(s, delay, life, (k) => {
+      const pop = Math.min(1, k / 0.12);
+      s.scale.set(height * aspect * pop, height * pop, 1);
+      s.position.set(at.x, TOP + up + k * 0.04, at.z);
+      mat.opacity = Math.min(1, (1 - k) / 0.2);
+    });
+  }
+
+  /** A word in the air over `at`. */
+  private word(text: string, ink: string, at: THREE.Vector3, up: number, delay: number, life = 1.2) {
+    this.float(this.own(chipTexture(text, ink)), at, up, 0.15, delay, life);
+  }
+
+  /** Two cards, face down, brought up from `a` and `b` to meet over the table between them, and taken back. */
+  private clash(a: THREE.Vector3, b: THREE.Vector3, delay: number) {
+    [a, b].forEach((p, i) => {
+      const c = this.playingCard("back", 0.45);
+      const side = i ? 1 : -1;
+      const mid = new THREE.Vector3((a.x + b.x) / 2 + side * 0.035, TOP + 0.16, (a.z + b.z) / 2);
+      const start = new THREE.Vector3(p.x, TOP + 0.03, p.z);
+      c.rotation.y = Math.atan2(b.x - a.x, b.z - a.z);
+      this.addFx(c, delay, 1.1, (k) => {
+        const go = k < 0.35 ? smoother(k / 0.35) : k > 0.75 ? 1 - smoother((k - 0.75) / 0.25) : 1;
+        c.position.lerpVectors(start, mid, go);
+        c.rotation.z = side * 0.6 * go + (k > 0.35 && k < 0.75 ? Math.sin(k * 80) * 0.1 : 0);
+      });
+    });
+  }
+
+  /**
+   * The Storm, over the middle of the table: a black cloud gathers, rain comes down on the cloth, lightning
+   * strikes twice (the first with the storm's own thunder, the cloth lit white under it), and it blows over.
+   */
+  private storm(delay: number) {
+    const LIFE = 2.8;
+    const CLOUD_Y = TOP + 0.52;
+    const g = new THREE.Group();
+    const own = <T extends THREE.Mesh>(m: T): T => {
+      m.userData.ownGeo = true;
+      g.add(m);
+      return m;
+    };
+    const puffs = [[-0.24, 0, 0.02, 0.13], [-0.1, 0.04, -0.05, 0.16], [0.06, 0.02, 0.05, 0.17], [0.22, 0, -0.02, 0.13], [0, -0.03, 0.1, 0.12], [-0.02, 0.07, 0, 0.13]].map(([x, dy, z, size], i) => {
+      const m = own(new THREE.Mesh(new THREE.DodecahedronGeometry(size, 0), lambert(i % 2 ? "#4a4f5a" : "#33363e")));
+      m.position.set(x, CLOUD_Y + dy, z);
+      m.rotation.set(i, i * 1.7, 0);
+      return m;
+    });
+    const rainMat = new THREE.MeshBasicMaterial({ color: "#9cc8f5", transparent: true, opacity: 0.8 });
+    const drops = Array.from({ length: 22 }, (_, i) => {
+      const m = own(new THREE.Mesh(new THREE.BoxGeometry(0.005, 0.06, 0.005), rainMat));
+      const a = i * 2.4;
+      const d = 0.08 + ((i * 37) % 100) / 100 * 0.5;
+      m.position.set(Math.cos(a) * d, 0, Math.sin(a) * d * 0.7);
+      m.rotation.z = 0.18;
+      m.userData.phase = ((i * 53) % 100) / 100;
+      return m;
+    });
+    // A bolt: a crooked line of bright strokes from the cloud down to the cloth.
+    const boltMat = new THREE.MeshBasicMaterial({ color: "#fff7c0" });
+    const bolt = (x: number, z: number) => {
+      const b = new THREE.Group();
+      const pts = [0, 1, 2, 3, 4].map((i) => new THREE.Vector3(x + (i % 2 ? 0.06 : -0.03) * (i === 0 || i === 4 ? 0 : 1), CLOUD_Y - 0.05 - (i / 4) * (CLOUD_Y - 0.05 - TOP - 0.01), z + (i === 2 ? 0.04 : 0)));
+      for (let i = 0; i < pts.length - 1; i++) {
+        const seg = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.02, pts[i].distanceTo(pts[i + 1])), boltMat);
+        seg.userData.ownGeo = true;
+        seg.position.copy(pts[i]).lerp(pts[i + 1], 0.5);
+        seg.lookAt(pts[i + 1]);
+        b.add(seg);
+      }
+      b.visible = false;
+      g.add(b);
+      return b;
+    };
+    const bolts = [bolt(-0.06, 0), bolt(0.12, 0.06)];
+    const flashMat = new THREE.MeshBasicMaterial({ color: "#ffffff", transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false });
+    const flash = own(new THREE.Mesh(new THREE.CircleGeometry(TABLE_R - 0.07, 28), flashMat));
+    flash.rotation.x = -Math.PI / 2;
+    flash.position.y = TOP + 0.02;
+    /** When each bolt strikes, as a share of the storm's life, and how long it is seen. */
+    const STRIKES = [0.3, 0.55];
+    const SEEN = 0.045;
+    // The thunder is the storm's own, from the weather: it cracks with the first bolt.
+    setTimeout(() => !this.disposed && sounds.thunder(() => undefined), (delay + STRIKES[0] * LIFE) * 1000);
+    this.addFx(g, delay, LIFE, (k) => {
+      // Gathering for the first fifth, blowing over for the last.
+      const body = Math.min(1, k / 0.2) * Math.min(1, (1 - k) / 0.18);
+      puffs.forEach((m, i) => {
+        m.scale.setScalar(Math.max(0.001, smoother(body)));
+        m.position.y = CLOUD_Y + Math.sin(this.clock * 2 + i) * 0.012;
+        m.rotation.y += 0.01;
+      });
+      rainMat.opacity = 0.8 * Math.min(1, Math.max(0, (k - 0.12) / 0.1)) * Math.min(1, (1 - k) / 0.2);
+      for (const d of drops) d.position.y = CLOUD_Y - 0.06 - ((k * LIFE * 1.9 + (d.userData.phase as number)) % 1) * (CLOUD_Y - 0.06 - TOP);
+      let lit = 0;
+      bolts.forEach((b, i) => {
+        const since = k - STRIKES[i];
+        // Each bolt flickers: on, off for a blink, on again.
+        b.visible = since >= 0 && since < SEEN * 2.2 && !(since > SEEN && since < SEEN * 1.3);
+        if (since >= 0) lit = Math.max(lit, Math.max(0, 1 - since / 0.12));
+      });
+      flashMat.opacity = 0.45 * lit;
+    });
+  }
+
+  /**
+   * The card table. Besides showing where everything lies, it acts out what changed since it was last told:
+   * a deal, a draw, a card played and what it did, a Storm, a swap with the buried card, and the cards shown
+   * at the end of a hand. Nothing is acted out for the state the table was in when you sat down.
+   */
+  syncTide(scene: TideScene | null) {
+    this.clickables = [];
+    const prev = this.tidePrev;
+    this.tidePrev = scene;
+    const y = TOP + 0.008 + CARD_T / 2;
+    const evKey = scene ? `${scene.hand}:${scene.playKey}:${scene.shown}:${!!scene.play?.swapped}` : "";
+    // The table as you found it is not acted out, but the first deal at a table you were sitting at is.
+    const event = this.tideTold && !!scene && evKey !== this.tideEv;
+    this.tideTold = true;
+    this.tideEv = evKey;
+    if (scene) this.primed = true;
+    const dealing = event && (!prev || scene!.hand !== prev.hand);
+    /** The card just played, if that is what changed. */
+    const play = event && !dealing && scene!.playKey !== prev!.playKey ? scene!.play : null;
+    const swapped = event && !dealing && !play && !!scene!.play?.swapped && !prev!.play?.swapped;
+    const showing = event && !dealing && scene!.shown && !prev!.shown;
+    /** Seconds until what the card did has been acted out: what follows it (a draw, the cards shown) waits that long. */
+    const after = play ? (play.moved ? 2.7 : play.target ? 1.6 : 0.6) : swapped ? 0.7 : 0;
+    /** Where a seat's cards lie, by that seat: its hand, and the row it plays to. */
+    const handAt = (mine: boolean, n: number, i: number) => new THREE.Vector3((i - (n - 1) / 2) * (mine ? CARD_AX * 1.5 : CARD_AX * 0.75), y + i * 0.0015, mine ? HAND_Z - 0.03 : STACK_Z + 0.05);
+    /** The same, as a point on the table: the middle of a seat's hand. */
+    const handSpot = (id: string): THREE.Vector3 | null => {
+      const r = this.rigs.get(id);
+      const seat = scene?.seats.find((s) => s.id === id);
+      return r && seat ? this.toTable(r, handAt(!!seat.pick, 1, 0)) : null;
+    };
+    const inHand = scene ? scene.seats.filter((s) => s.hand.length > 0).length : 0;
+
+    // The middle: the deck, as tall as it is deep, the buried card beside it, and the tide token.
+    const mid = scene ? `${scene.deck}|${scene.buried}|${scene.dealt}|${scene.tide}|${evKey}` : "";
+    if (mid !== this.middleKey) {
+      const turned = this.primed && !!scene && !!prev && prev.tide !== scene.tide;
+      this.middleKey = mid;
+      this.middle.clear();
+      if (scene) {
+        for (let i = 0; i < Math.ceil(scene.deck / 2); i++) {
+          const c = this.playingCard("back", 0.3);
+          c.position.set(DECK_AT.x, DECK_AT.y + i * CARD_T, DECK_AT.z);
+          c.rotation.y = 0.12 + (i % 3) * 0.02;
+          this.middle.add(c);
+        }
+        if (scene.dealt) {
+          // Buried: lying crossways, face down unless it is yours to see.
+          const b = this.playingCard(scene.buried ?? "back", scene.buried === null ? 0.3 : 0.6);
+          b.position.copy(BURIED_AT);
+          b.rotation.y = Math.PI / 2;
+          this.middle.add(b);
+          const by = swapped ? handSpot(scene.play!.by) : null;
+          if (dealing) this.slide(b, DECK_AT, { hide: true });
+          else if (by) this.slide(b, by, { dur: 0.6, lift: 0.12, flip: scene.buried !== null });
+          // Turned up where it lies: for the Smuggler's player as they look, and for everyone once the hand is over.
+          else if (event && prev?.buried === null && scene.buried !== null) this.slide(b, BURIED_AT, { delay: showing ? after + 0.3 * inHand + 0.2 : PLAY_S + 0.2, lift: 0.07, flip: true });
+        }
+        const face = glowing(this.tex(`tt:${scene.tide}`, () => canvasTexture(TIDE_TOKEN_PX * 4, TIDE_TOKEN_PX * 4, (ctx) => {
+          ctx.imageSmoothingEnabled = false;
+          ctx.drawImage(tideTokenCanvas(scene.tide), 0, 0, TIDE_TOKEN_PX * 4, TIDE_TOKEN_PX * 4);
+        })), 0.6);
+        const token = new THREE.Mesh(new THREE.CylinderGeometry(0.085, 0.085, 0.02, 24), [lambert(scene.tide === "high" ? "#3f7fd0" : "#b8913f"), face, lambert("#6b4a2b")]);
+        token.position.copy(TOKEN_AT);
+        // A cylinder's cap has its picture's top toward -x: turn it to face your seat.
+        token.rotation.y = -Math.PI / 2;
+        if (turned) token.userData.flip = 0;
+        this.middle.add(token);
+      }
+      if (turned) sounds.table("reveal");
+    }
+
+    // What the card did, drawn over the table for a moment.
+    if (play && scene) {
+      sounds.table("hold");
+      const by = this.rigs.get(play.by);
+      const from = by ? this.toTable(by, new THREE.Vector3(0, y, STACK_Z - 0.13)) : null;
+      const to = play.target ? handSpot(play.target) : null;
+      const middle = new THREE.Vector3(0, 0, 0.05);
+      if (from && to) {
+        this.aim(from, to, AIM_INK[play.card] ?? "#ffd23f", PLAY_S * 0.8);
+        if (play.guess) {
+          // A Gull: the card it called, held up over whoever it was called on, and whether that was right.
+          this.float(this.cardTex(play.guess), to, 0.2, 0.2, PLAY_S + 0.2, 1.7);
+          this.word(play.hit ? "right!" : "wrong", play.hit ? "#ffd23f" : "#f08a8a", to, 0.43, PLAY_S + 0.7, 1.2);
+        } else if (play.card === 3) {
+          this.word("looks", AIM_INK[3], to, 0.2, PLAY_S + 0.3, 1.1);
+        } else if (play.card === 4) {
+          const mine = handSpot(play.by);
+          if (mine) this.clash(mine, to, PLAY_S + 0.1);
+          this.word(play.tie ? "matched" : "clash!", play.tie ? "#7db6f2" : AIM_INK[4], new THREE.Vector3((from.x + to.x) / 2, 0, (from.z + to.z) / 2), 0.34, PLAY_S + 0.5, 1.0);
+        }
+      }
+      if (play.wasted && from) this.word("all at anchor", "#a8a3c4", from, 0.2, PLAY_S, 1.3);
+      if (play.tide) this.word(`${play.tide} tide`, play.tide === "high" ? "#a9d4fb" : "#e6c877", TOKEN_AT, 0.3, 0.3, 1.4);
+      if (play.card === 6) {
+        const at = handSpot(play.by);
+        if (at) this.ring(at, "#7db6f2", PLAY_S, 1.4);
+      }
+      if (play.card === 7) this.storm(PLAY_S * 0.5);
+      if (play.card === 7 && !play.moved) this.word("nothing to blow about", "#a8a3c4", middle, 0.3, PLAY_S + 0.6, 1.4);
+      if (play.card === 8 && scene.buried === null) {
+        this.ring(BURIED_AT, "#ffd23f", PLAY_S, 1.2);
+        this.word("looks", "#ffd23f", BURIED_AT, 0.2, PLAY_S + 0.1, 1.1);
+      }
+    }
+    if (swapped) this.word("swapped", "#ffd23f", BURIED_AT, 0.24, 0.5, 1.2);
+    if (showing) sounds.table("reveal", { delay: after });
+    if (dealing) sounds.table("hold", { delay: 0.25 });
+
+    let shownIx = 0;
+    for (const r of this.rigs.values()) {
+      const at = scene ? scene.seats.findIndex((s) => s.id === r.id) : -1;
+      const seat = at >= 0 ? scene!.seats[at] : undefined;
+      const key = seat ? `${seat.hand.join(",")}|${seat.known}|${seat.played.join(",")}|${seat.pick?.can}|${seat.pick?.index}|${evKey}` : "";
+      if (key === r.itemsKey) {
+        r.items.traverse((o) => o.userData.action && this.clickables.push(o));
+        continue;
+      }
+      r.itemsKey = key;
+      r.items.clear();
+      if (!seat || !scene) continue;
+      const was = event ? prev?.seats.find((s) => s.id === r.id) : undefined;
+      const mine = !!seat.pick;
+      const handMid = handAt(mine, 1, 0);
+      // What they have played, face up in a row toward the middle, each lapping the last.
+      const lap = Math.min(CARD_AX * 0.62, 0.42 / Math.max(1, seat.played.length));
+      seat.played.forEach((rank, i) => {
+        const c = this.playingCard(rank);
+        c.position.set((i - (seat.played.length - 1) / 2) * lap, y + i * 0.0015, STACK_Z - 0.13);
+        r.items.add(c);
+        if (!was || dealing || i < was.played.length) return;
+        // The card they played goes down first; a card after it is the one they were holding when they were put out, turned up once that has been acted out.
+        const played = !!play && play.by === r.id && i === was.played.length;
+        if (played) this.slide(c, new THREE.Vector3(handMid.x, y + 0.02, handMid.z), { flip: true });
+        else this.slide(c, handMid, { delay: play ? PLAY_S + (play.target ? 1.0 : 0.2) : 0, dur: 0.5, lift: 0.1, flip: true, hide: false });
+      });
+      // Their hand: face down in front of them, or face up if you may see it. Your own lies nearer you, larger, and can be clicked.
+      seat.hand.forEach((face, i) => {
+        const c = this.playingCard(face, face === "back" ? 0.3 : seat.known ? 0.35 : 0.55);
+        c.position.copy(handAt(mine, seat.hand.length, i));
+        const picked = mine && seat.pick!.index === i;
+        if (mine) {
+          c.scale.setScalar(1.25);
+          if (picked) c.position.z -= 0.05;
+          if (seat.pick!.can) {
+            c.userData.action = { type: "card", index: i } satisfies TableAction;
+            if (!picked) c.userData.baseY = c.position.y;
+            this.clickables.push(c);
+          }
+          if (picked) c.position.y += 0.03;
+        }
+        r.items.add(c);
+        if (!event) return;
+        const up = face !== "back";
+        const drawn = !!was && seat.hand.length > was.hand.length && i === seat.hand.length - 1;
+        const moved = play?.moved;
+        if (dealing) {
+          // Off the deck, round the table a seat at a time; whoever leads then draws.
+          this.slide(c, this.toSeat(r, DECK_AT), { delay: 0.25 + at * 0.16 + (i > 0 ? 0.5 + scene.seats.length * 0.16 : 0), dur: 0.5, lift: 0.14, flip: up, hide: true });
+        } else if (moved?.includes(r.id) && i === 0) {
+          // A Storm: the card comes round from the player before.
+          const giver = handSpot(moved[(moved.indexOf(r.id) + moved.length - 1) % moved.length]);
+          // It is caught up as the first bolt strikes, and comes down spinning in front of whoever is next round the table.
+          if (giver) this.slide(c, this.toSeat(r, giver), { delay: 1.15, dur: 1.2, lift: 0.3, flip: up, spin: 2 });
+        } else if (swapped && scene.play!.by === r.id && i === 0) {
+          this.slide(c, this.toSeat(r, BURIED_AT), { dur: 0.6, lift: 0.12, flip: up });
+        } else if (drawn) {
+          this.slide(c, this.toSeat(r, DECK_AT), { delay: after + 0.1, dur: 0.5, lift: 0.14, flip: up, hide: true });
+        } else if (up && was?.hand[i] === "back") {
+          // Turned up where it lies: a card you have been shown, or everyone's as the hand ends, one seat after another.
+          this.slide(c, c.position, { delay: showing ? after + 0.3 * shownIx : PLAY_S + 0.5, lift: 0.07, flip: true });
+        }
+        if (showing && scene.winners.includes(r.id)) c.userData.win = { t: -(after + 0.3 * inHand + 0.35), y: c.position.y, s: c.scale.x };
+      });
+      if (showing && seat.hand.length > 0) shownIx++;
+    }
+  }
+
   // ---------- input ----------
 
   press(ndc: THREE.Vector2, camera: THREE.Camera) {
@@ -1138,6 +1581,7 @@ export class TableStage implements WorldMinigame {
       r.seat.position.set(0, SEAT_Y * on + Math.sin(r.sit * Math.PI) * 0.1 + (info?.won ? Math.abs(Math.sin(this.clock * 5)) * 0.06 : 0), -stand * (1 - on));
       r.figure?.update({ time: this.clock, stride: 0, walking: false, lean: 0, lying: false, sitting: r.sit });
       for (const wrap of r.items.children) {
+        this.stepCard(wrap, dt);
         const th = wrap.userData.throw as Throw | undefined;
         if (!th) continue;
         th.t += dt;
@@ -1159,9 +1603,36 @@ export class TableStage implements WorldMinigame {
         }
       }
     }
+    for (const o of [...this.fx.children]) {
+      const f = o.userData.fx as { t: number; life: number; tick(k: number): void };
+      f.t += dt;
+      if (f.t < 0) continue;
+      if (f.t >= f.life) {
+        this.fx.remove(o);
+        o.traverse((c) => {
+          const mesh = c as THREE.Mesh;
+          for (const m of Array.isArray(mesh.material) ? mesh.material : [mesh.material]) m?.dispose();
+          if (c.userData.ownGeo) mesh.geometry?.dispose();
+        });
+        continue;
+      }
+      o.visible = true;
+      f.tick(f.t / f.life);
+    }
+    for (const o of this.middle.children) {
+      this.stepCard(o, dt);
+      // The tide token, turned: it spins up off the cloth and comes down on its new face.
+      const f = o.userData.flip as number | undefined;
+      if (f === undefined) continue;
+      const k = Math.min(1, f + dt / 0.7);
+      o.userData.flip = k;
+      o.rotation.z = (1 - smoother(k)) * Math.PI * 3;
+      o.position.y = TOP + 0.018 + Math.sin(k * Math.PI) * 0.14;
+      if (k >= 1) delete o.userData.flip;
+    }
     for (const o of this.clickables) {
-      // A die still in the air is the throw's to move.
-      if (o.userData.throw) continue;
+      // A die still in the air is the throw's to move, and a card on its way the slide's.
+      if (o.userData.throw || o.userData.slide) continue;
       const base = o.userData.baseY as number | undefined;
       if (base !== undefined) o.position.y = base + (0.5 + 0.5 * Math.sin(this.clock * 5)) * 0.018;
     }
@@ -1198,6 +1669,9 @@ export class TableStage implements WorldMinigame {
     this.world.setSharp(false);
     for (const r of this.rigs.values()) this.disposeRig(r);
     this.discGeo.dispose();
+    this.cardGeo.dispose();
+    this.lineGeo.dispose();
+    this.ringGeo.dispose();
     for (const m of [...(this.crewDice?.shown ?? []), ...(this.crewDice?.lit ?? [])]) m.dispose();
     for (const mats of [this.dieMats, this.dieBack, this.dieLit]) for (const m of mats ?? []) m.dispose();
     for (const t of this.textures) t.dispose();
