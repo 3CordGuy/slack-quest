@@ -18,6 +18,7 @@ import { markerUrl, type MarkerFace } from "../shoalsArt";
 import { PIXEL_LINE_ROWS, canDrawPixelText, drawPixelText, pixelTextWidth } from "./pixelFont";
 import { SITTING_DROP, makeFigure, type Figure } from "./figures";
 import { labelTexture, lookFor, spriteKey } from "./sprites";
+import { OVERLAY_LAYER } from "./post";
 import type { WorldMinigame, WorldRenderer } from "./WorldRenderer";
 
 export type TableKind = "dice" | "shoals";
@@ -355,6 +356,7 @@ export class TableStage implements WorldMinigame {
     // Hung above the middle of the table, turned to face whoever looks at it (a sprite faces each viewer's own camera).
     this.card = new THREE.Sprite(new THREE.SpriteMaterial({ transparent: true }));
     this.card.scale.set(0.64, 0.32, 1);
+    this.card.layers.set(OVERLAY_LAYER);
     this.card.position.set(0, CARD_Y, 0);
     this.card.visible = false;
     this.group.add(this.card);
@@ -423,6 +425,8 @@ export class TableStage implements WorldMinigame {
     const overlay = (map: THREE.Texture | null, y: number, order: number) => {
       const s = new THREE.Sprite(new THREE.SpriteMaterial({ map, transparent: true, depthTest: false }));
       s.renderOrder = order;
+      // Drawn after the depth-of-field blur, so it stays crisp however far from the focus it sits.
+      s.layers.set(OVERLAY_LAYER);
       s.position.y = y;
       return s;
     };
