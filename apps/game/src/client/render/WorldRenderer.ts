@@ -3072,12 +3072,88 @@ export class WorldRenderer {
         break;
       }
       case "shop": {
-        // Market stall: a counter under a striped awning.
-        add(box(0.9, 0.3, 0.45), lambert("#8a6a44"), 0, 0.15, 0);
-        for (const x of [-0.42, 0.42]) add(new THREE.CylinderGeometry(0.04, 0.04, 0.95, 5), lambert("#5a3d22"), x, 0.47, 0.2);
-        for (let i = 0; i < 4; i++) add(box(0.26, 0.06, 0.62), lambert(i % 2 ? "#f4efe1" : "#b9433d"), -0.39 + i * 0.26, 0.97, 0.05);
-        add(box(0.16, 0.14, 0.16), lambert("#e0b12e"), -0.22, 0.37, 0);
-        add(box(0.14, 0.18, 0.14), lambert("#3b82f6"), 0.2, 0.39, 0);
+        // The market stall: a plank platform, a counter with a cloth runner and the day's goods on it (a crate of apples,
+        // a balance and a stack of coin, a sack of grain), a shelved back wall of jars and bolts of cloth, a striped
+        // awning with a scalloped edge on four poles, lanterns, a coin sign, and crates and a barrel stacked at the sides.
+        const timber = lambert("#4a2f22");
+        const wood = lambert("#7a5230");
+        const plank = lambert("#a07a4c");
+        const brass = lambert("#e0b12e");
+        const iron = lambert("#2b2a33");
+        const red = lambert("#b9433d");
+        const cream = lambert("#f4efe1");
+        const glows: BuildingGlow[] = [];
+        add(box(1.5, 0.04, 0.95), lambert("#6b5138"), 0, 0.02, 0.05);
+        for (let i = -3; i <= 3; i++) add(box(0.012, 0.006, 0.95), timber, i * 0.2, 0.043, 0.05);
+        // The counter: a plank front, a top slab, and a red cloth runner down the middle.
+        add(box(1.0, 0.3, 0.36), wood, 0, 0.19, 0.18);
+        for (let i = -4; i <= 4; i++) add(box(0.01, 0.28, 0.01), timber, i * 0.11, 0.19, 0.364);
+        add(box(1.06, 0.04, 0.42), plank, 0, 0.36, 0.18);
+        add(box(0.9, 0.01, 0.3), red, 0, 0.385, 0.18);
+        add(box(0.9, 0.12, 0.012), red, 0, 0.27, 0.372);
+        for (let i = 0; i < 9; i++) add(new THREE.ConeGeometry(0.05, 0.06, 4), red, -0.4 + i * 0.1, 0.18, 0.372, Math.PI / 4).rotation.x = Math.PI;
+        // Four poles, the back two taller so the awning slopes down to the front.
+        for (const x of [-0.52, 0.52]) {
+          add(new THREE.CylinderGeometry(0.03, 0.03, 0.96, 6), timber, x, 0.52, 0.38);
+          add(new THREE.CylinderGeometry(0.03, 0.03, 1.12, 6), timber, x, 0.6, -0.2);
+        }
+        // The back wall and its two shelves.
+        add(box(1.04, 0.6, 0.03), lambert("#5e4026"), 0, 0.72, -0.2);
+        add(box(1.1, 0.04, 0.05), timber, 0, 1.1, -0.2);
+        for (const y of [0.5, 0.78]) add(box(0.96, 0.025, 0.16), plank, 0, y, -0.12);
+        const jar = (x: number, y: number, c: string) => {
+          add(new THREE.CylinderGeometry(0.034, 0.034, 0.09, 6), lambert(c), x, y + 0.05, -0.12);
+          add(new THREE.CylinderGeometry(0.036, 0.036, 0.016, 6), lambert("#c9a877"), x, y + 0.104, -0.12);
+        };
+        ["#c4473a", "#e0b12e", "#5f9e4a", "#3f7fb8", "#d9843a", "#8a5fb0", "#c4473a", "#5f9e4a"].forEach((c, i) => jar(-0.4 + i * 0.115, 0.5125, c));
+        // Bolts of cloth lying on the top shelf, and a few more jars.
+        [["#3f6fa8", -0.38], ["#b9433d", -0.2], ["#e8dcc0", -0.02]].forEach(([c, x], i) => add(box(0.16, 0.06 + (i % 2) * 0.02, 0.1), lambert(c as string), x as number, 0.8 + (0.06 + (i % 2) * 0.02) / 2, -0.12));
+        for (let i = 0; i < 3; i++) jar(0.16 + i * 0.12, 0.7925, ["#e0b12e", "#5f9e4a", "#c4473a"][i]);
+        // The striped awning, sloping forward, with a scalloped edge of diamonds along the front.
+        const pitch = Math.atan2(0.14, 0.58);
+        for (let i = 0; i < 6; i++) {
+          const c = i % 2 ? cream : red;
+          add(box(0.18, 0.04, 0.66), c, -0.45 + i * 0.18, 1.06, 0.09).rotation.x = pitch;
+          add(box(0.12, 0.12, 0.02), c, -0.45 + i * 0.18, 0.94, 0.41).rotation.z = Math.PI / 4;
+        }
+        add(box(1.12, 0.025, 0.025), timber, 0, 0.98, 0.39);
+        // The goods on the counter: a crate of apples, a balance and a stack of coin, and a sack of grain.
+        add(box(0.28, 0.09, 0.2), wood, -0.32, 0.43, 0.2);
+        add(box(0.24, 0.02, 0.16), lambert("#6b4a2b"), -0.32, 0.47, 0.2);
+        for (const [dx, dz, c] of [[-0.07, -0.04, "#c4473a"], [0.0, 0.03, "#d9843a"], [0.07, -0.03, "#c4473a"], [-0.02, -0.07, "#7ab04a"], [0.08, 0.05, "#c4473a"], [-0.08, 0.05, "#d9b45a"]] as [number, number, string][]) add(new THREE.SphereGeometry(0.036, 6, 5), lambert(c), -0.32 + dx, 0.5, 0.2 + dz);
+        add(box(0.1, 0.02, 0.07), brass, 0.0, 0.405, 0.2);
+        add(new THREE.CylinderGeometry(0.012, 0.012, 0.16, 5), brass, 0.0, 0.49, 0.2);
+        add(box(0.22, 0.012, 0.012), brass, 0.0, 0.57, 0.2).rotation.z = 0.12;
+        for (const [x, y] of [[-0.11, 0.55], [0.11, 0.59]]) {
+          add(new THREE.CylinderGeometry(0.045, 0.04, 0.01, 7), brass, x, y - 0.06, 0.2);
+          add(box(0.006, 0.06, 0.006), iron, x, y - 0.03, 0.2);
+        }
+        for (let i = 0; i < 4; i++) add(new THREE.CylinderGeometry(0.03, 0.03, 0.012, 7), brass, 0.2, 0.395 + i * 0.013, 0.28);
+        add(new THREE.CylinderGeometry(0.1, 0.12, 0.17, 7), lambert("#d8c7a0"), 0.36, 0.47, 0.2);
+        add(new THREE.CylinderGeometry(0.075, 0.1, 0.03, 7), lambert("#d9b45a"), 0.36, 0.565, 0.2);
+        // Lanterns on the front poles, lit at dusk.
+        for (const x of [-0.58, 0.58]) {
+          add(box(0.07, 0.02, 0.02), iron, x * 0.95, 0.86, 0.38);
+          add(box(0.05, 0.065, 0.05), new THREE.MeshBasicMaterial({ color: "#ffd77a" }), x, 0.78, 0.38).userData.glow = true;
+          add(box(0.08, 0.015, 0.08), iron, x, 0.735, 0.38);
+          add(new THREE.ConeGeometry(0.06, 0.05, 4), iron, x, 0.84, 0.38, Math.PI / 4);
+          glows.push({ pos: new THREE.Vector3(x, 0.78, 0.46), size: 0.4 });
+        }
+        // A coin sign on a post to the right, facing the lane.
+        add(box(0.04, 0.9, 0.04), timber, 0.74, 0.47, 0.34);
+        add(box(0.04, 0.3, 0.28), timber, 0.74, 0.8, 0.34);
+        add(box(0.045, 0.25, 0.23), lambert("#2c3a4a"), 0.74, 0.8, 0.34);
+        add(new THREE.CylinderGeometry(0.075, 0.075, 0.012, 10), brass, 0.768, 0.8, 0.34).rotation.z = Math.PI / 2;
+        // Crates stacked at the left, and a barrel and a leaning sack at the right.
+        add(box(0.26, 0.2, 0.26), wood, -0.72, 0.14, 0.26);
+        add(box(0.22, 0.16, 0.22), plank, -0.72, 0.32, 0.26, 0.4);
+        add(box(0.2, 0.14, 0.2), wood, -0.7, 0.12, -0.06, 0.2);
+        for (const [dx, dz] of [[-0.04, 0.02], [0.05, -0.03], [0.04, 0.05]]) add(new THREE.SphereGeometry(0.04, 6, 5), lambert("#7ab04a"), -0.7 + dx, 0.22, -0.06 + dz);
+        add(new THREE.CylinderGeometry(0.09, 0.09, 0.2, 8), wood, 0.72, 0.14, -0.02);
+        for (const y of [0.08, 0.2]) add(new THREE.CylinderGeometry(0.094, 0.094, 0.02, 8), timber, 0.72, y, -0.02);
+        add(box(0.12, 0.17, 0.1), lambert("#d8c7a0"), 0.68, 0.125, -0.22, 0.4);
+        g.userData.glows = glows;
+        foldByLook(g);
         break;
       }
       case "ring": {
@@ -3392,26 +3468,134 @@ export class WorldRenderer {
           break;
         }
         if (poi.kind === "apothecary") {
-          // The apothecary: a narrow plastered shop under a dark green roof, a green sign, and bunches of herbs hung from the eaves.
-          const wall = lambert("#d9ccb0");
-          add(box(0.9, 0.62, 0.7), wall, 0, 0.31, 0);
-          add(box(0.98, 0.06, 0.78), lambert("#4a3a2a"), 0, 0.64, 0);
-          const roof = add(new THREE.ConeGeometry(0.62, 0.5, 4), lambert("#2f5a3a"), 0, 0.92, 0, Math.PI / 4);
-          roof.scale.z = 0.85;
-          add(box(0.2, 0.34, 0.04), lambert("#3e5a3a"), -0.18, 0.17, 0.36);
-          add(box(0.24, 0.2, 0.03), new THREE.MeshBasicMaterial({ color: "#ffe2a0" }), 0.2, 0.38, 0.36);
-          // A swinging green sign on a bracket, with a pale leaf on it.
-          add(box(0.04, 0.04, 0.32), lambert("#3a2c22"), 0.42, 0.58, 0.5);
-          add(box(0.03, 0.22, 0.26), lambert("#3f8a46"), 0.42, 0.44, 0.58);
-          add(box(0.035, 0.1, 0.06), lambert("#cfe8a0"), 0.42, 0.45, 0.58);
-          // Bunches of herbs drying under the eaves: stems up, leaves hanging.
-          for (const [x, c] of [[-0.36, "#6aa34f"], [-0.12, "#8fb84f"], [0.08, "#5f8f3f"]] as [number, string][]) {
-            add(box(0.015, 0.1, 0.015), lambert("#5a3d22"), x, 0.57, 0.42);
-            add(new THREE.ConeGeometry(0.06, 0.16, 5), lambert(c), x, 0.46, 0.42, 0).rotation.x = Math.PI;
+          // The apothecary: a plastered two-storey shop with a jettied upper floor, dark timbers and a green door and shutters,
+          // under a steep green roof with a stone chimney. Bottles glow in the shop window, a green sign swings from a bracket,
+          // herbs dry on a rack, a copper still bubbles by the wall, and a little herb bed sits at the door.
+          const timber = lambert("#4a2f22");
+          const plaster = lambert("#e6dcc0");
+          const stone = lambert("#a8977a");
+          const footing = lambert("#7b8494");
+          const iron = lambert("#2b2a33");
+          const wood = lambert("#7a5230");
+          const green = lambert("#3e6a44");
+          const roofMat = lambert("#2f5a3a");
+          const roofDark = lambert("#234530");
+          const brass = lambert("#e0b12e");
+          const copper = lambert("#c8743a");
+          const glows: BuildingGlow[] = [];
+          const glass = warmPane("#b9a064", "#ffe2a0");
+          g.userData.panes = [glass];
+          const framed = (x: number, y: number, w: number, h: number, z: number) => {
+            add(box(w + 0.04, h + 0.04, 0.012), timber, x, y, z);
+            add(box(w, h, 0.01), glass, x, y, z + 0.008).userData.glow = true;
+            add(box(0.015, h, 0.012), timber, x, y, z + 0.014);
+            add(box(w, 0.015, 0.012), timber, x, y, z + 0.014);
+            for (const s of [-1, 1]) add(box(0.045, h + 0.02, 0.014), green, x + s * (w / 2 + 0.045), y, z + 0.008);
+            glows.push({ pos: new THREE.Vector3(x, y, z + 0.14), size: w * 2.2 });
+          };
+          const bottle = (x: number, y: number, z: number, c: string, lit = false) => {
+            const m = lit ? new THREE.MeshBasicMaterial({ color: c }) : lambert(c);
+            const body = add(new THREE.CylinderGeometry(0.024, 0.026, 0.06, 6), m, x, y + 0.03, z);
+            add(new THREE.CylinderGeometry(0.01, 0.012, 0.03, 5), m, x, y + 0.075, z);
+            if (lit) body.userData.glow = true;
+          };
+          const herbs = (x: number, y: number, z: number, c: string) => {
+            add(box(0.012, 0.07, 0.012), wood, x, y + 0.035, z);
+            add(new THREE.ConeGeometry(0.045, 0.13, 5), lambert(c), x, y - 0.05, z).rotation.x = Math.PI;
+          };
+          // Footing, stone course, plaster ground floor, the jetty beam, the overhanging upper floor, and the eave beam.
+          add(box(1.04, 0.08, 0.78), footing, 0, 0.04, 0);
+          add(box(0.96, 0.1, 0.7), stone, 0, 0.13, 0);
+          add(box(0.94, 0.28, 0.68), plaster, 0, 0.32, 0);
+          add(box(1.0, 0.04, 0.74), timber, 0, 0.47, 0);
+          add(box(0.98, 0.3, 0.72), plaster, 0, 0.64, 0);
+          add(box(1.02, 0.04, 0.76), timber, 0, 0.81, 0);
+          for (const x of [-0.47, 0.47]) for (const z of [-0.34, 0.34]) add(box(0.05, 0.28, 0.05), timber, x, 0.32, z);
+          for (const x of [-0.49, 0.49]) for (const z of [-0.36, 0.36]) add(box(0.05, 0.3, 0.05), timber, x, 0.64, z);
+          add(box(0.04, 0.3, 0.015), timber, 0, 0.64, 0.37);
+          for (const x of [-0.505, 0.505]) for (const tilt of [-0.5, 0.5]) add(box(0.015, 0.04, 0.4), timber, x, 0.64, 0).rotation.x = tilt;
+          // The door in a timber frame, a step and stepping stones; the shop window beside it, with a shelf of bottles.
+          add(box(0.24, 0.36, 0.03), timber, -0.24, 0.26, 0.345);
+          add(box(0.18, 0.32, 0.03), green, -0.24, 0.25, 0.355);
+          add(box(0.18, 0.012, 0.012), iron, -0.24, 0.35, 0.374);
+          add(box(0.18, 0.012, 0.012), iron, -0.24, 0.16, 0.374);
+          add(box(0.03, 0.03, 0.02), brass, -0.18, 0.25, 0.376);
+          add(box(0.3, 0.06, 0.12), footing, -0.24, 0.03, 0.45);
+          for (const [x, z, w] of [[-0.24, 0.62, 0.2], [-0.2, 0.76, 0.18]] as [number, number, number][]) add(box(w, 0.02, 0.1), footing, x, 0.01, z);
+          framed(0.2, 0.31, 0.3, 0.2, 0.343);
+          add(box(0.4, 0.03, 0.09), timber, 0.2, 0.19, 0.385);
+          ["#5f9e4a", "#c4473a", "#3f7fb8", "#d9b45a", "#8a5fb0"].forEach((c, i) => bottle(0.06 + i * 0.07, 0.205, 0.385, c, i === 0));
+          // Two upper windows, one with a planter of herbs and one of white blooms.
+          for (const x of [-0.22, 0.22]) {
+            framed(x, 0.65, 0.18, 0.16, 0.362);
+            add(box(0.26, 0.055, 0.075), wood, x, 0.53, 0.4);
+            add(box(0.22, 0.035, 0.055), lambert("#4f8a3a"), x, 0.57, 0.4);
+            for (let i = 0; i < 3; i++) add(box(0.04, x < 0 ? 0.04 : 0.07, 0.04), lambert(x < 0 ? "#f4efe1" : "#6aa34f"), x + (i - 1) * 0.07, x < 0 ? 0.605 : 0.62, 0.4);
           }
-          // A little copper still by the door, for show.
-          add(new THREE.CylinderGeometry(0.1, 0.12, 0.2, 7), lambert("#c8743a"), -0.58, 0.1, 0.3);
-          add(new THREE.CylinderGeometry(0.02, 0.02, 0.2, 4), lambert("#c8743a"), -0.58, 0.28, 0.3);
+          // The roof: a steep gable of plaster under two slabs of green, with darker courses of shingle and a ridge cap.
+          const half = 0.46, rise = 0.36, len = 1.04, rc = 0.83;
+          const shape = new THREE.Shape([new THREE.Vector2(-half, 0), new THREE.Vector2(half, 0), new THREE.Vector2(0, rise)]);
+          const prism = new THREE.ExtrudeGeometry(shape, { depth: len, bevelEnabled: false }).translate(0, 0, -len / 2).rotateY(Math.PI / 2);
+          add(prism, plaster, 0, rc, 0);
+          const pitch = Math.atan2(rise, half);
+          const slope = Math.hypot(rise, half) * 1.08;
+          for (const side of [1, -1]) {
+            /** A slab of roof `depth` long down the slope, its middle `along` from the ridge. */
+            const slab = (along: number, depth: number, m: THREE.Material, thick: number) => {
+              add(box(len + 0.12, thick, depth), m, 0, rc + rise - along * Math.sin(pitch) + 0.03 * Math.cos(pitch), side * (along * Math.cos(pitch) + 0.03 * Math.sin(pitch))).rotation.x = side * pitch;
+            };
+            slab(slope / 2, slope, roofMat, 0.06);
+            slab(0.22, 0.05, roofDark, 0.065);
+            slab(0.44, 0.05, roofDark, 0.065);
+          }
+          add(box(len + 0.2, 0.06, 0.08), roofDark, 0, rc + rise + 0.03, 0);
+          // A round window in each gable end, glowing at dusk.
+          for (const x of [-0.5, 0.5]) {
+            add(new THREE.CylinderGeometry(0.06, 0.06, 0.02, 8), timber, x * 1.03, rc + 0.13, 0).rotation.z = Math.PI / 2;
+            add(new THREE.CylinderGeometry(0.045, 0.045, 0.02, 8), glass, x * 1.04, rc + 0.13, 0).rotation.z = Math.PI / 2;
+          }
+          // The chimney, up the back; the ambience draws its smoke.
+          add(box(0.15, 0.5, 0.15), stone, 0.3, 1.05, -0.14);
+          add(box(0.2, 0.05, 0.2), footing, 0.3, 1.32, -0.14);
+          add(new THREE.CylinderGeometry(0.035, 0.045, 0.07, 6), lambert("#b8643a"), 0.3, 1.385, -0.14);
+          g.userData.smoke = new THREE.Vector3(0.3, 1.46, -0.14);
+          // The sign: an iron bracket from the upper floor and a green board with a pale cross, its face to the side.
+          add(box(0.03, 0.03, 0.28), iron, 0.47, 0.76, 0.5);
+          for (const z of [0.46, 0.62]) add(box(0.008, 0.07, 0.008), iron, 0.47, 0.725, z);
+          add(box(0.04, 0.24, 0.24), timber, 0.47, 0.6, 0.54);
+          add(box(0.046, 0.2, 0.2), lambert("#3f8a46"), 0.47, 0.6, 0.54);
+          add(box(0.05, 0.1, 0.034), lambert("#f0ead0"), 0.47, 0.6, 0.54);
+          add(box(0.05, 0.034, 0.1), lambert("#f0ead0"), 0.47, 0.6, 0.54);
+          // A lantern by the door.
+          add(box(0.04, 0.02, 0.05), iron, -0.43, 0.42, 0.37);
+          add(box(0.05, 0.065, 0.05), new THREE.MeshBasicMaterial({ color: "#ffd77a" }), -0.43, 0.37, 0.4).userData.glow = true;
+          add(box(0.08, 0.015, 0.08), iron, -0.43, 0.325, 0.4);
+          add(new THREE.ConeGeometry(0.06, 0.05, 4), iron, -0.43, 0.43, 0.4, Math.PI / 4);
+          glows.push({ pos: new THREE.Vector3(-0.43, 0.37, 0.48), size: 0.36 });
+          // The herb bed in front: a low wooden frame of soil, leafy plants and a few blooms.
+          add(box(0.42, 0.07, 0.17), wood, 0.2, 0.035, 0.6);
+          add(box(0.38, 0.03, 0.13), lambert("#4a3a2a"), 0.2, 0.075, 0.6);
+          for (let i = 0; i < 5; i++) add(box(0.05, 0.05 + (i % 2) * 0.03, 0.05), lambert(["#6aa34f", "#8fb84f", "#5f8f3f"][i % 3]), 0.06 + i * 0.07, 0.1 + (i % 2) * 0.015, 0.6);
+          for (const [x, c] of [[0.1, "#c46bd0"], [0.24, "#f4efe1"], [0.31, "#e8c53a"]] as [number, string][]) add(box(0.035, 0.035, 0.035), lambert(c), x, 0.17, 0.6);
+          // The drying rack along the west wall, its bundles of herbs hanging from the rail.
+          for (const z of [0.22, -0.28]) add(box(0.04, 0.5, 0.04), timber, -0.66, 0.25, z);
+          add(box(0.04, 0.04, 0.54), timber, -0.66, 0.5, -0.03);
+          [["#6aa34f", 0.16], ["#8fb84f", 0.04], ["#5f8f3f", -0.08], ["#a8b84f", -0.2]].forEach(([c, z]) => herbs(-0.66, 0.44, z as number, c as string));
+          // A copper still on a stone stand at the front corner: a pot, a dome, a neck to a collecting bottle.
+          add(box(0.2, 0.08, 0.2), footing, -0.6, 0.04, 0.5);
+          add(new THREE.CylinderGeometry(0.09, 0.1, 0.16, 8), copper, -0.6, 0.16, 0.5);
+          add(new THREE.SphereGeometry(0.07, 7, 5), copper, -0.6, 0.27, 0.5);
+          add(new THREE.CylinderGeometry(0.012, 0.012, 0.18, 5), copper, -0.5, 0.31, 0.5).rotation.z = Math.PI / 2 - 0.5;
+          add(new THREE.CylinderGeometry(0.012, 0.012, 0.1, 5), copper, -0.43, 0.23, 0.5);
+          bottle(-0.43, 0.08, 0.5, "#5f9e4a", true);
+          add(new THREE.CylinderGeometry(0.095, 0.105, 0.015, 8), brass, -0.6, 0.245, 0.5);
+          // A barrel and sacks of ingredients by the east wall.
+          add(new THREE.CylinderGeometry(0.08, 0.08, 0.18, 8), wood, 0.64, 0.09 + 0.04, 0.05);
+          for (const y of [0.1, 0.2]) add(new THREE.CylinderGeometry(0.084, 0.084, 0.02, 8), timber, 0.64, y, 0.05);
+          add(box(0.12, 0.14, 0.1), lambert("#d8c7a0"), 0.62, 0.11, 0.24, 0.3);
+          add(box(0.06, 0.03, 0.05), lambert("#8a6a44"), 0.62, 0.2, 0.24, 0.3);
+          g.userData.glows = glows;
+          foldByLook(g);
           break;
         }
         // The smithy: an open-fronted shed with a stone forge glowing at the back, a chimney, and an anvil on a block out front.
