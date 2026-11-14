@@ -89,11 +89,11 @@ export function placeSeats<S extends { id: string }>(seats: S[], you: string, op
 }
 
 /**
- * Who is drawn round the table: not anyone who walked away mid-game, and once a game is over only those still
- * standing at the table (`present`), so a finished game does not keep showing players who have gone.
+ * Who is drawn round the table: only those still standing at it (`present`). Anyone who walked away is gone,
+ * whether they forfeited, were already out of the game and wandered off, or left after it ended.
  */
 export function drawnSeats<S extends { id: string; forfeited: boolean }>(seats: S[], phase: string | undefined, present: string[], you: string): S[] {
-  return seats.filter((s) => s.id === you || (!s.forfeited && (phase !== "done" || present.includes(s.id))));
+  return seats.filter((s) => s.id === you || (!s.forfeited && (phase === "open" || present.includes(s.id))));
 }
 
 /**
