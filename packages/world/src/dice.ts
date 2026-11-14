@@ -11,9 +11,8 @@
 // `diceView` of it, so nobody is told another player's hidden dice.
 
 import { makeRng } from "./rng";
+import { isStake, potText, prizeText, stakeText } from "./stakes";
 
-/** Stakes the player who opens a table may pick from. */
-export const DICE_ANTES = [5, 10, 20] as const;
 /** Dice each player starts with. */
 export const DICE_START = 3;
 export const DICE_MIN_PLAYERS = 2;
@@ -86,7 +85,8 @@ export function diceSplit(pot: number): { house: number; prize: number } {
   return { house, prize: pot - house };
 }
 
-export const isDiceAnte = (n: unknown): n is (typeof DICE_ANTES)[number] => (DICE_ANTES as readonly unknown[]).includes(n);
+/** Free, or any whole stake up to STAKE_MAX (see stakes.ts). */
+export const isDiceAnte = isStake;
 
 /** A fresh table with its opener in the first seat. */
 export function createDiceGame(seed: number, ante: number, host: { id: string; name: string }): DiceGame {
@@ -101,7 +101,7 @@ export function createDiceGame(seed: number, ante: number, host: { id: string; n
     reveal: null,
     winner: null,
     pot: 0,
-    log: [`${host.name} opened a table at ${ante} gold a seat.`],
+    log: [`${host.name} opened a table at ${stakeText(ante)}.`],
     rng: seed >>> 0,
   };
 }
@@ -131,7 +131,7 @@ function settle(state: DiceGame, turn: number): DiceGame {
   const left = inPlay(state.seats);
   if (left.length === 1) {
     const { prize } = diceSplit(state.pot);
-    return { ...state, phase: "done", winner: left[0].id, bids: [], log: say(state, `${left[0].name} wins ${prize} gold.`) };
+    return { ...state, phase: "done", winner: left[0].id, bids: [], log: say(state, `${left[0].name} wins ${prizeText(prize)}.`) };
   }
   return reroll({ ...state, turn });
 }
@@ -171,7 +171,7 @@ export function stepDice(state: DiceGame, playerId: string, action: DiceAction):
       if (state.seats.length < DICE_MIN_PLAYERS) return fail("It takes at least two to play.");
       const seats = state.seats.map((s) => ({ ...s, dice: Array<number>(DICE_START).fill(0) }));
       const pot = state.ante * seats.length;
-      return { ok: true, state: reroll({ ...state, phase: "playing", seats, turn: 0, pot, log: say(state, `Dice down. The pot is ${pot} gold.`) }) };
+      return { ok: true, state: reroll({ ...state, phase: "playing", seats, turn: 0, pot, log: say(state, `Dice down. ${potText(pot)}`) }) };
     }
 
     case "bid": {

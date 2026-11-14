@@ -164,7 +164,7 @@ type ToyRequest = { type: string; ante?: number };
 const TOY = {
   ...(CREW_RULES as unknown as Record<string, unknown>),
   requests: new Set(["open", "sit", "start", "win"]),
-  isAnte: (n: unknown) => n === 10,
+  isAnte: (n: unknown) => n === 10 || n === 0,
   create: (_seed: number, ante: number, host: { id: string; name: string }): Toy => ({ ante, phase: "open", seats: [{ ...host }], winner: null, pot: 0 }),
   step(game: Toy, player: HarborPlayer, request: ToyRequest) {
     if (request.type === "sit") return { ok: true, state: { ...game, seats: [...game.seats, { id: player.id, name: player.name }] } };
@@ -194,10 +194,10 @@ describe("a game paid out at the table", () => {
   const bob: HarborPlayer = { id: "bob", name: "Bob", classId: "cleric", level: 1, pos: spot };
   const gold = (id: string) => (sql.prepare("SELECT gold FROM characters WHERE player_id = ?").get(id) as { gold: number }).gold;
 
-  async function play(crewId: string | null) {
+  async function play(crewId: string | null, ante = 10) {
     const { ctx, sockets } = room([ann, bob]);
     const table = new StakeTable<Toy, ToyRequest>(ctx, { DB: db } as Env, TOY, () => crewId);
-    await table.handle(sockets[0], ann, { type: "open", ante: 10 });
+    await table.handle(sockets[0], ann, { type: "open", ante });
     await table.handle(sockets[1], bob, { type: "sit" });
     await table.handle(sockets[0], ann, { type: "start" });
     await table.handle(sockets[1], bob, { type: "win" });
@@ -212,6 +212,17 @@ describe("a game paid out at the table", () => {
     expect(rows.map((r) => [r.name, r.played, r.wins, r.goldWon, r.net, r.best])).toEqual([
       ["Bob", 1, 1, 18, 8, 7],
       ["Ann", 1, 0, 0, -10, 3],
+    ]);
+  });
+
+  it("puts a free game on the board, with no gold and no Harbor XP", async () => {
+    await play(CREW, 0);
+    expect([gold("ann"), gold("bob")]).toEqual([100, 100]);
+    expect(sql.prepare("SELECT used FROM harbor_xp WHERE player_id = 'bob'").get()).toBeUndefined();
+    const rows = (await board()).crew;
+    expect(rows.map((r) => [r.name, r.played, r.wins, r.goldWon, r.net, r.best])).toEqual([
+      ["Bob", 1, 1, 0, 0, 7],
+      ["Ann", 1, 0, 0, 0, 3],
     ]);
   });
 
