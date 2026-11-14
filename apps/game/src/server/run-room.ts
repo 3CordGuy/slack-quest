@@ -25,6 +25,8 @@ import {
   pickSpine,
   seedFromString,
   stepWorld,
+  TORCH_PRICE,
+  TORCH_WOOD,
   storyHints,
   upgradeWorld,
   type WorldAction,
@@ -186,7 +188,22 @@ export class RunRoom extends DurableObject<Env> {
     // The acting hero always comes from the socket, never from the message.
     const action = { ...msg.action, heroId: playerId } as WorldAction;
     const error = await this.serial(async () => {
-      await this.load();
+      const world = await this.load();
+      // A torch is paid for in gold: check the world would take it, then take the gold, then apply it.
+      if (action.type === "torch") {
+        const dry = stepWorld(world, action);
+        if (!dry.ok) return dry.error;
+        const paid = action.craft
+          ? await this.env.DB
+              .prepare("UPDATE resources SET qty = qty - ?1 WHERE player_id = ?2 AND kind = 'wood' AND qty >= ?1")
+              .bind(TORCH_WOOD, playerId)
+              .run()
+          : await this.env.DB
+              .prepare("UPDATE characters SET gold = gold - ?1 WHERE player_id = ?2 AND status = 'active' AND gold >= ?1")
+              .bind(TORCH_PRICE, playerId)
+              .run();
+        if (!paid.meta.changes) return action.craft ? `A torch takes ${TORCH_WOOD} wood to craft.` : `A torch costs ${TORCH_PRICE} gold.`;
+      }
       return this.apply(action);
     });
     if (error) ws.send(JSON.stringify({ type: "error", message: error }));

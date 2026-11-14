@@ -6,11 +6,13 @@ import { RewardChips } from "../hutDrops";
 import "./board.css";
 
 export function ContractPicker({ state, run }: { state: ClientState; run: RunConnection }) {
+  // The Haunted Caverns have no contracts.
+  if (state.kind === "caverns") return null;
   const taken = state.heroes.find((h) => h.id === state.you)?.contract?.id ?? null;
   return (
     <div className="contracts">
       <h3>Take a contract</h3>
-      <p className="muted">One each, from the contract dealer in the pub. It pays a bonus if you meet its terms and {state.kind === "caverns" ? "the whole crew climbs back out" : "the story is won"}.</p>
+      <p className="muted">One each, from the contract dealer in the pub. It pays a bonus if you meet its terms and the story is won.</p>
       <ul className="contract-list">
         {contractsFor(state.kind).map((c) => (
           <li key={c.id}>
