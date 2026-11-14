@@ -7,6 +7,9 @@
 .hut-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
 .hut-list button { width: 100%; text-align: left; }
 .hut-list > li > button { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.hut-list > li.hut-stored { display: flex; align-items: stretch; gap: 4px; }
+.hut-list > li.hut-stored > button:first-child { flex: 1; min-width: 0; }
+.hut-list > li.hut-stored > button.small { width: auto; flex: none; white-space: nowrap; }
 
 .hut-recipes { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
 .hut-recipes li { border: 1px solid var(--line); padding: 6px 8px; }

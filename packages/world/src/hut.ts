@@ -469,6 +469,33 @@ export function buyFurnitureProblem(defId: string, gold: number, tier?: number):
   return gold < def.price ? "Not enough gold." : null;
 }
 
+/**
+ * What the stall pays for a piece of furniture it sells: half its price,
+ * rounded down. Only pieces the stall prices can be sold back; crafted-only
+ * pieces, trophies and boats have no price and stay with their owner.
+ */
+export function furnitureSellPrice(defId: string): number | null {
+  const def = Object.hasOwn(FURNISHINGS, defId) ? FURNISHINGS[defId] : undefined;
+  return def?.price === undefined ? null : Math.floor(def.price / 2);
+}
+
+/**
+ * Why this piece cannot be sold back to the stall, or null if it can. It must
+ * be in storage (not placed, not inside a container), and a container must be
+ * empty and a mount must have nothing hung on it, so nothing kept in or on it
+ * is lost with it. `contents` counts what is in or on it.
+ */
+export function sellFurnitureProblem(piece: { defId: string; q: number | null; inId: number | null; fish?: unknown } | undefined, contents = 0): string | null {
+  if (!piece) return "You do not own that.";
+  const price = furnitureSellPrice(piece.defId);
+  if (price === null || price < 1) return "The stall does not buy that.";
+  if (piece.q !== null) return "Put it back in storage first.";
+  if (piece.inId !== null) return "Take it out of the container first.";
+  if (piece.fish) return "Take the fish down first.";
+  if (contents > 0) return "Empty it first.";
+  return null;
+}
+
 /** The tier above this one, with what it costs, or null at the top. */
 export function nextHutTier(tier: number): HutTier | null {
   return HUT_TIERS.find((t) => t.tier === tier + 1) ?? null;

@@ -117,6 +117,35 @@ describe("furniture at the stall", () => {
   });
 });
 
+describe("selling furniture back to the stall", () => {
+  const stored = (defId: string) => ({ defId, q: null, inId: null, fish: null });
+
+  it("pays half the stall price, rounded down, for what the stall sells", async () => {
+    const { furnitureSellPrice } = await import("./index");
+    expect(furnitureSellPrice("table")).toBe(15);
+    expect(furnitureSellPrice("chair")).toBe(7);
+    expect(furnitureSellPrice("mug")).toBe(2);
+    for (const def of STALL_FURNITURE) expect(furnitureSellPrice(def.id)).toBe(Math.floor(def.price! / 2));
+    expect(furnitureSellPrice("bed")).toBeNull();
+    expect(furnitureSellPrice("storage_chest")).toBeNull();
+    expect(furnitureSellPrice("toString")).toBeNull();
+  });
+
+  it("buys only stored, empty pieces it prices", async () => {
+    const { sellFurnitureProblem } = await import("./index");
+    expect(sellFurnitureProblem(stored("table"))).toBeNull();
+    expect(sellFurnitureProblem(undefined)).toBe("You do not own that.");
+    expect(sellFurnitureProblem(stored("bed"))).toBe("The stall does not buy that.");
+    expect(sellFurnitureProblem(stored("storage_chest"))).toBe("The stall does not buy that.");
+    expect(sellFurnitureProblem(stored("trophy_core"))).toBe("The stall does not buy that.");
+    expect(sellFurnitureProblem({ ...stored("table"), q: 1 })).toBe("Put it back in storage first.");
+    expect(sellFurnitureProblem({ ...stored("mug"), inId: 7 })).toBe("Take it out of the container first.");
+    expect(sellFurnitureProblem({ ...stored("mounted_fish"), fish: { id: "f", species: "cod", grams: 1, mm: 1 } })).toBe("Take the fish down first.");
+    expect(sellFurnitureProblem(stored("crate"), 2)).toBe("Empty it first.");
+    expect(sellFurnitureProblem(stored("crate"), 0)).toBeNull();
+  });
+});
+
 describe("making a hut bigger", () => {
   it("costs the next tier's gold and materials", () => {
     const cottage = HUT_TIERS[1];

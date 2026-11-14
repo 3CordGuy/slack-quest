@@ -209,6 +209,7 @@ export const api = {
   stow: (container: number | null, itemId: number) => request("/api/hut/stow", { container, itemId }),
   upgradeHut: () => request<{ tier: number }>("/api/hut/upgrade", {}),
   buyFurniture: (defId: string) => request("/api/shop/furniture", { defId }),
+  sellFurniture: (furnishingId: number) => request<{ gold: number }>("/api/shop/furniture/sell", { furnishingId }),
   trades: () => request<TradeList>("/api/trade"),
   proposeTrade: (offer: TradeOffer, run?: string) => request<{ id: number }>("/api/trade/propose", { ...offer, run }),
   acceptTrade: (id: number) => request("/api/trade/accept", { id }),
