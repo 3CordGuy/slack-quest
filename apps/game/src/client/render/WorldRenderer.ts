@@ -417,6 +417,9 @@ interface Bubble {
   shift: number;
 }
 
+/** Plate pixels between a seated player's head and the edge of their chat bubble. */
+const SIDE_GAP = 14;
+
 /** Seconds a bubble stays up: a little longer for a longer line. */
 const bubbleLife = (text: string) => Math.min(7, 4 + text.length / 40);
 const BUBBLE_FADE = 0.6;
@@ -527,6 +530,8 @@ export interface WorldMinigame {
   press?(ndc: THREE.Vector2, camera: THREE.Camera): void;
   /** A key pressed; true if the game used it. */
   key?(e: KeyboardEvent): boolean;
+  /** Where the head of this unit's seat is, in the world, if the game draws the unit itself (a table's players): their chat bubble is set beside it, rather than over the hex they all stand on. Null for a unit it does not draw, or for you. */
+  bubbleAnchor?(unitId: string): THREE.Vector3 | null;
 }
 
 export interface RendererCallbacks {
@@ -1005,8 +1010,9 @@ export class WorldRenderer {
     const W = this.renderer.domElement.width / this.fine;
     const H = this.renderer.domElement.height / this.fine;
     const v = new THREE.Vector3();
-    const screen = (unit: Unit) => {
-      v.set(unit.feet.x, unit.feet.y + unit.head, unit.feet.z).project(this.camera);
+    const screen = (unit: Unit, anchor?: THREE.Vector3 | null) => {
+      if (anchor) v.copy(anchor).project(this.camera);
+      else v.set(unit.feet.x, unit.feet.y + unit.head, unit.feet.z).project(this.camera);
       return { x: ((v.x + 1) / 2) * W, y: ((v.y + 1) / 2) * H, behind: v.z > 1 };
     };
     type Box = { l: number; r: number; b: number; t: number };
@@ -1022,7 +1028,8 @@ export class WorldRenderer {
       tagTop.set(unit, 5 + unit.stack * (rows + 2) + rows);
       taken.push({ l: at.x - w / 2, r: at.x + w / 2, b: bottom, t: bottom + rows });
     }
-    const placing: { id: string; b: Bubble; unit: Unit; x: number; y: number; base: number }[] = [];
+    const placing: { id: string; b: Bubble; unit: Unit; x: number; y: number; base: number; anchor: THREE.Vector3 | null; fixed: number }[] = [];
+    const game = this.minigame?.game;
     for (const [id, b] of this.bubbles) {
       b.age += dt;
       const unit = this.units.get(id);
@@ -1034,12 +1041,15 @@ export class WorldRenderer {
         b.sprite.visible = false;
         continue;
       }
-      const at = screen(unit);
+      // A player seated at a table: the bubble hangs beside their head, on the side nearer the edge of the view, where the zoomed-in table leaves room.
+      const anchor = game?.bubbleAnchor?.(id) ?? null;
+      const at = screen(unit, anchor);
       if (at.behind) {
         b.sprite.visible = false;
         continue;
       }
-      placing.push({ id, b, unit, x: at.x, y: at.y, base: (tagTop.get(unit) ?? 3) + 2 });
+      const fixed = anchor ? (at.x < W / 2 ? 1 : -1) * -(b.width / 2 + SIDE_GAP) : 0;
+      placing.push({ id, b, unit, x: at.x, y: at.y, base: anchor ? -b.rows / 2 : (tagTop.get(unit) ?? 3) + 2, anchor, fixed });
     }
     placing.sort((p, q) => p.y + p.base - (q.y + q.base));
     const overlaps = (l: number, r: number, bottom: number, rows: number) => taken.find((o) => o.l < r && o.r > l && o.b < bottom + rows && o.t > bottom);
@@ -1047,9 +1057,9 @@ export class WorldRenderer {
       const { b, unit } = p;
       const half = b.width / 2;
       let bottom = p.y + p.base;
-      let shift = 0;
+      let shift = p.fixed;
       for (let pass = 0; pass < 24; pass++) {
-        const hit = overlaps(p.x - half, p.x + half, bottom, b.rows);
+        const hit = overlaps(p.x + p.fixed - half, p.x + p.fixed + half, bottom, b.rows);
         if (!hit) break;
         bottom = hit.t + 1;
       }
@@ -1080,7 +1090,8 @@ export class WorldRenderer {
       if (Math.abs(shift - b.shift) < 0.5) b.shift = shift;
       const s = b.sprite;
       s.visible = true;
-      s.position.set(unit.feet.x, unit.feet.y + unit.head, unit.feet.z);
+      if (p.anchor) s.position.copy(p.anchor);
+      else s.position.set(unit.feet.x, unit.feet.y + unit.head, unit.feet.z);
       s.center.set(0.5 - Math.round(b.shift) / b.width, -(p.base + Math.round(b.raise)) / b.rows);
       const tall = b.rows * labelRow;
       s.scale.set(tall * (b.width / b.rows), tall, 1);

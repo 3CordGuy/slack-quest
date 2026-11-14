@@ -906,6 +906,13 @@ export class TableStage implements WorldMinigame {
 
   // ---------- each frame ----------
 
+  /** The head of this player's seat, for their chat bubble. Not yours: you look out of it. */
+  bubbleAnchor(unitId: string): THREE.Vector3 | null {
+    const r = this.rigs.get(unitId);
+    if (!r || r.mine) return null;
+    return r.folk.localToWorld(new THREE.Vector3(0, STOOL_H + FOLK_H - 0.1, 0));
+  }
+
   frame(dt: number, now: number, aspect: number): { eye: THREE.Vector3; look: THREE.Vector3; blend: number; fov: number } {
     void now;
     this.clock += dt;
