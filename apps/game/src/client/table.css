@@ -25,7 +25,13 @@
 .td-log { font-size: 12px; }
 .td-foot { display: flex; align-items: center; gap: 8px; }
 .td-foot .spacer { flex: 1; }
-.td-rules { margin: 0; padding-left: 18px; font-size: 12px; }
+/* The rules scroll on their own, so the moves above them stay in view however long they run. */
+.td-rules {
+  margin: 0; padding: 0 6px 0 24px; font-size: 12px;
+  flex: 0 1 auto; min-height: 48px; max-height: calc(26vh / var(--ui-z, 1)); overflow-y: auto; overscroll-behavior: contain;
+}
+/* styles.css hides a .dice-table's or .shoals-table's overflow for floating panels that scroll a .panel-body; the dock has none, so it scrolls itself. */
+.table-dock.panel { overflow-y: auto; }
 .table-dock select { padding: 2px 6px; }
 .sh-outcome { font-size: 12px; }
 .sh-outcome.aground { color: #f08a8a; }
@@ -61,6 +67,7 @@
 .crew-die.loose { color: var(--muted); }
 .crew-die.kraken { border-color: #a01818; color: #f08a8a; }
 .crew-die.kraken:disabled { opacity: 1; }
+.crew-die.spare .crew-die-role { text-decoration: line-through; }
 .crew-moves { display: flex; flex-direction: column; gap: 4px; justify-content: center; margin-left: auto; }
 .crew-moves small { display: block; font-size: 10px; opacity: 0.8; }
 

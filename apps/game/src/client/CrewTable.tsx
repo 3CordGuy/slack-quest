@@ -7,7 +7,7 @@
 // held last roll starts out held again, until you let it go. The ship can't be let go.
 
 import { useEffect, useMemo, useState, type RefObject } from "react";
-import { CREW_ANTES, CREW_CAPTAIN, CREW_DEFAULT_ROUNDS, CREW_ROUND_CHOICES, CREW_KRAKEN, CREW_MAX_PLAYERS, CREW_MIN_PLAYERS, CREW_NEEDS, CREW_ROLLS, crewHold, type CrewRequest, type CrewSeatView, type CrewView } from "@gantt-quest/world";
+import { CREW_ANTES, CREW_CAPTAIN, CREW_DEFAULT_ROUNDS, CREW_ROUND_CHOICES, CREW_KRAKEN, CREW_MAX_PLAYERS, CREW_MIN_PLAYERS, CREW_NEEDS, CREW_ROLLS, crewHold, isCrewCargo, type CrewRequest, type CrewSeatView, type CrewView } from "@gantt-quest/world";
 import type { SeatInfo } from "./render/TableStage";
 import type { WorldRenderer } from "./render/WorldRenderer";
 import { CREW_FACE_NAME, crewFaceUrl, dieFaceUrl } from "./crewArt";
@@ -44,7 +44,7 @@ function Needs({ ship, captain }: { ship: boolean; captain: boolean }) {
 }
 
 /** A turn that came to nothing, said over their head. A cargo goes in a crate by their name instead. */
-const lossChip = (s: CrewSeatView) => (s.score === 0 ? (s.lost === "kraken" ? "kraken" : s.lost === "captainless" ? "no captain" : "adrift") : null);
+const lossChip = (s: CrewSeatView) => (s.score === 0 ? (s.lost === "kraken" ? "kraken" : s.lost === "captainless" ? "no captain" : s.lost === "empty" ? "empty hold" : "adrift") : null);
 
 export function CrewTable({ table, you, gold, error, lastXp, looks, world, host, send }: Props) {
   const [rules, setRules] = useState(false);
@@ -88,9 +88,10 @@ export function CrewTable({ table, you, gold, error, lastXp, looks, world, host,
   };
   const rolling = dice.length - holding.length;
   const krakens = loading ? dice.filter((d) => d === CREW_KRAKEN).length : 0;
-  /** Which die is the captain: a 5 in the held pool if there is one, else the first 5 showing. The other three are cargo. */
+  /** Which die is the captain: a 5 in the held pool if there is one, else the first 5 showing. */
   const captainIx = loading ? (holding.find((i) => dice[i] === CREW_CAPTAIN) ?? dice.indexOf(CREW_CAPTAIN)) : -1;
-  const cargoDice = captainIx >= 0 ? dice.filter((_, i) => i !== captainIx) : [];
+  /** The cargo: only the pip dice. A spare ship or captain, or a Kraken, carries nothing. */
+  const cargoDice = dice.filter(isCrewCargo);
 
   const confirmStand = () => !inGame || confirm("Walk away? You forfeit your stake.");
   const { stage, standUp } = useTableStage("crew", { ...host, world }, (a) => a.type === "keep" && toggle(a.index), confirmStand);
@@ -130,7 +131,7 @@ export function CrewTable({ table, you, gold, error, lastXp, looks, world, host,
     const inAll = many && mine ? ` (${standing(mine)} in all)` : "";
     const yours = mine?.score === null || mine?.score === undefined ? (many && mine && mine.total > 0 ? `You have ${mine.total} in all. ` : "")
       : mine.score > 0 ? `Your cargo ${many ? "this round " : ""}is ${mine.score}${inAll}${leaders.some((l) => l.id === you) ? ", the best so far" : ""}. `
-      : `${mine.lost === "kraken" ? "The Kraken took your cargo" : mine.lost === "captainless" ? "No captain for your cargo this round" : "No ship for you this round"}${inAll}. `;
+      : `${mine.lost === "kraken" ? "The Kraken took your cargo" : mine.lost === "captainless" ? "No captain for your cargo this round" : mine.lost === "empty" ? "Your captain came home with an empty hold" : "No ship for you this round"}${inAll}. `;
     const toBeat = best > 0 && !leaders.some((l) => l.id === you) ? `${leadText} ${leaders.length > 1 ? "lead" : "leads"} with ${best}. ` : "";
     return mine && mine.contending ? `${yours}${toBeat}Waiting for ${name(table.turn!)}.` : "You are watching.";
   })();
@@ -196,12 +197,15 @@ export function CrewTable({ table, you, gold, error, lastXp, looks, world, host,
     const d = dice[i];
     const kraken = d === CREW_KRAKEN;
     const held = holding.includes(i);
-    const role = kraken ? "Kraken" : i === captainIx ? "Captain" : "Cargo";
+    // A ship or captain beyond the ones that count keeps its picture, but carries nothing.
+    const spare = !kraken && i !== captainIx && !isCrewCargo(d);
+    const role = kraken ? "Kraken" : i === captainIx ? "Captain" : spare ? "Spare" : "Cargo";
+    const what = spare ? `A spare ${d === CREW_CAPTAIN ? "captain" : "ship"}, worth nothing as cargo` : role;
     const title = kraken ? "A Kraken can't be held: roll it away, or it takes your cargo"
-      : held ? `${role}: held, and stays held roll after roll. Click to roll it again`
-      : `${role}: click to hold it. It stays held until you click it again`;
+      : held ? `${what}: held, and stays held roll after roll. Click to roll it again`
+      : `${what}: click to hold it. It stays held until you click it again`;
     return (
-      <button key={i} type="button" className={`crew-die${held ? " held" : " loose"}${kraken ? " kraken" : ""}`} aria-pressed={held} disabled={!canKeep || kraken} title={title} onClick={() => toggle(i)}>
+      <button key={i} type="button" className={`crew-die${held ? " held" : " loose"}${kraken ? " kraken" : ""}${spare ? " spare" : ""}`} aria-pressed={held} disabled={!canKeep || kraken} title={title} onClick={() => toggle(i)}>
         <span className="crew-die-role">{role}</span>
         <img className="pixel-icon" src={d === 1 || d === 5 || d === 6 ? crewFaceUrl(d) : dieFaceUrl(d, held)} width={28} height={28} alt={kraken ? "Kraken" : String(d)} draggable={false} />
         <span className="crew-die-state">{held ? "held" : kraken ? "must roll" : "↻ roll"}</span>
@@ -263,7 +267,7 @@ export function CrewTable({ table, you, gold, error, lastXp, looks, world, host,
       {myTurn && loading && (
         <div className="crew-board">
           <div className="crew-pool" role="group" aria-label="Held: the ship, which stays all turn, and the dice you hold. Click a held die to roll it again">
-            <span className="td-label">Held <span className="crew-sum">{captainIx < 0 ? "· no captain yet" : `· cargo ${cargoDice.join("+")} = ${table!.cargo}`}</span></span>
+            <span className="td-label">Held <span className="crew-sum">{captainIx < 0 ? "· no captain yet" : cargoDice.length ? `· cargo ${cargoDice.join("+")} = ${table!.cargo}` : "· empty hold"}</span></span>
             <div className="crew-pool-dice">
               <span className="crew-die held ship" title="Ship: needed, so it stays held for the rest of your turn">
                 <span className="crew-die-role">Ship</span>
@@ -302,7 +306,7 @@ export function CrewTable({ table, you, gold, error, lastXp, looks, world, host,
           <li><strong>The dice:</strong> the 6 is printed with a ship, the 5 with a captain and the 1 with the Kraken; 2, 3 and 4 are plain pips.</li>
           <li><strong>Ship first:</strong> on your turn you roll five dice, up to {CREW_ROLLS} times. Nothing counts until a 6 comes up: the first one is your ship, and it is set aside.</li>
           <li><strong>Then it is up to you:</strong> the other four dice are yours to play with. With rolls left, click the ones you want to hold (on the table or below) and roll the rest again, or press <strong>Stand</strong>. A die you hold joins the ship in the held pool and stays held from roll to roll; click it again to roll it. The ship stays held all turn.</li>
-          <li><strong>Captain and cargo:</strong> among those four you need a 5, your captain. The other three are your cargo, added up for your score (up to 18). You need not keep a captain first: land good cargo and gamble your last rolls on a 5 coming up. End without a captain and your cargo goes nowhere: you score nothing.</li>
+          <li><strong>Captain and cargo:</strong> among those four you need a 5, your captain. Your cargo is the pip dice beside it, the 2s, 3s and 4s, added up for your score (up to 12). A second ship or a second captain keeps its picture but carries nothing, and neither does a Kraken. You need not keep a captain first: land good cargo and gamble your last rolls on a 5 coming up. End without a captain and your cargo goes nowhere: you score nothing.</li>
           <li><strong>The Kraken:</strong> a 1 is the Kraken. It can't be held, but you can roll it again, but if a Kraken is still among your dice when your rolls run out, it takes everything and you score nothing. You cannot stand with one showing, or without a captain. Every die you roll again could raise your score, bring in your captain, or sink you.</li>
           <li><strong>Rounds:</strong> whoever opens the table picks how many rounds ({CREW_ROUND_CHOICES.join(", ")}; {CREW_DEFAULT_ROUNDS} unless they say). Each round everyone has a turn, and your cargo adds up from round to round.</li>
           <li><strong>Winning:</strong> after the last round, the highest total takes the pot (the house keeps 10%). The totals so far are in the crates by everyone's names, the best banded in gold. If the best is tied, only those tied roll off, a round at a time, on that round's cargo alone. If nobody has scored, everyone rolls again.</li>
