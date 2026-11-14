@@ -1,4 +1,4 @@
-// The engine's built-in sounds: footsteps and combat, made from filtered noise
+// The engine's built-in sounds: footsteps, combat and the pub's tables, made from filtered noise
 // and simple tones with the Web Audio API, so the game has sound before a
 // single file is recorded or encoded. They were the game's only sounds before
 // this engine; here they are rendered once each into buffers, in a few takes,
@@ -23,10 +23,15 @@ export type SynthCombat =
   | "hero_down" | "enemy_down" | "boss_down"
   | "boss" | "victory" | "defeat" | "your_turn";
 
+/** The pub's game tables: the dice cup, dice on the felt, and the pot. */
+export type SynthTable = "shake" | "tumble" | "settle" | "hold" | "coins";
+
 /** How many takes of each: steps vary most, stings least. */
 const STEP_TAKES = 6;
 const COMBAT_TAKES = 4;
 const STING_TAKES = 2;
+const TABLE_TAKES = 4;
+const TABLE_LENGTH: Record<SynthTable, number> = { shake: 0.5, tumble: 0.75, settle: 0.12, hold: 0.18, coins: 0.7 };
 const STINGS: ReadonlySet<SynthCombat> = new Set(["boss", "victory", "defeat", "boss_down"]);
 
 const SAMPLE_RATE = 44100;
@@ -258,26 +263,98 @@ function combat(r: Render, sound: SynthCombat) {
   }
 }
 
+/**
+ * One table sound. Dice are small and hard, so they click high (ivory on ivory,
+ * or wood) and knock low through the tabletop; the felt deadens the rest.
+ */
+function table(r: Render, sound: SynthTable) {
+  const v = 0.8 * wobble(r, 0.12);
+  const p = wobble(r, 0.07);
+  /** A die striking something: a bright click, and the knock of the wood under the felt. */
+  const clack = (at: number, gain: number, bright = 1) => {
+    noiseAt(r, at, { filter: "bandpass", freq: (2600 + r.rnd() * 1800) * p * bright, q: 2.2, decay: 0.012 + r.rnd() * 0.01, gain: gain * 0.8 });
+    toneAt(r, at, { type: "sine", freq: (380 + r.rnd() * 160) * p, freqTo: 220 * p, decay: 0.035, gain: gain * 0.55 });
+  };
+  switch (sound) {
+    case "shake": {
+      // Dice rattling in a leather cup: a run of quick clicks, muffled, swelling and easing twice as the cup goes back and forth.
+      for (let i = 0; i < 22; i++) {
+        const at = 0.01 + (i / 22) * 0.42 + r.rnd() * 0.02;
+        const swing = 0.55 + 0.45 * Math.abs(Math.sin((at / 0.42) * Math.PI * 2));
+        noiseAt(r, at, { filter: "bandpass", freq: (1500 + r.rnd() * 1400) * p, q: 2.5, decay: 0.01 + r.rnd() * 0.008, gain: v * 0.45 * swing });
+      }
+      noiseAt(r, 0.01, { filter: "lowpass", freq: 500 * p, q: 0.8, attack: 0.06, decay: 0.35, gain: v * 0.18 });
+      break;
+    }
+    case "tumble": {
+      // Dice spilled onto the felt: each lands, bounces twice and rolls to a stop, a beat apart, with the odd click of one die on another.
+      const dice = 3;
+      for (let d = 0; d < dice; d++) {
+        let at = 0.005 + d * (0.03 + r.rnd() * 0.04);
+        let gain = v * (0.85 + r.rnd() * 0.3);
+        let gap = 0.12 + r.rnd() * 0.05;
+        for (let b = 0; b < 4; b++) {
+          clack(at, gain, 0.8 + r.rnd() * 0.3);
+          at += gap;
+          gap *= 0.55;
+          gain *= 0.5;
+        }
+      }
+      for (let i = 0; i < 3; i++) noiseAt(r, 0.06 + r.rnd() * 0.3, { filter: "highpass", freq: 4200 * p, q: 1.5, decay: 0.008, gain: v * 0.35 });
+      // The roll across the cloth.
+      noiseAt(r, 0.02, { filter: "bandpass", freq: 900 * p, q: 0.7, attack: 0.04, decay: 0.4, gain: v * 0.12 });
+      break;
+    }
+    case "settle":
+      // One die rocking to a stop.
+      clack(0.004, v * 0.5, 0.9);
+      clack(0.045, v * 0.2, 0.9);
+      break;
+    case "hold":
+      // A die set firmly aside: one solid wooden clack, a touch of ring.
+      noiseAt(r, 0.004, { filter: "bandpass", freq: 1500 * p, q: 1.8, decay: 0.025, gain: v * 0.8 });
+      toneAt(r, 0.004, { type: "sine", freq: 640 * p, freqTo: 480 * p, decay: 0.07, gain: v * 0.7 });
+      toneAt(r, 0.004, { type: "triangle", freq: 1900 * p, decay: 0.06, gain: v * 0.12 });
+      break;
+    case "coins": {
+      // Gold onto the pile: a handful of clinks, each a pair of inharmonic rings, landing over half a second.
+      const n = 6 + Math.floor(r.rnd() * 3);
+      for (let i = 0; i < n; i++) {
+        const at = 0.005 + (i / n) * 0.42 + r.rnd() * 0.04;
+        const f = (2900 + r.rnd() * 1600) * p;
+        const g = v * (0.25 + r.rnd() * 0.2) * (1 - (i / n) * 0.5);
+        toneAt(r, at, { type: "sine", freq: f, decay: 0.08 + r.rnd() * 0.08, gain: g });
+        toneAt(r, at, { type: "sine", freq: f * 1.47, decay: 0.05, gain: g * 0.5 });
+        noiseAt(r, at, { filter: "highpass", freq: 5000, q: 1, decay: 0.006, gain: g * 0.6 });
+      }
+      break;
+    }
+  }
+}
+
 const GROUNDS = Object.keys(STEP) as SynthGround[];
+const TABLES = Object.keys(TABLE_LENGTH) as SynthTable[];
 const COMBATS = Object.keys(COMBAT_LENGTH) as SynthCombat[];
 const takesOf = (sound: SynthCombat) => (STINGS.has(sound) ? STING_TAKES : COMBAT_TAKES);
 
-/** What a key renders: a footstep or a combat sound, and which take. */
-function parse(key: string): { kind: "step"; ground: SynthGround; take: number } | { kind: "combat"; sound: SynthCombat; take: number } | null {
-  const m = /^synth\/(step|combat)\/([a-z_]+)_(\d+)$/.exec(key);
+/** What a key renders: a footstep, a combat sound or a table sound, and which take. */
+function parse(key: string): { kind: "step"; ground: SynthGround; take: number } | { kind: "combat"; sound: SynthCombat; take: number } | { kind: "table"; sound: SynthTable; take: number } | null {
+  const m = /^synth\/(step|combat|table)\/([a-z_]+)_(\d+)$/.exec(key);
   if (!m) return null;
   const take = Number(m[3]);
+  if (m[1] === "table") return (TABLES as string[]).includes(m[2]) ? { kind: "table", sound: m[2] as SynthTable, take } : null;
   if (m[1] === "step" && (GROUNDS as string[]).includes(m[2])) return { kind: "step", ground: m[2] as SynthGround, take };
   if (m[1] === "combat" && (COMBATS as string[]).includes(m[2])) return { kind: "combat", sound: m[2] as SynthCombat, take };
   return null;
 }
 
-/** Every built-in sound as an index entry, keyed `synth/step/<ground>_<n>` and `synth/combat/<sound>_<n>`. */
+/** Every built-in sound as an index entry, keyed `synth/step/<ground>_<n>`, `synth/combat/<sound>_<n>` and `synth/table/<sound>_<n>`. */
 export function synthIndex(): Record<string, AudioFile> {
   const out: Record<string, AudioFile> = {};
   const entry = (duration: number): AudioFile => ({ urls: {}, duration, sampleRate: SAMPLE_RATE, channels: 1, synth: true });
   for (const g of GROUNDS) for (let i = 1; i <= STEP_TAKES; i++) out[`synth/step/${g}_${i}`] = entry(STEP[g].decay + 0.12);
   for (const c of COMBATS) for (let i = 1; i <= takesOf(c); i++) out[`synth/combat/${c}_${i}`] = entry(COMBAT_LENGTH[c]);
+  for (const t of TABLES) for (let i = 1; i <= TABLE_TAKES; i++) out[`synth/table/${t}_${i}`] = entry(TABLE_LENGTH[t]);
   return out;
 }
 
@@ -287,7 +364,7 @@ export async function renderSynth(key: string): Promise<AudioBuffer | null> {
   if (!what) return null;
   const Offline = globalThis.OfflineAudioContext ?? (globalThis as unknown as { webkitOfflineAudioContext?: typeof OfflineAudioContext }).webkitOfflineAudioContext;
   if (!Offline) return null;
-  const seconds = what.kind === "step" ? STEP[what.ground].decay + 0.12 : COMBAT_LENGTH[what.sound];
+  const seconds = what.kind === "step" ? STEP[what.ground].decay + 0.12 : what.kind === "table" ? TABLE_LENGTH[what.sound] : COMBAT_LENGTH[what.sound];
   const ctx = new Offline(1, Math.ceil(seconds * SAMPLE_RATE), SAMPLE_RATE);
   // A quarter second of white noise, the stuff every scuff and swish is cut from; seeded, like everything in a take.
   const rnd = seeded(key);
@@ -296,6 +373,7 @@ export async function renderSynth(key: string): Promise<AudioBuffer | null> {
   for (let i = 0; i < data.length; i++) data[i] = rnd() * 2 - 1;
   const r: Render = { ctx, out: ctx.destination, noise, rnd };
   if (what.kind === "step") step(r, what.ground, what.take);
+  else if (what.kind === "table") table(r, what.sound);
   else combat(r, what.sound);
   return ctx.startRendering();
 }

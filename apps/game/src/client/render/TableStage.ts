@@ -15,8 +15,9 @@
 import * as THREE from "three";
 import type { Marker, Outfit } from "@gantt-quest/world";
 import { markerUrl, type MarkerFace } from "../shoalsArt";
-import { isCrewFace, paintCrewFace } from "../crewArt";
+import { crewRim, isCrewFace, paintCrewFace } from "../crewArt";
 import { makeModelShip } from "./modelShip";
+import { sounds } from "../audio/gameSounds";
 import { PIXEL_CAP_ROWS, PIXEL_LINE_ROWS, canDrawPixelText, drawPixelText, pixelTextWidth } from "./pixelFont";
 import { SITTING_DROP, makeFigure, type Figure } from "./figures";
 import { labelTexture, lookFor, spriteKey } from "./sprites";
@@ -26,7 +27,7 @@ import type { WorldMinigame, WorldRenderer } from "./WorldRenderer";
 export type TableKind = "dice" | "shoals" | "crew";
 
 /** Something clicked in the scene. */
-export type TableAction = { type: "lay"; marker: Marker } | { type: "flip"; seat: string };
+export type TableAction = { type: "lay"; marker: Marker } | { type: "flip"; seat: string } | { type: "keep"; index: number };
 
 /** Who is in a seat, and how they look and are doing. */
 export interface SeatInfo {
@@ -40,6 +41,10 @@ export interface SeatInfo {
   won: boolean;
   /** A word over their head: "to play", "says 3", "passed". */
   chip: string | null;
+  /** The chip's colour, when its first word does not decide it. */
+  chipInk?: string;
+  /** A score in a crate beside the name (Ship, Captain & Kraken's cargo), gold-banded for whoever leads. */
+  crate?: { score: number; lead: boolean };
   /** Dice or markers left, of how many they began with. */
   pips?: { on: number; of: number };
   /** Passages won, of how many it takes. */
@@ -66,8 +71,14 @@ export interface CrewScene {
   rollKey: string;
   /** Who rolled last, if their dice should tumble now. */
   rolled: string | null;
-  /** Each seat's dice: ship, captain and crew held (drawn as pictures), and the rest as plain dice. */
-  seats: { id: string; held: number[]; free: number[] }[];
+  /**
+   * Each seat's dice: ship and captain held (drawn as pictures), and the rest. `fresh`: how many of the held came in on
+   * this roll; `thrown`: which of the rest were thrown in it (all, if not given). Once the cargo is in (`cargo`), a 1 in
+   * it is the Kraken. Your own cargo dice can be clicked to keep them (`canKeep`), and those you keep (`keep`) are lit.
+   */
+  seats: { id: string; held: number[]; free: number[]; fresh?: number; thrown?: number[]; cargo?: boolean; keep?: number[]; canKeep?: boolean }[];
+  /** The latest throw left a Kraken in the cargo as the rolls ran out. */
+  sunk?: boolean;
 }
 
 export interface TableCallbacks {
@@ -116,6 +127,40 @@ const SWAP_S = 0.8;
 const STOOD_AT = SEAT_R + 0.05 - 0.25;
 const STEP_IN = 0.4;
 const OUT_S = 1.0;
+/** A throw of the dice: seconds of the cup being shaken before they leave it, and from leaving it to coming to rest. */
+const SHAKE_S = 0.4;
+const THROW_S = 0.95;
+/** How far through a throw (0 to 1) a die lands, and each bounce after, and how high each bounce goes. */
+const LANDINGS = [0.36, 0.62, 0.8, 0.92];
+const BOUNCES = [0.07, 0.03, 0.01];
+
+/** A die in the air: where it left the cup and where it comes to rest (in its seat's frame), how it tumbles, and when. */
+interface Throw {
+  from: THREE.Vector3;
+  to: THREE.Vector3;
+  axis: THREE.Vector3;
+  turns: number;
+  delay: number;
+  /** Seconds since the throw was made, the shake included. */
+  t: number;
+}
+
+/** Height over its resting place a die is at, `k` of the way through a throw that began `drop` above it: an arc down to the felt, then a few bounces. */
+function throwHeight(k: number, drop: number): number {
+  if (k < LANDINGS[0]) {
+    const u = k / LANDINGS[0];
+    // Tossed a touch upward out of the cup, then falling.
+    return drop * (1 - u * u) + 0.05 * Math.sin(u * Math.PI);
+  }
+  for (let b = 0; b < BOUNCES.length; b++) {
+    if (k < LANDINGS[b + 1]) {
+      const u = (k - LANDINGS[b]) / (LANDINGS[b + 1] - LANDINGS[b]);
+      return BOUNCES[b] * 4 * u * (1 - u);
+    }
+  }
+  return 0;
+}
+
 const smoother = (t: number) => t * t * t * (t * (t * 6 - 15) + 10);
 const lambert = (color: string, emissive?: string) => new THREE.MeshLambertMaterial({ color, flatShading: true, emissive: emissive ?? "#000000" });
 /** A material showing a texture that also lights itself a little, so the art reads in the pub's dim light. */
@@ -154,9 +199,9 @@ function canvasTexture(w: number, h: number, paint: (ctx: CanvasRenderingContext
 function dieFace(value: number, lit = false, icon = false): THREE.CanvasTexture {
   if (icon && isCrewFace(value)) {
     return canvasTexture(64, 64, (ctx) => {
-      ctx.fillStyle = "#c99a3a";
+      ctx.fillStyle = crewRim(value);
       ctx.fillRect(0, 0, 64, 64);
-      ctx.fillStyle = IVORY;
+      ctx.fillStyle = lit ? "#ffe9a0" : IVORY;
       ctx.fillRect(4, 4, 56, 56);
       paintCrewFace(ctx, value, 8, 8, 3);
     }, true);
@@ -366,6 +411,37 @@ function chipTexture(text: string, ink: string): THREE.CanvasTexture {
   }, true);
 }
 
+/**
+ * A name plate with a cargo crate after it: a little slatted wooden box, as tall as the plate, with the score
+ * stencilled on it. Banded in gold for whoever leads the round.
+ */
+function withCrate(plate: { texture: THREE.CanvasTexture; aspect: number }, crate: { score: number; lead: boolean }): { texture: THREE.CanvasTexture; aspect: number } {
+  const tag = plate.texture.image as HTMLCanvasElement;
+  const h = tag.height;
+  const text = String(crate.score);
+  const cw = Math.max(h, pixelTextWidth(text) + 6);
+  const texture = canvasTexture(tag.width + 2 + cw, h, (ctx) => {
+    ctx.drawImage(tag, 0, 0);
+    const x = tag.width + 2;
+    // The box: a dark edge, the boards, a slat across the top and bottom, and the corners bound in iron or gold.
+    ctx.fillStyle = "#3a2414";
+    ctx.fillRect(x, 0, cw, h);
+    ctx.fillStyle = "#a0703c";
+    ctx.fillRect(x + 1, 1, cw - 2, h - 2);
+    ctx.fillStyle = "#7a5230";
+    ctx.fillRect(x + 1, 1, cw - 2, 1);
+    ctx.fillRect(x + 1, h - 2, cw - 2, 1);
+    ctx.fillStyle = crate.lead ? "#ffd23f" : "#5a5f6a";
+    for (const [cx, cy] of [[x, 0], [x + cw - 2, 0], [x, h - 2], [x + cw - 2, h - 2]]) ctx.fillRect(cx, cy, 2, 2);
+    // The score, stencilled dark with a light edge so it reads on the wood.
+    const tx = x + Math.round((cw - pixelTextWidth(text)) / 2);
+    const ty = Math.max(0, Math.round((h - PIXEL_LINE_ROWS) / 2) + 1);
+    drawPixelText(ctx, text, tx, ty, crate.lead ? "#fff3cf" : "#f4efe1");
+  }, true);
+  plate.texture.dispose();
+  return { texture, aspect: texture.image.width / texture.image.height };
+}
+
 const CHIP_COLOR: Record<string, string> = { winner: "#ffd23f", helm: "#ffd23f", "to play": "#ffd23f", out: "#f08a8a", left: "#f08a8a", passed: "#a8a3c4", opened: "#a9d4fb" };
 
 // ---------- the scene ----------
@@ -396,8 +472,7 @@ interface Rig {
   tallyKey: string;
   info: SeatInfo | null;
   itemsKey: string;
-  /** Seconds left of a roll or a settle, for dice. */
-  roll: number;
+
 }
 
 const FACE_NORMAL: Record<number, THREE.Vector3> = {
@@ -409,6 +484,28 @@ const FACE_NORMAL: Record<number, THREE.Vector3> = {
   4: new THREE.Vector3(0, 0, -1),
 };
 const UP = new THREE.Vector3(0, 1, 0);
+/** Which way is up in each face's picture, on a die as BoxGeometry lays its textures out. */
+const FACE_PICTURE_UP: Record<number, THREE.Vector3> = {
+  2: new THREE.Vector3(0, 1, 0),
+  5: new THREE.Vector3(0, 1, 0),
+  1: new THREE.Vector3(0, 0, -1),
+  6: new THREE.Vector3(0, 0, 1),
+  3: new THREE.Vector3(0, 1, 0),
+  4: new THREE.Vector3(0, 1, 0),
+};
+/**
+ * A die turned to show `v` on top with that face's picture the right way up from the seat: the picture's
+ * top toward the middle of the table (the seat's frame has +z pointing out to the seat).
+ */
+function faceUpright(v: number): THREE.Quaternion {
+  const n = FACE_NORMAL[v];
+  const u = FACE_PICTURE_UP[v];
+  const local = new THREE.Matrix4().makeBasis(n, u, n.clone().cross(u));
+  const top = new THREE.Vector3(0, 1, 0);
+  const away = new THREE.Vector3(0, 0, -1);
+  const world = new THREE.Matrix4().makeBasis(top, away, top.clone().cross(away));
+  return new THREE.Quaternion().setFromRotationMatrix(world.multiply(local.transpose()));
+}
 
 export class TableStage implements WorldMinigame {
   private rigs = new Map<string, Rig>();
@@ -440,9 +537,12 @@ export class TableStage implements WorldMinigame {
   private dieMats: THREE.Material[] | null = null;
   private dieBack: THREE.Material[] | null = null;
   private dieLit: THREE.Material[] | null = null;
-  /** A held ship, captain or crew: its picture on every face, so it reads the right way up from the seat whichever face is seen. */
-  private dieIcons = new Map<number, THREE.Material[]>();
+  /** Ship, Captain & Kraken's dice: the ship printed on the 6, the captain on the 5 and the Kraken on the 1, pips on the rest; and the same lit, for a kept die. */
+  private crewDice: { shown: THREE.Material[]; lit: THREE.Material[] } | null = null;
   private lastRoll = "";
+  /** The dice have been told what is on the table at least once: a change after that is a roll to be seen and heard, not the state you sat down to. */
+  private primed = false;
+  private lastReveal = "";
   private discGeo = new THREE.CylinderGeometry(DISC_R, DISC_R, DISC_T, 20);
 
   constructor(private world: WorldRenderer, private group: THREE.Group, private kind: TableKind, private cb: TableCallbacks) {
@@ -552,7 +652,7 @@ export class TableStage implements WorldMinigame {
     const items = new THREE.Group();
     rig.add(folk, ring, items);
     this.group.add(rig);
-    return { id, rig, folk, mine: false, sit: 1, seat, figure: null, plate, chip, tally, ring, items, yaw: 0, goal: 0, look: "", plateKey: "", chipKey: "", tallyKey: "", info: null, itemsKey: "", roll: 0 };
+    return { id, rig, folk, mine: false, sit: 1, seat, figure: null, plate, chip, tally, ring, items, yaw: 0, goal: 0, look: "", plateKey: "", chipKey: "", tallyKey: "", info: null, itemsKey: "" };
   }
 
   // ---------- what the panel tells it ----------
@@ -603,21 +703,21 @@ export class TableStage implements WorldMinigame {
     }
     // Out of the game: greyed.
     r.figure?.setDim(!!info.out);
-    const plateKey = firstName(info.name);
+    const plateKey = `${firstName(info.name)}|${info.crate ? `${info.crate.score}${info.crate.lead ? "*" : ""}` : ""}`;
     if (r.plateKey !== plateKey) {
       r.plateKey = plateKey;
-      const { texture, aspect } = labelTexture(plateKey);
+      const { texture, aspect } = info.crate ? withCrate(labelTexture(firstName(info.name)), info.crate) : labelTexture(firstName(info.name));
       this.own(texture);
       r.plate.material.map = texture;
       r.plate.material.needsUpdate = true;
       r.plate.scale.set(0.17 * aspect, 0.17, 1);
       r.plate.center.set(0.5, 0);
     }
-    const chipKey = info.chip ?? "";
+    const chipKey = `${info.chip ?? ""}|${info.chipInk ?? ""}`;
     if (r.chipKey !== chipKey) {
       r.chipKey = chipKey;
       if (info.chip) {
-        const t = this.own(chipTexture(info.chip, CHIP_COLOR[info.chip.split(" ")[0]] ?? "#a9d4fb"));
+        const t = this.own(chipTexture(info.chip, info.chipInk ?? CHIP_COLOR[info.chip.split(" ")[0]] ?? "#a9d4fb"));
         r.chip.material.map = t;
         r.chip.material.needsUpdate = true;
         r.chip.scale.set(0.18 * (t.image.width / t.image.height), 0.18, 1);
@@ -679,14 +779,14 @@ export class TableStage implements WorldMinigame {
 
   // ---------- dice ----------
 
-  private iconMaterials(v: number): THREE.Material[] {
-    let mats = this.dieIcons.get(v);
-    if (!mats) {
-      const m = glowing(this.tex(`die:${v}:icon`, () => dieFace(v, false, true)), 0.55);
-      mats = Array<THREE.Material>(6).fill(m);
-      this.dieIcons.set(v, mats);
+  private crewMaterials(): { shown: THREE.Material[]; lit: THREE.Material[] } {
+    if (!this.crewDice) {
+      const face = (v: number, lit: boolean) => glowing(this.tex(`crew:${v}:${lit}`, () => dieFace(v, lit, true)), lit ? 0.75 : isCrewFace(v) ? 0.55 : 0.4);
+      // BoxGeometry's faces are +x, -x, +y, -y, +z, -z.
+      const order = [2, 5, 1, 6, 3, 4];
+      this.crewDice = { shown: order.map((v) => face(v, false)), lit: order.map((v) => face(v, true)) };
     }
-    return mats;
+    return this.crewDice;
   }
 
   private dieMaterials(): { shown: THREE.Material[]; back: THREE.Material[]; lit: THREE.Material[] } {
@@ -701,9 +801,43 @@ export class TableStage implements WorldMinigame {
     return { shown: this.dieMats, back: this.dieBack!, lit: this.dieLit! };
   }
 
+  /**
+   * Throw these dice (wrappers already standing where they will come to rest) from the seat's side
+   * of the table: after a shake of the cup, each flies out, lands, bounces and rolls to a stop on its
+   * face. The sounds are timed to it. `held` are set aside as they land, with a firmer clack; `yours`
+   * is louder than anyone else's throw.
+   */
+  private throwDice(wraps: THREE.Object3D[], opts: { held?: Set<THREE.Object3D>; yours: boolean; sunk?: boolean }) {
+    if (wraps.length === 0) return;
+    const quiet = opts.yours ? 0 : -5;
+    sounds.table("shake", { gainDb: quiet });
+    wraps.forEach((wrap, i) => {
+      const to = wrap.position.clone();
+      // Out of the cup in your hand, over the near rim, a little to the side each.
+      const from = new THREE.Vector3(to.x * 0.4 + (Math.random() - 0.5) * 0.12, TOP + 0.26 + Math.random() * 0.06, STACK_Z + 0.42);
+      const axis = new THREE.Vector3(Math.random() - 0.5, Math.random() * 0.4, Math.random() - 0.5).normalize();
+      const delay = SHAKE_S + i * 0.05 + Math.random() * 0.03;
+      const held = !!opts.held?.has(wrap);
+      wrap.userData.throw = { from, to, axis, turns: 2 + Math.random() * 1.5, delay, t: 0 } satisfies Throw;
+      wrap.position.copy(from);
+      wrap.visible = false;
+      // A die coming to rest; a held one is set aside just after with a firmer clack.
+      sounds.table("settle", { delay: delay + THROW_S * 0.9, gainDb: quiet });
+      if (held) sounds.table("hold", { delay: delay + THROW_S + 0.12, gainDb: quiet });
+    });
+    sounds.table("roll", { delay: SHAKE_S + THROW_S * LANDINGS[0], gainDb: quiet });
+    // The Kraken rises as the last die stops.
+    if (opts.sunk) sounds.table("kraken", { delay: SHAKE_S + THROW_S + 0.25 });
+  }
+
   syncDice(scene: DiceScene | null) {
     const mats = this.dieMaterials();
-    const rolled = !!scene && scene.round !== this.lastRound;
+    const rolled = !!scene && scene.round !== this.lastRound && this.primed;
+    // Every die shown after a call: the cups come up.
+    const reveal = scene?.reveal ? `${scene.round}|${scene.reveal.face}` : "";
+    if (reveal && reveal !== this.lastReveal && this.primed) sounds.table("reveal");
+    this.lastReveal = reveal;
+    this.primed = true;
     if (scene) this.lastRound = scene.round;
     this.clickables = [];
     for (const r of this.rigs.values()) {
@@ -726,10 +860,9 @@ export class TableStage implements WorldMinigame {
         if (v > 0) die.quaternion.setFromUnitVectors(FACE_NORMAL[v], UP);
         die.rotateOnWorldAxis(UP, 0.5 + i * 1.7 + v);
         wrap.add(die);
-        wrap.userData.baseY = wrap.position.y;
         r.items.add(wrap);
       }
-      if (rolled) r.roll = 0.7;
+      if (rolled) this.throwDice([...r.items.children], { yours: r.mine });
     }
   }
 
@@ -743,7 +876,8 @@ export class TableStage implements WorldMinigame {
    */
   syncCrew(scene: CrewScene | null) {
     const mats = this.dieMaterials();
-    const rolled = !!scene && scene.rollKey !== this.lastRoll;
+    const rolled = !!scene && scene.rollKey !== this.lastRoll && this.primed;
+    this.primed = true;
     if (scene) this.lastRoll = scene.rollKey;
     this.clickables = [];
     const size = DIE * 0.85;
@@ -752,31 +886,58 @@ export class TableStage implements WorldMinigame {
     const heldGeo = new THREE.BoxGeometry(big, big, big);
     for (const r of this.rigs.values()) {
       const seat = scene?.seats.find((s) => s.id === r.id);
-      const key = seat ? `${seat.held.join("")}|${seat.free.join("")}` : "";
+      const key = seat ? `${seat.held.join("")}|${seat.free.join("")}|${seat.cargo}|${seat.keep?.join(",")}|${seat.canKeep}` : "";
       const tumble = rolled && scene?.rolled === r.id;
-      if (key === r.itemsKey && !tumble) continue;
+      if (key === r.itemsKey && !tumble) {
+        // Clickables are rebuilt each time, so gather them again from what stays.
+        r.items.traverse((o) => o.userData.action && this.clickables.push(o));
+        continue;
+      }
       r.itemsKey = key;
       r.items.clear();
       if (!seat) continue;
-      const row = (values: number[], z: number, icon: boolean, spin: boolean) =>
-        values.forEach((v, i) => {
-          const s = icon ? big : size;
-          const wrap = new THREE.Group();
-          wrap.position.set((i - (values.length - 1) / 2) * s * 1.35, TOP + s / 2 + 0.01, z);
-          // Held pictures sit square to the seat, so they read the right way up from it; loose dice lie as they fell.
-          const die = new THREE.Mesh(icon ? heldGeo : geo, icon ? this.iconMaterials(v) : v === 0 ? mats.back : mats.shown);
-          if (!icon) {
-            if (v > 0) die.quaternion.setFromUnitVectors(FACE_NORMAL[v], UP);
-            die.rotateOnWorldAxis(UP, 0.5 + i * 1.7 + v);
-          }
-          wrap.add(die);
-          // Only the dice that were rolled tumble.
-          if (spin) wrap.userData.baseY = wrap.position.y;
-          r.items.add(wrap);
-        });
-      row(seat.held, STACK_Z - 0.1, true, false);
-      row(seat.free, STACK_Z + 0.06, false, true);
-      if (tumble) r.roll = 0.7;
+      const thrown: THREE.Object3D[] = [];
+      const held = new Set<THREE.Object3D>();
+      const keep = new Set(seat.keep ?? []);
+      const throwFree = new Set(seat.thrown ?? seat.free.map((_, i) => i));
+      // Ship and captain, in a row toward the ship, a size larger and reading the right way up from the seat.
+      const crew = this.crewMaterials();
+      seat.held.forEach((v, i) => {
+        const wrap = new THREE.Group();
+        wrap.position.set((i - (seat.held.length - 1) / 2) * big * 1.35, TOP + big / 2 + 0.01, STACK_Z - 0.1);
+        const die = new THREE.Mesh(heldGeo, crew.shown);
+        die.quaternion.copy(faceUpright(v));
+        wrap.add(die);
+        r.items.add(wrap);
+        if (tumble && i >= seat.held.length - (seat.fresh ?? 0)) {
+          thrown.push(wrap);
+          held.add(wrap);
+        }
+      });
+      // The rest nearest the seat, each lying on the face it rolled: a picture face square to the seat so it reads, pips any old way. Kept dice are lit and lifted a little.
+      seat.free.forEach((v, i) => {
+        const kept = keep.has(i);
+        const wrap = new THREE.Group();
+        wrap.position.set((i - (seat.free.length - 1) / 2) * size * 1.5, TOP + size / 2 + 0.01 + (kept ? 0.03 : 0), STACK_Z + 0.06);
+        const die = new THREE.Mesh(geo, v === 0 ? mats.back : kept ? crew.lit : crew.shown);
+        if (isCrewFace(v)) die.quaternion.copy(faceUpright(v));
+        else if (v > 0) {
+          die.quaternion.setFromUnitVectors(FACE_NORMAL[v], UP);
+          die.rotateOnWorldAxis(UP, 0.5 + i * 1.7 + v);
+        }
+        wrap.add(die);
+        r.items.add(wrap);
+        if (tumble && throwFree.has(i)) thrown.push(wrap);
+        if (seat.canKeep) {
+          wrap.userData.action = { type: "keep", index: i } satisfies TableAction;
+          wrap.userData.baseY = wrap.position.y;
+          // A click anywhere near the die keeps it: an invisible, generous box round it.
+          const hit = new THREE.Mesh(new THREE.BoxGeometry(size * 1.5, size * 2, size * 1.5), new THREE.MeshBasicMaterial({ visible: false }));
+          wrap.add(hit);
+          this.clickables.push(wrap);
+        }
+      });
+      if (tumble) this.throwDice(thrown, { held, yours: r.mine, sunk: !!scene?.sunk });
     }
   }
 
@@ -970,16 +1131,31 @@ export class TableStage implements WorldMinigame {
       const stand = r.mine ? STOOD_AT + (STEP_IN - STOOD_AT) * this.newShare() : STEP_IN;
       r.seat.position.set(0, SEAT_Y * on + Math.sin(r.sit * Math.PI) * 0.1 + (info?.won ? Math.abs(Math.sin(this.clock * 5)) * 0.06 : 0), -stand * (1 - on));
       r.figure?.update({ time: this.clock, stride: 0, walking: false, lean: 0, lying: false, sitting: r.sit });
-      if (r.roll > 0) r.roll = Math.max(0, r.roll - dt);
       for (const wrap of r.items.children) {
-        if (wrap.userData.baseY === undefined || wrap.userData.pulse) continue;
-        // A roll: spin and hop, settling.
-        const k = r.roll / 0.7;
-        wrap.rotation.y = k * k * 9;
-        wrap.position.y = wrap.userData.baseY + Math.abs(Math.sin(k * 7)) * k * 0.12;
+        const th = wrap.userData.throw as Throw | undefined;
+        if (!th) continue;
+        th.t += dt;
+        const k = Math.min(1, Math.max(0, (th.t - th.delay) / THROW_S));
+        // Still in the cup until its moment comes.
+        wrap.visible = th.t >= th.delay;
+        // Out over the felt, slowing as it goes; down onto the cloth, then smaller and smaller bounces.
+        const go = 1 - (1 - k) ** 3;
+        wrap.position.x = th.from.x + (th.to.x - th.from.x) * go;
+        wrap.position.z = th.from.z + (th.to.z - th.from.z) * go;
+        wrap.position.y = th.to.y + throwHeight(k, th.from.y - th.to.y);
+        // Tumbling the whole way, the turn running out just as it stops on the face it rolled.
+        wrap.quaternion.setFromAxisAngle(th.axis, (1 - k) ** 2 * th.turns * Math.PI * 2);
+        if (k >= 1) {
+          wrap.position.copy(th.to);
+          wrap.quaternion.identity();
+          wrap.visible = true;
+          delete wrap.userData.throw;
+        }
       }
     }
     for (const o of this.clickables) {
+      // A die still in the air is the throw's to move.
+      if (o.userData.throw) continue;
       const base = o.userData.baseY as number | undefined;
       if (base !== undefined) o.position.y = base + (0.5 + 0.5 * Math.sin(this.clock * 5)) * 0.018;
     }
@@ -1016,7 +1192,7 @@ export class TableStage implements WorldMinigame {
     this.world.setSharp(false);
     for (const r of this.rigs.values()) this.disposeRig(r);
     this.discGeo.dispose();
-    for (const [m] of this.dieIcons.values()) m.dispose();
+    for (const m of [...(this.crewDice?.shown ?? []), ...(this.crewDice?.lit ?? [])]) m.dispose();
     for (const mats of [this.dieMats, this.dieBack, this.dieLit]) for (const m of mats ?? []) m.dispose();
     for (const t of this.textures) t.dispose();
     this.card.material.map?.dispose();

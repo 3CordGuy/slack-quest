@@ -130,6 +130,11 @@ export const CREW_RULES: Rules<CrewGame, CrewRequest> = {
   step(game, player, request) {
     if (request.type === "sit") return stepCrew(game, player.id, { type: "sit", name: player.name });
     if (request.type === "open") return { ok: false, error: "There is already a table open." };
+    if (request.type === "roll") {
+      // Which cargo dice to hold back: small whole numbers only, whatever was sent.
+      const keep = Array.isArray(request.keep) ? request.keep.slice(0, 5).map(Number).filter((k) => Number.isInteger(k) && k >= 0 && k < 5) : [];
+      return stepCrew(game, player.id, { type: "roll", keep });
+    }
     return stepCrew(game, player.id, { type: request.type });
   },
   leave: (game, playerId) => stepCrew(game, playerId, { type: "leave" }),

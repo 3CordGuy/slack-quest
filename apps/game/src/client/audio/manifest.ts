@@ -120,6 +120,18 @@ export const AUDIO: AudioManifest = {
     "gather.fish.reel": { files: "sfx/fishing/reel_*", fallback: built("swing"), pitch: [-6, -4], gainDb: -6 },
     "gather.fish.land": { files: "sfx/fishing/land_*", fallback: built("heal"), pitch: [0, 2], gainDb: -3 },
 
+    // ----- the pub's game tables -----
+    // Small, close sounds: you are sat at the table. Each has a built-in take until a recording is added.
+    "table.shake": { files: "sfx/table/shake_*", fallback: "synth/table/shake_*", gainDb: -6, pitch: [-1, 1], cooldown: 0.3 },
+    "table.roll": { files: "sfx/table/roll_*", fallback: "synth/table/tumble_*", gainDb: -3, pitch: [-1, 1], volume: [-2, 0], maxVoices: 4, reverb: -14 },
+    "table.settle": { files: "sfx/table/settle_*", fallback: "synth/table/settle_*", gainDb: -10, pitch: [-2, 2], volume: [-3, 0], maxVoices: 8 },
+    "table.hold": { files: "sfx/table/hold_*", fallback: "synth/table/hold_*", gainDb: -4, pitch: [-1, 1], maxVoices: 3 },
+    "table.reveal": { files: "sfx/table/reveal_*", fallback: "synth/table/hold_*", gainDb: -6, pitch: [-3, -1], cooldown: 0.5 },
+    "table.coins": { files: "sfx/table/coins_*", fallback: "synth/table/coins_*", gainDb: -6, pitch: [-1, 1], cooldown: 0.4 },
+    // The Kraken takes a cargo: something big and wet rolling over below the table.
+    "table.kraken": { files: "sfx/table/kraken_*", fallback: built("boss_down"), gainDb: -4, pitch: [-3, -1], reverb: -6, cooldown: 1 },
+    "table.win": { files: "music/stingers/table_win", fallback: built("victory"), group: "music", cooldown: 2 },
+
     // Stingers follow the Music slider.
     "stinger.battle_start": { files: "music/stingers/battle_start", group: "music" },
     // A boss's first appearance.

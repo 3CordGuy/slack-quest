@@ -36,6 +36,7 @@ The game asks for sounds by name, most specific first, and plays the first one t
 | `effect.<effect>` → `effect`, `tick.<effect>` → `tick` | An effect takes hold; bleeding or burning ticks. |
 | `down`, `flee.ok`, `flee.fail`, `trait.<trait>` → `trait` | Someone goes down; a flee; a class trait kicks in. |
 | `turn.yours`, `level_up`, `gold`, `loot.<rarity>` → `loot`, `key_item`, `pickup.<resource>` → `pickup`, `forage.<kind>` → `forage`, `search.found`, `search.empty`, `rest`, `discover` | Moments on a voyage, heard only by the hero they belong to. |
+| `table.shake`, `table.roll`, `table.settle`, `table.hold`, `table.reveal`, `table.coins`, `table.kraken`, `table.win` → `stinger.victory` | The pub's game tables: the dice cup shaken, dice thrown onto the felt, each die coming to rest, a ship or captain set aside, the Kraken taking a cargo, every die shown after a call, gold onto the pot (as a game starts, and to the winner), and your own win. Timed to the throw on screen. Each has a built-in take (`synth/table/…`) until a recording is added under `sfx/table/`. |
 | `weather.thunder` | Lightning strikes in a storm. A storm is its own weather: heavy rain with thunder, where a downpour is heavy rain without. The flash on screen follows the loudness of the take that plays, so bounce each strike, crack and rumble together, as one take: `sfx/weather/thunder_01.wav`, `thunder_02.wav`, and so on. |
 | `stinger.battle_start`, `stinger.victory`, `stinger.defeat`, `stinger.fled`, `stinger.ambush`, `stinger.voyage_won`, `stinger.voyage_lost` | Musical stings. |
 

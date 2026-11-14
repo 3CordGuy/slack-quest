@@ -7,6 +7,7 @@ import type { HexPos } from "@gantt-quest/core";
 import type { Outfit } from "@gantt-quest/world";
 import { TableStage, type SeatInfo, type TableAction, type TableKind } from "./render/TableStage";
 import type { WorldRenderer } from "./render/WorldRenderer";
+import { sounds } from "./audio/gameSounds";
 
 /** How someone at a table is drawn. */
 export interface SeatLook {
@@ -106,6 +107,28 @@ export function withSelf(infos: (SeatInfo | undefined)[], you: string, looks: Re
 }
 
 /** The pieces of a seat's look that do not depend on the game. */
-export function seatInfo(s: { id: string; name: string }, look: SeatLook | undefined, rest: Pick<SeatInfo, "turn" | "out" | "won" | "chip" | "pips" | "stars">): SeatInfo {
+export function seatInfo(s: { id: string; name: string }, look: SeatLook | undefined, rest: Pick<SeatInfo, "turn" | "out" | "won" | "chip" | "chipInk" | "crate" | "pips" | "stars">): SeatInfo {
   return { id: s.id, name: s.name, classId: look?.classId ?? "npc", outfit: look?.outfit, ...rest };
+}
+
+/**
+ * The moments every table game shares, heard as they happen: the antes going
+ * onto the pot as a game starts, a chime when it comes round to you, and the
+ * pot going to the winner (with a fanfare if that is you). Nothing sounds for
+ * the state the table was in when you sat down.
+ */
+export function useTableCues(state: { phase: string | null; myTurn: boolean; winner: string | null; you: string }) {
+  const last = useRef<{ phase: string | null; myTurn: boolean } | null>(null);
+  const { phase, myTurn, winner, you } = state;
+  useEffect(() => {
+    const was = last.current;
+    last.current = { phase, myTurn };
+    if (!was) return;
+    if (was.phase === "open" && phase === "playing") sounds.table("coins");
+    if (was.phase === "playing" && phase === "done") {
+      sounds.table("coins", { delay: 0.3 });
+      if (winner === you) sounds.tableWin();
+    }
+    if (myTurn && !was.myTurn && phase === "playing") sounds.yourTurn();
+  }, [phase, myTurn, winner, you]);
 }
