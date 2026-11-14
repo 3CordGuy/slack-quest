@@ -59,6 +59,16 @@ export const PUB_REGULAR_SPOTS: { pos: HexPos; stand: HexPos }[] = [
   { pos: at(4, 7), stand: at(4, 6) },
 ];
 
+/**
+ * The leaderboard for the game tables: a big chalk board standing on the
+ * floor against the back wall, across the two wall faces behind its hex,
+ * facing the room and the usual camera head-on. It is walked around like
+ * furniture; a customer reads it standing at `stand`, beside it. It is kept
+ * out of PUB_FITTINGS so the record fish's wall spots (see pubMountSpots),
+ * worked out from the fittings, stay where they were.
+ */
+export const PUB_LEADERBOARD: { pos: HexPos; stand: HexPos } = { pos: at(7, 1), stand: at(6, 1) };
+
 export interface PubFitting {
   id: number;
   model: string;
@@ -97,9 +107,9 @@ export function pubRoom(): WorldMap {
   return { ...room, pois: [...room.pois, harborPoi("counter", "counter", PUB_COUNTER), harborPoi("dice", "dice", PUB_DICE), harborPoi("shoals", "shoals", PUB_SHOALS), harborPoi("crew", "crew", PUB_CREW), harborPoi("trader", "trader", PUB_TRADER), harborPoi("dealer", "dealer", PUB_DEALER_STAND)] };
 }
 
-/** A walkable route across the pub, or null. The barkeep's side of the bar is his alone, the salesmen's corner theirs, and the dealer's and the regulars' spots theirs. */
+/** A walkable route across the pub, or null. The leaderboard is walked around. The barkeep's side of the bar is his alone, the salesmen's corner theirs, and the dealer's and the regulars' spots theirs. */
 export function pubPath(room: WorldMap, from: HexPos, to: HexPos): HexPos[] | null {
-  return hutPath(room, [...PUB_FITTINGS, PUB_BARKEEP_POS, PUB_SALESMAN_POS, PUB_DEALER_POS, ...PUB_REGULAR_SPOTS.map((s) => s.pos)], from, to);
+  return hutPath(room, [...PUB_FITTINGS, PUB_LEADERBOARD.pos, PUB_BARKEEP_POS, PUB_SALESMAN_POS, PUB_DEALER_POS, ...PUB_REGULAR_SPOTS.map((s) => s.pos)], from, to);
 }
 
 // ---------- the menu ----------

@@ -11,6 +11,7 @@ import type { GatherStatus } from "../server/gather";
 import type { SittingPaid } from "../server/fishing";
 import type { FishStock } from "../server/fishmarket";
 import type { CatchBook, PubWall } from "../server/catchbook";
+import type { PubGame, PubLeaderboard, PubScore } from "../server/pub-scores";
 import type { XpResult } from "../server/harbor-xp";
 import type { TradeList } from "../server/trade";
 import type { ApothecaryView, SmithyView } from "../server/workshops";
@@ -19,7 +20,7 @@ import type { ErrandPaid, RegularsView } from "../server/errands";
 
 export type { ApothecaryView, SmithyView, GalleyView, ErrandPaid, RegularsView };
 
-export type { CatchBook, FishStock, GatherStatus, PubWall, SittingPaid, XpResult };
+export type { CatchBook, FishStock, GatherStatus, PubGame, PubLeaderboard, PubScore, PubWall, SittingPaid, XpResult };
 
 /** What a hero has ordered at the pub and what it gives on their next voyage. */
 export interface PubTab {
@@ -185,6 +186,7 @@ export const api = {
   gatherStart: (spot: GatherSpot, pier?: FishSpot) => request<GatherStatus>("/api/gather/start", { spot, pier }),
   gatherStep: (choice: GatherChoice) => request<GatherStatus & { paid?: Resources; xp?: XpResult; sitting?: SittingPaid }>("/api/gather/step", { choice }),
   pub: () => request<PubTab>("/api/pub"),
+  pubLeaderboard: () => request<PubLeaderboard>("/api/pub/leaderboard"),
   pubOrder: (itemId: string) => request<PubTab>("/api/pub/order", { itemId }),
   pubTalk: (text: string) => request<{ say: string }>("/api/pub/talk", { text }),
   salesman: () => request<SalesmanView>("/api/pub/salesman", undefined, salesmanHeader()),

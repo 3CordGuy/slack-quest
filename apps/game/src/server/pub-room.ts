@@ -27,6 +27,7 @@ export async function enterPub(env: Env, player: Player, request: Request): Prom
   headers.set("x-player-name", encodeURIComponent(character.name));
   headers.set("x-player-class", character.class_id);
   headers.set("x-player-level", String(character.level));
+  headers.set("x-crew-id", crew.id);
   return env.PUB_ROOM.get(env.PUB_ROOM.idFromName(crew.id)).fetch(new Request(request.url, { headers }));
 }
 
@@ -36,13 +37,19 @@ export class PubRoom extends DurableObject<Env> {
   private crew: StakeTable<CrewGame, CrewRequest>;
   /** When each player last asked to be put back at the door. In memory only: a light limit. */
   private unstuckAt = new Map<string, number>();
+  /** Whose pub this is, for the leaderboard. Kept in storage: the room is named after the crew, but cannot read its own name. */
+  private crewId: string | null = null;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair("ping", "pong"));
-    this.dice = new StakeTable(ctx, env, DICE_RULES);
-    this.shoals = new StakeTable(ctx, env, SHOALS_RULES);
-    this.crew = new StakeTable(ctx, env, CREW_RULES);
+    const crewId = () => this.crewId;
+    this.dice = new StakeTable(ctx, env, DICE_RULES, crewId);
+    this.shoals = new StakeTable(ctx, env, SHOALS_RULES, crewId);
+    this.crew = new StakeTable(ctx, env, CREW_RULES, crewId);
+    void ctx.blockConcurrencyWhile(async () => {
+      this.crewId = (await ctx.storage.get<string>("crewId")) ?? null;
+    });
   }
 
   private players(except?: WebSocket): HarborPlayer[] {
@@ -85,6 +92,11 @@ export class PubRoom extends DurableObject<Env> {
     if (request.headers.get("Upgrade") !== "websocket") return new Response("expected websocket", { status: 426 });
     const id = request.headers.get("x-player-id");
     if (!id) return new Response("missing player", { status: 400 });
+    const crewId = request.headers.get("x-crew-id");
+    if (crewId && crewId !== this.crewId) {
+      this.crewId = crewId;
+      await this.ctx.storage.put("crewId", crewId);
+    }
 
     // One socket per player. A new tab takes over, standing where the old one stood.
     let pos = DOOR;
