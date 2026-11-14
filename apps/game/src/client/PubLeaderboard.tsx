@@ -1,5 +1,5 @@
 // The leaderboard on the pub's wall: how everyone in the crew has done at the
-// three game tables. Read from the server when it opens, and again whenever a
+// four game tables. Read from the server when it opens, and again whenever a
 // game in the pub starts or ends while it is open.
 
 import { useEffect, useState } from "react";
@@ -10,6 +10,7 @@ const GAMES: { id: PubGame; name: string; short: string }[] = [
   { id: "dice", name: "Dice", short: "Dice" },
   { id: "shoals", name: "Shoals", short: "Shoals" },
   { id: "crew", name: "Cargo and Krakens", short: "Cargo" },
+  { id: "tide", name: "Turn the Tide", short: "Tide" },
 ];
 
 const signed = (n: number) => (n > 0 ? `+${n}` : String(n));

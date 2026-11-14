@@ -1,0 +1,48 @@
+/* Turn the Tide: your hand as pictures, beside the tide and the move you are putting together. */
+.tide-status { font-size: 13px; line-height: 1.35; padding-left: 6px; border-left: 3px solid var(--line); }
+.tide-status.yours { border-left-color: var(--gold); }
+.tide-board { display: flex; gap: 10px; align-items: flex-start; flex-wrap: wrap; }
+.tide-hand { display: flex; gap: 6px; align-items: flex-end; flex: none; min-height: 60px; }
+.tide-none { align-self: center; max-width: 120px; font-size: 12px; }
+.tide-card { padding: 3px; border: 2px solid transparent; background: none; line-height: 0; transition: transform 0.12s; }
+.tide-card:not(:disabled):hover { transform: translateY(-3px); border-color: var(--line); }
+.tide-card.picked { border-color: var(--gold); background: rgba(217, 164, 58, 0.16); transform: translateY(-6px); }
+.tide-card:disabled { opacity: 1; cursor: default; }
+/* The Kraken on your turn: it stays where it is. */
+.tide-card.stuck { filter: saturate(0.6) brightness(0.8); }
+.tide-art { image-rendering: pixelated; }
+.tide-buried { display: inline-flex; flex-direction: column; gap: 2px; padding: 3px 5px; border: 1px dashed #a8862a; }
+.tide-side { display: flex; flex-direction: column; gap: 6px; flex: 1; min-width: 200px; }
+.tide-side > button { align-self: flex-start; }
+/* The move itself stays in view while the choices above it scroll. */
+.tide-side > button.primary:not(:disabled) { position: sticky; bottom: 0; z-index: 1; }
+.tide-token { display: flex; align-items: center; gap: 8px; font-size: 12px; line-height: 1.25; }
+.tide-token.high strong { color: #a9d4fb; }
+.tide-token.low strong { color: #e6c877; }
+.tide-token .muted { margin-left: auto; white-space: nowrap; }
+.tide-text { font-size: 12px; }
+.tide-known { font-size: 12px; color: var(--accent); }
+.tide-guess button { padding: 1px 5px; }
+.tide-table .td-row button.on { border-color: var(--gold); color: var(--gold); background: rgba(217, 164, 58, 0.14); }
+.tide-seen { display: flex; flex-wrap: wrap; gap: 2px 8px; font-size: 10px; align-items: baseline; }
+.tide-seen .gone { text-decoration: line-through; opacity: 0.6; }
+.tide-rules ol { margin: 0 0 6px; padding-left: 18px; }
+.tide-rules { padding-left: 6px; }
+.tide-cards { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 6px; }
+.tide-cards li { display: flex; gap: 6px; align-items: flex-start; }
+
+@media (max-width: 760px) {
+  /* A phone: the hand at its own size doubled is most of the dock, so the rest goes under it. */
+  .tide-side { min-width: 0; flex-basis: 100%; }
+  .tide-seen { display: none; }
+}
+
+/* What just happened is new: the line lights up as it changes, and a card drawn comes up into your hand. */
+@keyframes tide-said { from { background: rgba(217, 164, 58, 0.28); } to { background: transparent; } }
+.tide-status { animation: tide-said 1.2s ease-out; }
+@keyframes tide-drawn { from { transform: translateY(26px) rotate(-6deg); opacity: 0; } to { transform: none; opacity: 1; } }
+.tide-card, .tide-buried { animation: tide-drawn 0.35s ease-out backwards; }
+.tide-card:nth-child(2) { animation-delay: 0.25s; }
+@media (prefers-reduced-motion: reduce) {
+  .tide-status, .tide-card, .tide-buried { animation: none; }
+}

@@ -1,12 +1,12 @@
-// The pub's leaderboard: how each player in a crew has done at the three
+// The pub's leaderboard: how each player in a crew has done at the four
 // game tables. A finished game is written into `pub_scores` in the same D1
 // batch that pays its pot (see stake-table.ts), so the board never shows a
 // win whose gold did not move, or the other way round.
 
 import { crewFor } from "./db";
 
-export type PubGame = "dice" | "shoals" | "crew";
-export const PUB_GAMES: readonly PubGame[] = ["dice", "shoals", "crew"];
+export type PubGame = "dice" | "shoals" | "crew" | "tide";
+export const PUB_GAMES: readonly PubGame[] = ["dice", "shoals", "crew", "tide"];
 
 /** How a game ended, as the board needs to know it. */
 export interface PubResult {
@@ -89,7 +89,7 @@ export async function pubLeaderboard(db: D1Database, playerId: string): Promise<
     )
     .bind(crew.id, BOARD_ROWS)
     .all<Omit<PubScore, "member"> & { game: PubGame; place: number; member: number }>();
-  const board: PubLeaderboard = { dice: [], shoals: [], crew: [] };
+  const board: PubLeaderboard = { dice: [], shoals: [], crew: [], tide: [] };
   for (const { game, place: _place, member, ...row } of rows.results) board[game]?.push({ ...row, member: !!member });
   return board;
 }

@@ -41,6 +41,7 @@ export * from "./galley";
 export * from "./salesman";
 export * from "./regulars";
 export * from "./shoals";
+export * from "./tide";
 export * from "./trade";
 export * from "./carry";
 export * from "./catalogue";

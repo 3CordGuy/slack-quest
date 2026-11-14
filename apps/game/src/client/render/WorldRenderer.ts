@@ -3235,6 +3235,23 @@ export class WorldRenderer {
         add(box(0.08, 0.08, 0.08), lambert("#f4efe1"), 0.2, 0.505, -0.06, 0.6);
         break;
       }
+      case "tide": {
+        // Turn the Tide: a round card table under an indigo cloth, a stool for each of the five who can play, the deck
+        // with a card turned up beside it, and a candle to read them by.
+        add(new THREE.CylinderGeometry(0.16, 0.22, 0.4, 8), lambert("#5a3d22"), 0, 0.2, -0.3);
+        add(new THREE.CylinderGeometry(0.54, 0.54, 0.06, 10), lambert("#8a6a44"), 0, 0.43, -0.3);
+        add(new THREE.CylinderGeometry(0.47, 0.47, 0.012, 10), lambert("#3a3570"), 0, 0.466, -0.3);
+        for (let i = 0; i < 5; i++) {
+          const a = Math.PI / 2 + (i * Math.PI * 2) / 5;
+          add(new THREE.CylinderGeometry(0.13, 0.11, 0.24, 6), lambert("#5a3d22"), Math.cos(a) * 0.74, 0.12, -0.3 + Math.sin(a) * 0.62);
+        }
+        add(box(0.13, 0.05, 0.18), lambert("#22304f"), -0.12, 0.497, -0.32, 0.2);
+        add(box(0.13, 0.008, 0.18), lambert("#f4efe1"), 0.08, 0.476, -0.36, -0.5);
+        add(box(0.13, 0.008, 0.18), lambert("#f4efe1"), 0.18, 0.48, -0.26, 0.3);
+        add(new THREE.CylinderGeometry(0.03, 0.03, 0.1, 6), lambert("#f4efe1"), -0.02, 0.52, -0.12);
+        add(box(0.03, 0.05, 0.03), new THREE.MeshBasicMaterial({ color: "#ffb347" }), -0.02, 0.595, -0.12).userData.glow = true;
+        break;
+      }
       case "dice": {
         // Dice table: a round top on a barrel, a stool for each of the four who can play, and a pair of dice. Set back so whoever stands here is seen to sit at it.
         add(new THREE.CylinderGeometry(0.18, 0.22, 0.4, 7), lambert("#6b4a2b"), 0, 0.2, -0.3);

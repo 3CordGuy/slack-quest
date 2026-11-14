@@ -1,10 +1,10 @@
--- The pub's leaderboard: each player's results at the crew's three game
--- tables (dice, Shoals, Cargo and Krakens), one row per crew, game and
+-- The pub's leaderboard: each player's results at the crew's game tables
+-- (dice, Shoals, Cargo and Krakens, Turn the Tide), one row per crew, game and
 -- player. Written in the same batch that pays a finished game's pot.
 
 CREATE TABLE pub_scores (
   crew_id     TEXT NOT NULL,
-  game        TEXT NOT NULL,              -- 'dice', 'shoals' or 'crew'
+  game        TEXT NOT NULL,              -- 'dice', 'shoals', 'crew' or 'tide'
   player_id   TEXT NOT NULL REFERENCES players(id),
   played      INTEGER NOT NULL DEFAULT 0, -- games sat through to the end (a forfeit counts)
   wins        INTEGER NOT NULL DEFAULT 0,

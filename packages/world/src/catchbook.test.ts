@@ -57,7 +57,7 @@ describe("the pub's wall", () => {
 describe("the pub's leaderboard", () => {
   it("stands against the back wall, across two faces, beside clear floor, and blocks no one's way", async () => {
     const { hexDistance } = await import("@gantt-quest/core");
-    const { PUB_LEADERBOARD, PUB_DEALER_POS, PUB_DEALER_STAND, PUB_SALESMAN_POS, PUB_BARKEEP_POS, PUB_FITTINGS, PUB_DICE, PUB_SHOALS, PUB_CREW, PUB_COUNTER, PUB_TRADER, PUB_REGULAR_SPOTS, pubMountSpots, pubPath, pubRoom } = await import("./pub");
+    const { PUB_LEADERBOARD, PUB_DEALER_POS, PUB_DEALER_STAND, PUB_SALESMAN_POS, PUB_BARKEEP_POS, PUB_FITTINGS, PUB_DICE, PUB_SHOALS, PUB_CREW, PUB_TIDE, PUB_COUNTER, PUB_TRADER, PUB_REGULAR_SPOTS, pubMountSpots, pubPath, pubRoom } = await import("./pub");
     const { HEX_DIRS, wallFaces } = await import("./hutroom");
     const { PUB_MOUNT_SLOTS } = await import("./catchbook");
     const room = pubRoom();
@@ -71,7 +71,7 @@ describe("the pub's leaderboard", () => {
     expect(faces).toHaveLength(2);
     // No record fish hangs on either face it covers.
     expect(pubMountSpots(PUB_MOUNT_SLOTS).filter((f) => k(step(f.pos, f.side)) === k(pos))).toEqual([]);
-    const stations = [PUB_DICE, PUB_SHOALS, PUB_CREW, PUB_COUNTER, PUB_TRADER, PUB_DEALER_STAND, ...PUB_REGULAR_SPOTS.map((s) => s.stand)];
+    const stations = [PUB_DICE, PUB_SHOALS, PUB_CREW, PUB_TIDE, PUB_COUNTER, PUB_TRADER, PUB_DEALER_STAND, ...PUB_REGULAR_SPOTS.map((s) => s.stand)];
     const taken = new Set([...PUB_FITTINGS, ...stations, ...PUB_REGULAR_SPOTS.map((s) => s.pos), PUB_DEALER_POS, PUB_SALESMAN_POS, PUB_BARKEEP_POS].map(k));
     expect(taken.has(k(pos))).toBe(false);
     expect(taken.has(k(stand))).toBe(false);

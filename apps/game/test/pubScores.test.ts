@@ -121,6 +121,17 @@ describe("recording a finished game", () => {
     ]);
   });
 
+  it("keeps Turn the Tide on a board of its own", async () => {
+    await record(CREW, { game: "tide", ante: 20, seats: [{ id: "ann" }, { id: "bob" }, { id: "cat" }], winner: "cat", prize: 54 });
+    const b = await board();
+    expect([b.dice, b.shoals, b.crew]).toEqual([[], [], []]);
+    expect(b.tide.map((r) => [r.name, r.played, r.wins, r.goldWon, r.net])).toEqual([
+      ["Cat", 1, 1, 54, 34],
+      ["Ann", 1, 0, 0, -20],
+      ["Bob", 1, 0, 0, -20],
+    ]);
+  });
+
   it("is per crew, and writes nothing for a room that does not know its crew", async () => {
     await record(CREW, dice("ann"));
     await record(OTHER, dice("dan", ["dan"]));
