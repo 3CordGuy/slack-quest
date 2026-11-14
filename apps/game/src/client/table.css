@@ -40,14 +40,26 @@
   .table-dock { font-size: 12px; max-height: calc(42vh / var(--ui-z, 1)); }
 }
 
-/* Ship, Captain & Kraken: the ship and captain you need, lit as they come in. */
+/* Cargo and Krakens: the ship and captain you need, lit as they come in. */
 .crew-needs { display: inline-flex; gap: 4px; margin-right: 4px; }
 .crew-needs img { image-rendering: pixelated; }
 .crew-needs .crew-missing { opacity: 0.3; filter: grayscale(1); }
 
-/* Ship, Captain & Kraken: your cargo dice, each a toggle between keeping it and rolling it again. */
-.crew-cargo { display: inline-flex; gap: 4px; }
-.crew-die { display: inline-flex; flex-direction: column; align-items: center; gap: 1px; padding: 2px 3px; font-size: 10px; line-height: 1; }
+/* Cargo and Krakens: your dice once the ship is in, split into the held pool (the ship and what you hold, for the rest of the turn) and the loose dice the next roll throws. */
+.crew-board { display: flex; gap: 6px; flex-wrap: wrap; align-items: stretch; }
+.crew-pool, .crew-loose { display: flex; flex-direction: column; gap: 2px; padding: 3px 5px; border: 1px solid var(--line); }
+.crew-pool { border-color: #a8862a; background: rgba(217, 164, 58, 0.08); }
+.crew-loose { border-style: dashed; }
+.crew-pool .td-label, .crew-loose .td-label { font-size: 10px; white-space: nowrap; }
+.crew-sum { color: var(--gold); text-transform: none; letter-spacing: 0; }
+.crew-pool-dice { display: flex; gap: 3px; align-items: center; }
+.crew-die { display: inline-flex; flex-direction: column; align-items: center; gap: 1px; padding: 2px 3px; font-size: 9px; line-height: 1; min-width: 42px; }
 .crew-die img { image-rendering: pixelated; }
-.crew-die.kept { border-color: var(--gold); color: var(--gold); }
+.crew-die-role { font-size: 8px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+.crew-die.held { border: 1px solid var(--gold); color: var(--gold); background: rgba(217, 164, 58, 0.14); }
+.crew-die.held:disabled { opacity: 1; cursor: default; }
+.crew-die.loose { color: var(--muted); }
 .crew-die.kraken { border-color: #a01818; color: #f08a8a; }
+.crew-die.kraken:disabled { opacity: 1; }
+.crew-moves { display: flex; flex-direction: column; gap: 4px; justify-content: center; margin-left: auto; }
+.crew-moves small { display: block; font-size: 10px; opacity: 0.8; }

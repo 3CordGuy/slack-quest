@@ -1,4 +1,4 @@
-// A model ship in full sail, the centrepiece of the pub's Ship, Captain & Kraken
+// A model ship in full sail, the centrepiece of the pub's Cargo and Krakens
 // table. The room's table (WorldRenderer) and the first-person one
 // (TableStage) both stand one in the middle: a dark hull with a gold rail, a
 // mainmast and a foremast with cream sails, and a red pennant at the top.

@@ -1,4 +1,4 @@
-// Pixel art for the pub's Ship, Captain & Kraken table: what a die shows in
+// Pixel art for the pub's Cargo and Krakens table: what a die shows in
 // place of its pips. The 6 is the ship and the 5 the captain once each is set
 // aside, and a 1 in the cargo is the Kraken. Each is a 16-pixel picture, painted straight onto a die's face in the table scene
 // (render/TableStage.ts) and handed to the panel as an image URL, shown at a

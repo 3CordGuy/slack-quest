@@ -30,7 +30,7 @@ export const PUB_COUNTER: HexPos = at(3, 3);
 export const PUB_DICE: HexPos = at(7, 5);
 /** Where players stand to sit at the Shoals table. */
 export const PUB_SHOALS: HexPos = at(5, 5);
-/** Where players stand to sit at the Ship, Captain & Crew table. */
+/** Where players stand to sit at the Cargo and Krakens table. */
 export const PUB_CREW: HexPos = at(3, 5);
 /** The barkeep's spot, behind the bar. */
 export const PUB_BARKEEP_POS: HexPos = at(3, 1);

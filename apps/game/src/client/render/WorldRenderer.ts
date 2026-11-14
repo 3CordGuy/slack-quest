@@ -3218,7 +3218,7 @@ export class WorldRenderer {
         break;
       }
       case "crew": {
-        // Ship, Captain & Kraken: a broad round table under a tarred-rope rim, a stool for each of the six who can play,
+        // Cargo and Krakens: a broad round table under a tarred-rope rim, a stool for each of the six who can play,
         // a model ship in full sail in the middle, and the dice cup beside it with a die spilled out.
         add(new THREE.CylinderGeometry(0.2, 0.26, 0.4, 8), lambert("#5a3d22"), 0, 0.2, -0.3);
         add(new THREE.CylinderGeometry(0.56, 0.56, 0.07, 10), lambert("#8a6a44"), 0, 0.43, -0.3);
