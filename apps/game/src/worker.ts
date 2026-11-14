@@ -70,6 +70,7 @@ import { buyFromSalesman, getSalesman } from "./server/salesman";
 import { gatherStatus, rest, startOuting, stepOuting } from "./server/gather";
 import { fishStock, moveFish, sellFish } from "./server/fishmarket";
 import { catchBook, hangAtHome, mountInPub, pubWall, unmountInPub } from "./server/catchbook";
+import { pubLeaderboard } from "./server/pub-scores";
 import { builtProjectIds, contribute, crewWorks, projectStock } from "./server/projects";
 import { acceptTrade, closeTrade, listTrades, proposeTrade } from "./server/trade";
 import { apothecaryView, brew, smithItem, smithyView } from "./server/workshops";
@@ -459,6 +460,12 @@ app.get("/api/pub/ws", (c) => enterPub(c.env, c.get("player"), c.req.raw));
 app.get("/api/pub", async (c) => {
   const orders = await pubOrders(c.env.DB, c.get("player").id);
   return c.json({ orders, buff: pubBuff(orders) });
+});
+
+// The crew's leaderboard for the pub's game tables, on the board on the back wall.
+app.get("/api/pub/leaderboard", async (c) => {
+  const result = await pubLeaderboard(c.env.DB, c.get("player").id);
+  return typeof result === "string" ? c.json({ error: result }, 409) : c.json(result);
 });
 
 // Order off the menu. The price is the menu's; a second drink or meal replaces the first.

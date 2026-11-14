@@ -44,6 +44,7 @@ import {
   type ShoalsGame,
   type ShoalsRequest,
   HARBOR_XP,
+  STAKE_MAX,
   PUB_TIDE,
   TIDE_MAX_PLAYERS,
   createTideGame,
@@ -57,6 +58,7 @@ import {
 } from "@gantt-quest/world";
 import type { Env } from "./db";
 import { prepareXp, relayXp, xpMessage, xpOutcome } from "./harbor-xp";
+import { scoreStatements } from "./pub-scores";
 
 /** What every table game's state has in common. */
 interface StakeGame {
@@ -87,6 +89,8 @@ interface Rules<G extends StakeGame, R extends { type: string }> {
   prize(pot: number): number;
   /** Seated, but already out of the game: they need not stay at the table. */
   isOut(game: G, seatId: string): boolean;
+  /** For the pub's leaderboard: a seat's score for the whole game, where the game keeps one. */
+  cargo?(game: G, seatId: string): number | null;
 }
 
 export const DICE_RULES: Rules<DiceGame, DiceRequest> = {
@@ -157,6 +161,11 @@ export const CREW_RULES: Rules<CrewGame, CrewRequest> = {
     const seat = game.seats.find((s) => s.id === seatId);
     return !!seat && (seat.forfeited || !seat.contending);
   },
+  // The cargo a seat brought in over the game's rounds. Read loosely: games saved before rounds have no total.
+  cargo(game, seatId) {
+    const total = (game.seats.find((s) => s.id === seatId) as { total?: unknown } | undefined)?.total;
+    return typeof total === "number" && Number.isFinite(total) ? total : null;
+  },
 };
 
 export const TIDE_RULES: Rules<TideGame, TideRequest> = {
@@ -191,6 +200,8 @@ export class StakeTable<G extends StakeGame, R extends { type: string }> {
     private ctx: DurableObjectState,
     private env: Env,
     private rules: Rules<G, R>,
+    /** The crew whose pub this is, for the leaderboard; null until someone has come in since it was recorded. */
+    private crewId: () => string | null = () => null,
   ) {}
 
   private locked<T>(fn: () => Promise<T>): Promise<T> {
@@ -259,12 +270,32 @@ export class StakeTable<G extends StakeGame, R extends { type: string }> {
     return res.meta.changes === ids.length;
   }
 
-  /** The pot to the winner, and a little Harbor XP with it, in one batch. Everyone in the pub sees the XP. */
+  /**
+   * The pot to the winner, a little Harbor XP with it, and the game on the
+   * crew's leaderboard, in one batch. Everyone in the pub sees the XP.
+   */
   private async pay(game: G): Promise<void> {
-    if (!game.winner) return;
+    // A free game has no prize, whatever the pot's rule would make of nothing.
+    const prize = game.winner && game.ante > 0 ? this.rules.prize(game.pot) : 0;
+    const cargo = this.rules.cargo;
+    const scores = scoreStatements(this.env.DB, this.crewId(), {
+      game: this.rules.name,
+      ante: game.ante,
+      seats: game.seats,
+      winner: game.winner,
+      prize,
+      cargo: cargo && ((seatId) => cargo(game, seatId)),
+    });
+    // No winner, or a free game: no gold and no Harbor XP to give, but the game still goes on the board.
+    if (!game.winner || game.ante === 0) {
+      if (scores.length > 0) await this.env.DB.batch(scores);
+      return;
+    }
     const xp = await prepareXp(this.env.DB, game.winner, HARBOR_XP.pubWin);
+    // The scores go first: the XP's statements read the one just before them (the prize) and are read back from the end.
     const results = await this.env.DB.batch([
-      this.env.DB.prepare("UPDATE characters SET gold = gold + ? WHERE player_id = ?").bind(this.rules.prize(game.pot), game.winner),
+      ...scores,
+      this.env.DB.prepare("UPDATE characters SET gold = gold + ? WHERE player_id = ?").bind(prize, game.winner),
       ...(xp?.statements() ?? []),
     ]);
     const earned = xpOutcome(xp, results);
@@ -321,7 +352,7 @@ export class StakeTable<G extends StakeGame, R extends { type: string }> {
     if (request.type === "open") {
       const ante = (request as { ante?: unknown }).ante;
       if (game && game.phase !== "done") return "There is already a table open.";
-      if (!this.rules.isAnte(ante)) return "Pick a stake of 5, 10 or 20 gold.";
+      if (!this.rules.isAnte(ante)) return `Pick a stake: free, or a whole number of gold up to ${STAKE_MAX}.`;
       if ((await this.gold(player.id)) < (ante as number)) return "You cannot afford that ante.";
       const seed = crypto.getRandomValues(new Uint32Array(1))[0];
       await this.save(this.rules.create(seed, ante as number, { id: player.id, name: player.name }, request));

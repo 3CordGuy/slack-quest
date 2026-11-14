@@ -7,7 +7,9 @@
 // on whom, and the card a Gull names.
 
 import { useEffect, useMemo, useState, type RefObject } from "react";
-import { TIDE_ANTES, TIDE_CARDS, TIDE_CUTLASS, TIDE_DEFAULT_WINS, TIDE_GULL, TIDE_KRAKEN, TIDE_MAX_PLAYERS, TIDE_MIN_PLAYERS, TIDE_MOON, TIDE_SMUGGLER, TIDE_SPYGLASS, TIDE_STORM, TIDE_ANCHOR, TIDE_WIN_CHOICES, tideCard, tideCardPhrase, tideTargets, type TideRequest, type TideView } from "@gantt-quest/world";
+import { TIDE_CARDS, TIDE_CUTLASS, TIDE_DEFAULT_WINS, TIDE_GULL, TIDE_KRAKEN, TIDE_MAX_PLAYERS, TIDE_MIN_PLAYERS, TIDE_MOON, TIDE_SMUGGLER, TIDE_SPYGLASS, TIDE_STORM, TIDE_ANCHOR, TIDE_WIN_CHOICES, tideCard, tideCardPhrase, tideTargets, type TideRequest, type TideView } from "@gantt-quest/world";
+import { prizeText, stakeLabel, stakeText } from "@gantt-quest/world";
+import { StakePicker, anteNote } from "./StakePicker";
 import type { SeatInfo } from "./render/TableStage";
 import type { WorldRenderer } from "./render/WorldRenderer";
 import { TIDE_CARD_H, TIDE_CARD_W, tideCardUrl, tideTokenUrl, type TideFace } from "./tideArt";
@@ -124,8 +126,8 @@ export function TideTable({ table, you, gold, error, lastXp, looks, world, host,
   const status = (() => {
     if (!table) return "Nobody is playing. Open a table and the others may sit.";
     const goal = `First to ${hands(table.wins)}.`;
-    if (table.phase === "open") return seated ? (table.host === you ? (seats.length < TIDE_MIN_PLAYERS ? "Waiting for someone to sit." : `Start when everyone is seated. ${goal}`) : `Waiting for ${name(table.host)} to start. ${goal}`) : `A table is open at ${table.ante} gold a seat. ${goal}`;
-    if (table.phase === "done") return `${lastHand ?? ""} ${table.winner ? `${name(table.winner)} ${table.winner === you ? "win" : "wins"} ${table.prize} gold.` : "The game is over."}`.trim();
+    if (table.phase === "open") return seated ? (table.host === you ? (seats.length < TIDE_MIN_PLAYERS ? "Waiting for someone to sit." : `Start when everyone is seated. ${goal}`) : `Waiting for ${name(table.host)} to start. ${goal}`) : `A table is open at ${stakeText(table.ante)}. ${goal}`;
+    if (table.phase === "done") return `${lastHand ?? ""} ${table.winner ? `${name(table.winner)} ${table.winner === you ? "win" : "wins"} ${prizeText(table.prize)}.` : "The game is over."}`.trim();
     if (between) return `${lastHand ?? ""} ${inGame ? "Deal the next hand when you are ready." : "Waiting for the next hand."}`.trim();
     const said = table.log[table.log.length - 1] ?? "";
     if (choosing) return `The buried card is ${tideCardPhrase(table.buried!)}. Swap your ${tideCard(myHand[0])?.name ?? "card"} for it, or leave it buried?`;
@@ -177,8 +179,8 @@ export function TideTable({ table, you, gold, error, lastXp, looks, world, host,
         : null,
     );
     stage.setPot(table ? (table.phase === "open" ? table.ante * seats.length : table.phase === "done" ? table.prize : table.pot) : 0);
-    const caption = !table ? "No game" : table.phase === "open" ? `Seating: ${table.ante} gold a seat` : table.phase === "done" ? "Game over" : `Hand ${table.hand}: pot ${table.pot} gold`;
-    const main = !table || table.phase === "open" ? {} : table.phase === "done" ? { main: `${table.prize} gold` } : { main: `${table.tide} tide` };
+    const caption = !table ? "No game" : table.phase === "open" ? `Seating: ${stakeText(table.ante)}` : table.phase === "done" ? "Game over" : `Hand ${table.hand}: ${table.pot > 0 ? `pot ${table.pot} gold` : "free game"}`;
+    const main = !table || table.phase === "open" ? {} : table.phase === "done" ? { main: table.pot > 0 ? `${table.prize} gold` : "Won" } : { main: `${table.tide} tide` };
     const xp = table?.phase === "done" && lastXp?.id === table.winner && lastXp.amount > 0 ? `+${lastXp.amount} XP` : undefined;
     // The card over the table is kept short: the dock, with your hand in it, lies over the rest.
     stage.setCard({ caption, ...main, foot: xp, yours: !!myTurn });
@@ -200,13 +202,7 @@ export function TideTable({ table, you, gold, error, lastXp, looks, world, host,
               </button>
             ))}
           </span>
-          <span>{table ? "Another game:" : "Open a table:"}</span>
-          {TIDE_ANTES.map((a) => (
-            <button key={a} className="small" disabled={gold < a} title={gold < a ? "You cannot afford this ante" : `Open a table at ${a} gold a seat, first to ${hands(pickWins)}`} onClick={() => send({ type: "open", ante: a, wins: pickWins })}>
-              {a} gold
-            </button>
-          ))}
-          <span className="muted">You have {gold}.</span>
+          <StakePicker gold={gold} again={!!table} also={`, first to ${hands(pickWins)}`} open={(ante) => send({ type: "open", ante, wins: pickWins })} />
         </div>
       )}
 
@@ -214,7 +210,7 @@ export function TideTable({ table, you, gold, error, lastXp, looks, world, host,
         <div className="td-row">
           {!seated && (
             <button className="primary" disabled={gold < table.ante || seats.length >= TIDE_MAX_PLAYERS} onClick={() => send({ type: "sit" })}>
-              {gold < table.ante ? `You need ${table.ante} gold to sit` : `Sit (${table.ante} gold)`}
+              {gold < table.ante ? `You need ${table.ante} gold to sit` : `Sit (${stakeLabel(table.ante)})`}
             </button>
           )}
           {table.host === you && (
@@ -223,7 +219,7 @@ export function TideTable({ table, you, gold, error, lastXp, looks, world, host,
             </button>
           )}
           {seated && <button className="small" onClick={() => send({ type: "leave" })}>Give up the seat</button>}
-          {seated && <span className="muted">The ante is taken when the game starts.</span>}
+          {seated && <span className="muted">{anteNote(table.ante)}</span>}
         </div>
       )}
 

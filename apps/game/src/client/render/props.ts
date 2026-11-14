@@ -600,6 +600,52 @@ const MODELS: Record<string, (b: Builder) => void> = {
     b.box("#1f2430", 0.02, 0.02, 0.01, 0.19, 0.0, 0.12);
   },
 
+  // The pub's leaderboard: a big slate standing on two legs against the back wall, as wide as a hex,
+  // chalked in four columns (dice, Shoals, Cargo and Krakens, Turn the Tide) under a sign, with a chalk tray.
+  // Its back is at z = 0 side of the frame; it faces +z, into the room.
+  tally_board(b) {
+    const CHALK = "#e9ecef";
+    const W = 1.56;
+    // Legs and feet.
+    for (const x of [-W / 2 - 0.02, W / 2 + 0.02]) {
+      b.box(DARK_WOOD, 0.07, 1.86, 0.07, x, 0, 0);
+      b.box(DARK_WOOD, 0.1, 0.05, 0.34, x, 0, 0.04);
+    }
+    // The frame and the slate in it, from knee height to well over a hero's head.
+    b.box(DARK_WOOD, W, 1.02, 0.06, 0, 0.5, 0);
+    b.box("#2c3a33", W - 0.1, 0.92, 0.02, 0, 0.55, 0.035);
+    // The sign over it.
+    b.box(PALE_WOOD, 0.9, 0.2, 0.05, 0, 1.6, 0.01);
+    b.box(GOLD, 0.74, 0.03, 0.01, 0, 1.69, 0.04);
+    for (const x of [-0.3, 0.3]) b.box(IRON, 0.02, 0.1, 0.02, x, 1.52, 0.01);
+    // Column rules, and a line under the heads.
+    for (const x of [-0.36, 0, 0.36]) b.box(CHALK, 0.012, 0.82, 0.006, x, 0.58, 0.05);
+    b.box(CHALK, W - 0.2, 0.012, 0.006, 0, 1.24, 0.05);
+    // Each column's head: a die, a Shoals marker, a gold piece, a playing card.
+    b.box("#f4efe1", 0.1, 0.1, 0.06, -0.54, 1.28, 0.06);
+    for (const [x, y] of [[-0.565, 1.3], [-0.515, 1.35]]) b.box("#1f2430", 0.02, 0.02, 0.005, x, y, 0.09);
+    b.post("#6f9cb0", 0.055, 0.055, 0.04, -0.18, 1.33, 0.06, 8).rotation.x = Math.PI / 2;
+    b.post(GOLD, 0.05, 0.05, 0.02, 0.18, 1.33, 0.055, 8).rotation.x = Math.PI / 2;
+    const card = b.box("#f4efe1", 0.08, 0.12, 0.01, 0.54, 1.27, 0.055);
+    card.rotation.z = -0.15;
+    b.box("#b9433d", 0.03, 0.03, 0.005, 0.545, 1.315, 0.062).rotation.z = Math.PI / 4;
+    // Tallies, a row a player: four strokes and a fifth across.
+    const counts = [[7, 3, 6, 4], [4, 6, 2, 5], [2, 1, 4, 1], [1, 2, 0, 3]];
+    counts.forEach((row, i) => row.forEach((n, col) => {
+      const left = -0.68 + col * 0.36;
+      const y = 1.06 - i * 0.16;
+      for (let k = 0; k < n; k++) {
+        const group = Math.floor(k / 5);
+        const inGroup = k % 5;
+        if (inGroup < 4) b.box(CHALK, 0.02, 0.1, 0.005, left + group * 0.15 + inGroup * 0.026, y, 0.05);
+        else b.box(CHALK, 0.12, 0.02, 0.005, left + group * 0.15 + 0.039, y + 0.045, 0.051).rotation.z = 0.6;
+      }
+    }));
+    // The chalk tray and a stick of chalk in it.
+    b.box(PALE_WOOD, W, 0.04, 0.12, 0, 0.47, 0.07);
+    b.roll(CHALK, 0.016, 0.12, 0.3, 0.53, 0.09);
+  },
+
   // Boats, as they show in the craft list (on the water they are drawn under the hero by the renderer).
   float_barrel(b) {
     b.post(WOOD, 0.26, 0.23, 0.36);

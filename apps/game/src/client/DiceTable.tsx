@@ -4,7 +4,9 @@
 // game; this only shows the view it was sent and asks for moves.
 
 import { useEffect, useMemo, useState, type RefObject } from "react";
-import { DICE_ANTES, DICE_MAX_PLAYERS, DICE_MIN_PLAYERS, DICE_START, type DiceBid, type DiceRequest, type DiceView } from "@gantt-quest/world";
+import { DICE_MAX_PLAYERS, DICE_MIN_PLAYERS, DICE_START, type DiceBid, type DiceRequest, type DiceView } from "@gantt-quest/world";
+import { stakeLabel, stakeText } from "@gantt-quest/world";
+import { StakePicker, anteNote } from "./StakePicker";
 import type { SeatInfo } from "./render/TableStage";
 import type { WorldRenderer } from "./render/WorldRenderer";
 import { drawnSeats, placeSeats, withSelf, seatInfo, useTableCues, useTableStage, type SeatLook, type StageHost } from "./useTableStage";
@@ -72,8 +74,8 @@ export function DiceTable({ table, you, gold, error, lastXp, looks, world, host,
   const seats = table?.seats ?? [];
   const status = (() => {
     if (!table) return "Nobody is playing. Open a table and the others may sit.";
-    if (table.phase === "open") return seated ? (table.host === you ? (seats.length < DICE_MIN_PLAYERS ? "Waiting for someone to sit." : "Start when everyone is seated.") : `Waiting for ${name(table.host)} to start.`) : `A table is open at ${table.ante} gold a seat.`;
-    if (table.phase === "done") return table.winner ? `${name(table.winner)} ${table.winner === you ? "win" : "wins"} ${table.prize} gold from a pot of ${table.pot}.` : "The game is over.";
+    if (table.phase === "open") return seated ? (table.host === you ? (seats.length < DICE_MIN_PLAYERS ? "Waiting for someone to sit." : "Start when everyone is seated.") : `Waiting for ${name(table.host)} to start.`) : `A table is open at ${stakeText(table.ante)}.`;
+    if (table.phase === "done") return table.winner ? `${name(table.winner)} ${table.winner === you ? "win" : "wins"} ${table.pot > 0 ? `${table.prize} gold from a pot of ${table.pot}` : "the game"}.` : "The game is over.";
     if (showReveal) {
       const r = table.reveal!;
       return `${short(r.caller)} called ${r.bid.by === you ? "your" : `${short(r.bid.by)}'s`} ${bidText(r.bid)}: there ${r.actual === 1 ? "was" : "were"} ${r.actual}. ${name(r.loser)} lost a die.`;
@@ -103,9 +105,9 @@ export function DiceTable({ table, you, gold, error, lastXp, looks, world, host,
     stage.setPot(table ? (table.phase === "open" ? table.ante * seats.length : table.phase === "done" ? table.prize : table.pot) : 0);
     // Everything there is to read hangs on the card over the table, where your eyes already are; the dock below holds only the controls.
     const playing = table?.phase === "playing";
-    const caption = !table ? "No game" : table.phase === "open" ? `Seating: ${table.ante} gold a seat` : table.phase === "done" ? "Game over" : showReveal ? `Round ${table.round - 1}: called` : `Round ${table.round}: pot ${table.pot} gold, ${total} dice`;
+    const caption = !table ? "No game" : table.phase === "open" ? `Seating: ${stakeText(table.ante)}` : table.phase === "done" ? "Game over" : showReveal ? `Round ${table.round - 1}: called` : `Round ${table.round}: ${table.pot > 0 ? `pot ${table.pot} gold` : "free game"}, ${total} dice`;
     const main = !table || table.phase === "open" ? {}
-      : table.phase === "done" ? { main: `${table.prize} gold` }
+      : table.phase === "done" ? { main: table.pot > 0 ? `${table.prize} gold` : "Won" }
       : showReveal ? { main: `${table.reveal!.actual} x`, die: table.reveal!.bid.face }
       : last ? { main: `${last.count} x`, die: last.face }
       : { main: "no bid" };
@@ -129,13 +131,7 @@ export function DiceTable({ table, you, gold, error, lastXp, looks, world, host,
 
       {(!table || table.phase === "done") && (
         <div className="td-row">
-          <span>{table ? "Another game:" : "Open a table:"}</span>
-          {DICE_ANTES.map((a) => (
-            <button key={a} className="small" disabled={gold < a} title={gold < a ? "You cannot afford this ante" : `Open a table at ${a} gold a seat`} onClick={() => send({ type: "open", ante: a })}>
-              {a} gold
-            </button>
-          ))}
-          <span className="muted">You have {gold}.</span>
+          <StakePicker gold={gold} again={!!table} open={(ante) => send({ type: "open", ante })} />
         </div>
       )}
 
@@ -143,7 +139,7 @@ export function DiceTable({ table, you, gold, error, lastXp, looks, world, host,
         <div className="td-row">
           {!seated && (
             <button className="primary" disabled={gold < table.ante || seats.length >= DICE_MAX_PLAYERS} onClick={() => send({ type: "sit" })}>
-              {gold < table.ante ? `You need ${table.ante} gold to sit` : `Sit (${table.ante} gold)`}
+              {gold < table.ante ? `You need ${table.ante} gold to sit` : `Sit (${stakeLabel(table.ante)})`}
             </button>
           )}
           {table.host === you && (
@@ -152,7 +148,7 @@ export function DiceTable({ table, you, gold, error, lastXp, looks, world, host,
             </button>
           )}
           {seated && <button className="small" onClick={() => send({ type: "leave" })}>Give up the seat</button>}
-          {seated && <span className="muted">The ante is taken when the game starts.</span>}
+          {seated && <span className="muted">{anteNote(table.ante)}</span>}
         </div>
       )}
 

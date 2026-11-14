@@ -22,8 +22,8 @@
 // secret: tideView gives each player only what they may see.
 
 import { makeRng } from "./rng";
+import { isStake, potText, prizeText, stakeText } from "./stakes";
 
-export const TIDE_ANTES = [5, 10, 20] as const;
 export const TIDE_MIN_PLAYERS = 2;
 export const TIDE_MAX_PLAYERS = 5;
 /** How many hands it can take to win a table, and how many unless the opener says. */
@@ -185,7 +185,8 @@ export function tideSplit(pot: number): { house: number; prize: number } {
   return { house, prize: pot - house };
 }
 
-export const isTideAnte = (n: unknown): n is (typeof TIDE_ANTES)[number] => (TIDE_ANTES as readonly unknown[]).includes(n);
+/** Free, or any whole stake up to STAKE_MAX (see stakes.ts). */
+export const isTideAnte = isStake;
 
 const newSeat = (id: string, name: string): TideSeat => ({ id, name, hand: [], played: [], out: false, anchored: false, wins: 0, forfeited: false, knows: {} });
 
@@ -208,7 +209,7 @@ export function createTideGame(seed: number, ante: number, host: { id: string; n
     plays: 0,
     winner: null,
     pot: 0,
-    log: [`${host.name} set out the cards at ${ante} gold a seat, first to ${wins === 1 ? "one hand" : `${wins} hands`}.`],
+    log: [`${host.name} set out the cards at ${stakeText(ante)}, first to ${wins === 1 ? "one hand" : `${wins} hands`}.`],
     rng: seed >>> 0,
   };
 }
@@ -296,7 +297,7 @@ function endHand(state: TideGame, how: TideHandResult["how"]): TideGame {
 
 function win(state: TideGame, id: string): TideGame {
   const seat = state.seats.find((s) => s.id === id)!;
-  return { ...state, phase: "done", stage: "shown", winner: id, log: say(state, `${seat.name} wins ${tideSplit(state.pot).prize} gold.`) };
+  return { ...state, phase: "done", stage: "shown", winner: id, log: say(state, `${seat.name} wins ${prizeText(tideSplit(state.pot).prize)}.`) };
 }
 
 /** The player on turn is done: the hand may be over, or the next player draws. */
@@ -343,7 +344,7 @@ export function stepTide(state: TideGame, playerId: string, action: TideAction):
       if (state.seats.length < TIDE_MIN_PLAYERS) return fail("It takes at least two to play.");
       const pot = state.ante * state.seats.length;
       const seats = state.seats.map((s) => ({ ...s, wins: 0, forfeited: false }));
-      return { ok: true, state: deal({ ...state, phase: "playing", seats, pot, log: say(state, `The cards are dealt. The pot is ${pot} gold.`) }, 1, 0) };
+      return { ok: true, state: deal({ ...state, phase: "playing", seats, pot, log: say(state, `The cards are dealt. ${potText(pot)}`) }, 1, 0) };
     }
 
     case "deal": {

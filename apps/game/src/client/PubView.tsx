@@ -7,7 +7,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAudioScene } from "./audio/useAudioScene";
 import { hexDistance, hexNeighbors, type HexPos } from "@gantt-quest/core";
-import { PUB_BARKEEP, PUB_BARKEEP_POS, PUB_COUNTER, PUB_CREW, PUB_DEALER, PUB_DEALER_POS, PUB_DEALER_STAND, PUB_DICE, PUB_FITTINGS, PUB_GRID, PUB_MAX_TALK, PUB_MENU, PUB_REGULAR_SPOTS, PUB_SALESMAN_POS, PUB_SHOALS, PUB_TIDE, PUB_TRADER, dueIn, gatherDay, poiAt, pubMountSpots, pubPath, pubRoom, PUB_MOUNT_SLOTS, regularsOn, salesman, type Perk, type RegularId } from "@gantt-quest/world";
+import { PUB_BARKEEP, PUB_BARKEEP_POS, PUB_COUNTER, PUB_CREW, PUB_DEALER, PUB_DEALER_POS, PUB_DEALER_STAND, PUB_DICE, PUB_FITTINGS, PUB_GRID, PUB_LEADERBOARD, PUB_MAX_TALK, PUB_MENU, PUB_REGULAR_SPOTS, PUB_SALESMAN_POS, PUB_SHOALS, PUB_TIDE, PUB_TRADER, dueIn, gatherDay, poiAt, pubMountSpots, pubPath, pubRoom, PUB_MOUNT_SLOTS, regularsOn, salesman, type Perk, type RegularId } from "@gantt-quest/world";
 import { CatchPanel } from "./CatchPanel";
 import { RecordBoard } from "./CatchBook";
 import { api, type Me, type PubTab, type PubWall, type RegularsView } from "./api";
@@ -16,6 +16,7 @@ import { DealerPanel } from "./board/DealerPanel";
 import { DiceTable } from "./DiceTable";
 import { ShoalsTable } from "./ShoalsTable";
 import { CrewTable } from "./CrewTable";
+import { PubLeaderboard } from "./PubLeaderboard";
 import { TideTable } from "./TideTable";
 import { SalesmanPanel } from "./SalesmanPanel";
 import { useSalesman } from "./salesmanClock";
@@ -45,6 +46,9 @@ const ROOM = pubRoom();
 const DOOR = ROOM.pois.find((p) => p.kind === "door")!.pos;
 type TableName = "dice" | "shoals" | "crew" | "tide";
 const TABLE_HEX: Record<TableName, HexPos> = { dice: PUB_DICE, shoals: PUB_SHOALS, crew: PUB_CREW, tide: PUB_TIDE };
+/** Where a pointer over the leaderboard lands: its own hex, the two wall hexes behind it (its top is in front of them), and the floor where it is read. */
+const BOARD_HEXES: HexPos[] = [PUB_LEADERBOARD.pos, { q: PUB_LEADERBOARD.pos.q, r: PUB_LEADERBOARD.pos.r - 1 }, { q: PUB_LEADERBOARD.pos.q + 1, r: PUB_LEADERBOARD.pos.r - 1 }, PUB_LEADERBOARD.stand];
+const onBoard = (pos: HexPos) => BOARD_HEXES.some((h) => same(h, pos));
 
 interface TalkLine {
   who: string;
@@ -122,6 +126,9 @@ export function PubView({ me, refresh, onLeave }: { me: Me; refresh(): Promise<u
   const wantDeal = useRef(false);
   const castRef = useRef(cast);
   castRef.current = cast;
+  /** The leaderboard on the wall is open. It opens once you are in front of it if you clicked it, and closes when you walk away. */
+  const [reading, setReading] = useState(false);
+  const wantBoard = useRef(false);
 
   const pub = usePub(
     (id, path) => renderer.current?.playEvents([{ t: "moved", heroId: id, path }]),
@@ -184,6 +191,8 @@ export function PubView({ me, refresh, onLeave }: { me: Me; refresh(): Promise<u
           const spot = MOUNT_SPOTS[m.slot];
           return spot ? [{ id: `fish-${m.slot}`, model: "mounted_fish", pos: spot.pos, facing: spot.side, mount: true, x: 0, y: 0.62, fish: { species: m.species, mm: m.mm } }] : [];
         }),
+        // The leaderboard for the game tables, standing against the back wall. Pushed back into the notch between the two wall faces behind it.
+        { id: "leaderboard", model: "tally_board", pos: PUB_LEADERBOARD.pos, facing: 0, z: -0.4 },
       ],
     };
   }, [players, you, seller, cast, wall]);
@@ -195,7 +204,12 @@ export function PubView({ me, refresh, onLeave }: { me: Me; refresh(): Promise<u
   const heroSheet = useHeroSheet();
 
   useEffect(() => {
-    const r = new WorldRenderer(mount.current!, { onHexClick: (to) => {
+    const r = new WorldRenderer(mount.current!, { onPropClick: (id) => {
+        // The leaderboard's model, wherever on it the click landed.
+        if (id !== "leaderboard" || pinned.current) return false;
+        readBoard.current();
+        return true;
+      }, onHexClick: (to) => {
         if (pinned.current) return;
         // Clicking a regular walks you up beside them, and opens a word with them once there.
         const spot = PUB_REGULAR_SPOTS.findIndex((s) => same(s.pos, to));
@@ -205,6 +219,9 @@ export function PubView({ me, refresh, onLeave }: { me: Me; refresh(): Promise<u
         // Clicking the contract dealer (or the hex in front of them) walks you up, and opens their papers once there.
         wantDeal.current = same(to, PUB_DEALER_POS) || same(to, PUB_DEALER_STAND);
         if (wantDeal.current) return send.current({ type: "move", to: PUB_DEALER_STAND });
+        // Clicking the leaderboard (its wall, or the floor in front of it) walks you up to it, and opens it once there.
+        wantBoard.current = false;
+        if (onBoard(to)) return readBoard.current();
         // Clicking the salesman walks you up to their table.
         send.current({ type: "move", to: sellerHere.current && same(to, PUB_SALESMAN_POS) ? PUB_TRADER : to });
       }, onHover: setHover });
@@ -283,6 +300,20 @@ export function PubView({ me, refresh, onLeave }: { me: Me; refresh(): Promise<u
     if (wantDeal.current) setDealing(true);
     wantDeal.current = false;
   }, [atDealer]);
+  const atBoard = !!self && same(self.pos, PUB_LEADERBOARD.stand);
+  /** Clicking the board: open it if you are there, or walk up and open it once there. */
+  const readBoard = useRef(() => {});
+  readBoard.current = () => {
+    if (atBoard) return setReading(true);
+    wantBoard.current = true;
+    pub.send({ type: "move", to: PUB_LEADERBOARD.stand });
+  };
+  // Walking up to the leaderboard opens it if you clicked it; walking away puts it out of reach.
+  useEffect(() => {
+    if (!atBoard) setReading(false);
+    else if (wantBoard.current) setReading(true);
+    wantBoard.current = false;
+  }, [atBoard]);
   /** The regular you are standing beside, if any. */
   const nearSpot = self ? PUB_REGULAR_SPOTS.findIndex((s) => hexDistance(s.pos, self.pos) === 1) : -1;
   const near = nearSpot >= 0 ? cast[nearSpot] : undefined;
@@ -306,6 +337,7 @@ export function PubView({ me, refresh, onLeave }: { me: Me; refresh(): Promise<u
     : hover && same(hover, PUB_BARKEEP_POS) ? `${PUB_BARKEEP.name}, the barkeep. Stand at the menu board to talk to him.`
     : hover && seller && same(hover, PUB_SALESMAN_POS) ? `${seller.name}, ${seller.trade}. Click to walk up and trade.`
     : hover && same(hover, PUB_DEALER_POS) ? `${PUB_DEALER.name}, ${PUB_DEALER.trade}. Click to walk up: contracts and the crew's goal.`
+    : hover && onBoard(hover) ? "The leaderboard: the crew's wins at the game tables. Click to walk up and read it."
     : !hoverPoi ? null
     : hoverPoi.kind === "counter" ? "The menu board: order here, or have a word with the barkeep"
     : hoverPoi.kind === "dice" ? "Dice table: a bluffing game for a small stake"
@@ -427,6 +459,7 @@ export function PubView({ me, refresh, onLeave }: { me: Me; refresh(): Promise<u
       {you && records && <RecordBoard you={you} onClose={() => (setRecords(false), loadWall())} />}
       {you && sellingFish && <CatchPanel buyer="tam" onGold={() => void refresh()} onClose={() => setSellingFish(false)} />}
       {you && atTrader && seller && <SalesmanPanel me={me} refresh={refresh} />}
+      {you && atBoard && reading && <PubLeaderboard you={you} version={dicePhase} onClose={() => setReading(false)} />}
       {you && atDealer && dealing && <DealerPanel refresh={refresh} onClose={() => setDealing(false)} />}
       {you && talking && regs && <RegularPanel key={talking.regular} view={talking} handedIn={regs.handedIn} cap={regs.cap} reload={loadRegs} refresh={refresh} onClose={() => setTalkTo(null)} />}
       {you && seatedAt === "shoals" && <ShoalsTable table={pub.shoals} you={you} gold={gold} error={pub.shoalsError} lastXp={pub.lastXp} looks={looks} world={renderer} host={{ hex: PUB_SHOALS, hide: players.filter((p) => same(p.pos, PUB_SHOALS)).map((p) => p.id), onStand: () => standFrom("shoals") }} send={(action) => pub.send({ type: "shoals", action })} />}
@@ -464,19 +497,22 @@ export function PubView({ me, refresh, onLeave }: { me: Me; refresh(): Promise<u
           : atDice ? <span>At the dice table.</span>
           : atShoals ? <span>At the Shoals table.</span>
           : atCrew ? <span>At the Cargo and Krakens table.</span>
+          : atBoard ? <span>In front of the leaderboard.</span>
           : atTide ? <span>At the Turn the Tide card table.</span>
           : near ? <span>Beside {near.name}, {near.trade}.</span>
           : atDealer ? <span>Beside {PUB_DEALER.name}, {PUB_DEALER.trade}.</span>
           : atTrader ? (seller ? <span>At {seller.name}'s table.</span> : <span className="muted">The corner is empty.{due && ` ${due.name} is due ${dueIn(visitor.next!.startsAt - visitor.now)}.`}</span>)
           : seller ? <span className="pub-visitor">{seller.name}, {seller.trade}, is in the corner by the far wall.</span>
-          : <span className="muted">Click a hex to walk. Order at the menu board; contracts are with {PUB_DEALER.short} by the pillar; the game tables are across the room.</span>}
+          : <span className="muted">Click a hex to walk. Order at the menu board; contracts are with {PUB_DEALER.short} by the pillar; the game tables are across the room, with their leaderboard on the back wall.</span>}
         {near && !holdingDice && <button className="primary" disabled={!!talking} onClick={() => setTalkTo(near.id)}>Talk to {near.short}</button>}
         {atDealer && !holdingDice && <button className="primary" disabled={dealing} onClick={() => setDealing(true)}>See contracts</button>}
+        {atBoard && !holdingDice && <button className="primary" disabled={reading} onClick={() => setReading(true)}>Read the board</button>}
         <button className={atDoor ? "primary" : ""} disabled={holdingDice} onClick={onLeave}>Leave</button>
       </DragPanel>
       {atDoor && self && !holdingDice && <TileAction renderer={renderer} pos={self.pos} unitId={self.id} label="Leave" run={onLeave} />}
-      {near && self && !talking && !holdingDice && <TileAction renderer={renderer} pos={self.pos} unitId={self.id} label={`Talk to ${near.short}`} run={() => setTalkTo(near.id)} />}
+      {near && self && !talking && !holdingDice && !atBoard && <TileAction renderer={renderer} pos={self.pos} unitId={self.id} label={`Talk to ${near.short}`} run={() => setTalkTo(near.id)} />}
       {atDealer && self && !dealing && !holdingDice && <TileAction renderer={renderer} pos={self.pos} unitId={self.id} label="See contracts" run={() => setDealing(true)} />}
+      {atBoard && self && !reading && !holdingDice && <TileAction renderer={renderer} pos={self.pos} unitId={self.id} label="Read the board" run={() => setReading(true)} />}
       </>}
 
       {tip && <div className="tip">{tip}</div>}

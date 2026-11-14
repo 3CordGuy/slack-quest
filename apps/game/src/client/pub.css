@@ -49,3 +49,29 @@
   .story.pub-bar.regular-panel:not(.folded) { top: auto; bottom: 8px; max-height: calc(46vh / var(--ui-z, 1)); z-index: 14; }
   .pub-view:has(.regular-panel:not(.folded)) .turnbar { display: none; }
 }
+
+/* The leaderboard on the back wall (PubLeaderboard). Its body scrolls when the crew is long. */
+.story.pub-bar.pub-board { width: min(460px, calc(100% - 24px)); }
+.pub-board .gather-head { display: flex; align-items: center; gap: 6px; padding-bottom: 4px; }
+.pub-board .gather-head h3 { margin: 0; }
+.pub-board-tabs { display: flex; gap: 4px; margin-bottom: 6px; flex-wrap: wrap; }
+.pub-board-tabs .short { display: none; }
+.pub-board-scroll { overflow-x: auto; }
+.pub-board-table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+.pub-board-table th, .pub-board-table td { padding: 3px 6px; text-align: right; white-space: nowrap; border-bottom: 1px solid var(--line); }
+.pub-board-table th { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); font-weight: normal; }
+.pub-board-table td.won { color: var(--gold); }
+.pub-board-table .who { text-align: left; white-space: normal; width: 100%; }
+.pub-board-table .rank { color: var(--gold); text-align: left; }
+.pub-board-table tr.mine td { color: var(--gold); }
+.pub-board-table tr.gone td { opacity: 0.6; }
+@media (max-width: 760px) {
+  .story.pub-bar.pub-board { width: calc(100vw / var(--ui-z, 1) - 16px); }
+  .pub-board-tabs .long { display: none; }
+  .pub-board-tabs .short { display: inline; }
+  .pub-board-table .wide { display: none; }
+  .pub-board-table th, .pub-board-table td { padding: 3px 4px; }
+  /* Docked at the bottom, as a regular's panel is, clear of the folded panels at the top and of the board itself, over the "Here" bar. */
+  .story.pub-bar.pub-board:not(.folded) { top: auto; bottom: 8px; max-height: calc(50vh / var(--ui-z, 1)); z-index: 14; }
+  .pub-view:has(.pub-board:not(.folded)) .turnbar { display: none; }
+}
