@@ -7,10 +7,11 @@
 // ones you like and roll the rest again with any rolls left, or stand. A die
 // you hold stays held from roll to roll until you let it go.
 //
-// Among those four you need a 5, the captain, and the other three are your
-// cargo, added up for your score. You need not keep the captain first: land
-// good cargo and gamble your last rolls on a 5 turning up. End without a
-// captain and you score nothing.
+// Among those four you need a 5, the captain. Your cargo is the pip dice
+// beside it, the 2s, 3s and 4s, added up for your score (twelve at best): a
+// second ship or a second captain carries nothing. You need not keep the
+// captain first: land good cargo and gamble your last rolls on a 5 turning
+// up. End without a captain and you score nothing.
 //
 // A 1 is the Kraken. Roll one and you can roll it again, but if a Kraken is
 // still among your dice when your rolls run out, it takes the lot and you
@@ -50,14 +51,17 @@ export const CREW_NEEDS = [6] as const;
 export const CREW_CAPTAIN = 5;
 /** The face that is the Kraken, once the ship is in. */
 export const CREW_KRAKEN = 1;
-/** The best cargo there is: three sixes beside the captain. */
-export const CREW_MAX_CARGO = 18;
+/** The faces that are cargo: the plain pip dice. A ship, a captain or a Kraken beyond the ones that count carries nothing. */
+export const CREW_CARGO_FACES = [2, 3, 4] as const;
+export const isCrewCargo = (d: number): boolean => (CREW_CARGO_FACES as readonly number[]).includes(d);
+/** The best cargo there is: three 4s beside the captain. */
+export const CREW_MAX_CARGO = 12;
 /** The house's share of the pot, in percent, rounded down. */
 export const CREW_HOUSE_PCT = 10;
 const LOG_LINES = 8;
 
-/** Why a turn scored nothing: no ship, no captain, or the Kraken took the cargo. */
-export type CrewLoss = "adrift" | "captainless" | "kraken";
+/** Why a turn scored nothing: no ship, no captain, the Kraken took the cargo, or a captain with no pip dice beside it. */
+export type CrewLoss = "adrift" | "captainless" | "kraken" | "empty";
 
 export interface CrewSeat {
   id: string;
@@ -148,18 +152,19 @@ export const isCrewAnte = (n: unknown): n is (typeof CREW_ANTES)[number] => (CRE
 /** The ship is in and a captain is among the dice after it. */
 export const crewCaptain = (held: number, dice: readonly number[]): boolean => held >= CREW_NEEDS.length && dice.includes(CREW_CAPTAIN);
 
-/** The cargo: the dice after the ship, all but one captain, added up (Krakens and all). Null without ship and captain. */
-export const crewCargo = (held: number, dice: readonly number[]): number | null => (crewCaptain(held, dice) ? dice.reduce((a, d) => a + d, 0) - CREW_CAPTAIN : null);
+/** The cargo: the pip dice (2 to 4) after the ship, added up. Null without ship and captain. */
+export const crewCargo = (held: number, dice: readonly number[]): number | null => (crewCaptain(held, dice) ? dice.filter(isCrewCargo).reduce((a, d) => a + d, 0) : null);
 
 /** A Kraken is among the dice after the ship. */
 export const crewKraken = (held: number, dice: readonly number[]): boolean => held >= CREW_NEEDS.length && dice.includes(CREW_KRAKEN);
 
-/** What a turn ending now would score: the cargo, unless there is no ship, no captain, or the Kraken has it. */
+/** What a turn ending now would score: the cargo, unless there is no ship, no captain, the Kraken has it, or there is none. */
 export function crewScore(held: number, dice: readonly number[]): { score: number; lost: CrewLoss | null } {
   if (held < CREW_NEEDS.length) return { score: 0, lost: "adrift" };
   if (crewKraken(held, dice)) return { score: 0, lost: "kraken" };
   const cargo = crewCargo(held, dice);
   if (cargo === null) return { score: 0, lost: "captainless" };
+  if (cargo === 0) return { score: 0, lost: "empty" };
   return { score: cargo, lost: null };
 }
 
@@ -347,6 +352,7 @@ export function stepCrew(state: CrewGame, playerId: string, action: CrewAction):
       if (lost === "adrift") next = { ...next, log: say(next, `${seat.name} never got a ship, and scores nothing.`) };
       else if (lost === "kraken") next = { ...next, log: say(next, `The Kraken takes ${seat.name}'s cargo.`) };
       else if (lost === "captainless") next = { ...next, log: say(next, `${seat.name} has no captain, and the cargo goes nowhere.`) };
+      else if (lost === "empty") next = { ...next, log: say(next, `${seat.name} has a captain but an empty hold.`) };
       return { ok: true, state: endTurn(next) };
     }
 

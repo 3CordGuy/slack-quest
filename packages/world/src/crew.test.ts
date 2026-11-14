@@ -65,13 +65,18 @@ describe("ship, captain and kraken", () => {
     expect(crewHold(1, [5, 4, 3, 3])).toEqual({ held: 1, dice: [5, 4, 3, 3] });
   });
 
-  it("scores the three beside a captain, and nothing without a ship, a captain, or with a Kraken", () => {
+  it("scores the pip dice beside a captain, and nothing without a ship, a captain, or with a Kraken", () => {
     expect(crewCaptain(1, [6, 5, 3, 4])).toBe(true);
-    expect(crewCargo(1, [6, 5, 3, 4])).toBe(13);
-    // Two fives: one is the captain, the other cargo.
-    expect(crewCargo(1, [5, 5, 6, 6])).toBe(17);
+    // A second ship carries nothing: only the 3 and the 4 are cargo.
+    expect(crewCargo(1, [6, 5, 3, 4])).toBe(7);
+    // Nor does a second captain.
+    expect(crewCargo(1, [5, 5, 4, 2])).toBe(6);
+    expect(crewCargo(1, [4, 4, 5, 4])).toBe(12);
     expect(crewCargo(1, [6, 6, 6, 4])).toBeNull();
-    expect(crewScore(1, [6, 5, 3, 4])).toEqual({ score: 13, lost: null });
+    expect(crewScore(1, [6, 5, 3, 4])).toEqual({ score: 7, lost: null });
+    // A captain with nothing but ships and captains beside it brings home an empty hold.
+    expect(crewCargo(1, [5, 5, 6, 6])).toBe(0);
+    expect(crewScore(1, [5, 5, 6, 6])).toEqual({ score: 0, lost: "empty" });
     expect(crewScore(1, [6, 6, 6, 4])).toEqual({ score: 0, lost: "captainless" });
     expect(crewScore(1, [6, 5, 1, 4])).toEqual({ score: 0, lost: "kraken" });
     expect(crewScore(0, [6, 5, 3, 4, 2])).toEqual({ score: 0, lost: "adrift" });
@@ -132,8 +137,8 @@ describe("ship, captain and kraken", () => {
     g = must(holding(g, 1, [6, 2, 5, 4], 1), first, { type: "roll", keep: [0, 2] });
     expect(g.kept).toEqual([0, 2]);
     expect(crewView(g).kept).toEqual([0, 2]);
-    // Next roll, let the 6 go and hold the 4 instead.
-    g = must(holding(g, 1, [6, 2, 5, 4], 1, [0, 2]), first, { type: "roll", keep: [2, 3] });
+    // Next roll, let the 6 go and hold the last 2 instead (a cargo that cannot reach 12, so the turn goes on).
+    g = must(holding(g, 1, [6, 2, 5, 2], 1, [0, 2]), first, { type: "roll", keep: [2, 3] });
     expect(g.lastThrow!.thrown).toEqual([0, 1]);
     expect(g.kept).toEqual([2, 3]);
     // The next player starts with nothing held.
@@ -154,7 +159,7 @@ describe("ship, captain and kraken", () => {
     expect(err(holding(g, 1, [6, 6, 6, 4], 1), first, { type: "stand" })).toMatch(/captain/);
     expect(err(holding(g, 1, [6, 1, 5, 3], 1), first, { type: "stand" })).toMatch(/Kraken/);
     g = must(holding(g, 1, [3, 5, 4, 5], 1), first, { type: "stand" });
-    expect(seatOf(g, first)).toMatchObject({ score: 12, lost: null, hand: [6, 3, 5, 4, 5] });
+    expect(seatOf(g, first)).toMatchObject({ score: 7, lost: null, hand: [6, 3, 5, 4, 5] });
     expect(turnId(g)).not.toBe(first);
     expect(g.rolls).toBe(0);
   });
@@ -162,10 +167,10 @@ describe("ship, captain and kraken", () => {
   it("lets you gamble good cargo on a captain coming up", () => {
     const g = started(3);
     const first = turnId(g);
-    // Three sixes of cargo and no captain, one roll left: roll the fourth die and hope for a 5.
-    const before = holding(g, 1, [6, 6, 6, 2], CREW_ROLLS - 1);
-    const won = rollUntil(before, first, { type: "roll", keep: [0, 1, 2] }, (n) => seatOf(n, first).score === 18);
-    expect(seatOf(won, first).hand).toEqual([6, 6, 6, 6, 5]);
+    // Three 4s of cargo and no captain, one roll left: roll the fourth die and hope for a 5.
+    const before = holding(g, 1, [4, 4, 4, 2], CREW_ROLLS - 1);
+    const won = rollUntil(before, first, { type: "roll", keep: [0, 1, 2] }, (n) => seatOf(n, first).score === 12);
+    expect(seatOf(won, first).hand).toEqual([6, 4, 4, 4, 5]);
     const lost = rollUntil(before, first, { type: "roll", keep: [0, 1, 2] }, (n) => seatOf(n, first).lost === "captainless");
     expect(seatOf(lost, first).score).toBe(0);
   });
@@ -173,21 +178,21 @@ describe("ship, captain and kraken", () => {
   it("ends the turn at once on the best cargo there is", () => {
     const g = started(3);
     const first = turnId(g);
-    const best = rollUntil(holding(g, 1, [6, 6, 6, 2], 1), first, { type: "roll", keep: [0, 1, 2] }, (n) => seatOf(n, first).score === 18);
+    const best = rollUntil(holding(g, 1, [4, 4, 4, 2], 1), first, { type: "roll", keep: [0, 1, 2] }, (n) => seatOf(n, first).score === 12);
     expect(turnId(best)).not.toBe(first);
   });
 
   it("lets the Kraken take a cargo still holding one when the rolls run out", () => {
     const g = started(3);
     const first = turnId(g);
-    const before = holding(g, 1, [6, 6, 5, 1], CREW_ROLLS - 1);
-    // Keep the sixes and the captain, roll the Kraken again, and get another.
+    const before = holding(g, 1, [4, 4, 5, 1], CREW_ROLLS - 1);
+    // Keep the 4s and the captain, roll the Kraken again, and get another.
     const sunk = rollUntil(before, first, { type: "roll", keep: [0, 1, 2] }, (n) => seatOf(n, first).lost === "kraken");
-    expect(seatOf(sunk, first)).toMatchObject({ score: 0, lost: "kraken", hand: [6, 6, 6, 5, 1] });
+    expect(seatOf(sunk, first)).toMatchObject({ score: 0, lost: "kraken", hand: [6, 4, 4, 5, 1] });
     expect(sunk.lastThrow).toMatchObject({ kraken: true, thrown: [3] });
     // Or roll it away.
     const saved = rollUntil(before, first, { type: "roll", keep: [0, 1, 2] }, (n) => (seatOf(n, first).score ?? 0) > 0);
-    expect(seatOf(saved, first).score).toBeGreaterThanOrEqual(14);
+    expect(seatOf(saved, first).score).toBeGreaterThanOrEqual(8);
     expect(saved.lastThrow!.kraken).toBe(false);
   });
 
@@ -200,7 +205,7 @@ describe("ship, captain and kraken", () => {
 
   it("the highest cargo wins the pot, less the house's cut", () => {
     let g = started(5, [A, B, C]);
-    g = must(holding(g, 1, [6, 6, 5, 6], 1), "a", { type: "stand" });
+    g = must(holding(g, 1, [4, 4, 5, 4], 1), "a", { type: "stand" });
     g = must(holding(g, 1, [3, 2, 5, 2], 1), "b", { type: "stand" });
     g = must(holding(g, 1, [5, 6, 5, 4], 1), "c", { type: "stand" });
     expect(g.phase).toBe("done");
@@ -213,7 +218,7 @@ describe("ship, captain and kraken", () => {
     let g = started(5, [A, B, C]);
     g = must(holding(g, 1, [5, 5, 4, 3], 1), "a", { type: "stand" });
     g = must(holding(g, 1, [2, 5, 2, 2], 1), "b", { type: "stand" });
-    g = must(holding(g, 1, [6, 3, 5, 3], 1), "c", { type: "stand" });
+    g = must(holding(g, 1, [3, 4, 5, 6], 1), "c", { type: "stand" });
     expect(g.phase).toBe("playing");
     expect(g.last).toMatchObject({ result: "tie", ids: ["a", "c"] });
     expect(g.round).toBe(2);
@@ -252,24 +257,24 @@ describe("ship, captain and kraken", () => {
 
   it("adds up the cargo of every round, and the highest total after the last takes the pot", () => {
     let g = started(5, [A, B], 10, 3);
-    // Round 1: a 12, b 6.
+    // Round 1: a 7, b 6.
     g = must(holding(g, 1, [3, 5, 4, 5], 1), "a", { type: "stand" });
     g = must(holding(g, 1, [2, 5, 2, 2], 1), "b", { type: "stand" });
     expect(g.phase).toBe("playing");
     expect(g.round).toBe(2);
     expect(g.last).toMatchObject({ round: 1, result: "next", ids: ["a"] });
-    expect(crewView(g).seats.map((s) => [s.total, s.score])).toEqual([[12, null], [6, null]]);
+    expect(crewView(g).seats.map((s) => [s.total, s.score])).toEqual([[7, null], [6, null]]);
     expect(turnId(g)).toBe("a");
-    // Round 2: a 6, b 15. b leads, 21 to 18.
+    // Round 2: a 6, b 11. b leads, 17 to 13.
     g = must(holding(g, 1, [2, 5, 2, 2], 1), "a", { type: "stand" });
-    g = must(holding(g, 1, [6, 5, 6, 3], 1), "b", { type: "stand" });
+    g = must(holding(g, 1, [4, 5, 4, 3], 1), "b", { type: "stand" });
     expect(g.round).toBe(3);
     expect(g.last).toMatchObject({ round: 2, result: "next", ids: ["b"] });
-    expect(g.seats.map((s) => s.total)).toEqual([18, 21]);
-    // Round 3: a 18, b 6. a wins on the total, 36 to 27, though b had the best single round going into it.
-    g = must(holding(g, 1, [6, 6, 5, 6], 1), "a", { type: "stand" });
+    expect(g.seats.map((s) => s.total)).toEqual([13, 17]);
+    // Round 3: a 12, b 6. a wins on the total, 25 to 23, though b led going into it.
+    g = must(holding(g, 1, [4, 4, 5, 4], 1), "a", { type: "stand" });
     g = must(holding(g, 1, [2, 5, 2, 2], 1), "b", { type: "stand" });
-    expect(g.seats.map((s) => s.total)).toEqual([36, 27]);
+    expect(g.seats.map((s) => s.total)).toEqual([25, 23]);
     expect(g.phase).toBe("done");
     expect(g.winner).toBe("a");
     expect(g.last).toMatchObject({ round: 3, result: "win", ids: ["a"] });
@@ -281,7 +286,7 @@ describe("ship, captain and kraken", () => {
       g = must(holding(g, 1, [3, 5, 4, 5], 1), "a", { type: "stand" });
       g = must(holding(g, 1, [4, 5, 3, 5], 1), "b", { type: "stand" });
     }
-    expect(g.seats.map((s) => s.total)).toEqual([36, 36]);
+    expect(g.seats.map((s) => s.total)).toEqual([21, 21]);
     expect(g.last).toMatchObject({ round: 3, result: "tie", ids: ["a", "b"] });
     expect(g.round).toBe(4);
     expect(crewView(g).rounds).toBe(3);
@@ -289,7 +294,7 @@ describe("ship, captain and kraken", () => {
     g = must(holding(g, 1, [2, 5, 2, 2], 1), "a", { type: "stand" });
     g = must(holding(g, 1, [3, 5, 2, 2], 1), "b", { type: "stand" });
     expect(g.winner).toBe("b");
-    expect(g.seats.map((s) => s.total)).toEqual([36, 36]);
+    expect(g.seats.map((s) => s.total)).toEqual([21, 21]);
   });
 
   it("a forfeit on turn passes the turn, and the last one left wins", () => {
@@ -333,6 +338,7 @@ describe("ship, captain and kraken", () => {
     expect(view.turn).toBe("a");
     expect(view.kraken).toBe(true);
     expect(view.captain).toBe(true);
-    expect(view.cargo).toBe(9);
+    // The Kraken is no cargo: 4 and 4.
+    expect(view.cargo).toBe(8);
   });
 });
