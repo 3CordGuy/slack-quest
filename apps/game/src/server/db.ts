@@ -148,12 +148,12 @@ export function rowToItem(row: InventoryRow): ItemDef {
   };
 }
 
-function insertItem(db: D1Database, playerId: string, item: ItemDef, equipped: boolean, storedIn: number | null = null): D1PreparedStatement {
+function insertItem(db: D1Database, playerId: string, item: ItemDef, equipped: boolean, storedIn: number | null = null, runCode: string | null = null): D1PreparedStatement {
   return db
     .prepare(
-      "INSERT INTO inventory (player_id, kind, ref, name, rarity, slot, power, level_req, icon, stat_bonus_json, equipped, stored_in, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      "INSERT INTO inventory (player_id, kind, ref, name, rarity, slot, power, level_req, icon, stat_bonus_json, equipped, stored_in, created_at, run_code) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
-    .bind(playerId, item.kind, item.ref, item.name, item.rarity, item.slot, item.power, item.levelReq, item.icon, JSON.stringify(item.statBonus), equipped ? 1 : 0, storedIn, Date.now());
+    .bind(playerId, item.kind, item.ref, item.name, item.rarity, item.slot, item.power, item.levelReq, item.icon, JSON.stringify(item.statBonus), equipped ? 1 : 0, storedIn, Date.now(), runCode);
 }
 
 /**
@@ -681,10 +681,10 @@ export async function applyGrant(
   const stmts: D1PreparedStatement[] = [];
   const place = carry ? lootPlace(carry) : null;
   // Overflow goes into the best container with room (the free Storage Chest first).
-  if (grant.item) stmts.push(insertItem(db, playerId, grant.item, false, place === "storage" ? boxes[0]?.id ?? null : null));
+  if (grant.item) stmts.push(insertItem(db, playerId, grant.item, false, place === "storage" ? boxes[0]?.id ?? null : null, code));
   if (grant.resources) stmts.push(...resourceStatements(db, playerId, grant.resources));
-  if (grant.blueprint) stmts.push(blueprintStatement(db, playerId, grant.blueprint));
-  if (grant.furnishing) stmts.push(furnishingStatement(db, playerId, grant.furnishing));
+  if (grant.blueprint) stmts.push(blueprintStatement(db, playerId, grant.blueprint, code));
+  if (grant.furnishing) stmts.push(furnishingStatement(db, playerId, grant.furnishing, {}, code));
   const next = applyXp({ classId: c.class_id, level: c.level, xp: c.xp, stats: statsOf(c), unspent: c.unspent_points }, grant.xp);
   stmts.push(
     db
@@ -692,13 +692,43 @@ export async function applyGrant(
       .bind(next.level, next.xp, next.stats.str, next.stats.int_stat, next.stats.vit, next.stats.agi, next.stats.dex, next.unspent, gold, playerId),
     db
       .prepare(
-        `INSERT INTO run_players (code, player_id, xp_earned, gold_earned) VALUES (?1, ?2, ?3, ?4)
-         ON CONFLICT(code, player_id) DO UPDATE SET xp_earned = xp_earned + ?3, gold_earned = gold_earned + ?4`,
+        `INSERT INTO run_players (code, player_id, xp_earned, gold_earned, start_level, start_xp, start_str, start_int, start_vit, start_agi, start_dex, start_unspent)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+         ON CONFLICT(code, player_id) DO UPDATE SET xp_earned = xp_earned + ?3, gold_earned = gold_earned + ?4,
+           start_level = COALESCE(start_level, ?5), start_xp = COALESCE(start_xp, ?6), start_str = COALESCE(start_str, ?7), start_int = COALESCE(start_int, ?8),
+           start_vit = COALESCE(start_vit, ?9), start_agi = COALESCE(start_agi, ?10), start_dex = COALESCE(start_dex, ?11), start_unspent = COALESCE(start_unspent, ?12)`,
       )
-      .bind(code, playerId, grant.xp, gold),
+      .bind(code, playerId, grant.xp, gold, c.level, c.xp, c.str, c.int_stat, c.vit, c.agi, c.dex, c.unspent_points),
   );
   await db.batch(stmts);
   return place;
+}
+
+/**
+ * Abandoning a quest: take back everything it paid out. Gold, XP and levels go
+ * back to how the character stood before the first reward; the items,
+ * furnishings and blueprints it found are deleted; its hut materials are
+ * subtracted. Anything the character already had is untouched.
+ */
+export async function applyForfeit(db: D1Database, code: string, playerId: string, resources: Resources): Promise<void> {
+  const run = await db
+    .prepare("SELECT gold_earned, start_level, start_xp, start_str, start_int, start_vit, start_agi, start_dex, start_unspent FROM run_players WHERE code = ? AND player_id = ?")
+    .bind(code, playerId)
+    .first<{ gold_earned: number; start_level: number | null; start_xp: number | null; start_str: number; start_int: number; start_vit: number; start_agi: number; start_dex: number; start_unspent: number }>();
+  // Nothing was ever paid out on this run.
+  if (!run || run.start_level === null) return;
+  const negative: Resources = {};
+  for (const kind of RESOURCE_KINDS) if (resources[kind]) negative[kind] = -resources[kind]!;
+  await db.batch([
+    db
+      .prepare("UPDATE characters SET level = ?, xp = ?, str = ?, int_stat = ?, vit = ?, agi = ?, dex = ?, unspent_points = ?, gold = MAX(0, gold - ?) WHERE player_id = ?")
+      .bind(run.start_level, run.start_xp, run.start_str, run.start_int, run.start_vit, run.start_agi, run.start_dex, run.start_unspent, run.gold_earned, playerId),
+    db.prepare("DELETE FROM inventory WHERE player_id = ? AND run_code = ?").bind(playerId, code),
+    db.prepare("DELETE FROM furnishings WHERE player_id = ? AND run_code = ?").bind(playerId, code),
+    db.prepare("DELETE FROM blueprints WHERE player_id = ? AND run_code = ?").bind(playerId, code),
+    ...resourceStatements(db, playerId, negative),
+    db.prepare("UPDATE run_players SET xp_earned = 0, gold_earned = 0 WHERE code = ? AND player_id = ?").bind(code, playerId),
+  ]);
 }
 
 /** Soft death: lose a capped slice of gold, nothing else. */
@@ -1024,15 +1054,15 @@ export function resourceStatements(db: D1Database, playerId: string, resources: 
   );
 }
 
-export function blueprintStatement(db: D1Database, playerId: string, blueprintId: string): D1PreparedStatement {
-  return db.prepare("INSERT OR IGNORE INTO blueprints (player_id, blueprint_id) VALUES (?, ?)").bind(playerId, blueprintId);
+export function blueprintStatement(db: D1Database, playerId: string, blueprintId: string, runCode: string | null = null): D1PreparedStatement {
+  return db.prepare("INSERT OR IGNORE INTO blueprints (player_id, blueprint_id, run_code) VALUES (?, ?, ?)").bind(playerId, blueprintId, runCode);
 }
 
 /** A new furnishing goes into storage, unplaced. */
-export function furnishingStatement(db: D1Database, playerId: string, furnishing: FurnishingGrant, meta: unknown = {}): D1PreparedStatement {
+export function furnishingStatement(db: D1Database, playerId: string, furnishing: FurnishingGrant, meta: unknown = {}, runCode: string | null = null): D1PreparedStatement {
   return db
-    .prepare("INSERT INTO furnishings (player_id, def_id, label, meta_json, created_at) VALUES (?, ?, ?, ?, ?)")
-    .bind(playerId, furnishing.defId, furnishing.label, JSON.stringify(meta), now());
+    .prepare("INSERT INTO furnishings (player_id, def_id, label, meta_json, created_at, run_code) VALUES (?, ?, ?, ?, ?, ?)")
+    .bind(playerId, furnishing.defId, furnishing.label, JSON.stringify(meta), now(), runCode);
 }
 
 /** A player's hut tier, materials, known blueprints and furnishings. Everyone has a tier 1 hut by default. */

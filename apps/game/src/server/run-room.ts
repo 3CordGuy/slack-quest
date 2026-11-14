@@ -34,7 +34,7 @@ import {
 } from "@gantt-quest/world";
 import { generateFill, islandFacts, npcTurn, writeEpilogue } from "./ai";
 import { recordStep } from "./board";
-import { clearPubOrders, restoreGathering, applyGrant, applyPenalty, conversationStatement, getRun, heroInitFor, recentStories, refreshHarbor, saveRunStatements, type Env } from "./db";
+import { clearPubOrders, restoreGathering, applyForfeit, applyGrant, applyPenalty, conversationStatement, getRun, heroInitFor, recentStories, refreshHarbor, saveRunStatements, type Env } from "./db";
 import { clearBrews } from "./workshops";
 import { takeLarder } from "./galley";
 
@@ -258,6 +258,7 @@ export class RunRoom extends DurableObject<Env> {
         if (effect.item && (place === "storage" || place === "overfull")) res.events.push({ t: "pack_full", heroId: effect.heroId, item: effect.item.name, place });
       }
       else if (effect.kind === "penalty") await applyPenalty(db, effect.heroId, effect.goldPct, effect.cap);
+      else if (effect.kind === "forfeit") await applyForfeit(db, next.code, effect.heroId, effect.resources);
     }
     // Contracts: their outcomes when the run ends, and the crew's goal.
     await recordStep(db, this.crewId, prev, res);
