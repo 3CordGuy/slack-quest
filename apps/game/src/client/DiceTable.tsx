@@ -11,6 +11,8 @@ import { placeSeats, withSelf, seatInfo, useTableStage, type SeatLook, type Stag
 import "./table.css";
 
 const PIPS = ["", "⚀", "⚁", "⚂", "⚃", "⚄", "⚅"];
+/** How long a called round's dice stay face up before the next roll is shown. */
+const REVEAL_MS = 5000;
 const bidText = (b: DiceBid) => `${b.count} × ${PIPS[b.face]}`;
 const firstName = (name: string) => name.trim().split(/\s+/)[0] || name;
 
@@ -51,7 +53,16 @@ export function DiceTable({ table, you, gold, error, lastXp, looks, world, host,
   const myTurn = table?.turn === you;
   const legal = !last || count > last.count || (count === last.count && face > last.face);
   const inGame = table?.phase === "playing" && !!mine && mine.count > 0;
-  const showReveal = !!table?.reveal && (table.phase === "done" || table.bids.length === 0);
+  // After a call the server has already rolled the next round. Last round's dice stay up for a moment so everyone
+  // can see who was right, then the new roll comes down: nobody bids while the old dice are still showing.
+  const [seenRound, setSeenRound] = useState<number | null>(null);
+  const round = table?.round ?? null;
+  useEffect(() => {
+    if (round === null || round === seenRound) return;
+    const t = setTimeout(() => setSeenRound(round), REVEAL_MS);
+    return () => clearTimeout(t);
+  }, [round, seenRound]);
+  const showReveal = !!table?.reveal && (table.phase === "done" || (table.bids.length === 0 && seenRound !== table.round));
 
   const confirmStand = () => !inGame || confirm("Walk away? You forfeit your stake.");
   const { stage, standUp } = useTableStage("dice", { ...host, world }, () => undefined, confirmStand);
@@ -72,7 +83,7 @@ export function DiceTable({ table, you, gold, error, lastXp, looks, world, host,
     stage.setSeats(placement.chairs, withSelf(infos, you, looks));
     stage.syncDice(
       table && table.phase !== "open"
-        ? { round: table.round, seats: table.seats.map((s) => ({ id: s.id, count: s.count, dice: s.dice })), reveal: showReveal ? { hands: table.reveal!.hands, face: table.reveal!.bid.face } : null }
+        ? { round: showReveal && table.phase === "playing" ? table.round - 1 : table.round, seats: table.seats.map((s) => ({ id: s.id, count: s.count, dice: s.dice })), reveal: showReveal ? { hands: table.reveal!.hands, face: table.reveal!.bid.face } : null }
         : null,
     );
     stage.setPot(table ? (table.phase === "open" ? table.ante * seats.length : table.phase === "done" ? table.prize : table.pot) : 0);
@@ -83,7 +94,7 @@ export function DiceTable({ table, you, gold, error, lastXp, looks, world, host,
         : table.phase === "playing" ? { caption: `Round ${table.round}`, main: "no bid" } : null,
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [stage, table, placement, looks]);
+  }, [stage, table, placement, looks, showReveal]);
 
   const status = (() => {
     if (!table) return "Nobody is playing. Open a table and the others may sit.";
@@ -135,7 +146,7 @@ export function DiceTable({ table, you, gold, error, lastXp, looks, world, host,
         </div>
       )}
 
-      {table?.phase === "playing" && myTurn && (
+      {table?.phase === "playing" && myTurn && !showReveal && (
         <div className="td-row">
           <span className="td-label">{last ? "Raise to" : "Bid"}</span>
           <select aria-label="How many dice" value={count} onChange={(e) => setCount(Number(e.target.value))}>
