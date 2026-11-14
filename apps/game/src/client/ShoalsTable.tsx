@@ -117,6 +117,32 @@ export function ShoalsTable({ table, you, gold, error, lastXp, looks, world, hos
   const potGold = table ? (table.phase === "open" ? table.ante * seats.length : table.phase === "done" ? table.prize : table.pot) : 0;
   const placement = useMemo(() => placeSeats(drawnSeats(seats, table?.phase, host.hide, you), you, !table || table.phase === "open", SHOALS_MAX_PLAYERS), [seats, you, table, host.hide.join(",")]);
 
+  const outcome = last && (last.result === "clear"
+    ? `${name(last.pilot)} sailed ${last.bid} clear.`
+    : last.result === "aground"
+      ? `${name(last.pilot)} ran aground on ${last.at === last.pilot ? (last.pilot === you ? "your own" : "their own") : last.at === you ? "your" : `${name(last.at ?? "")}'s`} Shoal.`
+      : "The round was called off.");
+
+  const status = (() => {
+    if (!table) return "Nobody is playing. Open a table to set out the markers.";
+    if (table.phase === "open") return seated ? (table.host === you ? (seats.length < SHOALS_MIN_PLAYERS ? "Waiting for a second pilot to sit." : "Start when everyone is seated.") : `Waiting for ${name(table.host)} to start.`) : `A table is open at ${table.ante} gold a seat.`;
+    if (table.phase === "done") return table.winner ? `${name(table.winner)} ${table.winner === you ? "win" : "wins"} the table! ${table.winner === you ? "You take" : "They take"} ${table.prize} gold from a pot of ${table.pot}.` : "The game is over.";
+    const who = table.turn ? short(table.turn) : "";
+    const bid = table.bid;
+    if (table.step === "lay") {
+      if (!myTurn) return `${who} is laying a marker.`;
+      return everyoneLaid ? "Your turn: click a marker in your hand to lay another, or open the bidding." : "Your turn: click a marker in your hand to lay it face down.";
+    }
+    if (table.step === "bid" && bid) return myTurn ? `${short(bid.by)} ${bid.by === you ? "say" : "says"} ${bid.count}. Raise or pass.` : `${who} to raise ${shorts(bid.by)} ${bid.count}, or pass.`;
+    if (table.step === "sail" && bid) {
+      const left = bid.count - table.sailed;
+      return myTurn ? `At the helm: click a stack to turn over ${left} more. ${ownLeft > 0 ? "Your own stack first." : "Pick any stack."}` : `${who} ${table.turn === you ? "are" : "is"} at the helm: ${table.sailed} of ${bid.count} clear.`;
+    }
+    return "";
+  })();
+
+  const phaseLabel = !table ? "No game" : table.phase === "open" ? "Seating" : table.phase === "done" ? "Game over" : table.step === "lay" ? "Laying" : table.step === "bid" ? "Bidding" : "Sailing";
+
   // Everyone round the table from your seat, and what is on it.
   useEffect(() => {
     if (!stage) return;
@@ -165,52 +191,29 @@ export function ShoalsTable({ table, you, gold, error, lastXp, looks, world, hos
       });
     }
     stage.setPot(potGold);
-    stage.setCard(
-      !table || table.phase === "open" ? null
-        : table.phase === "done" ? { caption: "Pot paid out", main: `${table.prize} gold` }
-        : table.step === "sail" && table.bid ? { caption: `${short(table.bid.by)} sails ${table.bid.count}`, main: `${table.sailed} / ${table.bid.count}` }
-        : table.bid ? { caption: "Bid", main: `${table.bid.count}` }
-        : { caption: `Round ${table.round}`, main: `${table.total} laid` },
-    );
+    // Everything there is to read hangs on the card over the table, where your eyes already are; the dock below holds only the controls.
+    const caption = !table ? "No game" : table.phase === "open" ? `Seating: ${table.ante} gold a seat` : table.phase === "done" ? "Game over: pot paid out" : `${phaseLabel}: pot ${potGold} gold`;
+    const main = !table || table.phase === "open" ? undefined
+      : table.phase === "done" ? `${table.prize} gold`
+      : table.step === "sail" && table.bid ? `${table.sailed} / ${table.bid.count}`
+      : table.bid ? `says ${table.bid.count}`
+      : `${table.total} laid`;
+    const xp = table?.phase === "done" && lastXp?.id === table.winner && lastXp.amount > 0 ? `+${lastXp.amount} XP` : undefined;
+    stage.setCard({
+      caption,
+      main,
+      // Just after a round, how it went comes first.
+      prompt: playing && last && table!.step === "lay" ? `Last round: ${outcome} ${status}` : status,
+      foot: xp ?? (inGame ? `Your markers: ${mine!.count} of ${START}. Passages: ${mine!.passages} of ${SHOALS_PASSAGES}.` : undefined),
+      yours: !!myTurn,
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [stage, table, placement, looks, reveal]);
-
-  const outcome = last && (last.result === "clear"
-    ? `${name(last.pilot)} sailed ${last.bid} clear.`
-    : last.result === "aground"
-      ? `${name(last.pilot)} ran aground on ${last.at === last.pilot ? (last.pilot === you ? "your own" : "their own") : last.at === you ? "your" : `${name(last.at ?? "")}'s`} Shoal.`
-      : "The round was called off.");
-
-  const status = (() => {
-    if (!table) return "Nobody is playing. Open a table to set out the markers.";
-    if (table.phase === "open") return seated ? (table.host === you ? (seats.length < SHOALS_MIN_PLAYERS ? "Waiting for a second pilot to sit." : "Start when everyone is seated.") : `Waiting for ${name(table.host)} to start.`) : `A table is open at ${table.ante} gold a seat.`;
-    if (table.phase === "done") return table.winner ? `${name(table.winner)} ${table.winner === you ? "win" : "wins"} the table! ${table.winner === you ? "You take" : "They take"} ${table.prize} gold from a pot of ${table.pot}.` : "The game is over.";
-    const who = table.turn ? short(table.turn) : "";
-    const bid = table.bid;
-    if (table.step === "lay") {
-      if (!myTurn) return `${who} is laying a marker.`;
-      return everyoneLaid ? "Your turn: click a marker in your hand to lay another, or open the bidding." : "Your turn: click a marker in your hand to lay it face down.";
-    }
-    if (table.step === "bid" && bid) return myTurn ? `${short(bid.by)} ${bid.by === you ? "say" : "says"} ${bid.count}. Raise or pass.` : `${who} to raise ${shorts(bid.by)} ${bid.count}, or pass.`;
-    if (table.step === "sail" && bid) {
-      const left = bid.count - table.sailed;
-      return myTurn ? `At the helm: click a stack to turn over ${left} more. ${ownLeft > 0 ? "Your own stack first." : "Pick any stack."}` : `${who} ${table.turn === you ? "are" : "is"} at the helm: ${table.sailed} of ${bid.count} clear.`;
-    }
-    return "";
-  })();
-
-  const phaseLabel = !table ? "No game" : table.phase === "open" ? "Seating" : table.phase === "done" ? "Game over" : table.step === "lay" ? "Laying" : table.step === "bid" ? "Bidding" : "Sailing";
+  }, [stage, table, placement, looks, reveal, lastXp, status]);
 
   return (
     <div className="table-dock panel shoals-table">
-      <div className="td-status" aria-live="polite">
-        <span className={`td-phase ${table?.phase ?? "none"} ${table?.step ?? ""}`}>{phaseLabel}</span>
-        <span className="td-status-text">{status}</span>
-        {inGame && <span className="td-pot" title="Your markers left, and passages sailed">markers {mine!.count}/{START} · passages {mine!.passages}/{SHOALS_PASSAGES}</span>}
-        {table && table.phase !== "open" && <span className="td-pot" title="The house keeps 10%">pot {potGold} gold</span>}
-      </div>
-      {playing && last && table!.step === "lay" && <p className={`sh-outcome ${last.result}`}>Last round: {outcome}</p>}
-      {table?.phase === "done" && lastXp?.id === table.winner && lastXp.amount > 0 && <p className="xp-gain">+{lastXp.amount} XP</p>}
+      {/* What is happening is on the card over the table; this copy is for screen readers. */}
+      <p className="td-sr" aria-live="polite">{status}</p>
 
       {myTurn && table!.step !== "sail" && (everyoneLaid || table!.step === "bid") && (
         <div className="td-row sh-bid">
@@ -255,7 +258,6 @@ export function ShoalsTable({ table, you, gold, error, lastXp, looks, world, hos
       )}
 
       {error && <p className="bad">{error}</p>}
-      {table && table.log.length > 0 && <p className="td-log muted">{table.log[table.log.length - 1]}</p>}
 
       <div className="td-foot">
         <button type="button" className="link" aria-expanded={rules} onClick={() => setRules((r) => !r)}>{rules ? "Hide the rules" : "How to play"}</button>

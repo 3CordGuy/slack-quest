@@ -15,7 +15,7 @@
 import * as THREE from "three";
 import type { Marker, Outfit } from "@gantt-quest/world";
 import { markerUrl, type MarkerFace } from "../shoalsArt";
-import { PIXEL_LINE_ROWS, canDrawPixelText, drawPixelText, pixelTextWidth } from "./pixelFont";
+import { PIXEL_CAP_ROWS, PIXEL_LINE_ROWS, canDrawPixelText, drawPixelText, pixelTextWidth } from "./pixelFont";
 import { SITTING_DROP, makeFigure, type Figure } from "./figures";
 import { labelTexture, lookFor, spriteKey } from "./sprites";
 import { OVERLAY_LAYER } from "./post";
@@ -73,8 +73,13 @@ export interface TableCallbacks {
 const TABLE_R = 0.75;
 /** The height of the tabletop. */
 const TOP = 0.62;
-/** How high the card hangs, over the middle of the table. */
-const CARD_Y = TOP + 0.5;
+/**
+ * Where the card's top edge hangs: in front of the table's near rim, just below your own dice. From your seat that is the
+ * empty band of the view between your dice and the controls, so it hides no one's face or dice, and the bid sits
+ * right under the dice you are weighing it against.
+ */
+const CARD_Y = TOP + 0.23;
+const CARD_Z = TABLE_R + 0.25;
 const SEAT_R = 1.35;
 const STOOL_H = 0.3;
 /** How tall a seated character is drawn. */
@@ -212,31 +217,102 @@ function bigText(ctx: CanvasRenderingContext2D, text: string, x: number, y: numb
 
 const textWidth = (text: string, scale: number) => (canDrawPixelText(text) ? pixelTextWidth(text) * scale : text.length * 5 * scale);
 
-/** A die face as a 21-pixel picture (as tall as the card's large type): ivory, a dark rim, its pips. */
-function drawDie(ctx: CanvasRenderingContext2D, value: number, x: number, y: number) {
+/** A die face as a `side`-pixel picture (as tall as the card's large type): ivory, a dark rim, its pips. */
+function drawDie(ctx: CanvasRenderingContext2D, value: number, x: number, y: number, side: number) {
   ctx.fillStyle = INK;
-  ctx.fillRect(x, y, 21, 21);
+  ctx.fillRect(x, y, side, side);
   ctx.fillStyle = IVORY;
-  ctx.fillRect(x + 1, y + 1, 19, 19);
+  ctx.fillRect(x + 1, y + 1, side - 2, side - 2);
   ctx.fillStyle = value === 1 ? "#b9433d" : INK;
-  const size = value === 1 ? 5 : 3;
-  for (const [fx, fy] of PIPS[value] ?? []) ctx.fillRect(Math.round(x + 1 + fx * 19 - size / 2), Math.round(y + 1 + fy * 19 - size / 2), size, size);
+  const size = value === 1 ? Math.round(side / 4) : Math.max(2, Math.round(side / 7));
+  for (const [fx, fy] of PIPS[value] ?? []) ctx.fillRect(Math.round(x + 1 + fx * (side - 2) - size / 2), Math.round(y + 1 + fy * (side - 2) - size / 2), size, size);
 }
 
-/** The card hung over the table: a caption over a line in large type, ending in a die if there is one. Drawn at the font's own size and shown unsmoothed, so it stays crisp. */
-function cardTexture(caption: string, main: string, die?: number): THREE.CanvasTexture {
-  return canvasTexture(112, 56, (ctx) => {
-    ctx.fillStyle = "#6b4a2b";
-    ctx.fillRect(0, 0, 112, 56);
-    ctx.fillStyle = "#efe4c8";
-    ctx.fillRect(2, 2, 108, 52);
-    const cw = textWidth(caption, 1);
-    bigText(ctx, caption, Math.round((112 - cw) / 2), 7, "#6b4a2b", 1);
-    const total = textWidth(main, 3) + (die ? 6 + 21 : 0);
-    const x = Math.round((112 - total) / 2);
-    bigText(ctx, main, x, 24, INK, 3);
-    if (die) drawDie(ctx, die, x + textWidth(main, 3) + 6, 24);
+/**
+ * What the card over the table says. All of it is optional: a small `caption` along the top (the phase, the pot),
+ * a `main` line in large type ending in a die if there is one (the bid), the `prompt` (what is happening, and what to
+ * do on your turn), wrapped, and a muted `foot` (your own dice or markers). `yours`: it is your move, and the card is rimmed in gold.
+ */
+export interface TableCard {
+  caption?: string;
+  main?: string;
+  die?: number;
+  prompt?: string;
+  foot?: string;
+  yours?: boolean;
+}
+
+/** The card's width in its own pixels, and world units per pixel: big enough that its smallest type reads from your seat. */
+const CARD_W = 200;
+const CARD_PX = 0.0037;
+/** Lines of prompt the card will hold; past that the last is cut short. */
+const CARD_LINES = 4;
+
+/** Split `text` into lines no wider than `max` pixels at `scale`, breaking between words. */
+function wrapText(text: string, max: number, scale: number): string[] {
+  const lines: string[] = [];
+  let line = "";
+  for (const word of text.split(/\s+/).filter(Boolean)) {
+    const next = line ? `${line} ${word}` : word;
+    if (line && textWidth(next, scale) > max) {
+      lines.push(line);
+      line = word;
+    } else line = next;
+  }
+  if (line) lines.push(line);
+  return lines;
+}
+
+/** The card hung over the table (see TableCard). Drawn at the font's own size and shown unsmoothed, so it stays crisp. Returns its height in pixels. */
+function cardTexture(card: TableCard): { texture: THREE.CanvasTexture; height: number } {
+  const W = CARD_W;
+  // Kept short: it hangs between your dice and the controls.
+  const PAD = 5;
+  const GAP = 3;
+  const ROW = PIXEL_LINE_ROWS + 1;
+  /** The bid's type: twice the font's size, and a die as tall as its capitals. */
+  const BIG = 2;
+  const DIE = PIXEL_CAP_ROWS * BIG;
+  let lines = card.prompt ? wrapText(card.prompt, W - PAD * 2, 1) : [];
+  if (lines.length > CARD_LINES) lines = [...lines.slice(0, CARD_LINES - 1), `${lines[CARD_LINES - 1]}...`];
+  const foot = card.foot ? wrapText(card.foot, W - PAD * 2, 1) : [];
+  const blocks = [card.caption ? ROW : 0, card.main ? DIE + 1 : 0, lines.length * ROW, foot.length * ROW].filter((h) => h > 0);
+  const H = PAD * 2 + blocks.reduce((n, h) => n + h, 0) + Math.max(0, blocks.length - 1) * GAP;
+  const texture = canvasTexture(W, H, (ctx) => {
+    // A gold rim on your turn; walnut otherwise. The paper lets the table show through a little; the type is solid.
+    const rim = card.yours ? 3 : 2;
+    ctx.fillStyle = card.yours ? "rgba(217, 165, 32, 0.95)" : "rgba(107, 74, 43, 0.85)";
+    ctx.fillRect(0, 0, W, H);
+    ctx.clearRect(rim, rim, W - rim * 2, H - rim * 2);
+    ctx.fillStyle = card.yours ? "rgba(255, 243, 207, 0.8)" : "rgba(239, 228, 200, 0.72)";
+    ctx.fillRect(rim, rim, W - rim * 2, H - rim * 2);
+    const centred = (text: string, y: number, ink: string, scale: number) => bigText(ctx, text, Math.round((W - textWidth(text, scale)) / 2), y, ink, scale);
+    let y = PAD;
+    const gap = () => (y += GAP);
+    if (card.caption) {
+      centred(card.caption, y, "#6b4a2b", 1);
+      y += ROW;
+      gap();
+    }
+    if (card.main) {
+      const total = textWidth(card.main, BIG) + (card.die ? 5 + DIE : 0);
+      const x = Math.round((W - total) / 2);
+      bigText(ctx, card.main, x, y, INK, BIG);
+      if (card.die) drawDie(ctx, card.die, x + textWidth(card.main, BIG) + 5, y, DIE);
+      y += DIE + 1;
+      gap();
+    }
+    for (const line of lines) {
+      centred(line, y, INK, 1);
+      y += ROW;
+    }
+    if (lines.length) gap();
+    for (const line of foot) {
+      centred(line, y, "#8a6a44", 1);
+      y += ROW;
+    }
   }, true);
+  return { texture, height: H };
 }
 
 /** A row of pips (dice or markers left) and passage stars, small, under a name. */
@@ -354,10 +430,14 @@ export class TableStage implements WorldMinigame {
     this.old = world.poiObject(kind);
     this.showSwap();
     // Hung above the middle of the table, turned to face whoever looks at it (a sprite faces each viewer's own camera).
-    this.card = new THREE.Sprite(new THREE.SpriteMaterial({ transparent: true }));
+    // Drawn over the table's rim, not hidden behind it.
+    this.card = new THREE.Sprite(new THREE.SpriteMaterial({ transparent: true, depthTest: false }));
+    this.card.renderOrder = 9;
     this.card.scale.set(0.64, 0.32, 1);
+    // Hung by its top edge (see setCard).
+    this.card.center.set(0.5, 1);
     this.card.layers.set(OVERLAY_LAYER);
-    this.card.position.set(0, CARD_Y, 0);
+    this.card.position.set(0, CARD_Y, CARD_Z);
     this.card.visible = false;
     this.group.add(this.card);
   }
@@ -549,17 +629,20 @@ export class TableStage implements WorldMinigame {
   }
 
   /** The card hanging over the table, facing everyone: what the bid is, or what the last call found. Null puts it away. */
-  setCard(card: { caption: string; main: string; die?: number } | null) {
-    const key = card ? `${card.caption}|${card.main}|${card.die ?? ""}` : "";
+  setCard(card: TableCard | null) {
+    const key = card ? JSON.stringify(card) : "";
     if (key === this.cardKey) return;
     this.cardKey = key;
     this.card.visible = !!card;
     if (!card) return;
     const mat = this.card.material;
     const old = mat.map;
-    mat.map = cardTexture(card.caption, card.main, card.die);
+    const { texture, height } = cardTexture(card);
+    mat.map = texture;
     mat.needsUpdate = true;
     old?.dispose();
+    // Its top edge stays put under your dice, so a longer card grows down toward you rather than up over them.
+    this.card.scale.set(CARD_W * CARD_PX, height * CARD_PX, 1);
   }
 
   // ---------- dice ----------
@@ -776,6 +859,8 @@ export class TableStage implements WorldMinigame {
       r.folk.visible = this.swap >= (r.mine ? 0.5 : 1);
       if (r.mine) r.figure?.setFade(1 - (smoother(this.inT) - FADE_FROM) / (FADE_TO - FADE_FROM));
       r.plate.visible = !r.mine;
+      // Your own chip would hang right in front of your eyes, huge; the card says when it is your turn.
+      r.chip.visible = !r.mine && !!r.info?.chip;
       // Your own tally sits right under the camera and fills the screen over the table; it is in the dock instead.
       r.tally.visible = !r.mine && !!(r.info?.pips || r.info?.stars);
       r.items.visible = this.swap >= 1;
