@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CREW_MAX_PLAYERS, CREW_ROLLS, PUB_CREW, createCrewGame, crewCaptain, crewCargo, crewHold, crewKraken, crewScore, crewSplit, crewView, poiAt, pubPath, pubRoom, stepCrew, type CrewAction, type CrewGame } from "./index";
+import { CREW_DEFAULT_ROUNDS, CREW_MAX_PLAYERS, CREW_ROLLS, PUB_CREW, createCrewGame, crewRounds, crewCaptain, crewCargo, crewHold, crewKraken, crewScore, crewSplit, crewView, poiAt, pubPath, pubRoom, stepCrew, type CrewAction, type CrewGame } from "./index";
 
 const A = { id: "a", name: "Ada" };
 const B = { id: "b", name: "Bo" };
@@ -15,8 +15,9 @@ const err = (state: CrewGame, id: string, action: CrewAction) => {
   return res.ok ? null : res.error;
 };
 
-function started(seed: number, players = [A, B], ante = 10): CrewGame {
-  let g = createCrewGame(seed, ante, players[0]);
+/** A game under way. One round unless asked for more, so a round's cargo decides it. */
+function started(seed: number, players = [A, B], ante = 10, rounds = 1): CrewGame {
+  let g = createCrewGame(seed, ante, players[0], rounds);
   for (const p of players.slice(1)) g = must(g, p.id, { type: "sit", name: p.name });
   return must(g, players[0].id, { type: "start" });
 }
@@ -234,6 +235,61 @@ describe("ship, captain and kraken", () => {
     expect(g.round).toBe(2);
     expect(g.seats.every((s) => s.contending && s.score === null && !s.lost)).toBe(true);
     expect(turnId(g)).toBe("a");
+  });
+
+  it("opens for three rounds unless one of the other choices is asked for", () => {
+    expect(createCrewGame(1, 5, A).rounds).toBe(CREW_DEFAULT_ROUNDS);
+    expect(CREW_DEFAULT_ROUNDS).toBe(3);
+    expect(crewRounds(5)).toBe(5);
+    expect(crewRounds(1)).toBe(1);
+    expect(crewRounds(2)).toBe(3);
+    expect(crewRounds("5")).toBe(3);
+    expect(crewRounds(undefined)).toBe(3);
+    // A game saved before rounds is a one-round game.
+    const { rounds: _, ...old } = started(5);
+    expect(crewView(old as CrewGame).rounds).toBe(1);
+  });
+
+  it("adds up the cargo of every round, and the highest total after the last takes the pot", () => {
+    let g = started(5, [A, B], 10, 3);
+    // Round 1: a 12, b 6.
+    g = must(holding(g, 1, [3, 5, 4, 5], 1), "a", { type: "stand" });
+    g = must(holding(g, 1, [2, 5, 2, 2], 1), "b", { type: "stand" });
+    expect(g.phase).toBe("playing");
+    expect(g.round).toBe(2);
+    expect(g.last).toMatchObject({ round: 1, result: "next", ids: ["a"] });
+    expect(crewView(g).seats.map((s) => [s.total, s.score])).toEqual([[12, null], [6, null]]);
+    expect(turnId(g)).toBe("a");
+    // Round 2: a 6, b 15. b leads, 21 to 18.
+    g = must(holding(g, 1, [2, 5, 2, 2], 1), "a", { type: "stand" });
+    g = must(holding(g, 1, [6, 5, 6, 3], 1), "b", { type: "stand" });
+    expect(g.round).toBe(3);
+    expect(g.last).toMatchObject({ round: 2, result: "next", ids: ["b"] });
+    expect(g.seats.map((s) => s.total)).toEqual([18, 21]);
+    // Round 3: a 18, b 6. a wins on the total, 36 to 27, though b had the best single round going into it.
+    g = must(holding(g, 1, [6, 6, 5, 6], 1), "a", { type: "stand" });
+    g = must(holding(g, 1, [2, 5, 2, 2], 1), "b", { type: "stand" });
+    expect(g.seats.map((s) => s.total)).toEqual([36, 27]);
+    expect(g.phase).toBe("done");
+    expect(g.winner).toBe("a");
+    expect(g.last).toMatchObject({ round: 3, result: "win", ids: ["a"] });
+  });
+
+  it("rolls off a tie on totals after the last round, on the roll-off's own cargo", () => {
+    let g = started(5, [A, B], 10, 3);
+    for (let round = 1; round <= 3; round++) {
+      g = must(holding(g, 1, [3, 5, 4, 5], 1), "a", { type: "stand" });
+      g = must(holding(g, 1, [4, 5, 3, 5], 1), "b", { type: "stand" });
+    }
+    expect(g.seats.map((s) => s.total)).toEqual([36, 36]);
+    expect(g.last).toMatchObject({ round: 3, result: "tie", ids: ["a", "b"] });
+    expect(g.round).toBe(4);
+    expect(crewView(g).rounds).toBe(3);
+    // The roll-off is on its own cargo, and leaves the totals as they were.
+    g = must(holding(g, 1, [2, 5, 2, 2], 1), "a", { type: "stand" });
+    g = must(holding(g, 1, [3, 5, 2, 2], 1), "b", { type: "stand" });
+    expect(g.winner).toBe("b");
+    expect(g.seats.map((s) => s.total)).toEqual([36, 36]);
   });
 
   it("a forfeit on turn passes the turn, and the last one left wins", () => {

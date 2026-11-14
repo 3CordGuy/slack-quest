@@ -18,6 +18,7 @@ import {
   DICE_MAX_PLAYERS,
   PUB_CREW,
   createCrewGame,
+  crewRounds,
   crewSplit,
   crewView,
   isCrewAnte,
@@ -67,7 +68,8 @@ interface Rules<G extends StakeGame, R extends { type: string }> {
   maxPlayers: number;
   requests: ReadonlySet<string>;
   isAnte(n: unknown): boolean;
-  create(seed: number, ante: number, host: { id: string; name: string }): G;
+  /** A new game; `request` is the "open" that asked for it, for any choices beyond the ante. */
+  create(seed: number, ante: number, host: { id: string; name: string }, request: R): G;
   /** Apply a seated player's request (anything but "open"). */
   step(game: G, player: HarborPlayer, request: R): Outcome<G>;
   leave(game: G, playerId: string): Outcome<G>;
@@ -126,7 +128,8 @@ export const CREW_RULES: Rules<CrewGame, CrewRequest> = {
   maxPlayers: CREW_MAX_PLAYERS,
   requests: new Set(["open", "sit", "leave", "start", "roll", "stand"]),
   isAnte: isCrewAnte,
-  create: createCrewGame,
+  // How many rounds: one of the choices, or the default, whatever was sent.
+  create: (seed, ante, host, request) => createCrewGame(seed, ante, host, crewRounds((request as { rounds?: unknown }).rounds)),
   step(game, player, request) {
     if (request.type === "sit") return stepCrew(game, player.id, { type: "sit", name: player.name });
     if (request.type === "open") return { ok: false, error: "There is already a table open." };
@@ -289,7 +292,7 @@ export class StakeTable<G extends StakeGame, R extends { type: string }> {
       if (!this.rules.isAnte(ante)) return "Pick a stake of 5, 10 or 20 gold.";
       if ((await this.gold(player.id)) < (ante as number)) return "You cannot afford that ante.";
       const seed = crypto.getRandomValues(new Uint32Array(1))[0];
-      await this.save(this.rules.create(seed, ante as number, { id: player.id, name: player.name }));
+      await this.save(this.rules.create(seed, ante as number, { id: player.id, name: player.name }, request));
       return null;
     }
     if (!game) return "Nobody has opened a table.";

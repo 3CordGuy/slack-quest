@@ -63,3 +63,8 @@
 .crew-die.kraken:disabled { opacity: 1; }
 .crew-moves { display: flex; flex-direction: column; gap: 4px; justify-content: center; margin-left: auto; }
 .crew-moves small { display: block; font-size: 10px; opacity: 0.8; }
+
+/* Cargo and Krakens: how many rounds to open a table for. */
+.crew-rounds { display: inline-flex; align-items: center; gap: 3px; margin-right: 6px; }
+.crew-rounds button { min-width: 26px; }
+.crew-rounds button.on { border-color: var(--gold); color: var(--gold); background: rgba(217, 164, 58, 0.14); }

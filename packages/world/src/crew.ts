@@ -17,9 +17,12 @@
 // score nothing; and you cannot stand with one showing. So every die you roll
 // again might raise your score, bring in your captain, or sink you.
 //
-// When everyone has had a turn, the highest cargo takes the pot, less the
-// house's cut. A tie for the top is rolled off by those tied; if nobody
-// scored, everyone still in goes again.
+// A table is opened for a number of rounds (three unless the opener picks
+// otherwise), each a turn for everyone, and each round's cargo adds to a
+// running total. After the last round the highest total takes the pot, less
+// the house's cut. A tie for the top is rolled off by those tied, a round at
+// a time, on that round's cargo alone; if nobody has scored, everyone still in
+// goes again.
 //
 // The module, the pub's table and the messages keep the name "crew" from the
 // game this one grew out of.
@@ -33,6 +36,11 @@ import { makeRng } from "./rng";
 export const CREW_ANTES = [5, 10, 20] as const;
 export const CREW_MIN_PLAYERS = 2;
 export const CREW_MAX_PLAYERS = 6;
+/** How many rounds a table can be opened for, and how many unless the opener says. */
+export const CREW_ROUND_CHOICES = [1, 3, 5] as const;
+export const CREW_DEFAULT_ROUNDS = 3;
+/** The rounds asked for, if they are one of the choices; otherwise the default. */
+export const crewRounds = (n: unknown): number => ((CREW_ROUND_CHOICES as readonly unknown[]).includes(n) ? (n as number) : CREW_DEFAULT_ROUNDS);
 /** Dice in a roll, and rolls in a turn. */
 export const CREW_DICE = 5;
 export const CREW_ROLLS = 3;
@@ -58,6 +66,8 @@ export interface CrewSeat {
   contending: boolean;
   /** This round's score once their turn is over (0 for nothing), or null before. */
   score: number | null;
+  /** The cargo of the rounds played so far, added up (roll-offs aside). Missing in games saved before rounds. */
+  total?: number;
   /** Why it was 0, when it was. */
   lost?: CrewLoss | null;
   /** The five dice they last ended a turn on, the ship first. Empty before their first turn. */
@@ -70,8 +80,8 @@ export interface CrewSeat {
 export interface CrewRoundResult {
   round: number;
   scores: { id: string; score: number }[];
-  /** "win": `ids` holds the winner. "tie": `ids` are rolling off. "bust": nobody scored, so all of `ids` go again. */
-  result: "win" | "tie" | "bust";
+  /** "next": more rounds to come, and `ids` lead on totals. "win": `ids` holds the winner. "tie": `ids` are rolling off. "bust": nobody scored, so all of `ids` go again. */
+  result: "next" | "win" | "tie" | "bust";
   ids: string[];
 }
 
@@ -107,6 +117,8 @@ export interface CrewGame {
   /** The latest roll of the game, numbered from 1. For the table to animate, even a roll that ended a turn. */
   lastThrow: CrewThrow | null;
   winner: string | null;
+  /** How many rounds are played before the totals decide it; after that, any round is a roll-off. Missing in games saved before rounds: one. */
+  rounds?: number;
   /** Gold anted, set when the game starts. */
   pot: number;
   log: string[];
@@ -166,10 +178,10 @@ export function crewHold(held: number, dice: readonly number[]): { held: number;
   return { held, dice: left };
 }
 
-const newSeat = (id: string, name: string): CrewSeat => ({ id, name, contending: false, score: null, lost: null, hand: [], forfeited: false });
+const newSeat = (id: string, name: string): CrewSeat => ({ id, name, contending: false, score: null, total: 0, lost: null, hand: [], forfeited: false });
 
-/** A fresh table with its opener in the first seat. */
-export function createCrewGame(seed: number, ante: number, host: { id: string; name: string }): CrewGame {
+/** A fresh table with its opener in the first seat, to be played over `rounds` rounds. */
+export function createCrewGame(seed: number, ante: number, host: { id: string; name: string }, rounds: number = CREW_DEFAULT_ROUNDS): CrewGame {
   return {
     ante,
     phase: "open",
@@ -184,8 +196,9 @@ export function createCrewGame(seed: number, ante: number, host: { id: string; n
     last: null,
     lastThrow: null,
     winner: null,
+    rounds,
     pot: 0,
-    log: [`${host.name} set out the dice cup at ${ante} gold a seat.`],
+    log: [`${host.name} set out the dice cup at ${ante} gold a seat, for ${rounds === 1 ? "one round" : `${rounds} rounds`}.`],
     rng: seed >>> 0,
   };
 }
@@ -214,17 +227,32 @@ function win(state: CrewGame, id: string): CrewGame {
 
 /** Everyone in the running has played: settle the round, or start another for those still in it. */
 function endRound(state: CrewGame): CrewGame {
+  const rounds = state.rounds ?? 1;
+  // One of the rounds the table was opened for, not a roll-off after them.
+  const regular = state.round <= rounds;
   const runners = state.seats.filter((s) => s.contending && !s.forfeited);
+  const ran = new Set(runners.map((s) => s.id));
   const scores = runners.map((s) => ({ id: s.id, score: s.score ?? 0 }));
-  const best = Math.max(0, ...scores.map((s) => s.score));
-  const top = best > 0 ? scores.filter((s) => s.score === best).map((s) => s.id) : scores.map((s) => s.id);
+  // Each of the table's rounds adds its cargo to everyone's total; a roll-off counts on its own.
+  const counted = regular ? state.seats.map((s) => (ran.has(s.id) ? { ...s, total: (s.total ?? 0) + (s.score ?? 0) } : s)) : state.seats;
+  const marks = counted.filter((s) => ran.has(s.id)).map((s) => ({ id: s.id, n: regular ? (s.total ?? 0) : (s.score ?? 0) }));
+  const best = Math.max(0, ...marks.map((m) => m.n));
+  const top = best > 0 ? marks.filter((m) => m.n === best).map((m) => m.id) : marks.map((m) => m.id);
+  const names = (ids: string[]) => state.seats.filter((s) => ids.includes(s.id)).map((s) => s.name).join(" and ");
+  if (regular && state.round < rounds) {
+    // More rounds to come: everyone still in plays again, their totals carried.
+    const last: CrewRoundResult = { round: state.round, scores, result: "next", ids: best > 0 ? top : [] };
+    const lead = best > 0 ? `${names(top)} ${top.length > 1 ? "lead" : "leads"} with ${best}.` : "Nobody has brought a cargo home yet.";
+    const seats = counted.map((s) => ({ ...s, score: null, lost: null }));
+    const turn = nextDue(seats, 0);
+    return { ...state, ...fresh, seats, turn, round: state.round + 1, last, log: say(state, `Round ${state.round} of ${rounds} is over. ${lead}`) };
+  }
   const result: CrewRoundResult["result"] = best === 0 ? "bust" : top.length === 1 ? "win" : "tie";
   const last: CrewRoundResult = { round: state.round, scores, result, ids: top };
-  if (result === "win") return win({ ...state, last }, top[0]);
-  const names = state.seats.filter((s) => top.includes(s.id)).map((s) => s.name);
-  const line = result === "bust" ? "Nobody brought a cargo home. Everyone rolls again." : `${names.join(" and ")} tie on ${best}. They roll off.`;
+  if (result === "win") return win({ ...state, seats: counted, last }, top[0]);
+  const line = result === "bust" ? "Nobody brought a cargo home. Everyone rolls again." : `${names(top)} tie on ${best}. They roll off.`;
   // Hands stay on the table, so everyone can see how the round went, until each player rolls again.
-  const seats = state.seats.map((s) => ({ ...s, contending: top.includes(s.id), score: null, lost: null }));
+  const seats = counted.map((s) => ({ ...s, contending: top.includes(s.id), score: null, lost: null }));
   const turn = nextDue(seats, 0);
   return { ...state, ...fresh, seats, turn, round: state.round + 1, last, log: say(state, line) };
 }
@@ -274,7 +302,7 @@ export function stepCrew(state: CrewGame, playerId: string, action: CrewAction):
       if (state.host !== playerId) return fail("Only whoever opened the table can start.");
       if (state.seats.length < CREW_MIN_PLAYERS) return fail("It takes at least two to play.");
       const pot = state.ante * state.seats.length;
-      const seats = state.seats.map((s) => ({ ...s, contending: true, score: null, lost: null, hand: [] }));
+      const seats = state.seats.map((s) => ({ ...s, contending: true, score: null, total: 0, lost: null, hand: [] }));
       return { ok: true, state: { ...state, ...fresh, phase: "playing", seats, turn: 0, round: 1, pot, log: say(state, `The cup goes round. The pot is ${pot} gold.`) } };
     }
 
@@ -341,6 +369,8 @@ export interface CrewSeatView {
   name: string;
   contending: boolean;
   score: number | null;
+  /** The cargo of the table's rounds played so far, added up. */
+  total: number;
   lost: CrewLoss | null;
   hand: number[];
   forfeited: boolean;
@@ -365,6 +395,8 @@ export interface CrewView {
   /** A Kraken is among their dice. */
   kraken: boolean;
   round: number;
+  /** How many rounds the table was opened for; a round after those is a roll-off. */
+  rounds: number;
   last: CrewRoundResult | null;
   lastThrow: CrewThrow | null;
   winner: string | null;
@@ -382,7 +414,7 @@ export function crewView(state: CrewGame, viewerId?: string | null): CrewView {
     ante: state.ante,
     phase: state.phase,
     host: state.host,
-    seats: state.seats.map((s) => ({ id: s.id, name: s.name, contending: s.contending, score: s.score, lost: s.lost ?? null, hand: [...s.hand], forfeited: s.forfeited })),
+    seats: state.seats.map((s) => ({ id: s.id, name: s.name, contending: s.contending, score: s.score, total: s.total ?? 0, lost: s.lost ?? null, hand: [...s.hand], forfeited: s.forfeited })),
     turn: playing ? state.seats[state.turn].id : null,
     rolls: state.rolls,
     held: state.held,
@@ -392,6 +424,7 @@ export function crewView(state: CrewGame, viewerId?: string | null): CrewView {
     captain: playing && crewCaptain(state.held, state.dice),
     kraken: playing && crewKraken(state.held, state.dice),
     round: state.round,
+    rounds: state.rounds ?? 1,
     last: state.last,
     lastThrow: state.lastThrow,
     winner: state.winner,
@@ -404,4 +437,4 @@ export function crewView(state: CrewGame, viewerId?: string | null): CrewView {
 // ---------- wire types (carried inside the pub's messages) ----------
 
 /** What a client may ask of the table. The server fills in names and checks gold. */
-export type CrewRequest = { type: "open"; ante: number } | { type: "sit" } | { type: "leave" } | { type: "start" } | { type: "roll"; keep?: number[] } | { type: "stand" };
+export type CrewRequest = { type: "open"; ante: number; rounds?: number } | { type: "sit" } | { type: "leave" } | { type: "start" } | { type: "roll"; keep?: number[] } | { type: "stand" };
