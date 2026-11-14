@@ -55,6 +55,12 @@ export interface CrewRoundResult {
   ids: string[];
 }
 
+export interface CrewThrow {
+  n: number;
+  by: string;
+  fresh: number;
+}
+
 export interface CrewGame {
   ante: number;
   /** open: seats are filling. playing: dice are rolling. done: someone won. */
@@ -72,6 +78,8 @@ export interface CrewGame {
   round: number;
   /** The last round's outcome, once there has been one. */
   last: CrewRoundResult | null;
+  /** The latest roll of the game, numbered from 1: who threw, and how many of ship, captain and crew it brought in. For the table to animate, even a roll that ended a turn. */
+  lastThrow: CrewThrow | null;
   winner: string | null;
   /** Gold anted, set when the game starts. */
   pot: number;
@@ -131,6 +139,7 @@ export function createCrewGame(seed: number, ante: number, host: { id: string; n
     dice: [],
     round: 0,
     last: null,
+    lastThrow: null,
     winner: null,
     pot: 0,
     log: [`${host.name} set out the dice cup at ${ante} gold a seat.`],
@@ -239,7 +248,8 @@ export function stepCrew(state: CrewGame, playerId: string, action: CrewAction):
       const cargo = crewCargo(held, dice);
       const got = CREW_NEEDS.slice(state.held, held).map((n) => ({ 6: "ship", 5: "captain", 4: "crew" })[n]);
       const line = `${seat.name} rolls ${rolled.join(" ")}${got.length ? `: ${got.join(", ")} in` : ""}${cargo !== null ? `. Cargo ${cargo}.` : "."}`;
-      const next = { ...state, rolls, held, dice, rng: rng.state(), log: say(state, line) };
+      const lastThrow: CrewThrow = { n: (state.lastThrow?.n ?? 0) + 1, by: playerId, fresh: held - state.held };
+      const next = { ...state, rolls, held, dice, lastThrow, rng: rng.state(), log: say(state, line) };
       // Out of rolls, or no better cargo to be had: the turn is over.
       if (rolls >= CREW_ROLLS || cargo === CREW_MAX_CARGO) {
         const done = cargo === null ? { ...next, log: say(next, `${seat.name} never found a full crew and scores nothing.`) } : next;
@@ -283,6 +293,7 @@ export interface CrewView {
   cargo: number | null;
   round: number;
   last: CrewRoundResult | null;
+  lastThrow: CrewThrow | null;
   winner: string | null;
   pot: number;
   /** What the winner takes from the pot once the house has had its cut. */
@@ -306,6 +317,7 @@ export function crewView(state: CrewGame, viewerId?: string | null): CrewView {
     cargo: playing ? crewCargo(state.held, state.dice) : null,
     round: state.round,
     last: state.last,
+    lastThrow: state.lastThrow,
     winner: state.winner,
     pot: state.pot,
     prize: crewSplit(state.pot).prize,

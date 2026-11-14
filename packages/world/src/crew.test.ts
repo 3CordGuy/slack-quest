@@ -176,6 +176,18 @@ describe("ship, captain and crew", () => {
     for (const s of one.last!.scores) if (s.id !== one.winner) expect(s.score).toBeLessThan(top);
   });
 
+  it("numbers every throw, with who threw and what it brought in, even one that ends a turn", () => {
+    let g = started(4);
+    const first = turnId(g);
+    g = must({ ...g, held: 2, dice: [4, 4, 4], rolls: CREW_ROLLS - 1 }, first, { type: "roll" });
+    expect(turnId(g)).not.toBe(first);
+    expect(g.lastThrow).toMatchObject({ n: 1, by: first });
+    expect(g.lastThrow!.fresh).toBe(g.seats.find((s) => s.id === first)!.score! > 0 ? 1 : 0);
+    g = must(g, turnId(g), { type: "roll" });
+    expect(g.lastThrow!.n).toBe(2);
+    expect(crewView(g, null).lastThrow).toEqual(g.lastThrow);
+  });
+
   it("never shows the generator", () => {
     const view = crewView(started(1), "a");
     expect(view).not.toHaveProperty("rng");

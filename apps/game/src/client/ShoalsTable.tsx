@@ -10,7 +10,7 @@ import { SHOALS_ANTES, SHOALS_MAX_PLAYERS, SHOALS_MIN_PLAYERS, SHOALS_PASSAGES, 
 import type { SeatInfo } from "./render/TableStage";
 import type { WorldRenderer } from "./render/WorldRenderer";
 import { markerUrl, type MarkerFace } from "./shoalsArt";
-import { drawnSeats, placeSeats, withSelf, seatInfo, useTableStage, type SeatLook, type StageHost } from "./useTableStage";
+import { drawnSeats, placeSeats, withSelf, seatInfo, useTableCues, useTableStage, type SeatLook, type StageHost } from "./useTableStage";
 import "./table.css";
 import "./shoals.css";
 
@@ -113,6 +113,7 @@ export function ShoalsTable({ table, you, gold, error, lastXp, looks, world, hos
       send({ type: "flip", seat: a.seat });
     }
   }, confirmStand);
+  useTableCues({ phase: table?.phase ?? null, myTurn: !!myTurn, winner: table?.winner ?? null, you });
 
   const potGold = table ? (table.phase === "open" ? table.ante * seats.length : table.phase === "done" ? table.prize : table.pot) : 0;
   const placement = useMemo(() => placeSeats(drawnSeats(seats, table?.phase, host.hide, you), you, !table || table.phase === "open", SHOALS_MAX_PLAYERS), [seats, you, table, host.hide.join(",")]);

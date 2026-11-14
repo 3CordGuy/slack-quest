@@ -4,7 +4,7 @@
 
 import type { WorldEvent } from "@gantt-quest/world";
 import { audio, type SeaArea, type StartedTake } from "./engine";
-import { soundName, type AttackStyle, type Fighter } from "./names";
+import { soundName, type AttackStyle, type Fighter, type TableSound } from "./names";
 
 /** Where on the map it happens, for distance falloff. */
 type At = { x: number; z: number } | undefined;
@@ -64,6 +64,13 @@ export const sounds = {
    */
   thunder(onStart: (take: StartedTake) => void, at?: At) {
     audio.play(soundName.thunder(), { onStart, at });
+  },
+  /** At a pub table: `delay` seconds from now (to land with the animation), `gainDb` softer for someone else's dice. */
+  table(what: TableSound, opts: { delay?: number; gainDb?: number } = {}) {
+    audio.play(soundName.table(what), opts);
+  },
+  tableWin() {
+    audio.play(soundName.tableWin());
   },
   world(ev: WorldEvent, you: string) {
     const names = soundName.world(ev, you);

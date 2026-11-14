@@ -29,6 +29,10 @@ const voice = (f: Fighter, what: "attack" | "hurt" | "down") =>
 export const FISHING_SOUNDS = ["cast", "plop", "nibble", "plunge", "bite", "splash", "snap", "reel", "land"] as const;
 export type FishingSound = (typeof FISHING_SOUNDS)[number];
 
+/** The pub's game tables. */
+export const TABLE_SOUNDS = ["shake", "roll", "settle", "hold", "reveal", "coins"] as const;
+export type TableSound = (typeof TABLE_SOUNDS)[number];
+
 export const soundName = {
   /** A foot landing, by the ground under it. */
   footstep: (biome: string) => [`footstep.${biome}`, "footstep"],
@@ -67,6 +71,13 @@ export const soundName = {
   /** Fishing: the cast, the float landing, a nibble, the bite, a fish jumping, the line snapping, reeling it in, landing it. */
   fishing: (what: FishingSound) => [`gather.fish.${what}`],
   find: (what: "ore" | "gem") => [`gather.${what}`],
+  /**
+   * The pub's tables: the dice cup shaken, dice thrown onto the felt, one coming to rest, a die set
+   * aside (ship, captain or crew), every die shown after a call, and gold going onto the pot.
+   */
+  table: (what: TableSound) => [`table.${what}`],
+  /** You won a game at a table. */
+  tableWin: () => ["table.win", "stinger.victory"],
 
   /**
    * Something that happened on a voyage. Rewards and finds sound only for the
@@ -143,6 +154,8 @@ export function soundNames(): Set<string> {
   add(soundName.fall("timber"));
   [soundName.pick(true), soundName.rockBreak(), soundName.find("ore"), soundName.find("gem")].forEach(add);
   for (const f of FISHING_SOUNDS) add(soundName.fishing(f));
+  for (const t of TABLE_SOUNDS) add(soundName.table(t));
+  add(soundName.tableWin());
   add(["forage", ...Object.keys(FORAGE).map((k) => `forage.${k}`), "search.found", "search.empty", "rest", "discover"]);
   return names;
 }

@@ -9,7 +9,7 @@ import { CREW_ANTES, CREW_MAX_PLAYERS, CREW_MIN_PLAYERS, CREW_NEEDS, CREW_ROLLS,
 import type { SeatInfo } from "./render/TableStage";
 import type { WorldRenderer } from "./render/WorldRenderer";
 import { CREW_FACE_NAME, crewFaceUrl } from "./crewArt";
-import { drawnSeats, placeSeats, withSelf, seatInfo, useTableStage, type SeatLook, type StageHost } from "./useTableStage";
+import { drawnSeats, placeSeats, withSelf, seatInfo, useTableCues, useTableStage, type SeatLook, type StageHost } from "./useTableStage";
 import "./table.css";
 
 const firstName = (name: string) => name.trim().split(/\s+/)[0] || name;
@@ -50,9 +50,14 @@ export function CrewTable({ table, you, gold, error, lastXp, looks, world, host,
   const myTurn = table?.phase === "playing" && table.turn === you;
   const inGame = table?.phase === "playing" && !!mine && mine.contending && !mine.forfeited;
   const left = table ? CREW_ROLLS - table.rolls : 0;
+  /** The best cargo made so far this round, and who made it. */
+  const best = Math.max(0, ...seats.filter((s) => s.contending && !s.forfeited).map((s) => s.score ?? 0));
+  const leaders = seats.filter((s) => s.contending && !s.forfeited && best > 0 && s.score === best);
 
   const confirmStand = () => !inGame || confirm("Walk away? You forfeit your stake.");
   const { stage, standUp } = useTableStage("crew", { ...host, world }, () => undefined, confirmStand);
+  useTableCues({ phase: table?.phase ?? null, myTurn, winner: table?.winner ?? null, you });
+
 
   const lastLine = (() => {
     const l = table?.last;
@@ -68,13 +73,17 @@ export function CrewTable({ table, you, gold, error, lastXp, looks, world, host,
       return table.winner ? `${name(table.winner)} ${table.winner === you ? "win" : "wins"} ${table.prize} gold${top ? ` with a cargo of ${top}` : ""}.` : "The game is over.";
     }
     if (myTurn) {
-      if (table.rolls === 0) return "Your turn: roll the dice. You need a 6 (ship), then a 5 (captain), then a 4 (crew).";
-      if (table.cargo !== null) return `Ship, captain and crew are in. Your cargo is ${table.cargo}. Stand on it, or roll the two cargo dice again (${left} ${left === 1 ? "roll" : "rolls"} left).`;
+      const beat = best > 0 ? ` ${leaders.map((l) => short(l.id)).join(" and ")} ${leaders.length > 1 ? "have" : "has"} ${best} to beat.` : "";
+      if (table.rolls === 0) return `Your turn: roll the dice. You need a 6 (ship), then a 5 (captain), then a 4 (crew).${beat}`;
+      if (table.cargo !== null) return `Ship, captain and crew are in. Your cargo is ${table.cargo}.${beat} Stand on it, or roll the two cargo dice again (${left} ${left === 1 ? "roll" : "rolls"} left).`;
       const need = CREW_NEEDS[table.held];
       return `Still looking for a ${need} (${CREW_FACE_NAME[need as 4 | 5 | 6].toLowerCase()}). ${left} ${left === 1 ? "roll" : "rolls"} left.`;
     }
     if (mine && !mine.contending && !mine.forfeited) return `You are out of this roll-off. Waiting for ${name(table.turn!)}.`;
-    return mine && mine.contending ? `Waiting for ${name(table.turn!)}.` : "You are watching.";
+    // Your own score is not over your head (it would hang in front of your eyes), so it is said here.
+    const yours = mine?.score === null || mine?.score === undefined ? "" : mine.score > 0 ? `Your cargo is ${mine.score}${leaders.some((l) => l.id === you) ? ", the best so far" : ""}. ` : "No crew for you this round. ";
+    const toBeat = best > 0 && !leaders.some((l) => l.id === you) ? `${leaders.map((l) => short(l.id)).join(" and ")} ${leaders.length > 1 ? "lead" : "leads"} with ${best}. ` : "";
+    return mine && mine.contending ? `${yours}${toBeat}Waiting for ${name(table.turn!)}.` : "You are watching.";
   })();
 
   const reading = lastLine ? `${lastLine} ${status}` : status;
@@ -88,21 +97,25 @@ export function CrewTable({ table, you, gold, error, lastXp, looks, world, host,
       const out = !!table && table.phase !== "open" && (s.forfeited || (playing && !s.contending));
       const won = table?.phase === "done" && table.winner === s.id;
       const turn = playing && table!.turn === s.id;
+      // The scoreboard is over everyone's heads: each cargo as it is made, the best of the round so far in gold.
       const scored = s.score !== null && s.contending ? (s.score > 0 ? `cargo ${s.score}` : "no crew") : null;
       const chip = won ? "winner" : out ? (s.forfeited ? "left" : "out") : table?.phase === "open" && s.id === table.host ? "opened" : turn ? "to play" : scored;
-      return seatInfo(s, looks?.[s.id], { turn, out, won, chip });
+      const chipInk = chip !== scored || s.score === null ? undefined : s.score === 0 ? "#f08a8a" : s.score === best ? "#ffd23f" : "#a9d4fb";
+      return seatInfo(s, looks?.[s.id], { turn, out, won, chip, chipInk });
     });
     stage.setSeats(placement.chairs, withSelf(infos, you, looks));
     stage.syncCrew(
       table && table.phase !== "open"
         ? {
-            rollKey: `${table.round}:${table.turn}:${table.rolls}`,
-            rolled: table.rolls > 0 ? table.turn : null,
+            // Every throw is seen, even one that ended a turn (the turn has already passed on): its dice are then the hand the player ended on.
+            rollKey: String(table.lastThrow?.n ?? 0),
+            rolled: table.lastThrow?.by ?? null,
             seats: table.seats.map((s) => {
+              const fresh = table.lastThrow?.by === s.id ? table.lastThrow.fresh : 0;
               // The player rolling now shows this turn's dice; everyone else, the five they last ended a turn on.
-              if (table.phase === "playing" && table.turn === s.id && table.rolls > 0) return { id: s.id, held: CREW_NEEDS.slice(0, table.held), free: table.dice };
+              if (table.phase === "playing" && table.turn === s.id && table.rolls > 0) return { id: s.id, held: CREW_NEEDS.slice(0, table.held), free: table.dice, fresh };
               const { held } = crewHold(0, s.hand);
-              return { id: s.id, held: s.hand.slice(0, held), free: s.hand.slice(held) };
+              return { id: s.id, held: s.hand.slice(0, held), free: s.hand.slice(held), fresh };
             }),
           }
         : null,

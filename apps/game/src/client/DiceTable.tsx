@@ -7,7 +7,7 @@ import { useEffect, useMemo, useState, type RefObject } from "react";
 import { DICE_ANTES, DICE_MAX_PLAYERS, DICE_MIN_PLAYERS, DICE_START, type DiceBid, type DiceRequest, type DiceView } from "@gantt-quest/world";
 import type { SeatInfo } from "./render/TableStage";
 import type { WorldRenderer } from "./render/WorldRenderer";
-import { drawnSeats, placeSeats, withSelf, seatInfo, useTableStage, type SeatLook, type StageHost } from "./useTableStage";
+import { drawnSeats, placeSeats, withSelf, seatInfo, useTableCues, useTableStage, type SeatLook, type StageHost } from "./useTableStage";
 import "./table.css";
 
 const PIPS = ["", "⚀", "⚁", "⚂", "⚃", "⚄", "⚅"];
@@ -67,6 +67,7 @@ export function DiceTable({ table, you, gold, error, lastXp, looks, world, host,
 
   const confirmStand = () => !inGame || confirm("Walk away? You forfeit your stake.");
   const { stage, standUp } = useTableStage("dice", { ...host, world }, () => undefined, confirmStand);
+  useTableCues({ phase: table?.phase ?? null, myTurn: !!myTurn && !showReveal, winner: table?.winner ?? null, you });
 
   const seats = table?.seats ?? [];
   const status = (() => {

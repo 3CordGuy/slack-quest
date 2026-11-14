@@ -17,6 +17,7 @@ import type { Marker, Outfit } from "@gantt-quest/world";
 import { markerUrl, type MarkerFace } from "../shoalsArt";
 import { isCrewFace, paintCrewFace } from "../crewArt";
 import { makeModelShip } from "./modelShip";
+import { sounds } from "../audio/gameSounds";
 import { PIXEL_CAP_ROWS, PIXEL_LINE_ROWS, canDrawPixelText, drawPixelText, pixelTextWidth } from "./pixelFont";
 import { SITTING_DROP, makeFigure, type Figure } from "./figures";
 import { labelTexture, lookFor, spriteKey } from "./sprites";
@@ -40,6 +41,8 @@ export interface SeatInfo {
   won: boolean;
   /** A word over their head: "to play", "says 3", "passed". */
   chip: string | null;
+  /** The chip's colour, when its first word does not decide it (a score: gold for whoever leads). */
+  chipInk?: string;
   /** Dice or markers left, of how many they began with. */
   pips?: { on: number; of: number };
   /** Passages won, of how many it takes. */
@@ -66,8 +69,8 @@ export interface CrewScene {
   rollKey: string;
   /** Who rolled last, if their dice should tumble now. */
   rolled: string | null;
-  /** Each seat's dice: ship, captain and crew held (drawn as pictures), and the rest as plain dice. */
-  seats: { id: string; held: number[]; free: number[] }[];
+  /** Each seat's dice: ship, captain and crew held (drawn as pictures), and the rest as plain dice. `fresh`: how many of the held came in on this roll. */
+  seats: { id: string; held: number[]; free: number[]; fresh?: number }[];
 }
 
 export interface TableCallbacks {
@@ -116,6 +119,40 @@ const SWAP_S = 0.8;
 const STOOD_AT = SEAT_R + 0.05 - 0.25;
 const STEP_IN = 0.4;
 const OUT_S = 1.0;
+/** A throw of the dice: seconds of the cup being shaken before they leave it, and from leaving it to coming to rest. */
+const SHAKE_S = 0.4;
+const THROW_S = 0.95;
+/** How far through a throw (0 to 1) a die lands, and each bounce after, and how high each bounce goes. */
+const LANDINGS = [0.36, 0.62, 0.8, 0.92];
+const BOUNCES = [0.07, 0.03, 0.01];
+
+/** A die in the air: where it left the cup and where it comes to rest (in its seat's frame), how it tumbles, and when. */
+interface Throw {
+  from: THREE.Vector3;
+  to: THREE.Vector3;
+  axis: THREE.Vector3;
+  turns: number;
+  delay: number;
+  /** Seconds since the throw was made, the shake included. */
+  t: number;
+}
+
+/** Height over its resting place a die is at, `k` of the way through a throw that began `drop` above it: an arc down to the felt, then a few bounces. */
+function throwHeight(k: number, drop: number): number {
+  if (k < LANDINGS[0]) {
+    const u = k / LANDINGS[0];
+    // Tossed a touch upward out of the cup, then falling.
+    return drop * (1 - u * u) + 0.05 * Math.sin(u * Math.PI);
+  }
+  for (let b = 0; b < BOUNCES.length; b++) {
+    if (k < LANDINGS[b + 1]) {
+      const u = (k - LANDINGS[b]) / (LANDINGS[b + 1] - LANDINGS[b]);
+      return BOUNCES[b] * 4 * u * (1 - u);
+    }
+  }
+  return 0;
+}
+
 const smoother = (t: number) => t * t * t * (t * (t * 6 - 15) + 10);
 const lambert = (color: string, emissive?: string) => new THREE.MeshLambertMaterial({ color, flatShading: true, emissive: emissive ?? "#000000" });
 /** A material showing a texture that also lights itself a little, so the art reads in the pub's dim light. */
@@ -396,8 +433,7 @@ interface Rig {
   tallyKey: string;
   info: SeatInfo | null;
   itemsKey: string;
-  /** Seconds left of a roll or a settle, for dice. */
-  roll: number;
+
 }
 
 const FACE_NORMAL: Record<number, THREE.Vector3> = {
@@ -443,6 +479,9 @@ export class TableStage implements WorldMinigame {
   /** A held ship, captain or crew: its picture on every face, so it reads the right way up from the seat whichever face is seen. */
   private dieIcons = new Map<number, THREE.Material[]>();
   private lastRoll = "";
+  /** The dice have been told what is on the table at least once: a change after that is a roll to be seen and heard, not the state you sat down to. */
+  private primed = false;
+  private lastReveal = "";
   private discGeo = new THREE.CylinderGeometry(DISC_R, DISC_R, DISC_T, 20);
 
   constructor(private world: WorldRenderer, private group: THREE.Group, private kind: TableKind, private cb: TableCallbacks) {
@@ -552,7 +591,7 @@ export class TableStage implements WorldMinigame {
     const items = new THREE.Group();
     rig.add(folk, ring, items);
     this.group.add(rig);
-    return { id, rig, folk, mine: false, sit: 1, seat, figure: null, plate, chip, tally, ring, items, yaw: 0, goal: 0, look: "", plateKey: "", chipKey: "", tallyKey: "", info: null, itemsKey: "", roll: 0 };
+    return { id, rig, folk, mine: false, sit: 1, seat, figure: null, plate, chip, tally, ring, items, yaw: 0, goal: 0, look: "", plateKey: "", chipKey: "", tallyKey: "", info: null, itemsKey: "" };
   }
 
   // ---------- what the panel tells it ----------
@@ -613,11 +652,11 @@ export class TableStage implements WorldMinigame {
       r.plate.scale.set(0.17 * aspect, 0.17, 1);
       r.plate.center.set(0.5, 0);
     }
-    const chipKey = info.chip ?? "";
+    const chipKey = `${info.chip ?? ""}|${info.chipInk ?? ""}`;
     if (r.chipKey !== chipKey) {
       r.chipKey = chipKey;
       if (info.chip) {
-        const t = this.own(chipTexture(info.chip, CHIP_COLOR[info.chip.split(" ")[0]] ?? "#a9d4fb"));
+        const t = this.own(chipTexture(info.chip, info.chipInk ?? CHIP_COLOR[info.chip.split(" ")[0]] ?? "#a9d4fb"));
         r.chip.material.map = t;
         r.chip.material.needsUpdate = true;
         r.chip.scale.set(0.18 * (t.image.width / t.image.height), 0.18, 1);
@@ -701,9 +740,41 @@ export class TableStage implements WorldMinigame {
     return { shown: this.dieMats, back: this.dieBack!, lit: this.dieLit! };
   }
 
+  /**
+   * Throw these dice (wrappers already standing where they will come to rest) from the seat's side
+   * of the table: after a shake of the cup, each flies out, lands, bounces and rolls to a stop on its
+   * face. The sounds are timed to it. `held` are set aside as they land, with a firmer clack; `yours`
+   * is louder than anyone else's throw.
+   */
+  private throwDice(wraps: THREE.Object3D[], opts: { held?: Set<THREE.Object3D>; yours: boolean }) {
+    if (wraps.length === 0) return;
+    const quiet = opts.yours ? 0 : -5;
+    sounds.table("shake", { gainDb: quiet });
+    wraps.forEach((wrap, i) => {
+      const to = wrap.position.clone();
+      // Out of the cup in your hand, over the near rim, a little to the side each.
+      const from = new THREE.Vector3(to.x * 0.4 + (Math.random() - 0.5) * 0.12, TOP + 0.26 + Math.random() * 0.06, STACK_Z + 0.42);
+      const axis = new THREE.Vector3(Math.random() - 0.5, Math.random() * 0.4, Math.random() - 0.5).normalize();
+      const delay = SHAKE_S + i * 0.05 + Math.random() * 0.03;
+      const held = !!opts.held?.has(wrap);
+      wrap.userData.throw = { from, to, axis, turns: 2 + Math.random() * 1.5, delay, t: 0 } satisfies Throw;
+      wrap.position.copy(from);
+      wrap.visible = false;
+      // A die coming to rest; a held one is set aside just after with a firmer clack.
+      sounds.table("settle", { delay: delay + THROW_S * 0.9, gainDb: quiet });
+      if (held) sounds.table("hold", { delay: delay + THROW_S + 0.12, gainDb: quiet });
+    });
+    sounds.table("roll", { delay: SHAKE_S + THROW_S * LANDINGS[0], gainDb: quiet });
+  }
+
   syncDice(scene: DiceScene | null) {
     const mats = this.dieMaterials();
-    const rolled = !!scene && scene.round !== this.lastRound;
+    const rolled = !!scene && scene.round !== this.lastRound && this.primed;
+    // Every die shown after a call: the cups come up.
+    const reveal = scene?.reveal ? `${scene.round}|${scene.reveal.face}` : "";
+    if (reveal && reveal !== this.lastReveal && this.primed) sounds.table("reveal");
+    this.lastReveal = reveal;
+    this.primed = true;
     if (scene) this.lastRound = scene.round;
     this.clickables = [];
     for (const r of this.rigs.values()) {
@@ -726,10 +797,9 @@ export class TableStage implements WorldMinigame {
         if (v > 0) die.quaternion.setFromUnitVectors(FACE_NORMAL[v], UP);
         die.rotateOnWorldAxis(UP, 0.5 + i * 1.7 + v);
         wrap.add(die);
-        wrap.userData.baseY = wrap.position.y;
         r.items.add(wrap);
       }
-      if (rolled) r.roll = 0.7;
+      if (rolled) this.throwDice([...r.items.children], { yours: r.mine });
     }
   }
 
@@ -743,7 +813,8 @@ export class TableStage implements WorldMinigame {
    */
   syncCrew(scene: CrewScene | null) {
     const mats = this.dieMaterials();
-    const rolled = !!scene && scene.rollKey !== this.lastRoll;
+    const rolled = !!scene && scene.rollKey !== this.lastRoll && this.primed;
+    this.primed = true;
     if (scene) this.lastRoll = scene.rollKey;
     this.clickables = [];
     const size = DIE * 0.85;
@@ -758,7 +829,10 @@ export class TableStage implements WorldMinigame {
       r.itemsKey = key;
       r.items.clear();
       if (!seat) continue;
-      const row = (values: number[], z: number, icon: boolean, spin: boolean) =>
+      const thrown: THREE.Object3D[] = [];
+      const held = new Set<THREE.Object3D>();
+      /** `spin`: how many of the row, from its end, were in this roll. */
+      const row = (values: number[], z: number, icon: boolean, spin: number) =>
         values.forEach((v, i) => {
           const s = icon ? big : size;
           const wrap = new THREE.Group();
@@ -770,13 +844,16 @@ export class TableStage implements WorldMinigame {
             die.rotateOnWorldAxis(UP, 0.5 + i * 1.7 + v);
           }
           wrap.add(die);
-          // Only the dice that were rolled tumble.
-          if (spin) wrap.userData.baseY = wrap.position.y;
           r.items.add(wrap);
+          // Only the dice that were in the roll are thrown: the cargo or the dice still looking, and whatever of ship, captain and crew came in on it.
+          if (i >= values.length - spin) {
+            thrown.push(wrap);
+            if (icon) held.add(wrap);
+          }
         });
-      row(seat.held, STACK_Z - 0.1, true, false);
-      row(seat.free, STACK_Z + 0.06, false, true);
-      if (tumble) r.roll = 0.7;
+      row(seat.held, STACK_Z - 0.1, true, tumble ? (seat.fresh ?? 0) : 0);
+      row(seat.free, STACK_Z + 0.06, false, tumble ? seat.free.length : 0);
+      if (tumble) this.throwDice(thrown, { held, yours: r.mine });
     }
   }
 
@@ -970,13 +1047,26 @@ export class TableStage implements WorldMinigame {
       const stand = r.mine ? STOOD_AT + (STEP_IN - STOOD_AT) * this.newShare() : STEP_IN;
       r.seat.position.set(0, SEAT_Y * on + Math.sin(r.sit * Math.PI) * 0.1 + (info?.won ? Math.abs(Math.sin(this.clock * 5)) * 0.06 : 0), -stand * (1 - on));
       r.figure?.update({ time: this.clock, stride: 0, walking: false, lean: 0, lying: false, sitting: r.sit });
-      if (r.roll > 0) r.roll = Math.max(0, r.roll - dt);
       for (const wrap of r.items.children) {
-        if (wrap.userData.baseY === undefined || wrap.userData.pulse) continue;
-        // A roll: spin and hop, settling.
-        const k = r.roll / 0.7;
-        wrap.rotation.y = k * k * 9;
-        wrap.position.y = wrap.userData.baseY + Math.abs(Math.sin(k * 7)) * k * 0.12;
+        const th = wrap.userData.throw as Throw | undefined;
+        if (!th) continue;
+        th.t += dt;
+        const k = Math.min(1, Math.max(0, (th.t - th.delay) / THROW_S));
+        // Still in the cup until its moment comes.
+        wrap.visible = th.t >= th.delay;
+        // Out over the felt, slowing as it goes; down onto the cloth, then smaller and smaller bounces.
+        const go = 1 - (1 - k) ** 3;
+        wrap.position.x = th.from.x + (th.to.x - th.from.x) * go;
+        wrap.position.z = th.from.z + (th.to.z - th.from.z) * go;
+        wrap.position.y = th.to.y + throwHeight(k, th.from.y - th.to.y);
+        // Tumbling the whole way, the turn running out just as it stops on the face it rolled.
+        wrap.quaternion.setFromAxisAngle(th.axis, (1 - k) ** 2 * th.turns * Math.PI * 2);
+        if (k >= 1) {
+          wrap.position.copy(th.to);
+          wrap.quaternion.identity();
+          wrap.visible = true;
+          delete wrap.userData.throw;
+        }
       }
     }
     for (const o of this.clickables) {
