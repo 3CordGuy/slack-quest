@@ -191,6 +191,8 @@ export function CrewTable({ table, you, gold, error, lastXp, looks, world, host,
     const caption = !table ? "No game" : table.phase === "open" ? `Seating: ${stakeText(table.ante)}` : table.phase === "done" ? "Game over" : `${!regular ? "Roll-off" : rounds > 1 ? `Round ${table.round} of ${rounds}` : table.round > 1 ? `Round ${table.round}` : "Playing"}: ${table.pot > 0 ? `pot ${table.pot} gold` : "free game"}`;
     const main = !table || table.phase === "open" ? {}
       : table.phase === "done" ? { main: table.pot > 0 ? `${table.prize} gold` : "Won" }
+      // Done for this round while others still roll: what you brought home, not dice you no longer have.
+      : !myTurn ? { main: !mine || mine.forfeited ? "watching" : !mine.contending ? "sitting out" : mine.score === null ? "waiting" : mine.score > 0 ? `cargo ${mine.score}` : (lossChip(mine) ?? "no cargo") }
       : table.cargo !== null ? { main: table.kraken ? `cargo ${table.cargo}?` : `cargo ${table.cargo}` }
       : loading ? { main: "no captain" }
       : { main: rollsLeft(left) };
