@@ -107,7 +107,7 @@ export function withSelf(infos: (SeatInfo | undefined)[], you: string, looks: Re
 }
 
 /** The pieces of a seat's look that do not depend on the game. */
-export function seatInfo(s: { id: string; name: string }, look: SeatLook | undefined, rest: Pick<SeatInfo, "turn" | "out" | "won" | "chip" | "chipInk" | "pips" | "stars">): SeatInfo {
+export function seatInfo(s: { id: string; name: string }, look: SeatLook | undefined, rest: Pick<SeatInfo, "turn" | "out" | "won" | "chip" | "chipInk" | "crate" | "pips" | "stars">): SeatInfo {
   return { id: s.id, name: s.name, classId: look?.classId ?? "npc", outfit: look?.outfit, ...rest };
 }
 

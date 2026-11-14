@@ -42,8 +42,8 @@ function Needs({ held }: { held: number }) {
   );
 }
 
-/** What a seat's last turn came to, over their head: the scoreboard. */
-const scoreChip = (s: CrewSeatView) => (s.score === null ? null : s.score > 0 ? `cargo ${s.score}` : s.lost === "kraken" ? "kraken" : "adrift");
+/** A turn that came to nothing, said over their head. A cargo goes in a crate by their name instead. */
+const lossChip = (s: CrewSeatView) => (s.score === 0 ? (s.lost === "kraken" ? "kraken" : "adrift") : null);
 
 export function CrewTable({ table, you, gold, error, lastXp, looks, world, host, send }: Props) {
   const [rules, setRules] = useState(false);
@@ -122,11 +122,12 @@ export function CrewTable({ table, you, gold, error, lastXp, looks, world, host,
       const out = !!table && table.phase !== "open" && (s.forfeited || (playing && !s.contending));
       const won = table?.phase === "done" && table.winner === s.id;
       const turn = playing && table!.turn === s.id;
-      // The scoreboard is over everyone's heads: each cargo as it is made, the best of the round so far in gold, a lost one in red.
-      const scored = s.contending ? scoreChip(s) : null;
-      const chip = won ? "winner" : out ? (s.forfeited ? "left" : "out") : table?.phase === "open" && s.id === table.host ? "opened" : turn ? "to play" : scored;
-      const chipInk = chip !== scored || s.score === null ? undefined : s.score === 0 ? "#f08a8a" : s.score === best ? "#ffd23f" : "#a9d4fb";
-      return seatInfo(s, looks?.[s.id], { turn, out, won, chip, chipInk });
+      // The scoreboard is by everyone's names: each cargo in a crate as it is made, the best of the round gold-banded, and a lost one said in red over their head.
+      const lost = s.contending ? lossChip(s) : null;
+      const chip = won ? "winner" : out ? (s.forfeited ? "left" : "out") : table?.phase === "open" && s.id === table.host ? "opened" : turn ? "to play" : lost;
+      const chipInk = chip && chip === lost ? "#f08a8a" : undefined;
+      const crate = (s.contending || won) && s.score !== null && s.score > 0 ? { score: s.score, lead: s.score === best } : undefined;
+      return seatInfo(s, looks?.[s.id], { turn, out, won, chip, chipInk, crate });
     });
     stage.setSeats(placement.chairs, withSelf(infos, you, looks));
     const lt = table?.lastThrow;
@@ -215,7 +216,7 @@ export function CrewTable({ table, you, gold, error, lastXp, looks, world, host,
               const kept = keep.includes(i);
               return (
                 <button key={i} type="button" className={`crew-die${kept ? " kept" : ""}${kraken ? " kraken" : ""}`} aria-pressed={kept} disabled={!canKeep} title={kraken ? "A Kraken: roll it away, or it takes your cargo" : kept ? "Kept: click to roll it again" : "Click to keep this die"} onClick={() => toggle(i)}>
-                  <img className="pixel-icon" src={kraken ? crewFaceUrl(1) : dieFaceUrl(d, kept)} width={36} height={36} alt={kraken ? "Kraken" : String(d)} draggable={false} />
+                  <img className="pixel-icon" src={d === 1 || d === 5 || d === 6 ? crewFaceUrl(d) : dieFaceUrl(d, kept)} width={36} height={36} alt={kraken ? "Kraken" : String(d)} draggable={false} />
                   <span>{kept ? "keep" : "roll"}</span>
                 </button>
               );
@@ -239,12 +240,13 @@ export function CrewTable({ table, you, gold, error, lastXp, looks, world, host,
       </div>
       {rules && (
         <ol className="td-rules muted">
+          <li><strong>The dice:</strong> the 6 is printed with a ship, the 5 with a captain and the 1 with the Kraken; 2, 3 and 4 are plain pips. A ship or captain in your cargo just counts 6 or 5.</li>
           <li><strong>The idea:</strong> on your turn you roll five dice, up to {CREW_ROLLS} times. First you need a <em>6 (the ship)</em>, then a <em>5 (the captain)</em>. Each is set aside as soon as you roll it, and a 5 does not count until you have your 6. A lucky roll brings in both at once.</li>
           <li><strong>Cargo:</strong> once ship and captain are in, your other three dice are the cargo, and they add up to your score (up to 18).</li>
           <li><strong>The choice:</strong> with rolls left, click the cargo dice you want to keep (on the table or below), and roll the rest again. Or press <strong>Stand</strong> to end your turn on what you have.</li>
           <li><strong>The Kraken:</strong> a 1 in your cargo is the Kraken. You can roll it again, but if a Kraken is still there when your rolls run out, it takes your whole cargo and you score nothing. You cannot stand with one showing. Every die you roll again could raise your score or bring up a Kraken, so the more you chase, the more you risk.</li>
           <li><strong>No ship and captain, no score:</strong> run out of rolls before you have both, and you score nothing too.</li>
-          <li><strong>Winning:</strong> when everyone has had a turn, the highest cargo takes the pot (the house keeps 10%). The scores so far are over everyone's heads, the best in gold. If the best is tied, only those tied roll again. If nobody scored, everyone rolls again.</li>
+          <li><strong>Winning:</strong> when everyone has had a turn, the highest cargo takes the pot (the house keeps 10%). The scores so far are in the crates by everyone's names, the best banded in gold. If the best is tied, only those tied roll again. If nobody scored, everyone rolls again.</li>
         </ol>
       )}
     </div>
