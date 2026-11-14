@@ -18,7 +18,7 @@ import { catchIcon } from "./render/catchArt";
 import { units } from "./units";
 import { useAudioScene } from "./audio/useAudioScene";
 import type { HexPos } from "@gantt-quest/core";
-import { FURNISHINGS, besideHexes, coveredHexes, hutPath, isBeside, useOf, useProblem, type FurnishingUse, craftProblem, footprintCentre, footprintOf, hexCentre, hexSpan, hutDoor, hutPerks, hutRoom, hutTier, isFlat, isMounted, isSmall, nextHutTier, placeProblem, placedFurnishings, poiAt, smallPlaceProblem, turnOf, upgradeProblem, wallPlaceProblem, wrapAngle, type Furnishing } from "@gantt-quest/world";
+import { FURNISHINGS, besideHexes, coveredHexes, hutPath, isBeside, useOf, useProblem, type FurnishingUse, craftProblem, footprintCentre, furnitureSellPrice, sellFurnitureProblem, footprintOf, hexCentre, hexSpan, hutDoor, hutPerks, hutRoom, hutTier, isFlat, isMounted, isSmall, nextHutTier, placeProblem, placedFurnishings, poiAt, smallPlaceProblem, turnOf, upgradeProblem, wallPlaceProblem, wrapAngle, type Furnishing } from "@gantt-quest/world";
 import { api, type Hut, type Me } from "./api";
 import { CrewRoster } from "./CrewRoster";
 import { DragPanel } from "./DragPanel";
@@ -148,6 +148,8 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
   /** The owner's materials, blueprints and gold. Re-read after anything is spent. */
   const [own, setOwn] = useState<Hut | null>(null);
   const [busy, setBusy] = useState(false);
+  /** The stored piece whose Sell was clicked once: a second click sells it. */
+  const [selling, setSelling] = useState<number | null>(null);
   /** Why the room (or the rules, before asking it) said no; shown for a few seconds. */
   const [refusal, setRefusal] = useState<string | null>(null);
   /** The last thing done or refused, shown in the panel it happened in. */
@@ -572,6 +574,24 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
     setSelected(null);
     setHolding((h) => (h === id ? null : id));
   };
+  /** What is kept in or stands on a piece: a container must be empty before the stall takes it. */
+  const contentsOf = (id: number) =>
+    furnishings.filter((f) => f.inId === id || f.onId === id).length +
+    (own?.stash.filter((s) => s.containerId === id).length ?? 0) +
+    (own?.stowed.filter((g) => g.containerId === id).length ?? 0);
+  /** Sell a stored piece back to the stall: the first click asks, the second sells. */
+  const sell = (f: Furnishing) => {
+    if (selling !== f.id) return setSelling(f.id);
+    setSelling(null);
+    if (holding === f.id) setHolding(null);
+    setBusy(true);
+    setNote(null);
+    void api
+      .sellFurniture(f.id)
+      .then(({ gold }) => setNote({ where: "storage", text: `Sold the ${f.label} for ${gold} gold.`, ok: true }))
+      .catch((e: Error) => setNote({ where: "storage", text: e.message, ok: false }))
+      .finally(() => void Promise.all([loadOwn(), refresh()]).finally(() => setBusy(false)));
+  };
   /** Gear or materials in or out of a container: then re-read the hut and the bag. */
   const act = (fn: () => Promise<unknown>) => {
     setNote(null);
@@ -684,10 +704,25 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
               <h4>{heading as string}</h4>
               <ul className="hut-list">
                 {(list as Furnishing[]).map((f) => (
-                  <li key={f.id}>
+                  <li key={f.id} className="hut-stored">
                     <button className={holding === f.id ? "selected" : ""} title={`${blurb("furnishing", f.defId)} Pick it up to place it.`} onClick={() => pick(f.id)}>
                       <ThingIcon icon={furnishingIcon(f.defId)} size={27} />{f.label}{tags(f.defId).filter((t) => t !== "small").map((t) => <span key={t} className="tag">{t}</span>)}
                     </button>
+                    {mine && furnitureSellPrice(f.defId) !== null && (() => {
+                      const problem = sellFurnitureProblem(f, contentsOf(f.id));
+                      const asking = selling === f.id;
+                      return (
+                        <button
+                          className={`small ${asking ? "danger" : ""}`}
+                          disabled={busy || !!problem}
+                          title={problem ?? `Sell it back to the market stall for ${furnitureSellPrice(f.defId)} gold, half what it costs there.`}
+                          onClick={() => sell(f)}
+                          onBlur={() => asking && setSelling(null)}
+                        >
+                          {asking ? `Sell for ${furnitureSellPrice(f.defId)}g?` : `Sell ${furnitureSellPrice(f.defId)}g`}
+                        </button>
+                      );
+                    })()}
                   </li>
                 ))}
               </ul>

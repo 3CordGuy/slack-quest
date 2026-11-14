@@ -46,6 +46,7 @@ import {
   refreshHarbor,
   refreshHut,
   saveDraft,
+  sellFurniture,
   sellItem,
   sellMaterial,
   spendPoint,
@@ -371,6 +372,17 @@ app.post("/api/shop/furniture", async (c) => {
   // If they are somehow inside their hut (another tab), its storage list updates.
   c.executionCtx.waitUntil(refreshHut(c.env, player.id));
   return c.json({ ok: true });
+});
+
+// Sell a stored piece of furniture back to the stall, for half its stall price.
+app.post("/api/shop/furniture/sell", async (c) => {
+  const player = c.get("player");
+  const body = await c.req.json<{ furnishingId?: unknown }>().catch(() => ({}) as { furnishingId?: unknown });
+  const result = await sellFurniture(c.env.DB, player.id, body.furnishingId);
+  if (typeof result === "string") return c.json({ error: result }, 409);
+  // Written to D1 above; now the room they are standing in drops the piece from storage.
+  await refreshHut(c.env, player.id);
+  return c.json({ gold: result });
 });
 
 // ---------- huts ----------

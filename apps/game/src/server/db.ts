@@ -7,6 +7,8 @@ import {
   HUT_TIERS,
   applyXp,
   buyFurnitureProblem,
+  furnitureSellPrice,
+  sellFurnitureProblem,
   craftProblem,
   displacedFurnishings,
   equipProblem,
@@ -1216,6 +1218,43 @@ export async function buyFurniture(db: D1Database, playerId: string, defId: stri
   if (problem) return problem;
   const res = await db.batch([...spendStatements(db, playerId, FURNISHINGS[defId].price!, {}), paidFurnishingStatement(db, playerId, defId)]);
   return res[res.length - 1].meta.changes > 0 ? null : "Not enough gold.";
+}
+
+/**
+ * Sell a stored piece of furniture back to the market stall, for half what
+ * the stall charges for it (furnitureSellPrice). Returns the gold paid, or an
+ * error. The piece and the gold move in one batch: the delete re-checks that
+ * it is still in storage, empty, with nothing on it or hung on it, and the
+ * gold is only paid if the delete went through.
+ */
+export async function sellFurniture(db: D1Database, playerId: string, furnishingId: unknown): Promise<number | string> {
+  const id = Number(furnishingId);
+  if (!Number.isSafeInteger(id)) return "You do not own that.";
+  const c = await getCharacter(db, playerId);
+  if (c?.status !== "active") return "Create a character first.";
+  const row = await db
+    .prepare(
+      `SELECT def_id AS defId, q, in_id AS inId, meta_json AS meta, ${usedSql("?2")} + (SELECT COUNT(*) FROM furnishings WHERE on_id = ?2 AND player_id = ?1) AS used
+       FROM furnishings WHERE id = ?2 AND player_id = ?1`,
+    )
+    .bind(playerId, id)
+    .first<{ defId: string; q: number | null; inId: number | null; meta: string | null; used: number }>();
+  const fish = row ? ((JSON.parse(row.meta || "{}") as { fish?: unknown }).fish ?? null) : null;
+  const problem = sellFurnitureProblem(row ? { defId: row.defId, q: row.q, inId: row.inId, fish } : undefined, row?.used ?? 0);
+  if (problem) return problem;
+  const gold = furnitureSellPrice(row!.defId)!;
+  const [gone] = await db.batch([
+    db
+      .prepare(
+        `DELETE FROM furnishings WHERE id = ?2 AND player_id = ?1 AND q IS NULL AND in_id IS NULL AND def_id = ?3
+           AND ${usedSql("?2")} = 0
+           AND NOT EXISTS (SELECT 1 FROM furnishings WHERE on_id = ?2 AND player_id = ?1)
+           AND NOT EXISTS (SELECT 1 FROM fish WHERE furnishing_id = ?2 AND player_id = ?1)`,
+      )
+      .bind(playerId, id, row!.defId),
+    db.prepare("UPDATE characters SET gold = gold + ?2 WHERE player_id = ?1 AND status = 'active' AND changes() > 0").bind(playerId, gold),
+  ]);
+  return gone.meta.changes > 0 ? gold : "That has already changed. Try again.";
 }
 
 /**
