@@ -2581,6 +2581,25 @@ export class WorldRenderer {
         // A darker band round the rim so the bin reads as a box, not a block.
         add(box(W + 0.02, 0.04, T + 0.01), lambert("#5e4026"), 0, H - 0.02, 0.25 + D / 2);
         const fill = Math.max(0, Math.min(1, poi.fill ?? 0));
+        // The shack itself rises behind the bin as it fills: a slab, then the frame, then walls, then rafters.
+        if (fill >= 0.2) {
+          const frame = lambert("#7a5230");
+          const wall = lambert("#c9a877");
+          const late = fill >= 0.8;
+          const ph = late ? 0.62 : 0.4;
+          const wh = late ? 0.52 : 0.3;
+          add(box(0.8, 0.05, 0.4), lambert("#9a958a"), 0, 0.025, -0.1);
+          const posts: [number, number][] = [[-0.38, -0.28], [0.38, -0.28], [-0.38, 0.08], [0.38, 0.08]];
+          if (fill >= 0.4) for (const [x, z] of posts) add(box(0.06, ph, 0.06), frame, x, 0.05 + ph / 2, z);
+          if (fill >= 0.6) {
+            add(box(0.7, wh, 0.04), wall, 0, 0.05 + wh / 2, -0.28);
+            for (const x of [-0.38, 0.38]) add(box(0.04, wh, 0.32), wall, x, 0.05 + wh / 2, -0.1);
+          }
+          if (late) for (const x of [-0.25, 0, 0.25]) {
+            add(box(0.04, 0.04, 0.26), frame, x, 0.78, -0.2).rotation.x = -0.7;
+            add(box(0.04, 0.04, 0.26), frame, x, 0.78, -0.02).rotation.x = 0.7;
+          }
+        }
         if (fill > 0) {
           // Planks on the left, stones on the right, rising together; full, they heap over the rim.
           const top = 0.03 + fill * (H + 0.06);
@@ -3025,6 +3044,45 @@ export class WorldRenderer {
       case "apothecary":
       case "smithy":
       case "galley": {
+        const siteFill = Math.max(0, Math.min(1, poi.fill ?? 0));
+        if (!poi.cleared && siteFill > 0) {
+          // Under construction: the building rises as the crew pays in. Foundation first, then the frame and low walls,
+          // then full walls with the roof's rafters going on, in the trade's own colours.
+          const stage = siteFill >= 0.67 ? 3 : siteFill >= 0.34 ? 2 : 1;
+          const wallMat = lambert(poi.kind === "apothecary" ? "#d9ccb0" : "#8a6a44");
+          const roofMat = lambert(poi.kind === "apothecary" ? "#2f5a3a" : poi.kind === "galley" ? "#a0522d" : "#4a4f5a");
+          const timber = lambert("#7a5230");
+          add(box(1.04, 0.1, 0.76), lambert("#9a958a"), 0, 0.05, 0);
+          const corners: [number, number][] = [[-0.46, -0.32], [0.46, -0.32], [-0.46, 0.32], [0.46, 0.32]];
+          if (stage === 1) {
+            // A bare foundation, with the corner stakes and the first courses of the back wall.
+            for (const [x, z] of corners) add(box(0.06, 0.3, 0.06), timber, x, 0.25, z);
+            add(box(0.9, 0.16, 0.05), wallMat, 0, 0.18, -0.32);
+          } else if (stage === 2) {
+            // Posts to full height, the back and side walls half up, a cross beam on top.
+            for (const [x, z] of corners) add(box(0.07, 0.56, 0.07), timber, x, 0.38, z);
+            add(box(0.9, 0.3, 0.05), wallMat, 0, 0.25, -0.32);
+            for (const x of [-0.46, 0.46]) add(box(0.05, 0.3, 0.6), wallMat, x, 0.25, 0);
+            add(box(1.0, 0.05, 0.05), timber, 0, 0.68, -0.32);
+          } else {
+            // Walls to the eaves, the front open for the door, and bare rafters where the roof will sit.
+            for (const [x, z] of corners) add(box(0.07, 0.64, 0.07), timber, x, 0.42, z);
+            add(box(0.9, 0.52, 0.05), wallMat, 0, 0.36, -0.32);
+            for (const x of [-0.46, 0.46]) add(box(0.05, 0.52, 0.6), wallMat, x, 0.36, 0);
+            add(box(0.9, 0.06, 0.05), timber, 0, 0.7, 0.32);
+            for (const x of [-0.3, 0, 0.3]) {
+              add(box(0.04, 0.04, 0.8), timber, x, 0.74, 0).rotation.x = 0;
+              add(box(0.04, 0.04, 0.36), timber, x, 0.84, -0.17).rotation.x = -0.6;
+              add(box(0.04, 0.04, 0.36), timber, x, 0.84, 0.17).rotation.x = 0.6;
+            }
+            // A few roof slabs already laid on the back slope.
+            add(box(0.9, 0.04, 0.2), roofMat, 0, 0.82, -0.22).rotation.x = -0.6;
+          }
+          // Materials waiting by the door: planks and squared stone, thinner the nearer it is to done.
+          for (let i = 0; i < (stage === 3 ? 1 : 3); i++) add(box(0.5, 0.05, 0.12), lambert(i % 2 ? "#c9a877" : "#8a6a44"), -0.28, 0.03 + i * 0.05, 0.5 + i * 0.01, 0.15 * i);
+          for (const [x, z] of stage === 3 ? [[0.4, 0.52]] : [[0.3, 0.5], [0.42, 0.55], [0.36, 0.52]]) add(box(0.14, 0.12, 0.14), lambert("#959eac"), x, 0.06, z, 0.3);
+          break;
+        }
         if (!poi.cleared) {
           // Still a crew project: a fenced building site with the materials stacked inside it.
           const post = lambert("#7a5230");
