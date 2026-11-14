@@ -89,6 +89,14 @@ export function placeSeats<S extends { id: string }>(seats: S[], you: string, op
 }
 
 /**
+ * Who is drawn round the table: not anyone who walked away mid-game, and once a game is over only those still
+ * standing at the table (`present`), so a finished game does not keep showing players who have gone.
+ */
+export function drawnSeats<S extends { id: string; forfeited: boolean }>(seats: S[], phase: string | undefined, present: string[], you: string): S[] {
+  return seats.filter((s) => s.id === you || (!s.forfeited && (phase !== "done" || present.includes(s.id))));
+}
+
+/**
  * Slot 0 is yours even before you have joined a game, when no seat of the game's is: give it your own look, so
  * you are seen sitting down at the table rather than vanishing as the camera drops in.
  */
