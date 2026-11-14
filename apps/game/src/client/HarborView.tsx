@@ -30,6 +30,7 @@ import { WorksPanel } from "./works/WorksPanel";
 import { ApothecaryPanel, GalleyPanel, SmithyPanel } from "./works/WorkshopPanels";
 import { label } from "./labels";
 import { xpEvents } from "./xpEvents";
+import { useHotkey } from "./useHotkey";
 
 const same = (a: HexPos, b: HexPos) => a.q === b.q && a.r === b.r;
 /** "10 wood and 6 stone". */
@@ -44,6 +45,8 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
   const renderer = useRef<WorldRenderer | null>(null);
   const [hover, setHover] = useState<HexPos | null>(null);
   const [sheet, setSheet] = useState(false);
+  // "i" opens and closes the inventory, as the button in the top bar does.
+  useHotkey("i", () => setSheet((open) => !open), !!me.character);
   const [shop, setShop] = useState(false);
   const [notices, setNotices] = useState(false);
   const [spar, setSpar] = useState(false);
@@ -377,7 +380,7 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
           {me.player.email ? "Account" : <>Save<span className="wide-only"> progress</span></>}
         </button>
         {me.isAdmin && <button className="small" onClick={() => (location.hash = "#admin")}>Admin</button>}
-        <button className="small" onClick={() => setSheet(true)}>
+        <button className="small" title="Your gear and stats (I)" onClick={() => setSheet(true)}>
           Inventory<span className="wide-only"> · {me.character?.name}</span>{me.character && me.character.unspent_points > 0 ? " ●" : ""}
         </button>
         <OptionsMenu

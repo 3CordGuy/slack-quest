@@ -47,6 +47,7 @@ import { useRun, type RunConnection } from "./useRun";
 import { itemName, label } from "./labels";
 import { Icon } from "./items";
 import { GOLD_ICON, ThingIcon, dishIcon } from "./thingIcons";
+import { useHotkey } from "./useHotkey";
 
 /** The least time the ship is seen under way once she has sailed, before she makes landfall, so a quick story does not flash by. */
 const MIN_CROSSING_MS = 1200;
@@ -352,6 +353,12 @@ export function RunView({ code, me, refresh, onLeave }: { code: string; me: Me; 
   useEffect(() => {
     if (!ashore) setTradeWith(null);
   }, [ashore]);
+  // "i" opens and closes the inventory, as the top bar's button does: not during a fight, nor once the voyage is over.
+  useHotkey("i", () => {
+    if (inventory) return setInventory(false);
+    void refresh();
+    setInventory(true);
+  }, !!state && state.phase !== "battle" && state.phase !== "ended");
   // Dev-only handle for driving a run from the console or a test script.
   if (import.meta.env.DEV) (window as unknown as { __gq: unknown }).__gq = { state, send: run.send, World };
 
@@ -502,7 +509,7 @@ function TopBar({ state, code, status, onLeave, onAbandon, onInventory }: { stat
       {status !== "open" && <span className="bad">reconnecting…</span>}
       <span className="muted wide-only">{state.kind === "caverns" ? "Delve" : "Ship"} {code}</span>
       {state.phase !== "ended" && (
-        <button className="small" disabled={fighting} title={fighting ? "Not during a fight" : "Your gear and stats"} onClick={onInventory}>
+        <button className="small" disabled={fighting} title={fighting ? "Not during a fight" : "Your gear and stats (I)"} onClick={onInventory}>
           Inventory
         </button>
       )}
