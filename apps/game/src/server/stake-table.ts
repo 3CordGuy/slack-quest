@@ -231,6 +231,8 @@ export class StakeTable<G extends StakeGame, R extends { type: string }> {
   /** The pot to the winner, and a little Harbor XP with it, in one batch. Everyone in the pub sees the XP. */
   private async pay(game: G): Promise<void> {
     if (!game.winner) return;
+    // A free game pays nothing: no gold, and no Harbor XP either.
+    if (game.ante === 0) return;
     const xp = await prepareXp(this.env.DB, game.winner, HARBOR_XP.pubWin);
     const results = await this.env.DB.batch([
       this.env.DB.prepare("UPDATE characters SET gold = gold + ? WHERE player_id = ?").bind(this.rules.prize(game.pot), game.winner),

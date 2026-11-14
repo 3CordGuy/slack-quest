@@ -63,6 +63,8 @@ function addPlayer(id: string, name: string, gold: number) {
   sql.prepare("INSERT INTO characters (player_id, name, class_id, status, str, int_stat, vit, agi, dex, gold, created_at) VALUES (?, ?, 'cleric', 'active', 5, 5, 5, 5, 5, ?, 0)").run(id, name, gold);
 }
 const gold = (id: string) => (sql.prepare("SELECT gold FROM characters WHERE player_id = ?").get(id) as { gold: number }).gold;
+/** Harbor XP used today, or 0 with no record. */
+const harborXp = (id: string) => (sql.prepare("SELECT used FROM harbor_xp WHERE player_id = ?").get(id) as { used: number } | undefined)?.used ?? 0;
 
 beforeEach(() => {
   ({ sql, db } = openDb());
@@ -103,7 +105,7 @@ function room() {
 }
 
 describe("table stakes on the server", () => {
-  it("plays a free game with no gold at all, start to finish", async () => {
+  it("plays a free game with no gold and no Harbor XP, start to finish", async () => {
     const t = room();
     await t.ask(0, { type: "open", ante: 0 });
     await t.ask(1, { type: "sit" });
@@ -112,6 +114,7 @@ describe("table stakes on the server", () => {
     await t.walk();
     expect(t.last(0).table).toMatchObject({ phase: "done", winner: "ann" });
     expect([gold("ann"), gold("bob")]).toEqual([0, 1500]);
+    expect(harborXp("ann")).toBe(0);
   });
 
   it("opens at any whole stake up to the most, and pays the pot less the house's cut", async () => {
@@ -125,6 +128,8 @@ describe("table stakes on the server", () => {
     await t.walk();
     expect(t.last(0).table).toMatchObject({ phase: "done", winner: "ann" });
     expect(gold("ann")).toBe(63 + diceSplit(74).prize);
+    // A staked win still gives the usual Harbor XP.
+    expect(harborXp("ann")).toBeGreaterThan(0);
   });
 
   it("refuses a stake that is not a whole number from 0 to the most, or that the opener cannot cover", async () => {
