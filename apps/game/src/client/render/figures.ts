@@ -767,11 +767,18 @@ function lowHead(head: Part, look: Look, asleep: boolean, covered = false) {
  * Hair of each style, just outside a head of these rings: a cap down to the brow and a fall at the back,
  * longer or tied up or braided, or none. `covered` is a hat or helmet on top, which hides a bun.
  */
+/** The cap of hair over a head of these rings, from the brow up: what a helm or a hat goes over (see fitted). */
+function hairCap(rings: readonly Ring[]): Ring[] {
+  const cap = (y: number, by: number) => ringAt(rings, y).rx + by;
+  const capZ = (y: number, by: number) => ringAt(rings, y).rz + by;
+  return [[4.35, cap(4, 0.2), capZ(4, 0.21), -0.05], [5.3, cap(4.9, 0.22), capZ(4.9, 0.22), -0.1], [6.3, cap(6, 0.35), capZ(6, 0.35), -0.15], [6.95, 1.25, 1.25, -0.15]];
+}
+
 function lowHair(head: Part, hair: string, style: string, rings: readonly Ring[], covered: boolean) {
   if (style === "bald") return;
   const cap = (y: number, by: number) => ringAt(rings, y).rx + by;
   const capZ = (y: number, by: number) => ringAt(rings, y).rz + by;
-  head.loft(hair, [[4.35, cap(4, 0.2), capZ(4, 0.21), -0.05], [5.3, cap(4.9, 0.22), capZ(4.9, 0.22), -0.1], [6.3, cap(6, 0.35), capZ(6, 0.35), -0.15], [6.95, 1.25, 1.25, -0.15]]);
+  head.loft(hair, hairCap(rings));
   // The fall down the back: to the nape, or (long) on down between the shoulders, narrowing.
   const nape = ringAt(rings, 1.9);
   const levels: [y: number, rx: number, rz: number, from: number, to: number][] = [
@@ -1127,6 +1134,88 @@ const OVER_HAIR: Ring[] = [[3.95, 3.72, 3.42], [5.4, 3.66, 3.38, -0.05], [6.7, 2
 /** Rings made `by` larger all round. */
 const grown = (rings: readonly Ring[], by: number): Ring[] => rings.map(([y, rx, rz, dz = 0]) => [y, rx + by, rz + by, dz]);
 
+/** The rings of the head being dressed: its chosen shape, or the usual round one. */
+const headRings = (): readonly Ring[] => HEAD_RINGS[chosen?.headShape ?? "round"] ?? HEAD_RINGS.round;
+
+/** A head of these rings as headgear meets it: the face and jaw, and the cap of hair from the brow up. */
+const crownOf = (rings: readonly Ring[]): Ring[] => [...rings.filter((r) => r[0] < 4), ...hairCap(rings)];
+const ROUND_CROWN = crownOf(HEAD_RINGS.round);
+
+/** How much wider, deeper and further forward the head being dressed (with its hair) is than the round head, at height `y`. */
+function headDelta(y: number): { rx: number; rz: number; dz: number } {
+  const a = ringAt(crownOf(headRings()), y);
+  const b = ringAt(ROUND_CROWN, y);
+  return { rx: a.rx - b.rx, rz: a.rz - b.rz, dz: a.dz - b.dz };
+}
+
+/**
+ * Rings drawn round the usual round head (a helm, a hat's crown), fitted to the head being dressed: at each
+ * height moved out or in by as much as it (with its hair) is wider or narrower there, so a helm sits as close on
+ * a pear head's narrow crown or a square jaw as on a round one. Long spans are cut into shorter ones first, so
+ * the fit holds between the rings too (a squat head's crown falls away faster than a round one's).
+ */
+function fitted(rings: readonly Ring[]): Ring[] {
+  if (headRings() === HEAD_RINGS.round) return rings.slice();
+  const fine: Ring[] = [];
+  rings.forEach((r, i) => {
+    const next = rings[i + 1];
+    fine.push(r);
+    if (!next) return;
+    const steps = Math.ceil(Math.abs(next[0] - r[0]) / 0.45);
+    for (let k = 1; k < steps; k++) {
+      const t = k / steps;
+      fine.push([r[0] + (next[0] - r[0]) * t, r[1] + (next[1] - r[1]) * t, r[2] + (next[2] - r[2]) * t, (r[3] ?? 0) + ((next[3] ?? 0) - (r[3] ?? 0)) * t]);
+    }
+  });
+  const out: Ring[] = fine.map(([y, rx, rz, dz = 0]) => {
+    const d = headDelta(y);
+    return [y, rx + d.rx, rz + d.rz, dz + d.dz];
+  });
+  // Rigid: it curves over a dip in the head (a squat head's crown falling away), never in after it.
+  const rx = rounded(out.map((r) => [r[0], r[1]]));
+  const rz = rounded(out.map((r) => [r[0], r[2]]));
+  return out.map((r, i) => [r[0], rx[i], rz[i], r[3] ?? 0]);
+}
+
+/** The heights of a profile ([y, r] in order of y) lifted to the least that bows only outward: its upper hull. */
+function rounded(profile: [number, number][]): number[] {
+  const hull: [number, number][] = [];
+  for (const p of profile) {
+    while (hull.length >= 2) {
+      const [a, b] = [hull[hull.length - 2], hull[hull.length - 1]];
+      // Drop b if it lies on or under the line from a to p.
+      if ((b[0] - a[0]) * (p[1] - a[1]) - (b[1] - a[1]) * (p[0] - a[0]) >= 0) hull.pop();
+      else break;
+    }
+    hull.push(p);
+  }
+  return profile.map(([y, r]) => {
+    for (let i = 0; i + 1 < hull.length; i++) {
+      const [y0, r0] = hull[i];
+      const [y1, r1] = hull[i + 1];
+      if (y >= y0 && y <= y1) return Math.max(r, y1 === y0 ? Math.max(r0, r1) : r0 + ((r1 - r0) * (y - y0)) / (y1 - y0));
+    }
+    return r;
+  });
+}
+
+/** Points placed beside the usual round head, moved out (or in) with the side of the head being dressed. */
+const besideHead = (pts: Pt[]): Pt[] => pts.map(([x, y, z]) => [x + Math.sign(x) * headDelta(y).rx, y, z]);
+
+/**
+ * A plate over each cheek, from the brow band down to the jaw: hugging the side of the head being dressed,
+ * its foot a little in from its top as the face narrows to the chin.
+ */
+function cheekGuards(head: Part, c: string, top = 4.2, foot = 1.8) {
+  const at = (y: number, out: number) => ringAt(headRings(), y).rx + out;
+  for (const s of [-1, 1]) {
+    head.shape(c, [
+      [s * at(top, 0.2), top, 1.6], [s * at(top, 0.2), top, -1], [s * at(top, 0.62), top, 1.4], [s * at(top, 0.62), top, -0.8],
+      [s * at(foot, 0.16), foot, 1.15], [s * at(foot, 0.16), foot + 0.3, -0.6], [s * at(foot, 0.55), foot + 0.2, 0.9],
+    ]);
+  }
+}
+
 /**
  * The middle of one face of a loft (`sides` sides, see loftGeometry) at height `y`: the `k`th round from the
  * front (negative toward -x), and the turn about y that faces something along it. For laying plates, slits
@@ -1143,12 +1232,13 @@ function facet(rings: readonly Ring[], sides: number, y: number, k: number, out 
 
 /** A steel dome with a brow band, cheek guards and a crest: the paladin's helm, or (with a nasal) a diving helm. */
 function lowHelm(head: Part, c: string, band: string, crest: string, nasal = false) {
-  head.loft(c, OVER_HAIR, 10);
-  head.loft(band, [[3.85, 3.84, 3.54], [4.45, 3.82, 3.52, -0.02]], 10);
-  for (const s of [-1, 1]) head.shape(c, [[s * 3.5, 4.2, 1.6], [s * 3.5, 4.2, -1], [s * 3.2, 1.7, 1.2], [s * 3.2, 2, -0.6], [s * 3.95, 4.2, 1.4], [s * 3.95, 4.2, -0.8], [s * 3.7, 1.9, 0.9]]);
+  const dome = fitted(OVER_HAIR);
+  head.loft(c, dome, 10);
+  head.loft(band, fitted([[3.85, 3.84, 3.54], [4.45, 3.82, 3.52, -0.02]]), 10);
+  cheekGuards(head, c);
   head.shape(crest, sym([[0.42, 7.2, 2.2], [0.42, 8.7, 1.2], [0.42, 9.1, -0.6], [0.42, 8.3, -2.7], [0.42, 7, -2.6]]));
   if (nasal) {
-    const f = facet(OVER_HAIR, 10, 3.9, 0, 0.25);
+    const f = facet(dome, 10, 3.9, 0, 0.25);
     head.shape(c, sym([[0.38, 3.95, f.z], [0.3, 2.35, f.z + 0.45], [0, 2.2, f.z + 0.6], [0, 3.95, f.z + 0.2]]));
   }
 }
@@ -1168,13 +1258,18 @@ function lowHood(head: Part, c: string, rings: readonly Ring[], trim?: string) {
   const brow = 5.3;
   const mid = (brow + chin) / 2;
   const half = (brow - chin) / 2;
+  // As much wider as the face is anywhere from the chin to the brow than a round one (a square or pear jaw),
+  // so it is framed by the opening, not pushed through the sides; the crown follows a narrower top in.
+  let wide = 0;
+  for (let y = chin; y <= brow; y += 0.25) wide = Math.max(wide, ringAt(rings, y).rx - ringAt(HEAD_RINGS.round, y).rx);
+  const crown = Math.min(0, ringAt(rings, 4.9).rx - ringAt(HEAD_RINGS.round, 4.9).rx);
   // The opening stands out past the hair at the brow, so the face sits back inside the hood.
   const shell: Ring[] = [
-    [-3.3, 2.85, half, 0],
-    [-2.4, 3.65, half + 1, 0.45],
-    [-0.5, 4.05, 3.75, 3.5 - mid],
-    [1.5, 3.85, 3.55, 3.6 - mid],
-    [3, 2.75, 2.75, 3.9 - mid],
+    [-3.3, 2.85 + wide, half, 0],
+    [-2.4, 3.65 + wide, half + 1, 0.45],
+    [-0.5, 4.05 + wide, 3.75, 3.5 - mid],
+    [1.5, 3.85 + (wide + crown) / 2, 3.55 + crown, 3.6 - mid],
+    [3, 2.75 + crown, 2.75 + crown, 3.9 - mid],
     [4, 1.2, 1.2, 4.15 - mid],
     [4.5, 0.15, 0.15, 4.05 - mid],
   ];
@@ -1183,8 +1278,8 @@ function lowHood(head: Part, c: string, rings: readonly Ring[], trim?: string) {
   const lining: Ring[] = shell.slice(0, 3).map(([y, rx, rz, dz = 0]) => [y + 0.05, rx - 0.14, rz - 0.14, dz]);
   head.shell(tone(c, -0.32), lining, 12, { open: "both", inward: true }, 0, mid, 0, side);
   // A short mantle round the neck and over the shoulders, under the chin at the front.
-  head.loft(c, [[-1.15, 3.95, 3.5, 0.1], [-0.4, 3.8, 3.35, 0.05], [0.15, 3, 2.5, -0.4]], 12);
-  if (trim) head.shell(trim, [[-3.45, 2.99, half + 0.12, 0], [-3.12, 2.99, half + 0.12, 0]], 12, { open: "both" }, 0, mid, 0, side);
+  head.loft(c, [[-1.15, 3.95 + wide, 3.5, 0.1], [-0.4, 3.8 + wide, 3.35, 0.05], [0.15, 3 + wide, 2.5, -0.4]], 12);
+  if (trim) head.shell(trim, [[-3.45, 2.99 + wide, half + 0.12, 0], [-3.12, 2.99 + wide, half + 0.12, 0]], 12, { open: "both" }, 0, mid, 0, side);
 }
 
 /** The headgear a class, townsperson or enemy has by default, rounded to go with low-poly heads. */
@@ -1196,10 +1291,10 @@ function lowHat(head: Part, look: Look) {
       return;
     case "wizard": {
       // A wide brim just over the brows, a band, and a tall crown that bends back to its tip.
-      head.loft(look.accent, [[4.3, 5.3, 5.05, -0.05], [4.68, 5.3, 5.05, -0.05]], 14);
-      head.loft(look.body, [[4.5, 3.82, 3.52, -0.05], [6.2, 3.22, 2.97, -0.15], [7.8, 2.25, 2.05, -0.4], [9.3, 1.3, 1.2, -0.85], [10.5, 0.55, 0.55, -1.5], [11.1, 0.1, 0.1, -1.95]], 10);
-      head.loft(tone(look.body, -0.08), [[4.65, 3.86, 3.56, -0.05], [5.3, 3.72, 3.44, -0.08]], 10);
-      const f = facet(OVER_HAIR, 10, 5, 0, 0.3);
+      head.loft(look.accent, fitted([[4.3, 5.3, 5.05, -0.05], [4.68, 5.3, 5.05, -0.05]]), 14);
+      head.loft(look.body, fitted([[4.5, 3.82, 3.52, -0.05], [6.2, 3.22, 2.97, -0.15], [7.8, 2.25, 2.05, -0.4], [9.3, 1.3, 1.2, -0.85], [10.5, 0.55, 0.55, -1.5], [11.1, 0.1, 0.1, -1.95]]), 10);
+      head.loft(tone(look.body, -0.08), fitted([[4.65, 3.86, 3.56, -0.05], [5.3, 3.72, 3.44, -0.08]]), 10);
+      const f = facet(fitted(OVER_HAIR), 10, 5, 0, 0.3);
       head.shape(look.accent, sym([[0, 5.55, f.z], [0.5, 5, f.z], [0, 4.45, f.z], [0, 5, f.z + 0.25]]));
       return;
     }
@@ -1208,61 +1303,69 @@ function lowHat(head: Part, look: Look) {
       return;
     case "leaves": {
       // A wreath: a band of twigs, leaves round it, and a berry.
-      head.loft(tone(look.accent, -0.3), [[4.4, 3.8, 3.5], [4.85, 3.8, 3.5]], 10);
+      head.loft(tone(look.accent, -0.3), fitted([[4.4, 3.8, 3.5], [4.85, 3.8, 3.5]]), 10);
+      const d = headDelta(4.85);
       for (let i = 0; i < 10; i++) {
         const a = (i / 10) * Math.PI * 2;
-        head.ball(i % 2 ? look.accent : tone(look.accent, -0.1), 0.95, Math.sin(a) * 3.85, 4.85 + (i % 2) * 0.3, Math.cos(a) * 3.55, 0, [1.25, 0.5, 1.25]);
+        head.ball(i % 2 ? look.accent : tone(look.accent, -0.1), 0.95, Math.sin(a) * (3.85 + d.rx), 4.85 + (i % 2) * 0.3, Math.cos(a) * (3.55 + d.rz) + d.dz, 0, [1.25, 0.5, 1.25]);
       }
-      head.ball("#c8433d", 0.55, 1.5, 5.35, 3.3, 1);
+      head.ball("#c8433d", 0.55, 1.5 + d.rx * 0.4, 5.35, 3.3 + d.rz + d.dz, 1);
       return;
     }
     case "feather": {
       // A soft cap pushed back, a band, and a long feather sweeping up behind.
       const c = look.body;
-      head.loft(c, [[4.2, 3.84, 3.54], [5.2, 3.9, 3.6, -0.15], [6.3, 3.35, 3.1, -0.4], [7, 2.15, 2.05, -0.65], [7.35, 0.6, 0.6, -0.8]], 10);
-      head.loft(tone(c, -0.08), [[4.12, 3.9, 3.6], [4.6, 3.92, 3.62]], 10);
+      head.loft(c, fitted([[4.2, 3.84, 3.54], [5.2, 3.9, 3.6, -0.15], [6.3, 3.35, 3.1, -0.4], [7, 2.15, 2.05, -0.65], [7.35, 0.6, 0.6, -0.8]]), 10);
+      head.loft(tone(c, -0.08), fitted([[4.12, 3.9, 3.6], [4.6, 3.92, 3.62]]), 10);
       head.shape(look.accent, [[-2.3, 5.6, -1.6], [-2.75, 5.6, -1.8], [-3.2, 8.4, -2.9], [-3.55, 9.6, -3.6], [-3.8, 10.6, -4.5], [-3.0, 8.6, -2.5], [-2.9, 7.4, -2.1]]);
       return;
     }
     case "circlet": {
-      head.loft(look.accent, [[4.3, 3.66, 3.36], [4.75, 3.66, 3.36]], 10);
-      const f = facet([[4.3, 3.66, 3.36], [4.75, 3.66, 3.36]], 10, 4.5, 0, 0.2);
+      const band = fitted([[4.3, 3.66, 3.36], [4.75, 3.66, 3.36]]);
+      head.loft(look.accent, band, 10);
+      const f = facet(band, 10, 4.5, 0, 0.2);
       head.glowBall("#7fe3ff", 0.55, 0, 4.6, f.z);
       return;
     }
     case "brim": {
       // A round crown on a wide brim, the hair showing under it.
       const c = look.hatColor ?? look.body;
-      head.loft(c, [[4.9, 5.5, 5.3, -0.05], [5.25, 5.5, 5.3, -0.05]], 14);
-      head.loft(c, [[5, 3.62, 3.35, -0.05], [6.6, 3.35, 3.1, -0.1], [7.9, 3.05, 2.82, -0.12], [8.3, 2.4, 2.25, -0.12], [8.45, 0.5, 0.5, -0.12]], 10);
-      head.loft(look.accent, [[5.25, 3.7, 3.42, -0.05], [5.9, 3.62, 3.36, -0.07]], 10);
+      head.loft(c, fitted([[4.9, 5.5, 5.3, -0.05], [5.25, 5.5, 5.3, -0.05]]), 14);
+      head.loft(c, fitted([[5, 3.62, 3.35, -0.05], [6.6, 3.35, 3.1, -0.1], [7.9, 3.05, 2.82, -0.12], [8.3, 2.4, 2.25, -0.12], [8.45, 0.5, 0.5, -0.12]]), 10);
+      head.loft(look.accent, fitted([[5.25, 3.7, 3.42, -0.05], [5.9, 3.62, 3.36, -0.07]]), 10);
       return;
     }
     case "turban": {
       const c = look.hatColor ?? look.accent;
-      head.loft(c, [[4, 3.8, 3.5], [5, 4.18, 3.88, -0.1], [6.4, 3.92, 3.62, -0.15], [7.4, 2.8, 2.6, -0.15], [7.95, 1, 1, -0.1]], 10);
-      head.loft(tone(c, -0.08), [[5.6, 4.15, 3.85, -0.12], [6.05, 4.05, 3.75, -0.14]], 10);
+      head.loft(c, fitted([[4, 3.8, 3.5], [5, 4.18, 3.88, -0.1], [6.4, 3.92, 3.62, -0.15], [7.4, 2.8, 2.6, -0.15], [7.95, 1, 1, -0.1]]), 10);
+      head.loft(tone(c, -0.08), fitted([[5.6, 4.15, 3.85, -0.12], [6.05, 4.05, 3.75, -0.14]]), 10);
       head.ball(c, 1.15, 0.6, 7.95, -0.3, 1);
-      const f = facet([[5, 4.18, 3.88, -0.1], [6.4, 3.92, 3.62, -0.15]], 10, 5.5, 0, 0.2);
+      const f = facet(fitted([[5, 4.18, 3.88, -0.1], [6.4, 3.92, 3.62, -0.15]]), 10, 5.5, 0, 0.2);
       head.ball(look.accent, 0.55, 0, 5.5, f.z, 0);
       return;
     }
     case "kerchief": {
       // Tied close over the hair, knotted at the back with two tails.
       const c = look.hatColor ?? look.accent;
-      head.loft(c, grown(OVER_HAIR, -0.05), 10);
-      head.ball(tone(c, -0.08), 0.7, 0, 4.9, -3.55, 1);
-      head.shape(c, [[0.15, 4.9, -3.5], [0.65, 4.9, -3.65], [1.45, 2.9, -3.75], [1.95, 3.05, -3.75], [1.7, 2.6, -3.85]]);
-      head.shape(tone(c, -0.08), [[-0.15, 4.9, -3.5], [-0.6, 4.9, -3.65], [-0.95, 3.3, -3.75], [-1.4, 3.4, -3.75]]);
+      head.loft(c, fitted(grown(OVER_HAIR, -0.05)), 10);
+      // The knot and its tails stay on the back of the head, however deep it is.
+      const d = headDelta(4.9);
+      const back = d.dz - d.rz;
+      head.ball(tone(c, -0.08), 0.7, 0, 4.9, -3.55 + back, 1);
+      head.shape(c, [[0.15, 4.9, -3.5 + back], [0.65, 4.9, -3.65 + back], [1.45, 2.9, -3.75 + back], [1.95, 3.05, -3.75 + back], [1.7, 2.6, -3.85 + back]]);
+      head.shape(tone(c, -0.08), [[-0.15, 4.9, -3.5 + back], [-0.6, 4.9, -3.65 + back], [-0.95, 3.3, -3.75 + back], [-1.4, 3.4, -3.75 + back]]);
       return;
     }
     case "greathelm": {
       // A great helm over the whole head, its front pushed out over the nose, a slit for the eyes, breaths
       // below, and a crest.
       const c = look.hatColor ?? "#8b95a5";
-      const helm: Ring[] = [[0.1, 3.1, 2.95, 0.55], [1.4, 3.88, 3.55, 0.6], [3.2, 3.98, 3.62, 0.45], [5.4, 3.8, 3.5, -0.05], [6.7, 3.05, 2.85, -0.1], [7.5, 1.75, 1.6, -0.1], [7.85, 0.4, 0.4, -0.1]];
+      // Down past the chin of a long face or a pointed one.
+      const low = Math.min(0, headRings()[0][0] - 0.35);
+      // Its front out over the nose, and deep enough behind to close over the hair at the nape.
+      const helm = fitted([[0.1 + low, 3.1, 3.2, 0.3], [1.4, 3.88, 3.8, 0.35], [3.2, 3.98, 3.87, 0.2], [5.4, 3.8, 3.55, -0.1], [6.7, 3.05, 2.85, -0.1], [7.5, 1.75, 1.6, -0.1], [7.85, 0.4, 0.4, -0.1]]);
       head.loft(c, helm, 10);
-      head.loft(tone(c, -0.1), [[0, 3.2, 3.05, 0.55], [0.5, 3.45, 3.25, 0.58]], 10);
+      head.loft(tone(c, -0.1), fitted([[low, 3.2, 3.3, 0.3], [0.5 + low, 3.45, 3.5, 0.33]]), 10);
       for (const k of [-1, 0, 1]) {
         const f = facet(helm, 10, 3.3, k, 0.02);
         head.box(OUTLINE, 2.1, 0.5, 0.3, f.x, 3.3, f.z, [0, f.turn, 0]);
@@ -1273,10 +1376,10 @@ function lowHat(head: Part, look: Look) {
       return;
     }
     case "horns": {
-      head.loft(look.accent, [[4.3, 3.74, 3.44], [4.8, 3.74, 3.44]], 10);
+      head.loft(look.accent, fitted([[4.3, 3.74, 3.44], [4.8, 3.74, 3.44]]), 10);
       for (const s of [-1, 1]) {
         // Each horn curls out and up from the band.
-        head.loft(look.accent, [[0, 0.85, 0.85], [1.2, 0.7, 0.7, 0.25], [2.3, 0.45, 0.45, 0.8], [3.1, 0.12, 0.12, 1.5]], 6, s * 3.2, 5.2, 0, [0, 0, -s * 0.7]);
+        head.loft(look.accent, [[0, 0.85, 0.85], [1.2, 0.7, 0.7, 0.25], [2.3, 0.45, 0.45, 0.8], [3.1, 0.12, 0.12, 1.5]], 6, s * (3.2 + headDelta(5.2).rx), 5.2, 0, [0, 0, -s * 0.7]);
       }
       return;
     }
@@ -1292,7 +1395,7 @@ function lowWornHelmet(head: Part, helmet: { ref: string; icon: string }, trim: 
   }
   if (helmet.ref === "visor" || helmet.icon === "brutal-helm") {
     // Horned iron down over the eyes, a dark visor, one eye alight and a spyglass over the other.
-    const helm: Ring[] = [[2.2, 3.82, 3.55, 0.12], [3.95, 3.86, 3.56], [5.4, 3.74, 3.46, -0.05], [6.7, 3.02, 2.82, -0.1], [7.5, 1.7, 1.6, -0.1], [7.8, 0.35, 0.35, -0.1]];
+    const helm = fitted([[2.2, 3.82, 3.55, 0.12], [3.95, 3.86, 3.56], [5.4, 3.74, 3.46, -0.05], [6.7, 3.02, 2.82, -0.1], [7.5, 1.7, 1.6, -0.1], [7.8, 0.35, 0.35, -0.1]]);
     head.loft(GEAR.iron, helm, 10);
     for (const k of [-1, 0, 1]) {
       const f = facet(helm, 10, 3, k, 0.02);
@@ -1303,8 +1406,8 @@ function lowWornHelmet(head: Part, helmet: { ref: string; icon: string }, trim: 
     head.cyl(GEAR.gold, 0.7, 0.55, 1.8, -0.8, 3, front.z + 0.8, 8, [HALF_PI, 0, 0]);
     head.glowBall(trim, 0.42, -0.8, 3, front.z + 1.75);
     for (const s of [-1, 1]) {
-      head.shape(GEAR.iron, [[s * 3.35, 2.4, 1.3], [s * 3.4, 2.4, -1.2], [s * 2.95, 0.9, 0.8], [s * 3.05, 1, -0.6], [s * 3.8, 2.4, 1], [s * 3.75, 2.2, -0.9]]);
-      head.loft(GEAR.bone, [[0, 0.85, 0.85], [1.2, 0.7, 0.7, 0.25], [2.3, 0.45, 0.45, 0.75], [3.1, 0.1, 0.1, 1.4]], 6, s * 3.3, 5.9, 0, [0, 0, -s * 0.55]);
+      head.shape(GEAR.iron, besideHead([[s * 3.35, 2.4, 1.3], [s * 3.4, 2.4, -1.2], [s * 2.95, 0.9, 0.8], [s * 3.05, 1, -0.6], [s * 3.8, 2.4, 1], [s * 3.75, 2.2, -0.9]]));
+      head.loft(GEAR.bone, [[0, 0.85, 0.85], [1.2, 0.7, 0.7, 0.25], [2.3, 0.45, 0.45, 0.75], [3.1, 0.1, 0.1, 1.4]], 6, s * (3.3 + headDelta(5.9).rx), 5.9, 0, [0, 0, -s * 0.55]);
     }
     return;
   }
