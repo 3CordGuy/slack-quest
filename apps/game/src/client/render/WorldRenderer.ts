@@ -26,6 +26,7 @@ import { Rise } from "./rise";
 import { NIGHT, VEIL_CLEAR_S, Veil } from "./veil";
 import { GROUND_KIND, addFancyWater, addWaterRipple, setGroundWet, setWaterNight, setWaterStanding, shoreSide, updateWater, waterAttribute, type Standing } from "./water";
 import { ghostModel, propModel, tintGhost, type LightKind } from "./props";
+import { LAMP_TABLES, TableLamps } from "./tableLamps";
 import { nearWater, openEar, sounds } from "../audio/gameSounds";
 import type { AttackStyle, Fighter } from "../audio/names";
 import { PUFFS, footfalls, stepGround, worldToHex } from "./footsteps";
@@ -617,6 +618,8 @@ export class WorldRenderer {
   private ambience: Ambience;
   private decor = new THREE.Group();
   private poiGroup = new THREE.Group();
+  /** The lanterns over the pub's game tables. Hung in poiGroup, and rebuilt with it. */
+  private tableLamps = new TableLamps();
   private poiSig = "";
   private propGroup = new THREE.Group();
   private propSig = "";
@@ -857,6 +860,7 @@ export class WorldRenderer {
     this.storm.dispose();
     this.outlookMap?.dispose();
     this.ambience.dispose();
+    this.tableLamps.clear();
     this.endMinigame();
     this.post?.dispose();
     this.renderer.dispose();
@@ -1844,6 +1848,16 @@ export class WorldRenderer {
     for (const obj of [u.root, u.label, u.ring]) if (obj) obj.visible = true;
   }
 
+  /** Move the lantern over a pub game table across to the seated table that takes its place (0 the room's, 1 the seated one). */
+  slideTableLamp(id: string, k: number) {
+    this.tableLamps.slide(id, k);
+  }
+
+  /** Flare the lantern over a pub game table up by `amount` (0.3 a lift, 1 or more a blaze), settling over about `fade` seconds. */
+  flareTableLamp(id: string, amount: number, fade = 1) {
+    this.tableLamps.flare(id, amount, fade);
+  }
+
   /** A point of interest's model, by id, for a scene that moves one about itself (the crew's ship at sea). */
   poiObject(id: string): THREE.Object3D | undefined {
     return this.poiGroup.children.find((g) => g.userData.poiId === id);
@@ -1980,6 +1994,8 @@ export class WorldRenderer {
     if (sig === this.poiSig) return;
     this.poiSig = sig;
     this.poiGroup.clear();
+    this.tableLamps.clear();
+    this.poiGroup.add(this.tableLamps.group);
     // What stands in the water, for the fancy sea to foam round. Each model sits a little back from its hex's middle.
     const standing: Standing[] = [];
     for (const poi of state.map.pois) {
@@ -2007,11 +2023,14 @@ export class WorldRenderer {
         if (o instanceof THREE.Mesh) o.castShadow = o.receiveShadow = !o.userData.glow;
       });
       this.poiGroup.add(g);
+      // A game table in a room (the pub's): a lantern hung over it.
+      if (state.indoors && LAMP_TABLES.has(poi.kind)) this.tableLamps.hang(poi.id, poi.pos, at);
       if (g.userData.smoke) stacks.push((g.userData.smoke as THREE.Vector3).clone().add(g.position));
       if (g.userData.beacon) beacon = (g.userData.beacon as THREE.Vector3).clone().add(g.position);
       for (const glow of (g.userData.glows as BuildingGlow[] | undefined) ?? []) glows.push({ ...glow, pos: glow.pos.clone().add(g.position) });
       panes.push(...((g.userData.panes as THREE.MeshBasicMaterial[] | undefined) ?? []));
     }
+    this.ambience.setTableLamps(this.tableLamps.lights());
     this.ambience.setSmoke(stacks);
     this.ambience.setBeacon(beacon);
     this.ambience.setGlows(glows, panes);
@@ -4830,6 +4849,9 @@ export class WorldRenderer {
       const mine = this.state?.you ? this.units.get(this.state.you) : undefined;
       if (mine && this.minigame.game.ownHero?.()) for (const obj of [mine.root, mine.label, mine.ring]) if (obj) obj.visible = true;
     }
+    // The table lanterns burn brighter over a table someone is standing at.
+    const heroes = this.state?.heroes;
+    this.tableLamps.update(dt, (hex) => !!heroes?.some((h) => h.pos.q === hex.q && h.pos.r === hex.r));
     this.ambience.update(this.clock, this.yaw, this.target, this.state?.you ? this.units.get(this.state.you)?.root.position : undefined);
     // Sounds are heard from where your hero stands, or from the middle of the view without one.
     const ear = (this.state?.you ? this.units.get(this.state.you)?.root.position : undefined) ?? this.target;

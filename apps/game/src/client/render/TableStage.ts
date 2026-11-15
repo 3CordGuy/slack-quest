@@ -653,6 +653,8 @@ export class TableStage implements WorldMinigame {
   /** Things that are on the table only for a moment: a line from a player to whoever they played on, a card called out, a clash. */
   private fx = new THREE.Group();
   private lineGeo = new THREE.BoxGeometry(0.014, 0.004, 1).translate(0, 0, 0.5);
+  /** Whether anyone had won when the seats were last set; null before they have been. */
+  private wonSeen: boolean | null = null;
   private ringGeo = new THREE.RingGeometry(0.075, 0.092, 28);
 
   constructor(private world: WorldRenderer, private group: THREE.Group, private kind: TableKind, private cb: TableCallbacks) {
@@ -769,6 +771,10 @@ export class TableStage implements WorldMinigame {
 
   /** Everyone at the table, slot 0 being your own seat. A slot with nobody is an empty stool. */
   setSeats(chairs: number, placed: (SeatInfo | undefined)[]) {
+    // A game seen to be won (not one found won as you sat down): the lantern over the table blazes up.
+    const won = placed.some((p) => !!p?.won);
+    if (won && this.wonSeen === false) this.flare(1.1, 1.8, 0.25);
+    this.wonSeen = won;
     if (this.chairs !== chairs) {
       this.chairs = chairs;
       this.buildStools(chairs);
@@ -1339,6 +1345,17 @@ export class TableStage implements WorldMinigame {
     }
   }
 
+  /** The lantern over the table flares up by `amount` after `delay` seconds, settling over about `fade` (see WorldRenderer.flareTableLamp). */
+  private flare(amount: number, fade: number, delay = 0) {
+    if (delay <= 0) return this.world.flareTableLamp(this.kind, amount, fade);
+    let lit = false;
+    this.addFx(new THREE.Object3D(), delay, 0.05, () => {
+      if (lit) return;
+      lit = true;
+      this.world.flareTableLamp(this.kind, amount, fade);
+    });
+  }
+
   /** Put `o` on the table for `life` seconds, starting after `delay`; `tick` is told how far through it is, 0 to 1. */
   private addFx(o: THREE.Object3D, delay: number, life: number, tick: (k: number) => void) {
     o.userData.fx = { t: -delay, life, tick };
@@ -1593,6 +1610,8 @@ export class TableStage implements WorldMinigame {
     }
     if (swapped) this.word("swapped", "#ffd23f", BURIED_AT, 0.24, 0.5, 1.2);
     if (showing) sounds.table("reveal", { delay: after });
+    // The hand taken: the lantern lifts as the winners' cards rise.
+    if (showing && scene!.winners.length > 0) this.flare(0.8, 1.1, after + 0.3 * inHand + 0.35);
     if (dealing) sounds.table("hold", { delay: 0.25 });
 
     let shownIx = 0;
@@ -1731,6 +1750,8 @@ export class TableStage implements WorldMinigame {
     if (this.leaving) this.swap = Math.min(this.swap, this.inT / 0.3);
     else if (this.arrived) this.swap = Math.min(1, this.swap + dt / SWAP_S);
     this.showSwap();
+    // The lantern over the table moves across with it, to hang over the one you sit at.
+    this.world.slideTableLamp(this.kind, smoother(this.swap));
     this.inT = this.leaving ? Math.max(0, this.inT - dt / OUT_S) : this.swap >= 1 ? Math.min(1, this.inT + dt / IN_S) : 0;
     if (this.leaving && this.inT <= 0) setTimeout(() => this.finish(), 0);
     this.animate(dt);
@@ -1747,6 +1768,8 @@ export class TableStage implements WorldMinigame {
 
   private animate(dt: number) {
     const ease = 1 - Math.exp(-dt * 7);
+    /** A die came to rest this frame. */
+    let landed = false;
     for (const r of this.rigs.values()) {
       // Turn to a new place round the table the short way.
       let d = r.goal - r.yaw;
@@ -1810,9 +1833,12 @@ export class TableStage implements WorldMinigame {
           wrap.scale.setScalar(1);
           wrap.visible = true;
           delete wrap.userData.throw;
+          landed = true;
         }
       }
     }
+    // Dice down on the cloth: the lantern catches, just for a moment.
+    if (landed) this.flare(0.45, 0.4);
     for (const o of [...this.fx.children]) {
       const f = o.userData.fx as { t: number; life: number; tick(k: number): void };
       f.t += dt;
@@ -1878,6 +1904,7 @@ export class TableStage implements WorldMinigame {
       this.old.scale.setScalar(1);
     }
     this.world.setSharp(false);
+    this.world.slideTableLamp(this.kind, 0);
     for (const r of this.rigs.values()) this.disposeRig(r);
     this.discGeo.dispose();
     this.cardGeo.dispose();

@@ -11,6 +11,7 @@ import * as THREE from "three";
 import { WIND_DIR, gustAt, windPower } from "./wind";
 import type { Tile } from "@gantt-quest/world";
 import type { LightKind } from "./props";
+import type { LampLight } from "./tableLamps";
 
 /** One full day, in milliseconds. */
 const DAY_MS = 10 * 60 * 1000;
@@ -388,6 +389,9 @@ const GLOW: Record<LightKind, { color: string; power: number; range: number; fli
   fire: { color: "#ff9548", power: 2.2, range: 5, flicker: true },
 };
 
+/** What a table lantern's light warms toward as it flares. */
+const FLARE_WHITE = new THREE.Color("#ffe9c2");
+
 export class Ambience {
   /** Everything built for the current map. */
   readonly group = new THREE.Group();
@@ -455,6 +459,9 @@ export class Ambience {
   private fadeGlows = Array.from({ length: FADE_GLOWS }, () => new THREE.PointLight("#ffb35c", 0, 4, 2));
   private lights: { pos: THREE.Vector3; kind: LightKind }[] = [];
   private flames: THREE.Mesh[] = [];
+  /** The lanterns over the pub's game tables: lit by the plain lights only, never a shadow slot. Their owner moves and brightens them. */
+  private tableLamps: LampLight[] = [];
+  private lampColor = new THREE.Color();
 
   private grass: THREE.InstancedMesh | null = null;
   private tufts: Tuft[] = [];
@@ -1117,6 +1124,14 @@ export class Ambience {
     this.stirAll();
   }
 
+  /**
+   * The lanterns hung over the pub's game tables (see TableLamps). They share the plain lights with the candles
+   * past the shadow slots, nearest first, so they never add a light or a shadow map. Same objects every frame.
+   */
+  setTableLamps(lamps: LampLight[]) {
+    this.tableLamps = lamps;
+  }
+
   /** Redraw every indoor shadow map on the next frame: the room itself changed (a piece, a wall, the lamp). */
   stirAll() {
     this.lamp.shadow.needsUpdate = true;
@@ -1256,19 +1271,25 @@ export class Ambience {
         const i = this.slotOf.indexOf(l);
         return i < 0 ? 1 : 1 - this.slotWeight[i];
       };
-      const rest = sorted.filter((l) => share(l) > 0.001);
+      // The table lanterns join them here, nearest first with the rest.
+      const rest: { pos: THREE.Vector3; color: THREE.ColorRepresentation; distance: number; decay: number; intensity: number }[] = [
+        ...sorted.filter((l) => share(l) > 0.001).map((l) => {
+          const look = this.roomLook(l, clock, motion);
+          return { pos: l.pos, ...look, intensity: look.intensity * share(l) };
+        }),
+        ...this.tableLamps.map((l) => ({ pos: l.pos, color: this.lampColor.set("#ffa64d").lerp(FLARE_WHITE, Math.min(1, l.flare * 0.6)).getHex(), distance: 3, decay: 2, intensity: l.power })),
+      ].sort(near);
       [...this.glows, ...this.fadeGlows].forEach((g, i) => {
         const l = rest[i];
         if (!l) {
           g.intensity = 0;
           return;
         }
-        const look = this.roomLook(l, clock, motion);
         g.position.copy(l.pos);
-        g.color.set(look.color);
-        g.distance = look.distance;
-        g.decay = look.decay;
-        g.intensity = look.intensity * share(l);
+        g.color.set(l.color);
+        g.distance = l.distance;
+        g.decay = l.decay;
+        g.intensity = l.intensity;
       });
       return;
     }
@@ -1650,9 +1671,11 @@ export class Ambience {
       this.sun.intensity = 0;
       // With a fire going, the lamp and fill step back so the room is not overlit.
       const fire = this.lights.some((l) => l.kind === "fire");
+      // Under the pub's table lanterns the room lamp is turned down a little, so each table sits in its own pool of light.
+      const pooled = this.tableLamps.length > 0 ? 0.75 : 1;
       if (this.lampOn) {
-        this.lamp.intensity = (fire ? 1.15 : 1.5) * (this.still ? 1 : 1 + Math.sin(clock * 7) * 0.035 + Math.sin(clock * 13.3) * 0.02);
-        this.hemi.intensity = fire ? 0.8 : 0.95;
+        this.lamp.intensity = (fire ? 1.15 : 1.5) * pooled * (this.still ? 1 : 1 + Math.sin(clock * 7) * 0.035 + Math.sin(clock * 13.3) * 0.02);
+        this.hemi.intensity = (fire ? 0.8 : 0.95) * (0.6 + 0.4 * pooled);
       } else {
         // Lamp out: a faint fill so the room never goes black, and the candles, lanterns and fires do the rest.
         this.lamp.intensity = 0;
