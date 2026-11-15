@@ -8,6 +8,8 @@
 //   Gold          add gold to your hero's purse, or take it away.
 //   Items         put a chosen piece of gear, or some of a material, in
 //                 your hero's pack, or take a material away.
+//   Figures       try the low-poly people (a prototype; render/figures.ts).
+//                 This browser only; it reloads the page.
 //
 // Gold and items are changed on the server (server/dev.ts), which refuses
 // outside a development deployment. They are your own hero's alone.
@@ -22,6 +24,7 @@ import { SkyAndSound } from "./audio/SoundButton";
 import { DragPanel } from "./DragPanel";
 import { itemName, label } from "./labels";
 import { PixelIcon } from "./PixelIcon";
+import { LOW_POLY_KEY } from "./render/figures";
 import { WRENCH } from "./ui/menuIcons";
 
 const OPEN_KEY = "gq.dev.readout";
@@ -30,6 +33,7 @@ const TABS = [
   ["sky", "Sky & sound"],
   ["gold", "Gold"],
   ["items", "Items"],
+  ["figures", "Figures"],
 ] as const;
 type Tab = (typeof TABS)[number][0];
 
@@ -82,10 +86,33 @@ export function DevToolbox({ me, refresh }: { me: Me; refresh(): Promise<void> }
           </div>
           {tab === "sky" && <SkyAndSound />}
           {tab === "gold" && <Seeding key="gold" me={me} refresh={refresh}>{(seed) => <GoldSeed me={me} seed={seed} />}</Seeding>}
+          {tab === "figures" && <FigureStyle />}
           {tab === "items" && <Seeding key="items" me={me} refresh={refresh}>{(seed) => <ItemSeed me={me} seed={seed} />}</Seeding>}
         </DragPanel>
       )}
     </>
+  );
+}
+
+/** Switch the people between their box models and the low-poly prototype. Every figure is built afresh, so it reloads. */
+function FigureStyle() {
+  const low = recall(LOW_POLY_KEY) === "1";
+  const flip = () => {
+    remember(LOW_POLY_KEY, low ? null : "1");
+    location.reload();
+  };
+  return (
+    <div className="dev-seed">
+      <p>
+        People are drawn <strong>{low ? "low-poly (prototype)" : "in boxes"}</strong>.
+      </p>
+      <p className="muted">The prototype covers the body, face, hair, plain clothes, the paladin's helm and the sword. Other hats, worn armor and weapons are still boxes.</p>
+      <div className="dev-row">
+        <button className="small primary" onClick={flip}>
+          {low ? "Back to boxes" : "Try low-poly"}
+        </button>
+      </div>
+    </div>
   );
 }
 

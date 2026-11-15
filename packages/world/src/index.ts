@@ -5,6 +5,7 @@ export * from "./rng";
 export * from "./check";
 export * from "./content";
 export * from "./gear";
+export * from "./appearance";
 export * from "./map";
 export * from "./caverns";
 export * from "./battle";

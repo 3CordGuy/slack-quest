@@ -33,7 +33,7 @@ import {
 import { api, type Me } from "./api";
 import { BattleHud } from "./BattleHud";
 import { toOwned } from "./items";
-import { spriteDataUrl } from "./render/sprites";
+import { spriteDataUrl, withOutfitLook } from "./render/sprites";
 import type { RenderState, WorldRenderer } from "./render/WorldRenderer";
 import "./spar.css";
 import { blurb, label } from "./labels";
@@ -59,7 +59,7 @@ function sheetOf(me: Me, id: string): HeroSheet {
     classId: c.class_id,
     level: c.level,
     base: { str: c.str, int_stat: c.int_stat, vit: c.vit, agi: c.agi, dex: c.dex },
-    ...gearSheet(c.class_id, worn),
+    ...withOutfitLook(gearSheet(c.class_id, worn), c.appearance),
     traits: parseTraits(c.traits),
   };
 }

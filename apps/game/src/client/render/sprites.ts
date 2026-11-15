@@ -4,7 +4,7 @@
 // (figures.ts) by portraits.ts.
 
 import * as THREE from "three";
-import { SLOTS, barPixels, healthBand, type HealthBand, type Outfit } from "@gantt-quest/world";
+import { SLOTS, appearanceKey, barPixels, parseAppearance, type Appearance, healthBand, type HealthBand, type Outfit } from "@gantt-quest/world";
 import { LOOKS, mergeLook, type Look, type LookPalette } from "./looks";
 import { PIXEL_LINE_ROWS, canDrawPixelText, drawPixelText, drawSmallDigits, pixelTextWidth } from "./pixelFont";
 import { portraitUrl } from "./portraits";
@@ -34,8 +34,19 @@ export function lookFor(kind: string): Look {
 
 /** What tells one figure from another: the kind plus whatever is being worn, whether they are asleep or fishing, and the overrides in force. */
 export function spriteKey(kind: string, outfit?: Outfit, asleep = false, rod: boolean | "gilded" = false): string {
-  const worn = outfit ? `|${SLOTS.map((s) => (outfit[s] ? `${outfit[s]!.ref}:${outfit[s]!.rarity[0]}` : "-")).join(",")}` : "";
+  const worn = outfit ? `|${SLOTS.map((s) => (outfit[s] ? `${outfit[s]!.ref}:${outfit[s]!.rarity[0]}` : "-")).join(",")}${outfit.appearance ? `|${appearanceKey(outfit.appearance)}` : ""}` : "";
   return `${kind}${worn}${asleep ? "|zz" : ""}${rod === "gilded" ? "|rodG" : rod ? "|rod" : ""}|r${revision}`;
+}
+
+/** An outfit with the hero's chosen look on it (a stored JSON string or an Appearance), if they have one. */
+export function withLook(outfit: Outfit, appearance: string | Appearance | null | undefined): Outfit {
+  const look = typeof appearance === "string" || appearance == null ? parseAppearance(appearance ?? null) : appearance;
+  return look ? { ...outfit, appearance: look } : outfit;
+}
+
+/** A hero sheet whose outfit carries their chosen look. */
+export function withOutfitLook<T extends { outfit?: Outfit }>(sheet: T, appearance: string | null | undefined): T {
+  return { ...sheet, outfit: withLook(sheet.outfit ?? {}, appearance) };
 }
 
 /**

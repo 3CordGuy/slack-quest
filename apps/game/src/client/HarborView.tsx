@@ -20,6 +20,7 @@ import { HudBar } from "./ui/Hud";
 import { Logbook } from "./Logbook";
 import { GatherPanel } from "./GatherPanel";
 import { HeroSheet, useHeroSheet } from "./HeroSheet";
+import { LOOK_CHANGED } from "./ChangeLook";
 import { InventoryScreen } from "./InventoryScreen";
 import { ShopScreen } from "./ShopScreen";
 import { SparView } from "./SparView";
@@ -216,6 +217,14 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
     await refresh();
     harbor.send({ type: "refresh" });
   };
+  // And after a new look, saved from their sheet (ChangeLook).
+  const refreshRef = useRef(refreshAll);
+  refreshRef.current = refreshAll;
+  useEffect(() => {
+    const onLook = () => void refreshRef.current();
+    window.addEventListener(LOOK_CHANGED, onLook);
+    return () => window.removeEventListener(LOOK_CHANGED, onLook);
+  }, []);
   const atShop = !!self && same(self.pos, HARBOR_SHOP);
   const atBoard = !!self && same(self.pos, HARBOR_BOARD);
   const atRing = !!self && same(self.pos, HARBOR_RING);
