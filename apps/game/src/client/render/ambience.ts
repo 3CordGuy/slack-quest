@@ -9,6 +9,7 @@
 
 import * as THREE from "three";
 import { devTools } from "../devTools";
+import { fancy } from "./fancy";
 import { WIND_DIR, gustAt, windPower } from "./wind";
 import type { Tile } from "@gantt-quest/world";
 import type { LightKind } from "./props";
@@ -369,6 +370,45 @@ export const SHADOW_SLOTS = 6;
  * A lit window or lantern on a building: a soft halo that comes up as the light goes, and, with `light`, one of the
  * plain lights outdoors (shared with the props' lights, so the light count never changes).
  */
+/**
+ * The light a lighthouse's lamp throws on the ironwork round it (the lantern's glazing bars, the gallery's posts
+ * and rails) as its beams turn: laid over the iron as a skin, added to what is there. Each point shines by how
+ * nearly a beam points at it from the lamp, so the highlight runs round the rails with the beam, and by how near
+ * the lamp it is. The ambience sets where the lamp is, which way the beams point and how strong the shine is
+ * (see `setBeacon` and `sweep`); until it does, nothing shows.
+ */
+export function beaconShine(): THREE.ShaderMaterial {
+  return new THREE.ShaderMaterial({
+    uniforms: { uCentre: { value: new THREE.Vector3() }, uTurn: { value: 0 }, uGain: { value: 0 }, uNear: { value: 0.17 }, uColor: { value: new THREE.Color("#ffe2a0") } },
+    vertexShader: /* glsl */ `
+      uniform vec3 uCentre;
+      varying vec2 vOut;
+      void main() {
+        vec4 world = modelMatrix * vec4(position, 1.0);
+        vOut = world.xz - uCentre.xz;
+        gl_Position = projectionMatrix * viewMatrix * world;
+      }`,
+    fragmentShader: /* glsl */ `
+      uniform float uTurn;
+      uniform float uGain;
+      uniform float uNear;
+      uniform vec3 uColor;
+      varying vec2 vOut;
+      void main() {
+        float far = max(length(vOut), 0.0001);
+        // Two beams, back to back: either one pointing this way counts.
+        float facing = abs(dot(vOut / far, vec2(cos(uTurn), -sin(uTurn))));
+        float shine = pow(facing, 14.0) * pow(min(1.0, uNear / far), 1.5) * uGain;
+        gl_FragColor = vec4(uColor * shine, 1.0);
+        #include <tonemapping_fragment>
+        #include <colorspace_fragment>
+      }`,
+    transparent: true,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    fog: false,
+  });
+}
 export type BuildingGlow = { pos: THREE.Vector3; /** The halo's width; 0 for a light with no halo. */ size: number; light?: LightKind };
 /** Shadow maps a moving hero may redraw in one frame. Others wait their turn (a frame or two), oldest first. */
 const MOVE_REDRAWS = 2;
@@ -495,7 +535,7 @@ export class Ambience {
    * A lighthouse's lamp: two soft beams turning slowly round it and a glow on the lantern. Additive meshes and a
    * sprite, no light of its own, so the light count never changes. Kept out of `group`, like the smoke.
    */
-  private beacon: { root: THREE.Group; spin: THREE.Group; beams: THREE.MeshBasicMaterial; glow: THREE.SpriteMaterial; halo: THREE.Sprite } | null = null;
+  private beacon: { root: THREE.Group; spin: THREE.Group; beams: THREE.MeshBasicMaterial; glow: THREE.SpriteMaterial; halo: THREE.Sprite; scale: number; shine?: THREE.ShaderMaterial } | null = null;
   /**
    * Buildings' lit windows and lanterns: additive halos that come up at dusk, and the window panes, which warm from
    * their daytime colour (`userData.unlit`) to their lit one (`userData.lit`) with them. Kept out of `group`, like the smoke.
@@ -1381,8 +1421,11 @@ export class Ambience {
    * Put a lighthouse's turning beam at `at` (the middle of its lantern), or take it away with null.
    * Each beam is an open cone lying on its side, apex in the lantern, coloured by a ramp that fades to black
    * along its length: drawn additively, black adds nothing, so it thins out to nothing with no hard end.
+   * `scale` is how big the tower is drawn (1 is the size it is modelled at): the beams and the lantern's glow
+   * grow with it, and the beams reach further again, well out over the water. `shine` is the light on the ironwork
+   * round the lamp (see `beaconShine`), which follows the beams round.
    */
-  setBeacon(at: THREE.Vector3 | null) {
+  setBeacon(at: THREE.Vector3 | null, scale = 1, shine?: THREE.ShaderMaterial) {
     if (this.beacon) {
       this.scene.remove(this.beacon.root);
       this.beacon.root.traverse((o) => {
@@ -1408,19 +1451,22 @@ export class Ambience {
     root.position.copy(at);
     const spin = new THREE.Group();
     root.add(spin);
-    const LENGTH = 3.4;
+    // A tower drawn bigger throws a longer beam, not only a fatter one.
+    const LENGTH = 3.4 * scale * (scale > 1 ? 1.6 : 1);
     for (const side of [1, -1]) {
-      const cone = new THREE.Mesh(new THREE.ConeGeometry(0.42, LENGTH, 14, 1, true), beams);
+      const cone = new THREE.Mesh(new THREE.ConeGeometry(0.5 * scale, LENGTH, 14, 1, true), beams);
       // Lay it on its side with the apex at the lantern, pointing out along x (and back, for the second beam).
       cone.rotation.z = (side * Math.PI) / 2;
       cone.position.x = (side * LENGTH) / 2;
-      // A touch below the lamp, so the beam reads as sweeping the water rather than the sky.
-      cone.position.y = -0.12;
+      // Level with the middle of the lantern's glass, so the beam leaves the lamp and clears the gallery's floor and rail.
+      cone.position.y = 0.06 * scale;
       cone.renderOrder = 2;
       spin.add(cone);
     }
     const glow = new THREE.SpriteMaterial({
-      map: ramp([[0, "#fff4cc"], [0.25, "#ffd77a"], [0.6, "#5a3f10"], [1, "#000000"]], 64, 64, true),
+      // A haze, not a ball of light: warm and dim at its middle, so the lamp, the glass and the dark bars across
+      // it still read through it, and fading out smoothly with no bright core of its own (the lamp is the core).
+      map: ramp([[0, "#a37c34"], [0.3, "#6e5120"], [0.65, "#261b09"], [1, "#000000"]], 64, 64, true),
       blending: THREE.AdditiveBlending,
       depthWrite: false,
       transparent: true,
@@ -1428,10 +1474,25 @@ export class Ambience {
     });
     const halo = new THREE.Sprite(glow);
     halo.renderOrder = 2;
+    // The glow is a flat sheet facing the eye. Left at the lamp, the near half of the lantern (its roof, its bars,
+    // the gallery rail) would cut it off along a hard line; so it is held just in front of the lantern, toward
+    // whoever is looking, and spills over the ironwork the way a bright lamp does. Anything nearer still hides it.
+    const reach = 0.45 * scale;
+    const toEye = new THREE.Vector3();
+    halo.onBeforeRender = (_renderer, _scene, camera) => {
+      toEye.setFromMatrixPosition(camera.matrixWorld).sub(root.position).normalize().multiplyScalar(reach);
+      halo.position.copy(toEye);
+      halo.updateMatrixWorld();
+    };
     root.add(halo);
     root.traverse((o) => (o.frustumCulled = false));
     this.scene.add(root);
-    this.beacon = { root, spin, beams, glow, halo };
+    if (shine) {
+      (shine.uniforms.uCentre.value as THREE.Vector3).copy(at);
+      // The glazing bars stand this far from the lamp: the brightest ironwork. Further out it is dimmer.
+      shine.uniforms.uNear.value = 0.17 * scale;
+    }
+    this.beacon = { root, spin, beams, glow, halo, scale, shine };
   }
 
   /** The lighthouse's beam turns slowly; faint by day, plain at dusk and night. */
@@ -1444,9 +1505,18 @@ export class Ambience {
     b.beams.opacity = 0.06 + 0.5 * dark;
     // The glow breathes very gently, and is barely there at noon.
     const breathe = this.still ? 1 : 0.92 + 0.08 * Math.sin(clock * 1.3);
-    b.glow.opacity = (0.18 + 0.72 * dark) * breathe;
-    const size = 0.8 + 0.5 * dark;
+    // With fancy graphics on, the finishing pass already makes the lamp glow: the haze and the glints are turned
+    // well down there, or the two together bury the lantern in light.
+    const soft = fancy.get();
+    b.glow.opacity = (0.12 + 0.5 * dark) * breathe * (soft ? 0.3 : 1);
+    const size = (0.75 + 0.35 * dark) * b.scale;
     b.halo.scale.set(size, size, 1);
+    // The ironwork round the lamp catches each beam as it comes by: brightest where a beam points straight at it,
+    // gone a bar or so to either side.
+    if (b.shine) {
+      b.shine.uniforms.uTurn.value = b.spin.rotation.y;
+      b.shine.uniforms.uGain.value = (0.07 + 0.38 * dark) * (soft ? 0.6 : 1);
+    }
   }
 
   /** Light buildings' windows and lanterns (see `BuildingGlow`), and warm these panes with the dusk. Empty lists clear them. */

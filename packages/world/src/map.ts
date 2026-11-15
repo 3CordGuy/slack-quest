@@ -50,6 +50,8 @@ export interface Tile {
   biome: Biome;
   /** Visual height of the hex prism, 0..1. */
   h: number;
+  /** A building stands on this hex (part of the ground a Harbor building takes up): it cannot be walked through. */
+  built?: boolean;
 }
 
 /**
@@ -134,7 +136,7 @@ export function describeBearing(from: HexPos, to: HexPos): string {
 // ---------- pathfinding ----------
 
 type CostFn = (tile: Tile) => number;
-const terrainCost: CostFn = (t) => MOVE_COST[t.biome];
+const terrainCost: CostFn = (t) => (t.built ? Infinity : MOVE_COST[t.biome]);
 
 interface Reached {
   cost: number;
