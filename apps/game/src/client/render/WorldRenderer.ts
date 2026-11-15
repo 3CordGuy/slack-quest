@@ -10,7 +10,7 @@ import * as THREE from "three";
 import { makeModelShip } from "./modelShip";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { reportEnv } from "../ui/env";
-import { Ambience, TILE_FILLET, TILE_RADIUS, hexTop, pixelTexture, stamp, type BuildingGlow } from "./ambience";
+import { Ambience, TILE_FILLET, TILE_RADIUS, beaconShine, hexTop, pixelTexture, stamp, type BuildingGlow } from "./ambience";
 import "./camera.css";
 import { PINCH_PAN_SLACK, followIconSvg, readFollow, writeFollow } from "./cameraFollow";
 import type { HexPos } from "@gantt-quest/core";
@@ -331,6 +331,35 @@ function gradientTexture(fill: (ctx: CanvasRenderingContext2D, size: number) => 
 
 const yawOf = (facing: number, angle = 0) => -((facing * Math.PI) / 3 + angle);
 const key = (p: HexPos) => `${p.q},${p.r}`;
+
+/**
+ * How a point of interest's model stands against its hex. Every model is made to fit one hex, with its middle
+ * `back` behind the hex's (0.28 unless said here). The Harbor's places are drawn bigger than that, so a hero
+ * looks the right size beside them: `scale` times as big, and far enough back that the building stands on the
+ * ground behind its door (see `footing` in the world's harbor.ts) with the hero on the doorstep in front.
+ */
+const PLACE: Partial<Record<Poi["kind"], { scale: number; back: number }>> = {
+  pub: { scale: 2.2, back: 1.6 },
+  lighthouse: { scale: 3, back: 3 },
+  works: { scale: 2, back: 1.8 },
+  shop: { scale: 2, back: 1.6 },
+  apothecary: { scale: 2, back: 1.7 },
+  smithy: { scale: 2, back: 1.7 },
+  galley: { scale: 2, back: 1.7 },
+  plot: { scale: 1.7, back: 1.4 },
+  lot: { scale: 2, back: 1.6 },
+  site: { scale: 2, back: 1.6 },
+  fishing: { scale: 1.6, back: 0.8 },
+  cave: { scale: 2.2, back: 1.3 },
+  board: { scale: 1.6, back: 0.45 },
+  ring: { scale: 1.5, back: 0.42 },
+  felling: { scale: 1.5, back: 0.42 },
+  quarry: { scale: 1.5, back: 0.42 },
+  rocks: { scale: 1.6, back: 0.45 },
+  wreck: { scale: 1.8, back: 0.5 },
+  pier: { scale: 1.8, back: 1.25 },
+};
+const placeOf = (poi: Poi) => PLACE[poi.kind] ?? { scale: 1, back: 0.28 };
 /** To the nearest thousandth, so offsets sent to the server stay short. */
 const round = (n: number) => Math.round(n * 1000) / 1000;
 /** Where the stools stand round a game table in the pub (its middle is at z = -0.3): four, as many as can play, clear of whoever stands at the front. */
@@ -1406,7 +1435,7 @@ export class WorldRenderer {
     const land = this.tiles.filter((t) => t.biome !== "water");
     // For the night life: where the grass is, and where the land lies.
     this.nightLife.setGrass(
-      this.tiles.filter((t) => t.biome === "plains" || t.biome === "forest").map((t) => {
+      this.tiles.filter((t) => (t.biome === "plains" || t.biome === "forest") && !t.built).map((t) => {
         const { x, z } = hexToWorld(t);
         return new THREE.Vector3(x, tileTop(t), z);
       }),
@@ -1489,7 +1518,8 @@ export class WorldRenderer {
     }
     this.ambience.build(
       this.tiles.filter((t) => !this.deep.has(key(t))),
-      (t) => poiKeys.has(key(t)),
+      // Nothing grows or lies about where a place stands, or under a building.
+      (t) => poiKeys.has(key(t)) || !!t.built,
       (t) => ({ ...hexToWorld(t), y: tileTop(t) }),
     );
     const instanced = (geometry: THREE.BufferGeometry, color: string, mats: THREE.Matrix4[]) => {
@@ -2040,16 +2070,21 @@ export class WorldRenderer {
     const standing: Standing[] = [];
     for (const poi of state.map.pois) {
       const { x, z } = hexToWorld(poi.pos);
-      if (poi.kind === "rocks") standing.push({ x: x - 0.05, z: z - 0.2, half: 0.25, radius: 0.5 });
-      else if (poi.kind === "wreck") standing.push({ x: x + 0.2, z: z - 0.2, half: 0.75, radius: 0.45 });
+      const { scale, back } = placeOf(poi);
+      /** Something in the model, by where it is modelled: where it stands in the world, and how big. */
+      const stands = (mx: number, mz: number, half: number, radius: number) => standing.push({ x: x + mx * scale, z: z + mz * scale - back, half: half * scale, radius: radius * scale });
+      if (poi.kind === "rocks") stands(-0.05, 0.08, 0.25, 0.5);
+      else if (poi.kind === "wreck") stands(0.2, 0.08, 0.75, 0.45);
       // A moored ship lies off the end of its pier.
-      else if (poi.kind === "pier") standing.push({ x, z: z + 1.47, half: 0.72, radius: 0.36 });
+      else if (poi.kind === "pier") stands(0, 1.75, 0.72, 0.36);
     }
     setWaterStanding(standing);
     /** Chimney tops, which the ambience draws smoke from. */
     const stacks: THREE.Vector3[] = [];
     /** A lighthouse's lantern, which the ambience turns a beam from. */
     let beacon: THREE.Vector3 | null = null;
+    let beaconScale = 1;
+    let shine: THREE.ShaderMaterial | undefined;
     /** Buildings' lit windows and lanterns, and the panes that warm at dusk. */
     const glows: BuildingGlow[] = [];
     const panes: THREE.MeshBasicMaterial[] = [];
@@ -2057,7 +2092,11 @@ export class WorldRenderer {
       const g = this.poiModel(poi);
       g.userData.poiId = poi.id;
       const at = this.standAt(poi.pos);
-      g.position.set(at.x, at.y, at.z - 0.28);
+      const { scale, back } = placeOf(poi);
+      g.position.set(at.x, at.y, at.z - back);
+      g.scale.setScalar(scale);
+      // A building bigger than its hex is pointed at as a whole: anywhere on it means its door.
+      if (scale > 1) g.userData.door = poi.pos;
       g.traverse((o) => {
         // A glow is light, not a solid: it neither casts nor takes a shadow.
         if (o instanceof THREE.Mesh) o.castShadow = o.receiveShadow = !o.userData.glow;
@@ -2065,14 +2104,20 @@ export class WorldRenderer {
       this.poiGroup.add(g);
       // A game table in a room (the pub's): a lantern hung over it.
       if (state.indoors && LAMP_TABLES.has(poi.kind)) this.tableLamps.hang(poi.id, poi.pos, at);
-      if (g.userData.smoke) stacks.push((g.userData.smoke as THREE.Vector3).clone().add(g.position));
-      if (g.userData.beacon) beacon = (g.userData.beacon as THREE.Vector3).clone().add(g.position);
-      for (const glow of (g.userData.glows as BuildingGlow[] | undefined) ?? []) glows.push({ ...glow, pos: glow.pos.clone().add(g.position) });
+      /** A point in the model, out in the world. */
+      const out = (p: THREE.Vector3) => p.clone().multiplyScalar(scale).add(g.position);
+      if (g.userData.smoke) stacks.push(out(g.userData.smoke as THREE.Vector3));
+      if (g.userData.beacon) {
+        beacon = out(g.userData.beacon as THREE.Vector3);
+        beaconScale = scale;
+        shine = g.userData.shine as THREE.ShaderMaterial | undefined;
+      }
+      for (const glow of (g.userData.glows as BuildingGlow[] | undefined) ?? []) glows.push({ ...glow, pos: out(glow.pos), size: glow.size * scale });
       panes.push(...((g.userData.panes as THREE.MeshBasicMaterial[] | undefined) ?? []));
     }
     this.ambience.setTableLamps(this.tableLamps.lights());
     this.ambience.setSmoke(stacks);
-    this.ambience.setBeacon(beacon);
+    this.ambience.setBeacon(beacon, beaconScale, shine);
     this.ambience.setGlows(glows, panes);
     // The sea breaks around rocks standing out of it, and the wreck on them.
     this.ambience.setSeaRocks(state.map.pois.filter((p) => p.kind === "rocks" || p.kind === "wreck").map((p) => this.standAt(p.pos)));
@@ -2384,7 +2429,7 @@ export class WorldRenderer {
     if (!state.props?.length) return undefined;
     // Small things are stepped over, and so are rugs.
     const blocked = new Set(state.props.filter((p) => !p.small && !p.mount && !p.flat && p.on === undefined).flatMap((p) => (p.covers ?? [p.pos]).map(key)));
-    return (t) => (blocked.has(key(t)) ? Infinity : MOVE_COST[t.biome]);
+    return (t) => (blocked.has(key(t)) || t.built ? Infinity : MOVE_COST[t.biome]);
   }
 
   /**
@@ -3622,11 +3667,12 @@ export class WorldRenderer {
         /** Something standing at a distance `d` from the tower's axis at angle `a` (0 is the front), turned to face out. */
         const onFace = (geo: THREE.BufferGeometry, m: THREE.Material, a: number, d: number, y: number) => add(geo, m, Math.sin(a) * d, y, Math.cos(a) * d, a);
         /** A ring of `n` straight pieces at radius `r`, height `y`, like a rail or a builder's line round the tower. */
-        const ring = (r: number, y: number, n: number, m: THREE.Material, thick: number, phase = 0) => {
+        const ring = (r: number, y: number, n: number, m: THREE.Material, thick: number, phase = 0, glow = false) => {
           const side = 2 * r * Math.sin(Math.PI / n);
           for (let i = 0; i < n; i++) {
             const b = phase + ((i + 0.5) / n) * Math.PI * 2;
-            add(box(side, thick, thick), m, Math.cos(b) * r * Math.cos(Math.PI / n), y, Math.sin(b) * r * Math.cos(Math.PI / n), -b - Math.PI / 2);
+            const length = add(box(side, thick, thick), m, Math.cos(b) * r * Math.cos(Math.PI / n), y, Math.sin(b) * r * Math.cos(Math.PI / n), -b - Math.PI / 2);
+            if (glow) length.userData.glow = true;
           }
         };
         const plinth = () => {
@@ -3715,12 +3761,24 @@ export class WorldRenderer {
           const gy = y;
           for (let i = 0; i < 8; i++) onFace(box(0.05, 0.08, 0.08), masonry, (i / 8) * Math.PI * 2, 0.24, gy - 0.03);
           add(new THREE.CylinderGeometry(0.33, 0.27, 0.07, 8), lambert("#4a4458"), 0, gy + 0.035, 0, TURN);
+          /**
+           * Ironwork the lamp shines on as its beam comes round: a thin skin of light over each bar, post and rail,
+           * dark until a beam points its way. All of it is one material, which lights each part by where it lies
+           * round the lamp, so the shine runs along a rail rather than switching on a length at a time (the
+           * ambience turns it with the beam; see `setBeacon`).
+           */
+          const shine = beaconShine();
+          const glint = (w: number, h: number, r: number, y: number, a: number) => (add(box(w, h, w), shine, Math.cos(a) * r, y, Math.sin(a) * r).userData.glow = true);
           for (let i = 0; i < 8; i++) {
             const a = (i / 8) * Math.PI * 2 + Math.PI / 8;
             add(box(0.02, 0.14, 0.02), iron, Math.cos(a) * 0.3, gy + 0.14, Math.sin(a) * 0.3);
+            glint(0.028, 0.15, 0.3, gy + 0.14, a);
           }
           ring(0.31, gy + 0.21, 8, iron, 0.022, Math.PI / 8);
           ring(0.31, gy + 0.14, 8, iron, 0.014, Math.PI / 8);
+          // The same two rails again, a little fatter, as their skin of light.
+          ring(0.31, gy + 0.21, 8, shine, 0.03, Math.PI / 8, true);
+          ring(0.31, gy + 0.14, 8, shine, 0.022, Math.PI / 8, true);
           // The lantern room: a red parapet, a warm core behind glass, and eight dark glazing bars.
           const ly = gy + 0.07;
           add(new THREE.CylinderGeometry(0.19, 0.2, 0.08, 8), lambert("#8c3b2f"), 0, ly + 0.04, 0, TURN);
@@ -3729,7 +3787,9 @@ export class WorldRenderer {
           for (let i = 0; i < 8; i++) {
             const a = (i / 8) * Math.PI * 2;
             add(box(0.018, 0.22, 0.018), iron, Math.cos(a) * 0.17, ly + 0.19, Math.sin(a) * 0.17);
+            glint(0.026, 0.22, 0.17, ly + 0.19, a);
           }
+          g.userData.shine = shine;
           // The cap: a dark red cone on a ring, a ball, a rod and a vane with an arrow.
           add(new THREE.CylinderGeometry(0.2, 0.2, 0.03, 8), iron, 0, ly + 0.315, 0);
           add(new THREE.ConeGeometry(0.21, 0.2, 8), lambert("#8c3b2f"), 0, ly + 0.43, 0, TURN);
@@ -4789,6 +4849,16 @@ export class WorldRenderer {
       }
     }
     const hit = this.raycaster.intersectObject(this.terrain)[0];
+    // A building stands up out of several hexes: pointing at it means its door, not the ground behind its roof.
+    if (!this.state?.battle && this.poiGroup.visible) {
+      const places = this.poiGroup.children.filter((g) => g.userData.door && g.visible);
+      const onPlace = this.raycaster.intersectObjects(places, true)[0];
+      if (onPlace && (!hit || onPlace.distance < hit.distance)) {
+        let o: THREE.Object3D | null = onPlace.object;
+        while (o && !o.userData.door) o = o.parent;
+        if (o) return { ...(o.userData.door as HexPos) };
+      }
+    }
     if (!hit || hit.instanceId === undefined) return null;
     const t = this.tiles[hit.instanceId];
     return { q: t.q, r: t.r };

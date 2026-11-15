@@ -6,7 +6,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useAudioScene } from "./audio/useAudioScene";
 import type { HexPos } from "@gantt-quest/core";
-import { GATHER_SPOTS, GATHER_SPOT_IDS, HARBOR_APOTHECARY, HARBOR_BOARD, HARBOR_CAVE, HARBOR_GALLEY, HARBOR_LIGHTHOUSE, HARBOR_SMITHY, HARBOR_GATHER, HARBOR_NAME, HARBOR_PIERS, HARBOR_PLOTS, HARBOR_PUB, HARBOR_RING, HARBOR_SHOP, HARBOR_SPAWN, HARBOR_WORKS, MAX_PARTY, PLOT_PRICE, RESOURCE_KINDS, SHACK_COST, binFill, binNeeds, builtProjects, BOOK_TITLE, fishSpotAt, seaEdge, tileAt, waterSpotAt, type FishSpot, FISH_SPOTS, generateHarbor, projectById, projectProgress, harborPoi, hutTier, poiAt, salesman, type GatherSpot, type HarborShip, type Resources } from "@gantt-quest/world";
+import { GATHER_SPOTS, GATHER_SPOT_IDS, HARBOR_APOTHECARY, HARBOR_BOARD, HARBOR_CAVE, HARBOR_GALLEY, HARBOR_LIGHTHOUSE, HARBOR_SMITHY, HARBOR_GATHER, HARBOR_NAME, HARBOR_PIERS, HARBOR_PLOTS, HARBOR_PUB, HARBOR_RING, HARBOR_SHOP, HARBOR_SPAWN, HARBOR_WORKS, MAX_PARTY, PLOT_PRICE, RESOURCE_KINDS, SHACK_COST, binFill, binNeeds, builtProjects, BOOK_TITLE, fishSpotAt, harborDoor, seaEdge, tileAt, waterSpotAt, type FishSpot, FISH_SPOTS, generateHarbor, projectById, projectProgress, harborPoi, hutTier, poiAt, salesman, type GatherSpot, type HarborShip, type Resources } from "@gantt-quest/world";
 import { api, type Me } from "./api";
 import { CatchPanel } from "./CatchPanel";
 import { AccountPanel } from "./Account";
@@ -133,7 +133,8 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
   const heroSheet = useHeroSheet();
 
   useEffect(() => {
-    const r = new WorldRenderer(mount.current!, { onHexClick: (to) => send.current({ type: "move", to }), onHover: setHover });
+    // A click anywhere on a building is a walk to its door.
+    const r = new WorldRenderer(mount.current!, { onHexClick: (to) => send.current({ type: "move", to: harborDoor(to) ?? to }), onHover: setHover });
     renderer.current = r;
     if (latest.current) r.setState(latest.current);
     return () => {
@@ -161,7 +162,8 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
   const hutOwner = plotIndex >= 0 ? board.members.find((m) => m.plot === plotIndex) : undefined;
   const myPlot = board.members.find((m) => m.id === you)?.plot ?? null;
   const gold = me.character?.gold ?? 0;
-  const hoverPoi = scene && hover ? poiAt(scene.map, hover) : undefined;
+  // Pointing at the ground a building stands on is pointing at the building.
+  const hoverPoi = scene && hover ? poiAt(scene.map, harborDoor(hover) ?? hover) : undefined;
   const visitHere = salesmanNow.here;
   const visitor = visitHere ? salesman(visitHere.salesmanId) : undefined;
   /** A release with notes this player has not read: the board wears a "!". An older server sends no seenRelease, and then there is none. */

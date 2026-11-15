@@ -95,9 +95,9 @@ A day takes ten minutes. To hear a moment without waiting, type `__gqTime = 0.8`
 A loop can carry `layers`: stems that start on the same sample as its main file and stay locked to it. Bounce them the same length. Each can follow a parameter, which is how one piece of music changes from day to night:
 
 ```ts
-harbor: {
-  file: "music/harbor",
-  layers: [{ file: "music/harbor_night", follow: { param: "night", curve: [[0.3, 0], [0.8, 1]] } }],
+island: {
+  file: "music/island",
+  layers: [{ file: "music/island_night", follow: { param: "night", curve: [[0.3, 0], [0.8, 1]] } }],
 },
 ```
 
@@ -111,12 +111,25 @@ Every loop that is playing is held fully decoded: about 23 MB for each minute of
 - Beds at silence are not loaded.
 - A loop is let go as soon as nothing is playing it.
 
+## Day and night music
+
+Stems suit one piece that changes colour. For two different pieces, give the scene one for each:
+
+```ts
+harbor: { music: { day: "harbor_day", night: "harbor_night" } },
+```
+
+The hour picks the piece when you arrive. After that the change comes a little past the middle of dusk or dawn, and how it happens depends on the pieces:
+
+- Pieces with a `gap` (below) are never cut off. The one playing finishes, the rest follows, and the piece for the new hour takes the next turn. The two share the rest.
+- Looping pieces crossfade, using their `fadeOut` and `fadeIn`.
+
 ## Resting between plays
 
 Give a piece a `gap` and it stops looping: it plays through from the top, is silent for that many seconds, then plays again. The town music does this, so the Harbor has two minutes of atmosphere alone between plays:
 
 ```ts
-harbor: { file: "music/harbor", gap: 120 },
+harbor_day: { file: "music/harbor_day", gap: 120 },
 ```
 
 A range rests a different length each time: `gap: [120, 240]`. With a gap the whole file is one play, so loop markers are not used, and other music cannot come in on its bar. Scenes that share the piece (the Harbor, the hut, the pub) share its rest. If you leave while it is resting and come back, it waits out what is left; if you leave while it is playing, it starts from the top when you return. The engine readout shows how long a resting piece has left.

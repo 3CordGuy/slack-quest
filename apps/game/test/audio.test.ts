@@ -53,7 +53,8 @@ describe("the manifest", () => {
   });
   it("points every scene at music and ambience that exist", () => {
     for (const [name, scene] of Object.entries(AUDIO.scenes)) {
-      if (scene.music) expect(AUDIO.music[scene.music], `${name} music`).toBeDefined();
+      const pieces = !scene.music ? [] : typeof scene.music === "string" ? [scene.music] : [scene.music.day, scene.music.night];
+      for (const piece of pieces) expect(AUDIO.music[piece], `${name} music ${piece}`).toBeDefined();
       for (const a of scene.ambience ?? []) expect(AUDIO.ambience[a], `${name} ambience ${a}`).toBeDefined();
       // An indoor scene sits inside an outdoor one, not inside another room.
       if (scene.inside) expect(AUDIO.scenes[scene.inside.of]?.inside, `${name} is inside ${scene.inside.of}`).toBeUndefined();

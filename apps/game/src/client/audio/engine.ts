@@ -76,6 +76,8 @@ interface LoopVoice {
   region: { start: number; end: number };
   /** For a piece that rests between plays: when the next play begins on the audio clock, while it is resting. */
   nextAt: number | null;
+  /** When the play now sounding (or next due) begins on the audio clock. */
+  playAt: number | null;
   /** It has been told to stop: an ending source is not the end of a play. */
   ending: boolean;
   /** Let go of its nodes and files. Safe to call more than once. */
@@ -281,6 +283,9 @@ export class AudioEngine {
   private rested = "";
   /** For each piece that rests between plays: when its rest is over, by the page clock. Outlives the loop, so leaving and coming back does not cut a rest short. */
   private restUntil = new Map<string, number>();
+  /** The music and the place (a scene, or the scene a room is inside) as last applied, to tell when either changes. */
+  private musicWas: string | null = null;
+  private placeWas: SceneName | null = null;
   private headphones = false;
   private reverb: ReverbBus | null = null;
   /** The ground you stand on, and the reverb zone now heard (undefined before the first is chosen). */
@@ -603,6 +608,8 @@ export class AudioEngine {
     for (const lv of this.loops.values()) if (lv.parts.some((p) => follows(p.follow).some((f) => f.param === name))) this.levelParts(lv, name === "shore" ? 0.4 : 0.15);
     // A bed has come up from silence, or gone down to it: start it, or let it go.
     if (this.indexed && this.resting() !== this.rested) this.applyScene();
+    // Dusk or dawn has passed, and the scene has a piece for each: change over.
+    else if (this.indexed && name === "night" && this.wanted().music !== this.musicWas) this.applyScene();
   }
 
   /**
@@ -617,6 +624,30 @@ export class AudioEngine {
   }
 
   /**
+   * The music a scene's `music` means right now: the piece it names, or, given one for the day and one
+   * for the night, whichever suits the hour.
+   *
+   * The change of piece does not chase the light. It waits a little past the middle of dusk or dawn, so
+   * a sky hovering there does not flip back and forth; and a piece that rests between plays is left to
+   * finish the play it is in, and the other takes the next turn after the rest. Arriving somewhere new
+   * (or within a play's first few seconds) there is nothing to protect, and the hour decides at once.
+   */
+  private pickMusic(music: Scene["music"], samePlace: boolean): string | null {
+    if (music === undefined || music === null) return null;
+    if (typeof music === "string") return music;
+    const night = this.params.get("night") ?? 0;
+    const playing = [music.day, music.night].find((name) => this.loops.has(`music:${name}`));
+    if (!playing) return night >= 0.5 ? music.night : music.day;
+    const lv = this.loops.get(`music:${playing}`)!;
+    const now = this.ctx?.currentTime ?? 0;
+    const resting = lv.nextAt !== null && lv.nextAt > now;
+    const wellIn = lv.def.gap !== undefined && lv.playAt !== null && now - lv.playAt > 5 && !resting;
+    if (wellIn && samePlace) return playing;
+    if (playing === music.day) return night > 0.6 ? music.night : music.day;
+    return night < 0.4 ? music.day : music.night;
+  }
+
+  /**
    * What the scene asks for: its own music and beds and, when it is indoors, those of the scene
    * outside, which are the ones to muffle.
    */
@@ -624,10 +655,12 @@ export class AudioEngine {
     const scene = this.scene ? this.manifest.scenes[this.scene] : undefined;
     const outer = scene?.inside ? this.manifest.scenes[scene.inside.of] : undefined;
     const outside = new Set<string>();
-    let music = scene?.music ?? null;
+    // Indoors is still the same place as the scene outside its walls.
+    const samePlace = (scene?.inside?.of ?? this.scene) === this.placeWas;
+    let music = this.pickMusic(scene?.music, samePlace);
     if (scene && scene.music === undefined && outer?.music) {
-      music = outer.music;
-      outside.add(`music:${music}`);
+      music = this.pickMusic(outer.music, samePlace);
+      if (music) outside.add(`music:${music}`);
     }
     const ambience = [...(scene?.ambience ?? [])];
     for (const name of outer?.ambience ?? []) {
@@ -684,6 +717,9 @@ export class AudioEngine {
   private applyScene() {
     if (!this.ctx || !this.lib || !this.indexed) return;
     const asked = this.wanted();
+    this.musicWas = asked.music;
+    const here = this.scene ? this.manifest.scenes[this.scene] : undefined;
+    this.placeWas = here?.inside?.of ?? this.scene;
     this.muffle = asked.inside ? { cutoff: asked.inside.cutoff ?? 700, gain: dbToGain(asked.inside.gainDb ?? -3) } : null;
     this.muffled = asked.outside;
     const want = new Map<string, { def: Loop; group: Group }>();
@@ -765,6 +801,7 @@ export class AudioEngine {
       offset: 0,
       region: { start: 0, end: 0 },
       nextAt: null,
+      playAt: null,
       ending: false,
       release: () => {
         if (released) return;
@@ -786,6 +823,8 @@ export class AudioEngine {
     }
     // A piece with a gap plays through from the top, rests, and plays again; anything else goes round its loop.
     const gapped = def.gap !== undefined;
+    // All music shares one rest, so a day piece handing over to a night piece does not start it early.
+    const restKey = group === "music" ? "music" : id;
     const region = gapped ? { start: 0, end: buffers[0].duration } : loopRegion(def, lib.file(def.file), buffers[0].duration);
     const offset = !gapped && def.startAt === "loop" ? region.start : 0;
     const stems = have.flatMap((d, i) => {
@@ -811,19 +850,22 @@ export class AudioEngine {
             // Stopped, or replaced: let go. Otherwise a play has run its course: rest, then play again.
             if (lv.ending || this.loops.get(id) !== lv || !gapped) return lv.release();
             const rest = nextGap(def.gap, Math.random);
-            this.restUntil.set(id, performance.now() + rest * 1000);
+            this.restUntil.set(restKey, performance.now() + rest * 1000);
             lv.nextAt = ctx.currentTime + rest;
             play(lv.nextAt);
+            // The hour may have moved on while it played: if so, the other piece takes the next turn.
+            if (this.wanted().music !== this.musicWas) this.applyScene();
           };
         }
         src.start(at, offset);
+        lv.playAt = at;
         if (lv.parts[i]) lv.parts[i].src = src;
         else lv.parts.push({ file: stem.d.file, src, gain: stem.gain, gainDb: stem.main ? 0 : (stem.d.gainDb ?? 0), follow: stem.d.follow });
       });
     };
     // A moment ahead, so no stem is late. A piece that was heard to its end less than a rest ago
     // (you left and came back) waits out what is left of that rest before it starts again.
-    const resume = gapped ? Math.max(0, ((this.restUntil.get(id) ?? 0) - performance.now()) / 1000) : 0;
+    const resume = gapped ? Math.max(0, ((this.restUntil.get(restKey) ?? 0) - performance.now()) / 1000) : 0;
     const when = Math.max(at, ctx.currentTime + 0.05) + resume;
     if (resume > 0) lv.nextAt = when;
     play(when);

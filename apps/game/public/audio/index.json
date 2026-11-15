@@ -55,10 +55,19 @@
    "sampleRate": 44100,
    "channels": 2
   },
-  "music/harbor": {
+  "music/harbor_day": {
    "urls": {
-    "opus": "/audio/music/harbor.6ec7bc3487.ogg",
-    "aac": "/audio/music/harbor.6ec7bc3487.m4a"
+    "opus": "/audio/music/harbor_day.d93e803a2c.ogg",
+    "aac": "/audio/music/harbor_day.d93e803a2c.m4a"
+   },
+   "duration": 200,
+   "sampleRate": 44100,
+   "channels": 2
+  },
+  "music/harbor_night": {
+   "urls": {
+    "opus": "/audio/music/harbor_night.6ec7bc3487.ogg",
+    "aac": "/audio/music/harbor_night.6ec7bc3487.m4a"
    },
    "duration": 192,
    "sampleRate": 44100,

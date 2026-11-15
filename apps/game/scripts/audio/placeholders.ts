@@ -156,7 +156,8 @@ const F = [175, 220, 262, 349];
 const C = [262, 330, 392, 523];
 const G = [196, 247, 294, 392];
 const E = [165, 208, 247, 330];
-files["music/harbor"] = () => tune(84, [C, A, F, G], Math.sin);
+files["music/harbor_day"] = () => tune(84, [C, A, F, G], Math.sin);
+files["music/harbor_night"] = () => tune(72, [A, F, C, G], Math.sin);
 files["music/island"] = () => tune(96, [A, F, C, E], Math.sin);
 files["music/battle"] = () => tune(138, [A, A, F, E], square);
 // Rain: bright hiss. Night: a cricket-like chirp, pulsing. Day: a higher, slower chirp.
