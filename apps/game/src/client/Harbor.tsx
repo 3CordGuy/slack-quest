@@ -6,12 +6,14 @@ import { useMemo, useRef, useState } from "react";
 import { SoundButton } from "./audio/SoundButton";
 import { useAudioScene } from "./audio/useAudioScene";
 import { STARTING_STATS } from "@gantt-quest/core";
-import { HERO_CLASSES, RARITY_COLOR, STAT_BLURB, STAT_KEYS, STAT_LABEL, WEAPON_ICON, statPct } from "@gantt-quest/world";
+import { DEFAULT_APPEARANCE, HERO_CLASSES, RARITY_COLOR, STAT_BLURB, STAT_KEYS, STAT_LABEL, WEAPON_ICON, statPct, type Appearance } from "@gantt-quest/world";
 import { EmailSignIn } from "./Account";
 import { api, type Character, type Me, type StatKey } from "./api";
 import { Icon } from "./items";
 import { blurb, label } from "./labels";
 import { spriteDataUrl } from "./render/sprites";
+import { devTools } from "./devTools";
+import { LookBuilder, startingOutfit } from "./LookBuilder";
 import { AnchorMark, HarborBackdrop, HarborTitle } from "./Welcome";
 
 /** The game's name, as the browser tab shows it (index.html). */
@@ -174,6 +176,15 @@ function Creation({ draft, busy, act, invite }: { draft: Character | null; busy:
   const cls = HERO_CLASSES.find((c) => c.id === classId) ?? HERO_CLASSES[0];
   const sprites = useMemo(() => Object.fromEntries(HERO_CLASSES.map((c) => [c.id, spriteDataUrl(c.id)])), []);
   const base = STARTING_STATS[classId];
+  // The look builder is a prototype: on a development deployment only, for now.
+  const building = devTools.on;
+  const [look, setLook] = useState<Appearance>(DEFAULT_APPEARANCE);
+  const portrait = useMemo(() => (building ? spriteDataUrl(classId, startingOutfit(classId, look), true) : sprites[classId]), [building, classId, look, sprites]);
+  const begin = () =>
+    act(async () => {
+      if (building) await api.setAppearance(look);
+      await api.confirm();
+    });
   const [naming, setNaming] = useState(false);
   const [nameError, setNameError] = useState<string | null>(null);
   const offered = useRef<string[]>([]);
@@ -242,11 +253,18 @@ function Creation({ draft, busy, act, invite }: { draft: Character | null; busy:
         </div>
       </div>
 
+      {building && (
+        <div className="step">
+          <h3 className="step-title"><span className="step-num">3</span>Choose your look</h3>
+          <LookBuilder classId={classId} look={look} onChange={setLook} />
+        </div>
+      )}
+
       <div className="step">
-        <h3 className="step-title"><span className="step-num">3</span>Roll your stats</h3>
+        <h3 className="step-title"><span className="step-num">{building ? 4 : 3}</span>Roll your stats</h3>
         <div className="hero-sheet">
           <div className="hero-portrait">
-            <span className="hero-plinth"><img className="pixel-icon" src={sprites[classId]} alt="" width={108} height={132} /></span>
+            <span className="hero-plinth"><img className="pixel-icon" src={portrait} alt="" width={108} height={132} /></span>
             <strong className="hero-portrait-name">{name.trim() || "Your hero"}</strong>
             <span className="muted">{label("class", classId)}</span>
             <span className="cc-weapon">
@@ -268,7 +286,7 @@ function Creation({ draft, busy, act, invite }: { draft: Character | null; busy:
           <button className={`big ${rolled ? "" : "roll"}`} disabled={busy || !validName} onClick={() => act(() => api.roll(classId, name))} aria-describedby={!validName ? "hero-name-hint" : undefined}>
             <span aria-hidden>🎲</span> {rolled ? "Re-roll stats" : "Roll stats"}
           </button>
-          <button className="primary big" disabled={busy || !rolled || !validName} onClick={() => act(() => api.confirm())}>
+          <button className="primary big" disabled={busy || !rolled || !validName} onClick={begin}>
             Begin with these <span aria-hidden>▸</span>
           </button>
           {!validName ? <span className="muted hint">Name your hero to roll.</span> : !rolled ? <span className="muted hint">Roll once to unlock Begin.</span> : null}

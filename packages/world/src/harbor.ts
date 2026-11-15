@@ -4,6 +4,7 @@
 // freely, and the HarborRoom Durable Object only validates paths and relays
 // them. This file holds the fixed map and the message shapes both sides use.
 
+import type { Appearance } from "./appearance";
 import { allHexesInGrid, type HexGrid, type HexPos } from "@gantt-quest/core";
 import type { Outfit } from "./gear";
 import type { FishSpot, Vessel } from "./fishing";
@@ -252,6 +253,8 @@ export interface PublicHero {
   gear: ItemDef[];
   /** What the furniture in their hut gives them on a voyage. */
   hutPerks?: Perk;
+  /** How they chose to look, if they did. */
+  appearance?: Appearance;
 }
 
 export interface HarborMember {
