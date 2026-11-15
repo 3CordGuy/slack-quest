@@ -48,7 +48,7 @@ A loop goes round between its loop markers if the WAV has them (the `smpl` chunk
 
 Compressed files carry a little padding at each end, so for a loop that must be seamless, bounce it with a second of its own tail before the start and a second of its head after the end, mark the inner region as the loop, and set `startAt: "loop"`.
 
-Each scene (`harbor`, `hut`, `pub`, `sailing`, `island`, `battle`, `spar`, `title`) names one music loop and any number of atmosphere loops. Moving between scenes crossfades; a loop that both scenes share keeps playing.
+Each scene (`harbor`, `hut`, `pub`, `sailing`, `island`, `battle`, `title`) names one music loop and any number of atmosphere loops. Moving between scenes crossfades; a loop that both scenes share keeps playing.
 
 ## Indoors
 

@@ -173,8 +173,6 @@ export const api = {
   contracts: () => request<Board>("/api/contracts"),
   /** The notice board's release notes are read up to this release. */
   releaseSeen: (id: string) => request<{ seenRelease: string }>("/api/releases/seen", { id }),
-  /** A voyage to an island, or with "caverns" a delve into the Haunted Caverns. */
-  createRun: (kind: "voyage" | "caverns" = "voyage") => request<{ code: string }>("/api/run", { kind }),
   requestCode: (email: string) => request("/api/auth/email/request", { email }),
   verifyCode: (email: string, code: string) => request<{ outcome: "linked" | "signed_in" | "created" | "already" }>("/api/auth/email/verify", { email, code }),
   signOut: () => request("/api/auth/signout", {}),
@@ -217,8 +215,6 @@ export const api = {
   giveToProject: (projectId: string, give: ProjectAmounts) => request<Works & { completed: boolean; xp?: XpResult }>("/api/projects/give", { projectId, give }),
   hut: () => request<Hut>("/api/hut"),
   craft: (defId: string) => request<{ ok: true; xp?: XpResult }>("/api/hut/craft", { defId }),
-  /** A bout at the sparring ring is over: its few XP, if today still has room. */
-  sparDone: () => request<{ xp?: XpResult }>("/api/spar/done", {}),
   /** Materials into (qty > 0) or out of (qty < 0) one of your hut's containers. */
   stash: (container: number, kind: string, qty: number) => request("/api/hut/stash", { container, kind, qty }),
   /** Gear from the bag into a container, or (container null) back into the bag. */

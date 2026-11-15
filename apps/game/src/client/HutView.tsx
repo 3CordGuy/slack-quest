@@ -209,7 +209,6 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
         return { id: p.id, classId: p.classId, label: p.name, outfit: p.outfit, level: p.level, xp: p.xp, ...lying };
       }),
       turn: null,
-      battle: null,
       story: null,
       npcs: {},
       freeRoam: true,

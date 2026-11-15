@@ -4,7 +4,7 @@
 
 import { Hono, type Context } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
-import { HARBOR_PIERS, HARBOR_PLOTS, HARBOR_XP, HERO_CLASSES, MAX_CREW, PUB_BARKEEP, PUB_DEALER, PUB_MAX_TALK, PUB_MENU, dueIn, hutPerks, nextSalesmanVisit, salesman, salesmanVisitAt, makeRng, parseAppearance, pubBuff, rollStartingStats, type RunKind } from "@gantt-quest/world";
+import { HARBOR_PIERS, HARBOR_PLOTS, HERO_CLASSES, MAX_CREW, PUB_BARKEEP, PUB_DEALER, PUB_MAX_TALK, PUB_MENU, dueIn, hutPerks, nextSalesmanVisit, salesman, salesmanVisitAt, makeRng, parseAppearance, pubBuff, rollStartingStats } from "@gantt-quest/world";
 import { barkeepReply, heroName } from "./server/ai";
 import { contractBoard } from "./server/board";
 import { markReleaseSeen, seenRelease } from "./server/releases";
@@ -30,8 +30,7 @@ import {
   saveAppearance,
   ensureLook,
   createCrew,
-  createGuest,
-  createRun,
+  createGuest,
   crewFor,
   deleteCharacter,
   equipItem,
@@ -39,8 +38,7 @@ import {
   getHut,
   getInventory,
   carryState,
-  storeItem,
-  getRun,
+  storeItem,
   getShop,
   joinCrew,
   leaveCrew,
@@ -73,11 +71,11 @@ import { gatherStatus, rest, startOuting, stepOuting } from "./server/gather";
 import { fishStock, moveFish, sellFish } from "./server/fishmarket";
 import { catchBook, hangAtHome, mountInPub, pubWall, unmountInPub } from "./server/catchbook";
 import { pubLeaderboard } from "./server/pub-scores";
-import { builtProjectIds, contribute, crewWorks, projectStock } from "./server/projects";
+import { contribute, crewWorks, projectStock } from "./server/projects";
 import { acceptTrade, closeTrade, listTrades, openTrade, setTradeSide } from "./server/trade";
 import { apothecaryView, brew, smithItem, smithyView } from "./server/workshops";
 import { cook, galleyView } from "./server/galley";
-import { announceXp, harborXpFor, prepareXp, xpOutcome } from "./server/harbor-xp";
+import { announceXp, harborXpFor } from "./server/harbor-xp";
 import {
   checkImport,
   checkOverride,
@@ -793,21 +791,6 @@ app.post("/api/galley/cook", async (c) => {
   return c.json({ ...(await galleyView(c.env.DB, player.id)), xp: result.xp });
 });
 
-// ---------- the sparring ring ----------
-
-// A bout at the ring has ended. The bout itself runs in the browser, so all this does is pay its
-// few XP, and only for the first SPAR_XP_DAILY_BOUTS bouts of the day, under the daily Harbor cap.
-app.post("/api/spar/done", async (c) => {
-  const player = c.get("player");
-  const xp = await prepareXp(c.env.DB, player.id, HARBOR_XP.spar, { spar: true });
-  if (!xp) return c.json({ error: "Create a character first." }, 409);
-  const statements = xp.statements("1");
-  const results = statements.length > 0 ? await c.env.DB.batch(statements) : [];
-  const earned = xpOutcome(xp, results);
-  if (earned) c.executionCtx.waitUntil(announceXp(c.env, player.id, earned));
-  return c.json({ xp: earned });
-});
-
 // ---------- giving and trading between crewmates ----------
 
 // The trades this player has open, as they see them, and how recent ones ended.
@@ -886,29 +869,11 @@ app.get("/api/crew/ws", async (c) => {
   return c.env.HARBOR_ROOM.get(c.env.HARBOR_ROOM.idFromName(crew.id)).fetch(new Request(c.req.url, { headers }));
 });
 
-// Launch a voyage: allocates a run code and moors the ship at the crew's Harbor.
-// The island is generated from the run's seed.
-app.post("/api/run", async (c) => {
-  const player = c.get("player");
-  const [character, crew] = await Promise.all([getCharacter(c.env.DB, player.id), crewFor(c.env.DB, player.id)]);
-  if (character?.status !== "active") return c.json({ error: "Create a character first." }, 409);
-  // What the crew has built at the Harbor sails with the ship.
-  // A voyage to an island by default; a delve into the Haunted Caverns when asked for.
-  const body = await c.req.json<{ kind?: string }>().catch(() => ({}) as { kind?: string });
-  const kind: RunKind = body.kind === "caverns" ? "caverns" : "voyage";
-  const code = await createRun(c.env.DB, player.id, crew?.id ?? null, await builtProjectIds(c.env.DB, crew?.id ?? null), kind);
-  c.executionCtx.waitUntil(refreshHarbor(c.env, crew?.id ?? null));
-  return c.json({ code });
-});
-
-app.get("/api/run/:code/ws", async (c) => {
-  const code = c.req.param("code").toUpperCase();
-  if (!(await getRun(c.env.DB, code))) return c.text("No ship with that code.", 404);
-  const headers = new Headers(c.req.raw.headers);
-  headers.set("x-run-code", code);
-  headers.set("x-player-id", c.get("player").id);
-  const stub = c.env.RUN_ROOM.get(c.env.RUN_ROOM.idFromName(code));
-  return stub.fetch(new Request(c.req.url, { headers }));
-});
+// Voyages and delves are shut while they are rebuilt on the new combat (fights played on the tiles: see
+// packages/world/src/zone). Nothing can be launched or rejoined; the old rules (world.ts, run-room.ts)
+// stay in the tree as reference until their replacement lands.
+const RUNS_CLOSED = "Voyages and delves are being rebuilt. They will sail again soon.";
+app.post("/api/run", (c) => c.json({ error: RUNS_CLOSED }, 503));
+app.get("/api/run/:code/ws", (c) => c.text(RUNS_CLOSED, 503));
 
 export default app;

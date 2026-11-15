@@ -3,8 +3,7 @@
 // the canvas and is told about state (setState) and things that just
 // happened (playEvents).
 //
-// The same scene shows the overworld and battles: a battle pushes the camera
-// in on the fight and lines the two sides up facing each other.
+// Fights are played on the map itself: enemies stand on their own hexes like the heroes do.
 
 import * as THREE from "three";
 import { makeModelShip } from "./modelShip";
@@ -65,7 +64,6 @@ export interface RenderState {
   /** `asleep`: lying down with eyes shut, z's rising, as on a bedroll in the Harbor. */
   heroes: RenderHero[];
   turn: { heroId: string; mp: number } | null;
-  battle: ClientState["battle"];
   story: { npcs: { id: string; poi: string }[] } | null;
   npcs: Record<string, { hostile: boolean }>;
   /** Enemy bands in sight on the map. */
@@ -707,11 +705,6 @@ export class WorldRenderer {
   private hoverBorn = 0;
   /** Whether the hex under the pointer can be walked to: lit and alive if so, a dim outline if not. */
   private hoverLive = false;
-  private arena = new THREE.Group();
-  private arenaGround: THREE.Mesh;
-  private arenaDecor = new THREE.Group();
-  /** What the battleground was last dressed for, so it is only rebuilt when the fight moves. */
-  private arenaSig = "";
   private units = new Map<string, Unit>();
   /** The sea's daytime colour for this map; night deepens it toward navy. */
   private seaBase = new THREE.Color("#3577cf");
@@ -745,7 +738,7 @@ export class WorldRenderer {
   /**
    * Which way the camera looks from, as a turn about the vertical axis. 0 is
    * the default view from the south. `yaw` eases toward `yawGoal`; `userYaw`
-   * is what the player chose, kept while a battle forces the view back to 0.
+   * is what the player chose.
    */
   private yaw = 0;
   private yawGoal = 0;
@@ -836,15 +829,7 @@ export class WorldRenderer {
     this.hoverRing = this.buildHoverMarker();
     this.hoverRing.visible = false;
 
-    // The battleground: one great hex of whatever ground the fight broke out on, dressed to match (see dressArena).
-    this.arenaGround = new THREE.Mesh(new THREE.CylinderGeometry(4.4, 4.4, 1.6, 6), new THREE.MeshLambertMaterial({ color: "#7cb856", flatShading: true }));
-    this.arenaGround.receiveShadow = true;
-    const skirt = new THREE.Mesh(new THREE.CylinderGeometry(4.4, 3.9, 1.1, 6), new THREE.MeshLambertMaterial({ color: "#4a3f35", flatShading: true }));
-    skirt.position.y = -1.35;
-    this.arena.add(this.arenaGround, skirt, this.arenaDecor);
-    this.arena.visible = false;
-
-    this.scene.add(this.decor, this.poiGroup, this.propGroup, this.rangeGroup, this.pathGroup, this.hoverRing, this.arena, this.unitGroup, this.fxGroup);
+    this.scene.add(this.decor, this.poiGroup, this.propGroup, this.rangeGroup, this.pathGroup, this.hoverRing, this.unitGroup, this.fxGroup);
 
     canvas.addEventListener("pointerdown", this.onPointerDown);
     canvas.addEventListener("pointermove", this.onPointerMove);
@@ -963,25 +948,16 @@ export class WorldRenderer {
     this.syncUnits(state);
     this.updatePath();
 
-    if (state.battle) {
-      this.targetGoal.copy(this.battleCentre(state));
-      this.dist = 12;
-      // The line-up is laid out for the default view, so a fight always faces the same way.
-      this.yawGoal = nearestTurn(this.yaw, 0);
-      this.pitchGoal = DEFAULT_PITCH;
-      for (const b of this.turnButtons) b.hidden = true;
-    } else {
-      this.dist = this.userDist;
-      this.yawGoal = nearestTurn(this.yaw, this.userYaw);
-      this.pitchGoal = this.userPitch;
-      for (const b of this.turnButtons) b.hidden = false;
-      const turnKey = `${state.phase}:${state.round}:${state.turn?.heroId ?? ""}`;
-      // A room is small enough to see whole, so indoors the camera stays on its middle.
-      // Following, the camera starts on your hero indoors too.
-      if (first && me && (this.follow || !state.indoors)) this.target.copy(this.standAt(me.pos));
-      if ((first || turnKey !== this.turnKey) && me && (myTurn || first) && !state.indoors) this.targetGoal.copy(this.standAt(me.pos));
-      this.turnKey = turnKey;
-    }
+    this.dist = this.userDist;
+    this.yawGoal = nearestTurn(this.yaw, this.userYaw);
+    this.pitchGoal = this.userPitch;
+    for (const b of this.turnButtons) b.hidden = false;
+    const turnKey = `${state.phase}:${state.round}:${state.turn?.heroId ?? ""}`;
+    // A room is small enough to see whole, so indoors the camera stays on its middle.
+    // Following, the camera starts on your hero indoors too.
+    if (first && me && (this.follow || !state.indoors)) this.target.copy(this.standAt(me.pos));
+    if ((first || turnKey !== this.turnKey) && me && (myTurn || first) && !state.indoors) this.targetGoal.copy(this.standAt(me.pos));
+    this.turnKey = turnKey;
   }
 
   /** Animate things that just happened. Call after setState for the same update. */
@@ -1001,10 +977,7 @@ export class WorldRenderer {
     // Your turn coming round gets a soft tick, once, and not as the fight ends.
     let myTurnAt: number | null = null;
     for (const ev of events) {
-      if (ev.t === "battle_start") {
-        // A boss's first appearance: a low swell as the opening card goes up.
-        if (this.state?.battle?.combatants.some((c) => c.side === "enemy" && isBoss(c.kind))) this.later(0, () => sounds.boss(), 0.15);
-      } else if (ev.t === "moved") {
+      if (ev.t === "moved") {
         const unit = this.units.get(ev.heroId);
         if (unit) unit.path = ev.path.map((p) => this.standAt(p));
       } else if (ev.t === "chat") {
@@ -1180,8 +1153,6 @@ export class WorldRenderer {
 
   /** Who a unit is in the fight, for its voice: looked up when asked, as the fight's line-up can change. */
   private fighter(id: string): Fighter | undefined {
-    const c = this.state?.battle?.combatants.find((x) => x.id === id);
-    if (c) return { side: c.side, kind: c.kind };
     const h = this.state?.heroes.find((x) => x.id === id);
     return h ? { side: "hero", kind: h.classId } : undefined;
   }
@@ -1300,7 +1271,7 @@ export class WorldRenderer {
    */
   private footfall(id: string, unit: Unit) {
     const state = this.state;
-    if (!state || state.battle || unit.asleep) return;
+    if (!state || unit.asleep) return;
     const hero = state.heroes.find((h) => h.id === id);
     if (!hero || hero.asleep) return;
     const feet = unit.feet;
@@ -2440,11 +2411,9 @@ export class WorldRenderer {
    */
   private buildJoinRanges(state: RenderState) {
     const near = (p: HexPos, poi: Poi) => hexDistance(p, poi.pos) <= BATTLE_JOIN_RANGE;
-    const hostile = state.battle
-      ? []
-      : state.map.pois.filter(
-          (poi) => !poi.cleared && poi.enemies.length > 0 && ((this.hovered && near(this.hovered, poi)) || state.heroes.some((h) => near(h.pos, poi))),
-        );
+    const hostile = state.map.pois.filter(
+      (poi) => !poi.cleared && poi.enemies.length > 0 && ((this.hovered && near(this.hovered, poi)) || state.heroes.some((h) => near(h.pos, poi))),
+    );
     const sig = `${state.code}|${hostile.map((p) => p.id).join(",")}`;
     if (sig === this.rangeSig) return;
     this.rangeSig = sig;
@@ -4366,209 +4335,54 @@ export class WorldRenderer {
 
   // ---------- units ----------
 
-  /**
-   * Make the battleground look like where the fight is: the colour of that
-   * hex's ground, with a scatter of what grows or lies there, kept to the back
-   * and the sides so the two lines of fighters stand in the clear. A fight at
-   * a camp or a lair gets that place's own dressing.
-   */
-  private dressArena(state: RenderState) {
-    const battle = state.battle!;
-    const poi = state.map.pois.find((p) => p.id === (battle.poiId ?? state.story?.npcs.find((n) => n.id === battle.npcId)?.poi));
-    const at = poi?.pos ?? state.heroes[0].pos;
-    const found = tileAt(state.map, at)?.biome ?? "plains";
-    const biome = found === "fog" || found === "water" ? "plains" : found;
-    const sig = `${state.code}|${at.q},${at.r}|${biome}|${poi?.kind ?? ""}`;
-    if (sig === this.arenaSig) return;
-    this.arenaSig = sig;
-    this.arenaDecor.traverse((o) => {
-      const mesh = o as THREE.Mesh;
-      mesh.geometry?.dispose();
-      (mesh.material as THREE.Material | undefined)?.dispose();
-    });
-    this.arenaDecor.clear();
-    (this.arenaGround.material as THREE.MeshLambertMaterial).color.set(BIOME_COLOR[biome] ?? BIOME_COLOR.plains);
-    if (this.sodden && (biome === "plains" || biome === "forest")) (this.arenaGround.material as THREE.MeshLambertMaterial).color.lerp(DRAB, 0.5);
-
-    const TOP = 0.8;
-    const rnd = (i: number, salt: number) => noise(at.q * 3 + i, at.r * 5 - i, 40 + salt);
-    const put = (geometry: THREE.BufferGeometry, color: string, x: number, y: number, z: number, rotY = 0, scale = 1) => {
-      const mesh = new THREE.Mesh(geometry, new THREE.MeshLambertMaterial({ color, flatShading: true }));
-      mesh.position.set(x, TOP + y, z);
-      mesh.rotation.y = rotY;
-      mesh.scale.setScalar(scale);
-      mesh.castShadow = mesh.receiveShadow = true;
-      this.arenaDecor.add(mesh);
-      return mesh;
-    };
-    /** A spot off the fighting line: along the back, or out at either side. Kept inside the hex. */
-    const spot = (i: number): [number, number] => {
-      if (i % 3 === 2) {
-        const side = i % 2 ? 1 : -1;
-        return [side * (2.9 + rnd(i, 1) * 0.5), -0.6 + rnd(i, 2) * 2.2];
-      }
-      return [(rnd(i, 3) - 0.5) * 5.2, -3.1 + rnd(i, 4) * 1.5];
-    };
-    const tree = (x: number, z: number, s: number, dark = false) => {
-      put(new THREE.CylinderGeometry(0.07, 0.09, 0.3, 5), "#5a3d22", x, 0.15 * s, z, 0, s);
-      put(new THREE.ConeGeometry(0.42, 1.1, 5), dark ? "#2a5f38" : "#2f7a3d", x, 0.8 * s, z, rnd(x * 7, 5) * 3, s);
-    };
-    const rock = (x: number, z: number, s: number, tone = "#8d8674") => put(new THREE.DodecahedronGeometry(0.36, 0), tone, x, 0.2 * s, z, rnd(x * 5, 6) * 6, s);
-    const tuft = (x: number, z: number, s: number) => {
-      for (const [dx, lean] of [[-0.08, -0.25], [0, 0], [0.08, 0.25]]) put(new THREE.ConeGeometry(0.05, 0.34, 3), "#a6dd6f", x + dx, 0.17 * s, z, 0, s).rotation.z = -lean;
-    };
-
-    if (state.kind === "caverns") {
-      // Under the rocks: stalagmites crowding the back and sides, rubble, and the bones of whoever came down before.
-      for (let i = 0; i < 9; i++) {
-        const [x, z] = spot(i);
-        const h = 0.9 + rnd(i, 30) * 1.6;
-        put(new THREE.ConeGeometry(0.22 + rnd(i, 31) * 0.2, h, 5), i % 2 ? "#3d3946" : "#4a4552", x, h / 2, z, rnd(i, 32) * 3);
-      }
-      for (let i = 0; i < 5; i++) rock(spot(i + 10)[0], spot(i + 10)[1], 0.4 + rnd(i, 33) * 0.5, "#35323c");
-      for (let i = 0; i < 5; i++) put(new THREE.BoxGeometry(0.4, 0.05, 0.06), "#d6cfbd", (rnd(i, 34) - 0.5) * 5, 0.03, -2.4 + rnd(i, 35) * 1.2, rnd(i, 36) * 3);
-      put(new THREE.DodecahedronGeometry(0.16, 0), "#e8e2d2", -2.6, 0.14, -2.0);
-    } else if (poi?.kind === "camp") {
-      // A raiders' camp: two tents, a fire ringed with stones, crates.
-      for (const [x, z, r] of [[-2.0, -2.6, 0.3], [1.7, -2.9, -0.4]]) put(new THREE.ConeGeometry(0.85, 1.1, 4), "#8a7a5a", x, 0.55, z, Math.PI / 4 + r);
-      put(new THREE.ConeGeometry(0.22, 0.5, 5), "#ff9b3d", 0, 0.25, -2.4);
-      for (let i = 0; i < 6; i++) put(new THREE.DodecahedronGeometry(0.11, 0), "#6d6960", Math.sin(i) * 0.42, 0.06, -2.4 + Math.cos(i) * 0.42);
-      put(new THREE.BoxGeometry(0.5, 0.42, 0.5), "#9a6b2f", 3.0, 0.21, -0.9, 0.4);
-      put(new THREE.BoxGeometry(0.36, 0.3, 0.36), "#8a6a44", -3.1, 0.15, 0.2, 0.9);
-    }
-    if (poi?.kind === "lair") {
-      // The lair: leaning standing stones and old bones.
-      for (let i = 0; i < 6; i++) {
-        const a = Math.PI + ((i - 2.5) / 6) * Math.PI * 1.1;
-        const stone = put(new THREE.BoxGeometry(0.5, 1.5 + rnd(i, 7) * 0.9, 0.36), "#4a4458", Math.sin(a) * 3.3, 0.8, Math.cos(a) * 3.0 - 0.3, a);
-        stone.rotation.z = (rnd(i, 8) - 0.5) * 0.35;
-      }
-      for (let i = 0; i < 4; i++) put(new THREE.BoxGeometry(0.4, 0.05, 0.06), "#d8d2c0", (rnd(i, 9) - 0.5) * 4.6, 0.03, -2.2 - rnd(i, 10), rnd(i, 11) * 3);
-    }
-
-    if (biome === "forest") {
-      for (let i = 0; i < 9; i++) {
-        const [x, z] = spot(i);
-        tree(x, z, 0.9 + rnd(i, 12) * 0.8, i % 2 === 0);
-      }
-      const log = put(new THREE.CylinderGeometry(0.16, 0.16, 1.3, 6), "#6b4a2b", -2.6, 0.16, 1.7, 0.5);
-      log.rotation.z = Math.PI / 2;
-      for (let i = 0; i < 5; i++) tuft((rnd(i, 13) - 0.5) * 6, 1.8 + rnd(i, 14) * 1.2, 1);
-    } else if (biome === "hills") {
-      for (let i = 0; i < 8; i++) {
-        const [x, z] = spot(i);
-        rock(x, z, 0.8 + rnd(i, 15) * 1.3, ["#8d8674", "#7b786f", "#9c917b"][i % 3]);
-      }
-      put(new THREE.ConeGeometry(0.5, 1.6, 4), "#7b786f", -3.2, 0.8, -2.2, 0.6);
-      for (let i = 0; i < 5; i++) rock((rnd(i, 16) - 0.5) * 6.4, 2.0 + rnd(i, 17), 0.35, "#a39a86");
-    } else if (biome === "plains") {
-      for (let i = 0; i < 18; i++) {
-        const [x, z] = i < 12 ? spot(i) : [(rnd(i, 18) - 0.5) * 6.6, 1.7 + rnd(i, 19) * 1.5];
-        tuft(x, z, 0.9 + rnd(i, 20) * 0.7);
-      }
-      for (let i = 0; i < 3; i++) rock(spot(i + 20)[0], spot(i + 20)[1], 0.5 + rnd(i, 21) * 0.4);
-      for (let i = 0; i < 4; i++) put(new THREE.BoxGeometry(0.09, 0.09, 0.09), i % 2 ? "#ffd23f" : "#f4efe1", (rnd(i, 22) - 0.5) * 5.5, 0.22, -2.6 + rnd(i, 23) * 0.9);
-      tree(3.2, -2.5, 1.2);
-    } else if (state.kind !== "caverns") {
-      // Bare ground (mud, boards, stone): a few rocks and a broken crate.
-      for (let i = 0; i < 5; i++) rock(spot(i)[0], spot(i)[1], 0.6 + rnd(i, 24) * 0.6, "#6d6960");
-      put(new THREE.BoxGeometry(0.5, 0.4, 0.5), "#8a6a44", -2.9, 0.2, -2.3, 0.5);
-    }
-  }
-
-  private battleCentre(state: RenderState): THREE.Vector3 {
-    const battle = state.battle!;
-    const poiId = battle.poiId ?? state.story?.npcs.find((n) => n.id === battle.npcId)?.poi;
-    const poi = state.map.pois.find((p) => p.id === poiId);
-    const centre = this.standAt(poi?.pos ?? state.heroes[0].pos);
-    // The arena is a raised stage, clear of the tallest nearby tile and its trees.
-    let top = centre.y;
-    for (const t of this.tiles) {
-      const w = hexToWorld(t);
-      if (Math.hypot(w.x - centre.x, w.z - centre.z) < 4.2) top = Math.max(top, tileTop(t));
-    }
-    centre.y = top + 1.2;
-    return centre;
-  }
-
   private syncUnits(state: RenderState) {
     const want = new Map<string, Want>();
     const colorOf = (heroId: string) => PLAYER_COLORS[state.heroes.findIndex((h) => h.id === heroId) % PLAYER_COLORS.length];
 
-    if (state.battle) {
-      const centre = this.battleCentre(state);
-      this.arena.visible = true;
-      this.poiGroup.visible = false;
-      this.arena.position.set(centre.x, centre.y - 0.8, centre.z);
-      this.dressArena(state);
-      const actor = state.battle.actor;
-      for (const side of ["hero", "enemy"] as const) {
-        const line = state.battle.combatants.filter((c) => c.side === side);
-        line.forEach((c, i) => {
-          const dir = side === "hero" ? -1 : 1;
-          want.set(c.id, {
-            kind: c.kind,
-            outfit: c.outfit,
-            // Staggered diagonally so the tall figures do not hide each other.
-            pos: new THREE.Vector3(centre.x + dir * (1.2 + i * 1.05), centre.y, centre.z + (i - (line.length - 1) / 2) * 1.25),
-            size: isBoss(c.kind) ? 2.5 : isBig(c.kind) ? 2.2 : 1.9,
-            ring: side === "hero" ? colorOf(c.id) : "#e23b3b",
-            pulse: c.id === actor,
-            hp: c.hp / c.maxHp,
-            down: c.down,
-            // Facing the other side, turned a little toward the camera (which a fight swings round to the south).
-            face: -dir * (Math.PI / 2 - 0.5),
-          });
-        });
+        const stacks = new Map<string, number>();
+    for (const h of state.heroes) stacks.set(key(h.pos), (stacks.get(key(h.pos)) ?? 0) + 1);
+    const seen = new Map<string, number>();
+    for (const h of state.heroes) {
+      const n = stacks.get(key(h.pos))!;
+      const i = seen.get(key(h.pos)) ?? 0;
+      seen.set(key(h.pos), i + 1);
+      const pos = this.standAt(h.pos);
+      if (h.at) pos.add(new THREE.Vector3(h.at.x, h.at.y, h.at.z));
+      else {
+        pos.x += (i - (n - 1) / 2) * 0.6;
+        pos.z += 0.25;
       }
-    } else {
-      this.arena.visible = false;
-      this.poiGroup.visible = true;
-      const stacks = new Map<string, number>();
-      for (const h of state.heroes) stacks.set(key(h.pos), (stacks.get(key(h.pos)) ?? 0) + 1);
-      const seen = new Map<string, number>();
-      for (const h of state.heroes) {
-        const n = stacks.get(key(h.pos))!;
-        const i = seen.get(key(h.pos)) ?? 0;
-        seen.set(key(h.pos), i + 1);
-        const pos = this.standAt(h.pos);
-        if (h.at) pos.add(new THREE.Vector3(h.at.x, h.at.y, h.at.z));
-        else {
-          pos.x += (i - (n - 1) / 2) * 0.6;
-          pos.z += 0.25;
-        }
-        const base = plateOf(h);
-        const plate = base && h.id === state.you && state.stamina ? { ...base, bolts: state.stamina } : base;
-        // A plate shows a first name only: full names run long over a crowd.
-        const full = h.label ?? (plate ? h.name : undefined);
-        const label = plate && full ? firstName(full) : full;
-        want.set(h.id, { kind: h.classId, outfit: h.outfit, pos, size: 1.5, label, plate: label ? plate : undefined, stack: i, ring: colorOf(h.id), pulse: state.turn?.heroId === h.id, asleep: h.asleep, rod: h.rod, boat: h.boat });
-      }
-      for (const npc of state.story?.npcs ?? []) {
-        const poi = state.map.pois.find((p) => p.id === npc.poi);
-        if (!poi || state.npcs[npc.id]?.hostile) continue;
+      const base = plateOf(h);
+      const plate = base && h.id === state.you && state.stamina ? { ...base, bolts: state.stamina } : base;
+      // A plate shows a first name only: full names run long over a crowd.
+      const full = h.label ?? (plate ? h.name : undefined);
+      const label = plate && full ? firstName(full) : full;
+      want.set(h.id, { kind: h.classId, outfit: h.outfit, pos, size: 1.5, label, plate: label ? plate : undefined, stack: i, ring: colorOf(h.id), pulse: state.turn?.heroId === h.id, asleep: h.asleep, rod: h.rod, boat: h.boat });
+    }
+    for (const npc of state.story?.npcs ?? []) {
+      const poi = state.map.pois.find((p) => p.id === npc.poi);
+      if (!poi || state.npcs[npc.id]?.hostile) continue;
+      const pos = this.standAt(poi.pos);
+      pos.x += 0.62;
+      want.set(`npc:${npc.id}`, { kind: "npc", pos, size: 1.4 });
+    }
+    // Bands loose on the island, drawn where they stand while a hero can see them.
+    for (const band of state.roamers ?? []) {
+      band.kinds.forEach((kind, i) => {
+        const pos = this.standAt(band.pos);
+        pos.x += (i - (band.kinds.length - 1) / 2) * 0.55;
+        pos.z += 0.15;
+        want.set(`roam:${band.id}:${i}`, { kind, pos, size: isBig(kind) ? 1.5 : 1.3, ring: i === 0 ? "#ff3b3b" : undefined, pulse: i === 0 });
+      });
+    }
+    for (const poi of state.map.pois) {
+      if (poi.cleared || poi.enemies.length === 0) continue;
+      poi.enemies.forEach((kind, i) => {
         const pos = this.standAt(poi.pos);
-        pos.x += 0.62;
-        want.set(`npc:${npc.id}`, { kind: "npc", pos, size: 1.4 });
-      }
-      // Bands loose on the island, drawn where they stand while a hero can see them.
-      for (const band of state.roamers ?? []) {
-        band.kinds.forEach((kind, i) => {
-          const pos = this.standAt(band.pos);
-          pos.x += (i - (band.kinds.length - 1) / 2) * 0.55;
-          pos.z += 0.15;
-          want.set(`roam:${band.id}:${i}`, { kind, pos, size: isBig(kind) ? 1.5 : 1.3, ring: i === 0 ? "#ff3b3b" : undefined, pulse: i === 0 });
-        });
-      }
-      for (const poi of state.map.pois) {
-        if (poi.cleared || poi.enemies.length === 0) continue;
-        poi.enemies.forEach((kind, i) => {
-          const pos = this.standAt(poi.pos);
-          pos.x += (i - (poi.enemies.length - 1) / 2) * 0.6 + 0.2;
-          pos.z += 0.05;
-          want.set(`poi:${poi.id}:${i}`, { kind, pos, size: isBoss(kind) ? 1.7 : isBig(kind) ? 1.5 : 1.3 });
-        });
-      }
+        pos.x += (i - (poi.enemies.length - 1) / 2) * 0.6 + 0.2;
+        pos.z += 0.05;
+        want.set(`poi:${poi.id}:${i}`, { kind, pos, size: isBoss(kind) ? 1.7 : isBig(kind) ? 1.5 : 1.3 });
+      });
     }
 
     const turned = new Map<string, number>();
@@ -4616,7 +4430,7 @@ export class WorldRenderer {
       if (w.face !== undefined) this.posed.add(id);
       else this.posed.delete(id);
       // Arrows stay in until the one they hit goes down, or the fight is over.
-      if (w.down || !state.battle) this.clearArrows(unit);
+      if (w.down || w.hp === undefined) this.clearArrows(unit);
 
       if (w.ring && !unit.ring) {
         unit.ring = new THREE.Mesh(new THREE.RingGeometry(0.3, 0.44, 6), new THREE.MeshBasicMaterial({ side: THREE.DoubleSide }));
@@ -4805,7 +4619,7 @@ export class WorldRenderer {
     const hovered = this.hovered;
     this.hoverRing.visible = false;
     // While carrying a piece the ghost shows where it would go; no walking route.
-    if (!state || !hovered || state.battle || state.holding) return;
+    if (!state || !hovered || state.holding) return;
     const at = this.standAt(hovered);
     if (this.hoverRing.position.distanceToSquared(new THREE.Vector3(at.x, at.y + 0.04, at.z)) > 1e-6) this.hoverBorn = this.clock;
     this.hoverRing.position.set(at.x, at.y + 0.04, at.z);
@@ -4832,7 +4646,7 @@ export class WorldRenderer {
     this.raycaster.setFromCamera(ndc, this.camera);
     // A figure stands up out of its hex, so a click on it (or on the plate over its head) would
     // otherwise land on the ground behind. Clicking someone (other than yourself) means the hex they stand on.
-    if (!this.state?.battle) {
+    {
       const others = [...this.units.entries()].filter(([id]) => id !== this.state?.you).map(([, u]) => u);
       const onFigure = this.raycaster.intersectObjects(others.flatMap((u) => (u.label ? [u.root, u.label] : [u.root])), true)[0];
       const within = (root: THREE.Object3D, o: THREE.Object3D | null): boolean => !!o && (o === root || within(root, o.parent));
@@ -4850,7 +4664,7 @@ export class WorldRenderer {
     }
     const hit = this.raycaster.intersectObject(this.terrain)[0];
     // A building stands up out of several hexes: pointing at it means its door, not the ground behind its roof.
-    if (!this.state?.battle && this.poiGroup.visible) {
+    if (this.poiGroup.visible) {
       const places = this.poiGroup.children.filter((g) => g.userData.door && g.visible);
       const onPlace = this.raycaster.intersectObjects(places, true)[0];
       if (onPlace && (!hit || onPlace.distance < hit.distance)) {
@@ -4908,16 +4722,14 @@ export class WorldRenderer {
     return { dist: Math.max(1, Math.hypot(a.x - b.x, a.y - b.y)), x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, angle: Math.atan2(b.y - a.y, b.x - a.x) };
   }
 
-  /** Turn the view freely by an angle. No effect during a battle. */
+  /** Turn the view freely by an angle. */
   private turn(radians: number) {
-    if (this.state?.battle) return;
     this.userYaw += radians;
     this.yaw = this.yawGoal = this.userYaw;
   }
 
-  /** Tip the view up or down by an angle; `ease` glides there instead of jumping. No effect during a battle. */
+  /** Tip the view up or down by an angle; `ease` glides there instead of jumping. */
   tiltBy(radians: number, ease = false) {
-    if (this.state?.battle) return;
     this.userPitch = Math.max(MIN_PITCH, Math.min(MAX_PITCH, this.userPitch + radians));
     this.pitchGoal = this.userPitch;
     if (!ease) this.pitch = this.userPitch;
@@ -4925,7 +4737,6 @@ export class WorldRenderer {
 
   /** Turn the view by whole hex sides (60°), easing there. */
   rotateBy(steps: number) {
-    if (this.state?.battle) return;
     const step = Math.PI / 3;
     // Snap to the nearest side first, so repeated presses land on clean angles.
     this.userYaw = (Math.round(this.userYaw / step) + steps) * step;
@@ -4970,7 +4781,6 @@ export class WorldRenderer {
   }
 
   private panBy(dx: number, dy: number) {
-    if (this.state?.battle) return;
     if (dx === 0 && dy === 0) return;
     // Looking around is the player taking the camera: stop following until they ask again.
     if (this.follow) this.setFollow(false);
@@ -4997,7 +4807,7 @@ export class WorldRenderer {
       // Fingers apart zooms in: the camera distance shrinks as the spread grows.
       // Damped: doubling the spread zooms by about a half, not by two.
       this.userDist = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, this.pinch.zoom * Math.pow(this.pinch.dist / now.dist, PINCH_DAMPING)));
-      if (!this.state?.battle) this.dist = this.userDist;
+      this.dist = this.userDist;
       // While following, a pinch only zooms: the little drift of spreading fingers is not a pan.
       if (!this.holdPan(now.x, now.y)) this.panBy(now.x - this.pinch.x, now.y - this.pinch.y);
       // Twisting the two fingers turns the view with them.
@@ -5058,13 +4868,13 @@ export class WorldRenderer {
       if (target) this.callbacks.onPlace(target);
       return;
     }
-    if (this.callbacks.onPropClick && !this.state?.battle) {
+    if (this.callbacks.onPropClick) {
       const prop = this.pickProp();
       if (prop !== null && this.callbacks.onPropClick(prop)) return;
     }
     const pos = this.pick();
     // Nobody walks during a fight, and a practice bout borrows the Harbor's view.
-    if (pos && !this.state?.battle) this.callbacks.onHexClick(pos);
+    if (pos) this.callbacks.onHexClick(pos);
   };
 
   private onPointerLeave = () => {
@@ -5086,7 +4896,7 @@ export class WorldRenderer {
     // A trackpad sends many small deltas and a mouse wheel a few big ones; both end up gentle.
     const step = Math.max(-50, Math.min(50, e.deltaY)) * 0.0012;
     this.userDist = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, this.userDist * Math.exp(step)));
-    if (!this.state?.battle) this.dist = this.userDist;
+    this.dist = this.userDist;
   };
 
   private setHovered(pos: HexPos | null) {
@@ -5153,7 +4963,7 @@ export class WorldRenderer {
       if (ground) this.gaze = (this.gaze ?? new THREE.Vector3()).copy(ground.point);
       if (this.state?.holding) this.placeGhost();
       if (this.callbacks.onPropHover) {
-        const prop = this.state?.battle ? null : this.pickProp();
+        const prop = this.pickProp();
         if (prop !== this.hoverProp) this.callbacks.onPropHover((this.hoverProp = prop));
       }
     }
@@ -5163,7 +4973,7 @@ export class WorldRenderer {
     }
 
     // Held movement keys slide the view, at a speed that covers the screen in about a second and a half.
-    if (this.heldKeys.size > 0 && !this.state?.battle) {
+    if (this.heldKeys.size > 0) {
       let x = 0;
       let y = 0;
       for (const key of this.heldKeys) {
@@ -5176,7 +4986,7 @@ export class WorldRenderer {
     }
 
     // Following: the camera's goal is your hero's feet (the middle of the hex they stand on), wherever they have got to.
-    const mine = this.follow && !this.state?.battle && this.state?.you ? this.units.get(this.state.you) : undefined;
+    const mine = this.follow && this.state?.you ? this.units.get(this.state.you) : undefined;
     if (mine) {
       if (this.followHeld && mine.path.length > 0) {
         this.followHeld = false;
@@ -5328,7 +5138,7 @@ export class WorldRenderer {
       }
       unit.lean *= Math.exp(-dt * 8);
       // Your own hero, standing idle, looks toward the pointer; with the bag open they turn to face you.
-      if (id === this.state?.you && unit.path.length === 0 && !unit.asleep && !unit.lying && !this.state.battle && !this.minigame && !this.posed.has(id)) {
+      if (id === this.state?.you && unit.path.length === 0 && !unit.asleep && !unit.lying && !this.minigame && !this.posed.has(id)) {
         if (this.faceFront) unit.turnGoal = this.yaw;
         else if (this.gaze && this.pointer.inside) {
           const dx = this.gaze.x - p.x;
@@ -5350,7 +5160,7 @@ export class WorldRenderer {
       } else if (this.looks.has(id)) {
         // Someone else's hero looks where their player's pointer is, while they stand idle. Walking off, they face the way they go.
         if (unit.path.length > 0) this.looks.delete(id);
-        else if (!unit.asleep && !unit.lying && !this.state?.battle && !this.posed.has(id)) unit.turnGoal = this.looks.get(id)!;
+        else if (!unit.asleep && !unit.lying && !this.posed.has(id)) unit.turnGoal = this.looks.get(id)!;
       }
       // A sleeper lies with their head toward the left of the view, as the bedrolls are laid.
       if (unit.asleep) unit.turnGoal = this.yaw + Math.PI / 2;

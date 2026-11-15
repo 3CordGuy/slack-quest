@@ -217,7 +217,6 @@ export const AUDIO: AudioManifest = {
     // Under the rocks: no sky, no weather. The island's music until the caverns have their own.
     caverns: { music: "island" },
     battle: { music: "battle", ambience: ["day", "night", "rain", "rainstorm"] },
-    spar: { music: "battle", ambience: ["day", "night", "rain", "rainstorm"] },
   },
 };
 
