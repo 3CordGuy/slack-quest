@@ -14,9 +14,12 @@
 .zone-chip.enemy .zone-hp i { background: #ff6b6b; }
 
 /* Your own, when you have more than one to play (stand-in crewmates). */
-.zone-party { position: absolute; top: 60px; right: 12px; z-index: 10; display: flex; flex-direction: column; gap: 4px; padding: 6px; }
+.zone-party { position: absolute; top: 60px; left: 10px; z-index: 10; display: flex; flex-direction: column; gap: 4px; padding: 6px; }
 
-.zone-feed { bottom: 190px; }
+.zone-feed { bottom: 210px; }
+
+/* The crew, and where each of them is: right-click one to trade with them or go to them. */
+.zone-crew { position: absolute; top: 60px; right: 52px; width: 230px; z-index: 10; }
 
 .zone-banner { position: absolute; left: 50%; top: 22%; transform: translateX(-50%); z-index: 12; font-family: var(--font-title); font-size: 44px; letter-spacing: 0.04em; color: #ffe9a8; text-shadow: 0 3px 0 #3a1c10, 0 0 18px rgba(0, 0, 0, 0.6); pointer-events: none; animation: zone-banner 1.5s ease-out both; }
 @keyframes zone-banner { 0% { opacity: 0; scale: 0.8; } 15% { opacity: 1; scale: 1; } 75% { opacity: 1; } 100% { opacity: 0; } }
@@ -45,7 +48,7 @@
 .zone-barmenu-item.selected { border-color: var(--gold); }
 
 /* What is under the pointer: who, what they have left, and (with an attack picked) the chance it lands. */
-.zone-tip { position: absolute; left: 10px; top: 64px; z-index: 11; max-width: min(420px, 60vw); padding: 6px 10px; font-size: 13px; pointer-events: none; }
+.zone-tip { position: absolute; left: 10px; top: 150px; z-index: 11; max-width: min(420px, 60vw); padding: 6px 10px; font-size: 13px; pointer-events: none; }
 .zone-cond { margin-right: 8px; font-weight: bold; }
 .zone-chance { margin-top: 4px; padding-top: 4px; border-top: 1px dashed var(--line); }
 

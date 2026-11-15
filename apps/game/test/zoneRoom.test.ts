@@ -10,7 +10,7 @@ import { DatabaseSync } from "node:sqlite";
 import { beforeEach, describe, expect, it } from "vitest";
 import { hexDistance } from "@gantt-quest/core";
 import { ALERT_RANGE, zoneOptions, type ZoneEvent, type ZoneState, type ZoneView } from "@gantt-quest/world";
-import { createZoneRow } from "../src/server/zones";
+import { createZoneRow, crewPlaces } from "../src/server/zones";
 
 const globals = globalThis as Record<string, unknown>;
 globals.WebSocketRequestResponsePair = class {
@@ -98,6 +98,7 @@ let environment: string | undefined;
 function room() {
   const ctx = {
     setWebSocketAutoResponse() {},
+    waitUntil() {},
     getWebSockets: (tag?: string) => sockets.filter((s) => s.closed === null && (!tag || (s.deserializeAttachment() as { playerId: string } | null)?.playerId === tag)),
     acceptWebSocket(ws: FakeSocket) {
       sockets.push(ws);
@@ -113,10 +114,10 @@ function room() {
   return new ZoneRoom(ctx as never, { DB: db, ENVIRONMENT: environment } as never);
 }
 
-async function connect(to: InstanceType<typeof ZoneRoom>, code: string, playerId: string): Promise<FakeSocket> {
+async function connect(to: InstanceType<typeof ZoneRoom>, code: string, playerId: string, near?: string): Promise<FakeSocket> {
   const ws = new FakeSocket();
   nextServerSocket = ws;
-  const res = await to.fetch({ headers: new Headers({ Upgrade: "websocket", "x-zone-code": code, "x-player-id": playerId }) } as never);
+  const res = await to.fetch({ headers: new Headers({ Upgrade: "websocket", "x-zone-code": code, "x-player-id": playerId, ...(near ? { "x-zone-near": near } : {}) }) } as never);
   if (res.status !== 101) throw new Error(`refused: ${await res.text()}`);
   return ws;
 }
@@ -124,6 +125,7 @@ async function connect(to: InstanceType<typeof ZoneRoom>, code: string, playerId
 const act = (to: InstanceType<typeof ZoneRoom>, ws: FakeSocket, action: Record<string, unknown>) => to.webSocketMessage(ws as unknown as WebSocket, JSON.stringify({ type: "action", action }));
 const saved = (code: string) => JSON.parse((sql.prepare("SELECT state_json FROM zones WHERE code = ?").get(code) as { state_json: string }).state_json) as ZoneState;
 const hero = (state: ZoneView | ZoneState, id: string) => state.units.find((u) => u.id === id)!;
+const presence = (id: string) => sql.prepare("SELECT code, fighting FROM zone_presence WHERE player_id = ?").get(id) as { code: string; fighting: number } | undefined;
 
 /** A small open map with one pair of wolves on it, and Ann connected. */
 async function arrive() {
@@ -234,6 +236,41 @@ describe("ZoneRoom", () => {
     const now = again.state.encounter;
     expect(now === null || now.turnNo > before.turnNo).toBe(true);
     if (now) expect(now.deadline! - Date.now()).toBeGreaterThan(ZONE_TURN_MS - 5000);
+  });
+
+  it("writes down who is on the zone and whether they are fighting, and rubs it out when they leave", async () => {
+    const { code, zone, ann } = await arrive();
+    expect(presence("ann")).toEqual({ code, fighting: 0 });
+    await pickFight(zone, ann);
+    expect(presence("ann")).toEqual({ code, fighting: 1 });
+    // The crew's roster reads the same rows.
+    sql.prepare("INSERT INTO crews (id, name, created_by, created_at) VALUES ('CREWAA', 'Crew', 'ann', 1)").run();
+    for (const id of ["ann", "bo"]) sql.prepare("INSERT INTO crew_members (crew_id, player_id, joined_at) VALUES ('CREWAA', ?, 1)").run(id);
+    expect(await crewPlaces(db, "CREWAA")).toEqual([
+      { id: "ann", name: "Ann", classId: "qa_paladin", level: 1, zone: { code, fighting: true } },
+      { id: "bo", name: "Bo", classId: "qa_paladin", level: 1, zone: null },
+    ]);
+    await act(zone, ann, { type: "dev", dev: { op: "end_fight" } });
+    expect(presence("ann")).toEqual({ code, fighting: 0 });
+    ann.close();
+    await zone.webSocketClose(ann as unknown as WebSocket, 1000);
+    expect(presence("ann")).toBeUndefined();
+  });
+
+  it("puts someone who teleports to a crewmate beside them, unless that crewmate is in a fight", async () => {
+    const { code, zone, ann } = await arrive();
+    const far = ann.state.map.tiles.find((t) => hexDistance(t, ann.state.start) === 3 && t.biome === "plains")!;
+    await act(zone, ann, { type: "move", unit: "ann", to: { q: far.q, r: far.r } });
+    const bo = await connect(zone, code, "bo", "ann");
+    expect(hexDistance(hero(bo.state, "bo").pos, hero(bo.state, "ann").pos)).toBe(1);
+    // In a fight, a newcomer arrives at the map's start instead.
+    sql.prepare("INSERT INTO players (id, name, created_at) VALUES ('cy', 'Cy', 1)").run();
+    sql.prepare("INSERT INTO characters (player_id, name, class_id, status, str, int_stat, vit, agi, dex, gold, created_at) VALUES ('cy', 'Cy', 'qa_paladin', 'active', 9, 4, 9, 4, 4, 100, 1)").run();
+    await act(zone, ann, { type: "dev", dev: { op: "ai", off: true } });
+    await act(zone, ann, { type: "dev", dev: { op: "start_fight" } });
+    expect(ann.state.encounter?.order).toContain("ann");
+    const cy = await connect(zone, code, "cy", "ann");
+    expect(hexDistance(hero(cy.state, "cy").pos, cy.state.start)).toBeLessThanOrEqual(1);
   });
 
   it("takes dev actions on a development deployment only", async () => {

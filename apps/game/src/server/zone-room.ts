@@ -14,9 +14,9 @@
 
 import { DurableObject } from "cloudflare:workers";
 import { ZONE_CLIENT_ACTIONS, createZone, stepZone, zoneAwaiting, zoneHero, zoneOptions, zoneView, type ZoneAction, type ZoneEvent, type ZoneState } from "@gantt-quest/world";
-import { heroInitFor, type Env } from "./db";
+import { crewFor, heroInitFor, refreshHarbor, type Env } from "./db";
 import { isDev } from "./dev";
-import { getZoneRow, saveZoneStatement } from "./zones";
+import { clearPresence, getZoneRow, saveZoneStatement, setPresence } from "./zones";
 
 /** How long a turn in a fight may take before it ends itself. */
 export const ZONE_TURN_MS = 90_000;
@@ -63,6 +63,8 @@ export function zoneActionFrom(raw: unknown, by: string, dev: boolean): ZoneActi
 export class ZoneRoom extends DurableObject<Env> {
   private zone: ZoneState | null = null;
   private queue: Promise<unknown> = Promise.resolve();
+  /** Whether each player here was last written down as fighting, so presence is only rewritten when it changes. */
+  private fighting = new Map<string, boolean>();
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -92,6 +94,7 @@ export class ZoneRoom extends DurableObject<Env> {
     if (request.headers.get("Upgrade") !== "websocket") return new Response("expected websocket", { status: 426 });
     const code = request.headers.get("x-zone-code");
     const playerId = request.headers.get("x-player-id");
+    const near = request.headers.get("x-zone-near") ?? undefined;
     if (!code || !playerId) return new Response("missing zone or player", { status: 400 });
 
     const error = await this.serial(async () => {
@@ -99,7 +102,7 @@ export class ZoneRoom extends DurableObject<Env> {
       // Read afresh each time: the hero may have changed gear since they were last here.
       const hero = await heroInitFor(this.env.DB, playerId);
       if (!hero) return "You need a character first.";
-      return this.apply({ type: "join", hero: zoneHero(hero) });
+      return this.apply({ type: "join", hero: zoneHero(hero), near });
     });
     if (error) return new Response(error, { status: 409 });
 
@@ -111,6 +114,8 @@ export class ZoneRoom extends DurableObject<Env> {
 
     await this.serial(async () => {
       await this.resumeTimer();
+      this.fighting.delete(playerId);
+      await this.notePresence();
       this.broadcast([]);
     });
     return new Response(null, { status: 101, webSocket: pair[0] });
@@ -141,8 +146,15 @@ export class ZoneRoom extends DurableObject<Env> {
     } catch {
       // Already closed.
     }
+    const { playerId } = (ws.deserializeAttachment() as Attachment | null) ?? { playerId: "" };
     await this.serial(async () => {
-      await this.load();
+      const zone = await this.load();
+      // Gone from the zone, unless another tab of theirs is still here.
+      if (playerId && !this.ctx.getWebSockets(playerId).some((other) => other !== ws)) {
+        this.fighting.delete(playerId);
+        await clearPresence(this.env.DB, playerId, zone.code);
+        this.tellHarbor(playerId);
+      }
       this.broadcast([]);
     });
   }
@@ -180,8 +192,31 @@ export class ZoneRoom extends DurableObject<Env> {
     if (zoneAwaiting(next) !== zoneAwaiting(prev)) await this.armTimer(next);
     this.zone = next;
     await saveZoneStatement(this.env.DB, next).run();
+    await this.notePresence();
     this.broadcast(res.events);
     return null;
+  }
+
+  /** Write down, for everyone connected, that they are here and whether they are in a fight: only what has changed. */
+  private async notePresence() {
+    const zone = this.zone;
+    if (!zone) return;
+    for (const playerId of this.online()) {
+      const now = !!zone.encounter?.order.includes(playerId);
+      if (this.fighting.get(playerId) === now) continue;
+      this.fighting.set(playerId, now);
+      await setPresence(this.env.DB, playerId, zone.code, now);
+      this.tellHarbor(playerId);
+    }
+  }
+
+  /** The crew's Harbor shows where its members are: tell it to look again. */
+  private tellHarbor(playerId: string) {
+    this.ctx.waitUntil(
+      crewFor(this.env.DB, playerId)
+        .then((crew) => refreshHarbor(this.env, crew?.id ?? null))
+        .catch((err) => console.warn("zone-room:harbor-refresh-failed", { err: err instanceof Error ? err.message : String(err) })),
+    );
   }
 
   /** Players connected right now. */

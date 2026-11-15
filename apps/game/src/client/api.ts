@@ -232,6 +232,10 @@ export const api = {
   closeTrade: (id: number) => request("/api/trade/close", { id }),
   // The dev toolbox's seeding. The server answers these only on a development deployment (server/dev.ts).
   /** Add gold to your purse, or take it with a negative amount. */
+  /** Everyone in your crew and the zone each is on, if any. */
+  crewPlaces: () => request<{ members: { id: string; name: string; classId: string; level: number; zone: { code: string; fighting: boolean } | null }[] }>("/api/crew/places"),
+  /** Where to go to join a crewmate: the zone they are on, or null for the Harbor. Refused while they are in a fight. */
+  teleport: (to: string) => request<{ zone: string | null; name: string }>("/api/crew/teleport", { to }),
   /** Make a zone to try fights in, from these options (and a seed, or a fresh one), and get its code. */
   devZone: (options: Record<string, unknown>) => request<{ code: string; seed: string }>("/api/dev/zone", options),
   devGold: (amount: number) => request<{ gold: number }>("/api/dev/gold", { amount }),

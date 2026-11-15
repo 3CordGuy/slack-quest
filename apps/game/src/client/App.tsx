@@ -76,7 +76,7 @@ function Screen({ me, refresh, zone, invite, hut, pub, admin, catches }: { me: M
   if (admin) return <AdminView me={me} onLeave={() => (location.hash = "")} />;
   // Every catch's sprite and model, side by side: for admins, and on a development deployment.
   if (catches && (me.isAdmin || me.devTools || import.meta.env.DEV)) return <CatchGallery onLeave={() => (location.hash = "")} />;
-  if (zone && ready) return <ZoneView key={zone} code={zone} me={me} onLeave={() => (location.hash = "")} />;
+  if (zone && ready) return <ZoneView key={zone} code={zone} me={me} refresh={refresh} onLeave={() => (location.hash = "")} />;
   // A voyage or delve link (#run/CODE) lands in the Harbor: both are shut while they are rebuilt on the new combat.
   if (pub && ready && me.crew) return <PubView me={me} refresh={refresh} onLeave={() => (location.hash = "")} />;
   if (hut && ready && me.crew) return <HutView key={hut} ownerId={hut} me={me} refresh={refresh} onLeave={() => (location.hash = "")} />;

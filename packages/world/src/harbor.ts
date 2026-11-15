@@ -342,6 +342,8 @@ export interface HarborMember {
    * raised. Absent once the shack stands (and on boards saved before bins).
    */
   bin?: Resources;
+  /** Out on a zone right now: which one, and whether they are in a fight there (nobody can teleport into one). */
+  zone?: { code: string; fighting: boolean };
 }
 
 export interface HarborShip {

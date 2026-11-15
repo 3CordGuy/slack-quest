@@ -2,7 +2,7 @@
 // sprite, name, level and class, here-first. Shared by the Harbor's Crew
 // panel and the "Inside" panels of the hut and the pub.
 
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import type { Outfit } from "@gantt-quest/world";
 import { label } from "./labels";
 import { spriteDataUrl, spriteKey } from "./render/sprites";
@@ -21,6 +21,14 @@ export interface RosterMember {
   tags?: string[];
 }
 
+/** One thing to do with a crewmate, offered when their row is right-clicked. */
+export interface RosterAction {
+  label: string;
+  /** Why it cannot be done right now: shown greyed out, with this under it. */
+  blocked?: string;
+  run(): void;
+}
+
 interface Props {
   members: RosterMember[];
   you: string | null;
@@ -32,6 +40,8 @@ interface Props {
   openId?: string | null;
   /** Offer a Trade button on everyone but you. */
   onTrade?(id: string): void;
+  /** What a right-click on someone's row offers (trade, teleport to them). Nothing for an empty list. */
+  menu?(member: RosterMember): RosterAction[];
 }
 
 // toDataURL is not free: draw each look once.
@@ -52,9 +62,28 @@ const TradeIcon = () => (
 
 const byName = (a: RosterMember, b: RosterMember) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
 
-export function CrewRoster({ members, you, heading, onOpen, openId, onTrade }: Props) {
+export function CrewRoster({ members, you, heading, onOpen, openId, onTrade, menu }: Props) {
   const here = members.filter((m) => m.here).sort(byName);
   const away = members.filter((m) => !m.here).sort(byName);
+  /** The menu that is open: whose, and where on screen it was asked for. */
+  const [asked, setAsked] = useState<{ id: string; x: number; y: number } | null>(null);
+  useEffect(() => {
+    if (!asked) return;
+    const close = () => setAsked(null);
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && close();
+    // On the next turn of the loop, so the click that opened it does not close it.
+    const t = setTimeout(() => {
+      addEventListener("pointerdown", close);
+      addEventListener("keydown", onKey);
+    });
+    return () => {
+      clearTimeout(t);
+      removeEventListener("pointerdown", close);
+      removeEventListener("keydown", onKey);
+    };
+  }, [asked]);
+  const askedOf = asked ? members.find((m) => m.id === asked.id) : undefined;
+  const offered = askedOf && menu ? menu(askedOf) : [];
 
   const row = (m: RosterMember) => {
     const mine = m.id === you;
@@ -79,7 +108,15 @@ export function CrewRoster({ members, you, heading, onOpen, openId, onTrade }: P
       </>
     );
     return (
-      <li key={m.id} className={`cm ${m.here ? "here" : "away"}${mine ? " mine" : ""}${m.id === openId ? " open" : ""}`}>
+      <li
+        key={m.id}
+        className={`cm ${m.here ? "here" : "away"}${mine ? " mine" : ""}${m.id === openId ? " open" : ""}`}
+        onContextMenu={(e) => {
+          if (!menu || menu(m).length === 0) return;
+          e.preventDefault();
+          setAsked({ id: m.id, x: e.clientX, y: e.clientY });
+        }}
+      >
         {onOpen ? (
           <button type="button" className="cm-main" title={`${m.name}, level ${m.level} ${cls}${m.here ? "" : " (away)"}. Look them over.`} onClick={() => onOpen(m.id)}>
             {body}
@@ -104,6 +141,17 @@ export function CrewRoster({ members, you, heading, onOpen, openId, onTrade }: P
         {away.length > 0 && here.length > 0 && <li className="roster-sep" aria-hidden>Away</li>}
         {away.map(row)}
       </ul>
+      {asked && askedOf && offered.length > 0 && (
+        <div className="cm-menu panel" role="menu" aria-label={askedOf.name} style={{ left: Math.min(asked.x, innerWidth - 230), top: Math.min(asked.y, innerHeight - 40 - offered.length * 44) }} onPointerDown={(e) => e.stopPropagation()}>
+          <strong className="cm-menu-name">{askedOf.name}</strong>
+          {offered.map((a) => (
+            <button key={a.label} type="button" role="menuitem" className="cm-menu-item" disabled={!!a.blocked} onClick={() => { setAsked(null); a.run(); }}>
+              <span>{a.label}</span>
+              {a.blocked && <span className="muted">{a.blocked}</span>}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

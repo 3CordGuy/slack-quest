@@ -76,7 +76,7 @@ import { acceptTrade, closeTrade, listTrades, openTrade, setTradeSide } from "./
 import { apothecaryView, brew, smithItem, smithyView } from "./server/workshops";
 import { cook, galleyView } from "./server/galley";
 import { announceXp, harborXpFor } from "./server/harbor-xp";
-import { createZoneRow, getZoneRow } from "./server/zones";
+import { createZoneRow, crewPlaces, getZoneRow } from "./server/zones";
 import {
   checkImport,
   checkOverride,
@@ -890,6 +890,23 @@ const RUNS_CLOSED = "Voyages and delves are being rebuilt. They will sail again 
 app.post("/api/run", (c) => c.json({ error: RUNS_CLOSED }, 503));
 app.get("/api/run/:code/ws", (c) => c.text(RUNS_CLOSED, 503));
 
+// Where everyone in the asker's crew is: on which zone, and whether in a fight there. For the roster shown on a zone.
+app.get("/api/crew/places", async (c) => {
+  const crew = await crewFor(c.env.DB, c.get("player").id);
+  return c.json({ members: crew ? await crewPlaces(c.env.DB, crew.id) : [] });
+});
+
+// Teleport to a crewmate: says where to go. The zone they are on, if they are on one and not in a
+// fight (nobody drops into a fight); the Harbor (zone null) if they are not out on a zone at all.
+app.post("/api/crew/teleport", async (c) => {
+  const body = await c.req.json<{ to?: string }>().catch(() => ({}) as { to?: string });
+  const crew = await crewFor(c.env.DB, c.get("player").id);
+  const friend = crew ? (await crewPlaces(c.env.DB, crew.id)).find((m) => m.id === body.to) : undefined;
+  if (!friend || friend.id === c.get("player").id) return c.json({ error: "Pick a crewmate." }, 400);
+  if (friend.zone?.fighting) return c.json({ error: `${friend.name} is in a fight. Wait for it to end, or walk in from the map.` }, 409);
+  return c.json({ zone: friend.zone?.code ?? null, name: friend.name });
+});
+
 // A zone's socket. Anyone with a hero and the code can walk in; making a zone is a dev route for now.
 app.get("/api/zone/:code/ws", async (c) => {
   const code = c.req.param("code").toUpperCase();
@@ -897,6 +914,10 @@ app.get("/api/zone/:code/ws", async (c) => {
   const headers = new Headers(c.req.raw.headers);
   headers.set("x-zone-code", code);
   headers.set("x-player-id", c.get("player").id);
+  // Arriving by teleport: beside the crewmate teleported to.
+  const near = c.req.query("near");
+  if (near && near.length <= 64) headers.set("x-zone-near", near);
+  else headers.delete("x-zone-near");
   return c.env.ZONE_ROOM.get(c.env.ZONE_ROOM.idFromName(code)).fetch(new Request(c.req.url, { headers }));
 });
 

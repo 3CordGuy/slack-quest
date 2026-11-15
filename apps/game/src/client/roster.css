@@ -77,3 +77,9 @@ button.cm-main:hover:not(:disabled) { border-color: var(--line); background: rgb
   :has(> .roster-panel:not(.folded)) > .hs-sheet { right: 252px; }
   :has(> .roster-panel.roster-trade:not(.folded)) > .hs-sheet { right: 292px; }
 }
+
+/* What a right-click on someone's row offers. It sits where the pointer was, over everything. */
+.cm-menu { position: fixed; z-index: 60; min-width: 200px; padding: 6px; display: flex; flex-direction: column; gap: 4px; }
+.cm-menu-name { padding: 2px 4px 4px; font-family: var(--font-head); letter-spacing: 0.04em; }
+.cm-menu-item { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; padding: 5px 8px; text-align: left; }
+.cm-menu-item .muted { font-size: 11px; }

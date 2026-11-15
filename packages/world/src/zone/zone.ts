@@ -442,7 +442,10 @@ function act(ctx: Ctx, action: ZoneAction): string | null {
       here.hp = Math.min(here.hp, here.maxHp);
       return null;
     }
-    const pos = freeHexNear(state.map, state.start, (p) => !!unitAt(state, p), (p) => tileAt(state.map, p));
+    // Teleported to a crewmate: beside them, unless they have since got into a fight.
+    const friend = action.near ? unitById(state, action.near) : undefined;
+    const beside = friend && friend.side === "hero" && !inFight(state, friend.id) ? friend.pos : state.start;
+    const pos = freeHexNear(state.map, beside, (p) => !!unitAt(state, p), (p) => tileAt(state.map, p));
     if (!pos) return "There is no room to arrive.";
     state.units.push(heroUnit(hero, pos));
     ctx.events.push({ t: "joined", id: hero.id });

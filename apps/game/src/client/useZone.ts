@@ -36,7 +36,16 @@ export function useZone(code: string, onUpdate: (state: ZoneView, events: ZoneEv
     let everOpened = false;
     const connect = () => {
       const proto = location.protocol === "https:" ? "wss:" : "ws:";
-      const ws = new WebSocket(`${proto}//${location.host}/api/zone/${code}/ws${PROFILE ? `?p=${PROFILE}` : ""}`);
+      // Arriving by teleport: the crewmate to turn up beside, said once.
+      let near = "";
+      try {
+        near = sessionStorage.getItem("gq.zone.near") ?? "";
+        sessionStorage.removeItem("gq.zone.near");
+      } catch {
+        // Storage is off: the map's start it is.
+      }
+      const query = [PROFILE && `p=${encodeURIComponent(PROFILE)}`, near && `near=${encodeURIComponent(near)}`].filter(Boolean).join("&");
+      const ws = new WebSocket(`${proto}//${location.host}/api/zone/${code}/ws${query ? `?${query}` : ""}`);
       socket.current = ws;
       setStatus("connecting");
       ws.onopen = () => {

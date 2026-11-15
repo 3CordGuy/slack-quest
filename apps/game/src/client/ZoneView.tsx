@@ -51,7 +51,9 @@ import {
   type ZoneState,
   type ZoneView as ZoneViewState,
 } from "@gantt-quest/world";
-import type { Me } from "./api";
+import { api, type Me } from "./api";
+import { CrewRoster, type RosterMember } from "./CrewRoster";
+import { Trading } from "./TradePanel";
 import { useAudioScene } from "./audio/useAudioScene";
 import { sounds } from "./audio/gameSounds";
 import { OptionsMenu } from "./OptionsMenu";
@@ -102,7 +104,9 @@ function dwell(ev: ZoneEvent): number {
 /** What an attack is called, for its look and sound: an ability's name, or an enemy attack's own. */
 const blowName = (what: string) => ABILITIES[what]?.name ?? what;
 
-export function ZoneView({ code, me, onLeave }: { code: string; me: Me; onLeave(): void }) {
+type CrewPlaces = Awaited<ReturnType<typeof api.crewPlaces>>["members"];
+
+export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me; refresh(): Promise<unknown>; onLeave(): void }) {
   const mount = useRef<HTMLDivElement>(null);
   const renderer = useRef<WorldRenderer | null>(null);
   const layer = useRef<TacticsLayer | null>(null);
@@ -124,6 +128,37 @@ export function ZoneView({ code, me, onLeave }: { code: string; me: Me; onLeave(
   /** The bar's eighteen slots, by key (zone/hotbar.ts), and the slot whose contents are being chosen. */
   const [bar, setBar] = useState<string[]>([]);
   const [barMenu, setBarMenu] = useState<number | null>(null);
+  /** The crew and where each of them is, asked for every few seconds; and who the trade table is open with. */
+  const [crew, setCrew] = useState<CrewPlaces>([]);
+  const [tradeWith, setTradeWith] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+  useEffect(() => {
+    let live = true;
+    const ask = () => api.crewPlaces().then((r) => live && setCrew(r.members), () => undefined);
+    ask();
+    const t = setInterval(ask, 6000);
+    return () => {
+      live = false;
+      clearInterval(t);
+    };
+  }, []);
+  useEffect(() => {
+    if (!note) return;
+    const t = setTimeout(() => setNote(null), 3500);
+    return () => clearTimeout(t);
+  }, [note]);
+  /** Go to where a crewmate is: their map (beside them), or the Harbor if they are not out on one. */
+  const teleportTo = (id: string) => {
+    api.teleport(id).then(({ zone: to }) => {
+      if (!to) return onLeave();
+      try {
+        sessionStorage.setItem("gq.zone.near", id);
+      } catch {
+        // Storage is off: they arrive at the map's start.
+      }
+      location.hash = `zone/${to}`;
+    }, (e: Error) => setNote(e.message));
+  };
   const names = useRef(new Map<string, string>());
   const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
   const settled = useRef<Picture | null>(null);
@@ -730,6 +765,27 @@ export function ZoneView({ code, me, onLeave }: { code: string; me: Me; onLeave(
       )}
 
       {zone.error && <div className="toast">{zone.error}</div>}
+      {note && !zone.error && <div className="toast note">{note}</div>}
+
+      {crew.length > 1 && (
+        <div className="zone-crew roster-panel crew-cards">
+          <CrewRoster
+            you={state.you}
+            heading={<>{crew.filter((m) => m.zone?.code === code).length} of {crew.length} on this map</>}
+            members={crew.map((m): RosterMember => ({ id: m.id, name: m.name, classId: m.classId, level: m.level, here: m.zone?.code === code, outfit: state.units.find((u) => u.id === m.id)?.outfit, tags: m.zone?.fighting ? ["in a fight"] : m.zone && m.zone.code !== code ? ["on another map"] : !m.zone ? ["not on a map"] : undefined }))}
+            onTrade={setTradeWith}
+            menu={(m) => {
+              if (m.id === state.you) return [];
+              const where = crew.find((x) => x.id === m.id)?.zone;
+              return [
+                { label: "Trade", run: () => setTradeWith(m.id) },
+                { label: where ? "Teleport to them" : "Go to the Harbor", blocked: where?.fighting && where.code !== code ? "In a fight" : where?.code === code ? "Already on this map" : undefined, run: () => teleportTo(m.id) },
+              ];
+            }}
+          />
+        </div>
+      )}
+      {me.character && <Trading me={me} partners={crew.filter((m) => m.id !== state.you)} withId={tradeWith} onWith={setTradeWith} refresh={refresh} />}
 
       {barMenu !== null && (
         <div className="zone-barmenu panel" role="dialog" aria-label="Choose what goes in this slot">

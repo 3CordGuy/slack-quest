@@ -72,10 +72,23 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
   /** Your gathering outings left today, drawn as lightning bolts on your plate. Read on the way in and after anything that spends or restores them. */
   const [stamina, setStamina] = useState<{ left: number; max: number } | null>(null);
   const { board, players, you } = harbor;
-  // The whole crew, with whoever is walking the Harbor right now marked here (and drawn in what they wear).
+  /** Go to where a crewmate is: the zone they are on (beside them), if the server says they can be joined. */
+  const teleportTo = (id: string) => {
+    api.teleport(id).then(({ zone, name }) => {
+      if (!zone) return setNote(`${name} is not out on a map.`);
+      try {
+        sessionStorage.setItem("gq.zone.near", id);
+      } catch {
+        // Storage is off: they arrive at the map's start.
+      }
+      location.hash = `zone/${zone}`;
+    }, (e: Error) => setNote(e.message));
+  };
+  // The whole crew, with whoever is walking the Harbor right now marked here (and drawn in what they wear),
+  // and whoever is out on a map marked as that.
   const roster: RosterMember[] = useMemo(() => board.members.map((m) => {
     const p = players.find((x) => x.id === m.id);
-    return { id: m.id, name: m.name, classId: m.classId, level: p?.level ?? m.level, here: !!p, outfit: p?.outfit };
+    return { id: m.id, name: m.name, classId: m.classId, level: p?.level ?? m.level, here: !!p && !m.zone, outfit: p?.outfit, tags: m.zone ? [m.zone.fighting ? "in a fight" : "on a map"] : undefined };
   }), [board.members, players]);
   const hereCount = roster.filter((m) => m.here).length;
   const moored = board.ships.filter((s) => s.pier !== null);
@@ -392,6 +405,14 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
             onOpen={heroSheet.toggle}
             openId={heroSheet.open}
             onTrade={setTradeWith}
+            menu={(m) => {
+              if (m.id === you) return [];
+              const away = board.members.find((x) => x.id === m.id)?.zone;
+              return [
+                { label: "Trade", run: () => setTradeWith(m.id) },
+                { label: "Teleport to them", blocked: away?.fighting ? "In a fight" : away ? undefined : m.here ? "Already here with you" : "Not out on a map", run: () => teleportTo(m.id) },
+              ];
+            }}
           />
         </div>
       </div>

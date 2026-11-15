@@ -82,6 +82,7 @@ import type { HutRoom } from "./hut-room";
 import type { PubRoom } from "./pub-room";
 import type { RunRoom } from "./run-room";
 import type { ZoneRoom } from "./zone-room";
+import { crewPresence } from "./zones";
 
 export interface Env {
   DB: D1Database;
@@ -1142,7 +1143,9 @@ export async function harborBoard(db: D1Database, crewId: string, pierCount: num
   let pier = 0;
   for (const ship of ships) if (ship.phase === "lobby" && ship.kind !== "caverns" && pier < pierCount) ship.pier = pier++;
   // Members whose shack is not up yet carry what is in its bin, so the site can be drawn filling up.
-  const roster = members.results.map(({ bin, ...m }) => (m.plot !== null && bin !== null ? { ...m, bin: parseBin(bin) } : m));
+  // Who is out on a zone, and whether they are fighting there.
+  const zoneOf = await crewPresence(db, crewId);
+  const roster = members.results.map(({ bin, ...m }) => ({ ...m, ...(m.plot !== null && bin !== null ? { bin: parseBin(bin) } : {}), ...(zoneOf.has(m.id) ? { zone: zoneOf.get(m.id) } : {}) }));
   return { members: roster, ships, log, works };
 }
 

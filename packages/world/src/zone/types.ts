@@ -174,7 +174,8 @@ export type DevOp =
 
 /** `by` is the player an action came from: the server sets it, never the client. */
 export type ZoneAction =
-  | { type: "join"; hero: ZoneHero }
+  /** `near`: arrive beside this unit (a crewmate teleported to) and not at the start, unless they are in a fight. */
+  | { type: "join"; hero: ZoneHero; near?: string }
   | { type: "move"; by: string; unit: string; to: HexPos }
   | { type: "use"; by: string; unit: string; ability: string; target?: string; at?: HexPos; focus?: boolean }
   | { type: "common"; by: string; unit: string; what: CommonAction; target?: string; at?: HexPos }
