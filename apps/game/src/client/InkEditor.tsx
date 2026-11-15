@@ -22,6 +22,7 @@ import {
   type InkView,
 } from "@gantt-quest/world";
 import { inkAcross, inkGuides, inkOver, inkSurface } from "./render/figures";
+import { STAMPS, type Stamp } from "./inkStamps";
 
 /** One view of the doll, in cells, and the gap between the two. */
 const COLS = 92;
@@ -217,6 +218,28 @@ export function InkEditor({ look, onChange, onView }: { look: Appearance; onChan
     setBase(next);
     return { ...s, lifted };
   };
+  /** Where the doll was last pressed: a stamp goes down there (the left forearm, seen from the front, at first). */
+  const lastAt = useRef<{ view: InkView; col: number; row: number }>({ view: "f", col: 82, row: 81 });
+  /** Drop a stamp onto the doll in the chosen ink, lifted, to slide into place and put down. */
+  const placeStamp = (stamp: Stamp) => {
+    commit();
+    remember();
+    const faint = inkCell(color, Math.max(1, level - 2));
+    const lifted: NonNullable<Selection["lifted"]> = [];
+    stamp.rows.forEach((row, r) => [...row].forEach((ch, c) => ch !== "." && lifted.push({ c, r, cell: ch === "+" ? faint : brush })));
+    const w = Math.max(...stamp.rows.map((row) => row.length));
+    const h = stamp.rows.length;
+    const at = lastAt.current;
+    setSel({ view: at.view, col: at.col - Math.floor(w / 2), row: at.row - Math.floor(h / 2), w, h, dx: 0, dy: 0, lifted });
+    setTool("select");
+    onView?.(at.view);
+    canvas.current?.focus({ preventScroll: true });
+  };
+  /** Mirror a lifted selection left to right. */
+  const flip = () => {
+    if (!sel?.lifted) return;
+    setSel({ ...sel, lifted: sel.lifted.map((p) => ({ ...p, c: sel.w - 1 - p.c })) });
+  };
   const removeSelected = () => {
     if (!sel) return;
     remember();
@@ -285,6 +308,7 @@ export function InkEditor({ look, onChange, onView }: { look: Appearance; onChan
     const at = cellAt(e);
     if (!at) return;
     canvas.current?.setPointerCapture(e.pointerId);
+    lastAt.current = at;
     canvas.current?.focus({ preventScroll: true });
     onView?.(at.view);
     if (tool === "select") {
@@ -412,6 +436,11 @@ export function InkEditor({ look, onChange, onView }: { look: Appearance; onChan
           ))}
         </span>
         <span className="ink-tool-group">
+          {sel?.lifted && (
+            <button type="button" className="look-chip" onClick={flip} title="Mirror the selection left to right">
+              ⇋ Flip
+            </button>
+          )}
           <button type="button" className="look-chip" onClick={undo}>
             ↶ Undo
           </button>
@@ -419,6 +448,14 @@ export function InkEditor({ look, onChange, onView }: { look: Appearance; onChan
             Clear
           </button>
         </span>
+      </div>
+      <div className="ink-stamps" role="group" aria-label="Stamps">
+        <span className="look-label">Stamps</span>
+        {STAMPS.map((stamp) => (
+          <button key={stamp.id} type="button" className="ink-stamp" title={stamp.label} aria-label={`Stamp: ${stamp.label}`} onClick={() => placeStamp(stamp)}>
+            <StampIcon stamp={stamp} ink={brush} faint={inkCell(color, Math.max(1, level - 2))} skin={look.skin} />
+          </button>
+        ))}
       </div>
       <div className="ink-views" aria-hidden>
         <span>Front</span>
@@ -438,7 +475,7 @@ export function InkEditor({ look, onChange, onView }: { look: Appearance; onChan
         onKeyDown={key}
       />
       <p className="muted hint">
-        {tool === "select" ? "Drag a box round some ink, then drag inside it to slide it about. Arrow keys nudge it; Delete wipes it." : "Draw on the head, forearms and legs. Hair and clothes cover what is under them."}{" "}
+        {tool === "select" ? "Drag a box round some ink (or drop a stamp), then drag inside it to slide it about. Arrow keys nudge it, Flip mirrors it, Delete wipes it, Enter puts it down." : "Draw on the head, forearms and legs. Hair and clothes cover what is under them."}{" "}
         <span className="ink-count">
           {used} / {MAX_INK_CELLS}
         </span>
@@ -581,4 +618,25 @@ function shade(hex: string, k: number): string {
 function hexAlpha(hex: string, a: number): string {
   const n = parseInt(hex.slice(1), 16);
   return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${a})`;
+}
+
+/** A stamp drawn small, in the chosen ink over the skin, for its button. */
+function StampIcon({ stamp, ink, faint, skin }: { stamp: Stamp; ink: number; faint: number; skin: string }) {
+  const ref = useRef<HTMLCanvasElement>(null);
+  const w = Math.max(...stamp.rows.map((row) => row.length));
+  const h = stamp.rows.length;
+  useEffect(() => {
+    const ctx = ref.current?.getContext("2d");
+    if (!ctx) return;
+    ctx.fillStyle = skin;
+    ctx.fillRect(0, 0, w + 2, h + 2);
+    stamp.rows.forEach((row, r) =>
+      [...row].forEach((ch, c) => {
+        if (ch === ".") return;
+        ctx.fillStyle = inkOver(skin, ch === "+" ? faint : ink);
+        ctx.fillRect(c + 1, r + 1, 1, 1);
+      }),
+    );
+  }, [stamp, ink, faint, skin, w, h]);
+  return <canvas ref={ref} width={w + 2} height={h + 2} />;
 }
