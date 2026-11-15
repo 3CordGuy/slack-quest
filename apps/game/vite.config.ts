@@ -7,9 +7,16 @@ import { releaseNotes } from "./scripts/release-notes.ts";
 // The Cloudflare plugin runs the Worker (src/worker.ts) and its Durable
 // Object inside Miniflare next to the Vite dev server, so /api/* and the
 // React app share an origin. Bindings come from wrangler.jsonc.
-export default defineConfig({
+//
+// The Worker's AI binding has no local stand-in: the plugin reaches Cloudflare
+// for it, which needs a `wrangler login` that has not lapsed. `--mode offline`
+// (the "game-offline" entry in .claude/launch.json) leaves that connection
+// out, so the server starts without a login. Local dev answers with
+// AI_MODE "mock" and never calls the binding; only a local run switched to
+// live AI needs the connection.
+export default defineConfig(({ mode }) => ({
   // audioDev serves the WAV masters in ./audio while developing (see audio/README.md).
   // releaseNotes reads the notice board's release notes out of git (see src/releases.ts).
-  plugins: [react(), cloudflare(), audioDev("./audio"), releaseNotes()],
+  plugins: [react(), cloudflare({ remoteBindings: mode !== "offline" }), audioDev("./audio"), releaseNotes()],
   server: { port: 5180, strictPort: true },
-});
+}));
