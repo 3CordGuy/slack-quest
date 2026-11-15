@@ -1490,7 +1490,7 @@ export class TableStage implements WorldMinigame {
    * a deal, a draw, a card played and what it did, a Storm, a swap with the buried card, and the cards shown
    * at the end of a hand. Nothing is acted out for the state the table was in when you sat down.
    */
-  syncTide(scene: TideScene | null) {
+  syncTide(scene: TideScene | null): number {
     this.clickables = [];
     const prev = this.tidePrev;
     this.tidePrev = scene;
@@ -1662,6 +1662,14 @@ export class TableStage implements WorldMinigame {
       });
       if (showing && seat.hand.length > 0) shownIx++;
     }
+    // Seconds until your own cards have come to rest: your hand in the dock is not shown before then.
+    let wait = 0;
+    const mine = scene?.seats.find((s) => s.pick);
+    this.rigs.get(mine?.id ?? "")?.items.traverse((o) => {
+      const sl = o.userData.slide as Slide | undefined;
+      if (sl) wait = Math.max(wait, sl.dur - sl.t);
+    });
+    return wait;
   }
 
   // ---------- input ----------
