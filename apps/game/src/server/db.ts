@@ -81,6 +81,7 @@ import { brewBagOf } from "./workshops";
 import type { HutRoom } from "./hut-room";
 import type { PubRoom } from "./pub-room";
 import type { RunRoom } from "./run-room";
+import type { ZoneRoom } from "./zone-room";
 
 export interface Env {
   DB: D1Database;
@@ -90,6 +91,7 @@ export interface Env {
   HARBOR_ROOM: DurableObjectNamespace<HarborRoom>;
   HUT_ROOM: DurableObjectNamespace<HutRoom>;
   PUB_ROOM: DurableObjectNamespace<PubRoom>;
+  ZONE_ROOM: DurableObjectNamespace<ZoneRoom>;
   /** "mock" replaces Workers AI with a scripted stand-in. */
   AI_MODE?: string;
   /** Email Sending binding. Without it (and MAIL_FROM_ADDRESS) sign-in codes go to the log. */

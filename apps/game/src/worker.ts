@@ -4,7 +4,7 @@
 
 import { Hono, type Context } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
-import { HARBOR_PIERS, HARBOR_PLOTS, HERO_CLASSES, MAX_CREW, PUB_BARKEEP, PUB_DEALER, PUB_MAX_TALK, PUB_MENU, dueIn, hutPerks, nextSalesmanVisit, salesman, salesmanVisitAt, makeRng, parseAppearance, pubBuff, rollStartingStats } from "@gantt-quest/world";
+import { HARBOR_PIERS, HARBOR_PLOTS, HERO_CLASSES, MAX_CREW, PUB_BARKEEP, PUB_DEALER, PUB_MAX_TALK, PUB_MENU, dueIn, hutPerks, nextSalesmanVisit, salesman, salesmanVisitAt, makeRng, parseAppearance, pubBuff, rollStartingStats, zoneOptions } from "@gantt-quest/world";
 import { barkeepReply, heroName } from "./server/ai";
 import { contractBoard } from "./server/board";
 import { markReleaseSeen, seenRelease } from "./server/releases";
@@ -76,6 +76,7 @@ import { acceptTrade, closeTrade, listTrades, openTrade, setTradeSide } from "./
 import { apothecaryView, brew, smithItem, smithyView } from "./server/workshops";
 import { cook, galleyView } from "./server/galley";
 import { announceXp, harborXpFor } from "./server/harbor-xp";
+import { createZoneRow, getZoneRow } from "./server/zones";
 import {
   checkImport,
   checkOverride,
@@ -97,6 +98,7 @@ export { HarborRoom } from "./server/harbor-room";
 export { HutRoom } from "./server/hut-room";
 export { PubRoom } from "./server/pub-room";
 export { RunRoom } from "./server/run-room";
+export { ZoneRoom } from "./server/zone-room";
 
 type App = { Bindings: Env; Variables: { player: Player } };
 const app = new Hono<App>();
@@ -209,6 +211,18 @@ app.get("/api/me", async (c) => {
 app.use("/api/dev/*", async (c, next) => {
   if (!isDev(c.env)) return c.json({ error: "not found" }, 404);
   return next();
+});
+
+// A zone to try fights in: a map made from the options sent (anything missing takes its default),
+// sized for the level of whoever asks unless told otherwise. Returns its code and the seed it was made from.
+app.post("/api/dev/zone", async (c) => {
+  const player = c.get("player");
+  const character = await getCharacter(c.env.DB, player.id);
+  if (character?.status !== "active") return c.json({ error: "Create a character first." }, 409);
+  const body = await c.req.json<Record<string, unknown>>().catch(() => ({}) as Record<string, unknown>);
+  const options = zoneOptions({ level: character.level, ...body });
+  const seed = typeof body.seed === "string" && body.seed.trim() ? body.seed.trim().slice(0, 40) : crypto.randomUUID().slice(0, 8);
+  return c.json({ code: await createZoneRow(c.env.DB, player.id, options, seed), seed });
 });
 
 app.post("/api/dev/gold", async (c) => {
@@ -875,5 +889,15 @@ app.get("/api/crew/ws", async (c) => {
 const RUNS_CLOSED = "Voyages and delves are being rebuilt. They will sail again soon.";
 app.post("/api/run", (c) => c.json({ error: RUNS_CLOSED }, 503));
 app.get("/api/run/:code/ws", (c) => c.text(RUNS_CLOSED, 503));
+
+// A zone's socket. Anyone with a hero and the code can walk in; making a zone is a dev route for now.
+app.get("/api/zone/:code/ws", async (c) => {
+  const code = c.req.param("code").toUpperCase();
+  if (!(await getZoneRow(c.env.DB, code))) return c.text("No map with that code.", 404);
+  const headers = new Headers(c.req.raw.headers);
+  headers.set("x-zone-code", code);
+  headers.set("x-player-id", c.get("player").id);
+  return c.env.ZONE_ROOM.get(c.env.ZONE_ROOM.idFromName(code)).fetch(new Request(c.req.url, { headers }));
+});
 
 export default app;
