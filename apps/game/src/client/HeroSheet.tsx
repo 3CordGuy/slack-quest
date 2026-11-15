@@ -30,7 +30,6 @@ import {
 import type { StatKey } from "@gantt-quest/core";
 import { api } from "./api";
 import { ChangeLook } from "./ChangeLook";
-import { devTools } from "./devTools";
 import { perkText } from "./hutDrops";
 import { Icon, ItemDetail, ItemTile } from "./items";
 import { blurb, itemName, label } from "./labels";
@@ -151,8 +150,8 @@ export function HeroSheet({ id, you, onClose, live }: Props) {
         </div>
         <button className="small" onClick={onClose} aria-label="Close">✕</button>
       </header>
-      {/* Looks are still only on development deployments. */}
-      {hero.id === you && devTools.on && !live && (
+      {/* Your own look can be changed here, but not on a voyage. */}
+      {hero.id === you && !live && (
         <button type="button" className="small hs-change-look" onClick={() => setChanging(true)}>
           Change look
         </button>

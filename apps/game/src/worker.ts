@@ -182,9 +182,9 @@ app.use("/api/*", async (c, next) => {
 
 app.get("/api/me", async (c) => {
   const player = c.get("player");
-  // Looks are still only on development deployments: there, a hero from before them is given their class's
-  // look and starting clothes the first time they come in (see ensureLook).
-  if (isDev(c.env)) await ensureLook(c.env.DB, player.id);
+  // A hero from before looks came in is given their class's look and starting clothes the first time they
+  // come in (see ensureLook).
+  await ensureLook(c.env.DB, player.id);
   const [character, inventory, crew, carry, harborXp, seen, held] = await Promise.all([
     getCharacter(c.env.DB, player.id),
     getInventory(c.env.DB, player.id),
