@@ -1,0 +1,106 @@
+// The enemy's turn. An enemy plays by the heroes' rules: it has movement
+// and one attack, it is struck at if it walks out of someone's reach, and
+// fire burns it. It looks at every hex it could end on and asks what it
+// could do from there: how hard it could hit and whom, whether getting
+// there crosses fire or poison or draws a blow, and (for those that shoot)
+// whether it is high ground with nobody breathing down its neck. Then it
+// goes to the best one and attacks.
+
+import { hexDistance, posKey, type HexPos } from "@gantt-quest/core";
+import { enemyAct, walk } from "./combat";
+import { attackContext, defenceOf, has, type Ctx } from "./engine";
+import { adjacent, flies, inFight, pathIn, sees, zoneReach } from "./geometry";
+import { ENEMY_BURST, ENEMY_KIT, enemyStrikes, type EnemyStrike } from "./kit";
+import { diceAverage, hitChance } from "./rules";
+import { HARMFUL } from "./surfaces";
+import type { Budget, Unit, ZoneState } from "./types";
+
+interface Option {
+  attack: EnemyStrike;
+  target: Unit | null;
+  worth: number;
+}
+
+/** The best attack an enemy could make standing on `pos`, and what it is worth, or null if it has none from there. */
+function bestAttack(state: ZoneState, enemy: Unit, pos: HexPos, strikes: EnemyStrike[], heroes: Unit[]): Option | null {
+  const there = { ...enemy, pos };
+  const heaviest = Math.max(...strikes.map((s) => s.weight));
+  let best: Option | null = null;
+  const consider = (attack: EnemyStrike, target: Unit | null, worth: number) => {
+    // An enemy's habits still count: the attack it favours gets the benefit of a close call.
+    const scored = worth * (0.75 + (0.25 * attack.weight) / heaviest);
+    if (!best || scored > best.worth) best = { attack, target, worth: scored };
+  };
+  for (const attack of strikes) {
+    const average = diceAverage(attack.dice);
+    if (attack.burst) {
+      const caught = heroes.filter((h) => hexDistance(pos, h.pos) <= ENEMY_BURST && sees(state.map, pos, h.pos));
+      // About half save for half: three quarters of the damage, to each one caught.
+      if (caught.length > 0) consider(attack, null, caught.length * average * 0.75);
+      continue;
+    }
+    for (const hero of heroes) {
+      const dist = hexDistance(pos, hero.pos);
+      if (attack.range === 1 ? dist !== 1 : dist > attack.range || dist === 0 || !sees(state.map, pos, hero.pos)) continue;
+      const c = attackContext(state, there, hero, { melee: attack.range === 1 });
+      let worth = hitChance(attack.bonus + c.mods, defenceOf(hero), c.adv) * average * (has(hero, "guarded") ? 0.5 : 1);
+      // Go for the weak, finish the dying, and rise to a taunt.
+      worth *= 1 + 0.5 * (1 - hero.hp / hero.maxHp);
+      if (average >= hero.hp) worth += 3;
+      if (has(hero, "taunting")) worth *= 3;
+      consider(attack, hero, worth);
+    }
+  }
+  return best;
+}
+
+/** Play one enemy's turn: move to the best hex it can reach and attack from it. */
+export function enemyTurn(ctx: Ctx, enemy: Unit, budget: Budget): void {
+  const { state } = ctx;
+  if (state.aiOff) return;
+  const strikes = enemyStrikes(enemy.kind, enemy.level);
+  const heroes = state.units.filter((u) => u.side === "hero" && !u.down && inFight(state, u.id));
+  if (strikes.length === 0 || heroes.length === 0) return;
+  const kit = ENEMY_KIT[enemy.kind] ?? {};
+  const air = flies(enemy);
+  const harmful = new Set(Object.entries(state.surfaces).filter(([, s]) => HARMFUL.has(s.kind)).map(([key]) => key));
+  // Two looks at the ground: one that will not set foot in fire or poison, and one that will.
+  const clean = zoneReach(state, enemy, budget.move, air || harmful.size === 0 ? undefined : harmful);
+  const any = air || harmful.size === 0 ? clean : zoneReach(state, enemy, budget.move);
+  const nearest = (pos: HexPos) => Math.min(...heroes.map((h) => hexDistance(pos, h.pos)));
+
+  let best: { path: HexPos[]; score: number } | null = null;
+  for (const [key, reached] of any) {
+    if (!reached.stop) continue;
+    const viaClean = clean.get(key);
+    const path = pathIn(viaClean ? clean : any, reached.pos) ?? [];
+    let score = -(viaClean ?? reached).cost * 0.05;
+    // The ground on the way, and where it would end up standing.
+    if (!air) score -= 4 * path.filter((p) => harmful.has(posKey(p))).length + (harmful.has(key) ? 2 : 0);
+    // Blows drawn by walking out of reach.
+    if (!budget.disengaged) {
+      const drawn = new Set<string>();
+      let from = enemy.pos;
+      for (const step of path) {
+        for (const h of heroes) if (adjacent(h.pos, from) && !adjacent(h.pos, step) && !state.encounter?.reacted.includes(h.id) && !has(h, "stunned") && !has(h, "prone")) drawn.add(h.id);
+        from = step;
+      }
+      score -= 3 * drawn.size;
+    }
+    const option = bestAttack(state, enemy, reached.pos, strikes, heroes);
+    if (option) score += option.worth;
+    // Nothing to hit from there: at least get closer.
+    else score -= 50 + nearest(reached.pos);
+    // Those that shoot like room, and do not like company.
+    if (kit.ranged && option) score += Math.min(nearest(reached.pos), 4) * 0.4;
+    if (!best || score > best.score) best = { path, score };
+  }
+  if (best && best.path.length > 0) walk(ctx, enemy, best.path, budget);
+  if (enemy.down || has(enemy, "prone")) return;
+  // It may not have got where it meant to: look again from where it stands.
+  const still = state.units.filter((u) => u.side === "hero" && !u.down && inFight(state, u.id));
+  const option = still.length > 0 ? bestAttack(state, enemy, enemy.pos, strikes, still) : null;
+  if (!option) return;
+  budget.action = false;
+  enemyAct(ctx, enemy, option.attack, option.target);
+}

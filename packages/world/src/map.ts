@@ -52,6 +52,8 @@ export interface Tile {
   h: number;
   /** A building stands on this hex (part of the ground a Harbor building takes up): it cannot be walked through. */
   built?: boolean;
+  /** A zone map only: how many levels up this hex stands (0, 1 or 2). High ground helps a shot; a step of two is a cliff. */
+  elev?: number;
 }
 
 /**
