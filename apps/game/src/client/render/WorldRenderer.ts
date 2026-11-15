@@ -5150,6 +5150,7 @@ export class WorldRenderer {
     // Full resolution with "Fancy graphics" on, or while a game asks for it (setSharp); the chunky half otherwise.
     const px = fancy.get() ? 1 : this.pixel;
     this.fine = PIXEL / px;
+    this.ambience.fine = this.fine;
     this.renderer.setSize(Math.ceil(w / px), Math.ceil(h / px), false);
     this.post?.setSize(Math.ceil(w / px), Math.ceil(h / px));
     this.camera.aspect = w / h;
