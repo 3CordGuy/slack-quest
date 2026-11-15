@@ -90,14 +90,15 @@ export const WEAPON_ICON: Record<string, string> = {
   maul: "maul",
   grimoire: "grimoire",
   void_staff: "void-staff",
-  ballast_flail: "hammer-drop",
-  barometer_rod: "wizard-staff",
-  gaff_hook: "daggers",
-  coral_staff: "root-staff",
-  ships_bell: "lute",
-  astrolabe: "orb",
-  lamp_hook: "pager-axe",
-  bilge_chalice: "grimoire",
+  // Signature weapons, each with an icon of its own (saved items were moved over by migration 0031).
+  ballast_flail: "ballast-flail",
+  barometer_rod: "barometer-rod",
+  gaff_hook: "gaff-hook",
+  coral_staff: "coral-staff",
+  ships_bell: "ships-bell",
+  astrolabe: "astrolabe",
+  lamp_hook: "lamp-hook",
+  bilge_chalice: "bilge-chalice",
 };
 
 export interface Base {

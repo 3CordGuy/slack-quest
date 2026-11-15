@@ -205,7 +205,7 @@ export interface WeaponDef {
   name: string;
   classId: string;
   abilities: string[];
-  /** Drawn in hand like this other weapon (signature weapons borrow a look). */
+  /** The class weapon it is nearest to: drawn as that one where it has no shape of its own. */
   looksLike?: string;
 }
 

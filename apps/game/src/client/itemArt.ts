@@ -162,6 +162,111 @@ const ART: Record<string, Art> = {
     p.r(11, 2, 2, 1, p.accent);
     p.r(11, 1, 1, 1, C.shine);
   },
+  // ---- signature weapons ----
+  "ballast-flail": (p) => {
+    // A short haft, a chain, and a spiked iron ball banded in the accent.
+    p.l(3, 15, 7, 9, C.wood);
+    p.l(4, 15, 8, 9, C.bark);
+    p.r(7, 8, 2, 2, p.accent);
+    for (const [x, y] of [[9, 7], [9, 6], [10, 5]]) p.r(x, y, 1, 1, C.iron);
+    spans(p, C.iron, [[1, 11, 13], [2, 10, 14], [3, 10, 14], [4, 10, 14], [5, 11, 13]]);
+    p.r(10, 3, 5, 1, p.accent);
+    p.r(11, 2, 1, 1, C.steel);
+    for (const [x, y] of [[12, 0], [15, 3], [12, 6], [9, 3]]) p.r(x, y, 1, 1, C.steel);
+  },
+  "barometer-rod": (p) => {
+    // A staff with a dial set in it and a tube of glowing glass at the head.
+    p.r(7, 5, 2, 11, C.wood);
+    p.r(8, 5, 1, 11, C.bark);
+    p.r(6, 0, 4, 1, C.gold);
+    p.r(7, 0, 2, 1, p.accent);
+    p.r(6, 1, 1, 3, C.gold);
+    p.r(9, 1, 1, 3, C.gold);
+    p.r(7, 1, 2, 3, "#8fd3ff");
+    p.r(6, 4, 4, 1, C.gold);
+    spans(p, C.gold, [[6, 5, 10], [7, 4, 11], [8, 4, 11], [9, 4, 11], [10, 5, 10]]);
+    spans(p, C.paper, [[7, 6, 9], [8, 5, 10], [9, 6, 9]]);
+    p.r(7, 7, 1, 1, C.dark);
+    p.r(8, 8, 1, 1, p.accent);
+  },
+  "gaff-hook": (p) => {
+    // Two gaff hooks, crossed, their points curling outward.
+    p.l(2, 15, 4, 13, C.wood);
+    p.l(3, 15, 5, 13, C.bark);
+    p.r(4, 12, 2, 1, p.accent);
+    p.l(6, 11, 10, 3, C.steel);
+    spans(p, C.steel, [[2, 11, 12], [3, 13, 13], [4, 13, 13], [5, 12, 12]]);
+    p.r(12, 6, 1, 1, C.shine);
+    p.l(13, 15, 11, 13, C.wood);
+    p.l(12, 15, 10, 13, C.bark);
+    p.r(10, 12, 2, 1, p.accent);
+    p.l(9, 11, 5, 3, C.iron);
+    spans(p, C.iron, [[2, 3, 4], [3, 2, 2], [4, 2, 2], [5, 3, 3]]);
+    p.r(3, 6, 1, 1, C.shine);
+  },
+  "coral-staff": (p) => {
+    // Bleached driftwood crowned with coral round a pearl.
+    p.l(4, 15, 9, 6, "#c2a785");
+    p.l(5, 15, 10, 6, "#9c8564");
+    p.r(6, 12, 1, 1, C.paper);
+    p.l(9, 6, 6, 2, "#ff8f7a");
+    p.l(10, 6, 13, 2, "#ff8f7a");
+    p.l(10, 4, 10, 1, "#ff8f7a");
+    for (const [x, y] of [[6, 1], [13, 1], [10, 0]]) p.r(x, y, 1, 1, "#ffc0ad");
+    p.r(8, 3, 2, 2, p.accent);
+    p.r(8, 3, 1, 1, C.shine);
+  },
+  "ships-bell": (p) => {
+    // A hand bell: a wooden handle, a flared brass bell, the clapper beneath.
+    p.r(7, 0, 2, 4, C.wood);
+    p.r(8, 0, 1, 4, C.bark);
+    p.r(6, 4, 4, 1, C.gold);
+    spans(p, C.gold, [[5, 5, 10], [6, 5, 10], [7, 4, 11], [8, 4, 11], [9, 4, 11], [10, 3, 12], [11, 2, 13]]);
+    p.r(2, 12, 12, 1, "#b8891f");
+    p.r(5, 6, 1, 4, "#f2d675");
+    p.r(7, 13, 2, 2, p.accent);
+  },
+  astrolabe: (p) => {
+    // A brass disc on a short handle: the star plate, the sighting rule, a glowing pin.
+    p.r(6, 0, 4, 1, C.gold);
+    p.r(6, 1, 1, 1, C.gold);
+    p.r(9, 1, 1, 1, C.gold);
+    p.r(6, 2, 4, 1, C.gold);
+    spans(p, C.gold, [[3, 5, 10], [4, 4, 11], [5, 3, 12], [6, 3, 12], [7, 3, 12], [8, 3, 12], [9, 4, 11], [10, 5, 10]]);
+    spans(p, "#2d357a", [[4, 5, 10], [5, 4, 11], [6, 4, 11], [7, 4, 11], [8, 4, 11], [9, 5, 10]]);
+    for (const [x, y] of [[5, 5], [10, 5], [6, 8]]) p.r(x, y, 1, 1, C.shine);
+    p.l(4, 9, 11, 4, C.steel);
+    p.r(7, 6, 2, 2, p.accent);
+    p.r(6, 11, 4, 1, C.gold);
+    p.r(7, 12, 2, 3, C.wood);
+    p.r(7, 15, 2, 1, C.gold);
+  },
+  "lamp-hook": (p) => {
+    // A long pole, an iron hook at its head, a lantern hanging from it.
+    p.l(3, 15, 7, 5, C.wood);
+    p.l(4, 15, 8, 5, C.bark);
+    p.r(4, 12, 2, 1, p.accent);
+    p.r(7, 2, 1, 3, C.iron);
+    p.r(8, 1, 3, 1, C.iron);
+    p.r(11, 2, 1, 3, C.iron);
+    spans(p, C.iron, [[5, 10, 12], [6, 9, 13]]);
+    p.r(10, 7, 3, 4, "#ffd98a");
+    p.r(10, 7, 1, 1, "#fff4c0");
+    p.r(9, 7, 1, 4, C.iron);
+    p.r(13, 7, 1, 4, C.iron);
+    p.r(9, 11, 5, 1, C.iron);
+  },
+  "bilge-chalice": (p) => {
+    // A gold chalice brimming with glowing bilge, bubbles rising and a drip down the side.
+    spans(p, C.gold, [[4, 3, 12], [5, 3, 12], [6, 4, 11], [7, 4, 11], [8, 5, 10], [9, 6, 9]]);
+    p.r(4, 3, 8, 1, "#6dff9e");
+    p.r(5, 5, 1, 2, "#f2d675");
+    p.r(7, 10, 2, 4, C.gold);
+    p.r(7, 11, 2, 2, p.accent);
+    spans(p, C.gold, [[14, 5, 10], [15, 4, 11]]);
+    for (const [x, y] of [[6, 1], [9, 0], [8, 2]]) p.r(x, y, 1, 1, "#6dff9e");
+    p.r(12, 5, 1, 3, "#6dff9e");
+  },
   "round-shield": (p) => {
     spans(p, C.iron, [[2, 5, 10], [3, 3, 12], [4, 2, 13], [5, 2, 13], [6, 2, 13], [7, 2, 13], [8, 2, 13], [9, 2, 13], [10, 2, 13], [11, 2, 13], [12, 3, 12], [13, 5, 10]]);
     spans(p, p.accent, [[4, 5, 10], [5, 4, 11], [6, 4, 11], [7, 4, 11], [8, 4, 11], [9, 4, 11], [10, 4, 11], [11, 5, 10]]);
