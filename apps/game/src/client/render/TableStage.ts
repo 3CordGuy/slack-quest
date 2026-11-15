@@ -1617,8 +1617,10 @@ export class TableStage implements WorldMinigame {
         this.aim(from, to, AIM_INK[play.card] ?? "#ffd23f", PLAY_S * 0.8);
         if (play.guess) {
           // A Gull: the card it called, held up over whoever it was called on, and whether that was right.
+          // Labelled as the guess, so it is not taken for the card they hold, and whether it was right said under it.
           this.float(this.cardTex(play.guess), to, 0.2, 0.2, PLAY_S + 0.2, 1.7);
-          this.word(play.hit ? "right!" : "wrong", play.hit ? "#ffd23f" : "#f08a8a", to, 0.43, PLAY_S + 0.7, 1.2);
+          this.word("Guesses:", "#e6e2f5", to, 0.37, PLAY_S + 0.2, 1.7);
+          this.word(play.hit ? "right!" : "wrong", play.hit ? "#ffd23f" : "#f08a8a", to, 0.02, PLAY_S + 0.7, 1.2);
         } else if (play.card === 3) {
           this.word("looks", AIM_INK[3], to, 0.2, PLAY_S + 0.3, 1.1);
         } else if (play.card === 4) {
