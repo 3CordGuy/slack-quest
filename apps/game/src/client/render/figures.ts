@@ -160,7 +160,13 @@ type Pt = [number, number, number];
  * A faceted tube through elliptical rings stacked up y, capped at both ends: a limb, a torso, a head. Its
  * sides are turned half a step so a flat face, not an edge, looks along +z.
  */
-function loftGeometry(rings: readonly Ring[], sides: number): THREE.BufferGeometry {
+/** How a loft is closed: `open` leaves off the cap at its first ring (or both ends); `inward` faces it inward, to be seen from inside. */
+interface LoftShape {
+  open?: "start" | "both";
+  inward?: boolean;
+}
+
+function loftGeometry(rings: readonly Ring[], sides: number, shape: LoftShape = {}): THREE.BufferGeometry {
   const sorted = [...rings].sort((p, q) => p[0] - q[0]);
   const loops = sorted.map(([y, rx, rz, dz = 0]) =>
     Array.from({ length: sides }, (_, k) => {
@@ -169,7 +175,8 @@ function loftGeometry(rings: readonly Ring[], sides: number): THREE.BufferGeomet
     }),
   );
   const out: number[] = [];
-  const tri = (a: THREE.Vector3, b: THREE.Vector3, c: THREE.Vector3) => out.push(a.x, a.y, a.z, b.x, b.y, b.z, c.x, c.y, c.z);
+  const tri = (a: THREE.Vector3, b: THREE.Vector3, c: THREE.Vector3) =>
+    shape.inward ? out.push(a.x, a.y, a.z, c.x, c.y, c.z, b.x, b.y, b.z) : out.push(a.x, a.y, a.z, b.x, b.y, b.z, c.x, c.y, c.z);
   for (let i = 0; i + 1 < loops.length; i++) {
     for (let k = 0; k < sides; k++) {
       const n = (k + 1) % sides;
@@ -186,8 +193,8 @@ function loftGeometry(rings: readonly Ring[], sides: number): THREE.BufferGeomet
       else tri(c, loops[i][n], loops[i][k]);
     }
   };
-  cap(0, false);
-  cap(loops.length - 1, true);
+  if (!shape.open) cap(0, false);
+  if (shape.open !== "both") cap(loops.length - 1, true);
   const g = new THREE.BufferGeometry();
   g.setAttribute("position", new THREE.Float32BufferAttribute(out, 3));
   g.computeVertexNormals();
@@ -340,6 +347,14 @@ class Part {
   /** A faceted tube through `rings` (see loftGeometry), in this joint's space offset by (x, y, z). */
   loft(color: string, rings: readonly Ring[], sides = 8, x = 0, y = 0, z = 0, rot?: Rot): this {
     return this.add(loftGeometry(rings, sides), color, x, y, z, rot, false, true);
+  }
+
+  /**
+   * A loft left open at its first ring (or both ends; see LoftShape): a mouth, a hood's opening. Facing inward
+   * it is a lining, seen only from inside and drawn with no outline.
+   */
+  shell(color: string, rings: readonly Ring[], sides: number, shape: LoftShape, x = 0, y = 0, z = 0, rot?: Rot): this {
+    return this.add(loftGeometry(rings, sides, shape), color, x, y, z, rot, false, !shape.inward, !shape.inward);
   }
 
   /** The smallest solid that holds all of `pts`: a wedge, a blade, a shoe. */
@@ -1013,29 +1028,37 @@ function lowHelm(head: Part, c: string, band: string, crest: string, nasal = fal
 }
 
 /**
- * A hood: rounded over the crown to a soft point at the back, falling round the back and sides of the head
- * to the shoulders, open at the face. `trim` edges the face.
+ * A hood, low-poly: a cloth shell round the head, from an oval opening that frames the face, swelling over
+ * the ears and crown and tapering to a soft point down the back; dark inside round the face; a short mantle
+ * round the neck over the shoulders. `trim` bands the opening (a worn hood).
+ *
+ * The shell is a loft run front to back and laid on its side (turned so the loft's +y runs back, -z): each
+ * ring's rx is its half-width, its rz its half-height and its dz how far up its middle is from `mid`. The
+ * opening reaches from the brow to just under the chin of a head of these rings.
  */
 function lowHood(head: Part, c: string, rings: readonly Ring[], trim?: string) {
-  head.loft(c, [[4.1, 3.92, 3.62], [5.5, 3.86, 3.56, -0.15], [6.8, 3.1, 2.95, -0.45], [7.6, 1.7, 1.65, -0.95], [8.05, 0.3, 0.3, -1.5]], 10);
-  const fall: Pt[] = [];
-  const levels: [number, number, number][] = [
-    [5.4, 3.95, 3.6],
-    [3.6, ringAt(rings, 3.6).rx + 0.6, ringAt(rings, 3.6).rz + 0.55],
-    [1.6, ringAt(rings, 1.6).rx + 0.75, ringAt(rings, 1.6).rz + 0.6],
-    [-0.3, 3.9, 3.3],
+  const side: Rot = [-HALF_PI, 0, 0];
+  const chin = Math.min(0.6, rings[0][0] + 0.1);
+  const brow = 5.3;
+  const mid = (brow + chin) / 2;
+  const half = (brow - chin) / 2;
+  // The opening stands out past the hair at the brow, so the face sits back inside the hood.
+  const shell: Ring[] = [
+    [-3.3, 2.85, half, 0],
+    [-2.4, 3.65, half + 1, 0.45],
+    [-0.5, 4.05, 3.75, 3.5 - mid],
+    [1.5, 3.85, 3.55, 3.6 - mid],
+    [3, 2.75, 2.75, 3.9 - mid],
+    [4, 1.2, 1.2, 4.15 - mid],
+    [4.5, 0.15, 0.15, 4.05 - mid],
   ];
-  for (const [y, rx, rz] of levels) {
-    for (let deg = 52; deg <= 308; deg += 16) {
-      const a = (deg / 180) * Math.PI;
-      fall.push([Math.sin(a) * rx, y, Math.cos(a) * rz - 0.1]);
-    }
-  }
-  head.shape(c, fall);
-  if (trim) {
-    const f = facet(OVER_HAIR, 10, 4.3, 0, 0.3);
-    head.box(trim, 2.4, 0.55, 0.35, f.x, 4.3, f.z);
-  }
+  head.shell(c, shell, 12, { open: "start" }, 0, mid, 0, side);
+  // The lining round the face, in shadow.
+  const lining: Ring[] = shell.slice(0, 3).map(([y, rx, rz, dz = 0]) => [y + 0.05, rx - 0.14, rz - 0.14, dz]);
+  head.shell(tone(c, -0.32), lining, 12, { open: "both", inward: true }, 0, mid, 0, side);
+  // A short mantle round the neck and over the shoulders, under the chin at the front.
+  head.loft(c, [[-1.15, 3.95, 3.5, 0.1], [-0.4, 3.8, 3.35, 0.05], [0.15, 3, 2.5, -0.4]], 12);
+  if (trim) head.shell(trim, [[-3.45, 2.99, half + 0.12, 0], [-3.12, 2.99, half + 0.12, 0]], 12, { open: "both" }, 0, mid, 0, side);
 }
 
 /** The headgear a class, townsperson or enemy has by default, rounded to go with low-poly heads. */
