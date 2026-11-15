@@ -773,7 +773,6 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
             you={state.you}
             heading={<>{crew.filter((m) => m.zone?.code === code).length} of {crew.length} on this map</>}
             members={crew.map((m): RosterMember => ({ id: m.id, name: m.name, classId: m.classId, level: m.level, here: m.zone?.code === code, outfit: state.units.find((u) => u.id === m.id)?.outfit, tags: m.zone?.fighting ? ["in a fight"] : m.zone && m.zone.code !== code ? ["on another map"] : !m.zone ? ["not on a map"] : undefined }))}
-            onTrade={setTradeWith}
             menu={(m) => {
               if (m.id === state.you) return [];
               const where = crew.find((x) => x.id === m.id)?.zone;

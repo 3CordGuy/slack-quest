@@ -1,6 +1,8 @@
 // Who is in the crew (or in the room): one tidy row per person with their
 // sprite, name, level and class, here-first. Shared by the Harbor's Crew
-// panel and the "Inside" panels of the hut and the pub.
+// panel, a zone's, and the "Inside" panels of the hut and the pub. Where a
+// view offers things to do with a crewmate (trade, teleport to them), they
+// are on a right-click of that crewmate's row.
 
 import { useEffect, useState, type ReactNode } from "react";
 import type { Outfit } from "@gantt-quest/world";
@@ -38,8 +40,6 @@ interface Props {
   onOpen?(id: string): void;
   /** Whose sheet is open, to mark their row. */
   openId?: string | null;
-  /** Offer a Trade button on everyone but you. */
-  onTrade?(id: string): void;
   /** What a right-click on someone's row offers (trade, teleport to them). Nothing for an empty list. */
   menu?(member: RosterMember): RosterAction[];
 }
@@ -53,16 +53,9 @@ function face(classId: string, outfit?: Outfit): string {
   return url;
 }
 
-/** Two pixel arrows passing each other: give and take. */
-const TradeIcon = () => (
-  <svg className="cm-trade-icon" viewBox="0 0 7 11" width={14} height={22} shapeRendering="crispEdges" aria-hidden>
-    <path fill="currentColor" d="M4 0h1v5H4zM5 1h1v3H5zM6 2h1v1H6zM0 2h4v1H0zM2 6h1v5H2zM1 7h1v3H1zM0 8h1v1H0zM3 8h4v1H3z" />
-  </svg>
-);
-
 const byName = (a: RosterMember, b: RosterMember) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
 
-export function CrewRoster({ members, you, heading, onOpen, openId, onTrade, menu }: Props) {
+export function CrewRoster({ members, you, heading, onOpen, openId, menu }: Props) {
   const here = members.filter((m) => m.here).sort(byName);
   const away = members.filter((m) => !m.here).sort(byName);
   /** The menu that is open: whose, and where on screen it was asked for. */
@@ -123,11 +116,6 @@ export function CrewRoster({ members, you, heading, onOpen, openId, onTrade, men
           </button>
         ) : (
           <span className="cm-main" title={`${m.name}, level ${m.level} ${cls}`}>{body}</span>
-        )}
-        {onTrade && !mine && (
-          <button type="button" className="small cm-trade" title={`Give or trade with ${m.name}`} aria-label={`Trade with ${m.name}`} onClick={() => onTrade(m.id)}>
-            <TradeIcon />
-          </button>
         )}
       </li>
     );

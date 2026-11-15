@@ -397,14 +397,13 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
           </ul>
         </DragPanel>
 
-        <div className="crew roster-panel roster-trade crew-cards">
+        <div className="crew roster-panel crew-cards">
           <CrewRoster
             you={you}
             heading={<>{hereCount} of {roster.length} here</>}
             members={roster}
             onOpen={heroSheet.toggle}
             openId={heroSheet.open}
-            onTrade={setTradeWith}
             menu={(m) => {
               if (m.id === you) return [];
               const away = board.members.find((x) => x.id === m.id)?.zone;

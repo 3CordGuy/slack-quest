@@ -1,7 +1,5 @@
 /* The crew roster: the Harbor's Crew panel and the hut's and pub's "Inside" panels. */
-/* Narrower where there is no Trade button (the hut and the pub). */
 .crew.roster-panel:not(.folded) { width: 230px; }
-.crew.roster-panel.roster-trade:not(.folded) { width: 270px; }
 .panel.crew-roster { padding: 10px 10px 8px; }
 .crew-roster .roster-head { margin: 0 0 6px; font-size: 12px; }
 
@@ -53,29 +51,19 @@ button.cm-main:hover:not(:disabled) { border-color: var(--line); background: rgb
 .cm-tag { flex: none; font-size: 10px; line-height: 14px; padding: 0 4px; color: var(--muted); border: 1px solid var(--line); }
 .cm-tag.you { color: var(--ink); background: var(--gold); border-color: var(--gold); font-weight: bold; }
 
-.cm-trade { flex: none; display: grid; place-items: center; width: 30px; height: 30px; padding: 0; color: var(--gold); }
-.cm-trade-icon { display: block; }
-
 /* Away: greyed, but still readable. */
 .cm.away .cm-face img { filter: grayscale(1) brightness(0.7); }
 .cm.away .cm-face { background: #1a1830; border-style: dashed; }
 .cm.away .cm-name { color: #c9c5dc; font-weight: normal; }
 .cm.away .cm-lv { color: #b9ad86; border-color: #5a4c26; background: none; }
-.cm.away .cm-trade { opacity: 0.8; }
 
 @media (max-width: 760px) {
   .crew.roster-panel:not(.folded) { width: min(230px, calc(100vw / var(--ui-z, 1) - 12px)); }
-  .crew.roster-panel.roster-trade:not(.folded) { width: min(270px, calc(100vw / var(--ui-z, 1) - 12px)); }
   .roster { max-height: calc(100vh / var(--ui-z, 1) - 340px); }
 }
-@media (pointer: coarse) {
-  .cm-trade { width: 36px; height: 36px; }
-}
-
 /* A sheet opened from the roster sits beside it rather than on top of it. */
 @media (min-width: 900px) {
   :has(> .roster-panel:not(.folded)) > .hs-sheet { right: 252px; }
-  :has(> .roster-panel.roster-trade:not(.folded)) > .hs-sheet { right: 292px; }
 }
 
 /* What a right-click on someone's row offers. It sits where the pointer was, over everything. */
