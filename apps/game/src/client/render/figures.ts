@@ -106,8 +106,8 @@ void main() {
  * People (heroes, townsfolk and the humanoid enemies) are drawn low-poly, from tapered, faceted shapes with
  * exaggerated proportions (a big head, big hands and feet, broad shoulders over a narrow waist). The old box
  * people can be brought back per browser from the dev toolbox, to compare (it reloads the page); a hero who
- * has chosen how they look (appearance.ts) is low-poly regardless. Creatures with models of their own
- * (CREATURES) are still drawn in boxes.
+ * has chosen how they look (appearance.ts) is low-poly regardless. The creatures (see rigFor) are drawn
+ * low-poly too, from the same tapered, faceted shapes, and have no box models left.
  */
 export const BLOCKY_KEY = "gq.dev.blockyPeople";
 const BLOCKY_PREF = (() => {
@@ -117,8 +117,6 @@ const BLOCKY_PREF = (() => {
     return false;
   }
 })();
-/** Kinds drawn by models of their own rather than as people (see rigFor): not low-poly yet. */
-const CREATURES = new Set(["wolf", "alpha", "bear", "great_bear", "dummy", "shade", "haunt", "bat", "skeleton", "slime"]);
 /** How much bigger a low-poly head is than the box head it stands in for: a hat or helmet drawn in its space grows with it. */
 const BIG_HEAD = 1.22;
 /** Set by makeFigure for the figure being built: whether it is low-poly, and the look its hero chose (if any). */
@@ -2342,35 +2340,63 @@ function skeleton(top: THREE.Group): Rig {
   const b = biped(top, parts);
   const bone = "#e8e2d0";
   const dim = "#c9c1aa";
-  for (const leg of [b.legR, b.legL]) {
-    leg.box(bone, 1.2, 4.6, 1.2, 0, -2.3, 0);
-    leg.box(dim, 1.5, 0.9, 1.5, 0, -2.3, 0.1);
-    leg.box(bone, 1.6, 0.6, 3, 0, -4.7, 0.6);
+  const rag = "#8a3b2f";
+  for (const [thigh, shin, foot] of [[b.thighR, b.shinR, b.footR], [b.thighL, b.shinL, b.footL]]) {
+    // A thigh bone from a round head at the hip, a kneecap, a shin bone, and a long bony foot.
+    thigh.loft(bone, [[0.55, 0.5, 0.5], [0.15, 0.72, 0.72], [-0.5, 0.48, 0.48], [-1.9, 0.4, 0.4], [-2.55, 0.62, 0.6]], 6);
+    shin.ball(dim, 0.72, 0, -0.05, 0.15);
+    shin.loft(bone, [[-0.15, 0.58, 0.56], [-0.8, 0.4, 0.4], [-2, 0.36, 0.36], [-2.45, 0.52, 0.52]], 6);
+    foot.shape(bone, sym([[0.6, 0, -0.85], [0.72, 0, 1], [0.45, 0, 2.05], [0, 0, 2.2], [0.48, 0.55, -0.7], [0.42, 0.42, 1], [0, 0.48, 1.9], [0, 0.85, -0.5]]));
   }
-  b.torso.box(dim, 5.2, 1.6, 2.6, 0, 0.6, 0);
-  b.torso.box(bone, 1.3, 6, 1.3, 0, 3.2, -0.6);
-  for (const y of [2.4, 3.7, 5]) {
-    b.torso.box(dim, 5.8, 0.7, 0.7, 0, y, 1.1);
-    for (const s of [-1, 1]) b.torso.box(dim, 0.7, 0.7, 2.6, s * 2.6, y, 0);
-  }
-  b.torso.box(bone, 7.6, 0.8, 1.2, 0, 5.7, 0);
+  const t = b.torso;
+  // The pelvis, a bowl wider at its rim; the spine up the back, a knuckle of bone at each vertebra.
+  t.loft(dim, [[-0.3, 1.5, 0.95, 0.05], [0.45, 2.3, 1.25], [1.4, 2.65, 1.35, -0.1]], 8);
+  const spine: Ring[] = [];
+  for (let i = 0, y = 1.1; y <= 6.9; i++, y += 0.48) spine.push([y, i % 2 ? 0.66 : 0.46, i % 2 ? 0.62 : 0.44]);
+  t.loft(bone, spine, 6, 0, 0, -0.6);
+  // Three ribs a side, sweeping round from the spine and down to the breastbone.
+  ([[2.4, 2.35], [3.6, 2.65], [4.8, 2.75]] as const).forEach(([y, w]) => {
+    for (const s of [-1, 1]) {
+      const at = (k: number): Pt => {
+        const a = Math.PI * (1 - k);
+        return [s * Math.sin(a) * w, y - 0.55 * k, Math.cos(a) * 1.35 + 0.2];
+      };
+      const steps = [0, 0.25, 0.5, 0.75, 0.93];
+      for (let i = 0; i + 1 < steps.length; i++) strut(t, dim, at(steps[i]), at(steps[i + 1]), 0.3, 0.3, 5);
+    }
+  });
+  strut(t, bone, [0, 1.75, 1.5], [0, 5.3, 1.6], 0.4, 0.5);
+  // Collarbones out to the round of each shoulder.
+  strut(t, bone, [-3.9, 5.75, 0.15], [3.9, 5.75, 0.15], 0.42);
+  for (const s of [-1, 1]) t.ball(bone, 0.78, s * 4.3, 5.6, 0, 1);
   for (const arm of [b.armR, b.armL]) {
-    arm.box(bone, 1, 4.6, 1, 0, -2.2, 0);
-    arm.box(dim, 1.3, 0.8, 1.3, 0, -2.2, 0);
-    arm.box(bone, 1.4, 1.3, 1.6, 0, -5, 0);
+    arm.loft(bone, [[0.4, 0.52, 0.52], [0, 0.58, 0.58], [-0.6, 0.4, 0.4], [-1.9, 0.36, 0.36], [-2.3, 0.52, 0.52]], 6);
+    arm.ball(dim, 0.62, 0, -2.35, -0.05);
+    arm.loft(bone, [[-2.4, 0.46, 0.46], [-3.2, 0.34, 0.34], [-4.2, 0.38, 0.4], [-4.5, 0.48, 0.48]], 6);
+    // A bony hand: a narrow palm and the fingers curled under it.
+    arm.shape(bone, sym([[0.5, -4.35, 0.45], [0.5, -4.35, -0.35], [0.62, -5.2, 0.7], [0.55, -5.4, -0.4], [0.3, -5.95, 0.35], [0, -6, 0.85], [0, -5.7, -0.45]]));
   }
-  b.head.box(bone, 6, 4.6, 5.6, 0, 3.6, 0);
-  b.head.box(dim, 4.4, 1.6, 4, 0, 0.9, 0.6);
-  for (const s of [-1, 1]) b.head.box(OUTLINE, 1.6, 1.7, 0.4, s * 1.5, 3.4, 2.7);
-  b.head.box(OUTLINE, 0.7, 0.9, 0.4, 0, 2, 2.7);
-  for (const x of [-1.2, -0.4, 0.4, 1.2]) b.head.box(bone, 0.5, 0.7, 0.3, x, 0.9, 2.65);
-  b.head.box("#8a3b2f", 6.3, 1.2, 5.9, 0, 5.5, 0);
-  b.head.box("#8a3b2f", 1, 2.4, 0.7, 2.4, 4, -3.2, [0, 0, 0.2]);
+  // The skull, round over a narrower jaw, hollow eyes and a nose hole.
+  const h = b.head;
+  const skull: Ring[] = [[1.5, 2.25, 2.1, 0.55], [2.3, 2.85, 2.65, 0.3], [3.5, 3.1, 2.9, 0], [4.9, 3.05, 2.85, -0.1], [5.8, 2.45, 2.35, -0.15], [6.3, 1, 1, -0.15]];
+  h.loft(bone, skull, 10);
+  h.loft(dim, [[0.05, 1.45, 1.15, 0.95], [0.55, 1.9, 1.5, 0.85], [1.65, 2.15, 1.85, 0.6]], 8);
+  for (const s of [-1, 1]) h.ball(OUTLINE, 1, s * 1.3, 3.45, 2.55, 1, [0.82, 0.92, 0.5]);
+  h.shape(OUTLINE, sym([[0.42, 2.55, 2.2], [0.42, 2.55, 2.95], [0, 1.75, 2.2], [0, 1.75, 2.95]]));
+  for (const x of [-1.2, -0.4, 0.4, 1.2]) h.shape(bone, [[x - 0.26, 1.55, 1.9], [x + 0.26, 1.55, 1.9], [x - 0.22, 1.55, 2.45 - Math.abs(x) * 0.18], [x + 0.22, 1.55, 2.45 - Math.abs(x) * 0.18], [x, 0.75, 2.25 - Math.abs(x) * 0.18]]);
+  // The bandana tied over its crown, a tail of it hanging behind.
+  h.loft(rag, [[4.55, 3.2, 3, -0.1], [5.1, 3.18, 2.98, -0.11], [5.85, 2.6, 2.5, -0.15], [6.45, 1.15, 1.15, -0.15]], 10);
+  h.ball(rag, 0.6, 1.9, 5.05, -2.75, 0);
+  h.shape(rag, [[1.55, 5.1, -2.7], [2.35, 5.1, -2.65], [2.65, 2.7, -3.15], [3.3, 2.95, -3], [2.2, 4.3, -3.2]]);
+  // A rusted cutlass: a wrapped grip, a knuckle guard, and a broad blade curving forward to its point.
   const w = b.heldR;
-  w.box("#6b4a2b", 0.8, 1.8, 0.8, 0, 0.2, 0);
-  w.box("#6b4a2b", 2.8, 0.6, 1.2, 0, 1.3, 0.2);
-  w.box("#a3896a", 1.1, 6.4, 0.4, 0, 4.8, 0);
-  w.box("#a3896a", 1.1, 1.6, 0.4, 0, 8.4, 0.5, [0.5, 0, 0]);
+  const wood = "#6b4a2b";
+  const rust = "#a3896a";
+  w.loft(wood, [[-0.7, 0.36, 0.36], [1.1, 0.42, 0.42]], 6);
+  w.ball(wood, 0.5, 0, -0.85, 0);
+  w.shape(wood, sym([[1.4, 1.15, 0.65], [1.4, 1.5, 0.65], [1.4, 1.15, -0.2], [1.4, 1.5, -0.2], [0.5, 1.0, 0.85], [0.5, 1.65, 0.85], [0.5, 1.0, -0.45], [0.5, 1.65, -0.45]]));
+  w.shape(rust, sym([[0.5, 1.5, 0.14], [0.5, 1.5, -0.14], [0.6, 6.3, 0.32], [0.6, 6.3, 0.02]]));
+  w.shape(rust, [...sym([[0.6, 6.1, 0.32], [0.6, 6.1, 0.02], [0.42, 8, 0.82], [0.42, 8, 0.52]]), [0, 9.05, 1.35], [0, 9, 1.08]]);
   b.rest.armR = -0.35;
   b.rest.tiltR = 0.55;
   return { parts, animate: b.animate };
@@ -2378,8 +2404,57 @@ function skeleton(top: THREE.Group): Rig {
 
 // ---------- creatures ----------
 
-/** The four-legged gait a wolf and a bear share. `across` is half the body's width, `tall` the back's height. */
-function fourLegs(top: THREE.Group, legs: Part[], head: Part, tail: Part | null, across: number, tall: number) {
+/** Rings for a loft lying along z, nose toward +z: each its z, half-width, half-height, and how high its middle is. */
+type Span = readonly [z: number, rx: number, ry: number, up?: number];
+
+/**
+ * A faceted tube lying along z through `spans` (see Span): a body, a snout, a tail. Its flat faces are under
+ * and over it and to each side. `pitch` tips its +z end up (and its -z end down), from (x, y, z).
+ */
+function lengthwise(part: Part, color: string, spans: readonly Span[], sides = 8, x = 0, y = 0, z = 0, pitch = 0) {
+  part.loft(color, spans.map(([sz, rx, ry, up = 0]): Ring => [sz, rx, ry, -up]), sides, x, y, z, [HALF_PI - pitch, 0, 0]);
+}
+
+/**
+ * A hide of fur over part of a lengthwise loft: between `z0` and `z1`, round it from angle `a0` to `a1`
+ * (radians from straight up, toward +x), `by` outside it. A dark stripe down a back, a pale belly, frost.
+ */
+function pelt(part: Part, color: string, spans: readonly Span[], z0: number, z1: number, a0: number, a1: number, by = 0.14) {
+  const pts: Pt[] = [];
+  for (let i = 0; i <= 4; i++) {
+    const z = z0 + ((z1 - z0) * i) / 4;
+    const r = ringAt(spans as readonly Ring[], z);
+    for (let j = 0; j <= 4; j++) {
+      const a = a0 + ((a1 - a0) * j) / 4;
+      pts.push([Math.sin(a) * (r.rx + by), r.dz + Math.cos(a) * (r.rz + by), z]);
+    }
+  }
+  part.shape(color, pts);
+}
+
+/** A tapered, faceted rod from `a` to `b`: a bone, a post, a crossbar. */
+function strut(part: Part, color: string, a: Pt, b: Pt, ra: number, rb = ra, sides = 6) {
+  const along = new THREE.Vector3(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
+  const len = along.length();
+  const turn = new THREE.Euler().setFromQuaternion(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), along.normalize()));
+  part.loft(color, [[0, ra, ra], [len, rb, rb]], sides, a[0], a[1], a[2], [turn.x, turn.y, turn.z]);
+}
+
+/** A flat pill `rx` by `ry` and `depth` thick, facing +z before `rot`: a shine, a stitched mouth. */
+function spot(part: Part, color: string, rx: number, ry: number, depth: number, x: number, y: number, z: number, rot?: Rot) {
+  const pts: Pt[] = [];
+  for (let k = 0; k < 8; k++) {
+    const a = (k / 8) * Math.PI * 2;
+    for (const d of [-depth / 2, depth / 2]) pts.push([Math.cos(a) * rx, Math.sin(a) * ry, d]);
+  }
+  part.shape(color, pts, x, y, z, rot);
+}
+
+/**
+ * The four-legged gait a wolf and a bear share. `across` is half the body's width, `tall` the back's height,
+ * and `stoop` how far (radians) the head is carried nose-down: a wolf's, low and growling.
+ */
+function fourLegs(top: THREE.Group, legs: Part[], head: Part, tail: Part | null, across: number, tall: number, stoop = 0) {
   return (a: Anim) => {
     if (a.lying) {
       // On its side.
@@ -2392,7 +2467,7 @@ function fourLegs(top: THREE.Group, legs: Part[], head: Part, tail: Part | null,
     top.rotation.set(-a.strike * 0.3, 0, 0);
     top.position.set(0, (a.breath + 1) * 0.06 + a.strike * 1.2, 0);
     legs.forEach((leg, i) => (leg.joint.rotation.x = (i === 0 || i === 3 ? 1 : -1) * a.swing * 0.7));
-    head.joint.rotation.set(a.breath * 0.04 + a.strike * 0.35, 0, 0);
+    head.joint.rotation.set(stoop + a.breath * 0.04 + a.strike * 0.35, 0, 0);
     if (tail) tail.joint.rotation.y = Math.sin(a.t * 3.1) * 0.3;
   };
 }
@@ -2402,29 +2477,55 @@ function wolf(top: THREE.Group, fur = "#7d8793", dark = "#59616c", eye = "#ffd23
   const parts: Part[] = [];
   const part = (parent: THREE.Object3D, x: number, y: number, z: number) => (parts[parts.length] = new Part(parent, x, y, z));
   const body = part(top, 0, 0, 0);
-  body.box(fur, 4.4, 4, 9, 0, 6.2, -0.4);
-  body.box(tone(fur, 0.05), 5, 4.7, 3.6, 0, 6.5, 2.6);
-  body.box(dark, 3.4, 1, 6, 0, 4.2, -0.6);
-  body.box(dark, 2.2, 1, 7, 0, 8.4, -0.6);
-  const head = part(top, 0, 8, 4.4);
-  head.box(fur, 4, 3.8, 3.6, 0, 0.8, 1.4);
-  head.box(dark, 2.2, 1.9, 2.6, 0, 0, 4);
-  head.box(OUTLINE, 1, 0.9, 0.8, 0, 0.6, 5.3);
-  for (const s of [-1, 1]) {
-    head.cone(dark, 0.85, 1.9, s * 1.3, 3.5, 0.5);
-    head.glowBox(eye, 0.75, 0.75, 0.3, s * 1.25, 1.4, 3.25);
+  // Lean hips, a tucked belly and a deep chest, a ruff of paler fur at the shoulders; dark down the back and under.
+  const trunk: Span[] = [[-5.1, 1.2, 1.2, 6.9], [-4.4, 1.95, 1.85, 6.6], [-2.6, 2, 1.7, 6.6], [-0.6, 2.1, 1.95, 6.45], [1.6, 2.4, 2.35, 6.4], [3.4, 2.35, 2.3, 6.55], [4.5, 1.5, 1.6, 6.8]];
+  const ruff: Span[] = [[0.9, 2.3, 2.25, 6.5], [2.3, 2.7, 2.6, 6.6], [3.9, 2.6, 2.5, 6.85], [4.9, 1.8, 1.9, 7.2]];
+  lengthwise(body, fur, trunk);
+  lengthwise(body, tone(fur, 0.05), ruff);
+  pelt(body, dark, trunk, -4.3, 1.2, -0.7, 0.7, 0.12);
+  pelt(body, dark, trunk, -3.2, 1.2, Math.PI - 0.7, Math.PI + 0.7, 0.1);
+  // The hackles up, a crest of spiky fur from the nape back over the shoulders, tallest at the withers.
+  for (let i = 0; i < 9; i++) {
+    const z = 4.6 - i * 0.75;
+    const r = ringAt((z > 0.9 ? ruff : trunk) as readonly Ring[], z);
+    const rise = Math.max(0.7, 2.3 - Math.abs(z - 2.2) * 0.42);
+    for (const s of i % 2 ? [-1, 1] : [0]) {
+      const x = s * 0.7;
+      const y = r.dz + r.rz - 0.4 - Math.abs(x) * 0.35;
+      body.shape(i % 2 ? dark : tone(fur, 0.05), [[x - 0.65, y, z + 0.6], [x + 0.65, y, z + 0.6], [x, y, z - 0.6], [x + s * 0.45, y + rise, z - 0.75]]);
+    }
   }
-  head.box(GEAR.paper, 0.4, 0.7, 0.4, 0.7, -1.1, 4.6);
+  // Head down, snarling (see fourLegs' stoop).
+  const head = part(top, 0, 7.7, 4.4);
+  // A long skull, a dark tapering snout with a black nose, ears pinned back, bright eyes, and bared fangs.
+  lengthwise(head, fur, [[-0.6, 1.6, 1.6, 1], [0.5, 2.25, 2.1, 0.95], [1.9, 2.25, 1.95, 0.85], [3, 1.7, 1.5, 0.55], [3.5, 1, 0.95, 0.35]]);
+  lengthwise(head, dark, [[2.3, 1.3, 1.1, 0.2], [4, 1.08, 0.9, 0.05], [5.15, 0.8, 0.65, -0.05], [5.5, 0.45, 0.42, -0.05]]);
+  head.ball(OUTLINE, 0.5, 0, 0.5, 5.4, 0, [1.15, 0.8, 0.9]);
+  for (const s of [-1, 1]) {
+    head.shape(dark, [[s * 0.6, 2.4, -0.2], [s * 2.2, 2.4, -0.2], [s * 1.4, 2.4, 1], [s * 1.35, 2.6, -0.7], [s * 1.7, 4.2, -1.1]]);
+    head.glowBall(eye, 0.44, s * 1.25, 1.5, 3.05);
+    // Upper fangs over the lip, and the lower ones up from the jaw.
+    head.shape(GEAR.paper, [[s * 0.45, -0.5, 4.3], [s * 0.85, -0.5, 4.3], [s * 0.65, -0.5, 4.75], [s * 0.68, -1.5, 4.5]]);
+    head.shape(GEAR.paper, [[s * 0.4, -1.3, 3.7], [s * 0.75, -1.3, 3.7], [s * 0.58, -1.3, 4.05], [s * 0.6, -0.65, 3.85]]);
+  }
+  // The jaw dropped a little, the dark of the mouth showing between.
+  lengthwise(head, OUTLINE, [[2.6, 0.85, 0.3, -0.85], [4.7, 0.6, 0.25, -0.9]], 6);
+  lengthwise(head, dark, [[2.4, 1, 0.5, -1.15], [4.4, 0.78, 0.38, -1.25], [4.9, 0.5, 0.28, -1.22]], 6);
+  // The lip curled back off the teeth: wrinkles over the snout.
+  for (const z of [3.2, 3.75]) head.shape(tone(dark, -0.08), sym([[0.85, 0.85, z], [0.85, 0.85, z + 0.22], [0, 1.25, z], [0, 1.25, z + 0.22]]));
   const tail = part(top, 0, 7.6, -4.8);
-  tail.box(fur, 1.5, 1.5, 3.4, 0, -0.9, -1.4, [0.6, 0, 0]);
-  tail.box(dark, 1.3, 1.3, 1.6, 0, -2.2, -3.2, [0.6, 0, 0]);
+  // A brush hanging down and back, dark at its tip.
+  lengthwise(tail, fur, [[0.6, 0.6, 0.6], [-0.6, 0.85, 0.85], [-2.4, 1.05, 1], [-3.6, 0.9, 0.85]], 6, 0, 0, 0, 0.61);
+  lengthwise(tail, dark, [[-3.3, 0.96, 0.9], [-4.6, 0.7, 0.66], [-5.2, 0.2, 0.2]], 6, 0, 0, 0, 0.61);
   const legs = [[-1.5, 3], [1.5, 3], [-1.5, -3.6], [1.5, -3.6]].map(([x, z]) => {
     const leg = part(top, x, 4.6, z);
-    leg.box(dark, 1.5, 4.6, 1.7, 0, -2.3, 0);
-    leg.box(tone(dark, -0.06), 1.7, 0.7, 2.2, 0, -4.3, 0.3);
+    // The hind legs bend back at the hock.
+    const rings: Ring[] = z > 0 ? [[1.2, 1.05, 1.2, 0.1], [-0.6, 0.88, 0.98, 0.05], [-2.6, 0.68, 0.72, 0.05], [-3.9, 0.62, 0.68, 0.1]] : [[1.4, 1.2, 1.55, -0.25], [-0.6, 0.98, 1.12, -0.4], [-2.3, 0.66, 0.75, -0.6], [-3.1, 0.58, 0.66, -0.45], [-3.9, 0.62, 0.68, -0.15]];
+    leg.loft(dark, rings, 6);
+    leg.shape(tone(dark, -0.06), sym([[0.72, -4.6, -0.55], [0.82, -4.6, 0.7], [0.5, -4.6, 1.35], [0, -4.6, 1.5], [0.58, -3.7, -0.5], [0.58, -3.8, 0.4], [0, -4, 1.2]]));
     return leg;
   });
-  return { parts, animate: fourLegs(top, legs, head, tail, 2.6, 9) };
+  return { parts, animate: fourLegs(top, legs, head, tail, 2.6, 9, 0.3) };
 }
 
 /**
@@ -2435,24 +2536,28 @@ function bear(top: THREE.Group, fur = "#7a5232", dark = "#4f3420", muzzle = "#b9
   const parts: Part[] = [];
   const part = (parent: THREE.Object3D, x: number, y: number, z: number) => (parts[parts.length] = new Part(parent, x, y, z));
   const body = part(top, 0, 0, 0);
-  body.box(fur, 7, 6.6, 10, 0, 7.6, -0.6);
-  body.box(fur, 6.2, 2.4, 4.6, 0, 11.6, 1.4);
-  body.box(dark, 5.6, 1, 8, 0, 4.2, -0.6);
-  body.box(dark, 1.6, 1.6, 1, 0, 8.6, -5.9);
-  if (frost) body.box(frost, 6.3, 0.8, 4.7, 0, 12.6, 1.4);
+  // A barrel of a body rising to the hump over the shoulders, darker underneath, and a stub of a tail.
+  const trunk: Span[] = [[-6, 1.7, 1.7, 7.9], [-5.1, 3, 2.95, 7.7], [-2.8, 3.6, 3.35, 7.6], [-0.2, 3.65, 3.55, 7.85], [1.6, 3.55, 4.1, 8.5], [3.4, 3.25, 3.7, 8.3], [4.7, 2.5, 2.6, 8.6]];
+  lengthwise(body, fur, trunk);
+  pelt(body, dark, trunk, -4.6, 3.2, Math.PI - 0.75, Math.PI + 0.75, 0.12);
+  body.ball(dark, 1, 0, 8.8, -6, 0);
+  if (frost) pelt(body, frost, trunk, -1, 3.8, -0.8, 0.8, 0.14);
   const head = part(top, 0, 9.4, 4.2);
-  head.box(fur, 5.6, 5.2, 4.4, 0, 0.6, 1.8);
-  head.box(muzzle, 3, 2.6, 2.4, 0, -0.6, 4.8);
-  head.box(OUTLINE, 1.2, 1, 0.8, 0, 0.3, 6);
+  const skull: Span[] = [[-0.6, 2.5, 2.45, 0.8], [0.5, 3.1, 2.9, 0.75], [2.2, 3.05, 2.75, 0.6], [3.5, 2.4, 2.1, 0.25], [4.1, 1.45, 1.3, 0]];
+  lengthwise(head, fur, skull);
+  lengthwise(head, muzzle, [[3, 1.55, 1.35, -0.55], [5, 1.45, 1.2, -0.55], [5.95, 1.05, 0.85, -0.45], [6.2, 0.5, 0.45, -0.4]]);
+  head.ball(OUTLINE, 0.62, 0, 0.35, 6, 0, [1.2, 0.75, 0.8]);
   for (const s of [-1, 1]) {
-    head.ball(dark, 1.05, s * 2.2, 3.6, 1.2);
-    head.glowBox(eye, 0.8, 0.8, 0.3, s * 1.6, 1.5, 4.05);
+    head.ball(dark, 1.1, s * 2.4, 3.7, 1.1, 0, [1, 1, 0.7]);
+    head.glowBall(eye, 0.44, s * 1.6, 1.6, 3.4);
   }
-  if (frost) head.box(frost, 5.7, 0.8, 4.5, 0, 3, 1.8);
+  if (frost) pelt(head, frost, skull, 0, 3, -0.85, 0.85, 0.13);
   const legs = [[-2.3, 3.2], [2.3, 3.2], [-2.3, -4], [2.3, -4]].map(([x, z]) => {
     const leg = part(top, x, 4.8, z);
-    leg.box(dark, 2.6, 4.8, 3, 0, -2.4, 0);
-    for (const cx of [-0.8, 0, 0.8]) leg.box(GEAR.paper, 0.5, 0.6, 0.7, cx, -4.5, 1.8);
+    const rings: Ring[] = z > 0 ? [[1.5, 1.55, 1.75], [-0.8, 1.35, 1.55, 0.1], [-3, 1.25, 1.45, 0.2], [-4.2, 1.35, 1.6, 0.35]] : [[1.8, 1.75, 2.2, -0.3], [-0.6, 1.45, 1.7, -0.3], [-2.8, 1.25, 1.45, -0.05], [-4.2, 1.35, 1.6, 0.25]];
+    leg.loft(dark, rings, 8);
+    leg.shape(tone(dark, -0.05), sym([[1.4, -4.8, -1.25], [1.5, -4.8, 1], [1.1, -4.8, 1.85], [0, -4.8, 2.05], [1.35, -3.9, -1.15], [1.4, -3.9, 0.9], [0, -3.9, 1.7]]));
+    for (const cx of [-0.8, 0, 0.8]) leg.shape(GEAR.paper, [[cx - 0.25, -4.8, 1.55], [cx + 0.25, -4.8, 1.55], [cx, -4.25, 1.6], [cx, -4.75, 2.55]]);
     return leg;
   });
   return { parts, animate: fourLegs(top, legs, head, null, 3.6, 12) };
@@ -2465,22 +2570,31 @@ function bear(top: THREE.Group, fur = "#7a5232", dark = "#4f3420", muzzle = "#b9
 function ghost(top: THREE.Group, pale = "#dfe8f2", shade = "#a7b6cc", eye = "#24203a", crown?: string): Rig {
   const parts: Part[] = [];
   const body = (parts[0] = new Part(top, 0, 2, 0));
-  body.ball(pale, 3.9, 0, 12.6, 0, 1);
-  body.cyl(pale, 3.8, 4.6, 8, 0, 8.4, 0, 8);
-  for (let i = 0; i < 8; i++) {
-    const a = (i / 8) * Math.PI * 2 + 0.2;
-    body.cone(i % 2 ? shade : pale, 1.5, i % 2 ? 3.4 : 2.4, Math.sin(a) * 3.3, i % 2 ? 2.9 : 3.4, Math.cos(a) * 3.3, 4, [Math.PI, 0, 0]);
+  // One shape from the hem up over a round head, narrowing at the neck.
+  body.loft(pale, [[4.2, 4.6, 4.5], [6.5, 4.3, 4.2, 0.05], [9.5, 3.75, 3.65, 0.15], [11.4, 3.7, 3.6, 0.15], [13.4, 3.9, 3.8, 0.05], [15.3, 3.1, 3, -0.1], [16.2, 1.75, 1.7, -0.15], [16.55, 0.4, 0.4, -0.15]], 10);
+  // The ragged hem: tatters hanging below it, long and short by turns.
+  for (let i = 0; i < 10; i++) {
+    const a = ((i + 0.5) / 10) * Math.PI * 2;
+    const half = Math.PI / 10;
+    const long = i % 2 === 1;
+    const at = (turn: number, r: number, y: number): Pt => [Math.sin(a + turn) * r, y, Math.cos(a + turn) * r];
+    body.shape(long ? shade : pale, [at(-half, 4.62, 4.6), at(half, 4.62, 4.6), at(0, 3.5, 4.6), at(0, 4.3, 5.2), at(long ? 0.12 : -0.1, 4.15, long ? 1.3 : 2.2)]);
   }
-  for (const s of [-1, 1]) body.box(eye, 1.6, 2, 0.5, s * 1.5, 13, 3.3);
-  body.box(eye, 2.4, 1.6, 0.5, 0, 10.2, 3.75);
+  for (const s of [-1, 1]) body.ball(eye, 1, s * 1.5, 13, 3.35, 1, [0.92, 1.12, 0.55]);
+  body.ball(eye, 1, 0, 10.2, 3.42, 1, [1.15, 0.8, 0.5]);
   if (crown) {
-    body.cyl(crown, 2.9, 2.9, 0.9, 0, 16, 0, 8);
-    for (let i = 0; i < 4; i++) body.cone(crown, 0.7, 1.4, Math.sin(i * HALF_PI + 0.4) * 2.5, 17.1, Math.cos(i * HALF_PI + 0.4) * 2.5);
+    body.loft(crown, [[15.3, 3.15, 3.05, -0.1], [16.2, 3, 2.92, -0.12]], 8);
+    for (let i = 0; i < 4; i++) {
+      const a = i * HALF_PI + 0.4;
+      const at = (r: number, y: number, turn = 0): Pt => [Math.sin(a + turn) * r, y, Math.cos(a + turn) * r - 0.1];
+      body.shape(crown, [at(3.05, 16.1, -0.3), at(3.05, 16.1, 0.3), at(2.6, 16.1), at(2.85, 17.55)]);
+    }
   }
   const arms = [-1, 1].map((s) => {
     const arm = (parts[parts.length] = new Part(body.joint, s * 3.6, 9.6, 1));
-    arm.box(shade, 1.5, 1.5, 4.4, 0, 0, 2.2);
-    arm.box(pale, 1.8, 1.2, 1.4, 0, 0, 4.8);
+    // A sleeve reaching forward, flaring at the cuff, and a pale hand with long fingers.
+    lengthwise(arm, shade, [[-0.6, 1, 1], [1.5, 0.92, 0.88], [3.6, 0.82, 0.78], [4.4, 1.02, 0.95]], 6);
+    arm.shape(pale, [[-0.7, 0.35, 4.2], [0.7, 0.35, 4.2], [-0.7, -0.45, 4.2], [0.7, -0.45, 4.2], [-0.75, 0.05, 5.55], [0, 0.2, 5.95], [0.75, 0.05, 5.55], [0, -0.55, 5.3]]);
     return arm;
   });
   const animate = (a: Anim) => {
@@ -2502,18 +2616,31 @@ function bat(top: THREE.Group): Rig {
   const dark = "#4a3b52";
   const wing = "#2f2538";
   const body = (parts[0] = new Part(top, 0, 10, 0));
-  body.ball(dark, 2.3, 0, 0, 0, 0, [1, 1.2, 0.9]);
+  // A furry egg of a body, tall pointed ears, red eyes and a fang.
+  body.loft(dark, [[-2.75, 0.7, 0.65], [-2.1, 1.7, 1.45], [-0.6, 2.3, 1.95], [0.9, 2.25, 1.95, 0.1], [2.1, 1.75, 1.6, 0.15], [2.8, 0.7, 0.7, 0.1]], 8);
   for (const s of [-1, 1]) {
-    body.cone(dark, 0.7, 1.8, s * 1.1, 2.8, 0);
-    body.glowBox("#ff4d4d", 0.7, 0.7, 0.3, s * 0.9, 0.7, 1.9);
+    body.shape(dark, [[s * 0.45, 2, -0.35], [s * 1.75, 2, -0.35], [s * 1.1, 2, 0.6], [s * 1.35, 4, 0.05]]);
+    body.glowBall("#ff4d4d", 0.4, s * 0.85, 0.75, 1.72);
   }
-  body.box(GEAR.paper, 0.4, 0.8, 0.3, 0.3, -0.7, 1.95);
+  body.shape(GEAR.paper, [[0.12, -0.4, 1.7], [0.52, -0.4, 1.7], [0.32, -0.4, 2], [0.32, -1.25, 1.85]]);
   const wings = [-1, 1].map((s) => {
     const p = (parts[parts.length] = new Part(body.joint, s * 1.6, 0.8, 0));
-    p.box(wing, 5.2, 2.2, 0.35, s * 2.6, 0, 0);
-    p.box(wing, 3.2, 2, 0.35, s * 6, -1, 0);
-    p.box(wing, 2, 1, 0.35, s * 3.6, -1.6, 0);
-    p.box(dark, 7.6, 0.5, 0.5, s * 3.8, 1.1, 0);
+    // An arm out to the wrist and a long finger on to the tip along the top; two more fingers fanning down;
+    // the skin between them scalloped from one fingertip to the next.
+    const wrist: [number, number] = [s * 4.2, 1.3];
+    const tip: [number, number] = [s * 7.8, 0.9];
+    const lower: [number, number] = [s * 6.6, -2.2];
+    const inner: [number, number] = [s * 4, -2.4];
+    const skin = (pts: [number, number][]) => p.shape(wing, pts.flatMap(([x, y]): Pt[] => [[x, y, -0.13], [x, y, 0.13]]));
+    skin([[0, 1], wrist, inner, [s * 1.9, -1]]);
+    skin([[0, 1], [s * 1.9, -1], [s * 0.2, -1.3]]);
+    skin([wrist, inner, [s * 5.4, -1.35]]);
+    skin([wrist, [s * 5.4, -1.35], lower]);
+    skin([wrist, lower, [s * 7, -0.35]]);
+    skin([wrist, [s * 7, -0.35], tip]);
+    strut(p, dark, [0, 0.95, 0], [wrist[0], wrist[1], 0], 0.38, 0.28, 5);
+    for (const end of [tip, lower, inner]) strut(p, dark, [wrist[0], wrist[1], 0], [end[0], end[1], 0], 0.24, 0.12, 5);
+    p.ball(dark, 0.4, wrist[0], wrist[1] + 0.2, 0);
     return p;
   });
   const animate = (a: Anim) => {
@@ -2536,12 +2663,13 @@ function slime(top: THREE.Group): Rig {
   const green = "#6fcf5a";
   const deep = "#3f8f36";
   const body = new Part(top, 0, 0, 0);
-  body.ball(green, 6, 0, 4, 0, 1, [1, 0.8, 1]);
-  body.cyl(deep, 5.9, 5.5, 1.8, 0, 0.9, 0, 10);
-  body.ball(green, 1.1, -5.9, 0.7, 1.4);
-  body.box("#c9f5b8", 1.8, 0.8, 0.5, -2, 7.4, 3.3, [-0.6, -0.3, 0]);
-  body.box("#c9f5b8", 0.7, 1.4, 0.5, -3.6, 5.6, 3.9, [-0.3, -0.5, 0]);
-  for (const s of [-1, 1]) body.box("#14301a", 1.5, 1.8, 0.6, s * 1.9, 4.6, 5.4);
+  // A gumdrop, its foot spread wide and darker where it sits in its own ooze.
+  body.loft(green, [[1.4, 5.6, 5.6], [2.4, 5.85, 5.85], [4, 6, 6], [5.6, 5.6, 5.6], [7, 4.75, 4.75], [8.1, 3.3, 3.3], [8.7, 1.6, 1.6], [8.85, 0.4, 0.4]], 12);
+  body.loft(deep, [[0, 5.7, 5.7], [0.6, 6.05, 6.05], [1.9, 6.05, 6.05]], 12);
+  body.ball(green, 1.1, -5.9, 0.7, 1.4, 1);
+  spot(body, "#c9f5b8", 1, 0.42, 0.6, -2, 7.35, 3.7, [-0.9, -0.4, 0]);
+  spot(body, "#c9f5b8", 0.36, 0.72, 0.6, -3.6, 5.6, 4.3, [-0.45, -0.65, 0]);
+  for (const s of [-1, 1]) body.ball("#14301a", 1, s * 1.9, 4.6, 5.45, 1, [0.78, 0.95, 0.45]);
   const animate = (a: Anim) => {
     const squash = a.lying ? -0.6 : a.breath * 0.05 + Math.abs(a.swing) * 0.18 - a.strike * 0.25;
     top.scale.set(1 - squash * 0.5, 1 + squash, 1 - squash * 0.5);
@@ -2555,19 +2683,23 @@ function dummy(top: THREE.Group): Rig {
   const straw = "#d9b662";
   const shade = "#b08d3e";
   const body = new Part(top, 0, 0, 0);
-  body.cyl(GEAR.wood, 0.8, 0.8, 6.4, 0, 3.2, 0, 6);
-  body.box(GEAR.wood, 8, 0.8, 1.6, 0, 0.4, 0);
-  body.box(GEAR.wood, 1.6, 0.8, 8, 0, 0.4, 0);
-  body.cyl(straw, 3.7, 3.2, 7, 0, 9.6, 0, 8);
-  body.cyl(shade, 3.3, 3.3, 0.8, 0, 6.3, 0, 8);
-  body.box(GEAR.wood, 14, 1.2, 1.2, 0, 11.2, 0);
-  for (const s of [-1, 1]) body.box(shade, 1.2, 3.4, 1.8, s * 6.8, 11, 0);
-  body.cyl("#f4efe2", 2.1, 2.1, 0.4, 0, 9.6, 3.4, 10, [HALF_PI, 0, 0]);
-  body.cyl("#c8433d", 1, 1, 0.4, 0, 9.6, 3.6, 10, [HALF_PI, 0, 0]);
-  body.cyl(GEAR.leather, 2.5, 2.5, 0.8, 0, 13.4, 0, 8);
-  body.ball(straw, 3.1, 0, 16, 0, 1);
-  for (const s of [-1, 1]) body.box(OUTLINE, 0.8, 0.8, 0.5, s * 1.2, 16.6, 2.75);
-  body.box(shade, 2, 0.5, 0.5, 0, 15, 2.7);
+  // A post on two crossed feet.
+  body.loft(GEAR.wood, [[0, 0.95, 0.95], [6.6, 0.75, 0.75]], 6);
+  for (const turn of [0, HALF_PI]) body.shape(GEAR.wood, [...sym([[4, 0, 0.75], [4, 0, -0.75], [4, 0.55, 0.6], [4, 0.55, -0.6]]), [0, 0.95, 0.85], [0, 0.95, -0.85]], 0, 0, 0, [0, turn, 0]);
+  // The sack, tied at the bottom, with a target painted on its chest.
+  body.loft(straw, [[6.1, 3.15, 2.95], [7.3, 3.5, 3.25], [9.6, 3.75, 3.45], [11.8, 3.75, 3.45], [12.9, 3.3, 3.05], [13.4, 2.4, 2.3]], 8);
+  body.loft(shade, [[6, 3.3, 3.1], [6.75, 3.44, 3.22]], 8);
+  body.loft("#f4efe2", [[0, 2.1, 2.1], [0.35, 2.1, 2.1]], 10, 0, 9.6, 3.1, [HALF_PI, 0, 0]);
+  body.loft("#c8433d", [[0.3, 1, 1], [0.55, 1, 1]], 10, 0, 9.6, 3.1, [HALF_PI, 0, 0]);
+  // A crossbar for arms, straw spilling from each end.
+  strut(body, GEAR.wood, [-7.3, 11.2, 0], [7.3, 11.2, 0], 0.62);
+  for (const s of [-1, 1]) body.loft(shade, [[9.3, 0.75, 0.95], [10.2, 0.92, 1.08], [12, 0.72, 0.88], [12.7, 0.36, 0.42]], 6, s * 6.8, 0, 0);
+  // A sack of a head on a leather tie: two button eyes, a stitched mouth, a tuft on top.
+  body.loft(GEAR.leather, [[13, 2.55, 2.45], [13.9, 2.45, 2.35]], 8);
+  body.loft(straw, [[13.4, 1.6, 1.6], [14.1, 2.75, 2.65], [16, 3.15, 3.05], [17.8, 2.65, 2.55], [18.8, 1.3, 1.3], [19.1, 0.35, 0.35]], 8);
+  body.loft(shade, [[18.6, 0.7, 0.7], [19.5, 0.5, 0.5], [20, 0.9, 0.85]], 5);
+  for (const s of [-1, 1]) body.ball(OUTLINE, 0.5, s * 1.2, 16.6, 2.82, 1, [1, 1, 0.55]);
+  spot(body, shade, 1, 0.22, 0.4, 0, 15, 2.85);
   const animate = (a: Anim) => {
     if (a.lying) {
       top.rotation.set(-HALF_PI, 0, 0);
@@ -2729,7 +2861,7 @@ export function makeFigure(kind: string, look: Look, outfit?: Outfit, opts: Figu
   braids = [];
   slung = null;
   chosen = outfit?.appearance ?? null;
-  lowPoly = !!chosen || !!opts.lowPoly || (!BLOCKY_PREF && !(CREATURES.has(kind) && !outfit));
+  lowPoly = !!chosen || !!opts.lowPoly || !BLOCKY_PREF;
   m = lowPoly ? measuresOf(chosen) : USUAL;
   // A hero's own colouring over their class's.
   if (chosen) look = { ...look, skin: chosen.skin, hair: chosen.hair };
