@@ -194,8 +194,10 @@ const DROPS = 150;
 const SPLASH_DROPS = 6;
 /** How long one spell of weather lasts before the sky starts turning to the next. */
 const WEATHER_SPELL_MS = 7 * 60 * 1000;
-/** Smoke rings in the air over one chimney at a time. */
-const PUFFS = 4;
+/** Puffs of smoke in the air over one chimney at a time. */
+const PUFFS = 5;
+/** Lumps in one puff: a small low-poly cloud. */
+const LOBES = 5;
 
 /**
  * What the pixel decorations (smoke rings, wisps) need to know about the view: how big the picture being drawn
@@ -222,46 +224,29 @@ const CELLS_GLSL = /* glsl */ `
 `;
 
 /**
- * Smoke rings: low-poly rings (tori) lying flat, parallel to the ground, one instance per ring. The torus is
- * built in the shader from its two angles (the geometry's uv), so each ring has its own size and tube:
- * `aRing` is its middle and radius, `aShape` its tube's radius, how much of it is left (1 whole, 0 gone) and a
- * slight tip off level (x and z). Lit by a fixed light from above in three flat bands, lighter on top and darker
- * underneath, so it reads as solid. It is drawn opaque and thins away by dropping chunky pixels in an ordered
- * dither, so rings never need sorting against each other or the roofs. `uShade` follows the daylight.
+ * Chimney smoke: small low-poly clouds, each a few faceted lumps (one instance of a 20-sided ball each, placed by
+ * `puff`). Each face is one flat tone, lit by a fixed light from above in three bands (tops light, sides between,
+ * undersides dark), like the props' flat-shaded rocks and bushes; `uShade` follows the daylight.
  */
-function smokeRingMaterial(view: PixelView): THREE.ShaderMaterial {
+function smokeMaterial(): THREE.ShaderMaterial {
   return new THREE.ShaderMaterial({
-    uniforms: { ...view, uShade: { value: 1 } },
+    uniforms: { uShade: { value: 1 } },
     vertexShader: /* glsl */ `
-      attribute vec4 aRing;
-      attribute vec4 aShape;
-      varying vec3 vNormal;
-      varying float vLeft;
+      varying vec3 vWorld;
       void main() {
-        float u = uv.x * 6.2831853;
-        float v = uv.y * 6.2831853;
-        vec3 rim = vec3(cos(u), 0.0, sin(u));
-        vec3 normal = rim * cos(v) + vec3(0.0, sin(v), 0.0);
-        vec3 p = rim * aRing.w + normal * aShape.x;
-        // Tip it a little off level: about x, then about z.
-        float cx = cos(aShape.z), sx = sin(aShape.z), cz = cos(aShape.w), sz = sin(aShape.w);
-        mat3 tip = mat3(cz, sz, 0.0, -sz, cz, 0.0, 0.0, 0.0, 1.0) * mat3(1.0, 0.0, 0.0, 0.0, cx, sx, 0.0, -sx, cx);
-        vNormal = tip * normal;
-        vLeft = aShape.y;
-        gl_Position = projectionMatrix * modelViewMatrix * vec4(aRing.xyz + tip * p, 1.0);
+        vec4 world = modelMatrix * instanceMatrix * vec4(position, 1.0);
+        vWorld = world.xyz;
+        gl_Position = projectionMatrix * viewMatrix * world;
       }
     `,
     fragmentShader: /* glsl */ `
-      uniform float uFine;
       uniform float uShade;
-      varying vec3 vNormal;
-      varying float vLeft;
-      const float BAYER[16] = float[16](0.0, 8.0, 2.0, 10.0, 12.0, 4.0, 14.0, 6.0, 3.0, 11.0, 1.0, 9.0, 15.0, 7.0, 13.0, 5.0);
+      varying vec3 vWorld;
       void main() {
-        vec2 cell = mod(floor(gl_FragCoord.xy / uFine), 4.0);
-        if (vLeft <= (BAYER[int(cell.y) * 4 + int(cell.x)] + 0.5) / 16.0) discard;
-        float lit = dot(normalize(vNormal), normalize(vec3(0.35, 1.0, 0.25)));
-        float band = lit > 0.55 ? 1.0 : lit > -0.1 ? 0.84 : 0.68;
+        // The face's own normal, so each facet is one flat tone.
+        vec3 normal = normalize(cross(dFdx(vWorld), dFdy(vWorld)));
+        float lit = dot(normal, normalize(vec3(0.35, 1.0, 0.25)));
+        float band = lit > 0.6 ? 1.0 : lit > -0.15 ? 0.84 : 0.68;
         gl_FragColor = vec4(vec3(uShade * band, uShade * band, uShade * band * 1.03), 1.0);
         #include <colorspace_fragment>
       }
@@ -640,7 +625,7 @@ export class Ambience {
   private splashPoints: THREE.Points | null = null;
   private shoreSplashes: typeof this.splashes = [];
   private rockSplashes: typeof this.splashes = [];
-  /** Chimney smoke: pixel smoke rings rising from each stack. Outlives a map rebuild, so it is kept out of `group`. */
+  /** Chimney smoke: little low-poly clouds rising from each stack. Outlives a map rebuild, so it is kept out of `group`. */
   private smoke: THREE.InstancedMesh | null = null;
   private wispAt = new THREE.Vector3();
   private wispAhead = new THREE.Vector3();
@@ -1554,12 +1539,8 @@ export class Ambience {
     }
     this.stacks = stacks;
     if (stacks.length === 0) return;
-    // A plain torus for its angles only (the shader builds each ring's shape from them): few sides, for a chunky look.
-    const geometry = new THREE.TorusGeometry(1, 0.25, 6, 18);
-    const rings = stacks.length * PUFFS;
-    geometry.setAttribute("aRing", new THREE.InstancedBufferAttribute(new Float32Array(rings * 4), 4));
-    geometry.setAttribute("aShape", new THREE.InstancedBufferAttribute(new Float32Array(rings * 4), 4));
-    this.smoke = new THREE.InstancedMesh(geometry, smokeRingMaterial(this.pixelView), rings);
+    // One low-poly ball per lump of every puff; `puff` places and sizes them.
+    this.smoke = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1, 0), smokeMaterial(), stacks.length * PUFFS * LOBES);
     this.smoke.frustumCulled = false;
     this.scene.add(this.smoke);
   }
@@ -1787,36 +1768,59 @@ export class Ambience {
 
   private puff(clock: number) {
     if (!this.smoke) return;
-    const ring = this.smoke.geometry.getAttribute("aRing") as THREE.InstancedBufferAttribute;
-    const shape = this.smoke.geometry.getAttribute("aShape") as THREE.InstancedBufferAttribute;
-    (this.smoke.material as THREE.ShaderMaterial).uniforms.uShade.value = 0.5 + 0.45 * this.daylight;
+    (this.smoke.material as THREE.ShaderMaterial).uniforms.uShade.value = 0.52 + 0.45 * this.daylight;
+    const { turn, at, size, m, spin } = this.smokeScratch;
     this.stacks.forEach((stack, n) => {
       for (let i = 0; i < PUFFS; i++) {
-        // Each ring is blown out of the pot, floats up, widens, leans downwind and thins away near the top.
-        // Every time round it is a new ring: its own size, its own rate of widening and its own wobble.
-        const phase = this.still ? (i + 0.5) / PUFFS : clock * 0.11 + i / PUFFS + n * 0.37;
+        // Each puff is blown out of the pot small, floats up, swells and leans downwind, and comes apart near the
+        // top: its lumps drift away from each other and shrink away one by one. Every time round it is a new puff,
+        // with its own size and its own lumps.
+        const phase = this.still ? (i + 0.5) / PUFFS : clock * 0.12 + i / PUFFS + n * 0.37;
         const lap = Math.floor(phase);
         const life = phase - lap;
         const r = (salt: number) => hash(n * PUFFS + i + 1, lap, 700 + salt);
+        const big = (0.07 + r(1) * 0.05) * (1 + life * (0.9 + r(2) * 0.6));
         const sway = Math.sin(life * 5 + i * 1.7 + n) * 0.05 * life;
         const lean = life * life * 0.5;
-        const radius = (0.05 + r(1) * 0.07) * (1 + life * (0.8 + r(2) * 0.9));
-        const tube = radius * (0.34 - 0.12 * life);
-        const wobble = this.still ? 0 : 0.18 * life;
-        const k = n * PUFFS + i;
-        ring.setXYZW(k, stack.x + WIND.x * lean + sway, stack.y + 0.04 + life * (1.6 + r(3) * 0.5), stack.z + WIND.z * lean, radius);
-        shape.setXYZW(
-          k,
-          tube,
-          smooth(0, 0.06, life) * (1 - smooth(0.45, 1, life)),
-          (r(4) - 0.5) * 0.3 + Math.sin(clock * 1.3 + i * 2.1 + n) * wobble,
-          (r(5) - 0.5) * 0.3 + Math.cos(clock * 1.1 + i * 1.3 + n) * wobble,
-        );
+        const cx = stack.x + WIND.x * lean + sway;
+        const cy = stack.y + 0.06 + life * (1.5 + r(3) * 0.5);
+        const cz = stack.z + WIND.z * lean;
+        for (let l = 0; l < LOBES; l++) {
+          const k = (n * PUFFS + i) * LOBES + l;
+          const q = (salt: number) => hash(k + 1, lap, 760 + salt);
+          // The first lump is the middle of the puff; the rest sit round it, mostly to the sides, a little up.
+          const a = q(1) * Math.PI * 2;
+          const out = l === 0 ? 0 : 0.55 + q(2) * 0.45;
+          // Lumps swell in one after another, and each lets go at its own moment near the top, drifting off.
+          const born = smooth(l * 0.015, 0.06 + l * 0.015, life);
+          const leave = 0.45 + q(3) * 0.45;
+          const gone = smooth(leave - 0.15, leave + 0.1, life);
+          const loose = 1 + Math.max(0, life - (leave - 0.25)) * 2.2;
+          const lump = big * (l === 0 ? 1 : 0.55 + q(4) * 0.35);
+          at.set(
+            cx + Math.cos(a) * out * big * loose,
+            cy + (l === 0 ? 0 : (q(5) - 0.35) * big * 0.8) + (loose - 1) * big * 0.4,
+            cz + Math.sin(a) * out * big * loose,
+          );
+          // Each lump is turned its own way and turns slowly as it rises, so its facets catch the light differently.
+          spin.set(q(6) * 6.3 + life * (q(7) - 0.5) * 2, q(8) * 6.3 + life * (q(9) - 0.5) * 2, q(10) * 6.3);
+          turn.setFromEuler(spin);
+          // A little squat, like a cloud.
+          const s0 = Math.max(lump * born * (1 - gone), 1e-5);
+          size.set(s0, s0 * 0.85, s0);
+          this.smoke!.setMatrixAt(k, m.compose(at, turn, size));
+        }
       }
     });
-    ring.needsUpdate = true;
-    shape.needsUpdate = true;
+    this.smoke.instanceMatrix.needsUpdate = true;
   }
+  private smokeScratch = {
+    turn: new THREE.Quaternion(),
+    at: new THREE.Vector3(),
+    size: new THREE.Vector3(),
+    m: new THREE.Matrix4(),
+    spin: new THREE.Euler(),
+  };
 
   /**
    * How high the sun stands: about 1.2 at noon, 0 as it crosses the horizon, down to about -0.8 at midnight.
