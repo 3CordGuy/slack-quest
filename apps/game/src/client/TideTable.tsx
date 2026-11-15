@@ -68,7 +68,7 @@ export function TideTable({ table, you, gold, error, lastXp, looks, world, host,
   const turnKey = `${table?.hand}:${table?.lastPlay?.n ?? 0}:${canPlay}`;
   const [move, setMove] = useState<Move | null>(null);
   const myHand = mine?.hand ?? [];
-  // Your hand in the dock waits for the cards on the table to land: a card still on its way shows face down.
+  // Your hand in the dock waits for the cards on the table to land: a card still on its way is not in it yet.
   const handKey = `${table?.hand}:${myHand.join(",")}`;
   const [landed, setLanded] = useState<{ key: string; hand: number | undefined; cards: number[] } | null>(null);
   const settled = !landed || landed.key === handKey;
@@ -238,9 +238,9 @@ export function TideTable({ table, you, gold, error, lastXp, looks, world, host,
             {myHand.length === 0 && <span className="muted tide-none">{mine.forfeited ? "You walked away." : "You are out of this hand."}</span>}
             {showHand.map((c, i) => {
               const kraken = c === TIDE_KRAKEN;
-              const coming = c === "back";
+              if (c === "back") return null;
               return (
-                <button key={`${i}:${c}`} type="button" className={`tide-card${index === i ? " picked" : ""}${kraken && canPlay ? " stuck" : ""}`} aria-pressed={index === i} disabled={!canPlay || kraken || coming} title={coming ? "On its way" : kraken && canPlay ? "The Kraken cannot be played" : `${tideCard(c)?.name}: ${tideCard(c)?.text}`} onClick={() => pickCard(i)}>
+                <button key={`${i}:${c}`} type="button" className={`tide-card${index === i ? " picked" : ""}${kraken && canPlay ? " stuck" : ""}`} aria-pressed={index === i} disabled={!canPlay || kraken} title={kraken && canPlay ? "The Kraken cannot be played" : `${tideCard(c)?.name}: ${tideCard(c)?.text}`} onClick={() => pickCard(i)}>
                   <CardArt face={c} />
                 </button>
               );
