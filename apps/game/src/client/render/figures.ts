@@ -509,9 +509,24 @@ const HOLD: Record<string, Hold> = {
   daggers: { grip: [0, -1.8, 0], scale: 0.53, pose: { tilt: 0.7 } },
   // In the lute's own frame (see drawLute): the belly at the origin.
   lute: { grip: [0, -3, 0], scale: 0.5 },
+  // The signature weapons.
+  "ballast-flail": { grip: [0, -3.8, 0], scale: 0.75, turn: FORWARD, pose: { tilt: 0.3 } },
+  "barometer-rod": { grip: [0, -3.5, 0], scale: 0.8 },
+  // One in each fist, like the daggers, the hooks curling forward.
+  "gaff-hook": { grip: [0, -2.2, 0], scale: 0.55, turn: FORWARD, pose: { tilt: 0.5 } },
+  "coral-staff": { grip: [0, -4.2, 0], scale: 0.8 },
+  // Rung: held up by the handle, the bell hanging below the fist.
+  "ships-bell": { grip: [0, 5.6, 0], scale: 0.5, pose: { arm: -0.7 } },
+  astrolabe: { grip: [0, -4.2, 0], scale: 0.45, pose: { arm: -0.5 } },
+  "lamp-hook": { grip: [0, -6.5, 0], scale: 0.65, turn: FORWARD, pose: { tilt: 0.15 } },
+  // Held up in front by the stem.
+  "bilge-chalice": { grip: [0, -3, 0], scale: 0.46, at: [0, 0, 0.4], pose: { arm: -0.9 } },
   "round-shield": { grip: [0, 0, 0], scale: 0.39, at: [0.5, -3.4, 1.9], turn: ON_ARM },
   shield: { grip: [0, -0.5, 0], scale: 0.43, at: [0.5, -2.9, 1.95], turn: ON_ARM },
 };
+
+/** Icons held one in each fist (see heldGear). */
+const PAIRED = new Set(["daggers", "gaff-hook"]);
 
 /** The icon (so the model) a stock look's weapon is drawn as: a class weapon's own, or the one most like it. */
 const STOCK_ICON: Record<string, string> = { ...WEAPON_ICON, sword: "broadsword", bow: "crossbow" };
@@ -543,12 +558,12 @@ function outward(hand: Part, s: number): Part {
 function heldGear(icon: string, b: Biped, trim: string, shield: boolean): { arm?: number; tilt?: number } | null {
   const hold = HOLD[icon];
   if (!hold || icon === "lute") return null;
-  if (icon === "daggers") {
+  if (PAIRED.has(icon)) {
     // One in each fist (the second unless a shield is there), both tipped forward the same.
     if (!gear(outward(b.heldR, 1), icon, trim, hold, true)) return null;
     if (!shield) {
       gear(outward(b.heldL, -1), icon, trim, hold, true);
-      b.rest.tiltL = 0.7;
+      b.rest.tiltL = hold.pose?.tilt ?? 0;
     }
     return hold.pose ?? {};
   }
@@ -2524,10 +2539,10 @@ function person(top: THREE.Group, look: Look, outfit: Outfit | undefined, asleep
     const held = outfit.main_hand;
     if (held) {
       const like = WEAPONS[held.ref]?.looksLike;
-      // Low-poly, a signature weapon is its icon's model, and that is the icon of the weapon it is like: held as that one is.
-      const id = lowPoly && like ? like : held.ref;
-      apply(b, drawHeld(id, b, trim("main_hand"), look, !!shield, held.icon));
-      if (b.heldR.empty && like && id !== like) apply(b, drawHeld(like, b, trim("main_hand"), look, !!shield));
+      const grips = extraParts.length;
+      apply(b, drawHeld(held.ref, b, trim("main_hand"), look, !!shield, held.icon));
+      // Nothing drawn for it (no model, no shape of its own): drawn as the weapon it is like.
+      if (b.heldR.empty && extraParts.length === grips && like) apply(b, drawHeld(like, b, trim("main_hand"), look, !!shield));
     }
   } else if (look.weapon !== "none") {
     apply(b, drawHeld(look.weapon, b, look.accent, look, false, STOCK_ICON[look.weapon]));

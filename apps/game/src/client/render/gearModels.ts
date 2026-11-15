@@ -134,6 +134,24 @@ function dagger(k: Kit) {
   k.ball(0.8, k.a, { at: [0, -3.5, 0] });
 }
 
+/** A gaff hook, its collar at the origin: a bound wooden grip, a steel shank curling over into a barbed point toward +x. */
+function gaffHook(k: Kit) {
+  k.cyl(0.6, 0.7, 4.4, 6, C.wood, { at: [0, -2.2, 0] });
+  for (const y of [-3.3, -1.2]) k.cyl(0.74, 0.74, 0.4, 6, C.leather, { at: [0, y, 0] });
+  k.ball(0.75, C.iron, { at: [0, -4.6, 0] });
+  k.cyl(0.85, 0.85, 0.9, 6, k.a, { at: [0, 0.3, 0] });
+  k.rod([[0, 0.6, 0], [0, 4.5, 0], [0.5, 6.8, 0], [2.2, 7.8, 0], [3.9, 6.9, 0], [4.3, 5, 0]], 0.42, C.steel, {}, 6);
+  k.cone(0.5, 1.6, 4, C.shine, { at: [4.3, 4.2, 0], rot: [0, 0, Math.PI] });
+  k.cone(0.25, 1.1, 4, C.steel, { at: [4.6, 3.9, 0], rot: [0, 0, -0.6] });
+}
+
+/** A cone pointing out from `centre` along `dir`, its base `out` from the centre: a spike on a ball. */
+function spike(k: Kit, centre: V3, dir: THREE.Vector3, out: number, r: number, h: number, paint: Paint) {
+  const d = dir.clone().normalize();
+  const turn = new THREE.Euler().setFromQuaternion(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), d));
+  k.cone(r, h, 4, paint, { at: [centre[0] + d.x * (out + h / 2), centre[1] + d.y * (out + h / 2), centre[2] + d.z * (out + h / 2)], rot: [turn.x, turn.y, turn.z] });
+}
+
 /** One boot, toe toward +z. */
 function boot(k: Kit) {
   k.cyl(1.9, 2.1, 7, 6, C.leather, { at: [0, 2.5, 0] });
@@ -378,6 +396,174 @@ export const LOW_POLY: Record<string, LowPolyDef> = {
       k.ring(2.9, 0.6, C.dark, { at: [0, 10.6, 0] }, 5, 10);
       k.gem(1.15, 2.3, { glow: k.a }, { at: [0, 10.6, 0] });
       k.gem(0.5, 1, { glow: C.shine }, { at: [0, 10.6, 0.6], rot: [0, 0, Math.PI / 2] });
+    },
+  },
+
+  // ---- signature weapons: each class's own, dropped by lairs and bosses ----
+  "ballast-flail": {
+    // A short haft, and on a chain from its head a spiked iron ballast ball banded in the trim.
+    lean: -0.35,
+    spin: 0.4,
+    build: (k) => {
+      k.cyl(0.6, 0.7, 10, 6, C.wood, { at: [0, -1, 0] });
+      k.cyl(0.8, 0.8, 3, 6, C.leather, { at: [0, -3.8, 0] });
+      k.ball(0.85, C.gold, { at: [0, -6.4, 0] });
+      k.cyl(0.95, 0.85, 1.2, 6, k.a, { at: [0, 4.4, 0] });
+      k.ring(0.7, 0.22, C.iron, { at: [0, 5.5, 0], rot: [0, Math.PI / 2, 0] }, 4, 8);
+      const chain = new THREE.CatmullRomCurve3([v3([0, 6.1, 0]), v3([1.6, 7.6, 0]), v3([3.7, 7.6, 0]), v3([5.3, 6.1, 0])]);
+      const links = 7;
+      for (let i = 0; i <= links; i++) {
+        const t = i / links;
+        const at = chain.getPoint(t);
+        const along = chain.getTangent(t);
+        const link = k.ring(0.55, 0.18, C.iron, { at: [at.x, at.y, at.z], scale: [1.5, 1, 1] }, 4, 6);
+        link.rotation.order = "ZYX";
+        link.rotation.set(i % 2 ? Math.PI / 2 : 0, 0, Math.atan2(along.y, along.x));
+      }
+      const ball: V3 = [5.9, 3.4, 0];
+      k.ball(2.4, C.iron, { at: ball }, 1);
+      k.ring(2.42, 0.32, k.a, { at: ball, rot: [Math.PI / 2, 0, 0] }, 4, 16);
+      const ico = new THREE.IcosahedronGeometry(1, 0);
+      const seen = new Set<string>();
+      const p = ico.attributes.position;
+      for (let i = 0; i < p.count; i++) {
+        const d = new THREE.Vector3().fromBufferAttribute(p, i);
+        const key = d.toArray().map((n) => n.toFixed(2)).join();
+        if (seen.has(key) || Math.abs(d.y) < 0.2) continue;
+        seen.add(key);
+        spike(k, ball, d, 2.1, 0.45, 1.4, C.steel);
+      }
+      ico.dispose();
+    },
+  },
+  "barometer-rod": {
+    // A staff with a barometer's dial set in it and a tube of glowing glass at its head.
+    lean: DIAG,
+    build: (k) => {
+      k.cyl(0.55, 0.7, 17, 6, C.wood, { at: [0, -1.5, 0] });
+      k.cyl(0.8, 0.8, 2.6, 6, C.leather, { at: [0, -1, 0] });
+      k.cyl(0.78, 0.6, 0.9, 6, C.iron, { at: [0, -9.6, 0] });
+      const face: Place["rot"] = [Math.PI / 2, 0, 0];
+      k.cyl(2, 2, 0.7, 12, C.gold, { at: [0, 3.6, 0.5], rot: face });
+      k.cyl(1.6, 1.6, 0.3, 12, C.paper, { at: [0, 3.6, 0.85], rot: face });
+      k.box(0.25, 1.4, 0.12, C.dark, { at: [0.3, 4.1, 1.05], rot: [0, 0, -0.5] });
+      k.ball(0.28, k.a, { at: [0, 3.6, 1.1] });
+      for (const y of [7.4, 11.6]) k.cyl(1.2, 1.2, 0.7, 8, C.gold, { at: [0, y, 0] });
+      k.cyl(0.8, 0.8, 3.6, 8, { glow: "#8fd3ff" }, { at: [0, 9.5, 0] });
+      for (let i = 0; i < 3; i++) {
+        const a = (i / 3) * Math.PI * 2 + 0.4;
+        k.cyl(0.18, 0.18, 4.2, 4, C.gold, { at: [Math.cos(a) * 1.05, 9.5, Math.sin(a) * 1.05] });
+      }
+      k.cone(1.1, 1.6, 6, C.gold, { at: [0, 12.75, 0] });
+      k.gem(0.9, 1.9, { glow: k.a }, { at: [0, 14.2, 0] });
+    },
+  },
+  "gaff-hook": {
+    // A pair of gaff hooks, crossed at the collars, their points curling outward.
+    spin: 0.3,
+    inHand: gaffHook,
+    build: (k) => {
+      k.within({ at: [0, 0, -0.5], rot: [0, 0, -0.6] }, () => gaffHook(k));
+      k.within({ at: [0, 0, 0.5], rot: [0, Math.PI, -0.6] }, () => gaffHook(k));
+    },
+  },
+  "coral-staff": {
+    // Bleached driftwood, crowned with branching coral round a glowing pearl, barnacles on the shaft.
+    lean: DIAG,
+    build: (k) => {
+      const drift = "#c2a785";
+      k.rod([[0, -10, 0], [0.6, -5, 0.3], [-0.4, 0, 0], [0.5, 4, -0.2], [0, 7, 0]], 0.75, drift, {}, 6);
+      k.ball(0.75, drift, { at: [0, -10, 0] });
+      for (const [x, y, z, r] of [[0.75, -3.2, 0.3, -1.3], [-0.6, 1.8, 0.45, 1.2], [0.55, 2.6, -0.4, -1.4]] as const) k.cone(0.4, 0.5, 5, C.paper, { at: [x, y, z], rot: [0, 0, r] });
+      const coral = "#ff8f7a";
+      const tips = "#ffc0ad";
+      const branches: V3[][] = [
+        [[0, 6.6, 0], [-1.2, 8.5, 0.3], [-2.6, 10.4, 0], [-2.9, 12.1, 0.2]],
+        [[0, 6.6, 0], [1.3, 8.8, -0.2], [2.7, 10.2, 0.1], [3.1, 12.3, 0]],
+        [[-1.2, 8.5, 0.3], [-0.5, 10.6, 0.8], [-0.8, 12.8, 0.5]],
+        [[1.3, 8.8, -0.2], [1.1, 11, -0.7], [1.7, 13, -0.5]],
+        [[-2.6, 10.4, 0], [-3.9, 11.2, -0.2], [-4.4, 12.5, -0.1]],
+      ];
+      for (const b of branches) {
+        k.rod(b, 0.58, coral, {}, 5);
+        k.ball(0.68, tips, { at: b[b.length - 1] });
+      }
+      k.ball(1.55, { glow: k.a }, { at: [0, 10.3, 0.4] }, 1);
+    },
+  },
+  "ships-bell": {
+    // A hand bell: a flared brass bell banded at the lip, the clapper showing beneath, a turned wooden handle.
+    spin: 0.4,
+    tip: 0.2,
+    build: (k) => {
+      k.lathe([[0, -4.6], [3.4, -4.6], [3.6, -4.1], [3.2, -3.5], [2.6, -1], [2.2, 1.4], [1.6, 2.6], [0, 3]], 10, C.gold);
+      k.cyl(3.15, 3.15, 0.1, 10, C.dark, { at: [0, -4.62, 0] });
+      k.ring(3.35, 0.3, "#b8891f", { at: [0, -3.9, 0], rot: [Math.PI / 2, 0, 0] }, 4, 16);
+      k.ring(2.35, 0.22, "#b8891f", { at: [0, 0.6, 0], rot: [Math.PI / 2, 0, 0] }, 4, 14);
+      k.cyl(0.22, 0.22, 1.6, 4, C.iron, { at: [0, -4.6, 0] });
+      k.ball(0.9, k.a, { at: [0, -5.6, 0] });
+      k.cyl(0.95, 0.95, 0.8, 8, C.gold, { at: [0, 3.3, 0] });
+      k.cyl(0.6, 0.75, 4.2, 6, C.wood, { at: [0, 5.8, 0] });
+      k.ball(0.95, C.wood, { at: [0, 8.2, 0] });
+    },
+  },
+  astrolabe: {
+    // A brass astrolabe on a short handle: the star plate, a rete, the sighting rule across it and a glowing pin.
+    spin: 0.35,
+    tip: 0.2,
+    lean: -0.15,
+    build: (k) => {
+      const face: Place["rot"] = [Math.PI / 2, 0, 0];
+      k.cyl(4.2, 4.2, 0.8, 16, C.gold, { at: [0, 3.6, 0], rot: face });
+      k.cyl(3.5, 3.5, 0.3, 16, "#2d357a", { at: [0, 3.6, 0.45], rot: face });
+      k.ring(4.15, 0.35, "#b8891f", { at: [0, 3.6, 0.45] }, 4, 20);
+      for (const [x, y] of [[-2, 1.1], [1.7, 1.4], [-1.1, -1.9], [2.1, -1.3], [0.4, 2.4]] as const) k.ball(0.22, C.shine, { at: [x, 3.6 + y, 0.65] });
+      k.ring(2.2, 0.18, C.gold, { at: [0.6, 4, 0.75] }, 4, 14);
+      k.box(8.2, 0.5, 0.25, C.steel, { at: [0, 3.6, 0.95], rot: [0, 0, 0.7] });
+      k.gem(0.6, 1.3, { glow: k.a }, { at: [0, 3.6, 1.15], rot: face });
+      k.box(1.6, 1.2, 0.8, C.gold, { at: [0, 8.2, 0] }, 0.2);
+      k.ring(0.9, 0.25, C.gold, { at: [0, 9.3, 0], rot: [0, Math.PI / 2, 0] }, 4, 10);
+      k.cyl(1, 0.7, 1, 6, C.gold, { at: [0, -1, 0] });
+      k.cyl(0.7, 0.8, 5.5, 6, C.wood, { at: [0, -4.2, 0] });
+      k.ball(0.85, C.gold, { at: [0, -7.2, 0] });
+    },
+  },
+  "lamp-hook": {
+    // A long pole with an iron hook at its head, a lantern hanging from the hook.
+    lean: DIAG,
+    spin: 0.4,
+    build: (k) => {
+      k.cyl(0.6, 0.7, 20, 6, C.wood, { at: [0, -2, 0] });
+      for (const y of [-10, 2.4]) k.cyl(0.82, 0.82, 1.3, 6, k.a, { at: [0, y, 0] });
+      k.cyl(0.75, 0.75, 1.4, 6, C.iron, { at: [0, 8.4, 0] });
+      k.rod([[0, 8.8, 0], [0, 10.6, 0], [0.9, 12.1, 0], [2.6, 12.4, 0], [3.8, 11.4, 0], [3.9, 10.1, 0]], 0.32, C.iron, {}, 5);
+      const x = 3.9;
+      k.ring(0.6, 0.15, C.iron, { at: [x, 9.5, 0], rot: [0, Math.PI / 2, 0] }, 4, 8);
+      k.cone(1.5, 1.3, 6, C.iron, { at: [x, 8.5, 0] });
+      k.cyl(1.4, 1.4, 0.35, 6, C.iron, { at: [x, 7.7, 0] });
+      k.cyl(1.05, 1.05, 2.6, 6, { glow: "#ffd98a" }, { at: [x, 6.25, 0] });
+      for (let i = 0; i < 6; i++) {
+        const a = (i / 6) * Math.PI * 2;
+        k.cyl(0.14, 0.14, 2.6, 4, C.iron, { at: [x + Math.cos(a) * 1.15, 6.25, Math.sin(a) * 1.15] });
+      }
+      k.cyl(1.4, 1.25, 0.6, 6, C.iron, { at: [x, 4.7, 0] });
+    },
+  },
+  "bilge-chalice": {
+    // A gold chalice brimming with glowing bilge, bubbles rising and a drip running down its side.
+    spin: 0.4,
+    tip: 0.3,
+    build: (k) => {
+      const bilge = { glow: "#6dff9e" };
+      k.lathe([[0, -6], [3, -6], [3.1, -5.5], [1.6, -5], [0.7, -4], [0.6, -1], [0.9, -0.4], [2.6, 0.6], [3.6, 2.5], [3.9, 5]], 12, C.gold);
+      k.cyl(3.75, 3.75, 0.3, 12, bilge, { at: [0, 4.65, 0] });
+      k.ring(3.9, 0.3, "#b8891f", { at: [0, 5, 0], rot: [Math.PI / 2, 0, 0] }, 4, 20);
+      k.ball(1, k.a, { at: [0, -2.5, 0] });
+      k.gem(0.6, 1.2, k.a, { at: [0, 2.4, 3.45], rot: [Math.PI / 2 - 0.4, 0, 0] });
+      k.ball(0.55, bilge, { at: [1, 6.2, 0.6] });
+      k.ball(0.4, bilge, { at: [-1.2, 7.4, -0.3] });
+      k.ball(0.3, bilge, { at: [0.3, 8.5, 0.2] });
+      k.rod([[2.8, 5.1, 2.7], [2.9, 4, 2.75], [2.6, 2.6, 2.6]], 0.3, bilge, {}, 4);
     },
   },
 
