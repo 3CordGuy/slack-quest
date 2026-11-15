@@ -158,6 +158,10 @@ const CARD_AL = (CARD_AX * TIDE_CARD_H) / TIDE_CARD_W;
 const CARD_T = 0.004;
 /** Seconds for a played card to go from the hand to the table. */
 const PLAY_S = 0.45;
+/** A Cutlass clash: the cards meet and shake, then (unless they tie) one wins at CLASH_HIT_S and both go. */
+const CLASH_HIT_S = 0.82;
+const CLASH_S = 1.95;
+const CLASH_TIE_S = 1.1;
 /** Where the deck, the buried card and the tide token lie, from the middle of the table. */
 const DECK_AT = new THREE.Vector3(-0.15, TOP + 0.008 + CARD_T / 2, 0.04);
 const BURIED_AT = new THREE.Vector3(-0.01, TOP + 0.008 + CARD_T / 2, 0.06);
@@ -1393,20 +1397,64 @@ export class TableStage implements WorldMinigame {
     this.float(this.own(chipTexture(text, ink)), at, up, 0.15, delay, life);
   }
 
-  /** Two cards, face down, brought up from `a` and `b` to meet over the table between them, and taken back. */
-  private clash(a: THREE.Vector3, b: THREE.Vector3, delay: number) {
+  /**
+   * Two cards brought up from `a` and `b` to meet over the table between them. On a tie they shake and go back;
+   * otherwise the winner's card drives through, grown and lit gold, and the loser's is knocked back tumbling, red.
+   * A card is face up only if this viewer may see it.
+   */
+  private clash(a: THREE.Vector3, b: THREE.Vector3, delay: number, how: { won: 0 | 1 | null; faces: [TideFace, TideFace] }) {
+    const life = how.won === null ? CLASH_TIE_S : CLASH_S;
     [a, b].forEach((p, i) => {
-      const c = this.playingCard("back", 0.45);
+      const face = how.faces[i];
+      const c = this.playingCard(face, face === "back" ? 0.45 : 0.6);
+      const top = (c.material as THREE.MeshLambertMaterial[])[2];
       const side = i ? 1 : -1;
       const mid = new THREE.Vector3((a.x + b.x) / 2 + side * 0.035, TOP + 0.16, (a.z + b.z) / 2);
       const start = new THREE.Vector3(p.x, TOP + 0.03, p.z);
+      const other = i ? a : b;
+      const wins = how.won === i;
+      const loses = how.won !== null && !wins;
+      // The winner drives on a little past the middle toward the other hand; the loser is thrown back over its own.
+      const through = mid.clone().lerp(new THREE.Vector3(other.x, mid.y + 0.04, other.z), 0.18);
+      const thrown = start.clone().lerp(mid, -0.25).setY(TOP + 0.03);
       c.rotation.y = Math.atan2(b.x - a.x, b.z - a.z);
-      this.addFx(c, delay, 1.1, (k) => {
-        const go = k < 0.35 ? smoother(k / 0.35) : k > 0.75 ? 1 - smoother((k - 0.75) / 0.25) : 1;
-        c.position.lerpVectors(start, mid, go);
-        c.rotation.z = side * 0.6 * go + (k > 0.35 && k < 0.75 ? Math.sin(k * 80) * 0.1 : 0);
+      this.addFx(c, delay, life, (k) => {
+        const t = k * life;
+        if (how.won === null || t < CLASH_HIT_S) {
+          // Up to meet, a shake, and (on a tie) back again.
+          const back = how.won === null ? smoother(Math.max(0, (t - 0.82) / 0.28)) : 0;
+          const go = (t < 0.38 ? smoother(t / 0.38) : 1) * (1 - back);
+          c.position.lerpVectors(start, mid, go);
+          c.rotation.z = side * 0.6 * go + (t > 0.38 && t < 0.82 ? Math.sin(t * 73) * 0.1 : 0);
+          return;
+        }
+        const u = t - CLASH_HIT_S;
+        if (wins) {
+          const push = smoother(Math.min(1, u / 0.25));
+          const home = smoother(Math.max(0, (u - 0.75) / 0.3));
+          c.position.lerpVectors(mid, through, push).lerp(start, home);
+          c.rotation.z = side * 0.6 * (1 - push) * (1 - home);
+          c.scale.setScalar(1 + 0.35 * push * (1 - home));
+          top.emissive.set("#ffd23f");
+          top.emissiveIntensity = 0.45 + (0.5 + 0.35 * Math.sin(u * 14)) * push * (1 - home);
+        } else if (loses) {
+          const fly = smoother(Math.min(1, u / 0.45));
+          c.position.lerpVectors(mid, thrown, fly);
+          c.position.y += Math.sin(fly * Math.PI) * 0.1;
+          c.rotation.x = -side * fly * Math.PI * 2;
+          c.rotation.z = side * 0.6 * (1 - fly);
+          top.color.set("#f08a8a");
+          top.emissive.set("#a01818");
+          top.emissiveIntensity = 0.3 + 0.4 * fly;
+        }
       });
     });
+    if (how.won !== null) {
+      const [win, lose] = how.won === 0 ? [a, b] : [b, a];
+      this.ring(win, "#ffd23f", delay + CLASH_HIT_S, 1.3);
+      this.word("wins", "#ffd23f", win, 0.32, delay + CLASH_HIT_S + 0.05, 1.3);
+      this.word("out", "#f08a8a", lose, 0.26, delay + CLASH_HIT_S + 0.3, 1.1);
+    }
   }
 
   /**
@@ -1507,7 +1555,8 @@ export class TableStage implements WorldMinigame {
     const swapped = event && !dealing && !play && !!scene!.play?.swapped && !prev!.play?.swapped;
     const showing = event && !dealing && scene!.shown && !prev!.shown;
     /** Seconds until what the card did has been acted out: what follows it (a draw, the cards shown) waits that long. */
-    const after = play ? (play.moved ? 2.7 : play.target ? 1.6 : 0.6) : swapped ? 0.7 : 0;
+    const clashed = !!play && play.card === 4 && !!play.target && !play.tie && !!play.out?.length;
+    const after = play ? (play.moved ? 2.7 : clashed ? PLAY_S + 0.1 + CLASH_S : play.target ? 1.6 : 0.6) : swapped ? 0.7 : 0;
     /** Where a seat's cards lie, by that seat: its hand, and the row it plays to. */
     const handAt = (mine: boolean, n: number, i: number) => new THREE.Vector3((i - (n - 1) / 2) * (mine ? CARD_AX * 1.5 : CARD_AX * 0.75), y + i * 0.0015, mine ? HAND_Z - 0.03 : STACK_Z + 0.05);
     /** The same, as a point on the table: the middle of a seat's hand. */
@@ -1574,8 +1623,15 @@ export class TableStage implements WorldMinigame {
           this.word("looks", AIM_INK[3], to, 0.2, PLAY_S + 0.3, 1.1);
         } else if (play.card === 4) {
           const mine = handSpot(play.by);
-          if (mine) this.clash(mine, to, PLAY_S + 0.1);
-          this.word(play.tie ? "matched" : "clash!", play.tie ? "#7db6f2" : AIM_INK[4], new THREE.Vector3((from.x + to.x) / 2, 0, (from.z + to.z) / 2), 0.34, PLAY_S + 0.5, 1.0);
+          // Whoever is out shows their card (it is turned up anyway); the one left standing keeps theirs hidden, unless it is yours or you know it.
+          const lost = play.out?.[0];
+          const faceOf = (id: string): TideFace => {
+            const s = scene.seats.find((x) => x.id === id);
+            return (id === lost ? s?.played.at(-1) : s?.hand[0]) ?? "back";
+          };
+          const won = play.tie || !lost ? null : lost === play.target ? 0 : 1;
+          if (mine) this.clash(mine, to, PLAY_S + 0.1, { won, faces: [faceOf(play.by), faceOf(play.target!)] });
+          this.word(play.tie ? "matched" : "clash!", play.tie ? "#7db6f2" : AIM_INK[4], new THREE.Vector3((from.x + to.x) / 2, 0, (from.z + to.z) / 2), 0.34, PLAY_S + 0.4, 0.8);
         }
       }
       if (play.wasted && from) this.word("all at anchor", "#a8a3c4", from, 0.2, PLAY_S, 1.3);
@@ -1620,7 +1676,7 @@ export class TableStage implements WorldMinigame {
         // The card they played goes down first; a card after it is the one they were holding when they were put out, turned up once that has been acted out.
         const played = !!play && play.by === r.id && i === was.played.length;
         if (played) this.slide(c, new THREE.Vector3(handMid.x, y + 0.02, handMid.z), { flip: true });
-        else this.slide(c, handMid, { delay: play ? PLAY_S + (play.target ? 1.0 : 0.2) : 0, dur: 0.5, lift: 0.1, flip: true, hide: false });
+        else this.slide(c, handMid, { delay: play ? (clashed ? PLAY_S + 0.1 + CLASH_HIT_S + 0.45 : PLAY_S + (play.target ? 1.0 : 0.2)) : 0, dur: 0.5, lift: 0.1, flip: true, hide: false });
       });
       // Their hand: face down in front of them, or face up if you may see it. Your own lies nearer you, larger, and can be clicked.
       seat.hand.forEach((face, i) => {
