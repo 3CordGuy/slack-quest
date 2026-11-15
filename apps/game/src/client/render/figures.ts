@@ -103,20 +103,22 @@ void main() {
 }
 
 /**
- * Prototype: people drawn low-poly, from tapered, faceted shapes with exaggerated proportions (a big head,
- * big hands and feet, broad shoulders over a narrow waist), in place of boxes. Switched on for everyone per
- * browser from the dev toolbox (it reloads the page), and always for a hero who has chosen an appearance
- * (appearance.ts) or a figure asked for low-poly. Covers the body, the face and hair, the stock clothes, the
- * paladin's helm and the sword; any other hat, worn armor or weapon is still drawn in boxes on the new body.
+ * People (heroes, townsfolk and the humanoid enemies) are drawn low-poly, from tapered, faceted shapes with
+ * exaggerated proportions (a big head, big hands and feet, broad shoulders over a narrow waist). The old box
+ * people can be brought back per browser from the dev toolbox, to compare (it reloads the page); a hero who
+ * has chosen how they look (appearance.ts) is low-poly regardless. Creatures with models of their own
+ * (CREATURES) are still drawn in boxes.
  */
-export const LOW_POLY_KEY = "gq.dev.lowPoly";
-const LOW_POLY_PREF = (() => {
+export const BLOCKY_KEY = "gq.dev.blockyPeople";
+const BLOCKY_PREF = (() => {
   try {
-    return localStorage.getItem(LOW_POLY_KEY) === "1";
+    return localStorage.getItem(BLOCKY_KEY) === "1";
   } catch {
     return false;
   }
 })();
+/** Kinds drawn by models of their own rather than as people (see rigFor): not low-poly yet. */
+const CREATURES = new Set(["wolf", "alpha", "bear", "great_bear", "dummy", "shade", "haunt", "bat", "skeleton", "slime"]);
 /** How much bigger a low-poly head is than the box head it stands in for: a hat or helmet drawn in its space grows with it. */
 const BIG_HEAD = 1.22;
 /** Set by makeFigure for the figure being built: whether it is low-poly, and the look its hero chose (if any). */
@@ -490,7 +492,7 @@ function limb(thigh: Part, shin: Part) {
   };
 }
 
-// ---------- low-poly people (prototype; see LOW_POLY_PREF) ----------
+// ---------- low-poly people (see BLOCKY_KEY) ----------
 
 /** The head's outline, ring by ring from the chin up, for each head shape: all about as wide at the top, so hats fit. */
 const HEAD_RINGS: Record<string, Ring[]> = {
@@ -2597,7 +2599,7 @@ export function makeFigure(kind: string, look: Look, outfit?: Outfit, opts: Figu
   braids = [];
   slung = null;
   chosen = outfit?.appearance ?? null;
-  lowPoly = LOW_POLY_PREF || !!chosen || !!opts.lowPoly;
+  lowPoly = !!chosen || !!opts.lowPoly || (!BLOCKY_PREF && !(CREATURES.has(kind) && !outfit));
   m = lowPoly ? measuresOf(chosen) : USUAL;
   // A hero's own colouring over their class's.
   if (chosen) look = { ...look, skin: chosen.skin, hair: chosen.hair };
