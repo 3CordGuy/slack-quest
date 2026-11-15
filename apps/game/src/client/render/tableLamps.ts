@@ -25,7 +25,7 @@ const SEAT_Y = 1.9;
  * the seated one 0.62), so the light falls off fast across the table and leaves a pool on it rather than a wash.
  */
 const ROOM_LIGHT_Y = 1.05;
-const SEAT_LIGHT_Y = 1.1;
+export const SEAT_LIGHT_Y = 1.1;
 /** How far behind the hex's middle the room's table stands (the model sits 0.28 back, its table 0.3 further). The seated table is on the middle. */
 const ROOM_TABLE_Z = -0.58;
 /** How bright a lantern burns over an empty table, and over one in use. */
@@ -164,7 +164,13 @@ export class TableLamps {
     this.clock += dt;
     const t = this.clock;
     const motion = this.still ? 0 : 1;
+    // Sitting at one table, the camera comes down low among the others, and backs off further on a tall screen (a
+    // phone): a neighbouring table's lantern can hang right in front of it. Only the lantern over your own table is
+    // drawn while you sit; the others still light the room.
+    let seated = 0;
+    for (const l of this.lamps.values()) seated = Math.max(seated, l.slide);
     for (const l of this.lamps.values()) {
+      l.root.visible = l.slide > 0 || seated < 0.5;
       const want = busy(l.hex) ? LIT : BANKED;
       l.level += (want - l.level) * (1 - Math.exp(-dt * 1.6));
       l.flare *= Math.exp(-dt / l.fade);

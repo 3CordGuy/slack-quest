@@ -24,6 +24,8 @@ import { SITTING_DROP, makeFigure, type Figure } from "./figures";
 import { labelTexture, lookFor, spriteKey } from "./sprites";
 import { OVERLAY_LAYER } from "./post";
 import type { WorldMinigame, WorldRenderer } from "./WorldRenderer";
+import { SEAT_LIGHT_Y } from "./tableLamps";
+import { TableShadows, type Caster } from "./tableShadows";
 
 export type TableKind = "dice" | "shoals" | "crew" | "tide";
 
@@ -250,6 +252,12 @@ function throwHeight(k: number, drop: number): number {
   return 0;
 }
 
+/** The cloth's surface: let into the top, a hair proud of the wood (see buildTable). */
+const CLOTH_TOP = TOP + 0.007;
+/** What the pieces throw on the cloth (see tableShadows). */
+const DIE_SHADOW: Caster = { round: false, dark: 0.5 };
+const DISC_SHADOW: Caster = { round: true, dark: 0.45 };
+const CARD_SHADOW: Caster = { round: false, dark: 0.35 };
 const smoother = (t: number) => t * t * t * (t * (t * 6 - 15) + 10);
 const clamp01 = (t: number) => Math.min(1, Math.max(0, t));
 /** 0 to 1, overshooting a little before it settles. */
@@ -657,6 +665,8 @@ export class TableStage implements WorldMinigame {
   /** Things that are on the table only for a moment: a line from a player to whoever they played on, a card called out, a clash. */
   private fx = new THREE.Group();
   private lineGeo = new THREE.BoxGeometry(0.014, 0.004, 1).translate(0, 0, 0.5);
+  /** Soft shadows on the cloth under the dice, markers, cards and coins, from the lantern overhead. */
+  private shadows = new TableShadows(CLOTH_TOP, new THREE.Vector3(0, SEAT_LIGHT_Y, 0));
   /** Whether anyone had won when the seats were last set; null before they have been. */
   private wonSeen: boolean | null = null;
   private ringGeo = new THREE.RingGeometry(0.075, 0.092, 28);
@@ -665,7 +675,7 @@ export class TableStage implements WorldMinigame {
     // Dice and markers are read up close: draw them at full resolution, not the chunky half.
     world.setSharp(true);
     this.buildTable();
-    this.group.add(this.furniture, this.stools, this.pot, this.middle, this.fx);
+    this.group.add(this.furniture, this.stools, this.pot, this.middle, this.fx, this.shadows.group);
     this.old = world.poiObject(kind);
     this.showSwap();
     // Hung above the middle of the table, turned to face whoever looks at it (a sprite faces each viewer's own camera).
@@ -877,6 +887,8 @@ export class TableStage implements WorldMinigame {
       const [px, pz] = this.kind === "crew" ? [0.24, -0.16] : this.kind === "tide" ? [0, -0.19] : [0, -0.34];
       m.position.set(px + Math.cos(a) * (stack ? 0.085 : 0), TOP + 0.014 + (c % per) * 0.013, pz + Math.sin(a) * (stack ? 0.085 : 0));
       m.rotation.y = c * 0.7;
+      // A stack throws one shadow, from its bottom coin.
+      if (c % per === 0) m.userData.shadow = DISC_SHADOW;
       this.pot.add(m);
     }
   }
@@ -1102,6 +1114,7 @@ export class TableStage implements WorldMinigame {
         const wrap = new THREE.Group();
         wrap.position.set((i - (count - 1) / 2) * (DIE * 1.45), TOP + DIE / 2 + 0.01 + (lit ? 0.04 : 0), STACK_Z);
         const die = new THREE.Mesh(geo, v === 0 ? mats.back : lit ? mats.lit : mats.shown);
+        die.userData.shadow = DIE_SHADOW;
         if (v > 0) die.quaternion.setFromUnitVectors(FACE_NORMAL[v], UP);
         die.rotateOnWorldAxis(UP, 0.5 + i * 1.7 + v);
         wrap.add(die);
@@ -1180,6 +1193,7 @@ export class TableStage implements WorldMinigame {
         const wrap = new THREE.Group();
         wrap.position.set((slot - (pool.length - 1) / 2) * big * 1.35, TOP + big / 2 + 0.01, STACK_Z - 0.1);
         const die = new THREE.Mesh(heldGeo, picked ? crew.lit : crew.shown);
+        die.userData.shadow = DIE_SHADOW;
         die.quaternion.copy(faceUpright(v));
         wrap.add(die);
         r.items.add(wrap);
@@ -1195,6 +1209,7 @@ export class TableStage implements WorldMinigame {
         const wrap = new THREE.Group();
         wrap.position.set((slot - (loose.length - 1) / 2) * size * 1.5, TOP + size / 2 + 0.01, STACK_Z + 0.06);
         const die = new THREE.Mesh(geo, v === 0 ? mats.back : crew.shown);
+        die.userData.shadow = DIE_SHADOW;
         if (isCrewFace(v)) die.quaternion.copy(faceUpright(v));
         else if (v > 0) {
           die.quaternion.setFromUnitVectors(FACE_NORMAL[v], UP);
@@ -1221,7 +1236,9 @@ export class TableStage implements WorldMinigame {
     const top = glowing(this.tex(`m:${face}:${peek}`, () => markerTexture(face, peek)), 0.5);
     const side = lambert("#6b4a2b");
     const under = glowing(this.tex("m:back:false", () => markerTexture("back")), 0.4);
-    return new THREE.Mesh(this.discGeo, [side, top, under]);
+    const m = new THREE.Mesh(this.discGeo, [side, top, under]);
+    m.userData.shadow = DISC_SHADOW;
+    return m;
   }
 
   syncShoals(scene: ShoalsScene | null) {
@@ -1307,7 +1324,9 @@ export class TableStage implements WorldMinigame {
     const edge = lambert("#d8ccb0");
     const top = glowing(this.cardTex(face), glow);
     const under = glowing(this.cardTex("back"), 0.3);
-    return new THREE.Mesh(this.cardGeo, [edge, edge, top, under, edge, edge]);
+    const m = new THREE.Mesh(this.cardGeo, [edge, edge, top, under, edge, edge]);
+    m.userData.shadow = CARD_SHADOW;
+    return m;
   }
 
   /** A point by a seat (the seat's own bearings: +z out toward them) as a point on the table, and back. */
@@ -1617,6 +1636,7 @@ export class TableStage implements WorldMinigame {
         token.position.copy(TOKEN_AT);
         // A cylinder's cap has its picture's top toward -x: turn it to face your seat.
         token.rotation.y = -Math.PI / 2;
+        token.userData.shadow = DISC_SHADOW;
         if (turned) token.userData.flip = 0;
         this.middle.add(token);
       }
@@ -1821,6 +1841,8 @@ export class TableStage implements WorldMinigame {
     this.inT = this.leaving ? Math.max(0, this.inT - dt / OUT_S) : this.swap >= 1 ? Math.min(1, this.inT + dt / IN_S) : 0;
     if (this.leaving && this.inT <= 0) setTimeout(() => this.finish(), 0);
     this.animate(dt);
+    this.shadows.group.visible = this.swap >= 1;
+    if (this.swap >= 1) this.shadows.update([...[...this.rigs.values()].map((r) => r.items), this.middle, this.pot, this.fx], this.group);
     this.card.position.y = CARD_Y + Math.sin(this.clock * 1.6) * 0.012;
     const base = this.group.position;
     const sway = Math.sin(this.clock * 0.9) * 0.006;
@@ -1971,6 +1993,7 @@ export class TableStage implements WorldMinigame {
     }
     this.world.setSharp(false);
     this.world.slideTableLamp(this.kind, 0);
+    this.shadows.dispose();
     for (const r of this.rigs.values()) this.disposeRig(r);
     this.discGeo.dispose();
     this.cardGeo.dispose();
