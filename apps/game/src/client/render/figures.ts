@@ -881,6 +881,8 @@ function lowWizardBeard(head: Part, c: string, rings: readonly Ring[], chinY: nu
   aimDown(root.skin, upper);
   const a = upper.length();
   root.loft(c, [[0.4, 2.1, 0.95], [-a * 0.35, 2.35, 1.0], [-a * 0.7, 2.2, 0.95], [-a - 0.3, 1.9, 0.85]], 8);
+  // An amulet is worn over it, where it would otherwise be hidden (see lowAmulet).
+  beardFront = { part: root, at: [0, -a * 0.5, 1.0] };
   const end = new Part(root.joint, upper.x, upper.y, upper.z);
   const lower = tip.clone().sub(mid);
   aimDown(end.skin, lower);
@@ -937,6 +939,8 @@ interface Braid {
 /** Set by makeFigure for the figure being built: parts hung on others outside the rig (braids), and the braids to swing. */
 let extraParts: Part[] = [];
 let braids: Braid[] = [];
+/** The front of a long (wizard's) beard on the figure being built, if it has one: where an amulet goes. */
+let beardFront: { part: Part; at: Pt } | null = null;
 
 /**
  * Swing the braids and ponytails: each joint is a damped spring. The root is pulled back on the march, side to side with
@@ -1435,13 +1439,108 @@ function lowWornHelmet(head: Part, helmet: { ref: string; icon: string }, trim: 
  * how much broader (or narrower) than that the shoulders are. `belt` is drawn at the waist if given.
  */
 function lowChest(torso: Part, skin: string, cloth: string, sh: number, belt?: string): Ring[] {
-  const hip = m.hips;
-  // Down at the hips the clothes come out over the tops of the thighs, so the legs don't poke through at the sides.
-  const rings: Ring[] = [[-0.6, Math.max(2.85 * hip, thighReach(-0.6)), 1.95 + (hip - 1) * 0.6, 0], [0.4, Math.max(2.6 * hip, thighReach(0.4)), 1.8 + (hip - 1) * 0.5, 0], [1.6, 2.45 * (1 + hip) * 0.5, 1.7, 0.05], [3.6, 3.3 * (1 + sh) * 0.5, 2.05, 0.15], [5.3, 4.05 * sh, 2, 0.05], [6.1, 3.1 * sh, 1.6, -0.05], [6.5, 1.4, 1.2, 0]];
+  const rings = chestRings(sh);
   torso.cyl(skin, 1, 1.15, 1.6, 0, 6.6, 0, 6);
   torso.loft(cloth, rings);
   if (belt) torso.loft(belt, [around(rings, 0.85, 0.1, 0.02), around(rings, 1.75, 0.1, 0.05)]);
   return rings;
+}
+
+/** The low-poly chest's rings, hips to neck, for shoulders `sh` as broad as the girth (see lowChest). */
+function chestRings(sh: number): Ring[] {
+  const hip = m.hips;
+  // Down at the hips the clothes come out over the tops of the thighs, so the legs don't poke through at the sides.
+  return [[-0.6, Math.max(2.85 * hip, thighReach(-0.6)), 1.95 + (hip - 1) * 0.6, 0], [0.4, Math.max(2.6 * hip, thighReach(0.4)), 1.8 + (hip - 1) * 0.5, 0], [1.6, 2.45 * (1 + hip) * 0.5, 1.7, 0.05], [3.6, 3.3 * (1 + sh) * 0.5, 2.05, 0.15], [5.3, 4.05 * sh, 2, 0.05], [6.1, 3.1 * sh, 1.6, -0.05], [6.5, 1.4, 1.2, 0]];
+}
+
+/**
+ * A point on the front of the low-poly chest (`rings`) at `x` across and `y` up, `out` further out along the
+ * surface, and which way the surface faces there (radians about y, 0 straight ahead): where to lay a chain or
+ * pin a badge so it lies on the chest, not in it.
+ */
+function onChest(rings: readonly Ring[], x: number, y: number, out: number): { at: Pt; yaw: number } {
+  const r = ringAt(rings, y);
+  const u = Math.min(0.95, Math.abs(x) / r.rx);
+  const z = r.rz * Math.sqrt(1 - u * u);
+  // The ellipse's outward normal at (x, z): (x / rx², z / rz²).
+  const nx = x / (r.rx * r.rx);
+  const nz = z / (r.rz * r.rz);
+  const n = Math.hypot(nx, nz);
+  return { at: [x + (nx / n) * out, y, z + r.dz + (nz / n) * out], yaw: Math.atan2(nx, nz) };
+}
+
+/**
+ * An amulet worn over the low-poly chest, big enough to read on a figure across the harbour: a chain from the
+ * shoulders down the front to a pendant at mid-chest, below the chin (and a hood's mantle), or a badge pinned
+ * over the heart. `over` is how far whatever is worn stands out past the chest (a hauberk's plates, a
+ * greatcoat's buttons), so it lies on top of them. A long beard down the chest would hide it, so with one the
+ * pendant hangs (or the badge is pinned) on the front of the beard and swings with it. The stone glows in the
+ * item's rarity colour.
+ */
+function lowAmulet(torso: Part, ref: string, trim: string, sh: number, over: number) {
+  const rings = chestRings(sh);
+  const lift = over + 0.2;
+  // The part it is drawn on, where on it the pendant hangs from (or the badge is pinned), and which way that
+  // faces; `put` is a frame there: `dx` across, `dy` up, `dz` out.
+  const beard = beardFront;
+  const on = beard?.part ?? torso;
+  const { at, yaw } = beard ? { at: [beard.at[0], beard.at[1], beard.at[2] + 0.1] as Pt, yaw: 0 } : ref === "badge" ? onChest(rings, 1.75, 3.05, lift) : onChest(rings, 0, 3.2, lift);
+  const rot: Rot = [0, yaw, 0];
+  const put = (dx: number, dy: number, dz: number): [number, number, number] => [at[0] + Math.cos(yaw) * dx + Math.sin(yaw) * dz, at[1] + dy, at[2] - Math.sin(yaw) * dx + Math.cos(yaw) * dz];
+  if (ref === "badge") {
+    // The Harbormaster's Badge: a crowned heart on a gold boss, facing out.
+    spot(on, GEAR.gold, 1.05, 1.15, 0.3, ...put(0, 0, 0), rot);
+    // A heart: two lobes and a point, a little proud of the boss.
+    for (const s of [-1, 1]) on.glowBall(trim, 0.38, ...put(s * 0.3, 0.12, 0.25));
+    on.glowBox(trim, 0.6, 0.6, 0.25, ...put(0, -0.2, 0.25), [0, yaw, Math.PI / 4]);
+    // Its crown: three gold points over the top.
+    for (const s of [-1, 0, 1]) on.cone(GEAR.gold, 0.2, s === 0 ? 0.6 : 0.45, ...put(s * 0.42, 1.05 + (s === 0 ? 0.08 : 0), 0.2), 4, rot);
+    return;
+  }
+  if (beard) {
+    // Over a beard, the chain comes out from under it at the top.
+    for (const s of [-1, 1]) strut(on, GEAR.gold, put(s * 0.95, 1.6, -0.15), put(0, 0, 0), 0.17);
+  } else {
+    // The chain: from either shoulder, close round the neck, down over the chest to where the pendant hangs.
+    const path: [number, number][] = [[1.45, 5.85], [1.4, 5.1], [1.15, 4.2], [0.65, 3.45], [0, 3.2]];
+    for (const s of [-1, 1]) {
+      for (let i = 0; i + 1 < path.length; i++) {
+        const a = onChest(rings, s * path[i][0], path[i][1], lift - 0.05).at;
+        const b = onChest(rings, s * path[i + 1][0], path[i + 1][1], lift - 0.05).at;
+        strut(torso, GEAR.gold, a, b, 0.17);
+      }
+    }
+  }
+  if (ref === "keystone") {
+    // The Lighthouse Key, hanging by its bow: a gold ring with the stone in it, a shaft, and two teeth.
+    on.ring(GEAR.gold, 0.55, 0.18, ...put(0, -0.5, 0.05), rot);
+    on.glowBall(trim, 0.4, ...put(0, -0.5, 0.1));
+    on.box(GEAR.gold, 0.34, 1.25, 0.3, ...put(0, -1.55, 0), rot);
+    on.box(GEAR.gold, 0.55, 0.3, 0.3, ...put(0.4, -2, 0), rot);
+    on.box(GEAR.gold, 0.4, 0.3, 0.3, ...put(0.33, -1.62, 0), rot);
+    return;
+  }
+  // The Lucky Lanyard (or any other amulet): a stone in a gold setting.
+  spot(on, GEAR.gold, 0.75, 0.9, 0.3, ...put(0, -0.7, 0), rot);
+  on.glowBall(trim, 0.55, ...put(0, -0.7, 0.2));
+}
+
+/**
+ * A ring on the low-poly mitt (lowHand), round the knuckles below the thumb: the Mooring Bands, one in the
+ * trim's colour on each hand; any other, a gold band on the right hand with a stone on the outside that glows
+ * in the trim's colour.
+ */
+function lowRing(armR: Part, armL: Part, ref: string, trim: string) {
+  const band: Ring[] = [[-5.82, 1.2, 1.15, 0.15], [-5.42, 1.26, 1.2, 0.13]];
+  if (ref === "bands") {
+    for (const arm of [armR, armL]) arm.loft(trim, band, 8);
+    return;
+  }
+  armR.loft(GEAR.gold, band, 8);
+  // The stone, out to the side and a little forward (the right hand is s = -1: outward is -x).
+  const a = 0.75;
+  armR.ball(GEAR.gold, 0.44, -Math.sin(a) * 1.3, -5.62, Math.cos(a) * 1.22 + 0.14);
+  armR.glowBall(trim, 0.42, -Math.sin(a) * 1.6, -5.62, Math.cos(a) * 1.5 + 0.14);
 }
 
 /**
@@ -2418,7 +2517,10 @@ function person(top: THREE.Group, look: Look, outfit: Outfit | undefined, asleep
     }
   }
   const amulet = outfit?.amulet;
-  if (amulet) {
+  // Low-poly, it lies over whatever is worn (a hauberk's plates, a greatcoat's buttons, a tunic's placket), and
+  // is drawn once the head is, in case a long beard is in its way.
+  const amuletOver = greatcoat ? 0.45 : body ? 0.36 : undressed ? 0.04 : 0.14;
+  if (amulet && !lowPoly) {
     torso.box(GEAR.gold, 3.4, 0.4, 0.3, 0, 5.3, front + 0.1);
     if (amulet.ref === "keystone") {
       // A key on its cord.
@@ -2479,8 +2581,8 @@ function person(top: THREE.Group, look: Look, outfit: Outfit | undefined, asleep
     }
   }
   const ring = outfit?.ring;
-  if (ring?.ref === "bands" && lowPoly) {
-    for (const arm of [armR, armL]) arm.loft(trim("ring"), [[-4.45, 1.05, 1.05], [-3.95, 1.08, 1.08]], 8);
+  if (ring && lowPoly) {
+    lowRing(armR, armL, ring.ref, trim("ring"));
   } else if (ring?.ref === "bands") {
     for (const arm of [armR, armL]) arm.box(trim("ring"), 2.4, 0.6, 2.8, 0, -4.2, 0);
   } else if (ring) {
@@ -2528,6 +2630,8 @@ function person(top: THREE.Group, look: Look, outfit: Outfit | undefined, asleep
     if (lowPoly) lowHat(head, look);
     else drawHat(head, look);
   }
+
+  if (amulet && lowPoly) lowAmulet(torso, amulet.ref, trim("amulet"), m.shoulders / m.girth, amuletOver);
 
   // Hands: a hero's weapon (signature weapons that have no shape of their own are drawn as the one they are like).
   const shield = outfit?.off_hand;
@@ -3221,6 +3325,7 @@ export function makeFigure(kind: string, look: Look, outfit?: Outfit, opts: Figu
   rodInHand = opts.rod ?? false;
   extraParts = [];
   braids = [];
+  beardFront = null;
   slung = null;
   chosen = outfit?.appearance ?? null;
   lowPoly = !!chosen || !!opts.lowPoly || !BLOCKY_PREF;
