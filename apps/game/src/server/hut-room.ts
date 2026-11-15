@@ -10,7 +10,7 @@
 // is told about it.
 
 import { DurableObject } from "cloudflare:workers";
-import {
+import { LOOK_MIN_MS, validLook,
   FURNISHINGS,
   HARBOR_MAX_SAY,
   STORAGE_CHEST,
@@ -36,8 +36,7 @@ import {
   type HarborPlayer,
   type HutClientMessage,
   type HutServerMessage,
-  type WorldMap,
-} from "@gantt-quest/world";
+  type WorldMap, } from "@gantt-quest/world";
 import { containerUsed, crewFor, furnishingStatement, getCharacter, getHut, hasShack, heroInitFor, homeOf, type Env, type Player } from "./db";
 import { readXpPost, relayXp } from "./harbor-xp";
 
@@ -92,6 +91,8 @@ export class HutRoom extends DurableObject<Env> {
   private loading: Promise<Hut> | null = null;
   /** When each player last asked to be put back at the door. In memory only: a light limit. */
   private unstuckAt = new Map<string, number>();
+  /** When each player's look was last passed on, so a waving pointer cannot flood the room. */
+  private lookedAt = new Map<string, number>();
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -275,6 +276,16 @@ export class HutRoom extends DurableObject<Env> {
       const next: HarborPlayer = { ...player, bed: Number(msg.id) };
       ws.serializeAttachment(next);
       this.broadcast({ type: "joined", player: next });
+      return;
+    }
+
+    if (msg.type === "look") {
+      // Which way they are looking: passed on to everyone else here, and not kept.
+      const look = validLook(msg.look);
+      const now = Date.now();
+      if (look === null || now - (this.lookedAt.get(player.id) ?? -Infinity) < LOOK_MIN_MS) return;
+      this.lookedAt.set(player.id, now);
+      this.broadcast({ type: "looked", id: player.id, look }, ws);
       return;
     }
 

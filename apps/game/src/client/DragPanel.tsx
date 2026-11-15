@@ -1,4 +1,5 @@
-// A HUD panel the player can drag out of the way.
+// A HUD panel. Most are set in place and only fold down to their title; a
+// `resizable` one (the big windows) can also be dragged about and resized.
 //
 // With a mouse, drag from any part of the panel that is not a control. On
 // touch, drag from the grip in the corner, so swiping inside a panel still
@@ -22,7 +23,7 @@
 //
 // Options can also put every panel back as it started: `resetPanels()`.
 
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type HTMLAttributes, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type HTMLAttributes, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { onUiScaleChange, uiZoom } from "./uiScale";
 
 interface Offset {
@@ -125,6 +126,8 @@ interface Props extends HTMLAttributes<HTMLDivElement> {
   resizable?: boolean;
   /** Start folded on narrow screens. The player's own choice, once made, wins. */
   foldOnPhone?: boolean;
+  /** Let the panel be dragged taller or shorter by its top edge (the chat, which sits on the bottom of the view). The height is remembered. */
+  expandable?: boolean;
   /** Start folded everywhere, until the player unfolds it once. */
   startFolded?: boolean;
   /** Change this number to unfold the panel from outside (it does not change the remembered choice). */
@@ -144,7 +147,7 @@ function loadFolded(id: string, foldOnPhone: boolean, startFolded = false): bool
   return startFolded || (foldOnPhone && isPhone());
 }
 
-export function DragPanel({ id, title, compact = false, resizable = false, foldOnPhone = false, startFolded = false, unfold = 0, className = "", children, style, ...rest }: Props) {
+export function DragPanel({ id, title, compact = false, resizable = false, expandable = false, foldOnPhone = false, startFolded = false, unfold = 0, className = "", children, style, ...rest }: Props) {
   const [size, setSize] = useState<Size | null>(() => (resizable ? loadSize(id) : null));
   /** While a corner is being dragged: where the opposite corner must stay. */
   const pin = useRef<{ sx: number; sy: number; x: number; y: number } | null>(null);
@@ -162,6 +165,26 @@ export function DragPanel({ id, title, compact = false, resizable = false, foldO
   useEffect(() => {
     if (unfold) setFolded(false);
   }, [unfold]);
+  /** How tall the player has dragged the panel's lines, in CSS pixels; null for the stylesheet's own height. */
+  const [tall, setTall] = useState<number | null>(() => {
+    try {
+      const n = Number(localStorage.getItem(`${storageKey(id)}.tall`));
+      return expandable && n > 0 ? n : null;
+    } catch {
+      return null;
+    }
+  });
+  // What sits above the panel (the crew's cards) makes room for it: the stylesheet reads the height from the page.
+  useEffect(() => {
+    if (!expandable) return;
+    const root = document.documentElement.style;
+    if (tall && !folded) root.setProperty("--chat-tall", `${tall}px`);
+    else if (folded) root.setProperty("--chat-tall", "0px");
+    else root.removeProperty("--chat-tall");
+    return () => {
+      root.removeProperty("--chat-tall");
+    };
+  }, [expandable, tall, folded]);
   const el = useRef<HTMLDivElement>(null);
   const [offset, setOffset] = useState<Offset>(() => load(id));
   const [dragging, setDragging] = useState(false);
@@ -196,6 +219,7 @@ export function DragPanel({ id, title, compact = false, resizable = false, foldO
       setOffset(ZERO);
       setSize(null);
       setFolded(loadFolded(id, foldOnPhone, startFolded));
+      setTall(null);
     };
     resetListeners.add(back);
     return () => {
@@ -254,6 +278,44 @@ export function DragPanel({ id, title, compact = false, resizable = false, foldO
     addEventListener("pointercancel", up);
   };
 
+  const saveTall = (n: number | null) => {
+    setTall(n);
+    try {
+      if (n) localStorage.setItem(`${storageKey(id)}.tall`, String(n));
+      else localStorage.removeItem(`${storageKey(id)}.tall`);
+    } catch {
+      // Not remembered.
+    }
+  };
+  /** Drag the top edge: the panel sits on the bottom of the view, so up is taller. */
+  const startTall = (e: ReactPointerEvent<HTMLSpanElement>) => {
+    if (e.button !== 0 || !el.current) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const lines = el.current.querySelector<HTMLElement>(".chat-lines");
+    const z = uiZoom();
+    const from = (lines?.getBoundingClientRect().height ?? 110) / z;
+    const startY = e.clientY;
+    // Never taller than leaves the panel's top on screen, nor than a little under half the view.
+    const max = Math.min(from + (el.current.getBoundingClientRect().top - 12) / z, (innerHeight * 0.45) / z);
+    let latest = from;
+    setDragging(true);
+    const move = (ev: PointerEvent) => {
+      latest = Math.round(Math.max(48, Math.min(max, from + (startY - ev.clientY) / z)));
+      setTall(latest);
+    };
+    const up = () => {
+      removeEventListener("pointermove", move);
+      removeEventListener("pointerup", up);
+      removeEventListener("pointercancel", up);
+      setDragging(false);
+      saveTall(latest);
+    };
+    addEventListener("pointermove", move);
+    addEventListener("pointerup", up);
+    addEventListener("pointercancel", up);
+  };
+
   const resetSize = () => {
     pin.current = null;
     setSize(null);
@@ -262,7 +324,8 @@ export function DragPanel({ id, title, compact = false, resizable = false, foldO
   };
 
   const onPointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
-    if (e.button !== 0 || !el.current) return;
+    // Only a window moves: the docked panels stay where the layout puts them.
+    if (!resizable || e.button !== 0 || !el.current) return;
     const target = e.target as HTMLElement;
     if (target.closest(".resize")) return;
     const onGrip = !!target.closest(".grip");
@@ -315,19 +378,23 @@ export function DragPanel({ id, title, compact = false, resizable = false, foldO
       className={`${className} draggable ${dragging ? "dragging" : ""} ${folded ? "folded" : ""} ${resizable ? "resizable" : ""}`}
       style={{
         ...style,
-        translate: `${offset.x}px ${offset.y}px`,
+        translate: resizable ? `${offset.x}px ${offset.y}px` : undefined,
+        ...(tall && !folded ? ({ "--tall": `${tall}px` } as CSSProperties) : {}),
         // A minimized panel shrinks to its title whatever size it was given.
         ...(size && !folded ? { width: size.w, height: size.h, maxWidth: "none", maxHeight: "none" } : {}),
       }}
       onPointerDown={onPointerDown}
     >
+      {expandable && !folded && <span className="tall-handle" title="Drag to make it taller or shorter. Double-click for the usual height." onPointerDown={startTall} onDoubleClick={() => saveTall(null)} aria-hidden />}
       <span className="panel-tools">
         <button className="min-btn" aria-expanded={!folded} aria-label={folded ? `Show ${title}` : `Minimize ${title}`} title={folded ? "Show" : "Minimize"} onClick={toggle}>
           {folded ? "+" : "–"}
         </button>
-        <span className="grip" title="Drag to move. Double-click to put it back." onDoubleClick={reset} aria-hidden>
-          ⠿
-        </span>
+        {resizable && (
+          <span className="grip" title="Drag to move. Double-click to put it back." onDoubleClick={reset} aria-hidden>
+            ⠿
+          </span>
+        )}
       </span>
       {(folded || !compact) && (
         <button className="panel-title" tabIndex={-1} onClick={toggle}>

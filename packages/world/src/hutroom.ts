@@ -6,7 +6,7 @@
 // are, where a furnishing may stand, and that furniture is walked around.
 
 import { allHexesInGrid, posKey, type HexGrid, type HexPos } from "@gantt-quest/core";
-import { harborPoi, type HarborPlayer, type XpMessage } from "./harbor";
+import { harborPoi, type HarborPlayer, type LookMessage, type LookRequest, type XpMessage } from "./harbor";
 import { FURNISHINGS, HUT_TIERS, type Furnishing, type HutTier } from "./hut";
 import { BASE_HEIGHT, findPath, poiAt, tileAt, type Tile, type WorldMap } from "./map";
 import type { Footprint } from "./hut";
@@ -494,12 +494,12 @@ export function wallPlaceProblem(room: WorldMap, others: Placed[], defId: string
   return null;
 }
 
-/** How many slots a container has free, given what is already in it (decorations, gear, stacks of materials). */
+/** How many squares a container has free, given how many are filled (gear by its footprint, a square a stack of material, a square a decoration). */
 export function storageFree(defId: string, used: number): number {
   return Math.max(0, (FURNISHINGS[defId]?.storage ?? 0) - used);
 }
 
-/** Why `piece` cannot be put into `container`, or null if it can. `used` is how many slots the container already fills. */
+/** Why `piece` cannot be put into `container`, or null if it can. `used` is how many squares the container already fills. */
 export function putInProblem(piece: Pick<Furnishing, "id" | "defId">, container: Pick<Furnishing, "id" | "defId"> | undefined, used: number): string | null {
   if (!container || !FURNISHINGS[container.defId]?.storage) return "That does not hold anything.";
   if (piece.id === container.id) return "It cannot go inside itself.";
@@ -654,11 +654,13 @@ export type HutServerMessage =
   | { type: "said"; id: string; name: string; text: string }
   /** Sent only to whoever asked for something that was not allowed. */
   | { type: "refused"; reason: string }
+  | LookMessage
   | XpMessage;
 
 export type HutClientMessage =
   | { type: "move"; to: HexPos }
   | { type: "say"; text: string }
+  | LookRequest
   /** Back to the door, for a stuck or lost hero. */
   | { type: "unstick" }
   /**

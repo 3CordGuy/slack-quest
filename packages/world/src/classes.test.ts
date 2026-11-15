@@ -27,7 +27,7 @@ import {
 } from "./index";
 
 function hero(id: string, classId: string): HeroInit {
-  return { id, name: id, classId, level: 1, xp: 0, unspent: 0, base: { ...STARTING_STATS[classId] }, ...gearSheet(classId, []) };
+  return { id, name: id, classId, level: 1, xp: 0, unspent: 0, base: { ...STARTING_STATS[classId] }, ...gearSheet(classId, []), weapon: HERO_CLASSES.find((c) => c.id === classId)!.weapons[0] };
 }
 
 describe("hero classes", () => {

@@ -16,6 +16,8 @@ import { AttentionMark } from "./AttentionMark";
 import { hasUnseen } from "../releases";
 import { OptionsMenu } from "./OptionsMenu";
 import { DragPanel } from "./DragPanel";
+import { HudBar } from "./ui/Hud";
+import { Logbook } from "./Logbook";
 import { GatherPanel } from "./GatherPanel";
 import { HeroSheet, useHeroSheet } from "./HeroSheet";
 import { InventoryScreen } from "./InventoryScreen";
@@ -30,7 +32,6 @@ import { WorksPanel } from "./works/WorksPanel";
 import { ApothecaryPanel, GalleyPanel, SmithyPanel } from "./works/WorkshopPanels";
 import { label } from "./labels";
 import { xpEvents } from "./xpEvents";
-import { useHotkey } from "./useHotkey";
 
 const same = (a: HexPos, b: HexPos) => a.q === b.q && a.r === b.r;
 /** "10 wood and 6 stone". */
@@ -45,8 +46,7 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
   const renderer = useRef<WorldRenderer | null>(null);
   const [hover, setHover] = useState<HexPos | null>(null);
   const [sheet, setSheet] = useState(false);
-  // "i" opens and closes the inventory, as the button in the top bar does.
-  useHotkey("i", () => setSheet((open) => !open), !!me.character);
+  const [book, setBook] = useState(false);
   const [shop, setShop] = useState(false);
   const [notices, setNotices] = useState(false);
   const [spar, setSpar] = useState(false);
@@ -144,6 +144,10 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
     // While the sparring view is open it draws the scene itself, with its bout on top.
     if (scene && !spar) renderer.current?.setState(scene);
   }, [scene, spar]);
+  // With the bag open your hero turns to face you, so you can see what they are wearing.
+  useEffect(() => {
+    renderer.current?.setFacingFront(sheet);
+  }, [sheet]);
   useEffect(() => {
     chatEnd.current?.scrollIntoView({ block: "end" });
   }, [harbor.chat.length]);
@@ -363,83 +367,60 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
       }
     : null;
   // Anything laid over the Harbor, the sparring bout included, takes the floating button away.
-  const panelOpen = sheet || shop || notices || spar || !!gather || fishmonger || works || !!workshop || account || !!tradeWith;
+  const panelOpen = sheet || book || shop || notices || spar || !!gather || fishmonger || works || !!workshop || account || !!tradeWith;
   const error = harbor.error ?? launchError;
 
   return (
     <div className="run harbor-view">
       <div className="stage" ref={mount} />
-      <div className="topbar">
-        <strong>{HARBOR_NAME}</strong>
-        <span className="muted">{harbor.crew?.name ?? me.crew?.name}</span>
-        <span className="spacer" />
-        {harbor.status !== "open" && <span className="bad">connecting…</span>}
-        {harbor.crew && <span className="muted wide-only">Invite code {harbor.crew.id}</span>}
-        <button className="small" onClick={copy}>{copied ? "Copied" : <>Invite<span className="wide-only"> link</span></>}</button>
-        <button className={`small ${me.player.email ? "" : "nudge"}`} title={me.player.email ?? "Guest account: not saved yet"} onClick={() => setAccount(true)}>
-          {me.player.email ? "Account" : <>Save<span className="wide-only"> progress</span></>}
-        </button>
-        {me.isAdmin && <button className="small" onClick={() => (location.hash = "#admin")}>Admin</button>}
-        <button className="small" title="Your gear and stats (I)" onClick={() => setSheet(true)}>
-          Inventory<span className="wide-only"> · {me.character?.name}</span>{me.character && me.character.unspent_points > 0 ? " ●" : ""}
-        </button>
-        <OptionsMenu
-          reset={spar || harbor.status !== "open" ? undefined : {
-            to: "the plaza, where everyone arrives",
-            run: () => {
-              harbor.send({ type: "unstick" });
-              renderer.current?.lookAt(HARBOR_SPAWN);
-            },
-          }}
-          resetBlocked={spar ? "Not during a sparring bout." : "Waiting for the Harbor to connect."}
-        />
+      {/* Down the left-hand side: the docks at the top, the crew's cards in the middle (the talk sits under them). */}
+      <div className="hud-left">
+        <DragPanel id="harbor.docks" title="Docks" foldOnPhone className="story panel docks">
+          {board.ships.length === 0 && <p className="muted">No ships in port. Moor one and your crew can walk aboard.</p>}
+          <ul className="ships">
+            {board.ships.map((s) => {
+              const mine = !!me.character && s.aboard.includes(me.character.name);
+              return (
+                <li key={s.code}>
+                  <span>
+                    <strong>{s.phase === "lobby" ? (s.kind === "caverns" ? `${s.captain}'s delve` : `${s.captain}'s ship`) : (s.title ?? (s.kind === "caverns" ? "Going down" : "Setting out"))}</strong>
+                    <span className="muted">
+                      {" "}{s.phase === "lobby" ? `${s.aboard.length}/${MAX_PARTY} ${s.kind === "caverns" ? "at the cave mouth" : "aboard"}` : s.kind === "caverns" ? `in the caverns${s.day ? ` · day ${s.day}` : ""}` : `at sea${s.day ? ` · day ${s.day}` : ""}`}
+                      {s.aboard.length > 0 && ` · ${s.aboard.join(", ")}`}
+                    </span>
+                  </span>
+                  {s.phase === "lobby" && (mine || s.aboard.length < MAX_PARTY) && <button className="small" onClick={() => board_(s)}>{mine ? "Return" : s.kind === "caverns" ? "Join" : "Board"}</button>}
+                  {s.phase !== "lobby" && mine && <button className="small" onClick={() => board_(s)}>Rejoin</button>}
+                </li>
+              );
+            })}
+          </ul>
+          <button className="primary" onClick={() => void launch()}>Moor a new ship</button>
+          <h3>Voyage log</h3>
+          {board.log.length === 0 && <p className="muted">No voyages yet.</p>}
+          <ul className="log">
+            {board.log.map((v) => (
+              <li key={v.code}>
+                <span className={v.outcome === "victory" ? "good" : "bad"}>{v.outcome === "victory" ? "Won" : "Lost"}</span> <strong>{v.title}</strong>
+                <span className="muted"> · {v.crew.join(", ")}</span>
+              </li>
+            ))}
+          </ul>
+        </DragPanel>
+
+        <div className="crew roster-panel roster-trade crew-cards">
+          <CrewRoster
+            you={you}
+            heading={<>{hereCount} of {roster.length} here</>}
+            members={roster}
+            onOpen={heroSheet.toggle}
+            openId={heroSheet.open}
+            onTrade={setTradeWith}
+          />
+        </div>
       </div>
 
-      <DragPanel id="harbor.docks" title="Docks" foldOnPhone className="story panel docks">
-        {board.ships.length === 0 && <p className="muted">No ships in port. Moor one and your crew can walk aboard.</p>}
-        <ul className="ships">
-          {board.ships.map((s) => {
-            const mine = !!me.character && s.aboard.includes(me.character.name);
-            return (
-              <li key={s.code}>
-                <span>
-                  <strong>{s.phase === "lobby" ? (s.kind === "caverns" ? `${s.captain}'s delve` : `${s.captain}'s ship`) : (s.title ?? (s.kind === "caverns" ? "Going down" : "Setting out"))}</strong>
-                  <span className="muted">
-                    {" "}{s.phase === "lobby" ? `${s.aboard.length}/${MAX_PARTY} ${s.kind === "caverns" ? "at the cave mouth" : "aboard"}` : s.kind === "caverns" ? `in the caverns${s.day ? ` · day ${s.day}` : ""}` : `at sea${s.day ? ` · day ${s.day}` : ""}`}
-                    {s.aboard.length > 0 && ` · ${s.aboard.join(", ")}`}
-                  </span>
-                </span>
-                {s.phase === "lobby" && (mine || s.aboard.length < MAX_PARTY) && <button className="small" onClick={() => board_(s)}>{mine ? "Return" : s.kind === "caverns" ? "Join" : "Board"}</button>}
-                {s.phase !== "lobby" && mine && <button className="small" onClick={() => board_(s)}>Rejoin</button>}
-              </li>
-            );
-          })}
-        </ul>
-        <button className="primary" onClick={() => void launch()}>Moor a new ship</button>
-        <h3>Voyage log</h3>
-        {board.log.length === 0 && <p className="muted">No voyages yet.</p>}
-        <ul className="log">
-          {board.log.map((v) => (
-            <li key={v.code}>
-              <span className={v.outcome === "victory" ? "good" : "bad"}>{v.outcome === "victory" ? "Won" : "Lost"}</span> <strong>{v.title}</strong>
-              <span className="muted"> · {v.crew.join(", ")}</span>
-            </li>
-          ))}
-        </ul>
-      </DragPanel>
-
-      <DragPanel id="harbor.crew" title="Crew" foldOnPhone className="crew roster-panel roster-trade">
-        <CrewRoster
-          you={you}
-          heading={<>{hereCount} of {roster.length} here</>}
-          members={roster}
-          onOpen={heroSheet.toggle}
-          openId={heroSheet.open}
-          onTrade={setTradeWith}
-        />
-      </DragPanel>
-
-      <DragPanel id="harbor.chat" title="Crew chat" foldOnPhone className="chat panel harbor-chat">
+      <DragPanel id="harbor.chat" title="Crew chat" foldOnPhone expandable className="chat panel harbor-chat">
         <div className="chat-lines">
           {harbor.chat.length === 0 && <div className="muted">Crew chat. Only people in the Harbor right now see it.</div>}
           {harbor.chat.map((l, i) => <div key={i} className="line hero"><strong>{l.name}: </strong>{l.text}</div>)}
@@ -451,23 +432,49 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
         </div>
       </DragPanel>
 
-      <DragPanel id="harbor.turn" title="Here" compact className="turnbar panel">
-        {here ? (
-          <>
-            <span>{here.title}</span>
-            <button className="primary" onClick={here.run}>{here.label}</button>
-            {here.also && <button onClick={here.also.run}>{here.also.label}</button>}
-          </>
-        ) : (
-          <span className="muted">Click a hex to walk. Ships are boarded at the piers; gear is traded at the market stall.</span>
-        )}
-      </DragPanel>
+      <HudBar
+        me={me}
+        place={here && !here.quiet ? here.title : undefined}
+        rest={onWater ? undefined : {
+          run: () => void restHere(),
+          disabled: restIn > 0,
+          hint: restIn > 0 ? `Rest: you can lay out your bedroll again in ${restIn} min` : "Rest: lay out your bedroll here and sleep a while. Gathering outings come back.",
+        }}
+        meter={stamina ? { name: "Energy", note: "gathering outings left today", now: stamina.left, max: stamina.max, kind: "stamina" } : undefined}
+        chips={harbor.status !== "open" ? <span className="hud-chip bad">connecting…</span> : undefined}
+        // While the trade table is open it has the bag beside it already.
+        onBag={() => !tradeWith && setSheet((open) => !open)}
+        onBook={() => setBook(true)}
+        menu={
+          <OptionsMenu
+            title={HARBOR_NAME}
+            subtitle={<>{harbor.crew?.name ?? me.crew?.name}{harbor.crew && <> · invite code {harbor.crew.id}</>}</>}
+            actions={[
+              { label: copied ? "Invite link copied" : "Copy the crew's invite link", run: () => void copy(), stay: true },
+              { label: me.player.email ? "Account" : "Save your progress", hint: me.player.email ?? "Guest account: not saved yet", tone: me.player.email ? undefined : "nudge", run: () => setAccount(true) },
+              ...(me.isAdmin ? [{ label: "Admin", run: () => { location.hash = "#admin"; } }] : []),
+            ]}
+            reset={spar || harbor.status !== "open" ? undefined : {
+              to: "the plaza, where everyone arrives",
+              run: () => {
+                harbor.send({ type: "unstick" });
+                renderer.current?.lookAt(HARBOR_SPAWN);
+              },
+            }}
+            resetBlocked={spar ? "Not during a sparring bout." : "Waiting for the Harbor to connect."}
+          />
+        }
+      >
+        {here && !here.quiet && <button className="primary" onClick={here.run}>{here.label}</button>}
+        {here?.also && <button onClick={here.also.run}>{here.also.label}</button>}
+      </HudBar>
 
       {here && !here.quiet && self && !panelOpen && <TileAction renderer={renderer} pos={self.pos} unitId={self.id} label={here.label} run={here.run} />}
       {tip && <div className="tip">{tip}</div>}
       {error && <div className="toast">{error}</div>}
       {note && !error && <div className="toast note">{note}</div>}
-      {sheet && me.character && <InventoryScreen me={me} refresh={refreshAll} onClose={() => setSheet(false)} />}
+      {sheet && !tradeWith && me.character && <InventoryScreen me={me} refresh={refreshAll} onClose={() => setSheet(false)} />}
+      {book && me.character && <Logbook me={me} refresh={refreshAll} onClose={() => setBook(false)} />}
       {account && <AccountPanel me={me} refresh={refresh} onClose={() => setAccount(false)} />}
       {notices && <NoticeBoard seen={me.seenRelease} onSeen={() => void refresh()} onClose={() => setNotices(false)} />}
       {unseen && !panelOpen && !atBoard && <AttentionMark renderer={renderer} pos={HARBOR_BOARD} label="Something new on the notice board" />}

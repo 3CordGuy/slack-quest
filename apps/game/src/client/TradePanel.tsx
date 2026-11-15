@@ -1,45 +1,56 @@
-// Giving and trading with a crewmate, in the Harbor and on an island.
+// Trading with a crewmate, in the Harbor and on an island.
 //
 // `Trading` is mounted by any view where trading is allowed. It asks the
-// server every few seconds for the player's open offers, so an offer from a
-// crewmate shows up as a notice without anyone reloading, and it owns the
-// panel: either the one open offer between the two players (to accept,
-// decline or withdraw) or a form to make one. The form runs the same checks
-// as the server so the button explains itself, but the server decides.
+// server every few seconds for the player's open trades (every second while
+// the table is open), so a crewmate who wants to trade shows up as a notice
+// without anyone reloading, and what they lay on the table shows up as they
+// lay it.
+//
+// The table itself is drawn by the bag's screen (InventoryScreen.tsx): the
+// other player's side above, yours below, the bag beside them. This file
+// keeps your side while you change it and sends it on, sends your acceptance
+// with the table's rev (so you can only accept what you have seen), and
+// closes the table when the trade goes through or either of you walks away.
+// It runs the same checks as the server so the Accept button explains
+// itself, but the server decides.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { RESOURCE_KINDS, TRADE_MAX_ITEMS, carryProblem, isGift, tradeGoodsText, tradeProblem, type ResourceKind, type Resources, type TradeGoods, type TradeOffer } from "@gantt-quest/world";
+import { itemCells, sideIsEmpty, sideProblem, tradeRoomProblem, type TradeSide } from "@gantt-quest/world";
 import type { TradeList, TradeOutcome, TradeView } from "../server/trade";
 import { api, type Me } from "./api";
-import { DragPanel } from "./DragPanel";
-import { ResourceChips } from "./hutDrops";
-import { ItemTile, toOwned } from "./items";
-import { GOLD_ICON, ThingIcon, resourceIcon, type IconRef } from "./thingIcons";
+import { InventoryScreen } from "./InventoryScreen";
+import { toOwned } from "./items";
+import { itemName } from "./labels";
 import "./trade.css";
-import { itemName, label } from "./labels";
 
-const POLL_MS = 4000;
+/** How often the list is asked for: while the table is open, and while it is not. */
+const LIVE_MS = 1000;
+const IDLE_MS = 4000;
 const NOTICE_MS = 7000;
+/** Wait this long after the last change before sending your side, so typing an amount is one message. */
+const SEND_AFTER_MS = 200;
 
 export interface TradePartner {
   id: string;
   name: string;
 }
 
-/** What to tell the player about an offer that just closed, if anything. Their own clicks need no telling. */
+/** What to tell the player about a trade that just closed, if anything. Their own clicks need no telling. */
 function outcomeText(o: TradeOutcome): string | null {
-  if (o.mine && o.status === "accepted") return `${o.other} accepted your offer.`;
-  if (o.mine && o.status === "declined") return `${o.other} declined your offer.`;
-  if (o.mine && o.status === "failed") return `Your offer to ${o.other} fell through. ${o.reason ?? ""}`.trim();
-  if (!o.mine && o.status === "withdrawn") return `${o.other} withdrew their offer.`;
+  if (o.status === "accepted") return `The trade with ${o.other} went through.`;
+  // Whoever did not open the table "declines" it; whoever did "withdraws" it.
+  if ((o.mine && o.status === "declined") || (!o.mine && o.status === "withdrawn")) return `${o.other} cancelled the trade.`;
+  if (o.status === "failed") return `The trade with ${o.other} fell through. ${o.reason ?? ""}`.trim();
   return null;
 }
+
+const sideOf = (view: TradeView["mine"]): TradeSide => ({ items: view.items.map((i) => i.id), gold: view.gold, resources: { ...view.resources } });
 
 interface Props {
   me: Me;
   /** Who can be traded with here. */
   partners: TradePartner[];
-  /** The crewmate the panel is open for, or null while it is closed. */
+  /** The crewmate the table is open with, or null while it is closed. */
   withId: string | null;
   onWith(id: string | null): void;
   /** Reload the player's character and inventory. */
@@ -51,11 +62,19 @@ interface Props {
 export function Trading({ me, partners, withId, onWith, refresh, run }: Props) {
   const [list, setList] = useState<TradeList | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  /** Bumped whenever goods may have moved, so the form re-reads what the player holds. */
-  const [moved, setMoved] = useState(0);
+  /** Your side of the open table as you have it, ahead of what the server has been told. */
+  const [draft, setDraft] = useState<{ id: number; side: TradeSide } | null>(null);
+  /** A change to your side has not reached the server yet. */
+  const [unsent, setUnsent] = useState(false);
+  const [busy, setBusy] = useState(false);
+  /** What the server said when it refused the last thing asked of it. */
+  const [said, setSaid] = useState<string | null>(null);
   const seen = useRef<Set<number> | null>(null);
-  const refreshRef = useRef(refresh);
-  refreshRef.current = refresh;
+  const latest = useRef({ refresh, onWith, withId });
+  latest.current = { refresh, onWith, withId };
+  const draftRef = useRef<{ id: number; side: TradeSide } | null>(null);
+  const timer = useRef<ReturnType<typeof setTimeout>>();
+  const sending = useRef(false);
 
   const load = useCallback(async () => {
     let next: TradeList;
@@ -73,261 +92,185 @@ export function Trading({ me, partners, withId, onWith, refresh, run }: Props) {
       if (seen.current.has(o.id)) continue;
       seen.current.add(o.id);
       if (first) continue;
-      if (o.status === "accepted") {
-        // Gear, gold or materials just arrived or left.
-        void refreshRef.current();
-        setMoved((n) => n + 1);
-      }
+      // Gear, gold or materials just arrived or left.
+      if (o.status === "accepted") void latest.current.refresh();
       const text = outcomeText(o);
       if (text) setNotice(text);
+      // The table that just closed is the one on screen: put it away.
+      if (latest.current.withId === o.otherId) latest.current.onWith(null);
     }
   }, []);
 
   useEffect(() => {
     void load();
-    const timer = setInterval(() => void load(), POLL_MS);
-    return () => clearInterval(timer);
-  }, [load]);
+    const every = setInterval(() => void load(), withId ? LIVE_MS : IDLE_MS);
+    return () => clearInterval(every);
+  }, [load, withId]);
   useEffect(() => {
     if (!notice) return;
-    const timer = setTimeout(() => setNotice(null), NOTICE_MS);
-    return () => clearTimeout(timer);
+    const t = setTimeout(() => setNotice(null), NOTICE_MS);
+    return () => clearTimeout(t);
   }, [notice]);
 
-  const myId = me.player.id;
-  const incoming = (list?.open ?? []).filter((t) => t.to.id === myId);
-  const between = withId ? (list?.open ?? []).find((t) => t.from.id === withId || t.to.id === withId) : undefined;
-  const partnerName = partners.find((p) => p.id === withId)?.name ?? (between ? (between.from.id === withId ? between.from.name : between.to.name) : "your crewmate");
+  // Asking to trade with someone opens the table between you, or finds the one already open.
+  useEffect(() => {
+    if (!withId) return;
+    let live = true;
+    setSaid(null);
+    api.openTrade(withId, run).then(
+      () => live && void load(),
+      (e: Error) => {
+        if (!live) return;
+        setNotice(e.message);
+        latest.current.onWith(null);
+      },
+    );
+    return () => {
+      live = false;
+    };
+  }, [withId, run, load]);
 
-  /** After the player acts on an offer themselves: do not announce it back to them, and show what is true now. */
-  const acted: Acted = async (id, goodsMoved, said) => {
-    if (id !== null) seen.current?.add(id);
-    setNotice(said ?? null);
-    if (goodsMoved) {
-      await refresh();
-      setMoved((n) => n + 1);
+  const open = list?.open ?? [];
+  const table = withId ? open.find((t) => t.with.id === withId) : undefined;
+  const partnerName = table?.with.name ?? partners.find((p) => p.id === withId)?.name ?? "your crewmate";
+
+  // Your side starts as the server has it (a table reopened after a reload keeps what was on it).
+  useEffect(() => {
+    if (!table) {
+      if (withId) return;
+      draftRef.current = null;
+      setDraft(null);
+      setUnsent(false);
+      return;
+    }
+    if (draftRef.current?.id === table.id) return;
+    draftRef.current = { id: table.id, side: sideOf(table.mine) };
+    setDraft(draftRef.current);
+    setUnsent(false);
+  }, [table, withId]);
+
+  /** Send your side as it now is. If it changes again while it is on its way, send that too. */
+  const flush = async () => {
+    if (sending.current) return;
+    sending.current = true;
+    let refusedBy: string | null = null;
+    try {
+      for (;;) {
+        const sent = draftRef.current;
+        if (!sent) break;
+        try {
+          await api.offerTrade(sent.id, sent.side);
+        } catch (e) {
+          refusedBy = (e as Error).message;
+          break;
+        }
+        if (draftRef.current === sent) break;
+      }
+    } finally {
+      sending.current = false;
+    }
+    if (refusedBy) {
+      // The server would not have it: show why, and go back to what it does hold.
+      setSaid(refusedBy);
+      draftRef.current = null;
     }
     await load();
+    setUnsent(false);
   };
+  const setMine = (side: TradeSide) => {
+    if (!draftRef.current) return;
+    draftRef.current = { id: draftRef.current.id, side };
+    setDraft(draftRef.current);
+    setUnsent(true);
+    setSaid(null);
+    clearTimeout(timer.current);
+    timer.current = setTimeout(() => void flush(), SEND_AFTER_MS);
+  };
+  useEffect(() => () => clearTimeout(timer.current), []);
+
+  const accept = async (ok: boolean) => {
+    if (!table) return;
+    setBusy(true);
+    setSaid(null);
+    try {
+      const res = await api.acceptTrade(table.id, table.rev, ok);
+      if (res.settled) {
+        // Your own click settled it: no need to be told by the list.
+        seen.current?.add(table.id);
+        setNotice(`The trade with ${table.with.name} went through.`);
+        await refresh();
+        onWith(null);
+      }
+    } catch (e) {
+      setSaid((e as Error).message);
+    } finally {
+      await load();
+      setBusy(false);
+    }
+  };
+  /** Walk away from a table: it is cancelled for both. */
+  const cancel = (t: TradeView | undefined) => {
+    if (t) {
+      seen.current?.add(t.id);
+      void api.closeTrade(t.id).catch(() => undefined).finally(() => void load());
+    }
+    if (withId && (!t || t.with.id === withId)) onWith(null);
+  };
+
+  const c = me.character;
+  const mine = draft && table && draft.id === table.id ? draft.side : null;
+  const theirs = useMemo(() => (table ? { gear: table.theirs.items.map(toOwned), resources: table.theirs.resources, gold: table.theirs.gold, missing: table.theirs.missing } : null), [table]);
+  /** Why the table cannot be accepted as it stands: the same checks the server makes when you do. */
+  const problem = (() => {
+    if (!table || !mine || !theirs || !c) return null;
+    if (sideIsEmpty(mine) && theirs.gear.length === 0 && theirs.gold === 0 && Object.keys(theirs.resources).length === 0) return "Put something in the trade first.";
+    const held = { gold: c.gold, resources: me.materials ?? {}, items: me.inventory.map((i) => ({ id: i.id, equipped: !!i.equipped, name: itemName(i), cells: itemCells(i) })) };
+    const short = sideProblem(mine, held);
+    if (short) return short;
+    if (!me.carry) return null;
+    const cells = (ids: number[]) => ids.reduce((n, id) => n + (held.items.find((i) => i.id === id)?.cells ?? 1), 0);
+    return tradeRoomProblem(me.carry, held.resources, { cells: cells(mine.items), resources: mine.resources }, { cells: theirs.gear.reduce((n, g) => n + itemCells(g), 0), resources: theirs.resources });
+  })();
 
   return (
     <>
-      {!withId && (incoming.length > 0 || notice) && (
+      {!withId && (open.length > 0 || notice) && (
         <div className="trade-notices" role="status">
           {notice && <div className="trade-notice panel">{notice}</div>}
-          {incoming.map((t) => (
+          {open.map((t) => (
             <div key={t.id} className="trade-notice panel incoming">
-              <span><strong>{t.from.name}</strong> {t.gift ? "wants to give you something." : "offers you a trade."}</span>
-              <button className="small primary" onClick={() => onWith(t.from.id)}>Look</button>
+              <span>{t.opened ? <>Your trade with <strong>{t.with.name}</strong> is still open.</> : <><strong>{t.with.name}</strong> wants to trade.</>}</span>
+              <button className="small primary" onClick={() => onWith(t.with.id)}>Look</button>
+              <button className="small" onClick={() => cancel(t)}>{t.opened ? "Cancel" : "No thanks"}</button>
             </div>
           ))}
         </div>
       )}
-      {withId && me.character && (
-        <div className="overlay" onClick={(e) => e.target === e.currentTarget && onWith(null)}>
-          <DragPanel id="trade" title="Trade" compact className="panel trade-panel" role="dialog" aria-label={`Trade with ${partnerName}`}>
-            <header className="trade-head">
-              <h2>Trade with {partnerName}</h2>
-              <span className="spacer" />
-              <button className="small" onClick={() => onWith(null)}>Close</button>
-            </header>
-            {notice && <p className="good" role="status">{notice}</p>}
-            {!list ? <p className="muted">Checking for offers…</p>
-              : between ? <Offer key={between.id} trade={between} mine={between.from.id === myId} acted={acted} carry={me.carry} />
-              : <Compose key={moved} me={me} to={{ id: withId, name: partnerName }} run={run} acted={acted} />}
-          </DragPanel>
-        </div>
-      )}
-    </>
-  );
-}
-
-/** One side of an offer: item tiles, then gold and materials as chips. */
-function Goods({ goods, items = [] }: { goods: TradeGoods; items?: TradeView["give"]["items"] }) {
-  const nothing = items.length === 0 && !tradeGoodsText(goods);
-  if (nothing) return <p className="muted">Nothing.</p>;
-  return (
-    <div className="trade-goods">
-      {items.length > 0 && (
-        <ul className="trade-items">
-          {items.map((row) => {
-            const item = toOwned(row);
-            return (
-              <li key={row.id}>
-                <ItemTile item={item} />
-                <span><strong>{item.name}</strong><br /><span className="muted">{item.rarity}</span></span>
-              </li>
-            );
-          })}
-        </ul>
-      )}
-      <div className="res-chips">
-        {goods.gold > 0 && (
-          <span className="res-chip" title="Gold">
-            <ThingIcon icon={GOLD_ICON} size={22} />
-            <strong>{goods.gold}</strong>
-            <span className="res-name">Gold</span>
-          </span>
-        )}
-      </div>
-      <ResourceChips resources={goods.resources} />
-    </div>
-  );
-}
-
-/** `said` is shown to the player once the lists have caught up. */
-type Acted = (id: number | null, goodsMoved: boolean, said?: string) => Promise<void>;
-
-/** The open offer between the two players, with the buttons that settle it. */
-function Offer({ trade, mine, acted, carry }: { trade: TradeView; mine: boolean; acted: Acted; carry: Me["carry"] }) {
-  const [busy, setBusy] = useState(false);
-  /** The gear in it must fit in your pack. The server checks again. */
-  const full = !mine && carry ? carryProblem(carry, trade.give.items.length) : null;
-  const [error, setError] = useState<string | null>(null);
-  const settle = async (accept: boolean) => {
-    setBusy(true);
-    setError(null);
-    try {
-      await (accept ? api.acceptTrade(trade.id) : api.closeTrade(trade.id));
-      await acted(trade.id, accept, accept ? (trade.gift ? `${trade.from.name}'s gift is yours.` : `The trade with ${trade.from.name} went through.`) : mine ? "Offer withdrawn." : "Offer declined.");
-    } catch (e) {
-      setError((e as Error).message);
-      // The offer may have been closed by that; show what is true now.
-      await acted(trade.id, false);
-    } finally {
-      setBusy(false);
-    }
-  };
-  return (
-    <div className="trade-offer">
-      {trade.runCode && <p className="muted">Made on the island. It can be settled while you are both ashore there.</p>}
-      <h3>{mine ? `You offer ${trade.to.name}` : `${trade.from.name} offers you`}</h3>
-      <Goods goods={trade.give} items={trade.give.items} />
-      {trade.give.missing > 0 && (
-        <p className="bad">
-          {trade.give.missing === 1 ? "One item" : `${trade.give.missing} items`} in this offer {trade.give.missing === 1 ? "is" : "are"} no longer {mine ? "yours" : `${trade.from.name}'s`} to give. It cannot go through as it stands.
-        </p>
-      )}
-      <h3>{trade.gift ? "A gift: nothing is asked in return" : mine ? "And you ask for" : "And asks you for"}</h3>
-      {!trade.gift && <Goods goods={trade.ask} />}
-      {full && !error && <p className="bad">{full}</p>}
-      {error && <p className="bad" role="alert">{error}</p>}
-      <div className="row">
-        {mine ? (
-          <>
-            <button disabled={busy} onClick={() => settle(false)}>Withdraw the offer</button>
-            <span className="muted">Waiting for {trade.to.name} to answer.</span>
-          </>
-        ) : (
-          <>
-            <button className="primary" disabled={busy || !!full} onClick={() => settle(true)}>{trade.gift ? "Accept the gift" : "Accept the trade"}</button>
-            <button disabled={busy} onClick={() => settle(false)}>Decline</button>
-          </>
-        )}
-      </div>
-    </div>
-  );
-}
-
-type Amounts = Partial<Record<"gold" | ResourceKind, string>>;
-
-const whole = (text: string | undefined) => Math.max(0, Math.floor(Number(text ?? 0)) || 0);
-
-function goodsOf(amounts: Amounts): TradeGoods {
-  const resources: Resources = {};
-  for (const kind of RESOURCE_KINDS) if (whole(amounts[kind]) > 0) resources[kind] = whole(amounts[kind]);
-  return { gold: whole(amounts.gold), resources };
-}
-
-function AmountInput({ label, icon, have, value, onChange }: { label: string; icon: IconRef; have?: number; value: string | undefined; onChange(text: string): void }) {
-  return (
-    <label className="trade-amount">
-      <span className="with-icon"><ThingIcon icon={icon} size={18} /><span>{label}{have !== undefined && <span className="muted"> · {have}</span>}</span></span>
-      <input type="number" min={0} max={have} step={1} inputMode="numeric" placeholder="0" value={value ?? ""} onChange={(e) => onChange(e.target.value)} />
-    </label>
-  );
-}
-
-/** The form for a new offer: what to hand over, and optionally what to ask back. */
-function Compose({ me, to, run, acted }: { me: Me; to: TradePartner; run?: string; acted: Acted }) {
-  const [held, setHeld] = useState<Resources | null>(null);
-  const [picked, setPicked] = useState<number[]>([]);
-  const [give, setGive] = useState<Amounts>({});
-  const [ask, setAsk] = useState<Amounts>({});
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  useEffect(() => {
-    let live = true;
-    api.hut().then((hut) => live && setHeld(hut.resources), () => live && setHeld({}));
-    return () => {
-      live = false;
-    };
-  }, []);
-
-  const gold = me.character?.gold ?? 0;
-  const pack = useMemo(() => me.inventory.filter((i) => !i.equipped), [me.inventory]);
-  // Items that have left the pack since they were picked (sold in another tab) drop out of the offer.
-  const items = picked.filter((id) => pack.some((i) => i.id === id));
-  const offer: TradeOffer = { to: to.id, give: { ...goodsOf(give), items }, ask: goodsOf(ask) };
-  const empty = items.length === 0 && !tradeGoodsText(offer.give);
-  const problem = tradeProblem(offer, {
-    from: me.player.id,
-    giver: { gold, resources: held ?? {}, items: me.inventory.map((i) => ({ id: i.id, equipped: !!i.equipped, name: itemName(i) })) },
-  });
-  const giveText = [...(items.length ? [`${items.length} item${items.length === 1 ? "" : "s"}`] : []), tradeGoodsText(offer.give)].filter(Boolean).join(", ");
-
-  const toggle = (id: number) => setPicked((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id]));
-  const submit = async () => {
-    setBusy(true);
-    setError(null);
-    try {
-      await api.proposeTrade(offer, run);
-      await acted(null, false, `Offered. Waiting for ${to.name} to answer.`);
-    } catch (e) {
-      setError((e as Error).message);
-      await acted(null, false);
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <div className="trade-compose">
-      <p className="muted">Hand {to.name} gear you are not wearing, gold or hut materials. Ask for something back to make it a trade; ask for nothing and it is a gift. Nothing moves until {to.name} accepts.</p>
-      <h3>You give</h3>
-      {pack.length === 0 ? (
-        <p className="muted">Nothing in your pack. Gear you are wearing has to come off first.</p>
+      {withId && c && (table && mine && theirs ? (
+        <InventoryScreen
+          me={me}
+          refresh={refresh}
+          // Closing the screen walks away from the table.
+          onClose={() => cancel(table)}
+          onIsland={!!run}
+          trade={{
+            with: table.with.name,
+            // A change of yours that is still on its way has already taken both acceptances back.
+            theirs: { ...theirs, ok: table.theirs.ok && !unsent },
+            mine,
+            mineOk: table.mine.ok && !unsent,
+            setMine,
+            problem,
+            note: said,
+            busy: busy || unsent,
+            accept: (ok) => void accept(ok),
+          }}
+        />
       ) : (
-        <div className="pack-grid" aria-label={`Up to ${TRADE_MAX_ITEMS} items`}>
-          {pack.map((row) => {
-            const item = toOwned(row);
-            return <ItemTile key={row.id} item={item} selected={items.includes(row.id)} onClick={() => toggle(row.id)} />;
-          })}
+        <div className="trade-notices" role="status">
+          <div className="trade-notice panel">Opening the trade with {partnerName}…</div>
         </div>
-      )}
-      <div className="trade-amounts">
-        <AmountInput label="Gold" icon={GOLD_ICON} have={gold} value={give.gold} onChange={(v) => setGive((a) => ({ ...a, gold: v }))} />
-        {RESOURCE_KINDS.filter((k) => (held?.[k] ?? 0) > 0).map((k) => (
-          <AmountInput key={k} label={label("resource", k)} icon={resourceIcon(k)} have={held![k]} value={give[k]} onChange={(v) => setGive((a) => ({ ...a, [k]: v }))} />
-        ))}
-      </div>
-      <h3>You ask for <span className="muted">(optional)</span></h3>
-      <div className="trade-amounts">
-        <AmountInput label="Gold" icon={GOLD_ICON} value={ask.gold} onChange={(v) => setAsk((a) => ({ ...a, gold: v }))} />
-        {RESOURCE_KINDS.map((k) => (
-          <AmountInput key={k} label={label("resource", k)} icon={resourceIcon(k)} value={ask[k]} onChange={(v) => setAsk((a) => ({ ...a, [k]: v }))} />
-        ))}
-      </div>
-      {!empty && (
-        <p className="trade-summary">
-          {to.name} gets <strong>{giveText}</strong>{isGift(offer) ? ", as a gift." : <> for <strong>{tradeGoodsText(offer.ask)}</strong>.</>}
-        </p>
-      )}
-      {!empty && problem && <p className="bad">{problem}</p>}
-      {error && <p className="bad" role="alert">{error}</p>}
-      <div className="row">
-        <button className="primary" disabled={busy || !!problem} onClick={submit}>{isGift(offer) ? `Offer it to ${to.name}` : `Offer the trade to ${to.name}`}</button>
-      </div>
-    </div>
+      ))}
+    </>
   );
 }

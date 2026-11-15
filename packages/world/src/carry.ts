@@ -1,39 +1,104 @@
-// How much gear a hero can carry, and where gear goes when the pack is full.
+// What a hero can carry, and where things go when the pack is full.
 //
-// A hero carries a pack of unequipped gear whose size grows with Strength
-// (base plus what their gear gives). Worn gear does not count. Everything
-// else waits in the containers of their hut (hut.ts `storage`: the free
-// Storage Chest every home has, plus any chests, crates and cupboards they
-// add): items can be sent there from anywhere, but only taken out while
-// standing in your own hut.
+// The pack is a grid, PACK_COLS squares across and PACK_ROWS down, the same
+// for every hero. A thing takes up the squares of its footprint: a ring one,
+// a helm two by two, a coat two by three, a staff two by four. A material
+// (wood, stone, herbs...) sits in stacks of up to STACK_MAX, one square a
+// stack. Worn gear takes no room. The rules count squares: a hero can take
+// a thing on while its squares, added to those already filled, fit in the
+// pack. Where each thing lies in the grid is the player's own business (the
+// client arranges it), so a pack that is nearly full of awkward shapes may
+// need tidying before the last thing shows a place.
 //
-// Hut materials (wood, stone, herbs...) are not gear and never count: they
-// live in their own heaps, not in the pack.
+// Everything else waits in the containers of their hut (hut.ts `storage`:
+// the free Storage Chest every home has, plus any chests, crates and
+// cupboards they add), where each thing takes one slot whatever its shape.
+// Gear can be sent there from anywhere, but only taken out while standing
+// in your own hut. Materials are spent from the pack; crafting and building
+// inside your own hut also reach into its containers.
 //
 // Nothing earned is ever lost to a full pack. Loot that does not fit goes
 // to a container at home with room; with no home yet, or every container
 // full, it goes into the pack anyway, over the limit, and the hero simply
-// cannot take on more until they are back under it. Buying and trades are refused instead, since the player
-// can choose not to.
+// cannot take on more until they are back under it. Buying and trades are
+// refused instead, since the player can choose not to.
 
 import type { Stats } from "@gantt-quest/core";
+import type { Slot } from "./gear";
+import { RESOURCE_KINDS, type Resources } from "./hut";
 
-/** Slots every hero has, however weak. */
-export const CARRY_BASE = 3;
-/** Extra slots per point of Strength. */
-export const CARRY_PER_STR = 1;
+/** The pack's grid. */
+export const PACK_COLS = 12;
+export const PACK_ROWS = 5;
+/** Squares in the pack. */
+export const PACK_CELLS = PACK_COLS * PACK_ROWS;
+/** Kept for callers that still ask for the base: the whole pack. Strength no longer changes it. */
+export const CARRY_BASE = PACK_CELLS;
+/** The most of one material in one square, in the pack or in a container. */
+export const STACK_MAX = 99;
 
-/** "3 + Strength", for showing the rule next to the number. */
-export const CARRY_FORMULA = `${CARRY_BASE} + Strength`;
+/** Squares across and down. */
+export interface PackSize {
+  w: number;
+  h: number;
+}
 
-/** Carried slots for these total stats (base plus gear). */
-export function carryLimit(stats: Pick<Stats, "str">): number {
-  return CARRY_BASE + CARRY_PER_STR * Math.max(0, Math.floor(stats.str));
+/** What each kind of gear takes up. */
+export const SLOT_SIZE: Record<Slot, PackSize> = {
+  main_hand: { w: 2, h: 3 },
+  off_hand: { w: 2, h: 2 },
+  body: { w: 2, h: 3 },
+  helmet: { w: 2, h: 2 },
+  legs: { w: 2, h: 2 },
+  boots: { w: 2, h: 2 },
+  ring: { w: 1, h: 1 },
+  amulet: { w: 1, h: 1 },
+};
+
+const LONG: PackSize = { w: 2, h: 4 };
+const SLIM: PackSize = { w: 1, h: 3 };
+const SQUARE: PackSize = { w: 2, h: 2 };
+/** Weapons that are not the usual two by three, by their id (content.ts WEAPONS). */
+export const WEAPON_SIZE: Record<string, PackSize> = {
+  // Two-handed, and as long as the pack allows.
+  greatsword: LONG, staff: LONG, root_staff: LONG, coral_staff: LONG, barometer_rod: LONG, void_staff: LONG, pager_axe: LONG, maul: LONG, lamp_hook: LONG, shortbow: LONG,
+  // Slim things that slide in beside the rest.
+  daggers: SLIM, gaff_hook: SLIM, flute: SLIM, sickle: SLIM, scepter: SLIM,
+  // Books, orbs and bells.
+  tome: SQUARE, grimoire: SQUARE, orb: SQUARE, astrolabe: SQUARE, bilge_chalice: SQUARE, ships_bell: SQUARE,
+};
+
+/** The squares a piece of gear takes up in the pack. */
+export function itemSize(item: { slot: Slot; ref: string }): PackSize {
+  return (item.slot === "main_hand" ? WEAPON_SIZE[item.ref] : undefined) ?? SLOT_SIZE[item.slot] ?? { w: 1, h: 1 };
+}
+
+/** How many squares that is. */
+export const itemCells = (item: { slot: Slot; ref: string }) => {
+  const { w, h } = itemSize(item);
+  return w * h;
+};
+
+/** Squares that `qty` of one material fills. */
+export const stackSlots = (qty: number) => (qty > 0 ? Math.ceil(qty / STACK_MAX) : 0);
+
+/** Squares these materials fill between them. */
+export const materialSlots = (resources: Resources) => RESOURCE_KINDS.reduce((n, k) => n + stackSlots(resources[k] ?? 0), 0);
+
+/** Extra squares that adding `more` to a heap of `have` would fill. */
+export const addedSlots = (have: number, more: number) => stackSlots(have + more) - stackSlots(have);
+
+/** "12 × 5", for showing the rule next to the number. */
+export const CARRY_FORMULA = `${PACK_COLS} × ${PACK_ROWS} squares`;
+
+/** Squares in a hero's pack. The same for everyone; the stats are taken so the callers need not change if that does. */
+export function carryLimit(_stats?: Pick<Stats, "str">): number {
+  return PACK_CELLS;
 }
 
 /** A hero's pack, as a server reads it. */
 export interface CarryState {
-  /** Unequipped items carried now. */
+  /** Squares filled now: the footprints of unequipped gear, plus a square per stack of materials. */
   carried: number;
   limit: number;
   /** Gear kept in containers at home. */
@@ -48,8 +113,8 @@ export interface CarryState {
 export const carryRoom = (s: Pick<CarryState, "carried" | "limit">) => Math.max(0, s.limit - s.carried);
 
 /**
- * Why `who` cannot take `adding` more items into their pack, or null if
- * they can. `who` is "You" or a name.
+ * Why `who` cannot take something of `adding` squares into their pack, or
+ * null if they can. `who` is "You" or a name.
  */
 export function carryProblem(s: Pick<CarryState, "carried" | "limit">, adding: number, who = "You"): string | null {
   if (adding <= 0 || s.carried + adding <= s.limit) return null;
@@ -67,8 +132,8 @@ export type LootPlace = "pack" | "storage" | "overfull";
  * Where loot lands: in the pack if there is room, else a container at home
  * with a free slot, else the pack anyway, over the limit. Never nowhere.
  */
-export function lootPlace(s: Pick<CarryState, "carried" | "limit" | "hasHome" | "room">): LootPlace {
-  if (s.carried < s.limit) return "pack";
+export function lootPlace(s: Pick<CarryState, "carried" | "limit" | "hasHome" | "room">, cells = 1): LootPlace {
+  if (s.carried + cells <= s.limit) return "pack";
   return s.hasHome && s.room > 0 ? "storage" : "overfull";
 }
 
@@ -90,7 +155,7 @@ export function storeProblem(item: { equipped: boolean; stored: boolean } | null
 }
 
 /** Why an item cannot be taken out of storage, or null if it can. Only ever asked inside your own hut. */
-export function takeProblem(item: { stored: boolean } | null, s: Pick<CarryState, "carried" | "limit">): string | null {
+export function takeProblem(item: { stored: boolean } | null, s: Pick<CarryState, "carried" | "limit">, cells = 1): string | null {
   if (!item || !item.stored) return "That is not in your storage.";
-  return carryProblem(s, 1);
+  return carryProblem(s, cells);
 }

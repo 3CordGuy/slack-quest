@@ -1,0 +1,400 @@
+/* The look of every panel, button and slot: an old ship's timber and
+   fittings by lamplight. Tarred, salt-worn planks for the surfaces, dull
+   brass and rope for the trim, parchment for the text and the name plates,
+   and only a faded sea-grey where there used to be blue. The frames and the
+   textures are drawn in code (ui/frames.ts) and arrive as --frame-* and
+   --tex-* variables. Loaded after styles.css, so it has the last word. */
+
+:root {
+  --ink: #14100c;
+  --out: #0c0907;
+  --panel: #171310;
+  --panel-hi: #211b16;
+  --panel-lo: #1e1610;
+  --well: #0d0b09;
+  --slot: #0f0d0b;
+  --slot-hi: #211b15;
+  --raise: #4a3a29;
+  --raise-hi: #7d6647;
+  --raise-lo: #21180f;
+  --line: #6a5538;
+  --rule: #3d3226;
+  --text: #eadfc4;
+  --muted: #b3a486;
+  --gold: #e3b757;
+  --brass-hi: #e6cf8f;
+  --brass: #b58d45;
+  --brass-lo: #77582a;
+  --good: #a3d49b;
+  --bad: #e9846f;
+  --accent: #86bdb3;
+  --sea: #3f5a62;
+  --paper: #dfcfa6;
+  --paper-lo: #c7b283;
+  --paper-ink: #2c2318;
+}
+
+body { background: #1b2228; }
+h1 { color: var(--gold); }
+h2 { color: var(--text); letter-spacing: 0.02em; }
+h3 { color: var(--brass-hi); }
+/* A heading inside a panel sits between two flourishes. */
+.panel h3 { display: flex; align-items: center; justify-content: center; gap: 10px; text-align: center; }
+.panel h3::before, .panel h3::after { content: ""; flex: none; width: 56px; height: 12px; background: var(--flourish) center / 56px 12px no-repeat; }
+.panel h3::after { scale: -1 1; }
+.panel h3.roster-head::before, .panel h3.roster-head::after { display: none; }
+.panel h3:first-child { margin-top: 0; }
+
+/* ---------- Panels ----------
+   The timber is the frame. Inside it a panel is plain and dark, a shade
+   lighter at the top, so the words and the things on it are what you see. */
+.panel {
+  background: linear-gradient(180deg, #1d1814 0, #171310 60px, #131010 100%);
+  border: 2px solid var(--brass-lo);
+  border-image: var(--frame-panel) 48 / 24px / 9px stretch;
+  box-shadow: 0 6px 14px 9px rgba(0, 0, 0, 0.5);
+}
+/* The big windows (the bag, the stall, trading, the works, the menu) have the heavier frame. */
+.overlay > .panel, .panel.window {
+  background: radial-gradient(ellipse at 50% 0, #211b16 0, #171310 55%, #121010 100%);
+  border-image: var(--frame-window) 72 / 36px / 15px stretch;
+  box-shadow: 0 10px 28px 15px rgba(0, 0, 0, 0.6);
+  padding: 16px 18px;
+}
+.overlay { background: rgba(8, 6, 4, 0.62); }
+/* States that used to recolour a panel's border now light it from inside. */
+.hero-card.active, .trade-notice.incoming, .battle-card.recap.victory { box-shadow: inset 0 0 0 2px var(--gold), 0 5px 0 6px rgba(0, 0, 0, 0.42); }
+.hero-card.open { box-shadow: inset 0 0 0 2px var(--accent), 0 5px 0 6px rgba(0, 0, 0, 0.42); }
+.battle-card.intro, .battle-card.recap.defeat, .hut-refused { box-shadow: inset 0 0 0 2px var(--bad), 0 5px 0 6px rgba(0, 0, 0, 0.42); }
+
+/* A window's name on a strip of parchment, its ends notched like a pennant, tacked over the top edge. */
+.win-plate {
+  position: absolute; left: 50%; top: -34px; transform: translateX(-50%); z-index: 4;
+  white-space: nowrap; padding: 2px 34px 4px; color: var(--paper-ink);
+  background:
+    linear-gradient(180deg, rgba(255, 250, 230, 0.35), rgba(120, 90, 40, 0.18)),
+    var(--tex-paper, none) 0 0 / 512px 512px,
+    var(--paper);
+  clip-path: polygon(0 0, 100% 0, calc(100% - 12px) 50%, 100% 100%, 0 100%, 12px 50%);
+  filter: drop-shadow(0 3px 0 rgba(0, 0, 0, 0.5)) drop-shadow(0 0 0 #000);
+  pointer-events: none;
+}
+/* The tacks. */
+.win-plate::before, .win-plate::after { content: ""; position: absolute; top: 50%; margin-top: -3px; width: 6px; height: 6px; background: var(--brass); box-shadow: inset 1px 1px 0 var(--brass-hi), inset -1px -1px 0 #4f3413, 0 0 0 1px rgba(0, 0, 0, 0.6); }
+.win-plate::before { left: 18px; }
+.win-plate::after { right: 18px; }
+
+/* ---------- Buttons and fields ---------- */
+button, input, select, textarea { color: var(--text); background: var(--well); border: 2px solid; border-color: var(--out) var(--line) var(--line) var(--out); }
+/* A button is a block of worn wood, lighter along its top edge. */
+button {
+  background: linear-gradient(180deg, rgba(255, 236, 190, 0.14), rgba(0, 0, 0, 0.18)), var(--raise);
+  border: 1px solid #8a6f45; border-radius: 2px;
+  box-shadow: inset 0 1px 0 rgba(255, 236, 190, 0.18), inset 0 -1px 0 rgba(0, 0, 0, 0.35), 0 1px 2px rgba(0, 0, 0, 0.6);
+  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.6);
+}
+button:hover:not(:disabled) { background: linear-gradient(180deg, rgba(255, 236, 190, 0.2), rgba(0, 0, 0, 0.1)), #5a4731; border-color: var(--brass-hi); box-shadow: inset 0 1px 0 rgba(255, 236, 190, 0.25), 0 0 8px rgba(227, 183, 87, 0.35); }
+button:active:not(:disabled) { box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.6); }
+/* The thing to do: sea-green paint, going thin. */
+button.primary { background: linear-gradient(180deg, rgba(255, 255, 255, 0.1), rgba(0, 0, 0, 0.14)), #3e6a58; border-color: #9bc4ae; color: #f1f6e6; }
+button.primary:hover:not(:disabled) { background: linear-gradient(180deg, rgba(255, 255, 255, 0.14), rgba(0, 0, 0, 0.1)), #487a66; }
+button.danger { background: #55271f; border-color: #b0685a; color: #f4c1b2; }
+button.selected, button[aria-pressed="true"] { background: linear-gradient(180deg, rgba(255, 236, 190, 0.2), rgba(0, 0, 0, 0.15)), #6a5226; border-color: var(--brass-hi); color: #fff0c4; }
+button.link { background: none; border: none; box-shadow: none; text-shadow: none; }
+button.nudge { border-color: var(--gold); color: var(--gold); }
+input:focus, button:focus-visible, select:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+input::placeholder { color: #7d6f57; }
+
+/* A slider: a dark rail in a brass channel, filled as far as the knob when the element sets --fill, and a brass diamond to drag. */
+input[type="range"] {
+  appearance: none; -webkit-appearance: none; height: 18px; padding: 0; border: none; cursor: pointer;
+  background:
+    linear-gradient(90deg, #a5463a 0 var(--fill, 0%), transparent var(--fill, 0%)) 2px 50% / calc(100% - 4px) 4px no-repeat,
+    linear-gradient(var(--well), var(--well)) 0 50% / 100% 8px no-repeat,
+    linear-gradient(var(--brass), var(--brass)) 0 50% / 100% 12px no-repeat;
+  background-color: transparent;
+}
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none; width: 12px; height: 12px; rotate: 45deg;
+  background: linear-gradient(135deg, var(--brass-hi), var(--brass) 55%, var(--brass-lo)); border: 2px solid var(--out);
+}
+input[type="range"]::-moz-range-thumb { width: 10px; height: 10px; rotate: 45deg; border-radius: 0; background: var(--brass); border: 2px solid var(--out); }
+input[type="range"]:disabled { opacity: 0.45; cursor: default; }
+
+/* A tick box: a small brass-rimmed well with a gold tick. */
+input[type="checkbox"] {
+  appearance: none; -webkit-appearance: none; width: 18px; height: 18px; padding: 0; flex: none; cursor: pointer; vertical-align: -4px;
+  background: var(--well); border: 2px solid var(--brass-lo); box-shadow: inset 2px 2px 0 rgba(0, 0, 0, 0.5);
+}
+input[type="checkbox"]:checked {
+  border-color: var(--brass-hi);
+  background: var(--well) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 7 7' shape-rendering='crispEdges'%3E%3Cpath fill='%23e3b757' d='M5 1h1v1H5zM4 2h1v1H4zM3 3h1v1H3zM0 3h1v1H0zM1 4h2v1H1zM2 5h1v1H2zM3 4h1v1H3zM4 3h1v1H4zM5 2h1v1H5z'/%3E%3C/svg%3E") center / 14px 14px no-repeat;
+}
+
+/* ---------- Small parts ---------- */
+.tag { border-color: var(--line); background: rgba(0, 0, 0, 0.25); }
+.banner { background: rgba(0, 0, 0, 0.3); }
+.bar { height: 18px; background: var(--well); border: 2px solid var(--out); box-shadow: 0 0 0 1px var(--brass-lo); }
+.bar > span:last-child { line-height: 14px; text-shadow: 0 1px 0 #000; }
+.bar-fill.hp { background: linear-gradient(180deg, #cf6a58 0 3px, #a5463a 3px); }
+.bar-fill.xp { background: linear-gradient(180deg, #8fb9b6 0 3px, #4f7f82 3px); }
+.pips i { background: var(--well); }
+.dot { background: var(--line); }
+.stat-row, .gear li, .crew-list li, .ships li, .abilities li { border-bottom-color: var(--rule); }
+.demand { border-top-color: var(--rule); }
+.totals div { border-color: var(--rule); background: rgba(0, 0, 0, 0.22); }
+
+.topbar { background: var(--panel); border-bottom: 2px solid var(--out); box-shadow: inset 0 -2px 0 var(--brass-lo), inset 0 -4px 0 var(--out), 0 3px 0 rgba(0, 0, 0, 0.3); padding-bottom: 9px; }
+.topbar > strong:first-child { color: var(--gold); letter-spacing: 0.06em; }
+/* A note pinned up: parchment, with ink. */
+.tip { color: var(--paper-ink); background: var(--tex-paper, none) 0 0 / 512px 512px, var(--paper); border: 2px solid var(--out); box-shadow: 0 0 0 1px var(--brass-lo), 0 3px 0 rgba(0, 0, 0, 0.4); }
+.toast { background: #55271f; border: 2px solid var(--out); box-shadow: 0 0 0 2px var(--bad), 0 4px 0 rgba(0, 0, 0, 0.4); }
+.toast.note { background: #2f4a3a; box-shadow: 0 0 0 2px var(--good), 0 4px 0 rgba(0, 0, 0, 0.4); }
+.tile-action button::after { border-top-color: #86b7a0; }
+
+/* ---------- Slots: a dark square in a thin bronze line ---------- */
+.tile, .thing-tile { background: radial-gradient(circle at 50% 40%, #1f1914, #0c0a08 85%) padding-box, linear-gradient(135deg, #a48652 0, #4a3a23 45%, #2e2416 60%, #7d6540 100%) border-box; border: 1px solid transparent; border-radius: 0; box-shadow: inset 0 0 6px rgba(0, 0, 0, 0.8); }
+.tile.empty { border-style: solid; }
+.tile:hover:not(:disabled) { background: radial-gradient(circle at 50% 40%, #2b2219, #120e0b 85%) padding-box, linear-gradient(135deg, #f3dfa0, #8a6a3a) border-box; border-color: transparent; }
+.tile.selected { box-shadow: 0 0 0 2px var(--gold); }
+.badge { background: var(--out); }
+.detail-icon { background: var(--slot); box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.7); border-width: 1px; }
+.inv-pack { border: 1px solid var(--rule); background: rgba(0, 0, 0, 0.25); }
+
+/* ---------- Docked panels' tools ---------- */
+/* The fold button sits on the title's own line, at the panel's right-hand padding. */
+.panel-tools { background: none; border: none; top: 9px; right: 10px; gap: 2px; align-items: center; }
+.grip, .min-btn { width: 20px; height: 20px; line-height: 20px; }
+.folded > .panel-tools { top: 3px; right: 8px; }
+.chat.panel > .panel-tools { top: 5px; right: 6px; }
+.chat.panel.folded > .panel-tools { top: 3px; }
+.grip, .min-btn { color: var(--brass); text-shadow: none; box-shadow: none; border: none; }
+.grip:hover, .min-btn:hover:not(:disabled) { color: var(--brass-hi); background: rgba(255, 236, 190, 0.08); }
+.panel-title { color: var(--brass-hi); text-shadow: none; box-shadow: none; }
+.panel-title:hover { color: #fff0c4; background: none; }
+.crew > .panel-title { border-image: var(--frame-thin) 16 / 8px / 3px stretch; background: var(--panel); }
+.crew > .panel-tools { border: none; top: 3px; right: 6px; }
+.gather-head, .trade-head, .notice-head { background: var(--panel-hi); }
+.resize::after { border-color: var(--brass-lo); }
+
+/* ---------- Scrollbars ---------- */
+* { scrollbar-width: thin; scrollbar-color: var(--brass-lo) transparent; }
+.voxel-icon { display: block; flex: none; filter: drop-shadow(0 2px 0 rgba(0, 0, 0, 0.5)); }
+
+/* ---------- Lettering ----------
+   Pirata One (a pirate blackletter) for titles and brass plates; IM Fell
+   English (a seventeenth-century printer's face) for headings and the
+   logbook; the monospace stays for numbers and running text in panels.
+   Both are open-licensed and served from /fonts. */
+@font-face { font-family: "Pirata One"; src: url("/fonts/pirata-one-latin-400-normal.woff2") format("woff2"); font-display: swap; }
+@font-face { font-family: "IM Fell English"; src: url("/fonts/im-fell-english-latin-400-normal.woff2") format("woff2"); font-display: swap; }
+@font-face { font-family: "IM Fell English"; font-style: italic; src: url("/fonts/im-fell-english-latin-400-italic.woff2") format("woff2"); font-display: swap; }
+@font-face { font-family: "IM Fell English SC"; src: url("/fonts/im-fell-english-sc-latin-400-normal.woff2") format("woff2"); font-display: swap; }
+:root {
+  --font-title: "Pirata One", "IM Fell English", Georgia, serif;
+  --font-head: "IM Fell English SC", "IM Fell English", Georgia, serif;
+  --font-book: "IM Fell English", Georgia, serif;
+}
+h1 { font-family: var(--font-title); font-weight: normal; letter-spacing: 0.03em; }
+h2 { font-family: var(--font-title); font-weight: normal; font-size: 24px; letter-spacing: 0.03em; }
+h2 .muted { font-family: var(--font-book); font-size: 15px; letter-spacing: 0; }
+h3, h4, .panel-title, .slot-name, .options-menu h4 { font-family: var(--font-head); font-weight: normal; text-transform: none; letter-spacing: 0.06em; }
+h3 { font-size: 17px; }
+.panel-title { font-size: 15px; }
+.win-plate { font-family: var(--font-title); font-weight: normal; font-size: 20px; text-transform: none; letter-spacing: 0.06em; padding: 0 34px 2px; color: var(--paper-ink); }
+.topbar > strong:first-child { font-family: var(--font-title); font-weight: normal; font-size: 21px; line-height: 1; }
+button.primary, button.big { font-family: var(--font-head); font-size: 16px; letter-spacing: 0.04em; }
+
+/* ---------- The chat: a pane of smoked glass over the view ----------
+   Half see-through, with only a thin line round it, so the Harbor shows
+   behind the talk. The words carry a dark edge to stay readable on anything.
+   It folds down to its title (–), and its top edge drags up to make it taller. */
+.chat.panel {
+  background: rgba(10, 8, 6, 0.5);
+  border-image: var(--frame-thin) 16 / 8px / 3px stretch;
+  box-shadow: none;
+  padding: 8px 10px;
+  text-shadow: 0 1px 0 #000, 0 0 3px #000;
+}
+.chat.panel:hover, .chat.panel:focus-within { background: rgba(10, 8, 6, 0.72); }
+.chat.panel .panel-title { color: var(--brass-hi); }
+.chat.panel input { background: rgba(0, 0, 0, 0.45); border: 1px solid var(--line); text-shadow: none; }
+.chat.panel button:not(.min-btn):not(.panel-title) { text-shadow: none; }
+.chat-lines { scrollbar-color: rgba(181, 141, 69, 0.6) transparent; }
+.chat .line.hero strong { color: #e9846f; }
+.chat .line.npc strong { color: var(--gold); }
+/* Its top edge is a handle: drag it to make the pane taller or shorter (DragPanel's `tall`). */
+.chat.panel .chat-lines { height: var(--tall, 110px); }
+.tall-handle { position: absolute; left: 12px; right: 54px; top: -5px; height: 12px; cursor: ns-resize; touch-action: none; z-index: 3; }
+.tall-handle::after { content: ""; position: absolute; left: 50%; top: 5px; width: 44px; height: 3px; margin-left: -22px; border-top: 1px solid var(--brass); border-bottom: 1px solid var(--brass); opacity: 0.55; }
+.tall-handle:hover::after, .dragging .tall-handle::after { opacity: 1; border-color: var(--brass-hi); }
+.chat.panel.folded { background: rgba(10, 8, 6, 0.6); }
+
+/* ==========================================================================
+   The whole UI in the bottom bar's timber. The bar set the look: warm
+   red-brown boards with a dark maroon outline, lit along the top and
+   shadowed along the foot, hard three-pixel edges, pale wells for things to
+   sit in. Everything else follows it here, after all the rules above, so
+   these have the last word. Frames come from ui/frames.ts cut from the same
+   wood; the insides of panels stay dark so words read.
+   ========================================================================== */
+:root {
+  --ink: #2a1214; --out: #3a1d20;
+  --panel: #2e1a17; --panel-hi: #3d231d; --panel-lo: #241311; --well: #24120f;
+  --slot: #f3bc93; --slot-hi: #fbd3b0; --slot-edge: #d99b73;
+  --raise: #b1633c; --raise-hi: #d18a55; --raise-lo: #6b3524;
+  --line: #8e4a2f; --rule: #5a2f24;
+  --text: #fbe6c8; --muted: #d2a585;
+  --gold: #f4c64e; --brass-hi: #fbe08a; --brass: #f4c64e; --brass-lo: #b9822a;
+  --good: #86d86c; --bad: #ff8a7a; --accent: #7fc4e8;
+}
+.panel { background: linear-gradient(180deg, #38201b 0, #2a1614 100%); border-image: var(--frame-panel) 36 / 18px / 10px round; box-shadow: 0 6px 0 10px rgba(0, 0, 0, 0.4); }
+.overlay > .panel, .panel.window { background: linear-gradient(180deg, #3a211c 0, #2a1614 100%); border-image: var(--frame-window) 48 / 24px / 16px round; box-shadow: 0 9px 0 16px rgba(0, 0, 0, 0.45); }
+.chat.panel { border-image: var(--frame-thin) 18 / 9px / 4px round; background: rgba(42, 18, 20, 0.55); }
+.chat.panel:hover, .chat.panel:focus-within { background: rgba(42, 18, 20, 0.78); }
+.crew > .panel-title { border-image: var(--frame-thin) 18 / 9px / 4px round; }
+.hero-card.active, .trade-notice.incoming, .battle-card.recap.victory { box-shadow: inset 0 0 0 3px var(--gold), 0 6px 0 10px rgba(0, 0, 0, 0.4); }
+.hero-card.open { box-shadow: inset 0 0 0 3px var(--accent), 0 6px 0 10px rgba(0, 0, 0, 0.4); }
+.battle-card.intro, .battle-card.recap.defeat, .hut-refused { box-shadow: inset 0 0 0 3px var(--bad), 0 6px 0 10px rgba(0, 0, 0, 0.4); }
+
+/* A button is a block of the same timber: lit along its top, shadowed along its foot, pressed in when used. */
+button { background: var(--raise); border: 3px solid var(--out); border-radius: 0; box-shadow: inset 0 3px 0 var(--raise-hi), inset 0 -3px 0 var(--raise-lo); color: var(--text); text-shadow: 0 2px 0 var(--out); }
+button:hover:not(:disabled) { background: #c2744a; border-color: var(--out); box-shadow: inset 0 3px 0 #e6a06a, inset 0 -3px 0 var(--raise-lo); }
+button:active:not(:disabled) { box-shadow: inset 0 3px 0 var(--raise-lo); }
+button.primary { background: #45a84c; border-color: var(--out); box-shadow: inset 0 3px 0 #86d86c, inset 0 -3px 0 #2c7c3e; color: #fff; }
+button.primary:hover:not(:disabled) { background: #52b85a; box-shadow: inset 0 3px 0 #a2e88a, inset 0 -3px 0 #2c7c3e; }
+button.danger { background: #b83a30; border-color: var(--out); box-shadow: inset 0 3px 0 #e0665a, inset 0 -3px 0 #7a221c; color: #ffe9e0; }
+button.selected, button[aria-pressed="true"] { background: #f4c64e; border-color: var(--out); box-shadow: inset 0 3px 0 #fbe08a, inset 0 -3px 0 #b9822a; color: #3a1d20; text-shadow: none; }
+button.nudge { border-color: var(--out); color: #3a1d20; background: #f4c64e; box-shadow: inset 0 3px 0 #fbe08a, inset 0 -3px 0 #b9822a; text-shadow: none; }
+.menu-action.nudge { color: #3a1d20; border-color: var(--out); }
+button.link, .grip, .min-btn, .panel-title, button.cm-main { background: none; border: none; box-shadow: none; }
+button.link { color: var(--accent); text-shadow: none; }
+button.cm-main { border: 2px solid transparent; }
+input, select, textarea { background: var(--well); border: 3px solid var(--out); border-radius: 0; color: var(--text); }
+input[type="range"], input[type="checkbox"] { border-radius: 0; }
+input[type="range"] { border: none; }
+input[type="checkbox"] { border: 3px solid var(--out); background-color: var(--well); box-shadow: none; }
+input::placeholder { color: #a5765a; }
+.chat.panel input { background: rgba(36, 18, 15, 0.7); border: 3px solid var(--out); }
+
+.bar { background: #3b2119; border: 3px solid var(--out); box-shadow: none; height: 20px; }
+.bar-fill.hp { background: linear-gradient(180deg, #f06a54 0 3px, #d8342a 3px); }
+.bar-fill.xp { background: linear-gradient(180deg, #86d86c 0 3px, #45a84c 3px); }
+.tag { border: 2px solid var(--line); background: rgba(0, 0, 0, 0.25); }
+.tip { color: #3a1d20; background: var(--slot); border: 3px solid var(--out); box-shadow: inset 0 0 0 3px var(--slot-edge), 0 3px 0 rgba(0, 0, 0, 0.4); }
+.toast { border: 3px solid var(--out); }
+
+/* A window's name: a ribbon tacked over its top edge. */
+.win-plate { color: var(--text); text-shadow: 0 2px 0 var(--out); background: linear-gradient(180deg, #9a3d34 0 3px, #7c2f2a 3px calc(100% - 3px), #56201f calc(100% - 3px)); }
+
+/* Things sit in pale wells, as on the bar. */
+.tile, .thing-tile { background: var(--slot); border: 3px solid var(--out); border-radius: 0; box-shadow: inset 0 0 0 3px var(--slot-edge); }
+.tile.empty { border-style: solid; }
+.tile:hover:not(:disabled) { background: var(--slot-hi); box-shadow: inset 0 0 0 3px var(--slot-edge); }
+.tile.selected { box-shadow: inset 0 0 0 3px var(--slot-edge), 0 0 0 3px var(--gold); }
+.badge { background: var(--out); color: var(--text); }
+.badge.qty { color: #fff; }
+.detail-icon { background: var(--slot); border-width: 3px; box-shadow: inset 0 0 0 3px var(--slot-edge); }
+
+/* The sea bag: its squares are empty and dark, ruled off by a thin line, each a little lighter in its middle so
+   it reads as a hollow waiting for something. No raised rims: what lies in the bag is what stands out. */
+/* The gear lies on a dark hide, darkening to its edges, with a sea chart ruled over the whole of it in faint
+   gold (ui/DollChart.tsx): the chart is drawn round the slots, and frames each one. */
+.bag .bag-doll {
+  border: 3px solid var(--out);
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.5);
+  background:
+    radial-gradient(ellipse at 50% 50%, rgba(244, 198, 78, 0.06), rgba(0, 0, 0, 0) 55%),
+    radial-gradient(ellipse at 50% 50%, rgba(0, 0, 0, 0) 45%, rgba(0, 0, 0, 0.55) 100%),
+    linear-gradient(180deg, rgba(20, 10, 9, 0.5), rgba(20, 10, 9, 0.72)),
+    var(--tex-hide, none) 0 0 / 256px 256px,
+    #3a211c;
+}
+/* Drawn a little under full strength: it is a ground for the gear, not a picture of its own. */
+.bag-chart { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; opacity: 0.7; }
+/* A gear slot is the pack's square at its own size, and made as carefully: flat and dark, the same sunk
+   outline a little way in, and a short brass tick turning each corner. Worn gear lies on a wash of its
+   rarity's colour, with a line of the same round the slot and its corner ticks in that colour too. */
+.bag .doll-slot {
+  --tick: rgba(244, 198, 78, 0.6);
+  --ticks: linear-gradient(var(--tick), var(--tick)) 0 0 / 9px 1px no-repeat, linear-gradient(var(--tick), var(--tick)) 0 0 / 1px 9px no-repeat, linear-gradient(var(--tick), var(--tick)) 100% 0 / 9px 1px no-repeat, linear-gradient(var(--tick), var(--tick)) 100% 0 / 1px 9px no-repeat, linear-gradient(var(--tick), var(--tick)) 0 100% / 9px 1px no-repeat, linear-gradient(var(--tick), var(--tick)) 0 100% / 1px 9px no-repeat, linear-gradient(var(--tick), var(--tick)) 100% 100% / 9px 1px no-repeat, linear-gradient(var(--tick), var(--tick)) 100% 100% / 1px 9px no-repeat;
+  background: var(--ticks), #1b110f;
+  border: 1px solid rgba(0, 0, 0, 0.75); border-radius: 0;
+  box-shadow: inset 1px 1px 0 rgba(255, 214, 170, 0.06), 0 0 0 1px rgba(142, 74, 47, 0.5), 0 4px 10px rgba(0, 0, 0, 0.6);
+}
+.bag .doll-slot::before { content: ""; position: absolute; inset: 5px 3px 3px 5px; pointer-events: none; background: rgba(0, 0, 0, 0.08); border: 1px solid; border-color: rgba(0, 0, 0, 0.2) rgba(255, 214, 170, 0.05) rgba(255, 214, 170, 0.05) rgba(0, 0, 0, 0.2); }
+.bag .doll-slot > img { position: relative; z-index: 1; }
+.bag .doll-slot:not(.empty) { --tick: color-mix(in srgb, var(--tint, #f4c64e) 85%, #fff); background: var(--ticks), color-mix(in srgb, var(--tint, #b1633c) 15%, #170f12); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--tint, #8e4a2f) 55%, #000), 0 0 10px color-mix(in srgb, var(--tint, #8e4a2f) 28%, transparent), 0 4px 10px rgba(0, 0, 0, 0.6); }
+.bag .doll-slot:hover:not(:disabled) { --tick: #fbe08a; background: var(--ticks), #261815; border-color: rgba(0, 0, 0, 0.75); box-shadow: inset 1px 1px 0 rgba(255, 214, 170, 0.1), 0 0 0 1px #d18a55, 0 4px 10px rgba(0, 0, 0, 0.6); }
+.bag .doll-slot:not(.empty):hover:not(:disabled) { background: var(--ticks), color-mix(in srgb, var(--tint, #b1633c) 26%, #170f12); box-shadow: inset 0 0 0 1px var(--tint, #fbe08a), 0 0 12px color-mix(in srgb, var(--tint, #fbe08a) 50%, transparent); }
+/* The strip between the gear and the pack: the hero's name, and what the gear adds up to. */
+.bag-strip { display: flex; align-items: center; gap: 14px; min-height: 30px; padding: 0 4px; }
+.bag-who { font-family: var(--font-head); font-size: 17px; font-weight: normal; letter-spacing: 0.04em; color: var(--brass-hi); }
+.bag-stat { display: inline-flex; align-items: center; gap: 5px; font-weight: bold; font-variant-numeric: tabular-nums; }
+.bag .doll-slot.to-come { opacity: 0.6; }
+.bag .doll-slot .slot-name { color: var(--muted); }
+.bag .doll-slot.empty .pixel-icon { opacity: 0.5; filter: brightness(2.2) sepia(0.6); }
+.bag .doll-slot.fits { box-shadow: inset 0 0 0 1px #86d86c, 0 0 10px rgba(134, 216, 108, 0.5); }
+.bag .doll-slot.cannot { box-shadow: inset 0 0 0 1px var(--bad); }
+.bag .pack-wrap { padding: 0; border: 3px solid var(--out); background: #1b110f; box-shadow: none; }
+/* Each square is flat, with a smaller square embossed into it and a quiet groove for a divider (ui/frames.ts). */
+.bag .pack-grid-2 {
+  background:
+    linear-gradient(rgba(216, 52, 42, 0.3), rgba(216, 52, 42, 0.3)) 0 var(--spill) / 100% 100% no-repeat,
+    var(--tex-cell, none) 0 0 / var(--u) var(--u),
+    #1b110f;
+}
+/* A thing lies over its squares on a flat wash of its rarity's colour, with a fine line of the same round it.
+   The dividers are drawn again over the wash, so the squares it covers can still be counted. */
+.bag .pack-item {
+  border: none; background-clip: border-box;
+  background: var(--tex-lines, none) 0 0 / var(--u) var(--u), color-mix(in srgb, var(--tint, #b1633c) 17%, #170f12);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--tint, #8e4a2f) 70%, #000);
+}
+.bag .pack-item:hover:not(:disabled) {
+  border: none;
+  background: var(--tex-lines, none) 0 0 / var(--u) var(--u), color-mix(in srgb, var(--tint, #b1633c) 28%, #170f12);
+  box-shadow: inset 0 0 0 1px var(--tint, #fbe08a), 0 0 10px color-mix(in srgb, var(--tint, #fbe08a) 45%, transparent);
+}
+/* A thing that covers several squares is embossed as one: the same sunk outline as an empty square has, the
+   same distance in, but round the whole of it (ui/frames.ts EMBOSS). */
+.bag .pack-item::before {
+  content: ""; position: absolute; inset: 5px 3px 3px 5px; pointer-events: none;
+  background: rgba(0, 0, 0, 0.08);
+  /* The same quarter-pixel line as an empty square's, which here has to be a whole pixel at a quarter the strength. */
+  border: 1px solid; border-color: rgba(0, 0, 0, 0.14) rgba(255, 214, 170, 0.04) rgba(255, 214, 170, 0.04) rgba(0, 0, 0, 0.14);
+}
+.bag .pack-item > img { position: relative; z-index: 1; }
+.bag .pack-item.locked { background-color: #4a1a18; }
+.pack-target.ok { background: rgba(69, 168, 76, 0.4); box-shadow: inset 0 0 0 3px #86d86c; }
+.pack-target.swap { background: rgba(244, 198, 78, 0.4); box-shadow: inset 0 0 0 3px #fbe08a; }
+.pack-target.bad { background: rgba(216, 52, 42, 0.4); box-shadow: inset 0 0 0 3px #ff8a7a; }
+.slot-grid { border: 3px solid var(--out); background: #8e4a2f; }
+.bag-hint kbd, .bag-keys kbd { border: 2px solid var(--out); background: var(--raise); color: var(--text); }
+
+/* The crew's cards, the corner chips and the docked panels' small parts. */
+.crew-cards .roster li.cm { background: var(--panel); border: 3px solid var(--out); box-shadow: inset 0 3px 0 rgba(209, 138, 85, 0.25), 0 3px 0 rgba(0, 0, 0, 0.4); }
+.crew-cards .roster li.cm:last-child { border-bottom: 3px solid var(--out); }
+.hud-corner > span, .hud-corner > strong { border: 3px solid var(--out); box-shadow: none; }
+.options-switch { border: 2px solid var(--out); background: var(--well); }
+.options-switch.on { color: var(--good); border-color: var(--out); }
+.split-prompt { padding: 12px 14px; }
+
+/* Slots everywhere else (a chest's grid, an offer, the stall, a hero's sheet) are the sea bag's squares: flat
+   and dark with a quiet edge and the same slim sunk outline, the thing's rarity as a fine line round it. The
+   bottom bar keeps its pale wells: that is the rack's own look. */
+.tile, .thing-tile { position: relative; background: #1b110f; border: 1px solid rgba(142, 74, 47, 0.7); border-radius: 0; box-shadow: inset 1px 1px 0 rgba(255, 214, 170, 0.06), 0 0 0 1px rgba(0, 0, 0, 0.6); }
+.tile::before, .thing-tile::before { content: ""; position: absolute; inset: 5px 3px 3px 5px; pointer-events: none; background: rgba(0, 0, 0, 0.08); border: 1px solid; border-color: rgba(0, 0, 0, 0.2) rgba(255, 214, 170, 0.05) rgba(255, 214, 170, 0.05) rgba(0, 0, 0, 0.2); }
+.tile > img, .thing-tile > img { position: relative; z-index: 1; }
+.tile.empty { border-style: solid; border-color: rgba(142, 74, 47, 0.45); }
+.tile:hover:not(:disabled) { background: #261815; box-shadow: inset 1px 1px 0 rgba(255, 214, 170, 0.1), 0 0 0 1px #d18a55; }
+.tile.selected { background: #2e2110; box-shadow: inset 0 0 0 1px var(--gold), 0 0 0 1px var(--gold), 0 0 10px rgba(244, 198, 78, 0.45); }
+.tile.locked { opacity: 0.5; }
+.tile.match { box-shadow: 0 0 0 2px #c084fc, 0 0 12px #c084fc; }
+.tile.taken { opacity: 0.4; }
+.detail-icon { background: #1b110f; border-width: 1px; box-shadow: inset 1px 1px 0 rgba(255, 214, 170, 0.06), 0 0 0 1px rgba(0, 0, 0, 0.6); }
+.slot-grid { border: 3px solid var(--out); background: #170d0c; gap: 5px; padding: 8px; }
+.badge.offered { color: #3a1d20; background: var(--gold); font-weight: bold; padding: 1px 4px; }
+.trade-amounts input { width: 110px; }
+.hut-box-row { display: flex; align-items: center; gap: 8px; }
+.hut-box-row > .with-icon { flex: 1; min-width: 0; }

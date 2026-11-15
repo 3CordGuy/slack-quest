@@ -3,11 +3,12 @@
 // voyage code so it survives a reload (#run/BCDF), or a crew invite
 // (#crew/BCDFGH). #hut/<player id> is the inside of that crew member's hut.
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { loadMe, type Me } from "./api";
 import { loadContent } from "./content";
 import { AdminView } from "./admin/AdminView";
 import { CatchGallery } from "./CatchGallery";
+import { DevToolbox } from "./DevToolbox";
 import { Harbor } from "./Harbor";
 import { HarborView } from "./HarborView";
 import { HutView } from "./HutView";
@@ -31,7 +32,12 @@ export function App() {
   const [admin, setAdmin] = useState(adminFromHash);
   const [catches, setCatches] = useState(catchesFromHash);
 
-  const refresh = useCallback(() => loadMe().then(setMe, (e: Error) => setError(e.message)), []);
+  /** Only the answer to the newest question is kept: an older one that comes back late would show the pack as it was. */
+  const meAsked = useRef(0);
+  const refresh = useCallback(() => {
+    const asked = ++meAsked.current;
+    return loadMe().then((next) => { if (asked === meAsked.current) setMe(next); }, (e: Error) => setError(e.message));
+  }, []);
   useEffect(() => {
     // The content overrides need a session, so they load after the first /api/me
     // (which signs a new visitor in as a guest) and before anything is drawn.
@@ -55,10 +61,20 @@ export function App() {
 
   if (error) return <div className="centre"><div className="panel">Something went wrong: {error}</div></div>;
   if (!me) return <div className="centre"><div className="panel">Rowing ashore…</div></div>;
+  // On a development deployment (local and staging) the dev toolbox sits in the corner of every screen.
+  return (
+    <>
+      <Screen me={me} refresh={refresh} code={code} invite={invite} hut={hut} pub={pub} admin={admin} catches={catches} />
+      {me.devTools && <DevToolbox me={me} refresh={refresh} />}
+    </>
+  );
+}
+
+function Screen({ me, refresh, code, invite, hut, pub, admin, catches }: { me: Me; refresh(): Promise<void>; code: string | null; invite: string | null; hut: string | null; pub: boolean; admin: boolean; catches: boolean }) {
   const ready = me.character?.status === "active";
   if (admin) return <AdminView me={me} onLeave={() => (location.hash = "")} />;
-  // Every catch's sprite and model, side by side: for admins, and on the dev server.
-  if (catches && (me.isAdmin || import.meta.env.DEV)) return <CatchGallery onLeave={() => (location.hash = "")} />;
+  // Every catch's sprite and model, side by side: for admins, and on a development deployment.
+  if (catches && (me.isAdmin || me.devTools || import.meta.env.DEV)) return <CatchGallery onLeave={() => (location.hash = "")} />;
   if (code && ready) {
     return (
       <RunView

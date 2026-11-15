@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { HexPos } from "@gantt-quest/core";
 import type { CrewView, DiceView, HarborPlayer, PubClientMessage, PubServerMessage, ShoalsView, TideView, XpMessage } from "@gantt-quest/world";
 import { PROFILE } from "./api";
+import { gaze } from "./gaze";
 import type { HarborChatLine } from "./useHarbor";
 
 export interface PubConnection {
@@ -97,6 +98,8 @@ export function usePub(onMoved: (id: string, path: HexPos[]) => void, onXp?: (m:
           setPlayers((ps) => ps.map((p) => (p.id === msg.id ? { ...p, level: msg.level, xp: msg.xp } : p)));
           setLastXp(msg);
           queueMicrotask(() => xpSeen.current?.(msg));
+        } else if (msg.type === "looked") {
+          gaze.looked(msg.id, msg.look);
         } else if (msg.type === "said") {
           setChat((c) => [...c, { name: msg.name, text: msg.text }].slice(-30));
           // Over their head too, for everyone who can see them.
@@ -141,9 +144,12 @@ export function usePub(onMoved: (id: string, path: HexPos[]) => void, onXp?: (m:
       };
     };
     connect();
+    // Which way your own hero turns to look goes to everyone else here.
+    const unhear = gaze.onLook((look) => socket.current?.readyState === WebSocket.OPEN && socket.current.send(JSON.stringify({ type: "look", look })));
     const ping = setInterval(() => socket.current?.readyState === WebSocket.OPEN && socket.current.send("ping"), 25_000);
     return () => {
       closed = true;
+      unhear();
       clearInterval(ping);
       clearTimeout(retry);
       socket.current?.close();

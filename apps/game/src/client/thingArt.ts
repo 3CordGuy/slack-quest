@@ -147,6 +147,22 @@ function flask(p: Pen) {
 // ---------- the table ----------
 
 export const THING_ART: Record<string, Art> = {
+  "sea-bag": (p) => {
+    // A sailor's sea bag: a sack of oiled hide gathered at the neck with a cord, a strap round its belly and a brass buckle. The cord is the accent.
+    spans(p, C.leather, [[1, 6, 9], [2, 6, 9], [4, 5, 10], [5, 3, 12], [6, 2, 13], [7, 2, 13], [8, 2, 13], [9, 2, 13], [10, 2, 13], [11, 2, 13], [12, 3, 12], [13, 4, 11]]);
+    // Lit down its left shoulder, in shadow round its foot and right side.
+    spans(p, "#c08a52", [[5, 4, 5], [6, 3, 4], [7, 3, 3], [8, 3, 3]]);
+    spans(p, C.hide, [[6, 12, 13], [7, 12, 13], [10, 12, 13], [11, 10, 13], [12, 7, 12], [13, 4, 11]]);
+    // The neck, tied.
+    p.r(5, 3, 6, 1, p.accent);
+    p.r(10, 4, 2, 1, p.accent);
+    p.r(11, 5, 1, 2, p.shade);
+    // The strap and its buckle.
+    p.r(2, 9, 12, 1, C.bark);
+    p.r(7, 8, 3, 3, C.gold);
+    p.r(8, 9, 1, 1, C.bark);
+    p.r(7, 8, 1, 1, C.shine);
+  },
   // ---- pub fare ----
   "pub-ale": tankard,
   "pub-rum": (p) => bottle(p, "#7a3b1c", "#a65a2c"),

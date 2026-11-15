@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { hexNeighbors } from "@gantt-quest/core";
-import { FURNISHINGS, HUT_TIERS, SMALL_PER_SPOT, STORAGE_CHEST, displacedFurnishings, freeSpot, hutDoor, hutFloor, hutPath, hutRoom, hutTier, HEX_DIRS, besideHexes, isBeside, lieDownProblem, useOf, useProblem, placeProblem, placedFurnishings, poiAt, putInProblem, smallPlaceProblem, tileAt, validFacing, type Furnishing } from "./index";
+import { CHEST_COLS, CHEST_MAX_ROWS, FURNISHINGS, HUT_TIERS, SMALL_PER_SPOT, STORAGE_CHEST, displacedFurnishings, freeSpot, hutDoor, hutFloor, hutPath, hutRoom, hutTier, HEX_DIRS, besideHexes, isBeside, lieDownProblem, useOf, useProblem, placeProblem, placedFurnishings, poiAt, putInProblem, smallPlaceProblem, tileAt, validFacing, type Furnishing } from "./index";
 
 const at = (q: number, r: number) => ({ q, r });
 
@@ -144,6 +144,18 @@ describe("a hut changing size", () => {
     const spot = hutFloor(small)[0];
     const twin = [{ defId: "table", ...spot }, { defId: "chair", ...spot }, { defId: "bed", q: null, r: null }];
     expect(displacedFurnishings(1, twin)).toEqual([twin[1]]);
+  });
+});
+
+describe("containers", () => {
+  it("are grids twelve squares across, ten rows deep at the most", () => {
+    const boxes = Object.values(FURNISHINGS).filter((f) => f.storage);
+    expect(boxes.length).toBeGreaterThan(0);
+    for (const f of boxes) {
+      expect(f.storage! % CHEST_COLS).toBe(0);
+      expect(f.storage! / CHEST_COLS).toBeLessThanOrEqual(CHEST_MAX_ROWS);
+    }
+    expect(FURNISHINGS[STORAGE_CHEST].storage).toBe(CHEST_COLS * CHEST_MAX_ROWS);
   });
 });
 

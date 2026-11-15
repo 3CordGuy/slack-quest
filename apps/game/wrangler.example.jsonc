@@ -19,6 +19,11 @@
 // offline and for free. "live" uses real models for the story, NPC replies,
 // the barkeep and the epilogue, billed to the account's Workers AI allocation.
 //
+// ENVIRONMENT "dev" (local and staging) puts the dev toolbox in the top-right
+// corner of every screen: a held time of day and weather, the audio engine's
+// readout, and seeding gold and items for your own hero (the /api/dev routes,
+// which answer only then). Production leaves the var out.
+//
 // Admin side (content overrides): put ADMIN_EMAILS=you@example.com in
 // apps/game/.dev.vars locally, and `wrangler secret put ADMIN_EMAILS --name <worker>`
 // for a deployed Worker. Comma-separate several. Unset means nobody is an admin.
@@ -48,7 +53,7 @@
     }
   ],
   "ai": { "binding": "AI" },
-  "vars": { "AI_MODE": "mock" },
+  "vars": { "AI_MODE": "mock", "ENVIRONMENT": "dev" },
   "durable_objects": {
     "bindings": [
       { "name": "RUN_ROOM", "class_name": "RunRoom" },
@@ -84,7 +89,7 @@
       // Email sign-in codes. Needs the sending domain onboarded under Email
       // Service > Send Emails. Leave both out and codes are written to the log.
       "send_email": [{ "name": "EMAIL", "remote": true }],
-      "vars": { "AI_MODE": "live", "MAIL_FROM_ADDRESS": "noreply@heylets.party", "MAIL_FROM_NAME": "The Harbor of Heylets" },
+      "vars": { "AI_MODE": "live", "ENVIRONMENT": "dev", "MAIL_FROM_ADDRESS": "noreply@heylets.party", "MAIL_FROM_NAME": "The Harbor of Heylets" },
       "durable_objects": {
         "bindings": [
           { "name": "RUN_ROOM", "class_name": "RunRoom" },

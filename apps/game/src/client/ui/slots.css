@@ -1,0 +1,146 @@
+/* Slot grids, stacks and the split prompt (ui/Slots.tsx), and the sea bag window built from them. */
+
+.slot-grid { display: grid; grid-template-columns: repeat(auto-fill, 56px); gap: 4px; align-content: start; padding: 8px; background: rgba(0, 0, 0, 0.28); border: 1px solid var(--rule); }
+.slot-grid.over { border-color: var(--good); background: rgba(127, 227, 166, 0.08); }
+.slot-grid .tile { width: 56px; height: 56px; }
+.slot-empty { display: block; }
+.slot-over { display: contents; }
+.slot-over .tile { outline: 2px dashed var(--bad); outline-offset: -4px; }
+.tile.mat { border-color: var(--line); }
+.tile.taken { opacity: 0.4; }
+.badge.qty { color: var(--text); font-size: 12px; font-weight: bold; background: none; text-shadow: 1px 1px 0 #000, -1px 1px 0 #000, 1px -1px 0 #000, -1px -1px 0 #000; right: 2px; bottom: 1px; }
+
+.split-prompt { position: fixed; z-index: 90; width: 228px; display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; }
+.split-prompt input { width: 100%; }
+/* Asked from the bag or a chest, it stands in their overlay, which lets presses through and sizes its windows. */
+.overlay.bag-overlay > .split-prompt { pointer-events: auto; width: 270px; max-width: none; }
+
+/* ---------- The sea bag: down the right-hand side of the view ----------
+   As tall as what is in it, centred top to bottom on the right edge. The view and the bottom bar stay as they
+   are; the camera's buttons sit at the bag's left. */
+.overlay.bag-overlay { background: none; pointer-events: none; justify-content: flex-end; align-items: center; padding: 44px 22px 22px; z-index: 50; }
+/* Centred in the room above the bottom bar, so the bar and its buttons stay clear. */
+.run:has(> .hud) .overlay.bag-overlay { padding-top: 38px; padding-bottom: 150px; }
+.run:has(.bag-overlay) .camera-rotate { right: calc(724px * var(--ui-z, 1)); }
+.overlay .bag.panel { --u: 51px; position: relative; pointer-events: auto; width: calc(var(--u) * 12 + 46px); max-width: 100%; max-height: 100%; display: flex; flex-direction: column; gap: 8px; padding: 22px 18px 14px; gap: 10px; }
+.bag-close { position: absolute; top: -6px; right: -6px; width: 30px; height: 30px; font-size: 20px; line-height: 1; z-index: 5; }
+
+/* The figure's slots: each the size of what it holds, set out as it is worn. */
+.bag-doll {
+  position: relative; flex: none; width: calc(var(--u) * 12); margin: 0 auto; box-sizing: content-box; padding: 8px 3px;
+  border: 1px solid transparent;
+  background:
+    radial-gradient(ellipse at 50% 38%, rgba(196, 140, 70, 0.22), rgba(0, 0, 0, 0) 62%) padding-box,
+    linear-gradient(180deg, rgba(0, 0, 0, 0.05), rgba(0, 0, 0, 0.55)) padding-box,
+    var(--tex-hide, none) 0 0 / 256px 256px padding-box,
+    linear-gradient(#2a2019, #2a2019) padding-box,
+    linear-gradient(135deg, #a48652, #3a2c1a 50%, #7d6540) border-box;
+  box-shadow: inset 0 0 26px rgba(0, 0, 0, 0.75);
+}
+.doll-slot {
+  position: absolute; padding: 0; translate: 3px 8px; display: grid; place-items: center;
+  background: radial-gradient(circle at 50% 35%, #1d1813, #0a0806 85%) padding-box, linear-gradient(135deg, #a48652 0, #4a3a23 45%, #2e2416 60%, #7d6540 100%) border-box; border: 1px solid transparent; border-radius: 0;
+  box-shadow: inset 0 0 12px rgba(0, 0, 0, 0.85), 0 2px 6px rgba(0, 0, 0, 0.6);
+}
+.doll-slot:hover:not(:disabled) { background: radial-gradient(circle at 50% 35%, #2b2219, #100c09 85%) padding-box, linear-gradient(135deg, #f3dfa0, #8a6a3a) border-box; border-color: transparent; }
+.doll-slot.empty .pixel-icon { opacity: 0.55; }
+.doll-slot .slot-name { position: absolute; left: 0; right: 0; bottom: 3px; text-align: center; font-size: 10px; pointer-events: none; color: var(--muted); }
+.doll-slot.fits { box-shadow: inset 0 0 0 1px var(--good), inset 0 0 14px rgba(127, 227, 166, 0.35), 0 0 12px rgba(127, 227, 166, 0.5); }
+.doll-slot.cannot { box-shadow: inset 0 0 0 2px var(--bad); }
+.doll-slot.lifted > .voxel-icon { opacity: 0.25; }
+/* A slot for gear still to come: there, but faint, and nothing to press. */
+.doll-slot.to-come { opacity: 0.6; cursor: default; }
+.doll-slot.to-come.belt .slot-name { bottom: 50%; translate: 0 50%; }
+
+.bag-hint { font-size: 12px; margin: 0; text-align: center; min-height: 26px; }
+.bag-hint kbd { font: inherit; color: var(--brass-hi); border: 1px solid var(--brass-lo); padding: 0 4px; background: var(--well); }
+
+/* The pack: twelve squares by five, ruled off; things lie on it at their own size. */
+.pack-wrap { flex: 0 1 auto; min-height: calc(var(--u) * 2); align-self: center; max-height: 100%; overflow: hidden auto; padding: 3px; background: #0a0806; border: 1px solid transparent; background: linear-gradient(#0a0806, #0a0806) padding-box, linear-gradient(135deg, #a48652, #3a2c1a 50%, #7d6540) border-box; box-shadow: inset 0 0 10px rgba(0, 0, 0, 0.9); }
+.pack-grid-2 {
+  position: relative; width: calc(var(--u) * 12);
+  background:
+    linear-gradient(rgba(180, 40, 30, 0.22), rgba(180, 40, 30, 0.22)) 0 var(--spill) / 100% 100% no-repeat,
+    var(--tex-cell, none) 0 0 / var(--u) var(--u),
+    #0a0806;
+}
+.pack-item {
+  position: absolute; padding: 0; display: grid; place-items: center; border: 2px solid transparent; border-radius: 0; background-clip: padding-box;
+  background-color: color-mix(in srgb, var(--tint, #8a7a5c) 14%, rgba(22, 18, 14, 0.9));
+  background-image: radial-gradient(ellipse at 50% 30%, color-mix(in srgb, var(--tint, #8a7a5c) 22%, transparent), transparent 75%);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--tint, #8a7a5c) 60%, #000), inset 0 0 10px rgba(0, 0, 0, 0.55); text-shadow: none;
+}
+.pack-item:hover:not(:disabled) { background-color: color-mix(in srgb, var(--tint, #8a7a5c) 28%, rgba(22, 18, 14, 0.9)); background-image: radial-gradient(ellipse at 50% 30%, color-mix(in srgb, var(--tint, #8a7a5c) 34%, transparent), transparent 75%); border-color: transparent; box-shadow: inset 0 0 0 1px var(--tint, var(--brass-hi)), 0 0 10px color-mix(in srgb, var(--tint, #e3b757) 45%, transparent); }
+.pack-item.locked { background-color: rgba(120, 30, 24, 0.45); }
+.pack-item.lifted > * { opacity: 0.2; }
+.pack-item.spilt { box-shadow: inset 0 0 0 1px var(--bad); }
+.bag.holding .pack-item, .bag.holding .pack-item:hover { pointer-events: none; }
+.pack-target { position: absolute; pointer-events: none; z-index: 2; }
+.pack-target.ok { background: rgba(127, 227, 166, 0.28); box-shadow: inset 0 0 0 2px var(--good); }
+.pack-target.swap { background: rgba(242, 193, 78, 0.28); box-shadow: inset 0 0 0 2px var(--gold); }
+.pack-target.bad { background: rgba(255, 90, 70, 0.3); box-shadow: inset 0 0 0 2px var(--bad); }
+/* What is in hand, riding the pointer. */
+.held-float { position: fixed; z-index: 95; pointer-events: none; translate: -50% -50%; filter: drop-shadow(0 6px 4px rgba(0, 0, 0, 0.6)); }
+
+.bag-foot { display: flex; align-items: center; gap: 12px; padding-top: 4px; }
+.carry.warn { color: var(--gold); }
+/* The card for the thing under the pointer, out to the left of the bag. */
+.bag-card { position: absolute; z-index: 7; right: calc(100% + 50px); top: 30px; width: 300px; max-height: calc(100% - 60px); overflow-y: auto; padding: 10px 12px; pointer-events: none; }
+.mat-detail { display: flex; flex-direction: column; gap: 8px; }
+.mat-detail p { margin: 0; }
+@media (max-width: 760px) {
+  .overlay.bag-overlay { padding: 34px 14px 14px; }
+  .overlay .bag.panel { --u: 27px; padding: 18px 8px 10px; }
+  .bag-card { position: fixed; right: 14px; left: 14px; top: auto; bottom: 14px; width: auto; max-height: 45%; z-index: 6; }
+}
+
+/* ---------- A chest, open beside the bag ----------
+   The bag's own window and grid, in the middle of the view: dead centre where the view is wide enough, and
+   otherwise as near it as leaves the bag clear, with a gap between the two for the camera's buttons. Its squares
+   (--u, set by InventoryScreen) are the pack's size unless the view is too narrow for both. */
+.overlay .bag.chest-window, .overlay .bag.trade-window {
+  --w: calc(var(--u) * 12 + 46px);
+  flex: none; margin-right: auto;
+  margin-left: max(16px, min(calc(50% - var(--w) / 2), calc(100% - (51px * 12 + 46px) - 104px - var(--w))));
+}
+.chest-wait { margin: 0; padding: 40px 0; text-align: center; }
+.chest-keys { font-size: 12px; flex: 0 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bag-foot .carry { white-space: nowrap; }
+.chest-decor { display: flex; flex-direction: column; gap: 4px; }
+.chest-decor .hut-box-row { display: flex; align-items: center; gap: 8px; }
+.chest-decor .hut-box-row .with-icon { margin-right: auto; }
+.pack-item.decor.picked { box-shadow: inset 0 0 0 2px var(--gold); }
+/* With a chest open the card for a thing in either grid lies over the gear, clear of both. */
+.bag-card.over-doll { right: auto; left: 14px; top: 24px; }
+@media (max-width: 760px) {
+  .overlay .bag.chest-window, .overlay .bag.trade-window { margin-left: 0; }
+  .bag-card.over-doll { left: 14px; right: 14px; top: auto; }
+}
+
+/* ---------- Trading: your pack above, the two sides of the offer below ---------- */
+.trade-sides { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.trade-side { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.trade-side h3 { margin: 0; }
+.trade-side .slot-grid, .trade-compose .slot-grid { grid-template-columns: repeat(auto-fill, 46px); }
+.trade-side .slot-grid .tile, .trade-compose .slot-grid .tile { width: 46px; height: 46px; }
+.trade-gold { display: flex; align-items: center; gap: 8px; }
+.trade-gold input { width: 110px; }
+.trade-asks { display: flex; flex-wrap: wrap; gap: 4px; }
+@media (max-width: 620px) { .trade-sides { grid-template-columns: 1fr; } }
+
+/* ---------- The trade table, open beside the bag ----------
+   The chest's window in the chest's place: the other player's side above, yours below, each a grid like the
+   pack's. A side is ringed in green once its player has accepted the table as it stands. */
+.overlay .bag.trade-window { gap: 8px; }
+.trade-tabs { display: flex; margin: -4px 0 -2px; border-bottom: 2px solid var(--out); }
+.trade-tab { padding: 3px 14px 4px; font-family: var(--font-head); font-size: 15px; letter-spacing: 0.04em; color: var(--text); background: var(--raise); border: 2px solid var(--out); border-bottom: 0; }
+.trade-box { display: flex; flex-direction: column; gap: 6px; min-height: 0; }
+.trade-box h3 { margin: 0; display: flex; align-items: baseline; gap: 10px; font-family: var(--font-head); font-size: 15px; font-weight: normal; letter-spacing: 0.06em; color: var(--brass-hi, var(--gold)); }
+.trade-said { font-family: inherit; font-size: 12px; letter-spacing: 0.04em; color: #86d86c; }
+.bag .trade-box .pack-wrap { align-self: stretch; transition: border-color 0.15s, box-shadow 0.15s; }
+.bag .trade-box.ok .pack-wrap { border-color: #2f7a35; box-shadow: 0 0 0 2px #86d86c, 0 0 18px rgba(134, 216, 108, 0.55), inset 0 0 26px rgba(69, 168, 76, 0.4); }
+.trade-gold { display: flex; align-items: center; gap: 8px; min-height: 30px; font-variant-numeric: tabular-nums; }
+.trade-gold input { width: 110px; }
+.trade-note { margin: 0; font-size: 13px; }
+.trade-foot { gap: 10px; }
+.trade-state { font-size: 12px; min-width: 0; }

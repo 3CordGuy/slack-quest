@@ -9,7 +9,7 @@
 // via /bubble, what is said to and by the barkeep).
 
 import { DurableObject } from "cloudflare:workers";
-import { HARBOR_MAX_SAY, UNSTICK_COOLDOWN_MS, pubPath, pubRoom, type CrewGame, type CrewRequest, type DiceGame, type DiceRequest, type HarborPlayer, type PubClientMessage, type PubServerMessage, type ShoalsGame, type ShoalsRequest, type TideGame, type TideRequest } from "@gantt-quest/world";
+import { LOOK_MIN_MS, validLook, HARBOR_MAX_SAY, UNSTICK_COOLDOWN_MS, pubPath, pubRoom, type CrewGame, type CrewRequest, type DiceGame, type DiceRequest, type HarborPlayer, type PubClientMessage, type PubServerMessage, type ShoalsGame, type ShoalsRequest, type TideGame, type TideRequest } from "@gantt-quest/world";
 import { crewFor, getCharacter, heroInitFor, type Env, type Player } from "./db";
 import { CREW_RULES, DICE_RULES, SHOALS_RULES, TIDE_RULES, StakeTable } from "./stake-table";
 import { readXpPost, relayXp } from "./harbor-xp";
@@ -38,6 +38,8 @@ export class PubRoom extends DurableObject<Env> {
   private tide: StakeTable<TideGame, TideRequest>;
   /** When each player last asked to be put back at the door. In memory only: a light limit. */
   private unstuckAt = new Map<string, number>();
+  /** When each player's look was last passed on, so a waving pointer cannot flood the room. */
+  private lookedAt = new Map<string, number>();
   /** Whose pub this is, for the leaderboard. Kept in storage: the room is named after the crew, but cannot read its own name. */
   private crewId: string | null = null;
 
@@ -153,6 +155,13 @@ export class PubRoom extends DurableObject<Env> {
       await this.shoals.reconcile();
       await this.crew.reconcile();
       await this.tide.reconcile();
+    } else if (msg.type === "look") {
+      // Which way they are looking: passed on to everyone else here, and not kept.
+      const look = validLook(msg.look);
+      const now = Date.now();
+      if (look === null || now - (this.lookedAt.get(player.id) ?? -Infinity) < LOOK_MIN_MS) return;
+      this.lookedAt.set(player.id, now);
+      this.broadcast({ type: "looked", id: player.id, look }, ws);
     } else if (msg.type === "unstick") {
       // A stuck or lost hero goes back to the door. Only ever the sender's own hero.
       const now = Date.now();

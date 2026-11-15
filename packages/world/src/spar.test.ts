@@ -27,8 +27,7 @@ import {
   type HeroInit,
   type ItemDef,
   type WorldAction,
-  type WorldState,
-} from "./index";
+  type WorldState, ABILITIES, abilitiesFor } from "./index";
 
 const item = (over: Partial<ItemDef>): ItemDef => ({ kind: "armor", ref: "x", name: "X", rarity: "common", slot: "body", power: 0, statBonus: {}, levelReq: 1, icon: "x", ...over });
 
@@ -60,10 +59,15 @@ describe("gearSheet", () => {
     expect(sheet.outfit?.main_hand?.ref).toBe("greatsword");
   });
 
-  it("falls back to the class's starting weapon with nothing in hand", () => {
+  it("is unarmed with nothing in hand, and can only punch", () => {
     const sheet = gearSheet("devops_mage", []);
-    expect(sheet.weapon).toBe("staff");
+    expect(sheet.weapon).toBe("");
     expect(sheet.weaponPower).toBe(0);
+    expect(abilitiesFor(sheet.weapon)).toEqual(["punch"]);
+    expect(abilitiesFor("staff")).toContain("firebolt");
+    expect(ABILITIES.punch.target).toBe("enemy");
+    // No weapon gives a punch: it is what is left when the weapon is put down.
+    for (const w of Object.values(WEAPONS)) expect(w.abilities).not.toContain("punch");
   });
 });
 

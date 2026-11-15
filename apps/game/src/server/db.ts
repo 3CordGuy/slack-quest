@@ -36,6 +36,11 @@ import {
   addStats,
   STORAGE_CHEST,
   carryLimit,
+  SLOT_SIZE,
+  STACK_MAX,
+  WEAPON_SIZE,
+  addedSlots,
+  itemCells,
   carryProblem,
   loadoutOf,
   lootPlace,
@@ -86,6 +91,8 @@ export interface Env {
   MAIL_FROM_NAME?: string;
   /** Secret: comma-separated emails allowed into the admin side. Unset means nobody is an admin. */
   ADMIN_EMAILS?: string;
+  /** "dev" on local and staging: the client shows the dev toolbox and its seeding routes answer (dev.ts). Production leaves it out. */
+  ENVIRONMENT?: string;
 }
 
 export interface Player {
@@ -148,7 +155,7 @@ export function rowToItem(row: InventoryRow): ItemDef {
   };
 }
 
-function insertItem(db: D1Database, playerId: string, item: ItemDef, equipped: boolean, storedIn: number | null = null, runCode: string | null = null): D1PreparedStatement {
+export function insertItem(db: D1Database, playerId: string, item: ItemDef, equipped: boolean, storedIn: number | null = null, runCode: string | null = null): D1PreparedStatement {
   return db
     .prepare(
       "INSERT INTO inventory (player_id, kind, ref, name, rarity, slot, power, level_req, icon, stat_bonus_json, equipped, stored_in, created_at, run_code) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -289,23 +296,33 @@ export async function getInventory(db: D1Database, playerId: string): Promise<In
 
 // ---------- the pack, and storage in the hut's containers ----------
 
-/** SQL for how many unequipped items player ?1 carries right now (not kept in a container). */
-const CARRIED_SQL = "(SELECT COUNT(*) FROM inventory WHERE player_id = ?1 AND equipped = 0 AND stored_in IS NULL)";
+/** SQL for the slots a table's heaps of materials fill: STACK_MAX to a slot. */
+const STACKS_SQL = `COALESCE(SUM((qty + ${STACK_MAX - 1}) / ${STACK_MAX}), 0)`;
+/** SQL for the squares an `inventory` row takes up in the pack: its footprint, from the rules' own tables. */
+export const CELLS_SQL = (() => {
+  const weapons = Object.entries(WEAPON_SIZE).map(([ref, f]) => `WHEN '${ref}' THEN ${f.w * f.h}`).join(" ");
+  const slots = Object.entries(SLOT_SIZE).map(([slot, f]) => (slot === "main_hand" ? `WHEN 'main_hand' THEN CASE ref ${weapons} ELSE ${f.w * f.h} END` : `WHEN '${slot}' THEN ${f.w * f.h}`)).join(" ");
+  return `(CASE slot ${slots} ELSE 1 END)`;
+})();
+/** SQL for how many squares of the pack player `who` fills right now: unequipped gear not kept in a container, and stacks of materials. */
+export const carriedSql = (who: string) => `((SELECT COALESCE(SUM(${CELLS_SQL}), 0) FROM inventory WHERE player_id = ${who} AND equipped = 0 AND stored_in IS NULL)
+  + (SELECT ${STACKS_SQL} FROM resources WHERE player_id = ${who} AND qty > 0))`;
+const CARRIED_SQL = carriedSql("?1");
 /**
- * SQL, true while player ?1's pack has room for one more under `limit`. The
- * limit is inlined, so it must come from `carryState`, never a request. For
- * the `alsoIf` of `spendStatements`.
+ * SQL, true while player ?1's pack has room for `cells` more squares under
+ * `limit`. Both are inlined, so they must come from `carryState` and the
+ * rules, never a request. For the `alsoIf` of `spendStatements`.
  */
-export const packHasRoomSql = (limit: number) => `${CARRIED_SQL} < ${Math.max(0, Math.floor(limit))}`;
+export const packHasRoomSql = (limit: number, cells = 1) => `${CARRIED_SQL} + ${Math.max(1, Math.floor(cells))} <= ${Math.max(0, Math.floor(limit))}`;
 /** SQL that is true if player ?1 has a hut standing, and so somewhere to keep things. */
 const HAS_HOME_SQL = "EXISTS (SELECT 1 FROM huts WHERE player_id = ?1 AND plot IS NOT NULL AND bin_json IS NULL)";
-/** SQL for the slots used in container `box` of player ?1: decorations, gear and kinds of material in it (as `containerUsed`). */
+/** SQL for the squares used in container `box` of player ?1: a square a decoration, gear by its footprint, a square a stack of material (as `containerUsed`). */
 const usedSql = (box: string) => `((SELECT COUNT(*) FROM furnishings WHERE in_id = ${box} AND player_id = ?1)
-  + (SELECT COUNT(*) FROM inventory WHERE stored_in = ${box} AND player_id = ?1)
-  + (SELECT COUNT(*) FROM stash WHERE furnishing_id = ${box} AND player_id = ?1 AND qty > 0))`;
+  + (SELECT COALESCE(SUM(${CELLS_SQL}), 0) FROM inventory WHERE stored_in = ${box} AND player_id = ?1)
+  + (SELECT ${STACKS_SQL} FROM stash WHERE furnishing_id = ${box} AND player_id = ?1 AND qty > 0))`;
 
 /**
- * The player's containers with a free slot, best first: the free Storage
+ * The player's containers with a free square, best first: the free Storage
  * Chest, then whichever has the most room.
  */
 async function containersWithRoom(db: D1Database, playerId: string): Promise<{ id: number; defId: string; free: number }[]> {
@@ -351,13 +368,13 @@ export async function carryState(db: D1Database, playerId: string): Promise<Carr
 
 /**
  * Statement that keeps item `itemId` in container `boxId` of player ?1, only
- * if it is still carried, there is a home and the container still has a
- * free slot.
+ * if it is still carried, there is a home and the container still has
+ * the squares free for its footprint.
  */
-const keepStatement = (db: D1Database, playerId: string, itemId: number, boxId: number, slots: number) =>
+const keepStatement = (db: D1Database, playerId: string, itemId: number, boxId: number, squares: number) =>
   db
-    .prepare(`UPDATE inventory SET stored_in = ?3 WHERE id = ?2 AND player_id = ?1 AND equipped = 0 AND stored_in IS NULL AND ${HAS_HOME_SQL} AND ${usedSql("?3")} < ?4`)
-    .bind(playerId, itemId, boxId, slots);
+    .prepare(`UPDATE inventory SET stored_in = ?3 WHERE id = ?2 AND player_id = ?1 AND equipped = 0 AND stored_in IS NULL AND ${HAS_HOME_SQL} AND ${usedSql("?3")} + ${CELLS_SQL} <= ?4`)
+    .bind(playerId, itemId, boxId, squares);
 
 /**
  * Send an unequipped item to storage at home: into the free Storage Chest,
@@ -369,7 +386,10 @@ export async function storeItem(db: D1Database, playerId: string, itemId: number
   if (!carry) return "Create a character first.";
   const problem = storeProblem(row && { equipped: !!row.equipped, stored: false }, carry);
   if (problem) return problem;
-  const box = boxes[0];
+  // The first container (the free chest first) with the squares for it.
+  const cells = itemCells(row!);
+  const box = boxes.find((b) => b.free >= cells);
+  if (!box) return "No chest at home has the room for something that size. Make room there, or add another chest, crate or cupboard.";
   const res = await keepStatement(db, playerId, itemId, box.id, FURNISHINGS[box.defId].storage!).run();
   return res.meta.changes > 0 ? null : "That item or your chests changed just now. Try again.";
 }
@@ -457,8 +477,7 @@ export async function equipItem(db: D1Database, playerId: string, itemId: number
 export async function unequipItem(db: D1Database, playerId: string, itemId: number): Promise<string | null> {
   const row = await getItem(db, playerId, itemId);
   if (!row) return "No such item.";
-  // Abilities come from the weapon, so the main hand is only ever swapped.
-  if (row.slot === "main_hand") return "You need a weapon in hand. Equip another to swap.";
+  // The weapon comes off like anything else: a hero with nothing in hand fights with bare hands.
   // Into the pack even if that puts it over the limit: nothing is ever dropped.
   await db.prepare("UPDATE inventory SET equipped = 0 WHERE id = ?").bind(itemId).run();
   return null;
@@ -526,7 +545,8 @@ export async function buyShopItem(db: D1Database, playerId: string, index: numbe
   if (!shop || !c || !carry || !entry) return "The stall has nothing like that.";
   if (entry.bought) return "Already sold.";
   if (c.gold < entry.price) return "Not enough gold.";
-  const full = carryProblem(carry, 1);
+  const cells = itemCells(entry.item);
+  const full = carryProblem(carry, cells);
   if (full) return full;
   const day = Math.floor(now() / DAY_MS);
   try {
@@ -536,15 +556,15 @@ export async function buyShopItem(db: D1Database, playerId: string, index: numbe
     // the whole batch.
     const res = await db.batch([
       db
-        .prepare(`INSERT INTO shop_purchases (player_id, day, idx) SELECT ?1, ?2, ?3 WHERE (SELECT gold FROM characters WHERE player_id = ?1) >= ?4 AND ${CARRIED_SQL} < ?5`)
-        .bind(playerId, day, index, entry.price, carry.limit),
+        .prepare(`INSERT INTO shop_purchases (player_id, day, idx) SELECT ?1, ?2, ?3 WHERE (SELECT gold FROM characters WHERE player_id = ?1) >= ?4 AND ${CARRIED_SQL} + ?6 <= ?5`)
+        .bind(playerId, day, index, entry.price, carry.limit, cells),
       db.prepare("UPDATE characters SET gold = gold - ?1 WHERE player_id = ?2 AND changes() > 0").bind(entry.price, playerId),
       paidItemStatement(db, playerId, entry.item),
     ]);
     if (res[2].meta.changes === 0) {
       // Gold or room went elsewhere between the check and the batch: nothing happened.
       const fresh = await carryState(db, playerId);
-      return (fresh && carryProblem(fresh, 1)) || "Not enough gold.";
+      return (fresh && carryProblem(fresh, cells)) || "Not enough gold.";
     }
   } catch {
     return "Already sold.";
@@ -679,9 +699,10 @@ export async function applyGrant(
   if (!c) return null;
   const gold = grant.gold;
   const stmts: D1PreparedStatement[] = [];
-  const place = carry ? lootPlace(carry) : null;
-  // Overflow goes into the best container with room (the free Storage Chest first).
-  if (grant.item) stmts.push(insertItem(db, playerId, grant.item, false, place === "storage" ? boxes[0]?.id ?? null : null, code));
+  const place = carry && grant.item ? lootPlace(carry, itemCells(grant.item)) : null;
+  // Overflow goes into the best container with room for it (the free Storage Chest first).
+  const cells = grant.item ? itemCells(grant.item) : 1;
+  if (grant.item) stmts.push(insertItem(db, playerId, grant.item, false, place === "storage" ? boxes.find((b) => b.free >= cells)?.id ?? boxes[0]?.id ?? null : null, code));
   if (grant.resources) stmts.push(...resourceStatements(db, playerId, grant.resources));
   if (grant.blueprint) stmts.push(blueprintStatement(db, playerId, grant.blueprint, code));
   if (grant.furnishing) stmts.push(furnishingStatement(db, playerId, grant.furnishing, {}, code));
@@ -1080,7 +1101,7 @@ export async function getHut(db: D1Database, playerId: string): Promise<HutSumma
       .bind(playerId)
       .all<HutSummary["stash"][number]>(),
     db
-      .prepare("SELECT id AS itemId, stored_in AS containerId, name, icon, slot, rarity FROM inventory WHERE player_id = ? AND stored_in IS NOT NULL ORDER BY id")
+      .prepare("SELECT id AS itemId, stored_in AS containerId, name, icon, slot, rarity, kind, ref, power, level_req, stat_bonus_json, upgrades FROM inventory WHERE player_id = ? AND stored_in IS NOT NULL ORDER BY id")
       .bind(playerId)
       .all<HutSummary["stowed"][number]>(),
   ]);
@@ -1097,13 +1118,13 @@ export async function getHut(db: D1Database, playerId: string): Promise<HutSumma
 
 // ---------- containers: what a chest, crate or cupboard holds ----------
 
-/** How many slots of a container are filled: decorations in it, gear in it, and one per kind of material. */
+/** How many squares of a container are filled: one per decoration in it, gear by its footprint, and one per stack of material. */
 export async function containerUsed(db: D1Database, playerId: string, containerId: number): Promise<number> {
   const row = await db
     .prepare(
       `SELECT (SELECT COUNT(*) FROM furnishings WHERE in_id = ?1 AND player_id = ?2)
-            + (SELECT COUNT(*) FROM inventory WHERE stored_in = ?1 AND player_id = ?2)
-            + (SELECT COUNT(*) FROM stash WHERE furnishing_id = ?1 AND player_id = ?2 AND qty > 0) AS used`,
+            + (SELECT COALESCE(SUM(${CELLS_SQL}), 0) FROM inventory WHERE stored_in = ?1 AND player_id = ?2)
+            + (SELECT ${STACKS_SQL} FROM stash WHERE furnishing_id = ?1 AND player_id = ?2 AND qty > 0) AS used`,
     )
     .bind(containerId, playerId)
     .first<{ used: number }>();
@@ -1134,7 +1155,7 @@ export async function stashMaterial(db: D1Database, playerId: string, containerI
       db.prepare("SELECT qty FROM stash WHERE furnishing_id = ? AND kind = ? AND qty > 0").bind(containerId, k).first<{ qty: number }>(),
       containerUsed(db, playerId, containerId),
     ]);
-    if (!has && storageFree(box.defId, used) < 1) return "It is full.";
+    if (addedSlots(has?.qty ?? 0, n) > storageFree(box.defId, used)) return "It is full.";
     const res = await db.batch([
       db.prepare("UPDATE resources SET qty = qty - ?3 WHERE player_id = ?1 AND kind = ?2 AND qty >= ?3").bind(playerId, k, n),
       db
@@ -1143,6 +1164,13 @@ export async function stashMaterial(db: D1Database, playerId: string, containerI
     ]);
     return res[0].meta.changes > 0 ? null : `You do not have ${n} ${RESOURCE_LABEL[k].toLowerCase()}.`;
   }
+  // Coming out, the stacks have to fit in the pack.
+  const [carry, held] = await Promise.all([
+    carryState(db, playerId),
+    db.prepare("SELECT qty FROM resources WHERE player_id = ? AND kind = ?").bind(playerId, k).first<{ qty: number }>(),
+  ]);
+  const full = carry && carryProblem(carry, addedSlots(held?.qty ?? 0, n));
+  if (full) return full;
   const res = await db.batch([
     db.prepare("UPDATE stash SET qty = qty - ?4 WHERE furnishing_id = ?1 AND player_id = ?2 AND kind = ?3 AND qty >= ?4").bind(containerId, playerId, k, n),
     db
@@ -1159,7 +1187,7 @@ export async function stowGear(db: D1Database, playerId: string, containerId: nu
   if (!box) return "That does not hold anything.";
   if (!item) return "No such item.";
   if (item.equipped) return "Take it off first.";
-  if (storageFree(box.defId, used) < 1) return "It is full.";
+  if (storageFree(box.defId, used) < itemCells(item)) return "It is too full for that.";
   // The room in the container is checked again inside the write, as for "Send to storage".
   const res = await keepStatement(db, playerId, itemId, containerId, FURNISHINGS[box.defId].storage!).run();
   return res.meta.changes > 0 ? null : "It filled up, or that item moved. Try again.";
@@ -1172,17 +1200,18 @@ export async function stowGear(db: D1Database, playerId: string, containerId: nu
  */
 export async function unstowGear(db: D1Database, playerId: string, itemId: number): Promise<string | null> {
   if (!Number.isSafeInteger(itemId)) return "No such item.";
-  const carry = await carryState(db, playerId);
+  const [carry, row] = await Promise.all([carryState(db, playerId), db.prepare("SELECT slot, ref FROM inventory WHERE id = ? AND player_id = ?").bind(itemId, playerId).first<Pick<InventoryRow, "slot" | "ref">>()]);
   if (!carry) return "Create a character first.";
-  const full = carryProblem(carry, 1);
+  const cells = row ? itemCells(row) : 1;
+  const full = carryProblem(carry, cells);
   if (full) return full;
   const res = await db
-    .prepare(`UPDATE inventory SET stored_in = NULL WHERE id = ?2 AND player_id = ?1 AND stored_in IS NOT NULL AND ${CARRIED_SQL} < ?3`)
+    .prepare(`UPDATE inventory SET stored_in = NULL WHERE id = ?2 AND player_id = ?1 AND stored_in IS NOT NULL AND ${CARRIED_SQL} + ${CELLS_SQL} <= ?3`)
     .bind(playerId, itemId, carry.limit)
     .run();
   if (res.meta.changes > 0) return null;
   const fresh = await carryState(db, playerId);
-  return (fresh && carryProblem(fresh, 1)) || "That is not in a container.";
+  return (fresh && carryProblem(fresh, cells)) || "That is not in a container.";
 }
 
 /** Ask a hut's room to re-read the hut from D1 and tell everyone inside. Never throws. */
@@ -1219,6 +1248,40 @@ export function spendStatements(db: D1Database, playerId: string, gold: number, 
   ];
 }
 
+/** What the owner has to build with at home: the pack's materials and everything in the hut's containers. */
+export function atHome(hut: Pick<HutSummary, "resources" | "stash">): Resources {
+  const all: Resources = { ...hut.resources };
+  for (const s of hut.stash) all[s.kind] = (all[s.kind] ?? 0) + s.qty;
+  return all;
+}
+
+/**
+ * Statements that bring out of the hut's containers whatever of `need` the
+ * pack is short of, to run ahead of `spendStatements` in the same batch.
+ * Each stack only moves if it still held that many; the spend checks the
+ * pack again, so a stack that went elsewhere just leaves the cost unpaid.
+ */
+function drawFromChests(db: D1Database, playerId: string, need: Resources, hut: Pick<HutSummary, "resources" | "stash">): D1PreparedStatement[] {
+  const out: D1PreparedStatement[] = [];
+  for (const k of RESOURCE_KINDS) {
+    let short = (need[k] ?? 0) - (hut.resources[k] ?? 0);
+    for (const stack of hut.stash) {
+      if (short <= 0) break;
+      if (stack.kind !== k || stack.qty <= 0) continue;
+      const take = Math.min(stack.qty, short);
+      short -= take;
+      out.push(
+        db.prepare("UPDATE stash SET qty = qty - ?4 WHERE furnishing_id = ?1 AND player_id = ?2 AND kind = ?3 AND qty >= ?4").bind(stack.containerId, playerId, k, take),
+        db
+          .prepare("INSERT INTO resources (player_id, kind, qty) SELECT ?1, ?2, ?3 WHERE changes() > 0 ON CONFLICT(player_id, kind) DO UPDATE SET qty = qty + excluded.qty")
+          .bind(playerId, k, take),
+      );
+    }
+  }
+  if (out.length) out.push(db.prepare("DELETE FROM stash WHERE player_id = ? AND qty <= 0").bind(playerId));
+  return out;
+}
+
 /** A new furnishing into storage, but only if the statement before it in the batch changed a row. */
 export function paidFurnishingStatement(db: D1Database, playerId: string, defId: string): D1PreparedStatement {
   return db
@@ -1230,10 +1293,12 @@ export function paidFurnishingStatement(db: D1Database, playerId: string, defId:
 export async function craftFurnishing(db: D1Database, playerId: string, defId: string): Promise<string | { xp?: XpResult }> {
   const [c, hut] = await Promise.all([getCharacter(db, playerId), getHut(db, playerId)]);
   if (c?.status !== "active") return "Create a character first.";
-  const problem = craftProblem(defId, hut.blueprints, hut.resources, hut.tier);
+  // Crafting is done at home, so what is in the chests counts as well as what is in the pack.
+  const problem = craftProblem(defId, hut.blueprints, atHome(hut), hut.tier);
   if (problem) return problem;
   const xp = await prepareXp(db, playerId, HARBOR_XP.craft);
-  const made = [...spendStatements(db, playerId, 0, FURNISHINGS[defId].recipe!), paidFurnishingStatement(db, playerId, defId)];
+  const recipe = FURNISHINGS[defId].recipe!;
+  const made = [...drawFromChests(db, playerId, recipe, hut), ...spendStatements(db, playerId, 0, recipe), paidFurnishingStatement(db, playerId, defId)];
   const res = await db.batch([...made, ...(xp?.statements() ?? [])]);
   // The materials went elsewhere between the check and the batch: nothing was spent.
   return res[made.length - 1].meta.changes > 0 ? { xp: xpOutcome(xp, res) } : "You no longer have the materials for that.";
@@ -1296,12 +1361,12 @@ export async function sellFurniture(db: D1Database, playerId: string, furnishing
 export async function upgradeHut(db: D1Database, playerId: string): Promise<string | { tier: number }> {
   const [c, hut] = await Promise.all([getCharacter(db, playerId), getHut(db, playerId)]);
   if (c?.status !== "active") return "Create a character first.";
-  const problem = upgradeProblem(hut.tier, c.gold, hut.resources);
+  const problem = upgradeProblem(hut.tier, c.gold, atHome(hut));
   if (problem) return problem;
   const next = nextHutTier(hut.tier)!;
   // The tier is checked again inside the batch, so two requests at once cannot both pay.
   const stillThisTier = `COALESCE((SELECT tier FROM huts WHERE player_id = ?1), ${HUT_TIERS[0].tier}) = ${Math.floor(hut.tier)}`;
-  const spend = spendStatements(db, playerId, next.gold, next.resources, stillThisTier);
+  const spend = [...drawFromChests(db, playerId, next.resources, hut), ...spendStatements(db, playerId, next.gold, next.resources, stillThisTier)];
   const res = await db.batch([
     ...spend,
     db

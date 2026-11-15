@@ -5,7 +5,8 @@ import type { ContractBoard } from "../server/board";
 
 /** What the contract dealer in the pub has: the crew goal and the contracts on offer. */
 export type Board = ContractBoard;
-import type { CarryState, FishSpot, GatherChoice, HarborXpStatus, GatherSpot, HarborWorks, HutSummary, ItemDef, Perk, ProjectAmounts, PublicHero, Resources, SalesEntry, SalesmanId, SalesmanVisit, ShopEntry, TradeOffer } from "@gantt-quest/world";
+import type { CarryState, FishSpot, GatherChoice, HarborXpStatus, GatherSpot, HarborWorks, HutSummary, ItemDef, Perk, ProjectAmounts, PublicHero, Resources, SalesEntry, SalesmanId, SalesmanVisit, ShopEntry, TradeSide } from "@gantt-quest/world";
+import { devTools } from "./devTools";
 import { forcedSalesman } from "./salesmanClock";
 import type { GatherStatus } from "../server/gather";
 import type { SittingPaid } from "../server/fishing";
@@ -100,6 +101,8 @@ export interface Me {
   character: Character | null;
   /** What the hero has with them, worn and in the pack. Stored items are only listed inside their hut. */
   inventory: InventoryItem[];
+  /** The materials in the pack, by kind. They sit in stacks beside the gear. Absent from an older server. */
+  materials?: Resources;
   /** How full the pack is, its size, what is in storage and whether there is a home for it. Null without a character. */
   carry: CarryState | null;
   /** The crew whose Harbor this player shares, if any. The id doubles as the invite code. */
@@ -108,6 +111,8 @@ export interface Me {
   harborXp?: HarborXpStatus;
   /** On the ADMIN_EMAILS allow-list. Only shows the admin link; the server checks every admin call. */
   isAdmin: boolean;
+  /** A development deployment (the worker's ENVIRONMENT is "dev"): show the dev toolbox. Absent from an older server. */
+  devTools?: boolean;
   /** The newest release whose notes this player has read on the notice board. Null if never; absent from an older server. */
   seenRelease?: string | null;
 }
@@ -129,6 +134,12 @@ let signingIn: Promise<unknown> | null = null;
 
 /** Load the signed-in player, creating a guest account on first visit. */
 export async function loadMe(): Promise<Me> {
+  const me = await fetchMe();
+  devTools.set(me.devTools === true);
+  return me;
+}
+
+async function fetchMe(): Promise<Me> {
   try {
     return await request<Me>("/api/me");
   } catch (err) {
@@ -213,7 +224,18 @@ export const api = {
   buyFurniture: (defId: string) => request("/api/shop/furniture", { defId }),
   sellFurniture: (furnishingId: number) => request<{ gold: number }>("/api/shop/furniture/sell", { furnishingId }),
   trades: () => request<TradeList>("/api/trade"),
-  proposeTrade: (offer: TradeOffer, run?: string) => request<{ id: number }>("/api/trade/propose", { ...offer, run }),
-  acceptTrade: (id: number) => request("/api/trade/accept", { id }),
+  /** Open the trade table with a crewmate, or find the one already open between you. */
+  openTrade: (to: string, run?: string) => request<{ id: number }>("/api/trade/open", { to, run }),
+  /** Lay out your side of the table. */
+  offerTrade: (id: number, side: TradeSide) => request<{ rev: number }>("/api/trade/offer", { id, side }),
+  /** Accept the table as it stood at `rev`, or take that back. */
+  acceptTrade: (id: number, rev: number, ok = true) => request<{ settled: boolean }>("/api/trade/accept", { id, rev, ok }),
   closeTrade: (id: number) => request("/api/trade/close", { id }),
+  // The dev toolbox's seeding. The server answers these only on a development deployment (server/dev.ts).
+  /** Add gold to your purse, or take it with a negative amount. */
+  devGold: (amount: number) => request<{ gold: number }>("/api/dev/gold", { amount }),
+  /** Put one piece of gear in your pack: a weapon or a base by its ref, at a rarity and level. */
+  devGear: (ref: string, rarity: string, level: number) => request<{ item: ItemDef }>("/api/dev/gear", { ref, rarity, level }),
+  /** Add some of one material to your pack, or take it with a negative amount. */
+  devMaterial: (kind: string, qty: number) => request<{ kind: string; qty: number }>("/api/dev/material", { kind, qty }),
 };

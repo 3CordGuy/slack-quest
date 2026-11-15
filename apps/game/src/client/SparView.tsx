@@ -29,8 +29,7 @@ import {
   type BattleStatus,
   type CheckResult,
   type HeroSheet,
-  type Rng,
-} from "@gantt-quest/world";
+  type Rng, abilitiesFor, } from "@gantt-quest/world";
 import { api, type Me } from "./api";
 import { BattleHud } from "./BattleHud";
 import { toOwned } from "./items";
@@ -217,7 +216,7 @@ export function SparView({ me, scene, renderer, onClose }: Props) {
                 <strong>{sheet.name}</strong> <span className="muted">{className} · Level {sheet.level}</span>
                 <div className="muted">{weapon ? label("weapon", sheet.weapon) : "Unarmed"}{sheet.weaponPower > 0 ? ` · +${sheet.weaponPower} damage` : ""}{sheet.armor > 0 ? ` · armor ${sheet.armor}` : ""}</div>
                 <ul className="spar-abilities">
-                  {(weapon?.abilities ?? []).map((id) => {
+                  {abilitiesFor(sheet.weapon).map((id) => {
                     const a = ABILITIES[id];
                     return <li key={id}><strong>{label("ability", id)}</strong> <span className="muted">{a.rolls} × {STAT_LABEL[a.stat]} · {blurb("ability", id)}</span></li>;
                   })}
