@@ -1683,6 +1683,23 @@ function drawHeld(id: string, b: Biped, trim: string, look: Look, shield: boolea
     case "shortbow":
     case "bow": {
       // Held beside the fist, the belly forward and the string toward the arm.
+      if (lowPoly) {
+        // One smooth stave: thickest at the grip, curving back and tapering to a nock at each tip, the
+        // string straight between them.
+        const reach = 4.7;
+        const back = (y: number) => 0.35 - 1.75 * (y / reach) ** 2;
+        const stave: Ring[] = [];
+        for (let i = 0; i <= 12; i++) {
+          const y = -reach + (2 * reach * i) / 12;
+          const r = 0.38 - 0.2 * Math.abs(y / reach) ** 1.5;
+          stave.push([y, r, r * 1.15, back(y)]);
+        }
+        w.loft(GEAR.wood, stave, 6, -1.4);
+        for (const y of [-reach, reach]) w.ball(tone(GEAR.wood, -0.15), 0.26, -1.4, y, back(y), 0);
+        w.box(id === "bow" ? look.accent : GEAR.paper, 0.14, 2 * reach - 0.2, 0.14, -1.4, 0, back(reach) + 0.05);
+        w.loft(id === "bow" ? GEAR.leather : trim, [[-0.8, 0.46, 0.52, back(0)], [0.8, 0.46, 0.52, back(0)]], 6, -1.4);
+        return {};
+      }
       for (let i = -2; i <= 2; i++) w.box(GEAR.wood, 0.6, 2.6, 0.6, -1.4, i * 2.2, 0.3 - Math.abs(i) * 0.85, [i * 0.3, 0, 0]);
       w.box(id === "bow" ? look.accent : GEAR.paper, 0.2, 9.4, 0.2, -1.4, 0, -1.5);
       w.box(id === "bow" ? GEAR.leather : trim, 0.9, 1.6, 0.9, -1.4, 0, 0.3);
