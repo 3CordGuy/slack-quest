@@ -23,9 +23,9 @@
 // what it is (a meter's numbers, an item's card as in the bag, what an
 // ability does, a key).
 //
-// All of it is shaped for fights that will one day be played on the tiles
-// themselves; until then the abilities are a reminder of what the weapon
-// does, and the points are whatever the view has to show.
+// In a fight on the tiles (a zone) the nine slots are what the hero can do
+// this turn, each a button with its number key: the view hands them in as
+// `slots`. Anywhere else they are a reminder of what the weapon does.
 //
 // I (or B) opens and closes the bag and L opens the logbook, unless you are
 // typing. The bag's button does the same: press it again to put the bag away.
@@ -50,7 +50,27 @@ export interface HudPips {
   label: string;
   now: number;
   max: number;
-  kind: "action" | "move" | "focus";
+  kind: "action" | "bonus" | "move" | "focus";
+}
+
+/** One of the nine slots, when the view fills them itself: something the hero can do now, by button or number key. */
+export interface HudSlot {
+  id: string;
+  /** Two letters in the well. */
+  glyph: string;
+  name: string;
+  /** What it costs and reaches, for the tooltip; and more about it. */
+  line?: string;
+  more?: string;
+  /** How many are left of something that runs out. */
+  count?: number;
+  /** Turns until it can be used again. */
+  wait?: number;
+  /** Picked: waiting for its target. */
+  picked?: boolean;
+  /** Cannot be used right now: no Action left, on cooldown, none to throw. */
+  spent?: boolean;
+  run?(): void;
 }
 
 /** Something quick to hand on the rack, after the abilities. */
@@ -87,6 +107,8 @@ interface Props {
   /** Small extras beside the points: the doom clock, the larder. */
   chips?: ReactNode;
   quick?: HudQuick[];
+  /** The nine slots as the view wants them (a fight on the tiles). Replaces the weapon's abilities and `quick`. */
+  slots?: HudSlot[];
   /** The turn: seconds left on it (null with no clock), and ending it when it is yours. */
   turn?: { seconds: number | null; onEnd?(): void; waitingFor?: string };
   /** Resting, where it can be done. */
@@ -116,7 +138,7 @@ function Tip({ name, line, more, keys }: { name: string; line?: string; more?: s
   );
 }
 
-export function HudBar({ me, place, children, hp, meter, pips = [], chips, quick = [], turn, rest, onBag, bagBlocked, onBook, menu }: Props) {
+export function HudBar({ me, place, children, hp, meter, pips = [], chips, quick = [], slots, turn, rest, onBag, bagBlocked, onBook, menu }: Props) {
   const c = me.character;
   const items = me.inventory.map(toOwned);
   const worn = items.filter((i) => i.equipped);
@@ -131,6 +153,10 @@ export function HudBar({ me, place, children, hp, meter, pips = [], chips, quick
   const [hpAt, otherAt] = RACK.meters;
   const plaqueX = RACK.plaque.x + RACK.plaque.w / 2;
 
+  // The newest slots, for the key handler, which is not rebound each time they change.
+  const slotsNow = useRef(slots);
+  slotsNow.current = slots;
+
   // The rack's timber is one fixed picture, painted once.
   const art = useRef<HTMLCanvasElement>(null);
   useEffect(() => {
@@ -143,6 +169,9 @@ export function HudBar({ me, place, children, hp, meter, pips = [], chips, quick
       const k = e.key.toLowerCase();
       if ((k === "b" || k === "i") && onBag && !bagBlocked) onBag();
       if (k === "l" && onBook) onBook();
+      // A fight's slots answer to their numbers.
+      const slot = /^[1-9]$/.test(k) ? slotsNow.current?.[Number(k) - 1] : undefined;
+      if (slot?.run && !slot.spent) slot.run();
     };
     addEventListener("keydown", onKey);
     return () => removeEventListener("keydown", onKey);
@@ -226,8 +255,25 @@ export function HudBar({ me, place, children, hp, meter, pips = [], chips, quick
           {offhand && <Icon name={offhand.icon} color={RARITY_COLOR[offhand.rarity]} size={40} />}
         </span>
 
-        {/* Between the posts: what the hero can do, then what is quick to hand. */}
-        {abilities.slice(0, RACK.mid.length).map((id, i) => {
+        {/* Between the posts, in a fight on the tiles: what the hero can do this turn, each a button. */}
+        {slots?.slice(0, RACK.mid.length).map((s, i) => (
+          <button
+            key={s.id}
+            className={`hud-slot act ${s.picked ? "picked" : ""} ${s.spent ? "spent" : ""}`}
+            style={well(RACK.mid[i])}
+            aria-label={s.name}
+            aria-pressed={!!s.picked}
+            disabled={!s.run || !!s.spent}
+            onClick={s.run}
+            {...hover(RACK.mid[i] + 7, <Tip name={s.name} line={s.line} more={s.more} keys={String(i + 1)} />)}
+          >
+            <span className="hud-glyph">{s.glyph}</span>
+            {s.wait ? <span className="hud-wait">{s.wait}</span> : s.count !== undefined && <span className="hud-count">{s.count}</span>}
+            <span className="hud-key">{i + 1}</span>
+          </button>
+        ))}
+        {/* Otherwise: what the weapon in hand can do, then what is quick to hand. */}
+        {!slots && abilities.slice(0, RACK.mid.length).map((id, i) => {
           const a = ABILITIES[id];
           const name = label("ability", id);
           return (
@@ -237,7 +283,7 @@ export function HudBar({ me, place, children, hp, meter, pips = [], chips, quick
             </span>
           );
         })}
-        {quick.slice(0, RACK.mid.length - abilities.length).map((q, i) => (
+        {!slots && quick.slice(0, RACK.mid.length - abilities.length).map((q, i) => (
           <button key={q.label} className="hud-slot quick" style={well(RACK.mid[abilities.length + i])} disabled={!q.run} onClick={q.run} {...hover(RACK.mid[abilities.length + i] + 7, <Tip name={q.label} line={q.note} keys={String(abilities.length + i + 1)} />)}>
             <Icon name={q.icon.name} color={q.icon.color} size={30} />
             {q.count !== undefined && <span className="hud-count">{q.count}</span>}

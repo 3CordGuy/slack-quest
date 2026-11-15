@@ -1,0 +1,49 @@
+/* A zone (ZoneView): the initiative order across the top, the roll card, the banner, and the card for what is under the pointer. */
+
+.zone-view.picking .stage { cursor: crosshair; }
+
+/* The order of the fight: who goes when, with what each has left. Whose turn it is is lit. */
+.zone-order { position: absolute; top: 8px; left: 50%; transform: translateX(-50%); z-index: 10; display: flex; align-items: center; gap: 6px; padding: 5px 8px; max-width: calc(100vw - 180px); overflow-x: auto; }
+.zone-round { font-family: var(--font-head); font-size: 13px; letter-spacing: 0.04em; margin-right: 4px; white-space: nowrap; }
+.zone-chip { display: flex; flex-direction: column; gap: 3px; min-width: 62px; padding: 3px 6px; border: 2px solid var(--line); background: rgba(0, 0, 0, 0.25); font-size: 12px; white-space: nowrap; }
+.zone-chip.enemy { border-color: #7a3a3a; }
+.zone-chip.turn { border-color: var(--gold); box-shadow: 0 0 0 2px rgba(255, 210, 63, 0.35); }
+.zone-chip.down { opacity: 0.35; }
+.zone-hp { display: block; height: 4px; background: #1b1830; }
+.zone-hp i { display: block; height: 100%; background: #6ee06e; }
+.zone-chip.enemy .zone-hp i { background: #ff6b6b; }
+
+/* Your own, when you have more than one to play (stand-in crewmates). */
+.zone-party { position: absolute; top: 60px; right: 12px; z-index: 10; display: flex; flex-direction: column; gap: 4px; padding: 6px; }
+
+.zone-feed { bottom: 190px; }
+
+.zone-banner { position: absolute; left: 50%; top: 22%; transform: translateX(-50%); z-index: 12; font-family: var(--font-title); font-size: 44px; letter-spacing: 0.04em; color: #ffe9a8; text-shadow: 0 3px 0 #3a1c10, 0 0 18px rgba(0, 0, 0, 0.6); pointer-events: none; animation: zone-banner 1.5s ease-out both; }
+@keyframes zone-banner { 0% { opacity: 0; scale: 0.8; } 15% { opacity: 1; scale: 1; } 75% { opacity: 1; } 100% { opacity: 0; } }
+
+/* The roll: the dice as they fell, the sum, what it had to reach, and how it came out. */
+.zone-roll { position: absolute; left: 50%; top: 68px; transform: translateX(-50%); z-index: 11; display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 8px 12px; min-width: 190px; text-align: center; pointer-events: none; }
+.zone-roll.ok { border-color: var(--good); }
+.zone-roll.no { border-color: var(--bad); }
+.zone-roll-what { font-size: 12px; }
+.zone-roll-what em { font-style: normal; color: var(--gold); }
+.zone-dice { display: flex; gap: 8px; }
+.zone-dice b { display: grid; place-items: center; width: 44px; height: 44px; font-family: var(--font-title); font-size: 26px; color: #2a160c; background: #f2e3bd; border: 2px solid #5a3d22; clip-path: polygon(50% 0, 100% 25%, 100% 75%, 50% 100%, 0 75%, 0 25%); }
+.zone-dice b.dropped { opacity: 0.35; }
+.zone-roll-sum { font-size: 13px; }
+.zone-roll-out { font-family: var(--font-head); font-size: 17px; letter-spacing: 0.04em; }
+.zone-roll.ok .zone-roll-out { color: var(--good); }
+.zone-roll.no .zone-roll-out { color: var(--bad); }
+
+/* What is under the pointer: who, what they have left, and (with an attack picked) the chance it lands. */
+.zone-tip { position: absolute; left: 10px; top: 64px; z-index: 11; max-width: min(420px, 60vw); padding: 6px 10px; font-size: 13px; pointer-events: none; }
+.zone-cond { margin-right: 8px; font-weight: bold; }
+.zone-chance { margin-top: 4px; padding-top: 4px; border-top: 1px dashed var(--line); }
+
+@media (max-width: 700px) {
+  .zone-order { max-width: calc(100vw - 20px); top: 44px; }
+  .zone-roll { top: 110px; min-width: 150px; }
+  .zone-banner { font-size: 30px; }
+  .zone-tip { top: 100px; }
+}
+@media (prefers-reduced-motion: reduce) { .zone-banner { animation: none; } }

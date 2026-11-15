@@ -68,6 +68,14 @@ export interface RenderState {
   npcs: Record<string, { hostile: boolean }>;
   /** Enemy bands in sight on the map. */
   roamers?: { id: string; kinds: string[]; pos: HexPos }[];
+  /** A zone's enemies: each stands on its own hex, with a bar of what it has left once it is in a fight. */
+  units?: RenderUnit[];
+  /**
+   * Where the viewer can walk, worked out by the caller (a zone's rules know about cliffs, bodies in the way
+   * and what is left of a turn's movement). When set it is used as it stands: the tiles lit, the marker
+   * under the pointer and the dots along the way all come from it.
+   */
+  reach?: Map<string, { cost: number; prev: string | null; pos: HexPos }>;
   /** No turns or movement points: the viewer may walk anywhere reachable, and tiles are not lit. */
   freeRoam?: boolean;
   /** Furniture standing on hexes (a hut's room). Each blocks the hex it is on. */
@@ -80,6 +88,22 @@ export interface RenderState {
   stamina?: { left: number; max: number };
   /** A piece being carried: a ghost of it follows the pointer, and a click sets it down (RendererCallbacks.onPlace). */
   holding?: Holding | null;
+}
+
+/** An enemy standing on a hex of its own. */
+export interface RenderUnit {
+  id: string;
+  /** The enemy kind: drives the figure. */
+  kind: string;
+  pos: HexPos;
+  name?: string;
+  /** Shown as a bar over its head when set: 0 to 1 of what it can take. */
+  hp?: number;
+  down?: boolean;
+  /** Whose turn it is. */
+  active?: boolean;
+  /** In a fight: it wears a red ring. */
+  hostile?: boolean;
 }
 
 /**
@@ -109,6 +133,10 @@ export interface RenderHero {
   /** Absent off a voyage, where every hero is at full health. */
   hp?: number;
   maxHp?: number;
+  /** Knocked down in a fight: drawn lying where they fell. */
+  down?: boolean;
+  /** Whose turn it is in a fight on the tiles: their ring pulses. */
+  active?: boolean;
 }
 
 /** The first word of a name, for a plate: "Ewan Driftwood" is "Ewan". */
@@ -307,7 +335,7 @@ export function hexToWorld(p: HexPos): { x: number; z: number } {
   return { x: SQRT3 * (p.q + p.r / 2), z: 1.5 * p.r };
 }
 
-const tileTop = (t: Tile | undefined) => (!t ? 0.2 : t.biome === "water" ? 0.14 : 0.35 + t.h * 1.1);
+export const tileTop = (t: Tile | undefined) => (!t ? 0.2 : t.biome === "water" ? 0.14 : 0.35 + t.h * 1.1);
 /** A room's floor, which wall pieces' heights are measured from. */
 const FLOOR_TOP = tileTop({ q: 0, r: 0, biome: "floor", h: BASE_HEIGHT.floor });
 /** A turn in sixths plus radians, as Three.js turns a model about y. */
@@ -724,7 +752,7 @@ export class WorldRenderer {
   private pending: { at: number; run: () => void }[] = [];
 
   private state: RenderState | null = null;
-  private reach = new Map<string, { cost: number }>();
+  private reach = new Map<string, { cost: number; prev: string | null; pos: HexPos }>();
   private hovered: HexPos | null = null;
   private turnKey = "";
 
@@ -943,7 +971,7 @@ export class WorldRenderer {
 
     const me = state.heroes.find((h) => h.id === state.you);
     const myTurn = !!me && (state.freeRoam || (state.phase === "overworld" && state.turn?.heroId === state.you));
-    this.reach = myTurn ? reachable(state.map, me!.pos, state.freeRoam ? FREE_ROAM_REACH : state.turn!.mp, this.stepCost(state)) : new Map();
+    this.reach = state.reach ?? (myTurn ? reachable(state.map, me!.pos, state.freeRoam ? FREE_ROAM_REACH : state.turn!.mp, this.stepCost(state)) : new Map());
     this.paintTiles();
     this.syncUnits(state);
     this.updatePath();
@@ -1140,6 +1168,45 @@ export class WorldRenderer {
     }
   }
 
+  // ---------- a fight on the tiles ----------
+  // A zone plays its own events (ZoneView.tsx) and asks for each piece of the picture here.
+
+  /** Walk a unit along these hexes, after whatever it is already walking. Any unit, not only a hero. */
+  walkUnit(id: string, path: HexPos[]) {
+    const unit = this.units.get(id);
+    if (!unit) return;
+    for (const p of path) {
+      const at = this.standAt(p);
+      at.z += 0.25;
+      unit.path.push(at);
+    }
+  }
+
+  /** One blow or shot from one unit at another, named for its look and sound. `onImpact` runs as it lands (or flies wide). */
+  blow(actorId: string, targetId: string, name: string, opts: { crit?: boolean; landed?: boolean; onImpact?: () => void } = {}) {
+    const style = attackStyle(name);
+    this.attack(actorId, targetId, name, !!opts.crit, () => {
+      if (opts.landed) sounds.impact(name, style, !!opts.crit, this.fighter(targetId), this.spot(targetId));
+      else sounds.miss(name, style, this.spot(targetId));
+      opts.onImpact?.();
+    }, !!opts.landed);
+  }
+
+  /** Text rising off a unit: damage, healing, a condition's name. */
+  floatOver(id: string, text: string, color: string) {
+    this.float(id, text, color);
+  }
+
+  /** A glint of light on a unit: healing, a guard going up. */
+  glint(id: string, color: string) {
+    this.sparkle(id, color);
+  }
+
+  /** Where a unit stands in the world, for a sound's distance. */
+  whereIs(id: string): { x: number; z: number } | undefined {
+    return this.spot(id);
+  }
+
   /** Run `run` on beat `beat` of what is being played out, `extra` seconds after it. */
   private later(beat: number, run: () => void, extra = 0) {
     this.pending.push({ at: this.clock + beat * 0.38 + extra, run });
@@ -1154,7 +1221,9 @@ export class WorldRenderer {
   /** Who a unit is in the fight, for its voice: looked up when asked, as the fight's line-up can change. */
   private fighter(id: string): Fighter | undefined {
     const h = this.state?.heroes.find((x) => x.id === id);
-    return h ? { side: "hero", kind: h.classId } : undefined;
+    if (h) return { side: "hero", kind: h.classId };
+    const u = this.state?.units?.find((x) => x.id === id);
+    return u ? { side: "enemy", kind: u.kind } : undefined;
   }
 
   /** Where a unit stands on the map, for a sound's distance. */
@@ -1173,9 +1242,11 @@ export class WorldRenderer {
     const t = this.units.get(targetId);
     if (!a || !t || a === t) return onImpact();
     sounds.attack(ability, attackStyle(ability), this.fighter(actorId), this.spot(actorId));
-    const dir = t.goal.x >= a.goal.x ? 1 : -1;
+    // Left or right as the viewer sees it, whichever way the camera has been turned.
+    const dir = t.goal.clone().project(this.camera).x >= a.goal.clone().project(this.camera).x ? 1 : -1;
     const flip = dir < 0;
     a.lean = -dir * 0.5;
+    if (!a.lying) a.turn = a.turnGoal = Math.atan2(t.goal.x - a.goal.x, t.goal.z - a.goal.z);
     const hitAt = t.goal.clone().add(new THREE.Vector3(0, t.size * 0.4, 0.05));
     const spell = SPELL_COLOR[ability];
 
@@ -4357,7 +4428,7 @@ export class WorldRenderer {
       // A plate shows a first name only: full names run long over a crowd.
       const full = h.label ?? (plate ? h.name : undefined);
       const label = plate && full ? firstName(full) : full;
-      want.set(h.id, { kind: h.classId, outfit: h.outfit, pos, size: 1.5, label, plate: label ? plate : undefined, stack: i, ring: colorOf(h.id), pulse: state.turn?.heroId === h.id, asleep: h.asleep, rod: h.rod, boat: h.boat });
+      want.set(h.id, { kind: h.classId, outfit: h.outfit, pos, size: 1.5, label, plate: label ? plate : undefined, stack: i, ring: colorOf(h.id), pulse: state.turn?.heroId === h.id || !!h.active, asleep: h.asleep, rod: h.rod, boat: h.boat, down: h.down });
     }
     for (const npc of state.story?.npcs ?? []) {
       const poi = state.map.pois.find((p) => p.id === npc.poi);
@@ -4374,6 +4445,12 @@ export class WorldRenderer {
         pos.z += 0.15;
         want.set(`roam:${band.id}:${i}`, { kind, pos, size: isBig(kind) ? 1.5 : 1.3, ring: i === 0 ? "#ff3b3b" : undefined, pulse: i === 0 });
       });
+    }
+    // A zone's enemies, each on its own hex.
+    for (const u of state.units ?? []) {
+      const pos = this.standAt(u.pos);
+      pos.z += 0.25;
+      want.set(u.id, { kind: u.kind, pos, size: isBoss(u.kind) ? 1.9 : isBig(u.kind) ? 1.6 : 1.4, label: u.name, ring: u.hostile ? "#e23b3b" : undefined, pulse: !!u.active, hp: u.hp, down: u.down });
     }
     for (const poi of state.map.pois) {
       if (poi.cleared || poi.enemies.length === 0) continue;
@@ -4628,9 +4705,12 @@ export class WorldRenderer {
     const me = state.heroes.find((h) => h.id === state.you);
     this.hoverLive = !!reach && reach.cost > 0;
     const budget = state.freeRoam ? FREE_ROAM_REACH : state.turn?.mp;
-    if (!reach || reach.cost === 0 || !me || budget === undefined) return;
-    const route = findPath(state.map, me.pos, hovered, budget, this.stepCost(state));
-    for (const step of route?.path ?? []) {
+    if (!reach || reach.cost === 0 || !me || (budget === undefined && !state.reach)) return;
+    // A reach handed in carries its own way back to the start; otherwise the way is found over the terrain.
+    const steps: HexPos[] = [];
+    if (state.reach) for (let at: typeof reach | undefined = reach; at && at.prev !== null; at = this.reach.get(at.prev)) steps.unshift(at.pos);
+    else steps.push(...(findPath(state.map, me.pos, hovered, budget, this.stepCost(state))?.path ?? []));
+    for (const step of steps) {
       // The way there: small lights, glowing rather than solid.
       const dot = new THREE.Mesh(new THREE.SphereGeometry(0.09, 8, 6), new THREE.MeshBasicMaterial({ color: "#eaf6ff", transparent: true, opacity: 0.85, blending: THREE.AdditiveBlending, depthWrite: false }));
       const p = this.standAt(step);

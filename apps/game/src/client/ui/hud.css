@@ -25,6 +25,8 @@
 .hud-pips { display: inline-flex; align-items: center; gap: 4px; }
 .hud-pips i { width: 10px; height: 10px; background: var(--well); border: 2px solid var(--hw-out); box-shadow: 0 0 0 2px var(--hw-dark); margin: 2px; }
 .hud-pips.action i.on { background: #8fd49a; box-shadow: 0 0 0 2px #3f7a52; }
+.hud-pips.bonus i { border-radius: 50%; }
+.hud-pips.bonus i.on { background: #f29a5b; box-shadow: 0 0 0 2px #9a4a1f; }
 .hud-pips.move i.on { background: #f0c552; box-shadow: 0 0 0 2px #8a6a26; }
 .hud-pips.focus i { rotate: 45deg; }
 .hud-pips.focus i.on { background: #7fc4e8; box-shadow: 0 0 0 2px #2f6f96; }
@@ -62,6 +64,11 @@
 /* A slot lies over its well in the picture, which is already drawn: it only holds what is in it. */
 .hud .hud-slot { position: absolute; padding: 0; display: grid; place-items: center; border: none; border-radius: 0; background: none; box-shadow: none; text-shadow: none; color: #4a2418; }
 .hud .hud-slot.ability { cursor: help; }
+/* A fight's slots: picked (waiting for its target) is lit; spent (nothing left to pay for it) is faded. */
+.hud .hud-slot.act { cursor: pointer; }
+.hud .hud-slot.act.picked { background: rgba(255, 244, 214, 0.55); box-shadow: inset 0 0 0 var(--p) #ffd23f; }
+.hud .hud-slot.act.spent, .hud .hud-slot.act:disabled { opacity: 0.4; cursor: default; }
+.hud-wait { position: absolute; right: calc(var(--p) * 2 + 1px); bottom: calc(var(--p) * 2); font-size: 11px; line-height: 1; font-weight: bold; color: #8a2f1f; }
 .hud .hud-slot:disabled { opacity: 1; cursor: default; }
 .hud button.hud-slot:hover:not(:disabled) { background: rgba(255, 244, 214, 0.35); box-shadow: inset 0 0 0 var(--p) #fff1c9; border: none; }
 .hud-slot .voxel-icon, .hud-slot .pixel-icon { width: calc(var(--p) * 10); height: calc(var(--p) * 10); }

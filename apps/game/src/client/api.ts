@@ -232,6 +232,8 @@ export const api = {
   closeTrade: (id: number) => request("/api/trade/close", { id }),
   // The dev toolbox's seeding. The server answers these only on a development deployment (server/dev.ts).
   /** Add gold to your purse, or take it with a negative amount. */
+  /** Make a zone to try fights in, from these options (and a seed, or a fresh one), and get its code. */
+  devZone: (options: Record<string, unknown>) => request<{ code: string; seed: string }>("/api/dev/zone", options),
   devGold: (amount: number) => request<{ gold: number }>("/api/dev/gold", { amount }),
   /** Put one piece of gear in your pack: a weapon or a base by its ref, at a rarity and level. */
   devGear: (ref: string, rarity: string, level: number) => request<{ item: ItemDef }>("/api/dev/gear", { ref, rarity, level }),
