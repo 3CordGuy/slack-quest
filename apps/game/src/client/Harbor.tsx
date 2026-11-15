@@ -12,7 +12,6 @@ import { api, type Character, type Me, type StatKey } from "./api";
 import { Icon } from "./items";
 import { blurb, label } from "./labels";
 import { spriteDataUrl } from "./render/sprites";
-import { devTools } from "./devTools";
 import { LookBuilder, startingOutfit } from "./LookBuilder";
 import { AnchorMark, HarborBackdrop, HarborTitle } from "./Welcome";
 
@@ -176,13 +175,12 @@ function Creation({ draft, busy, act, invite }: { draft: Character | null; busy:
   const cls = HERO_CLASSES.find((c) => c.id === classId) ?? HERO_CLASSES[0];
   const sprites = useMemo(() => Object.fromEntries(HERO_CLASSES.map((c) => [c.id, spriteDataUrl(c.id)])), []);
   const base = STARTING_STATS[classId];
-  // The look builder is a prototype: on a development deployment only, for now.
-  const building = devTools.on;
+  // How they look, chosen in the look builder below, saved as they begin.
   const [look, setLook] = useState<Appearance>(DEFAULT_APPEARANCE);
-  const portrait = useMemo(() => (building ? spriteDataUrl(classId, startingOutfit(classId, look), true) : sprites[classId]), [building, classId, look, sprites]);
+  const portrait = useMemo(() => spriteDataUrl(classId, startingOutfit(classId, look), true), [classId, look]);
   const begin = () =>
     act(async () => {
-      if (building) await api.setAppearance(look);
+      await api.setAppearance(look);
       await api.confirm();
     });
   const [naming, setNaming] = useState(false);
@@ -253,15 +251,13 @@ function Creation({ draft, busy, act, invite }: { draft: Character | null; busy:
         </div>
       </div>
 
-      {building && (
-        <div className="step">
-          <h3 className="step-title"><span className="step-num">3</span>Choose your look</h3>
-          <LookBuilder classId={classId} look={look} onChange={setLook} />
-        </div>
-      )}
+      <div className="step">
+        <h3 className="step-title"><span className="step-num">3</span>Choose your look</h3>
+        <LookBuilder classId={classId} look={look} onChange={setLook} />
+      </div>
 
       <div className="step">
-        <h3 className="step-title"><span className="step-num">{building ? 4 : 3}</span>Roll your stats</h3>
+        <h3 className="step-title"><span className="step-num">4</span>Roll your stats</h3>
         <div className="hero-sheet">
           <div className="hero-portrait">
             <span className="hero-plinth"><img className="pixel-icon" src={portrait} alt="" width={108} height={132} /></span>
