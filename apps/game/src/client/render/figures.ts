@@ -49,6 +49,19 @@ const WEAR = /* glsl */ `
 }`;
 
 /** Lit like the furniture, but never darker than a third of its own colour: nobody vanishes at night. */
+/**
+ * Tattoo ink: lit and shaded like the body (with the same floor of light), see-through by each vertex colour's
+ * alpha, never hiding what is behind it from the depth test, and pulled a hair toward the eye over the skin.
+ */
+function inkMaterial(): THREE.MeshLambertMaterial {
+  const m = new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -2 });
+  m.onBeforeCompile = (shader) => {
+    shader.fragmentShader = shader.fragmentShader.replace("#include <opaque_fragment>", "outgoingLight = max(outgoingLight, diffuseColor.rgb * 0.32);\n  #include <opaque_fragment>");
+  };
+  m.customProgramCacheKey = () => "gq-figure-ink";
+  return m;
+}
+
 function bodyMaterial(): THREE.MeshLambertMaterial {
   const m = new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true });
   m.onBeforeCompile = (shader) => {
@@ -240,6 +253,8 @@ interface Mats {
   body: THREE.MeshLambertMaterial;
   outline: THREE.MeshBasicMaterial;
   glow: THREE.MeshBasicMaterial;
+  /** Tattoo ink: lit like the skin, and as see-through as each cell was inked (its vertex colours' alpha). */
+  ink: THREE.MeshLambertMaterial;
 }
 
 /** One jointed part: primitives gathered in the joint's own space, then merged into a mesh or three. */
@@ -250,6 +265,7 @@ class Part {
   private solid: THREE.BufferGeometry[] = [];
   private hull: THREE.BufferGeometry[] = [];
   private lit: THREE.BufferGeometry[] = [];
+  private inked: THREE.BufferGeometry[] = [];
 
   constructor(parent: THREE.Object3D, x = 0, y = 0, z = 0) {
     this.joint.position.set(x, y, z);
@@ -331,12 +347,21 @@ class Part {
     return this.add(new ConvexGeometry(pts.map(([px, py, pz]) => new THREE.Vector3(px, py, pz))), color, x, y, z, rot, false, true);
   }
 
-  /** Triangles lying just over a surface (see inkOn), lit but with no outline: a tattoo's ink. */
-  inkGeometry(color: string, positions: number[]): this {
+  /**
+   * Triangles lying just over a surface (see inkOn): a tattoo's ink, lit, with no outline, `alpha` of it laid
+   * over what is under it (the skin shows through faint ink).
+   */
+  inkGeometry(color: string, alpha: number, positions: number[]): this {
     const g = new THREE.BufferGeometry();
     g.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
     g.computeVertexNormals();
-    return this.add(g, color, 0, 0, 0, undefined, false, false, false);
+    const c = new THREE.Color(color);
+    const n = positions.length / 3;
+    const rgba = new Float32Array(n * 4);
+    for (let i = 0; i < n; i++) rgba.set([c.r, c.g, c.b, alpha], i * 4);
+    g.setAttribute("color", new THREE.BufferAttribute(rgba, 4));
+    this.inked.push(g);
+    return this;
   }
 
   glowBox(color: string, w: number, h: number, d: number, x = 0, y = 0, z = 0, rot?: Rot): this {
@@ -376,7 +401,13 @@ class Part {
       mesh.userData.selfLit = true;
       this.skin.add(mesh);
     }
-    this.solid = this.hull = this.lit = [];
+    if (this.inked.length > 0) {
+      // Drawn after the solid body it lies on, so the skin is there to show through.
+      const mesh = new THREE.Mesh(merged(this.inked), mats.ink);
+      mesh.renderOrder = 1;
+      this.skin.add(mesh);
+    }
+    this.solid = this.hull = this.lit = this.inked = [];
   }
 }
 
@@ -587,7 +618,7 @@ function lowHead(head: Part, look: Look, asleep: boolean, covered = false) {
   head.box(tone(skin, -0.25), 1, 0.24, 0.3, 0, mouthY, faceAt(rings, mouthY) + 0.03);
   lowEyes(head, skin, look.hair, chosen?.eyes ?? "round", asleep, faceAt(rings, 3.05), faceAt(rings, 3.95));
   lowHair(head, look.hair, chosen?.hairStyle ?? "short", rings, covered);
-  if (chosen?.ink) inkPart(head, "head", chosen.ink, skin);
+  if (chosen?.ink) inkPart(head, "head", chosen.ink);
   if (chosen) lowFacialHair(head, chosen.beard, chosen.mustache, skin, look.hair, rings, chinY, mouthY);
 }
 
@@ -1208,7 +1239,7 @@ function lowBareArm(arm: Part, skin: string) {
 // ---------- tattoos ----------
 
 /** How big an ink cell is on the body, in its part's units before scaling. */
-const INK_CELL = 0.26;
+const INK_CELL = 0.13;
 
 /**
  * Where an ink region's grid lies on the body (see INK_REGIONS): the loft it is drawn on, in its part's space
@@ -1296,13 +1327,13 @@ function onSurface(surface: InkSurface, x: number, y: number, back: boolean): [n
  * Lay one side's inked cells over a loft on `part`: each cell cut where the loft's faces turn and where its
  * rings change, so every piece lies flat on the face under it, and gathered into one mesh per shade.
  */
-function inkOn(part: Part, surface: InkSurface, cols: number, view: InkView, cells: Map<number, number>, skin: string) {
+function inkOn(part: Part, surface: InkSurface, cols: number, view: InkView, cells: Map<number, number>) {
   const { half, top, cell, rings } = surface;
   const back = view === "b";
   // Seen from the front, the grid's left is the figure's right (-x); from the back, its left.
   const xAt = (c: number) => (back ? half - c * cell : -half + c * cell);
-  /** Each cell's colour (its ink over the skin, as strongly as it was inked), and the triangles in it. */
-  const byColor = new Map<string, number[]>();
+  /** The triangles of each ink (a colour at a level), to lie over the skin as see-through as it was inked. */
+  const byInk = new Map<number, number[]>();
   for (const [at, ink] of cells) {
     const c = at % cols;
     const r = Math.floor(at / cols);
@@ -1311,9 +1342,8 @@ function inkOn(part: Part, surface: InkSurface, cols: number, view: InkView, cel
     const xa = Math.min(xAt(c), xAt(c + 1));
     const xb = Math.max(xAt(c), xAt(c + 1));
     if (Math.abs((xa + xb) / 2) >= inkAcross(surface, (yTop + yBottom) / 2)) continue;
-    const color = inkOver(skin, ink);
-    if (!byColor.has(color)) byColor.set(color, []);
-    const out = byColor.get(color)!;
+    if (!byInk.has(ink)) byInk.set(ink, []);
+    const out = byInk.get(ink)!;
     const ys = [yBottom, ...rings.map((ring) => ring[0]).filter((y) => y > yBottom && y < yTop), yTop];
     for (let i = 0; i + 1 < ys.length; i++) {
       const [y0, y1] = [ys[i], ys[i + 1]];
@@ -1335,7 +1365,9 @@ function inkOn(part: Part, surface: InkSurface, cols: number, view: InkView, cel
       }
     }
   }
-  for (const [color, positions] of byColor) if (positions.length) part.inkGeometry(color, positions);
+  for (const [ink, positions] of byInk) {
+    if (positions.length) part.inkGeometry(INK_COLORS[inkColorOf(ink) - 1] ?? INK_COLORS[0], inkLevelOf(ink) / INK_LEVELS, positions);
+  }
 }
 
 /** The colour a cell of ink shows on this skin: its ink laid over the skin, as strongly as it was inked. */
@@ -1345,11 +1377,12 @@ export function inkOver(skin: string, cell: number): string {
 }
 
 /** Draw the tattoos a hero drew on `region`, front and back, on the part it lies on. */
-function inkPart(part: Part, region: InkRegion, ink: Ink, skin: string) {
+function inkPart(part: Part, region: InkRegion, ink: Ink) {
   const surface = inkSurface(region, chosen);
+  const { cols } = INK_REGIONS[region];
   for (const view of ["f", "b"] as const) {
-    const cells = decodeInk(ink[`${region}.${view}`]);
-    if (cells.size) inkOn(part, surface, INK_REGIONS[region].cols, view, cells, skin);
+    const cells = decodeInk(ink[`${region}.${view}`], cols);
+    if (cells.size) inkOn(part, surface, cols, view, cells);
   }
 }
 
@@ -2058,8 +2091,8 @@ function person(top: THREE.Group, look: Look, outfit: Outfit | undefined, asleep
         lowBareLeg(thigh, shin, look.skin);
         if (chosen?.ink) {
           const right = thigh === b.thighR;
-          inkPart(thigh, right ? "thighR" : "thighL", chosen.ink, look.skin);
-          inkPart(shin, right ? "shinR" : "shinL", chosen.ink, look.skin);
+          inkPart(thigh, right ? "thighR" : "thighL", chosen.ink);
+          inkPart(shin, right ? "shinR" : "shinL", chosen.ink);
         }
       }
       else lowLeg(thigh, shin, look.legs);
@@ -2188,11 +2221,11 @@ function person(top: THREE.Group, look: Look, outfit: Outfit | undefined, asleep
         const region = s < 0 ? "armR" : "armL";
         if (undressed) {
           lowBareArm(arm, look.skin);
-          if (chosen?.ink) inkPart(arm, region, chosen.ink, look.skin);
+          if (chosen?.ink) inkPart(arm, region, chosen.ink);
         } else if (inkedArms) {
           // Sleeves rolled up, to show off the ink on the forearms.
           lowRolledSleeve(arm, look.skin, cloth);
-          inkPart(arm, region, chosen!.ink!, look.skin);
+          inkPart(arm, region, chosen!.ink!);
         } else lowSleeve(arm, cloth, look.accent);
         continue;
       }
@@ -2972,6 +3005,7 @@ export function makeFigure(kind: string, look: Look, outfit?: Outfit, opts: Figu
     body: fadeable(bodyMaterial(), fade, "gq-figure-body"),
     outline: fadeable(new THREE.MeshBasicMaterial({ color: OUTLINE, side: THREE.BackSide }), fade, "gq-figure-line"),
     glow: fadeable(new THREE.MeshBasicMaterial({ vertexColors: true }), fade, "gq-figure-glow"),
+    ink: fadeable(inkMaterial(), fade, "gq-figure-ink"),
   };
   const made: THREE.BufferGeometry[] = [];
   for (const part of [...rig.parts, ...extraParts]) part.build(mats, made);
@@ -3003,6 +3037,7 @@ export function makeFigure(kind: string, look: Look, outfit?: Outfit, opts: Figu
     setDim(on) {
       mats.body.color.setScalar(on ? 0.5 : 1);
       mats.glow.color.setScalar(on ? 0.4 : 1);
+      mats.ink.color.setScalar(on ? 0.5 : 1);
     },
     setFade(left) {
       fade.value = Math.max(0, Math.min(1, left));
@@ -3013,6 +3048,7 @@ export function makeFigure(kind: string, look: Look, outfit?: Outfit, opts: Figu
       mats.body.dispose();
       mats.outline.dispose();
       mats.glow.dispose();
+      mats.ink.dispose();
     },
   };
 }

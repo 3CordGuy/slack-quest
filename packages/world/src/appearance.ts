@@ -272,50 +272,95 @@ const validCell = (cell: number) => inkColorOf(cell) >= 1 && inkColorOf(cell) <=
  * renderer (render/figures.ts) knows where on the body each cell lies.
  */
 export const INK_REGIONS = {
-  head: { cols: 28, rows: 28 },
-  armR: { cols: 10, rows: 13 },
-  armL: { cols: 10, rows: 13 },
-  thighR: { cols: 12, rows: 4 },
-  thighL: { cols: 12, rows: 4 },
-  shinR: { cols: 10, rows: 8 },
-  shinL: { cols: 10, rows: 8 },
+  head: { cols: 56, rows: 56 },
+  armR: { cols: 20, rows: 26 },
+  armL: { cols: 20, rows: 26 },
+  thighR: { cols: 24, rows: 8 },
+  thighL: { cols: 24, rows: 8 },
+  shinR: { cols: 20, rows: 16 },
+  shinL: { cols: 20, rows: 16 },
 } as const;
+/** How many cells across (and down) each cell of the first, coarser grids became: ink saved then is read at this scale. */
+const LEGACY_SCALE = 2;
 export type InkRegion = keyof typeof INK_REGIONS;
 export type InkView = "f" | "b";
 /** A region seen from one side, as `ink` keys it: "head.f", "armL.b". */
 export type InkSide = `${InkRegion}.${InkView}`;
 
 /**
- * A hero's tattoos: for each region and side drawn on, its inked cells. Each cell is four characters: its
- * index in the grid (row by row from the top left as seen) in two base-36 digits, then its colour (a base-36
- * digit, 1 for INK_COLORS[0]) and its level, 1 to INK_LEVELS.
+ * A hero's tattoos: for each region and side drawn on, its inked cells, row by row from the top left as seen,
+ * run-length coded after a leading "~": a letter for an inked cell (its colour and level; see INK_LETTERS),
+ * "." for a bare one, either followed by how many in a row if more than one ("A3.12B" is three cells of one
+ * ink, twelve bare, one of another). Bare cells after the last inked one are left off.
+ *
+ * Ink saved before the grids were made finer is four characters a cell (its index in two base-36 digits, its
+ * colour, its level) on grids half as fine, with no "~": decodeInk reads it, each cell becoming a 2x2 block.
  */
 export type Ink = Partial<Record<InkSide, string>>;
 
 /** The most cells a hero may have inked, all told. */
-export const MAX_INK_CELLS = 1600;
+export const MAX_INK_CELLS = 6400;
+
+/** The letter for each ink: every colour at every level, in that order (A is INK_COLORS[0] at level 1). */
+const INK_LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwx";
+const RUN_MARK = "~";
+/** The longest run read (more than a whole head's worth is not a tattoo). */
+const MAX_RUN = 56 * 56;
 
 export const INK_SIDES: InkSide[] = (Object.keys(INK_REGIONS) as InkRegion[]).flatMap((r) => [`${r}.f`, `${r}.b`] as InkSide[]);
 
-/** The inked cells of one side: index to cell (see inkCell). */
-export function decodeInk(cells: string | undefined): Map<number, number> {
+/** The inked cells of one side, on a grid `cols` wide: index to cell (see inkCell). Reads either form (see Ink). */
+export function decodeInk(cells: string | undefined, cols: number): Map<number, number> {
   const out = new Map<number, number>();
   if (!cells) return out;
+  if (cells[0] === RUN_MARK) {
+    let at = 0;
+    let i = 1;
+    while (i < cells.length) {
+      const ch = cells[i++];
+      let digits = "";
+      while (i < cells.length && cells[i] >= "0" && cells[i] <= "9") digits += cells[i++];
+      const n = digits ? Number(digits) : 1;
+      if (!(n >= 1 && n <= MAX_RUN)) break;
+      if (ch !== ".") {
+        const k = INK_LETTERS.indexOf(ch);
+        if (k < 0) break;
+        const cell = inkCell(Math.floor(k / INK_LEVELS) + 1, (k % INK_LEVELS) + 1);
+        for (let j = 0; j < n; j++) out.set(at + j, cell);
+      }
+      at += n;
+    }
+    return out;
+  }
+  // The first form, on a grid half as fine: each cell a 2x2 block here.
+  const before = Math.floor(cols / LEGACY_SCALE);
   for (let i = 0; i + 4 <= cells.length; i += 4) {
-    const at = parseInt(cells.slice(i, i + 2), 36);
+    const old = parseInt(cells.slice(i, i + 2), 36);
     const cell = inkCell(parseInt(cells[i + 2], 36), Number(cells[i + 3]));
-    if (Number.isFinite(at) && at >= 0 && validCell(cell)) out.set(at, cell);
+    if (!Number.isFinite(old) || old < 0 || !validCell(cell)) continue;
+    const r = Math.floor(old / before);
+    const c = old % before;
+    for (let dy = 0; dy < LEGACY_SCALE; dy++) for (let dx = 0; dx < LEGACY_SCALE; dx++) out.set((r * LEGACY_SCALE + dy) * cols + c * LEGACY_SCALE + dx, cell);
   }
   return out;
 }
 
-/** One side's inked cells as `Ink` keeps them, in index order. */
+/** One side's inked cells as `Ink` keeps them (see Ink). */
 export function encodeInk(cells: Map<number, number>): string {
-  return [...cells.entries()]
-    .filter(([, cell]) => validCell(cell))
-    .sort((a, b) => a[0] - b[0])
-    .map(([at, cell]) => at.toString(36).padStart(2, "0") + inkColorOf(cell).toString(36) + inkLevelOf(cell))
-    .join("");
+  const inked = [...cells.entries()].filter(([at, cell]) => at >= 0 && validCell(cell)).sort((a, b) => a[0] - b[0]);
+  let out = RUN_MARK;
+  const run = (ch: string, n: number) => (out += n > 1 ? ch + n : ch);
+  let at = 0;
+  for (let i = 0; i < inked.length; ) {
+    const [start, cell] = inked[i];
+    if (start > at) run(".", start - at);
+    let n = 1;
+    while (i + n < inked.length && inked[i + n][0] === start + n && inked[i + n][1] === cell) n++;
+    run(INK_LETTERS[(inkColorOf(cell) - 1) * INK_LEVELS + inkLevelOf(cell) - 1], n);
+    at = start + n;
+    i += n;
+  }
+  return out;
 }
 
 /**
@@ -332,7 +377,7 @@ export function parseInk(raw: unknown): Ink | undefined {
     if (typeof v !== "string" || !v || left <= 0) continue;
     const { cols, rows } = INK_REGIONS[side.split(".")[0] as InkRegion];
     const cells = new Map<number, number>();
-    for (const [at, cell] of decodeInk(v.slice(0, 4 * MAX_INK_CELLS))) {
+    for (const [at, cell] of decodeInk(v.slice(0, 6 * MAX_INK_CELLS), cols)) {
       if (at >= cols * rows || left <= 0) continue;
       cells.set(at, cell);
       left--;
