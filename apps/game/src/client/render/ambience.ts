@@ -194,8 +194,120 @@ const DROPS = 150;
 const SPLASH_DROPS = 6;
 /** How long one spell of weather lasts before the sky starts turning to the next. */
 const WEATHER_SPELL_MS = 7 * 60 * 1000;
-/** Puffs of smoke in the air over one chimney at a time. */
-const PUFFS = 12;
+/** Smoke rings in the air over one chimney at a time. */
+const PUFFS = 4;
+
+/**
+ * What the pixel decorations (smoke rings, wisps) need to know about the view: how big the picture being drawn
+ * is, in its own pixels, and how many of those make one chunky pixel (1 as a rule, 2 with "Fancy graphics" on,
+ * when the world is drawn at full resolution). One per ambience, shared by its materials, kept current by `trackView`.
+ */
+type PixelView = { uRes: { value: THREE.Vector2 }; uFine: { value: number } };
+const viewSize = new THREE.Vector2();
+/** Before `object` is drawn, note the size of the picture it is drawn into (the screen, or the finishing pass's target). */
+function trackView(object: THREE.Object3D, view: PixelView) {
+  object.onBeforeRender = (renderer) => {
+    const target = renderer.getRenderTarget();
+    if (target) view.uRes.value.set(target.width, target.height);
+    else view.uRes.value.copy(renderer.getDrawingBufferSize(viewSize));
+  };
+}
+/** Chunky pixels across that `world` units come to at this depth, as a float (GLSL; `depth` is -view z). */
+const CELLS_GLSL = /* glsl */ `
+  uniform vec2 uRes;
+  uniform float uFine;
+  float cellsAcross(float world, float depth) {
+    return world * projectionMatrix[1][1] * 0.5 * uRes.y / depth / uFine;
+  }
+`;
+
+/**
+ * Smoke rings: low-poly rings (tori) lying flat, parallel to the ground, one instance per ring. The torus is
+ * built in the shader from its two angles (the geometry's uv), so each ring has its own size and tube:
+ * `aRing` is its middle and radius, `aShape` its tube's radius, how much of it is left (1 whole, 0 gone) and a
+ * slight tip off level (x and z). Lit by a fixed light from above in three flat bands, lighter on top and darker
+ * underneath, so it reads as solid. It is drawn opaque and thins away by dropping chunky pixels in an ordered
+ * dither, so rings never need sorting against each other or the roofs. `uShade` follows the daylight.
+ */
+function smokeRingMaterial(view: PixelView): THREE.ShaderMaterial {
+  return new THREE.ShaderMaterial({
+    uniforms: { ...view, uShade: { value: 1 } },
+    vertexShader: /* glsl */ `
+      attribute vec4 aRing;
+      attribute vec4 aShape;
+      varying vec3 vNormal;
+      varying float vLeft;
+      void main() {
+        float u = uv.x * 6.2831853;
+        float v = uv.y * 6.2831853;
+        vec3 rim = vec3(cos(u), 0.0, sin(u));
+        vec3 normal = rim * cos(v) + vec3(0.0, sin(v), 0.0);
+        vec3 p = rim * aRing.w + normal * aShape.x;
+        // Tip it a little off level: about x, then about z.
+        float cx = cos(aShape.z), sx = sin(aShape.z), cz = cos(aShape.w), sz = sin(aShape.w);
+        mat3 tip = mat3(cz, sz, 0.0, -sz, cz, 0.0, 0.0, 0.0, 1.0) * mat3(1.0, 0.0, 0.0, 0.0, cx, sx, 0.0, -sx, cx);
+        vNormal = tip * normal;
+        vLeft = aShape.y;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(aRing.xyz + tip * p, 1.0);
+      }
+    `,
+    fragmentShader: /* glsl */ `
+      uniform float uFine;
+      uniform float uShade;
+      varying vec3 vNormal;
+      varying float vLeft;
+      const float BAYER[16] = float[16](0.0, 8.0, 2.0, 10.0, 12.0, 4.0, 14.0, 6.0, 3.0, 11.0, 1.0, 9.0, 15.0, 7.0, 13.0, 5.0);
+      void main() {
+        vec2 cell = mod(floor(gl_FragCoord.xy / uFine), 4.0);
+        if (vLeft <= (BAYER[int(cell.y) * 4 + int(cell.x)] + 0.5) / 16.0) discard;
+        float lit = dot(normalize(vNormal), normalize(vec3(0.35, 1.0, 0.25)));
+        float band = lit > 0.55 ? 1.0 : lit > -0.1 ? 0.84 : 0.68;
+        gl_FragColor = vec4(vec3(uShade * band, uShade * band, uShade * band * 1.03), 1.0);
+        #include <colorspace_fragment>
+      }
+    `,
+  });
+}
+
+/**
+ * Wisps: each a ribbon along its trail, so it is one unbroken stroke however near the camera is (single pixels
+ * spaced along the path came apart into a row of dots up close). Its width is set in the world, at least one
+ * chunky pixel and at most three, in whole chunky pixels, so it thickens a little as the camera comes in.
+ * `aDir` is the way the trail runs at each point; `aSide` is which edge of the ribbon a corner is on.
+ */
+function wispMaterial(view: PixelView): THREE.ShaderMaterial {
+  return new THREE.ShaderMaterial({
+    uniforms: view,
+    transparent: true,
+    depthWrite: false,
+    vertexShader: /* glsl */ `
+      ${CELLS_GLSL}
+      attribute vec3 aDir;
+      attribute float aSide;
+      attribute vec4 aTint;
+      varying vec4 vTint;
+      void main() {
+        vec4 mv = modelViewMatrix * vec4(position, 1.0);
+        vec4 clip = projectionMatrix * mv;
+        vec4 ahead = projectionMatrix * modelViewMatrix * vec4(position + aDir, 1.0);
+        vec2 run = (ahead.xy / ahead.w - clip.xy / clip.w) * uRes;
+        float len = length(run);
+        vec2 across = len > 1e-4 ? vec2(-run.y, run.x) / len : vec2(0.0, 1.0);
+        float px = clamp(floor(cellsAcross(0.03, -mv.z) + 0.5), 1.0, 3.0) * uFine;
+        clip.xy += across * aSide * px / uRes * clip.w;
+        gl_Position = clip;
+        vTint = aTint;
+      }
+    `,
+    fragmentShader: /* glsl */ `
+      varying vec4 vTint;
+      void main() {
+        gl_FragColor = vTint;
+        #include <colorspace_fragment>
+      }
+    `,
+  });
+}
 /**
  * Cobbles for the Harbor's streets, as quiet as the floorboards: irregular
  * rounded stones of uneven size in four near-identical greys, with joints
@@ -514,7 +626,7 @@ export class Ambience {
   private wisps: Wisp[] = [];
   /** The map's extent, which gusts are scattered over. */
   private bounds = { minX: 0, maxX: 0, minZ: 0, maxZ: 0 };
-  private wispPoints: THREE.Points | null = null;
+  private wispRibbon: THREE.Mesh | null = null;
   /** Low cloud and rain: set for a map with streets. */
   /** The map is the Harbor (it has streets): its weather runs wetter. */
   private wetPort = false;
@@ -528,8 +640,16 @@ export class Ambience {
   private splashPoints: THREE.Points | null = null;
   private shoreSplashes: typeof this.splashes = [];
   private rockSplashes: typeof this.splashes = [];
-  /** Chimney smoke: a column of pixel puffs over each stack. Outlives a map rebuild, so it is kept out of `group`. */
-  private smoke: THREE.Points | null = null;
+  /** Chimney smoke: pixel smoke rings rising from each stack. Outlives a map rebuild, so it is kept out of `group`. */
+  private smoke: THREE.InstancedMesh | null = null;
+  private wispAt = new THREE.Vector3();
+  private wispAhead = new THREE.Vector3();
+  private wispBehind = new THREE.Vector3();
+  /** How many of the picture's pixels make one chunky pixel: 1 as a rule, 2 while the world is drawn at full resolution. */
+  set fine(fine: number) {
+    this.pixelView.uFine.value = fine;
+  }
+  private pixelView: PixelView = { uRes: { value: new THREE.Vector2(1, 1) }, uFine: { value: 1 } };
   private stacks: THREE.Vector3[] = [];
   /**
    * A lighthouse's lamp: two soft beams turning slowly round it and a glow on the lantern. Additive meshes and a
@@ -918,7 +1038,7 @@ export class Ambience {
       this.group.add(this.rain);
     }
 
-    // ---- wisps: trails of single pixels that sway gently as they cross ----
+    // ---- wisps: thin ribbons that sway gently as they cross ----
     // No wind indoors.
     const indoors = (this.indoors = tiles.some((t) => (t.biome as string) === "floor" || (t.biome as string) === "cave"));
     const count = this.still || indoors ? 0 : Math.min(14, Math.max(7, Math.round(tiles.length / 30)));
@@ -926,12 +1046,25 @@ export class Ambience {
       this.wisps.push({ offset: hash(i, 4, 100), speed: 0.1 + hash(i, 5, 100) * 0.07 });
     }
     if (count > 0) {
+      // Two corners per point along the trail, one each side, joined point to point into a strip.
+      const corners = count * TRAIL * 2;
       const geometry = new THREE.BufferGeometry();
-      geometry.setAttribute("position", new THREE.BufferAttribute(new Float32Array(count * TRAIL * 3), 3));
-      geometry.setAttribute("color", new THREE.BufferAttribute(new Float32Array(count * TRAIL * 4), 4));
-      this.wispPoints = new THREE.Points(geometry, new THREE.PointsMaterial({ size: 2, sizeAttenuation: false, vertexColors: true, transparent: true, depthWrite: false }));
-      this.wispPoints.frustumCulled = false;
-      this.group.add(this.wispPoints);
+      geometry.setAttribute("position", new THREE.BufferAttribute(new Float32Array(corners * 3), 3));
+      geometry.setAttribute("aDir", new THREE.BufferAttribute(new Float32Array(corners * 3), 3));
+      geometry.setAttribute("aTint", new THREE.BufferAttribute(new Float32Array(corners * 4), 4));
+      geometry.setAttribute("aSide", new THREE.BufferAttribute(new Float32Array(corners).map((_, k) => (k % 2 ? 1 : -1)), 1));
+      const index: number[] = [];
+      for (let n = 0; n < count; n++) {
+        for (let i = 0; i < TRAIL - 1; i++) {
+          const a = (n * TRAIL + i) * 2;
+          index.push(a, a + 1, a + 2, a + 1, a + 3, a + 2);
+        }
+      }
+      geometry.setIndex(index);
+      this.wispRibbon = new THREE.Mesh(geometry, wispMaterial(this.pixelView));
+      this.wispRibbon.frustumCulled = false;
+      trackView(this.wispRibbon, this.pixelView);
+      this.group.add(this.wispRibbon);
     }
   }
 
@@ -946,7 +1079,7 @@ export class Ambience {
     this.group.clear();
     this.grass = null;
     this.waves = [];
-    this.wispPoints = null;
+    this.wispRibbon = null;
     this.rain = null;
     this.splashPoints = null;
     this.splashes = [];
@@ -1079,9 +1212,10 @@ export class Ambience {
       material.map!.offset.x = motion * clock * (row ? 0.11 : -0.08) + row * 0.25;
     });
 
-    if (this.wispPoints) {
-      const pos = this.wispPoints.geometry.getAttribute("position") as THREE.BufferAttribute;
-      const col = this.wispPoints.geometry.getAttribute("color") as THREE.BufferAttribute;
+    if (this.wispRibbon) {
+      const pos = this.wispRibbon.geometry.getAttribute("position") as THREE.BufferAttribute;
+      const dir = this.wispRibbon.geometry.getAttribute("aDir") as THREE.BufferAttribute;
+      const col = this.wispRibbon.geometry.getAttribute("aTint") as THREE.BufferAttribute;
       const glow = 0.72 + 0.28 * this.daylight;
       const b = this.bounds;
       this.wisps.forEach((w, n) => {
@@ -1101,19 +1235,30 @@ export class Ambience {
         const underBeat = 3 + r(9) * 3;
         const drift = (r(12) - 0.5) * 0.8;
         const life = smooth(0, 0.12, head) * (1 - smooth(0.66, 1, head));
-        for (let i = 0; i < TRAIL; i++) {
-          // Each pixel follows the head a little further back along the same path.
-          const s = head - i * 0.0095;
+        /** Where the trail is at `s` along the gust's path. */
+        const at = (s: number, out: THREE.Vector3) => {
           const along = (s - 0.5) * reach;
           const up = Math.sin(s * beat + r(13) * 6) * swell + Math.sin(s * underBeat + r(6) * 6) * under + (s - 0.5) * drift;
-          const k = n * TRAIL + i;
-          pos.setXYZ(k, x0 + WIND.x * along, y0 + up, z0 + WIND.z * along);
+          return out.set(x0 + WIND.x * along, y0 + up, z0 + WIND.z * along);
+        };
+        for (let i = 0; i < TRAIL; i++) {
+          // Each point follows the head a little further back along the same path.
+          const s = head - i * 0.0095;
+          at(s, this.wispAt);
+          // Which way the trail runs here, for the ribbon's width to lie across it.
+          at(s + 0.0095, this.wispAhead).sub(at(s - 0.0095, this.wispBehind));
           // Fades toward the tail, and the whole trail fades in at the start of a crossing and out over its last third.
           const fade = s <= 0 ? 0 : life * (1 - i / TRAIL) ** 0.8;
-          col.setXYZW(k, 1, 0.95 + 0.05 * this.daylight, glow, fade * (0.55 + 0.35 * this.daylight));
+          for (let side = 0; side < 2; side++) {
+            const k = (n * TRAIL + i) * 2 + side;
+            pos.setXYZ(k, this.wispAt.x, this.wispAt.y, this.wispAt.z);
+            dir.setXYZ(k, this.wispAhead.x, this.wispAhead.y, this.wispAhead.z);
+            col.setXYZW(k, 1, 0.95 + 0.05 * this.daylight, glow, fade * (0.55 + 0.35 * this.daylight));
+          }
         }
       });
       pos.needsUpdate = true;
+      dir.needsUpdate = true;
       col.needsUpdate = true;
     }
   }
@@ -1409,10 +1554,12 @@ export class Ambience {
     }
     this.stacks = stacks;
     if (stacks.length === 0) return;
-    const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute("position", new THREE.BufferAttribute(new Float32Array(stacks.length * PUFFS * 3), 3));
-    geometry.setAttribute("color", new THREE.BufferAttribute(new Float32Array(stacks.length * PUFFS * 4), 4));
-    this.smoke = new THREE.Points(geometry, new THREE.PointsMaterial({ size: 3, sizeAttenuation: false, vertexColors: true, transparent: true, depthWrite: false }));
+    // A plain torus for its angles only (the shader builds each ring's shape from them): few sides, for a chunky look.
+    const geometry = new THREE.TorusGeometry(1, 0.25, 6, 18);
+    const rings = stacks.length * PUFFS;
+    geometry.setAttribute("aRing", new THREE.InstancedBufferAttribute(new Float32Array(rings * 4), 4));
+    geometry.setAttribute("aShape", new THREE.InstancedBufferAttribute(new Float32Array(rings * 4), 4));
+    this.smoke = new THREE.InstancedMesh(geometry, smokeRingMaterial(this.pixelView), rings);
     this.smoke.frustumCulled = false;
     this.scene.add(this.smoke);
   }
@@ -1640,20 +1787,35 @@ export class Ambience {
 
   private puff(clock: number) {
     if (!this.smoke) return;
-    const pos = this.smoke.geometry.getAttribute("position") as THREE.BufferAttribute;
-    const col = this.smoke.geometry.getAttribute("color") as THREE.BufferAttribute;
-    const shade = 0.55 + 0.4 * this.daylight;
+    const ring = this.smoke.geometry.getAttribute("aRing") as THREE.InstancedBufferAttribute;
+    const shape = this.smoke.geometry.getAttribute("aShape") as THREE.InstancedBufferAttribute;
+    (this.smoke.material as THREE.ShaderMaterial).uniforms.uShade.value = 0.5 + 0.45 * this.daylight;
     this.stacks.forEach((stack, n) => {
       for (let i = 0; i < PUFFS; i++) {
-        const life = this.still ? i / PUFFS : (clock * 0.16 + i / PUFFS + n * 0.37) % 1;
-        const sway = Math.sin(life * 5 + i * 1.7 + n) * 0.1 * life;
+        // Each ring is blown out of the pot, floats up, widens, leans downwind and thins away near the top.
+        // Every time round it is a new ring: its own size, its own rate of widening and its own wobble.
+        const phase = this.still ? (i + 0.5) / PUFFS : clock * 0.11 + i / PUFFS + n * 0.37;
+        const lap = Math.floor(phase);
+        const life = phase - lap;
+        const r = (salt: number) => hash(n * PUFFS + i + 1, lap, 700 + salt);
+        const sway = Math.sin(life * 5 + i * 1.7 + n) * 0.05 * life;
+        const lean = life * life * 0.5;
+        const radius = (0.05 + r(1) * 0.07) * (1 + life * (0.8 + r(2) * 0.9));
+        const tube = radius * (0.34 - 0.12 * life);
+        const wobble = this.still ? 0 : 0.18 * life;
         const k = n * PUFFS + i;
-        pos.setXYZ(k, stack.x + life * life * 0.55 + sway, stack.y + life * 1.5, stack.z + Math.cos(i * 2.3) * 0.05 * life);
-        col.setXYZW(k, shade, shade, shade * 1.03, Math.sin(Math.PI * Math.min(1, life * 1.15)) * 0.6 * (1 - life * 0.5));
+        ring.setXYZW(k, stack.x + WIND.x * lean + sway, stack.y + 0.04 + life * (1.6 + r(3) * 0.5), stack.z + WIND.z * lean, radius);
+        shape.setXYZW(
+          k,
+          tube,
+          smooth(0, 0.06, life) * (1 - smooth(0.45, 1, life)),
+          (r(4) - 0.5) * 0.3 + Math.sin(clock * 1.3 + i * 2.1 + n) * wobble,
+          (r(5) - 0.5) * 0.3 + Math.cos(clock * 1.1 + i * 1.3 + n) * wobble,
+        );
       }
     });
-    pos.needsUpdate = true;
-    col.needsUpdate = true;
+    ring.needsUpdate = true;
+    shape.needsUpdate = true;
   }
 
   /**
