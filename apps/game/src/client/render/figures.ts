@@ -1192,11 +1192,21 @@ function lowWornHelmet(head: Part, helmet: { ref: string; icon: string }, trim: 
  */
 function lowChest(torso: Part, skin: string, cloth: string, sh: number, belt?: string): Ring[] {
   const hip = m.hips;
-  const rings: Ring[] = [[-0.6, 2.85 * hip, 1.95 + (hip - 1) * 0.6, 0], [0.4, 2.6 * hip, 1.8 + (hip - 1) * 0.5, 0], [1.6, 2.45 * (1 + hip) * 0.5, 1.7, 0.05], [3.6, 3.3 * (1 + sh) * 0.5, 2.05, 0.15], [5.3, 4.05 * sh, 2, 0.05], [6.1, 3.1 * sh, 1.6, -0.05], [6.5, 1.4, 1.2, 0]];
+  // Down at the hips the clothes come out over the tops of the thighs, so the legs don't poke through at the sides.
+  const rings: Ring[] = [[-0.6, Math.max(2.85 * hip, thighReach(-0.6)), 1.95 + (hip - 1) * 0.6, 0], [0.4, Math.max(2.6 * hip, thighReach(0.4)), 1.8 + (hip - 1) * 0.5, 0], [1.6, 2.45 * (1 + hip) * 0.5, 1.7, 0.05], [3.6, 3.3 * (1 + sh) * 0.5, 2.05, 0.15], [5.3, 4.05 * sh, 2, 0.05], [6.1, 3.1 * sh, 1.6, -0.05], [6.5, 1.4, 1.2, 0]];
   torso.cyl(skin, 1, 1.15, 1.6, 0, 6.6, 0, 6);
   torso.loft(cloth, rings);
   if (belt) torso.loft(belt, [around(rings, 0.85, 0.1, 0.02), around(rings, 1.75, 0.1, 0.05)]);
   return rings;
+}
+
+/**
+ * How far out from the middle the outside of a thigh reaches at height `y` (the torso's own units; the hips are
+ * at 0), with room for trousers or greaves over it: what the clothes at the waist have to cover.
+ */
+function thighReach(y: number): number {
+  const fuller = 0.5 + 0.5 * m.hips;
+  return 1.7 * m.hips + (ringAt(THIGH, y).rx + 0.14) * fuller + 0.12;
 }
 
 /** A ring just outside `rings` at height `y`, `by` larger all round. */
@@ -1231,8 +1241,13 @@ function coatPanel(part: Part, color: string, s: number, a0: number, a1: number,
   const steps = 6;
   for (let i = 0; i <= steps; i++) {
     const a = a0 + ((a1 - a0) * i) / steps;
-    // The skirts flare over the hips, wider for wide ones.
-    for (const [y, rx, rz, dz] of [[1.4, 2.85 * (1 + m.hips) * 0.5 + grow, 2 + grow, 0.05], [-4.6, 3.5 * m.hips + grow, 2.7 + grow, -0.2]] as const) {
+    // The skirts flare over the hips, wider for wide ones, and out over the tops of the thighs.
+    const rings: [number, number, number, number][] = [
+      [1.4, 2.85 * (1 + m.hips) * 0.5 + grow, 2 + grow, 0.05],
+      [0.2, Math.max(3.1 * m.hips, thighReach(0.2) + 0.1) + grow, 2.25 + grow, 0],
+      [-4.6, Math.max(3.5 * m.hips, thighReach(0.2) + 0.25) + grow, 2.7 + grow, -0.2],
+    ];
+    for (const [y, rx, rz, dz] of rings) {
       for (const k of [1, 0.82]) pts.push([s * Math.sin(a) * rx * k, y, Math.cos(a) * rz * k + dz]);
     }
   }
