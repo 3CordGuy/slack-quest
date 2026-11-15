@@ -136,7 +136,7 @@ export interface FurnishingDef {
   surface?: Surface;
   /** It gives off light in the room. "fire" also throws shadows. */
   light?: "fire" | "candle" | "lamp";
-  /** It holds things: this many slots for decorations, gear and stacks of materials. */
+  /** It holds things: this many squares, CHEST_COLS across, for gear (by its footprint), stacks of materials and decorations (a square each). */
   storage?: number;
   /** Key for the client's model of it. */
   model: string;
@@ -153,6 +153,11 @@ export interface FurnishingDef {
 /** Half the distance between the middles of two neighbouring hexes: where a two-hex piece's middle sits from its anchor. */
 const HALF_HEX = Math.sqrt(3) / 2;
 
+/** A container is a grid like the pack: this many squares across, and as many rows down as its `storage` makes. */
+export const CHEST_COLS = 12;
+/** The deepest a container is: ten rows. */
+export const CHEST_MAX_ROWS = 10;
+
 export const FURNISHINGS: Record<string, FurnishingDef> = {
   table: { id: "table", name: "Plank Table", kind: "furniture", footprint: { w: 1.0, d: 0.7 }, model: "table", blurb: "Somewhere to put things down.", price: 30, recipe: { wood: 6 }, surface: { y: 0.5, w: 0.96, d: 0.66 } },
   chair: { id: "chair", name: "Stool", kind: "furniture", footprint: { w: 0.48, d: 0.48, round: true }, model: "chair", blurb: "Three legs and no back.", price: 15, recipe: { wood: 3 } },
@@ -160,22 +165,22 @@ export const FURNISHINGS: Record<string, FurnishingDef> = {
   lantern: { id: "lantern", name: "Copper Lantern", kind: "furniture", footprint: { w: 0.4, d: 0.4, round: true }, model: "lantern", blurb: "Keeps the corners lit.", price: 40, recipe: { copper: 3, wood: 1 }, light: "lamp" },
   banner: { id: "banner", name: "Crew Banner", kind: "furniture", footprint: { w: 0.7, d: 0.36 }, model: "banner", blurb: "Your crew's colours.", price: 45, recipe: { fur: 2, wood: 2 } },
   bed: { id: "bed", name: "Bunk", kind: "furniture", bed: true, footprint: { w: 0.84, d: 1.3, z: -0.02 }, model: "bed", blurb: "A proper night's sleep before sailing. +1 focus.", recipe: { wood: 8, fur: 4 }, needsBlueprint: true, perk: { focus: 1 } },
-  chest: { id: "chest", name: "Sea Chest", kind: "furniture", footprint: { w: 0.79, d: 0.56 }, model: "chest", blurb: "Room for a spare bottle. +1 potion. Holds 12 things.", recipe: { wood: 6, iron: 3 }, needsBlueprint: true, perk: { potions: 1 }, storage: 12, surface: { y: 0.48, w: 0.74, d: 0.5 } },
+  chest: { id: "chest", name: "Sea Chest", kind: "furniture", footprint: { w: 0.79, d: 0.56 }, model: "chest", blurb: "Room for a spare bottle. +1 potion. Twelve squares by eight inside.", recipe: { wood: 6, iron: 3 }, needsBlueprint: true, perk: { potions: 1 }, storage: CHEST_COLS * 8, surface: { y: 0.48, w: 0.74, d: 0.5 } },
   hearth: { id: "hearth", name: "Stone Hearth", kind: "furniture", footprint: { w: 1.2, d: 0.72 }, model: "hearth", blurb: "A hot meal before the voyage. +4 max HP.", recipe: { stone: 10, iron: 2 }, needsBlueprint: true, perk: { maxHp: 4 }, light: "fire" },
   bookshelf: { id: "bookshelf", name: "Bookshelf", kind: "furniture", footprint: { w: 0.95, d: 0.34, z: -0.1 }, model: "bookshelf", blurb: "Other people's mistakes, written down. +2% XP.", recipe: { wood: 8, bone: 2 }, needsBlueprint: true, perk: { xpPct: 2 } },
   workbench: { id: "workbench", name: "Workbench", kind: "furniture", footprint: { w: 1.15, d: 0.6 }, model: "workbench", blurb: "Where the next thing gets made.", recipe: { wood: 6, iron: 4 }, needsBlueprint: true, surface: { y: 0.6, w: 1.1, d: 0.56 } },
   // Every home gets one, free, standing in the room: where gear the hero cannot carry waits (carry.ts).
   // Never sold or crafted, and it gives no perk. A container like the others, and moved like any piece.
-  storage_chest: { id: "storage_chest", name: "Storage Chest", kind: "furniture", footprint: { w: 0.58, d: 0.45 }, model: "small_chest", blurb: "Every home's own chest, for the gear you cannot carry. Holds 10 things.", storage: 10, surface: { y: 0.42, w: 0.54, d: 0.4 } },
+  storage_chest: { id: "storage_chest", name: "Storage Chest", kind: "furniture", footprint: { w: 0.58, d: 0.45 }, model: "small_chest", blurb: "Every home's own chest, for the gear you cannot carry. Twelve squares by ten inside.", storage: CHEST_COLS * 10, surface: { y: 0.42, w: 0.54, d: 0.4 } },
   weapon_rack: { id: "weapon_rack", name: "Weapon Rack", kind: "furniture", footprint: { w: 1.0, d: 0.22, z: -0.08 }, model: "weapon_rack", blurb: "Everything in reach.", recipe: { wood: 4, iron: 4, copper: 2 }, needsBlueprint: true },
 
   // ---- more furniture: tops to put things on, and places to keep things ----
   desk: { id: "desk", name: "Writing Desk", kind: "furniture", footprint: { w: 1.1, d: 0.56 }, model: "desk", blurb: "A wide top and a drawer that sticks.", price: 40, recipe: { wood: 7 }, surface: { y: 0.62, w: 1.06, d: 0.52 } },
   side_table: { id: "side_table", name: "Side Table", kind: "furniture", footprint: { w: 0.56, d: 0.52 }, model: "side_table", blurb: "Just big enough for a candle and a mug.", price: 18, recipe: { wood: 3 }, surface: { y: 0.55, w: 0.52, d: 0.48 } },
-  dresser: { id: "dresser", name: "Dresser", kind: "furniture", footprint: { w: 1.04, d: 0.52, z: -0.1 }, model: "dresser", blurb: "Three drawers and a top for odds and ends. Holds 12 things.", price: 60, recipe: { wood: 8, iron: 1 }, storage: 12, surface: { y: 0.84, w: 0.98, d: 0.46, z: -0.1 } },
-  cupboard: { id: "cupboard", name: "Tall Cupboard", kind: "furniture", footprint: { w: 0.96, d: 0.48, z: -0.12 }, model: "cupboard", blurb: "Floor to rafters. Holds 20 things.", recipe: { wood: 10, iron: 2 }, needsBlueprint: true, storage: 20, surface: { y: 1.52, w: 0.86, d: 0.42, z: -0.12 } },
-  crate: { id: "crate", name: "Storage Crate", kind: "furniture", footprint: { w: 0.7, d: 0.7 }, model: "crate", blurb: "Nailed shut, then not. Holds 8 things.", price: 12, recipe: { wood: 3 }, storage: 8, surface: { y: 0.56, w: 0.66, d: 0.66 } },
-  barrel: { id: "barrel", name: "Barrel", kind: "furniture", footprint: { w: 0.58, d: 0.58, round: true }, model: "barrel", blurb: "Smells faintly of fish. Holds 6 things.", price: 16, recipe: { wood: 4, iron: 1 }, storage: 6, surface: { y: 0.78, w: 0.42, d: 0.42 } },
+  dresser: { id: "dresser", name: "Dresser", kind: "furniture", footprint: { w: 1.04, d: 0.52, z: -0.1 }, model: "dresser", blurb: "Three drawers and a top for odds and ends. Twelve squares by six inside.", price: 60, recipe: { wood: 8, iron: 1 }, storage: CHEST_COLS * 6, surface: { y: 0.84, w: 0.98, d: 0.46, z: -0.1 } },
+  cupboard: { id: "cupboard", name: "Tall Cupboard", kind: "furniture", footprint: { w: 0.96, d: 0.48, z: -0.12 }, model: "cupboard", blurb: "Floor to rafters. Twelve squares by ten inside.", recipe: { wood: 10, iron: 2 }, needsBlueprint: true, storage: CHEST_COLS * 10, surface: { y: 1.52, w: 0.86, d: 0.42, z: -0.12 } },
+  crate: { id: "crate", name: "Storage Crate", kind: "furniture", footprint: { w: 0.7, d: 0.7 }, model: "crate", blurb: "Nailed shut, then not. Twelve squares by four inside.", price: 12, recipe: { wood: 3 }, storage: CHEST_COLS * 4, surface: { y: 0.56, w: 0.66, d: 0.66 } },
+  barrel: { id: "barrel", name: "Barrel", kind: "furniture", footprint: { w: 0.58, d: 0.58, round: true }, model: "barrel", blurb: "Smells faintly of fish. Twelve squares by three inside.", price: 16, recipe: { wood: 4, iron: 1 }, storage: CHEST_COLS * 3, surface: { y: 0.78, w: 0.42, d: 0.42 } },
   fireplace: { id: "fireplace", name: "Great Fireplace", kind: "furniture", footprint: { w: 1.7, d: 0.8 }, model: "fireplace", blurb: "A roaring fire and a mantel for your treasures.", recipe: { stone: 14, iron: 3 }, needsBlueprint: true, light: "fire", surface: { y: 1.06, w: 1.5, d: 0.24, z: 0.24 } },
 
   // ---- big pieces: anchored on one hex and reaching across the next (see Footprint) ----
@@ -400,6 +405,13 @@ export interface StowedGear {
   icon: string;
   slot: string;
   rarity: string;
+  /** The rest of the item as the bag lists it, for its footprint and its card. */
+  kind: string;
+  ref: string;
+  power: number;
+  level_req: number;
+  stat_bonus_json: string;
+  upgrades?: number;
 }
 
 /** Everything about a player's hut and what they could put in it. */

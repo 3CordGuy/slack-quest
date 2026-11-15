@@ -17,6 +17,7 @@ import {
 } from "@gantt-quest/world";
 import type { InventoryItem } from "./api";
 import { itemArtUrl } from "./itemArt";
+import { voxelIconUrl } from "./ui/voxel";
 import { blurb, itemName, label } from "./labels";
 
 /** An inventory row as the game rules see it, keeping its id and equipped flag. */
@@ -41,10 +42,12 @@ export function toOwned(row: InventoryItem): OwnedItem {
 
 /**
  * A pixel-art item icon. `color` is the accent (the item's rarity colour).
- * Sizes that are a multiple of 18 keep every art pixel the same size.
+ * Shown as the icon's 3D form (ui/voxel.ts) unless `flat` or a `silhouette` is asked for.
  */
-export function Icon({ name, color, size = 36, silhouette = false }: { name: string; color: string; size?: number; silhouette?: boolean }) {
-  return <img className="pixel-icon" aria-hidden alt="" draggable={false} width={size} height={size} src={itemArtUrl(name, color, silhouette)} />;
+export function Icon({ name, color, size = 36, silhouette = false, flat = false }: { name: string; color: string; size?: number; silhouette?: boolean; flat?: boolean }) {
+  // A silhouette (an empty slot's hint) stays flat; everything else is shown as its little 3D model.
+  if (silhouette || flat) return <img className="pixel-icon" aria-hidden alt="" draggable={false} width={size} height={size} src={itemArtUrl(name, color, silhouette)} />;
+  return <img className="voxel-icon" aria-hidden alt="" draggable={false} width={size} height={size} src={voxelIconUrl(name, color)} />;
 }
 
 export const powerLabel = (item: ItemDef) => (item.kind === "weapon" ? "Power" : "Armor");

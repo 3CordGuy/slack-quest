@@ -8,6 +8,7 @@
 // sky.
 
 import * as THREE from "three";
+import { devTools } from "../devTools";
 import { WIND_DIR, gustAt, windPower } from "./wind";
 import type { Tile } from "@gantt-quest/world";
 import type { LightKind } from "./props";
@@ -65,9 +66,12 @@ export function stamp(ctx: CanvasRenderingContext2D, rows: string[], colors: Rec
   });
 }
 
-/** The radius a hex is drawn at: a hair under 1, so neighbours do not fight over a shared wall. */
-export const TILE_RADIUS = 0.985;
-/** The radius of the rounding where a hex's top turns down into its wall. */
+/** The radius a hex is drawn at: its full place in the grid, so its rim meets its neighbours' with no gap to see the sea through. */
+export const TILE_RADIUS = 1;
+/**
+ * The radius of the rounding where a hex's top turns down into its wall. Two neighbours on a level round down
+ * into each other and meet at the foot of the curve, which is the soft groove between tiles.
+ */
 export const TILE_FILLET = 0.09;
 /** How many flat strips the rounding is made of. Their normals turn smoothly, so it is lit as a curve. */
 const FILLET_STEPS = 5;
@@ -931,7 +935,7 @@ export class Ambience {
    * A new spell starts every few minutes and the sky eases from one to the next. The Harbor runs wetter than an island.
    */
   private weather(): number {
-    if (import.meta.env.DEV) {
+    if (devTools.on) {
       const forced = (globalThis as { __gqWeather?: number }).__gqWeather;
       if (typeof forced === "number") return forced;
     }
@@ -950,7 +954,7 @@ export class Ambience {
    * rest are plain downpours. Shared by a crew, like the weather itself.
    */
   private stormy(): number {
-    if (import.meta.env.DEV) {
+    if (devTools.on) {
       const forced = (globalThis as { __gqStorm?: number }).__gqStorm;
       if (typeof forced === "number") return forced;
       // Holding the weather by hand holds the storm off too, unless it is asked for.
@@ -965,7 +969,7 @@ export class Ambience {
   }
 
   private timeOfDay(): number {
-    if (import.meta.env.DEV) {
+    if (devTools.on) {
       const forced = (globalThis as { __gqTime?: number }).__gqTime;
       if (typeof forced === "number") return forced;
     }

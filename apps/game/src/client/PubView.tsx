@@ -24,6 +24,9 @@ import { useSalesman } from "./salesmanClock";
 import { CrewRoster } from "./CrewRoster";
 import { DragPanel } from "./DragPanel";
 import { OptionsMenu } from "./OptionsMenu";
+import { HudBar } from "./ui/Hud";
+import { InventoryScreen } from "./InventoryScreen";
+import { Logbook } from "./Logbook";
 import { perkText } from "./hutDrops";
 import { ThingIcon, pubIcon } from "./thingIcons";
 import { TileAction } from "./TileAction";
@@ -333,6 +336,9 @@ export function PubView({ me, refresh, onLeave }: { me: Me; refresh(): Promise<u
     wantTalk.current = null;
   }, [nearId]);
   const gold = me.character?.gold ?? 0;
+  /** The sea bag and the logbook, opened from the bottom bar. */
+  const [bag, setBag] = useState(false);
+  const [book, setBook] = useState(false);
   const hoverPoi = hover ? poiAt(ROOM, hover) : undefined;
   const tip = hoverRegular ? `${hoverRegular.name}, ${hoverRegular.trade}. Click to walk up and talk.`
     : hover && same(hover, PUB_BARKEEP_POS) ? `${PUB_BARKEEP.name}, the barkeep. Stand at the menu board to talk to him.`
@@ -390,24 +396,6 @@ export function PubView({ me, refresh, onLeave }: { me: Me; refresh(): Promise<u
   return (
     <div className={`run hut-view pub-view${seatedAt ? " seated" : ""}`}>
       <div className="stage" ref={mount} />
-      <div className="topbar">
-        <strong>The pub</strong>
-        <span className="muted">{me.crew?.name}</span>
-        <span className="spacer" />
-        <span className="gold">{gold} gold</span>
-        {pub.status !== "open" && !pub.error && <span className="bad">connecting…</span>}
-        <button className="small" onClick={onLeave}>Leave</button>
-        <OptionsMenu
-          reset={pub.status !== "open" ? undefined : {
-            to: "the door",
-            run: () => {
-              pub.send({ type: "unstick" });
-              renderer.current?.lookAt(DOOR);
-            },
-          }}
-          resetBlocked="Waiting for the pub to connect."
-        />
-      </div>
 
       {you && atCounter && (
         <DragPanel id="pub.bar" title="At the bar" className="story panel pub-bar">
@@ -483,7 +471,7 @@ export function PubView({ me, refresh, onLeave }: { me: Me; refresh(): Promise<u
         />
       </DragPanel>
 
-      <DragPanel id="pub.chat" title="Pub chat" foldOnPhone className="chat panel harbor-chat">
+      <DragPanel id="pub.chat" title="Pub chat" foldOnPhone expandable className="chat panel harbor-chat">
         <div className="chat-lines">
           {pub.chat.length === 0 && <div className="muted">Only people inside the pub see what is said here.</div>}
           {pub.chat.map((l, i) => <div key={i} className="line hero"><strong>{l.name}: </strong>{l.text}</div>)}
@@ -495,25 +483,51 @@ export function PubView({ me, refresh, onLeave }: { me: Me; refresh(): Promise<u
         </div>
       </DragPanel>
 
-      <DragPanel id="pub.turn" title="Here" compact className="turnbar panel">
-        {holdingDice ? <span>You are in a game. Walking away forfeits it.</span>
-          : atDoor ? <span>The door back to the Harbor.</span>
-          : atCounter ? <span>At the bar.</span>
-          : atDice ? <span>At the dice table.</span>
-          : atShoals ? <span>At the Shoals table.</span>
-          : atCrew ? <span>At the Cargo and Krakens table.</span>
-          : atBoard ? <span>In front of the leaderboard.</span>
-          : atTide ? <span>At the Turn the Tide card table.</span>
-          : near ? <span>Beside {near.name}, {near.trade}.</span>
-          : atDealer ? <span>Beside {PUB_DEALER.name}, {PUB_DEALER.trade}.</span>
-          : atTrader ? (seller ? <span>At {seller.name}'s table.</span> : <span className="muted">The corner is empty.{due && ` ${due.name} is due ${dueIn(visitor.next!.startsAt - visitor.now)}.`}</span>)
-          : seller ? <span className="pub-visitor">{seller.name}, {seller.trade}, is in the corner by the far wall.</span>
-          : <span className="muted">Click a hex to walk. Order at the menu board; contracts are with {PUB_DEALER.short} by the pillar; the game tables are across the room, with their leaderboard on the back wall.</span>}
+      <HudBar
+        me={me}
+        place={
+          <>
+            {holdingDice ? <span>You are in a game. Walking away forfeits it.</span>
+              : atDoor ? <span>The door back to the Harbor.</span>
+              : atCounter ? <span>At the bar.</span>
+              : atDice ? <span>At the dice table.</span>
+              : atShoals ? <span>At the Shoals table.</span>
+              : atCrew ? <span>At the Cargo and Krakens table.</span>
+              : atBoard ? <span>In front of the leaderboard.</span>
+              : atTide ? <span>At the Turn the Tide card table.</span>
+              : near ? <span>Beside {near.name}, {near.trade}.</span>
+              : atDealer ? <span>Beside {PUB_DEALER.name}, {PUB_DEALER.trade}.</span>
+              : atTrader ? (seller ? <span>At {seller.name}'s table.</span> : <span className="muted">The corner is empty.{due && ` ${due.name} is due ${dueIn(visitor.next!.startsAt - visitor.now)}.`}</span>)
+              : seller ? <span className="pub-visitor">{seller.name}, {seller.trade}, is in the corner by the far wall.</span>
+              : <span className="muted">Click a hex to walk. Order at the menu board; contracts are with {PUB_DEALER.short} by the pillar; the game tables are across the room, with their leaderboard on the back wall.</span>}
+          </>
+        }
+        chips={pub.status !== "open" && !pub.error ? <span className="hud-chip bad">connecting…</span> : undefined}
+        onBag={() => setBag((open) => !open)}
+        onBook={() => setBook(true)}
+        menu={
+          <OptionsMenu
+            title={"The pub"}
+            subtitle={me.crew?.name}
+            actions={[{ label: "Leave", run: onLeave }]}
+            reset={pub.status !== "open" ? undefined : {
+              to: "the door",
+              run: () => {
+                pub.send({ type: "unstick" });
+                renderer.current?.lookAt(DOOR);
+              },
+            }}
+            resetBlocked="Waiting for the pub to connect."
+          />
+        }
+      >
         {near && !holdingDice && <button className="primary" disabled={!!talking} onClick={() => setTalkTo(near.id)}>Talk to {near.short}</button>}
         {atDealer && !holdingDice && <button className="primary" disabled={dealing} onClick={() => setDealing(true)}>See contracts</button>}
         {atBoard && !holdingDice && <button className="primary" disabled={reading} onClick={() => setReading(true)}>Read the board</button>}
         <button className={atDoor ? "primary" : ""} disabled={holdingDice} onClick={onLeave}>Leave</button>
-      </DragPanel>
+      </HudBar>
+      {bag && me.character && <InventoryScreen me={me} refresh={refresh} onClose={() => setBag(false)} />}
+      {book && me.character && <Logbook me={me} refresh={refresh} onClose={() => setBook(false)} />}
       {atDoor && self && !holdingDice && <TileAction renderer={renderer} pos={self.pos} unitId={self.id} label="Leave" run={onLeave} />}
       {near && self && !talking && !holdingDice && !atBoard && <TileAction renderer={renderer} pos={self.pos} unitId={self.id} label={`Talk to ${near.short}`} run={() => setTalkTo(near.id)} />}
       {atDealer && self && !dealing && !holdingDice && <TileAction renderer={renderer} pos={self.pos} unitId={self.id} label="See contracts" run={() => setDealing(true)} />}

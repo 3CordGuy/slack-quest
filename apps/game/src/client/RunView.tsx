@@ -37,6 +37,8 @@ import { BEAT_MS, BattleIntro, BattleRecap, FindCard, INTRO_BEATS, INTRO_MS, blo
 import { BattleHud, useCountdown } from "./BattleHud";
 import { DragPanel } from "./DragPanel";
 import { OptionsMenu } from "./OptionsMenu";
+import { HudBar, HudCorner } from "./ui/Hud";
+import { Logbook } from "./Logbook";
 import { SailingView, type SeaMode } from "./SailingView";
 import { HutSpoils, blueprintName, isTrophy, perkText, resourceText } from "./hutDrops";
 import { InventoryScreen } from "./InventoryScreen";
@@ -46,8 +48,7 @@ import { WorldRenderer } from "./render/WorldRenderer";
 import { useRun, type RunConnection } from "./useRun";
 import { itemName, label } from "./labels";
 import { Icon } from "./items";
-import { GOLD_ICON, ThingIcon, dishIcon } from "./thingIcons";
-import { useHotkey } from "./useHotkey";
+import { GOLD_ICON, ThingIcon, brewIcon, dishIcon } from "./thingIcons";
 
 /** The least time the ship is seen under way once she has sailed, before she makes landfall, so a quick story does not flash by. */
 const MIN_CROSSING_MS = 1200;
@@ -217,6 +218,11 @@ function lastCheck(events: WorldEvent[], names: Map<string, string>): Shown | nu
 
 export function RunView({ code, me, refresh, onLeave }: { code: string; me: Me; refresh(): Promise<unknown>; onLeave(): void }) {
   const [inventory, setInventory] = useState(false);
+  const [book, setBook] = useState(false);
+  // With the bag open your hero turns to face you, so you can see what they are wearing.
+  useEffect(() => {
+    renderer.current?.setFacingFront(inventory);
+  }, [inventory]);
   const [tradeWith, setTradeWith] = useState<string | null>(null);
   const mount = useRef<HTMLDivElement>(null);
   const renderer = useRef<WorldRenderer | null>(null);
@@ -353,12 +359,6 @@ export function RunView({ code, me, refresh, onLeave }: { code: string; me: Me; 
   useEffect(() => {
     if (!ashore) setTradeWith(null);
   }, [ashore]);
-  // "i" opens and closes the inventory, as the top bar's button does: not during a fight, nor once the voyage is over.
-  useHotkey("i", () => {
-    if (inventory) return setInventory(false);
-    void refresh();
-    setInventory(true);
-  }, !!state && state.phase !== "battle" && state.phase !== "ended");
   // Dev-only handle for driving a run from the console or a test script.
   if (import.meta.env.DEV) (window as unknown as { __gq: unknown }).__gq = { state, send: run.send, World };
 
@@ -407,7 +407,7 @@ export function RunView({ code, me, refresh, onLeave }: { code: string; me: Me; 
       {!state && <div className="overlay"><div className="panel">{run.error ?? "Hailing the ship…"}{run.error && <p><button onClick={onLeave}>Back to the Harbor</button></p>}</div></div>}
       {state && (
         <>
-          <TopBar state={state} code={code} status={run.status} onLeave={onLeave} onAbandon={() => run.send({ type: "abandon" })} onInventory={() => { void refresh(); setInventory(true); }} />
+          <TopBar state={state} code={code} status={run.status} onLeave={onLeave} onAbandon={() => run.send({ type: "abandon" })} />
           {state.phase === "lobby" && <Lobby state={state} run={run} code={code} />}
           {!caverns && <SailingView view={view} mode={sea} island={run.state} names={state.heroes.map((h) => h.name)} onLanded={() => setLanded(true)} />}
           {atMouth && (
@@ -417,10 +417,12 @@ export function RunView({ code, me, refresh, onLeave }: { code: string; me: Me; 
           )}
           {(state.phase === "overworld" || state.phase === "battle") && !sea && (
             <>
-              <Story state={state} />
-              <Crew state={state} online={run.online} onTrade={ashore ? setTradeWith : undefined} onOpen={state.phase === "overworld" ? heroSheet.toggle : undefined} openId={heroSheet.open} />
+              <div className="hud-left">
+                <Story state={state} />
+                <Crew state={state} online={run.online} onTrade={ashore ? setTradeWith : undefined} onOpen={state.phase === "overworld" ? heroSheet.toggle : undefined} openId={heroSheet.open} />
+              </div>
               <Feed lines={feed} />
-              {state.phase === "overworld" && <TurnBar state={state} run={run} />}
+              {state.phase === "overworld" && <TurnBar state={state} run={run} me={me} code={code} status={run.status} onInventory={() => setInventory((open) => { if (!open) void refresh(); return !open; })} onBook={() => { void refresh(); setBook(true); }} onLeave={onLeave} />}
               <SkipVoteBar state={state} run={run} />
               <YourTurnFrame state={state} />
               {ashore && me.character && <Trading me={me} partners={state.heroes.filter((h) => h.id !== state.you)} withId={tradeWith} onWith={setTradeWith} refresh={refresh} run={code} />}
@@ -438,7 +440,7 @@ export function RunView({ code, me, refresh, onLeave }: { code: string; me: Me; 
           )}
           {state.phase === "ended" && <Ending state={state} onLeave={onLeave} />}
           {shown && <Slots shown={shown} />}
-          {inventory && me.character && state.phase !== "battle" && (
+          {inventory && !tradeWith && me.character && state.phase !== "battle" && (
             <InventoryScreen
               me={me}
               onIsland
@@ -450,6 +452,7 @@ export function RunView({ code, me, refresh, onLeave }: { code: string; me: Me; 
               onClose={() => setInventory(false)}
             />
           )}
+          {book && me.character && state.phase !== "battle" && <Logbook me={me} onIsland refresh={refresh} onClose={() => setBook(false)} />}
           {run.error && <div className="toast">{run.error}</div>}
         </>
       )}
@@ -484,18 +487,14 @@ function HexTip({ state, hover }: { state: ClientState; hover: HexPos }) {
   );
 }
 
-function TopBar({ state, code, status, onLeave, onAbandon, onInventory }: { state: ClientState; code: string; status: string; onLeave(): void; onAbandon(): void; onInventory(): void }) {
-  const fighting = state.phase === "battle";
-  const you = state.heroes.find((h) => h.id === state.you);
-  const gone = !!you?.out;
+/** What the voyage has to say for itself: its name, the days left, what is in the hold. */
+function VoyageChips({ state, status }: { state: ClientState; status: string }) {
   return (
-    <div className="topbar">
-      <strong>{state.story?.title ?? (state.kind === "caverns" ? "The Haunted Caverns" : "A ship at the Harbor")}</strong>
-      {state.story && <span className="muted wide-only">{state.story.islandName}</span>}
+    <>
       {state.round > 0 && state.phase !== "ended" && (
         state.kind === "caverns"
-          ? <span className={state.doom <= 3 ? "bad" : ""} title="When the torches burn out, the crew gropes its way out in the dark and loses some of what it carried. Climb out at the cave mouth before then."><span className="wide-only">Day {state.round} · torchlight for </span>{state.doom}<span className="wide-only"> more</span> day{state.doom === 1 ? "" : "s"}<span className="narrow-only"> of torchlight</span></span>
-          : <span className={state.doom <= 3 ? "bad" : ""}>Day {state.round} · {state.doom} day{state.doom === 1 ? "" : "s"} left</span>
+          ? <span className={`hud-chip ${state.doom <= 3 ? "bad" : ""}`} title="When the torches burn out, the crew gropes its way out in the dark and loses some of what it carried. Climb out at the cave mouth before then.">Day {state.round} · torchlight for {state.doom} more</span>
+          : <span className={`hud-chip ${state.doom <= 3 ? "bad" : ""}`}>Day {state.round} · {state.doom} day{state.doom === 1 ? "" : "s"} left</span>
       )}
       {state.kind === "caverns" && (state.keys ?? 0) > 0 && state.phase !== "ended" && (
         <span className="larder-chip" title="Any key opens any locked door.">Keys ×{state.keys}</span>
@@ -505,29 +504,49 @@ function TopBar({ state, code, status, onLeave, onAbandon, onInventory }: { stat
           <ThingIcon icon={dishIcon("chowder")} size={18} />Chowder ×{state.larder.chowder}
         </span>
       )}
-      <span className="spacer" />
-      {status !== "open" && <span className="bad">reconnecting…</span>}
-      <span className="muted wide-only">{state.kind === "caverns" ? "Delve" : "Ship"} {code}</span>
-      {state.phase !== "ended" && (
-        <button className="small" disabled={fighting} title={fighting ? "Not during a fight" : "Your gear and stats (I)"} onClick={onInventory}>
-          Inventory
-        </button>
-      )}
-      {/* The Harbor is behind you once the ship has sailed: only from the docked lobby, or once the voyage is over. */}
+      {status !== "open" && <span className="hud-chip bad">reconnecting…</span>}
+    </>
+  );
+}
+
+const voyageTitle = (state: ClientState) => state.story?.title ?? (state.kind === "caverns" ? "The Haunted Caverns" : "A ship at the Harbor");
+
+/** The voyage's game menu: no putting a hero back, where they stand is part of the game. */
+function VoyageMenu({ state, code, onLeave, onAbandon }: { state: ClientState; code: string; onLeave(): void; onAbandon(): void }) {
+  const you = state.heroes.find((h) => h.id === state.you);
+  const gone = !!you?.out;
+  return (
+    <OptionsMenu
+      title={voyageTitle(state)}
+      subtitle={<>{state.story?.islandName ? `${state.story.islandName} · ` : ""}{state.kind === "caverns" ? "Delve" : "Ship"} {code}</>}
+      actions={[
+        // The Harbor is behind you once the ship has sailed: only from the docked lobby, once the voyage is over, or once you are out of it.
+        ...(state.phase === "lobby" || state.phase === "ended" || gone ? [{ label: "Back to the Harbor", run: onLeave }] : []),
+        // The way back, at a price: everything this quest paid out is given up.
+        ...(state.phase === "overworld" && you && !gone
+          ? [{
+              label: "Abandon quest",
+              hint: "Head back to the Harbor now. You keep nothing you earned on this quest.",
+              tone: "danger" as const,
+              run: () => { if (window.confirm("Abandon the quest and return to the Harbor? You will forfeit all the loot, XP and gold you earned on it.")) onAbandon(); },
+            }]
+          : []),
+      ]}
+      resetBlocked="Not on a voyage: your hero stays where the island has them. It works in the Harbor, a hut or the pub."
+    />
+  );
+}
+
+/** While the bottom bar is away (the lobby, the crossing, a fight, the ending): the voyage's chips and the cog, in the corner. */
+function TopBar({ state, code, status, onLeave, onAbandon }: { state: ClientState; code: string; status: string; onLeave(): void; onAbandon(): void }) {
+  if (state.phase === "overworld" && state.turn) return null;
+  const gone = !!state.heroes.find((h) => h.id === state.you)?.out;
+  return (
+    <HudCorner menu={<VoyageMenu state={state} code={code} onLeave={onLeave} onAbandon={onAbandon} />}>
+      <strong>{voyageTitle(state)}</strong>
+      <VoyageChips state={state} status={status} />
       {(state.phase === "lobby" || state.phase === "ended" || gone) && <button className="small" onClick={onLeave}>Harbor</button>}
-      {/* The way back, at a price: everything this quest paid out is given up. */}
-      {state.phase === "overworld" && you && !gone && (
-        <button
-          className="small"
-          title="Head back to the Harbor now. You keep nothing you earned on this quest."
-          onClick={() => { if (window.confirm("Abandon the quest and return to the Harbor? You will forfeit all the loot, XP and gold you earned on it.")) onAbandon(); }}
-        >
-          Abandon quest
-        </button>
-      )}
-      {/* No putting a hero back on a voyage: where they stand is part of the game. */}
-      <OptionsMenu resetBlocked="Not on a voyage: your hero stays where the island has them. It works in the Harbor, a hut or the pub." />
-    </div>
+    </HudCorner>
   );
 }
 
@@ -633,7 +652,7 @@ interface CrewProps {
 
 function Crew({ state, online, onTrade, onOpen, openId }: CrewProps) {
   return (
-    <DragPanel id="run.crew" title="Crew" foldOnPhone className="crew">
+    <div className="crew crew-cards">
       {state.heroes.map((h) => {
         const c = state.battle?.combatants.find((x) => x.id === h.id);
         const hp = c?.hp ?? h.hp;
@@ -673,7 +692,7 @@ function Crew({ state, online, onTrade, onOpen, openId }: CrewProps) {
           </div>
         );
       })}
-    </DragPanel>
+    </div>
   );
 }
 
@@ -703,12 +722,21 @@ function Slots({ shown }: { shown: Shown }) {
   );
 }
 
-function TurnBar({ state, run }: { state: ClientState; run: RunConnection }) {
+function TurnBar({ state, run, me, code, status, onInventory, onBook, onLeave }: { state: ClientState; run: RunConnection; me: Me; code: string; status: string; onInventory(): void; onBook(): void; onLeave(): void }) {
   const turn = state.turn;
   const left = useCountdown(turn?.deadline);
+  const moveMax = useRef(0);
+  const moveTurn = useRef("");
   if (!turn) return null;
   const mine = turn.heroId === state.you;
   const hero = state.heroes.find((h) => h.id === turn.heroId)!;
+  const self = state.heroes.find((h) => h.id === state.you);
+  // The most movement seen this turn is what the turn began with.
+  if (moveTurn.current !== `${state.round}:${turn.heroId}`) {
+    moveTurn.current = `${state.round}:${turn.heroId}`;
+    moveMax.current = 0;
+  }
+  moveMax.current = Math.max(moveMax.current, turn.mp);
   const here = poiAt(state.map, hero.pos);
   const caverns = state.kind === "caverns";
   // In the caverns a locked door is worked from beside it.
@@ -729,23 +757,28 @@ function TurnBar({ state, run }: { state: ClientState; run: RunConnection }) {
     : poi.kind === "lair" ? (poi.cleared ? null : `Storm ${poiName(state, poi)}`)
     : null;
   return (
-    <DragPanel id="run.turn" title="Your turn" compact className="turnbar panel">
-      {mine ? (
-        <>
-          <strong>Your turn</strong>
-          <span>{turn.mp} movement left</span>
-          <span className="muted">{state.kind === "caverns" ? "Click a lit hex to move. Cave floor costs 1; the rock cannot be crossed." : "Click a lit hex to move. Plains cost 1, forest and hills 2."}</span>
-          {action && <button className="primary" onClick={() => run.send({ type: "interact" })}>{action}</button>}
-          {caverns && here?.kind === "landing" && (
-            <button title="Leave the caverns for good. The delve ends once the whole crew is out." onClick={() => run.send({ type: "climb_out" })}>Climb out</button>
-          )}
-          <button onClick={() => run.send({ type: "end_turn" })}>End turn</button>
-        </>
-      ) : (
-        <span>Waiting for <strong>{hero.name}</strong>…</span>
+    <HudBar
+      me={me}
+      place={mine
+        ? <><strong>Your turn</strong> <span className="muted">· {state.kind === "caverns" ? "click a lit hex to move" : "click a lit hex to move: plains 1, forest and hills 2"}</span></>
+        : <>Waiting for <strong>{hero.name}</strong>…</>}
+      hp={self ? { now: self.hp, max: self.maxHp } : undefined}
+      pips={[
+        ...(mine ? [{ label: "Action", now: turn.acted ? 0 : 1, max: 1, kind: "action" as const }, { label: "Move", now: turn.mp, max: Math.max(turn.mp, moveMax.current), kind: "move" as const }] : []),
+      ]}
+      meter={self ? { name: "Focus", note: "spent to steady a roll", now: self.focus, max: self.maxFocus, kind: "focus" } : undefined}
+      quick={self ? [{ icon: brewIcon("healing"), label: "Potions", note: `${self.potions} left. Drunk in a fight.`, count: self.potions }] : []}
+      chips={<VoyageChips state={state} status={status} />}
+      turn={{ seconds: left, onEnd: mine ? () => run.send({ type: "end_turn" }) : undefined, waitingFor: mine ? undefined : hero.name }}
+      onBag={onInventory}
+      onBook={onBook}
+      menu={<VoyageMenu state={state} code={code} onLeave={onLeave} onAbandon={() => run.send({ type: "abandon" })} />}
+    >
+      {mine && action && <button className="primary" onClick={() => run.send({ type: "interact" })}>{action}</button>}
+      {mine && caverns && here?.kind === "landing" && (
+        <button title="Leave the caverns for good. The delve ends once the whole crew is out." onClick={() => run.send({ type: "climb_out" })}>Climb out</button>
       )}
-      {left !== null && <span className={left <= 15 ? "bad" : "muted"}>{left}s</span>}
-    </DragPanel>
+    </HudBar>
   );
 }
 
@@ -787,7 +820,7 @@ function Chat({ state, run, talkTo, onTalked }: { state: ClientState; run: RunCo
     setFocus(0);
   };
   return (
-    <DragPanel id="run.chat" title="Talk" compact className="chat panel" unfold={unfold}>
+    <DragPanel id="run.chat" title="Talk" compact expandable className="chat panel" unfold={unfold}>
       <div className="chat-head">
         <strong>{npc.name}</strong> <span className="muted">{npc.role}</span>
         <span className="tag">{mood}</span>

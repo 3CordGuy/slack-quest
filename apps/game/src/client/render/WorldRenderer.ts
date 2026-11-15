@@ -9,12 +9,13 @@
 import * as THREE from "three";
 import { makeModelShip } from "./modelShip";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
+import { reportEnv } from "../ui/env";
 import { Ambience, TILE_FILLET, TILE_RADIUS, hexTop, pixelTexture, stamp, type BuildingGlow } from "./ambience";
 import "./camera.css";
 import { PINCH_PAN_SLACK, followIconSvg, readFollow, writeFollow } from "./cameraFollow";
 import type { HexPos } from "@gantt-quest/core";
 import { hexDistance } from "@gantt-quest/core";
-import { BASE_HEIGHT, BATTLE_JOIN_RANGE, BIG_REACH, ENEMIES, HEX_DIRS, TRAIT_BY_ID, MOVE_COST, WALL_FACE_HALF, WALL_ITEM_BOTTOM, WALL_ITEM_TOP, findPath, hexAt, xpProgress, reachable, tileAt, wallFace, wallFaces, type ClientState, type Outfit, type Phase, type Poi, type Tile, type WorldEvent, type WorldMap } from "@gantt-quest/world";
+import { lookStep, lookYaw, BASE_HEIGHT, BATTLE_JOIN_RANGE, BIG_REACH, ENEMIES, HEX_DIRS, TRAIT_BY_ID, MOVE_COST, WALL_FACE_HALF, WALL_ITEM_BOTTOM, WALL_ITEM_TOP, findPath, hexAt, xpProgress, reachable, tileAt, wallFace, wallFaces, type ClientState, type Outfit, type Phase, type Poi, type Tile, type WorldEvent, type WorldMap } from "@gantt-quest/world";
 import { fancy } from "./fancy";
 import { NightLife } from "./nightlife";
 import { Storm } from "./storm";
@@ -23,6 +24,7 @@ import { OVERLAY_LAYER, PostFx, type Air } from "./post";
 import { fishMount } from "./catchArt";
 import { makeFigure, type Figure } from "./figures";
 import { Rise } from "./rise";
+import { gaze } from "../gaze";
 import { NIGHT, VEIL_CLEAR_S, Veil } from "./veil";
 import { GROUND_KIND, addFancyWater, addWaterRipple, setGroundWet, setWaterNight, setWaterStanding, shoreSide, updateWater, waterAttribute, type Standing } from "./water";
 import { ghostModel, propModel, tintGhost, type LightKind } from "./props";
@@ -214,6 +216,8 @@ const PAN_KEYS: Record<string, [number, number]> = {
   w: [0, 1], s: [0, -1], a: [-1, 0], d: [1, 0],
   arrowup: [0, 1], arrowdown: [0, -1], arrowleft: [-1, 0], arrowright: [1, 0],
 };
+/** Seconds between tellings of which way your own hero looks. */
+const LOOK_SEND_S = 0.15;
 /** How long a figure lying down is, as a share of its size: its tag hangs over the middle of it. */
 const LYING = 0.45;
 /** The turn, about y, from `from` to `to` by the shorter way round. */
@@ -309,6 +313,22 @@ const tileTop = (t: Tile | undefined) => (!t ? 0.2 : t.biome === "water" ? 0.14 
 /** A room's floor, which wall pieces' heights are measured from. */
 const FLOOR_TOP = tileTop({ q: 0, r: 0, biome: "floor", h: BASE_HEIGHT.floor });
 /** A turn in sixths plus radians, as Three.js turns a model about y. */
+/** How high the hover marker's column of light rises, in world units. */
+const HOVER_BEAM = 1.5;
+
+/** A small square texture filled with a gradient: for soft light that fades away (the hover marker's glow, column and motes). */
+function gradientTexture(fill: (ctx: CanvasRenderingContext2D, size: number) => CanvasGradient): THREE.CanvasTexture {
+  const size = 64;
+  const canvas = document.createElement("canvas");
+  canvas.width = canvas.height = size;
+  const ctx = canvas.getContext("2d")!;
+  ctx.fillStyle = fill(ctx, size);
+  ctx.fillRect(0, 0, size, size);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
 const yawOf = (facing: number, angle = 0) => -((facing * Math.PI) / 3 + angle);
 const key = (p: HexPos) => `${p.q},${p.r}`;
 /** To the nearest thousandth, so offsets sent to the server stay short. */
@@ -562,6 +582,18 @@ export class WorldRenderer {
   private camera = new THREE.PerspectiveCamera(35, 1, 0.1, 200);
   private renderer: THREE.WebGLRenderer;
   private raycaster = new THREE.Raycaster();
+  /** The point on the ground under the pointer, when it was last over the map. */
+  private gaze: THREE.Vector3 | null = null;
+  /** Your hero faces the camera rather than the pointer. */
+  private faceFront = false;
+  /** Units set to face a given way by the view, which the pointer leaves alone. */
+  private posed = new Set<string>();
+  /** Which way everyone else's hero is looking (a turn about y), as their players' pointers have it; gone once they walk. */
+  private looks = new Map<string, number>();
+  private unhearLooks: (() => void) | null = null;
+  /** The last look of your own hero's that was sent, and when: only a change is sent, and not too often. */
+  private lookSent = -1;
+  private lookSentAt = 0;
   private resizeObserver: ResizeObserver;
   private raf = 0;
   /** The finishing pass (bloom, tilt-shift, grade), there while "Fancy graphics" is on. On the dev server P switches it alone, to compare. */
@@ -639,7 +671,13 @@ export class WorldRenderer {
   /** Red outlines around the hexes close enough to join a fight at each camp or lair. */
   private rangeGroup = new THREE.Group();
   private rangeSig = "";
-  private hoverRing: THREE.Mesh;
+  /** The marker on the hex under the pointer: a fine bright outline, a soft glow inside it, a column of light rising off it and a few motes drifting up. */
+  private hoverRing: THREE.Group;
+  private hoverParts!: { line: THREE.MeshBasicMaterial; glow: THREE.MeshBasicMaterial; beam: THREE.MeshBasicMaterial; motes: THREE.Points; seeds: Float32Array };
+  /** When the marker last moved to a new hex, so it can bloom up there rather than snap. */
+  private hoverBorn = 0;
+  /** Whether the hex under the pointer can be walked to: lit and alive if so, a dim outline if not. */
+  private hoverLive = false;
   private arena = new THREE.Group();
   private arenaGround: THREE.Mesh;
   private arenaDecor = new THREE.Group();
@@ -737,6 +775,7 @@ export class WorldRenderer {
     this.renderer.setPixelRatio(1);
     this.renderer.localClippingEnabled = true;
     if (!this.opts.backdrop) {
+      this.unhearLooks = gaze.onLooked((id, step) => this.looks.set(id, lookYaw(step)));
       this.veil = new Veil();
       this.rise = new Rise();
     }
@@ -765,12 +804,7 @@ export class WorldRenderer {
     this.scene.add(sea);
     this.sea = sea;
 
-    this.hoverRing = new THREE.Mesh(
-      new THREE.RingGeometry(0.78, 0.95, 6),
-      new THREE.MeshBasicMaterial({ color: "#ffffff", transparent: true, opacity: 0.9, side: THREE.DoubleSide }),
-    );
-    this.hoverRing.rotation.x = -Math.PI / 2;
-    this.hoverRing.rotation.z = Math.PI / 6;
+    this.hoverRing = this.buildHoverMarker();
     this.hoverRing.visible = false;
 
     // The battleground: one great hex of whatever ground the fight broke out on, dressed to match (see dressArena).
@@ -841,6 +875,7 @@ export class WorldRenderer {
   dispose() {
     cancelAnimationFrame(this.raf);
     this.veil?.dispose();
+    this.unhearLooks?.();
     this.ear.close();
     this.resizeObserver.disconnect();
     const canvas = this.renderer.domElement;
@@ -1696,6 +1731,11 @@ export class WorldRenderer {
   }
 
   /** Ease the camera over to a hex. Following your hero pauses there until they next walk. */
+  /** Have your hero turn to face the camera and stay so (while the bag is open), or go back to looking toward the pointer. */
+  setFacingFront(on: boolean) {
+    this.faceFront = on;
+  }
+
   lookAt(pos: HexPos) {
     this.targetGoal.copy(this.standAt(pos));
     if (this.follow && !this.followHeld) {
@@ -4512,6 +4552,9 @@ export class WorldRenderer {
       unit.figure.setSize(w.size);
       unit.figure.setDim(!!w.down);
       if (w.face !== undefined) unit.turnGoal = w.face;
+      // Someone set to face a given way (seated, casting a line, lined up for a fight) is not turned by the pointer.
+      if (w.face !== undefined) this.posed.add(id);
+      else this.posed.delete(id);
       // Arrows stay in until the one they hit goes down, or the fight is over.
       if (w.down || !state.battle) this.clearArrows(unit);
 
@@ -4608,6 +4651,94 @@ export class WorldRenderer {
 
   // ---------- hover and path ----------
 
+  /**
+   * The hover marker's parts. All of it is light: drawn additively and never written to the depth buffer, so
+   * it lies over the ground and glows through whatever stands on the hex.
+   */
+  private buildHoverMarker(): THREE.Group {
+    const group = new THREE.Group();
+    const light = { transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide } as const;
+    const flat = (mesh: THREE.Mesh) => {
+      mesh.rotation.x = -Math.PI / 2;
+      mesh.rotation.z = Math.PI / 6;
+      return mesh;
+    };
+    // The outline: a fine line just inside the hex's edge.
+    const line = new THREE.MeshBasicMaterial({ color: "#f4fbff", ...light });
+    group.add(flat(new THREE.Mesh(new THREE.RingGeometry(0.9, 0.955, 6), line)));
+    // The glow: brightest against the outline, thinning to nothing toward the middle.
+    const glowTex = gradientTexture((ctx, n) => {
+      const g = ctx.createRadialGradient(n / 2, n / 2, n * 0.12, n / 2, n / 2, n / 2);
+      g.addColorStop(0, "rgba(255, 255, 255, 0)");
+      g.addColorStop(0.7, "rgba(255, 255, 255, 0.16)");
+      g.addColorStop(1, "rgba(255, 255, 255, 0.85)");
+      return g;
+    });
+    const glow = new THREE.MeshBasicMaterial({ color: "#bfe6ff", map: glowTex, ...light });
+    group.add(flat(new THREE.Mesh(new THREE.CircleGeometry(0.9, 6), glow)));
+    // The column: the hex's own outline drawn up into the air, bright at the ground and gone a little way up.
+    const beamTex = gradientTexture((ctx, n) => {
+      const g = ctx.createLinearGradient(0, n, 0, 0);
+      g.addColorStop(0, "rgba(255, 255, 255, 0.7)");
+      g.addColorStop(0.35, "rgba(255, 255, 255, 0.2)");
+      g.addColorStop(1, "rgba(255, 255, 255, 0)");
+      return g;
+    });
+    const beam = new THREE.MeshBasicMaterial({ color: "#a9dcff", map: beamTex, ...light });
+    const column = new THREE.Mesh(new THREE.CylinderGeometry(0.9, 0.9, HOVER_BEAM, 6, 1, true), beam);
+    column.position.y = HOVER_BEAM / 2;
+    group.add(column);
+    // Motes: a few specks of light drifting up through the column, each at its own pace.
+    const count = 14;
+    const seeds = new Float32Array(count * 4);
+    for (let i = 0; i < count; i++) {
+      const turn = Math.random() * Math.PI * 2;
+      const out = 0.15 + Math.random() * 0.6;
+      seeds.set([Math.cos(turn) * out, Math.sin(turn) * out, Math.random(), 0.25 + Math.random() * 0.4], i * 4);
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.BufferAttribute(new Float32Array(count * 3), 3));
+    const moteTex = gradientTexture((ctx, n) => {
+      const g = ctx.createRadialGradient(n / 2, n / 2, 0, n / 2, n / 2, n / 2);
+      g.addColorStop(0, "rgba(255, 255, 255, 1)");
+      g.addColorStop(0.4, "rgba(255, 255, 255, 0.45)");
+      g.addColorStop(1, "rgba(255, 255, 255, 0)");
+      return g;
+    });
+    const motes = new THREE.Points(geo, new THREE.PointsMaterial({ color: "#eaf6ff", map: moteTex, size: 0.16, sizeAttenuation: true, ...light }));
+    motes.frustumCulled = false;
+    group.add(motes);
+    this.hoverParts = { line, glow, beam, motes, seeds };
+    return group;
+  }
+
+  /** Each frame: the marker blooms up where it lands, breathes slowly while it rests, and its motes climb. */
+  private animateHover() {
+    if (!this.hoverRing.visible) return;
+    const { line, glow, beam, motes, seeds } = this.hoverParts;
+    // Up from nothing over a fifth of a second on a new hex.
+    const arrive = Math.min(1, (this.clock - this.hoverBorn) / 0.2);
+    const bloom = arrive * arrive * (3 - 2 * arrive);
+    const breath = 0.5 + 0.5 * Math.sin(this.clock * 2.1);
+    const live = this.hoverLive;
+    line.color.set(live ? "#f4fbff" : "#5a6788");
+    line.opacity = bloom * (live ? 0.5 + 0.18 * breath : 0.45);
+    glow.opacity = bloom * (live ? 0.26 + 0.14 * breath : 0.1);
+    beam.opacity = live ? bloom * (0.22 + 0.1 * breath) : 0;
+    this.hoverRing.scale.setScalar(0.94 + 0.06 * bloom);
+    motes.visible = live;
+    if (!live) return;
+    const at = motes.geometry.getAttribute("position") as THREE.BufferAttribute;
+    for (let i = 0; i < at.count; i++) {
+      const rise = (seeds[i * 4 + 2] + this.clock * seeds[i * 4 + 3] * 0.35) % 1;
+      // A slow sway as it climbs.
+      const sway = Math.sin(this.clock * 1.3 + i * 2.4) * 0.05;
+      at.setXYZ(i, seeds[i * 4] + sway, 0.05 + rise * HOVER_BEAM * 0.9, seeds[i * 4 + 1] + sway);
+    }
+    at.needsUpdate = true;
+    (motes.material as THREE.PointsMaterial).opacity = bloom * (0.4 + 0.25 * breath);
+  }
+
   private updatePath() {
     this.pathGroup.clear();
     const state = this.state;
@@ -4616,16 +4747,18 @@ export class WorldRenderer {
     // While carrying a piece the ghost shows where it would go; no walking route.
     if (!state || !hovered || state.battle || state.holding) return;
     const at = this.standAt(hovered);
+    if (this.hoverRing.position.distanceToSquared(new THREE.Vector3(at.x, at.y + 0.04, at.z)) > 1e-6) this.hoverBorn = this.clock;
     this.hoverRing.position.set(at.x, at.y + 0.04, at.z);
     this.hoverRing.visible = true;
     const reach = this.reach.get(key(hovered));
     const me = state.heroes.find((h) => h.id === state.you);
-    (this.hoverRing.material as THREE.MeshBasicMaterial).color.set(reach && reach.cost > 0 ? "#ffffff" : "#35405a");
+    this.hoverLive = !!reach && reach.cost > 0;
     const budget = state.freeRoam ? FREE_ROAM_REACH : state.turn?.mp;
     if (!reach || reach.cost === 0 || !me || budget === undefined) return;
     const route = findPath(state.map, me.pos, hovered, budget, this.stepCost(state));
     for (const step of route?.path ?? []) {
-      const dot = new THREE.Mesh(new THREE.SphereGeometry(0.13, 6, 4), new THREE.MeshBasicMaterial({ color: "#ffffff" }));
+      // The way there: small lights, glowing rather than solid.
+      const dot = new THREE.Mesh(new THREE.SphereGeometry(0.09, 8, 6), new THREE.MeshBasicMaterial({ color: "#eaf6ff", transparent: true, opacity: 0.85, blending: THREE.AdditiveBlending, depthWrite: false }));
       const p = this.standAt(step);
       dot.position.set(p.x, p.y + 0.2, p.z);
       this.pathGroup.add(dot);
@@ -4939,11 +5072,15 @@ export class WorldRenderer {
     const dt = Math.min(0.1, (now - this.last) / 1000);
     this.last = now;
     this.clock += dt;
+    this.animateHover();
     const ease = 1 - Math.exp(-dt * 6);
 
     if (this.pointer.dirty && this.pointer.inside && !this.minigame) {
       this.pointer.dirty = false;
       this.setHovered(this.pick());
+      // Where on the ground the pointer is, for your hero to look toward.
+      const ground = this.terrain ? this.raycaster.intersectObject(this.terrain)[0] : undefined;
+      if (ground) this.gaze = (this.gaze ?? new THREE.Vector3()).copy(ground.point);
       if (this.state?.holding) this.placeGhost();
       if (this.callbacks.onPropHover) {
         const prop = this.state?.battle ? null : this.pickProp();
@@ -5077,6 +5214,8 @@ export class WorldRenderer {
     const offshore = this.land.reach + 4;
     setWaterNight(clearSky, this.land.x + (moon.x / across) * offshore, this.land.z + (moon.z / across) * offshore, Math.max(0, (clearSky - 0.55) / 0.45));
     this.ambience.smoothSea = fancy.get();
+    // The HUD's trim and the health orb are lit by the same sun or moon, from wherever the camera stands.
+    reportEnv(this.ambience.sunDir, this.yaw, this.ambience.sunGlint(this.litRim), this.scene.background as THREE.Color);
     updateWater(fancy.get(), this.clock, this.ambience.sunDir, this.ambience.sunGlint(this.litRim), (this.sea.material as THREE.MeshLambertMaterial).color, this.scene.background as THREE.Color, this.ambience.raining);
     const step = Math.round(night * 10);
     if (step !== this.paintedNight) {
@@ -5118,6 +5257,31 @@ export class WorldRenderer {
         unit.kick.multiplyScalar(Math.exp(-dt * 9));
       }
       unit.lean *= Math.exp(-dt * 8);
+      // Your own hero, standing idle, looks toward the pointer; with the bag open they turn to face you.
+      if (id === this.state?.you && unit.path.length === 0 && !unit.asleep && !unit.lying && !this.state.battle && !this.minigame && !this.posed.has(id)) {
+        if (this.faceFront) unit.turnGoal = this.yaw;
+        else if (this.gaze && this.pointer.inside) {
+          const dx = this.gaze.x - p.x;
+          const dz = this.gaze.z - p.z;
+          if (dx * dx + dz * dz > 0.09) {
+            unit.turnGoal = Math.atan2(dx, dz);
+            // And so everyone else here sees them look that way too.
+            const step = lookStep(unit.turnGoal);
+            if (step !== this.lookSent && this.clock - this.lookSentAt > LOOK_SEND_S) {
+              this.lookSent = step;
+              this.lookSentAt = this.clock;
+              gaze.look(step);
+            }
+          }
+        }
+      } else if (id === this.state?.you) {
+        // Walking, seated or asleep: whatever they look at next is told afresh.
+        this.lookSent = -1;
+      } else if (this.looks.has(id)) {
+        // Someone else's hero looks where their player's pointer is, while they stand idle. Walking off, they face the way they go.
+        if (unit.path.length > 0) this.looks.delete(id);
+        else if (!unit.asleep && !unit.lying && !this.state?.battle && !this.posed.has(id)) unit.turnGoal = this.looks.get(id)!;
+      }
       // A sleeper lies with their head toward the left of the view, as the bedrolls are laid.
       if (unit.asleep) unit.turnGoal = this.yaw + Math.PI / 2;
       unit.turn += turnBy(unit.turn, unit.turnGoal) * (1 - Math.exp(-dt * 12));

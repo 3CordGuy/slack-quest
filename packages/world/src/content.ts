@@ -159,6 +159,8 @@ export interface AbilityDef {
 }
 
 export const ABILITIES: Record<string, AbilityDef> = {
+  // Bare hands: what a hero has with no weapon. Weak on purpose, and never on a weapon.
+  punch: { id: "punch", name: "Punch", stat: "str", rolls: 2, target: "enemy", damage: 4, blurb: "Bare knuckles. All you have without a weapon in hand." },
   smite: { id: "smite", name: "Smite", stat: "str", rolls: 3, target: "enemy", damage: 9, perfect: { effect: "stunned", turns: 1 }, blurb: "Solid blow. Perfect: stuns." },
   shield_wall: { id: "shield_wall", name: "Shield Wall", stat: "vit", rolls: 2, target: "self", heal: 4, selfEffect: { effect: "guarded", turns: 1 }, blurb: "Guard yourself and catch your breath." },
   cleave: { id: "cleave", name: "Cleave", stat: "str", rolls: 4, target: "all_enemies", damage: 7, perfect: { effect: "exposed", turns: 2 }, blurb: "Hits every enemy. Perfect: holed." },
@@ -234,6 +236,12 @@ export const WEAPONS: Record<string, WeaponDef> = {
   bilge_chalice: { id: "bilge_chalice", name: "Bilge Chalice", classId: "data_warlock", abilities: ["red_tide", "hex", "soul_drain"], looksLike: "grimoire" },
   void_staff: { id: "void_staff", name: "Undertow Staff", classId: "data_warlock", abilities: ["blight", "hex", "soul_drain"] },
 };
+
+/** What a hero can do with nothing in hand. */
+export const UNARMED_ABILITIES: string[] = ["punch"];
+
+/** The abilities a weapon gives, by its id; with no weapon (or one that is not known), bare hands. */
+export const abilitiesFor = (weapon: string | null | undefined): string[] => (weapon ? WEAPONS[weapon]?.abilities : undefined) ?? UNARMED_ABILITIES;
 
 // ---------- enemies ----------
 

@@ -417,13 +417,21 @@ const FRAG_BODY = /* glsl */ `#include <color_fragment>
     // The sheen is kept faint, and fainter still over a caustic, so a low sun or moon never washes the web out.
     waterShine += waterGlint * (step(0.3, pow(sun, 260.0)) * 1.6 + pow(sun, 36.0) * 0.07 * (1.0 - 0.7 * caustic));
 
-    // The night sky on the water. Stars: single pixels scattered over the sea, each twinkling in its own
-    // time, and sliding a little as the waves pass under them.
+    // The night sky on the water. Stars: single pixels scattered over the sea, coming and going slowly and
+    // never twice in the same place. (They do not ride the waves: a star that hops from pixel to pixel reads
+    // as a flicker.)
     if (waterStars > 0.02) {
-      vec2 sky = floor((pix + tilt.xz * 0.5) * WATER_GRID);
-      float star = waterHash(sky * 1.31 + 3.7);
-      if (star > 0.9955) {
-        float twinkle = 0.55 + 0.45 * sin(waterTime * (1.5 + star * 300.0) + star * 900.0);
+      vec2 sky = floor(pix * WATER_GRID);
+      // Every pixel of the sea keeps its own slow clock: about two to three and a half seconds a turn, each starting at its
+      // own moment. On each turn of its clock the dice are thrown again for whether a star shows there, so
+      // a star fades up out of nothing, fades away to nothing, and the next one comes up somewhere else.
+      float own = waterHash(sky * 2.17 + 11.3);
+      float turn = waterTime / (1.8 + own * 1.8) + own * 17.0;
+      float star = waterHash(sky * 1.31 + 3.7 + floor(turn) * 0.618);
+      if (star > 0.992) {
+        // Nothing at either end of the turn, brightest in the middle, eased both ways.
+        float swell = sin(fract(turn) * 3.14159);
+        float twinkle = swell * swell;
         waterShine += vec3(0.75, 0.85, 1.0) * twinkle * waterStars * (1.0 - foam) * 0.9;
       }
     }

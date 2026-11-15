@@ -23,12 +23,14 @@ import { api, type Hut, type Me } from "./api";
 import { CrewRoster } from "./CrewRoster";
 import { DragPanel } from "./DragPanel";
 import { OptionsMenu } from "./OptionsMenu";
+import { HudBar, HudCorner } from "./ui/Hud";
+import { InventoryScreen } from "./InventoryScreen";
+import { Logbook } from "./Logbook";
 import { CostChips, PerkMeter, ResourceChips } from "./hutDrops";
 import { TileAction } from "./TileAction";
 import { HutToolbar, ICON, type ToolAction } from "./HutToolbar";
 import { PixelIcon } from "./PixelIcon";
 import { WorldRenderer, type PlaceTarget, type RenderState } from "./render/WorldRenderer";
-import { HutContainer } from "./HutContainer";
 import { HeroSheet, useHeroSheet } from "./HeroSheet";
 import { useHut } from "./useHut";
 import "./hut.css";
@@ -38,6 +40,12 @@ import { xpEvents } from "./xpEvents";
 import { StaminaBolts } from "./StaminaBolts";
 
 const same = (a: HexPos, b: HexPos) => a.q === b.q && a.r === b.r;
+/** What there is to build with at home: the pack's materials and everything in the hut's chests (the server spends from both here). */
+function homeStock(hut: { resources: Record<string, number | undefined>; stash: { kind: string; qty: number }[] }) {
+  const all: Record<string, number | undefined> = { ...hut.resources };
+  for (const s of hut.stash) all[s.kind] = (all[s.kind] ?? 0) + s.qty;
+  return all;
+}
 const defOf = (f: Furnishing) => FURNISHINGS[f.defId];
 /** A snapped turn: furniture to the hex's six facings, a small thing in twenty-fourths (15°). */
 const snapStep = (defId: string) => (isSmall(defId) ? Math.PI / 12 : Math.PI / 3);
@@ -413,7 +421,12 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
   if (import.meta.env.DEV) (window as unknown as { __hut: unknown }).__hut = { hut, renderer };
 
   const mine = ownerId === me.player.id;
-  const loadOwn = () => api.hut().then(setOwn, (e: Error) => setNote({ where: "storage", text: e.message, ok: false }));
+  /** Re-read the hut. Only the answer to the newest question is kept: an older one that comes back late would show a chest as it was. */
+  const ownAsked = useRef(0);
+  const loadOwn = () => {
+    const asked = ++ownAsked.current;
+    return api.hut().then((h) => { if (asked === ownAsked.current) setOwn(h); }, (e: Error) => setNote({ where: "storage", text: e.message, ok: false }));
+  };
   useEffect(() => {
     if (mine) void loadOwn();
   }, [mine]);
@@ -468,6 +481,9 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
     return () => clearTimeout(t);
   }, [notice]);
   const [resting, setResting] = useState(false);
+  /** The sea bag and the logbook, opened from the bottom bar. A chest always opens the bag beside it, whether or not it was asked for. */
+  const [bag, setBag] = useState(false);
+  const [book, setBook] = useState(false);
   /** Rest at home (the server checks the cooldown and that you are in your own hut). On a bed, lie down on it for everyone to see. */
   const restAtHome = async (bedId?: number) => {
     setResting(true);
@@ -592,13 +608,6 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
       .catch((e: Error) => setNote({ where: "storage", text: e.message, ok: false }))
       .finally(() => void Promise.all([loadOwn(), refresh()]).finally(() => setBusy(false)));
   };
-  /** Gear or materials in or out of a container: then re-read the hut and the bag. */
-  const act = (fn: () => Promise<unknown>) => {
-    setNote(null);
-    void fn()
-      .catch((e: Error) => setNote({ where: "box", text: e.message, ok: false }))
-      .finally(() => void Promise.all([loadOwn(), refresh()]));
-  };
   const onTop = chosen ? placed.filter((f) => f.onId === chosen.id) : [];
   const box = opened !== null ? furnishings.find((f) => f.id === opened && defOf(f)?.storage) ?? null : null;
   // Opening a container re-reads what it holds, which may have changed since the panel last looked.
@@ -648,27 +657,44 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
     tools.push({ key: "away", icon: "away", title: `Put away: back into storage${riders}`, run: () => (hut.send({ type: "pick_up", id: chosen.id }), setSelected(null)) });
   }
 
+  /** The game menu, for the bottom bar's cog (or the corner's, before the bar is up). */
+  const menu = (
+    <OptionsMenu
+      title={title}
+      subtitle={tier !== null ? hutTier(tier).name : undefined}
+      actions={[{ label: "Leave", run: onLeave }]}
+      reset={hut.status !== "open" || tier === null ? undefined : {
+        to: "the door",
+        run: () => {
+          hut.send({ type: "unstick" });
+          renderer.current?.lookAt(hutDoor(tier));
+        },
+      }}
+      resetBlocked="Waiting for the hut to connect."
+    />
+  );
+  /** After a change of gear or a spend: the hut's own stock and the hero both. */
+  const reloadAll = () => Promise.all([loadOwn(), refresh()]);
+  /** The chest that is open, for its owner: it lies in the middle of the view, with the bag always open beside it. */
+  const chestOpen = canEdit ? box : null;
+  const bagOpen = bag || !!chestOpen;
+  /** Shutting the bag shuts the chest with it. */
+  const closeBag = () => {
+    setBag(false);
+    setOpened(null);
+  };
+
   return (
     <div className={`run hut-view ${canEdit && box ? "box-open" : ""}`}>
       <div className="stage" ref={mount} />
       {hanging !== null && <HangFish mountId={hanging} current={furnishings.find((f) => f.id === hanging)?.fish ?? null} onClose={() => setHanging(null)} />}
-      <div className="topbar">
-        <strong>{title}</strong>
-        {tier !== null && <span className="muted">{hutTier(tier).name}</span>}
-        <span className="spacer" />
-        {hut.status !== "open" && !hut.error && <span className="bad">connecting…</span>}
-        <button className="small" onClick={onLeave}>Leave</button>
-        <OptionsMenu
-          reset={hut.status !== "open" || tier === null ? undefined : {
-            to: "the door",
-            run: () => {
-              hut.send({ type: "unstick" });
-              renderer.current?.lookAt(hutDoor(tier));
-            },
-          }}
-          resetBlocked="Waiting for the hut to connect."
-        />
-      </div>
+      {/* Before the room has you in it there is no bottom bar: the menu's cog waits in the corner. */}
+      {!you && (
+        <HudCorner menu={menu}>
+          <strong>{title}</strong>
+          {hut.status !== "open" && !hut.error && <span className="bad">connecting…</span>}
+        </HudCorner>
+      )}
 
       {decorating && (
         <DragPanel id="hut.storage" title="Storage" foldOnPhone className="story panel hut-storage">
@@ -735,11 +761,11 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
         <DragPanel id="hut.craft" title="Craft" foldOnPhone startFolded className="panel hut-craft">
           {noteIn("craft")}
           {!own ? <p className="muted">Counting your materials…</p> : <>
-            <ResourceChips resources={own.resources} all />
+            <ResourceChips resources={homeStock(own)} all />
             <ul className="hut-recipes">
               {RECIPES.map((def) => {
                 const known = !def.needsBlueprint || own.blueprints.includes(def.id);
-                const problem = craftProblem(def.id, own.blueprints, own.resources, tier ?? undefined);
+                const problem = craftProblem(def.id, own.blueprints, homeStock(own), tier ?? undefined);
                 return (
                   <li key={def.id} className={known ? "" : "locked"}>
                     <div className="with-icon">
@@ -751,7 +777,7 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
                       </span>
                     </div>
                     <div className="row">
-                      <CostChips cost={def.recipe!} have={own.resources} />
+                      <CostChips cost={def.recipe!} have={homeStock(own)} />
                       <span className="spacer" />
                       <button className="small primary" disabled={busy || !!problem} title={problem ?? (def.kind === "vessel" ? "Tied up at the pier when it is done" : "Goes into storage")} onClick={() => void spend("craft", () => api.craft(def.id), def.kind === "vessel" ? `${label("furnishing", def.id)} built. It is tied up at the pier: walk off the end of one to take it out.` : `${label("furnishing", def.id)} crafted. It is in storage.`)}>
                         Craft
@@ -773,10 +799,10 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
             <h4>Build the {bigger.name}</h4>
             <p className="muted">A floor of {bigger.cols} by {bigger.rows}, and a bigger building in the Harbor. Everything placed stays where it stands.</p>
             <div className="row">
-              <CostChips cost={bigger.resources} have={own.resources} gold={bigger.gold} haveGold={own.gold} />
+              <CostChips cost={bigger.resources} have={homeStock(own)} gold={bigger.gold} haveGold={own.gold} />
             </div>
-            {upgradeProblem(tier, own.gold, own.resources) && <p className="muted">{upgradeProblem(tier, own.gold, own.resources)}</p>}
-            <button className="primary" disabled={busy || !!upgradeProblem(tier, own.gold, own.resources)} onClick={() => void spend("hut", () => api.upgradeHut(), `Your hut is now a ${bigger.name}.`)}>
+            {upgradeProblem(tier, own.gold, homeStock(own)) && <p className="muted">{upgradeProblem(tier, own.gold, homeStock(own))}</p>}
+            <button className="primary" disabled={busy || !!upgradeProblem(tier, own.gold, homeStock(own))} onClick={() => void spend("hut", () => api.upgradeHut(), `Your hut is now a ${bigger.name}.`)}>
               Build the {bigger.name}
             </button>
           </>)}
@@ -808,18 +834,6 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
         </DragPanel>
       )}
 
-      {canEdit && box && (
-        <DragPanel id="hut.box" title={box.label} className="panel hut-boxpanel">
-          <div className="row">
-            <span className="muted">{blurb("furnishing", box.defId)}</span>
-            <span className="spacer" />
-            <button className="small" onClick={() => setOpened(null)}>Close</button>
-          </div>
-          {noteIn("box")}
-          <HutContainer box={box} furnishings={furnishings} own={own} bag={me.inventory} pack={me.carry} send={hut.send} act={act} carry={(id) => (setEditing(true), pick(id))} />
-        </DragPanel>
-      )}
-
       {chosen && tools.length > 0 && (
         <HutToolbar renderer={renderer} propId={chosen.id} name={chosen.label} tags={tags(chosen.defId)} actions={tools} />
       )}
@@ -837,7 +851,7 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
         />
       </DragPanel>
 
-      <DragPanel id="hut.chat" title="Hut chat" foldOnPhone className="chat panel harbor-chat">
+      <DragPanel id="hut.chat" title="Hut chat" foldOnPhone expandable className="chat panel harbor-chat">
         <div className="chat-lines">
           {hut.chat.length === 0 && <div className="muted">Only people inside this hut see what is said here.</div>}
           {hut.chat.map((l, i) => <div key={i} className="line hero"><strong>{l.name}: </strong>{l.text}</div>)}
@@ -849,35 +863,43 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
         </div>
       </DragPanel>
 
-      <DragPanel id="hut.turn" title="Here" compact className="turnbar panel hut-here">
-        <p className={`hut-here-hint ${atDoor ? "" : "muted"}`}>
-          {atDoor ? "The door back to the Harbor."
-            : decorating ? "Decorating: click a piece for its controls, or pick one out of Storage. Done when you are finished."
-            : canEdit ? "Click a hex to walk, or a piece to use it: sleep in the bed, open a chest."
-            : `Click a piece to look at it. Only ${owner?.name ?? "the owner"} can move the furniture.`}
-        </p>
-        <div className="hut-here-row">
-          {canEdit && (
-            <>
-              {stamina && (
-                <span className="hut-stamina" title={staminaLine ?? undefined}>
-                  <StaminaBolts left={stamina.stamina.left} max={stamina.stamina.max} size={16} />
-                  {restIn > 0 && <span className="muted"> rest in {restIn} min</span>}
-                </span>
-              )}
-              <button disabled={resting || !!restBlocked || asleep} title={restBlocked ?? (bed ? `Walk to your ${bed.label} and sleep: all your gathering outings back, once every twenty minutes` : "Sleep here: all your gathering outings back, once every twenty minutes")} onClick={restFromBar}>Rest</button>
-              <button className={`hut-decorate ${decorating ? "selected" : ""}`} aria-pressed={decorating} aria-label={decorating ? "Done decorating" : "Decorate"} title={decorating ? "Done decorating: back to using things (anything carried goes back where it was)" : "Decorate: move, turn, put away and craft furniture"} onClick={toggleEditing}>
-                <PixelIcon rows={ICON.hammer} /><span className="hut-decorate-label">{decorating ? "Done" : "Decorate"}</span>
-              </button>
-            </>
-          )}
-          <span className="spacer" />
-          <button className={lampOff ? "" : "lamp-on"} aria-pressed={!lampOff} title={lampOff ? "Light the hanging lamp" : "Put the hanging lamp out and let the candles, lanterns and fire light the room"} onClick={toggleLamp}>
-            {lampOff ? "Lamp off" : "Lamp on"}
-          </button>
-          <button className={atDoor ? "primary" : ""} onClick={onLeave}>Leave</button>
-        </div>
-      </DragPanel>
+      <HudBar
+        me={me}
+        place={
+          <span className={atDoor ? "" : "muted"}>
+            {atDoor ? "The door back to the Harbor."
+              : decorating ? "Decorating: click a piece for its controls, or pick one out of Storage. Done when you are finished."
+              : canEdit ? "Click a hex to walk, or a piece to use it: sleep in the bed, open a chest."
+              : `Click a piece to look at it. Only ${owner?.name ?? "the owner"} can move the furniture.`}
+          </span>
+        }
+        meter={canEdit && stamina ? { name: "Energy", note: restIn > 0 ? `gathering outings · rest again in ${restIn} min` : "gathering outings left today", now: stamina.stamina.left, max: stamina.stamina.max, kind: "stamina" } : undefined}
+        rest={canEdit ? { run: restFromBar, disabled: resting || !!restBlocked || asleep, hint: restBlocked ?? (bed ? `Walk to your ${bed.label} and sleep: all your gathering outings back, once every twenty minutes` : "Sleep here: all your gathering outings back, once every twenty minutes") } : undefined}
+        chips={hut.status !== "open" && !hut.error ? <span className="hud-chip bad">connecting…</span> : undefined}
+        onBag={() => (bagOpen ? closeBag() : setBag(true))}
+        onBook={() => setBook(true)}
+        menu={menu}
+      >
+        {canEdit && (
+            <button className={`hut-decorate ${decorating ? "selected" : ""}`} aria-pressed={decorating} aria-label={decorating ? "Done decorating" : "Decorate"} title={decorating ? "Done decorating: back to using things (anything carried goes back where it was)" : "Decorate: move, turn, put away and craft furniture"} onClick={toggleEditing}>
+              <PixelIcon rows={ICON.hammer} /><span className="hut-decorate-label">{decorating ? "Done" : "Decorate"}</span>
+            </button>
+        )}
+        <button className={lampOff ? "" : "lamp-on"} aria-pressed={!lampOff} title={lampOff ? "Light the hanging lamp" : "Put the hanging lamp out and let the candles, lanterns and fire light the room"} onClick={toggleLamp}>
+          {lampOff ? "Lamp off" : "Lamp on"}
+        </button>
+        <button className={atDoor ? "primary" : ""} onClick={onLeave}>Leave</button>
+      </HudBar>
+      {bagOpen && me.character && (
+        <InventoryScreen
+          me={me}
+          refresh={reloadAll}
+          onClose={closeBag}
+          // Shutting the chest leaves the bag as it was before the chest opened it.
+          chest={chestOpen ? { box: chestOpen, furnishings, own, send: hut.send, carry: (id) => (setEditing(true), pick(id)), onClose: () => setOpened(null) } : null}
+        />
+      )}
+      {book && me.character && <Logbook me={me} refresh={reloadAll} onClose={() => setBook(false)} />}
       {atDoor && self && <TileAction renderer={renderer} pos={self.pos} unitId={self.id} label="Leave" run={onLeave} />}
       {!atDoor && self && besideUse && <TileAction renderer={renderer} pos={self.pos} unitId={self.id} label={besideUse.label} run={() => doUse.current(besideUse.piece)} />}
       </>}

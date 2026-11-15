@@ -2,30 +2,51 @@
 
 import { STARTING_STATS } from "@gantt-quest/core";
 import { describe, expect, it } from "vitest";
-import { CARRY_BASE, addStats, carryLimit, carryProblem, carryRoom, lootPlace, lootPlaceText, storeProblem, takeProblem, tradeProblem, type TradeOffer } from "./index";
+import { CARRY_BASE, PACK_CELLS, PACK_COLS, PACK_ROWS, SLOT_SIZE, STACK_MAX, WEAPON_SIZE, addStats, itemCells, itemSize, addedSlots, materialSlots, stackSlots, carryLimit, carryProblem, carryRoom, lootPlace, lootPlaceText, storeProblem, takeProblem, sideProblem } from "./index";
 
-describe("carryLimit", () => {
-  it("is a base plus one slot per point of Strength", () => {
-    expect(carryLimit({ str: 0 })).toBe(CARRY_BASE);
-    expect(carryLimit({ str: 4 })).toBe(CARRY_BASE + 4);
-    expect(carryLimit({ str: 9 })).toBe(CARRY_BASE + 9);
+describe("the pack", () => {
+  it("is the same grid for every hero, whatever their Strength", () => {
+    expect(PACK_CELLS).toBe(PACK_COLS * PACK_ROWS);
+    expect(carryLimit({ str: 0 })).toBe(PACK_CELLS);
+    expect(carryLimit(STARTING_STATS.qa_paladin)).toBe(carryLimit(STARTING_STATS.staff_sage));
+    expect(CARRY_BASE).toBe(PACK_CELLS);
   });
 
-  it("counts Strength from gear as well as the base", () => {
-    const base = STARTING_STATS.staff_sage;
-    expect(carryLimit(addStats(base, { str: 2 }))).toBe(carryLimit(base) + 2);
+  it("gives gear a footprint by its slot, and weapons one by their kind", () => {
+    expect(itemSize({ slot: "ring", ref: "ring" })).toEqual({ w: 1, h: 1 });
+    expect(itemSize({ slot: "body", ref: "coat" })).toEqual({ w: 2, h: 3 });
+    expect(itemSize({ slot: "main_hand", ref: "mace" })).toEqual({ w: 2, h: 3 });
+    expect(itemSize({ slot: "main_hand", ref: "greatsword" })).toEqual({ w: 2, h: 4 });
+    expect(itemSize({ slot: "main_hand", ref: "daggers" })).toEqual({ w: 1, h: 3 });
+    expect(itemCells({ slot: "main_hand", ref: "staff" })).toBe(8);
   });
 
-  it("never goes below the base, and ignores fractions", () => {
-    expect(carryLimit({ str: -3 })).toBe(CARRY_BASE);
-    expect(carryLimit({ str: 5.9 })).toBe(CARRY_BASE + 5);
+  it("has no footprint taller or wider than the grid", () => {
+    for (const f of [...Object.values(SLOT_SIZE), ...Object.values(WEAPON_SIZE)]) {
+      expect(f.h).toBeLessThanOrEqual(PACK_ROWS);
+      expect(f.w).toBeLessThanOrEqual(PACK_COLS);
+    }
   });
 
-  it("lets a starting Paladin carry noticeably more than a Sage", () => {
-    const paladin = carryLimit(STARTING_STATS.qa_paladin);
-    const sage = carryLimit(STARTING_STATS.staff_sage);
-    expect(paladin - sage).toBeGreaterThanOrEqual(4);
-    expect(paladin / sage).toBeGreaterThan(1.5);
+  it("sends loot home when its footprint does not fit, not just when the pack is brim full", () => {
+    expect(lootPlace({ carried: 55, limit: 60, hasHome: true, room: 2 }, 6)).toBe("storage");
+    expect(lootPlace({ carried: 54, limit: 60, hasHome: true, room: 2 }, 6)).toBe("pack");
+  });
+});
+
+describe("stacks of materials", () => {
+  it("fill one slot per STACK_MAX of a kind", () => {
+    expect(stackSlots(0)).toBe(0);
+    expect(stackSlots(1)).toBe(1);
+    expect(stackSlots(STACK_MAX)).toBe(1);
+    expect(stackSlots(STACK_MAX + 1)).toBe(2);
+    expect(materialSlots({ wood: 150, stone: 3, gem: 0 })).toBe(3);
+  });
+
+  it("only take a new slot when a stack spills over", () => {
+    expect(addedSlots(10, 5)).toBe(0);
+    expect(addedSlots(0, 5)).toBe(1);
+    expect(addedSlots(STACK_MAX - 1, 2)).toBe(1);
   });
 });
 
@@ -97,9 +118,9 @@ describe("storage", () => {
 
 describe("trading a stored item", () => {
   it("is refused until it is taken out at home", () => {
-    const offer: TradeOffer = { to: "b", give: { gold: 0, resources: {}, items: [5] }, ask: { gold: 0, resources: {} } };
-    const giver = { gold: 0, resources: {}, items: [{ id: 5, equipped: false, stored: true, name: "Old Ring" }] };
-    expect(tradeProblem(offer, { from: "a", giver })).toMatch(/Old Ring is in storage at home/);
-    expect(tradeProblem(offer, { from: "a", giver, giverName: "Mira" })).toMatch(/Mira has put Old Ring in storage/);
+    const side = { gold: 0, resources: {}, items: [5] };
+    const holder = { gold: 0, resources: {}, items: [{ id: 5, equipped: false, stored: true, name: "Old Ring" }] };
+    expect(sideProblem(side, holder)).toMatch(/Old Ring is in storage at home/);
+    expect(sideProblem(side, holder, "Mira")).toMatch(/Mira has put Old Ring in storage/);
   });
 });

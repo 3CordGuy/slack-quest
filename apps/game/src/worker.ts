@@ -72,7 +72,7 @@ import { fishStock, moveFish, sellFish } from "./server/fishmarket";
 import { catchBook, hangAtHome, mountInPub, pubWall, unmountInPub } from "./server/catchbook";
 import { pubLeaderboard } from "./server/pub-scores";
 import { builtProjectIds, contribute, crewWorks, projectStock } from "./server/projects";
-import { acceptTrade, closeTrade, listTrades, proposeTrade } from "./server/trade";
+import { acceptTrade, closeTrade, listTrades, openTrade, setTradeSide } from "./server/trade";
 import { apothecaryView, brew, smithItem, smithyView } from "./server/workshops";
 import { cook, galleyView } from "./server/galley";
 import { announceXp, harborXpFor, prepareXp, xpOutcome } from "./server/harbor-xp";
@@ -90,6 +90,8 @@ import {
   putOverrides,
   type OverrideKind,
 } from "./server/content";
+
+import { isDev, seedGear, seedGold, seedMaterial } from "./server/dev";
 
 export { HarborRoom } from "./server/harbor-room";
 export { HutRoom } from "./server/hut-room";
@@ -178,18 +180,50 @@ app.use("/api/*", async (c, next) => {
 
 app.get("/api/me", async (c) => {
   const player = c.get("player");
-  const [character, inventory, crew, carry, harborXp, seen] = await Promise.all([
+  const [character, inventory, crew, carry, harborXp, seen, held] = await Promise.all([
     getCharacter(c.env.DB, player.id),
     getInventory(c.env.DB, player.id),
     crewFor(c.env.DB, player.id),
     carryState(c.env.DB, player.id),
     harborXpFor(c.env.DB, player.id),
     seenRelease(c.env.DB, player.id),
+    c.env.DB.prepare("SELECT kind, qty FROM resources WHERE player_id = ? AND qty > 0").bind(player.id).all<{ kind: string; qty: number }>(),
   ]);
+  // `materials` is what is in the pack, in stacks beside the gear.
+  const materials = Object.fromEntries(held.results.map((r) => [r.kind, r.qty]));
   // `inventory` is what the hero has with them; what is in storage at home is only listed inside their hut.
   // `isAdmin` only decides whether the client shows the admin link: every admin route checks again.
   // `seenRelease` is the newest release whose notes they have read on the notice board.
-  return c.json({ player, character, inventory, crew, carry, harborXp, seenRelease: seen, isAdmin: isAdmin(c.env, player) });
+  // `devTools` shows the dev toolbox (ENVIRONMENT is "dev" on local and staging): the routes below answer only then.
+  return c.json({ player, character, inventory, materials, crew, carry, harborXp, seenRelease: seen, isAdmin: isAdmin(c.env, player), devTools: isDev(c.env) });
+});
+
+// ---------- the dev toolbox ----------
+
+// Seeding for whoever is testing: gold, gear and materials for your own hero
+// (server/dev.ts). Only on a development deployment; in production these
+// routes do not exist.
+app.use("/api/dev/*", async (c, next) => {
+  if (!isDev(c.env)) return c.json({ error: "not found" }, 404);
+  return next();
+});
+
+app.post("/api/dev/gold", async (c) => {
+  const body = await c.req.json<{ amount?: unknown }>().catch(() => ({}) as { amount?: unknown });
+  const result = await seedGold(c.env.DB, c.get("player").id, body.amount);
+  return typeof result === "string" ? c.json({ error: result }, 409) : c.json(result);
+});
+
+app.post("/api/dev/gear", async (c) => {
+  const body = await c.req.json<{ ref?: unknown; rarity?: unknown; level?: unknown }>().catch(() => ({}) as { ref?: unknown; rarity?: unknown; level?: unknown });
+  const result = await seedGear(c.env.DB, c.get("player").id, body);
+  return typeof result === "string" ? c.json({ error: result }, 409) : c.json(result);
+});
+
+app.post("/api/dev/material", async (c) => {
+  const body = await c.req.json<{ kind?: unknown; qty?: unknown }>().catch(() => ({}) as { kind?: unknown; qty?: unknown });
+  const result = await seedMaterial(c.env.DB, c.get("player").id, body.kind, body.qty);
+  return typeof result === "string" ? c.json({ error: result }, 409) : c.json(result);
 });
 
 // A crewmate's or shipmate's hero sheet, read-only: what the overhead plate opens on a click.
@@ -763,27 +797,36 @@ app.post("/api/spar/done", async (c) => {
 
 // ---------- giving and trading between crewmates ----------
 
-// The offers this player has open, made or received, and how recent ones ended.
+// The trades this player has open, as they see them, and how recent ones ended.
 app.get("/api/trade", async (c) => c.json(await listTrades(c.env.DB, c.get("player").id)));
 
-// Open an offer to one crewmate. `run` says it is made on that voyage's island; the server checks every part of it.
-app.post("/api/trade/propose", async (c) => {
-  const body = await c.req.json<{ run?: unknown }>().catch(() => ({}) as { run?: unknown });
+// Open the trade table with one crewmate, or find the one already open between the two.
+// `run` says it is opened on that voyage's island; the server checks it.
+app.post("/api/trade/open", async (c) => {
+  const body = await c.req.json<{ to?: unknown; run?: unknown }>().catch(() => ({}) as { to?: unknown; run?: unknown });
   const run = typeof body.run === "string" && /^[A-Za-z]{4}$/.test(body.run) ? body.run.toUpperCase() : null;
-  const result = await proposeTrade(c.env.DB, c.get("player").id, body, run);
+  const result = await openTrade(c.env.DB, c.get("player").id, body.to, run);
   return "error" in result ? c.json({ error: result.error }, 409) : c.json({ id: result.id });
 });
 
-// Accept an offer: everything in it changes hands in one batch, or nothing does.
-app.post("/api/trade/accept", async (c) => {
-  const body = await c.req.json<{ id?: unknown }>().catch(() => ({}) as { id?: unknown });
-  const result = await acceptTrade(c.env.DB, c.get("player").id, Number(body.id));
-  if ("error" in result) return c.json({ error: result.error }, 409);
-  c.executionCtx.waitUntil(refreshHarbor(c.env, result.crewId));
-  return c.json({ ok: true });
+// Lay out your side of the table: the gear, gold and materials you offer. Takes both acceptances back.
+app.post("/api/trade/offer", async (c) => {
+  const body = await c.req.json<{ id?: unknown; side?: unknown }>().catch(() => ({}) as { id?: unknown; side?: unknown });
+  const result = await setTradeSide(c.env.DB, c.get("player").id, Number(body.id), body.side);
+  return "error" in result ? c.json({ error: result.error }, 409) : c.json({ rev: result.rev });
 });
 
-// Decline an offer made to you, or withdraw one you made.
+// Accept the table as it stood at `rev`, or (ok: false) take that back. When both have accepted,
+// everything on it changes hands in one batch, or nothing does.
+app.post("/api/trade/accept", async (c) => {
+  const body = await c.req.json<{ id?: unknown; rev?: unknown; ok?: unknown }>().catch(() => ({}) as { id?: unknown; rev?: unknown; ok?: unknown });
+  const result = await acceptTrade(c.env.DB, c.get("player").id, Number(body.id), Number(body.rev), body.ok !== false);
+  if ("error" in result) return c.json({ error: result.error }, 409);
+  if (result.settled) c.executionCtx.waitUntil(refreshHarbor(c.env, result.crewId));
+  return c.json({ ok: true, settled: result.settled });
+});
+
+// Walk away from the table: the trade is cancelled.
 app.post("/api/trade/close", async (c) => {
   const body = await c.req.json<{ id?: unknown }>().catch(() => ({}) as { id?: unknown });
   const result = await closeTrade(c.env.DB, c.get("player").id, Number(body.id));

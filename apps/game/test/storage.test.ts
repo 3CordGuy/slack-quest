@@ -4,11 +4,11 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { beforeEach, describe, expect, it } from "vitest";
-import { CARRY_BASE, FURNISHINGS, GATHER_DAILY_OUTINGS, STORAGE_CHEST, gatherDay, type ItemDef } from "@gantt-quest/world";
-import { applyGrant, buyShopItem, carryState, equipItem, getInventory, getShop, sellItem, storeItem, stowGear, unstowGear } from "../src/server/db";
+import { CARRY_BASE, FURNISHINGS, itemCells, GATHER_DAILY_OUTINGS, STORAGE_CHEST, gatherDay, type ItemDef } from "@gantt-quest/world";
+import { applyGrant, buyShopItem, carryState, craftFurnishing, equipItem, getInventory, getShop, sellItem, stashMaterial, storeItem, stowGear, unstowGear } from "../src/server/db";
 import { rest } from "../src/server/gather";
 import { buyFromSalesman, getSalesman } from "../src/server/salesman";
-import { acceptTrade, proposeTrade } from "../src/server/trade";
+import { acceptTrade, openTrade, setTradeSide } from "../src/server/trade";
 
 type Row = Record<string, unknown>;
 
@@ -57,8 +57,8 @@ function openDb() {
 
 let sql: DatabaseSync;
 let db: D1Database;
-/** Ann has Strength 2, so her pack holds CARRY_BASE + 2 = 5. */
-const LIMIT = CARRY_BASE + 2;
+/** Every pack is the same grid. The rings these tests fill it with take a square each. */
+const LIMIT = CARRY_BASE;
 
 const loot: ItemDef = { kind: "trinket", ref: "ring", name: "Sea Ring", rarity: "rare", slot: "ring", power: 0, statBonus: {}, levelReq: 1, icon: "ring" };
 const grant = (item: ItemDef | null = loot) => applyGrant(db, "RUNA", "ann", { xp: 0, gold: 0, item });
@@ -94,12 +94,50 @@ beforeEach(() => {
   sql.prepare("INSERT INTO inventory (player_id, kind, ref, name, rarity, slot, equipped, created_at) VALUES ('ann', 'weapon', 'mace', 'Mace', 'common', 'main_hand', 1, ?)").run(at);
 });
 
+describe("materials in the pack", () => {
+  const give = (kind: string, qty: number) => sql.prepare("INSERT INTO resources (player_id, kind, qty) VALUES ('ann', ?, ?)").run(kind, qty);
+  const held = (kind: string) => one<{ qty: number } | undefined>("SELECT qty FROM resources WHERE player_id = 'ann' AND kind = ?", kind)?.qty ?? 0;
+  const inChest = (kind: string) => one<{ qty: number } | undefined>("SELECT SUM(qty) AS qty FROM stash WHERE player_id = 'ann' AND kind = ?", kind)?.qty ?? 0;
+
+  it("fill a slot per stack of 99, beside the gear", async () => {
+    fillPack(1);
+    give("wood", 150);
+    give("stone", 4);
+    expect((await carryState(db, "ann"))!.carried).toBe(1 + 2 + 1);
+  });
+
+  it("take a chest slot per stack, and only come out while the pack has room", async () => {
+    const chest = buildShack();
+    give("wood", 120);
+    expect(await stashMaterial(db, "ann", chest, "wood", 120)).toBeNull();
+    expect(held("wood")).toBe(0);
+    expect((await carryState(db, "ann"))!.room).toBe(CHEST_SLOTS - 2);
+    fillPack(LIMIT);
+    expect(await stashMaterial(db, "ann", chest, "wood", -10)).toMatch(/full/);
+    expect(inChest("wood")).toBe(120);
+  });
+
+  it("are spent from the chests at home when the pack is short", async () => {
+    const chest = buildShack();
+    const [defId, def] = Object.entries(FURNISHINGS).find(([, f]) => f.recipe && Object.keys(f.recipe).length === 1 && !f.minTier)!;
+    const [kind, qty] = Object.entries(def.recipe!)[0] as [string, number];
+    sql.prepare("INSERT OR IGNORE INTO blueprints (player_id, blueprint_id) VALUES ('ann', ?)").run(defId);
+    give(kind, 1);
+    sql.prepare("INSERT INTO stash (furnishing_id, player_id, kind, qty) VALUES (?, 'ann', ?, ?)").run(chest, kind, qty + 5);
+    expect(typeof (await craftFurnishing(db, "ann", defId))).toBe("object");
+    expect(held(kind) + inChest(kind)).toBe(6);
+    expect(one<{ n: number }>("SELECT COUNT(*) AS n FROM furnishings WHERE player_id = 'ann' AND def_id = ?", defId).n).toBe(1);
+  });
+});
+
 describe("carryState", () => {
-  it("counts only unequipped, carried items, and adds Strength from gear", async () => {
+  it("counts the squares of unequipped, carried items, by their footprints", async () => {
     fillPack(2);
     expect(await carryState(db, "ann")).toEqual({ carried: 2, limit: LIMIT, stored: 0, hasHome: false, room: 0 });
-    sql.prepare("INSERT INTO inventory (player_id, kind, ref, name, rarity, slot, stat_bonus_json, equipped, created_at) VALUES ('ann', 'trinket', 'ring', 'Ring of Might', 'rare', 'ring', '{\"str\":3}', 1, 0)").run();
-    expect((await carryState(db, "ann"))!.limit).toBe(LIMIT + 3);
+    // A coat is two squares by three; a greatsword two by four.
+    sql.prepare("INSERT INTO inventory (player_id, kind, ref, name, rarity, slot, equipped, created_at) VALUES ('ann', 'armor', 'coat', 'Coat', 'common', 'body', 0, 0)").run();
+    sql.prepare("INSERT INTO inventory (player_id, kind, ref, name, rarity, slot, equipped, created_at) VALUES ('ann', 'weapon', 'greatsword', 'Greatsword', 'common', 'main_hand', 0, 0)").run();
+    expect((await carryState(db, "ann"))!.carried).toBe(2 + 6 + 8);
   });
 
   it("knows a bought plot is not a home until its shack stands", async () => {
@@ -155,11 +193,12 @@ describe("the market stall", () => {
     expect(one<{ n: number }>("SELECT COUNT(*) AS n FROM shop_purchases").n).toBe(0);
   });
 
-  it("sells while there is room", async () => {
-    fillPack(LIMIT - 1);
+  it("sells while there is room for the thing's footprint", async () => {
     const shop = await getShop(db, "ann");
+    const cells = itemCells(shop!.entries[0].item);
+    fillPack(LIMIT - cells);
     expect(await buyShopItem(db, "ann", shop!.entries[0].index)).toBeNull();
-    expect(carried()).toBe(LIMIT);
+    expect(carried()).toBe(LIMIT - cells + 1);
     expect(gold()).toBe(5000 - shop!.entries[0].price);
   });
 });
@@ -206,6 +245,24 @@ describe("the storage chest", () => {
     expect(await stowGear(db, "ann", chest, packIds()[0])).toMatch(/full/);
   });
 
+  it("counts gear by its footprint, as the pack does", async () => {
+    const chest = buildShack();
+    const coat = (name: string) =>
+      Number(sql.prepare("INSERT INTO inventory (player_id, kind, ref, name, rarity, slot, equipped, created_at) VALUES ('ann', 'armor', 'coat', ?, 'common', 'body', 0, 0)").run(name).lastInsertRowid);
+    // A coat is two squares by three.
+    expect(await stowGear(db, "ann", chest, coat("Coat"))).toBeNull();
+    expect((await carryState(db, "ann"))!.room).toBe(CHEST_SLOTS - 6);
+    // With five squares left a second coat does not go in, from the hut or from afar; a ring does.
+    fillPack(CHEST_SLOTS - 6 - 5);
+    for (const id of packIds()) sql.prepare("UPDATE inventory SET stored_in = ? WHERE id = ?").run(chest, id);
+    const second = coat("Second Coat");
+    expect(await stowGear(db, "ann", chest, second)).toMatch(/full/);
+    expect(await storeItem(db, "ann", second)).toMatch(/room for something that size/);
+    fillPack(1);
+    expect(await stowGear(db, "ann", chest, packIds().find((id) => id !== second)!)).toBeNull();
+    expect((await carryState(db, "ann"))!.room).toBe(4);
+  });
+
   it("will not sell, equip or take what is not there", async () => {
     buildShack();
     fillPack(1);
@@ -219,18 +276,29 @@ describe("the storage chest", () => {
 });
 
 describe("trades", () => {
+  /** Bo opens the table with Ann and lays out `items`; both then try to accept. Returns what each acceptance said. */
+  const give = async (items: number[]) => {
+    const made = await openTrade(db, "bo", "ann", null);
+    if ("error" in made) throw new Error(made.error);
+    const laid = await setTradeSide(db, "bo", made.id, { items });
+    if ("error" in laid) throw new Error(laid.error);
+    const giver = await acceptTrade(db, "bo", made.id, laid.rev);
+    return { id: made.id, rev: laid.rev, giver, said: await acceptTrade(db, "ann", made.id, laid.rev) };
+  };
+
   it("wait while the taker's pack is full, and go through once there is room", async () => {
     buildShack();
     fillPack(LIMIT);
     sql.prepare("INSERT INTO inventory (player_id, kind, ref, name, rarity, slot, equipped, created_at) VALUES ('bo', 'trinket', 'ring', 'Gift', 'common', 'ring', 0, 0)").run();
     const gift = one<{ id: number }>("SELECT id FROM inventory WHERE name = 'Gift'").id;
-    const made = await proposeTrade(db, "bo", { to: "ann", give: { items: [gift] }, ask: {} }, null);
-    if ("error" in made) throw new Error(made.error);
-    const refused = await acceptTrade(db, "ann", made.id);
-    expect("error" in refused && refused.error).toMatch(/pack is full/);
-    expect(one<{ status: string }>("SELECT status FROM trades WHERE id = ?", made.id).status).toBe("open");
+    const { id, rev, giver, said } = await give([gift]);
+    // Neither can accept a trade the pack has no room for: each is told whose pack it is.
+    expect("error" in giver && giver.error).toMatch(/Ann's pack is full/);
+    expect("error" in said && said.error).toMatch(/Your pack is full/);
+    expect(one<{ status: string }>("SELECT status FROM trades WHERE id = ?", id).status).toBe("open");
     await storeItem(db, "ann", packIds()[0]);
-    expect(await acceptTrade(db, "ann", made.id)).toMatchObject({ ok: true });
+    expect(await acceptTrade(db, "bo", id, rev)).toMatchObject({ ok: true, settled: false });
+    expect(await acceptTrade(db, "ann", id, rev)).toMatchObject({ ok: true, settled: true });
     expect(one<{ player_id: string }>("SELECT player_id FROM inventory WHERE id = ?", gift).player_id).toBe("ann");
   });
 
@@ -239,8 +307,10 @@ describe("trades", () => {
     fillPack(1);
     const [id] = packIds();
     await storeItem(db, "ann", id);
-    const made = await proposeTrade(db, "ann", { to: "bo", give: { items: [id] }, ask: {} }, null);
-    expect("error" in made && made.error).toMatch(/in storage at home/);
+    const made = await openTrade(db, "ann", "bo", null);
+    if ("error" in made) throw new Error(made.error);
+    const laid = await setTradeSide(db, "ann", made.id, { items: [id] });
+    expect("error" in laid && laid.error).toMatch(/in storage at home/);
   });
 });
 
@@ -254,10 +324,11 @@ describe("the pub's curio dealer", () => {
     expect(await buyFromSalesman(db, "ann", gear.index, "curio")).toMatch(/pack is full/);
     expect(gold()).toBe(5000);
     expect(carried()).toBe(LIMIT);
-    // Make room (Ann has no home here, so drop a ring rather than store it).
-    sql.prepare("DELETE FROM inventory WHERE id = ?").run(packIds()[0]);
+    // Make room for its footprint (Ann has no home here, so drop rings rather than store them).
+    const cells = gear.goods.kind === "item" ? itemCells(gear.goods.item) : 1;
+    for (const id of packIds().slice(0, cells)) sql.prepare("DELETE FROM inventory WHERE id = ?").run(id);
     expect(await buyFromSalesman(db, "ann", gear.index, "curio")).toMatchObject({ got: { index: gear.index } });
-    expect(carried()).toBe(LIMIT);
+    expect(carried()).toBe(LIMIT - cells + 1);
   });
 });
 

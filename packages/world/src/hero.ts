@@ -5,7 +5,7 @@
 import type { Stats } from "@gantt-quest/core";
 import type { Combatant } from "./battle";
 import { statPct } from "./check";
-import { WEAPONS, heroClass } from "./content";
+import { abilitiesFor } from "./content";
 import { loadoutOf, outfitOf, type ItemDef, type Outfit } from "./gear";
 import { addStats, maxFocusFor, maxHpFor } from "./progression";
 
@@ -36,12 +36,12 @@ export interface Vitals {
   potions: number;
 }
 
-/** What equipped items contribute to a hero. With no weapon in hand, the class's starting weapon is used. */
-export function gearSheet(classId: string, worn: ItemDef[]): Pick<HeroSheet, "bonus" | "weapon" | "weaponPower" | "armor" | "outfit"> {
+/** What equipped items contribute to a hero. With no weapon in hand the hero is unarmed (`weapon` is ""), and fights with bare hands. */
+export function gearSheet(_classId: string, worn: ItemDef[]): Pick<HeroSheet, "bonus" | "weapon" | "weaponPower" | "armor" | "outfit"> {
   const loadout = loadoutOf(worn);
   return {
     bonus: loadout.bonus,
-    weapon: loadout.weapon ?? heroClass(classId)?.weapons[0] ?? "",
+    weapon: loadout.weapon ?? "",
     weaponPower: loadout.weaponPower,
     armor: loadout.armor,
     outfit: outfitOf(worn),
@@ -73,7 +73,7 @@ export function heroCombatant(sheet: HeroSheet, vitals: Pick<Vitals, "hp" | "max
     speed: statPct(stats.agi),
     focus: vitals.focus,
     potions: vitals.potions,
-    abilities: WEAPONS[sheet.weapon]?.abilities ?? [],
+    abilities: abilitiesFor(sheet.weapon),
     effects: [],
     down: false,
     traits: [...(sheet.traits ?? [])],

@@ -25,8 +25,7 @@ import {
   xpToNext,
   type ItemDef,
   type PublicHero,
-  type Slot,
-} from "@gantt-quest/world";
+  type Slot, abilitiesFor, } from "@gantt-quest/world";
 import type { StatKey } from "@gantt-quest/core";
 import { api } from "./api";
 import { perkText } from "./hutDrops";
@@ -118,7 +117,7 @@ export function HeroSheet({ id, you, onClose, live }: Props) {
   const need = xpToNext(hero.level);
   const cls = HERO_CLASSES.find((c) => c.id === hero.classId);
   const weapon = worn.get("main_hand");
-  const abilities = weapon?.kind === "weapon" ? (WEAPONS[weapon.ref]?.abilities ?? []) : [];
+  const abilities = abilitiesFor(weapon?.kind === "weapon" ? weapon.ref : null);
   const perks = perkText(hero.hutPerks);
   const pickedItem = picked ? worn.get(picked) : undefined;
 

@@ -1,6 +1,6 @@
 // The Sound button in the top bar: a slider for each volume group, a master
 // over them, a mute, a headphones mode, and a way back to the defaults the
-// game ships with. While developing it also opens a live readout of the engine.
+// game ships with. The engine's live readout lives in the dev toolbox (DevToolbox.tsx).
 
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { audio } from "./engine";
@@ -10,7 +10,6 @@ import "./sound.css";
 
 export function SoundButton() {
   const [open, setOpen] = useState(false);
-  const [debug, setDebug] = useState(false);
   const settings = useSyncExternalStore(audio.mix.subscribe, audio.mix.get);
   const wrap = useRef<HTMLSpanElement>(null);
 
@@ -59,14 +58,8 @@ export function SoundButton() {
               Reset
             </button>
           </div>
-          {import.meta.env.DEV && (
-            <button className="link sound-debug-toggle" onClick={() => setDebug((d) => !d)}>
-              {debug ? "Hide" : "Show"} engine readout
-            </button>
-          )}
         </div>
       )}
-      {import.meta.env.DEV && debug && <AudioReadout onClose={() => setDebug(false)} />}
     </span>
   );
 }
@@ -156,7 +149,7 @@ function SkyControls() {
 }
 
 /**
- * Development only: switch between the WAV masters and the encoded files a deployed game plays, to
+ * Dev server only (the masters are not deployed): switch between the WAV masters and the encoded files a deployed game plays, to
  * compare them. Playing loops restart from the other source. Placeholders are never encoded, so
  * sounds that are still placeholders fall silent on the encoded side.
  */
@@ -180,8 +173,8 @@ function SourceSwitch() {
   );
 }
 
-/** Development only: what the engine is doing right now, refreshed a few times a second. */
-export function AudioReadout({ onClose }: { onClose(): void }) {
+/** The dev toolbox's first tab: the sky's holds, then what the engine is doing right now, refreshed a few times a second. */
+export function SkyAndSound() {
   const [d, setD] = useState(() => audio.debug());
   useEffect(() => {
     const t = setInterval(() => setD(audio.debug()), 250);
@@ -202,15 +195,9 @@ export function AudioReadout({ onClose }: { onClose(): void }) {
     ["Memory", d.library ? `${d.library.megabytes} of ${d.library.budget} MB, ${d.library.decoded}/${d.library.files} files, ${d.library.format}` : "–"],
   ];
   return (
-    <div className="sound-readout panel">
-      <div className="sound-readout-head">
-        <strong>Audio engine</strong>
-        <button className="link" onClick={onClose}>
-          Close
-        </button>
-      </div>
+    <>
       <SkyControls />
-      <SourceSwitch />
+      {import.meta.env.DEV && <SourceSwitch />}
       <dl>
         {rows.map(([k, v]) => (
           <div key={k}>
@@ -219,6 +206,6 @@ export function AudioReadout({ onClose }: { onClose(): void }) {
           </div>
         ))}
       </dl>
-    </div>
+    </>
   );
 }

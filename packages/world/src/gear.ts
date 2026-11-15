@@ -202,17 +202,8 @@ export function rollItem(rng: Rng, classId: string, quality: number, level: numb
   const rolled = rollRarity(rng, quality);
   // A floor on the rarity lifts the roll without drawing again, so it never changes what follows.
   const rarity = minRarity && rarityIndex(rolled) < rarityIndex(minRarity) ? minRarity : rolled;
-  const ri = rarityIndex(rarity);
   const kind = kindOfSlot(slot);
-
-  // Stat points lean toward what the class levels up in.
-  const favoured = LEVELUP_AUTO_ALLOC[classId] ?? [];
-  const points = kind === "weapon" ? Math.floor(ri / 2) : kind === "armor" ? ri : ri + 1;
-  const statBonus: Partial<Stats> = {};
-  for (let i = 0; i < points; i++) {
-    const stat = favoured.length > 0 && rng.chance(0.5) ? rng.pick(favoured) : rng.pick(STATS);
-    statBonus[stat] = (statBonus[stat] ?? 0) + 1;
-  }
+  const statBonus = rollStatBonus(rng, classId, kind, rarity);
 
   if (kind === "weapon") {
     // Good loot (lairs and bosses) can also be the class's signature weapon. Same one draw either way.
@@ -220,7 +211,26 @@ export function rollItem(rng: Rng, classId: string, quality: number, level: numb
     const weapons = cls ? (quality >= 0.5 ? [...cls.weapons, cls.signature] : cls.weapons) : Object.keys(WEAPONS);
     return weaponItem(rng.pick(weapons), rarity, level, statBonus);
   }
-  const base = rng.pick(BASES[slot as Exclude<Slot, "main_hand">]);
+  return baseItem(slot as Exclude<Slot, "main_hand">, rng.pick(BASES[slot as Exclude<Slot, "main_hand">]), rarity, level, statBonus);
+}
+
+/** The stat points an item of this kind and rarity carries. They lean toward what the class levels up in. */
+function rollStatBonus(rng: Rng, classId: string, kind: ItemKind, rarity: Rarity): Partial<Stats> {
+  const ri = rarityIndex(rarity);
+  const favoured = LEVELUP_AUTO_ALLOC[classId] ?? [];
+  const points = kind === "weapon" ? Math.floor(ri / 2) : kind === "armor" ? ri : ri + 1;
+  const statBonus: Partial<Stats> = {};
+  for (let i = 0; i < points; i++) {
+    const stat = favoured.length > 0 && rng.chance(0.5) ? rng.pick(favoured) : rng.pick(STATS);
+    statBonus[stat] = (statBonus[stat] ?? 0) + 1;
+  }
+  return statBonus;
+}
+
+/** A piece of armor or a trinket made from one base. */
+function baseItem(slot: Exclude<Slot, "main_hand">, base: Base, rarity: Rarity, level: number, statBonus: Partial<Stats>): ItemDef {
+  const ri = rarityIndex(rarity);
+  const kind = kindOfSlot(slot);
   return {
     kind,
     ref: base.ref,
@@ -232,6 +242,25 @@ export function rollItem(rng: Rng, classId: string, quality: number, level: numb
     levelReq: ri >= 2 ? Math.max(1, level - 1) : 1,
     icon: base.icon,
   };
+}
+
+/** The slot a piece of gear goes in, from its ref: a weapon id (content.ts WEAPONS) or an armor or trinket base. Undefined if it is neither. */
+export function slotOfRef(ref: string): Slot | undefined {
+  if (Object.hasOwn(WEAPONS, ref)) return "main_hand";
+  return (Object.keys(BASES) as Exclude<Slot, "main_hand">[]).find((s) => BASES[s].some((b) => b.ref === ref));
+}
+
+/**
+ * One chosen piece of gear, made as a drop would be: `ref` names the weapon
+ * or the base, and the stat points for its rarity are rolled for a hero of
+ * `classId`. Undefined for a ref that is not gear. For the dev toolbox.
+ */
+export function itemOfRef(rng: Rng, classId: string, ref: string, rarity: Rarity, level: number): ItemDef | undefined {
+  const slot = slotOfRef(ref);
+  if (!slot) return undefined;
+  const statBonus = rollStatBonus(rng, classId, kindOfSlot(slot), rarity);
+  if (slot === "main_hand") return weaponItem(ref, rarity, level, statBonus);
+  return baseItem(slot, BASES[slot].find((b) => b.ref === ref)!, rarity, level, statBonus);
 }
 
 // ---------- what gear does ----------

@@ -324,11 +324,13 @@ export type HarborServerMessage =
   /** Someone was put straight onto `pos` (no walk): a stuck hero sent back by "unstick". */
   | { type: "placed"; id: string; pos: HexPos }
   | { type: "said"; id: string; name: string; text: string }
+  | LookMessage
   | XpMessage;
 
 export type HarborClientMessage =
   | { type: "move"; to: HexPos }
   | { type: "say"; text: string }
+  | LookRequest
   /** "I changed my gear or level": the server re-reads the sender's character and tells everyone. */
   | { type: "refresh" }
   /** "I have just rested here": lay the sender's bedroll out where they stand, for everyone to see. */
@@ -337,6 +339,26 @@ export type HarborClientMessage =
   | { type: "fishing"; on: boolean }
   /** "I am stuck or lost": put the sender's own hero back where heroes arrive. At most once per UNSTICK_COOLDOWN_MS. */
   | { type: "unstick" };
+
+/**
+ * Which way a hero is looking as they stand: toward wherever their player's pointer is on the ground. It is
+ * only for show, so it is sent coarsely (one of LOOK_STEPS directions round the compass), at most every
+ * LOOK_MIN_MS, relayed to everyone else in the same place and never kept: someone who walks in sees a hero
+ * facing the way they last walked until that hero's player next moves the pointer.
+ */
+export const LOOK_STEPS = 32;
+export const LOOK_MIN_MS = 120;
+/** "I am looking this way": a step round the compass, 0 toward +z, turning toward +x. */
+export type LookRequest = { type: "look"; look: number };
+/** "They are looking this way". Not sent back to whoever is looking. */
+export type LookMessage = { type: "looked"; id: string; look: number };
+/** The step a turn about y, in radians, falls in; and the turn a step stands for. */
+export const lookStep = (yaw: number) => ((Math.round((yaw / (Math.PI * 2)) * LOOK_STEPS) % LOOK_STEPS) + LOOK_STEPS) % LOOK_STEPS;
+export const lookYaw = (step: number) => (step / LOOK_STEPS) * Math.PI * 2;
+/** A look as a client sent it, if it is one: a whole step in range. */
+export function validLook(look: unknown): number | null {
+  return typeof look === "number" && Number.isInteger(look) && look >= 0 && look < LOOK_STEPS ? look : null;
+}
 
 /** How often a hero may ask to be put back where they arrive (Harbor, hut or pub), per connection. */
 export const UNSTICK_COOLDOWN_MS = 3000;

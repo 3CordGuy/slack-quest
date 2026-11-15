@@ -1,0 +1,151 @@
+/* The bottom bar and the game menu (ui/Hud.tsx, OptionsMenu.tsx).
+
+   The bar is a ship's rack in pixel art: hard edges, a lit side and a shadowed side, nothing blurred. Warm
+   red-brown timber in four tones does all the work: --hw-hi where the light
+   catches, --hw-lit and --hw for the faces, --hw-dark in shadow, --hw-out for the outline. */
+.hud {
+  --hw-out: #3a1d20; --hw-dark: #6b3524; --hw: #8e4a2f; --hw-lit: #b1633c; --hw-hi: #d18a55; --well: #3b2119;
+  position: absolute; left: 0; right: 0; bottom: 18px; margin: 0 auto; z-index: 14; width: fit-content; max-width: calc(100% - 24px);
+  display: flex; flex-direction: column; align-items: center; pointer-events: none;
+  /* The timber dims a little with the hour (ui/env.ts). */
+  filter: brightness(calc(0.78 + 0.22 * var(--env-level, 1)));
+}
+.hud > * { pointer-events: auto; }
+
+/* Over everything: where you stand and what to do there, on a plain dark strip. */
+.hud-here { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; padding: 4px 10px; background: rgba(18, 12, 8, 0.86); border: 2px solid var(--hw-out); box-shadow: 0 0 0 2px var(--hw-dark); }
+.hud-place { font-family: var(--font-head); font-size: 15px; letter-spacing: 0.04em; }
+.hud-place .muted { font-family: var(--font-book); font-size: 13px; letter-spacing: 0; }
+.hud-here button { white-space: nowrap; }
+
+/* The turn's points: pips over each meter. */
+.hud-points { width: 100%; max-width: 600px; min-height: 14px; display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; font-size: 12px; }
+.hud-points-side { display: flex; align-items: center; gap: 10px; }
+.hud-points-side.end { justify-content: flex-end; }
+.hud-pips { display: inline-flex; align-items: center; gap: 4px; }
+.hud-pips i { width: 10px; height: 10px; background: var(--well); border: 2px solid var(--hw-out); box-shadow: 0 0 0 2px var(--hw-dark); margin: 2px; }
+.hud-pips.action i.on { background: #8fd49a; box-shadow: 0 0 0 2px #3f7a52; }
+.hud-pips.move i.on { background: #f0c552; box-shadow: 0 0 0 2px #8a6a26; }
+.hud-pips.focus i { rotate: 45deg; }
+.hud-pips.focus i.on { background: #7fc4e8; box-shadow: 0 0 0 2px #2f6f96; }
+.hud-chip { color: var(--muted); background: rgba(18, 12, 8, 0.86); border: 2px solid var(--hw-out); padding: 0 6px; white-space: nowrap; }
+.hud-chip.bad { color: var(--bad); }
+
+/* The meters and the plaque are part of the rack's picture; what moves is laid over it (below). */
+/* A meter's fill lies in its channel: liquid, drawn on the rack's own grid (LiquidMeter.tsx). */
+.hud-meter { position: absolute; overflow: hidden; }
+.liquid-meter { display: block; width: 100%; height: 100%; image-rendering: pixelated; }
+/* The card for whatever on the bar the pointer is over: above the bar, over that thing. */
+.hud .hud-tip { position: absolute; bottom: calc(100% + 16px); translate: -50% 0; z-index: 6; width: max-content; max-width: 300px; padding: 8px 12px; pointer-events: none; font-size: 13px; text-align: left; }
+.hud-tip-text { display: flex; flex-direction: column; gap: 2px; }
+.hud-tip-text strong { font-family: var(--font-head); font-size: 16px; font-weight: normal; letter-spacing: 0.03em; color: var(--brass-hi); display: flex; align-items: center; justify-content: space-between; gap: 14px; }
+.hud-tip-text kbd { font: bold 11px ui-monospace, Consolas, monospace; color: var(--text); padding: 0 5px; border: 2px solid var(--out); background: var(--raise); }
+.hud-tip .detail { font-size: 13px; }
+/* The plaque's face: the level, or the turn, lettered on the board the picture has for it. */
+.hud .hud-plaque {
+  position: absolute; padding: 0; display: inline-flex; align-items: center; justify-content: center; gap: 6px; border: none; border-radius: 0; background: none; box-shadow: none;
+  font-family: var(--font-head); font-size: calc(var(--p) * 5.4); letter-spacing: 0.05em; line-height: 1; color: #fbe6c8; text-shadow: 0 var(--p) 0 #3a1d20; white-space: nowrap;
+}
+.hud .hud-plaque:hover:not(:disabled) { background: rgba(255, 236, 190, 0.22); border: none; box-shadow: none; }
+.hud .hud-plaque:disabled { opacity: 1; cursor: default; }
+.hud .hud-plaque.news { color: #ffe27a; }
+.hud .hud-plaque.turn.mine { color: #ffe27a; background: rgba(244, 198, 78, 0.28); }
+.hud .hud-plaque.turn.low { color: #ffb0a0; }
+
+/* The rack: one picture of timber (rackArt.ts), drawn large with hard edges; --p is how many screen pixels one
+   of its pixels takes. What changes is laid over it at places given in the picture's own pixels. */
+.hud-rack { --p: 3px; position: relative; flex: none; filter: drop-shadow(0 calc(var(--p) * 1) 0 rgba(0, 0, 0, 0.5)); }
+.hud-rack-art { position: absolute; inset: 0; width: 100%; height: 100%; image-rendering: pixelated; pointer-events: none; }
+/* Experience: three rows of green in the beam's channel, lit along the top. */
+.hud-xp { position: absolute; overflow: hidden; }
+.hud-xp div { height: 100%; background: linear-gradient(180deg, #86d86c 0 33.4%, #45a84c 33.4% 66.7%, #2c7c3e 66.7%); transition: width 0.3s steps(12); }
+/* A slot lies over its well in the picture, which is already drawn: it only holds what is in it. */
+.hud .hud-slot { position: absolute; padding: 0; display: grid; place-items: center; border: none; border-radius: 0; background: none; box-shadow: none; text-shadow: none; color: #4a2418; }
+.hud .hud-slot.ability { cursor: help; }
+.hud .hud-slot:disabled { opacity: 1; cursor: default; }
+.hud button.hud-slot:hover:not(:disabled) { background: rgba(255, 244, 214, 0.35); box-shadow: inset 0 0 0 var(--p) #fff1c9; border: none; }
+.hud-slot .voxel-icon, .hud-slot .pixel-icon { width: calc(var(--p) * 10); height: calc(var(--p) * 10); }
+/* What is in hand, and the bag, are drawn as big as their wells allow. */
+.hud-slot.hand .voxel-icon, .hud-slot.bag .voxel-icon { width: calc(var(--p) * 13.4); height: calc(var(--p) * 13.4); }
+.hud-glyph { font-family: var(--font-title); font-size: calc(var(--p) * 6.4); line-height: 1; color: #5a2a17; }
+.hud-key { position: absolute; left: calc(var(--p) * 2 + 1px); top: calc(var(--p) * 2); font-size: 9px; line-height: 1; font-weight: bold; color: #9a5a3a; }
+.hud-count { position: absolute; right: calc(var(--p) * 2 + 1px); bottom: calc(var(--p) * 2); font-size: 11px; line-height: 1; font-weight: bold; color: #4a2418; }
+/* A tab lies over its block in the picture: a key's letter, or a small glyph, in pale cream. */
+.hud .hud-tab {
+  position: absolute; padding: 0; display: grid; place-items: center; border: none; border-radius: 0; background: none; box-shadow: none;
+  font: bold calc(var(--p) * 4) ui-monospace, Consolas, monospace; line-height: 1; color: #fbe6c8; text-shadow: 0 var(--p) 0 #3a1d20;
+}
+.hud .hud-tab:hover:not(:disabled) { background: rgba(255, 236, 190, 0.3); border: none; box-shadow: none; }
+.hud .hud-tab:disabled { color: #b98d6a; opacity: 1; }
+.hud .hud-tab.news { color: #ffe27a; animation: hud-tab-news 0.9s steps(2) infinite; }
+@keyframes hud-tab-news { 50% { color: #fff; } }
+@media (prefers-reduced-motion: reduce) { .hud .hud-tab.news { animation: none; } }
+.hud-tab .pixel-glyph { width: calc(var(--p) * 3.6); height: auto; }
+/* The menu's cog fills its tab. */
+.hud-tab.cog .options { display: grid; width: 100%; height: 100%; }
+.hud-tab.cog .hud-btn { width: 100%; height: 100%; padding: 0; background: none; border: none; box-shadow: none; border-radius: 0; color: #fbe6c8; }
+.hud-tab.cog .hud-btn:hover:not(:disabled) { background: rgba(255, 236, 190, 0.3); }
+
+/* The same button elsewhere (the bag's close, the corner cog). */
+.hud-btn { position: relative; width: 32px; height: 32px; padding: 0; display: grid; place-items: center; color: var(--brass-hi); }
+.hud-btn:disabled { color: var(--muted); }
+.options { display: inline-flex; }
+
+.hud-corner { position: absolute; top: 12px; right: 14px; z-index: 30; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; max-width: calc(100% - 28px); }
+.hud-corner > strong { font-family: var(--font-title); font-weight: normal; font-size: 19px; line-height: 1.2; color: var(--gold); }
+.hud-corner > span, .hud-corner > strong { background: var(--panel); border: 2px solid var(--out); box-shadow: 0 0 0 1px var(--brass-lo); padding: 1px 8px; }
+.hud-corner > .options { background: none; border: none; box-shadow: none; padding: 0; }
+
+/* The set layout round the bar, all down the left: the docks (or the story) at the top, the crew's cards in the middle, the talk at the bottom. */
+.hud-left { position: absolute; top: 20px; left: 20px; bottom: calc(160px + var(--chat-tall, 110px)); z-index: 10; display: flex; flex-direction: column; gap: 30px; width: min(330px, calc(40vw / var(--ui-z, 1))); pointer-events: none; }
+.run .hud-left > .draggable, .run .hud-left > * { position: relative; inset: auto; top: auto; right: auto; left: auto; width: auto; max-height: none; pointer-events: auto; flex: 0 1 auto; min-height: 0; }
+/* The crew sits in the middle of what is left under the docks. */
+.run .hud-left > .crew { margin-block: auto; width: 250px; display: flex; flex-direction: column; gap: 8px; }
+/* Each crewmate is a card of their own: no panel round the lot, no heading. */
+.crew-cards .panel.crew-roster { padding: 0; background: none; border: none; border-image: none; box-shadow: none; }
+.crew-cards .roster-head, .crew-cards .roster-sep { display: none; }
+.crew-cards .roster { display: flex; flex-direction: column; gap: 8px; margin: 0; padding: 2px; max-height: none; overflow: visible; }
+.crew-cards .roster li.cm { padding: 5px 8px; background: var(--panel); border: 2px solid var(--out); box-shadow: 0 0 0 1px var(--brass-lo), 0 3px 0 rgba(0, 0, 0, 0.4); }
+.crew-cards .roster li.cm:last-child { border-bottom: 2px solid var(--out); }
+.crew-cards .roster li.cm.away { opacity: 0.7; }
+.run:has(> .hud-corner) .hud-left { top: 16px; }
+.run:has(> .hud) .harbor-chat, .run:has(> .hud) .chat { left: 20px; right: auto; bottom: 20px; }
+.run:has(> .hud) .feed { left: auto; right: 16px; bottom: 16px; text-align: right; align-items: flex-end; }
+.run:has(> .hud) .tip { bottom: 206px; }
+.run:has(> .hud) .toast { top: 16px; }
+@media (max-width: 1500px) {
+  /* The talk would sit under the bar on a narrower screen: lift it clear, and the column above it. */
+  .run:has(> .hud) .harbor-chat, .run:has(> .hud) .chat, .run:has(> .hud) .feed { bottom: 200px; }
+  .hud-left { bottom: calc(336px + var(--chat-tall, 110px)); }
+}
+
+@media (max-width: 760px) {
+  .hud { bottom: 8px; max-width: calc(100% - 12px); }
+  /* The whole rack is drawn smaller: two screen pixels to one of its own, then one and a half. */
+  .hud-rack { --p: 2px; }
+  .hud-slot .voxel-icon, .hud-slot .pixel-icon { width: 20px; height: 20px; }
+  .hud-left { top: 8px; left: 8px; gap: 10px; }
+  .run:has(.bag-overlay) .camera-rotate { display: none; }
+}
+
+/* ---------- The game menu ---------- */
+.overlay.menu-overlay { position: fixed; z-index: 80; }
+.overlay > .panel.game-menu { position: relative; max-width: 860px; width: 100%; max-height: calc(100% - 40px); overflow-y: auto; display: flex; flex-direction: column; gap: 12px; white-space: normal; }
+.menu-head { text-align: center; padding-top: 6px; }
+.menu-head h2 { margin: 0; font-size: 30px; color: var(--gold); background: linear-gradient(180deg, #fbeab4 10%, #c29a4c 55%, #8a6a30 100%); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; filter: drop-shadow(0 2px 0 rgba(0, 0, 0, 0.6)); }
+.menu-head p { margin: 2px 0 0; font-family: var(--font-book); font-size: 15px; }
+.menu-cols { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 22px; }
+.menu-col { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.menu-col h3 { margin: 0 0 2px; text-align: center; font-size: 19px; background-position: center bottom; }
+.menu-action { width: 100%; text-align: center; padding: 8px 12px; }
+.menu-action.nudge { border-color: var(--gold); color: var(--gold); }
+.menu-slider { display: grid; grid-template-columns: 1fr auto; gap: 2px 8px; align-items: center; }
+.menu-slider input { grid-column: 1 / -1; width: 100%; }
+.options-row { display: flex; align-items: center; gap: 8px; }
+.options-sound { width: 100%; }
+.options-switch { background: var(--well); }
+.options-note { margin: 0; }
+@media (max-width: 760px) { .menu-cols { grid-template-columns: 1fr; } }
+.overlay > .panel.game-menu { overflow: visible; }
+.menu-cols { overflow-y: auto; min-height: 0; padding: 2px; }
+.menu-col .options-sound { flex: none; }

@@ -9,7 +9,7 @@
 // from D1, which stays the system of record.
 
 import { DurableObject } from "cloudflare:workers";
-import {
+import { LOOK_MIN_MS, validLook,
   HARBOR_MAX_SAY,
   HARBOR_PIERS,
   HARBOR_PLOTS,
@@ -22,8 +22,7 @@ import {
   harborPath,
   type HarborClientMessage,
   type HarborPlayer,
-  type HarborServerMessage,
-} from "@gantt-quest/world";
+  type HarborServerMessage, } from "@gantt-quest/world";
 import { getCrew, harborBoard, heroInitFor, type Env } from "./db";
 import { gildedRod, ownedVessel } from "./fishmarket";
 import { readXpPost, relayXp } from "./harbor-xp";
@@ -33,6 +32,8 @@ const MAP = generateHarbor();
 export class HarborRoom extends DurableObject<Env> {
   /** When each player last asked to be put back at the spawn. In memory only: a light limit, and a hibernation resets it. */
   private unstuckAt = new Map<string, number>();
+  /** When each player's look was last passed on, so a waving pointer cannot flood the room. */
+  private lookedAt = new Map<string, number>();
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -159,6 +160,13 @@ export class HarborRoom extends DurableObject<Env> {
       const next: HarborPlayer = { ...player, fishing: on || undefined };
       ws.serializeAttachment(next);
       this.broadcast({ type: "joined", player: next });
+    } else if (msg.type === "look") {
+      // Which way they are looking: passed on to everyone else here, and not kept.
+      const look = validLook(msg.look);
+      const now = Date.now();
+      if (look === null || now - (this.lookedAt.get(player.id) ?? -Infinity) < LOOK_MIN_MS) return;
+      this.lookedAt.set(player.id, now);
+      this.broadcast({ type: "looked", id: player.id, look }, ws);
     } else if (msg.type === "unstick") {
       // A stuck or lost hero goes back where heroes arrive. Only ever the sender's own hero: the socket says who that is.
       const now = Date.now();

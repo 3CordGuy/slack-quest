@@ -400,6 +400,7 @@ let iconOverrides: Record<string, IconPixels> = {};
 export function setIconOverrides(next: Record<string, IconPixels>): void {
   iconOverrides = next;
   cache.clear();
+  for (const fn of iconArtListeners) fn();
 }
 
 const hex2 = (n: number) => n.toString(16).padStart(2, "0");
@@ -428,7 +429,7 @@ function pixelArt(pixels: IconPixels): Art {
   };
 }
 
-function drawIcon(art: Art, accent: string, silhouette: boolean, lines = false): string {
+function paintIcon(art: Art, accent: string, silhouette: boolean, lines = false): HTMLCanvasElement {
   const canvas = document.createElement("canvas");
   canvas.width = ART_PIXELS;
   canvas.height = ART_PIXELS;
@@ -479,8 +480,10 @@ function drawIcon(art: Art, accent: string, silhouette: boolean, lines = false):
       }
     }
   }
-  return canvas.toDataURL();
+  return canvas;
 }
+
+const drawIcon = (art: Art, accent: string, silhouette: boolean, lines = false): string => paintIcon(art, accent, silhouette, lines).toDataURL();
 
 const codeArt = (name: string): Art => ART[name] ?? ART["gem-chain"];
 
@@ -499,6 +502,16 @@ export function itemArtUrl(name: string, accent: string, silhouette = false): st
   cache.set(key, url);
   return url;
 }
+
+/** The icon as it is drawn (ART_PIXELS square, outline and all, any admin override applied): what the voxel icons are built from. */
+export function itemArtPixels(name: string, accent: string): ImageData {
+  const over = iconOverrides[name];
+  const canvas = paintIcon(over ? pixelArt(over) : codeArt(name), accent, false);
+  return canvas.getContext("2d")!.getImageData(0, 0, ART_PIXELS, ART_PIXELS);
+}
+
+/** Called whenever the icon overrides change, so pictures built from the icons can be redrawn. */
+export const iconArtListeners = new Set<() => void>();
 
 /**
  * A blueprint of an icon: its edges and inner seams as lines in `line`, for
