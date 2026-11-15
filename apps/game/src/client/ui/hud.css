@@ -69,6 +69,8 @@
 .hud .hud-slot.act.picked { background: rgba(255, 244, 214, 0.55); box-shadow: inset 0 0 0 var(--p) #ffd23f; }
 .hud .hud-slot.act.spent, .hud .hud-slot.act:disabled { opacity: 0.4; cursor: default; }
 .hud .hud-slot.act.empty { cursor: pointer; }
+/* Out of a fight the slots are there to look at and rearrange, not to press. */
+.hud .hud-slot.act.reminder { cursor: grab; }
 .hud .hud-slot.act .pixel-icon { image-rendering: pixelated; }
 .hud-wait { position: absolute; right: calc(var(--p) * 2 + 1px); bottom: calc(var(--p) * 2); font-size: 11px; line-height: 1; font-weight: bold; color: #8a2f1f; }
 .hud .hud-slot:disabled { opacity: 1; cursor: default; }
