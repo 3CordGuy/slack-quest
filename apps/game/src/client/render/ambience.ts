@@ -195,7 +195,104 @@ const SPLASH_DROPS = 6;
 /** How long one spell of weather lasts before the sky starts turning to the next. */
 const WEATHER_SPELL_MS = 7 * 60 * 1000;
 /** Puffs of smoke in the air over one chimney at a time. */
-const PUFFS = 12;
+const PUFFS = 5;
+/** Lumps in one puff: a small low-poly cloud. */
+const LOBES = 5;
+
+/**
+ * What the pixel decorations (smoke rings, wisps) need to know about the view: how big the picture being drawn
+ * is, in its own pixels, and how many of those make one chunky pixel (1 as a rule, 2 with "Fancy graphics" on,
+ * when the world is drawn at full resolution). One per ambience, shared by its materials, kept current by `trackView`.
+ */
+type PixelView = { uRes: { value: THREE.Vector2 }; uFine: { value: number } };
+const viewSize = new THREE.Vector2();
+/** Before `object` is drawn, note the size of the picture it is drawn into (the screen, or the finishing pass's target). */
+function trackView(object: THREE.Object3D, view: PixelView) {
+  object.onBeforeRender = (renderer) => {
+    const target = renderer.getRenderTarget();
+    if (target) view.uRes.value.set(target.width, target.height);
+    else view.uRes.value.copy(renderer.getDrawingBufferSize(viewSize));
+  };
+}
+/** Chunky pixels across that `world` units come to at this depth, as a float (GLSL; `depth` is -view z). */
+const CELLS_GLSL = /* glsl */ `
+  uniform vec2 uRes;
+  uniform float uFine;
+  float cellsAcross(float world, float depth) {
+    return world * projectionMatrix[1][1] * 0.5 * uRes.y / depth / uFine;
+  }
+`;
+
+/**
+ * Chimney smoke: small low-poly clouds, each a few faceted lumps (one instance of a 20-sided ball each, placed by
+ * `puff`). Each face is one flat tone, lit by a fixed light from above in three bands (tops light, sides between,
+ * undersides dark), like the props' flat-shaded rocks and bushes; `uShade` follows the daylight.
+ */
+function smokeMaterial(): THREE.ShaderMaterial {
+  return new THREE.ShaderMaterial({
+    uniforms: { uShade: { value: 1 } },
+    vertexShader: /* glsl */ `
+      varying vec3 vWorld;
+      void main() {
+        vec4 world = modelMatrix * instanceMatrix * vec4(position, 1.0);
+        vWorld = world.xyz;
+        gl_Position = projectionMatrix * viewMatrix * world;
+      }
+    `,
+    fragmentShader: /* glsl */ `
+      uniform float uShade;
+      varying vec3 vWorld;
+      void main() {
+        // The face's own normal, so each facet is one flat tone.
+        vec3 normal = normalize(cross(dFdx(vWorld), dFdy(vWorld)));
+        float lit = dot(normal, normalize(vec3(0.35, 1.0, 0.25)));
+        float band = lit > 0.6 ? 1.0 : lit > -0.15 ? 0.84 : 0.68;
+        gl_FragColor = vec4(vec3(uShade * band, uShade * band, uShade * band * 1.03), 1.0);
+        #include <colorspace_fragment>
+      }
+    `,
+  });
+}
+
+/**
+ * Wisps: each a ribbon along its trail, so it is one unbroken stroke however near the camera is (single pixels
+ * spaced along the path came apart into a row of dots up close). Its width is set in the world, at least one
+ * chunky pixel and at most three, in whole chunky pixels, so it thickens a little as the camera comes in.
+ * `aDir` is the way the trail runs at each point; `aSide` is which edge of the ribbon a corner is on.
+ */
+function wispMaterial(view: PixelView): THREE.ShaderMaterial {
+  return new THREE.ShaderMaterial({
+    uniforms: view,
+    transparent: true,
+    depthWrite: false,
+    vertexShader: /* glsl */ `
+      ${CELLS_GLSL}
+      attribute vec3 aDir;
+      attribute float aSide;
+      attribute vec4 aTint;
+      varying vec4 vTint;
+      void main() {
+        vec4 mv = modelViewMatrix * vec4(position, 1.0);
+        vec4 clip = projectionMatrix * mv;
+        vec4 ahead = projectionMatrix * modelViewMatrix * vec4(position + aDir, 1.0);
+        vec2 run = (ahead.xy / ahead.w - clip.xy / clip.w) * uRes;
+        float len = length(run);
+        vec2 across = len > 1e-4 ? vec2(-run.y, run.x) / len : vec2(0.0, 1.0);
+        float px = clamp(floor(cellsAcross(0.03, -mv.z) + 0.5), 1.0, 3.0) * uFine;
+        clip.xy += across * aSide * px / uRes * clip.w;
+        gl_Position = clip;
+        vTint = aTint;
+      }
+    `,
+    fragmentShader: /* glsl */ `
+      varying vec4 vTint;
+      void main() {
+        gl_FragColor = vTint;
+        #include <colorspace_fragment>
+      }
+    `,
+  });
+}
 /**
  * Cobbles for the Harbor's streets, as quiet as the floorboards: irregular
  * rounded stones of uneven size in four near-identical greys, with joints
@@ -514,7 +611,7 @@ export class Ambience {
   private wisps: Wisp[] = [];
   /** The map's extent, which gusts are scattered over. */
   private bounds = { minX: 0, maxX: 0, minZ: 0, maxZ: 0 };
-  private wispPoints: THREE.Points | null = null;
+  private wispRibbon: THREE.Mesh | null = null;
   /** Low cloud and rain: set for a map with streets. */
   /** The map is the Harbor (it has streets): its weather runs wetter. */
   private wetPort = false;
@@ -528,8 +625,16 @@ export class Ambience {
   private splashPoints: THREE.Points | null = null;
   private shoreSplashes: typeof this.splashes = [];
   private rockSplashes: typeof this.splashes = [];
-  /** Chimney smoke: a column of pixel puffs over each stack. Outlives a map rebuild, so it is kept out of `group`. */
-  private smoke: THREE.Points | null = null;
+  /** Chimney smoke: little low-poly clouds rising from each stack. Outlives a map rebuild, so it is kept out of `group`. */
+  private smoke: THREE.InstancedMesh | null = null;
+  private wispAt = new THREE.Vector3();
+  private wispAhead = new THREE.Vector3();
+  private wispBehind = new THREE.Vector3();
+  /** How many of the picture's pixels make one chunky pixel: 1 as a rule, 2 while the world is drawn at full resolution. */
+  set fine(fine: number) {
+    this.pixelView.uFine.value = fine;
+  }
+  private pixelView: PixelView = { uRes: { value: new THREE.Vector2(1, 1) }, uFine: { value: 1 } };
   private stacks: THREE.Vector3[] = [];
   /**
    * A lighthouse's lamp: two soft beams turning slowly round it and a glow on the lantern. Additive meshes and a
@@ -918,7 +1023,7 @@ export class Ambience {
       this.group.add(this.rain);
     }
 
-    // ---- wisps: trails of single pixels that sway gently as they cross ----
+    // ---- wisps: thin ribbons that sway gently as they cross ----
     // No wind indoors.
     const indoors = (this.indoors = tiles.some((t) => (t.biome as string) === "floor" || (t.biome as string) === "cave"));
     const count = this.still || indoors ? 0 : Math.min(14, Math.max(7, Math.round(tiles.length / 30)));
@@ -926,12 +1031,25 @@ export class Ambience {
       this.wisps.push({ offset: hash(i, 4, 100), speed: 0.1 + hash(i, 5, 100) * 0.07 });
     }
     if (count > 0) {
+      // Two corners per point along the trail, one each side, joined point to point into a strip.
+      const corners = count * TRAIL * 2;
       const geometry = new THREE.BufferGeometry();
-      geometry.setAttribute("position", new THREE.BufferAttribute(new Float32Array(count * TRAIL * 3), 3));
-      geometry.setAttribute("color", new THREE.BufferAttribute(new Float32Array(count * TRAIL * 4), 4));
-      this.wispPoints = new THREE.Points(geometry, new THREE.PointsMaterial({ size: 2, sizeAttenuation: false, vertexColors: true, transparent: true, depthWrite: false }));
-      this.wispPoints.frustumCulled = false;
-      this.group.add(this.wispPoints);
+      geometry.setAttribute("position", new THREE.BufferAttribute(new Float32Array(corners * 3), 3));
+      geometry.setAttribute("aDir", new THREE.BufferAttribute(new Float32Array(corners * 3), 3));
+      geometry.setAttribute("aTint", new THREE.BufferAttribute(new Float32Array(corners * 4), 4));
+      geometry.setAttribute("aSide", new THREE.BufferAttribute(new Float32Array(corners).map((_, k) => (k % 2 ? 1 : -1)), 1));
+      const index: number[] = [];
+      for (let n = 0; n < count; n++) {
+        for (let i = 0; i < TRAIL - 1; i++) {
+          const a = (n * TRAIL + i) * 2;
+          index.push(a, a + 1, a + 2, a + 1, a + 3, a + 2);
+        }
+      }
+      geometry.setIndex(index);
+      this.wispRibbon = new THREE.Mesh(geometry, wispMaterial(this.pixelView));
+      this.wispRibbon.frustumCulled = false;
+      trackView(this.wispRibbon, this.pixelView);
+      this.group.add(this.wispRibbon);
     }
   }
 
@@ -946,7 +1064,7 @@ export class Ambience {
     this.group.clear();
     this.grass = null;
     this.waves = [];
-    this.wispPoints = null;
+    this.wispRibbon = null;
     this.rain = null;
     this.splashPoints = null;
     this.splashes = [];
@@ -1079,9 +1197,10 @@ export class Ambience {
       material.map!.offset.x = motion * clock * (row ? 0.11 : -0.08) + row * 0.25;
     });
 
-    if (this.wispPoints) {
-      const pos = this.wispPoints.geometry.getAttribute("position") as THREE.BufferAttribute;
-      const col = this.wispPoints.geometry.getAttribute("color") as THREE.BufferAttribute;
+    if (this.wispRibbon) {
+      const pos = this.wispRibbon.geometry.getAttribute("position") as THREE.BufferAttribute;
+      const dir = this.wispRibbon.geometry.getAttribute("aDir") as THREE.BufferAttribute;
+      const col = this.wispRibbon.geometry.getAttribute("aTint") as THREE.BufferAttribute;
       const glow = 0.72 + 0.28 * this.daylight;
       const b = this.bounds;
       this.wisps.forEach((w, n) => {
@@ -1101,19 +1220,30 @@ export class Ambience {
         const underBeat = 3 + r(9) * 3;
         const drift = (r(12) - 0.5) * 0.8;
         const life = smooth(0, 0.12, head) * (1 - smooth(0.66, 1, head));
-        for (let i = 0; i < TRAIL; i++) {
-          // Each pixel follows the head a little further back along the same path.
-          const s = head - i * 0.0095;
+        /** Where the trail is at `s` along the gust's path. */
+        const at = (s: number, out: THREE.Vector3) => {
           const along = (s - 0.5) * reach;
           const up = Math.sin(s * beat + r(13) * 6) * swell + Math.sin(s * underBeat + r(6) * 6) * under + (s - 0.5) * drift;
-          const k = n * TRAIL + i;
-          pos.setXYZ(k, x0 + WIND.x * along, y0 + up, z0 + WIND.z * along);
+          return out.set(x0 + WIND.x * along, y0 + up, z0 + WIND.z * along);
+        };
+        for (let i = 0; i < TRAIL; i++) {
+          // Each point follows the head a little further back along the same path.
+          const s = head - i * 0.0095;
+          at(s, this.wispAt);
+          // Which way the trail runs here, for the ribbon's width to lie across it.
+          at(s + 0.0095, this.wispAhead).sub(at(s - 0.0095, this.wispBehind));
           // Fades toward the tail, and the whole trail fades in at the start of a crossing and out over its last third.
           const fade = s <= 0 ? 0 : life * (1 - i / TRAIL) ** 0.8;
-          col.setXYZW(k, 1, 0.95 + 0.05 * this.daylight, glow, fade * (0.55 + 0.35 * this.daylight));
+          for (let side = 0; side < 2; side++) {
+            const k = (n * TRAIL + i) * 2 + side;
+            pos.setXYZ(k, this.wispAt.x, this.wispAt.y, this.wispAt.z);
+            dir.setXYZ(k, this.wispAhead.x, this.wispAhead.y, this.wispAhead.z);
+            col.setXYZW(k, 1, 0.95 + 0.05 * this.daylight, glow, fade * (0.55 + 0.35 * this.daylight));
+          }
         }
       });
       pos.needsUpdate = true;
+      dir.needsUpdate = true;
       col.needsUpdate = true;
     }
   }
@@ -1409,10 +1539,8 @@ export class Ambience {
     }
     this.stacks = stacks;
     if (stacks.length === 0) return;
-    const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute("position", new THREE.BufferAttribute(new Float32Array(stacks.length * PUFFS * 3), 3));
-    geometry.setAttribute("color", new THREE.BufferAttribute(new Float32Array(stacks.length * PUFFS * 4), 4));
-    this.smoke = new THREE.Points(geometry, new THREE.PointsMaterial({ size: 3, sizeAttenuation: false, vertexColors: true, transparent: true, depthWrite: false }));
+    // One low-poly ball per lump of every puff; `puff` places and sizes them.
+    this.smoke = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1, 0), smokeMaterial(), stacks.length * PUFFS * LOBES);
     this.smoke.frustumCulled = false;
     this.scene.add(this.smoke);
   }
@@ -1640,21 +1768,59 @@ export class Ambience {
 
   private puff(clock: number) {
     if (!this.smoke) return;
-    const pos = this.smoke.geometry.getAttribute("position") as THREE.BufferAttribute;
-    const col = this.smoke.geometry.getAttribute("color") as THREE.BufferAttribute;
-    const shade = 0.55 + 0.4 * this.daylight;
+    (this.smoke.material as THREE.ShaderMaterial).uniforms.uShade.value = 0.52 + 0.45 * this.daylight;
+    const { turn, at, size, m, spin } = this.smokeScratch;
     this.stacks.forEach((stack, n) => {
       for (let i = 0; i < PUFFS; i++) {
-        const life = this.still ? i / PUFFS : (clock * 0.16 + i / PUFFS + n * 0.37) % 1;
-        const sway = Math.sin(life * 5 + i * 1.7 + n) * 0.1 * life;
-        const k = n * PUFFS + i;
-        pos.setXYZ(k, stack.x + life * life * 0.55 + sway, stack.y + life * 1.5, stack.z + Math.cos(i * 2.3) * 0.05 * life);
-        col.setXYZW(k, shade, shade, shade * 1.03, Math.sin(Math.PI * Math.min(1, life * 1.15)) * 0.6 * (1 - life * 0.5));
+        // Each puff is blown out of the pot small, floats up, swells and leans downwind, and comes apart near the
+        // top: its lumps drift away from each other and shrink away one by one. Every time round it is a new puff,
+        // with its own size and its own lumps.
+        const phase = this.still ? (i + 0.5) / PUFFS : clock * 0.12 + i / PUFFS + n * 0.37;
+        const lap = Math.floor(phase);
+        const life = phase - lap;
+        const r = (salt: number) => hash(n * PUFFS + i + 1, lap, 700 + salt);
+        const big = (0.07 + r(1) * 0.05) * (1 + life * (0.9 + r(2) * 0.6));
+        const sway = Math.sin(life * 5 + i * 1.7 + n) * 0.05 * life;
+        const lean = life * life * 0.5;
+        const cx = stack.x + WIND.x * lean + sway;
+        const cy = stack.y + 0.06 + life * (1.5 + r(3) * 0.5);
+        const cz = stack.z + WIND.z * lean;
+        for (let l = 0; l < LOBES; l++) {
+          const k = (n * PUFFS + i) * LOBES + l;
+          const q = (salt: number) => hash(k + 1, lap, 760 + salt);
+          // The first lump is the middle of the puff; the rest sit round it, mostly to the sides, a little up.
+          const a = q(1) * Math.PI * 2;
+          const out = l === 0 ? 0 : 0.55 + q(2) * 0.45;
+          // Lumps swell in one after another, and each lets go at its own moment near the top, drifting off.
+          const born = smooth(l * 0.015, 0.06 + l * 0.015, life);
+          const leave = 0.45 + q(3) * 0.45;
+          const gone = smooth(leave - 0.15, leave + 0.1, life);
+          const loose = 1 + Math.max(0, life - (leave - 0.25)) * 2.2;
+          const lump = big * (l === 0 ? 1 : 0.55 + q(4) * 0.35);
+          at.set(
+            cx + Math.cos(a) * out * big * loose,
+            cy + (l === 0 ? 0 : (q(5) - 0.35) * big * 0.8) + (loose - 1) * big * 0.4,
+            cz + Math.sin(a) * out * big * loose,
+          );
+          // Each lump is turned its own way and turns slowly as it rises, so its facets catch the light differently.
+          spin.set(q(6) * 6.3 + life * (q(7) - 0.5) * 2, q(8) * 6.3 + life * (q(9) - 0.5) * 2, q(10) * 6.3);
+          turn.setFromEuler(spin);
+          // A little squat, like a cloud.
+          const s0 = Math.max(lump * born * (1 - gone), 1e-5);
+          size.set(s0, s0 * 0.85, s0);
+          this.smoke!.setMatrixAt(k, m.compose(at, turn, size));
+        }
       }
     });
-    pos.needsUpdate = true;
-    col.needsUpdate = true;
+    this.smoke.instanceMatrix.needsUpdate = true;
   }
+  private smokeScratch = {
+    turn: new THREE.Quaternion(),
+    at: new THREE.Vector3(),
+    size: new THREE.Vector3(),
+    m: new THREE.Matrix4(),
+    spin: new THREE.Euler(),
+  };
 
   /**
    * How high the sun stands: about 1.2 at noon, 0 as it crosses the horizon, down to about -0.8 at midnight.

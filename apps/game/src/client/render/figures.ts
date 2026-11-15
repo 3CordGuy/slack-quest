@@ -17,12 +17,12 @@ import { ConvexGeometry } from "three/examples/jsm/geometries/ConvexGeometry.js"
 import { GARB_PREFIX, INK_COLORS, INK_LEVELS, INK_REGIONS, RARITY_COLOR, WEAPONS, appearanceK, decodeInk, inkColorOf, inkLevelOf, type Appearance, type Ink, type InkRegion, type InkView, type Outfit, type Slot } from "@gantt-quest/world";
 import type { Look } from "./looks";
 
-const OUTLINE = "#1b1830";
+export const OUTLINE = "#1b1830";
 /** Set by makeFigure for the figure being built: a fishing rod goes in its right hand (gilded, for a full Catch Book). */
 let rodInHand: boolean | "gilded" = false;
 const GEAR = { steel: "#c9d1dc", shine: "#f1f5fa", iron: "#8b95a5", wood: "#8a5a2b", leather: "#a0683a", gold: "#e0b12e", paper: "#e8dcc0", bone: "#eee6cf", dark: "#2a2740" };
 /** The frame a figure is modelled in, in model units: `setSize(1)` makes this one world unit tall. */
-const FRAME = 22;
+export const FRAME = 22;
 
 type Rot = [number, number, number];
 const ONE = new THREE.Vector3(1, 1, 1);
@@ -49,6 +49,19 @@ const WEAR = /* glsl */ `
 }`;
 
 /** Lit like the furniture, but never darker than a third of its own colour: nobody vanishes at night. */
+/**
+ * Tattoo ink: lit and shaded like the body (with the same floor of light), see-through by each vertex colour's
+ * alpha, never hiding what is behind it from the depth test, and pulled a hair toward the eye over the skin.
+ */
+function inkMaterial(): THREE.MeshLambertMaterial {
+  const m = new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -2 });
+  m.onBeforeCompile = (shader) => {
+    shader.fragmentShader = shader.fragmentShader.replace("#include <opaque_fragment>", "outgoingLight = max(outgoingLight, diffuseColor.rgb * 0.32);\n  #include <opaque_fragment>");
+  };
+  m.customProgramCacheKey = () => "gq-figure-ink";
+  return m;
+}
+
 function bodyMaterial(): THREE.MeshLambertMaterial {
   const m = new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true });
   m.onBeforeCompile = (shader) => {
@@ -147,7 +160,13 @@ type Pt = [number, number, number];
  * A faceted tube through elliptical rings stacked up y, capped at both ends: a limb, a torso, a head. Its
  * sides are turned half a step so a flat face, not an edge, looks along +z.
  */
-function loftGeometry(rings: readonly Ring[], sides: number): THREE.BufferGeometry {
+/** How a loft is closed: `open` leaves off the cap at its first ring (or both ends); `inward` faces it inward, to be seen from inside. */
+interface LoftShape {
+  open?: "start" | "both";
+  inward?: boolean;
+}
+
+function loftGeometry(rings: readonly Ring[], sides: number, shape: LoftShape = {}): THREE.BufferGeometry {
   const sorted = [...rings].sort((p, q) => p[0] - q[0]);
   const loops = sorted.map(([y, rx, rz, dz = 0]) =>
     Array.from({ length: sides }, (_, k) => {
@@ -156,7 +175,8 @@ function loftGeometry(rings: readonly Ring[], sides: number): THREE.BufferGeomet
     }),
   );
   const out: number[] = [];
-  const tri = (a: THREE.Vector3, b: THREE.Vector3, c: THREE.Vector3) => out.push(a.x, a.y, a.z, b.x, b.y, b.z, c.x, c.y, c.z);
+  const tri = (a: THREE.Vector3, b: THREE.Vector3, c: THREE.Vector3) =>
+    shape.inward ? out.push(a.x, a.y, a.z, c.x, c.y, c.z, b.x, b.y, b.z) : out.push(a.x, a.y, a.z, b.x, b.y, b.z, c.x, c.y, c.z);
   for (let i = 0; i + 1 < loops.length; i++) {
     for (let k = 0; k < sides; k++) {
       const n = (k + 1) % sides;
@@ -173,8 +193,8 @@ function loftGeometry(rings: readonly Ring[], sides: number): THREE.BufferGeomet
       else tri(c, loops[i][n], loops[i][k]);
     }
   };
-  cap(0, false);
-  cap(loops.length - 1, true);
+  if (!shape.open) cap(0, false);
+  if (shape.open !== "both") cap(loops.length - 1, true);
   const g = new THREE.BufferGeometry();
   g.setAttribute("position", new THREE.Float32BufferAttribute(out, 3));
   g.computeVertexNormals();
@@ -203,7 +223,7 @@ const sym = (pts: Pt[]): Pt[] => pts.flatMap(([x, y, z]): Pt[] => (x ? [[x, y, z
  * The outline's shell for a rounded shape: every corner pushed out `by` along the faces that meet there,
  * so the dark edge is the same width all round (a box's shell is simply scaled; a tapered limb's would not be).
  */
-function inflate(g: THREE.BufferGeometry, by: number): THREE.BufferGeometry {
+export function inflate(g: THREE.BufferGeometry, by: number): THREE.BufferGeometry {
   const pos = g.getAttribute("position");
   const key = (i: number) => `${Math.round(pos.getX(i) * 1000)},${Math.round(pos.getY(i) * 1000)},${Math.round(pos.getZ(i) * 1000)}`;
   const sums = new Map<string, THREE.Vector3>();
@@ -240,6 +260,8 @@ interface Mats {
   body: THREE.MeshLambertMaterial;
   outline: THREE.MeshBasicMaterial;
   glow: THREE.MeshBasicMaterial;
+  /** Tattoo ink: lit like the skin, and as see-through as each cell was inked (its vertex colours' alpha). */
+  ink: THREE.MeshLambertMaterial;
 }
 
 /** One jointed part: primitives gathered in the joint's own space, then merged into a mesh or three. */
@@ -250,6 +272,7 @@ class Part {
   private solid: THREE.BufferGeometry[] = [];
   private hull: THREE.BufferGeometry[] = [];
   private lit: THREE.BufferGeometry[] = [];
+  private inked: THREE.BufferGeometry[] = [];
 
   constructor(parent: THREE.Object3D, x = 0, y = 0, z = 0) {
     this.joint.position.set(x, y, z);
@@ -318,7 +341,7 @@ class Part {
 
   /** A ring standing upright, facing +z. */
   ring(color: string, radius: number, tube: number, x = 0, y = 0, z = 0, rot?: Rot): this {
-    return this.add(new THREE.TorusGeometry(radius, tube, 4, 10), color, x, y, z, rot);
+    return this.add(new THREE.TorusGeometry(radius, tube, lowPoly ? 6 : 4, lowPoly ? 16 : 10), color, x, y, z, rot, false, lowPoly);
   }
 
   /** A faceted tube through `rings` (see loftGeometry), in this joint's space offset by (x, y, z). */
@@ -326,21 +349,43 @@ class Part {
     return this.add(loftGeometry(rings, sides), color, x, y, z, rot, false, true);
   }
 
+  /**
+   * A loft left open at its first ring (or both ends; see LoftShape): a mouth, a hood's opening. Facing inward
+   * it is a lining, seen only from inside and drawn with no outline.
+   */
+  shell(color: string, rings: readonly Ring[], sides: number, shape: LoftShape, x = 0, y = 0, z = 0, rot?: Rot): this {
+    return this.add(loftGeometry(rings, sides, shape), color, x, y, z, rot, false, !shape.inward, !shape.inward);
+  }
+
   /** The smallest solid that holds all of `pts`: a wedge, a blade, a shoe. */
   shape(color: string, pts: Pt[], x = 0, y = 0, z = 0, rot?: Rot): this {
     return this.add(new ConvexGeometry(pts.map(([px, py, pz]) => new THREE.Vector3(px, py, pz))), color, x, y, z, rot, false, true);
   }
 
-  /** Triangles lying just over a surface (see inkOn), lit but with no outline: a tattoo's ink. */
-  inkGeometry(color: string, positions: number[]): this {
+  /**
+   * Triangles lying just over a surface (see inkOn): a tattoo's ink, lit, with no outline, `alpha` of it laid
+   * over what is under it (the skin shows through faint ink).
+   */
+  inkGeometry(color: string, alpha: number, positions: number[]): this {
     const g = new THREE.BufferGeometry();
     g.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
     g.computeVertexNormals();
-    return this.add(g, color, 0, 0, 0, undefined, false, false, false);
+    const c = new THREE.Color(color);
+    const n = positions.length / 3;
+    const rgba = new Float32Array(n * 4);
+    for (let i = 0; i < n; i++) rgba.set([c.r, c.g, c.b, alpha], i * 4);
+    g.setAttribute("color", new THREE.BufferAttribute(rgba, 4));
+    this.inked.push(g);
+    return this;
   }
 
   glowBox(color: string, w: number, h: number, d: number, x = 0, y = 0, z = 0, rot?: Rot): this {
     return this.add(new THREE.BoxGeometry(w, h, d), color, x, y, z, rot, true);
+  }
+
+  /** A faceted tube through `rings` that glows (unlit, no outline): a lantern's glass. */
+  glowLoft(color: string, rings: readonly Ring[], sides = 8, x = 0, y = 0, z = 0): this {
+    return this.add(loftGeometry(rings, sides), color, x, y, z, undefined, true);
   }
 
   glowBall(color: string, radius: number, x = 0, y = 0, z = 0): this {
@@ -371,7 +416,13 @@ class Part {
       mesh.userData.selfLit = true;
       this.skin.add(mesh);
     }
-    this.solid = this.hull = this.lit = [];
+    if (this.inked.length > 0) {
+      // Drawn after the solid body it lies on, so the skin is there to show through.
+      const mesh = new THREE.Mesh(merged(this.inked), mats.ink);
+      mesh.renderOrder = 1;
+      this.skin.add(mesh);
+    }
+    this.solid = this.hull = this.lit = this.inked = [];
   }
 }
 
@@ -582,7 +633,7 @@ function lowHead(head: Part, look: Look, asleep: boolean, covered = false) {
   head.box(tone(skin, -0.25), 1, 0.24, 0.3, 0, mouthY, faceAt(rings, mouthY) + 0.03);
   lowEyes(head, skin, look.hair, chosen?.eyes ?? "round", asleep, faceAt(rings, 3.05), faceAt(rings, 3.95));
   lowHair(head, look.hair, chosen?.hairStyle ?? "short", rings, covered);
-  if (chosen?.ink) inkPart(head, "head", chosen.ink, skin);
+  if (chosen?.ink) inkPart(head, "head", chosen.ink);
   if (chosen) lowFacialHair(head, chosen.beard, chosen.mustache, skin, look.hair, rings, chinY, mouthY);
 }
 
@@ -977,29 +1028,37 @@ function lowHelm(head: Part, c: string, band: string, crest: string, nasal = fal
 }
 
 /**
- * A hood: rounded over the crown to a soft point at the back, falling round the back and sides of the head
- * to the shoulders, open at the face. `trim` edges the face.
+ * A hood, low-poly: a cloth shell round the head, from an oval opening that frames the face, swelling over
+ * the ears and crown and tapering to a soft point down the back; dark inside round the face; a short mantle
+ * round the neck over the shoulders. `trim` bands the opening (a worn hood).
+ *
+ * The shell is a loft run front to back and laid on its side (turned so the loft's +y runs back, -z): each
+ * ring's rx is its half-width, its rz its half-height and its dz how far up its middle is from `mid`. The
+ * opening reaches from the brow to just under the chin of a head of these rings.
  */
 function lowHood(head: Part, c: string, rings: readonly Ring[], trim?: string) {
-  head.loft(c, [[4.1, 3.92, 3.62], [5.5, 3.86, 3.56, -0.15], [6.8, 3.1, 2.95, -0.45], [7.6, 1.7, 1.65, -0.95], [8.05, 0.3, 0.3, -1.5]], 10);
-  const fall: Pt[] = [];
-  const levels: [number, number, number][] = [
-    [5.4, 3.95, 3.6],
-    [3.6, ringAt(rings, 3.6).rx + 0.6, ringAt(rings, 3.6).rz + 0.55],
-    [1.6, ringAt(rings, 1.6).rx + 0.75, ringAt(rings, 1.6).rz + 0.6],
-    [-0.3, 3.9, 3.3],
+  const side: Rot = [-HALF_PI, 0, 0];
+  const chin = Math.min(0.6, rings[0][0] + 0.1);
+  const brow = 5.3;
+  const mid = (brow + chin) / 2;
+  const half = (brow - chin) / 2;
+  // The opening stands out past the hair at the brow, so the face sits back inside the hood.
+  const shell: Ring[] = [
+    [-3.3, 2.85, half, 0],
+    [-2.4, 3.65, half + 1, 0.45],
+    [-0.5, 4.05, 3.75, 3.5 - mid],
+    [1.5, 3.85, 3.55, 3.6 - mid],
+    [3, 2.75, 2.75, 3.9 - mid],
+    [4, 1.2, 1.2, 4.15 - mid],
+    [4.5, 0.15, 0.15, 4.05 - mid],
   ];
-  for (const [y, rx, rz] of levels) {
-    for (let deg = 52; deg <= 308; deg += 16) {
-      const a = (deg / 180) * Math.PI;
-      fall.push([Math.sin(a) * rx, y, Math.cos(a) * rz - 0.1]);
-    }
-  }
-  head.shape(c, fall);
-  if (trim) {
-    const f = facet(OVER_HAIR, 10, 4.3, 0, 0.3);
-    head.box(trim, 2.4, 0.55, 0.35, f.x, 4.3, f.z);
-  }
+  head.shell(c, shell, 12, { open: "start" }, 0, mid, 0, side);
+  // The lining round the face, in shadow.
+  const lining: Ring[] = shell.slice(0, 3).map(([y, rx, rz, dz = 0]) => [y + 0.05, rx - 0.14, rz - 0.14, dz]);
+  head.shell(tone(c, -0.32), lining, 12, { open: "both", inward: true }, 0, mid, 0, side);
+  // A short mantle round the neck and over the shoulders, under the chin at the front.
+  head.loft(c, [[-1.15, 3.95, 3.5, 0.1], [-0.4, 3.8, 3.35, 0.05], [0.15, 3, 2.5, -0.4]], 12);
+  if (trim) head.shell(trim, [[-3.45, 2.99, half + 0.12, 0], [-3.12, 2.99, half + 0.12, 0]], 12, { open: "both" }, 0, mid, 0, side);
 }
 
 /** The headgear a class, townsperson or enemy has by default, rounded to go with low-poly heads. */
@@ -1133,11 +1192,21 @@ function lowWornHelmet(head: Part, helmet: { ref: string; icon: string }, trim: 
  */
 function lowChest(torso: Part, skin: string, cloth: string, sh: number, belt?: string): Ring[] {
   const hip = m.hips;
-  const rings: Ring[] = [[-0.6, 2.85 * hip, 1.95 + (hip - 1) * 0.6, 0], [0.4, 2.6 * hip, 1.8 + (hip - 1) * 0.5, 0], [1.6, 2.45 * (1 + hip) * 0.5, 1.7, 0.05], [3.6, 3.3 * (1 + sh) * 0.5, 2.05, 0.15], [5.3, 4.05 * sh, 2, 0.05], [6.1, 3.1 * sh, 1.6, -0.05], [6.5, 1.4, 1.2, 0]];
+  // Down at the hips the clothes come out over the tops of the thighs, so the legs don't poke through at the sides.
+  const rings: Ring[] = [[-0.6, Math.max(2.85 * hip, thighReach(-0.6)), 1.95 + (hip - 1) * 0.6, 0], [0.4, Math.max(2.6 * hip, thighReach(0.4)), 1.8 + (hip - 1) * 0.5, 0], [1.6, 2.45 * (1 + hip) * 0.5, 1.7, 0.05], [3.6, 3.3 * (1 + sh) * 0.5, 2.05, 0.15], [5.3, 4.05 * sh, 2, 0.05], [6.1, 3.1 * sh, 1.6, -0.05], [6.5, 1.4, 1.2, 0]];
   torso.cyl(skin, 1, 1.15, 1.6, 0, 6.6, 0, 6);
   torso.loft(cloth, rings);
   if (belt) torso.loft(belt, [around(rings, 0.85, 0.1, 0.02), around(rings, 1.75, 0.1, 0.05)]);
   return rings;
+}
+
+/**
+ * How far out from the middle the outside of a thigh reaches at height `y` (the torso's own units; the hips are
+ * at 0), with room for trousers or greaves over it: what the clothes at the waist have to cover.
+ */
+function thighReach(y: number): number {
+  const fuller = 0.5 + 0.5 * m.hips;
+  return 1.7 * m.hips + (ringAt(THIGH, y).rx + 0.14) * fuller + 0.12;
 }
 
 /** A ring just outside `rings` at height `y`, `by` larger all round. */
@@ -1172,8 +1241,13 @@ function coatPanel(part: Part, color: string, s: number, a0: number, a1: number,
   const steps = 6;
   for (let i = 0; i <= steps; i++) {
     const a = a0 + ((a1 - a0) * i) / steps;
-    // The skirts flare over the hips, wider for wide ones.
-    for (const [y, rx, rz, dz] of [[1.4, 2.85 * (1 + m.hips) * 0.5 + grow, 2 + grow, 0.05], [-4.6, 3.5 * m.hips + grow, 2.7 + grow, -0.2]] as const) {
+    // The skirts flare over the hips, wider for wide ones, and out over the tops of the thighs.
+    const rings: [number, number, number, number][] = [
+      [1.4, 2.85 * (1 + m.hips) * 0.5 + grow, 2 + grow, 0.05],
+      [0.2, Math.max(3.1 * m.hips, thighReach(0.2) + 0.1) + grow, 2.25 + grow, 0],
+      [-4.6, Math.max(3.5 * m.hips, thighReach(0.2) + 0.25) + grow, 2.7 + grow, -0.2],
+    ];
+    for (const [y, rx, rz, dz] of rings) {
       for (const k of [1, 0.82]) pts.push([s * Math.sin(a) * rx * k, y, Math.cos(a) * rz * k + dz]);
     }
   }
@@ -1203,7 +1277,7 @@ function lowBareArm(arm: Part, skin: string) {
 // ---------- tattoos ----------
 
 /** How big an ink cell is on the body, in its part's units before scaling. */
-const INK_CELL = 0.26;
+const INK_CELL = 0.13;
 
 /**
  * Where an ink region's grid lies on the body (see INK_REGIONS): the loft it is drawn on, in its part's space
@@ -1291,13 +1365,13 @@ function onSurface(surface: InkSurface, x: number, y: number, back: boolean): [n
  * Lay one side's inked cells over a loft on `part`: each cell cut where the loft's faces turn and where its
  * rings change, so every piece lies flat on the face under it, and gathered into one mesh per shade.
  */
-function inkOn(part: Part, surface: InkSurface, cols: number, view: InkView, cells: Map<number, number>, skin: string) {
+function inkOn(part: Part, surface: InkSurface, cols: number, view: InkView, cells: Map<number, number>) {
   const { half, top, cell, rings } = surface;
   const back = view === "b";
   // Seen from the front, the grid's left is the figure's right (-x); from the back, its left.
   const xAt = (c: number) => (back ? half - c * cell : -half + c * cell);
-  /** Each cell's colour (its ink over the skin, as strongly as it was inked), and the triangles in it. */
-  const byColor = new Map<string, number[]>();
+  /** The triangles of each ink (a colour at a level), to lie over the skin as see-through as it was inked. */
+  const byInk = new Map<number, number[]>();
   for (const [at, ink] of cells) {
     const c = at % cols;
     const r = Math.floor(at / cols);
@@ -1306,9 +1380,8 @@ function inkOn(part: Part, surface: InkSurface, cols: number, view: InkView, cel
     const xa = Math.min(xAt(c), xAt(c + 1));
     const xb = Math.max(xAt(c), xAt(c + 1));
     if (Math.abs((xa + xb) / 2) >= inkAcross(surface, (yTop + yBottom) / 2)) continue;
-    const color = inkOver(skin, ink);
-    if (!byColor.has(color)) byColor.set(color, []);
-    const out = byColor.get(color)!;
+    if (!byInk.has(ink)) byInk.set(ink, []);
+    const out = byInk.get(ink)!;
     const ys = [yBottom, ...rings.map((ring) => ring[0]).filter((y) => y > yBottom && y < yTop), yTop];
     for (let i = 0; i + 1 < ys.length; i++) {
       const [y0, y1] = [ys[i], ys[i + 1]];
@@ -1330,7 +1403,9 @@ function inkOn(part: Part, surface: InkSurface, cols: number, view: InkView, cel
       }
     }
   }
-  for (const [color, positions] of byColor) if (positions.length) part.inkGeometry(color, positions);
+  for (const [ink, positions] of byInk) {
+    if (positions.length) part.inkGeometry(INK_COLORS[inkColorOf(ink) - 1] ?? INK_COLORS[0], inkLevelOf(ink) / INK_LEVELS, positions);
+  }
 }
 
 /** The colour a cell of ink shows on this skin: its ink laid over the skin, as strongly as it was inked. */
@@ -1340,11 +1415,12 @@ export function inkOver(skin: string, cell: number): string {
 }
 
 /** Draw the tattoos a hero drew on `region`, front and back, on the part it lies on. */
-function inkPart(part: Part, region: InkRegion, ink: Ink, skin: string) {
+function inkPart(part: Part, region: InkRegion, ink: Ink) {
   const surface = inkSurface(region, chosen);
+  const { cols } = INK_REGIONS[region];
   for (const view of ["f", "b"] as const) {
-    const cells = decodeInk(ink[`${region}.${view}`]);
-    if (cells.size) inkOn(part, surface, INK_REGIONS[region].cols, view, cells, skin);
+    const cells = decodeInk(ink[`${region}.${view}`], cols);
+    if (cells.size) inkOn(part, surface, cols, view, cells);
   }
 }
 
@@ -1585,7 +1661,22 @@ function drawHeld(id: string, b: Biped, trim: string, look: Look, shield: boolea
     p.box(GEAR.steel, 0.9, 3.4, 0.4, 0, 2.9, 0);
     p.box(GEAR.shine, 0.5, 0.9, 0.4, 0, 5, 0);
   };
+  /** Two points mirrored across the blade's flat (x), `t` either side of it. */
+  const flat = (t: number, y: number, z: number): Pt[] => [[t, y, z], [-t, y, z]];
   const axe = (band: string) => {
+    if (lowPoly) {
+      // A round haft; an iron socket; a crescent blade, thick at the socket and thin at its bright edge; a
+      // short beak behind; a band of the trim below the head.
+      shaft(GEAR.wood, 14, 3.4);
+      w.cyl(GEAR.iron, 0.62, 0.62, 1.7, 0, 9.4, 0, 8);
+      const blade: Pt[] = [];
+      for (const [z, y0, y1, t] of [[0.4, 8.5, 10.3, 0.28], [1.8, 7.7, 11.1, 0.22], [3.25, 7.05, 11.75, 0.14]]) blade.push(...flat(t, y0, z), ...flat(t, y1, z));
+      w.shape(GEAR.steel, blade);
+      w.shape(GEAR.shine, [...flat(0.14, 7.05, 3.2), ...flat(0.14, 11.75, 3.2), ...flat(0.1, 7.4, 3.6), ...flat(0.1, 11.4, 3.6), ...flat(0.08, 9.4, 3.8)]);
+      w.shape(GEAR.iron, [...flat(0.26, 8.9, -0.5), ...flat(0.26, 9.9, -0.5), ...flat(0.14, 9.2, -1.65), ...flat(0.14, 9.6, -1.65)]);
+      w.loft(band, [[6.6, 0.6, 0.6], [7.4, 0.6, 0.6]], 8);
+      return;
+    }
     shaft(GEAR.wood, 14, 3.4);
     w.box(GEAR.steel, 0.5, 4, 2.6, 0, 9.4, 1.7);
     w.box(GEAR.shine, 0.52, 5, 0.8, 0, 9.4, 3.2);
@@ -1593,6 +1684,18 @@ function drawHeld(id: string, b: Biped, trim: string, look: Look, shield: boolea
     w.cyl(band, 0.6, 0.6, 0.8, 0, 7, 0, 6);
   };
   const lantern = (y: number, z: number) => {
+    if (lowPoly) {
+      // A round iron base, glowing glass between four slim posts, a band and a domed roof with a knob.
+      w.loft(GEAR.iron, [[y - 1.35, 0.95, 0.95], [y - 0.95, 1.02, 1.02]], 8, 0, 0, z);
+      w.glowLoft("#ffd98a", [[y - 0.95, 0.72, 0.72], [y + 0.95, 0.72, 0.72]], 8, 0, 0, z);
+      for (let k = 0; k < 4; k++) {
+        const a = ((k + 0.5) * Math.PI) / 2;
+        w.cyl(GEAR.iron, 0.12, 0.12, 1.9, Math.sin(a) * 0.82, y, z + Math.cos(a) * 0.82, 6);
+      }
+      w.loft(GEAR.iron, [[y + 0.95, 1.02, 1.02], [y + 1.25, 0.95, 0.95], [y + 1.75, 0.55, 0.55], [y + 2.05, 0.15, 0.15]], 8, 0, 0, z);
+      w.ball(GEAR.iron, 0.24, 0, y + 2.15, z, 0);
+      return;
+    }
     w.box(GEAR.iron, 1.7, 0.4, 1.7, 0, y + 1.2, z);
     w.cone(GEAR.iron, 1, 0.7, 0, y + 1.7, z);
     w.glowBox("#ffd98a", 1.3, 1.9, 1.3, 0, y, z);
@@ -1779,6 +1882,12 @@ function drawHeld(id: string, b: Biped, trim: string, look: Look, shield: boolea
       for (const s of [-1, 1]) w.cone(GEAR.gold, 0.4, 1.3, s * 1.3, 7.6, 0);
       return { tilt: 0.3 };
     case "club":
+      if (lowPoly) {
+        // A knobbly cudgel, thin at the grip and swelling to a rounded head, with knots in it.
+        w.loft(GEAR.wood, [[-1.2, 0.45, 0.45], [1.5, 0.5, 0.5], [3.6, 0.78, 0.75], [5.4, 1.05, 1], [6.2, 1.12, 1.08], [6.45, 0.6, 0.6]], 8);
+        for (const [r, x, y, z] of [[0.42, 0.85, 5, 0.35], [0.38, -0.8, 3.9, -0.4], [0.35, 0.2, 5.75, -0.95]]) w.ball(tone(GEAR.wood, -0.12), r, x, y, z, 0);
+        return { tilt: 0.5 };
+      }
       w.cyl(GEAR.wood, 1, 0.45, 7.6, 0, 2.6, 0, 6);
       w.box(tone(GEAR.wood, -0.1), 0.6, 0.6, 0.6, 0.8, 5.2, 0.3);
       w.box(tone(GEAR.wood, -0.1), 0.6, 0.6, 0.6, -0.7, 4, -0.4);
@@ -1802,12 +1911,37 @@ function drawHeld(id: string, b: Biped, trim: string, look: Look, shield: boolea
       const p = b.heldL;
       p.cyl(GEAR.paper, 0.8, 0.8, 6, -0.3, 1.2, 0.6, 8, [HALF_PI, 0, 0]);
       p.cyl("#3f6fa8", 0.88, 0.88, 1, -0.3, 1.2, 0.6, 8, [HALF_PI, 0, 0]);
-      for (const s of [-1, 1]) p.cyl("#c9b58a", 0.5, 0.5, 0.3, -0.3, 1.2, 0.6 + s * 3, 8, [HALF_PI, 0, 0]);
+      for (const s of [-1, 1]) {
+        if (lowPoly) p.ball("#c9b58a", 0.55, -0.3, 1.2, 0.6 + s * 3.2, 1);
+        else p.cyl("#c9b58a", 0.5, 0.5, 0.3, -0.3, 1.2, 0.6 + s * 3, 8, [HALF_PI, 0, 0]);
+      }
       return {};
     }
     case "pack": {
       // A big pack on the back, with a rolled blanket on top.
       const t = b.torso;
+      if (lowPoly) {
+        // A rounded leather sack on the back, a flap over its top, a bedroll strapped on above, straps over the
+        // shoulders and down the chest.
+        const strap = "#5f3f24";
+        t.loft("#7a5230", [[0.7, 2.3, 1.05], [2.2, 2.75, 1.35], [4.4, 2.7, 1.35], [5.9, 2.05, 1.05], [6.25, 1, 0.6]], 10, 0, 0, -3.25);
+        const flapPts: Pt[] = [];
+        for (const [y, rx, rz] of [[6.15, 1.65, 1], [5.6, 2.35, 1.3], [4.2, 2.8, 1.45]]) {
+          for (let deg = 110; deg <= 250; deg += 28) {
+            const a = (deg / 180) * Math.PI;
+            flapPts.push([Math.sin(a) * rx, y, Math.cos(a) * rz - 3.25]);
+          }
+        }
+        t.shape(strap, flapPts);
+        t.ball(GEAR.gold, 0.4, 0, 4.15, -4.78, 0);
+        t.cyl(look.accent, 1.05, 1.05, 5.6, 0, 6.95, -3, 10, [0, 0, HALF_PI]);
+        for (const x of [-1.6, 1.6]) t.cyl(strap, 1.13, 1.13, 0.35, x, 6.95, -3, 10, [0, 0, HALF_PI]);
+        for (const s of [-1, 1]) {
+          t.shape(strap, [[s * 1.8, 6, -1.7], [s * 2.4, 6, -1.7], [s * 1.85, 6.68, 0], [s * 2.45, 6.58, 0], [s * 1.8, 6, 1.6], [s * 2.4, 6, 1.6], [s * 1.85, 6.86, 0], [s * 2.45, 6.76, 0]]);
+          t.shape(strap, [[s * 1.75, 5.75, 1.82], [s * 2.35, 5.75, 1.72], [s * 1.75, 3, 2.18], [s * 2.35, 3, 2.08], [s * 1.75, 5.75, 2.02], [s * 2.35, 5.75, 1.92], [s * 1.75, 3, 2.38], [s * 2.35, 3, 2.28]]);
+        }
+        return {};
+      }
       t.box("#7a5230", 5.4, 5.6, 2.6, 0, 3.2, -3.2);
       t.box("#5f3f24", 5.5, 2, 2.7, 0, 5, -3.2);
       t.cyl(look.accent, 1.1, 1.1, 5.8, 0, 6.8, -3.1, 8, [0, 0, HALF_PI]);
@@ -1818,6 +1952,16 @@ function drawHeld(id: string, b: Biped, trim: string, look: Look, shield: boolea
     case "basket": {
       // A basket of greens on the other arm.
       const p = b.heldL;
+      if (lowPoly) {
+        // A woven bowl, banded, with a rim and a round handle, full of greens.
+        const wicker = "#b98b5a";
+        p.loft(wicker, [[-2.75, 1.45, 1.45], [-1.6, 1.95, 1.95], [-0.55, 2.1, 2.1]], 10, 0, 0, 0.8);
+        for (const y of [-2.05, -1.3]) p.loft(tone(wicker, -0.12), [[y, 1.86, 1.86], [y + 0.25, 1.92, 1.92]], 10, 0, 0, 0.8);
+        p.loft("#8a6a44", [[-0.72, 2.18, 2.18], [-0.32, 2.18, 2.18]], 10, 0, 0, 0.8);
+        p.ring("#8a6a44", 1.7, 0.2, 0, -0.4, 0.8);
+        for (const [x, z] of [[-0.8, 0.4], [0.7, 0.5], [0, 1.5]]) p.ball("#6fae4a", 0.9, x, -0.35, z, 1, [1, 0.75, 1]);
+        return {};
+      }
       p.cyl("#b98b5a", 2, 1.6, 2.2, 0, -1.6, 0.8, 8);
       p.cyl("#8a6a44", 2.05, 2.05, 0.5, 0, -1, 0.8, 8);
       p.ring("#8a6a44", 1.7, 0.2, 0, -0.4, 0.8);
@@ -1828,6 +1972,17 @@ function drawHeld(id: string, b: Biped, trim: string, look: Look, shield: boolea
       // A big axe in the right hand, a tower shield on the left arm.
       axe(look.accent);
       const s = b.armL;
+      if (lowPoly) {
+        // A tall shield, rounded at the shoulders and pointed at the foot: a steel rim, its face in the accent,
+        // a steel band across it.
+        const turn: Rot = [0, 0.35, 0];
+        const outline: [number, number][] = [[-2.3, 3.9], [2.3, 3.9], [2.55, 3.1], [2.55, -3.4], [1.9, -4.1], [0, -4.45], [-1.9, -4.1], [-2.55, -3.4], [-2.55, 3.1]];
+        const plate = (k: number, z0: number, z1: number): Pt[] => outline.flatMap(([x, y]): Pt[] => [[x * k, y * k, z0], [x * k, y * k, z1]]);
+        s.shape("#6f7480", plate(1, -0.35, 0.15), 0.4, -2.6, 1.9, turn);
+        s.shape(look.accent, plate(0.84, 0.12, 0.36), 0.4, -2.6, 1.9, turn);
+        s.shape(GEAR.steel, [[-2.2, 0.55, 0.3], [2.2, 0.55, 0.3], [-2.2, 1.3, 0.3], [2.2, 1.3, 0.3], [-2.2, 0.55, 0.5], [2.2, 0.55, 0.5], [-2.2, 1.3, 0.5], [2.2, 1.3, 0.5]], 0.4, -2.6, 1.9, turn);
+        return { tilt: 0.25 };
+      }
       s.box("#6f7480", 4.8, 8.4, 0.7, 0.4, -2.6, 1.9, [0, 0.35, 0]);
       s.box(look.accent, 3.2, 6.6, 0.3, 0.3, -2.6, 2.35, [0, 0.35, 0]);
       s.box(GEAR.steel, 3.4, 0.8, 0.35, 0.3, -2.4, 2.45, [0, 0.35, 0]);
@@ -1974,8 +2129,8 @@ function person(top: THREE.Group, look: Look, outfit: Outfit | undefined, asleep
         lowBareLeg(thigh, shin, look.skin);
         if (chosen?.ink) {
           const right = thigh === b.thighR;
-          inkPart(thigh, right ? "thighR" : "thighL", chosen.ink, look.skin);
-          inkPart(shin, right ? "shinR" : "shinL", chosen.ink, look.skin);
+          inkPart(thigh, right ? "thighR" : "thighL", chosen.ink);
+          inkPart(shin, right ? "shinR" : "shinL", chosen.ink);
         }
       }
       else lowLeg(thigh, shin, look.legs);
@@ -2104,11 +2259,11 @@ function person(top: THREE.Group, look: Look, outfit: Outfit | undefined, asleep
         const region = s < 0 ? "armR" : "armL";
         if (undressed) {
           lowBareArm(arm, look.skin);
-          if (chosen?.ink) inkPart(arm, region, chosen.ink, look.skin);
+          if (chosen?.ink) inkPart(arm, region, chosen.ink);
         } else if (inkedArms) {
           // Sleeves rolled up, to show off the ink on the forearms.
           lowRolledSleeve(arm, look.skin, cloth);
-          inkPart(arm, region, chosen!.ink!, look.skin);
+          inkPart(arm, region, chosen!.ink!);
         } else lowSleeve(arm, cloth, look.accent);
         continue;
       }
@@ -2888,6 +3043,7 @@ export function makeFigure(kind: string, look: Look, outfit?: Outfit, opts: Figu
     body: fadeable(bodyMaterial(), fade, "gq-figure-body"),
     outline: fadeable(new THREE.MeshBasicMaterial({ color: OUTLINE, side: THREE.BackSide }), fade, "gq-figure-line"),
     glow: fadeable(new THREE.MeshBasicMaterial({ vertexColors: true }), fade, "gq-figure-glow"),
+    ink: fadeable(inkMaterial(), fade, "gq-figure-ink"),
   };
   const made: THREE.BufferGeometry[] = [];
   for (const part of [...rig.parts, ...extraParts]) part.build(mats, made);
@@ -2919,6 +3075,7 @@ export function makeFigure(kind: string, look: Look, outfit?: Outfit, opts: Figu
     setDim(on) {
       mats.body.color.setScalar(on ? 0.5 : 1);
       mats.glow.color.setScalar(on ? 0.4 : 1);
+      mats.ink.color.setScalar(on ? 0.5 : 1);
     },
     setFade(left) {
       fade.value = Math.max(0, Math.min(1, left));
@@ -2929,6 +3086,7 @@ export function makeFigure(kind: string, look: Look, outfit?: Outfit, opts: Figu
       mats.body.dispose();
       mats.outline.dispose();
       mats.glow.dispose();
+      mats.ink.dispose();
     },
   };
 }

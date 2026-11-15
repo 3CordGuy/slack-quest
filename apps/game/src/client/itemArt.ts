@@ -512,6 +512,9 @@ export function itemArtPixels(name: string, accent: string): ImageData {
   return canvas.getContext("2d")!.getImageData(0, 0, ART_PIXELS, ART_PIXELS);
 }
 
+/** Whether an admin has redrawn this icon (then its pixels, not any model, are what is shown). */
+export const hasIconOverride = (name: string) => !!iconOverrides[name];
+
 /** Called whenever the icon overrides change, so pictures built from the icons can be redrawn. */
 export const iconArtListeners = new Set<() => void>();
 

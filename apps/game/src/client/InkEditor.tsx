@@ -22,34 +22,35 @@ import {
   type InkView,
 } from "@gantt-quest/world";
 import { inkAcross, inkGuides, inkOver, inkSurface } from "./render/figures";
+import { STAMPS, type Stamp } from "./inkStamps";
 
 /** One view of the doll, in cells, and the gap between the two. */
-const COLS = 46;
-const ROWS = 74;
-const GAP = 3;
+const COLS = 92;
+const ROWS = 148;
+const GAP = 6;
 /** Canvas pixels to a cell (it is drawn larger or smaller to fit; see builder.css). */
-const PX = 6;
+const PX = 3;
 const VIEWS: InkView[] = ["f", "b"];
 
 /** Where each region's grid sits on the doll, by its top-left cell. Seen from the back, left and right swap. */
 const PLACES: Record<InkView, { region: InkRegion; col: number; row: number }[]> = {
   f: [
-    { region: "head", col: 9, row: 0 },
-    { region: "armR", col: 0, row: 34 },
-    { region: "armL", col: 36, row: 34 },
-    { region: "thighR", col: 10, row: 59 },
-    { region: "thighL", col: 24, row: 59 },
-    { region: "shinR", col: 11, row: 63 },
-    { region: "shinL", col: 25, row: 63 },
+    { region: "head", col: 18, row: 0 },
+    { region: "armR", col: 0, row: 68 },
+    { region: "armL", col: 72, row: 68 },
+    { region: "thighR", col: 20, row: 118 },
+    { region: "thighL", col: 48, row: 118 },
+    { region: "shinR", col: 22, row: 126 },
+    { region: "shinL", col: 50, row: 126 },
   ],
   b: [
-    { region: "head", col: 9, row: 0 },
-    { region: "armL", col: 0, row: 34 },
-    { region: "armR", col: 36, row: 34 },
-    { region: "thighL", col: 10, row: 59 },
-    { region: "thighR", col: 24, row: 59 },
-    { region: "shinL", col: 11, row: 63 },
-    { region: "shinR", col: 25, row: 63 },
+    { region: "head", col: 18, row: 0 },
+    { region: "armL", col: 0, row: 68 },
+    { region: "armR", col: 72, row: 68 },
+    { region: "thighL", col: 20, row: 118 },
+    { region: "thighR", col: 48, row: 118 },
+    { region: "shinL", col: 22, row: 126 },
+    { region: "shinR", col: 50, row: 126 },
   ],
 };
 
@@ -90,7 +91,7 @@ type Cells = Map<InkSide, Map<number, number>>;
 function fromInk(ink: Ink | undefined): Cells {
   const out: Cells = new Map();
   for (const side of INK_SIDES) {
-    const cells = decodeInk(ink?.[side]);
+    const cells = decodeInk(ink?.[side], INK_REGIONS[side.split(".")[0] as InkRegion].cols);
     if (cells.size) out.set(side, cells);
   }
   return out;
@@ -147,6 +148,8 @@ export function InkEditor({ look, onChange, onView }: { look: Appearance; onChan
   const [color, setColor] = useState(1);
   const [level, setLevel] = useState(INK_LEVELS);
   const brush = inkCell(color, level);
+  /** How many cells across the brush (and eraser) is. */
+  const [size, setSize] = useState(1);
   const canvas = useRef<HTMLCanvasElement>(null);
   const history = useRef<string[]>([]);
   const shown = useMemo(() => composite(base, sel, grids), [base, sel, grids]);
@@ -215,6 +218,28 @@ export function InkEditor({ look, onChange, onView }: { look: Appearance; onChan
     setBase(next);
     return { ...s, lifted };
   };
+  /** Where the doll was last pressed: a stamp goes down there (the left forearm, seen from the front, at first). */
+  const lastAt = useRef<{ view: InkView; col: number; row: number }>({ view: "f", col: 82, row: 81 });
+  /** Drop a stamp onto the doll in the chosen ink, lifted, to slide into place and put down. */
+  const placeStamp = (stamp: Stamp) => {
+    commit();
+    remember();
+    const faint = inkCell(color, Math.max(1, level - 2));
+    const lifted: NonNullable<Selection["lifted"]> = [];
+    stamp.rows.forEach((row, r) => [...row].forEach((ch, c) => ch !== "." && lifted.push({ c, r, cell: ch === "+" ? faint : brush })));
+    const w = Math.max(...stamp.rows.map((row) => row.length));
+    const h = stamp.rows.length;
+    const at = lastAt.current;
+    setSel({ view: at.view, col: at.col - Math.floor(w / 2), row: at.row - Math.floor(h / 2), w, h, dx: 0, dy: 0, lifted });
+    setTool("select");
+    onView?.(at.view);
+    canvas.current?.focus({ preventScroll: true });
+  };
+  /** Mirror a lifted selection left to right. */
+  const flip = () => {
+    if (!sel?.lifted) return;
+    setSel({ ...sel, lifted: sel.lifted.map((p) => ({ ...p, c: sel.w - 1 - p.c })) });
+  };
   const removeSelected = () => {
     if (!sel) return;
     remember();
@@ -249,9 +274,14 @@ export function InkEditor({ look, onChange, onView }: { look: Appearance; onChan
       let next = prev;
       let total = countCells(prev);
       const steps = Math.max(Math.abs(to.col - from.col), Math.abs(to.row - from.row), 1);
+      const reach = Math.floor((size - 1) / 2);
+      const dots: [number, number][] = [];
       for (let i = 0; i <= steps; i++) {
         const col = Math.round(from.col + ((to.col - from.col) * i) / steps);
         const row = Math.round(from.row + ((to.row - from.row) * i) / steps);
+        for (let dr = 0; dr < size; dr++) for (let dc = 0; dc < size; dc++) dots.push([col - reach + dc, row - reach + dr]);
+      }
+      for (const [col, row] of dots) {
         const spot = grids[view][row]?.[col];
         if (!spot?.on) continue;
         const now = next.get(spot.side)?.get(spot.at);
@@ -278,6 +308,7 @@ export function InkEditor({ look, onChange, onView }: { look: Appearance; onChan
     const at = cellAt(e);
     if (!at) return;
     canvas.current?.setPointerCapture(e.pointerId);
+    lastAt.current = at;
     canvas.current?.focus({ preventScroll: true });
     onView?.(at.view);
     if (tool === "select") {
@@ -396,7 +427,20 @@ export function InkEditor({ look, onChange, onView }: { look: Appearance; onChan
           <input type="range" min={1} max={INK_LEVELS} step={1} value={level} onChange={(e) => setLevel(Number(e.target.value))} aria-valuetext={`${Math.round((level / INK_LEVELS) * 100)}%`} />
           <span className="ink-percent">{Math.round((level / INK_LEVELS) * 100)}%</span>
         </label>
+        <span className="ink-tool-group" role="radiogroup" aria-label="Brush size">
+          <span className="look-label">Size</span>
+          {[1, 2, 3].map((n) => (
+            <button key={n} type="button" role="radio" aria-checked={size === n} className={`look-chip ${size === n ? "selected" : ""}`} onClick={() => setSize(n)}>
+              {n}
+            </button>
+          ))}
+        </span>
         <span className="ink-tool-group">
+          {sel?.lifted && (
+            <button type="button" className="look-chip" onClick={flip} title="Mirror the selection left to right">
+              ⇋ Flip
+            </button>
+          )}
           <button type="button" className="look-chip" onClick={undo}>
             ↶ Undo
           </button>
@@ -404,6 +448,14 @@ export function InkEditor({ look, onChange, onView }: { look: Appearance; onChan
             Clear
           </button>
         </span>
+      </div>
+      <div className="ink-stamps" role="group" aria-label="Stamps">
+        <span className="look-label">Stamps</span>
+        {STAMPS.map((stamp) => (
+          <button key={stamp.id} type="button" className="ink-stamp" title={stamp.label} aria-label={`Stamp: ${stamp.label}`} onClick={() => placeStamp(stamp)}>
+            <StampIcon stamp={stamp} ink={brush} faint={inkCell(color, Math.max(1, level - 2))} skin={look.skin} />
+          </button>
+        ))}
       </div>
       <div className="ink-views" aria-hidden>
         <span>Front</span>
@@ -423,7 +475,7 @@ export function InkEditor({ look, onChange, onView }: { look: Appearance; onChan
         onKeyDown={key}
       />
       <p className="muted hint">
-        {tool === "select" ? "Drag a box round some ink, then drag inside it to slide it about. Arrow keys nudge it; Delete wipes it." : "Draw on the head, forearms and legs. Hair and clothes cover what is under them."}{" "}
+        {tool === "select" ? "Drag a box round some ink (or drop a stamp), then drag inside it to slide it about. Arrow keys nudge it, Flip mirrors it, Delete wipes it, Enter puts it down." : "Draw on the head, forearms and legs. Hair and clothes cover what is under them."}{" "}
         <span className="ink-count">
           {used} / {MAX_INK_CELLS}
         </span>
@@ -438,25 +490,25 @@ export function InkEditor({ look, onChange, onView }: { look: Appearance; onChan
  * skin like the rest, so the doll is one figure; only the inkable parts take ink.
  */
 const BODY: [number, number, number, number][] = [
-  [19, 20, 8, 10], // neck
-  [4, 29, 38, 3], // across the shoulders
-  [3, 30, 40, 2],
-  [1, 31, 8, 4], // upper arms
-  [37, 31, 8, 4],
-  [11, 29, 24, 26], // chest and belly
-  [10, 55, 26, 4], // hips
-  [10, 58, 12, 2], // tops of the thighs
-  [24, 58, 12, 2],
-  [2, 47, 6, 1], // hands, rounded
-  [1, 48, 8, 2],
-  [2, 50, 6, 1],
-  [38, 47, 6, 1],
-  [37, 48, 8, 2],
-  [38, 50, 6, 1],
-  [12, 71, 8, 1], // feet
-  [11, 72, 10, 2],
-  [26, 71, 8, 1],
-  [25, 72, 10, 2],
+  [38, 40, 16, 20], // neck
+  [8, 58, 76, 6], // across the shoulders
+  [6, 60, 80, 4],
+  [2, 62, 16, 8], // upper arms
+  [74, 62, 16, 8],
+  [22, 58, 48, 52], // chest and belly
+  [20, 110, 52, 8], // hips
+  [20, 116, 24, 4], // tops of the thighs
+  [48, 116, 24, 4],
+  [4, 94, 12, 2], // hands, rounded
+  [2, 96, 16, 4],
+  [4, 100, 12, 2],
+  [76, 94, 12, 2],
+  [74, 96, 16, 4],
+  [76, 100, 12, 2],
+  [24, 142, 16, 2], // feet
+  [22, 144, 20, 4],
+  [52, 142, 16, 2],
+  [50, 144, 20, 4],
 ];
 
 /** Which cells of each view are the body: the inkable skin, the rest of the body, and the ears. */
@@ -473,9 +525,10 @@ function bodyMask(grids: Record<InkView, Grid>, look: Appearance): Record<InkVie
     // The ears, just out past the head's outline at the sides.
     const earRow = Math.round((head.top - guides.earY) / head.cell);
     for (const s of [-1, 1]) {
-      const edge = 9 + (s * guides.earX + head.half) / head.cell;
-      const c0 = Math.round(s < 0 ? edge - 2 : edge);
-      fill(c0, earRow - 2, 2, 4);
+      const edge = 18 + (s * guides.earX + head.half) / head.cell;
+      // Overlapping the head's edge a little, so they join it.
+      const c0 = Math.round(s < 0 ? edge - 3 : edge - 2);
+      fill(c0, earRow - 4, 5, 8);
     }
     out[view] = mask;
   }
@@ -508,12 +561,12 @@ function drawDoll(ctx: CanvasRenderingContext2D, grids: Record<InkView, Grid>, m
     if (view === "f") {
       const guides = inkGuides(look);
       const head = inkSurface("head", look);
-      const at = (x: number, y: number): [number, number] => [ox + (9 + (x + head.half) / head.cell) * PX, ((head.top - y) / head.cell) * PX];
+      const at = (x: number, y: number): [number, number] => [ox + (18 + (x + head.half) / head.cell) * PX, ((head.top - y) / head.cell) * PX];
       ctx.fillStyle = hexAlpha("#1b1830", 0.22);
       for (const [x, y] of [[-guides.eyeX, guides.eyeY], [guides.eyeX, guides.eyeY], [0, guides.mouthY]]) {
         const [px, py] = at(x, y);
         ctx.beginPath();
-        ctx.arc(px, py, PX * 0.9, 0, Math.PI * 2);
+        ctx.arc(px, py, PX * 1.8, 0, Math.PI * 2);
         ctx.fill();
       }
     }
@@ -565,4 +618,25 @@ function shade(hex: string, k: number): string {
 function hexAlpha(hex: string, a: number): string {
   const n = parseInt(hex.slice(1), 16);
   return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${a})`;
+}
+
+/** A stamp drawn small, in the chosen ink over the skin, for its button. */
+function StampIcon({ stamp, ink, faint, skin }: { stamp: Stamp; ink: number; faint: number; skin: string }) {
+  const ref = useRef<HTMLCanvasElement>(null);
+  const w = Math.max(...stamp.rows.map((row) => row.length));
+  const h = stamp.rows.length;
+  useEffect(() => {
+    const ctx = ref.current?.getContext("2d");
+    if (!ctx) return;
+    ctx.fillStyle = skin;
+    ctx.fillRect(0, 0, w + 2, h + 2);
+    stamp.rows.forEach((row, r) =>
+      [...row].forEach((ch, c) => {
+        if (ch === ".") return;
+        ctx.fillStyle = inkOver(skin, ch === "+" ? faint : ink);
+        ctx.fillRect(c + 1, r + 1, 1, 1);
+      }),
+    );
+  }, [stamp, ink, faint, skin, w, h]);
+  return <canvas ref={ref} width={w + 2} height={h + 2} />;
 }

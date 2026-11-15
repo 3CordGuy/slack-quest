@@ -21,7 +21,7 @@ import { Storm } from "./storm";
 import { addWindSway, updateWind } from "./wind";
 import { OVERLAY_LAYER, PostFx, type Air } from "./post";
 import { fishMount } from "./catchArt";
-import { makeFigure, type Figure } from "./figures";
+import { FRAME, OUTLINE, inflate, makeFigure, type Figure } from "./figures";
 import { Rise } from "./rise";
 import { gaze } from "../gaze";
 import { NIGHT, VEIL_CLEAR_S, Veil } from "./veil";
@@ -316,6 +316,44 @@ function foldByLook(g: THREE.Group) {
       m.geometry.dispose();
     }
     g.add(mesh);
+  }
+}
+/** The places that are buildings: inked round with a dark line, like the people, so a hero and the house behind them are drawn alike. */
+const BUILDINGS = new Set<Poi["kind"]>(["hut", "plot", "pub", "shop", "works", "lighthouse", "apothecary", "smithy", "galley", "fishing"]);
+/**
+ * How thick a building's outline is, in world units: a hero's (a 0.12 edge on their 22-unit frame, drawn 1.5
+ * tall), made heavier so a building's big plain walls and roofs read as inked from across the plaza.
+ */
+const BUILDING_EDGE = (0.12 / FRAME) * 1.5 * 1.8;
+const INK = new THREE.MeshBasicMaterial({ color: OUTLINE, side: THREE.BackSide });
+/** Shapes that are only a face, with no inside: an outline shell round them would show as a dark sheet behind. */
+const FLAT_SHAPES = new Set(["PlaneGeometry", "ShapeGeometry", "CircleGeometry", "RingGeometry"]);
+/**
+ * Ink a building, as the people are inked (figures.ts): round every solid, lit piece of it, a dark shell a
+ * little larger than the piece, drawn from the inside only, so it shows as a line round its edges. `scale` is
+ * how much the building is drawn larger than its model, so the line is the same width on a hut as on the pub.
+ */
+function inkBuilding(g: THREE.Group, scale: number) {
+  g.updateMatrixWorld(true);
+  const toModel = new THREE.Matrix4().copy(g.matrixWorld).invert();
+  const local = new THREE.Matrix4();
+  const size = new THREE.Vector3();
+  const pieces: THREE.Mesh[] = [];
+  g.traverse((o) => {
+    if (!(o instanceof THREE.Mesh) || o.userData.glow || o.userData.ink) return;
+    const m = o.material as THREE.Material;
+    if (!(m instanceof THREE.MeshLambertMaterial) || m.transparent || FLAT_SHAPES.has(o.geometry.type)) return;
+    pieces.push(o);
+  });
+  for (const piece of pieces) {
+    // How much larger than its own geometry the piece is drawn, inside the model.
+    local.multiplyMatrices(toModel, piece.matrixWorld).decompose(new THREE.Vector3(), new THREE.Quaternion(), size);
+    const k = (size.x + size.y + size.z) / 3;
+    const geo = piece.geometry.index ? piece.geometry.toNonIndexed() : piece.geometry;
+    const shell = new THREE.Mesh(inflate(geo, BUILDING_EDGE / (scale * k)), INK);
+    if (geo !== piece.geometry) geo.dispose();
+    shell.userData.ink = true;
+    piece.add(shell);
   }
 }
 /** Window glass that warms with the dusk: `unlit` by day, `lit` by night (the ambience moves it between the two; see `setGlows`). */
@@ -2151,13 +2189,14 @@ export class WorldRenderer {
       g.userData.poiId = poi.id;
       const at = this.standAt(poi.pos);
       const { scale, back } = placeOf(poi);
+      if (BUILDINGS.has(poi.kind)) inkBuilding(g, scale);
       g.position.set(at.x, at.y, at.z - back);
       g.scale.setScalar(scale);
       // A building bigger than its hex is pointed at as a whole: anywhere on it means its door.
       if (scale > 1) g.userData.door = poi.pos;
       g.traverse((o) => {
         // A glow is light, not a solid: it neither casts nor takes a shadow.
-        if (o instanceof THREE.Mesh) o.castShadow = o.receiveShadow = !o.userData.glow;
+        if (o instanceof THREE.Mesh) o.castShadow = o.receiveShadow = !o.userData.glow && !o.userData.ink;
       });
       this.poiGroup.add(g);
       // A game table in a room (the pub's): a lantern hung over it.
@@ -5017,6 +5056,7 @@ export class WorldRenderer {
     // Full resolution with "Fancy graphics" on, or while a game asks for it (setSharp); the chunky half otherwise.
     const px = fancy.get() ? 1 : this.pixel;
     this.fine = PIXEL / px;
+    this.ambience.fine = this.fine;
     this.renderer.setSize(Math.ceil(w / px), Math.ceil(h / px), false);
     this.post?.setSize(Math.ceil(w / px), Math.ceil(h / px));
     this.camera.aspect = w / h;
