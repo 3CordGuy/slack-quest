@@ -183,6 +183,21 @@ function loftGeometry(rings: readonly Ring[], sides: number): THREE.BufferGeomet
   return g;
 }
 
+/** A box `w` by `h` by `d` about its middle with every corner cut off: the hull of points set back from each corner along its three edges. */
+function bevelledBox(w: number, h: number, d: number): THREE.BufferGeometry {
+  const b = Math.min(w, h, d) * 0.24;
+  const [x, y, z] = [w / 2, h / 2, d / 2];
+  const pts: THREE.Vector3[] = [];
+  for (const sx of [-1, 1]) {
+    for (const sy of [-1, 1]) {
+      for (const sz of [-1, 1]) {
+        pts.push(new THREE.Vector3(sx * (x - b), sy * y, sz * z), new THREE.Vector3(sx * x, sy * (y - b), sz * z), new THREE.Vector3(sx * x, sy * y, sz * (z - b)));
+      }
+    }
+  }
+  return new ConvexGeometry(pts);
+}
+
 /** Points given for one side (+x) and mirrored to the other; any on the middle line kept once. */
 const sym = (pts: Pt[]): Pt[] => pts.flatMap(([x, y, z]): Pt[] => (x ? [[x, y, z], [-x, y, z]] : [[x, y, z]]));
 
@@ -278,18 +293,22 @@ class Part {
     return this;
   }
 
-  /** A box centred on (x, y, z). */
+  /**
+   * A box centred on (x, y, z). On a low-poly figure (gear, props, trim) its corners and edges are cut away
+   * into facets, so it reads as a cut gem of a block rather than a cube; a sliver (a slit, a string) stays square.
+   */
   box(color: string, w: number, h: number, d: number, x = 0, y = 0, z = 0, rot?: Rot): this {
+    if (lowPoly && Math.min(w, h, d) >= 0.28) return this.add(bevelledBox(w, h, d), color, x, y, z, rot, false, true);
     return this.add(new THREE.BoxGeometry(w, h, d), color, x, y, z, rot);
   }
 
-  /** An upright cylinder (or tapered post) centred on (x, y, z). */
+  /** An upright cylinder (or tapered post) centred on (x, y, z); rounder on a low-poly figure. */
   cyl(color: string, top: number, bottom: number, h: number, x = 0, y = 0, z = 0, sides = 6, rot?: Rot): this {
-    return this.add(new THREE.CylinderGeometry(top, bottom, h, sides), color, x, y, z, rot);
+    return this.add(new THREE.CylinderGeometry(top, bottom, h, lowPoly ? Math.max(sides, 8) : sides), color, x, y, z, rot, false, lowPoly);
   }
 
   cone(color: string, radius: number, h: number, x = 0, y = 0, z = 0, sides = 4, rot?: Rot): this {
-    return this.add(new THREE.ConeGeometry(radius, h, sides), color, x, y, z, rot);
+    return this.add(new THREE.ConeGeometry(radius, h, lowPoly ? Math.max(sides, 6) : sides), color, x, y, z, rot, false, lowPoly);
   }
 
   /** A faceted ball, optionally squashed along each axis. */
@@ -1373,6 +1392,79 @@ function lowBareLeg(thigh: Part, shin: Part, skin: string) {
   thigh.loft(LINEN, [[-1.5, 1.42, 1.48], [0.3, 1.6, 1.6], [0.9, 1.2, 1.2]], 6);
 }
 
+/**
+ * A mail hauberk over the chest, low-poly: mail on the low-poly chest, rounded steel breast and back plates,
+ * a mail skirt over the hips, a gold belt, and the trim's colour on the breastplate. Returns how far forward
+ * its front is (for an amulet over it).
+ */
+function lowHauberk(torso: Part, skin: string, sh: number, trim: string): number {
+  const rings = lowChest(torso, skin, GEAR.iron, sh, GEAR.gold);
+  const hip = ringAt(rings, -0.6);
+  torso.loft(tone(GEAR.iron, -0.1), [around(rings, 0.55, 0.1), [-1.5, hip.rx + 0.35, hip.rz + 0.3, hip.dz]], 8);
+  for (const back of [false, true]) {
+    const pts: Pt[] = [];
+    for (const y of [2.3, 3.5, 4.6, 5.45]) {
+      const r = ringAt(rings, y);
+      for (const deg of [-64, -32, 0, 32, 64]) {
+        const a = (deg / 180) * Math.PI;
+        const z = Math.cos(a) * (r.rz + 0.24);
+        pts.push([Math.sin(a) * (r.rx + 0.24), y, back ? -z + r.dz : z + r.dz]);
+      }
+    }
+    torso.shape(GEAR.steel, pts);
+  }
+  const front = ringAt(rings, 4.2).rz + ringAt(rings, 4.2).dz + 0.3;
+  torso.box(trim, 1.3, 1.3, 0.4, 0, 4.2, front);
+  return front;
+}
+
+/**
+ * An oilskin greatcoat over the chest, low-poly (the skirts are coat panels, drawn with the other long coats):
+ * a stand-up collar, a placket with gold buttons, a dark belt with a buckle in the trim's colour. Returns how
+ * far forward its front is.
+ */
+function lowGreatcoat(torso: Part, skin: string, oilskin: string, sh: number, trim: string): number {
+  const rings = lowChest(torso, skin, oilskin, sh, GEAR.dark);
+  torso.loft(tone(oilskin, -0.1), [around(rings, 5.55, 0.18, -0.05), [6.55, 1.95, 1.75, -0.3]], 8);
+  const front = (y: number) => ringAt(rings, y).rz * Math.cos(Math.PI / 8) + ringAt(rings, y).dz;
+  torso.box(tone(oilskin, 0.08), 0.9, 3.4, 0.3, 0, 3.85, front(3.85) + 0.08);
+  for (const y of [2.5, 3.6, 4.7]) torso.ball(GEAR.gold, 0.3, 0, y, front(y) + 0.25);
+  torso.box(trim, 1.2, 1.1, 0.4, 0, 1.3, front(1.3) + 0.12);
+  return front(4.5) + 0.1;
+}
+
+/** Armor on the legs, low-poly: loose sailcloth trousers tied at the shin, or iron greaves with steel at the knee and shin. */
+function lowLegArmor(thigh: Part, shin: Part, ref: string, trim: string) {
+  if (ref === "trousers") {
+    const cloth = "#d8cfb4";
+    thigh.loft(cloth, grown(THIGH, 0.14), 6);
+    shin.loft(cloth, [[-1.55, 1.18, 1.24], [-1, 1.32, 1.38, -0.05], [0.4, 1.28, 1.32]], 6);
+    shin.loft(trim, [[-1.75, 1.22, 1.28], [-1.35, 1.24, 1.3]], 6);
+    thigh.box(tone(cloth, -0.1), 0.9, 1.1, 0.3, 0.45, -1.6, 1.42);
+    return;
+  }
+  thigh.loft(GEAR.iron, grown(THIGH, 0.06), 6);
+  shin.loft(GEAR.iron, grown(SHIN, 0.08), 6);
+  shin.ball(GEAR.steel, 0.95, 0, 0.05, 0.85, 0, [1.15, 0.95, 0.8]);
+  shin.shape(GEAR.steel, sym([[0.75, -0.55, 0.95], [0.7, -1.95, 0.85], [0, -0.45, 1.38], [0, -2.05, 1.25]]));
+  thigh.loft(trim, [[0.05, 1.62, 1.62], [0.5, 1.56, 1.56]], 6);
+}
+
+/** Boots, low-poly: short iron-shod treads, or tall sea boots turned down at the top. */
+function lowBoots(foot: Part, shin: Part, ref: string, trim: string) {
+  if (ref === "treads") {
+    lowShoe(foot, "#5a4632");
+    foot.shape(GEAR.iron, sym([[1.42, -0.05, -1.5], [1.5, -0.05, 1.5], [1.02, -0.05, 2.7], [0, -0.05, 2.95], [1.42, 0.4, -1.5], [1.5, 0.4, 1.5], [1.02, 0.4, 2.7], [0, 0.4, 2.95]]));
+    shin.loft("#5a4632", [[-2.35, 1.06, 1.1], [-1.75, 1.1, 1.14]], 6);
+    shin.loft(trim, [[-1.8, 1.14, 1.18], [-1.5, 1.14, 1.18]], 6);
+    return;
+  }
+  lowShoe(foot, GEAR.leather);
+  shin.loft(GEAR.leather, [[-2.35, 1.1, 1.14], [-1, 1.3, 1.34, -0.05], [-0.5, 1.32, 1.36]], 6);
+  shin.loft(tone(GEAR.leather, 0.08), [[-0.85, 1.44, 1.48], [-0.2, 1.48, 1.52]], 6);
+  shin.loft(trim, [[-1.15, 1.36, 1.4], [-0.92, 1.37, 1.41]], 6);
+}
+
 /** A chunky round-toed shoe, its sole on the ground at the foot's origin. */
 function lowShoe(foot: Part, color: string) {
   foot.shape(color, sym([[1.22, 0, -1.3], [1.3, 0, 1.4], [0.9, 0, 2.45], [0, 0, 2.7], [1.05, 1.35, -1.05], [1.1, 1.15, 0.7], [0.75, 0.75, 2.15], [0, 0.85, 2.4]]));
@@ -1800,6 +1892,10 @@ function drawHeld(id: string, b: Biped, trim: string, look: Look, shield: boolea
 /** A shield on the left forearm, held across the front. */
 function drawShield(arm: Part, ref: string, icon: string, trim: string) {
   const turn: Rot = [0, 0.35, 0];
+  if (lowPoly && !(ref === "buckler" || icon === "round-shield")) {
+    lowKiteShield(arm, trim, turn);
+    return;
+  }
   if (ref === "buckler" || icon === "round-shield") {
     // A barrel lid: planks, an iron hoop and a boss.
     arm.cyl("#9a7448", 2.7, 2.7, 0.6, 0.5, -3.4, 1.9, 10, [HALF_PI, 0, 0.35]);
@@ -1815,6 +1911,21 @@ function drawShield(arm: Part, ref: string, icon: string, trim: string) {
   arm.box(GEAR.steel, 4.8, 0.8, 0.7, 0.5, -0.3, 1.9, turn);
   arm.box(trim, 3.2, 3.6, 0.3, 0.62, -2.7, 2.25, turn);
   arm.box(GEAR.gold, 1, 1, 0.3, 0.7, -2.5, 2.45, turn);
+}
+
+/**
+ * A tall shield on the forearm, low-poly: a heater's shape, broad at the top and pointed at the foot, with a
+ * steel rim, its face in the trim's colour and a gold boss, turned a little out from the body.
+ */
+function lowKiteShield(arm: Part, trim: string, turn: Rot) {
+  const at = new THREE.Vector3(0.5, -2.9, 1.95);
+  const outline: [number, number][] = [[-2.35, 2.65], [2.35, 2.65], [2.55, 0.4], [1.85, -2.3], [0, -4.2], [-1.85, -2.3], [-2.55, 0.4]];
+  const plate = (scale: number, z0: number, z1: number): Pt[] => outline.flatMap(([x, y]): Pt[] => [[x * scale, y * scale, z0], [x * scale, y * scale, z1]]);
+  arm.shape(GEAR.steel, plate(1, -0.32, 0.18), at.x, at.y, at.z, turn);
+  arm.shape(GEAR.iron, plate(0.86, 0.1, 0.32), at.x, at.y, at.z, turn);
+  arm.shape(trim, plate(0.6, 0.25, 0.42), at.x, at.y + 0.25, at.z, turn);
+  const boss = new THREE.Vector3(0, 0.55, 0.55).applyEuler(new THREE.Euler(...turn)).add(at);
+  arm.ball(GEAR.gold, 0.7, boss.x, boss.y, boss.z, 1);
 }
 
 /**
@@ -1854,6 +1965,7 @@ function person(top: THREE.Group, look: Look, outfit: Outfit | undefined, asleep
       }
       else lowLeg(thigh, shin, look.legs);
     }
+    else if (lowPoly && legs) lowLegArmor(thigh, shin, legs.ref, trim("legs"));
     else if (legs?.ref === "trousers") {
       // Sailcloth: pale, loose, tied at the shin.
       const cloth = "#d8cfb4";
@@ -1874,6 +1986,7 @@ function person(top: THREE.Group, look: Look, outfit: Outfit | undefined, asleep
       if (bare("boots")) lowBareFoot(foot, look.skin);
       else lowShoe(foot, GEAR.dark);
     }
+    else if (lowPoly && boots) lowBoots(foot, shin, boots.ref, trim("boots"));
     else if (boots?.ref === "treads") {
       // Short and iron-shod.
       leg.box("#5a4632", 2.9, 1.8, 3.2, 0, -4, 0.1);
@@ -1900,12 +2013,15 @@ function person(top: THREE.Group, look: Look, outfit: Outfit | undefined, asleep
   const cloth = greatcoat ? oilskin : body ? GEAR.iron : look.body;
   let front = 1.95;
   if (!lowPoly) torso.box(look.skin, 2.6, 0.8, 2.6, 0, 6.1, 0);
-  else if (greatcoat || body) torso.cyl(look.skin, 1, 1.15, 1.6, 0, 6.6, 0, 6);
-  // The torso is as stout as chosen; armor is as broad as the shoulders it sits on.
-  torso.skin.scale.set(lowPoly && !body ? m.girth : m.shoulders, 1, m.girth);
+  // The torso is as stout as chosen (box armor is as broad as the shoulders it sits on).
+  torso.skin.scale.set(lowPoly ? m.girth : m.shoulders, 1, m.girth);
   if (lowPoly && !greatcoat && !body) {
     if (undressed) lowUndershirt(torso, look.skin, m.shoulders / m.girth);
     else lowTorso(torso, look, m.shoulders / m.girth);
+  } else if (lowPoly && greatcoat) {
+    front = lowGreatcoat(torso, look.skin, oilskin, m.shoulders / m.girth, trim("body"));
+  } else if (lowPoly && body) {
+    front = lowHauberk(torso, look.skin, m.shoulders / m.girth, trim("body"));
   } else if (greatcoat) {
     torso.box(oilskin, 7.2, 6, 4, 0, 3, 0);
     torso.box(tone(oilskin, -0.1), 7.5, 1.2, 4.5, 0, 5.6, -0.2);
@@ -1933,16 +2049,18 @@ function person(top: THREE.Group, look: Look, outfit: Outfit | undefined, asleep
   if (greatcoat || (look.coat && !body && !undressed)) {
     // A long coat, open at the front, down over the legs.
     const edgeColor = greatcoat ? trim("body") : look.accent;
-    if (lowPoly && !greatcoat) {
+    if (lowPoly) {
       for (const s of [-1, 1]) {
         coatPanel(torso, cloth, s, 0.42, Math.PI + 0.05);
         coatPanel(torso, edgeColor, s, 0.38, 0.52, 0.06);
       }
-    } else for (const s of [-1, 1]) {
-      torso.box(cloth, 2.7, 4.6, 4.3, s * 2.4, -2, 0);
-      torso.box(edgeColor, 0.5, 4.6, 0.4, s * 1.25, -2, 2.05);
+    } else {
+      for (const s of [-1, 1]) {
+        torso.box(cloth, 2.7, 4.6, 4.3, s * 2.4, -2, 0);
+        torso.box(edgeColor, 0.5, 4.6, 0.4, s * 1.25, -2, 2.05);
+      }
+      torso.box(cloth, 7.3, 4.6, 1, 0, -2, -1.7);
     }
-    torso.box(cloth, 7.3, 4.6, 1, 0, -2, -1.7);
   }
   const amulet = outfit?.amulet;
   if (amulet) {
@@ -1979,7 +2097,17 @@ function person(top: THREE.Group, look: Look, outfit: Outfit | undefined, asleep
         } else lowSleeve(arm, cloth, look.accent);
         continue;
       }
-      arm.box(cloth, 2, 4.6, 2.4, 0, -2.1, 0);
+      if (greatcoat) {
+        // Oilskin sleeves, cuffed in the coat's trim.
+        lowSleeve(arm, oilskin, trim("body"));
+      } else {
+        // Mail sleeves, a steel pauldron over the shoulder edged in the trim, and a steel vambrace.
+        lowSleeve(arm, GEAR.iron, GEAR.steel);
+        arm.ball(GEAR.steel, 1.55, s * 0.25, 0.35, 0, 0, [1.05, 0.72, 1.15]);
+        arm.loft(trim("body"), [[-0.75, 1.5, 1.5], [-0.45, 1.5, 1.5]], 8, s * 0.2);
+        arm.loft(GEAR.steel, [[-3.75, 1.12, 1.12], [-2.75, 1.18, 1.18]], 8);
+      }
+      continue;
     } else {
       arm.box(cloth, 2, 4.6, 2.4, 0, -2.1, 0);
       arm.box(look.skin, 1.8, 1.5, 2, 0, -5, 0);
@@ -1996,7 +2124,9 @@ function person(top: THREE.Group, look: Look, outfit: Outfit | undefined, asleep
     }
   }
   const ring = outfit?.ring;
-  if (ring?.ref === "bands") {
+  if (ring?.ref === "bands" && lowPoly) {
+    for (const arm of [armR, armL]) arm.loft(trim("ring"), [[-4.45, 1.05, 1.05], [-3.95, 1.08, 1.08]], 8);
+  } else if (ring?.ref === "bands") {
     for (const arm of [armR, armL]) arm.box(trim("ring"), 2.4, 0.6, 2.8, 0, -4.2, 0);
   } else if (ring) {
     armR.box(GEAR.gold, 2, 0.4, 2.2, 0, -5.1, 0);
