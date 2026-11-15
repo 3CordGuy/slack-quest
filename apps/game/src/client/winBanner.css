@@ -1,0 +1,55 @@
+/* "Name Wins!" over the table as a pub game is won (WinBanner). Only the card itself takes a click, to close it. */
+.win-banner {
+  position: absolute; left: 0; right: 0; top: 24%; z-index: 16;
+  display: flex; justify-content: center; pointer-events: none;
+}
+.win-card {
+  position: relative; pointer-events: auto; cursor: pointer;
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+  padding: 14px 28px 12px; max-width: calc(100vw / var(--ui-z, 1) - 32px);
+  font: inherit; color: var(--gold); text-align: center;
+  background: linear-gradient(#2a2347f2, #1b1730f2); border: 2px solid #a8862a;
+  box-shadow: 0 0 0 4px #1b173099, 0 0 36px rgba(255, 210, 63, 0.35);
+  animation: win-pop 0.55s cubic-bezier(0.2, 1.6, 0.4, 1) both, win-out 0.5s ease-in 5.5s forwards;
+}
+.win-card:hover, .win-card:focus-visible { border-color: var(--gold); }
+.win-card.yours { border-color: var(--gold); box-shadow: 0 0 0 4px #1b173099, 0 0 56px rgba(255, 210, 63, 0.6); }
+.win-title {
+  position: relative; font-size: clamp(26px, 6vw, 44px); font-weight: 700; letter-spacing: 0.02em; line-height: 1.05;
+  text-shadow: 0 2px 0 #6b4e0e, 0 0 18px rgba(255, 210, 63, 0.55);
+  animation: win-glow 1.2s ease-in-out 0.55s 3 alternate;
+}
+.win-sub { position: relative; font-size: 13px; color: #f3ead0; text-shadow: 0 1px 0 #000; }
+
+/* Gold rays turning slowly behind the card. */
+.win-rays {
+  position: absolute; left: 50%; top: 50%; width: 360px; height: 360px; margin: -180px 0 0 -180px; z-index: -1; pointer-events: none;
+  background: repeating-conic-gradient(rgba(255, 210, 63, 0.18) 0 10deg, transparent 10deg 30deg);
+  -webkit-mask: radial-gradient(circle, #000 25%, transparent 68%); mask: radial-gradient(circle, #000 25%, transparent 68%);
+  animation: win-rays 9s linear infinite, win-fade-in 0.6s ease-out both;
+}
+
+/* Confetti thrown out from the middle of the card, falling a little as it goes. */
+.win-burst { position: absolute; left: 50%; top: 50%; width: 0; height: 0; pointer-events: none; }
+.win-burst i {
+  position: absolute; left: -3px; top: -5px; width: 6px; height: 10px; opacity: 0;
+  animation: win-fly 1.5s cubic-bezier(0.15, 0.7, 0.3, 1) var(--t) forwards;
+}
+.win-burst i:nth-child(3n) { width: 8px; height: 8px; border-radius: 50%; }
+
+@keyframes win-pop { from { transform: scale(0.3); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+@keyframes win-out { to { transform: translateY(-14px); opacity: 0; } }
+@keyframes win-glow { to { text-shadow: 0 2px 0 #6b4e0e, 0 0 30px rgba(255, 210, 63, 0.95); } }
+@keyframes win-rays { to { transform: rotate(360deg); } }
+@keyframes win-fade-in { from { opacity: 0; } }
+@keyframes win-fly {
+  0% { opacity: 1; transform: rotate(var(--a)) translateY(0) rotate(0); }
+  70% { opacity: 1; }
+  100% { opacity: 0; transform: rotate(var(--a)) translateY(calc(-1 * var(--d))) rotate(var(--s)) translateX(12px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .win-card { animation: win-fade-in 0.3s ease-out both, win-out 0.5s ease-in 5.5s forwards; }
+  .win-title, .win-rays { animation: none; }
+  .win-burst { display: none; }
+}
