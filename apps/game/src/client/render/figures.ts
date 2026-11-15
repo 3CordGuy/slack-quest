@@ -17,12 +17,12 @@ import { ConvexGeometry } from "three/examples/jsm/geometries/ConvexGeometry.js"
 import { GARB_PREFIX, INK_COLORS, INK_LEVELS, INK_REGIONS, RARITY_COLOR, WEAPONS, appearanceK, decodeInk, inkColorOf, inkLevelOf, type Appearance, type Ink, type InkRegion, type InkView, type Outfit, type Slot } from "@gantt-quest/world";
 import type { Look } from "./looks";
 
-const OUTLINE = "#1b1830";
+export const OUTLINE = "#1b1830";
 /** Set by makeFigure for the figure being built: a fishing rod goes in its right hand (gilded, for a full Catch Book). */
 let rodInHand: boolean | "gilded" = false;
 const GEAR = { steel: "#c9d1dc", shine: "#f1f5fa", iron: "#8b95a5", wood: "#8a5a2b", leather: "#a0683a", gold: "#e0b12e", paper: "#e8dcc0", bone: "#eee6cf", dark: "#2a2740" };
 /** The frame a figure is modelled in, in model units: `setSize(1)` makes this one world unit tall. */
-const FRAME = 22;
+export const FRAME = 22;
 
 type Rot = [number, number, number];
 const ONE = new THREE.Vector3(1, 1, 1);
@@ -203,7 +203,7 @@ const sym = (pts: Pt[]): Pt[] => pts.flatMap(([x, y, z]): Pt[] => (x ? [[x, y, z
  * The outline's shell for a rounded shape: every corner pushed out `by` along the faces that meet there,
  * so the dark edge is the same width all round (a box's shell is simply scaled; a tapered limb's would not be).
  */
-function inflate(g: THREE.BufferGeometry, by: number): THREE.BufferGeometry {
+export function inflate(g: THREE.BufferGeometry, by: number): THREE.BufferGeometry {
   const pos = g.getAttribute("position");
   const key = (i: number) => `${Math.round(pos.getX(i) * 1000)},${Math.round(pos.getY(i) * 1000)},${Math.round(pos.getZ(i) * 1000)}`;
   const sums = new Map<string, THREE.Vector3>();
