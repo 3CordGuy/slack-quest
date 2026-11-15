@@ -9,13 +9,15 @@
 // that frame to world units. A figure faces +z; its right hand is at -x.
 //
 // Heroes wear what they have equipped: every base item and every weapon has
-// its own shape, with its rarity colour as the trim.
+// its own shape, with its rarity colour as the trim. The weapons and shields
+// in their hands are the very models of their item icons (gearModels.ts).
 
 import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { ConvexGeometry } from "three/examples/jsm/geometries/ConvexGeometry.js";
-import { GARB_PREFIX, INK_COLORS, INK_LEVELS, INK_REGIONS, RARITY_COLOR, WEAPONS, appearanceK, decodeInk, inkColorOf, inkLevelOf, type Appearance, type Ink, type InkRegion, type InkView, type Outfit, type Slot } from "@gantt-quest/world";
+import { GARB_PREFIX, INK_COLORS, INK_LEVELS, INK_REGIONS, RARITY_COLOR, WEAPONS, WEAPON_ICON, appearanceK, decodeInk, inkColorOf, inkLevelOf, type Appearance, type Ink, type InkRegion, type InkView, type Outfit, type Slot } from "@gantt-quest/world";
 import type { Look } from "./looks";
+import { buildLowPoly, disposeLowPoly } from "./gearModels";
 
 export const OUTLINE = "#1b1830";
 /** Set by makeFigure for the figure being built: a fishing rod goes in its right hand (gilded, for a full Catch Book). */
@@ -392,6 +394,31 @@ class Part {
     return this.add(new THREE.IcosahedronGeometry(radius, 0), color, x, y, z, undefined, true);
   }
 
+  /**
+   * A gear model (gearModels.ts) baked into this part, placed by `at`: each of its pieces in its own colour, what
+   * glows in the icon glowing here. A piece too fine to take an outline (a string, a finger hole) goes without.
+   */
+  model(model: THREE.Object3D, at: THREE.Matrix4): this {
+    model.updateMatrixWorld(true);
+    const size = new THREE.Vector3();
+    model.traverse((o) => {
+      if (!(o instanceof THREE.Mesh)) return;
+      const source = o.geometry as THREE.BufferGeometry;
+      const flat = source.index ? source.toNonIndexed() : source.clone();
+      flat.applyMatrix4(new THREE.Matrix4().multiplyMatrices(at, o.matrixWorld));
+      const paints = (Array.isArray(o.material) ? o.material : [o.material]) as THREE.MeshLambertMaterial[];
+      // A piece of several paints (a log and its cut ends) comes apart into one piece per paint.
+      const pieces = paints.length > 1 && flat.groups.length > 0 ? flat.groups.map((g) => ({ g: slice(flat, g.start, g.count), paint: paints[g.materialIndex ?? 0] })) : [{ g: flat, paint: paints[0] }];
+      if (pieces[0].g !== flat) flat.dispose();
+      for (const { g, paint } of pieces) {
+        g.computeBoundingBox();
+        const [, middle] = g.boundingBox!.getSize(size).toArray().sort((a, b) => a - b);
+        this.add(g, `#${paint.color.getHexString()}`, 0, 0, 0, undefined, !!paint.userData.glow, true, middle >= 3.5 * edge);
+      }
+    });
+    return this;
+  }
+
   get empty(): boolean {
     return this.solid.length === 0 && this.lit.length === 0;
   }
@@ -409,7 +436,9 @@ class Part {
       // It takes no shadows (at this size, its own hat's shadow across its face is only noise) and throws
       // none itself: the figure's one still shape does that (see castShape).
       mesh.userData.body = true;
-      this.skin.add(mesh, new THREE.Mesh(merged(this.hull), mats.outline));
+      this.skin.add(mesh);
+      // (Gear too fine for an outline has none: see model.)
+      if (this.hull.length > 0) this.skin.add(new THREE.Mesh(merged(this.hull), mats.outline));
     }
     if (this.lit.length > 0) {
       const mesh = new THREE.Mesh(merged(this.lit), mats.glow);
@@ -428,6 +457,103 @@ class Part {
 
 /** How thick the dark outline is, in model units, for the figure being built. */
 let edge = 0.12;
+
+/** The vertices `start` to `start + count` of a geometry with no index, as a geometry of their own. */
+function slice(g: THREE.BufferGeometry, start: number, count: number): THREE.BufferGeometry {
+  const out = new THREE.BufferGeometry();
+  for (const [name, attr] of Object.entries(g.attributes) as [string, THREE.BufferAttribute][]) {
+    out.setAttribute(name, new THREE.BufferAttribute(attr.array.slice(start * attr.itemSize, (start + count) * attr.itemSize), attr.itemSize, attr.normalized));
+  }
+  return out;
+}
+
+// ---------- gear in hand ----------
+
+/** How a gear model (gearModels.ts) is held: it is built upright, its front toward +z, in its icon's units. */
+interface Hold {
+  /** The point of the model the hand closes on, in its own units. */
+  grip: Pt;
+  /** Its units to the figure's: one for all three ways, or across, along and through it. */
+  scale: number | Pt;
+  /** How it is turned in the hand, about the grip. */
+  turn?: Rot;
+  /** Where the grip goes in the part's frame (a hand's fist is at its origin). */
+  at?: Pt;
+  /** How the arm carries it (see drawHeld). */
+  pose?: { arm?: number; tilt?: number };
+}
+
+/** Turns a model's +x (an axe's blade, a bow's belly, a book's fore-edge) to the front, its face out from the right hand. */
+const FORWARD: Rot = [0, -HALF_PI, 0];
+/** A shield's turn on the forearm: a little out from the body. */
+const ON_ARM: Rot = [0, 0.35, 0];
+
+/** Each held icon's grip, scaled to stand with the figure: hilts and hafts in the fist, the foot of a staff clear of the ground. */
+const HOLD: Record<string, Hold> = {
+  broadsword: { grip: [0, 0.3, 0], scale: 0.72, pose: { tilt: 0.4 } },
+  "hammer-drop": { grip: [0, -4, 0], scale: 0.6, turn: FORWARD, pose: { tilt: 0.4 } },
+  "wizard-staff": { grip: [0, -3.5, 0], scale: 0.8 },
+  "root-staff": { grip: [0, -4.2, 0], scale: 0.8 },
+  "void-staff": { grip: [0, -3.5, 0], scale: 0.8 },
+  "scroll-unfurled": { grip: [0, 1.2, 0], scale: 0.33, turn: FORWARD },
+  // Held up in front on the palm, its sigil to the front.
+  grimoire: { grip: [0, -6.5, 0], scale: 0.33, at: [0, 0, 0.6], pose: { arm: -0.9 } },
+  // Beside the fist, the belly forward and the arrow pointing ahead.
+  crossbow: { grip: [3.2, 0, 0], scale: 0.6, turn: FORWARD, at: [-1.4, 0, 0.35] },
+  sickle: { grip: [0, -4.5, 0], scale: 0.5, turn: FORWARD, pose: { tilt: 0.4 } },
+  orb: { grip: [0, -5, 0], scale: 0.45, pose: { arm: -0.5 } },
+  scepter: { grip: [0, -5.5, 0], scale: 0.55, pose: { tilt: 0.3 } },
+  "pager-axe": { grip: [0, -6.5, 0], scale: 0.65, turn: FORWARD, pose: { tilt: 0.25 } },
+  maul: { grip: [0, -9, 0], scale: 0.65, turn: FORWARD, pose: { tilt: 0.2 } },
+  // One in each fist (see heldGear).
+  daggers: { grip: [0, -1.8, 0], scale: 0.53, pose: { tilt: 0.7 } },
+  // In the lute's own frame (see drawLute): the belly at the origin.
+  lute: { grip: [0, -3, 0], scale: 0.5 },
+  "round-shield": { grip: [0, 0, 0], scale: 0.39, at: [0.5, -3.4, 1.9], turn: ON_ARM },
+  shield: { grip: [0, -0.5, 0], scale: 0.43, at: [0.5, -2.9, 1.95], turn: ON_ARM },
+};
+
+/** The icon (so the model) a stock look's weapon is drawn as: a class weapon's own, or the one most like it. */
+const STOCK_ICON: Record<string, string> = { ...WEAPON_ICON, sword: "broadsword", bow: "crossbow" };
+
+/** Put an icon's model in a part, held as `hold` says, in the trim colour. False when the icon has no model. */
+function gear(p: Part, icon: string, trim: string, hold: Hold, inHand = false): boolean {
+  const built = buildLowPoly(icon, trim, inHand);
+  if (!built) return false;
+  const scale = typeof hold.scale === "number" ? new THREE.Vector3().setScalar(hold.scale) : new THREE.Vector3(...hold.scale);
+  const at = new THREE.Matrix4().compose(new THREE.Vector3(...(hold.at ?? [0, 0, 0])), new THREE.Quaternion().setFromEuler(new THREE.Euler(...(hold.turn ?? [0, 0, 0]))), scale);
+  at.multiply(new THREE.Matrix4().makeTranslation(-hold.grip[0], -hold.grip[1], -hold.grip[2]));
+  p.model(built.model, at);
+  disposeLowPoly(built.model);
+  return true;
+}
+
+/** A grip in a fist angled out from the body (`s` 1 for the right hand, -1 the left), for a dagger or a hook. */
+function outward(hand: Part, s: number): Part {
+  const grip = new Part(hand.joint);
+  grip.joint.rotation.z = s * 0.38;
+  extraParts.push(grip);
+  return grip;
+}
+
+/**
+ * A low-poly hero's weapon as its icon's model, and how the arm carries it; null when it has none, or is played
+ * across the body (the lute and flute: drawHeld lays those out).
+ */
+function heldGear(icon: string, b: Biped, trim: string, shield: boolean): { arm?: number; tilt?: number } | null {
+  const hold = HOLD[icon];
+  if (!hold || icon === "lute") return null;
+  if (icon === "daggers") {
+    // One in each fist (the second unless a shield is there), both tipped forward the same.
+    if (!gear(outward(b.heldR, 1), icon, trim, hold, true)) return null;
+    if (!shield) {
+      gear(outward(b.heldL, -1), icon, trim, hold, true);
+      b.rest.tiltL = 0.7;
+    }
+    return hold.pose ?? {};
+  }
+  return gear(b.heldR, icon, trim, hold) ? hold.pose ?? {} : null;
+}
 
 /** What a rig is posed by each frame. */
 interface Anim {
@@ -1550,14 +1676,6 @@ function lowBareFoot(foot: Part, skin: string) {
   foot.shape(skin, sym([[0.95, 0, -1], [1.05, 0, 1.3], [0.7, 0, 2.2], [0, 0, 2.4], [0.8, 1.1, -0.7], [0.75, 0.7, 1.1], [0, 0.55, 2.1], [0, 1.25, -0.6]]));
 }
 
-/** A sword: a diamond-section blade tapering to a point, a swept guard, a wrapped grip and a round pommel. */
-function lowSword(w: Part, accent: string) {
-  w.cyl(GEAR.leather, 0.42, 0.48, 2.1, 0, 0.15, 0, 6);
-  w.ball(accent, 0.62, 0, -1.05, 0);
-  w.shape(accent, sym([[1.95, 1.45, 0.3], [1.95, 2.05, 0.3], [1.95, 1.45, -0.3], [1.95, 2.05, -0.3], [0, 1.05, 0.48], [0, 1.85, 0.48], [0, 1.05, -0.48], [0, 1.85, -0.48]]));
-  w.shape(GEAR.steel, sym([[0.62, 1.9, 0], [0, 1.9, 0.26], [0, 1.9, -0.26], [0.5, 8.7, 0], [0, 8.7, 0.22], [0, 8.7, -0.22], [0, 10.3, 0]]));
-}
-
 /** A head: skin, ears, hair, and a face. */
 function drawHead(head: Part, look: Look, asleep: boolean) {
   const skin = look.skin;
@@ -1652,7 +1770,10 @@ function drawHood(head: Part, c: string, trim?: string) {
  * What is carried, in the frame of the hand that carries it: the grip at the origin, up along +y.
  * Returns how far forward the arm rests and how the thing is tipped, where it is not held upright at the side.
  */
-function drawHeld(id: string, b: Biped, trim: string, look: Look, shield: boolean): { arm?: number; tilt?: number } {
+function drawHeld(id: string, b: Biped, trim: string, look: Look, shield: boolean, icon?: string): { arm?: number; tilt?: number } {
+  // Low-poly, a weapon with an icon is held as that icon's model: what is in the hand is what is in the bag.
+  const fromIcon = lowPoly && icon ? heldGear(icon, b, trim, shield) : null;
+  if (fromIcon) return fromIcon;
   const w = b.heldR;
   const shaft = (c: string, h: number, y: number) => w.cyl(c, 0.42, 0.42, h, 0, y, 0, 6);
   const dagger = (p: Part) => {
@@ -1664,17 +1785,7 @@ function drawHeld(id: string, b: Biped, trim: string, look: Look, shield: boolea
   /** Two points mirrored across the blade's flat (x), `t` either side of it. */
   const flat = (t: number, y: number, z: number): Pt[] => [[t, y, z], [-t, y, z]];
   const axe = (band: string) => {
-    if (lowPoly) {
-      // A round haft; an iron socket; a crescent blade, thick at the socket and thin at its bright edge; a
-      // short beak behind; a band of the trim below the head.
-      shaft(GEAR.wood, 14, 3.4);
-      w.cyl(GEAR.iron, 0.62, 0.62, 1.7, 0, 9.4, 0, 8);
-      const blade: Pt[] = [];
-      for (const [z, y0, y1, t] of [[0.4, 8.5, 10.3, 0.28], [1.8, 7.7, 11.1, 0.22], [3.25, 7.05, 11.75, 0.14]]) blade.push(...flat(t, y0, z), ...flat(t, y1, z));
-      w.shape(GEAR.steel, blade);
-      w.shape(GEAR.shine, [...flat(0.14, 7.05, 3.2), ...flat(0.14, 11.75, 3.2), ...flat(0.1, 7.4, 3.6), ...flat(0.1, 11.4, 3.6), ...flat(0.08, 9.4, 3.8)]);
-      w.shape(GEAR.iron, [...flat(0.26, 8.9, -0.5), ...flat(0.26, 9.9, -0.5), ...flat(0.14, 9.2, -1.65), ...flat(0.14, 9.6, -1.65)]);
-      w.loft(band, [[6.6, 0.6, 0.6], [7.4, 0.6, 0.6]], 8);
+    if (lowPoly && gear(w, "pager-axe", band, HOLD["pager-axe"])) {
       return;
     }
     shaft(GEAR.wood, 14, 3.4);
@@ -1704,10 +1815,6 @@ function drawHeld(id: string, b: Biped, trim: string, look: Look, shield: boolea
   };
   switch (id) {
     case "sword":
-      if (lowPoly) {
-        lowSword(w, look.accent);
-        return { tilt: 0.55 };
-      }
       w.box(GEAR.wood, 0.8, 1.8, 0.8, 0, 0.2, 0);
       w.box(look.accent, 1, 1, 1, 0, -0.9, 0);
       w.box(look.accent, 3.2, 0.6, 1, 0, 1.3, 0);
@@ -1768,12 +1875,6 @@ function drawHeld(id: string, b: Biped, trim: string, look: Look, shield: boolea
     case "daggers": {
       // One in each fist (the second unless a shield is there), both tipped forward the same and angled out
       // from the body, up and away from the hands.
-      const outward = (hand: Part, s: number) => {
-        const grip = new Part(hand.joint);
-        grip.joint.rotation.z = s * 0.38;
-        extraParts.push(grip);
-        return grip;
-      };
       dagger(outward(w, 1));
       if (!shield) {
         dagger(outward(b.heldL, -1));
@@ -1784,23 +1885,6 @@ function drawHeld(id: string, b: Biped, trim: string, look: Look, shield: boolea
     case "shortbow":
     case "bow": {
       // Held beside the fist, the belly forward and the string toward the arm.
-      if (lowPoly) {
-        // One smooth stave: thickest at the grip, curving back and tapering to a nock at each tip, the
-        // string straight between them.
-        const reach = 4.7;
-        const back = (y: number) => 0.35 - 1.75 * (y / reach) ** 2;
-        const stave: Ring[] = [];
-        for (let i = 0; i <= 12; i++) {
-          const y = -reach + (2 * reach * i) / 12;
-          const r = 0.38 - 0.2 * Math.abs(y / reach) ** 1.5;
-          stave.push([y, r, r * 1.15, back(y)]);
-        }
-        w.loft(GEAR.wood, stave, 6, -1.4);
-        for (const y of [-reach, reach]) w.ball(tone(GEAR.wood, -0.15), 0.26, -1.4, y, back(y), 0);
-        w.box(id === "bow" ? look.accent : GEAR.paper, 0.14, 2 * reach - 0.2, 0.14, -1.4, 0, back(reach) + 0.05);
-        w.loft(id === "bow" ? GEAR.leather : trim, [[-0.8, 0.46, 0.52, back(0)], [0.8, 0.46, 0.52, back(0)]], 6, -1.4);
-        return {};
-      }
       for (let i = -2; i <= 2; i++) w.box(GEAR.wood, 0.6, 2.6, 0.6, -1.4, i * 2.2, 0.3 - Math.abs(i) * 0.85, [i * 0.3, 0, 0]);
       w.box(id === "bow" ? look.accent : GEAR.paper, 0.2, 9.4, 0.2, -1.4, 0, -1.5);
       w.box(id === "bow" ? GEAR.leather : trim, 0.9, 1.6, 0.9, -1.4, 0, 0.3);
@@ -2061,11 +2145,9 @@ function drawHeld(id: string, b: Biped, trim: string, look: Look, shield: boolea
 
 /** A shield on the left forearm, held across the front. */
 function drawShield(arm: Part, ref: string, icon: string, trim: string) {
-  const turn: Rot = [0, 0.35, 0];
-  if (lowPoly && !(ref === "buckler" || icon === "round-shield")) {
-    lowKiteShield(arm, trim, turn);
-    return;
-  }
+  // Low-poly, it is its icon's model.
+  if (lowPoly && HOLD[icon] && gear(arm, icon, trim, HOLD[icon])) return;
+  const turn = ON_ARM;
   if (ref === "buckler" || icon === "round-shield") {
     // A barrel lid: planks, an iron hoop and a boss.
     arm.cyl("#9a7448", 2.7, 2.7, 0.6, 0.5, -3.4, 1.9, 10, [HALF_PI, 0, 0.35]);
@@ -2081,21 +2163,6 @@ function drawShield(arm: Part, ref: string, icon: string, trim: string) {
   arm.box(GEAR.steel, 4.8, 0.8, 0.7, 0.5, -0.3, 1.9, turn);
   arm.box(trim, 3.2, 3.6, 0.3, 0.62, -2.7, 2.25, turn);
   arm.box(GEAR.gold, 1, 1, 0.3, 0.7, -2.5, 2.45, turn);
-}
-
-/**
- * A tall shield on the forearm, low-poly: a heater's shape, broad at the top and pointed at the foot, with a
- * steel rim, its face in the trim's colour and a gold boss, turned a little out from the body.
- */
-function lowKiteShield(arm: Part, trim: string, turn: Rot) {
-  const at = new THREE.Vector3(0.5, -2.9, 1.95);
-  const outline: [number, number][] = [[-2.35, 2.65], [2.35, 2.65], [2.55, 0.4], [1.85, -2.3], [0, -4.2], [-1.85, -2.3], [-2.55, 0.4]];
-  const plate = (scale: number, z0: number, z1: number): Pt[] => outline.flatMap(([x, y]): Pt[] => [[x * scale, y * scale, z0], [x * scale, y * scale, z1]]);
-  arm.shape(GEAR.steel, plate(1, -0.32, 0.18), at.x, at.y, at.z, turn);
-  arm.shape(GEAR.iron, plate(0.86, 0.1, 0.32), at.x, at.y, at.z, turn);
-  arm.shape(trim, plate(0.6, 0.25, 0.42), at.x, at.y + 0.25, at.z, turn);
-  const boss = new THREE.Vector3(0, 0.55, 0.55).applyEuler(new THREE.Euler(...turn)).add(at);
-  arm.ball(GEAR.gold, 0.7, boss.x, boss.y, boss.z, 1);
 }
 
 /**
@@ -2353,19 +2420,22 @@ function person(top: THREE.Group, look: Look, outfit: Outfit | undefined, asleep
   } else if (outfit) {
     const held = outfit.main_hand;
     if (held) {
-      apply(b, drawHeld(held.ref, b, trim("main_hand"), look, !!shield));
       const like = WEAPONS[held.ref]?.looksLike;
-      if (b.heldR.empty && like) apply(b, drawHeld(like, b, trim("main_hand"), look, !!shield));
+      // Low-poly, a signature weapon is its icon's model, and that is the icon of the weapon it is like: held as that one is.
+      const id = lowPoly && like ? like : held.ref;
+      apply(b, drawHeld(id, b, trim("main_hand"), look, !!shield, held.icon));
+      if (b.heldR.empty && like && id !== like) apply(b, drawHeld(like, b, trim("main_hand"), look, !!shield));
     }
   } else if (look.weapon !== "none") {
-    apply(b, drawHeld(look.weapon, b, look.accent, look, false));
+    apply(b, drawHeld(look.weapon, b, look.accent, look, false, STOCK_ICON[look.weapon]));
   }
   if (shield || look.weapon === "axe_shield") b.rest.armL = -0.55;
   return { parts, animate: b.animate };
 }
 
-/** A lute in its own part's frame: the belly at the origin facing +z, the neck up +y. */
+/** A lute in its own part's frame: the belly at the origin facing +z, the neck up +y. Its icon's model, low-poly. */
 function drawLute(p: Part, trim: string) {
+  if (gear(p, "lute", trim, HOLD.lute)) return;
   p.ball(GEAR.leather, 2.3, 0, 0, 0, 1, [1, 1.2, 0.5]);
   p.ball(tone(GEAR.leather, 0.08), 2.1, 0, 0.05, 0.2, 1, [0.92, 1.1, 0.42]);
   p.cyl(GEAR.dark, 0.7, 0.7, 0.2, 0, 0.5, 1.05, 10, [HALF_PI, 0, 0]);
@@ -2380,6 +2450,8 @@ const FLUTE_ARMS = { right: -0.9, left: -1.2 };
 
 /** A flute in its own part's frame: a pipe up +y from just below the grip at the origin to past `span`, finger holes to the front. */
 function drawFlute(p: Part, trim: string, span: number) {
+  // Its icon's model, slimmed and drawn out to reach from hand to hand: 16 long from foot to mouthpiece.
+  if (gear(p, "flute", trim, { grip: [0, -8, 0], scale: [0.45, (span + 1.6) / 16, 0.45], at: [0, -0.8, 0] })) return;
   p.cyl(GEAR.paper, 0.38, 0.38, span + 1.6, 0, span / 2, 0, 8);
   for (const t of [0.3, 0.45, 0.6]) p.box(GEAR.dark, 0.3, 0.4, 0.3, 0, span * t, 0.3);
   p.cyl(trim, 0.5, 0.5, 0.8, 0, span + 0.4, 0, 8);

@@ -1,6 +1,8 @@
-// Low-poly models of the gear, materials and gold, for the item icons: each icon name has a little model built
-// from faceted shapes (flat-shaded, like the heroes in render/figures.ts) with its accent parts in the item's
-// rarity colour. ui/voxel.ts poses and lights them, frames each one to its picture and inks the outline.
+// Low-poly models of the gear, materials and gold: each icon name has a little model built from faceted
+// shapes (flat-shaded, like the heroes in render/figures.ts) with its accent parts in the item's rarity
+// colour. ui/voxel.ts poses and lights them, frames each one to its picture and inks the outline for the
+// item icons; render/figures.ts puts the same weapons and shields in the heroes' hands (see HOLD there), so
+// what a hero holds is what is in their bag.
 //
 // Units are roughly the 16x16 icon's pixels, y up, the item's front toward +z. A model is built upright and
 // `lean` tips it in the picture (a long weapon lies on the diagonal), `spin` turns it about its own upright to
@@ -58,6 +60,8 @@ export interface LowPolyDef {
   tip?: number;
   /** Extra room round the model in its picture, as a share of its size (small things look better smaller). */
   pad?: number;
+  /** What one hand holds, when the picture shows more than that (one of a pair of daggers). */
+  inHand?: (k: Kit) => void;
 }
 
 const DIAG = -Math.PI / 4;
@@ -221,6 +225,7 @@ export const LOW_POLY: Record<string, LowPolyDef> = {
   },
   daggers: {
     spin: 0.3,
+    inHand: dagger,
     build: (k) => {
       k.within({ at: [0, 0, -0.5], rot: [0, 0, 0.62] }, () => dagger(k));
       k.within({ at: [0, 0, 0.5], rot: [0, 0, -0.62] }, () => dagger(k));
@@ -659,6 +664,7 @@ function material(paint: Paint): THREE.Material {
   let m = materials.get(key);
   if (!m) {
     m = new THREE.MeshLambertMaterial({ color, flatShading: true, ...(glow ? { emissive: color, emissiveIntensity: 0.45 } : {}) });
+    m.userData.glow = glow;
     materials.set(key, m);
   }
   return m;
@@ -677,8 +683,11 @@ function place(o: THREE.Object3D, p: Place = {}) {
   if (p.scale !== undefined) typeof p.scale === "number" ? o.scale.setScalar(p.scale) : o.scale.set(...p.scale);
 }
 
-/** The model for an icon, in the accent colour, or null when the icon has none. */
-export function buildLowPoly(name: string, accent: string): { model: THREE.Object3D; def: LowPolyDef } | null {
+/**
+ * The model for an icon, in the accent colour, or null when the icon has none. `inHand` builds what one hand
+ * holds of it instead (see LowPolyDef.inHand), where that differs.
+ */
+export function buildLowPoly(name: string, accent: string, inHand = false): { model: THREE.Object3D; def: LowPolyDef } | null {
   const def = LOW_POLY[name];
   if (!def) return null;
   const root = new THREE.Group();
@@ -724,7 +733,7 @@ export function buildLowPoly(name: string, accent: string): { model: THREE.Objec
       parents.pop();
     },
   };
-  def.build(k);
+  (inHand && def.inHand ? def.inHand : def.build)(k);
   return { model: root, def };
 }
 

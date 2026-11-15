@@ -1,6 +1,6 @@
 // Item icons with some depth to them. Gear, materials and gold each have a little low-poly model
-// (ui/lowPolyIcons.ts), faceted like the heroes, posed, framed to fill the picture and inked round the
-// edge. Any other icon, and any an admin has redrawn, is built from its 16x16 pixels (itemArt.ts): one
+// (render/gearModels.ts, the same ones the heroes hold and wear), faceted like the heroes, posed, framed to
+// fill the picture and inked round the edge. Any other icon, and any an admin has redrawn, is built from its 16x16 pixels (itemArt.ts): one
 // block per pixel and a few blocks thick, turned a touch toward the viewer. Both are lit from the upper
 // left like the heroes' portraits.
 //
@@ -9,7 +9,7 @@
 
 import * as THREE from "three";
 import { ART_PIXELS, hasIconOverride, iconArtListeners, itemArtPixels, itemArtUrl } from "../itemArt";
-import { buildLowPoly, disposeLowPoly } from "./lowPolyIcons";
+import { buildLowPoly, disposeLowPoly } from "../render/gearModels";
 
 /** Pixels a picture is drawn at: shown at 36 to 54, so there is always detail to spare. */
 const PX = 128;
