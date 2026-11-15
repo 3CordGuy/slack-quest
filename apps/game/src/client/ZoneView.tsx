@@ -2,10 +2,12 @@
 // tiles themselves. The rules are packages/world/src/zone; this is the
 // picture of them and the hands on them.
 //
-// Out of a fight a click walks you there. In one, on your turn, the bar's
-// nine slots are what you can do: pick one and the map shows how far it
-// reaches and what it would cover; click a target and it is done. Movement
-// is a click on any lit hex, in as many pieces as you like.
+// Out of a fight a click walks you there; a click on an enemy runs you up
+// to it, and that is what starts a fight. In one, on your turn, the bar's
+// slots are what you can do: pick one and the map shows how far it reaches
+// and what it would cover; click a target and it is done. Movement is a
+// click on any lit hex, in as many pieces as you like. Something from the
+// pack is thrown where you click, or (a potion) drunk if you click yourself.
 //
 // The server answers each action with the whole state and a list of what
 // happened. The state is believed at once by the bar (so you can keep
@@ -25,6 +27,8 @@ import {
   THROWABLES,
   abilityArea,
   abilityDice,
+  checkAbility,
+  checkThrow,
   commonCost,
   defenceOf,
   diceText,
@@ -51,16 +55,22 @@ import type { Me } from "./api";
 import { useAudioScene } from "./audio/useAudioScene";
 import { sounds } from "./audio/gameSounds";
 import { OptionsMenu } from "./OptionsMenu";
+import * as THREE from "three";
+import { SpellFx } from "./render/SpellFx";
 import { TacticsLayer, type Overlay } from "./render/TacticsLayer";
-import { WorldRenderer, hexToWorld, type RenderState } from "./render/WorldRenderer";
+import { WorldRenderer, hexToWorld, tileTop, type RenderState } from "./render/WorldRenderer";
 import { HudBar, type HudSlot } from "./ui/Hud";
 import { useCountdown } from "./ui/useCountdown";
 import { useZone } from "./useZone";
+import { Icon } from "./items";
+import { THROW_COLOR, aimKind, fxFor } from "./zone/abilityFx";
+import { COMMON_ICON, ITEM_ICON, abilityIcon } from "./zone/actionIcons";
+import { BAR_SLOTS, assignSlot, barChoices, loadBar, moveSlot, saveBar } from "./zone/hotbar";
 import { setZoneDev, useZoneDev } from "./zone/zoneDev";
 import "./zone/zone.css";
 
 /** What is waiting for a click on the map. */
-type Pick = { kind: "ability"; id: string } | { kind: "common"; what: CommonAction } | { kind: "throw"; item: Throwable };
+type Pick = { kind: "ability"; id: string } | { kind: "common"; what: CommonAction } | { kind: "item"; item: Throwable };
 
 /** The part of the state the picture shows, which lags the truth while events play out. */
 interface Picture {
@@ -69,15 +79,13 @@ interface Picture {
 }
 
 const asState = (view: ZoneViewState) => view as unknown as ZoneState;
-const THROW_ORDER: Throwable[] = ["poison", "fire", "oil", "water", "healing"];
-const COMMON_ORDER: CommonAction[] = ["dash", "disengage", "jump", "shove", "help", "potion"];
 
 /** How long the picture dwells on each thing that happened, in ms. */
 function dwell(ev: ZoneEvent): number {
   switch (ev.t) {
     case "moved": return Math.min(2400, ev.path.length * 400);
     case "roll": return ev.roll.kind === "initiative" ? 0 : 520;
-    case "used": return 320;
+    case "used": return ev.what.startsWith("throw:") ? 620 : 320;
     case "hit": case "miss": return 430;
     case "heal": case "tick": return 380;
     case "condition": return 160;
@@ -98,6 +106,13 @@ export function ZoneView({ code, me, onLeave }: { code: string; me: Me; onLeave(
   const mount = useRef<HTMLDivElement>(null);
   const renderer = useRef<WorldRenderer | null>(null);
   const layer = useRef<TacticsLayer | null>(null);
+  const spells = useRef<SpellFx | null>(null);
+  /** The map as the effects need it: the middle of a hex's top, `lift` above it. */
+  const mapNow = useRef<ZoneViewState["map"] | null>(null);
+  const point = (pos: HexPos, lift = 0) => {
+    const { x, z } = hexToWorld(pos);
+    return new THREE.Vector3(x, tileTop(mapNow.current ? tileAt(mapNow.current, pos) : undefined) + lift, z + (lift > 0 ? 0.25 : 0));
+  };
   const [picture, setPicture] = useState<Picture | null>(null);
   const [feed, setFeed] = useState<string[]>([]);
   const [roll, setRoll] = useState<Roll | null>(null);
@@ -106,6 +121,9 @@ export function ZoneView({ code, me, onLeave }: { code: string; me: Me; onLeave(
   const [focus, setFocus] = useState(false);
   const [hover, setHover] = useState<HexPos | null>(null);
   const [playAs, setPlayAs] = useState<string | null>(null);
+  /** The bar's eighteen slots, by key (zone/hotbar.ts), and the slot whose contents are being chosen. */
+  const [bar, setBar] = useState<string[]>([]);
+  const [barMenu, setBarMenu] = useState<number | null>(null);
   const names = useRef(new Map<string, string>());
   const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
   const settled = useRef<Picture | null>(null);
@@ -115,6 +133,7 @@ export function ZoneView({ code, me, onLeave }: { code: string; me: Me; onLeave(
 
   const zone = useZone(code, (next, events, prev) => {
     for (const u of next.units) names.current.set(u.id, u.name);
+    mapNow.current = next.map;
     const name = (id: string | null | undefined) => (id ? (names.current.get(id) ?? "Someone") : "Something");
     // Anything still playing from the last update is finished at once.
     for (const t of timers.current) clearTimeout(t);
@@ -125,6 +144,8 @@ export function ZoneView({ code, me, onLeave }: { code: string; me: Me; onLeave(
     if (!prev || !from || events.length === 0) return setPicture(end);
 
     const draft: Picture = structuredClone(from);
+    /** The thing last used, whose blows the hits and misses after it are. */
+    let use: { id: string; what: string; look: ReturnType<typeof fxFor>; last: THREE.Vector3 | null } | null = null;
     const find = (id: string) => draft.units.find((u) => u.id === id);
     const lines: string[] = [];
     let at = 0;
@@ -150,9 +171,47 @@ export function ZoneView({ code, me, onLeave }: { code: string; me: Me; onLeave(
         say(`${name(ev.id)} shoves ${name(ev.target)}, who has nowhere to go and falls.`);
       } else if (ev.t === "used") {
         say(`${name(ev.id)}: ${ev.name}${ev.target ? ` on ${name(ev.target)}` : ""}.`);
+        const user = find(ev.id);
+        const from = user ? point(user.pos, 0.9) : null;
+        const thrown = ev.what.startsWith("throw:") ? (ev.what.slice(6) as Throwable) : null;
+        const look = fxFor(ev.what === "attack" ? ev.name : ev.what, ev.what === "attack" && !ev.target);
+        // Where each target of this use stood, so lightning can run from one to the next.
+        use = { id: ev.id, what: ev.what === "attack" ? ev.name : ev.what, look, last: from };
+        // What it covers, for the things that come up out of the ground or roll across it.
+        const covered = user && ABILITIES[ev.what] ? abilityArea(asState({ ...next, units: draft.units }), user, ev.what, ev.at) : [];
         later(() => {
-          if (ev.what.startsWith("throw:")) sounds.zone("throw", view?.whereIs(ev.id));
+          const fxs = spells.current;
           view?.floatOver(ev.id, ev.name, "#fff1c9");
+          if (!fxs || !from || !user) return;
+          if (thrown && ev.at) {
+            sounds.zone("throw", view?.whereIs(ev.id));
+            view?.cast(ev.id, ev.name, hexToWorld(ev.at).x, hexToWorld(ev.at).z);
+            const land = point(ev.at, 0.05);
+            fxs.launch("flask", from, land, THROW_COLOR[thrown], () => fxs.ring(land, 2.4, THROW_COLOR[thrown]));
+            return;
+          }
+          if (ev.what.startsWith("drink:")) return fxs.motes(point(user.pos, 0.3), "#7dff9a");
+          const aim = ev.at ? point(ev.at, 0.05) : null;
+          if (look.kind === "meteor" && aim) {
+            view?.cast(ev.id, ev.name, aim.x, aim.z);
+            fxs.launch("meteor", from, aim, look.color, () => fxs.ring(aim, 2.6, look.color));
+          } else if (look.kind === "storm" && aim) {
+            view?.cast(ev.id, ev.name, aim.x, aim.z);
+            fxs.spark([aim.clone().add(new THREE.Vector3(0.6, 9, -0.4)), aim], look.color);
+            fxs.ring(aim, 2.6, look.color);
+          } else if (look.kind === "lob" && aim) {
+            view?.cast(ev.id, ev.name, aim.x, aim.z);
+            fxs.launch("bolt", from, aim, look.color, () => fxs.ring(aim, 2.4, look.color));
+          } else if (look.kind === "beam" && covered.length > 0) {
+            const end = point(covered[covered.length - 1], 0.9);
+            view?.cast(ev.id, ev.name, end.x, end.z);
+            fxs.beam(from, end, look.color);
+          } else if (look.kind === "erupt" && covered.length > 0) {
+            view?.cast(ev.id, ev.name, point(covered[0]).x, point(covered[0]).z);
+            fxs.erupt(covered.map((p) => point(p)), look.color);
+          } else if (look.kind === "ring") {
+            fxs.ring(point(user.pos, 0.05), ev.what === "attack" ? 3.6 : covered.length > 6 ? 3.6 : 1.9, look.color);
+          }
         });
       } else if (ev.t === "roll") {
         if (ev.roll.kind !== "initiative") {
@@ -161,21 +220,49 @@ export function ZoneView({ code, me, onLeave }: { code: string; me: Me; onLeave(
             setRoll(ev.roll);
           });
         }
-      } else if (ev.t === "hit") {
-        const u = find(ev.target);
-        if (u) u.hp = Math.max(0, u.hp - ev.amount);
-        const land = () => view?.floatOver(ev.target, `-${ev.amount}`, ev.crit ? "#ffd23f" : "#ff6b6b");
-        later(() => (ev.actor && ev.actor !== ev.target && !ev.what.startsWith("throw:") ? view?.blow(ev.actor, ev.target, blowName(ev.what), { crit: ev.crit, landed: true, onImpact: land }) : land()));
-        say(`${name(ev.target)} takes ${ev.amount}${ev.crit ? " (critical hit)" : ""}.`);
-      } else if (ev.t === "miss") {
-        const wide = () => view?.floatOver(ev.target, "miss", "#c9d1e0");
-        later(() => (ev.what === "shove" ? wide() : view?.blow(ev.actor, ev.target, blowName(ev.what), { onImpact: wide })));
-        say(`${name(ev.actor)} misses ${name(ev.target)}.`);
+      } else if (ev.t === "hit" || ev.t === "miss") {
+        const hit = ev.t === "hit";
+        const target = find(ev.target);
+        const actor = ev.actor ? find(ev.actor) : undefined;
+        if (hit && target) target.hp = Math.max(0, target.hp - ev.amount);
+        const mark = hit ? () => view?.floatOver(ev.target, `-${ev.amount}`, ev.crit ? "#ffd23f" : "#ff6b6b") : () => view?.floatOver(ev.target, "miss", "#c9d1e0");
+        const what = blowName(ev.what);
+        // How this blow gets there: thrown or struck all at once (the picture is already playing), flown, or dealt by hand.
+        const mine = use && use.id === ev.actor ? use : null;
+        const kind = !ev.actor || ev.actor === ev.target || ev.what.startsWith("throw:") || ev.what === "shove" ? "none" : (mine?.look.kind ?? "melee");
+        const color = mine?.look.color ?? "#dfe9ff";
+        const to = target ? point(target.pos, 0.8) : null;
+        const from = actor ? point(actor.pos, 0.9) : null;
+        const chained = mine?.last ?? from;
+        if (mine && to) mine.last = to;
+        later(() => {
+          const fxs = spells.current;
+          if (kind === "melee") return view?.blow(ev.actor!, ev.target, what, { crit: hit && ev.crit, landed: hit, onImpact: mark });
+          if (fxs && from && to && (kind === "arrow" || kind === "bolt")) {
+            view?.cast(ev.actor!, what, to.x, to.z);
+            // A miss flies wide of the mark.
+            const end = hit ? to : to.clone().add(new THREE.Vector3(0.7, 0.5, 0.5));
+            fxs.launch(kind, from, end, color, () => {
+              view?.landed(ev.target, what, hit, hit && ev.crit);
+              mark();
+            });
+            return;
+          }
+          if (fxs && chained && to && kind === "spark") {
+            view?.cast(ev.actor!, what, to.x, to.z);
+            fxs.spark([chained, to], color);
+          }
+          if (kind !== "none" && kind !== "ring" && kind !== "beam") view?.landed(ev.target, what, hit, hit && ev.crit);
+          mark();
+        });
+        say(hit ? `${name(ev.target)} takes ${ev.amount}${ev.crit ? " (critical hit)" : ""}.` : `${name(ev.actor)} misses ${name(ev.target)}.`);
       } else if (ev.t === "heal") {
         const u = find(ev.target);
         if (u) u.hp = Math.min(u.maxHp, u.hp + ev.amount);
         later(() => {
           sounds.heal(blowName(ev.what), view?.whereIs(ev.target));
+          const healed = find(ev.target);
+          if (healed) spells.current?.motes(point(healed.pos, 0.3), use?.look.kind === "bless" ? use.look.color : "#7dff9a");
           view?.glint(ev.target, "#7dff9a");
           view?.floatOver(ev.target, `+${ev.amount}`, "#7dff9a");
         });
@@ -266,6 +353,17 @@ export function ZoneView({ code, me, onLeave }: { code: string; me: Me; onLeave(
   const budget = act && enc ? enc.budgets[act.id] : undefined;
   const deadline = useCountdown(enc?.deadline);
 
+  // The bar is the one this class was last left with, made to fit the abilities in hand.
+  const barFor = act ? `${act.kind}|${act.abilities.join(",")}` : "";
+  useEffect(() => {
+    if (act) setBar(loadBar(act.kind, act.abilities));
+    setBarMenu(null);
+  }, [barFor]);
+  const arrange = (next: string[]) => {
+    setBar(next);
+    if (act) saveBar(act.kind, next);
+  };
+
   useAudioScene(mine.some((u) => enc?.order.includes(u.id)) ? "battle" : state?.options.biome === "caves" ? "caverns" : "island");
 
   // ---------- the renderer ----------
@@ -275,9 +373,12 @@ export function ZoneView({ code, me, onLeave }: { code: string; me: Me; onLeave(
     const view = new WorldRenderer(mount.current!, { onHexClick: (pos) => click.current(pos), onHover: setHover });
     renderer.current = view;
     layer.current = new TacticsLayer(view);
+    spells.current = new SpellFx(view);
     return () => {
       layer.current?.dispose();
       layer.current = null;
+      spells.current?.dispose();
+      spells.current = null;
       renderer.current = null;
       view.dispose();
     };
@@ -353,9 +454,18 @@ export function ZoneView({ code, me, onLeave }: { code: string; me: Me; onLeave(
       const area = abilityArea(z, act, pick.id, hover ?? undefined);
       if (area.length > 0) out.push({ hexes: area, color: "#ff6b6b", fill: 0.3, line: 0.9 });
       else if (hover && unitOn(hover)) out.push({ hexes: [hover], color: tactic.shape === "ally" ? "#7dff9a" : "#ff6b6b", fill: 0.3, line: 0.9 });
-    } else if (pick.kind === "throw") {
+    } else if (pick.kind === "item") {
+      const def = THROWABLES[pick.item];
+      const tint = def.surface ? SURFACE_INFO[def.surface.kind].color : "#7dff9a";
       out.push({ hexes: within(throwRange(statMod(act.stats?.str ?? 5)), true), color: "#ffd23f", fill: 0.1, line: 0.8 });
-      if (hover) out.push({ hexes: zoneBlast(state.map, hover, THROWABLES[pick.item].radius), color: THROWABLES[pick.item].surface ? SURFACE_INFO[THROWABLES[pick.item].surface!.kind].color : "#7dff9a", fill: 0.35, line: 0.9 });
+      // Your own hex: a potion clicked there is drunk, not thrown.
+      if (def.drink) out.push({ hexes: [act.pos], color: "#7dff9a", fill: 0.3, line: 0.9 });
+      if (hover && !(def.drink && hover.q === act.pos.q && hover.r === act.pos.r)) {
+        const area = zoneBlast(state.map, hover, def.radius);
+        out.push({ hexes: area, color: tint, fill: 0.22, line: 0.9 });
+        // Where it lands gets the most of it.
+        if (def.heal) out.push({ hexes: [hover], color: tint, fill: 0.4 });
+      }
     } else if (pick.what === "jump") {
       out.push({ hexes: within(jumpRange(statMod(act.stats?.str ?? 5)), true).filter((t) => !unitOn(t)), color: "#8fd3ff", fill: 0.14, line: 0.8 });
       if (hover) out.push({ hexes: [hover], color: "#8fd3ff", fill: 0.35, line: 0.9 });
@@ -365,6 +475,27 @@ export function ZoneView({ code, me, onLeave }: { code: string; me: Me; onLeave(
     return out;
   }, [state, z, act, pick, hover, dev.showAlert, dev.tool]);
   useEffect(() => layer.current?.setOverlays(overlays), [overlays]);
+
+  // The line of a shot, a spell or a throw to where the pointer is: pale when it can be made, red when it cannot.
+  useEffect(() => {
+    const aimed = (() => {
+      if (!z || !act || !pick || !hover || (hover.q === act.pos.q && hover.r === act.pos.r)) return null;
+      mapNow.current = z.map;
+      const there = unitOn(hover);
+      const from = point(act.pos, 1.0);
+      const to = point(hover, there ? 0.8 : 0.05);
+      const distance = from.distanceTo(to);
+      if (pick.kind === "item") return { from, to, height: SpellFx.arcHeight("flask", distance), color: checkThrow(z, act, pick.item, hover) ? "#ff6b6b" : "#fff1c9" };
+      if (pick.kind !== "ability") return null;
+      const tactic = tacticOf(pick.id);
+      if (tactic.reach === "melee" || tactic.shape === "line" || tactic.shape === "self" || tactic.shape === "burst" || tactic.shape === "adjacent") return null;
+      const wrong = checkAbility(z, act, pick.id, tactic.shape === "blast" ? { at: hover } : { target: there?.id });
+      // Aimed at open ground with something that needs a target: no line at all.
+      if (tactic.shape !== "blast" && !there) return null;
+      return { from, to, height: SpellFx.arcHeight(aimKind(pick.id) === "arrow" ? "arrow" : "bolt", distance) + (tactic.shape === "blast" ? 0.6 : 0), color: wrong ? "#ff6b6b" : "#fff1c9" };
+    })();
+    layer.current?.setArc(aimed);
+  }, [z, act, pick, hover]);
 
   // ---------- acting ----------
 
@@ -391,15 +522,25 @@ export function ZoneView({ code, me, onLeave }: { code: string; me: Me; onLeave(
     const there = unitOn(pos);
     if (dev.tool?.tool === "spawn") return dev.open?.send({ op: "spawn", kinds: dev.tool.kinds, at: pos });
     if (dev.tool?.tool === "paint") return dev.open?.send({ op: "paint", kind: dev.tool.surface, hexes: dev.tool.wide ? zoneBlast(state.map, pos, 1) : [pos] });
-    if (!pick) return zone.send({ type: "move", unit: act.id, to: pos });
+    if (!pick) {
+      // A click on an enemy means "go up to it": the nearest hex beside it that can be reached.
+      if (there && there.side === "enemy" && !there.down) {
+        const beside = [...reach.values()].filter((r) => r.stop && hexDistance(r.pos, there.pos) === 1).sort((a, b) => a.cost - b.cost)[0];
+        if (beside && beside.cost > 0) zone.send({ type: "move", unit: act.id, to: beside.pos });
+        return;
+      }
+      return zone.send({ type: "move", unit: act.id, to: pos });
+    }
     if (pick.kind === "ability") {
       const shape = tacticOf(pick.id).shape;
       if (shape === "blast" || shape === "line") return use(pick.id, { at: pos });
       // An ally ability clicked on open ground is meant for yourself.
       if (shape === "ally") return use(pick.id, { target: there?.side === "hero" ? there.id : act.id });
       if (there) use(pick.id, { target: there.id });
-    } else if (pick.kind === "throw") {
-      zone.send({ type: "throw", unit: act.id, item: pick.item, at: pos });
+    } else if (pick.kind === "item") {
+      // Clicked on yourself, something drinkable is drunk; anywhere else it is thrown there.
+      if (THROWABLES[pick.item].drink && pos.q === act.pos.q && pos.r === act.pos.r) zone.send({ type: "drink", unit: act.id, item: pick.item });
+      else zone.send({ type: "throw", unit: act.id, item: pick.item, at: pos });
       setPick(null);
     } else if (pick.what === "jump") common("jump", { at: pos });
     else if (there) common(pick.what, { target: there.id });
@@ -446,45 +587,61 @@ export function ZoneView({ code, me, onLeave }: { code: string; me: Me; onLeave(
 
   const canPay = (cost: "action" | "bonus") => !fighting || (myTurn && !!budget?.[cost]);
   const costName = (cost: "action" | "bonus") => (cost === "action" ? "Action" : "Bonus action");
-  const slots: HudSlot[] = [
-    ...act.abilities.slice(0, 3).map((id): HudSlot => {
-      const def = ABILITIES[id];
-      const tactic = tacticOf(id);
-      const wait = act.cooldowns[id] ?? 0;
-      const reachText = tactic.shape === "self" ? "yourself" : tactic.shape === "burst" ? `everyone within ${tactic.radius}` : tactic.reach === "melee" ? (tactic.shape === "adjacent" ? "every enemy beside you" : "an enemy beside you") : `${tactic.shape === "line" ? `a line of ${tactic.length}` : `range ${tactic.range}`}${tactic.shape === "blast" ? `, blast ${tactic.radius}` : ""}`;
-      const dice = def.damage ? `${diceText(abilityDice(def))} damage` : def.heal ? `heals ${diceText(healDice(def))}` : "";
-      return {
-        id,
-        glyph: def.name.slice(0, 2),
-        name: def.name,
-        line: [costName(tactic.cost), reachText, dice].filter(Boolean).join(" · "),
-        more: `${def.blurb}${tactic.cooldown ? ` Then ${tactic.cooldown} turn${tactic.cooldown === 1 ? "" : "s"} before it can be used again.` : ""}`,
-        wait: wait || undefined,
-        picked: pick?.kind === "ability" && pick.id === id,
-        spent: !canPay(tactic.cost) || (fighting && wait > 0),
-        run: () => choose(id),
-      };
-    }),
-    ...COMMON_ORDER.map((what): HudSlot => {
-      const cost = commonCost(what, act.kind);
-      const needsFight = what === "dash" || what === "disengage";
-      return {
-        id: what,
-        glyph: COMMON_ACTIONS[what].name.slice(0, 2),
-        name: COMMON_ACTIONS[what].name,
-        line: costName(cost),
-        more: COMMON_ACTIONS[what].blurb,
-        count: what === "potion" ? act.potions : undefined,
-        picked: pick?.kind === "common" && pick.what === what,
-        spent: !canPay(cost) || (needsFight && !fighting) || (what === "potion" && act.potions <= 0),
-        run: () => (what === "dash" || what === "disengage" || what === "potion" ? common(what) : setPick((p) => (p?.kind === "common" && p.what === what ? null : { kind: "common", what }))),
-      };
-    }),
-  ];
+  /** Everything that could be on the bar, by key, as it stands right now. */
+  const entries: Record<string, HudSlot> = {};
+  for (const id of act.abilities) {
+    const def = ABILITIES[id];
+    const tactic = tacticOf(id);
+    const wait = act.cooldowns[id] ?? 0;
+    const reachText = tactic.shape === "self" ? "yourself" : tactic.shape === "burst" ? `everyone within ${tactic.radius}` : tactic.reach === "melee" ? (tactic.shape === "adjacent" ? "every enemy beside you" : "an enemy beside you") : `${tactic.shape === "line" ? `a line of ${tactic.length}` : `range ${tactic.range}`}${tactic.shape === "blast" ? `, blast ${tactic.radius}` : ""}`;
+    const dice = def.damage ? `${diceText(abilityDice(def))} damage` : def.heal ? `heals ${diceText(healDice(def))}` : "";
+    entries[`ab:${id}`] = {
+      id: `ab:${id}`,
+      icon: { ...abilityIcon(id), flat: true },
+      name: def.name,
+      line: [costName(tactic.cost), reachText, dice].filter(Boolean).join(" · "),
+      more: `${def.blurb}${tactic.cooldown ? ` Then ${tactic.cooldown} turn${tactic.cooldown === 1 ? "" : "s"} before it can be used again.` : ""}`,
+      wait: wait || undefined,
+      picked: pick?.kind === "ability" && pick.id === id,
+      spent: !canPay(tactic.cost) || (fighting && wait > 0),
+      run: () => choose(id),
+    };
+  }
+  for (const what of Object.keys(COMMON_ICON) as CommonAction[]) {
+    const cost = commonCost(what, act.kind);
+    const needsFight = what === "dash" || what === "disengage";
+    entries[`do:${what}`] = {
+      id: `do:${what}`,
+      icon: { ...COMMON_ICON[what], flat: true },
+      name: COMMON_ACTIONS[what].name,
+      line: costName(cost),
+      more: COMMON_ACTIONS[what].blurb,
+      picked: pick?.kind === "common" && pick.what === what,
+      spent: !canPay(cost) || (needsFight && !fighting),
+      run: () => (needsFight ? common(what) : setPick((p) => (p?.kind === "common" && p.what === what ? null : { kind: "common", what }))),
+    };
+  }
+  for (const item of Object.keys(ITEM_ICON) as Throwable[]) {
+    const def = THROWABLES[item];
+    const have = act.items[item] ?? 0;
+    entries[`it:${item}`] = {
+      id: `it:${item}`,
+      icon: ITEM_ICON[item],
+      name: def.name,
+      line: def.drink ? "Throw it (Action), or click yourself to drink it (Bonus action)" : "Throw it (Action)",
+      more: def.blurb,
+      count: have,
+      picked: pick?.kind === "item" && pick.item === item,
+      // Thrown for an Action; a potion can still be drunk when only the Bonus action is left.
+      spent: have <= 0 || !(canPay("action") || (!!def.drink && canPay("bonus"))),
+      run: () => setPick((p) => (p?.kind === "item" && p.item === item ? null : { kind: "item", item })),
+    };
+  }
+  const slots = Array.from({ length: BAR_SLOTS }, (_, i) => entries[bar[i] ?? ""] ?? null);
 
   const waitingFor = enc && !myTurn ? enc.acting.map((id) => names.current.get(id) ?? "someone").join(" and ") : undefined;
   const place: ReactNode = pick
-    ? <>{pick.kind === "ability" ? ABILITIES[pick.id].name : pick.kind === "throw" ? THROWABLES[pick.item].name : COMMON_ACTIONS[pick.what].name} <span className="muted">· click a target on the map, or Esc to put it back</span></>
+    ? <>{pick.kind === "ability" ? ABILITIES[pick.id].name : pick.kind === "item" ? THROWABLES[pick.item].name : COMMON_ACTIONS[pick.what].name} <span className="muted">· {pick.kind === "item" && THROWABLES[pick.item].drink ? "click where to throw it, or yourself to drink it" : "click a target on the map"}, or Esc to put it back</span></>
     : dev.tool
       ? <>Dev tool <span className="muted">· {dev.tool.tool === "spawn" ? "click a hex to place the group" : "click hexes to paint"}</span></>
       : !enc || !fighting
@@ -574,6 +731,29 @@ export function ZoneView({ code, me, onLeave }: { code: string; me: Me; onLeave(
 
       {zone.error && <div className="toast">{zone.error}</div>}
 
+      {barMenu !== null && (
+        <div className="zone-barmenu panel" role="dialog" aria-label="Choose what goes in this slot">
+          <div className="zone-barmenu-head">
+            <strong>Slot {barMenu < 9 ? barMenu + 1 : `Shift ${barMenu - 8}`}</strong>
+            <span className="muted">Pick what goes here. Drag slots on the bar to swap them.</span>
+            <button className="link" onClick={() => setBarMenu(null)}>Close</button>
+          </div>
+          <div className="zone-barmenu-list">
+            {barChoices(act.abilities).map((key) => {
+              const entry = entries[key];
+              if (!entry) return null;
+              return (
+                <button key={key} className={`zone-barmenu-item ${bar[barMenu] === key ? "selected" : ""}`} title={entry.more} onClick={() => { arrange(assignSlot(bar, barMenu, key)); setBarMenu(null); }}>
+                  <Icon name={entry.icon.name} color={entry.icon.color} size={27} flat={entry.icon.flat} />
+                  <span>{entry.name}{entry.count !== undefined ? ` × ${entry.count}` : ""}</span>
+                </button>
+              );
+            })}
+            <button className="zone-barmenu-item" onClick={() => { arrange(assignSlot(bar, barMenu, "")); setBarMenu(null); }}><span>Leave it empty</span></button>
+          </div>
+        </div>
+      )}
+
       <HudBar
         me={me}
         place={place}
@@ -585,18 +765,12 @@ export function ZoneView({ code, me, onLeave }: { code: string; me: Me; onLeave(
           { label: "Movement", now: budget.move, max: budget.moveMax, kind: "move" },
         ] : []}
         slots={slots}
+        onSlotMove={(from, to) => arrange(moveSlot(bar, from, to))}
+        onSlotMenu={(index) => setBarMenu((open) => (open === index ? null : index))}
         turn={enc && fighting ? { seconds: deadline, onEnd: myTurn ? () => zone.send({ type: "end_turn", unit: act.id }) : undefined, waitingFor } : undefined}
         menu={<OptionsMenu title={`Map ${code}`} subtitle={<>{state.options.biome} · {state.options.size}</>} actions={[{ label: "Leave the map", hint: "Back to the Harbor. The map stays as you left it.", run: onLeave }]} />}
       >
         <button className={`small ${focus ? "primary" : ""}`} disabled={act.focus <= 0} aria-pressed={focus} title="Spend 1 Focus on your next attack to roll it with advantage" onClick={() => setFocus((f) => !f)}>Focus {act.focus}</button>
-        {THROW_ORDER.map((item) => {
-          const have = item === "healing" ? act.potions : (act.items[item] ?? 0);
-          return (
-            <button key={item} className={`small ${pick?.kind === "throw" && pick.item === item ? "primary" : ""}`} disabled={have <= 0 || !canPay("action")} title={`Throw: ${THROWABLES[item].blurb}`} onClick={() => setPick((p) => (p?.kind === "throw" && p.item === item ? null : { kind: "throw", item }))}>
-              {THROWABLES[item].name.split(" ")[0]} {have}
-            </button>
-          );
-        })}
       </HudBar>
     </div>
   );

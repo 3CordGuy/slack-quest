@@ -28,6 +28,8 @@ export class TacticsLayer {
   private overlays = new THREE.Group();
   private ground = new THREE.Group();
   private map: WorldMap | null = null;
+  private arc: THREE.Line | null = null;
+  private arcSig = "";
   private overlaySig = "";
   private groundSig = "";
   private stop: () => void;
@@ -46,6 +48,7 @@ export class TacticsLayer {
     this.stop();
     this.clear(this.overlays);
     this.clear(this.ground);
+    this.setArc(null);
     this.renderer.removeObject(this.group);
   }
 
@@ -127,6 +130,32 @@ export class TacticsLayer {
         this.overlays.add(lines);
       }
     });
+  }
+
+  /**
+   * The line a shot, a spell or a throw would take: a dashed arc from the one aiming to what is aimed at,
+   * `height` over the straight line at its top. Null takes it away.
+   */
+  setArc(arc: { from: THREE.Vector3; to: THREE.Vector3; height: number; color: string } | null) {
+    const sig = arc ? `${arc.from.toArray().map((n) => n.toFixed(2))}|${arc.to.toArray().map((n) => n.toFixed(2))}|${arc.height.toFixed(2)}|${arc.color}` : "";
+    if (sig === this.arcSig) return;
+    this.arcSig = sig;
+    if (this.arc) {
+      this.group.remove(this.arc);
+      this.arc.geometry.dispose();
+      (this.arc.material as THREE.Material).dispose();
+      this.arc = null;
+    }
+    if (!arc) return;
+    const points = Array.from({ length: 25 }, (_, i) => {
+      const t = i / 24;
+      return arc.from.clone().lerp(arc.to, t).add(new THREE.Vector3(0, arc.height * 4 * t * (1 - t), 0));
+    });
+    const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints(points), new THREE.LineDashedMaterial({ color: arc.color, dashSize: 0.22, gapSize: 0.14, transparent: true, opacity: 0.95, depthTest: false }));
+    line.computeLineDistances();
+    line.renderOrder = 4;
+    this.arc = line;
+    this.group.add(line);
   }
 
   /** Draw the ground as it now is: one sheet per kind of surface. */

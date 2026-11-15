@@ -6,7 +6,7 @@ import { makeRng } from "../rng";
 import { walk } from "./combat";
 import { attackContext, type Ctx } from "./engine";
 import { ALERT_RANGE, DEFAULT_ZONE_OPTIONS, JOIN_RANGE, generateZone, zoneOptions } from "./gen";
-import { adjacent, flies, sees, solid, zoneReach } from "./geometry";
+import { adjacent, blast, flies, sees, solid, zoneReach } from "./geometry";
 import { ENEMY_KIT, TACTICS, enemyStrikes, tacticOf } from "./kit";
 import { d20, diceAverage, diceFor, heroMove, hitChance } from "./rules";
 import { createZone, standInHero, stepZone } from "./zone";
@@ -29,9 +29,9 @@ const tileEdit = (pos: HexPos, change: Partial<Tile>) => (t: Tile) => { if (t.q 
 function hero(state: ZoneState, id: string, classId: string, pos: HexPos): Unit {
   const sheet = standInHero(classId, id, 1)!;
   const unit: Unit = {
-    id, side: "hero", name: id, kind: classId, level: 1, pos, hp: sheet.maxHp, maxHp: sheet.maxHp, focus: 2, maxFocus: 2, potions: 2,
+    id, side: "hero", name: id, kind: classId, level: 1, pos, hp: sheet.maxHp, maxHp: sheet.maxHp, focus: 2, maxFocus: 2,
     stats: STARTING_STATS[classId], armor: 2, power: 1, abilities: classId === "refactor_rogue" ? ["aimed_shot", "quick_stab"] : classId === "devops_mage" ? ["firebolt", "mend"] : ["smite", "shield_wall"],
-    conditions: [], down: false, cooldowns: {}, items: { poison: 2, fire: 1, oil: 1, water: 1 },
+    conditions: [], down: false, cooldowns: {}, items: { healing: 2, poison: 2, fire: 1, oil: 1, water: 1 },
   };
   state.units.push(unit);
   return unit;
@@ -39,7 +39,7 @@ function hero(state: ZoneState, id: string, classId: string, pos: HexPos): Unit 
 
 function enemy(state: ZoneState, kind: string, pos: HexPos, group = "g1"): Unit {
   state.groups[group] ??= { alerted: false };
-  const unit: Unit = { id: `e${++state.seq}`, side: "enemy", name: ENEMIES[kind].name, kind, level: 1, pos, hp: ENEMIES[kind].hp, maxHp: ENEMIES[kind].hp, focus: 0, maxFocus: 0, potions: 0, armor: 0, power: 0, abilities: [], conditions: [], down: false, cooldowns: {}, items: {}, group, home: pos };
+  const unit: Unit = { id: `e${++state.seq}`, side: "enemy", name: ENEMIES[kind].name, kind, level: 1, pos, hp: ENEMIES[kind].hp, maxHp: ENEMIES[kind].hp, focus: 0, maxFocus: 0, armor: 0, power: 0, abilities: [], conditions: [], down: false, cooldowns: {}, items: {}, group, home: pos };
   state.units.push(unit);
   return unit;
 }
@@ -57,15 +57,19 @@ const fails = (state: ZoneState, action: ZoneAction): string => {
   return step.error;
 };
 const unit = (state: ZoneState, id: string) => state.units.find((u) => u.id === id)!;
+const zoneBlastCount = (state: ZoneState, pos: HexPos) => blast(state.map, pos, 1).length;
 const paint = (state: ZoneState, kind: SurfaceKind | null, hexes: HexPos[]) => must(state, { type: "dev", by: "dev", dev: { op: "paint", kind, hexes } });
+/** Set the nearest group on a hero where they stand, without anyone having to walk up to anyone. */
+const provoke = (state: ZoneState, by = "ann", sink: ZoneEvent[] = []) => must(state, { type: "dev", by, dev: { op: "start_fight" } }, sink);
 /** Put a hero in a fight with one enemy, with the enemy AI off, and it is the hero's turn. */
 function duel(kind = "bandit", classId = "qa_paladin", heroAt = at(5, 6), enemyAt = at(8, 6)) {
   let state = board();
   state.aiOff = true;
   hero(state, "ann", classId, heroAt);
   const foe = enemy(state, kind, enemyAt);
-  // Walking a step inside the alert radius starts it.
+  // A step toward it, and the fight is on (by walking up to it, if that step did; set on them, if not).
   state = must(state, { type: "move", by: "ann", unit: "ann", to: { q: heroAt.q + 1, r: heroAt.r } });
+  if (!state.encounter) state = provoke(state);
   // The enemy's turn (if it won initiative) passes with the AI off.
   expect(state.encounter?.acting).toEqual(["ann"]);
   return { state, foe: foe.id };
@@ -194,15 +198,18 @@ describe("free walking", () => {
 });
 
 describe("starting a fight", () => {
-  it("starts when a hero walks within sight of a group, and stops them there", () => {
+  it("starts when a hero runs right up to an enemy, and not before", () => {
     let state = board();
     state.aiOff = true;
     hero(state, "ann", "qa_paladin", at(1, 6));
     const wolf = enemy(state, "wolf", at(10, 6));
     const mate = enemy(state, "wolf", at(11, 6));
+    // Two hexes off, in plain sight: nothing.
+    state = must(state, { type: "move", by: "ann", unit: "ann", to: at(8, 6) });
+    expect(state.encounter).toBeNull();
+    expect(unit(state, "ann").pos).toEqual(at(8, 6));
     const events: ZoneEvent[] = [];
     state = must(state, { type: "move", by: "ann", unit: "ann", to: at(9, 6) }, events);
-    // Stopped on the first hex inside the alert radius, not where the click was.
     expect(hexDistance(unit(state, "ann").pos, wolf.pos)).toBe(ALERT_RANGE);
     expect(state.encounter).not.toBeNull();
     expect(new Set(state.encounter!.order)).toEqual(new Set(["ann", wolf.id, mate.id]));
@@ -211,14 +218,16 @@ describe("starting a fight", () => {
     expect(events.filter((e) => e.t === "roll" && e.roll.kind === "initiative")).toHaveLength(3);
   });
 
-  it("does not start through rock", () => {
-    let state = board((t) => { for (const row of [4, 5, 6, 7, 8]) tileEdit(at(7, row), { biome: "rock" })(t); });
+  it("stops a hero who walks past an enemy on the first hex beside it", () => {
+    let state = board();
+    state.aiOff = true;
     hero(state, "ann", "qa_paladin", at(3, 6));
-    const wolf = enemy(state, "wolf", at(9, 6));
-    expect(sees(state.map, at(6, 6), wolf.pos)).toBe(false);
-    state = must(state, { type: "move", by: "ann", unit: "ann", to: at(6, 6) });
-    expect(hexDistance(unit(state, "ann").pos, wolf.pos)).toBeLessThanOrEqual(ALERT_RANGE);
-    expect(state.encounter).toBeNull();
+    const wolf = enemy(state, "wolf", at(7, 5));
+    // The straight way to the far side runs right under its nose.
+    state = must(state, { type: "move", by: "ann", unit: "ann", to: at(12, 6) });
+    expect(state.encounter).not.toBeNull();
+    expect(hexDistance(unit(state, "ann").pos, wolf.pos)).toBe(1);
+    expect(unit(state, "ann").pos).not.toEqual(at(12, 6));
   });
 
   it("leaves a hero far away free to walk, and pulls them in when they come near", () => {
@@ -226,7 +235,7 @@ describe("starting a fight", () => {
     state.aiOff = true;
     hero(state, "ann", "qa_paladin", at(5, 2));
     hero(state, "bo", "qa_paladin", at(1, 10));
-    enemy(state, "wolf", at(9, 2));
+    enemy(state, "wolf", at(7, 2));
     state = must(state, { type: "move", by: "ann", unit: "ann", to: at(6, 2) });
     expect(state.encounter!.order).not.toContain("bo");
     // Bo is in no fight: no turn to wait for, and the walk costs nothing.
@@ -244,12 +253,12 @@ describe("starting a fight", () => {
     let state = board();
     state.aiOff = true;
     hero(state, "ann", "refactor_rogue", at(4, 2));
-    enemy(state, "wolf", at(8, 2), "g1");
-    const far = enemy(state, "bandit", at(8, 9), "g2");
+    enemy(state, "wolf", at(6, 2), "g1");
+    const far = enemy(state, "bandit", at(4, 4), "g2");
     state = must(state, { type: "move", by: "ann", unit: "ann", to: at(5, 2) });
     expect(state.encounter!.order).not.toContain(far.id);
     while (state.encounter!.acting[0] !== "ann") state = must(state, { type: "timeout" });
-    state = must(state, { type: "move", by: "ann", unit: "ann", to: at(6, 7) });
+    state = must(state, { type: "move", by: "ann", unit: "ann", to: at(4, 3) });
     expect(state.groups.g2.alerted).toBe(true);
     expect(state.encounter!.order).toContain(far.id);
   });
@@ -264,7 +273,7 @@ describe("turns", () => {
     hero(state, "ann", "qa_paladin", at(5, 6));
     hero(state, "bo", "qa_paladin", at(5, 7));
     enemy(state, "dummy", at(9, 6));
-    state = must(state, { type: "move", by: "ann", unit: "ann", to: at(6, 6) });
+    state = provoke(must(state, { type: "move", by: "ann", unit: "ann", to: at(6, 6) }));
     const enc = state.encounter!;
     const a = enc.order.indexOf("ann");
     const b = enc.order.indexOf("bo");
@@ -297,7 +306,7 @@ describe("turns", () => {
     state = must(state, { type: "use", by: "ann", unit: "ann", ability: "shield_wall" });
     expect(budget().bonus).toBe(false);
     expect(unit(state, "ann").conditions.some((c) => c.kind === "guarded")).toBe(true);
-    expect(fails(state, { type: "common", by: "ann", unit: "ann", what: "potion" })).toMatch(/Bonus action/);
+    expect(fails(state, { type: "drink", by: "ann", unit: "ann", item: "healing" })).toMatch(/Bonus action/);
     expect(fails(state, { type: "move", by: "ann", unit: "ann", to: at(1, 1) })).toMatch(/movement/);
   });
 
@@ -306,7 +315,7 @@ describe("turns", () => {
     state.aiOff = true;
     hero(state, "ann", "qa_paladin", at(5, 6));
     enemy(state, "dummy", at(9, 6));
-    state = must(state, { type: "move", by: "ann", unit: "ann", to: at(6, 6) });
+    state = provoke(must(state, { type: "move", by: "ann", unit: "ann", to: at(6, 6) }));
     const budget = () => state.encounter!.budgets.ann;
     const max = budget().moveMax;
     expect(budget().move).toBe(max);
@@ -337,7 +346,7 @@ describe("attacks", () => {
     state.aiOff = true;
     hero(state, "ann", "refactor_rogue", at(4, 6));
     const foe = enemy(state, "dummy", at(9, 6));
-    state = must(state, { type: "move", by: "ann", unit: "ann", to: at(5, 6) });
+    state = provoke(must(state, { type: "move", by: "ann", unit: "ann", to: at(5, 6) }));
     expect(fails(state, { type: "use", by: "ann", unit: "ann", ability: "quick_stab", target: foe.id })).toMatch(/next to it/);
     expect(fails(state, { type: "use", by: "ann", unit: "ann", ability: "aimed_shot", target: foe.id })).toMatch(/clear line/);
     state = must(state, { type: "move", by: "ann", unit: "ann", to: at(5, 5) });
@@ -530,6 +539,40 @@ describe("surfaces", () => {
   });
 });
 
+describe("items", () => {
+  it("heals the drinker in full for a Bonus action, and uses the potion up", () => {
+    let { state } = duel("dummy");
+    unit(state, "ann").hp = 5;
+    const events: ZoneEvent[] = [];
+    state = must(state, { type: "drink", by: "ann", unit: "ann", item: "healing" }, events);
+    const healed = events.find((e) => e.t === "heal");
+    expect(healed && healed.t === "heal" && healed.amount).toBeGreaterThanOrEqual(8);
+    expect(unit(state, "ann").items.healing).toBe(1);
+    expect(state.encounter!.budgets.ann).toMatchObject({ action: true, bonus: false });
+    expect(fails(state, { type: "drink", by: "ann", unit: "ann", item: "poison" })).toMatch(/not for drinking/);
+  });
+
+  it("heals whoever a thrown potion lands on, and half as much those on the six hexes round them", () => {
+    let state = board();
+    hero(state, "ann", "qa_paladin", at(3, 6));
+    const centre = hero(state, "bo", "qa_paladin", at(6, 6));
+    const edge = hero(state, "cy", "qa_paladin", at(7, 6));
+    const outside = hero(state, "di", "qa_paladin", at(8, 6));
+    for (const h of [centre, edge, outside]) h.hp = 1;
+    const events: ZoneEvent[] = [];
+    state = must(state, { type: "throw", by: "ann", unit: "ann", item: "healing", at: at(6, 6) }, events);
+    const got = (id: string) => events.find((e) => e.t === "heal" && e.target === id);
+    const full = got("bo");
+    const half = got("cy");
+    expect(full && full.t === "heal" && half && half.t === "heal" && half.amount).toBe(Math.ceil((full && full.t === "heal" ? full.amount : 0) / 2));
+    expect(got("di")).toBeUndefined();
+    expect(unit(state, "di").hp).toBe(1);
+    // Seven hexes in all: the one it lands on and the six around.
+    expect(zoneBlastCount(state, at(6, 6))).toBe(7);
+    expect(unit(state, "ann").items.healing).toBe(1);
+  });
+});
+
 // ---------- the enemy ----------
 
 describe("the enemy's turn", () => {
@@ -538,7 +581,7 @@ describe("the enemy's turn", () => {
     hero(state, "ann", "qa_paladin", at(4, 6));
     const wolf = enemy(state, "wolf", at(9, 6));
     const events: ZoneEvent[] = [];
-    state = must(state, { type: "move", by: "ann", unit: "ann", to: at(5, 6) }, events);
+    state = provoke(must(state, { type: "move", by: "ann", unit: "ann", to: at(5, 6) }), "ann", events);
     for (let i = 0; i < 4 && !events.some((e) => e.t === "used" && e.id === wolf.id); i++) state = must(state, { type: "timeout" }, events);
     expect(events.some((e) => e.t === "used" && e.id === wolf.id)).toBe(true);
     expect(adjacent(unit(state, wolf.id).pos, unit(state, "ann").pos)).toBe(true);
@@ -552,7 +595,7 @@ describe("the enemy's turn", () => {
       // A puddle right on the straight line between them, with open ground either side.
       state = paint(state, kind, [at(7, 6), at(6, 6)]);
       const events: ZoneEvent[] = [];
-      state = must(state, { type: "move", by: "ann", unit: "ann", to: at(5, 6) }, events);
+      state = provoke(must(state, { type: "move", by: "ann", unit: "ann", to: at(5, 6) }), "ann", events);
       for (let i = 0; i < 3 && !events.some((e) => e.t === "moved" && e.id === wolf.id); i++) state = must(state, { type: "timeout" }, events);
       const walked = events.filter((e): e is Extract<ZoneEvent, { t: "moved" }> => e.t === "moved" && e.id === wolf.id).flatMap((e) => e.path);
       expect(walked.length, kind).toBeGreaterThan(0);
@@ -566,7 +609,7 @@ describe("the enemy's turn", () => {
     hero(state, "ann", "qa_paladin", at(4, 6));
     const archer = enemy(state, "archer", at(9, 6));
     const events: ZoneEvent[] = [];
-    state = must(state, { type: "move", by: "ann", unit: "ann", to: at(5, 6) }, events);
+    state = provoke(must(state, { type: "move", by: "ann", unit: "ann", to: at(5, 6) }), "ann", events);
     for (let i = 0; i < 3 && !events.some((e) => e.t === "used" && e.id === archer.id); i++) state = must(state, { type: "timeout" }, events);
     expect(events.some((e) => e.t === "used" && e.id === archer.id)).toBe(true);
     expect(hexDistance(unit(state, archer.id).pos, unit(state, "ann").pos)).toBeGreaterThan(1);
@@ -616,7 +659,7 @@ describe("the end of a fight", () => {
     const bear = enemy(state, "bear", at(9, 6));
     bear.hp = 3;
     const events: ZoneEvent[] = [];
-    state = must(state, { type: "move", by: "ann", unit: "ann", to: at(7, 6) }, events);
+    state = provoke(must(state, { type: "move", by: "ann", unit: "ann", to: at(7, 6) }), "ann", events);
     for (let i = 0; i < 60 && state.encounter; i++) state = must(state, { type: "timeout" }, events);
     expect(events.some((e) => e.t === "fight_end" && e.outcome === "defeat")).toBe(true);
     expect(state.encounter).toBeNull();

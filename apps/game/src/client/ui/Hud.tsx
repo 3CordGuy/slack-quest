@@ -23,21 +23,25 @@
 // what it is (a meter's numbers, an item's card as in the bag, what an
 // ability does, a key).
 //
-// In a fight on the tiles (a zone) the nine slots are what the hero can do
-// this turn, each a button with its number key: the view hands them in as
-// `slots`. Anywhere else they are a reminder of what the weapon does.
+// In a fight on the tiles (a zone) the rack is two rows deep, eighteen
+// slots, and each is what the hero can do: an ability, a common action, a
+// thing from the pack. The view hands them in as `slots`. Each is a button
+// with its picture and its key (1 to 9 for the top row, Shift with them for
+// the bottom), and the player lays them out as they like: drag one onto
+// another to swap them, right-click one to choose what goes there. Anywhere
+// else the nine slots are a reminder of what the weapon does.
 //
 // I (or B) opens and closes the bag and L opens the logbook, unless you are
 // typing. The bag's button does the same: press it again to put the bag away.
 
-import { Children, useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { Children, useEffect, useRef, useState, type CSSProperties, type DragEvent, type MouseEvent, type ReactNode } from "react";
 import { ABILITIES, RARITY_COLOR, STAT_LABEL, abilitiesFor, loadoutOf, maxHpFor, parseTraits, pendingTraitTiers, xpToNext } from "@gantt-quest/world";
 import type { Me } from "../api";
 import { Icon, ItemDetail, toOwned } from "../items";
 import { blurb, label } from "../labels";
 import { PixelIcon } from "../PixelIcon";
 import { LiquidMeter } from "./LiquidMeter";
-import { RACK, paintRack } from "./rackArt";
+import { RACK, RACK_ROW, paintRack } from "./rackArt";
 import "./hud.css";
 
 const BOOK = ["####..####", "#...##...#", "#.#.##.#.#", "#...##...#", "#.#.##.#.#", "#...##...#", "#...##...#", "####..####", "..######.."];
@@ -56,8 +60,8 @@ export interface HudPips {
 /** One of the nine slots, when the view fills them itself: something the hero can do now, by button or number key. */
 export interface HudSlot {
   id: string;
-  /** Two letters in the well. */
-  glyph: string;
+  /** Its picture in the well (a name and accent colour from the item art); `flat` draws it as a flat glyph, not a little model. */
+  icon: { name: string; color: string; flat?: boolean };
   name: string;
   /** What it costs and reaches, for the tooltip; and more about it. */
   line?: string;
@@ -107,8 +111,12 @@ interface Props {
   /** Small extras beside the points: the doom clock, the larder. */
   chips?: ReactNode;
   quick?: HudQuick[];
-  /** The nine slots as the view wants them (a fight on the tiles). Replaces the weapon's abilities and `quick`. */
-  slots?: HudSlot[];
+  /** The slots as the view wants them (a fight on the tiles): up to two rows of nine, null for an empty one. Replaces the weapon's abilities and `quick`. */
+  slots?: (HudSlot | null)[];
+  /** The player dragged slot `from` onto slot `to`. */
+  onSlotMove?(from: number, to: number): void;
+  /** The player asked to choose what goes in a slot (a right-click, or a click on an empty one). */
+  onSlotMenu?(index: number): void;
   /** The turn: seconds left on it (null with no clock), and ending it when it is yours. */
   turn?: { seconds: number | null; onEnd?(): void; waitingFor?: string };
   /** Resting, where it can be done. */
@@ -138,7 +146,7 @@ function Tip({ name, line, more, keys }: { name: string; line?: string; more?: s
   );
 }
 
-export function HudBar({ me, place, children, hp, meter, pips = [], chips, quick = [], slots, turn, rest, onBag, bagBlocked, onBook, menu }: Props) {
+export function HudBar({ me, place, children, hp, meter, pips = [], chips, quick = [], slots, onSlotMove, onSlotMenu, turn, rest, onBag, bagBlocked, onBook, menu }: Props) {
   const c = me.character;
   const items = me.inventory.map(toOwned);
   const worn = items.filter((i) => i.equipped);
@@ -159,9 +167,10 @@ export function HudBar({ me, place, children, hp, meter, pips = [], chips, quick
 
   // The rack's timber is one fixed picture, painted once.
   const art = useRef<HTMLCanvasElement>(null);
+  const rackRows = slots && slots.length > RACK.mid.length ? 2 : 1;
   useEffect(() => {
-    if (art.current) paintRack(art.current);
-  }, [me.character === null]);
+    if (art.current) paintRack(art.current, rackRows);
+  }, [me.character === null, rackRows]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -169,8 +178,9 @@ export function HudBar({ me, place, children, hp, meter, pips = [], chips, quick
       const k = e.key.toLowerCase();
       if ((k === "b" || k === "i") && onBag && !bagBlocked) onBag();
       if (k === "l" && onBook) onBook();
-      // A fight's slots answer to their numbers.
-      const slot = /^[1-9]$/.test(k) ? slotsNow.current?.[Number(k) - 1] : undefined;
+      // A fight's slots answer to their numbers: the top row plain, the bottom row with Shift.
+      const digit = /^Digit([1-9])$/.exec(e.code)?.[1];
+      const slot = digit ? slotsNow.current?.[Number(digit) - 1 + (e.shiftKey ? RACK.mid.length : 0)] : undefined;
       if (slot?.run && !slot.spent) slot.run();
     };
     addEventListener("keydown", onKey);
@@ -207,7 +217,7 @@ export function HudBar({ me, place, children, hp, meter, pips = [], chips, quick
         <span className="hud-points-side end">{right.map(pipRow)}{chips}</span>
       </div>
 
-      <div className="hud-rack" style={box(0, 0, RACK.w, RACK.h)} onPointerLeave={() => setTip(null)}>
+      <div className="hud-rack" style={box(0, 0, RACK.w, RACK.h + (rackRows - 1) * RACK_ROW)} onPointerLeave={() => setTip(null)}>
         <canvas ref={art} className="hud-rack-art" aria-hidden />
         <div className="hud-xp" style={box(RACK.xp.x, RACK.xp.y, RACK.xp.w, RACK.xp.h)} {...hover(RACK.xp.x + RACK.xp.w / 2, <Tip name="Experience" line={`${c.xp} of ${next} to level ${c.level + 1}`} />)}>
           <div style={{ width: `${(100 * c.xp) / next}%` }} />
@@ -255,23 +265,52 @@ export function HudBar({ me, place, children, hp, meter, pips = [], chips, quick
           {offhand && <Icon name={offhand.icon} color={RARITY_COLOR[offhand.rarity]} size={40} />}
         </span>
 
-        {/* Between the posts, in a fight on the tiles: what the hero can do this turn, each a button. */}
-        {slots?.slice(0, RACK.mid.length).map((s, i) => (
-          <button
-            key={s.id}
-            className={`hud-slot act ${s.picked ? "picked" : ""} ${s.spent ? "spent" : ""}`}
-            style={well(RACK.mid[i])}
-            aria-label={s.name}
-            aria-pressed={!!s.picked}
-            disabled={!s.run || !!s.spent}
-            onClick={s.run}
-            {...hover(RACK.mid[i] + 7, <Tip name={s.name} line={s.line} more={s.more} keys={String(i + 1)} />)}
-          >
-            <span className="hud-glyph">{s.glyph}</span>
-            {s.wait ? <span className="hud-wait">{s.wait}</span> : s.count !== undefined && <span className="hud-count">{s.count}</span>}
-            <span className="hud-key">{i + 1}</span>
-          </button>
-        ))}
+        {/* Between the posts, in a fight on the tiles: what the hero can do, each a button, in two rows. */}
+        {slots?.slice(0, RACK.mid.length * 2).map((s, i) => {
+          const col = i % RACK.mid.length;
+          const lower = i >= RACK.mid.length;
+          const at = box(RACK.mid[col], RACK.slotY + (lower ? RACK_ROW : 0), RACK.slot, RACK.slot);
+          const keys = `${lower ? "Shift " : ""}${col + 1}`;
+          // Any slot can be dropped on, and asked to hold something else.
+          const arrange = {
+            onDragOver: (e: DragEvent) => e.preventDefault(),
+            onDrop: (e: DragEvent) => {
+              e.preventDefault();
+              const from = Number(e.dataTransfer.getData("text/gq-slot"));
+              if (Number.isInteger(from) && from !== i) onSlotMove?.(from, i);
+            },
+            onContextMenu: (e: MouseEvent) => {
+              e.preventDefault();
+              onSlotMenu?.(i);
+            },
+          };
+          if (!s) {
+            return <button key={`empty${i}`} className="hud-slot act empty" style={at} aria-label={`Empty slot ${keys}`} onClick={() => onSlotMenu?.(i)} {...arrange} {...hover(RACK.mid[col] + 7, <Tip name="Empty slot" line="Click to choose what goes here." more="Drag a slot onto another to swap them; right-click one to change it." keys={keys} />)} />;
+          }
+          return (
+            <button
+              key={s.id}
+              className={`hud-slot act ${s.picked ? "picked" : ""} ${s.spent ? "spent" : ""}`}
+              style={at}
+              aria-label={s.name}
+              aria-pressed={!!s.picked}
+              aria-disabled={!s.run || !!s.spent}
+              draggable={!!onSlotMove}
+              onDragStart={(e) => {
+                e.dataTransfer.setData("text/gq-slot", String(i));
+                e.dataTransfer.effectAllowed = "move";
+                setTip(null);
+              }}
+              onClick={() => !s.spent && s.run?.()}
+              {...arrange}
+              {...hover(RACK.mid[col] + 7, <Tip name={s.name} line={s.line} more={s.more} keys={keys} />)}
+            >
+              <Icon name={s.icon.name} color={s.icon.color} size={30} flat={s.icon.flat} />
+              {s.wait ? <span className="hud-wait">{s.wait}</span> : s.count !== undefined && <span className="hud-count">{s.count}</span>}
+              <span className="hud-key">{lower ? "⇧" : ""}{col + 1}</span>
+            </button>
+          );
+        })}
         {/* Otherwise: what the weapon in hand can do, then what is quick to hand. */}
         {!slots && abilities.slice(0, RACK.mid.length).map((id, i) => {
           const a = ABILITIES[id];

@@ -35,6 +35,15 @@
 .zone-roll.ok .zone-roll-out { color: var(--good); }
 .zone-roll.no .zone-roll-out { color: var(--bad); }
 
+/* Choosing what goes in one of the bar's slots. */
+.zone-barmenu { position: absolute; left: 50%; bottom: 236px; transform: translateX(-50%); z-index: 30; width: min(560px, calc(100vw - 24px)); padding: 8px 10px; }
+.zone-barmenu-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 6px; font-size: 13px; }
+.zone-barmenu-head .link { margin-left: auto; }
+.zone-barmenu-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 4px; max-height: 40vh; overflow-y: auto; }
+.zone-barmenu-item { display: flex; align-items: center; gap: 8px; padding: 3px 6px; text-align: left; font-size: 13px; }
+.zone-barmenu-item img { flex: none; image-rendering: pixelated; }
+.zone-barmenu-item.selected { border-color: var(--gold); }
+
 /* What is under the pointer: who, what they have left, and (with an attack picked) the chance it lands. */
 .zone-tip { position: absolute; left: 10px; top: 64px; z-index: 11; max-width: min(420px, 60vw); padding: 6px 10px; font-size: 13px; pointer-events: none; }
 .zone-cond { margin-right: 8px; font-weight: bold; }

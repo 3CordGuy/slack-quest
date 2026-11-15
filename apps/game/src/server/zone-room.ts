@@ -48,7 +48,7 @@ export function zoneActionFrom(raw: unknown, by: string, dev: boolean): ZoneActi
     }
     if (d.op === "standin" && text(d.classId)) return { type: "dev", by, dev: { op: "standin", classId: d.classId } };
     if (d.op === "ai") return { type: "dev", by, dev: { op: "ai", off: !!d.off } };
-    if (d.op === "heal" || d.op === "end_fight" || d.op === "clear_surfaces") return { type: "dev", by, dev: { op: d.op } };
+    if (d.op === "heal" || d.op === "end_fight" || d.op === "start_fight" || d.op === "clear_surfaces") return { type: "dev", by, dev: { op: d.op } };
     return null;
   }
   if (!text(a.unit)) return null;
@@ -56,6 +56,7 @@ export function zoneActionFrom(raw: unknown, by: string, dev: boolean): ZoneActi
   if (a.type === "use") return text(a.ability) ? { type: "use", by, unit: a.unit, ability: a.ability, target, at: hex(a.at), focus: !!a.focus } : null;
   if (a.type === "common") return text(a.what) ? { type: "common", by, unit: a.unit, what: a.what as never, target, at: hex(a.at) } : null;
   if (a.type === "throw") return text(a.item) && isHex(a.at) ? { type: "throw", by, unit: a.unit, item: a.item as never, at: hex(a.at)! } : null;
+  if (a.type === "drink") return text(a.item) ? { type: "drink", by, unit: a.unit, item: a.item as never } : null;
   return { type: "end_turn", by, unit: a.unit };
 }
 

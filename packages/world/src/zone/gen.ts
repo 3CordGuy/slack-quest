@@ -17,8 +17,12 @@ export const ZONE_GRIDS: Record<ZoneSize, HexGrid> = {
   large: { cols: 30, rows: 24 },
 };
 
-/** How near a hero has to come, in plain sight, for an enemy group to notice. */
-export const ALERT_RANGE = 4;
+/**
+ * How near a hero has to come, in plain sight, for an enemy group to turn on them: right up to one of
+ * them. A fight is something you start, by running up to an enemy or by hitting one from afar; walking
+ * past at a distance starts nothing.
+ */
+export const ALERT_RANGE = 1;
 /** How near a fight a hero has to be to be drawn into it. */
 export const JOIN_RANGE = 6;
 

@@ -9,7 +9,7 @@ import { ABILITIES, ARMOR_DAMAGE_DIVISOR, BARD_AURA, WARLOCK_BLEED_TURNS, type A
 import { tileAt } from "../map";
 import { DEBUFFS, addCondition, attackContext, attackRoll, damage, defenceOf, has, heal, removeCondition, saveBonus, saveRoll, type Ctx } from "./engine";
 import { adjacent, blast, directionToward, elevOf, inFight, lineFrom, sameHex, sees, solid, stepCost, unitAt, unitById } from "./geometry";
-import { COMMON_ACTIONS, ENEMY_BURST, JUMP_MOVE_COST, POTION_DICE, SAVE_STAT, THROWABLES, abilityDice, enemyStrikes, healDice, jumpRange, reactionStrike, tacticOf, throwRange, type EnemyStrike, type Tactic } from "./kit";
+import { COMMON_ACTIONS, ENEMY_BURST, JUMP_MOVE_COST, POTION_EDGE, SAVE_STAT, THROWABLES, abilityDice, enemyStrikes, healDice, jumpRange, reactionStrike, tacticOf, throwRange, type EnemyStrike, type Tactic } from "./kit";
 import { d20, hitChance, mod, proficiency, rollDice, statOf } from "./rules";
 import { chill, enterSurface, ignite, placeSurface } from "./surfaces";
 import type { Budget, CommonAction, Throwable, Unit, ZoneState } from "./types";
@@ -311,7 +311,6 @@ export function enemyAct(ctx: Ctx, enemy: Unit, attack: EnemyStrike, target: Uni
 export function checkCommon(state: ZoneState, unit: Unit, what: CommonAction, aim: Aim, budget: Budget | null): string | null {
   if (!COMMON_ACTIONS[what]) return "No such action.";
   if (what === "dash" || what === "disengage") return budget ? null : "That is for a fight.";
-  if (what === "potion") return unit.potions > 0 ? null : "You have no potions left.";
   if (what === "help") {
     const target = aim.target ? unitById(state, aim.target) : undefined;
     if (!target || target.side !== unit.side || !target.down) return "Pick a fallen ally.";
@@ -337,10 +336,7 @@ export function doCommon(ctx: Ctx, unit: Unit, what: CommonAction, aim: Aim, bud
   ctx.events.push({ t: "used", id: unit.id, what, name: COMMON_ACTIONS[what].name, target: aim.target, at: aim.at });
   if (what === "dash" && budget) budget.move += budget.moveMax;
   else if (what === "disengage" && budget) budget.disengaged = true;
-  else if (what === "potion") {
-    unit.potions -= 1;
-    heal(ctx, unit, rollDice(ctx.rng, POTION_DICE), { actor: unit.id, what: "potion" });
-  } else if (what === "help") {
+  else if (what === "help") {
     const target = unitById(ctx.state, aim.target!)!;
     target.down = false;
     target.hp = 0;
@@ -365,7 +361,7 @@ export function doCommon(ctx: Ctx, unit: Unit, what: CommonAction, aim: Aim, bud
 
 // ---------- throwing ----------
 
-const carried = (unit: Unit, item: Throwable): number => (item === "healing" ? unit.potions : (unit.items[item] ?? 0));
+const carried = (unit: Unit, item: Throwable): number => unit.items[item] ?? 0;
 
 /** Why `unit` cannot throw this there, in words, or null if it can. */
 export function checkThrow(state: ZoneState, unit: Unit, item: Throwable, at: HexPos): string | null {
@@ -376,19 +372,37 @@ export function checkThrow(state: ZoneState, unit: Unit, item: Throwable, at: He
   return sees(state.map, unit.pos, at) ? null : "There is no clear line to it.";
 }
 
+/** Why `unit` cannot drink this, in words, or null if it can. */
+export function checkDrink(unit: Unit, item: Throwable): string | null {
+  const def = THROWABLES[item];
+  if (!def) return "No such thing to drink.";
+  if (!def.drink) return `A ${def.name.toLowerCase()} is not for drinking.`;
+  return carried(unit, item) > 0 ? null : `You have no ${def.name.toLowerCase()} left.`;
+}
+
+/** Drink something that has passed its check: all of its healing, for the drinker. */
+export function drinkItem(ctx: Ctx, unit: Unit, item: Throwable): void {
+  const def = THROWABLES[item];
+  unit.items[item] = carried(unit, item) - 1;
+  ctx.events.push({ t: "used", id: unit.id, what: `drink:${item}`, name: def.name });
+  if (def.heal) heal(ctx, unit, rollDice(ctx.rng, def.heal), { actor: unit.id, what: `drink:${item}` });
+}
+
 /** Throw something that has passed its check: it lands on `at` and reaches the hexes around it. */
 export function throwItem(ctx: Ctx, unit: Unit, item: Throwable, at: HexPos): void {
   const def = THROWABLES[item];
-  if (item === "healing") unit.potions -= 1;
-  else unit.items[item] = carried(unit, item) - 1;
+  unit.items[item] = carried(unit, item) - 1;
   ctx.events.push({ t: "used", id: unit.id, what: `throw:${item}`, name: def.name, at });
   const area = blast(ctx.state.map, at, def.radius);
   const keys = new Set(area.map(posKey));
   const caught = ctx.state.units.filter((u) => keys.has(posKey(u.pos)));
   if (def.heal) {
     const amount = rollDice(ctx.rng, def.heal);
-    // It heals whoever it splashes, and gets a fallen hero up. The enemy's dead stay dead.
-    for (const u of caught) if (!u.down || u.side === "hero") heal(ctx, u, amount, { actor: unit.id, what: `throw:${item}` });
+    // It heals whoever it splashes, most of all whoever it lands on, and gets a fallen hero up. The enemy's dead stay dead.
+    for (const u of caught) {
+      if (u.down && u.side !== "hero") continue;
+      heal(ctx, u, sameHex(u.pos, at) ? amount : Math.ceil(amount * POTION_EDGE), { actor: unit.id, what: `throw:${item}` });
+    }
   }
   if (def.damage) {
     const rolled = rollDice(ctx.rng, def.damage);

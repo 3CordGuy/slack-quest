@@ -21,6 +21,7 @@ export {
   jumpRange,
   JUMP_MOVE_COST,
   POTION_DICE,
+  POTION_EDGE,
   ENEMY_KIT,
   ENEMY_BURST,
   enemyStrikes,
@@ -33,5 +34,5 @@ export {
 } from "./kit";
 export { mod as statMod, proficiency, heroMove, heroDefence, diceFor, diceText, diceAverage, hitChance, type Dice } from "./rules";
 export { attackContext, defenceOf, has as hasCondition, type AttackContext } from "./engine";
-export { abilityArea, checkAbility, checkCommon, checkThrow, previewAttack, BARD_AURA_RANGE, type Aim } from "./combat";
+export { abilityArea, checkAbility, checkCommon, checkDrink, checkThrow, previewAttack, BARD_AURA_RANGE, type Aim } from "./combat";
 export { SURFACE_INFO, HARMFUL as HARMFUL_SURFACES } from "./surfaces";

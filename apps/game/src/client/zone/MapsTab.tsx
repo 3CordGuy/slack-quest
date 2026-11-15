@@ -77,7 +77,7 @@ export function MapsTab() {
 
   return (
     <fieldset className="dev-seed dev-maps" disabled={busy}>
-      <p><strong>Make a map</strong> <span className="muted">and walk into it. The start is open ground; the enemy stand beyond it.</span></p>
+      <p><strong>Make a map</strong> <span className="muted">and walk into it. The start is open ground; the enemy stand beyond it, and a fight starts when you run up to one (or hit one from afar).</span></p>
       <div className="dev-row">
         <label>
           Size
@@ -118,6 +118,7 @@ export function MapsTab() {
           <p><strong>Map {dev.open.code}</strong> <span className="muted">is on screen.</span></p>
           <div className="dev-row">
             <button className="small" onClick={() => send({ op: "heal" })}>Heal and restock everyone</button>
+            <button className="small" onClick={() => send({ op: "start_fight" })}>Start a fight here</button>
             <button className="small" onClick={() => send({ op: "end_fight" })}>End the fight</button>
             <button className="small" onClick={() => send({ op: "clear_surfaces" })}>Clear the ground</button>
           </div>

@@ -18,7 +18,7 @@ import type { HeroSheet } from "../hero";
 import { addStats, maxFocusFor, maxHpFor } from "../progression";
 import { makeRng, seedFromString } from "../rng";
 import { enemyTurn } from "./ai";
-import { abilityArea, checkAbility, checkCommon, checkThrow, doCommon, resolveAbility, throwItem, walk } from "./combat";
+import { abilityArea, checkAbility, checkCommon, checkDrink, checkThrow, doCommon, drinkItem, resolveAbility, throwItem, walk } from "./combat";
 import { has, heal, removeCondition, tick, type Ctx } from "./engine";
 import { ALERT_RANGE, JOIN_RANGE, freeHexNear, generateZone } from "./gen";
 import { FREE_WALK, blast, inFight, pathIn, sameHex, sees, solid, unitAt, unitById, zoneReach } from "./geometry";
@@ -45,7 +45,6 @@ function enemyUnit(state: ZoneState, kind: string, pos: HexPos, group: string): 
     maxHp: hp,
     focus: 0,
     maxFocus: 0,
-    potions: 0,
     armor: 0,
     power: 0,
     abilities: [],
@@ -92,7 +91,6 @@ function heroUnit(hero: ZoneHero, pos: HexPos, controller?: string): Unit {
     maxHp: hero.maxHp,
     focus: hero.maxFocus,
     maxFocus: hero.maxFocus,
-    potions: 2,
     stats: hero.stats,
     armor: hero.armor,
     power: hero.weaponPower,
@@ -409,7 +407,6 @@ function dev(ctx: Ctx, by: string, op: DevOp): string | null {
       h.down = false;
       h.hp = h.maxHp;
       h.focus = h.maxFocus;
-      h.potions = Math.max(h.potions, 2);
       h.items = { ...STARTING_ITEMS };
       h.conditions = [];
       h.cooldowns = {};
@@ -419,6 +416,13 @@ function dev(ctx: Ctx, by: string, op: DevOp): string | null {
       f.hp = 0;
       f.down = true;
     }
+  } else if (op.op === "start_fight") {
+    const owner = unitById(state, by);
+    const nearest = state.units
+      .filter((u) => u.side === "enemy" && !u.down && u.group && !state.groups[u.group]?.alerted)
+      .sort((a, b) => hexDistance(a.pos, owner?.pos ?? state.start) - hexDistance(b.pos, owner?.pos ?? state.start))[0];
+    if (!owner || !nearest) return "There is nobody to fight.";
+    engage(ctx, [nearest.group!], owner);
   } else if (op.op === "ai") {
     state.aiOff = op.off;
   } else if (op.op === "clear_surfaces") {
@@ -497,6 +501,14 @@ function act(ctx: Ctx, action: ZoneAction): string | null {
     const shoved = action.what === "shove" ? unitById(state, action.target!)?.group : undefined;
     doCommon(ctx, unit, action.what, aim, budget);
     if (shoved) engage(ctx, [shoved], unit);
+    return null;
+  }
+  if (action.type === "drink") {
+    const wrong = checkDrink(unit, action.item);
+    if (wrong) return wrong;
+    const cost = spend(budget, "bonus");
+    if (cost) return cost;
+    drinkItem(ctx, unit, action.item);
     return null;
   }
   // Throw.

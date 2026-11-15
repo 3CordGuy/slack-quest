@@ -24,7 +24,7 @@ export interface UnitCondition {
   fresh?: boolean;
 }
 
-/** Things thrown from the pack. A healing potion is `unit.potions`: thrown, it heals everyone it splashes. */
+/** What a hero carries to use in a zone: thrown at a hex, and (a healing potion) drunk. */
 export type Throwable = "healing" | "poison" | "fire" | "oil" | "water";
 
 export interface Unit {
@@ -40,7 +40,6 @@ export interface Unit {
   maxHp: number;
   focus: number;
   maxFocus: number;
-  potions: number;
   /** With gear, for heroes. Enemies have none: their numbers are derived from their kind (kit.ts). */
   stats?: Stats;
   armor: number;
@@ -53,7 +52,7 @@ export interface Unit {
   down: boolean;
   /** Rounds until each ability can be used again. */
   cooldowns: Record<string, number>;
-  /** Heroes: what they can throw, and how many of each. */
+  /** Heroes: the items they carry (potions, flasks, bombs), and how many of each. */
   items: Partial<Record<Throwable, number>>;
   /** Enemies: the group they stand with, and the post they go back to. */
   group?: string;
@@ -160,7 +159,7 @@ export interface ZoneHero {
   maxFocus: number;
 }
 
-export type CommonAction = "dash" | "disengage" | "help" | "shove" | "jump" | "potion";
+export type CommonAction = "dash" | "disengage" | "help" | "shove" | "jump";
 
 export type DevOp =
   | { op: "spawn"; kinds: string[]; at: HexPos }
@@ -168,6 +167,8 @@ export type DevOp =
   | { op: "standin"; classId: string }
   | { op: "heal" }
   | { op: "end_fight" }
+  /** Set the nearest group that has not noticed anyone on whoever asked, wherever they stand. */
+  | { op: "start_fight" }
   | { op: "ai"; off: boolean }
   | { op: "clear_surfaces" };
 
@@ -178,12 +179,13 @@ export type ZoneAction =
   | { type: "use"; by: string; unit: string; ability: string; target?: string; at?: HexPos; focus?: boolean }
   | { type: "common"; by: string; unit: string; what: CommonAction; target?: string; at?: HexPos }
   | { type: "throw"; by: string; unit: string; item: Throwable; at: HexPos }
+  | { type: "drink"; by: string; unit: string; item: Throwable }
   | { type: "end_turn"; by: string; unit: string }
   | { type: "timeout" }
   | { type: "dev"; by: string; dev: DevOp };
 
 /** Action types a player's client may send. `dev` is let through only on a development deployment. */
-export const ZONE_CLIENT_ACTIONS: ReadonlySet<ZoneAction["type"]> = new Set(["move", "use", "common", "throw", "end_turn", "dev"]);
+export const ZONE_CLIENT_ACTIONS: ReadonlySet<ZoneAction["type"]> = new Set(["move", "use", "common", "throw", "drink", "end_turn", "dev"]);
 
 /** One d20 roll, as shown on the roll card. */
 export interface Roll {

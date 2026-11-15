@@ -9,6 +9,7 @@
 // so they go through the same lookup and admin overrides as gear.
 
 import { C, spans, type Art, type Pen } from "./artKit";
+import { ACTION_ART } from "./actionArt";
 import { THING_ART } from "./thingArt";
 
 const SIZE = 16;
@@ -362,6 +363,7 @@ const ART: Record<string, Art> = {
 
   // ---- pub, brews, hut furniture and trophies (thingArt.ts) ----
   ...THING_ART,
+  ...ACTION_ART,
 };
 
 /** A cast bar seen from above and in front: lit top face, darker front, a glint. */

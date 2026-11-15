@@ -154,15 +154,15 @@ export const COMMON_ACTIONS: Record<CommonAction, { name: string; cost: "action"
   help: { name: "Help", cost: "action", blurb: "Get a fallen ally beside you back on their feet with 1 HP." },
   shove: { name: "Shove", cost: "bonus", blurb: "Push an enemy beside you one hex away: into fire, off a path, out of reach." },
   jump: { name: "Jump", cost: "bonus", blurb: "Leap a few hexes, over whatever lies between. Costs 2 movement." },
-  potion: { name: "Drink a potion", cost: "bonus", blurb: "Heal yourself." },
 };
 
 /** Light on their feet: a Rogue disengages as a Bonus action. */
 export const commonCost = (what: CommonAction, classId: string): "action" | "bonus" => (what === "disengage" && classId === "refactor_rogue" ? "bonus" : COMMON_ACTIONS[what].cost);
 
 export const JUMP_MOVE_COST = 2;
-/** What a potion heals, drunk or thrown. */
+/** What a healing potion heals: all of it when drunk or at the heart of where it lands, half of it on the hexes around. */
 export const POTION_DICE: Dice = { n: 2, d: 4, plus: 6 };
+export const POTION_EDGE = 0.5;
 
 // ---------- throwables ----------
 
@@ -174,12 +174,14 @@ export interface ThrowableDef {
   surface?: { kind: SurfaceKind; rounds: number };
   /** Damage to everyone caught in it; an Agility save halves it. */
   damage?: Dice;
-  /** Healing to everyone caught in it. */
+  /** Healing to everyone caught in it: in full on the hex it lands on, and `POTION_EDGE` of that on the hexes around. */
   heal?: Dice;
+  /** Can be drunk instead of thrown, as a Bonus action: its healing, in full, for the drinker alone. */
+  drink?: boolean;
 }
 
 export const THROWABLES: Record<Throwable, ThrowableDef> = {
-  healing: { name: "Healing potion", blurb: "Shatters and heals everyone it splashes, friend or foe.", radius: 1, heal: POTION_DICE },
+  healing: { name: "Healing potion", blurb: "Drink it, or throw it: it heals whoever it lands on, and half as much everyone on the six hexes around.", radius: 1, heal: POTION_DICE, drink: true },
   poison: { name: "Poison flask", blurb: "Leaves poison on the ground for 3 rounds.", radius: 1, surface: { kind: "poison", rounds: 3 } },
   fire: { name: "Fire bomb", blurb: "Bursts into flame: damage to everyone near, and fire left burning for 2 rounds.", radius: 1, damage: { n: 2, d: 6, plus: 0 }, surface: { kind: "fire", rounds: 2 } },
   oil: { name: "Oil flask", blurb: "Slick ground that slows whoever crosses it, and goes up at a spark.", radius: 1, surface: { kind: "oil", rounds: 4 } },
@@ -187,7 +189,7 @@ export const THROWABLES: Record<Throwable, ThrowableDef> = {
 };
 
 /** What a hero carries into a zone to throw. */
-export const STARTING_ITEMS: Partial<Record<Throwable, number>> = { poison: 2, fire: 1, oil: 1, water: 1 };
+export const STARTING_ITEMS: Partial<Record<Throwable, number>> = { healing: 2, poison: 2, fire: 1, oil: 1, water: 1 };
 
 /** How far a hero can throw: 5 hexes, further for the strong, never under 3. */
 export const throwRange = (strMod: number): number => Math.max(3, 5 + strMod);

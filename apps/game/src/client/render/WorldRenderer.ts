@@ -1192,6 +1192,22 @@ export class WorldRenderer {
     }, !!opts.landed);
   }
 
+  /** A shot or a spell going off, drawn elsewhere (SpellFx): the unit turns to face where it is aimed, leans into it, and is heard. */
+  cast(actorId: string, name: string, x: number, z: number) {
+    const unit = this.units.get(actorId);
+    if (unit && !unit.lying) {
+      unit.turn = unit.turnGoal = Math.atan2(x - unit.goal.x, z - unit.goal.z);
+      unit.lean = -0.5;
+    }
+    sounds.attack(name, attackStyle(name), this.fighter(actorId), this.spot(actorId));
+  }
+
+  /** That shot or spell arriving: the sound of it landing on its target, or going wide. */
+  landed(targetId: string, name: string, hit: boolean, crit = false) {
+    if (hit) sounds.impact(name, attackStyle(name), crit, this.fighter(targetId), this.spot(targetId));
+    else sounds.miss(name, attackStyle(name), this.spot(targetId));
+  }
+
   /** Text rising off a unit: damage, healing, a condition's name. */
   floatOver(id: string, text: string, color: string) {
     this.float(id, text, color);
