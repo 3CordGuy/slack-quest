@@ -9,13 +9,15 @@
 // that frame to world units. A figure faces +z; its right hand is at -x.
 //
 // Heroes wear what they have equipped: every base item and every weapon has
-// its own shape, with its rarity colour as the trim.
+// its own shape, with its rarity colour as the trim. The weapons and shields
+// in their hands are the very models of their item icons (gearModels.ts).
 
 import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { ConvexGeometry } from "three/examples/jsm/geometries/ConvexGeometry.js";
-import { GARB_PREFIX, INK_COLORS, INK_LEVELS, INK_REGIONS, RARITY_COLOR, WEAPONS, appearanceK, decodeInk, inkColorOf, inkLevelOf, type Appearance, type Ink, type InkRegion, type InkView, type Outfit, type Slot } from "@gantt-quest/world";
+import { GARB_PREFIX, INK_COLORS, INK_LEVELS, INK_REGIONS, RARITY_COLOR, WEAPONS, WEAPON_ICON, appearanceK, decodeInk, inkColorOf, inkLevelOf, type Appearance, type Ink, type InkRegion, type InkView, type Outfit, type Slot } from "@gantt-quest/world";
 import type { Look } from "./looks";
+import { buildLowPoly, disposeLowPoly } from "./gearModels";
 
 export const OUTLINE = "#1b1830";
 /** Set by makeFigure for the figure being built: a fishing rod goes in its right hand (gilded, for a full Catch Book). */
@@ -392,6 +394,31 @@ class Part {
     return this.add(new THREE.IcosahedronGeometry(radius, 0), color, x, y, z, undefined, true);
   }
 
+  /**
+   * A gear model (gearModels.ts) baked into this part, placed by `at`: each of its pieces in its own colour, what
+   * glows in the icon glowing here. A piece too fine to take an outline (a string, a finger hole) goes without.
+   */
+  model(model: THREE.Object3D, at: THREE.Matrix4): this {
+    model.updateMatrixWorld(true);
+    const size = new THREE.Vector3();
+    model.traverse((o) => {
+      if (!(o instanceof THREE.Mesh)) return;
+      const source = o.geometry as THREE.BufferGeometry;
+      const flat = source.index ? source.toNonIndexed() : source.clone();
+      flat.applyMatrix4(new THREE.Matrix4().multiplyMatrices(at, o.matrixWorld));
+      const paints = (Array.isArray(o.material) ? o.material : [o.material]) as THREE.MeshLambertMaterial[];
+      // A piece of several paints (a log and its cut ends) comes apart into one piece per paint.
+      const pieces = paints.length > 1 && flat.groups.length > 0 ? flat.groups.map((g) => ({ g: slice(flat, g.start, g.count), paint: paints[g.materialIndex ?? 0] })) : [{ g: flat, paint: paints[0] }];
+      if (pieces[0].g !== flat) flat.dispose();
+      for (const { g, paint } of pieces) {
+        g.computeBoundingBox();
+        const [, middle] = g.boundingBox!.getSize(size).toArray().sort((a, b) => a - b);
+        this.add(g, `#${paint.color.getHexString()}`, 0, 0, 0, undefined, !!paint.userData.glow, true, middle >= 3.5 * edge);
+      }
+    });
+    return this;
+  }
+
   get empty(): boolean {
     return this.solid.length === 0 && this.lit.length === 0;
   }
@@ -409,7 +436,9 @@ class Part {
       // It takes no shadows (at this size, its own hat's shadow across its face is only noise) and throws
       // none itself: the figure's one still shape does that (see castShape).
       mesh.userData.body = true;
-      this.skin.add(mesh, new THREE.Mesh(merged(this.hull), mats.outline));
+      this.skin.add(mesh);
+      // (Gear too fine for an outline has none: see model.)
+      if (this.hull.length > 0) this.skin.add(new THREE.Mesh(merged(this.hull), mats.outline));
     }
     if (this.lit.length > 0) {
       const mesh = new THREE.Mesh(merged(this.lit), mats.glow);
@@ -428,6 +457,118 @@ class Part {
 
 /** How thick the dark outline is, in model units, for the figure being built. */
 let edge = 0.12;
+
+/** The vertices `start` to `start + count` of a geometry with no index, as a geometry of their own. */
+function slice(g: THREE.BufferGeometry, start: number, count: number): THREE.BufferGeometry {
+  const out = new THREE.BufferGeometry();
+  for (const [name, attr] of Object.entries(g.attributes) as [string, THREE.BufferAttribute][]) {
+    out.setAttribute(name, new THREE.BufferAttribute(attr.array.slice(start * attr.itemSize, (start + count) * attr.itemSize), attr.itemSize, attr.normalized));
+  }
+  return out;
+}
+
+// ---------- gear in hand ----------
+
+/** How a gear model (gearModels.ts) is held: it is built upright, its front toward +z, in its icon's units. */
+interface Hold {
+  /** The point of the model the hand closes on, in its own units. */
+  grip: Pt;
+  /** Its units to the figure's: one for all three ways, or across, along and through it. */
+  scale: number | Pt;
+  /** How it is turned in the hand, about the grip. */
+  turn?: Rot;
+  /** Where the grip goes in the part's frame (a hand's fist is at its origin). */
+  at?: Pt;
+  /** How the arm carries it (see drawHeld). */
+  pose?: { arm?: number; tilt?: number };
+}
+
+/** Turns a model's +x (an axe's blade, a bow's belly, a book's fore-edge) to the front, its face out from the right hand. */
+const FORWARD: Rot = [0, -HALF_PI, 0];
+/** A shield's turn on the forearm: a little out from the body. */
+const ON_ARM: Rot = [0, 0.35, 0];
+
+/** Each held icon's grip, scaled to stand with the figure: hilts and hafts in the fist, the foot of a staff clear of the ground. */
+const HOLD: Record<string, Hold> = {
+  broadsword: { grip: [0, 0.3, 0], scale: 0.72, pose: { tilt: 0.4 } },
+  "hammer-drop": { grip: [0, -4, 0], scale: 0.6, turn: FORWARD, pose: { tilt: 0.4 } },
+  "wizard-staff": { grip: [0, -3.5, 0], scale: 0.8 },
+  "root-staff": { grip: [0, -4.2, 0], scale: 0.8 },
+  "void-staff": { grip: [0, -3.5, 0], scale: 0.8 },
+  "scroll-unfurled": { grip: [0, 1.2, 0], scale: 0.33, turn: FORWARD },
+  // Held up in front on the palm, its sigil to the front.
+  grimoire: { grip: [0, -6.5, 0], scale: 0.33, at: [0, 0, 0.6], pose: { arm: -0.9 } },
+  // Beside the fist, the belly forward and the arrow pointing ahead.
+  crossbow: { grip: [3.2, 0, 0], scale: 0.6, turn: FORWARD, at: [-1.4, 0, 0.35] },
+  sickle: { grip: [0, -4.5, 0], scale: 0.5, turn: FORWARD, pose: { tilt: 0.4 } },
+  orb: { grip: [0, -5, 0], scale: 0.45, pose: { arm: -0.5 } },
+  scepter: { grip: [0, -5.5, 0], scale: 0.55, pose: { tilt: 0.3 } },
+  "pager-axe": { grip: [0, -6.5, 0], scale: 0.65, turn: FORWARD, pose: { tilt: 0.25 } },
+  maul: { grip: [0, -9, 0], scale: 0.65, turn: FORWARD, pose: { tilt: 0.2 } },
+  // One in each fist (see heldGear).
+  daggers: { grip: [0, -1.8, 0], scale: 0.53, pose: { tilt: 0.7 } },
+  // In the lute's own frame (see drawLute): the belly at the origin.
+  lute: { grip: [0, -3, 0], scale: 0.5 },
+  // The signature weapons.
+  "ballast-flail": { grip: [0, -3.8, 0], scale: 0.75, turn: FORWARD, pose: { tilt: 0.3 } },
+  "barometer-rod": { grip: [0, -3.5, 0], scale: 0.8 },
+  // One in each fist, like the daggers, the hooks curling forward.
+  "gaff-hook": { grip: [0, -2.2, 0], scale: 0.55, turn: FORWARD, pose: { tilt: 0.5 } },
+  "coral-staff": { grip: [0, -4.2, 0], scale: 0.8 },
+  // Rung: held up by the handle, the bell hanging below the fist.
+  "ships-bell": { grip: [0, 5.6, 0], scale: 0.5, pose: { arm: -0.7 } },
+  astrolabe: { grip: [0, -4.2, 0], scale: 0.45, pose: { arm: -0.5 } },
+  "lamp-hook": { grip: [0, -6.5, 0], scale: 0.65, turn: FORWARD, pose: { tilt: 0.15 } },
+  // Held up in front by the stem.
+  "bilge-chalice": { grip: [0, -3, 0], scale: 0.46, at: [0, 0, 0.4], pose: { arm: -0.9 } },
+  "round-shield": { grip: [0, 0, 0], scale: 0.39, at: [0.5, -3.4, 1.9], turn: ON_ARM },
+  shield: { grip: [0, -0.5, 0], scale: 0.43, at: [0.5, -2.9, 1.95], turn: ON_ARM },
+};
+
+/** Icons held one in each fist (see heldGear). */
+const PAIRED = new Set(["daggers", "gaff-hook"]);
+
+/** The icon (so the model) a stock look's weapon is drawn as: a class weapon's own, or the one most like it. */
+const STOCK_ICON: Record<string, string> = { ...WEAPON_ICON, sword: "broadsword", bow: "crossbow" };
+
+/** Put an icon's model in a part, held as `hold` says, in the trim colour. False when the icon has no model. */
+function gear(p: Part, icon: string, trim: string, hold: Hold, inHand = false): boolean {
+  const built = buildLowPoly(icon, trim, inHand);
+  if (!built) return false;
+  const scale = typeof hold.scale === "number" ? new THREE.Vector3().setScalar(hold.scale) : new THREE.Vector3(...hold.scale);
+  const at = new THREE.Matrix4().compose(new THREE.Vector3(...(hold.at ?? [0, 0, 0])), new THREE.Quaternion().setFromEuler(new THREE.Euler(...(hold.turn ?? [0, 0, 0]))), scale);
+  at.multiply(new THREE.Matrix4().makeTranslation(-hold.grip[0], -hold.grip[1], -hold.grip[2]));
+  p.model(built.model, at);
+  disposeLowPoly(built.model);
+  return true;
+}
+
+/** A grip in a fist angled out from the body (`s` 1 for the right hand, -1 the left), for a dagger or a hook. */
+function outward(hand: Part, s: number): Part {
+  const grip = new Part(hand.joint);
+  grip.joint.rotation.z = s * 0.38;
+  extraParts.push(grip);
+  return grip;
+}
+
+/**
+ * A low-poly hero's weapon as its icon's model, and how the arm carries it; null when it has none, or is played
+ * across the body (the lute and flute: drawHeld lays those out).
+ */
+function heldGear(icon: string, b: Biped, trim: string, shield: boolean): { arm?: number; tilt?: number } | null {
+  const hold = HOLD[icon];
+  if (!hold || icon === "lute") return null;
+  if (PAIRED.has(icon)) {
+    // One in each fist (the second unless a shield is there), both tipped forward the same.
+    if (!gear(outward(b.heldR, 1), icon, trim, hold, true)) return null;
+    if (!shield) {
+      gear(outward(b.heldL, -1), icon, trim, hold, true);
+      b.rest.tiltL = hold.pose?.tilt ?? 0;
+    }
+    return hold.pose ?? {};
+  }
+  return gear(b.heldR, icon, trim, hold) ? hold.pose ?? {} : null;
+}
 
 /** What a rig is posed by each frame. */
 interface Anim {
@@ -641,11 +782,18 @@ function lowHead(head: Part, look: Look, asleep: boolean, covered = false) {
  * Hair of each style, just outside a head of these rings: a cap down to the brow and a fall at the back,
  * longer or tied up or braided, or none. `covered` is a hat or helmet on top, which hides a bun.
  */
+/** The cap of hair over a head of these rings, from the brow up: what a helm or a hat goes over (see fitted). */
+function hairCap(rings: readonly Ring[]): Ring[] {
+  const cap = (y: number, by: number) => ringAt(rings, y).rx + by;
+  const capZ = (y: number, by: number) => ringAt(rings, y).rz + by;
+  return [[4.35, cap(4, 0.2), capZ(4, 0.21), -0.05], [5.3, cap(4.9, 0.22), capZ(4.9, 0.22), -0.1], [6.3, cap(6, 0.35), capZ(6, 0.35), -0.15], [6.95, 1.25, 1.25, -0.15]];
+}
+
 function lowHair(head: Part, hair: string, style: string, rings: readonly Ring[], covered: boolean) {
   if (style === "bald") return;
   const cap = (y: number, by: number) => ringAt(rings, y).rx + by;
   const capZ = (y: number, by: number) => ringAt(rings, y).rz + by;
-  head.loft(hair, [[4.35, cap(4, 0.2), capZ(4, 0.21), -0.05], [5.3, cap(4.9, 0.22), capZ(4.9, 0.22), -0.1], [6.3, cap(6, 0.35), capZ(6, 0.35), -0.15], [6.95, 1.25, 1.25, -0.15]]);
+  head.loft(hair, hairCap(rings));
   // The fall down the back: to the nape, or (long) on down between the shoulders, narrowing.
   const nape = ringAt(rings, 1.9);
   const levels: [y: number, rx: number, rz: number, from: number, to: number][] = [
@@ -1001,6 +1149,88 @@ const OVER_HAIR: Ring[] = [[3.95, 3.72, 3.42], [5.4, 3.66, 3.38, -0.05], [6.7, 2
 /** Rings made `by` larger all round. */
 const grown = (rings: readonly Ring[], by: number): Ring[] => rings.map(([y, rx, rz, dz = 0]) => [y, rx + by, rz + by, dz]);
 
+/** The rings of the head being dressed: its chosen shape, or the usual round one. */
+const headRings = (): readonly Ring[] => HEAD_RINGS[chosen?.headShape ?? "round"] ?? HEAD_RINGS.round;
+
+/** A head of these rings as headgear meets it: the face and jaw, and the cap of hair from the brow up. */
+const crownOf = (rings: readonly Ring[]): Ring[] => [...rings.filter((r) => r[0] < 4), ...hairCap(rings)];
+const ROUND_CROWN = crownOf(HEAD_RINGS.round);
+
+/** How much wider, deeper and further forward the head being dressed (with its hair) is than the round head, at height `y`. */
+function headDelta(y: number): { rx: number; rz: number; dz: number } {
+  const a = ringAt(crownOf(headRings()), y);
+  const b = ringAt(ROUND_CROWN, y);
+  return { rx: a.rx - b.rx, rz: a.rz - b.rz, dz: a.dz - b.dz };
+}
+
+/**
+ * Rings drawn round the usual round head (a helm, a hat's crown), fitted to the head being dressed: at each
+ * height moved out or in by as much as it (with its hair) is wider or narrower there, so a helm sits as close on
+ * a pear head's narrow crown or a square jaw as on a round one. Long spans are cut into shorter ones first, so
+ * the fit holds between the rings too (a squat head's crown falls away faster than a round one's).
+ */
+function fitted(rings: readonly Ring[]): Ring[] {
+  if (headRings() === HEAD_RINGS.round) return rings.slice();
+  const fine: Ring[] = [];
+  rings.forEach((r, i) => {
+    const next = rings[i + 1];
+    fine.push(r);
+    if (!next) return;
+    const steps = Math.ceil(Math.abs(next[0] - r[0]) / 0.45);
+    for (let k = 1; k < steps; k++) {
+      const t = k / steps;
+      fine.push([r[0] + (next[0] - r[0]) * t, r[1] + (next[1] - r[1]) * t, r[2] + (next[2] - r[2]) * t, (r[3] ?? 0) + ((next[3] ?? 0) - (r[3] ?? 0)) * t]);
+    }
+  });
+  const out: Ring[] = fine.map(([y, rx, rz, dz = 0]) => {
+    const d = headDelta(y);
+    return [y, rx + d.rx, rz + d.rz, dz + d.dz];
+  });
+  // Rigid: it curves over a dip in the head (a squat head's crown falling away), never in after it.
+  const rx = rounded(out.map((r) => [r[0], r[1]]));
+  const rz = rounded(out.map((r) => [r[0], r[2]]));
+  return out.map((r, i) => [r[0], rx[i], rz[i], r[3] ?? 0]);
+}
+
+/** The heights of a profile ([y, r] in order of y) lifted to the least that bows only outward: its upper hull. */
+function rounded(profile: [number, number][]): number[] {
+  const hull: [number, number][] = [];
+  for (const p of profile) {
+    while (hull.length >= 2) {
+      const [a, b] = [hull[hull.length - 2], hull[hull.length - 1]];
+      // Drop b if it lies on or under the line from a to p.
+      if ((b[0] - a[0]) * (p[1] - a[1]) - (b[1] - a[1]) * (p[0] - a[0]) >= 0) hull.pop();
+      else break;
+    }
+    hull.push(p);
+  }
+  return profile.map(([y, r]) => {
+    for (let i = 0; i + 1 < hull.length; i++) {
+      const [y0, r0] = hull[i];
+      const [y1, r1] = hull[i + 1];
+      if (y >= y0 && y <= y1) return Math.max(r, y1 === y0 ? Math.max(r0, r1) : r0 + ((r1 - r0) * (y - y0)) / (y1 - y0));
+    }
+    return r;
+  });
+}
+
+/** Points placed beside the usual round head, moved out (or in) with the side of the head being dressed. */
+const besideHead = (pts: Pt[]): Pt[] => pts.map(([x, y, z]) => [x + Math.sign(x) * headDelta(y).rx, y, z]);
+
+/**
+ * A plate over each cheek, from the brow band down to the jaw: hugging the side of the head being dressed,
+ * its foot a little in from its top as the face narrows to the chin.
+ */
+function cheekGuards(head: Part, c: string, top = 4.2, foot = 1.8) {
+  const at = (y: number, out: number) => ringAt(headRings(), y).rx + out;
+  for (const s of [-1, 1]) {
+    head.shape(c, [
+      [s * at(top, 0.2), top, 1.6], [s * at(top, 0.2), top, -1], [s * at(top, 0.62), top, 1.4], [s * at(top, 0.62), top, -0.8],
+      [s * at(foot, 0.16), foot, 1.15], [s * at(foot, 0.16), foot + 0.3, -0.6], [s * at(foot, 0.55), foot + 0.2, 0.9],
+    ]);
+  }
+}
+
 /**
  * The middle of one face of a loft (`sides` sides, see loftGeometry) at height `y`: the `k`th round from the
  * front (negative toward -x), and the turn about y that faces something along it. For laying plates, slits
@@ -1017,12 +1247,13 @@ function facet(rings: readonly Ring[], sides: number, y: number, k: number, out 
 
 /** A steel dome with a brow band, cheek guards and a crest: the paladin's helm, or (with a nasal) a diving helm. */
 function lowHelm(head: Part, c: string, band: string, crest: string, nasal = false) {
-  head.loft(c, OVER_HAIR, 10);
-  head.loft(band, [[3.85, 3.84, 3.54], [4.45, 3.82, 3.52, -0.02]], 10);
-  for (const s of [-1, 1]) head.shape(c, [[s * 3.5, 4.2, 1.6], [s * 3.5, 4.2, -1], [s * 3.2, 1.7, 1.2], [s * 3.2, 2, -0.6], [s * 3.95, 4.2, 1.4], [s * 3.95, 4.2, -0.8], [s * 3.7, 1.9, 0.9]]);
+  const dome = fitted(OVER_HAIR);
+  head.loft(c, dome, 10);
+  head.loft(band, fitted([[3.85, 3.84, 3.54], [4.45, 3.82, 3.52, -0.02]]), 10);
+  cheekGuards(head, c);
   head.shape(crest, sym([[0.42, 7.2, 2.2], [0.42, 8.7, 1.2], [0.42, 9.1, -0.6], [0.42, 8.3, -2.7], [0.42, 7, -2.6]]));
   if (nasal) {
-    const f = facet(OVER_HAIR, 10, 3.9, 0, 0.25);
+    const f = facet(dome, 10, 3.9, 0, 0.25);
     head.shape(c, sym([[0.38, 3.95, f.z], [0.3, 2.35, f.z + 0.45], [0, 2.2, f.z + 0.6], [0, 3.95, f.z + 0.2]]));
   }
 }
@@ -1042,13 +1273,18 @@ function lowHood(head: Part, c: string, rings: readonly Ring[], trim?: string) {
   const brow = 5.3;
   const mid = (brow + chin) / 2;
   const half = (brow - chin) / 2;
+  // As much wider as the face is anywhere from the chin to the brow than a round one (a square or pear jaw),
+  // so it is framed by the opening, not pushed through the sides; the crown follows a narrower top in.
+  let wide = 0;
+  for (let y = chin; y <= brow; y += 0.25) wide = Math.max(wide, ringAt(rings, y).rx - ringAt(HEAD_RINGS.round, y).rx);
+  const crown = Math.min(0, ringAt(rings, 4.9).rx - ringAt(HEAD_RINGS.round, 4.9).rx);
   // The opening stands out past the hair at the brow, so the face sits back inside the hood.
   const shell: Ring[] = [
-    [-3.3, 2.85, half, 0],
-    [-2.4, 3.65, half + 1, 0.45],
-    [-0.5, 4.05, 3.75, 3.5 - mid],
-    [1.5, 3.85, 3.55, 3.6 - mid],
-    [3, 2.75, 2.75, 3.9 - mid],
+    [-3.3, 2.85 + wide, half, 0],
+    [-2.4, 3.65 + wide, half + 1, 0.45],
+    [-0.5, 4.05 + wide, 3.75, 3.5 - mid],
+    [1.5, 3.85 + (wide + crown) / 2, 3.55 + crown, 3.6 - mid],
+    [3, 2.75 + crown, 2.75 + crown, 3.9 - mid],
     [4, 1.2, 1.2, 4.15 - mid],
     [4.5, 0.15, 0.15, 4.05 - mid],
   ];
@@ -1057,8 +1293,8 @@ function lowHood(head: Part, c: string, rings: readonly Ring[], trim?: string) {
   const lining: Ring[] = shell.slice(0, 3).map(([y, rx, rz, dz = 0]) => [y + 0.05, rx - 0.14, rz - 0.14, dz]);
   head.shell(tone(c, -0.32), lining, 12, { open: "both", inward: true }, 0, mid, 0, side);
   // A short mantle round the neck and over the shoulders, under the chin at the front.
-  head.loft(c, [[-1.15, 3.95, 3.5, 0.1], [-0.4, 3.8, 3.35, 0.05], [0.15, 3, 2.5, -0.4]], 12);
-  if (trim) head.shell(trim, [[-3.45, 2.99, half + 0.12, 0], [-3.12, 2.99, half + 0.12, 0]], 12, { open: "both" }, 0, mid, 0, side);
+  head.loft(c, [[-1.15, 3.95 + wide, 3.5, 0.1], [-0.4, 3.8 + wide, 3.35, 0.05], [0.15, 3 + wide, 2.5, -0.4]], 12);
+  if (trim) head.shell(trim, [[-3.45, 2.99 + wide, half + 0.12, 0], [-3.12, 2.99 + wide, half + 0.12, 0]], 12, { open: "both" }, 0, mid, 0, side);
 }
 
 /** The headgear a class, townsperson or enemy has by default, rounded to go with low-poly heads. */
@@ -1070,10 +1306,10 @@ function lowHat(head: Part, look: Look) {
       return;
     case "wizard": {
       // A wide brim just over the brows, a band, and a tall crown that bends back to its tip.
-      head.loft(look.accent, [[4.3, 5.3, 5.05, -0.05], [4.68, 5.3, 5.05, -0.05]], 14);
-      head.loft(look.body, [[4.5, 3.82, 3.52, -0.05], [6.2, 3.22, 2.97, -0.15], [7.8, 2.25, 2.05, -0.4], [9.3, 1.3, 1.2, -0.85], [10.5, 0.55, 0.55, -1.5], [11.1, 0.1, 0.1, -1.95]], 10);
-      head.loft(tone(look.body, -0.08), [[4.65, 3.86, 3.56, -0.05], [5.3, 3.72, 3.44, -0.08]], 10);
-      const f = facet(OVER_HAIR, 10, 5, 0, 0.3);
+      head.loft(look.accent, fitted([[4.3, 5.3, 5.05, -0.05], [4.68, 5.3, 5.05, -0.05]]), 14);
+      head.loft(look.body, fitted([[4.5, 3.82, 3.52, -0.05], [6.2, 3.22, 2.97, -0.15], [7.8, 2.25, 2.05, -0.4], [9.3, 1.3, 1.2, -0.85], [10.5, 0.55, 0.55, -1.5], [11.1, 0.1, 0.1, -1.95]]), 10);
+      head.loft(tone(look.body, -0.08), fitted([[4.65, 3.86, 3.56, -0.05], [5.3, 3.72, 3.44, -0.08]]), 10);
+      const f = facet(fitted(OVER_HAIR), 10, 5, 0, 0.3);
       head.shape(look.accent, sym([[0, 5.55, f.z], [0.5, 5, f.z], [0, 4.45, f.z], [0, 5, f.z + 0.25]]));
       return;
     }
@@ -1082,61 +1318,69 @@ function lowHat(head: Part, look: Look) {
       return;
     case "leaves": {
       // A wreath: a band of twigs, leaves round it, and a berry.
-      head.loft(tone(look.accent, -0.3), [[4.4, 3.8, 3.5], [4.85, 3.8, 3.5]], 10);
+      head.loft(tone(look.accent, -0.3), fitted([[4.4, 3.8, 3.5], [4.85, 3.8, 3.5]]), 10);
+      const d = headDelta(4.85);
       for (let i = 0; i < 10; i++) {
         const a = (i / 10) * Math.PI * 2;
-        head.ball(i % 2 ? look.accent : tone(look.accent, -0.1), 0.95, Math.sin(a) * 3.85, 4.85 + (i % 2) * 0.3, Math.cos(a) * 3.55, 0, [1.25, 0.5, 1.25]);
+        head.ball(i % 2 ? look.accent : tone(look.accent, -0.1), 0.95, Math.sin(a) * (3.85 + d.rx), 4.85 + (i % 2) * 0.3, Math.cos(a) * (3.55 + d.rz) + d.dz, 0, [1.25, 0.5, 1.25]);
       }
-      head.ball("#c8433d", 0.55, 1.5, 5.35, 3.3, 1);
+      head.ball("#c8433d", 0.55, 1.5 + d.rx * 0.4, 5.35, 3.3 + d.rz + d.dz, 1);
       return;
     }
     case "feather": {
       // A soft cap pushed back, a band, and a long feather sweeping up behind.
       const c = look.body;
-      head.loft(c, [[4.2, 3.84, 3.54], [5.2, 3.9, 3.6, -0.15], [6.3, 3.35, 3.1, -0.4], [7, 2.15, 2.05, -0.65], [7.35, 0.6, 0.6, -0.8]], 10);
-      head.loft(tone(c, -0.08), [[4.12, 3.9, 3.6], [4.6, 3.92, 3.62]], 10);
+      head.loft(c, fitted([[4.2, 3.84, 3.54], [5.2, 3.9, 3.6, -0.15], [6.3, 3.35, 3.1, -0.4], [7, 2.15, 2.05, -0.65], [7.35, 0.6, 0.6, -0.8]]), 10);
+      head.loft(tone(c, -0.08), fitted([[4.12, 3.9, 3.6], [4.6, 3.92, 3.62]]), 10);
       head.shape(look.accent, [[-2.3, 5.6, -1.6], [-2.75, 5.6, -1.8], [-3.2, 8.4, -2.9], [-3.55, 9.6, -3.6], [-3.8, 10.6, -4.5], [-3.0, 8.6, -2.5], [-2.9, 7.4, -2.1]]);
       return;
     }
     case "circlet": {
-      head.loft(look.accent, [[4.3, 3.66, 3.36], [4.75, 3.66, 3.36]], 10);
-      const f = facet([[4.3, 3.66, 3.36], [4.75, 3.66, 3.36]], 10, 4.5, 0, 0.2);
+      const band = fitted([[4.3, 3.66, 3.36], [4.75, 3.66, 3.36]]);
+      head.loft(look.accent, band, 10);
+      const f = facet(band, 10, 4.5, 0, 0.2);
       head.glowBall("#7fe3ff", 0.55, 0, 4.6, f.z);
       return;
     }
     case "brim": {
       // A round crown on a wide brim, the hair showing under it.
       const c = look.hatColor ?? look.body;
-      head.loft(c, [[4.9, 5.5, 5.3, -0.05], [5.25, 5.5, 5.3, -0.05]], 14);
-      head.loft(c, [[5, 3.62, 3.35, -0.05], [6.6, 3.35, 3.1, -0.1], [7.9, 3.05, 2.82, -0.12], [8.3, 2.4, 2.25, -0.12], [8.45, 0.5, 0.5, -0.12]], 10);
-      head.loft(look.accent, [[5.25, 3.7, 3.42, -0.05], [5.9, 3.62, 3.36, -0.07]], 10);
+      head.loft(c, fitted([[4.9, 5.5, 5.3, -0.05], [5.25, 5.5, 5.3, -0.05]]), 14);
+      head.loft(c, fitted([[5, 3.62, 3.35, -0.05], [6.6, 3.35, 3.1, -0.1], [7.9, 3.05, 2.82, -0.12], [8.3, 2.4, 2.25, -0.12], [8.45, 0.5, 0.5, -0.12]]), 10);
+      head.loft(look.accent, fitted([[5.25, 3.7, 3.42, -0.05], [5.9, 3.62, 3.36, -0.07]]), 10);
       return;
     }
     case "turban": {
       const c = look.hatColor ?? look.accent;
-      head.loft(c, [[4, 3.8, 3.5], [5, 4.18, 3.88, -0.1], [6.4, 3.92, 3.62, -0.15], [7.4, 2.8, 2.6, -0.15], [7.95, 1, 1, -0.1]], 10);
-      head.loft(tone(c, -0.08), [[5.6, 4.15, 3.85, -0.12], [6.05, 4.05, 3.75, -0.14]], 10);
+      head.loft(c, fitted([[4, 3.8, 3.5], [5, 4.18, 3.88, -0.1], [6.4, 3.92, 3.62, -0.15], [7.4, 2.8, 2.6, -0.15], [7.95, 1, 1, -0.1]]), 10);
+      head.loft(tone(c, -0.08), fitted([[5.6, 4.15, 3.85, -0.12], [6.05, 4.05, 3.75, -0.14]]), 10);
       head.ball(c, 1.15, 0.6, 7.95, -0.3, 1);
-      const f = facet([[5, 4.18, 3.88, -0.1], [6.4, 3.92, 3.62, -0.15]], 10, 5.5, 0, 0.2);
+      const f = facet(fitted([[5, 4.18, 3.88, -0.1], [6.4, 3.92, 3.62, -0.15]]), 10, 5.5, 0, 0.2);
       head.ball(look.accent, 0.55, 0, 5.5, f.z, 0);
       return;
     }
     case "kerchief": {
       // Tied close over the hair, knotted at the back with two tails.
       const c = look.hatColor ?? look.accent;
-      head.loft(c, grown(OVER_HAIR, -0.05), 10);
-      head.ball(tone(c, -0.08), 0.7, 0, 4.9, -3.55, 1);
-      head.shape(c, [[0.15, 4.9, -3.5], [0.65, 4.9, -3.65], [1.45, 2.9, -3.75], [1.95, 3.05, -3.75], [1.7, 2.6, -3.85]]);
-      head.shape(tone(c, -0.08), [[-0.15, 4.9, -3.5], [-0.6, 4.9, -3.65], [-0.95, 3.3, -3.75], [-1.4, 3.4, -3.75]]);
+      head.loft(c, fitted(grown(OVER_HAIR, -0.05)), 10);
+      // The knot and its tails stay on the back of the head, however deep it is.
+      const d = headDelta(4.9);
+      const back = d.dz - d.rz;
+      head.ball(tone(c, -0.08), 0.7, 0, 4.9, -3.55 + back, 1);
+      head.shape(c, [[0.15, 4.9, -3.5 + back], [0.65, 4.9, -3.65 + back], [1.45, 2.9, -3.75 + back], [1.95, 3.05, -3.75 + back], [1.7, 2.6, -3.85 + back]]);
+      head.shape(tone(c, -0.08), [[-0.15, 4.9, -3.5 + back], [-0.6, 4.9, -3.65 + back], [-0.95, 3.3, -3.75 + back], [-1.4, 3.4, -3.75 + back]]);
       return;
     }
     case "greathelm": {
       // A great helm over the whole head, its front pushed out over the nose, a slit for the eyes, breaths
       // below, and a crest.
       const c = look.hatColor ?? "#8b95a5";
-      const helm: Ring[] = [[0.1, 3.1, 2.95, 0.55], [1.4, 3.88, 3.55, 0.6], [3.2, 3.98, 3.62, 0.45], [5.4, 3.8, 3.5, -0.05], [6.7, 3.05, 2.85, -0.1], [7.5, 1.75, 1.6, -0.1], [7.85, 0.4, 0.4, -0.1]];
+      // Down past the chin of a long face or a pointed one.
+      const low = Math.min(0, headRings()[0][0] - 0.35);
+      // Its front out over the nose, and deep enough behind to close over the hair at the nape.
+      const helm = fitted([[0.1 + low, 3.1, 3.2, 0.3], [1.4, 3.88, 3.8, 0.35], [3.2, 3.98, 3.87, 0.2], [5.4, 3.8, 3.55, -0.1], [6.7, 3.05, 2.85, -0.1], [7.5, 1.75, 1.6, -0.1], [7.85, 0.4, 0.4, -0.1]]);
       head.loft(c, helm, 10);
-      head.loft(tone(c, -0.1), [[0, 3.2, 3.05, 0.55], [0.5, 3.45, 3.25, 0.58]], 10);
+      head.loft(tone(c, -0.1), fitted([[low, 3.2, 3.3, 0.3], [0.5 + low, 3.45, 3.5, 0.33]]), 10);
       for (const k of [-1, 0, 1]) {
         const f = facet(helm, 10, 3.3, k, 0.02);
         head.box(OUTLINE, 2.1, 0.5, 0.3, f.x, 3.3, f.z, [0, f.turn, 0]);
@@ -1147,10 +1391,10 @@ function lowHat(head: Part, look: Look) {
       return;
     }
     case "horns": {
-      head.loft(look.accent, [[4.3, 3.74, 3.44], [4.8, 3.74, 3.44]], 10);
+      head.loft(look.accent, fitted([[4.3, 3.74, 3.44], [4.8, 3.74, 3.44]]), 10);
       for (const s of [-1, 1]) {
         // Each horn curls out and up from the band.
-        head.loft(look.accent, [[0, 0.85, 0.85], [1.2, 0.7, 0.7, 0.25], [2.3, 0.45, 0.45, 0.8], [3.1, 0.12, 0.12, 1.5]], 6, s * 3.2, 5.2, 0, [0, 0, -s * 0.7]);
+        head.loft(look.accent, [[0, 0.85, 0.85], [1.2, 0.7, 0.7, 0.25], [2.3, 0.45, 0.45, 0.8], [3.1, 0.12, 0.12, 1.5]], 6, s * (3.2 + headDelta(5.2).rx), 5.2, 0, [0, 0, -s * 0.7]);
       }
       return;
     }
@@ -1166,7 +1410,7 @@ function lowWornHelmet(head: Part, helmet: { ref: string; icon: string }, trim: 
   }
   if (helmet.ref === "visor" || helmet.icon === "brutal-helm") {
     // Horned iron down over the eyes, a dark visor, one eye alight and a spyglass over the other.
-    const helm: Ring[] = [[2.2, 3.82, 3.55, 0.12], [3.95, 3.86, 3.56], [5.4, 3.74, 3.46, -0.05], [6.7, 3.02, 2.82, -0.1], [7.5, 1.7, 1.6, -0.1], [7.8, 0.35, 0.35, -0.1]];
+    const helm = fitted([[2.2, 3.82, 3.55, 0.12], [3.95, 3.86, 3.56], [5.4, 3.74, 3.46, -0.05], [6.7, 3.02, 2.82, -0.1], [7.5, 1.7, 1.6, -0.1], [7.8, 0.35, 0.35, -0.1]]);
     head.loft(GEAR.iron, helm, 10);
     for (const k of [-1, 0, 1]) {
       const f = facet(helm, 10, 3, k, 0.02);
@@ -1177,8 +1421,8 @@ function lowWornHelmet(head: Part, helmet: { ref: string; icon: string }, trim: 
     head.cyl(GEAR.gold, 0.7, 0.55, 1.8, -0.8, 3, front.z + 0.8, 8, [HALF_PI, 0, 0]);
     head.glowBall(trim, 0.42, -0.8, 3, front.z + 1.75);
     for (const s of [-1, 1]) {
-      head.shape(GEAR.iron, [[s * 3.35, 2.4, 1.3], [s * 3.4, 2.4, -1.2], [s * 2.95, 0.9, 0.8], [s * 3.05, 1, -0.6], [s * 3.8, 2.4, 1], [s * 3.75, 2.2, -0.9]]);
-      head.loft(GEAR.bone, [[0, 0.85, 0.85], [1.2, 0.7, 0.7, 0.25], [2.3, 0.45, 0.45, 0.75], [3.1, 0.1, 0.1, 1.4]], 6, s * 3.3, 5.9, 0, [0, 0, -s * 0.55]);
+      head.shape(GEAR.iron, besideHead([[s * 3.35, 2.4, 1.3], [s * 3.4, 2.4, -1.2], [s * 2.95, 0.9, 0.8], [s * 3.05, 1, -0.6], [s * 3.8, 2.4, 1], [s * 3.75, 2.2, -0.9]]));
+      head.loft(GEAR.bone, [[0, 0.85, 0.85], [1.2, 0.7, 0.7, 0.25], [2.3, 0.45, 0.45, 0.75], [3.1, 0.1, 0.1, 1.4]], 6, s * (3.3 + headDelta(5.9).rx), 5.9, 0, [0, 0, -s * 0.55]);
     }
     return;
   }
@@ -1550,14 +1794,6 @@ function lowBareFoot(foot: Part, skin: string) {
   foot.shape(skin, sym([[0.95, 0, -1], [1.05, 0, 1.3], [0.7, 0, 2.2], [0, 0, 2.4], [0.8, 1.1, -0.7], [0.75, 0.7, 1.1], [0, 0.55, 2.1], [0, 1.25, -0.6]]));
 }
 
-/** A sword: a diamond-section blade tapering to a point, a swept guard, a wrapped grip and a round pommel. */
-function lowSword(w: Part, accent: string) {
-  w.cyl(GEAR.leather, 0.42, 0.48, 2.1, 0, 0.15, 0, 6);
-  w.ball(accent, 0.62, 0, -1.05, 0);
-  w.shape(accent, sym([[1.95, 1.45, 0.3], [1.95, 2.05, 0.3], [1.95, 1.45, -0.3], [1.95, 2.05, -0.3], [0, 1.05, 0.48], [0, 1.85, 0.48], [0, 1.05, -0.48], [0, 1.85, -0.48]]));
-  w.shape(GEAR.steel, sym([[0.62, 1.9, 0], [0, 1.9, 0.26], [0, 1.9, -0.26], [0.5, 8.7, 0], [0, 8.7, 0.22], [0, 8.7, -0.22], [0, 10.3, 0]]));
-}
-
 /** A head: skin, ears, hair, and a face. */
 function drawHead(head: Part, look: Look, asleep: boolean) {
   const skin = look.skin;
@@ -1652,7 +1888,10 @@ function drawHood(head: Part, c: string, trim?: string) {
  * What is carried, in the frame of the hand that carries it: the grip at the origin, up along +y.
  * Returns how far forward the arm rests and how the thing is tipped, where it is not held upright at the side.
  */
-function drawHeld(id: string, b: Biped, trim: string, look: Look, shield: boolean): { arm?: number; tilt?: number } {
+function drawHeld(id: string, b: Biped, trim: string, look: Look, shield: boolean, icon?: string): { arm?: number; tilt?: number } {
+  // Low-poly, a weapon with an icon is held as that icon's model: what is in the hand is what is in the bag.
+  const fromIcon = lowPoly && icon ? heldGear(icon, b, trim, shield) : null;
+  if (fromIcon) return fromIcon;
   const w = b.heldR;
   const shaft = (c: string, h: number, y: number) => w.cyl(c, 0.42, 0.42, h, 0, y, 0, 6);
   const dagger = (p: Part) => {
@@ -1664,17 +1903,7 @@ function drawHeld(id: string, b: Biped, trim: string, look: Look, shield: boolea
   /** Two points mirrored across the blade's flat (x), `t` either side of it. */
   const flat = (t: number, y: number, z: number): Pt[] => [[t, y, z], [-t, y, z]];
   const axe = (band: string) => {
-    if (lowPoly) {
-      // A round haft; an iron socket; a crescent blade, thick at the socket and thin at its bright edge; a
-      // short beak behind; a band of the trim below the head.
-      shaft(GEAR.wood, 14, 3.4);
-      w.cyl(GEAR.iron, 0.62, 0.62, 1.7, 0, 9.4, 0, 8);
-      const blade: Pt[] = [];
-      for (const [z, y0, y1, t] of [[0.4, 8.5, 10.3, 0.28], [1.8, 7.7, 11.1, 0.22], [3.25, 7.05, 11.75, 0.14]]) blade.push(...flat(t, y0, z), ...flat(t, y1, z));
-      w.shape(GEAR.steel, blade);
-      w.shape(GEAR.shine, [...flat(0.14, 7.05, 3.2), ...flat(0.14, 11.75, 3.2), ...flat(0.1, 7.4, 3.6), ...flat(0.1, 11.4, 3.6), ...flat(0.08, 9.4, 3.8)]);
-      w.shape(GEAR.iron, [...flat(0.26, 8.9, -0.5), ...flat(0.26, 9.9, -0.5), ...flat(0.14, 9.2, -1.65), ...flat(0.14, 9.6, -1.65)]);
-      w.loft(band, [[6.6, 0.6, 0.6], [7.4, 0.6, 0.6]], 8);
+    if (lowPoly && gear(w, "pager-axe", band, HOLD["pager-axe"])) {
       return;
     }
     shaft(GEAR.wood, 14, 3.4);
@@ -1704,10 +1933,6 @@ function drawHeld(id: string, b: Biped, trim: string, look: Look, shield: boolea
   };
   switch (id) {
     case "sword":
-      if (lowPoly) {
-        lowSword(w, look.accent);
-        return { tilt: 0.55 };
-      }
       w.box(GEAR.wood, 0.8, 1.8, 0.8, 0, 0.2, 0);
       w.box(look.accent, 1, 1, 1, 0, -0.9, 0);
       w.box(look.accent, 3.2, 0.6, 1, 0, 1.3, 0);
@@ -1768,12 +1993,6 @@ function drawHeld(id: string, b: Biped, trim: string, look: Look, shield: boolea
     case "daggers": {
       // One in each fist (the second unless a shield is there), both tipped forward the same and angled out
       // from the body, up and away from the hands.
-      const outward = (hand: Part, s: number) => {
-        const grip = new Part(hand.joint);
-        grip.joint.rotation.z = s * 0.38;
-        extraParts.push(grip);
-        return grip;
-      };
       dagger(outward(w, 1));
       if (!shield) {
         dagger(outward(b.heldL, -1));
@@ -1784,23 +2003,6 @@ function drawHeld(id: string, b: Biped, trim: string, look: Look, shield: boolea
     case "shortbow":
     case "bow": {
       // Held beside the fist, the belly forward and the string toward the arm.
-      if (lowPoly) {
-        // One smooth stave: thickest at the grip, curving back and tapering to a nock at each tip, the
-        // string straight between them.
-        const reach = 4.7;
-        const back = (y: number) => 0.35 - 1.75 * (y / reach) ** 2;
-        const stave: Ring[] = [];
-        for (let i = 0; i <= 12; i++) {
-          const y = -reach + (2 * reach * i) / 12;
-          const r = 0.38 - 0.2 * Math.abs(y / reach) ** 1.5;
-          stave.push([y, r, r * 1.15, back(y)]);
-        }
-        w.loft(GEAR.wood, stave, 6, -1.4);
-        for (const y of [-reach, reach]) w.ball(tone(GEAR.wood, -0.15), 0.26, -1.4, y, back(y), 0);
-        w.box(id === "bow" ? look.accent : GEAR.paper, 0.14, 2 * reach - 0.2, 0.14, -1.4, 0, back(reach) + 0.05);
-        w.loft(id === "bow" ? GEAR.leather : trim, [[-0.8, 0.46, 0.52, back(0)], [0.8, 0.46, 0.52, back(0)]], 6, -1.4);
-        return {};
-      }
       for (let i = -2; i <= 2; i++) w.box(GEAR.wood, 0.6, 2.6, 0.6, -1.4, i * 2.2, 0.3 - Math.abs(i) * 0.85, [i * 0.3, 0, 0]);
       w.box(id === "bow" ? look.accent : GEAR.paper, 0.2, 9.4, 0.2, -1.4, 0, -1.5);
       w.box(id === "bow" ? GEAR.leather : trim, 0.9, 1.6, 0.9, -1.4, 0, 0.3);
@@ -2061,11 +2263,9 @@ function drawHeld(id: string, b: Biped, trim: string, look: Look, shield: boolea
 
 /** A shield on the left forearm, held across the front. */
 function drawShield(arm: Part, ref: string, icon: string, trim: string) {
-  const turn: Rot = [0, 0.35, 0];
-  if (lowPoly && !(ref === "buckler" || icon === "round-shield")) {
-    lowKiteShield(arm, trim, turn);
-    return;
-  }
+  // Low-poly, it is its icon's model.
+  if (lowPoly && HOLD[icon] && gear(arm, icon, trim, HOLD[icon])) return;
+  const turn = ON_ARM;
   if (ref === "buckler" || icon === "round-shield") {
     // A barrel lid: planks, an iron hoop and a boss.
     arm.cyl("#9a7448", 2.7, 2.7, 0.6, 0.5, -3.4, 1.9, 10, [HALF_PI, 0, 0.35]);
@@ -2081,21 +2281,6 @@ function drawShield(arm: Part, ref: string, icon: string, trim: string) {
   arm.box(GEAR.steel, 4.8, 0.8, 0.7, 0.5, -0.3, 1.9, turn);
   arm.box(trim, 3.2, 3.6, 0.3, 0.62, -2.7, 2.25, turn);
   arm.box(GEAR.gold, 1, 1, 0.3, 0.7, -2.5, 2.45, turn);
-}
-
-/**
- * A tall shield on the forearm, low-poly: a heater's shape, broad at the top and pointed at the foot, with a
- * steel rim, its face in the trim's colour and a gold boss, turned a little out from the body.
- */
-function lowKiteShield(arm: Part, trim: string, turn: Rot) {
-  const at = new THREE.Vector3(0.5, -2.9, 1.95);
-  const outline: [number, number][] = [[-2.35, 2.65], [2.35, 2.65], [2.55, 0.4], [1.85, -2.3], [0, -4.2], [-1.85, -2.3], [-2.55, 0.4]];
-  const plate = (scale: number, z0: number, z1: number): Pt[] => outline.flatMap(([x, y]): Pt[] => [[x * scale, y * scale, z0], [x * scale, y * scale, z1]]);
-  arm.shape(GEAR.steel, plate(1, -0.32, 0.18), at.x, at.y, at.z, turn);
-  arm.shape(GEAR.iron, plate(0.86, 0.1, 0.32), at.x, at.y, at.z, turn);
-  arm.shape(trim, plate(0.6, 0.25, 0.42), at.x, at.y + 0.25, at.z, turn);
-  const boss = new THREE.Vector3(0, 0.55, 0.55).applyEuler(new THREE.Euler(...turn)).add(at);
-  arm.ball(GEAR.gold, 0.7, boss.x, boss.y, boss.z, 1);
 }
 
 /**
@@ -2353,19 +2538,22 @@ function person(top: THREE.Group, look: Look, outfit: Outfit | undefined, asleep
   } else if (outfit) {
     const held = outfit.main_hand;
     if (held) {
-      apply(b, drawHeld(held.ref, b, trim("main_hand"), look, !!shield));
       const like = WEAPONS[held.ref]?.looksLike;
-      if (b.heldR.empty && like) apply(b, drawHeld(like, b, trim("main_hand"), look, !!shield));
+      const grips = extraParts.length;
+      apply(b, drawHeld(held.ref, b, trim("main_hand"), look, !!shield, held.icon));
+      // Nothing drawn for it (no model, no shape of its own): drawn as the weapon it is like.
+      if (b.heldR.empty && extraParts.length === grips && like) apply(b, drawHeld(like, b, trim("main_hand"), look, !!shield));
     }
   } else if (look.weapon !== "none") {
-    apply(b, drawHeld(look.weapon, b, look.accent, look, false));
+    apply(b, drawHeld(look.weapon, b, look.accent, look, false, STOCK_ICON[look.weapon]));
   }
   if (shield || look.weapon === "axe_shield") b.rest.armL = -0.55;
   return { parts, animate: b.animate };
 }
 
-/** A lute in its own part's frame: the belly at the origin facing +z, the neck up +y. */
+/** A lute in its own part's frame: the belly at the origin facing +z, the neck up +y. Its icon's model, low-poly. */
 function drawLute(p: Part, trim: string) {
+  if (gear(p, "lute", trim, HOLD.lute)) return;
   p.ball(GEAR.leather, 2.3, 0, 0, 0, 1, [1, 1.2, 0.5]);
   p.ball(tone(GEAR.leather, 0.08), 2.1, 0, 0.05, 0.2, 1, [0.92, 1.1, 0.42]);
   p.cyl(GEAR.dark, 0.7, 0.7, 0.2, 0, 0.5, 1.05, 10, [HALF_PI, 0, 0]);
@@ -2380,6 +2568,8 @@ const FLUTE_ARMS = { right: -0.9, left: -1.2 };
 
 /** A flute in its own part's frame: a pipe up +y from just below the grip at the origin to past `span`, finger holes to the front. */
 function drawFlute(p: Part, trim: string, span: number) {
+  // Its icon's model, slimmed and drawn out to reach from hand to hand: 16 long from foot to mouthpiece.
+  if (gear(p, "flute", trim, { grip: [0, -8, 0], scale: [0.45, (span + 1.6) / 16, 0.45], at: [0, -0.8, 0] })) return;
   p.cyl(GEAR.paper, 0.38, 0.38, span + 1.6, 0, span / 2, 0, 8);
   for (const t of [0.3, 0.45, 0.6]) p.box(GEAR.dark, 0.3, 0.4, 0.3, 0, span * t, 0.3);
   p.cyl(trim, 0.5, 0.5, 0.8, 0, span + 0.4, 0, 8);
