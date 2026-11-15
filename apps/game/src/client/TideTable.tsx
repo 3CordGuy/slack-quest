@@ -68,11 +68,16 @@ export function TideTable({ table, you, gold, error, lastXp, looks, world, host,
   const turnKey = `${table?.hand}:${table?.lastPlay?.n ?? 0}:${canPlay}`;
   const [move, setMove] = useState<Move | null>(null);
   const myHand = mine?.hand ?? [];
+  // Your hand in the dock waits for the cards on the table to land: a card still on its way is not in it yet.
+  const handKey = `${table?.hand}:${myHand.join(",")}`;
+  const [landed, setLanded] = useState<{ key: string; hand: number | undefined; cards: number[] } | null>(null);
+  const settled = !landed || landed.key === handKey;
+  const showHand: TideFace[] = settled ? myHand : myHand.map((c, i) => (landed.hand === table?.hand && landed.cards[i] === c ? c : "back"));
   const targets = table ? tideTargets(seats, you) : [];
   const live = move && move.key === turnKey ? move : null;
   // Holding the Kraken there is nothing to choose: the other card is the one you play.
   const forced = canPlay && myHand.includes(TIDE_KRAKEN) ? myHand.findIndex((c) => c !== TIDE_KRAKEN) : -1;
-  const index = canPlay ? (live?.index ?? (forced >= 0 ? forced : null)) : null;
+  const index = canPlay && settled ? (live?.index ?? (forced >= 0 ? forced : null)) : null;
   const card = index !== null ? myHand[index] : null;
   const def = card !== null ? tideCard(card) : undefined;
   const aimed = !!def?.aimed && targets.length > 0;
@@ -155,7 +160,7 @@ export function TideTable({ table, you, gold, error, lastXp, looks, world, host,
     });
     stage.setSeats(placement.chairs, withSelf(infos, you, looks));
     const backs = (n: number): TideFace[] => Array<TideFace>(Math.max(0, n)).fill("back");
-    stage.syncTide(
+    const wait = stage.syncTide(
       table && table.phase !== "open"
         ? {
             hand: table.hand,
@@ -184,6 +189,10 @@ export function TideTable({ table, you, gold, error, lastXp, looks, world, host,
     const xp = table?.phase === "done" && lastXp?.id === table.winner && lastXp.amount > 0 ? `+${lastXp.amount} XP` : undefined;
     // The card over the table is kept short: the dock, with your hand in it, lies over the rest.
     stage.setCard({ caption, ...main, foot: xp, yours: !!myTurn });
+    const land = () => setLanded({ key: handKey, hand: table?.hand, cards: myHand });
+    if (wait <= 0.05) return land();
+    const t = setTimeout(land, wait * 1000);
+    return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stage, table, placement, looks, lastXp, index, canPlay, myTurn]);
 
@@ -227,8 +236,9 @@ export function TideTable({ table, you, gold, error, lastXp, looks, world, host,
         <div className="tide-board">
           <div className="tide-hand" role="group" aria-label="Your hand">
             {myHand.length === 0 && <span className="muted tide-none">{mine.forfeited ? "You walked away." : "You are out of this hand."}</span>}
-            {myHand.map((c, i) => {
+            {showHand.map((c, i) => {
               const kraken = c === TIDE_KRAKEN;
+              if (c === "back") return null;
               return (
                 <button key={`${i}:${c}`} type="button" className={`tide-card${index === i ? " picked" : ""}${kraken && canPlay ? " stuck" : ""}`} aria-pressed={index === i} disabled={!canPlay || kraken} title={kraken && canPlay ? "The Kraken cannot be played" : `${tideCard(c)?.name}: ${tideCard(c)?.text}`} onClick={() => pickCard(i)}>
                   <CardArt face={c} />

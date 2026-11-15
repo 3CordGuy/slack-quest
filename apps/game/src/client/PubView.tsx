@@ -18,6 +18,7 @@ import { ShoalsTable } from "./ShoalsTable";
 import { CrewTable } from "./CrewTable";
 import { PubLeaderboard } from "./PubLeaderboard";
 import { TideTable } from "./TideTable";
+import { WinBanner } from "./WinBanner";
 import { SalesmanPanel } from "./SalesmanPanel";
 import { useSalesman } from "./salesmanClock";
 import { CrewRoster } from "./CrewRoster";
@@ -466,6 +467,10 @@ export function PubView({ me, refresh, onLeave }: { me: Me; refresh(): Promise<u
       {you && seatedAt === "crew" && <CrewTable table={pub.crew} you={you} gold={gold} error={pub.crewError} lastXp={pub.lastXp} looks={looks} world={renderer} host={{ hex: PUB_CREW, hide: players.filter((p) => same(p.pos, PUB_CREW)).map((p) => p.id), onStand: () => standFrom("crew") }} send={(action) => pub.send({ type: "crew", action })} />}
       {you && seatedAt === "tide" && <TideTable table={pub.tide} you={you} gold={gold} error={pub.tideError} lastXp={pub.lastXp} looks={looks} world={renderer} host={{ hex: PUB_TIDE, hide: players.filter((p) => same(p.pos, PUB_TIDE)).map((p) => p.id), onStand: () => standFrom("tide") }} send={(action) => pub.send({ type: "tide", action })} />}
       {you && seatedAt === "dice" && <DiceTable table={pub.dice} you={you} gold={gold} error={pub.diceError} lastXp={pub.lastXp} looks={looks} world={renderer} host={{ hex: PUB_DICE, hide: players.filter((p) => same(p.pos, PUB_DICE)).map((p) => p.id), onStand: () => standFrom("dice") }} send={(action) => pub.send({ type: "dice", action })} />}
+      {you && seatedAt && (() => {
+        const t = pub[seatedAt];
+        return <WinBanner key={seatedAt} table={t} you={you} xp={t && pub.lastXp?.id === t.winner ? pub.lastXp.amount : undefined} />;
+      })()}
 
       {you && <>
       <DragPanel id="pub.crew" title="Inside" foldOnPhone className="crew roster-panel">
