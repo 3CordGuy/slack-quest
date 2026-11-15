@@ -24,7 +24,7 @@ import { SkyAndSound } from "./audio/SoundButton";
 import { DragPanel } from "./DragPanel";
 import { itemName, label } from "./labels";
 import { PixelIcon } from "./PixelIcon";
-import { LOW_POLY_KEY } from "./render/figures";
+import { BLOCKY_KEY } from "./render/figures";
 import { WRENCH } from "./ui/menuIcons";
 
 const OPEN_KEY = "gq.dev.readout";
@@ -94,22 +94,22 @@ export function DevToolbox({ me, refresh }: { me: Me; refresh(): Promise<void> }
   );
 }
 
-/** Switch the people between their box models and the low-poly prototype. Every figure is built afresh, so it reloads. */
+/** Switch the people (in this browser) back to their old box models, to compare. Every figure is built afresh, so it reloads. */
 function FigureStyle() {
-  const low = recall(LOW_POLY_KEY) === "1";
+  const blocky = recall(BLOCKY_KEY) === "1";
   const flip = () => {
-    remember(LOW_POLY_KEY, low ? null : "1");
+    remember(BLOCKY_KEY, blocky ? null : "1");
     location.reload();
   };
   return (
     <div className="dev-seed">
       <p>
-        People are drawn <strong>{low ? "low-poly (prototype)" : "in boxes"}</strong>.
+        People are drawn <strong>{blocky ? "in the old boxes" : "low-poly"}</strong>.
       </p>
-      <p className="muted">The prototype covers the body, face, hair, plain clothes, the paladin's helm and the sword. Other hats, worn armor and weapons are still boxes.</p>
+      <p className="muted">Heroes who chose how they look stay low-poly either way. Creatures (wolves, bears, bats, ghosts, slimes, skeletons) are still boxes.</p>
       <div className="dev-row">
         <button className="small primary" onClick={flip}>
-          {low ? "Back to boxes" : "Try low-poly"}
+          {blocky ? "Back to low-poly" : "Show the old boxes"}
         </button>
       </div>
     </div>
