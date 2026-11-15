@@ -153,9 +153,19 @@ export interface Loop {
 /** The places the game can be, each with its own music and atmosphere. */
 export type SceneName = "title" | "harbor" | "hut" | "pub" | "sailing" | "island" | "caverns" | "battle" | "spar";
 
+/**
+ * One piece of music for the day and another for the night, each a key of `music`. The change comes
+ * a little after the middle of dusk or dawn. Pieces with a `gap` are not cut off: the one playing
+ * finishes, and the other takes the next turn after the rest. Looping pieces crossfade.
+ */
+export interface MusicByHour {
+  day: string;
+  night: string;
+}
+
 export interface Scene {
-  /** A key of `music`, or null for no music. */
-  music?: string | null;
+  /** A key of `music`; a piece each for day and night; or null for no music. */
+  music?: string | MusicByHour | null;
   /** Keys of `ambience`, all playing at once. */
   ambience?: string[];
   /**

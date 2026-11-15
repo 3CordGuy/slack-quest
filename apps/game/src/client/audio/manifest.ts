@@ -10,7 +10,7 @@
 
 import { ABILITIES, ENEMIES, type EffectKind } from "@gantt-quest/world";
 import { slug } from "./select";
-import type { AudioManifest, Follow, SoundEvent } from "./types";
+import type { AudioManifest, Follow, MusicByHour, SoundEvent } from "./types";
 
 /** "shore" is hexes to the nearest water. Level 0.7 is 3 dB down. */
 const BY_THE_SEA: Follow = { param: "shore", curve: [[0.5, 0.7], [2, 1]] };
@@ -35,6 +35,12 @@ const step = (surface: string, ground: string, gainDb = -6): SoundEvent => ({
   volume: [-3, 0],
   maxVoices: 6,
 });
+
+/**
+ * The town's music: one piece by day, another by night. The piece playing is never cut off at dusk or
+ * dawn: it finishes, the town rests, and the piece for the new hour takes the next turn.
+ */
+const TOWN: MusicByHour = { day: "harbor_day", night: "harbor_night" };
 
 export const AUDIO: AudioManifest = {
   // Where each slider starts for a new player, and your trim for each group.
@@ -174,12 +180,11 @@ export const AUDIO: AudioManifest = {
   // A level can follow the sky: "night" (0 day to 1 deep night), "rain" (0 dry to 1 pouring)
   // or "time" (0 midnight, 0.5 noon). A curve is [value, level] points; see audio/README.md.
   music: {
-    // The town's night music, by day too for now. A day version can be a second cue, or a stem laid
-    // over this one: layers: [{ file: "music/harbor_day", follow: { param: "night", curve: [[0.3, 1], [0.7, 0]] } }]
-    // Give it its bpm and the battle music will come in on its bar.
-    // `gap` is the rest between plays, in seconds: it plays through, leaves the town to its atmosphere for
-    // two minutes, then plays again. A range, such as [120, 240], rests a different length each time.
-    harbor: { file: "music/harbor", fadeIn: 3, fadeOut: 3, gap: 120 },
+    // The town has a piece for the day and one for the night (see TOWN, below). `gap` is the rest between
+    // plays, in seconds: a piece plays through, leaves the town to its atmosphere for two minutes, then
+    // the piece for that hour plays. A range, such as [120, 240], rests a different length each time.
+    harbor_day: { file: "music/harbor_day", fadeIn: 3, fadeOut: 3, gap: 120 },
+    harbor_night: { file: "music/harbor_night", fadeIn: 3, fadeOut: 3, gap: 120 },
     island: { file: "music/island", fadeIn: 3, fadeOut: 3, bpm: 96 },
     // Comes in on the next bar of whatever was playing.
     battle: { file: "music/battle", fadeIn: 0.05, fadeOut: 2, bpm: 138, enter: "bar" },
@@ -200,8 +205,8 @@ export const AUDIO: AudioManifest = {
   },
 
   scenes: {
-    title: { music: "harbor" },
-    harbor: { music: "harbor", ambience: ["day", "night", "rain", "rainstorm"] },
+    title: { music: TOWN },
+    harbor: { music: TOWN, ambience: ["day", "night", "rain", "rainstorm"] },
     // Indoors: the Harbor's music, atmosphere and sea carry on, muffled, as through the walls. `cutoff`
     // is the high cut in Hz. A building's own sound goes here too and is heard clean: ambience: ["pub_crowd"],
     // or music: "pub" to replace the music from outside.
