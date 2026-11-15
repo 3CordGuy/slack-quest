@@ -318,7 +318,7 @@ class Part {
 
   /** A ring standing upright, facing +z. */
   ring(color: string, radius: number, tube: number, x = 0, y = 0, z = 0, rot?: Rot): this {
-    return this.add(new THREE.TorusGeometry(radius, tube, 4, 10), color, x, y, z, rot);
+    return this.add(new THREE.TorusGeometry(radius, tube, lowPoly ? 6 : 4, lowPoly ? 16 : 10), color, x, y, z, rot, false, lowPoly);
   }
 
   /** A faceted tube through `rings` (see loftGeometry), in this joint's space offset by (x, y, z). */
@@ -341,6 +341,11 @@ class Part {
 
   glowBox(color: string, w: number, h: number, d: number, x = 0, y = 0, z = 0, rot?: Rot): this {
     return this.add(new THREE.BoxGeometry(w, h, d), color, x, y, z, rot, true);
+  }
+
+  /** A faceted tube through `rings` that glows (unlit, no outline): a lantern's glass. */
+  glowLoft(color: string, rings: readonly Ring[], sides = 8, x = 0, y = 0, z = 0): this {
+    return this.add(loftGeometry(rings, sides), color, x, y, z, undefined, true);
   }
 
   glowBall(color: string, radius: number, x = 0, y = 0, z = 0): this {
@@ -1585,7 +1590,22 @@ function drawHeld(id: string, b: Biped, trim: string, look: Look, shield: boolea
     p.box(GEAR.steel, 0.9, 3.4, 0.4, 0, 2.9, 0);
     p.box(GEAR.shine, 0.5, 0.9, 0.4, 0, 5, 0);
   };
+  /** Two points mirrored across the blade's flat (x), `t` either side of it. */
+  const flat = (t: number, y: number, z: number): Pt[] => [[t, y, z], [-t, y, z]];
   const axe = (band: string) => {
+    if (lowPoly) {
+      // A round haft; an iron socket; a crescent blade, thick at the socket and thin at its bright edge; a
+      // short beak behind; a band of the trim below the head.
+      shaft(GEAR.wood, 14, 3.4);
+      w.cyl(GEAR.iron, 0.62, 0.62, 1.7, 0, 9.4, 0, 8);
+      const blade: Pt[] = [];
+      for (const [z, y0, y1, t] of [[0.4, 8.5, 10.3, 0.28], [1.8, 7.7, 11.1, 0.22], [3.25, 7.05, 11.75, 0.14]]) blade.push(...flat(t, y0, z), ...flat(t, y1, z));
+      w.shape(GEAR.steel, blade);
+      w.shape(GEAR.shine, [...flat(0.14, 7.05, 3.2), ...flat(0.14, 11.75, 3.2), ...flat(0.1, 7.4, 3.6), ...flat(0.1, 11.4, 3.6), ...flat(0.08, 9.4, 3.8)]);
+      w.shape(GEAR.iron, [...flat(0.26, 8.9, -0.5), ...flat(0.26, 9.9, -0.5), ...flat(0.14, 9.2, -1.65), ...flat(0.14, 9.6, -1.65)]);
+      w.loft(band, [[6.6, 0.6, 0.6], [7.4, 0.6, 0.6]], 8);
+      return;
+    }
     shaft(GEAR.wood, 14, 3.4);
     w.box(GEAR.steel, 0.5, 4, 2.6, 0, 9.4, 1.7);
     w.box(GEAR.shine, 0.52, 5, 0.8, 0, 9.4, 3.2);
@@ -1593,6 +1613,18 @@ function drawHeld(id: string, b: Biped, trim: string, look: Look, shield: boolea
     w.cyl(band, 0.6, 0.6, 0.8, 0, 7, 0, 6);
   };
   const lantern = (y: number, z: number) => {
+    if (lowPoly) {
+      // A round iron base, glowing glass between four slim posts, a band and a domed roof with a knob.
+      w.loft(GEAR.iron, [[y - 1.35, 0.95, 0.95], [y - 0.95, 1.02, 1.02]], 8, 0, 0, z);
+      w.glowLoft("#ffd98a", [[y - 0.95, 0.72, 0.72], [y + 0.95, 0.72, 0.72]], 8, 0, 0, z);
+      for (let k = 0; k < 4; k++) {
+        const a = ((k + 0.5) * Math.PI) / 2;
+        w.cyl(GEAR.iron, 0.12, 0.12, 1.9, Math.sin(a) * 0.82, y, z + Math.cos(a) * 0.82, 6);
+      }
+      w.loft(GEAR.iron, [[y + 0.95, 1.02, 1.02], [y + 1.25, 0.95, 0.95], [y + 1.75, 0.55, 0.55], [y + 2.05, 0.15, 0.15]], 8, 0, 0, z);
+      w.ball(GEAR.iron, 0.24, 0, y + 2.15, z, 0);
+      return;
+    }
     w.box(GEAR.iron, 1.7, 0.4, 1.7, 0, y + 1.2, z);
     w.cone(GEAR.iron, 1, 0.7, 0, y + 1.7, z);
     w.glowBox("#ffd98a", 1.3, 1.9, 1.3, 0, y, z);
@@ -1779,6 +1811,12 @@ function drawHeld(id: string, b: Biped, trim: string, look: Look, shield: boolea
       for (const s of [-1, 1]) w.cone(GEAR.gold, 0.4, 1.3, s * 1.3, 7.6, 0);
       return { tilt: 0.3 };
     case "club":
+      if (lowPoly) {
+        // A knobbly cudgel, thin at the grip and swelling to a rounded head, with knots in it.
+        w.loft(GEAR.wood, [[-1.2, 0.45, 0.45], [1.5, 0.5, 0.5], [3.6, 0.78, 0.75], [5.4, 1.05, 1], [6.2, 1.12, 1.08], [6.45, 0.6, 0.6]], 8);
+        for (const [r, x, y, z] of [[0.42, 0.85, 5, 0.35], [0.38, -0.8, 3.9, -0.4], [0.35, 0.2, 5.75, -0.95]]) w.ball(tone(GEAR.wood, -0.12), r, x, y, z, 0);
+        return { tilt: 0.5 };
+      }
       w.cyl(GEAR.wood, 1, 0.45, 7.6, 0, 2.6, 0, 6);
       w.box(tone(GEAR.wood, -0.1), 0.6, 0.6, 0.6, 0.8, 5.2, 0.3);
       w.box(tone(GEAR.wood, -0.1), 0.6, 0.6, 0.6, -0.7, 4, -0.4);
@@ -1802,12 +1840,37 @@ function drawHeld(id: string, b: Biped, trim: string, look: Look, shield: boolea
       const p = b.heldL;
       p.cyl(GEAR.paper, 0.8, 0.8, 6, -0.3, 1.2, 0.6, 8, [HALF_PI, 0, 0]);
       p.cyl("#3f6fa8", 0.88, 0.88, 1, -0.3, 1.2, 0.6, 8, [HALF_PI, 0, 0]);
-      for (const s of [-1, 1]) p.cyl("#c9b58a", 0.5, 0.5, 0.3, -0.3, 1.2, 0.6 + s * 3, 8, [HALF_PI, 0, 0]);
+      for (const s of [-1, 1]) {
+        if (lowPoly) p.ball("#c9b58a", 0.55, -0.3, 1.2, 0.6 + s * 3.2, 1);
+        else p.cyl("#c9b58a", 0.5, 0.5, 0.3, -0.3, 1.2, 0.6 + s * 3, 8, [HALF_PI, 0, 0]);
+      }
       return {};
     }
     case "pack": {
       // A big pack on the back, with a rolled blanket on top.
       const t = b.torso;
+      if (lowPoly) {
+        // A rounded leather sack on the back, a flap over its top, a bedroll strapped on above, straps over the
+        // shoulders and down the chest.
+        const strap = "#5f3f24";
+        t.loft("#7a5230", [[0.7, 2.3, 1.05], [2.2, 2.75, 1.35], [4.4, 2.7, 1.35], [5.9, 2.05, 1.05], [6.25, 1, 0.6]], 10, 0, 0, -3.25);
+        const flapPts: Pt[] = [];
+        for (const [y, rx, rz] of [[6.15, 1.65, 1], [5.6, 2.35, 1.3], [4.2, 2.8, 1.45]]) {
+          for (let deg = 110; deg <= 250; deg += 28) {
+            const a = (deg / 180) * Math.PI;
+            flapPts.push([Math.sin(a) * rx, y, Math.cos(a) * rz - 3.25]);
+          }
+        }
+        t.shape(strap, flapPts);
+        t.ball(GEAR.gold, 0.4, 0, 4.15, -4.78, 0);
+        t.cyl(look.accent, 1.05, 1.05, 5.6, 0, 6.95, -3, 10, [0, 0, HALF_PI]);
+        for (const x of [-1.6, 1.6]) t.cyl(strap, 1.13, 1.13, 0.35, x, 6.95, -3, 10, [0, 0, HALF_PI]);
+        for (const s of [-1, 1]) {
+          t.shape(strap, [[s * 1.8, 6, -1.7], [s * 2.4, 6, -1.7], [s * 1.85, 6.68, 0], [s * 2.45, 6.58, 0], [s * 1.8, 6, 1.6], [s * 2.4, 6, 1.6], [s * 1.85, 6.86, 0], [s * 2.45, 6.76, 0]]);
+          t.shape(strap, [[s * 1.75, 5.75, 1.82], [s * 2.35, 5.75, 1.72], [s * 1.75, 3, 2.18], [s * 2.35, 3, 2.08], [s * 1.75, 5.75, 2.02], [s * 2.35, 5.75, 1.92], [s * 1.75, 3, 2.38], [s * 2.35, 3, 2.28]]);
+        }
+        return {};
+      }
       t.box("#7a5230", 5.4, 5.6, 2.6, 0, 3.2, -3.2);
       t.box("#5f3f24", 5.5, 2, 2.7, 0, 5, -3.2);
       t.cyl(look.accent, 1.1, 1.1, 5.8, 0, 6.8, -3.1, 8, [0, 0, HALF_PI]);
@@ -1818,6 +1881,16 @@ function drawHeld(id: string, b: Biped, trim: string, look: Look, shield: boolea
     case "basket": {
       // A basket of greens on the other arm.
       const p = b.heldL;
+      if (lowPoly) {
+        // A woven bowl, banded, with a rim and a round handle, full of greens.
+        const wicker = "#b98b5a";
+        p.loft(wicker, [[-2.75, 1.45, 1.45], [-1.6, 1.95, 1.95], [-0.55, 2.1, 2.1]], 10, 0, 0, 0.8);
+        for (const y of [-2.05, -1.3]) p.loft(tone(wicker, -0.12), [[y, 1.86, 1.86], [y + 0.25, 1.92, 1.92]], 10, 0, 0, 0.8);
+        p.loft("#8a6a44", [[-0.72, 2.18, 2.18], [-0.32, 2.18, 2.18]], 10, 0, 0, 0.8);
+        p.ring("#8a6a44", 1.7, 0.2, 0, -0.4, 0.8);
+        for (const [x, z] of [[-0.8, 0.4], [0.7, 0.5], [0, 1.5]]) p.ball("#6fae4a", 0.9, x, -0.35, z, 1, [1, 0.75, 1]);
+        return {};
+      }
       p.cyl("#b98b5a", 2, 1.6, 2.2, 0, -1.6, 0.8, 8);
       p.cyl("#8a6a44", 2.05, 2.05, 0.5, 0, -1, 0.8, 8);
       p.ring("#8a6a44", 1.7, 0.2, 0, -0.4, 0.8);
@@ -1828,6 +1901,17 @@ function drawHeld(id: string, b: Biped, trim: string, look: Look, shield: boolea
       // A big axe in the right hand, a tower shield on the left arm.
       axe(look.accent);
       const s = b.armL;
+      if (lowPoly) {
+        // A tall shield, rounded at the shoulders and pointed at the foot: a steel rim, its face in the accent,
+        // a steel band across it.
+        const turn: Rot = [0, 0.35, 0];
+        const outline: [number, number][] = [[-2.3, 3.9], [2.3, 3.9], [2.55, 3.1], [2.55, -3.4], [1.9, -4.1], [0, -4.45], [-1.9, -4.1], [-2.55, -3.4], [-2.55, 3.1]];
+        const plate = (k: number, z0: number, z1: number): Pt[] => outline.flatMap(([x, y]): Pt[] => [[x * k, y * k, z0], [x * k, y * k, z1]]);
+        s.shape("#6f7480", plate(1, -0.35, 0.15), 0.4, -2.6, 1.9, turn);
+        s.shape(look.accent, plate(0.84, 0.12, 0.36), 0.4, -2.6, 1.9, turn);
+        s.shape(GEAR.steel, [[-2.2, 0.55, 0.3], [2.2, 0.55, 0.3], [-2.2, 1.3, 0.3], [2.2, 1.3, 0.3], [-2.2, 0.55, 0.5], [2.2, 0.55, 0.5], [-2.2, 1.3, 0.5], [2.2, 1.3, 0.5]], 0.4, -2.6, 1.9, turn);
+        return { tilt: 0.25 };
+      }
       s.box("#6f7480", 4.8, 8.4, 0.7, 0.4, -2.6, 1.9, [0, 0.35, 0]);
       s.box(look.accent, 3.2, 6.6, 0.3, 0.3, -2.6, 2.35, [0, 0.35, 0]);
       s.box(GEAR.steel, 3.4, 0.8, 0.35, 0.3, -2.4, 2.45, [0, 0.35, 0]);
