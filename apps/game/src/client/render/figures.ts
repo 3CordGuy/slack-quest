@@ -359,6 +359,11 @@ class Part {
     return this.add(loftGeometry(rings, sides, shape), color, x, y, z, rot, false, !shape.inward, !shape.inward);
   }
 
+  /** The smallest solid that holds all of `pts`, with no outline: an eye laid on a face (see inlayPoints). */
+  inlay(color: string, pts: Pt[]): this {
+    return this.add(new ConvexGeometry(pts.map(([px, py, pz]) => new THREE.Vector3(px, py, pz))), color, 0, 0, 0, undefined, false, false, false);
+  }
+
   /** The smallest solid that holds all of `pts`: a wedge, a blade, a shoe. */
   shape(color: string, pts: Pt[], x = 0, y = 0, z = 0, rot?: Rot): this {
     return this.add(new ConvexGeometry(pts.map(([px, py, pz]) => new THREE.Vector3(px, py, pz))), color, x, y, z, rot, false, true);
@@ -772,7 +777,7 @@ function lowHead(head: Part, look: Look, asleep: boolean, covered = false) {
   lowEars(head, tone(skin, -0.05), chosen?.ears ?? "round", earX, covered);
   lowNose(head, tone(skin, -0.05), chosen?.nose ?? "pointy", faceAt(rings, 2.3));
   head.box(tone(skin, -0.25), 1, 0.24, 0.3, 0, mouthY, faceAt(rings, mouthY) + 0.03);
-  lowEyes(head, skin, look.hair, chosen?.eyes ?? "round", asleep, faceAt(rings, 3.05), faceAt(rings, 3.95));
+  lowEyes(head, look.hair, chosen?.eyes ?? "round", asleep, rings);
   lowHair(head, look.hair, chosen?.hairStyle ?? "short", rings, covered);
   if (chosen?.ink) inkPart(head, "head", chosen.ink);
   if (chosen) lowFacialHair(head, chosen.beard, chosen.mustache, skin, look.hair, rings, chinY, mouthY);
@@ -1005,28 +1010,85 @@ function lowEars(head: Part, c: string, kind: string, x: number, covered: boolea
   }
 }
 
-/** The eyes (and brows over them) of each kind, on a face whose front is at `z` (eyes) and `browZ` (brows). */
-function lowEyes(head: Part, skin: string, hair: string, kind: string, asleep: boolean, z: number, browZ: number) {
+/**
+ * An inlay on the face: an ellipse `rx` by `ry` about (`cx`, `cy`), laid on the head's own faceted surface
+ * (`rings`) `lift` proud of it. The head is an eight-sided loft, and an eye sits across the crease between its
+ * front facets; a ball there sinks into one facet and floats off the other, and its outline comes adrift of it.
+ * An inlay follows the facets (it holds points over its middle as well as round its rim, so it bends over the
+ * crease instead of bridging under it). `clip` reshapes the rim: it returns the height a point should be at.
+ */
+function inlayPoints(rings: readonly Ring[], cx: number, cy: number, rx: number, ry: number, lift: number, clip?: (x: number, y: number) => number): Pt[] {
+  const pts: Pt[] = [];
+  for (const k of [1, 0.6, 0.25]) {
+    for (let i = 0; i < 16; i++) {
+      const a = (i / 16) * Math.PI * 2;
+      const x = cx + Math.cos(a) * rx * k;
+      let y = cy + Math.sin(a) * ry * k;
+      if (clip) y = clip(x, y);
+      const z = faceZ(rings, x, y);
+      pts.push([x, y, z + lift]);
+      // Its back, well inside the head, so it is solid and never shows an edge.
+      if (k === 1) pts.push([x, y, z - 0.3]);
+    }
+  }
+  const mid = clip ? clip(cx, cy) : cy;
+  pts.push([cx, mid, faceZ(rings, cx, mid) + lift]);
+  return pts;
+}
+
+/**
+ * The eyes (and brows over them) of each kind, on a head of these `rings`. Each is ink laid on the face (see
+ * inlayPoints) with no outline of its own, since it is the outline's colour; its catchlight and a sleepy lid are
+ * laid flat over it, so each shades as one colour rather than as a faceted ball. The brows are laid on the face
+ * the same way, each over a dark band that is its outline.
+ */
+function lowEyes(head: Part, hair: string, kind: string, asleep: boolean, rings: readonly Ring[]) {
   const y = 3.05;
+  const fierce = kind === "fierce";
   for (const s of [-1, 1]) {
     const x = s * (kind === "beady" ? 1.05 : 1.15);
-    if (asleep) head.box(OUTLINE, 1, 0.24, 0.3, x, y, z + 0.05);
-    else if (kind === "big") {
-      head.ball(OUTLINE, 1, x, y + 0.05, z - 0.1, 1, [0.55, 0.8, 0.32]);
-      head.ball("#ffffff", 0.22, x + 0.18, y + 0.35, z + 0.18);
-      head.ball("#ffffff", 0.1, x - 0.15, y - 0.25, z + 0.2);
+    const glint = (gx: number, gy: number, r: number) => head.inlay("#ffffff", inlayPoints(rings, gx, gy, r, r, 0.1));
+    if (asleep) {
+      // Shut: a lid line, sagging a little in the middle.
+      head.inlay(OUTLINE, inlayPoints(rings, x, y - 0.1, 0.5, 0.09, 0.07, (px, py) => py + 0.16 * ((px - x) / 0.5) ** 2));
+    } else if (kind === "big") {
+      head.inlay(OUTLINE, inlayPoints(rings, x, y + 0.05, 0.55, 0.8, 0.07));
+      glint(x + 0.18, y + 0.35, 0.21);
+      glint(x - 0.15, y - 0.27, 0.1);
     } else if (kind === "beady") {
-      head.ball(OUTLINE, 0.3, x, y, z - 0.02, 1);
+      head.inlay(OUTLINE, inlayPoints(rings, x, y, 0.3, 0.3, 0.07));
     } else if (kind === "narrow") {
-      head.ball(OUTLINE, 1, x, y, z - 0.08, 1, [0.5, 0.26, 0.28]);
+      head.inlay(OUTLINE, inlayPoints(rings, x, y, 0.5, 0.24, 0.07));
     } else {
-      head.ball(OUTLINE, 1, x, y, z - 0.1, 1, [0.42, 0.62, 0.3]);
-      head.ball("#ffffff", 0.17, x + 0.15, y + 0.25, z + 0.18);
-      // Heavy lids, halfway down.
-      if (kind === "sleepy") head.ball(tone(skin, -0.04), 1, x, y + 0.3, z - 0.04, 1, [0.52, 0.36, 0.36]);
+      // Round, sleepy and fierce eyes. A fierce one is cut level with its brow, low at the inner corner; a
+      // sleepy one has heavy lids halfway down, so only its bottom half shows, under a level lid line.
+      const sleepy = kind === "sleepy";
+      const clip = fierce ? (px: number, py: number) => Math.min(py, y + 0.3 + (s * px - 1.15) * 0.55) : sleepy ? (_px: number, py: number) => Math.min(py, y + 0.04) : undefined;
+      head.inlay(OUTLINE, inlayPoints(rings, x, y, 0.42, 0.62, 0.07, clip));
+      if (!sleepy) glint(x + 0.12, y + (fierce ? 0.1 : 0.22), 0.16);
     }
-    const fierce = kind === "fierce";
-    head.box(hair, 1.15, fierce ? 0.38 : 0.32, 0.35, s * 1.2, y + (kind === "big" ? 1.02 : fierce ? 0.7 : 0.9), browZ + 0.04, [0, 0, s * (fierce ? 0.38 : -0.12)]);
+    // The brow, along a line tipped at its inner end (down for a fierce one, a little up otherwise), laid on
+    // the face over a dark band a little larger all round: its outline, even on every side (an outline shell
+    // shows only on the side turned from the viewer, a bar at one end and nothing over the top).
+    const bx = s * 1.2;
+    const by = y + (kind === "big" ? 1.02 : fierce ? 0.7 : 0.9);
+    const tip = Math.sin(fierce ? 0.38 : -0.12);
+    const half = (fierce ? 0.38 : 0.32) / 2;
+    const brow = (color: string, grow: number, lift: number) => {
+      const pts: Pt[] = [];
+      for (const t of [-1, -0.5, 0, 0.5, 1]) {
+        const px = bx + t * (0.575 + grow);
+        const py = by + s * (px - bx) * tip;
+        for (const dy of [-half - grow, 0, half + grow]) {
+          const z = faceZ(rings, px, py + dy);
+          pts.push([px, py + dy, z + lift]);
+          if (dy !== 0) pts.push([px, py + dy, z - 0.3]);
+        }
+      }
+      head.inlay(color, pts);
+    };
+    brow(OUTLINE, 0.09, 0.06);
+    brow(hair, 0, 0.14);
   }
 }
 
