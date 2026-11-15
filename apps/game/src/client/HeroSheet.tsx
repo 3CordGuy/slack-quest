@@ -8,6 +8,7 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   ABILITIES,
+  DEFAULT_APPEARANCE,
   HERO_CLASSES,
   RARITY_COLOR,
   SLOT_ICON,
@@ -28,10 +29,12 @@ import {
   type Slot, abilitiesFor, } from "@gantt-quest/world";
 import type { StatKey } from "@gantt-quest/core";
 import { api } from "./api";
+import { ChangeLook } from "./ChangeLook";
+import { devTools } from "./devTools";
 import { perkText } from "./hutDrops";
 import { Icon, ItemDetail, ItemTile } from "./items";
 import { blurb, itemName, label } from "./labels";
-import { spriteDataUrl } from "./render/sprites";
+import { spriteDataUrl, withLook } from "./render/sprites";
 import "./heroSheet.css";
 
 const LEFT: Slot[] = ["helmet", "body", "amulet", "ring"];
@@ -49,14 +52,14 @@ export interface LiveVitals {
 
 const cache = new Map<string, { at: number; hero: PublicHero }>();
 
-function useHero(id: string | null): { hero: PublicHero | null; error: string | null } {
+function useHero(id: string | null, reload = 0): { hero: PublicHero | null; error: string | null } {
   const [, bump] = useState(0);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
     setError(null);
     if (!id) return;
     const hit = cache.get(id);
-    if (hit && Date.now() - hit.at < FRESH_MS) return;
+    if (hit && Date.now() - hit.at < FRESH_MS && !reload) return;
     let live = true;
     api.hero(id).then(
       ({ hero }) => {
@@ -68,7 +71,7 @@ function useHero(id: string | null): { hero: PublicHero | null; error: string | 
     return () => {
       live = false;
     };
-  }, [id]);
+  }, [id, reload]);
   return { hero: id ? (cache.get(id)?.hero ?? null) : null, error };
 }
 
@@ -89,14 +92,18 @@ interface Props {
 }
 
 export function HeroSheet({ id, you, onClose, live }: Props) {
-  const { hero, error } = useHero(id);
+  // Bumped after they save a new look, to read their sheet again (with any starting clothes they were given).
+  const [reload, setReload] = useState(0);
+  const { hero, error } = useHero(id, reload);
   const [picked, setPicked] = useState<Slot | null>(null);
+  const [changing, setChanging] = useState(false);
   useEffect(() => setPicked(null), [id]);
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    // While their look is being changed, Escape is for that (see ChangeLook).
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && !changing && onClose();
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  }, [onClose, changing]);
 
   if (!hero) {
     return (
@@ -137,13 +144,30 @@ export function HeroSheet({ id, you, onClose, live }: Props) {
   return (
     <aside className="hs-sheet panel" role="dialog" aria-label={`${hero.name}'s sheet`}>
       <header className="hs-head">
-        <img className="hs-face" src={spriteDataUrl(hero.classId, outfitOf(hero.gear))} alt="" />
+        <img className="hs-face" src={spriteDataUrl(hero.classId, withLook(outfitOf(hero.gear), hero.appearance))} alt="" />
         <div className="hs-title">
           <strong>{hero.name}{hero.id === you && <span className="muted"> (you)</span>}</strong>
           <span className="muted">{label("class", hero.classId)} · <span className="hs-level">Lv {hero.level}</span></span>
         </div>
         <button className="small" onClick={onClose} aria-label="Close">✕</button>
       </header>
+      {/* Looks are still only on development deployments. */}
+      {hero.id === you && devTools.on && !live && (
+        <button type="button" className="small hs-change-look" onClick={() => setChanging(true)}>
+          Change look
+        </button>
+      )}
+      {changing && (
+        <ChangeLook
+          hero={hero}
+          look={hero.appearance ?? DEFAULT_APPEARANCE}
+          onClose={() => setChanging(false)}
+          onSaved={() => {
+            setChanging(false);
+            setReload((n) => n + 1);
+          }}
+        />
+      )}
 
       <div className="hs-bars">
         <div className="bar" title={live ? "Hit points on this voyage" : "Rested: every voyage starts at full HP"}>

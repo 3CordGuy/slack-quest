@@ -46,6 +46,12 @@ import {
   lootPlace,
   storeProblem,
   parseTraits,
+  parseAppearance,
+  starterGarb,
+  DEFAULT_APPEARANCE,
+  HAIR_COLORS,
+  SKIN_TONES,
+  type Appearance,
   traitPickError,
   type CarryState,
   type LootPlace,
@@ -67,6 +73,7 @@ import {
   type WorldState,
   HARBOR_XP,
 } from "@gantt-quest/world";
+import { LOOKS } from "../client/render/looks";
 import { prepareXp, xpOutcome, type XpResult } from "./harbor-xp";
 import type { HarborRoom } from "./harbor-room";
 import { crewWorks } from "./projects";
@@ -120,6 +127,8 @@ export interface CharacterRow {
   gold: number;
   /** JSON list of picked class trait ids. */
   traits: string;
+  /** JSON Appearance (appearance.ts), or null if they never chose one. */
+  appearance?: string | null;
 }
 
 export interface InventoryRow {
@@ -414,11 +423,90 @@ export async function confirmCharacter(db: D1Database, playerId: string): Promis
   const cls = heroClass(c.class_id);
   if (!cls) return false;
   const weapon = weaponItem(cls.weapons[0]);
+  // A hero who chose how they look starts in their class's clothes as items they can take off.
+  const garb = parseAppearance(c.appearance ?? null) ? starterGarb(c.class_id) : [];
   await db.batch([
     db.prepare("UPDATE characters SET status = 'active' WHERE player_id = ?").bind(playerId),
     insertItem(db, playerId, weapon, true),
+    ...garb.map((item) => insertItem(db, playerId, item, true)),
   ]);
   return true;
+}
+
+/**
+ * Set how a hero looks (draft or active). Every field is checked against its presets. False if there is no
+ * hero. A hero already out in the world who has never had their starting clothes is given them too (see
+ * dressInGarb); a draft gets them when it is confirmed.
+ */
+export async function saveAppearance(db: D1Database, playerId: string, raw: unknown): Promise<boolean> {
+  const appearance = parseAppearance(raw);
+  if (!appearance) return false;
+  const row = await db
+    .prepare("UPDATE characters SET appearance = ? WHERE player_id = ? RETURNING class_id, status")
+    .bind(JSON.stringify(appearance), playerId)
+    .first<{ class_id: string; status: string }>();
+  if (!row) return false;
+  if (row.status === "active") await dressInGarb(db, playerId, row.class_id);
+  return true;
+}
+
+/**
+ * The look a hero who never chose one is given: their class's own skin and hair (the nearest of the presets),
+ * the usual everything else. They can change any of it from their hero sheet.
+ */
+export function classAppearance(classId: string): Appearance {
+  const look = LOOKS[classId];
+  const nearest = (hex: string | undefined, list: readonly string[]) => {
+    if (!hex) return list[0];
+    const rgb = (h: string) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
+    const [r, g, b] = rgb(hex);
+    let best = list[0];
+    let gap = Infinity;
+    for (const c of list) {
+      const [cr, cg, cb] = rgb(c);
+      const d = (r - cr) ** 2 + (g - cg) ** 2 + (b - cb) ** 2;
+      if (d < gap) [best, gap] = [c, d];
+    }
+    return best;
+  };
+  return { ...DEFAULT_APPEARANCE, skin: nearest(look?.skin, SKIN_TONES), hair: nearest(look?.hair, HAIR_COLORS) };
+}
+
+/**
+ * Give an active hero who has never chosen a look their class's (classAppearance), and their starting
+ * clothes. Done once, the first time they are loaded after looks came in; true if it was done now.
+ */
+export async function ensureLook(db: D1Database, playerId: string): Promise<boolean> {
+  const c = await db.prepare("SELECT class_id FROM characters WHERE player_id = ? AND status = 'active' AND appearance IS NULL").bind(playerId).first<{ class_id: string }>();
+  if (!c) return false;
+  const res = await db
+    .prepare("UPDATE characters SET appearance = ? WHERE player_id = ? AND status = 'active' AND appearance IS NULL")
+    .bind(JSON.stringify(classAppearance(c.class_id)), playerId)
+    .run();
+  if (!res.meta.changes) return false;
+  await dressInGarb(db, playerId, c.class_id);
+  return true;
+}
+
+/**
+ * Starting clothes for a hero who was out in the world before there were any: each piece they do not
+ * already have, put on in its slot if that slot is empty. A slot with armor in it gets nothing (so nothing
+ * they wear is moved and their pack is not filled); they go bare there if they take the armor off.
+ */
+export async function dressInGarb(db: D1Database, playerId: string, classId: string): Promise<void> {
+  const now = Date.now();
+  await db.batch(
+    starterGarb(classId).map((item) =>
+      db
+        .prepare(
+          `INSERT INTO inventory (player_id, kind, ref, name, rarity, slot, power, level_req, icon, stat_bonus_json, equipped, created_at)
+           SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 1, ?11
+           WHERE NOT EXISTS (SELECT 1 FROM inventory WHERE player_id = ?1 AND slot = ?6 AND equipped = 1)
+             AND NOT EXISTS (SELECT 1 FROM inventory WHERE player_id = ?1 AND ref = ?3)`,
+        )
+        .bind(playerId, item.kind, item.ref, item.name, item.rarity, item.slot, item.power, item.levelReq, item.icon, JSON.stringify(item.statBonus), now),
+    ),
+  );
 }
 
 /** Re-roll: the character and everything it owns is discarded. */
@@ -583,6 +671,8 @@ export async function heroInitFor(db: D1Database, playerId: string): Promise<Her
     brewBagOf(db, playerId),
   ]);
   const worn = inventory.filter((i) => i.equipped).map(rowToItem);
+  const gear = gearSheet(c.class_id, worn);
+  const appearance = parseAppearance(c.appearance ?? null);
   return {
     id: c.player_id,
     name: c.name,
@@ -592,7 +682,9 @@ export async function heroInitFor(db: D1Database, playerId: string): Promise<Her
     unspent: c.unspent_points,
     base: statsOf(c),
     traits: parseTraits(c.traits),
-    ...gearSheet(c.class_id, worn),
+    ...gear,
+    // Their chosen look travels with what they wear, so they are drawn as themselves wherever they are drawn.
+    outfit: appearance ? { ...gear.outfit, appearance } : gear.outfit,
     // What the furniture standing in their hut gives them on a voyage.
     hutPerks: hutPerks(placed.results),
     // And what they have eaten and drunk at the pub since their last one.
@@ -632,6 +724,7 @@ export async function publicHero(db: D1Database, viewerId: string, heroId: strin
     armor: hero.armor,
     gear: inventory.filter((i) => i.equipped).map(rowToItem),
     hutPerks: hero.hutPerks,
+    appearance: hero.outfit?.appearance,
   };
 }
 

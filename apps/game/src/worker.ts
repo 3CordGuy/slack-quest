@@ -4,7 +4,7 @@
 
 import { Hono, type Context } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
-import { HARBOR_PIERS, HARBOR_PLOTS, HARBOR_XP, HERO_CLASSES, MAX_CREW, PUB_BARKEEP, PUB_DEALER, PUB_MAX_TALK, PUB_MENU, dueIn, hutPerks, nextSalesmanVisit, salesman, salesmanVisitAt, makeRng, pubBuff, rollStartingStats, type RunKind } from "@gantt-quest/world";
+import { HARBOR_PIERS, HARBOR_PLOTS, HARBOR_XP, HERO_CLASSES, MAX_CREW, PUB_BARKEEP, PUB_DEALER, PUB_MAX_TALK, PUB_MENU, dueIn, hutPerks, nextSalesmanVisit, salesman, salesmanVisitAt, makeRng, parseAppearance, pubBuff, rollStartingStats, type RunKind } from "@gantt-quest/world";
 import { barkeepReply, heroName } from "./server/ai";
 import { contractBoard } from "./server/board";
 import { markReleaseSeen, seenRelease } from "./server/releases";
@@ -27,6 +27,8 @@ import {
   normalizeEmail,
   playerByEmail,
   confirmCharacter,
+  saveAppearance,
+  ensureLook,
   createCrew,
   createGuest,
   createRun,
@@ -180,6 +182,9 @@ app.use("/api/*", async (c, next) => {
 
 app.get("/api/me", async (c) => {
   const player = c.get("player");
+  // Looks are still only on development deployments: there, a hero from before them is given their class's
+  // look and starting clothes the first time they come in (see ensureLook).
+  if (isDev(c.env)) await ensureLook(c.env.DB, player.id);
   const [character, inventory, crew, carry, harborXp, seen, held] = await Promise.all([
     getCharacter(c.env.DB, player.id),
     getInventory(c.env.DB, player.id),
@@ -335,6 +340,14 @@ app.post("/api/character/reroll", async (c) => {
   // Their hut and roster entry disappear until the new character is confirmed.
   c.executionCtx.waitUntil(crewFor(c.env.DB, player.id).then((crew) => refreshHarbor(c.env, crew?.id ?? null)));
   return c.json({ ok: true });
+});
+
+// How the hero looks: body, face and colouring, from fixed presets (appearance.ts). Draft or active.
+app.post("/api/character/appearance", async (c) => {
+  const body = await c.req.json<{ appearance?: unknown }>().catch(() => ({}) as { appearance?: unknown });
+  if (!parseAppearance(body.appearance)) return c.json({ error: "That is not a look." }, 400);
+  const ok = await saveAppearance(c.env.DB, c.get("player").id, body.appearance);
+  return ok ? c.json({ ok }) : c.json({ error: "No character to dress." }, 409);
 });
 
 app.post("/api/character/spend", async (c) => {

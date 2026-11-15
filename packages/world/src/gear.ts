@@ -6,6 +6,7 @@
 // carry stat bonuses. Rarity sets how much an item carries; the level it
 // dropped at nudges its power.
 
+import { appearanceKey, type Appearance } from "./appearance";
 import { LEVELUP_AUTO_ALLOC, type StatKey, type Stats } from "@gantt-quest/core";
 import { WEAPONS, heroClass } from "./content";
 import { makeRng, seedFromString, type Rng } from "./rng";
@@ -141,6 +142,35 @@ const BASES: Record<Exclude<Slot, "main_hand">, Base[]> = {
 /** Every armor and trinket base, for the content catalogue. Read-only: the rules use BASES. */
 export const GEAR_BASES: readonly Base[] = Object.values(BASES).flat();
 
+/**
+ * Starting clothes: a class's own hat, tunic, trousers and shoes as items, worn from the first day. They
+ * give no armor and never drop or sell in the shop; they are there so a hero can take them off (and be
+ * seen in what is under them) or swap them for armor. Drawn in the wearer's class colours.
+ */
+export const GARB_PREFIX = "garb_";
+const GARB: { slot: "helmet" | "body" | "legs" | "boots"; ref: string; name: string; icon: string }[] = [
+  { slot: "helmet", ref: "garb_hat", name: "Hat", icon: "hood" },
+  { slot: "body", ref: "garb_tunic", name: "Tunic", icon: "chest-armor" },
+  { slot: "legs", ref: "garb_trousers", name: "Trousers", icon: "armored-pants" },
+  { slot: "boots", ref: "garb_shoes", name: "Shoes", icon: "boots" },
+];
+
+/** A new hero's starting clothes, named for their class ("Tidewall Paladin Tunic"). */
+export function starterGarb(classId: string): ItemDef[] {
+  const cls = heroClass(classId);
+  return GARB.map((g) => ({
+    kind: kindOfSlot(g.slot),
+    ref: g.ref,
+    name: `${cls?.name ?? "Plain"} ${g.name}`,
+    rarity: "common",
+    slot: g.slot,
+    power: 0,
+    statBonus: {},
+    levelReq: 1,
+    icon: g.icon,
+  }));
+}
+
 /** Word put in front of a base name for each rarity: "Fine Anchor Mace". */
 export const RARITY_PREFIX: Record<Rarity, string> = { common: "", uncommon: "Sturdy ", rare: "Fine ", epic: "Masterwork ", legendary: "Mythic " };
 const ARMOR_BASE: Partial<Record<Slot, number>> = { body: 3, helmet: 2, legs: 2, off_hand: 2 };
@@ -247,7 +277,7 @@ function baseItem(slot: Exclude<Slot, "main_hand">, base: Base, rarity: Rarity, 
 /** The slot a piece of gear goes in, from its ref: a weapon id (content.ts WEAPONS) or an armor or trinket base. Undefined if it is neither. */
 export function slotOfRef(ref: string): Slot | undefined {
   if (Object.hasOwn(WEAPONS, ref)) return "main_hand";
-  return (Object.keys(BASES) as Exclude<Slot, "main_hand">[]).find((s) => BASES[s].some((b) => b.ref === ref));
+  return (Object.keys(BASES) as Exclude<Slot, "main_hand">[]).find((s) => BASES[s].some((b) => b.ref === ref)) ?? GARB.find((g) => g.ref === ref)?.slot;
 }
 
 /**
@@ -290,9 +320,11 @@ export function loadoutOf(equipped: ItemDef[]): Loadout {
 
 /**
  * What a hero is visibly wearing, slot by slot: enough for a client to draw
- * the items on the hero's sprite, and nothing else.
+ * the items on the hero's sprite, and nothing else. It also carries how the
+ * hero chose to look (appearance.ts), so wherever a hero is drawn in their
+ * gear they are drawn as themselves.
  */
-export type Outfit = Partial<Record<Slot, { icon: string; ref: string; rarity: Rarity }>>;
+export type Outfit = Partial<Record<Slot, { icon: string; ref: string; rarity: Rarity }>> & { appearance?: Appearance };
 
 export function outfitOf(equipped: ItemDef[]): Outfit {
   const out: Outfit = {};
@@ -303,7 +335,7 @@ export function outfitOf(equipped: ItemDef[]): Outfit {
 /** Stable string for an outfit, for caching whatever is drawn from it. */
 export function outfitKey(outfit: Outfit | undefined): string {
   if (!outfit) return "";
-  return SLOTS.map((s) => (outfit[s] ? `${outfit[s]!.icon}:${outfit[s]!.rarity[0]}` : "-")).join(",");
+  return SLOTS.map((s) => (outfit[s] ? `${outfit[s]!.icon}:${outfit[s]!.rarity[0]}` : "-")).join(",") + (outfit.appearance ? `|${appearanceKey(outfit.appearance)}` : "");
 }
 
 /** Damage taken off each enemy hit by this much armor, before the half-the-hit cap. */

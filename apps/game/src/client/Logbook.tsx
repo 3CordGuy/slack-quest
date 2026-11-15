@@ -29,7 +29,7 @@ import { CatchBookPanel } from "./CatchBook";
 import { useAct } from "./Harbor";
 import { toOwned } from "./items";
 import { blurb, label } from "./labels";
-import { spriteDataUrl } from "./render/sprites";
+import { spriteDataUrl, withLook } from "./render/sprites";
 import "./book.css";
 
 type Page = "stats" | "traits" | "skills";
@@ -75,7 +75,7 @@ export function Logbook({ me, refresh, onClose, onIsland = false }: Props) {
         <section className="book-page left">
           <h2>{c.name}</h2>
           <p className="book-sub">{c.title ? <>{c.title} · </> : null}{label("class", c.class_id)} · Level {c.level}</p>
-          <div className="book-portrait"><img src={spriteDataUrl(c.class_id, outfitOf(worn), true)} alt="" /></div>
+          <div className="book-portrait"><img src={spriteDataUrl(c.class_id, withLook(outfitOf(worn), c.appearance), true)} alt="" /></div>
           <div className="book-xp" title={`${c.xp} of ${next} XP`}>
             <div style={{ width: `${(100 * c.xp) / next}%` }} />
             <span>{c.xp} / {next} experience</span>

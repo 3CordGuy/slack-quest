@@ -5,7 +5,7 @@ import type { ContractBoard } from "../server/board";
 
 /** What the contract dealer in the pub has: the crew goal and the contracts on offer. */
 export type Board = ContractBoard;
-import type { CarryState, FishSpot, GatherChoice, HarborXpStatus, GatherSpot, HarborWorks, HutSummary, ItemDef, Perk, ProjectAmounts, PublicHero, Resources, SalesEntry, SalesmanId, SalesmanVisit, ShopEntry, TradeSide } from "@gantt-quest/world";
+import type { Appearance, CarryState, FishSpot, GatherChoice, HarborXpStatus, GatherSpot, HarborWorks, HutSummary, ItemDef, Perk, ProjectAmounts, PublicHero, Resources, SalesEntry, SalesmanId, SalesmanVisit, ShopEntry, TradeSide } from "@gantt-quest/world";
 import { devTools } from "./devTools";
 import { forcedSalesman } from "./salesmanClock";
 import type { GatherStatus } from "../server/gather";
@@ -57,6 +57,8 @@ export interface Character {
   gold: number;
   /** JSON list of picked class trait ids (parse with parseTraits). */
   traits?: string;
+  /** JSON Appearance (parse with parseAppearance), or null if they never chose one. */
+  appearance?: string | null;
 }
 
 export interface InventoryItem {
@@ -157,6 +159,7 @@ export const api = {
   suggestName: (classId: string, avoid: string[]) => request<{ name: string }>("/api/character/name", { classId, avoid }),
   roll: (classId: string, name: string) => request<{ character: Character }>("/api/character/roll", { classId, name }),
   confirm: () => request("/api/character/confirm", {}),
+  setAppearance: (appearance: Appearance) => request("/api/character/appearance", { appearance }),
   reroll: () => request("/api/character/reroll", {}),
   spend: (stat: StatKey) => request("/api/character/spend", { stat }),
   pickTrait: (trait: string) => request("/api/character/trait", { trait }),
