@@ -294,8 +294,11 @@ function foldByLook(g: THREE.Group) {
 }
 /** The places that are buildings: inked round with a dark line, like the people, so a hero and the house behind them are drawn alike. */
 const BUILDINGS = new Set<Poi["kind"]>(["hut", "plot", "pub", "shop", "works", "lighthouse", "apothecary", "smithy", "galley", "fishing"]);
-/** How thick a building's outline is, in world units: a hero's (a 0.12 edge on their 22-unit frame, drawn 1.5 tall). */
-const BUILDING_EDGE = (0.12 / FRAME) * 1.5;
+/**
+ * How thick a building's outline is, in world units: a hero's (a 0.12 edge on their 22-unit frame, drawn 1.5
+ * tall), made heavier so a building's big plain walls and roofs read as inked from across the plaza.
+ */
+const BUILDING_EDGE = (0.12 / FRAME) * 1.5 * 1.8;
 const INK = new THREE.MeshBasicMaterial({ color: OUTLINE, side: THREE.BackSide });
 /** Shapes that are only a face, with no inside: an outline shell round them would show as a dark sheet behind. */
 const FLAT_SHAPES = new Set(["PlaneGeometry", "ShapeGeometry", "CircleGeometry", "RingGeometry"]);
