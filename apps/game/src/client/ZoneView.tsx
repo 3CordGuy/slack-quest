@@ -23,6 +23,7 @@ import {
   CONDITION_INFO,
   ENEMIES,
   FREE_WALK,
+  pathIn,
   SURFACE_INFO,
   THROWABLES,
   abilityArea,
@@ -60,6 +61,7 @@ import { OptionsMenu } from "./OptionsMenu";
 import * as THREE from "three";
 import { SpellFx } from "./render/SpellFx";
 import { TacticsLayer, type Overlay } from "./render/TacticsLayer";
+import { spriteDataUrl } from "./render/sprites";
 import { WorldRenderer, hexToWorld, tileTop, type RenderState } from "./render/WorldRenderer";
 import { HudBar, type HudSlot } from "./ui/Hud";
 import { useCountdown } from "./ui/useCountdown";
@@ -86,7 +88,7 @@ const asState = (view: ZoneViewState) => view as unknown as ZoneState;
 function dwell(ev: ZoneEvent): number {
   switch (ev.t) {
     case "moved": return Math.min(2400, ev.path.length * 400);
-    case "roll": return ev.roll.kind === "initiative" ? 0 : 520;
+    case "roll": return ev.roll.kind === "initiative" ? 110 : 520;
     case "used": return ev.what.startsWith("throw:") ? 620 : 320;
     case "hit": case "miss": return 430;
     case "heal": case "tick": return 380;
@@ -95,7 +97,7 @@ function dwell(ev: ZoneEvent): number {
     case "surface": case "up": case "fight_join": case "round": return 240;
     case "burst": case "reaction": return 300;
     case "shoved": case "jumped": return 400;
-    case "fight_start": return 900;
+    case "fight_start": return 1300;
     case "fight_end": return 700;
     default: return 0;
   }
@@ -132,6 +134,12 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
   const [crew, setCrew] = useState<CrewPlaces>([]);
   const [tradeWith, setTradeWith] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
+  /** A fight has just broken out: the screen says so for a moment. */
+  const [intro, setIntro] = useState(false);
+  /** Whoever the picture is showing act right now (an enemy mid-turn, while the server already waits on you). */
+  const [spot, setSpot] = useState<string | null>(null);
+  /** The label that rides beside the pointer: moved by hand, so the whole view is not drawn again for every pixel. */
+  const cursor = useRef<HTMLDivElement>(null);
   useEffect(() => {
     let live = true;
     const ask = () => api.crewPlaces().then((r) => live && setCrew(r.members), () => undefined);
@@ -185,25 +193,50 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
     const lines: string[] = [];
     let at = 0;
     const later = (run: () => void) => timers.current.push(setTimeout(run, at));
+    /** Whoever the last thing shown was done by, so a new actor can be announced once as their turn comes up. */
+    let acting: string | null = null;
+    const nowActing = (id: string) => {
+      if (id === acting) return;
+      acting = id;
+      const unit = find(id);
+      const foe = unit?.side === "enemy";
+      const where = unit?.pos;
+      later(() => {
+        setSpot(id);
+        // An enemy's turn is heard, and the view goes to it. Your own is announced by its own event.
+        if (foe && next.encounter) {
+          sounds.zone("turn.enemy");
+          if (where) renderer.current?.lookAt(where);
+        }
+      });
+    };
     for (const ev of events) {
       const say = (line: string) => later(() => setFeed((f) => [...f, line].slice(-40)));
       const view = renderer.current;
+      if ((ev.t === "moved" || ev.t === "used" || ev.t === "jumped") && next.encounter?.order.includes(ev.id)) nowActing(ev.id);
       if (ev.t === "moved") {
         const u = find(ev.id);
         if (u) u.pos = ev.path[ev.path.length - 1];
         later(() => view?.walkUnit(ev.id, ev.path));
-      } else if (ev.t === "jumped" || (ev.t === "shoved" && ev.to)) {
-        const id = ev.t === "jumped" ? ev.id : ev.target;
-        const to = ev.to!;
-        const u = find(id);
-        if (u) u.pos = to;
+      } else if (ev.t === "jumped") {
+        const u = find(ev.id);
+        if (u) u.pos = ev.to;
         later(() => {
-          sounds.zone(ev.t === "jumped" ? "jump" : "shove", view?.whereIs(id));
-          view?.walkUnit(id, [to]);
+          sounds.zone("jump", view?.whereIs(ev.id));
+          view?.walkUnit(ev.id, [ev.to]);
         });
-        if (ev.t === "shoved") say(`${name(ev.id)} shoves ${name(ev.target)} back.`);
       } else if (ev.t === "shoved") {
-        say(`${name(ev.id)} shoves ${name(ev.target)}, who has nowhere to go and falls.`);
+        const u = find(ev.target);
+        const to = ev.to;
+        if (u && to) u.pos = to;
+        later(() => {
+          // Flung back and off their feet; with nowhere to go, flattened where they stand.
+          sounds.zone("shove", view?.whereIs(ev.target));
+          if (to) view?.knock(ev.target, to);
+          else view?.floor(ev.target);
+          timers.current.push(setTimeout(() => sounds.zone("fall", view?.whereIs(ev.target)), 260));
+        });
+        say(to ? `${name(ev.id)} shoves ${name(ev.target)} back.` : `${name(ev.id)} shoves ${name(ev.target)}, who has nowhere to go and falls.`);
       } else if (ev.t === "used") {
         say(`${name(ev.id)}: ${ev.name}${ev.target ? ` on ${name(ev.target)}` : ""}.`);
         const user = find(ev.id);
@@ -222,7 +255,10 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
             sounds.zone("throw", view?.whereIs(ev.id));
             view?.cast(ev.id, ev.name, hexToWorld(ev.at).x, hexToWorld(ev.at).z);
             const land = point(ev.at, 0.05);
-            fxs.launch("flask", from, land, THROW_COLOR[thrown], () => fxs.ring(land, 2.4, THROW_COLOR[thrown]));
+            fxs.launch("flask", from, land, THROW_COLOR[thrown], () => {
+              sounds.zone("shatter", { x: land.x, z: land.z });
+              fxs.ring(land, 2.4, THROW_COLOR[thrown]);
+            });
             return;
           }
           if (ev.what.startsWith("drink:")) return fxs.motes(point(user.pos, 0.3), "#7dff9a");
@@ -249,7 +285,13 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
           }
         });
       } else if (ev.t === "roll") {
-        if (ev.roll.kind !== "initiative") {
+        if (ev.roll.kind === "initiative") {
+          // Each fighter's roll comes up over their head, one after another.
+          later(() => {
+            sounds.zone("roll");
+            view?.floatOver(ev.roll.id, String(ev.roll.total), "#ffe9a8");
+          });
+        } else {
           later(() => {
             sounds.zone(ev.roll.crit ? "roll.crit" : "roll");
             setRoll(ev.roll);
@@ -278,7 +320,7 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
             // A miss flies wide of the mark.
             const end = hit ? to : to.clone().add(new THREE.Vector3(0.7, 0.5, 0.5));
             fxs.launch(kind, from, end, color, () => {
-              view?.landed(ev.target, what, hit, hit && ev.crit);
+              view?.landed(ev.target, what, hit, hit && ev.crit, ev.actor);
               mark();
             });
             return;
@@ -287,7 +329,7 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
             view?.cast(ev.actor!, what, to.x, to.z);
             fxs.spark([chained, to], color);
           }
-          if (kind !== "none" && kind !== "ring" && kind !== "beam") view?.landed(ev.target, what, hit, hit && ev.crit);
+          if (kind !== "none") view?.landed(ev.target, what, hit, hit && ev.crit, ev.actor);
           mark();
         });
         say(hit ? `${name(ev.target)} takes ${ev.amount}${ev.crit ? " (critical hit)" : ""}.` : `${name(ev.actor)} misses ${name(ev.target)}.`);
@@ -341,10 +383,16 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
       } else if (ev.t === "alert") {
         say(`${name(ev.by)} has been seen.`);
       } else if (ev.t === "fight_start") {
+        // The view goes to the middle of it, and the screen says a fight is on while the dice come up.
+        const fighters = ev.units.map(find).filter((u): u is Unit => !!u);
+        const mid = fighters.length > 0 ? { q: fighters.reduce((n, u) => n + u.pos.q, 0) / fighters.length, r: fighters.reduce((n, u) => n + u.pos.r, 0) / fighters.length } : null;
+        const centre = mid ? fighters.reduce((best, u) => (Math.hypot(u.pos.q - mid.q, u.pos.r - mid.r) < Math.hypot(best.pos.q - mid.q, best.pos.r - mid.r) ? u : best)).pos : null;
         later(() => {
           sounds.stinger("battle_start");
           sounds.zone("initiative");
-          setBanner("A fight!");
+          setIntro(true);
+          timers.current.push(setTimeout(() => setIntro(false), 1700));
+          if (centre) view?.lookAt(centre);
         });
         say("A fight breaks out. Roll for initiative.");
       } else if (ev.t === "fight_join") {
@@ -353,9 +401,12 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
         say(`Round ${ev.n}.`);
       } else if (ev.t === "turn") {
         if (ev.ids.some((id) => next.units.some((u) => u.id === id && (u.id === next.you || u.controller === next.you)))) {
+          const yours = next.units.find((u) => ev.ids.includes(u.id) && (u.id === next.you || u.controller === next.you));
           later(() => {
             sounds.yourTurn();
             setBanner("Your turn");
+            setSpot(null);
+            if (yours) view?.lookAt(yours.pos);
           });
         }
       } else if (ev.t === "fight_end") {
@@ -373,7 +424,10 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
       at += dwell(ev);
     }
     if (lines.length > 0) setFeed((f) => [...f, ...lines].slice(-40));
-    later(() => setPicture(end));
+    later(() => {
+      setPicture(end);
+      setSpot(null);
+    });
   });
   useEffect(() => () => timers.current.forEach(clearTimeout), []);
 
@@ -428,7 +482,7 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
 
   // In a dev build, the state and a way to act on it, for the console.
   useEffect(() => {
-    if (import.meta.env.DEV) (window as unknown as Record<string, unknown>).__gqZone = { state: zone.state, send };
+    if (import.meta.env.DEV) (window as unknown as Record<string, unknown>).__gqZone = { state: zone.state, send, layer: layer.current, view: renderer.current };
   }, [zone.state, send]);
 
   const picking = !!pick || !!dev.tool;
@@ -449,8 +503,8 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
       phase: "overworld",
       round: 0,
       map: state.map,
-      heroes: picture.units.filter((u) => u.side === "hero").map((u) => ({ id: u.id, classId: u.kind, pos: u.pos, name: u.name, outfit: u.outfit, level: u.level, xp: 0, hp: u.hp, maxHp: u.maxHp, down: u.down, active: turn(u.id) })),
-      units: picture.units.filter((u) => u.side === "enemy").map((u) => ({ id: u.id, kind: u.kind, pos: u.pos, name: u.name, hp: inFight(u.id) || u.hp < u.maxHp ? u.hp / u.maxHp : undefined, down: u.down, active: turn(u.id), hostile: inFight(u.id) })),
+      heroes: picture.units.filter((u) => u.side === "hero").map((u) => ({ id: u.id, classId: u.kind, pos: u.pos, name: u.name, outfit: u.outfit, level: u.level, xp: 0, hp: u.hp, maxHp: u.maxHp, down: u.down, prone: u.conditions.some((c) => c.kind === "prone"), active: turn(u.id) })),
+      units: picture.units.filter((u) => u.side === "enemy").map((u) => ({ id: u.id, kind: u.kind, pos: u.pos, name: u.name, hp: inFight(u.id) || u.hp < u.maxHp ? u.hp / u.maxHp : undefined, down: u.down, prone: u.conditions.some((c) => c.kind === "prone"), active: u.id === spot, hostile: inFight(u.id) })),
       turn: null,
       story: null,
       npcs: {},
@@ -461,7 +515,7 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
     view.setState(scene);
     layer.current?.setMap(state.map);
     layer.current?.setSurfaces(picture.surfaces);
-  }, [state, picture, reach, act?.id, fighting, code, enc]);
+  }, [state, picture, reach, act?.id, fighting, code, enc, spot]);
 
   // ---------- what a pick reaches, and what it would cover ----------
 
@@ -510,6 +564,57 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
     return out;
   }, [state, z, act, pick, hover, dev.showAlert, dev.tool]);
   useEffect(() => layer.current?.setOverlays(overlays), [overlays]);
+
+  // ---------- what a move would cost, at the pointer ----------
+
+  // Further than this turn's movement reaches: how far it would be, so the way can be shown in red.
+  const far = useMemo(() => {
+    if (!z || !act || !budget || !myTurn || picking || !hover || reach.has(posKey(hover))) return null;
+    return zoneReach(z, act, budget.move + 18);
+  }, [z, act, budget, myTurn, picking, hover, reach]);
+  const moveTip = useMemo(() => {
+    if (!state || !enc || !act || !budget || !myTurn || picking || !hover) return null;
+    const near = reach.get(posKey(hover));
+    const got = near ?? far?.get(posKey(hover));
+    if (!got) return { none: true as const };
+    if (got.cost === 0) return null;
+    const from = near ? reach : far!;
+    const path = pathIn(from, hover) ?? [];
+    // Enemies whose reach the way out of here leaves, and who still have a blow to answer it with.
+    const drawn = new Set<string>();
+    let at = act.pos;
+    if (!budget.disengaged) {
+      for (const step of path) {
+        for (const u of state.units) {
+          if (u.side !== act.side && !u.down && enc.order.includes(u.id) && !enc.reacted.includes(u.id) && hexDistance(u.pos, at) === 1 && hexDistance(u.pos, step) > 1) drawn.add(u.id);
+        }
+        at = step;
+      }
+    }
+    const ground = [...new Set(path.map((p) => state.surfaces[posKey(p)]?.kind).filter((k): k is "poison" | "fire" | "ice" => k === "poison" || k === "fire" || k === "ice"))];
+    return {
+      none: false as const,
+      cost: got.cost,
+      left: budget.move,
+      // Out of reach, or somebody is standing there.
+      beyond: !near,
+      taken: !got.stop,
+      drawn: drawn.size,
+      ground,
+      steps: near ? [] : path.map((pos) => ({ pos, ok: (from.get(posKey(pos))?.cost ?? Infinity) <= budget.move })),
+    };
+  }, [state, enc, act, budget, myTurn, picking, hover, reach, far]);
+  useEffect(() => layer.current?.setPath(moveTip && !moveTip.none ? moveTip.steps : []), [moveTip]);
+
+  // A marker over whoever's turn it is: gold for yours, pale for a crewmate's, red for the enemy's.
+  useEffect(() => {
+    const marks: { id: string; color: string }[] = [];
+    if (enc && state) {
+      if (spot) marks.push({ id: spot, color: state.units.find((u) => u.id === spot)?.side === "enemy" ? "#ff4d4d" : "#fff1c9" });
+      else for (const id of enc.acting) if (!enc.done.includes(id)) marks.push({ id, color: mine.some((u) => u.id === id) ? "#ffd23f" : "#fff1c9" });
+    }
+    layer.current?.setTurnMarkers(marks);
+  }, [enc, state, spot, mine]);
 
   // The line of a shot, a spell or a throw to where the pointer is: pale when it can be made, red when it cannot.
   useEffect(() => {
@@ -693,21 +798,60 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
   const surface = hover ? state.surfaces[posKey(hover)] : undefined;
 
   return (
-    <div className={`run zone-view ${picking ? "picking" : ""}`} onContextMenu={(e) => { if (pick) { e.preventDefault(); setPick(null); } }}>
+    <div
+      className={`run zone-view ${picking ? "picking" : ""} ${fighting ? "in-fight" : ""} ${myTurn && !spot ? "my-turn" : ""}`}
+      onContextMenu={(e) => { if (pick) { e.preventDefault(); setPick(null); } }}
+      onPointerMove={(e) => { if (cursor.current) cursor.current.style.transform = `translate(${e.clientX + 18}px, ${e.clientY + 14}px)`; }}
+    >
       <div className="stage" ref={mount} />
+      {/* The edge of the screen while a fight is on: red while you wait, gold when it is yours. */}
+      <div className="zone-frame" aria-hidden />
+
+      {intro && (
+        <div className="zone-intro" role="status">
+          <div className="zone-intro-band">
+            <strong>Combat</strong>
+            <span>Roll for initiative</span>
+          </div>
+        </div>
+      )}
+
+      <div ref={cursor} className={`zone-cursor ${moveTip ? "" : "off"} ${moveTip && (moveTip.none || moveTip.beyond || moveTip.taken) ? "bad" : ""}`} aria-hidden>
+        {moveTip && (moveTip.none ? (
+          <strong>No way there</strong>
+        ) : (
+          <>
+            <span className="zone-cursor-cost"><strong>{moveTip.cost}</strong> / {moveTip.left}</span>
+            <span className="zone-cursor-note">{moveTip.beyond ? `${moveTip.cost - moveTip.left} too far` : moveTip.taken ? "someone is standing there" : `${moveTip.left - moveTip.cost} left after`}</span>
+            {moveTip.drawn > 0 && <span className="zone-cursor-warn">Draws {moveTip.drawn === 1 ? "an attack" : `${moveTip.drawn} attacks`} as you leave</span>}
+            {moveTip.ground.map((k) => <span key={k} className="zone-cursor-warn" style={{ color: SURFACE_INFO[k].color }}>Through {SURFACE_INFO[k].name.toLowerCase()}</span>)}
+          </>
+        ))}
+      </div>
 
       {enc && (
-        <div className="zone-order panel" aria-label="Initiative order">
-          <span className="zone-round">Round {enc.round}</span>
-          {enc.order.map((id) => {
+        <div className="zone-order" aria-label="Turn order">
+          <span className="zone-round">Round<strong>{enc.round}</strong></span>
+          {enc.order.map((id, i) => {
             const u = (picture?.units ?? state.units).find((x) => x.id === id);
             if (!u) return null;
-            const turn = enc.acting.includes(id) && !enc.done.includes(id);
+            const turn = spot ? id === spot : enc.acting.includes(id) && !enc.done.includes(id);
+            const spent = !spot && enc.acting.includes(id) && enc.done.includes(id);
+            // Heroes side by side in the order take their turns together: drawn joined up.
+            const before = state.units.find((x) => x.id === enc.order[i - 1]);
+            const joined = u.side === "hero" && before?.side === "hero";
             return (
-              <span key={id} className={`zone-chip ${u.side} ${turn ? "turn" : ""} ${u.down ? "down" : ""}`} title={`${u.name} · initiative ${enc.init[id]}`}>
-                <strong>{u.name.split(" ")[0]}</strong>
+              <button
+                key={id}
+                type="button"
+                className={`zone-face ${u.side} ${turn ? "turn" : ""} ${spent ? "spent" : ""} ${u.down ? "down" : ""} ${joined ? "joined" : ""} ${mine.some((m) => m.id === id) ? "mine" : ""}`}
+                title={`${u.name} · ${u.hp}/${u.maxHp} HP · initiative ${enc.init[id]}`}
+                onClick={() => renderer.current?.lookAt(u.pos)}
+              >
+                <img className="pixel-icon" src={spriteDataUrl(u.kind, u.outfit)} alt="" draggable={false} />
                 <span className="zone-hp"><i style={{ width: `${(100 * u.hp) / u.maxHp}%` }} /></span>
-              </span>
+                <span className="zone-face-name">{u.name.split(" ")[0]}</span>
+              </button>
             );
           })}
         </div>

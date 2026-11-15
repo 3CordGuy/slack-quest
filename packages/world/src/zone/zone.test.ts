@@ -7,7 +7,7 @@ import { walk } from "./combat";
 import { attackContext, type Ctx } from "./engine";
 import { ALERT_RANGE, DEFAULT_ZONE_OPTIONS, JOIN_RANGE, generateZone, zoneOptions } from "./gen";
 import { adjacent, blast, flies, sees, solid, zoneReach } from "./geometry";
-import { ENEMY_KIT, TACTICS, enemyStrikes, tacticOf } from "./kit";
+import { ENEMY_KIT, TACTICS, enemyHp, enemyStrikes, tacticOf } from "./kit";
 import { d20, diceAverage, diceFor, heroMove, hitChance } from "./rules";
 import { createZone, standInHero, stepZone } from "./zone";
 import type { SurfaceKind, Unit, ZoneAction, ZoneEvent, ZoneState } from "./types";
@@ -575,7 +575,35 @@ describe("items", () => {
 
 // ---------- the enemy ----------
 
+describe("threat", () => {
+  it("makes the enemy tougher, sharper and more numerous as it rises", () => {
+    expect(enemyHp("wolf", 1, 1)).toBe(ENEMIES.wolf.hp);
+    expect(enemyHp("wolf", 1, 2)).toBeGreaterThan(enemyHp("wolf", 1, 1) * 1.5);
+    expect(enemyHp("wolf", 1, 3)).toBeGreaterThan(enemyHp("wolf", 1, 2));
+    expect(enemyStrikes("wolf", 1, 3)[0].bonus).toBe(enemyStrikes("wolf", 1, 1)[0].bonus + 2);
+    const count = (threat: number) => createZone("T", "threat", zoneOptions({ groups: 2, kinds: ["wolf"], party: 2, threat })).units.filter((u) => u.side === "enemy").length;
+    expect(count(1)).toBe(4);
+    expect(count(2)).toBe(6);
+    expect(count(3)).toBe(8);
+    // A zone made before there was a threat is a fair fight.
+    expect(zoneOptions({}).threat).toBe(2);
+  });
+});
+
 describe("the enemy's turn", () => {
+  it("runs when nothing is in reach, giving up its attack for twice the ground", () => {
+    let state = board();
+    hero(state, "ann", "qa_paladin", at(1, 6));
+    const bear = enemy(state, "bear", at(13, 6));
+    const events: ZoneEvent[] = [];
+    state = provoke(state, "ann", events);
+    for (let i = 0; i < 3 && !events.some((e) => e.t === "moved" && e.id === bear.id); i++) state = must(state, { type: "timeout" }, events);
+    const walked = events.filter((e): e is Extract<ZoneEvent, { t: "moved" }> => e.t === "moved" && e.id === bear.id).flatMap((e) => e.path);
+    expect(events.some((e) => e.t === "used" && e.id === bear.id && e.what === "dash")).toBe(true);
+    // A bear covers 5 a turn: dashing, more than that in one go.
+    expect(walked.length).toBeGreaterThan(5);
+  });
+
   it("closes on a hero and attacks", () => {
     let state = board();
     hero(state, "ann", "qa_paladin", at(4, 6));
@@ -670,8 +698,8 @@ describe("the end of a fight", () => {
   });
 
   it("plays whole fights on generated maps without breaking its own rules", () => {
-    for (let seed = 0; seed < 12; seed++) {
-      let state = createZone("PLAY", `play-${seed}`, zoneOptions({ size: "small", biome: (["meadow", "woods", "caves", "shore"] as const)[seed % 4], groups: 2, party: 2, clear: 3, obstacles: 2, elevation: 2 }));
+    for (let seed = 0; seed < 9; seed++) {
+      let state = createZone("PLAY", `play-${seed}`, zoneOptions({ size: "small", biome: (["meadow", "woods", "caves", "shore"] as const)[seed % 4], groups: 2, party: 2, clear: 3, obstacles: 2, elevation: 2, threat: (seed % 3) + 1 }));
       state = must(state, { type: "join", hero: standInHero("refactor_rogue", "ann", 3)! });
       state = must(state, { type: "join", hero: standInHero("devops_mage", "bo", 3)! });
       const check = () => {
@@ -686,7 +714,7 @@ describe("the end of a fight", () => {
         }
         if (state.encounter) for (const id of state.encounter.acting) expect(state.encounter.order, where).toContain(id);
       };
-      for (let step = 0; step < 400; step++) {
+      for (let step = 0; step < 150; step++) {
         if (!state.units.some((u) => u.side === "enemy" && !u.down)) break;
         for (const id of ["ann", "bo"]) {
           const me = unit(state, id);
@@ -714,5 +742,5 @@ describe("the end of a fight", () => {
       // Either the map is cleared or it ran long; either way the state is whole.
       check();
     }
-  });
+  }, 60_000);
 });

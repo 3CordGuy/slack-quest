@@ -27,6 +27,8 @@ export {
   enemyStrikes,
   enemyDefence,
   enemyMove,
+  enemyHp,
+  DEFAULT_THREAT,
   type Tactic,
   type Shape,
   type ThrowableDef,

@@ -4,7 +4,8 @@
 // could do from there: how hard it could hit and whom, whether getting
 // there crosses fire or poison or draws a blow, and (for those that shoot)
 // whether it is high ground with nobody breathing down its neck. Then it
-// goes to the best one and attacks.
+// goes to the best one and attacks. If nothing it can reach lets it attack,
+// it gives up its attack to run: twice as far, toward whoever is nearest.
 
 import { hexDistance, posKey, type HexPos } from "@gantt-quest/core";
 import { enemyAct, walk } from "./combat";
@@ -58,44 +59,62 @@ function bestAttack(state: ZoneState, enemy: Unit, pos: HexPos, strikes: EnemySt
 export function enemyTurn(ctx: Ctx, enemy: Unit, budget: Budget): void {
   const { state } = ctx;
   if (state.aiOff) return;
-  const strikes = enemyStrikes(enemy.kind, enemy.level);
+  const strikes = enemyStrikes(enemy.kind, enemy.level, state.options.threat);
   const heroes = state.units.filter((u) => u.side === "hero" && !u.down && inFight(state, u.id));
   if (strikes.length === 0 || heroes.length === 0) return;
   const kit = ENEMY_KIT[enemy.kind] ?? {};
   const air = flies(enemy);
   const harmful = new Set(Object.entries(state.surfaces).filter(([, s]) => HARMFUL.has(s.kind)).map(([key]) => key));
-  // Two looks at the ground: one that will not set foot in fire or poison, and one that will.
-  const clean = zoneReach(state, enemy, budget.move, air || harmful.size === 0 ? undefined : harmful);
-  const any = air || harmful.size === 0 ? clean : zoneReach(state, enemy, budget.move);
   const nearest = (pos: HexPos) => Math.min(...heroes.map((h) => hexDistance(pos, h.pos)));
 
-  let best: { path: HexPos[]; score: number } | null = null;
-  for (const [key, reached] of any) {
-    if (!reached.stop) continue;
-    const viaClean = clean.get(key);
-    const path = pathIn(viaClean ? clean : any, reached.pos) ?? [];
-    let score = -(viaClean ?? reached).cost * 0.05;
-    // The ground on the way, and where it would end up standing.
-    if (!air) score -= 4 * path.filter((p) => harmful.has(posKey(p))).length + (harmful.has(key) ? 2 : 0);
-    // Blows drawn by walking out of reach.
-    if (!budget.disengaged) {
-      const drawn = new Set<string>();
-      let from = enemy.pos;
-      for (const step of path) {
-        for (const h of heroes) if (adjacent(h.pos, from) && !adjacent(h.pos, step) && !state.encounter?.reacted.includes(h.id) && !has(h, "stunned") && !has(h, "prone")) drawn.add(h.id);
-        from = step;
+  /** The best place to end this move, weighing what could be done from there against what getting there costs. */
+  const choose = (): { path: HexPos[]; score: number; attacks: boolean } | null => {
+    // Two looks at the ground: one that will not set foot in fire or poison, and one that will.
+    const clean = zoneReach(state, enemy, budget.move, air || harmful.size === 0 ? undefined : harmful);
+    const any = air || harmful.size === 0 ? clean : zoneReach(state, enemy, budget.move);
+    let best: { path: HexPos[]; score: number; attacks: boolean } | null = null;
+    for (const [key, reached] of any) {
+      if (!reached.stop) continue;
+      const viaClean = clean.get(key);
+      const path = pathIn(viaClean ? clean : any, reached.pos) ?? [];
+      let score = -(viaClean ?? reached).cost * 0.05;
+      // The ground on the way, and where it would end up standing.
+      if (!air) score -= 4 * path.filter((p) => harmful.has(posKey(p))).length + (harmful.has(key) ? 2 : 0);
+      // Blows drawn by walking out of reach.
+      if (!budget.disengaged) {
+        const drawn = new Set<string>();
+        let from = enemy.pos;
+        for (const step of path) {
+          for (const h of heroes) if (adjacent(h.pos, from) && !adjacent(h.pos, step) && !state.encounter?.reacted.includes(h.id) && !has(h, "stunned") && !has(h, "prone")) drawn.add(h.id);
+          from = step;
+        }
+        score -= 3 * drawn.size;
       }
-      score -= 3 * drawn.size;
+      const option = budget.action ? bestAttack(state, enemy, reached.pos, strikes, heroes) : null;
+      if (option) {
+        score += option.worth;
+        // Two on one: a blow lands better with a friend already at the target's side.
+        if (option.target && state.units.some((u) => u.id !== enemy.id && u.side === "enemy" && !u.down && adjacent(u.pos, option.target!.pos))) score += 1;
+        // Those that shoot like room, and do not like company.
+        if (kit.ranged) score += Math.min(nearest(reached.pos), 4) * 0.4;
+      }
+      // Nothing to hit from there: at least get closer.
+      else score -= 50 + nearest(reached.pos);
+      if (!best || score > best.score) best = { path, score, attacks: !!option };
     }
-    const option = bestAttack(state, enemy, reached.pos, strikes, heroes);
-    if (option) score += option.worth;
-    // Nothing to hit from there: at least get closer.
-    else score -= 50 + nearest(reached.pos);
-    // Those that shoot like room, and do not like company.
-    if (kit.ranged && option) score += Math.min(nearest(reached.pos), 4) * 0.4;
-    if (!best || score > best.score) best = { path, score };
+    return best;
+  };
+
+  let plan = choose();
+  // Nothing in reach this turn: run. The attack is given up for twice the ground.
+  if (plan && !plan.attacks && budget.action && budget.moveMax > 0) {
+    budget.action = false;
+    budget.move += budget.moveMax;
+    ctx.events.push({ t: "used", id: enemy.id, what: "dash", name: "Dash" });
+    plan = choose();
   }
-  if (best && best.path.length > 0) walk(ctx, enemy, best.path, budget);
+  if (plan && plan.path.length > 0) walk(ctx, enemy, plan.path, budget);
+  if (enemy.down || has(enemy, "prone") || !budget.action) return;
   if (enemy.down || has(enemy, "prone")) return;
   // It may not have got where it meant to: look again from where it stands.
   const still = state.units.filter((u) => u.side === "hero" && !u.down && inFight(state, u.id));

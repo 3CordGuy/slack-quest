@@ -9,6 +9,7 @@ import { ENEMIES, bandKinds, cavernBand, type CavernLead, type RoamerLead } from
 import { BASE_HEIGHT, type Biome, type Tile, type WorldMap } from "../map";
 import { makeRng, seedFromString } from "../rng";
 import { hexesBetween, solid } from "./geometry";
+import { threatExtras } from "./kit";
 import type { ZoneBiome, ZoneOptions, ZoneSize } from "./types";
 
 export const ZONE_GRIDS: Record<ZoneSize, HexGrid> = {
@@ -26,7 +27,7 @@ export const ALERT_RANGE = 1;
 /** How near a fight a hero has to be to be drawn into it. */
 export const JOIN_RANGE = 6;
 
-export const DEFAULT_ZONE_OPTIONS: ZoneOptions = { size: "medium", biome: "meadow", groups: 2, kinds: [], elevation: 1, obstacles: 1, clear: 4, party: 2, level: 1 };
+export const DEFAULT_ZONE_OPTIONS: ZoneOptions = { size: "medium", biome: "meadow", groups: 2, kinds: [], elevation: 1, obstacles: 1, clear: 4, party: 2, level: 1, threat: 2 };
 
 /** What tends to lead a group in each kind of place. */
 export const BIOME_LEADS: Record<ZoneBiome, string[]> = {
@@ -54,6 +55,7 @@ export function zoneOptions(raw: unknown): ZoneOptions {
     clear: whole(o.clear, 2, 8, d.clear),
     party: whole(o.party, 1, 4, d.party),
     level: whole(o.level, 1, 40, d.level),
+    threat: whole(o.threat, 1, 3, d.threat ?? 2),
   };
 }
 
@@ -175,8 +177,10 @@ export function generateZone(seed: string, options: ZoneOptions): ZonePlan {
   const taken = new Set<string>();
   const groups = centres.map((c, i) => {
     const kinds = groupKinds(options.kinds.length > 0 ? leads[i % leads.length] : rng.pick(leads), options.party);
+    // A more dangerous zone has more of them in each group: another of whoever came with the leader. A boss still stands alone.
+    if (!ENEMIES[kinds[0]]?.boss && kinds[0] !== "dummy") for (let n = 0; n < threatExtras(options.threat); n++) kinds.push(kinds[kinds.length - 1]);
     const posts = inner
-      .filter((p) => hexDistance(p, c) <= 2 && open.has(posKey(p)) && !taken.has(posKey(p)))
+      .filter((p) => hexDistance(p, c) <= 3 && open.has(posKey(p)) && !taken.has(posKey(p)))
       .sort((a, b) => hexDistance(a, c) - hexDistance(b, c) || a.q - b.q || a.r - b.r)
       .slice(0, kinds.length);
     for (const p of posts) taken.add(posKey(p));

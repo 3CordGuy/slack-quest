@@ -30,6 +30,11 @@ export class TacticsLayer {
   private map: WorldMap | null = null;
   private arc: THREE.Line | null = null;
   private arcSig = "";
+  private path = new THREE.Group();
+  private pathSig = "";
+  /** Markers bobbing over whoever's turn it is: each follows its unit about. */
+  private marks: { id: string; mesh: THREE.Mesh }[] = [];
+  private markSig = "";
   private overlaySig = "";
   private groundSig = "";
   private stop: () => void;
@@ -37,10 +42,18 @@ export class TacticsLayer {
   private pulse: THREE.MeshBasicMaterial[] = [];
 
   constructor(private renderer: WorldRenderer) {
-    this.group.add(this.ground, this.overlays);
+    this.group.add(this.ground, this.overlays, this.path);
     renderer.addObject(this.group);
     this.stop = renderer.addTicker((_dt, _camera, clock) => {
       for (const [i, m] of this.pulse.entries()) m.opacity = (m.userData.base as number) * (0.82 + 0.18 * Math.sin(clock * 2.2 + i));
+      for (const { id, mesh } of this.marks) {
+        const head = renderer.unitHead(id);
+        mesh.visible = !!head;
+        if (!head) continue;
+        // Clear of the name plate that sits over the head.
+        mesh.position.set(head.x, head.y + 1.05 + Math.sin(clock * 3.2) * 0.09, head.z);
+        mesh.rotation.y = clock * 1.6;
+      }
     });
   }
 
@@ -48,7 +61,9 @@ export class TacticsLayer {
     this.stop();
     this.clear(this.overlays);
     this.clear(this.ground);
+    this.clear(this.path);
     this.setArc(null);
+    this.setTurnMarkers([]);
     this.renderer.removeObject(this.group);
   }
 
@@ -156,6 +171,50 @@ export class TacticsLayer {
     line.renderOrder = 4;
     this.arc = line;
     this.group.add(line);
+  }
+
+  /**
+   * The way to somewhere that cannot be reached this turn, step by step: pale as far as the movement
+   * left will carry, red from there on. Empty takes it away.
+   */
+  setPath(steps: { pos: HexPos; ok: boolean }[]) {
+    const sig = steps.map((s) => `${posKey(s.pos)}${s.ok ? "" : "!"}`).join(" ");
+    if (sig === this.pathSig) return;
+    this.pathSig = sig;
+    this.clear(this.path);
+    for (const ok of [true, false]) {
+      const points = steps.filter((s) => s.ok === ok);
+      if (points.length === 0) continue;
+      const dots = new THREE.InstancedMesh(new THREE.SphereGeometry(ok ? 0.09 : 0.11, 8, 6), new THREE.MeshBasicMaterial({ color: ok ? "#eaf6ff" : "#ff4d4d", transparent: true, opacity: 0.9, depthWrite: false }), points.length);
+      const at = new THREE.Matrix4();
+      points.forEach((s, i) => {
+        const { x, z } = hexToWorld(s.pos);
+        dots.setMatrixAt(i, at.makeTranslation(x, this.top(s.pos) + 0.2, z + 0.25));
+      });
+      dots.renderOrder = 3;
+      this.path.add(dots);
+    }
+  }
+
+  /** A marker over the head of everyone whose turn it is, in the colour given: it follows them as they move. */
+  setTurnMarkers(marks: { id: string; color: string }[]) {
+    const sig = marks.map((m) => `${m.id}:${m.color}`).join("|");
+    if (sig === this.markSig) return;
+    this.markSig = sig;
+    for (const { mesh } of this.marks) {
+      this.group.remove(mesh);
+      mesh.geometry.dispose();
+      (mesh.material as THREE.Material).dispose();
+    }
+    this.marks = marks.map(({ id, color }) => {
+      // A little four-sided arrowhead, point down.
+      const mesh = new THREE.Mesh(new THREE.ConeGeometry(0.24, 0.42, 4), new THREE.MeshBasicMaterial({ color, depthTest: false, transparent: true, opacity: 0.95 }));
+      mesh.rotation.x = Math.PI;
+      mesh.renderOrder = 6;
+      mesh.visible = false;
+      this.group.add(mesh);
+      return { id, mesh };
+    });
   }
 
   /** Draw the ground as it now is: one sheet per kind of surface. */

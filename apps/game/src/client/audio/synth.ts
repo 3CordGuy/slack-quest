@@ -21,7 +21,12 @@ export type SynthCombat =
   | "heal" | "heal_fail"
   | "bleed" | "burn" | "stun" | "buff" | "debuff"
   | "hero_down" | "enemy_down" | "boss_down"
-  | "boss" | "victory" | "defeat" | "your_turn";
+  | "boss" | "victory" | "defeat" | "your_turn"
+  // A fight on the tiles: the dice, the fight starting, whose turn it is, and what the tiles add.
+  | "dice" | "dice_crit" | "initiative" | "enemy_turn" | "opportunity"
+  | "shove" | "fall" | "jump" | "throw" | "shatter"
+  | "ignite" | "poison" | "splash" | "oil" | "ice"
+  | "sick" | "soak";
 
 /** The pub's game tables: the dice cup, dice on the felt, and the pot. */
 export type SynthTable = "shake" | "tumble" | "settle" | "hold" | "coins";
@@ -32,7 +37,7 @@ const COMBAT_TAKES = 4;
 const STING_TAKES = 2;
 const TABLE_TAKES = 4;
 const TABLE_LENGTH: Record<SynthTable, number> = { shake: 0.5, tumble: 0.75, settle: 0.12, hold: 0.18, coins: 0.7 };
-const STINGS: ReadonlySet<SynthCombat> = new Set(["boss", "victory", "defeat", "boss_down"]);
+const STINGS: ReadonlySet<SynthCombat> = new Set(["boss", "victory", "defeat", "boss_down", "initiative"]);
 
 const SAMPLE_RATE = 44100;
 
@@ -51,12 +56,16 @@ const STEP: Record<SynthGround, { filter: BiquadFilterType; freq: number; q: num
 
 /** How long each sound runs, so the offline render is no longer than it needs to be. */
 const COMBAT_LENGTH: Record<SynthCombat, number> = {
-  blade: 0.3, blunt: 0.35, swing: 0.2, arrow_loose: 0.25, arrow_hit: 0.2, spell_cast: 0.3, spell_hit: 0.3, crit: 0.25,
-  whiff: 0.2, fizzle: 0.2,
-  heal: 0.6, heal_fail: 0.3,
-  bleed: 0.15, burn: 0.35, stun: 0.35, buff: 0.25, debuff: 0.25,
-  hero_down: 0.8, enemy_down: 0.35, boss_down: 1.0,
-  boss: 2.0, victory: 1.1, defeat: 1.2, your_turn: 0.2,
+  blade: 0.45, blunt: 0.4, swing: 0.28, arrow_loose: 0.4, arrow_hit: 0.3, spell_cast: 0.5, spell_hit: 0.55, crit: 0.45,
+  whiff: 0.25, fizzle: 0.25,
+  heal: 0.8, heal_fail: 0.3,
+  bleed: 0.15, burn: 0.35, stun: 0.35, buff: 0.3, debuff: 0.3,
+  hero_down: 0.8, enemy_down: 0.5, boss_down: 1.0,
+  boss: 2.0, victory: 1.1, defeat: 1.2, your_turn: 0.4,
+  dice: 0.55, dice_crit: 0.9, initiative: 1.5, enemy_turn: 0.3, opportunity: 0.4,
+  shove: 0.35, fall: 0.45, jump: 0.5, throw: 0.35, shatter: 0.5,
+  ignite: 0.7, poison: 0.7, splash: 0.5, oil: 0.45, ice: 0.6,
+  sick: 0.4, soak: 0.35,
 };
 
 /** Notes of a few bright chords, so heals and stings are not always the same three notes. */
@@ -151,43 +160,56 @@ function combat(r: Render, sound: SynthCombat) {
   const pick = <T,>(xs: readonly T[]) => xs[Math.floor(r.rnd() * xs.length)];
   switch (sound) {
     case "blade":
-      // A bright bite with a ring to it (the swing that brought it is a sound of its own).
+      // A bright bite, and the steel ringing after it: two partials that do not agree, as struck metal has.
       noiseAt(r, t, { filter: "highpass", freq: 2600 * p, q: 1.5, decay: 0.05, gain: v * 0.7 });
       toneAt(r, t, { type: "square", freq: 820 * p, freqTo: 560 * p, decay: 0.05, gain: v * 0.12, cut: 2400 });
       toneAt(r, t, { type: "sine", freq: 170 * p, freqTo: 90, decay: 0.09, gain: v * 0.6 });
+      toneAt(r, t + 0.01, { type: "sine", freq: 2150 * p, decay: 0.26, gain: v * 0.1 });
+      toneAt(r, t + 0.01, { type: "sine", freq: 3380 * p, decay: 0.18, gain: v * 0.06 });
       break;
     case "blunt":
-      // A heavy thump with a little grit.
+      // A heavy thump with a little grit, and a knock on top so it is felt as well as heard.
       toneAt(r, t, { type: "sine", freq: 120 * p, freqTo: 50, decay: 0.16, gain: v * 1.1 });
+      toneAt(r, t, { type: "sine", freq: 62 * p, freqTo: 38, decay: 0.24, gain: v * 0.7 });
       noiseAt(r, t, { filter: "lowpass", freq: 600 * p, q: 0.9, decay: 0.09, gain: v * 0.8 });
+      noiseAt(r, t, { filter: "bandpass", freq: 1900 * p, q: 2, decay: 0.02, gain: v * 0.4 });
       break;
     case "swing":
-      // A swish through the air as a hand weapon comes round.
-      noiseAt(r, t, { filter: "bandpass", freq: 700 * p, freqTo: 3200 * p, q: 1.2, attack: 0.03, decay: 0.09, gain: v * 0.55 });
+      // A swish through the air as a hand weapon comes round: it rises, then falls away past you.
+      noiseAt(r, t, { filter: "bandpass", freq: 700 * p, freqTo: 3200 * p, q: 1.2, attack: 0.04, decay: 0.07, gain: v * 0.55 });
+      noiseAt(r, t + 0.09, { filter: "bandpass", freq: 2600 * p, freqTo: 600 * p, q: 1.2, attack: 0.01, decay: 0.12, gain: v * 0.3 });
       break;
     case "arrow_loose":
-      // The bowstring's twang.
+      // The bowstring's twang, and the arrow hissing off.
       toneAt(r, t, { type: "triangle", freq: 330 * p, freqTo: 300 * p, decay: 0.16, gain: v * 0.45 });
       noiseAt(r, t, { filter: "bandpass", freq: 2000 * p, q: 2, decay: 0.03, gain: v * 0.35 });
+      noiseAt(r, t + 0.03, { filter: "bandpass", freq: 4200 * p, freqTo: 1800 * p, q: 2.5, attack: 0.02, decay: 0.24, gain: v * 0.22 });
       break;
     case "arrow_hit":
-      // The thunk of it going in.
+      // The thunk of it going in, and the shaft quivering.
       noiseAt(r, t, { filter: "lowpass", freq: 1100 * p, q: 1.2, decay: 0.05, gain: v * 0.8 });
       toneAt(r, t, { type: "sine", freq: 240 * p, freqTo: 120, decay: 0.07, gain: v * 0.7 });
+      toneAt(r, t + 0.02, { type: "triangle", freq: 520 * p, freqTo: 470 * p, decay: 0.2, gain: v * 0.12 });
       break;
     case "spell_cast":
-      // A rising whoosh as the bolt leaves.
-      noiseAt(r, t, { filter: "bandpass", freq: 350 * p, freqTo: 1900 * p, q: 3, attack: 0.08, decay: 0.15, gain: v * 0.5 });
+      // Gathering, then let go: a whoosh that climbs, with a note climbing inside it.
+      noiseAt(r, t, { filter: "bandpass", freq: 350 * p, freqTo: 1900 * p, q: 3, attack: 0.16, decay: 0.2, gain: v * 0.5 });
+      toneAt(r, t, { type: "sine", freq: 220 * p, freqTo: 880 * p, attack: 0.18, decay: 0.2, gain: v * 0.18 });
+      toneAt(r, t, { type: "sine", freq: 331 * p, freqTo: 1320 * p, attack: 0.18, decay: 0.18, gain: v * 0.1 });
       break;
     case "spell_hit":
-      // A zap: a falling buzz and a crackle.
+      // A zap, a low punch under it, and sparks falling away after.
       toneAt(r, t, { type: "sawtooth", freq: 1400 * p, freqTo: 180 * p, decay: 0.13, gain: v * 0.35, cut: 3000 });
       noiseAt(r, t, { filter: "highpass", freq: 1800 * p, q: 0.8, decay: 0.08, gain: v * 0.5 });
+      toneAt(r, t, { type: "sine", freq: 110 * p, freqTo: 48, decay: 0.2, gain: v * 0.7 });
+      for (let i = 0; i < 4; i++) toneAt(r, t + 0.08 + r.rnd() * 0.3, { type: "sine", freq: 1800 + r.rnd() * 2400, decay: 0.05, gain: v * 0.08 });
       break;
     case "crit":
-      // Laid over a perfect hit: an extra crack and a low punch.
+      // Laid over a critical hit: a crack, a drop in the floor, and steel singing.
       noiseAt(r, t, { filter: "highpass", freq: 3200 * p, q: 1.8, decay: 0.04, gain: v * 0.6 });
-      toneAt(r, t, { type: "sine", freq: 95 * p, freqTo: 45, decay: 0.15, gain: v * 0.8 });
+      toneAt(r, t, { type: "sine", freq: 95 * p, freqTo: 40, decay: 0.28, gain: v * 0.9 });
+      toneAt(r, t + 0.02, { type: "sine", freq: 2637 * p, decay: 0.34, gain: v * 0.1 });
+      toneAt(r, t + 0.02, { type: "sine", freq: 3951 * p, decay: 0.26, gain: v * 0.06 });
       break;
     case "whiff":
       // Cutting nothing but air.
@@ -231,9 +253,11 @@ function combat(r: Render, sound: SynthCombat) {
       noiseAt(r, t + 0.3, { filter: "lowpass", freq: 400, decay: 0.12, gain: v * 0.5 });
       break;
     case "enemy_down":
-      // A puff and a falling blip.
+      // A puff, a falling blip, and the body hitting the ground.
       noiseAt(r, t, { filter: "lowpass", freq: 2400 * p, freqTo: 300, q: 0.8, attack: 0.01, decay: 0.22, gain: v * 0.5 });
       toneAt(r, t + 0.02, { type: "square", freq: 660 * p, freqTo: 180 * p, decay: 0.18, gain: v * 0.16, cut: 2000 });
+      toneAt(r, t + 0.2, { type: "sine", freq: 90 * p, freqTo: 44, decay: 0.16, gain: v * 0.7 });
+      noiseAt(r, t + 0.2, { filter: "lowpass", freq: 380, decay: 0.09, gain: v * 0.4 });
       break;
     case "boss_down":
       noiseAt(r, t, { filter: "lowpass", freq: 1800, freqTo: 120, q: 0.7, attack: 0.02, decay: 0.7, gain: v * 0.7 });
@@ -257,8 +281,120 @@ function combat(r: Render, sound: SynthCombat) {
       [392, 311, 262].forEach((f, i) => toneAt(r, t + i * 0.2, { type: "triangle", freq: f * wobble(r, 0.01), attack: 0.02, decay: i === 2 ? 0.7 : 0.22, gain: v * 0.45 }));
       break;
     case "your_turn":
-      toneAt(r, t, { type: "sine", freq: 1180 * p, decay: 0.05, gain: v * 0.22 });
-      toneAt(r, t + 0.07, { type: "sine", freq: 1580 * p, decay: 0.07, gain: v * 0.22 });
+      // Three notes up, the last one held: yours to play.
+      toneAt(r, t, { type: "sine", freq: 880 * p, decay: 0.06, gain: v * 0.22 });
+      toneAt(r, t + 0.07, { type: "sine", freq: 1175 * p, decay: 0.07, gain: v * 0.22 });
+      toneAt(r, t + 0.14, { type: "sine", freq: 1760 * p, decay: 0.2, gain: v * 0.24 });
+      toneAt(r, t + 0.14, { type: "triangle", freq: 880 * p, decay: 0.2, gain: v * 0.1 });
+      break;
+    case "dice":
+    case "dice_crit": {
+      // A die thrown down: it knocks a few times, each knock closer to the last, and comes to rest.
+      let at = t;
+      for (let i = 0; i < 5; i++) {
+        const k = 1 - i / 6;
+        noiseAt(r, at, { filter: "bandpass", freq: (2400 + r.rnd() * 1400) * p, q: 3, decay: 0.014, gain: v * 0.55 * k });
+        toneAt(r, at, { type: "sine", freq: (210 + r.rnd() * 90) * p, freqTo: 120, decay: 0.03, gain: v * 0.4 * k });
+        at += 0.045 + (0.09 * k * k) * (0.7 + r.rnd() * 0.6);
+      }
+      // A natural twenty rings out as it settles.
+      if (sound === "dice_crit") [1319, 1661, 1976, 2637].forEach((f, i) => toneAt(r, at + i * 0.05, { type: "sine", freq: f, attack: 0.01, decay: 0.3, gain: v * 0.2 }));
+      break;
+    }
+    case "initiative":
+      // A fight is on: two war-drum blows, and a low horn coming up under them.
+      for (const at of [0, 0.22]) {
+        toneAt(r, t + at, { type: "sine", freq: 105, freqTo: 48, decay: 0.3, gain: v * 1.1 });
+        noiseAt(r, t + at, { filter: "lowpass", freq: 900, freqTo: 200, decay: 0.12, gain: v * 0.6 });
+        noiseAt(r, t + at, { filter: "bandpass", freq: 2200, q: 2, decay: 0.02, gain: v * 0.3 });
+      }
+      toneAt(r, t + 0.4, { type: "sawtooth", freq: 110, freqTo: 147, attack: 0.25, decay: 0.7, gain: v * 0.32, cut: 620 });
+      toneAt(r, t + 0.4, { type: "sawtooth", freq: 165 * wobble(r, 0.004), freqTo: 220, attack: 0.25, decay: 0.7, gain: v * 0.22, cut: 620 });
+      break;
+    case "enemy_turn":
+      // Not yours: one low, dull tick.
+      toneAt(r, t, { type: "triangle", freq: 196 * p, freqTo: 147 * p, decay: 0.16, gain: v * 0.3, cut: 900 });
+      noiseAt(r, t, { filter: "lowpass", freq: 700, decay: 0.03, gain: v * 0.25 });
+      break;
+    case "opportunity":
+      // Caught leaving: a quick scrape of steel, cut short.
+      noiseAt(r, t, { filter: "bandpass", freq: 3800 * p, freqTo: 6200 * p, q: 4, attack: 0.02, decay: 0.12, gain: v * 0.5 });
+      toneAt(r, t + 0.05, { type: "sine", freq: 2480 * p, decay: 0.2, gain: v * 0.1 });
+      noiseAt(r, t + 0.1, { filter: "highpass", freq: 3000, q: 1.5, decay: 0.03, gain: v * 0.5 });
+      break;
+    case "shove":
+      // Shoulder into a body: the effort, then the knock.
+      noiseAt(r, t, { filter: "bandpass", freq: 520 * p, freqTo: 1100 * p, q: 1.5, attack: 0.03, decay: 0.07, gain: v * 0.45 });
+      toneAt(r, t + 0.08, { type: "sine", freq: 140 * p, freqTo: 60, decay: 0.14, gain: v });
+      noiseAt(r, t + 0.08, { filter: "lowpass", freq: 800 * p, decay: 0.06, gain: v * 0.6 });
+      break;
+    case "fall":
+      // Somebody hits the ground, all of them at once: a thud, a second smaller one, and grit.
+      toneAt(r, t, { type: "sine", freq: 100 * p, freqTo: 42, decay: 0.2, gain: v * 1.1 });
+      noiseAt(r, t, { filter: "lowpass", freq: 500 * p, decay: 0.1, gain: v * 0.7 });
+      toneAt(r, t + 0.13, { type: "sine", freq: 84 * p, freqTo: 46, decay: 0.12, gain: v * 0.5 });
+      noiseAt(r, t + 0.05, { filter: "highpass", freq: 2600, decay: 0.16, gain: v * 0.12 });
+      break;
+    case "jump":
+      // Up with a rush of air, and down on both feet.
+      noiseAt(r, t, { filter: "bandpass", freq: 500 * p, freqTo: 2200 * p, q: 1.6, attack: 0.08, decay: 0.14, gain: v * 0.4 });
+      toneAt(r, t + 0.3, { type: "sine", freq: 130 * p, freqTo: 60, decay: 0.1, gain: v * 0.8 });
+      noiseAt(r, t + 0.3, { filter: "lowpass", freq: 700 * p, decay: 0.06, gain: v * 0.5 });
+      break;
+    case "throw":
+      // An arm coming over, and something small leaving it, turning in the air.
+      noiseAt(r, t, { filter: "bandpass", freq: 900 * p, freqTo: 2800 * p, q: 1.4, attack: 0.04, decay: 0.08, gain: v * 0.45 });
+      for (let i = 0; i < 3; i++) noiseAt(r, t + 0.12 + i * 0.06, { filter: "bandpass", freq: 3000 * p, q: 5, attack: 0.01, decay: 0.025, gain: v * 0.16 });
+      break;
+    case "shatter":
+      // Glass breaking: a sharp crack, then shards skittering.
+      noiseAt(r, t, { filter: "highpass", freq: 3600 * p, q: 1.2, decay: 0.06, gain: v * 0.8 });
+      toneAt(r, t, { type: "sine", freq: 3100 * p, freqTo: 2500 * p, decay: 0.09, gain: v * 0.16 });
+      for (let i = 0; i < 9; i++) toneAt(r, t + 0.03 + r.rnd() * 0.36, { type: "sine", freq: 2600 + r.rnd() * 4200, decay: 0.03 + r.rnd() * 0.04, gain: v * 0.11 });
+      break;
+    case "ignite":
+      // Fire taking hold: air sucked in, a roar, and the crackle that stays.
+      noiseAt(r, t, { filter: "bandpass", freq: 260 * p, freqTo: 1500 * p, q: 0.9, attack: 0.14, decay: 0.34, gain: v * 0.7 });
+      toneAt(r, t + 0.05, { type: "sine", freq: 80, freqTo: 52, attack: 0.08, decay: 0.3, gain: v * 0.5 });
+      for (let i = 0; i < 8; i++) noiseAt(r, t + 0.18 + r.rnd() * 0.45, { filter: "highpass", freq: 2200 + r.rnd() * 2400, q: 1, decay: 0.014, gain: v * 0.4 });
+      break;
+    case "poison":
+      // Something that should not be breathed: a long hiss, and thick bubbles coming up through it.
+      noiseAt(r, t, { filter: "highpass", freq: 5200 * p, q: 0.8, attack: 0.05, decay: 0.5, gain: v * 0.3 });
+      for (let i = 0; i < 6; i++) {
+        const f = 260 + r.rnd() * 240;
+        toneAt(r, t + 0.06 + r.rnd() * 0.5, { type: "sine", freq: f, freqTo: f * 2.1, attack: 0.008, decay: 0.045, gain: v * 0.3 });
+      }
+      break;
+    case "splash":
+      // Water thrown down: the slap, the wash going out, and drops landing after.
+      noiseAt(r, t, { filter: "lowpass", freq: 3800 * p, freqTo: 700, q: 0.8, decay: 0.2, gain: v * 0.75 });
+      noiseAt(r, t + 0.03, { filter: "bandpass", freq: 1500 * p, freqTo: 3200 * p, q: 1.2, attack: 0.05, decay: 0.25, gain: v * 0.3 });
+      for (let i = 0; i < 4; i++) toneAt(r, t + 0.2 + r.rnd() * 0.25, { type: "sine", freq: 900 + r.rnd() * 900, freqTo: 1800 + r.rnd() * 600, decay: 0.03, gain: v * 0.16 });
+      break;
+    case "oil":
+      // Thick and slow: a wet slap with a long low spread.
+      noiseAt(r, t, { filter: "lowpass", freq: 900 * p, freqTo: 240, q: 1.4, decay: 0.26, gain: v * 0.8 });
+      toneAt(r, t + 0.04, { type: "sine", freq: 170 * p, freqTo: 95, decay: 0.2, gain: v * 0.4 });
+      toneAt(r, t + 0.22, { type: "sine", freq: 300 * p, freqTo: 520 * p, decay: 0.05, gain: v * 0.2 });
+      break;
+    case "ice":
+      // Water locking: a creak running outward, cracks, and a cold high ring.
+      for (let i = 0; i < 7; i++) noiseAt(r, t + i * 0.035 + r.rnd() * 0.03, { filter: "highpass", freq: 3200 + r.rnd() * 3000, q: 2.5, decay: 0.016, gain: v * 0.42 });
+      toneAt(r, t, { type: "triangle", freq: 420 * p, freqTo: 760 * p, attack: 0.02, decay: 0.24, gain: v * 0.14, cut: 2200 });
+      toneAt(r, t + 0.22, { type: "sine", freq: 3136 * p, decay: 0.34, gain: v * 0.12 });
+      toneAt(r, t + 0.22, { type: "sine", freq: 4186 * p, decay: 0.28, gain: v * 0.07 });
+      break;
+    case "sick":
+      // Poison in the blood: two sour notes sliding down, a little out of tune with each other.
+      toneAt(r, t, { type: "triangle", freq: 466 * p, freqTo: 311 * p, attack: 0.02, decay: 0.3, gain: v * 0.26 });
+      toneAt(r, t + 0.04, { type: "triangle", freq: 494 * p, freqTo: 330 * p, attack: 0.02, decay: 0.3, gain: v * 0.2 });
+      break;
+    case "soak":
+      // Soaked through: a short wash and two drips.
+      noiseAt(r, t, { filter: "bandpass", freq: 1800 * p, freqTo: 900 * p, q: 1, attack: 0.02, decay: 0.14, gain: v * 0.4 });
+      toneAt(r, t + 0.16, { type: "sine", freq: 820 * p, freqTo: 1500 * p, decay: 0.04, gain: v * 0.25 });
+      toneAt(r, t + 0.26, { type: "sine", freq: 700 * p, freqTo: 1300 * p, decay: 0.04, gain: v * 0.2 });
       break;
   }
 }

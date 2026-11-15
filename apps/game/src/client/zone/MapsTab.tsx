@@ -99,6 +99,14 @@ export function MapsTab() {
           </select>
         </label>
         {number("party", 1, 4, "Sized for")}
+        <label>
+          Threat
+          <select value={options.threat ?? 2} onChange={(e) => set({ threat: Number(e.target.value) })}>
+            <option value={1}>gentle</option>
+            <option value={2}>a fair fight</option>
+            <option value={3}>hard</option>
+          </select>
+        </label>
       </div>
       <div className="dev-row">
         {level("elevation", "High ground")}

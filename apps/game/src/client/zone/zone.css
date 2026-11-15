@@ -2,16 +2,56 @@
 
 .zone-view.picking .stage { cursor: crosshair; }
 
-/* The order of the fight: who goes when, with what each has left. Whose turn it is is lit. */
-.zone-order { position: absolute; top: 8px; left: 50%; transform: translateX(-50%); z-index: 10; display: flex; align-items: center; gap: 6px; padding: 5px 8px; max-width: calc(100vw - 180px); overflow-x: auto; }
-.zone-round { font-family: var(--font-head); font-size: 13px; letter-spacing: 0.04em; margin-right: 4px; white-space: nowrap; }
-.zone-chip { display: flex; flex-direction: column; gap: 3px; min-width: 62px; padding: 3px 6px; border: 2px solid var(--line); background: rgba(0, 0, 0, 0.25); font-size: 12px; white-space: nowrap; }
-.zone-chip.enemy { border-color: #7a3a3a; }
-.zone-chip.turn { border-color: var(--gold); box-shadow: 0 0 0 2px rgba(255, 210, 63, 0.35); }
-.zone-chip.down { opacity: 0.35; }
-.zone-hp { display: block; height: 4px; background: #1b1830; }
+/* The turn order, across the top: a face for everyone in the fight, left to right, with what each has
+   left under it. Whose turn it is stands taller in a bright frame; heroes who share a turn are joined up. */
+.zone-order { position: absolute; top: 6px; left: 50%; transform: translateX(-50%); z-index: 10; display: flex; align-items: flex-end; gap: 6px; padding: 6px 10px 20px; max-width: calc(100vw - 180px); overflow-x: auto; background: linear-gradient(rgba(18, 12, 8, 0.86), rgba(18, 12, 8, 0.55)); border: 2px solid var(--hw-out, #3a1d20); box-shadow: 0 0 0 2px var(--hw-dark, #6b3524); animation: zone-order-in 0.45s ease-out both; }
+@keyframes zone-order-in { from { translate: 0 -70px; opacity: 0; } to { translate: 0 0; opacity: 1; } }
+.zone-round { display: flex; flex-direction: column; align-items: center; margin-right: 4px; font-family: var(--font-head); font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.zone-round { color: #c9b48a; }
+.zone-round strong { font-size: 22px; line-height: 1; color: #ffe9a8; }
+.zone-face { position: relative; flex: none; display: flex; flex-direction: column; align-items: center; gap: 2px; width: 46px; padding: 2px 2px 3px; background: rgba(0, 0, 0, 0.35); border: 2px solid #4f7a5c; border-radius: 0; box-shadow: none; text-shadow: none; transition: translate 0.18s, width 0.18s, box-shadow 0.18s; }
+.zone-face img { width: 36px; height: 44px; image-rendering: pixelated; }
+.zone-face.enemy { border-color: #8a3a3a; }
+.zone-face.mine { border-color: #b08a2a; }
+.zone-face.joined { margin-left: -8px; border-left-style: dashed; }
+.zone-face.turn { translate: 0 6px; width: 56px; border-color: var(--gold); box-shadow: 0 0 0 2px rgba(255, 210, 63, 0.45), 0 6px 14px rgba(0, 0, 0, 0.5); background: rgba(60, 44, 12, 0.7); }
+.zone-face.turn img { width: 44px; height: 54px; }
+.zone-face.enemy.turn { border-color: #ff4d4d; box-shadow: 0 0 0 2px rgba(255, 77, 77, 0.45), 0 6px 14px rgba(0, 0, 0, 0.5); background: rgba(60, 14, 14, 0.7); }
+.zone-face.turn::after { content: ""; position: absolute; left: 50%; bottom: -11px; margin-left: -6px; border: 6px solid transparent; border-top-color: var(--gold); }
+.zone-face.enemy.turn::after { border-top-color: #ff4d4d; }
+.zone-face.spent { opacity: 0.55; }
+.zone-face.down { opacity: 0.35; filter: grayscale(1); }
+.zone-face-name { max-width: 100%; overflow: hidden; font-size: 10px; line-height: 1; white-space: nowrap; color: #f3e6c8; }
+.zone-hp { display: block; width: 100%; height: 4px; background: #1b1830; }
 .zone-hp i { display: block; height: 100%; background: #6ee06e; }
-.zone-chip.enemy .zone-hp i { background: #ff6b6b; }
+.zone-face.enemy .zone-hp i { background: #ff6b6b; }
+
+/* A refusal or a notice sits under the turn order, not over it. */
+.zone-view.in-fight .toast { top: 128px; }
+
+/* The edge of the screen in a fight: a dark red rim while you wait, a gold one breathing when the turn is yours. */
+.zone-frame { position: absolute; inset: 0; z-index: 8; pointer-events: none; opacity: 0; transition: opacity 0.5s, box-shadow 0.5s; box-shadow: inset 0 0 90px 10px rgba(120, 20, 20, 0.55); }
+.zone-view.in-fight .zone-frame { opacity: 1; }
+.zone-view.my-turn .zone-frame { box-shadow: inset 0 0 70px 6px rgba(255, 200, 60, 0.4); animation: zone-yours 2.2s ease-in-out infinite; }
+@keyframes zone-yours { 50% { box-shadow: inset 0 0 90px 12px rgba(255, 200, 60, 0.55); } }
+
+/* A fight breaking out: the screen darkens top and bottom and a band comes across the middle. */
+.zone-intro { position: absolute; inset: 0; z-index: 13; display: grid; place-items: center; pointer-events: none; background: linear-gradient(rgba(10, 4, 4, 0.75), transparent 32%, transparent 68%, rgba(10, 4, 4, 0.75)); animation: zone-intro 1.7s ease-out both; }
+.zone-intro-band { display: flex; flex-direction: column; align-items: center; gap: 2px; width: 100%; padding: 14px 0 16px; background: linear-gradient(90deg, transparent, rgba(60, 10, 10, 0.92) 22%, rgba(60, 10, 10, 0.92) 78%, transparent); border-top: 2px solid rgba(255, 210, 63, 0.7); border-bottom: 2px solid rgba(255, 210, 63, 0.7); animation: zone-band 1.7s cubic-bezier(0.2, 0.9, 0.2, 1) both; }
+.zone-intro-band strong { font-family: var(--font-title); font-size: 64px; line-height: 1; letter-spacing: 0.12em; text-transform: uppercase; color: #ffe9a8; text-shadow: 0 4px 0 #3a1c10; }
+.zone-intro-band span { font-family: var(--font-head); font-size: 16px; letter-spacing: 0.2em; text-transform: uppercase; color: #f0c8a0; }
+@keyframes zone-intro { 0% { opacity: 0; } 12% { opacity: 1; } 78% { opacity: 1; } 100% { opacity: 0; } }
+@keyframes zone-band { 0% { scale: 1 0; } 14% { scale: 1 1.08; } 22% { scale: 1 1; } 100% { scale: 1 1; } }
+
+/* What a move would cost, riding beside the pointer: pale when it can be made, red when it cannot. */
+.zone-cursor { position: fixed; left: 0; top: 0; z-index: 20; display: flex; flex-direction: column; gap: 1px; padding: 3px 8px 4px; pointer-events: none; background: rgba(18, 12, 8, 0.88); border: 2px solid #eaf6ff; color: #eaf6ff; font-size: 11px; line-height: 1.25; white-space: nowrap; }
+.zone-cursor.off { display: none; }
+.zone-cursor-cost { font-family: var(--font-head); font-size: 15px; letter-spacing: 0.03em; }
+.zone-cursor-cost strong { font-size: 24px; line-height: 1; }
+.zone-cursor-note { color: #c9d1e0; }
+.zone-cursor-warn { color: #ff8a8a; font-weight: bold; }
+.zone-cursor.bad { border-color: #ff4d4d; color: #ff8a8a; }
+.zone-cursor.bad .zone-cursor-note { color: #ff8a8a; }
 
 /* Your own, when you have more than one to play (stand-in crewmates). */
 .zone-party { position: absolute; top: 60px; left: 10px; z-index: 10; display: flex; flex-direction: column; gap: 4px; padding: 6px; }
@@ -25,7 +65,7 @@
 @keyframes zone-banner { 0% { opacity: 0; scale: 0.8; } 15% { opacity: 1; scale: 1; } 75% { opacity: 1; } 100% { opacity: 0; } }
 
 /* The roll: the dice as they fell, the sum, what it had to reach, and how it came out. */
-.zone-roll { position: absolute; left: 50%; top: 68px; transform: translateX(-50%); z-index: 11; display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 8px 12px; min-width: 190px; text-align: center; pointer-events: none; }
+.zone-roll { position: absolute; left: 50%; top: 128px; transform: translateX(-50%); z-index: 11; display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 8px 12px; min-width: 190px; text-align: center; pointer-events: none; }
 .zone-roll.ok { border-color: var(--good); }
 .zone-roll.no { border-color: var(--bad); }
 .zone-roll-what { font-size: 12px; }
@@ -54,8 +94,9 @@
 
 @media (max-width: 700px) {
   .zone-order { max-width: calc(100vw - 20px); top: 44px; }
+  .zone-intro-band strong { font-size: 40px; }
   .zone-roll { top: 110px; min-width: 150px; }
   .zone-banner { font-size: 30px; }
   .zone-tip { top: 100px; }
 }
-@media (prefers-reduced-motion: reduce) { .zone-banner { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .zone-banner, .zone-order, .zone-intro-band, .zone-view.my-turn .zone-frame { animation: none; } }

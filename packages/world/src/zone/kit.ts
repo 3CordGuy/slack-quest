@@ -254,8 +254,15 @@ export interface EnemyStrike {
   kit: EnemyAttackKit;
 }
 
-/** An enemy kind's attacks as they work on the tiles, for a party of this level. */
-export function enemyStrikes(kind: string, level: number): EnemyStrike[] {
+/** The threat a zone was made at, for one made before there was such a thing. */
+export const DEFAULT_THREAT = 2;
+const clampThreat = (threat: number | undefined) => Math.max(1, Math.min(3, Math.round(threat ?? DEFAULT_THREAT)));
+/** How much more an enemy can take, by threat: the old fights' numbers were for foes that fell in two blows. */
+const THREAT_HP = [1, 1.9, 2.7];
+
+/** An enemy kind's attacks as they work on the tiles, for a party of this level and at this threat. */
+export function enemyStrikes(kind: string, level: number, threat?: number): EnemyStrike[] {
+  const edge = clampThreat(threat) - 1;
   const def = ENEMIES[kind];
   if (!def) return [];
   const kit = ENEMY_KIT[kind] ?? {};
@@ -265,9 +272,9 @@ export function enemyStrikes(kind: string, level: number): EnemyStrike[] {
       name: a.name,
       range: a.target === "all_heroes" ? ENEMY_BURST : (own.range ?? 1),
       burst: a.target === "all_heroes",
-      dice: diceFor(a.damage + Math.floor(level / 2)),
-      // The old chance of a roll, turned into a bonus: 45% is +3, 57% is +5.
-      bonus: Math.round((a.pct - 30) / 6) + Math.floor((Math.max(1, level) - 1) / 4),
+      dice: diceFor(a.damage + Math.floor(level / 2) + edge),
+      // The old chance of a roll, turned into a bonus: 45% is +3, 57% is +5. Threat sharpens it.
+      bonus: Math.round((a.pct - 30) / 6) + Math.floor((Math.max(1, level) - 1) / 4) + edge,
       perfect: a.perfect,
       weight: a.weight,
       kit: own,
@@ -284,5 +291,8 @@ export const enemyMove = (kind: string): number => (kind === "dummy" ? 0 : Math.
 /** What an enemy adds to a saving throw: bosses and the big are harder to shake. */
 export const enemySave = (kind: string): number => (ENEMIES[kind]?.boss ? 3 : (ENEMIES[kind]?.hp ?? 0) >= 18 ? 2 : 0);
 
-/** Hit points for a party of this level: half again as much by level 4, as in the old fights. */
-export const enemyHp = (kind: string, level: number): number => Math.round((ENEMIES[kind]?.hp ?? 1) * (1 + 0.15 * Math.max(0, level - 1)));
+/** Hit points for a party of this level (half again as much by level 4, as in the old fights), scaled by threat. */
+export const enemyHp = (kind: string, level: number, threat?: number): number => Math.round((ENEMIES[kind]?.hp ?? 1) * (1 + 0.15 * Math.max(0, level - 1)) * THREAT_HP[clampThreat(threat) - 1]);
+
+/** How many more stand with a group than its leader would bring, by threat. */
+export const threatExtras = (threat?: number): number => clampThreat(threat) - 1;

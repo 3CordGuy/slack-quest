@@ -25,8 +25,10 @@
 .hud-pips { display: inline-flex; align-items: center; gap: 4px; }
 .hud-pips i { width: 10px; height: 10px; background: var(--well); border: 2px solid var(--hw-out); box-shadow: 0 0 0 2px var(--hw-dark); margin: 2px; }
 .hud-pips.action i.on { background: #8fd49a; box-shadow: 0 0 0 2px #3f7a52; }
-.hud-pips.bonus i { border-radius: 50%; }
-.hud-pips.bonus i.on { background: #f29a5b; box-shadow: 0 0 0 2px #9a4a1f; }
+/* An Action is a round pip, a Bonus action a triangle: told apart by shape as well as colour. */
+.hud-pips.action i { border-radius: 50%; width: 12px; height: 12px; }
+.hud-pips.bonus i { width: 14px; height: 13px; border: none; box-shadow: none; clip-path: polygon(50% 0, 100% 100%, 0 100%); background: #4a2c1c; }
+.hud-pips.bonus i.on { background: #f29a5b; box-shadow: none; }
 .hud-pips.move i.on { background: #f0c552; box-shadow: 0 0 0 2px #8a6a26; }
 .hud-pips.focus i { rotate: 45deg; }
 .hud-pips.focus i.on { background: #7fc4e8; box-shadow: 0 0 0 2px #2f6f96; }

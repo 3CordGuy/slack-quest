@@ -100,6 +100,8 @@ export interface RenderUnit {
   /** Shown as a bar over its head when set: 0 to 1 of what it can take. */
   hp?: number;
   down?: boolean;
+  /** Knocked flat (Prone) but still in the fight. */
+  prone?: boolean;
   /** Whose turn it is. */
   active?: boolean;
   /** In a fight: it wears a red ring. */
@@ -135,6 +137,8 @@ export interface RenderHero {
   maxHp?: number;
   /** Knocked down in a fight: drawn lying where they fell. */
   down?: boolean;
+  /** Knocked flat (Prone) but still in the fight: lying, not dimmed. */
+  prone?: boolean;
   /** Whose turn it is in a fight on the tiles: their ring pulses. */
   active?: boolean;
 }
@@ -466,6 +470,10 @@ const noise = (q: number, r: number, salt: number) => {
 };
 
 interface Unit {
+  /** Knocked across the ground (a shove): moved this many times faster than a walk, without steps, until it arrives. */
+  rush?: number;
+  /** Knocked off its feet: drawn lying until the render clock passes this. */
+  floored?: number;
   /** Afloat: the boat under them, which kind it is, and how far it sits them down. */
   boat?: THREE.Group | null;
   boatKind?: "barrel" | "rowboat";
@@ -564,6 +572,8 @@ interface Want {
   pulse?: boolean;
   hp?: number;
   down?: boolean;
+  /** Knocked flat but not out: lying, in full colour. */
+  prone?: boolean;
   asleep?: boolean;
   rod?: boolean | "gilded";
   /** Afloat: the boat drawn under them. */
@@ -1213,21 +1223,58 @@ export class WorldRenderer {
   walkUnit(id: string, path: HexPos[]) {
     const unit = this.units.get(id);
     if (!unit) return;
-    for (const p of path) {
-      const at = this.standAt(p);
-      at.z += 0.25;
-      unit.path.push(at);
-    }
+    for (const p of path) unit.path.push(this.standAt(p));
+  }
+
+  /**
+   * A unit knocked from where it stands to another hex (a shove, a blow that throws it back): it is
+   * flung there, not walked, and with `fall` lands on its back for a moment before getting up.
+   */
+  knock(id: string, to: HexPos, fall = true) {
+    const unit = this.units.get(id);
+    if (!unit) return;
+    unit.path = [this.standAt(to)];
+    unit.rush = 3.2;
+    unit.bob = 0.22;
+    if (fall) unit.floored = this.clock + 1;
+  }
+
+  /** A unit knocked off its feet where it stands. */
+  floor(id: string, seconds = 1) {
+    const unit = this.units.get(id);
+    if (unit) unit.floored = this.clock + seconds;
+  }
+
+  /** The top of a unit's head in the world, wherever it has got to: for something drawn over it. Null if it is not on the map. */
+  unitHead(id: string): THREE.Vector3 | null {
+    const unit = this.units.get(id);
+    if (!unit) return null;
+    const at = unit.root.position.clone();
+    at.y += unit.head - unit.bob;
+    return at;
   }
 
   /** One blow or shot from one unit at another, named for its look and sound. `onImpact` runs as it lands (or flies wide). */
   blow(actorId: string, targetId: string, name: string, opts: { crit?: boolean; landed?: boolean; onImpact?: () => void } = {}) {
     const style = attackStyle(name);
     this.attack(actorId, targetId, name, !!opts.crit, () => {
-      if (opts.landed) sounds.impact(name, style, !!opts.crit, this.fighter(targetId), this.spot(targetId));
-      else sounds.miss(name, style, this.spot(targetId));
+      if (opts.landed) {
+        sounds.impact(name, style, !!opts.crit, this.fighter(targetId), this.spot(targetId));
+        this.recoil(targetId, actorId, opts.crit ? 0.6 : 0.38);
+      } else sounds.miss(name, style, this.spot(targetId));
       opts.onImpact?.();
     }, !!opts.landed);
+  }
+
+  /** A unit rocked back by a blow: knocked a little away from whoever dealt it (or just jolted), and settling back. */
+  private recoil(targetId: string, fromId: string | null, by: number) {
+    const t = this.units.get(targetId);
+    const a = fromId ? this.units.get(fromId) : undefined;
+    if (!t || t.lying) return;
+    if (a && a !== t) t.kick.copy(t.goal).sub(a.goal).setLength(by);
+    else t.kick.set((Math.random() - 0.5) * by, 0, (Math.random() - 0.5) * by);
+    t.bob = Math.max(t.bob, 0.1);
+    t.lean = 0.25;
   }
 
   /** A shot or a spell going off, drawn elsewhere (SpellFx): the unit turns to face where it is aimed, leans into it, and is heard. */
@@ -1241,9 +1288,11 @@ export class WorldRenderer {
   }
 
   /** That shot or spell arriving: the sound of it landing on its target, or going wide. */
-  landed(targetId: string, name: string, hit: boolean, crit = false) {
-    if (hit) sounds.impact(name, attackStyle(name), crit, this.fighter(targetId), this.spot(targetId));
-    else sounds.miss(name, attackStyle(name), this.spot(targetId));
+  landed(targetId: string, name: string, hit: boolean, crit = false, fromId: string | null = null) {
+    if (hit) {
+      sounds.impact(name, attackStyle(name), crit, this.fighter(targetId), this.spot(targetId));
+      this.recoil(targetId, fromId, crit ? 0.5 : 0.3);
+    } else sounds.miss(name, attackStyle(name), this.spot(targetId));
   }
 
   /** Text rising off a unit: damage, healing, a condition's name. */
@@ -1269,7 +1318,10 @@ export class WorldRenderer {
   private lunge(actorId: string, targetId: string) {
     const a = this.units.get(actorId);
     const t = this.units.get(targetId);
-    if (a && t && a !== t) a.kick.copy(t.goal).sub(a.goal).setLength(0.7);
+    if (!a || !t || a === t) return;
+    // Right at them: most of the way across the gap, with a spring off the ground.
+    a.kick.copy(t.goal).sub(a.goal).setLength(Math.min(1.15, a.goal.distanceTo(t.goal) * 0.6));
+    a.bob = 0.2;
   }
 
   /** Who a unit is in the fight, for its voice: looked up when asked, as the fight's line-up can change. */
@@ -1299,7 +1351,8 @@ export class WorldRenderer {
     // Left or right as the viewer sees it, whichever way the camera has been turned.
     const dir = t.goal.clone().project(this.camera).x >= a.goal.clone().project(this.camera).x ? 1 : -1;
     const flip = dir < 0;
-    a.lean = -dir * 0.5;
+    // Leant well into it, so the strike is held long enough to be seen.
+    a.lean = -dir * 0.9;
     if (!a.lying) a.turn = a.turnGoal = Math.atan2(t.goal.x - a.goal.x, t.goal.z - a.goal.z);
     const hitAt = t.goal.clone().add(new THREE.Vector3(0, t.size * 0.4, 0.05));
     const spell = SPELL_COLOR[ability];
@@ -4483,7 +4536,7 @@ export class WorldRenderer {
       // A plate shows a first name only: full names run long over a crowd.
       const full = h.label ?? (plate ? h.name : undefined);
       const label = plate && full ? firstName(full) : full;
-      want.set(h.id, { kind: h.classId, outfit: h.outfit, pos, size: 1.5, label, plate: label ? plate : undefined, stack: i, ring: colorOf(h.id), pulse: state.turn?.heroId === h.id || !!h.active, asleep: h.asleep, rod: h.rod, boat: h.boat, down: h.down });
+      want.set(h.id, { kind: h.classId, outfit: h.outfit, pos, size: 1.5, label, plate: label ? plate : undefined, stack: i, ring: colorOf(h.id), pulse: state.turn?.heroId === h.id || !!h.active, asleep: h.asleep, rod: h.rod, boat: h.boat, down: h.down, prone: h.prone });
     }
     for (const npc of state.story?.npcs ?? []) {
       const poi = state.map.pois.find((p) => p.id === npc.poi);
@@ -4505,7 +4558,7 @@ export class WorldRenderer {
     for (const u of state.units ?? []) {
       const pos = this.standAt(u.pos);
       pos.z += 0.25;
-      want.set(u.id, { kind: u.kind, pos, size: isBoss(u.kind) ? 1.9 : isBig(u.kind) ? 1.6 : 1.4, label: u.name, ring: u.hostile ? "#e23b3b" : undefined, pulse: !!u.active, hp: u.hp, down: u.down });
+      want.set(u.id, { kind: u.kind, pos, size: isBoss(u.kind) ? 1.9 : isBig(u.kind) ? 1.6 : 1.4, label: u.name, ring: u.hostile ? "#e23b3b" : undefined, pulse: !!u.active, hp: u.hp, down: u.down, prone: u.prone });
     }
     for (const poi of state.map.pois) {
       if (poi.cleared || poi.enemies.length === 0) continue;
@@ -4551,7 +4604,7 @@ export class WorldRenderer {
       unit.asleep = !!w.asleep;
       this.syncBoat(unit, w.boat);
       // Down or asleep: on their back, low to the ground.
-      unit.lying = !!w.down || !!w.asleep;
+      unit.lying = !!w.down || !!w.asleep || !!w.prone;
       unit.head = unit.lying ? w.size * LYING + 0.3 : w.size + 0.3;
       unit.stack = w.stack ?? 0;
       unit.size = w.size;
@@ -5252,19 +5305,23 @@ export class WorldRenderer {
       if (unit.path.length > 0) {
         const next = unit.path[0].clone();
         next.z += 0.25;
-        const step = 4.2 * dt;
-        landed = footfalls(unit.stride, unit.stride + step);
-        unit.stride += step;
-        // They turn to face the way they are walking.
-        if (Math.hypot(next.x - p.x, next.z - p.z) > 1e-4) unit.turnGoal = Math.atan2(next.x - p.x, next.z - p.z);
+        const step = 4.2 * (unit.rush ?? 1) * dt;
+        // Flung, not walking: no footfalls, and no turning to face the way it is going.
+        if (!unit.rush) {
+          landed = footfalls(unit.stride, unit.stride + step);
+          unit.stride += step;
+          // They turn to face the way they are walking.
+          if (Math.hypot(next.x - p.x, next.z - p.z) > 1e-4) unit.turnGoal = Math.atan2(next.x - p.x, next.z - p.z);
+        }
         if (p.distanceTo(next) <= step) {
           p.copy(next);
           unit.path.shift();
+          if (unit.path.length === 0) unit.rush = undefined;
         } else {
           p.add(next.sub(p).setLength(step));
         }
         // Two steps per hex, with a little bounce in each, landing as each hex is reached.
-        unit.bob = Math.abs(Math.sin(unit.stride * 3.6)) * 0.07;
+        if (!unit.rush) unit.bob = Math.abs(Math.sin(unit.stride * 3.6)) * 0.07;
       } else {
         unit.bob *= Math.exp(-dt * 18);
         unit.stride = 0;
@@ -5302,7 +5359,7 @@ export class WorldRenderer {
       if (unit.asleep) unit.turnGoal = this.yaw + Math.PI / 2;
       unit.turn += turnBy(unit.turn, unit.turnGoal) * (1 - Math.exp(-dt * 12));
       unit.root.rotation.y = unit.turn;
-      unit.figure.update({ time: this.clock, stride: unit.stride, walking: unit.path.length > 0, lean: unit.lean, lying: unit.lying });
+      unit.figure.update({ time: this.clock, stride: unit.stride, walking: unit.path.length > 0 && !unit.rush, lean: unit.lean, lying: unit.lying || this.clock < (unit.floored ?? 0) });
       const ground = p.y;
       unit.feet.set(p.x, ground, p.z);
       if (landed) this.footfall(id, unit);

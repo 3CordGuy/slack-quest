@@ -38,7 +38,7 @@ function provoke(ctx: Ctx, unit: Unit, next: HexPos, budget: Budget | null, flus
     if (foe.side === unit.side || foe.down || !inFight(ctx.state, foe.id)) continue;
     if (!adjacent(foe.pos, unit.pos) || adjacent(foe.pos, next) || sameHex(foe.pos, next)) continue;
     if (enc.reacted.includes(foe.id) || has(foe, "stunned") || has(foe, "prone")) continue;
-    const blow = foe.side === "enemy" ? enemyStrikes(foe.kind, foe.level).find((s) => s.range === 1 && !s.burst) : undefined;
+    const blow = foe.side === "enemy" ? enemyStrikes(foe.kind, foe.level, ctx.state.options.threat).find((s) => s.range === 1 && !s.burst) : undefined;
     if (foe.side === "enemy" && !blow) continue;
     flush();
     enc.reacted.push(foe.id);
