@@ -142,8 +142,8 @@ describe("the result line", () => {
     expect(harborXpText({ granted: 4, asked: 4 })).toBe("+4 XP.");
     expect(harborXpText({ granted: 2, asked: 5 })).toBe("+2 XP (daily Harbor XP reached).");
     expect(harborXpText({ granted: 0, asked: 0 })).toBe("");
-    expect(harborXpText({ granted: 6, asked: 6, bonus: 3 })).toBe("+9 XP (3 for perfect splits).");
-    expect(harborXpText({ granted: 0, asked: 6, bonus: 2 })).toBe("+2 XP (2 for perfect splits; daily Harbor XP reached).");
+    expect(harborXpText({ granted: 6, asked: 6, bonus: 3, bonusFor: "firsts and records" })).toBe("+9 XP (3 for firsts and records).");
+    expect(harborXpText({ granted: 0, asked: 6, bonus: 2 })).toBe("+2 XP (2 bonus; daily Harbor XP reached).");
     expect(harborXpText({ granted: 0, asked: 0, bonus: 0 })).toBe("");
   });
 

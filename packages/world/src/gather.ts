@@ -8,8 +8,8 @@
 // spent on.
 //
 // Felling and the quarry are different: played in the world, first person,
-// against a thirty-second clock. Felling is two rounds, chopping then
-// splitting, reported whole (felling.ts); the quarry is a rock face dug for
+// against a thirty-second clock. Felling is a round of notching trees down,
+// reported whole (felling.ts); the quarry is a rock face dug for
 // the glinting seam, its blows reported as they break rocks (mine.ts).
 //
 // Pure functions. An outing is a GatherState made from a seed; the player
@@ -21,7 +21,7 @@ import type { StatKey } from "@gantt-quest/core";
 import { rollCheck, statPct, MAX_PCT, MIN_PCT, type CheckResult } from "./check";
 import type { ResourceKind, Resources } from "./hut";
 import { makeRng, type Rng } from "./rng";
-import { FELL_ROUND_MS, MAX_REPORTED, TREES, newFelling, replayChops, replayStrikes, rollLogs, splitMotion, type Chop, type FellingState, type FelledTree, type Split } from "./felling";
+import { FELL_ROUND_MS, MAX_CHOPS, TREES, newFelling, replayChops, rollLogs, type Chop, type FellingState, type FelledTree, type Split } from "./felling";
 import { TIMING, timingEase, timingGrade, type Motion, type TimingGrade } from "./timing";
 import { MINE_CHARGE_MS, landBlows, mineView, rockYield, seedMine, type Blow, type MineState, type MineView } from "./mine";
 import { sittingMaterials, sittingView, stepSitting, type Sitting, type SittingView } from "./sitting";
@@ -52,7 +52,7 @@ export const GATHER_SPOTS: Record<GatherSpot, GatherSpotDef> = {
     name: "Felling in the tree line",
     stat: "str",
     pays: ["wood"],
-    blurb: "Two rounds of thirty seconds. First chop: three trees, small, medium and large. Small falls fastest; the old oak takes longest but gives the most logs, and a tree still standing at the end gives nothing. Then split: strike each log when the marker is over the split. A perfect is two pieces of wood and a good is one, onto a pile of eight; a miss means swinging again. Every perfect also earns XP, past the daily Harbor cap.",
+    blurb: "Thirty seconds in the tree line. Pick a tree, set the angle of your cut, and click as fast as you can. A cut only goes so deep before the axe binds: cut from the other side to meet it and a chunk pops out. With an eighth of the trunk left it topples. The sapling falls fastest; the old oak takes longest but gives the most logs, and a tree still standing at the end gives nothing. Each log is a piece of firewood.",
   },
   quarry: {
     id: "quarry",
@@ -125,7 +125,7 @@ export interface GatherState {
   water?: { school: number; gulls: number; casts: Cast[] };
   /** Fishing: where the player has chosen, and the marker they now have to stop. Cleared by the stop. */
   aim?: { cell: number; startedAt: number; motion: Motion };
-  /** Felling: the two rounds. Missing on felling outings from before them, which can only be carried home. */
+  /** Felling: the round. Missing on felling outings from before it, which can only be carried home. */
   felling?: FellingState;
   /** Set on outings that are timed. Older outings in progress are played without it. */
   timed?: boolean;
@@ -138,11 +138,11 @@ export type GatherChoice =
   | { t: "aim"; cell: number; now?: number }
   /** Stop the marker. `at` is how long after it started, in ms, as the server has judged it. */
   | { t: "push"; cell?: number; at?: number }
-  /** Felling: start the next round. `now` is the server's clock, filled in by the server. */
+  /** Felling: start the round. `now` is the server's clock, filled in by the server. */
   | { t: "begin"; now?: number }
-  /** Felling: the chopping round is over; every chop in it, timed from its start. */
+  /** Felling: the round is over; every chop in it, timed from its start, with its angle. */
   | { t: "chopped"; chops: Chop[]; now?: number }
-  /** Felling: the splitting round is over; every strike in it, timed from its start. */
+  /** Felling, on an outing from when it had a splitting round: carry the logs home. */
   | { t: "split"; strikes: number[]; now?: number }
   /** Quarry: ready at the face; the clock starts now (`now` is the server's clock, filled in by the server). */
   | { t: "dig"; now?: number }
@@ -161,17 +161,16 @@ export type GatherChoice =
   | { t: "release"; now?: number }
   | { t: "bank"; now?: number };
 
-/** Felling as the client sees it: the round it is on, what came of the chopping, and the markers for each log. */
+/** Felling as the client sees it: whether the round is under way, and what came of it. */
 export interface FellingView {
   phase: FellingState["phase"];
   roundMs: number;
   felled: { size: FelledTree["size"]; logs: number; check: FelledTree["check"] }[];
   logs: number;
+  /** Splits and misses: only on outings from when felling had a splitting round. */
   splits: { grade: Split["grade"]; wood: number; check: Split["check"] }[];
   misses: number;
   wood: number;
-  /** The marker over each log, first to last. Shown once there are logs to split. */
-  motions: Motion[];
 }
 
 export interface GatherView {
@@ -186,7 +185,7 @@ export interface GatherView {
   /** What the outing paid. Empty until it is over. */
   payout: Resources;
   log: GatherEntry[];
-  /** Felling: the two rounds. Null elsewhere, and on a felling outing from before them. */
+  /** Felling: the round. Null elsewhere, and on a felling outing from before it. */
   felling: FellingView | null;
   /** Quarry: the rock face, its glints, and the clock. Null elsewhere, and on a quarry outing from before the face. */
   mine: MineView | null;
@@ -243,12 +242,14 @@ export interface GatherStep {
 export function stepGather(state: GatherState, choice: GatherChoice): GatherStep {
   if (state.status !== "active") return { state, error: "That outing is over." };
   if (state.sitting) return stepSitting(state, choice);
+  // A felling outing from when it had a splitting round is carried home with its logs, whatever is asked.
+  if (state.felling && (state.felling.phase === "ready-split" || state.felling.phase === "split")) return stepFelling(state, state.felling, choice);
   if (choice.t === "bank") {
     const empty = units(state.haul) === 0;
     return { state: { ...state, status: "banked", log: [...state.log, { text: empty ? "You head back with what little you can carry." : "You pack up and head back.", check: null, gained: {} }] } };
   }
   if (state.spot === "felling") {
-    // A felling outing from before the two rounds can only be carried home.
+    // A felling outing from before the rounds can only be carried home.
     if (!state.felling) return { state, error: "The light has gone on this stand. Carry it home." };
     return stepFelling(state, state.felling, choice);
   }
@@ -364,58 +365,52 @@ function mineStep(state: GatherState, choice: GatherChoice): GatherStep {
 }
 
 /**
- * Felling: begin a round, or take the report of one that has ended. The
+ * Felling: begin the round, or take the report of it once it has ended. The
  * server fills in `now`; a report is judged against how long the round has
  * really run, so nothing in it can come from after the request arrived.
  */
 function stepFelling(state: GatherState, f: FellingState, choice: GatherChoice): GatherStep {
   const now = "now" in choice ? Number(choice.now) || 0 : 0;
+  // From when felling had a splitting round: whatever logs came down are carried home as firewood.
+  if (f.phase === "ready-split" || f.phase === "split") {
+    const wood = Math.min(GATHER_MAX_UNITS, f.logs);
+    const text = `You carry the ${plural(f.logs, "log")} home and split them by the fire: ${plural(wood, "piece")} of firewood.`;
+    return { state: { ...state, step: state.step + 1, status: "banked", haul: wood > 0 ? { wood } : {}, log: [...state.log, { text, check: null, gained: wood > 0 ? { wood } : {} }], felling: { ...f, phase: "done", startedAt: 0, wood } } };
+  }
   if (choice.t === "bank") {
     return { state: { ...state, status: "banked", felling: { ...f, phase: "done" }, log: [...state.log, { text: "You leave the axe in the stump and head back.", check: null, gained: {} }] } };
   }
   if (choice.t === "begin") {
     if (f.phase === "ready-chop") return { state: { ...state, felling: { ...f, phase: "chop", startedAt: now } } };
-    if (f.phase === "ready-split") return { state: { ...state, felling: { ...f, phase: "split", startedAt: now } } };
     return { state, error: f.phase === "done" ? "That outing is over." : "A round is already under way." };
   }
-  // How long the round has run by the server's clock: a report can claim nothing later than this.
-  const ran = Math.max(0, now - f.startedAt + 50);
-  const rng = makeRng(state.rng);
   if (choice.t === "chopped") {
     if (f.phase !== "chop") return { state, error: "You are not chopping." };
-    const chops = Array.isArray(choice.chops) ? choice.chops.slice(0, MAX_REPORTED) : [];
+    // How long the round has run by the server's clock: a report can claim nothing later than this.
+    const ran = Math.max(0, now - f.startedAt + 50);
+    const rng = makeRng(state.rng);
+    const chops = Array.isArray(choice.chops) ? choice.chops.slice(0, MAX_CHOPS) : [];
     const felled = rollLogs(rng, replayChops(chops, ran), state.pct);
     const logs = felled.reduce((a, t) => a + t.logs, 0);
+    // Each log is a piece of firewood for now; splitting them is to be a game of its own (see felling.ts).
+    const wood = Math.min(GATHER_MAX_UNITS, logs);
     const count = (size: FelledTree["size"]) => felled.filter((t) => t.size === size).length;
     const kinds = (["small", "medium", "large"] as const).filter((k) => count(k)).map((k) => `${count(k)} ${count(k) === 1 ? TREES[k].name.toLowerCase() : TREES[k].plural}`);
-    const text = felled.length === 0 ? "Nothing came down before the time was up." : `Down came ${kinds.join(", ")}: ${plural(logs, "log")} to split.`;
-    const next: GatherState = { ...state, rng: rng.state(), step: state.step + 1, log: [...state.log, { text, check: null, gained: {} }], felling: { ...f, phase: logs > 0 ? "ready-split" : "done", startedAt: 0, felled, logs } };
-    if (logs === 0) {
-      next.status = "banked";
-      next.log.push({ text: "No logs to split. You gather an armful of kindling instead.", check: null, gained: {} });
-    }
-    return { state: next };
-  }
-  if (choice.t === "split") {
-    if (f.phase !== "split") return { state, error: "You are not splitting." };
-    const strikes = Array.isArray(choice.strikes) ? choice.strikes.slice(0, MAX_REPORTED) : [];
-    const { splits, misses } = replayStrikes(strikes, f.logs, (log) => splitMotion(state.seed, log, state.pct), ran, GATHER_MAX_UNITS);
-    const wood = splits.reduce((a, s) => a + s.wood, 0);
-    const perfect = splits.filter((s) => s.grade === "perfect").length;
-    const full = wood >= GATHER_MAX_UNITS ? ", and the pile is full" : "";
-    const text = splits.length === 0 ? "Not one log split clean." : `${plural(splits.length, "log")} split (${perfect} perfect)${misses ? `, ${plural(misses, "swing")} off the mark` : ""}: ${plural(wood, "piece")} of firewood${full}.`;
+    const full = logs > GATHER_MAX_UNITS ? `, all you can carry` : "";
+    const text = felled.length === 0 ? "Nothing came down before the time was up. You gather an armful of kindling instead." : `Down came ${kinds.join(", ")}: ${plural(logs, "log")}, ${plural(wood, "piece")} of firewood${full}.`;
     return {
       state: {
         ...state,
+        rng: rng.state(),
         step: state.step + 1,
         status: "banked",
         haul: wood > 0 ? { wood } : {},
         log: [...state.log, { text, check: null, gained: wood > 0 ? { wood } : {} }],
-        felling: { ...f, phase: "done", startedAt: 0, splits, misses, wood },
+        felling: { ...f, phase: "done", startedAt: 0, felled, logs, wood },
       },
     };
   }
-  return { state, error: f.phase === "ready-chop" || f.phase === "ready-split" ? "Start the round first." : "Unknown choice." };
+  return { state, error: f.phase === "ready-chop" ? "Start the round first." : "Unknown choice." };
 }
 
 /**
@@ -460,7 +455,6 @@ export function gatherView(state: GatherState, now?: number): GatherView {
       splits: state.felling.splits.map(({ grade, wood, check }) => ({ grade, wood, check })),
       misses: state.felling.misses,
       wood: state.felling.wood,
-      motions: Array.from({ length: state.felling.logs }, (_, log) => splitMotion(state.seed, log, state.pct)),
     },
     mine: state.mine ? mineView(state.mine, over, now) : null,
     aim: state.aim ? { cell: state.aim.cell, motion: state.aim.motion } : null,

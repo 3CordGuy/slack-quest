@@ -4,8 +4,9 @@
 // when it bit (runs, rests, head-shakes, jumps); the player's button becomes
 // pressure. Hold is full pressure; a tap is a short pulse of half; nothing is
 // none. When the fish runs, pressure tires it but piles tension on the line;
-// when it rests, pressure reels it in. Tire it out and land it before the
-// line snaps, runs out, or goes slack long enough to throw the hook.
+// when it rests, pressure reels it in. Tire it out before the line snaps,
+// runs out, or goes slack long enough to throw the hook: a spent fish gives
+// up and the reel winds it straight in.
 //
 // The client runs this live from the button and reports every press when the
 // fight ends; the server runs it again from those presses and its result
@@ -31,8 +32,12 @@ export const TAP_MS = 200;
 export const PULSE_MS = 250;
 /** Tension below this, on a run with no pressure, is a slack line: long enough and the hook falls out. */
 export const SLACK_T = 0.15;
-/** Below this the fish is spent and only rests. */
+/** Below this the fish is spent: it gives up, and the reel brings it straight in. */
 export const EXHAUSTED = 0.05;
+/** Metres a second a spent fish comes in, pressed or not: the fight is won, so there is no slow wind to sit through. */
+export const SPENT_REEL_MPS = 14;
+/** Dead weight (an old boot, a crate) comes in this many times quicker than a fish at rest. */
+const DRAG_REEL = 2.5;
 
 export type FightMode = "run" | "rest" | "shake" | "jump" | "drag";
 
@@ -160,6 +165,8 @@ export interface FightState {
   /** How long the line has been over breaking, and slack on a run. */
   over: number;
   slack: number;
+  /** Worn out: it has given up and is being wound straight in (see SPENT_REEL_MPS). Once spent, always spent. */
+  spent?: boolean;
   outcome: FightOutcome | null;
 }
 
@@ -196,13 +203,19 @@ export function fightTick(s: FightState, script: FightScript, ease: FightEase, p
     segT = 0;
   }
   const cur = script.segments[seg] ?? REST;
-  const mode: FightMode = cur.mode !== "drag" && cur.mode !== "rest" && S < EXHAUSTED ? "rest" : cur.mode;
+  const spent = s.spent || (cur.mode !== "drag" && S < EXHAUSTED);
+  const mode: FightMode = spent ? "rest" : cur.mode;
   const pull = script.power * (0.35 + 0.65 * S) * cur.power;
   const steady = 1.1 - 0.25 * ease.dex;
   const tiring = (0.8 + 0.5 * ease.str) / script.staminaS;
   const reel = script.reelSpeed * (0.8 + 0.6 * ease.str);
   let target = 0;
-  if (mode === "run") {
+  if (spent) {
+    // Won: it comes in on its own, the line easy, whatever the button does.
+    target = 0.12;
+    S = 0;
+    D -= DT * SPENT_REEL_MPS;
+  } else if (mode === "run") {
     target = pull * (0.3 + 0.9 * P) * steady;
     S -= DT * (0.25 + P) * tiring;
     D += DT * script.runSpeed * cur.power * (0.4 + 0.6 * S) * (1 - 0.7 * P);
@@ -217,7 +230,7 @@ export function fightTick(s: FightState, script: FightScript, ease: FightEase, p
     S -= DT * (0.25 + P) * tiring * 1.5;
   } else if (mode === "drag") {
     target = (0.2 + 0.6 * P) * script.power * steady;
-    D -= DT * P * reel * 0.6;
+    D -= DT * P * reel * 0.6 * DRAG_REEL;
   } else {
     target = 0.12 * P;
     D -= DT * P * reel;
@@ -236,7 +249,7 @@ export function fightTick(s: FightState, script: FightScript, ease: FightEase, p
   else if (slack > script.slackMs + 600 * ease.dex) outcome = "thrown";
   else if (D <= LAND_M) outcome = "landed";
   else if (t >= FIGHT_MAX_MS) outcome = "slipped";
-  return { t, S, T, D, seg, segT: segT + FIGHT_TICK_MS, mode, over, slack, outcome };
+  return { t, S, T, D, seg, segT: segT + FIGHT_TICK_MS, mode, over, slack, ...(spent ? { spent } : {}), outcome };
 }
 
 /**

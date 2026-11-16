@@ -378,6 +378,8 @@ interface Tree {
 export class Woods {
   readonly group = new THREE.Group();
   private trees: Tree[] = [];
+  /** The boulders, each one instance; only kept so a minigame can take the ones in its way out for a while. */
+  private rocks: { mesh: THREE.InstancedMesh; index: number; x: number; z: number; size: number; base: THREE.Matrix4; cleared: boolean }[] = [];
   /** The trees by the cell of a coarse grid they stand in, for finding the ones near a walker. */
   private cells = new Map<string, Tree[]>();
   /** Trees still swinging back upright. */
@@ -426,15 +428,14 @@ export class Woods {
       const list = boulders.filter((b) => b.shape === shape);
       const mesh = this.instanced(geometry, list.length);
       list.forEach((b, i) => {
-        mesh.setMatrixAt(
-          i,
-          new THREE.Matrix4().compose(
-            new THREE.Vector3(b.x, b.y + b.tall * 0.22, b.z),
-            new THREE.Quaternion().setFromEuler(new THREE.Euler(b.tilt, b.yaw, b.tilt * 0.6)),
-            new THREE.Vector3(b.size, b.tall, b.size * (0.85 + (shape % 3) * 0.1)),
-          ),
+        const base = new THREE.Matrix4().compose(
+          new THREE.Vector3(b.x, b.y + b.tall * 0.22, b.z),
+          new THREE.Quaternion().setFromEuler(new THREE.Euler(b.tilt, b.yaw, b.tilt * 0.6)),
+          new THREE.Vector3(b.size, b.tall, b.size * (0.85 + (shape % 3) * 0.1)),
         );
+        mesh.setMatrixAt(i, base);
         mesh.setColorAt(i, b.tint);
+        this.rocks.push({ mesh, index: i, x: b.x, z: b.z, size: b.size, base, cleared: false });
       });
     });
   }
@@ -509,16 +510,39 @@ export class Woods {
     tree.mesh.setMatrixAt(tree.index, this.scratch);
   }
 
-  /** Take out the trees within `radius` of (x, z), so a minigame's things stand clear. Back with `restore`. */
+  /** Take out the trees and boulders within `radius` of (x, z), so a minigame's things stand clear. Back with `restore`. */
   clear(x: number, z: number, radius: number) {
+    this.clearWhere((px, pz, size) => Math.hypot(px - x, pz - z) <= radius + size * 0.5);
+  }
+
+  /**
+   * Take out the trees and boulders within `radius` of the line from (ax, az) to (bx, bz): whatever would stand
+   * between a minigame's eye and what it looks at. Back with `restore`.
+   */
+  clearAlong(ax: number, az: number, bx: number, bz: number, radius: number) {
+    const dx = bx - ax, dz = bz - az;
+    const len2 = dx * dx + dz * dz || 1;
+    this.clearWhere((px, pz, size) => {
+      const t = Math.max(0, Math.min(1, ((px - ax) * dx + (pz - az) * dz) / len2));
+      return Math.hypot(px - (ax + dx * t), pz - (az + dz * t)) <= radius + size * 0.5;
+    });
+  }
+
+  private clearWhere(inside: (x: number, z: number, size: number) => boolean) {
     const hidden = new THREE.Matrix4().makeScale(0, 0, 0);
     const dirty = new Set<THREE.InstancedMesh>();
     for (const tree of this.trees) {
-      if (tree.cleared || Math.hypot(tree.x - x, tree.z - z) > radius) continue;
+      if (tree.cleared || !inside(tree.x, tree.z, 0)) continue;
       tree.cleared = true;
       this.moving.delete(tree);
       tree.mesh.setMatrixAt(tree.index, hidden);
       dirty.add(tree.mesh);
+    }
+    for (const rock of this.rocks) {
+      if (rock.cleared || !inside(rock.x, rock.z, rock.size)) continue;
+      rock.cleared = true;
+      rock.mesh.setMatrixAt(rock.index, hidden);
+      dirty.add(rock.mesh);
     }
     for (const mesh of dirty) mesh.instanceMatrix.needsUpdate = true;
   }
@@ -531,6 +555,12 @@ export class Woods {
       tree.dx = tree.dz = tree.vx = tree.vz = 0;
       tree.mesh.setMatrixAt(tree.index, tree.base);
       dirty.add(tree.mesh);
+    }
+    for (const rock of this.rocks) {
+      if (!rock.cleared) continue;
+      rock.cleared = false;
+      rock.mesh.setMatrixAt(rock.index, rock.base);
+      dirty.add(rock.mesh);
     }
     for (const mesh of dirty) mesh.instanceMatrix.needsUpdate = true;
   }

@@ -100,7 +100,7 @@ export function harborXpStatus(record: HarborXpRecord | null | undefined, now: n
 export interface HarborXpAward {
   /** XP actually given under the cap: the amount, cut down to what is left of today's. */
   granted: number;
-  /** XP given on top, outside the cap (perfect splits). Not counted against the day. */
+  /** XP given on top, outside the cap (a first catch, a crew record). Not counted against the day. */
   bonus: number;
   /** What the pastime would have paid without the cap. */
   asked: number;
@@ -133,15 +133,15 @@ export function harborXpAward(hero: Progress, record: HarborXpRecord | null | un
 }
 
 /**
- * "+4 XP", "+2 XP (daily Harbor XP reached)", "+7 XP (3 for perfect splits)",
+ * "+4 XP", "+2 XP (daily Harbor XP reached)", "+7 XP (3 for firsts and records)",
  * or "" when the pastime pays nothing. `bonus` is the XP given outside the cap.
  */
-export function harborXpText(award: { granted: number; asked: number; bonus?: number; levelsGained?: number }): string {
+export function harborXpText(award: { granted: number; asked: number; bonus?: number; bonusFor?: string; levelsGained?: number }): string {
   const bonus = Math.max(0, award.bonus ?? 0);
   if (award.asked <= 0 && bonus <= 0) return "";
   const level = award.levelsGained ? " Level up!" : "";
   const total = award.granted + bonus;
   if (total <= 0) return "No XP: daily Harbor XP reached.";
-  const notes = [bonus > 0 ? `${bonus} for perfect splits` : "", award.granted < award.asked ? "daily Harbor XP reached" : ""].filter(Boolean);
+  const notes = [bonus > 0 ? (award.bonusFor ? `${bonus} for ${award.bonusFor}` : `${bonus} bonus`) : "", award.granted < award.asked ? "daily Harbor XP reached" : ""].filter(Boolean);
   return `+${total} XP${notes.length ? ` (${notes.join("; ")})` : ""}.${level}`;
 }

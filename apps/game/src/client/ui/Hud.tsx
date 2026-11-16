@@ -137,6 +137,28 @@ export function HudBar({ me, place, children, hp, meter, pips = [], chips, quick
     if (art.current) paintRack(art.current);
   }, [me.character === null]);
 
+  // How much of the bottom of the screen the bar takes (its rack and the pips over it, not the "here" strip), as
+  // --hud-h on the page: whatever a view floats over the bottom (a minigame's controls) sits clear above it.
+  const root = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = root.current;
+    if (!el) return;
+    const measure = () => {
+      const tops = [...el.children].filter((k) => !k.classList.contains("hud-here")).map((k) => k.getBoundingClientRect().top);
+      if (tops.length === 0) return;
+      document.documentElement.style.setProperty("--hud-h", `${Math.max(0, Math.round(innerHeight - Math.min(...tops)))}px`);
+    };
+    measure();
+    const watch = new ResizeObserver(measure);
+    watch.observe(el);
+    addEventListener("resize", measure);
+    return () => {
+      watch.disconnect();
+      removeEventListener("resize", measure);
+      document.documentElement.style.removeProperty("--hud-h");
+    };
+  }, [c === null]);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (typing(e) || e.ctrlKey || e.metaKey || e.altKey) return;
@@ -148,7 +170,7 @@ export function HudBar({ me, place, children, hp, meter, pips = [], chips, quick
     return () => removeEventListener("keydown", onKey);
   }, [onBag, onBook, bagBlocked]);
 
-  if (!c) return <div className="hud"><div className="hud-rack"><span className="hud-caps">{children}{menu}</span></div></div>;
+  if (!c) return <div className="hud" ref={root}><div className="hud-rack"><span className="hud-caps">{children}{menu}</span></div></div>;
 
   const bonus = loadoutOf(worn).bonus;
   const stats = { str: c.str + (bonus.str ?? 0), int_stat: c.int_stat + (bonus.int_stat ?? 0), vit: c.vit + (bonus.vit ?? 0), agi: c.agi + (bonus.agi ?? 0), dex: c.dex + (bonus.dex ?? 0) };
@@ -165,7 +187,7 @@ export function HudBar({ me, place, children, hp, meter, pips = [], chips, quick
   );
 
   return (
-    <div className="hud" role="toolbar" aria-label="Your hero">
+    <div className="hud" ref={root} role="toolbar" aria-label="Your hero">
       {(place || Children.toArray(children).length > 0) && (
         <div className="hud-here">
           {place && <span className="hud-place">{place}</span>}
