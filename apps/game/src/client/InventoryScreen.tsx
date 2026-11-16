@@ -58,6 +58,7 @@ import {
   STALL_BUYS,
   addedSlots,
   armorBlock,
+  canHide,
   carryProblem,
   equipProblem,
   itemCells,
@@ -676,8 +677,8 @@ export function InventoryScreen({ me, refresh, onClose, onIsland = false, chest 
         {!item && <span className="slot-name">{SLOT_LABEL[slot]}</span>}
         {item && item.power > 0 && <span className="badge br">+{item.power}</span>}
       </button>
-      {/* Beside the slot, not in it (a button cannot hold a button): show or hide the piece on the hero. It counts either way. */}
-      {item && (
+      {/* Beside the slot, not in it (a button cannot hold a button): show or hide the piece on the hero. It counts either way. Not for what is held in the hands. */}
+      {item && canHide(slot) && (
         <button
           className="gear-eye"
           style={{ left: (at.x + at.w) * U, top: at.y * U }}

@@ -60,14 +60,16 @@ describe("gearSheet", () => {
   });
 
   it("counts hidden gear but does not draw it", () => {
-    const sheet = gearSheet("qa_paladin", WORN.map((i) => (i.slot === "helmet" || i.slot === "main_hand" ? { ...i, hidden: true } : i)));
-    expect(sheet.weapon).toBe("greatsword");
-    expect(sheet.weaponPower).toBe(3);
+    const sheet = gearSheet("qa_paladin", WORN.map((i) => (i.slot === "helmet" ? { ...i, hidden: true } : i)));
     expect(sheet.armor).toBe(8);
     expect(sheet.bonus).toEqual({ str: 2, vit: 3, agi: 1 });
     expect(sheet.outfit?.helmet).toBeUndefined();
-    expect(sheet.outfit?.main_hand).toBeUndefined();
     expect(sheet.outfit?.body?.ref).toBe("plate");
+  });
+
+  it("always draws what is held in the hands, even if marked hidden", () => {
+    const sheet = gearSheet("qa_paladin", WORN.map((i) => (i.slot === "main_hand" ? { ...i, hidden: true } : i)));
+    expect(sheet.outfit?.main_hand?.ref).toBe("greatsword");
   });
 
   it("is unarmed with nothing in hand, and can only punch", () => {

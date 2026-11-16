@@ -11,6 +11,7 @@ import {
   sellFurnitureProblem,
   craftProblem,
   displacedFurnishings,
+  canHide,
   equipProblem,
   gearSheet,
   heroClass,
@@ -574,8 +575,10 @@ export async function unequipItem(db: D1Database, playerId: string, itemId: numb
   return null;
 }
 
-/** Show or hide a worn piece on the hero. What it does is unchanged either way. Returns an error message or null. */
+/** Show or hide a worn piece on the hero (not one held in the hands). What it does is unchanged either way. Returns an error message or null. */
 export async function setGearHidden(db: D1Database, playerId: string, itemId: number, hidden: boolean): Promise<string | null> {
+  const row = await getItem(db, playerId, itemId);
+  if (row && !canHide(row.slot)) return "What is held in the hands is always shown.";
   const res = await db.prepare("UPDATE inventory SET hidden = ?3 WHERE id = ?2 AND player_id = ?1 AND equipped = 1 AND stored_in IS NULL").bind(playerId, itemId, hidden ? 1 : 0).run();
   return res.meta.changes > 0 ? null : "Only worn gear can be hidden.";
 }
