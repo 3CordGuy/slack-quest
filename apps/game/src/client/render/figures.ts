@@ -297,6 +297,65 @@ export function inflate(g: THREE.BufferGeometry, by: number): THREE.BufferGeomet
   return shell;
 }
 
+/**
+ * Cut a piece (three corners a face, with its normals) in two at height `y`: what lies above, what lies below,
+ * and how far the cut reaches across (x) and through (z) about its middle. Faces that cross the cut are split
+ * along it, their normals carried over, so the two halves still shade as one piece where they meet.
+ */
+function cutAt(g: THREE.BufferGeometry, y: number): { above: THREE.BufferGeometry; below: THREE.BufferGeometry; span: { x: number; z: number; rx: number; rz: number } | null } {
+  const pos = g.getAttribute("position");
+  const nor = g.getAttribute("normal") as THREE.BufferAttribute | undefined;
+  type V = [number, number, number, number, number, number];
+  const sides: [number[], number[]] = [[], []];
+  const normals: [number[], number[]] = [[], []];
+  let [x0, x1, z0, z1] = [Infinity, -Infinity, Infinity, -Infinity];
+  const put = (side: 0 | 1, poly: V[]) => {
+    for (let i = 1; i + 1 < poly.length; i++) {
+      for (const v of [poly[0], poly[i], poly[i + 1]]) {
+        sides[side].push(v[0], v[1], v[2]);
+        normals[side].push(v[3], v[4], v[5]);
+      }
+    }
+  };
+  for (let f = 0; f < pos.count; f += 3) {
+    const tri: V[] = [0, 1, 2].map((k) => [pos.getX(f + k), pos.getY(f + k), pos.getZ(f + k), nor ? nor.getX(f + k) : 0, nor ? nor.getY(f + k) : 0, nor ? nor.getZ(f + k) : 0]);
+    const over = tri.map((v) => v[1] >= y);
+    if (over.every(Boolean)) put(0, tri);
+    else if (!over.some(Boolean)) put(1, tri);
+    else {
+      const up: V[] = [];
+      const down: V[] = [];
+      for (let k = 0; k < 3; k++) {
+        const a = tri[k];
+        const b = tri[(k + 1) % 3];
+        (over[k] ? up : down).push(a);
+        if (over[k] === over[(k + 1) % 3]) continue;
+        const t = (y - a[1]) / (b[1] - a[1]);
+        const c = a.map((v, i) => v + (b[i] - v) * t) as V;
+        c[1] = y;
+        up.push(c);
+        down.push(c);
+        x0 = Math.min(x0, c[0]);
+        x1 = Math.max(x1, c[0]);
+        z0 = Math.min(z0, c[2]);
+        z1 = Math.max(z1, c[2]);
+      }
+      put(0, up);
+      put(1, down);
+    }
+  }
+  const make = (side: 0 | 1) => {
+    const out = new THREE.BufferGeometry();
+    out.setAttribute("position", new THREE.Float32BufferAttribute(sides[side], 3));
+    if (nor) out.setAttribute("normal", new THREE.Float32BufferAttribute(normals[side], 3));
+    return out;
+  };
+  return { above: make(0), below: make(1), span: x1 >= x0 ? { x: (x0 + x1) / 2, z: (z0 + z1) / 2, rx: (x1 - x0) / 2, rz: (z1 - z0) / 2 } : null };
+}
+
+/** How far out from a limb's own line a piece may reach and still be part of the limb (a sleeve, a bracer): it is cut at the joint. Anything wider (a shield) is not. */
+const LIMB_REACH = 2.3;
+
 interface Mats {
   body: THREE.MeshLambertMaterial;
   outline: THREE.MeshBasicMaterial;
@@ -314,11 +373,25 @@ class Part {
   private hull: THREE.BufferGeometry[] = [];
   private lit: THREE.BufferGeometry[] = [];
   private inked: THREE.BufferGeometry[] = [];
+  /**
+   * A joint part way down this part (an elbow): what is drawn on it below `at` goes to `lower`, which hangs
+   * from the joint, and a piece of the limb that crosses the joint is cut in two there (see place).
+   */
+  private bend: { at: number; lower: Part } | null = null;
 
   constructor(parent: THREE.Object3D, x = 0, y = 0, z = 0) {
     this.joint.position.set(x, y, z);
     this.joint.add(this.skin);
     parent.add(this.joint);
+  }
+
+  /**
+   * Give this part a joint at height `at` (an elbow), with `lower` hanging from it: what is drawn on this part
+   * from here on, in its own space as before, is shared out between the two (see place).
+   */
+  jointAt(at: number, lower: Part): this {
+    this.bend = { at, lower };
+    return this;
   }
 
   /** `geometry` is centred on its own origin; `glow` draws it unlit, with no outline. */
@@ -327,33 +400,72 @@ class Part {
     const flat = geometry.index ? geometry.toNonIndexed() : geometry;
     if (flat !== geometry) geometry.dispose();
     flat.deleteAttribute("uv");
-    if (!outlined) {
-      // Nothing round it: ink on the skin.
-    } else if (!glow && rounded) {
-      const shell = inflate(flat, edge);
-      shell.applyMatrix4(at);
-      this.hull.push(shell);
-    } else if (!glow) {
-      // The outline's shell: the same shape, a little larger all round.
+    // A square piece's outline is the same shape a little larger all round, grown about its own middle; a
+    // rounded one's is pushed out along its faces, once it is known where the piece goes (see put).
+    let shell: THREE.BufferGeometry | null = null;
+    if (outlined && !glow && !rounded) {
       flat.computeBoundingBox();
       const size = flat.boundingBox!.getSize(new THREE.Vector3());
-      const shell = flat.clone();
+      shell = flat.clone();
       shell.deleteAttribute("normal");
       shell.scale((size.x + 2 * edge) / size.x, (size.y + 2 * edge) / size.y, (size.z + 2 * edge) / size.z);
       shell.applyMatrix4(at);
-      this.hull.push(shell);
     }
+    flat.applyMatrix4(at);
     if (!glow) roundNormals(flat);
     const c = new THREE.Color(color);
     // No two pieces of cloth or plate are quite the same shade. (Not what glows, nor the ink of an eye.)
     if (!glow && color !== OUTLINE && color !== "#ffffff") c.offsetHSL((rand() - 0.5) * 0.02, (rand() - 0.5) * 0.08, (rand() - 0.5) * 0.06);
+    this.place(flat, shell, c, glow, outlined && !glow && rounded);
+    return this;
+  }
+
+  /**
+   * Where a piece (already in this part's space) goes. On a part with a joint: above it, here; below it, on the
+   * lower part; across it, the limb's own pieces (a sleeve, an arm) are cut in two at the joint, with a round
+   * of the same colour set in the joint to fill the gap when it bends, and anything else (too wide to be the
+   * limb, or only just over the line) goes whole to the side most of it is on.
+   */
+  private place(flat: THREE.BufferGeometry, shell: THREE.BufferGeometry | null, c: THREE.Color, glow: boolean, inflated: boolean) {
+    const bend = this.bend;
+    if (!bend) return this.put(flat, shell, c, glow, inflated);
+    const down = (g: THREE.BufferGeometry | null) => g?.translate(0, -bend.at, 0) ?? null;
+    flat.computeBoundingBox();
+    const box = flat.boundingBox!;
+    const lower = () => bend.lower.put(down(flat)!, down(shell), c, glow, inflated);
+    if (box.max.y <= bend.at) return lower();
+    if (box.min.y >= bend.at) return this.put(flat, shell, c, glow, inflated);
+    const limb = Math.max(-box.min.x, box.max.x, -box.min.z, box.max.z) <= LIMB_REACH && box.max.y - bend.at >= 0.5 && bend.at - box.min.y >= 0.5;
+    if (!limb) return (box.max.y + box.min.y) / 2 < bend.at ? lower() : this.put(flat, shell, c, glow, inflated);
+    const cut = cutAt(flat, bend.at);
+    const cutShell = shell ? cutAt(shell, bend.at) : null;
+    flat.dispose();
+    shell?.dispose();
+    this.put(cut.above, cutShell?.above ?? null, c, glow, inflated);
+    bend.lower.put(down(cut.below)!, down(cutShell?.below ?? null), c, glow, inflated);
+    if (cut.span && !glow) {
+      // The joint: a ball in a round limb, a barrel across a square one, the size of the cut.
+      const { x, z, rx, rz } = cut.span;
+      const round = inflated ? new THREE.IcosahedronGeometry(1, 1) : new THREE.CylinderGeometry(1, 1, 2, 10).rotateZ(HALF_PI);
+      const knuckle = round.index ? round.toNonIndexed() : round;
+      knuckle.deleteAttribute("uv");
+      if (inflated) knuckle.scale(rx * 0.98, Math.min(rx, rz) * 0.98, rz * 0.98);
+      else knuckle.scale(rx * 0.98, rz * 0.98, rz * 0.98);
+      knuckle.translate(x, bend.at, z);
+      roundNormals(knuckle);
+      this.put(knuckle, null, c, false, inflated || !!shell);
+    }
+  }
+
+  /** Keep a piece on this part: its outline's shell (made here for a rounded piece), and the piece in its colour. */
+  private put(flat: THREE.BufferGeometry, shell: THREE.BufferGeometry | null, c: THREE.Color, glow: boolean, inflated: boolean) {
+    if (inflated) this.hull.push(inflate(flat, edge));
+    else if (shell) this.hull.push(shell);
     const n = flat.getAttribute("position").count;
     const colors = new Float32Array(n * 3);
     for (let i = 0; i < n; i++) colors.set([c.r, c.g, c.b], i * 3);
     flat.setAttribute("color", new THREE.BufferAttribute(colors, 3));
-    flat.applyMatrix4(at);
     (glow ? this.lit : this.solid).push(flat);
-    return this;
   }
 
   /**
@@ -414,6 +526,19 @@ class Part {
    * over what is under it (the skin shows through faint ink).
    */
   inkGeometry(color: string, alpha: number, positions: number[]): this {
+    const bend = this.bend;
+    if (bend) {
+      // Each little face of ink goes with the piece of the limb it lies on.
+      const [above, below]: number[][] = [[], []];
+      for (let f = 0; f < positions.length; f += 9) {
+        const face = positions.slice(f, f + 9);
+        if ((face[1] + face[4] + face[7]) / 3 >= bend.at) above.push(...face);
+        else below.push(face[0], face[1] - bend.at, face[2], face[3], face[4] - bend.at, face[5], face[6], face[7] - bend.at, face[8]);
+      }
+      if (below.length > 0) bend.lower.inkGeometry(color, alpha, below);
+      if (above.length === 0) return this;
+      positions = above;
+    }
     const g = new THREE.BufferGeometry();
     g.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
     g.computeVertexNormals();
@@ -525,7 +650,7 @@ interface Hold {
   /** Where the grip goes in the part's frame (a hand's fist is at its origin). */
   at?: Pt;
   /** How the arm carries it (see drawHeld). */
-  pose?: { arm?: number; tilt?: number };
+  pose?: Carry;
 }
 
 /** Turns a model's +x (an axe's blade, a bow's belly, a book's fore-edge) to the front, its face out from the right hand. */
@@ -600,15 +725,38 @@ function outward(hand: Part, s: number): Part {
  * A low-poly hero's weapon as its icon's model, and how the arm carries it; null when it has none, or is played
  * across the body (the lute and flute: drawHeld lays those out).
  */
-function heldGear(icon: string, b: Biped, trim: string, shield: boolean): { arm?: number; tilt?: number } | null {
+function heldGear(icon: string, b: Biped, trim: string, shield: boolean): Carry | null {
   const hold = HOLD[icon];
   if (!hold || icon === "lute") return null;
+  if (icon === "crossbow" && !shield) {
+    // A bow is carried across the body like the lute: gripped in the left fist before the belly, its limbs
+    // slanting from the right hip up past the left shoulder, flat to the body so its whole curve shows, the
+    // arrow on the string pointing down and away. The right hand hangs ready to draw.
+    const bow = new Part(b.across().joint, 0, 0, BOW_OUT);
+    bow.joint.rotation.z = BOW_CANT;
+    if (!gear(bow, icon, trim, { grip: hold.grip, scale: hold.scale }, true)) return null;
+    // Strung by the figure, so the string can be drawn: a half from each tip to the nock, and an arrow on it.
+    const k = hold.scale as number;
+    const tip = { x: (-0.5 - hold.grip[0]) * k, y: 8 * k };
+    const halves = [1, -1].map((s) => {
+      const half = new Part(bow.joint, tip.x, s * tip.y, 0);
+      half.cyl(GEAR.paper, 0.07, 0.07, 1, 0, -0.5, 0, 4);
+      return half;
+    });
+    const arrow = new Part(bow.joint, tip.x, 0, 0.35);
+    arrow.cyl(GEAR.paper, 0.14, 0.14, 6.2, 3.0, 0, 0, 5, [0, 0, HALF_PI]);
+    arrow.cone(GEAR.steel, 0.42, 1.1, 6.6, 0, 0, 5, [0, 0, -HALF_PI]);
+    for (const turn of [0, HALF_PI]) arrow.box(trim, 1.4, 0.75, 0.08, 0.6, 0, 0, [turn, 0, 0]);
+    extraParts.push(bow, ...halves, arrow);
+    b.string({ bow, halves, arrow, tip });
+    return { arm: -0.2, bend: -0.7 };
+  }
   if (PAIRED.has(icon)) {
     // One in each fist (the second unless a shield is there), both tipped forward the same.
     if (!gear(outward(b.heldR, 1), icon, trim, hold, true)) return null;
     if (!shield) {
       gear(outward(b.heldL, -1), icon, trim, hold, true);
-      b.rest.tiltL = hold.pose?.tilt ?? 0;
+      carryLeft(b, hold.pose?.tilt ?? 0);
     }
     return hold.pose ?? {};
   }
@@ -640,12 +788,14 @@ interface Rig {
   clean?: boolean;
   /** A person's fists, right then left: where they hold things, and take hold of oars. */
   hands?: [THREE.Object3D, THREE.Object3D];
+  /** Draw and loose the bow carried, if one is (see Figure.loose). */
+  loose?: () => number;
 }
 
 // ---------- people ----------
 
 /** The joints every two-legged figure shares, and how they move. */
-function biped(top: THREE.Group, parts: Part[]) {
+function biped(top: THREE.Group, parts: Part[], elbow = ELBOW) {
   const part = (parent: THREE.Object3D, x: number, y: number, z: number) => {
     const p = new Part(parent, x, y, z);
     parts.push(p);
@@ -671,22 +821,138 @@ function biped(top: THREE.Group, parts: Part[]) {
   for (const leg of [thighR, thighL, shinR, shinL]) leg.skin.scale.set(m.girth, m.legs, m.girth);
   // Wide hips carry fuller thighs; the shins stay as they are.
   for (const thigh of [thighR, thighL]) thigh.skin.scale.x = m.girth * (0.5 + 0.5 * m.hips);
+  // An arm is an upper arm from the shoulder and a forearm from the elbow. It is still drawn as one limb in the
+  // shoulder's space: the part shares what is drawn on it between the two, and cuts a sleeve at the elbow.
+  const foreR = part(armR.joint, 0, elbow, 0);
+  const foreL = part(armL.joint, 0, elbow, 0);
+  armR.jointAt(elbow, foreR);
+  armL.jointAt(elbow, foreL);
   const limbGirth = (1 + m.girth) / 2;
-  for (const arm of [armR, armL]) arm.skin.scale.set(limbGirth, 1, limbGirth);
+  for (const arm of [armR, armL, foreR, foreL]) arm.skin.scale.set(limbGirth, 1, limbGirth);
   const legR = limb(thighR, shinR);
   const legL = limb(thighL, shinL);
-  // What each hand holds, kept upright while the arm hangs forward.
-  const heldR = part(armR.joint, 0, -5, 0);
-  const heldL = part(armL.joint, 0, -5, 0);
-  /** How far forward each arm rests, and how what it holds is tipped. */
-  const rest = { armR: -0.15, armL: -0.05, tiltR: 0, tiltL: 0 };
+  // What each hand holds, in the middle of the fist, kept upright however the arm is bent.
+  const fist = lowPoly ? -5.25 : -5;
+  const heldR = part(foreR.joint, 0, fist - elbow, 0);
+  const heldL = part(foreL.joint, 0, fist - elbow, 0);
+  /** How far forward each upper arm rests, how far its elbow is bent (forward is below zero), and how what it holds is tipped. */
+  const rest = { armR: -0.15, armL: -0.05, bendR: FREE_BEND, bendL: FREE_BEND, twistL: 0, tiltR: 0, tiltL: 0 };
+  // A forearm turns about the upper arm before it bends, so it can be brought across the body (a shield arm).
+  foreL.joint.rotation.order = foreR.joint.rotation.order = "YXZ";
+  /** What the left arm carries across the front (a shield's strap, a bow's grip): each kept standing as the body does. */
+  const levels: THREE.Object3D[] = [];
+  const level = { arm: new THREE.Quaternion() };
+  /**
+   * Carry a shield: the left arm bent round in front of the body, and on its forearm a strap that keeps the
+   * shield upright and facing the front however the arm is bent. Returns the part to draw the shield on, laid
+   * out as it always was on a straight arm (its middle about half a unit out, three down and two forward).
+   */
+  const shield = (): Part => {
+    rest.armL = SHIELD_ARM.arm;
+    rest.bendL = SHIELD_ARM.bend;
+    rest.twistL = SHIELD_ARM.twist;
+    const on = part(foreL.joint, 0, -1.7, 0);
+    levels.push(on.joint);
+    return part(on.joint, -0.5, 2.6, -0.7);
+  };
+  /**
+   * Carry something in the left fist across the front of the body (a bow): the arm bent round before the
+   * belly. Returns a part at the fist that stands as the body does, +y up and +z to the front.
+   */
+  const across = (): Part => {
+    rest.armL = ACROSS_ARM.arm;
+    rest.bendL = ACROSS_ARM.bend;
+    rest.twistL = ACROSS_ARM.twist;
+    const on = part(foreL.joint, 0, fist - elbow, 0);
+    levels.push(on.joint);
+    return on;
+  };
   // What the hands hold leans out from the body, far enough to clear the head (see heldLean).
   const lean = lowPoly ? heldLean(shoulderX) : 0;
+  /** A strung bow in the left hand (see heldGear), and the shot being made with it: when it began, and whether the next strike starts another. */
+  let strung: Strung | null = null;
+  const shot = { at: -Infinity, asked: false };
+  /** Begin a shot on the next frame, if a bow is carried. Returns the seconds until the arrow leaves the string (0 with no bow). */
+  const loose = (): number => {
+    if (!strung) return 0;
+    shot.asked = true;
+    return BOW_DRAW;
+  };
+  const string = (bow: Strung) => {
+    strung = bow;
+    stringTo(bow, 0, true);
+  };
+  /** Lay the string from each tip to the nock, drawn back `pull`, the arrow on it (or gone, once loosed). */
+  const stringTo = (bow: Strung, pull: number, nocked: boolean) => {
+    bow.halves.forEach((half, i) => {
+      const dy = (i === 0 ? -1 : 1) * bow.tip.y;
+      half.joint.rotation.z = Math.atan2(-pull, -dy);
+      half.joint.scale.y = Math.hypot(pull, dy);
+    });
+    bow.arrow.joint.position.x = bow.tip.x - pull;
+    bow.arrow.joint.visible = nocked;
+  };
+  const aim = { grip: new THREE.Vector3(), nock: new THREE.Vector3(), down: new THREE.Vector3(0.5, -1, -0.2), back: new THREE.Vector3(-0.7, 0.15, -0.7), m: new THREE.Matrix4() };
+  /** Keep what the left arm carries across the front standing as the body does, however the arm is posed just now. */
+  const settle = () => {
+    if (levels.length === 0) return;
+    level.arm.copy(armL.joint.quaternion).multiply(foreL.joint.quaternion).invert();
+    for (const joint of levels) joint.quaternion.copy(level.arm);
+  };
+  /**
+   * Shooting a bow, `since` seconds into it: the archer turns side-on, pushes the bow out toward the mark (it
+   * comes upright, its belly to the mark), the other hand takes the string and draws it back with the arrow,
+   * and looses; then the hand stays back a moment as the bow comes down.
+   */
+  const shoot = (bow: Strung, since: number) => {
+    const ease = (a: number, b: number) => {
+      const t = Math.min(1, Math.max(0, (since - a) / (b - a)));
+      return t * t * (3 - 2 * t);
+    };
+    const up = ease(0, 0.1) * (1 - ease(0.5, SHOT.over));
+    const loosed = since >= SHOT.loose;
+    const draw = ease(0.05, SHOT.loose - 0.03);
+    top.rotation.y = -SHOT.turn * up;
+    head.joint.rotation.y = SHOT.turn * 0.85 * up;
+    // The bow hand: out toward the mark, which lies to the left of a body turned side-on, at chest height.
+    const [ux, uz] = [Math.sin(SHOT.turn), Math.cos(SHOT.turn)];
+    const reachOut = -bow.tip.x;
+    aim.grip.set(-0.5 + reachOut * ux, 5.2, 2.8 + reachOut * uz);
+    reach(armL.joint, foreL.joint, -elbow, elbow - fist, aim.grip, aim.down, up);
+    settle();
+    bow.bow.joint.rotation.set(0, -(HALF_PI - SHOT.turn) * up, BOW_CANT + (-0.12 - BOW_CANT) * up);
+    bow.bow.joint.position.z = BOW_OUT * (1 - up);
+    stringTo(bow, loosed ? 0 : draw * SHOT.pull, !loosed);
+    // The string hand: to the nock, back with it, and a little further as it lets go.
+    torso.joint.updateWorldMatrix(true, true);
+    aim.nock.set(bow.tip.x - (draw + (loosed ? 0.2 * ease(SHOT.loose, SHOT.loose + 0.1) : 0)) * SHOT.pull, 0, 0);
+    aim.nock.applyMatrix4(aim.m.copy(torso.joint.matrixWorld).invert().multiply(bow.bow.joint.matrixWorld));
+    reach(armR.joint, foreR.joint, -elbow, elbow - fist, aim.nock, aim.back, up);
+  };
   const animate = (a: Anim) => {
-    heldR.joint.rotation.x = -rest.armR + rest.tiltR;
-    heldL.joint.rotation.x = -rest.armL + rest.tiltL;
+    pose(a);
+    if (strung) {
+      // A shot asked for begins now, and plays out on its own clock.
+      if (shot.asked) [shot.at, shot.asked] = [a.t, false];
+      const since = a.t - shot.at;
+      if (since >= 0 && since < SHOT.over && !a.lying && a.sitting === 0) return shoot(strung, since);
+      strung.bow.joint.rotation.set(0, 0, BOW_CANT);
+      strung.bow.joint.position.z = BOW_OUT;
+      stringTo(strung, 0, true);
+      head.joint.rotation.y = 0;
+      top.rotation.y = 0;
+    }
+    settle();
+  };
+  const pose = (a: Anim) => {
+    heldR.joint.rotation.x = -(rest.armR + rest.bendR) + rest.tiltR;
+    heldL.joint.rotation.x = -(rest.armL + rest.bendL) + rest.tiltL;
     heldR.joint.rotation.z = lean;
     heldL.joint.rotation.z = -lean;
+    foreR.joint.rotation.x = rest.bendR;
+    foreL.joint.rotation.x = rest.bendL;
+    foreL.joint.rotation.y = rest.twistL;
+
     if (a.lying) {
       // On their back, the head toward -z, centred on where they stood.
       top.rotation.set(-HALF_PI, 0, 0);
@@ -715,12 +981,18 @@ function biped(top: THREE.Group, parts: Part[]) {
         const forward = -1.12 + pull * 0.6;
         armL.joint.rotation.set(forward, 0, 0.03 + pull * 0.05);
         armR.joint.rotation.set(forward, 0, -0.03 - pull * 0.05);
+        // Straight-armed at the oars: the stroke was laid out for arms that reach.
+        foreL.joint.rotation.x = foreR.joint.rotation.x = 0;
         top.rotation.x = 0.12 - pull * 0.2;
         head.joint.rotation.x = -top.rotation.x * 0.7 + a.breath * 0.02;
         return;
       }
-      const reach = rest.armL + ((rest.armL < -0.3 ? rest.armL : -0.95) - rest.armL) * k;
-      heldL.joint.rotation.x = -reach + rest.tiltL;
+      // An arm already carried forward (a shield, an instrument) stays as it is; a free one comes up, bent at the elbow.
+      const carried = rest.armL + rest.bendL < -0.5;
+      const reach = rest.armL + ((carried ? rest.armL : -0.45) - rest.armL) * k;
+      const crook = rest.bendL + ((carried ? rest.bendL : -0.95) - rest.bendL) * k;
+      heldL.joint.rotation.x = -(reach + crook) + rest.tiltL;
+      foreL.joint.rotation.x = crook;
       armL.joint.rotation.set(reach + a.breath * 0.02, 0, 0.1 - 0.05 * k);
       armR.joint.rotation.set(rest.armR, 0, -0.1 - a.breath * 0.015);
       head.joint.rotation.x = a.breath * 0.02;
@@ -731,15 +1003,75 @@ function biped(top: THREE.Group, parts: Part[]) {
     // The knee of the leg swinging back bends a little.
     shinL.joint.rotation.x = Math.max(0, a.swing) * 0.6;
     shinR.joint.rotation.x = Math.max(0, -a.swing) * 0.6;
-    armL.joint.rotation.set(rest.armL - a.swing * 0.6, 0, 0.1 + a.breath * 0.015);
-    // The weapon arm swings less on the march, and comes up and over in an attack.
+    // An arm carrying a shield or a bow is held where it is on the march; a free one swings.
+    const free = levels.length > 0 ? 0.25 : 1;
+    armL.joint.rotation.set(rest.armL - a.swing * 0.6 * free, 0, 0.1 + a.breath * 0.015);
+    // The elbow of the arm swinging forward bends a little more.
+    foreL.joint.rotation.x = rest.bendL - Math.max(0, a.swing) * 0.35 * free;
+    // The weapon arm swings less on the march, and comes up and over in an attack, straightening as it comes down.
     armR.joint.rotation.set(rest.armR + a.swing * 0.3 - a.strike * 1.7, 0, -0.1 - a.breath * 0.015);
+    foreR.joint.rotation.x = rest.bendR * (1 - 0.55 * a.strike) - Math.max(0, -a.swing) * 0.15;
     head.joint.rotation.x = a.breath * 0.02 - a.strike * 0.15;
   };
-  return { torso, head, armR, armL, legR, legL, thighR, thighL, shinR, shinL, footR, footL, heldR, heldL, rest, animate };
+  return { torso, head, armR, armL, foreR, foreL, legR, legL, thighR, thighL, shinR, shinL, footR, footL, heldR, heldL, rest, shield, across, string, loose, animate };
 }
 
 type Biped = ReturnType<typeof biped>;
+
+/** Where the elbow is, below the shoulder. */
+const ELBOW = -2.3;
+/** How far an elbow is bent with nothing in the hand: a little, as an arm hangs. */
+const FREE_BEND = -0.25;
+/** How far it is bent to carry a weapon: the forearm well forward, the fist closed round the haft. */
+const HELD_BEND = -1.35;
+/** And how far back the upper arm is drawn for it, so the hand stays low at the side, clear of the face. */
+const HELD_BACK = 0.3;
+/** And a shield: the upper arm a little forward, the elbow well bent, and the forearm turned in across the front of the body. */
+const SHIELD_ARM = { arm: -0.2, bend: -1.2, twist: -0.85 };
+/** And a bow, carried across the body: the fist before the belly. */
+const ACROSS_ARM = { arm: -0.05, bend: -1.2, twist: -0.75 };
+/** How far a bow carried across the body leans, its upper limb toward the left shoulder, and how far before the fist it is carried. */
+const BOW_CANT = -0.6;
+const BOW_OUT = 0.55;
+/** A shot: how far the archer turns side-on to it, how far the string is drawn, and (in seconds) when it is loosed and when the shot is over. */
+const SHOT = { turn: 0.9, pull: 1.9, loose: 0.24, over: 0.8 };
+/** How long an archer takes to draw before the arrow flies, in seconds: what throws the arrow waits for it (see Figure.loose). */
+const BOW_DRAW = SHOT.loose;
+
+/** A bow in the hand, strung: its string in two halves from the tips (`tip`, in the bow's frame) to the nock, and the arrow on it. */
+interface Strung {
+  bow: Part;
+  halves: Part[];
+  arrow: Part;
+  tip: { x: number; y: number };
+}
+
+const ik = { t: new THREE.Vector3(), pole: new THREE.Vector3(), upper: new THREE.Vector3(), fore: new THREE.Vector3(), x: new THREE.Vector3(), y: new THREE.Vector3(), z: new THREE.Vector3(), m: new THREE.Matrix4(), q: new THREE.Quaternion() };
+/**
+ * Bend an arm (upper arm `arm` hung at `shoulder`, forearm `fore` from its elbow `upper` below, the fist `lower`
+ * below that) so its fist reaches `target`, `w` of the way from however it is posed: the elbow kept toward
+ * `pole`. All in the frame the shoulder is set in (the torso's). A target out of reach is reached toward.
+ */
+function reach(arm: THREE.Object3D, fore: THREE.Object3D, upper: number, lower: number, target: THREE.Vector3, pole: THREE.Vector3, w: number) {
+  if (w <= 0) return;
+  ik.t.copy(target).sub(arm.position);
+  const far = Math.min(upper + lower - 0.02, Math.max(Math.abs(upper - lower) + 0.05, ik.t.length()));
+  ik.t.normalize();
+  const open = Math.acos(Math.min(1, Math.max(-1, (upper * upper + far * far - lower * lower) / (2 * upper * far))));
+  ik.pole.copy(pole).addScaledVector(ik.t, -pole.dot(ik.t)).normalize();
+  ik.upper.copy(ik.t).multiplyScalar(Math.cos(open)).addScaledVector(ik.pole, Math.sin(open));
+  ik.fore.copy(ik.t).multiplyScalar(far).addScaledVector(ik.upper, -upper).normalize();
+  const bend = Math.acos(Math.min(1, Math.max(-1, ik.upper.dot(ik.fore))));
+  // The upper arm hangs along its own -y, and bends toward its own +z.
+  ik.y.copy(ik.upper).negate();
+  ik.z.copy(ik.fore).addScaledVector(ik.upper, -ik.fore.dot(ik.upper));
+  if (ik.z.lengthSq() < 1e-6) ik.z.copy(ik.pole).negate();
+  ik.z.normalize();
+  ik.x.crossVectors(ik.y, ik.z);
+  arm.quaternion.slerp(ik.q.setFromRotationMatrix(ik.m.makeBasis(ik.x, ik.y, ik.z)), w);
+  fore.rotation.x += (-bend - fore.rotation.x) * w;
+  fore.rotation.y *= 1 - w;
+}
 
 /** Where the knee is, below the hip, and how far a thigh swings forward to sit. */
 const KNEE = -2.5;
@@ -2104,7 +2436,7 @@ function drawHood(head: Part, c: string, trim?: string) {
  * What is carried, in the frame of the hand that carries it: the grip at the origin, up along +y.
  * Returns how far forward the arm rests and how the thing is tipped, where it is not held upright at the side.
  */
-function drawHeld(id: string, b: Biped, trim: string, look: Look, shield: boolean, icon?: string): { arm?: number; tilt?: number } {
+function drawHeld(id: string, b: Biped, trim: string, look: Look, shield: boolean, icon?: string): Carry {
   // Low-poly, a weapon with an icon is held as that icon's model: what is in the hand is what is in the bag.
   const fromIcon = lowPoly && icon ? heldGear(icon, b, trim, shield) : null;
   if (fromIcon) return fromIcon;
@@ -2212,7 +2544,7 @@ function drawHeld(id: string, b: Biped, trim: string, look: Look, shield: boolea
       dagger(outward(w, 1));
       if (!shield) {
         dagger(outward(b.heldL, -1));
-        b.rest.tiltL = 0.7;
+        carryLeft(b, 0.7);
       }
       return { tilt: 0.7 };
     }
@@ -2389,7 +2721,7 @@ function drawHeld(id: string, b: Biped, trim: string, look: Look, shield: boolea
     case "axe_shield": {
       // A big axe in the right hand, a tower shield on the left arm.
       axe(look.accent);
-      const s = b.armL;
+      const s = b.shield();
       if (lowPoly) {
         // A tall shield, rounded at the shoulders and pointed at the foot: a steel rim, its face in the accent,
         // a steel band across it.
@@ -2430,7 +2762,10 @@ function drawHeld(id: string, b: Biped, trim: string, look: Look, shield: boolea
         p.box(GEAR.shine, 0.4, 1.7, 0.6, 0, 4.9, 1.8);
       };
       hook(w);
-      if (!shield) hook(b.heldL);
+      if (!shield) {
+        hook(b.heldL);
+        carryLeft(b, 0);
+      }
       return { tilt: 0.5 };
     }
     case "coral_staff": {
@@ -2752,7 +3087,7 @@ function person(top: THREE.Group, look: Look, outfit: Outfit | undefined, asleep
 
   // Hands: a hero's weapon (signature weapons that have no shape of their own are drawn as the one they are like).
   const shield = outfit?.off_hand;
-  if (shield) drawShield(armL, shield.ref, shield.icon, trim("off_hand"));
+  if (shield) drawShield(b.shield(), shield.ref, shield.icon, trim("off_hand"));
   if (rodInHand) {
     // A townsperson, or a hero with nothing in hand, has no trim for it: the look's accent instead.
     apply(b, drawHeld("rod", b, outfit?.main_hand ? trim("main_hand") : look.accent, look, !!shield));
@@ -2768,8 +3103,7 @@ function person(top: THREE.Group, look: Look, outfit: Outfit | undefined, asleep
   } else if (look.weapon !== "none") {
     apply(b, drawHeld(look.weapon, b, look.accent, look, false, STOCK_ICON[look.weapon]));
   }
-  if (shield || look.weapon === "axe_shield") b.rest.armL = -0.55;
-  return { parts, animate: b.animate, hands: [b.heldR.joint, b.heldL.joint] };
+  return { parts, animate: b.animate, hands: [b.heldR.joint, b.heldL.joint], loose: b.loose };
 }
 
 /** A lute in its own part's frame: the belly at the origin facing +z, the neck up +y. Its icon's model, low-poly. */
@@ -2825,8 +3159,10 @@ function sling(b: Biped, front: Part, back: Part, arms: { right: number; left: n
     home: { pos: back.joint.position.clone(), quat: back.joint.quaternion.clone() },
     held: null,
   };
+  // Played straight-armed: the instrument is laid from hand to hand (see handAt).
   b.rest.armL = arms.left;
-  return { arm: arms.right };
+  b.rest.bendL = 0;
+  return { arm: arms.right, bend: 0 };
 }
 
 /**
@@ -2910,11 +3246,28 @@ function stow(s: Slung, walking: boolean, strike: number, dt: number) {
   }
   s.rest.armL = s.arms.left + (-0.05 - s.arms.left) * e;
   s.rest.armR = s.arms.right + (-0.35 - s.arms.right) * e;
+  s.rest.bendL = s.rest.bendR = FREE_BEND * e;
 }
 
-function apply(b: Biped, pose: { arm?: number; tilt?: number }) {
-  b.rest.armR = pose.arm ?? -0.35;
+/**
+ * Carry what the right hand holds. `arm` is how far forward a straight arm would have held it: with the elbow
+ * bent (`bend`, HELD_BEND unless given) the upper arm is drawn back a little (HELD_BACK), less the further
+ * forward that was, and the forearm does the reaching. A `bend` of 0 keeps the arm straight, exactly at `arm`.
+ */
+function apply(b: Biped, pose: Carry) {
+  const arm = pose.arm ?? -0.35;
+  const bend = pose.bend ?? HELD_BEND;
+  b.rest.armR = bend === 0 ? arm : HELD_BACK + 0.4 * (arm + 0.35);
+  b.rest.bendR = bend;
   b.rest.tiltR = pose.tilt ?? 0;
+}
+type Carry = { arm?: number; tilt?: number; bend?: number };
+
+/** The left hand carries the twin of what the right does (a second dagger, a second hook): the same crook of the arm. */
+function carryLeft(b: Biped, tilt: number) {
+  b.rest.armL = HELD_BACK;
+  b.rest.bendL = HELD_BEND;
+  b.rest.tiltL = tilt;
 }
 
 /** One of the smugglers' dead: a skeleton with a rusted cutlass and a scrap of its old bandana. */
@@ -2980,8 +3333,7 @@ function skeleton(top: THREE.Group): Rig {
   w.shape(wood, sym([[1.4, 1.15, 0.65], [1.4, 1.5, 0.65], [1.4, 1.15, -0.2], [1.4, 1.5, -0.2], [0.5, 1.0, 0.85], [0.5, 1.65, 0.85], [0.5, 1.0, -0.45], [0.5, 1.65, -0.45]]));
   w.shape(rust, sym([[0.5, 1.5, 0.14], [0.5, 1.5, -0.14], [0.6, 6.3, 0.32], [0.6, 6.3, 0.02]]));
   w.shape(rust, [...sym([[0.6, 6.1, 0.32], [0.6, 6.1, 0.02], [0.42, 8, 0.82], [0.42, 8, 0.52]]), [0, 9.05, 1.35], [0, 9, 1.08]]);
-  b.rest.armR = -0.35;
-  b.rest.tiltR = 0.55;
+  apply(b, { tilt: 0.55 });
   return { parts, animate: b.animate };
 }
 
@@ -2991,11 +3343,11 @@ function skeleton(top: THREE.Group): Rig {
  * A big two-legged figure: built on a person's joints with the proportions `measures` (see biped), then
  * the whole of it grown by `grow`. The outline is thinned to match, so it is as fine as anyone else's.
  */
-function giant(top: THREE.Group, parts: Part[], measures: Measures, grow: number): Biped {
+function giant(top: THREE.Group, parts: Part[], measures: Measures, grow: number, elbow = ELBOW): Biped {
   m = measures;
   edge /= grow;
   top.scale.setScalar(grow);
-  return biped(top, parts);
+  return biped(top, parts, elbow);
 }
 
 /**
@@ -3032,7 +3384,7 @@ function giantFoot(foot: Part, skin: string, nail: string, w: number, long: numb
  */
 function ogre(top: THREE.Group): Rig {
   const parts: Part[] = [];
-  const b = giant(top, parts, { legs: 0.85, girth: 1.4, shoulders: 1.5, hips: 1.3, head: 1 }, 1.3);
+  const b = giant(top, parts, { legs: 0.85, girth: 1.4, shoulders: 1.5, hips: 1.3, head: 1 }, 1.3, -2.6);
   const skin = "#b3a46a";
   const dark = tone(skin, -0.12);
   const fur = "#6e4f30";
@@ -3096,7 +3448,8 @@ function ogre(top: THREE.Group): Rig {
   w.loft(wood, [[-1.6, 0.5, 0.5], [1.5, 0.6, 0.6], [4.2, 0.95, 0.95, 0.1], [6.8, 1.4, 1.4, 0.2], [8.7, 1.3, 1.3, 0.15], [9.3, 0.7, 0.7, 0.1]], 7);
   w.loft(GEAR.iron, [[6.1, 1.42, 1.42, 0.18], [6.7, 1.5, 1.5, 0.2]], 7);
   for (const [y, a] of [[7.6, 0.4], [7.9, 2.5], [8.1, 4.6], [5.2, 1.5], [5.4, 3.6]] as const) w.cone(GEAR.iron, 0.3, 0.7, Math.sin(a) * 1.35, y, Math.cos(a) * 1.35 + 0.18, 5, [Math.cos(a) * HALF_PI, 0, -Math.sin(a) * HALF_PI]);
-  b.rest.armR = -0.3;
+  b.rest.armR = -0.1;
+  b.rest.bendR = -0.8;
   b.rest.tiltR = 0.75;
   b.rest.armL = -0.15;
   return { parts, animate: stooped(b, 0.18, 0.05) };
@@ -3109,7 +3462,7 @@ function ogre(top: THREE.Group): Rig {
  */
 function troll(top: THREE.Group): Rig {
   const parts: Part[] = [];
-  const b = giant(top, parts, { legs: 1.15, girth: 0.9, shoulders: 1.1, hips: 0.95, head: 1 }, 1.18);
+  const b = giant(top, parts, { legs: 1.15, girth: 0.9, shoulders: 1.1, hips: 0.95, head: 1 }, 1.18, -3.8);
   const skin = "#7f9474";
   const dark = tone(skin, -0.12);
   const moss = "#4e6a33";
@@ -3596,6 +3949,11 @@ export interface Figure {
   update(pose: FigurePose): void;
   /** A person's fists, right then left, for putting oars in; null for a creature. */
   hands(): [THREE.Object3D, THREE.Object3D] | null;
+  /**
+   * Shoot the bow carried: the figure draws and looses it. Returns the seconds until the arrow leaves the string,
+   * for whatever throws the arrow to wait; 0 for a figure with no bow in hand, which does nothing.
+   */
+  loose(): number;
   /** Greyed, for someone down in a fight. */
   setDim(on: boolean): void;
   /** How much of it is left to see, 1 (all there) to 0 (gone): it thins out pixel by pixel as a camera passes through it. */
@@ -3681,6 +4039,7 @@ export function makeFigure(kind: string, look: Look, outfit?: Outfit, opts: Figu
     setSize: (size) => scaler.scale.setScalar(size / FRAME),
     update,
     hands: () => rig.hands ?? null,
+    loose: () => rig.loose?.() ?? 0,
     setDim(on) {
       mats.body.color.setScalar(on ? 0.5 : 1);
       mats.glow.color.setScalar(on ? 0.4 : 1);

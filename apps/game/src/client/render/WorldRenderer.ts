@@ -1473,12 +1473,17 @@ export class WorldRenderer {
       const kind: FxKind = spell ? "bolt" : "arrow";
       const color = spell ?? "#e8dcc0";
       const from = a.goal.clone().add(new THREE.Vector3(dir * 0.5, a.size * 0.5, 0.05));
-      this.spawnFx(kind, color, flip, { from, to: hitAt, life: 0.24, size: [1.0, 1.0], spin: 0, fade: false, onEnd: () => {
-        this.spawnFx("burst", perfect ? "#ffd23f" : color, false, { from: hitAt, to: hitAt, life: 0.22, size: [0.7, 1.7], spin: 0.5, fade: true });
-        // An arrow that lands stays in: point first, the shaft toward whoever shot it.
-        if (kind === "arrow" && landed) this.stickArrow(t, dir);
-        onImpact();
-      } });
+      const fly = () =>
+        this.spawnFx(kind, color, flip, { from, to: hitAt, life: 0.24, size: [1.0, 1.0], spin: 0, fade: false, onEnd: () => {
+          this.spawnFx("burst", perfect ? "#ffd23f" : color, false, { from: hitAt, to: hitAt, life: 0.22, size: [0.7, 1.7], spin: 0.5, fade: true });
+          // An arrow that lands stays in: point first, the shaft toward whoever shot it.
+          if (kind === "arrow" && landed) this.stickArrow(t, dir);
+          onImpact();
+        } });
+      // An archer draws the bow first: the arrow leaves when the string does.
+      const draw = kind === "arrow" ? a.figure.loose() : 0;
+      if (draw > 0) this.later(0, fly, draw);
+      else fly();
       return;
     }
     // Melee: step in and swipe across the target.
