@@ -66,14 +66,17 @@ const HALF_WIDTH = THREE.MathUtils.degToRad(26);
 const ARRIVE_S = 1.9;
 const LEAVE_S = 1.4;
 const easeInOut = (t: number) => (t < 0.5 ? 2 * t * t : 1 - (-2 * t + 2) ** 2 / 2);
-/** The axe, from the grip: the handle's length, where the head sits up it, how far out the edge is, and its size in the view. */
-const AXE_LEN = 0.38;
-const AXE_HEAD = 0.345;
-const AXE_EDGE = 0.1;
+/** The axe, from the butt of the haft: where the head sits up it, how far out the middle of its edge is, and its size in the world. */
+const AXE_HEAD = 0.37;
+const AXE_EDGE = 0.112;
 const AXE_SCALE = 0.85;
-/** How long a chop takes, and how much of it is the blow (the rest is bringing the axe back). Quick: you click as fast as you like. */
-const SWING_S = 0.17;
-const STRIKE_PART = 0.4;
+/** How long a chop takes, and how much of it is the blow (the rest is drawing the axe back). Quick: you click as fast as you like. */
+const SWING_S = 0.2;
+const STRIKE_PART = 0.38;
+/** How far the axe is drawn back between blows: turned about the hands, in the plane of its blade (radians). */
+const BACKSWING = 1.05;
+/** When the axe binds it stays in the cut this long before it comes free. */
+const STUCK_S = 0.14;
 /** How a swing goes, 0 at rest to 1 at the blow. */
 function swingCurve(t: number): number {
   if (t < 0) return 0;
@@ -123,6 +126,59 @@ const widthAt = (size: TreeSize) => {
   const m = MODELS[size];
   return 2 * THREE.MathUtils.lerp(m.rBottom, m.rTop, m.cutY / m.height);
 };
+
+const tanOf = (deg: number) => Math.tan(THREE.MathUtils.degToRad(Math.abs(deg)));
+
+/**
+ * A felling axe, held at the butt of its haft (the group's origin): the haft
+ * runs up +Y, a little bowed, with a leather grip and a knob at the butt; the
+ * head sits across the top, its bit flaring out along +X to a curved edge,
+ * thinning to it, with a bright band of honed steel along the edge, and a
+ * square poll behind. The edge runs along Y, like the haft, as on any axe.
+ */
+function axeModel(): THREE.Group {
+  const axe = new THREE.Group();
+  const add = (geo: THREE.BufferGeometry, mat: THREE.Material) => {
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.renderOrder = 11;
+    axe.add(mesh);
+    return mesh;
+  };
+  // The haft: a gentle S, thicker toward the butt.
+  const curve = new THREE.CatmullRomCurve3([new THREE.Vector3(0, 0, 0), new THREE.Vector3(-0.01, 0.12, 0), new THREE.Vector3(0.004, 0.27, 0), new THREE.Vector3(0, AXE_HEAD + 0.03, 0)]);
+  add(new THREE.TubeGeometry(curve, 10, 0.0105, 6, false), lambert("#9a7448"));
+  add(new THREE.CylinderGeometry(0.016, 0.014, 0.022, 7).translate(0, 0.004, 0), lambert("#6a4a2c"));
+  add(new THREE.CylinderGeometry(0.0135, 0.0135, 0.1, 7).translate(-0.004, 0.07, 0), lambert("#5a3a22"));
+  for (const y of [0.03, 0.06, 0.09]) add(new THREE.CylinderGeometry(0.0142, 0.0142, 0.006, 7).translate(-0.005, y, 0), lambert("#3e2716"));
+  // The head, in profile: the poll behind, the eye round the haft, the bit flaring to a curved edge, bearded below.
+  const shape = new THREE.Shape();
+  shape.moveTo(-0.032, -0.022);
+  shape.lineTo(-0.032, 0.022);
+  shape.lineTo(0.03, 0.02);
+  shape.quadraticCurveTo(0.07, 0.03, 0.104, 0.05);
+  shape.quadraticCurveTo(0.124, 0.0, 0.106, -0.058);
+  shape.quadraticCurveTo(0.07, -0.03, 0.03, -0.02);
+  shape.closePath();
+  const head = new THREE.ExtrudeGeometry(shape, { depth: 0.03, bevelEnabled: false, curveSegments: 5 }).translate(0, 0, -0.015);
+  // Thin toward the edge, and the edge itself honed bright.
+  const pos = head.getAttribute("position") as THREE.BufferAttribute;
+  const colors = new Float32Array(pos.count * 3);
+  const steel = new THREE.Color("#8e98a4"), dark = new THREE.Color("#5f6872"), honed = new THREE.Color("#eef3f8");
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i);
+    const t = THREE.MathUtils.clamp((x - 0.02) / 0.09, 0, 1);
+    pos.setZ(i, pos.getZ(i) * (1 - 0.85 * t));
+    const c = x > 0.09 ? honed : x < -0.012 ? dark : steel;
+    colors.set([c.r, c.g, c.b], i * 3);
+  }
+  head.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+  head.computeVertexNormals();
+  add(head, new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true })).position.y = AXE_HEAD;
+  // The wedge driven into the top of the eye.
+  add(new THREE.BoxGeometry(0.012, 0.006, 0.022), lambert("#3a2a1a")).position.set(0.002, AXE_HEAD + 0.024, 0);
+  axe.scale.setScalar(AXE_SCALE);
+  return axe;
+}
 
 /**
  * A trunk that takes a felling notch: a column of many thin rings round the
@@ -199,6 +255,14 @@ class NotchTrunk {
     return this.w;
   }
 
+  /** How deep the wedges cut out of it so far reach at height y (a share of the width in from the notch's side). */
+  carved(cut: TreeCut, y: number): number {
+    let e = 0;
+    const dy = y - MODELS[this.size].cutY;
+    for (const k of cut.notches) e = Math.max(e, k.depth - Math.abs(dy) / (this.w * tanOf(dy >= 0 ? k.top : k.bottom)));
+    return e;
+  }
+
   /** Draw the trunk as `cut` leaves it; `severed`, only what is above the notch (the part that falls). */
   draw(cut: TreeCut, severed = false) {
     const m = MODELS[this.size];
@@ -206,17 +270,7 @@ class NotchTrunk {
     const pos = this.mesh.geometry.getAttribute("position") as THREE.BufferAttribute;
     const col = this.mesh.geometry.getAttribute("color") as THREE.BufferAttribute;
     const glow = this.mesh.geometry.getAttribute("glow") as THREE.BufferAttribute;
-    const tanOf = (deg: number) => Math.tan(THREE.MathUtils.degToRad(Math.abs(deg)));
-    // How deep the wedges cut out so far reach at height y: the deepest of them there.
-    const carved = (y: number) => {
-      let e = 0;
-      const dy = y - m.cutY;
-      for (const k of cut.notches) {
-        const t = tanOf(dy >= 0 ? k.top : k.bottom);
-        e = Math.max(e, k.depth - Math.abs(dy) / (this.w * t));
-      }
-      return e;
-    };
+    const carved = (y: number) => this.carved(cut, y);
     // The cuts under way: the line each runs along, from its point at the cut's height out to the bark.
     const kerfs: { depth: number; tan: number; up: boolean }[] = [];
     if (cut.top > cut.floor + 1e-6) kerfs.push({ depth: cut.top, tan: tanOf(cut.topAngle), up: true });
@@ -322,6 +376,14 @@ export class FellingScene implements WorldMinigame {
   private axe: THREE.Group;
   /** Seconds into the axe's swing, or -1 at rest. */
   private swingT = -1;
+  /** Seconds the axe has yet to stay in a cut it bound in. */
+  private stuck = 0;
+  /** Where the axe comes down on the chop under way: its pose at the blow (the hands, and how it is turned). */
+  private blow: { pos: THREE.Vector3; quat: THREE.Quaternion } | null = null;
+  /** What the chop under way does when the edge lands (the trunk redrawn, chips, sounds), and when that is. */
+  private impact: (() => void) | null = null;
+  private impactAt = 0;
+  private axePlaced = false;
   private bits: Bit[] = [];
   private shake = 0;
 
@@ -390,18 +452,7 @@ export class FellingScene implements WorldMinigame {
     this.guideStop = strip("#ff7a5a", 0.95);
     group.add(this.guide, this.guideStop);
 
-    // Held at the grip (the group's origin): the handle runs up its +Y to the head, and the blade points along +X.
-    this.axe = new THREE.Group();
-    const handle = new THREE.Mesh(new THREE.BoxGeometry(0.025, AXE_LEN, 0.025), lambert("#8a6a44"));
-    handle.position.y = AXE_LEN / 2;
-    const head = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.07, 0.02), lambert("#d9dee6"));
-    head.position.set(0.04, AXE_HEAD, 0);
-    const poll = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.05, 0.03), lambert("#9aa1ad"));
-    poll.position.set(-0.02, AXE_HEAD, 0);
-    const edge = new THREE.Mesh(new THREE.BoxGeometry(0.012, 0.085, 0.022), new THREE.MeshBasicMaterial({ color: "#ffffff" }));
-    edge.position.set(AXE_EDGE, AXE_HEAD, 0);
-    this.axe.add(handle, head, poll, edge);
-    this.axe.traverse((o) => (o.renderOrder = 11));
+    this.axe = axeModel();
     group.add(this.axe);
     this.emit(true);
   }
@@ -500,6 +551,10 @@ export class FellingScene implements WorldMinigame {
     }
     this.current = 2;
     this.pop = null;
+    this.impact = null;
+    this.blow = null;
+    this.swingT = -1;
+    this.stuck = 0;
     this.emit(true);
   }
 
@@ -675,48 +730,96 @@ export class FellingScene implements WorldMinigame {
     if (at - this.lastChop < CHOP_GAP_MS || now < tree.fellAt + REGROW_MS || at > FELL_ROUND_MS) return;
     this.lastChop = at;
     this.chops.push({ slot, at, angle: this.angle });
-    this.swingT = 0;
+    // The rules take the chop at once; what you see of it waits for the edge to land.
     const { cut, result, notch } = chopTree(tree.cut, tree.size, this.angle);
-    tree.cut = cut;
-    const tr = tree.trunk;
-    const sign = this.angle > 0 ? 1 : -1;
-    const deep = this.angle > 0 ? cut.top : cut.bottom;
-    // Chips fly from where the edge went in.
-    const tan = Math.tan(THREE.MathUtils.degToRad(Math.abs(this.angle)));
-    const hitAt = tr.at(Math.max(0, cut.floor) - 0.05, tr.cutY + sign * (deep - cut.floor + 0.05) * tr.width * tan).add(tree.root.position);
-    const away = tree.front.clone();
-    if (result === "bound") {
-      // The axe sticks: a thud, a jolt, no chips.
-      this.shake = 0.012;
-      tree.shake = 0.12;
-      audio.play(soundName.chop("miss"));
-      this.pop = { n: (this.pop?.n ?? 0) + 1, kind: "bound" };
-    } else {
-      tree.shake = 0.2;
-      for (let i = 0; i < 3; i++) this.bit("fleck", "#e8c88a", hitAt.clone(), away.clone().multiplyScalar(0.6 + Math.random() * 0.6).add(new THREE.Vector3((Math.random() - 0.5) * 0.8, 0.6 + Math.random() * 0.8, (Math.random() - 0.5) * 0.8)), 0.4, 0.035);
-      audio.play(soundName.chop(result === "bite" ? "good" : "perfect"));
-    }
-    if (notch) this.chunkOut(tree, notch);
-    if (result === "chunk") {
-      this.shake = 0.02;
-      this.pop = { n: (this.pop?.n ?? 0) + 1, kind: "chunk" };
-    }
-    tree.trunk.draw(cut, result === "felled");
-    if (result === "felled") {
-      tree.fellAt = now;
-      tree.cut = freshCut();
-      this.felled++;
-      this.shake = 0.03;
-      this.pop = { n: (this.pop?.n ?? 0) + 1, kind: "felled" };
-      audio.play(soundName.fall("timber"), { delay: 0.15 });
-    }
+    tree.cut = result === "felled" ? freshCut() : cut;
+    // The swing: on from wherever the axe is (a quick clicker never waits for it to come all the way back), to the
+    // edge in the cut just made.
+    const kNow = this.stuck > 0 ? 1 : this.swingT >= 0 ? swingCurve(this.swingT) : 0;
+    if (this.impact) this.landBlow();
+    this.stuck = 0;
+    this.swingT = SWING_S * STRIKE_PART * Math.sqrt(kNow);
+    this.impactAt = now + (SWING_S * STRIKE_PART - this.swingT) * 1000;
+    const strike = this.strikeAt(tree, cut, this.angle);
+    this.blow = this.blowPose(strike);
+    if (result === "felled") tree.fellAt = this.impactAt;
+    this.impact = () => {
+      const away = tree.front.clone();
+      if (result === "bound") {
+        // The axe sticks: a thud, a jolt, no chips, and it stays in the cut a moment.
+        this.shake = 0.012;
+        tree.shake = 0.12;
+        this.stuck = STUCK_S;
+        audio.play(soundName.chop("miss"));
+        this.pop = { n: (this.pop?.n ?? 0) + 1, kind: "bound" };
+      } else {
+        tree.shake = 0.2;
+        for (let i = 0; i < 3; i++) this.bit("fleck", "#e8c88a", strike.edge.clone(), away.clone().multiplyScalar(0.6 + Math.random() * 0.6).add(new THREE.Vector3((Math.random() - 0.5) * 0.8, 0.6 + Math.random() * 0.8, (Math.random() - 0.5) * 0.8)), 0.4, 0.035);
+        audio.play(soundName.chop(result === "bite" ? "good" : "perfect"));
+      }
+      if (notch) this.chunkOut(tree, notch, cut);
+      if (result === "chunk") {
+        this.shake = 0.02;
+        this.pop = { n: (this.pop?.n ?? 0) + 1, kind: "chunk" };
+      }
+      tree.trunk.draw(cut, result === "felled");
+      if (result === "felled") {
+        this.felled++;
+        this.shake = 0.03;
+        this.pop = { n: (this.pop?.n ?? 0) + 1, kind: "felled" };
+        audio.play(soundName.fall("timber"), { delay: 0.15 });
+      }
+      this.emit(true);
+    };
     this.emit(true);
   }
 
+  /** The edge has landed: what the chop did shows. */
+  private landBlow() {
+    const hit = this.impact;
+    this.impact = null;
+    hit?.();
+  }
+
+  /**
+   * Where the edge goes in for a chop at `angle`, as `cut` stands: on the line of the cut on that side, some way down
+   * it from where it meets the wood (so the bit is seen buried in the cut), or on the face of the notch where
+   * there is no cut yet. With the way into the wood along the cut, and across the trunk (the line of the edge).
+   */
+  private strikeAt(t: TreeObj, cut: TreeCut, angle: number): { edge: THREE.Vector3; dir: THREE.Vector3; across: THREE.Vector3 } {
+    const tr = t.trunk;
+    const sign = angle > 0 ? 1 : -1;
+    const tan = tanOf(angle);
+    const tip = Math.max(cut.floor, angle > 0 ? cut.top : cut.bottom);
+    const yAt = (d: number) => tr.cutY + sign * (tip - d) * tr.width * tan;
+    let entry = tip;
+    for (let d = -0.3; d < tip; d += 0.01) {
+      if (d >= Math.max(0, tr.carved(cut, yAt(d)))) {
+        entry = d;
+        break;
+      }
+    }
+    const d = tip - entry < 0.03 ? tip : entry + (tip - entry) * 0.6;
+    const edge = tr.at(d, yAt(d)).add(t.root.position);
+    const dir = t.front.clone().negate().addScaledVector(UP, -sign * tan).normalize();
+    const across = new THREE.Vector3().crossVectors(UP, t.front).normalize();
+    return { edge, dir, across };
+  }
+
+  /** The axe at the blow: the bit along the cut into the wood, the edge (and so the haft) across the trunk, the hands toward you. */
+  private blowPose(strike: { edge: THREE.Vector3; dir: THREE.Vector3; across: THREE.Vector3 }): { pos: THREE.Vector3; quat: THREE.Quaternion } {
+    const y = strike.across.clone();
+    if (y.dot(strike.edge.clone().sub(this.eye)) < 0) y.negate();
+    const z = new THREE.Vector3().crossVectors(strike.dir, y);
+    const quat = new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(strike.dir, y, z));
+    const pos = strike.edge.clone().sub(new THREE.Vector3(AXE_EDGE, AXE_HEAD, 0).multiplyScalar(AXE_SCALE).applyQuaternion(quat));
+    return { pos, quat };
+  }
+
   /** A wedge knocked out of the trunk: a pale chunk the shape of the new notch, flying out the front. */
-  private chunkOut(tree: TreeObj, notch: Notch) {
+  private chunkOut(tree: TreeObj, notch: Notch, cut: TreeCut) {
     const tr = tree.trunk;
-    const prev = tree.cut.notches.length > 1 ? tree.cut.notches[tree.cut.notches.length - 2].depth : 0;
+    const prev = cut.notches.length > 1 ? cut.notches[cut.notches.length - 2].depth : 0;
     const depth = Math.max(0.04, notch.depth - prev);
     const tanT = Math.tan(THREE.MathUtils.degToRad(Math.abs(notch.top)));
     const tanB = Math.tan(THREE.MathUtils.degToRad(Math.abs(notch.bottom)));
@@ -744,7 +847,8 @@ export class FellingScene implements WorldMinigame {
   private stepTrees(dt: number, now: number) {
     this.trees.forEach((t, slot) => {
       const since = now - t.fellAt;
-      const growing = since < REGROW_MS;
+      // (A tree's last chop is still on its way down until the edge lands.)
+      const growing = since >= 0 && since < REGROW_MS;
       // It goes over toward its notch, pivoting on the hinge left at the back of the cut.
       const fallAxis = new THREE.Vector3().crossVectors(UP, t.front).normalize();
       if (growing) {
@@ -779,22 +883,45 @@ export class FellingScene implements WorldMinigame {
 
   private stepAxe(dt: number) {
     this.axe.visible = this.blend > 0.85 && this.mode !== "leaving";
-    if (this.swingT >= 0) {
+    if (this.stuck > 0) this.stuck = Math.max(0, this.stuck - dt);
+    else if (this.swingT >= 0) {
       this.swingT += dt;
       if (this.swingT > SWING_S) this.swingT = -1;
     }
-    const k = swingCurve(this.swingT);
-    const fwd = this.look.clone().sub(this.eye).normalize();
-    const right = new THREE.Vector3().crossVectors(fwd, UP).normalize();
-    const up = new THREE.Vector3().crossVectors(right, fwd);
-    this.axe.scale.setScalar(AXE_SCALE);
-    // In the right hand, low in the view; a chop brings the head across and into the middle of the view, edge first,
-    // tipped to the angle of the cut.
-    this.axe.position.copy(this.eye).addScaledVector(fwd, 0.5 + k * 0.08).addScaledVector(right, 0.28 - k * 0.12).addScaledVector(up, -0.32 + k * 0.05);
-    this.axe.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(right.clone().negate(), up, fwd));
-    const tip = THREE.MathUtils.degToRad(this.angle) * 0.6;
-    this.axe.rotateZ(-0.25 - k * 0.85);
-    this.axe.rotateX(-0.2 + k * 0.5 - tip * k);
+    if (this.impact && performance.now() >= this.impactAt) this.landBlow();
+    const swinging = this.swingT >= 0 || this.stuck > 0;
+    const k = this.stuck > 0 ? 1 : swingCurve(this.swingT);
+    const t = this.trees[this.current];
+    const standing = performance.now() >= t.fellAt + REGROW_MS || (swinging && this.blow);
+    let pos: THREE.Vector3;
+    let quat: THREE.Quaternion;
+    if (this.mode === "chop" && standing) {
+      // Drawn back, already turned to the cut it will make; a chop swings it round about the hands, in the plane of
+      // its blade, until the edge is in the cut.
+      const blow = swinging && this.blow ? this.blow : this.blowPose(this.strikeAt(t, t.cut, this.angle));
+      const back = blow.quat.clone().multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), BACKSWING));
+      const backPos = blow.pos.clone().lerp(this.eye, 0.22).addScaledVector(UP, -0.05);
+      pos = backPos.lerp(blow.pos, k);
+      quat = back.slerp(blow.quat, k);
+    } else {
+      // Carried: in the right hand, low in the view, head up.
+      const fwd = this.look.clone().sub(this.eye).normalize();
+      const right = new THREE.Vector3().crossVectors(fwd, UP).normalize();
+      const up = new THREE.Vector3().crossVectors(right, fwd);
+      pos = this.eye.clone().addScaledVector(fwd, 0.5).addScaledVector(right, 0.28).addScaledVector(up, -0.34);
+      quat = new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(right.clone().negate(), up, fwd));
+      quat.multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(-0.2, 0, -0.25)));
+    }
+    if (!this.axePlaced || swinging || this.still) {
+      this.axe.position.copy(pos);
+      this.axe.quaternion.copy(quat);
+      this.axePlaced = true;
+    } else {
+      // Between blows it eases to where it should be: round to a new angle, or over to another tree.
+      const a = 1 - Math.exp(-dt * 12);
+      this.axe.position.lerp(pos, a);
+      this.axe.quaternion.slerp(quat, a);
+    }
   }
 
   private bit(kind: FxKind, color: string, at: THREE.Vector3, vel: THREE.Vector3, life: number, size: number) {
