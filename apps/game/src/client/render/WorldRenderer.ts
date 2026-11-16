@@ -9,19 +9,22 @@ import * as THREE from "three";
 import { makeModelShip } from "./modelShip";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { reportEnv } from "../ui/env";
-import { Ambience, TILE_FILLET, TILE_RADIUS, beaconShine, hexTop, pixelTexture, stamp, type BuildingGlow } from "./ambience";
+import { Ambience, TILE_FILLET, TILE_RADIUS, beaconShine, dryPatch, hexTop, meadowAt, pixelTexture, stamp, tallGrass, type BuildingGlow } from "./ambience";
 import "./camera.css";
 import { PINCH_PAN_SLACK, followIconSvg, readFollow, writeFollow } from "./cameraFollow";
 import type { HexPos } from "@gantt-quest/core";
 import { hexDistance } from "@gantt-quest/core";
-import { lookStep, lookYaw, BASE_HEIGHT, BATTLE_JOIN_RANGE, BIG_REACH, ENEMIES, HEX_DIRS, TRAIT_BY_ID, MOVE_COST, WALL_FACE_HALF, WALL_ITEM_BOTTOM, WALL_ITEM_TOP, findPath, hexAt, xpProgress, reachable, tileAt, wallFace, wallFaces, type ClientState, type Outfit, type Phase, type Poi, type Tile, type WorldEvent, type WorldMap } from "@gantt-quest/world";
+import { lookStep, lookYaw, BASE_HEIGHT, BATTLE_JOIN_RANGE, BIG_REACH, ENEMIES, HEX_DIRS, TRAIT_BY_ID, tileCost, WALL_FACE_HALF, WALL_ITEM_BOTTOM, WALL_ITEM_TOP, findPath, hexAt, xpProgress, reachable, tileAt, wallFace, wallFaces, type ClientState, type Outfit, type Phase, type Poi, type Tile, type WorldEvent, type WorldMap } from "@gantt-quest/world";
 import { fancy } from "./fancy";
 import { NightLife } from "./nightlife";
 import { Storm } from "./storm";
-import { addWindSway, updateWind } from "./wind";
+import { setFieldWalkers, updateWind } from "./wind";
+import { OAK_SHAPES, Woods, tintOf, type BoulderSpot, type TreeSpot } from "./woods";
+import { Gulls, type GullSpot } from "./gulls";
 import { OVERLAY_LAYER, PostFx, type Air } from "./post";
 import { fishMount } from "./catchArt";
-import { FRAME, OUTLINE, inflate, makeFigure, type Figure } from "./figures";
+import { FRAME, OUTLINE, SITTING_DROP, inflate, makeFigure, type Figure } from "./figures";
+import { BOAT_SCALE, OARLOCKS, ROWER_SEAT, aimOar, rowboatModel, shipOar } from "./rowboat";
 import { Rise } from "./rise";
 import { gaze } from "../gaze";
 import { NIGHT, VEIL_CLEAR_S, Veil } from "./veil";
@@ -30,7 +33,7 @@ import { ghostModel, propModel, tintGhost, type LightKind } from "./props";
 import { LAMP_TABLES, TableLamps } from "./tableLamps";
 import { nearWater, openEar, sounds } from "../audio/gameSounds";
 import type { AttackStyle, Fighter } from "../audio/names";
-import { PUFFS, footfalls, stepGround, worldToHex } from "./footsteps";
+import { PUFFS, footfalls, stepGround, worldToHex, type PuffLook } from "./footsteps";
 import { bubbleTexture, fxTexture, labelTexture, lookFor, plateKey, sleepZTexture, spriteKey, textTexture, type FxKind, type PlateStats } from "./sprites";
 
 /** Spells fly as a coloured bolt; these are their colours, by ability name. */
@@ -42,11 +45,22 @@ const SPELL_COLOR: Record<string, string> = {
   Immolate: "#ff6a3c",
 };
 const ARROW_ABILITIES = new Set(["Aimed Shot", "Pin Down", "Volley", "Barbed Arrow"]);
+/** Thrown things: a rock lobbed in an arc, tumbling, that bursts into dust where it lands. */
+const THROWN: Record<string, string> = { "Hurl Rock": "#77726a" };
+/** Melee blows heavy enough to knock the target back and raise dust at its feet. */
+const SMASHES = new Set(["Club Smash"]);
+/** A ground-pound (the ogre's Stomp, the guardian's Quake): no step in; the ground shakes out from the attacker's feet and jolts whoever it reaches. */
+const QUAKES = new Set(["Stomp", "Quake"]);
+/** Heals that are an enemy growing back (a troll's Regenerate), drawn as moss creeping over it, not a sparkle. */
+const REGROWTH = new Set(Object.values(ENEMIES).flatMap((e) => (e.regen ? [e.regen.name] : [])));
+const MOSS = "#9fe07a";
 /** How an attack travels, for its sound: the same split the effects above are drawn by. */
-const attackStyle = (ability: string): AttackStyle => (SPELL_COLOR[ability] ? "magic" : ARROW_ABILITIES.has(ability) ? "ranged" : "melee");
+const attackStyle = (ability: string): AttackStyle => (SPELL_COLOR[ability] ? "magic" : ARROW_ABILITIES.has(ability) || THROWN[ability] ? "ranged" : "melee");
 const isBoss = (kind: string) => !!ENEMIES[kind]?.boss;
 /** Rank-and-file drawn a size up: the heavy hitters. */
-const isBig = (kind: string) => kind === "brute" || kind === "bear";
+const isBig = (kind: string) => kind === "brute" || kind === "bear" || kind === "ogre" || kind === "troll";
+/** How much of a battle line a figure takes, as a share of an ordinary one's: an ogre is half as wide again. */
+const roomOf = (kind: string) => (kind === "ogre" ? 1.5 : 1);
 
 /**
  * What the renderer needs to draw a scene. An island's ClientState satisfies
@@ -88,6 +102,12 @@ export interface RenderState {
   stamina?: { left: number; max: number };
   /** A piece being carried: a ghost of it follows the pointer, and a click sets it down (RendererCallbacks.onPlace). */
   holding?: Holding | null;
+  /**
+   * The turn the view opens at, in radians (0 is from the south, squared to the rows of hexes). A town laid out
+   * on the grid is opened a little off it, so its streets do not run dead level across the screen. The turn
+   * buttons step round from here by sixths, so they come back to it.
+   */
+  homeYaw?: number;
 }
 
 /** An enemy standing on a hex of its own. */
@@ -259,9 +279,12 @@ const MAX_PITCH = 1.25;
 /** Camera distance per unit of zoom, kept from when the tilt was fixed. */
 const CAMERA_REACH = Math.hypot(0.72, 0.78);
 const PLAYER_COLORS = ["#ffd23f", "#5ce1e6", "#ff7ab6", "#9dff6b"];
-const BIOME_COLOR: Record<string, string> = { plains: "#7cb856", forest: "#4c9a52", hills: "#a39672", water: "#3f86dc", dock: "#9a7748", cobble: "#6f7279", mud: "#5f5140", rampart: "#62656d", floor: "#b08a5c", wall: "#6e5a48", cave: "#4a4552", rock: "#2a2730", gate: "#4a4552", fog: "#2b3140" };
+const BIOME_COLOR: Record<string, string> = { plains: "#7cb856", forest: "#4c9a52", hills: "#a39672", water: "#3f86dc", dock: "#9a7748", cobble: "#6f7279", mud: "#5f5140", rampart: "#6c6f55", floor: "#b08a5c", wall: "#6e5a48", cave: "#4a4552", rock: "#2a2730", gate: "#4a4552", fog: "#2b3140" };
 /** What grass and trees are pulled toward under the Harbor's low cloud. */
 const DRAB = new THREE.Color("#5d6a5c");
+/** What open grass is pulled toward where it has dried out (see dryPatch): straw under dead grass, dusty brown on dry ground. */
+const PARCHED = new THREE.Color("#a59a5a");
+const DUSTY = new THREE.Color("#9a835a");
 /** The pub's painted sign: a foaming tankard on an oxblood board with a gold edge. Made once and shared. */
 let pubSignTexture: THREE.CanvasTexture | null = null;
 function pubSign(): THREE.CanvasTexture {
@@ -398,6 +421,10 @@ function gradientTexture(fill: (ctx: CanvasRenderingContext2D, size: number) => 
 }
 
 const yawOf = (facing: number, angle = 0) => -((facing * Math.PI) / 3 + angle);
+/** A crew member's plot in the Harbor, at each stage: for sale, a building site, a hut. */
+const HUT_KINDS = new Set<Poi["kind"]>(["lot", "site", "plot"]);
+/** Straight up: the axis everything on the map turns about. */
+const UP = new THREE.Vector3(0, 1, 0);
 const key = (p: HexPos) => `${p.q},${p.r}`;
 
 /**
@@ -478,6 +505,11 @@ interface Unit {
   boat?: THREE.Group | null;
   boatKind?: "barrel" | "rowboat";
   sunk?: number;
+  /** Holding a fishing rod: in a rowboat, the oars are shipped and the hands left for the rod. */
+  rod?: boolean;
+  /** At the oars: how far round the stroke is (radians), and where it has the hands, 0 (forward) to 1 (pulled in). */
+  oarPhase?: number;
+  oarPull?: number;
   /** The model, and its root: where the unit stands (its feet) and which way it is turned. */
   figure: Figure;
   root: THREE.Group;
@@ -607,22 +639,43 @@ interface SleepZ {
 
 const Z_LIFE = 2.6;
 
-/** A puff kicked up by a footfall: drifts out and up a little and fades. Pooled, so walking makes no garbage. */
+/**
+ * One piece of the puff a footfall kicks up: a little low-poly solid that is thrown out from the foot, tumbles,
+ * and shrinks away to nothing (like the lumps of the chimneys' smoke, it is never see-through). Dust swells
+ * first and floats; chips of grass and drops are thrown up and fall back. Pooled, so walking makes no garbage.
+ */
 interface Puff {
-  sprite: THREE.Sprite;
+  mesh: THREE.Mesh<THREE.BufferGeometry, THREE.MeshLambertMaterial>;
+  kind: "dust" | "fleck" | "splash";
   age: number;
   life: number;
-  x: number;
-  y: number;
-  z: number;
+  /** The ground it was kicked up from: nothing falls below it. */
+  floor: number;
   vx: number;
   vy: number;
+  vz: number;
+  /** How fast it tumbles, about each axis. */
+  spin: THREE.Vector3;
   size: number;
-  alpha: number;
+}
+
+/** The pieces' shapes, made once: a squat lump of dust, a chip of a grass blade, a drop. Each about 1 across. */
+let puffShapes: Record<Puff["kind"], THREE.BufferGeometry> | null = null;
+function puffShape(kind: Puff["kind"]): THREE.BufferGeometry {
+  if (!puffShapes) {
+    const dust = new THREE.IcosahedronGeometry(1, 0);
+    dust.scale(1, 0.8, 1);
+    const fleck = new THREE.TetrahedronGeometry(1, 0);
+    fleck.scale(0.45, 1.5, 0.16);
+    const splash = new THREE.OctahedronGeometry(1, 0);
+    splash.scale(0.75, 1.15, 0.75);
+    puffShapes = { dust, fleck, splash };
+  }
+  return puffShapes[kind];
 }
 
 /** No more puffs than this are ever out at once; past it the oldest is reused. */
-const PUFF_POOL = 36;
+const PUFF_POOL = 60;
 
 /** A short-lived effect sprite: a swipe, a projectile in flight, a burst. */
 interface Fx {
@@ -636,6 +689,8 @@ interface Fx {
   /** Total rotation over its life, in radians. */
   spin: number;
   fade: boolean;
+  /** How high it rises over the middle of its flight, in world units: a lob. */
+  arc?: number;
   onEnd?: () => void;
 }
 
@@ -652,6 +707,8 @@ export interface WorldMinigame {
   ownHero?(): boolean;
   /** A press on the canvas, in normalized device coordinates, and the camera it was seen through. */
   press?(ndc: THREE.Vector2, camera: THREE.Camera): void;
+  /** The pointer moved over the canvas, in normalized device coordinates. */
+  hover?(ndc: THREE.Vector2, camera: THREE.Camera): void;
   /** A key pressed; true if the game used it. */
   key?(e: KeyboardEvent): boolean;
   /** Where the head of this unit's seat is, in the world, if the game draws the unit itself (a table's players): their chat bubble is set beside it, rather than over the hex they all stand on. Null for a unit it does not draw, or for you. */
@@ -711,9 +768,9 @@ export class WorldRenderer {
   private pixel = PIXEL;
   /** Units a minigame is drawing for itself. */
   private stageHidden: string[] = [];
-  private minigame: { game: WorldMinigame; group: THREE.Group; hidden: { obj: THREE.Object3D; was: boolean }[]; felled: { i: number; m: THREE.Matrix4 }[] } | null = null;
-  /** The trees on forest hexes, one instanced mesh; a minigame may clear some for room. */
-  private forest: THREE.InstancedMesh | null = null;
+  private minigame: { game: WorldMinigame; group: THREE.Group; hidden: { obj: THREE.Object3D; was: boolean }[]; felled: boolean; sight?: THREE.Vector3 } | null = null;
+  /** The trees on forest hexes and the boulder heaps on the hills; a minigame may clear some trees for room. */
+  private woods: Woods | null = null;
   /** The camera's normal field of view, which a minigame may widen. */
   private baseFov = 35;
   private lentFlash = 0;
@@ -723,6 +780,8 @@ export class WorldRenderer {
   private panes = new THREE.Group();
   /** Fireflies and moths, out at night with "Fancy graphics". */
   private nightLife = new NightLife();
+  /** The gulls that come and go by day on any map with the sea round it. */
+  private gulls = new Gulls();
   /** Lightning in a storm. On the dev server, `__gqWorld.strike()` sets one off. */
   private storm = new Storm();
   /** How wet the ground is, 0 to 1: it follows the rain up quickly and down slowly. */
@@ -795,6 +854,8 @@ export class WorldRenderer {
   /** The player asked for less motion: footsteps are still heard, but kick up no puffs. */
   private still = typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
   private fx: Fx[] = [];
+  /** When each attacker last shook the ground, on the render clock: a stomp hits everyone, but shakes the ground once. */
+  private quakeAt = new Map<string, number>();
   /** Speech over units' heads, by unit id; kept apart from the unit so a change of gear does not cut it short. */
   private bubbles = new Map<string, Bubble>();
   private pending: { at: number; run: () => void }[] = [];
@@ -819,6 +880,10 @@ export class WorldRenderer {
   private yaw = 0;
   private yawGoal = 0;
   private userYaw = 0;
+  /** The top middle of each place's model, in the world, measured when first asked for (see screenAbovePoi). */
+  private poiTops = new Map<string, THREE.Vector3>();
+  /** The turn this map opens at (RenderState.homeYaw), which the turn buttons' sixths are counted from. */
+  private homeYaw = 0;
   /** The current drag turns the camera instead of panning it. */
   private rotating = false;
   /** How steeply the camera looks down, in radians above the horizon. Eases toward `pitchGoal`; `userPitch` is the player's choice. */
@@ -892,7 +957,7 @@ export class WorldRenderer {
 
     // Sky, sun and moon, shadows, and the moving decoration.
     this.ambience = new Ambience(this.scene, this.renderer);
-    this.scene.add(this.nightLife.group, this.storm.bolt, this.panes);
+    this.scene.add(this.nightLife.group, this.gulls.group, this.storm.bolt, this.panes);
 
     const sea = new THREE.Mesh(new THREE.PlaneGeometry(240, 240), new THREE.MeshLambertMaterial({ color: "#3577cf" }));
     addFancyWater(sea.material);
@@ -982,6 +1047,7 @@ export class WorldRenderer {
     this.rotateButtons.remove();
     this.unwatchFancy();
     this.nightLife.dispose();
+    this.gulls.dispose();
     this.storm.dispose();
     this.outlookMap?.dispose();
     this.ambience.dispose();
@@ -1010,6 +1076,9 @@ export class WorldRenderer {
     this.updateGhost();
     this.buildJoinRanges(state);
     if (first) {
+      // A new map opens at its own turn.
+      this.homeYaw = state.homeYaw ?? 0;
+      this.userYaw = this.yaw = this.yawGoal = this.homeYaw;
       // No sea under a hut's floor, nor in the caverns.
       this.sea.visible = !state.indoors && state.kind !== "caverns";
       (this.scene.background as THREE.Color).set(state.indoors ? "#1d1a2b" : "#a9dcf7");
@@ -1069,8 +1138,22 @@ export class WorldRenderer {
         if (b.t === "hit") this.later(beat++, () => this.attack(b.actor, b.target, b.ability, b.perfect, () => { sounds.impact(b.ability, attackStyle(b.ability), b.perfect, this.fighter(b.target), this.spot(b.target)); this.float(b.target, `-${b.amount}`, b.perfect ? "#ffd23f" : "#ff6b6b"); }, true));
         else if (b.t === "miss" && b.heal) this.later(beat++, () => { sounds.healFailed(this.spot(b.actor)); this.float(b.actor, "fails", "#c9d1e0"); });
         else if (b.t === "miss") this.later(beat++, () => this.attack(b.actor, b.target, b.ability, false, () => { sounds.miss(b.ability, attackStyle(b.ability), this.spot(b.target)); this.float(b.target, "miss", "#c9d1e0"); }));
-        else if (b.t === "heal") this.later(beat++, () => { sounds.heal(b.ability, this.spot(b.target)); this.sparkle(b.target, "#7dff9a"); this.float(b.target, `+${b.amount}`, "#7dff9a"); });
-        else if (b.t === "tick") this.later(beat++, () => { sounds.tick(b.effect, this.spot(b.target)); this.float(b.target, `-${b.amount}`, "#ffa94d"); });
+        else if (b.t === "heal") this.later(beat++, () => {
+          sounds.heal(b.ability, this.spot(b.target));
+          if (REGROWTH.has(b.ability)) this.regrow(b.target);
+          else this.sparkle(b.target, "#7dff9a");
+          this.float(b.target, `+${b.amount}`, "#7dff9a");
+        });
+        else if (b.t === "tick") {
+          // A troll on fire: the burn, and its wounds failing to close.
+          const kind = this.state?.units?.find((u) => u.id === b.target)?.kind;
+          const blocked = kind !== undefined && ENEMIES[kind]?.regen?.unless === b.effect;
+          this.later(beat++, () => {
+            sounds.tick(b.effect, this.spot(b.target));
+            this.float(b.target, `-${b.amount}`, "#ffa94d");
+            if (blocked) this.regrowthBlocked(b.target);
+          });
+        }
         else if (b.t === "turn" && b.id === this.state?.you) myTurnAt = beat;
         // A class trait kicking in gets its name over the hero.
         else if (b.t === "trait") this.later(beat++, () => { const name = TRAIT_BY_ID[b.trait]?.name ?? b.trait; sounds.trait(name, this.spot(b.id)); this.float(b.id, name, "#facc15"); });
@@ -1357,6 +1440,35 @@ export class WorldRenderer {
     const hitAt = t.goal.clone().add(new THREE.Vector3(0, t.size * 0.4, 0.05));
     const spell = SPELL_COLOR[ability];
 
+    if (QUAKES.has(ability)) {
+      // It stays where it is and brings its weight down: dust rings out from its feet (once for the whole crew),
+      // and each hero it reaches is jolted off their feet.
+      if (this.clock - (this.quakeAt.get(actorId) ?? -Infinity) > 1) {
+        this.quakeAt.set(actorId, this.clock);
+        this.quakeRing(a);
+      }
+      if (landed) {
+        t.kick.set(dir * 0.12, 0.22, 0);
+        this.dustAt(t, perfect);
+      }
+      onImpact();
+      return;
+    }
+    const rock = THROWN[ability];
+    if (rock) {
+      // Lobbed high, tumbling, and it breaks into dust where it lands.
+      const from = a.goal.clone().add(new THREE.Vector3(dir * 0.5, a.size * 0.7, 0.05));
+      this.spawnFx("rock", rock, flip, { from, to: hitAt, life: 0.4, size: [0.85, 1.0], spin: -dir * 9, fade: false, arc: 0.9, onEnd: () => {
+        this.spawnFx("burst", perfect ? "#ffd23f" : "#c9c1aa", false, { from: hitAt, to: hitAt, life: 0.22, size: [0.7, 1.6], spin: 0.5, fade: true });
+        if (landed) {
+          this.dustAt(t, perfect);
+          t.kick.set(dir * 0.18, 0, 0);
+        }
+        onImpact();
+      } });
+      return;
+    }
+
     if (spell || ARROW_ABILITIES.has(ability)) {
       const kind: FxKind = spell ? "bolt" : "arrow";
       const color = spell ?? "#e8dcc0";
@@ -1371,8 +1483,54 @@ export class WorldRenderer {
     }
     // Melee: step in and swipe across the target.
     this.lunge(actorId, targetId);
-    this.spawnFx("slash", perfect ? "#ffd23f" : "#dfe9ff", flip, { from: hitAt, to: hitAt, life: 0.26, size: [1.3, 2.3], spin: -dir * 0.9, fade: true });
+    const heavy = SMASHES.has(ability);
+    // A heavy blow comes down from higher, wider, and knocks the target back with dust thrown up round its feet.
+    this.spawnFx("slash", perfect ? "#ffd23f" : "#dfe9ff", flip, { from: hitAt, to: hitAt, life: heavy ? 0.3 : 0.26, size: heavy ? [1.7, 3] : [1.3, 2.3], spin: -dir * (heavy ? 1.6 : 0.9), fade: true });
+    if (heavy && landed) {
+      t.kick.set(dir * 0.35, -0.08, 0);
+      this.dustAt(t, perfect);
+    }
     onImpact();
+  }
+
+  /** Dust thrown up either side of a unit's feet: a heavy landing, a rock breaking, the ground shaking under it. */
+  private dustAt(unit: Unit, perfect = false) {
+    const feet = unit.goal.clone().add(new THREE.Vector3(0, 0.15, 0.1));
+    for (const side of [-1, 1]) {
+      this.spawnFx("dust", perfect ? "#e8d27a" : "#c9b994", side > 0, { from: feet, to: feet.clone().add(new THREE.Vector3(side * 0.55, 0.3, 0)), life: 0.4, size: [0.6, 1.1], spin: 0, fade: true });
+    }
+  }
+
+  /** The ground shaken by a stomp: a ring of dust rolling out from the unit's feet. */
+  private quakeRing(unit: Unit) {
+    const feet = unit.goal.clone().add(new THREE.Vector3(0, 0.12, 0));
+    for (let i = 0; i < 10; i++) {
+      const a = (i / 10) * Math.PI * 2;
+      const out = new THREE.Vector3(Math.cos(a) * 1.9, 0.12, Math.sin(a) * 1.3);
+      this.spawnFx("dust", "#c9b994", Math.cos(a) > 0, { from: feet.clone().add(out.clone().multiplyScalar(0.2)), to: feet.clone().add(out), life: 0.5, size: [0.7, 1.3], spin: 0, fade: true });
+    }
+  }
+
+  /** A troll growing back: flecks of moss creeping up over it. */
+  private regrow(unitId: string) {
+    const unit = this.units.get(unitId);
+    if (!unit) return;
+    for (let i = 0; i < 5; i++) {
+      const x = (i - 2) * unit.size * 0.13;
+      const from = unit.goal.clone().add(new THREE.Vector3(x, unit.size * (0.15 + 0.12 * (i % 3)), 0.08));
+      this.spawnFx("fleck", MOSS, i % 2 === 0, { from, to: from.clone().add(new THREE.Vector3(x * 0.3, unit.size * 0.35, 0)), life: 0.7, size: [0.7, 0.95], spin: 0, fade: true });
+    }
+  }
+
+  /** Fire keeping a troll's wounds open: a wisp of smoke and a word saying so, over the burn. */
+  private regrowthBlocked(unitId: string) {
+    const unit = this.units.get(unitId);
+    if (!unit) return;
+    for (const [x, rise, flip] of [[-0.2, 0.9, false], [0.15, 1.1, true], [0.4, 0.8, false]] as const) {
+      const from = unit.goal.clone().add(new THREE.Vector3(x, unit.size * 0.55, 0.05));
+      this.spawnFx("dust", "#a39ca8", flip, { from, to: from.clone().add(new THREE.Vector3(x * 0.4, rise, 0)), life: 0.9, size: [0.9, 1.7], spin: 0, fade: true });
+    }
+    this.float(unitId, "can't regrow", "#c9c1d6", { height: 0.32, lift: 0.4 });
   }
 
   /** Leave an arrow standing in `unit`, shot from the `dir` side (1: from the left). */
@@ -1482,7 +1640,7 @@ export class WorldRenderer {
         addWaterRipple(here.x + dx * 0.6 - dz * along * 0.5, here.z + dz * 0.6 + dx * along * 0.5);
       }
     }
-    const ground = stepGround(biome);
+    const ground = stepGround(biome, !!tileAt(state.map, under)?.path);
     if (!ground || !biome) return;
     // The audio engine plays it, placed where the foot lands and falling off with distance from you.
     sounds.footstep(biome, { x: feet.x, z: feet.z }, id === state.you);
@@ -1490,37 +1648,51 @@ export class WorldRenderer {
   }
 
   private puff(ground: keyof typeof PUFFS, at: THREE.Vector3) {
-    const look = PUFFS[ground];
+    for (const look of PUFFS[ground]) this.kick(look, at);
+  }
+
+  /** Throw up the pieces of one kind of puff from a foot. */
+  private kick(look: PuffLook, at: THREE.Vector3) {
     for (let i = 0; i < look.count; i++) {
-      let puff = this.puffs.find((p) => !p.sprite.visible);
+      let puff = this.puffs.find((p) => !p.mesh.visible);
       if (!puff && this.puffs.length < PUFF_POOL) {
-        const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ transparent: true, depthWrite: false }));
-        // Drawn before the hero cards (renderOrder 2), so a hero is always in front of the dust at their feet.
-        sprite.renderOrder = 1;
-        this.fxGroup.add(sprite);
-        puff = { sprite, age: 0, life: 0, x: 0, y: 0, z: 0, vx: 0, vy: 0, size: 0, alpha: 0 };
+        const mesh = new THREE.Mesh(puffShape(look.kind), new THREE.MeshLambertMaterial({ flatShading: true }));
+        mesh.castShadow = false;
+        mesh.receiveShadow = false;
+        this.fxGroup.add(mesh);
+        puff = { mesh, kind: look.kind, age: 0, life: 0, floor: 0, vx: 0, vy: 0, vz: 0, spin: new THREE.Vector3(), size: 0 };
         this.puffs.push(puff);
       }
       if (!puff) puff = this.puffs[(this.nextPuff = (this.nextPuff + 1) % this.puffs.length)];
-      // Kicked out to either side of the foot, the second the other way.
+      // Kicked out to either side of the foot and a little fore or aft, each piece its own way.
       const side = (i % 2 ? 1 : -1) * (0.5 + Math.random() * 0.5);
-      const color = look.colors[(Math.random() * look.colors.length) | 0];
-      puff.sprite.material.map = fxTexture(look.kind, color, side > 0);
-      puff.sprite.material.needsUpdate = true;
-      puff.sprite.visible = true;
+      const fore = (Math.random() - 0.5) * 0.9;
+      puff.kind = look.kind;
+      puff.mesh.geometry = puffShape(look.kind);
+      puff.mesh.material.color.set(look.colors[(Math.random() * look.colors.length) | 0]);
+      puff.mesh.visible = true;
       puff.age = 0;
-      puff.life = 0.32 + Math.random() * 0.14;
-      puff.x = at.x + side * 0.22;
-      puff.z = at.z + 0.06;
-      // The shapes are drawn low in their tile (rows 4 to 11 of 16): lift it so the lowest row rests on the ground.
-      puff.y = at.y + look.size * 0.26;
-      puff.vx = side * 0.9;
-      puff.vy = look.kind === "splash" ? 0.6 : 0.3;
-      puff.size = look.size * (0.85 + Math.random() * 0.3);
-      puff.alpha = look.alpha;
-      puff.sprite.position.set(puff.x, puff.y, puff.z);
-      puff.sprite.scale.set(puff.size * 0.8, puff.size * 0.8, 1);
-      puff.sprite.material.opacity = puff.alpha;
+      puff.floor = at.y;
+      puff.size = look.size * (0.8 + Math.random() * 0.45);
+      puff.mesh.position.set(at.x + side * 0.14, at.y + puff.size * 0.6, at.z + fore * 0.1);
+      puff.mesh.rotation.set(Math.random() * 6.3, Math.random() * 6.3, Math.random() * 6.3);
+      puff.mesh.scale.setScalar(1e-4);
+      if (look.kind === "dust") {
+        // Dust rolls out low and slow, and hangs.
+        puff.life = 0.42 + Math.random() * 0.2;
+        puff.vx = side * 0.75;
+        puff.vy = 0.22 + Math.random() * 0.14;
+        puff.vz = fore * 0.5;
+        puff.spin.set((Math.random() - 0.5) * 2.4, (Math.random() - 0.5) * 2.4, (Math.random() - 0.5) * 2.4);
+      } else {
+        // Chips of grass and drops are thrown up and come down again, turning over as they go.
+        const drop = look.kind === "splash";
+        puff.life = 0.34 + Math.random() * 0.16;
+        puff.vx = side * (drop ? 0.8 : 1.0);
+        puff.vy = (drop ? 1.7 : 1.35) + Math.random() * 0.5;
+        puff.vz = fore * 0.9;
+        puff.spin.set((Math.random() - 0.5) * 16, (Math.random() - 0.5) * 16, (Math.random() - 0.5) * 16);
+      }
     }
   }
 
@@ -1634,56 +1806,140 @@ export class WorldRenderer {
     this.terrain = terrain;
     this.scene.add(terrain);
 
-    // Trees on forest. POI hexes stay clear. Rocks, grass and waves come from the ambience.
+    // Trees on forest, the thickets and boulder heaps that cannot be walked through, and the boulders that
+    // bound the Harbor. POI hexes stay clear. Rocks on open hills, grass and waves come from the ambience.
     const poiKeys = new Set(state.map.pois.map((p) => key(p.pos)));
-    const trees: THREE.Matrix4[] = [];
+    const trees: TreeSpot[] = [];
+    const boulders: BoulderSpot[] = [];
+    const setOaks = this.tiles.filter((t) => t.blocker === "oak");
     for (const t of this.tiles) {
-      if (poiKeys.has(key(t)) || t.biome !== "forest") continue;
+      if (poiKeys.has(key(t))) continue;
       const { x, z } = hexToWorld(t);
       const top = tileTop(t);
-      for (let i = 0; i < 2; i++) {
-        const s = 0.8 + noise(t.q, t.r, i) * 0.5;
-        trees.push(
-          new THREE.Matrix4().compose(
-            new THREE.Vector3(x + (noise(t.q, t.r, i + 3) - 0.5) * 0.9, top + 0.45 * s, z + (noise(t.q, t.r, i + 7) - 0.5) * 0.8 - 0.1),
-            new THREE.Quaternion(),
-            new THREE.Vector3(s, s, s),
-          ),
-        );
+      const n = (salt: number) => noise(t.q, t.r, salt);
+      const tree = (dx: number, dz: number, size: number, salt: number, pine = n(salt + 1) < 0.68) =>
+        trees.push({ x: x + dx, y: top, z: z + dz, size, kind: pine ? "pine" : "broad", yaw: n(salt + 2) * Math.PI * 2, tint: tintOf(n(salt + 3), n(salt + 4)) });
+      const rock = (dx: number, dz: number, size: number, tall: number, salt: number) =>
+        boulders.push({ x: x + dx, y: top, z: z + dz, size, tall, yaw: n(salt) * Math.PI * 2, tilt: (n(salt + 1) - 0.5) * 0.5, shape: Math.floor(n(salt + 2) * 3.99), tint: tintOf(n(salt + 3), n(salt + 4)) });
+      if (t.blocker === "trees") {
+        // A thicket: a ring of big old trees round one in the middle, and brush between their feet.
+        const ring = 5 + Math.floor(n(100) * 2.99);
+        const turn = n(101) * Math.PI * 2;
+        for (let i = 0; i < ring; i++) {
+          const a = turn + (i / ring) * Math.PI * 2 + (n(110 + i) - 0.5) * 0.6;
+          const d = 0.5 + n(120 + i) * 0.22;
+          tree(Math.sin(a) * d, Math.cos(a) * d * 0.95, 1.15 + n(130 + i) * 0.55, 140 + i * 5);
+        }
+        tree((n(102) - 0.5) * 0.2, (n(103) - 0.5) * 0.2, 1.6 + n(104) * 0.4, 190);
+        for (let i = 0; i < 3; i++) {
+          const a = turn + ((i + 0.5) / 3) * Math.PI * 2;
+          tree(Math.sin(a) * 0.3, Math.cos(a) * 0.3, 0.42 + n(200 + i) * 0.2, 210 + i * 5, false);
+        }
+      } else if (t.blocker === "oak") {
+        // One great old oak, set down by the map (the Harbor's, on its hill): in the middle of its hex, which
+        // nobody can walk onto, the broadest of the oaks and bigger than any that grows wild.
+        trees.push({ x, y: top, z, size: 3.7, kind: "oak", shape: 0, yaw: n(810) * Math.PI * 2, tint: tintOf(0.6, 0.55) });
+      } else if (t.blocker === "boulders") {
+        // A heap of boulders: one big one, a second leaning on it, and a few smaller round their feet.
+        const turn = n(300) * Math.PI * 2;
+        rock(Math.sin(turn) * 0.12, Math.cos(turn) * 0.12, 0.6 + n(301) * 0.15, 0.75 + n(302) * 0.35, 310);
+        rock(Math.sin(turn + 2.4) * 0.45, Math.cos(turn + 2.4) * 0.42, 0.4 + n(303) * 0.12, 0.5 + n(304) * 0.3, 320);
+        const small = 2 + Math.floor(n(305) * 2.99);
+        for (let i = 0; i < small; i++) {
+          const a = turn + 3.6 + i * 1.3 + n(330 + i) * 0.5;
+          const d = 0.55 + n(340 + i) * 0.2;
+          rock(Math.sin(a) * d, Math.cos(a) * d * 0.9, 0.16 + n(350 + i) * 0.14, 0.18 + n(360 + i) * 0.16, 370 + i * 5);
+        }
+      } else if (t.biome === "forest") {
+        // Open woods: two trees, room to walk between.
+        for (let i = 0; i < 2; i++) tree((n(i + 3) - 0.5) * 0.9, (n(i + 7) - 0.5) * 0.8 - 0.1, 0.72 + n(i) * 0.45, 400 + i * 5);
+      } else if (t.biome === "rampart" && !t.built) {
+        // The Harbor's bounds: great boulders shoulder to shoulder along the rim, so the hexes join into one
+        // line round the island. They run across the way out from the island's middle; here and there the
+        // line has slumped, and those stones sit lower. Smaller ones have rolled down on the inland side.
+        const ox = x - this.land.x, oz = z - this.land.z;
+        const out = Math.hypot(ox, oz) || 1;
+        const ax = -oz / out, az = ox / out;
+        const inx = -ox / out, inz = -oz / out;
+        const slumped = n(500) < 0.3 ? 0.72 : 1;
+        for (let i = 0; i < 3; i++) {
+          const along = (i - 1) * 0.56 + (n(510 + i) - 0.5) * 0.14;
+          const back = (n(520 + i) - 0.5) * 0.18;
+          const size = (0.42 + n(530 + i) * 0.14) * (i === 1 ? 1.08 : 1);
+          rock(ax * along + inx * back, az * along + inz * back, size, (0.9 + n(540 + i) * 0.45) * slumped, 550 + i * 5);
+        }
+        const small = 1 + Math.floor(n(580) * 2.99);
+        for (let i = 0; i < small; i++) {
+          const along = (n(590 + i) - 0.5) * 1.3;
+          const d = 0.42 + n(600 + i) * 0.2;
+          rock(ax * along + inx * d, az * along + inz * d, 0.14 + n(610 + i) * 0.12, 0.16 + n(620 + i) * 0.14, 630 + i * 5);
+        }
+      } else if (this.sodden && t.biome === "hills") {
+        // A gap in the Harbor's line of boulders: a few stones tumbled across it.
+        const turn = n(700) * Math.PI * 2;
+        const count = 2 + Math.floor(n(701) * 2.99);
+        for (let i = 0; i < count; i++) {
+          const a = turn + (i / count) * Math.PI * 2 + (n(710 + i) - 0.5) * 0.8;
+          const d = i === 0 ? 0.1 : 0.4 + n(720 + i) * 0.25;
+          rock(Math.sin(a) * d, Math.cos(a) * d * 0.9, (i === 0 ? 0.3 : 0.16) + n(730 + i) * 0.12, (i === 0 ? 0.4 : 0.2) + n(740 + i) * 0.16, 750 + i * 5);
+        }
+      } else if (t.biome === "plains" && !t.built && !t.path) {
+        // An old oak, here and there in the open grass; where the grass has died, more often, and dead: a snag.
+        // Too stout to walk through or push aside, it stands toward a corner of its hex, where three hexes meet
+        // and nobody stands, and only where that corner is open ground: nothing built or to be used on the three
+        // hexes that meet there, nor on any hex beside them.
+        const dry = dryPatch(t, x, z) >= 0;
+        if (n(800) >= (dry ? 0.45 : 0.2)) continue;
+        // Where the map has set an oak down, it stands alone: no wild one within a few hexes of it.
+        if (setOaks.some((o) => hexDistance(o, t) <= 5)) continue;
+        const corner = Math.floor(n(801) * 5.99);
+        const beside = [HEX_DIRS[corner], HEX_DIRS[(corner + 1) % 6]].map((d) => byKey.get(key({ q: t.q + d.q, r: t.r + d.r })));
+        if (beside.some((b) => !b || b.biome === "water" || b.biome === "dock" || b.path)) continue;
+        const taken = (h: Tile | undefined) => !!h && (!!h.built || !!h.blocker || poiKeys.has(key(h)));
+        if ([t, ...beside].some((h) => taken(h) || HEX_DIRS.some((d) => taken(byKey.get(key({ q: h!.q + d.q, r: h!.r + d.r })))))) continue;
+        const a = ((-30 + 60 * corner) * Math.PI) / 180;
+        const ox = x + Math.cos(a) * 0.8, oz = z + Math.sin(a) * 0.8;
+        // Old trees keep their distance: none within a couple of hexes of another, so their crowns do not run together.
+        if (trees.some((o) => (o.kind === "oak" || o.kind === "snag") && Math.hypot(o.x - ox, o.z - oz) < 3.6)) continue;
+        trees.push({
+          x: ox,
+          y: top,
+          z: oz,
+          size: dry ? 2.3 + n(802) * 0.6 : 2.7 + n(802) * 0.7,
+          kind: dry ? "snag" : "oak",
+          shape: Math.floor(n(803) * OAK_SHAPES * 0.999),
+          yaw: n(804) * Math.PI * 2,
+          tint: tintOf(n(805), n(806)),
+        });
       }
     }
-    // The rampart's broken teeth: a merlon or two left standing on each length of wall.
-    const merlons: THREE.Matrix4[] = [];
-    for (const t of this.tiles) {
-      if (t.biome !== "rampart") continue;
-      const { x, z } = hexToWorld(t);
-      const top = tileTop(t);
-      for (let i = 0; i < 3; i++) {
-        if (noise(t.q, t.r, 20 + i) < 0.35) continue;
-        const a = (i / 3) * Math.PI * 2 + noise(t.q, t.r, 23) * 2;
-        const tall = 0.18 + noise(t.q, t.r, 26 + i) * 0.2;
-        merlons.push(new THREE.Matrix4().compose(new THREE.Vector3(x + Math.sin(a) * 0.55, top + tall / 2, z + Math.cos(a) * 0.55), new THREE.Quaternion().setFromEuler(new THREE.Euler(0, a, 0)), new THREE.Vector3(0.36, tall, 0.3)));
+    // Where gulls may land: open ground nobody has built on or uses, low enough underfoot to see them on (no
+    // meadow or tall grass). The quay and the piers count three times over, being where a gull would rather be.
+    // None indoors or underground, on a map with no sea, for a backdrop, or for anyone who asked for less motion.
+    const landings: GullSpot[] = [];
+    if (!state.indoors && state.kind !== "caverns" && !this.opts.backdrop && !this.still && this.tiles.some((t) => t.biome === "water")) {
+      for (const t of this.tiles) {
+        if (poiKeys.has(key(t)) || t.built || t.blocker) continue;
+        const { x, z } = hexToWorld(t);
+        const shore = t.biome === "mud" || t.biome === "dock";
+        const open = t.biome === "cobble" || (t.biome === "plains" && !t.path && !tallGrass(t, x, z) && !meadowAt(x, z));
+        if (!shore && !open) continue;
+        for (let i = 0; i < (shore ? 3 : 1); i++) landings.push({ x, y: tileTop(t), z });
       }
     }
+    this.gulls.setGround(landings, this.land, Math.min(6, 2 + Math.floor(landings.length / 70)), recentre);
     this.ambience.build(
       this.tiles.filter((t) => !this.deep.has(key(t))),
-      // Nothing grows or lies about where a place stands, or under a building.
-      (t) => poiKeys.has(key(t)) || !!t.built,
+      // Nothing grows or lies about where a place stands, under a building, or in a thicket or a boulder heap.
+      // The Harbor's gaps of rubble have their boulders from the woods, not the ambience's hill rocks.
+      // (Grass does grow round the foot of a lone oak.)
+      (t) => poiKeys.has(key(t)) || !!t.built || (!!t.blocker && t.blocker !== "oak") || (this.sodden && t.biome === "hills"),
       (t) => ({ ...hexToWorld(t), y: tileTop(t) }),
     );
-    const instanced = (geometry: THREE.BufferGeometry, color: string, mats: THREE.Matrix4[]) => {
-      const mesh = new THREE.InstancedMesh(geometry, new THREE.MeshLambertMaterial({ color, flatShading: true }), Math.max(1, mats.length));
-      mesh.count = mats.length;
-      mats.forEach((mat, i) => mesh.setMatrixAt(i, mat));
-      mesh.castShadow = true;
-      mesh.receiveShadow = true;
-      this.decor.add(mesh);
-      return mesh;
-    };
-    // The trees bend in the wind (fancy graphics): 0.9 is the cone's height.
-    this.forest = instanced(new THREE.ConeGeometry(0.34, 0.9, 5), this.sodden ? "#3a5d41" : "#2f7a3d", trees);
-    addWindSway(this.forest.material as THREE.Material, 0.9);
-    if (merlons.length > 0) instanced(new THREE.BoxGeometry(1, 1, 1), "#6a6d75", merlons);
+    // The trees bend in the wind (fancy graphics), and aside as anyone walks through them.
+    this.woods?.dispose();
+    this.woods = new Woods(trees, boulders, this.sodden);
+    this.decor.add(this.woods.group);
 
     // Start centred on the island. Fog lifting redraws the ground but leaves the camera where the player put it.
     if (!recentre) return;
@@ -1842,12 +2098,21 @@ export class WorldRenderer {
     if (!this.terrain) return;
     const c = new THREE.Color();
     const white = new THREE.Color("#ffffff");
+    // A place's hex keeps its green: the ambience lays no dry grass there, so it would be parched for nothing.
+    const places = new Set(this.state?.map.pois.map((p) => key(p.pos)) ?? []);
     this.tiles.forEach((t, i) => {
       c.set(BIOME_COLOR[t.biome]);
       // Fog is a pale mist by day and all but black by night.
       if (t.biome === "fog") c.set(FOG_DAY).lerp(FOG_NIGHT, Math.max(0, this.paintedNight) / 10);
       // In a wet, walled port the green is tired.
       if (this.sodden && (t.biome === "plains" || t.biome === "forest")) c.lerp(DRAB, 0.5);
+      if (t.biome === "plains" && !t.built && !places.has(key(t))) {
+        const { x, z } = hexToWorld(t);
+        const dry = dryPatch(t, x, z);
+        if (dry >= 0) c.lerp(dry === 2 ? DUSTY : PARCHED, dry === 2 ? 0.62 : 0.45);
+        // Under tall grass the ground is in its shade.
+        else if (tallGrass(t, x, z)) c.multiplyScalar(0.82);
+      }
       if (this.sodden && t.biome === "water") c.lerp(GREY_SEA, 0.65);
       if (t.biome === "water") c.lerp(NIGHT_SEA, (Math.max(0, this.paintedNight) / 10) * 0.7);
       c.offsetHSL(0, 0, (noise(t.q, t.r, 9) - 0.5) * (t.biome === "rampart" ? 0.1 : 0.06));
@@ -1879,6 +2144,28 @@ export class WorldRenderer {
     const box = new THREE.Box3().setFromObject(g);
     if (box.isEmpty()) return null;
     const v = new THREE.Vector3((box.min.x + box.max.x) / 2, box.max.y + lift, (box.min.z + box.max.z) / 2);
+    v.project(this.camera);
+    if (v.z < -1 || v.z > 1 || Math.abs(v.x) > 1 || Math.abs(v.y) > 1) return null;
+    return { x: ((v.x + 1) / 2) * this.container.clientWidth, y: ((1 - v.y) / 2) * this.container.clientHeight };
+  }
+
+  /**
+   * Just above the top of a place's model (a building's roof, a sign's top), in container pixels: where its
+   * title hangs. The top is measured once for each model and kept until the places are rebuilt. Null when
+   * there is no such place, or it is hidden or off screen.
+   */
+  screenAbovePoi(id: string, lift = 0.25): { x: number; y: number } | null {
+    const g = this.poiObject(id);
+    if (!g || !g.visible) return null;
+    let top = this.poiTops.get(id);
+    if (!top) {
+      const box = new THREE.Box3().setFromObject(g);
+      if (box.isEmpty()) return null;
+      top = new THREE.Vector3((box.min.x + box.max.x) / 2, box.max.y, (box.min.z + box.max.z) / 2);
+      this.poiTops.set(id, top);
+    }
+    const v = top.clone();
+    v.y += lift;
     v.project(this.camera);
     if (v.z < -1 || v.z > 1 || Math.abs(v.x) > 1 || Math.abs(v.y) > 1) return null;
     return { x: ((v.x + 1) / 2) * this.container.clientWidth, y: ((1 - v.y) / 2) * this.container.clientHeight };
@@ -1967,7 +2254,7 @@ export class WorldRenderer {
       obj.visible = false;
     };
     hide(hidePoi ? this.poiObject(hidePoi) : undefined);
-    this.minigame = { game, group, hidden, felled: [] };
+    this.minigame = { game, group, hidden, felled: false };
     this.hideOwnHero();
     for (const b of [this.followButton, ...this.turnButtons]) b.style.visibility = "hidden";
     // Bring the usual view over the hex first, so the swing in starts from somewhere near.
@@ -1997,10 +2284,7 @@ export class WorldRenderer {
       for (const mat of mats) mat.dispose();
     });
     for (const h of m.hidden) h.obj.visible = h.was;
-    if (this.forest && m.felled.length) {
-      for (const { i, m: mat } of m.felled) this.forest.setMatrixAt(i, mat);
-      this.forest.instanceMatrix.needsUpdate = true;
-    }
+    if (m.felled) this.woods?.restore();
     const mine = this.state?.you ? this.units.get(this.state.you) : undefined;
     if (mine) for (const obj of [mine.root, mine.label, mine.ring]) if (obj) obj.visible = true;
     for (const id of this.stageHidden) this.showUnit(id);
@@ -2028,19 +2312,11 @@ export class WorldRenderer {
   /** For the minigame under way: take the forest's own trees out of a circle (world units) so its things stand clear. Put back when it ends. */
   clearTrees(x: number, z: number, radius: number) {
     const m = this.minigame;
-    const forest = this.forest;
-    if (!m || !forest) return;
-    const mat = new THREE.Matrix4();
-    const at = new THREE.Vector3();
-    for (let i = 0; i < forest.count; i++) {
-      forest.getMatrixAt(i, mat);
-      at.setFromMatrixPosition(mat);
-      if (Math.hypot(at.x - x, at.z - z) > radius || mat.elements[0] === 0) continue;
-      m.felled.push({ i, m: mat.clone() });
-      forest.setMatrixAt(i, new THREE.Matrix4().makeScale(0, 0, 0));
-    }
-    forest.instanceMatrix.needsUpdate = true;
+    if (!m || !this.woods) return;
+    m.felled = true;
+    this.woods.clear(x, z, radius);
   }
+
 
   /** While a minigame runs you see through your hero's eyes: their figure, tag and ring are not drawn. So are the units a game draws itself (a table's players, who all stand on its one hex). */
   private hideOwnHero() {
@@ -2098,10 +2374,10 @@ export class WorldRenderer {
     unit.boatKind = kind;
     if (!kind) return;
     const g = new THREE.Group();
-    const wood = new THREE.MeshLambertMaterial({ color: "#7a5a3a" });
-    const dark = new THREE.MeshLambertMaterial({ color: "#4a3322" });
-    const iron = new THREE.MeshLambertMaterial({ color: "#5a5e66" });
     if (kind === "barrel") {
+      const wood = new THREE.MeshLambertMaterial({ color: "#7a5a3a" });
+      const dark = new THREE.MeshLambertMaterial({ color: "#4a3322" });
+      const iron = new THREE.MeshLambertMaterial({ color: "#5a5e66" });
       const body = new THREE.Mesh(new THREE.CylinderGeometry(0.24, 0.21, 0.34, 10), wood);
       body.position.y = 0.05;
       const top = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, 0.01, 10), dark);
@@ -2114,30 +2390,35 @@ export class WorldRenderer {
         g.add(hoop);
       }
     } else {
-      const hull = new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.16, 0.95), wood);
-      hull.position.y = 0.04;
-      const bow = new THREE.Mesh(new THREE.ConeGeometry(0.23, 0.32, 4), wood);
-      bow.rotation.x = Math.PI / 2;
-      bow.rotation.y = Math.PI / 4;
-      bow.scale.set(1, 1, 0.5);
-      bow.position.set(0, 0.04, 0.62);
-      const inside = new THREE.Mesh(new THREE.BoxGeometry(0.38, 0.01, 0.85), dark);
-      inside.position.y = 0.125;
-      g.add(hull, bow, inside);
-      for (const s of [-1, 1]) {
-        const oar = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.02, 0.05), new THREE.MeshLambertMaterial({ color: "#b98b5a" }));
-        oar.position.set(s * 0.42, 0.12, -0.05);
-        oar.rotation.z = -s * 0.25;
-        oar.name = "oar";
-        g.add(oar);
-      }
+      // A proper little rowboat (see rowboat.ts): its oars are put in the rower's hands by rideBoat.
+      const boat = rowboatModel();
+      g.add(boat.group);
+      g.userData.oars = boat.oars;
     }
     g.visible = false;
     this.unitGroup.add(g);
     unit.boat = g;
   }
 
-  /** Afloat on a water hex: the boat bobs under the unit, sitting it down in it, turned the way it is going. */
+  /**
+   * Whether a unit is sat at the oars of a rowboat afloat (a person, without a rod in hand), and so is to be
+   * posed rowing: where its stroke is, 0 (reached forward) to 1 (pulled back), or undefined if not.
+   */
+  private rowingPose(unit: Unit, p: THREE.Vector3, dt: number): number | undefined {
+    if (unit.boatKind !== "rowboat" || unit.rod || unit.lying || this.groundAt(p.x, p.z)?.biome !== "water") return undefined;
+    const moving = unit.path.length > 0;
+    // Rowing, the stroke goes round steadily; at rest, the hands settle about half way and the oars lie still.
+    if (moving) unit.oarPhase = ((unit.oarPhase ?? 0) + dt * 6.2) % (Math.PI * 2);
+    const want = moving ? 0.5 - 0.5 * Math.cos(unit.oarPhase ?? 0) : 0.55;
+    unit.oarPull = moving ? want : (unit.oarPull ?? want) + (want - (unit.oarPull ?? want)) * Math.min(1, dt * 4);
+    return unit.oarPull;
+  }
+
+  /**
+   * Afloat on a water hex: the boat bobs under the unit, sitting it down in it. A rowboat is turned the way its
+   * rower faces, whichever way that is (walking, or looking toward the pointer), with its rowing seat under them;
+   * each oar's handle is put in their fist and laid through its oarlock.
+   */
   private rideBoat(unit: Unit, p: THREE.Vector3, dt: number) {
     const boat = unit.boat;
     if (!boat) return;
@@ -2146,18 +2427,47 @@ export class WorldRenderer {
     boat.visible = afloat && unit.root.visible;
     if (!afloat) return;
     const swell = Math.sin(this.clock * 1.4 + p.x) * 0.025;
-    boat.position.set(p.x, ground!.top + swell, p.z - 0.1);
-    const moving = unit.path.length > 0;
-    if (moving) {
-      const to = unit.path[0];
-      boat.rotation.y = Math.atan2(to.x - p.x, to.z - p.z);
+    if (unit.boatKind === "barrel") {
+      boat.position.set(p.x, ground!.top + swell, p.z - 0.1);
+      const moving = unit.path.length > 0;
+      if (moving) {
+        const to = unit.path[0];
+        boat.rotation.y = Math.atan2(to.x - p.x, to.z - p.z);
+      }
+      boat.rotation.z = Math.sin(this.clock * 1.1 + p.z) * 0.06;
+      // Sat down in it, to the chest.
+      unit.sunk = 0.24 - swell;
+      p.y -= unit.sunk;
+      return;
     }
-    boat.rotation.z = Math.sin(this.clock * 1.1 + p.z) * 0.06;
-    // Oars stroke while rowing.
-    for (const oar of boat.children.filter((c) => c.name === "oar")) oar.rotation.y = moving ? Math.sin(this.clock * 7) * 0.4 : oar.rotation.y * Math.exp(-dt * 4);
-    // Sat down in it: a barrel to the chest, a rowboat to the waist.
-    unit.sunk = (unit.boatKind === "barrel" ? 0.24 : 0.16) - swell;
+    // A rowboat: turned with its rower, its seat under them.
+    const turn = unit.turn;
+    const sin = Math.sin(turn), cos = Math.cos(turn);
+    const seatZ = ROWER_SEAT.z * BOAT_SCALE;
+    boat.position.set(p.x - sin * seatZ, ground!.top + swell, p.z - cos * seatZ);
+    boat.rotation.set(0, turn, Math.sin(this.clock * 1.1 + p.z) * 0.05);
+    // Seated on the thwart: the figure's origin as far below the seat as a seated figure's is.
+    unit.sunk = SITTING_DROP * unit.size - ROWER_SEAT.y * BOAT_SCALE - swell;
     p.y -= unit.sunk;
+    // No hop in a boat.
+    unit.bob = 0;
+    const oars = boat.userData.oars as [THREE.Group, THREE.Group] | undefined;
+    if (!oars) return;
+    const hands = unit.oarPull !== undefined && !unit.rod && !unit.lying ? unit.figure.hands() : null;
+    if (!hands) {
+      oars.forEach((oar, i) => shipOar(oar, OARLOCKS[i]));
+      return;
+    }
+    // Where the fists are now, in the boat model's own units: the figure and the boat brought up to date first.
+    unit.root.updateMatrixWorld(true);
+    boat.updateMatrixWorld(true);
+    const fist = new THREE.Vector3();
+    // The left hand takes the left oar (hands are right then left; the oarlocks left then right).
+    [hands[1], hands[0]].forEach((hand, i) => {
+      hand.getWorldPosition(fist);
+      oars[i].parent!.worldToLocal(fist);
+      aimOar(oars[i], fist, OARLOCKS[i]);
+    });
   }
 
   /** Whether a unit is still on its way along a walked path. */
@@ -2213,6 +2523,7 @@ export class WorldRenderer {
     if (sig === this.poiSig) return;
     this.poiSig = sig;
     this.poiGroup.clear();
+    this.poiTops.clear();
     this.tableLamps.clear();
     this.poiGroup.add(this.tableLamps.group);
     // What stands in the water, for the fancy sea to foam round. Each model sits a little back from its hex's middle.
@@ -2243,7 +2554,15 @@ export class WorldRenderer {
       const at = this.standAt(poi.pos);
       const { scale, back } = placeOf(poi);
       if (BUILDINGS.has(poi.kind)) inkBuilding(g, scale);
-      g.position.set(at.x, at.y, at.z - back);
+      // A building turned to front a road (see `facing`) is turned about its door: it stands back from the door
+      // the way it faces away from it.
+      // A hut is not set out with a surveyor's chain: each stands a few degrees askew of its lane, its own way
+      // (the same for a plot staked out, its building site and the hut that goes up on it).
+      const askew = HUT_KINDS.has(poi.kind) ? (noise(poi.pos.q, poi.pos.r, 77) - 0.5) * 0.3 : 0;
+      const yaw = yawOf(poi.facing ?? 0) + askew;
+      const behind = new THREE.Vector3(0, 0, -back).applyAxisAngle(UP, yaw);
+      g.position.set(at.x + behind.x, at.y, at.z + behind.z);
+      g.rotation.y = yaw;
       g.scale.setScalar(scale);
       // A building bigger than its hex is pointed at as a whole: anywhere on it means its door.
       if (scale > 1) g.userData.door = poi.pos;
@@ -2255,7 +2574,7 @@ export class WorldRenderer {
       // A game table in a room (the pub's): a lantern hung over it.
       if (state.indoors && LAMP_TABLES.has(poi.kind)) this.tableLamps.hang(poi.id, poi.pos, at);
       /** A point in the model, out in the world. */
-      const out = (p: THREE.Vector3) => p.clone().multiplyScalar(scale).add(g.position);
+      const out = (p: THREE.Vector3) => p.clone().multiplyScalar(scale).applyAxisAngle(UP, yaw).add(g.position);
       if (g.userData.smoke) stacks.push(out(g.userData.smoke as THREE.Vector3));
       if (g.userData.beacon) {
         beacon = out(g.userData.beacon as THREE.Vector3);
@@ -2579,7 +2898,7 @@ export class WorldRenderer {
     if (!state.props?.length) return undefined;
     // Small things are stepped over, and so are rugs.
     const blocked = new Set(state.props.filter((p) => !p.small && !p.mount && !p.flat && p.on === undefined).flatMap((p) => (p.covers ?? [p.pos]).map(key)));
-    return (t) => (blocked.has(key(t)) || t.built ? Infinity : MOVE_COST[t.biome]);
+    return (t) => (blocked.has(key(t)) ? Infinity : tileCost(t));
   }
 
   /**
@@ -4486,11 +4805,88 @@ export class WorldRenderer {
         add(box(0.9, 0.04, 0.5), lambert("#8c3b2f"), 0, 0.02, 0.28);
         for (const x of [-0.8, 0.8]) add(box(0.14, 0.9, 0.14), lambert("#5a3d22"), x, 0.45, 0.28);
         break;
-      case "board":
-        add(new THREE.CylinderGeometry(0.05, 0.05, 0.9, 5), lambert("#5a3d22"), -0.3, 0.45, 0);
-        add(new THREE.CylinderGeometry(0.05, 0.05, 0.9, 5), lambert("#5a3d22"), 0.3, 0.45, 0);
-        add(box(0.8, 0.5, 0.06), lambert("#e8dcc0"), 0, 0.7, 0);
+      case "board": {
+        // The notice board: a framed back of planks between two squared posts on stone feet, under a little
+        // shingled roof to keep the rain off the paper. Notices are pinned all over it, no two alike or quite
+        // straight: lines of writing, a wax seal and its ribbon, a wanted sheet, one hanging by a corner. A lantern
+        // on a bracket lights it after dark, and a pail of rolled notices stands at its foot.
+        const timber = lambert("#5a3d22");
+        const dark = lambert("#46301c");
+        const stone = lambert("#8b8f96");
+        const iron = lambert("#2e2a28");
+        const ink = lambert("#4a3a2a");
+        const glows: BuildingGlow[] = [];
+        // Posts on their feet, capped, braced to the ground behind.
+        for (const x of [-0.46, 0.46]) {
+          add(box(0.16, 0.07, 0.16), stone, x, 0.035, 0, x * 0.4);
+          add(box(0.085, 1.0, 0.085), timber, x, 0.55, 0);
+          add(box(0.12, 0.03, 0.12), dark, x, 1.06, 0);
+          add(box(0.04, 0.42, 0.04), dark, x, 0.2, -0.13).rotation.x = -0.62;
+        }
+        // The back: five planks, no two the same brown, in a frame of darker timber.
+        const planks = ["#8a6a44", "#7d5f3c", "#927048", "#80623f", "#8c6c46"];
+        planks.forEach((tone, i) => add(box(0.158, 0.54, 0.035), lambert(tone), -0.316 + i * 0.158, 0.68, 0));
+        for (const y of [0.4, 0.96]) add(box(0.9, 0.05, 0.06), dark, 0, y, 0.005);
+        for (const x of [-0.42, 0.42]) add(box(0.05, 0.6, 0.06), dark, x, 0.68, 0.005);
+        // The roof: two pitches of shingles in courses, and a ridge board.
+        for (const side of [1, -1]) {
+          for (let course = 0; course < 2; course++) {
+            const out = 0.055 + course * 0.1;
+            add(box(1.14 - course * 0.02, 0.022, 0.115), lambert(course ? "#7a4a36" : "#8a5540"), 0, 1.2 - out * 0.62, side * out * 0.86).rotation.x = side * 0.62;
+          }
+        }
+        add(box(1.18, 0.035, 0.05), lambert("#5c3626"), 0, 1.215, 0);
+        // The notices: where each is pinned, how big, how far askew, and its paper.
+        const front = 0.022;
+        const sheet = (x: number, y: number, w: number, h: number, turn: number, paper: string, pin = "#b0392b") => {
+          const page = add(box(w, h, 0.006), lambert(paper), x, y, front);
+          page.rotation.z = turn;
+          // Its pin, at the top; a sheet askew hangs from it.
+          add(box(0.022, 0.022, 0.014), lambert(pin), x - Math.sin(turn) * (h / 2 - 0.025), y + Math.cos(turn) * (h / 2 - 0.025), front + 0.008);
+          return page;
+        };
+        /** Lines of writing down a sheet, each a little shorter or longer than the last. */
+        const written = (x: number, y: number, w: number, lines: number, turn: number) => {
+          for (let i = 0; i < lines; i++) {
+            const dy = -i * 0.034;
+            add(box(w * (0.72 + ((i * 7) % 3) * 0.1), 0.01, 0.004), ink, x - Math.sin(turn) * dy, y + Math.cos(turn) * dy, front + 0.005).rotation.z = turn;
+          }
+        };
+        sheet(-0.24, 0.76, 0.2, 0.26, 0.05, "#efe4c4");
+        written(-0.24, 0.8, 0.15, 4, 0.05);
+        // A proclamation, with a red seal and the tail of its ribbon.
+        sheet(0.02, 0.74, 0.18, 0.3, -0.03, "#f4efe1", "#c9a227");
+        written(0.02, 0.83, 0.13, 3, -0.03);
+        add(new THREE.CylinderGeometry(0.026, 0.026, 0.012, 7), lambert("#a02c22"), 0.03, 0.66, front + 0.008).rotation.x = Math.PI / 2;
+        add(box(0.018, 0.07, 0.004), lambert("#8c2a22"), 0.045, 0.615, front + 0.006).rotation.z = -0.2;
+        // Wanted: a face in a box, a price under it.
+        sheet(0.26, 0.79, 0.17, 0.22, 0.08, "#e2d3a8");
+        add(box(0.09, 0.09, 0.004), ink, 0.257, 0.815, front + 0.005).rotation.z = 0.08;
+        add(box(0.11, 0.012, 0.004), ink, 0.268, 0.725, front + 0.005).rotation.z = 0.08;
+        // Small ones crowded in under them, one come loose and hanging by a corner.
+        sheet(-0.3, 0.52, 0.12, 0.13, -0.1, "#e8dcc0", "#3f6f8f");
+        written(-0.3, 0.545, 0.08, 2, -0.1);
+        sheet(0.27, 0.535, 0.13, 0.14, 0.42, "#efe4c4");
+        sheet(-0.1, 0.5, 0.1, 0.1, 0.12, "#d9c99a", "#c9a227");
+        // The lantern, hung from a bracket off the east post.
+        add(box(0.2, 0.022, 0.022), iron, 0.6, 1.0, 0.02);
+        add(box(0.012, 0.06, 0.012), iron, 0.68, 0.965, 0.02);
+        add(box(0.06, 0.075, 0.06), new THREE.MeshBasicMaterial({ color: "#ffd77a" }), 0.68, 0.895, 0.02).userData.glow = true;
+        for (const [dx, dz] of [[-0.035, -0.035], [0.035, -0.035], [-0.035, 0.035], [0.035, 0.035]]) add(box(0.012, 0.09, 0.012), iron, 0.68 + dx, 0.895, 0.02 + dz);
+        add(box(0.095, 0.016, 0.095), iron, 0.68, 0.845, 0.02);
+        add(new THREE.ConeGeometry(0.07, 0.05, 4), iron, 0.68, 0.96, 0.02, Math.PI / 4);
+        glows.push({ pos: new THREE.Vector3(0.68, 0.895, 0.12), size: 0.4 });
+        // The pail of rolled notices, and one dropped beside it.
+        add(new THREE.CylinderGeometry(0.075, 0.06, 0.13, 8), lambert("#6b4a2b"), -0.5, 0.065, 0.2);
+        add(new THREE.CylinderGeometry(0.078, 0.078, 0.016, 8), iron, -0.5, 0.11, 0.2);
+        for (const [dx, dz, lean, turn] of [[-0.02, 0.0, 0.2, 0.4], [0.025, 0.015, -0.16, 2.2], [0.0, -0.025, 0.1, 4.0]]) {
+          const roll = add(new THREE.CylinderGeometry(0.018, 0.018, 0.22, 6), lambert("#efe4c4"), -0.5 + dx, 0.2, 0.2 + dz, turn);
+          roll.rotation.z = lean;
+        }
+        add(new THREE.CylinderGeometry(0.018, 0.018, 0.2, 6), lambert("#e2d3a8"), -0.3, 0.02, 0.26, 0.5).rotation.z = Math.PI / 2;
+        g.userData.glows = glows;
         break;
+      }
       case "camp":
         if (this.state?.kind === "caverns") {
           // What lurks in a cave chamber: a heap of old bones and rubble, and (until it is beaten) eyes in the dark.
@@ -4498,9 +4894,14 @@ export class WorldRenderer {
           for (const [x, z, s] of [[-0.25, 0.05, 0.3], [0.2, 0.15, 0.24], [0.02, -0.12, 0.2]]) add(new THREE.DodecahedronGeometry(s, 0), lambert("#3a3640"), x, s * 0.6, z, x * 5);
           for (const [x, z, r] of [[-0.05, 0.38, 0.4], [0.28, 0.42, -0.7], [-0.32, 0.4, 1.2]]) add(box(0.3, 0.04, 0.05), lambert("#d6cfbd"), x, 0.03, z, r);
           if (lead === "slime" && !poi.cleared) add(new THREE.SphereGeometry(0.26, 8, 5, 0, Math.PI * 2, 0, Math.PI / 2), lambert("#5fbf4a"), 0.05, 0.02, 0.3);
+          // A troll's den: a gnawed bone the size of a leg, and a boulder it keeps to hand.
+          if (lead === "troll" && !poi.cleared) {
+            add(new THREE.CylinderGeometry(0.05, 0.06, 0.55, 5), lambert("#e8dcc0"), 0.3, 0.05, 0.3, 1.1).rotation.z = Math.PI / 2;
+            add(new THREE.DodecahedronGeometry(0.2, 0), lambert("#6e6a5e"), -0.35, 0.15, 0.3);
+          }
           if (lead === "bat" && !poi.cleared) for (const x of [-0.2, 0.2]) add(new THREE.ConeGeometry(0.12, 0.28, 3), lambert("#2a2430"), x, 0.95, -0.1, Math.PI);
           if (!poi.cleared) {
-            const eye = new THREE.MeshBasicMaterial({ color: { bat: "#ff4d3a", skeleton: "#9fd8ff", slime: "#b8ff6a", shade: "#c79bff" }[lead] ?? "#ff4d3a" });
+            const eye = new THREE.MeshBasicMaterial({ color: { bat: "#ff4d3a", skeleton: "#9fd8ff", slime: "#b8ff6a", shade: "#c79bff", troll: "#ffc23a" }[lead] ?? "#ff4d3a" });
             for (const x of [-0.07, 0.07]) add(box(0.05, 0.04, 0.02), eye, x, lead === "bat" ? 0.82 : 0.42, 0.12).userData.glow = true;
           }
           break;
@@ -4603,6 +5004,7 @@ export class WorldRenderer {
       if (w.asleep && !unit.asleep) unit.nextZ = this.clock + 0.4;
       unit.asleep = !!w.asleep;
       this.syncBoat(unit, w.boat);
+      unit.rod = !!w.rod;
       // Down or asleep: on their back, low to the ground.
       unit.lying = !!w.down || !!w.asleep || !!w.prone;
       unit.head = unit.lying ? w.size * LYING + 0.3 : w.size + 0.3;
@@ -4926,8 +5328,9 @@ export class WorldRenderer {
   /** Turn the view by whole hex sides (60°), easing there. */
   rotateBy(steps: number) {
     const step = Math.PI / 3;
-    // Snap to the nearest side first, so repeated presses land on clean angles.
-    this.userYaw = (Math.round(this.userYaw / step) + steps) * step;
+    // Snap to the nearest side first (counted from the turn the map opened at), so repeated presses land on
+    // clean angles and six of them come back to where the view began.
+    this.userYaw = (Math.round((this.userYaw - this.homeYaw) / step) + steps) * step + this.homeYaw;
     this.yawGoal = this.userYaw;
   }
 
@@ -4984,7 +5387,13 @@ export class WorldRenderer {
   }
 
   private onPointerMove = (e: PointerEvent) => {
-    if (this.minigame) return;
+    if (this.minigame) {
+      if (this.minigame.game.hover) {
+        const rect = this.renderer.domElement.getBoundingClientRect();
+        this.minigame.game.hover(new THREE.Vector2(((e.clientX - rect.left) / rect.width) * 2 - 1, -((e.clientY - rect.top) / rect.height) * 2 + 1), this.camera);
+      }
+      return;
+    }
     const touch = this.touches.get(e.pointerId);
     if (touch) {
       touch.x = e.clientX;
@@ -5208,6 +5617,14 @@ export class WorldRenderer {
     if (this.minigame) {
       const v = this.minigame.game.frame(dt, now, this.camera.aspect);
       const b = Math.max(0, Math.min(1, v.blend));
+      // Nothing of the woods (a tree, a boulder off a heap) may stand between the game's eye and what it looks at.
+      // Cleared again whenever the eye moves on (a window turned from wide to tall stands it further back).
+      const m = this.minigame;
+      if (this.woods && (!m.sight || m.sight.distanceToSquared(v.eye) > 0.01)) {
+        m.sight = v.eye.clone();
+        m.felled = true;
+        this.woods.clearAlong(v.eye.x, v.eye.z, v.look.x, v.look.z, 0.35);
+      }
       if (b > 0) {
         const rel0 = this.camera.position.clone().sub(v.look);
         const rel1 = v.eye.clone().sub(v.look);
@@ -5236,6 +5653,11 @@ export class WorldRenderer {
     const heroes = this.state?.heroes;
     this.tableLamps.update(dt, (hex) => !!heroes?.some((h) => h.pos.q === hex.q && h.pos.r === hex.r));
     this.ambience.update(this.clock, this.yaw, this.target, this.state?.you ? this.units.get(this.state.you)?.root.position : undefined);
+    // Whoever walks through the woods pushes the trees aside.
+    // Everyone on their feet on the map: the trees they brush past bend aside, and the grass they wade through parts.
+    const walkers = [...this.units.values()].filter((u) => u.root.visible).map((u) => u.root.position);
+    this.woods?.update(dt, walkers);
+    if (!this.opts.backdrop) setFieldWalkers(walkers, this.target, dt);
     // Sounds are heard from where your hero stands, or from the middle of the view without one.
     const ear = (this.state?.you ? this.units.get(this.state.you)?.root.position : undefined) ?? this.target;
     this.ear.listener(ear.x, ear.z, this.yaw);
@@ -5276,6 +5698,8 @@ export class WorldRenderer {
     const lively = fancy.get() && this.ambience.openSky ? night : 0;
     this.nightLife.setLamps(this.ambience.lampSpots());
     this.nightLife.update(this.clock, lively);
+    // Gulls keep to fair daylight: they are gone by night and in a storm.
+    this.gulls.update(dt, walkers, this.ambience.openSky ? (1 - night) * (1 - this.ambience.storming) : 0);
     const clearSky = lively * (1 - this.ambience.overcast);
     // The moon's reflection lies on the sea off the island's shore, on the side the moon is on.
     const moon = this.ambience.sunDir;
@@ -5359,7 +5783,9 @@ export class WorldRenderer {
       if (unit.asleep) unit.turnGoal = this.yaw + Math.PI / 2;
       unit.turn += turnBy(unit.turn, unit.turnGoal) * (1 - Math.exp(-dt * 12));
       unit.root.rotation.y = unit.turn;
-      unit.figure.update({ time: this.clock, stride: unit.stride, walking: unit.path.length > 0 && !unit.rush, lean: unit.lean, lying: unit.lying || this.clock < (unit.floored ?? 0) });
+      const rowing = this.rowingPose(unit, p, dt);
+      if (rowing === undefined) unit.oarPull = undefined;
+      unit.figure.update({ time: this.clock, stride: unit.stride, walking: unit.path.length > 0 && !unit.rush, lean: unit.lean, lying: unit.lying || this.clock < (unit.floored ?? 0), rowing, sitting: unit.boatKind === "rowboat" && unit.boat?.visible ? 1 : undefined });
       const ground = p.y;
       unit.feet.set(p.x, ground, p.z);
       if (landed) this.footfall(id, unit);
@@ -5408,6 +5834,7 @@ export class WorldRenderer {
       f.age += dt;
       const t = Math.min(1, f.age / f.life);
       f.sprite.position.lerpVectors(f.from, f.to, t);
+      if (f.arc) f.sprite.position.y += f.arc * 4 * t * (1 - t);
       const size = f.size[0] + (f.size[1] - f.size[0]) * t;
       f.sprite.scale.set(size, size, 1);
       f.sprite.material.rotation = f.spin * t;
@@ -5421,21 +5848,38 @@ export class WorldRenderer {
     }
 
     for (const puff of this.puffs) {
-      if (!puff.sprite.visible) continue;
+      if (!puff.mesh.visible) continue;
       puff.age += dt;
       const t = puff.age / puff.life;
       if (t >= 1) {
-        puff.sprite.visible = false;
+        puff.mesh.visible = false;
         continue;
       }
-      puff.x += puff.vx * dt;
-      puff.y += puff.vy * dt;
-      puff.vx *= Math.exp(-dt * 5);
-      puff.vy *= Math.exp(-dt * 4);
-      puff.sprite.position.set(puff.x, puff.y, puff.z);
-      const s = puff.size * (0.8 + t * 0.45);
-      puff.sprite.scale.set(s, s, 1);
-      puff.sprite.material.opacity = puff.alpha * (1 - t * t);
+      const at = puff.mesh.position;
+      at.x += puff.vx * dt;
+      at.y += puff.vy * dt;
+      at.z += puff.vz * dt;
+      let s: number;
+      if (puff.kind === "dust") {
+        // Slowing as it spreads; swelling as it thins, then gone.
+        puff.vx *= Math.exp(-dt * 5);
+        puff.vz *= Math.exp(-dt * 5);
+        puff.vy *= Math.exp(-dt * 3);
+        s = puff.size * (0.55 + t * 1.1) * Math.min(1, t * 9) * (1 - t * t * t);
+      } else {
+        // Falling: thrown up, and down again to the ground it came from, where it stays.
+        puff.vy -= 9 * dt;
+        if (at.y < puff.floor + puff.size * 0.3) {
+          at.y = puff.floor + puff.size * 0.3;
+          puff.vx *= Math.exp(-dt * 14);
+          puff.vz *= Math.exp(-dt * 14);
+        }
+        s = puff.size * Math.min(1, t * 12) * (1 - t * t * t);
+      }
+      puff.mesh.rotation.x += puff.spin.x * dt;
+      puff.mesh.rotation.y += puff.spin.y * dt;
+      puff.mesh.rotation.z += puff.spin.z * dt;
+      puff.mesh.scale.setScalar(Math.max(s, 1e-4));
     }
 
     // Sleepers breathe out a z now and then: small, small, then a big one.

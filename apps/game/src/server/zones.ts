@@ -38,7 +38,7 @@ export async function getZoneRow(db: D1Database, code: string): Promise<ZoneRow 
 const PRESENCE_STALE_MS = 12 * 60 * 60_000;
 
 // Presence is a courtesy to the roster, never a reason for a zone or the Harbor to fail: if it cannot be
-// written or read (a database that has not had migration 0033 yet), that is logged and everything carries on.
+// written or read (a database that has not had migration 0035 yet), that is logged and everything carries on.
 const unwritten = (what: string) => (err: unknown) => console.warn(`zones:presence-${what}-failed`, { err: err instanceof Error ? err.message : String(err) });
 
 /** A player is on this zone, in a fight or not. */

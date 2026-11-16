@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { BOOK_PAGES, BOOK_SLOTS, FISH, FISH_IDS, WATERS, bookPage, type FishDef } from "./fishcatalog";
 import { holdFight, idleFight, playFight } from "./fishbot";
-import { FIGHT_MAX_EDGES, FIGHT_MAX_MS, PULSE_MS, TAP_MS, edgesProblem, fightEase, makeFightScript, pressureAt, replayFight, type FightEase } from "./fishfight";
+import { EXHAUSTED, FIGHT_MAX_EDGES, FIGHT_MAX_MS, FIGHT_TICK_MS, LINE_M, PULSE_MS, SPENT_REEL_MPS, TAP_MS, edgesProblem, fightEase, fightTick, makeFightScript, pressureAt, replayFight, startFight, type FightEase } from "./fishfight";
 import { FISH_SPOTS, HAUL_SHARE, castMetres, marketPrice, rollCatch, rollSize, tamPrice } from "./fishing";
 import { makeRng } from "./rng";
 
@@ -164,6 +164,27 @@ describe("the fight", () => {
     let snapped = 0;
     for (let i = 0; i < 20; i++) if (holdFight(hooked(FISH.amberjack, i, 1).script, MID).outcome === "snapped") snapped++;
     expect(snapped).toBe(20);
+  });
+
+  it("winds a worn-out fish straight in, button or no button", () => {
+    let checked = 0;
+    for (const f of fishes((f) => f.kind !== "haul" && f.style !== "dead").slice(0, 12)) {
+      const { script } = hooked(f, 3);
+      // Played well until it is spent; from there, hands off.
+      const { edges } = playFight(script, MID);
+      let s = startFight(script);
+      let spentAt = -1;
+      while (!s.outcome) {
+        if (spentAt < 0 && s.S < EXHAUSTED) spentAt = s.t;
+        s = fightTick(s, script, MID, spentAt < 0 ? pressureAt(edges, s.t) : 0);
+      }
+      if (spentAt < 0) continue;
+      checked++;
+      expect(s.outcome).toBe("landed");
+      // No slower than the line it could have out, at the spent fish's speed (and a tick to spare).
+      expect(s.t - spentAt).toBeLessThanOrEqual(Math.ceil(((LINE_M / SPENT_REEL_MPS) * 1000) / FIGHT_TICK_MS) * FIGHT_TICK_MS + FIGHT_TICK_MS);
+    }
+    expect(checked).toBeGreaterThan(5);
   });
 
   it("loses a fish that is never reeled", () => {

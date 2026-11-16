@@ -15,6 +15,8 @@ export interface ZoneConnection {
   online: string[];
   status: "connecting" | "open" | "closed";
   error: string | null;
+  /** Counts up whenever the player's trades may have changed (a crewmate changed one, or the connection is new): ask for them again. */
+  trades: number;
   send(action: ZoneSend): void;
   /** Your gear has changed: have the server read your hero again. */
   resheet(): void;
@@ -26,6 +28,7 @@ export function useZone(code: string, onUpdate: (state: ZoneView, events: ZoneEv
   const [online, setOnline] = useState<string[]>([]);
   const [status, setStatus] = useState<ZoneConnection["status"]>("connecting");
   const [error, setError] = useState<string | null>(null);
+  const [trades, setTrades] = useState(0);
   const socket = useRef<WebSocket | null>(null);
   const latest = useRef<ZoneView | null>(null);
   const handler = useRef(onUpdate);
@@ -54,6 +57,8 @@ export function useZone(code: string, onUpdate: (state: ZoneView, events: ZoneEv
         attempts = 0;
         everOpened = true;
         setStatus("open");
+        // A trade may have changed while there was no connection to hear of it.
+        setTrades((n) => n + 1);
       };
       ws.onmessage = (e) => {
         if (e.data === "pong") return;
@@ -66,6 +71,8 @@ export function useZone(code: string, onUpdate: (state: ZoneView, events: ZoneEv
           handler.current(msg.state, msg.events, prev);
         } else if (msg.type === "error") {
           setError(msg.message);
+        } else if (msg.type === "trades") {
+          setTrades((n) => n + 1);
         }
       };
       ws.onclose = (e) => {
@@ -93,5 +100,5 @@ export function useZone(code: string, onUpdate: (state: ZoneView, events: ZoneEv
     if (socket.current?.readyState === WebSocket.OPEN) socket.current.send(JSON.stringify({ type: "sheet" }));
   }, []);
   const clearError = useCallback(() => setError(null), []);
-  return { state, online, status, error, send, resheet, clearError };
+  return { state, online, status, error, trades, send, resheet, clearError };
 }

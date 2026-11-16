@@ -318,6 +318,16 @@ describe("ZoneRoom", () => {
     expect(hero(ann.state, "ann").items).toEqual({ healing: 2, poison: 2, fire: 1, oil: 1, water: 1 });
   });
 
+  it("tells a player on the map, and only that player, that their trades changed", async () => {
+    const { code, zone, ann } = await arrive();
+    const bo = await connect(zone, code, "bo");
+    const before = [ann.sent.length, bo.sent.length];
+    const res = await zone.fetch({ url: "https://zone/trades?to=bo", headers: new Headers() } as never);
+    expect(res.status).toBe(200);
+    expect(bo.sent.slice(before[1])).toEqual([{ type: "trades" }]);
+    expect(ann.sent.length).toBe(before[0]);
+  });
+
   it("takes dev actions on a development deployment only", async () => {
     const { zone, ann } = await arrive();
     const at = ann.state.map.tiles.find((t) => hexDistance(t, ann.state.start) === 1 && t.biome === "plains")!;

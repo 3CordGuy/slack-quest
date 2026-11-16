@@ -238,7 +238,7 @@ const DEMANDS = {
   pray: { id: "pray", text: "pay your respects at the old shrine", fact: "prayed:shrine" },
 } satisfies Record<string, Demand>;
 
-const CAMP_ENCOUNTERS = [["bandit", "wolf"], ["bandit", "bandit"], ["archer", "bandit"], ["brute"], ["wolf", "wolf", "wolf"], ["cultist", "archer"], ["bear"]];
+const CAMP_ENCOUNTERS = [["bandit", "wolf"], ["bandit", "bandit"], ["archer", "bandit"], ["brute"], ["wolf", "wolf", "wolf"], ["cultist", "archer"], ["bear"], ["ogre"], ["troll"]];
 /**
  * A beast hunt whose beast is a bear (its description says so), so the den
  * holds a Great Bear and not a pack leader. Singular only: one beast is "a

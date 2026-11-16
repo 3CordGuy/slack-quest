@@ -532,6 +532,8 @@ button.nudge { border-color: var(--gold); color: var(--gold); }
 /* Combat timeline: an enemy's next move, and turns a stun will skip. */
 .chip .intent { font-size: 12px; color: var(--muted, #b8b0a0); }
 .chip .intent.heavy { color: #ff8a7a; font-weight: 600; }
+.chip .regen { font-size: 12px; color: #7dff9a; }
+.chip .regen.stopped { color: #fb923c; }
 .turn-chip.skip { opacity: 0.5; text-decoration: line-through; }
 
 /* A little XP from a Harbor pastime, in its result line. */

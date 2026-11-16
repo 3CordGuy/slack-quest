@@ -732,8 +732,8 @@ describe("fog of war and roaming bands", () => {
         expect(s.heroes.every((h) => hexDistance(h.pos, r.pos) >= VISION + 2)).toBe(true);
         expect(s.map.pois.some((p) => p.pos.q === r.pos.q && p.pos.r === r.pos.r)).toBe(false);
         expect(tileAt(s.map, r.pos)!.biome).not.toBe("water");
-        // A pair for a party of two, or a bear on its own.
-        expect(r.kinds.length).toBe(r.kinds[0] === "bear" ? 1 : 2);
+        // A pair for a party of two, or a bear or an ogre on its own.
+        expect(r.kinds.length).toBe(r.kinds[0] === "bear" || r.kinds[0] === "ogre" ? 1 : 2);
       }
     }
   });
@@ -793,7 +793,7 @@ describe("forest finds", () => {
   function walkIntoForest(seed: string) {
     let s = startedWorld(seed);
     const me = s.turn!.heroId;
-    const target = s.map.tiles.find((t) => t.biome === "forest" && !s.map.pois.some((p) => p.pos.q === t.q && p.pos.r === t.r) && [...reachable(s.map, t, 3).values()].some((r) => r.cost > 0 && hexDistance(r.pos, t) === 1));
+    const target = s.map.tiles.find((t) => t.biome === "forest" && !t.blocker && !s.map.pois.some((p) => p.pos.q === t.q && p.pos.r === t.r) && [...reachable(s.map, t, 3).values()].some((r) => r.cost > 0 && hexDistance(r.pos, t) === 1));
     if (!target) return null;
     const from = [...reachable(s.map, target, 3).values()].find((r) => r.cost > 0 && hexDistance(r.pos, target) === 1 && tileAt(s.map, r.pos)?.biome !== "forest");
     if (!from) return null;

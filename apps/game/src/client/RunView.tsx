@@ -11,7 +11,7 @@ import { hexDistance, type HexPos } from "@gantt-quest/core";
 import {
   MAX_NPC_MESSAGES,
   MAX_PERSUADE_ATTEMPTS,
-  MOVE_COST,
+  tileCost,
   brewBag,
   brewBuff,
   brewById,
@@ -65,7 +65,7 @@ const PICKUP_LABEL: Record<string, string> = { herbs: "A patch of herbs", mushro
 const PICKUP_LABEL_CAVE: Record<string, string> = { mushrooms: "Pale mushrooms", stone: "Loose stone", bone: "Old bones", copper: "A vein of copper", iron: "A vein of iron" };
 
 /** What lurks in a cave chamber, by who leads it. */
-const LURKER_LABEL: Record<string, string> = { skeleton: "A heap of bones", bat: "A bat roost", slime: "A slime pool", shade: "A cold spot" };
+const LURKER_LABEL: Record<string, string> = { skeleton: "A heap of bones", bat: "A bat roost", slime: "A slime pool", shade: "A cold spot", troll: "A troll's den" };
 
 /** The caverns' places have no story to name them: they are named for what they are. */
 function caveName(poi: Poi): string {
@@ -125,7 +125,7 @@ function describe(events: WorldEvent[], state: ClientState, names: Map<string, s
         break;
       case "ambush": {
         const NAMES: Record<string, [string, string]> = {
-          wolf: ["a wolf", "wolves"], bear: ["a bear", "bears"],
+          wolf: ["a wolf", "wolves"], bear: ["a bear", "bears"], ogre: ["an ogre", "ogres"], troll: ["a troll", "trolls"],
           shade: ["a shade", "shades"], bat: ["a bat", "bats"], skeleton: ["a skeleton", "skeletons"], slime: ["a slime", "slimes"], haunt: ["the haunt", "haunts"],
         };
         const [one, many] = NAMES[ev.kinds[0]] ?? ["a raider", "raiders"];
@@ -388,7 +388,7 @@ export function RunView({ code, me, refresh, onLeave }: { code: string; me: Me; 
               {state.phase === "overworld" && <TurnBar state={state} run={run} me={me} code={code} status={run.status} onInventory={() => setInventory((open) => { if (!open) void refresh(); return !open; })} onBook={() => { void refresh(); setBook(true); }} onLeave={onLeave} />}
               <SkipVoteBar state={state} run={run} />
               <YourTurnFrame state={state} />
-              {ashore && me.character && <Trading me={me} partners={state.heroes.filter((h) => h.id !== state.you)} withId={tradeWith} onWith={setTradeWith} refresh={refresh} run={code} />}
+              {ashore && me.character && <Trading me={me} partners={state.heroes.filter((h) => h.id !== state.you)} withId={tradeWith} onWith={setTradeWith} refresh={refresh} run={code} nudge={run.trades} />}
               {state.phase === "overworld" && <Chat state={state} run={run} talkTo={talkTo} onTalked={() => setTalkTo(null)} />}
               {find && <FindCard find={find} onDone={() => setFind(null)} />}
               {state.phase === "overworld" && heroSheet.open && (() => {
@@ -421,13 +421,15 @@ export function RunView({ code, me, refresh, onLeave }: { code: string; me: Me; 
 }
 
 const BIOME_LABEL: Record<string, string> = { plains: "Plains", forest: "Forest", hills: "Hills", water: "Sea", dock: "Dock", cave: "Cave floor", rock: "Solid rock", gate: "A locked door" };
+/** A hex with something standing on it too thick to get through. */
+const BLOCKER_LABEL: Record<string, string> = { trees: "Thick woods", boulders: "Boulders", oak: "An old oak" };
 
 /** What the hovered hex is, what it costs to enter, and what walking there would cost this turn. */
 function HexTip({ state, hover }: { state: ClientState; hover: HexPos }) {
   const tile = tileAt(state.map, hover);
   if (!tile) return null;
   const poi = poiAt(state.map, hover);
-  const cost = MOVE_COST[tile.biome];
+  const cost = tileCost(tile);
   const me = state.heroes.find((h) => h.id === state.you);
   const turn = state.turn?.heroId === state.you ? state.turn : null;
   let walk: string | null = null;
@@ -437,7 +439,7 @@ function HexTip({ state, hover }: { state: ClientState; hover: HexPos }) {
   }
   return (
     <div className="tip">
-      <strong>{poi ? `${poiName(state, poi)}${poi.cleared ? " (cleared)" : ""}` : BIOME_LABEL[tile.biome]}</strong>
+      <strong>{poi ? `${poiName(state, poi)}${poi.cleared ? " (cleared)" : ""}` : tile.blocker ? BLOCKER_LABEL[tile.blocker] : BIOME_LABEL[tile.biome]}</strong>
       {poi && <span className="muted"> · {BIOME_LABEL[tile.biome]}</span>}
       <span className="muted"> · {Number.isFinite(cost) ? `${cost} movement to enter` : poi?.kind === "gate" ? "stand beside it to unlock or force it" : "cannot be crossed"}</span>
       {walk && <span className={walk.startsWith("out") ? "bad" : "good"}> · {walk}</span>}
@@ -708,7 +710,7 @@ function TurnBar({ state, run, me, code, status, onInventory, onBook, onLeave }:
     : rite ? rite.label
     : poi.kind === "gate" ? ((state.keys ?? 0) > 0 ? "Unlock the door" : `Force the door (Strength, ${heroPct(hero, "str")}%)`)
     : caverns && poi.kind === "cache" ? (poi.cleared ? null : guard && !guard.cleared ? `Reach for ${poiName(state, poi).replace(/^An? |^The /, "the ")}: fight what guards it` : `Open ${poiName(state, poi).replace(/^An? |^The /, "the ")}`)
-    : caverns && poi.kind === "camp" ? (poi.cleared ? null : `Fight the ${{ skeleton: "skeletons", bat: "bats", slime: "slimes", shade: "shades" }[poi.enemies[0]] ?? "things here"}`)
+    : caverns && poi.kind === "camp" ? (poi.cleared ? null : `Fight the ${{ skeleton: "skeletons", bat: "bats", slime: "slimes", shade: "shades", troll: "troll" }[poi.enemies[0]] ?? "things here"}`)
     : caverns && poi.kind === "lair" ? (poi.cleared ? null : "Fight what guards the hoard")
     : poi.kind === "landing" ? (state.larder && eatsChowder(hero, state.larder.chowder) ? "Rest and eat a chowder" : state.kind === "caverns" ? "Rest at the cave mouth" : "Rest at the ship")
     : poi.kind === "shrine" ? (poi.usedBy.includes(hero.id) ? null : "Pray at the shrine")

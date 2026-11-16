@@ -238,6 +238,10 @@ export const ENEMY_KIT: Record<string, EnemyKit> = {
   bandit: {},
   wolf: { pack: true },
   bear: {},
+  // Its Stomp, like anything that strikes the whole crew, is a burst around it.
+  ogre: {},
+  // It rakes up close, and will throw a rock at whoever keeps away. (Its wounds closing is in zone.ts, at the start of its turn.)
+  troll: { attacks: { "Hurl Rock": { range: 5 } } },
   cultist: { ranged: true, attacks: { "Dark Bolt": { range: 5 }, Immolate: { range: 5, surface: { kind: "fire", rounds: 2 } } } },
   brute: { attacks: { Shove: { push: true } } },
   archer: { ranged: true, attacks: { Volley: { range: 7 }, "Barbed Arrow": { range: 7 } } },

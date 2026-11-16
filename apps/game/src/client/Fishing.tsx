@@ -228,10 +228,11 @@ function Sitting({ outing, world, pier, at: here, vessel, gilded, shipBeside, ap
         }
         if (chargeFill.current) chargeFill.current.style.width = `${Math.round(h.charge * 100)}%`;
         if (modeWord.current) {
-          const word = h.mode === "run" ? "It runs! Ease off, tap" : h.mode === "shake" ? "Head-shaking! Ease off" : h.mode === "jump" ? "It jumps!" : h.mode === "drag" ? "Dead weight. Reel steady" : h.mode === "rest" ? "It rests. Hold to reel" : "";
-          if (modeWord.current.textContent !== word) {
+          const word = h.spent ? "Worn out! Reeling it in" : h.mode === "run" ? "It runs! Ease off, tap" : h.mode === "shake" ? "Head-shaking! Ease off" : h.mode === "jump" ? "It jumps!" : h.mode === "drag" ? "Dead weight. Hold to reel" : h.mode === "rest" ? "It rests. Hold to reel" : "";
+          const mode = h.spent ? "spent" : h.mode ?? "";
+          if (modeWord.current.textContent !== word || modeWord.current.dataset.mode !== mode) {
             modeWord.current.textContent = word;
-            modeWord.current.dataset.mode = h.mode ?? "";
+            modeWord.current.dataset.mode = mode;
           }
         }
       },
@@ -402,9 +403,14 @@ function Sitting({ outing, world, pier, at: here, vessel, gilded, shipBeside, ap
           <div className="fish-creel-bar"><div style={{ width: `${Math.min(100, (live.creelGrams / live.creelLimitG) * 100)}%` }} /></div>
           <span className="tabular">{formatLoad(live.creelGrams, u)} / {formatLoad(live.creelLimitG, u)}</span>
         </div>
-        {prompt && <span className="fish-prompt">{prompt}</span>}
-        {phase === "charging" && <div className="fish-charge"><div ref={chargeFill} /></div>}
+      </div>
+
+      {/* What to do now, and what the fish is doing: big, in the middle of the view, where the eye already is. */}
+      <div className="fish-center" aria-live="polite">
+        {msg && <div key={msg.text} className={`fish-msg ${msg.tone}`} role="status">{msg.text}</div>}
+        {prompt && !msg && <span key={prompt} className="fish-prompt">{prompt}</span>}
         {fighting && <span className="fish-mode-word" ref={modeWord} />}
+        {phase === "charging" && <div className="fish-charge"><div ref={chargeFill} /></div>}
       </div>
 
       {fighting && (
@@ -430,7 +436,6 @@ function Sitting({ outing, world, pier, at: here, vessel, gilded, shipBeside, ap
         </div>
       )}
 
-      {msg && <div className={`fish-msg ${msg.tone}`} role="status">{msg.text}</div>}
       {book && <CatchBookPanel onClose={() => setBook(false)} />}
 
       {pending && def && !ended && (

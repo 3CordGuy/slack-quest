@@ -47,7 +47,7 @@
 // where it goes. While a fight is on the gear worn stays as it is; the pack
 // can still be looked through.
 
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { CatchPanel } from "./CatchPanel";
 import {
   CARRY_FORMULA,
@@ -66,6 +66,7 @@ import {
   THROWABLES,
   addedSlots,
   armorBlock,
+  canHide,
   carryProblem,
   equipProblem,
   itemCells,
@@ -301,6 +302,17 @@ function PackGrid({ zone, name, u, rows, baseRows, stacks, decor = [], spots, he
       })}
       {target && <span className={`pack-target ${target.verdict}`} style={{ left: target.at.x * u, top: target.at.y * u, width: target.w * u, height: target.h * u }} aria-hidden />}
     </div>
+  );
+}
+
+/** An open eye, or one struck through: whether a worn piece is shown on the hero. */
+function EyeGlyph({ shut }: { shut: boolean }) {
+  return (
+    <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M1.5 8s2.4-4.5 6.5-4.5S14.5 8 14.5 8 12.1 12.5 8 12.5 1.5 8 1.5 8z" />
+      <circle cx="8" cy="8" r="2" fill={shut ? "none" : "currentColor"} />
+      {shut && <path d="M2.5 13.5l11-11" />}
+    </svg>
   );
 }
 
@@ -577,6 +589,7 @@ export function InventoryScreen({ me, refresh, onClose, onIsland = false, chest 
   const unequip = async (id: number) => {
     if (!gearLocked) await act(() => api.unequip(id));
   };
+  const setHidden = (id: number, hidden: boolean) => act(() => api.hideGear(id, hidden));
   const lift = (stack: Stack, from: Held["from"], e: Point) => {
     setHeld({ stack, from });
     setHover(null);
@@ -670,9 +683,9 @@ export function InventoryScreen({ me, refresh, onClose, onIsland = false, chest 
     const cannot = fits && !!equipProblem(inHand!, c.class_id, c.level);
     const style: CSSProperties = { left: at.x * U, top: at.y * U, width: at.w * U, height: at.h * U, ...(item ? ({ borderColor: RARITY_COLOR[item.rarity], "--tint": RARITY_COLOR[item.rarity] } as CSSProperties) : {}) };
     return (
+      <Fragment key={slot}>
       <button
-        key={slot}
-        className={`doll-slot ${item ? "" : "empty"} ${fits ? (cannot ? "cannot" : "fits") : ""} ${held?.from === "worn" && held.stack.key === `gear:${item?.id}` ? "lifted" : ""}`}
+        className={`doll-slot ${item ? "" : "empty"} ${item?.hidden ? "unseen" : ""} ${fits ? (cannot ? "cannot" : "fits") : ""} ${held?.from === "worn" && held.stack.key === `gear:${item?.id}` ? "lifted" : ""}`}
         style={style}
         title={item ? undefined : `${SLOT_LABEL[slot]}: empty`}
         onPointerEnter={() => !held && setHover(item ? { zone: "worn", key: `gear:${item.id}` } : null)}
@@ -695,6 +708,20 @@ export function InventoryScreen({ me, refresh, onClose, onIsland = false, chest 
         {!item && <span className="slot-name">{SLOT_LABEL[slot]}</span>}
         {item && item.power > 0 && <span className="badge br">+{item.power}</span>}
       </button>
+      {/* Beside the slot, not in it (a button cannot hold a button): show or hide the piece on the hero. It counts either way. Not for what is held in the hands. */}
+      {item && canHide(slot) && (
+        <button
+          className="gear-eye"
+          style={{ left: (at.x + at.w) * U, top: at.y * U }}
+          aria-pressed={!!item.hidden}
+          aria-label={item.hidden ? `Show ${item.name}` : `Hide ${item.name}`}
+          title={item.hidden ? "Hidden: still worn and counted, but not shown on your hero. Click to show it." : "Hide it on your hero (it still counts)"}
+          onClick={() => void setHidden(item.id, !item.hidden)}
+        >
+          <EyeGlyph shut={!!item.hidden} />
+        </button>
+      )}
+      </Fragment>
     );
   };
 

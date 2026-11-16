@@ -146,8 +146,9 @@ export function soundNames(): Set<string> {
       add(soundName.miss(a, style));
     }
   }
-  // Heals come from abilities, and from traits and the druid's Deep Roots.
-  for (const a of [...attacks, ...TRAITS.map((t) => t.name), "Deep Roots"]) add(soundName.heal(a));
+  // Heals come from abilities, and from traits, the druid's Deep Roots and a troll growing back.
+  const regrowth = Object.values(ENEMIES).flatMap((e) => (e.regen ? [e.regen.name] : []));
+  for (const a of [...attacks, ...TRAITS.map((t) => t.name), "Deep Roots", ...regrowth]) add(soundName.heal(a));
   for (const f of fighters) {
     add(soundName.attackVoice(f));
     add(soundName.hurt(f));

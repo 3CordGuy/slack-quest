@@ -301,7 +301,8 @@ describe("paths through a story", () => {
         }
       }
     }
-  });
+    // Some eight hundred islands are built here: more than the default five seconds on a slow runner.
+  }, 20_000);
 
   it("can be played to victory on every path", () => {
     for (const frame of STORY_FRAMES) {

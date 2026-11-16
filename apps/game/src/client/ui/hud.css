@@ -162,3 +162,9 @@
 .overlay > .panel.game-menu { overflow: visible; }
 .menu-cols { overflow-y: auto; min-height: 0; padding: 2px; }
 .menu-col .options-sound { flex: none; }
+
+/* While a minigame has the view (the quarry, fishing, felling), the "where you stand" strip over the bar and the
+   crew's cards are put away: the game's own controls sit just above the bar (at --hud-h, which leaves the strip
+   out), and nothing covers what you are aiming at. */
+body.mining .hud-here, body.fishing .hud-here, .harbor-view.felling .hud-here { visibility: hidden; }
+body.mining .hud-left, body.fishing .hud-left, .harbor-view.felling .hud-left { display: none !important; }

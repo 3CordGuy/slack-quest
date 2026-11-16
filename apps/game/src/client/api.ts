@@ -75,6 +75,8 @@ export interface InventoryItem {
   equipped: number;
   /** Steps of work at the smithy, already counted in `power`. */
   upgrades?: number;
+  /** 1 while worn but not drawn on the hero. */
+  hidden?: number;
 }
 
 /** The traveling salesman in the pub, if one is in, and their stock for this player; otherwise who is due next. */
@@ -167,6 +169,8 @@ export const api = {
   pickTrait: (trait: string) => request("/api/character/trait", { trait }),
   equip: (itemId: number) => request("/api/character/equip", { itemId }),
   unequip: (itemId: number) => request("/api/character/unequip", { itemId }),
+  /** Show or hide a worn piece on the hero; it counts either way. */
+  hideGear: (itemId: number, hidden: boolean) => request("/api/character/hide", { itemId, hidden }),
   store: (itemId: number) => request("/api/inventory/store", { itemId }),
   sell: (itemId: number) => request<{ gold: number }>("/api/inventory/sell", { itemId }),
   sellMaterial: (kind: string, qty: number) => request<{ gold: number }>("/api/shop/materials/sell", { kind, qty }),

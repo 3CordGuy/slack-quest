@@ -79,6 +79,23 @@ h3 { color: var(--brass-hi); }
   filter: drop-shadow(0 3px 0 rgba(0, 0, 0, 0.5)) drop-shadow(0 0 0 #000);
   pointer-events: none;
 }
+/* A place's name, hung over it in the scene while it is pointed at: the same notched strip of parchment, in the
+   title face. PlaceTitle moves the wrapper every frame; the strip sits centred above that point and drops in. */
+.place-title { position: absolute; left: 0; top: 0; width: 0; height: 0; z-index: 7; pointer-events: none; visibility: hidden; will-change: transform; }
+.place-title span {
+  position: absolute; left: 0; bottom: 6px; transform: translateX(-50%);
+  white-space: nowrap; padding: 1px 26px 3px; color: var(--paper-ink);
+  font-family: var(--font-title); font-size: 20px; line-height: 1.2; letter-spacing: 0.05em;
+  background:
+    linear-gradient(180deg, rgba(255, 250, 230, 0.35), rgba(120, 90, 40, 0.18)),
+    var(--tex-paper, none) 0 0 / 512px 512px,
+    var(--paper);
+  clip-path: polygon(0 0, 100% 0, calc(100% - 10px) 50%, 100% 100%, 0 100%, 10px 50%);
+  filter: drop-shadow(0 3px 0 rgba(0, 0, 0, 0.5)) drop-shadow(0 0 0 #000);
+  animation: place-title-in 0.14s ease-out;
+}
+@keyframes place-title-in { from { opacity: 0; transform: translate(-50%, 6px); } to { opacity: 1; transform: translate(-50%, 0); } }
+@media (prefers-reduced-motion: reduce) { .place-title span { animation: none; } }
 /* The tacks. */
 .win-plate::before, .win-plate::after { content: ""; position: absolute; top: 50%; margin-top: -3px; width: 6px; height: 6px; background: var(--brass); box-shadow: inset 1px 1px 0 var(--brass-hi), inset -1px -1px 0 #4f3413, 0 0 0 1px rgba(0, 0, 0, 0.6); }
 .win-plate::before { left: 18px; }

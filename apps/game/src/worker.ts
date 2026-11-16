@@ -30,7 +30,7 @@ import {
   saveAppearance,
   ensureLook,
   createCrew,
-  createGuest,
+  createGuest,
   crewFor,
   deleteCharacter,
   equipItem,
@@ -38,7 +38,7 @@ import {
   getHut,
   getInventory,
   carryState,
-  storeItem,
+  storeItem,
   getShop,
   joinCrew,
   leaveCrew,
@@ -52,6 +52,7 @@ import {
   spendPoint,
   pickTrait,
   unequipItem,
+  setGearHidden,
   upgradeHut,
   type Env,
   type Player,
@@ -71,8 +72,8 @@ import { gatherStatus, rest, startOuting, stepOuting } from "./server/gather";
 import { fishStock, moveFish, sellFish } from "./server/fishmarket";
 import { catchBook, hangAtHome, mountInPub, pubWall, unmountInPub } from "./server/catchbook";
 import { pubLeaderboard } from "./server/pub-scores";
-import { contribute, crewWorks, projectStock } from "./server/projects";
-import { acceptTrade, closeTrade, listTrades, openTrade, setTradeSide } from "./server/trade";
+import { builtProjectIds, contribute, crewWorks, projectStock } from "./server/projects";
+import { acceptTrade, announceTrade, closeTrade, listTrades, openTrade, setTradeSide } from "./server/trade";
 import { consumablesOf } from "./server/consumables";
 import { apothecaryView, brew, brewFlask, smithItem, smithyView } from "./server/workshops";
 import { cook, galleyView } from "./server/galley";
@@ -385,6 +386,12 @@ app.post("/api/character/equip", async (c) => {
 app.post("/api/character/unequip", async (c) => {
   const body = await c.req.json<{ itemId?: number }>().catch(() => ({}) as { itemId?: number });
   const error = await unequipItem(c.env.DB, c.get("player").id, Number(body.itemId));
+  return error ? c.json({ error }, 409) : c.json({ ok: true });
+});
+
+app.post("/api/character/hide", async (c) => {
+  const body = await c.req.json<{ itemId?: number; hidden?: boolean }>().catch(() => ({}) as { itemId?: number; hidden?: boolean });
+  const error = await setGearHidden(c.env.DB, c.get("player").id, Number(body.itemId), body.hidden === true);
   return error ? c.json({ error }, 409) : c.json({ ok: true });
 });
 
@@ -828,14 +835,18 @@ app.post("/api/trade/open", async (c) => {
   const body = await c.req.json<{ to?: unknown; run?: unknown }>().catch(() => ({}) as { to?: unknown; run?: unknown });
   const run = typeof body.run === "string" && /^[A-Za-z]{4}$/.test(body.run) ? body.run.toUpperCase() : null;
   const result = await openTrade(c.env.DB, c.get("player").id, body.to, run);
-  return "error" in result ? c.json({ error: result.error }, 409) : c.json({ id: result.id });
+  if ("error" in result) return c.json({ error: result.error }, 409);
+  c.executionCtx.waitUntil(announceTrade(c.env, result.id, c.get("player").id));
+  return c.json({ id: result.id });
 });
 
 // Lay out your side of the table: the gear, gold and materials you offer. Takes both acceptances back.
 app.post("/api/trade/offer", async (c) => {
   const body = await c.req.json<{ id?: unknown; side?: unknown }>().catch(() => ({}) as { id?: unknown; side?: unknown });
   const result = await setTradeSide(c.env.DB, c.get("player").id, Number(body.id), body.side);
-  return "error" in result ? c.json({ error: result.error }, 409) : c.json({ rev: result.rev });
+  if ("error" in result) return c.json({ error: result.error }, 409);
+  c.executionCtx.waitUntil(announceTrade(c.env, Number(body.id), c.get("player").id));
+  return c.json({ rev: result.rev });
 });
 
 // Accept the table as it stood at `rev`, or (ok: false) take that back. When both have accepted,
@@ -843,6 +854,8 @@ app.post("/api/trade/offer", async (c) => {
 app.post("/api/trade/accept", async (c) => {
   const body = await c.req.json<{ id?: unknown; rev?: unknown; ok?: unknown }>().catch(() => ({}) as { id?: unknown; rev?: unknown; ok?: unknown });
   const result = await acceptTrade(c.env.DB, c.get("player").id, Number(body.id), Number(body.rev), body.ok !== false);
+  // Even a refused acceptance can change the table for the other side (it fell through, or both acceptances were taken back).
+  c.executionCtx.waitUntil(announceTrade(c.env, Number(body.id), c.get("player").id));
   if ("error" in result) return c.json({ error: result.error }, 409);
   if (result.settled) c.executionCtx.waitUntil(refreshHarbor(c.env, result.crewId));
   return c.json({ ok: true, settled: result.settled });
@@ -852,7 +865,9 @@ app.post("/api/trade/accept", async (c) => {
 app.post("/api/trade/close", async (c) => {
   const body = await c.req.json<{ id?: unknown }>().catch(() => ({}) as { id?: unknown });
   const result = await closeTrade(c.env.DB, c.get("player").id, Number(body.id));
-  return "error" in result ? c.json({ error: result.error }, 409) : c.json({ ok: true });
+  if ("error" in result) return c.json({ error: result.error }, 409);
+  c.executionCtx.waitUntil(announceTrade(c.env, Number(body.id), c.get("player").id));
+  return c.json({ ok: true });
 });
 
 // ---------- crews and the shared Harbor ----------

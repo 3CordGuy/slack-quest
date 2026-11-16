@@ -993,7 +993,7 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
           />
         </div>
       )}
-      {me.character && <Trading me={me} partners={crew.filter((m) => m.id !== state.you)} withId={tradeWith} onWith={setTradeWith} refresh={refresh} />}
+      {me.character && <Trading me={me} partners={crew.filter((m) => m.id !== state.you)} withId={tradeWith} onWith={setTradeWith} refresh={refresh} nudge={zone.trades} />}
       {bag && !tradeWith && me.character && (
         <InventoryScreen
           me={me}

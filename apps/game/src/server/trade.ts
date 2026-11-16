@@ -28,7 +28,7 @@
 // from the request that accepts it.
 
 import { RESOURCE_KINDS, TRADE_TTL_MS, emptySide, itemCells, readTradeSide, sideIsEmpty, sideProblem, tradeRoomProblem, upgradedName, type Resources, type Slot, type TradeHoldings, type TradeLoad, type TradeSide, type WorldState } from "@gantt-quest/world";
-import { CELLS_SQL, carriedSql, carryState, type InventoryRow } from "./db";
+import { CELLS_SQL, carriedSql, carryState, type Env, type InventoryRow } from "./db";
 
 /** A voyage nobody has touched for this long is taken to be abandoned, as on the dock board. */
 const VOYAGE_STALE_MS = 12 * 60 * 60_000;
@@ -499,4 +499,37 @@ export async function listTrades(db: D1Database, playerId: string): Promise<Trad
         otherId: r.from_id === playerId ? r.to_id : r.from_id,
       })),
   };
+}
+
+/**
+ * Tell the other player at a table that it changed, wherever they are: the
+ * crew's Harbor, any voyage they are on, and the map they are out on. Each room passes it to that
+ * player's own socket only, and their client asks for its trades again (the
+ * player who made the change has already asked). Nothing is sent to a room
+ * nobody is in, so this is how a crewmate's request shows up without anyone
+ * polling for it.
+ */
+export async function announceTrade(env: Env, tradeId: number, actor: string): Promise<void> {
+  if (!Number.isSafeInteger(tradeId)) return;
+  try {
+    const row = await env.DB.prepare("SELECT crew_id, from_id, to_id FROM trades WHERE id = ?").bind(tradeId).first<Pick<TradeRow, "crew_id" | "from_id" | "to_id">>();
+    if (!row || (actor !== row.from_id && actor !== row.to_id)) return;
+    const who = actor === row.from_id ? row.to_id : row.from_id;
+    const runs = await env.DB.prepare(
+      `SELECT DISTINCT r.code FROM runs r, json_each(r.state_json, '$.heroes') h
+        WHERE r.crew_id = ? AND r.updated_at > ? AND r.status NOT IN ('victory', 'defeat') AND r.state_json IS NOT NULL AND json_extract(h.value, '$.id') = ?`,
+    )
+      .bind(row.crew_id, Date.now() - VOYAGE_STALE_MS, who)
+      .all<{ code: string }>();
+    const zone = await env.DB.prepare("SELECT code FROM zone_presence WHERE player_id = ?").bind(who).first<{ code: string }>();
+    const to = `?to=${encodeURIComponent(who)}`;
+    await Promise.all([
+      env.HARBOR_ROOM.get(env.HARBOR_ROOM.idFromName(row.crew_id)).fetch(`https://harbor/trades${to}`, { headers: { "x-crew-id": row.crew_id } }),
+      ...runs.results.map((r) => env.RUN_ROOM.get(env.RUN_ROOM.idFromName(r.code)).fetch(`https://run/trades${to}`)),
+      ...(zone ? [env.ZONE_ROOM.get(env.ZONE_ROOM.idFromName(zone.code)).fetch(`https://zone/trades${to}`)] : []),
+    ]);
+  } catch (err) {
+    // They will see it the next time they look: on opening the bag, or when their connection comes back.
+    console.warn("trade:announce-failed", { tradeId, err: err instanceof Error ? err.message : String(err) });
+  }
 }

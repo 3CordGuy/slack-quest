@@ -589,6 +589,8 @@ interface Anim {
   lying: boolean;
   /** On a seat, 0 (standing) to 1: the hips stay where they are, the thighs go forward and the shins hang from the knee. */
   sitting: number;
+  /** At the oars of a rowboat (seated): where the stroke is, 0 (reached forward) to 1 (pulled back). -1: not rowing. */
+  oars: number;
 }
 
 interface Rig {
@@ -596,6 +598,8 @@ interface Rig {
   animate(a: Anim): void;
   /** Never touches the ground (a ghost, a bat) or is all one wet thing (a slime): no mud on it. */
   clean?: boolean;
+  /** A person's fists, right then left: where they hold things, and take hold of oars. */
+  hands?: [THREE.Object3D, THREE.Object3D];
 }
 
 // ---------- people ----------
@@ -664,6 +668,17 @@ function biped(top: THREE.Group, parts: Part[]) {
       thighL.joint.rotation.set(-SIT * k, 0, 0.12 * k);
       thighR.joint.rotation.set(-SIT * k, 0, -0.12 * k);
       shinL.joint.rotation.x = shinR.joint.rotation.x = (SIT - 0.1) * k;
+      if (a.oars >= 0) {
+        // At the oars, facing the bow: both arms reach forward and up to the handles to push the blades back
+        // through the water, then come down and back in to lift them out. The body leans into each push.
+        const pull = a.oars;
+        const forward = -1.12 + pull * 0.6;
+        armL.joint.rotation.set(forward, 0, 0.03 + pull * 0.05);
+        armR.joint.rotation.set(forward, 0, -0.03 - pull * 0.05);
+        top.rotation.x = 0.12 - pull * 0.2;
+        head.joint.rotation.x = -top.rotation.x * 0.7 + a.breath * 0.02;
+        return;
+      }
       const reach = rest.armL + ((rest.armL < -0.3 ? rest.armL : -0.95) - rest.armL) * k;
       heldL.joint.rotation.x = -reach + rest.tiltL;
       armL.joint.rotation.set(reach + a.breath * 0.02, 0, 0.1 - 0.05 * k);
@@ -2714,7 +2729,7 @@ function person(top: THREE.Group, look: Look, outfit: Outfit | undefined, asleep
     apply(b, drawHeld(look.weapon, b, look.accent, look, false, STOCK_ICON[look.weapon]));
   }
   if (shield || look.weapon === "axe_shield") b.rest.armL = -0.55;
-  return { parts, animate: b.animate };
+  return { parts, animate: b.animate, hands: [b.heldR.joint, b.heldL.joint] };
 }
 
 /** A lute in its own part's frame: the belly at the origin facing +z, the neck up +y. Its icon's model, low-poly. */
@@ -2928,6 +2943,183 @@ function skeleton(top: THREE.Group): Rig {
   b.rest.armR = -0.35;
   b.rest.tiltR = 0.55;
   return { parts, animate: b.animate };
+}
+
+// ---------- giants ----------
+
+/**
+ * A big two-legged figure: built on a person's joints with the proportions `measures` (see biped), then
+ * the whole of it grown by `grow`. The outline is thinned to match, so it is as fine as anyone else's.
+ */
+function giant(top: THREE.Group, parts: Part[], measures: Measures, grow: number): Biped {
+  m = measures;
+  edge /= grow;
+  top.scale.setScalar(grow);
+  return biped(top, parts);
+}
+
+/**
+ * Stoop a biped forward by `lean` radians at the hips, its head lifted back to look ahead and its arms hanging
+ * `reach` further forward than they would: a hulking carriage. Down, it lies flat like anyone.
+ */
+function stooped(b: Biped, lean: number, reach: number): (a: Anim) => void {
+  return (a) => {
+    b.animate(a);
+    if (a.lying) {
+      b.torso.joint.rotation.x = 0;
+      return;
+    }
+    const k = lean * (1 - a.sitting);
+    b.torso.joint.rotation.x = k;
+    b.head.joint.rotation.x -= k * 0.9;
+    for (const arm of [b.armR, b.armL]) arm.joint.rotation.x -= k + reach;
+  };
+}
+
+/** A great bare foot, flat on the ground, with three blunt toes (or claws). */
+function giantFoot(foot: Part, skin: string, nail: string, w: number, long: number, claws = false) {
+  foot.shape(skin, sym([[w, 0, -1.3], [w * 1.1, 0, long * 0.55], [w * 0.8, 0, long], [0, 0, long * 1.08], [w * 0.85, 1.5, -1.05], [w * 0.85, 1.15, long * 0.45], [0, 0.95, long * 0.95], [0, 1.75, -0.85]]));
+  for (const x of [-w * 0.55, 0, w * 0.55]) {
+    if (claws) foot.shape(nail, [[x - 0.28, 0, long * 0.95], [x + 0.28, 0, long * 0.95], [x, 0.45, long * 0.95], [x, 0, long * 1.35]]);
+    else foot.ball(tone(skin, -0.06), 0.42, x, 0.35, long * 0.98, 0, [1, 0.8, 1]);
+  }
+}
+
+/**
+ * An ogre: half again as broad as a brute and a head taller, with a great hanging belly, a small bald head
+ * sunk between the shoulders under a heavy brow, tusks up from an underbite, a fur kilt, and an iron-banded
+ * club the length of a man.
+ */
+function ogre(top: THREE.Group): Rig {
+  const parts: Part[] = [];
+  const b = giant(top, parts, { legs: 0.85, girth: 1.4, shoulders: 1.5, hips: 1.3, head: 1 }, 1.3);
+  const skin = "#b3a46a";
+  const dark = tone(skin, -0.12);
+  const fur = "#6e4f30";
+  const leather = "#5a3d22";
+  // Short tree-trunk legs and wide bare feet.
+  for (const [thigh, shin, foot] of [[b.thighR, b.shinR, b.footR], [b.thighL, b.shinL, b.footL]] as const) {
+    lowLeg(thigh, shin, skin);
+    shin.ball(dark, 0.95, 0, 0.1, 0.55, 0, [1, 0.8, 0.8]);
+    giantFoot(foot, skin, GEAR.bone, 1.65, 2.9);
+  }
+  // The trunk: hips, a belly hanging out in front, a barrel of a chest, shoulders like a yoke and a hump of
+  // muscle behind the neck.
+  const t = b.torso;
+  const trunk: Ring[] = [[-0.8, 4.3, 3.1, 0.2], [0.5, 4.7, 3.7, 0.65], [2, 5, 4, 0.95], [3.5, 5.05, 3.5, 0.55], [4.9, 6.2, 3.1, 0.05], [6, 5.5, 2.8, -0.25], [6.9, 2.9, 2.2, -0.2]];
+  t.loft(skin, trunk, 10);
+  // A paler belly and a navel.
+  t.shape(tone(skin, 0.07), sym([[2.4, 0.6, 4.1], [2.7, 2, 4.6], [2.2, 3.4, 3.9], [0, 0.4, 4.45], [0, 2, 5.05], [0, 3.5, 4.15]]));
+  t.ball(dark, 0.32, 0, 1.6, 5.0);
+  // The fur kilt, round the hips and over the tops of the thighs, a rawhide belt and a bone toggle.
+  t.loft(fur, [[-2.1, 5, 3.9, 0.35], [-0.9, 4.75, 3.75, 0.4], [0.35, 4.85, 3.85, 0.62]], 10);
+  for (let i = 0; i < 10; i++) {
+    const a = ((i + 0.5) / 10) * Math.PI * 2;
+    const [x, z] = [Math.sin(a) * 5.05, Math.cos(a) * 4.05 + 0.35];
+    t.shape(tone(fur, -0.06), [[x * 0.92, -1.9, z * 0.92], [x, -2.1, z], [x * 1.02 + Math.cos(a) * 0.5, -2.75, z * 1.02 - Math.sin(a) * 0.5], [x * 0.94 - Math.cos(a) * 0.5, -2.2, z * 0.94 + Math.sin(a) * 0.5]]);
+  }
+  t.loft(leather, [around(trunk, 0.3, 0.12, 0.02), around(trunk, 1.0, 0.12, 0.04)], 10);
+  t.shape(GEAR.bone, [[-0.9, 0.5, 4.7], [0.9, 0.5, 4.7], [-0.9, 0.9, 4.95], [0.9, 0.9, 4.95], [0, 0.7, 5.25]]);
+  // A shaggy pelt slung over one shoulder.
+  t.ball(fur, 1.9, 4.9, 5.7, 0, 0, [1.1, 0.65, 1.25]);
+  t.ball(tone(fur, 0.06), 1.4, 3.7, 6.3, -0.3, 0, [1.2, 0.5, 1.2]);
+  // The head, small for the body, sat low and forward between the shoulders.
+  const h = b.head;
+  h.joint.position.set(0, 5.7, 1.5);
+  const skull: Ring[] = [[0.1, 2.7, 2.45, 0.7], [1.4, 3.05, 2.75, 0.45], [2.9, 2.85, 2.6, 0.1], [4.2, 2.55, 2.4, -0.1], [5, 1.7, 1.65, -0.15], [5.35, 0.6, 0.6, -0.15]];
+  h.loft(skin, skull, 8);
+  // A heavy brow over little dark eyes, a broad flat nose, and a wide mouth with the lower jaw jutting.
+  h.shape(dark, sym([[2.3, 3.3, 2.25], [2.2, 3.85, 2.25], [0.4, 3.45, 2.85], [0.4, 4, 2.75], [1.3, 3.25, 2.95], [0, 3.55, 2.95]]));
+  for (const s of [-1, 1]) {
+    h.ball(OUTLINE, 0.34, s * 1.0, 2.95, 2.62);
+    h.ball("#ffffff", 0.1, s * 1.0 + 0.1, 3.05, 2.9);
+  }
+  h.shape(dark, sym([[0.8, 1.95, 2.8], [0.45, 2.85, 2.75], [0.7, 2.0, 3.3], [0, 1.95, 3.55], [0, 2.75, 3.15]]));
+  h.box(OUTLINE, 2.4, 0.26, 0.3, 0, 1.2, 3.12);
+  h.shape(skin, sym([[1.9, 0.15, 2.75], [1.6, 1.05, 3.05], [0, 0.0, 3.25], [0, 1.0, 3.35]]));
+  // Tusks up out of the underbite, past the lip.
+  for (const s of [-1, 1]) h.shape(GEAR.bone, [[s * 1.0, 0.85, 3.05], [s * 1.45, 0.85, 3.0], [s * 1.2, 0.85, 3.45], [s * 1.35, 2.05, 3.2]]);
+  // Small round ears, low on the head, and a topknot tied with a thong.
+  for (const s of [-1, 1]) h.ball(tone(skin, -0.05), 0.75, s * 2.85, 2.55, -0.1, 0, [0.5, 1, 0.85]);
+  h.ball("#2a1c14", 0.75, 0, 5.4, -0.4, 0, [1, 0.8, 1]);
+  h.loft(leather, [[5.85, 0.45, 0.45, -0.4], [6.15, 0.45, 0.45, -0.4]], 6);
+  h.shape("#2a1c14", [[-0.35, 6.1, -0.2], [0.35, 6.1, -0.2], [-0.25, 6.1, -0.7], [0.25, 6.1, -0.7], [0, 4.4, -2.3]]);
+  // Great arms, a rawhide bracer on each, and fists like buckets.
+  for (const arm of [b.armR, b.armL]) {
+    arm.loft(skin, [[1, 1.3, 1.3], [0.2, 1.75, 1.75], [-1.3, 1.5, 1.5], [-2.6, 1.2, 1.25], [-3.6, 1.45, 1.45], [-4.7, 1.3, 1.3]], 8);
+    arm.loft(leather, [[-4.5, 1.42, 1.42], [-3.4, 1.58, 1.58]], 8);
+    arm.ball(skin, 1.35, 0, -5.6, 0.15, 1, [1, 1.05, 1]);
+  }
+  // A club: a crooked bough, thick at the head, bound with iron and studded.
+  const w = b.heldR;
+  const wood = "#7a5530";
+  w.loft(wood, [[-1.6, 0.5, 0.5], [1.5, 0.6, 0.6], [4.2, 0.95, 0.95, 0.1], [6.8, 1.4, 1.4, 0.2], [8.7, 1.3, 1.3, 0.15], [9.3, 0.7, 0.7, 0.1]], 7);
+  w.loft(GEAR.iron, [[6.1, 1.42, 1.42, 0.18], [6.7, 1.5, 1.5, 0.2]], 7);
+  for (const [y, a] of [[7.6, 0.4], [7.9, 2.5], [8.1, 4.6], [5.2, 1.5], [5.4, 3.6]] as const) w.cone(GEAR.iron, 0.3, 0.7, Math.sin(a) * 1.35, y, Math.cos(a) * 1.35 + 0.18, 5, [Math.cos(a) * HALF_PI, 0, -Math.sin(a) * HALF_PI]);
+  b.rest.armR = -0.3;
+  b.rest.tiltR = 0.75;
+  b.rest.armL = -0.15;
+  return { parts, animate: stooped(b, 0.18, 0.05) };
+}
+
+/**
+ * A troll: tall, gaunt and stooped, its arms hanging to its knees and ending in claws; grey-green hide with
+ * moss and stony warts on it, a long drooping nose, small yellow eyes, ears out to the sides and fangs up
+ * from the jaw. A ragged hide round its hips and nothing in its hands.
+ */
+function troll(top: THREE.Group): Rig {
+  const parts: Part[] = [];
+  const b = giant(top, parts, { legs: 1.15, girth: 0.9, shoulders: 1.1, hips: 0.95, head: 1 }, 1.18);
+  const skin = "#7f9474";
+  const dark = tone(skin, -0.12);
+  const moss = "#4e6a33";
+  const wart = "#8d8a7a";
+  const hide = "#6b5a3e";
+  const nail = "#2f2a24";
+  for (const [thigh, shin, foot] of [[b.thighR, b.shinR, b.footR], [b.thighL, b.shinL, b.footL]] as const) {
+    thigh.loft(skin, [[-2.95, 0.9, 0.95], [-1.4, 1.05, 1.1], [0.2, 1.3, 1.3], [0.85, 0.95, 0.95]], 6);
+    // Knobbled knees and stringy shins.
+    shin.ball(dark, 0.85, 0, 0, 0.35);
+    shin.loft(skin, [[-2.25, 0.75, 0.8], [-1, 0.9, 0.95, -0.1], [0.4, 0.85, 0.9]], 6);
+    giantFoot(foot, skin, nail, 1.3, 2.8, true);
+  }
+  const t = b.torso;
+  // A narrow waist, ribs up to a bony chest, and the shoulders high and humped behind.
+  const trunk: Ring[] = [[-0.6, 2.75, 1.95], [1, 2.35, 1.7, 0.1], [3, 3.1, 2.2, 0.2], [4.8, 4, 2.4, -0.1], [5.9, 4.7, 2.55, -0.5], [6.7, 3.2, 2.1, -0.45], [7.3, 1.3, 1.2, 0.3]];
+  t.loft(skin, trunk, 8);
+  for (const y of [2.6, 3.4]) t.shape(dark, sym([[2.4, y, 1.75], [2.4, y + 0.22, 1.8], [1.1, y - 0.35, 2.25], [1.1, y - 0.13, 2.3]]));
+  // Moss down its back and over a shoulder, and warts like little stones.
+  t.shape(moss, sym([[2.6, 6.4, -2.55], [3.3, 5.5, -2.8], [1.8, 3.2, -2.3], [0, 6.8, -2.6], [0, 3, -2.4], [0, 5, -3.1]]));
+  t.ball(moss, 1.2, -3.8, 6.3, -0.3, 0, [1.2, 0.55, 1.4]);
+  for (const [x, y, z, r] of [[1.4, 5.6, -2.9, 0.42], [-1.1, 4.4, -2.65, 0.35], [2.2, 4.1, 1.9, 0.3], [-2.9, 5.4, 1.6, 0.34], [0.4, 6.3, -2.8, 0.3]] as const) t.ball(wart, r, x, y, z);
+  // A ragged hide about the hips, a flap hanging before and behind.
+  t.loft(hide, [[-1.5, 3.05, 2.2, 0.05], [-0.4, 2.95, 2.15], [0.5, 2.7, 2.0, 0.05]], 8);
+  for (const s of [-1, 1]) t.shape(tone(hide, -0.05), [[-1.2, -1.2, s * 2.15], [1.2, -1.2, s * 2.15], [-1.1, -1.2, s * 1.9], [1.1, -1.2, s * 1.9], [-0.9, -3.6, s * 2.3], [0.7, -3.9, s * 2.3], [0, -3.4, s * 2.15]]);
+  // The head, pushed out ahead on its neck.
+  const h = b.head;
+  h.joint.position.set(0, 6.7, 1.6);
+  const skull: Ring[] = [[0.3, 1.9, 1.8, 0.75], [1.3, 2.55, 2.25, 0.45], [2.9, 2.6, 2.35, 0.05], [4.3, 2.3, 2.2, -0.2], [5.1, 1.45, 1.45, -0.3], [5.45, 0.5, 0.5, -0.3]];
+  h.loft(skin, skull, 8);
+  // A long nose drooping past the mouth, a ridge of brow, and small yellow eyes under it.
+  h.shape(dark, sym([[0.55, 3.35, 2.3], [0.7, 2.4, 2.45], [0.35, 1.6, 3.5], [0, 1.15, 4.35], [0, 3.5, 2.55], [0, 1.9, 4.4]]));
+  h.shape(dark, sym([[2.1, 3.65, 1.95], [2.0, 4.05, 1.9], [0.3, 3.75, 2.5], [0.3, 4.15, 2.4], [1.1, 3.55, 2.55]]));
+  for (const s of [-1, 1]) h.glowBall("#ffc23a", 0.34, s * 1.05, 3.25, 2.25);
+  // A wide slot of a mouth, and fangs up from the jaw.
+  h.box(OUTLINE, 2.6, 0.24, 0.3, 0, 0.95, 2.4);
+  for (const s of [-1, 1]) h.shape(GEAR.paper, [[s * 0.75, 0.75, 2.35], [s * 1.1, 0.75, 2.3], [s * 0.9, 0.75, 2.7], [s * 0.95, 1.65, 2.45]]);
+  // Ears out to the sides and drooping, and a few hanks of mossy hair.
+  for (const s of [-1, 1]) h.shape(tone(skin, -0.05), [[s * 2.4, 3.7, 0.2], [s * 2.4, 2.6, 0.2], [s * 2.4, 3.5, -0.6], [s * 4.3, 2.3, -0.9], [s * 4.1, 2.0, -0.7]]);
+  for (const [x, z] of [[0, -0.4], [-1.1, -1.2], [1.1, -1.2], [0, -1.9]] as const) h.shape(moss, [[x - 0.45, 5.2, z + 0.3], [x + 0.45, 5.2, z + 0.3], [x, 5.45, z], [x + 0.2 * Math.sign(x || 1), 3.2, z - 1.6]]);
+  // Long arms to the knee, knobbed at the elbow, and three-clawed hands.
+  for (const arm of [b.armR, b.armL]) {
+    arm.loft(skin, [[0.8, 1.05, 1.05], [0.1, 1.2, 1.2], [-1.8, 0.88, 0.92], [-3.4, 0.72, 0.76], [-3.95, 0.9, 0.9], [-5.6, 0.82, 0.84], [-6.7, 0.66, 0.68]], 6);
+    arm.ball(wart, 0.32, 0, -3.8, -0.75);
+    arm.loft(skin, [[-8.0, 0.65, 0.5, 0.15], [-7.4, 1.05, 0.85, 0.15], [-6.7, 0.75, 0.72]], 6);
+    for (const [x, z] of [[-0.55, 0.45], [0, 0.6], [0.55, 0.45]] as const) arm.shape(nail, [[x - 0.2, -7.9, z - 0.2], [x + 0.2, -7.9, z - 0.2], [x, -7.9, z + 0.2], [x, -9.1, z + 0.45]]);
+  }
+  b.rest.armR = -0.1;
+  b.rest.armL = -0.1;
+  return { parts, animate: stooped(b, 0.42, 0.1) };
 }
 
 // ---------- creatures ----------
@@ -3263,6 +3455,10 @@ function rigFor(kind: string, top: THREE.Group, look: Look, outfit: Outfit | und
       return skeleton(top);
     case "slime":
       return slime(top);
+    case "ogre":
+      return ogre(top);
+    case "troll":
+      return troll(top);
   }
   return person(top, look, undefined, asleep);
 }
@@ -3342,6 +3538,11 @@ export interface FigurePose {
    * into the pose it is, 0 (standing) to 1, for sitting down and getting up. Only people sit; a creature stands.
    */
   sitting?: boolean | number;
+  /**
+   * At the oars of a rowboat (a person, seated): where the stroke is, 0 (hands reached forward) to 1 (pulled back
+   * in). Whatever the hands held is put down meanwhile, so they can take the oars (see Figure.hands).
+   */
+  rowing?: number;
 }
 
 /** How far below a seat's top a seated figure's origin goes, as a share of its size: its hips, less half a thigh. */
@@ -3353,6 +3554,8 @@ export interface Figure {
   /** How tall the 22-unit frame is in world units: what a sprite's height used to be. */
   setSize(size: number): void;
   update(pose: FigurePose): void;
+  /** A person's fists, right then left, for putting oars in; null for a creature. */
+  hands(): [THREE.Object3D, THREE.Object3D] | null;
   /** Greyed, for someone down in a fight. */
   setDim(on: boolean): void;
   /** How much of it is left to see, 1 (all there) to 0 (gone): it thins out pixel by pixel as a camera passes through it. */
@@ -3411,13 +3614,21 @@ export function makeFigure(kind: string, look: Look, outfit?: Outfit, opts: Figu
   const beat = Math.random() * 6;
   let swing = 0;
   let last = -1;
+  /** Whether what the hands hold is put away (at the oars). */
+  let heldAway = false;
   const update = (p: FigurePose) => {
     const dt = last < 0 ? 1 : Math.min(0.1, Math.max(0, p.time - last));
     last = p.time;
     const want = p.walking ? Math.sin(p.stride * 3.6) : 0;
     swing += (want - swing) * Math.min(1, dt * 20);
-    const anim: Anim = { t: p.time, swing, breath: Math.sin(p.time * 2.2 + beat), strike: Math.min(1, Math.abs(p.lean) * 2), lying: p.lying, sitting: typeof p.sitting === "number" ? Math.max(0, Math.min(1, p.sitting)) : p.sitting ? 1 : 0 };
+    const rowing = p.rowing !== undefined && !!rig.hands && !p.lying;
+    const anim: Anim = { t: p.time, swing, breath: Math.sin(p.time * 2.2 + beat), strike: Math.min(1, Math.abs(p.lean) * 2), lying: p.lying, sitting: rowing ? 1 : typeof p.sitting === "number" ? Math.max(0, Math.min(1, p.sitting)) : p.sitting ? 1 : 0, oars: rowing ? Math.max(0, Math.min(1, p.rowing!)) : -1 };
     if (sling) stow(sling, p.walking, anim.strike, dt);
+    // At the oars, whatever was in hand is laid down in the boat; it is back in hand once they step ashore.
+    if (rig.hands && rowing !== heldAway) {
+      heldAway = rowing;
+      for (const hand of rig.hands) for (const held of hand.children) held.visible = !rowing;
+    }
     rig.animate(anim);
     if (swinging.length > 0) swingBraids(swinging, anim);
   };
@@ -3429,6 +3640,7 @@ export function makeFigure(kind: string, look: Look, outfit?: Outfit, opts: Figu
     root,
     setSize: (size) => scaler.scale.setScalar(size / FRAME),
     update,
+    hands: () => rig.hands ?? null,
     setDim(on) {
       mats.body.color.setScalar(on ? 0.5 : 1);
       mats.glow.color.setScalar(on ? 0.4 : 1);

@@ -48,6 +48,19 @@
 .doll-slot.fits { box-shadow: inset 0 0 0 1px var(--good), inset 0 0 14px rgba(127, 227, 166, 0.35), 0 0 12px rgba(127, 227, 166, 0.5); }
 .doll-slot.cannot { box-shadow: inset 0 0 0 2px var(--bad); }
 .doll-slot.lifted > .voxel-icon { opacity: 0.25; }
+/* Worn but hidden on the hero: still there, shown faint. */
+.doll-slot.unseen > .voxel-icon { opacity: 0.4; filter: grayscale(0.6); }
+/* The eye in a worn slot's top-right corner (a sibling laid over it, as the slot is a button): shows or hides the piece on the hero.
+   Scoped under .bag so it outweighs the theme's button, hover and pressed looks. */
+.bag .gear-eye {
+  position: absolute; z-index: 1; width: 18px; height: 18px; padding: 0; display: grid; place-items: center;
+  translate: calc(3px - 100% - 3px) calc(8px + 3px);
+  color: var(--brass-hi); background: rgba(10, 8, 6, 0.75); border: 1px solid var(--brass-lo); border-radius: 50%;
+  box-shadow: none; text-shadow: none; opacity: 0.75; cursor: pointer;
+}
+.bag .gear-eye:hover:not(:disabled) { background: rgba(10, 8, 6, 0.9); border-color: var(--brass-hi); box-shadow: 0 0 6px rgba(227, 183, 87, 0.45); opacity: 1; }
+.bag .gear-eye[aria-pressed="true"] { color: var(--muted); background: rgba(10, 8, 6, 0.85); border-color: var(--brass-lo); box-shadow: none; opacity: 1; }
+.bag.holding .gear-eye { pointer-events: none; }
 /* A slot for gear still to come: there, but faint, and nothing to press. */
 .doll-slot.to-come { opacity: 0.6; cursor: default; }
 .doll-slot.to-come.belt .slot-name { bottom: 50%; translate: 0 50%; }

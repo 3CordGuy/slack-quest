@@ -221,6 +221,9 @@ function beginTurn(ctx: Ctx, enc: Encounter, unit: Unit): boolean {
   if (unit.down) return false;
   // A Druid mends a little every turn.
   if (unit.kind === "backend_druid" && unit.hp < unit.maxHp) heal(ctx, unit, DRUID_REGEN, { actor: unit.id, what: "regen" });
+  // A troll's wounds close at the start of each of its turns, unless it is on fire.
+  const grows = unit.side === "enemy" ? ENEMIES[unit.kind]?.regen : undefined;
+  if (grows && unit.hp < unit.maxHp && !has(unit, grows.unless)) heal(ctx, unit, grows.amount, { actor: unit.id, what: grows.name });
   standInSurface(ctx, unit);
   if (unit.down) return false;
   if (has(unit, "stunned")) {

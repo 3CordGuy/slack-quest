@@ -108,7 +108,21 @@ export class ZoneRoom extends DurableObject<Env> {
   }
 
   async fetch(request: Request): Promise<Response> {
-    if (request.headers.get("Upgrade") !== "websocket") return new Response("expected websocket", { status: 426 });
+    if (request.headers.get("Upgrade") !== "websocket") {
+      // A trade changed: tell the player it concerns to look again, if they are here and connected.
+      const url = new URL(request.url);
+      if (url.pathname !== "/trades") return new Response("expected websocket", { status: 426 });
+      for (const to of url.searchParams.getAll("to")) {
+        for (const ws of this.ctx.getWebSockets(to)) {
+          try {
+            ws.send(JSON.stringify({ type: "trades" }));
+          } catch {
+            // Socket is closing; webSocketClose will follow.
+          }
+        }
+      }
+      return new Response("ok");
+    }
     const code = request.headers.get("x-zone-code");
     const playerId = request.headers.get("x-player-id");
     const near = request.headers.get("x-zone-near") ?? undefined;

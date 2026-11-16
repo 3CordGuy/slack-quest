@@ -6,13 +6,14 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useAudioScene } from "./audio/useAudioScene";
 import type { HexPos } from "@gantt-quest/core";
-import { GATHER_SPOTS, GATHER_SPOT_IDS, HARBOR_APOTHECARY, HARBOR_BOARD, HARBOR_CAVE, HARBOR_GALLEY, HARBOR_LIGHTHOUSE, HARBOR_SMITHY, HARBOR_GATHER, HARBOR_NAME, HARBOR_PIERS, HARBOR_PLOTS, HARBOR_PUB, HARBOR_RING, HARBOR_SHOP, HARBOR_SPAWN, HARBOR_WORKS, PLOT_PRICE, RESOURCE_KINDS, SHACK_COST, binFill, binNeeds, builtProjects, BOOK_TITLE, fishSpotAt, harborDoor, seaEdge, tileAt, waterSpotAt, type FishSpot, FISH_SPOTS, generateHarbor, projectById, projectProgress, harborPoi, hutTier, poiAt, salesman, type GatherSpot, type Resources } from "@gantt-quest/world";
+import { GATHER_SPOTS, GATHER_SPOT_IDS, HARBOR_APOTHECARY, HARBOR_BOARD, HARBOR_CAVE, HARBOR_GALLEY, HARBOR_LIGHTHOUSE, HARBOR_SMITHY, HARBOR_GATHER, HARBOR_NAME, HARBOR_PIERS, HARBOR_PLOTS, HARBOR_PLOT_FACING, HARBOR_PUB, HARBOR_RING, HARBOR_SHOP, HARBOR_SPAWN, HARBOR_WORKS, MAX_PARTY, PLOT_PRICE, RESOURCE_KINDS, SHACK_COST, binFill, binNeeds, builtProjects, BOOK_TITLE, fishSpotAt, harborDoor, seaEdge, tileAt, waterSpotAt, type FishSpot, FISH_SPOTS, generateHarbor, projectById, projectProgress, harborPoi, hutTier, poiAt, salesman, type GatherSpot, type HarborShip, type Resources } from "@gantt-quest/world";
 import { api, type Me } from "./api";
 import { CatchPanel } from "./CatchPanel";
 import { AccountPanel } from "./Account";
 import { CrewRoster, type RosterMember } from "./CrewRoster";
 import { NoticeBoard } from "./board/NoticeBoard";
 import { AttentionMark } from "./AttentionMark";
+import { PlaceTitle } from "./PlaceTitle";
 import { hasUnseen } from "../releases";
 import { OptionsMenu } from "./OptionsMenu";
 import { DragPanel } from "./DragPanel";
@@ -34,6 +35,13 @@ import { label } from "./labels";
 import { xpEvents } from "./xpEvents";
 
 const same = (a: HexPos, b: HexPos) => a.q === b.q && a.r === b.r;
+/**
+ * The Harbor opens seen from a little east of south, about eighteen degrees off the rows of hexes: its streets
+ * and lanes are laid along those rows, and squared to the screen they look ruled. From here the buildings on
+ * the north side of the High Street and along both hut lanes show their fronts.
+ */
+const HARBOR_VIEW_YAW = 0.32;
+
 /** "10 wood and 6 stone". */
 const costText = (r: Resources) => {
   const parts = RESOURCE_KINDS.filter((k) => (r[k] ?? 0) > 0).map((k) => `${r[k]} ${label("resource", k).toLowerCase()}`);
@@ -114,9 +122,10 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
       // A plot someone has bought has their hut on it, or a resource bin while the shack is still to go up; the rest are staked out and for sale.
       ...HARBOR_PLOTS.map((pos, i) => {
         const owner = board.members.find((m) => m.plot === i);
-        if (!owner) return harborPoi(`lot:${i}`, "lot", pos);
-        if (owner.bin) return { ...harborPoi(`site:${owner.id}`, "site", pos), fill: binFill(owner.bin) };
-        return { ...harborPoi(`plot:${owner.id}`, "plot", pos), tier: owner.hutTier ?? 1 };
+        const facing = HARBOR_PLOT_FACING[i];
+        if (!owner) return harborPoi(`lot:${i}`, "lot", pos, facing);
+        if (owner.bin) return { ...harborPoi(`site:${owner.id}`, "site", pos, facing), fill: binFill(owner.bin) };
+        return { ...harborPoi(`plot:${owner.id}`, "plot", pos, facing), tier: owner.hutTier ?? 1 };
       }),
       ...moored.map((s) => harborPoi(`ship:${s.code}`, "pier", HARBOR_PIERS[s.pier!])),
     ];
@@ -131,6 +140,7 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
       story: null,
       npcs: {},
       freeRoam: true,
+      homeYaw: HARBOR_VIEW_YAW,
       // Bedrolls laid out by whoever is resting.
       props: players.filter((p) => p.bedroll).map((p, i) => ({ id: 9000 + i, model: "bedroll", pos: p.bedroll!, facing: 0 })),
       stamina: stamina ?? undefined,
@@ -197,6 +207,28 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
     : hoverPoi.kind === "pier" ? `${moored.find((s) => `ship:${s.code}` === hoverPoi.id)?.captain ?? "A"}'s ship`
     : null;
 
+  /** The place's name alone, hung over it on a plate while it is pointed at (the tip says what it is for). */
+  const ownerOf = (prefix: string) => board.members.find((m) => `${prefix}:${m.id}` === hoverPoi?.id);
+  const title = !hoverPoi ? null
+    : hoverPoi.kind === "cave" ? "The Haunted Caverns"
+    : hoverPoi.kind === "board" ? "Notice Board"
+    : hoverPoi.kind === "shop" ? "Market Stall"
+    : hoverPoi.kind === "ring" ? "Sparring Ring"
+    : hoverPoi.kind === "fishing" ? "The Fishmonger"
+    : hoverPoi.kind === "felling" ? "The Tree Line"
+    : hoverPoi.kind === "quarry" ? "The Quarry"
+    : hoverPoi.kind === "wreck" ? "The Wreck"
+    : hoverPoi.kind === "pub" ? "The Pub"
+    : hoverPoi.kind === "works" ? "The Works"
+    : hoverPoi.kind === "lighthouse" ? (lit || lighthouseFill > 0 ? "The Lighthouse" : "Lighthouse Point")
+    : hoverPoi.kind === "apothecary" ? "The Apothecary"
+    : hoverPoi.kind === "smithy" ? "The Smithy"
+    : hoverPoi.kind === "galley" ? "The Galley"
+    : hoverPoi.kind === "lot" ? "Plot for Sale"
+    : hoverPoi.kind === "site" ? (hoverPoi.id === `site:${you}` ? "Your Plot" : `${ownerOf("site")?.name ?? "Someone"}'s Plot`)
+    : hoverPoi.kind === "plot" ? (hoverPoi.id === `plot:${you}` ? `Your ${hutTier(hoverPoi.tier ?? 1).name}` : `${ownerOf("plot")?.name ?? "Someone"}'s ${hutTier(hoverPoi.tier ?? 1).name}`)
+    : hoverPoi.kind === "pier" ? `${moored.find((s) => `ship:${s.code}` === hoverPoi.id)?.captain ?? "A"}'s Ship`
+    : null;
   const invite = harbor.crew ? `${location.origin}${location.pathname}#crew/${harbor.crew.id}` : "";
   const copy = async () => {
     try {
@@ -437,7 +469,7 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
           hint: restIn > 0 ? `Rest: you can lay out your bedroll again in ${restIn} min` : "Rest: lay out your bedroll here and sleep a while. Gathering outings come back.",
         }}
         meter={stamina ? { name: "Energy", note: "gathering outings left today", now: stamina.left, max: stamina.max, kind: "stamina" } : undefined}
-        chips={harbor.status !== "open" ? <span className="hud-chip bad">connecting…</span> : undefined}
+        chips={harbor.status === "paused" ? <span className="hud-chip">away</span> : harbor.status !== "open" ? <span className="hud-chip bad">connecting…</span> : undefined}
         // While the trade table is open it has the bag beside it already.
         onBag={() => !tradeWith && setSheet((open) => !open)}
         onBook={() => setBook(true)}
@@ -467,13 +499,14 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
 
       {here && !here.quiet && !here.closed && self && !panelOpen && <TileAction renderer={renderer} pos={self.pos} unitId={self.id} label={here.label} run={here.run} />}
       {tip && <div className="tip">{tip}</div>}
+      {title && hoverPoi && !panelOpen && <PlaceTitle renderer={renderer} poiId={hoverPoi.id} title={title} />}
       {error && <div className="toast">{error}</div>}
       {note && !error && <div className="toast note">{note}</div>}
       {sheet && !tradeWith && me.character && <InventoryScreen me={me} refresh={refreshAll} onClose={() => setSheet(false)} />}
       {book && me.character && <Logbook me={me} refresh={refreshAll} onClose={() => setBook(false)} />}
       {account && <AccountPanel me={me} refresh={refresh} onClose={() => setAccount(false)} />}
       {notices && <NoticeBoard seen={me.seenRelease} onSeen={() => void refresh()} onClose={() => setNotices(false)} />}
-      {unseen && !panelOpen && !atBoard && <AttentionMark renderer={renderer} pos={HARBOR_BOARD} label="Something new on the notice board" />}
+      {unseen && !panelOpen && !atBoard && <AttentionMark renderer={renderer} pos={HARBOR_BOARD} lift={2.35} label="Something new on the notice board" />}
       {works && <WorksPanel works={board.works} refresh={refresh} onClose={() => setWorks(false)} />}
       {workshop === "apothecary" && <ApothecaryPanel refresh={refreshAll} onClose={() => setWorkshop(null)} />}
       {workshop === "galley" && <GalleyPanel onClose={() => setWorkshop(null)} />}
@@ -481,7 +514,7 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
       {gather && me.character && <GatherPanel spot={gather} onRod={(on) => harbor.send({ type: "fishing", on })} pier={pierHere ?? undefined} at={self?.pos} vessel={self?.vessel ?? null} gilded={me.character?.title === BOOK_TITLE} shipBeside={!!shipHere} renderer={renderer} onClose={() => setGather(null)} onStamina={setStamina} />}
       {fishmonger && me.character && <CatchPanel buyer="market" onGold={() => void refresh()} onClose={() => setFishmonger(false)} />}
       {shop && me.character && <ShopScreen me={me} refresh={refreshAll} onClose={() => setShop(false)} />}
-      {me.character && <Trading me={me} partners={board.members.filter((m) => m.id !== you)} withId={tradeWith} onWith={setTradeWith} refresh={refresh} />}
+      {me.character && <Trading me={me} partners={board.members.filter((m) => m.id !== you)} withId={tradeWith} onWith={setTradeWith} refresh={refresh} nudge={harbor.trades} />}
       {heroSheet.open && you && <HeroSheet id={heroSheet.open} you={you} onClose={heroSheet.close} />}
     </div>
   );

@@ -14,6 +14,9 @@ import { makeRng, seedFromString, type Rng } from "./rng";
 export const SLOTS = ["main_hand", "off_hand", "body", "helmet", "legs", "boots", "ring", "amulet"] as const;
 export type Slot = (typeof SLOTS)[number];
 
+/** Whether the piece in a slot can be hidden on the hero: worn gear can, what is held in the hands (weapon, shield) cannot. */
+export const canHide = (slot: Slot) => slot !== "main_hand" && slot !== "off_hand";
+
 export const SLOT_LABEL: Record<Slot, string> = {
   main_hand: "Main Hand",
   off_hand: "Off Hand",
@@ -67,6 +70,8 @@ export interface ItemDef {
   icon: string;
   /** Steps of work at the smithy, each already counted in `power`. Absent or 0 for untouched gear. */
   upgrades?: number;
+  /** Worn but not drawn: it still counts for everything, but the hero is shown without it. */
+  hidden?: boolean;
 }
 
 export const rarityIndex = (r: Rarity) => RARITIES.indexOf(r);
@@ -329,7 +334,8 @@ export type Outfit = Partial<Record<Slot, { icon: string; ref: string; rarity: R
 
 export function outfitOf(equipped: ItemDef[]): Outfit {
   const out: Outfit = {};
-  for (const item of equipped) out[item.slot] = { icon: item.icon, ref: item.ref, rarity: item.rarity };
+  // Hidden gear is worn for what it does, not for how it looks. What is in the hands is always shown.
+  for (const item of equipped) if (!(item.hidden && canHide(item.slot))) out[item.slot] = { icon: item.icon, ref: item.ref, rarity: item.rarity };
   return out;
 }
 

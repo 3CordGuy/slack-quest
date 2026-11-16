@@ -790,3 +790,20 @@ describe("what a hero carries", () => {
     expect(unit(state, "ann").items).toEqual({ healing: 7, poison: 2, fire: 1, oil: 1, water: 1 });
   });
 });
+
+// ---------- a troll ----------
+
+describe("a troll", () => {
+  it("grows back at the start of each of its turns, unless it is burning", () => {
+    const { state, foe } = duel("troll");
+    unit(state, foe).hp = 5;
+    const events: ZoneEvent[] = [];
+    const healed = must(state, { type: "end_turn", by: "ann", unit: "ann" }, events);
+    expect(unit(healed, foe).hp).toBe(5 + ENEMIES.troll.regen!.amount);
+    expect(events).toContainEqual({ t: "heal", actor: foe, target: foe, amount: ENEMIES.troll.regen!.amount, what: "Regenerate" });
+
+    unit(state, foe).conditions.push({ kind: "burning", rounds: 3 });
+    const lit = must(state, { type: "end_turn", by: "ann", unit: "ann" });
+    expect(unit(lit, foe).hp).toBeLessThan(5);
+  });
+});
