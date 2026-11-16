@@ -26,6 +26,14 @@ export function updateWind(clock: number, power: number) {
   UNIFORMS.windPower.value = still ? 0 : power;
 }
 
+/** 1 while there is no wind and the grass is to sway in its own time anyway (as the tufts do), else 0. */
+const FIELD = { fieldCalm: { value: 0 } };
+
+/** Once a frame, from the ambience: whether the meadows sway to and fro in its own time (no wind, motion allowed). */
+export function setFieldCalm(calm: number) {
+  FIELD.fieldCalm.value = calm;
+}
+
 /** How hard it is blowing right now. */
 export const windPower = () => UNIFORMS.windPower.value;
 
@@ -52,6 +60,35 @@ float windGust(vec2 at) {
   return windPower * (0.25 + 0.75 * gust * patchy);
 }
 void main() {`;
+
+/**
+ * Makes a material's field of grass sway: an InstancedMesh of patches whose blades stand on y = 0, at most
+ * `height` tall, each patch turned its own way about y. Every blade bends from its root by the gust passing
+ * over that very spot, so the gusts can be seen rolling through one patch and on into the next (and with no
+ * wind, sways to and fro in its own time, as the tufts do; see setFieldCalm), all of it
+ * on the GPU: nothing is placed again each frame, however many blades there are.
+ */
+export function addFieldSway(material: THREE.Material, height: number) {
+  material.onBeforeCompile = (shader) => {
+    Object.assign(shader.uniforms, UNIFORMS, FIELD);
+    shader.vertexShader = shader.vertexShader.replace("void main() {", "uniform float fieldCalm;\n" + GUST).replace(
+      "#include <begin_vertex>",
+      /* glsl */ `#include <begin_vertex>
+      #ifdef USE_INSTANCING
+      {
+        vec2 at = (instanceMatrix * vec4(position, 1.0)).xz;
+        float phase = at.x * 0.6 + at.y * 0.35;
+        vec2 way = (transpose(mat3(instanceMatrix)) * vec3(${WIND_DIR.x}, 0.0, ${WIND_DIR.z})).xz / max(length(instanceMatrix[0].xyz), 1e-3);
+        float lean = windGust(at) * 0.55 + sin(windTime * 3.1 + at.x * 1.7 + at.y * 2.3) * 0.05 * windPower
+          + fieldCalm * (sin(windTime * 1.3 + phase) * 0.22 + sin(windTime * 3.1 + phase * 1.7) * 0.07 + 0.08);
+        float up = max(position.y, 0.0);
+        transformed.xz += way * lean * up * clamp(up / ${height.toFixed(3)}, 0.0, 1.0);
+      }
+      #endif`,
+    );
+  };
+  material.customProgramCacheKey = () => `field-sway-${height}`;
+}
 
 /**
  * Makes a material's trees sway. For an InstancedMesh of trees whose geometry stands upright about its own

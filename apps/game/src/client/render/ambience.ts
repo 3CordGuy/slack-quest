@@ -1,7 +1,7 @@
 // The living parts of the map: a slow day and night with a moving sun and
-// shadows, varied rocks on the hills, and three flat, pixel-art touches that
-// move — wave crests on the water, grass tufts leaning in the wind, and wisps
-// drifting through the air.
+// shadows, varied rocks on the hills, low-poly grass (tufts, meadows of
+// thick grass, and dry patches of dead grass and burnt ground) leaning in the wind, and two flat, pixel-art touches that move — wave crests on the water
+// and wisps drifting through the air.
 //
 // Everything here is decoration. Nothing reads or changes game state, and the
 // time of day comes from the wall clock, so everyone in a crew sees the same
@@ -10,7 +10,7 @@
 import * as THREE from "three";
 import { devTools } from "../devTools";
 import { fancy } from "./fancy";
-import { WIND_DIR, gustAt, windPower } from "./wind";
+import { WIND_DIR, addFieldSway, gustAt, setFieldCalm, windPower } from "./wind";
 import type { Tile } from "@gantt-quest/world";
 import type { LightKind } from "./props";
 import type { LampLight } from "./tableLamps";
@@ -111,21 +111,171 @@ export function hexTop(vertex: (x: number, y: number, z: number, nx: number, ny:
   }
 }
 
-const grassTexture = () =>
-  pixelTexture(9, 6, (ctx) =>
-    stamp(
-      ctx,
-      [
-        "  a   b  ",
-        "a a   b b",
-        "a ab  b b",
-        " aab ab b",
-        " aabaabb ",
-        "  abaab  ",
-      ],
-      { a: "#a6dd6f", b: "#5f9f45" },
-    ),
-  );
+/** How many shapes of grass tuft there are; each tuft is one of them, turned its own way. */
+const GRASS_KINDS = 3;
+
+/** Grass colours, root to tip, shared by the tufts and the meadows. */
+const GRASS_ROOT = new THREE.Color("#4a8a3a");
+const GRASS_MID = new THREE.Color("#79bd50");
+const GRASS_TIP = new THREE.Color("#c8ef86");
+/** A dry tip, for the odd blade in a meadow gone to seed. */
+const GRASS_STRAW = new THREE.Color("#dfe08c");
+type Tones = readonly [THREE.Color, THREE.Color, THREE.Color];
+const GREEN: Tones = [GRASS_ROOT, GRASS_MID, GRASS_TIP];
+const SEEDING: Tones = [GRASS_ROOT, GRASS_MID, GRASS_STRAW];
+/** Dead grass, root to tip: straw gone pale at the ends. */
+const DEAD: Tones = [new THREE.Color("#8f8448"), new THREE.Color("#c6af60"), new THREE.Color("#eedd9a")];
+/** Grass not quite dead yet: a tired olive. */
+const FADING: Tones = [new THREE.Color("#5f7a3a"), new THREE.Color("#93a352"), new THREE.Color("#cfd48a")];
+/** Grass on dry ground, burnt brown. */
+const BURNT: Tones = [new THREE.Color("#7a6a40"), new THREE.Color("#a88f58"), new THREE.Color("#d2bd8c")];
+
+/** The arrays a clump of blades is built into. */
+interface Blades {
+  pos: number[];
+  nor: number[];
+  col: number[];
+}
+
+/**
+ * One blade of grass: a strip of three triangles from (rx, rz) on the ground, `h` tall and `w` across at the
+ * root, narrowing to a point and curling out toward (ox, oz) by `lean` of its height, the more the higher.
+ * Both faces of each triangle are written, wound either way, so either side is lit from above alike (a
+ * double-sided material would turn the back faces' normals downward and leave them black). Its normals point
+ * up, tipped the way it leans, so it is lit like the ground it grows from rather than going dark side-on.
+ */
+function pushBlade(out: Blades, rx: number, rz: number, ox: number, oz: number, across: number, h: number, w: number, lean: number, shade: number, tones: Tones = GREEN) {
+  const [root, mid, tip] = tones;
+  const sx = Math.sin(across), sz = Math.cos(across);
+  const at = (f: number, half: number, side: number) => {
+    const reach = lean * h * f * f;
+    return [rx + ox * reach + sx * half * side, h * f, rz + oz * reach + sz * half * side];
+  };
+  const bl = at(0, w, -1), br = at(0, w, 1), ml = at(0.5, w * 0.7, -1), mr = at(0.5, w * 0.7, 1), tp = at(1, 0, 0);
+  const n = new THREE.Vector3(ox * 0.35, 1, oz * 0.35).normalize();
+  const c = new THREE.Color();
+  const strip: [number[], THREE.Color][][] = [
+    [[bl, root], [br, root], [mr, mid]],
+    [[bl, root], [mr, mid], [ml, mid]],
+    [[ml, mid], [mr, mid], [tp, tip]],
+  ];
+  for (const tri of strip)
+    for (const [v, tone] of [...tri, ...[...tri].reverse()]) {
+      out.pos.push(v[0], v[1], v[2]);
+      out.nor.push(n.x, n.y, n.z);
+      c.copy(tone).multiplyScalar(shade);
+      out.col.push(c.r, c.g, c.b);
+    }
+}
+
+function bladesGeometry(out: Blades): THREE.BufferGeometry {
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.Float32BufferAttribute(out.pos, 3));
+  geo.setAttribute("normal", new THREE.Float32BufferAttribute(out.nor, 3));
+  geo.setAttribute("color", new THREE.Float32BufferAttribute(out.col, 3));
+  return geo;
+}
+
+/** A tuft of grass, low-poly: a clump of blades rooted near the middle that curl outward. About 1 tall, on y = 0. */
+function tuftGeometry(kind: number): THREE.BufferGeometry {
+  const r = (i: number) => hash(kind, i, 977);
+  const blades = 5 + kind * 2;
+  const out: Blades = { pos: [], nor: [], col: [] };
+  for (let b = 0; b < blades; b++) {
+    const k = b * 8;
+    const a = (b / blades) * Math.PI * 2 + (r(k) - 0.5) * 0.9;
+    const ox = Math.sin(a), oz = Math.cos(a);
+    const d = 0.03 + r(k + 2) * 0.09;
+    // Across the blade: square to the way it leans, give or take a twist.
+    pushBlade(out, ox * d, oz * d, ox, oz, a + Math.PI / 2 + (r(k + 1) - 0.5) * 0.9, 0.55 + r(k + 3) * 0.45, 0.07 + r(k + 5) * 0.04, 0.2 + r(k + 4) * 0.35, 0.88 + r(k + 6) * 0.24);
+  }
+  return bladesGeometry(out);
+}
+
+/** How many different meadow patches there are; each meadow hex is one of them, turned by sixths. */
+const MEADOW_KINDS = 2;
+/** Blades in one meadow hex. */
+const MEADOW_BLADES = 130;
+/** The tallest a meadow's blades stand, world units: short enough that a hero's feet still show. */
+const MEADOW_H = 0.36;
+
+/**
+ * A whole hex of grass, as one piece: blades scattered evenly over a pointy-topped hex of radius 1 (a little
+ * inside it, so a lone meadow does not spill far onto its neighbours), each leaning its own way, a few of them
+ * dry at the tip. A hex turned by a sixth still fits its hex, so each patch can be laid six ways.
+ */
+function meadowGeometry(kind: number): THREE.BufferGeometry {
+  const r = (i: number) => hash(kind + 11, i, 431);
+  const out: Blades = { pos: [], nor: [], col: [] };
+  const inside = (x: number, z: number) => Math.abs(x) <= 0.866 && Math.abs(z) + Math.abs(x) * 0.577 <= 1;
+  // Jittered rows, so the blades cover the hex evenly with no bald spots and no lines.
+  const step = Math.sqrt((2.6 * 0.94 * 0.94) / MEADOW_BLADES);
+  let i = 0;
+  for (let gz = -1; gz <= 1; gz += step)
+    for (let gx = -0.9; gx <= 0.9; gx += step) {
+      const k = (i++) * 9;
+      const x = (gx + (r(k) - 0.5) * step) * 0.94, z = (gz + (r(k + 1) - 0.5) * step) * 0.94;
+      if (!inside(x / 0.94, z / 0.94)) continue;
+      const a = r(k + 2) * Math.PI * 2;
+      const h = MEADOW_H * (0.5 + r(k + 3) * 0.5);
+      const dry = r(k + 7) < 0.08;
+      pushBlade(out, x, z, Math.sin(a), Math.cos(a), a + Math.PI / 2 + (r(k + 4) - 0.5), h, 0.035 + r(k + 5) * 0.025, 0.25 + r(k + 6) * 0.4, 0.84 + r(k + 8) * 0.3, dry ? SEEDING : GREEN);
+    }
+  return bladesGeometry(out);
+}
+
+/**
+ * Where the meadows are: a smooth swell over the map, so the hexes it picks come in patches of several
+ * together that read as fields, not one here and one there. About a third of open grass.
+ */
+const meadowAt = (x: number, z: number) =>
+  Math.sin(x * 0.31 + 1.3) * Math.sin(z * 0.37 + 0.4) + 0.6 * Math.sin((x - z) * 0.17 + 2.1) + 0.3 * Math.sin(x * 0.83 + z * 0.61) > 0.35;
+
+/** Dry patches: two of dead grass, flopped over and gone to straw, and one of dry ground, thin and burnt brown. */
+const DRY_KINDS = 3;
+/** The kind that is dry ground rather than dead grass. */
+const DRY_GROUND = 2;
+/** The tallest a dry patch's blades stand: dead grass lies lower than living. */
+const DRY_H = 0.34;
+
+/**
+ * A hex gone dry, in one piece like a meadow, told from it by colour alone (the renderer tints the ground
+ * under it to match). Dead grass is still thick, but straw-coloured, bent over and short, with an odd olive
+ * blade not quite gone. Dry ground grows thinner, lower grass, burnt brown.
+ */
+function dryGeometry(kind: number): THREE.BufferGeometry {
+  const r = (i: number) => hash(kind + 23, i, 613);
+  const out: Blades = { pos: [], nor: [], col: [] };
+  const burnt = kind === DRY_GROUND;
+  const inside = (x: number, z: number) => Math.abs(x) <= 0.866 && Math.abs(z) + Math.abs(x) * 0.577 <= 1;
+  const blades = burnt ? 75 : 115;
+  const step = Math.sqrt((2.6 * 0.94 * 0.94) / blades);
+  let i = 0;
+  for (let gz = -1; gz <= 1; gz += step)
+    for (let gx = -0.9; gx <= 0.9; gx += step) {
+      const k = 1000 + (i++) * 9;
+      const x = (gx + (r(k) - 0.5) * step) * 0.94, z = (gz + (r(k + 1) - 0.5) * step) * 0.94;
+      if (!inside(x / 0.94, z / 0.94)) continue;
+      const a = r(k + 3) * Math.PI * 2;
+      const tones = burnt ? (r(k + 7) < 0.25 ? DEAD : BURNT) : r(k + 7) < 0.15 ? FADING : DEAD;
+      const h = DRY_H * (burnt ? 0.3 + r(k + 5) * 0.5 : 0.4 + r(k + 5) * 0.6);
+      pushBlade(out, x, z, Math.sin(a), Math.cos(a), a + Math.PI / 2 + (r(k + 4) - 0.5), h, 0.04 + r(k + 6) * 0.03, 0.45 + r(k + 8) * 0.5, 0.86 + r(k + 2) * 0.26, tones);
+    }
+  return bladesGeometry(out);
+}
+
+/**
+ * Which dry patch a hex of open grass is, or -1 if it is not one: another smooth swell over the map, apart
+ * from the meadows', so dry ground comes in patches too and never where a meadow is. About a sixth of open
+ * grass; a third of that is dry ground, the rest dead grass. The renderer asks too, to tint the ground under it.
+ */
+export function dryPatch(t: Tile, x: number, z: number): number {
+  if (t.biome !== "plains" || meadowAt(x, z)) return -1;
+  const swell = Math.sin(x * 0.27 + 4.1) * Math.sin(z * 0.33 + 2.6) + 0.6 * Math.sin((x + z) * 0.19 + 0.7) + 0.3 * Math.sin(x * 0.71 - z * 0.53 + 1.9);
+  if (swell < 0.55) return -1;
+  // The driest in the middle of the swell: dry ground there, dead grass round it.
+  return swell > 1.05 ? DRY_GROUND : hash(t.q, t.r, 98) < 0.5 ? 0 : 1;
+}
 
 /** Two scallops of a cut-out wave: a white crest over a lighter blue body. */
 const waveTexture = () =>
@@ -440,6 +590,20 @@ interface Tuft {
   z: number;
   size: number;
   phase: number;
+  /** Which shape of tuft, its place among that shape's instances, and how it is turned about y. */
+  kind?: number;
+  index?: number;
+  yaw?: number;
+}
+/** A hex covered whole by one patch of grass (a meadow, or a dry one): where, turned how many sixths, which patch. */
+interface FieldPatch {
+  x: number;
+  y: number;
+  z: number;
+  turn: number;
+  kind: number;
+  /** 0 to 1: how light or dark this one is. */
+  tone: number;
 }
 interface Crest {
   /** Centre of the water hex it belongs to. */
@@ -604,7 +768,8 @@ export class Ambience {
   private tableLamps: LampLight[] = [];
   private lampColor = new THREE.Color();
 
-  private grass: THREE.InstancedMesh | null = null;
+  /** The grass, one mesh for each shape of tuft. */
+  private grass: THREE.InstancedMesh[] = [];
   private tufts: Tuft[] = [];
   private waves: THREE.InstancedMesh[] = [];
   private crests: Crest[] = [];
@@ -706,6 +871,8 @@ export class Ambience {
     const tones = ["#8d8674", "#7b786f", "#9c917b", "#6d6960", "#a39a86"];
     const rocks: { m: THREE.Matrix4; tone: string }[][] = shapes.map(() => []);
     const tufts: Tuft[] = [];
+    const meadows: FieldPatch[] = [];
+    const drys: FieldPatch[] = [];
     const crests: Crest[] = [];
     let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
 
@@ -742,6 +909,12 @@ export class Ambience {
           });
         }
         if (n(70) < 0.35) tufts.push({ x: p.x + (n(71) - 0.5) * 1.1, y: p.y, z: p.z + 0.45, size: 0.3, phase: n(72) * 6 });
+      } else if (dryPatch(t, p.x, p.z) >= 0) {
+        // A dry patch: dead grass, or bare earth, over the whole hex.
+        drys.push({ x: p.x, y: p.y, z: p.z, turn: Math.floor(n(95) * 6), kind: dryPatch(t, p.x, p.z), tone: n(97) });
+      } else if (t.biome === "plains" && meadowAt(p.x, p.z)) {
+        // A meadow: the whole hex grown thick with grass, one patch of a few, turned by sixths.
+        meadows.push({ x: p.x, y: p.y, z: p.z, turn: Math.floor(n(95) * 6), kind: Math.floor(n(96) * MEADOW_KINDS), tone: n(97) });
       } else if (t.biome === "plains") {
         const count = 1 + Math.floor(n(80) * 3.99);
         for (let i = 0; i < count; i++) {
@@ -928,18 +1101,61 @@ export class Ambience {
       this.group.add(mesh);
     }
 
-    // ---- grass: upright cut-outs that turn to the camera and lean with the wind ----
+    // ---- grass: low-poly tufts, each turned its own way, that lean with the wind ----
+    // Each is tinted a shade lighter or darker; in the wet port, drabbed the way its ground is.
     this.tufts = tufts;
-    const blade = new THREE.PlaneGeometry(1.5, 1);
-    blade.translate(0, 0.5, 0);
-    this.grass = new THREE.InstancedMesh(
-      blade,
-      new THREE.MeshBasicMaterial({ map: grassTexture(), alphaTest: 0.5, side: THREE.DoubleSide }),
-      Math.max(1, tufts.length),
-    );
-    this.grass.count = tufts.length;
-    this.grass.frustumCulled = false;
-    this.group.add(this.grass);
+    const plain = new THREE.Color("#7cb856");
+    const drab = new THREE.Color(grassTint.r / plain.r, grassTint.g / plain.g, grassTint.b / plain.b);
+    const counts = new Array<number>(GRASS_KINDS).fill(0);
+    for (const t of tufts) {
+      const kx = Math.round(t.x * 100), kz = Math.round(t.z * 100);
+      t.kind = Math.floor(hash(kx, kz, 5) * GRASS_KINDS);
+      t.index = counts[t.kind]++;
+      t.yaw = hash(kx, kz, 6) * Math.PI * 2;
+    }
+    this.grass = counts.map((count, kind) => {
+      const mesh = new THREE.InstancedMesh(
+        tuftGeometry(kind),
+        new THREE.MeshLambertMaterial({ vertexColors: true }),
+        Math.max(1, count),
+      );
+      mesh.count = count;
+      mesh.frustumCulled = false;
+      mesh.receiveShadow = true;
+      this.group.add(mesh);
+      return mesh;
+    });
+    const tint = new THREE.Color();
+    for (const t of tufts) {
+      const kx = Math.round(t.x * 100), kz = Math.round(t.z * 100);
+      this.grass[t.kind!].setColorAt(t.index!, tint.copy(drab).multiplyScalar(0.9 + hash(kx, kz, 7) * 0.2));
+    }
+
+    // ---- meadows and dry patches: whole hexes of grass, each one instance of a patch of blades ----
+    // Placed once and never again: the wind bends their blades in the shader, so a field costs no more each
+    // frame than a single tuft does.
+    // A meadow is drabbed in the wet port as the tufts are; a dry patch is not (the drab, made for green, would turn its straw to rust).
+    const fields = (patches: FieldPatch[], kinds: number, geometry: (kind: number) => THREE.BufferGeometry, height: number, base: THREE.Color) => {
+      for (let kind = 0; kind < kinds; kind++) {
+        const list = patches.filter((m) => m.kind === kind);
+        if (list.length === 0) continue;
+        const material = new THREE.MeshLambertMaterial({ vertexColors: true });
+        addFieldSway(material, height);
+        const mesh = new THREE.InstancedMesh(geometry(kind), material, list.length);
+        const at = new THREE.Matrix4();
+        const up = new THREE.Vector3(0, 1, 0);
+        const turn = new THREE.Quaternion();
+        list.forEach((m, i) => {
+          mesh.setMatrixAt(i, at.compose(new THREE.Vector3(m.x, m.y, m.z), turn.setFromAxisAngle(up, (m.turn * Math.PI) / 3), new THREE.Vector3(1, 1, 1)));
+          mesh.setColorAt(i, tint.copy(base).multiplyScalar(0.94 + m.tone * 0.12));
+        });
+        mesh.frustumCulled = false;
+        mesh.receiveShadow = true;
+        this.group.add(mesh);
+      }
+    };
+    fields(meadows, MEADOW_KINDS, meadowGeometry, MEADOW_H, drab);
+    fields(drys, DRY_KINDS, dryGeometry, DRY_H, new THREE.Color(1, 1, 1));
 
     // ---- puddles: standing water on the mud and in the dips of the street ----
     // Each is a real hollow, not a picture of one: a low bank of earth or stone thrown up round a dip,
@@ -1062,7 +1278,7 @@ export class Ambience {
       material.dispose();
     }
     this.group.clear();
-    this.grass = null;
+    this.grass = [];
     this.waves = [];
     this.wispRibbon = null;
     this.rain = null;
@@ -1146,32 +1362,30 @@ export class Ambience {
     this.flicker(clock, focus ?? target);
     const motion = this.still ? 0 : 1;
 
-    if (this.grass) {
-      const cos = Math.cos(yaw);
-      const sin = Math.sin(yaw);
+    if (this.grass.length > 0) {
       // With the fancy wind, every tuft leans the way the wind blows, by the gust passing over it, so the
       // gusts can be seen crossing the grass. Without it, each sways to and fro in its own time.
       const blowing = windPower() > 0;
-      this.tufts.forEach((t, i) => {
+      setFieldCalm(blowing ? 0 : motion);
+      for (const t of this.tufts) {
         // A slow swell with a quicker flutter on top, rolling across the island.
         const lean = blowing
           ? gustAt(t.x, t.z) * 0.55 + Math.sin(clock * 3.1 + t.phase * 1.7) * 0.05 * windPower()
           : motion * (Math.sin(clock * 1.3 + t.phase) * 0.22 + Math.sin(clock * 3.1 + t.phase * 1.7) * 0.07 + 0.08);
-        const w = t.size;
-        // Which way the top is pushed: downwind, or to the right of the screen without the fancy wind.
-        const lx = blowing ? WIND_DIR.x : cos;
-        const lz = blowing ? WIND_DIR.z : -sin;
-        // Columns: right, up (sheared toward the wind), and the facing normal.
+        const w = t.size * 1.4;
+        const h = t.size * 1.45;
+        const cos = Math.cos(t.yaw!);
+        const sin = Math.sin(t.yaw!);
+        // Columns: its own turn about y, scaled, with the up column sheared downwind so it bends from the root.
         this.m.set(
-          cos * w, lx * lean * w, sin, t.x,
-          0, w, 0, t.y,
-          -sin * w, lz * lean * w, cos, t.z,
+          cos * w, WIND_DIR.x * lean * h, sin * w, t.x,
+          0, h, 0, t.y,
+          -sin * w, WIND_DIR.z * lean * h, cos * w, t.z,
           0, 0, 0, 1,
         );
-        this.grass!.setMatrixAt(i, this.m);
-      });
-      this.grass.instanceMatrix.needsUpdate = true;
-      (this.grass.material as THREE.MeshBasicMaterial).color.copy(this.flatTint);
+        this.grass[t.kind!].setMatrixAt(t.index!, this.m);
+      }
+      for (const mesh of this.grass) mesh.instanceMatrix.needsUpdate = true;
     }
 
     const cos = Math.cos(yaw);
