@@ -1,6 +1,7 @@
 // The living parts of the map: a slow day and night with a moving sun and
 // shadows, varied rocks on the hills, low-poly grass (tufts, meadows of
-// thick grass, and dry patches of dead grass and burnt ground) leaning in the wind, and two flat, pixel-art touches that move — wave crests on the water
+// thick grass, tall grass that parts as you wade through it, and dry patches of
+// dead grass and burnt ground) leaning in the wind, and two flat, pixel-art touches that move — wave crests on the water
 // and wisps drifting through the air.
 //
 // Everything here is decoration. Nothing reads or changes game state, and the
@@ -135,6 +136,8 @@ interface Blades {
   pos: number[];
   nor: number[];
   col: number[];
+  /** Where on the ground (x, z) the blade each vertex belongs to is rooted: the fields' shader moves a whole blade by where its root is. */
+  root: number[];
 }
 
 /**
@@ -165,6 +168,7 @@ function pushBlade(out: Blades, rx: number, rz: number, ox: number, oz: number, 
       out.nor.push(n.x, n.y, n.z);
       c.copy(tone).multiplyScalar(shade);
       out.col.push(c.r, c.g, c.b);
+      out.root.push(rx, rz);
     }
 }
 
@@ -173,6 +177,7 @@ function bladesGeometry(out: Blades): THREE.BufferGeometry {
   geo.setAttribute("position", new THREE.Float32BufferAttribute(out.pos, 3));
   geo.setAttribute("normal", new THREE.Float32BufferAttribute(out.nor, 3));
   geo.setAttribute("color", new THREE.Float32BufferAttribute(out.col, 3));
+  geo.setAttribute("aRoot", new THREE.Float32BufferAttribute(out.root, 2));
   return geo;
 }
 
@@ -180,7 +185,7 @@ function bladesGeometry(out: Blades): THREE.BufferGeometry {
 function tuftGeometry(kind: number): THREE.BufferGeometry {
   const r = (i: number) => hash(kind, i, 977);
   const blades = 5 + kind * 2;
-  const out: Blades = { pos: [], nor: [], col: [] };
+  const out: Blades = { pos: [], nor: [], col: [], root: [] };
   for (let b = 0; b < blades; b++) {
     const k = b * 8;
     const a = (b / blades) * Math.PI * 2 + (r(k) - 0.5) * 0.9;
@@ -206,7 +211,7 @@ const MEADOW_H = 0.36;
  */
 function meadowGeometry(kind: number): THREE.BufferGeometry {
   const r = (i: number) => hash(kind + 11, i, 431);
-  const out: Blades = { pos: [], nor: [], col: [] };
+  const out: Blades = { pos: [], nor: [], col: [], root: [] };
   const inside = (x: number, z: number) => Math.abs(x) <= 0.866 && Math.abs(z) + Math.abs(x) * 0.577 <= 1;
   // Jittered rows, so the blades cover the hex evenly with no bald spots and no lines.
   const step = Math.sqrt((2.6 * 0.94 * 0.94) / MEADOW_BLADES);
@@ -245,7 +250,7 @@ const DRY_H = 0.34;
  */
 function dryGeometry(kind: number): THREE.BufferGeometry {
   const r = (i: number) => hash(kind + 23, i, 613);
-  const out: Blades = { pos: [], nor: [], col: [] };
+  const out: Blades = { pos: [], nor: [], col: [], root: [] };
   const burnt = kind === DRY_GROUND;
   const inside = (x: number, z: number) => Math.abs(x) <= 0.866 && Math.abs(z) + Math.abs(x) * 0.577 <= 1;
   const blades = burnt ? 75 : 115;
@@ -275,6 +280,48 @@ export function dryPatch(t: Tile, x: number, z: number): number {
   if (swell < 0.55) return -1;
   // The driest in the middle of the swell: dry ground there, dead grass round it.
   return swell > 1.05 ? DRY_GROUND : hash(t.q, t.r, 98) < 0.5 ? 0 : 1;
+}
+
+/** Tall grass, root to tip: deeper than the meadow's, and gone to pale seed at the top of some. */
+const TALL: Tones = [new THREE.Color("#356f31"), new THREE.Color("#5c9f45"), new THREE.Color("#a9d873")];
+const TALL_SEED: Tones = [new THREE.Color("#356f31"), new THREE.Color("#7aa850"), new THREE.Color("#e6dc9a")];
+/** How many different patches of tall grass there are. */
+const TALL_KINDS = 2;
+/** The tallest its blades stand, world units: up to a hero's waist. */
+const TALL_H = 0.82;
+
+/**
+ * A hex of tall grass, in one piece like a meadow: more blades, three times the height, standing straighter,
+ * every one in five topped with seed. It is the fields' shader that parts it round anyone walking through.
+ */
+function tallGeometry(kind: number): THREE.BufferGeometry {
+  const r = (i: number) => hash(kind + 37, i, 719);
+  const out: Blades = { pos: [], nor: [], col: [], root: [] };
+  const inside = (x: number, z: number) => Math.abs(x) <= 0.866 && Math.abs(z) + Math.abs(x) * 0.577 <= 1;
+  const blades = 170;
+  const step = Math.sqrt((2.6 * 0.97 * 0.97) / blades);
+  let i = 0;
+  for (let gz = -1; gz <= 1; gz += step)
+    for (let gx = -0.9; gx <= 0.9; gx += step) {
+      const k = (i++) * 9;
+      const x = (gx + (r(k) - 0.5) * step) * 0.97, z = (gz + (r(k + 1) - 0.5) * step) * 0.97;
+      if (!inside(x / 0.97, z / 0.97)) continue;
+      const a = r(k + 2) * Math.PI * 2;
+      const seeded = r(k + 7) < 0.2;
+      const h = TALL_H * (seeded ? 0.8 + r(k + 3) * 0.2 : 0.5 + r(k + 3) * 0.42);
+      pushBlade(out, x, z, Math.sin(a), Math.cos(a), a + Math.PI / 2 + (r(k + 4) - 0.5), h, 0.04 + r(k + 5) * 0.028, 0.08 + r(k + 6) * 0.2, 0.8 + r(k + 8) * 0.32, seeded ? TALL_SEED : TALL);
+    }
+  return bladesGeometry(out);
+}
+
+/**
+ * Whether a hex of open grass is tall grass: a third smooth swell over the map, so it too comes in patches,
+ * and never where a path, a dry patch or a meadow is. About a tenth of open grass. The renderer asks too, to
+ * deepen the ground under it.
+ */
+export function tallGrass(t: Tile, x: number, z: number): boolean {
+  if (t.biome !== "plains" || t.path || meadowAt(x, z) || dryPatch(t, x, z) >= 0) return false;
+  return Math.sin(x * 0.29 + 0.4) * Math.sin(z * 0.35 + 5.1) + 0.6 * Math.sin((x * 0.6 - z) * 0.21 + 3.3) + 0.3 * Math.sin(x * 0.77 + z * 0.49 + 0.6) > 0.3;
 }
 
 /** The ridge along a path's edge, as tints on its dirt: shaded where it rises, lit along the crest, olive at its foot in the grass. */
@@ -945,6 +992,7 @@ export class Ambience {
     const tufts: Tuft[] = [];
     const meadows: FieldPatch[] = [];
     const drys: FieldPatch[] = [];
+    const talls: FieldPatch[] = [];
     const crests: Crest[] = [];
     let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
 
@@ -984,6 +1032,9 @@ export class Ambience {
       } else if (dryPatch(t, p.x, p.z) >= 0) {
         // A dry patch: dead grass, or bare earth, over the whole hex.
         drys.push({ x: p.x, y: p.y, z: p.z, turn: Math.floor(n(95) * 6), kind: dryPatch(t, p.x, p.z), tone: n(97) });
+      } else if (tallGrass(t, p.x, p.z)) {
+        // Tall grass, to wade through.
+        talls.push({ x: p.x, y: p.y, z: p.z, turn: Math.floor(n(95) * 6), kind: Math.floor(n(96) * TALL_KINDS), tone: n(97) });
       } else if (t.biome === "plains" && !t.path && meadowAt(p.x, p.z)) {
         // A meadow: the whole hex grown thick with grass, one patch of a few, turned by sixths.
         meadows.push({ x: p.x, y: p.y, z: p.z, turn: Math.floor(n(95) * 6), kind: Math.floor(n(96) * MEADOW_KINDS), tone: n(97) });
@@ -1239,6 +1290,7 @@ export class Ambience {
     };
     fields(meadows, MEADOW_KINDS, meadowGeometry, MEADOW_H, drab);
     fields(drys, DRY_KINDS, dryGeometry, DRY_H, new THREE.Color(1, 1, 1));
+    fields(talls, TALL_KINDS, tallGeometry, TALL_H, drab);
 
     // ---- dirt paths: a sheet of trodden earth on each path hex, all in one mesh ----
     // Each hex's dirt is the shape pathReach gives, sampled round its middle: often enough to be round where it
@@ -1267,7 +1319,7 @@ export class Ambience {
     ];
     const shade = new THREE.Color();
     /** The grass that spills over the paths' edges, in world space. */
-    const fringe: Blades = { pos: [], nor: [], col: [] };
+    const fringe: Blades = { pos: [], nor: [], col: [], root: [] };
     for (const t of tiles) {
       if (!t.path) continue;
       const p = place(t);
@@ -1323,12 +1375,17 @@ export class Ambience {
           const tones = r(j * 5 + 2) < 0.12 ? SEEDING : GREEN;
           const h = 0.1 + r(j * 5 + 3) * 0.1;
           const start = fringe.pos.length;
+          const rootStart = fringe.root.length;
           pushBlade(fringe, rx - p.x, rz - p.z, Math.cos(lean), Math.sin(lean), lean + Math.PI / 2, h, 0.025 + r(j * 5 + 4) * 0.02, 0.25 + r(j * 5 + 2) * 0.35, 0.86 + r(j * 5 + 3) * 0.24, tones);
           // pushBlade builds about (0, 0); lift it to where the hex lies.
           for (let v = start; v < fringe.pos.length; v += 3) {
             fringe.pos[v] += p.x;
             fringe.pos[v + 1] += p.y + 0.012;
             fringe.pos[v + 2] += p.z;
+          }
+          for (let v = rootStart; v < fringe.root.length; v += 2) {
+            fringe.root[v] += p.x;
+            fringe.root[v + 1] += p.z;
           }
         }
       }

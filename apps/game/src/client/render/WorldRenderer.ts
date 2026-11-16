@@ -10,7 +10,7 @@ import * as THREE from "three";
 import { makeModelShip } from "./modelShip";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { reportEnv } from "../ui/env";
-import { Ambience, TILE_FILLET, TILE_RADIUS, beaconShine, dryPatch, hexTop, pixelTexture, stamp, type BuildingGlow } from "./ambience";
+import { Ambience, TILE_FILLET, TILE_RADIUS, beaconShine, dryPatch, hexTop, pixelTexture, stamp, tallGrass, type BuildingGlow } from "./ambience";
 import "./camera.css";
 import { PINCH_PAN_SLACK, followIconSvg, readFollow, writeFollow } from "./cameraFollow";
 import type { HexPos } from "@gantt-quest/core";
@@ -19,8 +19,8 @@ import { lookStep, lookYaw, BASE_HEIGHT, BATTLE_JOIN_RANGE, BIG_REACH, ENEMIES, 
 import { fancy } from "./fancy";
 import { NightLife } from "./nightlife";
 import { Storm } from "./storm";
-import { updateWind } from "./wind";
-import { Woods, tintOf, type BoulderSpot, type TreeSpot } from "./woods";
+import { setFieldWalkers, updateWind } from "./wind";
+import { OAK_SHAPES, Woods, tintOf, type BoulderSpot, type TreeSpot } from "./woods";
 import { OVERLAY_LAYER, PostFx, type Air } from "./post";
 import { fishMount } from "./catchArt";
 import { FRAME, OUTLINE, inflate, makeFigure, type Figure } from "./figures";
@@ -1718,6 +1718,32 @@ export class WorldRenderer {
           const d = i === 0 ? 0.1 : 0.4 + n(720 + i) * 0.25;
           rock(Math.sin(a) * d, Math.cos(a) * d * 0.9, (i === 0 ? 0.3 : 0.16) + n(730 + i) * 0.12, (i === 0 ? 0.4 : 0.2) + n(740 + i) * 0.16, 750 + i * 5);
         }
+      } else if (t.biome === "plains" && !t.built && !t.path) {
+        // An old oak, here and there in the open grass; where the grass has died, more often, and dead: a snag.
+        // Too stout to walk through or push aside, it stands toward a corner of its hex, where three hexes meet
+        // and nobody stands, and only where that corner is open ground: nothing built or to be used on the three
+        // hexes that meet there, nor on any hex beside them.
+        const dry = dryPatch(t, x, z) >= 0;
+        if (n(800) >= (dry ? 0.45 : 0.2)) continue;
+        const corner = Math.floor(n(801) * 5.99);
+        const beside = [HEX_DIRS[corner], HEX_DIRS[(corner + 1) % 6]].map((d) => byKey.get(key({ q: t.q + d.q, r: t.r + d.r })));
+        if (beside.some((b) => !b || b.biome === "water" || b.biome === "dock" || b.path)) continue;
+        const taken = (h: Tile | undefined) => !!h && (!!h.built || !!h.blocker || poiKeys.has(key(h)));
+        if ([t, ...beside].some((h) => taken(h) || HEX_DIRS.some((d) => taken(byKey.get(key({ q: h!.q + d.q, r: h!.r + d.r })))))) continue;
+        const a = ((-30 + 60 * corner) * Math.PI) / 180;
+        const ox = x + Math.cos(a) * 0.8, oz = z + Math.sin(a) * 0.8;
+        // Old trees keep their distance: none within a couple of hexes of another, so their crowns do not run together.
+        if (trees.some((o) => (o.kind === "oak" || o.kind === "snag") && Math.hypot(o.x - ox, o.z - oz) < 3.6)) continue;
+        trees.push({
+          x: ox,
+          y: top,
+          z: oz,
+          size: dry ? 2.3 + n(802) * 0.6 : 2.7 + n(802) * 0.7,
+          kind: dry ? "snag" : "oak",
+          shape: Math.floor(n(803) * OAK_SHAPES * 0.999),
+          yaw: n(804) * Math.PI * 2,
+          tint: tintOf(n(805), n(806)),
+        });
       }
     }
     this.ambience.build(
@@ -1901,6 +1927,8 @@ export class WorldRenderer {
         const { x, z } = hexToWorld(t);
         const dry = dryPatch(t, x, z);
         if (dry >= 0) c.lerp(dry === 2 ? DUSTY : PARCHED, dry === 2 ? 0.62 : 0.45);
+        // Under tall grass the ground is in its shade.
+        else if (tallGrass(t, x, z)) c.multiplyScalar(0.82);
       }
       if (this.sodden && t.biome === "water") c.lerp(GREY_SEA, 0.65);
       if (t.biome === "water") c.lerp(NIGHT_SEA, (Math.max(0, this.paintedNight) / 10) * 0.7);
@@ -5450,7 +5478,10 @@ export class WorldRenderer {
     this.tableLamps.update(dt, (hex) => !!heroes?.some((h) => h.pos.q === hex.q && h.pos.r === hex.r));
     this.ambience.update(this.clock, this.yaw, this.target, this.state?.you ? this.units.get(this.state.you)?.root.position : undefined);
     // Whoever walks through the woods pushes the trees aside.
-    this.woods?.update(dt, [...this.units.values()].filter((u) => u.root.visible).map((u) => u.root.position));
+    // Everyone on their feet on the map: the trees they brush past bend aside, and the grass they wade through parts.
+    const walkers = [...this.units.values()].filter((u) => u.root.visible).map((u) => u.root.position);
+    this.woods?.update(dt, walkers);
+    if (!this.opts.backdrop) setFieldWalkers(walkers, this.target, dt);
     // Sounds are heard from where your hero stands, or from the middle of the view without one.
     const ear = (this.state?.you ? this.units.get(this.state.you)?.root.position : undefined) ?? this.target;
     this.ear.listener(ear.x, ear.z, this.yaw);
