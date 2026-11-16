@@ -10,7 +10,7 @@ import * as THREE from "three";
 import { makeModelShip } from "./modelShip";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { reportEnv } from "../ui/env";
-import { Ambience, TILE_FILLET, TILE_RADIUS, beaconShine, dryPatch, hexTop, pixelTexture, stamp, tallGrass, type BuildingGlow } from "./ambience";
+import { Ambience, TILE_FILLET, TILE_RADIUS, beaconShine, dryPatch, hexTop, meadowAt, pixelTexture, stamp, tallGrass, type BuildingGlow } from "./ambience";
 import "./camera.css";
 import { PINCH_PAN_SLACK, followIconSvg, readFollow, writeFollow } from "./cameraFollow";
 import type { HexPos } from "@gantt-quest/core";
@@ -21,6 +21,7 @@ import { NightLife } from "./nightlife";
 import { Storm } from "./storm";
 import { setFieldWalkers, updateWind } from "./wind";
 import { OAK_SHAPES, Woods, tintOf, type BoulderSpot, type TreeSpot } from "./woods";
+import { Gulls, type GullSpot } from "./gulls";
 import { OVERLAY_LAYER, PostFx, type Air } from "./post";
 import { fishMount } from "./catchArt";
 import { FRAME, OUTLINE, inflate, makeFigure, type Figure } from "./figures";
@@ -735,6 +736,8 @@ export class WorldRenderer {
   private panes = new THREE.Group();
   /** Fireflies and moths, out at night with "Fancy graphics". */
   private nightLife = new NightLife();
+  /** The gulls that come and go by day on any map with the sea round it. */
+  private gulls = new Gulls();
   /** Lightning in a storm. On the dev server, `__gqWorld.strike()` sets one off. */
   private storm = new Storm();
   /** How wet the ground is, 0 to 1: it follows the rain up quickly and down slowly. */
@@ -915,7 +918,7 @@ export class WorldRenderer {
 
     // Sky, sun and moon, shadows, and the moving decoration.
     this.ambience = new Ambience(this.scene, this.renderer);
-    this.scene.add(this.nightLife.group, this.storm.bolt, this.panes);
+    this.scene.add(this.nightLife.group, this.gulls.group, this.storm.bolt, this.panes);
 
     const sea = new THREE.Mesh(new THREE.PlaneGeometry(240, 240), new THREE.MeshLambertMaterial({ color: "#3577cf" }));
     addFancyWater(sea.material);
@@ -1013,6 +1016,7 @@ export class WorldRenderer {
     this.rotateButtons.remove();
     this.unwatchFancy();
     this.nightLife.dispose();
+    this.gulls.dispose();
     this.storm.dispose();
     this.outlookMap?.dispose();
     this.ambience.dispose();
@@ -1790,6 +1794,21 @@ export class WorldRenderer {
         });
       }
     }
+    // Where gulls may land: open ground nobody has built on or uses, low enough underfoot to see them on (no
+    // meadow or tall grass). The quay and the piers count three times over, being where a gull would rather be.
+    // None indoors or underground, on a map with no sea, for a backdrop, or for anyone who asked for less motion.
+    const landings: GullSpot[] = [];
+    if (!state.indoors && state.kind !== "caverns" && !this.opts.backdrop && !this.still && this.tiles.some((t) => t.biome === "water")) {
+      for (const t of this.tiles) {
+        if (poiKeys.has(key(t)) || t.built || t.blocker) continue;
+        const { x, z } = hexToWorld(t);
+        const shore = t.biome === "mud" || t.biome === "dock";
+        const open = t.biome === "cobble" || (t.biome === "plains" && !t.path && !tallGrass(t, x, z) && !meadowAt(x, z));
+        if (!shore && !open) continue;
+        for (let i = 0; i < (shore ? 3 : 1); i++) landings.push({ x, y: tileTop(t), z });
+      }
+    }
+    this.gulls.setGround(landings, this.land, Math.min(6, 2 + Math.floor(landings.length / 70)), recentre);
     this.ambience.build(
       this.tiles.filter((t) => !this.deep.has(key(t))),
       // Nothing grows or lies about where a place stands, under a building, or in a thicket or a boulder heap.
@@ -5667,6 +5686,8 @@ export class WorldRenderer {
     const lively = fancy.get() && this.ambience.openSky ? night : 0;
     this.nightLife.setLamps(this.ambience.lampSpots());
     this.nightLife.update(this.clock, lively);
+    // Gulls keep to fair daylight: they are gone by night and in a storm.
+    this.gulls.update(dt, walkers, this.ambience.openSky ? (1 - night) * (1 - this.ambience.storming) : 0);
     const clearSky = lively * (1 - this.ambience.overcast);
     // The moon's reflection lies on the sea off the island's shore, on the side the moon is on.
     const moon = this.ambience.sunDir;

@@ -233,7 +233,7 @@ function meadowGeometry(kind: number): THREE.BufferGeometry {
  * Where the meadows are: a smooth swell over the map, so the hexes it picks come in patches of several
  * together that read as fields, not one here and one there. About a third of open grass.
  */
-const meadowAt = (x: number, z: number) =>
+export const meadowAt = (x: number, z: number) =>
   Math.sin(x * 0.31 + 1.3) * Math.sin(z * 0.37 + 0.4) + 0.6 * Math.sin((x - z) * 0.17 + 2.1) + 0.3 * Math.sin(x * 0.83 + z * 0.61) > 0.35;
 
 /** Dry patches: two of dead grass, flopped over and gone to straw, and one of dry ground, thin and burnt brown. */
