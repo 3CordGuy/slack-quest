@@ -817,6 +817,8 @@ export class WorldRenderer {
   private yaw = 0;
   private yawGoal = 0;
   private userYaw = 0;
+  /** The top middle of each place's model, in the world, measured when first asked for (see screenAbovePoi). */
+  private poiTops = new Map<string, THREE.Vector3>();
   /** The turn this map opens at (RenderState.homeYaw), which the turn buttons' sixths are counted from. */
   private homeYaw = 0;
   /** The current drag turns the camera instead of panning it. */
@@ -1966,6 +1968,28 @@ export class WorldRenderer {
     return { x: ((v.x + 1) / 2) * this.container.clientWidth, y: ((1 - v.y) / 2) * this.container.clientHeight };
   }
 
+  /**
+   * Just above the top of a place's model (a building's roof, a sign's top), in container pixels: where its
+   * title hangs. The top is measured once for each model and kept until the places are rebuilt. Null when
+   * there is no such place, or it is hidden or off screen.
+   */
+  screenAbovePoi(id: string, lift = 0.25): { x: number; y: number } | null {
+    const g = this.poiObject(id);
+    if (!g || !g.visible) return null;
+    let top = this.poiTops.get(id);
+    if (!top) {
+      const box = new THREE.Box3().setFromObject(g);
+      if (box.isEmpty()) return null;
+      top = new THREE.Vector3((box.min.x + box.max.x) / 2, box.max.y, (box.min.z + box.max.z) / 2);
+      this.poiTops.set(id, top);
+    }
+    const v = top.clone();
+    v.y += lift;
+    v.project(this.camera);
+    if (v.z < -1 || v.z > 1 || Math.abs(v.x) > 1 || Math.abs(v.y) > 1) return null;
+    return { x: ((v.x + 1) / 2) * this.container.clientWidth, y: ((1 - v.y) / 2) * this.container.clientHeight };
+  }
+
   screenAbove(pos: HexPos, lift = 1.8): { x: number; y: number } | null {
     if (!this.state) return null;
     const v = this.standAt(pos);
@@ -2284,6 +2308,7 @@ export class WorldRenderer {
     if (sig === this.poiSig) return;
     this.poiSig = sig;
     this.poiGroup.clear();
+    this.poiTops.clear();
     this.tableLamps.clear();
     this.poiGroup.add(this.tableLamps.group);
     // What stands in the water, for the fancy sea to foam round. Each model sits a little back from its hex's middle.
