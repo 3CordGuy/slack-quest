@@ -1,0 +1,21 @@
+/* The figure lab (FigureLab.tsx): a dev-only stage over the whole view, its controls down one side. */
+.figure-lab { position: fixed; inset: 0; z-index: 80; display: flex; background: #6f7d8c; }
+.figure-lab-stage { flex: 1; min-width: 0; width: 100%; height: 100%; display: block; cursor: grab; touch-action: none; }
+.figure-lab-stage:active { cursor: grabbing; }
+.figure-lab-side { flex: none; width: min(340px, 100vw); max-height: 100vh; overflow-y: auto; margin: 0; border-radius: 0; font-size: 12px; white-space: normal; display: flex; flex-direction: column; gap: 6px; }
+.figure-lab-head { display: flex; justify-content: space-between; align-items: baseline; }
+.figure-lab-side h4 { margin: 8px 0 0; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+.figure-lab-side p { margin: 0; }
+.figure-lab-side input[type="range"] { width: 110px; padding: 0; accent-color: var(--accent); }
+.figure-lab-gear { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 8px; }
+.figure-lab-gear label { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.figure-lab-gear span { color: var(--muted); }
+.figure-lab-gear select { min-width: 0; width: 100%; padding: 2px 6px; }
+.figure-lab-note { color: #ffd98a; }
+.figure-lab-readout { font-variant-numeric: tabular-nums; }
+/* A phone: the stage on top, the controls under it. */
+@media (max-width: 720px) {
+  .figure-lab { flex-direction: column; }
+  .figure-lab-stage { flex: none; height: 46vh; }
+  .figure-lab-side { width: 100%; max-height: 54vh; }
+}
