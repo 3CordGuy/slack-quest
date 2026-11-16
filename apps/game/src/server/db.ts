@@ -147,6 +147,8 @@ export interface InventoryRow {
   stored_in: number | null;
   /** Steps of work done at the smithy, already counted in `power`. */
   upgrades: number;
+  /** 1 while worn but not drawn on the hero. */
+  hidden: number;
 }
 
 export function rowToItem(row: InventoryRow): ItemDef {
@@ -161,6 +163,7 @@ export function rowToItem(row: InventoryRow): ItemDef {
     levelReq: row.level_req,
     icon: row.icon,
     ...(row.upgrades ? { upgrades: row.upgrades } : {}),
+    ...(row.hidden ? { hidden: true } : {}),
   };
 }
 
@@ -556,7 +559,7 @@ export async function equipItem(db: D1Database, playerId: string, itemId: number
   if (problem) return `${problem}.`;
   // Swapping never changes how many are carried: one comes off as the other goes on.
   await db.batch([
-    db.prepare("UPDATE inventory SET equipped = 0 WHERE player_id = ?1 AND slot = ?2 AND EXISTS (SELECT 1 FROM inventory WHERE id = ?3 AND stored_in IS NULL)").bind(playerId, row.slot, itemId),
+    db.prepare("UPDATE inventory SET equipped = 0, hidden = 0 WHERE player_id = ?1 AND slot = ?2 AND EXISTS (SELECT 1 FROM inventory WHERE id = ?3 AND stored_in IS NULL)").bind(playerId, row.slot, itemId),
     db.prepare("UPDATE inventory SET equipped = 1 WHERE id = ? AND stored_in IS NULL").bind(itemId),
   ]);
   return null;
@@ -567,8 +570,14 @@ export async function unequipItem(db: D1Database, playerId: string, itemId: numb
   if (!row) return "No such item.";
   // The weapon comes off like anything else: a hero with nothing in hand fights with bare hands.
   // Into the pack even if that puts it over the limit: nothing is ever dropped.
-  await db.prepare("UPDATE inventory SET equipped = 0 WHERE id = ?").bind(itemId).run();
+  await db.prepare("UPDATE inventory SET equipped = 0, hidden = 0 WHERE id = ?").bind(itemId).run();
   return null;
+}
+
+/** Show or hide a worn piece on the hero. What it does is unchanged either way. Returns an error message or null. */
+export async function setGearHidden(db: D1Database, playerId: string, itemId: number, hidden: boolean): Promise<string | null> {
+  const res = await db.prepare("UPDATE inventory SET hidden = ?3 WHERE id = ?2 AND player_id = ?1 AND equipped = 1 AND stored_in IS NULL").bind(playerId, itemId, hidden ? 1 : 0).run();
+  return res.meta.changes > 0 ? null : "Only worn gear can be hidden.";
 }
 
 /** Sell an unequipped item to the market stall. Returns the gold paid, or an error message. */

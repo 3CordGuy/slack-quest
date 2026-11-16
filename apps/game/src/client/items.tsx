@@ -37,6 +37,7 @@ export function toOwned(row: InventoryItem): OwnedItem {
     statBonus: JSON.parse(row.stat_bonus_json) as ItemDef["statBonus"],
     levelReq: row.level_req,
     icon: row.icon,
+    ...(row.hidden ? { hidden: true } : {}),
   };
 }
 

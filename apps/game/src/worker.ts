@@ -54,6 +54,7 @@ import {
   spendPoint,
   pickTrait,
   unequipItem,
+  setGearHidden,
   upgradeHut,
   type Env,
   type Player,
@@ -371,6 +372,12 @@ app.post("/api/character/equip", async (c) => {
 app.post("/api/character/unequip", async (c) => {
   const body = await c.req.json<{ itemId?: number }>().catch(() => ({}) as { itemId?: number });
   const error = await unequipItem(c.env.DB, c.get("player").id, Number(body.itemId));
+  return error ? c.json({ error }, 409) : c.json({ ok: true });
+});
+
+app.post("/api/character/hide", async (c) => {
+  const body = await c.req.json<{ itemId?: number; hidden?: boolean }>().catch(() => ({}) as { itemId?: number; hidden?: boolean });
+  const error = await setGearHidden(c.env.DB, c.get("player").id, Number(body.itemId), body.hidden === true);
   return error ? c.json({ error }, 409) : c.json({ ok: true });
 });
 
