@@ -82,7 +82,7 @@ function swingCurve(t: number): number {
   return 1 - easeInOut((u - STRIKE_PART) / (1 - STRIKE_PART));
 }
 /** How far round from looking straight at a tree its notch faces: far enough that the wedge bites out of its outline, near enough that you see into it. */
-const NOTCH_TURN = THREE.MathUtils.degToRad(55);
+const NOTCH_TURN = THREE.MathUtils.degToRad(40);
 
 const lambert = (color: string) => new THREE.MeshLambertMaterial({ color, flatShading: true });
 const HEARTWOOD = new THREE.Color("#ffe3a6");
