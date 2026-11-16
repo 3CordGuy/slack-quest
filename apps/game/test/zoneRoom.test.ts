@@ -273,6 +273,21 @@ describe("ZoneRoom", () => {
     expect(hexDistance(hero(cy.state, "cy").pos, cy.state.start)).toBeLessThanOrEqual(1);
   });
 
+  it("reads a hero again when their gear changes, but leaves them as they were in a fight", async () => {
+    const { zone, ann } = await arrive();
+    const sheet = () => zone.webSocketMessage(ann as unknown as WebSocket, JSON.stringify({ type: "sheet" }));
+    const was = hero(ann.state, "ann").maxHp;
+    sql.prepare("UPDATE characters SET vit = vit + 6 WHERE player_id = 'ann'").run();
+    await sheet();
+    const grown = hero(ann.state, "ann").maxHp;
+    expect(grown).toBeGreaterThan(was);
+
+    await pickFight(zone, ann);
+    sql.prepare("UPDATE characters SET vit = vit + 6 WHERE player_id = 'ann'").run();
+    await sheet();
+    expect(hero(ann.state, "ann").maxHp).toBe(grown);
+  });
+
   it("takes dev actions on a development deployment only", async () => {
     const { zone, ann } = await arrive();
     const at = ann.state.map.tiles.find((t) => hexDistance(t, ann.state.start) === 1 && t.biome === "plains")!;

@@ -129,8 +129,17 @@ export class ZoneRoom extends DurableObject<Env> {
     } catch {
       return;
     }
-    if (msg.type !== "action") return;
     const { playerId } = ws.deserializeAttachment() as Attachment;
+    if (msg.type === "sheet") {
+      // Gear was changed in the bag: the hero is read again. In a fight the reducer leaves them as they were.
+      await this.serial(async () => {
+        await this.load();
+        const hero = await heroInitFor(this.env.DB, playerId);
+        if (hero) await this.apply({ type: "join", hero: zoneHero(hero) });
+      });
+      return;
+    }
+    if (msg.type !== "action") return;
     const action = zoneActionFrom(msg.action, playerId, isDev(this.env));
     if (!action) return;
     const error = await this.serial(async () => {

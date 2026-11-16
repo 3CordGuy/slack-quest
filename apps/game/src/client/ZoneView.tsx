@@ -54,6 +54,7 @@ import {
 } from "@gantt-quest/world";
 import { api, type Me } from "./api";
 import { CrewRoster, type RosterMember } from "./CrewRoster";
+import { InventoryScreen } from "./InventoryScreen";
 import { Trading } from "./TradePanel";
 import { useAudioScene } from "./audio/useAudioScene";
 import { sounds } from "./audio/gameSounds";
@@ -171,6 +172,8 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
   /** The crew and where each of them is, asked for every few seconds; and who the trade table is open with. */
   const [crew, setCrew] = useState<CrewPlaces>([]);
   const [tradeWith, setTradeWith] = useState<string | null>(null);
+  /** The sea bag, open over the map. */
+  const [bag, setBag] = useState(false);
   const [note, setNote] = useState<string | null>(null);
   /** A fight has just broken out: the screen says so for a moment. */
   const [intro, setIntro] = useState(false);
@@ -986,6 +989,31 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
         </div>
       )}
       {me.character && <Trading me={me} partners={crew.filter((m) => m.id !== state.you)} withId={tradeWith} onWith={setTradeWith} refresh={refresh} />}
+      {bag && !tradeWith && me.character && (
+        <InventoryScreen
+          me={me}
+          onIsland
+          // Gear changed here is gear changed on the map: the server reads the hero again (and leaves them be in a fight).
+          refresh={() => refresh().then(() => zone.resheet())}
+          onClose={() => setBag(false)}
+          gearLocked={enc?.order.includes(state.you) ? "A fight is on: what you are wearing stays as it is until it is over." : undefined}
+          satchel={(Object.keys(ITEM_ICON) as Throwable[]).filter((item) => (act.items[item] ?? 0) > 0).map((item) => {
+            const entry = entries[`it:${item}`];
+            return {
+              id: item,
+              name: entry.name,
+              line: [entry.line, entry.more].filter(Boolean).join(". "),
+              icon: entry.icon,
+              count: entry.count ?? 0,
+              blocked: !entry.spent ? undefined : fighting && !myTurn ? "It is not your turn." : "You have neither an Action nor a Bonus action left for it this turn.",
+              use: () => {
+                setBag(false);
+                setPick({ kind: "item", item });
+              },
+            };
+          })}
+        />
+      )}
 
       {barMenu !== null && (
         <div className="zone-barmenu panel" role="dialog" aria-label="Choose what goes in this slot">
@@ -1023,6 +1051,8 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
         slots={slots}
         onSlotMove={(from, to) => arrange(moveSlot(bar, from, to))}
         onSlotMenu={(index) => setBarMenu((open) => (open === index ? null : index))}
+        // While the trade table is open it has the bag beside it already.
+        onBag={() => !tradeWith && setBag((open) => !open)}
         turn={enc && fighting ? { seconds: deadline, onEnd: myTurn ? () => zone.send({ type: "end_turn", unit: act.id }) : undefined, waitingFor } : undefined}
         menu={<OptionsMenu title={`Map ${code}`} subtitle={<>{state.options.biome} · {state.options.size}</>} actions={[{ label: "Leave the map", hint: "Back to the Harbor. The map stays as you left it.", run: onLeave }]} />}
       >

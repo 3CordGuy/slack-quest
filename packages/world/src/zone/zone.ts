@@ -438,6 +438,8 @@ function act(ctx: Ctx, action: ZoneAction): string | null {
     const here = unitById(state, hero.id);
     if (here) {
       // Back again, perhaps with different gear: the sheet is refreshed, and where they stand and how hurt they are is kept.
+      // Not in a fight, though: that is fought in the gear it was started in.
+      if (inFight(state, here.id)) return null;
       Object.assign(here, { name: hero.name, kind: hero.classId, level: hero.level, stats: hero.stats, armor: hero.armor, power: hero.weaponPower, abilities: abilitiesFor(hero.weapon), outfit: hero.outfit, maxHp: hero.maxHp, maxFocus: hero.maxFocus });
       here.hp = Math.min(here.hp, here.maxHp);
       return null;

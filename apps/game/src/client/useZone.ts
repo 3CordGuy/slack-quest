@@ -16,6 +16,8 @@ export interface ZoneConnection {
   status: "connecting" | "open" | "closed";
   error: string | null;
   send(action: ZoneSend): void;
+  /** Your gear has changed: have the server read your hero again. */
+  resheet(): void;
   clearError(): void;
 }
 
@@ -87,6 +89,9 @@ export function useZone(code: string, onUpdate: (state: ZoneView, events: ZoneEv
   const send = useCallback((action: ZoneSend) => {
     if (socket.current?.readyState === WebSocket.OPEN) socket.current.send(JSON.stringify({ type: "action", action }));
   }, []);
+  const resheet = useCallback(() => {
+    if (socket.current?.readyState === WebSocket.OPEN) socket.current.send(JSON.stringify({ type: "sheet" }));
+  }, []);
   const clearError = useCallback(() => setError(null), []);
-  return { state, online, status, error, send, clearError };
+  return { state, online, status, error, send, resheet, clearError };
 }

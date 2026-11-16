@@ -39,6 +39,10 @@
 // once, before the server has answered: the moves are sent one at a time, in
 // order, and each is shown over what the server last said until its answer
 // (and the fresh lists after it) are in. A move the server refuses goes back.
+//
+// Opened on a map, a row over the pack holds what the hero carries there to
+// drink or throw: picking one closes the bag with it in hand. While a fight
+// is on the gear worn stays as it is; the pack can still be looked through.
 
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { CatchPanel } from "./CatchPanel";
@@ -159,6 +163,20 @@ export interface OpenTrade {
   accept(ok: boolean): void;
 }
 
+/** Something carried on a map to drink or throw, shown in the bag's row of them. */
+export interface SatchelItem {
+  id: string;
+  name: string;
+  /** What it does, for its tooltip. */
+  line: string;
+  icon: { name: string; color: string; flat?: boolean };
+  count: number;
+  /** Why it cannot be used just now, if it cannot. */
+  blocked?: string;
+  /** Take it in hand: the bag closes and the map asks where it goes. */
+  use(): void;
+}
+
 interface Props {
   me: Me;
   refresh(): Promise<unknown>;
@@ -169,6 +187,10 @@ interface Props {
   chest?: OpenChest | null;
   /** A trade with a crewmate, open beside the bag in a chest's place. */
   trade?: OpenTrade | null;
+  /** On a map: what is carried there to drink or throw. */
+  satchel?: SatchelItem[];
+  /** Why the gear worn cannot be changed just now (a fight is on), if it cannot. */
+  gearLocked?: string;
 }
 
 /**
@@ -280,7 +302,7 @@ function PackGrid({ zone, name, u, rows, baseRows, stacks, decor = [], spots, he
   );
 }
 
-export function InventoryScreen({ me, refresh, onClose, onIsland = false, chest = null, trade = null }: Props) {
+export function InventoryScreen({ me, refresh, onClose, onIsland = false, chest = null, trade = null, satchel, gearLocked }: Props) {
   const c = me.character!;
   const { busy, error, act } = useAct(refresh);
   const [catchOpen, setCatchOpen] = useState(false);
@@ -545,8 +567,13 @@ export function InventoryScreen({ me, refresh, onClose, onIsland = false, chest 
     if (pickedDecor !== null && !inside.some((f) => f.id === pickedDecor)) setPickedDecor(null);
   }, [pickedDecor, inside]);
 
-  const equip = (id: number) => act(() => api.equip(id));
-  const unequip = (id: number) => act(() => api.unequip(id));
+  // A fight has the gear held as it is (the bag says so under the figure): nothing is worn or taken off.
+  const equip = async (id: number) => {
+    if (!gearLocked) await act(() => api.equip(id));
+  };
+  const unequip = async (id: number) => {
+    if (!gearLocked) await act(() => api.unequip(id));
+  };
   const lift = (stack: Stack, from: Held["from"], e: Point) => {
     setHeld({ stack, from });
     setHover(null);
@@ -649,12 +676,13 @@ export function InventoryScreen({ me, refresh, onClose, onIsland = false, chest 
         onPointerLeave={() => setHover(null)}
         data-slot={slot}
         onPointerDown={(e) => {
-          if (!held && item && e.button === 0 && !e.shiftKey) press.current = { stack: { t: "gear", key: `gear:${item.id}`, item }, from: "worn", x: e.clientX, y: e.clientY, dragging: false };
+          if (!held && item && !gearLocked && e.button === 0 && !e.shiftKey) press.current = { stack: { t: "gear", key: `gear:${item.id}`, item }, from: "worn", x: e.clientX, y: e.clientY, dragging: false };
         }}
         onClick={(e) => {
           if (held) {
             wearHeld();
           } else if (item) {
+            if (gearLocked) return;
             if (e.shiftKey) void unequip(item.id);
             else lift({ t: "gear", key: `gear:${item.id}`, item }, "worn", e);
           }
@@ -825,7 +853,7 @@ export function InventoryScreen({ me, refresh, onClose, onIsland = false, chest 
         <button className="bag-close hud-btn" aria-label="Close" title="Close (Esc)" onClick={onClose}>×</button>
         {(error ?? (trade ? null : refused)) && <div className="banner error">{error ?? refused}</div>}
 
-        <div className="bag-doll" style={{ height: DOLL_ROWS * U }}>
+        <div className={`bag-doll ${gearLocked ? "locked" : ""}`} style={{ height: DOLL_ROWS * U }}>
           <DollChart slots={CHART_SLOTS} unit={U} focus={{ x: DOLL.body.x + DOLL.body.w / 2, y: DOLL.body.y + DOLL.body.h / 2 }} pad={{ x: 3, y: 8 }} />
           {SLOTS.map(slotCell)}
           {TO_COME.map((t) => (
@@ -871,6 +899,26 @@ export function InventoryScreen({ me, refresh, onClose, onIsland = false, chest 
             </>
           )}
         </div>
+
+        {gearLocked && <div className="bag-locked" role="note">{gearLocked}</div>}
+        {satchel && satchel.length > 0 && (
+          <div className="bag-satchel" aria-label="Carried to drink or throw">
+            <span className="bag-satchel-name">To drink or throw</span>
+            {satchel.map((it) => (
+              <button
+                key={it.id}
+                className="satchel-item"
+                aria-label={`${it.name}, ${it.count}`}
+                aria-disabled={!!it.blocked}
+                title={`${it.name} × ${it.count}\n${it.blocked ?? it.line}`}
+                onClick={() => !it.blocked && it.use()}
+              >
+                <Icon name={it.icon.name} color={it.icon.color} size={iconPx(1, 1)} flat={it.icon.flat} />
+                <span className="badge br qty">{it.count}</span>
+              </button>
+            ))}
+          </div>
+        )}
 
         <div className="pack-wrap">
           <PackGrid

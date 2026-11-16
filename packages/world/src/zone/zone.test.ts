@@ -744,3 +744,19 @@ describe("the end of a fight", () => {
     }
   }, 60_000);
 });
+
+// ---------- a hero's sheet ----------
+
+describe("a hero's sheet", () => {
+  it("is read again when they come back in different gear, but not in the middle of a fight", () => {
+    const changed = { ...standInHero("qa_paladin", "ann", 1)!, armor: 9 };
+    let state = board();
+    hero(state, "ann", "qa_paladin", at(5, 6));
+    state = must(state, { type: "join", hero: changed });
+    expect(unit(state, "ann").armor).toBe(9);
+
+    const fight = duel().state;
+    const before = unit(fight, "ann").armor;
+    expect(unit(must(fight, { type: "join", hero: changed }), "ann").armor).toBe(before);
+  });
+});
