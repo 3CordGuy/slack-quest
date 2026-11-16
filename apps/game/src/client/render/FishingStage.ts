@@ -50,6 +50,8 @@ export interface FishHud {
   strength: number;
   lineOut: number;
   mode: FightMode | null;
+  /** The fish is worn out and coming straight in. */
+  spent: boolean;
   /** The button is down, and the pressure it is putting on. */
   held: boolean;
   pressure: number;
@@ -690,6 +692,7 @@ export class FishingStage implements WorldMinigame {
       strength: s?.S ?? 0,
       lineOut: s ? s.D / LINE_M : 0,
       mode: s?.mode ?? null,
+      spent: !!s?.spent,
       held: this.held,
       pressure: this.fight ? pressureAt(this.fight.edges, now - this.fight.at) : 0,
     });

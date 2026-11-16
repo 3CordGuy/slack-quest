@@ -671,6 +671,8 @@ export interface WorldMinigame {
   ownHero?(): boolean;
   /** A press on the canvas, in normalized device coordinates, and the camera it was seen through. */
   press?(ndc: THREE.Vector2, camera: THREE.Camera): void;
+  /** The pointer moved over the canvas, in normalized device coordinates. */
+  hover?(ndc: THREE.Vector2, camera: THREE.Camera): void;
   /** A key pressed; true if the game used it. */
   key?(e: KeyboardEvent): boolean;
   /** Where the head of this unit's seat is, in the world, if the game draws the unit itself (a table's players): their chat bubble is set beside it, rather than over the hex they all stand on. Null for a unit it does not draw, or for you. */
@@ -730,7 +732,7 @@ export class WorldRenderer {
   private pixel = PIXEL;
   /** Units a minigame is drawing for itself. */
   private stageHidden: string[] = [];
-  private minigame: { game: WorldMinigame; group: THREE.Group; hidden: { obj: THREE.Object3D; was: boolean }[]; felled: boolean } | null = null;
+  private minigame: { game: WorldMinigame; group: THREE.Group; hidden: { obj: THREE.Object3D; was: boolean }[]; felled: boolean; sight?: THREE.Vector3 } | null = null;
   /** The trees on forest hexes and the boulder heaps on the hills; a minigame may clear some trees for room. */
   private woods: Woods | null = null;
   /** The camera's normal field of view, which a minigame may widen. */
@@ -5430,7 +5432,13 @@ export class WorldRenderer {
   }
 
   private onPointerMove = (e: PointerEvent) => {
-    if (this.minigame) return;
+    if (this.minigame) {
+      if (this.minigame.game.hover) {
+        const rect = this.renderer.domElement.getBoundingClientRect();
+        this.minigame.game.hover(new THREE.Vector2(((e.clientX - rect.left) / rect.width) * 2 - 1, -((e.clientY - rect.top) / rect.height) * 2 + 1), this.camera);
+      }
+      return;
+    }
     const touch = this.touches.get(e.pointerId);
     if (touch) {
       touch.x = e.clientX;
@@ -5654,6 +5662,14 @@ export class WorldRenderer {
     if (this.minigame) {
       const v = this.minigame.game.frame(dt, now, this.camera.aspect);
       const b = Math.max(0, Math.min(1, v.blend));
+      // Nothing of the woods (a tree, a boulder off a heap) may stand between the game's eye and what it looks at.
+      // Cleared again whenever the eye moves on (a window turned from wide to tall stands it further back).
+      const m = this.minigame;
+      if (this.woods && (!m.sight || m.sight.distanceToSquared(v.eye) > 0.01)) {
+        m.sight = v.eye.clone();
+        m.felled = true;
+        this.woods.clearAlong(v.eye.x, v.eye.z, v.look.x, v.look.z, 0.35);
+      }
       if (b > 0) {
         const rel0 = this.camera.position.clone().sub(v.look);
         const rel1 = v.eye.clone().sub(v.look);

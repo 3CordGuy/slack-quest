@@ -31,6 +31,11 @@ export function Quarry({ outing, world, apply, onLeave }: {
   const [phase, setPhase] = useState<"ready" | "digging" | "time" | "hauling">(mine.leftMs === null ? "ready" : mine.leftMs > 0 ? "digging" : "time");
   const [error, setError] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
+  /** "Dig!" flashes up as the clock starts. */
+  const [go, setGo] = useState(false);
+  const phaseRef = useRef(phase);
+  phaseRef.current = phase;
+  const startingRef = useRef(false);
   const timerBar = useRef<HTMLDivElement>(null);
   const timerText = useRef<HTMLSpanElement>(null);
   const chargeFill = useRef<HTMLDivElement>(null);
@@ -126,11 +131,13 @@ export function Quarry({ outing, world, apply, onLeave }: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [world]);
 
-  // The clock, drawn straight into the bar.
+  // The clock, drawn straight into the bar. The outing was begun on the quarry's card already: once the camera
+  // has flown down to the face the clock starts by itself, with no second "Start" to press.
   useEffect(() => {
     let raf = 0;
     const draw = () => {
       raf = requestAnimationFrame(draw);
+      if (phaseRef.current === "ready" && !startingRef.current && !errorRef.current && stage.current?.arrived) void beginRef.current();
       const left = stage.current?.leftMs ?? mine.leftMs ?? mine.ms;
       const frac = Math.max(0, Math.min(1, left / mine.ms));
       if (timerBar.current) {
@@ -170,6 +177,8 @@ export function Quarry({ outing, world, apply, onLeave }: {
   }, []);
 
   const begin = async () => {
+    if (startingRef.current) return;
+    startingRef.current = true;
     setStarting(true);
     setError(null);
     try {
@@ -177,12 +186,19 @@ export function Quarry({ outing, world, apply, onLeave }: {
       applyRef.current(next);
       stage.current?.start(0);
       setPhase("digging");
+      setGo(true);
+      setTimeout(() => setGo(false), 800);
     } catch (e) {
       setError((e as Error).message);
     } finally {
+      startingRef.current = false;
       setStarting(false);
     }
   };
+  const beginRef = useRef(begin);
+  beginRef.current = begin;
+  const errorRef = useRef(error);
+  errorRef.current = error;
 
   const finds = outing.log.filter((e) => Object.keys(e.gained).length > 0).slice(-3);
   const haul = outing.haul;
@@ -228,19 +244,18 @@ export function Quarry({ outing, world, apply, onLeave }: {
         </ul>
       </div>
 
-      {phase === "ready" && (
-        <div className="mine-ready">
-          <span className="mine-kicker">Find the seam</span>
-          <div className="mine-keys">
-            <span><kbd>Tap</kbd> strike</span>
-            <span><kbd>Hold</kbd> heavy swing</span>
-            <span className="warn"><kbd>▼</kbd> falling rocks crush finds</span>
+      {phase === "ready" && (error ? (
+        <div className="mine-banner" role="alert">
+          <p className="bad">{error}</p>
+          <div className="row">
+            <button className="primary" onClick={() => void begin()}>Try again</button>
+            <button onClick={onLeave}>Step away</button>
           </div>
-          <button className="primary big" disabled={starting} onClick={() => void begin()} autoFocus>Start · {Math.round(mine.ms / 1000)}s</button>
-          <button className="link" onClick={onLeave}>Step away</button>
-          {error && <p className="bad">{error}</p>}
         </div>
-      )}
+      ) : (
+        <div className="mine-banner mine-getready" role="status"><strong>Get ready…</strong></div>
+      ))}
+      {go && <div className="mine-banner" role="status"><strong>Dig!</strong></div>}
 
       {phase === "time" && (
         <div className="mine-banner" role="status">

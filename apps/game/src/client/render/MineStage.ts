@@ -848,6 +848,11 @@ export class MineStage implements WorldMinigame {
     return { ...this.shot(aspect), blend: this.close };
   }
 
+  /** The camera has flown all the way down to the face. */
+  get arrived(): boolean {
+    return this.inT >= 1 && !this.leaving;
+  }
+
   /** Fly back out to the map, then take the set down and give the view back. */
   leave() {
     this.stop();

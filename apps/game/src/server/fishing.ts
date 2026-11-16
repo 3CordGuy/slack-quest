@@ -91,7 +91,7 @@ export async function closeSitting(db: D1Database, playerId: string, before: str
   const best = heaviest(items);
   const beaten = crew ? [...best.values()].filter((f) => FISH[f.species].kind !== "haul" && f.grams > (recordFor.get(f.species) ?? 0)) : [];
 
-  const xp = await prepareXp(db, playerId, sittingXp(next), { bonus: newSpecies.length * NEW_SPECIES_XP + beaten.length * CREW_RECORD_XP + book.pages.length * PAGE_XP });
+  const xp = await prepareXp(db, playerId, sittingXp(next), { bonus: newSpecies.length * NEW_SPECIES_XP + beaten.length * CREW_RECORD_XP + book.pages.length * PAGE_XP, bonusFor: "firsts and records" });
   const today = gatherDay(now);
   const statements: D1PreparedStatement[] = [
     // The sitting ends, and only now spends its stamina.
