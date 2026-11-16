@@ -58,7 +58,12 @@ void main() {`;
  * middle, `height` tall: each bends from its foot, most at the tip, by the gust passing where it stands,
  * with a small shiver of its own on top.
  */
-export function addWindSway(material: THREE.Material, height: number) {
+export function addWindSway(material: THREE.Material, height: number, turned = false) {
+  // Trees that are each turned their own way about y have the wind turned back into their own frame,
+  // so they all still lean the one way it blows.
+  const way = turned
+    ? /* glsl */ `(transpose(mat3(instanceMatrix)) * vec3(${WIND_DIR.x}, 0.0, ${WIND_DIR.z})).xz / max(length(instanceMatrix[0].xyz), 1e-3)`
+    : /* glsl */ `vec2(${WIND_DIR.x}, ${WIND_DIR.z})`;
   material.onBeforeCompile = (shader) => {
     Object.assign(shader.uniforms, UNIFORMS);
     shader.vertexShader = shader.vertexShader.replace("void main() {", GUST).replace(
@@ -69,10 +74,10 @@ export function addWindSway(material: THREE.Material, height: number) {
         vec2 root = instanceMatrix[3].xz;
         float up = clamp(position.y / ${height.toFixed(3)} + 0.5, 0.0, 1.0);
         float lean = windGust(root) * 0.2 + sin(windTime * 3.3 + root.x * 1.7 + root.y * 2.3) * 0.025 * windPower;
-        transformed.xz += vec2(${WIND_DIR.x}, ${WIND_DIR.z}) * lean * up * up;
+        transformed.xz += ${way} * lean * up * up;
       }
       #endif`,
     );
   };
-  material.customProgramCacheKey = () => `wind-sway-${height}`;
+  material.customProgramCacheKey = () => `wind-sway-${height}${turned ? "-turned" : ""}`;
 }

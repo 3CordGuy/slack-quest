@@ -15,11 +15,12 @@ import "./camera.css";
 import { PINCH_PAN_SLACK, followIconSvg, readFollow, writeFollow } from "./cameraFollow";
 import type { HexPos } from "@gantt-quest/core";
 import { hexDistance } from "@gantt-quest/core";
-import { lookStep, lookYaw, BASE_HEIGHT, BATTLE_JOIN_RANGE, BIG_REACH, ENEMIES, HEX_DIRS, TRAIT_BY_ID, MOVE_COST, WALL_FACE_HALF, WALL_ITEM_BOTTOM, WALL_ITEM_TOP, findPath, hexAt, xpProgress, reachable, tileAt, wallFace, wallFaces, type ClientState, type Outfit, type Phase, type Poi, type Tile, type WorldEvent, type WorldMap } from "@gantt-quest/world";
+import { lookStep, lookYaw, BASE_HEIGHT, BATTLE_JOIN_RANGE, BIG_REACH, ENEMIES, HEX_DIRS, TRAIT_BY_ID, tileCost, WALL_FACE_HALF, WALL_ITEM_BOTTOM, WALL_ITEM_TOP, findPath, hexAt, xpProgress, reachable, tileAt, wallFace, wallFaces, type ClientState, type Outfit, type Phase, type Poi, type Tile, type WorldEvent, type WorldMap } from "@gantt-quest/world";
 import { fancy } from "./fancy";
 import { NightLife } from "./nightlife";
 import { Storm } from "./storm";
-import { addWindSway, updateWind } from "./wind";
+import { updateWind } from "./wind";
+import { Woods, tintOf, type BoulderSpot, type TreeSpot } from "./woods";
 import { OVERLAY_LAYER, PostFx, type Air } from "./post";
 import { fishMount } from "./catchArt";
 import { FRAME, OUTLINE, inflate, makeFigure, type Figure } from "./figures";
@@ -675,9 +676,9 @@ export class WorldRenderer {
   private pixel = PIXEL;
   /** Units a minigame is drawing for itself. */
   private stageHidden: string[] = [];
-  private minigame: { game: WorldMinigame; group: THREE.Group; hidden: { obj: THREE.Object3D; was: boolean }[]; felled: { i: number; m: THREE.Matrix4 }[] } | null = null;
-  /** The trees on forest hexes, one instanced mesh; a minigame may clear some for room. */
-  private forest: THREE.InstancedMesh | null = null;
+  private minigame: { game: WorldMinigame; group: THREE.Group; hidden: { obj: THREE.Object3D; was: boolean }[]; felled: boolean } | null = null;
+  /** The trees on forest hexes and the boulder heaps on the hills; a minigame may clear some trees for room. */
+  private woods: Woods | null = null;
   /** The camera's normal field of view, which a minigame may widen. */
   private baseFov = 35;
   private lentFlash = 0;
@@ -1523,22 +1524,48 @@ export class WorldRenderer {
     this.terrain = terrain;
     this.scene.add(terrain);
 
-    // Trees on forest. POI hexes stay clear. Rocks, grass and waves come from the ambience.
+    // Trees on forest, and the thickets and boulder heaps that cannot be walked through. POI hexes stay clear.
+    // Rocks on open hills, grass and waves come from the ambience.
     const poiKeys = new Set(state.map.pois.map((p) => key(p.pos)));
-    const trees: THREE.Matrix4[] = [];
+    const trees: TreeSpot[] = [];
+    const boulders: BoulderSpot[] = [];
     for (const t of this.tiles) {
-      if (poiKeys.has(key(t)) || t.biome !== "forest") continue;
+      if (poiKeys.has(key(t))) continue;
       const { x, z } = hexToWorld(t);
       const top = tileTop(t);
-      for (let i = 0; i < 2; i++) {
-        const s = 0.8 + noise(t.q, t.r, i) * 0.5;
-        trees.push(
-          new THREE.Matrix4().compose(
-            new THREE.Vector3(x + (noise(t.q, t.r, i + 3) - 0.5) * 0.9, top + 0.45 * s, z + (noise(t.q, t.r, i + 7) - 0.5) * 0.8 - 0.1),
-            new THREE.Quaternion(),
-            new THREE.Vector3(s, s, s),
-          ),
-        );
+      const n = (salt: number) => noise(t.q, t.r, salt);
+      const tree = (dx: number, dz: number, size: number, salt: number, pine = n(salt + 1) < 0.68) =>
+        trees.push({ x: x + dx, y: top, z: z + dz, size, kind: pine ? "pine" : "broad", yaw: n(salt + 2) * Math.PI * 2, tint: tintOf(n(salt + 3), n(salt + 4)) });
+      if (t.blocker === "trees") {
+        // A thicket: a ring of big old trees round one in the middle, and brush between their feet.
+        const ring = 5 + Math.floor(n(100) * 2.99);
+        const turn = n(101) * Math.PI * 2;
+        for (let i = 0; i < ring; i++) {
+          const a = turn + (i / ring) * Math.PI * 2 + (n(110 + i) - 0.5) * 0.6;
+          const d = 0.5 + n(120 + i) * 0.22;
+          tree(Math.sin(a) * d, Math.cos(a) * d * 0.95, 1.15 + n(130 + i) * 0.55, 140 + i * 5);
+        }
+        tree((n(102) - 0.5) * 0.2, (n(103) - 0.5) * 0.2, 1.6 + n(104) * 0.4, 190);
+        for (let i = 0; i < 3; i++) {
+          const a = turn + ((i + 0.5) / 3) * Math.PI * 2;
+          tree(Math.sin(a) * 0.3, Math.cos(a) * 0.3, 0.42 + n(200 + i) * 0.2, 210 + i * 5, false);
+        }
+      } else if (t.blocker === "boulders") {
+        // A heap of boulders: one big one, a second leaning on it, and a few smaller round their feet.
+        const turn = n(300) * Math.PI * 2;
+        const rock = (dx: number, dz: number, size: number, tall: number, salt: number) =>
+          boulders.push({ x: x + dx, y: top, z: z + dz, size, tall, yaw: n(salt) * Math.PI * 2, tilt: (n(salt + 1) - 0.5) * 0.5, shape: Math.floor(n(salt + 2) * 3.99), tint: tintOf(n(salt + 3), n(salt + 4)) });
+        rock(Math.sin(turn) * 0.12, Math.cos(turn) * 0.12, 0.6 + n(301) * 0.15, 0.75 + n(302) * 0.35, 310);
+        rock(Math.sin(turn + 2.4) * 0.45, Math.cos(turn + 2.4) * 0.42, 0.4 + n(303) * 0.12, 0.5 + n(304) * 0.3, 320);
+        const small = 2 + Math.floor(n(305) * 2.99);
+        for (let i = 0; i < small; i++) {
+          const a = turn + 3.6 + i * 1.3 + n(330 + i) * 0.5;
+          const d = 0.55 + n(340 + i) * 0.2;
+          rock(Math.sin(a) * d, Math.cos(a) * d * 0.9, 0.16 + n(350 + i) * 0.14, 0.18 + n(360 + i) * 0.16, 370 + i * 5);
+        }
+      } else if (t.biome === "forest") {
+        // Open woods: two trees, room to walk between.
+        for (let i = 0; i < 2; i++) tree((n(i + 3) - 0.5) * 0.9, (n(i + 7) - 0.5) * 0.8 - 0.1, 0.72 + n(i) * 0.45, 400 + i * 5);
       }
     }
     // The rampart's broken teeth: a merlon or two left standing on each length of wall.
@@ -1556,8 +1583,8 @@ export class WorldRenderer {
     }
     this.ambience.build(
       this.tiles.filter((t) => !this.deep.has(key(t))),
-      // Nothing grows or lies about where a place stands, or under a building.
-      (t) => poiKeys.has(key(t)) || !!t.built,
+      // Nothing grows or lies about where a place stands, under a building, or in a thicket or a boulder heap.
+      (t) => poiKeys.has(key(t)) || !!t.built || !!t.blocker,
       (t) => ({ ...hexToWorld(t), y: tileTop(t) }),
     );
     const instanced = (geometry: THREE.BufferGeometry, color: string, mats: THREE.Matrix4[]) => {
@@ -1569,9 +1596,10 @@ export class WorldRenderer {
       this.decor.add(mesh);
       return mesh;
     };
-    // The trees bend in the wind (fancy graphics): 0.9 is the cone's height.
-    this.forest = instanced(new THREE.ConeGeometry(0.34, 0.9, 5), this.sodden ? "#3a5d41" : "#2f7a3d", trees);
-    addWindSway(this.forest.material as THREE.Material, 0.9);
+    // The trees bend in the wind (fancy graphics), and aside as anyone walks through them.
+    this.woods?.dispose();
+    this.woods = new Woods(trees, boulders, this.sodden);
+    this.decor.add(this.woods.group);
     if (merlons.length > 0) instanced(new THREE.BoxGeometry(1, 1, 1), "#6a6d75", merlons);
 
     // Start centred on the island. Fog lifting redraws the ground but leaves the camera where the player put it.
@@ -1856,7 +1884,7 @@ export class WorldRenderer {
       obj.visible = false;
     };
     hide(hidePoi ? this.poiObject(hidePoi) : undefined);
-    this.minigame = { game, group, hidden, felled: [] };
+    this.minigame = { game, group, hidden, felled: false };
     this.hideOwnHero();
     for (const b of [this.followButton, ...this.turnButtons]) b.style.visibility = "hidden";
     // Bring the usual view over the hex first, so the swing in starts from somewhere near.
@@ -1886,10 +1914,7 @@ export class WorldRenderer {
       for (const mat of mats) mat.dispose();
     });
     for (const h of m.hidden) h.obj.visible = h.was;
-    if (this.forest && m.felled.length) {
-      for (const { i, m: mat } of m.felled) this.forest.setMatrixAt(i, mat);
-      this.forest.instanceMatrix.needsUpdate = true;
-    }
+    if (m.felled) this.woods?.restore();
     const mine = this.state?.you ? this.units.get(this.state.you) : undefined;
     if (mine) for (const obj of [mine.root, mine.label, mine.ring]) if (obj) obj.visible = true;
     for (const id of this.stageHidden) this.showUnit(id);
@@ -1917,19 +1942,11 @@ export class WorldRenderer {
   /** For the minigame under way: take the forest's own trees out of a circle (world units) so its things stand clear. Put back when it ends. */
   clearTrees(x: number, z: number, radius: number) {
     const m = this.minigame;
-    const forest = this.forest;
-    if (!m || !forest) return;
-    const mat = new THREE.Matrix4();
-    const at = new THREE.Vector3();
-    for (let i = 0; i < forest.count; i++) {
-      forest.getMatrixAt(i, mat);
-      at.setFromMatrixPosition(mat);
-      if (Math.hypot(at.x - x, at.z - z) > radius || mat.elements[0] === 0) continue;
-      m.felled.push({ i, m: mat.clone() });
-      forest.setMatrixAt(i, new THREE.Matrix4().makeScale(0, 0, 0));
-    }
-    forest.instanceMatrix.needsUpdate = true;
+    if (!m || !this.woods) return;
+    m.felled = true;
+    this.woods.clear(x, z, radius);
   }
+
 
   /** While a minigame runs you see through your hero's eyes: their figure, tag and ring are not drawn. So are the units a game draws itself (a table's players, who all stand on its one hex). */
   private hideOwnHero() {
@@ -2468,7 +2485,7 @@ export class WorldRenderer {
     if (!state.props?.length) return undefined;
     // Small things are stepped over, and so are rugs.
     const blocked = new Set(state.props.filter((p) => !p.small && !p.mount && !p.flat && p.on === undefined).flatMap((p) => (p.covers ?? [p.pos]).map(key)));
-    return (t) => (blocked.has(key(t)) || t.built ? Infinity : MOVE_COST[t.biome]);
+    return (t) => (blocked.has(key(t)) ? Infinity : tileCost(t));
   }
 
   /**
@@ -5277,6 +5294,8 @@ export class WorldRenderer {
     const heroes = this.state?.heroes;
     this.tableLamps.update(dt, (hex) => !!heroes?.some((h) => h.pos.q === hex.q && h.pos.r === hex.r));
     this.ambience.update(this.clock, this.yaw, this.target, this.state?.you ? this.units.get(this.state.you)?.root.position : undefined);
+    // Whoever walks through the woods pushes the trees aside.
+    this.woods?.update(dt, [...this.units.values()].filter((u) => u.root.visible).map((u) => u.root.position));
     // Sounds are heard from where your hero stands, or from the middle of the view without one.
     const ear = (this.state?.you ? this.units.get(this.state.you)?.root.position : undefined) ?? this.target;
     this.ear.listener(ear.x, ear.z, this.yaw);
