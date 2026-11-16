@@ -23,7 +23,8 @@ import { setFieldWalkers, updateWind } from "./wind";
 import { OAK_SHAPES, Woods, tintOf, type BoulderSpot, type TreeSpot } from "./woods";
 import { OVERLAY_LAYER, PostFx, type Air } from "./post";
 import { fishMount } from "./catchArt";
-import { FRAME, OUTLINE, inflate, makeFigure, type Figure } from "./figures";
+import { FRAME, OUTLINE, SITTING_DROP, inflate, makeFigure, type Figure } from "./figures";
+import { BOAT_SCALE, OARLOCKS, ROWER_SEAT, aimOar, rowboatModel, shipOar } from "./rowboat";
 import { Rise } from "./rise";
 import { gaze } from "../gaze";
 import { NIGHT, VEIL_CLEAR_S, Veil } from "./veil";
@@ -469,6 +470,11 @@ interface Unit {
   boat?: THREE.Group | null;
   boatKind?: "barrel" | "rowboat";
   sunk?: number;
+  /** Holding a fishing rod: in a rowboat, the oars are shipped and the hands left for the rod. */
+  rod?: boolean;
+  /** At the oars: how far round the stroke is (radians), and where it has the hands, 0 (forward) to 1 (pulled in). */
+  oarPhase?: number;
+  oarPull?: number;
   /** The model, and its root: where the unit stands (its feet) and which way it is turned. */
   figure: Figure;
   root: THREE.Group;
@@ -2236,10 +2242,10 @@ export class WorldRenderer {
     unit.boatKind = kind;
     if (!kind) return;
     const g = new THREE.Group();
-    const wood = new THREE.MeshLambertMaterial({ color: "#7a5a3a" });
-    const dark = new THREE.MeshLambertMaterial({ color: "#4a3322" });
-    const iron = new THREE.MeshLambertMaterial({ color: "#5a5e66" });
     if (kind === "barrel") {
+      const wood = new THREE.MeshLambertMaterial({ color: "#7a5a3a" });
+      const dark = new THREE.MeshLambertMaterial({ color: "#4a3322" });
+      const iron = new THREE.MeshLambertMaterial({ color: "#5a5e66" });
       const body = new THREE.Mesh(new THREE.CylinderGeometry(0.24, 0.21, 0.34, 10), wood);
       body.position.y = 0.05;
       const top = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, 0.01, 10), dark);
@@ -2252,30 +2258,35 @@ export class WorldRenderer {
         g.add(hoop);
       }
     } else {
-      const hull = new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.16, 0.95), wood);
-      hull.position.y = 0.04;
-      const bow = new THREE.Mesh(new THREE.ConeGeometry(0.23, 0.32, 4), wood);
-      bow.rotation.x = Math.PI / 2;
-      bow.rotation.y = Math.PI / 4;
-      bow.scale.set(1, 1, 0.5);
-      bow.position.set(0, 0.04, 0.62);
-      const inside = new THREE.Mesh(new THREE.BoxGeometry(0.38, 0.01, 0.85), dark);
-      inside.position.y = 0.125;
-      g.add(hull, bow, inside);
-      for (const s of [-1, 1]) {
-        const oar = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.02, 0.05), new THREE.MeshLambertMaterial({ color: "#b98b5a" }));
-        oar.position.set(s * 0.42, 0.12, -0.05);
-        oar.rotation.z = -s * 0.25;
-        oar.name = "oar";
-        g.add(oar);
-      }
+      // A proper little rowboat (see rowboat.ts): its oars are put in the rower's hands by rideBoat.
+      const boat = rowboatModel();
+      g.add(boat.group);
+      g.userData.oars = boat.oars;
     }
     g.visible = false;
     this.unitGroup.add(g);
     unit.boat = g;
   }
 
-  /** Afloat on a water hex: the boat bobs under the unit, sitting it down in it, turned the way it is going. */
+  /**
+   * Whether a unit is sat at the oars of a rowboat afloat (a person, without a rod in hand), and so is to be
+   * posed rowing: where its stroke is, 0 (reached forward) to 1 (pulled back), or undefined if not.
+   */
+  private rowingPose(unit: Unit, p: THREE.Vector3, dt: number): number | undefined {
+    if (unit.boatKind !== "rowboat" || unit.rod || unit.lying || this.groundAt(p.x, p.z)?.biome !== "water") return undefined;
+    const moving = unit.path.length > 0;
+    // Rowing, the stroke goes round steadily; at rest, the hands settle about half way and the oars lie still.
+    if (moving) unit.oarPhase = ((unit.oarPhase ?? 0) + dt * 6.2) % (Math.PI * 2);
+    const want = moving ? 0.5 - 0.5 * Math.cos(unit.oarPhase ?? 0) : 0.55;
+    unit.oarPull = moving ? want : (unit.oarPull ?? want) + (want - (unit.oarPull ?? want)) * Math.min(1, dt * 4);
+    return unit.oarPull;
+  }
+
+  /**
+   * Afloat on a water hex: the boat bobs under the unit, sitting it down in it. A rowboat is turned the way its
+   * rower faces, whichever way that is (walking, or looking toward the pointer), with its rowing seat under them;
+   * each oar's handle is put in their fist and laid through its oarlock.
+   */
   private rideBoat(unit: Unit, p: THREE.Vector3, dt: number) {
     const boat = unit.boat;
     if (!boat) return;
@@ -2284,18 +2295,47 @@ export class WorldRenderer {
     boat.visible = afloat && unit.root.visible;
     if (!afloat) return;
     const swell = Math.sin(this.clock * 1.4 + p.x) * 0.025;
-    boat.position.set(p.x, ground!.top + swell, p.z - 0.1);
-    const moving = unit.path.length > 0;
-    if (moving) {
-      const to = unit.path[0];
-      boat.rotation.y = Math.atan2(to.x - p.x, to.z - p.z);
+    if (unit.boatKind === "barrel") {
+      boat.position.set(p.x, ground!.top + swell, p.z - 0.1);
+      const moving = unit.path.length > 0;
+      if (moving) {
+        const to = unit.path[0];
+        boat.rotation.y = Math.atan2(to.x - p.x, to.z - p.z);
+      }
+      boat.rotation.z = Math.sin(this.clock * 1.1 + p.z) * 0.06;
+      // Sat down in it, to the chest.
+      unit.sunk = 0.24 - swell;
+      p.y -= unit.sunk;
+      return;
     }
-    boat.rotation.z = Math.sin(this.clock * 1.1 + p.z) * 0.06;
-    // Oars stroke while rowing.
-    for (const oar of boat.children.filter((c) => c.name === "oar")) oar.rotation.y = moving ? Math.sin(this.clock * 7) * 0.4 : oar.rotation.y * Math.exp(-dt * 4);
-    // Sat down in it: a barrel to the chest, a rowboat to the waist.
-    unit.sunk = (unit.boatKind === "barrel" ? 0.24 : 0.16) - swell;
+    // A rowboat: turned with its rower, its seat under them.
+    const turn = unit.turn;
+    const sin = Math.sin(turn), cos = Math.cos(turn);
+    const seatZ = ROWER_SEAT.z * BOAT_SCALE;
+    boat.position.set(p.x - sin * seatZ, ground!.top + swell, p.z - cos * seatZ);
+    boat.rotation.set(0, turn, Math.sin(this.clock * 1.1 + p.z) * 0.05);
+    // Seated on the thwart: the figure's origin as far below the seat as a seated figure's is.
+    unit.sunk = SITTING_DROP * unit.size - ROWER_SEAT.y * BOAT_SCALE - swell;
     p.y -= unit.sunk;
+    // No hop in a boat.
+    unit.bob = 0;
+    const oars = boat.userData.oars as [THREE.Group, THREE.Group] | undefined;
+    if (!oars) return;
+    const hands = unit.oarPull !== undefined && !unit.rod && !unit.lying ? unit.figure.hands() : null;
+    if (!hands) {
+      oars.forEach((oar, i) => shipOar(oar, OARLOCKS[i]));
+      return;
+    }
+    // Where the fists are now, in the boat model's own units: the figure and the boat brought up to date first.
+    unit.root.updateMatrixWorld(true);
+    boat.updateMatrixWorld(true);
+    const fist = new THREE.Vector3();
+    // The left hand takes the left oar (hands are right then left; the oarlocks left then right).
+    [hands[1], hands[0]].forEach((hand, i) => {
+      hand.getWorldPosition(fist);
+      oars[i].parent!.worldToLocal(fist);
+      aimOar(oars[i], fist, OARLOCKS[i]);
+    });
   }
 
   /** Whether a unit is still on its way along a walked path. */
@@ -4987,6 +5027,7 @@ export class WorldRenderer {
       if (w.asleep && !unit.asleep) unit.nextZ = this.clock + 0.4;
       unit.asleep = !!w.asleep;
       this.syncBoat(unit, w.boat);
+      unit.rod = !!w.rod;
       // Down or asleep: on their back, low to the ground.
       unit.lying = !!w.down || !!w.asleep;
       unit.head = unit.lying ? w.size * LYING + 0.3 : w.size + 0.3;
@@ -5746,7 +5787,9 @@ export class WorldRenderer {
       if (unit.asleep) unit.turnGoal = this.yaw + Math.PI / 2;
       unit.turn += turnBy(unit.turn, unit.turnGoal) * (1 - Math.exp(-dt * 12));
       unit.root.rotation.y = unit.turn;
-      unit.figure.update({ time: this.clock, stride: unit.stride, walking: unit.path.length > 0, lean: unit.lean, lying: unit.lying });
+      const rowing = this.rowingPose(unit, p, dt);
+      if (rowing === undefined) unit.oarPull = undefined;
+      unit.figure.update({ time: this.clock, stride: unit.stride, walking: unit.path.length > 0, lean: unit.lean, lying: unit.lying, rowing, sitting: unit.boatKind === "rowboat" && unit.boat?.visible ? 1 : undefined });
       const ground = p.y;
       unit.feet.set(p.x, ground, p.z);
       if (landed) this.footfall(id, unit);

@@ -589,6 +589,8 @@ interface Anim {
   lying: boolean;
   /** On a seat, 0 (standing) to 1: the hips stay where they are, the thighs go forward and the shins hang from the knee. */
   sitting: number;
+  /** At the oars of a rowboat (seated): where the stroke is, 0 (reached forward) to 1 (pulled back). -1: not rowing. */
+  oars: number;
 }
 
 interface Rig {
@@ -596,6 +598,8 @@ interface Rig {
   animate(a: Anim): void;
   /** Never touches the ground (a ghost, a bat) or is all one wet thing (a slime): no mud on it. */
   clean?: boolean;
+  /** A person's fists, right then left: where they hold things, and take hold of oars. */
+  hands?: [THREE.Object3D, THREE.Object3D];
 }
 
 // ---------- people ----------
@@ -664,6 +668,17 @@ function biped(top: THREE.Group, parts: Part[]) {
       thighL.joint.rotation.set(-SIT * k, 0, 0.12 * k);
       thighR.joint.rotation.set(-SIT * k, 0, -0.12 * k);
       shinL.joint.rotation.x = shinR.joint.rotation.x = (SIT - 0.1) * k;
+      if (a.oars >= 0) {
+        // At the oars, facing the bow: both arms reach forward and up to the handles to push the blades back
+        // through the water, then come down and back in to lift them out. The body leans into each push.
+        const pull = a.oars;
+        const forward = -1.12 + pull * 0.6;
+        armL.joint.rotation.set(forward, 0, 0.03 + pull * 0.05);
+        armR.joint.rotation.set(forward, 0, -0.03 - pull * 0.05);
+        top.rotation.x = 0.12 - pull * 0.2;
+        head.joint.rotation.x = -top.rotation.x * 0.7 + a.breath * 0.02;
+        return;
+      }
       const reach = rest.armL + ((rest.armL < -0.3 ? rest.armL : -0.95) - rest.armL) * k;
       heldL.joint.rotation.x = -reach + rest.tiltL;
       armL.joint.rotation.set(reach + a.breath * 0.02, 0, 0.1 - 0.05 * k);
@@ -2714,7 +2729,7 @@ function person(top: THREE.Group, look: Look, outfit: Outfit | undefined, asleep
     apply(b, drawHeld(look.weapon, b, look.accent, look, false, STOCK_ICON[look.weapon]));
   }
   if (shield || look.weapon === "axe_shield") b.rest.armL = -0.55;
-  return { parts, animate: b.animate };
+  return { parts, animate: b.animate, hands: [b.heldR.joint, b.heldL.joint] };
 }
 
 /** A lute in its own part's frame: the belly at the origin facing +z, the neck up +y. Its icon's model, low-poly. */
@@ -3523,6 +3538,11 @@ export interface FigurePose {
    * into the pose it is, 0 (standing) to 1, for sitting down and getting up. Only people sit; a creature stands.
    */
   sitting?: boolean | number;
+  /**
+   * At the oars of a rowboat (a person, seated): where the stroke is, 0 (hands reached forward) to 1 (pulled back
+   * in). Whatever the hands held is put down meanwhile, so they can take the oars (see Figure.hands).
+   */
+  rowing?: number;
 }
 
 /** How far below a seat's top a seated figure's origin goes, as a share of its size: its hips, less half a thigh. */
@@ -3534,6 +3554,8 @@ export interface Figure {
   /** How tall the 22-unit frame is in world units: what a sprite's height used to be. */
   setSize(size: number): void;
   update(pose: FigurePose): void;
+  /** A person's fists, right then left, for putting oars in; null for a creature. */
+  hands(): [THREE.Object3D, THREE.Object3D] | null;
   /** Greyed, for someone down in a fight. */
   setDim(on: boolean): void;
   /** How much of it is left to see, 1 (all there) to 0 (gone): it thins out pixel by pixel as a camera passes through it. */
@@ -3592,13 +3614,21 @@ export function makeFigure(kind: string, look: Look, outfit?: Outfit, opts: Figu
   const beat = Math.random() * 6;
   let swing = 0;
   let last = -1;
+  /** Whether what the hands hold is put away (at the oars). */
+  let heldAway = false;
   const update = (p: FigurePose) => {
     const dt = last < 0 ? 1 : Math.min(0.1, Math.max(0, p.time - last));
     last = p.time;
     const want = p.walking ? Math.sin(p.stride * 3.6) : 0;
     swing += (want - swing) * Math.min(1, dt * 20);
-    const anim: Anim = { t: p.time, swing, breath: Math.sin(p.time * 2.2 + beat), strike: Math.min(1, Math.abs(p.lean) * 2), lying: p.lying, sitting: typeof p.sitting === "number" ? Math.max(0, Math.min(1, p.sitting)) : p.sitting ? 1 : 0 };
+    const rowing = p.rowing !== undefined && !!rig.hands && !p.lying;
+    const anim: Anim = { t: p.time, swing, breath: Math.sin(p.time * 2.2 + beat), strike: Math.min(1, Math.abs(p.lean) * 2), lying: p.lying, sitting: rowing ? 1 : typeof p.sitting === "number" ? Math.max(0, Math.min(1, p.sitting)) : p.sitting ? 1 : 0, oars: rowing ? Math.max(0, Math.min(1, p.rowing!)) : -1 };
     if (sling) stow(sling, p.walking, anim.strike, dt);
+    // At the oars, whatever was in hand is laid down in the boat; it is back in hand once they step ashore.
+    if (rig.hands && rowing !== heldAway) {
+      heldAway = rowing;
+      for (const hand of rig.hands) for (const held of hand.children) held.visible = !rowing;
+    }
     rig.animate(anim);
     if (swinging.length > 0) swingBraids(swinging, anim);
   };
@@ -3610,6 +3640,7 @@ export function makeFigure(kind: string, look: Look, outfit?: Outfit, opts: Figu
     root,
     setSize: (size) => scaler.scale.setScalar(size / FRAME),
     update,
+    hands: () => rig.hands ?? null,
     setDim(on) {
       mats.body.color.setScalar(on ? 0.5 : 1);
       mats.glow.color.setScalar(on ? 0.4 : 1);
