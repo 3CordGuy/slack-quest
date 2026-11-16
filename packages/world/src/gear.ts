@@ -67,6 +67,8 @@ export interface ItemDef {
   icon: string;
   /** Steps of work at the smithy, each already counted in `power`. Absent or 0 for untouched gear. */
   upgrades?: number;
+  /** Worn but not drawn: it still counts for everything, but the hero is shown without it. */
+  hidden?: boolean;
 }
 
 export const rarityIndex = (r: Rarity) => RARITIES.indexOf(r);
@@ -329,7 +331,8 @@ export type Outfit = Partial<Record<Slot, { icon: string; ref: string; rarity: R
 
 export function outfitOf(equipped: ItemDef[]): Outfit {
   const out: Outfit = {};
-  for (const item of equipped) out[item.slot] = { icon: item.icon, ref: item.ref, rarity: item.rarity };
+  // Hidden gear is worn for what it does, not for how it looks.
+  for (const item of equipped) if (!item.hidden) out[item.slot] = { icon: item.icon, ref: item.ref, rarity: item.rarity };
   return out;
 }
 
