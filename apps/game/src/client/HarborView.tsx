@@ -6,7 +6,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useAudioScene } from "./audio/useAudioScene";
 import type { HexPos } from "@gantt-quest/core";
-import { GATHER_SPOTS, GATHER_SPOT_IDS, HARBOR_APOTHECARY, HARBOR_BOARD, HARBOR_CAVE, HARBOR_GALLEY, HARBOR_LIGHTHOUSE, HARBOR_SMITHY, HARBOR_GATHER, HARBOR_NAME, HARBOR_PIERS, HARBOR_PLOTS, HARBOR_PUB, HARBOR_RING, HARBOR_SHOP, HARBOR_SPAWN, HARBOR_WORKS, MAX_PARTY, PLOT_PRICE, RESOURCE_KINDS, SHACK_COST, binFill, binNeeds, builtProjects, BOOK_TITLE, fishSpotAt, harborDoor, seaEdge, tileAt, waterSpotAt, type FishSpot, FISH_SPOTS, generateHarbor, projectById, projectProgress, harborPoi, hutTier, poiAt, salesman, type GatherSpot, type HarborShip, type Resources } from "@gantt-quest/world";
+import { GATHER_SPOTS, GATHER_SPOT_IDS, HARBOR_APOTHECARY, HARBOR_BOARD, HARBOR_CAVE, HARBOR_GALLEY, HARBOR_LIGHTHOUSE, HARBOR_SMITHY, HARBOR_GATHER, HARBOR_NAME, HARBOR_PIERS, HARBOR_PLOTS, HARBOR_PLOT_FACING, HARBOR_PUB, HARBOR_RING, HARBOR_SHOP, HARBOR_SPAWN, HARBOR_WORKS, MAX_PARTY, PLOT_PRICE, RESOURCE_KINDS, SHACK_COST, binFill, binNeeds, builtProjects, BOOK_TITLE, fishSpotAt, harborDoor, seaEdge, tileAt, waterSpotAt, type FishSpot, FISH_SPOTS, generateHarbor, projectById, projectProgress, harborPoi, hutTier, poiAt, salesman, type GatherSpot, type HarborShip, type Resources } from "@gantt-quest/world";
 import { api, type Me } from "./api";
 import { CatchPanel } from "./CatchPanel";
 import { AccountPanel } from "./Account";
@@ -35,6 +35,13 @@ import { label } from "./labels";
 import { xpEvents } from "./xpEvents";
 
 const same = (a: HexPos, b: HexPos) => a.q === b.q && a.r === b.r;
+/**
+ * The Harbor opens seen from a little east of south, about eighteen degrees off the rows of hexes: its streets
+ * and lanes are laid along those rows, and squared to the screen they look ruled. From here the buildings on
+ * the north side of the High Street and along both hut lanes show their fronts.
+ */
+const HARBOR_VIEW_YAW = 0.32;
+
 /** "10 wood and 6 stone". */
 const costText = (r: Resources) => {
   const parts = RESOURCE_KINDS.filter((k) => (r[k] ?? 0) > 0).map((k) => `${r[k]} ${label("resource", k).toLowerCase()}`);
@@ -104,9 +111,10 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
       // A plot someone has bought has their hut on it, or a resource bin while the shack is still to go up; the rest are staked out and for sale.
       ...HARBOR_PLOTS.map((pos, i) => {
         const owner = board.members.find((m) => m.plot === i);
-        if (!owner) return harborPoi(`lot:${i}`, "lot", pos);
-        if (owner.bin) return { ...harborPoi(`site:${owner.id}`, "site", pos), fill: binFill(owner.bin) };
-        return { ...harborPoi(`plot:${owner.id}`, "plot", pos), tier: owner.hutTier ?? 1 };
+        const facing = HARBOR_PLOT_FACING[i];
+        if (!owner) return harborPoi(`lot:${i}`, "lot", pos, facing);
+        if (owner.bin) return { ...harborPoi(`site:${owner.id}`, "site", pos, facing), fill: binFill(owner.bin) };
+        return { ...harborPoi(`plot:${owner.id}`, "plot", pos, facing), tier: owner.hutTier ?? 1 };
       }),
       ...moored.map((s) => harborPoi(`ship:${s.code}`, "pier", HARBOR_PIERS[s.pier!])),
     ];
@@ -122,6 +130,7 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
       story: null,
       npcs: {},
       freeRoam: true,
+      homeYaw: HARBOR_VIEW_YAW,
       // Bedrolls laid out by whoever is resting.
       props: players.filter((p) => p.bedroll).map((p, i) => ({ id: 9000 + i, model: "bedroll", pos: p.bedroll!, facing: 0 })),
       stamina: stamina ?? undefined,

@@ -94,6 +94,12 @@ export interface RenderState {
   stamina?: { left: number; max: number };
   /** A piece being carried: a ghost of it follows the pointer, and a click sets it down (RendererCallbacks.onPlace). */
   holding?: Holding | null;
+  /**
+   * The turn the view opens at, in radians (0 is from the south, squared to the rows of hexes). A town laid out
+   * on the grid is opened a little off it, so its streets do not run dead level across the screen. The turn
+   * buttons step round from here by sixths, so they come back to it.
+   */
+  homeYaw?: number;
 }
 
 /**
@@ -383,6 +389,10 @@ function gradientTexture(fill: (ctx: CanvasRenderingContext2D, size: number) => 
 }
 
 const yawOf = (facing: number, angle = 0) => -((facing * Math.PI) / 3 + angle);
+/** A crew member's plot in the Harbor, at each stage: for sale, a building site, a hut. */
+const HUT_KINDS = new Set<Poi["kind"]>(["lot", "site", "plot"]);
+/** Straight up: the axis everything on the map turns about. */
+const UP = new THREE.Vector3(0, 1, 0);
 const key = (p: HexPos) => `${p.q},${p.r}`;
 
 /**
@@ -807,6 +817,8 @@ export class WorldRenderer {
   private yaw = 0;
   private yawGoal = 0;
   private userYaw = 0;
+  /** The turn this map opens at (RenderState.homeYaw), which the turn buttons' sixths are counted from. */
+  private homeYaw = 0;
   /** The current drag turns the camera instead of panning it. */
   private rotating = false;
   /** How steeply the camera looks down, in radians above the horizon. Eases toward `pitchGoal`; `userPitch` is the player's choice. */
@@ -1006,6 +1018,9 @@ export class WorldRenderer {
     this.updateGhost();
     this.buildJoinRanges(state);
     if (first) {
+      // A new map opens at its own turn.
+      this.homeYaw = state.homeYaw ?? 0;
+      this.userYaw = this.yaw = this.yawGoal = this.homeYaw;
       // No sea under a hut's floor, nor in the caverns.
       this.sea.visible = !state.indoors && state.kind !== "caverns";
       (this.scene.background as THREE.Color).set(state.indoors ? "#1d1a2b" : "#a9dcf7");
@@ -2271,7 +2286,15 @@ export class WorldRenderer {
       const at = this.standAt(poi.pos);
       const { scale, back } = placeOf(poi);
       if (BUILDINGS.has(poi.kind)) inkBuilding(g, scale);
-      g.position.set(at.x, at.y, at.z - back);
+      // A building turned to front a road (see `facing`) is turned about its door: it stands back from the door
+      // the way it faces away from it.
+      // A hut is not set out with a surveyor's chain: each stands a few degrees askew of its lane, its own way
+      // (the same for a plot staked out, its building site and the hut that goes up on it).
+      const askew = HUT_KINDS.has(poi.kind) ? (noise(poi.pos.q, poi.pos.r, 77) - 0.5) * 0.3 : 0;
+      const yaw = yawOf(poi.facing ?? 0) + askew;
+      const behind = new THREE.Vector3(0, 0, -back).applyAxisAngle(UP, yaw);
+      g.position.set(at.x + behind.x, at.y, at.z + behind.z);
+      g.rotation.y = yaw;
       g.scale.setScalar(scale);
       // A building bigger than its hex is pointed at as a whole: anywhere on it means its door.
       if (scale > 1) g.userData.door = poi.pos;
@@ -2283,7 +2306,7 @@ export class WorldRenderer {
       // A game table in a room (the pub's): a lantern hung over it.
       if (state.indoors && LAMP_TABLES.has(poi.kind)) this.tableLamps.hang(poi.id, poi.pos, at);
       /** A point in the model, out in the world. */
-      const out = (p: THREE.Vector3) => p.clone().multiplyScalar(scale).add(g.position);
+      const out = (p: THREE.Vector3) => p.clone().multiplyScalar(scale).applyAxisAngle(UP, yaw).add(g.position);
       if (g.userData.smoke) stacks.push(out(g.userData.smoke as THREE.Vector3));
       if (g.userData.beacon) {
         beacon = out(g.userData.beacon as THREE.Vector3);
@@ -5114,8 +5137,9 @@ export class WorldRenderer {
   rotateBy(steps: number) {
     if (this.state?.battle) return;
     const step = Math.PI / 3;
-    // Snap to the nearest side first, so repeated presses land on clean angles.
-    this.userYaw = (Math.round(this.userYaw / step) + steps) * step;
+    // Snap to the nearest side first (counted from the turn the map opened at), so repeated presses land on
+    // clean angles and six of them come back to where the view began.
+    this.userYaw = (Math.round((this.userYaw - this.homeYaw) / step) + steps) * step + this.homeYaw;
     this.yawGoal = this.userYaw;
   }
 

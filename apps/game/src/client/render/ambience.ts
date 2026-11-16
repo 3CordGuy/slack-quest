@@ -270,11 +270,47 @@ function dryGeometry(kind: number): THREE.BufferGeometry {
  * grass; a third of that is dry ground, the rest dead grass. The renderer asks too, to tint the ground under it.
  */
 export function dryPatch(t: Tile, x: number, z: number): number {
-  if (t.biome !== "plains" || meadowAt(x, z)) return -1;
+  if (t.biome !== "plains" || t.path || meadowAt(x, z)) return -1;
   const swell = Math.sin(x * 0.27 + 4.1) * Math.sin(z * 0.33 + 2.6) + 0.6 * Math.sin((x + z) * 0.19 + 0.7) + 0.3 * Math.sin(x * 0.71 - z * 0.53 + 1.9);
   if (swell < 0.55) return -1;
   // The driest in the middle of the swell: dry ground there, dead grass round it.
   return swell > 1.05 ? DRY_GROUND : hash(t.q, t.r, 98) < 0.5 ? 0 : 1;
+}
+
+/** The ridge along a path's edge, as tints on its dirt: shaded where it rises, lit along the crest, olive at its foot in the grass. */
+const RIDGE_FOOT_IN = new THREE.Color(0.86, 0.84, 0.82);
+const RIDGE_CREST = new THREE.Color(1.1, 1.06, 1.0);
+const RIDGE_FOOT_OUT = new THREE.Color(0.78, 1.0, 0.72);
+/** Half a path's width: the same everywhere, so a path's ends meet its neighbours' exactly at the shared side. */
+const PATH_HALF = 0.24;
+/** From a hex's middle to the middle of a side. */
+const SIDE_REACH = (TILE_RADIUS * Math.sqrt(3)) / 2;
+/** The way out through each side, in the world's HEX_DIRS order (top right, clockwise), as (x, z). */
+const SIDE_WAY = [-60, 0, 60, 120, 180, 240].map((deg) => ({ x: Math.cos((deg * Math.PI) / 180), z: Math.sin((deg * Math.PI) / 180) }));
+
+/**
+ * How far out from a path hex's middle its dirt reaches, in a direction `phi` (radians, from +x toward +z): the
+ * union of a strip out to each side it joins (`bits`, as Tile.path) and a round middle that rounds off its
+ * joints, or makes a round end where only one strip leaves.
+ */
+function pathReach(bits: number, phi: number): number {
+  let arms = 0;
+  let reach = 0;
+  for (let i = 0; i < 6; i++) {
+    if (!(bits & (1 << i))) continue;
+    arms++;
+    const a = Math.atan2(Math.sin(phi - Math.atan2(SIDE_WAY[i].z, SIDE_WAY[i].x)), Math.cos(phi - Math.atan2(SIDE_WAY[i].z, SIDE_WAY[i].x)));
+    if (Math.abs(a) >= Math.PI / 2) continue;
+    const side = Math.abs(Math.sin(a)) < 1e-6 ? Infinity : PATH_HALF / Math.abs(Math.sin(a));
+    reach = Math.max(reach, Math.min(side, SIDE_REACH / Math.cos(a)));
+  }
+  return Math.max(reach, PATH_HALF * (arms === 1 ? 1.3 : 1.02));
+}
+
+/** Whether a spot (dx, dz from a hex's middle) is on the dirt of a path hex, give or take `margin`. */
+function onPath(bits: number, dx: number, dz: number, margin: number): boolean {
+  const d = Math.hypot(dx, dz);
+  return d < pathReach(bits, Math.atan2(dz, dx)) + margin;
 }
 
 /** Two scallops of a cut-out wave: a white crest over a lighter blue body. */
@@ -529,6 +565,42 @@ const mudTexture = () =>
       // Mostly single pixels; some smears two or three long, and a few ruts.
       const len = kind < 0.5 ? 1 + Math.floor(hash(i, 4, 620) * 3) : kind < 0.85 ? 1 : 4 + Math.floor(hash(i, 4, 620) * 3);
       for (let dx = 0; dx < len; dx++) ctx.fillRect((x + dx) % 32, y, 1, 1);
+    }
+  });
+
+/**
+ * Trodden earth for the dirt paths, in the same pixel style as the mud: dusty brown grit, a scatter of small
+ * pebbles with a pale top, and darker smears where feet and wheels have worn it. It is laid by world position,
+ * so it runs on unbroken from one path hex into the next.
+ */
+const pathTexture = () =>
+  pixelTexture(32, 32, (ctx) => {
+    ctx.fillStyle = "#a88b5e";
+    ctx.fillRect(0, 0, 32, 32);
+    for (let i = 0; i < 70; i++) {
+      const x = Math.floor(hash(i, 1, 640) * 32);
+      const y = Math.floor(hash(i, 2, 640) * 32);
+      const kind = hash(i, 3, 640);
+      if (kind < 0.42) {
+        // Grit: single pixels a shade either way.
+        ctx.fillStyle = hash(i, 4, 640) < 0.5 ? "#9a7e53" : "#b5996a";
+        ctx.fillRect(x, y, 1, 1);
+      } else if (kind < 0.7) {
+        // Worn smears, two to five long, darker.
+        ctx.fillStyle = hash(i, 4, 640) < 0.6 ? "#937650" : "#8a6d48";
+        const len = 2 + Math.floor(hash(i, 5, 640) * 3.99);
+        for (let dx = 0; dx < len; dx++) ctx.fillRect((x + dx) % 32, y, 1, 1);
+      } else if (kind < 0.9) {
+        // A pebble: two by two, grey, lit on top.
+        ctx.fillStyle = "#8e877a";
+        ctx.fillRect(x, y, 2, 2);
+        ctx.fillStyle = "#bdb6a6";
+        ctx.fillRect(x, y, 1, 1);
+      } else {
+        // A dry crack.
+        ctx.fillStyle = "#7c6242";
+        for (let k = 0; k < 4; k++) ctx.fillRect((x + k) % 32, (y + (k >> 1)) % 32, 1, 1);
+      }
     }
   });
 
@@ -912,14 +984,25 @@ export class Ambience {
       } else if (dryPatch(t, p.x, p.z) >= 0) {
         // A dry patch: dead grass, or bare earth, over the whole hex.
         drys.push({ x: p.x, y: p.y, z: p.z, turn: Math.floor(n(95) * 6), kind: dryPatch(t, p.x, p.z), tone: n(97) });
-      } else if (t.biome === "plains" && meadowAt(p.x, p.z)) {
+      } else if (t.biome === "plains" && !t.path && meadowAt(p.x, p.z)) {
         // A meadow: the whole hex grown thick with grass, one patch of a few, turned by sixths.
         meadows.push({ x: p.x, y: p.y, z: p.z, turn: Math.floor(n(95) * 6), kind: Math.floor(n(96) * MEADOW_KINDS), tone: n(97) });
       } else if (t.biome === "plains") {
-        const count = 1 + Math.floor(n(80) * 3.99);
+        // Along a path's edge, a few tufts stand just behind the ridge it throws up (the fringe of blades along it is
+        // drawn with the path), far enough back that the wind does not lay them over the dirt.
+        if (t.path)
+          for (let i = 0; i < 5; i++) {
+            const a = (i / 5) * Math.PI * 2 + n(140 + i) * 1.1;
+            const r = pathReach(t.path, a) + 0.16 + n(150 + i) * 0.08;
+            if (r > SIDE_REACH - TILE_FILLET - 0.04) continue;
+            tufts.push({ x: p.x + Math.cos(a) * r, y: p.y, z: p.z + Math.sin(a) * r, size: 0.17 + n(160 + i) * 0.1, phase: p.x * 0.6 + p.z * 0.35 + n(170 + i) });
+          }
+        const count = 1 + Math.floor(n(80) * 3.99) + (t.path ? 2 : 0);
         for (let i = 0; i < count; i++) {
           const angle = n(81 + i) * Math.PI * 2;
           const spread = 0.25 + n(84 + i) * 0.5;
+          // Grass grows beside a path, not on it.
+          if (t.path && onPath(t.path, Math.sin(angle) * spread, Math.cos(angle) * spread, 0.24)) continue;
           tufts.push({
             x: p.x + Math.sin(angle) * spread,
             y: p.y,
@@ -1156,6 +1239,169 @@ export class Ambience {
     };
     fields(meadows, MEADOW_KINDS, meadowGeometry, MEADOW_H, drab);
     fields(drys, DRY_KINDS, dryGeometry, DRY_H, new THREE.Color(1, 1, 1));
+
+    // ---- dirt paths: a sheet of trodden earth on each path hex, all in one mesh ----
+    // Each hex's dirt is the shape pathReach gives, sampled round its middle: often enough to be round where it
+    // is round, and at the exact angles of each strip's corners and of the notches between strips. Its edge is
+    // pushed in and out by a smooth wobble of where it lies in the world, so it is ragged, not ruled; a strip's
+    // end, where it meets the next hex's, is left straight, and its corners move the same in both hexes (they
+    // are the same point), so the two still meet. Out past the flat of the tile it bends down over the rounded
+    // rim, so two hexes' strips meet in the seam between them. A pixel texture of grit and pebbles is laid over
+    // it by world position.
+    const pathPos: number[] = [];
+    const pathCol: number[] = [];
+    const pathUv: number[] = [];
+    const dirt = wet ? new THREE.Color(0.88, 0.85, 0.82) : new THREE.Color(1, 1, 1);
+    const flat = SIDE_REACH - TILE_FILLET;
+    /** How far below the flat of the tile a point this far out (along the nearest side's normal) lies. */
+    const sag = (x: number, z: number) => {
+      const out = Math.max(...SIDE_WAY.map((w) => x * w.x + z * w.z));
+      if (out <= flat) return 0;
+      const over = Math.min(TILE_FILLET, out - flat);
+      return TILE_FILLET - Math.sqrt(TILE_FILLET * TILE_FILLET - over * over);
+    };
+    /** The wobble of a path's edge at a world point: a smooth push, up to about a tenth of a unit, either way. */
+    const wobble = (x: number, z: number) => [
+      0.075 * (0.6 * Math.sin(x * 5.3 + z * 2.1) + 0.4 * Math.sin(x * 11.7 - z * 7.9 + 1.7)),
+      0.075 * (0.6 * Math.sin(z * 4.9 - x * 2.7 + 0.8) + 0.4 * Math.sin(z * 12.3 + x * 8.3 + 2.9)),
+    ];
+    const shade = new THREE.Color();
+    /** The grass that spills over the paths' edges, in world space. */
+    const fringe: Blades = { pos: [], nor: [], col: [] };
+    for (const t of tiles) {
+      if (!t.path) continue;
+      const p = place(t);
+      const angles: number[] = [];
+      for (let k = 0; k < 96; k++) angles.push((k / 96) * Math.PI * 2);
+      const corner = Math.atan2(PATH_HALF, SIDE_REACH);
+      const ends: [number, number][] = [];
+      for (let i = 0; i < 6; i++) {
+        if (!(t.path & (1 << i))) continue;
+        const a = Math.atan2(SIDE_WAY[i].z, SIDE_WAY[i].x);
+        ends.push([a - corner, a + corner]);
+        for (const d of [0, corner - 1e-3, corner, corner + 1e-3, Math.PI / 6]) angles.push(a + d, a - d);
+      }
+      const ring = angles.map((a) => ((a % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2)).sort((a, b) => a - b).filter((a, i, all) => i === 0 || a - all[i - 1] > 1e-5);
+      /** Whether an angle looks out through the straight end of one of this hex's strips (not at its corners). */
+      const atEnd = (a: number) => ends.some(([lo, hi]) => Math.sin(a - lo) > 2e-3 && Math.sin(hi - a) > 2e-3 && Math.cos(a - (lo + hi) / 2) > 0);
+      /** The point at angle `a`, `f` of the way out to the dirt's edge, wobbled more the nearer the edge it is. */
+      const point = (a: number, f: number) => {
+        const r = pathReach(t.path!, a) * f;
+        let dx = Math.cos(a) * r, dz = Math.sin(a) * r;
+        if (!atEnd(a)) {
+          const [wx, wz] = wobble(p.x + dx, p.z + dz);
+          const k = Math.max(0, (f - 0.6) / 0.4);
+          dx += wx * k;
+          dz += wz * k;
+        }
+        return [p.x + dx, p.y + 0.012 - sag(dx, dz), p.z + dz];
+      };
+      const put = (v: number[], tint?: THREE.Color) => {
+        pathPos.push(v[0], v[1], v[2]);
+        shade.copy(dirt).multiplyScalar(0.93 + hash(Math.round(v[0] * 23), Math.round(v[2] * 23), 41) * 0.12);
+        if (tint) shade.multiply(tint);
+        pathCol.push(shade.r, shade.g, shade.b);
+        pathUv.push(v[0] / BOARD_SPAN, v[2] / BOARD_SPAN);
+      };
+      // The fringe: short blades rooted all along the ragged edge, just behind the ridge, standing up and leaning a
+      // little away from the path, so the grass crowds the edge without the wind laying it over the dirt. None at
+      // a strip's end, where it runs on into the next hex.
+      for (let k = 0; k < 72; k++) {
+        const a = ((k + hash(t.q, t.r, 300 + k) * 0.8) / 72) * Math.PI * 2;
+        if (atEnd(a)) continue;
+        const edge = point(a, 1);
+        const ox = edge[0] - p.x, oz = edge[2] - p.z;
+        const out = Math.hypot(ox, oz) || 1;
+        // Not out over the rounded rim of the tile, where the dirt bends down into the seam.
+        if (out > SIDE_REACH - TILE_FILLET - 0.02) continue;
+        const r = (i: number) => hash(t.q * 7 + k, t.r * 13 + i, 311);
+        for (let j = 0; j < 2; j++) {
+          const back = 0.11 + r(j * 5) * 0.07;
+          const rx = edge[0] + (ox / out) * back, rz = edge[2] + (oz / out) * back;
+          // Leaning out, away from the path, give or take.
+          const lean = Math.atan2(oz, ox) + (r(j * 5 + 1) - 0.5) * 1.6;
+          const tones = r(j * 5 + 2) < 0.12 ? SEEDING : GREEN;
+          const h = 0.1 + r(j * 5 + 3) * 0.1;
+          const start = fringe.pos.length;
+          pushBlade(fringe, rx - p.x, rz - p.z, Math.cos(lean), Math.sin(lean), lean + Math.PI / 2, h, 0.025 + r(j * 5 + 4) * 0.02, 0.25 + r(j * 5 + 2) * 0.35, 0.86 + r(j * 5 + 3) * 0.24, tones);
+          // pushBlade builds about (0, 0); lift it to where the hex lies.
+          for (let v = start; v < fringe.pos.length; v += 3) {
+            fringe.pos[v] += p.x;
+            fringe.pos[v + 1] += p.y + 0.012;
+            fringe.pos[v + 2] += p.z;
+          }
+        }
+      }
+      // Three rings out from the middle (the flat, the start of the rim, the edge), so the bend over the rim follows it.
+      const steps = [0.8, 0.92, 1];
+      const middle = [p.x, p.y + 0.012, p.z];
+      for (let k = 0; k < ring.length; k++) {
+        const a0 = ring[k], a1 = ring[(k + 1) % ring.length];
+        let in0 = middle, in1 = middle;
+        for (const f of steps) {
+          const o0 = point(a0, f), o1 = point(a1, f);
+          // Wound so they face up.
+          if (in0 === middle) for (const v of [middle, o1, o0]) put(v);
+          else for (const v of [in0, o1, o0, in0, in1, o1]) put(v);
+          in0 = o0;
+          in1 = o1;
+        }
+      }
+      // The ridges: a low bank of earth thrown up along each side of the path, as round a puddle: shaded dirt
+      // rising from the path, a lit crest, and a foot gone olive where it runs out under the grass. It follows the
+      // ragged edge, stops short of the tile's rounded rim, and leaves a strip's end open into the next hex.
+      const edge = ring.map((a) => ({ v: point(a, 1), end: atEnd(a) }));
+      const bank = edge.map(({ v }, k) => {
+        const prev = edge[(k + edge.length - 1) % edge.length].v, next = edge[(k + 1) % edge.length].v;
+        let nx = next[2] - prev[2], nz = -(next[0] - prev[0]);
+        const len = Math.hypot(nx, nz) || 1;
+        nx /= len;
+        nz /= len;
+        if (nx * (v[0] - p.x) + nz * (v[2] - p.z) < 0) [nx, nz] = [-nx, -nz];
+        const y = p.y + 0.012;
+        return [
+          [v[0] - nx * 0.02, y, v[2] - nz * 0.02],
+          [v[0] + nx * 0.045, y + 0.03, v[2] + nz * 0.045],
+          [v[0] + nx * 0.11, p.y + 0.004, v[2] + nz * 0.11],
+        ];
+      });
+      const rim = SIDE_REACH - TILE_FILLET - 0.13;
+      const tints = [RIDGE_FOOT_IN, RIDGE_CREST, RIDGE_FOOT_OUT];
+      for (let k = 0; k < edge.length; k++) {
+        const k1 = (k + 1) % edge.length;
+        if (edge[k].end || edge[k1].end) continue;
+        if ([edge[k].v, edge[k1].v].some((v) => Math.hypot(v[0] - p.x, v[2] - p.z) > rim)) continue;
+        for (let j = 0; j < 2; j++) {
+          const i0 = bank[k][j], i1 = bank[k1][j], o0 = bank[k][j + 1], o1 = bank[k1][j + 1];
+          const ti = tints[j], to = tints[j + 1];
+          put(i0, ti); put(o1, to); put(o0, to);
+          put(i0, ti); put(i1, ti); put(o1, to);
+        }
+      }
+    }
+    if (pathPos.length > 0) {
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute("position", new THREE.Float32BufferAttribute(pathPos, 3));
+      geo.setAttribute("color", new THREE.Float32BufferAttribute(pathCol, 3));
+      geo.setAttribute("uv", new THREE.Float32BufferAttribute(pathUv, 2));
+      geo.computeVertexNormals();
+      const map = pathTexture();
+      map.wrapS = map.wrapT = THREE.RepeatWrapping;
+      const mesh = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ map, vertexColors: true }));
+      mesh.receiveShadow = true;
+      this.group.add(mesh);
+    }
+    if (fringe.pos.length > 0) {
+      // One instance, placed where it was built, so the field sway (which works per instance) bends it in the wind.
+      const material = new THREE.MeshLambertMaterial({ vertexColors: true });
+      addFieldSway(material, 0.25);
+      const mesh = new THREE.InstancedMesh(bladesGeometry(fringe), material, 1);
+      mesh.setMatrixAt(0, new THREE.Matrix4());
+      mesh.setColorAt(0, drab);
+      mesh.frustumCulled = false;
+      mesh.receiveShadow = true;
+      this.group.add(mesh);
+    }
 
     // ---- puddles: standing water on the mud and in the dips of the street ----
     // Each is a real hollow, not a picture of one: a low bank of earth or stone thrown up round a dip,
