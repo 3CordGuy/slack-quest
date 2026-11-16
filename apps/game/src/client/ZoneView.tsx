@@ -84,17 +84,53 @@ interface Picture {
 
 const asState = (view: ZoneViewState) => view as unknown as ZoneState;
 
-/** How long the picture dwells on each thing that happened, in ms. */
-function dwell(ev: ZoneEvent): number {
+/** The things that are done, as against what comes of them: each starts a new run of results. */
+const CAUSES = new Set<ZoneEvent["t"]>(["used", "moved", "jumped", "shoved", "reaction", "turn", "round", "fight_start", "fight_end"]);
+
+/**
+ * Which events land on several at once, and which is the last of its run. What comes of one thing done
+ * (a blast, a flask, a round of fire underfoot) is every event up to the next thing done; when that
+ * reaches more than one fighter they are all shown together, a beat apart, and not one after another.
+ */
+function runs(events: ZoneEvent[]): { many: boolean[]; last: boolean[] } {
+  const many = events.map(() => false);
+  const last = events.map(() => false);
+  let start = 0;
+  const close = (end: number) => {
+    if (end === start) return;
+    const reached = new Set<string>();
+    for (let k = start; k < end; k++) {
+      const ev = events[k];
+      if (ev.t === "hit" || ev.t === "miss" || ev.t === "heal" || ev.t === "tick") reached.add(ev.target);
+    }
+    for (let k = start; k < end; k++) many[k] = reached.size > 1;
+    last[end - 1] = true;
+    start = end;
+  };
+  events.forEach((ev, i) => {
+    if (CAUSES.has(ev.t)) close(i);
+  });
+  close(events.length);
+  return { many, last };
+}
+
+/**
+ * How long the picture dwells on each thing that happened, in ms. `many`: it is one of several that
+ * land together. `next`: what follows, so that going down or catching fire comes on the heels of the blow.
+ */
+function dwell(ev: ZoneEvent, many: boolean, next: ZoneEvent | undefined): number {
+  const follows = (id: string) => !!next && ((next.t === "down" && next.id === id) || (next.t === "condition" && next.target === id));
   switch (ev.t) {
     case "moved": return Math.min(2400, ev.path.length * 400);
-    case "roll": return ev.roll.kind === "initiative" ? 110 : 520;
-    case "used": return ev.what.startsWith("throw:") ? 620 : 320;
-    case "hit": case "miss": return 430;
-    case "heal": case "tick": return 380;
-    case "condition": return 160;
-    case "down": case "skip": return 320;
-    case "surface": case "up": case "fight_join": case "round": return 240;
+    case "roll": return ev.roll.kind === "initiative" ? 110 : many ? 0 : 440;
+    case "used": return ev.what.startsWith("throw:") ? 620 : 280;
+    case "hit": case "heal": case "tick": return many ? 130 : follows(ev.target) ? 200 : 380;
+    case "miss": return many ? 130 : 380;
+    case "condition": return many ? 50 : 150;
+    case "down": return many ? 130 : 320;
+    case "skip": return 320;
+    case "surface": return many ? 80 : 240;
+    case "up": case "fight_join": case "round": return 240;
     case "burst": case "reaction": return 300;
     case "shoved": case "jumped": return 400;
     case "fight_start": return 1300;
@@ -102,6 +138,8 @@ function dwell(ev: ZoneEvent): number {
     default: return 0;
   }
 }
+/** The breath after several have been struck at once, before the next thing is shown. */
+const AFTER_MANY = 340;
 
 /** What an attack is called, for its look and sound: an ability's name, or an enemy attack's own. */
 const blowName = (what: string) => ABILITIES[what]?.name ?? what;
@@ -138,6 +176,8 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
   const [intro, setIntro] = useState(false);
   /** Whoever the picture is showing act right now (an enemy mid-turn, while the server already waits on you). */
   const [spot, setSpot] = useState<string | null>(null);
+  /** The enemy's turn is still being shown, though the server may already be waiting on you: not yours to play yet. */
+  const [watching, setWatching] = useState(false);
   /** The label that rides beside the pointer: moved by hand, so the whole view is not drawn again for every pixel. */
   const cursor = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -184,7 +224,16 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
     const end: Picture = { units: next.units, surfaces: next.surfaces };
     const from = settled.current;
     settled.current = end;
-    if (!prev || !from || events.length === 0) return setPicture(end);
+    if (!prev || !from || events.length === 0) {
+      // Nothing to play out: whatever was being shown is over.
+      setSpot(null);
+      setWatching(false);
+      return setPicture(end);
+    }
+    const yours = (id: string) => next.units.some((u) => u.id === id && (u.id === next.you || u.controller === next.you));
+    // The turn has passed to the enemy in this: it is watched through before the turn is yours again.
+    setWatching(!!next.encounter && events.some((ev) => ev.t === "turn" && !ev.ids.some(yours)));
+    const { many, last } = runs(events);
 
     const draft: Picture = structuredClone(from);
     /** The thing last used, whose blows the hits and misses after it are. */
@@ -210,7 +259,7 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
         }
       });
     };
-    for (const ev of events) {
+    for (const [i, ev] of events.entries()) {
       const say = (line: string) => later(() => setFeed((f) => [...f, line].slice(-40)));
       const view = renderer.current;
       if ((ev.t === "moved" || ev.t === "used" || ev.t === "jumped") && next.encounter?.order.includes(ev.id)) nowActing(ev.id);
@@ -291,7 +340,8 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
             sounds.zone("roll");
             view?.floatOver(ev.roll.id, String(ev.roll.total), "#ffe9a8");
           });
-        } else {
+        } else if (!many[i]) {
+          // One of several struck at once has no card of its own: the numbers over their heads say how each fared.
           later(() => {
             sounds.zone(ev.roll.crit ? "roll.crit" : "roll");
             setRoll(ev.roll);
@@ -400,13 +450,14 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
       } else if (ev.t === "round") {
         say(`Round ${ev.n}.`);
       } else if (ev.t === "turn") {
-        if (ev.ids.some((id) => next.units.some((u) => u.id === id && (u.id === next.you || u.controller === next.you)))) {
-          const yours = next.units.find((u) => ev.ids.includes(u.id) && (u.id === next.you || u.controller === next.you));
+        if (ev.ids.some(yours)) {
+          const mine = next.units.find((u) => ev.ids.includes(u.id) && yours(u.id));
           later(() => {
             sounds.yourTurn();
             setBanner("Your turn");
             setSpot(null);
-            if (yours) view?.lookAt(yours.pos);
+            setWatching(false);
+            if (mine) view?.lookAt(mine.pos);
           });
         }
       } else if (ev.t === "fight_end") {
@@ -421,12 +472,13 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
       // What the picture shows once this event has been seen.
       const shown: Picture = structuredClone(draft);
       later(() => setPicture(shown));
-      at += dwell(ev);
+      at += dwell(ev, many[i], events[i + 1]) + (many[i] && last[i] ? AFTER_MANY : 0);
     }
     if (lines.length > 0) setFeed((f) => [...f, ...lines].slice(-40));
     later(() => {
       setPicture(end);
       setSpot(null);
+      setWatching(false);
     });
   });
   useEffect(() => () => timers.current.forEach(clearTimeout), []);
@@ -438,7 +490,11 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
   const ready = (u: Unit) => !!enc && enc.acting.includes(u.id) && !enc.done.includes(u.id) && !u.down;
   const act = mine.find((u) => u.id === playAs && (!enc || !enc.order.includes(u.id) || ready(u))) ?? mine.find(ready) ?? mine.find((u) => u.id === state?.you) ?? mine[0];
   const fighting = !!act && !!enc?.order.includes(act.id);
-  const myTurn = !!act && fighting && ready(act);
+  // While an enemy's turn is still being shown the turn is not yet yours to play, though the server already
+  // waits on you: what they did is seen through, and the health it cost is on the bars, before you answer it.
+  const myTurn = !!act && fighting && ready(act) && !watching;
+  /** A unit as the picture shows it now: its health moves as each blow and heal lands, not ahead of them. */
+  const seen = (u: Unit) => picture?.units.find((x) => x.id === u.id) ?? u;
   const budget = act && enc ? enc.budgets[act.id] : undefined;
   const deadline = useCountdown(enc?.deadline);
 
@@ -779,7 +835,8 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
   }
   const slots = Array.from({ length: BAR_SLOTS }, (_, i) => entries[bar[i] ?? ""] ?? null);
 
-  const waitingFor = enc && !myTurn ? enc.acting.map((id) => names.current.get(id) ?? "someone").join(" and ") : undefined;
+  // Whoever is being shown acting, while the enemy's turn plays out; otherwise whoever the server waits on.
+  const waitingFor = enc && !myTurn ? (watching && spot ? (names.current.get(spot) ?? "someone") : enc.acting.map((id) => names.current.get(id) ?? "someone").join(" and ")) : undefined;
   const place: ReactNode = pick
     ? <>{pick.kind === "ability" ? ABILITIES[pick.id].name : pick.kind === "item" ? THROWABLES[pick.item].name : COMMON_ACTIONS[pick.what].name} <span className="muted">· {pick.kind === "item" && THROWABLES[pick.item].drink ? "click where to throw it, or yourself to drink it" : "click a target on the map"}, or Esc to put it back</span></>
     : dev.tool
@@ -799,7 +856,7 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
 
   return (
     <div
-      className={`run zone-view ${picking ? "picking" : ""} ${fighting ? "in-fight" : ""} ${myTurn && !spot ? "my-turn" : ""}`}
+      className={`run zone-view ${picking ? "picking" : ""} ${fighting ? "in-fight" : ""} ${myTurn ? "my-turn" : ""}`}
       onContextMenu={(e) => { if (pick) { e.preventDefault(); setPick(null); } }}
       onPointerMove={(e) => { if (cursor.current) cursor.current.style.transform = `translate(${e.clientX + 18}px, ${e.clientY + 14}px)`; }}
     >
@@ -861,7 +918,7 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
         <div className="zone-party panel">
           {mine.map((u) => (
             <button key={u.id} className={`small ${u.id === act.id ? "primary" : ""}`} disabled={u.down || (!!enc?.order.includes(u.id) && !ready(u))} onClick={() => setPlayAs(u.id)}>
-              {u.name.split(" ")[0]} · {u.hp}/{u.maxHp}
+              {u.name.split(" ")[0]} · {seen(u).hp}/{u.maxHp}
             </button>
           ))}
         </div>
@@ -956,7 +1013,7 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
       <HudBar
         me={me}
         place={place}
-        hp={{ now: act.hp, max: act.maxHp }}
+        hp={{ now: seen(act).hp, max: act.maxHp }}
         meter={{ name: "Focus", note: "spend one to roll an attack with advantage", now: act.focus, max: act.maxFocus, kind: "focus" }}
         pips={fighting && budget ? [
           { label: "Action", now: budget.action ? 1 : 0, max: 1, kind: "action" },
