@@ -208,6 +208,20 @@ float waterLine(float d, float h0) {
 float waterNearest(float x) {
   return abs(x - floor(x + 0.5));
 }
+// How much of the sea one screen pixel covers at a spot, in world units. Unlike the slope of a value worked out
+// cell by cell (a distance to a splash in its own square of sea, to the shore of its own hex), it never jumps:
+// measured from such a value, the softening goes wild along the cells' borders and draws them as faint lines.
+float waterPx(vec2 at) {
+  return max(length(fwidth(at)) * 0.7071, 1e-4);
+}
+// waterStep and waterLine with the softening's width w given, for a value that jumps from cell to cell.
+float waterStepW(float edge, float x, float w) {
+  return smoothstep(edge - w, edge + w, x);
+}
+float waterLineW(float d, float h0, float w) {
+  float h = max(h0, w);
+  return (1.0 - smoothstep(h - w, h + w, d)) * clamp(h0 / w, 0.0, 1.0);
+}
 // floor(x + 0.5) in flat steps of tone, the jump between two steps softened over one screen pixel.
 float waterBands(float x) {
   float f = x + 0.5;
@@ -220,7 +234,7 @@ float waterSpray(vec2 at, float salt) {
   vec2 c = floor(g);
   float t = floor(waterTime * 10.0);
   vec2 o = 0.25 + 0.5 * waterHash2(c + t * 0.37 + salt);
-  return step(0.6, waterHash(c + t + salt)) * (1.0 - waterStep(0.3, length(g - c - o)));
+  return step(0.6, waterHash(c + t + salt)) * (1.0 - waterStepW(0.3, length(g - c - o), waterPx(at) * WATER_GRID));
 }
 // A web of wandering cells: small where two cells meet, so a threshold on it draws the web's lines.
 float waterWeb(vec2 p, float t) {
@@ -253,8 +267,9 @@ float waterSplash(vec2 at, float size, float every, float salt) {
   vec2 centre = (c + 0.25 + 0.5 * waterHash2(c + floor(turn) * 1.7 + salt)) * size;
   float d = length(at - centre);
   float r = 0.12 + 0.5 * u;
-  float burst = 1.0 - waterStep(0.24 * (1.0 - u * 1.8), d);
-  float spray = (1.0 - waterStep(r, d)) * waterSpray(at, salt) * step(u, 0.7);
+  float w = waterPx(at);
+  float burst = 1.0 - waterStepW(0.24 * (1.0 - u * 1.8), d, w);
+  float spray = (1.0 - waterStepW(r, d, w)) * waterSpray(at, salt) * step(u, 0.7);
   return max(burst, spray);
 }
 // Rain on the sea: small rings that open where the drops land. More of them the harder it rains.
@@ -269,7 +284,7 @@ float waterDrops(vec2 at) {
   if (waterHash(c + floor(turn) * 3.3) > waterRain) return 0.0;
   vec2 centre = (c + 0.2 + 0.6 * waterHash2(c + floor(turn) * 1.7)) * 1.3;
   float d = length(at - centre);
-  return waterLine(abs(d - (0.06 + 0.34 * u)), 0.05) * step(u, 0.75) * (1.0 - u);
+  return waterLineW(abs(d - (0.06 + 0.34 * u)), 0.05, waterPx(at)) * step(u, 0.75) * (1.0 - u);
 }
 float waterNoise(vec2 p) {
   vec2 i = floor(p);
@@ -374,7 +389,10 @@ const FRAG_BODY = /* glsl */ `#include <color_fragment>
     }
     // Shallows: paler and greener toward the land.
     float ragged = waterNoise(pix * 2.3 + waterTime * 0.25);
-    shallow = waterBands(smoothstep(0.95, 0.0, edge + 0.12 * ragged) * 3.0) / 3.0;
+    // (The distance to the shore is each hex's own, so the softening is measured from the spot: see waterPx.)
+    float px = waterPx(pix);
+    float shoal = smoothstep(0.95, 0.0, edge + 0.12 * ragged) * 3.0 + 0.5;
+    shallow = (floor(shoal) + smoothstep(1.0 - min(px * 5.0, 1.0), 1.0, fract(shoal))) / 3.0;
     sea = mix(sea, sea * vec3(0.85, 1.3, 1.2) + vec3(0.0, 0.035, 0.035), shallow * 0.75);
     #endif
 
@@ -414,10 +432,10 @@ const FRAG_BODY = /* glsl */ `#include <color_fragment>
     }
     #ifdef WATER_TILES
     // A solid line against the land, and rings of it drifting out from the shore, thinning as they go.
-    foam = max(foam, 1.0 - waterStep(0.07 + 0.08 * ragged, edge));
+    foam = max(foam, 1.0 - waterStepW(0.07 + 0.08 * ragged, edge, px));
     float reach = clamp(1.0 - edge / 0.95, 0.0, 1.0);
     // Each ring is a band 0.26 * reach of a repeat wide; measured from its middle, so there is no seam where the repeat wraps.
-    float ring = waterLine(waterNearest(edge * 2.4 - waterTime * 0.22 + ragged * 0.35 - 0.13 * reach), 0.13 * reach) * waterStep(0.3, ragged);
+    float ring = waterLineW(waterNearest(edge * 2.4 - waterTime * 0.22 + ragged * 0.35 - 0.13 * reach), 0.13 * reach, px * 2.4) * waterStep(0.3, ragged);
     foam = max(foam, ring * (0.35 + 0.5 * reach));
     // Now and then a wave breaks on the shore: the line swells and throws spray.
     {
@@ -428,8 +446,8 @@ const FRAG_BODY = /* glsl */ `#include <color_fragment>
       if (u < 1.0) {
         float swell = sin(u * 3.1416);
         float spray = waterSpray(pix, 8.7);
-        foam = max(foam, 1.0 - waterStep(0.08 + 0.16 * swell, edge));
-        foam = max(foam, (1.0 - waterStep(0.12 + 0.34 * swell, edge)) * spray);
+        foam = max(foam, 1.0 - waterStepW(0.08 + 0.16 * swell, edge, px));
+        foam = max(foam, (1.0 - waterStepW(0.12 + 0.34 * swell, edge, px)) * spray);
       }
     }
     #endif
