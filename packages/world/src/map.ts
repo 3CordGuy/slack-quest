@@ -347,7 +347,33 @@ export function placeBlockers(map: WorldMap, seed: string, landing: HexPos) {
     const j = Math.floor(rng.next() * (i + 1));
     [candidates[i], candidates[j]] = [candidates[j], candidates[i]];
   }
-  let open = reachable(map, landing).size;
+  // Only whether a hex can be got to matters here, not what it costs: a plain flood fill over the
+  // tiles' neighbours (worked out once) is much quicker than pathfinding after every try.
+  const tiles = map.tiles;
+  const index = new Map(tiles.map((t, i) => [posKey(t), i]));
+  const near = tiles.map((t) => hexNeighbors(t, map.grid).flatMap((n) => index.get(posKey(n)) ?? []));
+  const start = index.get(posKey(landing))!;
+  const seen = new Uint8Array(tiles.length);
+  const stack = new Int32Array(tiles.length);
+  /** How many hexes can be walked to from the landing, counting the landing: as `reachable(map, landing).size`. */
+  const walkable = () => {
+    seen.fill(0);
+    seen[start] = 1;
+    stack[0] = start;
+    let top = 1;
+    let count = 1;
+    while (top > 0) {
+      const i = stack[--top];
+      for (const j of near[i]) {
+        if (seen[j] || !Number.isFinite(tileCost(tiles[j]))) continue;
+        seen[j] = 1;
+        count++;
+        stack[top++] = j;
+      }
+    }
+    return count;
+  };
+  let open = walkable();
   // No more than about a sixth of the land: an island to find a way across, not a maze.
   let left = Math.round(map.tiles.filter((t) => t.biome !== "water").length * 0.17);
   // Two passes: the first seeds a few stands, the second lets them grow into the hexes beside them.
@@ -355,11 +381,11 @@ export function placeBlockers(map: WorldMap, seed: string, landing: HexPos) {
     for (const t of candidates) {
       if (t.blocker) continue;
       if (left <= 0) return;
-      const beside = hexNeighbors(t, map.grid).some((n) => !!tileAt(map, n)?.blocker);
+      const beside = near[index.get(posKey(t))!].some((j) => !!tiles[j].blocker);
       const chance = grow ? (beside ? 0.36 : 0.05) : 0.12;
       if (!rng.chance(chance)) continue;
       t.blocker = t.biome === "forest" ? "trees" : "boulders";
-      const now = reachable(map, landing).size;
+      const now = walkable();
       // It cut something off (or stood somewhere nobody could reach anyway): take it back.
       if (now !== open - 1) {
         delete t.blocker;
