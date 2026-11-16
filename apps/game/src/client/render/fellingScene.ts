@@ -225,7 +225,8 @@ class NotchTrunk {
     for (let i = 0; i < this.ys.length - 1; i++) {
       for (let j = 0; j < n; j++) {
         const a = i * n + j, b = i * n + ((j + 1) % n), c = (i + 1) * n + j, d = (i + 1) * n + ((j + 1) % n);
-        index.push(a, c, b, b, c, d);
+        // Wound so the faces look outward (counter-clockwise seen from outside): the side facing you is drawn, not the inside of the far side.
+        index.push(a, b, c, b, d, c);
       }
     }
     geo.setIndex(index);
