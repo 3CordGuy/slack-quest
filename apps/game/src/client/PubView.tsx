@@ -167,6 +167,7 @@ export function PubView({ me, refresh, onLeave }: { me: Me; refresh(): Promise<u
     if (!you) return null;
     return {
       code: "pub",
+      kind: "pub",
       you,
       phase: "overworld",
       round: 0,

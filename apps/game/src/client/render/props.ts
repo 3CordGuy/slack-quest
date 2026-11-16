@@ -8,6 +8,7 @@
 // "on the walls").
 
 import * as THREE from "three";
+import { fieldstoneTexture } from "./groundArt";
 
 /** The kinds of light a piece can give; Ambience sets how bright and how far each one reaches. */
 export type LightKind = "fire" | "candle" | "lamp";
@@ -21,6 +22,38 @@ const CLOTH = "#e8dcc0";
 const GOLD = "#e0b12e";
 /** From a hex's middle to the side it shares with the next one along: where a two-hex piece's middle sits from its anchor. */
 const HX = Math.sqrt(3) / 2;
+
+/** World units across one repeat of the fieldstone. */
+const STONE_SPAN = 0.9;
+let fieldstone: THREE.Texture | null = null;
+
+/**
+ * Fieldstone, tinted: laid on from all three sides by where each point is in the world and which way it faces
+ * (the side it faces most takes most of its picture), so blocks of any shape need no UVs and the stones run on
+ * unbroken from one block into the next.
+ */
+function stoneMaterial(tint: string): THREE.MeshLambertMaterial {
+  const m = new THREE.MeshLambertMaterial({ color: tint, map: (fieldstone ??= fieldstoneTexture()) });
+  m.onBeforeCompile = (shader) => {
+    shader.vertexShader = shader.vertexShader
+      .replace("void main() {", "varying vec3 vStonePos;\nvarying vec3 vStoneNormal;\nvoid main() {")
+      .replace("#include <begin_vertex>", "#include <begin_vertex>\n  vStonePos = ( modelMatrix * vec4( transformed, 1.0 ) ).xyz;\n  vStoneNormal = normalize( mat3( modelMatrix ) * objectNormal );");
+    shader.fragmentShader = shader.fragmentShader
+      .replace("void main() {", "varying vec3 vStonePos;\nvarying vec3 vStoneNormal;\nvoid main() {")
+      .replace(
+        "#include <map_fragment>",
+        /* glsl */ `{
+          vec3 w = pow( abs( vStoneNormal ), vec3( 4.0 ) );
+          w /= w.x + w.y + w.z;
+          vec3 p = vStonePos / ${STONE_SPAN.toFixed(2)};
+          vec4 stone = texture2D( map, p.zy ) * w.x + texture2D( map, p.xz ) * w.y + texture2D( map, p.xy ) * w.z;
+          diffuseColor *= stone;
+        }`,
+      );
+  };
+  m.customProgramCacheKey = () => "gq-fieldstone";
+  return m;
+}
 
 export class Builder {
   readonly group = new THREE.Group();
@@ -83,9 +116,63 @@ export class Builder {
     return this;
   }
 
-  /** A fire's light: warm and flickering. */
-  fire(x: number, y: number, z: number): this {
-    return this.light("fire", x, y, z);
+  /**
+   * A fire's light: warm and flickering. `main` marks the room's great fire, which lights the whole room and
+   * always throws shadows (see Ambience.setLights).
+   */
+  fire(x: number, y: number, z: number, main = false): this {
+    this.light("fire", x, y, z);
+    if (main) this.group.children[this.group.children.length - 1].userData.main = true;
+    return this;
+  }
+
+  /**
+   * A soft tongue of flame: a teardrop of light, brightest at its root and fading to nothing at its tip, added
+   * over what is behind it. Flickered and swayed by the ambience like the boxy flames (see Ambience.setFires).
+   */
+  softFlame(color: string, radius: number, height: number, x: number, y: number, z: number): THREE.Mesh {
+    const STEPS = 14;
+    const profile: THREE.Vector2[] = [];
+    for (let i = 0; i <= STEPS; i++) {
+      const t = i / STEPS;
+      const w = t < 0.28 ? Math.sin((t / 0.28) * (Math.PI / 2)) : Math.pow(1 - (t - 0.28) / 0.72, 1.4);
+      profile.push(new THREE.Vector2(Math.max(1e-3, radius * w), height * t));
+    }
+    const geometry = new THREE.LatheGeometry(profile, 12);
+    const base = new THREE.Color(color);
+    const colors: number[] = [];
+    const pos = geometry.getAttribute("position");
+    for (let i = 0; i < pos.count; i++) {
+      const t = pos.getY(i) / height;
+      // Added to what is behind it, so dark is see-through: full at the root, gone by the tip.
+      const k = Math.min(1, t / 0.12) * Math.pow(1 - t, 1.3);
+      colors.push(base.r * k, base.g * k, base.b * k);
+    }
+    geometry.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
+    const material = new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide });
+    const mesh = this.mesh(geometry, material, x, y, z);
+    mesh.userData.selfLit = true;
+    mesh.userData.soft = true;
+    mesh.userData.flame = this.group.children.filter((o) => o.userData.flame !== undefined).length;
+    return mesh;
+  }
+
+  /**
+   * A block of fieldstone standing in a corner where two walls meet at 120 degrees, the corner `corner` straight
+   * behind the model's origin (at z = -corner): its front is flat at `front`, its sides at x0 and x1, and its back
+   * follows the two walls, so it stands flush against both. The stone is laid by position (see stoneMaterial).
+   */
+  cornerBlock(tint: string, x0: number, x1: number, front: number, y: number, h: number, corner = 1, material?: THREE.Material): THREE.Mesh {
+    /** How far forward the walls are this far to the side of the corner: they leave it at 30 degrees off the line across. */
+    const wall = (x: number) => -corner + Math.tan(Math.PI / 6) * Math.abs(x) + 0.012;
+    const pts: [number, number][] = [[x0, front], [x1, front], [x1, wall(x1)]];
+    if (x0 < 0 && x1 > 0) pts.push([0, wall(0)]);
+    pts.push([x0, wall(x0)]);
+    // The shape is drawn in (x, -z) and stood up, so it extrudes upward.
+    const shape = new THREE.Shape(pts.map(([px, pz]) => new THREE.Vector2(px, -pz)));
+    const geometry = new THREE.ExtrudeGeometry(shape, { depth: h, bevelEnabled: false });
+    geometry.rotateX(-Math.PI / 2);
+    return this.mesh(geometry, material ?? stoneMaterial(tint), 0, y, 0);
   }
 
   /** A cylinder lying on its side along x, its middle at (x, y, z). */
@@ -245,6 +332,64 @@ const MODELS: Record<string, (b: Builder) => void> = {
     b.flame("#fff0a0", 0.05, 0.1, 0.05, 0.02, 0.2, 0.09);
     // The light sits just out of the firebox, so it spills across the floor in front.
     b.fire(0, 0.5, 0.48);
+  },
+  /**
+   * The pub's great fireplace, built into the corner where its back wall meets the side wall: a hearthstone
+   * before it, a deep sooty firebox between two piers of fieldstone, an oak mantel with tankards on it, and the
+   * chimney breast stepping in as it rises to the top of the wall. Logs on firedogs over a bed of embers, soft
+   * flames, and the room's great fire, which lights the whole pub and throws its shadows across the floor.
+   * Facing the room along the corner's bisector, its back fitted flush to both walls.
+   */
+  pub_hearth(b) {
+    const OAK = "#4a2f22";
+    b.cornerBlock("#a39888", -0.98, 0.98, 0.5, 0, 0.07);
+    for (const [x0, x1] of [[-0.74, -0.32], [0.32, 0.74]]) b.cornerBlock("#f2ead8", x0, x1, -0.02, 0.07, 0.93);
+    // The firebox: its back and sides black with soot, and its floor a bed of ash.
+    b.cornerBlock("#54473c", -0.32, 0.32, -0.4, 0.07, 0.93);
+    b.cornerBlock("#e6dccb", -0.32, 0.32, -0.02, 0.74, 0.26);
+    b.box("#2c2622", 0.62, 0.012, 0.38, 0, 0.07, -0.21);
+    // The mantel: a heavy oak beam across the front, its ends fitted to the walls.
+    const oak = new THREE.MeshLambertMaterial({ color: OAK });
+    b.cornerBlock(OAK, -0.86, 0.86, 0.08, 1.0, 0.08, 1, oak);
+    b.cornerBlock(OAK, -0.8, 0.8, 0.02, 0.95, 0.05, 1, oak);
+    // The chimney breast, stepping in as it rises.
+    b.cornerBlock("#f2ead8", -0.62, 0.62, -0.1, 1.08, 0.34);
+    b.cornerBlock("#ece2cf", -0.44, 0.44, -0.2, 1.42, 0.34);
+    // Tankards and a plate on the mantel.
+    for (const x of [-0.55, 0.6]) {
+      b.post("#9aa0a8", 0.045, 0.05, 0.11, x, 1.08, -0.02, 10);
+      b.post("#4a4f5a", 0.05, 0.05, 0.012, x, 1.18, -0.02, 10);
+    }
+    b.post("#c9a54a", 0.1, 0.1, 0.015, 0.3, 1.13, -0.08, 16).rotation.x = Math.PI / 2 - 0.25;
+    // Firedogs, and three logs across them.
+    for (const x of [-0.2, 0.2]) {
+      b.box("#2e2c30", 0.03, 0.16, 0.03, x, 0.07, -0.08);
+      b.box("#2e2c30", 0.03, 0.03, 0.26, x, 0.07, -0.2);
+    }
+    const log = (x: number, y: number, z: number, length: number, yaw: number, radius = 0.045) => {
+      const m = b.roll("#4a321c", radius, length, x, y, z, 10);
+      m.rotation.y = yaw;
+      return m;
+    };
+    log(0, 0.15, -0.16, 0.56, 0.12);
+    log(0.02, 0.15, -0.27, 0.52, -0.1);
+    log(-0.04, 0.22, -0.21, 0.44, 0.35, 0.04);
+    // Embers under them, glowing.
+    b.glow("#c4421c", new THREE.BoxGeometry(0.48, 0.02, 0.26), 0, 0.085, -0.21);
+    b.glow("#ff7a2a", new THREE.BoxGeometry(0.3, 0.022, 0.14), 0.02, 0.087, -0.2);
+    // The flames: a broad orange body, warmer tongues inside it, and a pale hot heart.
+    const flames: [string, number, number, number, number][] = [
+      ["#ff5a14", 0.13, 0.5, -0.1, -0.24],
+      ["#ff6a1c", 0.12, 0.42, 0.12, -0.22],
+      ["#ff7a24", 0.11, 0.58, 0.01, -0.2],
+      ["#ff9a32", 0.08, 0.4, -0.05, -0.17],
+      ["#ffb84a", 0.07, 0.34, 0.07, -0.16],
+      ["#ffe08a", 0.05, 0.24, 0.0, -0.15],
+      ["#fff3c8", 0.03, 0.13, 0.02, -0.14],
+    ];
+    for (const [color, radius, height, x, z] of flames) b.softFlame(color, radius, height, x, 0.13, z);
+    // The great fire's light, just out of the firebox, so it spills across the hearth and the room.
+    b.fire(0, 0.42, 0.14, true);
   },
   bookshelf(b) {
     b.box(DARK_WOOD, 0.95, 1.25, 0.34, 0, 0, -0.1);

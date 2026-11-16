@@ -89,7 +89,8 @@ export const PUB_FITTINGS: PubFitting[] = [
   fit(3, "bar", 4, 2),
   fit(4, "keg", 1, 1),
   fit(5, "keg", 5, 1),
-  fit(6, "hearth", 9, 1),
+  // The great fireplace, built into the corner where the back wall meets the side wall, facing out across the room.
+  fit(6, "pub_hearth", 9, 1, 1),
   fit(7, "table", 8, 3),
   fit(8, "chair", 7, 3, 1),
   fit(9, "chair", 9, 3, 4),

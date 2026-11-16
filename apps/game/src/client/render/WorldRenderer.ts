@@ -9,7 +9,8 @@ import * as THREE from "three";
 import { makeModelShip } from "./modelShip";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { reportEnv } from "../ui/env";
-import { Ambience, TILE_FILLET, TILE_RADIUS, beaconShine, dryPatch, hexTop, meadowAt, pixelTexture, stamp, tallGrass, type BuildingGlow } from "./ambience";
+import { panelTexture } from "./groundArt";
+import { Ambience, type RoomLight, TILE_FILLET, TILE_RADIUS, beaconShine, dryPatch, hexTop, meadowAt, pixelTexture, stamp, tallGrass, type BuildingGlow } from "./ambience";
 import "./camera.css";
 import { PINCH_PAN_SLACK, followIconSvg, readFollow, writeFollow } from "./cameraFollow";
 import type { HexPos } from "@gantt-quest/core";
@@ -70,7 +71,7 @@ export interface RenderState {
   /** Identifies the map; the terrain is rebuilt when it changes. */
   code: string;
   /** A voyage's island, or the Haunted Caverns: the caverns' mouth shows no moored ship, and its heroes carry torches. */
-  kind?: "voyage" | "caverns";
+  kind?: "voyage" | "caverns" | "pub";
   you: string;
   phase: Phase;
   round: number;
@@ -775,6 +776,8 @@ export class WorldRenderer {
   private outlook: WorldRenderer | null = null;
   private outlookMap: THREE.CanvasTexture | null = null;
   private panes = new THREE.Group();
+  /** The pub's walls inside: oak boards to waist height, plaster above (see buildWallPanels). One mesh per wall hex. */
+  private wallPanels = new THREE.Group();
   /** Fireflies and moths, out at night with "Fancy graphics". */
   private nightLife = new NightLife();
   /** The gulls that come and go by day on any map with the sea round it. */
@@ -953,7 +956,7 @@ export class WorldRenderer {
 
     // Sky, sun and moon, shadows, and the moving decoration.
     this.ambience = new Ambience(this.scene, this.renderer);
-    this.scene.add(this.nightLife.group, this.gulls.group, this.storm.bolt, this.panes);
+    this.scene.add(this.nightLife.group, this.gulls.group, this.storm.bolt, this.panes, this.wallPanels);
 
     const sea = new THREE.Mesh(new THREE.PlaneGeometry(240, 240), new THREE.MeshLambertMaterial({ color: "#3577cf" }));
     addFancyWater(sea.material);
@@ -1064,6 +1067,7 @@ export class WorldRenderer {
     const lifted = state.map.tiles.reduce((n, t) => n + (t.biome === "fog" ? 0 : 1), 0);
     if (first || lifted !== this.lifted) this.buildTerrain(state, first);
     if (first) this.buildPanes(state);
+    if (first) this.buildWallPanels(state);
     this.lifted = lifted;
     this.state = state;
     this.ambience.setLampOn(!state.lampOff);
@@ -1982,6 +1986,7 @@ export class WorldRenderer {
       if (wall) g.visible = !this.lowered.has(wall);
     }
     for (const pane of this.panes.children) pane.visible = !this.lowered.has(pane.userData.wallKey as string);
+    for (const panel of this.wallPanels.children) panel.visible = !this.lowered.has(panel.userData.wallKey as string);
   }
 
   // ---------- windows ----------
@@ -2025,6 +2030,50 @@ export class WorldRenderer {
   }
 
   /** The windows themselves: a few panes along the back wall, each showing its own slice of the one picture. */
+  /**
+   * The pub's walls dressed inside to go with the inn outside: on every side of a tall wall that faces the floor,
+   * a sheet of oak boards to waist height under a rail, cream plaster above, and a timber beam along the top
+   * (panelTexture), from the floor up to where the wall's top starts to round over. Each wall hex's sheets are
+   * one mesh, hidden with the wall when it is cut down for the camera.
+   */
+  private buildWallPanels(state: RenderState) {
+    for (const panel of this.wallPanels.children) (panel as THREE.Mesh).geometry.dispose();
+    this.wallPanels.clear();
+    if (state.kind !== "pub") return;
+    const material = (this.panelMaterial ??= new THREE.MeshLambertMaterial({ map: panelTexture() }));
+    const byWall = new Map<string, number[][]>();
+    for (const f of wallFaces(state.map)) {
+      const tile = tileAt(state.map, f.pos);
+      if (!tile) continue;
+      const at = wallFace(f.pos, f.side);
+      const top = tileTop(tile) - TILE_FILLET;
+      const lift = 0.006;
+      const [cx, cz] = [at.x + at.nx * lift, at.z + at.nz * lift];
+      const half = WALL_FACE_HALF;
+      // Two triangles, left to right as seen from the room, the sheet's foot on the floor.
+      const corner = (s: number, y: number, u: number, v: number) => [cx + at.tx * s * half, y, cz + at.tz * s * half, at.nx, 0, at.nz, u, v];
+      const a = corner(-1, FLOOR_TOP, 0, 0);
+      const b = corner(1, FLOOR_TOP, 1, 0);
+      const c = corner(1, top, 1, 1);
+      const d = corner(-1, top, 0, 1);
+      const list = byWall.get(key(f.pos)) ?? [];
+      list.push(a, b, c, a, c, d);
+      byWall.set(key(f.pos), list);
+    }
+    for (const [wall, verts] of byWall) {
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute("position", new THREE.Float32BufferAttribute(verts.flatMap((v) => v.slice(0, 3)), 3));
+      geometry.setAttribute("normal", new THREE.Float32BufferAttribute(verts.flatMap((v) => v.slice(3, 6)), 3));
+      geometry.setAttribute("uv", new THREE.Float32BufferAttribute(verts.flatMap((v) => v.slice(6, 8)), 2));
+      const mesh = new THREE.Mesh(geometry, material);
+      mesh.receiveShadow = true;
+      mesh.userData.wallKey = wall;
+      mesh.visible = !this.lowered.has(wall);
+      this.wallPanels.add(mesh);
+    }
+  }
+  private panelMaterial: THREE.MeshLambertMaterial | null = null;
+
   private buildPanes(state: RenderState | null) {
     for (const pane of this.panes.children) {
       pane.traverse((o) => {
@@ -2660,12 +2709,12 @@ export class WorldRenderer {
     }
     this.propGroup.updateMatrixWorld(true);
     // Rings for the piece being handled, and lights wherever a model asks for one.
-    const lights: { pos: THREE.Vector3; kind: LightKind }[] = [];
+    const lights: RoomLight[] = [];
     for (const prop of ordered) {
       const g = this.propModels.get(prop.id);
       if (!g) continue;
       g.traverse((o) => {
-        if (o.userData.light) lights.push({ pos: o.getWorldPosition(new THREE.Vector3()), kind: o.userData.light as LightKind });
+        if (o.userData.light) lights.push({ pos: o.getWorldPosition(new THREE.Vector3()), kind: o.userData.light as LightKind, main: !!o.userData.main });
       });
       if (prop.selected && !prop.mount && (prop.covers?.length ?? 0) > 1) {
         // A piece reaching across hexes: outline every hex it covers, as one shape.
