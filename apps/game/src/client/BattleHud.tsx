@@ -29,6 +29,9 @@ function intentText(c: Combatant, nameOf: (id: string) => string): { text: strin
 function CombatantChip({ c, active, onClick, selectable, nameOf }: { c: Combatant; active: boolean; onClick?: () => void; selectable?: boolean; nameOf: (id: string) => string }) {
   const intent = intentText(c, nameOf);
   const glitched = c.effects.some((e) => e.kind === "glitched");
+  // A troll grows back each turn, and fire stops it: say so, so the crew knows to reach for it.
+  const regen = c.side === "enemy" && !c.down ? ENEMIES[c.kind]?.regen : undefined;
+  const stopped = !!regen && c.effects.some((e) => e.kind === regen.unless);
   return (
     <button className={`chip ${c.side} ${active ? "active" : ""} ${c.down ? "down" : ""} ${selectable ? "selectable" : ""}`} disabled={!selectable} onClick={onClick}>
       <strong>{c.name}</strong>
@@ -36,6 +39,11 @@ function CombatantChip({ c, active, onClick, selectable, nameOf }: { c: Combatan
       {intent && (
         <span className={`intent ${intent.heavy ? "heavy" : ""}`} title="What it will do on its next turn. A taunt or a stun can change it.">
           Next: {intent.text}{glitched ? ` (${label("effect", "glitched").toLowerCase()})` : ""}
+        </span>
+      )}
+      {regen && (
+        <span className={`regen ${stopped ? "stopped" : ""}`} title={`Grows back ${regen.amount} HP at the start of each of its turns, unless it is ${label("effect", regen.unless)}.`}>
+          {stopped ? `${label("effect", regen.unless)}: can't regenerate` : `Regenerates ${regen.amount} a turn · ${label("effect", regen.unless).toLowerCase()} stops it`}
         </span>
       )}
       {c.effects.length > 0 && <span className="effects">{c.effects.map((e) => <i key={e.kind} style={{ color: EFFECT_INFO[e.kind]?.color }} title={blurb("effect", e.kind)}>{label("effect", e.kind)}</i>)}</span>}

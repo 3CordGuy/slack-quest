@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { STARTING_STATS } from "@gantt-quest/core";
 import {
+  ABILITIES,
   CANNED_FILLS,
   CLIENT_ACTIONS,
   CONTRACTS,
@@ -251,12 +252,12 @@ describe("tallies", () => {
     const first = actor();
     s = must(s, { type: "battle", heroId: first, action: { type: "potion" } });
     expect(s.heroes.find((h) => h.id === first)!.tally).toEqual({ potions: 1 });
-    // The potion is free, so the same hero still has the turn. Focus guarantees every roll, so the result is perfect whatever the seed.
+    // The potion is free, so the same hero still has the turn. Focus on every roll guarantees them all, so the result is perfect whatever the seed.
     const second = actor();
     expect(second).toBe(first);
     const ability = s.battle!.combatants.find((c) => c.id === second)!.abilities[0];
     const before = s.heroes.find((h) => h.id === second)!.tally?.perfects ?? 0;
-    s = must(s, { type: "battle", heroId: second, action: { type: "ability", ability, focus: 2 } });
+    s = must(s, { type: "battle", heroId: second, action: { type: "ability", ability, focus: ABILITIES[ability].rolls } });
     expect(s.heroes.find((h) => h.id === second)!.tally?.perfects ?? 0).toBeGreaterThanOrEqual(before + 1);
   });
 

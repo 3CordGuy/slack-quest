@@ -44,11 +44,22 @@ const SPELL_COLOR: Record<string, string> = {
   Immolate: "#ff6a3c",
 };
 const ARROW_ABILITIES = new Set(["Aimed Shot", "Pin Down", "Volley", "Barbed Arrow"]);
+/** Thrown things: a rock lobbed in an arc, tumbling, that bursts into dust where it lands. */
+const THROWN: Record<string, string> = { "Hurl Rock": "#77726a" };
+/** Melee blows heavy enough to knock the target back and raise dust at its feet. */
+const SMASHES = new Set(["Club Smash"]);
+/** A ground-pound: no step in; the ground shakes out from the attacker's feet and jolts whoever it reaches. */
+const QUAKES = new Set(["Stomp"]);
+/** Heals that are an enemy growing back (a troll's Regenerate), drawn as moss creeping over it, not a sparkle. */
+const REGROWTH = new Set(Object.values(ENEMIES).flatMap((e) => (e.regen ? [e.regen.name] : [])));
+const MOSS = "#9fe07a";
 /** How an attack travels, for its sound: the same split the effects above are drawn by. */
-const attackStyle = (ability: string): AttackStyle => (SPELL_COLOR[ability] ? "magic" : ARROW_ABILITIES.has(ability) ? "ranged" : "melee");
+const attackStyle = (ability: string): AttackStyle => (SPELL_COLOR[ability] ? "magic" : ARROW_ABILITIES.has(ability) || THROWN[ability] ? "ranged" : "melee");
 const isBoss = (kind: string) => !!ENEMIES[kind]?.boss;
 /** Rank-and-file drawn a size up: the heavy hitters. */
-const isBig = (kind: string) => kind === "brute" || kind === "bear";
+const isBig = (kind: string) => kind === "brute" || kind === "bear" || kind === "ogre" || kind === "troll";
+/** How much of a battle line a figure takes, as a share of an ordinary one's: an ogre is half as wide again. */
+const roomOf = (kind: string) => (kind === "ogre" ? 1.5 : 1);
 
 /**
  * What the renderer needs to draw a scene. An island's ClientState satisfies
@@ -601,6 +612,8 @@ interface Fx {
   /** Total rotation over its life, in radians. */
   spin: number;
   fade: boolean;
+  /** How high it rises over the middle of its flight, in world units: a lob. */
+  arc?: number;
   onEnd?: () => void;
 }
 
@@ -765,6 +778,8 @@ export class WorldRenderer {
   /** The player asked for less motion: footsteps are still heard, but kick up no puffs. */
   private still = typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
   private fx: Fx[] = [];
+  /** When each attacker last shook the ground, on the render clock: a stomp hits everyone, but shakes the ground once. */
+  private quakeAt = new Map<string, number>();
   /** Speech over units' heads, by unit id; kept apart from the unit so a change of gear does not cut it short. */
   private bubbles = new Map<string, Bubble>();
   private pending: { at: number; run: () => void }[] = [];
@@ -1059,8 +1074,22 @@ export class WorldRenderer {
         if (b.t === "hit") this.later(beat++, () => this.attack(b.actor, b.target, b.ability, b.perfect, () => { sounds.impact(b.ability, attackStyle(b.ability), b.perfect, this.fighter(b.target), this.spot(b.target)); this.float(b.target, `-${b.amount}`, b.perfect ? "#ffd23f" : "#ff6b6b"); }, true));
         else if (b.t === "miss" && b.heal) this.later(beat++, () => { sounds.healFailed(this.spot(b.actor)); this.float(b.actor, "fails", "#c9d1e0"); });
         else if (b.t === "miss") this.later(beat++, () => this.attack(b.actor, b.target, b.ability, false, () => { sounds.miss(b.ability, attackStyle(b.ability), this.spot(b.target)); this.float(b.target, "miss", "#c9d1e0"); }));
-        else if (b.t === "heal") this.later(beat++, () => { sounds.heal(b.ability, this.spot(b.target)); this.sparkle(b.target, "#7dff9a"); this.float(b.target, `+${b.amount}`, "#7dff9a"); });
-        else if (b.t === "tick") this.later(beat++, () => { sounds.tick(b.effect, this.spot(b.target)); this.float(b.target, `-${b.amount}`, "#ffa94d"); });
+        else if (b.t === "heal") this.later(beat++, () => {
+          sounds.heal(b.ability, this.spot(b.target));
+          if (REGROWTH.has(b.ability)) this.regrow(b.target);
+          else this.sparkle(b.target, "#7dff9a");
+          this.float(b.target, `+${b.amount}`, "#7dff9a");
+        });
+        else if (b.t === "tick") {
+          // A troll on fire: the burn, and its wounds failing to close.
+          const kind = this.state?.battle?.combatants.find((c) => c.id === b.target)?.kind;
+          const blocked = kind !== undefined && ENEMIES[kind]?.regen?.unless === b.effect;
+          this.later(beat++, () => {
+            sounds.tick(b.effect, this.spot(b.target));
+            this.float(b.target, `-${b.amount}`, "#ffa94d");
+            if (blocked) this.regrowthBlocked(b.target);
+          });
+        }
         else if (b.t === "turn" && b.id === this.state?.you) myTurnAt = beat;
         // A class trait kicking in gets its name over the hero.
         else if (b.t === "trait") this.later(beat++, () => { const name = TRAIT_BY_ID[b.trait]?.name ?? b.trait; sounds.trait(name, this.spot(b.id)); this.float(b.id, name, "#facc15"); });
@@ -1247,6 +1276,35 @@ export class WorldRenderer {
     const hitAt = t.goal.clone().add(new THREE.Vector3(0, t.size * 0.4, 0.05));
     const spell = SPELL_COLOR[ability];
 
+    if (QUAKES.has(ability)) {
+      // It stays where it is and brings its weight down: dust rings out from its feet (once for the whole crew),
+      // and each hero it reaches is jolted off their feet.
+      if (this.clock - (this.quakeAt.get(actorId) ?? -Infinity) > 1) {
+        this.quakeAt.set(actorId, this.clock);
+        this.quakeRing(a);
+      }
+      if (landed) {
+        t.kick.set(dir * 0.12, 0.22, 0);
+        this.dustAt(t, perfect);
+      }
+      onImpact();
+      return;
+    }
+    const rock = THROWN[ability];
+    if (rock) {
+      // Lobbed high, tumbling, and it breaks into dust where it lands.
+      const from = a.goal.clone().add(new THREE.Vector3(dir * 0.5, a.size * 0.7, 0.05));
+      this.spawnFx("rock", rock, flip, { from, to: hitAt, life: 0.4, size: [0.85, 1.0], spin: -dir * 9, fade: false, arc: 0.9, onEnd: () => {
+        this.spawnFx("burst", perfect ? "#ffd23f" : "#c9c1aa", false, { from: hitAt, to: hitAt, life: 0.22, size: [0.7, 1.6], spin: 0.5, fade: true });
+        if (landed) {
+          this.dustAt(t, perfect);
+          t.kick.set(dir * 0.18, 0, 0);
+        }
+        onImpact();
+      } });
+      return;
+    }
+
     if (spell || ARROW_ABILITIES.has(ability)) {
       const kind: FxKind = spell ? "bolt" : "arrow";
       const color = spell ?? "#e8dcc0";
@@ -1261,8 +1319,54 @@ export class WorldRenderer {
     }
     // Melee: step in and swipe across the target.
     this.lunge(actorId, targetId);
-    this.spawnFx("slash", perfect ? "#ffd23f" : "#dfe9ff", flip, { from: hitAt, to: hitAt, life: 0.26, size: [1.3, 2.3], spin: -dir * 0.9, fade: true });
+    const heavy = SMASHES.has(ability);
+    // A heavy blow comes down from higher, wider, and knocks the target back with dust thrown up round its feet.
+    this.spawnFx("slash", perfect ? "#ffd23f" : "#dfe9ff", flip, { from: hitAt, to: hitAt, life: heavy ? 0.3 : 0.26, size: heavy ? [1.7, 3] : [1.3, 2.3], spin: -dir * (heavy ? 1.6 : 0.9), fade: true });
+    if (heavy && landed) {
+      t.kick.set(dir * 0.35, -0.08, 0);
+      this.dustAt(t, perfect);
+    }
     onImpact();
+  }
+
+  /** Dust thrown up either side of a unit's feet: a heavy landing, a rock breaking, the ground shaking under it. */
+  private dustAt(unit: Unit, perfect = false) {
+    const feet = unit.goal.clone().add(new THREE.Vector3(0, 0.15, 0.1));
+    for (const side of [-1, 1]) {
+      this.spawnFx("dust", perfect ? "#e8d27a" : "#c9b994", side > 0, { from: feet, to: feet.clone().add(new THREE.Vector3(side * 0.55, 0.3, 0)), life: 0.4, size: [0.6, 1.1], spin: 0, fade: true });
+    }
+  }
+
+  /** The ground shaken by a stomp: a ring of dust rolling out from the unit's feet. */
+  private quakeRing(unit: Unit) {
+    const feet = unit.goal.clone().add(new THREE.Vector3(0, 0.12, 0));
+    for (let i = 0; i < 10; i++) {
+      const a = (i / 10) * Math.PI * 2;
+      const out = new THREE.Vector3(Math.cos(a) * 1.9, 0.12, Math.sin(a) * 1.3);
+      this.spawnFx("dust", "#c9b994", Math.cos(a) > 0, { from: feet.clone().add(out.clone().multiplyScalar(0.2)), to: feet.clone().add(out), life: 0.5, size: [0.7, 1.3], spin: 0, fade: true });
+    }
+  }
+
+  /** A troll growing back: flecks of moss creeping up over it. */
+  private regrow(unitId: string) {
+    const unit = this.units.get(unitId);
+    if (!unit) return;
+    for (let i = 0; i < 5; i++) {
+      const x = (i - 2) * unit.size * 0.13;
+      const from = unit.goal.clone().add(new THREE.Vector3(x, unit.size * (0.15 + 0.12 * (i % 3)), 0.08));
+      this.spawnFx("fleck", MOSS, i % 2 === 0, { from, to: from.clone().add(new THREE.Vector3(x * 0.3, unit.size * 0.35, 0)), life: 0.7, size: [0.7, 0.95], spin: 0, fade: true });
+    }
+  }
+
+  /** Fire keeping a troll's wounds open: a wisp of smoke and a word saying so, over the burn. */
+  private regrowthBlocked(unitId: string) {
+    const unit = this.units.get(unitId);
+    if (!unit) return;
+    for (const [x, rise, flip] of [[-0.2, 0.9, false], [0.15, 1.1, true], [0.4, 0.8, false]] as const) {
+      const from = unit.goal.clone().add(new THREE.Vector3(x, unit.size * 0.55, 0.05));
+      this.spawnFx("dust", "#a39ca8", flip, { from, to: from.clone().add(new THREE.Vector3(x * 0.4, rise, 0)), life: 0.9, size: [0.9, 1.7], spin: 0, fade: true });
+    }
+    this.float(unitId, "can't regrow", "#c9c1d6", { height: 0.32, lift: 0.4 });
   }
 
   /** Leave an arrow standing in `unit`, shot from the `dir` side (1: from the left). */
@@ -4406,9 +4510,14 @@ export class WorldRenderer {
           for (const [x, z, s] of [[-0.25, 0.05, 0.3], [0.2, 0.15, 0.24], [0.02, -0.12, 0.2]]) add(new THREE.DodecahedronGeometry(s, 0), lambert("#3a3640"), x, s * 0.6, z, x * 5);
           for (const [x, z, r] of [[-0.05, 0.38, 0.4], [0.28, 0.42, -0.7], [-0.32, 0.4, 1.2]]) add(box(0.3, 0.04, 0.05), lambert("#d6cfbd"), x, 0.03, z, r);
           if (lead === "slime" && !poi.cleared) add(new THREE.SphereGeometry(0.26, 8, 5, 0, Math.PI * 2, 0, Math.PI / 2), lambert("#5fbf4a"), 0.05, 0.02, 0.3);
+          // A troll's den: a gnawed bone the size of a leg, and a boulder it keeps to hand.
+          if (lead === "troll" && !poi.cleared) {
+            add(new THREE.CylinderGeometry(0.05, 0.06, 0.55, 5), lambert("#e8dcc0"), 0.3, 0.05, 0.3, 1.1).rotation.z = Math.PI / 2;
+            add(new THREE.DodecahedronGeometry(0.2, 0), lambert("#6e6a5e"), -0.35, 0.15, 0.3);
+          }
           if (lead === "bat" && !poi.cleared) for (const x of [-0.2, 0.2]) add(new THREE.ConeGeometry(0.12, 0.28, 3), lambert("#2a2430"), x, 0.95, -0.1, Math.PI);
           if (!poi.cleared) {
-            const eye = new THREE.MeshBasicMaterial({ color: { bat: "#ff4d3a", skeleton: "#9fd8ff", slime: "#b8ff6a", shade: "#c79bff" }[lead] ?? "#ff4d3a" });
+            const eye = new THREE.MeshBasicMaterial({ color: { bat: "#ff4d3a", skeleton: "#9fd8ff", slime: "#b8ff6a", shade: "#c79bff", troll: "#ffc23a" }[lead] ?? "#ff4d3a" });
             for (const x of [-0.07, 0.07]) add(box(0.05, 0.04, 0.02), eye, x, lead === "bat" ? 0.82 : 0.42, 0.12).userData.glow = true;
           }
           break;
@@ -4560,13 +4669,17 @@ export class WorldRenderer {
       const actor = state.battle.actor;
       for (const side of ["hero", "enemy"] as const) {
         const line = state.battle.combatants.filter((c) => c.side === side);
+        // Each figure's place along the line, in ordinary figures' steps: wide ones push their neighbours along.
+        const steps = line.map((c) => roomOf(c.kind));
+        const at = steps.map((_, i) => steps.slice(0, i).reduce((sum, r, j) => sum + (r + steps[j + 1]) / 2, 0));
+        const span = at[at.length - 1] ?? 0;
         line.forEach((c, i) => {
           const dir = side === "hero" ? -1 : 1;
           want.set(c.id, {
             kind: c.kind,
             outfit: c.outfit,
             // Staggered diagonally so the tall figures do not hide each other.
-            pos: new THREE.Vector3(centre.x + dir * (1.2 + i * 1.05), centre.y, centre.z + (i - (line.length - 1) / 2) * 1.25),
+            pos: new THREE.Vector3(centre.x + dir * (1.2 + at[i] * 1.05), centre.y, centre.z + (at[i] - span / 2) * 1.25),
             size: isBoss(c.kind) ? 2.5 : isBig(c.kind) ? 2.2 : 1.9,
             ring: side === "hero" ? colorOf(c.id) : "#e23b3b",
             pulse: c.id === actor,
@@ -5464,6 +5577,7 @@ export class WorldRenderer {
       f.age += dt;
       const t = Math.min(1, f.age / f.life);
       f.sprite.position.lerpVectors(f.from, f.to, t);
+      if (f.arc) f.sprite.position.y += f.arc * 4 * t * (1 - t);
       const size = f.size[0] + (f.size[1] - f.size[0]) * t;
       f.sprite.scale.set(size, size, 1);
       f.sprite.material.rotation = f.spin * t;

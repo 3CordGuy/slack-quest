@@ -264,7 +264,12 @@ export interface EnemyDef {
   xp: number;
   boss?: boolean;
   attacks: EnemyAttack[];
+  /** Grows back `amount` HP at the start of each of its turns, unless it has the effect `unless` on it (a troll and fire). */
+  regen?: { amount: number; unless: EffectKind; name: string };
 }
+
+/** HP a troll grows back at the start of each of its turns, when it is not Burning. */
+export const TROLL_REGEN = 3;
 
 /** The sparring ring's stand-in opponent. Practice only: no story or map may field it. */
 export const DUMMY_KIND = "dummy";
@@ -293,6 +298,25 @@ export const ENEMIES: Record<string, EnemyDef> = {
     attacks: [
       { name: "Mauling Swipe", rolls: 2, pct: 53, damage: 12, target: "hero", perfect: { effect: "bleeding", turns: 2 }, weight: 3 },
       { name: "Roar", rolls: 2, pct: 45, damage: 4, target: "hero", perfect: { effect: "stunned", turns: 1 }, weight: 1 },
+    ],
+  },
+  // The heaviest thing that walks ashore: very slow, and its club lands like a dropped mast. Its stomp
+  // shakes the whole crew and leaves them slow on their feet. A pair's worth on its own, like a bear.
+  ogre: {
+    kind: "ogre", name: "Ogre", hp: 32, speed: 22, xp: 24,
+    attacks: [
+      { name: "Club Smash", rolls: 2, pct: 49, damage: 13, target: "hero", perfect: { effect: "stunned", turns: 1 }, weight: 3 },
+      { name: "Stomp", rolls: 3, pct: 45, damage: 4, target: "all_heroes", perfect: { effect: "slowed", turns: 2 }, weight: 1 },
+    ],
+  },
+  // A troll: no tougher than a brute to look at, but its wounds close as you watch. It grows back every
+  // turn unless it is Burning, so fire (or a lot of damage at once) is how it is put down.
+  troll: {
+    kind: "troll", name: "Troll", hp: 20, speed: 40, xp: 22,
+    regen: { amount: TROLL_REGEN, unless: "burning", name: "Regenerate" },
+    attacks: [
+      { name: "Rake", rolls: 3, pct: 53, damage: 7, target: "hero", perfect: { effect: "bleeding", turns: 2 }, weight: 3 },
+      { name: "Hurl Rock", rolls: 2, pct: 49, damage: 6, target: "hero", perfect: { effect: "stunned", turns: 1 }, weight: 1 },
     ],
   },
   cultist: {
@@ -405,17 +429,19 @@ export function cavernBand(lead: CavernLead, party: number): string[] {
   return [lead, ...(party >= 2 ? [second] : []), ...(party >= 4 ? [lead] : [])];
 }
 
-/** What leads a roaming band ashore, as an even pick: wolves and bandits twice as often as a bear. */
-export const ROAMER_LEADS = ["wolf", "bandit", "wolf", "bandit", "bear"] as const;
+/** What leads a roaming band ashore, as an even pick: wolves and bandits twice as often as a bear or an ogre. */
+export const ROAMER_LEADS = ["wolf", "bandit", "wolf", "bandit", "bear", "ogre"] as const;
 export type RoamerLead = (typeof ROAMER_LEADS)[number];
 
 /**
  * A roaming band for a crew of `party` heroes: a lone hero meets one enemy, a
  * party a pair, a full ship a third. A bear is a pair's worth on its own, so
- * it comes alone until the ship is full, and then with a second.
+ * it comes alone until the ship is full, and then with a second. So does an ogre, and what comes with it
+ * to a full ship is the bandit who keeps it fed.
  */
 export function bandKinds(lead: RoamerLead, party: number): string[] {
   if (lead === "bear") return party >= 4 ? ["bear", "bear"] : ["bear"];
+  if (lead === "ogre") return party >= 4 ? ["ogre", "bandit"] : ["ogre"];
   return [lead, ...(party >= 2 ? [lead === "bandit" ? "archer" : "wolf"] : []), ...(party >= 4 ? [lead] : [])];
 }
 

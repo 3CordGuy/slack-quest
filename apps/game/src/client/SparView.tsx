@@ -229,7 +229,7 @@ export function SparView({ me, scene, renderer, onClose }: Props) {
                 <button key={e.kind} className={`spar-opponent ${kind === e.kind ? "selected" : ""}`} aria-pressed={kind === e.kind} onClick={() => setKind(e.kind)}>
                   <img className="pixel-icon" alt="" src={spriteDataUrl(e.kind)} />
                   <strong>{label("enemy", e.kind)}</strong>
-                  <span className="muted">{e.kind === DUMMY_KIND ? "Barely hits back" : e.boss ? "Boss · no fleeing" : e.attacks.map((a) => a.name).join(", ")}</span>
+                  <span className="muted">{e.kind === DUMMY_KIND ? "Barely hits back" : e.boss ? "Boss · no fleeing" : [...e.attacks.map((a) => a.name), ...(e.regen ? [`${e.regen.name} (not while ${label("effect", e.regen.unless).toLowerCase()})`] : [])].join(", ")}</span>
                 </button>
               ))}
             </div>

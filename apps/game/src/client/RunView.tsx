@@ -61,7 +61,7 @@ const PICKUP_LABEL: Record<string, string> = { herbs: "A patch of herbs", mushro
 const PICKUP_LABEL_CAVE: Record<string, string> = { mushrooms: "Pale mushrooms", stone: "Loose stone", bone: "Old bones", copper: "A vein of copper", iron: "A vein of iron" };
 
 /** What lurks in a cave chamber, by who leads it. */
-const LURKER_LABEL: Record<string, string> = { skeleton: "A heap of bones", bat: "A bat roost", slime: "A slime pool", shade: "A cold spot" };
+const LURKER_LABEL: Record<string, string> = { skeleton: "A heap of bones", bat: "A bat roost", slime: "A slime pool", shade: "A cold spot", troll: "A troll's den" };
 
 /** The caverns' places have no story to name them: they are named for what they are. */
 function caveName(poi: Poi): string {
@@ -121,7 +121,7 @@ function describe(events: WorldEvent[], state: ClientState, names: Map<string, s
         break;
       case "ambush": {
         const NAMES: Record<string, [string, string]> = {
-          wolf: ["a wolf", "wolves"], bear: ["a bear", "bears"],
+          wolf: ["a wolf", "wolves"], bear: ["a bear", "bears"], ogre: ["an ogre", "ogres"], troll: ["a troll", "trolls"],
           shade: ["a shade", "shades"], bat: ["a bat", "bats"], skeleton: ["a skeleton", "skeletons"], slime: ["a slime", "slimes"], haunt: ["the haunt", "haunts"],
         };
         const [one, many] = NAMES[ev.kinds[0]] ?? ["a raider", "raiders"];
@@ -750,7 +750,7 @@ function TurnBar({ state, run, me, code, status, onInventory, onBook, onLeave }:
     : rite ? rite.label
     : poi.kind === "gate" ? ((state.keys ?? 0) > 0 ? "Unlock the door" : `Force the door (Strength, ${heroPct(hero, "str")}%)`)
     : caverns && poi.kind === "cache" ? (poi.cleared ? null : guard && !guard.cleared ? `Reach for ${poiName(state, poi).replace(/^An? |^The /, "the ")}: fight what guards it` : `Open ${poiName(state, poi).replace(/^An? |^The /, "the ")}`)
-    : caverns && poi.kind === "camp" ? (poi.cleared ? null : `Fight the ${{ skeleton: "skeletons", bat: "bats", slime: "slimes", shade: "shades" }[poi.enemies[0]] ?? "things here"}`)
+    : caverns && poi.kind === "camp" ? (poi.cleared ? null : `Fight the ${{ skeleton: "skeletons", bat: "bats", slime: "slimes", shade: "shades", troll: "troll" }[poi.enemies[0]] ?? "things here"}`)
     : caverns && poi.kind === "lair" ? (poi.cleared ? null : "Fight what guards the hoard")
     : poi.kind === "landing" ? (state.larder && eatsChowder(hero, state.larder.chowder) ? "Rest and eat a chowder" : state.kind === "caverns" ? "Rest at the cave mouth" : "Rest at the ship")
     : poi.kind === "shrine" ? (poi.usedBy.includes(hero.id) ? null : "Pray at the shrine")

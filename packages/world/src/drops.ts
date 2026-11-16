@@ -23,6 +23,9 @@ export const ENEMY_DROPS: Record<string, ResourceKind[]> = {
   archer: ARMED,
   brute: ARMED,
   cultist: ARMED,
+  // An ogre's hide and the iron bands off its club; a troll's bones, and the stone it hurls.
+  ogre: ["fur", "bone", "iron"],
+  troll: ["bone", "stone"],
   villain: ARMED,
   guardian: ["stone"],
   // The dead leave bones behind.

@@ -490,7 +490,7 @@ export function bubbleTexture(text: string): { texture: THREE.CanvasTexture; wid
 
 // ---------- battle effects ----------
 
-export type FxKind = "slash" | "bolt" | "arrow" | "burst" | "spark" | "mote" | "dust" | "fleck" | "splash";
+export type FxKind = "slash" | "bolt" | "arrow" | "burst" | "spark" | "mote" | "dust" | "fleck" | "splash" | "rock";
 
 const fxCache = new Map<string, THREE.CanvasTexture>();
 
@@ -585,6 +585,15 @@ export function fxTexture(kind: FxKind, color: string, flip = false): THREE.Canv
     dot(12, 10);
     for (const [x, y] of [[4, 7], [3, 5], [11, 7], [12, 5], [7, 6], [8, 4]] as const) dot(x, y);
     dot(8, 5, "#ffffff");
+  } else if (kind === "rock") {
+    // A thrown stone: a lumpy rock, dark round its edge and lit across its top.
+    const edge = "#2f2b33";
+    for (const [x, y, w] of [[6, 4, 4], [5, 5, 6], [4, 6, 8], [4, 7, 8], [4, 8, 8], [5, 9, 7], [6, 10, 4]] as const) {
+      for (let i = 0; i < w; i++) dot(x + i, y, i === 0 || i === w - 1 || y === 4 || y === 10 ? edge : color);
+    }
+    for (const [x, y] of [[6, 5], [7, 5], [5, 6]] as const) dot(x, y, "#b9b3a6");
+    dot(9, 9, "#4a4650");
+    dot(10, 8, "#4a4650");
   } else if (kind === "mote") {
     // One XP mote: a solid 4x4 pixel, a white glint in its corner, in the middle of the tile.
     ctx.fillStyle = color;
