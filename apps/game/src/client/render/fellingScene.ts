@@ -81,8 +81,8 @@ function swingCurve(t: number): number {
   if (u < STRIKE_PART) return (u / STRIKE_PART) ** 2;
   return 1 - easeInOut((u - STRIKE_PART) / (1 - STRIKE_PART));
 }
-/** How far round from looking straight at a tree its notch faces: all but side on, so the wedge bites out of its outline. */
-const NOTCH_TURN = THREE.MathUtils.degToRad(80);
+/** How far round from looking straight at a tree its notch faces: far enough that the wedge bites out of its outline, near enough that you see into it. */
+const NOTCH_TURN = THREE.MathUtils.degToRad(55);
 
 const lambert = (color: string) => new THREE.MeshLambertMaterial({ color, flatShading: true });
 const HEARTWOOD = new THREE.Color("#ffe3a6");
@@ -357,9 +357,9 @@ export class FellingScene implements WorldMinigame {
       const root = new THREE.Group();
       root.position.copy(this.treeSpot(this.out, slot));
       root.position.y = this.heightAt(root.position);
-      // The notch faces round from you to the left, clear of the axe in your right hand: the wedge shows on that edge.
+      // The notch faces round from you to the right, where the axe in your right hand comes in: you cut it on that side.
       const toYou = this.out.clone().negate();
-      const front = toYou.clone().applyAxisAngle(UP, -NOTCH_TURN);
+      const front = toYou.clone().applyAxisAngle(UP, NOTCH_TURN);
       const body = new THREE.Group();
       const trunk = new NotchTrunk(size, front);
       body.add(trunk.mesh);
