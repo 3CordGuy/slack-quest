@@ -135,11 +135,35 @@ function rand(): number {
  * (which see-through materials would not), and the pattern suits the pixels. `fade.value` is how much of it
  * is left, 1 to 0. Keeps any shader changes the material already has.
  */
+/**
+ * What is worn over what, as a number each piece carries (its `layer`): the legs under the hem of whatever is
+ * worn on the body, and headgear over the hair and the head.
+ */
+const TIER = { legs: -1, body: 0, headgear: 2 };
+/** The layer whatever is drawn next belongs to (see TIER): set round the drawing of legs and of headgear. */
+let tier = TIER.body;
+/** How much nearer one layer is drawn than the one under it, in the figure's own units. */
+const LAYER_LIFT = 0.3;
+
+/**
+ * Layers: a piece on an outer layer is drawn a little nearer the eye in depth only (it does not move or grow on
+ * the screen), by its layer's share of LAYER_LIFT at the figure's own scale. So where a helmet and the hair
+ * under it nearly touch, or the top of a thigh swings out through a tunic's hem, the outer one is what shows,
+ * with no piece resized to make room.
+ */
+const LAYERED = /* glsl */ `
+{
+  float lift = layer * ${LAYER_LIFT.toFixed(2)} * length( modelViewMatrix[ 1 ].xyz );
+  vec4 nearer = projectionMatrix * ( mvPosition + vec4( 0.0, 0.0, lift, 0.0 ) );
+  gl_Position.z = nearer.z / nearer.w * gl_Position.w;
+}`;
+
 function fadeable<M extends THREE.Material>(material: M, fade: { value: number }, key: string): M {
   const before = material.onBeforeCompile;
   material.onBeforeCompile = function (shader, renderer) {
     before.call(this, shader, renderer);
     shader.uniforms.figureFade = fade;
+    shader.vertexShader = shader.vertexShader.replace("void main() {", "attribute float layer;\nvoid main() {").replace("#include <project_vertex>", `#include <project_vertex>${LAYERED}`);
     shader.fragmentShader = shader.fragmentShader.replace(
       "void main() {",
       /* glsl */ `uniform float figureFade;
@@ -416,7 +440,7 @@ class Part {
     const c = new THREE.Color(color);
     // No two pieces of cloth or plate are quite the same shade. (Not what glows, nor the ink of an eye.)
     if (!glow && color !== OUTLINE && color !== "#ffffff") c.offsetHSL((rand() - 0.5) * 0.02, (rand() - 0.5) * 0.08, (rand() - 0.5) * 0.06);
-    this.place(flat, shell, c, glow, outlined && !glow && rounded);
+    this.place(flat, shell, c, glow, outlined && !glow && rounded, tier);
     return this;
   }
 
@@ -426,23 +450,23 @@ class Part {
    * of the same colour set in the joint to fill the gap when it bends, and anything else (too wide to be the
    * limb, or only just over the line) goes whole to the side most of it is on.
    */
-  private place(flat: THREE.BufferGeometry, shell: THREE.BufferGeometry | null, c: THREE.Color, glow: boolean, inflated: boolean) {
+  private place(flat: THREE.BufferGeometry, shell: THREE.BufferGeometry | null, c: THREE.Color, glow: boolean, inflated: boolean, layer: number) {
     const bend = this.bend;
-    if (!bend) return this.put(flat, shell, c, glow, inflated);
+    if (!bend) return this.put(flat, shell, c, glow, inflated, layer);
     const down = (g: THREE.BufferGeometry | null) => g?.translate(0, -bend.at, 0) ?? null;
     flat.computeBoundingBox();
     const box = flat.boundingBox!;
-    const lower = () => bend.lower.put(down(flat)!, down(shell), c, glow, inflated);
+    const lower = () => bend.lower.put(down(flat)!, down(shell), c, glow, inflated, layer);
     if (box.max.y <= bend.at) return lower();
-    if (box.min.y >= bend.at) return this.put(flat, shell, c, glow, inflated);
+    if (box.min.y >= bend.at) return this.put(flat, shell, c, glow, inflated, layer);
     const limb = Math.max(-box.min.x, box.max.x, -box.min.z, box.max.z) <= LIMB_REACH && box.max.y - bend.at >= 0.5 && bend.at - box.min.y >= 0.5;
-    if (!limb) return (box.max.y + box.min.y) / 2 < bend.at ? lower() : this.put(flat, shell, c, glow, inflated);
+    if (!limb) return (box.max.y + box.min.y) / 2 < bend.at ? lower() : this.put(flat, shell, c, glow, inflated, layer);
     const cut = cutAt(flat, bend.at);
     const cutShell = shell ? cutAt(shell, bend.at) : null;
     flat.dispose();
     shell?.dispose();
-    this.put(cut.above, cutShell?.above ?? null, c, glow, inflated);
-    bend.lower.put(down(cut.below)!, down(cutShell?.below ?? null), c, glow, inflated);
+    this.put(cut.above, cutShell?.above ?? null, c, glow, inflated, layer);
+    bend.lower.put(down(cut.below)!, down(cutShell?.below ?? null), c, glow, inflated, layer);
     if (cut.span && !glow) {
       // The joint: a ball in a round limb, a barrel across a square one, the size of the cut.
       const { x, z, rx, rz } = cut.span;
@@ -453,14 +477,17 @@ class Part {
       else knuckle.scale(rx * 0.98, rz * 0.98, rz * 0.98);
       knuckle.translate(x, bend.at, z);
       roundNormals(knuckle);
-      this.put(knuckle, null, c, false, inflated || !!shell);
+      this.put(knuckle, null, c, false, inflated || !!shell, layer);
     }
   }
 
   /** Keep a piece on this part: its outline's shell (made here for a rounded piece), and the piece in its colour. */
-  private put(flat: THREE.BufferGeometry, shell: THREE.BufferGeometry | null, c: THREE.Color, glow: boolean, inflated: boolean) {
+  private put(flat: THREE.BufferGeometry, shell: THREE.BufferGeometry | null, c: THREE.Color, glow: boolean, inflated: boolean, layer: number) {
+    // Its layer on every corner, and on its outline's shell too, so the two stay together in depth.
+    const layered = (g: THREE.BufferGeometry) => g.setAttribute("layer", new THREE.BufferAttribute(new Float32Array(g.getAttribute("position").count).fill(layer), 1));
+    layered(flat);
     if (inflated) this.hull.push(inflate(flat, edge));
-    else if (shell) this.hull.push(shell);
+    else if (shell) this.hull.push(layered(shell));
     const n = flat.getAttribute("position").count;
     const colors = new Float32Array(n * 3);
     for (let i = 0; i < n; i++) colors.set([c.r, c.g, c.b], i * 3);
@@ -547,6 +574,7 @@ class Part {
     const rgba = new Float32Array(n * 4);
     for (let i = 0; i < n; i++) rgba.set([c.r, c.g, c.b, alpha], i * 4);
     g.setAttribute("color", new THREE.BufferAttribute(rgba, 4));
+    g.setAttribute("layer", new THREE.BufferAttribute(new Float32Array(n).fill(tier), 1));
     this.inked.push(g);
     return this;
   }
@@ -2859,6 +2887,8 @@ function person(top: THREE.Group, look: Look, outfit: Outfit | undefined, asleep
     [b.legR, b.thighR, b.shinR, b.footR],
     [b.legL, b.thighL, b.shinL, b.footL],
   ] as const;
+  // Under the hem of whatever is worn on the body.
+  tier = TIER.legs;
   for (const [leg, thigh, shin, foot] of sides) {
     if (lowPoly && !legs) {
       if (bare("legs")) {
@@ -2910,6 +2940,8 @@ function person(top: THREE.Group, look: Look, outfit: Outfit | undefined, asleep
       leg.box(GEAR.dark, 2.6, 1.2, 3.5, 0, -4.4, 0.4);
     }
   }
+
+  tier = TIER.body;
 
   // Chest, belt and coat-tails.
   const body = armor("body");
@@ -3050,6 +3082,8 @@ function person(top: THREE.Group, look: Look, outfit: Outfit | undefined, asleep
     lowHead(head, look, asleep, hatted);
   } else drawHead(head, look, asleep);
   const helmet = armor("helmet");
+  // Over the hair and the head.
+  tier = TIER.headgear;
   if (lowPoly && helmet) {
     lowWornHelmet(head, helmet, trim("helmet"));
   } else if (helmet?.ref === "hood" || helmet?.icon === "hood") {
@@ -3082,6 +3116,7 @@ function person(top: THREE.Group, look: Look, outfit: Outfit | undefined, asleep
     if (lowPoly) lowHat(head, look);
     else drawHat(head, look);
   }
+  tier = TIER.body;
 
   if (amulet && lowPoly) lowAmulet(torso, amulet.ref, trim("amulet"), m.shoulders / m.girth, amuletOver);
 
@@ -3985,6 +4020,7 @@ export function makeFigure(kind: string, look: Look, outfit?: Outfit, opts: Figu
   scaler.scale.setScalar(1 / FRAME);
   edge = opts.edge ?? 0.12;
   seed = 20261113;
+  tier = TIER.body;
   rodInHand = opts.rod ?? false;
   extraParts = [];
   braids = [];
