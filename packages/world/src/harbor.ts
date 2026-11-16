@@ -32,14 +32,41 @@ const keyOf = (p: HexPos) => `${p.q},${p.r}`;
  */
 export type Footing = "pair" | "trio" | "flower";
 
-/** The hexes a building with its door on `door` stands on. */
-export function footing(door: HexPos, shape: Footing): HexPos[] {
-  const { q, r } = door;
-  const pair = [{ q, r: r - 1 }, { q: q + 1, r: r - 1 }];
-  if (shape === "pair") return pair;
-  const behind = { q: q + 1, r: r - 2 };
-  if (shape === "trio") return [...pair, behind];
-  return [...pair, behind, { q, r: r - 2 }, { q: q + 2, r: r - 2 }, { q: q + 1, r: r - 3 }, { q: q + 2, r: r - 3 }];
+/**
+ * The six sides of a hex, clockwise from the top right: the same order as `HEX_DIRS` (hutroom.ts), which a
+ * path's bits and a building's facing both count in. Kept here too so this file does not import the hut room's.
+ */
+export const HARBOR_SIDES: readonly HexPos[] = [{ q: 1, r: -1 }, { q: 1, r: 0 }, { q: 0, r: 1 }, { q: -1, r: 1 }, { q: -1, r: 0 }, { q: 0, r: -1 }];
+/** An offset turned a sixth clockwise, `times` times: in the order above, each side becomes the next. */
+function turned(d: HexPos, times: number): HexPos {
+  let { q, r } = d;
+  for (let i = 0; i < ((times % 6) + 6) % 6; i++) [q, r] = [-r, q + r];
+  return { q, r };
+}
+
+/**
+ * The hexes a building with its door on `door` stands on. Facing 0 it stands to the north of its door, its front
+ * to the south; each step of `facing` turns it a sixth clockwise about the door, so it can front a road running
+ * any of the three ways a row of hexes runs.
+ */
+export function footing(door: HexPos, shape: Footing, facing = 0): HexPos[] {
+  const pair = [{ q: 0, r: -1 }, { q: 1, r: -1 }];
+  const offsets = shape === "pair" ? pair : shape === "trio" ? [...pair, { q: 1, r: -2 }] : [...pair, { q: 1, r: -2 }, { q: 0, r: -2 }, { q: 2, r: -2 }, { q: 1, r: -3 }, { q: 2, r: -3 }];
+  return offsets.map((d) => {
+    const t = turned(d, facing);
+    return { q: door.q + t.q, r: door.r + t.r };
+  });
+}
+
+/**
+ * The hexes just in front of a door facing `facing`: the two of its sides the front looks out between. A
+ * doorstep's path runs out to whichever of them a road is on.
+ */
+export function frontOf(door: HexPos, facing = 0): HexPos[] {
+  return [2, 3].map((side) => {
+    const d = HARBOR_SIDES[(side + facing) % 6];
+    return { q: door.q + d.q, r: door.r + d.r };
+  });
 }
 
 /** Where a player appears on arrival: the middle of the plaza, at the island's heart. */
@@ -48,18 +75,22 @@ export const HARBOR_SPAWN: HexPos = at(13, 15);
 export const HARBOR_PIERS: HexPos[] = [at(8, 26), at(13, 27), at(18, 26)];
 /**
  * Hut plots, handed out to crew members in the order they joined: each is the doorstep of a hut that stands on the
- * two hexes behind it. Scattered round the island the way a village grows, not laid out in rows: the first few near
- * the plaza, the later ones out toward the trees and the shore.
+ * two hexes behind it. They line the two dirt lanes that run up from the High Street to the north-west and the
+ * north-east, facing the lane from either side, the first few nearest the street; the last few are down by the
+ * shore, along the lanes to the fish shack and the lighthouse.
  */
 export const HARBOR_PLOTS: HexPos[] = [
-  at(10, 9), at(16, 9), at(9, 13), at(13, 7), at(19, 10), at(6, 9),
-  at(10, 21), at(20, 19), at(5, 16), at(17, 6), at(18, 21), at(7, 20),
+  at(10, 12), at(16, 13), at(8, 13), at(9, 18), at(9, 10), at(17, 11),
+  at(7, 11), at(20, 10), at(8, 8), at(18, 9), at(8, 20), at(20, 18),
 ];
-export const HARBOR_BOARD: HexPos = at(13, 12);
-/** The market stall, where gear is bought and sold. */
-export const HARBOR_SHOP: HexPos = at(18, 13);
-/** The sparring ring, where crewmates try out their gear. */
-export const HARBOR_RING: HexPos = at(7, 15);
+/** Which way each hut plot faces (see `footing`), so its hut fronts the lane it stands on. */
+export const HARBOR_PLOT_FACING: number[] = [1, 5, 4, 0, 1, 5, 4, 2, 1, 5, 3, 0];
+/** The notice board, at the plaza's north edge beside the lane up to the caverns. */
+export const HARBOR_BOARD: HexPos = at(14, 13);
+/** The market stall, where gear is bought and sold: on the High Street, just west of the plaza. */
+export const HARBOR_SHOP: HexPos = at(12, 14);
+/** The sparring ring, where crewmates try out their gear: at the west end of the High Street. */
+export const HARBOR_RING: HexPos = at(5, 15);
 /** Gathering spots at the edges: the fish shack on the south-west shore, the western trees, and an outcrop in the east wall. */
 export const HARBOR_GATHER = { fishing: at(6, 23), felling: at(3, 13), quarry: at(20, 6) } as const;
 /** Where a fishing sitting can be started: each pier head, and the old spot on the south-west shore. The open sea is reached by boat. */
@@ -76,10 +107,10 @@ export function fishSpotAt(pos: HexPos): ShoreSpot | null {
   for (const [id, p] of Object.entries(HARBOR_FISH_SPOTS) as [ShoreSpot, HexPos][]) if (p.q === pos.q && p.r === pos.r) return id;
   return null;
 }
-/** The pub's door: food, drink, the barkeep and the dice table are inside. */
-export const HARBOR_PUB: HexPos = at(17, 18);
-/** The works: the builders' yard where the crew's shared projects are paid for. */
-export const HARBOR_WORKS: HexPos = at(9, 18);
+/** The pub's door, at the east end of the High Street on its north side, its front to the south: food, drink, the barkeep and the dice table are inside. */
+export const HARBOR_PUB: HexPos = at(19, 14);
+/** The works: the builders' yard where the crew's shared projects are paid for, on the west road down to the quay. */
+export const HARBOR_WORKS: HexPos = at(11, 18);
 /**
  * The lighthouse's door: out on the south-east point, over the wreck, where
  * ships pass out of the harbour. Not in the plaza, where a tall tower would
@@ -87,12 +118,12 @@ export const HARBOR_WORKS: HexPos = at(9, 18);
  * a bare point (then a building site) until the crew has paid for it at the works.
  */
 export const HARBOR_LIGHTHOUSE: HexPos = at(21, 24);
-/** The apothecary's door, along the lane from the market stall. A building site until the crew has paid for it. */
-export const HARBOR_APOTHECARY: HexPos = at(20, 16);
-/** The smithy's door, up from the sparring ring. A building site until the crew has paid for it. */
-export const HARBOR_SMITHY: HexPos = at(6, 13);
-/** The galley's door, above the quay between the middle and east piers, where ships take on provisions. A building site until the crew has paid for it. */
-export const HARBOR_GALLEY: HexPos = at(16, 23);
+/** The apothecary's door, across the High Street from the pub, facing up it from the south side. A building site until the crew has paid for it. */
+export const HARBOR_APOTHECARY: HexPos = at(18, 16);
+/** The smithy's door, at the west end of the High Street by the sparring ring. A building site until the crew has paid for it. */
+export const HARBOR_SMITHY: HexPos = at(6, 14);
+/** The galley's door, on the east road down to the quay, where ships take on provisions. A building site until the crew has paid for it. */
+export const HARBOR_GALLEY: HexPos = at(15, 21);
 
 /** The mouth of the Haunted Caverns: a way into the rocks through the north wall. */
 export const HARBOR_CAVE: HexPos = at(13, 3);
@@ -105,20 +136,59 @@ export const HARBOR_WRECK: HexPos = at(22, 23);
  * The town's buildings: where each one's door is, how much ground it stands on behind it, and what that ground
  * is. The town's places stand on cobbles; the lighthouse and the fish shack on the bare shore; huts on the grass.
  */
-export const HARBOR_BUILDINGS: { id: string; door: HexPos; shape: Footing; ground: Biome }[] = [
+export const HARBOR_BUILDINGS: { id: string; door: HexPos; shape: Footing; ground: Biome; facing?: number }[] = [
   { id: "pub", door: HARBOR_PUB, shape: "trio", ground: "cobble" },
   { id: "lighthouse", door: HARBOR_LIGHTHOUSE, shape: "flower", ground: "mud" },
-  { id: "works", door: HARBOR_WORKS, shape: "pair", ground: "cobble" },
+  { id: "works", door: HARBOR_WORKS, shape: "pair", ground: "cobble", facing: 5 },
   { id: "shop", door: HARBOR_SHOP, shape: "pair", ground: "cobble" },
-  { id: "apothecary", door: HARBOR_APOTHECARY, shape: "trio", ground: "cobble" },
+  { id: "apothecary", door: HARBOR_APOTHECARY, shape: "trio", ground: "cobble", facing: 3 },
   { id: "smithy", door: HARBOR_SMITHY, shape: "trio", ground: "cobble" },
-  { id: "galley", door: HARBOR_GALLEY, shape: "trio", ground: "cobble" },
+  { id: "galley", door: HARBOR_GALLEY, shape: "trio", ground: "cobble", facing: 4 },
   { id: "fishing", door: HARBOR_GATHER.fishing, shape: "pair", ground: "mud" },
-  ...HARBOR_PLOTS.map((door, i) => ({ id: `plot:${i}`, door, shape: "pair" as const, ground: "plains" as const })),
+  ...HARBOR_PLOTS.map((door, i) => ({ id: `plot:${i}`, door, shape: "pair" as const, ground: "plains" as const, facing: HARBOR_PLOT_FACING[i] })),
 ];
 
+/**
+ * The town's roads, each a straight run (or a zigzag, for a lane that must head due north or south, which no
+ * row of hexes does): where it starts and the sides it steps out through, in `HARBOR_SIDES` order. Cobbled
+ * streets are laid as cobble hexes; dirt lanes as paths across the grass, joining wherever they meet.
+ */
+export interface HarborRoad {
+  kind: "cobble" | "dirt";
+  from: HexPos;
+  steps: number[];
+}
+const run = (side: number, n: number) => Array<number>(n).fill(side);
+const zigzag = (a: number, b: number, n: number) => Array.from({ length: n }, (_, i) => (i % 2 ? b : a));
+export const HARBOR_ROADS: HarborRoad[] = [
+  // The High Street, east and west through the plaza, from the sparring ring to the pub.
+  { kind: "cobble", from: at(6, 15), steps: run(1, 14) },
+  // The two roads down from the plaza to the quay, the works on the west one and the galley on the east.
+  { kind: "cobble", from: at(13, 16), steps: run(3, 6) },
+  { kind: "cobble", from: at(14, 16), steps: run(2, 6) },
+  // The lane up to the caverns' mouth, due north, so zigzagging.
+  { kind: "dirt", from: at(13, 14), steps: zigzag(0, 5, 11) },
+  // The hut lanes, up from the High Street to the north-west and the north-east.
+  { kind: "dirt", from: at(10, 15), steps: run(5, 6) },
+  { kind: "dirt", from: at(16, 15), steps: run(0, 6) },
+  // Along the shore from the quay roads: west to the fish shack, east toward the lighthouse.
+  { kind: "dirt", from: at(11, 19), steps: run(4, 5) },
+  { kind: "dirt", from: at(15, 19), steps: run(1, 5) },
+];
+
+/** The hexes a road covers, its start first. */
+export function roadHexes(road: HarborRoad): HexPos[] {
+  const out = [road.from];
+  for (const side of road.steps) {
+    const p = out[out.length - 1];
+    const d = HARBOR_SIDES[side];
+    out.push({ q: p.q + d.q, r: p.r + d.r });
+  }
+  return out;
+}
+
 /** Every hex a building stands on, by the door it belongs to. */
-const DOOR_OF = new Map<string, HexPos>(HARBOR_BUILDINGS.flatMap((b) => footing(b.door, b.shape).map((p) => [keyOf(p), b.door] as [string, HexPos])));
+const DOOR_OF = new Map<string, HexPos>(HARBOR_BUILDINGS.flatMap((b) => footing(b.door, b.shape, b.facing).map((p) => [keyOf(p), b.door] as [string, HexPos])));
 
 /**
  * The door of the building standing on a hex, if one does: pointing at any part of a building is pointing at the
@@ -130,8 +200,8 @@ export function harborDoor(pos: HexPos): HexPos | null {
 
 const HEIGHT: Record<Biome, number> = { water: 0.05, plains: 0.3, forest: 0.42, hills: 0.75, dock: 0.1, cobble: 0.26, mud: 0.2, rampart: 0.7, floor: 0.1, wall: 0.9, cave: 0.18, rock: 1.4, gate: 0.18, fog: 0.3 };
 
-export function harborPoi(id: string, kind: PoiKind, pos: HexPos): Poi {
-  return { id, kind, pos, hidden: false, cleared: false, usedBy: [], enemies: [] };
+export function harborPoi(id: string, kind: PoiKind, pos: HexPos, facing = 0): Poi {
+  return { id, kind, pos, hidden: false, cleared: false, usedBy: [], enemies: [], ...(facing ? { facing } : {}) };
 }
 
 /** A fixed 0..1 value per hex, so the same ground is mud or scrub every time. */
@@ -155,7 +225,9 @@ const around = (p: HexPos) => NEIGHBOURS.map((d) => ({ q: p.q + d.q, r: p.r + d.
  * stand on the west and east shoulders where the wall never reached; and the
  * south shore is a quay of bare earth with three piers, the sea beyond them
  * dotted with rocks and a wreck. Inland it is grass, with a cobbled plaza at
- * the heart, the crew's places round it, and hut plots scattered between.
+ * the heart and the town laid out along its roads (HARBOR_ROADS): the High
+ * Street east and west through the plaza, two roads down to the quay, and dirt
+ * lanes up to the huts and the caverns. Every building fronts a road.
  * A building is bigger than the hex its door is on: it stands on the hexes
  * behind the door (see `footing`), which are marked `built` and cannot be walked through.
  */
@@ -193,10 +265,12 @@ export function generateHarbor(): WorldMap {
   };
   // The plaza: cobbles under the place everyone arrives and all round it, and under the notice board and the ring.
   for (const p of [HARBOR_SPAWN, ...around(HARBOR_SPAWN), HARBOR_BOARD, HARBOR_RING]) lay(p, "cobble");
+  // The cobbled streets, before the buildings that front them.
+  for (const road of HARBOR_ROADS) if (road.kind === "cobble") for (const p of roadHexes(road)) lay(p, "cobble");
   // Each building's ground: its doorstep and the hexes it stands on, all level. Nobody walks through the building.
   for (const b of HARBOR_BUILDINGS) {
     lay(b.door, b.ground);
-    for (const p of footing(b.door, b.shape)) {
+    for (const p of footing(b.door, b.shape, b.facing)) {
       const t = lay(p, b.ground);
       if (t) t.built = true;
     }
@@ -217,6 +291,7 @@ export function generateHarbor(): WorldMap {
   // The gathering spots keep the ground they are about.
   lay(HARBOR_GATHER.quarry, "hills");
   lay(HARBOR_GATHER.felling, "forest");
+  layPaths(map);
   map.pois = [
     harborPoi("board", "board", HARBOR_BOARD), harborPoi("shop", "shop", HARBOR_SHOP), harborPoi("ring", "ring", HARBOR_RING),
     harborPoi("pub", "pub", HARBOR_PUB), harborPoi("works", "works", HARBOR_WORKS),
@@ -229,8 +304,51 @@ export function generateHarbor(): WorldMap {
     harborPoi("cave", "cave", HARBOR_CAVE),
     ...HARBOR_ROCKS.map((p, i) => harborPoi(`rocks:${i}`, "rocks", p)),
     harborPoi("wreck", "wreck", HARBOR_WRECK),
-  ];
+  ].map((p) => {
+    const facing = HARBOR_BUILDINGS.find((b) => b.id === p.id)?.facing;
+    return facing ? { ...p, facing } : p;
+  });
   return map;
+}
+
+/** Ground a dirt path can be trodden into: open grass, not under a building. */
+const trodden = (t: Tile | undefined): t is Tile => !!t && t.biome === "plains" && !t.built;
+/** Ground a path can run up to and stop at: a street, the bare quay, the woods or the hills it leads into. */
+const meets = (t: Tile | undefined) => !!t && !t.built && ["cobble", "mud", "dock", "forest", "hills"].includes(t.biome);
+
+/**
+ * Tread the dirt lanes into the grass: each step of a lane joins the two hexes it crosses between, on whichever
+ * of them is grass. Then each building on the grass (a hut) gets a short path from its doorstep out to the road
+ * in front of it, if one passes there.
+ */
+function layPaths(map: WorldMap) {
+  const join = (a: HexPos, side: number) => {
+    const d = HARBOR_SIDES[side];
+    const b = { q: a.q + d.q, r: a.r + d.r };
+    const ta = tileAt(map, a), tb = tileAt(map, b);
+    if (!ta || !tb) return;
+    const ok = (t: Tile, other: Tile) => trodden(t) && (trodden(other) || meets(other));
+    if (ok(ta, tb)) ta.path = (ta.path ?? 0) | (1 << side);
+    if (ok(tb, ta)) tb.path = (tb.path ?? 0) | (1 << ((side + 3) % 6));
+  };
+  for (const road of HARBOR_ROADS) {
+    if (road.kind !== "dirt") continue;
+    let p = road.from;
+    for (const side of road.steps) {
+      join(p, side);
+      const d = HARBOR_SIDES[side];
+      p = { q: p.q + d.q, r: p.r + d.r };
+    }
+  }
+  for (const b of HARBOR_BUILDINGS) {
+    if (!trodden(tileAt(map, b.door))) continue;
+    for (const [i, front] of frontOf(b.door, b.facing).entries()) {
+      const t = tileAt(map, front);
+      if (!t || !(t.path || t.biome === "cobble")) continue;
+      join(b.door, ([2, 3][i] + (b.facing ?? 0)) % 6);
+      break;
+    }
+  }
 }
 
 /** Longest walk the server will accept in one request. */

@@ -5,7 +5,7 @@
 // water. It has no heroes, ships or crew huts in it yet, and it makes no sound.
 
 import * as THREE from "three";
-import { HARBOR_PUB, generateHarbor } from "@gantt-quest/world";
+import { HARBOR_LIGHTHOUSE, HARBOR_PUB, generateHarbor } from "@gantt-quest/world";
 import { WorldRenderer, hexToWorld, type RenderState } from "./WorldRenderer";
 
 /**
@@ -42,9 +42,13 @@ export function harborOutlook(): Outlook {
   };
   view.setState(state);
 
-  // From a little south of the pub, at about head height, looking out over the quay to the piers and the sea.
+  // From the pub's front, at about head height, looking out across the High Street and down past the quay to
+  // the lighthouse's point and the sea (east of south, so the apothecary over the road stands to one side).
   const pub = hexToWorld(HARBOR_PUB);
-  view.setVantage(new THREE.Vector3(pub.x, 1.6, pub.z + 1.5), new THREE.Vector3(pub.x, 0.5, pub.z + 9), 26);
+  const point = hexToWorld(HARBOR_LIGHTHOUSE);
+  const eye = new THREE.Vector3(pub.x, 1.6, pub.z + 1.5);
+  const away = new THREE.Vector3(point.x - eye.x, 0, point.z - eye.z).normalize().multiplyScalar(7.5);
+  view.setVantage(eye, new THREE.Vector3(eye.x + away.x, 0.5, eye.z + away.z), 26);
   // Seen through a small pane, the picture wants to be sharp from front to back and even to its corners:
   // no tilt-shift blur, no vignette, and only a little haze out at sea.
   if (view.post) Object.assign(view.post.params, { dof: 0, vignette: 0, haze: 0.3 });

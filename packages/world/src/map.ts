@@ -54,6 +54,12 @@ export interface Tile {
   built?: boolean;
   /** Something too thick to get through stands on this hex: a stand of old trees in the forest, or a heap of boulders in the hills. */
   blocker?: Blocker;
+  /**
+   * A dirt path crosses this hex: bit i is set for each side it runs out through, the sides in `HEX_DIRS` order
+   * (top right, right, bottom right, bottom left, left, top left). One bit is a path's end; two, a run or a bend;
+   * three or more, a junction. It is only drawn: a path costs the same to walk as the ground it is on.
+   */
+  path?: number;
 }
 
 /** What can stand on an island hex and stop anyone walking onto it. */
@@ -86,6 +92,11 @@ export interface Poi {
   enemies: string[];
   /** For a hut plot in the Harbor: the hut's tier, which sets how big the building is drawn. */
   tier?: number;
+  /**
+   * For a building in the Harbor: which way it faces, in sixths of a turn. 0 has its door to the south and the
+   * building behind it to the north; each step turns it a sixth clockwise as seen from above (see `footing`).
+   */
+  facing?: number;
   /** For a pickup on an island: what lies there for the taking. */
   find?: ResourceKind;
   /** For a bought plot whose shack is not up yet: how full its resource bin is, 0 to 1. */

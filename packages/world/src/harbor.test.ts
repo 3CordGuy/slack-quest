@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { HARBOR_APOTHECARY, HARBOR_BUILDINGS, HARBOR_CAVE, HARBOR_GALLEY, HARBOR_GATHER, HARBOR_LIGHTHOUSE, HARBOR_PUB, HARBOR_WRECK, HARBOR_SMITHY, HARBOR_GRID, HARBOR_BOARD, HARBOR_PIERS, HARBOR_PLOTS, HARBOR_RING, HARBOR_SHOP, HARBOR_SPAWN, HARBOR_WORKS, findPath, footing, generateHarbor, harborDoor, harborPath, tileAt } from "./index";
+import { HARBOR_APOTHECARY, HARBOR_BUILDINGS, HARBOR_CAVE, HARBOR_GALLEY, HARBOR_GATHER, HARBOR_LIGHTHOUSE, HARBOR_PUB, HARBOR_WRECK, HARBOR_SMITHY, HARBOR_GRID, HARBOR_BOARD, HARBOR_PIERS, HARBOR_PLOTS, HARBOR_RING, HARBOR_SHOP, HARBOR_SPAWN, HARBOR_WORKS, HARBOR_ROADS, HARBOR_SIDES, findPath, footing, frontOf, generateHarbor, roadHexes, harborDoor, harborPath, tileAt } from "./index";
 
 type Hex = { q: number; r: number };
 const key = (p: Hex) => `${p.q},${p.r}`;
@@ -10,7 +10,7 @@ describe("harbor map", () => {
   const map = generateHarbor();
   /** Every hex a hero stands on to use a place. */
   const doors = [...HARBOR_PLOTS, HARBOR_BOARD, HARBOR_SHOP, HARBOR_RING, HARBOR_PUB, HARBOR_WORKS, HARBOR_APOTHECARY, HARBOR_SMITHY, HARBOR_GALLEY, HARBOR_LIGHTHOUSE, HARBOR_CAVE, ...Object.values(HARBOR_GATHER)];
-  const built = HARBOR_BUILDINGS.flatMap((b) => footing(b.door, b.shape));
+  const built = HARBOR_BUILDINGS.flatMap((b) => footing(b.door, b.shape, b.facing));
 
   it("is the same every time", () => {
     expect(generateHarbor()).toEqual(map);
@@ -65,7 +65,7 @@ describe("harbor map", () => {
     }
     expect(map.tiles.filter((t) => t.built).length).toBe(built.length);
     // The ground under a building is level with its doorstep, so it does not float or sink.
-    for (const b of HARBOR_BUILDINGS) for (const p of footing(b.door, b.shape)) expect(tileAt(map, p)!.h).toBe(tileAt(map, b.door)!.h);
+    for (const b of HARBOR_BUILDINGS) for (const p of footing(b.door, b.shape, b.facing)) expect(tileAt(map, p)!.h).toBe(tileAt(map, b.door)!.h);
   });
 
   it("gives the pub four tiles and the lighthouse a ring of seven with the tower in the middle", () => {
@@ -80,7 +80,7 @@ describe("harbor map", () => {
   });
 
   it("says which door a building's ground belongs to", () => {
-    for (const b of HARBOR_BUILDINGS) for (const p of footing(b.door, b.shape)) expect(harborDoor(p)).toEqual(b.door);
+    for (const b of HARBOR_BUILDINGS) for (const p of footing(b.door, b.shape, b.facing)) expect(harborDoor(p)).toEqual(b.door);
     // Open ground and the doors themselves belong to no building.
     expect(harborDoor(HARBOR_SPAWN)).toBeNull();
     expect(harborDoor(HARBOR_PUB)).toBeNull();
@@ -118,7 +118,7 @@ describe("harbor map", () => {
     for (const pos of [HARBOR_SPAWN, ...around(HARBOR_SPAWN), HARBOR_BOARD, HARBOR_RING]) expect(tileAt(map, pos)?.biome).toBe("cobble");
     for (const id of ["pub", "works", "shop", "apothecary", "smithy", "galley"]) {
       const b = HARBOR_BUILDINGS.find((x) => x.id === id)!;
-      for (const pos of [b.door, ...footing(b.door, b.shape)]) expect(tileAt(map, pos)?.biome, id).toBe("cobble");
+      for (const pos of [b.door, ...footing(b.door, b.shape, b.facing)]) expect(tileAt(map, pos)?.biome, id).toBe("cobble");
     }
     // Huts stand on the grass, not on paving.
     for (const plot of HARBOR_PLOTS) expect(tileAt(map, plot)?.biome).toBe("plains");
@@ -142,10 +142,15 @@ describe("harbor map", () => {
     expect(map.pois.find((p) => p.id === "cave")?.pos).toEqual(HARBOR_CAVE);
   });
 
-  it("puts the apothecary near the market stall and the smithy near the sparring ring, off the plots", () => {
+  it("puts the apothecary on the High Street with the market stall and the smithy by the sparring ring, off the plots", () => {
     const plots = new Set(HARBOR_PLOTS.map(key));
     for (const spot of [HARBOR_APOTHECARY, HARBOR_SMITHY]) expect(plots.has(key(spot))).toBe(false);
-    expect(dist(HARBOR_APOTHECARY, HARBOR_SHOP)).toBeLessThanOrEqual(4);
+    const highStreet = new Set(roadHexes(HARBOR_ROADS[0]).map(key));
+    const facing = (door: Hex) => HARBOR_BUILDINGS.find((b) => key(b.door) === key(door))!.facing;
+    for (const spot of [HARBOR_APOTHECARY, HARBOR_SHOP, HARBOR_PUB]) expect(frontOf(spot, facing(spot)).some((p) => highStreet.has(key(p)))).toBe(true);
+    // The pub's front is to the south, toward the view the Harbor opens on; the apothecary faces it across the street.
+    expect(facing(HARBOR_PUB) ?? 0).toBe(0);
+    expect(facing(HARBOR_APOTHECARY)).toBe(3);
     expect(dist(HARBOR_SMITHY, HARBOR_RING)).toBeLessThanOrEqual(4);
     expect(map.pois.find((p) => p.id === "apothecary")?.pos).toEqual(HARBOR_APOTHECARY);
     expect(map.pois.find((p) => p.id === "smithy")?.pos).toEqual(HARBOR_SMITHY);
@@ -156,13 +161,13 @@ describe("harbor map", () => {
     expect(taken.some((p) => key(p) === key(HARBOR_GALLEY))).toBe(false);
     // Down by the water: south of the plaza, a short walk from a pier.
     expect(HARBOR_GALLEY.r).toBeGreaterThan(HARBOR_SPAWN.r);
-    expect(Math.min(...HARBOR_PIERS.map((p) => dist(p, HARBOR_GALLEY)))).toBeLessThanOrEqual(4);
+    expect(Math.min(...HARBOR_PIERS.map((p) => dist(p, HARBOR_GALLEY)))).toBeLessThanOrEqual(5);
     expect(map.pois.find((p) => p.id === "galley")).toMatchObject({ kind: "galley", pos: HARBOR_GALLEY });
     // Every pier can still be walked to without crossing the galley's doorstep.
     for (const pier of HARBOR_PIERS) expect(harborPath(map, HARBOR_SPAWN, pier)!.some((p) => key(p) === key(HARBOR_GALLEY))).toBe(false);
   });
 
-  it("is a round island: sea on every side, room for the town, and hut plots that are not laid out in rows", () => {
+  it("is a round island: sea on every side, room for the town, and hut plots spread along the lanes", () => {
     const land = map.tiles.filter((t) => t.biome !== "water" && t.biome !== "dock");
     const col = (t: Hex) => t.q + Math.floor(t.r / 2);
     // No land on the map's border, so the sea goes all the way round.
@@ -179,12 +184,74 @@ describe("harbor map", () => {
     // A town, not a hamlet: some twenty hexes across, and most of it still open ground to walk on.
     expect(wide).toBeGreaterThanOrEqual(18);
     expect(land.filter((t) => !t.built).length).toBeGreaterThan(land.length * 0.8);
-    // The plots are scattered: no row holds more than three of them, and no two huts touch.
-    const perRow = new Map<number, number>();
-    for (const p of HARBOR_PLOTS) perRow.set(p.r, (perRow.get(p.r) ?? 0) + 1);
-    expect(Math.max(...perRow.values())).toBeLessThanOrEqual(3);
-    expect(perRow.size).toBeGreaterThanOrEqual(6);
-    for (const a of HARBOR_PLOTS) for (const b of HARBOR_PLOTS) if (a !== b) expect(dist(a, b)).toBeGreaterThanOrEqual(3);
+    // The plots are spread over the town, not crowded in one corner, and no two share a doorstep or touch it.
+    expect(new Set(HARBOR_PLOTS.map((p) => p.r)).size).toBeGreaterThanOrEqual(6);
+    for (const a of HARBOR_PLOTS) for (const b of HARBOR_PLOTS) if (a !== b) expect(dist(a, b)).toBeGreaterThanOrEqual(2);
+  });
+
+  it("turns a building's ground about its door, a sixth at a time, with its front opposite", () => {
+    const door = { q: 5, r: 5 };
+    for (const shape of ["pair", "trio", "flower"] as const) {
+      const sizes = new Set<number>();
+      for (let facing = 0; facing < 6; facing++) {
+        const ground = footing(door, shape, facing);
+        sizes.add(ground.length);
+        // Still touching the door on two sides, and never on the hexes in front of it.
+        expect(ground.filter((p) => dist(p, door) === 1)).toHaveLength(2);
+        for (const front of frontOf(door, facing)) {
+          expect(dist(front, door)).toBe(1);
+          expect(ground.map(key)).not.toContain(key(front));
+        }
+      }
+      expect(sizes.size).toBe(1);
+      // Six turns is all the way round.
+      expect(footing(door, shape, 6)).toEqual(footing(door, shape, 0));
+    }
+    // Facing 0 stands north of the door, as it always has; half a turn stands it south.
+    expect(footing(door, "pair", 0).every((p) => p.r < door.r)).toBe(true);
+    expect(footing(door, "pair", 3).every((p) => p.r > door.r)).toBe(true);
+  });
+
+  it("fronts every building onto a road: the town's places onto cobbles, huts onto a dirt lane", () => {
+    for (const b of HARBOR_BUILDINGS) {
+      if (b.id === "lighthouse" || b.id === "fishing") continue;
+      const front = frontOf(b.door, b.facing).map((p) => tileAt(map, p)!);
+      if (b.id.startsWith("plot")) {
+        // A path from the hut's doorstep out to the lane in front of it.
+        const step = tileAt(map, b.door)!;
+        expect(step.path, b.id).toBeTruthy();
+        expect(front.some((t) => t.path || t.biome === "cobble"), b.id).toBe(true);
+      } else expect(front.some((t) => t.biome === "cobble"), b.id).toBe(true);
+    }
+    for (const id of ["pub", "apothecary", "works", "galley"]) expect(map.pois.find((p) => p.id === id)?.facing, id).toBe(HARBOR_BUILDINGS.find((b) => b.id === id)!.facing || undefined);
+  });
+
+  it("joins its dirt paths: each side a path runs out through meets another path, or a street, the quay or the edge of the woods", () => {
+    const paths = map.tiles.filter((t) => t.path);
+    expect(paths.length).toBeGreaterThan(20);
+    let junctions = 0;
+    for (const t of paths) {
+      expect(t.biome).toBe("plains");
+      expect(t.built).toBeFalsy();
+      let sides = 0;
+      for (let side = 0; side < 6; side++) {
+        if (!(t.path! & (1 << side))) continue;
+        sides++;
+        const n = tileAt(map, { q: t.q + HARBOR_SIDES[side].q, r: t.r + HARBOR_SIDES[side].r })!;
+        if (n.path) expect(n.path & (1 << ((side + 3) % 6)), `${key(t)} -> ${key(n)}`).toBeTruthy();
+        else expect(["cobble", "mud", "dock", "forest", "hills"]).toContain(n.biome);
+      }
+      if (sides >= 3) junctions++;
+    }
+    // The huts' doorsteps branch off the lanes: there are junctions, not only runs.
+    expect(junctions).toBeGreaterThan(4);
+    // Every road is laid where it says: a street's hexes are cobbled, a lane's grass ones are path.
+    for (const road of HARBOR_ROADS)
+      for (const p of roadHexes(road)) {
+        const t = tileAt(map, p)!;
+        if (road.kind === "cobble") expect(t.biome, key(p)).toBe("cobble");
+        else if (t.biome === "plains") expect(t.path, key(p)).toBeTruthy();
+      }
   });
 
   it("stands the lighthouse on the south-east point over the wreck, reachable and clear of every other place", () => {
