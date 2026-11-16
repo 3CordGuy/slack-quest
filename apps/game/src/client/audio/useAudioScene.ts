@@ -4,7 +4,7 @@ import type { SceneName } from "./types";
 
 /**
  * Say which scene a view is: its music and atmosphere play while it is on
- * screen. A view opened over another (the sparring ring over the Harbor) wins
+ * screen. A view opened over another wins
  * until it closes. Pass null for silence.
  */
 export function useAudioScene(scene: SceneName | null) {

@@ -10,6 +10,9 @@
 //                 your hero's pack, or take a material away.
 //   Figures       try the low-poly people (a prototype; render/figures.ts).
 //                 This browser only; it reloads the page.
+//   Maps          make a zone (a map to walk and fight on) and walk into it;
+//                 while one is on screen, place enemies, paint the ground and
+//                 the rest (zone/MapsTab.tsx).
 //
 // Gold and items are changed on the server (server/dev.ts), which refuses
 // outside a development deployment. They are your own hero's alone.
@@ -26,6 +29,7 @@ import { itemName, label } from "./labels";
 import { PixelIcon } from "./PixelIcon";
 import { BLOCKY_KEY } from "./render/figures";
 import { WRENCH } from "./ui/menuIcons";
+import { MapsTab } from "./zone/MapsTab";
 
 const OPEN_KEY = "gq.dev.readout";
 const TAB_KEY = "gq.dev.tab";
@@ -34,6 +38,7 @@ const TABS = [
   ["gold", "Gold"],
   ["items", "Items"],
   ["figures", "Figures"],
+  ["maps", "Maps"],
 ] as const;
 type Tab = (typeof TABS)[number][0];
 
@@ -87,6 +92,7 @@ export function DevToolbox({ me, refresh }: { me: Me; refresh(): Promise<void> }
           {tab === "sky" && <SkyAndSound />}
           {tab === "gold" && <Seeding key="gold" me={me} refresh={refresh}>{(seed) => <GoldSeed me={me} seed={seed} />}</Seeding>}
           {tab === "figures" && <FigureStyle />}
+          {tab === "maps" && (me.character?.status === "active" ? <MapsTab /> : <p className="muted">Create a character first: there is no hero to walk in.</p>)}
           {tab === "items" && <Seeding key="items" me={me} refresh={refresh}>{(seed) => <ItemSeed me={me} seed={seed} />}</Seeding>}
         </DragPanel>
       )}

@@ -5,7 +5,7 @@ import type { ContractBoard } from "../server/board";
 
 /** What the contract dealer in the pub has: the crew goal and the contracts on offer. */
 export type Board = ContractBoard;
-import type { Appearance, CarryState, FishSpot, GatherChoice, HarborXpStatus, GatherSpot, HarborWorks, HutSummary, ItemDef, Perk, ProjectAmounts, PublicHero, Resources, SalesEntry, SalesmanId, SalesmanVisit, ShopEntry, TradeSide } from "@gantt-quest/world";
+import type { Appearance, CarryState, FishSpot, GatherChoice, HarborXpStatus, GatherSpot, HarborWorks, HutSummary, ItemDef, Perk, ProjectAmounts, PublicHero, Resources, SalesEntry, SalesmanId, SalesmanVisit, ShopEntry, Throwable, TradeSide } from "@gantt-quest/world";
 import { devTools } from "./devTools";
 import { forcedSalesman } from "./salesmanClock";
 import type { GatherStatus } from "../server/gather";
@@ -107,6 +107,8 @@ export interface Me {
   inventory: InventoryItem[];
   /** The materials in the pack, by kind. They sit in stacks beside the gear. Absent from an older server. */
   materials?: Resources;
+  /** The potions, flasks and bombs in the pack, by kind: used up on a map, and kept between maps. Absent from an older server. */
+  consumables?: Partial<Record<Throwable, number>>;
   /** How full the pack is, its size, what is in storage and whether there is a home for it. Null without a character. */
   carry: CarryState | null;
   /** The crew whose Harbor this player shares, if any. The id doubles as the invite code. */
@@ -177,8 +179,6 @@ export const api = {
   contracts: () => request<Board>("/api/contracts"),
   /** The notice board's release notes are read up to this release. */
   releaseSeen: (id: string) => request<{ seenRelease: string }>("/api/releases/seen", { id }),
-  /** A voyage to an island, or with "caverns" a delve into the Haunted Caverns. */
-  createRun: (kind: "voyage" | "caverns" = "voyage") => request<{ code: string }>("/api/run", { kind }),
   requestCode: (email: string) => request("/api/auth/email/request", { email }),
   verifyCode: (email: string, code: string) => request<{ outcome: "linked" | "signed_in" | "created" | "already" }>("/api/auth/email/verify", { email, code }),
   signOut: () => request("/api/auth/signout", {}),
@@ -214,6 +214,7 @@ export const api = {
   projects: () => request<Works>("/api/projects"),
   apothecary: () => request<ApothecaryView>("/api/apothecary"),
   brew: (brewId: string) => request<ApothecaryView & { xp?: XpResult }>("/api/apothecary/brew", { brewId }),
+  brewFlask: (kind: string) => request<ApothecaryView & { xp?: XpResult }>("/api/apothecary/flask", { kind }),
   smithy: () => request<SmithyView>("/api/smithy"),
   smith: (itemId: number) => request<SmithyView & { worked: string; xp?: XpResult }>("/api/smithy/work", { itemId }),
   galley: () => request<GalleyView>("/api/galley"),
@@ -221,8 +222,6 @@ export const api = {
   giveToProject: (projectId: string, give: ProjectAmounts) => request<Works & { completed: boolean; xp?: XpResult }>("/api/projects/give", { projectId, give }),
   hut: () => request<Hut>("/api/hut"),
   craft: (defId: string) => request<{ ok: true; xp?: XpResult }>("/api/hut/craft", { defId }),
-  /** A bout at the sparring ring is over: its few XP, if today still has room. */
-  sparDone: () => request<{ xp?: XpResult }>("/api/spar/done", {}),
   /** Materials into (qty > 0) or out of (qty < 0) one of your hut's containers. */
   stash: (container: number, kind: string, qty: number) => request("/api/hut/stash", { container, kind, qty }),
   /** Gear from the bag into a container, or (container null) back into the bag. */
@@ -240,6 +239,12 @@ export const api = {
   closeTrade: (id: number) => request("/api/trade/close", { id }),
   // The dev toolbox's seeding. The server answers these only on a development deployment (server/dev.ts).
   /** Add gold to your purse, or take it with a negative amount. */
+  /** Everyone in your crew and the zone each is on, if any. */
+  crewPlaces: () => request<{ members: { id: string; name: string; classId: string; level: number; zone: { code: string; fighting: boolean } | null }[] }>("/api/crew/places"),
+  /** Where to go to join a crewmate: the zone they are on, or null for the Harbor. Refused while they are in a fight. */
+  teleport: (to: string) => request<{ zone: string | null; name: string }>("/api/crew/teleport", { to }),
+  /** Make a zone to try fights in, from these options (and a seed, or a fresh one), and get its code. */
+  devZone: (options: Record<string, unknown>) => request<{ code: string; seed: string }>("/api/dev/zone", options),
   devGold: (amount: number) => request<{ gold: number }>("/api/dev/gold", { amount }),
   /** Put one piece of gear in your pack: a weapon or a base by its ref, at a rarity and level. */
   devGear: (ref: string, rarity: string, level: number) => request<{ item: ItemDef }>("/api/dev/gear", { ref, rarity, level }),

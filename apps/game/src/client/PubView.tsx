@@ -183,7 +183,6 @@ export function PubView({ me, refresh, onLeave }: { me: Me; refresh(): Promise<u
         ...cast.map((r, i) => ({ id: regularUnit(r.id), classId: r.look, pos: PUB_REGULAR_SPOTS[i].pos, label: r.name })),
       ],
       turn: null,
-      battle: null,
       story: null,
       npcs: {},
       freeRoam: true,

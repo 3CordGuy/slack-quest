@@ -28,6 +28,7 @@ import type { HexPos } from "@gantt-quest/core";
 import { getCrew, harborBoard, heroInitFor, type Env } from "./db";
 import { gildedRod, ownedVessel } from "./fishmarket";
 import { readXpPost, relayXp } from "./harbor-xp";
+import { clearPresence } from "./zones";
 
 const MAP = generateHarbor();
 
@@ -138,6 +139,8 @@ export class HarborRoom extends DurableObject<Env> {
     this.ctx.acceptWebSocket(pair[1], [id]);
     pair[1].serializeAttachment(player);
 
+    // Here, so not out on a zone: whatever a room that went away without saying so left written down is cleared.
+    await clearPresence(this.env.DB, id);
     const board = await harborBoard(this.env.DB, crewId, HARBOR_PIERS.length);
     pair[1].send(JSON.stringify({ type: "snapshot", you: id, crew, players: this.players(), ...board } satisfies HarborServerMessage));
     this.broadcast({ type: "joined", player }, pair[1]);

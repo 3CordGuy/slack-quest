@@ -39,6 +39,8 @@ The game asks for sounds by name, most specific first, and plays the first one t
 | `table.shake`, `table.roll`, `table.settle`, `table.hold`, `table.reveal`, `table.coins`, `table.kraken`, `table.win` → `stinger.victory` | The pub's game tables: the dice cup shaken, dice thrown onto the felt, each die coming to rest, a ship or captain set aside, the Kraken taking a cargo, every die shown after a call, gold onto the pot (as a game starts, and to the winner), and your own win. Timed to the throw on screen. Each has a built-in take (`synth/table/…`) until a recording is added under `sfx/table/`. |
 | `weather.thunder` | Lightning strikes in a storm. A storm is its own weather: heavy rain with thunder, where a downpour is heavy rain without. The flash on screen follows the loudness of the take that plays, so bounce each strike, crack and rumble together, as one take: `sfx/weather/thunder_01.wav`, `thunder_02.wav`, and so on. |
 | `stinger.battle_start`, `stinger.victory`, `stinger.defeat`, `stinger.fled`, `stinger.ambush`, `stinger.voyage_won`, `stinger.voyage_lost` | Musical stings. |
+| `zone.roll`, `zone.roll.crit`, `zone.initiative`, `zone.turn.enemy`, `zone.reaction`, `zone.shove`, `zone.fall`, `zone.jump`, `zone.throw`, `zone.shatter`, `zone.burst` | A fight on the tiles (a zone). A d20 is rolled for an attack, a save or a shove (`roll.crit` on a natural 20); a fight breaks out and everyone rolls initiative; an enemy's turn starts; someone strikes at an enemy leaving their reach; a shove; somebody knocked to the ground; a jump; something thrown from the pack, and it breaking where it lands; poison going up in flame. Each has a built-in sound until you bounce a file to `sfx/zone/<name>_01.wav` (the paths are in the manifest). |
+| `surface.<poison\|fire\|oil\|water\|ice>` → `surface` | A surface is laid on the ground in a zone. Also new there: `effect.poisoned`, `effect.prone`, `effect.wet`, and `tick.poison` and `tick.fire` for the ground hurting whoever stands in it. All built in until recorded. |
 
 Ability, class, enemy and trait names are lower case with underscores (`Aimed Shot` is `aimed_shot`). While developing, the browser console says once which names were asked for and found nothing, and `pnpm test` fails if the manifest has an event name the game never asks for.
 
@@ -48,7 +50,7 @@ A loop goes round between its loop markers if the WAV has them (the `smpl` chunk
 
 Compressed files carry a little padding at each end, so for a loop that must be seamless, bounce it with a second of its own tail before the start and a second of its head after the end, mark the inner region as the loop, and set `startAt: "loop"`.
 
-Each scene (`harbor`, `hut`, `pub`, `sailing`, `island`, `battle`, `spar`, `title`) names one music loop and any number of atmosphere loops. Moving between scenes crossfades; a loop that both scenes share keeps playing.
+Each scene (`harbor`, `hut`, `pub`, `sailing`, `island`, `battle`, `title`) names one music loop and any number of atmosphere loops. Moving between scenes crossfades; a loop that both scenes share keeps playing.
 
 ## Indoors
 

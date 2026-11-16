@@ -4,7 +4,7 @@
 
 import { Hono, type Context } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
-import { HARBOR_PIERS, HARBOR_PLOTS, HARBOR_XP, HERO_CLASSES, MAX_CREW, PUB_BARKEEP, PUB_DEALER, PUB_MAX_TALK, PUB_MENU, dueIn, hutPerks, nextSalesmanVisit, salesman, salesmanVisitAt, makeRng, parseAppearance, pubBuff, rollStartingStats, type RunKind } from "@gantt-quest/world";
+import { HARBOR_PIERS, HARBOR_PLOTS, HERO_CLASSES, MAX_CREW, PUB_BARKEEP, PUB_DEALER, PUB_MAX_TALK, PUB_MENU, dueIn, hutPerks, nextSalesmanVisit, salesman, salesmanVisitAt, makeRng, parseAppearance, pubBuff, rollStartingStats, zoneOptions } from "@gantt-quest/world";
 import { barkeepReply, heroName } from "./server/ai";
 import { contractBoard } from "./server/board";
 import { markReleaseSeen, seenRelease } from "./server/releases";
@@ -31,7 +31,6 @@ import {
   ensureLook,
   createCrew,
   createGuest,
-  createRun,
   crewFor,
   deleteCharacter,
   equipItem,
@@ -40,7 +39,6 @@ import {
   getInventory,
   carryState,
   storeItem,
-  getRun,
   getShop,
   joinCrew,
   leaveCrew,
@@ -76,9 +74,11 @@ import { catchBook, hangAtHome, mountInPub, pubWall, unmountInPub } from "./serv
 import { pubLeaderboard } from "./server/pub-scores";
 import { builtProjectIds, contribute, crewWorks, projectStock } from "./server/projects";
 import { acceptTrade, announceTrade, closeTrade, listTrades, openTrade, setTradeSide } from "./server/trade";
-import { apothecaryView, brew, smithItem, smithyView } from "./server/workshops";
+import { consumablesOf } from "./server/consumables";
+import { apothecaryView, brew, brewFlask, smithItem, smithyView } from "./server/workshops";
 import { cook, galleyView } from "./server/galley";
-import { announceXp, harborXpFor, prepareXp, xpOutcome } from "./server/harbor-xp";
+import { announceXp, harborXpFor } from "./server/harbor-xp";
+import { createZoneRow, crewPlaces, getZoneRow } from "./server/zones";
 import {
   checkImport,
   checkOverride,
@@ -100,6 +100,7 @@ export { HarborRoom } from "./server/harbor-room";
 export { HutRoom } from "./server/hut-room";
 export { PubRoom } from "./server/pub-room";
 export { RunRoom } from "./server/run-room";
+export { ZoneRoom } from "./server/zone-room";
 
 type App = { Bindings: Env; Variables: { player: Player } };
 const app = new Hono<App>();
@@ -186,7 +187,7 @@ app.get("/api/me", async (c) => {
   // A hero from before looks came in is given their class's look and starting clothes the first time they
   // come in (see ensureLook).
   await ensureLook(c.env.DB, player.id);
-  const [character, inventory, crew, carry, harborXp, seen, held] = await Promise.all([
+  const [character, inventory, crew, carry, harborXp, seen, held, consumables] = await Promise.all([
     getCharacter(c.env.DB, player.id),
     getInventory(c.env.DB, player.id),
     crewFor(c.env.DB, player.id),
@@ -194,14 +195,15 @@ app.get("/api/me", async (c) => {
     harborXpFor(c.env.DB, player.id),
     seenRelease(c.env.DB, player.id),
     c.env.DB.prepare("SELECT kind, qty FROM resources WHERE player_id = ? AND qty > 0").bind(player.id).all<{ kind: string; qty: number }>(),
+    consumablesOf(c.env.DB, player.id),
   ]);
-  // `materials` is what is in the pack, in stacks beside the gear.
+  // `materials` is what is in the pack, in stacks beside the gear; `consumables` the potions and flasks there with them.
   const materials = Object.fromEntries(held.results.map((r) => [r.kind, r.qty]));
   // `inventory` is what the hero has with them; what is in storage at home is only listed inside their hut.
   // `isAdmin` only decides whether the client shows the admin link: every admin route checks again.
   // `seenRelease` is the newest release whose notes they have read on the notice board.
   // `devTools` shows the dev toolbox (ENVIRONMENT is "dev" on local and staging): the routes below answer only then.
-  return c.json({ player, character, inventory, materials, crew, carry, harborXp, seenRelease: seen, isAdmin: isAdmin(c.env, player), devTools: isDev(c.env) });
+  return c.json({ player, character, inventory, materials, consumables, crew, carry, harborXp, seenRelease: seen, isAdmin: isAdmin(c.env, player), devTools: isDev(c.env) });
 });
 
 // ---------- the dev toolbox ----------
@@ -212,6 +214,18 @@ app.get("/api/me", async (c) => {
 app.use("/api/dev/*", async (c, next) => {
   if (!isDev(c.env)) return c.json({ error: "not found" }, 404);
   return next();
+});
+
+// A zone to try fights in: a map made from the options sent (anything missing takes its default),
+// sized for the level of whoever asks unless told otherwise. Returns its code and the seed it was made from.
+app.post("/api/dev/zone", async (c) => {
+  const player = c.get("player");
+  const character = await getCharacter(c.env.DB, player.id);
+  if (character?.status !== "active") return c.json({ error: "Create a character first." }, 409);
+  const body = await c.req.json<Record<string, unknown>>().catch(() => ({}) as Record<string, unknown>);
+  const options = zoneOptions({ level: character.level, ...body });
+  const seed = typeof body.seed === "string" && body.seed.trim() ? body.seed.trim().slice(0, 40) : crypto.randomUUID().slice(0, 8);
+  return c.json({ code: await createZoneRow(c.env.DB, player.id, options, seed), seed });
 });
 
 app.post("/api/dev/gold", async (c) => {
@@ -772,6 +786,16 @@ app.post("/api/apothecary/brew", async (c) => {
   return c.json({ ...(await apothecaryView(c.env.DB, player.id)), xp: result.xp });
 });
 
+// Make one potion, flask or bomb for the pack. The recipe is the catalogue's; the client names only the kind.
+app.post("/api/apothecary/flask", async (c) => {
+  const player = c.get("player");
+  const body = await c.req.json<{ kind?: unknown }>().catch(() => ({}) as { kind?: unknown });
+  const result = await brewFlask(c.env.DB, player.id, String(body.kind ?? ""));
+  if (typeof result === "string") return c.json({ error: result }, 409);
+  if (result.xp) c.executionCtx.waitUntil(announceXp(c.env, player.id, result.xp));
+  return c.json({ ...(await apothecaryView(c.env.DB, player.id)), xp: result.xp });
+});
+
 // The weapons and armour this hero has with them, and what the next step on each would cost.
 app.get("/api/smithy", async (c) => c.json(await smithyView(c.env.DB, c.get("player").id)));
 
@@ -798,21 +822,6 @@ app.post("/api/galley/cook", async (c) => {
   if (typeof result === "string") return c.json({ error: result }, 409);
   if (result.xp) c.executionCtx.waitUntil(announceXp(c.env, player.id, result.xp));
   return c.json({ ...(await galleyView(c.env.DB, player.id)), xp: result.xp });
-});
-
-// ---------- the sparring ring ----------
-
-// A bout at the ring has ended. The bout itself runs in the browser, so all this does is pay its
-// few XP, and only for the first SPAR_XP_DAILY_BOUTS bouts of the day, under the daily Harbor cap.
-app.post("/api/spar/done", async (c) => {
-  const player = c.get("player");
-  const xp = await prepareXp(c.env.DB, player.id, HARBOR_XP.spar, { spar: true });
-  if (!xp) return c.json({ error: "Create a character first." }, 409);
-  const statements = xp.statements("1");
-  const results = statements.length > 0 ? await c.env.DB.batch(statements) : [];
-  const earned = xpOutcome(xp, results);
-  if (earned) c.executionCtx.waitUntil(announceXp(c.env, player.id, earned));
-  return c.json({ xp: earned });
 });
 
 // ---------- giving and trading between crewmates ----------
@@ -901,29 +910,42 @@ app.get("/api/crew/ws", async (c) => {
   return c.env.HARBOR_ROOM.get(c.env.HARBOR_ROOM.idFromName(crew.id)).fetch(new Request(c.req.url, { headers }));
 });
 
-// Launch a voyage: allocates a run code and moors the ship at the crew's Harbor.
-// The island is generated from the run's seed.
-app.post("/api/run", async (c) => {
-  const player = c.get("player");
-  const [character, crew] = await Promise.all([getCharacter(c.env.DB, player.id), crewFor(c.env.DB, player.id)]);
-  if (character?.status !== "active") return c.json({ error: "Create a character first." }, 409);
-  // What the crew has built at the Harbor sails with the ship.
-  // A voyage to an island by default; a delve into the Haunted Caverns when asked for.
-  const body = await c.req.json<{ kind?: string }>().catch(() => ({}) as { kind?: string });
-  const kind: RunKind = body.kind === "caverns" ? "caverns" : "voyage";
-  const code = await createRun(c.env.DB, player.id, crew?.id ?? null, await builtProjectIds(c.env.DB, crew?.id ?? null), kind);
-  c.executionCtx.waitUntil(refreshHarbor(c.env, crew?.id ?? null));
-  return c.json({ code });
+// Voyages and delves are shut while they are rebuilt on the new combat (fights played on the tiles: see
+// packages/world/src/zone). Nothing can be launched or rejoined; the old rules (world.ts, run-room.ts)
+// stay in the tree as reference until their replacement lands.
+const RUNS_CLOSED = "Voyages and delves are being rebuilt. They will sail again soon.";
+app.post("/api/run", (c) => c.json({ error: RUNS_CLOSED }, 503));
+app.get("/api/run/:code/ws", (c) => c.text(RUNS_CLOSED, 503));
+
+// Where everyone in the asker's crew is: on which zone, and whether in a fight there. For the roster shown on a zone.
+app.get("/api/crew/places", async (c) => {
+  const crew = await crewFor(c.env.DB, c.get("player").id);
+  return c.json({ members: crew ? await crewPlaces(c.env.DB, crew.id) : [] });
 });
 
-app.get("/api/run/:code/ws", async (c) => {
+// Teleport to a crewmate: says where to go. The zone they are on, if they are on one and not in a
+// fight (nobody drops into a fight); the Harbor (zone null) if they are not out on a zone at all.
+app.post("/api/crew/teleport", async (c) => {
+  const body = await c.req.json<{ to?: string }>().catch(() => ({}) as { to?: string });
+  const crew = await crewFor(c.env.DB, c.get("player").id);
+  const friend = crew ? (await crewPlaces(c.env.DB, crew.id)).find((m) => m.id === body.to) : undefined;
+  if (!friend || friend.id === c.get("player").id) return c.json({ error: "Pick a crewmate." }, 400);
+  if (friend.zone?.fighting) return c.json({ error: `${friend.name} is in a fight. Wait for it to end, or walk in from the map.` }, 409);
+  return c.json({ zone: friend.zone?.code ?? null, name: friend.name });
+});
+
+// A zone's socket. Anyone with a hero and the code can walk in; making a zone is a dev route for now.
+app.get("/api/zone/:code/ws", async (c) => {
   const code = c.req.param("code").toUpperCase();
-  if (!(await getRun(c.env.DB, code))) return c.text("No ship with that code.", 404);
+  if (!(await getZoneRow(c.env.DB, code))) return c.text("No map with that code.", 404);
   const headers = new Headers(c.req.raw.headers);
-  headers.set("x-run-code", code);
+  headers.set("x-zone-code", code);
   headers.set("x-player-id", c.get("player").id);
-  const stub = c.env.RUN_ROOM.get(c.env.RUN_ROOM.idFromName(code));
-  return stub.fetch(new Request(c.req.url, { headers }));
+  // Arriving by teleport: beside the crewmate teleported to.
+  const near = c.req.query("near");
+  if (near && near.length <= 64) headers.set("x-zone-near", near);
+  else headers.delete("x-zone-near");
+  return c.env.ZONE_ROOM.get(c.env.ZONE_ROOM.idFromName(code)).fetch(new Request(c.req.url, { headers }));
 });
 
 export default app;

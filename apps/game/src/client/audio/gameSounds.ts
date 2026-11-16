@@ -4,7 +4,7 @@
 
 import type { WorldEvent } from "@gantt-quest/world";
 import { audio, type SeaArea, type StartedTake } from "./engine";
-import { soundName, type AttackStyle, type Fighter, type TableSound } from "./names";
+import { soundName, type AttackStyle, type Fighter, type TableSound, type ZoneSound } from "./names";
 
 /** Where on the map it happens, for distance falloff. */
 type At = { x: number; z: number } | undefined;
@@ -49,6 +49,18 @@ export const sounds = {
   },
   yourTurn() {
     audio.play(soundName.yourTurn());
+  },
+  /** A moment of a fight on the tiles: the dice, initiative, a shove, a throw. */
+  zone(what: ZoneSound, at?: At) {
+    audio.play(soundName.zone(what), { at });
+  },
+  /** A surface laid on the ground. */
+  surface(kind: string, at?: At) {
+    audio.play(soundName.surface(kind), { at });
+  },
+  /** A musical sting: a fight starting, won or lost. */
+  stinger(which: "battle_start" | "victory" | "defeat") {
+    audio.play([`stinger.${which}`]);
   },
   /** A boss has turned up: heard as the battle's opening card goes up. */
   boss() {

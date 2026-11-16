@@ -78,10 +78,13 @@ import { LOOKS } from "../client/render/looks";
 import { prepareXp, xpOutcome, type XpResult } from "./harbor-xp";
 import type { HarborRoom } from "./harbor-room";
 import { crewWorks } from "./projects";
+import { kitStatements } from "./consumables";
 import { brewBagOf } from "./workshops";
 import type { HutRoom } from "./hut-room";
 import type { PubRoom } from "./pub-room";
 import type { RunRoom } from "./run-room";
+import type { ZoneRoom } from "./zone-room";
+import { crewPresence } from "./zones";
 
 export interface Env {
   DB: D1Database;
@@ -91,6 +94,7 @@ export interface Env {
   HARBOR_ROOM: DurableObjectNamespace<HarborRoom>;
   HUT_ROOM: DurableObjectNamespace<HutRoom>;
   PUB_ROOM: DurableObjectNamespace<PubRoom>;
+  ZONE_ROOM: DurableObjectNamespace<ZoneRoom>;
   /** "mock" replaces Workers AI with a scripted stand-in. */
   AI_MODE?: string;
   /** Email Sending binding. Without it (and MAIL_FROM_ADDRESS) sign-in codes go to the log. */
@@ -317,9 +321,13 @@ export const CELLS_SQL = (() => {
   const slots = Object.entries(SLOT_SIZE).map(([slot, f]) => (slot === "main_hand" ? `WHEN 'main_hand' THEN CASE ref ${weapons} ELSE ${f.w * f.h} END` : `WHEN '${slot}' THEN ${f.w * f.h}`)).join(" ");
   return `(CASE slot ${slots} ELSE 1 END)`;
 })();
-/** SQL for how many squares of the pack player `who` fills right now: unequipped gear not kept in a container, and stacks of materials. */
+/**
+ * SQL for how many squares of the pack player `who` fills right now: unequipped gear not kept in a container, stacks of
+ * materials, and stacks of what they carry to drink or throw. `who` appears three times: a caller that passes a bare `?` binds it three times.
+ */
 export const carriedSql = (who: string) => `((SELECT COALESCE(SUM(${CELLS_SQL}), 0) FROM inventory WHERE player_id = ${who} AND equipped = 0 AND stored_in IS NULL)
-  + (SELECT ${STACKS_SQL} FROM resources WHERE player_id = ${who} AND qty > 0))`;
+  + (SELECT ${STACKS_SQL} FROM resources WHERE player_id = ${who} AND qty > 0)
+  + (SELECT ${STACKS_SQL} FROM consumables WHERE player_id = ${who} AND qty > 0))`;
 const CARRIED_SQL = carriedSql("?1");
 /**
  * SQL, true while player ?1's pack has room for `cells` more squares under
@@ -433,6 +441,8 @@ export async function confirmCharacter(db: D1Database, playerId: string): Promis
     db.prepare("UPDATE characters SET status = 'active' WHERE player_id = ?").bind(playerId),
     insertItem(db, playerId, weapon, true),
     ...garb.map((item) => insertItem(db, playerId, item, true)),
+    // And the potions and flasks every hero starts out with.
+    ...kitStatements(db, playerId),
   ]);
   return true;
 }
@@ -1152,7 +1162,9 @@ export async function harborBoard(db: D1Database, crewId: string, pierCount: num
   let pier = 0;
   for (const ship of ships) if (ship.phase === "lobby" && ship.kind !== "caverns" && pier < pierCount) ship.pier = pier++;
   // Members whose shack is not up yet carry what is in its bin, so the site can be drawn filling up.
-  const roster = members.results.map(({ bin, ...m }) => (m.plot !== null && bin !== null ? { ...m, bin: parseBin(bin) } : m));
+  // Who is out on a zone, and whether they are fighting there.
+  const zoneOf = await crewPresence(db, crewId);
+  const roster = members.results.map(({ bin, ...m }) => ({ ...m, ...(m.plot !== null && bin !== null ? { bin: parseBin(bin) } : {}), ...(zoneOf.has(m.id) ? { zone: zoneOf.get(m.id) } : {}) }));
   return { members: roster, ships, log, works };
 }
 

@@ -159,7 +159,29 @@ const E = [165, 208, 247, 330];
 files["music/harbor_day"] = () => tune(84, [C, A, F, G], Math.sin);
 files["music/harbor_night"] = () => tune(72, [A, F, C, G], Math.sin);
 files["music/island"] = () => tune(96, [A, F, C, E], Math.sin);
-files["music/battle"] = () => tune(138, [A, A, F, E], square);
+// The fight's music: the same kind of tune, driven hard. A kick on every beat, a snare on the
+// backbeat, hats on the off-beats and a bass that pumps in eighths, eight bars long, so that it is
+// plainly a fight the moment it comes in. A stand-in until the real piece is bounced.
+files["music/battle"] = () => {
+  const bpm = 138;
+  const beat = 60 / bpm;
+  const bars = [A, A, F, E, A, A, G, E];
+  const parts: Float32Array[] = [mix(tune(bpm, bars.slice(0, 4), square), after(16 * beat, tune(bpm, bars.slice(4), square)))];
+  bars.forEach((chord, bar) => {
+    for (let b = 0; b < 4; b++) {
+      const at = (bar * 4 + b) * beat;
+      // Kick: a low thump that drops in pitch.
+      parts.push(after(at, tone(0.16, (t) => 130 * Math.exp(-t * 22) + 45, (t) => 0.9 * Math.exp(-t * 16))));
+      // Snare on two and four: a crack of noise.
+      if (b % 2 === 1) parts.push(after(at, filtered(0.14, () => 5200, (t) => 1.5 * Math.exp(-t * 26))));
+      // Hats on the off-beats.
+      parts.push(after(at + beat / 2, filtered(0.05, () => 9500, (t) => 0.7 * Math.exp(-t * 70))));
+      // The bass, pumping in eighths an octave down.
+      for (const half of [0, 0.5]) parts.push(after(at + half * beat, tone(beat / 2, () => chord[0] / 2, (t) => 0.3 * Math.min(1, t * 200) * Math.exp(-t * 9), square)));
+    }
+  });
+  return mix(...parts).slice(0, Math.round(32 * beat * RATE));
+};
 // Rain: bright hiss. Night: a cricket-like chirp, pulsing. Day: a higher, slower chirp.
 files["ambience/rain"] = () => seamless(mix(filtered(10, () => 9000, () => 0.5), filtered(10, () => 1200, () => 0.6)), 2);
 files["ambience/forest_night"] = () => tone(8, () => 4200, (t) => 0.12 * (Math.sin(t * 2 * Math.PI * 22) > 0.2 ? 1 : 0) * (Math.sin(t * 2 * Math.PI * 1.5) > 0 ? 1 : 0));

@@ -89,8 +89,33 @@ export const AUDIO: AudioManifest = {
     "hero.down": { files: "sfx/combat/hero_down_*", fallback: built("hero_down"), reverb: -8 },
     ...bossFalls(),
 
+    // ----- a fight on the tiles (a zone) -----
+    // Every one has a built-in sound, heard until a recording is bounced to the path in `files`.
+    "zone.roll": { files: "sfx/zone/dice_*", fallback: built("dice"), gainDb: -5, pitch: [-1, 1], cooldown: 0.12 },
+    "zone.roll.crit": { files: "sfx/zone/dice_crit_*", fallback: built("dice_crit"), gainDb: -3 },
+    "zone.initiative": { files: "sfx/zone/initiative_*", fallback: built("initiative"), gainDb: -2, cooldown: 2 },
+    "zone.turn.enemy": { files: "sfx/zone/enemy_turn_*", fallback: built("enemy_turn"), gainDb: -8, cooldown: 0.4 },
+    "zone.reaction": { files: "sfx/zone/opportunity_*", fallback: built("opportunity"), gainDb: -3, reverb: -10 },
+    "zone.shove": { files: "sfx/zone/shove_*", fallback: built("shove"), pitch: [-2, 2], reverb: -10 },
+    "zone.fall": { files: "sfx/zone/fall_*", fallback: built("fall"), pitch: [-2, 2], reverb: -8 },
+    "zone.jump": { files: "sfx/zone/jump_*", fallback: built("jump"), pitch: [-1, 1], gainDb: -3, reverb: -10 },
+    "zone.throw": { files: "sfx/zone/throw_*", fallback: built("throw"), pitch: [-2, 2], gainDb: -3 },
+    "zone.shatter": { files: "sfx/zone/shatter_*", fallback: built("shatter"), pitch: [-2, 2], reverb: -8 },
+    "zone.burst": { files: "sfx/zone/burst_*", fallback: built("ignite"), pitch: [-5, -3], reverb: -6 },
+    surface: { files: "sfx/zone/surface_*", fallback: built("splash"), gainDb: -4, reverb: -8 },
+    "surface.poison": { files: "sfx/zone/surface_poison_*", fallback: built("poison"), gainDb: -2, reverb: -8 },
+    "surface.fire": { files: "sfx/zone/surface_fire_*", fallback: built("ignite"), reverb: -6 },
+    "surface.oil": { files: "sfx/zone/surface_oil_*", fallback: built("oil"), gainDb: -2, reverb: -10 },
+    "surface.water": { files: "sfx/zone/surface_water_*", fallback: built("splash"), gainDb: -2, reverb: -8 },
+    "surface.ice": { files: "sfx/zone/surface_ice_*", fallback: built("ice"), gainDb: -2, reverb: -6 },
+    "effect.poisoned": { files: "sfx/combat/effect_poisoned_*", fallback: built("sick"), gainDb: -4 },
+    "effect.prone": { files: "sfx/combat/effect_prone_*", fallback: built("fall"), gainDb: -2 },
+    "effect.wet": { files: "sfx/combat/effect_wet_*", fallback: built("soak"), gainDb: -5 },
+    "tick.poison": { files: "sfx/combat/tick_poison_*", fallback: built("sick"), gainDb: -6, pitch: [-2, 2] },
+    "tick.fire": { files: "sfx/combat/tick_fire_*", fallback: built("burn"), gainDb: -4, pitch: [-2, 2] },
+
     // ----- moments -----
-    "turn.yours": { files: "sfx/ui/your_turn", fallback: built("your_turn"), gainDb: -6, cooldown: 1 },
+    "turn.yours": { files: "sfx/ui/your_turn", fallback: built("your_turn"), gainDb: -4, cooldown: 1 },
     level_up: { files: "sfx/ui/level_up", cooldown: 2 },
     loot: { files: "sfx/ui/loot", gainDb: -4 },
     gold: { files: "sfx/ui/gold", gainDb: -6, cooldown: 0.2 },
@@ -217,7 +242,6 @@ export const AUDIO: AudioManifest = {
     // Under the rocks: no sky, no weather. The island's music until the caverns have their own.
     caverns: { music: "island" },
     battle: { music: "battle", ambience: ["day", "night", "rain", "rainstorm"] },
-    spar: { music: "battle", ambience: ["day", "night", "rain", "rainstorm"] },
   },
 };
 

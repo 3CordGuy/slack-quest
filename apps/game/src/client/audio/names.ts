@@ -29,6 +29,13 @@ const voice = (f: Fighter, what: "attack" | "hurt" | "down") =>
 export const FISHING_SOUNDS = ["cast", "plop", "nibble", "plunge", "bite", "splash", "snap", "reel", "land"] as const;
 export type FishingSound = (typeof FISHING_SOUNDS)[number];
 
+/** A fight on the tiles (a zone): the d20 and what it came to, the fight starting, and the things only the tiles have. */
+export const ZONE_SOUNDS = ["roll", "roll.crit", "initiative", "turn.enemy", "reaction", "shove", "fall", "jump", "throw", "shatter", "burst"] as const;
+export type ZoneSound = (typeof ZONE_SOUNDS)[number];
+/** What can lie on the ground in a zone, and the conditions the tiles add to the old fights' effects. */
+export const SURFACE_SOUNDS = ["poison", "fire", "oil", "water", "ice"] as const;
+export const ZONE_CONDITION_SOUNDS = ["poisoned", "prone", "wet"] as const;
+
 /** The pub's game tables. */
 export const TABLE_SOUNDS = ["shake", "roll", "settle", "hold", "reveal", "coins", "kraken"] as const;
 export type TableSound = (typeof TABLE_SOUNDS)[number];
@@ -57,6 +64,10 @@ export const soundName = {
   flee: (ok: boolean) => [ok ? "flee.ok" : "flee.fail", "flee"],
   trait: (name: string) => [`trait.${slug(name)}`, "trait"],
   yourTurn: () => ["turn.yours"],
+  /** A moment of a fight on the tiles. */
+  zone: (what: ZoneSound) => [`zone.${what}`],
+  /** A surface laid on the ground, by its kind. */
+  surface: (kind: string) => [`surface.${kind}`, "surface"],
   /** A boss's first appearance in a fight. */
   boss: () => ["stinger.boss", "stinger.battle_start"],
   levelUp: () => ["level_up"],
@@ -148,6 +159,11 @@ export function soundNames(): Set<string> {
     add(soundName.effect(e));
   }
   for (const t of TRAITS) add(soundName.trait(t.name));
+  // Fights on the tiles: their own moments, the ground, and the conditions and hurts the ground brings.
+  for (const z of ZONE_SOUNDS) add(soundName.zone(z));
+  for (const s of SURFACE_SOUNDS) add(soundName.surface(s));
+  for (const c of ZONE_CONDITION_SOUNDS) add(soundName.effect(c));
+  for (const t of ["poison", "fire"]) add(soundName.tick(t));
   [soundName.crit(), soundName.healFailed(), soundName.flee(true), soundName.flee(false), soundName.yourTurn(), soundName.levelUp(), soundName.thunder()].forEach(add);
   add(["stinger.boss", "stinger.battle_start", "stinger.victory", "stinger.defeat", "stinger.fled", "stinger.voyage_won", "stinger.voyage_lost", "stinger.ambush"]);
   add(["loot", ...RARITIES.map((r) => `loot.${r}`), "key_item", "gold", "pickup", ...RESOURCE_KINDS.map((k) => `pickup.${k}`)]);

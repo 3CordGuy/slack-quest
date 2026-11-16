@@ -39,6 +39,13 @@
 // once, before the server has answered: the moves are sent one at a time, in
 // order, and each is shown over what the server last said until its answer
 // (and the fresh lists after it) are in. A move the server refuses goes back.
+//
+// What there is to drink or throw (potions, flasks, bombs) lies in the pack in
+// stacks like a material's, and stays in the pack: it is not stowed or
+// traded. Opened on a map, one can be taken in hand out of the bag
+// (shift-click it, or lift it and press Use): the bag closes and the map asks
+// where it goes. While a fight is on the gear worn stays as it is; the pack
+// can still be looked through.
 
 import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { CatchPanel } from "./CatchPanel";
@@ -56,6 +63,7 @@ import {
   SLOT_LABEL,
   STACK_MAX,
   STALL_BUYS,
+  THROWABLES,
   addedSlots,
   armorBlock,
   canHide,
@@ -72,6 +80,7 @@ import {
   type ResourceKind,
   type Resources,
   type Slot,
+  type Throwable,
   type TradeSide,
 } from "@gantt-quest/world";
 import { api, type Hut, type InventoryItem, type Me } from "./api";
@@ -81,7 +90,8 @@ import { label } from "./labels";
 import { ThingIcon, furnishingIcon, resourceIcon } from "./thingIcons";
 import { layoutPack, loadSaved, saveSaved, under, type Saved, type Shape, type Spot } from "./ui/packLayout";
 import { DollChart, type ChartSlot } from "./ui/DollChart";
-import { SplitPrompt, stackName, toStacks, type Stack } from "./ui/Slots";
+import { SplitPrompt, StackIcon, stackName, toStacks, type Stack } from "./ui/Slots";
+import { ITEM_ICON } from "./zone/actionIcons";
 import { uiZoom } from "./uiScale";
 import "./ui/slots.css";
 
@@ -123,6 +133,8 @@ type Zone = "pack" | "chest";
 /** What is in hand, and where it was lifted from: a grid, or off the figure. */
 type Held = { stack: Stack; from: Zone | "worn" };
 type Verdict = "ok" | "swap" | "bad";
+/** Said when a potion or a flask is sent toward a chest or the trade table. */
+const STAYS_IN_PACK = "Potions, flasks and bombs stay in your pack: they cannot be stowed or traded yet.";
 /** A decoration kept in a chest lies on its grid too, a square each. */
 const decorKey = (id: number) => `decor:${id}`;
 
@@ -160,6 +172,14 @@ export interface OpenTrade {
   accept(ok: boolean): void;
 }
 
+/** On a map: how a potion or a flask is taken out of the bag to be used. */
+export interface Usable {
+  /** Take one in hand: the bag closes and the map asks where it goes. */
+  use(kind: Throwable): void;
+  /** Why it cannot be used just now, if it cannot. */
+  blocked(kind: Throwable): string | undefined;
+}
+
 interface Props {
   me: Me;
   refresh(): Promise<unknown>;
@@ -170,6 +190,10 @@ interface Props {
   chest?: OpenChest | null;
   /** A trade with a crewmate, open beside the bag in a chest's place. */
   trade?: OpenTrade | null;
+  /** On a map: what there is to drink or throw can be used from here. */
+  usable?: Usable;
+  /** Why the gear worn cannot be changed just now (a fight is on), if it cannot. */
+  gearLocked?: string;
 }
 
 /**
@@ -232,7 +256,7 @@ function PackGrid({ zone, name, u, rows, baseRows, stacks, decor = [], spots, he
             key={s.key}
             className={`pack-item ${s.t} ${held?.from === zone && held.stack.key === s.key ? "lifted" : ""} ${lockedOf?.(s) ? "locked" : ""} ${at.y + h > baseRows ? "spilt" : ""}`}
             style={{ left: at.x * u, top: at.y * u, width: w * u, height: h * u, ...(color ? { "--tint": color } : {}) } as CSSProperties}
-            aria-label={`${stackName(s)}${s.t === "mat" ? `, ${s.qty}` : ""}`}
+            aria-label={`${stackName(s)}${s.t !== "gear" ? `, ${s.qty}` : ""}`}
             onPointerEnter={() => !held && onHover(s.key)}
             onPointerDown={(e) => {
               if (!held && e.button === 0 && !e.shiftKey) onPress(s, e);
@@ -250,8 +274,8 @@ function PackGrid({ zone, name, u, rows, baseRows, stacks, decor = [], spots, he
               onSplit(s, { x: e.clientX, y: e.clientY });
             }}
           >
-            {s.t === "gear" ? <Icon name={s.item.icon} color={color!} size={iconPx(w, h, u)} /> : <ThingIcon icon={resourceIcon(s.kind)} size={iconPx(1, 1, u)} />}
-            {s.t === "mat" && <span className="badge br qty">{s.qty}</span>}
+            {s.t === "gear" ? <Icon name={s.item.icon} color={color!} size={iconPx(w, h, u)} /> : <StackIcon stack={s} size={iconPx(1, 1, u)} />}
+            {s.t !== "gear" && <span className="badge br qty">{s.qty}</span>}
             {s.t === "gear" && s.item.power > 0 && w > 1 && <span className="badge br">+{s.item.power}</span>}
           </button>
         );
@@ -292,7 +316,7 @@ function EyeGlyph({ shut }: { shut: boolean }) {
   );
 }
 
-export function InventoryScreen({ me, refresh, onClose, onIsland = false, chest = null, trade = null }: Props) {
+export function InventoryScreen({ me, refresh, onClose, onIsland = false, chest = null, trade = null, usable, gearLocked }: Props) {
   const c = me.character!;
   const { busy, error, act } = useAct(refresh);
   const [catchOpen, setCatchOpen] = useState(false);
@@ -346,7 +370,7 @@ export function InventoryScreen({ me, refresh, onClose, onIsland = false, chest 
     for (const [k, n] of Object.entries(trade?.mine.resources ?? {}) as [ResourceKind, number][]) out[k] = Math.max(0, (out[k] ?? 0) - n);
     return out;
   }, [me.materials, matAt, trade?.mine.resources]);
-  const stacks = useMemo(() => toStacks(packGear, packMats), [packGear, packMats]);
+  const stacks = useMemo(() => toStacks(packGear, packMats, me.consumables), [packGear, packMats, me.consumables]);
   const shapes = useMemo(() => stacks.map(shapeOf), [stacks]);
   const layout = useMemo(() => layoutPack(shapes, saved), [shapes, saved]);
   const wornStacks = [...worn.values()].map((item): Stack => ({ t: "gear", key: `gear:${item.id}`, item }));
@@ -402,11 +426,11 @@ export function InventoryScreen({ me, refresh, onClose, onIsland = false, chest 
   }, [theirShapes, theirSaved, theirLayout]);
 
   /** Whether a thing (or `n` of a stack) fits in the chest by the count of its squares. */
-  const fitsIn = (s: Stack, n = s.t === "mat" ? s.qty : 1) => (s.t === "gear" ? itemCells(s.item) : addedSlots(kept[s.kind] ?? 0, n)) <= chestFree;
+  const fitsIn = (s: Stack, n = s.t === "gear" ? 1 : s.qty) => s.t !== "use" && (s.t === "gear" ? itemCells(s.item) : addedSlots(kept[s.kind] ?? 0, n)) <= chestFree;
   /** The squares of the pack that are filled, as it is shown (the server's count runs behind while moves are under way). */
   const packUsed = shapes.reduce((n, s) => n + s.w * s.h, 0);
   /** Why a thing cannot come out into the pack, or null. */
-  const outProblem = (s: Stack, n = s.t === "mat" ? s.qty : 1) => (trade ? null : carry ? carryProblem({ carried: packUsed, limit: carry.limit }, s.t === "gear" ? itemCells(s.item) : addedSlots(packMats[s.kind] ?? 0, n)) : null);
+  const outProblem = (s: Stack, n = s.t === "gear" ? 1 : s.qty) => (trade || s.t === "use" ? null : carry ? carryProblem({ carried: packUsed, limit: carry.limit }, s.t === "gear" ? itemCells(s.item) : addedSlots(packMats[s.kind] ?? 0, n)) : null);
 
   /** Show a move at once, send it when the ones before it are done, and stop showing it over the server's lists once its own answer and the lists after it are in. */
   const send = (show: (op: number) => void, run: () => Promise<unknown>) => {
@@ -422,7 +446,8 @@ export function InventoryScreen({ me, refresh, onClose, onIsland = false, chest 
       });
   };
   /** Across between the pack and the open chest: `to` is the side it goes to. */
-  const moveTo = (to: Zone, s: Stack, n = s.t === "mat" ? s.qty : 1) => {
+  const moveTo = (to: Zone, s: Stack, n = s.t === "gear" ? 1 : s.qty) => {
+    if (s.t === "use") return setRefused(STAYS_IN_PACK);
     if (trade) {
       // Onto your side of the table, or back off it: nothing leaves the pack for real until the trade is settled.
       if (to === "chest" && !fitsIn(s, n)) return setRefused("That is more than fits on the table.");
@@ -557,8 +582,13 @@ export function InventoryScreen({ me, refresh, onClose, onIsland = false, chest 
     if (pickedDecor !== null && !inside.some((f) => f.id === pickedDecor)) setPickedDecor(null);
   }, [pickedDecor, inside]);
 
-  const equip = (id: number) => act(() => api.equip(id));
-  const unequip = (id: number) => act(() => api.unequip(id));
+  // A fight has the gear held as it is (the bag says so under the figure): nothing is worn or taken off.
+  const equip = async (id: number) => {
+    if (!gearLocked) await act(() => api.equip(id));
+  };
+  const unequip = async (id: number) => {
+    if (!gearLocked) await act(() => api.unequip(id));
+  };
   const setHidden = (id: number, hidden: boolean) => act(() => api.hideGear(id, hidden));
   const lift = (stack: Stack, from: Held["from"], e: Point) => {
     setHeld({ stack, from });
@@ -615,7 +645,7 @@ export function InventoryScreen({ me, refresh, onClose, onIsland = false, chest 
     } else {
       // Across to the other grid: it lies where it was put, if it is a thing of its own or the first of its kind there.
       if (s.t === "gear") rememberIn(zone, { [s.key]: at });
-      else if (!(zone === "chest" ? kept[s.kind] : packMats[s.kind])) rememberIn(zone, { [`mat:${s.kind}:0`]: at });
+      else if (s.t === "mat" && !(zone === "chest" ? kept[s.kind] : packMats[s.kind])) rememberIn(zone, { [`mat:${s.kind}:0`]: at });
       setHeld(null);
       if (zone === "chest") moveIn(s);
       else moveOut(s);
@@ -662,12 +692,13 @@ export function InventoryScreen({ me, refresh, onClose, onIsland = false, chest 
         onPointerLeave={() => setHover(null)}
         data-slot={slot}
         onPointerDown={(e) => {
-          if (!held && item && e.button === 0 && !e.shiftKey) press.current = { stack: { t: "gear", key: `gear:${item.id}`, item }, from: "worn", x: e.clientX, y: e.clientY, dragging: false };
+          if (!held && item && !gearLocked && e.button === 0 && !e.shiftKey) press.current = { stack: { t: "gear", key: `gear:${item.id}`, item }, from: "worn", x: e.clientX, y: e.clientY, dragging: false };
         }}
         onClick={(e) => {
           if (held) {
             wearHeld();
           } else if (item) {
+            if (gearLocked) return;
             if (e.shiftKey) void unequip(item.id);
             else lift({ t: "gear", key: `gear:${item.id}`, item }, "worn", e);
           }
@@ -700,6 +731,9 @@ export function InventoryScreen({ me, refresh, onClose, onIsland = false, chest 
   const stats = { str: c.str + (bonus.str ?? 0), int_stat: c.int_stat + (bonus.int_stat ?? 0), vit: c.vit + (bonus.vit ?? 0), agi: c.agi + (bonus.agi ?? 0), dex: c.dex + (bonus.dex ?? 0) };
   const shown = hover ? (hover.zone === "worn" ? wornStacks : hover.zone === "theirs" ? theirStacks : stacksOf(hover.zone)).find((s) => s.key === hover.key) ?? null : null;
   const holding = held?.stack.t === "gear" && held.from === "pack" ? held.stack.item : null;
+  /** A potion or a flask in hand, and why it cannot be used from here just now (if this is a map at all). */
+  const holdingUse = held?.stack.t === "use" ? held.stack : null;
+  const useBlocked = holdingUse && usable ? usable.blocked(holdingUse.kind) : undefined;
   const picked = inside.find((f) => f.id === pickedDecor) ?? null;
 
   return (
@@ -852,7 +886,7 @@ export function InventoryScreen({ me, refresh, onClose, onIsland = false, chest 
         <button className="bag-close hud-btn" aria-label="Close" title="Close (Esc)" onClick={onClose}>×</button>
         {(error ?? (trade ? null : refused)) && <div className="banner error">{error ?? refused}</div>}
 
-        <div className="bag-doll" style={{ height: DOLL_ROWS * U }}>
+        <div className={`bag-doll ${gearLocked ? "locked" : ""}`} style={{ height: DOLL_ROWS * U }}>
           <DollChart slots={CHART_SLOTS} unit={U} focus={{ x: DOLL.body.x + DOLL.body.w / 2, y: DOLL.body.y + DOLL.body.h / 2 }} pad={{ x: 3, y: 8 }} />
           {SLOTS.map(slotCell)}
           {TO_COME.map((t) => (
@@ -888,6 +922,15 @@ export function InventoryScreen({ me, refresh, onClose, onIsland = false, chest 
                 </button>
               )}
             </>
+          ) : holdingUse ? (
+            <>
+              <strong className="bag-who">{THROWABLES[holdingUse.kind].name}</strong>
+              <span className="muted">× {holdingUse.total}</span>
+              <span className="spacer" />
+              {usable
+                ? <button className="small primary" disabled={!!useBlocked} title={useBlocked ?? "Take it in hand: the bag closes, and you click where it goes"} onClick={() => { setHeld(null); usable.use(holdingUse.kind); }}>Use</button>
+                : <span className="muted">Used on a map</span>}
+            </>
           ) : (
             <>
               <strong className="bag-who">{c.name}</strong>
@@ -899,6 +942,7 @@ export function InventoryScreen({ me, refresh, onClose, onIsland = false, chest 
           )}
         </div>
 
+        {gearLocked && <div className="bag-locked" role="note">{gearLocked}</div>}
         <div className="pack-wrap">
           <PackGrid
             zone="pack"
@@ -914,7 +958,10 @@ export function InventoryScreen({ me, refresh, onClose, onIsland = false, chest 
             {...gridHandlers("pack")}
             // Shift-click: into the chest, or onto the trade table, while one is open; otherwise gear is worn.
             onQuick={(s) => {
-              if (sideOpen) moveIn(s);
+              if (s.t === "use") {
+                // On a map, straight into the hand. Anywhere else there is nothing to do with it.
+                if (usable && !usable.blocked(s.kind)) usable.use(s.kind);
+              } else if (sideOpen) moveIn(s);
               else if (s.t === "gear" && !equipProblem(s.item, c.class_id, c.level)) void equip(s.item.id);
             }}
             onSplit={sideOpen ? (s, at) => setSplit({ stack: s, into: true, at }) : undefined}
@@ -941,6 +988,8 @@ export function InventoryScreen({ me, refresh, onClose, onIsland = false, chest 
           <aside className={`bag-card panel ${sideOpen && hover.zone !== "worn" ? "over-doll" : ""}`}>
             {shown.t === "gear"
               ? <ItemDetail item={shown.item} current={worn.get(shown.item.slot) ?? null} equipped={shown.item.equipped} classId={c.class_id} level={c.level} />
+              : shown.t === "use"
+              ? <ConsumableDetail kind={shown.kind} total={shown.total} how={usable ? (usable.blocked(shown.kind) ?? "Shift-click to take it in hand, then click where it goes.") : "Used on a map: thrown, or drunk."} />
               : <MaterialDetail kind={shown.kind} total={shown.total} where={hover.zone === "theirs" ? "theirs" : hover.zone === "chest" ? (trade ? "offer" : "chest") : "pack"} />}
           </aside>
         )}
@@ -950,7 +999,7 @@ export function InventoryScreen({ me, refresh, onClose, onIsland = false, chest 
         <div ref={float} className="held-float" aria-hidden>
           {held.stack.t === "gear"
             ? <Icon name={held.stack.item.icon} color={RARITY_COLOR[held.stack.item.rarity]} size={iconPx(heldShape!.w, heldShape!.h)} />
-            : <ThingIcon icon={resourceIcon(held.stack.kind)} size={iconPx(1, 1)} />}
+            : <StackIcon stack={held.stack} size={iconPx(1, 1)} />}
         </div>
       )}
       {split && (
@@ -968,6 +1017,25 @@ export function InventoryScreen({ me, refresh, onClose, onIsland = false, chest 
         />
       )}
       {catchOpen && <CatchPanel buyer={null} onClose={() => setCatchOpen(false)} />}
+    </div>
+  );
+}
+
+/** What a potion, a flask or a bomb does, how many there are, and how it is used from here. */
+function ConsumableDetail({ kind, total, how }: { kind: Throwable; total: number; how: string }) {
+  const def = THROWABLES[kind];
+  return (
+    <div className="mat-detail">
+      <div className="detail-head">
+        <span className="detail-icon" style={{ borderColor: "var(--line)" }}><Icon name={ITEM_ICON[kind].name} color={ITEM_ICON[kind].color} size={54} /></span>
+        <div>
+          <strong>{def.name}</strong>
+          <div><span className="tag" style={{ marginLeft: 0 }}>{def.drink ? "to drink or throw" : "to throw"}</span></div>
+        </div>
+      </div>
+      <p className="muted">{def.blurb}</p>
+      <p>You carry <strong>{total}</strong>. Each one used is gone; the rest stay in your pack from map to map.</p>
+      <p className="muted">{how}</p>
     </div>
   );
 }

@@ -3,8 +3,7 @@
 // the canvas and is told about state (setState) and things that just
 // happened (playEvents).
 //
-// The same scene shows the overworld and battles: a battle pushes the camera
-// in on the fight and lines the two sides up facing each other.
+// Fights are played on the map itself: enemies stand on their own hexes like the heroes do.
 
 import * as THREE from "three";
 import { makeModelShip } from "./modelShip";
@@ -79,11 +78,18 @@ export interface RenderState {
   /** `asleep`: lying down with eyes shut, z's rising, as on a bedroll in the Harbor. */
   heroes: RenderHero[];
   turn: { heroId: string; mp: number } | null;
-  battle: ClientState["battle"];
   story: { npcs: { id: string; poi: string }[] } | null;
   npcs: Record<string, { hostile: boolean }>;
   /** Enemy bands in sight on the map. */
   roamers?: { id: string; kinds: string[]; pos: HexPos }[];
+  /** A zone's enemies: each stands on its own hex, with a bar of what it has left once it is in a fight. */
+  units?: RenderUnit[];
+  /**
+   * Where the viewer can walk, worked out by the caller (a zone's rules know about cliffs, bodies in the way
+   * and what is left of a turn's movement). When set it is used as it stands: the tiles lit, the marker
+   * under the pointer and the dots along the way all come from it.
+   */
+  reach?: Map<string, { cost: number; prev: string | null; pos: HexPos }>;
   /** No turns or movement points: the viewer may walk anywhere reachable, and tiles are not lit. */
   freeRoam?: boolean;
   /** Furniture standing on hexes (a hut's room). Each blocks the hex it is on. */
@@ -102,6 +108,24 @@ export interface RenderState {
    * buttons step round from here by sixths, so they come back to it.
    */
   homeYaw?: number;
+}
+
+/** An enemy standing on a hex of its own. */
+export interface RenderUnit {
+  id: string;
+  /** The enemy kind: drives the figure. */
+  kind: string;
+  pos: HexPos;
+  name?: string;
+  /** Shown as a bar over its head when set: 0 to 1 of what it can take. */
+  hp?: number;
+  down?: boolean;
+  /** Knocked flat (Prone) but still in the fight. */
+  prone?: boolean;
+  /** Whose turn it is. */
+  active?: boolean;
+  /** In a fight: it wears a red ring. */
+  hostile?: boolean;
 }
 
 /**
@@ -131,6 +155,12 @@ export interface RenderHero {
   /** Absent off a voyage, where every hero is at full health. */
   hp?: number;
   maxHp?: number;
+  /** Knocked down in a fight: drawn lying where they fell. */
+  down?: boolean;
+  /** Knocked flat (Prone) but still in the fight: lying, not dimmed. */
+  prone?: boolean;
+  /** Whose turn it is in a fight on the tiles: their ring pulses. */
+  active?: boolean;
 }
 
 /** The first word of a name, for a plate: "Ewan Driftwood" is "Ewan". */
@@ -370,7 +400,7 @@ export function hexToWorld(p: HexPos): { x: number; z: number } {
   return { x: SQRT3 * (p.q + p.r / 2), z: 1.5 * p.r };
 }
 
-const tileTop = (t: Tile | undefined) => (!t ? 0.2 : t.biome === "water" ? 0.14 : 0.35 + t.h * 1.1);
+export const tileTop = (t: Tile | undefined) => (!t ? 0.2 : t.biome === "water" ? 0.14 : 0.35 + t.h * 1.1);
 /** A room's floor, which wall pieces' heights are measured from. */
 const FLOOR_TOP = tileTop({ q: 0, r: 0, biome: "floor", h: BASE_HEIGHT.floor });
 /** A turn in sixths plus radians, as Three.js turns a model about y. */
@@ -467,6 +497,10 @@ const noise = (q: number, r: number, salt: number) => {
 };
 
 interface Unit {
+  /** Knocked across the ground (a shove): moved this many times faster than a walk, without steps, until it arrives. */
+  rush?: number;
+  /** Knocked off its feet: drawn lying until the render clock passes this. */
+  floored?: number;
   /** Afloat: the boat under them, which kind it is, and how far it sits them down. */
   boat?: THREE.Group | null;
   boatKind?: "barrel" | "rowboat";
@@ -570,6 +604,8 @@ interface Want {
   pulse?: boolean;
   hp?: number;
   down?: boolean;
+  /** Knocked flat but not out: lying, in full colour. */
+  prone?: boolean;
   asleep?: boolean;
   rod?: boolean | "gilded";
   /** Afloat: the boat drawn under them. */
@@ -804,11 +840,6 @@ export class WorldRenderer {
   private hoverBorn = 0;
   /** Whether the hex under the pointer can be walked to: lit and alive if so, a dim outline if not. */
   private hoverLive = false;
-  private arena = new THREE.Group();
-  private arenaGround: THREE.Mesh;
-  private arenaDecor = new THREE.Group();
-  /** What the battleground was last dressed for, so it is only rebuilt when the fight moves. */
-  private arenaSig = "";
   private units = new Map<string, Unit>();
   /** The sea's daytime colour for this map; night deepens it toward navy. */
   private seaBase = new THREE.Color("#3577cf");
@@ -830,7 +861,7 @@ export class WorldRenderer {
   private pending: { at: number; run: () => void }[] = [];
 
   private state: RenderState | null = null;
-  private reach = new Map<string, { cost: number }>();
+  private reach = new Map<string, { cost: number; prev: string | null; pos: HexPos }>();
   private hovered: HexPos | null = null;
   private turnKey = "";
 
@@ -844,7 +875,7 @@ export class WorldRenderer {
   /**
    * Which way the camera looks from, as a turn about the vertical axis. 0 is
    * the default view from the south. `yaw` eases toward `yawGoal`; `userYaw`
-   * is what the player chose, kept while a battle forces the view back to 0.
+   * is what the player chose.
    */
   private yaw = 0;
   private yawGoal = 0;
@@ -939,15 +970,7 @@ export class WorldRenderer {
     this.hoverRing = this.buildHoverMarker();
     this.hoverRing.visible = false;
 
-    // The battleground: one great hex of whatever ground the fight broke out on, dressed to match (see dressArena).
-    this.arenaGround = new THREE.Mesh(new THREE.CylinderGeometry(4.4, 4.4, 1.6, 6), new THREE.MeshLambertMaterial({ color: "#7cb856", flatShading: true }));
-    this.arenaGround.receiveShadow = true;
-    const skirt = new THREE.Mesh(new THREE.CylinderGeometry(4.4, 3.9, 1.1, 6), new THREE.MeshLambertMaterial({ color: "#4a3f35", flatShading: true }));
-    skirt.position.y = -1.35;
-    this.arena.add(this.arenaGround, skirt, this.arenaDecor);
-    this.arena.visible = false;
-
-    this.scene.add(this.decor, this.poiGroup, this.propGroup, this.rangeGroup, this.pathGroup, this.hoverRing, this.arena, this.unitGroup, this.fxGroup);
+    this.scene.add(this.decor, this.poiGroup, this.propGroup, this.rangeGroup, this.pathGroup, this.hoverRing, this.unitGroup, this.fxGroup);
 
     canvas.addEventListener("pointerdown", this.onPointerDown);
     canvas.addEventListener("pointermove", this.onPointerMove);
@@ -1065,30 +1088,21 @@ export class WorldRenderer {
 
     const me = state.heroes.find((h) => h.id === state.you);
     const myTurn = !!me && (state.freeRoam || (state.phase === "overworld" && state.turn?.heroId === state.you));
-    this.reach = myTurn ? reachable(state.map, me!.pos, state.freeRoam ? FREE_ROAM_REACH : state.turn!.mp, this.stepCost(state)) : new Map();
+    this.reach = state.reach ?? (myTurn ? reachable(state.map, me!.pos, state.freeRoam ? FREE_ROAM_REACH : state.turn!.mp, this.stepCost(state)) : new Map());
     this.paintTiles();
     this.syncUnits(state);
     this.updatePath();
 
-    if (state.battle) {
-      this.targetGoal.copy(this.battleCentre(state));
-      this.dist = 12;
-      // The line-up is laid out for the default view, so a fight always faces the same way.
-      this.yawGoal = nearestTurn(this.yaw, 0);
-      this.pitchGoal = DEFAULT_PITCH;
-      for (const b of this.turnButtons) b.hidden = true;
-    } else {
-      this.dist = this.userDist;
-      this.yawGoal = nearestTurn(this.yaw, this.userYaw);
-      this.pitchGoal = this.userPitch;
-      for (const b of this.turnButtons) b.hidden = false;
-      const turnKey = `${state.phase}:${state.round}:${state.turn?.heroId ?? ""}`;
-      // A room is small enough to see whole, so indoors the camera stays on its middle.
-      // Following, the camera starts on your hero indoors too.
-      if (first && me && (this.follow || !state.indoors)) this.target.copy(this.standAt(me.pos));
-      if ((first || turnKey !== this.turnKey) && me && (myTurn || first) && !state.indoors) this.targetGoal.copy(this.standAt(me.pos));
-      this.turnKey = turnKey;
-    }
+    this.dist = this.userDist;
+    this.yawGoal = nearestTurn(this.yaw, this.userYaw);
+    this.pitchGoal = this.userPitch;
+    for (const b of this.turnButtons) b.hidden = false;
+    const turnKey = `${state.phase}:${state.round}:${state.turn?.heroId ?? ""}`;
+    // A room is small enough to see whole, so indoors the camera stays on its middle.
+    // Following, the camera starts on your hero indoors too.
+    if (first && me && (this.follow || !state.indoors)) this.target.copy(this.standAt(me.pos));
+    if ((first || turnKey !== this.turnKey) && me && (myTurn || first) && !state.indoors) this.targetGoal.copy(this.standAt(me.pos));
+    this.turnKey = turnKey;
   }
 
   /** Animate things that just happened. Call after setState for the same update. */
@@ -1108,10 +1122,7 @@ export class WorldRenderer {
     // Your turn coming round gets a soft tick, once, and not as the fight ends.
     let myTurnAt: number | null = null;
     for (const ev of events) {
-      if (ev.t === "battle_start") {
-        // A boss's first appearance: a low swell as the opening card goes up.
-        if (this.state?.battle?.combatants.some((c) => c.side === "enemy" && isBoss(c.kind))) this.later(0, () => sounds.boss(), 0.15);
-      } else if (ev.t === "moved") {
+      if (ev.t === "moved") {
         const unit = this.units.get(ev.heroId);
         if (unit) unit.path = ev.path.map((p) => this.standAt(p));
       } else if (ev.t === "chat") {
@@ -1135,7 +1146,7 @@ export class WorldRenderer {
         });
         else if (b.t === "tick") {
           // A troll on fire: the burn, and its wounds failing to close.
-          const kind = this.state?.battle?.combatants.find((c) => c.id === b.target)?.kind;
+          const kind = this.state?.units?.find((u) => u.id === b.target)?.kind;
           const blocked = kind !== undefined && ENEMIES[kind]?.regen?.unless === b.effect;
           this.later(beat++, () => {
             sounds.tick(b.effect, this.spot(b.target));
@@ -1288,6 +1299,100 @@ export class WorldRenderer {
     }
   }
 
+  // ---------- a fight on the tiles ----------
+  // A zone plays its own events (ZoneView.tsx) and asks for each piece of the picture here.
+
+  /** Walk a unit along these hexes, after whatever it is already walking. Any unit, not only a hero. */
+  walkUnit(id: string, path: HexPos[]) {
+    const unit = this.units.get(id);
+    if (!unit) return;
+    for (const p of path) unit.path.push(this.standAt(p));
+  }
+
+  /**
+   * A unit knocked from where it stands to another hex (a shove, a blow that throws it back): it is
+   * flung there, not walked, and with `fall` lands on its back for a moment before getting up.
+   */
+  knock(id: string, to: HexPos, fall = true) {
+    const unit = this.units.get(id);
+    if (!unit) return;
+    unit.path = [this.standAt(to)];
+    unit.rush = 3.2;
+    unit.bob = 0.22;
+    if (fall) unit.floored = this.clock + 1;
+  }
+
+  /** A unit knocked off its feet where it stands. */
+  floor(id: string, seconds = 1) {
+    const unit = this.units.get(id);
+    if (unit) unit.floored = this.clock + seconds;
+  }
+
+  /** The top of a unit's head in the world, wherever it has got to: for something drawn over it. Null if it is not on the map. */
+  unitHead(id: string): THREE.Vector3 | null {
+    const unit = this.units.get(id);
+    if (!unit) return null;
+    const at = unit.root.position.clone();
+    at.y += unit.head - unit.bob;
+    return at;
+  }
+
+  /** One blow or shot from one unit at another, named for its look and sound. `onImpact` runs as it lands (or flies wide). */
+  blow(actorId: string, targetId: string, name: string, opts: { crit?: boolean; landed?: boolean; onImpact?: () => void } = {}) {
+    const style = attackStyle(name);
+    this.attack(actorId, targetId, name, !!opts.crit, () => {
+      if (opts.landed) {
+        sounds.impact(name, style, !!opts.crit, this.fighter(targetId), this.spot(targetId));
+        this.recoil(targetId, actorId, opts.crit ? 0.6 : 0.38);
+      } else sounds.miss(name, style, this.spot(targetId));
+      opts.onImpact?.();
+    }, !!opts.landed);
+  }
+
+  /** A unit rocked back by a blow: knocked a little away from whoever dealt it (or just jolted), and settling back. */
+  private recoil(targetId: string, fromId: string | null, by: number) {
+    const t = this.units.get(targetId);
+    const a = fromId ? this.units.get(fromId) : undefined;
+    if (!t || t.lying) return;
+    if (a && a !== t) t.kick.copy(t.goal).sub(a.goal).setLength(by);
+    else t.kick.set((Math.random() - 0.5) * by, 0, (Math.random() - 0.5) * by);
+    t.bob = Math.max(t.bob, 0.1);
+    t.lean = 0.25;
+  }
+
+  /** A shot or a spell going off, drawn elsewhere (SpellFx): the unit turns to face where it is aimed, leans into it, and is heard. */
+  cast(actorId: string, name: string, x: number, z: number) {
+    const unit = this.units.get(actorId);
+    if (unit && !unit.lying) {
+      unit.turn = unit.turnGoal = Math.atan2(x - unit.goal.x, z - unit.goal.z);
+      unit.lean = -0.5;
+    }
+    sounds.attack(name, attackStyle(name), this.fighter(actorId), this.spot(actorId));
+  }
+
+  /** That shot or spell arriving: the sound of it landing on its target, or going wide. */
+  landed(targetId: string, name: string, hit: boolean, crit = false, fromId: string | null = null) {
+    if (hit) {
+      sounds.impact(name, attackStyle(name), crit, this.fighter(targetId), this.spot(targetId));
+      this.recoil(targetId, fromId, crit ? 0.5 : 0.3);
+    } else sounds.miss(name, attackStyle(name), this.spot(targetId));
+  }
+
+  /** Text rising off a unit: damage, healing, a condition's name. */
+  floatOver(id: string, text: string, color: string) {
+    this.float(id, text, color);
+  }
+
+  /** A glint of light on a unit: healing, a guard going up. */
+  glint(id: string, color: string) {
+    this.sparkle(id, color);
+  }
+
+  /** Where a unit stands in the world, for a sound's distance. */
+  whereIs(id: string): { x: number; z: number } | undefined {
+    return this.spot(id);
+  }
+
   /** Run `run` on beat `beat` of what is being played out, `extra` seconds after it. */
   private later(beat: number, run: () => void, extra = 0) {
     this.pending.push({ at: this.clock + beat * 0.38 + extra, run });
@@ -1296,15 +1401,18 @@ export class WorldRenderer {
   private lunge(actorId: string, targetId: string) {
     const a = this.units.get(actorId);
     const t = this.units.get(targetId);
-    if (a && t && a !== t) a.kick.copy(t.goal).sub(a.goal).setLength(0.7);
+    if (!a || !t || a === t) return;
+    // Right at them: most of the way across the gap, with a spring off the ground.
+    a.kick.copy(t.goal).sub(a.goal).setLength(Math.min(1.15, a.goal.distanceTo(t.goal) * 0.6));
+    a.bob = 0.2;
   }
 
   /** Who a unit is in the fight, for its voice: looked up when asked, as the fight's line-up can change. */
   private fighter(id: string): Fighter | undefined {
-    const c = this.state?.battle?.combatants.find((x) => x.id === id);
-    if (c) return { side: c.side, kind: c.kind };
     const h = this.state?.heroes.find((x) => x.id === id);
-    return h ? { side: "hero", kind: h.classId } : undefined;
+    if (h) return { side: "hero", kind: h.classId };
+    const u = this.state?.units?.find((x) => x.id === id);
+    return u ? { side: "enemy", kind: u.kind } : undefined;
   }
 
   /** Where a unit stands on the map, for a sound's distance. */
@@ -1323,9 +1431,12 @@ export class WorldRenderer {
     const t = this.units.get(targetId);
     if (!a || !t || a === t) return onImpact();
     sounds.attack(ability, attackStyle(ability), this.fighter(actorId), this.spot(actorId));
-    const dir = t.goal.x >= a.goal.x ? 1 : -1;
+    // Left or right as the viewer sees it, whichever way the camera has been turned.
+    const dir = t.goal.clone().project(this.camera).x >= a.goal.clone().project(this.camera).x ? 1 : -1;
     const flip = dir < 0;
-    a.lean = -dir * 0.5;
+    // Leant well into it, so the strike is held long enough to be seen.
+    a.lean = -dir * 0.9;
+    if (!a.lying) a.turn = a.turnGoal = Math.atan2(t.goal.x - a.goal.x, t.goal.z - a.goal.z);
     const hitAt = t.goal.clone().add(new THREE.Vector3(0, t.size * 0.4, 0.05));
     const spell = SPELL_COLOR[ability];
 
@@ -1496,7 +1607,7 @@ export class WorldRenderer {
    */
   private footfall(id: string, unit: Unit) {
     const state = this.state;
-    if (!state || state.battle || unit.asleep) return;
+    if (!state || unit.asleep) return;
     const hero = state.heroes.find((h) => h.id === id);
     if (!hero || hero.asleep) return;
     const feet = unit.feet;
@@ -2798,11 +2909,9 @@ export class WorldRenderer {
    */
   private buildJoinRanges(state: RenderState) {
     const near = (p: HexPos, poi: Poi) => hexDistance(p, poi.pos) <= BATTLE_JOIN_RANGE;
-    const hostile = state.battle
-      ? []
-      : state.map.pois.filter(
-          (poi) => !poi.cleared && poi.enemies.length > 0 && ((this.hovered && near(this.hovered, poi)) || state.heroes.some((h) => near(h.pos, poi))),
-        );
+    const hostile = state.map.pois.filter(
+      (poi) => !poi.cleared && poi.enemies.length > 0 && ((this.hovered && near(this.hovered, poi)) || state.heroes.some((h) => near(h.pos, poi))),
+    );
     const sig = `${state.code}|${hostile.map((p) => p.id).join(",")}`;
     if (sig === this.rangeSig) return;
     this.rangeSig = sig;
@@ -4806,213 +4915,60 @@ export class WorldRenderer {
 
   // ---------- units ----------
 
-  /**
-   * Make the battleground look like where the fight is: the colour of that
-   * hex's ground, with a scatter of what grows or lies there, kept to the back
-   * and the sides so the two lines of fighters stand in the clear. A fight at
-   * a camp or a lair gets that place's own dressing.
-   */
-  private dressArena(state: RenderState) {
-    const battle = state.battle!;
-    const poi = state.map.pois.find((p) => p.id === (battle.poiId ?? state.story?.npcs.find((n) => n.id === battle.npcId)?.poi));
-    const at = poi?.pos ?? state.heroes[0].pos;
-    const found = tileAt(state.map, at)?.biome ?? "plains";
-    const biome = found === "fog" || found === "water" ? "plains" : found;
-    const sig = `${state.code}|${at.q},${at.r}|${biome}|${poi?.kind ?? ""}`;
-    if (sig === this.arenaSig) return;
-    this.arenaSig = sig;
-    this.arenaDecor.traverse((o) => {
-      const mesh = o as THREE.Mesh;
-      mesh.geometry?.dispose();
-      (mesh.material as THREE.Material | undefined)?.dispose();
-    });
-    this.arenaDecor.clear();
-    (this.arenaGround.material as THREE.MeshLambertMaterial).color.set(BIOME_COLOR[biome] ?? BIOME_COLOR.plains);
-    if (this.sodden && (biome === "plains" || biome === "forest")) (this.arenaGround.material as THREE.MeshLambertMaterial).color.lerp(DRAB, 0.5);
-
-    const TOP = 0.8;
-    const rnd = (i: number, salt: number) => noise(at.q * 3 + i, at.r * 5 - i, 40 + salt);
-    const put = (geometry: THREE.BufferGeometry, color: string, x: number, y: number, z: number, rotY = 0, scale = 1) => {
-      const mesh = new THREE.Mesh(geometry, new THREE.MeshLambertMaterial({ color, flatShading: true }));
-      mesh.position.set(x, TOP + y, z);
-      mesh.rotation.y = rotY;
-      mesh.scale.setScalar(scale);
-      mesh.castShadow = mesh.receiveShadow = true;
-      this.arenaDecor.add(mesh);
-      return mesh;
-    };
-    /** A spot off the fighting line: along the back, or out at either side. Kept inside the hex. */
-    const spot = (i: number): [number, number] => {
-      if (i % 3 === 2) {
-        const side = i % 2 ? 1 : -1;
-        return [side * (2.9 + rnd(i, 1) * 0.5), -0.6 + rnd(i, 2) * 2.2];
-      }
-      return [(rnd(i, 3) - 0.5) * 5.2, -3.1 + rnd(i, 4) * 1.5];
-    };
-    const tree = (x: number, z: number, s: number, dark = false) => {
-      put(new THREE.CylinderGeometry(0.07, 0.09, 0.3, 5), "#5a3d22", x, 0.15 * s, z, 0, s);
-      put(new THREE.ConeGeometry(0.42, 1.1, 5), dark ? "#2a5f38" : "#2f7a3d", x, 0.8 * s, z, rnd(x * 7, 5) * 3, s);
-    };
-    const rock = (x: number, z: number, s: number, tone = "#8d8674") => put(new THREE.DodecahedronGeometry(0.36, 0), tone, x, 0.2 * s, z, rnd(x * 5, 6) * 6, s);
-    const tuft = (x: number, z: number, s: number) => {
-      for (const [dx, lean] of [[-0.08, -0.25], [0, 0], [0.08, 0.25]]) put(new THREE.ConeGeometry(0.05, 0.34, 3), "#a6dd6f", x + dx, 0.17 * s, z, 0, s).rotation.z = -lean;
-    };
-
-    if (state.kind === "caverns") {
-      // Under the rocks: stalagmites crowding the back and sides, rubble, and the bones of whoever came down before.
-      for (let i = 0; i < 9; i++) {
-        const [x, z] = spot(i);
-        const h = 0.9 + rnd(i, 30) * 1.6;
-        put(new THREE.ConeGeometry(0.22 + rnd(i, 31) * 0.2, h, 5), i % 2 ? "#3d3946" : "#4a4552", x, h / 2, z, rnd(i, 32) * 3);
-      }
-      for (let i = 0; i < 5; i++) rock(spot(i + 10)[0], spot(i + 10)[1], 0.4 + rnd(i, 33) * 0.5, "#35323c");
-      for (let i = 0; i < 5; i++) put(new THREE.BoxGeometry(0.4, 0.05, 0.06), "#d6cfbd", (rnd(i, 34) - 0.5) * 5, 0.03, -2.4 + rnd(i, 35) * 1.2, rnd(i, 36) * 3);
-      put(new THREE.DodecahedronGeometry(0.16, 0), "#e8e2d2", -2.6, 0.14, -2.0);
-    } else if (poi?.kind === "camp") {
-      // A raiders' camp: two tents, a fire ringed with stones, crates.
-      for (const [x, z, r] of [[-2.0, -2.6, 0.3], [1.7, -2.9, -0.4]]) put(new THREE.ConeGeometry(0.85, 1.1, 4), "#8a7a5a", x, 0.55, z, Math.PI / 4 + r);
-      put(new THREE.ConeGeometry(0.22, 0.5, 5), "#ff9b3d", 0, 0.25, -2.4);
-      for (let i = 0; i < 6; i++) put(new THREE.DodecahedronGeometry(0.11, 0), "#6d6960", Math.sin(i) * 0.42, 0.06, -2.4 + Math.cos(i) * 0.42);
-      put(new THREE.BoxGeometry(0.5, 0.42, 0.5), "#9a6b2f", 3.0, 0.21, -0.9, 0.4);
-      put(new THREE.BoxGeometry(0.36, 0.3, 0.36), "#8a6a44", -3.1, 0.15, 0.2, 0.9);
-    }
-    if (poi?.kind === "lair") {
-      // The lair: leaning standing stones and old bones.
-      for (let i = 0; i < 6; i++) {
-        const a = Math.PI + ((i - 2.5) / 6) * Math.PI * 1.1;
-        const stone = put(new THREE.BoxGeometry(0.5, 1.5 + rnd(i, 7) * 0.9, 0.36), "#4a4458", Math.sin(a) * 3.3, 0.8, Math.cos(a) * 3.0 - 0.3, a);
-        stone.rotation.z = (rnd(i, 8) - 0.5) * 0.35;
-      }
-      for (let i = 0; i < 4; i++) put(new THREE.BoxGeometry(0.4, 0.05, 0.06), "#d8d2c0", (rnd(i, 9) - 0.5) * 4.6, 0.03, -2.2 - rnd(i, 10), rnd(i, 11) * 3);
-    }
-
-    if (biome === "forest") {
-      for (let i = 0; i < 9; i++) {
-        const [x, z] = spot(i);
-        tree(x, z, 0.9 + rnd(i, 12) * 0.8, i % 2 === 0);
-      }
-      const log = put(new THREE.CylinderGeometry(0.16, 0.16, 1.3, 6), "#6b4a2b", -2.6, 0.16, 1.7, 0.5);
-      log.rotation.z = Math.PI / 2;
-      for (let i = 0; i < 5; i++) tuft((rnd(i, 13) - 0.5) * 6, 1.8 + rnd(i, 14) * 1.2, 1);
-    } else if (biome === "hills") {
-      for (let i = 0; i < 8; i++) {
-        const [x, z] = spot(i);
-        rock(x, z, 0.8 + rnd(i, 15) * 1.3, ["#8d8674", "#7b786f", "#9c917b"][i % 3]);
-      }
-      put(new THREE.ConeGeometry(0.5, 1.6, 4), "#7b786f", -3.2, 0.8, -2.2, 0.6);
-      for (let i = 0; i < 5; i++) rock((rnd(i, 16) - 0.5) * 6.4, 2.0 + rnd(i, 17), 0.35, "#a39a86");
-    } else if (biome === "plains") {
-      for (let i = 0; i < 18; i++) {
-        const [x, z] = i < 12 ? spot(i) : [(rnd(i, 18) - 0.5) * 6.6, 1.7 + rnd(i, 19) * 1.5];
-        tuft(x, z, 0.9 + rnd(i, 20) * 0.7);
-      }
-      for (let i = 0; i < 3; i++) rock(spot(i + 20)[0], spot(i + 20)[1], 0.5 + rnd(i, 21) * 0.4);
-      for (let i = 0; i < 4; i++) put(new THREE.BoxGeometry(0.09, 0.09, 0.09), i % 2 ? "#ffd23f" : "#f4efe1", (rnd(i, 22) - 0.5) * 5.5, 0.22, -2.6 + rnd(i, 23) * 0.9);
-      tree(3.2, -2.5, 1.2);
-    } else if (state.kind !== "caverns") {
-      // Bare ground (mud, boards, stone): a few rocks and a broken crate.
-      for (let i = 0; i < 5; i++) rock(spot(i)[0], spot(i)[1], 0.6 + rnd(i, 24) * 0.6, "#6d6960");
-      put(new THREE.BoxGeometry(0.5, 0.4, 0.5), "#8a6a44", -2.9, 0.2, -2.3, 0.5);
-    }
-  }
-
-  private battleCentre(state: RenderState): THREE.Vector3 {
-    const battle = state.battle!;
-    const poiId = battle.poiId ?? state.story?.npcs.find((n) => n.id === battle.npcId)?.poi;
-    const poi = state.map.pois.find((p) => p.id === poiId);
-    const centre = this.standAt(poi?.pos ?? state.heroes[0].pos);
-    // The arena is a raised stage, clear of the tallest nearby tile and its trees.
-    let top = centre.y;
-    for (const t of this.tiles) {
-      const w = hexToWorld(t);
-      if (Math.hypot(w.x - centre.x, w.z - centre.z) < 4.2) top = Math.max(top, tileTop(t));
-    }
-    centre.y = top + 1.2;
-    return centre;
-  }
-
   private syncUnits(state: RenderState) {
     const want = new Map<string, Want>();
     const colorOf = (heroId: string) => PLAYER_COLORS[state.heroes.findIndex((h) => h.id === heroId) % PLAYER_COLORS.length];
 
-    if (state.battle) {
-      const centre = this.battleCentre(state);
-      this.arena.visible = true;
-      this.poiGroup.visible = false;
-      this.arena.position.set(centre.x, centre.y - 0.8, centre.z);
-      this.dressArena(state);
-      const actor = state.battle.actor;
-      for (const side of ["hero", "enemy"] as const) {
-        const line = state.battle.combatants.filter((c) => c.side === side);
-        // Each figure's place along the line, in ordinary figures' steps: wide ones push their neighbours along.
-        const steps = line.map((c) => roomOf(c.kind));
-        const at = steps.map((_, i) => steps.slice(0, i).reduce((sum, r, j) => sum + (r + steps[j + 1]) / 2, 0));
-        const span = at[at.length - 1] ?? 0;
-        line.forEach((c, i) => {
-          const dir = side === "hero" ? -1 : 1;
-          want.set(c.id, {
-            kind: c.kind,
-            outfit: c.outfit,
-            // Staggered diagonally so the tall figures do not hide each other.
-            pos: new THREE.Vector3(centre.x + dir * (1.2 + at[i] * 1.05), centre.y, centre.z + (at[i] - span / 2) * 1.25),
-            size: isBoss(c.kind) ? 2.5 : isBig(c.kind) ? 2.2 : 1.9,
-            ring: side === "hero" ? colorOf(c.id) : "#e23b3b",
-            pulse: c.id === actor,
-            hp: c.hp / c.maxHp,
-            down: c.down,
-            // Facing the other side, turned a little toward the camera (which a fight swings round to the south).
-            face: -dir * (Math.PI / 2 - 0.5),
-          });
-        });
+        const stacks = new Map<string, number>();
+    for (const h of state.heroes) stacks.set(key(h.pos), (stacks.get(key(h.pos)) ?? 0) + 1);
+    const seen = new Map<string, number>();
+    for (const h of state.heroes) {
+      const n = stacks.get(key(h.pos))!;
+      const i = seen.get(key(h.pos)) ?? 0;
+      seen.set(key(h.pos), i + 1);
+      const pos = this.standAt(h.pos);
+      if (h.at) pos.add(new THREE.Vector3(h.at.x, h.at.y, h.at.z));
+      else {
+        pos.x += (i - (n - 1) / 2) * 0.6;
+        pos.z += 0.25;
       }
-    } else {
-      this.arena.visible = false;
-      this.poiGroup.visible = true;
-      const stacks = new Map<string, number>();
-      for (const h of state.heroes) stacks.set(key(h.pos), (stacks.get(key(h.pos)) ?? 0) + 1);
-      const seen = new Map<string, number>();
-      for (const h of state.heroes) {
-        const n = stacks.get(key(h.pos))!;
-        const i = seen.get(key(h.pos)) ?? 0;
-        seen.set(key(h.pos), i + 1);
-        const pos = this.standAt(h.pos);
-        if (h.at) pos.add(new THREE.Vector3(h.at.x, h.at.y, h.at.z));
-        else {
-          pos.x += (i - (n - 1) / 2) * 0.6;
-          pos.z += 0.25;
-        }
-        const base = plateOf(h);
-        const plate = base && h.id === state.you && state.stamina ? { ...base, bolts: state.stamina } : base;
-        // A plate shows a first name only: full names run long over a crowd.
-        const full = h.label ?? (plate ? h.name : undefined);
-        const label = plate && full ? firstName(full) : full;
-        want.set(h.id, { kind: h.classId, outfit: h.outfit, pos, size: 1.5, label, plate: label ? plate : undefined, stack: i, ring: colorOf(h.id), pulse: state.turn?.heroId === h.id, asleep: h.asleep, rod: h.rod, boat: h.boat });
-      }
-      for (const npc of state.story?.npcs ?? []) {
-        const poi = state.map.pois.find((p) => p.id === npc.poi);
-        if (!poi || state.npcs[npc.id]?.hostile) continue;
+      const base = plateOf(h);
+      const plate = base && h.id === state.you && state.stamina ? { ...base, bolts: state.stamina } : base;
+      // A plate shows a first name only: full names run long over a crowd.
+      const full = h.label ?? (plate ? h.name : undefined);
+      const label = plate && full ? firstName(full) : full;
+      want.set(h.id, { kind: h.classId, outfit: h.outfit, pos, size: 1.5, label, plate: label ? plate : undefined, stack: i, ring: colorOf(h.id), pulse: state.turn?.heroId === h.id || !!h.active, asleep: h.asleep, rod: h.rod, boat: h.boat, down: h.down, prone: h.prone });
+    }
+    for (const npc of state.story?.npcs ?? []) {
+      const poi = state.map.pois.find((p) => p.id === npc.poi);
+      if (!poi || state.npcs[npc.id]?.hostile) continue;
+      const pos = this.standAt(poi.pos);
+      pos.x += 0.62;
+      want.set(`npc:${npc.id}`, { kind: "npc", pos, size: 1.4 });
+    }
+    // Bands loose on the island, drawn where they stand while a hero can see them.
+    for (const band of state.roamers ?? []) {
+      band.kinds.forEach((kind, i) => {
+        const pos = this.standAt(band.pos);
+        pos.x += (i - (band.kinds.length - 1) / 2) * 0.55;
+        pos.z += 0.15;
+        want.set(`roam:${band.id}:${i}`, { kind, pos, size: isBig(kind) ? 1.5 : 1.3, ring: i === 0 ? "#ff3b3b" : undefined, pulse: i === 0 });
+      });
+    }
+    // A zone's enemies, each on its own hex.
+    for (const u of state.units ?? []) {
+      const pos = this.standAt(u.pos);
+      pos.z += 0.25;
+      want.set(u.id, { kind: u.kind, pos, size: isBoss(u.kind) ? 1.9 : isBig(u.kind) ? 1.6 : 1.4, label: u.name, ring: u.hostile ? "#e23b3b" : undefined, pulse: !!u.active, hp: u.hp, down: u.down, prone: u.prone });
+    }
+    for (const poi of state.map.pois) {
+      if (poi.cleared || poi.enemies.length === 0) continue;
+      poi.enemies.forEach((kind, i) => {
         const pos = this.standAt(poi.pos);
-        pos.x += 0.62;
-        want.set(`npc:${npc.id}`, { kind: "npc", pos, size: 1.4 });
-      }
-      // Bands loose on the island, drawn where they stand while a hero can see them.
-      for (const band of state.roamers ?? []) {
-        band.kinds.forEach((kind, i) => {
-          const pos = this.standAt(band.pos);
-          pos.x += (i - (band.kinds.length - 1) / 2) * 0.55;
-          pos.z += 0.15;
-          want.set(`roam:${band.id}:${i}`, { kind, pos, size: isBig(kind) ? 1.5 : 1.3, ring: i === 0 ? "#ff3b3b" : undefined, pulse: i === 0 });
-        });
-      }
-      for (const poi of state.map.pois) {
-        if (poi.cleared || poi.enemies.length === 0) continue;
-        poi.enemies.forEach((kind, i) => {
-          const pos = this.standAt(poi.pos);
-          pos.x += (i - (poi.enemies.length - 1) / 2) * 0.6 + 0.2;
-          pos.z += 0.05;
-          want.set(`poi:${poi.id}:${i}`, { kind, pos, size: isBoss(kind) ? 1.7 : isBig(kind) ? 1.5 : 1.3 });
-        });
-      }
+        pos.x += (i - (poi.enemies.length - 1) / 2) * 0.6 + 0.2;
+        pos.z += 0.05;
+        want.set(`poi:${poi.id}:${i}`, { kind, pos, size: isBoss(kind) ? 1.7 : isBig(kind) ? 1.5 : 1.3 });
+      });
     }
 
     const turned = new Map<string, number>();
@@ -5050,7 +5006,7 @@ export class WorldRenderer {
       this.syncBoat(unit, w.boat);
       unit.rod = !!w.rod;
       // Down or asleep: on their back, low to the ground.
-      unit.lying = !!w.down || !!w.asleep;
+      unit.lying = !!w.down || !!w.asleep || !!w.prone;
       unit.head = unit.lying ? w.size * LYING + 0.3 : w.size + 0.3;
       unit.stack = w.stack ?? 0;
       unit.size = w.size;
@@ -5061,7 +5017,7 @@ export class WorldRenderer {
       if (w.face !== undefined) this.posed.add(id);
       else this.posed.delete(id);
       // Arrows stay in until the one they hit goes down, or the fight is over.
-      if (w.down || !state.battle) this.clearArrows(unit);
+      if (w.down || w.hp === undefined) this.clearArrows(unit);
 
       if (w.ring && !unit.ring) {
         unit.ring = new THREE.Mesh(new THREE.RingGeometry(0.3, 0.44, 6), new THREE.MeshBasicMaterial({ side: THREE.DoubleSide }));
@@ -5250,7 +5206,7 @@ export class WorldRenderer {
     const hovered = this.hovered;
     this.hoverRing.visible = false;
     // While carrying a piece the ghost shows where it would go; no walking route.
-    if (!state || !hovered || state.battle || state.holding) return;
+    if (!state || !hovered || state.holding) return;
     const at = this.standAt(hovered);
     if (this.hoverRing.position.distanceToSquared(new THREE.Vector3(at.x, at.y + 0.04, at.z)) > 1e-6) this.hoverBorn = this.clock;
     this.hoverRing.position.set(at.x, at.y + 0.04, at.z);
@@ -5259,9 +5215,12 @@ export class WorldRenderer {
     const me = state.heroes.find((h) => h.id === state.you);
     this.hoverLive = !!reach && reach.cost > 0;
     const budget = state.freeRoam ? FREE_ROAM_REACH : state.turn?.mp;
-    if (!reach || reach.cost === 0 || !me || budget === undefined) return;
-    const route = findPath(state.map, me.pos, hovered, budget, this.stepCost(state));
-    for (const step of route?.path ?? []) {
+    if (!reach || reach.cost === 0 || !me || (budget === undefined && !state.reach)) return;
+    // A reach handed in carries its own way back to the start; otherwise the way is found over the terrain.
+    const steps: HexPos[] = [];
+    if (state.reach) for (let at: typeof reach | undefined = reach; at && at.prev !== null; at = this.reach.get(at.prev)) steps.unshift(at.pos);
+    else steps.push(...(findPath(state.map, me.pos, hovered, budget, this.stepCost(state))?.path ?? []));
+    for (const step of steps) {
       // The way there: small lights, glowing rather than solid.
       const dot = new THREE.Mesh(new THREE.SphereGeometry(0.09, 8, 6), new THREE.MeshBasicMaterial({ color: "#eaf6ff", transparent: true, opacity: 0.85, blending: THREE.AdditiveBlending, depthWrite: false }));
       const p = this.standAt(step);
@@ -5277,7 +5236,7 @@ export class WorldRenderer {
     this.raycaster.setFromCamera(ndc, this.camera);
     // A figure stands up out of its hex, so a click on it (or on the plate over its head) would
     // otherwise land on the ground behind. Clicking someone (other than yourself) means the hex they stand on.
-    if (!this.state?.battle) {
+    {
       const others = [...this.units.entries()].filter(([id]) => id !== this.state?.you).map(([, u]) => u);
       const onFigure = this.raycaster.intersectObjects(others.flatMap((u) => (u.label ? [u.root, u.label] : [u.root])), true)[0];
       const within = (root: THREE.Object3D, o: THREE.Object3D | null): boolean => !!o && (o === root || within(root, o.parent));
@@ -5295,7 +5254,7 @@ export class WorldRenderer {
     }
     const hit = this.raycaster.intersectObject(this.terrain)[0];
     // A building stands up out of several hexes: pointing at it means its door, not the ground behind its roof.
-    if (!this.state?.battle && this.poiGroup.visible) {
+    if (this.poiGroup.visible) {
       const places = this.poiGroup.children.filter((g) => g.userData.door && g.visible);
       const onPlace = this.raycaster.intersectObjects(places, true)[0];
       if (onPlace && (!hit || onPlace.distance < hit.distance)) {
@@ -5353,16 +5312,14 @@ export class WorldRenderer {
     return { dist: Math.max(1, Math.hypot(a.x - b.x, a.y - b.y)), x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, angle: Math.atan2(b.y - a.y, b.x - a.x) };
   }
 
-  /** Turn the view freely by an angle. No effect during a battle. */
+  /** Turn the view freely by an angle. */
   private turn(radians: number) {
-    if (this.state?.battle) return;
     this.userYaw += radians;
     this.yaw = this.yawGoal = this.userYaw;
   }
 
-  /** Tip the view up or down by an angle; `ease` glides there instead of jumping. No effect during a battle. */
+  /** Tip the view up or down by an angle; `ease` glides there instead of jumping. */
   tiltBy(radians: number, ease = false) {
-    if (this.state?.battle) return;
     this.userPitch = Math.max(MIN_PITCH, Math.min(MAX_PITCH, this.userPitch + radians));
     this.pitchGoal = this.userPitch;
     if (!ease) this.pitch = this.userPitch;
@@ -5370,7 +5327,6 @@ export class WorldRenderer {
 
   /** Turn the view by whole hex sides (60°), easing there. */
   rotateBy(steps: number) {
-    if (this.state?.battle) return;
     const step = Math.PI / 3;
     // Snap to the nearest side first (counted from the turn the map opened at), so repeated presses land on
     // clean angles and six of them come back to where the view began.
@@ -5416,7 +5372,6 @@ export class WorldRenderer {
   }
 
   private panBy(dx: number, dy: number) {
-    if (this.state?.battle) return;
     if (dx === 0 && dy === 0) return;
     // Looking around is the player taking the camera: stop following until they ask again.
     if (this.follow) this.setFollow(false);
@@ -5449,7 +5404,7 @@ export class WorldRenderer {
       // Fingers apart zooms in: the camera distance shrinks as the spread grows.
       // Damped: doubling the spread zooms by about a half, not by two.
       this.userDist = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, this.pinch.zoom * Math.pow(this.pinch.dist / now.dist, PINCH_DAMPING)));
-      if (!this.state?.battle) this.dist = this.userDist;
+      this.dist = this.userDist;
       // While following, a pinch only zooms: the little drift of spreading fingers is not a pan.
       if (!this.holdPan(now.x, now.y)) this.panBy(now.x - this.pinch.x, now.y - this.pinch.y);
       // Twisting the two fingers turns the view with them.
@@ -5510,13 +5465,13 @@ export class WorldRenderer {
       if (target) this.callbacks.onPlace(target);
       return;
     }
-    if (this.callbacks.onPropClick && !this.state?.battle) {
+    if (this.callbacks.onPropClick) {
       const prop = this.pickProp();
       if (prop !== null && this.callbacks.onPropClick(prop)) return;
     }
     const pos = this.pick();
     // Nobody walks during a fight, and a practice bout borrows the Harbor's view.
-    if (pos && !this.state?.battle) this.callbacks.onHexClick(pos);
+    if (pos) this.callbacks.onHexClick(pos);
   };
 
   private onPointerLeave = () => {
@@ -5538,7 +5493,7 @@ export class WorldRenderer {
     // A trackpad sends many small deltas and a mouse wheel a few big ones; both end up gentle.
     const step = Math.max(-50, Math.min(50, e.deltaY)) * 0.0012;
     this.userDist = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, this.userDist * Math.exp(step)));
-    if (!this.state?.battle) this.dist = this.userDist;
+    this.dist = this.userDist;
   };
 
   private setHovered(pos: HexPos | null) {
@@ -5606,7 +5561,7 @@ export class WorldRenderer {
       if (ground) this.gaze = (this.gaze ?? new THREE.Vector3()).copy(ground.point);
       if (this.state?.holding) this.placeGhost();
       if (this.callbacks.onPropHover) {
-        const prop = this.state?.battle ? null : this.pickProp();
+        const prop = this.pickProp();
         if (prop !== this.hoverProp) this.callbacks.onPropHover((this.hoverProp = prop));
       }
     }
@@ -5616,7 +5571,7 @@ export class WorldRenderer {
     }
 
     // Held movement keys slide the view, at a speed that covers the screen in about a second and a half.
-    if (this.heldKeys.size > 0 && !this.state?.battle) {
+    if (this.heldKeys.size > 0) {
       let x = 0;
       let y = 0;
       for (const key of this.heldKeys) {
@@ -5629,7 +5584,7 @@ export class WorldRenderer {
     }
 
     // Following: the camera's goal is your hero's feet (the middle of the hex they stand on), wherever they have got to.
-    const mine = this.follow && !this.state?.battle && this.state?.you ? this.units.get(this.state.you) : undefined;
+    const mine = this.follow && this.state?.you ? this.units.get(this.state.you) : undefined;
     if (mine) {
       if (this.followHeld && mine.path.length > 0) {
         this.followHeld = false;
@@ -5774,19 +5729,23 @@ export class WorldRenderer {
       if (unit.path.length > 0) {
         const next = unit.path[0].clone();
         next.z += 0.25;
-        const step = 4.2 * dt;
-        landed = footfalls(unit.stride, unit.stride + step);
-        unit.stride += step;
-        // They turn to face the way they are walking.
-        if (Math.hypot(next.x - p.x, next.z - p.z) > 1e-4) unit.turnGoal = Math.atan2(next.x - p.x, next.z - p.z);
+        const step = 4.2 * (unit.rush ?? 1) * dt;
+        // Flung, not walking: no footfalls, and no turning to face the way it is going.
+        if (!unit.rush) {
+          landed = footfalls(unit.stride, unit.stride + step);
+          unit.stride += step;
+          // They turn to face the way they are walking.
+          if (Math.hypot(next.x - p.x, next.z - p.z) > 1e-4) unit.turnGoal = Math.atan2(next.x - p.x, next.z - p.z);
+        }
         if (p.distanceTo(next) <= step) {
           p.copy(next);
           unit.path.shift();
+          if (unit.path.length === 0) unit.rush = undefined;
         } else {
           p.add(next.sub(p).setLength(step));
         }
         // Two steps per hex, with a little bounce in each, landing as each hex is reached.
-        unit.bob = Math.abs(Math.sin(unit.stride * 3.6)) * 0.07;
+        if (!unit.rush) unit.bob = Math.abs(Math.sin(unit.stride * 3.6)) * 0.07;
       } else {
         unit.bob *= Math.exp(-dt * 18);
         unit.stride = 0;
@@ -5796,7 +5755,7 @@ export class WorldRenderer {
       }
       unit.lean *= Math.exp(-dt * 8);
       // Your own hero, standing idle, looks toward the pointer; with the bag open they turn to face you.
-      if (id === this.state?.you && unit.path.length === 0 && !unit.asleep && !unit.lying && !this.state.battle && !this.minigame && !this.posed.has(id)) {
+      if (id === this.state?.you && unit.path.length === 0 && !unit.asleep && !unit.lying && !this.minigame && !this.posed.has(id)) {
         if (this.faceFront) unit.turnGoal = this.yaw;
         else if (this.gaze && this.pointer.inside) {
           const dx = this.gaze.x - p.x;
@@ -5818,7 +5777,7 @@ export class WorldRenderer {
       } else if (this.looks.has(id)) {
         // Someone else's hero looks where their player's pointer is, while they stand idle. Walking off, they face the way they go.
         if (unit.path.length > 0) this.looks.delete(id);
-        else if (!unit.asleep && !unit.lying && !this.state?.battle && !this.posed.has(id)) unit.turnGoal = this.looks.get(id)!;
+        else if (!unit.asleep && !unit.lying && !this.posed.has(id)) unit.turnGoal = this.looks.get(id)!;
       }
       // A sleeper lies with their head toward the left of the view, as the bedrolls are laid.
       if (unit.asleep) unit.turnGoal = this.yaw + Math.PI / 2;
@@ -5826,7 +5785,7 @@ export class WorldRenderer {
       unit.root.rotation.y = unit.turn;
       const rowing = this.rowingPose(unit, p, dt);
       if (rowing === undefined) unit.oarPull = undefined;
-      unit.figure.update({ time: this.clock, stride: unit.stride, walking: unit.path.length > 0, lean: unit.lean, lying: unit.lying, rowing, sitting: unit.boatKind === "rowboat" && unit.boat?.visible ? 1 : undefined });
+      unit.figure.update({ time: this.clock, stride: unit.stride, walking: unit.path.length > 0 && !unit.rush, lean: unit.lean, lying: unit.lying || this.clock < (unit.floored ?? 0), rowing, sitting: unit.boatKind === "rowboat" && unit.boat?.visible ? 1 : undefined });
       const ground = p.y;
       unit.feet.set(p.x, ground, p.z);
       if (landed) this.footfall(id, unit);

@@ -40,6 +40,9 @@ export const RACK = {
   plaque: { x: 96, y: 2, w: 36, h: 11 },
 };
 
+/** How much taller the rack is for each row of slots after the first (a fight's bar has two). */
+export const RACK_ROW = 16;
+
 const OUT = "#3a1d20";
 const DARK = "#6b3524";
 const MID = "#8e4a2f";
@@ -64,9 +67,12 @@ function grain(x: number, y: number, tone: string, lighter: string, darker: stri
   return dash > 0.9 ? lighter : dash < 0.1 ? darker : tone;
 }
 
-/** Paint the bar onto a canvas sized RACK.w by RACK.h. */
-export function paintRack(canvas: HTMLCanvasElement) {
-  const { w, h } = RACK;
+/** Paint the bar onto a canvas sized RACK.w by RACK.h, taller by RACK_ROW for each row of slots after the first. */
+export function paintRack(canvas: HTMLCanvasElement, rows = 1) {
+  const { w } = RACK;
+  /** The extra depth of board under the first row. */
+  const more = (rows - 1) * RACK_ROW;
+  const h = RACK.h + more;
   canvas.width = w;
   canvas.height = h;
   const ctx = canvas.getContext("2d")!;
@@ -192,18 +198,17 @@ export function paintRack(canvas: HTMLCanvasElement) {
   row(rx0, rx1, T + 12, OUT);
   row(rx0 + 1, rx1 - 1, T + 13, (x) => grain(x, T + 13, HIGH, HIGH, LIGHT));
   row(rx0 + 1, rx1 - 1, T + 14, (x) => grain(x, T + 14, LIGHT, HIGH, MID));
-  for (let y = T + 15; y <= T + 31; y++) row(rx0 + 1, rx1 - 1, y, (x) => grain(x, y, MID, LIGHT, DARK));
-  row(rx0 + 1, rx1 - 1, T + 32, (x) => grain(x, T + 32, DARK, MID, DARK));
-  row(rx0 + 1, rx1 - 1, T + 33, DARK);
-  row(rx0, rx1, T + 34, OUT);
-  for (let y = T + 12; y <= T + 34; y++) {
+  for (let y = T + 15; y <= T + 31 + more; y++) row(rx0 + 1, rx1 - 1, y, (x) => grain(x, y, MID, LIGHT, DARK));
+  row(rx0 + 1, rx1 - 1, T + 32 + more, (x) => grain(x, T + 32 + more, DARK, MID, DARK));
+  row(rx0 + 1, rx1 - 1, T + 33 + more, DARK);
+  row(rx0, rx1, T + 34 + more, OUT);
+  for (let y = T + 12; y <= T + 34 + more; y++) {
     dot(rx0, y, OUT);
     dot(rx1, y, OUT);
   }
 
   // The wells: pale squares with a dark outline, a line of shadow over each and of light under it.
-  const well = (sx: number) => {
-    const sy = RACK.slotY;
+  const well = (sx: number, sy = RACK.slotY) => {
     const n = RACK.slot;
     row(sx, sx + n - 1, sy - 1, DARK);
     row(sx, sx + n - 1, sy + n, LIGHT);
@@ -216,16 +221,18 @@ export function paintRack(canvas: HTMLCanvasElement) {
     }
   };
   for (const sx of [...RACK.hands, ...RACK.mid, RACK.bag]) well(sx);
+  // A second row holds slots between the posts only: the hands and the bag stay where they are.
+  for (let r = 1; r < rows; r++) for (const sx of RACK.mid) well(sx, RACK.slotY + r * RACK_ROW);
 
   // The posts: turned columns lit from the left, taller than the board, with a cap and a foot a pixel wider.
   const shaft = [OUT, HIGH, LIGHT, LIGHT, MID, MID, DARK, OUT];
   for (const px of RACK.posts) {
-    for (let y = T + 13; y <= T + 33; y++) {
+    for (let y = T + 13; y <= T + 33 + more; y++) {
       // A ring turned into the column near each end.
-      const ring = y === T + 15 || y === T + 31;
+      const ring = y === T + 15 || y === T + 31 + more;
       shaft.forEach((c, i) => dot(px + i, y, ring && i > 0 && i < 7 ? (i < 4 ? MID : DARK) : c));
     }
-    for (const y0 of [T + 10, T + 33]) {
+    for (const y0 of [T + 10, T + 33 + more]) {
       row(px - 1, px + 8, y0, OUT);
       row(px, px + 7, y0 + 1, (x) => (x - px < 2 ? HIGH : x - px < 6 ? LIGHT : MID));
       dot(px - 1, y0 + 1, OUT);

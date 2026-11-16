@@ -1,6 +1,7 @@
 // Slots: the squares a pack, a chest or one side of a trade is made of, and
 // what sits in them. A piece of gear takes a slot; a material sits in stacks
-// of up to STACK_MAX, each stack a slot.
+// of up to STACK_MAX, each stack a slot, and so does what is carried to drink
+// or throw (potions, flasks, bombs), which lives in the pack only.
 //
 // The controls are the same wherever slots appear:
 //   click          look at it
@@ -10,8 +11,9 @@
 // A view decides what "across" means and passes the handlers in.
 
 import { useEffect, useRef, useState, type CSSProperties, type DragEvent, type MouseEvent, type ReactNode } from "react";
-import { RARITY_COLOR, RESOURCE_KINDS, STACK_MAX, type ResourceKind, type Resources } from "@gantt-quest/world";
+import { RARITY_COLOR, RESOURCE_KINDS, STACK_MAX, THROWABLES, THROWABLE_KINDS, type ResourceKind, type Resources, type Throwable } from "@gantt-quest/world";
 import { Icon, type OwnedItem } from "../items";
+import { ITEM_ICON } from "../zone/actionIcons";
 import { itemName, label } from "../labels";
 import { ThingIcon, resourceIcon } from "../thingIcons";
 import "./slots.css";
@@ -19,7 +21,9 @@ import "./slots.css";
 export type Stack =
   | { t: "gear"; key: string; item: OwnedItem }
   /** `total` is all the player holds of the kind here, across its stacks. */
-  | { t: "mat"; key: string; kind: ResourceKind; qty: number; total: number };
+  | { t: "mat"; key: string; kind: ResourceKind; qty: number; total: number }
+  /** Something to drink or throw on a map. */
+  | { t: "use"; key: string; kind: Throwable; qty: number; total: number };
 
 /** A material as the stacks it fills, fullest first. */
 export function matStacks(kind: ResourceKind, total: number): Stack[] {
@@ -28,12 +32,28 @@ export function matStacks(kind: ResourceKind, total: number): Stack[] {
   return out;
 }
 
-/** Everything in a pack or a container, as slots: the gear, then each material's stacks. */
-export function toStacks(gear: OwnedItem[], materials: Resources): Stack[] {
-  return [...gear.map((item): Stack => ({ t: "gear", key: `gear:${item.id}`, item })), ...RESOURCE_KINDS.flatMap((k) => matStacks(k, materials[k] ?? 0))];
+/** A kind of thing to drink or throw as the stacks it fills, fullest first. */
+export function useStacks(kind: Throwable, total: number): Stack[] {
+  const out: Stack[] = [];
+  for (let left = total, i = 0; left > 0; left -= STACK_MAX, i++) out.push({ t: "use", key: `use:${kind}:${i}`, kind, qty: Math.min(STACK_MAX, left), total });
+  return out;
 }
 
-export const stackName = (s: Stack) => (s.t === "gear" ? itemName(s.item) : label("resource", s.kind));
+/** Everything in a pack or a container, as slots: the gear, then what there is to drink or throw, then each material's stacks. */
+export function toStacks(gear: OwnedItem[], materials: Resources, consumables: Partial<Record<Throwable, number>> = {}): Stack[] {
+  return [
+    ...gear.map((item): Stack => ({ t: "gear", key: `gear:${item.id}`, item })),
+    ...THROWABLE_KINDS.flatMap((k) => useStacks(k, consumables[k] ?? 0)),
+    ...RESOURCE_KINDS.flatMap((k) => matStacks(k, materials[k] ?? 0)),
+  ];
+}
+
+export const stackName = (s: Stack) => (s.t === "gear" ? itemName(s.item) : s.t === "use" ? THROWABLES[s.kind].name : label("resource", s.kind));
+
+/** The picture of a stack that is not gear, `size` pixels square. */
+export function StackIcon({ stack, size }: { stack: Exclude<Stack, { t: "gear" }>; size: number }) {
+  return stack.t === "use" ? <Icon name={ITEM_ICON[stack.kind].name} color={ITEM_ICON[stack.kind].color} size={size} /> : <ThingIcon icon={resourceIcon(stack.kind)} size={size} />;
+}
 
 interface TileProps {
   stack: Stack;
@@ -59,7 +79,7 @@ export function StackTile({ stack, selected, locked, match, taken, size = 40, on
     <button
       className={`tile ${stack.t} ${selected ? "selected" : ""} ${locked ? "locked" : ""} ${match ? "match" : ""} ${taken ? "taken" : ""}`}
       style={color ? { borderColor: color } : undefined}
-      title={`${stackName(stack)}${stack.t === "mat" ? ` × ${stack.qty}` : ""}${hint ? `\n${hint}` : ""}`}
+      title={`${stackName(stack)}${stack.t !== "gear" ? ` × ${stack.qty}` : ""}${hint ? `\n${hint}` : ""}`}
       draggable={!!onDragStart}
       onDragStart={onDragStart}
       onClick={(e) => {
@@ -81,7 +101,7 @@ export function StackTile({ stack, selected, locked, match, taken, size = 40, on
         </>
       ) : (
         <>
-          <ThingIcon icon={resourceIcon(stack.kind)} size={size} />
+          <StackIcon stack={stack} size={size} />
           <span className="badge br qty">{stack.qty}</span>
         </>
       )}

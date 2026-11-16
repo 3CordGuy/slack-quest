@@ -1,3 +1,7 @@
+// CLOSED: voyages and delves are shut while they are rebuilt on the new combat (packages/world/src/zone,
+// ZoneView.tsx). Nothing routes here; this file is kept as reference for the story panel, the islanders' chat,
+// the lobby and the ending, and goes when its replacement lands. Its fight overlays have been removed.
+//
 // A voyage in progress: the Three.js island with the HUD over it. Covers
 // the ship (lobby), the overworld, NPC conversation, battle and the ending.
 
@@ -33,8 +37,8 @@ import type { Me } from "./api";
 import { ContractPicker, contractName } from "./board/ContractPicker";
 import { ContractResult } from "./board/ContractResult";
 import { ContractStatus } from "./board/ContractStatus";
-import { BEAT_MS, BattleIntro, BattleRecap, FindCard, INTRO_BEATS, INTRO_MS, blowsIn, findFor, introFor, recapFor, settleBattle, type Find, type Intro, type Recap } from "./BattleBeats";
-import { BattleHud, useCountdown } from "./BattleHud";
+import { FindCard, findFor, type Find } from "./FindCard";
+import { useCountdown } from "./ui/useCountdown";
 import { DragPanel } from "./DragPanel";
 import { OptionsMenu } from "./OptionsMenu";
 import { HudBar, HudCorner } from "./ui/Hud";
@@ -238,28 +242,12 @@ export function RunView({ code, me, refresh, onLeave }: { code: string; me: Me; 
   const [feed, setFeed] = useState<string[]>([]);
   /** An islander the player just clicked: once they are in earshot, the chat opens and its box takes the keyboard. */
   const [talkTo, setTalkTo] = useState<{ id: string; at: number } | null>(null);
-  // Pacing around a fight: an opening card, the finished fight held on screen, and its recap. See BattleBeats.
-  const [intro, setIntro] = useState<Intro | null>(null);
-  const [held, setHeld] = useState<ClientState | null>(null);
-  const [recap, setRecap] = useState<Recap | null>(null);
-  const holding = useRef<ClientState | null>(null);
-  const introTimer = useRef<ReturnType<typeof setTimeout>>();
-  const recapTimer = useRef<ReturnType<typeof setTimeout>>();
   const [find, setFind] = useState<Find | null>(null);
   const findTimer = useRef<ReturnType<typeof setTimeout>>();
-  /** Let go of a finished fight and show the island as it now is. */
-  const release = () => {
-    clearTimeout(recapTimer.current);
-    holding.current = null;
-    setHeld(null);
-    setRecap(null);
-    if (latest.current && !atSea.current) renderer.current?.setState(latest.current);
-  };
   const [shown, setShown] = useState<Shown | null>(null);
   const [hover, setHover] = useState<HexPos | null>(null);
 
   const run = useRun(code, (events, state) => {
-    const prev = latest.current;
     latest.current = state;
     // You gave up the quest: nothing more to do here.
     if (events.some((e) => e.t === "abandoned" && e.heroId === state.you)) {
@@ -272,42 +260,18 @@ export function RunView({ code, me, refresh, onLeave }: { code: string; me: Me; 
     for (const h of state.heroes) names.current.set(h.id, h.name);
     for (const c of state.battle?.combatants ?? []) names.current.set(c.id, c.name);
 
-    const opening = introFor(events, state, names.current);
     // A cache opened: say what was in it, after the dice have been seen.
     const found = findFor(events, state.you, names.current);
     if (found) {
       clearTimeout(findTimer.current);
       findTimer.current = setTimeout(() => setFind(found), 1300);
     }
-    if (prev?.battle && events.some((e) => e.t === "battle_end")) {
-      // The fight is over on the server. Keep it on screen as it stood while the last blows land, then say how it went.
-      const settled = settleBattle(prev.battle, events);
-      const frozen: ClientState = { ...prev, phase: "battle", battle: settled };
-      holding.current = frozen;
-      setHeld(frozen);
-      island?.setState(frozen);
-      island?.playEvents(events);
-      const summary = recapFor(events, settled, state);
-      clearTimeout(recapTimer.current);
-      recapTimer.current = setTimeout(() => setRecap(summary), blowsIn(events) * BEAT_MS + 1100);
-    } else if (opening) {
-      // A new fight: whatever was being held gives way, and the first blows wait for the opening card.
-      release();
-      setIntro(opening);
-      clearTimeout(introTimer.current);
-      introTimer.current = setTimeout(() => setIntro(null), INTRO_MS);
-      island?.setState(state);
-      island?.playEvents(events, INTRO_BEATS);
-    } else if (!holding.current) {
-      island?.setState(state);
-      island?.playEvents(events);
-    }
+    island?.setState(state);
+    island?.playEvents(events);
     const lines = describe(events, state, names.current);
     if (lines.length) setFeed((f) => [...f, ...lines].slice(-40));
     const check = lastCheck(events, names.current);
-    // A fight's first roll waits for its opening card to clear, like its first blow.
-    if (check && opening) setTimeout(() => setShown(check), INTRO_MS);
-    else if (check) setShown(check);
+    if (check) setShown(check);
   });
   const send = useRef(run.send);
   send.current = run.send;
@@ -352,10 +316,9 @@ export function RunView({ code, me, refresh, onLeave }: { code: string; me: Me; 
     return () => clearTimeout(t);
   }, [run.error, run.clearError]);
 
-  // While a finished fight is held on screen, everything is drawn from it rather than from the live state.
-  const state = held ?? run.state;
+  const state = run.state;
   // Trading is for the walk, not the fight: a panel left open closes when one starts.
-  const ashore = run.state?.phase === "overworld" && !held;
+  const ashore = run.state?.phase === "overworld";
   useEffect(() => {
     if (!ashore) setTradeWith(null);
   }, [ashore]);
@@ -397,7 +360,7 @@ export function RunView({ code, me, refresh, onLeave }: { code: string; me: Me; 
   const atMouth = caverns && aboard;
   const onIsland = !!phase && sea === null && !atMouth;
   useEffect(() => {
-    const s = holding.current ?? latest.current;
+    const s = latest.current;
     if (onIsland && view && s) view.setState(s);
   }, [onIsland, view]);
 
@@ -427,10 +390,7 @@ export function RunView({ code, me, refresh, onLeave }: { code: string; me: Me; 
               <YourTurnFrame state={state} />
               {ashore && me.character && <Trading me={me} partners={state.heroes.filter((h) => h.id !== state.you)} withId={tradeWith} onWith={setTradeWith} refresh={refresh} run={code} nudge={run.trades} />}
               {state.phase === "overworld" && <Chat state={state} run={run} talkTo={talkTo} onTalked={() => setTalkTo(null)} />}
-              {state.phase === "battle" && !held && !intro && <BattleHud battle={state.battle!} you={state.you} onAction={(action) => run.send({ type: "battle", action })} />}
-              {intro && !held && <BattleIntro intro={intro} />}
-              {held && recap && <BattleRecap recap={recap} you={state.you} onDone={release} />}
-              {find && !held && !intro && <FindCard find={find} onDone={() => setFind(null)} />}
+              {find && <FindCard find={find} onDone={() => setFind(null)} />}
               {state.phase === "overworld" && heroSheet.open && (() => {
                 const h = state.heroes.find((x) => x.id === heroSheet.open);
                 return h && <HeroSheet id={h.id} you={state.you} onClose={heroSheet.close} live={{ hp: h.hp, maxHp: h.maxHp, focus: h.focus, maxFocus: h.maxFocus }} />;

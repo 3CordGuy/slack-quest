@@ -157,3 +157,7 @@
 .trade-note { margin: 0; font-size: 13px; }
 .trade-foot { gap: 10px; }
 .trade-state { font-size: 12px; min-width: 0; }
+
+/* Opened on a map while a fight is on: the word that the gear is held as it is. */
+.bag-locked { flex: none; margin: 0 4px 6px; padding: 4px 8px; font-size: 12px; color: #ffb3a8; background: rgba(74, 26, 24, 0.6); border: 2px solid var(--bad); }
+.bag-doll.locked .doll-slot:not(.empty) { cursor: not-allowed; }

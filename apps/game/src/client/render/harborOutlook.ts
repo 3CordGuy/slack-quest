@@ -35,7 +35,6 @@ export function harborOutlook(): Outlook {
     map: generateHarbor(),
     heroes: [],
     turn: null,
-    battle: null,
     story: null,
     npcs: {},
     freeRoam: true,

@@ -332,7 +332,7 @@ export function settleStatements(
       const cells = (ids: number[]) => `(SELECT COALESCE(SUM(${CELLS_SQL}), 0) FROM inventory WHERE id IN (${marks(ids)}))`;
       const more = back.items.length > 0 ? `(${cells(items)} - ${cells(back.items)})` : cells(items);
       const moreBinds = [...items, ...back.items];
-      need(`(${more} <= 0 OR ${carriedSql("?")} + ${more} <= ?)`, ...moreBinds, taker, taker, ...moreBinds, limit);
+      need(`(${more} <= 0 OR ${carriedSql("?")} + ${more} <= ?)`, ...moreBinds, taker, taker, taker, ...moreBinds, limit);
     }
     if (goods.gold > 0) need("(SELECT gold FROM characters WHERE player_id = ?) >= ?", giver, goods.gold);
     for (const kind of RESOURCE_KINDS) {
@@ -503,7 +503,7 @@ export async function listTrades(db: D1Database, playerId: string): Promise<Trad
 
 /**
  * Tell the other player at a table that it changed, wherever they are: the
- * crew's Harbor, and any voyage they are on. Each room passes it to that
+ * crew's Harbor, any voyage they are on, and the map they are out on. Each room passes it to that
  * player's own socket only, and their client asks for its trades again (the
  * player who made the change has already asked). Nothing is sent to a room
  * nobody is in, so this is how a crewmate's request shows up without anyone
@@ -521,10 +521,12 @@ export async function announceTrade(env: Env, tradeId: number, actor: string): P
     )
       .bind(row.crew_id, Date.now() - VOYAGE_STALE_MS, who)
       .all<{ code: string }>();
+    const zone = await env.DB.prepare("SELECT code FROM zone_presence WHERE player_id = ?").bind(who).first<{ code: string }>();
     const to = `?to=${encodeURIComponent(who)}`;
     await Promise.all([
       env.HARBOR_ROOM.get(env.HARBOR_ROOM.idFromName(row.crew_id)).fetch(`https://harbor/trades${to}`, { headers: { "x-crew-id": row.crew_id } }),
       ...runs.results.map((r) => env.RUN_ROOM.get(env.RUN_ROOM.idFromName(r.code)).fetch(`https://run/trades${to}`)),
+      ...(zone ? [env.ZONE_ROOM.get(env.ZONE_ROOM.idFromName(zone.code)).fetch(`https://zone/trades${to}`)] : []),
     ]);
   } catch (err) {
     // They will see it the next time they look: on opening the bag, or when their connection comes back.

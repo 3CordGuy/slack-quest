@@ -13,10 +13,11 @@ import { Harbor } from "./Harbor";
 import { HarborView } from "./HarborView";
 import { HutView } from "./HutView";
 import { PubView } from "./PubView";
-import { RunView } from "./RunView";
+import { ZoneView } from "./ZoneView";
 
-const runCodeFromHash = () => /^#run\/([A-Za-z]{4})$/.exec(location.hash)?.[1].toUpperCase() ?? null;
 const pubFromHash = () => location.hash === "#pub";
+/** A zone: a map to walk and fight on (ZoneView). */
+const zoneFromHash = () => /^#zone\/([A-Za-z]{4})$/.exec(location.hash)?.[1].toUpperCase() ?? null;
 const adminFromHash = () => location.hash === "#admin";
 const catchesFromHash = () => location.hash === "#catches";
 const hutFromHash = () => /^#hut\/([A-Za-z0-9-]{1,64})$/.exec(location.hash)?.[1] ?? null;
@@ -25,10 +26,10 @@ const inviteFromHash = () => /^#crew\/([A-Za-z]{6})$/.exec(location.hash)?.[1].t
 export function App() {
   const [me, setMe] = useState<Me | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [code, setCode] = useState(runCodeFromHash);
   const [invite, setInvite] = useState(inviteFromHash);
   const [hut, setHut] = useState(hutFromHash);
   const [pub, setPub] = useState(pubFromHash);
+  const [zone, setZone] = useState(zoneFromHash);
   const [admin, setAdmin] = useState(adminFromHash);
   const [catches, setCatches] = useState(catchesFromHash);
 
@@ -48,10 +49,10 @@ export function App() {
       })
       .catch((e: Error) => setError(e.message));
     const onHash = () => {
-      setCode(runCodeFromHash());
       setInvite(inviteFromHash());
       setHut(hutFromHash());
       setPub(pubFromHash());
+      setZone(zoneFromHash());
       setAdmin(adminFromHash());
       setCatches(catchesFromHash());
     };
@@ -64,30 +65,19 @@ export function App() {
   // On a development deployment (local and staging) the dev toolbox sits in the corner of every screen.
   return (
     <>
-      <Screen me={me} refresh={refresh} code={code} invite={invite} hut={hut} pub={pub} admin={admin} catches={catches} />
+      <Screen me={me} refresh={refresh} zone={zone} invite={invite} hut={hut} pub={pub} admin={admin} catches={catches} />
       {me.devTools && <DevToolbox me={me} refresh={refresh} />}
     </>
   );
 }
 
-function Screen({ me, refresh, code, invite, hut, pub, admin, catches }: { me: Me; refresh(): Promise<void>; code: string | null; invite: string | null; hut: string | null; pub: boolean; admin: boolean; catches: boolean }) {
+function Screen({ me, refresh, zone, invite, hut, pub, admin, catches }: { me: Me; refresh(): Promise<void>; zone: string | null; invite: string | null; hut: string | null; pub: boolean; admin: boolean; catches: boolean }) {
   const ready = me.character?.status === "active";
   if (admin) return <AdminView me={me} onLeave={() => (location.hash = "")} />;
   // Every catch's sprite and model, side by side: for admins, and on a development deployment.
   if (catches && (me.isAdmin || me.devTools || import.meta.env.DEV)) return <CatchGallery onLeave={() => (location.hash = "")} />;
-  if (code && ready) {
-    return (
-      <RunView
-        code={code}
-        me={me}
-        refresh={refresh}
-        onLeave={() => {
-          location.hash = "";
-          void refresh();
-        }}
-      />
-    );
-  }
+  if (zone && ready) return <ZoneView key={zone} code={zone} me={me} refresh={refresh} onLeave={() => (location.hash = "")} />;
+  // A voyage or delve link (#run/CODE) lands in the Harbor: both are shut while they are rebuilt on the new combat.
   if (pub && ready && me.crew) return <PubView me={me} refresh={refresh} onLeave={() => (location.hash = "")} />;
   if (hut && ready && me.crew) return <HutView key={hut} ownerId={hut} me={me} refresh={refresh} onLeave={() => (location.hash = "")} />;
   // An invite to a different crew than your own takes you back to the gate to accept it.
