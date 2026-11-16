@@ -145,10 +145,10 @@ function board(ctx: CanvasRenderingContext2D, wood: Wood, x: number, y: number, 
   ctx.clip();
   // Light along the top, shade along the foot.
   const shade = ctx.createLinearGradient(0, by, 0, by + bh);
-  shade.addColorStop(0, "rgba(255,240,210,0.28)");
+  shade.addColorStop(0, "rgba(255,240,210,0.14)");
   shade.addColorStop(0.18, "rgba(255,240,210,0)");
   shade.addColorStop(0.75, "rgba(40,20,0,0)");
-  shade.addColorStop(1, "rgba(40,20,0,0.3)");
+  shade.addColorStop(1, "rgba(40,20,0,0.14)");
   ctx.fillStyle = shade;
   ctx.fillRect(bx, by, bw, bh);
   // The grain: long lines that drift up and down along the board, and bend round the knot.
@@ -161,7 +161,7 @@ function board(ctx: CanvasRenderingContext2D, wood: Wood, x: number, y: number, 
     const amp = 1 + hash(id, 20 + i, salt) * 2;
     const phase = hash(id, 30 + i, salt) * 6.28;
     ctx.lineWidth = 0.9 + hash(id, 40 + i, salt) * 0.8;
-    ctx.globalAlpha = 0.35 + hash(id, 50 + i, salt) * 0.3;
+    ctx.globalAlpha = 0.16 + hash(id, 50 + i, salt) * 0.16;
     ctx.beginPath();
     for (let s = 0; s <= 48; s++) {
       const px = bx + (s / 48) * bw;
@@ -177,6 +177,7 @@ function board(ctx: CanvasRenderingContext2D, wood: Wood, x: number, y: number, 
   }
   ctx.globalAlpha = 1;
   if (knot >= 0) {
+    ctx.globalAlpha = 0.5;
     ctx.fillStyle = wood.grain;
     ctx.beginPath();
     ctx.ellipse(kx, ky, 4, 2.4, 0, 0, Math.PI * 2);
@@ -185,13 +186,14 @@ function board(ctx: CanvasRenderingContext2D, wood: Wood, x: number, y: number, 
     ctx.beginPath();
     ctx.ellipse(kx, ky, 7, 4, 0, 0, Math.PI * 2);
     ctx.stroke();
+    ctx.globalAlpha = 1;
   }
   ctx.restore();
   // The ink outline.
   ctx.beginPath();
   ctx.roundRect(bx, by, bw, bh, 4);
   ctx.strokeStyle = wood.gap;
-  ctx.lineWidth = 1.6;
+  ctx.lineWidth = 1;
   ctx.stroke();
   // Two nails at each end, each a dark head with a glint.
   for (const nx of [bx + 8, bx + bw - 8]) {
@@ -200,7 +202,7 @@ function board(ctx: CanvasRenderingContext2D, wood: Wood, x: number, y: number, 
       ctx.beginPath();
       ctx.arc(nx, ny, 1.9, 0, Math.PI * 2);
       ctx.fill();
-      ctx.fillStyle = "rgba(255,255,255,0.45)";
+      ctx.fillStyle = "rgba(255,255,255,0.25)";
       ctx.beginPath();
       ctx.arc(nx - 0.7, ny - 0.7, 0.8, 0, Math.PI * 2);
       ctx.fill();
@@ -210,7 +212,7 @@ function board(ctx: CanvasRenderingContext2D, wood: Wood, x: number, y: number, 
 
 /** Floorboards for a hut: warm, honey-coloured boards running across the room. */
 export function floorTexture(): THREE.CanvasTexture {
-  return sheet((ctx) => planks(ctx, { boards: ["#b58d5e", "#ab8455", "#bd9566", "#b08a5c"], gap: "#5e4229", grain: "#8a6640", nail: "#4a3a2c" }, 300));
+  return sheet((ctx) => planks(ctx, { boards: ["#b58d5e", "#ab8455", "#bd9566", "#b08a5c"], gap: "#7f5f3e", grain: "#9a7650", nail: "#6e5640" }, 300));
 }
 
 /** Planks for the piers: greyer, sea-weathered boards running out to sea. */
@@ -220,7 +222,7 @@ export function pierTexture(): THREE.CanvasTexture {
     ctx.translate(SIZE / 2, SIZE / 2);
     ctx.rotate(Math.PI / 2);
     ctx.translate(-SIZE / 2, -SIZE / 2);
-    planks(ctx, { boards: ["#9a7a50", "#927448", "#a28256", "#97784e"], gap: "#4a3826", grain: "#76603f", nail: "#3c342c" }, 630);
+    planks(ctx, { boards: ["#9a7a50", "#927448", "#a28256", "#97784e"], gap: "#6c5538", grain: "#86704c", nail: "#5c4c3c" }, 630);
   });
 }
 
