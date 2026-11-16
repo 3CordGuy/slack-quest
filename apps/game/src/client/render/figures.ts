@@ -48,11 +48,71 @@ function inkMaterial(): THREE.MeshLambertMaterial {
   return m;
 }
 
+/**
+ * How far a figure's light is eased from its facets toward its rounded normals (see roundNormals): 0 lights each
+ * flat face in one tone, 1 shades every piece as smoothly as a pebble. A trace of the facets is kept, so a
+ * shape's planes still read.
+ */
+const SMOOTHING = 0.85;
+
+/**
+ * Soft shading: the face's own normal (worked out from the slope of the surface, as flat shading does) mixed
+ * toward the rounded normal handed down from the piece's corners, so light rolls over a shoulder or a helmet
+ * instead of stepping from face to face.
+ */
+const SOFTEN = /* glsl */ `
+{
+  vec3 facet = normalize( cross( dFdx( vViewPosition ), dFdy( vViewPosition ) ) );
+  normal = normalize( mix( facet, normal, ${SMOOTHING.toFixed(2)} ) );
+}`;
+
+/**
+ * Rounded normals for one piece: at each corner, the faces that meet there averaged, each by the angle it makes
+ * at that corner (so a box's corner leans equally to its three sides however its faces are cut into triangles).
+ * Shared only within the piece, so a sleeve never rounds into the arm it sits on.
+ */
+function roundNormals(g: THREE.BufferGeometry) {
+  const pos = g.getAttribute("position");
+  const key = (i: number) => `${Math.round(pos.getX(i) * 1000)},${Math.round(pos.getY(i) * 1000)},${Math.round(pos.getZ(i) * 1000)}`;
+  const sums = new Map<string, THREE.Vector3>();
+  const corner = [new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3()];
+  const ab = new THREE.Vector3();
+  const ac = new THREE.Vector3();
+  const face = new THREE.Vector3();
+  const keys: string[] = [];
+  for (let f = 0; f < pos.count; f += 3) {
+    for (let k = 0; k < 3; k++) corner[k].fromBufferAttribute(pos, f + k);
+    face.subVectors(corner[1], corner[0]).cross(ab.subVectors(corner[2], corner[0]));
+    for (let k = 0; k < 3; k++) keys[f + k] = key(f + k);
+    if (face.lengthSq() < 1e-14) continue;
+    face.normalize();
+    for (let k = 0; k < 3; k++) {
+      ab.subVectors(corner[(k + 1) % 3], corner[k]);
+      ac.subVectors(corner[(k + 2) % 3], corner[k]);
+      const angle = ab.angleTo(ac);
+      let sum = sums.get(keys[f + k]);
+      if (!sum) sums.set(keys[f + k], (sum = new THREE.Vector3()));
+      sum.addScaledVector(face, angle);
+    }
+  }
+  const normals = new Float32Array(pos.count * 3);
+  for (let i = 0; i < pos.count; i++) {
+    const sum = sums.get(keys[i]);
+    if (sum && sum.lengthSq() > 0) {
+      face.copy(sum).normalize();
+      normals.set([face.x, face.y, face.z], i * 3);
+    }
+  }
+  g.setAttribute("normal", new THREE.BufferAttribute(normals, 3));
+}
+
 /** Lit like the furniture, but never darker than a third of its own colour: nobody vanishes at night. */
 function bodyMaterial(): THREE.MeshLambertMaterial {
-  const m = new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true });
+  const m = new THREE.MeshLambertMaterial({ vertexColors: true });
   m.onBeforeCompile = (shader) => {
-    shader.fragmentShader = shader.fragmentShader.replace("#include <opaque_fragment>", "outgoingLight = max(outgoingLight, diffuseColor.rgb * 0.32);\n  #include <opaque_fragment>");
+    shader.fragmentShader = shader.fragmentShader
+      .replace("#include <normal_fragment_begin>", `#include <normal_fragment_begin>${SOFTEN}`)
+      .replace("#include <opaque_fragment>", "outgoingLight = max(outgoingLight, diffuseColor.rgb * 0.32);\n  #include <opaque_fragment>");
   };
   m.customProgramCacheKey = () => "gq-figure-body";
   return m;
@@ -283,6 +343,7 @@ class Part {
       shell.applyMatrix4(at);
       this.hull.push(shell);
     }
+    if (!glow) roundNormals(flat);
     const c = new THREE.Color(color);
     // No two pieces of cloth or plate are quite the same shade. (Not what glows, nor the ink of an eye.)
     if (!glow && color !== OUTLINE && color !== "#ffffff") c.offsetHSL((rand() - 0.5) * 0.02, (rand() - 0.5) * 0.08, (rand() - 0.5) * 0.06);
