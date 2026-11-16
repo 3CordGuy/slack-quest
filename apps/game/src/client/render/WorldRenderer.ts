@@ -50,8 +50,8 @@ const ARROW_ABILITIES = new Set(["Aimed Shot", "Pin Down", "Volley", "Barbed Arr
 const THROWN: Record<string, string> = { "Hurl Rock": "#77726a" };
 /** Melee blows heavy enough to knock the target back and raise dust at its feet. */
 const SMASHES = new Set(["Club Smash"]);
-/** A ground-pound: no step in; the ground shakes out from the attacker's feet and jolts whoever it reaches. */
-const QUAKES = new Set(["Stomp"]);
+/** A ground-pound (the ogre's Stomp, the guardian's Quake): no step in; the ground shakes out from the attacker's feet and jolts whoever it reaches. */
+const QUAKES = new Set(["Stomp", "Quake"]);
 /** Heals that are an enemy growing back (a troll's Regenerate), drawn as moss creeping over it, not a sparkle. */
 const REGROWTH = new Set(Object.values(ENEMIES).flatMap((e) => (e.regen ? [e.regen.name] : [])));
 const MOSS = "#9fe07a";
