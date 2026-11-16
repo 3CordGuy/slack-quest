@@ -550,6 +550,8 @@ export type HarborServerMessage =
   /** Someone was put straight onto `pos` (no walk): a stuck hero sent back by "unstick". */
   | { type: "placed"; id: string; pos: HexPos }
   | { type: "said"; id: string; name: string; text: string }
+  /** A trade you are part of changed (opened, laid out, accepted, closed): ask the server for your trades again. Sent to that player only. */
+  | { type: "trades" }
   | LookMessage
   | XpMessage;
 

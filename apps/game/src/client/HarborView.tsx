@@ -485,7 +485,7 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
           hint: restIn > 0 ? `Rest: you can lay out your bedroll again in ${restIn} min` : "Rest: lay out your bedroll here and sleep a while. Gathering outings come back.",
         }}
         meter={stamina ? { name: "Energy", note: "gathering outings left today", now: stamina.left, max: stamina.max, kind: "stamina" } : undefined}
-        chips={harbor.status !== "open" ? <span className="hud-chip bad">connecting…</span> : undefined}
+        chips={harbor.status === "paused" ? <span className="hud-chip">away</span> : harbor.status !== "open" ? <span className="hud-chip bad">connecting…</span> : undefined}
         // While the trade table is open it has the bag beside it already.
         onBag={() => !tradeWith && setSheet((open) => !open)}
         onBook={() => setBook(true)}
@@ -531,7 +531,7 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
       {gather && me.character && <GatherPanel spot={gather} onRod={(on) => harbor.send({ type: "fishing", on })} pier={pierHere ?? undefined} at={self?.pos} vessel={self?.vessel ?? null} gilded={me.character?.title === BOOK_TITLE} shipBeside={!!shipHere} renderer={renderer} onClose={() => setGather(null)} onStamina={setStamina} />}
       {fishmonger && me.character && <CatchPanel buyer="market" onGold={() => void refresh()} onClose={() => setFishmonger(false)} />}
       {shop && me.character && <ShopScreen me={me} refresh={refreshAll} onClose={() => setShop(false)} />}
-      {me.character && <Trading me={me} partners={board.members.filter((m) => m.id !== you)} withId={tradeWith} onWith={setTradeWith} refresh={refresh} />}
+      {me.character && <Trading me={me} partners={board.members.filter((m) => m.id !== you)} withId={tradeWith} onWith={setTradeWith} refresh={refresh} nudge={harbor.trades} />}
       {heroSheet.open && you && !spar && <HeroSheet id={heroSheet.open} you={you} onClose={heroSheet.close} />}
     </div>
   );

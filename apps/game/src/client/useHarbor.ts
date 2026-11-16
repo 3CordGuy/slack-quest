@@ -1,10 +1,13 @@
 // WebSocket connection to the crew's HarborRoom: who is here, where they
-// stand, and what is on the notice board.
+// stand, and what is on the notice board. It is closed while the player is
+// away (see awake.ts) and opened again when they come back, standing where
+// they stood.
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { HexPos } from "@gantt-quest/core";
 import { HARBOR_NAME, type HarborBoard, type HarborClientMessage, type HarborPlayer, type HarborServerMessage, type XpMessage } from "@gantt-quest/world";
 import { PROFILE } from "./api";
+import { useAwake } from "./awake";
 import { gaze } from "./gaze";
 
 export interface HarborChatLine {
@@ -18,8 +21,11 @@ export interface HarborConnection {
   players: HarborPlayer[];
   board: HarborBoard;
   chat: HarborChatLine[];
-  status: "connecting" | "open" | "closed";
+  /** "paused": closed while the player is away; it opens again when they are back. */
+  status: "connecting" | "open" | "closed" | "paused";
   error: string | null;
+  /** Counts up whenever the player's trades may have changed (a crewmate changed one, or the connection is new): ask for them again. */
+  trades: number;
   send(message: HarborClientMessage): void;
 }
 
@@ -34,7 +40,12 @@ export function useHarbor(onMoved: (id: string, path: HexPos[]) => void, onXp?: 
   const [chat, setChat] = useState<HarborChatLine[]>([]);
   const [status, setStatus] = useState<HarborConnection["status"]>("connecting");
   const [error, setError] = useState<string | null>(null);
+  const [trades, setTrades] = useState(0);
+  const awake = useAwake();
   const socket = useRef<WebSocket | null>(null);
+  /** Where your own hero stands, to ask for again after a pause. */
+  const standing = useRef<HexPos | null>(null);
+  standing.current = (you && players.find((p) => p.id === you)?.pos) || null;
   const moved = useRef(onMoved);
   moved.current = onMoved;
   const xpSeen = useRef(onXp);
@@ -43,6 +54,10 @@ export function useHarbor(onMoved: (id: string, path: HexPos[]) => void, onXp?: 
   said.current = onSaid;
 
   useEffect(() => {
+    if (!awake) {
+      setStatus("paused");
+      return;
+    }
     let closed = false;
     let attempts = 0;
     let retry: ReturnType<typeof setTimeout> | undefined;
@@ -57,6 +72,8 @@ export function useHarbor(onMoved: (id: string, path: HexPos[]) => void, onXp?: 
       } catch {
         // No hint; the Harbor picks.
       }
+      // Back after a pause or a dropped connection: stand where you stood.
+      if (!query.has("at") && standing.current) query.set("at", `${standing.current.q},${standing.current.r}`);
       const ws = new WebSocket(`${proto}//${location.host}/api/crew/ws${query.size ? `?${query}` : ""}`);
       socket.current = ws;
       setStatus("connecting");
@@ -79,6 +96,10 @@ export function useHarbor(onMoved: (id: string, path: HexPos[]) => void, onXp?: 
           setCrew(msg.crew);
           setPlayers(msg.players);
           setBoard({ members: msg.members, ships: msg.ships, log: msg.log, works: msg.works });
+          // A trade may have changed while there was no connection to hear of it.
+          setTrades((n) => n + 1);
+        } else if (msg.type === "trades") {
+          setTrades((n) => n + 1);
         } else if (msg.type === "board") {
           setBoard({ members: msg.members, ships: msg.ships, log: msg.log, works: msg.works });
         } else if (msg.type === "joined") {
@@ -126,10 +147,10 @@ export function useHarbor(onMoved: (id: string, path: HexPos[]) => void, onXp?: 
       clearTimeout(retry);
       socket.current?.close();
     };
-  }, []);
+  }, [awake]);
 
   const send = useCallback((message: HarborClientMessage) => {
     if (socket.current?.readyState === WebSocket.OPEN) socket.current.send(JSON.stringify(message));
   }, []);
-  return { you, crew, players, board, chat, status, error, send };
+  return { you, crew, players, board, chat, status, error, trades, send };
 }

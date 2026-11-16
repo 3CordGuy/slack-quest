@@ -114,6 +114,19 @@ export class RunRoom extends DurableObject<Env> {
   }
 
   async fetch(request: Request): Promise<Response> {
+    // A trade changed: tell the player it concerns to look again, if they are aboard and connected.
+    if (new URL(request.url).pathname === "/trades") {
+      for (const to of new URL(request.url).searchParams.getAll("to")) {
+        for (const ws of this.ctx.getWebSockets(to)) {
+          try {
+            ws.send(JSON.stringify({ type: "trades" }));
+          } catch {
+            // Socket is closing; webSocketClose will follow.
+          }
+        }
+      }
+      return new Response("ok");
+    }
     if (request.headers.get("Upgrade") !== "websocket") return new Response("expected websocket", { status: 426 });
     const code = request.headers.get("x-run-code");
     const playerId = request.headers.get("x-player-id");

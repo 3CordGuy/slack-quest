@@ -1,10 +1,12 @@
 // Trading with a crewmate, in the Harbor and on an island.
 //
 // `Trading` is mounted by any view where trading is allowed. It asks the
-// server every few seconds for the player's open trades (every second while
-// the table is open), so a crewmate who wants to trade shows up as a notice
-// without anyone reloading, and what they lay on the table shows up as they
-// lay it.
+// server for the player's open trades when it opens, and again whenever the
+// place's connection says one of them changed (`nudge`): the server tells a
+// player's own socket when a crewmate opens a table with them, lays something
+// on it, accepts or walks away. So a crewmate who wants to trade shows up as
+// a notice without anyone reloading, and what they lay on the table shows up
+// as they lay it, with nothing asked of the server in between.
 //
 // The table itself is drawn by the bag's screen (InventoryScreen.tsx): the
 // other player's side above, yours below, the bag beside them. This file
@@ -23,9 +25,8 @@ import { toOwned } from "./items";
 import { itemName } from "./labels";
 import "./trade.css";
 
-/** How often the list is asked for: while the table is open, and while it is not. */
-const LIVE_MS = 1000;
-const IDLE_MS = 4000;
+/** While the table is open, ask now and then anyway, in case word of a change was lost on the way. */
+const OPEN_TABLE_MS = 15_000;
 const NOTICE_MS = 7000;
 /** Wait this long after the last change before sending your side, so typing an amount is one message. */
 const SEND_AFTER_MS = 200;
@@ -57,9 +58,11 @@ interface Props {
   refresh(): Promise<unknown>;
   /** The voyage this is shown on, when on an island. */
   run?: string;
+  /** Counts up when the place's connection hears that this player's trades changed. */
+  nudge: number;
 }
 
-export function Trading({ me, partners, withId, onWith, refresh, run }: Props) {
+export function Trading({ me, partners, withId, onWith, refresh, run, nudge }: Props) {
   const [list, setList] = useState<TradeList | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   /** Your side of the open table as you have it, ahead of what the server has been told. */
@@ -103,7 +106,10 @@ export function Trading({ me, partners, withId, onWith, refresh, run }: Props) {
 
   useEffect(() => {
     void load();
-    const every = setInterval(() => void load(), withId ? LIVE_MS : IDLE_MS);
+  }, [load, nudge]);
+  useEffect(() => {
+    if (!withId) return;
+    const every = setInterval(() => void load(), OPEN_TABLE_MS);
     return () => clearInterval(every);
   }, [load, withId]);
   useEffect(() => {
