@@ -21,6 +21,8 @@ export interface RunConnection {
   voteSkip(): void;
   status: "connecting" | "open" | "closed";
   error: string | null;
+  /** Counts up whenever the player's trades may have changed (a crewmate changed one, or the connection is new): ask for them again. */
+  trades: number;
   send(action: Outgoing): void;
   /** Tell the voyage this hero's equipped gear changed, so it re-reads it. */
   regear(): void;
@@ -33,6 +35,7 @@ export function useRun(code: string, onEvents: (events: WorldEvent[], state: Cli
   const [skip, setSkip] = useState<SkipVote | null>(null);
   const [status, setStatus] = useState<RunConnection["status"]>("connecting");
   const [error, setError] = useState<string | null>(null);
+  const [trades, setTrades] = useState(0);
   const socket = useRef<WebSocket | null>(null);
   const handler = useRef(onEvents);
   handler.current = onEvents;
@@ -52,6 +55,8 @@ export function useRun(code: string, onEvents: (events: WorldEvent[], state: Cli
         attempts = 0;
         everOpened = true;
         setStatus("open");
+        // A trade may have changed while there was no connection to hear of it.
+        setTrades((n) => n + 1);
       };
       ws.onmessage = (e) => {
         if (e.data === "pong") return;
@@ -63,6 +68,8 @@ export function useRun(code: string, onEvents: (events: WorldEvent[], state: Cli
           handler.current(msg.events, msg.state);
         } else if (msg.type === "error") {
           setError(msg.message);
+        } else if (msg.type === "trades") {
+          setTrades((n) => n + 1);
         }
       };
       ws.onclose = (e) => {
@@ -93,5 +100,5 @@ export function useRun(code: string, onEvents: (events: WorldEvent[], state: Cli
     if (socket.current?.readyState === WebSocket.OPEN) socket.current.send(JSON.stringify({ type: "vote_skip" }));
   }, []);
   const clearError = useCallback(() => setError(null), []);
-  return { state, online, skip, voteSkip, status, error, send, regear, clearError };
+  return { state, online, skip, voteSkip, status, error, trades, send, regear, clearError };
 }

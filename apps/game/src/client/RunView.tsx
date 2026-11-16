@@ -425,7 +425,7 @@ export function RunView({ code, me, refresh, onLeave }: { code: string; me: Me; 
               {state.phase === "overworld" && <TurnBar state={state} run={run} me={me} code={code} status={run.status} onInventory={() => setInventory((open) => { if (!open) void refresh(); return !open; })} onBook={() => { void refresh(); setBook(true); }} onLeave={onLeave} />}
               <SkipVoteBar state={state} run={run} />
               <YourTurnFrame state={state} />
-              {ashore && me.character && <Trading me={me} partners={state.heroes.filter((h) => h.id !== state.you)} withId={tradeWith} onWith={setTradeWith} refresh={refresh} run={code} />}
+              {ashore && me.character && <Trading me={me} partners={state.heroes.filter((h) => h.id !== state.you)} withId={tradeWith} onWith={setTradeWith} refresh={refresh} run={code} nudge={run.trades} />}
               {state.phase === "overworld" && <Chat state={state} run={run} talkTo={talkTo} onTalked={() => setTalkTo(null)} />}
               {state.phase === "battle" && !held && !intro && <BattleHud battle={state.battle!} you={state.you} onAction={(action) => run.send({ type: "battle", action })} />}
               {intro && !held && <BattleIntro intro={intro} />}

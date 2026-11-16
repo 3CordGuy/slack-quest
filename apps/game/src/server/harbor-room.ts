@@ -22,12 +22,22 @@ import { LOOK_MIN_MS, validLook,
   harborPath,
   type HarborClientMessage,
   type HarborPlayer,
-  type HarborServerMessage, } from "@gantt-quest/world";
+  type HarborServerMessage,
+  type Vessel, } from "@gantt-quest/world";
+import type { HexPos } from "@gantt-quest/core";
 import { getCrew, harborBoard, heroInitFor, type Env } from "./db";
 import { gildedRod, ownedVessel } from "./fishmarket";
 import { readXpPost, relayXp } from "./harbor-xp";
 
 const MAP = generateHarbor();
+
+/** A hex asked for as "q,r", if a hero could have walked (or, with this boat, rowed) there from where heroes arrive. */
+function standingAt(at: string | null, vessel: Vessel | null): HexPos | undefined {
+  const m = at?.match(/^(-?\d{1,3}),(-?\d{1,3})$/);
+  if (!m) return undefined;
+  const pos = { q: Number(m[1]), r: Number(m[2]) };
+  return harborPath(MAP, HARBOR_SPAWN, pos, vessel) ? pos : undefined;
+}
 
 export class HarborRoom extends DurableObject<Env> {
   /** When each player last asked to be put back at the spawn. In memory only: a light limit, and a hibernation resets it. */
@@ -74,6 +84,20 @@ export class HarborRoom extends DurableObject<Env> {
       return new Response("ok");
     }
 
+    // A trade changed: tell the player it concerns to look again, if they are here. Nobody else hears of it.
+    if (new URL(request.url).pathname === "/trades") {
+      for (const to of new URL(request.url).searchParams.getAll("to")) {
+        for (const ws of this.ctx.getWebSockets(to)) {
+          try {
+            ws.send(JSON.stringify({ type: "trades" } satisfies HarborServerMessage));
+          } catch {
+            // Socket is closing; webSocketClose will follow.
+          }
+        }
+      }
+      return new Response("ok");
+    }
+
     // A hero earned XP: show it over their head, if they are here.
     if (new URL(request.url).pathname === "/xp") {
       const msg = await readXpPost(request);
@@ -88,8 +112,10 @@ export class HarborRoom extends DurableObject<Env> {
 
     // One socket per player. A new tab takes over, standing where the old one stood.
     // Someone stepping out of a hut or the pub arrives at its door.
+    // Someone back from being away (their socket was closed while idle) asks to stand where they stood.
     const at = new URL(request.url).searchParams.get("at");
-    let pos = (at === "pub" ? HARBOR_PUB : at !== null && /^\d{1,2}$/.test(at) ? HARBOR_PLOTS[Number(at)] : undefined) ?? HARBOR_SPAWN;
+    const vessel = await ownedVessel(this.env.DB, id);
+    let pos = (at === "pub" ? HARBOR_PUB : at !== null && /^\d{1,2}$/.test(at) ? HARBOR_PLOTS[Number(at)] : standingAt(at, vessel)) ?? HARBOR_SPAWN;
     for (const old of this.ctx.getWebSockets(id)) {
       pos = (old.deserializeAttachment() as HarborPlayer | null)?.pos ?? pos;
       old.serializeAttachment(null);
@@ -104,7 +130,7 @@ export class HarborRoom extends DurableObject<Env> {
       xp: hero?.xp,
       pos,
       outfit: hero?.outfit,
-      vessel: await ownedVessel(this.env.DB, id),
+      vessel,
       gilded: await gildedRod(this.env.DB, id),
     };
 
