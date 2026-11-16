@@ -36,6 +36,8 @@ export const LURKERS: string[][] = [
   ["skeleton", "slime"],
   ["bat", "bat", "bat"],
   ["shade", "shade"],
+  // A troll lying up in the dark, alone: it keeps the chamber to itself.
+  ["troll"],
 ];
 
 /** What guards the hoard in the deepest chamber. */

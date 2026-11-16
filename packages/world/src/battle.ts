@@ -400,6 +400,13 @@ function advance(state: BattleState, rng: Rng, events: BattleEvent[]) {
       actor.hp += amount;
       events.push({ t: "heal", actor: actor.id, target: actor.id, amount, ability: "Deep Roots" });
     }
+    // A troll's wounds close at the start of each of its turns, stunned or not, unless it is on fire.
+    const grows = actor.side === "enemy" ? ENEMIES[actor.kind]?.regen : undefined;
+    if (grows && actor.hp < actor.maxHp && !hasEffect(actor, grows.unless)) {
+      const amount = Math.min(actor.maxHp - actor.hp, grows.amount);
+      actor.hp += amount;
+      events.push({ t: "heal", actor: actor.id, target: actor.id, amount, ability: grows.name });
+    }
     for (const { id, rule } of rulesOf(actor, "regen")) {
       const amount = Math.min(actor.maxHp - actor.hp, rule.amount);
       if (amount <= 0) continue;
