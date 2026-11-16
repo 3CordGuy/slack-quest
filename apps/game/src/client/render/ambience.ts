@@ -31,6 +31,14 @@ const hash = (a: number, b: number, salt: number) => {
   return n - Math.floor(n);
 };
 
+/** A value noise along `t`, 0 to 1: the hash at whole steps of t, eased smoothly between them. */
+const drift = (t: number, b: number, salt: number) => {
+  const i = Math.floor(t);
+  const f = t - i;
+  const e = f * f * (3 - 2 * f);
+  return hash(i, b, salt) * (1 - e) + hash(i + 1, b, salt) * e;
+};
+
 export function pixelTexture(w: number, h: number, draw: (ctx: CanvasRenderingContext2D) => void): THREE.CanvasTexture {
   const canvas = document.createElement("canvas");
   canvas.width = w;
@@ -650,6 +658,8 @@ export function beaconShine(): THREE.ShaderMaterial {
     fog: false,
   });
 }
+/** A light a piece in a room gives. `main` is the room's great fire: it reaches the whole room and always throws shadows. */
+export type RoomLight = { pos: THREE.Vector3; kind: LightKind; main?: boolean };
 export type BuildingGlow = { pos: THREE.Vector3; /** The halo's width; 0 for a light with no halo. */ size: number; light?: LightKind };
 /** Shadow maps a moving hero may redraw in one frame. Others wait their turn (a frame or two), oldest first. */
 const MOVE_REDRAWS = 2;
@@ -719,7 +729,7 @@ export class Ambience {
    */
   private slots = Array.from({ length: SHADOW_SLOTS }, () => new THREE.PointLight("#ffb35c", 0, 6, 1));
   /** The piece each slot is lighting, or null while it has none. */
-  private slotOf: ({ pos: THREE.Vector3; kind: LightKind } | null)[] = Array(SHADOW_SLOTS).fill(null);
+  private slotOf: (RoomLight | null)[] = Array(SHADOW_SLOTS).fill(null);
   /**
    * How much of its piece's light each slot carries, 0 to 1; a plain light carries the rest. It eases up after a
    * slot is handed to a piece and down before the slot leaves it, so a shadow fades rather than pops.
@@ -742,7 +752,7 @@ export class Ambience {
   private glows = Array.from({ length: GLOW_LIGHTS }, () => new THREE.PointLight("#ffb35c", 0, 4, 2));
   /** A couple more plain lights indoors, so pieces whose shadow is fading in or out always have one. Hidden outdoors. */
   private fadeGlows = Array.from({ length: FADE_GLOWS }, () => new THREE.PointLight("#ffb35c", 0, 4, 2));
-  private lights: { pos: THREE.Vector3; kind: LightKind }[] = [];
+  private lights: RoomLight[] = [];
   private flames: THREE.Mesh[] = [];
   /** The lanterns over the pub's game tables: lit by the plain lights only, never a shadow slot. Their owner moves and brightens them. */
   private tableLamps: LampLight[] = [];
@@ -792,16 +802,16 @@ export class Ambience {
    */
   private lamps: { root: THREE.Group; glow: THREE.SpriteMaterial; halos: THREE.Sprite[]; sizes: number[]; panes: THREE.MeshBasicMaterial[] } | null = null;
   /** The lights buildings ask for, lit outdoors along with the props' lights. */
-  private poiLights: { pos: THREE.Vector3; kind: LightKind }[] = [];
+  private poiLights: RoomLight[] = [];
   private paneLit = new THREE.Color();
   private flatTint = new THREE.Color();
   private still = typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
   private m = new THREE.Matrix4();
 
   constructor(private scene: THREE.Scene, renderer: THREE.WebGLRenderer) {
-    // Hard-edged shadows suit the flat, pixelated look.
+    // Shadows softened at their edges, to suit the smooth look.
     renderer.shadowMap.enabled = true;
-    renderer.shadowMap.type = THREE.BasicShadowMap;
+    renderer.shadowMap.type = THREE.PCFShadowMap;
     scene.background = this.background;
 
     this.sun.castShadow = true;
@@ -823,7 +833,7 @@ export class Ambience {
     this.lamp.shadow.autoUpdate = false;
     this.lamp.visible = false;
     this.slots.forEach((s, i) => {
-      // 256 a face: six of them, so a phone keeps its memory, and the coarse edge suits the pixels.
+      // 256 a face: six of them, so a phone keeps its memory. The edges are softened by filtering (PCF).
       s.shadow.mapSize.set(256, 256);
       s.shadow.camera.near = 0.1;
       s.shadow.bias = -0.004;
@@ -1663,7 +1673,7 @@ export class Ambience {
   }
 
   /** The lights the props ask for (hearths, campfires, candles, lanterns) and the flames to flicker. The meshes belong to the caller. */
-  setLights(lights: { pos: THREE.Vector3; kind: LightKind }[], flames: THREE.Mesh[]) {
+  setLights(lights: RoomLight[], flames: THREE.Mesh[]) {
     this.lights = lights;
     this.flames = flames;
     // Called whenever a piece is placed, moved, turned or taken away: every shadow in the room may have changed.
@@ -1728,8 +1738,8 @@ export class Ambience {
    * so walking hands over only the slot whose light fell out. That slot's shadow fades out first (its weight
    * eases to 0), and only then is the slot moved to the new piece, redrawn once, and faded in.
    */
-  private assignSlots(want: { pos: THREE.Vector3; kind: LightKind }[], dt: number) {
-    const same = (a: { pos: THREE.Vector3; kind: LightKind }, b: { pos: THREE.Vector3; kind: LightKind }) => a.kind === b.kind && a.pos.distanceToSquared(b.pos) < 1e-6;
+  private assignSlots(want: RoomLight[], dt: number) {
+    const same = (a: RoomLight, b: RoomLight) => a.kind === b.kind && a.pos.distanceToSquared(b.pos) < 1e-6;
     const step = dt / SLOT_FADE;
     const left = [...want];
     const free: number[] = [];
@@ -1773,11 +1783,13 @@ export class Ambience {
     for (const f of this.flames) {
       const k = f.userData.flame as number;
       const seed = k * 1.7 + f.position.x * 9.1 + f.position.z * 5.3;
-      // Steps rather than a smooth swell, so it reads as pixel fire.
-      const step = Math.floor(clock * 9 + seed);
-      const jitter = hash(step, k, 900);
-      f.scale.y = 1 + motion * (Math.sin(clock * 6.3 + seed) * 0.18 + (jitter - 0.5) * 0.45);
-      f.scale.x = f.scale.z = 1 + motion * (hash(step, k, 901) - 0.5) * 0.25;
+      // A smooth, restless swell: two waves and a drifting noise, so no two flames lick together.
+      const t = clock * 7 + seed;
+      const jitter = drift(t, k, 900);
+      f.scale.y = 1 + motion * (Math.sin(clock * 6.3 + seed) * 0.14 + (jitter - 0.5) * 0.4);
+      f.scale.x = f.scale.z = 1 + motion * (drift(t * 0.8, k, 901) - 0.5) * 0.22;
+      // A soft flame leans a little this way and that, as if in a draught.
+      if (f.userData.soft) f.rotation.z = motion * (drift(t * 0.5, k, 902) - 0.5) * 0.3;
     }
     // Indoors the lights are part of the room; outdoors they show only as the day goes.
     const dusk = this.indoors ? 1 : 1 - this.daylight;
@@ -1789,9 +1801,10 @@ export class Ambience {
       // Indoors the nearest few each throw shadows. A piece already holding a slot keeps it until another is
       // clearly nearer (SLOT_HOLD), so walking along the edge between two never hands a slot back and forth.
       // Matched by place, since setLights hands over new objects for the same pieces.
-      const slotted = (l: { pos: THREE.Vector3; kind: LightKind }) => this.slotOf.some((o) => o && o.kind === l.kind && o.pos.distanceToSquared(l.pos) < 1e-6);
+      const slotted = (l: RoomLight) => this.slotOf.some((o) => o && o.kind === l.kind && o.pos.distanceToSquared(l.pos) < 1e-6);
       // A fire is the brightest thing in the room and throws the longest shadows, so it counts as a little nearer.
-      const keyed = sorted.map((l) => ({ l, d: l.pos.distanceTo(target) - (slotted(l) ? SLOT_HOLD : 0) - (l.kind === "fire" ? FIRE_PULL : 0) }));
+      // The room's great fire always holds a slot: its shadows are the room's.
+      const keyed = sorted.map((l) => ({ l, d: l.main ? -Infinity : l.pos.distanceTo(target) - (slotted(l) ? SLOT_HOLD : 0) - (l.kind === "fire" ? FIRE_PULL : 0) }));
       keyed.sort((a, b) => a.d - b.d);
       const dt = Math.min(0.1, Math.max(0, clock - this.lastClock));
       this.lastClock = clock;
@@ -1813,7 +1826,7 @@ export class Ambience {
       // Whatever share of a piece's light its slot does not carry (all of it, for a piece with no slot) goes to a
       // plain light in the same spot with the same look, so the piece is always exactly as bright: handing it to
       // or from a slot only fades its shadow in or out.
-      const share = (l: { pos: THREE.Vector3; kind: LightKind }) => {
+      const share = (l: RoomLight) => {
         const i = this.slotOf.indexOf(l);
         return i < 0 ? 1 : 1 - this.slotWeight[i];
       };
@@ -1876,8 +1889,10 @@ export class Ambience {
    * How a candle, lantern or fire lights a room, the same whether it holds a shadow slot or a plain light.
    * Its flicker is keyed to the piece's place, not to the light carrying it, so it never jumps on a hand-over.
    */
-  private roomLook(l: { pos: THREE.Vector3; kind: LightKind }, clock: number, motion: number): { color: string; distance: number; decay: number; intensity: number } {
+  private roomLook(l: RoomLight, clock: number, motion: number): { color: string; distance: number; decay: number; intensity: number } {
     const wave = this.waver(clock, Math.abs(Math.floor(l.pos.x * 13 + l.pos.z * 7)) % 7, motion);
+    // The great fire reaches across the room, falling off gently, so it throws long shadows over the floor.
+    if (l.main) return { color: "#ff9a4c", distance: 14, decay: 1.15, intensity: 3.4 * wave };
     if (l.kind === "fire") return { color: "#ff9548", distance: 6, decay: 2, intensity: 3.2 * wave };
     const look = GLOW[l.kind];
     const flick = look.flicker ? wave : 1;
@@ -1899,7 +1914,7 @@ export class Ambience {
 
   /** A gentle unsteadiness for a flame's light, different for each `n`. */
   private waver(clock: number, n: number, motion: number): number {
-    return 1 + motion * (Math.sin(clock * (8.1 + n * 0.7) + n) * 0.07 + Math.sin(clock * 13.7 + 1.3 + n * 2.1) * 0.05 + (hash(Math.floor(clock * 9), 3 + n, 902) - 0.5) * 0.1);
+    return 1 + motion * (Math.sin(clock * (8.1 + n * 0.7) + n) * 0.07 + Math.sin(clock * 13.7 + 1.3 + n * 2.1) * 0.05 + (drift(clock * 9, 3 + n, 902) - 0.5) * 0.1);
   }
 
   setSmoke(stacks: THREE.Vector3[]) {
