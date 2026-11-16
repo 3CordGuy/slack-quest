@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { HARBOR_APOTHECARY, HARBOR_BUILDINGS, HARBOR_CAVE, HARBOR_GALLEY, HARBOR_GATHER, HARBOR_LIGHTHOUSE, HARBOR_PUB, HARBOR_WRECK, HARBOR_SMITHY, HARBOR_GRID, HARBOR_BOARD, HARBOR_PIERS, HARBOR_PLOTS, HARBOR_RING, HARBOR_SHOP, HARBOR_SPAWN, HARBOR_WORKS, HARBOR_ROADS, HARBOR_SIDES, findPath, footing, frontOf, generateHarbor, roadHexes, harborDoor, harborPath, tileAt } from "./index";
+import { HARBOR_APOTHECARY, HARBOR_BUILDINGS, HARBOR_CAVE, HARBOR_GALLEY, HARBOR_GATHER, HARBOR_LIGHTHOUSE, HARBOR_PUB, HARBOR_WRECK, HARBOR_SMITHY, HARBOR_GRID, HARBOR_BOARD, HARBOR_PIERS, HARBOR_PLOTS, HARBOR_RING, HARBOR_SHOP, HARBOR_SPAWN, HARBOR_WORKS, HARBOR_OAK, HARBOR_ROADS, HARBOR_SIDES, findPath, footing, frontOf, generateHarbor, roadHexes, harborDoor, harborPath, tileAt } from "./index";
 
 type Hex = { q: number; r: number };
 const key = (p: Hex) => `${p.q},${p.r}`;
@@ -224,6 +224,39 @@ describe("harbor map", () => {
       } else expect(front.some((t) => t.biome === "cobble"), b.id).toBe(true);
     }
     for (const id of ["pub", "apothecary", "works", "galley"]) expect(map.pois.find((p) => p.id === id)?.facing, id).toBe(HARBOR_BUILDINGS.find((b) => b.id === id)!.facing || undefined);
+  });
+
+  it("stands one old oak on a hill at the back of the island, in tall grass, where nothing else is", () => {
+    const top = tileAt(map, HARBOR_OAK)!;
+    // The oak's own hex: grass, the highest ground on the island that is not wall or rock, and not to be walked onto.
+    expect(top.biome).toBe("plains");
+    expect(top.blocker).toBe("oak");
+    expect(map.tiles.filter((t) => t.blocker).map(key)).toEqual([key(HARBOR_OAK)]);
+    expect(harborPath(map, HARBOR_SPAWN, HARBOR_OAK)).toBeNull();
+    expect(findPath(map, HARBOR_SPAWN, HARBOR_OAK)).toBeNull();
+    // North of the plaza: the back of the island as it is first seen.
+    expect(HARBOR_OAK.r).toBeLessThan(HARBOR_SPAWN.r - 5);
+    // The hill round it: six hexes of open grass, each lower than the top and higher than the plain, all to be climbed.
+    const ring = around(HARBOR_OAK).map((p) => tileAt(map, p)!);
+    const plain = Math.max(...map.tiles.filter((t) => t.biome === "plains" && !t.grass).map((t) => t.h));
+    for (const t of ring) {
+      expect(t.biome).toBe("plains");
+      expect(t.built || t.path || t.blocker).toBeFalsy();
+      expect(t.h).toBeLessThan(top.h);
+      expect(t.h).toBeGreaterThan(plain);
+      expect(t.grass).toBe("tall");
+      expect(harborPath(map, HARBOR_SPAWN, t)!.at(-1)).toEqual({ q: t.q, r: t.r });
+    }
+    // Tall grass runs on past the hill's foot, and is only ever on open grass.
+    const tall = map.tiles.filter((t) => t.grass === "tall");
+    expect(tall.length).toBeGreaterThan(12);
+    for (const t of tall) {
+      expect(t.biome).toBe("plains");
+      expect(t.built).toBeFalsy();
+    }
+    // Nothing of the town is on the hill: no door, no plot, no building's ground.
+    const hill = new Set([HARBOR_OAK, ...around(HARBOR_OAK)].map(key));
+    for (const p of [...doors, ...built]) expect(hill.has(key(p)), key(p)).toBe(false);
   });
 
   it("joins its dirt paths: each side a path runs out through meets another path, or a street, the quay or the edge of the woods", () => {

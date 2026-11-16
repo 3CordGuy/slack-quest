@@ -31,6 +31,9 @@ describe("footsteps", () => {
 
   it("hears each ground", () => {
     expect(stepGround("plains")).toBe("grass");
+    // A dirt path across the grass is dirt underfoot; a path flag changes nothing on other ground.
+    expect(stepGround("plains", true)).toBe("dirt");
+    expect(stepGround("cobble", true)).toBe("stone");
     expect(stepGround("cobble")).toBe("stone");
     expect(stepGround("dock")).toBe("wood");
     expect(stepGround("floor")).toBe("floor");

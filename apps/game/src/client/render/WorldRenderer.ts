@@ -32,7 +32,7 @@ import { ghostModel, propModel, tintGhost, type LightKind } from "./props";
 import { LAMP_TABLES, TableLamps } from "./tableLamps";
 import { nearWater, openEar, sounds } from "../audio/gameSounds";
 import type { AttackStyle, Fighter } from "../audio/names";
-import { PUFFS, footfalls, stepGround, worldToHex } from "./footsteps";
+import { PUFFS, footfalls, stepGround, worldToHex, type PuffLook } from "./footsteps";
 import { bubbleTexture, fxTexture, labelTexture, lookFor, plateKey, sleepZTexture, spriteKey, textTexture, type FxKind, type PlateStats } from "./sprites";
 
 /** Spells fly as a coloured bolt; these are their colours, by ability name. */
@@ -596,22 +596,43 @@ interface SleepZ {
 
 const Z_LIFE = 2.6;
 
-/** A puff kicked up by a footfall: drifts out and up a little and fades. Pooled, so walking makes no garbage. */
+/**
+ * One piece of the puff a footfall kicks up: a little low-poly solid that is thrown out from the foot, tumbles,
+ * and shrinks away to nothing (like the lumps of the chimneys' smoke, it is never see-through). Dust swells
+ * first and floats; chips of grass and drops are thrown up and fall back. Pooled, so walking makes no garbage.
+ */
 interface Puff {
-  sprite: THREE.Sprite;
+  mesh: THREE.Mesh<THREE.BufferGeometry, THREE.MeshLambertMaterial>;
+  kind: "dust" | "fleck" | "splash";
   age: number;
   life: number;
-  x: number;
-  y: number;
-  z: number;
+  /** The ground it was kicked up from: nothing falls below it. */
+  floor: number;
   vx: number;
   vy: number;
+  vz: number;
+  /** How fast it tumbles, about each axis. */
+  spin: THREE.Vector3;
   size: number;
-  alpha: number;
+}
+
+/** The pieces' shapes, made once: a squat lump of dust, a chip of a grass blade, a drop. Each about 1 across. */
+let puffShapes: Record<Puff["kind"], THREE.BufferGeometry> | null = null;
+function puffShape(kind: Puff["kind"]): THREE.BufferGeometry {
+  if (!puffShapes) {
+    const dust = new THREE.IcosahedronGeometry(1, 0);
+    dust.scale(1, 0.8, 1);
+    const fleck = new THREE.TetrahedronGeometry(1, 0);
+    fleck.scale(0.45, 1.5, 0.16);
+    const splash = new THREE.OctahedronGeometry(1, 0);
+    splash.scale(0.75, 1.15, 0.75);
+    puffShapes = { dust, fleck, splash };
+  }
+  return puffShapes[kind];
 }
 
 /** No more puffs than this are ever out at once; past it the oldest is reused. */
-const PUFF_POOL = 36;
+const PUFF_POOL = 60;
 
 /** A short-lived effect sprite: a swipe, a projectile in flight, a burst. */
 interface Fx {
@@ -1496,7 +1517,7 @@ export class WorldRenderer {
         addWaterRipple(here.x + dx * 0.6 - dz * along * 0.5, here.z + dz * 0.6 + dx * along * 0.5);
       }
     }
-    const ground = stepGround(biome);
+    const ground = stepGround(biome, !!tileAt(state.map, under)?.path);
     if (!ground || !biome) return;
     // The audio engine plays it, placed where the foot lands and falling off with distance from you.
     sounds.footstep(biome, { x: feet.x, z: feet.z }, id === state.you);
@@ -1504,37 +1525,51 @@ export class WorldRenderer {
   }
 
   private puff(ground: keyof typeof PUFFS, at: THREE.Vector3) {
-    const look = PUFFS[ground];
+    for (const look of PUFFS[ground]) this.kick(look, at);
+  }
+
+  /** Throw up the pieces of one kind of puff from a foot. */
+  private kick(look: PuffLook, at: THREE.Vector3) {
     for (let i = 0; i < look.count; i++) {
-      let puff = this.puffs.find((p) => !p.sprite.visible);
+      let puff = this.puffs.find((p) => !p.mesh.visible);
       if (!puff && this.puffs.length < PUFF_POOL) {
-        const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ transparent: true, depthWrite: false }));
-        // Drawn before the hero cards (renderOrder 2), so a hero is always in front of the dust at their feet.
-        sprite.renderOrder = 1;
-        this.fxGroup.add(sprite);
-        puff = { sprite, age: 0, life: 0, x: 0, y: 0, z: 0, vx: 0, vy: 0, size: 0, alpha: 0 };
+        const mesh = new THREE.Mesh(puffShape(look.kind), new THREE.MeshLambertMaterial({ flatShading: true }));
+        mesh.castShadow = false;
+        mesh.receiveShadow = false;
+        this.fxGroup.add(mesh);
+        puff = { mesh, kind: look.kind, age: 0, life: 0, floor: 0, vx: 0, vy: 0, vz: 0, spin: new THREE.Vector3(), size: 0 };
         this.puffs.push(puff);
       }
       if (!puff) puff = this.puffs[(this.nextPuff = (this.nextPuff + 1) % this.puffs.length)];
-      // Kicked out to either side of the foot, the second the other way.
+      // Kicked out to either side of the foot and a little fore or aft, each piece its own way.
       const side = (i % 2 ? 1 : -1) * (0.5 + Math.random() * 0.5);
-      const color = look.colors[(Math.random() * look.colors.length) | 0];
-      puff.sprite.material.map = fxTexture(look.kind, color, side > 0);
-      puff.sprite.material.needsUpdate = true;
-      puff.sprite.visible = true;
+      const fore = (Math.random() - 0.5) * 0.9;
+      puff.kind = look.kind;
+      puff.mesh.geometry = puffShape(look.kind);
+      puff.mesh.material.color.set(look.colors[(Math.random() * look.colors.length) | 0]);
+      puff.mesh.visible = true;
       puff.age = 0;
-      puff.life = 0.32 + Math.random() * 0.14;
-      puff.x = at.x + side * 0.22;
-      puff.z = at.z + 0.06;
-      // The shapes are drawn low in their tile (rows 4 to 11 of 16): lift it so the lowest row rests on the ground.
-      puff.y = at.y + look.size * 0.26;
-      puff.vx = side * 0.9;
-      puff.vy = look.kind === "splash" ? 0.6 : 0.3;
-      puff.size = look.size * (0.85 + Math.random() * 0.3);
-      puff.alpha = look.alpha;
-      puff.sprite.position.set(puff.x, puff.y, puff.z);
-      puff.sprite.scale.set(puff.size * 0.8, puff.size * 0.8, 1);
-      puff.sprite.material.opacity = puff.alpha;
+      puff.floor = at.y;
+      puff.size = look.size * (0.8 + Math.random() * 0.45);
+      puff.mesh.position.set(at.x + side * 0.14, at.y + puff.size * 0.6, at.z + fore * 0.1);
+      puff.mesh.rotation.set(Math.random() * 6.3, Math.random() * 6.3, Math.random() * 6.3);
+      puff.mesh.scale.setScalar(1e-4);
+      if (look.kind === "dust") {
+        // Dust rolls out low and slow, and hangs.
+        puff.life = 0.42 + Math.random() * 0.2;
+        puff.vx = side * 0.75;
+        puff.vy = 0.22 + Math.random() * 0.14;
+        puff.vz = fore * 0.5;
+        puff.spin.set((Math.random() - 0.5) * 2.4, (Math.random() - 0.5) * 2.4, (Math.random() - 0.5) * 2.4);
+      } else {
+        // Chips of grass and drops are thrown up and come down again, turning over as they go.
+        const drop = look.kind === "splash";
+        puff.life = 0.34 + Math.random() * 0.16;
+        puff.vx = side * (drop ? 0.8 : 1.0);
+        puff.vy = (drop ? 1.7 : 1.35) + Math.random() * 0.5;
+        puff.vz = fore * 0.9;
+        puff.spin.set((Math.random() - 0.5) * 16, (Math.random() - 0.5) * 16, (Math.random() - 0.5) * 16);
+      }
     }
   }
 
@@ -1653,6 +1688,7 @@ export class WorldRenderer {
     const poiKeys = new Set(state.map.pois.map((p) => key(p.pos)));
     const trees: TreeSpot[] = [];
     const boulders: BoulderSpot[] = [];
+    const setOaks = this.tiles.filter((t) => t.blocker === "oak");
     for (const t of this.tiles) {
       if (poiKeys.has(key(t))) continue;
       const { x, z } = hexToWorld(t);
@@ -1676,6 +1712,10 @@ export class WorldRenderer {
           const a = turn + ((i + 0.5) / 3) * Math.PI * 2;
           tree(Math.sin(a) * 0.3, Math.cos(a) * 0.3, 0.42 + n(200 + i) * 0.2, 210 + i * 5, false);
         }
+      } else if (t.blocker === "oak") {
+        // One great old oak, set down by the map (the Harbor's, on its hill): in the middle of its hex, which
+        // nobody can walk onto, the broadest of the oaks and bigger than any that grows wild.
+        trees.push({ x, y: top, z, size: 3.7, kind: "oak", shape: 0, yaw: n(810) * Math.PI * 2, tint: tintOf(0.6, 0.55) });
       } else if (t.blocker === "boulders") {
         // A heap of boulders: one big one, a second leaning on it, and a few smaller round their feet.
         const turn = n(300) * Math.PI * 2;
@@ -1727,6 +1767,8 @@ export class WorldRenderer {
         // hexes that meet there, nor on any hex beside them.
         const dry = dryPatch(t, x, z) >= 0;
         if (n(800) >= (dry ? 0.45 : 0.2)) continue;
+        // Where the map has set an oak down, it stands alone: no wild one within a few hexes of it.
+        if (setOaks.some((o) => hexDistance(o, t) <= 5)) continue;
         const corner = Math.floor(n(801) * 5.99);
         const beside = [HEX_DIRS[corner], HEX_DIRS[(corner + 1) % 6]].map((d) => byKey.get(key({ q: t.q + d.q, r: t.r + d.r })));
         if (beside.some((b) => !b || b.biome === "water" || b.biome === "dock" || b.path)) continue;
@@ -1752,7 +1794,8 @@ export class WorldRenderer {
       this.tiles.filter((t) => !this.deep.has(key(t))),
       // Nothing grows or lies about where a place stands, under a building, or in a thicket or a boulder heap.
       // The Harbor's gaps of rubble have their boulders from the woods, not the ambience's hill rocks.
-      (t) => poiKeys.has(key(t)) || !!t.built || !!t.blocker || (this.sodden && t.biome === "hills"),
+      // (Grass does grow round the foot of a lone oak.)
+      (t) => poiKeys.has(key(t)) || !!t.built || (!!t.blocker && t.blocker !== "oak") || (this.sodden && t.biome === "hills"),
       (t) => ({ ...hexToWorld(t), y: tileTop(t) }),
     );
     // The trees bend in the wind (fancy graphics), and aside as anyone walks through them.
@@ -4592,11 +4635,88 @@ export class WorldRenderer {
         add(box(0.9, 0.04, 0.5), lambert("#8c3b2f"), 0, 0.02, 0.28);
         for (const x of [-0.8, 0.8]) add(box(0.14, 0.9, 0.14), lambert("#5a3d22"), x, 0.45, 0.28);
         break;
-      case "board":
-        add(new THREE.CylinderGeometry(0.05, 0.05, 0.9, 5), lambert("#5a3d22"), -0.3, 0.45, 0);
-        add(new THREE.CylinderGeometry(0.05, 0.05, 0.9, 5), lambert("#5a3d22"), 0.3, 0.45, 0);
-        add(box(0.8, 0.5, 0.06), lambert("#e8dcc0"), 0, 0.7, 0);
+      case "board": {
+        // The notice board: a framed back of planks between two squared posts on stone feet, under a little
+        // shingled roof to keep the rain off the paper. Notices are pinned all over it, no two alike or quite
+        // straight: lines of writing, a wax seal and its ribbon, a wanted sheet, one hanging by a corner. A lantern
+        // on a bracket lights it after dark, and a pail of rolled notices stands at its foot.
+        const timber = lambert("#5a3d22");
+        const dark = lambert("#46301c");
+        const stone = lambert("#8b8f96");
+        const iron = lambert("#2e2a28");
+        const ink = lambert("#4a3a2a");
+        const glows: BuildingGlow[] = [];
+        // Posts on their feet, capped, braced to the ground behind.
+        for (const x of [-0.46, 0.46]) {
+          add(box(0.16, 0.07, 0.16), stone, x, 0.035, 0, x * 0.4);
+          add(box(0.085, 1.0, 0.085), timber, x, 0.55, 0);
+          add(box(0.12, 0.03, 0.12), dark, x, 1.06, 0);
+          add(box(0.04, 0.42, 0.04), dark, x, 0.2, -0.13).rotation.x = -0.62;
+        }
+        // The back: five planks, no two the same brown, in a frame of darker timber.
+        const planks = ["#8a6a44", "#7d5f3c", "#927048", "#80623f", "#8c6c46"];
+        planks.forEach((tone, i) => add(box(0.158, 0.54, 0.035), lambert(tone), -0.316 + i * 0.158, 0.68, 0));
+        for (const y of [0.4, 0.96]) add(box(0.9, 0.05, 0.06), dark, 0, y, 0.005);
+        for (const x of [-0.42, 0.42]) add(box(0.05, 0.6, 0.06), dark, x, 0.68, 0.005);
+        // The roof: two pitches of shingles in courses, and a ridge board.
+        for (const side of [1, -1]) {
+          for (let course = 0; course < 2; course++) {
+            const out = 0.055 + course * 0.1;
+            add(box(1.14 - course * 0.02, 0.022, 0.115), lambert(course ? "#7a4a36" : "#8a5540"), 0, 1.2 - out * 0.62, side * out * 0.86).rotation.x = side * 0.62;
+          }
+        }
+        add(box(1.18, 0.035, 0.05), lambert("#5c3626"), 0, 1.215, 0);
+        // The notices: where each is pinned, how big, how far askew, and its paper.
+        const front = 0.022;
+        const sheet = (x: number, y: number, w: number, h: number, turn: number, paper: string, pin = "#b0392b") => {
+          const page = add(box(w, h, 0.006), lambert(paper), x, y, front);
+          page.rotation.z = turn;
+          // Its pin, at the top; a sheet askew hangs from it.
+          add(box(0.022, 0.022, 0.014), lambert(pin), x - Math.sin(turn) * (h / 2 - 0.025), y + Math.cos(turn) * (h / 2 - 0.025), front + 0.008);
+          return page;
+        };
+        /** Lines of writing down a sheet, each a little shorter or longer than the last. */
+        const written = (x: number, y: number, w: number, lines: number, turn: number) => {
+          for (let i = 0; i < lines; i++) {
+            const dy = -i * 0.034;
+            add(box(w * (0.72 + ((i * 7) % 3) * 0.1), 0.01, 0.004), ink, x - Math.sin(turn) * dy, y + Math.cos(turn) * dy, front + 0.005).rotation.z = turn;
+          }
+        };
+        sheet(-0.24, 0.76, 0.2, 0.26, 0.05, "#efe4c4");
+        written(-0.24, 0.8, 0.15, 4, 0.05);
+        // A proclamation, with a red seal and the tail of its ribbon.
+        sheet(0.02, 0.74, 0.18, 0.3, -0.03, "#f4efe1", "#c9a227");
+        written(0.02, 0.83, 0.13, 3, -0.03);
+        add(new THREE.CylinderGeometry(0.026, 0.026, 0.012, 7), lambert("#a02c22"), 0.03, 0.66, front + 0.008).rotation.x = Math.PI / 2;
+        add(box(0.018, 0.07, 0.004), lambert("#8c2a22"), 0.045, 0.615, front + 0.006).rotation.z = -0.2;
+        // Wanted: a face in a box, a price under it.
+        sheet(0.26, 0.79, 0.17, 0.22, 0.08, "#e2d3a8");
+        add(box(0.09, 0.09, 0.004), ink, 0.257, 0.815, front + 0.005).rotation.z = 0.08;
+        add(box(0.11, 0.012, 0.004), ink, 0.268, 0.725, front + 0.005).rotation.z = 0.08;
+        // Small ones crowded in under them, one come loose and hanging by a corner.
+        sheet(-0.3, 0.52, 0.12, 0.13, -0.1, "#e8dcc0", "#3f6f8f");
+        written(-0.3, 0.545, 0.08, 2, -0.1);
+        sheet(0.27, 0.535, 0.13, 0.14, 0.42, "#efe4c4");
+        sheet(-0.1, 0.5, 0.1, 0.1, 0.12, "#d9c99a", "#c9a227");
+        // The lantern, hung from a bracket off the east post.
+        add(box(0.2, 0.022, 0.022), iron, 0.6, 1.0, 0.02);
+        add(box(0.012, 0.06, 0.012), iron, 0.68, 0.965, 0.02);
+        add(box(0.06, 0.075, 0.06), new THREE.MeshBasicMaterial({ color: "#ffd77a" }), 0.68, 0.895, 0.02).userData.glow = true;
+        for (const [dx, dz] of [[-0.035, -0.035], [0.035, -0.035], [-0.035, 0.035], [0.035, 0.035]]) add(box(0.012, 0.09, 0.012), iron, 0.68 + dx, 0.895, 0.02 + dz);
+        add(box(0.095, 0.016, 0.095), iron, 0.68, 0.845, 0.02);
+        add(new THREE.ConeGeometry(0.07, 0.05, 4), iron, 0.68, 0.96, 0.02, Math.PI / 4);
+        glows.push({ pos: new THREE.Vector3(0.68, 0.895, 0.12), size: 0.4 });
+        // The pail of rolled notices, and one dropped beside it.
+        add(new THREE.CylinderGeometry(0.075, 0.06, 0.13, 8), lambert("#6b4a2b"), -0.5, 0.065, 0.2);
+        add(new THREE.CylinderGeometry(0.078, 0.078, 0.016, 8), iron, -0.5, 0.11, 0.2);
+        for (const [dx, dz, lean, turn] of [[-0.02, 0.0, 0.2, 0.4], [0.025, 0.015, -0.16, 2.2], [0.0, -0.025, 0.1, 4.0]]) {
+          const roll = add(new THREE.CylinderGeometry(0.018, 0.018, 0.22, 6), lambert("#efe4c4"), -0.5 + dx, 0.2, 0.2 + dz, turn);
+          roll.rotation.z = lean;
+        }
+        add(new THREE.CylinderGeometry(0.018, 0.018, 0.2, 6), lambert("#e2d3a8"), -0.3, 0.02, 0.26, 0.5).rotation.z = Math.PI / 2;
+        g.userData.glows = glows;
         break;
+      }
       case "camp":
         if (this.state?.kind === "caverns") {
           // What lurks in a cave chamber: a heap of old bones and rubble, and (until it is beaten) eyes in the dark.
@@ -5689,21 +5809,38 @@ export class WorldRenderer {
     }
 
     for (const puff of this.puffs) {
-      if (!puff.sprite.visible) continue;
+      if (!puff.mesh.visible) continue;
       puff.age += dt;
       const t = puff.age / puff.life;
       if (t >= 1) {
-        puff.sprite.visible = false;
+        puff.mesh.visible = false;
         continue;
       }
-      puff.x += puff.vx * dt;
-      puff.y += puff.vy * dt;
-      puff.vx *= Math.exp(-dt * 5);
-      puff.vy *= Math.exp(-dt * 4);
-      puff.sprite.position.set(puff.x, puff.y, puff.z);
-      const s = puff.size * (0.8 + t * 0.45);
-      puff.sprite.scale.set(s, s, 1);
-      puff.sprite.material.opacity = puff.alpha * (1 - t * t);
+      const at = puff.mesh.position;
+      at.x += puff.vx * dt;
+      at.y += puff.vy * dt;
+      at.z += puff.vz * dt;
+      let s: number;
+      if (puff.kind === "dust") {
+        // Slowing as it spreads; swelling as it thins, then gone.
+        puff.vx *= Math.exp(-dt * 5);
+        puff.vz *= Math.exp(-dt * 5);
+        puff.vy *= Math.exp(-dt * 3);
+        s = puff.size * (0.55 + t * 1.1) * Math.min(1, t * 9) * (1 - t * t * t);
+      } else {
+        // Falling: thrown up, and down again to the ground it came from, where it stays.
+        puff.vy -= 9 * dt;
+        if (at.y < puff.floor + puff.size * 0.3) {
+          at.y = puff.floor + puff.size * 0.3;
+          puff.vx *= Math.exp(-dt * 14);
+          puff.vz *= Math.exp(-dt * 14);
+        }
+        s = puff.size * Math.min(1, t * 12) * (1 - t * t * t);
+      }
+      puff.mesh.rotation.x += puff.spin.x * dt;
+      puff.mesh.rotation.y += puff.spin.y * dt;
+      puff.mesh.rotation.z += puff.spin.z * dt;
+      puff.mesh.scale.setScalar(Math.max(s, 1e-4));
     }
 
     // Sleepers breathe out a z now and then: small, small, then a big one.

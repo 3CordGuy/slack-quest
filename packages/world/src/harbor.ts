@@ -125,6 +125,12 @@ export const HARBOR_SMITHY: HexPos = at(6, 14);
 /** The galley's door, on the east road down to the quay, where ships take on provisions. A building site until the crew has paid for it. */
 export const HARBOR_GALLEY: HexPos = at(15, 21);
 
+/**
+ * The oak on the hill: one great old tree on a rise in the open ground at the back of the island, north-east of
+ * the plaza, with tall grass all round it. Nobody walks through the oak; the hill itself is to climb.
+ */
+export const HARBOR_OAK: HexPos = at(15, 7);
+
 /** The mouth of the Haunted Caverns: a way into the rocks through the north wall. */
 export const HARBOR_CAVE: HexPos = at(13, 3);
 
@@ -227,7 +233,8 @@ const around = (p: HexPos) => NEIGHBOURS.map((d) => ({ q: p.q + d.q, r: p.r + d.
  * dotted with rocks and a wreck. Inland it is grass, with a cobbled plaza at
  * the heart and the town laid out along its roads (HARBOR_ROADS): the High
  * Street east and west through the plaza, two roads down to the quay, and dirt
- * lanes up to the huts and the caverns. Every building fronts a road.
+ * lanes up to the huts and the caverns. Every building fronts a road. At the
+ * back, north-east of the plaza, one old oak stands on a hill in tall grass.
  * A building is bigger than the hex its door is on: it stands on the hexes
  * behind the door (see `footing`), which are marked `built` and cannot be walked through.
  */
@@ -291,6 +298,7 @@ export function generateHarbor(): WorldMap {
   // The gathering spots keep the ground they are about.
   lay(HARBOR_GATHER.quarry, "hills");
   lay(HARBOR_GATHER.felling, "forest");
+  raiseOakHill(map);
   layPaths(map);
   map.pois = [
     harborPoi("board", "board", HARBOR_BOARD), harborPoi("shop", "shop", HARBOR_SHOP), harborPoi("ring", "ring", HARBOR_RING),
@@ -309,6 +317,32 @@ export function generateHarbor(): WorldMap {
     return facing ? { ...p, facing } : p;
   });
   return map;
+}
+
+/**
+ * The oak's hill: its hex raised highest, with the oak on it; the six round it raised half as far; and tall
+ * grass over all of them and over the open grass at the hill's foot.
+ */
+function raiseOakHill(map: WorldMap) {
+  const top = tileAt(map, HARBOR_OAK);
+  if (!top) return;
+  top.h = HEIGHT.plains + 0.62;
+  top.blocker = "oak";
+  top.grass = "tall";
+  const ring = around(HARBOR_OAK);
+  for (const p of ring) {
+    const t = tileAt(map, p);
+    if (!t || t.biome !== "plains" || t.built) continue;
+    t.h = HEIGHT.plains + 0.3;
+    t.grass = "tall";
+  }
+  const hill = new Set([HARBOR_OAK, ...ring].map(keyOf));
+  for (const p of ring.flatMap(around)) {
+    const t = tileAt(map, p);
+    if (!t || hill.has(keyOf(p)) || t.biome !== "plains" || t.built) continue;
+    t.h = HEIGHT.plains + 0.09;
+    t.grass = "tall";
+  }
 }
 
 /** Ground a dirt path can be trodden into: open grass, not under a building. */
@@ -361,7 +395,7 @@ export const HARBOR_MAX_PATH = 60;
  */
 export function harborPath(map: WorldMap, from: HexPos, to: HexPos, vessel: Vessel | null = null): HexPos[] | null {
   const route = findPath(map, from, to, HARBOR_MAX_PATH, (t) => {
-    if (t.biome === "rampart" || t.built) return Infinity;
+    if (t.biome === "rampart" || t.built || t.blocker) return Infinity;
     if (t.biome !== "water") return 1;
     if (!vessel || HAZARDS.has(`${t.q},${t.r}`)) return Infinity;
     return vessel === "rowboat" || coastal(map, t) ? 1 : Infinity;
