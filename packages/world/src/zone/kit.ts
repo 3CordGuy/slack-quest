@@ -188,8 +188,21 @@ export const THROWABLES: Record<Throwable, ThrowableDef> = {
   water: { name: "Water skin", blurb: "Douses fire and leaves the ground wet for 3 rounds.", radius: 1, surface: { kind: "water", rounds: 3 } },
 };
 
-/** What a hero carries into a zone to throw. */
+/** The kit every hero starts out with in their pack (and a stand-in is given on each map). */
 export const STARTING_ITEMS: Partial<Record<Throwable, number>> = { healing: 2, poison: 2, fire: 1, oil: 1, water: 1 };
+
+/** Every kind of thing carried to drink or throw, in the order they are listed. */
+export const THROWABLE_KINDS = Object.keys(THROWABLES) as Throwable[];
+
+/** What is really carried, out of whatever was read: the kinds there are, in whole numbers, and none of what there is none of. */
+export function cleanItems(raw: Partial<Record<string, number>> | undefined): Partial<Record<Throwable, number>> {
+  const out: Partial<Record<Throwable, number>> = {};
+  for (const kind of THROWABLE_KINDS) {
+    const n = raw?.[kind];
+    if (typeof n === "number" && Number.isFinite(n) && n >= 1) out[kind] = Math.floor(n);
+  }
+  return out;
+}
 
 /** How far a hero can throw: 5 hexes, further for the strong, never under 3. */
 export const throwRange = (strMod: number): number => Math.max(3, 5 + strMod);

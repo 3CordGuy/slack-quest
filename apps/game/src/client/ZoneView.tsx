@@ -489,6 +489,11 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
   const state = zone.state;
   const enc = state?.encounter ?? null;
   // Which of your own you are playing: your hero, or a stand-in whose turn it is.
+  // What your own hero carries comes out of your pack: when the count on the map changes, the pack is read again.
+  const carried = JSON.stringify(state?.units.find((u) => u.id === state.you)?.items ?? null);
+  useEffect(() => {
+    if (carried !== "null") void refresh();
+  }, [carried]);
   const mine = useMemo(() => state?.units.filter((u) => u.side === "hero" && (u.id === state.you || u.controller === state.you)) ?? [], [state]);
   const ready = (u: Unit) => !!enc && enc.acting.includes(u.id) && !enc.done.includes(u.id) && !u.down;
   const act = mine.find((u) => u.id === playAs && (!enc || !enc.order.includes(u.id) || ready(u))) ?? mine.find(ready) ?? mine.find((u) => u.id === state?.you) ?? mine[0];
@@ -997,21 +1002,19 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
           refresh={() => refresh().then(() => zone.resheet())}
           onClose={() => setBag(false)}
           gearLocked={enc?.order.includes(state.you) ? "A fight is on: what you are wearing stays as it is until it is over." : undefined}
-          satchel={(Object.keys(ITEM_ICON) as Throwable[]).filter((item) => (act.items[item] ?? 0) > 0).map((item) => {
-            const entry = entries[`it:${item}`];
-            return {
-              id: item,
-              name: entry.name,
-              line: [entry.line, entry.more].filter(Boolean).join(". "),
-              icon: entry.icon,
-              count: entry.count ?? 0,
-              blocked: !entry.spent ? undefined : fighting && !myTurn ? "It is not your turn." : "You have neither an Action nor a Bonus action left for it this turn.",
-              use: () => {
-                setBag(false);
-                setPick({ kind: "item", item });
-              },
-            };
-          })}
+          usable={{
+            use: (item) => {
+              setBag(false);
+              setPick({ kind: "item", item });
+            },
+            // The bag is your own hero's: a stand-in you are playing carries its own.
+            blocked: (item) =>
+              act.id !== state.you ? "This is your own pack. Play your own hero to use what is in it."
+              : (act.items[item] ?? 0) <= 0 ? "You have none left."
+              : !entries[`it:${item}`]?.spent ? undefined
+              : fighting && !myTurn ? "It is not your turn."
+              : "You have neither an Action nor a Bonus action left for it this turn.",
+          }}
         />
       )}
 

@@ -5,7 +5,7 @@ import type { ContractBoard } from "../server/board";
 
 /** What the contract dealer in the pub has: the crew goal and the contracts on offer. */
 export type Board = ContractBoard;
-import type { Appearance, CarryState, FishSpot, GatherChoice, HarborXpStatus, GatherSpot, HarborWorks, HutSummary, ItemDef, Perk, ProjectAmounts, PublicHero, Resources, SalesEntry, SalesmanId, SalesmanVisit, ShopEntry, TradeSide } from "@gantt-quest/world";
+import type { Appearance, CarryState, FishSpot, GatherChoice, HarborXpStatus, GatherSpot, HarborWorks, HutSummary, ItemDef, Perk, ProjectAmounts, PublicHero, Resources, SalesEntry, SalesmanId, SalesmanVisit, ShopEntry, Throwable, TradeSide } from "@gantt-quest/world";
 import { devTools } from "./devTools";
 import { forcedSalesman } from "./salesmanClock";
 import type { GatherStatus } from "../server/gather";
@@ -105,6 +105,8 @@ export interface Me {
   inventory: InventoryItem[];
   /** The materials in the pack, by kind. They sit in stacks beside the gear. Absent from an older server. */
   materials?: Resources;
+  /** The potions, flasks and bombs in the pack, by kind: used up on a map, and kept between maps. Absent from an older server. */
+  consumables?: Partial<Record<Throwable, number>>;
   /** How full the pack is, its size, what is in storage and whether there is a home for it. Null without a character. */
   carry: CarryState | null;
   /** The crew whose Harbor this player shares, if any. The id doubles as the invite code. */

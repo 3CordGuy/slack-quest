@@ -760,3 +760,33 @@ describe("a hero's sheet", () => {
     expect(unit(must(fight, { type: "join", hero: changed }), "ann").armor).toBe(before);
   });
 });
+
+// ---------- what a hero carries ----------
+
+describe("what a hero carries", () => {
+  it("is what their pack holds when they walk in, and the starting kit for one with no pack", () => {
+    let state = board();
+    state = must(state, { type: "join", hero: { ...standInHero("qa_paladin", "ann", 1)!, items: { healing: 5 } } });
+    expect(unit(state, "ann").items).toEqual({ healing: 5 });
+    state = must(state, { type: "join", hero: standInHero("devops_mage", "bo", 1)! });
+    expect(unit(state, "bo").items).toEqual({ healing: 2, poison: 2, fire: 1, oil: 1, water: 1 });
+  });
+
+  it("follows the pack when the server says what it holds now, even in a fight", () => {
+    const { state } = duel();
+    const next = must(state, { type: "stock", unit: "ann", items: { healing: 1, fire: 0, nonsense: 4 } as never });
+    expect(unit(next, "ann").items).toEqual({ healing: 1 });
+    // And coming back mid-fight keeps the gear but takes the pack's count.
+    const back = must(state, { type: "join", hero: { ...standInHero("qa_paladin", "ann", 1)!, armor: 9, items: { poison: 3 } } });
+    expect(unit(back, "ann").items).toEqual({ poison: 3 });
+    expect(unit(back, "ann").armor).toBe(unit(state, "ann").armor);
+  });
+
+  it("is topped up to the starting kit by the dev restock, and never cut down", () => {
+    let state = board();
+    const ann = hero(state, "ann", "qa_paladin", at(5, 6));
+    ann.items = { healing: 7, poison: 0 };
+    state = must(state, { type: "dev", by: "ann", dev: { op: "heal" } });
+    expect(unit(state, "ann").items).toEqual({ healing: 7, poison: 2, fire: 1, oil: 1, water: 1 });
+  });
+});

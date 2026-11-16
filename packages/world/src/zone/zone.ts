@@ -22,10 +22,10 @@ import { abilityArea, checkAbility, checkCommon, checkDrink, checkThrow, doCommo
 import { has, heal, removeCondition, tick, type Ctx } from "./engine";
 import { ALERT_RANGE, JOIN_RANGE, freeHexNear, generateZone } from "./gen";
 import { FREE_WALK, blast, inFight, pathIn, sameHex, sees, solid, unitAt, unitById, zoneReach } from "./geometry";
-import { STARTING_ITEMS, THROWABLES, commonCost, enemyHp, enemyMove, tacticOf } from "./kit";
+import { STARTING_ITEMS, THROWABLES, THROWABLE_KINDS, cleanItems, commonCost, enemyHp, enemyMove, tacticOf } from "./kit";
 import { d20, heroMove, mod, statOf } from "./rules";
 import { clearSurfaces, placeSurface, standInSurface, tickSurfaces } from "./surfaces";
-import type { Budget, DevOp, Encounter, Unit, ZoneAction, ZoneEffect, ZoneEvent, ZoneHero, ZoneOptions, ZoneState, ZoneStep, ZoneView } from "./types";
+import type { Budget, DevOp, Encounter, Throwable, Unit, ZoneAction, ZoneEffect, ZoneEvent, ZoneHero, ZoneOptions, ZoneState, ZoneStep, ZoneView } from "./types";
 
 /** Rounds a surface painted from the dev toolbox lasts. */
 const PAINT_ROUNDS = 6;
@@ -99,15 +99,19 @@ function heroUnit(hero: ZoneHero, pos: HexPos, controller?: string): Unit {
     conditions: [],
     down: false,
     cooldowns: {},
-    items: { ...STARTING_ITEMS },
+    items: { ...(hero.items ?? STARTING_ITEMS) },
     controller,
   };
 }
 
-/** A hero's sheet, as a zone needs it: stats with gear, and how much they can take. */
-export function zoneHero(sheet: HeroSheet): ZoneHero {
+/** A hero's sheet, as a zone needs it: stats with gear, how much they can take, and (`items`) what their pack holds to drink or throw. */
+export function zoneHero(sheet: HeroSheet, items?: Partial<Record<Throwable, number>>): ZoneHero {
   const stats = addStats(sheet.base, sheet.bonus);
-  return { id: sheet.id, name: sheet.name, classId: sheet.classId, level: sheet.level, stats, weapon: sheet.weapon, weaponPower: sheet.weaponPower ?? 0, armor: sheet.armor ?? 0, outfit: sheet.outfit, maxHp: maxHpFor(stats, sheet.level), maxFocus: maxFocusFor(sheet.level) };
+  return {
+    id: sheet.id, name: sheet.name, classId: sheet.classId, level: sheet.level, stats, weapon: sheet.weapon, weaponPower: sheet.weaponPower ?? 0, armor: sheet.armor ?? 0, outfit: sheet.outfit,
+    maxHp: maxHpFor(stats, sheet.level), maxFocus: maxFocusFor(sheet.level),
+    ...(items ? { items: cleanItems(items) } : {}),
+  };
 }
 
 /** A stand-in crewmate of a class, as it starts out: for trying fights with a party when alone. */
@@ -407,7 +411,8 @@ function dev(ctx: Ctx, by: string, op: DevOp): string | null {
       h.down = false;
       h.hp = h.maxHp;
       h.focus = h.maxFocus;
-      h.items = { ...STARTING_ITEMS };
+      // Restocked: brought up to the starting kit, with anything more they carry left alone.
+      for (const kind of THROWABLE_KINDS) if ((STARTING_ITEMS[kind] ?? 0) > (h.items[kind] ?? 0)) h.items[kind] = STARTING_ITEMS[kind];
       h.conditions = [];
       h.cooldowns = {};
     }
@@ -437,6 +442,8 @@ function act(ctx: Ctx, action: ZoneAction): string | null {
     const hero = action.hero;
     const here = unitById(state, hero.id);
     if (here) {
+      // What their pack holds is what they carry, fight or no fight.
+      if (hero.items) here.items = { ...hero.items };
       // Back again, perhaps with different gear: the sheet is refreshed, and where they stand and how hurt they are is kept.
       // Not in a fight, though: that is fought in the gear it was started in.
       if (inFight(state, here.id)) return null;
@@ -455,6 +462,11 @@ function act(ctx: Ctx, action: ZoneAction): string | null {
   }
   if (action.type === "timeout") {
     if (state.encounter) state.encounter.done = [...state.encounter.acting];
+    return null;
+  }
+  if (action.type === "stock") {
+    const hero = unitById(state, action.unit);
+    if (hero?.side === "hero") hero.items = cleanItems(action.items);
     return null;
   }
   if (action.type === "dev") return dev(ctx, action.by, action.dev);

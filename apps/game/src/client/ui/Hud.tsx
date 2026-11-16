@@ -205,7 +205,7 @@ export function HudBar({ me, place, children, hp, meter, pips = [], chips, quick
     const cost = (c: "action" | "bonus") => (c === "action" ? "Action" : "Bonus action");
     if (kind === "ab" && ABILITIES[id]) return { id: key, icon: { ...abilityIcon(id), flat: true }, name: label("ability", id), line: `${cost(tacticOf(id).cost)} · used in a fight`, more: blurb("ability", id) };
     if (kind === "do" && COMMON_ACTIONS[id as CommonAction]) return { id: key, icon: { ...COMMON_ICON[id as CommonAction], flat: true }, name: COMMON_ACTIONS[id as CommonAction].name, line: `${cost(commonCost(id as CommonAction, c.class_id))} · used in a fight`, more: COMMON_ACTIONS[id as CommonAction].blurb };
-    if (kind === "it" && THROWABLES[id as Throwable]) return { id: key, icon: ITEM_ICON[id as Throwable], name: THROWABLES[id as Throwable].name, line: "Carried into a fight", more: THROWABLES[id as Throwable].blurb };
+    if (kind === "it" && THROWABLES[id as Throwable]) return { id: key, icon: ITEM_ICON[id as Throwable], name: THROWABLES[id as Throwable].name, line: "Carried into a fight", more: THROWABLES[id as Throwable].blurb, count: me.consumables?.[id as Throwable] ?? 0 };
     return null;
   };
   const shown = slots ?? layout.map(reminder);

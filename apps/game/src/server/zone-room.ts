@@ -9,11 +9,16 @@
 // - The turn timer is a DO Alarm. Enemy turns resolve inside the reducer, so
 //   nothing waits on a connected client to make progress.
 //
+// What a hero carries to drink or throw is their own pack's (consumables.ts):
+// it is read as they walk in and again before each one is used, and what was
+// used is taken out of the pack before the zone is saved.
+//
 // Walking freely needs no clock at all: the reducer walks a hero's whole
 // path at once and says where they ended up, as the Harbor does.
 
 import { DurableObject } from "cloudflare:workers";
-import { ZONE_CLIENT_ACTIONS, createZone, stepZone, zoneAwaiting, zoneHero, zoneOptions, zoneView, type ZoneAction, type ZoneEvent, type ZoneState } from "@gantt-quest/world";
+import { THROWABLE_KINDS, ZONE_CLIENT_ACTIONS, createZone, stepZone, zoneAwaiting, zoneHero, zoneOptions, zoneView, type ZoneAction, type ZoneEvent, type ZoneState } from "@gantt-quest/world";
+import { consumablesOf, kitStatements, spendConsumables, type Consumables } from "./consumables";
 import { crewFor, heroInitFor, refreshHarbor, type Env } from "./db";
 import { isDev } from "./dev";
 import { clearPresence, getZoneRow, saveZoneStatement, setPresence } from "./zones";
@@ -60,6 +65,18 @@ export function zoneActionFrom(raw: unknown, by: string, dev: boolean): ZoneActi
   return { type: "end_turn", by, unit: a.unit };
 }
 
+/** How many of each kind a hero has fewer of after a step than before it. */
+function usedBy(prev: ZoneState, next: ZoneState, id: string): Consumables {
+  const had = prev.units.find((u) => u.id === id)?.items ?? {};
+  const has = next.units.find((u) => u.id === id)?.items ?? {};
+  const used: Consumables = {};
+  for (const kind of THROWABLE_KINDS) {
+    const n = (had[kind] ?? 0) - (has[kind] ?? 0);
+    if (n > 0) used[kind] = n;
+  }
+  return used;
+}
+
 export class ZoneRoom extends DurableObject<Env> {
   private zone: ZoneState | null = null;
   private queue: Promise<unknown> = Promise.resolve();
@@ -102,7 +119,7 @@ export class ZoneRoom extends DurableObject<Env> {
       // Read afresh each time: the hero may have changed gear since they were last here.
       const hero = await heroInitFor(this.env.DB, playerId);
       if (!hero) return "You need a character first.";
-      return this.apply({ type: "join", hero: zoneHero(hero), near });
+      return this.apply({ type: "join", hero: zoneHero(hero, await consumablesOf(this.env.DB, playerId)), near });
     });
     if (error) return new Response(error, { status: 409 });
 
@@ -135,16 +152,18 @@ export class ZoneRoom extends DurableObject<Env> {
       await this.serial(async () => {
         await this.load();
         const hero = await heroInitFor(this.env.DB, playerId);
-        if (hero) await this.apply({ type: "join", hero: zoneHero(hero) });
+        if (hero) await this.apply({ type: "join", hero: zoneHero(hero, await consumablesOf(this.env.DB, playerId)) });
       });
       return;
     }
     if (msg.type !== "action") return;
     const action = zoneActionFrom(msg.action, playerId, isDev(this.env));
     if (!action) return;
+    // Throwing or drinking as your own hero draws on your own pack. (A stand-in has no pack: it carries the kit it was given.)
+    const pack = (action.type === "throw" || action.type === "drink") && action.unit === playerId ? playerId : undefined;
     const error = await this.serial(async () => {
       await this.load();
-      return this.apply(action);
+      return this.apply(action, pack);
     });
     if (error) ws.send(JSON.stringify({ type: "error", message: error }));
   }
@@ -186,9 +205,18 @@ export class ZoneRoom extends DurableObject<Env> {
     });
   }
 
-  /** Step the zone, persist, then broadcast. Returns an error string or null. */
-  private async apply(action: ZoneAction): Promise<string | null> {
-    const prev = this.zone!;
+  /**
+   * Step the zone, persist, then broadcast. Returns an error string or null. `pack`: the player whose own
+   * hero this draws a potion or flask from; their pack is read first and what was used is taken out of it.
+   */
+  private async apply(action: ZoneAction, pack?: string): Promise<string | null> {
+    const db = this.env.DB;
+    let prev = this.zone!;
+    if (pack) {
+      // What they carry is what their pack holds now, whatever the map last heard.
+      const held = stepZone(prev, { type: "stock", unit: pack, items: await consumablesOf(db, pack) });
+      if (held.ok) prev = held.state;
+    }
     let res: ReturnType<typeof stepZone>;
     try {
       res = stepZone(prev, action);
@@ -196,11 +224,25 @@ export class ZoneRoom extends DurableObject<Env> {
       console.error("zone-room:step-failed", { type: action.type, err: err instanceof Error ? err.message : String(err) });
       return "That could not be done.";
     }
-    if (!res.ok) return res.error;
+    if (!res.ok) {
+      // Refused, but the count may have been wrong on screen (the pack held fewer than the map thought): put it right.
+      if (prev !== this.zone) {
+        this.zone = prev;
+        await saveZoneStatement(db, prev).run();
+        this.broadcast([]);
+      }
+      return res.error;
+    }
     const next = res.state;
     if (zoneAwaiting(next) !== zoneAwaiting(prev)) await this.armTimer(next);
     this.zone = next;
-    await saveZoneStatement(this.env.DB, next).run();
+    // The pack first: a potion drunk is gone from it even if the room goes away before the zone is saved.
+    const writes: D1PreparedStatement[] = [];
+    if (pack) writes.push(...spendConsumables(db, pack, usedBy(prev, next, pack)));
+    // The dev toolbox's restock is real too, for every player's hero here.
+    if (action.type === "dev" && action.dev.op === "heal") for (const u of next.units) if (u.side === "hero" && !u.controller) writes.push(...kitStatements(db, u.id));
+    for (const write of writes) await write.run();
+    await saveZoneStatement(db, next).run();
     await this.notePresence();
     this.broadcast(res.events);
     return null;

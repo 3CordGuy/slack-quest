@@ -288,6 +288,36 @@ describe("ZoneRoom", () => {
     expect(hero(ann.state, "ann").maxHp).toBe(grown);
   });
 
+  it("carries what the hero's pack holds, and takes each one used out of the pack", async () => {
+    const stock = (qty: number) => sql.prepare("INSERT INTO consumables (player_id, kind, qty) VALUES ('ann', 'healing', ?) ON CONFLICT(player_id, kind) DO UPDATE SET qty = excluded.qty").run(qty);
+    const inPack = () => (sql.prepare("SELECT qty FROM consumables WHERE player_id = 'ann' AND kind = 'healing'").get() as { qty: number }).qty;
+    stock(3);
+    const { code, zone, ann } = await arrive();
+    expect(hero(ann.state, "ann").items).toEqual({ healing: 3 });
+
+    await act(zone, ann, { type: "drink", unit: "ann", item: "healing" });
+    expect(ann.errors).toEqual([]);
+    expect(hero(ann.state, "ann").items.healing).toBe(2);
+    expect(inPack()).toBe(2);
+    expect(hero(saved(code), "ann").items.healing).toBe(2);
+
+    // The pack changed elsewhere: the next one used is counted from what is really there.
+    stock(1);
+    await act(zone, ann, { type: "throw", unit: "ann", item: "healing", at: hero(ann.state, "ann").pos });
+    expect(inPack()).toBe(0);
+    expect(hero(ann.state, "ann").items.healing ?? 0).toBe(0);
+
+    // None left: refused, and nothing goes below nothing.
+    await act(zone, ann, { type: "drink", unit: "ann", item: "healing" });
+    expect(ann.errors.length).toBe(1);
+    expect(inPack()).toBe(0);
+
+    // The dev restock fills the pack itself, so it is still there on the next map.
+    await act(zone, ann, { type: "dev", dev: { op: "heal" } });
+    expect(inPack()).toBe(2);
+    expect(hero(ann.state, "ann").items).toEqual({ healing: 2, poison: 2, fire: 1, oil: 1, water: 1 });
+  });
+
   it("takes dev actions on a development deployment only", async () => {
     const { zone, ann } = await arrive();
     const at = ann.state.map.tiles.find((t) => hexDistance(t, ann.state.start) === 1 && t.biome === "plains")!;

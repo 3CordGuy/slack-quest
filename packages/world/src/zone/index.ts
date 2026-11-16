@@ -17,6 +17,8 @@ export {
   commonCost,
   THROWABLES,
   STARTING_ITEMS,
+  THROWABLE_KINDS,
+  cleanItems,
   throwRange,
   jumpRange,
   JUMP_MOVE_COST,

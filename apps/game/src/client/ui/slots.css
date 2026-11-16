@@ -145,11 +145,6 @@
 .trade-foot { gap: 10px; }
 .trade-state { font-size: 12px; min-width: 0; }
 
-/* Opened on a map: what is carried there to drink or throw, in a row over the pack; and the word that a fight has the gear held as it is. */
-.bag-satchel { flex: none; display: flex; align-items: center; gap: 6px; padding: 2px 4px 8px; }
-.bag-satchel-name { margin-right: 6px; font-size: 12px; color: var(--muted); }
-.satchel-item { position: relative; flex: none; display: grid; place-items: center; width: var(--u); height: var(--u); padding: 0; background: #1b110f; border: 2px solid #5a4630; border-radius: 0; box-shadow: none; }
-.satchel-item:hover { border-color: var(--gold); }
-.satchel-item[aria-disabled="true"] { opacity: 0.45; }
+/* Opened on a map while a fight is on: the word that the gear is held as it is. */
 .bag-locked { flex: none; margin: 0 4px 6px; padding: 4px 8px; font-size: 12px; color: #ffb3a8; background: rgba(74, 26, 24, 0.6); border: 2px solid var(--bad); }
 .bag-doll.locked .doll-slot:not(.empty) { cursor: not-allowed; }

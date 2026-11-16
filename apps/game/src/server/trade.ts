@@ -332,7 +332,7 @@ export function settleStatements(
       const cells = (ids: number[]) => `(SELECT COALESCE(SUM(${CELLS_SQL}), 0) FROM inventory WHERE id IN (${marks(ids)}))`;
       const more = back.items.length > 0 ? `(${cells(items)} - ${cells(back.items)})` : cells(items);
       const moreBinds = [...items, ...back.items];
-      need(`(${more} <= 0 OR ${carriedSql("?")} + ${more} <= ?)`, ...moreBinds, taker, taker, ...moreBinds, limit);
+      need(`(${more} <= 0 OR ${carriedSql("?")} + ${more} <= ?)`, ...moreBinds, taker, taker, taker, ...moreBinds, limit);
     }
     if (goods.gold > 0) need("(SELECT gold FROM characters WHERE player_id = ?) >= ?", giver, goods.gold);
     for (const kind of RESOURCE_KINDS) {

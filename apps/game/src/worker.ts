@@ -73,6 +73,7 @@ import { catchBook, hangAtHome, mountInPub, pubWall, unmountInPub } from "./serv
 import { pubLeaderboard } from "./server/pub-scores";
 import { contribute, crewWorks, projectStock } from "./server/projects";
 import { acceptTrade, closeTrade, listTrades, openTrade, setTradeSide } from "./server/trade";
+import { consumablesOf } from "./server/consumables";
 import { apothecaryView, brew, smithItem, smithyView } from "./server/workshops";
 import { cook, galleyView } from "./server/galley";
 import { announceXp, harborXpFor } from "./server/harbor-xp";
@@ -185,7 +186,7 @@ app.get("/api/me", async (c) => {
   // A hero from before looks came in is given their class's look and starting clothes the first time they
   // come in (see ensureLook).
   await ensureLook(c.env.DB, player.id);
-  const [character, inventory, crew, carry, harborXp, seen, held] = await Promise.all([
+  const [character, inventory, crew, carry, harborXp, seen, held, consumables] = await Promise.all([
     getCharacter(c.env.DB, player.id),
     getInventory(c.env.DB, player.id),
     crewFor(c.env.DB, player.id),
@@ -193,14 +194,15 @@ app.get("/api/me", async (c) => {
     harborXpFor(c.env.DB, player.id),
     seenRelease(c.env.DB, player.id),
     c.env.DB.prepare("SELECT kind, qty FROM resources WHERE player_id = ? AND qty > 0").bind(player.id).all<{ kind: string; qty: number }>(),
+    consumablesOf(c.env.DB, player.id),
   ]);
-  // `materials` is what is in the pack, in stacks beside the gear.
+  // `materials` is what is in the pack, in stacks beside the gear; `consumables` the potions and flasks there with them.
   const materials = Object.fromEntries(held.results.map((r) => [r.kind, r.qty]));
   // `inventory` is what the hero has with them; what is in storage at home is only listed inside their hut.
   // `isAdmin` only decides whether the client shows the admin link: every admin route checks again.
   // `seenRelease` is the newest release whose notes they have read on the notice board.
   // `devTools` shows the dev toolbox (ENVIRONMENT is "dev" on local and staging): the routes below answer only then.
-  return c.json({ player, character, inventory, materials, crew, carry, harborXp, seenRelease: seen, isAdmin: isAdmin(c.env, player), devTools: isDev(c.env) });
+  return c.json({ player, character, inventory, materials, consumables, crew, carry, harborXp, seenRelease: seen, isAdmin: isAdmin(c.env, player), devTools: isDev(c.env) });
 });
 
 // ---------- the dev toolbox ----------

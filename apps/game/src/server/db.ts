@@ -77,6 +77,7 @@ import { LOOKS } from "../client/render/looks";
 import { prepareXp, xpOutcome, type XpResult } from "./harbor-xp";
 import type { HarborRoom } from "./harbor-room";
 import { crewWorks } from "./projects";
+import { kitStatements } from "./consumables";
 import { brewBagOf } from "./workshops";
 import type { HutRoom } from "./hut-room";
 import type { PubRoom } from "./pub-room";
@@ -316,9 +317,13 @@ export const CELLS_SQL = (() => {
   const slots = Object.entries(SLOT_SIZE).map(([slot, f]) => (slot === "main_hand" ? `WHEN 'main_hand' THEN CASE ref ${weapons} ELSE ${f.w * f.h} END` : `WHEN '${slot}' THEN ${f.w * f.h}`)).join(" ");
   return `(CASE slot ${slots} ELSE 1 END)`;
 })();
-/** SQL for how many squares of the pack player `who` fills right now: unequipped gear not kept in a container, and stacks of materials. */
+/**
+ * SQL for how many squares of the pack player `who` fills right now: unequipped gear not kept in a container, stacks of
+ * materials, and stacks of what they carry to drink or throw. `who` appears three times: a caller that passes a bare `?` binds it three times.
+ */
 export const carriedSql = (who: string) => `((SELECT COALESCE(SUM(${CELLS_SQL}), 0) FROM inventory WHERE player_id = ${who} AND equipped = 0 AND stored_in IS NULL)
-  + (SELECT ${STACKS_SQL} FROM resources WHERE player_id = ${who} AND qty > 0))`;
+  + (SELECT ${STACKS_SQL} FROM resources WHERE player_id = ${who} AND qty > 0)
+  + (SELECT ${STACKS_SQL} FROM consumables WHERE player_id = ${who} AND qty > 0))`;
 const CARRIED_SQL = carriedSql("?1");
 /**
  * SQL, true while player ?1's pack has room for `cells` more squares under
@@ -432,6 +437,8 @@ export async function confirmCharacter(db: D1Database, playerId: string): Promis
     db.prepare("UPDATE characters SET status = 'active' WHERE player_id = ?").bind(playerId),
     insertItem(db, playerId, weapon, true),
     ...garb.map((item) => insertItem(db, playerId, item, true)),
+    // And the potions and flasks every hero starts out with.
+    ...kitStatements(db, playerId),
   ]);
   return true;
 }

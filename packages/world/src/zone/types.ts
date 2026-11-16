@@ -162,6 +162,8 @@ export interface ZoneHero {
   outfit?: Outfit;
   maxHp: number;
   maxFocus: number;
+  /** What they carry to drink or throw, out of their own pack. A stand-in has no pack and is given the starting kit. */
+  items?: Partial<Record<Throwable, number>>;
 }
 
 export type CommonAction = "dash" | "disengage" | "help" | "shove" | "jump";
@@ -188,6 +190,8 @@ export type ZoneAction =
   | { type: "drink"; by: string; unit: string; item: Throwable }
   | { type: "end_turn"; by: string; unit: string }
   | { type: "timeout" }
+  /** The server's own, never a client's: what a hero carries to drink or throw, as their pack holds it now. */
+  | { type: "stock"; unit: string; items: Partial<Record<Throwable, number>> }
   | { type: "dev"; by: string; dev: DevOp };
 
 /** Action types a player's client may send. `dev` is let through only on a development deployment. */
