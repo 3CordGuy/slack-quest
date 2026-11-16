@@ -74,7 +74,7 @@ import { pubLeaderboard } from "./server/pub-scores";
 import { contribute, crewWorks, projectStock } from "./server/projects";
 import { acceptTrade, closeTrade, listTrades, openTrade, setTradeSide } from "./server/trade";
 import { consumablesOf } from "./server/consumables";
-import { apothecaryView, brew, smithItem, smithyView } from "./server/workshops";
+import { apothecaryView, brew, brewFlask, smithItem, smithyView } from "./server/workshops";
 import { cook, galleyView } from "./server/galley";
 import { announceXp, harborXpFor } from "./server/harbor-xp";
 import { createZoneRow, crewPlaces, getZoneRow } from "./server/zones";
@@ -774,6 +774,16 @@ app.post("/api/apothecary/brew", async (c) => {
   const player = c.get("player");
   const body = await c.req.json<{ brewId?: unknown }>().catch(() => ({}) as { brewId?: unknown });
   const result = await brew(c.env.DB, player.id, String(body.brewId ?? ""));
+  if (typeof result === "string") return c.json({ error: result }, 409);
+  if (result.xp) c.executionCtx.waitUntil(announceXp(c.env, player.id, result.xp));
+  return c.json({ ...(await apothecaryView(c.env.DB, player.id)), xp: result.xp });
+});
+
+// Make one potion, flask or bomb for the pack. The recipe is the catalogue's; the client names only the kind.
+app.post("/api/apothecary/flask", async (c) => {
+  const player = c.get("player");
+  const body = await c.req.json<{ kind?: unknown }>().catch(() => ({}) as { kind?: unknown });
+  const result = await brewFlask(c.env.DB, player.id, String(body.kind ?? ""));
   if (typeof result === "string") return c.json({ error: result }, 409);
   if (result.xp) c.executionCtx.waitUntil(announceXp(c.env, player.id, result.xp));
   return c.json({ ...(await apothecaryView(c.env.DB, player.id)), xp: result.xp });

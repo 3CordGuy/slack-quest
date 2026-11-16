@@ -1,5 +1,6 @@
-// The apothecary and the smithy in D1: a hero's brew bag, brewing, and
-// working gear at the forge.
+// The apothecary and the smithy in D1: a hero's brew bag, brewing (for the
+// next voyage, and potions and flasks for the pack), and working gear at
+// the forge.
 //
 // The rules (recipes, costs, the +3 cap) live in packages/world/src/apothecary.ts
 // and smithy.ts. Each purchase here is one batch built on `spendStatements`:
@@ -9,10 +10,13 @@
 
 import {
   APOTHECARY_PROJECT,
+  FLASK_RECIPES,
   SMITHY_PROJECT,
+  addedSlots,
   brewBag,
   brewById,
   brewProblem,
+  flaskProblem,
   smithyCost,
   smithyProblem,
   smithyWork,
@@ -22,10 +26,13 @@ import {
   type Resources,
   type Slot,
   type SmithyCost,
+  type CarryState,
+  type Throwable,
   HARBOR_XP,
 } from "@gantt-quest/world";
+import { consumablesOf, type Consumables } from "./consumables";
 import { prepareXp, xpOutcome, type XpResult } from "./harbor-xp";
-import { crewFor, spendStatements } from "./db";
+import { carryState, crewFor, packHasRoomSql, spendStatements } from "./db";
 import { builtProjectIds, projectStock } from "./projects";
 
 async function crewBuilt(db: D1Database, playerId: string, projectId: string): Promise<boolean> {
@@ -50,11 +57,41 @@ export interface ApothecaryView {
   built: boolean;
   bag: string[];
   resources: Resources;
+  /** The potions, flasks and bombs already in the pack, and how full the pack is: the first of a kind needs a square. */
+  carried: Consumables;
+  carry: CarryState | null;
 }
 
 export async function apothecaryView(db: D1Database, playerId: string): Promise<ApothecaryView> {
-  const [built, bag, held] = await Promise.all([crewBuilt(db, playerId, APOTHECARY_PROJECT), brewBagOf(db, playerId), holdings(db, playerId)]);
-  return { built, bag, resources: held.resources };
+  const [built, bag, held, carried, carry] = await Promise.all([
+    crewBuilt(db, playerId, APOTHECARY_PROJECT),
+    brewBagOf(db, playerId),
+    holdings(db, playerId),
+    consumablesOf(db, playerId),
+    carryState(db, playerId),
+  ]);
+  return { built, bag, resources: held.resources, carried, carry };
+}
+
+/**
+ * Make one potion, flask or bomb and put it in the pack. Returns an error message, or what it earned.
+ * The materials are taken and the pack gains one in a single batch, which checks again that the
+ * materials are there and (for the first of a kind, which takes a square) that the pack has the room.
+ */
+export async function brewFlask(db: D1Database, playerId: string, kind: string): Promise<string | { xp?: XpResult }> {
+  const view = await apothecaryView(db, playerId);
+  const problem = flaskProblem(kind, view);
+  if (problem) return problem;
+  const k = kind as Throwable;
+  const squares = addedSlots(view.carried[k] ?? 0, 1);
+  const spend = spendStatements(db, playerId, 0, FLASK_RECIPES[k], squares > 0 && view.carry ? packHasRoomSql(view.carry.limit, squares) : "1");
+  const xp = await prepareXp(db, playerId, HARBOR_XP.brew);
+  const res = await db.batch([
+    ...spend,
+    db.prepare("INSERT INTO consumables (player_id, kind, qty) SELECT ?1, ?2, 1 WHERE changes() > 0 ON CONFLICT(player_id, kind) DO UPDATE SET qty = qty + 1").bind(playerId, k),
+    ...(xp?.statements() ?? []),
+  ]);
+  return res[spend.length].meta.changes > 0 ? { xp: xpOutcome(xp, res) } : "You no longer have what that takes, or the room in your pack for it.";
 }
 
 /** Brew one thing into the bag. Returns an error message, or null once it is in the bag. */

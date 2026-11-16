@@ -7,12 +7,15 @@ import { STARTING_STATS } from "@gantt-quest/core";
 import {
   APOTHECARY_PROJECT,
   BREWS,
+  FLASK_RECIPES,
   SMITHY_MAX_STEPS,
+  THROWABLE_KINDS,
   SMITHY_PROJECT,
   brewBag,
   brewBuff,
   brewProblem,
   createWorld,
+  flaskProblem,
   projectById,
   smithyCost,
   smithyProblem,
@@ -109,5 +112,29 @@ describe("the smithy", () => {
     expect(upgradedName("Anchor Mace", 2)).toBe("Anchor Mace +2");
     expect(upgradedName("Anchor Mace", 0)).toBe("Anchor Mace");
     expect(upgradedName("Anchor Mace", undefined)).toBe("Anchor Mace");
+  });
+});
+
+describe("brewing for the pack", () => {
+  const room = { carried: 3, limit: 60 };
+
+  it("has a recipe for everything a hero can drink or throw", () => {
+    expect(Object.keys(FLASK_RECIPES).sort()).toEqual([...THROWABLE_KINDS].sort());
+    expect(FLASK_RECIPES).toEqual({ healing: { herbs: 3 }, poison: { mushrooms: 3 }, fire: { wood: 2, copper: 1 }, oil: { bone: 2 }, water: { fur: 1 } });
+  });
+
+  it("needs the apothecary built and the materials, and can be done again and again", () => {
+    expect(flaskProblem("healing", { built: true, resources: { herbs: 3 }, carried: {}, carry: room })).toBeNull();
+    expect(flaskProblem("healing", { built: true, resources: { herbs: 3 }, carried: { healing: 12 }, carry: room })).toBeNull();
+    expect(flaskProblem("healing", { built: false, resources: { herbs: 3 }, carried: {}, carry: room })).toMatch(/not built/);
+    expect(flaskProblem("fire", { built: true, resources: { wood: 2 }, carried: {}, carry: room })).toMatch(/2 wood, 1 copper/);
+    expect(flaskProblem("elixir", { built: true, resources: { herbs: 9 }, carried: {}, carry: room })).toMatch(/does not make/);
+  });
+
+  it("needs a square of the pack for the first of a kind, and for a new stack, but not for one more on a stack", () => {
+    const full = { carried: 60, limit: 60 };
+    expect(flaskProblem("water", { built: true, resources: { fur: 1 }, carried: {}, carry: full })).toMatch(/pack is full/);
+    expect(flaskProblem("water", { built: true, resources: { fur: 1 }, carried: { water: 4 }, carry: full })).toBeNull();
+    expect(flaskProblem("water", { built: true, resources: { fur: 1 }, carried: { water: 99 }, carry: full })).toMatch(/pack is full/);
   });
 });
