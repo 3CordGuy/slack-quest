@@ -7,7 +7,7 @@ import { hexDistance, type HexPos } from "@gantt-quest/core";
 import {
   MAX_NPC_MESSAGES,
   MAX_PERSUADE_ATTEMPTS,
-  MOVE_COST,
+  tileCost,
   brewBag,
   brewBuff,
   brewById,
@@ -461,13 +461,15 @@ export function RunView({ code, me, refresh, onLeave }: { code: string; me: Me; 
 }
 
 const BIOME_LABEL: Record<string, string> = { plains: "Plains", forest: "Forest", hills: "Hills", water: "Sea", dock: "Dock", cave: "Cave floor", rock: "Solid rock", gate: "A locked door" };
+/** A hex with something standing on it too thick to get through. */
+const BLOCKER_LABEL: Record<string, string> = { trees: "Thick woods", boulders: "Boulders" };
 
 /** What the hovered hex is, what it costs to enter, and what walking there would cost this turn. */
 function HexTip({ state, hover }: { state: ClientState; hover: HexPos }) {
   const tile = tileAt(state.map, hover);
   if (!tile) return null;
   const poi = poiAt(state.map, hover);
-  const cost = MOVE_COST[tile.biome];
+  const cost = tileCost(tile);
   const me = state.heroes.find((h) => h.id === state.you);
   const turn = state.turn?.heroId === state.you ? state.turn : null;
   let walk: string | null = null;
@@ -477,7 +479,7 @@ function HexTip({ state, hover }: { state: ClientState; hover: HexPos }) {
   }
   return (
     <div className="tip">
-      <strong>{poi ? `${poiName(state, poi)}${poi.cleared ? " (cleared)" : ""}` : BIOME_LABEL[tile.biome]}</strong>
+      <strong>{poi ? `${poiName(state, poi)}${poi.cleared ? " (cleared)" : ""}` : tile.blocker ? BLOCKER_LABEL[tile.blocker] : BIOME_LABEL[tile.biome]}</strong>
       {poi && <span className="muted"> · {BIOME_LABEL[tile.biome]}</span>}
       <span className="muted"> · {Number.isFinite(cost) ? `${cost} movement to enter` : poi?.kind === "gate" ? "stand beside it to unlock or force it" : "cannot be crossed"}</span>
       {walk && <span className={walk.startsWith("out") ? "bad" : "good"}> · {walk}</span>}

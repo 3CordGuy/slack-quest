@@ -52,6 +52,16 @@ export interface Tile {
   h: number;
   /** A building stands on this hex (part of the ground a Harbor building takes up): it cannot be walked through. */
   built?: boolean;
+  /** Something too thick to get through stands on this hex: a stand of old trees in the forest, or a heap of boulders in the hills. */
+  blocker?: Blocker;
+}
+
+/** What can stand on an island hex and stop anyone walking onto it. */
+export type Blocker = "trees" | "boulders";
+
+/** What it costs to step onto a tile: its ground's cost, or Infinity where a building or a blocker stands. */
+export function tileCost(t: Tile): number {
+  return t.built || t.blocker ? Infinity : MOVE_COST[t.biome];
 }
 
 /**
@@ -136,7 +146,7 @@ export function describeBearing(from: HexPos, to: HexPos): string {
 // ---------- pathfinding ----------
 
 type CostFn = (tile: Tile) => number;
-const terrainCost: CostFn = (t) => (t.built ? Infinity : MOVE_COST[t.biome]);
+const terrainCost: CostFn = tileCost;
 
 interface Reached {
   cost: number;
@@ -311,8 +321,54 @@ export function generateMap(seed: string, grid: HexGrid = MAP_GRID): WorldMap {
       if (tileAt(map, step)!.biome === "water") setBiome(step, "plains");
     }
   }
+  placeBlockers(map, seed, landing);
   scatterPickups(map, seed, landing);
   return map;
+}
+
+/**
+ * Stand old trees in the forest and heap boulders in the hills, on hexes nobody
+ * can walk through, clumped so they read as thickets and outcrops. One goes down
+ * only where it shuts nothing else off: every hex that could be walked to from
+ * the landing before still can be, though perhaps the long way round. None
+ * stands on a place, nor right beside the landing. Uses its own random stream,
+ * so the rest of the island comes out the same as before blockers existed.
+ */
+export function placeBlockers(map: WorldMap, seed: string, landing: HexPos) {
+  const rng = makeRng(seedFromString(`blockers|${seed}`));
+  const candidates = map.tiles.filter(
+    (t) =>
+      (t.biome === "forest" || t.biome === "hills") &&
+      hexDistance(t, landing) >= 2 &&
+      map.pois.every((p) => hexDistance(p.pos, t) >= 1),
+  );
+  // A random order: shuffled, so the clumping below does not always grow from the same corner.
+  for (let i = candidates.length - 1; i > 0; i--) {
+    const j = Math.floor(rng.next() * (i + 1));
+    [candidates[i], candidates[j]] = [candidates[j], candidates[i]];
+  }
+  let open = reachable(map, landing).size;
+  // No more than about a sixth of the land: an island to find a way across, not a maze.
+  let left = Math.round(map.tiles.filter((t) => t.biome !== "water").length * 0.17);
+  // Two passes: the first seeds a few stands, the second lets them grow into the hexes beside them.
+  for (const grow of [false, true]) {
+    for (const t of candidates) {
+      if (t.blocker) continue;
+      if (left <= 0) return;
+      const beside = hexNeighbors(t, map.grid).some((n) => !!tileAt(map, n)?.blocker);
+      const chance = grow ? (beside ? 0.36 : 0.05) : 0.12;
+      if (!rng.chance(chance)) continue;
+      t.blocker = t.biome === "forest" ? "trees" : "boulders";
+      const now = reachable(map, landing).size;
+      // It cut something off (or stood somewhere nobody could reach anyway): take it back.
+      if (now !== open - 1) {
+        delete t.blocker;
+        continue;
+      }
+      open = now;
+      left--;
+    }
+  }
 }
 
 /**

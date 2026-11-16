@@ -25,7 +25,7 @@ import { freshVitals, heroCombatant } from "./hero";
 import { addResources, capPerks, xpWithBonus, type Perk, type ResourceKind, type Resources } from "./hut";
 import { capPubBuff } from "./pub";
 import { brewBag, brewBuff } from "./apothecary";
-import { BASE_HEIGHT, MOVE_COST, PICKUP_MAX, findPath, generateMap, poiAt, poiById, tileAt, type ChestLoot, type Poi, type WorldMap } from "./map";
+import { BASE_HEIGHT, PICKUP_MAX, findPath, generateMap, poiAt, poiById, tileAt, tileCost, type ChestLoot, type Poi, type WorldMap } from "./map";
 import {
   MAX_NPC_MESSAGES,
   MAX_PERSUADE_ATTEMPTS,
@@ -594,7 +594,10 @@ function inSight(state: WorldState, tile: HexPos, from: HexPos): boolean {
   return !state.seen || hexDistance(tile, from) <= VISION || state.seen.includes(posKeyOf(tile));
 }
 
-const walkable = (state: WorldState, pos: HexPos) => Number.isFinite(MOVE_COST[tileAt(state.map, pos)?.biome ?? "water"]);
+const walkable = (state: WorldState, pos: HexPos) => {
+  const tile = tileAt(state.map, pos);
+  return !!tile && Number.isFinite(tileCost(tile));
+};
 
 /** Put a new band ashore somewhere out of the heroes' sight, clear of places and other bands. False if there is nowhere. */
 function spawnRoamer(ctx: Ctx): boolean {
@@ -1241,7 +1244,7 @@ export function stepWorld(prev: WorldState, action: WorldAction): StepResult {
       const hero = heroById(state, action.heroId)!;
       // Nobody walks into fog: only over ground the party has seen, or can see from here.
       const from = hero.pos;
-      const route = findPath(state.map, from, action.to, state.turn.mp, (t) => (inSight(state, t, from) ? MOVE_COST[t.biome] : Infinity));
+      const route = findPath(state.map, from, action.to, state.turn.mp, (t) => (inSight(state, t, from) ? tileCost(t) : Infinity));
       if (!route || route.path.length === 0) return fail("out of reach");
       // Walking up to a roaming band starts the fight there, on the hex where they meet.
       // In the caverns, so does coming within a hex of whatever lurks in a chamber.
