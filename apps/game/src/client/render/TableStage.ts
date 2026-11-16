@@ -672,8 +672,6 @@ export class TableStage implements WorldMinigame {
   private ringGeo = new THREE.RingGeometry(0.075, 0.092, 28);
 
   constructor(private world: WorldRenderer, private group: THREE.Group, private kind: TableKind, private cb: TableCallbacks) {
-    // Dice and markers are read up close: draw them at full resolution, not the chunky half.
-    world.setSharp(true);
     this.buildTable();
     this.group.add(this.furniture, this.stools, this.pot, this.middle, this.fx, this.shadows.group);
     this.old = world.poiObject(kind);
@@ -1991,7 +1989,6 @@ export class TableStage implements WorldMinigame {
       this.old.visible = true;
       this.old.scale.setScalar(1);
     }
-    this.world.setSharp(false);
     this.world.slideTableLamp(this.kind, 0);
     this.shadows.dispose();
     for (const r of this.rigs.values()) this.disposeRig(r);

@@ -239,9 +239,8 @@ const FREE_ROAM_REACH = 60;
 
 const SQRT3 = Math.sqrt(3);
 /**
- * Render at 1/PIXEL resolution and scale up unsmoothed for a chunky look. With "Fancy graphics" on the world is
- * drawn at full resolution instead, so the figures' faces and gear can be made out; what is read (plates, speech)
- * keeps its chunky pixels and its size either way.
+ * The world is drawn at full resolution and smoothed. What is read (plates, speech) is still drawn in chunky
+ * pixels, PIXEL screen pixels each, so it keeps its size.
  */
 const PIXEL = 2;
 /** Nearest and farthest the camera may sit from what it looks at. */
@@ -759,13 +758,11 @@ export class WorldRenderer {
   /** The finishing pass (bloom, tilt-shift, grade), there while "Fancy graphics" is on. On the dev server P switches it alone, to compare. */
   post: PostFx | null = null;
   private unwatchFancy: () => void;
-  /** How many of the view's pixels make one chunky pixel: 1 as a rule, PIXEL while the world is drawn at full resolution ("Fancy graphics", or a game that asked for it). */
-  private fine = 1;
+  /** How many of the view's pixels make one of the plates' chunky pixels. */
+  private fine = PIXEL;
   /** A backdrop's fixed point of view (see setVantage), and the lightning it is lent by the view showing it. */
   private vantage: { from: THREE.Vector3; to: THREE.Vector3 } | null = null;
   /** A game being played in the world, the group its things stand in, and how your own hero looked before it hid them. */
-  /** How many screen pixels one drawn pixel covers. */
-  private pixel = PIXEL;
   /** Units a minigame is drawing for itself. */
   private stageHidden: string[] = [];
   private minigame: { game: WorldMinigame; group: THREE.Group; hidden: { obj: THREE.Object3D; was: boolean }[]; felled: boolean; sight?: THREE.Vector3 } | null = null;
@@ -934,7 +931,7 @@ export class WorldRenderer {
    */
   constructor(private container: HTMLElement, private callbacks: RendererCallbacks, private opts: { backdrop?: boolean } = {}) {
     this.ear = opts.backdrop ? DEAF : openEar();
-    this.renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: "low-power" });
+    this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "low-power" });
     this.renderer.setPixelRatio(1);
     this.renderer.localClippingEnabled = true;
     if (!this.opts.backdrop) {
@@ -948,7 +945,6 @@ export class WorldRenderer {
     canvas.style.width = "100%";
     canvas.style.height = "100%";
     canvas.style.display = "block";
-    canvas.style.imageRendering = "pixelated";
     canvas.style.touchAction = "none";
     // Under a veil until there is a place to show (see `reveal`): going in or out of a building never flashes
     // an empty sea before the room is built. The canvas itself is the veil's dark until the first frame is drawn.
@@ -2177,7 +2173,7 @@ export class WorldRenderer {
     v.y += lift;
     v.project(this.camera);
     if (v.z < -1 || v.z > 1 || Math.abs(v.x) > 1 || Math.abs(v.y) > 1) return null;
-    // The canvas is drawn at 1/PIXEL size and stretched; the container's own size is what the HUD is laid out in.
+    // The container's own size is what the HUD is laid out in.
     return { x: ((v.x + 1) / 2) * this.container.clientWidth, y: ((1 - v.y) / 2) * this.container.clientHeight };
   }
 
@@ -5506,21 +5502,12 @@ export class WorldRenderer {
 
   // ---------- frame loop ----------
 
-  /** Draw at full resolution (a game that is read up close, like a table) instead of the chunky half. */
-  setSharp(sharp: boolean) {
-    this.pixel = sharp ? 1 : PIXEL;
-    this.resize();
-  }
-
   private resize() {
     const w = Math.max(1, this.container.clientWidth);
     const h = Math.max(1, this.container.clientHeight);
-    // Full resolution with "Fancy graphics" on, or while a game asks for it (setSharp); the chunky half otherwise.
-    const px = fancy.get() ? 1 : this.pixel;
-    this.fine = PIXEL / px;
     this.ambience.fine = this.fine;
-    this.renderer.setSize(Math.ceil(w / px), Math.ceil(h / px), false);
-    this.post?.setSize(Math.ceil(w / px), Math.ceil(h / px));
+    this.renderer.setSize(w, h, false);
+    this.post?.setSize(w, h);
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
   }
