@@ -126,6 +126,18 @@ function book(k: Kit, cover: Paint, spine: Paint, corner: Paint) {
   for (const y of [5.7, -5.7]) k.box(1.7, 1.7, 0.35, corner, { at: [4.5, y, 1.95] }, 0.1);
 }
 
+/** A short bow's stave, tips and grip, unstrung: the grip at (3.2, 0, 0), the tips at (-0.5, ±8, 0). */
+function bowStave(k: Kit) {
+  const stave: V3[] = Array.from({ length: 9 }, (_, i) => {
+    const y = -8 + i * 2;
+    const t = y / 8;
+    return [3.2 * (1 - t * t) - 0.5 * t ** 6, y, 0];
+  });
+  k.rod(stave, 0.6, C.wood, {}, 6);
+  for (const y of [-8, 8]) k.ball(0.6, C.bark, { at: [-0.5, y, 0] });
+  k.cyl(0.85, 0.85, 2.8, 6, k.a, { at: [3.2, 0, 0] });
+}
+
 /** A dagger, its guard at the origin. */
 function dagger(k: Kit) {
   k.hull(bladePoints(8, 1.9, 0.75, 2.6, 0.3), C.steel);
@@ -253,15 +265,10 @@ export const LOW_POLY: Record<string, LowPolyDef> = {
     // A short bow with an arrow nocked: the stave on one diagonal, the arrow on the other.
     lean: -DIAG,
     spin: 0.3,
+    // In an archer's hand, the stave alone: the figure strings it and nocks an arrow of its own, to draw (see figures.ts).
+    inHand: bowStave,
     build: (k) => {
-      const stave: V3[] = Array.from({ length: 9 }, (_, i) => {
-        const y = -8 + i * 2;
-        const t = y / 8;
-        return [3.2 * (1 - t * t) - 0.5 * t ** 6, y, 0];
-      });
-      k.rod(stave, 0.6, C.wood, {}, 6);
-      for (const y of [-8, 8]) k.ball(0.6, C.bark, { at: [-0.5, y, 0] });
-      k.cyl(0.85, 0.85, 2.8, 6, k.a, { at: [3.2, 0, 0] });
+      bowStave(k);
       k.cyl(0.12, 0.12, 16, 3, C.paper, { at: [-0.5, 0, 0] });
       k.cyl(0.25, 0.25, 10.5, 4, C.paper, { at: [3.6, 0, 0.9], rot: [0, 0, Math.PI / 2] });
       k.cone(0.75, 2, 4, C.steel, { at: [9.6, 0, 0.9], rot: [0, 0, -Math.PI / 2] });
