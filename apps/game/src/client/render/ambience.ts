@@ -9,6 +9,7 @@
 // sky.
 
 import * as THREE from "three";
+import { cobbleTexture, floorTexture, pierTexture } from "./groundArt";
 import { devTools } from "../devTools";
 import { fancy } from "./fancy";
 import { WIND_DIR, addFieldSway, gustAt, setFieldCalm, windPower } from "./wind";
@@ -363,66 +364,48 @@ function onPath(bits: number, dx: number, dz: number, margin: number): boolean {
   return d < pathReach(bits, Math.atan2(dz, dx)) + margin;
 }
 
-/** Two scallops of a cut-out wave: a white crest over a lighter blue body. */
-const waveTexture = () =>
-  pixelTexture(24, 6, (ctx) =>
-    stamp(
-      ctx,
-      [
-        "    wwww        wwww    ",
-        "  wwbbbbww    wwbbbbww  ",
-        " wbbbbbbbbw  wbbbbbbbbw ",
-        "wbbbbbbbbbbwwbbbbbbbbbbw",
-        "bbbbbbbbbbbbbbbbbbbbbbbb",
-        "bbbbbbbbbbbbbbbbbbbbbbbb",
-      ],
-      { w: "#f2f9ff", b: "#4f95e4" },
-    ),
-  );
+/**
+ * Two scallops of a cut-out wave: a white crest over a lighter blue body. Drawn smoothly at eight times the
+ * strip's old 24 by 6, so its outline stays clean however near the camera comes.
+ */
+const waveTexture = () => {
+  const k = 8;
+  const canvas = document.createElement("canvas");
+  canvas.width = 24 * k;
+  canvas.height = 6 * k;
+  const ctx = canvas.getContext("2d")!;
+  /** The top of the wave at x: a rounded hump either side of the middle, meeting the next in a trough. */
+  const top = (x: number) => {
+    const u = ((x / k) % 12 - 6) / 6;
+    return k * (4 - 3.6 * Math.sqrt(Math.max(0, 1 - u * u)));
+  };
+  const outline = new Path2D();
+  outline.moveTo(0, canvas.height);
+  for (let x = 0; x <= canvas.width; x++) outline.lineTo(x, top(x));
+  outline.lineTo(canvas.width, canvas.height);
+  outline.closePath();
+  ctx.fillStyle = "#4f95e4";
+  ctx.fill(outline);
+  ctx.save();
+  ctx.clip(outline);
+  ctx.beginPath();
+  for (let x = 0; x <= canvas.width; x++) (x === 0 ? ctx.moveTo : ctx.lineTo).call(ctx, x, top(x));
+  ctx.strokeStyle = "#f2f9ff";
+  ctx.lineWidth = 2.6 * k;
+  ctx.lineJoin = "round";
+  ctx.stroke();
+  ctx.restore();
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+};
 
 /** Width of a wave strip: short enough that two rows fit inside a hex at any angle. */
 const WAVE_WIDTH = 1.3;
 /** How far each row sits from the middle of its hex. */
 const WAVE_ROW = 0.3;
-/** World units covered by one repeat of the floorboard texture: about one hex across. */
-const BOARD_SPAN = 1.76;
-
-/**
- * Floorboards for a hut: four rows of planks with staggered ends, a dark seam
- * between rows, and a few streaks of grain. Flat colours only, so it sits with
- * the rest of the scenery.
- */
-const floorTexture = () =>
-  pixelTexture(32, 32, (ctx) => {
-    const boards = ["#b58d5e", "#a98253", "#bd9566", "#b08a5c"];
-    const seam = "#7f5f3c";
-    const grain = "#9c7749";
-    const light = "#c9a274";
-    for (let row = 0; row < 4; row++) {
-      const y = row * 8;
-      // Each row is two planks, with the joint somewhere different every row.
-      const joint = [11, 25, 5, 19][row];
-      for (let x = 0; x < 32; x++) {
-        const plank = x < joint ? row : row + 2;
-        ctx.fillStyle = boards[plank % boards.length];
-        ctx.fillRect(x, y, 1, 7);
-      }
-      ctx.fillStyle = seam;
-      ctx.fillRect(0, y + 7, 32, 1);
-      ctx.fillRect(joint, y, 1, 7);
-      // Short streaks along the plank, darker and lighter.
-      for (let i = 0; i < 5; i++) {
-        const gx = Math.floor(hash(row, i, 300) * 28);
-        const gy = y + 1 + Math.floor(hash(row, i, 301) * 5);
-        const len = 2 + Math.floor(hash(row, i, 302) * 4);
-        ctx.fillStyle = i % 3 === 2 ? light : grain;
-        ctx.fillRect(gx, gy, len, 1);
-      }
-    }
-    // One knot.
-    ctx.fillStyle = seam;
-    ctx.fillRect(21, 11, 2, 2);
-  });
+/** World units covered by one repeat of the illustrated ground (cobbles, boards): about one hex across. */
+const GROUND_SPAN = 1.76;
 
 /** Raindrops in the air at once. */
 const DROPS = 150;
@@ -437,8 +420,8 @@ const LOBES = 5;
 
 /**
  * What the pixel decorations (smoke rings, wisps) need to know about the view: how big the picture being drawn
- * is, in its own pixels, and how many of those make one chunky pixel (1 as a rule, 2 with "Fancy graphics" on,
- * when the world is drawn at full resolution). One per ambience, shared by its materials, kept current by `trackView`.
+ * is, in its own pixels, and how many of those make one chunky pixel (2: the world is drawn at full resolution).
+ * One per ambience, shared by its materials, kept current by `trackView`.
  */
 type PixelView = { uRes: { value: THREE.Vector2 }; uFine: { value: number } };
 const viewSize = new THREE.Vector2();
@@ -529,131 +512,6 @@ function wispMaterial(view: PixelView): THREE.ShaderMaterial {
     `,
   });
 }
-/**
- * Cobbles for the Harbor's streets, as quiet as the floorboards: irregular
- * rounded stones of uneven size in four near-identical greys, with joints
- * only a shade darker and now and then a faintly mossy stone. Each pixel
- * belongs to the nearest of a scatter of stone centres, and the pixels where
- * two stones meet are the joint. The scatter wraps, so the sheet tiles.
- */
-const cobbleTexture = () =>
-  pixelTexture(32, 32, (ctx) => {
-    const SIZE = 32;
-    const CELLS = 5;
-    const step = SIZE / CELLS;
-    const stones = ["#72757c", "#6d7077", "#75787f", "#6f7279"];
-    // One centre per cell of a coarse grid, pushed well off the middle so no rows or columns show.
-    const centres: { x: number; y: number; tone: string }[] = [];
-    for (let cy = 0; cy < CELLS; cy++) {
-      for (let cx = 0; cx < CELLS; cx++) {
-        centres.push({
-          x: (cx + 0.15 + hash(cx, cy, 610) * 0.7) * step,
-          y: (cy + 0.15 + hash(cx, cy, 611) * 0.7) * step,
-          tone: hash(cx, cy, 612) < 0.07 ? "#6b746c" : stones[Math.floor(hash(cx, cy, 613) * stones.length)],
-        });
-      }
-    }
-    const wrap = (d: number) => Math.min(Math.abs(d), SIZE - Math.abs(d));
-    for (let y = 0; y < SIZE; y++) {
-      for (let x = 0; x < SIZE; x++) {
-        let best = Infinity;
-        let second = Infinity;
-        let tone = stones[0];
-        for (const c of centres) {
-          const d = Math.hypot(wrap(x + 0.5 - c.x), wrap(y + 0.5 - c.y));
-          if (d < best) {
-            second = best;
-            best = d;
-            tone = c.tone;
-          } else if (d < second) second = d;
-        }
-        ctx.fillStyle = second - best < 1.1 ? "#63666d" : tone;
-        ctx.fillRect(x, y, 1, 1);
-      }
-    }
-  });
-
-/**
- * Planks for the piers: long weathered boards running out to sea, in close
- * browns with thin dark gaps and the odd nail. Quieter than the hut floor.
- */
-const pierTexture = () =>
-  pixelTexture(32, 32, (ctx) => {
-    const boards = ["#9a7748", "#927044", "#a07d4e", "#967446"];
-    for (let col = 0; col < 4; col++) {
-      const x = col * 8;
-      // Each run is two boards end to end, the joint somewhere different every run.
-      const joint = [9, 22, 15, 4][col];
-      for (let y = 0; y < 32; y++) {
-        ctx.fillStyle = boards[(y < joint ? col : col + 2) % boards.length];
-        ctx.fillRect(x, y, 7, 1);
-      }
-      ctx.fillStyle = "#7a5c38";
-      ctx.fillRect(x + 7, 0, 1, 32);
-      ctx.fillRect(x, joint, 7, 1);
-      ctx.fillStyle = "#6b5234";
-      ctx.fillRect(x + 3, (joint + 2) % 32, 1, 1);
-      // A streak or two of pale, salt-bleached grain.
-      ctx.fillStyle = "#a98658";
-      for (let i = 0; i < 2; i++) ctx.fillRect(x + 1 + Math.floor(hash(col, i, 630) * 5), Math.floor(hash(col, i, 631) * 28), 1, 2 + Math.floor(hash(col, i, 632) * 3));
-    }
-  });
-
-/**
- * Mud for the Harbor's unpaved ground: one brown with a faint scatter of
- * darker wet patches, paler grit and a few short ruts. Barely there.
- */
-const mudTexture = () =>
-  pixelTexture(32, 32, (ctx) => {
-    ctx.fillStyle = "#5f5140";
-    ctx.fillRect(0, 0, 32, 32);
-    for (let i = 0; i < 46; i++) {
-      const x = Math.floor(hash(i, 1, 620) * 32);
-      const y = Math.floor(hash(i, 2, 620) * 32);
-      const kind = hash(i, 3, 620);
-      ctx.fillStyle = kind < 0.5 ? "#574a3a" : kind < 0.85 ? "#665846" : "#52463a";
-      // Mostly single pixels; some smears two or three long, and a few ruts.
-      const len = kind < 0.5 ? 1 + Math.floor(hash(i, 4, 620) * 3) : kind < 0.85 ? 1 : 4 + Math.floor(hash(i, 4, 620) * 3);
-      for (let dx = 0; dx < len; dx++) ctx.fillRect((x + dx) % 32, y, 1, 1);
-    }
-  });
-
-/**
- * Trodden earth for the dirt paths, in the same pixel style as the mud: dusty brown grit, a scatter of small
- * pebbles with a pale top, and darker smears where feet and wheels have worn it. It is laid by world position,
- * so it runs on unbroken from one path hex into the next.
- */
-const pathTexture = () =>
-  pixelTexture(32, 32, (ctx) => {
-    ctx.fillStyle = "#a88b5e";
-    ctx.fillRect(0, 0, 32, 32);
-    for (let i = 0; i < 70; i++) {
-      const x = Math.floor(hash(i, 1, 640) * 32);
-      const y = Math.floor(hash(i, 2, 640) * 32);
-      const kind = hash(i, 3, 640);
-      if (kind < 0.42) {
-        // Grit: single pixels a shade either way.
-        ctx.fillStyle = hash(i, 4, 640) < 0.5 ? "#9a7e53" : "#b5996a";
-        ctx.fillRect(x, y, 1, 1);
-      } else if (kind < 0.7) {
-        // Worn smears, two to five long, darker.
-        ctx.fillStyle = hash(i, 4, 640) < 0.6 ? "#937650" : "#8a6d48";
-        const len = 2 + Math.floor(hash(i, 5, 640) * 3.99);
-        for (let dx = 0; dx < len; dx++) ctx.fillRect((x + dx) % 32, y, 1, 1);
-      } else if (kind < 0.9) {
-        // A pebble: two by two, grey, lit on top.
-        ctx.fillStyle = "#8e877a";
-        ctx.fillRect(x, y, 2, 2);
-        ctx.fillStyle = "#bdb6a6";
-        ctx.fillRect(x, y, 1, 1);
-      } else {
-        // A dry crack.
-        ctx.fillStyle = "#7c6242";
-        for (let k = 0; k < 4; k++) ctx.fillRect((x + k) % 32, (y + (k >> 1)) % 32, 1, 1);
-      }
-    }
-  });
-
 /**
  * A puddle: a blocky pixel blob of dark water, stepped at the ends rather than
  * round, with a pale glint along its far edge.
@@ -917,7 +775,7 @@ export class Ambience {
   private wispAt = new THREE.Vector3();
   private wispAhead = new THREE.Vector3();
   private wispBehind = new THREE.Vector3();
-  /** How many of the picture's pixels make one chunky pixel: 1 as a rule, 2 while the world is drawn at full resolution. */
+  /** How many of the picture's pixels make one chunky pixel (the world renderer's PIXEL). */
   set fine(fine: number) {
     this.pixelView.uFine.value = fine;
   }
@@ -1129,8 +987,8 @@ export class Ambience {
       this.group.add(lantern, cap, chain);
     }
 
-    // ---- floorboards and cobbles: laid as one sheet each, so the pattern runs across hexes ----
-    const lay = (biome: string, map: THREE.CanvasTexture, span: number, material?: THREE.Material) => {
+    // ---- floorboards, cobbles and pier planks: laid as one sheet each, so the pattern runs across hexes ----
+    const lay = (biome: string, map: THREE.Texture) => {
       const under = tiles.filter((t) => (t.biome as string) === biome);
       if (under.length === 0) return;
       const positions: number[] = [];
@@ -1142,26 +1000,24 @@ export class Ambience {
         hexTop((x, y, z, nx, ny, nz) => {
           positions.push(p.x + x + nx * 0.006, p.y + y + ny * 0.006, p.z + z + nz * 0.006);
           normals.push(nx, ny, nz);
-          uvs.push((p.x + x) / span, (p.z + z) / span);
+          uvs.push((p.x + x) / GROUND_SPAN, (p.z + z) / GROUND_SPAN);
         });
       }
       const sheet = new THREE.BufferGeometry();
       sheet.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
       sheet.setAttribute("uv", new THREE.Float32BufferAttribute(uvs, 2));
       sheet.setAttribute("normal", new THREE.Float32BufferAttribute(normals, 3));
-      map.wrapS = map.wrapT = THREE.RepeatWrapping;
-      const mesh = new THREE.Mesh(sheet, material ?? new THREE.MeshLambertMaterial({ map }));
+      const mesh = new THREE.Mesh(sheet, new THREE.MeshLambertMaterial({ map }));
       mesh.receiveShadow = true;
       this.group.add(mesh);
     };
+    lay("floor", floorTexture());
+    lay("cobble", cobbleTexture());
+    lay("dock", pierTexture());
     // The Harbor's grass is drabbed by the wet, as the renderer does for every grass tile in a port.
     const wet = tiles.some((t) => (t.biome as string) === "cobble");
     const grassTint = new THREE.Color("#7cb856");
     if (wet) grassTint.lerp(new THREE.Color("#5d6a5c"), 0.5);
-    lay("floor", floorTexture(), BOARD_SPAN);
-    lay("cobble", cobbleTexture(), BOARD_SPAN);
-    lay("mud", mudTexture(), BOARD_SPAN);
-    lay("dock", pierTexture(), BOARD_SPAN);
     // ---- grass edges: where a dirt path meets grass, the grass breaks up into tiny hexes across the dirt ----
     // The tiny hexes sit on one lattice for the whole map, so they line up across tile borders, and thin out
     // the further they are from the grass: about half the edge row, a few just beyond it, then bare dirt.
@@ -1301,12 +1157,12 @@ export class Ambience {
     // pushed in and out by a smooth wobble of where it lies in the world, so it is ragged, not ruled; a strip's
     // end, where it meets the next hex's, is left straight, and its corners move the same in both hexes (they
     // are the same point), so the two still meet. Out past the flat of the tile it bends down over the rounded
-    // rim, so two hexes' strips meet in the seam between them. A pixel texture of grit and pebbles is laid over
-    // it by world position.
+    // rim, so two hexes' strips meet in the seam between them. It is one flat earth colour, a shade lighter or
+    // darker from point to point.
     const pathPos: number[] = [];
     const pathCol: number[] = [];
-    const pathUv: number[] = [];
-    const dirt = wet ? new THREE.Color(0.88, 0.85, 0.82) : new THREE.Color(1, 1, 1);
+    const dirt = new THREE.Color("#a88b5e");
+    if (wet) dirt.multiply(new THREE.Color(0.88, 0.85, 0.82));
     const flat = SIDE_REACH - TILE_FILLET;
     /** How far below the flat of the tile a point this far out (along the nearest side's normal) lies. */
     const sag = (x: number, z: number) => {
@@ -1356,7 +1212,6 @@ export class Ambience {
         shade.copy(dirt).multiplyScalar(0.93 + hash(Math.round(v[0] * 23), Math.round(v[2] * 23), 41) * 0.12);
         if (tint) shade.multiply(tint);
         pathCol.push(shade.r, shade.g, shade.b);
-        pathUv.push(v[0] / BOARD_SPAN, v[2] / BOARD_SPAN);
       };
       // The fringe: short blades rooted all along the ragged edge, just behind the ridge, standing up and leaning a
       // little away from the path, so the grass crowds the edge without the wind laying it over the dirt. None at
@@ -1443,11 +1298,8 @@ export class Ambience {
       const geo = new THREE.BufferGeometry();
       geo.setAttribute("position", new THREE.Float32BufferAttribute(pathPos, 3));
       geo.setAttribute("color", new THREE.Float32BufferAttribute(pathCol, 3));
-      geo.setAttribute("uv", new THREE.Float32BufferAttribute(pathUv, 2));
       geo.computeVertexNormals();
-      const map = pathTexture();
-      map.wrapS = map.wrapT = THREE.RepeatWrapping;
-      const mesh = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ map, vertexColors: true }));
+      const mesh = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ vertexColors: true }));
       mesh.receiveShadow = true;
       this.group.add(mesh);
     }

@@ -2,8 +2,10 @@
 // drawn as one unbroken, moving surface: rolling waves that catch the light,
 // the sky's colour on their far slopes, a bright path toward the sun or moon,
 // lantern and fire light glancing off them at night, paler shallows and foam
-// along the shore. The water's own colour is cut into flat steps with hard
+// along the shore. The water's own colour is cut into flat steps with clean
 // edges, like the flat-shaded ground beside it; the reflections on it are smooth.
+// Every hard edge (a band of tone, foam, a thread of light) is softened over
+// one screen pixel, so nothing on the water is drawn in chunky squares.
 // It is added to the materials the water already uses,
 // and does nothing while the setting is off, so the plain sea is exactly as it was.
 
@@ -182,15 +184,43 @@ varying vec2 vWaterLocal;
 #endif
 // The size of one step of the water's tone.
 const float WATER_STEP = 0.1;
-// The water's patterns are drawn in squares this many to a world unit: chunky pixels lying on the sea.
+// Spray and stars sit in cells this many to a world unit, one fleck at most to a cell.
 const float WATER_GRID = 11.0;
-// And the land's detail a little finer.
-const float LAND_GRID = 14.0;
 float waterHash(vec2 p) {
   return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
 }
 vec2 waterHash2(vec2 p) {
   return fract(sin(vec2(dot(p, vec2(127.1, 311.7)), dot(p, vec2(269.5, 183.3)))) * 43758.5453);
+}
+// step(edge, x), softened over one screen pixel so the line is smooth at any distance.
+float waterStep(float edge, float x) {
+  float w = max(fwidth(x), 1e-4);
+  return smoothstep(edge - w, edge + w, x);
+}
+// A line h0 wide either side of where d = 0 (d is never below 0). It is never drawn thinner than a screen
+// pixel: a thinner one is drawn that wide but fainter, so it fades away evenly instead of breaking into dashes.
+float waterLine(float d, float h0) {
+  float w = max(fwidth(d), 1e-4);
+  float h = max(h0, w);
+  return (1.0 - smoothstep(h - w, h + w, d)) * clamp(h0 / w, 0.0, 1.0);
+}
+// Distance from x to the nearest whole number: for lines that repeat.
+float waterNearest(float x) {
+  return abs(x - floor(x + 0.5));
+}
+// floor(x + 0.5) in flat steps of tone, the jump between two steps softened over one screen pixel.
+float waterBands(float x) {
+  float f = x + 0.5;
+  float w = clamp(fwidth(f), 1e-4, 1.0);
+  return floor(f) + smoothstep(1.0 - w, 1.0, fract(f));
+}
+// Flecks of spray: a round dot in some of the cells round a spot, thrown again ten times a second.
+float waterSpray(vec2 at, float salt) {
+  vec2 g = at * WATER_GRID;
+  vec2 c = floor(g);
+  float t = floor(waterTime * 10.0);
+  vec2 o = 0.25 + 0.5 * waterHash2(c + t * 0.37 + salt);
+  return step(0.6, waterHash(c + t + salt)) * (1.0 - waterStep(0.3, length(g - c - o)));
 }
 // A web of wandering cells: small where two cells meet, so a threshold on it draws the web's lines.
 float waterWeb(vec2 p, float t) {
@@ -223,9 +253,9 @@ float waterSplash(vec2 at, float size, float every, float salt) {
   vec2 centre = (c + 0.25 + 0.5 * waterHash2(c + floor(turn) * 1.7 + salt)) * size;
   float d = length(at - centre);
   float r = 0.12 + 0.5 * u;
-  float burst = step(d, 0.24 * (1.0 - u * 1.8));
-  float spray = step(d, r) * step(0.74, waterHash(floor(at * WATER_GRID) + floor(waterTime * 10.0))) * (1.0 - u);
-  return max(burst, step(0.3, spray));
+  float burst = 1.0 - waterStep(0.24 * (1.0 - u * 1.8), d);
+  float spray = (1.0 - waterStep(r, d)) * waterSpray(at, salt) * step(u, 0.7);
+  return max(burst, spray);
 }
 // Rain on the sea: small rings that open where the drops land. More of them the harder it rains.
 float waterDrops(vec2 at) {
@@ -239,7 +269,7 @@ float waterDrops(vec2 at) {
   if (waterHash(c + floor(turn) * 3.3) > waterRain) return 0.0;
   vec2 centre = (c + 0.2 + 0.6 * waterHash2(c + floor(turn) * 1.7)) * 1.3;
   float d = length(at - centre);
-  return step(abs(d - (0.06 + 0.34 * u)), 0.05) * step(u, 0.75) * (1.0 - u);
+  return waterLine(abs(d - (0.06 + 0.34 * u)), 0.05) * step(u, 0.75) * (1.0 - u);
 }
 float waterNoise(vec2 p) {
   vec2 i = floor(p);
@@ -258,34 +288,36 @@ void main() {
 const FRAG_BODY = /* glsl */ `#include <color_fragment>
 {
   #ifdef WATER_TILES
-  // The ground's own detail, painted in small squares on the top of each hex: no two hexes alike, and
-  // nothing that moves. Each kind of ground keeps its colour and gets its own marks.
+  // The ground's own detail, painted softly over the top of each hex: no two hexes alike, and nothing that
+  // moves. Each kind of ground keeps its colour and gets its own marks, blended in rather than stamped.
   if (waterFancy > 0.5 && vWaterTop > 0.5 && vGround > 0.5) {
-    vec2 square = floor(vWaterPos.xz * LAND_GRID);
-    vec2 at = (square + 0.5) / LAND_GRID;
-    float roll = waterHash(square + 11.0);
-    // Where the marks gather, and broad patches a shade lighter or darker.
+    vec2 at = vWaterPos.xz;
+    // Where the marks gather, broad patches a shade lighter or darker, and two finer mottles.
     float clump = waterNoise(at * 1.4 + 5.0);
-    float shade = floor(waterNoise(at * 0.45 + 2.0) * 3.0) / 2.0;
+    float shade = waterNoise(at * 0.45 + 2.0);
+    float fine = waterNoise(at * 6.0 + 11.0);
+    float fine2 = waterNoise(at * 8.5 + 23.0);
     vec3 ground = diffuseColor.rgb;
     if (vGround < 1.5) {
-      // Grass: sunlit blades in tufts, darker ones between, and now and then a small flower.
-      ground *= 0.94 + 0.1 * shade;
-      ground = mix(ground, ground * vec3(1.18, 1.2, 0.9), step(1.0 - 0.17 * clump, roll));
-      ground = mix(ground, ground * vec3(0.8, 0.86, 0.85), step(roll, 0.1 * (1.0 - clump)));
-      float flower = step(0.9972, waterHash(square + 71.0)) * step(0.5, clump);
-      ground = mix(ground, mix(vec3(0.93, 0.9, 0.78), vec3(0.93, 0.76, 0.3), step(0.5, waterHash(square + 3.0))), flower);
+      // Grass: sunlit drifts where it gathers, softer shade between, and now and then a small round flower.
+      ground *= 0.95 + 0.1 * shade;
+      ground = mix(ground, ground * vec3(1.12, 1.14, 0.92), smoothstep(0.6 - 0.15 * clump, 0.82 - 0.15 * clump, fine) * 0.8);
+      ground = mix(ground, ground * vec3(0.86, 0.9, 0.88), smoothstep(0.62, 0.86, fine2) * (1.0 - clump) * 0.7);
+      vec2 cell = floor(at * 3.0);
+      float petal = length(at * 3.0 - cell - (0.2 + 0.6 * waterHash2(cell + 71.0)));
+      float flower = (1.0 - smoothstep(0.07, 0.11, petal)) * step(0.93, waterHash(cell + 9.0)) * step(0.5, clump);
+      ground = mix(ground, mix(vec3(0.93, 0.9, 0.78), vec3(0.93, 0.76, 0.3), step(0.5, waterHash(cell + 3.0))), flower);
     } else if (vGround < 2.5) {
-      // Forest floor: deeper shade, with fallen leaves and bare dark earth.
+      // Forest floor: deeper shade, with drifts of fallen leaves and patches of bare dark earth.
       ground *= 0.9 + 0.12 * shade;
-      ground = mix(ground, ground * vec3(1.3, 1.02, 0.66), step(0.93, roll) * 0.85);
-      ground = mix(ground, ground * 0.76, step(roll, 0.09));
+      ground = mix(ground, ground * vec3(1.3, 1.02, 0.66), smoothstep(0.68, 0.84, fine) * 0.7);
+      ground = mix(ground, ground * 0.8, smoothstep(0.7, 0.86, fine2) * 0.8);
     } else {
-      // Hills: bands of rock, with pale chips and dark pits.
+      // Hills: soft bands through the rock, with paler and darker patches.
       ground *= 0.93 + 0.1 * shade;
-      ground *= 1.0 - 0.07 * step(0.5, fract(waterNoise(at * 0.9 + 8.0) * 6.0));
-      ground = mix(ground, ground * 1.2, step(0.94, roll));
-      ground = mix(ground, ground * 0.78, step(roll, 0.07));
+      ground *= 1.0 - 0.05 * (0.5 + 0.5 * sin(waterNoise(at * 0.9 + 8.0) * 37.7));
+      ground = mix(ground, ground * 1.15, smoothstep(0.7, 0.86, fine) * 0.8);
+      ground = mix(ground, ground * 0.82, smoothstep(0.72, 0.88, fine2) * 0.8);
     }
     diffuseColor.rgb = ground;
   }
@@ -296,8 +328,8 @@ const FRAG_BODY = /* glsl */ `#include <color_fragment>
   float waterIs = waterFancy;
   #endif
   if (waterIs > 0.5) {
-    // Everything is worked out at the middle of a chunky square of sea, so the patterns are made of pixels.
-    vec2 pix = (floor(vWaterPos.xz * WATER_GRID) + 0.5) / WATER_GRID;
+    // Everything is worked out at the spot itself, and every hard edge is softened over a screen pixel.
+    vec2 pix = vWaterPos.xz;
     // Four trains of long, slow waves crossing each other, on a surface bent by slow noise so the
     // pattern never lines up or repeats.
     vec2 p = pix + 2.4 * vec2(waterNoise(pix * 0.21 + waterTime * 0.03), waterNoise(pix * 0.21 + 31.7 - waterTime * 0.025));
@@ -320,9 +352,9 @@ const FRAG_BODY = /* glsl */ `#include <color_fragment>
     float tone = (0.84 + 0.34 * crest) * clamp(1.0 + 1.5 * (dot(tilt, waterSunDir) - waterSunDir.y), 0.7, 1.4);
     // Depth: dark pools between the swells, and a pale lip along the top of each wave.
     tone *= 0.8 + 0.34 * smoothstep(0.25, 0.75, deep);
-    tone += 0.16 * step(0.86, crest);
+    tone += 0.16 * waterStep(0.86, crest);
     vec3 clear = mix(vec3(dot(waterBase, vec3(0.2126, 0.7152, 0.0722))), waterBase, 1.2) * vec3(0.86, 1.14, 1.08) * 1.12;
-    vec3 sea = clear * (floor(tone / WATER_STEP + 0.5) * WATER_STEP);
+    vec3 sea = clear * (waterBands(tone / WATER_STEP) * WATER_STEP);
     float shallow = 0.0;
     float caustic = 0.0;
 
@@ -331,8 +363,8 @@ const FRAG_BODY = /* glsl */ `#include <color_fragment>
     float edge = 9.0;
     // Rounded: a whole number handed across a triangle can arrive a hair off, and then the wrong sides read as shore.
     float sides = floor(vWaterTile.y + 0.5);
-    // The same chunky square, measured from the middle of this hex.
-    vec2 local = vWaterLocal + (pix - vWaterPos.xz) * 0.985;
+    // The spot, measured from the middle of this hex.
+    vec2 local = vWaterLocal;
     for (int k = 0; k < 6; k++) {
       float half_ = floor(sides * 0.5 + 0.01);
       float touches = sides - half_ * 2.0;
@@ -342,7 +374,7 @@ const FRAG_BODY = /* glsl */ `#include <color_fragment>
     }
     // Shallows: paler and greener toward the land.
     float ragged = waterNoise(pix * 2.3 + waterTime * 0.25);
-    shallow = floor(smoothstep(0.95, 0.0, edge + 0.12 * ragged) * 3.0 + 0.5) / 3.0;
+    shallow = waterBands(smoothstep(0.95, 0.0, edge + 0.12 * ragged) * 3.0) / 3.0;
     sea = mix(sea, sea * vec3(0.85, 1.3, 1.2) + vec3(0.0, 0.035, 0.035), shallow * 0.75);
     #endif
 
@@ -353,7 +385,7 @@ const FRAG_BODY = /* glsl */ `#include <color_fragment>
       q += 0.22 * vec2(waterNoise(pix * 2.6 - waterTime * 0.11), waterNoise(pix * 2.6 + 5.9 + waterTime * 0.09));
       float web = waterWeb(q * 0.8 + waterTime * vec2(0.03, 0.02), waterTime * 0.5);
       float fine = waterWeb(q * 1.5 + 17.0 - waterTime * vec2(0.02, 0.04), waterTime * 0.7);
-      float light = max(step(web, 0.07), step(fine, 0.05) * 0.55) + step(web, 0.16) * 0.3;
+      float light = max(waterLine(web, 0.07), waterLine(fine, 0.05) * 0.55) + waterLine(web, 0.16) * 0.3;
       caustic = min(light, 1.0) * (0.45 + 0.4 * shallow);
       sea = mix(sea, sea * 1.35 + vec3(0.03, 0.09, 0.09), caustic);
     }
@@ -369,22 +401,23 @@ const FRAG_BODY = /* glsl */ `#include <color_fragment>
       vec2 off = pix - it.xy;
       off.x -= clamp(off.x, -it.z, it.z);
       float d = length(off) - it.w;
-      foam = max(foam, step(abs(d - 0.05 * collar), 0.05 + 0.04 * collar));
+      foam = max(foam, waterLine(abs(d - 0.05 * collar), 0.05 + 0.04 * collar));
       float out_ = fract(waterTime * 0.16 + float(i) * 0.37);
-      foam = max(foam, step(abs(d - 0.12 - 0.5 * out_), 0.035) * (1.0 - out_) * 0.55 * step(0.35, collar));
+      foam = max(foam, waterLine(abs(d - 0.12 - 0.5 * out_), 0.035) * (1.0 - out_) * 0.55 * waterStep(0.35, collar));
     }
     // Rings where a foot came down at the water's edge.
     for (int i = 0; i < ${RIPPLES}; i++) {
       float age = waterTime - waterRipples[i].z;
       if (age < 0.0 || age > 1.4) continue;
       float d = length(pix - waterRipples[i].xy);
-      foam = max(foam, step(abs(d - 0.08 - 0.34 * age), 0.045) * (1.0 - age / 1.4) * 0.8);
+      foam = max(foam, waterLine(abs(d - 0.08 - 0.34 * age), 0.045) * (1.0 - age / 1.4) * 0.8);
     }
     #ifdef WATER_TILES
     // A solid line against the land, and rings of it drifting out from the shore, thinning as they go.
-    foam = max(foam, step(edge, 0.07 + 0.08 * ragged));
+    foam = max(foam, 1.0 - waterStep(0.07 + 0.08 * ragged, edge));
     float reach = clamp(1.0 - edge / 0.95, 0.0, 1.0);
-    float ring = step(fract(edge * 2.4 - waterTime * 0.22 + ragged * 0.35), 0.26 * reach) * step(0.3, ragged);
+    // Each ring is a band 0.26 * reach of a repeat wide; measured from its middle, so there is no seam where the repeat wraps.
+    float ring = waterLine(waterNearest(edge * 2.4 - waterTime * 0.22 + ragged * 0.35 - 0.13 * reach), 0.13 * reach) * waterStep(0.3, ragged);
     foam = max(foam, ring * (0.35 + 0.5 * reach));
     // Now and then a wave breaks on the shore: the line swells and throws spray.
     {
@@ -394,9 +427,9 @@ const FRAG_BODY = /* glsl */ `#include <color_fragment>
       float u = fract(waterTime / period + seed * 10.0) * period / 0.9;
       if (u < 1.0) {
         float swell = sin(u * 3.1416);
-        float spray = step(0.72, waterHash(floor(pix * WATER_GRID) + floor(waterTime * 10.0)));
-        foam = max(foam, step(edge, 0.08 + 0.16 * swell));
-        foam = max(foam, step(edge, 0.12 + 0.34 * swell) * spray);
+        float spray = waterSpray(pix, 8.7);
+        foam = max(foam, 1.0 - waterStep(0.08 + 0.16 * swell, edge));
+        foam = max(foam, (1.0 - waterStep(0.12 + 0.34 * swell, edge)) * spray);
       }
     }
     #endif
@@ -415,14 +448,14 @@ const FRAG_BODY = /* glsl */ `#include <color_fragment>
     // The reflections stay smooth: they are light on the water, not the water's own paint.
     float sun = max(dot(tilt, normalize(waterSunDir + eye)), 0.0);
     // The sheen is kept faint, and fainter still over a caustic, so a low sun or moon never washes the web out.
-    waterShine += waterGlint * (step(0.3, pow(sun, 260.0)) * 1.6 + pow(sun, 36.0) * 0.07 * (1.0 - 0.7 * caustic));
+    waterShine += waterGlint * (waterStep(0.3, pow(sun, 260.0)) * 1.6 + pow(sun, 36.0) * 0.07 * (1.0 - 0.7 * caustic));
 
-    // The night sky on the water. Stars: single pixels scattered over the sea, coming and going slowly and
-    // never twice in the same place. (They do not ride the waves: a star that hops from pixel to pixel reads
-    // as a flicker.)
+    // The night sky on the water. Stars: small round points scattered over the sea, coming and going slowly and
+    // never twice in the same place. (They do not ride the waves: a star that hops about reads as a flicker.)
     if (waterStars > 0.02) {
       vec2 sky = floor(pix * WATER_GRID);
-      // Every pixel of the sea keeps its own slow clock: about two to three and a half seconds a turn, each starting at its
+      float point = 1.0 - smoothstep(0.08, 0.3, length(pix * WATER_GRID - sky - 0.5));
+      // Every cell of the sea keeps its own slow clock: about two to three and a half seconds a turn, each starting at its
       // own moment. On each turn of its clock the dice are thrown again for whether a star shows there, so
       // a star fades up out of nothing, fades away to nothing, and the next one comes up somewhere else.
       float own = waterHash(sky * 2.17 + 11.3);
@@ -432,17 +465,17 @@ const FRAG_BODY = /* glsl */ `#include <color_fragment>
         // Nothing at either end of the turn, brightest in the middle, eased both ways.
         float swell = sin(fract(turn) * 3.14159);
         float twinkle = swell * swell;
-        waterShine += vec3(0.75, 0.85, 1.0) * twinkle * waterStars * (1.0 - foam) * 0.9;
+        waterShine += vec3(0.75, 0.85, 1.0) * twinkle * point * waterStars * (1.0 - foam) * 0.9;
       }
     }
     // The moon: a broken disc of light lying on the sea, and a path of glints running from it toward the eye.
     if (waterMoon.z > 0.01) {
       vec2 from = pix + tilt.xz * 1.6 - waterMoon.xy;
-      float disc = step(length(from), 0.68);
+      float disc = 1.0 - waterStep(0.68, length(from));
       vec2 toEye = normalize(cameraPosition.xz - waterMoon.xy);
       float along = dot(from, toEye);
       float across = abs(dot(from, vec2(-toEye.y, toEye.x)));
-      float path = step(0.6, along) * step(along, 7.0) * step(across, 0.55 * (1.0 - along / 7.5)) * step(0.62, crest);
+      float path = waterStep(0.6, along) * (1.0 - waterStep(7.0, along)) * (1.0 - waterStep(0.55 * (1.0 - along / 7.5), across)) * waterStep(0.62, crest);
       waterShine += vec3(0.8, 0.88, 1.0) * waterMoon.z * (disc * 0.75 + path * 0.5) * (1.0 - foam);
     }
 
@@ -463,12 +496,12 @@ const FRAG_BODY = /* glsl */ `#include <color_fragment>
   // Rain on the land: the top of every hex darkens as it gets wet, shallow puddles gather in the low
   // spots, and lanterns and fires glint off both. It dries slowly once the rain stops.
   else if (waterFancy > 0.5 && waterWet > 0.01 && vWaterTop > 0.5) {
-    vec2 pix = (floor(vWaterPos.xz * WATER_GRID) + 0.5) / WATER_GRID;
+    vec2 pix = vWaterPos.xz;
     float low = waterNoise(pix * 0.8 + 3.3) * 0.65 + waterNoise(pix * 2.1 + 1.7) * 0.35;
     // The puddles start small in the lowest spots and spread as the ground wets, and the water in them
     // comes up gradually too, so nothing appears all at once when the rain starts.
     float brim = 0.86 - 0.34 * smoothstep(0.1, 1.0, waterWet);
-    float puddle = step(brim, low) * smoothstep(0.08, 0.75, waterWet);
+    float puddle = waterStep(brim, low) * smoothstep(0.08, 0.75, waterWet);
     diffuseColor.rgb *= mix(1.0, 0.72, waterWet);
     // A puddle is a thin film of water: the ground shows through it, barely darker, with a faint
     // sheen of sky on top, a pale line at its brim, and rings where the drops land.
@@ -487,7 +520,7 @@ const FRAG_BODY = /* glsl */ `#include <color_fragment>
     float sun = max(dot(film, normalize(waterSunDir + eye)), 0.0);
     // A soft sheen only. Hard single-pixel glints, as on the sea, read as stray white dots on the ground.
     waterShine += waterGlint * pow(sun, 30.0) * 0.16 * puddle;
-    waterShine += waterSky * 0.12 * puddle * step(low, brim + 0.022);
+    waterShine += waterSky * 0.12 * puddle * (1.0 - waterStep(brim + 0.022, low));
     waterShine += vec3(0.5, 0.55, 0.62) * waterDrops(pix) * puddle * 0.4;
     #if NUM_POINT_LIGHTS > 0
     // The ground is not quite flat, so the glint breaks up; a puddle's glint moves with its ripples.

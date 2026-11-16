@@ -36,22 +36,6 @@ function tone(hex: string, k: number): string {
 }
 
 /**
- * Wear, so nobody looks fresh out of the box: every surface is broken into the model's own pixels, some of
- * them scuffed darker and a few rubbed pale, with larger patches of grime over that. It is worked out from
- * where a point lies in its part (stepped a little inside the surface, so a face never straddles two cells),
- * so it stays put on a limb as it swings.
- */
-const WEAR = /* glsl */ `
-{
-  vec3 gritCell = floor( vGrit / 1.4 );
-  float gritSpeck = fract( sin( dot( gritCell, vec3( 127.1, 311.7, 74.7 ) ) ) * 43758.5453 );
-  vec3 gritPatch = floor( vGrit / 4.3 + 0.5 );
-  float gritStain = fract( sin( dot( gritPatch, vec3( 269.5, 183.3, 246.1 ) ) ) * 43758.5453 );
-  diffuseColor.rgb *= 1.0 - 0.2 * step( 0.76, gritSpeck ) + 0.1 * step( gritSpeck, 0.07 ) - 0.16 * gritStain * gritStain;
-}`;
-
-/** Lit like the furniture, but never darker than a third of its own colour: nobody vanishes at night. */
-/**
  * Tattoo ink: lit and shaded like the body (with the same floor of light), see-through by each vertex colour's
  * alpha, never hiding what is behind it from the depth test, and pulled a hair toward the eye over the skin.
  */
@@ -64,16 +48,11 @@ function inkMaterial(): THREE.MeshLambertMaterial {
   return m;
 }
 
+/** Lit like the furniture, but never darker than a third of its own colour: nobody vanishes at night. */
 function bodyMaterial(): THREE.MeshLambertMaterial {
   const m = new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true });
   m.onBeforeCompile = (shader) => {
-    shader.vertexShader = shader.vertexShader
-      .replace("void main() {", "varying vec3 vGrit;\nvoid main() {")
-      .replace("#include <begin_vertex>", "#include <begin_vertex>\n  vGrit = position - normal * 0.3;");
-    shader.fragmentShader = shader.fragmentShader
-      .replace("void main() {", "varying vec3 vGrit;\nvoid main() {")
-      .replace("#include <color_fragment>", `#include <color_fragment>${WEAR}`)
-      .replace("#include <opaque_fragment>", "outgoingLight = max(outgoingLight, diffuseColor.rgb * 0.32);\n  #include <opaque_fragment>");
+    shader.fragmentShader = shader.fragmentShader.replace("#include <opaque_fragment>", "outgoingLight = max(outgoingLight, diffuseColor.rgb * 0.32);\n  #include <opaque_fragment>");
   };
   m.customProgramCacheKey = () => "gq-figure-body";
   return m;
