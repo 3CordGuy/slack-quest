@@ -13,6 +13,7 @@ import { AccountPanel } from "./Account";
 import { CrewRoster, type RosterMember } from "./CrewRoster";
 import { NoticeBoard } from "./board/NoticeBoard";
 import { AttentionMark } from "./AttentionMark";
+import { PlaceTitle } from "./PlaceTitle";
 import { hasUnseen } from "../releases";
 import { OptionsMenu } from "./OptionsMenu";
 import { DragPanel } from "./DragPanel";
@@ -196,6 +197,29 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
     : hoverPoi.kind === "site" ? (hoverPoi.id === `site:${you}` ? "Your plot: fill the bin and the shack goes up" : `${board.members.find((m) => `site:${m.id}` === hoverPoi.id)?.name ?? "Someone"}'s plot: building a shack`)
     : hoverPoi.kind === "plot" ? `${board.members.find((m) => `plot:${m.id}` === hoverPoi.id)?.name ?? "Someone"}'s ${hutTier(hoverPoi.tier ?? 1).name.toLowerCase()}`
     : hoverPoi.kind === "pier" ? `${moored.find((s) => `ship:${s.code}` === hoverPoi.id)?.captain ?? "A"}'s ship`
+    : null;
+
+  /** The place's name alone, hung over it on a plate while it is pointed at (the tip says what it is for). */
+  const ownerOf = (prefix: string) => board.members.find((m) => `${prefix}:${m.id}` === hoverPoi?.id);
+  const title = !hoverPoi ? null
+    : hoverPoi.kind === "cave" ? "The Haunted Caverns"
+    : hoverPoi.kind === "board" ? "Notice Board"
+    : hoverPoi.kind === "shop" ? "Market Stall"
+    : hoverPoi.kind === "ring" ? "Sparring Ring"
+    : hoverPoi.kind === "fishing" ? "The Fishmonger"
+    : hoverPoi.kind === "felling" ? "The Tree Line"
+    : hoverPoi.kind === "quarry" ? "The Quarry"
+    : hoverPoi.kind === "wreck" ? "The Wreck"
+    : hoverPoi.kind === "pub" ? "The Pub"
+    : hoverPoi.kind === "works" ? "The Works"
+    : hoverPoi.kind === "lighthouse" ? (lit || lighthouseFill > 0 ? "The Lighthouse" : "Lighthouse Point")
+    : hoverPoi.kind === "apothecary" ? "The Apothecary"
+    : hoverPoi.kind === "smithy" ? "The Smithy"
+    : hoverPoi.kind === "galley" ? "The Galley"
+    : hoverPoi.kind === "lot" ? "Plot for Sale"
+    : hoverPoi.kind === "site" ? (hoverPoi.id === `site:${you}` ? "Your Plot" : `${ownerOf("site")?.name ?? "Someone"}'s Plot`)
+    : hoverPoi.kind === "plot" ? (hoverPoi.id === `plot:${you}` ? `Your ${hutTier(hoverPoi.tier ?? 1).name}` : `${ownerOf("plot")?.name ?? "Someone"}'s ${hutTier(hoverPoi.tier ?? 1).name}`)
+    : hoverPoi.kind === "pier" ? `${moored.find((s) => `ship:${s.code}` === hoverPoi.id)?.captain ?? "A"}'s Ship`
     : null;
 
   const board_ = (ship: HarborShip) => (location.hash = `run/${ship.code}`);
@@ -491,6 +515,7 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
 
       {here && !here.quiet && self && !panelOpen && <TileAction renderer={renderer} pos={self.pos} unitId={self.id} label={here.label} run={here.run} />}
       {tip && <div className="tip">{tip}</div>}
+      {title && hoverPoi && !panelOpen && <PlaceTitle renderer={renderer} poiId={hoverPoi.id} title={title} />}
       {error && <div className="toast">{error}</div>}
       {note && !error && <div className="toast note">{note}</div>}
       {sheet && !tradeWith && me.character && <InventoryScreen me={me} refresh={refreshAll} onClose={() => setSheet(false)} />}
