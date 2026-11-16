@@ -462,7 +462,7 @@ export function RunView({ code, me, refresh, onLeave }: { code: string; me: Me; 
 
 const BIOME_LABEL: Record<string, string> = { plains: "Plains", forest: "Forest", hills: "Hills", water: "Sea", dock: "Dock", cave: "Cave floor", rock: "Solid rock", gate: "A locked door" };
 /** A hex with something standing on it too thick to get through. */
-const BLOCKER_LABEL: Record<string, string> = { trees: "Thick woods", boulders: "Boulders" };
+const BLOCKER_LABEL: Record<string, string> = { trees: "Thick woods", boulders: "Boulders", oak: "An old oak" };
 
 /** What the hovered hex is, what it costs to enter, and what walking there would cost this turn. */
 function HexTip({ state, hover }: { state: ClientState; hover: HexPos }) {

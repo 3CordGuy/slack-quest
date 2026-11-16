@@ -4,10 +4,14 @@
 import type { Biome } from "@gantt-quest/world";
 
 /** What a foot comes down on, which sets both the sound of the step and the puff it kicks up. */
-export type StepGround = "grass" | "stone" | "wood" | "mud" | "water" | "floor";
+export type StepGround = "grass" | "dirt" | "stone" | "wood" | "mud" | "water" | "floor";
 
-/** Grass and fields are soft, paving and rock click, piers and room floors are hollow boards, the quay is dull mud. */
-export function stepGround(biome: Biome | undefined): StepGround | null {
+/**
+ * Grass and fields are soft, paving and rock click, piers and room floors are hollow boards, the quay is dull mud.
+ * `path` is whether a dirt path crosses the hex: on grass, that is dry trodden earth underfoot, not turf.
+ */
+export function stepGround(biome: Biome | undefined, path = false): StepGround | null {
+  if (path && biome === "plains") return "dirt";
   switch (biome) {
     case "plains":
     case "forest":
@@ -54,24 +58,32 @@ export function worldToHex(x: number, z: number): { q: number; r: number } {
   return { q: q + 0, r: r + 0 }; // + 0 turns -0 into 0
 }
 
-/** The puff a footfall kicks up on each ground: which pixel shape, its colours, how many bits and how strong. */
+/**
+ * The puff a footfall kicks up on each ground, as a few low-poly pieces: lumps of dust that swell and drift off,
+ * chips of grass that tumble away, or drops that are thrown up and fall back. Which, their colours, how many,
+ * and how big a piece is (world units; a hero stands about 1.5 tall).
+ */
 export interface PuffLook {
   kind: "dust" | "fleck" | "splash";
   colors: string[];
   count: number;
-  /** Opacity it starts at. */
-  alpha: number;
-  /** Size of its 16-pixel tile in world units: about 1.1 makes its pixels the size of a hero sprite's (22 pixels to 1.5 units). */
   size: number;
 }
 
-export const PUFFS: Record<StepGround, PuffLook> = {
-  grass: { kind: "fleck", colors: ["#d4f09a", "#b5e36f", "#eefac8"], count: 2, alpha: 0.95, size: 1.1 },
-  stone: { kind: "dust", colors: ["#e6dcc6", "#cfc4ad"], count: 2, alpha: 0.8, size: 1.15 },
-  wood: { kind: "dust", colors: ["#d8c19b", "#bfa47a"], count: 1, alpha: 0.6, size: 1.0 },
-  mud: { kind: "splash", colors: ["#7a6248", "#5c4a36"], count: 2, alpha: 0.9, size: 1.1 },
-  water: { kind: "splash", colors: ["#e4f4ff", "#9fd2f5"], count: 3, alpha: 0.9, size: 1.15 },
+/** A ground's puff may be of more than one kind at once: grass throws up chips of itself and a little pale dust with them. */
+export const PUFFS: Record<StepGround, PuffLook[]> = {
+  // Small: a couple of pale puffs that show against the green, and chips of grass.
+  grass: [
+    { kind: "dust", colors: ["#e9efcf", "#d6e2b4"], count: 2, size: 0.07 },
+    { kind: "fleck", colors: ["#a9dc6c", "#c7ec92"], count: 2, size: 0.08 },
+  ],
+  // A dirt path is dry and loose: the biggest puffs, the colour of its earth.
+  dirt: [{ kind: "dust", colors: ["#d2b88c", "#c0a274", "#dcc8a0"], count: 4, size: 0.14 }],
+  stone: [{ kind: "dust", colors: ["#e2d9c4", "#cfc5ae"], count: 3, size: 0.11 }],
+  wood: [{ kind: "dust", colors: ["#d8c4a0", "#c4ab84"], count: 2, size: 0.09 }],
+  mud: [{ kind: "splash", colors: ["#7a6248", "#5c4a36"], count: 3, size: 0.05 }],
+  water: [{ kind: "splash", colors: ["#e4f4ff", "#9fd2f5"], count: 4, size: 0.05 }],
   // Indoors: nothing but a faint scuff.
-  floor: { kind: "dust", colors: ["#d9c4a0"], count: 1, alpha: 0.3, size: 1.0 },
+  floor: [{ kind: "dust", colors: ["#d9c4a0"], count: 1, size: 0.06 }],
 };
 

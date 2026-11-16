@@ -522,7 +522,7 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
       {book && me.character && <Logbook me={me} refresh={refreshAll} onClose={() => setBook(false)} />}
       {account && <AccountPanel me={me} refresh={refresh} onClose={() => setAccount(false)} />}
       {notices && <NoticeBoard seen={me.seenRelease} onSeen={() => void refresh()} onClose={() => setNotices(false)} />}
-      {unseen && !panelOpen && !atBoard && <AttentionMark renderer={renderer} pos={HARBOR_BOARD} label="Something new on the notice board" />}
+      {unseen && !panelOpen && !atBoard && <AttentionMark renderer={renderer} pos={HARBOR_BOARD} lift={2.35} label="Something new on the notice board" />}
       {works && <WorksPanel works={board.works} refresh={refresh} onClose={() => setWorks(false)} />}
       {workshop === "apothecary" && <ApothecaryPanel onClose={() => setWorkshop(null)} />}
       {workshop === "galley" && <GalleyPanel onClose={() => setWorkshop(null)} />}

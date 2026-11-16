@@ -60,10 +60,12 @@ export interface Tile {
    * three or more, a junction. It is only drawn: a path costs the same to walk as the ground it is on.
    */
   path?: number;
+  /** The grass here is of a set kind, whatever the lie of the land would have grown: tall grass, to wade through. */
+  grass?: "tall";
 }
 
-/** What can stand on an island hex and stop anyone walking onto it. */
-export type Blocker = "trees" | "boulders";
+/** What can stand on a hex and stop anyone walking onto it: a thicket or a heap of boulders on an island, or one great old oak. */
+export type Blocker = "trees" | "boulders" | "oak";
 
 /** What it costs to step onto a tile: its ground's cost, or Infinity where a building or a blocker stands. */
 export function tileCost(t: Tile): number {

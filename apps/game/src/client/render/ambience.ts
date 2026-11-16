@@ -275,7 +275,7 @@ function dryGeometry(kind: number): THREE.BufferGeometry {
  * grass; a third of that is dry ground, the rest dead grass. The renderer asks too, to tint the ground under it.
  */
 export function dryPatch(t: Tile, x: number, z: number): number {
-  if (t.biome !== "plains" || t.path || meadowAt(x, z)) return -1;
+  if (t.biome !== "plains" || t.path || t.grass || meadowAt(x, z)) return -1;
   const swell = Math.sin(x * 0.27 + 4.1) * Math.sin(z * 0.33 + 2.6) + 0.6 * Math.sin((x + z) * 0.19 + 0.7) + 0.3 * Math.sin(x * 0.71 - z * 0.53 + 1.9);
   if (swell < 0.55) return -1;
   // The driest in the middle of the swell: dry ground there, dead grass round it.
@@ -320,7 +320,10 @@ function tallGeometry(kind: number): THREE.BufferGeometry {
  * deepen the ground under it.
  */
 export function tallGrass(t: Tile, x: number, z: number): boolean {
-  if (t.biome !== "plains" || t.path || meadowAt(x, z) || dryPatch(t, x, z) >= 0) return false;
+  if (t.biome !== "plains" || t.path) return false;
+  // Set down as tall grass, whatever the swells say (the Harbor's oak hill).
+  if (t.grass === "tall") return true;
+  if (meadowAt(x, z) || dryPatch(t, x, z) >= 0) return false;
   return Math.sin(x * 0.29 + 0.4) * Math.sin(z * 0.35 + 5.1) + 0.6 * Math.sin((x * 0.6 - z) * 0.21 + 3.3) + 0.3 * Math.sin(x * 0.77 + z * 0.49 + 0.6) > 0.3;
 }
 
