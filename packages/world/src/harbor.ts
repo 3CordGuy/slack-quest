@@ -128,7 +128,7 @@ export function harborDoor(pos: HexPos): HexPos | null {
   return DOOR_OF.get(keyOf(pos)) ?? null;
 }
 
-const HEIGHT: Record<Biome, number> = { water: 0.05, plains: 0.3, forest: 0.42, hills: 0.75, dock: 0.1, cobble: 0.26, mud: 0.2, rampart: 1.25, floor: 0.1, wall: 0.9, cave: 0.18, rock: 1.4, gate: 0.18, fog: 0.3 };
+const HEIGHT: Record<Biome, number> = { water: 0.05, plains: 0.3, forest: 0.42, hills: 0.75, dock: 0.1, cobble: 0.26, mud: 0.2, rampart: 0.7, floor: 0.1, wall: 0.9, cave: 0.18, rock: 1.4, gate: 0.18, fog: 0.3 };
 
 export function harborPoi(id: string, kind: PoiKind, pos: HexPos): Poi {
   return { id, kind, pos, hidden: false, cleared: false, usedBy: [], enemies: [] };
@@ -150,8 +150,8 @@ const around = (p: HexPos) => NEIGHBOURS.map((d) => ({ q: p.q + d.q, r: p.r + d.
 
 /**
  * The Harbor map. The same for every crew: a round island with the sea all
- * about it, its coast a little ragged. An old stone rampart curves round the
- * north, fallen in places, with the caverns' mouth in the middle of it; trees
+ * about it, its coast a little ragged. A line of great mossy boulders on a low
+ * bank curves round the north, gapped in places, with the caverns' mouth in the middle of it; trees
  * stand on the west and east shoulders where the wall never reached; and the
  * south shore is a quay of bare earth with three piers, the sea beyond them
  * dotted with rocks and a wreck. Inland it is grass, with a cobbled plaza at
@@ -172,7 +172,7 @@ export function generateHarbor(): WorldMap {
     // The coast: a circle, pushed in and out a little so it is not drawn with a compass.
     const coast = COAST + 0.4 * Math.sin(3 * turn + 1.0) + 0.3 * Math.sin(5 * turn + 2.2);
     if (out > coast) biome = "water";
-    // The rim: wall round the north (rubble where it has come down), bare shore to the south.
+    // The rim: boulders round the north (a gap of rubble here and there), bare shore to the south.
     else if (out > coast - 1) biome = north < 1.25 ? (grit(col, pos.r) < 0.2 ? "hills" : "rampart") : north < 2 ? "forest" : "mud";
     // Trees stand deeper on the shoulders than the wall is thick.
     else if (out > coast - 2.2 && north >= 1.25 && north < 2) biome = "forest";

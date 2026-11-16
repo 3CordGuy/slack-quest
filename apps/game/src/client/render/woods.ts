@@ -8,6 +8,7 @@
 // back with a wobble after.
 //
 // Outcrops are heaps of lumpy, mossy boulders on the hills, too big to climb.
+// The same boulders, shoulder to shoulder, are the line that bounds the Harbor.
 
 import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";

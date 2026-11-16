@@ -10,7 +10,7 @@ import * as THREE from "three";
 import { makeModelShip } from "./modelShip";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { reportEnv } from "../ui/env";
-import { Ambience, TILE_FILLET, TILE_RADIUS, beaconShine, hexTop, pixelTexture, stamp, type BuildingGlow } from "./ambience";
+import { Ambience, TILE_FILLET, TILE_RADIUS, beaconShine, dryPatch, hexTop, pixelTexture, stamp, type BuildingGlow } from "./ambience";
 import "./camera.css";
 import { PINCH_PAN_SLACK, followIconSvg, readFollow, writeFollow } from "./cameraFollow";
 import type { HexPos } from "@gantt-quest/core";
@@ -241,9 +241,12 @@ const MAX_PITCH = 1.25;
 /** Camera distance per unit of zoom, kept from when the tilt was fixed. */
 const CAMERA_REACH = Math.hypot(0.72, 0.78);
 const PLAYER_COLORS = ["#ffd23f", "#5ce1e6", "#ff7ab6", "#9dff6b"];
-const BIOME_COLOR: Record<string, string> = { plains: "#7cb856", forest: "#4c9a52", hills: "#a39672", water: "#3f86dc", dock: "#9a7748", cobble: "#6f7279", mud: "#5f5140", rampart: "#62656d", floor: "#b08a5c", wall: "#6e5a48", cave: "#4a4552", rock: "#2a2730", gate: "#4a4552", fog: "#2b3140" };
+const BIOME_COLOR: Record<string, string> = { plains: "#7cb856", forest: "#4c9a52", hills: "#a39672", water: "#3f86dc", dock: "#9a7748", cobble: "#6f7279", mud: "#5f5140", rampart: "#6c6f55", floor: "#b08a5c", wall: "#6e5a48", cave: "#4a4552", rock: "#2a2730", gate: "#4a4552", fog: "#2b3140" };
 /** What grass and trees are pulled toward under the Harbor's low cloud. */
 const DRAB = new THREE.Color("#5d6a5c");
+/** What open grass is pulled toward where it has dried out (see dryPatch): straw under dead grass, dusty brown on dry ground. */
+const PARCHED = new THREE.Color("#a59a5a");
+const DUSTY = new THREE.Color("#9a835a");
 /** The pub's painted sign: a foaming tankard on an oxblood board with a gold edge. Made once and shared. */
 let pubSignTexture: THREE.CanvasTexture | null = null;
 function pubSign(): THREE.CanvasTexture {
@@ -1628,8 +1631,8 @@ export class WorldRenderer {
     this.terrain = terrain;
     this.scene.add(terrain);
 
-    // Trees on forest, and the thickets and boulder heaps that cannot be walked through. POI hexes stay clear.
-    // Rocks on open hills, grass and waves come from the ambience.
+    // Trees on forest, the thickets and boulder heaps that cannot be walked through, and the boulders that
+    // bound the Harbor. POI hexes stay clear. Rocks on open hills, grass and waves come from the ambience.
     const poiKeys = new Set(state.map.pois.map((p) => key(p.pos)));
     const trees: TreeSpot[] = [];
     const boulders: BoulderSpot[] = [];
@@ -1640,6 +1643,8 @@ export class WorldRenderer {
       const n = (salt: number) => noise(t.q, t.r, salt);
       const tree = (dx: number, dz: number, size: number, salt: number, pine = n(salt + 1) < 0.68) =>
         trees.push({ x: x + dx, y: top, z: z + dz, size, kind: pine ? "pine" : "broad", yaw: n(salt + 2) * Math.PI * 2, tint: tintOf(n(salt + 3), n(salt + 4)) });
+      const rock = (dx: number, dz: number, size: number, tall: number, salt: number) =>
+        boulders.push({ x: x + dx, y: top, z: z + dz, size, tall, yaw: n(salt) * Math.PI * 2, tilt: (n(salt + 1) - 0.5) * 0.5, shape: Math.floor(n(salt + 2) * 3.99), tint: tintOf(n(salt + 3), n(salt + 4)) });
       if (t.blocker === "trees") {
         // A thicket: a ring of big old trees round one in the middle, and brush between their feet.
         const ring = 5 + Math.floor(n(100) * 2.99);
@@ -1657,8 +1662,6 @@ export class WorldRenderer {
       } else if (t.blocker === "boulders") {
         // A heap of boulders: one big one, a second leaning on it, and a few smaller round their feet.
         const turn = n(300) * Math.PI * 2;
-        const rock = (dx: number, dz: number, size: number, tall: number, salt: number) =>
-          boulders.push({ x: x + dx, y: top, z: z + dz, size, tall, yaw: n(salt) * Math.PI * 2, tilt: (n(salt + 1) - 0.5) * 0.5, shape: Math.floor(n(salt + 2) * 3.99), tint: tintOf(n(salt + 3), n(salt + 4)) });
         rock(Math.sin(turn) * 0.12, Math.cos(turn) * 0.12, 0.6 + n(301) * 0.15, 0.75 + n(302) * 0.35, 310);
         rock(Math.sin(turn + 2.4) * 0.45, Math.cos(turn + 2.4) * 0.42, 0.4 + n(303) * 0.12, 0.5 + n(304) * 0.3, 320);
         const small = 2 + Math.floor(n(305) * 2.99);
@@ -1670,41 +1673,49 @@ export class WorldRenderer {
       } else if (t.biome === "forest") {
         // Open woods: two trees, room to walk between.
         for (let i = 0; i < 2; i++) tree((n(i + 3) - 0.5) * 0.9, (n(i + 7) - 0.5) * 0.8 - 0.1, 0.72 + n(i) * 0.45, 400 + i * 5);
-      }
-    }
-    // The rampart's broken teeth: a merlon or two left standing on each length of wall.
-    const merlons: THREE.Matrix4[] = [];
-    for (const t of this.tiles) {
-      if (t.biome !== "rampart") continue;
-      const { x, z } = hexToWorld(t);
-      const top = tileTop(t);
-      for (let i = 0; i < 3; i++) {
-        if (noise(t.q, t.r, 20 + i) < 0.35) continue;
-        const a = (i / 3) * Math.PI * 2 + noise(t.q, t.r, 23) * 2;
-        const tall = 0.18 + noise(t.q, t.r, 26 + i) * 0.2;
-        merlons.push(new THREE.Matrix4().compose(new THREE.Vector3(x + Math.sin(a) * 0.55, top + tall / 2, z + Math.cos(a) * 0.55), new THREE.Quaternion().setFromEuler(new THREE.Euler(0, a, 0)), new THREE.Vector3(0.36, tall, 0.3)));
+      } else if (t.biome === "rampart" && !t.built) {
+        // The Harbor's bounds: great boulders shoulder to shoulder along the rim, so the hexes join into one
+        // line round the island. They run across the way out from the island's middle; here and there the
+        // line has slumped, and those stones sit lower. Smaller ones have rolled down on the inland side.
+        const ox = x - this.land.x, oz = z - this.land.z;
+        const out = Math.hypot(ox, oz) || 1;
+        const ax = -oz / out, az = ox / out;
+        const inx = -ox / out, inz = -oz / out;
+        const slumped = n(500) < 0.3 ? 0.72 : 1;
+        for (let i = 0; i < 3; i++) {
+          const along = (i - 1) * 0.56 + (n(510 + i) - 0.5) * 0.14;
+          const back = (n(520 + i) - 0.5) * 0.18;
+          const size = (0.42 + n(530 + i) * 0.14) * (i === 1 ? 1.08 : 1);
+          rock(ax * along + inx * back, az * along + inz * back, size, (0.9 + n(540 + i) * 0.45) * slumped, 550 + i * 5);
+        }
+        const small = 1 + Math.floor(n(580) * 2.99);
+        for (let i = 0; i < small; i++) {
+          const along = (n(590 + i) - 0.5) * 1.3;
+          const d = 0.42 + n(600 + i) * 0.2;
+          rock(ax * along + inx * d, az * along + inz * d, 0.14 + n(610 + i) * 0.12, 0.16 + n(620 + i) * 0.14, 630 + i * 5);
+        }
+      } else if (this.sodden && t.biome === "hills") {
+        // A gap in the Harbor's line of boulders: a few stones tumbled across it.
+        const turn = n(700) * Math.PI * 2;
+        const count = 2 + Math.floor(n(701) * 2.99);
+        for (let i = 0; i < count; i++) {
+          const a = turn + (i / count) * Math.PI * 2 + (n(710 + i) - 0.5) * 0.8;
+          const d = i === 0 ? 0.1 : 0.4 + n(720 + i) * 0.25;
+          rock(Math.sin(a) * d, Math.cos(a) * d * 0.9, (i === 0 ? 0.3 : 0.16) + n(730 + i) * 0.12, (i === 0 ? 0.4 : 0.2) + n(740 + i) * 0.16, 750 + i * 5);
+        }
       }
     }
     this.ambience.build(
       this.tiles.filter((t) => !this.deep.has(key(t))),
       // Nothing grows or lies about where a place stands, under a building, or in a thicket or a boulder heap.
-      (t) => poiKeys.has(key(t)) || !!t.built || !!t.blocker,
+      // The Harbor's gaps of rubble have their boulders from the woods, not the ambience's hill rocks.
+      (t) => poiKeys.has(key(t)) || !!t.built || !!t.blocker || (this.sodden && t.biome === "hills"),
       (t) => ({ ...hexToWorld(t), y: tileTop(t) }),
     );
-    const instanced = (geometry: THREE.BufferGeometry, color: string, mats: THREE.Matrix4[]) => {
-      const mesh = new THREE.InstancedMesh(geometry, new THREE.MeshLambertMaterial({ color, flatShading: true }), Math.max(1, mats.length));
-      mesh.count = mats.length;
-      mats.forEach((mat, i) => mesh.setMatrixAt(i, mat));
-      mesh.castShadow = true;
-      mesh.receiveShadow = true;
-      this.decor.add(mesh);
-      return mesh;
-    };
     // The trees bend in the wind (fancy graphics), and aside as anyone walks through them.
     this.woods?.dispose();
     this.woods = new Woods(trees, boulders, this.sodden);
     this.decor.add(this.woods.group);
-    if (merlons.length > 0) instanced(new THREE.BoxGeometry(1, 1, 1), "#6a6d75", merlons);
 
     // Start centred on the island. Fog lifting redraws the ground but leaves the camera where the player put it.
     if (!recentre) return;
@@ -1863,12 +1874,19 @@ export class WorldRenderer {
     if (!this.terrain) return;
     const c = new THREE.Color();
     const white = new THREE.Color("#ffffff");
+    // A place's hex keeps its green: the ambience lays no dry grass there, so it would be parched for nothing.
+    const places = new Set(this.state?.map.pois.map((p) => key(p.pos)) ?? []);
     this.tiles.forEach((t, i) => {
       c.set(BIOME_COLOR[t.biome]);
       // Fog is a pale mist by day and all but black by night.
       if (t.biome === "fog") c.set(FOG_DAY).lerp(FOG_NIGHT, Math.max(0, this.paintedNight) / 10);
       // In a wet, walled port the green is tired.
       if (this.sodden && (t.biome === "plains" || t.biome === "forest")) c.lerp(DRAB, 0.5);
+      if (t.biome === "plains" && !t.built && !places.has(key(t))) {
+        const { x, z } = hexToWorld(t);
+        const dry = dryPatch(t, x, z);
+        if (dry >= 0) c.lerp(dry === 2 ? DUSTY : PARCHED, dry === 2 ? 0.62 : 0.45);
+      }
       if (this.sodden && t.biome === "water") c.lerp(GREY_SEA, 0.65);
       if (t.biome === "water") c.lerp(NIGHT_SEA, (Math.max(0, this.paintedNight) / 10) * 0.7);
       c.offsetHSL(0, 0, (noise(t.q, t.r, 9) - 0.5) * (t.biome === "rampart" ? 0.1 : 0.06));

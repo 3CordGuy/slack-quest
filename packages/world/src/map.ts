@@ -17,8 +17,8 @@ import type { ResourceKind } from "./hut";
 
 /**
  * `dock`, `cobble`, `mud` and `rampart` belong to the Harbor: the wooden pier
- * surface, its streets, its wet ground, and the old stone wall around it
- * (which cannot be climbed). `floor` and `wall` make up the inside of a hut.
+ * surface, its streets, its wet ground, and the line of great boulders that
+ * bounds it, a low bank heaped with stones (which cannot be climbed). `floor` and `wall` make up the inside of a hut.
  * `cave` and `rock` are the Haunted Caverns: a stone floor, and the living rock around it.
  * `gate` is a locked door across a cave tunnel: it cannot be walked through until it is opened,
  * when it becomes cave floor.
@@ -231,7 +231,7 @@ function pickBiome(rng: Rng): Biome {
   return "plains";
 }
 
-export const BASE_HEIGHT: Record<Biome, number> = { water: 0.05, plains: 0.3, forest: 0.4, hills: 0.75, dock: 0.1, cobble: 0.26, mud: 0.2, rampart: 1.25, floor: 0.1, wall: 0.9, cave: 0.18, rock: 1.4, gate: 0.18, fog: 0.3 };
+export const BASE_HEIGHT: Record<Biome, number> = { water: 0.05, plains: 0.3, forest: 0.4, hills: 0.75, dock: 0.1, cobble: 0.26, mud: 0.2, rampart: 0.7, floor: 0.1, wall: 0.9, cave: 0.18, rock: 1.4, gate: 0.18, fog: 0.3 };
 
 /** Offset-space position of a hex, used for the island outline. */
 function flatPos(pos: HexPos): { x: number; y: number } {
