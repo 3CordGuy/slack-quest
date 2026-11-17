@@ -541,8 +541,10 @@ const key = (p: HexPos) => `${p.q},${p.r}`;
  * `back` behind the hex's (0.28 unless said here). The Harbor's places are drawn bigger than that, so a hero
  * looks the right size beside them: `scale` times as big, and far enough back that the building stands on the
  * ground behind its door (see `footing` in the world's harbor.ts) with the hero on the doorstep in front.
+ * `turn` (in sixths of a turn, as a facing is) turns it further about its door: half a sixth for a thing that
+ * stands on the one hex up and to the right of where it is used from, and so faces down and to the left.
  */
-const PLACE: Partial<Record<Poi["kind"], { scale: number; back: number }>> = {
+const PLACE: Partial<Record<Poi["kind"], { scale: number; back: number; turn?: number }>> = {
   pub: { scale: 2.2, back: 1.6 },
   lighthouse: { scale: 3, back: 3 },
   works: { scale: 2, back: 1.8 },
@@ -557,7 +559,7 @@ const PLACE: Partial<Record<Poi["kind"], { scale: number; back: number }>> = {
   cave: { scale: 2.2, back: 1.3 },
   board: { scale: 1.6, back: 0.45 },
   bench: { scale: 1.6, back: 0.45 },
-  townchest: { scale: 1.7, back: 0.4 },
+  townchest: { scale: 1.75, back: SQRT3, turn: 0.5 },
   ring: { scale: 1.5, back: 0.42 },
   felling: { scale: 1.5, back: 0.42 },
   quarry: { scale: 1.5, back: 0.42 },
@@ -566,11 +568,11 @@ const PLACE: Partial<Record<Poi["kind"], { scale: number; back: number }>> = {
   pier: { scale: 1.8, back: 1.25 },
 };
 /** On a map of the world (RenderState.far) a place is a landmark of a small world: no bigger than its hex, and standing on it. */
-const FAR_PLACE: Partial<Record<Poi["kind"], { scale: number; back: number }>> = {
+const FAR_PLACE: Partial<Record<Poi["kind"], { scale: number; back: number; turn?: number }>> = {
   lighthouse: { scale: 1.2, back: 0.1 },
   cave: { scale: 1, back: 0.3 },
 };
-const placeOf = (poi: Poi, far = false) => (far ? FAR_PLACE[poi.kind] : PLACE[poi.kind]) ?? { scale: far ? 0.8 : 1, back: far ? 0.1 : 0.28 };
+const placeOf = (poi: Poi, far = false): { scale: number; back: number; turn?: number } => (far ? FAR_PLACE[poi.kind] : PLACE[poi.kind]) ?? { scale: far ? 0.8 : 1, back: far ? 0.1 : 0.28 };
 /** To the nearest thousandth, so offsets sent to the server stay short. */
 const round = (n: number) => Math.round(n * 1000) / 1000;
 /** Where the stools stand round a game table in the pub (its middle is at z = -0.3): four, as many as can play, clear of whoever stands at the front. */
@@ -855,7 +857,8 @@ export interface WorldMinigame {
 }
 
 export interface RendererCallbacks {
-  onHexClick(pos: HexPos): void;
+  /** `place` is the id of the point of interest whose model was clicked, when the click landed on one (and so means its door). */
+  onHexClick(pos: HexPos, place?: string): void;
   onHover(pos: HexPos | null): void;
   /** A click on a prop. Return true if it was handled; otherwise the click falls through to its hex. */
   onPropClick?(id: string | number): boolean;
@@ -3113,14 +3116,14 @@ export class WorldRenderer {
       // Any real flame in it (a torch by the caverns' entrance) flickers with the rest.
       for (const f of flamesIn(g)) this.liveFlames.add(f);
       const at = this.standAt(poi.pos);
-      const { scale, back } = placeOf(poi, state.far);
+      const { scale, back, turn = 0 } = placeOf(poi, state.far);
       if (BUILDINGS.has(poi.kind)) inkBuilding(g, scale);
       // A building turned to front a road (see `facing`) is turned about its door: it stands back from the door
       // the way it faces away from it.
       // A hut is not set out with a surveyor's chain: each stands a few degrees askew of its lane, its own way
       // (the same for a plot staked out, its building site and the hut that goes up on it).
       const askew = HUT_KINDS.has(poi.kind) ? (noise(poi.pos.q, poi.pos.r, 77) - 0.5) * 0.3 : 0;
-      const yaw = yawOf(poi.facing ?? 0) + askew;
+      const yaw = yawOf((poi.facing ?? 0) + turn) + askew;
       const behind = new THREE.Vector3(0, 0, -back).applyAxisAngle(UP, yaw);
       g.position.set(at.x + behind.x, at.y, at.z + behind.z);
       g.rotation.y = yaw;
@@ -3546,8 +3549,8 @@ export class WorldRenderer {
    * back, turned to face, and scaled).
    */
   private inModel(poi: Poi, x: number, z: number): THREE.Vector2 {
-    const { scale, back } = placeOf(poi, this.state?.far);
-    const yaw = yawOf(poi.facing ?? 0);
+    const { scale, back, turn = 0 } = placeOf(poi, this.state?.far);
+    const yaw = yawOf((poi.facing ?? 0) + turn);
     const at = hexToWorld(poi.pos);
     const behind = new THREE.Vector3(0, 0, -back).applyAxisAngle(UP, yaw);
     const p = new THREE.Vector3(x - at.x - behind.x, 0, z - at.z - behind.z).applyAxisAngle(UP, -yaw).divideScalar(scale);
@@ -5439,9 +5442,10 @@ export class WorldRenderer {
         for (const x of [-0.8, 0.8]) add(box(0.14, 0.9, 0.14), lambert("#5a3d22"), x, 0.45, 0.28);
         break;
       case "townchest": {
-        // The town chest, the crew's shared store: a great iron-bound sea chest on a stone plinth, its lid propped
-        // open on a stay, with what is in it showing over the rim (gold, and the blue of lodestones). The crew's
-        // pennant flies from a pole behind it, and a lantern hangs from the pole to find it by after dark.
+        // The town chest, the crew's shared store: a great iron-bound sea chest on a stone plinth. Its lid is shut
+        // until someone opens it (setChestOpen swings it back), and then what is in it shows over the rim: gold,
+        // and the blue of lodestones. The crew's pennant flies from a pole behind it, and a lantern hangs from the
+        // pole to find it by after dark.
         const oak = lambert("#6b4a2a");
         const darkOak = lambert("#4a3320");
         const iron = lambert("#33363c");
@@ -5466,7 +5470,7 @@ export class WorldRenderer {
           g.scale.y = 1.3;
           if (glow) g.userData.glow = true;
         }
-        // The lid, thrown back on its hinges and held by a stay: domed, banded like the body.
+        // The lid, on its hinges along the back: domed, banded like the body. movePois swings it.
         const lid = new THREE.Group();
         const part = (geometry: THREE.BufferGeometry, material: THREE.Material, x: number, y: number, z: number) => {
           const m = new THREE.Mesh(geometry, material);
@@ -5477,16 +5481,17 @@ export class WorldRenderer {
         part(box(0.92, 0.1, 0.58), oak, 0, 0.05, 0.29);
         part(box(0.86, 0.06, 0.46), lambert("#775231"), 0, 0.13, 0.29);
         for (const x of [-0.3, 0, 0.3]) part(box(0.06, 0.17, 0.6), iron, x, 0.085, 0.29);
+        part(box(0.1, 0.05, 0.03), brass, 0, 0.02, 0.585);
         lid.position.set(0, 0.6, -0.28);
-        lid.rotation.x = -1.9;
+        lid.rotation.x = WorldRenderer.TOWN_LID * this.chestLid.at;
         g.add(lid);
-        add(box(0.02, 0.4, 0.02), iron, 0.4, 0.78, -0.22).rotation.x = -0.5;
+        g.userData.townLid = lid;
         // The pole behind, with the crew's pennant and a lantern.
-        add(box(0.06, 1.9, 0.06), darkOak, -0.5, 0.95, -0.46);
-        add(box(0.5, 0.26, 0.02), lambert("#b23a2e"), -0.22, 1.7, -0.46);
-        add(box(0.5, 0.05, 0.022), lambert("#e9c85a"), -0.22, 1.7, -0.46);
-        add(box(0.02, 0.12, 0.02), iron, -0.5, 1.22, -0.36);
-        add(box(0.09, 0.11, 0.09), new THREE.MeshBasicMaterial({ color: "#ffd98a" }), -0.5, 1.12, -0.36).userData.glow = true;
+        add(box(0.06, 1.9, 0.06), darkOak, 0.5, 0.95, -0.46);
+        add(box(0.5, 0.26, 0.02), lambert("#b23a2e"), 0.22, 1.7, -0.46);
+        add(box(0.5, 0.05, 0.022), lambert("#e9c85a"), 0.22, 1.7, -0.46);
+        add(box(0.02, 0.12, 0.02), iron, 0.5, 1.22, -0.36);
+        add(box(0.09, 0.11, 0.09), new THREE.MeshBasicMaterial({ color: "#ffd98a" }), 0.5, 1.12, -0.36).userData.glow = true;
         break;
       }
       case "bench": {
@@ -5683,6 +5688,15 @@ export class WorldRenderer {
 
   /** How long a chest's lid takes to swing open, in seconds. */
   private static readonly LID_SWING = 0.5;
+  /** How far back the town chest's lid is thrown when it is open, in radians about its hinges. */
+  private static readonly TOWN_LID = -1.9;
+  /** The town chest's lid: whether it is meant to be open, how far open it is now (0 shut, 1 thrown back), and how fast it is swinging. */
+  private chestLid = { open: false, at: 0, speed: 0, seen: 0 };
+
+  /** Open the town chest's lid, or shut it: it swings on a spring, a little past where it is going and back. */
+  setChestOpen(open: boolean) {
+    this.chestLid.open = open;
+  }
 
   /** A chest's lid now: swinging open (eased, with a little bounce as it hits the end of its hinge), or at rest. */
   private lidNow(poi: Poi): number {
@@ -5759,6 +5773,22 @@ export class WorldRenderer {
 
   /** Each frame: lids swinging, crates rocking, glints twinkling. */
   private movePois() {
+    {
+      // The town chest's lid, sprung toward open or shut. Opening it is flung; shutting it is let fall and thuds home.
+      const lid = this.chestLid;
+      const dt = Math.min(0.05, Math.max(0, this.clock - lid.seen));
+      lid.seen = this.clock;
+      const goal = lid.open ? 1 : 0;
+      if (lid.at !== goal || lid.speed !== 0) {
+        lid.speed += ((goal - lid.at) * (lid.open ? 150 : 90) - lid.speed * (lid.open ? 13 : 9)) * dt;
+        lid.at += lid.speed * dt;
+        // It cannot swing down through the chest: it lands on the rim and stops.
+        if (lid.at < 0) [lid.at, lid.speed] = [0, 0];
+        if (Math.abs(goal - lid.at) < 0.001 && Math.abs(lid.speed) < 0.01) [lid.at, lid.speed] = [goal, 0];
+        const model = this.poiObject("townchest")?.userData.townLid as THREE.Object3D | undefined;
+        if (model) model.rotation.x = WorldRenderer.TOWN_LID * lid.at;
+      }
+    }
     for (const [id, start] of this.lidsSwinging) {
       const lid = this.poiObject(id)?.userData.lid as THREE.Object3D | undefined;
       const poi = this.state?.map.pois.find((p) => p.id === id);
@@ -6141,7 +6171,11 @@ export class WorldRenderer {
     }
   }
 
+  /** The place whose model the last `pick` landed on, if it landed on one. */
+  private pickedPlace: string | null = null;
+
   private pick(): HexPos | null {
+    this.pickedPlace = null;
     if (!this.terrain) return null;
     const rect = this.renderer.domElement.getBoundingClientRect();
     const ndc = new THREE.Vector2(((this.pointer.x - rect.left) / rect.width) * 2 - 1, -((this.pointer.y - rect.top) / rect.height) * 2 + 1);
@@ -6172,7 +6206,10 @@ export class WorldRenderer {
       if (onPlace && (!hit || onPlace.distance < hit.distance)) {
         let o: THREE.Object3D | null = onPlace.object;
         while (o && !o.userData.door) o = o.parent;
-        if (o) return { ...(o.userData.door as HexPos) };
+        if (o) {
+          this.pickedPlace = (o.userData.poiId as string | undefined) ?? null;
+          return { ...(o.userData.door as HexPos) };
+        }
       }
     }
     if (!hit || hit.instanceId === undefined) return null;
@@ -6383,7 +6420,7 @@ export class WorldRenderer {
     }
     const pos = this.pick();
     // Nobody walks during a fight, and a practice bout borrows the Harbor's view.
-    if (pos) this.callbacks.onHexClick(pos);
+    if (pos) this.callbacks.onHexClick(pos, this.pickedPlace ?? undefined);
   };
 
   private onPointerLeave = () => {

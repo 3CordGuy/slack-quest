@@ -5,11 +5,11 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { beforeEach, describe, expect, it } from "vitest";
-import { ATLAS_HOME, PLAIN_STONE_COST, STACK_MAX, TOWN_CHEST_COLS, TOWN_CHEST_ROWS, atlasNodeById, attuneCost, chestRowCost, modsOf, needsStone, rerollCost, stoneItem, temperCost, type ZoneMod, type ZoneOptions } from "@gantt-quest/world";
+import { ATLAS_HOME, PLAIN_STONE_COST, STACK_MAX, TOWN_TABS_MAX, TOWN_TAB_CELLS, atlasNodeById, attuneCost, modsOf, townTabCost, needsStone, rerollCost, stoneItem, temperCost, type ZoneMod, type ZoneOptions } from "@gantt-quest/world";
 import { atlasSeed, chartFor, clearNode, devClearNode, devResetChart, enterProblem, openNode } from "../src/server/atlas";
-import { applyZoneGrant } from "../src/server/db";
+import { applyZoneGrant, carryState } from "../src/server/db";
 import { attuneStone, cutStone, fuseStones, gainStone, lodestonesOf, rerollStone, temperStone } from "../src/server/lodestones";
-import { chestAddRow, chestFor, chestPut, chestTake } from "../src/server/townchest";
+import { chestBuyTab, chestColorTab, chestFor, chestMoveTab, chestPutGear, chestPutStack, chestRenameTab, chestTakeGear, chestTakeStack } from "../src/server/townchest";
 import { CAVE_IDLE_MS, getZoneRow } from "../src/server/zones";
 
 type Row = Record<string, unknown>;
@@ -241,75 +241,203 @@ describe("lodestones", () => {
 });
 
 describe("the town chest", () => {
-  const tabOf = async (tab: string, crew = CREW) => (await chestFor(db, crew)).tabs.find((t) => t.id === tab)!;
+  /** A crew's tab of a kind: the first of them. */
+  const tabOf = async (kind: string, crew = CREW) => (await chestFor(db, crew)).tabs.find((t) => t.kind === kind)!;
   const mats = (who: string) => Object.fromEntries((sql.prepare("SELECT kind, qty FROM resources WHERE player_id = ? AND qty > 0").all(who) as { kind: string; qty: number }[]).map((r) => [r.kind, r.qty]));
   const hand = (who: string, kind: string, qty: number) => sql.prepare("INSERT INTO resources (player_id, kind, qty) VALUES (?, ?, ?) ON CONFLICT(player_id, kind) DO UPDATE SET qty = qty + excluded.qty").run(who, kind, qty);
+  /** Put a piece of gear in someone's pack, and give its id: a ring (a square) unless another slot is named. */
+  const gear = (who: string, name = "Brass Ring", slot = "ring", worn = 0) =>
+    Number(
+      sql
+        .prepare("INSERT INTO inventory (player_id, kind, ref, name, rarity, slot, power, level_req, icon, stat_bonus_json, equipped, created_at, upgrades) VALUES (?, 'trinket', 'brass_ring', ?, 'rare', ?, 4, 2, 'ring', '{\"str\":2}', ?, 1, 1)")
+        .run(who, name, slot, worn).lastInsertRowid,
+    );
+  const pack = (who: string) => (sql.prepare("SELECT name FROM inventory WHERE player_id = ? ORDER BY id").all(who) as { name: string }[]).map((r) => r.name);
+  const gold = (who: string) => (sql.prepare("SELECT gold FROM characters WHERE player_id = ?").get(who) as { gold: number }).gold;
 
-  it("starts empty, with a tab for lodestones and one for materials", async () => {
+  it("starts with a chest, a tab for materials and one for lodestones, all empty, and makes them once", async () => {
     const chest = await chestFor(db, CREW);
-    expect(chest.tabs.map((t) => t.id)).toEqual(["lodestones", "materials"]);
-    expect(chest.tabs.every((t) => t.rows === TOWN_CHEST_ROWS && t.held.length === 0)).toBe(true);
+    expect(chest.tabs.map((t) => [t.name, t.kind])).toEqual([["Chest", "general"], ["Materials", "materials"], ["Lodestones", "lodestones"]]);
+    expect(chest.tabs.every((t) => t.gear.length === 0 && t.stacks.length === 0)).toBe(true);
+    expect(chest.nextTab).toBe(townTabCost(1));
+    expect((await chestFor(db, CREW)).tabs.map((t) => t.id)).toEqual(chest.tabs.map((t) => t.id));
+    // Another crew's chest is another chest.
+    const theirs = await chestFor(db, OTHER);
+    expect(theirs.tabs.length).toBe(3);
+    expect(theirs.tabs.some((t) => chest.tabs.some((mine) => mine.id === t.id))).toBe(false);
   });
 
-  it("takes what one of the crew puts in out of their pack, and gives it to whichever of them takes it out", async () => {
+  it("takes a piece of gear out of one pack, keeps what it is, and gives it to whichever of the crew takes it out", async () => {
+    const ring = gear("ann");
+    const chest = await tabOf("general");
+    expect(await chestPutGear(db, CREW, "ann", chest.id, ring)).toBeNull();
+    expect(pack("ann")).toEqual([]);
+    const [kept] = (await tabOf("general")).gear;
+    expect(kept).toMatchObject({ id: ring, name: "Brass Ring", rarity: "rare", slot: "ring", ref: "brass_ring", power: 4, level_req: 2, upgrades: 1, stat_bonus_json: '{"str":2}' });
+    // Bo, of the same crew, takes it out: it is Bo's now, and nobody's twice.
+    expect(await chestTakeGear(db, CREW, "bo", kept.id)).toBeNull();
+    expect(pack("bo")).toEqual(["Brass Ring"]);
+    expect((await tabOf("general")).gear).toEqual([]);
+    expect(await chestTakeGear(db, CREW, "ann", kept.id)).toMatch(/no longer in the chest/);
+    // It is the same piece it was: its id with it.
+    expect(sql.prepare("SELECT id, power, level_req, upgrades, equipped, stored_in FROM inventory WHERE player_id = 'bo'").get()).toEqual({ id: ring, power: 4, level_req: 2, upgrades: 1, equipped: 0, stored_in: null });
+    // A piece made after it gets an id of its own, not the one that was out of the table for a while.
+    const next = gear("ann");
+    expect(next).toBeGreaterThan(ring);
+    expect(await chestPutGear(db, CREW, "bo", (await tabOf("general")).id, ring)).toBeNull();
+    expect(gear("ann", "Another")).toBeGreaterThan(next);
+  });
+
+  it("takes no gear that is worn, is somebody else's, or is meant for a tab that does not hold gear", async () => {
+    const chest = await tabOf("general");
+    const worn = gear("ann", "Worn Ring", "ring", 1);
+    const bos = gear("bo", "Bo's Ring");
+    const mine = gear("ann");
+    expect(await chestPutGear(db, CREW, "ann", chest.id, worn)).toMatch(/no such thing/);
+    expect(await chestPutGear(db, CREW, "ann", chest.id, bos)).toMatch(/no such thing/);
+    expect(await chestPutGear(db, CREW, "ann", (await tabOf("materials")).id, mine)).toMatch(/does not belong/);
+    expect(await chestPutGear(db, CREW, "ann", (await tabOf("general", OTHER)).id, mine)).toMatch(/no such tab/);
+    expect(await chestPutGear(db, CREW, "ann", "1", mine)).toMatch(/no such tab/);
+    expect(pack("ann")).toEqual(["Worn Ring", "Brass Ring"]);
+    // And gives none to somebody outside the crew.
+    expect(await chestPutGear(db, CREW, "ann", chest.id, mine)).toBeNull();
+    const [kept] = (await tabOf("general")).gear;
+    expect(await chestTakeGear(db, OTHER, "cy", kept.id)).toMatch(/no longer in the chest/);
+    expect((await tabOf("general")).gear.length).toBe(1);
+  });
+
+  it("holds gear only while it has the squares, and gives it only to a pack with room", async () => {
+    const chest = await tabOf("general");
+    // All but two of its squares are filled.
+    sql.prepare("INSERT INTO town_stacks (tab_id, kind, qty) VALUES (?, 'stone', ?)").run(chest.id, STACK_MAX * (TOWN_TAB_CELLS - 2));
+    const helm = gear("ann", "Helm", "helmet");
+    const ring = gear("ann");
+    expect(await chestPutGear(db, CREW, "ann", chest.id, helm)).toMatch(/no room/);
+    expect(await chestPutGear(db, CREW, "ann", chest.id, ring)).toBeNull();
+    expect(pack("ann")).toEqual(["Helm"]);
+    // Bo's pack is full to the brim: the ring stays where it is.
+    const { limit, carried } = (await carryState(db, "bo"))!;
+    for (let i = carried; i < limit; i++) gear("bo", `Ring ${i}`);
+    const [kept] = (await tabOf("general")).gear;
+    expect(await chestTakeGear(db, CREW, "bo", kept.id)).toMatch(/no room/);
+    expect((await tabOf("general")).gear.length).toBe(1);
+    expect(pack("bo")).not.toContain("Brass Ring");
+  });
+
+  it("moves stacks between a pack and the tab that takes them", async () => {
     hand("ann", "wood", 30);
     give("ann", ["hardy"]);
     give("ann", ["hardy"]);
-    expect(await chestPut(db, CREW, "ann", "materials", "wood", 20)).toBeNull();
-    expect(await chestPut(db, CREW, "ann", "lodestones", stoneItem(["hardy"]), 2)).toBeNull();
-    expect(mats("ann")).toEqual({ wood: 10 });
+    const [chest, materials, stones] = [await tabOf("general"), await tabOf("materials"), await tabOf("lodestones")];
+    expect(await chestPutStack(db, CREW, "ann", materials.id, "wood", 20)).toBeNull();
+    expect(await chestPutStack(db, CREW, "ann", stones.id, stoneItem(["hardy"]), 1)).toBeNull();
+    // A general tab takes either.
+    expect(await chestPutStack(db, CREW, "ann", chest.id, "wood", 4)).toBeNull();
+    expect(await chestPutStack(db, CREW, "ann", chest.id, stoneItem(["hardy"]), 1)).toBeNull();
+    expect(mats("ann")).toEqual({ wood: 6 });
     expect(await lodestonesOf(db, "ann")).toEqual([]);
-    expect((await tabOf("materials")).held).toEqual([{ kind: "wood", qty: 20 }]);
-    expect((await tabOf("lodestones")).held).toEqual([{ kind: "lodestone:hardy", qty: 2 }]);
-    // Bo, of the same crew, takes some out.
-    expect(await chestTake(db, CREW, "bo", "materials", "wood", 15)).toBeNull();
-    expect(await chestTake(db, CREW, "bo", "lodestones", "lodestone:hardy", 1)).toBeNull();
+    expect((await tabOf("materials")).stacks).toEqual([{ kind: "wood", qty: 20 }]);
+    expect((await tabOf("lodestones")).stacks).toEqual([{ kind: "lodestone:hardy", qty: 1 }]);
+    expect((await tabOf("general")).stacks).toEqual([{ kind: "lodestone:hardy", qty: 1 }, { kind: "wood", qty: 4 }]);
+    // Bo takes some out.
+    expect(await chestTakeStack(db, CREW, "bo", materials.id, "wood", 15)).toBeNull();
+    expect(await chestTakeStack(db, CREW, "bo", chest.id, "lodestone:hardy", 1)).toBeNull();
     expect(mats("bo")).toEqual({ wood: 15 });
     expect(await lodestonesOf(db, "bo")).toEqual([{ stone: ["hardy"], qty: 1 }]);
-    expect((await tabOf("materials")).held).toEqual([{ kind: "wood", qty: 5 }]);
-    // Another crew's chest is another chest.
-    expect((await tabOf("materials", OTHER)).held).toEqual([]);
-    expect(await chestTake(db, OTHER, "cy", "materials", "wood", 1)).toMatch(/not that many/);
+    expect((await tabOf("materials")).stacks).toEqual([{ kind: "wood", qty: 5 }]);
+    expect((await tabOf("general")).stacks).toEqual([{ kind: "wood", qty: 4 }]);
   });
 
   it("gives nothing that is not there, and takes nothing that is not carried or does not belong", async () => {
     hand("ann", "wood", 5);
-    expect(await chestPut(db, CREW, "ann", "materials", "wood", 6)).toMatch(/no longer carry/);
-    expect(await chestPut(db, CREW, "ann", "lodestones", "wood", 1)).toMatch(/does not belong/);
-    expect(await chestPut(db, CREW, "ann", "materials", "lodestone", 1)).toMatch(/does not belong/);
-    expect(await chestPut(db, CREW, "ann", "gear", "wood", 1)).toMatch(/no such tab/);
-    expect(await chestPut(db, CREW, "ann", "materials", "wood", 0)).toMatch(/not an amount/);
-    expect(await chestPut(db, CREW, "ann", "materials", "wood", 5)).toBeNull();
-    expect(await chestTake(db, CREW, "bo", "materials", "wood", 6)).toMatch(/not that many/);
-    expect(await chestTake(db, CREW, "bo", "materials", "wood", -1)).toMatch(/not an amount/);
-    expect(await chestTake(db, CREW, "bo", "materials", "healing", 1)).toMatch(/no such thing/);
+    const [materials, stones] = [await tabOf("materials"), await tabOf("lodestones")];
+    expect(await chestPutStack(db, CREW, "ann", materials.id, "wood", 6)).toMatch(/no longer carry/);
+    expect(await chestPutStack(db, CREW, "ann", stones.id, "wood", 1)).toMatch(/does not belong/);
+    expect(await chestPutStack(db, CREW, "ann", materials.id, "lodestone", 1)).toMatch(/does not belong/);
+    expect(await chestPutStack(db, CREW, "ann", 99999, "wood", 1)).toMatch(/no such tab/);
+    expect(await chestPutStack(db, CREW, "ann", materials.id, "wood", 0)).toMatch(/not an amount/);
+    expect(await chestPutStack(db, CREW, "ann", materials.id, "wood", 5)).toBeNull();
+    expect(await chestTakeStack(db, CREW, "bo", materials.id, "wood", 6)).toMatch(/not that many/);
+    expect(await chestTakeStack(db, CREW, "bo", materials.id, "wood", -1)).toMatch(/not an amount/);
+    expect(await chestTakeStack(db, CREW, "bo", materials.id, "healing", 1)).toMatch(/no such thing/);
+    expect(await chestTakeStack(db, OTHER, "cy", materials.id, "wood", 1)).toMatch(/no such thing/);
     // Nothing moved by any of it but the one that went in.
     expect(mats("ann")).toEqual({});
     expect(mats("bo")).toEqual({});
-    expect((await tabOf("materials")).held).toEqual([{ kind: "wood", qty: 5 }]);
+    expect((await tabOf("materials")).stacks).toEqual([{ kind: "wood", qty: 5 }]);
   });
 
-  it("holds no more than its squares, until someone pays for another row: for the whole crew, and dearer each time", async () => {
-    const squares = TOWN_CHEST_ROWS * TOWN_CHEST_COLS;
-    sql.prepare("INSERT INTO town_chest (crew_id, tab, kind, qty) VALUES (?, 'materials', 'stone', ?)").run(CREW, STACK_MAX * squares);
-    hand("ann", "wood", 40);
-    expect(await chestPut(db, CREW, "ann", "materials", "wood", 1)).toMatch(/no room/);
-    // Not without the gold and the materials for it.
-    sql.prepare("UPDATE characters SET gold = 0 WHERE player_id = 'bo'").run();
-    expect(await chestAddRow(db, CREW, "bo", "materials")).toMatch(/gold and materials/);
-    const cost = chestRowCost(TOWN_CHEST_ROWS)!;
-    for (const [kind, qty] of Object.entries(cost.resources)) hand("bo", kind, qty!);
-    sql.prepare("UPDATE characters SET gold = ? WHERE player_id = 'bo'").run(cost.gold + 7);
-    expect(await chestAddRow(db, CREW, "bo", "materials")).toBeNull();
-    expect((await tabOf("materials")).rows).toBe(TOWN_CHEST_ROWS + 1);
-    expect((await tabOf("lodestones")).rows).toBe(TOWN_CHEST_ROWS);
-    expect((sql.prepare("SELECT gold FROM characters WHERE player_id = 'bo'").get() as { gold: number }).gold).toBe(7);
-    expect(mats("bo")).toEqual({});
-    // Now Ann's wood goes in.
-    expect(await chestPut(db, CREW, "ann", "materials", "wood", 40)).toBeNull();
-    // The next row costs more than Bo has left.
-    expect(chestRowCost(TOWN_CHEST_ROWS + 1)!.gold).toBeGreaterThan(cost.gold);
-    expect(await chestAddRow(db, CREW, "bo", "materials")).toMatch(/gold and materials/);
+  it("a general tab holds no more stacks than its squares; the materials tab has none to run out of", async () => {
+    const [chest, materials] = [await tabOf("general"), await tabOf("materials")];
+    sql.prepare("INSERT INTO town_stacks (tab_id, kind, qty) VALUES (?, 'stone', ?)").run(chest.id, STACK_MAX * TOWN_TAB_CELLS);
+    hand("ann", "wood", 400);
+    expect(await chestPutStack(db, CREW, "ann", chest.id, "wood", 1)).toMatch(/no room/);
+    expect(await chestPutStack(db, CREW, "ann", materials.id, "wood", 400)).toBeNull();
+    expect(mats("ann")).toEqual({});
+  });
+
+  it("gets another tab for gold, for the whole crew and dearer each time, up to so many", async () => {
+    const cost = townTabCost(1);
+    expect(await chestBuyTab(db, CREW, "bo")).toMatch(/gold/);
+    sql.prepare("UPDATE characters SET gold = ? WHERE player_id = 'bo'").run(cost + townTabCost(2) - 1);
+    expect(await chestBuyTab(db, CREW, "bo", "  Spare   gear ")).toBeNull();
+    const chest = await chestFor(db, CREW);
+    expect(chest.tabs.map((t) => [t.name, t.kind])).toEqual([["Chest", "general"], ["Materials", "materials"], ["Lodestones", "lodestones"], ["Spare gear", "general"]]);
+    expect(chest.nextTab).toBe(townTabCost(2));
+    expect(townTabCost(2)).toBeGreaterThan(cost);
+    expect(gold("bo")).toBe(townTabCost(2) - 1);
+    // The next costs more than Bo has left, and nothing is taken for it.
+    expect(await chestBuyTab(db, CREW, "bo")).toMatch(/gold/);
+    expect(gold("bo")).toBe(townTabCost(2) - 1);
+    // Ann's gear goes into the new one. The other crew's chest is as it was.
+    expect(await chestPutGear(db, CREW, "ann", chest.tabs[3].id, gear("ann"))).toBeNull();
+    expect((await chestFor(db, OTHER)).tabs.length).toBe(3);
+    // A chest has only so many.
+    sql.prepare("UPDATE characters SET gold = 1000000 WHERE player_id = 'bo'").run();
+    for (let n = 4; n < TOWN_TABS_MAX; n++) expect(await chestBuyTab(db, CREW, "bo"), String(n)).toBeNull();
+    expect((await chestFor(db, CREW)).nextTab).toBeNull();
+    const before = gold("bo");
+    expect(await chestBuyTab(db, CREW, "bo")).toMatch(/all the tabs/);
+    expect(gold("bo")).toBe(before);
+  });
+
+  it("lets anyone in the crew name a tab again, and nobody else", async () => {
+    const stones = await tabOf("lodestones");
+    expect(await chestRenameTab(db, CREW, stones.id, "  Keys to the   sea ")).toBeNull();
+    expect((await tabOf("lodestones")).name).toBe("Keys to the sea");
+    expect(await chestRenameTab(db, CREW, stones.id, "   ")).toMatch(/needs a name/);
+    expect(await chestRenameTab(db, OTHER, stones.id, "Ours")).toMatch(/no such tab/);
+    expect((await tabOf("lodestones")).name).toBe("Keys to the sea");
+  });
+
+  it("lets the crew colour a tab, and move the tabs about", async () => {
+    const [chest, materials, stones] = (await chestFor(db, CREW)).tabs;
+    expect(chest.color).toBeNull();
+    expect(await chestColorTab(db, CREW, stones.id, "teal")).toBeNull();
+    expect((await tabOf("lodestones")).color).toBe("teal");
+    // Not a colour there is: the tab goes back to having none. Nor another crew's tab.
+    expect(await chestColorTab(db, CREW, stones.id, "#ff0000")).toBeNull();
+    expect((await tabOf("lodestones")).color).toBeNull();
+    expect(await chestColorTab(db, OTHER, stones.id, "red")).toMatch(/no such tab/);
+    const order = async (crew = CREW) => (await chestFor(db, crew)).tabs.map((t) => t.id);
+    expect(await chestMoveTab(db, CREW, stones.id, 0)).toBeNull();
+    expect(await order()).toEqual([stones.id, chest.id, materials.id]);
+    expect(await chestMoveTab(db, CREW, stones.id, 99)).toBeNull();
+    expect(await order()).toEqual([chest.id, materials.id, stones.id]);
+    expect(await chestMoveTab(db, CREW, materials.id, 0)).toBeNull();
+    expect(await order()).toEqual([materials.id, chest.id, stones.id]);
+    expect(await chestMoveTab(db, CREW, 99999, 0)).toMatch(/no such tab/);
+    expect(await chestMoveTab(db, OTHER, chest.id, 0)).toMatch(/no such tab/);
+    expect(await chestMoveTab(db, CREW, chest.id, "first")).toMatch(/no such/);
+    // A tab bought after that stands last, and what is in a tab moves with it.
+    sql.prepare("UPDATE characters SET gold = 1000 WHERE player_id = 'ann'").run();
+    hand("ann", "wood", 3);
+    expect(await chestPutStack(db, CREW, "ann", materials.id, "wood", 3)).toBeNull();
+    expect(await chestBuyTab(db, CREW, "ann")).toBeNull();
+    const now = (await chestFor(db, CREW)).tabs;
+    expect(now.slice(0, 3).map((t) => t.id)).toEqual([materials.id, chest.id, stones.id]);
+    expect(now[0].stacks).toEqual([{ kind: "wood", qty: 3 }]);
+    expect(now[3].kind).toBe("general");
   });
 });
 

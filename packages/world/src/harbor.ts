@@ -29,8 +29,10 @@ const keyOf = (p: HexPos) => `${p.q},${p.r}`;
  * building itself stands on the hexes north of it, which nobody can walk through:
  * a `pair` is the two hexes behind the door (three tiles with the doorstep), a `trio` those and the one behind them
  * (a diamond of four with the doorstep), and a `flower` a whole ring of seven whose two nearest petals touch the door.
+ * A `single` is one hex, the one up and to the right of where a hero stands to use it: for a thing rather than a
+ * building (the town chest).
  */
-export type Footing = "pair" | "trio" | "flower";
+export type Footing = "single" | "pair" | "trio" | "flower";
 
 /**
  * The six sides of a hex, clockwise from the top right: the same order as `HEX_DIRS` (hutroom.ts), which a
@@ -51,7 +53,7 @@ function turned(d: HexPos, times: number): HexPos {
  */
 export function footing(door: HexPos, shape: Footing, facing = 0): HexPos[] {
   const pair = [{ q: 0, r: -1 }, { q: 1, r: -1 }];
-  const offsets = shape === "pair" ? pair : shape === "trio" ? [...pair, { q: 1, r: -2 }] : [...pair, { q: 1, r: -2 }, { q: 0, r: -2 }, { q: 2, r: -2 }, { q: 1, r: -3 }, { q: 2, r: -3 }];
+  const offsets = shape === "single" ? [{ q: 1, r: -1 }] : shape === "pair" ? pair : shape === "trio" ? [...pair, { q: 1, r: -2 }] : [...pair, { q: 1, r: -2 }, { q: 0, r: -2 }, { q: 2, r: -2 }, { q: 1, r: -3 }, { q: 2, r: -3 }];
   return offsets.map((d) => {
     const t = turned(d, facing);
     return { q: door.q + t.q, r: door.r + t.r };
@@ -123,8 +125,13 @@ export const HARBOR_LIGHTHOUSE: HexPos = at(21, 24);
  * worked here (stonecraft.ts) before a crew goes up to the atlas with them.
  */
 export const HARBOR_BENCH: HexPos = at(18, 20);
-/** The town chest: in the plaza, a step from where everyone arrives. The crew's shared store (townchest.ts). */
-export const HARBOR_CHEST: HexPos = at(15, 14);
+/**
+ * The town chest, the crew's shared store (townchest.ts): where a hero stands to open it, on the plaza's east
+ * side, a step from where everyone arrives. The chest itself stands on a hex of its own at the plaza's
+ * north-east corner, up and to the right of this one, facing the plaza. Nobody walks through it, and pointing
+ * at it is pointing here.
+ */
+export const HARBOR_CHEST: HexPos = at(14, 15);
 /** The apothecary's door, across the High Street from the pub, facing up it from the south side. A building site until the crew has paid for it. */
 export const HARBOR_APOTHECARY: HexPos = at(18, 16);
 /** The smithy's door, at the west end of the High Street by the sparring ring. A building site until the crew has paid for it. */
@@ -158,6 +165,7 @@ export const HARBOR_BUILDINGS: { id: string; door: HexPos; shape: Footing; groun
   { id: "smithy", door: HARBOR_SMITHY, shape: "trio", ground: "cobble" },
   { id: "galley", door: HARBOR_GALLEY, shape: "trio", ground: "cobble", facing: 4 },
   { id: "fishing", door: HARBOR_GATHER.fishing, shape: "pair", ground: "mud" },
+  { id: "townchest", door: HARBOR_CHEST, shape: "single", ground: "cobble" },
   ...HARBOR_PLOTS.map((door, i) => ({ id: `plot:${i}`, door, shape: "pair" as const, ground: "plains" as const, facing: HARBOR_PLOT_FACING[i] })),
 ];
 

@@ -261,13 +261,19 @@ export const api = {
   /** Set out for a place, with the lodestone put into its slot (what it carries, joined with "+"; "" for a plain one). It comes out of your pack. */
   openNode: (node: string, stone?: string) => request<{ code: string; fresh: boolean }>("/api/atlas/open", { node, stone }),
   /** The dev toolbox: clear a landfall without fighting for it, or wipe the chart. Gives the chart as it now is. */
-  /** The crew's town chest: its tabs, how big each is and what is in it. */
+  /** The crew's town chest: its tabs and what is in each. Every call below gives the chest back as it now is. */
   chest: () => request<ChestView>("/api/chest"),
-  /** Put `qty` of a kind of thing from your pack into a tab of the chest, or take it out. The chest comes back as it now is. */
-  chestPut: (tab: string, kind: string, qty: number) => request<ChestView>("/api/chest/put", { tab, kind, qty }),
-  chestTake: (tab: string, kind: string, qty: number) => request<ChestView>("/api/chest/take", { tab, kind, qty }),
-  /** Pay for a tab's next row of squares, for the whole crew. */
-  chestRow: (tab: string) => request<ChestView>("/api/chest/row", { tab }),
+  /** Put a piece of gear from your pack into a tab of the chest, or take one (by its id in the chest) out into your pack. */
+  chestStow: (tab: number, item: number) => request<ChestView>("/api/chest/stow", { tab, item }),
+  chestUnstow: (item: number) => request<ChestView>("/api/chest/unstow", { item }),
+  /** Put `qty` of a kind of stack (a material, a lodestone) from your pack into a tab of the chest, or take it out. */
+  chestPut: (tab: number, kind: string, qty: number) => request<ChestView>("/api/chest/put", { tab, kind, qty }),
+  chestTake: (tab: number, kind: string, qty: number) => request<ChestView>("/api/chest/take", { tab, kind, qty }),
+  /** Buy the chest another tab with your gold, for the whole crew; or give a tab another name, a colour (null for none), or another place among the tabs (from 0). */
+  chestBuyTab: (name?: string) => request<ChestView>("/api/chest/tab", { name }),
+  chestRenameTab: (tab: number, name: string) => request<ChestView>("/api/chest/rename", { tab, name }),
+  chestColorTab: (tab: number, color: string | null) => request<ChestView>("/api/chest/color", { tab, color }),
+  chestMoveTab: (tab: number, to: number) => request<ChestView>("/api/chest/move", { tab, to }),
   /** Work lodestones at the bench, out of your pack: fuse three (each as it is sent) into one, attune one to a modifier, or reroll one. */
   benchFuse: (stones: string[]) => request<{ made: Lodestone; lodestones: HeldStone[] }>("/api/atlas/bench", { op: "fuse", stones }),
   benchAttune: (stone: string, mod: string) => request<{ made: Lodestone; lodestones: HeldStone[] }>("/api/atlas/bench", { op: "attune", stone, mod }),

@@ -30,7 +30,7 @@ import { WorldRenderer, type RenderState } from "./render/WorldRenderer";
 import { useHarbor } from "./useHarbor";
 import { useSalesman } from "./salesmanClock";
 import { WorksPanel } from "./works/WorksPanel";
-import { TownChest } from "./chest/TownChest";
+import { TownChest, readChestAhead } from "./chest/TownChest";
 import { StoneBench } from "./atlas/StoneBench";
 import { label } from "./labels";
 import { xpEvents } from "./xpEvents";
@@ -63,6 +63,8 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
   const [works, setWorks] = useState(false);
   /** The town chest, which stands in the plaza: the crew's shared store. */
   const [chest, setChest] = useState(false);
+  /** The town chest itself was clicked: it is to open when the hero gets to it. */
+  const [wantChest, setWantChest] = useState(false);
   /** The stonecutter's bench, on the lane to the lighthouse: lodestones are cut and worked there. */
   const [bench, setBench] = useState(false);
   const [account, setAccount] = useState(false);
@@ -156,8 +158,16 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
   const heroSheet = useHeroSheet();
 
   useEffect(() => {
-    // A click anywhere on a building is a walk to its door.
-    const r = new WorldRenderer(mount.current!, { onHexClick: (to) => send.current({ type: "move", to: harborDoor(to) ?? to }), onHover: setHover });
+    // A click anywhere on a building is a walk to its door. A click on the town chest itself (or the hex it
+    // stands on) is a walk up to it and the opening of it: nothing more to press on arriving.
+    const r = new WorldRenderer(mount.current!, {
+      onHexClick: (to, place) => {
+        const door = harborDoor(to);
+        setWantChest(place === "townchest" || (!!door && same(door, HARBOR_CHEST)));
+        send.current({ type: "move", to: door ?? to });
+      },
+      onHover: setHover,
+    });
     renderer.current = r;
     if (latest.current) r.setState(latest.current);
     return () => {
@@ -267,6 +277,27 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
   const atBoard = !!self && same(self.pos, HARBOR_BOARD);
   const atBench = !!self && same(self.pos, HARBOR_BENCH);
   const atChest = !!self && same(self.pos, HARBOR_CHEST);
+  // The chest was clicked: it opens once the hero has walked up to it (at once, if they stand there already).
+  useEffect(() => {
+    if (!wantChest || !atChest) return;
+    const arrived = () => {
+      if (you && renderer.current?.isWalking(you)) return false;
+      setWantChest(false);
+      setChest(true);
+      return true;
+    };
+    if (arrived()) return;
+    const tick = setInterval(arrived, 60);
+    return () => clearInterval(tick);
+  }, [wantChest, atChest, you]);
+  // What is in it is read ahead: on coming into the Harbor, and again on setting off toward it. So it opens at once.
+  useEffect(() => {
+    if (wantChest || !chest) readChestAhead();
+  }, [wantChest, chest]);
+  // Its lid swings back while it is open, and falls shut after.
+  useEffect(() => {
+    renderer.current?.setChestOpen(chest);
+  }, [chest]);
   const atRing = !!self && same(self.pos, HARBOR_RING);
   // Fishing is from any pier head as well as the shore spot.
   // Afloat (a boat under them on a water hex): the water's own spot, or the open sea from the edge in a rowboat.
@@ -363,7 +394,7 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
   // The place under your feet and the one thing to do there, shown in the bar below and floated over the hex.
   const here: { title: ReactNode; label: string; run(): void; quiet?: boolean; closed?: boolean; also?: { label: string; run(): void } } | null =
     atBoard ? { title: unseen ? "The notice board · something new is pinned up" : "The notice board", label: "Read the notice board", run: () => setNotices(true) }
-    : atChest ? { title: <>The town chest <span className="muted">· the crew's shared store: lodestones and materials</span></>, label: "Open the town chest", run: () => setChest(true) }
+    : atChest ? { title: <>The town chest <span className="muted">· the crew's shared store, in tabs: gear, materials, lodestones</span></>, label: "Open the town chest", run: () => setChest(true) }
     : atBench ? { title: <>The stonecutter's bench <span className="muted">· lodestones for the atlas are cut and worked here</span></>, label: "Work lodestones", run: () => setBench(true) }
     : atCave ? { title: <>The Haunted Caverns <span className="muted">· something lurks in the dark</span></>, label: "Go down", run: goDown }
     : shipHere ? { ...shut(<>{shipHere.captain}'s ship <span className="muted">· laid up while voyages are rebuilt</span></>), also: pierHere ? { label: "Cast a line", run: () => setGather("fishing") } : undefined }
@@ -496,7 +527,7 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
         meter={stamina ? { name: "Energy", note: "gathering outings left today", now: stamina.left, max: stamina.max, kind: "stamina" } : undefined}
         chips={harbor.status === "paused" ? <span className="hud-chip">away</span> : harbor.status !== "open" ? <span className="hud-chip bad">connecting…</span> : undefined}
         // While the trade table is open it has the bag beside it already.
-        onBag={() => !tradeWith && setSheet((open) => !open)}
+        onBag={() => !tradeWith && (chest ? setChest(false) : setSheet((open) => !open))}
         onBook={() => setBook(true)}
         menu={
           <OptionsMenu
@@ -527,13 +558,13 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
       {title && hoverPoi && !panelOpen && <PlaceTitle renderer={renderer} poiId={hoverPoi.id} title={title} />}
       {error && <div className="toast">{error}</div>}
       {note && !error && <div className="toast note">{note}</div>}
-      {sheet && !tradeWith && me.character && <InventoryScreen me={me} refresh={refreshAll} onClose={() => setSheet(false)} />}
+      {sheet && !tradeWith && !chest && me.character && <InventoryScreen me={me} refresh={refreshAll} onClose={() => setSheet(false)} />}
       {book && me.character && <Logbook me={me} refresh={refreshAll} onClose={() => setBook(false)} />}
       {account && <AccountPanel me={me} refresh={refresh} onClose={() => setAccount(false)} />}
       {notices && <NoticeBoard seen={me.seenRelease} onSeen={() => void refresh()} onClose={() => setNotices(false)} />}
       {unseen && !panelOpen && !atBoard && <AttentionMark renderer={renderer} pos={HARBOR_BOARD} lift={2.35} label="Something new on the notice board" />}
       {works && <WorksPanel works={board.works} refresh={refresh} onClose={() => setWorks(false)} />}
-      {chest && <TownChest me={me} refresh={refresh} onClose={() => setChest(false)} />}
+      {chest && me.character && <TownChest me={me} refresh={refresh} onClose={() => setChest(false)} />}
       {bench && <StoneBench me={me} refresh={refresh} onClose={() => setBench(false)} />}
       {gather && me.character && <GatherPanel spot={gather} onRod={(on) => harbor.send({ type: "fishing", on })} pier={pierHere ?? undefined} at={self?.pos} vessel={self?.vessel ?? null} gilded={me.character?.title === BOOK_TITLE} shipBeside={!!shipHere} renderer={renderer} onClose={() => setGather(null)} onStamina={setStamina} />}
       {fishmonger && me.character && <CatchPanel buyer="market" onGold={() => void refresh()} onClose={() => setFishmonger(false)} />}

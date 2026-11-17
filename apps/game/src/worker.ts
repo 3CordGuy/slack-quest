@@ -81,7 +81,7 @@ import { cook } from "./server/galley";
 import { announceXp, harborXpFor } from "./server/harbor-xp";
 import { chartFor, devClearNode, devResetChart, enterProblem, openNode } from "./server/atlas";
 import { attuneStone, cutStone, fuseStones, gainStone, lodestonesOf, rerollStone, temperStone } from "./server/lodestones";
-import { chestAddRow, chestFor, chestPut, chestTake } from "./server/townchest";
+import { chestBuyTab, chestColorTab, chestFor, chestMoveTab, chestPutGear, chestPutStack, chestRenameTab, chestTakeGear, chestTakeStack } from "./server/townchest";
 import { createZoneRow, crewPlaces, getZoneRow, openCave, teleportTo } from "./server/zones";
 import {
   checkImport,
@@ -1037,18 +1037,25 @@ app.get("/api/chest", async (c) => {
   return c.json(await chestFor(c.env.DB, crew.id));
 });
 
-// Put something from your pack into the chest, take something out, or pay for a tab's next row. Each answers
-// with the chest as it now is.
-app.post("/api/chest/:move{put|take|row}", async (c) => {
+// Reach into the chest: a piece of gear in (`stow`) or out (`unstow`), some of a stack in (`put`) or out
+// (`take`), another tab bought for the crew (`tab`), or a tab named again (`rename`), given a colour (`color`)
+// or moved among the others (`move`). Each answers with the chest as it now is.
+app.post("/api/chest/:move{stow|unstow|put|take|tab|rename|color|move}", async (c) => {
   const player = c.get("player");
   const crew = await crewFor(c.env.DB, player.id);
   if (!crew) return c.json({ error: "You are not in a crew." }, 403);
-  const body = await c.req.json<{ tab?: unknown; kind?: unknown; qty?: unknown }>().catch(() => ({}) as { tab?: unknown; kind?: unknown; qty?: unknown });
+  type Body = { tab?: unknown; item?: unknown; kind?: unknown; qty?: unknown; name?: unknown; color?: unknown; to?: unknown };
+  const body = await c.req.json<Body>().catch(() => ({}) as Body);
   const move = c.req.param("move");
   const problem =
-    move === "put" ? await chestPut(c.env.DB, crew.id, player.id, body.tab, body.kind, body.qty)
-    : move === "take" ? await chestTake(c.env.DB, crew.id, player.id, body.tab, body.kind, body.qty)
-    : await chestAddRow(c.env.DB, crew.id, player.id, body.tab);
+    move === "stow" ? await chestPutGear(c.env.DB, crew.id, player.id, body.tab, body.item)
+    : move === "unstow" ? await chestTakeGear(c.env.DB, crew.id, player.id, body.item)
+    : move === "put" ? await chestPutStack(c.env.DB, crew.id, player.id, body.tab, body.kind, body.qty)
+    : move === "take" ? await chestTakeStack(c.env.DB, crew.id, player.id, body.tab, body.kind, body.qty)
+    : move === "tab" ? await chestBuyTab(c.env.DB, crew.id, player.id, body.name)
+    : move === "rename" ? await chestRenameTab(c.env.DB, crew.id, body.tab, body.name)
+    : move === "color" ? await chestColorTab(c.env.DB, crew.id, body.tab, body.color)
+    : await chestMoveTab(c.env.DB, crew.id, body.tab, body.to);
   if (problem) return c.json({ error: problem }, 409);
   return c.json(await chestFor(c.env.DB, crew.id));
 });
