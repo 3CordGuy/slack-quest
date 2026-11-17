@@ -191,7 +191,7 @@ export const THROWABLES: Record<Throwable, ThrowableDef> = {
   fire: { name: "Fire bomb", blurb: "Bursts into flame: damage to everyone near, and fire left burning for 2 rounds.", radius: 1, damage: { n: 2, d: 6, plus: 0 }, surface: { kind: "fire", rounds: 2 } },
   oil: { name: "Oil flask", blurb: "Slick ground that slows whoever crosses it, and goes up at a spark.", radius: 1, surface: { kind: "oil", rounds: 4 } },
   water: { name: "Water skin", blurb: "Douses fire and leaves the ground wet for 3 rounds.", radius: 1, surface: { kind: "water", rounds: 3 } },
-  acid: { name: "Acid flask", blurb: "Splashes slime acid: a little damage to everyone near, and leaves them Holed for 2 rounds unless they dodge it.", radius: 1, damage: { n: 1, d: 6, plus: 0 }, condition: { kind: "exposed", rounds: 2 } },
+  acid: { name: "Acid flask", blurb: "Splashes slime acid: a little damage to everyone near, and leaves them Exposed for 2 rounds unless they dodge it.", radius: 1, damage: { n: 1, d: 6, plus: 0 }, condition: { kind: "exposed", rounds: 2 } },
   slime: { name: "Slime flask", blurb: "Leaves a sticky slick for 3 rounds: it costs a step more to cross and slows whoever walks into it.", radius: 1, surface: { kind: "slime", rounds: 3 } },
   torch: { name: "Torch", blurb: "Light it to hold in your off hand (a Bonus action) and see in the dark, with your shield set aside. Thrown, it lies burning where it lands, and sets oil alight.", radius: 0, light: true },
 };
