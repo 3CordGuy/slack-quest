@@ -91,9 +91,9 @@ function tags(defId: string): string[] {
 const RECIPES = Object.values(FURNISHINGS).filter((f) => f.recipe).sort((a, b) => Number(!!a.needsBlueprint) - Number(!!b.needsBlueprint));
 
 /** What a use is called, on the button over the hero's head and in the tooltip. */
-const USE_VERB: Record<FurnishingUse, string> = { rest: "Rest", open: "Open", dress: "Change look", warm: "Warm up", read: "Read", look: "Look" };
+const USE_VERB: Record<FurnishingUse, string> = { rest: "Rest", open: "Open", dress: "Change look", warm: "Warm up", read: "Read", sit: "Sit", look: "Look" };
 /** Which use wins when the hero stands beside several things at once. */
-const USE_ORDER: FurnishingUse[] = ["rest", "open", "dress", "warm", "read"];
+const USE_ORDER: FurnishingUse[] = ["rest", "open", "dress", "warm", "read", "sit"];
 
 /** Which panel a message belongs in. */
 type Where = "storage" | "craft" | "hut" | "box";
@@ -548,6 +548,14 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
     const problem = useProblem(piece.defId, canEdit, owner?.name);
     if (problem) return setNotice({ text: `${piece.label}: ${problem}`, ok: false, n: Date.now() });
     if (use === "look") return doUse.current(piece);
+    if (use === "sit") {
+      // A stool is walked onto: the walk ends on its hex, and whoever is on a stool's hex is drawn sitting on it.
+      const seat = { q: piece.q, r: piece.r };
+      if (same(self.pos, seat)) return;
+      if (players.some((p) => p.id !== self.id && same(p.pos, seat))) return setNotice({ text: `Someone is sitting on the ${piece.label}.`, ok: false, n: Date.now() });
+      if (!hutPath(room, furnishings, self.pos, seat)) return setNotice({ text: `You cannot get to the ${piece.label}.`, ok: false, n: Date.now() });
+      return hut.send({ type: "move", to: seat });
+    }
     // No walk across the room for a rest that will not happen.
     if (use === "rest" && restBlocked) return setNotice({ text: restBlocked, ok: false, n: Date.now() });
     if (isBeside(room, furnishings, piece, self.pos)) return doUse.current(piece);
@@ -887,8 +895,8 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
           <span className={atDoor ? "" : "muted"}>
             {atDoor ? "The door back to the Harbor."
               : decorating ? "Decorating: click a piece for its controls, or pick one out of Storage. Done when you are finished."
-              : canEdit ? "Click a hex to walk, or a piece to use it: sleep in the bed, open a chest, change at the wardrobe."
-              : `Click a piece to look at it. Only ${owner?.name ?? "the owner"} can move the furniture.`}
+              : canEdit ? "Click a hex to walk, or a piece to use it: sleep in the bed, open a chest, change at the wardrobe, sit on a stool."
+              : `Click a piece to look at it, or a stool to sit on it. Only ${owner?.name ?? "the owner"} can move the furniture.`}
           </span>
         }
         meter={canEdit && stamina ? { name: "Energy", note: restIn > 0 ? `gathering outings · rest again in ${restIn} min` : "gathering outings left today", now: stamina.stamina.left, max: stamina.stamina.max, kind: "stamina" } : undefined}

@@ -7,7 +7,7 @@
 
 import { allHexesInGrid, posKey, type HexGrid, type HexPos } from "@gantt-quest/core";
 import { harborPoi, type HarborPlayer, type LookMessage, type LookRequest, type XpMessage } from "./harbor";
-import { FURNISHINGS, HUT_TIERS, type Furnishing, type HutTier } from "./hut";
+import { FURNISHINGS, HUT_TIERS, SEATS, type Furnishing, type HutTier } from "./hut";
 import { BASE_HEIGHT, findPath, poiAt, tileAt, type Tile, type WorldMap } from "./map";
 import type { Footprint } from "./hut";
 
@@ -555,10 +555,25 @@ export function blockedHexes(placed: Placed[]): Set<string> {
   return blocked;
 }
 
-/** A walkable route between two hexes of the room, or null. Walls and placed furniture are walked around. */
-export function hutPath(room: WorldMap, placed: Placed[], from: HexPos, to: HexPos): HexPos[] | null {
+/** The hexes with a seat standing on them (a stool): where someone walks to sit down. */
+export function seatHexes(placed: Placed[]): HexPos[] {
+  return placedFurnishings(placed)
+    .filter((f) => !!f.defId && f.onId == null && !!SEATS[FURNISHINGS[f.defId]?.model ?? ""])
+    .map((f) => ({ q: f.q, r: f.r }));
+}
+
+/**
+ * A walkable route between two hexes of the room, or null. Walls and placed
+ * furniture are walked around. A seat (`seats`: the placed stools, unless
+ * given) is the one piece that can be walked onto, to sit on it: only as the
+ * end of the walk, never on the way to somewhere else, and not while someone
+ * else is on it (`taken`: where everyone else is).
+ */
+export function hutPath(room: WorldMap, placed: Placed[], from: HexPos, to: HexPos, seats: HexPos[] = seatHexes(placed), taken: HexPos[] = []): HexPos[] | null {
   const blocked = blockedHexes(placed);
-  const route = findPath(room, from, to, HUT_MAX_PATH, (t) => (t.biome !== "floor" || blocked.has(posKey(t)) ? Infinity : 1));
+  const at = (h: HexPos) => h.q === to.q && h.r === to.r;
+  const seat = seats.some(at) && !taken.some(at) ? posKey(to) : null;
+  const route = findPath(room, from, to, HUT_MAX_PATH, (t) => (t.biome !== "floor" || (blocked.has(posKey(t)) && posKey(t) !== seat) ? Infinity : 1));
   return route && route.path.length > 0 ? route.path : null;
 }
 
@@ -569,8 +584,8 @@ export function hutPath(room: WorldMap, placed: Placed[], from: HexPos, to: HexP
 // in and out of a container are decided by the server over HTTP (gather.ts,
 // the stash and stow routes); the room only checks who may lie down where.
 
-/** What clicking a piece does: rest in a bed, open a container, change your look at a wardrobe, warm up at a fire, read a shelf, or just look. */
-export type FurnishingUse = "rest" | "open" | "dress" | "warm" | "read" | "look";
+/** What clicking a piece does: rest in a bed, open a container, change your look at a wardrobe, warm up at a fire, read a shelf, sit on a stool, or just look. */
+export type FurnishingUse = "rest" | "open" | "dress" | "warm" | "read" | "sit" | "look";
 
 export function useOf(defId: string): FurnishingUse {
   const def = FURNISHINGS[defId];
@@ -580,6 +595,7 @@ export function useOf(defId: string): FurnishingUse {
   if (def.dress) return "dress";
   if (def.light === "fire") return "warm";
   if (defId === "bookshelf" || defId === "great_bookcase" || defId === "books") return "read";
+  if (SEATS[def.model]) return "sit";
   return "look";
 }
 

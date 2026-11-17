@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { hexDistance } from "@gantt-quest/core";
-import { PUB_BARKEEP_POS, PUB_BUFF_CAPS, PUB_COUNTER, PUB_CREW, PUB_DEALER_POS, PUB_DEALER_STAND, PUB_DICE, PUB_FITTINGS, PUB_GRID, PUB_MENU, PUB_REGULAR_SPOTS, PUB_SALESMAN_POS, PUB_SHOALS, PUB_TRADER, capPubBuff, hutGrid, poiAt, pubBuff, pubPath, pubRoom, tileAt } from "./index";
+import { PUB_BARKEEP_POS, PUB_BUFF_CAPS, PUB_COUNTER, PUB_CREW, PUB_DEALER_POS, PUB_DEALER_STAND, PUB_DICE, PUB_FITTINGS, PUB_GRID, PUB_MENU, PUB_REGULAR_SPOTS, PUB_SALESMAN_POS, PUB_SEATS, PUB_SHOALS, PUB_TRADER, capPubBuff, hutGrid, poiAt, pubBuff, pubPath, pubRoom, tileAt } from "./index";
 
 describe("the pub", () => {
   const room = pubRoom();
@@ -32,6 +32,18 @@ describe("the pub", () => {
     expect(poiAt(room, PUB_DEALER_STAND)?.kind).toBe("dealer");
     expect(pubPath(room, door, PUB_DEALER_STAND)!.at(-1)).toEqual(PUB_DEALER_STAND);
     expect(pubPath(room, door, PUB_DEALER_POS)).toBeNull();
+  });
+
+  it("lets a customer walk onto a free stool to sit, and not through one", () => {
+    expect(PUB_SEATS.length).toBe(PUB_FITTINGS.filter((f) => f.model === "chair").length);
+    for (const seat of PUB_SEATS) {
+      const path = pubPath(room, door, seat)!;
+      expect(path.at(-1), `${seat.q},${seat.r}`).toEqual(seat);
+      expect(path.slice(0, -1).some((p) => PUB_SEATS.some((s) => s.q === p.q && s.r === p.r))).toBe(false);
+      // Taken by someone else, it is furniture like any other; and whoever sat can walk away again.
+      expect(pubPath(room, door, seat, [seat])).toBeNull();
+      expect(pubPath(room, seat, door)).not.toBeNull();
+    }
   });
 
   it("still lets a customer reach every place to stand", () => {

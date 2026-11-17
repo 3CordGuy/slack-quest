@@ -146,7 +146,8 @@ export class PubRoom extends DurableObject<Env> {
     if (msg.type === "move") {
       const to = { q: Number(msg.to?.q), r: Number(msg.to?.r) };
       if (!Number.isInteger(to.q) || !Number.isInteger(to.r)) return;
-      const path = pubPath(ROOM, player.pos, to);
+      // A walk may end on a stool, to sit on it, unless someone else already is.
+      const path = pubPath(ROOM, player.pos, to, this.players().filter((p) => p.id !== player.id).map((p) => p.pos));
       if (!path) return;
       ws.serializeAttachment({ ...player, pos: path[path.length - 1] } satisfies HarborPlayer);
       this.broadcast({ type: "moved", id: player.id, path });

@@ -15,7 +15,7 @@ import type { DiceRequest, DiceView } from "./dice";
 import type { ShoalsRequest, ShoalsView } from "./shoals";
 import type { TideRequest, TideView } from "./tide";
 import { harborPoi, type HarborPlayer, type LookMessage, type LookRequest, type XpMessage } from "./harbor";
-import type { Perk } from "./hut";
+import { SEATS, type Perk } from "./hut";
 import { HEX_DIRS, buildRoom, hutPath, wallFaces } from "./hutroom";
 import type { WorldMap } from "./map";
 
@@ -111,9 +111,12 @@ export function pubRoom(): WorldMap {
   return { ...room, pois: [...room.pois, harborPoi("counter", "counter", PUB_COUNTER), harborPoi("dice", "dice", PUB_DICE), harborPoi("shoals", "shoals", PUB_SHOALS), harborPoi("crew", "crew", PUB_CREW), harborPoi("tide", "tide", PUB_TIDE), harborPoi("trader", "trader", PUB_TRADER), harborPoi("dealer", "dealer", PUB_DEALER_STAND)] };
 }
 
-/** A walkable route across the pub, or null. The leaderboard is walked around. The barkeep's side of the bar is his alone, the salesmen's corner theirs, and the dealer's and the regulars' spots theirs. */
-export function pubPath(room: WorldMap, from: HexPos, to: HexPos): HexPos[] | null {
-  return hutPath(room, [...PUB_FITTINGS, PUB_LEADERBOARD.pos, PUB_BARKEEP_POS, PUB_SALESMAN_POS, PUB_DEALER_POS, ...PUB_REGULAR_SPOTS.map((s) => s.pos)], from, to);
+/** The stools at the pub's tables: anyone may walk onto one to sit on it. */
+export const PUB_SEATS: HexPos[] = PUB_FITTINGS.filter((f) => !!SEATS[f.model]).map((f) => ({ q: f.q, r: f.r }));
+
+/** A walkable route across the pub, or null. The leaderboard is walked around. The barkeep's side of the bar is his alone, the salesmen's corner theirs, and the dealer's and the regulars' spots theirs. A walk may end on a stool nobody else is on (`taken`: where everyone else is), to sit on it. */
+export function pubPath(room: WorldMap, from: HexPos, to: HexPos, taken: HexPos[] = []): HexPos[] | null {
+  return hutPath(room, [...PUB_FITTINGS, PUB_LEADERBOARD.pos, PUB_BARKEEP_POS, PUB_SALESMAN_POS, PUB_DEALER_POS, ...PUB_REGULAR_SPOTS.map((s) => s.pos)], from, to, PUB_SEATS, taken);
 }
 
 // ---------- the menu ----------
