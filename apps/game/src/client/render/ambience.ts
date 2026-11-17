@@ -9,7 +9,7 @@
 // sky.
 
 import * as THREE from "three";
-import { cobbleTexture, floorTexture, pierTexture } from "./groundArt";
+import { cobbleTexture, flagstoneTexture, floorTexture, pierTexture } from "./groundArt";
 import { devTools } from "../devTools";
 import { fancy, fancyGrass } from "./fancy";
 import { WIND_DIR, addFieldSway, gustAt, setFieldCalm, windPower } from "./wind";
@@ -688,6 +688,7 @@ const GLOW: Record<LightKind, { color: string; power: number; range: number; fli
   candle: { color: "#ffb35c", power: 0.9, range: 3.2, flicker: true },
   lamp: { color: "#ffd08a", power: 1.5, range: 4.5, flicker: false },
   fire: { color: "#ff9548", power: 2.2, range: 5, flicker: true },
+  brew: { color: "#6fe07e", power: 1.7, range: 3.8, flicker: true },
 };
 
 /** What a table lantern's light warms toward as it flares. */
@@ -711,8 +712,16 @@ export class Ambience {
   readonly sunDir = new THREE.Vector3(-0.4, 0.8, 0.4);
   /** A hut's hanging lamp over the middle of the room, which its owner can put out. */
   private lamp = new THREE.PointLight("#ffd7a1", 0, 0, 0);
+  /** What a room's floor is laid with: boards, as in the huts and the pub, or flagstones (the smithy). Read when the ground is built. */
+  floorLook: "planks" | "flags" = "planks";
   /** Whether the hut's hanging lamp is lit. Off, the room is lit only by its candles, lanterns and fires. */
   private lampOn = true;
+  /**
+   * A room kept dim for the mood of it (the apothecary's shop), with the lamp out: each small light makes a pool
+   * round itself and no more, falling off sharply, and the fill is fainter, so there is dark between the pools.
+   * Without it a room with its lamp out has its small lights carry the whole room, as a hut's do.
+   */
+  private gloom = false;
   /** In the Haunted Caverns: dark as indoors, no hanging lamp, and a torch carried by each hero. */
   private cave = false;
   /**
@@ -1068,7 +1077,7 @@ export class Ambience {
       mesh.receiveShadow = true;
       this.group.add(mesh);
     };
-    lay("floor", floorTexture());
+    lay("floor", this.floorLook === "flags" ? flagstoneTexture() : floorTexture());
     lay("cobble", cobbleTexture());
     lay("dock", pierTexture());
     // The Harbor's grass is drabbed by the wet, as the renderer does for every grass tile in a port.
@@ -1721,6 +1730,12 @@ export class Ambience {
     for (let i = 0; i < this.torchCount; i++) this.torches[i].position.set(at[i].x + 0.2, at[i].y + TORCH_LIFT, at[i].z + 0.1);
   }
 
+  setGloom(on: boolean) {
+    if (on === this.gloom) return;
+    this.gloom = on;
+    this.stirAll();
+  }
+
   setLampOn(on: boolean) {
     if (on === this.lampOn) return;
     this.lampOn = on;
@@ -1949,12 +1964,17 @@ export class Ambience {
   private roomLook(l: RoomLight, clock: number, motion: number): { color: string; distance: number; decay: number; intensity: number } {
     const wave = this.waver(clock, Math.abs(Math.floor(l.pos.x * 13 + l.pos.z * 7)) % 7, motion);
     // The great fire reaches across the room, falling off gently, so it throws long shadows over the floor.
+    // In a gloomy room (the smithy's forge, lamp out) the great fire is a deep, strong pool a few hexes across, not a
+    // light for the whole room, so the corners stay dark.
+    if (l.main && this.gloom && !this.lampOn) return { color: "#ff8a3c", distance: 7.5, decay: 2, intensity: 4.4 * wave };
     if (l.main) return { color: "#ff9a4c", distance: 14, decay: 1.15, intensity: 3.4 * wave };
-    if (l.kind === "fire") return { color: "#ff9548", distance: 6, decay: 2, intensity: 3.2 * wave };
+    if (l.kind === "fire") return this.gloom && !this.lampOn ? { color: "#ff9548", distance: 4.5, decay: 2, intensity: 2.4 * wave } : { color: "#ff9548", distance: 6, decay: 2, intensity: 3.2 * wave };
     const look = GLOW[l.kind];
     const flick = look.flicker ? wave : 1;
     // Under the lamp a small light is only a warm spot, as it always was; its shadow is a faint one close by.
     if (this.lampOn) return { color: look.color, distance: look.range, decay: 2, intensity: look.power * flick };
+    // A gloomy room: a pool of light round each, falling off sharply, and dark between them.
+    if (this.gloom) return { color: look.color, distance: look.range * 1.3, decay: 2, intensity: look.power * 2.4 * flick };
     // With the lamp out the small lights carry the room: more reach, fading gently (decay 1), so a hero a hex or
     // two away still throws a shadow you can see. Several share the room, so each is softer than the one shadow
     // light there used to be.
@@ -2363,7 +2383,7 @@ export class Ambience {
       } else {
         // Lamp out: a faint fill so the room never goes black, and the candles, lanterns and fires do the rest.
         this.lamp.intensity = 0;
-        this.hemi.intensity = 0.15;
+        this.hemi.intensity = this.gloom ? 0.07 : 0.15;
       }
       this.hemi.color.set("#ffe9c9");
       this.hemi.groundColor.set("#3b2f2a");

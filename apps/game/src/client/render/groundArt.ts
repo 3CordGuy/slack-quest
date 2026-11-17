@@ -215,6 +215,85 @@ export function floorTexture(): THREE.CanvasTexture {
   return sheet((ctx) => planks(ctx, { boards: ["#b58d5e", "#ab8455", "#bd9566", "#b08a5c"], gap: "#7f5f3e", grain: "#9a7650", nail: "#6e5640" }, 300));
 }
 
+/**
+ * Flagstones for the smithy: big, worn slabs of dark stone laid in rows of uneven lengths, each its own grey-brown,
+ * with dark joints, a soft wear across the middle, a crack or two, and soot and scorch scuffed into them.
+ */
+export function flagstoneTexture(): THREE.CanvasTexture {
+  return sheet((ctx) => {
+    ctx.fillStyle = "#2c2925";
+    ctx.fillRect(0, 0, SIZE, SIZE);
+    const rows = 3;
+    const rh = SIZE / rows;
+    const tones = ["#5e5850", "#66605a", "#57524b", "#6b645a", "#615a52"];
+    for (let r = 0; r < rows; r++) {
+      const y = r * rh;
+      // Each row starts somewhere different, and its slabs run on across the sheet's edge and back in.
+      let x = hash(r, 0, 940) * 70;
+      let k = 0;
+      const end = x + SIZE;
+      while (x < end) {
+        const w = Math.min(end - x, 60 + hash(r, k, 941) * 70);
+        const tone = tones[Math.floor(hash(r, k, 942) * tones.length)];
+        for (const shift of [0, -SIZE]) {
+          const [x0, y0, bw, bh] = [x + shift + 2, y + 2, w - 4, rh - 4];
+          if (x0 > SIZE || x0 + bw < 0) continue;
+          ctx.fillStyle = tone;
+          ctx.fillRect(x0, y0, bw, bh);
+          // Worn paler across the middle where feet go, darker at the edges.
+          const g = ctx.createRadialGradient(x0 + bw / 2, y0 + bh / 2, 4, x0 + bw / 2, y0 + bh / 2, Math.max(bw, bh) * 0.7);
+          g.addColorStop(0, "rgba(255,245,230,0.07)");
+          g.addColorStop(1, "rgba(15,10,6,0.3)");
+          ctx.fillStyle = g;
+          ctx.fillRect(x0, y0, bw, bh);
+          // A lit edge along the top and a shaded one along the foot.
+          ctx.fillStyle = "rgba(255,240,220,0.1)";
+          ctx.fillRect(x0, y0, bw, 2);
+          ctx.fillStyle = "rgba(10,6,4,0.25)";
+          ctx.fillRect(x0, y0 + bh - 2, bw, 2);
+          // Now and then a crack across it.
+          if (hash(r, k, 943) < 0.35) {
+            ctx.strokeStyle = "rgba(20,16,12,0.6)";
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            let cx = x0 + bw * (0.2 + hash(r, k, 944) * 0.3);
+            let cy = y0 + 3;
+            ctx.moveTo(cx, cy);
+            for (let s = 0; s < 6; s++) {
+              cx += (hash(r * 9 + k, s, 945) - 0.3) * 10;
+              cy += bh / 7;
+              ctx.lineTo(cx, cy);
+            }
+            ctx.stroke();
+          }
+          // Speckle: grit and pitting.
+          for (let d = 0; d < 14; d++) {
+            ctx.fillStyle = hash(r * 31 + k, d, 946) < 0.5 ? "rgba(20,15,10,0.25)" : "rgba(255,240,220,0.08)";
+            ctx.fillRect(x0 + hash(r * 31 + k, d, 947) * bw, y0 + hash(r * 31 + k, d, 948) * bh, 2, 2);
+          }
+        }
+        x += w;
+        k++;
+      }
+    }
+    // Soot and scorch scuffed across it, wrapping round the edges so the sheet repeats unbroken.
+    for (let i = 0; i < 8; i++) {
+      const x = hash(i, 1, 950) * SIZE;
+      const y = hash(i, 2, 950) * SIZE;
+      const r = 20 + hash(i, 3, 950) * 40;
+      for (const dx of [-SIZE, 0, SIZE]) {
+        for (const dy of [-SIZE, 0, SIZE]) {
+          const g = ctx.createRadialGradient(x + dx, y + dy, 0, x + dx, y + dy, r);
+          g.addColorStop(0, "rgba(12,9,6,0.22)");
+          g.addColorStop(1, "rgba(12,9,6,0)");
+          ctx.fillStyle = g;
+          ctx.fillRect(x + dx - r, y + dy - r, r * 2, r * 2);
+        }
+      }
+    }
+  });
+}
+
 /** Planks for the piers: greyer, sea-weathered boards running out to sea. */
 export function pierTexture(): THREE.CanvasTexture {
   return sheet((ctx) => {
@@ -419,4 +498,228 @@ export function panelTexture(): THREE.CanvasTexture {
   tex.wrapS = THREE.RepeatWrapping;
   tex.anisotropy = 8;
   return tex;
+}
+
+/** A run of timber across a wall sheet: dark, lit along its top edge and shaded along its foot. */
+function timberBand(ctx: CanvasRenderingContext2D, W: number, y0: number, y1: number, tone: string) {
+  ctx.fillStyle = tone;
+  ctx.fillRect(0, y0, W, y1 - y0);
+  const g = ctx.createLinearGradient(0, y0, 0, y1);
+  g.addColorStop(0, "rgba(255,225,180,0.2)");
+  g.addColorStop(0.3, "rgba(255,225,180,0)");
+  g.addColorStop(0.7, "rgba(20,10,0,0)");
+  g.addColorStop(1, "rgba(20,10,0,0.32)");
+  ctx.fillStyle = g;
+  ctx.fillRect(0, y0, W, y1 - y0);
+}
+
+function wallSheet(draw: (ctx: CanvasRenderingContext2D, W: number, H: number, at: (share: number) => number) => void): THREE.CanvasTexture {
+  const W = 256;
+  const H = 448;
+  const canvas = document.createElement("canvas");
+  canvas.width = W;
+  canvas.height = H;
+  const ctx = canvas.getContext("2d")!;
+  draw(ctx, W, H, (share) => H * (1 - share));
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.anisotropy = 8;
+  return tex;
+}
+
+/**
+ * The smithy's walls inside: rough-dressed stone in uneven courses to a little over waist height, each block its
+ * own grey-brown with a pale mortar joint round it and the top courses darkened by the forge's smoke; above, a
+ * timber frame of posts and a brace filled with limewash gone grey with soot, darkest toward the top; and a heavy
+ * smoke-black beam along the top. One sheet is one unit of wall across; it repeats along the wall.
+ */
+export function smithyWallTexture(): THREE.CanvasTexture {
+  return wallSheet((ctx, W, H, at) => {
+    const stoneTop = at(0.56);
+    const beam = at(0.93);
+    // Mortar behind everything, then the blocks laid over it in courses, each course offset from the last.
+    ctx.fillStyle = "#6e665c";
+    ctx.fillRect(0, stoneTop, W, H - stoneTop);
+    const courses = 5;
+    const ch = (H - stoneTop) / courses;
+    const tones = ["#7d746a", "#857a6c", "#6f675e", "#8a8174", "#766c62", "#80766a"];
+    for (let c = 0; c < courses; c++) {
+      const y = stoneTop + c * ch;
+      let x = -hash(c, 1, 900) * 60;
+      let k = 0;
+      while (x < W) {
+        const w = 48 + hash(c, k, 901) * 46;
+        const tone = tones[Math.floor(hash(c, k, 902) * tones.length)];
+        // The block, a little inset for its joint, its corners knocked off.
+        const [x0, y0, bw, bh] = [x + 3, y + 3, w - 6, ch - 6];
+        ctx.fillStyle = tone;
+        ctx.beginPath();
+        ctx.moveTo(x0 + 4, y0);
+        ctx.lineTo(x0 + bw - 3, y0 + 1);
+        ctx.lineTo(x0 + bw, y0 + 5);
+        ctx.lineTo(x0 + bw - 1, y0 + bh - 3);
+        ctx.lineTo(x0 + bw - 5, y0 + bh);
+        ctx.lineTo(x0 + 2, y0 + bh - 1);
+        ctx.lineTo(x0, y0 + bh - 5);
+        ctx.lineTo(x0 + 1, y0 + 3);
+        ctx.closePath();
+        // Drawn again a sheet to each side, so a block across the edge meets itself where the sheet repeats.
+        for (const shift of [-W, 0, W]) {
+          ctx.save();
+          ctx.translate(shift, 0);
+          ctx.fill();
+          // Lit along the top, shaded along the foot: it stands proud of the mortar.
+          const g = ctx.createLinearGradient(0, y0, 0, y0 + bh);
+          g.addColorStop(0, "rgba(255,240,220,0.14)");
+          g.addColorStop(0.35, "rgba(255,240,220,0)");
+          g.addColorStop(1, "rgba(20,12,6,0.28)");
+          ctx.fillStyle = g;
+          ctx.fill();
+          ctx.fillStyle = tone;
+          ctx.restore();
+        }
+        // A few pits and chips on its face.
+        for (let d = 0; d < 3; d++) {
+          ctx.fillStyle = `rgba(30,22,16,${0.12 + hash(c * 7 + k, d, 903) * 0.12})`;
+          ctx.fillRect(x0 + hash(c * 7 + k, d, 904) * bw, y0 + hash(c * 7 + k, d, 905) * bh, 2 + hash(c, d, 906) * 3, 2);
+        }
+        x += w;
+        k++;
+      }
+    }
+    // Smoke on the top courses of stone.
+    const smoke = ctx.createLinearGradient(0, stoneTop, 0, stoneTop + ch * 2);
+    smoke.addColorStop(0, "rgba(20,14,10,0.35)");
+    smoke.addColorStop(1, "rgba(20,14,10,0)");
+    ctx.fillStyle = smoke;
+    ctx.fillRect(0, stoneTop, W, ch * 2);
+
+    // Above: limewash gone grey, sooted darker toward the beam, with a mottle.
+    ctx.fillStyle = "#b9b0a0";
+    ctx.fillRect(0, beam, W, stoneTop - beam);
+    for (let i = 0; i < 20; i++) {
+      const x = hash(i, 1, 910) * W;
+      const y = beam + hash(i, 2, 910) * (stoneTop - beam);
+      const r = 16 + hash(i, 3, 910) * 30;
+      const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+      g.addColorStop(0, "rgba(40,30,22,0.1)");
+      g.addColorStop(1, "rgba(40,30,22,0)");
+      ctx.fillStyle = g;
+      for (const shift of [-W, 0, W]) ctx.fillRect(x - r + shift, y - r, r * 2, r * 2);
+    }
+    const soot = ctx.createLinearGradient(0, beam, 0, stoneTop);
+    soot.addColorStop(0, "rgba(25,18,12,0.55)");
+    soot.addColorStop(1, "rgba(25,18,12,0.05)");
+    ctx.fillStyle = soot;
+    ctx.fillRect(0, beam, W, stoneTop - beam);
+    // The frame: a post at each edge of the sheet (half on each side, so neighbours make one post) and a brace.
+    const post = "#3b2a1e";
+    for (const x of [-11, W - 11]) {
+      ctx.fillStyle = post;
+      ctx.fillRect(x, beam, 22, stoneTop - beam);
+      ctx.fillStyle = "rgba(255,225,180,0.1)";
+      ctx.fillRect(x, beam, 3, stoneTop - beam);
+    }
+    ctx.save();
+    ctx.strokeStyle = post;
+    ctx.lineWidth = 16;
+    ctx.beginPath();
+    ctx.moveTo(8, stoneTop - 6);
+    ctx.lineTo(W - 8, beam + 6);
+    ctx.stroke();
+    ctx.restore();
+    // The sill on the stone, and the beam along the top.
+    timberBand(ctx, W, stoneTop - 12, stoneTop + 4, "#3b2a1e");
+    timberBand(ctx, W, 0, beam, "#2b1f17");
+  });
+}
+
+/**
+ * The apothecary's walls inside: deep green painted wainscot to waist height, in raised panels with a pale
+ * moulding round each, on a dark skirting and under a rail; above, an old printed paper of small gold sprigs on
+ * dark olive, a little faded and stained; and a dark timber beam along the top. One sheet is one unit of wall
+ * across (two panels); it repeats along the wall.
+ */
+export function apothecaryWallTexture(): THREE.CanvasTexture {
+  return wallSheet((ctx, W, H, at) => {
+    const railTop = at(0.53);
+    const rail = at(0.5);
+    const skirt = at(0.05);
+    const beam = at(0.93);
+    // The paper: dark olive, a sprig repeated on a diamond lattice, faded toward the foot and stained here and there.
+    ctx.fillStyle = "#3e4a32";
+    ctx.fillRect(0, beam, W, railTop - beam);
+    const step = 32;
+    for (let row = 0; row * step < railTop - beam + step; row++) {
+      for (let col = -1; col * step < W + step; col++) {
+        const x = col * step + (row % 2 ? step / 2 : 0);
+        const y = beam + row * step;
+        ctx.save();
+        ctx.translate(x, y);
+        ctx.strokeStyle = "rgba(214,184,106,0.55)";
+        ctx.fillStyle = "rgba(214,184,106,0.55)";
+        ctx.lineWidth = 1.4;
+        ctx.beginPath();
+        ctx.moveTo(0, 6);
+        ctx.quadraticCurveTo(1, 0, 0, -6);
+        ctx.stroke();
+        for (const s of [-1, 1]) {
+          ctx.beginPath();
+          ctx.ellipse(s * 3, -1 + s, 3, 1.5, s * 0.6, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        ctx.beginPath();
+        ctx.arc(0, -7, 1.6, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      }
+    }
+    for (let i = 0; i < 10; i++) {
+      const x = hash(i, 1, 920) * W;
+      const y = beam + hash(i, 2, 920) * (railTop - beam);
+      const r = 18 + hash(i, 3, 920) * 36;
+      const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+      g.addColorStop(0, "rgba(120,100,50,0.12)");
+      g.addColorStop(1, "rgba(120,100,50,0)");
+      ctx.fillStyle = g;
+      for (const shift of [-W, 0, W]) ctx.fillRect(x - r + shift, y - r, r * 2, r * 2);
+    }
+    const fade = ctx.createLinearGradient(0, beam, 0, railTop);
+    fade.addColorStop(0, "rgba(10,12,8,0.25)");
+    fade.addColorStop(1, "rgba(10,12,8,0)");
+    ctx.fillStyle = fade;
+    ctx.fillRect(0, beam, W, railTop - beam);
+
+    // The wainscot: deep green, two raised panels to the sheet, each with a pale moulding and a lit and a shaded edge.
+    ctx.fillStyle = "#24402e";
+    ctx.fillRect(0, rail, W, skirt - rail);
+    const pw = W / 2;
+    for (let i = 0; i < 2; i++) {
+      const [x0, y0, w, h] = [i * pw + 14, rail + 16, pw - 28, skirt - rail - 30];
+      ctx.fillStyle = "#2c4d37";
+      ctx.fillRect(x0, y0, w, h);
+      ctx.strokeStyle = "#7d9a72";
+      ctx.lineWidth = 2;
+      ctx.strokeRect(x0 + 1, y0 + 1, w - 2, h - 2);
+      ctx.fillStyle = "rgba(255,245,210,0.12)";
+      ctx.fillRect(x0 + 3, y0 + 3, w - 6, 3);
+      ctx.fillRect(x0 + 3, y0 + 3, 3, h - 6);
+      ctx.fillStyle = "rgba(5,15,8,0.3)";
+      ctx.fillRect(x0 + 3, y0 + h - 6, w - 6, 3);
+      ctx.fillRect(x0 + w - 6, y0 + 3, 3, h - 6);
+    }
+    // The stile between sheets: a darker line at each edge, so neighbours meet in one.
+    ctx.fillStyle = "rgba(5,15,8,0.35)";
+    ctx.fillRect(0, rail, 2, skirt - rail);
+    // The rail, the skirting and the beam, in dark timber.
+    timberBand(ctx, W, railTop, rail, "#3a2a1c");
+    timberBand(ctx, W, skirt, H, "#2e2117");
+    timberBand(ctx, W, 0, beam, "#2e2117");
+    const lip = ctx.createLinearGradient(0, rail, 0, rail + 10);
+    lip.addColorStop(0, "rgba(5,10,5,0.35)");
+    lip.addColorStop(1, "rgba(5,10,5,0)");
+    ctx.fillStyle = lip;
+    ctx.fillRect(0, rail, W, 10);
+  });
 }
