@@ -42,6 +42,8 @@ const drift = (t: number, b: number, salt: number) => {
 /** How far a torch's light reaches (world units, about four hexes), and how bright it burns. */
 const TORCH_REACH = 12;
 const TORCH_STRENGTH = 4;
+/** How high over where a torch is carried its light hangs: above a hero's head. Export for a torch on the ground. */
+export const TORCH_LIFT = 2.1;
 
 export function pixelTexture(w: number, h: number, draw: (ctx: CanvasRenderingContext2D) => void): THREE.CanvasTexture {
   const canvas = document.createElement("canvas");
@@ -1714,7 +1716,9 @@ export class Ambience {
   setTorches(at: THREE.Vector3[]) {
     if (!this.cave) return;
     this.torchCount = Math.min(at.length, this.torches.length);
-    for (let i = 0; i < this.torchCount; i++) this.torches[i].position.set(at[i].x + 0.25, at[i].y + 1.15, at[i].z + 0.15);
+    // Hung above the carrier's head: lit from there, a hero's own torch throws their shadow as a small pool at their
+    // feet, not wedges of dark across the floor (at shoulder height their own body would stand in its light).
+    for (let i = 0; i < this.torchCount; i++) this.torches[i].position.set(at[i].x + 0.2, at[i].y + TORCH_LIFT, at[i].z + 0.1);
   }
 
   setLampOn(on: boolean) {

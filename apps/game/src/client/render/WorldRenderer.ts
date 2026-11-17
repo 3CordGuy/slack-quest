@@ -12,7 +12,7 @@ import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js
 import { reportEnv } from "../ui/env";
 import { makeRenderer } from "./graphics";
 import { panelTexture } from "./groundArt";
-import { Ambience, type RoomLight, TILE_FILLET, TILE_RADIUS, beaconShine, dryPatch, hexTop, meadowAt, pixelTexture, stamp, tallGrass, type BuildingGlow } from "./ambience";
+import { Ambience, type RoomLight, TILE_FILLET, TILE_RADIUS, TORCH_LIFT, beaconShine, dryPatch, hexTop, meadowAt, pixelTexture, stamp, tallGrass, type BuildingGlow } from "./ambience";
 import "./camera.css";
 import { PINCH_PAN_SLACK, followIconSvg, readFollow, writeFollow } from "./cameraFollow";
 import type { HexPos } from "@gantt-quest/core";
@@ -5969,7 +5969,8 @@ export class WorldRenderer {
         const unit = this.units.get(h.id);
         if (unit && (!lit || h.torch)) torches.push(unit.root.position);
       }
-      for (const t of this.groundTorches.children) torches.push(t.position.clone().setY(t.position.y - 0.8));
+      // A torch on the ground lights from just over its flame.
+      for (const t of this.groundTorches.children) torches.push(t.position.clone().setY(t.position.y + 0.55 - TORCH_LIFT));
       torches.sort((a, b) => a.distanceToSquared(this.target) - b.distanceToSquared(this.target));
       this.ambience.setTorches(torches);
     }
