@@ -28,7 +28,8 @@ import { FREE_WALK, blast, inFight, pathIn, sameHex, sees, solid, unitAt, unitBy
 import { STARTING_ITEMS, THROWABLES, THROWABLE_KINDS, cleanItems, commonCost, enemyHp, enemyMove, tacticOf } from "./kit";
 import { d20, heroMove, mod, statOf } from "./rules";
 import { hiddenEnemies, sentToClient } from "./light";
-import { clearSurfaces, lightTorch, placeSurface, standInSurface, tickLights, tickSurfaces } from "./surfaces";
+import { checkPickup, clearSurfaces, lightTorch, pickUpTorch, placeSurface, standInSurface, tickLights, tickSurfaces } from "./surfaces";
+import { passTime } from "./clock";
 import type { Budget, DevOp, Encounter, Throwable, Unit, ZoneAction, ZoneEffect, ZoneEvent, ZoneHero, ZoneOptions, ZoneState, ZoneStep, ZoneView } from "./types";
 
 /** Rounds a surface painted from the dev toolbox lasts. */
@@ -486,6 +487,10 @@ function act(ctx: Ctx, action: ZoneAction): string | null {
     if (state.encounter) state.encounter.done = [...state.encounter.acting];
     return null;
   }
+  if (action.type === "time") {
+    passTime(ctx, action.now);
+    return null;
+  }
   if (action.type === "stock") {
     const hero = unitById(state, action.unit);
     if (hero?.side === "hero") hero.items = cleanItems(action.items);
@@ -548,6 +553,15 @@ function act(ctx: Ctx, action: ZoneAction): string | null {
     const cost = spend(budget, "bonus");
     if (cost) return cost;
     drinkItem(ctx, unit, action.item);
+    return null;
+  }
+  if (action.type === "pickup") {
+    const wrong = checkPickup(state, unit, action.at);
+    if (wrong) return wrong;
+    // Out of a fight it is free; in one, a Bonus action, like lighting one.
+    const cost = spend(budget, "bonus");
+    if (cost) return cost;
+    pickUpTorch(ctx, unit, action.at);
     return null;
   }
   if (action.type === "open") {

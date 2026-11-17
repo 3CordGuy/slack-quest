@@ -20,7 +20,7 @@
 
 import { DurableObject } from "cloudflare:workers";
 import { THROWABLE_KINDS, ZONE_CLIENT_ACTIONS, createZone, stepZone, zoneAwaiting, zoneHero, zoneOptions, zoneView, type ZoneAction, type ZoneEvent, type ZoneState } from "@gantt-quest/world";
-import { consumablesOf, kitStatements, spendConsumables, type Consumables } from "./consumables";
+import { consumablesOf, gainConsumables, kitStatements, spendConsumables, type Consumables } from "./consumables";
 import { applyZoneGrant, crewFor, heroInitFor, refreshHarbor, type Env } from "./db";
 import { isDev } from "./dev";
 import { clearPresence, getZoneRow, saveZoneStatement, setPresence } from "./zones";
@@ -64,18 +64,19 @@ export function zoneActionFrom(raw: unknown, by: string, dev: boolean): ZoneActi
   if (a.type === "common") return text(a.what) ? { type: "common", by, unit: a.unit, what: a.what as never, target, at: hex(a.at) } : null;
   if (a.type === "throw") return text(a.item) && isHex(a.at) ? { type: "throw", by, unit: a.unit, item: a.item as never, at: hex(a.at)! } : null;
   if (a.type === "drink") return text(a.item) ? { type: "drink", by, unit: a.unit, item: a.item as never } : null;
+  if (a.type === "pickup") return isHex(a.at) ? { type: "pickup", by, unit: a.unit, at: hex(a.at)! } : null;
   if (a.type === "open") return text(a.poi) ? { type: "open", by, unit: a.unit, poi: a.poi } : null;
   if (a.type === "light") return { type: "light", by, unit: a.unit, ...(a.hand === "main" ? { hand: "main" as const } : {}) };
   return { type: "end_turn", by, unit: a.unit };
 }
 
-/** How many of each kind a hero has fewer of after a step than before it. */
-function usedBy(prev: ZoneState, next: ZoneState, id: string): Consumables {
+/** How many of each kind a hero has fewer of after a step than before it (`sign` 1), or more of (`sign` -1). */
+function usedBy(prev: ZoneState, next: ZoneState, id: string, sign: 1 | -1 = 1): Consumables {
   const had = prev.units.find((u) => u.id === id)?.items ?? {};
   const has = next.units.find((u) => u.id === id)?.items ?? {};
   const used: Consumables = {};
   for (const kind of THROWABLE_KINDS) {
-    const n = (had[kind] ?? 0) - (has[kind] ?? 0);
+    const n = sign * ((had[kind] ?? 0) - (has[kind] ?? 0));
     if (n > 0) used[kind] = n;
   }
   return used;
@@ -177,8 +178,8 @@ export class ZoneRoom extends DurableObject<Env> {
     if (msg.type !== "action") return;
     const action = zoneActionFrom(msg.action, playerId, isDev(this.env));
     if (!action) return;
-    // Throwing, drinking or lighting a torch as your own hero draws on your own pack. (A stand-in has no pack: it carries the kit it was given.)
-    const pack = (action.type === "throw" || action.type === "drink" || action.type === "light") && action.unit === playerId ? playerId : undefined;
+    // Throwing, drinking, lighting a torch or picking one up as your own hero draws on (or adds to) your own pack. (A stand-in has no pack: it carries the kit it was given.)
+    const pack = (action.type === "throw" || action.type === "drink" || action.type === "light" || action.type === "pickup") && action.unit === playerId ? playerId : undefined;
     const error = await this.serial(async () => {
       await this.load();
       return this.apply(action, pack);
@@ -230,6 +231,15 @@ export class ZoneRoom extends DurableObject<Env> {
   private async apply(action: ZoneAction, pack?: string): Promise<string | null> {
     const db = this.env.DB;
     let prev = this.zone!;
+    // Time out of a fight has gone by since the last thing done here (zone/clock.ts): it passes first.
+    let passed: ZoneEvent[] = [];
+    if (action.type !== "time") {
+      const timed = stepZone(prev, { type: "time", now: Date.now() });
+      if (timed.ok) {
+        prev = timed.state;
+        passed = timed.events;
+      }
+    }
     if (pack) {
       // What they carry is what their pack holds now, whatever the map last heard.
       const held = stepZone(prev, { type: "stock", unit: pack, items: await consumablesOf(db, pack) });
@@ -247,7 +257,7 @@ export class ZoneRoom extends DurableObject<Env> {
       if (prev !== this.zone) {
         this.zone = prev;
         await saveZoneStatement(db, prev).run();
-        this.broadcast([]);
+        this.broadcast(passed);
       }
       return res.error;
     }
@@ -256,7 +266,7 @@ export class ZoneRoom extends DurableObject<Env> {
     this.zone = next;
     // The pack first: a potion drunk is gone from it even if the room goes away before the zone is saved.
     const writes: D1PreparedStatement[] = [];
-    if (pack) writes.push(...spendConsumables(db, pack, usedBy(prev, next, pack)));
+    if (pack) writes.push(...spendConsumables(db, pack, usedBy(prev, next, pack)), ...gainConsumables(db, pack, usedBy(prev, next, pack, -1)));
     // The dev toolbox's restock is real too, for every player's hero here.
     if (action.type === "dev" && action.dev.op === "heal") for (const u of next.units) if (u.side === "hero" && !u.controller) writes.push(...kitStatements(db, u.id));
     for (const write of writes) await write.run();
@@ -271,7 +281,7 @@ export class ZoneRoom extends DurableObject<Env> {
     }
     await saveZoneStatement(db, next).run();
     await this.notePresence();
-    this.broadcast(res.events);
+    this.broadcast([...passed, ...res.events]);
     return null;
   }
 

@@ -202,6 +202,13 @@ export const FIRE_GLOW = 1;
 /** Rounds of a fight a torch burns: lit to hold, and one lit from the pack and thrown straight down. */
 export const TORCH_HELD_ROUNDS = 10;
 export const TORCH_GROUND_ROUNDS = 8;
+/**
+ * Out of a fight time passes as in real life (zone/clock.ts): every EXPLORE_ROUND_MS counts as a round for the
+ * ground and for conditions. Torches are given a far kinder clock out there, a round every TORCH_ROUND_MS: a
+ * held torch lights some fifteen minutes of exploring.
+ */
+export const EXPLORE_ROUND_MS = 6_000;
+export const TORCH_ROUND_MS = 90_000;
 /** Defence lost while a torch is held in the hand a shield would be on. */
 export const SHIELD_SET_ASIDE = 2;
 

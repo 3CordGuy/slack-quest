@@ -5,7 +5,7 @@
 // fire out, cold turns water to ice, fire burns slime off and water washes
 // it away.
 
-import { hexNeighbors, posKey, type HexPos } from "@gantt-quest/core";
+import { hexDistance, hexNeighbors, posKey, type HexPos } from "@gantt-quest/core";
 import { tileAt } from "../map";
 import { addCondition, saveRoll, tick, type Ctx } from "./engine";
 import { flies, solid } from "./geometry";
@@ -205,6 +205,30 @@ export function tickLights(ctx: Ctx): void {
     const [q, r] = key.split(",").map(Number);
     ctx.events.push({ t: "light", at: { q, r }, on: false });
   }
+}
+
+/** Why `unit` cannot pick up a torch lying at `at`, or null if it can. */
+export function checkPickup(state: Ctx["state"], unit: Unit, at: HexPos): string | null {
+  if (!state.lights?.[posKey(at)]) return "There is no torch burning there.";
+  if (unit.side !== "hero") return "Only a hero can take it.";
+  if (unit.down) return "Not while you are down.";
+  if (hexDistance(unit.pos, at) > 1) return "Go up to it first.";
+  return null;
+}
+
+/**
+ * Pick up a torch burning on the ground: into the hand still lit, with what it has left to burn, or, with a
+ * torch already in hand, put out and stowed in the pack (as good as new: it is only rag and a stick).
+ */
+export function pickUpTorch(ctx: Ctx, unit: Unit, at: HexPos): void {
+  const key = posKey(at);
+  const light = ctx.state.lights![key];
+  delete ctx.state.lights![key];
+  ctx.events.push({ t: "light", at, on: false });
+  const stowed = (unit.torch ?? 0) > 0;
+  if (stowed) unit.items.torch = (unit.items.torch ?? 0) + 1;
+  else unit.torch = light.rounds;
+  ctx.events.push({ t: "took_torch", id: unit.id, at, stowed });
 }
 
 /** Light a torch to hold, from the pack. In the main hand the weapon is put away and the torch is swung instead. */

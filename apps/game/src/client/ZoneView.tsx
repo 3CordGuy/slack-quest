@@ -527,8 +527,12 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
         say(`${name(ev.id)} lights a torch.`);
       } else if (ev.t === "torch_out") {
         say(`${name(ev.id)}'s torch gutters out.`);
+      } else if (ev.t === "took_torch") {
+        say(ev.stowed ? `${name(ev.id)} puts out a torch and stows it in the pack.` : `${name(ev.id)} picks up a burning torch.`);
       } else if (ev.t === "light" && !ev.on) {
-        say("A torch on the ground burns out.");
+        // Gone from the ground because someone took it up is not burning out.
+        const taken = events.some((e) => e.t === "took_torch" && e.at.q === ev.at.q && e.at.r === ev.at.r);
+        if (!taken) say("A torch on the ground burns out.");
       } else if (ev.t === "joined") {
         say(`${name(ev.id)} arrives.`);
       }
@@ -792,6 +796,8 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
     if (dev.tool?.tool === "spawn") return dev.open?.send({ op: "spawn", kinds: dev.tool.kinds, at: pos });
     if (dev.tool?.tool === "paint") return dev.open?.send({ op: "paint", kind: dev.tool.surface, hexes: dev.tool.wide ? zoneBlast(state.map, pos, 1) : [pos] });
     if (!pick) {
+      // A click on a torch burning on the ground right beside you takes it up; from further off, it is walked to.
+      if (state.lights?.[posKey(pos)] && hexDistance(pos, act.pos) <= 1) return zone.send({ type: "pickup", unit: act.id, at: pos });
       // A click on a chest opens it from beside it, or walks up to it first.
       const chest = state.map.pois.find((p) => p.kind === "cache" && !p.cleared && p.pos.q === pos.q && p.pos.r === pos.r);
       if (chest) {
@@ -923,6 +929,8 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
 
   // Whoever is being shown acting, while the enemy's turn plays out; otherwise whoever the server waits on.
   const waitingFor = enc && !myTurn ? (watching && spot ? (names.current.get(spot) ?? "someone") : enc.acting.map((id) => names.current.get(id) ?? "someone").join(" and ")) : undefined;
+  // A torch burning on the ground within reach, to pick up.
+  const torchBeside = act && state.lights ? Object.keys(state.lights).map((k) => { const [q, r] = k.split(",").map(Number); return { q, r }; }).find((p) => hexDistance(p, act.pos) <= 1) : undefined;
   // A cave's chests, and its way out.
   const caves = state.options.biome === "caves";
   const chestBeside = act ? state.map.pois.find((p) => p.kind === "cache" && !p.cleared && hexDistance(p.pos, act.pos) <= 1) : undefined;
@@ -961,6 +969,7 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
 
   const under = unitOn(hover);
   const ground = hover ? tileAt(state.map, hover) : undefined;
+  const hoverTorch = hover ? state.lights?.[posKey(hover)] : undefined;
   const hoverChest = hover ? state.map.pois.find((p) => p.kind === "cache" && p.pos.q === hover.q && p.pos.r === hover.r) : undefined;
   const hoverMouth = !!hover && caves && state.map.pois.some((p) => p.kind === "landing" && p.pos.q === hover.q && p.pos.r === hover.r);
   const preview = under && z && pick?.kind === "ability" && under.side !== act.side ? previewAttack(z, act, pick.id, under) : null;
@@ -1080,6 +1089,11 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
                 </div>
               )}
             </>
+          ) : hoverTorch ? (
+            <>
+              <strong>A burning torch</strong>{" "}
+              <span className="muted">· {hoverTorch.rounds} round{hoverTorch.rounds === 1 ? "" : "s"} of light left{act && hexDistance(hover!, act.pos) <= 1 ? " · click to pick it up" : ""}</span>
+            </>
           ) : hoverChest ? (
             <>
               <strong>{chestName(hoverChest, true)}</strong>{" "}
@@ -1195,6 +1209,11 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
           ? { label: "Leave the cave", hint: atMouth ? "Back up to the Harbor. The cave stays as you left it." : "The way out is the cave mouth: walk back to it to leave.", disabled: !atMouth || fighting, run: leave }
           : { label: "Leave the map", hint: "Back to the Harbor. The map stays as you left it.", run: onLeave }]} />}
       >
+        {torchBeside && (!fighting || myTurn) && (
+          <button className="small" disabled={fighting && !budget?.bonus} title={fighting ? "A Bonus action" : undefined} onClick={() => zone.send({ type: "pickup", unit: act.id, at: torchBeside })}>
+            {act.torch ? "Stow the torch" : "Pick up the torch"}
+          </button>
+        )}
         {chestBeside && (!fighting || myTurn) && (
           <button className="small primary" disabled={chestGuarded(chestBeside) || (fighting && !budget?.action)} title={chestGuarded(chestBeside) ? "Its guards still stand over it" : fighting ? "An Action" : undefined} onClick={() => zone.send({ type: "open", unit: act.id, poi: chestBeside.id })}>
             Open {chestName(chestBeside)}
