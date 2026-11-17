@@ -13,6 +13,9 @@ import { defenceOf } from "./engine";
 import { checkAbility } from "./combat";
 import { d20, diceAverage, diceFor, heroMove, hitChance } from "./rules";
 import { createZone, standInHero, stepZone, zoneView } from "./zone";
+import { generateDelve } from "./delve";
+import { litHexes } from "./light";
+import { CHEST_PAY } from "./loot";
 import type { SurfaceKind, Unit, ZoneAction, ZoneEffect, ZoneEvent, ZoneState } from "./types";
 
 // ---------- helpers ----------
@@ -1073,6 +1076,124 @@ describe("the end of a fight", () => {
       check();
     }
   }, 60_000);
+});
+
+// ---------- a delve ----------
+
+describe("a delve", () => {
+  const delveOptions = (party = 2) => zoneOptions({ biome: "caves", delve: true, party, level: 3 });
+  /** Every open hex walkable from the mouth. */
+  const fromMouth = (state: ZoneState) => {
+    const open = new Set(state.map.tiles.filter((t) => !solid(t)).map((t) => posKey(t)));
+    const seen = new Set([posKey(state.start)]);
+    const queue = [state.start];
+    for (let i = 0; i < queue.length; i++) {
+      for (const n of hexNeighbors(queue[i], state.map.grid)) {
+        if (!open.has(posKey(n)) || seen.has(posKey(n))) continue;
+        seen.add(posKey(n));
+        queue.push(n);
+      }
+    }
+    return seen;
+  };
+  const tileOf = (state: ZoneState, p: HexPos) => state.map.tiles.find((t) => t.q === p.q && t.r === p.r);
+
+  it("is the caverns' own layout: chambers and tunnels from the mouth, its bands as groups, and chests to open", () => {
+    for (let seed = 0; seed < 12; seed++) {
+      const where = `seed ${seed}`;
+      const plan = generateDelve(`d${seed}`, delveOptions());
+      expect(generateDelve(`d${seed}`, delveOptions()), where).toEqual(plan);
+      expect(plan.map.tiles.some((t) => t.biome === "gate"), where).toBe(false);
+      expect(plan.map.pois.filter((p) => p.kind === "landing").map((p) => p.pos), where).toEqual([plan.start]);
+      const state = createZone("DLVE", `d${seed}`, delveOptions());
+      const reach = fromMouth(state);
+      // Every band stands where the party can walk to it, under its chamber's name; every chest can be reached.
+      for (const u of state.units) expect(reach.has(posKey(u.pos)), where).toBe(true);
+      expect(Object.keys(state.groups).length, where).toBeGreaterThanOrEqual(2);
+      for (const id of Object.keys(state.groups)) expect(id, where).toMatch(/^(band\d+|lair)$/);
+      const caches = state.map.pois.filter((p) => p.kind === "cache");
+      expect(caches.length, where).toBeGreaterThan(0);
+      for (const c of caches) expect([...hexNeighbors(c.pos, state.map.grid), c.pos].some((n) => reach.has(posKey(n))), where).toBe(true);
+      // The hoard is there, guarded by the haunt.
+      const hoard = caches.find((c) => c.loot === "hoard");
+      if (hoard) {
+        expect(hoard.guard, where).toBe("lair");
+        expect(state.units.some((u) => u.group === "lair" && u.kind === "haunt"), where).toBe(true);
+      }
+      // Nobody stands on the mouth, so the party always has room to arrive.
+      expect(state.units.some((u) => posKey(u.pos) === posKey(state.start)), where).toBe(false);
+    }
+  });
+
+  it("lets daylight in at the mouth: the hexes round it are lit with no torch", () => {
+    const state = createZone("DLVE", "d2", delveOptions());
+    const lit = litHexes(state)!;
+    expect(lit.has(posKey(state.start))).toBe(true);
+    for (const n of hexNeighbors(state.start, state.map.grid)) if (!solid(state.map.tiles.find((t) => t.q === n.q && t.r === n.r))) expect(lit.has(posKey(n))).toBe(true);
+    // Far down the tunnels it is still dark.
+    expect(state.map.tiles.some((t) => t.biome === "cave" && !lit.has(posKey(t)))).toBe(true);
+  });
+
+  it("sends a lone hero against smaller bands, and the haunt alone", () => {
+    const solo = createZone("DLVE", "d3", delveOptions(1));
+    const crew = createZone("DLVE", "d3", delveOptions(4));
+    expect(solo.units.length).toBeLessThan(crew.units.length);
+    expect(solo.units.filter((u) => u.group === "lair").map((u) => u.kind)).toEqual(["haunt"]);
+  });
+
+  it("opens a chest from beside it once its guards are gone, and pays its opener", () => {
+    let state = createZone("DLVE", "d1", delveOptions());
+    const chest = state.map.pois.find((p) => p.kind === "cache" && p.loot === "chest")!;
+    expect(chest).toBeDefined();
+    const ann = hero(state, "ann", "qa_paladin", state.start);
+    expect(fails(state, { type: "open", by: "ann", unit: "ann", poi: chest.id })).toMatch(/Go up to it/);
+    ann.pos = hexNeighbors(chest.pos, state.map.grid).find((n) => !solid(tileOf(state, n)) && !state.units.some((u) => posKey(u.pos) === posKey(n)))!;
+    if (chest.guard) {
+      expect(fails(state, { type: "open", by: "ann", unit: "ann", poi: chest.id })).toMatch(/guards still stand/);
+      state.units = state.units.filter((u) => u.group !== chest.guard);
+    }
+    // Out of a fight, with nobody near enough to start one.
+    state.units = state.units.filter((u) => u.side === "hero" || hexDistance(u.pos, ann.pos) > 3);
+    const step = stepZone(state, { type: "open", by: "ann", unit: "ann", poi: chest.id });
+    if (!step.ok) throw new Error(step.error);
+    state = step.state;
+    expect(state.map.pois.find((p) => p.id === chest.id)!.cleared).toBe(true);
+    expect(step.events).toContainEqual({ t: "opened", id: "ann", poi: chest.id, loot: "chest" });
+    expect(step.effects).toHaveLength(1);
+    expect(step.effects[0]).toMatchObject({ type: "grant", heroId: "ann", xp: CHEST_PAY.chest.xp });
+    const gold = step.effects[0].gold!;
+    expect(gold).toBeGreaterThanOrEqual(CHEST_PAY.chest.gold[0]);
+    expect(gold).toBeLessThanOrEqual(CHEST_PAY.chest.gold[1]);
+    expect(step.events.some((e) => e.t === "spoils" && e.id === "ann" && e.gold === gold)).toBe(true);
+    expect(fails(state, { type: "open", by: "ann", unit: "ann", poi: chest.id })).toMatch(/emptied/);
+  });
+
+  it("pays every player's hero on the map from the hoard, but no stand-in, and lets no stand-in open it", () => {
+    const state = createZone("DLVE", "d1", delveOptions());
+    const hoard = state.map.pois.find((p) => p.loot === "hoard")!;
+    expect(hoard).toBeDefined();
+    state.units = state.units.filter((u) => u.side === "hero");
+    const beside = hexNeighbors(hoard.pos, state.map.grid).filter((n) => !solid(tileOf(state, n)));
+    hero(state, "ann", "qa_paladin", beside[0]);
+    hero(state, "bo", "devops_mage", state.start);
+    const helper = hero(state, "cy", "refactor_rogue", beside[1]);
+    helper.controller = "ann";
+    expect(fails(state, { type: "open", by: "ann", unit: "cy", poi: hoard.id })).toMatch(/your own hero/);
+    const step = stepZone(state, { type: "open", by: "ann", unit: "ann", poi: hoard.id });
+    if (!step.ok) throw new Error(step.error);
+    expect(step.effects.map((e) => e.heroId).sort()).toEqual(["ann", "bo"]);
+    for (const e of step.effects) expect(e).toMatchObject({ xp: CHEST_PAY.hoard.xp });
+    expect(step.effects.every((e) => !!e.item)).toBe(true);
+  });
+
+  it("costs an Action to open a chest in a fight", () => {
+    let { state } = duel("dummy");
+    state.map.pois.push({ id: "chest9", kind: "cache", pos: at(5, 7), hidden: false, cleared: false, usedBy: [], enemies: [], loot: "chest" });
+    state = must(state, { type: "open", by: "ann", unit: "ann", poi: "chest9" });
+    expect(state.encounter!.budgets.ann.action).toBe(false);
+    state.map.pois.push({ id: "chest10", kind: "cache", pos: at(5, 6), hidden: false, cleared: false, usedBy: [], enemies: [], loot: "chest" });
+    expect(fails(state, { type: "open", by: "ann", unit: "ann", poi: "chest10" })).toMatch(/Action/);
+  });
 });
 
 // ---------- a hero's sheet ----------

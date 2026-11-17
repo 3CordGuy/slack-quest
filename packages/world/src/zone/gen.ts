@@ -56,6 +56,7 @@ export function zoneOptions(raw: unknown): ZoneOptions {
     party: whole(o.party, 1, 4, d.party),
     level: whole(o.level, 1, 40, d.level),
     threat: whole(o.threat, 1, 3, d.threat ?? 2),
+    ...(o.delve === true ? { delve: true } : {}),
   };
 }
 
@@ -72,7 +73,8 @@ export function groupKinds(lead: string, party: number): string[] {
 export interface ZonePlan {
   map: WorldMap;
   start: HexPos;
-  groups: { kinds: string[]; posts: HexPos[] }[];
+  /** `id`: what the group is called on the map (a delve keeps its chamber's), else one is made up. */
+  groups: { id?: string; kinds: string[]; posts: HexPos[] }[];
 }
 
 /** Everything that can be walked to from `from`: open ground, no step of two levels. */

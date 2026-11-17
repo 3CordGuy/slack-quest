@@ -65,6 +65,7 @@ export function zoneActionFrom(raw: unknown, by: string, dev: boolean): ZoneActi
   if (a.type === "throw") return text(a.item) && isHex(a.at) ? { type: "throw", by, unit: a.unit, item: a.item as never, at: hex(a.at)! } : null;
   if (a.type === "drink") return text(a.item) ? { type: "drink", by, unit: a.unit, item: a.item as never } : null;
   if (a.type === "pickup") return isHex(a.at) ? { type: "pickup", by, unit: a.unit, at: hex(a.at)! } : null;
+  if (a.type === "open") return text(a.poi) ? { type: "open", by, unit: a.unit, poi: a.poi } : null;
   if (a.type === "light") return { type: "light", by, unit: a.unit, ...(a.hand === "main" ? { hand: "main" as const } : {}) };
   return { type: "end_turn", by, unit: a.unit };
 }
@@ -272,7 +273,9 @@ export class ZoneRoom extends DurableObject<Env> {
     // What a won fight paid, written before the zone is saved (and so before anyone is told of it).
     for (const effect of res.effects) {
       if (effect.type !== "grant") continue;
-      await applyZoneGrant(db, effect.heroId, effect.xp, effect.resources);
+      const { place } = await applyZoneGrant(db, effect.heroId, effect);
+      // A full pack never loses what was found, but the hero hears where it went.
+      if (effect.item && (place === "storage" || place === "overfull")) res.events.push({ t: "stowed", id: effect.heroId, item: effect.item.name, place });
       // The roster shows each hero's level.
       this.tellHarbor(effect.heroId);
     }

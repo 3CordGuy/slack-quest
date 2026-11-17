@@ -3172,6 +3172,29 @@ export class WorldRenderer {
           add(box(0.04, 0.9, 0.04), lambert("#c9a877"), -0.35, 0.45, -0.3);
           add(box(0.05, 0.5, 0.05), lambert("#3d4048"), 0.35, 0.25, -0.2);
           add(box(0.16, 0.18, 0.16), new THREE.MeshBasicMaterial({ color: "#ffd98a" }), 0.35, 0.58, -0.2).userData.glow = true;
+          // And daylight falling in through it from above: a pale shaft, brightest at the floor and fading as it
+          // rises, a pool of light where it lands, and real light round it, so the way out shows from across the dark.
+          const sky = new THREE.Color("#d8ecff");
+          const glowing = (geometry: THREE.BufferGeometry, k: (x: number, y: number, z: number) => number) => {
+            const pos = geometry.getAttribute("position");
+            const colors: number[] = [];
+            for (let i = 0; i < pos.count; i++) {
+              const v = k(pos.getX(i), pos.getY(i), pos.getZ(i));
+              colors.push(sky.r * v, sky.g * v, sky.b * v);
+            }
+            geometry.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
+            const mesh = add(geometry, new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }), 0, 0, 0);
+            mesh.userData.glow = true;
+            return mesh;
+          };
+          const SHAFT = 3.6;
+          const shaft = glowing(new THREE.CylinderGeometry(0.42, 0.78, SHAFT, 18, 6, true), (_x, y) => 0.32 * Math.pow(1 - (y + SHAFT / 2) / SHAFT, 1.6));
+          shaft.position.y = SHAFT / 2;
+          const pool = glowing(new THREE.CircleGeometry(0.95, 24).rotateX(-Math.PI / 2), (x, _y, z) => 0.55 * Math.pow(Math.max(0, 1 - Math.hypot(x, z) / 0.95), 1.3));
+          pool.position.y = 0.02;
+          const daylight = new THREE.PointLight("#d8e8ff", 2.6, 4.5, 1.4);
+          daylight.position.set(0, 1.6, 0);
+          g.add(daylight);
           break;
         }
         add(box(1.0, 0.08, 0.5), lambert("#8a6a44"), 0, 0.05, 0.1);

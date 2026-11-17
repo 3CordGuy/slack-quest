@@ -22,6 +22,8 @@ import { enemyTurn } from "./ai";
 import { abilityArea, checkAbility, checkCommon, checkDrink, checkLight, checkThrow, doCommon, drinkItem, resolveAbility, throwItem, walk } from "./combat";
 import { has, heal, removeCondition, tick, type Ctx } from "./engine";
 import { ALERT_RANGE, JOIN_RANGE, freeHexNear, generateZone } from "./gen";
+import { generateDelve } from "./delve";
+import { checkOpen, openChest } from "./loot";
 import { FREE_WALK, blast, inFight, pathIn, sameHex, sees, solid, unitAt, unitById, zoneReach } from "./geometry";
 import { STARTING_ITEMS, THROWABLES, THROWABLE_KINDS, cleanItems, commonCost, enemyHp, enemyMove, tacticOf } from "./kit";
 import { d20, heroMove, mod, statOf } from "./rules";
@@ -61,10 +63,10 @@ function enemyUnit(state: ZoneState, kind: string, pos: HexPos, group: string): 
 }
 
 export function createZone(code: string, seed: string, options: ZoneOptions): ZoneState {
-  const plan = generateZone(seed, options);
+  const plan = options.delve ? generateDelve(seed, options) : generateZone(seed, options);
   const state: ZoneState = { v: 1, code, seed, rng: seedFromString(`zone-run|${seed}`), options, map: plan.map, start: plan.start, units: [], groups: {}, surfaces: {}, encounter: null, seq: 0 };
   for (const group of plan.groups) {
-    const id = `g${++state.seq}`;
+    const id = group.id ?? `g${++state.seq}`;
     state.groups[id] = { alerted: false };
     group.kinds.forEach((kind, i) => state.units.push(enemyUnit(state, kind, group.posts[i], id)));
   }
@@ -560,6 +562,15 @@ function act(ctx: Ctx, action: ZoneAction): string | null {
     const cost = spend(budget, "bonus");
     if (cost) return cost;
     pickUpTorch(ctx, unit, action.at);
+    return null;
+  }
+  if (action.type === "open") {
+    const chest = state.map.pois.find((p) => p.id === action.poi && p.kind === "cache");
+    const wrong = checkOpen(state, unit, chest);
+    if (wrong) return wrong;
+    const cost = spend(budget, "action");
+    if (cost) return cost;
+    openChest(ctx, unit, chest!);
     return null;
   }
   if (action.type === "light") {
