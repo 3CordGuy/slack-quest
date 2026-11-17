@@ -10,6 +10,7 @@ import { flamesIn, flickerFlame, torchFlame } from "./torchFlame";
 import { makeModelShip } from "./modelShip";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { reportEnv } from "../ui/env";
+import { makeRenderer } from "./graphics";
 import { panelTexture } from "./groundArt";
 import { Ambience, type RoomLight, TILE_FILLET, TILE_RADIUS, beaconShine, dryPatch, hexTop, meadowAt, pixelTexture, stamp, tallGrass, type BuildingGlow } from "./ambience";
 import "./camera.css";
@@ -973,8 +974,9 @@ export class WorldRenderer {
    * windows). It makes no sound, takes no keys, and draws only when the view showing it asks (see `step`).
    */
   constructor(private container: HTMLElement, private callbacks: RendererCallbacks, private opts: { backdrop?: boolean } = {}) {
+    // First, before anything that would need undoing: the browser may refuse (GraphicsUnavailable).
+    this.renderer = makeRenderer({ antialias: true, powerPreference: "low-power" });
     this.ear = opts.backdrop ? DEAF : openEar();
-    this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "low-power" });
     this.renderer.setPixelRatio(1);
     this.renderer.localClippingEnabled = true;
     if (!this.opts.backdrop) {
