@@ -845,7 +845,7 @@ function gear(p: Part, icon: string, trim: string, hold: Hold, inHand = false): 
     part.model(group, new THREE.Matrix4().makeTranslation(-pivot.x, -pivot.y, -pivot.z).multiply(at));
     disposeLowPoly(group);
     extraParts.push(part);
-    dangles.push({ joint: part.joint, rest, limit: d.limit, clear, bob: null, was: new THREE.Vector3(), pivot: new THREE.Vector3() });
+    dangles.push({ joint: part.joint, rest, limit: d.limit, clear, size: (d.size ?? 0) * scale.x, bob: null, was: new THREE.Vector3(), pivot: new THREE.Vector3() });
   }
   p.model(built.model, at);
   disposeLowPoly(built.model);
@@ -864,6 +864,8 @@ interface Dangling {
   limit?: number;
   /** The haft it hangs by, in the joint's parent's units: the weight is kept `r` from the line between. */
   clear?: { from: THREE.Vector3; to: THREE.Vector3; r: number };
+  /** How big the weight is, in the figure's units: how far it is kept off the body. */
+  size: number;
   /** Where the weight is in the world, and where it was a step ago (its speed); null until the first frame placed. */
   bob: THREE.Vector3 | null;
   was: THREE.Vector3;
@@ -873,6 +875,46 @@ interface Dangling {
 
 /** Set by makeFigure for the figure being built: what hangs loose in its hands. */
 let dangles: Dangling[] = [];
+/** Set by biped for the figure being built: the parts of the body a weight swinging from a hand bumps against. */
+let bodyParts: Part[] = [];
+
+/** A piece of the body as a capsule (a line, rounded out by `r`) in its joint's space, for what swings to bump against. */
+interface BodyCapsule {
+  joint: THREE.Object3D;
+  a: THREE.Vector3;
+  b: THREE.Vector3;
+  r: number;
+}
+
+/**
+ * Fit a capsule round each body part, once it is built: along the longest side of what is drawn on it, as thick
+ * as the other two sides on average. So a broad-shouldered or long-legged hero's is their own shape.
+ */
+function bodyCapsules(parts: Part[]): BodyCapsule[] {
+  const out: BodyCapsule[] = [];
+  const box = new THREE.Box3();
+  const piece = new THREE.Box3();
+  const size = new THREE.Vector3();
+  const mid = new THREE.Vector3();
+  for (const part of parts) {
+    box.makeEmpty();
+    part.skin.updateMatrix();
+    for (const o of part.skin.children) {
+      if (!(o instanceof THREE.Mesh) || !o.userData.body) continue;
+      o.geometry.computeBoundingBox();
+      box.union(piece.copy(o.geometry.boundingBox!).applyMatrix4(part.skin.matrix));
+    }
+    if (box.isEmpty()) continue;
+    box.getSize(size);
+    box.getCenter(mid);
+    const half = size.toArray().map((n) => n / 2);
+    const long = half.indexOf(Math.max(...half));
+    const r = (half.reduce((sum, n) => sum + n, 0) - half[long]) / 2;
+    const along = new THREE.Vector3().setComponent(long, Math.max(0, half[long] - r));
+    out.push({ joint: part.joint, a: mid.clone().sub(along), b: mid.clone().add(along), r });
+  }
+  return out;
+}
 
 /** Gravity, in the figure's units (22 to its height) a second squared: a little light, so a swing reads. */
 const DANGLE_GRAVITY = 95;
@@ -891,16 +933,39 @@ const _a = new THREE.Vector3();
 const _b = new THREE.Vector3();
 const _line = new THREE.Line3();
 const _near = new THREE.Vector3();
+const _off = new THREE.Vector3();
+/** The body's capsules in the world this frame: two ends and a radius each. */
+const _body: { a: THREE.Vector3; b: THREE.Vector3; r: number }[] = [];
+/** How much of its speed a weight keeps each step it is rubbing against the body. */
+const RUB = 0.85;
+
+/** Push `bob` out of the capsule from `a` to `b` of radius `r`. True if it was inside. */
+function pushOut(bob: THREE.Vector3, a: THREE.Vector3, b: THREE.Vector3, r: number): boolean {
+  _line.set(a, b);
+  _line.closestPointToPoint(bob, true, _near);
+  const off = _off.subVectors(bob, _near);
+  const gap = off.length();
+  if (gap >= r) return false;
+  if (gap < 1e-6) off.set(1, 0, 0);
+  bob.copy(_near).addScaledVector(off.normalize(), r);
+  return true;
+}
 
 /**
  * Swing what hangs loose: each is a weight on a rod from its pivot, stepped in the world (Verlet), so it keeps
  * its speed while the hand carrying it moves and turns under it. Then its joint is turned to hang toward it.
  */
-function swingDangles(list: Dangling[], dt: number) {
+function swingDangles(list: Dangling[], dt: number, top: THREE.Object3D, body: BodyCapsule[]) {
+  // The whole figure, posed for this frame, into the world: the hands that carry and the body they swing against.
+  top.updateWorldMatrix(true, true);
+  while (_body.length < body.length) _body.push({ a: new THREE.Vector3(), b: new THREE.Vector3(), r: 0 });
+  for (const [i, c] of body.entries()) {
+    _body[i].a.copy(c.a).applyMatrix4(c.joint.matrixWorld);
+    _body[i].b.copy(c.b).applyMatrix4(c.joint.matrixWorld);
+  }
   for (const d of list) {
     const parent = d.joint.parent;
     if (!parent) continue;
-    parent.updateWorldMatrix(true, false);
     parent.matrixWorld.decompose(_pos, _parentQ, _scale);
     const scale = _scale.x || 1;
     _pivot.copy(d.joint.position).applyMatrix4(parent.matrixWorld);
@@ -916,7 +981,7 @@ function swingDangles(list: Dangling[], dt: number) {
       d.pivot.copy(_pivot);
     } else {
       // A few small steps, the pivot carried along between last frame's place and this one's.
-      const steps = Math.min(4, Math.max(1, Math.ceil(dt * 120)));
+      const steps = Math.min(8, Math.max(1, Math.ceil(dt * 240)));
       const h = dt / steps;
       const keep = Math.exp(-DANGLE_DRAG * h);
       const fall = DANGLE_GRAVITY * scale * h * h;
@@ -940,20 +1005,22 @@ function swingDangles(list: Dangling[], dt: number) {
           }
         }
         d.bob.copy(at).addScaledVector(_dir, length);
-        // Kept off the haft: pushed straight out from it, then back to the chain's length.
-        if (d.clear) {
-          _line.set(_a.copy(d.clear.from).applyMatrix4(parent.matrixWorld), _b.copy(d.clear.to).applyMatrix4(parent.matrixWorld));
-          _line.closestPointToPoint(d.bob, true, _near);
-          const r = d.clear.r * scale;
-          const off = _dir.subVectors(d.bob, _near);
-          const gap = off.length();
-          if (gap < r) {
-            if (gap < 1e-6) off.set(1, 0, 0);
-            d.bob.copy(_near).addScaledVector(off.normalize(), r);
-            _dir.subVectors(d.bob, at).normalize();
-            d.bob.copy(at).addScaledVector(_dir, length);
+        // Kept off the haft and the body: pushed straight out of each (twice round, as one can push it into
+        // another), then back to the chain's length. Touching the body, it rubs, and loses some speed.
+        let touched = false;
+        for (let pass = 0; pass < 2; pass++) {
+          let moved = false;
+          if (d.clear) moved = pushOut(d.bob, _a.copy(d.clear.from).applyMatrix4(parent.matrixWorld), _b.copy(d.clear.to).applyMatrix4(parent.matrixWorld), d.clear.r * scale);
+          if (d.size > 0) {
+            for (let c = 0; c < body.length; c++) {
+              if (pushOut(d.bob, _body[c].a, _body[c].b, (body[c].r + d.size) * scale)) moved = touched = true;
+            }
           }
+          if (!moved) break;
+          _dir.subVectors(d.bob, at).normalize();
+          d.bob.copy(at).addScaledVector(_dir, length);
         }
+        if (touched) d.was.lerp(d.bob, 1 - RUB);
       }
       d.pivot.copy(_pivot);
     }
@@ -1747,6 +1814,8 @@ function biped(top: THREE.Group, parts: Part[], elbow = ELBOW) {
   for (const arm of [armR, armL, foreR, foreL]) arm.skin.scale.set(limbGirth, 1, limbGirth);
   const legR = limb(thighR, shinR);
   const legL = limb(thighL, shinL);
+  // What a weight swinging from the right hand can bump: all but that arm, which carries it.
+  bodyParts = [torso, head, thighR, thighL, shinR, shinL, armL, foreL];
   // What each hand holds, in the middle of the fist, kept upright however the arm is bent.
   const fist = lowPoly ? -5.25 : -5;
   const heldR = part(foreR.joint, 0, fist - elbow, 0);
@@ -5647,6 +5716,7 @@ export function makeFigure(kind: string, look: Look, outfit?: Outfit, opts: Figu
   extraParts = [];
   braids = [];
   dangles = [];
+  bodyParts = [];
   beardFront = null;
   slung = null;
   chosen = outfit?.appearance ?? null;
@@ -5666,6 +5736,8 @@ export function makeFigure(kind: string, look: Look, outfit?: Outfit, opts: Figu
   for (const part of [...rig.parts, ...extraParts]) part.build(mats, made);
   const swinging = braids;
   const loose = dangles;
+  // What a swinging weight bumps against: only worth fitting for someone carrying one.
+  const body = loose.length > 0 ? bodyCapsules(bodyParts) : [];
   const sling = slung;
   if (!rig.clean) muddy(scaler, mats.body);
   // Each figure breathes on its own beat.
@@ -5705,7 +5777,7 @@ export function makeFigure(kind: string, look: Look, outfit?: Outfit, opts: Figu
     }
     rig.animate(anim);
     if (swinging.length > 0) swingBraids(swinging, anim);
-    if (loose.length > 0) swingDangles(loose, first ? 0 : dt);
+    if (loose.length > 0) swingDangles(loose, first ? 0 : dt, top, body);
   };
   update({ time: 0, stride: 0, walking: false, lean: 0, lying: false });
   last = -1;

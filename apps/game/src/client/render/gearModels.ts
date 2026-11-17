@@ -56,7 +56,7 @@ export interface Kit {
    * model's own units as usual: in a hero's hand they swing from there as a pendulum (see figures.ts), weighted
    * at `bob`. In a picture they stay as built.
    */
-  dangle(pivot: V3, bob: V3, build: () => void, opts?: Pick<Dangle, "limit" | "clear">): void;
+  dangle(pivot: V3, bob: V3, build: () => void, opts?: Pick<Dangle, "limit" | "clear" | "size">): void;
 }
 
 /** What a group made by Kit.dangle carries in its userData. */
@@ -67,6 +67,8 @@ export interface Dangle {
   limit?: number;
   /** A haft or pole it cannot swing through: the weight is kept `r` from the line `from` to `to`. */
   clear?: { from: V3; to: V3; r: number };
+  /** How big the weight is round `bob`, for keeping it off the body of whoever holds it. */
+  size?: number;
 }
 
 export interface LowPolyDef {
@@ -240,7 +242,7 @@ function flail(k: Kit, loose: boolean) {
       spike(k, ball, d, 2.1, 0.45, 1.4, C.steel);
     }
     ico.dispose();
-  }, { clear: { from: [0, 5.5, 0], to: [0, -7, 0], r: 3 } });
+  }, { clear: { from: [0, 5.5, 0], to: [0, -7, 0], r: 3 }, size: 3 });
 }
 
 function boot(k: Kit) {
@@ -751,7 +753,7 @@ export const LOW_POLY: Record<string, LowPolyDef> = {
           k.cyl(0.14, 0.14, 2.6, 4, C.iron, { at: [x + Math.cos(a) * 1.15, 6.25, Math.sin(a) * 1.15] });
         }
         k.cyl(1.4, 1.25, 0.6, 6, C.iron, { at: [x, 4.7, 0] });
-      }, { clear: { from: [0, 8.8, 0], to: [0, -12, 0], r: 2.2 } });
+      }, { clear: { from: [0, 8.8, 0], to: [0, -12, 0], r: 2.2 }, size: 1.5 });
     },
   },
   "bilge-chalice": {
