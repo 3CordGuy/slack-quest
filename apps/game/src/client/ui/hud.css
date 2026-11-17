@@ -136,8 +136,18 @@
   .hud { bottom: 8px; max-width: calc(100% - 12px); }
   /* The whole rack is drawn smaller: two screen pixels to one of its own, then one and a half. */
   .hud-rack { --p: 2px; }
+  /* Terse on a phone: the muted explainer after where you stand goes; the place itself stays. */
+  .hud-place .muted { display: none; }
+  /* Where you stand gets a line of its own over the buttons, rather than a narrow column beside them. */
+  .hud-here { flex-wrap: wrap; justify-content: center; gap: 4px 8px; }
+  .hud-place { flex: 1 1 100%; text-align: center; font-size: 13px; }
+  .hud-place:empty, .hud-place:has(> .muted:only-child) { display: none; }
   .hud-slot .voxel-icon, .hud-slot .pixel-icon { width: 20px; height: 20px; }
   .hud-left { top: 8px; left: 8px; gap: 10px; }
+  /* The crew's cards: as wide as a name needs, and close together (the rows themselves shrink in roster.css). */
+  .run .hud-left > .crew { width: fit-content; max-width: 190px; gap: 4px; }
+  .crew-cards .roster { gap: 4px; }
+  .crew-cards .roster li.cm { padding: 2px 6px 2px 4px; }
   .run:has(.bag-overlay) .camera-rotate { display: none; }
 }
 

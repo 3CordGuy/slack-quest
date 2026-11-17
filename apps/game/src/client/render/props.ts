@@ -456,6 +456,22 @@ const MODELS: Record<string, (b: Builder) => void> = {
       b.box(IRON, 0.04, 0.12, 0.03, x > 0 ? 0.05 : -0.05, 0.7, 0.12);
     }
   },
+  /** The free wardrobe every home has: tall, with two doors, a cornice and a clothes rail peeking out. */
+  wardrobe(b) {
+    b.box(DARK_WOOD, 0.92, 0.06, 0.46, 0, 0, -0.12);
+    b.box(WOOD, 0.88, 1.48, 0.42, 0, 0.06, -0.12);
+    b.box(DARK_WOOD, 0.96, 0.08, 0.5, 0, 1.54, -0.12);
+    b.box(PALE_WOOD, 0.9, 0.04, 0.46, 0, 1.5, -0.12);
+    for (const x of [-0.215, 0.215]) {
+      b.box(PALE_WOOD, 0.41, 1.34, 0.02, x, 0.12, 0.1);
+      // A panel high and low on each door, and a knob by the middle.
+      b.box(DARK_WOOD, 0.3, 0.56, 0.025, x, 0.82, 0.1);
+      b.box(DARK_WOOD, 0.3, 0.4, 0.025, x, 0.22, 0.1);
+      b.ball(GOLD, 0.025, x > 0 ? 0.04 : -0.04, 0.74, 0.12, 0);
+    }
+    // A scarf caught in the doors.
+    b.box("#b8452f", 0.05, 0.36, 0.03, 0.0, 0.5, 0.11);
+  },
   crate(b) {
     b.box(PALE_WOOD, 0.66, 0.5, 0.66);
     for (const y of [0.06, 0.36]) b.box(WOOD, 0.68, 0.08, 0.68, 0, y);

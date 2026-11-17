@@ -1,4 +1,4 @@
-// Changing how your hero looks, from their sheet: the look builder from character creation (LookBuilder),
+// Changing how your hero looks, from their sheet or their wardrobe at home: the look builder from character creation (LookBuilder),
 // over the game, with them in what they are wearing now. Saving tells whoever is listening (the Harbor) so
 // everyone sees the new look; see LOOK_CHANGED.
 
@@ -14,6 +14,12 @@ export function ChangeLook({ hero, look: from, onClose, onSaved }: { hero: Publi
   const [look, setLook] = useState<Appearance>(from);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // While it is open the bottom bar (the hotbar) is hidden: it would sit over the builder's footer (builder.css).
+  useEffect(() => {
+    document.body.classList.add("changing-look");
+    return () => document.body.classList.remove("changing-look");
+  }, []);
 
   // Escape closes this (and not the sheet under it), unless something in the builder used it, as the tattoo
   // editor does to put a selection down.

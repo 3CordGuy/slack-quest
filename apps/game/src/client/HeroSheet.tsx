@@ -29,7 +29,7 @@ import {
   type Slot, abilitiesFor, } from "@gantt-quest/world";
 import type { StatKey } from "@gantt-quest/core";
 import { api } from "./api";
-import { ChangeLook } from "./ChangeLook";
+import { ChangeLook, LOOK_CHANGED } from "./ChangeLook";
 import { perkText } from "./hutDrops";
 import { Icon, ItemDetail, ItemTile } from "./items";
 import { blurb, itemName, label } from "./labels";
@@ -50,6 +50,8 @@ export interface LiveVitals {
 }
 
 const cache = new Map<string, { at: number; hero: PublicHero }>();
+// A look saved anywhere (the wardrobe at home, too) makes every kept sheet stale.
+if (typeof window !== "undefined") window.addEventListener(LOOK_CHANGED, () => cache.clear());
 
 function useHero(id: string | null, reload = 0): { hero: PublicHero | null; error: string | null } {
   const [, bump] = useState(0);

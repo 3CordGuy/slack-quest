@@ -58,8 +58,20 @@ button.cm-main:hover:not(:disabled) { border-color: var(--line); background: rgb
 .cm.away .cm-lv { color: #b9ad86; border-color: #5a4c26; background: none; }
 
 @media (max-width: 760px) {
-  .crew.roster-panel:not(.folded) { width: min(230px, calc(100vw / var(--ui-z, 1) - 12px)); }
+  .crew.roster-panel:not(.folded) { width: min(190px, calc(100vw / var(--ui-z, 1) - 12px)); }
   .roster { max-height: calc(100vh / var(--ui-z, 1) - 340px); }
+  /* A phone: one short line each, a small portrait, the name and level. Tapping still opens their whole sheet. */
+  .panel.crew-roster { padding: 6px 6px 4px; }
+  .crew-roster .roster-head { margin: 0 0 2px; font-size: 10px; }
+  .roster li.cm { padding: 1px 0; }
+  .cm-main { gap: 6px; padding: 1px 2px; min-height: 0; }
+  .cm-face { width: 24px; height: 28px; }
+  .cm-face img { width: 22px; height: 27px; }
+  .cm-face .dot { right: -3px; bottom: -3px; width: 7px; height: 7px; border-width: 1px; }
+  .cm-text { flex-direction: row; align-items: center; gap: 4px; }
+  .cm-name { font-size: 12px; }
+  .cm-class, .cm-tag:not(.you) { display: none; }
+  .roster-sep { margin: 4px 0 1px; font-size: 10px; }
 }
 /* A sheet opened from the roster sits beside it rather than on top of it. */
 @media (min-width: 900px) {
