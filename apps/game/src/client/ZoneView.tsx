@@ -31,6 +31,7 @@ import {
   pathIn,
   HARBOR_CAVE,
   SURFACE_INFO,
+  WEATHER_INFO,
   THROWABLES,
   abilityArea,
   abilityDice,
@@ -340,7 +341,7 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
           else view?.floor(ev.target);
           timers.current.push(setTimeout(() => sounds.zone("fall", view?.whereIs(ev.target)), 260));
         });
-        say(to ? `${name(ev.id)} shoves ${name(ev.target)} back.` : `${name(ev.id)} shoves ${name(ev.target)}, who has nowhere to go and falls.`);
+        say(!to ? `${name(ev.id)} shoves ${name(ev.target)}, who has nowhere to go and falls.` : hexDistance(ev.from, to) > 1 ? `${name(ev.target)} is swept away.` : `${name(ev.id)} shoves ${name(ev.target)} back.`);
       } else if (ev.t === "used") {
         // Getting away has a line of its own (fled).
         if (ev.what !== "flee") say(`${name(ev.id)}: ${ev.name}${ev.target ? ` on ${name(ev.target)}` : ""}.`);
@@ -503,6 +504,8 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
         say(ev.t === "down" ? `${name(ev.id)} is down.` : `${name(ev.id)} is back up.`);
       } else if (ev.t === "skip") {
         say(`${name(ev.id)} is ${CONDITION_INFO[ev.kind].name} and loses the turn.`);
+      } else if (ev.t === "weather") {
+        say(ev.kind ? `${WEATHER_INFO[ev.kind].name} gathers.` : "The weather clears.");
       } else if (ev.t === "surface") {
         for (const p of ev.hexes) {
           if (ev.kind) draft.surfaces[posKey(p)] = { kind: ev.kind, rounds: 1, by: null };
@@ -779,6 +782,7 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
     view.setState(scene);
     layer.current?.setMap(state.map);
     layer.current?.setSurfaces(picture.surfaces);
+    layer.current?.setWeather(state.weather ?? []);
   }, [state, picture, reach, act?.id, fighting, code, enc, spot]);
 
   // ---------- what a pick reaches, and what it would cover ----------
@@ -1082,7 +1086,7 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
     const def = ABILITIES[id];
     const tactic = tacticOf(id);
     const wait = act.cooldowns[id] ?? 0;
-    const reachText = tactic.shape === "self" ? "yourself" : tactic.shape === "burst" ? `everyone within ${tactic.radius}` : tactic.reach === "melee" ? (tactic.shape === "adjacent" ? "every enemy beside you" : "an enemy beside you") : `${tactic.shape === "line" ? `a line of ${tactic.length}` : `range ${tactic.range}`}${tactic.shape === "blast" ? `, blast ${tactic.radius}` : ""}`;
+    const reachText = tactic.shape === "self" ? "yourself" : tactic.shape === "burst" ? `everyone within ${tactic.radius}` : tactic.reach === "melee" ? (tactic.shape === "adjacent" ? "every enemy beside you" : "an enemy beside you") : `${tactic.shape === "line" ? `a line of ${tactic.length}` : `range ${tactic.range}`}${tactic.weather === "rain" ? ", 3 hexes" : tactic.shape === "blast" ? `, blast ${tactic.radius}` : ""}`;
     const dice = def.damage ? `${diceText(abilityDice(def))} damage` : def.heal ? `heals ${diceText(healDice(def))}` : "";
     entries[`ab:${id}`] = {
       id: `ab:${id}`,
@@ -1185,6 +1189,7 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
   const hoverGlow = hover ? state.map.pois.find((p) => p.kind === "glowcap" && p.pos.q === hover.q && p.pos.r === hover.r) : undefined;
   const preview = under && z && pick?.kind === "ability" && under.side !== act.side ? previewAttack(z, act, pick.id, under) : null;
   const surface = hover ? state.surfaces[posKey(hover)] : undefined;
+  const weather = hover ? (state.weather ?? []).filter((w) => w.hexes.some((p) => p.q === hover.q && p.r === hover.r)) : [];
 
   return (
     <div
@@ -1341,6 +1346,7 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
               <span className="muted">{(ground.elev ?? 0) > 0 ? ` · ${ground.elev} up` : ""}{ground.biome === "forest" ? " · 2 to cross, cover from shots" : ground.biome === "rock" ? " · blocks the way and the view" : ""}</span>
             </>
           )}
+          {weather.map((w, i) => <div key={i} style={{ color: WEATHER_INFO[w.kind].color }}>{WEATHER_INFO[w.kind].name} <span className="muted">· {w.rounds} round{w.rounds === 1 ? "" : "s"} · {WEATHER_INFO[w.kind].blurb}</span></div>)}
           {surface && <div style={{ color: SURFACE_INFO[surface.kind].color }}>{SURFACE_INFO[surface.kind].name} <span className="muted">· {surface.rounds} round{surface.rounds === 1 ? "" : "s"} · {SURFACE_INFO[surface.kind].blurb}</span></div>}
         </div>
       )}

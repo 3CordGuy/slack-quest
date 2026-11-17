@@ -16,6 +16,7 @@ import { d20, hitChance, mod, proficiency, rollDice, statOf } from "./rules";
 import { seenByHeroes } from "./light";
 import { HINDERING, chill, clearSurfaces, dropTorch, enterSurface, ignite, letGoTorch, placeSurface } from "./surfaces";
 import type { Budget, CommonAction, Throwable, Unit, ZoneState } from "./types";
+import { enterWeather, makeWeather, rainHexes } from "./weather";
 
 /** How near a Bard has to be for their tune to help. */
 export const BARD_AURA_RANGE = 3;
@@ -95,6 +96,7 @@ export function walk(ctx: Ctx, unit: Unit, path: HexPos[], budget: Budget | null
     if (budget) budget.move -= step.cost;
     taken.push(next);
     if (enterSurface(ctx, unit, flush) || unit.down) break;
+    enterWeather(ctx, unit);
     if (ctx.onStep?.(unit, flush)) break;
   }
   flush();
@@ -105,7 +107,7 @@ export function walk(ctx: Ctx, unit: Unit, path: HexPos[], budget: Budget | null
 export function push(ctx: Ctx, from: HexPos, target: Unit, by: string): void {
   const dir = directionToward(from, target.pos);
   const dest = { q: target.pos.q + dir.q, r: target.pos.r + dir.r };
-  const open = !solid(tileAt(ctx.state.map, dest)) && !blockerAt(ctx.state, dest) && Math.abs(elevOf(ctx.state.map, dest) - elevOf(ctx.state.map, target.pos)) < 2 && !unitAt(ctx.state, dest);
+  const open = openFor(ctx.state, target.pos, dest);
   const was = target.pos;
   if (!open) {
     ctx.events.push({ t: "shoved", id: by, target: target.id, from: was, to: null });
@@ -116,6 +118,25 @@ export function push(ctx: Ctx, from: HexPos, target: Unit, by: string): void {
   target.pos = dest;
   ctx.events.push({ t: "shoved", id: by, target: target.id, from: was, to: dest });
   enterSurface(ctx, target);
+  enterWeather(ctx, target);
+}
+
+/** Can a unit be moved from one hex onto the next by force: open ground, nobody on it, no cliff between. */
+function openFor(state: ZoneState, from: HexPos, to: HexPos): boolean {
+  return !solid(tileAt(state.map, to)) && !blockerAt(state, to) && Math.abs(elevOf(state.map, to) - elevOf(state.map, from)) < 2 && !unitAt(state, to);
+}
+
+/** Carry a unit along `line` from where it stands toward the far end, as far as the way is open. */
+function sweepAlong(ctx: Ctx, target: Unit, line: HexPos[], by: string): void {
+  const from = line.findIndex((p) => sameHex(p, target.pos));
+  let dest = target.pos;
+  for (let j = from + 1; j < line.length && openFor(ctx.state, dest, line[j]); j++) dest = line[j];
+  if (sameHex(dest, target.pos)) return;
+  const was = target.pos;
+  target.pos = dest;
+  ctx.events.push({ t: "shoved", id: by, target: target.id, from: was, to: dest });
+  enterSurface(ctx, target);
+  enterWeather(ctx, target);
 }
 
 // ---------- a hero's abilities ----------
@@ -123,6 +144,7 @@ export function push(ctx: Ctx, from: HexPos, target: Unit, by: string): void {
 /** The hexes an ability covers, for one that takes a shape: what is lit up before it is used, and what it then hits. */
 export function abilityArea(state: ZoneState, unit: Unit, ability: string, at?: HexPos): HexPos[] {
   const tactic = tacticOf(ability);
+  if (tactic.weather === "rain") return at ? rainHexes(state, unit.pos, at) : [];
   if (tactic.shape === "blast") return at ? blast(state.map, at, tactic.radius ?? 1) : [];
   if (tactic.shape === "burst") return blast(state.map, unit.pos, tactic.radius ?? 1).filter((p) => !sameHex(p, unit.pos));
   if (tactic.shape === "line") return at ? lineFrom(state.map, unit.pos, at, tactic.length ?? 3) : [];
@@ -286,8 +308,34 @@ export function resolveAbility(ctx: Ctx, unit: Unit, ability: string, aim: Aim &
     // Aimed at a crate, a chain goes no further: there is nothing in a crate for it to jump from.
     smash(ctx, unit, def, tactic, crate);
     landed = true;
+  } else if (tactic.weather) {
+    makeWeather(ctx, tactic.weather, abilityArea(state, unit, ability, aim.at), unit);
+    landed = true;
   } else if (tactic.shape === "single") {
-    landed = strike(ctx, unit, def, tactic, unitById(state, aim.target!)!, aim);
+    const target = unitById(state, aim.target!)!;
+    if (tactic.sure) {
+      if (def.damage) damage(ctx, target, rollDice(ctx.rng, abilityDice(def)) + damageBonus(state, unit, def), { actor: unit.id, what: def.id, ignoreGuard: def.ignoreGuard });
+      afflict(ctx, unit, def, target, false);
+      landed = true;
+    } else landed = strike(ctx, unit, def, tactic, target, aim);
+    for (let k = 0; landed && k < (tactic.knockback ?? 0) && !target.down; k++) push(ctx, unit.pos, target, unit.id);
+  } else if (tactic.sweep) {
+    // A wave: the far ones are swept first, so the near ones have somewhere to go.
+    const line = abilityArea(state, unit, ability, aim.at);
+    const along = (u: Unit) => line.findIndex((p) => sameHex(p, u.pos));
+    const caught = foes().filter((u) => along(u) >= 0).sort((a, b) => along(b) - along(a));
+    const rolled = rollDice(ctx.rng, abilityDice(def)) + damageBonus(state, unit, def);
+    for (const victim of caught) {
+      const saved = saveRoll(ctx, victim, "agi", saveDc(unit, def), def.name, aim.focus).ok;
+      let amount = rolled;
+      if (tactic.vsWet && has(victim, "wet")) amount += tactic.vsWet;
+      damage(ctx, victim, saved ? Math.floor(amount / 2) : amount, { actor: unit.id, what: def.id, ignoreGuard: def.ignoreGuard });
+      if (!saved && !victim.down) sweepAlong(ctx, victim, line, unit.id);
+    }
+    if (unit.side === "hero" && def.damage) for (const box of cratesOn(state, line)) hurtCrate(ctx, box, rolled, { actor: unit.id, what: def.id });
+    // It leaves the line awash: whoever ends up on it is soaked.
+    if (tactic.surface) placeSurface(ctx, line, tactic.surface.kind, tactic.surface.rounds, unit.id);
+    landed = true;
   } else if (tactic.shape === "adjacent") {
     for (const foe of foes().filter((u) => adjacent(u.pos, unit.pos))) landed = strike(ctx, unit, def, tactic, foe, aim) || landed;
     if (unit.side === "hero" && def.damage) {
@@ -439,7 +487,10 @@ export function doCommon(ctx: Ctx, unit: Unit, what: CommonAction, aim: Aim, bud
     unit.pos = aim.at!;
     if (budget) budget.move -= JUMP_MOVE_COST;
     ctx.events.push({ t: "jumped", id: unit.id, from, to: unit.pos });
-    if (!enterSurface(ctx, unit) && !unit.down) ctx.onStep?.(unit, () => {});
+    if (!enterSurface(ctx, unit) && !unit.down) {
+      enterWeather(ctx, unit);
+      ctx.onStep?.(unit, () => {});
+    }
   }
 }
 

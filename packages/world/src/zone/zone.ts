@@ -30,6 +30,7 @@ import { FREE_WALK, blast, blockerAt, inFight, pathIn, sameHex, sees, solid, uni
 import { AURAS, FLEE_RANGE, STARTING_ITEMS, THROWABLES, THROWABLE_KINDS, cleanItems, commonCost, enemyHp, enemyMove, tacticOf } from "./kit";
 import { d20, heroMove, mod, rollDice, statOf } from "./rules";
 import { hiddenEnemies, sentToClient } from "./light";
+import { tickWeather, weatherAtTurn } from "./weather";
 import { checkPickup, clearSurfaces, lightTorch, pickUpTorch, placeSurface, standInSurface, tickLights, tickSurfaces } from "./surfaces";
 import { exploreRound, passTime } from "./clock";
 import { checkUnlock, dropKeys, heardBy, workDoor } from "./doors";
@@ -339,7 +340,9 @@ function beginTurn(ctx: Ctx, enc: Encounter, unit: Unit): boolean {
     move = Math.floor(move / 2);
   }
   enc.budgets[unit.id] = { action: true, bonus: true, move, moveMax: base, disengaged: false };
-  return true;
+  // Weather it stands in acts now its turn is underway, with a budget for the winds to change.
+  weatherAtTurn(ctx, unit);
+  return !unit.down;
 }
 
 /** End a unit's turn: each condition has one turn less to run, bar those put on during this very turn. */
@@ -473,6 +476,7 @@ function advance(ctx: Ctx): void {
         // a hero who got away still burns and bleeds, and what is on them still runs down.
         for (const out of state.units.filter((u) => !enc.order.includes(u.id))) exploreRound(ctx, out);
         tickSurfaces(ctx);
+        tickWeather(ctx);
         tickLights(ctx);
       }
       // One back in after fleeing on their turn this round waits for the next.

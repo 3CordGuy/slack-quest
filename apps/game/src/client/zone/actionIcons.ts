@@ -25,6 +25,11 @@ export const ABILITY_ICON: Record<string, ActionIcon> = {
   branding_strike: icon("heavy", "#ff7a2a"),
   stoke_the_fire: icon("fire", "#ff5a2a"),
   bolster: icon("shield", "#9ec9ff"),
+  soothing_rain: icon("heal", "#8fd3ff"),
+  chain_lightning: icon("spark", "#c4b5fd"),
+  roar_of_thunder: icon("shout", "#facc15"),
+  trade_winds: icon("dash", "#d9f2e6"),
+  tidal_wave: icon("wave", "#38bdf8"),
   show_the_way: icon("beam", "#fff4c2"),
   // Mage
   firebolt: icon("fire", "#fff1c9"),

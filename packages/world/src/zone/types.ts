@@ -77,6 +77,23 @@ export interface Unit {
   away?: boolean;
 }
 
+/** What a spell can leave hanging over some hexes (weather.ts). */
+export type WeatherKind = "rain" | "wind";
+
+export interface Weather {
+  kind: WeatherKind;
+  hexes: HexPos[];
+  /** Rounds of a fight it has left. */
+  rounds: number;
+  /** Made this round: the end of it does not count against it. */
+  fresh?: boolean;
+  /** Who made it, and their side: the side it helps. */
+  by: string;
+  side: Side;
+  /** Rain: the turn (Encounter.turnNo, or -1 out of a fight) each unit was last healed by it in. */
+  touched: Record<string, number>;
+}
+
 export type SurfaceKind = "poison" | "fire" | "oil" | "water" | "ice" | "slime";
 
 export interface GroundSurface {
@@ -173,6 +190,8 @@ export interface ZoneState {
   groups: Record<string, { alerted: boolean }>;
   /** The ground, by hex key. */
   surfaces: Record<string, GroundSurface>;
+  /** Weather spells have left over the ground (weather.ts). */
+  weather?: Weather[];
   /** Torches lying lit on the ground, by hex: rounds of a fight left to burn, and who threw them. */
   lights?: Record<string, { rounds: number; by: string | null }>;
   /**
@@ -294,6 +313,8 @@ export type ZoneEvent =
   | { t: "heal"; actor: string | null; target: string; amount: number; what: string }
   | { t: "condition"; target: string; kind: Condition; rounds: number; amount?: number }
   | { t: "tick"; target: string; kind: Condition | SurfaceKind; amount: number }
+  /** Weather made over some hexes, or (`kind` null) cleared from them. */
+  | { t: "weather"; kind: WeatherKind | null; hexes: HexPos[]; by: string }
   | { t: "skip"; id: string; kind: Condition }
   | { t: "down"; id: string }
   | { t: "up"; id: string }

@@ -15,6 +15,7 @@
 import { DRUID_REGEN, EFFECT_TICK, ENEMIES } from "../content";
 import { has, heal, removeCondition, tick, type Ctx } from "./engine";
 import { EXPLORE_ROUND_MS, TORCH_ROUND_MS } from "./kit";
+import { tickWeather } from "./weather";
 import { standInSurface, tickLights, tickSurfaces } from "./surfaces";
 import type { Unit } from "./types";
 
@@ -59,6 +60,7 @@ export function passTime(ctx: Ctx, now: number): void {
     for (let n = 0; n < Math.min(rounds, MAX_CATCHUP_ROUNDS); n++) {
       for (const unit of state.units) exploreRound(ctx, unit);
       tickSurfaces(ctx);
+      tickWeather(ctx);
     }
   }
   const burns = Math.floor((now - state.clock.torchAt) / TORCH_ROUND_MS);

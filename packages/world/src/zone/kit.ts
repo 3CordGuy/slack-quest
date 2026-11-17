@@ -7,7 +7,7 @@
 import type { StatKey } from "@gantt-quest/core";
 import { ABILITIES, EFFECT_INFO, ENEMIES, type AbilityDef, type EffectKind, type EnemyAttack } from "../content";
 import { diceFor, type Dice } from "./rules";
-import type { CommonAction, Condition, SurfaceKind, Throwable } from "./types";
+import type { CommonAction, Condition, SurfaceKind, Throwable, WeatherKind } from "./types";
 
 /**
  * - `single`: one enemy, an attack roll.
@@ -47,6 +47,14 @@ export interface Tactic {
   aura?: { kind: Condition; rounds: number };
   /** Shields the user, and every ally within `range` of them, with `shield` points plus the user's level, for `rounds` of each one's turns (Bolstered). */
   shield?: { range: number; shield: number; rounds: number };
+  /** Leaves this weather over the hexes it covers (weather.ts), instead of striking them. */
+  weather?: WeatherKind;
+  /** Single: lands without an attack roll. */
+  sure?: boolean;
+  /** Single: pushes the target this many hexes away from the user. */
+  knockback?: number;
+  /** Line: strikes only the other side; whoever fails to save is swept to the far end of the line. */
+  sweep?: boolean;
   /** Takes every harmful condition off the ally, and the ground that hurts or hinders (surfaces.ts HINDERING) off the way you would walk to them. */
   clearWay?: boolean;
 }
@@ -59,6 +67,15 @@ const mend = (range: number, extra: Partial<Tactic> = {}): Tactic => ({ cost: "a
 
 /** Bolster: a shield of `shield` points plus the Paladin's level on them and every ally within `range`, for `rounds` of each one's turns. */
 export const BOLSTER = { range: 2, shield: 10, rounds: 3 };
+
+/**
+ * Weather (weather.ts), by kind: how many rounds of a fight it hangs on after the one it is made in. Rain heals
+ * `heal` (once a turn) and keeps `water` rounds of water under itself; the winds Haste the caster's side and Slow the other.
+ */
+export const WEATHER = {
+  rain: { rounds: 3, heal: { n: 1, d: 4, plus: 2 } satisfies Dice, water: 2 },
+  wind: { rounds: 3 },
+};
 
 /** Shield Wall: a shield of `shield` points plus the Paladin's level on themselves alone, through their next turn. */
 export const SHIELD_WALL = { range: 0, shield: 6, rounds: 1 };
@@ -85,6 +102,12 @@ export const TACTICS: Record<string, Tactic> = {
   chain_spark: spell(5, { shape: "chain", jumps: 2, cooldown: 2, vsWet: 3 }),
   hex_bolt: spell(6),
   thunderhead: spell(6, { shape: "blast", radius: 1, cooldown: 3, vsWet: 3 }),
+  // Mage class abilities
+  soothing_rain: spell(5, { shape: "blast", radius: 1, cooldown: 3, weather: "rain" }),
+  chain_lightning: spell(5, { shape: "chain", jumps: Infinity, cooldown: 2, vsWet: 3 }),
+  roar_of_thunder: spell(5, { cooldown: 3, sure: true, knockback: 1 }),
+  trade_winds: spell(5, { shape: "blast", radius: 1, cooldown: 3, weather: "wind" }),
+  tidal_wave: spell(5, { shape: "line", length: 5, cooldown: 3, sweep: true, surface: { kind: "water", rounds: 2 } }),
   // Rogue
   quick_stab: melee(),
   flurry: melee({ cooldown: 1 }),

@@ -47,6 +47,7 @@ export { mod as statMod, proficiency, heroMove, heroDefence, diceFor, diceText, 
 export { attackContext, defenceOf, has as hasCondition, shieldOf, type AttackContext } from "./engine";
 export { abilityArea, checkAbility, checkCommon, checkDrink, checkLight, checkThrow, crateBlow, previewAttack, BARD_AURA_RANGE, type Aim } from "./combat";
 export { SURFACE_INFO, HARMFUL as HARMFUL_SURFACES } from "./surfaces";
+export { WEATHER_INFO } from "./weather";
 export { isDark, litHexes, inDark, seenByHeroes, lightSources } from "./light";
 export { MAX_CATCHUP_ROUNDS } from "./clock";
 export { CHEST_PAY, checkOpen, unopened } from "./loot";

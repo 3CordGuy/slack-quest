@@ -7,7 +7,7 @@
 import * as THREE from "three";
 import { fireField, gooMaterial, tickGround } from "./groundFx";
 import { posKey, type HexPos } from "@gantt-quest/core";
-import { SURFACE_INFO, tileAt, type SurfaceKind, type WorldMap } from "@gantt-quest/world";
+import { SURFACE_INFO, WEATHER_INFO, tileAt, type SurfaceKind, type WorldMap } from "@gantt-quest/world";
 import { hexToWorld, tileTop, type WorldRenderer } from "./WorldRenderer";
 
 /** A set of hexes to mark: filled faintly, outlined round its edge, or both. */
@@ -45,13 +45,18 @@ export class TacticsLayer {
   private goo: THREE.ShaderMaterial[] = [];
   private flames: THREE.Object3D[] = [];
   private sparks: THREE.Points[] = [];
+  /** Weather over the ground (zone/weather.ts): its drops or gusts, each with where it started and its kind. */
+  private sky = new THREE.Group();
+  private skySig = "";
+  private drift: { points: THREE.Points; base: Float32Array; floor: Float32Array; kind: "rain" | "wind" }[] = [];
 
   constructor(private renderer: WorldRenderer) {
-    this.group.add(this.ground, this.overlays, this.path);
+    this.group.add(this.ground, this.sky, this.overlays, this.path);
     renderer.addObject(this.group);
     this.stop = renderer.addTicker((_dt, _camera, clock) => {
       for (const [i, m] of this.pulse.entries()) m.opacity = (m.userData.base as number) * (0.82 + 0.18 * Math.sin(clock * 2.2 + i));
       tickGround(clock, this.goo, this.flames, this.sparks);
+      this.tickSky(clock);
       for (const { id, mesh } of this.marks) {
         const head = renderer.unitHead(id);
         mesh.visible = !!head;
@@ -67,6 +72,7 @@ export class TacticsLayer {
     this.stop();
     this.clear(this.overlays);
     this.clear(this.ground);
+    this.clear(this.sky);
     this.clear(this.path);
     this.setArc(null);
     this.setTurnMarkers([]);
@@ -76,7 +82,7 @@ export class TacticsLayer {
   setMap(map: WorldMap) {
     if (this.map?.tiles === map.tiles) return;
     this.map = map;
-    this.overlaySig = this.groundSig = "";
+    this.overlaySig = this.groundSig = this.skySig = "";
   }
 
   private clear(group: THREE.Group) {
@@ -267,6 +273,72 @@ export class TacticsLayer {
       const rim = new THREE.LineSegments(this.outline(hexes, 0.04), new THREE.LineBasicMaterial({ color: SURFACE_INFO[kind].color, transparent: true, opacity: 0.9 }));
       rim.renderOrder = 1;
       this.ground.add(rim);
+    }
+  }
+
+  /**
+   * Draw the weather: a pale wash and an outline over its hexes, and rain falling on them or wind
+   * streaming across them.
+   */
+  setWeather(list: { kind: "rain" | "wind"; hexes: HexPos[] }[]) {
+    const sig = list.map((w) => `${w.kind}:${w.hexes.map(posKey).join(",")}`).join("|");
+    if (sig === this.skySig) return;
+    this.skySig = sig;
+    this.clear(this.sky);
+    this.drift = [];
+    for (const w of list) {
+      const color = WEATHER_INFO[w.kind].color;
+      const wash = new THREE.Mesh(this.fill(w.hexes, 0.05, 0.95), new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.16, depthWrite: false, side: THREE.DoubleSide }));
+      wash.renderOrder = 2;
+      this.sky.add(wash);
+      const rim = new THREE.LineSegments(this.outline(w.hexes, 0.06), new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.85 }));
+      rim.renderOrder = 2;
+      this.sky.add(rim);
+      // Motes scattered over each hex: drops that fall, or gusts that run along the wind.
+      const per = w.kind === "rain" ? 26 : 14;
+      const base = new Float32Array(w.hexes.length * per * 3);
+      const floor = new Float32Array(w.hexes.length * per);
+      let k = 0;
+      let f = 0;
+      for (const p of w.hexes) {
+        const { x, z } = hexToWorld(p);
+        const y = this.top(p);
+        for (let i = 0; i < per; i++) {
+          const a = Math.random() * Math.PI * 2;
+          const d = Math.sqrt(Math.random()) * 0.85;
+          floor[f++] = y;
+          base[k++] = x + Math.cos(a) * d;
+          base[k++] = Math.random();
+          base[k++] = z + Math.sin(a) * d;
+        }
+      }
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute("position", new THREE.Float32BufferAttribute(base.slice(), 3));
+      const points = new THREE.Points(geometry, new THREE.PointsMaterial({ color, size: w.kind === "rain" ? 0.07 : 0.1, transparent: true, opacity: 0.8, depthWrite: false }));
+      this.sky.add(points);
+      this.drift.push({ points, base, floor, kind: w.kind });
+    }
+  }
+
+  /** Rain falls and starts again at the top; wind blows its motes along and round again. */
+  private tickSky(clock: number) {
+    for (const { points, base, floor, kind } of this.drift) {
+      const pos = points.geometry.getAttribute("position") as THREE.BufferAttribute;
+      for (let i = 0; i < pos.count; i++) {
+        const bx = base[i * 3];
+        const phase = base[i * 3 + 1];
+        const bz = base[i * 3 + 2];
+        if (kind === "rain") {
+          // From 2.4 above the ground down to it, over and over.
+          const fall = (clock * 1.6 + phase) % 1;
+          pos.setXYZ(i, bx, floor[i] + 2.4 * (1 - fall), bz);
+        } else {
+          // Low over the ground, running along and round again.
+          const run = ((clock * 0.5 + phase) % 1) - 0.5;
+          pos.setXYZ(i, bx + run * 0.9, floor[i] + 0.2 + phase * 0.7 + Math.sin(clock * 2 + i) * 0.05, bz + Math.sin(clock + i) * 0.08);
+        }
+      }
+      pos.needsUpdate = true;
     }
   }
 }

@@ -10,7 +10,7 @@ import { adjacent, blast, flies, sees, solid, unitAt, zoneReach } from "./geomet
 import { AURAS, BOLSTER, ENEMY_BURST, SHIELD_WALL, ENEMY_KIT, EXPLORE_ROUND_MS, FLEE_RANGE, LIGHT_RADIUS, SHIELD_SET_ASIDE, TACTICS, TORCH_GROUND_ROUNDS, TORCH_HELD_ROUNDS, TORCH_ROUND_MS, commonCost, enemyHp, enemyStrikes, tacticOf } from "./kit";
 import { MAX_CATCHUP_ROUNDS } from "./clock";
 import { defenceOf } from "./engine";
-import { checkAbility, crateBlow, enemyAct, wayBetween } from "./combat";
+import { abilityArea, checkAbility, crateBlow, enemyAct, wayBetween } from "./combat";
 import { d20, diceAverage, diceFor, heroMove, hitChance } from "./rules";
 import { createZone, ensureMouth, standInHero, stepZone, zoneView } from "./zone";
 import { DELVE_CRATES, generateDelve } from "./delve";
@@ -2423,5 +2423,178 @@ describe("the Paladin's class abilities", () => {
     const { state } = party();
     for (const p of [at(4, 6), ...hexNeighbors(at(4, 6), state.map.grid)]) state.surfaces[posKey(p)] = { kind: "slime", rounds: 5, by: null };
     expect(wayBetween(state, unit(state, "ann"), unit(state, "bo").pos)).toHaveLength(3);
+  });
+});
+
+describe("the Mage's class abilities", () => {
+  /**
+   * A Mage (ann) and a crewmate (bo) two hexes off along the row, in a fight with a dummy far down it. Ann's turn.
+   * Everyone stands on row 6, so hexes along it are in a straight line.
+   */
+  function party(abilities = ["soothing_rain", "chain_lightning", "roar_of_thunder", "trade_winds", "tidal_wave"]) {
+    let state = board();
+    state.aiOff = true;
+    const ann = hero(state, "ann", "devops_mage", at(5, 6));
+    ann.abilities = abilities;
+    hero(state, "bo", "qa_paladin", at(3, 6));
+    const dummy = enemy(state, "dummy", at(13, 6));
+    state = provoke(state);
+    while (!state.encounter!.acting.includes("ann")) state = must(state, { type: "timeout" });
+    return { state, dummy: dummy.id };
+  }
+  function endShared(state: ZoneState, sink: ZoneEvent[] = []): ZoneState {
+    for (const id of [...state.encounter!.acting]) if (!state.encounter!.done.includes(id) && !unit(state, id).down) state = must(state, { type: "end_turn", by: id, unit: id }, sink);
+    return state;
+  }
+  function nextTurn(state: ZoneState, sink: ZoneEvent[] = []): ZoneState {
+    state = endShared(state, sink);
+    while (!state.encounter!.acting.includes("ann") || state.encounter!.done.includes("ann")) state = must(state, { type: "timeout" }, sink);
+    return state;
+  }
+  /** Put a dummy down somewhere, in the fight. */
+  function addDummy(state: ZoneState, pos: HexPos): string {
+    const e = enemy(state, "dummy", pos);
+    state.encounter!.order.push(e.id);
+    state.encounter!.init[e.id] = 0;
+    return e.id;
+  }
+  const healsOf = (events: ZoneEvent[], id: string) => events.filter((e) => e.t === "heal" && e.what === "soothing_rain" && e.target === id).length;
+  const has = (state: ZoneState, id: string, kind: string) => unit(state, id).conditions.some((c) => c.kind === kind);
+
+  it("are all in the Mage's pool", () => {
+    expect(poolFor("devops_mage").map((e) => e.id)).toEqual(["soothing_rain", "chain_lightning", "roar_of_thunder", "trade_winds", "tidal_wave"]);
+  });
+
+  it("Soothing Rain: a 3-hex cloud that lays water, and heals the caster's side under it as it comes, not the enemy", () => {
+    let { state } = party();
+    const foe = addDummy(state, at(3, 7));
+    for (const id of ["ann", "bo", foe]) unit(state, id).hp = 1;
+    const events: ZoneEvent[] = [];
+    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "soothing_rain", at: at(3, 6) }, events);
+    const area = abilityArea(state, unit(state, "ann"), "soothing_rain", at(3, 6));
+    expect(area).toHaveLength(3);
+    for (const p of area) for (const q of area) expect(hexDistance(p, q)).toBeLessThanOrEqual(1);
+    for (const p of area) expect(state.surfaces[posKey(p)]?.kind).toBe("water");
+    expect(state.weather).toHaveLength(1);
+    expect(healsOf(events, "bo")).toBe(1);
+    expect(healsOf(events, "ann")).toBe(0);
+    expect(healsOf(events, foe)).toBe(0);
+    expect(state.encounter!.budgets.ann.action).toBe(false);
+  });
+
+  it("Soothing Rain: heals as a turn starts in it, and once a turn for walking in, however often", () => {
+    let { state } = party();
+    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "soothing_rain", at: at(3, 6) });
+    const area = state.weather![0].hexes;
+    const out = at(3, 4);
+    expect(area.some((p) => hexDistance(p, out) === 0)).toBe(false);
+    unit(state, "bo").hp = 1;
+    // Ann walks in and out and in again on her turn: one heal.
+    unit(state, "ann").hp = 1;
+    const walked: ZoneEvent[] = [];
+    const inside = area.find((p) => !state.units.some((u) => u.pos.q === p.q && u.pos.r === p.r))!;
+    state.encounter!.budgets.ann.move = 99;
+    state = must(state, { type: "move", by: "ann", unit: "ann", to: inside }, walked);
+    state = must(state, { type: "move", by: "ann", unit: "ann", to: at(6, 6) }, walked);
+    state = must(state, { type: "move", by: "ann", unit: "ann", to: inside }, walked);
+    expect(healsOf(walked, "ann")).toBe(1);
+    // On the next turn, bo (still standing in it) is healed as it starts.
+    const turn: ZoneEvent[] = [];
+    state = nextTurn(state, turn);
+    expect(healsOf(turn, "bo")).toBe(1);
+  });
+
+  it("Soothing Rain: puts its water back at the start of every turn, and clears after 3 rounds", () => {
+    let { state } = party();
+    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "soothing_rain", at: at(3, 6) });
+    const area = state.weather![0].hexes;
+    for (const p of area) delete state.surfaces[posKey(p)];
+    state = nextTurn(state);
+    for (const p of area) expect(state.surfaces[posKey(p)]?.kind).toBe("water");
+    for (let round = 1; round <= 3; round++) {
+      expect(state.weather, `round ${round}`).toHaveLength(1);
+      state = nextTurn(state);
+    }
+    expect(state.weather).toHaveLength(0);
+  });
+
+  it("Chain Lightning: leaps to the nearest enemy within 2 hexes it has not struck, on and on, each struck once", () => {
+    for (let seed = 1; seed <= 6; seed++) {
+      let { state, dummy } = party();
+      state.rng = seed;
+      const chain = [at(7, 6), at(9, 6), at(10, 6), at(8, 7)].map((p) => addDummy(state, p));
+      // 3 hexes from the nearest of the chain: never reached. (The first dummy is further still.)
+      const apart = addDummy(state, at(13, 8));
+      const events: ZoneEvent[] = [];
+      state = must(state, { type: "use", by: "ann", unit: "ann", ability: "chain_lightning", target: chain[0] }, events);
+      const struck = events.filter((e) => e.t === "roll" && e.roll.kind === "attack").map((e) => e.t === "roll" && e.roll.target);
+      expect(new Set(struck).size).toBe(struck.length);
+      expect(new Set(struck)).toEqual(new Set(chain));
+      expect(struck).not.toContain(apart);
+      expect(struck).not.toContain(dummy);
+    }
+  });
+
+  it("Roar of Thunder: never misses, Stuns, and throws the enemy a hex back", () => {
+    for (let seed = 1; seed <= 6; seed++) {
+      let { state } = party();
+      state.rng = seed;
+      const foe = addDummy(state, at(7, 6));
+      const events: ZoneEvent[] = [];
+      state = must(state, { type: "use", by: "ann", unit: "ann", ability: "roar_of_thunder", target: foe }, events);
+      expect(events.some((e) => e.t === "roll" && e.roll.kind === "attack")).toBe(false);
+      expect(has(state, foe, "stunned")).toBe(true);
+      expect(unit(state, foe).pos).toEqual(at(8, 6));
+      expect(fails(nextTurn(state), { type: "use", by: "ann", unit: "ann", ability: "roar_of_thunder", target: foe })).toMatch(/not ready/);
+    }
+  });
+
+  it("Trade Winds: 7 hexes that Haste the caster's side and Slow the enemy in them", () => {
+    let { state } = party();
+    const foe = addDummy(state, at(4, 6));
+    const outside = addDummy(state, at(9, 6));
+    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "trade_winds", at: at(3, 6) });
+    expect(state.weather![0].hexes).toHaveLength(7);
+    expect(has(state, "bo", "hasted")).toBe(true);
+    expect(has(state, foe, "slowed")).toBe(true);
+    expect(has(state, outside, "slowed")).toBe(false);
+    expect(has(state, "ann", "hasted")).toBe(false);
+  });
+
+  it("Trade Winds: a turn started in them goes twice as far, or half, and walking in on your turn counts too", () => {
+    let { state } = party();
+    const before = state.encounter!.budgets.bo.move;
+    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "trade_winds", at: at(3, 6) });
+    // Bo shares ann's turn: Hasted now, the move doubles at once.
+    expect(state.encounter!.budgets.bo.move).toBe(before * 2);
+    state = nextTurn(state);
+    expect(has(state, "bo", "hasted")).toBe(true);
+    // Ann walks into the winds on her turn.
+    state.encounter!.budgets.ann.move = 3;
+    state = must(state, { type: "move", by: "ann", unit: "ann", to: at(4, 6) });
+    expect(has(state, "ann", "hasted")).toBe(true);
+  });
+
+  it("Tidal Wave: strikes only enemies in the line, and sweeps those that fail to brace to the far end", () => {
+    let swept = 0;
+    for (let seed = 1; seed <= 10; seed++) {
+      let { state } = party();
+      state.rng = seed;
+      const near = addDummy(state, at(6, 6));
+      const far = addDummy(state, at(8, 6));
+      const events: ZoneEvent[] = [];
+      state = must(state, { type: "use", by: "ann", unit: "ann", ability: "tidal_wave", at: at(6, 6) }, events);
+      const saved = (id: string) => events.some((e) => e.t === "roll" && e.roll.kind === "save" && e.roll.id === id && e.roll.ok);
+      // The line runs from at(6,6) to at(10,6). The far one goes first, to the end; the near one as far as it can get.
+      expect(unit(state, far).pos).toEqual(saved(far) ? at(8, 6) : at(10, 6));
+      if (!saved(near)) expect(unit(state, near).pos).toEqual(saved(far) ? at(7, 6) : at(9, 6));
+      else expect(unit(state, near).pos).toEqual(at(6, 6));
+      swept += [near, far].filter((id) => !saved(id)).length;
+      expect(events.some((e) => e.t === "hit" && e.target === "bo")).toBe(false);
+      // The line is left under water, and whoever is on it soaked.
+      for (let col = 6; col <= 10; col++) expect(state.surfaces[posKey(at(col, 6))]?.kind, `col ${col}`).toBe("water");
+      for (const id of [near, far]) expect(unit(state, id).conditions.some((c) => c.kind === "wet")).toBe(true);
+    }
+    expect(swept).toBeGreaterThan(0);
   });
 });
