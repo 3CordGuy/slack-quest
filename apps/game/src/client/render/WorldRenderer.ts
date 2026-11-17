@@ -28,6 +28,7 @@ import { Gulls, type GullSpot } from "./gulls";
 import { OVERLAY_LAYER, PostFx, type Air } from "./post";
 import { fishMount } from "./catchArt";
 import { FRAME, OUTLINE, SITTING_DROP, inflate, makeFigure, type Figure } from "./figures";
+import { HIDES, hidingMaterial } from "./silhouette";
 import { BOAT_SCALE, OARLOCKS, ROWER_SEAT, aimOar, rowboatModel, shipOar } from "./rowboat";
 import { Rise } from "./rise";
 import { gaze } from "../gaze";
@@ -271,6 +272,10 @@ export interface Holding {
 /** Furthest a free-roaming walk may be previewed; matches the Harbor's server-side limit. */
 const FREE_ROAM_REACH = 60;
 /** Seconds to get up onto a stool, and to get off one. */
+/** The hexes that stand up as walls: whoever is behind one is shown through it (see silhouette.ts). */
+const WALLS: ReadonlySet<string> = new Set(["wall", "rock", "rampart"]);
+/** An enemy in a fight: its ring, and its shape seen through what hides it. */
+const ENEMY_RED = "#e23b3b";
 const SIT_S = 0.45;
 const STAND_S = 0.2;
 /**
@@ -662,6 +667,8 @@ interface Want {
   /** Heroes sharing a hex: which of them this is, so their plates are stacked instead of overlapping. */
   stack?: number;
   ring?: string;
+  /** Shown through a tree or a wall it is behind, as a flat shape of this colour (see silhouette.ts). */
+  through?: string;
   pulse?: boolean;
   hp?: number;
   down?: boolean;
@@ -871,6 +878,14 @@ export class WorldRenderer {
   private clock = 0;
 
   private terrain: THREE.InstancedMesh | null = null;
+  /**
+   * The hexes that stand up as walls (WALLS), once more: depth and no colour, drawn first, so a figure behind
+   * one can be shown through it (see silhouette.ts). `wallTiles` is which of `tiles` each one is.
+   */
+  private wallMarks: THREE.InstancedMesh | null = null;
+  private wallTiles: number[] = [];
+  /** Whether the canvas has a stencil buffer to do that with: without one, nobody is shown through anything. */
+  private seeThrough = false;
   private tiles: Tile[] = [];
   /** This map's place in the sound: where you stand, its sky, its fires and its water. */
   private ear: ReturnType<typeof openEar>;
@@ -1023,7 +1038,8 @@ export class WorldRenderer {
    */
   constructor(private container: HTMLElement, private callbacks: RendererCallbacks, private opts: { backdrop?: boolean } = {}) {
     // First, before anything that would need undoing: the browser may refuse (GraphicsUnavailable).
-    this.renderer = makeRenderer({ antialias: true, powerPreference: "low-power" });
+    this.renderer = makeRenderer({ antialias: true, powerPreference: "low-power", stencil: true });
+    this.seeThrough = !!this.renderer.getContext().getContextAttributes()?.stencil;
     this.ear = opts.backdrop ? DEAF : openEar();
     this.renderer.setPixelRatio(1);
     this.renderer.localClippingEnabled = true;
@@ -2028,6 +2044,12 @@ export class WorldRenderer {
       this.scene.remove(this.terrain);
       this.terrain.geometry.dispose();
     }
+    if (this.wallMarks) {
+      this.scene.remove(this.wallMarks);
+      (this.wallMarks.material as THREE.Material).dispose();
+      this.wallMarks.dispose();
+      this.wallMarks = null;
+    }
     this.decor.clear();
     this.poiSig = "";
 
@@ -2090,6 +2112,15 @@ export class WorldRenderer {
     terrain.receiveShadow = true;
     this.terrain = terrain;
     this.scene.add(terrain);
+    this.wallTiles = this.tiles.flatMap((t, i) => (WALLS.has(t.biome) ? [i] : []));
+    if (this.seeThrough && this.wallTiles.length > 0) {
+      this.wallMarks = new THREE.InstancedMesh(geo, hidingMaterial([GROUND_FLOOR]), this.wallTiles.length);
+      this.wallMarks.renderOrder = HIDES;
+      // Like the trees, never worth culling: its hexes are all over the map.
+      this.wallMarks.frustumCulled = false;
+      this.scene.add(this.wallMarks);
+      this.markWalls();
+    }
 
     // Trees on forest, the thickets and boulder heaps that cannot be walked through, and the boulders that
     // bound the Harbor. POI hexes stay clear. Rocks on open hills, grass and waves come from the ambience.
@@ -2248,6 +2279,21 @@ export class WorldRenderer {
   }
 
   /**
+   * Stand the walls' copies (see wallMarks) where the walls are now. One cut down to a kerb for the camera hides
+   * nobody, and has no copy.
+   */
+  private markWalls() {
+    if (!this.terrain || !this.wallMarks) return;
+    const m = new THREE.Matrix4();
+    this.wallTiles.forEach((tile, i) => {
+      if (this.lowered.has(key(this.tiles[tile]))) m.makeScale(0, 0, 0);
+      else this.terrain!.getMatrixAt(tile, m);
+      this.wallMarks!.setMatrixAt(i, m);
+    });
+    this.wallMarks.instanceMatrix.needsUpdate = true;
+  }
+
+  /**
    * Indoors, the walls between the camera and the room are cut down to a
    * kerb, like a doll's house, so the room can be seen from any side.
    */
@@ -2271,6 +2317,7 @@ export class WorldRenderer {
       this.terrain!.setMatrixAt(i, m);
     });
     this.terrain.instanceMatrix.needsUpdate = true;
+    this.markWalls();
     this.hideLoweredWallProps();
     // A wall cut down (or stood back up) and the pieces hung on it change every light's shadows.
     if ([...this.lowered].join("|") !== was) this.ambience.stirAll();
@@ -5509,7 +5556,7 @@ export class WorldRenderer {
       // A plate shows a first name only: full names run long over a crowd.
       const full = h.label ?? (plate ? h.name : undefined);
       const label = plate && full ? firstName(full) : full;
-      want.set(h.id, { kind: h.classId, outfit: h.outfit, pos, size: 1.5, label, plate: label ? plate : undefined, stack: i, ring: colorOf(h.id), pulse: state.turn?.heroId === h.id || !!h.active, asleep: h.asleep, rod: h.rod, boat: h.boat, down: h.down, prone: h.prone, effects: h.effects, seat: seat?.top });
+      want.set(h.id, { kind: h.classId, outfit: h.outfit, pos, size: 1.5, label, plate: label ? plate : undefined, stack: i, ring: colorOf(h.id), through: colorOf(h.id), pulse: state.turn?.heroId === h.id || !!h.active, asleep: h.asleep, rod: h.rod, boat: h.boat, down: h.down, prone: h.prone, effects: h.effects, seat: seat?.top });
     }
     for (const npc of state.story?.npcs ?? []) {
       const poi = state.map.pois.find((p) => p.id === npc.poi);
@@ -5531,7 +5578,7 @@ export class WorldRenderer {
     for (const u of state.units ?? []) {
       const pos = this.standAt(u.pos);
       pos.z += 0.25;
-      want.set(u.id, { kind: u.kind, pos, size: isBoss(u.kind) ? 1.9 : isBig(u.kind) ? 1.6 : 1.4, label: u.name, ring: u.hostile ? "#e23b3b" : undefined, pulse: !!u.active, hp: u.hp, down: u.down, prone: u.prone, effects: u.effects });
+      want.set(u.id, { kind: u.kind, pos, size: isBoss(u.kind) ? 1.9 : isBig(u.kind) ? 1.6 : 1.4, label: u.name, ring: u.hostile ? ENEMY_RED : undefined, through: u.hostile ? ENEMY_RED : undefined, pulse: !!u.active, hp: u.hp, down: u.down, prone: u.prone, effects: u.effects });
     }
     for (const poi of state.map.pois) {
       if (poi.cleared || poi.enemies.length === 0) continue;
@@ -5594,6 +5641,8 @@ export class WorldRenderer {
       unit.size = w.size;
       unit.figure.setSize(w.size);
       unit.figure.setDim(!!w.down);
+      // A hero always, and an enemy once it is in a fight, is shown through the tree or wall it is behind.
+      unit.figure.setSilhouette(this.seeThrough ? (w.through ?? null) : null);
       if (w.face !== undefined) unit.turnGoal = w.face;
       // Someone set to face a given way (seated, casting a line, lined up for a fight) is not turned by the pointer.
       if (w.face !== undefined) this.posed.add(id);

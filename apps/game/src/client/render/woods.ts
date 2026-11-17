@@ -18,6 +18,7 @@
 
 import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
+import { HIDES } from "./silhouette";
 import { addOakSway, addWindSway } from "./wind";
 
 /** Every tree geometry is this tall, centred on y = 0 (as addWindSway expects); an instance scales it. */
@@ -408,6 +409,8 @@ export class Woods {
       const list = trees.filter(kind.of);
       if (kind.stout && list.length === 0) continue;
       const mesh = this.instanced(kind.geometry(), list.length);
+      // Trees are drawn first, so whoever stands behind one can be shown through it (see silhouette.ts).
+      mesh.renderOrder = HIDES;
       if (kind.stout) addOakSway(mesh.material as THREE.Material, TREE_H);
       else addWindSway(mesh.material as THREE.Material, TREE_H, true);
       list.forEach((spot, index) => {
