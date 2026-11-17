@@ -1844,12 +1844,12 @@ export class TableStage implements WorldMinigame {
     this.card.position.y = CARD_Y + Math.sin(this.clock * 1.6) * 0.012;
     const base = this.group.position;
     const sway = Math.sin(this.clock * 0.9) * 0.006;
-    // A tall window (a phone) sees little across: back the eye off and open the lens until the stools at either side are in.
+    // A tall window (a phone) sees little across: the eye backs off a little. The lens stays as it is: opened wider,
+    // the cards on the table come out too small to read.
     const back = THREE.MathUtils.clamp(0.8 / aspect, 1, 1.3);
     const eye = new THREE.Vector3(base.x, base.y + 1.75 * back + sway, base.z + (SEAT_R + 1.0) * back);
     const look = new THREE.Vector3(base.x, base.y + TOP + 0.08, base.z - 0.05);
-    const fov = Math.max(VFOV, Math.min(72, (2 * Math.atan(Math.tan(THREE.MathUtils.degToRad(26)) / aspect) * 180) / Math.PI));
-    return { eye, look, blend: smoother(this.inT), fov };
+    return { eye, look, blend: smoother(this.inT), fov: VFOV };
   }
 
   private animate(dt: number) {

@@ -5685,6 +5685,8 @@ export class WorldRenderer {
     this.post?.setSize(w, h);
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
+    // A view offset for a minigame's cover is set again next frame, in the new size.
+    if (this.coverShift) this.coverShift = "resized";
   }
 
   /** Dev server only: a lightning strike now, whatever the weather, for trying thunder takes against the flash. */
@@ -5814,7 +5816,10 @@ export class WorldRenderer {
       const shift = lb > 0.001 || lr > 0.001 ? `${lr.toFixed(4)},${lb.toFixed(4)}` : "";
       if (Math.abs(fov - this.camera.fov) > 0.01 || shift !== this.coverShift) {
         this.camera.fov = fov;
-        if (shift) this.camera.setViewOffset(1, 1, lr / 2, lb / 2, 1, 1);
+        // In the view's own pixels: setViewOffset also sets the camera's aspect from them (fullWidth / fullHeight).
+        const w = Math.max(1, this.container.clientWidth);
+        const h = Math.max(1, this.container.clientHeight);
+        if (shift) this.camera.setViewOffset(w, h, (lr * w) / 2, (lb * h) / 2, w, h);
         else this.camera.clearViewOffset();
         this.coverShift = shift;
         this.camera.updateProjectionMatrix();
