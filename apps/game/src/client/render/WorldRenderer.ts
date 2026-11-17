@@ -548,6 +548,13 @@ interface Unit {
   rush?: number;
   /** Knocked off its feet: drawn lying until the render clock passes this. */
   floored?: number;
+  /** Down in a fight, as last told. */
+  down?: boolean;
+  /**
+   * Just killed, and still on its feet until the blow that did it lands: it falls (a ragdoll, see topple) at its
+   * "down" beat, or failing one, when the render clock passes this.
+   */
+  dying?: number;
   /**
    * The waypoints in `path` that are jumped to, not walked: the Jump action (see leapUnit: true, and heard as
    * one), and any step of a walk that goes up or down a level of the ground (see walkUnit: false).
@@ -672,6 +679,8 @@ interface Want {
   pulse?: boolean;
   hp?: number;
   down?: boolean;
+  /** Seen going down, it falls limp (a ragdoll) rather than being laid out. */
+  falls?: boolean;
   /** Knocked flat but not out: lying, in full colour. */
   prone?: boolean;
   asleep?: boolean;
@@ -1277,6 +1286,8 @@ export class WorldRenderer {
     const ending = events.find((e) => e.t === "battle_end");
     // Your turn coming round gets a soft tick, once, and not as the fight ends.
     let myTurnAt: number | null = null;
+    /** Who last struck each target, so one killed falls away from them. */
+    const struck = new Map<string, string>();
     for (const ev of events) {
       if (ev.t === "moved") {
         const unit = this.units.get(ev.heroId);
@@ -1291,6 +1302,7 @@ export class WorldRenderer {
       } else if (ev.t === "battle") {
         const b = ev.ev;
         // Sounds are asked for inside each beat, so they land with the picture, not when the message arrived.
+        if (b.t === "hit") struck.set(b.target, b.actor);
         if (b.t === "hit") this.later(beat++, () => this.attack(b.actor, b.target, b.ability, b.perfect, () => { sounds.impact(b.ability, attackStyle(b.ability), b.perfect, this.fighter(b.target), this.spot(b.target)); this.float(b.target, `-${b.amount}`, b.perfect ? "#ffd23f" : "#ff6b6b"); }, true));
         else if (b.t === "miss" && b.heal) this.later(beat++, () => { sounds.healFailed(this.spot(b.actor)); this.float(b.actor, "fails", "#c9d1e0"); });
         else if (b.t === "miss") this.later(beat++, () => this.attack(b.actor, b.target, b.ability, false, () => { sounds.miss(b.ability, attackStyle(b.ability), this.spot(b.target)); this.float(b.target, "miss", "#c9d1e0"); }));
@@ -1315,7 +1327,15 @@ export class WorldRenderer {
         else if (b.t === "trait") this.later(beat++, () => { const name = TRAIT_BY_ID[b.trait]?.name ?? b.trait; sounds.trait(name, this.spot(b.id)); this.float(b.id, name, "#facc15"); });
         // These ride on the blow before them rather than taking a beat of their own.
         else if (b.t === "effect") { this.later(Math.max(startBeat, beat - 1) + 0.4, () => sounds.effect(b.effect, this.spot(b.target))); }
-        else if (b.t === "down") { const who = this.fighter(b.id); this.later(Math.max(startBeat, beat - 1) + 0.6, () => sounds.down(who, this.spot(b.id))); }
+        else if (b.t === "down") {
+          const who = this.fighter(b.id);
+          const by = struck.get(b.id);
+          const at = Math.max(startBeat, beat - 1) + 0.6;
+          // Held up until then (the fallback is only for a fall no beat brings).
+          const dying = this.units.get(b.id);
+          if (dying?.dying !== undefined) dying.dying = this.clock + at * 0.38 + 2;
+          this.later(at, () => { sounds.down(who, this.spot(b.id)); this.topple(b.id, by); });
+        }
         else if (b.t === "flee") this.later(beat, () => sounds.flee(b.ok, this.spot(b.actor)));
       } else if (this.state) {
         // After the blows queued so far, so a fight's closing sting does not cut across its last hit.
@@ -1668,6 +1688,24 @@ export class WorldRenderer {
   }
 
   /** Run `run` on beat `beat` of what is being played out, `extra` seconds after it. */
+  /**
+   * One just killed falls where it stands, limp (see Figure.fall): knocked away from `by`, who struck the blow.
+   * Only for one held up for it (see Unit.dying); anyone else is already lying as they should.
+   */
+  private topple(id: string, by?: string) {
+    const unit = this.units.get(id);
+    if (!unit || unit.dying === undefined) return;
+    unit.dying = undefined;
+    unit.lying = true;
+    unit.head = unit.size * LYING + 0.3;
+    unit.path = [];
+    unit.figure.setDim(true);
+    this.clearArrows(unit);
+    const from = by ? this.units.get(by) : undefined;
+    const away = from ? unit.goal.clone().sub(from.goal).setY(0) : undefined;
+    unit.figure.fall(away && away.lengthSq() > 1e-6 ? away : undefined);
+  }
+
   private later(beat: number, run: () => void, extra = 0) {
     this.pending.push({ at: this.clock + beat * 0.38 + extra, run });
   }
@@ -5607,7 +5645,7 @@ export class WorldRenderer {
     for (const u of state.units ?? []) {
       const pos = this.standAt(u.pos);
       pos.z += 0.25;
-      want.set(u.id, { kind: u.kind, pos, size: isBoss(u.kind) ? 1.9 : isBig(u.kind) ? 1.6 : 1.4, label: u.name, ring: u.hostile ? ENEMY_RED : undefined, through: u.hostile ? ENEMY_RED : undefined, pulse: !!u.active, hp: u.hp, down: u.down, prone: u.prone, effects: u.effects });
+      want.set(u.id, { kind: u.kind, pos, size: isBoss(u.kind) ? 1.9 : isBig(u.kind) ? 1.6 : 1.4, label: u.name, ring: u.hostile ? ENEMY_RED : undefined, through: u.hostile ? ENEMY_RED : undefined, pulse: !!u.active, hp: u.hp, down: u.down, falls: true, prone: u.prone, effects: u.effects });
     }
     for (const poi of state.map.pois) {
       if (poi.cleared || poi.enemies.length === 0) continue;
@@ -5644,6 +5682,7 @@ export class WorldRenderer {
     this.pulsing.clear();
     for (const [id, w] of want) {
       let unit = this.units.get(id);
+      const seen = !!unit;
       if (!unit) {
         const figure = makeFigure(w.kind, lookFor(w.kind), w.outfit, { asleep: w.asleep, rod: w.rod });
         for (const f of flamesIn(figure.root)) this.liveFlames.add(f);
@@ -5663,13 +5702,18 @@ export class WorldRenderer {
       unit.asleep = !!w.asleep;
       this.syncBoat(unit, w.boat);
       unit.rod = !!w.rod;
+      // Seen going down: it stays on its feet for the blow to land, then falls (see topple).
+      if (w.down && !unit.down && seen && w.falls) unit.dying = this.clock + 2;
+      if (!w.down) unit.dying = undefined;
+      unit.down = !!w.down;
+      const fell = !!w.down && unit.dying === undefined;
       // Down or asleep: on their back, low to the ground.
-      unit.lying = !!w.down || !!w.asleep || !!w.prone;
+      unit.lying = fell || !!w.asleep || !!w.prone;
       unit.head = unit.lying ? w.size * LYING + 0.3 : w.size + 0.3;
       unit.stack = w.stack ?? 0;
       unit.size = w.size;
       unit.figure.setSize(w.size);
-      unit.figure.setDim(!!w.down);
+      unit.figure.setDim(fell);
       // A hero always, and an enemy once it is in a fight, is shown through the tree or wall it is behind.
       unit.figure.setSilhouette(this.seeThrough ? (w.through ?? null) : null);
       if (w.face !== undefined) unit.turnGoal = w.face;
@@ -5677,7 +5721,7 @@ export class WorldRenderer {
       if (w.face !== undefined) this.posed.add(id);
       else this.posed.delete(id);
       // Arrows stay in until the one they hit goes down, or the fight is over.
-      if (w.down || w.hp === undefined) this.clearArrows(unit);
+      if (fell || w.hp === undefined) this.clearArrows(unit);
 
       if (w.ring && !unit.ring) {
         unit.ring = new THREE.Mesh(new THREE.RingGeometry(0.3, 0.44, 6), new THREE.MeshBasicMaterial({ side: THREE.DoubleSide }));
@@ -6559,6 +6603,7 @@ export class WorldRenderer {
       if (unit.asleep) unit.turnGoal = this.yaw + Math.PI / 2;
       unit.turn += turnBy(unit.turn, unit.turnGoal) * (1 - Math.exp(-dt * 12));
       unit.root.rotation.y = unit.turn;
+      if (unit.dying !== undefined && this.clock >= unit.dying) this.topple(id);
       const rowing = this.rowingPose(unit, p, dt);
       if (rowing === undefined) unit.oarPull = undefined;
       unit.figure.update({ time: this.clock, stride: unit.stride, walking: unit.path.length > 0 && !unit.rush && !unit.leap, lean: unit.lean, lying: unit.lying || this.clock < (unit.floored ?? 0), rowing, sitting: unit.boatKind === "rowboat" && unit.boat?.visible ? 1 : unit.sit || undefined });
