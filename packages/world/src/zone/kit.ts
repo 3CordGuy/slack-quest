@@ -53,6 +53,7 @@ const mend = (range: number, extra: Partial<Tactic> = {}): Tactic => ({ cost: "a
 
 export const TACTICS: Record<string, Tactic> = {
   punch: melee(),
+  torch_swing: melee(),
   // Paladin
   smite: melee(),
   shield_wall: guard(),
@@ -180,6 +181,8 @@ export interface ThrowableDef {
   drink?: boolean;
   /** Left on everyone caught in it who fails the Agility save. */
   condition?: { kind: Condition; rounds: number };
+  /** A torch: lit and held in the off hand instead of drunk, and thrown it lies burning where it lands (light.ts). */
+  light?: boolean;
 }
 
 export const THROWABLES: Record<Throwable, ThrowableDef> = {
@@ -190,10 +193,20 @@ export const THROWABLES: Record<Throwable, ThrowableDef> = {
   water: { name: "Water skin", blurb: "Douses fire and leaves the ground wet for 3 rounds.", radius: 1, surface: { kind: "water", rounds: 3 } },
   acid: { name: "Acid flask", blurb: "Splashes slime acid: a little damage to everyone near, and leaves them Holed for 2 rounds unless they dodge it.", radius: 1, damage: { n: 1, d: 6, plus: 0 }, condition: { kind: "exposed", rounds: 2 } },
   slime: { name: "Slime flask", blurb: "Leaves a sticky slick for 3 rounds: it costs a step more to cross and slows whoever walks into it.", radius: 1, surface: { kind: "slime", rounds: 3 } },
+  torch: { name: "Torch", blurb: "Light it to hold in your off hand (a Bonus action) and see in the dark, with your shield set aside. Thrown, it lies burning where it lands, and sets oil alight.", radius: 0, light: true },
 };
 
+/** How far a torch lights, held or lying burning, and how far a burning hex does. */
+export const LIGHT_RADIUS = 3;
+export const FIRE_GLOW = 1;
+/** Rounds of a fight a torch burns: lit to hold, and one lit from the pack and thrown straight down. */
+export const TORCH_HELD_ROUNDS = 10;
+export const TORCH_GROUND_ROUNDS = 8;
+/** Defence lost while a torch is held in the hand a shield would be on. */
+export const SHIELD_SET_ASIDE = 2;
+
 /** The kit every hero starts out with in their pack (and a stand-in is given on each map). */
-export const STARTING_ITEMS: Partial<Record<Throwable, number>> = { healing: 2, poison: 2, fire: 1, oil: 1, water: 1 };
+export const STARTING_ITEMS: Partial<Record<Throwable, number>> = { healing: 2, poison: 2, fire: 1, oil: 1, water: 1, torch: 2 };
 
 /** Every kind of thing carried to drink or throw, in the order they are listed. */
 export const THROWABLE_KINDS = Object.keys(THROWABLES) as Throwable[];

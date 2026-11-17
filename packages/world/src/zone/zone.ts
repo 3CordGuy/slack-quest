@@ -19,13 +19,14 @@ import type { HeroSheet } from "../hero";
 import { addStats, maxFocusFor, maxHpFor } from "../progression";
 import { makeRng, seedFromString } from "../rng";
 import { enemyTurn } from "./ai";
-import { abilityArea, checkAbility, checkCommon, checkDrink, checkThrow, doCommon, drinkItem, resolveAbility, throwItem, walk } from "./combat";
+import { abilityArea, checkAbility, checkCommon, checkDrink, checkLight, checkThrow, doCommon, drinkItem, resolveAbility, throwItem, walk } from "./combat";
 import { has, heal, removeCondition, tick, type Ctx } from "./engine";
 import { ALERT_RANGE, JOIN_RANGE, freeHexNear, generateZone } from "./gen";
 import { FREE_WALK, blast, inFight, pathIn, sameHex, sees, solid, unitAt, unitById, zoneReach } from "./geometry";
 import { STARTING_ITEMS, THROWABLES, THROWABLE_KINDS, cleanItems, commonCost, enemyHp, enemyMove, tacticOf } from "./kit";
 import { d20, heroMove, mod, statOf } from "./rules";
-import { clearSurfaces, placeSurface, standInSurface, tickSurfaces } from "./surfaces";
+import { hiddenEnemies, sentToClient } from "./light";
+import { clearSurfaces, lightTorch, placeSurface, standInSurface, tickLights, tickSurfaces } from "./surfaces";
 import type { Budget, DevOp, Encounter, Throwable, Unit, ZoneAction, ZoneEffect, ZoneEvent, ZoneHero, ZoneOptions, ZoneState, ZoneStep, ZoneView } from "./types";
 
 /** Rounds a surface painted from the dev toolbox lasts. */
@@ -72,7 +73,11 @@ export function createZone(code: string, seed: string, options: ZoneOptions): Zo
 /** What a client is sent. */
 export function zoneView(state: ZoneState, you: string): ZoneView {
   const { rng: _rng, seed: _seed, ...rest } = state;
-  return { ...rest, you };
+  const hidden = hiddenEnemies(state);
+  if (hidden.length === 0) return { ...rest, you };
+  // What the dark hides is not sent at all, unless it is in a fight: then it keeps its place in the order, marked.
+  const fighting = hidden.filter((id) => inFight(state, id));
+  return { ...rest, units: rest.units.filter(sentToClient(state, new Set(hidden))), you, ...(fighting.length > 0 ? { dark: fighting } : {}) };
 }
 
 /** Whose turn the server is waiting on, as a key that changes when the wait does. Null out of a fight. */
@@ -338,6 +343,7 @@ function advance(ctx: Ctx): void {
         enc.reacted = [];
         ctx.events.push({ t: "round", n: enc.round });
         tickSurfaces(ctx);
+        tickLights(ctx);
       }
       const u = unitById(state, enc.order[i]);
       if (!u || u.down) continue;
@@ -458,7 +464,10 @@ function act(ctx: Ctx, action: ZoneAction): string | null {
       // Back again, perhaps with different gear: the sheet is refreshed, and where they stand and how hurt they are is kept.
       // Not in a fight, though: that is fought in the gear it was started in.
       if (inFight(state, here.id)) return null;
-      Object.assign(here, { name: hero.name, kind: hero.classId, level: hero.level, stats: hero.stats, armor: hero.armor, power: hero.weaponPower, abilities: abilitiesFor(hero.weapon), outfit: hero.outfit, maxHp: hero.maxHp, maxFocus: hero.maxFocus });
+      Object.assign(here, { name: hero.name, kind: hero.classId, level: hero.level, stats: hero.stats, armor: hero.armor, power: hero.weaponPower, outfit: hero.outfit, maxHp: hero.maxHp, maxFocus: hero.maxFocus });
+      // A torch swung in the main hand stays there: the new weapon is what is taken up when it goes.
+      if (here.torchHand === "main") here.stowed = abilitiesFor(hero.weapon);
+      else here.abilities = abilitiesFor(hero.weapon);
       here.hp = Math.min(here.hp, here.maxHp);
       return null;
     }
@@ -537,6 +546,14 @@ function act(ctx: Ctx, action: ZoneAction): string | null {
     const cost = spend(budget, "bonus");
     if (cost) return cost;
     drinkItem(ctx, unit, action.item);
+    return null;
+  }
+  if (action.type === "light") {
+    const wrong = checkLight(unit);
+    if (wrong) return wrong;
+    const cost = spend(budget, "bonus");
+    if (cost) return cost;
+    lightTorch(ctx, unit, action.hand);
     return null;
   }
   // Throw.

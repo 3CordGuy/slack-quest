@@ -6,6 +6,7 @@
 // Fights are played on the map itself: enemies stand on their own hexes like the heroes do.
 
 import * as THREE from "three";
+import { flamesIn, flickerFlame, torchFlame } from "./torchFlame";
 import { makeModelShip } from "./modelShip";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { reportEnv } from "../ui/env";
@@ -91,6 +92,11 @@ export interface RenderState {
   /** A zone's enemies: each stands on its own hex, with a bar of what it has left once it is in a fight. */
   units?: RenderUnit[];
   /**
+   * Torches lying lit on the ground, underground. With this set (a zone in the caves), only heroes holding
+   * a torch carry light, and these light where they lie; without it every hero in the caverns has one.
+   */
+  lights?: HexPos[];
+  /**
    * Where the viewer can walk, worked out by the caller (a zone's rules know about cliffs, bodies in the way
    * and what is left of a turn's movement). When set it is used as it stands: the tiles lit, the marker
    * under the pointer and the dots along the way all come from it.
@@ -167,6 +173,8 @@ export interface RenderHero {
   prone?: boolean;
   /** Whose turn it is in a fight on the tiles: their ring pulses. */
   active?: boolean;
+  /** Holding a lit torch: underground, its light goes where they go. */
+  torch?: boolean;
 }
 
 /** The first word of a name, for a plate: "Ewan Driftwood" is "Ewan". */
@@ -847,6 +855,11 @@ export class WorldRenderer {
   private sea: THREE.Mesh;
   private unitGroup = new THREE.Group();
   private fxGroup = new THREE.Group();
+  /** Torches lying burning on the ground, and which hexes they are on. */
+  private groundTorches = new THREE.Group();
+  private groundTorchKey = "";
+  /** Every torch flame on the map, in a hand or on the ground, to flicker each frame. */
+  private liveFlames = new Set<THREE.Object3D>();
   private pathGroup = new THREE.Group();
   /** Red outlines around the hexes close enough to join a fight at each camp or lair. */
   private rangeGroup = new THREE.Group();
@@ -987,7 +1000,7 @@ export class WorldRenderer {
     this.hoverRing = this.buildHoverMarker();
     this.hoverRing.visible = false;
 
-    this.scene.add(this.decor, this.poiGroup, this.propGroup, this.rangeGroup, this.pathGroup, this.hoverRing, this.unitGroup, this.fxGroup);
+    this.scene.add(this.decor, this.poiGroup, this.propGroup, this.rangeGroup, this.pathGroup, this.hoverRing, this.unitGroup, this.fxGroup, this.groundTorches);
 
     canvas.addEventListener("pointerdown", this.onPointerDown);
     canvas.addEventListener("pointermove", this.onPointerMove);
@@ -1085,6 +1098,40 @@ export class WorldRenderer {
 
   // ---------- state ----------
 
+  /** A torch for each lit hex in `state.lights`: a stick lying aslant on the ground with a flame at its head. */
+  private buildGroundTorches(state: RenderState) {
+    const key = (state.lights ?? []).map((p) => `${p.q},${p.r}`).sort().join(";");
+    if (key === this.groundTorchKey) return;
+    this.groundTorchKey = key;
+    for (const old of [...this.groundTorches.children]) {
+      this.groundTorches.remove(old);
+      old.traverse((o) => {
+        if (o instanceof THREE.Mesh) {
+          o.geometry.dispose();
+          (o.material as THREE.Material).dispose();
+        }
+      });
+    }
+    for (const p of state.lights ?? []) {
+      const { x, z } = hexToWorld(p);
+      const torch = new THREE.Group();
+      torch.position.set(x, tileTop(tileAt(state.map, p)) + 0.05, z);
+      torch.rotation.y = ((p.q * 7 + p.r * 13) % 6) * (Math.PI / 3);
+      const stick = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.045, 0.6, 6), new THREE.MeshLambertMaterial({ color: "#6b4a2b" }));
+      stick.rotation.z = Math.PI / 2 - 0.35;
+      stick.position.set(0, 0.1, 0);
+      const rag = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.06, 0.14, 6), new THREE.MeshLambertMaterial({ color: "#3a2a1e" }));
+      rag.rotation.z = stick.rotation.z;
+      rag.position.set(-0.27, 0.2, 0);
+      // The flame burns upright off the head of the stick, flickering like the pub's fire.
+      const flame = torchFlame(0.24);
+      flame.position.set(-0.3, 0.25, 0);
+      this.liveFlames.add(flame);
+      torch.add(stick, rag, flame);
+      this.groundTorches.add(torch);
+    }
+  }
+
   setState(state: RenderState) {
     // Dev server only: the view being fed state is the live one (a view torn down after it was made would otherwise be left in the hook).
     if (import.meta.env.DEV && !this.opts.backdrop) (globalThis as { __gqWorld?: WorldRenderer }).__gqWorld = this;
@@ -1097,6 +1144,7 @@ export class WorldRenderer {
     this.lifted = lifted;
     this.state = state;
     this.ambience.setLampOn(!state.lampOff);
+    this.buildGroundTorches(state);
     this.buildPois(state);
     this.buildProps(state);
     this.updateGhost();
@@ -5134,6 +5182,7 @@ export class WorldRenderer {
       let unit = this.units.get(id);
       if (!unit) {
         const figure = makeFigure(w.kind, lookFor(w.kind), w.outfit, { asleep: w.asleep, rod: w.rod });
+        for (const f of flamesIn(figure.root)) this.liveFlames.add(f);
         figure.root.position.copy(w.pos);
         this.unitGroup.add(figure.root);
         // New arrivals face the camera, turned a little so what they carry shows.
@@ -5847,14 +5896,28 @@ export class WorldRenderer {
       this.ear.sea(nearWater(ear.x, ear.z, this.water));
       this.ear.ground(this.state ? (tileAt(this.state.map, worldToHex(ear.x, ear.z - 0.25))?.biome ?? null) : null);
     }
-    // In the caverns every hero carries a torch: the lights follow them as they walk.
+    // In the caverns the lights follow the heroes who carry a torch as they walk (in the old delves, every hero),
+    // and a torch thrown down lights where it lies. Nearest the view first: there are only so many lights.
     if (this.state?.kind === "caverns") {
       const torches: THREE.Vector3[] = [];
+      const lit = this.state.lights !== undefined;
       for (const h of this.state.heroes) {
         const unit = this.units.get(h.id);
-        if (unit) torches.push(unit.root.position);
+        if (unit && (!lit || h.torch)) torches.push(unit.root.position);
       }
+      for (const t of this.groundTorches.children) torches.push(t.position.clone().setY(t.position.y - 0.8));
+      torches.sort((a, b) => a.distanceToSquared(this.target) - b.distanceToSquared(this.target));
       this.ambience.setTorches(torches);
+    }
+    // Torch flames flicker, in a hand or lying on the ground. One no longer on the map is let go.
+    if (this.liveFlames.size > 0) {
+      const now = performance.now() / 1000;
+      for (const f of this.liveFlames) {
+        let top: THREE.Object3D = f;
+        while (top.parent) top = top.parent;
+        if (top !== this.scene) this.liveFlames.delete(f);
+        else flickerFlame(f, now);
+      }
     }
     // Night reaches the open sea and the fog too, not just the lit ground.
     const night = this.ambience.night;

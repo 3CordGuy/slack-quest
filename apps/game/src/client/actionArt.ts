@@ -286,6 +286,14 @@ export const ACTION_ART: Record<string, Art> = {
     p.r(11, 1, 2, 2, p.accent);
     p.r(13, 0, 1, 1, K.flame);
   },
+  "item-torch": (p) => {
+    // A stick bound with pitch-soaked rag at its head, alight.
+    p.l(5, 14, 9, 7, C.bark);
+    p.l(6, 14, 10, 7, C.wood);
+    spans(p, C.hide, [[5, 9, 12], [6, 9, 12], [7, 8, 11]]);
+    spans(p, p.accent, [[1, 11, 11], [2, 10, 12], [3, 9, 13], [4, 9, 13]]);
+    spans(p, K.flame, [[0, 11, 11], [2, 11, 11], [3, 10, 12]]);
+  },
   "item-waterskin": (p) => {
     p.r(7, 1, 2, 1, C.bark);
     p.r(7, 2, 2, 2, C.hide);

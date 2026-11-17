@@ -6,7 +6,8 @@ import type { StatKey } from "@gantt-quest/core";
 import { tileAt } from "../map";
 import type { Rng } from "../rng";
 import { adjacent, elevOf, inFight } from "./geometry";
-import { ENEMY_KIT, enemyDefence, enemySave } from "./kit";
+import { ENEMY_KIT, SHIELD_SET_ASIDE, enemyDefence, enemySave } from "./kit";
+import { inDark } from "./light";
 import { d20, heroDefence, mod, netAdvantage, statOf } from "./rules";
 import type { Condition, Roll, Unit, ZoneEffect, ZoneEvent, ZoneState } from "./types";
 
@@ -51,7 +52,8 @@ export function addCondition(ctx: Ctx, unit: Unit, kind: Condition, rounds: numb
 /** The conditions that count as wounds, for abilities that grow with them. */
 export const DEBUFFS: readonly Condition[] = ["bleeding", "burning", "stunned", "slowed", "glitched", "exposed", "poisoned", "prone"];
 
-export const defenceOf = (unit: Unit): number => (unit.side === "hero" && unit.stats ? heroDefence(unit.stats, unit.armor) : enemyDefence(unit.kind));
+export const defenceOf = (unit: Unit): number =>
+  unit.side === "hero" && unit.stats ? heroDefence(unit.stats, unit.armor) - ((unit.torch ?? 0) > 0 && unit.torchHand !== "main" && unit.outfit?.off_hand ? SHIELD_SET_ASIDE : 0) : enemyDefence(unit.kind);
 
 export const saveBonus = (unit: Unit, stat: StatKey): number => (unit.side === "hero" ? mod(statOf(unit, stat)) : enemySave(unit.kind));
 
@@ -127,6 +129,8 @@ export function attackContext(state: ZoneState, attacker: Unit, target: Unit, op
   if (attacker.side === "enemy" && ENEMY_KIT[attacker.kind]?.pack && state.units.some((u) => u.id !== attacker.id && u.side === "enemy" && !u.down && adjacent(u.pos, target.pos))) adv("the pack is on the target");
   if (has(attacker, "poisoned")) dis("Poisoned");
   if (has(attacker, "glitched")) dis("Fouled");
+  // The party strikes blind at what the light does not reach. The things of the caves see in the dark.
+  if (attacker.side === "hero" && inDark(state, target.pos)) dis("the target is in the dark");
   if (!opts.melee) {
     if (state.units.some((u) => u.side !== attacker.side && !u.down && inFight(state, u.id) && adjacent(u.pos, attacker.pos))) dis("an enemy is beside you");
     if (has(target, "prone")) dis("the target is Prone");

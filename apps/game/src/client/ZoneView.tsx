@@ -141,6 +141,9 @@ function dwell(ev: ZoneEvent, many: boolean, next: ZoneEvent | undefined): numbe
     default: return 0;
   }
 }
+/** How a lit torch is drawn in the off hand (render/gearModels.ts "torch"). */
+const TORCH_IN_HAND = { icon: "torch", ref: "torch", rarity: "common" as const };
+
 /** The breath after several have been struck at once, before the next thing is shown. */
 const AFTER_MANY = 340;
 
@@ -498,6 +501,12 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
       } else if (ev.t === "cleared") {
         later(() => setBanner("Cleared"));
         say("Nothing else stirs here. Leave the map, and the next way down finds a fresh one.");
+      } else if (ev.t === "lit") {
+        say(`${name(ev.id)} lights a torch.`);
+      } else if (ev.t === "torch_out") {
+        say(`${name(ev.id)}'s torch gutters out.`);
+      } else if (ev.t === "light" && !ev.on) {
+        say("A torch on the ground burns out.");
       } else if (ev.t === "joined") {
         say(`${name(ev.id)} arrives.`);
       }
@@ -596,13 +605,17 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
       phase: "overworld",
       round: 0,
       map: state.map,
-      heroes: picture.units.filter((u) => u.side === "hero").map((u) => ({ id: u.id, classId: u.kind, pos: u.pos, name: u.name, outfit: u.outfit, level: u.level, xp: 0, hp: u.hp, maxHp: u.maxHp, down: u.down, prone: u.conditions.some((c) => c.kind === "prone"), active: turn(u.id) })),
-      units: picture.units.filter((u) => u.side === "enemy").map((u) => ({ id: u.id, kind: u.kind, pos: u.pos, name: u.name, hp: inFight(u.id) || u.hp < u.maxHp ? u.hp / u.maxHp : undefined, down: u.down, prone: u.conditions.some((c) => c.kind === "prone"), active: u.id === spot, hostile: inFight(u.id) })),
+      // A lit torch is held in the off hand, where a shield would be.
+      heroes: picture.units.filter((u) => u.side === "hero").map((u) => ({ id: u.id, classId: u.kind, pos: u.pos, name: u.name, outfit: u.torch ? { ...u.outfit, [u.torchHand === "main" ? "main_hand" : "off_hand"]: TORCH_IN_HAND } : u.outfit, torch: !!u.torch, level: u.level, xp: 0, hp: u.hp, maxHp: u.maxHp, down: u.down, prone: u.conditions.some((c) => c.kind === "prone"), active: turn(u.id) })),
+      // What the dark hides is not drawn: out of a fight the server does not even send it.
+      units: picture.units.filter((u) => u.side === "enemy" && !state.dark?.includes(u.id)).map((u) => ({ id: u.id, kind: u.kind, pos: u.pos, name: u.name, hp: inFight(u.id) || u.hp < u.maxHp ? u.hp / u.maxHp : undefined, down: u.down, prone: u.conditions.some((c) => c.kind === "prone"), active: u.id === spot, hostile: inFight(u.id) })),
       turn: null,
       story: null,
       npcs: {},
       // Lit tiles are a turn's movement; walking freely, nothing is lit.
       freeRoam: !fighting,
+      // Underground, light comes only from torches (held, or lying where they were thrown) and fire.
+      lights: state.options.biome === "caves" ? Object.keys(state.lights ?? {}).map((k) => { const [q, r] = k.split(",").map(Number); return { q, r }; }) : undefined,
       reach,
     };
     view.setState(scene);
@@ -640,9 +653,10 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
       const def = THROWABLES[pick.item];
       const tint = def.surface ? SURFACE_INFO[def.surface.kind].color : "#7dff9a";
       out.push({ hexes: within(throwRange(statMod(act.stats?.str ?? 5)), true), color: "#ffd23f", fill: 0.1, line: 0.8 });
-      // Your own hex: a potion clicked there is drunk, not thrown.
-      if (def.drink) out.push({ hexes: [act.pos], color: "#7dff9a", fill: 0.3, line: 0.9 });
-      if (hover && !(def.drink && hover.q === act.pos.q && hover.r === act.pos.r)) {
+      // Your own hex: a potion clicked there is drunk, and a torch lit to hold, not thrown.
+      const self = def.drink || (def.light && !act.torch);
+      if (self) out.push({ hexes: [act.pos], color: def.light ? "#ffb070" : "#7dff9a", fill: 0.3, line: 0.9 });
+      if (hover && !(self && hover.q === act.pos.q && hover.r === act.pos.r)) {
         const area = zoneBlast(state.map, hover, def.radius);
         out.push({ hexes: area, color: tint, fill: 0.22, line: 0.9 });
         // Where it lands gets the most of it.
@@ -771,8 +785,11 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
       if (shape === "ally") return use(pick.id, { target: there?.side === "hero" ? there.id : act.id });
       if (there) use(pick.id, { target: there.id });
     } else if (pick.kind === "item") {
-      // Clicked on yourself, something drinkable is drunk; anywhere else it is thrown there.
-      if (THROWABLES[pick.item].drink && pos.q === act.pos.q && pos.r === act.pos.r) zone.send({ type: "drink", unit: act.id, item: pick.item });
+      // Clicked on yourself, something drinkable is drunk and a torch is lit to hold; anywhere else it is thrown there.
+      const onSelf = pos.q === act.pos.q && pos.r === act.pos.r;
+      const def = THROWABLES[pick.item];
+      if (def.drink && onSelf) zone.send({ type: "drink", unit: act.id, item: pick.item });
+      else if (def.light && onSelf && !act.torch) zone.send({ type: "light", unit: act.id });
       else zone.send({ type: "throw", unit: act.id, item: pick.item, at: pos });
       setPick(null);
     } else if (pick.what === "jump") common("jump", { at: pos });
@@ -857,16 +874,18 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
   for (const item of Object.keys(ITEM_ICON) as Throwable[]) {
     const def = THROWABLES[item];
     const have = act.items[item] ?? 0;
+    // A torch lit in the hand can be thrown with none left in the pack.
+    const held = !!def.light && (act.torch ?? 0) > 0;
     entries[`it:${item}`] = {
       id: `it:${item}`,
       icon: ITEM_ICON[item],
-      name: def.name,
-      line: def.drink ? "Throw it (Action), or click yourself to drink it (Bonus action)" : "Throw it (Action)",
+      name: held ? `${def.name} (lit, ${act.torch} rounds left)` : def.name,
+      line: def.drink ? "Throw it (Action), or click yourself to drink it (Bonus action)" : def.light ? (held ? "Throw the lit torch down where it should burn (Action)" : "Throw it lit (Action), or click yourself to light it to hold (Bonus action)") : "Throw it (Action)",
       more: def.blurb,
       count: have,
       picked: pick?.kind === "item" && pick.item === item,
-      // Thrown for an Action; a potion can still be drunk when only the Bonus action is left.
-      spent: have <= 0 || !(canPay("action") || (!!def.drink && canPay("bonus"))),
+      // Thrown for an Action; a potion can still be drunk, or a torch lit, when only the Bonus action is left.
+      spent: (have <= 0 && !held) || !(canPay("action") || ((!!def.drink || (!!def.light && !held)) && canPay("bonus"))),
       run: () => setPick((p) => (p?.kind === "item" && p.item === item ? null : { kind: "item", item })),
     };
   }
@@ -875,7 +894,7 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
   // Whoever is being shown acting, while the enemy's turn plays out; otherwise whoever the server waits on.
   const waitingFor = enc && !myTurn ? (watching && spot ? (names.current.get(spot) ?? "someone") : enc.acting.map((id) => names.current.get(id) ?? "someone").join(" and ")) : undefined;
   const place: ReactNode = pick
-    ? <>{pick.kind === "ability" ? ABILITIES[pick.id].name : pick.kind === "item" ? THROWABLES[pick.item].name : COMMON_ACTIONS[pick.what].name} <span className="muted">· {pick.kind === "item" && THROWABLES[pick.item].drink ? "click where to throw it, or yourself to drink it" : "click a target on the map"}, or Esc to put it back</span></>
+    ? <>{pick.kind === "ability" ? ABILITIES[pick.id].name : pick.kind === "item" ? THROWABLES[pick.item].name : COMMON_ACTIONS[pick.what].name} <span className="muted">· {pick.kind === "item" && THROWABLES[pick.item].drink ? "click where to throw it, or yourself to drink it" : pick.kind === "item" && THROWABLES[pick.item].light && !act?.torch ? "click where to throw it, or yourself to light it to hold" : "click a target on the map"}, or Esc to put it back</span></>
     : dev.tool
       ? <>Dev tool <span className="muted">· {dev.tool.tool === "spawn" ? "click a hex to place the group" : "click hexes to paint"}</span></>
       : !enc || !fighting
@@ -1083,6 +1102,14 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
         slots={slots}
         onSlotMove={(from, to) => arrange(moveSlot(bar, from, to))}
         onSlotMenu={(index) => setBarMenu((open) => (open === index ? null : index))}
+        // Either hand takes a lit torch: put one there to light it. In the main hand it is swung as a weapon.
+        torch={{
+          rounds: act.torch ?? null,
+          hand: act.torchHand === "main" ? "main" : "off",
+          carried: act.items.torch ?? 0,
+          light: !act.torch && (act.items.torch ?? 0) > 0 && !act.down && (!fighting || (myTurn && !!budget?.bonus)) ? (hand) => zone.send({ type: "light", unit: act.id, ...(hand === "main" ? { hand } : {}) }) : undefined,
+          why: fighting && !myTurn ? "Wait for your turn." : fighting && !budget?.bonus ? "You have used your Bonus action this turn." : undefined,
+        }}
         // While the trade table is open it has the bag beside it already.
         onBag={() => !tradeWith && setBag((open) => !open)}
         turn={enc && fighting ? { seconds: deadline, onEnd: myTurn ? () => zone.send({ type: "end_turn", unit: act.id }) : undefined, waitingFor } : undefined}

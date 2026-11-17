@@ -315,7 +315,7 @@ describe("ZoneRoom", () => {
     // The dev restock fills the pack itself, so it is still there on the next map.
     await act(zone, ann, { type: "dev", dev: { op: "heal" } });
     expect(inPack()).toBe(2);
-    expect(hero(ann.state, "ann").items).toEqual({ healing: 2, poison: 2, fire: 1, oil: 1, water: 1 });
+    expect(hero(ann.state, "ann").items).toEqual({ healing: 2, poison: 2, fire: 1, oil: 1, water: 1, torch: 2 });
   });
 
   it("pays a won fight's XP and materials to the hero, and marks a map with no enemy left as cleared", async () => {

@@ -17,6 +17,7 @@ import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js
 import { ConvexGeometry } from "three/examples/jsm/geometries/ConvexGeometry.js";
 import { GARB_PREFIX, INK_COLORS, INK_LEVELS, INK_REGIONS, RARITY_COLOR, WEAPONS, WEAPON_ICON, appearanceK, decodeInk, inkColorOf, inkLevelOf, type Appearance, type Ink, type InkRegion, type InkView, type Outfit, type Slot } from "@gantt-quest/world";
 import type { Look } from "./looks";
+import { torchFlame } from "./torchFlame";
 import { buildLowPoly, disposeLowPoly } from "./gearModels";
 
 export const OUTLINE = "#1b1830";
@@ -1633,6 +1634,18 @@ function biped(top: THREE.Group, parts: Part[], elbow = ELBOW) {
     levels.push(on.joint);
     return on;
   };
+  /**
+   * Hold something up in the left fist (a lit torch): the arm forward and bent so the fist is at the shoulder,
+   * out in front. Returns a part at the fist that stands as the body does, +y up and +z to the front.
+   */
+  const aloft = (): Part => {
+    rest.armL = TORCH_ARM.arm;
+    rest.bendL = TORCH_ARM.bend;
+    rest.twistL = TORCH_ARM.twist;
+    const on = part(foreL.joint, 0, fist - elbow, 0);
+    levels.push(on.joint);
+    return on;
+  };
   // What the hands hold leans out from the body, far enough to clear the head (see heldLean).
   const lean = lowPoly ? heldLean(shoulderX) : 0;
   /** A strung bow in the left hand (see heldGear), and the shot being made with it: when it began, and whether the next strike starts another. */
@@ -2221,7 +2234,7 @@ function biped(top: THREE.Group, parts: Part[], elbow = ELBOW) {
     foreR.joint.rotation.x = rest.bendR * (1 - 0.55 * a.strike) - Math.max(0, -a.swing) * 0.15;
     head.joint.rotation.x = a.breath * 0.02 - a.strike * 0.15;
   };
-  return { torso, head, armR, armL, foreR, foreL, legR, legL, thighR, thighL, shinR, shinL, footR, footL, heldR, heldL, rest, carried: levelsR, shield, across, string, loose, instrument, plays: () => !!music, emits, before, reads, pair, focuses, sidearms, cutsAlong, twin: () => paired, armed, fires: () => !!gun, longGun: () => !!gun?.long, animate };
+  return { torso, head, armR, armL, foreR, foreL, legR, legL, thighR, thighL, shinR, shinL, footR, footL, heldR, heldL, rest, carried: levelsR, shield, across, aloft, string, loose, instrument, plays: () => !!music, emits, before, reads, pair, focuses, sidearms, cutsAlong, twin: () => paired, armed, fires: () => !!gun, longGun: () => !!gun?.long, animate };
 }
 
 type Biped = ReturnType<typeof biped>;
@@ -2240,6 +2253,8 @@ const SHIELD_ARM = { arm: -0.2, bend: -1.2, twist: -0.85 };
 const BEFORE_TWIST = 0.8;
 /** And a bow, carried across the body: the fist before the belly. */
 const ACROSS_ARM = { arm: -0.05, bend: -1.2, twist: -0.75 };
+/** A torch held up: the upper arm forward, the forearm raised, the fist out before the shoulder. */
+const TORCH_ARM = { arm: -0.55, bend: -1.35, twist: -0.2 };
 /** How far a bow carried across the body leans, its upper limb toward the left shoulder, and how far before the fist it is carried. */
 const BOW_CANT = -0.6;
 const BOW_OUT = 0.55;
@@ -3682,6 +3697,11 @@ function drawHood(head: Part, c: string, trim?: string) {
  */
 function drawHeld(id: string, b: Biped, trim: string, look: Look, shield: boolean, icon?: string): Carry {
   // Low-poly, a weapon with an icon is held as that icon's model: what is in the hand is what is in the bag.
+  // A lit torch swung as a weapon: held up and forward in the fist, so a strike swings it.
+  if (icon === "torch") {
+    drawTorch(b.heldR);
+    return { arm: -0.45, tilt: 0.15 };
+  }
   const fromIcon = lowPoly && icon ? heldGear(icon, b, trim, shield) : null;
   if (fromIcon) return fromIcon;
   const w = b.heldR;
@@ -4059,6 +4079,17 @@ function drawHeld(id: string, b: Biped, trim: string, look: Look, shield: boolea
 }
 
 /** A shield on the left forearm, held across the front. */
+/** A lit torch in the fist: a stick, pitch-soaked rag bound round its head, and a live flame on it (torchFlame.ts). */
+function drawTorch(fist: Part) {
+  fist.cyl("#6b4a2b", 0.4, 0.48, 9.5, 0, 2.4, 0, 6);
+  fist.cyl("#2a1d14", 0.82, 0.82, 0.45, 0, 6.6, 0, 7);
+  fist.cyl("#3a2a1e", 1.05, 0.72, 2.4, 0, 7.9, 0, 7);
+  // A torch's fire, not a candle's: broad at the rag and licking well up past the head.
+  const flame = torchFlame(2.5);
+  flame.position.set(0, 8.6, 0);
+  fist.joint.add(flame);
+}
+
 function drawShield(arm: Part, ref: string, icon: string, trim: string) {
   // Low-poly, it is its icon's model.
   if (lowPoly && HOLD[icon] && gear(arm, icon, trim, HOLD[icon])) return;
@@ -4350,7 +4381,8 @@ function person(top: THREE.Group, look: Look, outfit: Outfit | undefined, asleep
 
   // Hands: a hero's weapon (signature weapons that have no shape of their own are drawn as the one they are like).
   const shield = outfit?.off_hand;
-  if (shield) drawShield(b.shield(), shield.ref, shield.icon, trim("off_hand"));
+  if (shield?.icon === "torch") drawTorch(b.aloft());
+  else if (shield) drawShield(b.shield(), shield.ref, shield.icon, trim("off_hand"));
   if (rodInHand) {
     // A townsperson, or a hero with nothing in hand, has no trim for it: the look's accent instead.
     apply(b, drawHeld("rod", b, outfit?.main_hand ? trim("main_hand") : look.accent, look, !!shield));

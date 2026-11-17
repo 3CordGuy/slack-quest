@@ -129,6 +129,7 @@ describe("brewing for the pack", () => {
       water: { fur: 1 },
       acid: { slime: 2, bone: 1 },
       slime: { slime: 2 },
+      torch: { wood: 1, fur: 1 },
     });
   });
 

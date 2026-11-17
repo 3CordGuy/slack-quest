@@ -9,9 +9,10 @@ import { ABILITIES, ARMOR_DAMAGE_DIVISOR, BARD_AURA, WARLOCK_BLEED_TURNS, type A
 import { tileAt } from "../map";
 import { DEBUFFS, addCondition, attackContext, attackRoll, damage, defenceOf, has, heal, removeCondition, saveBonus, saveRoll, type Ctx } from "./engine";
 import { adjacent, blast, directionToward, elevOf, inFight, lineFrom, sameHex, sees, solid, stepCost, unitAt, unitById } from "./geometry";
-import { COMMON_ACTIONS, ENEMY_BURST, JUMP_MOVE_COST, POTION_EDGE, SAVE_STAT, THROWABLES, abilityDice, enemyStrikes, healDice, jumpRange, reactionStrike, tacticOf, throwRange, type EnemyStrike, type Tactic } from "./kit";
+import { COMMON_ACTIONS, ENEMY_BURST, JUMP_MOVE_COST, POTION_EDGE, SAVE_STAT, THROWABLES, TORCH_GROUND_ROUNDS, abilityDice, enemyStrikes, healDice, jumpRange, reactionStrike, tacticOf, throwRange, type EnemyStrike, type Tactic } from "./kit";
 import { d20, hitChance, mod, proficiency, rollDice, statOf } from "./rules";
-import { chill, enterSurface, ignite, placeSurface } from "./surfaces";
+import { seenByHeroes } from "./light";
+import { chill, dropTorch, enterSurface, ignite, letGoTorch, placeSurface } from "./surfaces";
 import type { Budget, CommonAction, Throwable, Unit, ZoneState } from "./types";
 
 /** How near a Bard has to be for their tune to help. */
@@ -141,6 +142,7 @@ export function checkAbility(state: ZoneState, unit: Unit, ability: string, aim:
   if (tactic.shape === "single" || tactic.shape === "chain") {
     const target = aim.target ? unitById(state, aim.target) : undefined;
     if (!target || target.down || target.side === unit.side) return "Pick an enemy.";
+    if (unit.side === "hero" && !seenByHeroes(state, target)) return "It is too dark to make it out: bring a light, or get beside it.";
     return inReach(target.pos);
   }
   if (tactic.shape === "adjacent") {
@@ -162,7 +164,8 @@ export function checkAbility(state: ZoneState, unit: Unit, ability: string, aim:
 /** What a hero adds to an ability's damage: their stat, their weapon, half their level, and a Bard's tune if one is near. */
 function damageBonus(state: ZoneState, unit: Unit, def: AbilityDef): number {
   const tune = state.units.some((u) => u.id !== unit.id && u.side === unit.side && u.kind === "frontend_bard" && !u.down && hexDistance(u.pos, unit.pos) <= BARD_AURA_RANGE) ? BARD_AURA : 0;
-  return mod(statOf(unit, def.stat)) + unit.power + Math.floor(unit.level / 2) + tune;
+  // A torch swung in the hand hits with the torch, not the weapon put away for it.
+  return mod(statOf(unit, def.stat)) + (def.id === "torch_swing" ? 0 : unit.power) + Math.floor(unit.level / 2) + tune;
 }
 
 const saveDc = (unit: Unit, def: AbilityDef): number => 8 + proficiency(unit.level) + mod(statOf(unit, def.stat));
@@ -366,13 +369,20 @@ const carried = (unit: Unit, item: Throwable): number => unit.items[item] ?? 0;
 /** Why `unit` cannot throw this there, in words, or null if it can. */
 export function checkThrow(state: ZoneState, unit: Unit, item: Throwable, at: HexPos): string | null {
   if (!THROWABLES[item]) return "No such thing to throw.";
-  if (carried(unit, item) <= 0) return `You have no ${THROWABLES[item].name.toLowerCase()} left.`;
+  // A torch already lit in the hand can be thrown with none left in the pack.
+  if (carried(unit, item) <= 0 && !(THROWABLES[item].light && (unit.torch ?? 0) > 0)) return `You have no ${THROWABLES[item].name.toLowerCase()} left.`;
   if (!tileAt(state.map, at)) return "Pick a hex.";
   if (hexDistance(unit.pos, at) > throwRange(mod(statOf(unit, "str")))) return "Too far to throw.";
   return sees(state.map, unit.pos, at) ? null : "There is no clear line to it.";
 }
 
 /** Why `unit` cannot drink this, in words, or null if it can. */
+/** Why `unit` cannot light a torch to hold, or null if it can. */
+export function checkLight(unit: Unit): string | null {
+  if ((unit.torch ?? 0) > 0) return "You already hold a lit torch.";
+  return carried(unit, "torch") > 0 ? null : "You have no torch left.";
+}
+
 export function checkDrink(unit: Unit, item: Throwable): string | null {
   const def = THROWABLES[item];
   if (!def) return "No such thing to drink.";
@@ -391,6 +401,15 @@ export function drinkItem(ctx: Ctx, unit: Unit, item: Throwable): void {
 /** Throw something that has passed its check: it lands on `at` and reaches the hexes around it. */
 export function throwItem(ctx: Ctx, unit: Unit, item: Throwable, at: HexPos): void {
   const def = THROWABLES[item];
+  if (def.light) {
+    // The torch in the hand if one is lit, burning on for what it has left; else one from the pack, lit as it goes.
+    const held = unit.torch ?? 0;
+    if (held > 0) letGoTorch(unit);
+    else unit.items[item] = carried(unit, item) - 1;
+    ctx.events.push({ t: "used", id: unit.id, what: `throw:${item}`, name: def.name, at });
+    dropTorch(ctx, at, held > 0 ? held : TORCH_GROUND_ROUNDS, unit.id);
+    return;
+  }
   unit.items[item] = carried(unit, item) - 1;
   ctx.events.push({ t: "used", id: unit.id, what: `throw:${item}`, name: def.name, at });
   const area = blast(ctx.state.map, at, def.radius);

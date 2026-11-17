@@ -38,6 +38,7 @@ const fx = (kind: FxKind, color: string): Fx => ({ kind, color });
 
 const ABILITY_FX: Record<string, Fx> = {
   firebolt: fx("bolt", "#ff7a2a"),
+  torch_swing: fx("melee", "#ff8a2a"),
   hex_bolt: fx("bolt", "#a78bfa"),
   manifest: fx("bolt", "#67e8f9"),
   plot_the_course: fx("bolt", "#facc15"),
@@ -83,7 +84,7 @@ export function fxFor(what: string, burst = false): Fx {
 }
 
 /** The colour of each thing thrown, in the air and where it breaks. */
-export const THROW_COLOR: Record<Throwable, string> = { healing: "#ff6b6b", poison: "#84cc16", fire: "#ff7a2a", oil: "#8a7f6a", water: "#38bdf8", acid: "#d9f99d", slime: "#65a30d" };
+export const THROW_COLOR: Record<Throwable, string> = { healing: "#ff6b6b", poison: "#84cc16", fire: "#ff7a2a", oil: "#8a7f6a", water: "#38bdf8", acid: "#d9f99d", slime: "#65a30d", torch: "#ffb070" };
 
 /** How high a shot or a spell arcs when it is aimed, as SpellFx flies it. */
 export const aimKind = (what: string): "arrow" | "spell" => (fxFor(what).kind === "arrow" ? "arrow" : "spell");

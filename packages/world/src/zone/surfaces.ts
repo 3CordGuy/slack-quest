@@ -10,6 +10,7 @@ import { tileAt } from "../map";
 import { addCondition, saveRoll, tick, type Ctx } from "./engine";
 import { flies, solid } from "./geometry";
 import type { GroundSurface, SurfaceKind, Unit } from "./types";
+import { TORCH_HELD_ROUNDS } from "./kit";
 
 export const SURFACE_INFO: Record<SurfaceKind, { name: string; blurb: string; color: string }> = {
   poison: { name: "Poison", blurb: "Hurts and Poisons whoever enters it or starts a turn in it. Fire sets it off.", color: "#84cc16" },
@@ -119,6 +120,7 @@ export function placeSurface(ctx: Ctx, hexes: HexPos[], kind: SurfaceKind, round
       else if (there === "slime") set(pos, "fire", 1);
       else set(pos, "fire");
     } else if (kind === "water") {
+      douse(ctx, [pos]);
       if (there === "fire" || there === "slime") set(pos, null);
       else if (there !== "ice") set(pos, "water");
     } else if (kind === "poison") {
@@ -157,10 +159,72 @@ export function clearSurfaces(ctx: Ctx, hexes: HexPos[]): void {
   if (gone.length > 0) ctx.events.push({ t: "surface", kind: null, hexes: gone });
 }
 
-/** A flame touches a hex: oil or poison on it catches. */
+/** A flame touches a hex: oil or poison on it catches, and slime burns off. */
 export function ignite(ctx: Ctx, pos: HexPos, by: string | null): void {
   const there = ctx.state.surfaces[posKey(pos)]?.kind;
-  if (there === "oil" || there === "poison") placeSurface(ctx, [pos], "fire", SPREAD_FIRE_ROUNDS, by);
+  if (there === "oil" || there === "poison" || there === "slime") placeSurface(ctx, [pos], "fire", SPREAD_FIRE_ROUNDS, by);
+}
+
+/**
+ * A lit torch lands on a hex: it lies there burning for `rounds`, lighting the dark, and sets alight what
+ * will catch. Into water or onto ice it goes out at once.
+ */
+export function dropTorch(ctx: Ctx, at: HexPos, rounds: number, by: string | null): void {
+  const key = posKey(at);
+  const there = ctx.state.surfaces[key]?.kind;
+  if (there === "water" || there === "ice") return;
+  ignite(ctx, at, by);
+  ctx.state.lights = { ...(ctx.state.lights ?? {}), [key]: { rounds, by } };
+  ctx.events.push({ t: "light", at, on: true });
+}
+
+/** Put out a torch lying on these hexes (water thrown on it). */
+function douse(ctx: Ctx, hexes: HexPos[]): void {
+  for (const p of hexes) {
+    const key = posKey(p);
+    if (!ctx.state.lights?.[key]) continue;
+    delete ctx.state.lights[key];
+    ctx.events.push({ t: "light", at: p, on: false });
+  }
+}
+
+/** A round of the fight has passed: every torch, held or lying, burns a round down, and the spent ones go out. */
+export function tickLights(ctx: Ctx): void {
+  for (const u of ctx.state.units) {
+    if (!u.torch) continue;
+    u.torch -= 1;
+    if (u.torch <= 0) {
+      letGoTorch(u);
+      ctx.events.push({ t: "torch_out", id: u.id });
+    }
+  }
+  for (const [key, light] of Object.entries(ctx.state.lights ?? {})) {
+    light.rounds -= 1;
+    if (light.rounds > 0) continue;
+    delete ctx.state.lights![key];
+    const [q, r] = key.split(",").map(Number);
+    ctx.events.push({ t: "light", at: { q, r }, on: false });
+  }
+}
+
+/** Light a torch to hold, from the pack. In the main hand the weapon is put away and the torch is swung instead. */
+export function lightTorch(ctx: Ctx, unit: Unit, hand?: "main"): void {
+  unit.items.torch = (unit.items.torch ?? 0) - 1;
+  unit.torch = TORCH_HELD_ROUNDS;
+  if (hand === "main") {
+    unit.torchHand = "main";
+    unit.stowed = unit.abilities;
+    unit.abilities = ["torch_swing"];
+  }
+  ctx.events.push({ t: "lit", id: unit.id });
+}
+
+/** The torch in a hand is gone (burnt out, or thrown): a weapon put away for it is taken up again. */
+export function letGoTorch(unit: Unit): void {
+  delete unit.torch;
+  if (unit.torchHand === "main") unit.abilities = unit.stowed ?? unit.abilities;
+  delete unit.torchHand;
+  delete unit.stowed;
 }
 
 /** Cold touches a hex: water on it freezes. */

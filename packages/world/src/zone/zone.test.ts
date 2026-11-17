@@ -7,9 +7,11 @@ import { walk } from "./combat";
 import { attackContext, type Ctx } from "./engine";
 import { ALERT_RANGE, DEFAULT_ZONE_OPTIONS, JOIN_RANGE, generateZone, zoneOptions } from "./gen";
 import { adjacent, blast, flies, sees, solid, zoneReach } from "./geometry";
-import { ENEMY_KIT, TACTICS, enemyHp, enemyStrikes, tacticOf } from "./kit";
+import { ENEMY_KIT, LIGHT_RADIUS, SHIELD_SET_ASIDE, TACTICS, TORCH_GROUND_ROUNDS, TORCH_HELD_ROUNDS, enemyHp, enemyStrikes, tacticOf } from "./kit";
+import { defenceOf } from "./engine";
+import { checkAbility } from "./combat";
 import { d20, diceAverage, diceFor, heroMove, hitChance } from "./rules";
-import { createZone, standInHero, stepZone } from "./zone";
+import { createZone, standInHero, stepZone, zoneView } from "./zone";
 import type { SurfaceKind, Unit, ZoneAction, ZoneEffect, ZoneEvent, ZoneState } from "./types";
 
 // ---------- helpers ----------
@@ -580,6 +582,147 @@ describe("surfaces", () => {
   });
 });
 
+describe("light and the dark", () => {
+  /** A cave board: dark but where a torch or a fire lights it. */
+  const cave = () => {
+    const state = board();
+    state.options = { ...state.options, biome: "caves" };
+    return state;
+  };
+
+  it("lights a torch from the pack to hold, for a Bonus action in a fight, and not a second while one burns", () => {
+    let { state } = duel("dummy");
+    state.options = { ...state.options, biome: "caves" };
+    unit(state, "ann").items.torch = 2;
+    const events: ZoneEvent[] = [];
+    state = must(state, { type: "light", by: "ann", unit: "ann" }, events);
+    expect(unit(state, "ann")).toMatchObject({ torch: TORCH_HELD_ROUNDS, items: { torch: 1 } });
+    expect(state.encounter!.budgets.ann.bonus).toBe(false);
+    expect(events).toContainEqual({ t: "lit", id: "ann" });
+    expect(fails(state, { type: "light", by: "ann", unit: "ann" })).toMatch(/already/);
+  });
+
+  it("hides an enemy in the dark from the party, and shows it once a torch or a hero is near", () => {
+    let state = cave();
+    const ann = hero(state, "ann", "qa_paladin", at(3, 6));
+    ann.items.torch = 1;
+    const wolf = enemy(state, "wolf", at(9, 6));
+    expect(zoneView(state, "ann").units.map((u) => u.id)).toEqual(["ann"]);
+    state = must(state, { type: "light", by: "ann", unit: "ann" });
+    expect(zoneView(state, "ann").units.map((u) => u.id)).toEqual(["ann"]);
+    // Walked up within the torch's reach, it is seen.
+    state = must(state, { type: "move", by: "ann", unit: "ann", to: at(9 - LIGHT_RADIUS, 6) });
+    expect(zoneView(state, "ann").units.map((u) => u.id)).toContain(wolf.id);
+    // Out of the caves nothing is hidden.
+    const open = board();
+    hero(open, "ann", "qa_paladin", at(3, 6));
+    enemy(open, "wolf", at(14, 6));
+    expect(zoneView(open, "ann").units).toHaveLength(2);
+  });
+
+  it("will not pick out an enemy in the dark, and strikes blind at one beside you that is unlit", () => {
+    let state = cave();
+    state.aiOff = true;
+    const ann = hero(state, "ann", "refactor_rogue", at(3, 6));
+    const far = enemy(state, "dummy", at(6, 6));
+    expect(checkAbility(state, ann, "aimed_shot", { target: far.id })).toMatch(/too dark/);
+    const near = enemy(state, "dummy", at(4, 6), "g2");
+    expect(attackContext(state, ann, near, { melee: true }).notes).toContain("Disadvantage: the target is in the dark");
+    ann.torch = 5;
+    expect(checkAbility(state, ann, "aimed_shot", { target: far.id })).toBeNull();
+    expect(attackContext(state, ann, near, { melee: true }).notes).not.toContain("Disadvantage: the target is in the dark");
+    // The enemy sees in the dark.
+    ann.torch = undefined;
+    expect(attackContext(state, near, ann, { melee: true }).notes.some((n) => n.includes("dark"))).toBe(false);
+    expect(state.units).toHaveLength(3);
+  });
+
+  it("throws a torch down to burn where it lands, setting oil alight, and it burns out round by round", () => {
+    let { state } = duel("dummy", "qa_paladin", at(4, 6), at(12, 2));
+    state.options = { ...state.options, biome: "caves" };
+    unit(state, "ann").items.torch = 1;
+    state = paint(state, "oil", [at(7, 6), at(8, 6)]);
+    const events: ZoneEvent[] = [];
+    state = must(state, { type: "throw", by: "ann", unit: "ann", item: "torch", at: at(7, 6) }, events);
+    expect(unit(state, "ann").items.torch ?? 0).toBe(0);
+    expect(state.lights?.[posKey(at(7, 6))]).toMatchObject({ rounds: TORCH_GROUND_ROUNDS });
+    for (const p of [at(7, 6), at(8, 6)]) expect(state.surfaces[posKey(p)].kind).toBe("fire");
+    expect(events).toContainEqual({ t: "light", at: at(7, 6), on: true });
+    const round = state.encounter!.round;
+    while (state.encounter && state.encounter.round < round + TORCH_GROUND_ROUNDS) state = must(state, { type: "timeout" });
+    expect(state.lights?.[posKey(at(7, 6))]).toBeUndefined();
+  });
+
+  it("throws the lit torch from the hand with none left in the pack, and goes out in water", () => {
+    let state = cave();
+    const ann = hero(state, "ann", "qa_paladin", at(3, 6));
+    ann.items = {};
+    ann.torch = 4;
+    state = paint(state, "water", [at(6, 2)]);
+    state = must(state, { type: "throw", by: "ann", unit: "ann", item: "torch", at: at(5, 6) });
+    expect(unit(state, "ann").torch).toBeUndefined();
+    expect(state.lights?.[posKey(at(5, 6))]).toMatchObject({ rounds: 4 });
+    expect(fails(state, { type: "throw", by: "ann", unit: "ann", item: "torch", at: at(5, 6) })).toMatch(/no torch/);
+    unit(state, "ann").items.torch = 1;
+    state = must(state, { type: "throw", by: "ann", unit: "ann", item: "torch", at: at(6, 2) });
+    expect(state.lights?.[posKey(at(6, 2))]).toBeUndefined();
+    // Water thrown over a burning torch puts it out.
+    state = paint(state, "water", [at(5, 6)]);
+    expect(state.lights?.[posKey(at(5, 6))]).toBeUndefined();
+  });
+
+  it("swings a torch lit in the main hand as a weapon that may set its target Burning, the weapon put away till it goes", () => {
+    let { state, foe } = duel("dummy");
+    const ann = unit(state, "ann");
+    ann.items.torch = 1;
+    ann.outfit = { off_hand: { icon: "round-shield", ref: "buckler", rarity: "common" } };
+    const guarded = defenceOf(ann);
+    const weapon = [...ann.abilities];
+    state = must(state, { type: "light", by: "ann", unit: "ann", hand: "main" });
+    expect(unit(state, "ann")).toMatchObject({ torchHand: "main", abilities: ["torch_swing"], stowed: weapon });
+    // The shield is still on the other arm.
+    expect(defenceOf(unit(state, "ann"))).toBe(guarded);
+    expect(fails(state, { type: "use", by: "ann", unit: "ann", ability: weapon[0], target: foe })).toMatch(/do not have/);
+    // Swung until it lands: a hit offers the target a save against catching fire, and a failed one sets it Burning.
+    let burned = false;
+    let saved = false;
+    for (let seed = 1; seed < 60 && !(burned && saved); seed++) {
+      const tryIt = structuredClone(state);
+      tryIt.rng = seed;
+      const target = unit(tryIt, foe);
+      target.pos = { q: unit(tryIt, "ann").pos.q + 1, r: unit(tryIt, "ann").pos.r };
+      const step = stepZone(tryIt, { type: "use", by: "ann", unit: "ann", ability: "torch_swing", target: foe });
+      if (!step.ok) throw new Error(step.error);
+      const resist = step.events.find((e) => e.t === "roll" && e.roll.kind === "save");
+      if (!resist || resist.t !== "roll") continue;
+      const burning = unit(step.state, foe).conditions.some((c) => c.kind === "burning");
+      expect(burning).toBe(!resist.roll.ok);
+      if (burning) burned = true;
+      else saved = true;
+    }
+    expect(burned).toBe(true);
+    // Thrown down, the weapon is taken up again.
+    state = must(state, { type: "throw", by: "ann", unit: "ann", item: "torch", at: at(3, 3) });
+    expect(unit(state, "ann").abilities).toEqual(weapon);
+    expect(unit(state, "ann").torchHand).toBeUndefined();
+  });
+
+  it("burns a held torch down only while a fight goes on, and sets the shield aside while it is held", () => {
+    let { state } = duel("dummy");
+    const ann = unit(state, "ann");
+    ann.outfit = { off_hand: { icon: "round-shield", ref: "buckler", rarity: "common" } };
+    const guarded = defenceOf(ann);
+    ann.torch = 2;
+    expect(defenceOf(ann)).toBe(guarded - SHIELD_SET_ASIDE);
+    const events: ZoneEvent[] = [];
+    const round = state.encounter!.round;
+    while (state.encounter && state.encounter.round < round + 2) state = must(state, { type: "timeout" }, events);
+    expect(unit(state, "ann").torch).toBeUndefined();
+    expect(events).toContainEqual({ t: "torch_out", id: "ann" });
+    expect(defenceOf(unit(state, "ann"))).toBe(guarded);
+  });
+});
+
 describe("items", () => {
   it("heals the drinker in full for a Bonus action, and uses the potion up", () => {
     let { state } = duel("dummy");
@@ -850,7 +993,7 @@ describe("what a hero carries", () => {
     state = must(state, { type: "join", hero: { ...standInHero("qa_paladin", "ann", 1)!, items: { healing: 5 } } });
     expect(unit(state, "ann").items).toEqual({ healing: 5 });
     state = must(state, { type: "join", hero: standInHero("devops_mage", "bo", 1)! });
-    expect(unit(state, "bo").items).toEqual({ healing: 2, poison: 2, fire: 1, oil: 1, water: 1 });
+    expect(unit(state, "bo").items).toEqual({ healing: 2, poison: 2, fire: 1, oil: 1, water: 1, torch: 2 });
   });
 
   it("follows the pack when the server says what it holds now, even in a fight", () => {
@@ -868,7 +1011,7 @@ describe("what a hero carries", () => {
     const ann = hero(state, "ann", "qa_paladin", at(5, 6));
     ann.items = { healing: 7, poison: 0 };
     state = must(state, { type: "dev", by: "ann", dev: { op: "heal" } });
-    expect(unit(state, "ann").items).toEqual({ healing: 7, poison: 2, fire: 1, oil: 1, water: 1 });
+    expect(unit(state, "ann").items).toEqual({ healing: 7, poison: 2, fire: 1, oil: 1, water: 1, torch: 2 });
   });
 });
 

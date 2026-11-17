@@ -120,6 +120,12 @@ interface Props {
   onSlotMove?(from: number, to: number): void;
   /** The player asked to choose what goes in a slot (a right-click, or a click on an empty one). */
   onSlotMenu?(index: number): void;
+  /**
+   * On a map, either hand can hold a lit torch (in the main hand it is swung as a weapon): rounds of light left on
+   * the one held (null with none) and which hand it is in, how many are carried, and `light` to light one into a
+   * hand (absent when it cannot be done now; `why` says why).
+   */
+  torch?: { rounds: number | null; hand: "main" | "off"; carried: number; light?(hand: "main" | "off"): void; why?: string };
   /** The turn: seconds left on it (null with no clock), and ending it when it is yours. */
   turn?: { seconds: number | null; onEnd?(): void; waitingFor?: string };
   /** Resting, where it can be done. */
@@ -149,7 +155,7 @@ function Tip({ name, line, more, keys }: { name: string; line?: string; more?: s
   );
 }
 
-export function HudBar({ me, place, children, hp, meter, pips = [], chips, quick = [], slots, onSlotMove, onSlotMenu, turn, rest, onBag, bagBlocked, onBook, menu }: Props) {
+export function HudBar({ me, place, children, hp, meter, pips = [], chips, quick = [], slots, onSlotMove, onSlotMenu, torch, turn, rest, onBag, bagBlocked, onBook, menu }: Props) {
   const c = me.character;
   const items = me.inventory.map(toOwned);
   const worn = items.filter((i) => i.equipped);
@@ -231,6 +237,52 @@ export function HudBar({ me, place, children, hp, meter, pips = [], chips, quick
     return null;
   };
   const shown = slots ?? layout.map(reminder);
+
+  /** A hand's slot: what it holds, with its card; on a map, a lit torch there, or a click (or the bar's torch dropped on it) to light one into it. */
+  const handSlot = (hand: "main" | "off") => {
+    const at = RACK.hands[hand === "main" ? 0 : 1];
+    const worn = hand === "main" ? weapon : offhand;
+    const slot = hand === "main" ? "main_hand" : "off_hand";
+    if (torch && torch.rounds !== null && torch.hand === hand) {
+      const line = hand === "main" ? `${torch.rounds} rounds of light left. Swung as a weapon: it may set whoever it hits Burning. Your weapon is put away while you hold it.` : `${torch.rounds} rounds of light left.${offhand ? " Your shield is set aside while you hold it." : ""}`;
+      return (
+        <span key={slot} className="hud-slot hand lit" style={well(at)} {...hover(at + 7, <Tip name="Lit torch" line={line} more="It burns down only while a fight goes on. Throw it from the bar to leave it burning on the ground." />)}>
+          <Icon name={ITEM_ICON.torch.name} color={ITEM_ICON.torch.color} size={34} />
+          <span className="hud-count">{torch.rounds}</span>
+        </span>
+      );
+    }
+    if (torch && torch.rounds === null && torch.carried > 0) {
+      const what = hand === "main" ? "swing it as a weapon (your weapon put away; it may set whoever it hits Burning)" : `hold it up${offhand ? " (your shield set aside)" : ""}`;
+      return (
+        <button
+          key={slot}
+          className={`hud-slot hand ${torch.light ? "" : "spent"}`}
+          style={well(at)}
+          aria-label={`Light a torch in your ${hand} hand`}
+          aria-disabled={!torch.light}
+          onClick={() => torch.light?.(hand)}
+          onDragOver={(e) => e.preventDefault()}
+          onDrop={(e) => {
+            e.preventDefault();
+            const from = Number(e.dataTransfer.getData("text/gq-slot"));
+            if (Number.isInteger(from) && shown[from]?.id === "it:torch") torch.light?.(hand);
+          }}
+          {...hover(at + 7, <Tip name={`${worn ? `${worn.name}, or` : hand === "main" ? "Main hand:" : "Off hand:"} a torch`} line={torch.light ? `Click, or drag the torch here from the bar, to light one and ${what}. A Bonus action in a fight.` : (torch.why ?? "You cannot light one now.")} more={`${torch.carried} carried.`} />)}
+        >
+          {worn && <Icon name={worn.icon} color={RARITY_COLOR[worn.rarity]} size={40} />}
+          <span className="hud-torch-hint"><Icon name={ITEM_ICON.torch.name} color={ITEM_ICON.torch.color} size={16} /></span>
+        </button>
+      );
+    }
+    const card = worn ? <ItemDetail item={worn} equipped classId={c.class_id} level={c.level} /> : hand === "main" ? <Tip name="Nothing in hand" line="Bare fists: all you can do in a fight is punch." /> : <Tip name="Off hand" line="Empty." />;
+    return (
+      <span key={slot} className="hud-slot hand" style={well(at)} {...hover(at + 7, card)}>
+        {worn && <Icon name={worn.icon} color={RARITY_COLOR[worn.rarity]} size={40} />}
+      </span>
+    );
+  };
+
   const moveShown = onSlotMove ?? ((from: number, to: number) => {
     const next = moveSlot(layout, from, to);
     setLayout(next);
@@ -305,13 +357,9 @@ export function HudBar({ me, place, children, hp, meter, pips = [], chips, quick
           </button>
         )}
 
-        {/* Left of the first post: weapon and shield, each with the card it has in the bag. */}
-        <span className="hud-slot hand" style={well(RACK.hands[0])} {...hover(RACK.hands[0] + 7, weapon ? <ItemDetail item={weapon} equipped classId={c.class_id} level={c.level} /> : <Tip name="Nothing in hand" line="Bare fists: all you can do in a fight is punch." />)}>
-          {weapon && <Icon name={weapon.icon} color={RARITY_COLOR[weapon.rarity]} size={40} />}
-        </span>
-        <span className="hud-slot hand" style={well(RACK.hands[1])} {...hover(RACK.hands[1] + 7, offhand ? <ItemDetail item={offhand} equipped classId={c.class_id} level={c.level} /> : <Tip name="Off hand" line="Empty." />)}>
-          {offhand && <Icon name={offhand.icon} color={RARITY_COLOR[offhand.rarity]} size={40} />}
-        </span>
+        {/* Left of the first post: weapon and shield, each with the card it has in the bag. On a map either hand can take a lit torch instead. */}
+        {handSlot("main")}
+        {handSlot("off")}
 
         {/* Between the posts, in a fight on the tiles: what the hero can do, each a button, in two rows. */}
         {shown.slice(0, RACK.mid.length * 2).map((s, i) => {

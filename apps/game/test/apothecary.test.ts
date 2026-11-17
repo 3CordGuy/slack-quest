@@ -81,6 +81,16 @@ describe("brewing for the pack", () => {
     expect((await apothecaryView(db, "ann")).carried).toEqual({ healing: 2 });
   });
 
+  it("makes torches two at a time from a piece of wood and a fur", async () => {
+    build();
+    give("wood", 1);
+    give("fur", 1);
+    expect(await brewFlask(db, "ann", "torch")).not.toBeTypeOf("string");
+    expect(await consumablesOf(db, "ann")).toEqual({ torch: 2 });
+    expect(holds("wood")).toBe(0);
+    expect(await brewFlask(db, "ann", "torch")).toMatch(/1 wood, 1 fur/);
+  });
+
   it("needs the apothecary built, and makes only what there is a recipe for", async () => {
     give("fur", 5);
     expect(await brewFlask(db, "ann", "water")).toMatch(/not built/);

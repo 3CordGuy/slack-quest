@@ -26,7 +26,7 @@ export interface UnitCondition {
 }
 
 /** What a hero carries to use in a zone: thrown at a hex, and (a healing potion) drunk. */
-export type Throwable = "healing" | "poison" | "fire" | "oil" | "water" | "acid" | "slime";
+export type Throwable = "healing" | "poison" | "fire" | "oil" | "water" | "acid" | "slime" | "torch";
 
 export interface Unit {
   /** A hero's player id; `e<n>` for an enemy; `s<n>` for a stand-in crewmate. */
@@ -53,6 +53,12 @@ export interface Unit {
   down: boolean;
   /** Rounds until each ability can be used again. */
   cooldowns: Record<string, number>;
+  /** Rounds left on a lit torch held in a hand; none held when missing or 0. It burns only while a fight goes on. */
+  torch?: number;
+  /** The torch is in the main hand, swung as a weapon (else it is in the off hand, and the shield is set aside). */
+  torchHand?: "main";
+  /** The weapon's abilities, put away while a torch is swung in the main hand. */
+  stowed?: string[];
   /** Heroes: the items they carry (potions, flasks, bombs), and how many of each. */
   items: Partial<Record<Throwable, number>>;
   /** Enemies: the group they stand with, and the post they go back to. */
@@ -143,6 +149,8 @@ export interface ZoneState {
   groups: Record<string, { alerted: boolean }>;
   /** The ground, by hex key. */
   surfaces: Record<string, GroundSurface>;
+  /** Torches lying lit on the ground, by hex: rounds of a fight left to burn, and who threw them. */
+  lights?: Record<string, { rounds: number; by: string | null }>;
   encounter: Encounter | null;
   /** For minting unit ids. */
   seq: number;
@@ -189,6 +197,8 @@ export type ZoneAction =
   | { type: "common"; by: string; unit: string; what: CommonAction; target?: string; at?: HexPos }
   | { type: "throw"; by: string; unit: string; item: Throwable; at: HexPos }
   | { type: "drink"; by: string; unit: string; item: Throwable }
+  /** Light a torch from the pack and hold it: in the off hand, or in the main hand to swing as a weapon. */
+  | { type: "light"; by: string; unit: string; hand?: "main" }
   | { type: "end_turn"; by: string; unit: string }
   | { type: "timeout" }
   /** The server's own, never a client's: what a hero carries to drink or throw, as their pack holds it now. */
@@ -196,7 +206,7 @@ export type ZoneAction =
   | { type: "dev"; by: string; dev: DevOp };
 
 /** Action types a player's client may send. `dev` is let through only on a development deployment. */
-export const ZONE_CLIENT_ACTIONS: ReadonlySet<ZoneAction["type"]> = new Set(["move", "use", "common", "throw", "drink", "end_turn", "dev"]);
+export const ZONE_CLIENT_ACTIONS: ReadonlySet<ZoneAction["type"]> = new Set(["move", "use", "common", "throw", "drink", "light", "end_turn", "dev"]);
 
 /** One d20 roll, as shown on the roll card. */
 export interface Roll {
@@ -244,6 +254,11 @@ export type ZoneEvent =
   | { t: "shoved"; id: string; target: string; from: HexPos; to: HexPos | null }
   | { t: "jumped"; id: string; from: HexPos; to: HexPos }
   | { t: "fight_end"; outcome: "victory" | "defeat" }
+  /** A hero lights a torch to hold; a held torch burns out. */
+  | { t: "lit"; id: string }
+  | { t: "torch_out"; id: string }
+  /** A torch lands burning on the ground (on), or burns out or is put out there (off). */
+  | { t: "light"; at: HexPos; on: boolean }
   /** What a hero took from a won fight: the XP it paid and the materials the fallen left. */
   | { t: "spoils"; id: string; xp: number; resources: Resources }
   /** The last enemy group on the map is gone. */
@@ -255,4 +270,5 @@ export type ZoneEffect = { type: "grant"; heroId: string; xp: number; resources:
 export type ZoneStep = { ok: true; state: ZoneState; events: ZoneEvent[]; effects: ZoneEffect[] } | { ok: false; error: string };
 
 /** What a client is sent: the zone, less its dice. */
-export type ZoneView = Omit<ZoneState, "rng" | "seed"> & { you: string };
+/** `dark`: enemies in the fight that stand where the party cannot see them (those out of a fight are not sent at all). */
+export type ZoneView = Omit<ZoneState, "rng" | "seed"> & { you: string; dark?: string[] };
