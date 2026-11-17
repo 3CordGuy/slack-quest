@@ -335,6 +335,48 @@ describe("ZoneRoom", () => {
     expect((sql.prepare("SELECT status FROM zones WHERE code = ?").get(code) as { status: string }).status).toBe("cleared");
   });
 
+  it("pays a delve's chests into the character, and calls the delve cleared only once its foes are gone and its chests open", async () => {
+    const code = await createZoneRow(db, "ann", zoneOptions({ biome: "caves", delve: true, party: 1 }), "room-delve", "caves", "crew1");
+    let zone = room();
+    await connect(zone, code, "ann");
+    // Nobody left below but Ann, standing beside the first chest.
+    const state = saved(code);
+    const chests = state.map.pois.filter((p) => p.kind === "cache");
+    expect(chests.length).toBeGreaterThan(1);
+    const besideOf = (c: { pos: { q: number; r: number } }) => state.map.tiles.find((t) => t.biome === "cave" && hexDistance(t, c.pos) === 1)!;
+    state.units = state.units.filter((u) => u.side === "hero");
+    const b = besideOf(chests[0]);
+    hero(state, "ann").pos = { q: b.q, r: b.r };
+    sql.prepare("UPDATE zones SET state_json = ? WHERE code = ?").run(JSON.stringify(state), code);
+    zone = room();
+    const ann = await connect(zone, code, "ann");
+    const goldBefore = (sql.prepare("SELECT gold FROM characters WHERE player_id = 'ann'").get() as { gold: number }).gold;
+    await act(zone, ann, { type: "open", unit: "ann", poi: chests[0].id });
+    expect(ann.errors).toEqual([]);
+    const spoils = ann.sent.flatMap((m) => (m.type === "update" ? m.events : [])).find((e) => e.t === "spoils") as Extract<ZoneEvent, { t: "spoils" }>;
+    expect(spoils.gold).toBeGreaterThan(0);
+    expect((sql.prepare("SELECT gold FROM characters WHERE player_id = 'ann'").get() as { gold: number }).gold).toBe(goldBefore + spoils.gold!);
+    if (spoils.potions) expect((sql.prepare("SELECT qty FROM consumables WHERE player_id = 'ann' AND kind = 'healing'").get() as { qty: number }).qty).toBeGreaterThanOrEqual(spoils.potions);
+    if (spoils.item) expect(sql.prepare("SELECT name FROM inventory WHERE player_id = 'ann'").all().map((r) => (r as { name: string }).name)).toContain(spoils.item);
+    // No foes left, but chests still shut: not cleared, and the crew's cave is still there to go back to.
+    const status = () => (sql.prepare("SELECT status FROM zones WHERE code = ?").get(code) as { status: string }).status;
+    expect(status()).toBe("open");
+    expect(await openCave(db, "crew1")).toBe(code);
+    // Every chest opened: cleared.
+    for (const c of chests.slice(1)) {
+      const now = saved(code);
+      const at = besideOf(c);
+      hero(now, "ann").pos = { q: at.q, r: at.r };
+      sql.prepare("UPDATE zones SET state_json = ? WHERE code = ?").run(JSON.stringify(now), code);
+      zone = room();
+      const again = await connect(zone, code, "ann");
+      await act(zone, again, { type: "open", unit: "ann", poi: c.id });
+      expect(again.errors).toEqual([]);
+    }
+    expect(status()).toBe("cleared");
+    expect(await openCave(db, "crew1")).toBeNull();
+  });
+
   it("finds a crew's cave still being fought through, and not a cleared, stale or other crew's one", async () => {
     const options = zoneOptions({ size: "small", biome: "caves", groups: 1 });
     expect(await openCave(db, "crew1")).toBeNull();

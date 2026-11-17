@@ -8,9 +8,10 @@
 
 import type { HexPos, Stats } from "@gantt-quest/core";
 import type { EffectKind } from "../content";
-import type { Outfit } from "../gear";
+import type { ItemDef, Outfit } from "../gear";
 import type { Resources } from "../hut";
 import type { WorldMap } from "../map";
+import type { FurnishingGrant } from "../world";
 
 export type Side = "hero" | "enemy";
 
@@ -133,6 +134,8 @@ export interface ZoneOptions {
    * they can take, how well they hit, and how many stand in a group. Absent on zones made before it: 2.
    */
   threat?: number;
+  /** A delve into the caverns (zone/delve.ts): chambers, tunnels, chests and a hoard, not open ground. */
+  delve?: boolean;
 }
 
 export interface ZoneState {
@@ -197,6 +200,8 @@ export type ZoneAction =
   | { type: "common"; by: string; unit: string; what: CommonAction; target?: string; at?: HexPos }
   | { type: "throw"; by: string; unit: string; item: Throwable; at: HexPos }
   | { type: "drink"; by: string; unit: string; item: Throwable }
+  /** Open a chest, strongbox or hoard (a cache on the map) from beside it. */
+  | { type: "open"; by: string; unit: string; poi: string }
   /** Light a torch from the pack and hold it: in the off hand, or in the main hand to swing as a weapon. */
   | { type: "light"; by: string; unit: string; hand?: "main" }
   | { type: "end_turn"; by: string; unit: string }
@@ -206,7 +211,7 @@ export type ZoneAction =
   | { type: "dev"; by: string; dev: DevOp };
 
 /** Action types a player's client may send. `dev` is let through only on a development deployment. */
-export const ZONE_CLIENT_ACTIONS: ReadonlySet<ZoneAction["type"]> = new Set(["move", "use", "common", "throw", "drink", "light", "end_turn", "dev"]);
+export const ZONE_CLIENT_ACTIONS: ReadonlySet<ZoneAction["type"]> = new Set(["move", "use", "common", "throw", "drink", "light", "open", "end_turn", "dev"]);
 
 /** One d20 roll, as shown on the roll card. */
 export interface Roll {
@@ -259,13 +264,28 @@ export type ZoneEvent =
   | { t: "torch_out"; id: string }
   /** A torch lands burning on the ground (on), or burns out or is put out there (off). */
   | { t: "light"; at: HexPos; on: boolean }
-  /** What a hero took from a won fight: the XP it paid and the materials the fallen left. */
-  | { t: "spoils"; id: string; xp: number; resources: Resources }
+  /** What a hero took, from a won fight or a chest: the XP, and whatever else came with it. */
+  | { t: "spoils"; id: string; xp: number; resources: Resources; gold?: number; item?: string; blueprint?: string; furnishing?: string; potions?: number }
+  /** A piece of gear found had no room in the pack: it went home to storage, or into the pack over its limit. Told by the server. */
+  | { t: "stowed"; id: string; item: string; place: "storage" | "overfull" }
+  /** A chest, strongbox or hoard is opened. */
+  | { t: "opened"; id: string; poi: string; loot: "chest" | "vault" | "hoard" }
   /** The last enemy group on the map is gone. */
   | { t: "cleared" };
 
-/** Things the server must carry out: what a player's own hero earned from a won fight. */
-export type ZoneEffect = { type: "grant"; heroId: string; xp: number; resources: Resources };
+/** Things the server must carry out: what a player's own hero earned, from a won fight or a chest. */
+export type ZoneEffect = {
+  type: "grant";
+  heroId: string;
+  xp: number;
+  resources: Resources;
+  gold?: number;
+  item?: ItemDef | null;
+  blueprint?: string;
+  furnishing?: FurnishingGrant;
+  /** Put in the pack to drink or throw. */
+  items?: Partial<Record<Throwable, number>>;
+};
 
 export type ZoneStep = { ok: true; state: ZoneState; events: ZoneEvent[]; effects: ZoneEffect[] } | { ok: false; error: string };
 

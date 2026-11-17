@@ -1,5 +1,5 @@
 // Light and the dark. Underground (a caves zone) nothing is lit but what
-// a torch or a fire lights: a lit torch held in a hero's off hand, one
+// a torch or a fire lights, and the daylight at the mouth: a lit torch held in a hero's off hand, one
 // thrown down and still burning, and the ground on fire. A hero can only
 // make out an enemy that stands in the light or right beside one of the
 // party; one in the dark cannot be picked out to strike or shoot at, and a
@@ -11,6 +11,9 @@
 import { hexDistance, posKey, type HexPos } from "@gantt-quest/core";
 import { adjacent, inFight, sees } from "./geometry";
 import { FIRE_GLOW, LIGHT_RADIUS } from "./kit";
+
+/** How far the daylight at a cave mouth reaches into the dark. */
+export const DAYLIGHT_RADIUS = 2;
 import type { Unit, ZoneState } from "./types";
 
 /** Whether this zone is dark but where it is lit. */
@@ -24,6 +27,8 @@ export function lightSources(state: ZoneState): { at: HexPos; radius: number }[]
     const [q, r] = key.split(",").map(Number);
     out.push({ at: { q, r }, radius: LIGHT_RADIUS });
   }
+  // Daylight falls in at the way out.
+  for (const p of state.map.pois) if (p.kind === "landing") out.push({ at: p.pos, radius: DAYLIGHT_RADIUS });
   for (const [key, s] of Object.entries(state.surfaces)) {
     if (s.kind !== "fire") continue;
     const [q, r] = key.split(",").map(Number);

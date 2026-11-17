@@ -94,11 +94,14 @@ export interface Reached {
  * climbing a level 1 more; oil or slime underfoot 1 more. A drop or a climb of two levels is a cliff. Enemies
  * on their feet bar the way; allies and the fallen can be walked past but not stopped on.
  */
+/** A chest, strongbox or hoard stands on this hex: nobody walks, lands or is shoved onto it (it is opened from beside it). */
+export const chestAt = (state: Pick<ZoneState, "map">, pos: HexPos): boolean => state.map.pois.some((p) => p.kind === "cache" && p.pos.q === pos.q && p.pos.r === pos.r);
+
 export function stepCost(state: ZoneState, unit: Unit, from: HexPos, to: HexPos, shut?: ReadonlySet<string>): { cost: number; stop: boolean } {
   const tile = tileAt(state.map, to);
   const air = flies(unit);
   const none = { cost: Infinity, stop: false };
-  if (!tile || tile.built || shut?.has(posKey(to))) return none;
+  if (!tile || tile.built || shut?.has(posKey(to)) || chestAt(state, to)) return none;
   let cost = air ? (SIGHT_BLOCKERS.has(tile.biome) ? Infinity : 1) : MOVE_COST[tile.biome];
   if (!Number.isFinite(cost)) return none;
   if (!air) {

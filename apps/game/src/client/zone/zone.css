@@ -100,3 +100,8 @@
   .zone-tip { top: 100px; }
 }
 @media (prefers-reduced-motion: reduce) { .zone-banner, .zone-order, .zone-intro-band, .zone-view.my-turn .zone-frame { animation: none; } }
+
+/* A question over the map that waits for an answer: the cave is clear, so leave now or look round first. */
+.zone-ask { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(8, 6, 14, 0.45); z-index: 30; }
+.zone-ask .panel { max-width: 340px; text-align: center; }
+.zone-ask-buttons { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }

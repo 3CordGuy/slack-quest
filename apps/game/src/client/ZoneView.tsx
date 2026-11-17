@@ -24,6 +24,7 @@ import {
   ENEMIES,
   FREE_WALK,
   pathIn,
+  HARBOR_CAVE,
   SURFACE_INFO,
   THROWABLES,
   abilityArea,
@@ -41,6 +42,7 @@ import {
   tacticOf,
   throwRange,
   tileAt,
+  unopened,
   zoneBlast,
   zoneReach,
   type CommonAction,
@@ -170,6 +172,8 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
   const [feed, setFeed] = useState<string[]>([]);
   const [roll, setRoll] = useState<Roll | null>(null);
   const [banner, setBanner] = useState<string | null>(null);
+  /** The last enemy in a cave has fallen: ask whether to climb out now. */
+  const [clearedAsk, setClearedAsk] = useState(false);
   const [pick, setPick] = useState<Pick | null>(null);
   const [focus, setFocus] = useState(false);
   const [hover, setHover] = useState<HexPos | null>(null);
@@ -497,13 +501,28 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
         });
         say(ev.outcome === "victory" ? "The fight is won." : "The fight is lost. You wake where you started.");
       } else if (ev.t === "spoils") {
-        const found = Object.entries(ev.resources).filter(([, n]) => n).map(([kind, n]) => `${n} ${label("resource", kind).toLowerCase()}`);
+        const found = [
+          ...(ev.gold ? [`${ev.gold} gold`] : []),
+          ...Object.entries(ev.resources).filter(([, n]) => n).map(([kind, n]) => `${n} ${label("resource", kind).toLowerCase()}`),
+          ...(ev.item ? [ev.item] : []),
+          ...(ev.potions ? [ev.potions === 1 ? "a healing potion" : `${ev.potions} healing potions`] : []),
+          ...(ev.blueprint ? ["a blueprint"] : []),
+          ...(ev.furnishing ? [ev.furnishing] : []),
+        ];
         say(`${name(ev.id)} earns ${ev.xp} XP${found.length > 0 ? ` and takes ${found.join(", ")}` : ""}.`);
         // Your own level, XP and materials as the server now has them.
         if (ev.id === next.you) later(() => void refresh());
       } else if (ev.t === "cleared") {
-        later(() => setBanner("Cleared"));
-        say("Nothing else stirs here. Leave the map, and the next way down finds a fresh one.");
+        later(() => {
+          setBanner("Cleared");
+          // A cave: offer the way out (or a while longer to open what is left).
+          if (next.options.biome === "caves") setClearedAsk(true);
+        });
+        say("Nothing else stirs here.");
+      } else if (ev.t === "opened") {
+        say(`${name(ev.id)} opens ${ev.loot === "hoard" ? "the hoard" : ev.loot === "vault" ? "the strongbox" : "a chest"}.`);
+      } else if (ev.t === "stowed") {
+        say(ev.place === "storage" ? `${ev.item} goes home to the storage chest: the pack is full.` : `${ev.item} is crammed into the pack, over what it holds.`);
       } else if (ev.t === "lit") {
         say(`${name(ev.id)} lights a torch.`);
       } else if (ev.t === "torch_out") {
@@ -773,6 +792,14 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
     if (dev.tool?.tool === "spawn") return dev.open?.send({ op: "spawn", kinds: dev.tool.kinds, at: pos });
     if (dev.tool?.tool === "paint") return dev.open?.send({ op: "paint", kind: dev.tool.surface, hexes: dev.tool.wide ? zoneBlast(state.map, pos, 1) : [pos] });
     if (!pick) {
+      // A click on a chest opens it from beside it, or walks up to it first.
+      const chest = state.map.pois.find((p) => p.kind === "cache" && !p.cleared && p.pos.q === pos.q && p.pos.r === pos.r);
+      if (chest) {
+        if (hexDistance(chest.pos, act.pos) <= 1) return zone.send({ type: "open", unit: act.id, poi: chest.id });
+        const beside = [...reach.values()].filter((r) => r.stop && hexDistance(r.pos, chest.pos) === 1).sort((a, b) => a.cost - b.cost)[0];
+        if (beside) zone.send({ type: "move", unit: act.id, to: beside.pos });
+        return;
+      }
       // A click on an enemy means "go up to it": the nearest hex beside it that can be reached.
       if (there && there.side === "enemy" && !there.down) {
         const beside = [...reach.values()].filter((r) => r.stop && hexDistance(r.pos, there.pos) === 1).sort((a, b) => a.cost - b.cost)[0];
@@ -896,11 +923,35 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
 
   // Whoever is being shown acting, while the enemy's turn plays out; otherwise whoever the server waits on.
   const waitingFor = enc && !myTurn ? (watching && spot ? (names.current.get(spot) ?? "someone") : enc.acting.map((id) => names.current.get(id) ?? "someone").join(" and ")) : undefined;
+  // A cave's chests, and its way out.
+  const caves = state.options.biome === "caves";
+  const chestBeside = act ? state.map.pois.find((p) => p.kind === "cache" && !p.cleared && hexDistance(p.pos, act.pos) <= 1) : undefined;
+  const chestName = (p: { loot?: string }, cap = false) => {
+    const n = p.loot === "hoard" ? "the hoard" : p.loot === "vault" ? "the strongbox" : "the chest";
+    return cap ? n.charAt(0).toUpperCase() + n.slice(1) : n;
+  };
+  const chestGuarded = (p: { guard?: string }) => !!p.guard && state.units.some((u) => u.group === p.guard && !u.down);
+  const atMouth = caves && !!act && state.map.pois.some((p) => p.kind === "landing" && hexDistance(p.pos, act.pos) <= 1);
+  /** Back up to the Harbor: out of a cave, standing at its mouth. */
+  const leave = () => {
+    if (caves) {
+      try {
+        sessionStorage.setItem("gq.harborAt", `${HARBOR_CAVE.q},${HARBOR_CAVE.r}`);
+      } catch {
+        // Storage is off: the usual spot it is.
+      }
+    }
+    onLeave();
+  };
   const place: ReactNode = pick
     ? <>{pick.kind === "ability" ? ABILITIES[pick.id].name : pick.kind === "item" ? THROWABLES[pick.item].name : COMMON_ACTIONS[pick.what].name} <span className="muted">· {pick.kind === "item" && THROWABLES[pick.item].drink ? "click where to throw it, or yourself to drink it" : pick.kind === "item" && THROWABLES[pick.item].light && !act?.torch ? "click where to throw it, or yourself to light it to hold" : "click a target on the map"}, or Esc to put it back</span></>
     : dev.tool
       ? <>Dev tool <span className="muted">· {dev.tool.tool === "spawn" ? "click a hex to place the group" : "click hexes to paint"}</span></>
-      : !enc || !fighting
+      : (!enc || !fighting) && chestBeside
+        ? <>{chestName(chestBeside, true)} <span className="muted">· {chestGuarded(chestBeside) ? "its guards still stand over it" : "right beside you"}</span></>
+        : (!enc || !fighting) && atMouth
+          ? <>The way out <span className="muted">· the cave mouth, back up to the Harbor</span></>
+          : !enc || !fighting
         ? <>Exploring <span className="muted">· click a hex to walk{enc ? ". A fight is on nearby: walk in to join it" : ""}</span></>
         : myTurn
           ? <>{mine.length > 1 ? `${act.name}'s turn` : "Your turn"} <span className="muted">· round {enc.round}</span></>
@@ -910,6 +961,8 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
 
   const under = unitOn(hover);
   const ground = hover ? tileAt(state.map, hover) : undefined;
+  const hoverChest = hover ? state.map.pois.find((p) => p.kind === "cache" && p.pos.q === hover.q && p.pos.r === hover.r) : undefined;
+  const hoverMouth = !!hover && caves && state.map.pois.some((p) => p.kind === "landing" && p.pos.q === hover.q && p.pos.r === hover.r);
   const preview = under && z && pick?.kind === "ability" && under.side !== act.side ? previewAttack(z, act, pick.id, under) : null;
   const surface = hover ? state.surfaces[posKey(hover)] : undefined;
 
@@ -986,6 +1039,19 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
       <div className="feed zone-feed" aria-live="polite">{feed.slice(-8).map((line, i) => <div key={feed.length - 8 + i}>{line}</div>)}</div>
 
       {banner && <div className="zone-banner">{banner}</div>}
+      {clearedAsk && caves && !fighting && (
+        // The last of them is down: point the way out (the mouth), or look round first.
+        <div className="zone-ask">
+          <div className="panel">
+            <h3>The cave is clear</h3>
+            <p>{unopened(state) > 0 ? `${unopened(state) === 1 ? "A chest is" : `${unopened(state)} chests are`} still unopened down here.` : "Everything down here has been found."} The way out is back at the cave mouth.</p>
+            <p className="zone-ask-buttons">
+              <button className="primary" onClick={() => { const mouth = state.map.pois.find((p) => p.kind === "landing"); if (mouth) renderer.current?.lookAt(mouth.pos); setClearedAsk(false); }}>Show the way out</button>
+              <button onClick={() => setClearedAsk(false)}>Keep exploring</button>
+            </p>
+          </div>
+        </div>
+      )}
 
       {roll && (
         <div className={`zone-roll panel ${roll.ok ? "ok" : "no"}`} role="status">
@@ -1014,6 +1080,15 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
                 </div>
               )}
             </>
+          ) : hoverChest ? (
+            <>
+              <strong>{chestName(hoverChest, true)}</strong>{" "}
+              <span className="muted">· {hoverChest.cleared ? "emptied" : chestGuarded(hoverChest) ? "guarded: its band still stands" : hexDistance(hoverChest.pos, act.pos) <= 1 ? "click to open it" : "click to walk up to it"}</span>
+            </>
+          ) : hoverMouth ? (
+            <>
+              <strong>The cave mouth</strong> <span className="muted">· the way out, back up to the Harbor</span>
+            </>
           ) : (
             <>
               <strong>{ground.biome === "plains" ? "Open ground" : ground.biome === "forest" ? "Trees" : ground.biome === "cave" ? "Cave floor" : ground.biome === "rock" ? "Rock" : ground.biome === "water" ? "Water" : "Ground"}</strong>
@@ -1038,7 +1113,7 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
               const where = crew.find((x) => x.id === m.id)?.zone;
               return [
                 { label: "Trade", run: () => setTradeWith(m.id) },
-                { label: where ? "Teleport to them" : "Go to the Harbor", blocked: where?.fighting && where.code !== code ? "In a fight" : where?.code === code ? "Already on this map" : undefined, run: () => teleportTo(m.id) },
+                { label: where ? "Teleport to them" : "Go to the Harbor", blocked: where?.fighting && where.code !== code ? "In a fight" : where?.code === code ? "Already on this map" : !where && caves && !atMouth ? "Walk back to the cave mouth to leave" : undefined, run: () => teleportTo(m.id) },
               ];
             }}
           />
@@ -1116,8 +1191,21 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
         // While the trade table is open it has the bag beside it already.
         onBag={() => !tradeWith && setBag((open) => !open)}
         turn={enc && fighting ? { seconds: deadline, onEnd: myTurn ? () => zone.send({ type: "end_turn", unit: act.id }) : undefined, waitingFor } : undefined}
-        menu={<OptionsMenu title={`Map ${code}`} subtitle={<>{state.options.biome} · {state.options.size}</>} actions={[{ label: "Leave the map", hint: "Back to the Harbor. The map stays as you left it.", run: onLeave }]} />}
+        menu={<OptionsMenu title={`Map ${code}`} subtitle={<>{state.options.biome} · {state.options.size}</>} actions={[caves
+          ? { label: "Leave the cave", hint: atMouth ? "Back up to the Harbor. The cave stays as you left it." : "The way out is the cave mouth: walk back to it to leave.", disabled: !atMouth || fighting, run: leave }
+          : { label: "Leave the map", hint: "Back to the Harbor. The map stays as you left it.", run: onLeave }]} />}
       >
+        {chestBeside && (!fighting || myTurn) && (
+          <button className="small primary" disabled={chestGuarded(chestBeside) || (fighting && !budget?.action)} title={chestGuarded(chestBeside) ? "Its guards still stand over it" : fighting ? "An Action" : undefined} onClick={() => zone.send({ type: "open", unit: act.id, poi: chestBeside.id })}>
+            Open {chestName(chestBeside)}
+          </button>
+        )}
+        {/* Out of a cave the way you came in: only at its mouth. Any other map can be left from anywhere. */}
+        {(!caves || atMouth) && (
+          <button className="small" disabled={fighting} title={fighting ? "Not in the middle of a fight" : "Back up to the Harbor. The map stays as you left it."} onClick={leave}>
+            {caves ? "Leave the cave" : "Leave the map"}
+          </button>
+        )}
         <button className={`small ${focus ? "primary" : ""}`} disabled={act.focus <= 0} aria-pressed={focus} title="Spend 1 Focus on your next attack to roll it with advantage" onClick={() => setFocus((f) => !f)}>Focus {act.focus}</button>
       </HudBar>
     </div>

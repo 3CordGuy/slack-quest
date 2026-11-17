@@ -944,7 +944,8 @@ app.post("/api/caves", async (c) => {
     .then((r) => new Set([...r.ids, player.id]), () => new Set([player.id]));
   const party = (await crewPlaces(c.env.DB, crew.id)).filter((m) => here.has(m.id));
   const level = party.length > 0 ? party.reduce((sum, m) => sum + m.level, 0) / party.length : character.level;
-  const options = zoneOptions({ size: "medium", biome: "caves", groups: 3, elevation: 1, obstacles: 2, clear: 3, threat: 2, party: Math.min(4, Math.max(1, party.length)), level });
+  // A delve: the caverns' chambers and tunnels, with chests to open and the hoard in the deepest (zone/delve.ts).
+  const options = zoneOptions({ size: "medium", biome: "caves", delve: true, threat: 2, party: Math.min(4, Math.max(1, party.length)), level });
   return c.json({ code: await createZoneRow(c.env.DB, player.id, options, crypto.randomUUID().slice(0, 8), "caves", crew.id), fresh: true });
 });
 
