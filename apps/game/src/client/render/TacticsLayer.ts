@@ -230,11 +230,11 @@ export class TacticsLayer {
       byKind.set(s.kind, [...(byKind.get(s.kind) ?? []), { q, r }]);
     }
     for (const [kind, hexes] of byKind) {
-      const base = kind === "ice" ? 0.75 : kind === "oil" ? 0.7 : 0.6;
+      const base = kind === "ice" ? 0.75 : kind === "oil" || kind === "slime" ? 0.7 : 0.6;
       const material = new THREE.MeshBasicMaterial({ color: SURFACE_INFO[kind].color, transparent: true, opacity: base, depthWrite: false, side: THREE.DoubleSide });
       material.userData.base = base;
-      // Fire and poison stir; the rest lie still.
-      if (kind === "fire" || kind === "poison") this.pulse.push(material);
+      // Fire and poison stir, and slime wobbles; the rest lie still.
+      if (kind === "fire" || kind === "poison" || kind === "slime") this.pulse.push(material);
       const mesh = new THREE.Mesh(this.fill(hexes, 0.03, 0.9), material);
       mesh.renderOrder = 1;
       this.ground.add(mesh);

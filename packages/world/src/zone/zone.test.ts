@@ -517,6 +517,47 @@ describe("surfaces", () => {
     expect(unit(state, "ann").conditions.some((c) => c.kind === "burning")).toBe(false);
   });
 
+  it("makes slime cost a step more and slow whoever walks in; fire burns it off and water washes it away", () => {
+    let { state } = duel("dummy", "qa_paladin", at(4, 6), at(9, 6));
+    state = paint(state, "slime", [at(6, 6)]);
+    state.encounter!.budgets.ann.move = 10;
+    state = must(state, { type: "move", by: "ann", unit: "ann", to: at(6, 6) });
+    // A step onto it costs two, and the slowing halves what is left.
+    expect(state.encounter!.budgets.ann.move).toBe(Math.floor((10 - 2) / 2));
+    expect(unit(state, "ann").conditions.some((c) => c.kind === "slowed")).toBe(true);
+    let ground = board();
+    ground = paint(ground, "slime", [at(5, 6), at(6, 6)]);
+    ground = paint(ground, "fire", [at(5, 6)]);
+    expect(ground.surfaces[posKey(at(5, 6))]).toMatchObject({ kind: "fire", rounds: 1 });
+    // Fire does not run along slime as it does along oil.
+    expect(ground.surfaces[posKey(at(6, 6))].kind).toBe("slime");
+    ground = paint(ground, "water", [at(6, 6)]);
+    expect(ground.surfaces[posKey(at(6, 6))]).toBeUndefined();
+    // Slime thrown on a fire smothers it.
+    ground = paint(ground, "fire", [at(8, 6)]);
+    ground = paint(ground, "slime", [at(8, 6)]);
+    expect(ground.surfaces[posKey(at(8, 6))]).toBeUndefined();
+  });
+
+  it("leaves those an acid flask splashes Exposed unless they dodge, and lays a slick where a slime flask lands", () => {
+    let state = board();
+    state.aiOff = true;
+    hero(state, "ann", "qa_paladin", at(3, 6)).items = { acid: 1, slime: 1 };
+    const foes = [enemy(state, "dummy", at(8, 6)), enemy(state, "dummy", at(9, 6)), enemy(state, "dummy", at(8, 7))];
+    const events: ZoneEvent[] = [];
+    state = must(state, { type: "throw", by: "ann", unit: "ann", item: "acid", at: foes[0].pos }, events);
+    expect(unit(state, "ann").items.acid ?? 0).toBe(0);
+    for (const f of foes) {
+      const save = events.find((e) => e.t === "roll" && e.roll.kind === "save" && e.roll.id === f.id);
+      expect(save).toBeDefined();
+      const exposed = unit(state, f.id).conditions.some((c) => c.kind === "exposed");
+      expect(exposed).toBe(save!.t === "roll" && !save!.roll.ok);
+    }
+    expect(events.some((e) => e.t === "hit" && e.what === "throw:acid")).toBe(true);
+    state = must(state, { type: "throw", by: "ann", unit: "ann", item: "slime", at: at(6, 3) });
+    expect(state.surfaces[posKey(at(6, 3))]).toMatchObject({ kind: "slime", rounds: 3 });
+  });
+
   it("lays poison where a flask lands, and starts the fight if it lands on a group", () => {
     let state = board();
     state.aiOff = true;

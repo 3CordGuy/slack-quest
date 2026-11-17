@@ -94,14 +94,14 @@ describe("brewing for the pack", () => {
   it("needs a free square of the pack for the first of a kind, and none for one more of a kind already carried", async () => {
     build();
     give("fur", 5);
-    give("mushrooms", 9);
+    give("bone", 9);
     // Fill the pack to the brim with rings, less the two squares the materials take.
     const ring = sql.prepare("INSERT INTO inventory (player_id, kind, ref, name, rarity, slot, equipped, created_at) VALUES ('ann', 'trinket', 'ring', ?, 'common', 'ring', 0, ?)");
     for (let i = 0; i < CARRY_BASE - 3; i++) ring.run(`Ring ${i}`, Date.now());
     expect(await brewFlask(db, "ann", "water")).not.toBeTypeOf("string");
     expect((await carryState(db, "ann"))!.carried).toBe(CARRY_BASE);
-    expect(await brewFlask(db, "ann", "poison")).toMatch(/pack is full/);
-    expect(holds("mushrooms")).toBe(9);
+    expect(await brewFlask(db, "ann", "oil")).toMatch(/pack is full/);
+    expect(holds("bone")).toBe(9);
     expect(await brewFlask(db, "ann", "water")).not.toBeTypeOf("string");
     expect(await consumablesOf(db, "ann")).toEqual({ water: 2 });
   });

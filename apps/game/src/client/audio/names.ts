@@ -33,7 +33,7 @@ export type FishingSound = (typeof FISHING_SOUNDS)[number];
 export const ZONE_SOUNDS = ["roll", "roll.crit", "initiative", "turn.enemy", "reaction", "shove", "fall", "jump", "throw", "shatter", "burst"] as const;
 export type ZoneSound = (typeof ZONE_SOUNDS)[number];
 /** What can lie on the ground in a zone, and the conditions the tiles add to the old fights' effects. */
-export const SURFACE_SOUNDS = ["poison", "fire", "oil", "water", "ice"] as const;
+export const SURFACE_SOUNDS = ["poison", "fire", "oil", "water", "ice", "slime"] as const;
 export const ZONE_CONDITION_SOUNDS = ["poisoned", "prone", "wet"] as const;
 
 /** The pub's game tables. */
