@@ -160,6 +160,8 @@ export interface AbilityDef {
 
 export const ABILITIES: Record<string, AbilityDef> = {
   // Bare hands: what a hero has with no weapon. Weak on purpose, and never on a weapon.
+  // A lit torch swung in the main hand (zones only): the weapon is put away while it is held.
+  torch_swing: { id: "torch_swing", name: "Torch Swing", stat: "str", rolls: 2, target: "enemy", damage: 6, perfect: { effect: "burning", turns: 2 }, blurb: "A swing of a lit torch. Whoever it hits may catch fire." },
   punch: { id: "punch", name: "Punch", stat: "str", rolls: 2, target: "enemy", damage: 4, blurb: "Bare knuckles. All you have without a weapon in hand." },
   smite: { id: "smite", name: "Smite", stat: "str", rolls: 3, target: "enemy", damage: 9, perfect: { effect: "stunned", turns: 1 }, blurb: "Solid blow. Perfect: stuns." },
   shield_wall: { id: "shield_wall", name: "Shield Wall", stat: "vit", rolls: 2, target: "self", heal: 4, selfEffect: { effect: "guarded", turns: 1 }, blurb: "Guard yourself and catch your breath." },

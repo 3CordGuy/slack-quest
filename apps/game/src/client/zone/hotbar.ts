@@ -11,7 +11,7 @@ export const BAR_ROW = 9;
 export const BAR_SLOTS = BAR_ROW * 2;
 
 export const COMMON_ORDER: CommonAction[] = ["dash", "disengage", "jump", "shove", "help"];
-export const ITEM_ORDER: Throwable[] = ["healing", "poison", "fire", "oil", "water", "acid", "slime"];
+export const ITEM_ORDER: Throwable[] = ["healing", "poison", "fire", "oil", "water", "acid", "slime", "torch"];
 
 const key = (kind: string) => `gq.zone.bar.${kind}`;
 const pad = (keys: string[], to: number) => [...keys, ...Array.from({ length: Math.max(0, to - keys.length) }, () => "")].slice(0, to);

@@ -11,6 +11,7 @@
 import {
   APOTHECARY_PROJECT,
   FLASK_RECIPES,
+  flaskYield,
   SMITHY_PROJECT,
   addedSlots,
   brewBag,
@@ -83,12 +84,13 @@ export async function brewFlask(db: D1Database, playerId: string, kind: string):
   const problem = flaskProblem(kind, view);
   if (problem) return problem;
   const k = kind as Throwable;
-  const squares = addedSlots(view.carried[k] ?? 0, 1);
+  const made = flaskYield(k);
+  const squares = addedSlots(view.carried[k] ?? 0, made);
   const spend = spendStatements(db, playerId, 0, FLASK_RECIPES[k], squares > 0 && view.carry ? packHasRoomSql(view.carry.limit, squares) : "1");
   const xp = await prepareXp(db, playerId, HARBOR_XP.brew);
   const res = await db.batch([
     ...spend,
-    db.prepare("INSERT INTO consumables (player_id, kind, qty) SELECT ?1, ?2, 1 WHERE changes() > 0 ON CONFLICT(player_id, kind) DO UPDATE SET qty = qty + 1").bind(playerId, k),
+    db.prepare("INSERT INTO consumables (player_id, kind, qty) SELECT ?1, ?2, ?3 WHERE changes() > 0 ON CONFLICT(player_id, kind) DO UPDATE SET qty = qty + ?3").bind(playerId, k, made),
     ...(xp?.statements() ?? []),
   ]);
   return res[spend.length].meta.changes > 0 ? { xp: xpOutcome(xp, res) } : "You no longer have what that takes, or the room in your pack for it.";

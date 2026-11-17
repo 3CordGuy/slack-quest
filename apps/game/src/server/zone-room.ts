@@ -64,6 +64,7 @@ export function zoneActionFrom(raw: unknown, by: string, dev: boolean): ZoneActi
   if (a.type === "common") return text(a.what) ? { type: "common", by, unit: a.unit, what: a.what as never, target, at: hex(a.at) } : null;
   if (a.type === "throw") return text(a.item) && isHex(a.at) ? { type: "throw", by, unit: a.unit, item: a.item as never, at: hex(a.at)! } : null;
   if (a.type === "drink") return text(a.item) ? { type: "drink", by, unit: a.unit, item: a.item as never } : null;
+  if (a.type === "light") return { type: "light", by, unit: a.unit, ...(a.hand === "main" ? { hand: "main" as const } : {}) };
   return { type: "end_turn", by, unit: a.unit };
 }
 
@@ -175,8 +176,8 @@ export class ZoneRoom extends DurableObject<Env> {
     if (msg.type !== "action") return;
     const action = zoneActionFrom(msg.action, playerId, isDev(this.env));
     if (!action) return;
-    // Throwing or drinking as your own hero draws on your own pack. (A stand-in has no pack: it carries the kit it was given.)
-    const pack = (action.type === "throw" || action.type === "drink") && action.unit === playerId ? playerId : undefined;
+    // Throwing, drinking or lighting a torch as your own hero draws on your own pack. (A stand-in has no pack: it carries the kit it was given.)
+    const pack = (action.type === "throw" || action.type === "drink" || action.type === "light") && action.unit === playerId ? playerId : undefined;
     const error = await this.serial(async () => {
       await this.load();
       return this.apply(action, pack);
