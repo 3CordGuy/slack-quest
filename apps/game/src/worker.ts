@@ -8,6 +8,7 @@ import { HARBOR_PIERS, HARBOR_PLOTS, HERO_CLASSES, MAX_CREW, PUB_BARKEEP, PUB_DE
 import { barkeepReply, heroName } from "./server/ai";
 import { contractBoard } from "./server/board";
 import { markReleaseSeen, seenRelease } from "./server/releases";
+import { BUILD_ID } from "./build";
 import { RELEASES } from "./releases";
 import { dropErrand, handInErrand, regularsView, takeErrand, tradeWithRegular } from "./server/errands";
 import { sendSignInCode } from "./server/email";
@@ -171,6 +172,16 @@ app.post("/api/auth/signout", async (c) => {
   if (token) await deleteSession(c.env.DB, token);
   deleteCookie(c, cookieName(c), { path: "/" });
   return c.json({ ok: true });
+});
+
+/**
+ * The build now deployed (see build.ts). A tab asks from time to time and tells its player when it is running
+ * an older one. Open to anyone and never cached: it must be this Worker's own answer, and it says nothing
+ * that the page's script name does not.
+ */
+app.get("/api/version", (c) => {
+  c.header("Cache-Control", "no-store");
+  return c.json({ build: BUILD_ID });
 });
 
 app.use("/api/*", async (c, next) => {
