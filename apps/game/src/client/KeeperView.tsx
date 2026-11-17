@@ -12,6 +12,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import { hexNeighbors, type HexPos } from "@gantt-quest/core";
+import { useOwnLook } from "./ownLook";
 import { KEEPER_GRID, KEEPER_PLACES, keeperPath, keeperRoom, keeperWallPieces, outfitOf, type KeeperShop } from "@gantt-quest/world";
 import { api, type ApothecaryView, type GalleyKeeperView, type Me, type SmithyView } from "./api";
 import { useAudioScene } from "./audio/useAudioScene";
@@ -60,7 +61,9 @@ export function KeeperView({ shop, me, refresh, onLeave }: { shop: KeeperShop; m
   }, [reload]);
 
   /** What you are wearing, for how you are drawn. */
-  const outfit = useMemo(() => withLook(outfitOf(me.inventory.map(toOwned).filter((i) => i.equipped)), c.appearance), [me.inventory, c.appearance]);
+  const worn = useMemo(() => withLook(outfitOf(me.inventory.map(toOwned).filter((i) => i.equipped)), c.appearance), [me.inventory, c.appearance]);
+  // Drawn in what the bag shows while a change of gear is on its way; otherwise in what the pack says is worn.
+  const outfit = useOwnLook(worn)!;
 
   const scene = useMemo<RenderState>(
     () => ({

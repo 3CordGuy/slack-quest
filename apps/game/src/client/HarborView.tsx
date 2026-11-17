@@ -28,6 +28,7 @@ import { TileAction } from "./TileAction";
 import { Trading } from "./TradePanel";
 import { WorldRenderer, type RenderState } from "./render/WorldRenderer";
 import { useHarbor } from "./useHarbor";
+import { useOwnLook } from "./ownLook";
 import { useSalesman } from "./salesmanClock";
 import { WorksPanel } from "./works/WorksPanel";
 import { label } from "./labels";
@@ -78,6 +79,8 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
   /** Your gathering outings left today, drawn as lightning bolts on your plate. Read on the way in and after anything that spends or restores them. */
   const [stamina, setStamina] = useState<{ left: number; max: number } | null>(null);
   const { board, players, you } = harbor;
+  // Your own hero is drawn in what the bag shows while a change of gear is on its way; otherwise as the room tells.
+  const ownOutfit = useOwnLook(players.find((p) => p.id === you)?.outfit);
   /** Go to where a crewmate is: the zone they are on (beside them), if the server says they can be joined. */
   const teleportTo = (id: string) => {
     api.teleport(id).then(({ zone, name }) => {
@@ -133,7 +136,7 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
       phase: "overworld",
       round: 0,
       map: { ...base, pois },
-      heroes: players.map((p) => ({ id: p.id, classId: p.classId, pos: p.pos, label: p.name, outfit: p.outfit, asleep: !!p.bedroll && same(p.bedroll, p.pos), rod: p.fishing ? (p.gilded ? "gilded" : true) : false, boat: tileAt(base, p.pos)?.biome === "water" ? p.vessel ?? "barrel" : undefined, level: p.level, xp: p.xp })),
+      heroes: players.map((p) => ({ id: p.id, classId: p.classId, pos: p.pos, label: p.name, outfit: p.id === you ? ownOutfit : p.outfit, asleep: !!p.bedroll && same(p.bedroll, p.pos), rod: p.fishing ? (p.gilded ? "gilded" : true) : false, boat: tileAt(base, p.pos)?.biome === "water" ? p.vessel ?? "barrel" : undefined, level: p.level, xp: p.xp })),
       turn: null,
       story: null,
       npcs: {},
@@ -144,7 +147,7 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
       stamina: stamina ?? undefined,
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [base, board, players, you, stamina]);
+  }, [base, board, players, you, stamina, ownOutfit]);
   const latest = useRef(scene);
   latest.current = scene;
   const heroSheet = useHeroSheet();
@@ -171,7 +174,7 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
   }, [harbor.chat.length]);
 
   // Dev-only handle for driving the Harbor from the console or a test script.
-  if (import.meta.env.DEV) (window as unknown as { __harbor: unknown }).__harbor = { harbor };
+  if (import.meta.env.DEV) (window as unknown as { __harbor: unknown }).__harbor = { harbor, view: renderer.current };
   const self = players.find((p) => p.id === you);
   const shipHere = self ? moored.find((s) => same(HARBOR_PIERS[s.pier!], self.pos)) : undefined;
   const plotIndex = self ? HARBOR_PLOTS.findIndex((p) => same(p, self.pos)) : -1;
