@@ -6,7 +6,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useAudioScene } from "./audio/useAudioScene";
 import type { HexPos } from "@gantt-quest/core";
-import { GATHER_SPOTS, GATHER_SPOT_IDS, HARBOR_APOTHECARY, HARBOR_BENCH, HARBOR_BOARD, HARBOR_CAVE, HARBOR_CHEST, HARBOR_GALLEY, HARBOR_LIGHTHOUSE, HARBOR_SMITHY, HARBOR_GATHER, HARBOR_NAME, HARBOR_PIERS, HARBOR_PLOTS, HARBOR_PLOT_FACING, HARBOR_PUB, HARBOR_RING, HARBOR_SHOP, HARBOR_SPAWN, HARBOR_WORKS, MAX_PARTY, PLOT_PRICE, RESOURCE_KINDS, SHACK_COST, binFill, binNeeds, builtProjects, BOOK_TITLE, fishSpotAt, harborDoor, seaEdge, tileAt, waterSpotAt, type FishSpot, FISH_SPOTS, generateHarbor, projectById, projectProgress, harborPoi, hutTier, poiAt, salesman, type GatherSpot, type HarborShip, type Resources } from "@gantt-quest/world";
+import { GATHER_SPOTS, GATHER_SPOT_IDS, HARBOR_APOTHECARY, HARBOR_BENCH, HARBOR_BOARD, HARBOR_BUILDINGS, footing, HARBOR_CAVE, HARBOR_CHEST, HARBOR_GALLEY, HARBOR_LIGHTHOUSE, HARBOR_SMITHY, HARBOR_GATHER, HARBOR_NAME, HARBOR_PIERS, HARBOR_PLOTS, HARBOR_PLOT_FACING, HARBOR_PUB, HARBOR_RING, HARBOR_SHOP, HARBOR_SPAWN, HARBOR_WORKS, MAX_PARTY, PLOT_PRICE, RESOURCE_KINDS, SHACK_COST, binFill, binNeeds, builtProjects, BOOK_TITLE, fishSpotAt, harborDoor, seaEdge, tileAt, waterSpotAt, type FishSpot, FISH_SPOTS, generateHarbor, projectById, projectProgress, harborPoi, hutTier, poiAt, salesman, type GatherSpot, type HarborShip, type Resources } from "@gantt-quest/world";
 import { api, type Me } from "./api";
 import { CatchPanel } from "./CatchPanel";
 import { AccountPanel } from "./Account";
@@ -49,15 +49,18 @@ const costText = (r: Resources) => {
   return parts.length > 1 ? `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}` : (parts[0] ?? "nothing");
 };
 
+/** The hex the notice board itself stands on (it is read from the hex beside it): the "!" floats over this one. */
+const BOARD_STANDS = footing(HARBOR_BOARD, "single", HARBOR_BUILDINGS.find((b) => b.id === "board")?.facing)[0];
+
 /**
  * The places that only open a window, and so open on a click with nothing more to press: by the id of their
  * point of interest, and where a hero stands to use them. Clicking the place itself, the ground it stands on or
- * its doorstep counts; for one used from a hex of the street (`street`), clicking that hex is only a walk.
+ * its doorstep counts; for one used from a hex of the square (`street`), clicking that hex is only a walk.
  */
 const CLICK_OPENS: { id: string; at: { q: number; r: number }; street?: boolean }[] = [
   { id: "townchest", at: HARBOR_CHEST, street: true },
-  { id: "board", at: HARBOR_BOARD },
-  { id: "bench", at: HARBOR_BENCH },
+  { id: "board", at: HARBOR_BOARD, street: true },
+  { id: "bench", at: HARBOR_BENCH, street: true },
   { id: "shop", at: HARBOR_SHOP },
 ];
 
@@ -73,11 +76,11 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
   const [gather, setGather] = useState<GatherSpot | null>(null);
   const [fishmonger, setFishmonger] = useState(false);
   const [works, setWorks] = useState(false);
-  /** The town chest, which stands in the plaza: the crew's shared store. */
+  /** The town chest, which stands at the head of the square: the crew's shared store. */
   const [chest, setChest] = useState(false);
   /** A place that opens on a click (CLICK_OPENS) was clicked: it is to open when the hero gets to it. Its id. */
   const [want, setWant] = useState<string | null>(null);
-  /** The stonecutter's bench, on the lane to the lighthouse: lodestones are cut and worked there. */
+  /** The stonecutter's bench, beside the smithy: lodestones are cut and worked there. */
   const [bench, setBench] = useState(false);
   const [account, setAccount] = useState(false);
   const [tradeWith, setTradeWith] = useState<string | null>(null);
@@ -485,7 +488,7 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
       {/* Down the left-hand side: the docks at the top, the crew's cards in the middle (the talk sits under them). */}
       <div className="hud-left">
         <DragPanel id="harbor.docks" title="Docks" foldOnPhone className="story panel docks">
-          <p className="muted">The crew's atlas is kept out at the lighthouse: everywhere you have found, and the routes that run on from there. Walk out to the point to open it. Setting out takes a lodestone: they are cut and worked at the stonecutter's bench, on the lane out there.</p>
+          <p className="muted">The crew's atlas is kept out at the lighthouse: everywhere you have found, and the routes that run on from there. Walk out to the point to open it. Setting out takes a lodestone: they are cut and worked at the stonecutter's bench, beside the smithy at the west end of the High Street.</p>
           <p>
             <button className="small" onClick={() => renderer.current?.lookAt(HARBOR_LIGHTHOUSE)}>Show me the lighthouse</button> <button className="small" onClick={() => renderer.current?.lookAt(HARBOR_BENCH)}>Show me the bench</button> <button className="small" onClick={() => renderer.current?.lookAt(HARBOR_CHEST)}>Show me the town chest</button>
           </p>
@@ -580,7 +583,7 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
       {book && me.character && <Logbook me={me} refresh={refreshAll} onClose={() => setBook(false)} />}
       {account && <AccountPanel me={me} refresh={refresh} onClose={() => setAccount(false)} />}
       {notices && <NoticeBoard seen={me.seenRelease} onSeen={() => void refresh()} onClose={() => setNotices(false)} />}
-      {unseen && !panelOpen && !atBoard && <AttentionMark renderer={renderer} pos={HARBOR_BOARD} lift={2.35} label="Something new on the notice board" />}
+      {unseen && !panelOpen && !atBoard && <AttentionMark renderer={renderer} pos={BOARD_STANDS} lift={2.35} label="Something new on the notice board" />}
       {works && <WorksPanel works={board.works} refresh={refresh} onClose={() => setWorks(false)} />}
       {chest && me.character && <TownChest me={me} refresh={refresh} onClose={() => setChest(false)} />}
       {bench && <StoneBench me={me} refresh={refresh} onClose={() => setBench(false)} />}

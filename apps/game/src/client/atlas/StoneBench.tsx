@@ -1,7 +1,7 @@
 // The lodestone bench: where a hero works the stones in their pack into the
 // ones they want (packages/world/src/stonecraft.ts has the rules;
 // server/lodestones.ts does the work and rolls what comes of it). It stands
-// in the Harbor, on the lane out to the lighthouse: stones are made ready
+// in the Harbor, beside the smithy at the west end of the High Street: stones are made ready
 // here before a crew goes up to the atlas with them. A plain one, which
 // carries nothing and only opens a place, is cut here from stone and iron.
 //

@@ -1,4 +1,4 @@
-// The town chest: one store the whole crew shares, standing in the plaza
+// The town chest: one store the whole crew shares, standing in the square
 // (packages/world/src/townchest.ts decides what its tabs hold; server/townchest.ts
 // moves things in and out). It opens like a chest at home: its window beside
 // the sea bag (InventoryScreen.tsx draws both), with things dragged across.

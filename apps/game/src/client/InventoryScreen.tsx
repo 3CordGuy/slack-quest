@@ -13,7 +13,7 @@
 // middle of the view with the bag beside it. The two share one hand, so a
 // thing lifted out of either can be set down in the other.
 //
-// The town chest, in the Harbor's plaza, is the same again: the crew's own
+// The town chest, in the Harbor's square, is the same again: the crew's own
 // store in the chest's place, with its tabs across the top (chest/TownChest.tsx
 // reads it and draws them). A general tab is a grid like any chest's. The
 // materials tab and the lodestones tab are laid out their own way, a place for
@@ -155,7 +155,7 @@ type Held = { stack: Stack; from: Zone | "worn" };
 type Verdict = "ok" | "swap" | "bad";
 /** Said when a potion or a flask is sent toward a chest or the trade table. */
 const STAYS_IN_PACK = "Potions, flasks and bombs stay in your pack: they cannot be stowed or traded yet.";
-const STONES_STAY = "Lodestones are not stowed at home or traded hand to hand: the town chest, in the plaza, takes them, and the whole crew shares it.";
+const STONES_STAY = "Lodestones are not stowed at home or traded hand to hand: the town chest, in the square, takes them, and the whole crew shares it.";
 /** A stack that can be split, and so moved in part: a material's, or (at the town chest) lodestones'. */
 type Splittable = Extract<Stack, { t: "mat" | "stone" }>;
 /** What a stack is counted under on either side: a material's kind, or a lodestone's kind as an item. Gear is not counted. */
@@ -1326,7 +1326,7 @@ function LodestoneDetail({ stone, total, how, inChest = false }: { stone: Lodest
           ))}
         </ul>
       )}
-      <p>{inChest ? "The crew keeps" : "You carry"} <strong>{total}</strong>{inChest ? " here" : ""}. Put one into a place's slot on the atlas, at the lighthouse, to set out for it: it is spent, and what it carries is added to the place. Stones are cut and worked at the stonecutter's bench, on the lane out there.</p>
+      <p>{inChest ? "The crew keeps" : "You carry"} <strong>{total}</strong>{inChest ? " here" : ""}. Put one into a place's slot on the atlas, at the lighthouse, to set out for it: it is spent, and what it carries is added to the place. Stones are cut and worked at the stonecutter's bench, beside the smithy at the west end of the High Street.</p>
       {how && <p className="muted">{how}</p>}
     </div>
   );
