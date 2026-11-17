@@ -88,6 +88,30 @@ const chamferPoints = (w: number, h: number, d: number, b: number): V3[] => {
   return pts;
 };
 
+/**
+ * The outline of a curved, single-edged blade, for a plate: `len` long from y = 3, its edge toward +x and its
+ * point swept back toward -x by `sweep` at the tip. It is `w0` wide at the hilt and `w1` at its broadest, two
+ * thirds of the way up, and comes to its point over the last `tip` of its length, the edge rounding in to
+ * meet the back.
+ */
+const curvedBlade = (len: number, sweep: number, w0: number, w1: number, tip: number): [number, number][] => {
+  const STEPS = 12;
+  const at = (i: number) => {
+    const t = i / STEPS;
+    const wide = w0 + (w1 - w0) * Math.sin(Math.min(1, t / 0.66) * (Math.PI / 2));
+    const taper = t > 1 - tip ? Math.sqrt(Math.max(0, (1 - t) / tip)) : 1;
+    return { y: 3 + len * t, x: -sweep * t * t, half: (wide / 2) * taper };
+  };
+  const edge: [number, number][] = [];
+  const back: [number, number][] = [];
+  for (let i = 0; i <= STEPS; i++) {
+    const p = at(i);
+    edge.push([p.x + p.half * 1.25, p.y]);
+    if (i < STEPS) back.unshift([p.x - p.half * 0.75, p.y]);
+  }
+  return [...edge, ...back];
+};
+
 const v3 = ([x, y, z]: V3) => new THREE.Vector3(x, y, z);
 
 /** A horn: a cone curled toward +x (or -x), `h` long, its base at the origin. */
@@ -391,6 +415,148 @@ export const LOW_POLY: Record<string, LowPolyDef> = {
       k.ring(2.5, 0.35, { glow: k.a }, { at: [0.4, 0.6, 2.05] }, 4, 10);
       k.gem(0.9, 1.8, { glow: k.a }, { at: [0.4, 0.6, 2.2] });
       k.box(2.2, 2.4, 4.4, C.gold, { at: [5.3, 0, 0] }, 0.3);
+    },
+  },
+  // ---- sea blades: built like the broadsword (the blade up from y = 3, the grip at the origin), a curved one
+  // with its edge toward +x, so the picture shows the curve; in the hand it is turned edge on (see figures.ts).
+  cutlass: {
+    // A sailor's cutlass: a short, broad, curved blade with a clipped point, and a brass shell and bow round the hand.
+    lean: DIAG,
+    build: (k) => {
+      k.plate(curvedBlade(12.5, 2.4, 2.2, 3.1, 0.3), 0.7, C.steel, {}, 0.25);
+      k.box(0.5, 9, 0.2, C.shine, { at: [-0.9, 8, 0.4], rot: [0, 0, 0.14] });
+      k.cyl(2.1, 1.7, 0.6, 10, C.gold, { at: [0.3, 2.7, 0] });
+      k.rod([[2.0, 2.6, 0], [3.0, 0.9, 0], [2.6, -1.3, 0], [0.5, -2.1, 0]], 0.38, C.gold, {}, 5);
+      k.cyl(0.62, 0.68, 3.8, 6, C.bark, { at: [0, 0.3, 0] });
+      k.ball(1.1, k.a, { at: [0, -2.1, 0] });
+    },
+  },
+  sabre: {
+    // An officer's sabre: a long, slim blade with a deep curve, a slender guard and knuckle bow, a wired grip.
+    lean: DIAG,
+    build: (k) => {
+      k.plate(curvedBlade(15.5, 3.6, 1.5, 1.7, 0.22), 0.55, C.steel, {}, 0.2);
+      k.box(4.2, 0.6, 1.1, C.gold, { at: [0.2, 2.75, 0] }, 0.2);
+      k.ball(0.5, C.gold, { at: [-2, 2.75, 0] });
+      k.rod([[2.2, 2.7, 0], [2.9, 1.0, 0], [2.4, -1.3, 0], [0.4, -2.2, 0]], 0.26, C.gold, {}, 5);
+      k.cyl(0.55, 0.6, 4, 6, C.dark, { at: [0, 0.3, 0] });
+      for (const y of [-0.7, 0.3, 1.3]) k.cyl(0.66, 0.66, 0.22, 6, C.gold, { at: [0, y, 0] });
+      k.ball(0.95, k.a, { at: [0, -2.2, 0] });
+    },
+  },
+  rapier: {
+    // A rapier: a long, narrow, straight blade for the point, behind a cup, a ring and long quillons, with a knuckle bow.
+    lean: DIAG,
+    build: (k) => {
+      k.hull(bladePoints(16, 1.0, 0.7, 4, 3), C.steel);
+      k.lathe([[0.5, 2.2], [1.7, 2.6], [2.2, 3.4], [2.3, 3.9]], 10, C.steel);
+      k.box(7, 0.5, 0.6, C.gold, { at: [0, 2.3, 0] }, 0.15);
+      for (const x of [-3.6, 3.6]) k.ball(0.5, C.gold, { at: [x, 2.3, 0] });
+      k.rod([[2.0, 2.3, 0], [2.6, 0.7, 0], [2.1, -1.4, 0], [0.4, -2.2, 0]], 0.24, C.gold, {}, 5);
+      k.cyl(0.5, 0.55, 3.8, 6, C.bark, { at: [0, 0.2, 0] });
+      k.ball(0.95, k.a, { at: [0, -2.2, 0] });
+    },
+  },
+  dirk: {
+    // A midshipman's dirk: a short straight blade, a small brass cross, an ivory grip and a capped pommel.
+    lean: DIAG,
+    pad: 0.25,
+    build: (k) => {
+      k.hull(bladePoints(9, 1.7, 0.7, 3, 3), C.steel);
+      k.box(4.4, 0.8, 1.3, C.gold, { at: [0, 2.7, 0] }, 0.25);
+      for (const x of [-2.3, 2.3]) k.ball(0.55, C.gold, { at: [x, 2.7, 0] });
+      k.cyl(0.55, 0.6, 3.4, 6, C.bone, { at: [0, 0.5, 0] });
+      k.ball(0.95, k.a, { at: [0, -1.6, 0] });
+    },
+  },
+  // ---- guns and the crossbow: the barrel up the model, muzzle at the top. A gun's grip and stock fall away
+  // toward -x, so the picture shows it side on; the crossbow's top is toward +z, so the picture looks down on
+  // its bow. In the hand they are turned to point ahead (see GUN and BOLT in figures.ts).
+  pistol: {
+    // A flintlock: an iron barrel on a walnut stock, a curved grip with a capped butt, a cock and a brass guard.
+    lean: -0.7,
+    spin: 0.25,
+    build: (k) => {
+      k.cyl(0.75, 0.9, 9.5, 8, C.iron, { at: [0, 3.2, 0] });
+      k.cyl(1.0, 1.0, 0.6, 8, C.steel, { at: [0, 7.7, 0] });
+      k.cyl(0.5, 0.5, 0.2, 8, C.dark, { at: [0, 8.02, 0] });
+      k.box(1.6, 8, 1.5, C.wood, { at: [-0.95, 1.6, 0] }, 0.35);
+      k.box(2.2, 2.6, 1.9, C.iron, { at: [-0.3, -2.4, 0] }, 0.35);
+      k.rod([[-0.7, -3, 0], [-2.2, -4.8, 0], [-3.4, -7.2, 0]], 1.0, C.wood, {}, 6);
+      k.ball(1.2, k.a, { at: [-3.6, -7.7, 0] });
+      k.box(0.6, 1.9, 0.5, C.steel, { at: [1.0, -1.7, 0], rot: [0, 0, -0.55] });
+      k.box(0.5, 0.7, 0.45, C.paper, { at: [1.5, -0.8, 0] });
+      k.ring(1.0, 0.2, C.gold, { at: [-2.1, -3, 0] }, 4, 12);
+      k.cyl(1.0, 1.0, 0.7, 8, k.a, { at: [0, 1.6, 0] });
+    },
+  },
+  blunderbuss: {
+    // A short, fat gun with a brass barrel belled out at the muzzle, a heavy stock and an iron butt plate.
+    lean: DIAG,
+    spin: 0.25,
+    build: (k) => {
+      const brass = "#c99a3a";
+      k.lathe([[1.0, -4], [1.0, 4.5], [1.3, 7], [2.5, 9.6], [2.8, 10]], 10, brass);
+      k.cyl(2.3, 2.3, 0.2, 10, C.dark, { at: [0, 9.6, 0] });
+      k.cyl(1.15, 1.15, 0.7, 10, k.a, { at: [0, 0.5, 0] });
+      k.cyl(1.2, 1.2, 0.6, 10, k.a, { at: [0, 4.4, 0] });
+      k.box(1.9, 9.5, 1.8, C.wood, { at: [-1.0, -1.2, 0] }, 0.4);
+      k.box(2.2, 2.8, 2.2, C.iron, { at: [-0.2, -4.8, 0] }, 0.35);
+      k.box(0.6, 2, 0.5, C.steel, { at: [1.2, -4.1, 0], rot: [0, 0, -0.55] });
+      // The stock: a narrow wrist where the hand closes, widening down and back to the shoulder.
+      k.hull([[-0.2, -5.6, 0.85], [-0.2, -5.6, -0.85], [-2.0, -5.6, 0.85], [-2.0, -5.6, -0.85], [-1.5, -8, 0.8], [-1.5, -8, -0.8], [-3.0, -8, 0.8], [-3.0, -8, -0.8], [-2.2, -12.6, 1], [-2.2, -12.6, -1], [-5.6, -11.8, 1], [-5.6, -11.8, -1]], C.wood);
+      k.box(3.9, 0.7, 2.2, C.iron, { at: [-3.9, -12.4, 0], rot: [0, 0, -0.24] }, 0.2);
+      k.ring(1.1, 0.22, C.gold, { at: [-2.2, -6.4, 0] }, 4, 12);
+    },
+  },
+  "harpoon-gun": {
+    // A whaler's gun: a stout iron tube with a barbed harpoon standing out of it, a coil of line at its side,
+    // a winding handle and a pistol grip.
+    lean: DIAG,
+    spin: 0.25,
+    build: (k) => {
+      const rope = "#c9b58a";
+      k.cyl(1.15, 1.3, 9, 8, C.iron, { at: [0, 0, 0] });
+      k.cyl(1.4, 1.4, 0.8, 8, k.a, { at: [0, 4.1, 0] });
+      k.cyl(1.45, 1.45, 0.7, 8, k.a, { at: [0, -2.8, 0] });
+      // The harpoon: a steel shaft, a broad head, and two barbs laid back from it.
+      k.cyl(0.32, 0.32, 8, 5, C.steel, { at: [0, 8, 0] });
+      k.hull(bladePoints(3.4, 2.2, 0.7, 2.4, 11.4), C.steel);
+      for (const s of [-1, 1]) k.cone(0.45, 1.8, 4, C.steel, { at: [s * 1.0, 10.9, 0], rot: [0, 0, s * 2.55] });
+      // The line: coiled at the side, and run up to the harpoon's shaft.
+      for (const z of [-0.35, 0.35]) k.ring(1.9, 0.38, rope, { at: [2.6, -0.4, z] }, 5, 14);
+      k.rod([[2.6, 1.5, 0], [1.4, 4.6, 0.5], [0.3, 7.2, 0.2]], 0.16, rope, {}, 4);
+      k.box(1.9, 7, 1.8, C.wood, { at: [-1.1, -1.6, 0] }, 0.4);
+      k.rod([[-1.0, -4.6, 0], [-2.6, -6.8, 0], [-3.6, -9.6, 0]], 1.05, C.wood, {}, 6);
+      k.ball(1.2, C.iron, { at: [-3.8, -10.1, 0] });
+      k.ring(1.0, 0.2, C.gold, { at: [-2.4, -4.8, 0] }, 4, 12);
+      k.cyl(0.3, 0.3, 1.8, 5, C.steel, { at: [0, -3.9, 1.7], rot: [Math.PI / 2, 0, 0] });
+      k.ball(0.5, C.gold, { at: [0, -3.9, 2.7] });
+    },
+  },
+  "heavy-crossbow": {
+    // A true crossbow, seen from above: a steel bow across a long tiller, the string drawn back to the nut,
+    // a bolt in the groove, a stirrup at the nose and a long trigger under the stock.
+    lean: DIAG,
+    spin: 0.15,
+    tip: 0.2,
+    build: (k) => {
+      k.box(1.9, 17, 1.6, C.wood, { at: [0, -1.5, 0] }, 0.4);
+      k.hull([[-1.4, -8, 0.8], [1.4, -8, 0.8], [-1.4, -8, -0.8], [1.4, -8, -0.8], [-1.9, -11.6, 0.9], [1.9, -11.6, 0.9], [-1.9, -11.6, -0.9], [1.9, -11.6, -0.9]], C.wood);
+      k.box(2.1, 1.6, 1.8, k.a, { at: [0, -6.4, 0] }, 0.3);
+      // The bow, its tips swept back, lashed to the nose of the tiller.
+      k.rod([[-7.4, 3.6, 0.2], [-4.6, 5.4, 0.2], [0, 6.2, 0.2], [4.6, 5.4, 0.2], [7.4, 3.6, 0.2]], 0.6, C.iron, {}, 6);
+      for (const x of [-7.4, 7.4]) k.ball(0.7, C.steel, { at: [x, 3.6, 0.2] });
+      k.box(2.3, 1.3, 2, C.leather, { at: [0, 6.2, 0.1] }, 0.3);
+      // Drawn: the string back from each tip to the nut.
+      k.rod([[-7.4, 3.6, 0.5], [0, -0.6, 0.9], [7.4, 3.6, 0.5]], 0.13, C.paper, {}, 4);
+      k.cyl(0.55, 0.55, 0.6, 8, C.gold, { at: [0, -0.6, 0.9], rot: [0, 0, Math.PI / 2] });
+      // The bolt in its groove, and the stirrup.
+      k.cyl(0.22, 0.22, 7.6, 5, C.bark, { at: [0, 3.4, 1.0] });
+      k.cone(0.55, 1.5, 4, C.steel, { at: [0, 7.9, 1.0] });
+      for (const r of [0, Math.PI / 2]) k.box(1.3, 1.6, 0.1, k.a, { at: [0, 0.4, 1.0], rot: [0, r, 0] });
+      k.ring(1.15, 0.22, C.iron, { at: [0, 8.2, 0], rot: [Math.PI / 2, 0, 0] }, 4, 12);
+      k.box(0.4, 5, 0.4, C.steel, { at: [0, -4.4, -1.2], rot: [0.2, 0, 0] });
     },
   },
   "void-staff": {

@@ -50,6 +50,11 @@ const ARROW_ABILITIES = new Set(["Aimed Shot", "Pin Down", "Volley", "Barbed Arr
 const THROWN: Record<string, string> = { "Hurl Rock": "#77726a" };
 /** Melee blows heavy enough to knock the target back and raise dust at its feet. */
 const SMASHES = new Set(["Club Smash"]);
+/**
+ * Melee blows struck as the figure's heavy strike (see Figure.strike), a great two-handed sweep or with a blade
+ * in each hand both tossed and jabbed down: the smashes, and the other all-or-nothing swings.
+ */
+const HEAVY_SWINGS = new Set([...SMASHES, "Heavy Blow", "Cleave", "Crushing Maul", "Crushing Strike", "Sweeping Ruin", "Stone Fist", "Flurry", "Shockwave"]);
 /** A ground-pound (the ogre's Stomp, the guardian's Quake): no step in; the ground shakes out from the attacker's feet and jolts whoever it reaches. */
 const QUAKES = new Set(["Stomp", "Quake"]);
 /** Heals that are an enemy growing back (a troll's Regenerate), drawn as moss creeping over it, not a sparkle. */
@@ -1357,17 +1362,62 @@ export class WorldRenderer {
     if (a && a !== t) t.kick.copy(t.goal).sub(a.goal).setLength(by);
     else t.kick.set((Math.random() - 0.5) * by, 0, (Math.random() - 0.5) * by);
     t.bob = Math.max(t.bob, 0.1);
-    t.lean = 0.25;
+    t.figure.hit();
   }
 
-  /** A shot or a spell going off, drawn elsewhere (SpellFx): the unit turns to face where it is aimed, leans into it, and is heard. */
-  cast(actorId: string, name: string, x: number, z: number) {
+  /**
+   * A shot or a spell going off, drawn elsewhere (SpellFx): the unit turns to face where it is aimed, makes its
+   * gesture (a bow is drawn, a gun or crossbow fired, an instrument played; anything else is swung round
+   * overhead and pointed), and is heard. `then` is what leaves it (the bolt, the arrow, the flask): it runs as
+   * the string is loosed, the gun goes off, the song takes hold or the hand points, not before. `thrown` is something flung by hand, whatever else is carried.
+   */
+  cast(actorId: string, name: string, x: number, z: number, then?: () => void, thrown = false) {
     const unit = this.units.get(actorId);
+    let wait = 0;
     if (unit && !unit.lying) {
-      unit.turn = unit.turnGoal = Math.atan2(x - unit.goal.x, z - unit.goal.z);
-      unit.lean = -0.5;
+      this.face(unit, x, z);
+      wait = (!thrown && (unit.figure.loose() || unit.figure.fire() || unit.figure.play())) || unit.figure.cast();
     }
     sounds.attack(name, attackStyle(name), this.fighter(actorId), this.spot(actorId));
+    if (!then) return;
+    if (wait > 0) this.later(0, then, wait);
+    else then();
+  }
+
+  /** Turn a unit to look at a spot, unless it is the one it stands on. */
+  private face(unit: Unit, x: number, z: number) {
+    const [dx, dz] = [x - unit.goal.x, z - unit.goal.z];
+    if (Math.hypot(dx, dz) > 0.05) unit.turn = unit.turnGoal = Math.atan2(dx, dz);
+  }
+
+  /**
+   * An attack all round where the unit stands (a ring): struck as its heavy blow, or, `sung`, played on what it
+   * carries (cast, with no instrument); a ground-pound is leant into. `then` runs as the blow lands.
+   */
+  burst(actorId: string, name: string, sung: boolean, then: () => void) {
+    const unit = this.units.get(actorId);
+    let wait = 0;
+    if (unit && !unit.lying) {
+      if (QUAKES.has(name)) unit.lean = -0.9;
+      else wait = sung ? unit.figure.play() || unit.figure.cast() : unit.figure.strike("heavy");
+    }
+    sounds.attack(name, sung ? "magic" : "melee", this.fighter(actorId), this.spot(actorId));
+    if (wait > 0) this.later(0, then, wait);
+    else then();
+  }
+
+  /** A heal or a blessing given: the giver turns to whoever it is for (if not themselves) and plays it, or casts it. */
+  bless(actorId: string, toward: { x: number; z: number } | null) {
+    const unit = this.units.get(actorId);
+    if (!unit || unit.lying) return;
+    if (toward) this.face(unit, toward.x, toward.z);
+    if (!unit.figure.play()) unit.figure.cast();
+  }
+
+  /** A guard put up: the unit braces behind its shield, or what it has in hand. */
+  brace(actorId: string) {
+    const unit = this.units.get(actorId);
+    if (unit && !unit.lying) unit.figure.guard();
   }
 
   /** That shot or spell arriving: the sound of it landing on its target, or going wide. */
@@ -1434,11 +1484,12 @@ export class WorldRenderer {
     // Left or right as the viewer sees it, whichever way the camera has been turned.
     const dir = t.goal.clone().project(this.camera).x >= a.goal.clone().project(this.camera).x ? 1 : -1;
     const flip = dir < 0;
-    // Leant well into it, so the strike is held long enough to be seen.
-    a.lean = -dir * 0.9;
+    const spell = SPELL_COLOR[ability];
+    // A stomp is leant well into, so it is held long enough to be seen. A spell, a shot or a throw is the
+    // figure's own gesture, and a blow in the hand its own strike (see below).
+    if (QUAKES.has(ability)) a.lean = -dir * 0.9;
     if (!a.lying) a.turn = a.turnGoal = Math.atan2(t.goal.x - a.goal.x, t.goal.z - a.goal.z);
     const hitAt = t.goal.clone().add(new THREE.Vector3(0, t.size * 0.4, 0.05));
-    const spell = SPELL_COLOR[ability];
 
     if (QUAKES.has(ability)) {
       // It stays where it is and brings its weight down: dust rings out from its feet (once for the whole crew),
@@ -1458,14 +1509,19 @@ export class WorldRenderer {
     if (rock) {
       // Lobbed high, tumbling, and it breaks into dust where it lands.
       const from = a.goal.clone().add(new THREE.Vector3(dir * 0.5, a.size * 0.7, 0.05));
-      this.spawnFx("rock", rock, flip, { from, to: hitAt, life: 0.4, size: [0.85, 1.0], spin: -dir * 9, fade: false, arc: 0.9, onEnd: () => {
-        this.spawnFx("burst", perfect ? "#ffd23f" : "#c9c1aa", false, { from: hitAt, to: hitAt, life: 0.22, size: [0.7, 1.6], spin: 0.5, fade: true });
-        if (landed) {
-          this.dustAt(t, perfect);
-          t.kick.set(dir * 0.18, 0, 0);
-        }
-        onImpact();
-      } });
+      const hurl = () =>
+        this.spawnFx("rock", rock, flip, { from, to: hitAt, life: 0.4, size: [0.85, 1.0], spin: -dir * 9, fade: false, arc: 0.9, onEnd: () => {
+          this.spawnFx("burst", perfect ? "#ffd23f" : "#c9c1aa", false, { from: hitAt, to: hitAt, life: 0.22, size: [0.7, 1.6], spin: 0.5, fade: true });
+          if (landed) {
+            this.dustAt(t, perfect);
+            t.kick.set(dir * 0.18, 0, 0);
+          }
+          onImpact();
+        } });
+      // Swung round overhead first: it leaves the hand as the hand comes down to point.
+      const wait = a.figure.cast();
+      if (wait > 0) this.later(0, hurl, wait);
+      else hurl();
       return;
     }
 
@@ -1480,22 +1536,33 @@ export class WorldRenderer {
           if (kind === "arrow" && landed) this.stickArrow(t, dir);
           onImpact();
         } });
-      // An archer draws the bow first: the arrow leaves when the string does.
-      const draw = kind === "arrow" ? a.figure.loose() : 0;
-      if (draw > 0) this.later(0, fly, draw);
+      // An archer draws the bow first, and the arrow leaves when the string does; a bard plays, and the spell
+      // goes as the song takes hold; any other spell (or an arrow from no bow) is swung round overhead, and
+      // leaves as the hand points.
+      const wait = (kind === "arrow" && (a.figure.loose() || a.figure.fire())) || (spell && a.figure.play()) || a.figure.cast();
+      if (wait > 0) this.later(0, fly, wait);
       else fly();
       return;
     }
-    // Melee: step in and swipe across the target.
-    this.lunge(actorId, targetId);
+    // Melee: the figure winds up, steps half way across its tile and strikes (a creature, with no such
+    // animation, is sprung at the target instead); the swipe across the target, and all that follows from it,
+    // waits for the blow to land.
     const heavy = SMASHES.has(ability);
-    // A heavy blow comes down from higher, wider, and knocks the target back with dust thrown up round its feet.
-    this.spawnFx("slash", perfect ? "#ffd23f" : "#dfe9ff", flip, { from: hitAt, to: hitAt, life: heavy ? 0.3 : 0.26, size: heavy ? [1.7, 3] : [1.3, 2.3], spin: -dir * (heavy ? 1.6 : 0.9), fade: true });
-    if (heavy && landed) {
-      t.kick.set(dir * 0.35, -0.08, 0);
-      this.dustAt(t, perfect);
+    const wait = a.figure.strike(HEAVY_SWINGS.has(ability) ? "heavy" : "light");
+    const land = () => {
+      // A heavy blow comes down from higher, wider, and knocks the target back with dust thrown up round its feet.
+      this.spawnFx("slash", perfect ? "#ffd23f" : "#dfe9ff", flip, { from: hitAt, to: hitAt, life: heavy ? 0.3 : 0.26, size: heavy ? [1.7, 3] : [1.3, 2.3], spin: -dir * (heavy ? 1.6 : 0.9), fade: true });
+      if (heavy && landed) {
+        t.kick.set(dir * 0.35, -0.08, 0);
+        this.dustAt(t, perfect);
+      }
+      onImpact();
+    };
+    if (wait <= 0) {
+      this.lunge(actorId, targetId);
+      return land();
     }
-    onImpact();
+    this.later(0, land, wait);
   }
 
   /** Dust thrown up either side of a unit's feet: a heavy landing, a rock breaking, the ground shaking under it. */

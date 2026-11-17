@@ -4,8 +4,8 @@
 //
 // Pick who stands on the stage (a hero class, a townsperson or an enemy),
 // dress a person in any gear, and drive the same pose the game drives
-// (render/figures.ts, FigurePose): walk, strike, shoot, flinch, lie down, sit,
-// row. Time can be slowed, paused and stepped a frame at a time, and an
+// (render/figures.ts, FigurePose and Figure): walk, strike, stab, sweep,
+// shoot, cast, play, flinch, lie down, sit, row. Time can be slowed, paused and stepped a frame at a time, and an
 // action can be set to repeat, to watch it over and over. Drag the stage to
 // look round the figure, and scroll to come closer.
 //
@@ -33,15 +33,32 @@ const SIZE = 1.5;
 const LEAN_EASE = 8;
 const SPEEDS = [1, 0.5, 0.25, 0.1] as const;
 const ACTIONS = [
-  ["strike", "Strike", "Lean into a blow: the weapon arm comes up and over."],
-  ["shoot", "Shoot", "Draw and loose a bow. Only a figure carrying one does."],
-  ["hit", "Flinch", "The small lean of taking a blow."],
+  ["strike", "Strike", "The ordinary blow for what is in hand, with a step in: a cut, with daggers or a dirk a leap and a stab downward, with a rapier a thrust. An archer draws a knife for it; bare hands jab."],
+  ["stab", "Stab", "A straight thrust with whatever is held: the hand drawn back, a step into a lunge, the arm shot out. A rapier's own strike."],
+  ["heavy", "Heavy strike", "A great two-handed sweep from one side to the other; with a blade in each hand (the rogue), both are tossed up, caught points down and jabbed downward."],
+  ["shoot", "Shoot", "Whatever shoots: a bow is drawn and loosed; a pistol is levelled at arm's length and a long gun or crossbow brought to the shoulder, then the kick, flash and smoke. Only a figure carrying one of them shoots."],
+  ["cast", "Cast", "A spell or a throw: swung round overhead, then pointed at the mark as it leaves. An orb, astrolabe or chalice is held aloft and presented; a book has a hand waved over it."],
+  ["play", "Play", "A bard's song: the lute strummed, the flute lifted to the mouth or the ship's bell rung, notes and wisps rising. Only a figure carrying one plays."],
+  ["guard", "Guard", "Braced: knees bent and the shield brought up in front; with no shield, what is in hand and the other forearm. Shield Wall and Hold the Line."],
+  ["hit", "Flinch", "Taking a blow: thrown back, arms flung wide, then gathered again."],
+  ["lean", "Lean", "The plain lean, easing off: what every attack used to be, and a stomp still is."],
 ] as const;
 type Action = (typeof ACTIONS)[number][0];
 
 const nameOf = (kind: string) => (HEROES.includes(kind) ? label("class", kind) : FOES.includes(kind) ? label("enemy", kind) : kind.replace(/_/g, " "));
+/** Models with no weapon in the game yet: offered in the main hand, to see them held. */
+const SPARE_MODELS = [
+  ["cutlass", "Cutlass (model only)"],
+  ["sabre", "Sabre (model only)"],
+  ["rapier", "Rapier (model only)"],
+  ["dirk", "Dirk (model only)"],
+  ["pistol", "Pistol (model only)"],
+  ["blunderbuss", "Blunderbuss (model only)"],
+  ["harpoon-gun", "Harpoon gun (model only)"],
+  ["heavy-crossbow", "Crossbow (model only)"],
+] as const;
 const gearChoices = (slot: Slot): { ref: string; icon: string; name: string }[] =>
-  slot === "main_hand" ? Object.keys(WEAPONS).map((ref) => ({ ref, icon: WEAPON_ICON[ref] ?? ref, name: label("weapon", ref) })) : GEAR_BASES.filter((b) => slotOfRef(b.ref) === slot).map((b) => ({ ref: b.ref, icon: b.icon, name: label("gear", b.ref) }));
+  slot === "main_hand" ? [...Object.keys(WEAPONS).map((ref) => ({ ref, icon: WEAPON_ICON[ref] ?? ref, name: label("weapon", ref) })), ...SPARE_MODELS.map(([icon, name]) => ({ ref: icon, icon, name }))] : GEAR_BASES.filter((b) => slotOfRef(b.ref) === slot).map((b) => ({ ref: b.ref, icon: b.icon, name: label("gear", b.ref) }));
 
 /** What the frame loop reads each frame: kept in a ref, so moving a slider never rebuilds the stage. */
 interface Live {
@@ -150,12 +167,34 @@ export default function FigureLab({ me, onClose }: { me: Me; onClose(): void }) 
     };
     const act = (action: Action): string => {
       sinceAct = 0;
+      const figure = stage.current?.figure;
+      if (!figure) return "";
       if (action === "hit") {
-        lean = 0.25;
+        figure.hit();
         return "";
       }
+      if (action === "strike" || action === "stab" || action === "heavy") {
+        const wait = figure.strike(action === "strike" ? "light" : action);
+        return wait > 0 ? `The blow lands ${wait.toFixed(2)}s in.` : "A creature: it has no wind-up, and lunges at once.";
+      }
+      if (action === "cast") {
+        const wait = figure.cast();
+        return wait > 0 ? `It leaves the hand ${wait.toFixed(2)}s in.` : "A creature, or a hand already pointing: it leaves at once.";
+      }
+      if (action === "guard") {
+        const wait = figure.guard();
+        return wait > 0 ? `The guard is up ${wait.toFixed(2)}s in.` : "A creature: it has no guard.";
+      }
+      if (action === "play") {
+        const wait = figure.play();
+        return wait > 0 ? `The song takes hold ${wait.toFixed(2)}s in.` : "No instrument in hand, or already mid-song. Pick the Shanty Bard, or give a person a lute, a flute or the ship's bell.";
+      }
+      if (action === "shoot") {
+        // As the game does it: a bow if there is one, else a gun or a crossbow.
+        const wait = figure.loose() || figure.fire();
+        return wait > 0 ? `The shot leaves ${wait.toFixed(2)}s in.` : "Nothing in hand that shoots. Pick the Archer, or dress a person in gear and give them a shortbow, pistol, blunderbuss, harpoon gun or crossbow.";
+      }
       lean = -0.9;
-      if (action === "shoot" && (stage.current?.figure?.loose() ?? 0) === 0) return "No bow in hand: it leans, but there is nothing to draw. Give a person a Shortbow, or pick the archer.";
       return "";
     };
     stage.current = { stand, camera, figure: null, look, act, step: () => draw(1 / 60) };
