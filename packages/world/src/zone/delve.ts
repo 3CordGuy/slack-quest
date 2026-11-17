@@ -6,7 +6,10 @@
 //   groups, sized for the party as every zone's are. A group keeps its
 //   chamber's id ("band2", "lair"), so a chest knows who guards it.
 // - Chests, strongboxes and the hoard stay on the map as caches to open
-//   (zone.ts openChest). The mouth is the way in, and the way out.
+//   (zone.ts openChest). The mouth is the way in, and the way out. A chest
+//   stands in the way, so one the caverns put in the only way through (where
+//   a tunnel leaves its chamber) is set aside, to the nearest spot round its
+//   chamber where it shuts nothing off.
 // - Crates are stacked against the rock here and there, in the chambers and
 //   in the nooks off the tunnels, to be broken open (crates.ts). None is put
 //   where it would shut off any of the floor, or crowd a chest or the mouth.
@@ -26,62 +29,95 @@ import type { ZonePlan } from "./gen";
 /** A delve's rock: roomier than the old caverns', so fights have space in the chambers and tunnels to retreat down. */
 export const DELVE_GRID: HexGrid = { cols: 18, rows: 16 };
 
+/** The floor that can be walked to from `from`, round whatever stands on the hexes in `blocked`. */
+function walkable(map: WorldMap, floor: ReadonlySet<string>, from: HexPos, blocked: ReadonlySet<string>): Set<string> {
+  const seen = new Set([posKey(from)]);
+  const queue = [from];
+  for (let i = 0; i < queue.length; i++) {
+    for (const n of hexNeighbors(queue[i], map.grid)) {
+      const key = posKey(n);
+      if (seen.has(key) || !floor.has(key) || blocked.has(key)) continue;
+      seen.add(key);
+      queue.push(n);
+    }
+  }
+  return seen;
+}
+
+/**
+ * Move any chest that stands in the only way through to somewhere in its chamber where it does not: the nearest
+ * open floor within two hexes of where it was (snug against the rock if there is a choice), off the mouth and
+ * clear of the other chests, where every hex that could be walked to can still be walked to.
+ */
+function clearTheWay(map: WorldMap, mouth: HexPos, chests: readonly Poi[]): void {
+  const floor = new Set(map.tiles.filter((t) => t.biome === "cave").map(posKey));
+  const all = walkable(map, floor, mouth, new Set());
+  const blocked = new Set<string>();
+  const shuts = (at: HexPos): boolean => {
+    const round = new Set([...blocked, posKey(at)]);
+    const reach = walkable(map, floor, mouth, round);
+    return [...all].some((k) => !round.has(k) && !reach.has(k));
+  };
+  const rockBeside = (p: HexPos) => 6 - hexNeighbors(p, map.grid).filter((n) => floor.has(posKey(n))).length;
+  for (const chest of chests) {
+    if (shuts(chest.pos)) {
+      const aside = map.tiles
+        .filter((t) => all.has(posKey(t)) && !blocked.has(posKey(t)) && hexDistance(t, chest.pos) <= 2 && hexDistance(t, mouth) > 1)
+        .sort((a, b) => hexDistance(a, chest.pos) - hexDistance(b, chest.pos) || rockBeside(b) - rockBeside(a) || a.q - b.q || a.r - b.r)
+        .find((t) => !shuts(t));
+      if (aside) chest.pos = { q: aside.q, r: aside.r };
+    }
+    blocked.add(posKey(chest.pos));
+  }
+}
+
 /** How many places in a delve have crates, fewest to most; and the chance a place has two side by side. */
 export const DELVE_CRATES: [number, number] = [4, 6];
 export const CRATE_PAIR = 0.45;
 
 /**
- * Crates to stack about the floor. Each goes on open floor against the rock, nowhere anyone stands, two or more
- * hexes from any chest and the mouth (so they can always be got to), and only where every hex that could be walked
- * to before can still be walked to. Places are kept three hexes apart; a place may have a second crate beside it.
+ * Crates to stack about the floor. Each goes on open floor against the rock, nowhere anyone stands, not beside a
+ * chest and not within two of the mouth (so both can always be got to), and only where every hex that could be
+ * walked to before can still be walked to. Places are kept apart; a place may have a second crate beside it.
  */
 function placeCrates(rng: Rng, map: WorldMap, mouth: HexPos, taken: ReadonlySet<string>, chests: readonly HexPos[]): Poi[] {
   const { grid } = map;
   const floor = new Set(map.tiles.filter((t) => t.biome === "cave").map(posKey));
   const blocked = new Set(chests.map(posKey));
-  /** The floor that can be walked to from the mouth, round whatever is `blocked` (and `also`, if given). */
-  const walkable = (also?: string): Set<string> => {
-    const seen = new Set([posKey(mouth)]);
-    const queue = [mouth];
-    for (let i = 0; i < queue.length; i++) {
-      for (const n of hexNeighbors(queue[i], grid)) {
-        const key = posKey(n);
-        if (seen.has(key) || !floor.has(key) || blocked.has(key) || key === also) continue;
-        seen.add(key);
-        queue.push(n);
-      }
-    }
-    return seen;
-  };
-  const before = walkable();
+  const before = walkable(map, floor, mouth, blocked);
+  const crates: Poi[] = [];
   const rockBeside = (p: HexPos) => 6 - hexNeighbors(p, grid).filter((n) => floor.has(posKey(n))).length;
   const fits = (p: HexPos): boolean => {
     const key = posKey(p);
-    if (!before.has(key) || blocked.has(key) || taken.has(key) || hexDistance(p, mouth) <= 2 || chests.some((c) => hexDistance(c, p) <= 2)) return false;
-    // Nothing that was in reach is cut off by it.
-    const after = walkable(key);
-    return [...before].every((k) => k === key || blocked.has(k) || after.has(k));
+    if (!before.has(key) || blocked.has(key) || taken.has(key) || hexDistance(p, mouth) <= 2 || chests.some((c) => hexDistance(c, p) <= 1)) return false;
+    // Nothing that was in reach is cut off by it, and every crate already down can still be walked up to.
+    const after = walkable(map, floor, mouth, new Set([...blocked, key]));
+    if (![...before].every((k) => k === key || blocked.has(k) || after.has(k))) return false;
+    return crates.every((c) => hexNeighbors(c.pos, grid).some((n) => after.has(posKey(n))));
   };
   // Against the rock first: snug in a corner or a nook, then along a wall.
   const spots = map.tiles
-    .filter((t) => floor.has(posKey(t)) && rockBeside(t) >= 2)
+    .filter((t) => floor.has(posKey(t)) && rockBeside(t) >= 1)
     .map((t) => ({ pos: { q: t.q, r: t.r }, snug: rockBeside(t) + rng.next() * 2.5 }))
     .sort((a, b) => b.snug - a.snug);
   const want = rng.int(DELVE_CRATES[0], DELVE_CRATES[1]);
   const places: HexPos[] = [];
-  const crates: Poi[] = [];
   const put = (pos: HexPos) => {
     blocked.add(posKey(pos));
     crates.push({ id: `crate${crates.length + 1}`, kind: "crate", pos, hidden: false, cleared: false, usedBy: [], enemies: [], hp: CRATE_HP, maxHp: CRATE_HP });
   };
-  for (const { pos } of spots) {
-    if (places.length >= want) break;
-    if (places.some((p) => hexDistance(p, pos) < 3) || !fits(pos)) continue;
-    places.push(pos);
-    put(pos);
-    if (!rng.chance(CRATE_PAIR)) continue;
-    const buddy = hexNeighbors(pos, grid).filter((n) => floor.has(posKey(n)) && rockBeside(n) >= 2 && fits(n));
-    if (buddy.length > 0) put(rng.pick(buddy));
+  // Places three apart, against at least two sides of rock; and in a small or crowded delve, where that leaves too
+  // few, again with places two apart along any wall.
+  for (const [apart, snug] of [[3, 2], [2, 1]] as const) {
+    for (const { pos } of spots) {
+      if (places.length >= want) break;
+      if (rockBeside(pos) < snug || places.some((p) => hexDistance(p, pos) < apart) || !fits(pos)) continue;
+      places.push(pos);
+      put(pos);
+      if (!rng.chance(CRATE_PAIR)) continue;
+      const buddy = hexNeighbors(pos, grid).filter((n) => floor.has(posKey(n)) && rockBeside(n) >= 2 && fits(n));
+      if (buddy.length > 0) put(rng.pick(buddy));
+    }
   }
   return crates;
 }
@@ -110,6 +146,7 @@ export function generateDelve(seed: string, options: ZoneOptions): ZonePlan {
   const mouth = map.pois.find((p) => p.kind === "landing")!.pos;
   const open = (p: HexPos) => map.tiles.some((t) => t.q === p.q && t.r === p.r && t.biome === "cave");
   const caches = map.pois.filter((p) => p.kind === "cache");
+  clearTheWay(map, mouth, caches.filter((c) => open(c.pos)));
   const taken = new Set([posKey(mouth), ...caches.map((c) => posKey(c.pos))]);
 
   const groups: ZonePlan["groups"] = [];

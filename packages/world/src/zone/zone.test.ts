@@ -1135,6 +1135,30 @@ describe("a delve", () => {
     expect(state.map.tiles.some((t) => t.biome === "cave" && !lit.has(posKey(t)))).toBe(true);
   });
 
+  it("puts no chest where it shuts off any of the floor: one in the only way through is set aside in its chamber", () => {
+    for (let seed = 0; seed < 60; seed++) {
+      const where = `seed ${seed}`;
+      const state = createZone("DLVE", `x${seed}`, delveOptions());
+      const chests = state.map.pois.filter((p) => p.kind === "cache");
+      const walk = (blocked: Set<string>) => {
+        const seen = new Set([posKey(state.start)]);
+        const queue = [state.start];
+        for (let i = 0; i < queue.length; i++) {
+          for (const n of hexNeighbors(queue[i], state.map.grid)) {
+            if (seen.has(posKey(n)) || blocked.has(posKey(n)) || solid(tileOf(state, n))) continue;
+            seen.add(posKey(n));
+            queue.push(n);
+          }
+        }
+        return seen;
+      };
+      const keys = new Set(chests.map((c) => posKey(c.pos)));
+      const round = walk(keys);
+      for (const key of walk(new Set())) if (!keys.has(key)) expect(round.has(key), `${where} ${key}`).toBe(true);
+      expect(chests.some((c) => posKey(c.pos) === posKey(state.start)), where).toBe(false);
+    }
+  });
+
   it("sends a lone hero against smaller bands, and the haunt alone", () => {
     const solo = createZone("DLVE", "d3", delveOptions(1));
     const crew = createZone("DLVE", "d3", delveOptions(4));
@@ -1248,7 +1272,8 @@ describe("crates", () => {
         expect(state.map.tiles.find((t) => t.q === c.pos.q && t.r === c.pos.r)?.biome, where).toBe("cave");
         expect(state.units.some((u) => posKey(u.pos) === posKey(c.pos)), where).toBe(false);
         expect(hexDistance(c.pos, state.start), where).toBeGreaterThan(2);
-        for (const chest of chests) expect(hexDistance(c.pos, chest.pos), where).toBeGreaterThan(2);
+        // Never right beside a chest, so it never stands where a chest is opened from.
+        for (const chest of chests) expect(hexDistance(c.pos, chest.pos), where).toBeGreaterThan(1);
         // Every crate can be walked up to, to be broken.
         expect(hexNeighbors(c.pos, state.map.grid).some((n) => withAll.has(posKey(n))), where).toBe(true);
       }
