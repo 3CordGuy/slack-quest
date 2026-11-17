@@ -447,6 +447,19 @@ export default function FigureLab({ me, onClose }: { me: Me; onClose(): void }) 
           <label title="Down in a fight, or on a bedroll.">
             <input type="checkbox" checked={live.lying} onChange={(e) => set({ lying: e.target.checked })} /> Lying
           </label>
+          <button
+            className="small"
+            title="Killed: it goes limp and falls where it stands, knocked backward by the blow (a ragdoll), as an enemy does in a fight. Untick Lying to stand it up again."
+            onClick={() => {
+              const figure = stage.current?.figure;
+              if (!figure) return;
+              liveRef.current = { ...liveRef.current, lying: true };
+              set({ lying: true });
+              figure.fall(new THREE.Vector3(0, 0, -1).applyQuaternion(figure.root.getWorldQuaternion(new THREE.Quaternion())));
+            }}
+          >
+            Fall dead
+          </button>
           <label title="Eyes shut. The figure is built again.">
             <input type="checkbox" checked={asleep} onChange={(e) => setAsleep(e.target.checked)} /> Asleep
           </label>

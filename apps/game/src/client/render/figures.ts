@@ -5654,6 +5654,253 @@ function castShape(top: THREE.Group, made: THREE.BufferGeometry[]): THREE.Mesh |
 /** The animals that stand side-on in a portrait, as they did in their sprites. */
 export const FOUR_LEGGED = new Set(["wolf", "alpha", "bear", "great_bear"]);
 
+// ---------- falling dead ----------
+
+/** Gravity for a body falling, in the figure's units (22 to its height) a second squared: about the real thing. */
+const RAG_GRAVITY = 130;
+/** Steps a second the fall is worked out in, and rounds of holding each piece together per step. */
+const RAG_RATE = 120;
+const RAG_ROUNDS = 6;
+/** How much of its sideways speed a corner on the ground keeps each step: the ground grips. */
+const RAG_GRIP = 0.55;
+/** How hard a joint holds the angle it had at the moment of death, per round: a little, so limbs flop but do not fold flat. */
+const RAG_TONE = 0.06;
+/** How long a body may go on settling, and how still it must be (units a step) for long enough to call it settled. */
+const RAG_MAX = 4;
+const RAG_STILL = 0.004;
+/** How fast the blow that fells it knocks its head away (units a second): enough to topple it over its feet. */
+const RAG_PUSH = 40;
+/** No piece of it moves faster than this (units a second), whatever the pushing apart of pieces caught in each other asks. */
+const RAG_FASTEST = 90;
+
+interface RagPiece {
+  part: Part;
+  /** Its box's eight corners and its joint: indices into the particles. */
+  corners: number[];
+  /** The part its box hangs from (null: the one that carries the rest, or one hung straight from the body's top). */
+  parent: RagPiece | null;
+  /** Its joint's turn, relative to the figure, as it fell, and the middle of its box then. */
+  q0: THREE.Quaternion;
+  mid0: THREE.Vector3;
+  origin0: THREE.Vector3;
+  /** Its box's three edges as it fell (corner 0 to 1, 2 and 4), for working out how it has turned since. */
+  frame0: THREE.Matrix4;
+  depth: number;
+}
+
+/** Two particles held `length` apart, `stiff` of the way each round. */
+type RagStick = [number, number, number, number];
+
+export interface Ragdoll {
+  /** Work the fall on by `dt` seconds and pose the figure to match. False once it has come to rest. */
+  step(dt: number): boolean;
+  /** Put every joint back as it was when it fell (for one got up again). */
+  restore(): void;
+}
+
+const _rq = new THREE.Quaternion();
+const _rm = new THREE.Matrix4();
+const _rv = new THREE.Vector3();
+const _rx = new THREE.Vector3();
+const _ry = new THREE.Vector3();
+const _rz = new THREE.Vector3();
+
+/** A frame (a turn) from three edges of a box: the first as it is, the second squared to it, the third across both. */
+function frameOf(p: Float32Array, c: number[], out: THREE.Matrix4) {
+  const at = (i: number, v: THREE.Vector3) => v.set(p[c[i] * 3], p[c[i] * 3 + 1], p[c[i] * 3 + 2]);
+  const o = at(0, _rv);
+  at(1, _rx).sub(o).normalize();
+  at(2, _ry).sub(o);
+  _ry.addScaledVector(_rx, -_ry.dot(_rx)).normalize();
+  _rz.crossVectors(_rx, _ry);
+  return out.makeBasis(_rx, _ry, _rz);
+}
+
+/**
+ * Let a figure go limp and fall: each part of it a solid box of eight particles, each joint a particle held to
+ * the boxes either side of it, all of them dropped under gravity onto the ground under its feet (y = 0 in the
+ * figure's own space) and pushed `push` (in that space, along the ground) by the blow that felled it. Each frame
+ * the boxes are read back as turns of the joints, so whatever the rig is (a man, a wolf, a slime), it crumples
+ * as it is jointed.
+ */
+function ragdoll(top: THREE.Group, parts: Part[], push: THREE.Vector3): Ragdoll {
+  const scaler = top.parent!;
+  scaler.updateWorldMatrix(true, true);
+  const toFigure = new THREE.Matrix4().copy(scaler.matrixWorld).invert();
+  const figureQ = new THREE.Quaternion();
+  scaler.getWorldQuaternion(figureQ);
+  const fromFigure = figureQ.clone().invert();
+  const byJoint = new Map(parts.map((p) => [p.joint as THREE.Object3D, p]));
+  const saved = new Map<THREE.Object3D, THREE.Quaternion>(parts.map((p) => [p.joint, p.joint.quaternion.clone()]));
+  saved.set(top, top.quaternion.clone());
+  const savedTop = top.position.clone();
+
+  const pos: number[] = [];
+  const sticks: RagStick[] = [];
+  const add = (v: THREE.Vector3) => (pos.push(v.x, v.y, v.z), pos.length / 3 - 1);
+  const dist = (a: number, b: number) => Math.hypot(pos[a * 3] - pos[b * 3], pos[a * 3 + 1] - pos[b * 3 + 1], pos[a * 3 + 2] - pos[b * 3 + 2]);
+  const stick = (a: number, b: number, stiff = 1) => sticks.push([a, b, dist(a, b), stiff]);
+
+  // Each part's box, in the figure's space as it stands now.
+  const pieces: RagPiece[] = [];
+  const box = new THREE.Box3();
+  const piece = new THREE.Box3();
+  for (const part of parts) {
+    box.makeEmpty();
+    part.skin.updateMatrix();
+    for (const o of part.skin.children) {
+      if (!(o instanceof THREE.Mesh) || !o.userData.body) continue;
+      o.geometry.computeBoundingBox();
+      box.union(piece.copy(o.geometry.boundingBox!).applyMatrix4(part.skin.matrix));
+    }
+    if (box.isEmpty()) box.setFromCenterAndSize(new THREE.Vector3(), new THREE.Vector3(1, 1, 1));
+    // Nothing quite flat, so its box always has a turn to read back.
+    const size = box.getSize(new THREE.Vector3()).max(new THREE.Vector3(0.8, 0.8, 0.8));
+    box.setFromCenterAndSize(box.getCenter(new THREE.Vector3()), size);
+    const m = _rm.multiplyMatrices(toFigure, part.joint.matrixWorld);
+    const corners: number[] = [];
+    for (let i = 0; i < 8; i++) {
+      const c = new THREE.Vector3(i & 1 ? box.max.x : box.min.x, i & 2 ? box.max.y : box.min.y, i & 4 ? box.max.z : box.min.z);
+      corners.push(add(c.applyMatrix4(m)));
+    }
+    corners.push(add(new THREE.Vector3().setFromMatrixPosition(m)));
+    for (let a = 0; a < 8; a++) for (let b = a + 1; b < 8; b++) stick(corners[a], corners[b]);
+    const q0 = new THREE.Quaternion();
+    part.joint.getWorldQuaternion(q0).premultiply(fromFigure);
+    let depth = 0;
+    for (let o = part.joint.parent; o && o !== top; o = o.parent) depth++;
+    pieces.push({ part, corners, parent: null, q0, mid0: box.getCenter(new THREE.Vector3()).applyMatrix4(m), origin0: new THREE.Vector3().setFromMatrixPosition(m), frame0: new THREE.Matrix4(), depth });
+  }
+  if (pieces.length === 0) return { step: () => false, restore() {} };
+  const atStart = new Float32Array(pos);
+  for (const p of pieces) frameOf(atStart, p.corners, p.frame0);
+  // What carries the rest: the biggest part hung straight from the top (a body, a torso).
+  const volume = (p: RagPiece) => dist(p.corners[0], p.corners[1]) * dist(p.corners[0], p.corners[2]) * dist(p.corners[0], p.corners[4]);
+  const roots = pieces.filter((p) => p.depth === 0);
+  const main = (roots.length > 0 ? roots : pieces).reduce((a, b) => (volume(b) > volume(a) ? b : a));
+  // Each joint held to the box above it (a part hung from the top, to the main one's), and a little to the angle it had.
+  for (const p of pieces) {
+    if (p === main) continue;
+    let up: THREE.Object3D | null = p.part.joint.parent;
+    while (up && up !== top && !byJoint.has(up)) up = up.parent;
+    const parentPart = up && up !== top ? byJoint.get(up)! : main.part;
+    p.parent = pieces.find((q) => q.part === parentPart) ?? main;
+    const joint = p.corners[8];
+    for (let i = 0; i < 8; i++) stick(joint, p.parent.corners[i]);
+    stick(p.corners[0], p.parent.corners[7], RAG_TONE);
+    stick(p.corners[7], p.parent.corners[0], RAG_TONE);
+  }
+  // The joint particle is carried on its own box too.
+  for (const p of pieces) for (let i = 0; i < 8; i++) stick(p.corners[8], p.corners[i]);
+
+  const n = pos.length / 3;
+  // Nothing starts under the ground (a foot drawn a little into it, or one already lying), or it would be thrown out of it.
+  let low = 0;
+  for (let i = 0; i < n; i++) low = Math.min(low, pos[i * 3 + 1]);
+  for (let i = 0; i < n; i++) pos[i * 3 + 1] -= low;
+  const now = new Float32Array(pos);
+  const was = new Float32Array(pos);
+  // Knocked away from the blow, the higher the harder, so it topples over its feet; and a little up.
+  const h = 1 / RAG_RATE;
+  for (let i = 0; i < n; i++) {
+    const lift = Math.max(0, now[i * 3 + 1]) / FRAME;
+    was[i * 3] -= push.x * lift * h;
+    was[i * 3 + 1] -= 6 * lift * h;
+    was[i * 3 + 2] -= push.z * lift * h;
+  }
+  const order = [...pieces].sort((a, b) => a.depth - b.depth);
+  // Where the main joint is in the top's space, and how it is turned there (undone): the top is carried by it.
+  top.updateWorldMatrix(true, true);
+  const mainAt = new THREE.Vector3().setFromMatrixPosition(_rm.copy(top.matrixWorld).invert().multiply(main.part.joint.matrixWorld));
+  const topQ0 = new THREE.Quaternion();
+  top.getWorldQuaternion(topQ0).premultiply(fromFigure);
+  const mainQ0 = main.q0.clone();
+  const mainInTop = topQ0.clone().invert().multiply(main.q0).invert();
+  let time = 0;
+  let spare = 0;
+  let still = 0;
+
+  const solve = () => {
+    const keep = 0.998;
+    for (let i = 0; i < n; i++) {
+      for (let k = 0; k < 3; k++) {
+        const j = i * 3 + k;
+        const v = Math.max(-RAG_FASTEST * h, Math.min(RAG_FASTEST * h, (now[j] - was[j]) * keep));
+        was[j] = now[j];
+        now[j] += v;
+      }
+      now[i * 3 + 1] -= RAG_GRAVITY * h * h;
+    }
+    for (let round = 0; round < RAG_ROUNDS; round++) {
+      for (const [a, b, length, stiff] of sticks) {
+        const dx = now[b * 3] - now[a * 3];
+        const dy = now[b * 3 + 1] - now[a * 3 + 1];
+        const dz = now[b * 3 + 2] - now[a * 3 + 2];
+        const d = Math.hypot(dx, dy, dz) || 1e-6;
+        const k = ((d - length) / d) * 0.5 * stiff;
+        now[a * 3] += dx * k;
+        now[a * 3 + 1] += dy * k;
+        now[a * 3 + 2] += dz * k;
+        now[b * 3] -= dx * k;
+        now[b * 3 + 1] -= dy * k;
+        now[b * 3 + 2] -= dz * k;
+      }
+      // The ground: nothing goes under it, and what touches it is held back by it.
+      for (let i = 0; i < n; i++) {
+        if (now[i * 3 + 1] >= 0) continue;
+        now[i * 3 + 1] = 0;
+        // Stopped dead on it: being pushed up out of it (a foot drawn a little into the ground) is no leap.
+        was[i * 3 + 1] = 0;
+        was[i * 3] = now[i * 3] - (now[i * 3] - was[i * 3]) * RAG_GRIP;
+        was[i * 3 + 2] = now[i * 3 + 2] - (now[i * 3 + 2] - was[i * 3 + 2]) * RAG_GRIP;
+      }
+    }
+    let most = 0;
+    for (let j = 0; j < now.length; j++) most = Math.max(most, Math.abs(now[j] - was[j]));
+    return most;
+  };
+
+  const turned = new THREE.Matrix4();
+  const parentQ = new THREE.Quaternion();
+  /** Read the boxes back as the figure's pose: the top carried with the main box, every other joint turned with its own. */
+  const pose = () => {
+    const rel = (p: RagPiece) => {
+      frameOf(now, p.corners, turned);
+      return _rq.setFromRotationMatrix(turned.multiply(_rm.copy(p.frame0).transpose()));
+    };
+    // The top: turned as the main box has, and placed so the main joint lands where its particle is.
+    top.quaternion.copy(rel(main)).multiply(mainQ0).multiply(mainInTop);
+    const j = main.corners[8];
+    top.position.set(now[j * 3], now[j * 3 + 1], now[j * 3 + 2]).sub(_rv.copy(mainAt).applyQuaternion(top.quaternion));
+    top.updateMatrixWorld(true);
+    for (const p of order) {
+      if (p === main) continue;
+      const want = rel(p).multiply(p.q0);
+      p.part.joint.parent!.getWorldQuaternion(parentQ).premultiply(fromFigure);
+      p.part.joint.quaternion.copy(parentQ.invert().multiply(want));
+      p.part.joint.updateMatrixWorld(true);
+    }
+  };
+
+  return {
+    step(dt) {
+      if (time >= RAG_MAX) return false;
+      spare += Math.min(dt, 0.1);
+      while (spare >= h) {
+        spare -= h;
+        time += h;
+        still = solve() < RAG_STILL ? still + h : 0;
+      }
+      pose();
+      return still < 0.5 && time < RAG_MAX;
+    },
+    restore() {
+      for (const [joint, q] of saved) joint.quaternion.copy(q);
+      top.position.copy(savedTop);
+    },
+  };
+}
+
 // ---------- the figure ----------
 
 export interface FigurePose {
@@ -5741,6 +5988,12 @@ export interface Figure {
    * creature, which only leans into it.
    */
   jump(air: number): number;
+  /**
+   * Go limp and fall where it stands (a ragdoll), knocked along `push` (in the world, along the ground: away from
+   * the blow) or, without one, any way. It lies as it fell for as long as it is posed lying; stood up again, it
+   * takes its usual poses.
+   */
+  fall(push?: THREE.Vector3): void;
   /** Greyed, for someone down in a fight. */
   setDim(on: boolean): void;
   /** How much of it is left to see, 1 (all there) to 0 (gone): it thins out pixel by pixel as a camera passes through it. */
@@ -5800,7 +6053,8 @@ export function makeFigure(kind: string, look: Look, outfit?: Outfit, opts: Figu
     ink: fadeable(inkMaterial(), fade, "gq-figure-ink"),
   };
   const made: THREE.BufferGeometry[] = [];
-  for (const part of [...rig.parts, ...extraParts]) part.build(mats, made);
+  const allParts = [...rig.parts, ...extraParts];
+  for (const part of allParts) part.build(mats, made);
   const swinging = braids;
   const loose = dangles;
   // What a swinging weight bumps against: only worth fitting for someone carrying one.
@@ -5822,6 +6076,8 @@ export function makeFigure(kind: string, look: Look, outfit?: Outfit, opts: Figu
   let through: Silhouette | null = null;
   let throughColor: string | null = null;
   let actions = 0;
+  /** Fallen dead: the fall under way (or come to rest), which poses it in place of the rig while it lies. */
+  let fallen: { doll: Ragdoll; moving: boolean } | null = null;
   const update = (p: FigurePose) => {
     const first = last < 0;
     const dt = last < 0 ? 1 : Math.min(0.1, Math.max(0, p.time - last));
@@ -5842,7 +6098,13 @@ export function makeFigure(kind: string, look: Look, outfit?: Outfit, opts: Figu
       for (const hand of rig.hands) for (const held of hand.children) held.visible = !rowing;
       for (const thing of rig.carried ?? []) thing.visible = !rowing;
     }
-    rig.animate(anim);
+    if (fallen && !p.lying) {
+      fallen.doll.restore();
+      fallen = null;
+    }
+    if (fallen) {
+      if (fallen.moving) fallen.moving = fallen.doll.step(first ? 0 : dt);
+    } else rig.animate(anim);
     if (swinging.length > 0) swingBraids(swinging, anim);
     if (loose.length > 0) swingDangles(loose, first ? 0 : dt, top, body);
   };
@@ -5907,6 +6169,16 @@ export function makeFigure(kind: string, look: Look, outfit?: Outfit, opts: Figu
       asked = "jump";
       airtime = Math.max(0.1, air);
       return rig.acts ? JUMP.spring : 0;
+    },
+    fall(push) {
+      if (fallen) return;
+      // Into the figure's own space, along the ground; a blow from nowhere in particular knocks it any way.
+      const dir = push ? push.clone() : new THREE.Vector3(Math.random() - 0.5, 0, Math.random() - 0.5);
+      dir.applyQuaternion(scaler.getWorldQuaternion(new THREE.Quaternion()).invert());
+      dir.y = 0;
+      if (dir.lengthSq() < 1e-6) dir.set(0, 0, -1);
+      dir.setLength(RAG_PUSH);
+      fallen = { doll: ragdoll(top, allParts, dir), moving: true };
     },
     setDim(on) {
       mats.body.color.setScalar(on ? 0.5 : 1);
