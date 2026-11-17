@@ -112,6 +112,8 @@ export interface RenderState {
   indoors?: boolean;
   /** Inside a hut with its hanging lamp put out: the room is lit by its own candles, lanterns and fires. */
   lampOff?: boolean;
+  /** With `lampOff`: a room kept dim for the mood of it, each small light a pool with dark between (the apothecary's shop). */
+  gloom?: boolean;
   /** Your gathering outings, shown as lightning bolts on your own plate. */
   stamina?: { left: number; max: number };
   /** A piece being carried: a ghost of it follows the pointer, and a click sets it down (RendererCallbacks.onPlace). */
@@ -1165,6 +1167,7 @@ export class WorldRenderer {
     if (first) this.buildWallPanels(state);
     this.lifted = lifted;
     this.state = state;
+    this.ambience.setGloom(!!state.gloom);
     this.ambience.setLampOn(!state.lampOff);
     this.buildGroundTorches(state);
     this.buildPois(state);

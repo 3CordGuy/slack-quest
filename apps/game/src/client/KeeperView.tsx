@@ -79,6 +79,10 @@ export function KeeperView({ shop, me, refresh, onLeave }: { shop: KeeperShop; m
       npcs: {},
       freeRoam: true,
       indoors: true,
+      // The apothecary keeps his lamp out and his shop dim: pools of candlelight, the cauldron's fire and the green
+      // glow of the brew, with dark between.
+      lampOff: shop === "apothecary",
+      gloom: shop === "apothecary",
       props: place.fittings.map((f) => ({ id: f.id, model: f.model, pos: { q: f.q, r: f.r }, facing: f.facing, x: f.x, z: f.z })),
     }),
     [shop, you, room, c.class_id, c.name, c.level, c.xp, pos, outfit, keeper, place],

@@ -130,7 +130,9 @@ export const KEEPER_PLACES: Record<KeeperShop, KeeperPlace> = {
       fit(3, "cauldron", 3, 2, 0, WORK_PULL),
       fit(4, "shop_counter", 5, 2),
       fit(5, "herb_rack", 1, 1),
-      fit(6, "potion_shelf", 6, 1),
+      // The one shelf with a candle on it, in the far corner: the lamp is kept out, so this, the counter's candle, the
+      // herb table's and the cauldron light the shop in pools.
+      fit(6, "potion_shelf_lit", 6, 1),
       fit(7, "cupboard", 7, 2),
       fit(8, "herb_table", 1, 3),
       fit(9, "barrel", 1, 5),

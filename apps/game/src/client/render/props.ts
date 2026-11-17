@@ -10,8 +10,8 @@
 import * as THREE from "three";
 import { fieldstoneTexture } from "./groundArt";
 
-/** The kinds of light a piece can give; Ambience sets how bright and how far each one reaches. */
-export type LightKind = "fire" | "candle" | "lamp";
+/** The kinds of light a piece can give; Ambience sets how bright and how far each one reaches. A `brew` is the green glow off a bubbling cauldron. */
+export type LightKind = "fire" | "candle" | "lamp" | "brew";
 
 const WOOD = "#8a6a44";
 const DARK_WOOD = "#5a3d22";
@@ -509,6 +509,7 @@ const MODELS: Record<string, (b: Builder) => void> = {
   potion_shelf(b) {
     b.box(DARK_WOOD, 0.98, 1.5, 0.36, 0, 0, -0.14);
     b.box("#4a321c", 1.04, 0.06, 0.4, 0, 1.5, -0.14);
+
     for (let i = 0; i < 3; i++) b.box(WOOD, 0.28, 0.2, 0.03, -0.31 + i * 0.31, 0.06, 0.05);
     for (let i = 0; i < 3; i++) b.box(GOLD, 0.05, 0.03, 0.02, -0.31 + i * 0.31, 0.15, 0.07);
     const glassy = ["#b9433d", "#4f9a5a", "#3f6fa8", "#c98b3a", "#8c5ab0", "#4fb8b0", "#d8d2c0"];
@@ -524,6 +525,15 @@ const MODELS: Record<string, (b: Builder) => void> = {
         b.post("#8a6a44", 0.018, 0.018, 0.04, x, y + (tall ? 0.2 : 0.13), 0.03, 5);
       }
     }
+  },
+  // The same shelves with a fat candle guttering on top, wax run down the front. Only one shelf in the shop has one,
+  // so the candles light pools of the room and leave dark between them.
+  potion_shelf_lit(b) {
+    MODELS.potion_shelf(b);
+    b.post(CLOTH, 0.045, 0.05, 0.16, 0.3, 1.56, -0.04, 6);
+    b.box(CLOTH, 0.03, 0.08, 0.02, 0.33, 1.5, 0.06);
+    b.flame("#ffd98a", 0.04, 0.07, 0.04, 0.3, 1.72, -0.04);
+    b.light("candle", 0.3, 1.82, -0.04);
   },
   // The cauldron: a black iron pot on three legs over a small fire, the brew a sickly green and bubbling. The apothecary stirs it with his paddle.
   cauldron(b) {
@@ -541,7 +551,10 @@ const MODELS: Record<string, (b: Builder) => void> = {
     b.post("#26262b", 0.37, 0.37, 0.05, 0, 0.56, 0, 10);
     b.glow("#7fd66a", new THREE.CylinderGeometry(0.32, 0.32, 0.02, 10), 0, 0.6, 0);
     for (const [x, z, r] of [[-0.12, 0.06, 0.05], [0.1, -0.08, 0.04], [0.04, 0.14, 0.03]]) b.glow("#b6f2a0", new THREE.IcosahedronGeometry(r, 0), x, 0.62, z);
+    // A small fire (not a room's great fire: the apothecary keeps his lamp out and his shop in pools of light), and
+    // the brew gives off a green glow of its own.
     b.fire(0, 0.3, 0.5);
+    b.light("brew", 0, 0.8, 0);
   },
   // The apothecary's counter: a panelled front, a top with the scales, a mortar and pestle, and a few bottles put out.
   shop_counter(b) {
@@ -562,6 +575,11 @@ const MODELS: Record<string, (b: Builder) => void> = {
       b.post(color, 0.04, 0.05, 0.12, x, 0.68, z, 6);
       b.post("#8a6a44", 0.018, 0.018, 0.035, x, 0.8, z, 5);
     }
+    // A stub of candle in a brass dish at the back corner, to count by.
+    b.post("#b87333", 0.07, 0.06, 0.02, -0.5, 0.68, -0.18, 8);
+    b.post(CLOTH, 0.025, 0.025, 0.1, -0.5, 0.7, -0.18, 6);
+    b.flame("#ffd98a", 0.03, 0.05, 0.03, -0.5, 0.8, -0.18);
+    b.light("candle", -0.5, 0.88, -0.18);
   },
   // A drying rack: two posts and three rails hung with bunches of herbs, heads down.
   herb_rack(b) {
