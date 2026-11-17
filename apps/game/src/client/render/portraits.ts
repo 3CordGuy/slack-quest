@@ -6,6 +6,7 @@
 import * as THREE from "three";
 import { ENEMIES, type Outfit } from "@gantt-quest/world";
 import { FOUR_LEGGED, makeFigure } from "./figures";
+import { makeRenderer } from "./graphics";
 import type { Look } from "./looks";
 
 /** A picture's size in pixels at detail 1: twice the old sprite. */
@@ -24,6 +25,9 @@ interface Studio {
 }
 
 let studio: Studio | null | undefined;
+/** After the browser refused a renderer: when to ask again (it may only have been a bad moment). */
+let retryAt = 0;
+const RETRY_MS = 5000;
 
 function open(): Studio | null {
   // The browser drops the oldest WebGL context when a page holds too many: a renderer that lost its own is
@@ -32,9 +36,10 @@ function open(): Studio | null {
     studio.renderer.dispose();
     studio = undefined;
   }
+  if (studio === null && performance.now() >= retryAt) studio = undefined;
   if (studio !== undefined) return studio;
   try {
-    const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: false, preserveDrawingBuffer: true, powerPreference: "low-power" });
+    const renderer = makeRenderer({ alpha: true, antialias: false, preserveDrawingBuffer: true, powerPreference: "low-power" });
     renderer.setPixelRatio(1);
     renderer.setClearColor(0x000000, 0);
     const scene = new THREE.Scene();
@@ -49,8 +54,9 @@ function open(): Studio | null {
     camera.position.set(0, 0, 100);
     studio = { renderer, scene, camera, stand };
   } catch {
-    // No WebGL: the HUD goes without faces.
+    // No WebGL for now: the HUD goes without faces, and asks again in a while.
     studio = null;
+    retryAt = performance.now() + RETRY_MS;
   }
   return studio;
 }
