@@ -3260,10 +3260,8 @@ export class WorldRenderer {
     switch (poi.kind) {
       case "landing": {
         if (this.state?.kind === "caverns") {
-          // The way back out of the caverns: a lantern on a spike, and a rope down into the light (see caveRope).
-          add(box(0.05, 0.5, 0.05), lambert("#3d4048"), 0.35, 0.25, -0.2);
+          // The way back out of the caverns: a rope let down into the light from above (see caveRope).
           g.add(caveRope(SHAFT_HEIGHT));
-          add(box(0.16, 0.18, 0.16), new THREE.MeshBasicMaterial({ color: "#ffd98a" }), 0.35, 0.58, -0.2).userData.glow = true;
           // And daylight falling in through it from above: a pale shaft, brightest at the floor and fading as it
           // rises, a pool of light where it lands, and real light round it, so the way out shows from across the dark.
           const sky = new THREE.Color("#d8ecff");

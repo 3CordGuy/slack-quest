@@ -152,17 +152,22 @@ export function caveRope(shaft: number): THREE.Group {
   const g = new THREE.Group();
   const hemp = new THREE.Color("#c4a06a");
   const sky = new THREE.Color("#eef6ff");
-  /** How far up the rope has faded into the light: 0 low down, 1 at the top, where the light swallows it. */
-  const fade = (y: number) => THREE.MathUtils.smoothstep(y, shaft * 0.35, shaft + 0.4);
-  // Hemp low down, paling and thinning into the light as it rises.
-  const material = new THREE.MeshLambertMaterial({ vertexColors: true, transparent: true, flatShading: true });
+  // It stands in daylight, so it is shaded as the daylight would shade it (from above, a little to the front) and not
+  // by the cave's dark: hemp low down, paling as it rises into the light, and gone into it at the top.
+  const sun = new THREE.Vector3(0.35, 0.85, 0.4).normalize();
+  const pale = (y: number) => THREE.MathUtils.smoothstep(y, shaft * 0.25, shaft * 0.9);
+  const gone = (y: number) => THREE.MathUtils.smoothstep(y, shaft * 0.7, shaft + 0.3);
+  const material = new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true });
   const tint = (geometry: THREE.BufferGeometry, base: THREE.Color, lift = 0) => {
     const pos = geometry.getAttribute("position");
+    const normal = geometry.getAttribute("normal");
+    const n = new THREE.Vector3();
     const colors: number[] = [];
     for (let i = 0; i < pos.count; i++) {
-      const k = fade(pos.getY(i) + lift);
-      const c = base.clone().lerp(sky, k);
-      colors.push(c.r, c.g, c.b, 1 - k);
+      const y = pos.getY(i) + lift;
+      n.fromBufferAttribute(normal, i);
+      const c = base.clone().multiplyScalar(0.45 + 0.6 * Math.max(0, n.dot(sun))).lerp(sky, pale(y));
+      colors.push(c.r, c.g, c.b, 1 - gone(y));
     }
     geometry.setAttribute("color", new THREE.Float32BufferAttribute(colors, 4));
     return geometry;
@@ -175,7 +180,9 @@ export function caveRope(shaft: number): THREE.Group {
     new THREE.Vector3(-0.11, shaft * 0.5, -0.05),
     new THREE.Vector3(-0.12, shaft + 0.6, -0.08),
   ]);
+  // Drawn before the shaft of light (which is added on top), so the daylight falls over it and not behind it.
   const rope = new THREE.Mesh(tint(new THREE.TubeGeometry(curve, 72, 0.036, 6, false), hemp), material);
+  rope.renderOrder = -1;
   g.add(rope);
   // Knots for the hands, a forearm apart, up the hanging length (fading with it).
   const knotColor = new THREE.Color("#8a6a3c");
@@ -184,13 +191,13 @@ export function caveRope(shaft: number): THREE.Group {
     const k = new THREE.Mesh(tint(new THREE.SphereGeometry(0.06, 7, 5), knotColor, at.y), material);
     k.position.copy(at);
     k.scale.set(1, 0.75, 1);
+    k.renderOrder = -1;
     g.add(k);
   }
   // The slack, coiled on the floor at its foot.
-  const coilMaterial = new THREE.MeshLambertMaterial({ color: hemp, flatShading: true });
   for (let i = 0; i < 3; i++) {
-    const coil = new THREE.Mesh(new THREE.TorusGeometry(0.17 - i * 0.04, 0.032, 6, 18), coilMaterial);
-    coil.rotation.x = Math.PI / 2;
+    // Laid flat before it is shaded, so the light falls on its top.
+    const coil = new THREE.Mesh(tint(new THREE.TorusGeometry(0.17 - i * 0.04, 0.032, 6, 18).rotateX(Math.PI / 2), hemp), material);
     coil.position.set(0.12 + i * 0.012, 0.035 + i * 0.045, 0.2);
     g.add(coil);
   }
