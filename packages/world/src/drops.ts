@@ -32,7 +32,7 @@ export const ENEMY_DROPS: Record<string, ResourceKind[]> = {
   shade: ["bone"],
   skeleton: ["bone", "iron"],
   bat: ["fur"],
-  slime: ["mushrooms"],
+  slime: ["slime"],
   haunt: ["bone"],
 };
 

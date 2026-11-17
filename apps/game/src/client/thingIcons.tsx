@@ -30,6 +30,7 @@ const RESOURCE_COLOR: Record<ResourceKind, string> = {
   bone: "#eee6cf",
   herbs: "#6fae4a",
   mushrooms: "#b8452f",
+  slime: "#65a30d",
   gem: "#ff7ae0",
 };
 

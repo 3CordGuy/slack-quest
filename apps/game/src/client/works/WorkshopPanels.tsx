@@ -88,7 +88,7 @@ export function ApothecaryPanel({ onClose, refresh }: { onClose(): void; refresh
       {!view && !error && <p className="muted">Grinding, steeping…</p>}
       {view && (
         <>
-          <p className="works-stock">You hold: <RewardChips zeros resources={{ herbs: view.resources.herbs ?? 0, mushrooms: view.resources.mushrooms ?? 0, bone: view.resources.bone ?? 0, wood: view.resources.wood ?? 0, copper: view.resources.copper ?? 0, fur: view.resources.fur ?? 0 }} /></p>
+          <p className="works-stock">You hold: <RewardChips zeros resources={{ herbs: view.resources.herbs ?? 0, mushrooms: view.resources.mushrooms ?? 0, bone: view.resources.bone ?? 0, wood: view.resources.wood ?? 0, copper: view.resources.copper ?? 0, fur: view.resources.fur ?? 0, slime: view.resources.slime ?? 0 }} /></p>
           <p className="works-stock"><strong>For your pack</strong> <span className="muted">· kept until you use them, as many as you can carry</span></p>
           <ul className="workshop-list">
             {THROWABLE_KINDS.map((kind) => {

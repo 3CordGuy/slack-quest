@@ -7,6 +7,7 @@ import { STARTING_STATS } from "@gantt-quest/core";
 import {
   APOTHECARY_PROJECT,
   BREWS,
+  ENEMY_DROPS,
   FLASK_RECIPES,
   SMITHY_MAX_STEPS,
   THROWABLE_KINDS,
@@ -120,7 +121,23 @@ describe("brewing for the pack", () => {
 
   it("has a recipe for everything a hero can drink or throw", () => {
     expect(Object.keys(FLASK_RECIPES).sort()).toEqual([...THROWABLE_KINDS].sort());
-    expect(FLASK_RECIPES).toEqual({ healing: { herbs: 3 }, poison: { mushrooms: 3 }, fire: { wood: 2, copper: 1 }, oil: { bone: 2 }, water: { fur: 1 } });
+    expect(FLASK_RECIPES).toEqual({
+      healing: { herbs: 3 },
+      poison: { slime: 1, mushrooms: 1 },
+      fire: { wood: 2, copper: 1 },
+      oil: { bone: 2 },
+      water: { fur: 1 },
+      acid: { slime: 2, bone: 1 },
+      slime: { slime: 2 },
+    });
+  });
+
+  it("takes cave slime for the poison, acid and slime flasks, and cave slimes leave it", () => {
+    expect(flaskProblem("poison", { built: true, resources: { mushrooms: 3 }, carried: {}, carry: room })).toMatch(/1 slime, 1 mushrooms/);
+    expect(flaskProblem("poison", { built: true, resources: { slime: 1, mushrooms: 1 }, carried: {}, carry: room })).toBeNull();
+    expect(flaskProblem("acid", { built: true, resources: { slime: 2, bone: 1 }, carried: {}, carry: room })).toBeNull();
+    expect(flaskProblem("slime", { built: true, resources: { slime: 1 }, carried: {}, carry: room })).toMatch(/2 slime/);
+    expect(ENEMY_DROPS.slime).toEqual(["slime"]);
   });
 
   it("needs the apothecary built and the materials, and can be done again and again", () => {

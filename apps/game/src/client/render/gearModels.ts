@@ -996,6 +996,18 @@ export const LOW_POLY: Record<string, LowPolyDef> = {
       mushroom(k, 3, -1.2, 0.85);
     },
   },
+  "res-slime": {
+    // A squat glob of cave slime with a smaller one beside it, a shine on each and a bubble caught inside.
+    spin: 0.4,
+    tip: 0.35,
+    build: (k) => {
+      k.ball(4.2, "#65a30d", { at: [-0.8, 1.6, 0], scale: [1.25, 0.62, 1.1] }, 1);
+      k.ball(2, "#4d7c0f", { at: [3.6, 0.8, 1.6], scale: [1.2, 0.6, 1.1] }, 1);
+      k.ball(1.2, "#a3e635", { at: [-2.2, 3.4, 1.2], scale: [1.4, 0.4, 1] });
+      k.ball(0.6, "#a3e635", { at: [3.2, 1.8, 2.2], scale: [1.4, 0.4, 1] });
+      k.ball(0.7, "#d9f99d", { at: [0.8, 2.2, 3.6] });
+    },
+  },
 
   // ---- gold ----
   cash: {

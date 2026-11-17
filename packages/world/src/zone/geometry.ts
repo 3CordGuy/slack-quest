@@ -91,7 +91,7 @@ export interface Reached {
 
 /**
  * What one step costs `unit`, or Infinity if it cannot be made. Open ground is 1; forest and hills 2;
- * climbing a level 1 more; oil underfoot 1 more. A drop or a climb of two levels is a cliff. Enemies
+ * climbing a level 1 more; oil or slime underfoot 1 more. A drop or a climb of two levels is a cliff. Enemies
  * on their feet bar the way; allies and the fallen can be walked past but not stopped on.
  */
 export function stepCost(state: ZoneState, unit: Unit, from: HexPos, to: HexPos, shut?: ReadonlySet<string>): { cost: number; stop: boolean } {
@@ -105,7 +105,8 @@ export function stepCost(state: ZoneState, unit: Unit, from: HexPos, to: HexPos,
     const climb = (tile.elev ?? 0) - elevOf(state.map, from);
     if (Math.abs(climb) >= 2) return none;
     if (climb === 1) cost += 1;
-    if (state.surfaces[posKey(to)]?.kind === "oil") cost += 1;
+    const underfoot = state.surfaces[posKey(to)]?.kind;
+    if (underfoot === "oil" || underfoot === "slime") cost += 1;
   }
   const there = unitAt(state, to);
   if (there && there.id !== unit.id) {
