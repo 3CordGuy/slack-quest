@@ -508,8 +508,12 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
         say(`${name(ev.id)} lights a torch.`);
       } else if (ev.t === "torch_out") {
         say(`${name(ev.id)}'s torch gutters out.`);
+      } else if (ev.t === "took_torch") {
+        say(ev.stowed ? `${name(ev.id)} puts out a torch and stows it in the pack.` : `${name(ev.id)} picks up a burning torch.`);
       } else if (ev.t === "light" && !ev.on) {
-        say("A torch on the ground burns out.");
+        // Gone from the ground because someone took it up is not burning out.
+        const taken = events.some((e) => e.t === "took_torch" && e.at.q === ev.at.q && e.at.r === ev.at.r);
+        if (!taken) say("A torch on the ground burns out.");
       } else if (ev.t === "joined") {
         say(`${name(ev.id)} arrives.`);
       }
@@ -773,6 +777,8 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
     if (dev.tool?.tool === "spawn") return dev.open?.send({ op: "spawn", kinds: dev.tool.kinds, at: pos });
     if (dev.tool?.tool === "paint") return dev.open?.send({ op: "paint", kind: dev.tool.surface, hexes: dev.tool.wide ? zoneBlast(state.map, pos, 1) : [pos] });
     if (!pick) {
+      // A click on a torch burning on the ground right beside you takes it up; from further off, it is walked to.
+      if (state.lights?.[posKey(pos)] && hexDistance(pos, act.pos) <= 1) return zone.send({ type: "pickup", unit: act.id, at: pos });
       // A click on an enemy means "go up to it": the nearest hex beside it that can be reached.
       if (there && there.side === "enemy" && !there.down) {
         const beside = [...reach.values()].filter((r) => r.stop && hexDistance(r.pos, there.pos) === 1).sort((a, b) => a.cost - b.cost)[0];
@@ -896,6 +902,8 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
 
   // Whoever is being shown acting, while the enemy's turn plays out; otherwise whoever the server waits on.
   const waitingFor = enc && !myTurn ? (watching && spot ? (names.current.get(spot) ?? "someone") : enc.acting.map((id) => names.current.get(id) ?? "someone").join(" and ")) : undefined;
+  // A torch burning on the ground within reach, to pick up.
+  const torchBeside = act && state.lights ? Object.keys(state.lights).map((k) => { const [q, r] = k.split(",").map(Number); return { q, r }; }).find((p) => hexDistance(p, act.pos) <= 1) : undefined;
   const place: ReactNode = pick
     ? <>{pick.kind === "ability" ? ABILITIES[pick.id].name : pick.kind === "item" ? THROWABLES[pick.item].name : COMMON_ACTIONS[pick.what].name} <span className="muted">· {pick.kind === "item" && THROWABLES[pick.item].drink ? "click where to throw it, or yourself to drink it" : pick.kind === "item" && THROWABLES[pick.item].light && !act?.torch ? "click where to throw it, or yourself to light it to hold" : "click a target on the map"}, or Esc to put it back</span></>
     : dev.tool
@@ -910,6 +918,7 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
 
   const under = unitOn(hover);
   const ground = hover ? tileAt(state.map, hover) : undefined;
+  const hoverTorch = hover ? state.lights?.[posKey(hover)] : undefined;
   const preview = under && z && pick?.kind === "ability" && under.side !== act.side ? previewAttack(z, act, pick.id, under) : null;
   const surface = hover ? state.surfaces[posKey(hover)] : undefined;
 
@@ -1013,6 +1022,11 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
                   {preview.notes.map((n) => <div key={n} className="muted">{n}</div>)}
                 </div>
               )}
+            </>
+          ) : hoverTorch ? (
+            <>
+              <strong>A burning torch</strong>{" "}
+              <span className="muted">· {hoverTorch.rounds} round{hoverTorch.rounds === 1 ? "" : "s"} of light left{act && hexDistance(hover!, act.pos) <= 1 ? " · click to pick it up" : ""}</span>
             </>
           ) : (
             <>
@@ -1118,6 +1132,11 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
         turn={enc && fighting ? { seconds: deadline, onEnd: myTurn ? () => zone.send({ type: "end_turn", unit: act.id }) : undefined, waitingFor } : undefined}
         menu={<OptionsMenu title={`Map ${code}`} subtitle={<>{state.options.biome} · {state.options.size}</>} actions={[{ label: "Leave the map", hint: "Back to the Harbor. The map stays as you left it.", run: onLeave }]} />}
       >
+        {torchBeside && (!fighting || myTurn) && (
+          <button className="small" disabled={fighting && !budget?.bonus} title={fighting ? "A Bonus action" : undefined} onClick={() => zone.send({ type: "pickup", unit: act.id, at: torchBeside })}>
+            {act.torch ? "Stow the torch" : "Pick up the torch"}
+          </button>
+        )}
         <button className={`small ${focus ? "primary" : ""}`} disabled={act.focus <= 0} aria-pressed={focus} title="Spend 1 Focus on your next attack to roll it with advantage" onClick={() => setFocus((f) => !f)}>Focus {act.focus}</button>
       </HudBar>
     </div>

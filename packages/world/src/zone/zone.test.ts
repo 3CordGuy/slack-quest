@@ -1,13 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { STARTING_STATS, allHexesInGrid, hexDistance, hexNeighbors, posKey, type HexGrid, type HexPos } from "@gantt-quest/core";
-import { ABILITIES, ENEMIES } from "../content";
+import { ABILITIES, EFFECT_TICK, ENEMIES } from "../content";
 import type { Biome, Tile } from "../map";
 import { makeRng } from "../rng";
 import { walk } from "./combat";
 import { attackContext, type Ctx } from "./engine";
 import { ALERT_RANGE, DEFAULT_ZONE_OPTIONS, JOIN_RANGE, generateZone, zoneOptions } from "./gen";
 import { adjacent, blast, flies, sees, solid, zoneReach } from "./geometry";
-import { ENEMY_KIT, LIGHT_RADIUS, SHIELD_SET_ASIDE, TACTICS, TORCH_GROUND_ROUNDS, TORCH_HELD_ROUNDS, enemyHp, enemyStrikes, tacticOf } from "./kit";
+import { ENEMY_KIT, EXPLORE_ROUND_MS, LIGHT_RADIUS, SHIELD_SET_ASIDE, TACTICS, TORCH_GROUND_ROUNDS, TORCH_HELD_ROUNDS, TORCH_ROUND_MS, enemyHp, enemyStrikes, tacticOf } from "./kit";
+import { MAX_CATCHUP_ROUNDS } from "./clock";
 import { defenceOf } from "./engine";
 import { checkAbility } from "./combat";
 import { d20, diceAverage, diceFor, heroMove, hitChance } from "./rules";
@@ -720,6 +721,111 @@ describe("light and the dark", () => {
     expect(unit(state, "ann").torch).toBeUndefined();
     expect(events).toContainEqual({ t: "torch_out", id: "ann" });
     expect(defenceOf(unit(state, "ann"))).toBe(guarded);
+  });
+});
+
+describe("time out of a fight", () => {
+  const T0 = 1_000_000;
+  const tell = (state: ZoneState, now: number, sink: ZoneEvent[] = []) => must(state, { type: "time", now }, sink);
+
+  it("starts counting from the first time it is told, without anything passing", () => {
+    let state = board();
+    hero(state, "ann", "qa_paladin", at(3, 6)).torch = 3;
+    state = paint(state, "poison", [at(8, 6)]);
+    const rounds = state.surfaces[posKey(at(8, 6))].rounds;
+    state = tell(state, T0);
+    expect(state.clock).toEqual({ at: T0, torchAt: T0 });
+    expect(state.surfaces[posKey(at(8, 6))].rounds).toBe(rounds);
+    expect(unit(state, "ann").torch).toBe(3);
+  });
+
+  it("counts every six seconds out of a fight as a round: the ground wears, burning burns, conditions run down", () => {
+    let state = board();
+    const ann = hero(state, "ann", "qa_paladin", at(3, 6));
+    ann.conditions = [{ kind: "burning", rounds: 2 }, { kind: "slowed", rounds: 5 }];
+    state = paint(state, "oil", [at(8, 6)]);
+    const oil = state.surfaces[posKey(at(8, 6))].rounds;
+    state = tell(state, T0);
+    const hp = unit(state, "ann").hp;
+    const events: ZoneEvent[] = [];
+    // Two rounds and a bit: two rounds pass, and the bit is kept for next time.
+    state = tell(state, T0 + 2 * EXPLORE_ROUND_MS + 2_000, events);
+    expect(state.clock!.at).toBe(T0 + 2 * EXPLORE_ROUND_MS);
+    expect(state.surfaces[posKey(at(8, 6))].rounds).toBe(oil - 2);
+    expect(unit(state, "ann").hp).toBe(hp - 2 * EFFECT_TICK.burning!);
+    expect(unit(state, "ann").conditions).toEqual([{ kind: "slowed", rounds: 3 }]);
+    expect(events.filter((e) => e.t === "tick" && e.kind === "burning")).toHaveLength(2);
+  });
+
+  it("counts a long absence as a few rounds at most, and catches the clock up", () => {
+    let state = board();
+    hero(state, "ann", "qa_paladin", at(3, 6)).conditions = [{ kind: "bleeding", rounds: 30 }];
+    state = tell(state, T0);
+    const events: ZoneEvent[] = [];
+    state = tell(state, T0 + 3_600_000, events);
+    expect(events.filter((e) => e.t === "tick")).toHaveLength(MAX_CATCHUP_ROUNDS);
+    expect(state.clock!.at).toBe(T0 + 3_600_000);
+  });
+
+  it("burns torches on a far kinder clock out of a fight, held or lying on the ground", () => {
+    let state = board();
+    hero(state, "ann", "qa_paladin", at(3, 6)).torch = 2;
+    state.lights = { [posKey(at(6, 6))]: { rounds: 1, by: "ann" } };
+    state = tell(state, T0);
+    // A minute and a half less a moment: nothing yet, though the ground has had its rounds.
+    state = tell(state, T0 + TORCH_ROUND_MS - 1);
+    expect(unit(state, "ann").torch).toBe(2);
+    expect(state.lights![posKey(at(6, 6))]).toBeDefined();
+    const events: ZoneEvent[] = [];
+    state = tell(state, T0 + TORCH_ROUND_MS, events);
+    expect(unit(state, "ann").torch).toBe(1);
+    expect(state.lights![posKey(at(6, 6))]).toBeUndefined();
+    expect(events).toContainEqual({ t: "light", at: at(6, 6), on: false });
+    state = tell(state, T0 + 2 * TORCH_ROUND_MS, events);
+    expect(unit(state, "ann").torch).toBeUndefined();
+    expect(events).toContainEqual({ t: "torch_out", id: "ann" });
+  });
+
+  it("leaves time to the fight's own rounds while one is on", () => {
+    let { state } = duel("dummy");
+    unit(state, "ann").torch = 3;
+    state = tell(state, T0);
+    state = tell(state, T0 + 10 * TORCH_ROUND_MS);
+    expect(unit(state, "ann").torch).toBe(3);
+    expect(state.clock).toEqual({ at: T0 + 10 * TORCH_ROUND_MS, torchAt: T0 + 10 * TORCH_ROUND_MS });
+  });
+});
+
+describe("picking up a torch", () => {
+  it("takes a torch burning on the ground into a free hand, with what it has left to burn", () => {
+    let state = board();
+    hero(state, "ann", "qa_paladin", at(3, 6)).items = {};
+    state.lights = { [posKey(at(4, 6))]: { rounds: 5, by: "bo" } };
+    const events: ZoneEvent[] = [];
+    state = must(state, { type: "pickup", by: "ann", unit: "ann", at: at(4, 6) }, events);
+    expect(unit(state, "ann").torch).toBe(5);
+    expect(state.lights![posKey(at(4, 6))]).toBeUndefined();
+    expect(events).toContainEqual({ t: "took_torch", id: "ann", at: at(4, 6), stowed: false });
+    expect(fails(state, { type: "pickup", by: "ann", unit: "ann", at: at(4, 6) })).toMatch(/no torch/);
+  });
+
+  it("puts it out and stows it in the pack with a torch already in hand, and wants you beside it", () => {
+    let state = board();
+    const ann = hero(state, "ann", "qa_paladin", at(3, 6));
+    ann.items = { torch: 1 };
+    ann.torch = 7;
+    state.lights = { [posKey(at(4, 6))]: { rounds: 2, by: null }, [posKey(at(9, 6))]: { rounds: 2, by: null } };
+    expect(fails(state, { type: "pickup", by: "ann", unit: "ann", at: at(9, 6) })).toMatch(/Go up to it/);
+    state = must(state, { type: "pickup", by: "ann", unit: "ann", at: at(4, 6) });
+    expect(unit(state, "ann")).toMatchObject({ torch: 7, items: { torch: 2 } });
+  });
+
+  it("costs a Bonus action in a fight", () => {
+    let { state } = duel("dummy");
+    state.lights = { [posKey(at(5, 5))]: { rounds: 3, by: null }, [posKey(at(5, 7))]: { rounds: 3, by: null } };
+    state = must(state, { type: "pickup", by: "ann", unit: "ann", at: at(5, 5) });
+    expect(state.encounter!.budgets.ann.bonus).toBe(false);
+    expect(fails(state, { type: "pickup", by: "ann", unit: "ann", at: at(5, 7) })).toMatch(/Bonus/);
   });
 });
 

@@ -151,6 +151,11 @@ export interface ZoneState {
   surfaces: Record<string, GroundSurface>;
   /** Torches lying lit on the ground, by hex: rounds of a fight left to burn, and who threw them. */
   lights?: Record<string, { rounds: number; by: string | null }>;
+  /**
+   * Time out of a fight (zone/clock.ts): when the last round of exploring was counted, and the last torch round.
+   * Server time, in ms, as the room told it. Missing until the room first tells the time.
+   */
+  clock?: { at: number; torchAt: number };
   encounter: Encounter | null;
   /** For minting unit ids. */
   seq: number;
@@ -199,6 +204,10 @@ export type ZoneAction =
   | { type: "drink"; by: string; unit: string; item: Throwable }
   /** Light a torch from the pack and hold it: in the off hand, or in the main hand to swing as a weapon. */
   | { type: "light"; by: string; unit: string; hand?: "main" }
+  /** Pick up a torch burning on the ground beside you: into a free hand still lit, or put out and into the pack. */
+  | { type: "pickup"; by: string; unit: string; at: HexPos }
+  /** The server's own, never a client's: the time now, so time out of a fight can pass (zone/clock.ts). */
+  | { type: "time"; now: number }
   | { type: "end_turn"; by: string; unit: string }
   | { type: "timeout" }
   /** The server's own, never a client's: what a hero carries to drink or throw, as their pack holds it now. */
@@ -206,7 +215,7 @@ export type ZoneAction =
   | { type: "dev"; by: string; dev: DevOp };
 
 /** Action types a player's client may send. `dev` is let through only on a development deployment. */
-export const ZONE_CLIENT_ACTIONS: ReadonlySet<ZoneAction["type"]> = new Set(["move", "use", "common", "throw", "drink", "light", "end_turn", "dev"]);
+export const ZONE_CLIENT_ACTIONS: ReadonlySet<ZoneAction["type"]> = new Set(["move", "use", "common", "throw", "drink", "light", "pickup", "end_turn", "dev"]);
 
 /** One d20 roll, as shown on the roll card. */
 export interface Roll {
@@ -259,6 +268,8 @@ export type ZoneEvent =
   | { t: "torch_out"; id: string }
   /** A torch lands burning on the ground (on), or burns out or is put out there (off). */
   | { t: "light"; at: HexPos; on: boolean }
+  /** A hero takes up a torch from the ground: still lit in hand, or put out and stowed in the pack. */
+  | { t: "took_torch"; id: string; at: HexPos; stowed: boolean }
   /** What a hero took from a won fight: the XP it paid and the materials the fallen left. */
   | { t: "spoils"; id: string; xp: number; resources: Resources }
   /** The last enemy group on the map is gone. */

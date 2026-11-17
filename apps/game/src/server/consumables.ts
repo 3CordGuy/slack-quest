@@ -20,6 +20,13 @@ export function spendConsumables(db: D1Database, playerId: string, used: Consuma
   );
 }
 
+/** Statements that put what was picked up on a map into the pack. */
+export function gainConsumables(db: D1Database, playerId: string, gained: Consumables): D1PreparedStatement[] {
+  return THROWABLE_KINDS.filter((k) => (gained[k] ?? 0) > 0).map((k) =>
+    db.prepare("INSERT INTO consumables (player_id, kind, qty) VALUES (?1, ?2, ?3) ON CONFLICT(player_id, kind) DO UPDATE SET qty = qty + ?3").bind(playerId, k, gained[k]!),
+  );
+}
+
 /**
  * The kit every hero starts with: each kind brought up to its starting number, and never down. For a
  * new hero as they are confirmed, and for the dev toolbox's restock.

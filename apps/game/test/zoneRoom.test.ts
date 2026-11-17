@@ -7,9 +7,9 @@
 
 import { readFileSync, readdirSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { hexDistance } from "@gantt-quest/core";
-import { ALERT_RANGE, zoneOptions, type ZoneEvent, type ZoneState, type ZoneView } from "@gantt-quest/world";
+import { ALERT_RANGE, EXPLORE_ROUND_MS, zoneOptions, type ZoneEvent, type ZoneState, type ZoneView } from "@gantt-quest/world";
 import { CAVE_IDLE_MS, createZoneRow, crewPlaces, openCave } from "../src/server/zones";
 
 const globals = globalThis as Record<string, unknown>;
@@ -347,6 +347,48 @@ describe("ZoneRoom", () => {
     const stale = await createZoneRow(db, "ann", options, "c2", "caves", "crew1");
     sql.prepare("UPDATE zones SET updated_at = ? WHERE code = ?").run(Date.now() - CAVE_IDLE_MS - 1000, stale);
     expect(await openCave(db, "crew1")).toBeNull();
+  });
+
+  it("lets time out of a fight pass with whatever is done next, and tells it", async () => {
+    const clock = vi.spyOn(Date, "now");
+    try {
+      const T0 = 2_000_000_000_000;
+      clock.mockReturnValue(T0);
+      const { code, zone, ann } = await arrive();
+      const at = ann.state.map.tiles.find((t) => hexDistance(t, ann.state.start) === 2 && t.biome === "plains")!;
+      await act(zone, ann, { type: "dev", dev: { op: "paint", kind: "oil", hexes: [{ q: at.q, r: at.r }] } });
+      const rounds = saved(code).surfaces[`${at.q},${at.r}`].rounds;
+      // Three rounds of exploring later, the next thing done counts them.
+      clock.mockReturnValue(T0 + 3 * EXPLORE_ROUND_MS + 500);
+      const before = ann.sent.length;
+      const step = ann.state.map.tiles.find((t) => hexDistance(t, ann.state.start) === 1 && t.biome === "plains")!;
+      await act(zone, ann, { type: "move", unit: "ann", to: { q: step.q, r: step.r } });
+      expect(saved(code).surfaces[`${at.q},${at.r}`].rounds).toBe(rounds - 3);
+      expect(saved(code).clock!.at).toBe(T0 + 3 * EXPLORE_ROUND_MS);
+      expect(ann.sent.length).toBeGreaterThan(before);
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
+  it("puts a torch picked up with one already in hand into the pack, for good", async () => {
+    const { code, zone, ann } = await arrive();
+    const state = saved(code);
+    const me = hero(state, "ann");
+    me.torch = 5;
+    const beside = state.map.tiles.find((t) => hexDistance(t, me.pos) === 1 && t.biome === "plains")!;
+    state.lights = { [`${beside.q},${beside.r}`]: { rounds: 3, by: null } };
+    sql.prepare("UPDATE zones SET state_json = ? WHERE code = ?").run(JSON.stringify(state), code);
+    const again = room();
+    const sock = await connect(again, code, "ann");
+    const inPack = () => (sql.prepare("SELECT qty FROM consumables WHERE player_id = 'ann' AND kind = 'torch'").get() as { qty: number } | undefined)?.qty ?? 0;
+    const had = inPack();
+    await act(again, sock, { type: "pickup", unit: "ann", at: { q: beside.q, r: beside.r } });
+    expect(sock.errors).toEqual([]);
+    expect(inPack()).toBe(had + 1);
+    expect(hero(saved(code), "ann").torch).toBe(5);
+    expect(zone).toBeDefined();
+    expect(ann).toBeDefined();
   });
 
   it("tells a player on the map, and only that player, that their trades changed", async () => {
