@@ -19,6 +19,14 @@ export interface Look {
   hatColor?: string;
   /** A full-length coat over the legs, for travellers. */
   coat?: boolean;
+  /** A mustache, in the hair's colour, on a stock figure (a hero's own is in their appearance). */
+  mustache?: "bushy" | "pencil" | "handlebar" | "walrus";
+  /** An apron of this colour over the clothes: a bib on the chest and a skirt to the knees. */
+  apron?: string;
+  /** The nose on a stock figure, where it is not the usual pointy one: `bulbous` is big, round and ruddy. */
+  nose?: "button" | "broad" | "long" | "hooked" | "bulbous";
+  /** The eyes on a stock figure, where they are not the usual round ones. */
+  eyes?: "big" | "beady" | "narrow" | "sleepy" | "fierce";
 }
 
 export const LOOKS: Record<string, Look> = {
@@ -48,9 +56,9 @@ export const LOOKS: Record<string, Look> = {
   // (a hood, not a wide hat, so the brim does not hide his stirring), with the paddle he stirs his cauldron with.
   keeper_smith: { skin: "#d9a67c", hair: "#3a2a20", body: "#6b4a34", legs: "#3a3030", accent: "#8b95a5", hat: "kerchief", hatColor: "#b9433d", weapon: "smith_hammer" },
   keeper_apothecary: { skin: "#e8c2a0", hair: "#d9d9e3", body: "#3e6a44", legs: "#2a3a2e", accent: "#f2d675", hat: "hood", hatColor: "#2f5a3a", weapon: "paddle", coat: true },
-  // The galley's cook: a big, weathered man in a stained linen smock, a cook's cloth cap wound round his head, and
-  // the cleaver he is never seen without.
-  keeper_cook: { skin: "#c98f68", hair: "#2a1c14", body: "#d9cfb6", legs: "#4a3a2e", accent: "#7a3a22", hat: "turban", hatColor: "#ece7d8", weapon: "cleaver" },
+  // The galley's cook: a big, weathered man with small beady eyes, a great red nose and a heavy black mustache, in a slate shirt under a stained linen
+  // apron, a cook's cloth cap wound round his head, and the cleaver he is never seen without.
+  keeper_cook: { skin: "#c98f68", hair: "#2a1c14", body: "#5f6f7a", legs: "#4a3a2e", accent: "#7a3a22", hat: "turban", hatColor: "#ece7d8", weapon: "cleaver", mustache: "walrus", apron: "#e2d9c2", nose: "bulbous", eyes: "beady" },
   npc: { skin: "#e8b891", hair: "#b9b9b9", body: "#a0683a", legs: "#5a4632", accent: "#e8dcc0", hat: "none", weapon: "none" },
   bandit: { skin: "#d9a67c", hair: "#3a2a20", body: "#7a2f2f", legs: "#3a3030", accent: "#1f1f1f", hat: "hood", weapon: "club" },
   cultist: { skin: "#cdb7d6", hair: "#2a1838", body: "#5b2a7a", legs: "#34194a", accent: "#e04fd0", hat: "hood", weapon: "staff" },
