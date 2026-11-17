@@ -64,6 +64,17 @@ function enemyUnit(state: ZoneState, kind: string, pos: HexPos, group: string): 
   };
 }
 
+/**
+ * A cave is left by its mouth, and only there (ZoneView). One made without a mouth (open cave floor from before
+ * delves, or a dev map) is given one where heroes arrive: its start. Run on every cave made, and on every saved
+ * one as it is loaded, so none is ever left with no way out. Returns the same state, changed in place.
+ */
+export function ensureMouth(state: ZoneState): ZoneState {
+  if (state.options.biome !== "caves" || state.map.pois.some((p) => p.kind === "landing")) return state;
+  state.map.pois.push({ id: "landing", kind: "landing", pos: { q: state.start.q, r: state.start.r }, hidden: false, cleared: false, usedBy: [], enemies: [] });
+  return state;
+}
+
 export function createZone(code: string, seed: string, options: ZoneOptions): ZoneState {
   const plan = options.delve ? generateDelve(seed, options) : generateZone(seed, options);
   const state: ZoneState = { v: 1, code, seed, rng: seedFromString(`zone-run|${seed}`), options, map: plan.map, start: plan.start, units: [], groups: {}, surfaces: {}, encounter: null, seq: 0 };
@@ -73,6 +84,7 @@ export function createZone(code: string, seed: string, options: ZoneOptions): Zo
     state.groups[id] = { alerted: false };
     group.kinds.forEach((kind, i) => state.units.push(enemyUnit(state, kind, group.posts[i], id)));
   }
+  ensureMouth(state);
   return state;
 }
 

@@ -1055,7 +1055,9 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
   // A crate beside you, and what of yours would break at it.
   const crateBeside = act ? state.map.pois.find((p) => p.kind === "crate" && !p.cleared && hexDistance(p.pos, act.pos) <= 1) : undefined;
   const crateHit = crateBeside ? crateBlow(asState(state), act, crateBeside.id) : null;
-  const atMouth = caves && !!act && state.map.pois.some((p) => p.kind === "landing" && hexDistance(p.pos, act.pos) <= 1);
+  // The way out: the cave's mouth, or (should a cave ever come without one) where heroes arrive.
+  const mouthAt = state.map.pois.find((p) => p.kind === "landing")?.pos ?? state.start;
+  const atMouth = caves && !!act && hexDistance(mouthAt, act.pos) <= 1;
   /** Back up to the Harbor: out of a cave, standing at its mouth. */
   const leave = () => {
     if (caves) {
@@ -1176,7 +1178,7 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
             <h3>The cave is clear</h3>
             <p>{unopened(state) > 0 ? `${unopened(state) === 1 ? "A chest is" : `${unopened(state)} chests are`} still unopened down here.` : "Everything down here has been found."} The way out is back at the cave mouth.</p>
             <p className="zone-ask-buttons">
-              <button className="primary" onClick={() => { const mouth = state.map.pois.find((p) => p.kind === "landing"); if (mouth) renderer.current?.lookAt(mouth.pos); setClearedAsk(false); }}>Show the way out</button>
+              <button className="primary" onClick={() => { renderer.current?.lookAt(mouthAt); setClearedAsk(false); }}>Show the way out</button>
               <button onClick={() => setClearedAsk(false)}>Keep exploring</button>
             </p>
           </div>

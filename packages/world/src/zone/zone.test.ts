@@ -12,7 +12,7 @@ import { MAX_CATCHUP_ROUNDS } from "./clock";
 import { defenceOf } from "./engine";
 import { checkAbility, crateBlow } from "./combat";
 import { d20, diceAverage, diceFor, heroMove, hitChance } from "./rules";
-import { createZone, standInHero, stepZone, zoneView } from "./zone";
+import { createZone, ensureMouth, standInHero, stepZone, zoneView } from "./zone";
 import { DELVE_CRATES, generateDelve } from "./delve";
 import { litHexes } from "./light";
 import { CHEST_PAY, unopened } from "./loot";
@@ -1284,6 +1284,20 @@ describe("a delve", () => {
       for (const key of walk(new Set())) if (!keys.has(key)) expect(round.has(key), `${where} ${key}`).toBe(true);
       expect(chests.some((c) => posKey(c.pos) === posKey(state.start)), where).toBe(false);
     }
+  });
+
+  it("gives a cave with no mouth one where heroes arrive, once, and leaves other maps alone", () => {
+    const open = createZone("OPEN", "o1", zoneOptions({ biome: "caves", size: "small", groups: 1 }));
+    expect(open.map.pois.filter((p) => p.kind === "landing").map((p) => p.pos)).toEqual([open.start]);
+    // A cave saved before mouths were given out gets one as it is loaded, and only one however often.
+    const old = structuredClone(open);
+    old.map.pois = [];
+    ensureMouth(ensureMouth(old));
+    expect(old.map.pois.filter((p) => p.kind === "landing").map((p) => p.pos)).toEqual([old.start]);
+    // A delve keeps the mouth it has; a meadow gets none.
+    const delve = createZone("DLVE", "d1", delveOptions());
+    expect(delve.map.pois.filter((p) => p.kind === "landing")).toHaveLength(1);
+    expect(createZone("MEAD", "m1", zoneOptions({ biome: "meadow", size: "small" })).map.pois.some((p) => p.kind === "landing")).toBe(false);
   });
 
   it("sends a lone hero against smaller bands, and the haunt alone", () => {

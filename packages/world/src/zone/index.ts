@@ -4,7 +4,7 @@
 // stays inside.
 
 export * from "./types";
-export { createZone, stepZone, zoneView, zoneAwaiting, zoneHero, standInHero } from "./zone";
+export { createZone, ensureMouth, stepZone, zoneView, zoneAwaiting, zoneHero, standInHero } from "./zone";
 export { ZONE_GRIDS, ALERT_RANGE, JOIN_RANGE, DEFAULT_ZONE_OPTIONS, BIOME_LEADS, zoneOptions, generateZone, groupKinds, type ZonePlan } from "./gen";
 export { FREE_WALK, zoneReach, pathIn, sees, sameHex, elevOf, inFight, flies, unitAt, unitById, lineFrom, stepCost, blockerAt, blast as zoneBlast, type Reached } from "./geometry";
 export {
