@@ -40,6 +40,11 @@
 // order, and each is shown over what the server last said until its answer
 // (and the fresh lists after it) are in. A move the server refuses goes back.
 //
+// Gear put on or taken off is shown the same way (wearAhead.ts): the piece is
+// in its slot, or back in the pack, at the click, and what it replaced has
+// come off. The hero out in the view is drawn in it at once too (ownLook.ts).
+// If the server refuses, the piece goes back and the bag says why.
+//
 // What there is to drink or throw (potions, flasks, bombs) lies in the pack in
 // stacks like a material's, and stays in the pack: it is not stowed or
 // traded. Opened on a map, one can be taken in hand out of the bag
@@ -69,6 +74,7 @@ import {
   canHide,
   carryProblem,
   equipProblem,
+  outfitOf,
   itemCells,
   itemSize,
   loadoutOf,
@@ -93,6 +99,9 @@ import { DollChart, type ChartSlot } from "./ui/DollChart";
 import { SplitPrompt, StackIcon, stackName, toStacks, type Stack } from "./ui/Slots";
 import { ITEM_ICON } from "./zone/actionIcons";
 import { uiZoom } from "./uiScale";
+import { ownLook } from "./ownLook";
+import { withLook } from "./render/sprites";
+import { wornAhead, type WearChange } from "./wearAhead";
 import "./ui/slots.css";
 
 /** Where the pointer is, in screen pixels. */
@@ -335,6 +344,8 @@ export function InventoryScreen({ me, refresh, onClose, onIsland = false, chest 
   const [gearAt, setGearAt] = useState<Map<number, { item: OwnedItem; to: Zone; box: number; op: number }>>(() => new Map());
   /** The same for materials: how many of a kind are shown on each side while a move of them is under way. */
   const [matAt, setMatAt] = useState<Map<ResourceKind, { pack: number; chest: number; box: number; op: number }>>(() => new Map());
+  /** Gear put on or taken off whose answer is still to come: each is shown as made meanwhile (wearAhead.ts). */
+  const [wearing, setWearing] = useState<WearChange[]>([]);
   /** The moves go to the server one after another, so each answer is about a state the screen knows. */
   const sending = useRef<Promise<unknown>>(Promise.resolve());
   const opCount = useRef(0);
@@ -354,7 +365,8 @@ export function InventoryScreen({ me, refresh, onClose, onIsland = false, chest 
     return () => removeEventListener("resize", on);
   }, []);
 
-  const items = useMemo(() => me.inventory.map(toOwned), [me.inventory]);
+  // What the hero has with them, with the changes of gear still on their way already made.
+  const items = useMemo(() => wornAhead(me.inventory, wearing).map(toOwned), [me.inventory, wearing]);
   const carry = me.carry;
   const worn = useMemo(() => new Map(items.filter((i) => i.equipped).map((i) => [i.slot, i])), [items]);
   /** The pack as it is shown: what the server lists, with the moves still under way already made. */
@@ -443,6 +455,7 @@ export function InventoryScreen({ me, refresh, onClose, onIsland = false, chest 
       .finally(() => {
         setGearAt(settled);
         setMatAt(settled);
+        setWearing((was) => (was.some((w) => w.op === op) ? was.filter((w) => w.op !== op) : was));
       });
   };
   /** Across between the pack and the open chest: `to` is the side it goes to. */
@@ -583,12 +596,30 @@ export function InventoryScreen({ me, refresh, onClose, onIsland = false, chest 
   }, [pickedDecor, inside]);
 
   // A fight has the gear held as it is (the bag says so under the figure): nothing is worn or taken off.
-  const equip = async (id: number) => {
-    if (!gearLocked) await act(() => api.equip(id));
+  // Otherwise the change is shown at once and sent after any move still on its way. Only a piece the hero
+  // can wear is shown worn: anything else is just sent, and the server says why not.
+  const equip = (id: number) => {
+    if (gearLocked) return;
+    const item = items.find((i) => i.id === id && !i.equipped);
+    if (!item || equipProblem(item, c.class_id, c.level)) return void act(() => api.equip(id));
+    send((op) => setWearing((was) => [...was, { op, itemId: id, on: true }]), () => api.equip(id));
   };
-  const unequip = async (id: number) => {
-    if (!gearLocked) await act(() => api.unequip(id));
+  const unequip = (id: number) => {
+    if (gearLocked) return;
+    send((op) => setWearing((was) => [...was, { op, itemId: id, on: false }]), () => api.unequip(id));
   };
+  // The hero out in the view wears what the bag shows, while the room they stand in has yet to hear of it.
+  const lookAhead = useRef(false);
+  useEffect(() => {
+    const outfit = withLook(outfitOf(items.filter((i) => i.equipped)), c.appearance);
+    if (wearing.length > 0) ownLook.show(outfit);
+    else if (lookAhead.current) ownLook.settle(outfit);
+    lookAhead.current = wearing.length > 0;
+  }, [items, wearing, c.appearance]);
+  // The bag shut on a change still on its way: what was shown stands a little longer, and then the room's word does.
+  useEffect(() => () => {
+    if (lookAhead.current) ownLook.settle();
+  }, []);
   const setHidden = (id: number, hidden: boolean) => act(() => api.hideGear(id, hidden));
   const lift = (stack: Stack, from: Held["from"], e: Point) => {
     setHeld({ stack, from });
