@@ -16,7 +16,7 @@ import { PINCH_PAN_SLACK, followIconSvg, readFollow, writeFollow } from "./camer
 import type { HexPos } from "@gantt-quest/core";
 import { hexDistance } from "@gantt-quest/core";
 import { lookStep, lookYaw, BASE_HEIGHT, BATTLE_JOIN_RANGE, BIG_REACH, ENEMIES, HEX_DIRS, TRAIT_BY_ID, tileCost, WALL_FACE_HALF, WALL_ITEM_BOTTOM, WALL_ITEM_TOP, findPath, hexAt, xpProgress, reachable, tileAt, wallFace, wallFaces, type ClientState, type Outfit, type Phase, type Poi, type Tile, type WorldEvent, type WorldMap } from "@gantt-quest/world";
-import { fancy } from "./fancy";
+import { fancy, fancyGrass } from "./fancy";
 import { NightLife } from "./nightlife";
 import { Storm } from "./storm";
 import { setFieldWalkers, updateWind } from "./wind";
@@ -764,6 +764,8 @@ export class WorldRenderer {
   /** The finishing pass (bloom, tilt-shift, grade), there while "Fancy graphics" is on. On the dev server P switches it alone, to compare. */
   post: PostFx | null = null;
   private unwatchFancy: () => void;
+  /** Stops redrawing the grass and the trees when "Fancy grass" changes. */
+  private unwatchGrass: () => void;
   /** How many of the view's pixels make one of the plates' chunky pixels. */
   private fine = PIXEL;
   /** A backdrop's fixed point of view (see setVantage), and the lightning it is lent by the view showing it. */
@@ -1027,6 +1029,12 @@ export class WorldRenderer {
       this.setPost(fancy.get());
       this.resize();
     });
+    // "Fancy grass" changes what the ground is grown with: the map's ground is drawn again, as when fog lifts.
+    this.unwatchGrass = fancyGrass.subscribe(() => {
+      if (!this.state) return;
+      this.lifted = -1;
+      this.setState(this.state);
+    });
     this.resize();
     if (!opts.backdrop) this.raf = requestAnimationFrame(this.frame);
   }
@@ -1050,6 +1058,7 @@ export class WorldRenderer {
     removeEventListener("blur", this.onBlur);
     this.rotateButtons.remove();
     this.unwatchFancy();
+    this.unwatchGrass();
     this.nightLife.dispose();
     this.gulls.dispose();
     this.storm.dispose();
@@ -2010,7 +2019,7 @@ export class WorldRenderer {
     );
     // The trees bend in the wind (fancy graphics), and aside as anyone walks through them.
     this.woods?.dispose();
-    this.woods = new Woods(trees, boulders, this.sodden);
+    this.woods = new Woods(trees, boulders, this.sodden, !fancyGrass.get());
     this.decor.add(this.woods.group);
 
     // Start centred on the island. Fog lifting redraws the ground but leaves the camera where the player put it.

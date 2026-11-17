@@ -12,9 +12,9 @@ import { audio } from "./audio/engine";
 import { FADERS, FADER_LABELS } from "./audio/mixer";
 import { resetPanels } from "./DragPanel";
 import { PixelIcon } from "./PixelIcon";
-import { fancy } from "./render/fancy";
+import { fancy, fancyGrass } from "./render/fancy";
 import { units } from "./units";
-import { GEAR, RULER, SPARKLE, SPEAKER_OFF, SPEAKER_ON } from "./ui/menuIcons";
+import { GEAR, GRASS, RULER, SPARKLE, SPEAKER_OFF, SPEAKER_ON } from "./ui/menuIcons";
 import { UI_SCALE_MAX, UI_SCALE_MIN, UI_SCALE_STEP, getUiScale, onUiScaleChange, setUiScale, uiZoom } from "./uiScale";
 
 export interface ResetPosition {
@@ -70,6 +70,7 @@ export function OptionsMenu({ reset, resetBlocked, title = "The Harbor of Heylet
   const mix = useSyncExternalStore(audio.mix.subscribe, audio.mix.get);
   const muted = mix.muted;
   const fancyOn = useSyncExternalStore(fancy.subscribe, fancy.get);
+  const grassOn = useSyncExternalStore(fancyGrass.subscribe, fancyGrass.get);
   const measures = useSyncExternalStore(units.subscribe, units.get);
   const [scale, setScale] = useState(getUiScale);
   const [zoom, setZoom] = useState(uiZoom);
@@ -209,6 +210,17 @@ export function OptionsMenu({ reset, resetBlocked, title = "The Harbor of Heylet
                   <PixelIcon rows={SPARKLE} size={18} />
                   <span className="grow">Fancy graphics</span>
                   <span className={`options-switch ${fancyOn ? "on" : ""}`} aria-hidden>{fancyOn ? "On" : "Off"}</span>
+                </button>
+                <button
+                  className="options-sound"
+                  role="switch"
+                  aria-checked={grassOn}
+                  title="Thick fields of grass blades and oaks in full leaf. Off, the grass is a few tufts and the trees are plain low-poly: easier on a phone."
+                  onClick={() => fancyGrass.set(!grassOn)}
+                >
+                  <PixelIcon rows={GRASS} size={18} />
+                  <span className="grow">Fancy grass</span>
+                  <span className={`options-switch ${grassOn ? "on" : ""}`} aria-hidden>{grassOn ? "On" : "Off"}</span>
                 </button>
                 <button
                   className="options-sound"
