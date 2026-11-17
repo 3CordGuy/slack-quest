@@ -11,8 +11,12 @@ import {
   STAT_BLURB,
   STAT_KEYS,
   STAT_LABEL,
+  ABILITY_SLOTS,
   TRAIT_LEVELS,
   abilitiesFor,
+  classAbilitiesOf,
+  parseAbilityLoadout,
+  poolFor,
   armorBlock,
   loadoutOf,
   maxFocusFor,
@@ -63,6 +67,10 @@ export function Logbook({ me, refresh, onClose, onIsland = false }: Props) {
   const stats = { str: total("str"), int_stat: total("int_stat"), vit: total("vit"), agi: total("agi"), dex: total("dex") };
   const weapon = worn.find((i) => i.slot === "main_hand");
   const abilities = abilitiesFor(weapon?.ref);
+  const slotted = parseAbilityLoadout(c.ability_loadout);
+  const pool = poolFor(c.class_id);
+  const equipped = classAbilitiesOf(c.class_id, c.level, slotted);
+  const [pickSlot, setPickSlot] = useState<number | null>(null);
   const next = xpToNext(c.level);
 
   return (
@@ -159,6 +167,41 @@ export function Logbook({ me, refresh, onClose, onIsland = false }: Props) {
                   </div>
                 );
               })}
+              {pool.length > 0 && (
+                <>
+                  <h3>Class abilities</h3>
+                  <p className="book-note">{onIsland ? "Your slots can only be changed in the Harbor." : <>Choose {ABILITY_SLOTS} from your class's abilities. They come with you on top of your weapon's skills. Change them in the Harbor.</>}</p>
+                  <div className="book-slots">
+                    {Array.from({ length: ABILITY_SLOTS }, (_, slot) => {
+                      const id = slotted[slot];
+                      // Something once slotted that has left the class's pool, or that their level no longer reaches: kept, but it does nothing.
+                      const idle = !!id && !equipped.includes(id);
+                      const entry = id ? pool.find((e) => e.id === id) : undefined;
+                      return (
+                        <button key={slot} className={`book-slot ${pickSlot === slot ? "on" : ""} ${idle ? "idle" : ""}`} disabled={onIsland || busy} aria-pressed={pickSlot === slot} onClick={() => setPickSlot(pickSlot === slot ? null : slot)}>
+                          <span className="book-skill-n">{slot + 1}</span>
+                          <strong>{id ? label("ability", id) : "Empty"}</strong>
+                          {id && <small>{!idle ? blurb("ability", id) : entry ? `Opens at level ${entry.level}: does nothing until then.` : "No longer one of your class's abilities: does nothing."}</small>}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  {pickSlot !== null && (
+                    <div className="book-pool">
+                      {pool.map((e) => {
+                        const locked = c.level < e.level;
+                        return (
+                          <button key={e.id} className="book-pool-item" disabled={locked || busy} onClick={() => act(() => api.setAbility(pickSlot, e.id)).then(() => setPickSlot(null))}>
+                            <strong>{label("ability", e.id)}</strong>
+                            <small>{locked ? `Opens at level ${e.level}` : blurb("ability", e.id)}</small>
+                          </button>
+                        );
+                      })}
+                      {slotted[pickSlot] && <button className="book-pool-item" disabled={busy} onClick={() => act(() => api.setAbility(pickSlot, null)).then(() => setPickSlot(null))}><strong>Empty this slot</strong></button>}
+                    </div>
+                  )}
+                </>
+              )}
               {cls?.passive && <div className="book-skill"><span className="book-skill-n">✦</span><div><strong>Passive</strong><small> always on</small><p>{cls.passive}</p></div></div>}
             </>
           )}

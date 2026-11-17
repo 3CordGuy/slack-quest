@@ -36,7 +36,7 @@
 // typing. The bag's button does the same: press it again to put the bag away.
 
 import { Children, useEffect, useRef, useState, type CSSProperties, type DragEvent, type MouseEvent, type ReactNode } from "react";
-import { ABILITIES, COMMON_ACTIONS, RARITY_COLOR, THROWABLES, abilitiesFor, commonCost, loadoutOf, maxHpFor, parseTraits, pendingTraitTiers, tacticOf, xpToNext, type CommonAction, type Throwable } from "@gantt-quest/world";
+import { ABILITIES, COMMON_ACTIONS, RARITY_COLOR, THROWABLES, abilitiesFor, classAbilitiesOf, commonCost, loadoutOf, maxHpFor, parseAbilityLoadout, parseTraits, pendingTraitTiers, tacticOf, withClassAbilities, xpToNext, type CommonAction, type Throwable } from "@gantt-quest/world";
 import type { Me } from "../api";
 import { Icon, ItemDetail, toOwned } from "../items";
 import { blurb, label } from "../labels";
@@ -162,7 +162,7 @@ export function HudBar({ me, place, children, hp, meter, pips = [], chips, quick
   const weapon = worn.find((i) => i.slot === "main_hand");
   const offhand = worn.find((i) => i.slot === "off_hand");
   // With nothing in hand there is only the punch.
-  const abilities = abilitiesFor(weapon?.ref);
+  const abilities = withClassAbilities(abilitiesFor(weapon?.ref), c ? classAbilitiesOf(c.class_id, c.level, parseAbilityLoadout(c.ability_loadout)) : []);
 
   /** What the pointer is over on the bar, and where along it (in the picture's pixels), for the card that explains it. */
   const [tip, setTip] = useState<{ x: number; node: ReactNode } | null>(null);

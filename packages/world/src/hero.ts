@@ -5,6 +5,7 @@
 import type { Stats } from "@gantt-quest/core";
 import type { Combatant } from "./battle";
 import { statPct } from "./check";
+import { classAbilitiesOf, withClassAbilities } from "./classabilities";
 import { abilitiesFor } from "./content";
 import { loadoutOf, outfitOf, type ItemDef, type Outfit } from "./gear";
 import { addStats, maxFocusFor, maxHpFor } from "./progression";
@@ -25,6 +26,8 @@ export interface HeroSheet {
   outfit?: Outfit;
   /** Class traits picked so far (traits.ts). */
   traits?: string[];
+  /** The class abilities chosen for the hero's slots (classabilities.ts). Fought with on top of the weapon's, in zone fights and voyage battles alike. */
+  abilityLoadout?: (string | null)[];
 }
 
 /** What a fight wears down. */
@@ -73,7 +76,7 @@ export function heroCombatant(sheet: HeroSheet, vitals: Pick<Vitals, "hp" | "max
     speed: statPct(stats.agi),
     focus: vitals.focus,
     potions: vitals.potions,
-    abilities: abilitiesFor(sheet.weapon),
+    abilities: withClassAbilities(abilitiesFor(sheet.weapon), classAbilitiesOf(sheet.classId, sheet.level, sheet.abilityLoadout)),
     effects: [],
     down: false,
     traits: [...(sheet.traits ?? [])],

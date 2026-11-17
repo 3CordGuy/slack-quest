@@ -12,6 +12,7 @@
 // turns are played here, at once, so nothing waits on a client.
 
 import { STARTING_STATS, hexDistance, posKey, type HexPos } from "@gantt-quest/core";
+import { classAbilitiesOf, withClassAbilities } from "../classabilities";
 import { ABILITIES, DRUID_REGEN, EFFECT_TICK, ENEMIES, HERO_CLASSES, abilitiesFor } from "../content";
 import { battleDrops } from "../drops";
 import { tileAt } from "../map";
@@ -104,6 +105,11 @@ export function zoneAwaiting(state: ZoneState): string | null {
   return state.encounter && state.encounter.acting.length > 0 ? `t:${state.encounter.turnNo}` : null;
 }
 
+/** Everything a hero can use in a fight: what their weapon gives, then the class abilities they chose. */
+function heroAbilities(hero: ZoneHero): string[] {
+  return withClassAbilities(abilitiesFor(hero.weapon), hero.classAbilities);
+}
+
 function heroUnit(hero: ZoneHero, pos: HexPos, controller?: string): Unit {
   return {
     id: hero.id,
@@ -119,7 +125,7 @@ function heroUnit(hero: ZoneHero, pos: HexPos, controller?: string): Unit {
     stats: hero.stats,
     armor: hero.armor,
     power: hero.weaponPower,
-    abilities: abilitiesFor(hero.weapon),
+    abilities: heroAbilities(hero),
     outfit: hero.outfit,
     conditions: [],
     down: false,
@@ -135,6 +141,7 @@ export function zoneHero(sheet: HeroSheet, items?: Partial<Record<Throwable, num
   return {
     id: sheet.id, name: sheet.name, classId: sheet.classId, level: sheet.level, stats, weapon: sheet.weapon, weaponPower: sheet.weaponPower ?? 0, armor: sheet.armor ?? 0, outfit: sheet.outfit,
     maxHp: maxHpFor(stats, sheet.level), maxFocus: maxFocusFor(sheet.level),
+    classAbilities: classAbilitiesOf(sheet.classId, sheet.level, sheet.abilityLoadout),
     ...(items ? { items: cleanItems(items) } : {}),
   };
 }
@@ -595,8 +602,8 @@ function act(ctx: Ctx, action: ZoneAction): string | null {
       if (inFight(state, here.id)) return null;
       Object.assign(here, { name: hero.name, kind: hero.classId, level: hero.level, stats: hero.stats, armor: hero.armor, power: hero.weaponPower, outfit: hero.outfit, maxHp: hero.maxHp, maxFocus: hero.maxFocus });
       // A torch swung in the main hand stays there: the new weapon is what is taken up when it goes.
-      if (here.torchHand === "main") here.stowed = abilitiesFor(hero.weapon);
-      else here.abilities = abilitiesFor(hero.weapon);
+      if (here.torchHand === "main") here.stowed = heroAbilities(hero);
+      else here.abilities = heroAbilities(hero);
       here.hp = Math.min(here.hp, here.maxHp);
       return null;
     }

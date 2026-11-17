@@ -48,4 +48,5 @@ export * from "./trade";
 export * from "./carry";
 export * from "./catalogue";
 export * from "./traits";
+export * from "./classabilities";
 export * from "./zone";

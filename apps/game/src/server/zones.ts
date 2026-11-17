@@ -71,6 +71,16 @@ export async function clearPresence(db: D1Database, playerId: string, code?: str
   await gone.run().catch(unwritten("clear"));
 }
 
+/** Whether a player is out on a zone right now (as opposed to in the Harbor). Not on one, if presence cannot be read. */
+export async function onAZone(db: D1Database, playerId: string): Promise<boolean> {
+  const row = await db
+    .prepare("SELECT 1 AS here FROM zone_presence WHERE player_id = ? AND seen_at > ?")
+    .bind(playerId, Date.now() - PRESENCE_STALE_MS)
+    .first()
+    .catch((err) => (unwritten("read")(err), null));
+  return !!row;
+}
+
 /** Who of a crew is out on a zone, by player id. Nobody, if presence cannot be read. */
 export async function crewPresence(db: D1Database, crewId: string): Promise<Map<string, { code: string; fighting: boolean }>> {
   const rows = await db

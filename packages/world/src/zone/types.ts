@@ -202,6 +202,8 @@ export interface ZoneHero {
   outfit?: Outfit;
   maxHp: number;
   maxFocus: number;
+  /** The class abilities they carry in, already checked against their class and level (classabilities.ts), on top of the weapon's. */
+  classAbilities?: string[];
   /** What they carry to drink or throw, out of their own pack. A stand-in has no pack and is given the starting kit. */
   items?: Partial<Record<Throwable, number>>;
 }

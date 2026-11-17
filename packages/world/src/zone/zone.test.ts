@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { STARTING_STATS, allHexesInGrid, hexDistance, hexNeighbors, posKey, type HexGrid, type HexPos } from "@gantt-quest/core";
-import { ABILITIES, EFFECT_TICK, ENEMIES } from "../content";
+import { ABILITIES, EFFECT_TICK, ENEMIES, abilitiesFor } from "../content";
 import type { Biome, Tile } from "../map";
 import { makeRng } from "../rng";
 import { walk } from "./combat";
@@ -1353,6 +1353,15 @@ describe("fleeing", () => {
     expect(unit(state, "s1").away).toBeUndefined();
     expect(back).toContainEqual({ t: "fight_join", id: "bo" });
     expect(state.encounter!.order).toContain("s1");
+  });
+
+  it("brings a hero's class abilities with them, after the weapon's, and refreshes them on a return", () => {
+    const sheet = standInHero("qa_paladin", "cy", 3)!;
+    let state = must(board(), { type: "join", hero: { ...sheet, classAbilities: ["firebolt", "smite"] } });
+    const weapon = abilitiesFor(sheet.weapon);
+    expect(unit(state, "cy").abilities).toEqual([...new Set([...weapon, "firebolt", "smite"])]);
+    state = must(state, { type: "join", hero: { ...sheet, classAbilities: [] } });
+    expect(unit(state, "cy").abilities).toEqual(weapon);
   });
 
   it("keeps a hero whose player leaves in the middle of a fight in it", () => {

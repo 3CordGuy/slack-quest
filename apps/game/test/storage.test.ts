@@ -5,8 +5,9 @@ import { readFileSync, readdirSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { beforeEach, describe, expect, it } from "vitest";
 import { CARRY_BASE, FURNISHINGS, itemCells, GATHER_DAILY_OUTINGS, STORAGE_CHEST, gatherDay, type ItemDef } from "@gantt-quest/world";
-import { applyGrant, buyShopItem, carryState, craftFurnishing, equipItem, getInventory, getShop, sellItem, stashMaterial, storeItem, stowGear, unstowGear } from "../src/server/db";
+import { applyGrant, buyShopItem, carryState, craftFurnishing, equipItem, getInventory, getShop, sellItem, setAbilitySlot, stashMaterial, storeItem, stowGear, unstowGear } from "../src/server/db";
 import { rest } from "../src/server/gather";
+import { setPresence } from "../src/server/zones";
 import { buyFromSalesman, getSalesman } from "../src/server/salesman";
 import { acceptTrade, openTrade, setTradeSide } from "../src/server/trade";
 
@@ -346,5 +347,41 @@ describe("resting at home", () => {
     const again = await rest(db, "ann", "hut");
     expect(again).toMatch(/rest again|just rested/i);
     expect(one<{ used: number }>("SELECT used FROM gathering WHERE player_id = 'ann'").used).toBe(2);
+  });
+});
+
+describe("class ability slots", () => {
+  const pools = { qa_paladin: [{ id: "smite", level: 1 }, { id: "cleave", level: 1 }, { id: "shield_wall", level: 50 }] };
+  const slots = () => one<{ ability_loadout: string }>("SELECT ability_loadout FROM characters WHERE player_id = 'ann'").ability_loadout;
+
+  it("starts empty, then keeps what is slotted", async () => {
+    expect(slots()).toBe("[]");
+    expect(await setAbilitySlot(db, "ann", 0, "smite", pools)).toBeNull();
+    expect(JSON.parse(slots())).toEqual(["smite", null, null]);
+    expect(await setAbilitySlot(db, "ann", 2, "cleave", pools)).toBeNull();
+    expect(JSON.parse(slots())).toEqual(["smite", null, "cleave"]);
+  });
+
+  it("trades places when an ability is moved to another slot, and empties a slot", async () => {
+    await setAbilitySlot(db, "ann", 0, "smite", pools);
+    await setAbilitySlot(db, "ann", 1, "smite", pools);
+    expect(JSON.parse(slots())).toEqual([null, "smite", null]);
+    expect(await setAbilitySlot(db, "ann", 1, null, pools)).toBeNull();
+    expect(JSON.parse(slots())).toEqual([null, null, null]);
+  });
+
+  it("refuses what the class lacks, what the level has not opened, and a slot that is not there", async () => {
+    expect(await setAbilitySlot(db, "ann", 0, "firebolt", pools)).toMatch(/class's abilities/);
+    expect(await setAbilitySlot(db, "ann", 0, "shield_wall", pools)).toMatch(/level 50/);
+    expect(await setAbilitySlot(db, "ann", 3, "smite", pools)).toMatch(/no such slot/);
+    expect(slots()).toBe("[]");
+  });
+
+  it("is refused out on a zone, and allowed again back in the Harbor", async () => {
+    await setPresence(db, "ann", "ZONEAA", false);
+    expect(await setAbilitySlot(db, "ann", 0, "smite", pools)).toMatch(/only be changed in the Harbor/);
+    expect(slots()).toBe("[]");
+    sql.prepare("DELETE FROM zone_presence WHERE player_id = 'ann'").run();
+    expect(await setAbilitySlot(db, "ann", 0, "smite", pools)).toBeNull();
   });
 });
