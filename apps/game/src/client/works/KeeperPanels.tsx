@@ -1,7 +1,8 @@
 // Dealing with the smith or the apothecary, standing in front of them in
 // their shop (KeeperView): what they sell from their own stock for gold, and
 // what they do with what you bring. The keeper and what you hold stay at the
-// top; the list of items and services scrolls under them.
+// top; the list of items and services scrolls under them. The hotbar is put
+// away meanwhile; "Step away" walks you back from the keeper and brings it back.
 //
 // Anything with a gold price can be haggled over, once a day: pick how much
 // to ask off, and the server rolls for whether the keeper agrees.
@@ -67,7 +68,7 @@ function HaggleAsks({ list, chances, busy, onAsk, onCancel }: { list: number; ch
 }
 
 /** The shared frame: the keeper at the top, what you hold, the last word, and the scrolling list. */
-function Frame({ shop, said, hold, children }: { shop: KeeperShop; said: Said | null; hold: ReactNode; children: ReactNode }) {
+function Frame({ shop, said, hold, onDone, children }: { shop: KeeperShop; said: Said | null; hold: ReactNode; onDone(): void; children: ReactNode }) {
   const { keeper, title } = KEEPER_PLACES[shop];
   return (
     <DragPanel id={`keeper.${shop}`} title={title} className={`story panel pub-bar keeper-panel keeper-${shop}`}>
@@ -79,7 +80,10 @@ function Frame({ shop, said, hold, children }: { shop: KeeperShop; said: Said | 
             <p className={`salesman-says ${said?.tone === "bad" ? "bad" : said?.tone === "good" ? "good" : ""}`} role="status">{said ? said.text : `“${keeper.line}”`}</p>
           </div>
         </div>
-        {hold}
+        <div className="keeper-hold">
+          {hold}
+          <button className="small" onClick={onDone} title="Step back from the keeper: the hotbar comes back">Step away</button>
+        </div>
       </div>
       <div className="keeper-list" tabIndex={0} aria-label="Items and services">{children}</div>
     </DragPanel>
@@ -132,7 +136,7 @@ function HaggleButton({ entry, deal, list, open, busy, disabled, onOpen }: { ent
 
 // ---------- the apothecary ----------
 
-export function ApothecaryKeeperPanel({ view, setView, reload, refresh, onSay }: {
+export function ApothecaryKeeperPanel({ view, setView, reload, refresh, onSay, onDone }: {
   view: ApothecaryView;
   setView(view: ApothecaryView): void;
   /** Fetch the shop again. */
@@ -141,6 +145,8 @@ export function ApothecaryKeeperPanel({ view, setView, reload, refresh, onSay }:
   refresh(): Promise<unknown>;
   /** The keeper says something out loud, over his head. */
   onSay(text: string): void;
+  /** Step back from the keeper, which puts the panel away. */
+  onDone(): void;
 }) {
   const d = useDealing("apothecary", reload, refresh, onSay);
   const bagBuff = perkText(brewBuff(view.bag));
@@ -171,6 +177,7 @@ export function ApothecaryKeeperPanel({ view, setView, reload, refresh, onSay }:
     <Frame
       shop="apothecary"
       said={d.said}
+      onDone={onDone}
       hold={<p className="works-stock">You hold: <RewardChips zeros gold={view.gold} resources={{ herbs: view.resources.herbs ?? 0, mushrooms: view.resources.mushrooms ?? 0, bone: view.resources.bone ?? 0, wood: view.resources.wood ?? 0, copper: view.resources.copper ?? 0, fur: view.resources.fur ?? 0, slime: view.resources.slime ?? 0 }} /></p>}
     >
       <h4 className="keeper-section">On the shelf <span className="muted">· ready-made, for gold · {SHELF_DAILY} of each a day</span></h4>
@@ -254,13 +261,14 @@ export function ApothecaryKeeperPanel({ view, setView, reload, refresh, onSay }:
 
 // ---------- the smithy ----------
 
-export function SmithyKeeperPanel({ me, view, setView, reload, refresh, onSay }: {
+export function SmithyKeeperPanel({ me, view, setView, reload, refresh, onSay, onDone }: {
   me: Me;
   view: SmithyView;
   setView(view: SmithyView): void;
   reload(): Promise<unknown>;
   refresh(): Promise<unknown>;
   onSay(text: string): void;
+  onDone(): void;
 }) {
   const c = me.character!;
   const d = useDealing("smithy", reload, refresh, onSay);
@@ -283,7 +291,7 @@ export function SmithyKeeperPanel({ me, view, setView, reload, refresh, onSay }:
     });
 
   return (
-    <Frame shop="smithy" said={d.said} hold={<p className="works-stock">You hold: <RewardChips zeros gold={view.gold} resources={{ iron: view.resources.iron ?? 0, copper: view.resources.copper ?? 0 }} /></p>}>
+    <Frame shop="smithy" said={d.said} onDone={onDone} hold={<p className="works-stock">You hold: <RewardChips zeros gold={view.gold} resources={{ iron: view.resources.iron ?? 0, copper: view.resources.copper ?? 0 }} /></p>}>
       <h4 className="keeper-section">On the rack <span className="muted">· today's work, for gold · made for your class and level</span></h4>
       <ul className="workshop-list">
         {view.wares.map((w) => {

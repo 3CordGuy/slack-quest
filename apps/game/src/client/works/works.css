@@ -158,3 +158,11 @@
   .keeper-line { flex-wrap: wrap; }
   .keeper-buttons { flex-direction: row; width: 100%; justify-content: flex-end; }
 }
+/* What you hold, with the way back from the keeper at the end of the line. */
+.keeper-hold { display: flex; align-items: center; gap: 8px; }
+.keeper-hold .works-stock { flex: 1; min-width: 0; }
+.keeper-hold button { flex: none; }
+/* With the hotbar put away, a docked panel on a phone can have more of the screen. */
+@media (max-width: 760px) {
+  .story.pub-bar.keeper-panel:not(.folded) { max-height: calc(64vh / var(--ui-z, 1)); }
+}

@@ -11,8 +11,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
-import type { HexPos } from "@gantt-quest/core";
-import { KEEPER_PLACES, keeperPath, keeperRoom, outfitOf, type KeeperShop } from "@gantt-quest/world";
+import { hexNeighbors, type HexPos } from "@gantt-quest/core";
+import { KEEPER_GRID, KEEPER_PLACES, keeperPath, keeperRoom, outfitOf, type KeeperShop } from "@gantt-quest/world";
 import { api, type ApothecaryView, type Me, type SmithyView } from "./api";
 import { useAudioScene } from "./audio/useAudioScene";
 import { InventoryScreen } from "./InventoryScreen";
@@ -117,7 +117,8 @@ export function KeeperView({ shop, me, refresh, onLeave }: { shop: KeeperShop; m
       }, ms);
       timers.add(t);
     };
-    const beat = place.work.how === "hammer" ? 1150 : 2400;
+    // A blow about once a second; a stir runs half a minute, asked again just before it ends.
+    const beat = place.work.how === "hammer" ? 1150 : 29_000;
     const go = () => {
       const wait = r.work(keeper.id, place.work.how, at);
       if (place.work.how === "hammer" && wait > 0) {
@@ -148,6 +149,24 @@ export function KeeperView({ shop, me, refresh, onLeave }: { shop: KeeperShop; m
     if (atKeeper) renderer.current?.say(keeper.id, keeper.hello);
   }, [atKeeper, keeper]);
   const say = useCallback((text: string) => renderer.current?.say(keeper.id, text), [keeper]);
+  /** Dealing with the keeper: their panel is up, and the hotbar is put away so the list has the screen. */
+  const dealing = !!view?.built && atKeeper;
+  // While dealing, the camera brings the keeper clear of the panel so you can watch them work: to the right of it
+  // on a wide screen (the panel is on the left), above it on a phone (it is docked along the bottom). Stepping
+  // away puts the camera back on the middle of the room.
+  useEffect(() => {
+    const r = renderer.current;
+    if (!r) return;
+    const k = place.keeperPos;
+    const phone = typeof matchMedia === "function" && matchMedia("(max-width: 760px)").matches;
+    r.lookAt(dealing ? (phone ? { q: k.q - 2, r: k.r + 3 } : { q: k.q - 1, r: k.r }) : { q: k.q, r: k.r + 1 });
+  }, [dealing, place]);
+  /** Step back from the keeper onto the floor beside the counter, toward the room: the panel goes, the hotbar comes back. */
+  const stepAway = () => {
+    const away = hexNeighbors(place.stand, KEEPER_GRID).filter((n) => !same(n, place.keeperPos) && keeperPath(shop, room, place.stand, n));
+    away.sort((a, b) => b.r - a.r);
+    if (away[0]) walk.current(away[0]);
+  };
 
   const [bag, setBag] = useState(false);
   const [book, setBook] = useState(false);
@@ -168,11 +187,13 @@ export function KeeperView({ shop, me, refresh, onLeave }: { shop: KeeperShop; m
     <div className={`run hut-view keeper-view keeper-view-${shop}`}>
       <div className="stage" ref={mount} />
 
-      {view?.built && atKeeper && (shop === "apothecary"
-        ? <ApothecaryKeeperPanel view={view as ApothecaryView} setView={setView} reload={reload} refresh={refresh} onSay={say} />
-        : <SmithyKeeperPanel me={me} view={view as SmithyView} setView={setView} reload={reload} refresh={refresh} onSay={say} />)}
+      {dealing && (shop === "apothecary"
+        ? <ApothecaryKeeperPanel view={view as ApothecaryView} setView={setView} reload={reload} refresh={refresh} onSay={say} onDone={stepAway} />
+        : <SmithyKeeperPanel me={me} view={view as SmithyView} setView={setView} reload={reload} refresh={refresh} onSay={say} onDone={stepAway} />)}
 
-      <HudBar
+      {/* Put away while dealing with the keeper, as at the pub's game tables: the panel has the screen, and its own
+          way back ("Step away"). It comes back as you step away. */}
+      {!dealing && <HudBar
         me={me}
         place={
           atDoor ? <span>The door back to the Harbor.</span>
@@ -199,7 +220,7 @@ export function KeeperView({ shop, me, refresh, onLeave }: { shop: KeeperShop; m
       >
         {!atKeeper && !refused && <button className="primary" onClick={() => walk.current(place.stand)}>Talk to {keeper.short}</button>}
         <button className={atDoor ? "primary" : ""} onClick={onLeave}>Leave</button>
-      </HudBar>
+      </HudBar>}
       {bag && <InventoryScreen me={me} refresh={refresh} onClose={closeBag} />}
       {book && <Logbook me={me} refresh={refresh} onClose={() => setBook(false)} />}
       {atDoor && !refused && <TileAction renderer={renderer} pos={pos} unitId={you} label="Leave" run={onLeave} />}
