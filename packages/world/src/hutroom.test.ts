@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { hexNeighbors } from "@gantt-quest/core";
-import { CHEST_COLS, CHEST_MAX_ROWS, FURNISHINGS, HUT_TIERS, SMALL_PER_SPOT, STORAGE_CHEST, displacedFurnishings, freeSpot, hutDoor, hutFloor, hutPath, hutRoom, hutTier, HEX_DIRS, besideHexes, isBeside, lieDownProblem, useOf, useProblem, placeProblem, placedFurnishings, poiAt, putInProblem, smallPlaceProblem, tileAt, validFacing, type Furnishing } from "./index";
+import { CHEST_COLS, CHEST_MAX_ROWS, FURNISHINGS, HOME_FREEBIES, HUT_TIERS, SMALL_PER_SPOT, STORAGE_CHEST, WARDROBE, displacedFurnishings, freeSpot, hutDoor, hutFloor, hutPath, hutRoom, hutTier, HEX_DIRS, besideHexes, isBeside, lieDownProblem, useOf, useProblem, placeProblem, placedFurnishings, poiAt, putInProblem, seatHexes, smallPlaceProblem, tileAt, validFacing, type Furnishing } from "./index";
 
 const at = (q: number, r: number) => ({ q, r });
 
@@ -125,6 +125,44 @@ describe("walking around furniture", () => {
   });
 });
 
+describe("sitting on a stool", () => {
+  const room = hutRoom(1);
+  const door = hutDoor(1);
+  const far = hutFloor(room)[0];
+  const direct = hutPath(room, [], door, far)!;
+  const spot = direct[Math.floor(direct.length / 2)];
+  const stool = [{ id: 1, defId: "chair", onId: null, q: spot.q, r: spot.r }];
+  const onStool = (p: { q: number; r: number }) => p.q === spot.q && p.r === spot.r;
+
+  it("is what a click on a stool does", () => {
+    expect(useOf("chair")).toBe("sit");
+    expect(useProblem("chair", false)).toBeNull();
+    expect(seatHexes(stool)).toEqual([spot]);
+    expect(seatHexes([{ id: 2, defId: "table", onId: null, q: spot.q, r: spot.r }])).toEqual([]);
+  });
+
+  it("ends a walk on the stool's hex, and never passes through it", () => {
+    const onto = hutPath(room, stool, door, spot)!;
+    expect(onto.at(-1)).toEqual(spot);
+    expect(onto.slice(0, -1).some(onStool)).toBe(false);
+    expect(hutPath(room, stool, door, far)!.some(onStool)).toBe(false);
+  });
+
+  it("lets whoever is sitting walk off again", () => {
+    expect(hutPath(room, stool, spot, door)!.at(-1)).toEqual(door);
+  });
+
+  it("holds one at a time", () => {
+    expect(hutPath(room, stool, door, spot, undefined, [spot])).toBeNull();
+    expect(hutPath(room, stool, door, spot, undefined, [far])).not.toBeNull();
+  });
+
+  it("cannot be sat on when nothing beside it can be reached", () => {
+    const ring = hexNeighbors(spot, room.grid).filter((n) => tileAt(room, n)!.biome === "floor").map((n) => ({ id: 10, defId: "table", onId: null, q: n.q, r: n.r }));
+    expect(hutPath(room, [...stool, ...ring], door, spot)).toBeNull();
+  });
+});
+
 describe("a hut changing size", () => {
   it("keeps every piece where it stands when the room grows", () => {
     for (const tier of HUT_TIERS.slice(0, -1)) {
@@ -184,6 +222,28 @@ describe("the free storage chest", () => {
     const first = freeSpot(room, [], STORAGE_CHEST, door)!;
     const second = freeSpot(room, [first], STORAGE_CHEST, door)!;
     expect(second).not.toEqual(first);
+  });
+});
+
+describe("the free wardrobe", () => {
+  it("comes with every home beside the chest: free, no perk, never sold or crafted", () => {
+    expect(HOME_FREEBIES).toEqual([STORAGE_CHEST, WARDROBE]);
+    const def = FURNISHINGS[WARDROBE];
+    expect(def.kind).toBe("furniture");
+    expect(def.dress).toBe(true);
+    expect(def.storage).toBeUndefined();
+    expect(def.price ?? def.recipe ?? def.perk).toBeUndefined();
+  });
+
+  it("finds its own spot clear of the chest in every hut", () => {
+    for (const { tier } of HUT_TIERS) {
+      const room = hutRoom(tier);
+      const door = hutDoor(tier);
+      const chest = { ...freeSpot(room, [], STORAGE_CHEST, door)!, defId: STORAGE_CHEST };
+      const spot = freeSpot(room, [chest], WARDROBE, door)!;
+      expect(spot).not.toBeNull();
+      expect(placeProblem(room, [chest], WARDROBE, spot)).toBeNull();
+    }
   });
 });
 
@@ -276,10 +336,12 @@ describe("using pieces outside edit mode", () => {
   it("rests in a bed, opens containers, warms up at a fire, reads books and otherwise looks", () => {
     expect(useOf("bed")).toBe("rest");
     for (const id of ["chest", "storage_chest", "dresser", "crate", "barrel", "cupboard"]) expect(useOf(id), id).toBe("open");
+    expect(useOf("wardrobe")).toBe("dress");
     expect(useOf("hearth")).toBe("warm");
     expect(useOf("fireplace")).toBe("warm");
     expect(useOf("bookshelf")).toBe("read");
-    expect(useOf("chair")).toBe("look");
+    expect(useOf("chair")).toBe("sit");
+    expect(useOf("table")).toBe("look");
     expect(useOf("nonsense")).toBe("look");
   });
 
@@ -289,6 +351,8 @@ describe("using pieces outside edit mode", () => {
     expect(useProblem("bed", false, "Ada")).toMatch(/Only Ada sleeps here/);
     expect(useProblem("chest", false)).toMatch(/can open/);
     expect(useProblem("dresser", false)).not.toBeNull();
+    expect(useProblem("wardrobe", true)).toBeNull();
+    expect(useProblem("wardrobe", false, "Ada")).toMatch(/Only Ada can open/);
     expect(useProblem("hearth", false)).toBeNull();
     expect(useProblem("bookshelf", false)).toBeNull();
     expect(useProblem("chair", false)).toBeNull();

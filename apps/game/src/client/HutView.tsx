@@ -1,8 +1,8 @@
 // Inside a hut: a small room drawn by the same renderer as the Harbor, where
 // everyone present sees each other and the furniture.
 //
-// Clicking a piece uses it: the owner rests in their bed and opens their
-// chests, and anyone can warm up at a fire, read a shelf or look at the rest
+// Clicking a piece uses it: the owner rests in their bed, opens their
+// chests and changes their look at their wardrobe (ChangeLook), and anyone can warm up at a fire, read a shelf or look at the rest
 // (useOf in hutroom.ts). The hero walks over first, and while they stand
 // beside something usable its action floats over their head (TileAction).
 //
@@ -18,8 +18,9 @@ import { catchIcon } from "./render/catchArt";
 import { units } from "./units";
 import { useAudioScene } from "./audio/useAudioScene";
 import type { HexPos } from "@gantt-quest/core";
-import { FURNISHINGS, besideHexes, coveredHexes, hutPath, isBeside, useOf, useProblem, type FurnishingUse, craftProblem, footprintCentre, furnitureSellPrice, sellFurnitureProblem, footprintOf, hexCentre, hexSpan, hutDoor, hutPerks, hutRoom, hutTier, isFlat, isMounted, isSmall, nextHutTier, placeProblem, placedFurnishings, poiAt, smallPlaceProblem, turnOf, upgradeProblem, wallPlaceProblem, wrapAngle, type Furnishing } from "@gantt-quest/world";
+import { DEFAULT_APPEARANCE, FURNISHINGS, type PublicHero, besideHexes, coveredHexes, hutPath, isBeside, useOf, useProblem, type FurnishingUse, craftProblem, footprintCentre, furnitureSellPrice, sellFurnitureProblem, footprintOf, hexCentre, hexSpan, hutDoor, hutPerks, hutRoom, hutTier, isFlat, isMounted, isSmall, nextHutTier, placeProblem, placedFurnishings, poiAt, smallPlaceProblem, turnOf, upgradeProblem, wallPlaceProblem, wrapAngle, type Furnishing } from "@gantt-quest/world";
 import { api, type Hut, type Me } from "./api";
+import { ChangeLook, LOOK_CHANGED } from "./ChangeLook";
 import { CrewRoster } from "./CrewRoster";
 import { DragPanel } from "./DragPanel";
 import { OptionsMenu } from "./OptionsMenu";
@@ -90,9 +91,9 @@ function tags(defId: string): string[] {
 const RECIPES = Object.values(FURNISHINGS).filter((f) => f.recipe).sort((a, b) => Number(!!a.needsBlueprint) - Number(!!b.needsBlueprint));
 
 /** What a use is called, on the button over the hero's head and in the tooltip. */
-const USE_VERB: Record<FurnishingUse, string> = { rest: "Rest", open: "Open", warm: "Warm up", read: "Read", look: "Look" };
+const USE_VERB: Record<FurnishingUse, string> = { rest: "Rest", open: "Open", dress: "Change look", warm: "Warm up", read: "Read", sit: "Sit", look: "Look" };
 /** Which use wins when the hero stands beside several things at once. */
-const USE_ORDER: FurnishingUse[] = ["rest", "open", "warm", "read"];
+const USE_ORDER: FurnishingUse[] = ["rest", "open", "dress", "warm", "read", "sit"];
 
 /** Which panel a message belongs in. */
 type Where = "storage" | "craft" | "hut" | "box";
@@ -483,6 +484,19 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
   /** The sea bag and the logbook, opened from the bottom bar. A chest always opens the bag beside it, whether or not it was asked for. */
   const [bag, setBag] = useState(false);
   const [book, setBook] = useState(false);
+  /** At the wardrobe: the hero as they are now, for the look changer over the room. */
+  const [dressing, setDressing] = useState<PublicHero | null>(null);
+  // After a new look is saved (here or from the sheet): the hero again, and everyone in the room sees it.
+  const lookSaved = useRef(() => {});
+  lookSaved.current = () => {
+    void refresh();
+    hut.send({ type: "refresh" });
+  };
+  useEffect(() => {
+    const onLook = () => lookSaved.current();
+    window.addEventListener(LOOK_CHANGED, onLook);
+    return () => window.removeEventListener(LOOK_CHANGED, onLook);
+  }, []);
   /** Rest at home (the server checks the cooldown and that you are in your own hut). On a bed, lie down on it for everyone to see. */
   const restAtHome = async (bedId?: number) => {
     setResting(true);
@@ -513,10 +527,24 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
       void restAtHome(piece.id);
     } else if (use === "open") {
       setOpened(piece.id);
+    } else if (use === "dress") {
+      void api.hero(me.player.id).then(
+        ({ hero }) => setDressing(hero),
+        (e: Error) => setNotice({ text: e.message, ok: false, n: Date.now() }),
+      );
     } else if (use === "warm") {
       setNotice({ text: `You warm your hands at the ${piece.label}. ${about}`, ok: true, n: Date.now() });
     } else if (use === "read") {
       setNotice({ text: `You leaf through the ${piece.label}. ${about}`, ok: true, n: Date.now() });
+    } else if (use === "sit") {
+      // A stool is walked onto: the walk ends on its hex, and whoever is on a stool's hex is drawn sitting on it.
+      // A stool still in storage has no hex to walk to.
+      if (!room || !self || piece.q === null || piece.r === null) return;
+      const seat = { q: piece.q, r: piece.r };
+      if (same(self.pos, seat)) return;
+      if (players.some((p) => p.id !== self.id && same(p.pos, seat))) return setNotice({ text: `Someone is sitting on the ${piece.label}.`, ok: false, n: Date.now() });
+      if (!hutPath(room, furnishings, self.pos, seat)) return setNotice({ text: `You cannot get to the ${piece.label}.`, ok: false, n: Date.now() });
+      hut.send({ type: "move", to: seat });
     } else {
       setNotice({ text: `${piece.label}: ${about}`, ok: true, n: Date.now() });
     }
@@ -529,6 +557,8 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
     const problem = useProblem(piece.defId, canEdit, owner?.name);
     if (problem) return setNotice({ text: `${piece.label}: ${problem}`, ok: false, n: Date.now() });
     if (use === "look") return doUse.current(piece);
+    // Sitting is the walk itself (doUse), from beside the stool or across the room: the same from the button over the head.
+    if (use === "sit") return doUse.current(piece);
     // No walk across the room for a rest that will not happen.
     if (use === "rest" && restBlocked) return setNotice({ text: restBlocked, ok: false, n: Date.now() });
     if (isBeside(room, furnishings, piece, self.pos)) return doUse.current(piece);
@@ -868,8 +898,8 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
           <span className={atDoor ? "" : "muted"}>
             {atDoor ? "The door back to the Harbor."
               : decorating ? "Decorating: click a piece for its controls, or pick one out of Storage. Done when you are finished."
-              : canEdit ? "Click a hex to walk, or a piece to use it: sleep in the bed, open a chest."
-              : `Click a piece to look at it. Only ${owner?.name ?? "the owner"} can move the furniture.`}
+              : canEdit ? "Click a hex to walk, or a piece to use it: sleep in the bed, open a chest, change at the wardrobe, sit on a stool."
+              : `Click a piece to look at it, or a stool to sit on it. Only ${owner?.name ?? "the owner"} can move the furniture.`}
           </span>
         }
         meter={canEdit && stamina ? { name: "Energy", note: restIn > 0 ? `gathering outings · rest again in ${restIn} min` : "gathering outings left today", now: stamina.stamina.left, max: stamina.stamina.max, kind: "stamina" } : undefined}
@@ -909,6 +939,17 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
           <p>{hut.error}</p>
           <button className="primary" onClick={onLeave}>Back to the Harbor</button>
         </div>
+      )}
+      {dressing && (
+        <ChangeLook
+          hero={dressing}
+          look={dressing.appearance ?? DEFAULT_APPEARANCE}
+          onClose={() => setDressing(null)}
+          onSaved={() => {
+            setDressing(null);
+            setNotice({ text: "You close the wardrobe in your new look.", ok: true, n: Date.now() });
+          }}
+        />
       )}
       {heroSheet.open && you && <HeroSheet id={heroSheet.open} you={you} onClose={heroSheet.close} />}
     </div>

@@ -80,7 +80,7 @@ export function tileCost(t: Tile): number {
  * hut, the notice board, the market stall and the pub's contract dealer. `door` is the way out of a hut's room.
  * `gate` is a locked door in the Haunted Caverns, standing on a `gate` tile.
  */
-export type PoiKind = "cave" | "landing" | "hut" | "lair" | "shrine" | "cache" | "camp" | "pier" | "plot" | "board" | "shop" | "ring" | "dice" | "door" | "works" | "pub" | "counter" | "shoals" | "crew" | "tide" | "trader" | "rocks" | "wreck" | "lot" | "site" | "ship" | "pickup" | "fishing" | "felling" | "quarry" | "apothecary" | "smithy" | "galley" | "lighthouse" | "gate" | "dealer";
+export type PoiKind = "cave" | "landing" | "hut" | "lair" | "shrine" | "cache" | "camp" | "pier" | "plot" | "board" | "shop" | "ring" | "dice" | "door" | "works" | "pub" | "counter" | "shoals" | "crew" | "tide" | "trader" | "rocks" | "wreck" | "lot" | "site" | "ship" | "pickup" | "fishing" | "felling" | "quarry" | "apothecary" | "smithy" | "galley" | "lighthouse" | "gate" | "dealer" | "crate" | "glowcap";
 
 export interface Poi {
   id: string;
@@ -113,6 +113,9 @@ export interface Poi {
   key?: boolean;
   /** For a locked door: the step from it into the room it shuts (a neighbour's offset), so it can be drawn across its tunnel. */
   into?: HexPos;
+  /** For a crate in a delve: what it can still take before it breaks (it is `cleared` once broken), and what it started with. */
+  hp?: number;
+  maxHp?: number;
 }
 
 export type ChestLoot = "chest" | "vault" | "hoard";

@@ -53,6 +53,7 @@ const mend = (range: number, extra: Partial<Tactic> = {}): Tactic => ({ cost: "a
 
 export const TACTICS: Record<string, Tactic> = {
   punch: melee(),
+  torch_swing: melee(),
   // Paladin
   smite: melee(),
   shield_wall: guard(),
@@ -154,10 +155,14 @@ export const COMMON_ACTIONS: Record<CommonAction, { name: string; cost: "action"
   help: { name: "Help", cost: "action", blurb: "Get a fallen ally beside you back on their feet with 1 HP." },
   shove: { name: "Shove", cost: "bonus", blurb: "Push an enemy beside you one hex away: into fire, off a path, out of reach." },
   jump: { name: "Jump", cost: "bonus", blurb: "Leap a few hexes, over whatever lies between. Costs 2 movement." },
+  flee: { name: "Flee", cost: "action", blurb: "Get out of the fight, once no enemy in it is within 2 hexes of you. You walk free and it goes on without you; an enemy coming that close again brings you back into it." },
 };
 
-/** Light on their feet: a Rogue disengages as a Bonus action. */
-export const commonCost = (what: CommonAction, classId: string): "action" | "bonus" => (what === "disengage" && classId === "refactor_rogue" ? "bonus" : COMMON_ACTIONS[what].cost);
+/** How far clear of every enemy in a fight a hero must be to flee it, and how near one must come to draw them back in. */
+export const FLEE_RANGE = 2;
+
+/** Light on their feet: a Rogue disengages, and flees, as a Bonus action. */
+export const commonCost = (what: CommonAction, classId: string): "action" | "bonus" => ((what === "disengage" || what === "flee") && classId === "refactor_rogue" ? "bonus" : COMMON_ACTIONS[what].cost);
 
 export const JUMP_MOVE_COST = 2;
 /** What a healing potion heals: all of it when drunk or at the heart of where it lands, half of it on the hexes around. */
@@ -178,18 +183,41 @@ export interface ThrowableDef {
   heal?: Dice;
   /** Can be drunk instead of thrown, as a Bonus action: its healing, in full, for the drinker alone. */
   drink?: boolean;
+  /** Left on everyone caught in it who fails the Agility save. */
+  condition?: { kind: Condition; rounds: number };
+  /** A torch: lit and held in the off hand instead of drunk, and thrown it lies burning where it lands (light.ts). */
+  light?: boolean;
 }
 
 export const THROWABLES: Record<Throwable, ThrowableDef> = {
   healing: { name: "Healing potion", blurb: "Drink it, or throw it: it heals whoever it lands on, and half as much everyone on the six hexes around.", radius: 1, heal: POTION_DICE, drink: true },
-  poison: { name: "Poison flask", blurb: "Leaves poison on the ground for 3 rounds.", radius: 1, surface: { kind: "poison", rounds: 3 } },
+  poison: { name: "Poison flask", blurb: "Brewed with cave slime: leaves poison on the ground for 4 rounds.", radius: 1, surface: { kind: "poison", rounds: 4 } },
   fire: { name: "Fire bomb", blurb: "Bursts into flame: damage to everyone near, and fire left burning for 2 rounds.", radius: 1, damage: { n: 2, d: 6, plus: 0 }, surface: { kind: "fire", rounds: 2 } },
   oil: { name: "Oil flask", blurb: "Slick ground that slows whoever crosses it, and goes up at a spark.", radius: 1, surface: { kind: "oil", rounds: 4 } },
   water: { name: "Water skin", blurb: "Douses fire and leaves the ground wet for 3 rounds.", radius: 1, surface: { kind: "water", rounds: 3 } },
+  acid: { name: "Acid flask", blurb: "Splashes slime acid: a little damage to everyone near, and leaves them Exposed for 2 rounds unless they dodge it.", radius: 1, damage: { n: 1, d: 6, plus: 0 }, condition: { kind: "exposed", rounds: 2 } },
+  slime: { name: "Slime flask", blurb: "Leaves a sticky slick for 3 rounds: it costs a step more to cross and slows whoever walks into it.", radius: 1, surface: { kind: "slime", rounds: 3 } },
+  torch: { name: "Torch", blurb: "Light it to hold in your off hand (a Bonus action) and see in the dark, with your shield set aside. Thrown, it lies burning where it lands, and sets oil alight.", radius: 0, light: true },
 };
 
+/** How far a torch lights, held or lying burning, and how far a burning hex does. */
+export const LIGHT_RADIUS = 4;
+export const FIRE_GLOW = 1;
+/** Rounds of a fight a torch burns: lit to hold, and one lit from the pack and thrown straight down. */
+export const TORCH_HELD_ROUNDS = 10;
+export const TORCH_GROUND_ROUNDS = 8;
+/**
+ * Out of a fight time passes as in real life (zone/clock.ts): every EXPLORE_ROUND_MS counts as a round for the
+ * ground and for conditions. Torches are given a far kinder clock out there, a round every TORCH_ROUND_MS: a
+ * held torch lights some fifteen minutes of exploring.
+ */
+export const EXPLORE_ROUND_MS = 6_000;
+export const TORCH_ROUND_MS = 90_000;
+/** Defence lost while a torch is held in the hand a shield would be on. */
+export const SHIELD_SET_ASIDE = 2;
+
 /** The kit every hero starts out with in their pack (and a stand-in is given on each map). */
-export const STARTING_ITEMS: Partial<Record<Throwable, number>> = { healing: 2, poison: 2, fire: 1, oil: 1, water: 1 };
+export const STARTING_ITEMS: Partial<Record<Throwable, number>> = { healing: 2, poison: 2, fire: 1, oil: 1, water: 1, torch: 2 };
 
 /** Every kind of thing carried to drink or throw, in the order they are listed. */
 export const THROWABLE_KINDS = Object.keys(THROWABLES) as Throwable[];

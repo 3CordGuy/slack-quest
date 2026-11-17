@@ -30,6 +30,7 @@ const RESOURCE_COLOR: Record<ResourceKind, string> = {
   bone: "#eee6cf",
   herbs: "#6fae4a",
   mushrooms: "#b8452f",
+  slime: "#65a30d",
   gem: "#ff7ae0",
 };
 
@@ -71,6 +72,7 @@ const FURN_ACCENT: Record<string, string> = {
   weapon_rack: "#b8452f",
   dresser: "#3f6fa8",
   cupboard: "#b8452f",
+  wardrobe: "#9b59b6",
   crate: "#b8452f",
   barrel: "#3f6fa8",
   candle: "#c8743a",

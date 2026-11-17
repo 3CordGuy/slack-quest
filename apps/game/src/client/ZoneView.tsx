@@ -8,6 +8,9 @@
 // and what it would cover; click a target and it is done. Movement is a
 // click on any lit hex, in as many pieces as you like. Something from the
 // pack is thrown where you click, or (a potion) drunk if you click yourself.
+// In a delve a click on a chest opens it, a click on a crate breaks at it
+// with your own blow, and a click on glowing mushrooms picks them (each walks
+// you up to it first).
 //
 // The server answers each action with the whole state and a list of what
 // happened. The state is believed at once by the bar (so you can keep
@@ -21,19 +24,27 @@ import {
   ALERT_RANGE,
   COMMON_ACTIONS,
   CONDITION_INFO,
+  CRATE_HP,
   ENEMIES,
+  FLEE_RANGE,
   FREE_WALK,
   pathIn,
+  HARBOR_CAVE,
   SURFACE_INFO,
   THROWABLES,
   abilityArea,
   abilityDice,
   checkAbility,
+  checkCommon,
   checkThrow,
   commonCost,
+  crateAt,
+  crateBlow,
+  crateHp,
   defenceOf,
   diceText,
   healDice,
+  isCrateId,
   jumpRange,
   previewAttack,
   sees,
@@ -41,10 +52,13 @@ import {
   tacticOf,
   throwRange,
   tileAt,
+  FORCE_DC,
+  unopened,
   zoneBlast,
   zoneReach,
   type CommonAction,
   type GroundSurface,
+  type Poi,
   type Roll,
   type Throwable,
   type Unit,
@@ -68,6 +82,7 @@ import { HudBar, type HudSlot } from "./ui/Hud";
 import { useCountdown } from "./ui/useCountdown";
 import { useZone } from "./useZone";
 import { Icon } from "./items";
+import { label } from "./labels";
 import { THROW_COLOR, aimKind, fxFor } from "./zone/abilityFx";
 import { COMMON_ICON, ITEM_ICON, abilityIcon } from "./zone/actionIcons";
 import { BAR_SLOTS, assignSlot, barChoices, loadBar, moveSlot, saveBar } from "./zone/hotbar";
@@ -81,9 +96,14 @@ type Pick = { kind: "ability"; id: string } | { kind: "common"; what: CommonActi
 interface Picture {
   units: Unit[];
   surfaces: Record<string, GroundSurface>;
+  /** The places on the map: a chest is drawn thrown open, and a crate knocked about or broken, as each is shown happening. */
+  pois: Poi[];
 }
 
 const asState = (view: ZoneViewState) => view as unknown as ZoneState;
+
+/** How long a leave asked for mid-fight waits for the Flee before it is given up. */
+const LEAVING_WAIT_MS = 6000;
 
 /** The things that are done, as against what comes of them: each starts a new run of results. */
 const CAUSES = new Set<ZoneEvent["t"]>(["used", "moved", "jumped", "shoved", "reaction", "turn", "round", "fight_start", "fight_end"]);
@@ -103,6 +123,7 @@ function runs(events: ZoneEvent[]): { many: boolean[]; last: boolean[] } {
     for (let k = start; k < end; k++) {
       const ev = events[k];
       if (ev.t === "hit" || ev.t === "miss" || ev.t === "heal" || ev.t === "tick") reached.add(ev.target);
+      if (ev.t === "crate_hit") reached.add(ev.poi);
     }
     for (let k = start; k < end; k++) many[k] = reached.size > 1;
     last[end - 1] = true;
@@ -133,12 +154,26 @@ function dwell(ev: ZoneEvent, many: boolean, next: ZoneEvent | undefined): numbe
     case "surface": return many ? 80 : 240;
     case "up": case "fight_join": case "round": return 240;
     case "burst": case "reaction": return 300;
-    case "shoved": case "jumped": return 400;
+    case "shoved": return 400;
+    // The crouch, the leap and the landing: what follows waits for the feet to come down.
+    case "jumped": return 700;
     case "fight_start": return 1300;
     case "fight_end": return 700;
+    case "fled": return 420;
+    case "cleared": return 900;
+    // The lid swings and the glints spill; a blow at a crate lands before it breaks.
+    case "opened": return 700;
+    case "crate_hit": return many ? 130 : 420;
+    case "crate_broken": return 450;
     default: return 0;
   }
 }
+/** The conditions on a unit, as badges over its head: in CONDITION_INFO's colours, with rounds left. */
+const badgesOf = (u: Unit) => u.conditions.map((c) => ({ kind: c.kind, color: CONDITION_INFO[c.kind].color, rounds: c.rounds }));
+
+/** How a lit torch is drawn in a hand (figures.ts drawTorch). */
+const TORCH_IN_HAND = { icon: "torch", ref: "torch", rarity: "common" as const };
+
 /** The breath after several have been struck at once, before the next thing is shown. */
 const AFTER_MANY = 340;
 
@@ -162,6 +197,8 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
   const [feed, setFeed] = useState<string[]>([]);
   const [roll, setRoll] = useState<Roll | null>(null);
   const [banner, setBanner] = useState<string | null>(null);
+  /** The last enemy in a cave has fallen: ask whether to climb out now. */
+  const [clearedAsk, setClearedAsk] = useState(false);
   const [pick, setPick] = useState<Pick | null>(null);
   const [focus, setFocus] = useState(false);
   const [hover, setHover] = useState<HexPos | null>(null);
@@ -220,11 +257,11 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
   const zone = useZone(code, (next, events, prev) => {
     for (const u of next.units) names.current.set(u.id, u.name);
     mapNow.current = next.map;
-    const name = (id: string | null | undefined) => (id ? (names.current.get(id) ?? "Someone") : "Something");
+    const name = (id: string | null | undefined) => (id ? (names.current.get(id) ?? (isCrateId(next, id) ? "the crate" : "Someone")) : "Something");
     // Anything still playing from the last update is finished at once.
     for (const t of timers.current) clearTimeout(t);
     timers.current = [];
-    const end: Picture = { units: next.units, surfaces: next.surfaces };
+    const end: Picture = { units: next.units, surfaces: next.surfaces, pois: next.map.pois };
     const from = settled.current;
     settled.current = end;
     if (!prev || !from || events.length === 0) {
@@ -265,6 +302,8 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
     for (const [i, ev] of events.entries()) {
       const say = (line: string) => later(() => setFeed((f) => [...f, line].slice(-40)));
       const view = renderer.current;
+      /** The unit makes its gesture (a cast, or a bow drawn), and `go`, what leaves its hand, runs as the gesture ends: at once with no view to draw it. */
+      const cast = (id: string, name: string, x: number, z: number, go: () => void, thrown = false) => (view ? view.cast(id, name, x, z, go, thrown) : go());
       if ((ev.t === "moved" || ev.t === "used" || ev.t === "jumped") && next.encounter?.order.includes(ev.id)) nowActing(ev.id);
       if (ev.t === "moved") {
         const u = find(ev.id);
@@ -273,10 +312,8 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
       } else if (ev.t === "jumped") {
         const u = find(ev.id);
         if (u) u.pos = ev.to;
-        later(() => {
-          sounds.zone("jump", view?.whereIs(ev.id));
-          view?.walkUnit(ev.id, [ev.to]);
-        });
+        // A leap, not a walk; the view sounds it, timed to the landing.
+        later(() => (view ? view.leapUnit(ev.id, ev.to) : sounds.zone("jump")));
       } else if (ev.t === "shoved") {
         const u = find(ev.target);
         const to = ev.to;
@@ -290,7 +327,8 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
         });
         say(to ? `${name(ev.id)} shoves ${name(ev.target)} back.` : `${name(ev.id)} shoves ${name(ev.target)}, who has nowhere to go and falls.`);
       } else if (ev.t === "used") {
-        say(`${name(ev.id)}: ${ev.name}${ev.target ? ` on ${name(ev.target)}` : ""}.`);
+        // Getting away has a line of its own (fled).
+        if (ev.what !== "flee") say(`${name(ev.id)}: ${ev.name}${ev.target ? ` on ${name(ev.target)}` : ""}.`);
         const user = find(ev.id);
         const from = user ? point(user.pos, 0.9) : null;
         const thrown = ev.what.startsWith("throw:") ? (ev.what.slice(6) as Throwable) : null;
@@ -305,35 +343,47 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
           if (!fxs || !from || !user) return;
           if (thrown && ev.at) {
             sounds.zone("throw", view?.whereIs(ev.id));
-            view?.cast(ev.id, ev.name, hexToWorld(ev.at).x, hexToWorld(ev.at).z);
             const land = point(ev.at, 0.05);
-            fxs.launch("flask", from, land, THROW_COLOR[thrown], () => {
-              sounds.zone("shatter", { x: land.x, z: land.z });
-              fxs.ring(land, 2.4, THROW_COLOR[thrown]);
-            });
+            cast(
+              ev.id,
+              ev.name,
+              land.x,
+              land.z,
+              () =>
+                fxs.launch("flask", from, land, THROW_COLOR[thrown], () => {
+                  sounds.zone("shatter", { x: land.x, z: land.z });
+                  fxs.ring(land, 2.4, THROW_COLOR[thrown]);
+                }),
+              true,
+            );
             return;
           }
           if (ev.what.startsWith("drink:")) return fxs.motes(point(user.pos, 0.3), "#7dff9a");
           const aim = ev.at ? point(ev.at, 0.05) : null;
           if (look.kind === "meteor" && aim) {
-            view?.cast(ev.id, ev.name, aim.x, aim.z);
-            fxs.launch("meteor", from, aim, look.color, () => fxs.ring(aim, 2.6, look.color));
+            cast(ev.id, ev.name, aim.x, aim.z, () => fxs.launch("meteor", from, aim, look.color, () => fxs.ring(aim, 2.6, look.color)));
           } else if (look.kind === "storm" && aim) {
-            view?.cast(ev.id, ev.name, aim.x, aim.z);
-            fxs.spark([aim.clone().add(new THREE.Vector3(0.6, 9, -0.4)), aim], look.color);
-            fxs.ring(aim, 2.6, look.color);
+            cast(ev.id, ev.name, aim.x, aim.z, () => {
+              fxs.spark([aim.clone().add(new THREE.Vector3(0.6, 9, -0.4)), aim], look.color);
+              fxs.ring(aim, 2.6, look.color);
+            });
           } else if (look.kind === "lob" && aim) {
-            view?.cast(ev.id, ev.name, aim.x, aim.z);
-            fxs.launch("bolt", from, aim, look.color, () => fxs.ring(aim, 2.4, look.color));
+            cast(ev.id, ev.name, aim.x, aim.z, () => fxs.launch("bolt", from, aim, look.color, () => fxs.ring(aim, 2.4, look.color)));
           } else if (look.kind === "beam" && covered.length > 0) {
             const end = point(covered[covered.length - 1], 0.9);
-            view?.cast(ev.id, ev.name, end.x, end.z);
-            fxs.beam(from, end, look.color);
+            cast(ev.id, ev.name, end.x, end.z, () => fxs.beam(from, end, look.color));
           } else if (look.kind === "erupt" && covered.length > 0) {
-            view?.cast(ev.id, ev.name, point(covered[0]).x, point(covered[0]).z);
-            fxs.erupt(covered.map((p) => point(p)), look.color);
+            cast(ev.id, ev.name, point(covered[0]).x, point(covered[0]).z, () => fxs.erupt(covered.map((p) => point(p)), look.color));
           } else if (look.kind === "ring") {
-            fxs.ring(point(user.pos, 0.05), ev.what === "attack" ? 3.6 : covered.length > 6 ? 3.6 : 1.9, look.color);
+            // Struck all round (a song, played): the ring goes out as the blow lands.
+            const ring = () => fxs.ring(point(user.pos, 0.05), ev.what === "attack" ? 3.6 : covered.length > 6 ? 3.6 : 1.9, look.color);
+            if (view) view.burst(ev.id, ev.name, ABILITIES[ev.what]?.stat === "int_stat", ring);
+            else ring();
+          } else if (look.kind === "bless") {
+            // A guard is braced behind; a heal or a blessing is played or cast, toward whoever it is for.
+            const whom = ev.target && ev.target !== ev.id ? find(ev.target) : null;
+            if (ev.what === "shield_wall" || ev.what === "hold_the_line") view?.brace(ev.id);
+            else view?.bless(ev.id, whom ? point(whom.pos) : null);
           }
         });
       } else if (ev.t === "roll") {
@@ -369,18 +419,23 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
           const fxs = spells.current;
           if (kind === "melee") return view?.blow(ev.actor!, ev.target, what, { crit: hit && ev.crit, landed: hit, onImpact: mark });
           if (fxs && from && to && (kind === "arrow" || kind === "bolt")) {
-            view?.cast(ev.actor!, what, to.x, to.z);
             // A miss flies wide of the mark.
             const end = hit ? to : to.clone().add(new THREE.Vector3(0.7, 0.5, 0.5));
-            fxs.launch(kind, from, end, color, () => {
+            cast(ev.actor!, what, to.x, to.z, () =>
+              fxs.launch(kind, from, end, color, () => {
+                view?.landed(ev.target, what, hit, hit && ev.crit, ev.actor);
+                mark();
+              }),
+            );
+            return;
+          }
+          if (fxs && chained && to && kind === "spark") {
+            cast(ev.actor!, what, to.x, to.z, () => {
+              fxs.spark([chained, to], color);
               view?.landed(ev.target, what, hit, hit && ev.crit, ev.actor);
               mark();
             });
             return;
-          }
-          if (fxs && chained && to && kind === "spark") {
-            view?.cast(ev.actor!, what, to.x, to.z);
-            fxs.spark([chained, to], color);
           }
           if (kind !== "none") view?.landed(ev.target, what, hit, hit && ev.crit, ev.actor);
           mark();
@@ -463,12 +518,125 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
             if (mine) view?.lookAt(mine.pos);
           });
         }
+      } else if (ev.t === "fled") {
+        later(() => {
+          sounds.flee(true, view?.whereIs(ev.id));
+          view?.floatOver(ev.id, "Got away", "#ffd98a");
+          if (yours(ev.id)) setBanner("You got away");
+        });
+        say(`${name(ev.id)} gets away from the fight.`);
       } else if (ev.t === "fight_end") {
         later(() => {
-          sounds.stinger(ev.outcome);
-          setBanner(ev.outcome === "victory" ? "Victory" : "Defeated");
+          // Getting away was heard as it happened: no stinger for a fight nobody won.
+          if (ev.outcome !== "fled") sounds.stinger(ev.outcome);
+          setBanner(ev.outcome === "victory" ? "Victory" : ev.outcome === "defeat" ? "Defeated" : "Got away");
         });
-        say(ev.outcome === "victory" ? "The fight is won." : "The fight is lost. You wake where you started.");
+        say(ev.outcome === "victory" ? "The fight is won." : ev.outcome === "defeat" ? "The fight is lost. You wake where you started." : "Nobody is left in the fight: it is over. The enemy go back to their posts and bind their wounds; those that fell stay fallen.");
+      } else if (ev.t === "spoils") {
+        const found = [
+          ...(ev.gold ? [`${ev.gold} gold`] : []),
+          ...Object.entries(ev.resources).filter(([, n]) => n).map(([kind, n]) => `${n} ${label("resource", kind).toLowerCase()}`),
+          ...(ev.item ? [ev.item] : []),
+          ...(ev.potions ? [ev.potions === 1 ? "a healing potion" : `${ev.potions} healing potions`] : []),
+          ...(ev.torches ? [ev.torches === 1 ? "a torch" : `${ev.torches} torches`] : []),
+          ...(ev.blueprint ? ["a blueprint"] : []),
+          ...(ev.furnishing ? [ev.furnishing] : []),
+        ];
+        // A crate pays no XP: only what was in it is told.
+        if (ev.xp > 0) say(`${name(ev.id)} earns ${ev.xp} XP${found.length > 0 ? ` and takes ${found.join(", ")}` : ""}.`);
+        else if (found.length > 0) say(`${name(ev.id)} takes ${found.join(", ")}.`);
+        // And over their head, one thing at a time: gold first, then the XP, then whatever else.
+        const pops = [
+          ...(ev.gold ? [{ text: `+${ev.gold} gold`, color: "#ffd23f" }] : []),
+          ...(ev.xp > 0 ? [{ text: `+${ev.xp} XP`, color: "#ffe27a", xp: ev.xp }] : []),
+          ...Object.entries(ev.resources).filter(([, n]) => n).map(([kind, n]) => ({ text: `+${n} ${label("resource", kind).toLowerCase()}`, color: "#e8dcc0" })),
+          ...(ev.item ? [{ text: `+${ev.item}`, color: "#c4b5fd" }] : []),
+          ...(ev.potions ? [{ text: ev.potions === 1 ? "+1 healing potion" : `+${ev.potions} healing potions`, color: "#ff8a8a" }] : []),
+          ...(ev.torches ? [{ text: ev.torches === 1 ? "+1 torch" : `+${ev.torches} torches`, color: "#ffb070" }] : []),
+          ...(ev.blueprint ? [{ text: "+a blueprint", color: "#9fd8ff" }] : []),
+          ...(ev.furnishing ? [{ text: `+${ev.furnishing}`, color: "#9fd8ff" }] : []),
+        ];
+        if (pops.length > 0) later(() => view?.pickups(ev.id, pops));
+        // Your own level, XP and materials as the server now has them.
+        if (ev.id === next.you) later(() => void refresh());
+      } else if (ev.t === "cleared") {
+        later(() => {
+          setBanner("Cleared");
+          // A cave: offer the way out (or a while longer to open what is left).
+          if (next.options.biome === "caves") setClearedAsk(true);
+        });
+        say("Nothing else stirs here.");
+      } else if (ev.t === "key") {
+        // On the ring: over whoever found it, or (from a beaten band) your own hero, as the ring is everyone's.
+        const finder = ev.id ?? next.you;
+        later(() => view?.pickups(finder, [{ text: "+1 key", color: "#ffd98a" }]));
+        say(ev.from === "chest" ? `${ev.id ? name(ev.id) : "Someone"} finds a key in it. (${ev.keys} on the ring)` : `A key falls from the beaten band. (${ev.keys} on the ring)`);
+      } else if (ev.t === "foraged") {
+        say(`${name(ev.id)} picks the glowing mushrooms.`);
+      } else if (ev.t === "door") {
+        say(ev.how === "key" ? `${name(ev.id)} unlocks the door.` : ev.how === "forced" ? `${name(ev.id)} forces the door: it gives way with a crash.` : `${name(ev.id)} throws a shoulder at the door: it holds.`);
+      } else if (ev.t === "noise") {
+        say("The noise carries through the tunnels. Something is coming.");
+      } else if (ev.t === "opened") {
+        const chest = draft.pois.find((p) => p.id === ev.poi);
+        if (chest) chest.cleared = true;
+        later(() => {
+          const top = chest ? view?.poiSpot(chest) : null;
+          sounds.zone("chest_open", top ? { x: top.x, z: top.z } : undefined);
+          view?.openChest(ev.poi);
+          // The glints spill out once the lid is a little way up.
+          if (top) timers.current.push(setTimeout(() => spells.current?.spill(top, ev.loot === "hoard"), 110));
+        });
+        say(`${name(ev.id)} opens ${ev.loot === "hoard" ? "the hoard" : ev.loot === "vault" ? "the strongbox" : "a chest"}.`);
+      } else if (ev.t === "crate_hit") {
+        const box = draft.pois.find((p) => p.id === ev.poi);
+        if (box) box.hp = Math.max(0, crateHp(box) - ev.amount);
+        const shown = box ? { ...box } : null;
+        // A blow by hand, a shot or a spark is shown reaching it; a blast, a bomb or the fire under it is already playing.
+        const mine = use && use.id === ev.actor ? use : null;
+        const look = !ev.actor || ev.what === "fire" || ev.what.startsWith("throw:") ? null : (mine?.look.kind ?? "melee");
+        const what = blowName(ev.what);
+        const actor = ev.actor ? find(ev.actor) : undefined;
+        const from = actor ? point(actor.pos, 0.9) : null;
+        later(() => {
+          const fxs = spells.current;
+          const at = shown ? view?.poiSpot(shown) : null;
+          const impact = () => {
+            sounds.zone("crate_hit", at ? { x: at.x, z: at.z } : undefined);
+            view?.shakePoi(ev.poi, ev.amount >= 6 ? 1.4 : 1);
+            view?.floatAt(ev.poi, `-${ev.amount}`, ev.what === "fire" ? "#ffa94d" : "#ff6b6b");
+            if (at) fxs?.splinters(at, 5);
+          };
+          if (!at || !from || !look) return impact();
+          if (look === "melee") return view ? view.strikeAt(ev.actor!, at, what, impact) : impact();
+          if (fxs && (look === "arrow" || look === "bolt")) return cast(ev.actor!, what, at.x, at.z, () => fxs.launch(look, from, at, mine?.look.color ?? "#dfe9ff", impact));
+          if (fxs && look === "spark") return cast(ev.actor!, what, at.x, at.z, () => { fxs.spark([from, at], mine?.look.color ?? "#dfe9ff"); impact(); });
+          impact();
+        });
+        say(`The crate takes ${ev.amount}${ev.what === "fire" ? " from the fire" : ""}.`);
+      } else if (ev.t === "crate_broken") {
+        const box = draft.pois.find((p) => p.id === ev.poi);
+        const whole = box ? { ...box, cleared: false } : null;
+        if (box) Object.assign(box, { cleared: true, hp: 0 });
+        later(() => {
+          const at = whole ? view?.poiSpot(whole) : null;
+          sounds.zone("crate_break", at ? { x: at.x, z: at.z } : undefined);
+          if (at) spells.current?.splinters(at, 18, true);
+        });
+        say(ev.id ? `${name(ev.id)} breaks the crate open.` : "The crate burns through and falls apart.");
+      } else if (ev.t === "stowed") {
+        say(ev.place === "storage" ? `${ev.item} goes home to the storage chest: the pack is full.` : `${ev.item} is crammed into the pack, over what it holds.`);
+      } else if (ev.t === "lit") {
+        say(`${name(ev.id)} lights a torch.`);
+      } else if (ev.t === "torch_out") {
+        say(`${name(ev.id)}'s torch gutters out.`);
+      } else if (ev.t === "took_torch") {
+        if (ev.stowed) later(() => view?.pickups(ev.id, [{ text: "+1 torch", color: "#ffb070" }]));
+        say(ev.stowed ? `${name(ev.id)} puts out a torch and stows it in the pack.` : `${name(ev.id)} picks up a burning torch.`);
+      } else if (ev.t === "light" && !ev.on) {
+        // Gone from the ground because someone took it up is not burning out.
+        const taken = events.some((e) => e.t === "took_torch" && e.at.q === ev.at.q && e.at.r === ev.at.r);
+        if (!taken) say("A torch on the ground burns out.");
       } else if (ev.t === "joined") {
         say(`${name(ev.id)} arrives.`);
       }
@@ -566,14 +734,19 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
       you: act?.id ?? state.you,
       phase: "overworld",
       round: 0,
-      map: state.map,
-      heroes: picture.units.filter((u) => u.side === "hero").map((u) => ({ id: u.id, classId: u.kind, pos: u.pos, name: u.name, outfit: u.outfit, level: u.level, xp: 0, hp: u.hp, maxHp: u.maxHp, down: u.down, prone: u.conditions.some((c) => c.kind === "prone"), active: turn(u.id) })),
-      units: picture.units.filter((u) => u.side === "enemy").map((u) => ({ id: u.id, kind: u.kind, pos: u.pos, name: u.name, hp: inFight(u.id) || u.hp < u.maxHp ? u.hp / u.maxHp : undefined, down: u.down, prone: u.conditions.some((c) => c.kind === "prone"), active: u.id === spot, hostile: inFight(u.id) })),
+      // Chests and crates as the picture has them: thrown open, or knocked about and broken, as each is shown.
+      map: { ...state.map, pois: picture.pois },
+      // A lit torch is held in the off hand, where a shield would be.
+      heroes: picture.units.filter((u) => u.side === "hero").map((u) => ({ id: u.id, classId: u.kind, pos: u.pos, name: u.name, outfit: u.torch ? { ...u.outfit, [u.torchHand === "main" ? "main_hand" : "off_hand"]: TORCH_IN_HAND } : u.outfit, torch: !!u.torch, effects: badgesOf(u), level: u.level, xp: 0, hp: u.hp, maxHp: u.maxHp, down: u.down, prone: u.conditions.some((c) => c.kind === "prone"), active: turn(u.id) })),
+      // What the dark hides is not drawn: out of a fight the server does not even send it.
+      units: picture.units.filter((u) => u.side === "enemy" && !state.dark?.includes(u.id)).map((u) => ({ id: u.id, kind: u.kind, pos: u.pos, name: u.name, hp: inFight(u.id) || u.hp < u.maxHp ? u.hp / u.maxHp : undefined, down: u.down, prone: u.conditions.some((c) => c.kind === "prone"), active: u.id === spot, hostile: inFight(u.id), effects: badgesOf(u) })),
       turn: null,
       story: null,
       npcs: {},
       // Lit tiles are a turn's movement; walking freely, nothing is lit.
       freeRoam: !fighting,
+      // Underground, light comes only from torches (held, or lying where they were thrown) and fire.
+      lights: state.options.biome === "caves" ? Object.keys(state.lights ?? {}).map((k) => { const [q, r] = k.split(",").map(Number); return { q, r }; }) : undefined,
       reach,
     };
     view.setState(scene);
@@ -585,6 +758,8 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
 
   const z = state ? asState(state) : null;
   const unitOn = (pos: HexPos | null) => (pos && state ? state.units.find((u) => u.pos.q === pos.q && u.pos.r === pos.r) : undefined);
+  /** A crate still whole on this hex. */
+  const crateOn = (pos: HexPos | null) => (pos && state ? crateAt(state, pos) : undefined);
   const within = (range: number, sight: boolean) => (state && act ? state.map.tiles.filter((t) => hexDistance(t, act.pos) <= range && hexDistance(t, act.pos) > 0 && (!sight || sees(state.map, act.pos, t))) : []);
 
   const overlays = useMemo<Overlay[]>(() => {
@@ -606,14 +781,15 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
       if (tactic.shape !== "line") out.push({ hexes: within(melee ? 1 : tactic.range, !melee), color: "#ffd23f", fill: 0.1, line: 0.8 });
       const area = abilityArea(z, act, pick.id, hover ?? undefined);
       if (area.length > 0) out.push({ hexes: area, color: "#ff6b6b", fill: 0.3, line: 0.9 });
-      else if (hover && unitOn(hover)) out.push({ hexes: [hover], color: tactic.shape === "ally" ? "#7dff9a" : "#ff6b6b", fill: 0.3, line: 0.9 });
+      else if (hover && (unitOn(hover) || (crateOn(hover) && (tactic.shape === "single" || tactic.shape === "chain")))) out.push({ hexes: [hover], color: tactic.shape === "ally" ? "#7dff9a" : "#ff6b6b", fill: 0.3, line: 0.9 });
     } else if (pick.kind === "item") {
       const def = THROWABLES[pick.item];
       const tint = def.surface ? SURFACE_INFO[def.surface.kind].color : "#7dff9a";
       out.push({ hexes: within(throwRange(statMod(act.stats?.str ?? 5)), true), color: "#ffd23f", fill: 0.1, line: 0.8 });
-      // Your own hex: a potion clicked there is drunk, not thrown.
-      if (def.drink) out.push({ hexes: [act.pos], color: "#7dff9a", fill: 0.3, line: 0.9 });
-      if (hover && !(def.drink && hover.q === act.pos.q && hover.r === act.pos.r)) {
+      // Your own hex: a potion clicked there is drunk, and a torch lit to hold, not thrown.
+      const self = def.drink || (def.light && !act.torch);
+      if (self) out.push({ hexes: [act.pos], color: def.light ? "#ffb070" : "#7dff9a", fill: 0.3, line: 0.9 });
+      if (hover && !(self && hover.q === act.pos.q && hover.r === act.pos.r)) {
         const area = zoneBlast(state.map, hover, def.radius);
         out.push({ hexes: area, color: tint, fill: 0.22, line: 0.9 });
         // Where it lands gets the most of it.
@@ -686,16 +862,17 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
       if (!z || !act || !pick || !hover || (hover.q === act.pos.q && hover.r === act.pos.r)) return null;
       mapNow.current = z.map;
       const there = unitOn(hover);
+      const box = there ? undefined : crateOn(hover);
       const from = point(act.pos, 1.0);
-      const to = point(hover, there ? 0.8 : 0.05);
+      const to = point(hover, there ? 0.8 : box ? 0.45 : 0.05);
       const distance = from.distanceTo(to);
       if (pick.kind === "item") return { from, to, height: SpellFx.arcHeight("flask", distance), color: checkThrow(z, act, pick.item, hover) ? "#ff6b6b" : "#fff1c9" };
       if (pick.kind !== "ability") return null;
       const tactic = tacticOf(pick.id);
       if (tactic.reach === "melee" || tactic.shape === "line" || tactic.shape === "self" || tactic.shape === "burst" || tactic.shape === "adjacent") return null;
-      const wrong = checkAbility(z, act, pick.id, tactic.shape === "blast" ? { at: hover } : { target: there?.id });
+      const wrong = checkAbility(z, act, pick.id, tactic.shape === "blast" ? { at: hover } : { target: there?.id ?? box?.id });
       // Aimed at open ground with something that needs a target: no line at all.
-      if (tactic.shape !== "blast" && !there) return null;
+      if (tactic.shape !== "blast" && !there && !box) return null;
       return { from, to, height: SpellFx.arcHeight(aimKind(pick.id) === "arrow" ? "arrow" : "bolt", distance) + (tactic.shape === "blast" ? 0.6 : 0), color: wrong ? "#ff6b6b" : "#fff1c9" };
     })();
     layer.current?.setArc(aimed);
@@ -727,10 +904,45 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
     if (dev.tool?.tool === "spawn") return dev.open?.send({ op: "spawn", kinds: dev.tool.kinds, at: pos });
     if (dev.tool?.tool === "paint") return dev.open?.send({ op: "paint", kind: dev.tool.surface, hexes: dev.tool.wide ? zoneBlast(state.map, pos, 1) : [pos] });
     if (!pick) {
+      // A click on a torch burning on the ground right beside you takes it up; from further off, it is walked to.
+      if (state.lights?.[posKey(pos)] && hexDistance(pos, act.pos) <= 1) return zone.send({ type: "pickup", unit: act.id, at: pos });
+      // A click on a locked door works it from beside it (a key if there is one, else a shoulder), or walks up to it first.
+      const door = state.map.pois.find((p) => p.kind === "gate" && !p.cleared && p.pos.q === pos.q && p.pos.r === pos.r);
+      if (door) {
+        if (hexDistance(door.pos, act.pos) <= 1) return zone.send({ type: "unlock", unit: act.id, poi: door.id });
+        const beside = [...reach.values()].filter((r) => r.stop && hexDistance(r.pos, door.pos) === 1).sort((a, b) => a.cost - b.cost)[0];
+        if (beside) zone.send({ type: "move", unit: act.id, to: beside.pos });
+        return;
+      }
+      // A click on a chest opens it from beside it, or walks up to it first.
+      const chest = state.map.pois.find((p) => p.kind === "cache" && !p.cleared && p.pos.q === pos.q && p.pos.r === pos.r);
+      if (chest) {
+        if (hexDistance(chest.pos, act.pos) <= 1) return zone.send({ type: "open", unit: act.id, poi: chest.id });
+        const beside = [...reach.values()].filter((r) => r.stop && hexDistance(r.pos, chest.pos) === 1).sort((a, b) => a.cost - b.cost)[0];
+        if (beside) zone.send({ type: "move", unit: act.id, to: beside.pos });
+        return;
+      }
+      // A click on a crate breaks at it with your own blow, if anything of yours reaches it; else it walks you up to it.
+      const box = crateOn(pos);
+      if (box) {
+        const blow = crateBlow(asState(state), act, box.id);
+        if (blow) return use(blow, { target: box.id });
+        const beside = [...reach.values()].filter((r) => r.stop && hexDistance(r.pos, box.pos) === 1).sort((a, b) => a.cost - b.cost)[0];
+        if (beside && beside.cost > 0) zone.send({ type: "move", unit: act.id, to: beside.pos });
+        return;
+      }
       // A click on an enemy means "go up to it": the nearest hex beside it that can be reached.
       if (there && there.side === "enemy" && !there.down) {
         const beside = [...reach.values()].filter((r) => r.stop && hexDistance(r.pos, there.pos) === 1).sort((a, b) => a.cost - b.cost)[0];
         if (beside && beside.cost > 0) zone.send({ type: "move", unit: act.id, to: beside.pos });
+        return;
+      }
+      // A click on glowing mushrooms picks them from beside them (or among them), or walks up to them first.
+      const patch = state.map.pois.find((p) => p.kind === "glowcap" && !p.cleared && p.pos.q === pos.q && p.pos.r === pos.r);
+      if (patch) {
+        if (hexDistance(patch.pos, act.pos) <= 1) return zone.send({ type: "forage", unit: act.id, poi: patch.id });
+        const beside = [...reach.values()].filter((r) => r.stop && hexDistance(r.pos, patch.pos) <= 1).sort((a, b) => a.cost - b.cost)[0];
+        if (beside) zone.send({ type: "move", unit: act.id, to: beside.pos });
         return;
       }
       return zone.send({ type: "move", unit: act.id, to: pos });
@@ -740,10 +952,15 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
       if (shape === "blast" || shape === "line") return use(pick.id, { at: pos });
       // An ally ability clicked on open ground is meant for yourself.
       if (shape === "ally") return use(pick.id, { target: there?.side === "hero" ? there.id : act.id });
+      const box = crateOn(pos);
       if (there) use(pick.id, { target: there.id });
+      else if (box && (shape === "single" || shape === "chain")) use(pick.id, { target: box.id });
     } else if (pick.kind === "item") {
-      // Clicked on yourself, something drinkable is drunk; anywhere else it is thrown there.
-      if (THROWABLES[pick.item].drink && pos.q === act.pos.q && pos.r === act.pos.r) zone.send({ type: "drink", unit: act.id, item: pick.item });
+      // Clicked on yourself, something drinkable is drunk and a torch is lit to hold; anywhere else it is thrown there.
+      const onSelf = pos.q === act.pos.q && pos.r === act.pos.r;
+      const def = THROWABLES[pick.item];
+      if (def.drink && onSelf) zone.send({ type: "drink", unit: act.id, item: pick.item });
+      else if (def.light && onSelf && !act.torch) zone.send({ type: "light", unit: act.id });
       else zone.send({ type: "throw", unit: act.id, item: pick.item, at: pos });
       setPick(null);
     } else if (pick.what === "jump") common("jump", { at: pos });
@@ -778,6 +995,37 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
     return () => clearTimeout(t);
   }, [roll]);
 
+  /** Back up to the Harbor: out of a cave, standing at its mouth. */
+  const leave = () => {
+    if (state?.options.biome === "caves") {
+      try {
+        sessionStorage.setItem("gq.harborAt", `${HARBOR_CAVE.q},${HARBOR_CAVE.r}`);
+      } catch {
+        // Storage is off: the usual spot it is.
+      }
+    }
+    onLeave();
+  };
+  /**
+   * Going somewhere from the middle of a fight (off the map, or to a crewmate): the hero flees it first, and
+   * goes once the server has them out of it, or stays if it says no. Nobody leaves a hero behind in a fight.
+   * It is meant for that moment only: if they are not out of it soon after (an enemy came close enough to draw
+   * them straight back in), it is dropped, and does not go off whenever the fight happens to end.
+   */
+  const [leaving, setLeaving] = useState<{ go: () => void } | null>(null);
+  useEffect(() => {
+    if (!leaving) return;
+    if (!fighting) {
+      setLeaving(null);
+      leaving.go();
+    } else if (zone.error) setLeaving(null);
+  }, [leaving, fighting, zone.error]);
+  useEffect(() => {
+    if (!leaving) return;
+    const t = setTimeout(() => setLeaving(null), LEAVING_WAIT_MS);
+    return () => clearTimeout(t);
+  }, [leaving]);
+
   if (!state || !act) {
     return (
       <div className="run zone-view">
@@ -791,6 +1039,16 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
 
   const canPay = (cost: "action" | "bonus") => !fighting || (myTurn && !!budget?.[cost]);
   const costName = (cost: "action" | "bonus") => (cost === "action" ? "Action" : "Bonus action");
+  // Getting away: on your turn, with the Action (a Rogue's Bonus action) for it, and no enemy in the fight within FLEE_RANGE.
+  const fleeCost = commonCost("flee", act.kind);
+  const fleeBlock = !fighting ? "That is for a fight." : !myTurn ? "Wait for your turn." : !budget?.[fleeCost] ? `You have used your ${costName(fleeCost)} this turn.` : checkCommon(asState(state), act, "flee", {}, budget ?? null);
+  /** From the middle of a fight: flee it, then `go` once out of it. */
+  const fleeThen = (go: () => void) => {
+    zone.clearError();
+    setLeaving({ go });
+    common("flee");
+  };
+  const fleeAndLeave = () => fleeThen(leave);
   /** Everything that could be on the bar, by key, as it stands right now. */
   const entries: Record<string, HudSlot> = {};
   for (const id of act.abilities) {
@@ -813,31 +1071,33 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
   }
   for (const what of Object.keys(COMMON_ICON) as CommonAction[]) {
     const cost = commonCost(what, act.kind);
-    const needsFight = what === "dash" || what === "disengage";
+    const needsFight = what === "dash" || what === "disengage" || what === "flee";
     entries[`do:${what}`] = {
       id: `do:${what}`,
       icon: { ...COMMON_ICON[what], flat: true },
       name: COMMON_ACTIONS[what].name,
       line: costName(cost),
-      more: COMMON_ACTIONS[what].blurb,
+      more: what === "flee" && myTurn && fleeBlock ? `${COMMON_ACTIONS[what].blurb} ${fleeBlock}` : COMMON_ACTIONS[what].blurb,
       picked: pick?.kind === "common" && pick.what === what,
-      spent: !canPay(cost) || (needsFight && !fighting),
+      spent: !canPay(cost) || (needsFight && !fighting) || (what === "flee" && !!fleeBlock),
       run: () => (needsFight ? common(what) : setPick((p) => (p?.kind === "common" && p.what === what ? null : { kind: "common", what }))),
     };
   }
   for (const item of Object.keys(ITEM_ICON) as Throwable[]) {
     const def = THROWABLES[item];
     const have = act.items[item] ?? 0;
+    // A torch lit in the hand can be thrown with none left in the pack.
+    const held = !!def.light && (act.torch ?? 0) > 0;
     entries[`it:${item}`] = {
       id: `it:${item}`,
       icon: ITEM_ICON[item],
-      name: def.name,
-      line: def.drink ? "Throw it (Action), or click yourself to drink it (Bonus action)" : "Throw it (Action)",
+      name: held ? `${def.name} (lit, ${act.torch} rounds left)` : def.name,
+      line: def.drink ? "Throw it (Action), or click yourself to drink it (Bonus action)" : def.light ? (held ? "Throw the lit torch down where it should burn (Action)" : "Throw it lit (Action), or click yourself to light it to hold (Bonus action)") : "Throw it (Action)",
       more: def.blurb,
       count: have,
       picked: pick?.kind === "item" && pick.item === item,
-      // Thrown for an Action; a potion can still be drunk when only the Bonus action is left.
-      spent: have <= 0 || !(canPay("action") || (!!def.drink && canPay("bonus"))),
+      // Thrown for an Action; a potion can still be drunk, or a torch lit, when only the Bonus action is left.
+      spent: (have <= 0 && !held) || !(canPay("action") || ((!!def.drink || (!!def.light && !held)) && canPay("bonus"))),
       run: () => setPick((p) => (p?.kind === "item" && p.item === item ? null : { kind: "item", item })),
     };
   }
@@ -845,11 +1105,41 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
 
   // Whoever is being shown acting, while the enemy's turn plays out; otherwise whoever the server waits on.
   const waitingFor = enc && !myTurn ? (watching && spot ? (names.current.get(spot) ?? "someone") : enc.acting.map((id) => names.current.get(id) ?? "someone").join(" and ")) : undefined;
+  // A torch burning on the ground within reach, to pick up.
+  const torchBeside = act && state.lights ? Object.keys(state.lights).map((k) => { const [q, r] = k.split(",").map(Number); return { q, r }; }).find((p) => hexDistance(p, act.pos) <= 1) : undefined;
+  // A locked door within reach, and the keys on the party's ring.
+  const doorBeside = act ? state.map.pois.find((p) => p.kind === "gate" && !p.cleared && hexDistance(p.pos, act.pos) <= 1) : undefined;
+  const keys = state.keys ?? 0;
+  const keysText = keys === 1 ? "1 key" : `${keys} keys`;
+  // A cave's chests, and its way out.
+  const caves = state.options.biome === "caves";
+  const chestBeside = act ? state.map.pois.find((p) => p.kind === "cache" && !p.cleared && hexDistance(p.pos, act.pos) <= 1) : undefined;
+  const chestName = (p: { loot?: string }, cap = false) => {
+    const n = p.loot === "hoard" ? "the hoard" : p.loot === "vault" ? "the strongbox" : "the chest";
+    return cap ? n.charAt(0).toUpperCase() + n.slice(1) : n;
+  };
+  const chestGuarded = (p: { guard?: string }) => !!p.guard && state.units.some((u) => u.group === p.guard && !u.down);
+  // A crate beside you, and what of yours would break at it.
+  const crateBeside = act ? state.map.pois.find((p) => p.kind === "crate" && !p.cleared && hexDistance(p.pos, act.pos) <= 1) : undefined;
+  const crateHit = crateBeside ? crateBlow(asState(state), act, crateBeside.id) : null;
+  // Glowing mushrooms within reach, to pick.
+  const glowBeside = act ? state.map.pois.find((p) => p.kind === "glowcap" && !p.cleared && hexDistance(p.pos, act.pos) <= 1) : undefined;
+  // The way out: the cave's mouth, or (should a cave ever come without one) where heroes arrive.
+  const mouthAt = state.map.pois.find((p) => p.kind === "landing")?.pos ?? state.start;
+  const atMouth = caves && !!act && hexDistance(mouthAt, act.pos) <= 1;
   const place: ReactNode = pick
-    ? <>{pick.kind === "ability" ? ABILITIES[pick.id].name : pick.kind === "item" ? THROWABLES[pick.item].name : COMMON_ACTIONS[pick.what].name} <span className="muted">· {pick.kind === "item" && THROWABLES[pick.item].drink ? "click where to throw it, or yourself to drink it" : "click a target on the map"}, or Esc to put it back</span></>
+    ? <>{pick.kind === "ability" ? ABILITIES[pick.id].name : pick.kind === "item" ? THROWABLES[pick.item].name : COMMON_ACTIONS[pick.what].name} <span className="muted">· {pick.kind === "item" && THROWABLES[pick.item].drink ? "click where to throw it, or yourself to drink it" : pick.kind === "item" && THROWABLES[pick.item].light && !act?.torch ? "click where to throw it, or yourself to light it to hold" : "click a target on the map"}, or Esc to put it back</span></>
     : dev.tool
       ? <>Dev tool <span className="muted">· {dev.tool.tool === "spawn" ? "click a hex to place the group" : "click hexes to paint"}</span></>
-      : !enc || !fighting
+      : (!enc || !fighting) && doorBeside
+        ? <>A locked door <span className="muted">· {keys > 0 ? `${keysText} on the ring: one opens it` : "no key: it can be forced, but not quietly"}</span></>
+      : (!enc || !fighting) && chestBeside
+        ? <>{chestName(chestBeside, true)} <span className="muted">· {chestGuarded(chestBeside) ? "its guards still stand over it" : "right beside you"}</span></>
+        : (!enc || !fighting) && atMouth
+          ? <>The way out <span className="muted">· the cave mouth, back up to the Harbor</span></>
+          : enc && !fighting && enc.fled?.includes(act.id)
+            ? <>Got away <span className="muted">· the fight goes on; an enemy in it coming within {FLEE_RANGE} hexes brings you back</span></>
+          : !enc || !fighting
         ? <>Exploring <span className="muted">· click a hex to walk{enc ? ". A fight is on nearby: walk in to join it" : ""}</span></>
         : myTurn
           ? <>{mine.length > 1 ? `${act.name}'s turn` : "Your turn"} <span className="muted">· round {enc.round}</span></>
@@ -859,6 +1149,13 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
 
   const under = unitOn(hover);
   const ground = hover ? tileAt(state.map, hover) : undefined;
+  const hoverTorch = hover ? state.lights?.[posKey(hover)] : undefined;
+  const hoverDoor = hover ? state.map.pois.find((p) => p.kind === "gate" && p.pos.q === hover.q && p.pos.r === hover.r) : undefined;
+  const hoverChest = hover ? state.map.pois.find((p) => p.kind === "cache" && p.pos.q === hover.q && p.pos.r === hover.r) : undefined;
+  // A crate as the picture shows it, so its health drops as each blow is seen to land.
+  const hoverCrate = hover ? (picture?.pois ?? state.map.pois).find((p) => p.kind === "crate" && p.pos.q === hover.q && p.pos.r === hover.r) : undefined;
+  const hoverMouth = !!hover && caves && state.map.pois.some((p) => p.kind === "landing" && p.pos.q === hover.q && p.pos.r === hover.r);
+  const hoverGlow = hover ? state.map.pois.find((p) => p.kind === "glowcap" && p.pos.q === hover.q && p.pos.r === hover.r) : undefined;
   const preview = under && z && pick?.kind === "ability" && under.side !== act.side ? previewAttack(z, act, pick.id, under) : null;
   const surface = hover ? state.surfaces[posKey(hover)] : undefined;
 
@@ -935,6 +1232,19 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
       <div className="feed zone-feed" aria-live="polite">{feed.slice(-8).map((line, i) => <div key={feed.length - 8 + i}>{line}</div>)}</div>
 
       {banner && <div className="zone-banner">{banner}</div>}
+      {clearedAsk && caves && !fighting && (
+        // The last of them is down: point the way out (the mouth), or look round first.
+        <div className="zone-ask">
+          <div className="panel">
+            <h3>The cave is clear</h3>
+            <p>{unopened(state) > 0 ? `${unopened(state) === 1 ? "A chest is" : `${unopened(state)} chests are`} still unopened down here.` : "Everything down here has been found."} The way out is back at the cave mouth.</p>
+            <p className="zone-ask-buttons">
+              <button className="primary" onClick={() => { renderer.current?.lookAt(mouthAt); setClearedAsk(false); }}>Show the way out</button>
+              <button onClick={() => setClearedAsk(false)}>Keep exploring</button>
+            </p>
+          </div>
+        </div>
+      )}
 
       {roll && (
         <div className={`zone-roll panel ${roll.ok ? "ok" : "no"}`} role="status">
@@ -963,6 +1273,41 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
                 </div>
               )}
             </>
+          ) : hoverTorch ? (
+            <>
+              <strong>A burning torch</strong>{" "}
+              <span className="muted">· {hoverTorch.rounds} round{hoverTorch.rounds === 1 ? "" : "s"} of light left{act && hexDistance(hover!, act.pos) <= 1 ? " · click to pick it up" : ""}</span>
+            </>
+          ) : hoverDoor ? (
+            <>
+              <strong>A locked door</strong>{" "}
+              <span className="muted">· {hoverDoor.cleared ? "standing open" : keys > 0 ? `${keysText} on the ring` : "no key: force it (loud)"}{!hoverDoor.cleared && act && hexDistance(hoverDoor.pos, act.pos) <= 1 ? " · click to open it" : ""}</span>
+            </>
+          ) : hoverCrate ? (
+            <>
+              <strong>{hoverCrate.cleared ? "A broken crate" : "Crate"}</strong>{" "}
+              <span className="muted">
+                {hoverCrate.cleared
+                  ? "· splinters, nothing left in it"
+                  : `· ${crateHp(hoverCrate)}/${hoverCrate.maxHp ?? CRATE_HP} HP · ${pick?.kind === "ability" ? "every blow at it lands" : crateBlow(asState(state), act, hoverCrate.id) ? "click to break it open" : "click to walk up to it"}`}
+              </span>
+              {!hoverCrate.cleared && <div className="muted">Old boards: wood inside, and maybe a few coins, a potion or a torch.</div>}
+            </>
+          ) : hoverGlow ? (
+            <>
+              <strong>{hoverGlow.cleared ? "Picked mushrooms" : "Glowing mushrooms"}</strong>{" "}
+              <span className="muted">· {hoverGlow.cleared ? "only the stalks are left" : `pick them for mushrooms · ${hexDistance(hoverGlow.pos, act.pos) <= 1 ? "click to pick them" : "click to walk up to them"}`}</span>
+              {!hoverGlow.cleared && <div className="muted">They light the rock round them until they are picked.</div>}
+            </>
+          ) : hoverChest ? (
+            <>
+              <strong>{chestName(hoverChest, true)}</strong>{" "}
+              <span className="muted">· {hoverChest.cleared ? "emptied" : chestGuarded(hoverChest) ? "guarded: its band still stands" : hexDistance(hoverChest.pos, act.pos) <= 1 ? "click to open it" : "click to walk up to it"}</span>
+            </>
+          ) : hoverMouth ? (
+            <>
+              <strong>The cave mouth</strong> <span className="muted">· the way out, back up to the Harbor</span>
+            </>
           ) : (
             <>
               <strong>{ground.biome === "plains" ? "Open ground" : ground.biome === "forest" ? "Trees" : ground.biome === "cave" ? "Cave floor" : ground.biome === "rock" ? "Rock" : ground.biome === "water" ? "Water" : "Ground"}</strong>
@@ -987,7 +1332,12 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
               const where = crew.find((x) => x.id === m.id)?.zone;
               return [
                 { label: "Trade", run: () => setTradeWith(m.id) },
-                { label: where ? "Teleport to them" : "Go to the Harbor", blocked: where?.fighting && where.code !== code ? "In a fight" : where?.code === code ? "Already on this map" : undefined, run: () => teleportTo(m.id) },
+                {
+                  label: where ? "Teleport to them" : "Go to the Harbor",
+                  blocked: where?.fighting && where.code !== code ? "In a fight" : where?.code === code ? "Already on this map" : !where && caves && !atMouth ? "Walk back to the cave mouth to leave" : fighting && fleeBlock ? `You are in a fight. ${fleeBlock}` : undefined,
+                  // From the middle of a fight of your own, you flee it first.
+                  run: () => (fighting ? fleeThen(() => teleportTo(m.id)) : teleportTo(m.id)),
+                },
               ];
             }}
           />
@@ -1051,15 +1401,84 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
           { label: "Bonus action", now: budget.bonus ? 1 : 0, max: 1, kind: "bonus" },
           { label: "Movement", now: budget.move, max: budget.moveMax, kind: "move" },
         ] : []}
+        // The keys the party has found, on its one ring.
+        chips={keys > 0 ? <span className="hud-chip" title="Keys to locked doors: any key opens any door">{keysText}</span> : undefined}
         slots={slots}
         onSlotMove={(from, to) => arrange(moveSlot(bar, from, to))}
         onSlotMenu={(index) => setBarMenu((open) => (open === index ? null : index))}
+        // Either hand takes a lit torch: put one there to light it. In the main hand it is swung as a weapon.
+        torch={{
+          rounds: act.torch ?? null,
+          hand: act.torchHand === "main" ? "main" : "off",
+          carried: act.items.torch ?? 0,
+          light: !act.torch && (act.items.torch ?? 0) > 0 && !act.down && (!fighting || (myTurn && !!budget?.bonus)) ? (hand) => zone.send({ type: "light", unit: act.id, ...(hand === "main" ? { hand } : {}) }) : undefined,
+          why: fighting && !myTurn ? "Wait for your turn." : fighting && !budget?.bonus ? "You have used your Bonus action this turn." : undefined,
+        }}
         // While the trade table is open it has the bag beside it already.
         onBag={() => !tradeWith && setBag((open) => !open)}
         turn={enc && fighting ? { seconds: deadline, onEnd: myTurn ? () => zone.send({ type: "end_turn", unit: act.id }) : undefined, waitingFor } : undefined}
-        menu={<OptionsMenu title={`Map ${code}`} subtitle={<>{state.options.biome} · {state.options.size}</>} actions={[{ label: "Leave the map", hint: "Back to the Harbor. The map stays as you left it.", run: onLeave }]} />}
+        menu={<OptionsMenu title={`Map ${code}`} subtitle={<>{state.options.biome} · {state.options.size}</>} actions={[caves
+          ? {
+              label: "Leave the cave",
+              hint: !atMouth ? "The way out is the cave mouth: walk back to it to leave." : !fighting ? "Back up to the Harbor. The cave stays as you left it." : fleeBlock ? `In a fight: you can leave once you could flee it. ${fleeBlock}` : "Flee the fight and climb back up to the Harbor.",
+              disabled: !atMouth || (fighting && !!fleeBlock),
+              run: fighting ? fleeAndLeave : leave,
+            }
+          : {
+              label: "Leave the map",
+              hint: !fighting ? "Back to the Harbor. The map stays as you left it." : fleeBlock ? `In a fight: you can leave once you could flee it. ${fleeBlock}` : "Flee the fight and go back to the Harbor.",
+              disabled: fighting && !!fleeBlock,
+              run: fighting ? fleeAndLeave : leave,
+            }]} />}
       >
+        {torchBeside && (!fighting || myTurn) && (
+          <button className="small" disabled={fighting && !budget?.bonus} title={fighting ? "A Bonus action" : undefined} onClick={() => zone.send({ type: "pickup", unit: act.id, at: torchBeside })}>
+            {act.torch ? "Stow the torch" : "Pick up the torch"}
+          </button>
+        )}
+        {doorBeside && (!fighting || myTurn) && (
+          <button className="small primary" disabled={fighting && !budget?.action} title={keys > 0 ? "Uses a key off the ring" : `A Strength roll (${FORCE_DC} or better). Loud: the nearest band within earshot will come.`} onClick={() => zone.send({ type: "unlock", unit: act.id, poi: doorBeside.id })}>
+            {keys > 0 ? "Unlock the door" : "Force the door"}
+          </button>
+        )}
+        {chestBeside && (!fighting || myTurn) && (
+          <button className="small primary" disabled={chestGuarded(chestBeside) || (fighting && !budget?.action)} title={chestGuarded(chestBeside) ? "Its guards still stand over it" : fighting ? "An Action" : undefined} onClick={() => zone.send({ type: "open", unit: act.id, poi: chestBeside.id })}>
+            Open {chestName(chestBeside)}
+          </button>
+        )}
+        {glowBeside && (!fighting || myTurn) && (
+          <button className="small" disabled={fighting && !budget?.action} title={fighting ? "An Action" : "Mushrooms for the apothecary. Picked, they stop glowing."} onClick={() => zone.send({ type: "forage", unit: act.id, poi: glowBeside.id })}>
+            Pick the mushrooms
+          </button>
+        )}
+        {/* Out of a cave the way you came in: only at its mouth. Any other map can be left from anywhere. */}
+        {(!caves || atMouth) && (
+          // In the middle of a fight it is the way out for one who could flee it: they flee, then go.
+          <button
+            className="small"
+            disabled={fighting && !!fleeBlock}
+            title={!fighting ? "Back up to the Harbor. The map stays as you left it." : fleeBlock ? `Not in the middle of a fight, unless you could flee it. ${fleeBlock}` : `Flee the fight (${costName(fleeCost)}) and go back up to the Harbor.`}
+            onClick={fighting ? fleeAndLeave : leave}
+          >
+            {caves ? "Leave the cave" : "Leave the map"}
+          </button>
+        )}
+        {fighting && myTurn && (
+          <button
+            className="small"
+            disabled={!!fleeBlock}
+            title={fleeBlock ?? `${costName(fleeCost)}: out of the fight and free to walk. It goes on without you, and an enemy in it coming within ${FLEE_RANGE} hexes brings you back.`}
+            onClick={() => common("flee")}
+          >
+            Flee
+          </button>
+        )}
         <button className={`small ${focus ? "primary" : ""}`} disabled={act.focus <= 0} aria-pressed={focus} title="Spend 1 Focus on your next attack to roll it with advantage" onClick={() => setFocus((f) => !f)}>Focus {act.focus}</button>
+        {crateBeside && (!fighting || myTurn) && (
+          <button className="small" disabled={!crateHit || (fighting && !budget?.action)} title={crateHit ? `${ABILITIES[crateHit].name}${fighting ? ", for an Action" : ""}: every blow at a crate lands` : "Nothing you have reaches it"} onClick={() => crateHit && use(crateHit, { target: crateBeside.id })}>
+            Break the crate
+          </button>
+        )}
       </HudBar>
     </div>
   );

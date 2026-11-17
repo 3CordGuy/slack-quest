@@ -4,7 +4,7 @@
 // furnishings catalogue, hut sizes, and the perks a furnished hut grants.
 // Rules that act on a hut (room layout, placement, crafting) build on it.
 
-export const RESOURCE_KINDS = ["wood", "stone", "iron", "copper", "fur", "bone", "herbs", "mushrooms", "gem"] as const;
+export const RESOURCE_KINDS = ["wood", "stone", "iron", "copper", "fur", "bone", "herbs", "mushrooms", "slime", "gem"] as const;
 export type ResourceKind = (typeof RESOURCE_KINDS)[number];
 export type Resources = Partial<Record<ResourceKind, number>>;
 
@@ -17,6 +17,7 @@ export const RESOURCE_LABEL: Record<ResourceKind, string> = {
   bone: "Bone",
   herbs: "Herbs",
   mushrooms: "Mushrooms",
+  slime: "Slime",
   gem: "Gems",
 };
 
@@ -128,6 +129,8 @@ export interface FurnishingDef {
   flat?: boolean;
   /** Somewhere to sleep: clicking it rests the owner (see hutroom.ts, useOf). */
   bed?: boolean;
+  /** Somewhere to change: clicking it opens the owner's look changer (see hutroom.ts, useOf). */
+  dress?: boolean;
   /** Only sold or crafted once the hut is at least this tier (a piece too big for a Shack). */
   minTier?: number;
   /** It hangs on a wall rather than standing on the floor (see hutroom.ts, wallPlaceProblem). */
@@ -153,6 +156,13 @@ export interface FurnishingDef {
 /** Half the distance between the middles of two neighbouring hexes: where a two-hex piece's middle sits from its anchor. */
 const HALF_HEX = Math.sqrt(3) / 2;
 
+/**
+ * The models that are sat on, wherever they stand (a hut's stool, the pub's),
+ * and how high the top of each seat is off the floor. A seat's hex is walked
+ * onto to sit on it, and never walked through (see hutroom.ts, hutPath).
+ */
+export const SEATS: Record<string, { top: number }> = { chair: { top: 0.37 } };
+
 /** A container is a grid like the pack: this many squares across, and as many rows down as its `storage` makes. */
 export const CHEST_COLS = 12;
 /** The deepest a container is: ten rows. */
@@ -172,6 +182,9 @@ export const FURNISHINGS: Record<string, FurnishingDef> = {
   // Every home gets one, free, standing in the room: where gear the hero cannot carry waits (carry.ts).
   // Never sold or crafted, and it gives no perk. A container like the others, and moved like any piece.
   storage_chest: { id: "storage_chest", name: "Storage Chest", kind: "furniture", footprint: { w: 0.58, d: 0.45 }, model: "small_chest", blurb: "Every home's own chest, for the gear you cannot carry. Twelve squares by ten inside.", storage: CHEST_COLS * 10, surface: { y: 0.42, w: 0.54, d: 0.4 } },
+  // Every home gets one of these too, free: open it to change how you look, as "Change look" on the hero's sheet does.
+  // Never sold or crafted, and it gives no perk. Moved like any piece.
+  wardrobe: { id: "wardrobe", name: "Wardrobe", kind: "furniture", dress: true, footprint: { w: 0.96, d: 0.5, z: -0.12 }, model: "wardrobe", blurb: "Every home's own wardrobe. Open it to change how you look.", surface: { y: 1.6, w: 0.9, d: 0.44, z: -0.12 } },
   weapon_rack: { id: "weapon_rack", name: "Weapon Rack", kind: "furniture", footprint: { w: 1.0, d: 0.22, z: -0.08 }, model: "weapon_rack", blurb: "Everything in reach.", recipe: { wood: 4, iron: 4, copper: 2 }, needsBlueprint: true },
 
   // ---- more furniture: tops to put things on, and places to keep things ----
@@ -243,6 +256,10 @@ export const FURNISHINGS: Record<string, FurnishingDef> = {
 
 /** The free storage chest every home has. */
 export const STORAGE_CHEST = "storage_chest";
+/** The free wardrobe every home has. */
+export const WARDROBE = "wardrobe";
+/** What every home comes with, free, standing in the room (see HutRoom.stock). */
+export const HOME_FREEBIES: readonly string[] = [STORAGE_CHEST, WARDROBE];
 
 /** Which trophy each story shape awards, by frame id. */
 export const TROPHY_FOR_FRAME: Record<string, string> = {

@@ -2,7 +2,7 @@
 // character creation (roll and re-roll starting stats) and choosing a crew.
 // The character sheet itself lives in InventoryScreen.tsx.
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { SoundButton } from "./audio/SoundButton";
 import { useAudioScene } from "./audio/useAudioScene";
 import { STARTING_STATS } from "@gantt-quest/core";
@@ -11,6 +11,8 @@ import { EmailSignIn } from "./Account";
 import { api, type Character, type Me, type StatKey } from "./api";
 import { Icon } from "./items";
 import { blurb, label } from "./labels";
+import { GRAPHICS_HELP } from "./render/graphics";
+import { isBlankPortrait } from "./render/portraits";
 import { spriteDataUrl } from "./render/sprites";
 import { LookBuilder, startingOutfit } from "./LookBuilder";
 import { AnchorMark, HarborBackdrop, HarborTitle } from "./Welcome";
@@ -173,11 +175,20 @@ function Creation({ draft, busy, act, invite }: { draft: Character | null; busy:
   const rolled = draft && draft.class_id === classId ? draft : null;
   const validName = name.trim().length >= 2;
   const cls = HERO_CLASSES.find((c) => c.id === classId) ?? HERO_CLASSES[0];
-  const sprites = useMemo(() => Object.fromEntries(HERO_CLASSES.map((c) => [c.id, spriteDataUrl(c.id)])), []);
+  // The pictures come up empty when the browser will not give the game WebGL. They are asked for again a few
+  // times (it may only have been a bad moment), and meanwhile the player is told why the frames are empty.
+  const [redraws, setRedraws] = useState(0);
+  const sprites = useMemo(() => Object.fromEntries(HERO_CLASSES.map((c) => [c.id, spriteDataUrl(c.id)])), [redraws]);
+  const noGraphics = isBlankPortrait(sprites[HERO_CLASSES[0].id]);
+  useEffect(() => {
+    if (!noGraphics || redraws >= 6) return;
+    const again = setTimeout(() => setRedraws((n) => n + 1), 6000);
+    return () => clearTimeout(again);
+  }, [noGraphics, redraws]);
   const base = STARTING_STATS[classId];
   // How they look, chosen in the look builder below, saved as they begin.
   const [look, setLook] = useState<Appearance>(DEFAULT_APPEARANCE);
-  const portrait = useMemo(() => spriteDataUrl(classId, startingOutfit(classId, look), true), [classId, look]);
+  const portrait = useMemo(() => spriteDataUrl(classId, startingOutfit(classId, look), true), [classId, look, redraws]);
   const begin = () =>
     act(async () => {
       await api.setAppearance(look);
@@ -204,6 +215,11 @@ function Creation({ draft, busy, act, invite }: { draft: Character | null; busy:
     <section className="panel creation" aria-labelledby="creation-title">
       <h2 id="creation-title">Create your character</h2>
       {invite && <p className="banner">You were invited to a crew. Create a character first, then you can join it.</p>}
+      {noGraphics && (
+        <p className="banner error" role="alert">
+          Your browser is not giving the game a working 3D canvas (WebGL), so the heroes below are not drawn and the Harbor will not open. {GRAPHICS_HELP}
+        </p>
+      )}
 
       <div className="step">
         <h3 className="step-title"><span className="step-num">1</span><label htmlFor="hero-name">Name your hero</label></h3>

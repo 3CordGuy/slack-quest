@@ -7,7 +7,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAudioScene } from "./audio/useAudioScene";
 import { hexDistance, hexNeighbors, type HexPos } from "@gantt-quest/core";
-import { PUB_BARKEEP, PUB_BARKEEP_POS, PUB_COUNTER, PUB_CREW, PUB_DEALER, PUB_DEALER_POS, PUB_DEALER_STAND, PUB_DICE, PUB_FITTINGS, PUB_GRID, PUB_LEADERBOARD, PUB_MAX_TALK, PUB_MENU, PUB_REGULAR_SPOTS, PUB_SALESMAN_POS, PUB_SHOALS, PUB_TIDE, PUB_TRADER, dueIn, gatherDay, poiAt, pubMountSpots, pubPath, pubRoom, PUB_MOUNT_SLOTS, regularsOn, salesman, type Perk, type RegularId } from "@gantt-quest/world";
+import { PUB_BARKEEP, PUB_BARKEEP_POS, PUB_COUNTER, PUB_CREW, PUB_DEALER, PUB_DEALER_POS, PUB_DEALER_STAND, PUB_DICE, PUB_FITTINGS, PUB_GRID, PUB_LEADERBOARD, PUB_MAX_TALK, PUB_MENU, PUB_REGULAR_SPOTS, PUB_SALESMAN_POS, PUB_SEATS, PUB_SHOALS, PUB_TIDE, PUB_TRADER, dueIn, gatherDay, poiAt, pubMountSpots, pubPath, pubRoom, PUB_MOUNT_SLOTS, regularsOn, salesman, type Perk, type RegularId } from "@gantt-quest/world";
 import { CatchPanel } from "./CatchPanel";
 import { RecordBoard } from "./CatchBook";
 import { api, type Me, type PubTab, type PubWall, type RegularsView } from "./api";
@@ -167,6 +167,7 @@ export function PubView({ me, refresh, onLeave }: { me: Me; refresh(): Promise<u
     if (!you) return null;
     return {
       code: "pub",
+      kind: "pub",
       you,
       phase: "overworld",
       round: 0,
@@ -208,8 +209,17 @@ export function PubView({ me, refresh, onLeave }: { me: Me; refresh(): Promise<u
 
   useEffect(() => {
     const r = new WorldRenderer(mount.current!, { onPropClick: (id) => {
+        if (pinned.current) return false;
+        // A stool, wherever on it the click landed: walk onto its hex, and sit (whoever is on a stool's hex is drawn sitting on it).
+        const stool = PUB_FITTINGS.find((f) => f.id === id && PUB_SEATS.some((s) => same(s, f)));
+        if (stool) {
+          wantTalk.current = null;
+          wantDeal.current = wantBoard.current = false;
+          send.current({ type: "move", to: { q: stool.q, r: stool.r } });
+          return true;
+        }
         // The leaderboard's model, wherever on it the click landed.
-        if (id !== "leaderboard" || pinned.current) return false;
+        if (id !== "leaderboard") return false;
         readBoard.current();
         return true;
       }, onHexClick: (to) => {
@@ -286,7 +296,7 @@ export function PubView({ me, refresh, onLeave }: { me: Me; refresh(): Promise<u
   const standFrom = (table: TableName) => {
     setStood(table);
     const from = TABLE_HEX[table];
-    const away = hexNeighbors(from, PUB_GRID).filter((n) => ![PUB_COUNTER, PUB_DICE, PUB_SHOALS, PUB_CREW, PUB_TIDE, PUB_TRADER, PUB_DEALER_STAND].some((p) => same(p, n)) && pubPath(ROOM, from, n));
+    const away = hexNeighbors(from, PUB_GRID).filter((n) => ![PUB_COUNTER, PUB_DICE, PUB_SHOALS, PUB_CREW, PUB_TIDE, PUB_TRADER, PUB_DEALER_STAND].some((p) => same(p, n)) && !PUB_SEATS.some((s) => same(s, n)) && pubPath(ROOM, from, n));
     // The floor south of the table first, toward the room.
     away.sort((a, b) => b.r - a.r);
     if (away[0]) pub.send({ type: "move", to: away[0] });
@@ -482,7 +492,9 @@ export function PubView({ me, refresh, onLeave }: { me: Me; refresh(): Promise<u
         </div>
       </DragPanel>
 
-      <HudBar
+      {/* Put away while seated at a game table: the table's own dock has the moves and the way to stand up, and it
+          drops to the bottom of the screen (--hud-h goes with the bar). It comes back on standing up. */}
+      {!seatedAt && <HudBar
         me={me}
         place={
           <>
@@ -524,7 +536,7 @@ export function PubView({ me, refresh, onLeave }: { me: Me; refresh(): Promise<u
         {atDealer && !holdingDice && <button className="primary" disabled={dealing} onClick={() => setDealing(true)}>See contracts</button>}
         {atBoard && !holdingDice && <button className="primary" disabled={reading} onClick={() => setReading(true)}>Read the board</button>}
         <button className={atDoor ? "primary" : ""} disabled={holdingDice} onClick={onLeave}>Leave</button>
-      </HudBar>
+      </HudBar>}
       {bag && me.character && <InventoryScreen me={me} refresh={refresh} onClose={() => setBag(false)} />}
       {book && me.character && <Logbook me={me} refresh={refresh} onClose={() => setBook(false)} />}
       {atDoor && self && !holdingDice && <TileAction renderer={renderer} pos={self.pos} unitId={self.id} label="Leave" run={onLeave} />}

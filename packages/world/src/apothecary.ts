@@ -81,11 +81,18 @@ export function recipeText(recipe: Resources): string {
  */
 export const FLASK_RECIPES: Record<Throwable, Resources> = {
   healing: { herbs: 3 },
-  poison: { mushrooms: 3 },
+  // Cave slime does most of the work: one of it and a mushroom.
+  poison: { slime: 1, mushrooms: 1 },
   fire: { wood: 2, copper: 1 },
   oil: { bone: 2 },
   water: { fur: 1 },
+  acid: { slime: 2, bone: 1 },
+  slime: { slime: 2 },
+  torch: { wood: 1, fur: 1 },
 };
+
+/** How many one making gives: torches come two at a time, everything else one. */
+export const flaskYield = (kind: Throwable): number => (kind === "torch" ? 2 : 1);
 
 /**
  * Why a hero cannot make one of these now, or null if they can. `carried` is what their pack holds of
@@ -102,5 +109,5 @@ export function flaskProblem(
   for (const [res, qty] of Object.entries(recipe) as [ResourceKind, number][]) {
     if ((ctx.resources[res] ?? 0) < qty) return `${THROWABLES[k].name}: that takes ${recipeText(recipe)}.`;
   }
-  return ctx.carry ? carryProblem(ctx.carry, addedSlots(ctx.carried[k] ?? 0, 1)) : null;
+  return ctx.carry ? carryProblem(ctx.carry, addedSlots(ctx.carried[k] ?? 0, flaskYield(k))) : null;
 }

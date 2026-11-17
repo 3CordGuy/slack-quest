@@ -672,8 +672,6 @@ export class TableStage implements WorldMinigame {
   private ringGeo = new THREE.RingGeometry(0.075, 0.092, 28);
 
   constructor(private world: WorldRenderer, private group: THREE.Group, private kind: TableKind, private cb: TableCallbacks) {
-    // Dice and markers are read up close: draw them at full resolution, not the chunky half.
-    world.setSharp(true);
     this.buildTable();
     this.group.add(this.furniture, this.stools, this.pot, this.middle, this.fx, this.shadows.group);
     this.old = world.poiObject(kind);
@@ -1846,12 +1844,12 @@ export class TableStage implements WorldMinigame {
     this.card.position.y = CARD_Y + Math.sin(this.clock * 1.6) * 0.012;
     const base = this.group.position;
     const sway = Math.sin(this.clock * 0.9) * 0.006;
-    // A tall window (a phone) sees little across: back the eye off and open the lens until the stools at either side are in.
+    // A tall window (a phone) sees little across: the eye backs off a little. The lens stays as it is: opened wider,
+    // the cards on the table come out too small to read.
     const back = THREE.MathUtils.clamp(0.8 / aspect, 1, 1.3);
     const eye = new THREE.Vector3(base.x, base.y + 1.75 * back + sway, base.z + (SEAT_R + 1.0) * back);
     const look = new THREE.Vector3(base.x, base.y + TOP + 0.08, base.z - 0.05);
-    const fov = Math.max(VFOV, Math.min(72, (2 * Math.atan(Math.tan(THREE.MathUtils.degToRad(26)) / aspect) * 180) / Math.PI));
-    return { eye, look, blend: smoother(this.inT), fov };
+    return { eye, look, blend: smoother(this.inT), fov: VFOV };
   }
 
   private animate(dt: number) {
@@ -1991,7 +1989,6 @@ export class TableStage implements WorldMinigame {
       this.old.visible = true;
       this.old.scale.setScalar(1);
     }
-    this.world.setSharp(false);
     this.world.slideTableLamp(this.kind, 0);
     this.shadows.dispose();
     for (const r of this.rigs.values()) this.disposeRig(r);

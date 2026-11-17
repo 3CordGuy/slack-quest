@@ -270,6 +270,17 @@ export const ACTION_ART: Record<string, Art> = {
     p.r(2, 12, 12, 2, C.steel);
     p.r(2, 11, 3, 1, K.skin);
   },
+  "act-flee": (p) => {
+    // The way out: a dark doorway, and an arrow running for it.
+    p.r(9, 1, 6, 1, C.wood);
+    p.r(9, 2, 1, 12, C.wood);
+    p.r(14, 2, 1, 12, C.wood);
+    p.r(10, 2, 4, 12, C.dark);
+    p.r(1, 7, 9, 2, p.accent);
+    p.l(8, 4, 11, 7, p.accent);
+    p.l(8, 11, 11, 8, p.accent);
+    p.r(0, 14, 16, 1, C.bark);
+  },
   // ---- things thrown ----
   "item-flask": (p) => {
     p.r(7, 1, 2, 1, C.bark);
@@ -285,6 +296,14 @@ export const ACTION_ART: Record<string, Art> = {
     p.l(9, 4, 11, 2, C.bark);
     p.r(11, 1, 2, 2, p.accent);
     p.r(13, 0, 1, 1, K.flame);
+  },
+  "item-torch": (p) => {
+    // A stick bound with pitch-soaked rag at its head, alight.
+    p.l(5, 14, 9, 7, C.bark);
+    p.l(6, 14, 10, 7, C.wood);
+    spans(p, C.hide, [[5, 9, 12], [6, 9, 12], [7, 8, 11]]);
+    spans(p, p.accent, [[1, 11, 11], [2, 10, 12], [3, 9, 13], [4, 9, 13]]);
+    spans(p, K.flame, [[0, 11, 11], [2, 11, 11], [3, 10, 12]]);
   },
   "item-waterskin": (p) => {
     p.r(7, 1, 2, 1, C.bark);

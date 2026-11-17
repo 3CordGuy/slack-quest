@@ -31,17 +31,24 @@ void main() {
   gl_FragColor = vec4(c * smoothstep(threshold, threshold + knee, l), 1.0);
 }`;
 
-/** One direction of a soft blur: nine samples' worth from five reads. */
+/**
+ * One direction of a soft blur: nine samples' worth from five reads. Each read is capped at what the screen can
+ * show first: light piled up past white (a fire's flames drawn one over another) would otherwise spread its
+ * excess across everything near it, and an out-of-focus fire would blur into a white block.
+ */
 const BLUR = /* glsl */ `
 uniform sampler2D tMap;
 uniform vec2 dir;
 varying vec2 vUv;
+vec3 capped(vec2 at) {
+  return min(texture2D(tMap, at).rgb, vec3(1.0));
+}
 void main() {
-  vec3 c = texture2D(tMap, vUv).rgb * 0.2270270270;
-  c += texture2D(tMap, vUv + dir * 1.3846153846).rgb * 0.3162162162;
-  c += texture2D(tMap, vUv - dir * 1.3846153846).rgb * 0.3162162162;
-  c += texture2D(tMap, vUv + dir * 3.2307692308).rgb * 0.0702702703;
-  c += texture2D(tMap, vUv - dir * 3.2307692308).rgb * 0.0702702703;
+  vec3 c = capped(vUv) * 0.2270270270;
+  c += capped(vUv + dir * 1.3846153846) * 0.3162162162;
+  c += capped(vUv - dir * 1.3846153846) * 0.3162162162;
+  c += capped(vUv + dir * 3.2307692308) * 0.0702702703;
+  c += capped(vUv - dir * 3.2307692308) * 0.0702702703;
   gl_FragColor = vec4(c, 1.0);
 }`;
 
@@ -270,8 +277,13 @@ export class PostFx {
     const type = renderer.extensions.has("EXT_color_buffer_float") || renderer.extensions.has("EXT_color_buffer_half_float") ? THREE.HalfFloatType : THREE.UnsignedByteType;
     // The scene itself is drawn with four samples a pixel, so the edges of hexes, roofs and figures are smooth.
     const target = (depth = false) => {
-      const t = new THREE.WebGLRenderTarget(1, 1, { type, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, depthBuffer: depth, samples: depth ? 4 : 0 });
-      if (depth) t.depthTexture = new THREE.DepthTexture(1, 1);
+      // The scene's picture has a stencil as well, for showing figures through what hides them (silhouette.ts):
+      // its depth is kept in a texture that holds both.
+      const t = new THREE.WebGLRenderTarget(1, 1, { type, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, depthBuffer: depth, stencilBuffer: depth, samples: depth ? 4 : 0 });
+      if (depth) {
+        t.depthTexture = new THREE.DepthTexture(1, 1, THREE.UnsignedInt248Type);
+        t.depthTexture.format = THREE.DepthStencilFormat;
+      }
       return t;
     };
     this.scene = target(true);

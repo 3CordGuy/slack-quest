@@ -83,6 +83,10 @@
 .hud-glyph { font-family: var(--font-title); font-size: calc(var(--p) * 6.4); line-height: 1; color: #5a2a17; }
 .hud-key { position: absolute; left: calc(var(--p) * 2 + 1px); top: calc(var(--p) * 2); font-size: 9px; line-height: 1; font-weight: bold; color: #9a5a3a; }
 .hud-count { position: absolute; right: calc(var(--p) * 2 + 1px); bottom: calc(var(--p) * 2); font-size: 11px; line-height: 1; font-weight: bold; color: #4a2418; }
+/* The off hand on a map: a torch can be lit into it (a small torch in its corner says so), and glows while one burns. */
+.hud-torch-hint { position: absolute; right: calc(var(--p) * 1); top: calc(var(--p) * 1); line-height: 0; pointer-events: none; }
+.hud-slot.hand.lit { box-shadow: inset 0 0 calc(var(--p) * 4) rgba(255, 150, 60, 0.75); }
+.hud-slot.hand.lit .hud-count { color: #ffe08a; text-shadow: 0 1px 0 #3a1d20; }
 /* A tab lies over its block in the picture: a key's letter, or a small glyph, in pale cream. */
 .hud .hud-tab {
   position: absolute; padding: 0; display: grid; place-items: center; border: none; border-radius: 0; background: none; box-shadow: none;
@@ -136,8 +140,18 @@
   .hud { bottom: 8px; max-width: calc(100% - 12px); }
   /* The whole rack is drawn smaller: two screen pixels to one of its own, then one and a half. */
   .hud-rack { --p: 2px; }
+  /* Terse on a phone: the muted explainer after where you stand goes; the place itself stays. */
+  .hud-place .muted { display: none; }
+  /* Where you stand gets a line of its own over the buttons, rather than a narrow column beside them. */
+  .hud-here { flex-wrap: wrap; justify-content: center; gap: 4px 8px; }
+  .hud-place { flex: 1 1 100%; text-align: center; font-size: 13px; }
+  .hud-place:empty, .hud-place:has(> .muted:only-child) { display: none; }
   .hud-slot .voxel-icon, .hud-slot .pixel-icon { width: 20px; height: 20px; }
   .hud-left { top: 8px; left: 8px; gap: 10px; }
+  /* The crew's cards: as wide as a name needs, and close together (the rows themselves shrink in roster.css). */
+  .run .hud-left > .crew { width: fit-content; max-width: 190px; gap: 4px; }
+  .crew-cards .roster { gap: 4px; }
+  .crew-cards .roster li.cm { padding: 2px 6px 2px 4px; }
   .run:has(.bag-overlay) .camera-rotate { display: none; }
 }
 

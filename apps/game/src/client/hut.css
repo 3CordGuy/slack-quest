@@ -107,6 +107,10 @@
   .hut-here-row { gap: 6px; }
   .hut-here-row > button { padding-left: 8px; padding-right: 8px; }
   .hut-here-row .hut-decorate-label { display: none; }
+  /* No hover on a phone: a tap uses the piece and says what it is, so the pointer's tip would only linger. */
+  .hut-view > .tip { display: none; }
+  .hud-here .hut-decorate-label { display: none; }
+  .hud-here .hut-decorate { min-width: 36px; justify-content: center; }
   .hut-here-row .hut-decorate { min-width: 36px; justify-content: center; }
   .hut-view .harbor-chat { bottom: 146px; }
   .hut-view .hut-craft { bottom: 190px; }

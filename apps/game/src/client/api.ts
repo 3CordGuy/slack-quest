@@ -15,11 +15,10 @@ import type { CatchBook, PubWall } from "../server/catchbook";
 import type { PubGame, PubLeaderboard, PubScore } from "../server/pub-scores";
 import type { XpResult } from "../server/harbor-xp";
 import type { TradeList } from "../server/trade";
-import type { ApothecaryView, SmithyView } from "../server/workshops";
-import type { GalleyView } from "../server/galley";
+import type { ApothecaryView, GalleyKeeperView, HaggleResult, KeeperWare, SmithyView } from "../server/workshops";
 import type { ErrandPaid, RegularsView } from "../server/errands";
 
-export type { ApothecaryView, SmithyView, GalleyView, ErrandPaid, RegularsView };
+export type { ApothecaryView, SmithyView, GalleyKeeperView, ErrandPaid, RegularsView, HaggleResult, KeeperWare };
 
 export type { CatchBook, FishStock, GatherStatus, PubGame, PubLeaderboard, PubScore, PubWall, SittingPaid, XpResult };
 
@@ -217,8 +216,15 @@ export const api = {
   brewFlask: (kind: string) => request<ApothecaryView & { xp?: XpResult }>("/api/apothecary/flask", { kind }),
   smithy: () => request<SmithyView>("/api/smithy"),
   smith: (itemId: number) => request<SmithyView & { worked: string; xp?: XpResult }>("/api/smithy/work", { itemId }),
-  galley: () => request<GalleyView>("/api/galley"),
-  cook: (dishId: string) => request<GalleyView & { xp?: XpResult }>("/api/galley/cook", { dishId }),
+  /** Buy something ready-made from a keeper's own stock, by its key. */
+  buyFromApothecary: (key: string) => request<ApothecaryView & { got: string }>("/api/apothecary/buy", { key }),
+  buyFromSmith: (key: string) => request<SmithyView & { got: string }>("/api/smithy/buy", { key }),
+  /** Ask a keeper to take something off a price: `ask` is one of HAGGLE_ASKS. One try a day for each thing. */
+  haggle: (shop: string, key: string, ask: string) => request<HaggleResult>("/api/keeper/haggle", { shop, key, ask }),
+  galley: () => request<GalleyKeeperView>("/api/galley"),
+  cook: (dishId: string) => request<GalleyKeeperView & { xp?: XpResult }>("/api/galley/cook", { dishId }),
+  /** Buy a dish ready-made from the cook, by its key: it goes into the crew's larder. */
+  buyFromCook: (key: string) => request<GalleyKeeperView & { got: string }>("/api/galley/buy", { key }),
   giveToProject: (projectId: string, give: ProjectAmounts) => request<Works & { completed: boolean; xp?: XpResult }>("/api/projects/give", { projectId, give }),
   hut: () => request<Hut>("/api/hut"),
   craft: (defId: string) => request<{ ok: true; xp?: XpResult }>("/api/hut/craft", { defId }),
@@ -243,6 +249,8 @@ export const api = {
   crewPlaces: () => request<{ members: { id: string; name: string; classId: string; level: number; zone: { code: string; fighting: boolean } | null }[] }>("/api/crew/places"),
   /** Where to go to join a crewmate: the zone they are on, or null for the Harbor. Refused while they are in a fight. */
   teleport: (to: string) => request<{ zone: string | null; name: string }>("/api/crew/teleport", { to }),
+  /** Down into the caves: the crew's cave still being fought through, or a fresh one. */
+  caves: () => request<{ code: string; fresh: boolean }>("/api/caves", {}),
   /** Make a zone to try fights in, from these options (and a seed, or a fresh one), and get its code. */
   devZone: (options: Record<string, unknown>) => request<{ code: string; seed: string }>("/api/dev/zone", options),
   devGold: (amount: number) => request<{ gold: number }>("/api/dev/gold", { amount }),

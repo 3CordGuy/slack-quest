@@ -30,7 +30,6 @@ import { WorldRenderer, type RenderState } from "./render/WorldRenderer";
 import { useHarbor } from "./useHarbor";
 import { useSalesman } from "./salesmanClock";
 import { WorksPanel } from "./works/WorksPanel";
-import { ApothecaryPanel, GalleyPanel, SmithyPanel } from "./works/WorkshopPanels";
 import { label } from "./labels";
 import { xpEvents } from "./xpEvents";
 
@@ -60,7 +59,6 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
   const [gather, setGather] = useState<GatherSpot | null>(null);
   const [fishmonger, setFishmonger] = useState(false);
   const [works, setWorks] = useState(false);
-  const [workshop, setWorkshop] = useState<"apothecary" | "smithy" | "galley" | null>(null);
   const [account, setAccount] = useState(false);
   const [tradeWith, setTradeWith] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
@@ -187,7 +185,7 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
   /** A release with notes this player has not read: the board wears a "!". An older server sends no seenRelease, and then there is none. */
   const unseen = me.seenRelease !== undefined && hasUnseen(me.seenRelease);
   const tip = !hoverPoi ? null
-    : hoverPoi.kind === "cave" ? "The Haunted Caverns: boarded up while delves are rebuilt"
+    : hoverPoi.kind === "cave" ? "The Haunted Caverns: go down and fight what lurks in the dark"
     : hoverPoi.kind === "board" ? (unseen ? "Notice board: news of what has changed. Something new is pinned up!" : "Notice board: news of what has changed")
     : hoverPoi.kind === "shop" ? "Market stall: gear, and furniture for your hut"
     : hoverPoi.kind === "ring" ? "Sparring ring: being rebuilt"
@@ -198,9 +196,9 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
     : hoverPoi.kind === "pub" ? (visitor ? `The pub: a traveling salesman is in. ${visitor.name}, ${visitor.trade}` : "The pub: food, drink, Old Tam and the dice table")
     : hoverPoi.kind === "works" ? "The works: crew projects"
     : hoverPoi.kind === "lighthouse" ? (lit ? "The lighthouse: it sees every ship out past the shoals" : lighthouseFill > 0 ? "The lighthouse going up: a crew project at the works" : "A bare point over the wreck, where the lighthouse will stand")
-    : hoverPoi.kind === "apothecary" ? (apothecaryBuilt ? "The apothecary: brew potions and flasks for your pack" : "The apothecary's building site: a crew project at the works")
-    : hoverPoi.kind === "smithy" ? (smithyBuilt ? "The smithy: sharpen weapons, reinforce armour" : "The smithy's building site: a crew project at the works")
-    : hoverPoi.kind === "galley" ? (galleyBuilt ? "The galley: cook chowder and stores into the crew's larder" : "The galley's building site: a crew project at the works")
+    : hoverPoi.kind === "apothecary" ? (apothecaryBuilt ? "The apothecary: potions and flasks, bought or brewed, and a keeper to haggle with" : "The apothecary's building site: a crew project at the works")
+    : hoverPoi.kind === "smithy" ? (smithyBuilt ? "The smithy: arms and armour off the rack, your own sharpened or reinforced, and a smith to haggle with" : "The smithy's building site: a crew project at the works")
+    : hoverPoi.kind === "galley" ? (galleyBuilt ? "The galley: go in to cook chowder and stores into the crew's larder" : "The galley's building site: a crew project at the works")
     : hoverPoi.kind === "lot" ? (myPlot === null ? `A plot for sale: ${PLOT_PRICE} gold` : "An empty plot")
     : hoverPoi.kind === "site" ? (hoverPoi.id === `site:${you}` ? "Your plot: fill the bin and the shack goes up" : `${board.members.find((m) => `site:${m.id}` === hoverPoi.id)?.name ?? "Someone"}'s plot: building a shack`)
     : hoverPoi.kind === "plot" ? `${board.members.find((m) => `plot:${m.id}` === hoverPoi.id)?.name ?? "Someone"}'s ${hutTier(hoverPoi.tier ?? 1).name.toLowerCase()}`
@@ -345,13 +343,17 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
     }
     location.hash = hash;
   };
-  // Voyages, delves and sparring are shut while they are rebuilt on the new combat (fights on the tiles
+  /** Down into the caves: the crew's cave if one is still being fought through, else a fresh one. Leaving it comes back to the mouth. */
+  const goDown = () => {
+    api.caves().then(({ code }) => goInside(`${HARBOR_CAVE.q},${HARBOR_CAVE.r}`, `zone/${code}`), (e: Error) => setNote(e.message));
+  };
+  // Voyages and sparring are shut while they are rebuilt on the new combat (fights on the tiles
   // themselves): each place says so and offers nothing to do.
   const shut = (title: ReactNode) => ({ title, label: "", run: () => {}, closed: true });
   // The place under your feet and the one thing to do there, shown in the bar below and floated over the hex.
   const here: { title: ReactNode; label: string; run(): void; quiet?: boolean; closed?: boolean; also?: { label: string; run(): void } } | null =
     atBoard ? { title: unseen ? "The notice board · something new is pinned up" : "The notice board", label: "Read the notice board", run: () => setNotices(true) }
-    : atCave ? shut(<>The Haunted Caverns <span className="muted">· boarded up while delves are rebuilt. Coming soon.</span></>)
+    : atCave ? { title: <>The Haunted Caverns <span className="muted">· something lurks in the dark</span></>, label: "Go down", run: goDown }
     : shipHere ? { ...shut(<>{shipHere.captain}'s ship <span className="muted">· laid up while voyages are rebuilt</span></>), also: pierHere ? { label: "Cast a line", run: () => setGather("fishing") } : undefined }
     : atShop ? { title: "The market stall", label: "Browse the wares", run: () => setShop(true) }
     : atRing ? shut(<>The sparring ring <span className="muted">· being rebuilt for a new way of fighting. Coming soon.</span></>)
@@ -367,13 +369,13 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
     : atLighthouse ? { title: lit ? "The lighthouse" : <>The lighthouse's point <span className="muted">· paid for at the works</span></>, label: "See the crew's projects", run: () => setWorks(true) }
     // A workshop still to be built points to the works, where the crew pays for it.
     : atApothecary ? (apothecaryBuilt
-        ? { title: "The apothecary", label: "Brew something", run: () => setWorkshop("apothecary") }
+        ? { title: "The apothecary", label: "Go in", run: () => goInside(`${HARBOR_APOTHECARY.q},${HARBOR_APOTHECARY.r}`, "apothecary") }
         : { title: <>The apothecary's building site <span className="muted">· paid for at the works</span></>, label: "See the crew's projects", run: () => setWorks(true) })
     : atSmithy ? (smithyBuilt
-        ? { title: "The smithy", label: "Work your gear", run: () => setWorkshop("smithy") }
+        ? { title: "The smithy", label: "Go in", run: () => goInside(`${HARBOR_SMITHY.q},${HARBOR_SMITHY.r}`, "smithy") }
         : { title: <>The smithy's building site <span className="muted">· paid for at the works</span></>, label: "See the crew's projects", run: () => setWorks(true) })
     : atGalley ? (galleyBuilt
-        ? { title: "The galley", label: "Cook for the ship", run: () => setWorkshop("galley") }
+        ? { title: "The galley", label: "Go in", run: () => goInside(`${HARBOR_GALLEY.q},${HARBOR_GALLEY.r}`, "galley") }
         : { title: <>The galley's building site <span className="muted">· paid for at the works</span></>, label: "See the crew's projects", run: () => setWorks(true) })
     : myBin ? {
         title: (
@@ -407,7 +409,7 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
       }
     : null;
   // Anything laid over the Harbor takes the floating button away.
-  const panelOpen = sheet || book || shop || notices || !!gather || fishmonger || works || !!workshop || account || !!tradeWith;
+  const panelOpen = sheet || book || shop || notices || !!gather || fishmonger || works || account || !!tradeWith;
   const error = harbor.error;
 
   return (
@@ -460,7 +462,9 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
         </div>
       </DragPanel>
 
-      <HudBar
+      {/* Put away while a gathering outing (fishing, felling, the quarry) has the view: nothing on it is any use
+          there, and the game's own controls drop to the bottom of the screen (--hud-h goes with it). */}
+      {!(gather && me.character) && <HudBar
         me={me}
         place={here && !here.quiet ? here.title : undefined}
         rest={onWater ? undefined : {
@@ -495,7 +499,7 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
       >
         {here && !here.quiet && !here.closed && <button className="primary" onClick={here.run}>{here.label}</button>}
         {here?.also && <button onClick={here.also.run}>{here.also.label}</button>}
-      </HudBar>
+      </HudBar>}
 
       {here && !here.quiet && !here.closed && self && !panelOpen && <TileAction renderer={renderer} pos={self.pos} unitId={self.id} label={here.label} run={here.run} />}
       {tip && <div className="tip">{tip}</div>}
@@ -508,9 +512,6 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
       {notices && <NoticeBoard seen={me.seenRelease} onSeen={() => void refresh()} onClose={() => setNotices(false)} />}
       {unseen && !panelOpen && !atBoard && <AttentionMark renderer={renderer} pos={HARBOR_BOARD} lift={2.35} label="Something new on the notice board" />}
       {works && <WorksPanel works={board.works} refresh={refresh} onClose={() => setWorks(false)} />}
-      {workshop === "apothecary" && <ApothecaryPanel refresh={refreshAll} onClose={() => setWorkshop(null)} />}
-      {workshop === "galley" && <GalleyPanel onClose={() => setWorkshop(null)} />}
-      {workshop === "smithy" && <SmithyPanel refresh={refreshAll} onClose={() => setWorkshop(null)} />}
       {gather && me.character && <GatherPanel spot={gather} onRod={(on) => harbor.send({ type: "fishing", on })} pier={pierHere ?? undefined} at={self?.pos} vessel={self?.vessel ?? null} gilded={me.character?.title === BOOK_TITLE} shipBeside={!!shipHere} renderer={renderer} onClose={() => setGather(null)} onStamina={setStamina} />}
       {fishmonger && me.character && <CatchPanel buyer="market" onGold={() => void refresh()} onClose={() => setFishmonger(false)} />}
       {shop && me.character && <ShopScreen me={me} refresh={refreshAll} onClose={() => setShop(false)} />}

@@ -6,16 +6,20 @@
 // Fights are played on the map itself: enemies stand on their own hexes like the heroes do.
 
 import * as THREE from "three";
+import { flamesIn, flickerFlame, torchFlame } from "./torchFlame";
+import { MOUTH_FACE, SHAFT_HEIGHT, buildCaveDressing, caveMouth, caveRope, glowcapCluster, mouthRope, mouthTorch } from "./caveDressing";
 import { makeModelShip } from "./modelShip";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { reportEnv } from "../ui/env";
-import { Ambience, TILE_FILLET, TILE_RADIUS, beaconShine, dryPatch, hexTop, meadowAt, pixelTexture, stamp, tallGrass, type BuildingGlow } from "./ambience";
+import { makeRenderer } from "./graphics";
+import { apothecaryWallTexture, galleyWallTexture, panelTexture, smithyWallTexture } from "./groundArt";
+import { Ambience, type RoomLight, TILE_FILLET, TILE_RADIUS, TORCH_LIFT, beaconShine, dryPatch, hexTop, meadowAt, pixelTexture, stamp, tallGrass, type BuildingGlow } from "./ambience";
 import "./camera.css";
 import { PINCH_PAN_SLACK, followIconSvg, readFollow, writeFollow } from "./cameraFollow";
 import type { HexPos } from "@gantt-quest/core";
 import { hexDistance } from "@gantt-quest/core";
-import { lookStep, lookYaw, BASE_HEIGHT, BATTLE_JOIN_RANGE, BIG_REACH, ENEMIES, HEX_DIRS, TRAIT_BY_ID, tileCost, WALL_FACE_HALF, WALL_ITEM_BOTTOM, WALL_ITEM_TOP, findPath, hexAt, xpProgress, reachable, tileAt, wallFace, wallFaces, type ClientState, type Outfit, type Phase, type Poi, type Tile, type WorldEvent, type WorldMap } from "@gantt-quest/world";
-import { fancy } from "./fancy";
+import { lookStep, lookYaw, BASE_HEIGHT, BATTLE_JOIN_RANGE, BIG_REACH, ENEMIES, HEX_DIRS, SEATS, TRAIT_BY_ID, tileCost, WALL_FACE_HALF, WALL_ITEM_BOTTOM, WALL_ITEM_TOP, hexAt, xpProgress, reachable, tileAt, wallFace, wallFaces, type ClientState, type Outfit, type Phase, type Poi, type Tile, type WorldEvent, type WorldMap } from "@gantt-quest/world";
+import { fancy, fancyGrass } from "./fancy";
 import { NightLife } from "./nightlife";
 import { Storm } from "./storm";
 import { setFieldWalkers, updateWind } from "./wind";
@@ -24,6 +28,7 @@ import { Gulls, type GullSpot } from "./gulls";
 import { OVERLAY_LAYER, PostFx, type Air } from "./post";
 import { fishMount } from "./catchArt";
 import { FRAME, OUTLINE, SITTING_DROP, inflate, makeFigure, type Figure } from "./figures";
+import { HIDES, hidingMaterial } from "./silhouette";
 import { BOAT_SCALE, OARLOCKS, ROWER_SEAT, aimOar, rowboatModel, shipOar } from "./rowboat";
 import { Rise } from "./rise";
 import { gaze } from "../gaze";
@@ -31,10 +36,11 @@ import { NIGHT, VEIL_CLEAR_S, Veil } from "./veil";
 import { GROUND_KIND, addFancyWater, addWaterRipple, setGroundWet, setWaterNight, setWaterStanding, shoreSide, updateWater, waterAttribute, type Standing } from "./water";
 import { ghostModel, propModel, tintGhost, type LightKind } from "./props";
 import { LAMP_TABLES, TableLamps } from "./tableLamps";
+import { LID_OPEN, chestMouth, chestModel, crateMiddle, crateModel, restingLid } from "./caveProps";
 import { nearWater, openEar, sounds } from "../audio/gameSounds";
 import type { AttackStyle, Fighter } from "../audio/names";
 import { PUFFS, footfalls, stepGround, worldToHex, type PuffLook } from "./footsteps";
-import { bubbleTexture, fxTexture, labelTexture, lookFor, plateKey, sleepZTexture, spriteKey, textTexture, type FxKind, type PlateStats } from "./sprites";
+import { badgeTexture, badgesKey, bubbleTexture, fxTexture, labelTexture, lookFor, plateKey, sleepZTexture, spriteKey, textTexture, type Badge, type FxKind, type PlateStats } from "./sprites";
 
 /** Spells fly as a coloured bolt; these are their colours, by ability name. */
 const SPELL_COLOR: Record<string, string> = {
@@ -49,6 +55,11 @@ const ARROW_ABILITIES = new Set(["Aimed Shot", "Pin Down", "Volley", "Barbed Arr
 const THROWN: Record<string, string> = { "Hurl Rock": "#77726a" };
 /** Melee blows heavy enough to knock the target back and raise dust at its feet. */
 const SMASHES = new Set(["Club Smash"]);
+/**
+ * Melee blows struck as the figure's heavy strike (see Figure.strike), a great two-handed sweep or with a blade
+ * in each hand both tossed and jabbed down: the smashes, and the other all-or-nothing swings.
+ */
+const HEAVY_SWINGS = new Set([...SMASHES, "Heavy Blow", "Cleave", "Crushing Maul", "Crushing Strike", "Sweeping Ruin", "Stone Fist", "Flurry", "Shockwave"]);
 /** A ground-pound (the ogre's Stomp, the guardian's Quake): no step in; the ground shakes out from the attacker's feet and jolts whoever it reaches. */
 const QUAKES = new Set(["Stomp", "Quake"]);
 /** Heals that are an enemy growing back (a troll's Regenerate), drawn as moss creeping over it, not a sparkle. */
@@ -66,11 +77,14 @@ const roomOf = (kind: string) => (kind === "ogre" ? 1.5 : 1);
  * What the renderer needs to draw a scene. An island's ClientState satisfies
  * this as it is; the Harbor builds one by hand with `freeRoam` set.
  */
+/** Seconds between one pickup told over a hero's head and the next. */
+const PICKUP_GAP = 0.55;
+
 export interface RenderState {
   /** Identifies the map; the terrain is rebuilt when it changes. */
   code: string;
   /** A voyage's island, or the Haunted Caverns: the caverns' mouth shows no moored ship, and its heroes carry torches. */
-  kind?: "voyage" | "caverns";
+  kind?: "voyage" | "caverns" | "pub";
   you: string;
   phase: Phase;
   round: number;
@@ -85,6 +99,11 @@ export interface RenderState {
   /** A zone's enemies: each stands on its own hex, with a bar of what it has left once it is in a fight. */
   units?: RenderUnit[];
   /**
+   * Torches lying lit on the ground, underground. With this set (a zone in the caves), only heroes holding
+   * a torch carry light, and these light where they lie; without it every hero in the caverns has one.
+   */
+  lights?: HexPos[];
+  /**
    * Where the viewer can walk, worked out by the caller (a zone's rules know about cliffs, bodies in the way
    * and what is left of a turn's movement). When set it is used as it stands: the tiles lit, the marker
    * under the pointer and the dots along the way all come from it.
@@ -98,6 +117,12 @@ export interface RenderState {
   indoors?: boolean;
   /** Inside a hut with its hanging lamp put out: the room is lit by its own candles, lanterns and fires. */
   lampOff?: boolean;
+  /** With `lampOff`: a room kept dim for the mood of it, each small light a pool with dark between (the apothecary's shop). */
+  gloom?: boolean;
+  /** How a room's walls are dressed inside: the pub's oak and plaster, the smithy's stone and sooted timber, the apothecary's green wainscot and paper, the galley's oxblood boards, tiles and limewash. The pub's is the default for the pub; other rooms have bare walls without it. */
+  walls?: WallDressing;
+  /** What a room's floor is laid with: boards (the default) or flagstones (the smithy). */
+  floor?: "planks" | "flags";
   /** Your gathering outings, shown as lightning bolts on your own plate. */
   stamina?: { left: number; max: number };
   /** A piece being carried: a ghost of it follows the pointer, and a click sets it down (RendererCallbacks.onPlace). */
@@ -109,6 +134,10 @@ export interface RenderState {
    */
   homeYaw?: number;
 }
+
+/** The ways a room's walls can be dressed inside (see RenderState.walls). */
+export type WallDressing = "pub" | "smithy" | "apothecary" | "galley";
+const WALL_DRESSINGS: Record<WallDressing, () => THREE.CanvasTexture> = { pub: panelTexture, smithy: smithyWallTexture, apothecary: apothecaryWallTexture, galley: galleyWallTexture };
 
 /** An enemy standing on a hex of its own. */
 export interface RenderUnit {
@@ -126,6 +155,8 @@ export interface RenderUnit {
   active?: boolean;
   /** In a fight: it wears a red ring. */
   hostile?: boolean;
+  /** Conditions on it, badged over its head. */
+  effects?: Badge[];
 }
 
 /**
@@ -161,6 +192,10 @@ export interface RenderHero {
   prone?: boolean;
   /** Whose turn it is in a fight on the tiles: their ring pulses. */
   active?: boolean;
+  /** Holding a lit torch: underground, its light goes where they go. */
+  torch?: boolean;
+  /** Conditions on them, badged over their head. */
+  effects?: Badge[];
 }
 
 /** The first word of a name, for a plate: "Ewan Driftwood" is "Ewan". */
@@ -236,12 +271,24 @@ export interface Holding {
 
 /** Furthest a free-roaming walk may be previewed; matches the Harbor's server-side limit. */
 const FREE_ROAM_REACH = 60;
+/** Seconds to get up onto a stool, and to get off one. */
+/** The hexes that stand up as walls: whoever is behind one is shown through it (see silhouette.ts). */
+const WALLS: ReadonlySet<string> = new Set(["wall", "rock", "rampart"]);
+/** An enemy in a fight: its ring, and its shape seen through what hides it. */
+const ENEMY_RED = "#e23b3b";
+const SIT_S = 0.45;
+const STAND_S = 0.2;
+/**
+ * A jump from tile to tile (see leapUnit): how long it is off the ground and how high it goes at the top, each a
+ * base and so much more per world unit jumped; the longest it is ever in the air; how far it clears the lip of
+ * a ledge it is jumping up onto; and how far into the jump's sound the thud of the landing is.
+ */
+const LEAP = { air: 0.3, airPer: 0.045, longest: 0.56, high: 0.45, highPer: 0.13, clear: 0.45, thud: 0.3 };
 
 const SQRT3 = Math.sqrt(3);
 /**
- * Render at 1/PIXEL resolution and scale up unsmoothed for a chunky look. With "Fancy graphics" on the world is
- * drawn at full resolution instead, so the figures' faces and gear can be made out; what is read (plates, speech)
- * keeps its chunky pixels and its size either way.
+ * The world is drawn at full resolution and smoothed. What is read (plates, speech) is still drawn in chunky
+ * pixels, PIXEL screen pixels each, so it keeps its size.
  */
 const PIXEL = 2;
 /** Nearest and farthest the camera may sit from what it looks at. */
@@ -501,10 +548,24 @@ interface Unit {
   rush?: number;
   /** Knocked off its feet: drawn lying until the render clock passes this. */
   floored?: number;
+  /**
+   * The waypoints in `path` that are jumped to, not walked: the Jump action (see leapUnit: true, and heard as
+   * one), and any step of a walk that goes up or down a level of the ground (see walkUnit: false).
+   */
+  leaps?: Map<THREE.Vector3, boolean>;
+  /**
+   * The jump under way, to the next waypoint `to`: from `from`, the feet leaving the ground at `at` on the
+   * render clock and off it for `air` seconds, `high` at the top of the arc.
+   */
+  leap?: { to: THREE.Vector3; from: THREE.Vector3; at: number; air: number; high: number };
   /** Afloat: the boat under them, which kind it is, and how far it sits them down. */
   boat?: THREE.Group | null;
   boatKind?: "barrel" | "rowboat";
   sunk?: number;
+  /** On a stool's hex: sat on it once they have walked up to it. `seatTop` is how high the seat is off the floor, and `sit` how far onto it they are, 0 (standing) to 1. */
+  seated?: boolean;
+  seatTop?: number;
+  sit?: number;
   /** Holding a fishing rod: in a rowboat, the oars are shipped and the hands left for the rod. */
   rod?: boolean;
   /** At the oars: how far round the stroke is (radians), and where it has the hands, 0 (forward) to 1 (pulled in). */
@@ -527,6 +588,9 @@ interface Unit {
   ring: THREE.Mesh | null;
   hpBack: THREE.Sprite | null;
   hpFill: THREE.Sprite | null;
+  /** Its status badges, and what they were last drawn for. */
+  badges?: THREE.Sprite | null;
+  badgesKey?: string;
   label: THREE.Sprite | null;
   labelText: string;
   goal: THREE.Vector3;
@@ -591,6 +655,8 @@ const MAX_STUCK_ARROWS = 6;
 
 interface Want {
   kind: string;
+  /** The conditions on it, shown as a row of badges over its head until each wears off. */
+  effects?: Badge[];
   /** Draw the unit wearing this instead of its kind's stock look. */
   outfit?: Outfit;
   pos: THREE.Vector3;
@@ -601,6 +667,8 @@ interface Want {
   /** Heroes sharing a hex: which of them this is, so their plates are stacked instead of overlapping. */
   stack?: number;
   ring?: string;
+  /** Shown through a tree or a wall it is behind, as a flat shape of this colour (see silhouette.ts). */
+  through?: string;
   pulse?: boolean;
   hp?: number;
   down?: boolean;
@@ -612,6 +680,8 @@ interface Want {
   boat?: "barrel" | "rowboat";
   /** The way to face, about y: the two sides of a fight face each other. Otherwise a unit keeps the way it last walked. */
   face?: number;
+  /** On a stool: how high its seat is off the floor. `pos` is then the stool's own spot. */
+  seat?: number;
 }
 
 interface Floater {
@@ -759,13 +829,13 @@ export class WorldRenderer {
   /** The finishing pass (bloom, tilt-shift, grade), there while "Fancy graphics" is on. On the dev server P switches it alone, to compare. */
   post: PostFx | null = null;
   private unwatchFancy: () => void;
-  /** How many of the view's pixels make one chunky pixel: 1 as a rule, PIXEL while the world is drawn at full resolution ("Fancy graphics", or a game that asked for it). */
-  private fine = 1;
+  /** Stops redrawing the grass and the trees when "Fancy grass" changes. */
+  private unwatchGrass: () => void;
+  /** How many of the view's pixels make one of the plates' chunky pixels. */
+  private fine = PIXEL;
   /** A backdrop's fixed point of view (see setVantage), and the lightning it is lent by the view showing it. */
   private vantage: { from: THREE.Vector3; to: THREE.Vector3 } | null = null;
   /** A game being played in the world, the group its things stand in, and how your own hero looked before it hid them. */
-  /** How many screen pixels one drawn pixel covers. */
-  private pixel = PIXEL;
   /** Units a minigame is drawing for itself. */
   private stageHidden: string[] = [];
   private minigame: { game: WorldMinigame; group: THREE.Group; hidden: { obj: THREE.Object3D; was: boolean }[]; felled: boolean; sight?: THREE.Vector3 } | null = null;
@@ -773,11 +843,24 @@ export class WorldRenderer {
   private woods: Woods | null = null;
   /** The camera's normal field of view, which a minigame may widen. */
   private baseFov = 35;
+  /**
+   * A minigame's own controls lying over the view (a pub table's dock), and how much of it they cover: a share of
+   * the height along the bottom, or of the width down the right side. The game is framed in the rest. `cover` eases
+   * toward `coverGoal`, so the view slides rather than jumps as the controls change size.
+   */
+  private coverEl: HTMLElement | null = null;
+  private coverGoal = { bottom: 0, right: 0 };
+  private cover = { bottom: 0, right: 0 };
+  private coverObserver: ResizeObserver | null = null;
+  /** The view offset last set on the camera for the cover, to skip setting it again unchanged. */
+  private coverShift = "";
   private lentFlash = 0;
   /** A room's windows: the backdrop seen through them, its picture as a texture, and the panes on the wall. */
   private outlook: WorldRenderer | null = null;
   private outlookMap: THREE.CanvasTexture | null = null;
   private panes = new THREE.Group();
+  /** The pub's walls inside: oak boards to waist height, plaster above (see buildWallPanels). One mesh per wall hex. */
+  private wallPanels = new THREE.Group();
   /** Fireflies and moths, out at night with "Fancy graphics". */
   private nightLife = new NightLife();
   /** The gulls that come and go by day on any map with the sea round it. */
@@ -795,6 +878,14 @@ export class WorldRenderer {
   private clock = 0;
 
   private terrain: THREE.InstancedMesh | null = null;
+  /**
+   * The hexes that stand up as walls (WALLS), once more: depth and no colour, drawn first, so a figure behind
+   * one can be shown through it (see silhouette.ts). `wallTiles` is which of `tiles` each one is.
+   */
+  private wallMarks: THREE.InstancedMesh | null = null;
+  private wallTiles: number[] = [];
+  /** Whether the canvas has a stencil buffer to do that with: without one, nobody is shown through anything. */
+  private seeThrough = false;
   private tiles: Tile[] = [];
   /** This map's place in the sound: where you stand, its sky, its fires and its water. */
   private ear: ReturnType<typeof openEar>;
@@ -811,6 +902,8 @@ export class WorldRenderer {
   private mapCode = "";
   private ambience: Ambience;
   private decor = new THREE.Group();
+  /** The caverns' moss, puddles, rocks and spikes, in the decor while underground. */
+  private caveDressing: THREE.Group | null = null;
   private poiGroup = new THREE.Group();
   /** The lanterns over the pub's game tables. Hung in poiGroup, and rebuilt with it. */
   private tableLamps = new TableLamps();
@@ -829,6 +922,11 @@ export class WorldRenderer {
   private sea: THREE.Mesh;
   private unitGroup = new THREE.Group();
   private fxGroup = new THREE.Group();
+  /** Torches lying burning on the ground, and which hexes they are on. */
+  private groundTorches = new THREE.Group();
+  private groundTorchKey = "";
+  /** Every torch flame on the map, in a hand or on the ground, to flicker each frame. */
+  private liveFlames = new Set<THREE.Object3D>();
   private pathGroup = new THREE.Group();
   /** Red outlines around the hexes close enough to join a fight at each camp or lair. */
   private rangeGroup = new THREE.Group();
@@ -882,6 +980,12 @@ export class WorldRenderer {
   private userYaw = 0;
   /** The top middle of each place's model, in the world, measured when first asked for (see screenAbovePoi). */
   private poiTops = new Map<string, THREE.Vector3>();
+  /** Chests being thrown open, by poi id: when the lid began to swing (on the render clock). */
+  private lidsSwinging = new Map<string, number>();
+  /** Crates rocking from a blow, by poi id: when it landed, and how hard. */
+  private poiShakes = new Map<string, { at: number; by: number }>();
+  /** Glints on the places that twinkle (a chest not yet opened). Gathered as the places are built. */
+  private twinkles: THREE.Object3D[] = [];
   /** The turn this map opens at (RenderState.homeYaw), which the turn buttons' sixths are counted from. */
   private homeYaw = 0;
   /** The current drag turns the camera instead of panning it. */
@@ -933,8 +1037,10 @@ export class WorldRenderer {
    * windows). It makes no sound, takes no keys, and draws only when the view showing it asks (see `step`).
    */
   constructor(private container: HTMLElement, private callbacks: RendererCallbacks, private opts: { backdrop?: boolean } = {}) {
+    // First, before anything that would need undoing: the browser may refuse (GraphicsUnavailable).
+    this.renderer = makeRenderer({ antialias: true, powerPreference: "low-power", stencil: true });
+    this.seeThrough = !!this.renderer.getContext().getContextAttributes()?.stencil;
     this.ear = opts.backdrop ? DEAF : openEar();
-    this.renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: "low-power" });
     this.renderer.setPixelRatio(1);
     this.renderer.localClippingEnabled = true;
     if (!this.opts.backdrop) {
@@ -948,7 +1054,6 @@ export class WorldRenderer {
     canvas.style.width = "100%";
     canvas.style.height = "100%";
     canvas.style.display = "block";
-    canvas.style.imageRendering = "pixelated";
     canvas.style.touchAction = "none";
     // Under a veil until there is a place to show (see `reveal`): going in or out of a building never flashes
     // an empty sea before the room is built. The canvas itself is the veil's dark until the first frame is drawn.
@@ -957,7 +1062,7 @@ export class WorldRenderer {
 
     // Sky, sun and moon, shadows, and the moving decoration.
     this.ambience = new Ambience(this.scene, this.renderer);
-    this.scene.add(this.nightLife.group, this.gulls.group, this.storm.bolt, this.panes);
+    this.scene.add(this.nightLife.group, this.gulls.group, this.storm.bolt, this.panes, this.wallPanels);
 
     const sea = new THREE.Mesh(new THREE.PlaneGeometry(240, 240), new THREE.MeshLambertMaterial({ color: "#3577cf" }));
     addFancyWater(sea.material);
@@ -970,7 +1075,7 @@ export class WorldRenderer {
     this.hoverRing = this.buildHoverMarker();
     this.hoverRing.visible = false;
 
-    this.scene.add(this.decor, this.poiGroup, this.propGroup, this.rangeGroup, this.pathGroup, this.hoverRing, this.unitGroup, this.fxGroup);
+    this.scene.add(this.decor, this.poiGroup, this.propGroup, this.rangeGroup, this.pathGroup, this.hoverRing, this.unitGroup, this.fxGroup, this.groundTorches);
 
     canvas.addEventListener("pointerdown", this.onPointerDown);
     canvas.addEventListener("pointermove", this.onPointerMove);
@@ -1023,6 +1128,12 @@ export class WorldRenderer {
       this.setPost(fancy.get());
       this.resize();
     });
+    // "Fancy grass" changes what the ground is grown with: the map's ground is drawn again, as when fog lifts.
+    this.unwatchGrass = fancyGrass.subscribe(() => {
+      if (!this.state) return;
+      this.lifted = -1;
+      this.setState(this.state);
+    });
     this.resize();
     if (!opts.backdrop) this.raf = requestAnimationFrame(this.frame);
   }
@@ -1033,6 +1144,7 @@ export class WorldRenderer {
     this.unhearLooks?.();
     this.ear.close();
     this.resizeObserver.disconnect();
+    this.coverObserver?.disconnect();
     const canvas = this.renderer.domElement;
     canvas.removeEventListener("pointerdown", this.onPointerDown);
     canvas.removeEventListener("pointermove", this.onPointerMove);
@@ -1046,6 +1158,7 @@ export class WorldRenderer {
     removeEventListener("blur", this.onBlur);
     this.rotateButtons.remove();
     this.unwatchFancy();
+    this.unwatchGrass();
     this.nightLife.dispose();
     this.gulls.dispose();
     this.storm.dispose();
@@ -1055,10 +1168,48 @@ export class WorldRenderer {
     this.endMinigame();
     this.post?.dispose();
     this.renderer.dispose();
+    // Give the WebGL context back now, not whenever the canvas is collected: a page holds only so many, and the
+    // browser drops the oldest (the HUD's portrait renderer) to make room. Every view (the Harbor, a hut, the pub
+    // and the Harbor through its windows) makes its own canvas, so this one is not drawn on again.
+    this.renderer.forceContextLoss();
     canvas.remove();
   }
 
   // ---------- state ----------
+
+  /** A torch for each lit hex in `state.lights`: a stick lying aslant on the ground with a flame at its head. */
+  private buildGroundTorches(state: RenderState) {
+    const key = (state.lights ?? []).map((p) => `${p.q},${p.r}`).sort().join(";");
+    if (key === this.groundTorchKey) return;
+    this.groundTorchKey = key;
+    for (const old of [...this.groundTorches.children]) {
+      this.groundTorches.remove(old);
+      old.traverse((o) => {
+        if (o instanceof THREE.Mesh) {
+          o.geometry.dispose();
+          (o.material as THREE.Material).dispose();
+        }
+      });
+    }
+    for (const p of state.lights ?? []) {
+      const { x, z } = hexToWorld(p);
+      const torch = new THREE.Group();
+      torch.position.set(x, tileTop(tileAt(state.map, p)) + 0.05, z);
+      torch.rotation.y = ((p.q * 7 + p.r * 13) % 6) * (Math.PI / 3);
+      const stick = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.045, 0.6, 6), new THREE.MeshLambertMaterial({ color: "#6b4a2b" }));
+      stick.rotation.z = Math.PI / 2 - 0.35;
+      stick.position.set(0, 0.1, 0);
+      const rag = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.06, 0.14, 6), new THREE.MeshLambertMaterial({ color: "#3a2a1e" }));
+      rag.rotation.z = stick.rotation.z;
+      rag.position.set(-0.27, 0.2, 0);
+      // The flame burns upright off the head of the stick, flickering like the pub's fire.
+      const flame = torchFlame(0.24);
+      flame.position.set(-0.3, 0.25, 0);
+      this.liveFlames.add(flame);
+      torch.add(stick, rag, flame);
+      this.groundTorches.add(torch);
+    }
+  }
 
   setState(state: RenderState) {
     // Dev server only: the view being fed state is the live one (a view torn down after it was made would otherwise be left in the hook).
@@ -1066,11 +1217,15 @@ export class WorldRenderer {
     const first = this.mapCode !== state.code;
     // The ground is redrawn for a new map, and whenever fog lifts off more of this one.
     const lifted = state.map.tiles.reduce((n, t) => n + (t.biome === "fog" ? 0 : 1), 0);
+    this.ambience.floorLook = state.floor ?? "planks";
     if (first || lifted !== this.lifted) this.buildTerrain(state, first);
     if (first) this.buildPanes(state);
+    if (first) this.buildWallPanels(state);
     this.lifted = lifted;
     this.state = state;
+    this.ambience.setGloom(!!state.gloom);
     this.ambience.setLampOn(!state.lampOff);
+    this.buildGroundTorches(state);
     this.buildPois(state);
     this.buildProps(state);
     this.updateGhost();
@@ -1089,6 +1244,7 @@ export class WorldRenderer {
     const me = state.heroes.find((h) => h.id === state.you);
     const myTurn = !!me && (state.freeRoam || (state.phase === "overworld" && state.turn?.heroId === state.you));
     this.reach = state.reach ?? (myTurn ? reachable(state.map, me!.pos, state.freeRoam ? FREE_ROAM_REACH : state.turn!.mp, this.stepCost(state)) : new Map());
+    if (!state.reach && myTurn) this.reachSeats(state);
     this.paintTiles();
     this.syncUnits(state);
     this.updatePath();
@@ -1302,11 +1458,38 @@ export class WorldRenderer {
   // ---------- a fight on the tiles ----------
   // A zone plays its own events (ZoneView.tsx) and asks for each piece of the picture here.
 
-  /** Walk a unit along these hexes, after whatever it is already walking. Any unit, not only a hero. */
+  /**
+   * Walk a unit along these hexes, after whatever it is already walking. Any unit, not only a hero. A step
+   * onto a hex a level higher or lower than the one before is jumped, not walked (see leapUnit).
+   */
   walkUnit(id: string, path: HexPos[]) {
     const unit = this.units.get(id);
     if (!unit) return;
-    for (const p of path) unit.path.push(this.standAt(p));
+    const map = this.state?.map;
+    const level = (pos: HexPos) => (map ? (tileAt(map, pos)?.elev ?? 0) : 0);
+    // Where it sets off from: the last hex it is already bound for, or the one it stands on (a quarter hex
+    // toward the camera from the middle: see syncUnits).
+    const last = unit.path[unit.path.length - 1];
+    let from: HexPos = last ? worldToHex(last.x, last.z) : worldToHex(unit.root.position.x, unit.root.position.z - 0.25);
+    for (const p of path) {
+      const at = this.standAt(p);
+      unit.path.push(at);
+      if (level(from) !== level(p)) (unit.leaps ??= new Map()).set(at, false);
+      from = p;
+    }
+  }
+
+  /**
+   * A unit jumps to a hex, after whatever it is already walking: it crouches, springs, goes over in an arc
+   * (higher the further it is, and clear of a ledge it is jumping up onto) and lands in a crouch, with a puff
+   * of whatever it landed on. Any unit; a creature has no crouch and springs at once.
+   */
+  leapUnit(id: string, to: HexPos) {
+    const unit = this.units.get(id);
+    if (!unit) return;
+    const at = this.standAt(to);
+    unit.path.push(at);
+    (unit.leaps ??= new Map()).set(at, true);
   }
 
   /**
@@ -1357,17 +1540,79 @@ export class WorldRenderer {
     if (a && a !== t) t.kick.copy(t.goal).sub(a.goal).setLength(by);
     else t.kick.set((Math.random() - 0.5) * by, 0, (Math.random() - 0.5) * by);
     t.bob = Math.max(t.bob, 0.1);
-    t.lean = 0.25;
+    t.figure.hit();
   }
 
-  /** A shot or a spell going off, drawn elsewhere (SpellFx): the unit turns to face where it is aimed, leans into it, and is heard. */
-  cast(actorId: string, name: string, x: number, z: number) {
+  /**
+   * A shot or a spell going off, drawn elsewhere (SpellFx): the unit turns to face where it is aimed, makes its
+   * gesture (a bow is drawn, a gun or crossbow fired, an instrument played; anything else is swung round
+   * overhead and pointed), and is heard. `then` is what leaves it (the bolt, the arrow, the flask): it runs as
+   * the string is loosed, the gun goes off, the song takes hold or the hand points, not before. `thrown` is something flung by hand, whatever else is carried.
+   */
+  cast(actorId: string, name: string, x: number, z: number, then?: () => void, thrown = false) {
     const unit = this.units.get(actorId);
+    let wait = 0;
     if (unit && !unit.lying) {
-      unit.turn = unit.turnGoal = Math.atan2(x - unit.goal.x, z - unit.goal.z);
-      unit.lean = -0.5;
+      this.face(unit, x, z);
+      wait = (!thrown && (unit.figure.loose() || unit.figure.fire() || unit.figure.play())) || unit.figure.cast();
     }
     sounds.attack(name, attackStyle(name), this.fighter(actorId), this.spot(actorId));
+    if (!then) return;
+    if (wait > 0) this.later(0, then, wait);
+    else then();
+  }
+
+  /** Turn a unit to look at a spot, unless it is the one it stands on. */
+  private face(unit: Unit, x: number, z: number) {
+    const [dx, dz] = [x - unit.goal.x, z - unit.goal.z];
+    if (Math.hypot(dx, dz) > 0.05) unit.turn = unit.turnGoal = Math.atan2(dx, dz);
+  }
+
+  /**
+   * An attack all round where the unit stands (a ring): struck as its heavy blow, or, `sung`, played on what it
+   * carries (cast, with no instrument); a ground-pound is leant into. `then` runs as the blow lands.
+   */
+  burst(actorId: string, name: string, sung: boolean, then: () => void) {
+    const unit = this.units.get(actorId);
+    let wait = 0;
+    if (unit && !unit.lying) {
+      if (QUAKES.has(name)) unit.lean = -0.9;
+      else wait = sung ? unit.figure.play() || unit.figure.cast() : unit.figure.strike("heavy");
+    }
+    sounds.attack(name, sung ? "magic" : "melee", this.fighter(actorId), this.spot(actorId));
+    if (wait > 0) this.later(0, then, wait);
+    else then();
+  }
+
+  /** A heal or a blessing given: the giver turns to whoever it is for (if not themselves) and plays it, or casts it. */
+  bless(actorId: string, toward: { x: number; z: number } | null) {
+    const unit = this.units.get(actorId);
+    if (!unit || unit.lying) return;
+    if (toward) this.face(unit, toward.x, toward.z);
+    if (!unit.figure.play()) unit.figure.cast();
+  }
+
+  /** How high a room's floor is in the world: what stands on it stands this far up. */
+  floorTop(): number {
+    return FLOOR_TOP;
+  }
+
+  /**
+   * Someone at their trade (a shopkeeper at work): the unit turns to the spot given and brings a hammer down on it,
+   * or stirs the pot there. Returns the seconds until a hammer lands, for its sparks and its ring; 0 for a stir,
+   * or for a unit that is not there, is down, or is walking.
+   */
+  work(unitId: string, how: "hammer" | "stir", at: { x: number; z: number }): number {
+    const unit = this.units.get(unitId);
+    if (!unit || unit.lying || unit.path.length > 0) return 0;
+    this.face(unit, at.x, at.z);
+    return unit.figure.work(how);
+  }
+
+  /** A guard put up: the unit braces behind its shield, or what it has in hand. */
+  brace(actorId: string) {
+    const unit = this.units.get(actorId);
+    if (unit && !unit.lying) unit.figure.guard();
   }
 
   /** That shot or spell arriving: the sound of it landing on its target, or going wide. */
@@ -1434,11 +1679,12 @@ export class WorldRenderer {
     // Left or right as the viewer sees it, whichever way the camera has been turned.
     const dir = t.goal.clone().project(this.camera).x >= a.goal.clone().project(this.camera).x ? 1 : -1;
     const flip = dir < 0;
-    // Leant well into it, so the strike is held long enough to be seen.
-    a.lean = -dir * 0.9;
+    const spell = SPELL_COLOR[ability];
+    // A stomp is leant well into, so it is held long enough to be seen. A spell, a shot or a throw is the
+    // figure's own gesture, and a blow in the hand its own strike (see below).
+    if (QUAKES.has(ability)) a.lean = -dir * 0.9;
     if (!a.lying) a.turn = a.turnGoal = Math.atan2(t.goal.x - a.goal.x, t.goal.z - a.goal.z);
     const hitAt = t.goal.clone().add(new THREE.Vector3(0, t.size * 0.4, 0.05));
-    const spell = SPELL_COLOR[ability];
 
     if (QUAKES.has(ability)) {
       // It stays where it is and brings its weight down: dust rings out from its feet (once for the whole crew),
@@ -1458,14 +1704,19 @@ export class WorldRenderer {
     if (rock) {
       // Lobbed high, tumbling, and it breaks into dust where it lands.
       const from = a.goal.clone().add(new THREE.Vector3(dir * 0.5, a.size * 0.7, 0.05));
-      this.spawnFx("rock", rock, flip, { from, to: hitAt, life: 0.4, size: [0.85, 1.0], spin: -dir * 9, fade: false, arc: 0.9, onEnd: () => {
-        this.spawnFx("burst", perfect ? "#ffd23f" : "#c9c1aa", false, { from: hitAt, to: hitAt, life: 0.22, size: [0.7, 1.6], spin: 0.5, fade: true });
-        if (landed) {
-          this.dustAt(t, perfect);
-          t.kick.set(dir * 0.18, 0, 0);
-        }
-        onImpact();
-      } });
+      const hurl = () =>
+        this.spawnFx("rock", rock, flip, { from, to: hitAt, life: 0.4, size: [0.85, 1.0], spin: -dir * 9, fade: false, arc: 0.9, onEnd: () => {
+          this.spawnFx("burst", perfect ? "#ffd23f" : "#c9c1aa", false, { from: hitAt, to: hitAt, life: 0.22, size: [0.7, 1.6], spin: 0.5, fade: true });
+          if (landed) {
+            this.dustAt(t, perfect);
+            t.kick.set(dir * 0.18, 0, 0);
+          }
+          onImpact();
+        } });
+      // Swung round overhead first: it leaves the hand as the hand comes down to point.
+      const wait = a.figure.cast();
+      if (wait > 0) this.later(0, hurl, wait);
+      else hurl();
       return;
     }
 
@@ -1473,24 +1724,40 @@ export class WorldRenderer {
       const kind: FxKind = spell ? "bolt" : "arrow";
       const color = spell ?? "#e8dcc0";
       const from = a.goal.clone().add(new THREE.Vector3(dir * 0.5, a.size * 0.5, 0.05));
-      this.spawnFx(kind, color, flip, { from, to: hitAt, life: 0.24, size: [1.0, 1.0], spin: 0, fade: false, onEnd: () => {
-        this.spawnFx("burst", perfect ? "#ffd23f" : color, false, { from: hitAt, to: hitAt, life: 0.22, size: [0.7, 1.7], spin: 0.5, fade: true });
-        // An arrow that lands stays in: point first, the shaft toward whoever shot it.
-        if (kind === "arrow" && landed) this.stickArrow(t, dir);
-        onImpact();
-      } });
+      const fly = () =>
+        this.spawnFx(kind, color, flip, { from, to: hitAt, life: 0.24, size: [1.0, 1.0], spin: 0, fade: false, onEnd: () => {
+          this.spawnFx("burst", perfect ? "#ffd23f" : color, false, { from: hitAt, to: hitAt, life: 0.22, size: [0.7, 1.7], spin: 0.5, fade: true });
+          // An arrow that lands stays in: point first, the shaft toward whoever shot it.
+          if (kind === "arrow" && landed) this.stickArrow(t, dir);
+          onImpact();
+        } });
+      // An archer draws the bow first, and the arrow leaves when the string does; a bard plays, and the spell
+      // goes as the song takes hold; any other spell (or an arrow from no bow) is swung round overhead, and
+      // leaves as the hand points.
+      const wait = (kind === "arrow" && (a.figure.loose() || a.figure.fire())) || (spell && a.figure.play()) || a.figure.cast();
+      if (wait > 0) this.later(0, fly, wait);
+      else fly();
       return;
     }
-    // Melee: step in and swipe across the target.
-    this.lunge(actorId, targetId);
+    // Melee: the figure winds up, steps half way across its tile and strikes (a creature, with no such
+    // animation, is sprung at the target instead); the swipe across the target, and all that follows from it,
+    // waits for the blow to land.
     const heavy = SMASHES.has(ability);
-    // A heavy blow comes down from higher, wider, and knocks the target back with dust thrown up round its feet.
-    this.spawnFx("slash", perfect ? "#ffd23f" : "#dfe9ff", flip, { from: hitAt, to: hitAt, life: heavy ? 0.3 : 0.26, size: heavy ? [1.7, 3] : [1.3, 2.3], spin: -dir * (heavy ? 1.6 : 0.9), fade: true });
-    if (heavy && landed) {
-      t.kick.set(dir * 0.35, -0.08, 0);
-      this.dustAt(t, perfect);
+    const wait = a.figure.strike(HEAVY_SWINGS.has(ability) ? "heavy" : "light");
+    const land = () => {
+      // A heavy blow comes down from higher, wider, and knocks the target back with dust thrown up round its feet.
+      this.spawnFx("slash", perfect ? "#ffd23f" : "#dfe9ff", flip, { from: hitAt, to: hitAt, life: heavy ? 0.3 : 0.26, size: heavy ? [1.7, 3] : [1.3, 2.3], spin: -dir * (heavy ? 1.6 : 0.9), fade: true });
+      if (heavy && landed) {
+        t.kick.set(dir * 0.35, -0.08, 0);
+        this.dustAt(t, perfect);
+      }
+      onImpact();
+    };
+    if (wait <= 0) {
+      this.lunge(actorId, targetId);
+      return land();
     }
-    onImpact();
+    this.later(0, land, wait);
   }
 
   /** Dust thrown up either side of a unit's feet: a heavy landing, a rock breaking, the ground shaking under it. */
@@ -1647,6 +1914,19 @@ export class WorldRenderer {
     if (!this.still) this.puff(ground, feet);
   }
 
+  /** A unit has come down from a jump (see leapUnit): what it landed on is thrown up round its feet, twice a step's worth. */
+  private touchdown(unit: Unit) {
+    const state = this.state;
+    if (!state || this.still) return;
+    const feet = unit.feet;
+    // Everyone stands a quarter hex toward the camera from the middle of their hex (see syncUnits).
+    const tile = tileAt(state.map, worldToHex(feet.x, feet.z - 0.25));
+    const ground = stepGround(tile?.biome, !!tile?.path);
+    if (!ground) return;
+    this.puff(ground, feet);
+    this.puff(ground, feet);
+  }
+
   private puff(ground: keyof typeof PUFFS, at: THREE.Vector3) {
     for (const look of PUFFS[ground]) this.kick(look, at);
   }
@@ -1696,6 +1976,27 @@ export class WorldRenderer {
     }
   }
 
+  /**
+   * What a hero just picked up, told over their head one thing at a time (gold, then XP, then the rest), each
+   * rising off the plate and fading in about a second, a beat after the one before. XP is the Harbor's own pop,
+   * motes and all. Easier to take in than the feed.
+   */
+  pickups(unitId: string, lines: { text: string; color: string; xp?: number }[]) {
+    lines.forEach((line, i) =>
+      this.pending.push({
+        at: this.clock + i * PICKUP_GAP,
+        run: () => {
+          if (line.xp) return this.xpGain(unitId, line.xp);
+          const unit = this.units.get(unitId);
+          if (!unit) return;
+          const head = unit.goal.clone().add(new THREE.Vector3(0, unit.size * 0.75, 0.05));
+          const top = Math.max(head.y + 0.4, this.plateTop(unit) ?? 0);
+          this.float(unitId, line.text, line.color, { life: 1.05, rise: 0.6, height: 0.38, at: new THREE.Vector3(head.x, top + 0.3, head.z) });
+        },
+      }),
+    );
+  }
+
   xpGain(unitId: string, amount: number, levelUp = false) {
     const unit = this.units.get(unitId);
     if (!unit || !(amount > 0 || levelUp)) return;
@@ -1742,6 +2043,12 @@ export class WorldRenderer {
     if (this.terrain) {
       this.scene.remove(this.terrain);
       this.terrain.geometry.dispose();
+    }
+    if (this.wallMarks) {
+      this.scene.remove(this.wallMarks);
+      (this.wallMarks.material as THREE.Material).dispose();
+      this.wallMarks.dispose();
+      this.wallMarks = null;
     }
     this.decor.clear();
     this.poiSig = "";
@@ -1805,6 +2112,15 @@ export class WorldRenderer {
     terrain.receiveShadow = true;
     this.terrain = terrain;
     this.scene.add(terrain);
+    this.wallTiles = this.tiles.flatMap((t, i) => (WALLS.has(t.biome) ? [i] : []));
+    if (this.seeThrough && this.wallTiles.length > 0) {
+      this.wallMarks = new THREE.InstancedMesh(geo, hidingMaterial([GROUND_FLOOR]), this.wallTiles.length);
+      this.wallMarks.renderOrder = HIDES;
+      // Like the trees, never worth culling: its hexes are all over the map.
+      this.wallMarks.frustumCulled = false;
+      this.scene.add(this.wallMarks);
+      this.markWalls();
+    }
 
     // Trees on forest, the thickets and boulder heaps that cannot be walked through, and the boulders that
     // bound the Harbor. POI hexes stay clear. Rocks on open hills, grass and waves come from the ambience.
@@ -1938,8 +2254,20 @@ export class WorldRenderer {
     );
     // The trees bend in the wind (fancy graphics), and aside as anyone walks through them.
     this.woods?.dispose();
-    this.woods = new Woods(trees, boulders, this.sodden);
+    // The caverns' entrance is cut into the rampart behind its hex (its model stands back into it): none of the
+    // rampart's rubble stands in the way in, or just in front of it, where it would block the arch from view.
+    const ways = state.map.pois.filter((p) => p.kind === "cave").map((p) => ({ ...hexToWorld(p.pos), back: placeOf(p).back }));
+    const clearOfWays = boulders.filter((b) => !ways.some((w) => Math.abs(b.x - w.x) < 1.4 && b.z - (w.z - w.back) > -0.9 && b.z - (w.z - w.back) < 1.3));
+    this.woods = new Woods(trees, clearOfWays, this.sodden, !fancyGrass.get());
     this.decor.add(this.woods.group);
+    // The caverns: moss, puddles, loose rocks, stalagmites and stalactites (caveDressing.ts).
+    this.caveDressing?.traverse((o) => {
+      if (!(o instanceof THREE.Mesh)) return;
+      o.geometry.dispose();
+      (o.material as THREE.Material).dispose();
+    });
+    this.caveDressing = state.kind === "caverns" ? buildCaveDressing(this.tiles, (t) => ({ ...hexToWorld(t), y: tileTop(t) }), hexToWorld, (p) => poiKeys.has(key(p))) : null;
+    if (this.caveDressing) this.decor.add(this.caveDressing);
 
     // Start centred on the island. Fog lifting redraws the ground but leaves the camera where the player put it.
     if (!recentre) return;
@@ -1948,6 +2276,21 @@ export class WorldRenderer {
     this.middle.set((Math.min(...xs) + Math.max(...xs)) / 2, 0, (Math.min(...zs) + Math.max(...zs)) / 2);
     this.target.copy(this.middle);
     this.targetGoal.copy(this.target);
+  }
+
+  /**
+   * Stand the walls' copies (see wallMarks) where the walls are now. One cut down to a kerb for the camera hides
+   * nobody, and has no copy.
+   */
+  private markWalls() {
+    if (!this.terrain || !this.wallMarks) return;
+    const m = new THREE.Matrix4();
+    this.wallTiles.forEach((tile, i) => {
+      if (this.lowered.has(key(this.tiles[tile]))) m.makeScale(0, 0, 0);
+      else this.terrain!.getMatrixAt(tile, m);
+      this.wallMarks!.setMatrixAt(i, m);
+    });
+    this.wallMarks.instanceMatrix.needsUpdate = true;
   }
 
   /**
@@ -1974,6 +2317,7 @@ export class WorldRenderer {
       this.terrain!.setMatrixAt(i, m);
     });
     this.terrain.instanceMatrix.needsUpdate = true;
+    this.markWalls();
     this.hideLoweredWallProps();
     // A wall cut down (or stood back up) and the pieces hung on it change every light's shadows.
     if ([...this.lowered].join("|") !== was) this.ambience.stirAll();
@@ -1986,6 +2330,7 @@ export class WorldRenderer {
       if (wall) g.visible = !this.lowered.has(wall);
     }
     for (const pane of this.panes.children) pane.visible = !this.lowered.has(pane.userData.wallKey as string);
+    for (const panel of this.wallPanels.children) panel.visible = !this.lowered.has(panel.userData.wallKey as string);
   }
 
   // ---------- windows ----------
@@ -2029,6 +2374,56 @@ export class WorldRenderer {
   }
 
   /** The windows themselves: a few panes along the back wall, each showing its own slice of the one picture. */
+  /**
+   * The pub's walls dressed inside to go with the inn outside: on every side of a tall wall that faces the floor,
+   * a sheet of oak boards to waist height under a rail, cream plaster above, and a timber beam along the top
+   * (panelTexture), from the floor up to where the wall's top starts to round over. Each wall hex's sheets are
+   * one mesh, hidden with the wall when it is cut down for the camera.
+   */
+  private buildWallPanels(state: RenderState) {
+    for (const panel of this.wallPanels.children) (panel as THREE.Mesh).geometry.dispose();
+    this.wallPanels.clear();
+    const dressing = state.walls ?? (state.kind === "pub" ? "pub" : null);
+    if (!dressing) return;
+    let material = this.panelMaterials.get(dressing);
+    if (!material) {
+      material = new THREE.MeshLambertMaterial({ map: WALL_DRESSINGS[dressing]() });
+      this.panelMaterials.set(dressing, material);
+    }
+    const byWall = new Map<string, number[][]>();
+    for (const f of wallFaces(state.map)) {
+      const tile = tileAt(state.map, f.pos);
+      if (!tile) continue;
+      const at = wallFace(f.pos, f.side);
+      const top = tileTop(tile) - TILE_FILLET;
+      const lift = 0.006;
+      const [cx, cz] = [at.x + at.nx * lift, at.z + at.nz * lift];
+      const half = WALL_FACE_HALF;
+      // Two triangles, left to right as seen from the room, the sheet's foot on the floor.
+      const corner = (s: number, y: number, u: number, v: number) => [cx + at.tx * s * half, y, cz + at.tz * s * half, at.nx, 0, at.nz, u, v];
+      const a = corner(-1, FLOOR_TOP, 0, 0);
+      const b = corner(1, FLOOR_TOP, 1, 0);
+      const c = corner(1, top, 1, 1);
+      const d = corner(-1, top, 0, 1);
+      const list = byWall.get(key(f.pos)) ?? [];
+      list.push(a, b, c, a, c, d);
+      byWall.set(key(f.pos), list);
+    }
+    for (const [wall, verts] of byWall) {
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute("position", new THREE.Float32BufferAttribute(verts.flatMap((v) => v.slice(0, 3)), 3));
+      geometry.setAttribute("normal", new THREE.Float32BufferAttribute(verts.flatMap((v) => v.slice(3, 6)), 3));
+      geometry.setAttribute("uv", new THREE.Float32BufferAttribute(verts.flatMap((v) => v.slice(6, 8)), 2));
+      const mesh = new THREE.Mesh(geometry, material);
+      mesh.receiveShadow = true;
+      mesh.userData.wallKey = wall;
+      mesh.visible = !this.lowered.has(wall);
+      this.wallPanels.add(mesh);
+    }
+  }
+  /** One material for each way of dressing walls, made the first time it is wanted. */
+  private panelMaterials = new Map<WallDressing, THREE.MeshLambertMaterial>();
+
   private buildPanes(state: RenderState | null) {
     for (const pane of this.panes.children) {
       pane.traverse((o) => {
@@ -2177,7 +2572,7 @@ export class WorldRenderer {
     v.y += lift;
     v.project(this.camera);
     if (v.z < -1 || v.z > 1 || Math.abs(v.x) > 1 || Math.abs(v.y) > 1) return null;
-    // The canvas is drawn at 1/PIXEL size and stretched; the container's own size is what the HUD is laid out in.
+    // The container's own size is what the HUD is laid out in.
     return { x: ((v.x + 1) / 2) * this.container.clientWidth, y: ((1 - v.y) / 2) * this.container.clientHeight };
   }
 
@@ -2290,8 +2685,11 @@ export class WorldRenderer {
     for (const id of this.stageHidden) this.showUnit(id);
     this.stageHidden = [];
     for (const b of [this.followButton, ...this.turnButtons]) b.style.visibility = "";
-    if (this.camera.fov !== this.baseFov) {
+    this.cover = { bottom: 0, right: 0 };
+    if (this.camera.fov !== this.baseFov || this.coverShift) {
       this.camera.fov = this.baseFov;
+      this.camera.clearViewOffset();
+      this.coverShift = "";
       this.camera.updateProjectionMatrix();
     }
   }
@@ -2519,11 +2917,12 @@ export class WorldRenderer {
   // ---------- points of interest ----------
 
   private buildPois(state: RenderState) {
-    const sig = state.map.pois.map((p) => `${p.id}:${p.cleared}:${p.tier ?? ""}:${p.fill ?? ""}`).join("|");
+    const sig = state.map.pois.map((p) => `${p.id}:${p.cleared}:${p.tier ?? ""}:${p.fill ?? ""}:${p.hp ?? ""}`).join("|");
     if (sig === this.poiSig) return;
     this.poiSig = sig;
     this.poiGroup.clear();
     this.poiTops.clear();
+    this.twinkles = [];
     this.tableLamps.clear();
     this.poiGroup.add(this.tableLamps.group);
     // What stands in the water, for the fancy sea to foam round. Each model sits a little back from its hex's middle.
@@ -2548,9 +2947,13 @@ export class WorldRenderer {
     /** Buildings' lit windows and lanterns, and the panes that warm at dusk. */
     const glows: BuildingGlow[] = [];
     const panes: THREE.MeshBasicMaterial[] = [];
+    /** Glowing mushrooms in the caverns, which light the rock round them until they are picked. */
+    const patches: { id: string; at: THREE.Vector3; on: boolean }[] = [];
     for (const poi of state.map.pois) {
       const g = this.poiModel(poi);
       g.userData.poiId = poi.id;
+      // Any real flame in it (a torch by the caverns' entrance) flickers with the rest.
+      for (const f of flamesIn(g)) this.liveFlames.add(f);
       const at = this.standAt(poi.pos);
       const { scale, back } = placeOf(poi);
       if (BUILDINGS.has(poi.kind)) inkBuilding(g, scale);
@@ -2569,6 +2972,7 @@ export class WorldRenderer {
       g.traverse((o) => {
         // A glow is light, not a solid: it neither casts nor takes a shadow.
         if (o instanceof THREE.Mesh) o.castShadow = o.receiveShadow = !o.userData.glow && !o.userData.ink;
+        if (o.userData.twinkle !== undefined) this.twinkles.push(o);
       });
       this.poiGroup.add(g);
       // A game table in a room (the pub's): a lantern hung over it.
@@ -2582,12 +2986,14 @@ export class WorldRenderer {
         shine = g.userData.shine as THREE.ShaderMaterial | undefined;
       }
       for (const glow of (g.userData.glows as BuildingGlow[] | undefined) ?? []) glows.push({ ...glow, pos: out(glow.pos), size: glow.size * scale });
+      if (g.userData.glowAt) patches.push({ id: poi.id, at: out(g.userData.glowAt as THREE.Vector3), on: !poi.cleared });
       panes.push(...((g.userData.panes as THREE.MeshBasicMaterial[] | undefined) ?? []));
     }
     this.ambience.setTableLamps(this.tableLamps.lights());
     this.ambience.setSmoke(stacks);
     this.ambience.setBeacon(beacon, beaconScale, shine);
     this.ambience.setGlows(glows, panes);
+    this.ambience.setGlowcaps(patches);
     // The sea breaks around rocks standing out of it, and the wreck on them.
     this.ambience.setSeaRocks(state.map.pois.filter((p) => p.kind === "rocks" || p.kind === "wreck").map((p) => this.standAt(p.pos)));
   }
@@ -2664,12 +3070,12 @@ export class WorldRenderer {
     }
     this.propGroup.updateMatrixWorld(true);
     // Rings for the piece being handled, and lights wherever a model asks for one.
-    const lights: { pos: THREE.Vector3; kind: LightKind }[] = [];
+    const lights: RoomLight[] = [];
     for (const prop of ordered) {
       const g = this.propModels.get(prop.id);
       if (!g) continue;
       g.traverse((o) => {
-        if (o.userData.light) lights.push({ pos: o.getWorldPosition(new THREE.Vector3()), kind: o.userData.light as LightKind });
+        if (o.userData.light) lights.push({ pos: o.getWorldPosition(new THREE.Vector3()), kind: o.userData.light as LightKind, main: !!o.userData.main });
       });
       if (prop.selected && !prop.mount && (prop.covers?.length ?? 0) > 1) {
         // A piece reaching across hexes: outline every hex it covers, as one shape.
@@ -2893,6 +3299,34 @@ export class WorldRenderer {
     return hit ? (hit.object.userData.propId as string | number) : null;
   }
 
+  /** The stools standing on the floor, by the hex each is on: where in the hex to sit, and how high the seat is. */
+  private seatsOf(state: RenderState): Map<string, { pos: HexPos; x: number; z: number; top: number }> {
+    const out = new Map<string, { pos: HexPos; x: number; z: number; top: number }>();
+    for (const p of state.props ?? []) {
+      const seat = SEATS[p.model];
+      if (seat && !p.small && !p.mount && !p.flat && p.on === undefined) out.set(key(p.pos), { pos: p.pos, x: p.x ?? 0, z: p.z ?? 0, top: seat.top });
+    }
+    return out;
+  }
+
+  /**
+   * A stool is furniture, so no walk goes through its hex; but a walk may end on it, to sit down. Each free
+   * stool beside somewhere the viewer can walk to is added to their reach, as one more step from there.
+   */
+  private reachSeats(state: RenderState) {
+    const found: { cost: number; prev: string | null; pos: HexPos }[] = [];
+    for (const [k, seat] of this.seatsOf(state)) {
+      if (this.reach.has(k) || state.heroes.some((h) => key(h.pos) === k)) continue;
+      let from: { cost: number; pos: HexPos } | undefined;
+      for (const d of HEX_DIRS) {
+        const beside = this.reach.get(key({ q: seat.pos.q + d.q, r: seat.pos.r + d.r }));
+        if (beside && (!from || beside.cost < from.cost)) from = beside;
+      }
+      if (from) found.push({ cost: from.cost + 1, prev: key(from.pos), pos: seat.pos });
+    }
+    for (const f of found) this.reach.set(key(f.pos), f);
+  }
+
   /** Cost of stepping onto a tile: the terrain's, except that furniture cannot be walked through. */
   private stepCost(state: RenderState): ((t: Tile) => number) | undefined {
     if (!state.props?.length) return undefined;
@@ -2949,6 +3383,19 @@ export class WorldRenderer {
     this.rangeGroup.add(lines);
   }
 
+  /**
+   * A point out in the world, in the space of `poi`'s model (as the loop over places sets each model down: moved
+   * back, turned to face, and scaled).
+   */
+  private inModel(poi: Poi, x: number, z: number): THREE.Vector2 {
+    const { scale, back } = placeOf(poi);
+    const yaw = yawOf(poi.facing ?? 0);
+    const at = hexToWorld(poi.pos);
+    const behind = new THREE.Vector3(0, 0, -back).applyAxisAngle(UP, yaw);
+    const p = new THREE.Vector3(x - at.x - behind.x, 0, z - at.z - behind.z).applyAxisAngle(UP, -yaw).divideScalar(scale);
+    return new THREE.Vector2(p.x, p.z);
+  }
+
   private poiModel(poi: Poi): THREE.Group {
     const g = new THREE.Group();
     const lambert = (color: string) => new THREE.MeshLambertMaterial({ color, flatShading: true });
@@ -2964,10 +3411,31 @@ export class WorldRenderer {
     switch (poi.kind) {
       case "landing": {
         if (this.state?.kind === "caverns") {
-          // The way back out of the caverns: a rope down the rock and a lantern on a spike.
-          add(box(0.04, 0.9, 0.04), lambert("#c9a877"), -0.35, 0.45, -0.3);
-          add(box(0.05, 0.5, 0.05), lambert("#3d4048"), 0.35, 0.25, -0.2);
-          add(box(0.16, 0.18, 0.16), new THREE.MeshBasicMaterial({ color: "#ffd98a" }), 0.35, 0.58, -0.2).userData.glow = true;
+          // The way back out of the caverns: a rope let down into the light from above (see caveRope).
+          g.add(caveRope(SHAFT_HEIGHT));
+          // And daylight falling in through it from above: a pale shaft, brightest at the floor and fading as it
+          // rises, a pool of light where it lands, and real light round it, so the way out shows from across the dark.
+          const sky = new THREE.Color("#d8ecff");
+          const glowing = (geometry: THREE.BufferGeometry, k: (x: number, y: number, z: number) => number) => {
+            const pos = geometry.getAttribute("position");
+            const colors: number[] = [];
+            for (let i = 0; i < pos.count; i++) {
+              const v = k(pos.getX(i), pos.getY(i), pos.getZ(i));
+              colors.push(sky.r * v, sky.g * v, sky.b * v);
+            }
+            geometry.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
+            const mesh = add(geometry, new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }), 0, 0, 0);
+            mesh.userData.glow = true;
+            return mesh;
+          };
+          const SHAFT = SHAFT_HEIGHT;
+          const shaft = glowing(new THREE.CylinderGeometry(0.42, 0.78, SHAFT, 18, 6, true), (_x, y) => 0.32 * Math.pow(1 - (y + SHAFT / 2) / SHAFT, 1.6));
+          shaft.position.y = SHAFT / 2;
+          const pool = glowing(new THREE.CircleGeometry(0.95, 24).rotateX(-Math.PI / 2), (x, _y, z) => 0.55 * Math.pow(Math.max(0, 1 - Math.hypot(x, z) / 0.95), 1.3));
+          pool.position.y = 0.02;
+          const daylight = new THREE.PointLight("#d8e8ff", 2.6, 4.5, 1.4);
+          daylight.position.set(0, 1.6, 0);
+          g.add(daylight);
           break;
         }
         add(box(1.0, 0.08, 0.5), lambert("#8a6a44"), 0, 0.05, 0.1);
@@ -3044,25 +3512,12 @@ export class WorldRenderer {
       }
       case "cache": {
         if (this.state?.kind === "caverns" && poi.loot) {
-          // An old chest, an iron-bound strongbox, or the hoard: bigger, and banded, and (until it is opened) glinting.
-          const k = poi.loot === "hoard" ? 1.45 : poi.loot === "vault" ? 1.2 : 1;
-          const wood = lambert(poi.cleared ? "#5b4a3a" : poi.loot === "chest" ? "#8a5a2b" : "#6b3f22");
-          const iron = lambert(poi.loot === "chest" ? "#6e6250" : "#3f4248");
-          add(box(0.44 * k, 0.24 * k, 0.3 * k), wood, 0, 0.12 * k, 0.2);
-          for (const x of [-0.15 * k, 0.15 * k]) add(box(0.04 * k, 0.25 * k, 0.31 * k), iron, x, 0.125 * k, 0.2);
-          if (poi.cleared) {
-            // Thrown open: the lid stands up at the back, and nothing glints.
-            const lid = add(box(0.44 * k, 0.04 * k, 0.3 * k), wood, 0, 0.3 * k, 0.05);
-            lid.rotation.x = -1.2;
-          } else {
-            add(box(0.46 * k, 0.07 * k, 0.32 * k), wood, 0, 0.27 * k, 0.2);
-            add(box(0.06, 0.07, 0.02), lambert("#d8b45a"), 0, 0.2 * k, 0.2 + 0.155 * k);
-            if (poi.loot !== "chest") {
-              // Coin spilling out at its foot, lit so it catches the torchlight from across a chamber.
-              const coin = new THREE.MeshBasicMaterial({ color: "#ffd45e" });
-              for (const [x, z] of [[-0.3, 0.42], [-0.18, 0.5], [0.26, 0.46], [0.34, 0.36], [0.05, 0.52]]) add(box(0.07, 0.025, 0.07), coin, x * k, 0.015, z).userData.glow = true;
-            }
-          }
+          // An old chest, an iron-bound strongbox, or the hoard (caveProps.ts). Its lid may be swinging open right now.
+          const model = chestModel(poi, this.lidNow(poi));
+          g.add(model);
+          g.userData.lid = model.userData.lid;
+          // Pointing anywhere on it means its hex, not the ground behind it.
+          g.userData.door = poi.pos;
           break;
         }
         add(box(0.38, 0.24, 0.26), lambert(poi.cleared ? "#6b6b6b" : "#9a6b2f"), 0, 0.12, 0.2);
@@ -3580,19 +4035,39 @@ export class WorldRenderer {
         break;
       }
       case "cave": {
-        // The Haunted Caverns' mouth in the back wall: a heap of dark rock with a black arch in it, and a torch either side.
+        // The Haunted Caverns' mouth in the back wall: a heap of dark rock with a way in cut into it, framed in stone,
+        // and a torch burning either side.
         const rock = lambert("#3d4048");
         const pale = lambert("#565a63");
-        add(new THREE.DodecahedronGeometry(0.62, 0), rock, 0, 0.42, -0.25, 0.3);
-        add(new THREE.ConeGeometry(0.42, 1.1, 5), pale, -0.55, 0.45, -0.15, 0.8);
-        add(new THREE.ConeGeometry(0.36, 0.95, 5), rock, 0.55, 0.38, -0.2, 1.7);
-        // The arch: a black opening at the foot of the rock.
-        add(box(0.46, 0.5, 0.06), new THREE.MeshBasicMaterial({ color: "#050409" }), 0, 0.25, 0.32).userData.glow = true;
-        add(new THREE.CylinderGeometry(0.23, 0.23, 0.06, 8, 1, false, 0, Math.PI), new THREE.MeshBasicMaterial({ color: "#050409" }), 0, 0.5, 0.32).rotation.set(Math.PI / 2, 0, Math.PI / 2);
-        for (const x of [-0.34, 0.34]) {
-          add(box(0.04, 0.42, 0.04), lambert("#5a3d22"), x, 0.21, 0.4);
-          add(box(0.08, 0.1, 0.08), new THREE.MeshBasicMaterial({ color: "#ffb347" }), x, 0.46, 0.4).userData.glow = true;
+        const stone = lambert("#4a4d55");
+        // The heap, set back behind the entrance so none of it stands in the way in.
+        add(new THREE.DodecahedronGeometry(0.74, 0), rock, 0, 0.46, -1.0, 0.3);
+        add(new THREE.ConeGeometry(0.44, 1.15, 5), pale, -0.76, 0.5, -0.42, 0.8);
+        add(new THREE.ConeGeometry(0.38, 1.0, 5), rock, 0.76, 0.44, -0.46, 1.7);
+        // The way in (caveDressing.ts): an arched tunnel going back into the rock, dark, darkest at its back.
+        g.add(caveMouth(MOUTH_FACE));
+        // Framed in the stone, so it is a hole in the rock from any side: rough jambs either side, a lintel over it.
+        for (const side of [-1, 1]) {
+          // Stood square to the face (turned, a long stone would swing across the way in).
+          const jamb = add(new THREE.DodecahedronGeometry(0.24, 0), side < 0 ? stone : rock, side * 0.45, 0.3, 0.08, side * 0.12);
+          jamb.scale.set(0.8, 1.55, 1.3);
+          // And a stone at each foot, half sunk.
+          add(new THREE.DodecahedronGeometry(0.1, 0), pale, side * 0.48, 0.03, 0.38, side * 1.3).scale.set(1.2, 0.7, 1);
         }
+        const lintel = add(new THREE.DodecahedronGeometry(0.26, 0), stone, 0, 0.7, 0.06, 0.08);
+        lintel.scale.set(1.85, 0.7, 1.3);
+        // A torch burning on a stake either side, clear of the frame (real flames, flickered with the others), and a
+        // halo and warm light round each at dusk.
+        const glows: BuildingGlow[] = [];
+        for (const x of [-0.6, 0.6]) {
+          const torch = mouthTorch();
+          torch.position.set(x, 0, MOUTH_FACE + 0.12);
+          g.add(torch);
+          glows.push({ pos: new THREE.Vector3(x, 0.66, MOUTH_FACE + 0.12), size: 0.3, light: "candle" });
+        }
+        g.userData.glows = glows;
+        // And the rope out of the dark: the far end of the one that hangs down inside, tied round a boulder out front.
+        g.add(mouthRope(MOUTH_FACE));
         break;
       }
       case "rocks": {
@@ -4909,8 +5384,146 @@ export class WorldRenderer {
         add(new THREE.ConeGeometry(0.48, 0.6, 4), lambert(poi.cleared ? "#777777" : "#b9433d"), -0.2, 0.3, 0, Math.PI / 4);
         if (!poi.cleared) add(new THREE.ConeGeometry(0.1, 0.22, 4), new THREE.MeshBasicMaterial({ color: "#ff9a3c" }), 0.4, 0.11, 0.25);
         break;
+      case "crate": {
+        // A crate in a delve (caveProps.ts): whole, knocked about, or splinters.
+        const model = crateModel(poi);
+        g.add(model);
+        g.userData.body = model.userData.body;
+        if (!poi.cleared) g.userData.door = poi.pos;
+        break;
+      }
+      case "glowcap": {
+        // Glowing mushrooms (caveDressing.ts), grown at the foot of the rock: set over toward the wall, off the
+        // middle of the hex where a hero stands to pick them.
+        const cluster = glowcapCluster(poi.pos.q, poi.pos.r, !!poi.cleared);
+        const map = this.state?.map;
+        const at = hexToWorld(poi.pos);
+        const toward = new THREE.Vector2();
+        for (const dir of HEX_DIRS) {
+          if (map && tileAt(map, { q: poi.pos.q + dir.q, r: poi.pos.r + dir.r })?.biome !== "rock") continue;
+          const w = hexToWorld({ q: poi.pos.q + dir.q, r: poi.pos.r + dir.r });
+          toward.add(new THREE.Vector2(w.x - at.x, w.z - at.z));
+        }
+        if (toward.lengthSq() > 0) toward.normalize().multiplyScalar(0.42);
+        const spot = this.inModel(poi, at.x + toward.x, at.z + toward.y);
+        cluster.position.set(spot.x, 0, spot.y);
+        g.add(cluster);
+        // Their light (the ambience's): a little over the caps.
+        g.userData.glowAt = new THREE.Vector3(spot.x, 0.45, spot.y);
+        // Pointing anywhere on them means their hex.
+        g.userData.door = poi.pos;
+        break;
+      }
     }
     return g;
+  }
+
+  // ---------- chests and crates moving ----------
+
+  /** How long a chest's lid takes to swing open, in seconds. */
+  private static readonly LID_SWING = 0.5;
+
+  /** A chest's lid now: swinging open (eased, with a little bounce as it hits the end of its hinge), or at rest. */
+  private lidNow(poi: Poi): number {
+    const start = this.lidsSwinging.get(poi.id);
+    if (start === undefined) return restingLid(poi);
+    const t = Math.min(1, Math.max(0, (this.clock - start) / WorldRenderer.LID_SWING));
+    // Ease out with an overshoot: it is flung back, knocks against its stop and settles.
+    const c = 2.2;
+    const k = 1 + (c + 1) * (t - 1) ** 3 + c * (t - 1) ** 2;
+    const from = restingLid({ ...poi, cleared: false });
+    return from + (LID_OPEN - from) * k;
+  }
+
+  /** A chest is opened: its lid swings back over half a second. */
+  openChest(poiId: string) {
+    this.lidsSwinging.set(poiId, this.clock);
+  }
+
+  /**
+   * A blow struck by hand at a place rather than at a unit (a crate): the unit turns to it, winds up and strikes,
+   * and `onImpact` runs as the blow lands.
+   */
+  strikeAt(actorId: string, at: THREE.Vector3, name: string, onImpact: () => void) {
+    const a = this.units.get(actorId);
+    if (!a || a.lying) return onImpact();
+    sounds.attack(name, attackStyle(name), this.fighter(actorId), this.spot(actorId));
+    this.face(a, at.x, at.z);
+    const dir = at.clone().project(this.camera).x >= a.goal.clone().project(this.camera).x ? 1 : -1;
+    const heavy = SMASHES.has(name);
+    const land = () => {
+      this.spawnFx("slash", "#dfe9ff", dir < 0, { from: at, to: at, life: heavy ? 0.3 : 0.26, size: heavy ? [1.7, 3] : [1.3, 2.3], spin: -dir * (heavy ? 1.6 : 0.9), fade: true });
+      onImpact();
+    };
+    const wait = a.figure.strike(HEAVY_SWINGS.has(name) ? "heavy" : "light");
+    if (wait > 0) return this.later(0, land, wait);
+    // A creature with no swing of its own springs at it.
+    a.kick.copy(at).sub(a.goal).setY(0).setLength(Math.min(0.6, a.goal.distanceTo(at) * 0.4));
+    a.bob = 0.2;
+    land();
+  }
+
+  /** A crate takes a blow: it rocks and jolts, `by` hard (1 a good hit). */
+  shakePoi(poiId: string, by = 1) {
+    this.poiShakes.set(poiId, { at: this.clock, by });
+  }
+
+  /** A point in a place's model (caveProps' chestMouth, crateMiddle), out in the world. Null if it is not drawn. */
+  poiPoint(poiId: string, local: THREE.Vector3): THREE.Vector3 | null {
+    const g = this.poiObject(poiId);
+    if (!g) return null;
+    g.updateWorldMatrix(true, false);
+    return g.localToWorld(local.clone());
+  }
+
+  /** Where the middle of a chest's opening or a crate is, in the world: for what spills or flies out of it. */
+  poiSpot(poi: Poi): THREE.Vector3 | null {
+    return this.poiPoint(poi.id, poi.kind === "crate" ? crateMiddle(poi) : chestMouth(poi));
+  }
+
+  /** Text rising off a place: the damage a crate takes. */
+  floatAt(poiId: string, text: string, color: string) {
+    const g = this.poiObject(poiId);
+    if (!g) return;
+    const box = new THREE.Box3().setFromObject(g);
+    if (box.isEmpty()) return;
+    const map = textTexture(text, color);
+    const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map, transparent: true, depthTest: false }));
+    sprite.scale.set((0.45 * map.image.width) / 24, 0.45, 1);
+    sprite.position.set((box.min.x + box.max.x) / 2, box.max.y + 0.35, (box.min.z + box.max.z) / 2);
+    sprite.renderOrder = 10;
+    this.fxGroup.add(sprite);
+    this.floaters.push({ sprite, age: 0 });
+  }
+
+  /** Each frame: lids swinging, crates rocking, glints twinkling. */
+  private movePois() {
+    for (const [id, start] of this.lidsSwinging) {
+      const lid = this.poiObject(id)?.userData.lid as THREE.Object3D | undefined;
+      const poi = this.state?.map.pois.find((p) => p.id === id);
+      if (lid && poi) lid.rotation.x = this.lidNow({ ...poi, cleared: true });
+      if (this.clock - start > WorldRenderer.LID_SWING) this.lidsSwinging.delete(id);
+    }
+    for (const [id, shake] of this.poiShakes) {
+      const body = this.poiObject(id)?.userData.body as THREE.Object3D | undefined;
+      const t = (this.clock - shake.at) / 0.35;
+      if (body) {
+        // A jolt that dies away: rocked side to side and lifted off the ground a moment.
+        const k = t < 1 ? (1 - t) ** 2 * shake.by : 0;
+        body.rotation.x = Math.sin(t * 22) * 0.09 * k;
+        body.rotation.z = (body.userData.lean ??= body.rotation.z) + Math.sin(t * 17 + 1) * 0.12 * k;
+        body.position.y = Math.abs(Math.sin(t * 9)) * 0.06 * k;
+      }
+      if (t >= 1) this.poiShakes.delete(id);
+    }
+    for (const o of this.twinkles) {
+      const phase = o.userData.twinkle as number;
+      // Mostly a faint point, flaring now and then, each on its own beat.
+      const beat = Math.sin(this.clock * 2.3 + phase);
+      const flare = Math.max(0, beat) ** 6;
+      o.scale.setScalar((o.userData.size as number) * (0.35 + flare * 1.6));
+      o.rotation.y = this.clock * 1.5 + phase;
+    }
   }
 
   // ---------- units ----------
@@ -4922,13 +5535,19 @@ export class WorldRenderer {
         const stacks = new Map<string, number>();
     for (const h of state.heroes) stacks.set(key(h.pos), (stacks.get(key(h.pos)) ?? 0) + 1);
     const seen = new Map<string, number>();
+    const seats = this.seatsOf(state);
     for (const h of state.heroes) {
       const n = stacks.get(key(h.pos))!;
       const i = seen.get(key(h.pos)) ?? 0;
       seen.set(key(h.pos), i + 1);
       const pos = this.standAt(h.pos);
+      // Whoever is on a stool's hex sits on the stool, wherever in the hex it stands.
+      const seat = i === 0 && !h.at && !h.asleep && !h.down && !h.prone ? seats.get(key(h.pos)) : undefined;
       if (h.at) pos.add(new THREE.Vector3(h.at.x, h.at.y, h.at.z));
-      else {
+      else if (seat) {
+        pos.x += seat.x;
+        pos.z += seat.z;
+      } else {
         pos.x += (i - (n - 1) / 2) * 0.6;
         pos.z += 0.25;
       }
@@ -4937,7 +5556,7 @@ export class WorldRenderer {
       // A plate shows a first name only: full names run long over a crowd.
       const full = h.label ?? (plate ? h.name : undefined);
       const label = plate && full ? firstName(full) : full;
-      want.set(h.id, { kind: h.classId, outfit: h.outfit, pos, size: 1.5, label, plate: label ? plate : undefined, stack: i, ring: colorOf(h.id), pulse: state.turn?.heroId === h.id || !!h.active, asleep: h.asleep, rod: h.rod, boat: h.boat, down: h.down, prone: h.prone });
+      want.set(h.id, { kind: h.classId, outfit: h.outfit, pos, size: 1.5, label, plate: label ? plate : undefined, stack: i, ring: colorOf(h.id), through: colorOf(h.id), pulse: state.turn?.heroId === h.id || !!h.active, asleep: h.asleep, rod: h.rod, boat: h.boat, down: h.down, prone: h.prone, effects: h.effects, seat: seat?.top });
     }
     for (const npc of state.story?.npcs ?? []) {
       const poi = state.map.pois.find((p) => p.id === npc.poi);
@@ -4959,7 +5578,7 @@ export class WorldRenderer {
     for (const u of state.units ?? []) {
       const pos = this.standAt(u.pos);
       pos.z += 0.25;
-      want.set(u.id, { kind: u.kind, pos, size: isBoss(u.kind) ? 1.9 : isBig(u.kind) ? 1.6 : 1.4, label: u.name, ring: u.hostile ? "#e23b3b" : undefined, pulse: !!u.active, hp: u.hp, down: u.down, prone: u.prone });
+      want.set(u.id, { kind: u.kind, pos, size: isBoss(u.kind) ? 1.9 : isBig(u.kind) ? 1.6 : 1.4, label: u.name, ring: u.hostile ? ENEMY_RED : undefined, through: u.hostile ? ENEMY_RED : undefined, pulse: !!u.active, hp: u.hp, down: u.down, prone: u.prone, effects: u.effects });
     }
     for (const poi of state.map.pois) {
       if (poi.cleared || poi.enemies.length === 0) continue;
@@ -4984,6 +5603,11 @@ export class WorldRenderer {
       if (unit.ring) this.unitGroup.remove(unit.ring);
       if (unit.hpBack) this.unitGroup.remove(unit.hpBack);
       if (unit.hpFill) this.unitGroup.remove(unit.hpFill);
+      if (unit.badges) {
+        this.unitGroup.remove(unit.badges);
+        unit.badges.material.map?.dispose();
+        unit.badges.material.dispose();
+      }
       this.clearArrows(unit);
       this.dropLabel(unit);
       this.units.delete(id);
@@ -4993,14 +5617,19 @@ export class WorldRenderer {
       let unit = this.units.get(id);
       if (!unit) {
         const figure = makeFigure(w.kind, lookFor(w.kind), w.outfit, { asleep: w.asleep, rod: w.rod });
+        for (const f of flamesIn(figure.root)) this.liveFlames.add(f);
         figure.root.position.copy(w.pos);
         this.unitGroup.add(figure.root);
         // New arrivals face the camera, turned a little so what they carry shows.
         const turn = turned.get(id) ?? w.face ?? this.yaw + 0.35;
         unit = { figure, root: figure.root, size: w.size, turn, turnGoal: turn, lying: false, shadowAt: w.pos.clone(), shadowTurn: turn, shadowSize: 0, ring: null, hpBack: null, hpFill: null, label: null, labelText: "", goal: w.pos.clone(), path: [], kick: new THREE.Vector3(), lean: 0, stride: 0, bob: 0, kind: spriteKey(w.kind, w.outfit, w.asleep, w.rod), asleep: false, nextZ: 0, zCount: 0, glowUntil: 0, glowing: false, head: w.size + 0.3, stack: 0, feet: w.pos.clone() };
+        // Someone found on a stool is found sitting.
+        if (w.seat !== undefined) unit.sit = 1;
         this.units.set(id, unit);
       }
       unit.goal.copy(w.pos);
+      unit.seated = w.seat !== undefined;
+      if (w.seat !== undefined) unit.seatTop = w.seat;
       if (w.asleep && !unit.asleep) unit.nextZ = this.clock + 0.4;
       unit.asleep = !!w.asleep;
       this.syncBoat(unit, w.boat);
@@ -5012,6 +5641,8 @@ export class WorldRenderer {
       unit.size = w.size;
       unit.figure.setSize(w.size);
       unit.figure.setDim(!!w.down);
+      // A hero always, and an enemy once it is in a fight, is shown through the tree or wall it is behind.
+      unit.figure.setSilhouette(this.seeThrough ? (w.through ?? null) : null);
       if (w.face !== undefined) unit.turnGoal = w.face;
       // Someone set to face a given way (seated, casting a line, lined up for a fight) is not turned by the pointer.
       if (w.face !== undefined) this.posed.add(id);
@@ -5052,6 +5683,27 @@ export class WorldRenderer {
           unit.hpFill.scale.set(Math.max(0.001, 1.14 * w.hp!), 0.1, 1);
           unit.hpFill.material.color.set(w.hp! > 0.5 ? "#6ee06e" : w.hp! > 0.25 ? "#ffd23f" : "#ff6b6b");
           unit.hpBack.userData.lift = unit.hpFill.userData.lift = w.size + 0.25;
+        }
+      }
+      // What it is under, badged over its head until each wears off. Redrawn only when the list or a count changes.
+      const effects = w.down ? [] : (w.effects ?? []);
+      const key = badgesKey(effects);
+      if (key !== (unit.badgesKey ?? "")) {
+        unit.badgesKey = key;
+        if (unit.badges) {
+          unit.badges.material.map?.dispose();
+          unit.badges.material.dispose();
+          this.unitGroup.remove(unit.badges);
+          unit.badges = null;
+        }
+        if (effects.length > 0) {
+          const { texture, aspect } = badgeTexture(effects);
+          const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: texture, depthTest: false, transparent: true }));
+          sprite.renderOrder = 7;
+          sprite.layers.set(OVERLAY_LAYER);
+          sprite.userData.aspect = aspect;
+          unit.badges = sprite;
+          this.unitGroup.add(sprite);
         }
       }
     }
@@ -5216,10 +5868,9 @@ export class WorldRenderer {
     this.hoverLive = !!reach && reach.cost > 0;
     const budget = state.freeRoam ? FREE_ROAM_REACH : state.turn?.mp;
     if (!reach || reach.cost === 0 || !me || (budget === undefined && !state.reach)) return;
-    // A reach handed in carries its own way back to the start; otherwise the way is found over the terrain.
+    // The reach carries its own way back to the start, whether it was handed in or found over the terrain.
     const steps: HexPos[] = [];
-    if (state.reach) for (let at: typeof reach | undefined = reach; at && at.prev !== null; at = this.reach.get(at.prev)) steps.unshift(at.pos);
-    else steps.push(...(findPath(state.map, me.pos, hovered, budget, this.stepCost(state))?.path ?? []));
+    for (let at: typeof reach | undefined = reach; at && at.prev !== null; at = this.reach.get(at.prev)) steps.unshift(at.pos);
     for (const step of steps) {
       // The way there: small lights, glowing rather than solid.
       const dot = new THREE.Mesh(new THREE.SphereGeometry(0.09, 8, 6), new THREE.MeshBasicMaterial({ color: "#eaf6ff", transparent: true, opacity: 0.85, blending: THREE.AdditiveBlending, depthWrite: false }));
@@ -5506,23 +6157,46 @@ export class WorldRenderer {
 
   // ---------- frame loop ----------
 
-  /** Draw at full resolution (a game that is read up close, like a table) instead of the chunky half. */
-  setSharp(sharp: boolean) {
-    this.pixel = sharp ? 1 : PIXEL;
-    this.resize();
+  /**
+   * The element a minigame keeps its controls in, over the view (null when there is none): the camera frames the
+   * game in what it leaves clear, above it when it lies along the bottom, or left of it down the right side.
+   */
+  setCover(el: HTMLElement | null) {
+    if (el === this.coverEl) return;
+    if (this.coverEl) this.coverObserver?.unobserve(this.coverEl);
+    this.coverEl = el;
+    if (el) {
+      this.coverObserver ??= new ResizeObserver(() => this.measureCover());
+      this.coverObserver.observe(el);
+    }
+    this.measureCover();
+  }
+
+  private measureCover() {
+    const el = this.coverEl;
+    const box = this.container.getBoundingClientRect();
+    const r = el?.isConnected ? el.getBoundingClientRect() : null;
+    if (!r || !r.width || !r.height || !box.width || !box.height) {
+      this.coverGoal = { bottom: 0, right: 0 };
+      return;
+    }
+    // Whichever way round leaves more of the view clear: a dock along the bottom, or one down the right side.
+    const bottom = Math.max(0, (box.bottom - r.top) / box.height);
+    const right = Math.max(0, (box.right - r.left) / box.width);
+    this.coverGoal = bottom <= right ? { bottom: Math.min(bottom, 0.6), right: 0 } : { bottom: 0, right: Math.min(right, 0.6) };
   }
 
   private resize() {
+    this.measureCover();
     const w = Math.max(1, this.container.clientWidth);
     const h = Math.max(1, this.container.clientHeight);
-    // Full resolution with "Fancy graphics" on, or while a game asks for it (setSharp); the chunky half otherwise.
-    const px = fancy.get() ? 1 : this.pixel;
-    this.fine = PIXEL / px;
     this.ambience.fine = this.fine;
-    this.renderer.setSize(Math.ceil(w / px), Math.ceil(h / px), false);
-    this.post?.setSize(Math.ceil(w / px), Math.ceil(h / px));
+    this.renderer.setSize(w, h, false);
+    this.post?.setSize(w, h);
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
+    // A view offset for a minigame's cover is set again next frame, in the new size.
+    if (this.coverShift) this.coverShift = "resized";
   }
 
   /** Dev server only: a lightning strike now, whatever the weather, for trying thunder takes against the flash. */
@@ -5615,7 +6289,11 @@ export class WorldRenderer {
     // and height about the game's look point all ease over together, so it orbits in rather than sliding.
     let focus = this.camera.position.distanceTo(this.target);
     if (this.minigame) {
-      const v = this.minigame.game.frame(dt, now, this.camera.aspect);
+      // The game's controls cover part of the view: it is framed in the rest, as if that were the whole window.
+      const ease = 1 - Math.exp(-dt * 6);
+      this.cover.bottom += (this.coverGoal.bottom - this.cover.bottom) * ease;
+      this.cover.right += (this.coverGoal.right - this.cover.right) * ease;
+      const v = this.minigame.game.frame(dt, now, (this.camera.aspect * (1 - this.cover.right)) / (1 - this.cover.bottom));
       const b = Math.max(0, Math.min(1, v.blend));
       // Nothing of the woods (a tree, a boulder off a heap) may stand between the game's eye and what it looks at.
       // Cleared again whenever the eye moves on (a window turned from wide to tall stands it further back).
@@ -5639,9 +6317,21 @@ export class WorldRenderer {
         this.camera.lookAt(look);
         focus = this.camera.position.distanceTo(look);
       }
-      const fov = THREE.MathUtils.lerp(this.baseFov, v.fov ?? this.baseFov, b);
-      if (Math.abs(fov - this.camera.fov) > 0.01) {
+      // The lens is opened so the game's own field of view spans the clear part of the height, and the view is
+      // shifted so the look point sits in the middle of that part (up from a dock along the bottom, left of one on the right).
+      const lb = this.cover.bottom * b;
+      const lr = this.cover.right * b;
+      const want = THREE.MathUtils.lerp(this.baseFov, v.fov ?? this.baseFov, b);
+      const fov = lb > 0.001 ? THREE.MathUtils.radToDeg(2 * Math.atan(Math.tan(THREE.MathUtils.degToRad(want) / 2) / (1 - lb))) : want;
+      const shift = lb > 0.001 || lr > 0.001 ? `${lr.toFixed(4)},${lb.toFixed(4)}` : "";
+      if (Math.abs(fov - this.camera.fov) > 0.01 || shift !== this.coverShift) {
         this.camera.fov = fov;
+        // In the view's own pixels: setViewOffset also sets the camera's aspect from them (fullWidth / fullHeight).
+        const w = Math.max(1, this.container.clientWidth);
+        const h = Math.max(1, this.container.clientHeight);
+        if (shift) this.camera.setViewOffset(w, h, (lr * w) / 2, (lb * h) / 2, w, h);
+        else this.camera.clearViewOffset();
+        this.coverShift = shift;
         this.camera.updateProjectionMatrix();
       }
       this.hideOwnHero();
@@ -5667,14 +6357,29 @@ export class WorldRenderer {
       this.ear.sea(nearWater(ear.x, ear.z, this.water));
       this.ear.ground(this.state ? (tileAt(this.state.map, worldToHex(ear.x, ear.z - 0.25))?.biome ?? null) : null);
     }
-    // In the caverns every hero carries a torch: the lights follow them as they walk.
+    // In the caverns the lights follow the heroes who carry a torch as they walk (in the old delves, every hero),
+    // and a torch thrown down lights where it lies. Nearest the view first: there are only so many lights.
     if (this.state?.kind === "caverns") {
       const torches: THREE.Vector3[] = [];
+      const lit = this.state.lights !== undefined;
       for (const h of this.state.heroes) {
         const unit = this.units.get(h.id);
-        if (unit) torches.push(unit.root.position);
+        if (unit && (!lit || h.torch)) torches.push(unit.root.position);
       }
+      // A torch on the ground lights from just over its flame.
+      for (const t of this.groundTorches.children) torches.push(t.position.clone().setY(t.position.y + 0.55 - TORCH_LIFT));
+      torches.sort((a, b) => a.distanceToSquared(this.target) - b.distanceToSquared(this.target));
       this.ambience.setTorches(torches);
+    }
+    // Torch flames flicker, in a hand or lying on the ground. One no longer on the map is let go.
+    if (this.liveFlames.size > 0) {
+      const now = performance.now() / 1000;
+      for (const f of this.liveFlames) {
+        let top: THREE.Object3D = f;
+        while (top.parent) top = top.parent;
+        if (top !== this.scene) this.liveFlames.delete(f);
+        else flickerFlame(f, now);
+      }
     }
     // Night reaches the open sea and the fog too, not just the lit ground.
     const night = this.ambience.night;
@@ -5726,18 +6431,57 @@ export class WorldRenderer {
       p.y += unit.sunk ?? 0;
       unit.sunk = 0;
       let landed = 0;
+      let touched = false;
+      // A jump whose landing place is no longer the next on the way (knocked aside, sent elsewhere) is off.
+      if (unit.leap && unit.leap.to !== unit.path[0]) unit.leap = undefined;
+      if (unit.path.length === 0 && unit.leaps?.size) unit.leaps.clear();
       if (unit.path.length > 0) {
         const next = unit.path[0].clone();
         next.z += 0.25;
+        // The last step onto a stool goes to the stool itself, wherever in its hex it stands.
+        if (unit.seated && unit.path.length === 1 && Math.hypot(unit.goal.x - next.x, unit.goal.z - next.z) < 1) next.copy(unit.goal);
+        const acted = unit.rush ? undefined : unit.leaps?.get(unit.path[0]);
+        if (acted !== undefined && !unit.leap) {
+          // It begins: turned to where it is going, and crouched to spring. The further, the longer and higher.
+          const far = Math.hypot(next.x - p.x, next.z - p.z);
+          const air = Math.min(LEAP.longest, LEAP.air + LEAP.airPer * far);
+          unit.leap = { to: unit.path[0], from: p.clone(), at: this.clock + unit.figure.jump(air), air, high: Math.max(LEAP.high + LEAP.highPer * far, next.y - p.y + LEAP.clear) };
+          if (far > 1e-4) unit.turnGoal = Math.atan2(next.x - p.x, next.z - p.z);
+          unit.stride = 0;
+          // The Jump action is heard, so that its thud falls as the feet come down (the sound's own is LEAP.thud into it).
+          const spot = { x: p.x, z: p.z };
+          const land = unit.leap.at + air;
+          if (acted) this.pending.push({ at: Math.max(this.clock, land - LEAP.thud), run: () => sounds.zone("jump", spot) });
+        }
+        const leap = unit.leap;
         const step = 4.2 * (unit.rush ?? 1) * dt;
-        // Flung, not walking: no footfalls, and no turning to face the way it is going.
-        if (!unit.rush) {
+        if (leap) {
+          const k = (this.clock - leap.at) / leap.air;
+          if (k >= 1) {
+            p.copy(next);
+            unit.leaps?.delete(unit.path[0]);
+            unit.path.shift();
+            unit.leap = undefined;
+            unit.bob = 0;
+            // The Jump action lands hard; a step up or down on a walk lands as a footstep does.
+            if (acted) touched = true;
+            else landed = 1;
+          } else if (k > 0) {
+            // Straight across from where it sprang to where it lands, and over the top between.
+            p.lerpVectors(leap.from, next, k);
+            unit.bob = 4 * leap.high * k * (1 - k);
+          } else {
+            unit.bob *= Math.exp(-dt * 18);
+          }
+        } else if (!unit.rush) {
           landed = footfalls(unit.stride, unit.stride + step);
           unit.stride += step;
           // They turn to face the way they are walking.
           if (Math.hypot(next.x - p.x, next.z - p.z) > 1e-4) unit.turnGoal = Math.atan2(next.x - p.x, next.z - p.z);
         }
-        if (p.distanceTo(next) <= step) {
+        if (leap) {
+          // Carried by the jump, above.
+        } else if (p.distanceTo(next) <= step) {
           p.copy(next);
           unit.path.shift();
           if (unit.path.length === 0) unit.rush = undefined;
@@ -5745,7 +6489,7 @@ export class WorldRenderer {
           p.add(next.sub(p).setLength(step));
         }
         // Two steps per hex, with a little bounce in each, landing as each hex is reached.
-        if (!unit.rush) unit.bob = Math.abs(Math.sin(unit.stride * 3.6)) * 0.07;
+        if (!unit.rush && !leap) unit.bob = Math.abs(Math.sin(unit.stride * 3.6)) * 0.07;
       } else {
         unit.bob *= Math.exp(-dt * 18);
         unit.stride = 0;
@@ -5753,6 +6497,9 @@ export class WorldRenderer {
         p.lerp(goal, 1 - Math.exp(-dt * 14));
         unit.kick.multiplyScalar(Math.exp(-dt * 9));
       }
+      // At a stool: up onto it once they have walked to it, and off it again as they leave.
+      const atSeat = !!unit.seated && unit.path.length === 0 && !unit.lying && Math.hypot(unit.goal.x - p.x, unit.goal.z - p.z) < 0.08;
+      if (atSeat || unit.sit) unit.sit = atSeat ? Math.min(1, (unit.sit ?? 0) + dt / SIT_S) : Math.max(0, (unit.sit ?? 0) - dt / STAND_S);
       unit.lean *= Math.exp(-dt * 8);
       // Your own hero, standing idle, looks toward the pointer; with the bag open they turn to face you.
       if (id === this.state?.you && unit.path.length === 0 && !unit.asleep && !unit.lying && !this.minigame && !this.posed.has(id)) {
@@ -5785,11 +6532,19 @@ export class WorldRenderer {
       unit.root.rotation.y = unit.turn;
       const rowing = this.rowingPose(unit, p, dt);
       if (rowing === undefined) unit.oarPull = undefined;
-      unit.figure.update({ time: this.clock, stride: unit.stride, walking: unit.path.length > 0 && !unit.rush, lean: unit.lean, lying: unit.lying || this.clock < (unit.floored ?? 0), rowing, sitting: unit.boatKind === "rowboat" && unit.boat?.visible ? 1 : undefined });
+      unit.figure.update({ time: this.clock, stride: unit.stride, walking: unit.path.length > 0 && !unit.rush && !unit.leap, lean: unit.lean, lying: unit.lying || this.clock < (unit.floored ?? 0), rowing, sitting: unit.boatKind === "rowboat" && unit.boat?.visible ? 1 : unit.sit || undefined });
       const ground = p.y;
       unit.feet.set(p.x, ground, p.z);
-      if (landed) this.footfall(id, unit);
+      if (touched) this.touchdown(unit);
+      else if (landed) this.footfall(id, unit);
       this.rideBoat(unit, p, dt);
+      // On a stool: the figure's origin as far below the seat's top as a seated figure's is, with a small hop on the way up.
+      let perch = 0;
+      if (unit.sit) {
+        perch = ((unit.seatTop ?? 0) - SITTING_DROP * unit.size) * THREE.MathUtils.smootherstep(unit.sit, 0, 1) + Math.sin(unit.sit * Math.PI) * 0.1;
+        unit.sunk = (unit.sunk ?? 0) - perch;
+        p.y += perch;
+      }
       p.y += unit.bob;
       // Indoors the shadow maps are drawn only when something changes: a hero that moved, turned, lay down or
       // stood up asks the lights in reach of where it was and where it is now to redraw.
@@ -5809,7 +6564,7 @@ export class WorldRenderer {
       if (unit.label) {
         // A plate waits for the ground under it to come up.
         if (this.rise) unit.label.visible = unit.root.visible && this.rise.reached(p.x, p.z);
-        unit.label.position.set(p.x, ground + unit.label.userData.lift, p.z);
+        unit.label.position.set(p.x, ground + unit.label.userData.lift + perch, p.z);
         const tall = unit.label.userData.rows * labelRow;
         unit.label.scale.set(tall * unit.label.userData.aspect, tall, 1);
       }
@@ -5821,6 +6576,15 @@ export class WorldRenderer {
         const lift = unit.hpBack.userData.lift ?? 2;
         unit.hpBack.position.set(p.x - 0.6, ground + lift, p.z);
         unit.hpFill.position.set(p.x - 0.57, ground + lift, p.z);
+      }
+      if (unit.badges) {
+        // Over the name tag or plate, clear of the health bar too.
+        const bar = unit.hpBack?.visible ? ground + (unit.hpBack.userData.lift ?? 2) + 0.26 : ground + unit.head + 0.4;
+        const tag = this.plateTop(unit);
+        const over = tag !== null ? Math.max(bar, tag + 0.2) : bar;
+        const tall = 0.3;
+        unit.badges.position.set(p.x, over, p.z);
+        unit.badges.scale.set(tall * (unit.badges.userData.aspect as number), tall, 1);
       }
     }
 
@@ -5924,6 +6688,7 @@ export class WorldRenderer {
       }
     }
 
+    this.movePois();
     for (const tick of this.tickers) tick(dt, this.camera, this.clock);
     this.ambience.settleShadows();
     // Until the veil starts to clear, the place is all down but the hex you stand on (or the middle of the view).

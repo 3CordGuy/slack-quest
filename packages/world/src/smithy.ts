@@ -7,6 +7,7 @@
 
 import type { ItemDef } from "./gear";
 import type { Resources } from "./hut";
+import { haggledPrice } from "./keepers";
 
 /** The project id the smithy is built under (see PROJECTS). */
 export const SMITHY_PROJECT = "smithy";
@@ -29,25 +30,26 @@ export function smithyWork(item: Pick<ItemDef, "kind">): SmithyWork | null {
 /**
  * The cost of taking an item from `steps` to `steps + 1`, or null once it is
  * at the cap or for an item the smithy cannot work. Weapons take iron and
- * gold; armour takes iron and copper.
+ * gold; armour takes iron and copper. `dealPct` is what the customer talked
+ * the smith down by today (see keepers.ts): it comes off the gold only.
  */
-export function smithyCost(item: Pick<ItemDef, "kind">, steps: number): SmithyCost | null {
+export function smithyCost(item: Pick<ItemDef, "kind">, steps: number, dealPct = 0): SmithyCost | null {
   const work = smithyWork(item);
   const n = Math.floor(steps) + 1;
   if (!work || n < 1 || n > SMITHY_MAX_STEPS) return null;
-  return work === "sharpen" ? { gold: 40 * n, resources: { iron: 3 * n } } : { gold: 0, resources: { iron: 2 * n, copper: 2 * n } };
+  return work === "sharpen" ? { gold: haggledPrice(40 * n, dealPct), resources: { iron: 3 * n } } : { gold: 0, resources: { iron: 2 * n, copper: 2 * n } };
 }
 
 /** Why this item cannot take its next step now, or null if it can. */
 export function smithyProblem(
-  item: Pick<ItemDef, "kind" | "name"> & { upgrades?: number },
+  item: Pick<ItemDef, "kind" | "name"> & { upgrades?: number; deal?: { pct: number } | null },
   ctx: { built: boolean; gold: number; resources: Resources },
 ): string | null {
   if (!ctx.built) return "The crew has not built the smithy yet.";
   const work = smithyWork(item);
   if (!work) return "The smith only works weapons and armour.";
   const steps = item.upgrades ?? 0;
-  const cost = smithyCost(item, steps);
+  const cost = smithyCost(item, steps, item.deal?.pct ?? 0);
   if (!cost) return `${item.name} is as good as the smith can make it.`;
   if (ctx.gold < cost.gold) return `That takes ${cost.gold} gold.`;
   for (const [kind, qty] of Object.entries(cost.resources) as [keyof Resources, number][]) {

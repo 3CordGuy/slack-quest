@@ -9,8 +9,9 @@
 // sky.
 
 import * as THREE from "three";
+import { cobbleTexture, flagstoneTexture, floorTexture, pierTexture } from "./groundArt";
 import { devTools } from "../devTools";
-import { fancy } from "./fancy";
+import { fancy, fancyGrass } from "./fancy";
 import { WIND_DIR, addFieldSway, gustAt, setFieldCalm, windPower } from "./wind";
 import type { Tile } from "@gantt-quest/world";
 import type { LightKind } from "./props";
@@ -29,6 +30,29 @@ const hash = (a: number, b: number, salt: number) => {
   const n = Math.sin(a * 127.1 + b * 311.7 + salt * 74.7) * 43758.5453;
   return n - Math.floor(n);
 };
+
+/** A value noise along `t`, 0 to 1: the hash at whole steps of t, eased smoothly between them. */
+const drift = (t: number, b: number, salt: number) => {
+  const i = Math.floor(t);
+  const f = t - i;
+  const e = f * f * (3 - 2 * f);
+  return hash(i, b, salt) * (1 - e) + hash(i + 1, b, salt) * e;
+};
+
+/** How far a torch's light reaches (world units, about four hexes), and how bright it burns. */
+const TORCH_REACH = 12;
+const TORCH_STRENGTH = 4;
+/** How high over where a torch is carried its light hangs: above a hero's head. Export for a torch on the ground. */
+export const TORCH_LIFT = 2.1;
+/**
+ * Glowing mushrooms' light: how many patches have one at a time (the nearest the view), how far it reaches (about
+ * the hex round them the rules light, and a soft edge past it), how bright, and how long it takes to go out once
+ * they are picked.
+ */
+const GLOWCAP_LIGHTS = 3;
+const GLOWCAP_REACH = 4.2;
+const GLOWCAP_STRENGTH = 2.2;
+const GLOWCAP_FADE_S = 1.1;
 
 export function pixelTexture(w: number, h: number, draw: (ctx: CanvasRenderingContext2D) => void): THREE.CanvasTexture {
   const canvas = document.createElement("canvas");
@@ -363,66 +387,48 @@ function onPath(bits: number, dx: number, dz: number, margin: number): boolean {
   return d < pathReach(bits, Math.atan2(dz, dx)) + margin;
 }
 
-/** Two scallops of a cut-out wave: a white crest over a lighter blue body. */
-const waveTexture = () =>
-  pixelTexture(24, 6, (ctx) =>
-    stamp(
-      ctx,
-      [
-        "    wwww        wwww    ",
-        "  wwbbbbww    wwbbbbww  ",
-        " wbbbbbbbbw  wbbbbbbbbw ",
-        "wbbbbbbbbbbwwbbbbbbbbbbw",
-        "bbbbbbbbbbbbbbbbbbbbbbbb",
-        "bbbbbbbbbbbbbbbbbbbbbbbb",
-      ],
-      { w: "#f2f9ff", b: "#4f95e4" },
-    ),
-  );
+/**
+ * Two scallops of a cut-out wave: a white crest over a lighter blue body. Drawn smoothly at eight times the
+ * strip's old 24 by 6, so its outline stays clean however near the camera comes.
+ */
+const waveTexture = () => {
+  const k = 8;
+  const canvas = document.createElement("canvas");
+  canvas.width = 24 * k;
+  canvas.height = 6 * k;
+  const ctx = canvas.getContext("2d")!;
+  /** The top of the wave at x: a rounded hump either side of the middle, meeting the next in a trough. */
+  const top = (x: number) => {
+    const u = ((x / k) % 12 - 6) / 6;
+    return k * (4 - 3.6 * Math.sqrt(Math.max(0, 1 - u * u)));
+  };
+  const outline = new Path2D();
+  outline.moveTo(0, canvas.height);
+  for (let x = 0; x <= canvas.width; x++) outline.lineTo(x, top(x));
+  outline.lineTo(canvas.width, canvas.height);
+  outline.closePath();
+  ctx.fillStyle = "#4f95e4";
+  ctx.fill(outline);
+  ctx.save();
+  ctx.clip(outline);
+  ctx.beginPath();
+  for (let x = 0; x <= canvas.width; x++) (x === 0 ? ctx.moveTo : ctx.lineTo).call(ctx, x, top(x));
+  ctx.strokeStyle = "#f2f9ff";
+  ctx.lineWidth = 2.6 * k;
+  ctx.lineJoin = "round";
+  ctx.stroke();
+  ctx.restore();
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+};
 
 /** Width of a wave strip: short enough that two rows fit inside a hex at any angle. */
 const WAVE_WIDTH = 1.3;
 /** How far each row sits from the middle of its hex. */
 const WAVE_ROW = 0.3;
-/** World units covered by one repeat of the floorboard texture: about one hex across. */
-const BOARD_SPAN = 1.76;
-
-/**
- * Floorboards for a hut: four rows of planks with staggered ends, a dark seam
- * between rows, and a few streaks of grain. Flat colours only, so it sits with
- * the rest of the scenery.
- */
-const floorTexture = () =>
-  pixelTexture(32, 32, (ctx) => {
-    const boards = ["#b58d5e", "#a98253", "#bd9566", "#b08a5c"];
-    const seam = "#7f5f3c";
-    const grain = "#9c7749";
-    const light = "#c9a274";
-    for (let row = 0; row < 4; row++) {
-      const y = row * 8;
-      // Each row is two planks, with the joint somewhere different every row.
-      const joint = [11, 25, 5, 19][row];
-      for (let x = 0; x < 32; x++) {
-        const plank = x < joint ? row : row + 2;
-        ctx.fillStyle = boards[plank % boards.length];
-        ctx.fillRect(x, y, 1, 7);
-      }
-      ctx.fillStyle = seam;
-      ctx.fillRect(0, y + 7, 32, 1);
-      ctx.fillRect(joint, y, 1, 7);
-      // Short streaks along the plank, darker and lighter.
-      for (let i = 0; i < 5; i++) {
-        const gx = Math.floor(hash(row, i, 300) * 28);
-        const gy = y + 1 + Math.floor(hash(row, i, 301) * 5);
-        const len = 2 + Math.floor(hash(row, i, 302) * 4);
-        ctx.fillStyle = i % 3 === 2 ? light : grain;
-        ctx.fillRect(gx, gy, len, 1);
-      }
-    }
-    // One knot.
-    ctx.fillStyle = seam;
-    ctx.fillRect(21, 11, 2, 2);
-  });
+/** World units covered by one repeat of the illustrated ground (cobbles, boards): about one hex across. */
+const GROUND_SPAN = 1.76;
 
 /** Raindrops in the air at once. */
 const DROPS = 150;
@@ -437,8 +443,8 @@ const LOBES = 5;
 
 /**
  * What the pixel decorations (smoke rings, wisps) need to know about the view: how big the picture being drawn
- * is, in its own pixels, and how many of those make one chunky pixel (1 as a rule, 2 with "Fancy graphics" on,
- * when the world is drawn at full resolution). One per ambience, shared by its materials, kept current by `trackView`.
+ * is, in its own pixels, and how many of those make one chunky pixel (2: the world is drawn at full resolution).
+ * One per ambience, shared by its materials, kept current by `trackView`.
  */
 type PixelView = { uRes: { value: THREE.Vector2 }; uFine: { value: number } };
 const viewSize = new THREE.Vector2();
@@ -529,131 +535,6 @@ function wispMaterial(view: PixelView): THREE.ShaderMaterial {
     `,
   });
 }
-/**
- * Cobbles for the Harbor's streets, as quiet as the floorboards: irregular
- * rounded stones of uneven size in four near-identical greys, with joints
- * only a shade darker and now and then a faintly mossy stone. Each pixel
- * belongs to the nearest of a scatter of stone centres, and the pixels where
- * two stones meet are the joint. The scatter wraps, so the sheet tiles.
- */
-const cobbleTexture = () =>
-  pixelTexture(32, 32, (ctx) => {
-    const SIZE = 32;
-    const CELLS = 5;
-    const step = SIZE / CELLS;
-    const stones = ["#72757c", "#6d7077", "#75787f", "#6f7279"];
-    // One centre per cell of a coarse grid, pushed well off the middle so no rows or columns show.
-    const centres: { x: number; y: number; tone: string }[] = [];
-    for (let cy = 0; cy < CELLS; cy++) {
-      for (let cx = 0; cx < CELLS; cx++) {
-        centres.push({
-          x: (cx + 0.15 + hash(cx, cy, 610) * 0.7) * step,
-          y: (cy + 0.15 + hash(cx, cy, 611) * 0.7) * step,
-          tone: hash(cx, cy, 612) < 0.07 ? "#6b746c" : stones[Math.floor(hash(cx, cy, 613) * stones.length)],
-        });
-      }
-    }
-    const wrap = (d: number) => Math.min(Math.abs(d), SIZE - Math.abs(d));
-    for (let y = 0; y < SIZE; y++) {
-      for (let x = 0; x < SIZE; x++) {
-        let best = Infinity;
-        let second = Infinity;
-        let tone = stones[0];
-        for (const c of centres) {
-          const d = Math.hypot(wrap(x + 0.5 - c.x), wrap(y + 0.5 - c.y));
-          if (d < best) {
-            second = best;
-            best = d;
-            tone = c.tone;
-          } else if (d < second) second = d;
-        }
-        ctx.fillStyle = second - best < 1.1 ? "#63666d" : tone;
-        ctx.fillRect(x, y, 1, 1);
-      }
-    }
-  });
-
-/**
- * Planks for the piers: long weathered boards running out to sea, in close
- * browns with thin dark gaps and the odd nail. Quieter than the hut floor.
- */
-const pierTexture = () =>
-  pixelTexture(32, 32, (ctx) => {
-    const boards = ["#9a7748", "#927044", "#a07d4e", "#967446"];
-    for (let col = 0; col < 4; col++) {
-      const x = col * 8;
-      // Each run is two boards end to end, the joint somewhere different every run.
-      const joint = [9, 22, 15, 4][col];
-      for (let y = 0; y < 32; y++) {
-        ctx.fillStyle = boards[(y < joint ? col : col + 2) % boards.length];
-        ctx.fillRect(x, y, 7, 1);
-      }
-      ctx.fillStyle = "#7a5c38";
-      ctx.fillRect(x + 7, 0, 1, 32);
-      ctx.fillRect(x, joint, 7, 1);
-      ctx.fillStyle = "#6b5234";
-      ctx.fillRect(x + 3, (joint + 2) % 32, 1, 1);
-      // A streak or two of pale, salt-bleached grain.
-      ctx.fillStyle = "#a98658";
-      for (let i = 0; i < 2; i++) ctx.fillRect(x + 1 + Math.floor(hash(col, i, 630) * 5), Math.floor(hash(col, i, 631) * 28), 1, 2 + Math.floor(hash(col, i, 632) * 3));
-    }
-  });
-
-/**
- * Mud for the Harbor's unpaved ground: one brown with a faint scatter of
- * darker wet patches, paler grit and a few short ruts. Barely there.
- */
-const mudTexture = () =>
-  pixelTexture(32, 32, (ctx) => {
-    ctx.fillStyle = "#5f5140";
-    ctx.fillRect(0, 0, 32, 32);
-    for (let i = 0; i < 46; i++) {
-      const x = Math.floor(hash(i, 1, 620) * 32);
-      const y = Math.floor(hash(i, 2, 620) * 32);
-      const kind = hash(i, 3, 620);
-      ctx.fillStyle = kind < 0.5 ? "#574a3a" : kind < 0.85 ? "#665846" : "#52463a";
-      // Mostly single pixels; some smears two or three long, and a few ruts.
-      const len = kind < 0.5 ? 1 + Math.floor(hash(i, 4, 620) * 3) : kind < 0.85 ? 1 : 4 + Math.floor(hash(i, 4, 620) * 3);
-      for (let dx = 0; dx < len; dx++) ctx.fillRect((x + dx) % 32, y, 1, 1);
-    }
-  });
-
-/**
- * Trodden earth for the dirt paths, in the same pixel style as the mud: dusty brown grit, a scatter of small
- * pebbles with a pale top, and darker smears where feet and wheels have worn it. It is laid by world position,
- * so it runs on unbroken from one path hex into the next.
- */
-const pathTexture = () =>
-  pixelTexture(32, 32, (ctx) => {
-    ctx.fillStyle = "#a88b5e";
-    ctx.fillRect(0, 0, 32, 32);
-    for (let i = 0; i < 70; i++) {
-      const x = Math.floor(hash(i, 1, 640) * 32);
-      const y = Math.floor(hash(i, 2, 640) * 32);
-      const kind = hash(i, 3, 640);
-      if (kind < 0.42) {
-        // Grit: single pixels a shade either way.
-        ctx.fillStyle = hash(i, 4, 640) < 0.5 ? "#9a7e53" : "#b5996a";
-        ctx.fillRect(x, y, 1, 1);
-      } else if (kind < 0.7) {
-        // Worn smears, two to five long, darker.
-        ctx.fillStyle = hash(i, 4, 640) < 0.6 ? "#937650" : "#8a6d48";
-        const len = 2 + Math.floor(hash(i, 5, 640) * 3.99);
-        for (let dx = 0; dx < len; dx++) ctx.fillRect((x + dx) % 32, y, 1, 1);
-      } else if (kind < 0.9) {
-        // A pebble: two by two, grey, lit on top.
-        ctx.fillStyle = "#8e877a";
-        ctx.fillRect(x, y, 2, 2);
-        ctx.fillStyle = "#bdb6a6";
-        ctx.fillRect(x, y, 1, 1);
-      } else {
-        // A dry crack.
-        ctx.fillStyle = "#7c6242";
-        for (let k = 0; k < 4; k++) ctx.fillRect((x + k) % 32, (y + (k >> 1)) % 32, 1, 1);
-      }
-    }
-  });
-
 /**
  * A puddle: a blocky pixel blob of dark water, stepped at the ends rather than
  * round, with a pale glint along its far edge.
@@ -792,6 +673,8 @@ export function beaconShine(): THREE.ShaderMaterial {
     fog: false,
   });
 }
+/** A light a piece in a room gives. `main` is the room's great fire: it reaches the whole room and always throws shadows. */
+export type RoomLight = { pos: THREE.Vector3; kind: LightKind; main?: boolean };
 export type BuildingGlow = { pos: THREE.Vector3; /** The halo's width; 0 for a light with no halo. */ size: number; light?: LightKind };
 /** Shadow maps a moving hero may redraw in one frame. Others wait their turn (a frame or two), oldest first. */
 const MOVE_REDRAWS = 2;
@@ -814,6 +697,7 @@ const GLOW: Record<LightKind, { color: string; power: number; range: number; fli
   candle: { color: "#ffb35c", power: 0.9, range: 3.2, flicker: true },
   lamp: { color: "#ffd08a", power: 1.5, range: 4.5, flicker: false },
   fire: { color: "#ff9548", power: 2.2, range: 5, flicker: true },
+  brew: { color: "#6fe07e", power: 1.7, range: 3.8, flicker: true },
 };
 
 /** What a table lantern's light warms toward as it flares. */
@@ -837,13 +721,36 @@ export class Ambience {
   readonly sunDir = new THREE.Vector3(-0.4, 0.8, 0.4);
   /** A hut's hanging lamp over the middle of the room, which its owner can put out. */
   private lamp = new THREE.PointLight("#ffd7a1", 0, 0, 0);
+  /** What a room's floor is laid with: boards, as in the huts and the pub, or flagstones (the smithy). Read when the ground is built. */
+  floorLook: "planks" | "flags" = "planks";
   /** Whether the hut's hanging lamp is lit. Off, the room is lit only by its candles, lanterns and fires. */
   private lampOn = true;
+  /**
+   * A room kept dim for the mood of it (the apothecary's shop), with the lamp out: each small light makes a pool
+   * round itself and no more, falling off sharply, and the fill is fainter, so there is dark between the pools.
+   * Without it a room with its lamp out has its small lights carry the whole room, as a hut's do.
+   */
+  private gloom = false;
   /** In the Haunted Caverns: dark as indoors, no hanging lamp, and a torch carried by each hero. */
   private cave = false;
-  /** One warm, flickering torch per hero in the caverns (at most four). No shadows: they move with every step. */
-  private torches = Array.from({ length: 4 }, () => new THREE.PointLight("#ffb070", 0, 7, 1.4));
+  /**
+   * A warm, flickering light for each torch in the caverns (at most four, nearest the view first): carried, or
+   * lying burning on the ground. Each reaches well out round it, about the four hexes a torch lights by the
+   * rules. The nearest throws real shadows (with Fancy graphics on): rock and figures cast them across the floor.
+   */
+  private torches = Array.from({ length: 4 }, () => new THREE.PointLight("#ffb070", 0, TORCH_REACH, 1.1));
   private torchCount = 0;
+  /**
+   * In the caverns, a cold sea-green light over each of the nearest few patches of glowing mushrooms, real light on
+   * the rock and whoever stands by. No shadows. Always in the scene there, so a patch picked never changes the
+   * number of lights (and recompiles every material): its light just eases out.
+   */
+  private glowcaps = Array.from({ length: GLOWCAP_LIGHTS }, () => new THREE.PointLight("#5ee6c2", 0, GLOWCAP_REACH, 1.4));
+  /** Each patch on the map, where its light hangs, whether it still grows (not picked), and how lit it is now, 0 to 1. */
+  private patches = new Map<string, { at: THREE.Vector3; on: boolean; lit: number }>();
+  private patchClock = 0;
+  /** Stops following the Fancy graphics switch, when these lights are done with. */
+  private unfancy: () => void = () => {};
   /** The lamp's glowing lantern, dimmed when the lamp is put out. */
   private lanternMat: THREE.MeshBasicMaterial | null = null;
   /**
@@ -861,7 +768,7 @@ export class Ambience {
    */
   private slots = Array.from({ length: SHADOW_SLOTS }, () => new THREE.PointLight("#ffb35c", 0, 6, 1));
   /** The piece each slot is lighting, or null while it has none. */
-  private slotOf: ({ pos: THREE.Vector3; kind: LightKind } | null)[] = Array(SHADOW_SLOTS).fill(null);
+  private slotOf: (RoomLight | null)[] = Array(SHADOW_SLOTS).fill(null);
   /**
    * How much of its piece's light each slot carries, 0 to 1; a plain light carries the rest. It eases up after a
    * slot is handed to a piece and down before the slot leaves it, so a shadow fades rather than pops.
@@ -884,7 +791,7 @@ export class Ambience {
   private glows = Array.from({ length: GLOW_LIGHTS }, () => new THREE.PointLight("#ffb35c", 0, 4, 2));
   /** A couple more plain lights indoors, so pieces whose shadow is fading in or out always have one. Hidden outdoors. */
   private fadeGlows = Array.from({ length: FADE_GLOWS }, () => new THREE.PointLight("#ffb35c", 0, 4, 2));
-  private lights: { pos: THREE.Vector3; kind: LightKind }[] = [];
+  private lights: RoomLight[] = [];
   private flames: THREE.Mesh[] = [];
   /** The lanterns over the pub's game tables: lit by the plain lights only, never a shadow slot. Their owner moves and brightens them. */
   private tableLamps: LampLight[] = [];
@@ -917,7 +824,7 @@ export class Ambience {
   private wispAt = new THREE.Vector3();
   private wispAhead = new THREE.Vector3();
   private wispBehind = new THREE.Vector3();
-  /** How many of the picture's pixels make one chunky pixel: 1 as a rule, 2 while the world is drawn at full resolution. */
+  /** How many of the picture's pixels make one chunky pixel (the world renderer's PIXEL). */
   set fine(fine: number) {
     this.pixelView.uFine.value = fine;
   }
@@ -934,16 +841,16 @@ export class Ambience {
    */
   private lamps: { root: THREE.Group; glow: THREE.SpriteMaterial; halos: THREE.Sprite[]; sizes: number[]; panes: THREE.MeshBasicMaterial[] } | null = null;
   /** The lights buildings ask for, lit outdoors along with the props' lights. */
-  private poiLights: { pos: THREE.Vector3; kind: LightKind }[] = [];
+  private poiLights: RoomLight[] = [];
   private paneLit = new THREE.Color();
   private flatTint = new THREE.Color();
   private still = typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
   private m = new THREE.Matrix4();
 
   constructor(private scene: THREE.Scene, renderer: THREE.WebGLRenderer) {
-    // Hard-edged shadows suit the flat, pixelated look.
+    // Shadows softened at their edges, to suit the smooth look.
     renderer.shadowMap.enabled = true;
-    renderer.shadowMap.type = THREE.BasicShadowMap;
+    renderer.shadowMap.type = THREE.PCFShadowMap;
     scene.background = this.background;
 
     this.sun.castShadow = true;
@@ -965,7 +872,7 @@ export class Ambience {
     this.lamp.shadow.autoUpdate = false;
     this.lamp.visible = false;
     this.slots.forEach((s, i) => {
-      // 256 a face: six of them, so a phone keeps its memory, and the coarse edge suits the pixels.
+      // 256 a face: six of them, so a phone keeps its memory. The edges are softened by filtering (PCF).
       s.shadow.mapSize.set(256, 256);
       s.shadow.camera.near = 0.1;
       s.shadow.bias = -0.004;
@@ -976,7 +883,16 @@ export class Ambience {
     });
     for (const g of this.fadeGlows) g.visible = false;
     for (const t of this.torches) t.visible = false;
-    scene.add(this.hemi, this.sun, this.sun.target, this.lamp, this.fireLight, ...this.slots, ...this.glows, ...this.fadeGlows, ...this.torches, this.group);
+    for (const g of this.glowcaps) g.visible = false;
+    // The nearest torch's shadows: six small faces, redrawn every frame as it moves.
+    const lead = this.torches[0].shadow;
+    lead.mapSize.set(256, 256);
+    lead.camera.near = 0.1;
+    lead.camera.far = TORCH_REACH;
+    lead.bias = -0.004;
+    // Fancy graphics turn its shadows on and off as they are switched.
+    this.unfancy = fancy.subscribe(() => this.torchShadows());
+    scene.add(this.hemi, this.sun, this.sun.target, this.lamp, this.fireLight, ...this.slots, ...this.glows, ...this.fadeGlows, ...this.torches, ...this.glowcaps, this.group);
   }
 
   /** Lay out the decoration for a map. `skip` holds the hexes to leave clear. */
@@ -1068,6 +984,32 @@ export class Ambience {
       }
     }
 
+    // Without "Fancy grass", a meadow or a hex of tall grass is a few tufts (taller ones in tall grass) instead of a
+    // field of blades, and a dry patch is just its tinted ground.
+    if (!fancyGrass.get()) {
+      const scatter = (patches: FieldPatch[], count: number, size: number) => {
+        for (const f of patches) {
+          const kx = Math.round(f.x * 100), kz = Math.round(f.z * 100);
+          for (let i = 0; i < count; i++) {
+            const angle = (i / count) * Math.PI * 2 + hash(kx, kz, 300 + i) * 1.2;
+            const spread = 0.2 + hash(kx, kz, 320 + i) * 0.5;
+            tufts.push({
+              x: f.x + Math.sin(angle) * spread,
+              y: f.y,
+              z: f.z + Math.cos(angle) * spread,
+              size: size * (0.8 + hash(kx, kz, 340 + i) * 0.4),
+              phase: f.x * 0.6 + f.z * 0.35 + hash(kx, kz, 360 + i),
+            });
+          }
+        }
+      };
+      scatter(meadows, 5, 0.26);
+      scatter(talls, 6, 0.45);
+      meadows.length = 0;
+      talls.length = 0;
+      drys.length = 0;
+    }
+
     const tone = new THREE.Color();
     shapes.forEach((geometry, s) => {
       const list = rocks[s];
@@ -1105,6 +1047,8 @@ export class Ambience {
     // The caverns light like a room with its lamp out: no sun, no sky, and the heroes' torches doing the work.
     const cave = (this.cave = tiles.some((t) => (t.biome as string) === "cave"));
     for (const t of this.torches) t.visible = cave;
+    for (const g of this.glowcaps) g.visible = cave;
+    this.torchShadows();
     const inside = cave || tiles.some((t) => (t.biome as string) === "floor");
     this.lamp.visible = inside;
     // Casting even while it is out (at no strength, its map not redrawn), so putting it out never recompiles a material.
@@ -1129,8 +1073,8 @@ export class Ambience {
       this.group.add(lantern, cap, chain);
     }
 
-    // ---- floorboards and cobbles: laid as one sheet each, so the pattern runs across hexes ----
-    const lay = (biome: string, map: THREE.CanvasTexture, span: number, material?: THREE.Material) => {
+    // ---- floorboards, cobbles and pier planks: laid as one sheet each, so the pattern runs across hexes ----
+    const lay = (biome: string, map: THREE.Texture) => {
       const under = tiles.filter((t) => (t.biome as string) === biome);
       if (under.length === 0) return;
       const positions: number[] = [];
@@ -1142,26 +1086,24 @@ export class Ambience {
         hexTop((x, y, z, nx, ny, nz) => {
           positions.push(p.x + x + nx * 0.006, p.y + y + ny * 0.006, p.z + z + nz * 0.006);
           normals.push(nx, ny, nz);
-          uvs.push((p.x + x) / span, (p.z + z) / span);
+          uvs.push((p.x + x) / GROUND_SPAN, (p.z + z) / GROUND_SPAN);
         });
       }
       const sheet = new THREE.BufferGeometry();
       sheet.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
       sheet.setAttribute("uv", new THREE.Float32BufferAttribute(uvs, 2));
       sheet.setAttribute("normal", new THREE.Float32BufferAttribute(normals, 3));
-      map.wrapS = map.wrapT = THREE.RepeatWrapping;
-      const mesh = new THREE.Mesh(sheet, material ?? new THREE.MeshLambertMaterial({ map }));
+      const mesh = new THREE.Mesh(sheet, new THREE.MeshLambertMaterial({ map }));
       mesh.receiveShadow = true;
       this.group.add(mesh);
     };
+    lay("floor", this.floorLook === "flags" ? flagstoneTexture() : floorTexture());
+    lay("cobble", cobbleTexture());
+    lay("dock", pierTexture());
     // The Harbor's grass is drabbed by the wet, as the renderer does for every grass tile in a port.
     const wet = tiles.some((t) => (t.biome as string) === "cobble");
     const grassTint = new THREE.Color("#7cb856");
     if (wet) grassTint.lerp(new THREE.Color("#5d6a5c"), 0.5);
-    lay("floor", floorTexture(), BOARD_SPAN);
-    lay("cobble", cobbleTexture(), BOARD_SPAN);
-    lay("mud", mudTexture(), BOARD_SPAN);
-    lay("dock", pierTexture(), BOARD_SPAN);
     // ---- grass edges: where a dirt path meets grass, the grass breaks up into tiny hexes across the dirt ----
     // The tiny hexes sit on one lattice for the whole map, so they line up across tile borders, and thin out
     // the further they are from the grass: about half the edge row, a few just beyond it, then bare dirt.
@@ -1301,12 +1243,12 @@ export class Ambience {
     // pushed in and out by a smooth wobble of where it lies in the world, so it is ragged, not ruled; a strip's
     // end, where it meets the next hex's, is left straight, and its corners move the same in both hexes (they
     // are the same point), so the two still meet. Out past the flat of the tile it bends down over the rounded
-    // rim, so two hexes' strips meet in the seam between them. A pixel texture of grit and pebbles is laid over
-    // it by world position.
+    // rim, so two hexes' strips meet in the seam between them. It is one flat earth colour, a shade lighter or
+    // darker from point to point.
     const pathPos: number[] = [];
     const pathCol: number[] = [];
-    const pathUv: number[] = [];
-    const dirt = wet ? new THREE.Color(0.88, 0.85, 0.82) : new THREE.Color(1, 1, 1);
+    const dirt = new THREE.Color("#a88b5e");
+    if (wet) dirt.multiply(new THREE.Color(0.88, 0.85, 0.82));
     const flat = SIDE_REACH - TILE_FILLET;
     /** How far below the flat of the tile a point this far out (along the nearest side's normal) lies. */
     const sag = (x: number, z: number) => {
@@ -1356,7 +1298,6 @@ export class Ambience {
         shade.copy(dirt).multiplyScalar(0.93 + hash(Math.round(v[0] * 23), Math.round(v[2] * 23), 41) * 0.12);
         if (tint) shade.multiply(tint);
         pathCol.push(shade.r, shade.g, shade.b);
-        pathUv.push(v[0] / BOARD_SPAN, v[2] / BOARD_SPAN);
       };
       // The fringe: short blades rooted all along the ragged edge, just behind the ridge, standing up and leaning a
       // little away from the path, so the grass crowds the edge without the wind laying it over the dirt. None at
@@ -1443,11 +1384,8 @@ export class Ambience {
       const geo = new THREE.BufferGeometry();
       geo.setAttribute("position", new THREE.Float32BufferAttribute(pathPos, 3));
       geo.setAttribute("color", new THREE.Float32BufferAttribute(pathCol, 3));
-      geo.setAttribute("uv", new THREE.Float32BufferAttribute(pathUv, 2));
       geo.computeVertexNormals();
-      const map = pathTexture();
-      map.wrapS = map.wrapT = THREE.RepeatWrapping;
-      const mesh = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ map, vertexColors: true }));
+      const mesh = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ vertexColors: true }));
       mesh.receiveShadow = true;
       this.group.add(mesh);
     }
@@ -1598,6 +1536,8 @@ export class Ambience {
   }
 
   dispose() {
+    this.unfancy();
+    this.torches[0].shadow.map?.dispose();
     this.clear();
     this.setSmoke([]);
     this.setBeacon(null);
@@ -1796,10 +1736,66 @@ export class Ambience {
   /** Draw smoke rising from these points (chimney tops). An empty list clears it. */
   /** Light or put out a hut's hanging lamp. */
   /** Where each hero's torch is in the caverns this frame (at most four). Ignored outside them. */
+  /** The nearest torch throws shadows underground, with Fancy graphics on. Changed only when either changes, as it recompiles. */
+  private torchShadows() {
+    const want = this.cave && fancy.get();
+    if (this.torches[0].castShadow !== want) this.torches[0].castShadow = want;
+  }
+
   setTorches(at: THREE.Vector3[]) {
     if (!this.cave) return;
     this.torchCount = Math.min(at.length, this.torches.length);
-    for (let i = 0; i < this.torchCount; i++) this.torches[i].position.set(at[i].x + 0.25, at[i].y + 1.15, at[i].z + 0.15);
+    // Hung above the carrier's head: lit from there, a hero's own torch throws their shadow as a small pool at their
+    // feet, not wedges of dark across the floor (at shoulder height their own body would stand in its light).
+    for (let i = 0; i < this.torchCount; i++) this.torches[i].position.set(at[i].x + 0.2, at[i].y + TORCH_LIFT, at[i].z + 0.1);
+  }
+
+  /**
+   * The patches of glowing mushrooms on the map, and which still grow. One seen for the first time comes as it is
+   * (lit, or dark if already picked); one picked since goes dark over a second or so. Ignored outside the caverns.
+   */
+  setGlowcaps(list: { id: string; at: THREE.Vector3; on: boolean }[]) {
+    const seen = new Set<string>();
+    for (const p of list) {
+      seen.add(p.id);
+      const had = this.patches.get(p.id);
+      if (had) {
+        had.at.copy(p.at);
+        had.on = p.on;
+      } else this.patches.set(p.id, { at: p.at.clone(), on: p.on, lit: p.on ? 1 : 0 });
+    }
+    for (const id of [...this.patches.keys()]) if (!seen.has(id)) this.patches.delete(id);
+  }
+
+  /** The mushrooms' lights this frame: each patch eased toward lit or dark, and the lights handed to the nearest still glowing. */
+  private glowcapLight(clock: number, target: THREE.Vector3) {
+    const dt = Math.min(0.1, Math.max(0, clock - this.patchClock));
+    this.patchClock = clock;
+    const glowing: { at: THREE.Vector3; lit: number; seed: number }[] = [];
+    let seed = 0;
+    for (const p of this.patches.values()) {
+      seed += 1;
+      p.lit = THREE.MathUtils.clamp(p.lit + (p.on ? 1 : -1) * (dt / GLOWCAP_FADE_S), 0, 1);
+      if (p.lit > 0) glowing.push({ at: p.at, lit: p.lit, seed });
+    }
+    glowing.sort((a, b) => a.at.distanceToSquared(target) - b.at.distanceToSquared(target));
+    this.glowcaps.forEach((g, i) => {
+      const p = glowing[i];
+      if (!p) {
+        g.intensity = 0;
+        return;
+      }
+      g.position.copy(p.at);
+      // A slow breath in the glow, each patch on its own; eased out as they are picked.
+      const breath = this.still ? 1 : 1 + Math.sin(clock * 1.3 + p.seed * 2.4) * 0.12;
+      g.intensity = GLOWCAP_STRENGTH * p.lit * p.lit * breath;
+    });
+  }
+
+  setGloom(on: boolean) {
+    if (on === this.gloom) return;
+    this.gloom = on;
+    this.stirAll();
   }
 
   setLampOn(on: boolean) {
@@ -1811,7 +1807,7 @@ export class Ambience {
   }
 
   /** The lights the props ask for (hearths, campfires, candles, lanterns) and the flames to flicker. The meshes belong to the caller. */
-  setLights(lights: { pos: THREE.Vector3; kind: LightKind }[], flames: THREE.Mesh[]) {
+  setLights(lights: RoomLight[], flames: THREE.Mesh[]) {
     this.lights = lights;
     this.flames = flames;
     // Called whenever a piece is placed, moved, turned or taken away: every shadow in the room may have changed.
@@ -1876,8 +1872,8 @@ export class Ambience {
    * so walking hands over only the slot whose light fell out. That slot's shadow fades out first (its weight
    * eases to 0), and only then is the slot moved to the new piece, redrawn once, and faded in.
    */
-  private assignSlots(want: { pos: THREE.Vector3; kind: LightKind }[], dt: number) {
-    const same = (a: { pos: THREE.Vector3; kind: LightKind }, b: { pos: THREE.Vector3; kind: LightKind }) => a.kind === b.kind && a.pos.distanceToSquared(b.pos) < 1e-6;
+  private assignSlots(want: RoomLight[], dt: number) {
+    const same = (a: RoomLight, b: RoomLight) => a.kind === b.kind && a.pos.distanceToSquared(b.pos) < 1e-6;
     const step = dt / SLOT_FADE;
     const left = [...want];
     const free: number[] = [];
@@ -1921,11 +1917,13 @@ export class Ambience {
     for (const f of this.flames) {
       const k = f.userData.flame as number;
       const seed = k * 1.7 + f.position.x * 9.1 + f.position.z * 5.3;
-      // Steps rather than a smooth swell, so it reads as pixel fire.
-      const step = Math.floor(clock * 9 + seed);
-      const jitter = hash(step, k, 900);
-      f.scale.y = 1 + motion * (Math.sin(clock * 6.3 + seed) * 0.18 + (jitter - 0.5) * 0.45);
-      f.scale.x = f.scale.z = 1 + motion * (hash(step, k, 901) - 0.5) * 0.25;
+      // A smooth, restless swell: two waves and a drifting noise, so no two flames lick together.
+      const t = clock * 7 + seed;
+      const jitter = drift(t, k, 900);
+      f.scale.y = 1 + motion * (Math.sin(clock * 6.3 + seed) * 0.14 + (jitter - 0.5) * 0.4);
+      f.scale.x = f.scale.z = 1 + motion * (drift(t * 0.8, k, 901) - 0.5) * 0.22;
+      // A soft flame leans a little this way and that, as if in a draught.
+      if (f.userData.soft) f.rotation.z = motion * (drift(t * 0.5, k, 902) - 0.5) * 0.3;
     }
     // Indoors the lights are part of the room; outdoors they show only as the day goes.
     const dusk = this.indoors ? 1 : 1 - this.daylight;
@@ -1937,9 +1935,10 @@ export class Ambience {
       // Indoors the nearest few each throw shadows. A piece already holding a slot keeps it until another is
       // clearly nearer (SLOT_HOLD), so walking along the edge between two never hands a slot back and forth.
       // Matched by place, since setLights hands over new objects for the same pieces.
-      const slotted = (l: { pos: THREE.Vector3; kind: LightKind }) => this.slotOf.some((o) => o && o.kind === l.kind && o.pos.distanceToSquared(l.pos) < 1e-6);
+      const slotted = (l: RoomLight) => this.slotOf.some((o) => o && o.kind === l.kind && o.pos.distanceToSquared(l.pos) < 1e-6);
       // A fire is the brightest thing in the room and throws the longest shadows, so it counts as a little nearer.
-      const keyed = sorted.map((l) => ({ l, d: l.pos.distanceTo(target) - (slotted(l) ? SLOT_HOLD : 0) - (l.kind === "fire" ? FIRE_PULL : 0) }));
+      // The room's great fire always holds a slot: its shadows are the room's.
+      const keyed = sorted.map((l) => ({ l, d: l.main ? -Infinity : l.pos.distanceTo(target) - (slotted(l) ? SLOT_HOLD : 0) - (l.kind === "fire" ? FIRE_PULL : 0) }));
       keyed.sort((a, b) => a.d - b.d);
       const dt = Math.min(0.1, Math.max(0, clock - this.lastClock));
       this.lastClock = clock;
@@ -1961,7 +1960,7 @@ export class Ambience {
       // Whatever share of a piece's light its slot does not carry (all of it, for a piece with no slot) goes to a
       // plain light in the same spot with the same look, so the piece is always exactly as bright: handing it to
       // or from a slot only fades its shadow in or out.
-      const share = (l: { pos: THREE.Vector3; kind: LightKind }) => {
+      const share = (l: RoomLight) => {
         const i = this.slotOf.indexOf(l);
         return i < 0 ? 1 : 1 - this.slotWeight[i];
       };
@@ -2024,13 +2023,20 @@ export class Ambience {
    * How a candle, lantern or fire lights a room, the same whether it holds a shadow slot or a plain light.
    * Its flicker is keyed to the piece's place, not to the light carrying it, so it never jumps on a hand-over.
    */
-  private roomLook(l: { pos: THREE.Vector3; kind: LightKind }, clock: number, motion: number): { color: string; distance: number; decay: number; intensity: number } {
+  private roomLook(l: RoomLight, clock: number, motion: number): { color: string; distance: number; decay: number; intensity: number } {
     const wave = this.waver(clock, Math.abs(Math.floor(l.pos.x * 13 + l.pos.z * 7)) % 7, motion);
-    if (l.kind === "fire") return { color: "#ff9548", distance: 6, decay: 2, intensity: 3.2 * wave };
+    // The great fire reaches across the room, falling off gently, so it throws long shadows over the floor.
+    // In a gloomy room (the smithy's forge, lamp out) the great fire is a deep, strong pool a few hexes across, not a
+    // light for the whole room, so the corners stay dark.
+    if (l.main && this.gloom && !this.lampOn) return { color: "#ff8a3c", distance: 7.5, decay: 2, intensity: 4.4 * wave };
+    if (l.main) return { color: "#ff9a4c", distance: 14, decay: 1.15, intensity: 3.4 * wave };
+    if (l.kind === "fire") return this.gloom && !this.lampOn ? { color: "#ff9548", distance: 4.5, decay: 2, intensity: 2.4 * wave } : { color: "#ff9548", distance: 6, decay: 2, intensity: 3.2 * wave };
     const look = GLOW[l.kind];
     const flick = look.flicker ? wave : 1;
     // Under the lamp a small light is only a warm spot, as it always was; its shadow is a faint one close by.
     if (this.lampOn) return { color: look.color, distance: look.range, decay: 2, intensity: look.power * flick };
+    // A gloomy room: a pool of light round each, falling off sharply, and dark between them.
+    if (this.gloom) return { color: look.color, distance: look.range * 1.3, decay: 2, intensity: look.power * 2.4 * flick };
     // With the lamp out the small lights carry the room: more reach, fading gently (decay 1), so a hero a hex or
     // two away still throws a shadow you can see. Several share the room, so each is softer than the one shadow
     // light there used to be.
@@ -2047,7 +2053,7 @@ export class Ambience {
 
   /** A gentle unsteadiness for a flame's light, different for each `n`. */
   private waver(clock: number, n: number, motion: number): number {
-    return 1 + motion * (Math.sin(clock * (8.1 + n * 0.7) + n) * 0.07 + Math.sin(clock * 13.7 + 1.3 + n * 2.1) * 0.05 + (hash(Math.floor(clock * 9), 3 + n, 902) - 0.5) * 0.1);
+    return 1 + motion * (Math.sin(clock * (8.1 + n * 0.7) + n) * 0.07 + Math.sin(clock * 13.7 + 1.3 + n * 2.1) * 0.05 + (drift(clock * 9, 3 + n, 902) - 0.5) * 0.1);
   }
 
   setSmoke(stacks: THREE.Vector3[]) {
@@ -2422,8 +2428,9 @@ export class Ambience {
       this.hemi.groundColor.set("#141018");
       this.background.set("#07060b");
       this.torches.forEach((t, i) => {
-        t.intensity = i < this.torchCount ? 2.4 * (this.still ? 1 : 1 + Math.sin(clock * 9 + i * 2.1) * 0.06 + Math.sin(clock * 15.7 + i) * 0.04) : 0;
+        t.intensity = i < this.torchCount ? TORCH_STRENGTH * (this.still ? 1 : 1 + Math.sin(clock * 9 + i * 2.1) * 0.06 + Math.sin(clock * 15.7 + i) * 0.04) : 0;
       });
+      this.glowcapLight(clock, target);
       return;
     }
     if (this.indoors) {
@@ -2439,7 +2446,7 @@ export class Ambience {
       } else {
         // Lamp out: a faint fill so the room never goes black, and the candles, lanterns and fires do the rest.
         this.lamp.intensity = 0;
-        this.hemi.intensity = 0.15;
+        this.hemi.intensity = this.gloom ? 0.07 : 0.15;
       }
       this.hemi.color.set("#ffe9c9");
       this.hemi.groundColor.set("#3b2f2a");

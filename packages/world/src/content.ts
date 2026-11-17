@@ -13,13 +13,13 @@ export const EFFECT_INFO: Record<EffectKind, { name: string; blurb: string; colo
   stunned: { name: "Stunned", blurb: "Skips the next turn.", color: "#a78bfa" },
   guarded: { name: "Guarded", blurb: "Takes half damage until its next turn.", color: "#93c5fd" },
   taunting: { name: "Taunting", blurb: "Every enemy attack aimed at one hero goes to it instead, until its next turn.", color: "#fbbf24" },
-  slowed: { name: "Becalmed", blurb: "Its next turns come half again later on the timeline.", color: "#4ade80" },
-  hasted: { name: "Fair Wind", blurb: "Its next turn comes a third sooner on the timeline.", color: "#67e8f9" },
-  glitched: { name: "Fouled", blurb: "Its gear is fouled: one roll of its next attack fails, whatever happens.", color: "#e879f9" },
-  exposed: { name: "Holed", blurb: "Holed below the waterline: takes 3 more damage from every direct hit, for 2 of its turns.", color: "#facc15" },
+  slowed: { name: "Slowed", blurb: "Its next turns come half again later on the timeline.", color: "#4ade80" },
+  hasted: { name: "Hasted", blurb: "Its next turn comes a third sooner on the timeline.", color: "#67e8f9" },
+  glitched: { name: "Fumbling", blurb: "One roll of its next attack fails, whatever happens.", color: "#e879f9" },
+  exposed: { name: "Exposed", blurb: "Takes 3 more damage from every direct hit, for 2 of its turns.", color: "#facc15" },
 };
 
-/** Holed (`exposed`) targets take this much more from each direct hit. */
+/** Exposed targets take this much more from each direct hit. */
 export const EXPOSED_BONUS = 3;
 /** A hasted combatant's wait between turns is multiplied by this; a slowed one's by SLOW_FACTOR. */
 export const HASTE_FACTOR = 2 / 3;
@@ -160,41 +160,43 @@ export interface AbilityDef {
 
 export const ABILITIES: Record<string, AbilityDef> = {
   // Bare hands: what a hero has with no weapon. Weak on purpose, and never on a weapon.
+  // A lit torch swung in the main hand (zones only): the weapon is put away while it is held.
+  torch_swing: { id: "torch_swing", name: "Torch Swing", stat: "str", rolls: 2, target: "enemy", damage: 6, perfect: { effect: "burning", turns: 2 }, blurb: "A swing of a lit torch. Whoever it hits may catch fire." },
   punch: { id: "punch", name: "Punch", stat: "str", rolls: 2, target: "enemy", damage: 4, blurb: "Bare knuckles. All you have without a weapon in hand." },
   smite: { id: "smite", name: "Smite", stat: "str", rolls: 3, target: "enemy", damage: 9, perfect: { effect: "stunned", turns: 1 }, blurb: "Solid blow. Perfect: stuns." },
   shield_wall: { id: "shield_wall", name: "Shield Wall", stat: "vit", rolls: 2, target: "self", heal: 4, selfEffect: { effect: "guarded", turns: 1 }, blurb: "Guard yourself and catch your breath." },
-  cleave: { id: "cleave", name: "Cleave", stat: "str", rolls: 4, target: "all_enemies", damage: 7, perfect: { effect: "exposed", turns: 2 }, blurb: "Hits every enemy. Perfect: holed." },
+  cleave: { id: "cleave", name: "Cleave", stat: "str", rolls: 4, target: "all_enemies", damage: 7, perfect: { effect: "exposed", turns: 2 }, blurb: "Hits every enemy. Perfect: exposed." },
   heavy_blow: { id: "heavy_blow", name: "Heavy Blow", stat: "str", rolls: 2, target: "enemy", damage: 12, perfect: { effect: "bleeding", turns: 3 }, blurb: "All or nothing. Perfect: bleeding." },
   firebolt: { id: "firebolt", name: "Firebolt", stat: "int_stat", rolls: 3, target: "enemy", damage: 9, perfect: { effect: "burning", turns: 3 }, blurb: "Perfect: sets the target burning." },
   mend: { id: "mend", name: "Mend", stat: "int_stat", rolls: 2, target: "ally", heal: 10, blurb: "Heal an ally (or yourself)." },
-  chain_spark: { id: "chain_spark", name: "Chain Spark", stat: "int_stat", rolls: 4, target: "all_enemies", damage: 6, perfect: { effect: "glitched", turns: 1 }, blurb: "Arcs through every enemy. Perfect: fouled." },
+  chain_spark: { id: "chain_spark", name: "Chain Spark", stat: "int_stat", rolls: 4, target: "all_enemies", damage: 6, perfect: { effect: "glitched", turns: 1 }, blurb: "Arcs through every enemy. Perfect: fumbling." },
   hex_bolt: { id: "hex_bolt", name: "Hex Bolt", stat: "int_stat", rolls: 2, target: "enemy", damage: 6, perfect: { effect: "stunned", turns: 1 }, blurb: "Perfect: stuns." },
   quick_stab: { id: "quick_stab", name: "Quick Stab", stat: "dex", rolls: 2, target: "enemy", damage: 8, perfect: { effect: "bleeding", turns: 3 }, blurb: "Reliable. Perfect: bleeding." },
-  flurry: { id: "flurry", name: "Flurry", stat: "dex", rolls: 4, target: "enemy", damage: 12, perfect: { effect: "exposed", turns: 2 }, blurb: "Four cuts; every one has to land. Perfect: holed." },
+  flurry: { id: "flurry", name: "Flurry", stat: "dex", rolls: 4, target: "enemy", damage: 12, perfect: { effect: "exposed", turns: 2 }, blurb: "Four cuts; every one has to land. Perfect: exposed." },
   aimed_shot: { id: "aimed_shot", name: "Aimed Shot", stat: "dex", rolls: 3, target: "enemy", damage: 10, blurb: "A careful, heavy shot." },
-  thornlash: { id: "thornlash", name: "Thornlash", stat: "int_stat", rolls: 3, target: "enemy", damage: 10, perfect: { effect: "slowed", turns: 2 }, blurb: "Thorns that dig in. Perfect: becalmed." },
+  thornlash: { id: "thornlash", name: "Thornlash", stat: "int_stat", rolls: 3, target: "enemy", damage: 10, perfect: { effect: "slowed", turns: 2 }, blurb: "Thorns that dig in. Perfect: slowed." },
   rejuvenate: { id: "rejuvenate", name: "Rejuvenate", stat: "int_stat", rolls: 2, target: "ally", heal: 9, blurb: "Heal an ally (or yourself)." },
-  overgrowth: { id: "overgrowth", name: "Overgrowth", stat: "int_stat", rolls: 3, target: "all_enemies", damage: 5, perfect: { effect: "slowed", turns: 2 }, blurb: "Roots burst up under every enemy. Perfect: becalmed." },
+  overgrowth: { id: "overgrowth", name: "Overgrowth", stat: "int_stat", rolls: 3, target: "all_enemies", damage: 5, perfect: { effect: "slowed", turns: 2 }, blurb: "Roots burst up under every enemy. Perfect: slowed." },
   dissonance: { id: "dissonance", name: "Dissonance", stat: "int_stat", rolls: 3, target: "enemy", damage: 9, perfect: { effect: "stunned", turns: 1 }, blurb: "A note nobody can think through. Perfect: stuns." },
-  encore: { id: "encore", name: "Second Wind", stat: "int_stat", rolls: 2, target: "ally", heal: 9, targetEffect: { effect: "hasted", turns: 1 }, blurb: "A tune that gets an ally (or yourself) back on their feet, with a fair wind behind them." },
+  encore: { id: "encore", name: "Second Wind", stat: "int_stat", rolls: 2, target: "ally", heal: 9, targetEffect: { effect: "hasted", turns: 1 }, blurb: "A tune that gets an ally (or yourself) back on their feet, and Hasted." },
   cacophony: { id: "cacophony", name: "Cacophony", stat: "int_stat", rolls: 4, target: "all_enemies", damage: 5, blurb: "Every enemy hears it." },
-  manifest: { id: "manifest", name: "Manifest", stat: "int_stat", rolls: 3, target: "enemy", damage: 12, perfect: { effect: "exposed", turns: 2 }, blurb: "Raw force. The heaviest single spell there is. Perfect: holed." },
+  manifest: { id: "manifest", name: "Manifest", stat: "int_stat", rolls: 3, target: "enemy", damage: 12, perfect: { effect: "exposed", turns: 2 }, blurb: "Raw force. The heaviest single spell there is. Perfect: exposed." },
   arcane_ward: { id: "arcane_ward", name: "Arcane Ward", stat: "int_stat", rolls: 2, target: "self", heal: 3, selfEffect: { effect: "guarded", turns: 1 }, blurb: "Wrap yourself in a ward and steady your breath." },
   meteor: { id: "meteor", name: "Meteor", stat: "int_stat", rolls: 4, target: "all_enemies", damage: 9, perfect: { effect: "burning", turns: 3 }, blurb: "Everything has to land. Perfect: sets them all burning." },
-  bulwark_strike: { id: "bulwark_strike", name: "Bulwark Strike", stat: "str", rolls: 3, target: "enemy", damage: 7, armorDamage: true, perfect: { effect: "exposed", turns: 2 }, blurb: "Your whole weight behind the blow: adds a third of your armor to the damage. Perfect: holed." },
+  bulwark_strike: { id: "bulwark_strike", name: "Bulwark Strike", stat: "str", rolls: 3, target: "enemy", damage: 7, armorDamage: true, perfect: { effect: "exposed", turns: 2 }, blurb: "Your whole weight behind the blow: adds a third of your armor to the damage. Perfect: exposed." },
   taunt: { id: "taunt", name: "Taunt", stat: "str", rolls: 2, target: "enemy", damage: 4, selfEffect: { effect: "taunting", turns: 1 }, blurb: "A jab and a shout. Until your next turn, enemies aiming at one hero aim at you." },
   hold_the_line: { id: "hold_the_line", name: "Hold the Line", stat: "vit", rolls: 2, target: "self", heal: 4, selfEffect: { effect: "guarded", turns: 1 }, blurb: "Plant your feet: guard yourself and catch your breath." },
   shockwave: { id: "shockwave", name: "Shockwave", stat: "str", rolls: 4, target: "all_enemies", damage: 5, perfect: { effect: "stunned", turns: 1 }, blurb: "Slam the ground under every enemy. Perfect: stuns them all." },
-  hex: { id: "hex", name: "Hex", stat: "int_stat", rolls: 3, target: "enemy", damage: 6, maxHpDamage: 0.05, perfect: { effect: "glitched", turns: 1 }, blurb: "A slow query on the target: adds 5% of its max HP to the damage. Perfect: fouled." },
+  hex: { id: "hex", name: "Hex", stat: "int_stat", rolls: 3, target: "enemy", damage: 6, maxHpDamage: 0.05, perfect: { effect: "glitched", turns: 1 }, blurb: "A slow query on the target: adds 5% of its max HP to the damage. Perfect: fumbling." },
   blight: { id: "blight", name: "Blight", stat: "int_stat", rolls: 4, target: "all_enemies", damage: 5, blurb: "A curse on every enemy at once." },
   soul_drain: { id: "soul_drain", name: "Soul Drain", stat: "int_stat", rolls: 2, target: "enemy", damage: 7, drain: 0.34, blurb: "Takes some of their life for yours: heals you a third of the damage dealt." },
   // Signature abilities: one per class, on its signature weapon.
   full_reckoning: { id: "full_reckoning", name: "Full Reckoning", stat: "str", rolls: 3, target: "enemy", damage: 8, perDebuffDamage: 2, blurb: "Every wound it carries counts against it: +2 damage per different debuff on the target." },
   thunderhead: { id: "thunderhead", name: "Thunderhead", stat: "int_stat", rolls: 3, target: "all_enemies", damage: 7, vsEffect: { effect: "burning", bonus: 3 }, blurb: "Lightning on every enemy, +3 on any already Burning." },
   land_the_catch: { id: "land_the_catch", name: "Land the Catch", stat: "dex", rolls: 3, target: "enemy", damage: 9, finisher: 2, blurb: "Hook the weakest: double damage to an enemy under a quarter of its HP." },
-  riptide: { id: "riptide", name: "Riptide", stat: "int_stat", rolls: 3, target: "all_enemies", damage: 4, targetEffect: { effect: "slowed", turns: 1 }, blurb: "Drags at every enemy, and leaves them Becalmed." },
+  riptide: { id: "riptide", name: "Riptide", stat: "int_stat", rolls: 3, target: "all_enemies", damage: 4, targetEffect: { effect: "slowed", turns: 1 }, blurb: "Drags at every enemy, and leaves them Slowed." },
   all_hands: { id: "all_hands", name: "All Hands", stat: "int_stat", rolls: 2, target: "ally", heal: 4, actNext: true, blurb: "Ring the bell: a crewmate patches up a little and takes the very next turn." },
-  plot_the_course: { id: "plot_the_course", name: "Plot the Course", stat: "int_stat", rolls: 3, target: "enemy", damage: 10, ignoreGuard: true, perfect: { effect: "exposed", turns: 2 }, blurb: "Goes straight through a guard. Perfect: holed." },
+  plot_the_course: { id: "plot_the_course", name: "Plot the Course", stat: "int_stat", rolls: 3, target: "enemy", damage: 10, ignoreGuard: true, perfect: { effect: "exposed", turns: 2 }, blurb: "Goes straight through a guard. Perfect: exposed." },
   lighthouse_beam: { id: "lighthouse_beam", name: "Lighthouse Beam", stat: "str", rolls: 3, target: "all_enemies", damage: 4, selfEffect: { effect: "taunting", turns: 1 }, blurb: "Sweep the light across every enemy, and every one of them comes for you." },
   red_tide: { id: "red_tide", name: "Red Tide", stat: "int_stat", rolls: 3, target: "enemy", damage: 6, bleedPayoff: 2, blurb: "Calls in the debt: +2 damage per turn of Bleeding left on the target, and the bleeding stops." },
   pin_down: { id: "pin_down", name: "Pin Down", stat: "agi", rolls: 2, target: "enemy", damage: 4, perfect: { effect: "stunned", turns: 1 }, blurb: "Perfect: stuns." },
@@ -365,7 +367,7 @@ export const ENEMIES: Record<string, EnemyDef> = {
       { name: "Quake", rolls: 4, pct: 49, damage: 6, target: "all_heroes", weight: 2 },
     ],
   },
-  // The Haunted Caverns' dead. A shade is quick and weak, and its touch chills (becalms) whoever it lays a hand on.
+  // The Haunted Caverns' dead. A shade is quick and weak, and its touch chills (slows) whoever it lays a hand on.
   shade: {
     kind: "shade", name: "Shade", hp: 10, speed: 70, xp: 12,
     attacks: [
@@ -389,7 +391,7 @@ export const ENEMIES: Record<string, EnemyDef> = {
       { name: "Bone Rattle", rolls: 2, pct: 45, damage: 4, target: "hero", perfect: { effect: "stunned", turns: 1 }, weight: 1 },
     ],
   },
-  // A cave slime: very slow and very tough, and its acid leaves its prey holed (taking more from every hit).
+  // A cave slime: very slow and very tough, and its acid leaves its prey exposed (taking more from every hit).
   slime: {
     kind: "slime", name: "Cave Slime", hp: 20, speed: 25, xp: 13,
     attacks: [

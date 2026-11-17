@@ -108,7 +108,7 @@ export function ShoalsTable({ table, you, gold, error, lastXp, looks, world, hos
   const seats = table?.seats ?? [];
 
   const confirmStand = () => !inGame || confirm("Walk away? You forfeit your stake.");
-  const { stage, standUp } = useTableStage("shoals", { ...host, world }, (a) => {
+  const { stage, standUp, dock } = useTableStage("shoals", { ...host, world }, (a) => {
     if (a.type === "lay") send({ type: "lay", marker: a.marker });
     else if (a.type === "flip") {
       myFlip.current = a.seat;
@@ -214,7 +214,7 @@ export function ShoalsTable({ table, you, gold, error, lastXp, looks, world, hos
   }, [stage, table, placement, looks, reveal, lastXp, status]);
 
   return (
-    <div className="table-dock panel shoals-table">
+    <div ref={dock} className="table-dock panel shoals-table">
       {/* What is happening is on the card over the table; this copy is for screen readers. */}
       <p className="td-sr" aria-live="polite">{status}</p>
 

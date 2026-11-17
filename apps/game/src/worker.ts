@@ -8,6 +8,7 @@ import { HARBOR_PIERS, HARBOR_PLOTS, HERO_CLASSES, MAX_CREW, PUB_BARKEEP, PUB_DE
 import { barkeepReply, heroName } from "./server/ai";
 import { contractBoard } from "./server/board";
 import { markReleaseSeen, seenRelease } from "./server/releases";
+import { BUILD_ID } from "./build";
 import { RELEASES } from "./releases";
 import { dropErrand, handInErrand, regularsView, takeErrand, tradeWithRegular } from "./server/errands";
 import { sendSignInCode } from "./server/email";
@@ -75,10 +76,10 @@ import { pubLeaderboard } from "./server/pub-scores";
 import { builtProjectIds, contribute, crewWorks, projectStock } from "./server/projects";
 import { acceptTrade, announceTrade, closeTrade, listTrades, openTrade, setTradeSide } from "./server/trade";
 import { consumablesOf } from "./server/consumables";
-import { apothecaryView, brew, brewFlask, smithItem, smithyView } from "./server/workshops";
-import { cook, galleyView } from "./server/galley";
+import { apothecaryView, brew, brewFlask, buyFromKeeper, galleyKeeperView, haggle, smithItem, smithyView } from "./server/workshops";
+import { cook } from "./server/galley";
 import { announceXp, harborXpFor } from "./server/harbor-xp";
-import { createZoneRow, crewPlaces, getZoneRow } from "./server/zones";
+import { createZoneRow, crewPlaces, getZoneRow, openCave, teleportTo } from "./server/zones";
 import {
   checkImport,
   checkOverride,
@@ -171,6 +172,16 @@ app.post("/api/auth/signout", async (c) => {
   if (token) await deleteSession(c.env.DB, token);
   deleteCookie(c, cookieName(c), { path: "/" });
   return c.json({ ok: true });
+});
+
+/**
+ * The build now deployed (see build.ts). A tab asks from time to time and tells its player when it is running
+ * an older one. Open to anyone and never cached: it must be this Worker's own answer, and it says nothing
+ * that the page's script name does not.
+ */
+app.get("/api/version", (c) => {
+  c.header("Cache-Control", "no-store");
+  return c.json({ build: BUILD_ID });
 });
 
 app.use("/api/*", async (c, next) => {
@@ -809,10 +820,35 @@ app.post("/api/smithy/work", async (c) => {
   return c.json({ ...(await smithyView(c.env.DB, player.id)), worked: result.name, xp: result.xp });
 });
 
+// Buy something ready-made off the apothecary's shelf, or off the smith's rack. The client names only the
+// entry; the price is the day's for this customer, after any haggling.
+app.post("/api/apothecary/buy", async (c) => {
+  const player = c.get("player");
+  const body = await c.req.json<{ key?: unknown }>().catch(() => ({}) as { key?: unknown });
+  const result = await buyFromKeeper(c.env.DB, player.id, "apothecary", body.key);
+  if (typeof result === "string") return c.json({ error: result }, 409);
+  return c.json({ ...(await apothecaryView(c.env.DB, player.id)), got: result.got });
+});
+
+app.post("/api/smithy/buy", async (c) => {
+  const player = c.get("player");
+  const body = await c.req.json<{ key?: unknown }>().catch(() => ({}) as { key?: unknown });
+  const result = await buyFromKeeper(c.env.DB, player.id, "smithy", body.key);
+  if (typeof result === "string") return c.json({ error: result }, 409);
+  return c.json({ ...(await smithyView(c.env.DB, player.id)), got: result.got });
+});
+
+// Ask a keeper to take something off a price: one try a day for each thing. The server rolls for it.
+app.post("/api/keeper/haggle", async (c) => {
+  const body = await c.req.json<{ shop?: unknown; key?: unknown; ask?: unknown }>().catch(() => ({}) as { shop?: unknown; key?: unknown; ask?: unknown });
+  const result = await haggle(c.env.DB, c.get("player").id, body.shop, body.key, body.ask);
+  return typeof result === "string" ? c.json({ error: result }, 409) : c.json(result);
+});
+
 // ---------- the galley ----------
 
-// The crew's shared larder, and the materials this player could cook with.
-app.get("/api/galley", async (c) => c.json(await galleyView(c.env.DB, c.get("player").id)));
+// The crew's shared larder, the materials this player could cook with, and what the cook sells ready-made.
+app.get("/api/galley", async (c) => c.json(await galleyKeeperView(c.env.DB, c.get("player").id)));
 
 // Cook one dish into the crew's larder. The recipe and the cap are the catalogue's; the client names only the dish.
 app.post("/api/galley/cook", async (c) => {
@@ -821,7 +857,17 @@ app.post("/api/galley/cook", async (c) => {
   const result = await cook(c.env.DB, player.id, String(body.dishId ?? ""));
   if (typeof result === "string") return c.json({ error: result }, 409);
   if (result.xp) c.executionCtx.waitUntil(announceXp(c.env, player.id, result.xp));
-  return c.json({ ...(await galleyView(c.env.DB, player.id)), xp: result.xp });
+  return c.json({ ...(await galleyKeeperView(c.env.DB, player.id)), xp: result.xp });
+});
+
+// Buy a dish ready-made from the cook, straight into the crew's larder. The client names only the entry; the
+// price is the day's for this customer, after any haggling, and the larder's cap holds.
+app.post("/api/galley/buy", async (c) => {
+  const player = c.get("player");
+  const body = await c.req.json<{ key?: unknown }>().catch(() => ({}) as { key?: unknown });
+  const result = await buyFromKeeper(c.env.DB, player.id, "galley", body.key);
+  if (typeof result === "string") return c.json({ error: result }, 409);
+  return c.json({ ...(await galleyKeeperView(c.env.DB, player.id)), got: result.got });
 });
 
 // ---------- giving and trading between crewmates ----------
@@ -917,6 +963,27 @@ const RUNS_CLOSED = "Voyages and delves are being rebuilt. They will sail again 
 app.post("/api/run", (c) => c.json({ error: RUNS_CLOSED }, 503));
 app.get("/api/run/:code/ws", (c) => c.text(RUNS_CLOSED, 503));
 
+// Down into the Haunted Caverns: the crew's cave if one is still being fought through, else a fresh one.
+// A fresh cave is pitched for whoever of the crew is in the Harbor now (the asker always counts): as many
+// heroes as are there, up to four, at their average level. Crewmates who come later join by teleport.
+app.post("/api/caves", async (c) => {
+  const player = c.get("player");
+  const [crew, character] = await Promise.all([crewFor(c.env.DB, player.id), getCharacter(c.env.DB, player.id)]);
+  if (!crew) return c.json({ error: "You are not in a crew." }, 403);
+  if (character?.status !== "active") return c.json({ error: "Create a character first." }, 409);
+  const open = await openCave(c.env.DB, crew.id);
+  if (open) return c.json({ code: open, fresh: false });
+  const here = await c.env.HARBOR_ROOM.get(c.env.HARBOR_ROOM.idFromName(crew.id))
+    .fetch("https://harbor/present", { headers: { "x-crew-id": crew.id } })
+    .then((r) => (r.ok ? (r.json() as Promise<{ ids: string[] }>) : { ids: [] }))
+    .then((r) => new Set([...r.ids, player.id]), () => new Set([player.id]));
+  const party = (await crewPlaces(c.env.DB, crew.id)).filter((m) => here.has(m.id));
+  const level = party.length > 0 ? party.reduce((sum, m) => sum + m.level, 0) / party.length : character.level;
+  // A delve: the caverns' chambers and tunnels, with chests to open and the hoard in the deepest (zone/delve.ts).
+  const options = zoneOptions({ size: "medium", biome: "caves", delve: true, threat: 2, party: Math.min(4, Math.max(1, party.length)), level });
+  return c.json({ code: await createZoneRow(c.env.DB, player.id, options, crypto.randomUUID().slice(0, 8), "caves", crew.id), fresh: true });
+});
+
 // Where everyone in the asker's crew is: on which zone, and whether in a fight there. For the roster shown on a zone.
 app.get("/api/crew/places", async (c) => {
   const crew = await crewFor(c.env.DB, c.get("player").id);
@@ -925,16 +992,15 @@ app.get("/api/crew/places", async (c) => {
 
 // Teleport to a crewmate: says where to go. The zone they are on, if they are on one and not in a
 // fight (nobody drops into a fight); the Harbor (zone null) if they are not out on a zone at all.
+// Not from the middle of a fight of your own: that is left by fleeing it (teleportTo).
 app.post("/api/crew/teleport", async (c) => {
   const body = await c.req.json<{ to?: string }>().catch(() => ({}) as { to?: string });
   const crew = await crewFor(c.env.DB, c.get("player").id);
-  const friend = crew ? (await crewPlaces(c.env.DB, crew.id)).find((m) => m.id === body.to) : undefined;
-  if (!friend || friend.id === c.get("player").id) return c.json({ error: "Pick a crewmate." }, 400);
-  if (friend.zone?.fighting) return c.json({ error: `${friend.name} is in a fight. Wait for it to end, or walk in from the map.` }, 409);
-  return c.json({ zone: friend.zone?.code ?? null, name: friend.name });
+  const go = teleportTo(crew ? await crewPlaces(c.env.DB, crew.id) : [], c.get("player").id, body.to);
+  return "error" in go ? c.json({ error: go.error }, go.status) : c.json(go);
 });
 
-// A zone's socket. Anyone with a hero and the code can walk in; making a zone is a dev route for now.
+// A zone's socket. Anyone with a hero and the code can walk in. Zones are made by /api/caves and the dev route.
 app.get("/api/zone/:code/ws", async (c) => {
   const code = c.req.param("code").toUpperCase();
   if (!(await getZoneRow(c.env.DB, code))) return c.text("No map with that code.", 404);

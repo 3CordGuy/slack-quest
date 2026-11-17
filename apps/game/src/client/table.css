@@ -37,13 +37,22 @@
 .sh-outcome.aground { color: #f08a8a; }
 .sh-outcome.clear { color: var(--accent); }
 
-/* Sitting at a table: the pub's usual bottom bar and the other panels give way, so the view is the table. */
-.pub-view.seated .turnbar { display: none; }
+/* Sitting at a table, the pub's hotbar is not drawn (PubView), and on a phone the other panels give way too, so the view is the table. */
 
-/* On a phone the dock and the view are all there is room for. */
-@media (max-width: 760px) {
+/* On a phone the dock and the view are all there is room for: held upright (narrow) or on its side (short). */
+@media (max-width: 760px), (max-height: 500px) {
   .pub-view.seated .roster-panel, .pub-view.seated .harbor-chat { display: none; }
   .table-dock { font-size: 12px; max-height: calc(42vh / var(--ui-z, 1)); }
+}
+/* A phone on its side has no height to spare under the table: the dock stands in the bottom right corner instead, as
+   tall as it needs up to the full height of the screen, and the view frames the table left of it (WorldRenderer.setCover). */
+@media (max-height: 500px) and (orientation: landscape) {
+  .table-dock {
+    left: auto; right: max(8px, env(safe-area-inset-right)); bottom: 8px; transform: none;
+    width: min(400px, calc(50vw / var(--ui-z, 1))); max-height: calc(100vh / var(--ui-z, 1) - 16px);
+  }
+  /* The rules take what height the moves leave, and scroll in it. */
+  .table-dock .td-rules { max-height: none; }
 }
 
 /* Cargo and Krakens: the ship and captain you need, lit as they come in. */

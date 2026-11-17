@@ -52,6 +52,20 @@ export const SPARKLE = [
   ".###........",
 ];
 
+/** A tuft of grass: the "Fancy grass" setting. */
+export const GRASS = [
+  "......#.....",
+  "..#...#.....",
+  "..#..##...#.",
+  "...#.#...#..",
+  "#..#.#..##..",
+  ".#.##.#.#...",
+  ".#..#.#.#...",
+  "..#.#.##....",
+  "..#.####....",
+  "############",
+];
+
 /** A spanner: the dev toolbox. */
 export const WRENCH = [
   "......###.",

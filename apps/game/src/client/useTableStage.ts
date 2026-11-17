@@ -2,7 +2,7 @@
 // dropping the camera into the table's scene (render/TableStage.ts) for as
 // long as the panel is up, and setting everyone round it from your seat.
 
-import { useEffect, useRef, useState, type RefObject } from "react";
+import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import type { HexPos } from "@gantt-quest/core";
 import type { Outfit } from "@gantt-quest/world";
 import { TableStage, type SeatInfo, type TableAction, type TableKind } from "./render/TableStage";
@@ -70,7 +70,10 @@ export function useTableStage(kind: TableKind, host: StageHost, pick: (a: TableA
     r.setStageHidden(host.hide);
   }, [stage, hiddenKey]);
 
-  return { stage, standUp: () => standRef.current?.() };
+  /** For the table's dock: the view frames the table in what the dock leaves clear. */
+  const dock = useCallback((el: HTMLElement | null) => latest.current.host.world.current?.setCover(el), []);
+
+  return { stage, standUp: () => standRef.current?.(), dock };
 }
 
 /**

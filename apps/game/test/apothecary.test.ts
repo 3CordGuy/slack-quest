@@ -81,6 +81,16 @@ describe("brewing for the pack", () => {
     expect((await apothecaryView(db, "ann")).carried).toEqual({ healing: 2 });
   });
 
+  it("makes torches two at a time from a piece of wood and a fur", async () => {
+    build();
+    give("wood", 1);
+    give("fur", 1);
+    expect(await brewFlask(db, "ann", "torch")).not.toBeTypeOf("string");
+    expect(await consumablesOf(db, "ann")).toEqual({ torch: 2 });
+    expect(holds("wood")).toBe(0);
+    expect(await brewFlask(db, "ann", "torch")).toMatch(/1 wood, 1 fur/);
+  });
+
   it("needs the apothecary built, and makes only what there is a recipe for", async () => {
     give("fur", 5);
     expect(await brewFlask(db, "ann", "water")).toMatch(/not built/);
@@ -94,14 +104,14 @@ describe("brewing for the pack", () => {
   it("needs a free square of the pack for the first of a kind, and none for one more of a kind already carried", async () => {
     build();
     give("fur", 5);
-    give("mushrooms", 9);
+    give("bone", 9);
     // Fill the pack to the brim with rings, less the two squares the materials take.
     const ring = sql.prepare("INSERT INTO inventory (player_id, kind, ref, name, rarity, slot, equipped, created_at) VALUES ('ann', 'trinket', 'ring', ?, 'common', 'ring', 0, ?)");
     for (let i = 0; i < CARRY_BASE - 3; i++) ring.run(`Ring ${i}`, Date.now());
     expect(await brewFlask(db, "ann", "water")).not.toBeTypeOf("string");
     expect((await carryState(db, "ann"))!.carried).toBe(CARRY_BASE);
-    expect(await brewFlask(db, "ann", "poison")).toMatch(/pack is full/);
-    expect(holds("mushrooms")).toBe(9);
+    expect(await brewFlask(db, "ann", "oil")).toMatch(/pack is full/);
+    expect(holds("bone")).toBe(9);
     expect(await brewFlask(db, "ann", "water")).not.toBeTypeOf("string");
     expect(await consumablesOf(db, "ann")).toEqual({ water: 2 });
   });

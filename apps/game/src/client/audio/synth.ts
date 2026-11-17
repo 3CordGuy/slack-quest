@@ -26,7 +26,9 @@ export type SynthCombat =
   | "dice" | "dice_crit" | "initiative" | "enemy_turn" | "opportunity"
   | "shove" | "fall" | "jump" | "throw" | "shatter"
   | "ignite" | "poison" | "splash" | "oil" | "ice"
-  | "sick" | "soak";
+  | "sick" | "soak"
+  // A delve: a chest's lid creaking open, a crate taking a blow, and a crate breaking apart.
+  | "creak" | "knock" | "splinter";
 
 /** The pub's game tables: the dice cup, dice on the felt, and the pot. */
 export type SynthTable = "shake" | "tumble" | "settle" | "hold" | "coins";
@@ -66,6 +68,7 @@ const COMBAT_LENGTH: Record<SynthCombat, number> = {
   shove: 0.35, fall: 0.45, jump: 0.5, throw: 0.35, shatter: 0.5,
   ignite: 0.7, poison: 0.7, splash: 0.5, oil: 0.45, ice: 0.6,
   sick: 0.4, soak: 0.35,
+  creak: 0.8, knock: 0.3, splinter: 0.9,
 };
 
 /** Notes of a few bright chords, so heals and stings are not always the same three notes. */
@@ -389,6 +392,41 @@ function combat(r: Render, sound: SynthCombat) {
       // Poison in the blood: two sour notes sliding down, a little out of tune with each other.
       toneAt(r, t, { type: "triangle", freq: 466 * p, freqTo: 311 * p, attack: 0.02, decay: 0.3, gain: v * 0.26 });
       toneAt(r, t + 0.04, { type: "triangle", freq: 494 * p, freqTo: 330 * p, attack: 0.02, decay: 0.3, gain: v * 0.2 });
+      break;
+    case "creak": {
+      // A chest thrown open: the latch knocks, the old hinge groans through the swing in a run of catches, and
+      // the lid thumps back against its stop.
+      noiseAt(r, t, { filter: "highpass", freq: 2400 * p, q: 1.2, decay: 0.02, gain: v * 0.5 });
+      toneAt(r, t, { type: "sine", freq: 320 * p, freqTo: 180 * p, decay: 0.04, gain: v * 0.35 });
+      toneAt(r, t + 0.05, { type: "sawtooth", freq: 150 * p, freqTo: 270 * p, attack: 0.06, decay: 0.38, gain: v * 0.07, cut: 1300 });
+      toneAt(r, t + 0.12, { type: "triangle", freq: 430 * p, freqTo: 300 * p, attack: 0.04, decay: 0.3, gain: v * 0.05, cut: 2000 });
+      const catches = 32;
+      for (let i = 0; i < catches; i++) {
+        const k = i / catches;
+        noiseAt(r, t + 0.05 + 0.42 * k ** 0.85 + r.rnd() * 0.006, { filter: "bandpass", freq: (650 + 950 * Math.sin(Math.PI * k)) * p, q: 6, attack: 0.002, decay: 0.012, gain: v * (0.22 + 0.2 * r.rnd()) });
+      }
+      toneAt(r, t + 0.5, { type: "sine", freq: 125 * p, freqTo: 55, decay: 0.15, gain: v * 0.8 });
+      noiseAt(r, t + 0.5, { filter: "lowpass", freq: 650 * p, decay: 0.06, gain: v * 0.5 });
+      break;
+    }
+    case "knock":
+      // A blow into boards: a hollow thump, the wood's own note, and a crack of a split.
+      toneAt(r, t, { type: "sine", freq: 210 * p, freqTo: 105, decay: 0.09, gain: v * 0.75 });
+      noiseAt(r, t, { filter: "bandpass", freq: 900 * p, q: 1.4, decay: 0.05, gain: v * 0.6 });
+      toneAt(r, t + 0.004, { type: "triangle", freq: 520 * p, freqTo: 430 * p, decay: 0.06, gain: v * 0.12, cut: 1800 });
+      noiseAt(r, t + 0.01, { filter: "highpass", freq: 2600 * p, q: 1, decay: 0.015, gain: v * 0.3 });
+      break;
+    case "splinter":
+      // A crate giving way: the crack, the box caving in, wood splitting all through it, and boards clattering down.
+      noiseAt(r, t, { filter: "highpass", freq: 1800 * p, q: 1, decay: 0.05, gain: v * 0.9 });
+      toneAt(r, t, { type: "sine", freq: 170 * p, freqTo: 58, decay: 0.16, gain: v * 0.85 });
+      for (let i = 0; i < 11; i++) noiseAt(r, t + 0.02 + r.rnd() * 0.2, { filter: "bandpass", freq: 1200 + r.rnd() * 2800, q: 3, decay: 0.01 + r.rnd() * 0.02, gain: v * 0.35 });
+      for (let i = 0; i < 6; i++) {
+        const at = t + 0.24 + r.rnd() * 0.42;
+        const f = (300 + r.rnd() * 320) * p;
+        toneAt(r, at, { type: "sine", freq: f, freqTo: f * 0.6, decay: 0.05, gain: v * 0.24 });
+        noiseAt(r, at, { filter: "bandpass", freq: 700 + r.rnd() * 700, q: 2, decay: 0.03, gain: v * 0.3 });
+      }
       break;
     case "soak":
       // Soaked through: a short wash and two drips.

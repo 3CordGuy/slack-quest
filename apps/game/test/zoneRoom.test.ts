@@ -7,10 +7,10 @@
 
 import { readFileSync, readdirSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { hexDistance } from "@gantt-quest/core";
-import { ALERT_RANGE, zoneOptions, type ZoneEvent, type ZoneState, type ZoneView } from "@gantt-quest/world";
-import { createZoneRow, crewPlaces } from "../src/server/zones";
+import { ALERT_RANGE, EXPLORE_ROUND_MS, zoneOptions, type ZoneEvent, type ZoneState, type ZoneView } from "@gantt-quest/world";
+import { CAVE_IDLE_MS, createZoneRow, crewPlaces, openCave, teleportTo } from "../src/server/zones";
 
 const globals = globalThis as Record<string, unknown>;
 globals.WebSocketRequestResponsePair = class {
@@ -152,7 +152,7 @@ beforeEach(() => {
   sql = new DatabaseSync(":memory:");
   const dir = new URL("../migrations/", import.meta.url);
   for (const file of readdirSync(dir).sort()) sql.exec(readFileSync(new URL(file, dir), "utf8"));
-  db = { prepare: (text: string) => new Stmt(sql, text) } as unknown as D1Database;
+  db = { prepare: (text: string) => new Stmt(sql, text), batch: async (stmts: Stmt[]) => stmts.map((s) => s.exec()) } as unknown as D1Database;
   const at = Date.now();
   for (const [id, name] of [["ann", "Ann"], ["bo", "Bo"]]) {
     sql.prepare("INSERT INTO players (id, name, created_at) VALUES (?, ?, ?)").run(id, name, at);
@@ -257,6 +257,27 @@ describe("ZoneRoom", () => {
     expect(presence("ann")).toBeUndefined();
   });
 
+  it("marks a hero whose player has left the map as away, so nothing pulls them into a fight, and not once they are back", async () => {
+    const { code, zone, ann } = await arrive();
+    expect(hero(saved(code), "ann").away).toBeUndefined();
+    ann.close();
+    await zone.webSocketClose(ann as unknown as WebSocket, 1000);
+    expect(hero(saved(code), "ann").away).toBe(true);
+    expect(presence("ann")).toBeUndefined();
+    const again = await connect(zone, code, "ann");
+    expect(hero(again.state, "ann").away).toBeUndefined();
+    expect(hero(saved(code), "ann").away).toBeUndefined();
+  });
+
+  it("sends nobody to a crewmate from the middle of their own fight, or into someone else's", () => {
+    const place = (id: string, zone: { code: string; fighting: boolean } | null) => ({ id, name: id.toUpperCase(), classId: "qa_paladin", level: 1, zone });
+    expect(teleportTo([place("ann", { code: "AAAA", fighting: false }), place("bo", { code: "BBBB", fighting: false })], "ann", "bo")).toEqual({ zone: "BBBB", name: "BO" });
+    expect(teleportTo([place("ann", { code: "AAAA", fighting: true }), place("bo", { code: "BBBB", fighting: false })], "ann", "bo")).toMatchObject({ status: 409, error: expect.stringMatching(/flee it first/) });
+    expect(teleportTo([place("ann", { code: "AAAA", fighting: true }), place("bo", null)], "ann", "bo")).toMatchObject({ status: 409 });
+    expect(teleportTo([place("ann", null), place("bo", { code: "BBBB", fighting: true })], "ann", "bo")).toMatchObject({ status: 409, error: expect.stringMatching(/BO is in a fight/) });
+    expect(teleportTo([place("ann", null)], "ann", "ann")).toMatchObject({ status: 400 });
+  });
+
   it("puts someone who teleports to a crewmate beside them, unless that crewmate is in a fight", async () => {
     const { code, zone, ann } = await arrive();
     const far = ann.state.map.tiles.find((t) => hexDistance(t, ann.state.start) === 3 && t.biome === "plains")!;
@@ -315,7 +336,133 @@ describe("ZoneRoom", () => {
     // The dev restock fills the pack itself, so it is still there on the next map.
     await act(zone, ann, { type: "dev", dev: { op: "heal" } });
     expect(inPack()).toBe(2);
-    expect(hero(ann.state, "ann").items).toEqual({ healing: 2, poison: 2, fire: 1, oil: 1, water: 1 });
+    expect(hero(ann.state, "ann").items).toEqual({ healing: 2, poison: 2, fire: 1, oil: 1, water: 1, torch: 2 });
+  });
+
+  it("pays a won fight's XP and materials to the hero, and marks a map with no enemy left as cleared", async () => {
+    const { code, zone, ann } = await arrive();
+    const xpBefore = (sql.prepare("SELECT xp, level FROM characters WHERE player_id = 'ann'").get() as { xp: number; level: number });
+    await pickFight(zone, ann);
+    await act(zone, ann, { type: "dev", dev: { op: "end_fight" } });
+    const spoils = ann.sent.flatMap((m) => (m.type === "update" ? m.events : [])).find((e) => e.t === "spoils");
+    expect(spoils).toMatchObject({ t: "spoils", id: "ann" });
+    const paid = spoils as Extract<ZoneEvent, { t: "spoils" }>;
+    expect(paid.xp).toBeGreaterThan(0);
+    const after = sql.prepare("SELECT xp, level FROM characters WHERE player_id = 'ann'").get() as { xp: number; level: number };
+    expect(after.level > xpBefore.level || after.xp === xpBefore.xp + paid.xp).toBe(true);
+    // Wolves leave fur and bone, and they are in the hut's materials.
+    const held = Object.fromEntries((sql.prepare("SELECT kind, qty FROM resources WHERE player_id = 'ann'").all() as { kind: string; qty: number }[]).map((r) => [r.kind, r.qty]));
+    expect(held).toEqual(paid.resources);
+    expect((sql.prepare("SELECT status FROM zones WHERE code = ?").get(code) as { status: string }).status).toBe("cleared");
+  });
+
+  it("pays a delve's chests into the character, and calls the delve cleared only once its foes are gone and its chests open", async () => {
+    const code = await createZoneRow(db, "ann", zoneOptions({ biome: "caves", delve: true, party: 1 }), "room-delve", "caves", "crew1");
+    let zone = room();
+    await connect(zone, code, "ann");
+    // Nobody left below but Ann, standing beside the first chest.
+    const state = saved(code);
+    const chests = state.map.pois.filter((p) => p.kind === "cache");
+    expect(chests.length).toBeGreaterThan(1);
+    const besideOf = (c: { pos: { q: number; r: number } }) => state.map.tiles.find((t) => t.biome === "cave" && hexDistance(t, c.pos) === 1)!;
+    state.units = state.units.filter((u) => u.side === "hero");
+    const b = besideOf(chests[0]);
+    hero(state, "ann").pos = { q: b.q, r: b.r };
+    sql.prepare("UPDATE zones SET state_json = ? WHERE code = ?").run(JSON.stringify(state), code);
+    zone = room();
+    const ann = await connect(zone, code, "ann");
+    const goldBefore = (sql.prepare("SELECT gold FROM characters WHERE player_id = 'ann'").get() as { gold: number }).gold;
+    await act(zone, ann, { type: "open", unit: "ann", poi: chests[0].id });
+    expect(ann.errors).toEqual([]);
+    const spoils = ann.sent.flatMap((m) => (m.type === "update" ? m.events : [])).find((e) => e.t === "spoils") as Extract<ZoneEvent, { t: "spoils" }>;
+    expect(spoils.gold).toBeGreaterThan(0);
+    expect((sql.prepare("SELECT gold FROM characters WHERE player_id = 'ann'").get() as { gold: number }).gold).toBe(goldBefore + spoils.gold!);
+    if (spoils.potions) expect((sql.prepare("SELECT qty FROM consumables WHERE player_id = 'ann' AND kind = 'healing'").get() as { qty: number }).qty).toBeGreaterThanOrEqual(spoils.potions);
+    if (spoils.item) expect(sql.prepare("SELECT name FROM inventory WHERE player_id = 'ann'").all().map((r) => (r as { name: string }).name)).toContain(spoils.item);
+    // No foes left, but chests still shut: not cleared, and the crew's cave is still there to go back to.
+    const status = () => (sql.prepare("SELECT status FROM zones WHERE code = ?").get(code) as { status: string }).status;
+    expect(status()).toBe("open");
+    expect(await openCave(db, "crew1")).toBe(code);
+    // Every chest opened: cleared.
+    for (const c of chests.slice(1)) {
+      const now = saved(code);
+      const at = besideOf(c);
+      hero(now, "ann").pos = { q: at.q, r: at.r };
+      sql.prepare("UPDATE zones SET state_json = ? WHERE code = ?").run(JSON.stringify(now), code);
+      zone = room();
+      const again = await connect(zone, code, "ann");
+      await act(zone, again, { type: "open", unit: "ann", poi: c.id });
+      expect(again.errors).toEqual([]);
+    }
+    expect(status()).toBe("cleared");
+    expect(await openCave(db, "crew1")).toBeNull();
+  });
+
+  it("finds a crew's cave still being fought through, and not a cleared, stale or other crew's one", async () => {
+    const options = zoneOptions({ size: "small", biome: "caves", groups: 1 });
+    expect(await openCave(db, "crew1")).toBeNull();
+    const cave = await createZoneRow(db, "ann", options, "c1", "caves", "crew1");
+    await createZoneRow(db, "ann", options, "d1", "dev", "crew1");
+    expect(await openCave(db, "crew1")).toBe(cave);
+    expect(await openCave(db, "crew2")).toBeNull();
+    sql.prepare("UPDATE zones SET status = 'cleared' WHERE code = ?").run(cave);
+    expect(await openCave(db, "crew1")).toBeNull();
+    const stale = await createZoneRow(db, "ann", options, "c2", "caves", "crew1");
+    sql.prepare("UPDATE zones SET updated_at = ? WHERE code = ?").run(Date.now() - CAVE_IDLE_MS - 1000, stale);
+    expect(await openCave(db, "crew1")).toBeNull();
+  });
+
+  it("lets time out of a fight pass with whatever is done next, and tells it", async () => {
+    const clock = vi.spyOn(Date, "now");
+    try {
+      const T0 = 2_000_000_000_000;
+      clock.mockReturnValue(T0);
+      const { code, zone, ann } = await arrive();
+      const at = ann.state.map.tiles.find((t) => hexDistance(t, ann.state.start) === 2 && t.biome === "plains")!;
+      await act(zone, ann, { type: "dev", dev: { op: "paint", kind: "oil", hexes: [{ q: at.q, r: at.r }] } });
+      const rounds = saved(code).surfaces[`${at.q},${at.r}`].rounds;
+      // Three rounds of exploring later, the next thing done counts them.
+      clock.mockReturnValue(T0 + 3 * EXPLORE_ROUND_MS + 500);
+      const before = ann.sent.length;
+      const step = ann.state.map.tiles.find((t) => hexDistance(t, ann.state.start) === 1 && t.biome === "plains")!;
+      await act(zone, ann, { type: "move", unit: "ann", to: { q: step.q, r: step.r } });
+      expect(saved(code).surfaces[`${at.q},${at.r}`].rounds).toBe(rounds - 3);
+      expect(saved(code).clock!.at).toBe(T0 + 3 * EXPLORE_ROUND_MS);
+      expect(ann.sent.length).toBeGreaterThan(before);
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
+  it("puts a torch picked up with one already in hand into the pack, for good", async () => {
+    const { code, zone, ann } = await arrive();
+    const state = saved(code);
+    const me = hero(state, "ann");
+    me.torch = 5;
+    const beside = state.map.tiles.find((t) => hexDistance(t, me.pos) === 1 && t.biome === "plains")!;
+    state.lights = { [`${beside.q},${beside.r}`]: { rounds: 3, by: null } };
+    sql.prepare("UPDATE zones SET state_json = ? WHERE code = ?").run(JSON.stringify(state), code);
+    const again = room();
+    const sock = await connect(again, code, "ann");
+    const inPack = () => (sql.prepare("SELECT qty FROM consumables WHERE player_id = 'ann' AND kind = 'torch'").get() as { qty: number } | undefined)?.qty ?? 0;
+    const had = inPack();
+    await act(again, sock, { type: "pickup", unit: "ann", at: { q: beside.q, r: beside.r } });
+    expect(sock.errors).toEqual([]);
+    expect(inPack()).toBe(had + 1);
+    expect(hero(saved(code), "ann").torch).toBe(5);
+    expect(zone).toBeDefined();
+    expect(ann).toBeDefined();
+  });
+
+  it("gives a cave saved without a mouth one as it is loaded, so it can be left", async () => {
+    const code = await createZoneRow(db, "ann", zoneOptions({ biome: "caves", size: "small", groups: 1 }), "old-cave", "caves", "crew1");
+    await connect(room(), code, "ann");
+    const state = saved(code);
+    state.map.pois = [];
+    sql.prepare("UPDATE zones SET state_json = ? WHERE code = ?").run(JSON.stringify(state), code);
+    const ann = await connect(room(), code, "ann");
+    expect(ann.state.map.pois.filter((p) => p.kind === "landing").map((p) => p.pos)).toEqual([ann.state.start]);
+    expect(saved(code).map.pois.some((p) => p.kind === "landing")).toBe(true);
   });
 
   it("tells a player on the map, and only that player, that their trades changed", async () => {
@@ -341,6 +488,7 @@ describe("ZoneRoom", () => {
     expect(zoneActionFrom({ type: "move", unit: "ann", to: { q: "1", r: 2 } }, "ann", true)).toBeNull();
     expect(zoneActionFrom({ type: "join", hero: {} }, "ann", true)).toBeNull();
     expect(zoneActionFrom({ type: "timeout" }, "ann", true)).toBeNull();
+    expect(zoneActionFrom({ type: "away", player: "bo", away: true }, "ann", true)).toBeNull();
     expect(zoneActionFrom({ type: "move", by: "bo", unit: "ann", to: { q: 1, r: 2, extra: true } }, "ann", true)).toEqual({ type: "move", by: "ann", unit: "ann", to: { q: 1, r: 2 } });
     expect(zoneActionFrom("move", "ann", true)).toBeNull();
   });

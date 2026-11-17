@@ -89,7 +89,7 @@ export function TideTable({ table, you, gold, error, lastXp, looks, world, host,
   const play = () => ready && send({ type: "play", card: card!, ...(target ? { target } : {}), ...(guess !== null ? { guess } : {}) });
 
   const confirmStand = () => !inGame || confirm("Walk away? You forfeit your stake.");
-  const { stage, standUp } = useTableStage("tide", { ...host, world }, (a) => a.type === "card" && pickCard(a.index), confirmStand);
+  const { stage, standUp, dock } = useTableStage("tide", { ...host, world }, (a) => a.type === "card" && pickCard(a.index), confirmStand);
   useTableCues({ phase: table?.phase ?? null, myTurn: !!myTurn, winner: table?.winner ?? null, you });
   // Dev-only handle for acting out a scene on the table from the console or a test script.
   if (import.meta.env.DEV) (window as unknown as { __tideStage: unknown }).__tideStage = stage;
@@ -197,7 +197,7 @@ export function TideTable({ table, you, gold, error, lastXp, looks, world, host,
   }, [stage, table, placement, looks, lastXp, index, canPlay, myTurn]);
 
   return (
-    <div className="table-dock panel dice-table tide-table">
+    <div ref={dock} className="table-dock panel dice-table tide-table">
       {/* Your hand takes the room under the table where the other games hang their card, so what is happening is said here. */}
       <p key={status} className={`tide-status${myTurn ? " yours" : ""}`} aria-live="polite">{status}</p>
 

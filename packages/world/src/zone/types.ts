@@ -8,8 +8,10 @@
 
 import type { HexPos, Stats } from "@gantt-quest/core";
 import type { EffectKind } from "../content";
-import type { Outfit } from "../gear";
+import type { ItemDef, Outfit } from "../gear";
+import type { Resources } from "../hut";
 import type { WorldMap } from "../map";
+import type { FurnishingGrant } from "../world";
 
 export type Side = "hero" | "enemy";
 
@@ -25,7 +27,7 @@ export interface UnitCondition {
 }
 
 /** What a hero carries to use in a zone: thrown at a hex, and (a healing potion) drunk. */
-export type Throwable = "healing" | "poison" | "fire" | "oil" | "water";
+export type Throwable = "healing" | "poison" | "fire" | "oil" | "water" | "acid" | "slime" | "torch";
 
 export interface Unit {
   /** A hero's player id; `e<n>` for an enemy; `s<n>` for a stand-in crewmate. */
@@ -52,6 +54,12 @@ export interface Unit {
   down: boolean;
   /** Rounds until each ability can be used again. */
   cooldowns: Record<string, number>;
+  /** Rounds left on a lit torch held in a hand; none held when missing or 0. It burns only while a fight goes on. */
+  torch?: number;
+  /** The torch is in the main hand, swung as a weapon (else it is in the off hand, and the shield is set aside). */
+  torchHand?: "main";
+  /** The weapon's abilities, put away while a torch is swung in the main hand. */
+  stowed?: string[];
   /** Heroes: the items they carry (potions, flasks, bombs), and how many of each. */
   items: Partial<Record<Throwable, number>>;
   /** Enemies: the group they stand with, and the post they go back to. */
@@ -59,9 +67,15 @@ export interface Unit {
   home?: HexPos;
   /** A stand-in crewmate: the player who plays its turns. */
   controller?: string;
+  /**
+   * A hero whose player is not on the map (their last connection to it closed): nothing draws them into a
+   * fight, and no enemy blow meant for a fight lands on them. A fight they were already in goes on with them in it.
+   * Set by the server; cleared when the player comes back.
+   */
+  away?: boolean;
 }
 
-export type SurfaceKind = "poison" | "fire" | "oil" | "water" | "ice";
+export type SurfaceKind = "poison" | "fire" | "oil" | "water" | "ice" | "slime";
 
 export interface GroundSurface {
   kind: SurfaceKind;
@@ -99,6 +113,19 @@ export interface Encounter {
   turnNo: number;
   /** Epoch ms when the server ends this turn. Set by the server, not the reducer. */
   deadline: number | null;
+  /**
+   * Heroes who fled this fight (Flee) and have not come back into it. One is drawn back in only by an enemy in
+   * it coming within FLEE_RANGE (not by walking within JOIN_RANGE), and cannot reach into it from outside: no
+   * blow, flask or help for anyone in it until they are back.
+   */
+  fled?: string[];
+  /**
+   * Heroes who have had their turn this round and fled on it: should they come back into the fight before the
+   * round is out, they wait for the next one. Cleared as each round begins.
+   */
+  waits?: string[];
+  /** Set when the one taking a turn flees and nobody else shared it: who came after them in the order (null: they were last), so the next turn goes there. */
+  resume?: string | null;
 }
 
 export type ZoneSize = "small" | "medium" | "large";
@@ -126,6 +153,8 @@ export interface ZoneOptions {
    * they can take, how well they hit, and how many stand in a group. Absent on zones made before it: 2.
    */
   threat?: number;
+  /** A delve into the caverns (zone/delve.ts): chambers, tunnels, chests and a hoard, not open ground. */
+  delve?: boolean;
 }
 
 export interface ZoneState {
@@ -142,6 +171,17 @@ export interface ZoneState {
   groups: Record<string, { alerted: boolean }>;
   /** The ground, by hex key. */
   surfaces: Record<string, GroundSurface>;
+  /** Torches lying lit on the ground, by hex: rounds of a fight left to burn, and who threw them. */
+  lights?: Record<string, { rounds: number; by: string | null }>;
+  /**
+   * Time out of a fight (zone/clock.ts): when the last round of exploring was counted, and the last torch round.
+   * Server time, in ms, as the room told it. Missing until the room first tells the time.
+   */
+  clock?: { at: number; torchAt: number };
+  /** Keys to locked doors the party has found, all on one ring (zone/doors.ts). */
+  keys?: number;
+  /** The bands that carry a key: it is the party's once the band is beaten. */
+  keyHolders?: string[];
   encounter: Encounter | null;
   /** For minting unit ids. */
   seq: number;
@@ -166,7 +206,7 @@ export interface ZoneHero {
   items?: Partial<Record<Throwable, number>>;
 }
 
-export type CommonAction = "dash" | "disengage" | "help" | "shove" | "jump";
+export type CommonAction = "dash" | "disengage" | "help" | "shove" | "jump" | "flee";
 
 export type DevOp =
   | { op: "spawn"; kinds: string[]; at: HexPos }
@@ -184,18 +224,33 @@ export type ZoneAction =
   /** `near`: arrive beside this unit (a crewmate teleported to) and not at the start, unless they are in a fight. */
   | { type: "join"; hero: ZoneHero; near?: string }
   | { type: "move"; by: string; unit: string; to: HexPos }
+  /** `target`: a unit's id, or a crate's (it is a poi on the map) for an ability that does damage. */
   | { type: "use"; by: string; unit: string; ability: string; target?: string; at?: HexPos; focus?: boolean }
   | { type: "common"; by: string; unit: string; what: CommonAction; target?: string; at?: HexPos }
   | { type: "throw"; by: string; unit: string; item: Throwable; at: HexPos }
   | { type: "drink"; by: string; unit: string; item: Throwable }
+  /** Open a chest, strongbox or hoard (a cache on the map) from beside it. */
+  | { type: "open"; by: string; unit: string; poi: string }
+  /** Light a torch from the pack and hold it: in the off hand, or in the main hand to swing as a weapon. */
+  | { type: "light"; by: string; unit: string; hand?: "main" }
+  /** Pick up a torch burning on the ground beside you: into a free hand still lit, or put out and into the pack. */
+  | { type: "pickup"; by: string; unit: string; at: HexPos }
+  /** Pick a cluster of glowing mushrooms from beside it, for a few mushrooms. */
+  | { type: "forage"; by: string; unit: string; poi: string }
+  /** Unlock a locked door from beside it with a key off the ring, or force it without one. */
+  | { type: "unlock"; by: string; unit: string; poi: string }
+  /** The server's own, never a client's: the time now, so time out of a fight can pass (zone/clock.ts). */
+  | { type: "time"; now: number }
   | { type: "end_turn"; by: string; unit: string }
   | { type: "timeout" }
+  /** The server's own, never a client's: a player has left the map (their last connection closed), or (false) is back. Their hero and stand-ins are `away`. */
+  | { type: "away"; player: string; away: boolean }
   /** The server's own, never a client's: what a hero carries to drink or throw, as their pack holds it now. */
   | { type: "stock"; unit: string; items: Partial<Record<Throwable, number>> }
   | { type: "dev"; by: string; dev: DevOp };
 
 /** Action types a player's client may send. `dev` is let through only on a development deployment. */
-export const ZONE_CLIENT_ACTIONS: ReadonlySet<ZoneAction["type"]> = new Set(["move", "use", "common", "throw", "drink", "end_turn", "dev"]);
+export const ZONE_CLIENT_ACTIONS: ReadonlySet<ZoneAction["type"]> = new Set(["move", "use", "common", "throw", "drink", "light", "pickup", "open", "unlock", "forage", "end_turn", "dev"]);
 
 /** One d20 roll, as shown on the roll card. */
 export interface Roll {
@@ -242,12 +297,54 @@ export type ZoneEvent =
   | { t: "burst"; hexes: HexPos[] }
   | { t: "shoved"; id: string; target: string; from: HexPos; to: HexPos | null }
   | { t: "jumped"; id: string; from: HexPos; to: HexPos }
-  | { t: "fight_end"; outcome: "victory" | "defeat" };
+  /** A hero gets away from the fight (Flee): out of the order, walking free. */
+  | { t: "fled"; id: string }
+  /** `fled`: every hero still standing got away, and none is left in it. */
+  | { t: "fight_end"; outcome: "victory" | "defeat" | "fled" }
+  /** A hero lights a torch to hold; a held torch burns out. */
+  | { t: "lit"; id: string }
+  | { t: "torch_out"; id: string }
+  /** A torch lands burning on the ground (on), or burns out or is put out there (off). */
+  | { t: "light"; at: HexPos; on: boolean }
+  /** A hero takes up a torch from the ground: still lit in hand, or put out and stowed in the pack. */
+  | { t: "took_torch"; id: string; at: HexPos; stowed: boolean }
+  /** What a hero took, from a won fight or a chest: the XP, and whatever else came with it. */
+  | { t: "spoils"; id: string; xp: number; resources: Resources; gold?: number; item?: string; blueprint?: string; furnishing?: string; potions?: number; torches?: number }
+  /** A piece of gear found had no room in the pack: it went home to storage, or into the pack over its limit. Told by the server. */
+  | { t: "stowed"; id: string; item: string; place: "storage" | "overfull" }
+  /** A key goes on the party's ring: found in a chest (by `id`), or taken from a beaten band. */
+  | { t: "key"; keys: number; from: "chest" | "band"; id?: string }
+  /** A door is worked: unlocked with a key, forced open, or forced and held. */
+  | { t: "door"; id: string; poi: string; how: "key" | "forced" | "held" }
+  /** The crash of a forced door is heard by a band, which comes running. */
+  | { t: "noise"; group: string }
+  /** A cluster of glowing mushrooms is picked; what it gave follows as `spoils`. */
+  | { t: "foraged"; id: string; poi: string }
+  /** A chest, strongbox or hoard is opened. */
+  | { t: "opened"; id: string; poi: string; loot: "chest" | "vault" | "hoard" }
+  /** A crate takes a blow, a blast or the fire under it. `actor` is who did it, if anyone did. */
+  | { t: "crate_hit"; poi: string; actor: string | null; amount: number; what: string }
+  /** A crate breaks open. `id` is whose blow (or fire) broke it, if anyone's. */
+  | { t: "crate_broken"; poi: string; id: string | null }
+  /** The last enemy group on the map is gone. */
+  | { t: "cleared" };
 
-/** Things the server must carry out. Empty for now: the seam spoils will come through. */
-export type ZoneEffect = { type: "grant"; heroId: string; xp: number };
+/** Things the server must carry out: what a player's own hero earned, from a won fight or a chest. */
+export type ZoneEffect = {
+  type: "grant";
+  heroId: string;
+  xp: number;
+  resources: Resources;
+  gold?: number;
+  item?: ItemDef | null;
+  blueprint?: string;
+  furnishing?: FurnishingGrant;
+  /** Put in the pack to drink or throw. */
+  items?: Partial<Record<Throwable, number>>;
+};
 
 export type ZoneStep = { ok: true; state: ZoneState; events: ZoneEvent[]; effects: ZoneEffect[] } | { ok: false; error: string };
 
 /** What a client is sent: the zone, less its dice. */
-export type ZoneView = Omit<ZoneState, "rng" | "seed"> & { you: string };
+/** `dark`: enemies in the fight that stand where the party cannot see them (those out of a fight are not sent at all). */
+export type ZoneView = Omit<ZoneState, "rng" | "seed"> & { you: string; dark?: string[] };

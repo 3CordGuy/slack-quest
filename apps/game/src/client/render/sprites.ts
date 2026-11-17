@@ -7,7 +7,7 @@ import * as THREE from "three";
 import { SLOTS, appearanceKey, barPixels, parseAppearance, type Appearance, healthBand, type HealthBand, type Outfit } from "@gantt-quest/world";
 import { LOOKS, mergeLook, type Look, type LookPalette } from "./looks";
 import { PIXEL_LINE_ROWS, canDrawPixelText, drawPixelText, drawSmallDigits, pixelTextWidth } from "./pixelFont";
-import { portraitUrl } from "./portraits";
+import { isBlankPortrait, portraitUrl } from "./portraits";
 
 const OUTLINE = "#1b1830";
 
@@ -64,7 +64,10 @@ export function previewSpriteUrl(kind: string, palette: LookPalette | undefined,
 export function spriteDataUrl(kind: string, outfit?: Outfit, large = false): string {
   const key = `${spriteKey(kind, outfit)}${large ? "|L" : ""}`;
   let url = pictures.get(key);
-  if (!url) pictures.set(key, (url = portraitUrl(kind, lookFor(kind), outfit, false, large ? 2 : 1)));
+  if (url) return url;
+  url = portraitUrl(kind, lookFor(kind), outfit, false, large ? 2 : 1);
+  // An empty picture (the renderer's context was lost) is not kept: it is drawn again the next time it is asked for.
+  if (!isBlankPortrait(url)) pictures.set(key, url);
   return url;
 }
 
@@ -615,4 +618,75 @@ export function fxTexture(kind: FxKind, color: string, flip = false): THREE.Canv
   tex.colorSpace = THREE.SRGBColorSpace;
   fxCache.set(key, tex);
   return tex;
+}
+
+// ---------- status badges ----------
+
+/** A condition on a unit, as its badge shows it: what it is, its colour, and rounds left. */
+export interface Badge {
+  kind: string;
+  color: string;
+  rounds: number;
+}
+
+/** A small pixel glyph for each condition, 7 by 7, "#" lit. */
+const GLYPHS: Record<string, string[]> = {
+  bleeding: ["...#...", "...#...", "..###..", ".#####.", ".#####.", ".#####.", "..###.."],
+  burning: ["...#...", "..##...", "..###..", ".####.#", ".######", ".#####.", "..###.."],
+  stunned: ["#.....#", ".#...#.", "...#...", "..###..", "...#...", ".#...#.", "#.....#"],
+  guarded: [".#####.", "#######", "#######", "#######", ".#####.", "..###..", "...#..."],
+  taunting: ["...#...", "..###..", "..###..", "...#...", "...#...", ".......", "...#..."],
+  slowed: ["...#...", "...#...", "...#...", "#..#..#", ".#.#.#.", "..###..", "...#..."],
+  hasted: ["...#...", "..###..", ".#.#.#.", "#..#..#", "...#...", "...#...", "...#..."],
+  glitched: ["#..#...", ".#.#.#.", "..#.#..", ".#...#.", "#.#...#", "...#.#.", "....#.."],
+  exposed: ["..###..", ".#...#.", "#..#..#", "#.###.#", "#..#..#", ".#...#.", "..###.."],
+  poisoned: ["..###..", ".#####.", "##.#.##", ".#####.", "..#.#..", ".......", ".#.#.#."],
+  prone: [".......", ".......", "##.....", "#######", "#######", ".......", "......."],
+  wet: ["..#....", ".###...", ".###.#.", "..#.###", "....###", ".....#.", "......."],
+};
+
+/** The key a badge row is drawn for, to know when it has changed. */
+export const badgesKey = (badges: readonly Badge[]): string => badges.map((b) => `${b.kind}:${b.rounds}`).join(",");
+
+/**
+ * A row of status badges: each a dark square edged and tinted in the condition's colour, its glyph in that
+ * colour, and how many rounds it has left in the corner. Drawn crisp, like the plates.
+ */
+export function badgeTexture(badges: readonly Badge[]): { texture: THREE.CanvasTexture; aspect: number } {
+  const SIZE = 22;
+  const GAP = 3;
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, badges.length * (SIZE + GAP) - GAP);
+  canvas.height = SIZE;
+  const ctx = canvas.getContext("2d")!;
+  badges.forEach((b, i) => {
+    const x = i * (SIZE + GAP);
+    ctx.fillStyle = "#14101f";
+    ctx.fillRect(x, 0, SIZE, SIZE);
+    ctx.fillStyle = b.color;
+    ctx.globalAlpha = 0.28;
+    ctx.fillRect(x + 1, 1, SIZE - 2, SIZE - 2);
+    ctx.globalAlpha = 1;
+    ctx.strokeStyle = b.color;
+    ctx.lineWidth = 2;
+    ctx.strokeRect(x + 1, 1, SIZE - 2, SIZE - 2);
+    const glyph = GLYPHS[b.kind] ?? GLYPHS.exposed;
+    ctx.fillStyle = b.color;
+    glyph.forEach((row, y) => [...row].forEach((c, gx) => c === "#" && ctx.fillRect(x + 3 + gx * 2, 3 + y * 2, 2, 2)));
+    if (b.rounds > 0) {
+      ctx.font = "bold 9px ui-monospace, Menlo, monospace";
+      ctx.textAlign = "right";
+      ctx.textBaseline = "bottom";
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = "#14101f";
+      ctx.strokeText(String(b.rounds), x + SIZE - 1, SIZE);
+      ctx.fillStyle = "#fbe6c8";
+      ctx.fillText(String(b.rounds), x + SIZE - 1, SIZE);
+    }
+  });
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.magFilter = THREE.NearestFilter;
+  texture.minFilter = THREE.LinearFilter;
+  texture.colorSpace = THREE.SRGBColorSpace;
+  return { texture, aspect: canvas.width / canvas.height };
 }

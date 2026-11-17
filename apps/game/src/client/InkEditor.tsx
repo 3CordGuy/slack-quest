@@ -475,7 +475,9 @@ export function InkEditor({ look, onChange, onView }: { look: Appearance; onChan
         onKeyDown={key}
       />
       <p className="muted hint">
-        {tool === "select" ? "Drag a box round some ink (or drop a stamp), then drag inside it to slide it about. Arrow keys nudge it, Flip mirrors it, Delete wipes it, Enter puts it down." : "Draw on the head, forearms and legs. Hair and clothes cover what is under them."}{" "}
+        <span className="ink-explain">
+          {tool === "select" ? "Drag a box round some ink (or drop a stamp), then drag inside it to slide it about. Arrow keys nudge it, Flip mirrors it, Delete wipes it, Enter puts it down." : "Draw on the head, forearms and legs. Hair and clothes cover what is under them."}{" "}
+        </span>
         <span className="ink-count">
           {used} / {MAX_INK_CELLS}
         </span>

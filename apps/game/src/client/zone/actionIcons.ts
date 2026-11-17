@@ -13,6 +13,7 @@ const icon = (name: string, color: string): ActionIcon => ({ name: `act-${name}`
 
 export const ABILITY_ICON: Record<string, ActionIcon> = {
   punch: icon("fist", "#8a5a2b"),
+  torch_swing: { name: "item-torch", color: "#ffb070" },
   // Paladin
   smite: icon("slash", "#ffd23f"),
   shield_wall: icon("shield", "#3f6fa8"),
@@ -67,6 +68,7 @@ export const COMMON_ICON: Record<CommonAction, ActionIcon> = {
   jump: icon("jump", "#7dff9a"),
   shove: icon("shove", "#ff8a3a"),
   help: icon("help", "#7dff9a"),
+  flee: icon("flee", "#ffd98a"),
 };
 
 export const ITEM_ICON: Record<Throwable, ActionIcon> = {
@@ -75,4 +77,7 @@ export const ITEM_ICON: Record<Throwable, ActionIcon> = {
   fire: { name: "item-bomb", color: "#ff5a2a" },
   oil: { name: "item-flask", color: "#57534e" },
   water: { name: "item-waterskin", color: "#38bdf8" },
+  acid: { name: "item-flask", color: "#bef264" },
+  slime: { name: "item-flask", color: "#4d7c0f" },
+  torch: { name: "item-torch", color: "#ffb070" },
 };
