@@ -18,7 +18,7 @@ import { ConvexGeometry } from "three/examples/jsm/geometries/ConvexGeometry.js"
 import { GARB_PREFIX, INK_COLORS, INK_LEVELS, INK_REGIONS, RARITY_COLOR, WEAPONS, WEAPON_ICON, appearanceK, decodeInk, inkColorOf, inkLevelOf, type Appearance, type Ink, type InkRegion, type InkView, type Outfit, type Slot } from "@gantt-quest/world";
 import type { Look } from "./looks";
 import { torchFlame } from "./torchFlame";
-import { buildLowPoly, disposeLowPoly } from "./gearModels";
+import { buildLowPoly, disposeLowPoly, type Dangle } from "./gearModels";
 import { makeSilhouette, type Silhouette } from "./silhouette";
 
 export const OUTLINE = "#1b1830";
@@ -830,9 +830,137 @@ function gear(p: Part, icon: string, trim: string, hold: Hold, inHand = false): 
   const scale = typeof hold.scale === "number" ? new THREE.Vector3().setScalar(hold.scale) : new THREE.Vector3(...hold.scale);
   const at = new THREE.Matrix4().compose(new THREE.Vector3(...(hold.at ?? [0, 0, 0])), new THREE.Quaternion().setFromEuler(new THREE.Euler(...(hold.turn ?? [0, 0, 0]))), scale);
   at.multiply(new THREE.Matrix4().makeTranslation(-hold.grip[0], -hold.grip[1], -hold.grip[2]));
+  // What hangs loose (a flail's ball, a lantern) goes on a joint of its own at its pivot, to swing (see swingDangles).
+  const loose: THREE.Object3D[] = [];
+  built.model.traverse((o) => {
+    if (o.userData.dangle) loose.push(o);
+  });
+  for (const group of loose) {
+    group.removeFromParent();
+    const d = group.userData.dangle as Dangle;
+    const pivot = new THREE.Vector3(...d.pivot).applyMatrix4(at);
+    const rest = new THREE.Vector3(...d.bob).applyMatrix4(at).sub(pivot);
+    const part = new Part(p.joint, pivot.x, pivot.y, pivot.z);
+    const clear = d.clear && { from: new THREE.Vector3(...d.clear.from).applyMatrix4(at), to: new THREE.Vector3(...d.clear.to).applyMatrix4(at), r: d.clear.r * scale.x };
+    part.model(group, new THREE.Matrix4().makeTranslation(-pivot.x, -pivot.y, -pivot.z).multiply(at));
+    disposeLowPoly(group);
+    extraParts.push(part);
+    dangles.push({ joint: part.joint, rest, limit: d.limit, clear, bob: null, was: new THREE.Vector3(), pivot: new THREE.Vector3() });
+  }
   p.model(built.model, at);
   disposeLowPoly(built.model);
   return true;
+}
+
+/**
+ * Something hanging loose in a hand, swung as a pendulum by how the hand really moves through the world: a turn
+ * on the spot, a run, a blow, an arm swinging on the march all fling it, and it falls back under its own weight.
+ */
+interface Dangling {
+  joint: THREE.Group;
+  /** From the pivot to where its weight is, as built, in the joint's parent's units (the figure's own). */
+  rest: THREE.Vector3;
+  /** How far it may swing from `rest`, in radians, if not all the way round. */
+  limit?: number;
+  /** The haft it hangs by, in the joint's parent's units: the weight is kept `r` from the line between. */
+  clear?: { from: THREE.Vector3; to: THREE.Vector3; r: number };
+  /** Where the weight is in the world, and where it was a step ago (its speed); null until the first frame placed. */
+  bob: THREE.Vector3 | null;
+  was: THREE.Vector3;
+  /** Where the pivot was in the world last frame. */
+  pivot: THREE.Vector3;
+}
+
+/** Set by makeFigure for the figure being built: what hangs loose in its hands. */
+let dangles: Dangling[] = [];
+
+/** Gravity, in the figure's units (22 to its height) a second squared: a little light, so a swing reads. */
+const DANGLE_GRAVITY = 95;
+/** How much of its speed a swing loses a second, to the air and the chain. */
+const DANGLE_DRAG = 2.2;
+
+const _pivot = new THREE.Vector3();
+const _step = new THREE.Vector3();
+const _dir = new THREE.Vector3();
+const _rest = new THREE.Vector3();
+const _parentQ = new THREE.Quaternion();
+const _scale = new THREE.Vector3();
+const _pos = new THREE.Vector3();
+const DOWN = new THREE.Vector3(0, -1, 0);
+const _a = new THREE.Vector3();
+const _b = new THREE.Vector3();
+const _line = new THREE.Line3();
+const _near = new THREE.Vector3();
+
+/**
+ * Swing what hangs loose: each is a weight on a rod from its pivot, stepped in the world (Verlet), so it keeps
+ * its speed while the hand carrying it moves and turns under it. Then its joint is turned to hang toward it.
+ */
+function swingDangles(list: Dangling[], dt: number) {
+  for (const d of list) {
+    const parent = d.joint.parent;
+    if (!parent) continue;
+    parent.updateWorldMatrix(true, false);
+    parent.matrixWorld.decompose(_pos, _parentQ, _scale);
+    const scale = _scale.x || 1;
+    _pivot.copy(d.joint.position).applyMatrix4(parent.matrixWorld);
+    const length = d.rest.length() * scale;
+    // In the world, where it hangs as built (for a limit), and which way is down.
+    _rest.copy(d.rest).normalize().applyQuaternion(_parentQ);
+    // The first frame, or a jump across the map (a new scene, a teleport): hang it straight down, at rest.
+    if (!d.bob || dt <= 0 || _pivot.distanceTo(d.pivot) > 40 * scale) {
+      d.bob ??= new THREE.Vector3();
+      _dir.copy(d.limit !== undefined ? _rest : DOWN);
+      d.bob.copy(_pivot).addScaledVector(_dir, length);
+      d.was.copy(d.bob);
+      d.pivot.copy(_pivot);
+    } else {
+      // A few small steps, the pivot carried along between last frame's place and this one's.
+      const steps = Math.min(4, Math.max(1, Math.ceil(dt * 120)));
+      const h = dt / steps;
+      const keep = Math.exp(-DANGLE_DRAG * h);
+      const fall = DANGLE_GRAVITY * scale * h * h;
+      const from = d.pivot.clone();
+      for (let i = 1; i <= steps; i++) {
+        const at = from.clone().lerp(_pivot, i / steps);
+        _step.subVectors(d.bob, d.was).multiplyScalar(keep);
+        d.was.copy(d.bob);
+        d.bob.add(_step);
+        d.bob.y -= fall;
+        // Held at the length of its chain from the pivot, and (a clapper) within its bell.
+        _dir.subVectors(d.bob, at);
+        if (_dir.lengthSq() < 1e-12) _dir.copy(DOWN);
+        _dir.normalize();
+        if (d.limit !== undefined) {
+          const angle = _dir.angleTo(_rest);
+          if (angle > d.limit) {
+            const axis = _step.crossVectors(_rest, _dir);
+            if (axis.lengthSq() < 1e-12) _dir.copy(_rest);
+            else _dir.copy(_rest).applyAxisAngle(axis.normalize(), d.limit);
+          }
+        }
+        d.bob.copy(at).addScaledVector(_dir, length);
+        // Kept off the haft: pushed straight out from it, then back to the chain's length.
+        if (d.clear) {
+          _line.set(_a.copy(d.clear.from).applyMatrix4(parent.matrixWorld), _b.copy(d.clear.to).applyMatrix4(parent.matrixWorld));
+          _line.closestPointToPoint(d.bob, true, _near);
+          const r = d.clear.r * scale;
+          const off = _dir.subVectors(d.bob, _near);
+          const gap = off.length();
+          if (gap < r) {
+            if (gap < 1e-6) off.set(1, 0, 0);
+            d.bob.copy(_near).addScaledVector(off.normalize(), r);
+            _dir.subVectors(d.bob, at).normalize();
+            d.bob.copy(at).addScaledVector(_dir, length);
+          }
+        }
+      }
+      d.pivot.copy(_pivot);
+    }
+    // Turn the joint so the weight, built along `rest`, hangs toward it.
+    _dir.subVectors(d.bob, _pivot).normalize().applyQuaternion(_parentQ.invert());
+    d.joint.quaternion.setFromUnitVectors(_rest.copy(d.rest).normalize(), _dir);
+  }
 }
 
 /** A grip in a fist angled out from the body (`s` 1 for the right hand, -1 the left), for a dagger or a hook. */
@@ -945,7 +1073,8 @@ function heldGear(icon: string, b: Biped, trim: string, shield: boolean): Carry 
     }
     return hold.pose ?? {};
   }
-  if (!gear(b.heldR, icon, trim, hold)) return null;
+  // A flail is held with its chain hanging straight, to swing (its picture curls it round).
+  if (!gear(b.heldR, icon, trim, hold, icon === "ballast-flail")) return null;
   // Held as it is made (nothing with an edge is: see HOLD), a thing is flat to the front and its sides lead.
   if (!hold.turn) b.cutsAlong("x");
   const motes = MOTES[icon];
@@ -5517,6 +5646,7 @@ export function makeFigure(kind: string, look: Look, outfit?: Outfit, opts: Figu
   rodInHand = opts.rod ?? false;
   extraParts = [];
   braids = [];
+  dangles = [];
   beardFront = null;
   slung = null;
   chosen = outfit?.appearance ?? null;
@@ -5535,6 +5665,7 @@ export function makeFigure(kind: string, look: Look, outfit?: Outfit, opts: Figu
   const made: THREE.BufferGeometry[] = [];
   for (const part of [...rig.parts, ...extraParts]) part.build(mats, made);
   const swinging = braids;
+  const loose = dangles;
   const sling = slung;
   if (!rig.clean) muddy(scaler, mats.body);
   // Each figure breathes on its own beat.
@@ -5553,6 +5684,7 @@ export function makeFigure(kind: string, look: Look, outfit?: Outfit, opts: Figu
   let throughColor: string | null = null;
   let actions = 0;
   const update = (p: FigurePose) => {
+    const first = last < 0;
     const dt = last < 0 ? 1 : Math.min(0.1, Math.max(0, p.time - last));
     last = p.time;
     if (asked) [action, asked] = [{ kind: asked, at: p.time, n: ++actions, air: asked === "jump" ? airtime : 0 }, null];
@@ -5573,6 +5705,7 @@ export function makeFigure(kind: string, look: Look, outfit?: Outfit, opts: Figu
     }
     rig.animate(anim);
     if (swinging.length > 0) swingBraids(swinging, anim);
+    if (loose.length > 0) swingDangles(loose, first ? 0 : dt);
   };
   update({ time: 0, stride: 0, walking: false, lean: 0, lying: false });
   last = -1;
