@@ -75,4 +75,6 @@ export const ITEM_ICON: Record<Throwable, ActionIcon> = {
   fire: { name: "item-bomb", color: "#ff5a2a" },
   oil: { name: "item-flask", color: "#57534e" },
   water: { name: "item-waterskin", color: "#38bdf8" },
+  acid: { name: "item-flask", color: "#bef264" },
+  slime: { name: "item-flask", color: "#4d7c0f" },
 };

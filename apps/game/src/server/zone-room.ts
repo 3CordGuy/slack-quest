@@ -32,7 +32,7 @@ interface Attachment {
 
 const isHex = (v: unknown): v is { q: number; r: number } => !!v && typeof v === "object" && Number.isInteger((v as { q: unknown }).q) && Number.isInteger((v as { r: unknown }).r);
 const text = (v: unknown): v is string => typeof v === "string" && v.length > 0 && v.length <= 64;
-const SURFACES = ["poison", "fire", "oil", "water", "ice"];
+const SURFACES = ["poison", "fire", "oil", "water", "ice", "slime"];
 
 /**
  * A client's message as an action, or null if it is not one. Who it is from comes from the socket,

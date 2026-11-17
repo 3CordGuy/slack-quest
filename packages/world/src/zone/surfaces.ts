@@ -2,7 +2,8 @@
 // onto it or starts a turn standing on it, friend and foe alike, and it
 // lasts a set number of rounds of a fight. Laying one surface on another
 // combines them: fire runs through oil and sets off poison, water puts
-// fire out, cold turns water to ice.
+// fire out, cold turns water to ice, fire burns slime off and water washes
+// it away.
 
 import { hexNeighbors, posKey, type HexPos } from "@gantt-quest/core";
 import { tileAt } from "../map";
@@ -16,6 +17,7 @@ export const SURFACE_INFO: Record<SurfaceKind, { name: string; blurb: string; co
   oil: { name: "Oil", blurb: "Slick: costs one more to cross. A spark turns every hex of it to fire.", color: "#57534e" },
   water: { name: "Water", blurb: "Leaves whoever crosses it Wet. Cold freezes it.", color: "#38bdf8" },
   ice: { name: "Ice", blurb: "Save or fall Prone and stop. Fire melts it.", color: "#bae6fd" },
+  slime: { name: "Slime", blurb: "Sticky: costs one more to cross, and Slows whoever walks into it. Fire burns it off; water washes it away.", color: "#c9f5b8" },
 };
 
 /** Surfaces a creature would rather not walk through. The enemy looks for a way round these. */
@@ -41,6 +43,8 @@ function act(ctx: Ctx, unit: Unit, kind: SurfaceKind, moving: boolean): boolean 
     addCondition(ctx, unit, "burning", 2);
   } else if (kind === "water") {
     addCondition(ctx, unit, "wet", 2);
+  } else if (kind === "slime" && moving) {
+    addCondition(ctx, unit, "slowed", 1);
   } else if (kind === "ice" && moving) {
     if (!saveRoll(ctx, unit, "agi", ICE_SAVE, "Keep your feet").ok) {
       addCondition(ctx, unit, "prone", 1);
@@ -111,9 +115,11 @@ export function placeSurface(ctx: Ctx, hexes: HexPos[], kind: SurfaceKind, round
         }
       } else if (there === "water") set(pos, null);
       else if (there === "ice") set(pos, "water", 2);
+      // Slime burns off: the hex burns for a moment and is clean after.
+      else if (there === "slime") set(pos, "fire", 1);
       else set(pos, "fire");
     } else if (kind === "water") {
-      if (there === "fire") set(pos, null);
+      if (there === "fire" || there === "slime") set(pos, null);
       else if (there !== "ice") set(pos, "water");
     } else if (kind === "poison") {
       if (there === "fire") burst.set(posKey(pos), pos);
@@ -124,10 +130,14 @@ export function placeSurface(ctx: Ctx, hexes: HexPos[], kind: SurfaceKind, round
     } else if (kind === "ice") {
       if (there === "fire") set(pos, "water", 2);
       else set(pos, "ice");
+    } else if (kind === "slime") {
+      // Slime smothers a fire and sticks over anything else.
+      if (there === "fire") set(pos, null);
+      else set(pos, "slime");
     }
   }
   // Told one kind at a time, so the client can draw and sound each change once.
-  for (const to of [null, "poison", "fire", "oil", "water", "ice"] as const) {
+  for (const to of [null, "poison", "fire", "oil", "water", "ice", "slime"] as const) {
     const group = [...changed.values()].filter((c) => c.kind === to).map((c) => c.pos);
     if (group.length > 0) ctx.events.push({ t: "surface", kind: to, hexes: group });
   }

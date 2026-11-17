@@ -409,6 +409,8 @@ export function throwItem(ctx: Ctx, unit: Unit, item: Throwable, at: HexPos): vo
     for (const u of caught.filter((c) => !c.down)) {
       const saved = saveRoll(ctx, u, "agi", THROW_SAVE, def.name).ok;
       damage(ctx, u, saved ? Math.floor(rolled / 2) : rolled, { actor: unit.id, what: `throw:${item}` });
+      // What it leaves on them (acid's holes) only sticks to those who did not dodge it.
+      if (def.condition && !saved && !u.down) addCondition(ctx, u, def.condition.kind, def.condition.rounds);
     }
   }
   if (def.surface) placeSurface(ctx, area, def.surface.kind, def.surface.rounds, unit.id);

@@ -447,6 +447,15 @@ const ART: Record<string, Art> = {
     shroom(1, 6, 9);
     p.r(1, 14, 14, 1, "#4f8a3a");
   },
+  "res-slime": (p) => {
+    // A wobbling glob of cave slime, dripping, with a shine on top and a bubble caught inside.
+    spans(p, "#3f6212", [[13, 2, 13], [14, 3, 12]]);
+    spans(p, "#65a30d", [[5, 6, 9], [6, 4, 11], [7, 3, 12], [8, 2, 13], [9, 2, 13], [10, 2, 13], [11, 2, 13], [12, 2, 13]]);
+    spans(p, "#a3e635", [[6, 5, 7], [7, 4, 6], [8, 3, 4]]);
+    p.r(9, 9, 2, 2, "#d9f99d");
+    p.r(3, 13, 1, 2, "#65a30d");
+    p.r(11, 13, 1, 3, "#65a30d");
+  },
 
   // ---- interface ----
   hand: (p) => {

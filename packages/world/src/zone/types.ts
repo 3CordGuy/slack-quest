@@ -25,7 +25,7 @@ export interface UnitCondition {
 }
 
 /** What a hero carries to use in a zone: thrown at a hex, and (a healing potion) drunk. */
-export type Throwable = "healing" | "poison" | "fire" | "oil" | "water";
+export type Throwable = "healing" | "poison" | "fire" | "oil" | "water" | "acid" | "slime";
 
 export interface Unit {
   /** A hero's player id; `e<n>` for an enemy; `s<n>` for a stand-in crewmate. */
@@ -61,7 +61,7 @@ export interface Unit {
   controller?: string;
 }
 
-export type SurfaceKind = "poison" | "fire" | "oil" | "water" | "ice";
+export type SurfaceKind = "poison" | "fire" | "oil" | "water" | "ice" | "slime";
 
 export interface GroundSurface {
   kind: SurfaceKind;
