@@ -60,14 +60,14 @@ export const TRAITS: TraitDef[] = [
   t("qa_paladin", 2, "read_the_wreckage", "Read the Wreckage", "+2 damage for each different debuff on the target.", { t: "per_debuff", bonus: 2 }),
   // Stormcall Mage
   t("devops_mage", 1, "st_elmos_fire", "St. Elmo's Fire", "+2 damage against Burning enemies.", { t: "vs_effect", effect: "burning", bonus: 2 }),
-  t("devops_mage", 1, "ride_the_storm", "Ride the Storm", "Start every fight with a Fair Wind.", { t: "start_effect", effect: "hasted", turns: 1 }),
+  t("devops_mage", 1, "ride_the_storm", "Ride the Storm", "Start every fight Hasted.", { t: "start_effect", effect: "hasted", turns: 1 }),
   t("devops_mage", 2, "eye_of_the_storm", "Eye of the Storm", "The first focus you spend in a fight comes back.", { t: "first_focus_free" }),
-  t("devops_mage", 2, "squall_line", "Squall Line", "Burning and Fouled that you cause last a turn longer.", { t: "longer", effects: ["burning", "glitched"], turns: 1 }),
+  t("devops_mage", 2, "squall_line", "Squall Line", "Burning and Fumbling that you cause last a turn longer.", { t: "longer", effects: ["burning", "glitched"], turns: 1 }),
   // Smuggler Rogue
   t("refactor_rogue", 1, "cutthroat", "Cutthroat", "Half again as much damage to enemies under a quarter of their HP.", { t: "finisher", mult: 1.5 }),
   t("refactor_rogue", 1, "bleed_em_dry", "Bleed 'Em Dry", "+2 damage against Bleeding enemies.", { t: "vs_effect", effect: "bleeding", bonus: 2 }),
   t("refactor_rogue", 2, "slip_the_noose", "Slip the Noose", "Once a fight, a blow that would put you down leaves you on 1 HP.", { t: "last_stand" }),
-  t("refactor_rogue", 2, "spyglass", "Spyglass", "Your perfect hits also leave the target Holed.", { t: "perfect_effect", effect: "exposed", turns: 2 }),
+  t("refactor_rogue", 2, "spyglass", "Spyglass", "Your perfect hits also leave the target Exposed.", { t: "perfect_effect", effect: "exposed", turns: 2 }),
   // Reef Druid
   t("backend_druid", 1, "tide_pools", "Tide Pools", "Grow back 1 more HP at the start of each turn.", { t: "regen", amount: 1 }),
   t("backend_druid", 1, "rip_current", "Rip Current", "+2 damage against Slowed enemies.", { t: "vs_effect", effect: "slowed", bonus: 2 }),
@@ -76,8 +76,8 @@ export const TRAITS: TraitDef[] = [
   // Shanty Bard
   t("frontend_bard", 1, "call_and_response", "Call and Response", "+1 focus whenever a crewmate lands a perfect.", { t: "ally_perfect_focus" }),
   t("frontend_bard", 1, "sea_legs", "Sea Legs", "Potions you hand out, to yourself or a crewmate, heal 6 more.", { t: "potion_bonus", amount: 6 }),
-  t("frontend_bard", 2, "heave_ho", "Heave Ho", "Fair Wind that you give lasts a turn longer.", { t: "longer", effects: ["hasted"], turns: 1 }),
-  t("frontend_bard", 2, "jeers_from_the_rigging", "Jeers from the Rigging", "Your perfect hits also leave the target Holed.", { t: "perfect_effect", effect: "exposed", turns: 2 }),
+  t("frontend_bard", 2, "heave_ho", "Heave Ho", "Hasted that you give lasts a turn longer.", { t: "longer", effects: ["hasted"], turns: 1 }),
+  t("frontend_bard", 2, "jeers_from_the_rigging", "Jeers from the Rigging", "Your perfect hits also leave the target Exposed.", { t: "perfect_effect", effect: "exposed", turns: 2 }),
   // Starchart Sage
   t("staff_sage", 1, "dead_reckoning", "Dead Reckoning", "The first focus you spend in a fight comes back.", { t: "first_focus_free" }),
   t("staff_sage", 1, "star_chart", "Star Chart", "+2 damage for each different debuff on the target.", { t: "per_debuff", bonus: 2 }),
@@ -86,13 +86,13 @@ export const TRAITS: TraitDef[] = [
   // Lighthouse Warden
   t("sre_warden", 1, "steady_light", "Steady Light", "Grow back 1 HP at the start of each turn.", { t: "regen", amount: 1 }),
   t("sre_warden", 1, "hold_fast", "Hold Fast", "Once a fight, a blow that would put you down leaves you on 1 HP.", { t: "last_stand" }),
-  t("sre_warden", 2, "lamp_oil", "Lamp Oil", "+3 damage against Holed enemies.", { t: "vs_effect", effect: "exposed", bonus: 3 }),
+  t("sre_warden", 2, "lamp_oil", "Lamp Oil", "+3 damage against Exposed enemies.", { t: "vs_effect", effect: "exposed", bonus: 3 }),
   t("sre_warden", 2, "keepers_watch", "Keeper's Watch", "While under a third of your HP, you start each turn Guarded.", { t: "low_hp_guard" }),
   // Wreck Warlock
   t("data_warlock", 1, "drowned_debts", "Drowned Debts", "Heal 3 HP whenever an enemy goes down.", { t: "on_kill_heal", amount: 3 }),
   t("data_warlock", 1, "shipworm", "Shipworm", "+2 damage against Bleeding enemies.", { t: "vs_effect", effect: "bleeding", bonus: 2 }),
   t("data_warlock", 2, "salt_the_wound", "Salt the Wound", "+2 damage for each different debuff on the target.", { t: "per_debuff", bonus: 2 }),
-  t("data_warlock", 2, "cursed_tide", "Cursed Tide", "Bleeding and Fouled that you cause last a turn longer.", { t: "longer", effects: ["bleeding", "glitched"], turns: 1 }),
+  t("data_warlock", 2, "cursed_tide", "Cursed Tide", "Bleeding and Fumbling that you cause last a turn longer.", { t: "longer", effects: ["bleeding", "glitched"], turns: 1 }),
 ];
 
 export const TRAIT_BY_ID: Record<string, TraitDef> = Object.fromEntries(TRAITS.map((d) => [d.id, d]));
