@@ -5,6 +5,7 @@
 // nothing of the rules: the view tells it which hexes and what colour.
 
 import * as THREE from "three";
+import { fireField, gooMaterial, tickGround } from "./groundFx";
 import { posKey, type HexPos } from "@gantt-quest/core";
 import { SURFACE_INFO, tileAt, type SurfaceKind, type WorldMap } from "@gantt-quest/world";
 import { hexToWorld, tileTop, type WorldRenderer } from "./WorldRenderer";
@@ -40,12 +41,17 @@ export class TacticsLayer {
   private stop: () => void;
   /** Surfaces breathe a little, so the ground looks alive. */
   private pulse: THREE.MeshBasicMaterial[] = [];
+  /** And what lies on the ground moves (groundFx.ts): goo rolls and gleams, fire flickers and throws sparks. */
+  private goo: THREE.ShaderMaterial[] = [];
+  private flames: THREE.Object3D[] = [];
+  private sparks: THREE.Points[] = [];
 
   constructor(private renderer: WorldRenderer) {
     this.group.add(this.ground, this.overlays, this.path);
     renderer.addObject(this.group);
     this.stop = renderer.addTicker((_dt, _camera, clock) => {
       for (const [i, m] of this.pulse.entries()) m.opacity = (m.userData.base as number) * (0.82 + 0.18 * Math.sin(clock * 2.2 + i));
+      tickGround(clock, this.goo, this.flames, this.sparks);
       for (const { id, mesh } of this.marks) {
         const head = renderer.unitHead(id);
         mesh.visible = !!head;
@@ -74,11 +80,12 @@ export class TacticsLayer {
   }
 
   private clear(group: THREE.Group) {
-    for (const child of group.children) {
-      const mesh = child as THREE.Mesh;
-      mesh.geometry.dispose();
-      (mesh.material as THREE.Material).dispose();
-    }
+    // Whatever is in it, however deep (a fire is a group of embers, flames and sparks).
+    group.traverse((o) => {
+      if (o === group || !(o instanceof THREE.Mesh || o instanceof THREE.Line || o instanceof THREE.Points)) return;
+      o.geometry.dispose();
+      for (const m of Array.isArray(o.material) ? o.material : [o.material]) m.dispose();
+    });
     group.clear();
   }
 
@@ -224,17 +231,36 @@ export class TacticsLayer {
     this.groundSig = sig;
     this.clear(this.ground);
     this.pulse = [];
+    this.goo = [];
+    this.flames = [];
+    this.sparks = [];
     const byKind = new Map<SurfaceKind, HexPos[]>();
     for (const [key, s] of Object.entries(surfaces)) {
       const [q, r] = key.split(",").map(Number);
       byKind.set(s.kind, [...(byKind.get(s.kind) ?? []), { q, r }]);
     }
     for (const [kind, hexes] of byKind) {
-      const base = kind === "ice" ? 0.75 : kind === "oil" || kind === "slime" ? 0.7 : 0.6;
-      const material = new THREE.MeshBasicMaterial({ color: SURFACE_INFO[kind].color, transparent: true, opacity: base, depthWrite: false, side: THREE.DoubleSide });
-      material.userData.base = base;
-      // Fire and poison stir, and slime wobbles; the rest lie still.
-      if (kind === "fire" || kind === "poison" || kind === "slime") this.pulse.push(material);
+      let material: THREE.Material;
+      if (kind === "oil" || kind === "slime") {
+        // Goo: a gloss that rolls and gleams.
+        const goo = gooMaterial(kind, SURFACE_INFO[kind].color);
+        this.goo.push(goo);
+        material = goo;
+      } else {
+        const base = kind === "ice" ? 0.75 : kind === "fire" ? 0.22 : 0.6;
+        const flat = new THREE.MeshBasicMaterial({ color: SURFACE_INFO[kind].color, transparent: true, opacity: base, depthWrite: false, side: THREE.DoubleSide });
+        flat.userData.base = base;
+        // Fire and poison stir; the rest lie still.
+        if (kind === "fire" || kind === "poison") this.pulse.push(flat);
+        material = flat;
+      }
+      if (kind === "fire") {
+        // Burning ground: embers, flames and sparks on every hex of it.
+        const fire = fireField(hexes, (p) => ({ ...hexToWorld(p), y: this.top(p) }));
+        this.ground.add(fire.group);
+        this.flames.push(...fire.flames);
+        this.sparks.push(fire.sparks);
+      }
       const mesh = new THREE.Mesh(this.fill(hexes, 0.03, 0.9), material);
       mesh.renderOrder = 1;
       this.ground.add(mesh);
