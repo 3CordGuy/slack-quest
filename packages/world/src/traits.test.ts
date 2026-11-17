@@ -227,7 +227,7 @@ describe("signature abilities", () => {
     expect(r.state.actor).toBe("b");
   });
 
-  it("Riptide becalms every enemy it hits; Lighthouse Beam taunts", () => {
+  it("Riptide slows every enemy it hits; Lighthouse Beam taunts", () => {
     const s = tune(fight([hero("h")], ["dummy", "dummy"]), { hp: 500, maxHp: 500 });
     const r = ok(stepBattle(s, "h", { type: "ability", ability: "riptide" }, makeRng(1)));
     expect(r.events.filter((e) => e.t === "effect" && e.effect === "slowed")).toHaveLength(2);

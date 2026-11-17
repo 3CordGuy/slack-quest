@@ -70,9 +70,9 @@ export const TRAITS: TraitDef[] = [
   t("refactor_rogue", 2, "spyglass", "Spyglass", "Your perfect hits also leave the target Holed.", { t: "perfect_effect", effect: "exposed", turns: 2 }),
   // Reef Druid
   t("backend_druid", 1, "tide_pools", "Tide Pools", "Grow back 1 more HP at the start of each turn.", { t: "regen", amount: 1 }),
-  t("backend_druid", 1, "rip_current", "Rip Current", "+2 damage against Becalmed enemies.", { t: "vs_effect", effect: "slowed", bonus: 2 }),
+  t("backend_druid", 1, "rip_current", "Rip Current", "+2 damage against Slowed enemies.", { t: "vs_effect", effect: "slowed", bonus: 2 }),
   t("backend_druid", 2, "carrion_crabs", "Carrion Crabs", "Heal 3 HP whenever an enemy goes down.", { t: "on_kill_heal", amount: 3 }),
-  t("backend_druid", 2, "kelp_snare", "Kelp Snare", "Becalmed that you cause lasts a turn longer.", { t: "longer", effects: ["slowed"], turns: 1 }),
+  t("backend_druid", 2, "kelp_snare", "Kelp Snare", "Slowing that you cause lasts a turn longer.", { t: "longer", effects: ["slowed"], turns: 1 }),
   // Shanty Bard
   t("frontend_bard", 1, "call_and_response", "Call and Response", "+1 focus whenever a crewmate lands a perfect.", { t: "ally_perfect_focus" }),
   t("frontend_bard", 1, "sea_legs", "Sea Legs", "Potions you hand out, to yourself or a crewmate, heal 6 more.", { t: "potion_bonus", amount: 6 }),
