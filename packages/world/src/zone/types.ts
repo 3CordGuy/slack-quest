@@ -107,6 +107,13 @@ export interface Encounter {
   turnNo: number;
   /** Epoch ms when the server ends this turn. Set by the server, not the reducer. */
   deadline: number | null;
+  /**
+   * Heroes who fled this fight (Flee) and have not come back into it. One is drawn back in only by an enemy in
+   * it coming within FLEE_RANGE, or by doing something to someone in it; not by walking within JOIN_RANGE.
+   */
+  fled?: string[];
+  /** Set when the one taking a turn flees and nobody else shared it: who came after them in the order (null: they were last), so the next turn goes there. */
+  resume?: string | null;
 }
 
 export type ZoneSize = "small" | "medium" | "large";
@@ -187,7 +194,7 @@ export interface ZoneHero {
   items?: Partial<Record<Throwable, number>>;
 }
 
-export type CommonAction = "dash" | "disengage" | "help" | "shove" | "jump";
+export type CommonAction = "dash" | "disengage" | "help" | "shove" | "jump" | "flee";
 
 export type DevOp =
   | { op: "spawn"; kinds: string[]; at: HexPos }
@@ -276,7 +283,10 @@ export type ZoneEvent =
   | { t: "burst"; hexes: HexPos[] }
   | { t: "shoved"; id: string; target: string; from: HexPos; to: HexPos | null }
   | { t: "jumped"; id: string; from: HexPos; to: HexPos }
-  | { t: "fight_end"; outcome: "victory" | "defeat" }
+  /** A hero gets away from the fight (Flee): out of the order, walking free. */
+  | { t: "fled"; id: string }
+  /** `fled`: every hero still standing got away, and none is left in it. */
+  | { t: "fight_end"; outcome: "victory" | "defeat" | "fled" }
   /** A hero lights a torch to hold; a held torch burns out. */
   | { t: "lit"; id: string }
   | { t: "torch_out"; id: string }

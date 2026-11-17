@@ -7,7 +7,7 @@ import { walk } from "./combat";
 import { attackContext, type Ctx } from "./engine";
 import { ALERT_RANGE, DEFAULT_ZONE_OPTIONS, JOIN_RANGE, generateZone, zoneOptions } from "./gen";
 import { adjacent, blast, flies, sees, solid, zoneReach } from "./geometry";
-import { ENEMY_KIT, EXPLORE_ROUND_MS, LIGHT_RADIUS, SHIELD_SET_ASIDE, TACTICS, TORCH_GROUND_ROUNDS, TORCH_HELD_ROUNDS, TORCH_ROUND_MS, enemyHp, enemyStrikes, tacticOf } from "./kit";
+import { ENEMY_KIT, EXPLORE_ROUND_MS, FLEE_RANGE, LIGHT_RADIUS, SHIELD_SET_ASIDE, TACTICS, TORCH_GROUND_ROUNDS, TORCH_HELD_ROUNDS, TORCH_ROUND_MS, commonCost, enemyHp, enemyStrikes, tacticOf } from "./kit";
 import { MAX_CATCHUP_ROUNDS } from "./clock";
 import { defenceOf } from "./engine";
 import { checkAbility, crateBlow } from "./combat";
@@ -1079,6 +1079,264 @@ describe("the end of a fight", () => {
       // Either the map is cleared or it ran long; either way the state is whole.
       check();
     }
+  }, 60_000);
+});
+
+// ---------- fleeing ----------
+
+describe("fleeing", () => {
+  const flee = (id = "ann"): ZoneAction => ({ type: "common", by: id, unit: id, what: "flee" });
+  /** Ann and Bo in a fight with a wolf, AI off, and it is Ann's turn. */
+  function pair(annClass = "qa_paladin") {
+    let state = board();
+    state.aiOff = true;
+    hero(state, "ann", annClass, at(3, 6));
+    hero(state, "bo", "qa_paladin", at(3, 8));
+    const wolf = enemy(state, "wolf", at(9, 6));
+    state = provoke(state);
+    expect(new Set(state.encounter!.order)).toEqual(new Set(["ann", "bo", wolf.id]));
+    while (!state.encounter!.acting.includes("ann")) state = must(state, { type: "timeout" });
+    return { state, wolf: wolf.id };
+  }
+
+  it("is for a fight, on your turn, once no enemy in it is within 2 hexes, and costs the Action (a Rogue's Bonus action)", () => {
+    const alone = board();
+    hero(alone, "ann", "qa_paladin", at(3, 6));
+    expect(fails(alone, flee())).toMatch(/for a fight/);
+    // Two hexes off: too close.
+    const { state: near } = duel("bandit", "qa_paladin", at(5, 6), at(8, 6));
+    expect(hexDistance(unit(near, "ann").pos, near.units.find((u) => u.side === "enemy")!.pos)).toBe(FLEE_RANGE);
+    expect(fails(near, flee())).toMatch(/too close to get away/);
+    // Clear of it, but the Action is gone.
+    const { state: clear } = duel("bandit", "qa_paladin", at(3, 6), at(9, 6));
+    clear.encounter!.budgets.ann.action = false;
+    expect(fails(clear, flee())).toMatch(/used your Action/);
+    // A Rogue runs for a Bonus action.
+    expect(commonCost("flee", "refactor_rogue")).toBe("bonus");
+    const { state: rogue } = duel("bandit", "refactor_rogue", at(3, 6), at(9, 6));
+    rogue.encounter!.budgets.ann.action = false;
+    expect(stepZone(rogue, flee()).ok).toBe(true);
+  });
+
+  it("ends the fight with nobody winning when the last hero gets away: nothing paid, nobody moved, the enemy home as hurt as they were", () => {
+    let { state, foe } = duel("bandit", "qa_paladin", at(3, 6), at(9, 6));
+    const bandit = unit(state, foe);
+    bandit.hp -= 4;
+    bandit.pos = at(7, 6);
+    unit(state, "ann").hp -= 3;
+    unit(state, "ann").cooldowns = { smite: 2 };
+    const before = structuredClone(unit(state, "ann"));
+    const step = stepZone(state, flee());
+    if (!step.ok) throw new Error(step.error);
+    state = step.state;
+    expect(step.events).toContainEqual({ t: "used", id: "ann", what: "flee", name: "Flee", target: undefined, at: undefined });
+    expect(step.events).toContainEqual({ t: "fled", id: "ann" });
+    expect(step.events).toContainEqual({ t: "fight_end", outcome: "fled" });
+    expect(step.events.some((e) => e.t === "spoils" || e.t === "cleared")).toBe(false);
+    expect(step.effects).toEqual([]);
+    expect(state.encounter).toBeNull();
+    // No worse off than losing: where she stood, as hurt as she was, never knocked down to 1 HP.
+    expect(unit(state, "ann")).toMatchObject({ pos: before.pos, hp: before.hp, down: false, cooldowns: {} });
+    // The bandit is back at its post, wounds and all, and has stopped looking.
+    expect(unit(state, foe)).toMatchObject({ pos: at(9, 6), hp: bandit.maxHp - 4, down: false });
+    expect(state.groups.g1.alerted).toBe(false);
+    // She walks free, and walking right up to it again starts a new fight.
+    state = must(state, { type: "move", by: "ann", unit: "ann", to: at(6, 6) });
+    expect(state.encounter).toBeNull();
+    state = must(state, { type: "move", by: "ann", unit: "ann", to: at(8, 6) });
+    expect(state.encounter?.order).toContain(foe);
+  });
+
+  it("goes on for whoever is still in it, and draws the one who fled back only when an enemy in it is within 2 hexes", () => {
+    let { state, wolf } = pair();
+    state = must(state, flee());
+    expect(state.encounter).not.toBeNull();
+    expect(state.encounter!.order).toEqual(expect.arrayContaining(["bo", wolf]));
+    expect(state.encounter!.order).not.toContain("ann");
+    expect(state.encounter!.fled).toEqual(["ann"]);
+    // Walking is free again, and well inside JOIN_RANGE of the fight she stays out of it.
+    state = must(state, { type: "move", by: "ann", unit: "ann", to: at(6, 6) });
+    expect(unit(state, "ann").pos).toEqual(at(6, 6));
+    expect(state.encounter!.order).not.toContain("ann");
+    // Within 2 of the wolf: back in, and stopped there.
+    const events: ZoneEvent[] = [];
+    state = must(state, { type: "move", by: "ann", unit: "ann", to: at(8, 6) }, events);
+    expect(events).toContainEqual({ t: "fight_join", id: "ann" });
+    expect(hexDistance(unit(state, "ann").pos, unit(state, wolf).pos)).toBe(FLEE_RANGE);
+    expect(state.encounter!.order).toContain("ann");
+    expect(state.encounter!.fled).toEqual([]);
+  });
+
+  it("draws a hero who fled back in when an enemy in the fight comes within 2 hexes of them", () => {
+    let { state, wolf } = pair();
+    state = must(state, flee());
+    // The wolf, after Bo, comes past her.
+    state.units.find((u) => u.id === wolf)!.pos = at(5, 6);
+    const events: ZoneEvent[] = [];
+    state = must(state, { type: "time", now: 1 }, events);
+    expect(events).toContainEqual({ t: "fight_join", id: "ann" });
+    expect(state.encounter!.order).toContain("ann");
+  });
+
+  it("puts a hero out of the fight in it when they strike at someone in it, or help them, and not for looking after themselves", () => {
+    const { state: start, wolf } = pair("devops_mage");
+    const out = must(start, flee());
+    // Sturdy enough to outlast a firebolt, so the fight is still on to be in.
+    Object.assign(unit(out, wolf), { hp: 200, maxHp: 200 });
+    const shot = must(out, { type: "use", by: "ann", unit: "ann", ability: "firebolt", target: wolf });
+    expect(shot.encounter!.order).toContain("ann");
+    const mended = must(out, { type: "use", by: "ann", unit: "ann", ability: "mend", target: "bo" });
+    expect(mended.encounter!.order).toContain("ann");
+    const potion = must(out, { type: "throw", by: "ann", unit: "ann", item: "healing", at: unit(out, "bo").pos });
+    expect(potion.encounter!.order).toContain("ann");
+    const self = must(out, { type: "use", by: "ann", unit: "ann", ability: "mend", target: "ann" });
+    expect(self.encounter!.order).not.toContain("ann");
+    // A hero who never was in it, shooting in from further off than JOIN_RANGE, is in it too.
+    let far = board();
+    far.aiOff = true;
+    hero(far, "ann", "qa_paladin", at(3, 2));
+    const archer = hero(far, "cy", "refactor_rogue", at(12, 2));
+    const foe = enemy(far, "bandit", at(5, 2));
+    Object.assign(foe, { hp: 200, maxHp: 200 });
+    far = provoke(far);
+    expect(far.encounter!.order).not.toContain(archer.id);
+    expect(Math.min(hexDistance(archer.pos, foe.pos), hexDistance(archer.pos, at(3, 2)))).toBeGreaterThan(JOIN_RANGE);
+    far = must(far, { type: "use", by: "cy", unit: "cy", ability: "aimed_shot", target: foe.id });
+    expect(far.encounter!.order).toContain("cy");
+  });
+
+  it("hands the turn on to whoever came after a hero who fled on a turn of their own", () => {
+    let state = board();
+    state.aiOff = true;
+    hero(state, "ann", "qa_paladin", at(3, 6));
+    hero(state, "bo", "qa_paladin", at(3, 9));
+    const a = enemy(state, "wolf", at(9, 6));
+    const b = enemy(state, "wolf", at(9, 9));
+    state = provoke(state);
+    const turnOf = (order: string[]) => {
+      const s = structuredClone(state);
+      Object.assign(s.encounter!, { order, acting: ["ann"], done: [], budgets: { ann: { action: true, bonus: true, move: 5, moveMax: 5, disengaged: false } } });
+      return s;
+    };
+    const { round, turnNo } = state.encounter!;
+    // In the middle of the round: the wolf after her goes next (and does nothing, with the AI off), then Bo.
+    const mid = must(turnOf([a.id, "ann", b.id, "bo"]), flee());
+    expect(mid.encounter).toMatchObject({ round, turnNo: turnNo + 2, acting: ["bo"], order: [a.id, b.id, "bo"] });
+    expect(mid.encounter!.resume).toBeUndefined();
+    // Last in the order: a new round, from the top.
+    const last = must(turnOf([a.id, "bo", b.id, "ann"]), flee());
+    expect(last.encounter).toMatchObject({ round: round + 1, turnNo: turnNo + 2, acting: ["bo"] });
+    // Sharing a turn with Bo: it is still Bo's.
+    const sharing = turnOf([a.id, "ann", "bo", b.id]);
+    sharing.encounter!.acting = ["ann", "bo"];
+    sharing.encounter!.budgets.bo = { action: true, bonus: true, move: 5, moveMax: 5, disengaged: false };
+    const after = must(sharing, flee());
+    expect(after.encounter).toMatchObject({ turnNo, acting: ["bo"], done: [] });
+  });
+
+  it("leaves the fight lost for the fallen when the last hero standing gets away from them", () => {
+    let { state, wolf } = pair();
+    unit(state, "bo").down = true;
+    unit(state, "bo").hp = 0;
+    unit(state, wolf).hp -= 3;
+    const annBefore = structuredClone(unit(state, "ann"));
+    const events: ZoneEvent[] = [];
+    state = must(state, flee(), events);
+    expect(events).toContainEqual({ t: "fight_end", outcome: "defeat" });
+    expect(state.encounter).toBeNull();
+    // The fallen wake at the start, as from any lost fight; the one who ran is where she ran to.
+    expect(unit(state, "bo")).toMatchObject({ down: false, hp: 1 });
+    expect(hexDistance(unit(state, "bo").pos, state.start)).toBeLessThanOrEqual(1);
+    expect(unit(state, "ann")).toMatchObject({ pos: annBefore.pos, hp: annBefore.hp });
+    expect(unit(state, wolf)).toMatchObject({ hp: unit(state, wolf).maxHp, pos: at(9, 6) });
+  });
+
+  it("leaves the enemy who fell fallen, and finds a post taken by a hero the nearest free hex", () => {
+    let state = board();
+    state.aiOff = true;
+    hero(state, "ann", "qa_paladin", at(3, 6));
+    const fallen = enemy(state, "bandit", at(9, 6));
+    const other = enemy(state, "bandit", at(9, 4));
+    state = provoke(state);
+    while (!state.encounter!.acting.includes("ann")) state = must(state, { type: "timeout" });
+    Object.assign(unit(state, fallen.id), { hp: 0, down: true });
+    // The other has come out to her: she has got round it to stand on its post.
+    unit(state, other.id).pos = at(5, 3);
+    unit(state, "ann").pos = at(9, 4);
+    const step = stepZone(state, flee());
+    if (!step.ok) throw new Error(step.error);
+    expect(step.effects).toEqual([]);
+    expect(step.state.units.some((u) => u.id === fallen.id)).toBe(false);
+    const back = step.state.units.find((u) => u.id === other.id)!;
+    expect(hexDistance(back.pos, at(9, 4))).toBe(1);
+    expect(unit(step.state, "ann").pos).toEqual(at(9, 4));
+  });
+
+  it("keeps its own rules through whole fights where heroes run off and get caught again", () => {
+    let ran = 0;
+    for (let seed = 0; seed < 8; seed++) {
+      let state = createZone("RUN", `run-${seed}`, zoneOptions({ size: "small", biome: (["meadow", "caves"] as const)[seed % 2], groups: 2, party: 2, clear: 3, obstacles: 1, elevation: 1, threat: 1 }));
+      state = must(state, { type: "join", hero: standInHero("refactor_rogue", "ann", 3)! });
+      state = must(state, { type: "join", hero: standInHero("qa_paladin", "bo", 3)! });
+      const dice = makeRng(seed + 1);
+      const check = () => {
+        const where = `seed ${seed}`;
+        const up = state.units.filter((u) => !u.down);
+        expect(new Set(up.map((u) => posKey(u.pos))).size, where).toBe(up.length);
+        const enc = state.encounter;
+        if (!enc) return;
+        for (const id of enc.acting) expect(enc.order, where).toContain(id);
+        for (const id of enc.fled ?? []) expect(enc.order, where).not.toContain(id);
+        expect(enc.resume, where).toBeUndefined();
+        expect(enc.order.some((id) => unit(state, id).side === "hero"), where).toBe(true);
+      };
+      for (let step = 0; step < 150; step++) {
+        if (!state.units.some((u) => u.side === "enemy" && !u.down)) break;
+        for (const id of ["ann", "bo"]) {
+          const me = unit(state, id);
+          if (me.down) continue;
+          const enc = state.encounter;
+          const fighting = !!enc?.order.includes(id);
+          if (fighting && (!enc!.acting.includes(id) || enc!.done.includes(id))) continue;
+          const foes = state.units.filter((u) => u.side === "enemy" && !u.down && (!fighting || enc!.order.includes(u.id)));
+          if (fighting && dice.int(1, 3) === 1) {
+            // Run: as far from them as this turn goes (blows and all), then off, if that got clear.
+            const reach = zoneReach(state, me, enc!.budgets[id].move);
+            const far = (p: HexPos) => Math.min(...foes.map((f) => hexDistance(f.pos, p)));
+            const spot = [...reach.values()].filter((r) => r.stop).sort((a, b) => far(b.pos) - far(a.pos))[0];
+            if (spot && spot.cost > 0) state = must(state, { type: "move", by: id, unit: id, to: spot.pos });
+            check();
+            const out = stepZone(state, flee(id));
+            if (out.ok) {
+              state = out.state;
+              ran += 1;
+              check();
+              continue;
+            }
+            if (unit(state, id).down || !state.encounter?.budgets[id]) continue;
+          }
+          const now = unit(state, id);
+          const target = foes.sort((a, b) => hexDistance(a.pos, now.pos) - hexDistance(b.pos, now.pos))[0];
+          if (!target) continue;
+          const ability = now.abilities[0];
+          let tried = stepZone(state, { type: "use", by: id, unit: id, ability, target: target.id });
+          if (!tried.ok) {
+            const me = now;
+            const reach = zoneReach(state, me, state.encounter?.order.includes(id) ? (state.encounter.budgets[id]?.move ?? 0) : 12);
+            const spot = [...reach.values()].filter((r) => r.stop).sort((a, b) => hexDistance(a.pos, target.pos) - hexDistance(b.pos, target.pos) || a.cost - b.cost)[0];
+            if (spot && hexDistance(spot.pos, target.pos) < hexDistance(me.pos, target.pos)) state = must(state, { type: "move", by: id, unit: id, to: spot.pos });
+            tried = stepZone(state, { type: "use", by: id, unit: id, ability, target: target.id });
+          }
+          if (tried.ok) state = tried.state;
+          check();
+          if (state.encounter?.acting.includes(id) && !state.encounter.done.includes(id)) state = must(state, { type: "end_turn", by: id, unit: id });
+          check();
+        }
+        if (state.encounter && !state.encounter.acting.some((id) => !state.encounter!.done.includes(id))) state = must(state, { type: "timeout" });
+        check();
+      }
+    }
+    expect(ran).toBeGreaterThan(0);
   }, 60_000);
 });
 

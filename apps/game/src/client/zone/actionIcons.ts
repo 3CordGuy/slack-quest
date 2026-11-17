@@ -68,6 +68,7 @@ export const COMMON_ICON: Record<CommonAction, ActionIcon> = {
   jump: icon("jump", "#7dff9a"),
   shove: icon("shove", "#ff8a3a"),
   help: icon("help", "#7dff9a"),
+  flee: icon("flee", "#ffd98a"),
 };
 
 export const ITEM_ICON: Record<Throwable, ActionIcon> = {

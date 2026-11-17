@@ -11,7 +11,7 @@ import { tileAt, type Poi } from "../map";
 import { DEBUFFS, addCondition, attackContext, attackRoll, damage, defenceOf, has, heal, removeCondition, saveBonus, saveRoll, type Ctx } from "./engine";
 import { cratesOn, crateById, hurtCrate, isCrateId } from "./crates";
 import { adjacent, blast, blockerAt, directionToward, elevOf, inFight, lineFrom, sameHex, sees, solid, stepCost, unitAt, unitById } from "./geometry";
-import { COMMON_ACTIONS, ENEMY_BURST, JUMP_MOVE_COST, POTION_EDGE, SAVE_STAT, THROWABLES, TORCH_GROUND_ROUNDS, abilityDice, enemyStrikes, healDice, jumpRange, reactionStrike, tacticOf, throwRange, type EnemyStrike, type Tactic } from "./kit";
+import { COMMON_ACTIONS, ENEMY_BURST, FLEE_RANGE, JUMP_MOVE_COST, POTION_EDGE, SAVE_STAT, THROWABLES, TORCH_GROUND_ROUNDS, abilityDice, enemyStrikes, healDice, jumpRange, reactionStrike, tacticOf, throwRange, type EnemyStrike, type Tactic } from "./kit";
 import { d20, hitChance, mod, proficiency, rollDice, statOf } from "./rules";
 import { seenByHeroes } from "./light";
 import { chill, dropTorch, enterSurface, ignite, letGoTorch, placeSurface } from "./surfaces";
@@ -360,10 +360,18 @@ export function enemyAct(ctx: Ctx, enemy: Unit, attack: EnemyStrike, target: Uni
 
 // ---------- common actions ----------
 
+/** The enemies in the fight, still standing, within `range` of `unit`: the dark hides none of them from this. */
+export const foesWithin = (state: ZoneState, unit: Unit, range: number): Unit[] =>
+  state.units.filter((u) => u.side !== unit.side && !u.down && inFight(state, u.id) && hexDistance(u.pos, unit.pos) <= range);
+
 /** Why `unit` cannot take this common action, in words, or null if it can. `budget` is null out of a fight. */
 export function checkCommon(state: ZoneState, unit: Unit, what: CommonAction, aim: Aim, budget: Budget | null): string | null {
   if (!COMMON_ACTIONS[what]) return "No such action.";
   if (what === "dash" || what === "disengage") return budget ? null : "That is for a fight.";
+  if (what === "flee") {
+    if (!budget) return "That is for a fight.";
+    return foesWithin(state, unit, FLEE_RANGE).length > 0 ? `An enemy is too close to get away: get more than ${FLEE_RANGE} hexes from every one in the fight first.` : null;
+  }
   if (what === "help") {
     const target = aim.target ? unitById(state, aim.target) : undefined;
     if (!target || target.side !== unit.side || !target.down) return "Pick a fallen ally.";

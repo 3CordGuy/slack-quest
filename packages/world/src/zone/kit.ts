@@ -155,10 +155,14 @@ export const COMMON_ACTIONS: Record<CommonAction, { name: string; cost: "action"
   help: { name: "Help", cost: "action", blurb: "Get a fallen ally beside you back on their feet with 1 HP." },
   shove: { name: "Shove", cost: "bonus", blurb: "Push an enemy beside you one hex away: into fire, off a path, out of reach." },
   jump: { name: "Jump", cost: "bonus", blurb: "Leap a few hexes, over whatever lies between. Costs 2 movement." },
+  flee: { name: "Flee", cost: "action", blurb: "Get out of the fight, once no enemy in it is within 2 hexes of you. You walk free and it goes on without you; an enemy coming that close again brings you back into it." },
 };
 
-/** Light on their feet: a Rogue disengages as a Bonus action. */
-export const commonCost = (what: CommonAction, classId: string): "action" | "bonus" => (what === "disengage" && classId === "refactor_rogue" ? "bonus" : COMMON_ACTIONS[what].cost);
+/** How far clear of every enemy in a fight a hero must be to flee it, and how near one must come to draw them back in. */
+export const FLEE_RANGE = 2;
+
+/** Light on their feet: a Rogue disengages, and flees, as a Bonus action. */
+export const commonCost = (what: CommonAction, classId: string): "action" | "bonus" => ((what === "disengage" || what === "flee") && classId === "refactor_rogue" ? "bonus" : COMMON_ACTIONS[what].cost);
 
 export const JUMP_MOVE_COST = 2;
 /** What a healing potion heals: all of it when drunk or at the heart of where it lands, half of it on the hexes around. */
