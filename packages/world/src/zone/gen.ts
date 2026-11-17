@@ -62,6 +62,7 @@ export function zoneOptions(raw: unknown): ZoneOptions {
     ...(o.delve === true ? { delve: true } : {}),
     ...(cleanMods(o.mods).length > 0 ? { mods: cleanMods(o.mods) } : {}),
     ...(typeof o.tier === "number" && Number.isFinite(o.tier) && o.tier >= 1 ? { tier: Math.min(ATLAS_TIERS, Math.round(o.tier)) } : {}),
+    ...(typeof o.name === "string" && o.name.trim() ? { name: o.name.trim().slice(0, 40) } : {}),
   };
 }
 

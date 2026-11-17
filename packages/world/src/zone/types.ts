@@ -165,6 +165,8 @@ export interface ZoneOptions {
    * such a map pays everyone on it a bounty, and its fights pay by the enemy's level.
    */
   tier?: number;
+  /** What the place is called, on a map the atlas made: its node's name. */
+  name?: string;
 }
 
 export interface ZoneState {

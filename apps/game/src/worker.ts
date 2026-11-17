@@ -79,6 +79,7 @@ import { consumablesOf } from "./server/consumables";
 import { apothecaryView, brew, brewFlask, buyFromKeeper, galleyKeeperView, haggle, smithItem, smithyView } from "./server/workshops";
 import { cook } from "./server/galley";
 import { announceXp, harborXpFor } from "./server/harbor-xp";
+import { chartFor, devClearNode, devResetChart, enterProblem, openNode } from "./server/atlas";
 import { createZoneRow, crewPlaces, getZoneRow, openCave, teleportTo } from "./server/zones";
 import {
   checkImport,
@@ -963,6 +964,53 @@ const RUNS_CLOSED = "Voyages and delves are being rebuilt. They will sail again 
 app.post("/api/run", (c) => c.json({ error: RUNS_CLOSED }, 503));
 app.get("/api/run/:code/ws", (c) => c.text(RUNS_CLOSED, 503));
 
+/** Whoever of a crew is in the Harbor now, and the asker with them: who a map made this moment is sized for. */
+async function harborParty(env: Env, crewId: string, playerId: string) {
+  const here = await env.HARBOR_ROOM.get(env.HARBOR_ROOM.idFromName(crewId))
+    .fetch("https://harbor/present", { headers: { "x-crew-id": crewId } })
+    .then((r) => (r.ok ? (r.json() as Promise<{ ids: string[] }>) : { ids: [] }))
+    .then((r) => new Set([...r.ids, playerId]), () => new Set([playerId]));
+  return (await crewPlaces(env.DB, crewId)).filter((m) => here.has(m.id));
+}
+
+// ---------- the atlas: a crew's chart of landfalls ----------
+
+// The crew's chart: the Harbor, what they have cleared, what is open to them, the fog beyond, and who is out on what.
+app.get("/api/atlas", async (c) => {
+  const crew = await crewFor(c.env.DB, c.get("player").id);
+  if (!crew) return c.json({ error: "You are not in a crew." }, 403);
+  return c.json(await chartFor(c.env.DB, crew.id));
+});
+
+// Set sail for a landfall: the map the crew is already fighting through there, or a fresh one, sized (like a
+// cave) for whoever of the crew is in the Harbor now. The client names only the node; what is on it is the chart's.
+app.post("/api/atlas/open", async (c) => {
+  const player = c.get("player");
+  const [crew, character] = await Promise.all([crewFor(c.env.DB, player.id), getCharacter(c.env.DB, player.id)]);
+  if (!crew) return c.json({ error: "You are not in a crew." }, 403);
+  if (character?.status !== "active") return c.json({ error: "Create a character first." }, 409);
+  const body = await c.req.json<{ node?: unknown }>().catch(() => ({}) as { node?: unknown });
+  const went = await openNode(c.env.DB, crew.id, player.id, body.node, (await harborParty(c.env, crew.id, player.id)).length);
+  if ("error" in went) return c.json({ error: went.error }, went.status);
+  // Crewmates looking at the chart see that someone has put in there.
+  if (went.fresh) c.executionCtx.waitUntil(refreshHarbor(c.env, crew.id));
+  return c.json(went);
+});
+
+// For whoever is testing: clear a landfall without fighting for it, or wipe the chart back to the Harbor.
+app.post("/api/dev/atlas", async (c) => {
+  const crew = await crewFor(c.env.DB, c.get("player").id);
+  if (!crew) return c.json({ error: "You are not in a crew." }, 403);
+  const body = await c.req.json<{ op?: unknown; node?: unknown }>().catch(() => ({}) as { op?: unknown; node?: unknown });
+  if (body.op === "reset") await devResetChart(c.env.DB, crew.id);
+  else if (body.op === "clear") {
+    const problem = await devClearNode(c.env.DB, crew.id, body.node);
+    if (problem) return c.json({ error: problem }, 409);
+  } else return c.json({ error: "No such tool." }, 400);
+  c.executionCtx.waitUntil(refreshHarbor(c.env, crew.id));
+  return c.json(await chartFor(c.env.DB, crew.id));
+});
+
 // Down into the Haunted Caverns: the crew's cave if one is still being fought through, else a fresh one.
 // A fresh cave is pitched for whoever of the crew is in the Harbor now (the asker always counts): as many
 // heroes as are there, up to four, at their average level. Crewmates who come later join by teleport.
@@ -973,11 +1021,7 @@ app.post("/api/caves", async (c) => {
   if (character?.status !== "active") return c.json({ error: "Create a character first." }, 409);
   const open = await openCave(c.env.DB, crew.id);
   if (open) return c.json({ code: open, fresh: false });
-  const here = await c.env.HARBOR_ROOM.get(c.env.HARBOR_ROOM.idFromName(crew.id))
-    .fetch("https://harbor/present", { headers: { "x-crew-id": crew.id } })
-    .then((r) => (r.ok ? (r.json() as Promise<{ ids: string[] }>) : { ids: [] }))
-    .then((r) => new Set([...r.ids, player.id]), () => new Set([player.id]));
-  const party = (await crewPlaces(c.env.DB, crew.id)).filter((m) => here.has(m.id));
+  const party = await harborParty(c.env, crew.id, player.id);
   const level = party.length > 0 ? party.reduce((sum, m) => sum + m.level, 0) / party.length : character.level;
   // A delve: the caverns' chambers and tunnels, with chests to open and the hoard in the deepest (zone/delve.ts).
   const options = zoneOptions({ size: "medium", biome: "caves", delve: true, threat: 2, party: Math.min(4, Math.max(1, party.length)), level });
@@ -1000,10 +1044,14 @@ app.post("/api/crew/teleport", async (c) => {
   return "error" in go ? c.json({ error: go.error }, go.status) : c.json(go);
 });
 
-// A zone's socket. Anyone with a hero and the code can walk in. Zones are made by /api/caves and the dev route.
+// A zone's socket. Anyone with a hero and the code can walk in, but a landfall on a crew's chart is that crew's
+// own. Zones are made by /api/caves, /api/atlas/open and the dev route.
 app.get("/api/zone/:code/ws", async (c) => {
   const code = c.req.param("code").toUpperCase();
-  if (!(await getZoneRow(c.env.DB, code))) return c.text("No map with that code.", 404);
+  const zone = await getZoneRow(c.env.DB, code);
+  if (!zone) return c.text("No map with that code.", 404);
+  const barred = enterProblem(zone, zone.kind === "atlas" ? ((await crewFor(c.env.DB, c.get("player").id))?.id ?? null) : null);
+  if (barred) return c.text(barred, 403);
   const headers = new Headers(c.req.raw.headers);
   headers.set("x-zone-code", code);
   headers.set("x-player-id", c.get("player").id);

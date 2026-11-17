@@ -232,7 +232,7 @@ export function atlasView(seed: string, cleared: ReadonlySet<string>): AtlasNode
 export function nodeOptions(seed: string, node: AtlasNode, party: number): ZoneOptions {
   const rng = rngFor(seed, "lay", node.id);
   const near = node.ring <= 1;
-  const base = { party, level: node.level, threat: near ? 1 : 2, mods: node.mods, tier: Math.max(1, node.ring) };
+  const base = { party, level: node.level, threat: near ? 1 : 2, mods: node.mods, tier: Math.max(1, node.ring), name: node.name };
   if (node.kind === "seacave") return zoneOptions({ ...base, size: "medium", biome: "caves", delve: true });
   return zoneOptions({
     ...base,
