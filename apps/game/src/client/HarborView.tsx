@@ -460,7 +460,9 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
         </div>
       </DragPanel>
 
-      <HudBar
+      {/* Put away while a gathering outing (fishing, felling, the quarry) has the view: nothing on it is any use
+          there, and the game's own controls drop to the bottom of the screen (--hud-h goes with it). */}
+      {!(gather && me.character) && <HudBar
         me={me}
         place={here && !here.quiet ? here.title : undefined}
         rest={onWater ? undefined : {
@@ -495,7 +497,7 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
       >
         {here && !here.quiet && !here.closed && <button className="primary" onClick={here.run}>{here.label}</button>}
         {here?.also && <button onClick={here.also.run}>{here.also.label}</button>}
-      </HudBar>
+      </HudBar>}
 
       {here && !here.quiet && !here.closed && self && !panelOpen && <TileAction renderer={renderer} pos={self.pos} unitId={self.id} label={here.label} run={here.run} />}
       {tip && <div className="tip">{tip}</div>}
