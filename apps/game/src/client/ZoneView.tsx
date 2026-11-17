@@ -265,6 +265,8 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
     for (const [i, ev] of events.entries()) {
       const say = (line: string) => later(() => setFeed((f) => [...f, line].slice(-40)));
       const view = renderer.current;
+      /** The unit makes its gesture (a cast, or a bow drawn), and `go`, what leaves its hand, runs as the gesture ends: at once with no view to draw it. */
+      const cast = (id: string, name: string, x: number, z: number, go: () => void, thrown = false) => (view ? view.cast(id, name, x, z, go, thrown) : go());
       if ((ev.t === "moved" || ev.t === "used" || ev.t === "jumped") && next.encounter?.order.includes(ev.id)) nowActing(ev.id);
       if (ev.t === "moved") {
         const u = find(ev.id);
@@ -305,35 +307,47 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
           if (!fxs || !from || !user) return;
           if (thrown && ev.at) {
             sounds.zone("throw", view?.whereIs(ev.id));
-            view?.cast(ev.id, ev.name, hexToWorld(ev.at).x, hexToWorld(ev.at).z);
             const land = point(ev.at, 0.05);
-            fxs.launch("flask", from, land, THROW_COLOR[thrown], () => {
-              sounds.zone("shatter", { x: land.x, z: land.z });
-              fxs.ring(land, 2.4, THROW_COLOR[thrown]);
-            });
+            cast(
+              ev.id,
+              ev.name,
+              land.x,
+              land.z,
+              () =>
+                fxs.launch("flask", from, land, THROW_COLOR[thrown], () => {
+                  sounds.zone("shatter", { x: land.x, z: land.z });
+                  fxs.ring(land, 2.4, THROW_COLOR[thrown]);
+                }),
+              true,
+            );
             return;
           }
           if (ev.what.startsWith("drink:")) return fxs.motes(point(user.pos, 0.3), "#7dff9a");
           const aim = ev.at ? point(ev.at, 0.05) : null;
           if (look.kind === "meteor" && aim) {
-            view?.cast(ev.id, ev.name, aim.x, aim.z);
-            fxs.launch("meteor", from, aim, look.color, () => fxs.ring(aim, 2.6, look.color));
+            cast(ev.id, ev.name, aim.x, aim.z, () => fxs.launch("meteor", from, aim, look.color, () => fxs.ring(aim, 2.6, look.color)));
           } else if (look.kind === "storm" && aim) {
-            view?.cast(ev.id, ev.name, aim.x, aim.z);
-            fxs.spark([aim.clone().add(new THREE.Vector3(0.6, 9, -0.4)), aim], look.color);
-            fxs.ring(aim, 2.6, look.color);
+            cast(ev.id, ev.name, aim.x, aim.z, () => {
+              fxs.spark([aim.clone().add(new THREE.Vector3(0.6, 9, -0.4)), aim], look.color);
+              fxs.ring(aim, 2.6, look.color);
+            });
           } else if (look.kind === "lob" && aim) {
-            view?.cast(ev.id, ev.name, aim.x, aim.z);
-            fxs.launch("bolt", from, aim, look.color, () => fxs.ring(aim, 2.4, look.color));
+            cast(ev.id, ev.name, aim.x, aim.z, () => fxs.launch("bolt", from, aim, look.color, () => fxs.ring(aim, 2.4, look.color)));
           } else if (look.kind === "beam" && covered.length > 0) {
             const end = point(covered[covered.length - 1], 0.9);
-            view?.cast(ev.id, ev.name, end.x, end.z);
-            fxs.beam(from, end, look.color);
+            cast(ev.id, ev.name, end.x, end.z, () => fxs.beam(from, end, look.color));
           } else if (look.kind === "erupt" && covered.length > 0) {
-            view?.cast(ev.id, ev.name, point(covered[0]).x, point(covered[0]).z);
-            fxs.erupt(covered.map((p) => point(p)), look.color);
+            cast(ev.id, ev.name, point(covered[0]).x, point(covered[0]).z, () => fxs.erupt(covered.map((p) => point(p)), look.color));
           } else if (look.kind === "ring") {
-            fxs.ring(point(user.pos, 0.05), ev.what === "attack" ? 3.6 : covered.length > 6 ? 3.6 : 1.9, look.color);
+            // Struck all round (a song, played): the ring goes out as the blow lands.
+            const ring = () => fxs.ring(point(user.pos, 0.05), ev.what === "attack" ? 3.6 : covered.length > 6 ? 3.6 : 1.9, look.color);
+            if (view) view.burst(ev.id, ev.name, ABILITIES[ev.what]?.stat === "int_stat", ring);
+            else ring();
+          } else if (look.kind === "bless") {
+            // A guard is braced behind; a heal or a blessing is played or cast, toward whoever it is for.
+            const whom = ev.target && ev.target !== ev.id ? find(ev.target) : null;
+            if (ev.what === "shield_wall" || ev.what === "hold_the_line") view?.brace(ev.id);
+            else view?.bless(ev.id, whom ? point(whom.pos) : null);
           }
         });
       } else if (ev.t === "roll") {
@@ -369,18 +383,23 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
           const fxs = spells.current;
           if (kind === "melee") return view?.blow(ev.actor!, ev.target, what, { crit: hit && ev.crit, landed: hit, onImpact: mark });
           if (fxs && from && to && (kind === "arrow" || kind === "bolt")) {
-            view?.cast(ev.actor!, what, to.x, to.z);
             // A miss flies wide of the mark.
             const end = hit ? to : to.clone().add(new THREE.Vector3(0.7, 0.5, 0.5));
-            fxs.launch(kind, from, end, color, () => {
+            cast(ev.actor!, what, to.x, to.z, () =>
+              fxs.launch(kind, from, end, color, () => {
+                view?.landed(ev.target, what, hit, hit && ev.crit, ev.actor);
+                mark();
+              }),
+            );
+            return;
+          }
+          if (fxs && chained && to && kind === "spark") {
+            cast(ev.actor!, what, to.x, to.z, () => {
+              fxs.spark([chained, to], color);
               view?.landed(ev.target, what, hit, hit && ev.crit, ev.actor);
               mark();
             });
             return;
-          }
-          if (fxs && chained && to && kind === "spark") {
-            view?.cast(ev.actor!, what, to.x, to.z);
-            fxs.spark([chained, to], color);
           }
           if (kind !== "none") view?.landed(ev.target, what, hit, hit && ev.crit, ev.actor);
           mark();
