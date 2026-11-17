@@ -9,7 +9,7 @@
 // sky.
 
 import * as THREE from "three";
-import { cobbleTexture, floorTexture, pierTexture } from "./groundArt";
+import { cobbleTexture, flagstoneTexture, floorTexture, pierTexture } from "./groundArt";
 import { devTools } from "../devTools";
 import { fancy, fancyGrass } from "./fancy";
 import { WIND_DIR, addFieldSway, gustAt, setFieldCalm, windPower } from "./wind";
@@ -712,6 +712,8 @@ export class Ambience {
   readonly sunDir = new THREE.Vector3(-0.4, 0.8, 0.4);
   /** A hut's hanging lamp over the middle of the room, which its owner can put out. */
   private lamp = new THREE.PointLight("#ffd7a1", 0, 0, 0);
+  /** What a room's floor is laid with: boards, as in the huts and the pub, or flagstones (the smithy). Read when the ground is built. */
+  floorLook: "planks" | "flags" = "planks";
   /** Whether the hut's hanging lamp is lit. Off, the room is lit only by its candles, lanterns and fires. */
   private lampOn = true;
   /**
@@ -1075,7 +1077,7 @@ export class Ambience {
       mesh.receiveShadow = true;
       this.group.add(mesh);
     };
-    lay("floor", floorTexture());
+    lay("floor", this.floorLook === "flags" ? flagstoneTexture() : floorTexture());
     lay("cobble", cobbleTexture());
     lay("dock", pierTexture());
     // The Harbor's grass is drabbed by the wet, as the renderer does for every grass tile in a port.
@@ -1962,6 +1964,9 @@ export class Ambience {
   private roomLook(l: RoomLight, clock: number, motion: number): { color: string; distance: number; decay: number; intensity: number } {
     const wave = this.waver(clock, Math.abs(Math.floor(l.pos.x * 13 + l.pos.z * 7)) % 7, motion);
     // The great fire reaches across the room, falling off gently, so it throws long shadows over the floor.
+    // In a gloomy room (the smithy's forge, lamp out) the great fire is a deep, strong pool a few hexes across, not a
+    // light for the whole room, so the corners stay dark.
+    if (l.main && this.gloom && !this.lampOn) return { color: "#ff8a3c", distance: 7.5, decay: 2, intensity: 4.4 * wave };
     if (l.main) return { color: "#ff9a4c", distance: 14, decay: 1.15, intensity: 3.4 * wave };
     if (l.kind === "fire") return this.gloom && !this.lampOn ? { color: "#ff9548", distance: 4.5, decay: 2, intensity: 2.4 * wave } : { color: "#ff9548", distance: 6, decay: 2, intensity: 3.2 * wave };
     const look = GLOW[l.kind];

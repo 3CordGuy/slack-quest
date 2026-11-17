@@ -11,7 +11,7 @@ import { makeModelShip } from "./modelShip";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { reportEnv } from "../ui/env";
 import { makeRenderer } from "./graphics";
-import { panelTexture } from "./groundArt";
+import { apothecaryWallTexture, panelTexture, smithyWallTexture } from "./groundArt";
 import { Ambience, type RoomLight, TILE_FILLET, TILE_RADIUS, TORCH_LIFT, beaconShine, dryPatch, hexTop, meadowAt, pixelTexture, stamp, tallGrass, type BuildingGlow } from "./ambience";
 import "./camera.css";
 import { PINCH_PAN_SLACK, followIconSvg, readFollow, writeFollow } from "./cameraFollow";
@@ -114,6 +114,10 @@ export interface RenderState {
   lampOff?: boolean;
   /** With `lampOff`: a room kept dim for the mood of it, each small light a pool with dark between (the apothecary's shop). */
   gloom?: boolean;
+  /** How a room's walls are dressed inside: the pub's oak and plaster, the smithy's stone and sooted timber, the apothecary's green wainscot and paper. The pub's is the default for the pub; other rooms have bare walls without it. */
+  walls?: WallDressing;
+  /** What a room's floor is laid with: boards (the default) or flagstones (the smithy). */
+  floor?: "planks" | "flags";
   /** Your gathering outings, shown as lightning bolts on your own plate. */
   stamina?: { left: number; max: number };
   /** A piece being carried: a ghost of it follows the pointer, and a click sets it down (RendererCallbacks.onPlace). */
@@ -125,6 +129,10 @@ export interface RenderState {
    */
   homeYaw?: number;
 }
+
+/** The ways a room's walls can be dressed inside (see RenderState.walls). */
+export type WallDressing = "pub" | "smithy" | "apothecary";
+const WALL_DRESSINGS: Record<WallDressing, () => THREE.CanvasTexture> = { pub: panelTexture, smithy: smithyWallTexture, apothecary: apothecaryWallTexture };
 
 /** An enemy standing on a hex of its own. */
 export interface RenderUnit {
@@ -1162,6 +1170,7 @@ export class WorldRenderer {
     const first = this.mapCode !== state.code;
     // The ground is redrawn for a new map, and whenever fog lifts off more of this one.
     const lifted = state.map.tiles.reduce((n, t) => n + (t.biome === "fog" ? 0 : 1), 0);
+    this.ambience.floorLook = state.floor ?? "planks";
     if (first || lifted !== this.lifted) this.buildTerrain(state, first);
     if (first) this.buildPanes(state);
     if (first) this.buildWallPanels(state);
@@ -1506,6 +1515,11 @@ export class WorldRenderer {
     if (!unit || unit.lying) return;
     if (toward) this.face(unit, toward.x, toward.z);
     if (!unit.figure.play()) unit.figure.cast();
+  }
+
+  /** How high a room's floor is in the world: what stands on it stands this far up. */
+  floorTop(): number {
+    return FLOOR_TOP;
   }
 
   /**
@@ -2217,8 +2231,13 @@ export class WorldRenderer {
   private buildWallPanels(state: RenderState) {
     for (const panel of this.wallPanels.children) (panel as THREE.Mesh).geometry.dispose();
     this.wallPanels.clear();
-    if (state.kind !== "pub") return;
-    const material = (this.panelMaterial ??= new THREE.MeshLambertMaterial({ map: panelTexture() }));
+    const dressing = state.walls ?? (state.kind === "pub" ? "pub" : null);
+    if (!dressing) return;
+    let material = this.panelMaterials.get(dressing);
+    if (!material) {
+      material = new THREE.MeshLambertMaterial({ map: WALL_DRESSINGS[dressing]() });
+      this.panelMaterials.set(dressing, material);
+    }
     const byWall = new Map<string, number[][]>();
     for (const f of wallFaces(state.map)) {
       const tile = tileAt(state.map, f.pos);
@@ -2250,7 +2269,8 @@ export class WorldRenderer {
       this.wallPanels.add(mesh);
     }
   }
-  private panelMaterial: THREE.MeshLambertMaterial | null = null;
+  /** One material for each way of dressing walls, made the first time it is wanted. */
+  private panelMaterials = new Map<WallDressing, THREE.MeshLambertMaterial>();
 
   private buildPanes(state: RenderState | null) {
     for (const pane of this.panes.children) {

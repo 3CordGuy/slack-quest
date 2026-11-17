@@ -70,6 +70,11 @@ export class Builder {
     return this.mesh(new THREE.BoxGeometry(w, h, d), new THREE.MeshLambertMaterial({ color, flatShading: true }), x, y + h / 2, z);
   }
 
+  /** A box of fieldstone (see stoneMaterial), tinted, whose base sits at `y`. */
+  stone(tint: string, w: number, h: number, d: number, x = 0, y = 0, z = 0): THREE.Mesh {
+    return this.mesh(new THREE.BoxGeometry(w, h, d), stoneMaterial(tint), x, y + h / 2, z);
+  }
+
   /** An upright cylinder (or, with different radii, a tapered post) whose base sits at `y`. */
   post(color: string, top: number, bottom: number, h: number, x = 0, y = 0, z = 0, sides = 6): THREE.Mesh {
     return this.mesh(new THREE.CylinderGeometry(top, bottom, h, sides), new THREE.MeshLambertMaterial({ color, flatShading: true }), x, y + h / 2, z);
@@ -409,6 +414,25 @@ const MODELS: Record<string, (b: Builder) => void> = {
     b.box(IRON, 0.2, 0.1, 0.1, 0.3, 0.6, 0.16);
     b.box(DARK_WOOD, 0.05, 0.05, 0.3, 0.3, 0.63, 0.3);
   },
+  // The same bench with a lantern standing on it, for working by: the smithy keeps its lamp out (see keepers.ts).
+  workbench_lit(b) {
+    MODELS.workbench(b);
+    const [x, y, z] = [-0.15, 0.6, -0.18];
+    b.box("#b87333", 0.15, 0.03, 0.15, x, y, z);
+    b.glow("#ffd98a", new THREE.BoxGeometry(0.11, 0.13, 0.11), x, y + 0.095, z);
+    for (const [dx, dz] of [[-0.065, -0.065], [0.065, -0.065], [-0.065, 0.065], [0.065, 0.065]]) b.box("#8a5a2a", 0.02, 0.13, 0.02, x + dx, y + 0.03, z + dz);
+    b.cone("#b87333", 0.11, 0.07, x, y + 0.16, z);
+    b.box("#8a5a2a", 0.1, 0.02, 0.02, x, y + 0.25, z);
+    b.light("lamp", x, y + 0.12, z + 0.1);
+  },
+  // A barrel with a candle stuck on its head in its own wax.
+  barrel_lit(b) {
+    MODELS.barrel(b);
+    b.post(CLOTH, 0.05, 0.07, 0.03, 0.06, 0.78, 0.04, 6);
+    b.post(CLOTH, 0.035, 0.04, 0.16, 0.06, 0.78, 0.04, 6);
+    b.flame("#ffd98a", 0.04, 0.07, 0.04, 0.06, 0.94, 0.04);
+    b.light("candle", 0.06, 1.04, 0.04);
+  },
   weapon_rack(b) {
     for (const x of [-0.45, 0.45]) b.box(DARK_WOOD, 0.08, 1.05, 0.14, x, 0, -0.1);
     b.box(WOOD, 0.98, 0.07, 0.1, 0, 0.3, -0.1);
@@ -422,26 +446,86 @@ const MODELS: Record<string, (b: Builder) => void> = {
     b.box(IRON, 0.22, 0.2, 0.04, 0.32, 0.68, -0.02);
   },
   // ---- the smithy and the apothecary (packages/world/src/keepers.ts): fittings, never sold ----
-  // The forge: a stone hearth at waist height with a bed of coals, under a sooty hood that runs up the back wall,
-  // and the bellows beside it.
+  /**
+   * The forge, against the back wall: a fieldstone hearth at waist height with an arched mouth glowing in its face,
+   * an iron-bound rim, and on top a deep bed of coals, red at the edges and white-hot at the heart, with a bar of
+   * iron heating in it. Over it a tapered hood of riveted iron with a copper band, on iron posts, a rail of tongs, a
+   * hammer and a poker hung from it, and a fieldstone chimney going up the wall. Leather bellows on its right.
+   * Its fire is the room's great fire.
+   */
   forge(b) {
-    b.box(STONE, 1.3, 0.56, 0.86, 0, 0, -0.06);
-    b.box("#7d796f", 1.36, 0.1, 0.92, 0, 0.56, -0.06);
-    b.box("#2a2623", 0.96, 0.06, 0.56, 0, 0.64, -0.04);
-    b.box("#c4421c", 0.8, 0.04, 0.42, 0, 0.68, -0.04);
-    for (const [x, z] of [[-0.24, -0.1], [0.06, 0.04], [0.26, -0.12], [-0.06, -0.16]]) b.box("#3a3632", 0.14, 0.07, 0.12, x, 0.7, z);
-    for (const [color, w, h, x, z] of [["#ff5a1a", 0.14, 0.3, -0.18, -0.06], ["#ff7a24", 0.16, 0.4, 0.02, -0.02], ["#ff6a1f", 0.13, 0.28, 0.2, -0.08], ["#ffb83a", 0.1, 0.24, -0.06, 0.04], ["#ffe27a", 0.07, 0.14, 0.1, 0.06]] as const) {
-      b.flame(color, w, h, w * 0.7, x, 0.7, z);
+    const SOOT = "#2a2623";
+    const HOOD = "#3d3a38";
+    const COPPER = "#b87333";
+    // The hearth: a plinth, the body, and an iron-bound rim with rivets along the front.
+    b.stone("#8d8674", 1.46, 0.12, 0.98, 0, 0, -0.06);
+    b.stone("#a39888", 1.32, 0.5, 0.86, 0, 0.12, -0.06);
+    b.box("#5a5550", 1.4, 0.08, 0.94, 0, 0.62, -0.06);
+    b.box(IRON, 1.42, 0.05, 0.02, 0, 0.64, 0.42);
+    for (let i = 0; i < 7; i++) b.ball("#8b95a5", 0.016, -0.6 + i * 0.2, 0.665, 0.435, 0);
+    // The arched mouth in its face: a sooty recess with embers glowing in it, under an arch of red brick.
+    b.box(SOOT, 0.46, 0.26, 0.03, 0, 0.16, 0.36);
+    b.glow("#c4421c", new THREE.BoxGeometry(0.4, 0.05, 0.02), 0, 0.2, 0.38);
+    b.glow("#ff8a2a", new THREE.BoxGeometry(0.22, 0.03, 0.02), 0, 0.22, 0.385);
+    for (let k = 0; k <= 6; k++) {
+      const a = Math.PI * (k / 6);
+      const brick = b.box("#a8513a", 0.09, 0.06, 0.05, 0, 0, 0.375);
+      brick.position.set(-Math.cos(a) * 0.27, 0.36 + Math.sin(a) * 0.12, 0.375);
+      brick.rotation.z = a - Math.PI / 2;
     }
-    // The hood and its flue, up the wall.
-    for (const x of [-0.6, 0.6]) b.box("#4a4640", 0.1, 0.7, 0.1, x, 0.66, -0.42);
-    b.box("#3a3632", 1.36, 0.4, 0.7, 0, 1.36, -0.16);
-    b.box("#2e2a27", 0.6, 0.9, 0.44, 0, 1.76, -0.26);
-    // Bellows on the right: two boards, a leather bag between and a nozzle into the coals.
-    b.box(DARK_WOOD, 0.3, 0.05, 0.44, 0.84, 0.46, 0.06);
-    b.box("#6b4a34", 0.26, 0.14, 0.38, 0.84, 0.51, 0.06);
-    b.box(DARK_WOOD, 0.3, 0.05, 0.44, 0.84, 0.65, 0.06);
-    b.box(IRON, 0.2, 0.05, 0.05, 0.66, 0.56, 0.02);
+    // The bed of coals on top: dark at the rim, red through, a hot orange core and a white heart, lumps over it.
+    b.box(SOOT, 0.98, 0.05, 0.56, 0, 0.7, -0.06);
+    b.glow("#b8361a", new THREE.BoxGeometry(0.86, 0.03, 0.46), 0, 0.745, -0.06);
+    b.glow("#ff7a24", new THREE.BoxGeometry(0.5, 0.035, 0.28), 0, 0.75, -0.06);
+    b.glow("#ffd27a", new THREE.BoxGeometry(0.2, 0.04, 0.12), 0.04, 0.755, -0.06);
+    for (const [x, z, r] of [[-0.36, -0.2, 0.06], [-0.28, 0.12, 0.05], [0.34, -0.16, 0.06], [0.38, 0.1, 0.05], [-0.12, -0.26, 0.05], [0.16, 0.16, 0.045], [-0.4, -0.02, 0.05]]) b.ball("#2f2b29", r, x, 0.77, z, 0);
+    // A bar of iron heating in the coals, white-hot at its end, and its cool end and handle sticking out to the right.
+    const hot = b.glow("#ffb347", new THREE.BoxGeometry(0.34, 0.035, 0.035), 0.06, 0.785, -0.02);
+    hot.rotation.y = -0.25;
+    b.glow("#fff0c0", new THREE.BoxGeometry(0.1, 0.038, 0.038), -0.06, 0.786, 0.01);
+    const cool = b.box("#4a4e58", 0.36, 0.03, 0.03, 0.4, 0.77, -0.09);
+    cool.rotation.y = -0.25;
+    // Soft flames licking up off the coals.
+    for (const [color, radius, height, x, z] of [["#ff5a14", 0.1, 0.36, -0.18, -0.08], ["#ff7a24", 0.11, 0.46, 0.02, -0.04], ["#ff6a1c", 0.09, 0.32, 0.22, -0.1], ["#ffb84a", 0.06, 0.26, -0.04, 0.02], ["#ffe08a", 0.04, 0.16, 0.06, -0.02]] as const) {
+      b.softFlame(color, radius, height, x, 0.76, z);
+    }
+    // The hood: iron posts at the front corners, a copper band round its foot, the tapered hood itself with rivets,
+    // and the chimney up the wall behind.
+    for (const x of [-0.62, 0.62]) b.box(IRON, 0.06, 0.56, 0.06, x, 0.68, 0.34);
+    b.box(COPPER, 1.34, 0.07, 0.86, 0, 1.22, -0.08);
+    const hood = b.post(HOOD, 0.3, 0.86, 0.58, 0, 1.28, -0.12, 4);
+    hood.rotation.y = Math.PI / 4;
+    hood.scale.z = 0.72;
+    for (let i = 0; i < 5; i++) b.ball("#8b95a5", 0.018, -0.36 + i * 0.18, 1.36, 0.25, 0);
+    b.stone("#8d8674", 0.5, 0.92, 0.42, 0, 1.78, -0.22);
+    b.box("#5a5550", 0.6, 0.07, 0.5, 0, 2.7, -0.22);
+    // A rail along the copper band, and the smith's tools hung from it: tongs, a hammer, a poker.
+    b.box(IRON, 1.12, 0.025, 0.025, 0, 1.12, 0.37);
+    for (const [x, kind] of [[-0.4, "tongs"], [-0.12, "hammer"], [0.18, "poker"], [0.44, "tongs"]] as const) {
+      b.box(IRON, 0.012, 0.06, 0.012, x, 1.06, 0.37);
+      if (kind === "tongs") {
+        for (const s of [-1, 1]) {
+          const leg = b.box("#4a4e58", 0.018, 0.4, 0.018, x, 0.66, 0.38);
+          leg.rotation.z = s * 0.07;
+        }
+      } else if (kind === "hammer") {
+        b.box(PALE_WOOD, 0.025, 0.3, 0.025, x, 0.76, 0.38);
+        b.box("#5b606c", 0.13, 0.07, 0.07, x, 0.7, 0.38);
+      } else {
+        b.box("#4a4e58", 0.02, 0.44, 0.02, x, 0.62, 0.38);
+        b.ring("#4a4e58", 0.035, 0.008, x, 1.05, 0.38);
+      }
+    }
+    // The bellows on the right: two shaped boards with brass studs, a leather bag between, a nozzle into the hearth,
+    // and the handles.
+    const [bx, by, bz] = [0.86, 0.44, 0.02];
+    b.box(DARK_WOOD, 0.32, 0.04, 0.5, bx, by, bz);
+    b.box("#6b4a34", 0.28, 0.16, 0.44, bx, by + 0.04, bz);
+    b.box(DARK_WOOD, 0.32, 0.04, 0.5, bx, by + 0.2, bz);
+    for (const [dx, dz] of [[-0.1, -0.15], [0.1, -0.15], [0, 0.12]]) b.ball(GOLD, 0.016, bx + dx, by + 0.245, bz + dz, 0);
+    b.box(COPPER, 0.22, 0.04, 0.04, bx - 0.2, by + 0.1, bz - 0.24);
+    b.box(DARK_WOOD, 0.05, 0.05, 0.22, bx, by + 0.22, bz + 0.34);
+    b.box(DARK_WOOD, 0.05, 0.44, 0.05, bx, 0, bz + 0.2);
     b.fire(0, 1.0, 0.5, true);
   },
   // Coal for the forge: an open-topped bin heaped with it, and a shovel leaning in the corner.
@@ -453,19 +537,34 @@ const MODELS: Record<string, (b: Builder) => void> = {
     b.post(PALE_WOOD, 0.02, 0.02, 0.8, 0.36, 0.1, 0.24, 5).rotation.z = -0.25;
     b.box(IRON, 0.16, 0.18, 0.03, 0.44, 0.02, 0.24);
   },
-  // The anvil, on an oak stump: the body waisted, a horn to the left and the heel to the right, with the hammer lying on it.
+  // The anvil, standing on its own cast-iron foot: a broad base and a waisted pedestal up to the body, a horn to the
+  // left and the heel to the right, its face polished bright. On the face a sword blade being forged, glowing from
+  // the fire: white-hot where the hammer falls, orange to dull red along it, its tang cooling grey over the heel.
   anvil(b) {
-    b.post("#6b4a2e", 0.3, 0.34, 0.4, 0, 0, 0, 8);
-    b.post("#4a321c", 0.31, 0.31, 0.04, 0, 0.36, 0, 8);
-    b.box("#3d4048", 0.4, 0.07, 0.3, 0, 0.4);
-    b.box("#4a4e58", 0.22, 0.14, 0.2, 0, 0.47);
-    b.box("#5b606c", 0.62, 0.12, 0.26, 0.04, 0.61);
-    const horn = b.cone("#5b606c", 0.09, 0.3, -0.42, 0.61, 0, 6);
+    b.box("#2f3238", 0.5, 0.06, 0.36);
+    for (const [x, z] of [[-0.2, -0.13], [0.2, -0.13], [-0.2, 0.13], [0.2, 0.13]]) b.box("#2f3238", 0.12, 0.04, 0.1, x, 0, z);
+    // Low, so the face is at about the smith's waist: the face at 0.44 above the floor.
+    const pedestal = b.post("#3d4048", 0.15, 0.24, 0.12, 0, 0.06, 0, 4);
+    pedestal.rotation.y = Math.PI / 4;
+    b.box("#3d4048", 0.4, 0.06, 0.3, 0, 0.18);
+    b.box("#4a4e58", 0.22, 0.08, 0.2, 0, 0.24);
+    b.box("#5b606c", 0.62, 0.11, 0.26, 0.04, 0.32);
+    const horn = b.cone("#5b606c", 0.085, 0.3, -0.42, 0.32, 0, 6);
     horn.rotation.z = Math.PI / 2;
-    horn.position.y = 0.67;
-    b.box("#8b95a5", 0.6, 0.012, 0.24, 0.04, 0.73);
-    b.box(IRON, 0.12, 0.1, 0.1, 0.18, 0.745, 0.02);
-    b.box(PALE_WOOD, 0.04, 0.04, 0.36, 0.18, 0.775, 0.2);
+    horn.position.y = 0.375;
+    b.box("#8b95a5", 0.6, 0.012, 0.24, 0.04, 0.43);
+    // The blade on the face: its glow in bands from white-hot where the hammer lands (toward the horn) to red at
+    // the point and the shoulders.
+    const y = 0.451;
+    b.glow("#b8361a", new THREE.BoxGeometry(0.5, 0.014, 0.05), -0.02, y, 0);
+    b.glow("#ff7a24", new THREE.BoxGeometry(0.3, 0.016, 0.052), -0.12, y + 0.001, 0);
+    b.glow("#ffd27a", new THREE.BoxGeometry(0.14, 0.018, 0.054), -0.15, y + 0.002, 0);
+    b.glow("#fff4d0", new THREE.BoxGeometry(0.05, 0.02, 0.056), -0.16, y + 0.003, 0);
+    const tip = b.glow("#b8361a", new THREE.ConeGeometry(0.026, 0.08, 4), -0.31, y, 0);
+    tip.rotation.z = Math.PI / 2;
+    // The tang, cooled to iron, running off over the heel.
+    b.box("#3a2a26", 0.08, 0.012, 0.03, 0.27, y - 0.006, 0);
+    b.box("#4a4e58", 0.16, 0.012, 0.022, 0.39, y - 0.006, 0);
   },
   // The quench: a half barrel of dark water, with a pair of tongs hooked over the rim.
   quench_tub(b) {
@@ -945,6 +1044,52 @@ const MODELS: Record<string, (b: Builder) => void> = {
       const guard = b.box(GOLD, 0.14, 0.03, 0.03, 0, 0, 0.075);
       guard.position.set(Math.sin(turn) * 0.2, -Math.cos(turn) * 0.2, 0.075);
       guard.rotation.z = turn;
+    }
+  },
+  // ---- the smithy's walls: her work hung up for sale (packages/world/src/keepers.ts). Each hangs from its top. ----
+  // A longsword hung point down between two pegs, with a red-wrapped grip and a brass guard.
+  wall_sword(b) {
+    for (const x of [-0.12, 0.12]) b.box(DARK_WOOD, 0.04, 0.04, 0.08, x, -0.3, 0.04);
+    b.ball(GOLD, 0.04, 0, -0.05, 0.06, 0);
+    b.box("#7a2f2f", 0.045, 0.18, 0.04, 0, -0.26, 0.06);
+    b.box(GOLD, 0.26, 0.04, 0.05, 0, -0.3, 0.06);
+    b.box("#cfd6e0", 0.07, 0.7, 0.02, 0, -1.0, 0.06);
+    b.box("#eef2f6", 0.02, 0.66, 0.022, 0, -0.98, 0.065);
+    b.cone("#cfd6e0", 0.05, 0.08, 0, -1.07, 0.06, 4).rotation.z = Math.PI;
+  },
+  // A round shield, red with an iron rim and boss, two axes crossed behind it.
+  wall_shield_axes(b) {
+    for (const turn of [0.65, -0.65]) {
+      const handle = b.box(DARK_WOOD, 0.035, 0.84, 0.03, 0, 0, 0.03);
+      handle.position.set(0, -0.42, 0.03);
+      handle.rotation.z = turn;
+      const head = b.box("#8b95a5", 0.18, 0.13, 0.025, 0, 0, 0.035);
+      head.position.set(-Math.sin(turn) * 0.36 + Math.cos(turn) * 0.06 * Math.sign(turn), -0.42 + Math.cos(turn) * 0.36 + Math.sin(turn) * 0.06 * Math.sign(turn), 0.035);
+      head.rotation.z = turn;
+    }
+    const face = b.post("#8a2f2a", 0.26, 0.26, 0.04, 0, 0, 0, 14);
+    face.rotation.x = Math.PI / 2;
+    face.position.set(0, -0.42, 0.07);
+    b.ring(IRON, 0.255, 0.022, 0, -0.42, 0.09);
+    for (const a of [0, Math.PI / 2, Math.PI, Math.PI * 1.5]) b.box(IRON, 0.02, 0.2, 0.012, Math.sin(a) * 0.12, -0.42 - 0.1 + Math.cos(a) * 0.12, 0.092).rotation.z = a;
+    b.ball(IRON, 0.06, 0, -0.42, 0.1, 1);
+  },
+  // A warhammer and a mace crossed, hung on a board.
+  wall_hammers(b) {
+    b.box(DARK_WOOD, 0.5, 0.12, 0.04, 0, -0.14, 0.02);
+    for (const [turn, kind] of [[0.5, "hammer"], [-0.5, "mace"]] as const) {
+      const haft = b.box(PALE_WOOD, 0.035, 0.78, 0.03, 0, 0, 0.06);
+      haft.position.set(0, -0.48, 0.06);
+      haft.rotation.z = turn;
+      const [hx, hy] = [-Math.sin(turn) * 0.34, -0.48 + Math.cos(turn) * 0.34];
+      if (kind === "hammer") {
+        const head = b.box("#5b606c", 0.22, 0.09, 0.08, 0, 0, 0.06);
+        head.position.set(hx, hy, 0.06);
+        head.rotation.z = turn;
+      } else {
+        b.ball("#5b606c", 0.08, hx, hy, 0.06, 0);
+        for (const a of [0, 1.6, 3.2, 4.8]) b.cone("#8b95a5", 0.025, 0.06, hx + Math.sin(a) * 0.08, hy - 0.03 + Math.cos(a) * 0.08, 0.06, 4);
+      }
     }
   },
   mounted_fish(b) {

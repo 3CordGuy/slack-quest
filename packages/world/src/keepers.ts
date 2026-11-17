@@ -14,7 +14,7 @@
 import type { HexGrid, HexPos } from "@gantt-quest/core";
 import { itemPrice, rollItem, type ItemDef, type Slot } from "./gear";
 import { harborPoi } from "./harbor";
-import { buildRoom, hutPath } from "./hutroom";
+import { HEX_DIRS, buildRoom, hutPath, wallFaces } from "./hutroom";
 import type { WorldMap } from "./map";
 import { makeRng, seedFromString } from "./rng";
 import { THROWABLE_KINDS } from "./zone/kit";
@@ -79,6 +79,42 @@ export interface KeeperPlace {
   fittings: KeeperFitting[];
   /** What the keeper is at, the whole time: they turn to it and work, and go on working while they deal with you. */
   work: KeeperWork;
+  /** Wall pieces to hang, one model each, spread along the back and side walls (see keeperWallPieces). */
+  wall?: string[];
+}
+
+/** A piece hung on a wall: on the wall hex `pos`, on its side `side` that faces the floor, its top `y` up from the floor. */
+export interface KeeperWallPiece {
+  id: number;
+  model: string;
+  pos: HexPos;
+  side: number;
+  y: number;
+}
+
+/** Wall pieces that give light: hung lower than the weapons, at about head height, so they light the wall round them. */
+const WALL_LIGHTS = new Set(["sconce", "wall_lantern"]);
+
+/** Fittings tall enough against a wall that nothing should hang over them. */
+const TALL = new Set(["forge", "weapon_rack", "armor_stand", "potion_shelf", "potion_shelf_lit", "herb_rack", "cupboard"]);
+
+/**
+ * Where a shop's wall pieces hang: spread evenly along the back and side walls, never over a tall fitting standing
+ * against the wall, and none on the door's side. The same every time.
+ */
+export function keeperWallPieces(shop: KeeperShop): KeeperWallPiece[] {
+  const place = KEEPER_PLACES[shop];
+  const models = place.wall ?? [];
+  if (models.length === 0) return [];
+  const tall = new Set(place.fittings.filter((f) => TALL.has(f.model)).map((f) => `${f.q},${f.r}`));
+  const faces = wallFaces(keeperRoom(shop))
+    .filter((f) => !tall.has(`${f.pos.q + HEX_DIRS[f.side].q},${f.pos.r + HEX_DIRS[f.side].r}`))
+    .sort((a, b) => a.pos.r - b.pos.r || a.pos.q - b.pos.q || a.side - b.side);
+  const step = faces.length / models.length;
+  return models.map((model, i) => {
+    const f = faces[Math.min(faces.length - 1, Math.floor(i * step + step / 2))];
+    return { id: 100 + i, model, pos: f.pos, side: f.side, y: WALL_LIGHTS.has(model) ? 1.35 : 1.72 };
+  });
 }
 
 /**
@@ -98,6 +134,8 @@ export const KEEPER_PLACES: Record<KeeperShop, KeeperPlace> = {
     keeperPos: KEEPER_POS,
     stand: KEEPER_STAND,
     work: { how: "hammer", fitting: 3 },
+    // Her work hung up round the walls for customers to see, with iron sconces and a lantern between, for the look of it.
+    wall: ["wall_sword", "sconce", "wall_shield_axes", "crossed_blades", "wall_lantern", "wall_hammers", "sconce", "wall_sword", "wall_shield_axes"],
     fittings: [
       // The forge against the back wall behind her, the coal beside it, the anvil close before her (she faces it, to
       // her left as you look) and the quench behind her.
@@ -110,9 +148,10 @@ export const KEEPER_PLACES: Record<KeeperShop, KeeperPlace> = {
       fit(5, "weapon_rack", 1, 1),
       fit(6, "armor_stand", 6, 1),
       fit(7, "grindstone", 7, 2),
-      fit(8, "workbench", 1, 3),
+      // The lamp is kept out here too: the forge, a lantern on the bench and a candle on the barrel light the shop.
+      fit(8, "workbench_lit", 1, 3),
       fit(9, "crate", 1, 5),
-      fit(10, "barrel", 6, 5),
+      fit(10, "barrel_lit", 6, 5),
     ],
   },
   apothecary: {
@@ -122,6 +161,8 @@ export const KEEPER_PLACES: Record<KeeperShop, KeeperPlace> = {
     keeperPos: KEEPER_POS,
     stand: KEEPER_STAND,
     work: { how: "stir", fitting: 3 },
+    // Candles in iron sconces round the walls: small pools of light on the green panelling and the paper.
+    wall: ["sconce", "sconce", "sconce", "sconce"],
     fittings: [
       // Shelves of bottles along the back wall, the cauldron close before him (he faces it, to his left as you look)
       // and the counter with the scales behind him.

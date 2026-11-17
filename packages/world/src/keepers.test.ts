@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { HAGGLE_ASKS, KEEPER_PLACES, KEEPER_SHOPS, forgeStock, haggleChance, haggleLine, haggleOutcome, haggledPrice, keeperPath, keeperRoom, smithyCost } from "./index";
+import { HAGGLE_ASKS, HEX_DIRS, KEEPER_PLACES, KEEPER_SHOPS, keeperWallPieces, forgeStock, haggleChance, haggleLine, haggleOutcome, haggledPrice, keeperPath, keeperRoom, smithyCost } from "./index";
 
 describe("the keepers' rooms", () => {
   it("lets a customer walk from the door to the keeper in both shops, around the fittings", () => {
@@ -15,6 +15,25 @@ describe("the keepers' rooms", () => {
         expect(keeperPath(shop, room, door, f)).toBeNull();
       }
     }
+  });
+});
+
+describe("the smithy's walls", () => {
+  it("hangs each weapon and light on its own spot of a back or side wall, facing the floor and not over the forge or a rack", () => {
+    const room = keeperRoom("smithy");
+    const pieces = keeperWallPieces("smithy");
+    expect(pieces).toHaveLength(KEEPER_PLACES.smithy.wall!.length);
+    expect(new Set(pieces.map((p) => `${p.pos.q},${p.pos.r},${p.side}`)).size).toBe(pieces.length);
+    const tall = KEEPER_PLACES.smithy.fittings.filter((f) => ["forge", "weapon_rack", "armor_stand"].includes(f.model)).map((f) => `${f.q},${f.r}`);
+    for (const p of pieces) {
+      expect(room.tiles.find((t) => t.q === p.pos.q && t.r === p.pos.r)?.biome).toBe("wall");
+      const front = { q: p.pos.q + HEX_DIRS[p.side].q, r: p.pos.r + HEX_DIRS[p.side].r };
+      expect(room.tiles.find((t) => t.q === front.q && t.r === front.r)?.biome).toBe("floor");
+      expect(tall).not.toContain(`${front.q},${front.r}`);
+    }
+    // The apothecary's walls have only candles, hung lower than the smith's weapons.
+    expect(keeperWallPieces("apothecary").map((p) => p.model)).toEqual(KEEPER_PLACES.apothecary.wall);
+    for (const p of keeperWallPieces("smithy")) expect(p.y).toBe(p.model === "sconce" || p.model === "wall_lantern" ? 1.35 : 1.72);
   });
 });
 

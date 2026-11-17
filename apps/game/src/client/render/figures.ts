@@ -1986,12 +1986,22 @@ function biped(top: THREE.Group, parts: Part[], elbow = ELBOW) {
       // the body bowing and the knees giving behind the blow; the other hand holds the work steady with the tongs.
       const up = along(HAMMER.up, t);
       const side = armR.joint.position.x;
-      bow((0.22 - 0.3 * up) * w, 0.12 * up * w);
-      knees((0.16 * (1 - up)) * w);
-      head.joint.rotation.x += 0.22 * w;
-      sweep.grip.set(side * 0.7, 4.4 + 4.8 * up, 3.4 - 2.2 * up);
-      sweep.dir.set(0, -0.3 + 0.85 * up, 1 - 1.85 * up).normalize();
-      wield(w, true);
+      // The anvil stands low, at the knuckles: the blow comes down to it with a bend at the waist and knees.
+      bow((0.16 - 0.24 * up) * w, 0.12 * up * w);
+      knees((0.12 * (1 - up)) * w);
+      head.joint.rotation.x += 0.26 * w;
+      // At the bottom of the blow the hammer's face stops on the work on her anvil, whose face is 0.44 above the
+      // floor (measured in the smithy, against the anvil itself); raised, it is up over her head.
+      sweep.grip.set(side * 0.7, 6.8 + 3.8 * up, 3.6 - 2.4 * up);
+      // The handle stays in the plane of the swing (straight ahead and up), and the hammer's face (the head's +z)
+      // always leads, at right angles to the handle on the side it is swinging toward: raised, the face is to the
+      // sky; at the blow the handle is level and the face comes straight down on the anvil. Never rolled sideways.
+      sweep.dir.set(0, -0.12 + 0.95 * up, 1 - 1.8 * up).normalize();
+      sweep.lead.set(0, -sweep.dir.z, sweep.dir.y);
+      sweep.side.crossVectors(sweep.dir, sweep.lead);
+      sweep.m.makeBasis(sweep.side, sweep.dir, sweep.lead);
+      sweep.want.setFromRotationMatrix(sweep.m);
+      carry();
       if (levels.length === 0) reach(armL.joint, foreL.joint, -elbow, elbow - fist, sweep.grip.set(-side * 0.5, 4.3, 3.6), sweep.poleL, w);
       return;
     }

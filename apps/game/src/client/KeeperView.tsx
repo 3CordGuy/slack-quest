@@ -12,7 +12,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import { hexNeighbors, type HexPos } from "@gantt-quest/core";
-import { KEEPER_GRID, KEEPER_PLACES, keeperPath, keeperRoom, outfitOf, type KeeperShop } from "@gantt-quest/world";
+import { KEEPER_GRID, KEEPER_PLACES, keeperPath, keeperRoom, keeperWallPieces, outfitOf, type KeeperShop } from "@gantt-quest/world";
 import { api, type ApothecaryView, type Me, type SmithyView } from "./api";
 import { useAudioScene } from "./audio/useAudioScene";
 import { InventoryScreen } from "./InventoryScreen";
@@ -79,11 +79,19 @@ export function KeeperView({ shop, me, refresh, onLeave }: { shop: KeeperShop; m
       npcs: {},
       freeRoam: true,
       indoors: true,
-      // The apothecary keeps his lamp out and his shop dim: pools of candlelight, the cauldron's fire and the green
-      // glow of the brew, with dark between.
-      lampOff: shop === "apothecary",
-      gloom: shop === "apothecary",
-      props: place.fittings.map((f) => ({ id: f.id, model: f.model, pos: { q: f.q, r: f.r }, facing: f.facing, x: f.x, z: f.z })),
+      // Both keepers keep the lamp out and the shop dim, lit in pools with dark between: the apothecary by candles,
+      // the cauldron's fire and the green glow of the brew; the smithy by the forge, a lantern and a candle.
+      lampOff: true,
+      gloom: true,
+      // Each shop's walls dressed to its trade: rough stone and sooted timber; green wainscot and old printed paper.
+      walls: shop,
+      // A forge stands on stone: the smithy is flagged; the apothecary keeps his boards.
+      floor: shop === "smithy" ? "flags" : "planks",
+      props: [
+        ...place.fittings.map((f) => ({ id: f.id, model: f.model, pos: { q: f.q, r: f.r }, facing: f.facing, x: f.x, z: f.z })),
+        // What hangs on the walls (the smith's weapons), each on its wall hex's side facing the room.
+        ...keeperWallPieces(shop).map((w) => ({ id: w.id, model: w.model, pos: w.pos, facing: w.side, mount: true, x: 0, y: w.y })),
+      ],
     }),
     [shop, you, room, c.class_id, c.name, c.level, c.xp, pos, outfit, keeper, place],
   );
@@ -127,7 +135,8 @@ export function KeeperView({ shop, me, refresh, onLeave }: { shop: KeeperShop; m
       const wait = r.work(keeper.id, place.work.how, at);
       if (place.work.how === "hammer" && wait > 0) {
         later(() => {
-          sparks.burst(new THREE.Vector3(at.x, 0.78, at.z), "#ffb84a", 7);
+          // Off the work on the anvil's face, which stands on the floor (its top, not 0).
+          sparks.burst(new THREE.Vector3(at.x, r.floorTop() + 0.47, at.z), "#ffb84a", 7);
           audio.play("gather.pick", { at });
         }, wait * 1000);
       }
