@@ -23,7 +23,7 @@ import { THROWABLE_KINDS, ZONE_CLIENT_ACTIONS, createZone, ensureMouth, stepZone
 import { consumablesOf, gainConsumables, kitStatements, spendConsumables, type Consumables } from "./consumables";
 import { applyZoneGrant, crewFor, heroInitFor, refreshHarbor, type Env } from "./db";
 import { isDev } from "./dev";
-import { clearNode } from "./atlas";
+import { addStone, clearNode } from "./atlas";
 import { clearPresence, getZoneRow, saveZoneStatement, setPresence, zoneStatus } from "./zones";
 
 /** How long a turn in a fight may take before it ends itself. */
@@ -283,6 +283,8 @@ export class ZoneRoom extends DurableObject<Env> {
     for (const effect of res.effects) {
       if (effect.type !== "grant") continue;
       const { place } = await applyZoneGrant(db, effect.heroId, effect);
+      // A lodestone found in a bounty is the crew's: into their case, with the atlas.
+      if (effect.stone && this.landfall) await addStone(db, this.landfall.crewId, effect.stone);
       // A full pack never loses what was found, but the hero hears where it went.
       if (effect.item && (place === "storage" || place === "overfull")) res.events.push({ t: "stowed", id: effect.heroId, item: effect.item.name, place });
       // The roster shows each hero's level.

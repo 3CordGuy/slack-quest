@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { hexDistance } from "@gantt-quest/core";
 import { ATLAS_HOME, ATLAS_SPACING, atlasCell, atlasClime, atlasLevel, atlasModCount, atlasNode, atlasNodeById, atlasOpen, atlasView, nodeOptions, type AtlasCell, type AtlasNode } from "./atlas";
 import { CLIMES } from "./map";
+import { ENEMIES } from "./content";
 import { ZONE_MODS, createZone, generateZone, standInHero, stepZone, zoneOptions, zoneReach } from "./zone";
 
 const SEEDS = ["CREWAA", "CREWBB", "ZGHPQH"];
@@ -100,7 +101,8 @@ describe("the chart", () => {
     for (const seed of SEEDS) {
       for (const n of nodes(seed, 9)) {
         if (n.ring === 0) continue;
-        expect(n.level).toBe(atlasLevel(n.ring));
+        // A lair is a level above its ring.
+        expect(n.level).toBe(atlasLevel(n.ring + (n.kind === "lair" ? 1 : 0)));
         const [lo, hi] = atlasModCount(n.ring);
         expect(n.mods.length).toBeGreaterThanOrEqual(lo);
         expect(n.mods.length).toBeLessThanOrEqual(hi);
@@ -292,5 +294,40 @@ describe("the climates", () => {
     expect(zoneOptions({ clime: "frost" }).clime).toBe("frost");
     expect(generateZone("plain", zoneOptions({})).map.tiles.some((t) => t.clime)).toBe(false);
     expect(generateZone("under", zoneOptions({ biome: "caves", clime: "frost" })).map.tiles.some((t) => t.clime)).toBe(false);
+  });
+});
+
+describe("lookouts and lairs", () => {
+  it("are out there from the second and third rings, a few in a hundred, and named for what they are", () => {
+    for (const seed of SEEDS) {
+      const all = nodes(seed, 14).filter((n) => n.ring > 0);
+      const share = (kind: AtlasNode["kind"]) => all.filter((n) => n.kind === kind).length / all.length;
+      expect(share("lookout"), seed).toBeGreaterThan(0.03);
+      expect(share("lookout"), seed).toBeLessThan(0.12);
+      expect(share("lair"), seed).toBeGreaterThan(0.03);
+      expect(share("lair"), seed).toBeLessThan(0.12);
+      expect(all.some((n) => n.ring < 2 && n.kind !== "landfall"), seed).toBe(false);
+      expect(all.some((n) => n.ring < 3 && n.kind === "lair"), seed).toBe(false);
+      for (const n of all.filter((n) => n.kind === "lookout")) expect(n.name).toMatch(/ (Lookout|Watch|Height|Crag|Beacon|Tor)$/);
+      for (const n of all.filter((n) => n.kind === "lair")) expect(n.name).toMatch(/ (Den|Lair|Warren|Roost|Hold|Maw)$/);
+    }
+  });
+
+  it("a lookout's map is high, broken ground; a lair's has the beast in it, alone, and a band besides", () => {
+    const seed = "CREWAA";
+    const all = nodes(seed, 14);
+    const lookout = all.find((n) => n.kind === "lookout")!;
+    expect(nodeOptions(seed, lookout, 2).elevation).toBe(3);
+    for (const lair of all.filter((n) => n.kind === "lair").slice(0, 6)) {
+      const options = nodeOptions(seed, lair, 3);
+      expect(options.groups).toBe(2);
+      expect(ENEMIES[options.kinds[0]].boss, lair.id).toBe(true);
+      expect(ENEMIES[options.kinds[1]].boss ?? false, lair.id).toBe(false);
+      expect(options.tier).toBe(lair.ring + 3);
+      const state = createZone("TEST", `lair:${lair.id}`, options);
+      const bosses = state.units.filter((u) => u.side === "enemy" && ENEMIES[u.kind].boss);
+      expect(bosses.length, lair.id).toBe(1);
+      expect(state.units.filter((u) => u.side === "enemy").length, lair.id).toBeGreaterThan(1);
+    }
   });
 });

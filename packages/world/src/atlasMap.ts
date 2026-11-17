@@ -43,9 +43,10 @@ export interface AtlasWorld {
 
 /** How far a window reaches from its middle, in hexes: further than the view sees before the distance is lost in mist. */
 export const ATLAS_VIEW = 62;
-/** How far the cloud is lifted round the Harbor and a cleared node, and round a node that is only open. */
+/** How far the cloud is lifted round the Harbor and a cleared node, round a node that is only open, and round a lookout the crew has cleared. */
 export const ATLAS_SIGHT = ATLAS_SPACING + 2;
 export const ATLAS_GLIMPSE = 2;
+export const ATLAS_FARSIGHT = ATLAS_SPACING * 3 + 1;
 /** How far past the lit ground the land is still handed over, to show through the cloud's edge. */
 export const ATLAS_RIM = 3;
 
@@ -99,7 +100,7 @@ export function atlasGround(seed: string, hex: HexPos, memo?: Map<string, number
 export function atlasWorld(seed: string, nodes: readonly AtlasNodeView[], centre: HexPos = { q: 0, r: 0 }, reach = ATLAS_VIEW): AtlasWorld {
   const memo = new Map<string, number>();
   // Only what a node near the window can light, or make of the ground, matters to it.
-  const known = nodes.flatMap((n) => (n.state !== "fogged" && hexDistance(n.hex, centre) <= reach + ATLAS_SIGHT + ATLAS_RIM ? [n] : []));
+  const known = nodes.flatMap((n) => (n.state !== "fogged" && hexDistance(n.hex, centre) <= reach + ATLAS_FARSIGHT + ATLAS_RIM ? [n] : []));
 
   // ---------- what stands where ----------
   /** The ground a node makes of the hexes round it, by world hex. */
@@ -142,7 +143,7 @@ export function atlasWorld(seed: string, nodes: readonly AtlasNodeView[], centre
   };
   const clear: AtlasWorld["clear"] = [];
   for (const n of known) {
-    const far = n.state === "open" ? ATLAS_GLIMPSE : ATLAS_SIGHT;
+    const far = n.state === "open" ? ATLAS_GLIMPSE : n.kind === "lookout" ? ATLAS_FARSIGHT : ATLAS_SIGHT;
     round(n.hex, far, lit);
     round(n.hex, far + ATLAS_RIM, shown);
     clear.push({ hex: n.hex, reach: far });

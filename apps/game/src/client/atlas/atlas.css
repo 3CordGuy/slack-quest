@@ -73,6 +73,28 @@
 .atlas-mods li.enemy { border-left-color: #e0453a; }
 .atlas-mods .small-note { font-size: 12px; color: var(--muted); }
 .atlas-pay { padding: 6px 8px; border: 1px solid var(--gold, #f4c64e); }
+/* What a lodestone set into the place has added: marked as the stone's. */
+.atlas-mods li.stone { background: rgba(63, 169, 255, 0.1); border-color: rgba(63, 169, 255, 0.55); }
+/* The crew's lodestones, to set into the place picked. */
+.atlas-stones { display: flex; flex-direction: column; gap: 6px; padding: 6px 8px; border: 1px solid rgba(63, 169, 255, 0.55); }
+.atlas-stones-head { font-family: var(--font-head, serif); }
+.atlas-stones ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.atlas-stones li { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.atlas-stone { display: flex; align-items: center; gap: 8px; min-width: 0; }
+/* The stone itself: a cut gem, brighter the more it carries. */
+.atlas-stone-gem { flex: none; width: 16px; height: 16px; rotate: 45deg; border: 2px solid #0d1020; background: linear-gradient(135deg, #cfe9ff, #3f8fd6 55%, #1c3f73); box-shadow: 0 0 0 1px rgba(160, 215, 255, 0.35); }
+.atlas-stone-gem.n2 { background: linear-gradient(135deg, #ffffff, #5fb8ff 50%, #2356a8); box-shadow: 0 0 8px rgba(110, 190, 255, 0.7); }
+.atlas-stone-gem.n3 { background: linear-gradient(135deg, #ffffff, #9fe0ff 45%, #3f7fe0); box-shadow: 0 0 12px 2px rgba(140, 210, 255, 0.9); }
+.atlas-stone-mod { margin-right: 6px; padding-left: 9px; position: relative; color: var(--muted); }
+.atlas-stone-mod::before { content: ''; position: absolute; left: 0; top: 0.42em; width: 6px; height: 6px; rotate: 45deg; background: #46b3bd; }
+.atlas-stone-mod.enemy::before { background: #e0453a; }
+/* What of a stone would not take in this place. */
+.atlas-stone-mod.spent { text-decoration: line-through; opacity: 0.55; }
+.atlas-stone-set { padding: 5px 8px; color: #d9f0ff; border: 1px solid rgba(63, 169, 255, 0.55); background: rgba(63, 169, 255, 0.1); }
+/* What kind of place it is, in what is written under it. */
+.atlas-what { padding: 0 5px; border-radius: 6px; font-weight: bold; }
+.atlas-what.lair { color: #fff; background: #8c2433; }
+.atlas-what.lookout { color: #2c2208; background: #e9dcae; }
 .atlas-go { display: flex; align-items: center; gap: 8px; }
 .atlas-tally, .atlas-even { font-family: var(--font-head, serif); color: var(--gold, #f4c64e); }
 .atlas-dev { margin-top: 4px !important; }

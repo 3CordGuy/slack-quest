@@ -51,3 +51,4 @@ export * from "./traits";
 export * from "./zone";
 export * from "./atlas";
 export * from "./atlasMap";
+export * from "./lodestone";

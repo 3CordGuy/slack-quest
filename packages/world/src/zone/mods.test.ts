@@ -10,6 +10,7 @@ import { DEFAULT_ZONE_OPTIONS, ZONE_GRIDS, zoneOptions } from "./gen";
 import { solid } from "./geometry";
 import { EXPLORE_ROUND_MS, enemyHp, enemyMove, enemyStrikes } from "./kit";
 import { bountyPay } from "./loot";
+import { cleanStone, stoneChance } from "../lodestone";
 import { MAX_MODS, ZONE_MODS, ZONE_MOD_IDS, cleanMods, modsOf, type ZoneModId } from "./mods";
 import { diceAverage } from "./rules";
 import { createZone, standInHero, stepZone } from "./zone";
@@ -190,6 +191,31 @@ function fight(options: Partial<ZoneState["options"]> = {}, level = 1): ZoneStat
 const win = (state: ZoneState, events: ZoneEvent[], effects: ZoneEffect[]) => must(state, { type: "dev", by: "ann", dev: { op: "end_fight" } }, events, effects);
 
 describe("the bounty for clearing a map the atlas made", () => {
+  it("turns up a lodestone for some and not for others, each one fit to keep; and a chart-less map never does", () => {
+    let found = 0;
+    const tries = 120;
+    for (let i = 0; i < tries; i++) {
+      const events: ZoneEvent[] = [];
+      const effects: ZoneEffect[] = [];
+      const start = fight({ tier: 6 });
+      start.rng = i * 9973 + 11;
+      win(start, events, effects);
+      const paid = effects[effects.length - 1];
+      const told = events.filter((e): e is Extract<ZoneEvent, { t: "spoils" }> => e.t === "spoils").pop()!;
+      expect(told.stone).toEqual(paid.stone);
+      if (!paid.stone) continue;
+      found++;
+      expect(cleanStone(paid.stone)).toEqual(paid.stone);
+      expect(paid.stone.length).toBeLessThanOrEqual(2);
+    }
+    expect(found / tries).toBeGreaterThan(stoneChance(6) - 0.15);
+    expect(found / tries).toBeLessThan(stoneChance(6) + 0.15);
+    // The fight's own pay has none, and nor has a map the atlas did not make.
+    const effects: ZoneEffect[] = [];
+    win(fight({}), [], effects);
+    expect(effects.some((e) => e.stone)).toBe(false);
+  });
+
   it("is paid to every player's hero on it and no stand-in, once", () => {
     const events: ZoneEvent[] = [];
     const effects: ZoneEffect[] = [];

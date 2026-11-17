@@ -20,11 +20,13 @@
 // It opens from above the cloud: the camera comes down and round while the
 // cloud parts outward from the Harbor. Picking a place shows what is known
 // of it and lights the way there from the Harbor; Set out goes to its map,
-// and coming back from one lands here again.
+// and coming back from one lands here again. Before setting out, one of the
+// crew's lodestones (packages/world/src/lodestone.ts) may be set into the
+// place: its map is made with what the stone carries added to its own.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { hexDistance, type HexPos } from "@gantt-quest/core";
-import { ATLAS_HOME, ATLAS_SPACING, ATLAS_VIEW, ZONE_MODS, atlasNodeById, atlasWorld, bountyPay, modsOf, type AtlasNode } from "@gantt-quest/world";
+import { ATLAS_HOME, ATLAS_SPACING, ATLAS_VIEW, LAIR_RINGS, ZONE_MODS, atlasNodeById, atlasTier, atlasWorld, bountyPay, modsOf, stoneKey, stoneName, stoneOn, stoneProblem, type AtlasNode, type Lodestone } from "@gantt-quest/world";
 import { api, type Chart, type ChartNode, type Me } from "../api";
 import { useAudioScene } from "../audio/useAudioScene";
 import { worldToHex } from "../render/footsteps";
@@ -240,7 +242,9 @@ export function AtlasView({ me, onLeave }: { me: Me; onLeave(): void }) {
       id: n.id,
       hex: n.hex,
       look: n.state,
-      ...(known(n) && n.state === "open" ? { motes: n.mods.map((id) => ZONE_MODS[id].kind), busy: !!n.zone, danger: Math.min(1.2, (n.level - 1) * 0.12) } : {}),
+      ...(known(n) && (n.kind === "lookout" || n.kind === "lair") ? { crown: n.kind } : {}),
+      // A mote for everything odd about it, what a lodestone has added among them.
+      ...(known(n) && n.state === "open" ? { motes: stoneOn(n, n.stone ?? []).mods.map((id) => ZONE_MODS[id].kind), busy: !!n.zone, danger: Math.min(1.2, (n.level - 1) * 0.12) } : {}),
     }));
     layer.current?.set(marks, routes.list, rise);
     if (looked.current) return;
@@ -293,7 +297,23 @@ export function AtlasView({ me, onLeave }: { me: Me; onLeave(): void }) {
   const level = me.character?.level ?? 1;
   const cleared = nodes.filter((n) => n.state === "cleared").length;
   const furthest = Math.max(0, ...nodes.filter((n) => n.state === "cleared").map((n) => n.ring));
-  const pay = shown && shown.kind !== "harbor" ? bountyPay(Math.max(1, shown.ring), modsOf({ mods: shown.mods }).pay) : null;
+  /** What the place carries: its own, and what a lodestone set into it has added. */
+  const carried = shown ? stoneOn(shown, shown.stone ?? []) : { mods: [], added: [] };
+  const pay = shown && shown.kind !== "harbor" ? bountyPay(atlasTier(shown), modsOf({ mods: carried.mods }).pay) : null;
+  const stones = chart?.stones ?? [];
+  const stoneCount = stones.reduce((n, s) => n + s.qty, 0);
+  const setIn = async (n: Known, stone: Lodestone) => {
+    setBusy(true);
+    setError(null);
+    try {
+      take(await api.setStone(n.id, stoneKey(stone)));
+    } catch (e) {
+      setError((e as Error).message);
+      void load();
+    } finally {
+      setBusy(false);
+    }
+  };
   const remember = (id: string | null) => {
     try {
       if (id) sessionStorage.setItem(FOCUS_KEY, id);
@@ -316,7 +336,7 @@ export function AtlasView({ me, onLeave }: { me: Me; onLeave(): void }) {
       setBusy(false);
     }
   };
-  const dev = async (op: "clear" | "reset", id?: string) => {
+  const dev = async (op: "clear" | "reset" | "stone", id?: string) => {
     setBusy(true);
     setError(null);
     try {
@@ -359,7 +379,9 @@ export function AtlasView({ me, onLeave }: { me: Me; onLeave(): void }) {
               {n.state === "open" && (
                 <span className="atlas-glance">
                   <span className="atlas-level">Lv {n.level}</span>
-                  {n.mods.map((id) => <i key={id} className={ZONE_MODS[id].kind} />)}
+                  {n.kind === "lair" && <span className="atlas-what lair">Lair</span>}
+                  {n.kind === "lookout" && <span className="atlas-what lookout">Lookout</span>}
+                  {stoneOn(n, n.stone ?? []).mods.map((id) => <i key={id} className={ZONE_MODS[id].kind} />)}
                   {n.zone && <span className="atlas-there">{n.here?.length ? `${n.here.length} there` : "begun"}</span>}
                 </span>
               )}
@@ -386,6 +408,9 @@ export function AtlasView({ me, onLeave }: { me: Me; onLeave(): void }) {
             <p className="muted">Pick a place to see what is known of it. The blue ones are open to you: a route runs to each from the Harbor, or from somewhere the crew has cleared. The green ones are done.</p>
             <p className="muted">Clearing a place opens the ones its routes lead on to, and lifts the fog round it. Further out is more dangerous, and pays better.</p>
             <p className="atlas-tally">{cleared === 0 ? "Nothing cleared yet." : `${cleared} cleared.`}</p>
+            <p className="muted">
+              {stoneCount === 0 ? "No lodestones in the crew's case. They turn up in the bounty of a place cleared." : `${stoneCount} ${stoneCount === 1 ? "lodestone" : "lodestones"} in the crew's case. Pick a place that is open to set one into it: its map will be harder, and pay better.`}
+            </p>
             {open.length > 0 && (
               <ul className="atlas-open">
                 {open.map((n) => (
@@ -420,11 +445,13 @@ export function AtlasView({ me, onLeave }: { me: Me; onLeave(): void }) {
                   <span className="muted"> · you are level {level}</span>
                 </p>
                 {shown.kind === "seacave" && <p className="muted">Dark inside, with chests to open and a hoard at the bottom. It is cleared when the last of them is open.</p>}
-                {shown.mods.length > 0 ? (
+                {shown.kind === "lookout" && <p className="muted">A lookout: high, broken ground, where whoever holds the top has the best of it. From up there the crew will see a long way: clearing it lifts the cloud far round it.</p>}
+                {shown.kind === "lair" && <p className="muted">A lair: something big has made its den here, with others for company. It pays as a place {LAIR_RINGS} rings further out would.</p>}
+                {carried.mods.length > 0 ? (
                   <ul className="atlas-mods">
-                    {shown.mods.map((id) => (
-                      <li key={id} className={ZONE_MODS[id].kind}>
-                        <strong>{ZONE_MODS[id].name}</strong> <span className="muted">· {ZONE_MODS[id].kind === "map" ? "the ground" : "the enemy"}</span>
+                    {carried.mods.map((id) => (
+                      <li key={id} className={`${ZONE_MODS[id].kind} ${carried.added.includes(id) ? "stone" : ""}`}>
+                        <strong>{ZONE_MODS[id].name}</strong> <span className="muted">· {ZONE_MODS[id].kind === "map" ? "the ground" : "the enemy"}{carried.added.includes(id) ? " · from the lodestone" : ""}</span>
                         <br />
                         <span className="small-note">{ZONE_MODS[id].blurb}</span>
                       </li>
@@ -439,6 +466,34 @@ export function AtlasView({ me, onLeave }: { me: Me; onLeave(): void }) {
                     {pay.gear >= 1 ? ", with a piece of gear." : `, and a ${Math.round(pay.gear * 100)}% chance of a piece of gear.`}
                   </p>
                 )}
+                {shown.stone ? (
+                  <p className="atlas-stone-set">A {stoneName(shown.stone).toLowerCase()} is set in it.</p>
+                ) : shown.zone ? null : stones.length === 0 ? (
+                  <p className="muted small-note">The crew has no lodestones to set into it. They turn up in bounties.</p>
+                ) : (
+                  <div className="atlas-stones">
+                    <p className="atlas-stones-head">Set a lodestone into it <span className="muted">· harder, and pays better</span></p>
+                    <ul>
+                      {stones.map(({ stone, qty }) => {
+                        const problem = stoneProblem(shown, stone);
+                        const adds = stoneOn(shown, stone).added;
+                        return (
+                          <li key={stoneKey(stone)}>
+                            <span className="atlas-stone" title={stone.map((id) => `${ZONE_MODS[id].name}: ${ZONE_MODS[id].blurb}`).join("\n")}>
+                              <span className={`atlas-stone-gem n${stone.length}`} aria-hidden />
+                              <span>
+                                {stoneName(stone)}{qty > 1 ? ` ×${qty}` : ""}
+                                <br />
+                                <span className="small-note">{stone.map((id) => <span key={id} className={`atlas-stone-mod ${ZONE_MODS[id].kind} ${problem || adds.includes(id) ? "" : "spent"}`}>{ZONE_MODS[id].name}</span>)}</span>
+                              </span>
+                            </span>
+                            <button className="small" disabled={busy || !!problem} title={problem ?? "Set it into this place: it is spent"} onClick={() => void setIn(shown, stone)}>Set it</button>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </div>
+                )}
                 {shown.zone && <p className="atlas-even">{shown.here?.length ? `${shown.here.join(", ")} ${shown.here.length === 1 ? "is" : "are"} there now.` : "The crew has gone in there already."}</p>}
                 <p className="atlas-go">
                   <button className="primary" disabled={busy} onClick={() => void setOut(shown)}>{shown.zone ? "Join them" : "Set out"}</button>
@@ -449,7 +504,11 @@ export function AtlasView({ me, onLeave }: { me: Me; onLeave(): void }) {
             {me.devTools && shown.state === "open" && <p><button className="small" disabled={busy} onClick={() => void dev("clear", shown.id)}>Dev: clear it</button></p>}
           </>
         )}
-        {me.devTools && chart && <p className="atlas-dev"><button className="small" disabled={busy} onClick={() => void dev("reset")}>Dev: wipe the atlas</button></p>}
+        {me.devTools && chart && (
+          <p className="atlas-dev">
+            <button className="small" disabled={busy} onClick={() => void dev("stone")}>Dev: find a lodestone</button> <button className="small" disabled={busy} onClick={() => void dev("reset")}>Dev: wipe the atlas</button>
+          </p>
+        )}
       </aside>
     </div>
   );

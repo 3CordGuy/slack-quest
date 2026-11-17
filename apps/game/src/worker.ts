@@ -79,7 +79,7 @@ import { consumablesOf } from "./server/consumables";
 import { apothecaryView, brew, brewFlask, buyFromKeeper, galleyKeeperView, haggle, smithItem, smithyView } from "./server/workshops";
 import { cook } from "./server/galley";
 import { announceXp, harborXpFor } from "./server/harbor-xp";
-import { chartFor, devClearNode, devResetChart, enterProblem, openNode } from "./server/atlas";
+import { chartFor, devClearNode, devGrantStone, devResetChart, enterProblem, openNode, setStone } from "./server/atlas";
 import { createZoneRow, crewPlaces, getZoneRow, openCave, teleportTo } from "./server/zones";
 import {
   checkImport,
@@ -997,12 +997,25 @@ app.post("/api/atlas/open", async (c) => {
   return c.json(went);
 });
 
+// Set a lodestone from the crew's case into a place, before anyone sets out for it. The chart comes back, changed.
+app.post("/api/atlas/stone", async (c) => {
+  const player = c.get("player");
+  const crew = await crewFor(c.env.DB, player.id);
+  if (!crew) return c.json({ error: "You are not in a crew." }, 403);
+  const body = await c.req.json<{ node?: unknown; stone?: unknown }>().catch(() => ({}) as { node?: unknown; stone?: unknown });
+  const done = await setStone(c.env.DB, crew.id, player.id, body.node, body.stone);
+  if ("error" in done) return c.json({ error: done.error }, done.status);
+  c.executionCtx.waitUntil(refreshHarbor(c.env, crew.id));
+  return c.json(await chartFor(c.env.DB, crew.id));
+});
+
 // For whoever is testing: clear a landfall without fighting for it, or wipe the chart back to the Harbor.
 app.post("/api/dev/atlas", async (c) => {
   const crew = await crewFor(c.env.DB, c.get("player").id);
   if (!crew) return c.json({ error: "You are not in a crew." }, 403);
   const body = await c.req.json<{ op?: unknown; node?: unknown }>().catch(() => ({}) as { op?: unknown; node?: unknown });
   if (body.op === "reset") await devResetChart(c.env.DB, crew.id);
+  else if (body.op === "stone") await devGrantStone(c.env.DB, crew.id);
   else if (body.op === "clear") {
     const problem = await devClearNode(c.env.DB, crew.id, body.node);
     if (problem) return c.json({ error: problem }, 409);

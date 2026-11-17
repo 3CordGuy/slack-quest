@@ -325,7 +325,7 @@ export type ZoneEvent =
   /** A hero takes up a torch from the ground: still lit in hand, or put out and stowed in the pack. */
   | { t: "took_torch"; id: string; at: HexPos; stowed: boolean }
   /** What a hero took, from a won fight or a chest: the XP, and whatever else came with it. */
-  | { t: "spoils"; id: string; xp: number; resources: Resources; gold?: number; item?: string; blueprint?: string; furnishing?: string; potions?: number; torches?: number }
+  | { t: "spoils"; id: string; xp: number; resources: Resources; gold?: number; item?: string; blueprint?: string; furnishing?: string; potions?: number; torches?: number; /** A lodestone, in a bounty: what it carries. It goes to the crew's case. */ stone?: ZoneModId[] }
   /** A piece of gear found had no room in the pack: it went home to storage, or into the pack over its limit. Told by the server. */
   | { t: "stowed"; id: string; item: string; place: "storage" | "overfull" }
   /** A key goes on the party's ring: found in a chest (by `id`), or taken from a beaten band. */
@@ -359,6 +359,8 @@ export type ZoneEffect = {
   furnishing?: FurnishingGrant;
   /** Put in the pack to drink or throw. */
   items?: Partial<Record<Throwable, number>>;
+  /** A lodestone found in a bounty (lodestone.ts): it goes into the crew's case, not the hero's pack. */
+  stone?: ZoneModId[];
 };
 
 export type ZoneStep = { ok: true; state: ZoneState; events: ZoneEvent[]; effects: ZoneEffect[] } | { ok: false; error: string };

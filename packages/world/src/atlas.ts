@@ -22,6 +22,14 @@
 //              of ground are in each, and look nothing alike.
 //   sea caves  now and then a node is a cave: a delve (zone/delve.ts), with
 //              chests and a hoard, cleared when the last chest is open.
+//   lookouts   high ground, craggy to fight on. From one the crew has
+//              cleared they see a long way: the cloud lifts far round it.
+//   lairs      something big has made its den there, and its own kind keep
+//              it company. A level above its ring, and its bounty is that
+//              of a place three rings further out.
+//   lodestones a crew may set a stone into a place before setting out for
+//              it (lodestone.ts): what the stone carries is added to what
+//              the place has.
 //
 // What a crew sees of it (`atlasView`) is the nodes it has cleared, the ones
 // open to it (a route from the Harbor or from a cleared node), and a ring of
@@ -30,8 +38,8 @@
 import type { HexPos } from "@gantt-quest/core";
 import type { Clime } from "./map";
 import { makeRng, seedFromString, type Rng } from "./rng";
-import { zoneOptions } from "./zone/gen";
-import { ZONE_MODS, ZONE_MOD_IDS, type ZoneModId } from "./zone/mods";
+import { BIOME_LEADS, zoneOptions } from "./zone/gen";
+import { ZONE_MODS, ZONE_MOD_IDS, cleanMods, type ZoneModId } from "./zone/mods";
 import type { ZoneBiome, ZoneOptions } from "./zone/types";
 
 /** A cell of the chart, in axial hex coordinates. The Harbor is at 0,0. */
@@ -40,7 +48,7 @@ export interface AtlasCell {
   r: number;
 }
 
-export type AtlasNodeKind = "harbor" | "landfall" | "seacave";
+export type AtlasNodeKind = "harbor" | "landfall" | "seacave" | "lookout" | "lair";
 
 export interface AtlasNode {
   /** "q,r": the node's cell, and its name in the database. */
@@ -85,8 +93,14 @@ const WARP_SCALE = 2.2;
 const NUDGE = 0.7;
 /** Two places are joined by a route of the second kind (not the one each has toward the Harbor) only if they lie this near. */
 const ROUTE_REACH = ATLAS_SPACING + 1;
-/** One node in so many, from the second ring out, is a sea cave. */
+/** One node in so many, from the second ring out, is a sea cave; one in so many more a lookout; and from the third ring, a lair. */
 const SEACAVE_CHANCE = 0.16;
+const LOOKOUT_CHANCE = 0.07;
+const LAIR_CHANCE = 0.07;
+/** A lair's bounty is that of a place this many rings further out. */
+export const LAIR_RINGS = 3;
+/** What has made its den in a lair, by the ground it is on. */
+const LAIR_BEAST: Record<ZoneBiome, string> = { meadow: "alpha", woods: "great_bear", shore: "guardian", caves: "haunt" };
 
 const DIRS: AtlasCell[] = [{ q: 1, r: 0 }, { q: 1, r: -1 }, { q: 0, r: -1 }, { q: -1, r: 0 }, { q: -1, r: 1 }, { q: 0, r: 1 }];
 const idOf = (c: AtlasCell) => `${c.q},${c.r}`;
@@ -249,6 +263,12 @@ const CLIME_LAST: Record<Exclude<Clime, "greenwood">, string[]> = {
   ash: ["Cinders", "Scar", "Slag", "Crater", "Kiln", "Embers", "Vent", "Clinker"],
 };
 
+/** What a lookout and a lair are called, whatever ground or climate they are in. */
+const KIND_LAST: Partial<Record<AtlasNodeKind, string[]>> = {
+  lookout: ["Lookout", "Watch", "Height", "Crag", "Beacon", "Tor"],
+  lair: ["Den", "Lair", "Warren", "Roost", "Hold", "Maw"],
+};
+
 /** How dangerous a ring is: the level of what stands there. A ring out is a level up. */
 export const atlasLevel = (ring: number): number => Math.max(1, Math.min(40, Math.round(ring)));
 /** How many modifiers a node in this ring may carry: none beside the Harbor, more the further out. */
@@ -280,13 +300,21 @@ export function atlasNode(seed: string, cell: AtlasCell): AtlasNode {
   const links = around(cell).filter((n) => joined(seed, cell, n)).map(idOf);
   if (ring === 0) return { id, cell, hex, name: "The Harbor", kind: "harbor", biome: "shore", clime: "greenwood", ring: 0, level: 1, mods: [], links };
   const rng = rngFor(seed, "node", id);
-  const kind: AtlasNodeKind = ring >= 2 && rng.chance(SEACAVE_CHANCE) ? "seacave" : "landfall";
+  // One throw decides what it is: a sea cave, a lookout, a lair, or (most of them) a landfall.
+  const what = rng.next();
+  const kind: AtlasNodeKind =
+    ring >= 2 && what < SEACAVE_CHANCE ? "seacave"
+    : ring >= 2 && what < SEACAVE_CHANCE + LOOKOUT_CHANCE ? "lookout"
+    : ring >= 3 && what < SEACAVE_CHANCE + LOOKOUT_CHANCE + LAIR_CHANCE ? "lair"
+    : "landfall";
   const biome = kind === "seacave" ? "caves" : atlasRegion(seed, hex);
   const clime = atlasClime(seed, hex);
-  // A cave is a cave wherever it is; anywhere else out of the greenwood is named for its climate.
+  // A cave is a cave wherever it is, and a lookout or a lair is named for what it is; anywhere else out of the
+  // greenwood is named for its climate.
   const last = rng.pick(LAST[biome]);
-  const name = `${firstWord(seed, cell)} ${clime === "greenwood" || kind === "seacave" ? last : rngFor(seed, "clime-name", id).pick(CLIME_LAST[clime])}`;
-  return { id, cell, hex, name, kind, biome, clime, ring, level: atlasLevel(ring), mods: rollMods(rng, ring, kind), links };
+  const own = KIND_LAST[kind];
+  const name = `${firstWord(seed, cell)} ${own ? rngFor(seed, "kind-name", id).pick(own) : clime === "greenwood" || kind === "seacave" ? last : rngFor(seed, "clime-name", id).pick(CLIME_LAST[clime])}`;
+  return { id, cell, hex, name, kind, biome, clime, ring, level: atlasLevel(ring + (kind === "lair" ? 1 : 0)), mods: rollMods(rng, ring, kind), links };
 }
 
 /** The node an id names on a chart, or null if the id is not a node's. */
@@ -341,15 +369,25 @@ export function atlasView(seed: string, cleared: ReadonlySet<string>): AtlasNode
   ];
 }
 
+/** The ring a node's bounty is paid as: its own, or further out for a lair. */
+export const atlasTier = (node: Pick<AtlasNode, "ring" | "kind">): number => Math.max(1, node.ring + (node.kind === "lair" ? LAIR_RINGS : 0));
+
 /**
  * What a node's map is made from, for a party of this many. The ring sets the level; the ground and
- * the modifiers set the rest. The nodes beside the Harbor are small and gentle.
+ * the modifiers set the rest. The nodes beside the Harbor are small and gentle. `more` is what a lodestone
+ * set into the node adds to its own modifiers (lodestone.ts: `stoneOn(node, stone).added`).
  */
-export function nodeOptions(seed: string, node: AtlasNode, party: number): ZoneOptions {
+export function nodeOptions(seed: string, node: AtlasNode, party: number, more: readonly ZoneModId[] = []): ZoneOptions {
   const rng = rngFor(seed, "lay", node.id);
   const near = node.ring <= 1;
-  const base = { party, level: node.level, threat: near ? 1 : 2, mods: node.mods, tier: Math.max(1, node.ring), name: node.name, clime: node.clime };
+  const base = { party, level: node.level, threat: near ? 1 : 2, mods: cleanMods([...node.mods, ...more]), tier: atlasTier(node), name: node.name, clime: node.clime };
   if (node.kind === "seacave") return zoneOptions({ ...base, size: "medium", biome: "caves", delve: true });
+  // High, broken ground: whoever holds the top has the best of it.
+  if (node.kind === "lookout") return zoneOptions({ ...base, size: "medium", biome: node.biome, groups: rng.int(2, 3), elevation: 3, obstacles: 1, clear: 4 });
+  // The beast itself, which stands alone, and a band of whatever else lives on that ground.
+  if (node.kind === "lair") {
+    return zoneOptions({ ...base, size: "medium", biome: node.biome, groups: 2, kinds: [LAIR_BEAST[node.biome], rng.pick(BIOME_LEADS[node.biome])], elevation: rng.int(1, 2), obstacles: rng.int(1, 2), clear: 4 });
+  }
   return zoneOptions({
     ...base,
     size: near ? "small" : "medium",

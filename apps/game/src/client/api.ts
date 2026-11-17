@@ -256,7 +256,9 @@ export const api = {
   /** Set sail for a landfall: the map the crew is fighting through there, or a fresh one. */
   openNode: (node: string) => request<{ code: string; fresh: boolean }>("/api/atlas/open", { node }),
   /** The dev toolbox: clear a landfall without fighting for it, or wipe the chart. Gives the chart as it now is. */
-  devAtlas: (op: "clear" | "reset", node?: string) => request<Chart>("/api/dev/atlas", { op, node }),
+  /** Set one of the crew's lodestones (what it carries, joined with "+") into a place. The chart comes back, changed. */
+  setStone: (node: string, stone: string) => request<Chart>("/api/atlas/stone", { node, stone }),
+  devAtlas: (op: "clear" | "reset" | "stone", node?: string) => request<Chart>("/api/dev/atlas", { op, node }),
   /** Down into the caves: the crew's cave still being fought through, or a fresh one. */
   caves: () => request<{ code: string; fresh: boolean }>("/api/caves", {}),
   /** Make a zone to try fights in, from these options (and a seed, or a fresh one), and get its code. */

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { hexDistance, posKey, type HexPos } from "@gantt-quest/core";
 import { ATLAS_HOME, ATLAS_SPACING, atlasHex, atlasNode, atlasNodeById, atlasView, type AtlasCell, type AtlasNodeView } from "./atlas";
-import { ATLAS_GLIMPSE, ATLAS_RIM, ATLAS_SIGHT, ATLAS_VIEW, atlasGround, atlasWorld, type AtlasWorld } from "./atlasMap";
+import { ATLAS_FARSIGHT, ATLAS_GLIMPSE, ATLAS_RIM, ATLAS_SIGHT, ATLAS_VIEW, atlasGround, atlasWorld, type AtlasWorld } from "./atlasMap";
 import type { Tile } from "./map";
 
 const SEEDS = ["CREWAA", "CREWBB", "ZGHPQH"];
@@ -22,7 +22,7 @@ const tileAtHex = (world: AtlasWorld, hex: HexPos): Tile | undefined => world.ma
 const seenBy = (nodes: AtlasNodeView[]) => {
   const reached = nodes.filter((n) => n.state === "harbor" || n.state === "cleared");
   const open = nodes.filter((n) => n.state === "open");
-  return (hex: HexPos) => reached.some((n) => hexDistance(n.hex, hex) <= ATLAS_SIGHT) || open.some((n) => hexDistance(n.hex, hex) <= ATLAS_GLIMPSE);
+  return (hex: HexPos) => reached.some((n) => hexDistance(n.hex, hex) <= (n.state === "cleared" && n.kind === "lookout" ? ATLAS_FARSIGHT : ATLAS_SIGHT)) || open.some((n) => hexDistance(n.hex, hex) <= ATLAS_GLIMPSE);
 };
 
 describe("the world the atlas lies on", () => {
@@ -171,11 +171,25 @@ describe("the window a crew is shown", () => {
       // The same rule, as rounds: one for the Harbor and each place cleared or open, as far as each lifts the cloud.
       const told = nodes.filter((n) => n.state !== "fogged");
       expect(world.clear.map((c) => posKey(c.hex)).sort()).toEqual(told.map((n) => posKey(n.hex)).sort());
-      for (const c of world.clear) expect(c.reach).toBe(told.find((n) => posKey(n.hex) === posKey(c.hex))!.state === "open" ? ATLAS_GLIMPSE : ATLAS_SIGHT);
+      for (const c of world.clear) {
+        const n = told.find((n) => posKey(n.hex) === posKey(c.hex))!;
+        expect(c.reach).toBe(n.state === "open" ? ATLAS_GLIMPSE : n.kind === "lookout" ? ATLAS_FARSIGHT : ATLAS_SIGHT);
+      }
       // And no fog is handed over as ground: under the cloud there is nothing, or (at its edge) the land itself.
       expect(world.map.tiles.some((t) => t.biome === "fog")).toBe(false);
       expect(world.lit.length).toBeGreaterThan(150);
     }
+  });
+
+  it("lifts the cloud far round a lookout the crew has cleared, and no further than any place round one only open", () => {
+    const seed = "CREWAA";
+    const hex = { q: 30, r: -10 };
+    const node = (state: "cleared" | "open", kind: "lookout" | "landfall"): AtlasNodeView => ({ ...atlasNode(seed, { q: 6, r: -2 }), hex, kind, state });
+    const reach = (n: AtlasNodeView) => Math.max(...atlasWorld(seed, [n], hex).lit.map((l) => hexDistance(l, hex)));
+    expect(reach(node("cleared", "lookout"))).toBe(ATLAS_FARSIGHT);
+    expect(reach(node("cleared", "landfall"))).toBe(ATLAS_SIGHT);
+    expect(reach(node("open", "lookout"))).toBe(ATLAS_GLIMPSE);
+    expect(atlasWorld(seed, [node("cleared", "lookout")], hex).clear).toEqual([{ hex, reach: ATLAS_FARSIGHT }]);
   });
 
   it("hands over the land a few hexes past the lit ground, and no further", () => {

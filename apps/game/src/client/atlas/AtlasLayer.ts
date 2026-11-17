@@ -9,6 +9,8 @@
 // some of the crew are there). What is odd about it circles its stone as
 // motes: teal for the ground, red for the enemy. Green is somewhere the crew
 // has cleared: its stone has settled onto the dais and burns low and steady.
+// A lookout has three pale spires standing round its dais, and a lair a ring
+// of short dark thorns, so each can be told from a landfall at a glance.
 // The Harbor has a ring of gold round the foot of its lighthouse. Somewhere
 // nothing is known of is a dark ring lying on top of the cloud.
 //
@@ -40,6 +42,8 @@ export interface AtlasMark {
   busy?: boolean;
   /** How much taller than the least its beam stands, from 0: the more dangerous, the taller. */
   danger?: number;
+  /** What stands round its dais, for a place that is more than a landfall. */
+  crown?: "lookout" | "lair";
 }
 export interface AtlasRoute {
   key: string;
@@ -148,7 +152,12 @@ const BEAM = 3.4;
 const UP = new THREE.Vector3(0, 1, 0);
 const ONE = new THREE.Vector3(1, 1, 1);
 // The cloud is drawn over everything under it. What lies on top of it (a ring, a dash) is drawn after it: its own part.
-type Part = "dais" | "ring" | "ringAloft" | "pool" | "stone" | "halo" | "beam" | "mote" | "dash" | "dashAloft" | "shade" | "flow" | "trail";
+type Part = "dais" | "ring" | "ringAloft" | "pool" | "stone" | "halo" | "beam" | "mote" | "spike" | "dash" | "dashAloft" | "shade" | "flow" | "trail";
+/** What stands round a dais: how many, how far out, how tall and thick, how far they lean outward, and their colour. */
+const CROWN = {
+  lookout: { count: 3, out: 0.6, tall: 0.95, thick: 1, lean: 0.06, color: "#e9dcae" },
+  lair: { count: 6, out: 0.63, tall: 0.42, thick: 1.5, lean: 0.42, color: "#7d2230" },
+};
 /** Drawn after the cloud. */
 const ALOFT = 6;
 
@@ -171,6 +180,8 @@ export class AtlasLayer {
     // Its foot at its own origin, so it can be stretched upward.
     beam: new THREE.CylinderGeometry(0.04, 0.17, BEAM, 10, 1, true).translate(0, BEAM / 2, 0),
     mote: new THREE.OctahedronGeometry(0.075, 0),
+    // A unit tall, its foot at its own origin.
+    spike: new THREE.ConeGeometry(0.06, 1, 5).translate(0, 0.5, 0),
     dash: new THREE.PlaneGeometry(0.3, 0.11).rotateX(-Math.PI / 2),
     dashAloft: new THREE.PlaneGeometry(0.3, 0.11).rotateX(-Math.PI / 2),
     shade: new THREE.PlaneGeometry(0.4, 0.21).rotateX(-Math.PI / 2),
@@ -187,6 +198,7 @@ export class AtlasLayer {
     halo: light(this.glow),
     beam: light(this.fade, THREE.DoubleSide),
     mote: solid(),
+    spike: new THREE.MeshLambertMaterial({ color: "#ffffff", flatShading: true }),
     dash: solid(),
     dashAloft: solid({ transparent: true, depthWrite: false }),
     shade: new THREE.MeshBasicMaterial({ color: "#10131f", transparent: true, opacity: 0.42, depthWrite: false }),
@@ -304,6 +316,20 @@ export class AtlasLayer {
     // After the cloud: a beam stands up through it.
     const beam = this.make("beam", count.beam, 7);
     const mote = this.make("mote", count.mote);
+    const crowned = this.placed.filter((p) => p.mark.crown && p.stone >= 0);
+    const spike = this.make("spike", crowned.reduce((n, p) => n + CROWN[p.mark.crown!].count, 0));
+    spike.castShadow = true;
+    let s = 0;
+    for (const p of crowned) {
+      const crown = CROWN[p.mark.crown!];
+      for (let i = 0; i < crown.count; i++) {
+        const a = p.phase + (i / crown.count) * Math.PI * 2;
+        // Leaning outward, away from the middle.
+        q.setFromAxisAngle(this.at.set(Math.cos(a), 0, -Math.sin(a)), crown.lean);
+        spike.setMatrixAt(s, m.compose(this.at.set(p.x + Math.sin(a) * crown.out, p.y + 0.02, p.z + Math.cos(a) * crown.out), q, this.size.set(crown.thick, crown.tall, crown.thick)));
+        spike.setColorAt(s++, c.set(crown.color));
+      }
+    }
 
     let d = 0;
     q.identity();

@@ -65,6 +65,8 @@ import {
   type ZoneEvent,
   type ZoneState,
   type ZoneView as ZoneViewState,
+  ZONE_MODS,
+  stoneName,
 } from "@gantt-quest/world";
 import { api, type Me } from "./api";
 import { CrewRoster, type RosterMember } from "./CrewRoster";
@@ -543,6 +545,7 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
           ...(ev.torches ? [ev.torches === 1 ? "a torch" : `${ev.torches} torches`] : []),
           ...(ev.blueprint ? ["a blueprint"] : []),
           ...(ev.furnishing ? [ev.furnishing] : []),
+          ...(ev.stone ? [`a ${stoneName(ev.stone).toLowerCase()} (${ev.stone.map((id) => ZONE_MODS[id].name).join(", ")}) for the crew's case`] : []),
         ];
         // A crate pays no XP: only what was in it is told.
         if (ev.xp > 0) say(`${name(ev.id)} earns ${ev.xp} XP${found.length > 0 ? ` and takes ${found.join(", ")}` : ""}.`);
@@ -557,6 +560,7 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
           ...(ev.torches ? [{ text: ev.torches === 1 ? "+1 torch" : `+${ev.torches} torches`, color: "#ffb070" }] : []),
           ...(ev.blueprint ? [{ text: "+a blueprint", color: "#9fd8ff" }] : []),
           ...(ev.furnishing ? [{ text: `+${ev.furnishing}`, color: "#9fd8ff" }] : []),
+          ...(ev.stone ? [{ text: `+${stoneName(ev.stone)}`, color: "#7fd0ff" }] : []),
         ];
         if (pops.length > 0) later(() => view?.pickups(ev.id, pops));
         // Your own level, XP and materials as the server now has them.
