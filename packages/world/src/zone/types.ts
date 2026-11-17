@@ -216,6 +216,8 @@ export type ZoneAction =
   | { type: "light"; by: string; unit: string; hand?: "main" }
   /** Pick up a torch burning on the ground beside you: into a free hand still lit, or put out and into the pack. */
   | { type: "pickup"; by: string; unit: string; at: HexPos }
+  /** Pick a cluster of glowing mushrooms from beside it, for a few mushrooms. */
+  | { type: "forage"; by: string; unit: string; poi: string }
   /** Unlock a locked door from beside it with a key off the ring, or force it without one. */
   | { type: "unlock"; by: string; unit: string; poi: string }
   /** The server's own, never a client's: the time now, so time out of a fight can pass (zone/clock.ts). */
@@ -227,7 +229,7 @@ export type ZoneAction =
   | { type: "dev"; by: string; dev: DevOp };
 
 /** Action types a player's client may send. `dev` is let through only on a development deployment. */
-export const ZONE_CLIENT_ACTIONS: ReadonlySet<ZoneAction["type"]> = new Set(["move", "use", "common", "throw", "drink", "light", "pickup", "open", "unlock", "end_turn", "dev"]);
+export const ZONE_CLIENT_ACTIONS: ReadonlySet<ZoneAction["type"]> = new Set(["move", "use", "common", "throw", "drink", "light", "pickup", "open", "unlock", "forage", "end_turn", "dev"]);
 
 /** One d20 roll, as shown on the roll card. */
 export interface Roll {
@@ -292,6 +294,8 @@ export type ZoneEvent =
   | { t: "door"; id: string; poi: string; how: "key" | "forced" | "held" }
   /** The crash of a forced door is heard by a band, which comes running. */
   | { t: "noise"; group: string }
+  /** A cluster of glowing mushrooms is picked; what it gave follows as `spoils`. */
+  | { t: "foraged"; id: string; poi: string }
   /** A chest, strongbox or hoard is opened. */
   | { t: "opened"; id: string; poi: string; loot: "chest" | "vault" | "hoard" }
   /** A crate takes a blow, a blast or the fire under it. `actor` is who did it, if anyone did. */

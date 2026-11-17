@@ -11,6 +11,7 @@
 import { hexDistance, posKey, type HexPos } from "@gantt-quest/core";
 import { adjacent, inFight, sees } from "./geometry";
 import { FIRE_GLOW, LIGHT_RADIUS } from "./kit";
+import { GLOWCAP_LIGHT } from "./forage";
 
 /** How far the daylight at a cave mouth reaches into the dark. */
 export const DAYLIGHT_RADIUS = 2;
@@ -27,6 +28,8 @@ export function lightSources(state: ZoneState): { at: HexPos; radius: number }[]
     const [q, r] = key.split(",").map(Number);
     out.push({ at: { q, r }, radius: LIGHT_RADIUS });
   }
+  // Glowing mushrooms, until they are picked.
+  for (const p of state.map.pois) if (p.kind === "glowcap" && !p.cleared) out.push({ at: p.pos, radius: GLOWCAP_LIGHT });
   // Daylight falls in at the way out.
   for (const p of state.map.pois) if (p.kind === "landing") out.push({ at: p.pos, radius: DAYLIGHT_RADIUS });
   for (const [key, s] of Object.entries(state.surfaces)) {

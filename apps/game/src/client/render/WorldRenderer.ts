@@ -7,6 +7,7 @@
 
 import * as THREE from "three";
 import { flamesIn, flickerFlame, torchFlame } from "./torchFlame";
+import { SHAFT_HEIGHT, buildCaveDressing, caveRope, glowcapCluster } from "./caveDressing";
 import { makeModelShip } from "./modelShip";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { reportEnv } from "../ui/env";
@@ -861,6 +862,8 @@ export class WorldRenderer {
   private mapCode = "";
   private ambience: Ambience;
   private decor = new THREE.Group();
+  /** The caverns' moss, puddles, rocks and spikes, in the decor while underground. */
+  private caveDressing: THREE.Group | null = null;
   private poiGroup = new THREE.Group();
   /** The lanterns over the pub's game tables. Hung in poiGroup, and rebuilt with it. */
   private tableLamps = new TableLamps();
@@ -2156,6 +2159,14 @@ export class WorldRenderer {
     this.woods?.dispose();
     this.woods = new Woods(trees, boulders, this.sodden, !fancyGrass.get());
     this.decor.add(this.woods.group);
+    // The caverns: moss, puddles, loose rocks, stalagmites and stalactites (caveDressing.ts).
+    this.caveDressing?.traverse((o) => {
+      if (!(o instanceof THREE.Mesh)) return;
+      o.geometry.dispose();
+      (o.material as THREE.Material).dispose();
+    });
+    this.caveDressing = state.kind === "caverns" ? buildCaveDressing(this.tiles, (t) => ({ ...hexToWorld(t), y: tileTop(t) }), hexToWorld, (p) => poiKeys.has(key(p))) : null;
+    if (this.caveDressing) this.decor.add(this.caveDressing);
 
     // Start centred on the island. Fog lifting redraws the ground but leaves the camera where the player put it.
     if (!recentre) return;
@@ -3221,6 +3232,19 @@ export class WorldRenderer {
     this.rangeGroup.add(lines);
   }
 
+  /**
+   * A point out in the world, in the space of `poi`'s model (as the loop over places sets each model down: moved
+   * back, turned to face, and scaled).
+   */
+  private inModel(poi: Poi, x: number, z: number): THREE.Vector2 {
+    const { scale, back } = placeOf(poi);
+    const yaw = yawOf(poi.facing ?? 0);
+    const at = hexToWorld(poi.pos);
+    const behind = new THREE.Vector3(0, 0, -back).applyAxisAngle(UP, yaw);
+    const p = new THREE.Vector3(x - at.x - behind.x, 0, z - at.z - behind.z).applyAxisAngle(UP, -yaw).divideScalar(scale);
+    return new THREE.Vector2(p.x, p.z);
+  }
+
   private poiModel(poi: Poi): THREE.Group {
     const g = new THREE.Group();
     const lambert = (color: string) => new THREE.MeshLambertMaterial({ color, flatShading: true });
@@ -3236,10 +3260,8 @@ export class WorldRenderer {
     switch (poi.kind) {
       case "landing": {
         if (this.state?.kind === "caverns") {
-          // The way back out of the caverns: a rope down the rock and a lantern on a spike.
-          add(box(0.04, 0.9, 0.04), lambert("#c9a877"), -0.35, 0.45, -0.3);
-          add(box(0.05, 0.5, 0.05), lambert("#3d4048"), 0.35, 0.25, -0.2);
-          add(box(0.16, 0.18, 0.16), new THREE.MeshBasicMaterial({ color: "#ffd98a" }), 0.35, 0.58, -0.2).userData.glow = true;
+          // The way back out of the caverns: a rope let down into the light from above (see caveRope).
+          g.add(caveRope(SHAFT_HEIGHT));
           // And daylight falling in through it from above: a pale shaft, brightest at the floor and fading as it
           // rises, a pool of light where it lands, and real light round it, so the way out shows from across the dark.
           const sky = new THREE.Color("#d8ecff");
@@ -3255,7 +3277,7 @@ export class WorldRenderer {
             mesh.userData.glow = true;
             return mesh;
           };
-          const SHAFT = 3.6;
+          const SHAFT = SHAFT_HEIGHT;
           const shaft = glowing(new THREE.CylinderGeometry(0.42, 0.78, SHAFT, 18, 6, true), (_x, y) => 0.32 * Math.pow(1 - (y + SHAFT / 2) / SHAFT, 1.6));
           shaft.position.y = SHAFT / 2;
           const pool = glowing(new THREE.CircleGeometry(0.95, 24).rotateX(-Math.PI / 2), (x, _y, z) => 0.55 * Math.pow(Math.max(0, 1 - Math.hypot(x, z) / 0.95), 1.3));
@@ -5197,6 +5219,26 @@ export class WorldRenderer {
         g.add(model);
         g.userData.body = model.userData.body;
         if (!poi.cleared) g.userData.door = poi.pos;
+        break;
+      }
+      case "glowcap": {
+        // Glowing mushrooms (caveDressing.ts), grown at the foot of the rock: set over toward the wall, off the
+        // middle of the hex where a hero stands to pick them.
+        const cluster = glowcapCluster(poi.pos.q, poi.pos.r, !!poi.cleared);
+        const map = this.state?.map;
+        const at = hexToWorld(poi.pos);
+        const toward = new THREE.Vector2();
+        for (const dir of HEX_DIRS) {
+          if (map && tileAt(map, { q: poi.pos.q + dir.q, r: poi.pos.r + dir.r })?.biome !== "rock") continue;
+          const w = hexToWorld({ q: poi.pos.q + dir.q, r: poi.pos.r + dir.r });
+          toward.add(new THREE.Vector2(w.x - at.x, w.z - at.z));
+        }
+        if (toward.lengthSq() > 0) toward.normalize().multiplyScalar(0.42);
+        const spot = this.inModel(poi, at.x + toward.x, at.z + toward.y);
+        cluster.position.set(spot.x, 0, spot.y);
+        g.add(cluster);
+        // Pointing anywhere on them means their hex.
+        g.userData.door = poi.pos;
         break;
       }
     }

@@ -8,8 +8,9 @@
 // and what it would cover; click a target and it is done. Movement is a
 // click on any lit hex, in as many pieces as you like. Something from the
 // pack is thrown where you click, or (a potion) drunk if you click yourself.
-// In a delve a click on a chest opens it, and a click on a crate breaks at
-// it with your own blow (or walks you up to it first).
+// In a delve a click on a chest opens it, a click on a crate breaks at it
+// with your own blow, and a click on glowing mushrooms picks them (each walks
+// you up to it first).
 //
 // The server answers each action with the whole state and a list of what
 // happened. The state is believed at once by the bar (so you can keep
@@ -555,6 +556,8 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
         const finder = ev.id ?? next.you;
         later(() => view?.pickups(finder, [{ text: "+1 key", color: "#ffd98a" }]));
         say(ev.from === "chest" ? `${ev.id ? name(ev.id) : "Someone"} finds a key in it. (${ev.keys} on the ring)` : `A key falls from the beaten band. (${ev.keys} on the ring)`);
+      } else if (ev.t === "foraged") {
+        say(`${name(ev.id)} picks the glowing mushrooms.`);
       } else if (ev.t === "door") {
         say(ev.how === "key" ? `${name(ev.id)} unlocks the door.` : ev.how === "forced" ? `${name(ev.id)} forces the door: it gives way with a crash.` : `${name(ev.id)} throws a shoulder at the door: it holds.`);
       } else if (ev.t === "noise") {
@@ -919,6 +922,14 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
         if (beside && beside.cost > 0) zone.send({ type: "move", unit: act.id, to: beside.pos });
         return;
       }
+      // A click on glowing mushrooms picks them from beside them (or among them), or walks up to them first.
+      const patch = state.map.pois.find((p) => p.kind === "glowcap" && !p.cleared && p.pos.q === pos.q && p.pos.r === pos.r);
+      if (patch) {
+        if (hexDistance(patch.pos, act.pos) <= 1) return zone.send({ type: "forage", unit: act.id, poi: patch.id });
+        const beside = [...reach.values()].filter((r) => r.stop && hexDistance(r.pos, patch.pos) <= 1).sort((a, b) => a.cost - b.cost)[0];
+        if (beside) zone.send({ type: "move", unit: act.id, to: beside.pos });
+        return;
+      }
       return zone.send({ type: "move", unit: act.id, to: pos });
     }
     if (pick.kind === "ability") {
@@ -1055,6 +1066,8 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
   // A crate beside you, and what of yours would break at it.
   const crateBeside = act ? state.map.pois.find((p) => p.kind === "crate" && !p.cleared && hexDistance(p.pos, act.pos) <= 1) : undefined;
   const crateHit = crateBeside ? crateBlow(asState(state), act, crateBeside.id) : null;
+  // Glowing mushrooms within reach, to pick.
+  const glowBeside = act ? state.map.pois.find((p) => p.kind === "glowcap" && !p.cleared && hexDistance(p.pos, act.pos) <= 1) : undefined;
   // The way out: the cave's mouth, or (should a cave ever come without one) where heroes arrive.
   const mouthAt = state.map.pois.find((p) => p.kind === "landing")?.pos ?? state.start;
   const atMouth = caves && !!act && hexDistance(mouthAt, act.pos) <= 1;
@@ -1095,6 +1108,7 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
   // A crate as the picture shows it, so its health drops as each blow is seen to land.
   const hoverCrate = hover ? (picture?.pois ?? state.map.pois).find((p) => p.kind === "crate" && p.pos.q === hover.q && p.pos.r === hover.r) : undefined;
   const hoverMouth = !!hover && caves && state.map.pois.some((p) => p.kind === "landing" && p.pos.q === hover.q && p.pos.r === hover.r);
+  const hoverGlow = hover ? state.map.pois.find((p) => p.kind === "glowcap" && p.pos.q === hover.q && p.pos.r === hover.r) : undefined;
   const preview = under && z && pick?.kind === "ability" && under.side !== act.side ? previewAttack(z, act, pick.id, under) : null;
   const surface = hover ? state.surfaces[posKey(hover)] : undefined;
 
@@ -1232,6 +1246,12 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
               </span>
               {!hoverCrate.cleared && <div className="muted">Old boards: wood inside, and maybe a few coins, a potion or a torch.</div>}
             </>
+          ) : hoverGlow ? (
+            <>
+              <strong>{hoverGlow.cleared ? "Picked mushrooms" : "Glowing mushrooms"}</strong>{" "}
+              <span className="muted">· {hoverGlow.cleared ? "only the stalks are left" : `pick them for mushrooms · ${hexDistance(hoverGlow.pos, act.pos) <= 1 ? "click to pick them" : "click to walk up to them"}`}</span>
+              {!hoverGlow.cleared && <div className="muted">They light the rock round them until they are picked.</div>}
+            </>
           ) : hoverChest ? (
             <>
               <strong>{chestName(hoverChest, true)}</strong>{" "}
@@ -1362,6 +1382,11 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
         {chestBeside && (!fighting || myTurn) && (
           <button className="small primary" disabled={chestGuarded(chestBeside) || (fighting && !budget?.action)} title={chestGuarded(chestBeside) ? "Its guards still stand over it" : fighting ? "An Action" : undefined} onClick={() => zone.send({ type: "open", unit: act.id, poi: chestBeside.id })}>
             Open {chestName(chestBeside)}
+          </button>
+        )}
+        {glowBeside && (!fighting || myTurn) && (
+          <button className="small" disabled={fighting && !budget?.action} title={fighting ? "An Action" : "Mushrooms for the apothecary. Picked, they stop glowing."} onClick={() => zone.send({ type: "forage", unit: act.id, poi: glowBeside.id })}>
+            Pick the mushrooms
           </button>
         )}
         {/* Out of a cave the way you came in: only at its mouth. Any other map can be left from anywhere. */}

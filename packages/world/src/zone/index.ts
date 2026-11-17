@@ -50,5 +50,6 @@ export { isDark, litHexes, inDark, seenByHeroes, lightSources } from "./light";
 export { MAX_CATCHUP_ROUNDS } from "./clock";
 export { CHEST_PAY, checkOpen, unopened } from "./loot";
 export { FORCE_DC, NOISE_RANGE, checkUnlock, doorAt } from "./doors";
+export { GLOWCAP_LIGHT, GLOWCAP_MUSHROOMS, checkForage } from "./forage";
 export { CRATE_HP, CRATE_PAY, crateAt, crateById, crateHp, isCrateId } from "./crates";
 export { DELVE_GRID, DELVE_CRATES, generateDelve } from "./delve";
