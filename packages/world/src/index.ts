@@ -49,3 +49,4 @@ export * from "./carry";
 export * from "./catalogue";
 export * from "./traits";
 export * from "./zone";
+export * from "./atlas";

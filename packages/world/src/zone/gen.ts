@@ -10,6 +10,7 @@ import { BASE_HEIGHT, type Biome, type Tile, type WorldMap } from "../map";
 import { makeRng, seedFromString } from "../rng";
 import { hexesBetween, solid } from "./geometry";
 import { threatExtras } from "./kit";
+import { cleanMods } from "./mods";
 import type { ZoneBiome, ZoneOptions, ZoneSize } from "./types";
 
 export const ZONE_GRIDS: Record<ZoneSize, HexGrid> = {
@@ -37,6 +38,8 @@ export const BIOME_LEADS: Record<ZoneBiome, string[]> = {
   shore: ["bandit", "brute", "cultist"],
 };
 
+/** The furthest ring a map's `tier` is counted to. */
+const ATLAS_TIERS = 500;
 const SIZES: ZoneSize[] = ["small", "medium", "large"];
 const BIOMES: ZoneBiome[] = ["meadow", "woods", "caves", "shore"];
 const whole = (v: unknown, lo: number, hi: number, otherwise: number) => (typeof v === "number" && Number.isFinite(v) ? Math.max(lo, Math.min(hi, Math.round(v))) : otherwise);
@@ -57,6 +60,8 @@ export function zoneOptions(raw: unknown): ZoneOptions {
     level: whole(o.level, 1, 40, d.level),
     threat: whole(o.threat, 1, 3, d.threat ?? 2),
     ...(o.delve === true ? { delve: true } : {}),
+    ...(cleanMods(o.mods).length > 0 ? { mods: cleanMods(o.mods) } : {}),
+    ...(typeof o.tier === "number" && Number.isFinite(o.tier) && o.tier >= 1 ? { tier: Math.min(ATLAS_TIERS, Math.round(o.tier)) } : {}),
   };
 }
 

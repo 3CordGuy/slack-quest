@@ -12,6 +12,7 @@ import type { ItemDef, Outfit } from "../gear";
 import type { Resources } from "../hut";
 import type { WorldMap } from "../map";
 import type { FurnishingGrant } from "../world";
+import type { ZoneModId } from "./mods";
 
 export type Side = "hero" | "enemy";
 
@@ -155,6 +156,13 @@ export interface ZoneOptions {
   threat?: number;
   /** A delve into the caverns (zone/delve.ts): chambers, tunnels, chests and a hoard, not open ground. */
   delve?: boolean;
+  /** What makes this map unlike the next (zone/mods.ts): changes to its ground and to whoever stands on it. */
+  mods?: ZoneModId[];
+  /**
+   * Set on a map the atlas made (atlas.ts): how many rings out from the Harbor its node lies. Clearing
+   * such a map pays everyone on it a bounty, and its fights pay by the enemy's level.
+   */
+  tier?: number;
 }
 
 export interface ZoneState {
