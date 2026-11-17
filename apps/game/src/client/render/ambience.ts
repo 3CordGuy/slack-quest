@@ -136,6 +136,30 @@ export function hexTop(vertex: (x: number, y: number, z: number, nx: number, ny:
   }
 }
 
+/**
+ * A mountain for a map of the world: a cone one unit wide at the foot and one tall, standing on y = 0, its
+ * sides pushed in and out so it is a crag and not a tent. `cap` is the snow that lies on one: the same cone,
+ * smooth, with a ragged lower edge where the snow runs down the gullies.
+ */
+function cragGeometry(cap: boolean): THREE.BufferGeometry {
+  const geo = new THREE.ConeGeometry(1, 1, 9, cap ? 1 : 4).translate(0, 0.5, 0).toNonIndexed();
+  const pos = geo.getAttribute("position");
+  // By where a corner is, so the faces that share it stay joined.
+  const jag = (x: number, y: number, z: number, salt: number) => hash(Math.round(x * 97) + Math.round(y * 31), Math.round(z * 97), salt);
+  for (let i = 0; i < pos.count; i++) {
+    const [x, y, z] = [pos.getX(i), pos.getY(i), pos.getZ(i)];
+    if (cap) {
+      if (y < 0.02) pos.setY(i, -0.38 * jag(x, y, z, 5));
+      continue;
+    }
+    if (y > 0.98) continue;
+    const out = 0.8 + 0.42 * jag(x, y, z, 1);
+    pos.setXYZ(i, x * out, y < 0.02 ? y : y + (jag(x, y, z, 2) - 0.5) * 0.14, z * out);
+  }
+  geo.computeVertexNormals();
+  return geo;
+}
+
 /** How many shapes of grass tuft there are; each tuft is one of them, turned its own way. */
 const GRASS_KINDS = 3;
 
@@ -911,7 +935,18 @@ export class Ambience {
       new THREE.TetrahedronGeometry(0.34, 0),
     ];
     const tones = ["#8d8674", "#7b786f", "#9c917b", "#6d6960", "#a39a86"];
+    // The stone of each climate that is not the greenwood: snow-laden, red, dark and wet, black.
+    const climeTones: Record<string, string[]> = {
+      frost: ["#eef2f6", "#d5dde6", "#b8c3cf", "#e2e8ee"],
+      dunes: ["#b5673f", "#c98852", "#9c5533", "#d29a62"],
+      mire: ["#4d4a3c", "#5e5a47", "#403e33"],
+      ash: ["#2c2831", "#3a353f", "#49434e", "#221f27"],
+    };
+    const SNOW = "#e9eef3";
     const rocks: { m: THREE.Matrix4; tone: string }[][] = shapes.map(() => []);
+    /** On a map of the world: the mountains on its hills, and the snow on the tallest. */
+    const mountains: { m: THREE.Matrix4; tone: string }[] = [];
+    const snowcaps: THREE.Matrix4[] = [];
     const tufts: Tuft[] = [];
     const meadows: FieldPatch[] = [];
     const drys: FieldPatch[] = [];
@@ -934,23 +969,21 @@ export class Ambience {
       if (skip(t)) continue;
 
       if (small && t.biome === "hills") {
-        // A small world's hills: a little peak with a stone or two at its foot. The higher the ground, the bigger the peak.
-        const high = Math.min(1, Math.max(0, (p.y - 1.1) / 0.9));
-        const count = 2 + Math.floor(n(40) * 1.99 + high);
+        // A small world's hills are mountains: one peak with a shoulder or two beside it, taller the higher the
+        // ground it stands on, with snow on the tallest (and on every one, in the frost).
+        const high = Math.min(1, Math.max(0, (p.y - 1.17) / 1.2));
+        const list = climeTones[t.clime ?? ""] ?? tones;
+        const count = 1 + Math.floor(n(40) * 2.99);
         for (let i = 0; i < count; i++) {
-          const shape = i === 0 ? 3 : Math.floor(n(41 + i) * shapes.length);
-          const s = (i === 0 ? 0.42 + 0.4 * high : 0.2) + n(44 + i) * 0.2;
-          const tall = shape === 2 ? 0.8 + n(47 + i) * 0.7 : shape === 3 ? 1.2 + n(47 + i) * 0.8 : 0.7 + n(47 + i) * 0.4;
-          const angle = (i / (count - 1)) * Math.PI * 2 + n(50) * 6;
-          const spread = i === 0 ? 0.1 : 0.42 + n(65 + i) * 0.26;
-          rocks[shape].push({
-            m: new THREE.Matrix4().compose(
-              new THREE.Vector3(p.x + Math.sin(angle) * spread, p.y + 0.1 * s * tall, p.z + Math.cos(angle) * spread * 0.9),
-              new THREE.Quaternion().setFromEuler(new THREE.Euler((n(53 + i) - 0.5) * 0.3, n(56 + i) * 6, (n(59 + i) - 0.5) * 0.3)),
-              new THREE.Vector3(s, s * tall, s),
-            ),
-            tone: tones[Math.floor(n(62 + i) * tones.length)],
-          });
+          const wide = i === 0 ? 0.6 + 0.22 * high : 0.3 + n(44 + i) * 0.14;
+          const tall = i === 0 ? 0.75 + 1.35 * high + n(47) * 0.3 : 0.38 + n(47 + i) * 0.3 + 0.35 * high;
+          const angle = n(50) * 6 + (i / Math.max(1, count - 1)) * Math.PI * 2;
+          const spread = i === 0 ? 0.08 : 0.52;
+          const at = new THREE.Vector3(p.x + Math.sin(angle) * spread, p.y - 0.03, p.z + Math.cos(angle) * spread * 0.9);
+          const turn = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), n(56 + i) * 6);
+          mountains.push({ m: new THREE.Matrix4().compose(at, turn, new THREE.Vector3(wide, tall, wide)), tone: list[Math.floor(n(62 + i) * list.length)] });
+          // The snow lies on the top two fifths of it.
+          if (t.clime === "frost" || (!t.clime && tall > 1.45)) snowcaps.push(new THREE.Matrix4().compose(at.clone().setY(at.y + tall * 0.57), turn, new THREE.Vector3(wide * 0.47, tall * 0.45, wide * 0.47)));
         }
       } else if (small) {
         // No grass: the trees are the size grass is elsewhere.
@@ -1048,6 +1081,23 @@ export class Ambience {
       mesh.receiveShadow = true;
       this.group.add(mesh);
     });
+
+    // ---- mountains: craggy cones, each its own stone, and snow on the tallest ----
+    if (mountains.length > 0) {
+      const peaks = new THREE.InstancedMesh(cragGeometry(false), new THREE.MeshLambertMaterial({ flatShading: true }), mountains.length);
+      mountains.forEach((peak, i) => {
+        peaks.setMatrixAt(i, peak.m);
+        peaks.setColorAt(i, tone.set(peak.tone));
+      });
+      peaks.castShadow = true;
+      peaks.receiveShadow = true;
+      this.group.add(peaks);
+      const snow = new THREE.InstancedMesh(cragGeometry(true), new THREE.MeshLambertMaterial({ flatShading: true, color: "#f2f6fa" }), Math.max(1, snowcaps.length));
+      snow.count = snowcaps.length;
+      snowcaps.forEach((cap, i) => snow.setMatrixAt(i, cap));
+      snow.receiveShadow = true;
+      this.group.add(snow);
+    }
 
     // ---- waves: two rows of upright paper cut-outs on each water hex ----
     // Each strip is short enough to stay inside its own hex however the view is turned.

@@ -109,7 +109,9 @@ export function updateWater(on: boolean, clock: number, sunDir: THREE.Vector3, g
  * What each hex of the ground tells the shader, three numbers a hex:
  * whether it is water (1) or not (0); which of its six sides touch land
  * (one bit a side, in the order of `shoreSide`); and, for land, what kind of
- * ground it is (see GROUND_KIND), so its top can be painted to suit.
+ * ground it is (see GROUND_KIND), so its top can be painted to suit. For
+ * water the third says what water it is: 0 the sea, 1 cold, 2 dark and
+ * still, 3 clear and green.
  */
 export function waterAttribute(count: number): THREE.InstancedBufferAttribute {
   return new THREE.InstancedBufferAttribute(new Float32Array(count * 3), 3);
@@ -316,7 +318,7 @@ const FRAG_BODY = /* glsl */ `#include <color_fragment>
   #ifdef WATER_TILES
   // The ground's own detail, painted softly over the top of each hex: no two hexes alike, and nothing that
   // moves. Each kind of ground keeps its colour and gets its own marks, blended in rather than stamped.
-  if (waterFancy > 0.5 && vWaterTop > 0.5 && vGround > 0.5) {
+  if (waterFancy > 0.5 && vWaterTop > 0.5 && vGround > 0.5 && vWaterTile.x < 0.5) {
     vec2 at = vWaterPos.xz * waterFine;
     // Where the marks gather, broad patches a shade lighter or darker, and two finer mottles.
     float clump = waterNoise(at * 1.4 + 5.0);
@@ -381,6 +383,13 @@ const FRAG_BODY = /* glsl */ `#include <color_fragment>
     tone += 0.16 * waterStep(0.86, crest);
     vec3 clear = mix(vec3(dot(waterBase, vec3(0.2126, 0.7152, 0.0722))), waterBase, 1.2) * vec3(0.86, 1.14, 1.08) * 1.12;
     vec3 sea = clear * (waterBands(tone / WATER_STEP) * WATER_STEP);
+    #ifdef WATER_TILES
+    // Water of another climate (a hex of water says which, where a hex of land says what ground it is): cold and
+    // grey-blue in the frost, dark and still in the mire, clear and green in the dunes.
+    if (vGround > 2.5) sea *= vec3(0.74, 1.2, 1.04);
+    else if (vGround > 1.5) sea *= vec3(0.5, 0.72, 0.42);
+    else if (vGround > 0.5) sea *= vec3(0.7, 0.84, 0.98);
+    #endif
     float shallow = 0.0;
     float caustic = 0.0;
 

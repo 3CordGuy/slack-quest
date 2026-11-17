@@ -36,7 +36,9 @@ import "./atlas.css";
 
 type Known = Extract<ChartNode, { state: "harbor" | "cleared" | "open" }>;
 const known = (n: ChartNode | undefined): n is Known => !!n && n.state !== "fogged";
-const GROUND: Record<Known["biome"], string> = { meadow: "Open meadow", woods: "Deep woods", shore: "A stretch of shore", caves: "A sea cave" };
+const GROUND: Record<Known["biome"], string> = { meadow: "Open ground", woods: "Deep woods", shore: "A stretch of shore", caves: "A sea cave" };
+/** The climate a place lies in, as the card says it. */
+const CLIME: Record<Known["clime"], string> = { greenwood: "the Greenwood", frost: "the Frost", dunes: "the Dunes", mire: "the Mire", ash: "the Ashlands" };
 /** How often the chart is asked for again: a crewmate may have cleared something. */
 const REFRESH_MS = 10_000;
 /** Places lose what is written under them when they are drawn closer together than this, in pixels. */
@@ -407,7 +409,7 @@ export function AtlasView({ me, onLeave }: { me: Me; onLeave(): void }) {
           <>
             <h3>{shown.name}</h3>
             <p className="atlas-kind">
-              {GROUND[shown.biome]} <span className="muted">· {shown.ring} {shown.ring === 1 ? "ring" : "rings"} out</span>
+              {GROUND[shown.biome]} in <span className={`atlas-clime ${shown.clime}`}>{CLIME[shown.clime]}</span> <span className="muted">· {shown.ring} {shown.ring === 1 ? "ring" : "rings"} out</span>
             </p>
             {shown.state === "cleared" ? (
               <p className="good">Cleared. The routes beyond it are open.</p>

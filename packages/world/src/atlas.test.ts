@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { hexDistance } from "@gantt-quest/core";
-import { ATLAS_HOME, atlasCell, atlasLevel, atlasModCount, atlasNode, atlasNodeById, atlasOpen, atlasView, nodeOptions, type AtlasCell, type AtlasNode } from "./atlas";
-import { ZONE_MODS, createZone, standInHero, stepZone, zoneReach } from "./zone";
+import { ATLAS_HOME, ATLAS_SPACING, atlasCell, atlasClime, atlasLevel, atlasModCount, atlasNode, atlasNodeById, atlasOpen, atlasView, nodeOptions, type AtlasCell, type AtlasNode } from "./atlas";
+import { CLIMES } from "./map";
+import { ZONE_MODS, createZone, generateZone, standInHero, stepZone, zoneOptions, zoneReach } from "./zone";
 
 const SEEDS = ["CREWAA", "CREWBB", "ZGHPQH"];
 const ring = (c: AtlasCell) => (Math.abs(c.q) + Math.abs(c.r) + Math.abs(c.q + c.r)) / 2;
@@ -222,5 +223,74 @@ describe("a node's map", () => {
         expect([...zoneReach(alone, walker, 400).values()].some((r) => hexDistance(r.pos, e.pos) === 1), `${n.id}: ${e.kind} cut off`).toBe(true);
       }
     }
+  });
+});
+
+describe("the climates", () => {
+  const far = (step: number, reach: number): { q: number; r: number }[] => {
+    const out = [];
+    for (let q = -reach; q <= reach; q += step) for (let r = -reach; r <= reach; r += step) out.push({ q, r });
+    return out;
+  };
+
+  it("leave the Harbor's own country greenwood, a few places out in every direction", () => {
+    for (const seed of SEEDS) {
+      for (const hex of far(1, 14)) {
+        if (Math.abs(hex.q + hex.r) > 14) continue;
+        expect(atlasClime(seed, hex), `${seed} ${hex.q},${hex.r}`).toBe("greenwood");
+      }
+    }
+  });
+
+  it("are all out there, each a fair share of the world, and the same for the same seed", () => {
+    for (const seed of SEEDS) {
+      const count: Record<string, number> = {};
+      const spots = far(9, 520);
+      for (const hex of spots) count[atlasClime(seed, hex)] = (count[atlasClime(seed, hex)] ?? 0) + 1;
+      expect(Object.keys(count).sort(), seed).toEqual([...CLIMES].sort());
+      for (const clime of CLIMES) expect(count[clime] / spots.length, `${seed} ${clime}`).toBeGreaterThan(0.05);
+      // The greenwood is the most of it, but not most of the world.
+      expect(count.greenwood / spots.length, seed).toBeLessThan(0.6);
+      for (const hex of spots.slice(0, 200)) expect(atlasClime(seed, hex)).toBe(atlasClime(seed, hex));
+    }
+    const lie = (seed: string) => far(40, 400).map((hex) => atlasClime(seed, hex)).join(" ");
+    expect(lie("CREWAA")).not.toBe(lie("CREWBB"));
+  });
+
+  it("lie in great tracts: a place and the next one over are nearly always in the same one", () => {
+    for (const seed of SEEDS) {
+      let same = 0;
+      const spots = far(11, 400);
+      for (const hex of spots) if (atlasClime(seed, hex) === atlasClime(seed, { q: hex.q + ATLAS_SPACING, r: hex.r })) same++;
+      expect(same / spots.length, seed).toBeGreaterThan(0.84);
+    }
+  });
+
+  it("are a place's own: it is named for its climate, and its map is made in it", () => {
+    const seen = new Set<string>();
+    for (const seed of SEEDS) {
+      for (let q = -24; q <= 24; q++) {
+        for (let r = -24; r <= 24; r += 3) {
+          const node = atlasNode(seed, { q, r });
+          expect(node.clime).toBe(node.kind === "harbor" ? "greenwood" : atlasClime(seed, node.hex));
+          seen.add(node.clime);
+          const options = nodeOptions(seed, node, 2);
+          expect(options.clime).toBe(node.clime === "greenwood" ? undefined : node.clime);
+          if (node.clime === "greenwood" || node.kind !== "landfall" || seen.size > 12) continue;
+          // Its map's ground is all of that climate.
+          const map = generateZone(`${seed}:${node.id}`, options).map;
+          expect(map.tiles.every((t) => t.clime === node.clime), node.id).toBe(true);
+        }
+      }
+    }
+    expect([...seen].sort()).toEqual([...CLIMES].sort());
+  });
+
+  it("a map made with no climate, or the greenwood, has none on its tiles; nor has a cave under any", () => {
+    expect(zoneOptions({ clime: "greenwood" }).clime).toBeUndefined();
+    expect(zoneOptions({ clime: "tundra" }).clime).toBeUndefined();
+    expect(zoneOptions({ clime: "frost" }).clime).toBe("frost");
+    expect(generateZone("plain", zoneOptions({})).map.tiles.some((t) => t.clime)).toBe(false);
+    expect(generateZone("under", zoneOptions({ biome: "caves", clime: "frost" })).map.tiles.some((t) => t.clime)).toBe(false);
   });
 });

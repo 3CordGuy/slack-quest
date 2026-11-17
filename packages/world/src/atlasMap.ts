@@ -28,9 +28,9 @@
 // between them are the view's to draw (the client's atlas/ folder).
 
 import { hexDistance, posKey, type HexPos } from "@gantt-quest/core";
-import { ATLAS_SPACING, atlasNoise, atlasRegion, type AtlasNodeView } from "./atlas";
+import { ATLAS_SPACING, atlasClime, atlasNoise, atlasRegion, type AtlasNodeView } from "./atlas";
 import { HARBOR_SIDES } from "./harbor";
-import { BASE_HEIGHT, type Biome, type Blocker, type Poi, type Tile, type WorldMap } from "./map";
+import { BASE_HEIGHT, type Biome, type Blocker, type Clime, type Poi, type Tile, type WorldMap } from "./map";
 
 export interface AtlasWorld {
   /** The ground the crew can see round the window's middle, and a little past its edge: tiles at the world's own hexes, none where there is only cloud. */
@@ -49,24 +49,47 @@ export const ATLAS_GLIMPSE = 2;
 /** How far past the lit ground the land is still handed over, to show through the cloud's edge. */
 export const ATLAS_RIM = 3;
 
-type Ground = Pick<Tile, "biome" | "h" | "blocker" | "grass">;
+type Ground = Pick<Tile, "biome" | "h" | "blocker" | "grass" | "clime">;
+
+/**
+ * How each climate bends the lie of the land. `sea` is how much of it is under water (the greenwood's share
+ * is 0.34: the dunes are dry and the mire half drowned); `strand` how wide the shore beyond the water is;
+ * `ridge` how readily hills rise; `woods` how much of what would be forest is (the dunes have a tree here and there).
+ */
+const LIE: Record<Clime, { sea: number; strand: number; ridge: number; woods: number }> = {
+  greenwood: { sea: 0.34, strand: 0.05, ridge: 0.68, woods: 1 },
+  // Its shallows are frozen over: a wide shelf of ice where a strand would be.
+  frost: { sea: 0.3, strand: 0.09, ridge: 0.64, woods: 0.8 },
+  dunes: { sea: 0.22, strand: 0.03, ridge: 0.66, woods: 0.12 },
+  mire: { sea: 0.4, strand: 0.03, ridge: 0.78, woods: 0.9 },
+  // No sea: the low ground is molten, with a crust at its edge.
+  ash: { sea: 0.21, strand: 0.05, ridge: 0.6, woods: 0.45 },
+};
 
 /** The lie of the land at a hex of the world, before anything is put on it. `memo` saves working the same noise out twice. */
 export function atlasGround(seed: string, hex: HexPos, memo?: Map<string, number>): Ground {
   const at = (tag: string, scale: number) => atlasNoise(seed, tag, hex, scale, memo);
+  const clime = atlasClime(seed, hex, memo);
+  const lie = LIE[clime];
+  // Where it is, so the view can paint it: left out for the greenwood, which is how ground looks unless told otherwise.
+  const here = clime === "greenwood" ? {} : { clime };
   const sea = at("sea", 3.1);
   const fine = at("fine", 0.34);
-  const lift = (biome: Biome, more = 0): Ground => ({ biome, h: BASE_HEIGHT[biome] + more + fine * 0.05 });
-  if (sea < 0.34) return { biome: "water", h: BASE_HEIGHT.water };
+  const lift = (biome: Biome, more = 0): Ground => ({ biome, h: BASE_HEIGHT[biome] + more + fine * 0.05, ...here });
+  // In the ashlands what lies lowest is not water: it is drawn as low, bare ground, and painted as the fire it is.
+  if (sea < lie.sea) return clime === "ash" ? { biome: "sand", h: BASE_HEIGHT.water + 0.02, ...here } : { biome: "water", h: BASE_HEIGHT.water, ...here };
   // Ridges: hills that climb into mountains along their spine.
   const ridge = at("ridge", 1.25);
-  if (ridge > 0.68 && sea > 0.42) return { ...lift("hills", Math.min(0.9, (ridge - 0.68) * 4)), ...(ridge > 0.8 && fine > 0.55 ? { blocker: "boulders" as Blocker } : {}) };
-  // The strand: sand wherever the sea is near.
-  if (sea < 0.39) return lift("sand");
+  if (ridge > lie.ridge && sea > lie.sea + 0.08) return { ...lift("hills", Math.min(1.1, (ridge - lie.ridge) * 4.5)), ...(ridge > lie.ridge + 0.12 && fine > 0.55 ? { blocker: "boulders" as Blocker } : {}) };
+  // The strand: sand wherever the sea is near (ice, in the frost; a crust of cooled rock, in the ashlands).
+  if (sea < lie.sea + lie.strand) return clime === "frost" || clime === "ash" ? { biome: "sand", h: BASE_HEIGHT.water + 0.06 + fine * 0.03, ...here } : lift("sand");
+  // The mire is pocked with pools.
+  if (clime === "mire" && fine < 0.2) return { biome: "water", h: BASE_HEIGHT.water, ...here };
   const region = atlasRegion(seed, hex, memo);
-  if (region === "shore") return fine > 0.8 ? lift("plains") : lift("sand");
-  if (region === "woods") return fine < 0.7 ? lift("forest") : lift("plains");
-  return fine > 0.74 ? lift("forest") : { ...lift("plains"), ...(fine < 0.16 ? { grass: "tall" as const } : {}) };
+  const wooded = (share: number) => fine < share * lie.woods;
+  if (region === "shore") return clime === "greenwood" || clime === "dunes" ? (fine > 0.8 ? lift("plains") : lift("sand")) : wooded(0.25) ? lift("forest") : lift("plains");
+  if (region === "woods") return wooded(0.7) ? lift("forest") : lift("plains");
+  return fine > 1 - 0.26 * lie.woods ? lift("forest") : { ...lift("plains"), ...(fine < 0.16 && clime === "greenwood" ? { grass: "tall" as const } : {}) };
 }
 
 /**
@@ -82,9 +105,10 @@ export function atlasWorld(seed: string, nodes: readonly AtlasNodeView[], centre
   /** The ground a node makes of the hexes round it, by world hex. */
   const made = new Map<string, Ground>();
   const put = (hex: HexPos, ground: Ground) => made.set(posKey(hex), ground);
-  const flat = (biome: Biome): Ground => ({ biome, h: BASE_HEIGHT[biome] });
   for (const n of known) {
     const here = atlasGround(seed, n.hex, memo);
+    // Whatever it makes of the ground is still ground of the climate it lies in.
+    const flat = (biome: Biome): Ground => ({ biome, h: BASE_HEIGHT[biome], ...(here.clime ? { clime: here.clime } : {}) });
     const ring = HARBOR_SIDES.map((d) => ({ q: n.hex.q + d.q, r: n.hex.r + d.r }));
     if (n.kind === "harbor") {
       // Home: a green with the lighthouse on it. (Not cobbles: the renderer takes cobbles for a wet, walled port.)
@@ -98,9 +122,9 @@ export function atlasWorld(seed: string, nodes: readonly AtlasNodeView[], centre
     ring.forEach((p, side) => {
       const was = atlasGround(seed, p, memo);
       // A sea cave has crags at its back.
-      if (n.kind === "seacave" && (side === 5 || side === 0 || side === 4)) put(p, { biome: "hills", h: BASE_HEIGHT.hills + 0.35 });
+      if (n.kind === "seacave" && (side === 5 || side === 0 || side === 4)) put(p, { ...flat("hills"), h: BASE_HEIGHT.hills + 0.35 });
       else if (was.biome === "water" && here.biome === "water") put(p, flat("sand"));
-      else if (was.blocker) put(p, { biome: was.biome, h: was.h });
+      else if (was.blocker) put(p, { biome: was.biome, h: was.h, ...(was.clime ? { clime: was.clime } : {}) });
     });
   }
 

@@ -18,7 +18,7 @@ import "./camera.css";
 import { PINCH_PAN_SLACK, followIconSvg, readFollow, writeFollow } from "./cameraFollow";
 import type { HexPos } from "@gantt-quest/core";
 import { hexDistance } from "@gantt-quest/core";
-import { lookStep, lookYaw, BASE_HEIGHT, BATTLE_JOIN_RANGE, BIG_REACH, ENEMIES, HEX_DIRS, SEATS, TRAIT_BY_ID, tileCost, WALL_FACE_HALF, WALL_ITEM_BOTTOM, WALL_ITEM_TOP, hexAt, xpProgress, reachable, tileAt, wallFace, wallFaces, type ClientState, type Outfit, type Phase, type Poi, type Tile, type WorldEvent, type WorldMap } from "@gantt-quest/world";
+import { lookStep, lookYaw, BASE_HEIGHT, BATTLE_JOIN_RANGE, BIG_REACH, ENEMIES, HEX_DIRS, SEATS, TRAIT_BY_ID, tileCost, WALL_FACE_HALF, WALL_ITEM_BOTTOM, WALL_ITEM_TOP, hexAt, xpProgress, reachable, tileAt, wallFace, wallFaces, type Biome, type ClientState, type Clime, type Outfit, type Phase, type Poi, type Tile, type WorldEvent, type WorldMap } from "@gantt-quest/world";
 import { fancy, fancyGrass } from "./fancy";
 import { NightLife } from "./nightlife";
 import { Storm } from "./storm";
@@ -344,6 +344,40 @@ const MAX_PITCH = 1.25;
 const CAMERA_REACH = Math.hypot(0.72, 0.78);
 const PLAYER_COLORS = ["#ffd23f", "#5ce1e6", "#ff7ab6", "#9dff6b"];
 const BIOME_COLOR: Record<string, string> = { plains: "#7cb856", forest: "#4c9a52", hills: "#a39672", water: "#3f86dc", dock: "#9a7748", cobble: "#6f7279", mud: "#5f5140", rampart: "#6c6f55", floor: "#b08a5c", wall: "#6e5a48", cave: "#4a4552", rock: "#2a2730", gate: "#4a4552", fog: "#2b3140", sand: "#e2d09a" };
+/**
+ * How the ground is painted in each climate that is not the greenwood (Tile.clime): the same kinds of ground,
+ * in that climate's own colours. Snowfields and blue ice in the frost; sand, scrub and red rock in the dunes;
+ * moss, mud and dark water in the mire; cinders and black rock in the ashlands.
+ */
+const CLIME_COLOR: Record<Exclude<Clime, "greenwood">, Partial<Record<Biome, string>>> = {
+  frost: { plains: "#e6edf4", forest: "#cfdbe6", hills: "#a3afbf", sand: "#b9dcec", water: "#2b5a8a", rock: "#8793a4" },
+  dunes: { plains: "#d9aa66", forest: "#c2965a", hills: "#ad5c38", sand: "#ead29a", water: "#2f9ea4", rock: "#874830" },
+  mire: { plains: "#586a3a", forest: "#3f5238", hills: "#625d4c", sand: "#66553a", water: "#3b5a44", rock: "#3a372e" },
+  ash: { plains: "#58525d", forest: "#443d46", hills: "#36303a", sand: "#29232b", water: "#3b3340", rock: "#221e26" },
+};
+/** The ashlands' lowest ground is molten: far brighter than anything lit can be, so it glows where there is glow to be had. */
+const MOLTEN = new THREE.Color(1.5, 0.4, 0.07);
+const MOLTEN_DEEP = new THREE.Color(0.7, 0.11, 0.03);
+/** What a loose stone's own colour is multiplied by in a climate: the stone there is not the greenwood's grey. */
+const ROCK_TINT: Partial<Record<Clime, THREE.Color>> = { frost: new THREE.Color(1.3, 1.36, 1.46), dunes: new THREE.Color(1.3, 0.8, 0.55), mire: new THREE.Color(0.74, 0.74, 0.6), ash: new THREE.Color(0.44, 0.41, 0.47) };
+/** Such a hex is molten (and not the cooled crust beside it) when it lies this low. */
+const MOLTEN_BELOW = 0.09;
+/** On a map of the world the greenwood is painted a little deeper than underfoot: seen whole, the brighter greens are too much. */
+const FAR_COLOR: Partial<Record<Biome, string>> = { plains: "#6c9c4b", forest: "#3f7b47", hills: "#93886b", sand: "#d8c58f", water: "#2c72c0" };
+/** What a tree's own colours are multiplied by in a climate: rimed with frost, dark with wet, charred. */
+const TREE_TINT: Partial<Record<Clime, THREE.Color>> = { frost: new THREE.Color(1.22, 1.5, 1.72), mire: new THREE.Color(0.72, 0.82, 0.6), ash: new THREE.Color(0.42, 0.38, 0.4), dunes: new THREE.Color(1.15, 1.0, 0.78) };
+/** How much of a greenwood's trees stand in a climate's woods. */
+const TREE_SHARE: Partial<Record<Clime, number>> = { dunes: 0.3, ash: 0.5, mire: 0.75 };
+/** Which painted detail a hex of ground gets on top (see GROUND_KIND), by its climate: a snowfield has no flowers in it. */
+const groundKind = (t: Tile): number => {
+  if (!t.clime) return GROUND_KIND[t.biome] ?? 0;
+  if (t.biome === "water") return 0;
+  if (t.clime === "ash" && t.biome === "sand" && t.h < MOLTEN_BELOW) return 0;
+  return t.clime === "mire" && (t.biome === "plains" || t.biome === "forest") ? 2 : 3;
+};
+/** How the water of a climate is told to the shader (see water.ts): 0 the sea as it is, 1 cold, 2 dark and still, 3 clear and green. */
+const WATER_KIND: Partial<Record<Clime, number>> = { frost: 1, mire: 2, dunes: 3 };
+
 /** What grass and trees are pulled toward under the Harbor's low cloud. */
 const DRAB = new THREE.Color("#5d6a5c");
 /** What open grass is pulled toward where it has dried out (see dryPatch): straw under dead grass, dusty brown on dry ground. */
@@ -2146,7 +2180,7 @@ export class WorldRenderer {
       m.compose(new THREE.Vector3(x, tileTop(t), z), new THREE.Quaternion(), new THREE.Vector3(shown, shown ? 1 : 0, shown));
       terrain.setMatrixAt(i, m);
       if (t.biome !== "water") {
-        water.setXYZ(i, 0, 0, GROUND_KIND[t.biome] ?? 0);
+        water.setXYZ(i, 0, 0, groundKind(t));
         return;
       }
       let sides = 0;
@@ -2156,7 +2190,7 @@ export class WorldRenderer {
         const to = hexToWorld(next);
         sides |= 1 << shoreSide(to.x - x, to.z - z);
       }
-      water.setXYZ(i, 1, sides, 0);
+      water.setXYZ(i, 1, sides, (t.clime && WATER_KIND[t.clime]) || 0);
     });
     geo.setAttribute("aWater", water);
     terrain.castShadow = true;
@@ -2184,10 +2218,24 @@ export class WorldRenderer {
       const { x, z } = hexToWorld(t);
       const top = tileTop(t);
       const n = (salt: number) => noise(t.q, t.r, salt);
-      const tree = (dx: number, dz: number, size: number, salt: number, pine = n(salt + 1) < 0.68) =>
-        trees.push({ x: x + dx, y: top, z: z + dz, size, kind: pine ? "pine" : "broad", yaw: n(salt + 2) * Math.PI * 2, tint: tintOf(n(salt + 3), n(salt + 4)) });
-      const rock = (dx: number, dz: number, size: number, tall: number, salt: number) =>
-        boulders.push({ x: x + dx, y: top, z: z + dz, size, tall, yaw: n(salt) * Math.PI * 2, tilt: (n(salt + 1) - 0.5) * 0.5, shape: Math.floor(n(salt + 2) * 3.99), tint: tintOf(n(salt + 3), n(salt + 4)) });
+      // What grows is the climate's own: rimed pines in the frost, dead wood in the dunes and the ashlands (and half the mire's).
+      const clime = t.clime;
+      const tree = (dx: number, dz: number, size: number, salt: number, pine = n(salt + 1) < 0.68) => {
+        const tint = tintOf(n(salt + 3), n(salt + 4));
+        if (clime && TREE_TINT[clime]) tint.multiply(TREE_TINT[clime]!);
+        const dead = clime === "dunes" || clime === "ash" || (clime === "mire" && n(salt + 5) < 0.45);
+        trees.push({
+          x: x + dx, y: top, z: z + dz, yaw: n(salt + 2) * Math.PI * 2, tint,
+          size: dead ? size * 1.2 : size,
+          kind: dead ? "snag" : pine || clime === "frost" ? "pine" : "broad",
+          ...(dead ? { shape: Math.floor(n(salt + 6) * OAK_SHAPES * 0.999) } : {}),
+        });
+      };
+      const rock = (dx: number, dz: number, size: number, tall: number, salt: number) => {
+        const tint = tintOf(n(salt + 3), n(salt + 4));
+        if (t.clime && ROCK_TINT[t.clime]) tint.multiply(ROCK_TINT[t.clime]!);
+        boulders.push({ x: x + dx, y: top, z: z + dz, size, tall, yaw: n(salt) * Math.PI * 2, tilt: (n(salt + 1) - 0.5) * 0.5, shape: Math.floor(n(salt + 2) * 3.99), tint });
+      };
       if (state.far) {
         // A small world: little trees in clumps, thick in the forest and one or two out on the grass, and
         // a few stones where the map has heaped boulders. (Its hills' peaks are the ambience's.)
@@ -2199,9 +2247,25 @@ export class WorldRenderer {
             tree(Math.sin(a) * d, Math.cos(a) * d * 0.92, least + n(salt + 30 + i) * more, salt + 40 + i * 5);
           }
         };
-        if (t.biome === "forest") clump(5 + Math.floor(n(900) * 2.99), 0.26, 0.2, 901);
-        else if (t.biome === "plains" && n(960) < 0.16) clump(1 + Math.floor(n(961) * 1.99), 0.22, 0.14, 962);
+        const share = (clime && TREE_SHARE[clime]) || 1;
+        // Deep in the woods the trees stand taller and closer; out on the grass, one or two.
+        const deep = n(905) > 0.62;
+        if (t.biome === "forest") clump(Math.max(1, Math.round((5 + Math.floor(n(900) * 2.99) + (deep ? 2 : 0)) * share)), deep ? 0.34 : 0.26, 0.2, 901);
+        else if (t.biome === "plains" && n(960) < 0.16 * share) clump(1 + Math.floor(n(961) * 1.99), 0.22, 0.14, 962);
         if (t.blocker === "boulders") for (let i = 0; i < 3; i++) rock((n(980 + i) - 0.5) * 0.9, (n(984 + i) - 0.5) * 0.8, 0.2 + n(988 + i) * 0.12, 0.3 + n(992 + i) * 0.25, 996 + i * 5);
+        // Here and there on open ground, a ring of standing stones: someone was here before the crew.
+        else if (t.biome === "plains" && n(1060) < 0.014) {
+          const turn = n(1061) * Math.PI * 2;
+          for (let i = 0; i < 6; i++) {
+            if (i === 4 && n(1062) < 0.5) continue;
+            const a = turn + (i / 6) * Math.PI * 2;
+            rock(Math.sin(a) * 0.5, Math.cos(a) * 0.46, 0.085, 0.34 + n(1064 + i) * 0.2, 1070 + i * 5);
+          }
+        }
+        // A stone or two lying about on open ground: more of them where little grows.
+        else if ((t.biome === "plains" || t.biome === "sand") && top > 0.45 && n(1020) < (clime === "dunes" || clime === "ash" ? 0.34 : 0.1)) {
+          for (let i = 0; i < 1 + Math.floor(n(1021) * 1.99); i++) rock((n(1024 + i) - 0.5) * 1.1, (n(1028 + i) - 0.5) * 1.0, 0.09 + n(1032 + i) * 0.1, 0.1 + n(1036 + i) * 0.14, 1040 + i * 5);
+        }
         continue;
       }
       if (t.blocker === "trees") {
@@ -2564,14 +2628,16 @@ export class WorldRenderer {
     // A place's hex keeps its green: the ambience lays no dry grass there, so it would be parched for nothing.
     const places = new Set(this.state?.map.pois.map((p) => key(p.pos)) ?? []);
     this.tiles.forEach((t, i) => {
-      c.set(BIOME_COLOR[t.biome]);
+      c.set((t.clime && t.clime !== "greenwood" && CLIME_COLOR[t.clime][t.biome]) || (this.state?.far && FAR_COLOR[t.biome]) || BIOME_COLOR[t.biome]);
+      // Molten, in the ashlands: brighter and darker in slow patches, like a crust breaking up.
+      if (t.clime === "ash" && t.biome === "sand" && t.h < MOLTEN_BELOW) c.copy(MOLTEN_DEEP).lerp(MOLTEN, noise(t.q, t.r, 61));
       // Fog is a pale mist by day and all but black by night.
       if (t.biome === "fog") {
         c.set(FOG_DAY).lerp(FOG_NIGHT, Math.max(0, this.paintedNight) / 10);
       }
       // In a wet, walled port the green is tired.
       if (this.sodden && (t.biome === "plains" || t.biome === "forest")) c.lerp(DRAB, 0.5);
-      if (t.biome === "plains" && !t.built && !places.has(key(t))) {
+      if (t.biome === "plains" && !t.clime && !t.built && !places.has(key(t))) {
         const { x, z } = hexToWorld(t);
         const dry = dryPatch(t, x, z);
         if (dry >= 0) c.lerp(dry === 2 ? DUSTY : PARCHED, dry === 2 ? 0.62 : 0.45);

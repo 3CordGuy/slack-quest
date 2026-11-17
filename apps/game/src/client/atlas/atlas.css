@@ -65,6 +65,9 @@
 .atlas-card h3 { margin: 0; font-family: var(--font-title, serif); font-size: 26px; line-height: 1.05; text-transform: none; letter-spacing: 0.01em; }
 .atlas-card p { margin: 0; }
 .atlas-kind { font-family: var(--font-head, serif); }
+/* The climate a place lies in, in that climate's own colour. */
+.atlas-clime { font-weight: bold; }
+.atlas-clime.greenwood { color: #8fcf6a; } .atlas-clime.frost { color: #cfe8f7; } .atlas-clime.dunes { color: #e8c07a; } .atlas-clime.mire { color: #9aa86a; } .atlas-clime.ash { color: #ff8a55; }
 .atlas-mods { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 .atlas-mods li { padding: 5px 8px; border: 1px solid var(--line); border-left: 4px solid #46b3bd; }
 .atlas-mods li.enemy { border-left-color: #e0453a; }

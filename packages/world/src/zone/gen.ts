@@ -6,7 +6,7 @@
 
 import { allHexesInGrid, hexDistance, hexNeighbors, posKey, type HexGrid, type HexPos } from "@gantt-quest/core";
 import { ENEMIES, bandKinds, cavernBand, type CavernLead, type RoamerLead } from "../content";
-import { BASE_HEIGHT, type Biome, type Tile, type WorldMap } from "../map";
+import { BASE_HEIGHT, CLIMES, type Biome, type Clime, type Tile, type WorldMap } from "../map";
 import { makeRng, seedFromString } from "../rng";
 import { hexesBetween, solid } from "./geometry";
 import { threatExtras } from "./kit";
@@ -63,6 +63,7 @@ export function zoneOptions(raw: unknown): ZoneOptions {
     ...(cleanMods(o.mods).length > 0 ? { mods: cleanMods(o.mods) } : {}),
     ...(typeof o.tier === "number" && Number.isFinite(o.tier) && o.tier >= 1 ? { tier: Math.min(ATLAS_TIERS, Math.round(o.tier)) } : {}),
     ...(typeof o.name === "string" && o.name.trim() ? { name: o.name.trim().slice(0, 40) } : {}),
+    ...(CLIMES.includes(o.clime as Clime) && o.clime !== "greenwood" ? { clime: o.clime as Clime } : {}),
   };
 }
 
@@ -216,6 +217,8 @@ export function generateZone(seed: string, asked: ZoneOptions): ZonePlan {
 
   // Heights for the eye: a level is a clear step up.
   for (const t of tiles.values()) t.h = t.biome === "water" ? BASE_HEIGHT.water : BASE_HEIGHT[t.biome] + (t.elev ?? 0) * 0.42 + rng.next() * 0.05;
+  // The climate the place lies in: the same ground, painted and grown over to suit. (Not under the earth: a cave is a cave.)
+  if (options.clime && !caves) for (const t of tiles.values()) t.clime = options.clime;
   // Ground that stays, from a modifier: patches of it on open ground, clear of the start and of where anyone stands
   // (an enemy left standing in fire would burn down before the party arrived). Its own dice, so a map with none
   // is the map it always was.

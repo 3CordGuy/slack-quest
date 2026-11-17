@@ -16,6 +16,10 @@
 //              pairs of neighbours are joined too, for ways round.
 //   regions    ground comes from slow noise over the chart, so there are
 //              stretches of woods and runs of shore, not a scatter.
+//   climates   and over those, far slower, lie the climates: the greenwood
+//              round the Harbor, and beyond it great tracts of frost, dunes,
+//              mire and ashlands, each many places across. The same kinds
+//              of ground are in each, and look nothing alike.
 //   sea caves  now and then a node is a cave: a delve (zone/delve.ts), with
 //              chests and a hoard, cleared when the last chest is open.
 //
@@ -24,6 +28,7 @@
 // fog beyond those: where there is something, and nothing more.
 
 import type { HexPos } from "@gantt-quest/core";
+import type { Clime } from "./map";
 import { makeRng, seedFromString, type Rng } from "./rng";
 import { zoneOptions } from "./zone/gen";
 import { ZONE_MODS, ZONE_MOD_IDS, type ZoneModId } from "./zone/mods";
@@ -46,6 +51,8 @@ export interface AtlasNode {
   name: string;
   kind: AtlasNodeKind;
   biome: ZoneBiome;
+  /** The climate it lies in. */
+  clime: Clime;
   /** Cells out from the Harbor: 0 for the Harbor itself. */
   ring: number;
   /** The level of what stands on it. */
@@ -175,6 +182,31 @@ export function atlasRegion(seed: string, hex: HexPos, memo?: Map<string, number
   return v < 0.4 ? "shore" : v < 0.6 ? "meadow" : "woods";
 }
 
+/** How many cells across a climate's slow noise is: a tract of one climate is a few of these wide. */
+const CLIME_SCALE = 10;
+/** The Harbor's own country is greenwood this many cells out, and the climates come into their own over this many more. */
+const HOME_GREEN = 3;
+const CLIME_RISE = 5;
+
+/**
+ * The climate a hex of the world lies in. Two slow noises, how warm it is and how wet, give great tracts of
+ * each; a little fine noise at their borders lets one run raggedly into the next. Near the Harbor both are
+ * drawn in toward the middle, so home is always greenwood and the wilder climates lie further out.
+ */
+export function atlasClime(seed: string, hex: HexPos, memo?: Map<string, number>): Clime {
+  const { x, y } = page(hex);
+  const out = Math.min(1, Math.max(0, (Math.hypot(x, y) - HOME_GREEN) / CLIME_RISE));
+  if (out === 0) return "greenwood";
+  const ragged = (atlasNoise(seed, "clime-edge", hex, 0.45, memo) - 0.5) * 0.07;
+  // Stretched away from the middle (blended noise keeps to it), then drawn back in near home.
+  const far = (tag: string) => 0.5 + (atlasNoise(seed, tag, hex, CLIME_SCALE, memo) - 0.5) * 1.7 * out + ragged;
+  const warm = far("warm");
+  const wet = far("wet");
+  if (warm < 0.34) return "frost";
+  if (warm > 0.66) return wet > 0.5 ? "ash" : "dunes";
+  return wet > 0.7 ? "mire" : "greenwood";
+}
+
 const FIRST = [
   "Gull", "Widow's", "Salt", "Drowned", "Lantern", "Brine", "Kelp", "Thistle", "Crooked", "Grey",
   "Amber", "Wrecker's", "Tinker's", "Mizzen", "Fathom", "Barnacle", "Squall", "Ember", "Moss", "Heron",
@@ -209,6 +241,14 @@ const LAST: Record<ZoneBiome, string[]> = {
   caves: ["Grotto", "Sea Cave", "Sump", "Gullet", "Hole", "Cellars"],
 };
 
+/** What a place is called in a climate that is not the greenwood, whatever its ground. */
+const CLIME_LAST: Record<Exclude<Clime, "greenwood">, string[]> = {
+  frost: ["Floe", "Drift", "Fell", "Rime", "Tarn", "Hollow", "Scarp", "Firth"],
+  dunes: ["Dunes", "Wadi", "Mesa", "Wells", "Flats", "Reach", "Sands", "Cairn"],
+  mire: ["Mire", "Fen", "Slough", "Carr", "Bog", "Reeds", "Wash", "Sedge"],
+  ash: ["Cinders", "Scar", "Slag", "Crater", "Kiln", "Embers", "Vent", "Clinker"],
+};
+
 /** How dangerous a ring is: the level of what stands there. A ring out is a level up. */
 export const atlasLevel = (ring: number): number => Math.max(1, Math.min(40, Math.round(ring)));
 /** How many modifiers a node in this ring may carry: none beside the Harbor, more the further out. */
@@ -238,12 +278,15 @@ export function atlasNode(seed: string, cell: AtlasCell): AtlasNode {
   const ring = ringOf(cell);
   const hex = atlasHex(seed, cell);
   const links = around(cell).filter((n) => joined(seed, cell, n)).map(idOf);
-  if (ring === 0) return { id, cell, hex, name: "The Harbor", kind: "harbor", biome: "shore", ring: 0, level: 1, mods: [], links };
+  if (ring === 0) return { id, cell, hex, name: "The Harbor", kind: "harbor", biome: "shore", clime: "greenwood", ring: 0, level: 1, mods: [], links };
   const rng = rngFor(seed, "node", id);
   const kind: AtlasNodeKind = ring >= 2 && rng.chance(SEACAVE_CHANCE) ? "seacave" : "landfall";
   const biome = kind === "seacave" ? "caves" : atlasRegion(seed, hex);
-  const name = `${firstWord(seed, cell)} ${rng.pick(LAST[biome])}`;
-  return { id, cell, hex, name, kind, biome, ring, level: atlasLevel(ring), mods: rollMods(rng, ring, kind), links };
+  const clime = atlasClime(seed, hex);
+  // A cave is a cave wherever it is; anywhere else out of the greenwood is named for its climate.
+  const last = rng.pick(LAST[biome]);
+  const name = `${firstWord(seed, cell)} ${clime === "greenwood" || kind === "seacave" ? last : rngFor(seed, "clime-name", id).pick(CLIME_LAST[clime])}`;
+  return { id, cell, hex, name, kind, biome, clime, ring, level: atlasLevel(ring), mods: rollMods(rng, ring, kind), links };
 }
 
 /** The node an id names on a chart, or null if the id is not a node's. */
@@ -305,7 +348,7 @@ export function atlasView(seed: string, cleared: ReadonlySet<string>): AtlasNode
 export function nodeOptions(seed: string, node: AtlasNode, party: number): ZoneOptions {
   const rng = rngFor(seed, "lay", node.id);
   const near = node.ring <= 1;
-  const base = { party, level: node.level, threat: near ? 1 : 2, mods: node.mods, tier: Math.max(1, node.ring), name: node.name };
+  const base = { party, level: node.level, threat: near ? 1 : 2, mods: node.mods, tier: Math.max(1, node.ring), name: node.name, clime: node.clime };
   if (node.kind === "seacave") return zoneOptions({ ...base, size: "medium", biome: "caves", delve: true });
   return zoneOptions({
     ...base,

@@ -45,10 +45,20 @@ export const MOVE_COST: Record<Biome, number> = {
   fog: Infinity,
 };
 
+/**
+ * The climate a stretch of the world lies in (the atlas lays them out: atlas.ts). The same kinds of ground are
+ * found in each (open ground, woods, hills, shore, water), but look nothing alike: the greenwood's grass is the
+ * frost's snowfield, the dunes' sand, the mire's moss and the ashlands' cinders.
+ */
+export type Clime = "greenwood" | "frost" | "dunes" | "mire" | "ash";
+export const CLIMES: Clime[] = ["greenwood", "frost", "dunes", "mire", "ash"];
+
 export interface Tile {
   q: number;
   r: number;
   biome: Biome;
+  /** The climate it lies in, where that is not the greenwood: it changes how its ground is painted and what grows on it, not what it is. */
+  clime?: Clime;
   /** Visual height of the hex prism, 0..1. */
   h: number;
   /** A building stands on this hex (part of the ground a Harbor building takes up): it cannot be walked through. */

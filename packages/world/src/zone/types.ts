@@ -10,7 +10,7 @@ import type { HexPos, Stats } from "@gantt-quest/core";
 import type { EffectKind } from "../content";
 import type { ItemDef, Outfit } from "../gear";
 import type { Resources } from "../hut";
-import type { WorldMap } from "../map";
+import type { Clime, WorldMap } from "../map";
 import type { FurnishingGrant } from "../world";
 import type { ZoneModId } from "./mods";
 
@@ -167,6 +167,8 @@ export interface ZoneOptions {
   tier?: number;
   /** What the place is called, on a map the atlas made: its node's name. */
   name?: string;
+  /** The climate it lies in, on a map the atlas made (left out for the greenwood): its ground is painted to suit. */
+  clime?: Clime;
 }
 
 export interface ZoneState {
