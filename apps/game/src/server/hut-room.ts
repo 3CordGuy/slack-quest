@@ -13,7 +13,7 @@ import { DurableObject } from "cloudflare:workers";
 import { LOOK_MIN_MS, validLook,
   FURNISHINGS,
   HARBOR_MAX_SAY,
-  STORAGE_CHEST,
+  HOME_FREEBIES,
   UNSTICK_COOLDOWN_MS,
   coveredHexes,
   freeSpot,
@@ -36,6 +36,7 @@ import { LOOK_MIN_MS, validLook,
   type HarborPlayer,
   type HutClientMessage,
   type HutServerMessage,
+  type Placed,
   type WorldMap, } from "@gantt-quest/world";
 import { containerUsed, crewFor, furnishingStatement, getCharacter, getHut, hasShack, heroInitFor, homeOf, type Env, type Player } from "./db";
 import { readXpPost, relayXp } from "./harbor-xp";
@@ -115,10 +116,10 @@ export class HutRoom extends DurableObject<Env> {
 
   /**
    * The owner opening a hut while owning no furnishings at all gets a few to
-   * start with. Every home also comes with one free storage chest, standing
-   * in the room; a hut built before chests existed gets it on the owner's
-   * next visit. The insert checks for a chest itself, so two tabs at once
-   * cannot both add one.
+   * start with. Every home also comes with a free storage chest and a free
+   * wardrobe (HOME_FREEBIES), standing in the room; a hut built before one
+   * existed gets it on the owner's next visit. Each insert checks for its
+   * piece itself, so two tabs at once cannot both add one.
    */
   private async stock(ownerId: string): Promise<Hut> {
     const hut = await this.load(ownerId, true);
@@ -126,15 +127,19 @@ export class HutRoom extends DurableObject<Env> {
     if (hut.furnishings.length === 0) {
       statements.push(...STARTER_SET.map((defId) => furnishingStatement(this.env.DB, ownerId, { defId, label: FURNISHINGS[defId].name })));
     }
-    if (!hut.furnishings.some((f) => f.defId === STORAGE_CHEST)) {
-      const spot = freeSpot(hut.room, placedFurnishings(hut.furnishings), STORAGE_CHEST, hutDoor(hut.tier));
+    // Each free piece takes the next free spot, clear of the ones set down before it.
+    const placed: Placed[] = placedFurnishings(hut.furnishings);
+    for (const defId of HOME_FREEBIES) {
+      if (hut.furnishings.some((f) => f.defId === defId)) continue;
+      const spot = freeSpot(hut.room, placed, defId, hutDoor(hut.tier));
+      if (spot) placed.push({ ...spot, defId });
       statements.push(
         this.env.DB
           .prepare(
             `INSERT INTO furnishings (player_id, def_id, label, meta_json, q, r, facing, created_at)
              SELECT ?1, ?2, ?3, '{}', ?4, ?5, 0, ?6 WHERE NOT EXISTS (SELECT 1 FROM furnishings WHERE player_id = ?1 AND def_id = ?2)`,
           )
-          .bind(ownerId, STORAGE_CHEST, FURNISHINGS[STORAGE_CHEST].name, spot?.q ?? null, spot?.r ?? null, Date.now()),
+          .bind(ownerId, defId, FURNISHINGS[defId].name, spot?.q ?? null, spot?.r ?? null, Date.now()),
       );
     }
     if (statements.length === 0) return hut;
@@ -286,6 +291,16 @@ export class HutRoom extends DurableObject<Env> {
       if (look === null || now - (this.lookedAt.get(player.id) ?? -Infinity) < LOOK_MIN_MS) return;
       this.lookedAt.set(player.id, now);
       this.broadcast({ type: "looked", id: player.id, look }, ws);
+      return;
+    }
+
+    if (msg.type === "refresh") {
+      // They saved a new look (from the wardrobe or their sheet) or changed gear: re-read the hero and show everyone.
+      const hero = await heroInitFor(this.env.DB, player.id);
+      if (!hero) return;
+      const next: HarborPlayer = { ...player, name: hero.name, classId: hero.classId, level: hero.level, xp: hero.xp, outfit: hero.outfit };
+      ws.serializeAttachment(next);
+      this.broadcast({ type: "joined", player: next });
       return;
     }
 

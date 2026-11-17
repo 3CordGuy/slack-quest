@@ -41,8 +41,25 @@
 
 @media (max-width: 640px) {
   .look-builder { grid-template-columns: minmax(0, 1fr); }
-  .look-stage { position: static; justify-self: center; width: 100%; max-width: 300px; box-sizing: border-box; }
+  /* The hero stays pinned at the top while the choices scroll under them: a smaller preview, its buttons beside it. */
+  .look-stage {
+    top: 0; z-index: 3; width: 100%; box-sizing: border-box;
+    display: grid; grid-template-columns: auto minmax(0, 1fr); align-content: start; gap: 6px 10px; padding: 8px;
+    box-shadow: 0 6px 8px -4px rgba(0, 0, 0, 0.6);
+  }
+  .look-dialog .look-stage { top: -14px; }
+  .look-plinth { grid-row: 1 / span 2; width: 150px; height: 150px; }
+  .look-plinth .figure-preview { width: 150px !important; height: 150px !important; }
+  .look-spin, .look-walk { font-size: 10px; padding: 3px 5px; bottom: 4px; }
+  .look-walk { left: 4px; }
+  .look-spin { right: 4px; }
+  .look-spin-word { display: none; }
+  .look-stage-row { grid-column: 2; flex-direction: column; align-self: stretch; }
+  .look-stage-row > button { width: 100%; }
+  .look-dice { grid-column: 2; align-self: start; }
   .look-row { grid-template-columns: minmax(0, 1fr); gap: 4px; }
+  /* Terse on a phone: the how-to lines go (the ink counter stays). */
+  .look-explain, .ink-explain { display: none; }
 }
 
 /* The tattoo editor (InkEditor.tsx): tools over a paper doll, front and back. */
@@ -89,6 +106,8 @@
   padding: 10px 0 2px; background: inherit; border-top: 1px solid #37335a;
 }
 .look-dialog-foot .error { margin-right: auto; color: #ff8a80; font-size: 13px; }
+/* The bottom bar (the hotbar) goes while a look is being changed. */
+body.changing-look .hud { display: none !important; }
 .hs-change-look { align-self: flex-start; margin: 2px 0 4px; }
 
 /* Tattoo stamps (inkStamps.ts): a row of little designs to drop onto the doll. */

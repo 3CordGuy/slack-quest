@@ -482,6 +482,19 @@ export const THING_ART: Record<string, Art> = {
     p.r(8, 8, 1, 1, C.gold);
     p.r(2, 0, 12, 1, p.accent);
   },
+  "furn-wardrobe": (p) => {
+    // Two tall doors, a cornice and a scarf caught between them.
+    cabinet(p, 3, 0, 10, []);
+    p.r(7, 2, 1, 13, C.bark);
+    p.r(4, 3, 2, 4, C.bark);
+    p.r(9, 3, 2, 4, C.bark);
+    p.r(4, 10, 2, 4, C.bark);
+    p.r(9, 10, 2, 4, C.bark);
+    p.r(6, 8, 1, 1, C.gold);
+    p.r(8, 8, 1, 1, C.gold);
+    p.r(7, 9, 1, 4, p.accent);
+    p.r(2, 0, 12, 1, C.bark);
+  },
   "furn-crate": (p) => {
     p.r(1, 3, 14, 12, C.wood);
     p.r(1, 3, 14, 2, C.bark);

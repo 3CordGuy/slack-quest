@@ -58,8 +58,8 @@ export function LookBuilder({ classId, look, onChange, wearing }: { classId: str
           <button type="button" className="small look-walk" aria-pressed={walk} onClick={() => setWalk(!walk)}>
             {walk ? "■ Stand" : "Walk"}
           </button>
-          <button type="button" className="small look-spin" aria-pressed={!spin} onClick={() => setSpin(!spin)} title={spin ? "Stop turning" : "Turn"}>
-            {spin ? "❚❚ Stop turning" : "▶ Turn"}
+          <button type="button" className="small look-spin" aria-pressed={!spin} onClick={() => setSpin(!spin)} title={spin ? "Stop turning" : "Turn"} aria-label={spin ? "Stop turning" : "Turn"}>
+            {spin ? "❚❚" : "▶"}<span className="look-spin-word">{spin ? " Stop turning" : " Turn"}</span>
           </button>
         </span>
         <div className="look-stage-row" role="group" aria-label="What they are wearing">
@@ -73,7 +73,7 @@ export function LookBuilder({ classId, look, onChange, wearing }: { classId: str
         <button type="button" className="small look-dice" onClick={() => onChange({ ...randomAppearance(), ink: look.ink })}>
           <span aria-hidden>🎲</span> Surprise me
         </button>
-        <p className="muted hint">Drag to turn them by hand. The hat, tunic, trousers and shoes are items you can take off or swap for armor.</p>
+        <p className="muted hint look-explain">Drag to turn them by hand. The hat, tunic, trousers and shoes are items you can take off or swap for armor.</p>
       </div>
 
       <div className="look-pickers">

@@ -569,21 +569,22 @@ export function hutPath(room: WorldMap, placed: Placed[], from: HexPos, to: HexP
 // in and out of a container are decided by the server over HTTP (gather.ts,
 // the stash and stow routes); the room only checks who may lie down where.
 
-/** What clicking a piece does: rest in a bed, open a container, warm up at a fire, read a shelf, or just look. */
-export type FurnishingUse = "rest" | "open" | "warm" | "read" | "look";
+/** What clicking a piece does: rest in a bed, open a container, change your look at a wardrobe, warm up at a fire, read a shelf, or just look. */
+export type FurnishingUse = "rest" | "open" | "dress" | "warm" | "read" | "look";
 
 export function useOf(defId: string): FurnishingUse {
   const def = FURNISHINGS[defId];
   if (!def) return "look";
   if (def.bed) return "rest";
   if (def.storage) return "open";
+  if (def.dress) return "dress";
   if (def.light === "fire") return "warm";
   if (defId === "bookshelf" || defId === "great_bookcase" || defId === "books") return "read";
   return "look";
 }
 
-/** Uses that are the owner's alone: a visitor may not sleep in their bed or open their chests. */
-export const OWNER_USES: readonly FurnishingUse[] = ["rest", "open"];
+/** Uses that are the owner's alone: a visitor may not sleep in their bed, open their chests or dress from their wardrobe. */
+export const OWNER_USES: readonly FurnishingUse[] = ["rest", "open", "dress"];
 
 /** Why this player may not use `defId` this way, or null if they may. `ownerName` words the refusal for a visitor. */
 export function useProblem(defId: string, isOwner: boolean, ownerName = "the owner"): string | null {
@@ -663,6 +664,8 @@ export type HutClientMessage =
   | LookRequest
   /** Back to the door, for a stuck or lost hero. */
   | { type: "unstick" }
+  /** After a new look (or gear) is saved: re-read the hero and show everyone here. */
+  | { type: "refresh" }
   /**
    * Owner only. Put a stored furnishing down, or move a placed one. On the
    * floor it goes on hex `to` at offset `x`/`z`, turned `angle` radians
