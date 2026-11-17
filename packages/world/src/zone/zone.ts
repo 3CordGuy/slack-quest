@@ -13,6 +13,7 @@
 
 import { STARTING_STATS, hexDistance, posKey, type HexPos } from "@gantt-quest/core";
 import { ABILITIES, DRUID_REGEN, EFFECT_TICK, ENEMIES, HERO_CLASSES, abilitiesFor } from "../content";
+import { battleDrops } from "../drops";
 import { tileAt } from "../map";
 import type { HeroSheet } from "../hero";
 import { addStats, maxFocusFor, maxHpFor } from "../progression";
@@ -279,8 +280,14 @@ function settle(ctx: Ctx): boolean {
     h.cooldowns = {};
   }
   if (won) {
+    // Every hero who fought takes the whole XP and their own roll of what the fallen left. A stand-in takes nothing.
     const xp = foes.reduce((sum, f) => sum + (ENEMIES[f.kind]?.xp ?? 0), 0);
-    for (const h of heroes) if (!h.controller) ctx.effects.push({ type: "grant", heroId: h.id, xp });
+    for (const h of heroes) {
+      if (h.controller) continue;
+      const resources = battleDrops(ctx.rng, foes.map((f) => f.kind));
+      ctx.effects.push({ type: "grant", heroId: h.id, xp, resources });
+      ctx.events.push({ t: "spoils", id: h.id, xp, resources });
+    }
   } else {
     const groups = new Set(foes.map((f) => f.group));
     for (const g of groups) if (g && state.groups[g]) state.groups[g].alerted = false;
@@ -298,6 +305,7 @@ function settle(ctx: Ctx): boolean {
     for (const h of heroes) h.pos = freeHexNear(state.map, state.start, (p) => !!unitAt(state, p), (p) => tileAt(state.map, p)) ?? state.start;
   }
   sweep(state);
+  if (won && !state.units.some((u) => u.side === "enemy")) ctx.events.push({ t: "cleared" });
   return true;
 }
 

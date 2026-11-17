@@ -187,7 +187,7 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
   /** A release with notes this player has not read: the board wears a "!". An older server sends no seenRelease, and then there is none. */
   const unseen = me.seenRelease !== undefined && hasUnseen(me.seenRelease);
   const tip = !hoverPoi ? null
-    : hoverPoi.kind === "cave" ? "The Haunted Caverns: boarded up while delves are rebuilt"
+    : hoverPoi.kind === "cave" ? "The Haunted Caverns: go down and fight what lurks in the dark"
     : hoverPoi.kind === "board" ? (unseen ? "Notice board: news of what has changed. Something new is pinned up!" : "Notice board: news of what has changed")
     : hoverPoi.kind === "shop" ? "Market stall: gear, and furniture for your hut"
     : hoverPoi.kind === "ring" ? "Sparring ring: being rebuilt"
@@ -345,13 +345,17 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
     }
     location.hash = hash;
   };
-  // Voyages, delves and sparring are shut while they are rebuilt on the new combat (fights on the tiles
+  /** Down into the caves: the crew's cave if one is still being fought through, else a fresh one. Leaving it comes back to the mouth. */
+  const goDown = () => {
+    api.caves().then(({ code }) => goInside(`${HARBOR_CAVE.q},${HARBOR_CAVE.r}`, `zone/${code}`), (e: Error) => setNote(e.message));
+  };
+  // Voyages and sparring are shut while they are rebuilt on the new combat (fights on the tiles
   // themselves): each place says so and offers nothing to do.
   const shut = (title: ReactNode) => ({ title, label: "", run: () => {}, closed: true });
   // The place under your feet and the one thing to do there, shown in the bar below and floated over the hex.
   const here: { title: ReactNode; label: string; run(): void; quiet?: boolean; closed?: boolean; also?: { label: string; run(): void } } | null =
     atBoard ? { title: unseen ? "The notice board · something new is pinned up" : "The notice board", label: "Read the notice board", run: () => setNotices(true) }
-    : atCave ? shut(<>The Haunted Caverns <span className="muted">· boarded up while delves are rebuilt. Coming soon.</span></>)
+    : atCave ? { title: <>The Haunted Caverns <span className="muted">· something lurks in the dark</span></>, label: "Go down", run: goDown }
     : shipHere ? { ...shut(<>{shipHere.captain}'s ship <span className="muted">· laid up while voyages are rebuilt</span></>), also: pierHere ? { label: "Cast a line", run: () => setGather("fishing") } : undefined }
     : atShop ? { title: "The market stall", label: "Browse the wares", run: () => setShop(true) }
     : atRing ? shut(<>The sparring ring <span className="muted">· being rebuilt for a new way of fighting. Coming soon.</span></>)

@@ -841,6 +841,24 @@ export async function applyGrant(
 }
 
 /**
+ * What a won fight on a zone pays a hero: XP (levelling them up as it goes) and the materials the
+ * fallen left. Unlike applyGrant this writes nothing to run_players, which belongs to voyages and
+ * delves of the old kind, and there is nothing on a zone to forfeit. Returns the levels gained.
+ */
+export async function applyZoneGrant(db: D1Database, playerId: string, xp: number, resources: Resources): Promise<number> {
+  const c = await getCharacter(db, playerId);
+  if (!c) return 0;
+  const next = applyXp({ classId: c.class_id, level: c.level, xp: c.xp, stats: statsOf(c), unspent: c.unspent_points }, xp);
+  await db.batch([
+    ...resourceStatements(db, playerId, resources),
+    db
+      .prepare("UPDATE characters SET level = ?, xp = ?, str = ?, int_stat = ?, vit = ?, agi = ?, dex = ?, unspent_points = ? WHERE player_id = ?")
+      .bind(next.level, next.xp, next.stats.str, next.stats.int_stat, next.stats.vit, next.stats.agi, next.stats.dex, next.unspent, playerId),
+  ]);
+  return next.levelsGained;
+}
+
+/**
  * Abandoning a quest: take back everything it paid out. Gold, XP and levels go
  * back to how the character stood before the first reward; the items,
  * furnishings and blueprints it found are deleted; its hut materials are

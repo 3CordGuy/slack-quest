@@ -10,7 +10,7 @@ import { DatabaseSync } from "node:sqlite";
 import { beforeEach, describe, expect, it } from "vitest";
 import { hexDistance } from "@gantt-quest/core";
 import { ALERT_RANGE, zoneOptions, type ZoneEvent, type ZoneState, type ZoneView } from "@gantt-quest/world";
-import { createZoneRow, crewPlaces } from "../src/server/zones";
+import { CAVE_IDLE_MS, createZoneRow, crewPlaces, openCave } from "../src/server/zones";
 
 const globals = globalThis as Record<string, unknown>;
 globals.WebSocketRequestResponsePair = class {
@@ -152,7 +152,7 @@ beforeEach(() => {
   sql = new DatabaseSync(":memory:");
   const dir = new URL("../migrations/", import.meta.url);
   for (const file of readdirSync(dir).sort()) sql.exec(readFileSync(new URL(file, dir), "utf8"));
-  db = { prepare: (text: string) => new Stmt(sql, text) } as unknown as D1Database;
+  db = { prepare: (text: string) => new Stmt(sql, text), batch: async (stmts: Stmt[]) => stmts.map((s) => s.exec()) } as unknown as D1Database;
   const at = Date.now();
   for (const [id, name] of [["ann", "Ann"], ["bo", "Bo"]]) {
     sql.prepare("INSERT INTO players (id, name, created_at) VALUES (?, ?, ?)").run(id, name, at);
@@ -316,6 +316,37 @@ describe("ZoneRoom", () => {
     await act(zone, ann, { type: "dev", dev: { op: "heal" } });
     expect(inPack()).toBe(2);
     expect(hero(ann.state, "ann").items).toEqual({ healing: 2, poison: 2, fire: 1, oil: 1, water: 1 });
+  });
+
+  it("pays a won fight's XP and materials to the hero, and marks a map with no enemy left as cleared", async () => {
+    const { code, zone, ann } = await arrive();
+    const xpBefore = (sql.prepare("SELECT xp, level FROM characters WHERE player_id = 'ann'").get() as { xp: number; level: number });
+    await pickFight(zone, ann);
+    await act(zone, ann, { type: "dev", dev: { op: "end_fight" } });
+    const spoils = ann.sent.flatMap((m) => (m.type === "update" ? m.events : [])).find((e) => e.t === "spoils");
+    expect(spoils).toMatchObject({ t: "spoils", id: "ann" });
+    const paid = spoils as Extract<ZoneEvent, { t: "spoils" }>;
+    expect(paid.xp).toBeGreaterThan(0);
+    const after = sql.prepare("SELECT xp, level FROM characters WHERE player_id = 'ann'").get() as { xp: number; level: number };
+    expect(after.level > xpBefore.level || after.xp === xpBefore.xp + paid.xp).toBe(true);
+    // Wolves leave fur and bone, and they are in the hut's materials.
+    const held = Object.fromEntries((sql.prepare("SELECT kind, qty FROM resources WHERE player_id = 'ann'").all() as { kind: string; qty: number }[]).map((r) => [r.kind, r.qty]));
+    expect(held).toEqual(paid.resources);
+    expect((sql.prepare("SELECT status FROM zones WHERE code = ?").get(code) as { status: string }).status).toBe("cleared");
+  });
+
+  it("finds a crew's cave still being fought through, and not a cleared, stale or other crew's one", async () => {
+    const options = zoneOptions({ size: "small", biome: "caves", groups: 1 });
+    expect(await openCave(db, "crew1")).toBeNull();
+    const cave = await createZoneRow(db, "ann", options, "c1", "caves", "crew1");
+    await createZoneRow(db, "ann", options, "d1", "dev", "crew1");
+    expect(await openCave(db, "crew1")).toBe(cave);
+    expect(await openCave(db, "crew2")).toBeNull();
+    sql.prepare("UPDATE zones SET status = 'cleared' WHERE code = ?").run(cave);
+    expect(await openCave(db, "crew1")).toBeNull();
+    const stale = await createZoneRow(db, "ann", options, "c2", "caves", "crew1");
+    sql.prepare("UPDATE zones SET updated_at = ? WHERE code = ?").run(Date.now() - CAVE_IDLE_MS - 1000, stale);
+    expect(await openCave(db, "crew1")).toBeNull();
   });
 
   it("tells a player on the map, and only that player, that their trades changed", async () => {

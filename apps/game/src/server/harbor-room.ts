@@ -99,6 +99,11 @@ export class HarborRoom extends DurableObject<Env> {
       return new Response("ok");
     }
 
+    // Who is walking the Harbor right now: the crewmates who would go down into the caves together.
+    if (new URL(request.url).pathname === "/present") {
+      return Response.json({ ids: this.players().map((p) => p.id) });
+    }
+
     // A hero earned XP: show it over their head, if they are here.
     if (new URL(request.url).pathname === "/xp") {
       const msg = await readXpPost(request);
