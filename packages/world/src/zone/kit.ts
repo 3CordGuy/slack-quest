@@ -45,8 +45,8 @@ export interface Tactic {
   vsWet?: number;
   /** Puts this condition on the user for `rounds` of their own turns: an aura, worked by the condition itself (see AURAS). */
   aura?: { kind: Condition; rounds: number };
-  /** Shields the user and every ally within BOLSTER.range (Bolstered). */
-  bolster?: boolean;
+  /** Shields the user, and every ally within `range` of them, with `shield` points plus the user's level, for `rounds` of each one's turns (Bolstered). */
+  shield?: { range: number; shield: number; rounds: number };
   /** Takes every harmful condition off the ally, and the ground that hurts or hinders (surfaces.ts HINDERING) off the way you would walk to them. */
   clearWay?: boolean;
 }
@@ -57,12 +57,18 @@ const spell = (range: number, extra: Partial<Tactic> = {}): Tactic => ({ cost: "
 const guard = (): Tactic => ({ cost: "bonus", reach: "spell", range: 0, shape: "self" });
 const mend = (range: number, extra: Partial<Tactic> = {}): Tactic => ({ cost: "action", reach: "spell", range, shape: "ally", ...extra });
 
+/** Bolster: a shield of `shield` points plus the Paladin's level on them and every ally within `range`, for `rounds` of each one's turns. */
+export const BOLSTER = { range: 2, shield: 10, rounds: 3 };
+
+/** Shield Wall: a shield of `shield` points plus the Paladin's level on themselves alone, through their next turn. */
+export const SHIELD_WALL = { range: 0, shield: 6, rounds: 1 };
+
 export const TACTICS: Record<string, Tactic> = {
   punch: melee(),
   torch_swing: melee(),
   // Paladin
   smite: melee(),
-  shield_wall: guard(),
+  shield_wall: { ...guard(), shield: SHIELD_WALL },
   cleave: melee({ shape: "adjacent", cooldown: 2 }),
   heavy_blow: melee({ toHit: -2 }),
   full_reckoning: melee(),
@@ -71,7 +77,7 @@ export const TACTICS: Record<string, Tactic> = {
   healing_aura: { cost: "bonus", reach: "spell", range: 0, shape: "self", aura: { kind: "mending", rounds: 4 } },
   branding_strike: melee({ cooldown: 2 }),
   stoke_the_fire: melee({ shape: "adjacent", cooldown: 2 }),
-  bolster: { cost: "action", reach: "spell", range: 0, shape: "self", cooldown: 3, bolster: true },
+  bolster: { cost: "action", reach: "spell", range: 0, shape: "self", cooldown: 3, shield: BOLSTER },
   show_the_way: mend(5, { cooldown: 2, clearWay: true }),
   // Mage
   firebolt: spell(6, { ignites: true }),
@@ -137,8 +143,6 @@ export const AURAS = {
   heal: { n: 1, d: 4, plus: 1 } satisfies Dice,
 };
 
-/** Bolster: a shield of `shield` points plus the Paladin's level on them and every ally within `range`, for `rounds` of each one's turns. */
-export const BOLSTER = { range: 2, shield: 10, rounds: 3 };
 
 /** The stat that shrugs off each condition. */
 export const SAVE_STAT: Record<Condition, StatKey> = {

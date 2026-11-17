@@ -129,6 +129,8 @@ export function textTexture(text: string, color: string): THREE.CanvasTexture {
 export interface PlateStats {
   level: number;
   hp: number;
+  /** A shield (Bolstered), as a share of max HP like `hp`: a pale stretch after the HP. */
+  shield?: number;
   xp: number;
   /** Just earned XP: the XP bar is drawn lit up for a moment. */
   glow?: boolean;
@@ -143,6 +145,7 @@ const PLATE_SHEEN = "rgba(74, 69, 112, 0.55)";
 const NAME_INK = "#f1eee4";
 const BAR_TRACK = "#3b3560";
 const HP_COLOR: Record<HealthBand, string> = { good: "#6ee06e", hurt: "#ffd23f", low: "#ff6b6b" };
+const SHIELD_COLOR = "#d6dde8";
 const XP_COLOR = "#7d8cff";
 /** The XP bar as it lights up on a gain: pale blue track, near-white fill. */
 const XP_GLOW_TRACK = "#5f7fd8";
@@ -190,7 +193,19 @@ export function plateKey(text: string, plate?: PlateStats): string {
   if (!plate) return text;
   const inner = plateWidth(text, plate) - TEXT_X - 3;
   const bolts = plate.bolts ? `|${plate.bolts.left}/${plate.bolts.max}` : "";
-  return `${text}|${plate.level}|${barPixels(plate.hp, inner)}:${healthBand(plate.hp)}|${barPixels(plate.xp, inner)}${bolts}${plate.glow ? "|glow" : ""}`;
+  const [hpPx, shieldPx] = hpPixels(plate, inner);
+  return `${text}|${plate.level}|${hpPx}+${shieldPx}:${healthBand(plate.hp)}|${barPixels(plate.xp, inner)}${bolts}${plate.glow ? "|glow" : ""}`;
+}
+
+/**
+ * The HP bar's pixels of HP and of shield. With a shield that takes the two past max HP, the bar stands for
+ * the two together, so the shield always shows whole.
+ */
+function hpPixels(plate: PlateStats, inner: number): [number, number] {
+  const shield = plate.shield ?? 0;
+  const whole = Math.max(1, plate.hp + shield);
+  const hp = barPixels(plate.hp / whole, inner);
+  return [hp, shield > 0 ? Math.max(1, barPixels((plate.hp + shield) / whole, inner) - hp) : 0];
 }
 
 const LABEL_FONT = "12px ui-monospace, Menlo, Consolas, monospace";
@@ -346,7 +361,13 @@ export function labelTexture(text: string, plate?: PlateStats): { texture: THREE
       ctx.fillRect(TEXT_X, y, filled, rows);
     }
   };
-  bar(HP_Y, 2, p.hp, HP_COLOR[healthBand(p.hp)]);
+  const [hpPx, shieldPx] = hpPixels(p, inner);
+  ctx.fillStyle = BAR_TRACK;
+  ctx.fillRect(TEXT_X, HP_Y, inner, 2);
+  ctx.fillStyle = HP_COLOR[healthBand(p.hp)];
+  ctx.fillRect(TEXT_X, HP_Y, hpPx, 2);
+  ctx.fillStyle = SHIELD_COLOR;
+  ctx.fillRect(TEXT_X + hpPx, HP_Y, shieldPx, 2);
   if (p.glow) bar(XP_Y, 2, p.xp, XP_GLOW_COLOR, XP_GLOW_TRACK);
   else bar(XP_Y, 2, p.xp, XP_COLOR);
   return { texture: makeTexture(canvas), aspect: canvas.width / canvas.height };

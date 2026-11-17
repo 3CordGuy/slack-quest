@@ -7,7 +7,7 @@ import { walk } from "./combat";
 import { attackContext, damage, type Ctx } from "./engine";
 import { ALERT_RANGE, DEFAULT_ZONE_OPTIONS, JOIN_RANGE, generateZone, zoneOptions } from "./gen";
 import { adjacent, blast, flies, sees, solid, unitAt, zoneReach } from "./geometry";
-import { AURAS, BOLSTER, ENEMY_BURST, ENEMY_KIT, EXPLORE_ROUND_MS, FLEE_RANGE, LIGHT_RADIUS, SHIELD_SET_ASIDE, TACTICS, TORCH_GROUND_ROUNDS, TORCH_HELD_ROUNDS, TORCH_ROUND_MS, commonCost, enemyHp, enemyStrikes, tacticOf } from "./kit";
+import { AURAS, BOLSTER, ENEMY_BURST, SHIELD_WALL, ENEMY_KIT, EXPLORE_ROUND_MS, FLEE_RANGE, LIGHT_RADIUS, SHIELD_SET_ASIDE, TACTICS, TORCH_GROUND_ROUNDS, TORCH_HELD_ROUNDS, TORCH_ROUND_MS, commonCost, enemyHp, enemyStrikes, tacticOf } from "./kit";
 import { MAX_CATCHUP_ROUNDS } from "./clock";
 import { defenceOf } from "./engine";
 import { checkAbility, crateBlow, enemyAct, wayBetween } from "./combat";
@@ -2299,9 +2299,12 @@ describe("the Paladin's class abilities", () => {
 
   it("Bolster: an Action that shields the Paladin and allies within 2 hexes, not anyone further off", () => {
     let { state } = party();
-    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "bolster" });
+    const events: ZoneEvent[] = [];
+    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "bolster" }, events);
     expect(state.encounter!.budgets.ann).toMatchObject({ action: false, bonus: true });
     const size = BOLSTER.shield + unit(state, "ann").level;
+    // The event says how big the shield is, for the bars to show it as the fight is played out.
+    expect(events.filter((e) => e.t === "condition" && e.kind === "bolstered").map((e) => e.t === "condition" && [e.target, e.amount])).toEqual([["ann", size], ["bo", size]]);
     expect(shieldOf(state, "ann")).toBe(size);
     expect(shieldOf(state, "bo")).toBe(size);
     expect(shieldOf(state, "cy")).toBeUndefined();
@@ -2323,6 +2326,24 @@ describe("the Paladin's class abilities", () => {
     expect(bo.hp).toBe(hp - 2);
     expect(shieldOf(ctx.state, "bo")).toBeUndefined();
     expect(events.filter((e) => e.t === "hit").map((e) => e.t === "hit" && [e.amount, e.blocked])).toEqual([[0, size - 3], [2, 3]]);
+  });
+
+  it("Shield Wall: guards the Paladin and gives them alone a shield through their next turn, and heals nothing", () => {
+    let { state } = party();
+    unit(state, "ann").abilities.push("shield_wall");
+    unit(state, "ann").hp = 5;
+    const events: ZoneEvent[] = [];
+    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "shield_wall" }, events);
+    expect(state.encounter!.budgets.ann).toMatchObject({ action: true, bonus: false });
+    expect(unit(state, "ann").hp).toBe(5);
+    expect(events.some((e) => e.t === "heal")).toBe(false);
+    expect(lasts(state, "guarded")).toBeGreaterThan(0);
+    expect(shieldOf(state, "ann")).toBe(SHIELD_WALL.shield + unit(state, "ann").level);
+    expect(shieldOf(state, "bo")).toBeUndefined();
+    state = nextTurn(state);
+    expect(shieldOf(state, "ann")).toBeGreaterThan(0);
+    state = endShared(state);
+    expect(shieldOf(state, "ann")).toBeUndefined();
   });
 
   it("Bolster: wears off after 3 of the bearer's turns", () => {

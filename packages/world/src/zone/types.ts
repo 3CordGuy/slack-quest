@@ -292,7 +292,7 @@ export type ZoneEvent =
   | { t: "hit"; actor: string | null; target: string; amount: number; what: string; crit: boolean; blocked?: number }
   | { t: "miss"; actor: string; target: string; what: string }
   | { t: "heal"; actor: string | null; target: string; amount: number; what: string }
-  | { t: "condition"; target: string; kind: Condition; rounds: number }
+  | { t: "condition"; target: string; kind: Condition; rounds: number; amount?: number }
   | { t: "tick"; target: string; kind: Condition | SurfaceKind; amount: number }
   | { t: "skip"; id: string; kind: Condition }
   | { t: "down"; id: string }

@@ -107,7 +107,8 @@ interface Props {
   /** The button for what can be done here. */
   children?: ReactNode;
   /** Hit points right now; omitted off a voyage, where the hero is whole. */
-  hp?: { now: number; max: number };
+  /** `shield`: points of shield (Bolstered), shown after the HP. */
+  hp?: { now: number; max: number; shield?: number };
   /** What the right-hand meter counts here. */
   meter?: HudMeter;
   pips?: HudPips[];
@@ -325,8 +326,8 @@ export function HudBar({ me, place, children, hp, meter, pips = [], chips, quick
         </div>
 
         {/* Over the cornice: health, the plaque, and the view's other count. Their numbers are in their tooltips. */}
-        <div className="hud-meter" style={box(hpAt.x, hpAt.y, hpAt.w, hpAt.h)} {...hover(hpAt.x + hpAt.w / 2, <Tip name="Health" line={`${nowHp} of ${maxHp} hit points`} />)}>
-          <LiquidMeter kind="hp" now={nowHp} max={maxHp} w={hpAt.w} h={hpAt.h} />
+        <div className="hud-meter" style={box(hpAt.x, hpAt.y, hpAt.w, hpAt.h)} {...hover(hpAt.x + hpAt.w / 2, <Tip name="Health" line={`${nowHp} of ${maxHp} hit points${hp?.shield ? `, and a shield of ${hp.shield}` : ""}`} />)}>
+          <LiquidMeter kind="hp" now={nowHp} max={maxHp} shield={hp?.shield} w={hpAt.w} h={hpAt.h} />
         </div>
         {meter && (
           <div className="hud-meter" style={box(otherAt.x, otherAt.y, otherAt.w, otherAt.h)} {...hover(otherAt.x + otherAt.w / 2, <Tip name={meter.name} line={`${meter.now} of ${meter.max}${meter.note ? ` · ${meter.note}` : ""}`} />)}>

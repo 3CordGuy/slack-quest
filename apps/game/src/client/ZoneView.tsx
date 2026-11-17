@@ -42,6 +42,7 @@ import {
   crateBlow,
   crateHp,
   defenceOf,
+  shieldOf,
   diceText,
   healDice,
   isCrateId,
@@ -170,6 +171,20 @@ function dwell(ev: ZoneEvent, many: boolean, next: ZoneEvent | undefined): numbe
 }
 /** The conditions on a unit, as badges over its head: in CONDITION_INFO's colours, with rounds left. */
 const badgesOf = (u: Unit) => u.conditions.map((c) => ({ kind: c.kind, color: CONDITION_INFO[c.kind].color, rounds: c.rounds }));
+
+/**
+ * A unit's HP in the order of turns, with any shield (Bolstered) as a pale stretch after it. Should the two
+ * come to more than its max, the bar is that long instead, so the shield always shows whole.
+ */
+function HpBar({ now, max, shield }: { now: number; max: number; shield: number }) {
+  const whole = Math.max(max, now + shield, 1);
+  return (
+    <span className="zone-hp">
+      <i style={{ width: `${(100 * now) / whole}%` }} />
+      {shield > 0 && <b style={{ width: `${(100 * shield) / whole}%` }} />}
+    </span>
+  );
+}
 
 /** How a lit torch is drawn in a hand (figures.ts drawTorch). */
 const TORCH_IN_HAND = { icon: "torch", ref: "torch", rarity: "common" as const };
@@ -406,6 +421,11 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
         const actor = ev.actor ? find(ev.actor) : undefined;
         if (hit && target) target.hp = Math.max(0, target.hp - ev.amount);
         const blocked = hit && ev.blocked ? ev.blocked : 0;
+        if (blocked && target) {
+          const shield = target.conditions.find((c) => c.kind === "bolstered");
+          if (shield) shield.amount = Math.max(0, (shield.amount ?? 0) - blocked);
+          if (shield && !shield.amount) target.conditions = target.conditions.filter((c) => c !== shield);
+        }
         const mark = !hit
           ? () => view?.floatOver(ev.target, "miss", "#c9d1e0")
           : blocked && ev.amount === 0
@@ -467,7 +487,9 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
         say(`${name(ev.target)} takes ${ev.amount} from ${what.toLowerCase()}.`);
       } else if (ev.t === "condition") {
         const u = find(ev.target);
-        if (u && !u.conditions.some((c) => c.kind === ev.kind)) u.conditions.push({ kind: ev.kind, rounds: ev.rounds });
+        const held = u?.conditions.find((c) => c.kind === ev.kind);
+        if (u && !held) u.conditions.push({ kind: ev.kind, rounds: ev.rounds, ...(ev.amount !== undefined ? { amount: ev.amount } : {}) });
+        if (held && ev.amount !== undefined) held.amount = ev.amount;
         later(() => {
           sounds.effect(ev.kind, view?.whereIs(ev.target));
           view?.floatOver(ev.target, CONDITION_INFO[ev.kind].name, CONDITION_INFO[ev.kind].color);
@@ -742,7 +764,7 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
       // Chests and crates as the picture has them: thrown open, or knocked about and broken, as each is shown.
       map: { ...state.map, pois: picture.pois },
       // A lit torch is held in the off hand, where a shield would be.
-      heroes: picture.units.filter((u) => u.side === "hero").map((u) => ({ id: u.id, classId: u.kind, pos: u.pos, name: u.name, outfit: u.torch ? { ...u.outfit, [u.torchHand === "main" ? "main_hand" : "off_hand"]: TORCH_IN_HAND } : u.outfit, torch: !!u.torch || u.conditions.some((c) => c.kind === "beacon"), effects: badgesOf(u), level: u.level, xp: 0, hp: u.hp, maxHp: u.maxHp, down: u.down, prone: u.conditions.some((c) => c.kind === "prone"), active: turn(u.id) })),
+      heroes: picture.units.filter((u) => u.side === "hero").map((u) => ({ id: u.id, classId: u.kind, pos: u.pos, name: u.name, outfit: u.torch ? { ...u.outfit, [u.torchHand === "main" ? "main_hand" : "off_hand"]: TORCH_IN_HAND } : u.outfit, torch: !!u.torch || u.conditions.some((c) => c.kind === "beacon"), effects: badgesOf(u), level: u.level, xp: 0, hp: u.hp, maxHp: u.maxHp, shield: shieldOf(u), down: u.down, prone: u.conditions.some((c) => c.kind === "prone"), active: turn(u.id) })),
       // What the dark hides is not drawn: out of a fight the server does not even send it.
       units: picture.units.filter((u) => u.side === "enemy" && !state.dark?.includes(u.id)).map((u) => ({ id: u.id, kind: u.kind, pos: u.pos, name: u.name, hp: inFight(u.id) || u.hp < u.maxHp ? u.hp / u.maxHp : undefined, down: u.down, prone: u.conditions.some((c) => c.kind === "prone"), active: u.id === spot, hostile: inFight(u.id), effects: badgesOf(u) })),
       turn: null,
@@ -1212,11 +1234,11 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
                 key={id}
                 type="button"
                 className={`zone-face ${u.side} ${turn ? "turn" : ""} ${spent ? "spent" : ""} ${u.down ? "down" : ""} ${joined ? "joined" : ""} ${mine.some((m) => m.id === id) ? "mine" : ""}`}
-                title={`${u.name} · ${u.hp}/${u.maxHp} HP · initiative ${enc.init[id]}`}
+                title={`${u.name} · ${u.hp}/${u.maxHp} HP${shieldOf(u) ? ` · ${shieldOf(u)} shield` : ""} · initiative ${enc.init[id]}`}
                 onClick={() => renderer.current?.lookAt(u.pos)}
               >
                 <img className="pixel-icon" src={spriteDataUrl(u.kind, u.outfit)} alt="" draggable={false} />
-                <span className="zone-hp"><i style={{ width: `${(100 * u.hp) / u.maxHp}%` }} /></span>
+                <HpBar now={seen(u).hp} max={u.maxHp} shield={shieldOf(seen(u))} />
                 <span className="zone-face-name">{u.name.split(" ")[0]}</span>
               </button>
             );
@@ -1228,7 +1250,7 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
         <div className="zone-party panel">
           {mine.map((u) => (
             <button key={u.id} className={`small ${u.id === act.id ? "primary" : ""}`} disabled={u.down || (!!enc?.order.includes(u.id) && !ready(u))} onClick={() => setPlayAs(u.id)}>
-              {u.name.split(" ")[0]} · {seen(u).hp}/{u.maxHp}
+              {u.name.split(" ")[0]} · {seen(u).hp}/{u.maxHp}{shieldOf(seen(u)) ? ` +${shieldOf(seen(u))}` : ""}
             </button>
           ))}
         </div>
@@ -1399,7 +1421,7 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
       <HudBar
         me={me}
         place={place}
-        hp={{ now: seen(act).hp, max: act.maxHp }}
+        hp={{ now: seen(act).hp, max: act.maxHp, shield: shieldOf(seen(act)) }}
         meter={{ name: "Focus", note: "spend one to roll an attack with advantage", now: act.focus, max: act.maxFocus, kind: "focus" }}
         pips={fighting && budget ? [
           { label: "Action", now: budget.action ? 1 : 0, max: 1, kind: "action" },

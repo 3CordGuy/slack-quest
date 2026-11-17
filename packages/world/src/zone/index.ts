@@ -44,7 +44,7 @@ export {
   type EnemyStrike,
 } from "./kit";
 export { mod as statMod, proficiency, heroMove, heroDefence, diceFor, diceText, diceAverage, hitChance, type Dice } from "./rules";
-export { attackContext, defenceOf, has as hasCondition, type AttackContext } from "./engine";
+export { attackContext, defenceOf, has as hasCondition, shieldOf, type AttackContext } from "./engine";
 export { abilityArea, checkAbility, checkCommon, checkDrink, checkLight, checkThrow, crateBlow, previewAttack, BARD_AURA_RANGE, type Aim } from "./combat";
 export { SURFACE_INFO, HARMFUL as HARMFUL_SURFACES } from "./surfaces";
 export { isDark, litHexes, inDark, seenByHeroes, lightSources } from "./light";

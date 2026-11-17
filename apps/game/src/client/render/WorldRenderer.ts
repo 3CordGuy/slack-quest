@@ -186,6 +186,8 @@ export interface RenderHero {
   /** Absent off a voyage, where every hero is at full health. */
   hp?: number;
   maxHp?: number;
+  /** Points of shield (Bolstered), drawn as a pale stretch after the HP. */
+  shield?: number;
   /** Knocked down in a fight: drawn lying where they fell. */
   down?: boolean;
   /** Knocked flat (Prone) but still in the fight: lying, not dimmed. */
@@ -207,7 +209,8 @@ export function firstName(name: string): string {
 export function plateOf(h: RenderHero): PlateStats | undefined {
   if (h.level === undefined) return undefined;
   const hp = h.hp !== undefined && h.maxHp ? h.hp / h.maxHp : 1;
-  return { level: h.level, hp, xp: xpProgress(h.level, h.xp ?? 0) };
+  const shield = h.shield && h.maxHp ? h.shield / h.maxHp : 0;
+  return { level: h.level, hp, xp: xpProgress(h.level, h.xp ?? 0), ...(shield > 0 ? { shield } : {}) };
 }
 
 export interface SceneProp {

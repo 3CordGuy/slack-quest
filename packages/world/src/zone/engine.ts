@@ -29,8 +29,11 @@ export function removeCondition(unit: Unit, kind: Condition): void {
   unit.conditions = unit.conditions.filter((c) => c.kind !== kind);
 }
 
-/** Put a condition on a unit, or lengthen the one it has. Something soaked cannot be set burning. */
-export function addCondition(ctx: Ctx, unit: Unit, kind: Condition, rounds: number): void {
+/**
+ * Put a condition on a unit, or lengthen the one it has. Something soaked cannot be set burning.
+ * `amount`: a shield's points (Bolstered); a bigger one replaces a smaller.
+ */
+export function addCondition(ctx: Ctx, unit: Unit, kind: Condition, rounds: number, amount?: number): void {
   if (unit.down || rounds <= 0) return;
   if (kind === "burning" && has(unit, "wet")) return;
   if (kind === "wet") removeCondition(unit, "burning");
@@ -46,7 +49,9 @@ export function addCondition(ctx: Ctx, unit: Unit, kind: Condition, rounds: numb
     if (budget && kind === "slowed") budget.move = Math.floor(budget.move / 2);
     if (budget && kind === "prone") budget.move = 0;
   }
-  ctx.events.push({ t: "condition", target: unit.id, kind, rounds });
+  const now = unit.conditions.find((c) => c.kind === kind)!;
+  if (amount !== undefined) now.amount = Math.max(now.amount ?? 0, amount);
+  ctx.events.push({ t: "condition", target: unit.id, kind, rounds, ...(now.amount !== undefined ? { amount: now.amount } : {}) });
 }
 
 /** The conditions that count as wounds, for abilities that grow with them. */
@@ -66,11 +71,11 @@ function fall(ctx: Ctx, unit: Unit): void {
 
 /** Put a shield of `amount` points on a unit for `rounds` of its turns (Bolstered). A bigger one replaces a smaller. */
 export function shieldUnit(ctx: Ctx, unit: Unit, amount: number, rounds: number): void {
-  if (unit.down || amount <= 0) return;
-  addCondition(ctx, unit, "bolstered", rounds);
-  const held = unit.conditions.find((c) => c.kind === "bolstered");
-  if (held) held.amount = Math.max(held.amount ?? 0, amount);
+  if (amount > 0) addCondition(ctx, unit, "bolstered", rounds, amount);
 }
+
+/** The points of shield a unit has left (Bolstered), 0 for none. */
+export const shieldOf = (unit: Pick<Unit, "conditions">): number => unit.conditions.find((c) => c.kind === "bolstered")?.amount ?? 0;
 
 /** Spend a unit's shield on `amount` of damage. Returns how much of it the shield took; a shield used up is gone. */
 function soak(unit: Unit, amount: number): number {

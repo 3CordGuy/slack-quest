@@ -5,6 +5,9 @@
 // back and forth a pixel, brighter where it meets the air. The level eases
 // to its new value rather than jumping.
 //
+// A shield (Bolstered) on top of HP is a pale band after the liquid; should
+// the two come to more than the max, the channel stands for the two together.
+//
 // It redraws about fifteen times a second, and holds still for anyone who
 // has asked for less motion.
 
@@ -24,10 +27,16 @@ const LIQUID: Record<string, [RGB, RGB, RGB, RGB]> = {
   stamina: [[176, 112, 20], [238, 176, 40], [252, 220, 104], [255, 250, 214]],
 };
 
-export function LiquidMeter({ kind, now, max, w, h }: { kind: keyof typeof LIQUID; now: number; max: number; w: number; h: number }) {
+/** A shield's band: in shadow, its body, lit. */
+const SHIELD: [RGB, RGB, RGB] = [[150, 160, 178], [204, 212, 226], [240, 244, 250]];
+
+export function LiquidMeter({ kind, now, max, shield = 0, w, h }: { kind: keyof typeof LIQUID; now: number; max: number; shield?: number; w: number; h: number }) {
   const canvas = useRef<HTMLCanvasElement>(null);
   const goal = useRef(0);
-  goal.current = Math.max(0, Math.min(1, now / Math.max(1, max)));
+  const shieldGoal = useRef(0);
+  const whole = Math.max(1, max, now + shield);
+  goal.current = Math.max(0, Math.min(1, now / whole));
+  shieldGoal.current = Math.max(0, Math.min(1, (now + shield) / whole));
 
   useEffect(() => {
     const ctx = canvas.current?.getContext("2d");
@@ -36,6 +45,7 @@ export function LiquidMeter({ kind, now, max, w, h }: { kind: keyof typeof LIQUI
     const [deep, body, lit, glint] = LIQUID[kind];
     const still = typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
     let level = goal.current;
+    let shieldLevel = shieldGoal.current;
     let frame = 0;
     let last = 0;
     const draw = (ms: number) => {
@@ -44,6 +54,8 @@ export function LiquidMeter({ kind, now, max, w, h }: { kind: keyof typeof LIQUI
       const dt = Math.min(0.25, (ms - last) / 1000);
       last = ms;
       level += (goal.current - level) * (1 - Math.exp(-dt * 6));
+      shieldLevel += (shieldGoal.current - shieldLevel) * (1 - Math.exp(-dt * 6));
+      const shieldEdge = shieldLevel - level > 0.002 ? shieldLevel * w : 0;
       const t = still ? 0 : ms / 1000;
       for (let y = 0; y < h; y++) {
         // The leading edge laps: each row a little ahead of or behind the level, in its own time.
@@ -51,7 +63,13 @@ export function LiquidMeter({ kind, now, max, w, h }: { kind: keyof typeof LIQUI
         for (let x = 0; x < w; x++) {
           const i = (y * w + x) * 4;
           if (x + 0.5 > edge) {
-            img.data[i + 3] = 0;
+            if (x + 0.5 <= shieldEdge) {
+              const s = y === 0 ? SHIELD[2] : y === h - 1 ? SHIELD[0] : SHIELD[1];
+              img.data[i] = s[0];
+              img.data[i + 1] = s[1];
+              img.data[i + 2] = s[2];
+              img.data[i + 3] = 255;
+            } else img.data[i + 3] = 0;
             continue;
           }
           // Top row lit, bottom row in shadow, the body between.
