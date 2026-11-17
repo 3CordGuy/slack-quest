@@ -193,9 +193,10 @@ function leafSpray(at: THREE.Vector3, r: number, count: number, leaves: THREE.Co
 
 /**
  * The heart of a clump of oak leaves, about `r` across at `at`: a dark lump knocked out of round, for the
- * leaves to stand out from and so that the sky does not show through the crown. It does not move.
+ * leaves to stand out from and so that the sky does not show through the crown. It does not move, unless it
+ * `sways`: a plain oak's clump is the lump alone, and it heaves in the wind as a whole.
  */
-function leafCore(at: THREE.Vector3, r: number, leaves: THREE.Color, salt: number): THREE.BufferGeometry {
+function leafCore(at: THREE.Vector3, r: number, leaves: THREE.Color, salt: number, sways = false): THREE.BufferGeometry {
   const g = new THREE.IcosahedronGeometry(1, 0);
   const pos = g.getAttribute("position") as THREE.BufferAttribute;
   const v = new THREE.Vector3();
@@ -216,7 +217,7 @@ function leafCore(at: THREE.Vector3, r: number, leaves: THREE.Color, salt: numbe
     for (let k = 0; k < 3; k++) colors.set([c.r, c.g, c.b], (f + k) * 3);
   }
   g.setAttribute("color", new THREE.BufferAttribute(colors, 3));
-  return leafy(g);
+  return leafy(g, sways ? at : undefined);
 }
 
 /**
@@ -224,9 +225,10 @@ function leafCore(at: THREE.Vector3, r: number, leaves: THREE.Color, salt: numbe
  * out from its top and a leader going on up, and a broad crown: a clump of leaves on the end of each limb, a
  * big one on top, and smaller ones filling in between. The first is broad and low, the second taller, the
  * third leans, with its crown out to one side. `bare` is the same tree dead: no leaves, grey wood, and each
- * limb forking out into pointed twigs.
+ * limb forking out into pointed twigs. A `plain` oak (no "Fancy grass") has the same limbs, but each clump of
+ * its crown is a faceted lump with no leaves standing out of it, like the broadleaves'.
  */
-function oakGeometry(shape: number, bare: boolean, sodden: boolean): THREE.BufferGeometry {
+function oakGeometry(shape: number, bare: boolean, sodden: boolean, plain = false): THREE.BufferGeometry {
   const r = (i: number) => lumpAt(shape * 3.7 + 1, i * 0.61, bare ? 2.3 : 0.9, 5 + shape);
   const bark = new THREE.Color(bare ? "#7b6f60" : sodden ? "#4c3d2f" : "#5d4833");
   const pale = bark.clone().multiplyScalar(bare ? 1.14 : 1.08);
@@ -282,6 +284,10 @@ function oakGeometry(shape: number, bare: boolean, sodden: boolean): THREE.Buffe
     // and small ones standing proud of it round its sides and across its top, so its outline is broken. Each
     // clump is a dark heart with a spray of leaves standing out all round it.
     const clump = (at: THREE.Vector3, size: number, tone: THREE.Color, salt: number) => {
+      if (plain) {
+        parts.push(leafCore(at, size * 0.95, tone, salt, true));
+        return;
+      }
       parts.push(leafCore(at, size * 0.6, tone.clone().multiplyScalar(0.6), salt));
       parts.push(leafSpray(at, size * 1.15, Math.round(26 + size * 150), tone, salt + 100));
     };
@@ -388,14 +394,14 @@ export class Woods {
   private scratch = new THREE.Matrix4();
   private shear = new THREE.Matrix4();
 
-  constructor(trees: TreeSpot[], boulders: BoulderSpot[], sodden: boolean) {
+  constructor(trees: TreeSpot[], boulders: BoulderSpot[], sodden: boolean, plain = false) {
     // Each kind of tree is one mesh; an oak or a snag, one for each of its shapes, made only where any stand.
     // Oaks are `stout`: the wind moves them their own way, and nobody walking by pushes them over.
     const shapeOf = (t: TreeSpot) => (((t.shape ?? 0) % OAK_SHAPES) + OAK_SHAPES) % OAK_SHAPES;
     const kinds: { of: (t: TreeSpot) => boolean; geometry: () => THREE.BufferGeometry; stout: boolean }[] = [
       { of: (t) => t.kind === "pine", geometry: () => pineGeometry(sodden), stout: false },
       { of: (t) => t.kind === "broad", geometry: () => broadGeometry(sodden), stout: false },
-      ...Array.from({ length: OAK_SHAPES }, (_, shape) => ({ of: (t: TreeSpot) => t.kind === "oak" && shapeOf(t) === shape, geometry: () => oakGeometry(shape, false, sodden), stout: true })),
+      ...Array.from({ length: OAK_SHAPES }, (_, shape) => ({ of: (t: TreeSpot) => t.kind === "oak" && shapeOf(t) === shape, geometry: () => oakGeometry(shape, false, sodden, plain), stout: true })),
       ...Array.from({ length: OAK_SHAPES }, (_, shape) => ({ of: (t: TreeSpot) => t.kind === "snag" && shapeOf(t) === shape, geometry: () => oakGeometry(shape, true, sodden), stout: true })),
     ];
     for (const kind of kinds) {

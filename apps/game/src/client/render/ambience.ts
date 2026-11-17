@@ -11,7 +11,7 @@
 import * as THREE from "three";
 import { cobbleTexture, floorTexture, pierTexture } from "./groundArt";
 import { devTools } from "../devTools";
-import { fancy } from "./fancy";
+import { fancy, fancyGrass } from "./fancy";
 import { WIND_DIR, addFieldSway, gustAt, setFieldCalm, windPower } from "./wind";
 import type { Tile } from "@gantt-quest/world";
 import type { LightKind } from "./props";
@@ -934,6 +934,32 @@ export class Ambience {
           });
         }
       }
+    }
+
+    // Without "Fancy grass", a meadow or a hex of tall grass is a few tufts (taller ones in tall grass) instead of a
+    // field of blades, and a dry patch is just its tinted ground.
+    if (!fancyGrass.get()) {
+      const scatter = (patches: FieldPatch[], count: number, size: number) => {
+        for (const f of patches) {
+          const kx = Math.round(f.x * 100), kz = Math.round(f.z * 100);
+          for (let i = 0; i < count; i++) {
+            const angle = (i / count) * Math.PI * 2 + hash(kx, kz, 300 + i) * 1.2;
+            const spread = 0.2 + hash(kx, kz, 320 + i) * 0.5;
+            tufts.push({
+              x: f.x + Math.sin(angle) * spread,
+              y: f.y,
+              z: f.z + Math.cos(angle) * spread,
+              size: size * (0.8 + hash(kx, kz, 340 + i) * 0.4),
+              phase: f.x * 0.6 + f.z * 0.35 + hash(kx, kz, 360 + i),
+            });
+          }
+        }
+      };
+      scatter(meadows, 5, 0.26);
+      scatter(talls, 6, 0.45);
+      meadows.length = 0;
+      talls.length = 0;
+      drys.length = 0;
     }
 
     const tone = new THREE.Color();
