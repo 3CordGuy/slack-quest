@@ -22,7 +22,12 @@ export type AbilityPools = Record<string, PoolEntry[]>;
 
 /** What each class can choose from, by class id. Classes with no entries have no class abilities yet. */
 export const ABILITY_POOLS: AbilityPools = {
-  qa_paladin: [],
+  qa_paladin: [
+    { id: "beacon_aura", level: 1 },
+    { id: "healing_aura", level: 1 },
+    { id: "branding_strike", level: 1 },
+    { id: "stoke_the_fire", level: 1 },
+  ],
   devops_mage: [],
   refactor_rogue: [],
   backend_druid: [],

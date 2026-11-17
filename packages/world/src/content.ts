@@ -190,6 +190,12 @@ export const ABILITIES: Record<string, AbilityDef> = {
   hex: { id: "hex", name: "Hex", stat: "int_stat", rolls: 3, target: "enemy", damage: 6, maxHpDamage: 0.05, perfect: { effect: "glitched", turns: 1 }, blurb: "A slow query on the target: adds 5% of its max HP to the damage. Perfect: fumbling." },
   blight: { id: "blight", name: "Blight", stat: "int_stat", rolls: 4, target: "all_enemies", damage: 5, blurb: "A curse on every enemy at once." },
   soul_drain: { id: "soul_drain", name: "Soul Drain", stat: "int_stat", rolls: 2, target: "enemy", damage: 7, drain: 0.34, blurb: "Takes some of their life for yours: heals you a third of the damage dealt." },
+  // Class abilities: chosen for a hero's slots from their class's pool (classabilities.ts), not given by a weapon.
+  // Paladin. The two auras are conditions on the Paladin in a zone fight (zone/kit.ts AURAS); a voyage battle has no tiles for them to reach across.
+  beacon_aura: { id: "beacon_aura", name: "Beacon Aura", stat: "vit", rolls: 1, target: "self", blurb: "For 4 turns you shine: you light the dark around you, and you and allies beside you have advantage on your attacks." },
+  healing_aura: { id: "healing_aura", name: "Healing Aura", stat: "vit", rolls: 1, target: "self", blurb: "For 4 turns, at the start of each of your turns, you and every ally beside you heal a little." },
+  branding_strike: { id: "branding_strike", name: "Branding Strike", stat: "str", rolls: 3, target: "enemy", damage: 11, targetEffect: { effect: "burning", turns: 2 }, blurb: "A searing blow that hits harder than most, and sets the target Burning." },
+  stoke_the_fire: { id: "stoke_the_fire", name: "Stoke the Fire", stat: "str", rolls: 3, target: "all_enemies", damage: 6, targetEffect: { effect: "burning", turns: 2 }, blurb: "Flame bursts off you: every enemy beside you is struck and set Burning." },
   // Signature abilities: one per class, on its signature weapon.
   full_reckoning: { id: "full_reckoning", name: "Full Reckoning", stat: "str", rolls: 3, target: "enemy", damage: 8, perDebuffDamage: 2, blurb: "Every wound it carries counts against it: +2 damage per different debuff on the target." },
   thunderhead: { id: "thunderhead", name: "Thunderhead", stat: "int_stat", rolls: 3, target: "all_enemies", damage: 7, vsEffect: { effect: "burning", bonus: 3 }, blurb: "Lightning on every enemy, +3 on any already Burning." },

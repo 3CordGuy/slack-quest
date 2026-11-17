@@ -20,6 +20,10 @@ export const ABILITY_ICON: Record<string, ActionIcon> = {
   cleave: icon("cleave", "#ff6b6b"),
   heavy_blow: icon("heavy", "#ff8a3a"),
   full_reckoning: icon("slash", "#e879f9"),
+  beacon_aura: icon("beam", "#ffe9a8"),
+  healing_aura: icon("heal", "#ffd23f"),
+  branding_strike: icon("heavy", "#ff7a2a"),
+  stoke_the_fire: icon("fire", "#ff5a2a"),
   // Mage
   firebolt: icon("fire", "#fff1c9"),
   mend: icon("heal", "#7dff9a"),

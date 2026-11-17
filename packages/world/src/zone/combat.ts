@@ -319,6 +319,7 @@ export function resolveAbility(ctx: Ctx, unit: Unit, ability: string, aim: Aim &
     if (def.targetEffect) addCondition(ctx, target, def.targetEffect.effect, def.targetEffect.turns);
     // "Takes the very next turn" has no meaning in an initiative order: the ally is Hasted instead.
     if (def.actNext && target.id !== unit.id) addCondition(ctx, target, "hasted", 2);
+    if (tactic.aura) addCondition(ctx, unit, tactic.aura.kind, tactic.aura.rounds);
     landed = true;
   }
   if (landed && def.selfEffect && !unit.down) addCondition(ctx, unit, def.selfEffect.effect, def.selfEffect.turns);

@@ -27,8 +27,8 @@ import { generateDelve } from "./delve";
 import { checkOpen, openChest } from "./loot";
 import { isCrateId } from "./crates";
 import { FREE_WALK, blast, blockerAt, inFight, pathIn, sameHex, sees, solid, unitAt, unitById, zoneReach } from "./geometry";
-import { FLEE_RANGE, STARTING_ITEMS, THROWABLES, THROWABLE_KINDS, cleanItems, commonCost, enemyHp, enemyMove, tacticOf } from "./kit";
-import { d20, heroMove, mod, statOf } from "./rules";
+import { AURAS, FLEE_RANGE, STARTING_ITEMS, THROWABLES, THROWABLE_KINDS, cleanItems, commonCost, enemyHp, enemyMove, tacticOf } from "./kit";
+import { d20, heroMove, mod, rollDice, statOf } from "./rules";
 import { hiddenEnemies, sentToClient } from "./light";
 import { checkPickup, clearSurfaces, lightTorch, pickUpTorch, placeSurface, standInSurface, tickLights, tickSurfaces } from "./surfaces";
 import { exploreRound, passTime } from "./clock";
@@ -313,6 +313,12 @@ function beginTurn(ctx: Ctx, enc: Encounter, unit: Unit): boolean {
   if (unit.down) return false;
   // A Druid mends a little every turn.
   if (unit.kind === "backend_druid" && unit.hp < unit.maxHp) heal(ctx, unit, DRUID_REGEN, { actor: unit.id, what: "regen" });
+  // A Healing Aura mends the bearer and everyone of theirs standing beside them.
+  if (has(unit, "mending")) {
+    for (const u of ctx.state.units) {
+      if (u.side === unit.side && !u.down && u.hp < u.maxHp && hexDistance(u.pos, unit.pos) <= AURAS.range) heal(ctx, u, rollDice(ctx.rng, AURAS.heal), { actor: unit.id, what: "healing_aura" });
+    }
+  }
   // A troll's wounds close at the start of each of its turns, unless it is on fire.
   const grows = unit.side === "enemy" ? ENEMIES[unit.kind]?.regen : undefined;
   if (grows && unit.hp < unit.maxHp && !has(unit, grows.unless)) heal(ctx, unit, grows.amount, { actor: unit.id, what: grows.name });

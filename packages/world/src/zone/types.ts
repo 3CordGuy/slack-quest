@@ -15,8 +15,8 @@ import type { FurnishingGrant } from "../world";
 
 export type Side = "hero" | "enemy";
 
-/** What can be on a unit: the old fights' effects, and three the tiles bring. */
-export type Condition = EffectKind | "poisoned" | "prone" | "wet";
+/** What can be on a unit: the old fights' effects, three the tiles bring, and the auras a hero can carry (kit.ts AURAS). */
+export type Condition = EffectKind | "poisoned" | "prone" | "wet" | "beacon" | "mending";
 
 export interface UnitCondition {
   kind: Condition;

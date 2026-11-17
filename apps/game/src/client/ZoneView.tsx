@@ -737,7 +737,7 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
       // Chests and crates as the picture has them: thrown open, or knocked about and broken, as each is shown.
       map: { ...state.map, pois: picture.pois },
       // A lit torch is held in the off hand, where a shield would be.
-      heroes: picture.units.filter((u) => u.side === "hero").map((u) => ({ id: u.id, classId: u.kind, pos: u.pos, name: u.name, outfit: u.torch ? { ...u.outfit, [u.torchHand === "main" ? "main_hand" : "off_hand"]: TORCH_IN_HAND } : u.outfit, torch: !!u.torch, effects: badgesOf(u), level: u.level, xp: 0, hp: u.hp, maxHp: u.maxHp, down: u.down, prone: u.conditions.some((c) => c.kind === "prone"), active: turn(u.id) })),
+      heroes: picture.units.filter((u) => u.side === "hero").map((u) => ({ id: u.id, classId: u.kind, pos: u.pos, name: u.name, outfit: u.torch ? { ...u.outfit, [u.torchHand === "main" ? "main_hand" : "off_hand"]: TORCH_IN_HAND } : u.outfit, torch: !!u.torch || u.conditions.some((c) => c.kind === "beacon"), effects: badgesOf(u), level: u.level, xp: 0, hp: u.hp, maxHp: u.maxHp, down: u.down, prone: u.conditions.some((c) => c.kind === "prone"), active: turn(u.id) })),
       // What the dark hides is not drawn: out of a fight the server does not even send it.
       units: picture.units.filter((u) => u.side === "enemy" && !state.dark?.includes(u.id)).map((u) => ({ id: u.id, kind: u.kind, pos: u.pos, name: u.name, hp: inFight(u.id) || u.hp < u.maxHp ? u.hp / u.maxHp : undefined, down: u.down, prone: u.conditions.some((c) => c.kind === "prone"), active: u.id === spot, hostile: inFight(u.id), effects: badgesOf(u) })),
       turn: null,

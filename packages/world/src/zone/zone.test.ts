@@ -7,7 +7,7 @@ import { walk } from "./combat";
 import { attackContext, type Ctx } from "./engine";
 import { ALERT_RANGE, DEFAULT_ZONE_OPTIONS, JOIN_RANGE, generateZone, zoneOptions } from "./gen";
 import { adjacent, blast, flies, sees, solid, zoneReach } from "./geometry";
-import { ENEMY_BURST, ENEMY_KIT, EXPLORE_ROUND_MS, FLEE_RANGE, LIGHT_RADIUS, SHIELD_SET_ASIDE, TACTICS, TORCH_GROUND_ROUNDS, TORCH_HELD_ROUNDS, TORCH_ROUND_MS, commonCost, enemyHp, enemyStrikes, tacticOf } from "./kit";
+import { AURAS, ENEMY_BURST, ENEMY_KIT, EXPLORE_ROUND_MS, FLEE_RANGE, LIGHT_RADIUS, SHIELD_SET_ASIDE, TACTICS, TORCH_GROUND_ROUNDS, TORCH_HELD_ROUNDS, TORCH_ROUND_MS, commonCost, enemyHp, enemyStrikes, tacticOf } from "./kit";
 import { MAX_CATCHUP_ROUNDS } from "./clock";
 import { defenceOf } from "./engine";
 import { checkAbility, crateBlow, enemyAct } from "./combat";
@@ -15,6 +15,7 @@ import { d20, diceAverage, diceFor, heroMove, hitChance } from "./rules";
 import { createZone, ensureMouth, standInHero, stepZone, zoneView } from "./zone";
 import { DELVE_CRATES, generateDelve } from "./delve";
 import { litHexes } from "./light";
+import { poolFor } from "../classabilities";
 import { CHEST_PAY, unopened } from "./loot";
 import { CRATE_HP, CRATE_PAY } from "./crates";
 import { NOISE_RANGE } from "./doors";
@@ -2149,5 +2150,146 @@ describe("a troll", () => {
     unit(state, foe).conditions.push({ kind: "burning", rounds: 3 });
     const lit = must(state, { type: "end_turn", by: "ann", unit: "ann" });
     expect(unit(lit, foe).hp).toBeLessThan(5);
+  });
+});
+
+describe("the Paladin's class abilities", () => {
+  /**
+   * A Paladin (ann) and two crewmates in a fight with a dummy: bo right beside ann, cy two hexes off. Ann's turn.
+   * `spare` is another hex beside ann, left empty.
+   */
+  function party() {
+    let state = board();
+    state.aiOff = true;
+    const annAt = at(5, 6);
+    const dummyAt = at(6, 6);
+    const [boAt, spare] = hexNeighbors(annAt, state.map.grid).filter((p) => !sameHexes(p, dummyAt));
+    const ann = hero(state, "ann", "qa_paladin", annAt);
+    ann.abilities = ["beacon_aura", "healing_aura", "branding_strike", "stoke_the_fire"];
+    hero(state, "bo", "refactor_rogue", boAt);
+    hero(state, "cy", "devops_mage", at(3, 6));
+    const dummy = enemy(state, "dummy", dummyAt);
+    state = provoke(state);
+    while (!state.encounter!.acting.includes("ann")) state = must(state, { type: "timeout" });
+    expect(hexDistance(unit(state, "ann").pos, unit(state, "bo").pos)).toBe(1);
+    expect(hexDistance(unit(state, "ann").pos, unit(state, "cy").pos)).toBe(2);
+    expect(hexDistance(unit(state, "ann").pos, dummy.pos)).toBe(1);
+    return { state, dummy: dummy.id, spare };
+  }
+  /** Everyone sharing ann's turn ends it (conditions run down as a shared turn ends, not as each one in it does). */
+  function endShared(state: ZoneState, sink: ZoneEvent[] = []): ZoneState {
+    for (const id of [...state.encounter!.acting]) if (!state.encounter!.done.includes(id) && !unit(state, id).down) state = must(state, { type: "end_turn", by: id, unit: id }, sink);
+    return state;
+  }
+  /** On to ann's next turn. */
+  function nextTurn(state: ZoneState, sink: ZoneEvent[] = []): ZoneState {
+    state = endShared(state, sink);
+    while (!state.encounter!.acting.includes("ann") || state.encounter!.done.includes("ann")) state = must(state, { type: "timeout" }, sink);
+    return state;
+  }
+  const sameHexes = (a: HexPos, b: HexPos) => a.q === b.q && a.r === b.r;
+  const lasts = (state: ZoneState, kind: string) => unit(state, "ann").conditions.find((c) => c.kind === kind)?.rounds;
+
+  it("are all in the Paladin's pool", () => {
+    expect(poolFor("qa_paladin").map((e) => e.id)).toEqual(["beacon_aura", "healing_aura", "branding_strike", "stoke_the_fire"]);
+  });
+
+  it("Beacon Aura: a Bonus action that gives the Paladin and allies beside them advantage, not anyone further off", () => {
+    let { state, dummy } = party();
+    const foe = () => unit(state, dummy);
+    expect(attackContext(state, unit(state, "bo"), foe(), { melee: true }).adv).toBe(0);
+    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "beacon_aura" });
+    expect(state.encounter!.budgets.ann).toMatchObject({ bonus: false, action: true });
+    const bo = attackContext(state, unit(state, "bo"), foe(), { melee: true });
+    expect(bo.adv).toBe(1);
+    expect(bo.notes.join()).toMatch(/Beacon/);
+    const ann = attackContext(state, unit(state, "ann"), foe(), { melee: true });
+    expect(ann.adv).toBe(1);
+    expect(ann.notes.join()).toMatch(/your Beacon/);
+    expect(attackContext(state, unit(state, "cy"), foe(), { melee: false }).adv).toBe(0);
+    // Enemies beside the Paladin get nothing from it.
+    expect(attackContext(state, foe(), unit(state, "ann"), { melee: true }).adv).toBe(0);
+  });
+
+  it("Beacon Aura: lights the dark around the Paladin while it lasts, and lasts 4 of the Paladin's turns after this one", () => {
+    let { state } = party();
+    state.options = { ...state.options, biome: "caves" };
+    const near = hexNeighbors(unit(state, "ann").pos, state.map.grid)[0];
+    expect(litHexes(state)!.has(posKey(near))).toBe(false);
+    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "beacon_aura" });
+    expect(litHexes(state)!.has(posKey(near))).toBe(true);
+    for (let turn = 1; turn <= 4; turn++) {
+      state = nextTurn(state);
+      expect(lasts(state, "beacon"), `turn ${turn}`).toBeGreaterThan(0);
+    }
+    state = endShared(state);
+    expect(lasts(state, "beacon")).toBeUndefined();
+    expect(litHexes(state)!.has(posKey(near))).toBe(false);
+  });
+
+  it("Healing Aura: heals the Paladin and allies beside them at the start of each of their next 4 turns", () => {
+    let { state } = party();
+    for (const id of ["ann", "bo", "cy"]) unit(state, id).hp = 1;
+    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "healing_aura" });
+    expect(state.encounter!.budgets.ann.bonus).toBe(false);
+    // Nothing on the turn it is put up.
+    expect(unit(state, "ann").hp).toBe(1);
+    const events: ZoneEvent[] = [];
+    for (let turn = 0; turn < 6; turn++) state = nextTurn(state, events);
+    const healed = (id: string) => events.filter((e) => e.t === "heal" && e.what === "healing_aura" && e.target === id);
+    expect(healed("ann")).toHaveLength(4);
+    expect(healed("bo")).toHaveLength(4);
+    expect(healed("cy")).toHaveLength(0);
+    for (const e of healed("ann")) if (e.t === "heal") expect(e.amount).toBeGreaterThanOrEqual(AURAS.heal.plus + 1);
+    expect(unit(state, "cy").hp).toBe(1);
+  });
+
+  it("Healing Aura: does not get a fallen ally up", () => {
+    let { state } = party();
+    Object.assign(unit(state, "bo"), { hp: 0, down: true });
+    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "healing_aura" });
+    state = nextTurn(state);
+    expect(unit(state, "bo").down).toBe(true);
+  });
+
+  it("Branding Strike: an Action blow that sets what it hits Burning, and needs a rest after", () => {
+    let hits = 0;
+    for (let seed = 1; seed <= 12; seed++) {
+      let { state, dummy } = party();
+      state.rng = seed;
+      const events: ZoneEvent[] = [];
+      state = must(state, { type: "use", by: "ann", unit: "ann", ability: "branding_strike", target: dummy }, events);
+      const hit = events.some((e) => e.t === "hit" && e.target === dummy);
+      if (hit) hits++;
+      expect(unit(state, dummy).conditions.some((c) => c.kind === "burning")).toBe(hit);
+      expect(state.encounter!.budgets.ann.action).toBe(false);
+      expect(fails(nextTurn(state), { type: "use", by: "ann", unit: "ann", ability: "branding_strike", target: dummy })).toMatch(/not ready/);
+    }
+    expect(hits).toBeGreaterThan(0);
+  });
+
+  it("Branding Strike: hits harder than a Smite", () => {
+    expect(ABILITIES.branding_strike.damage!).toBeGreaterThan(ABILITIES.smite.damage!);
+  });
+
+  it("Stoke the Fire: strikes every enemy beside the Paladin and sets the ones it hits Burning, and nothing further off", () => {
+    let hits = 0;
+    for (let seed = 1; seed <= 12; seed++) {
+      let { state, dummy, spare } = party();
+      const second = enemy(state, "dummy", spare).id;
+      const far = enemy(state, "dummy", at(8, 6)).id;
+      expect(hexDistance(unit(state, "ann").pos, unit(state, second).pos)).toBe(1);
+      state.rng = seed;
+      const events: ZoneEvent[] = [];
+      state = must(state, { type: "use", by: "ann", unit: "ann", ability: "stoke_the_fire" }, events);
+      for (const id of [dummy, second]) {
+        const hit = events.some((e) => e.t === "hit" && e.target === id);
+        if (hit) hits++;
+        expect(unit(state, id).conditions.some((c) => c.kind === "burning"), `seed ${seed} ${id}`).toBe(hit);
+      }
+      expect(events.some((e) => (e.t === "roll" && e.roll.target === far) || (e.t === "hit" && e.target === far))).toBe(false);
+      expect(unit(state, far).conditions).toEqual([]);
+    }
+    expect(hits).toBeGreaterThan(0);
   });
 });

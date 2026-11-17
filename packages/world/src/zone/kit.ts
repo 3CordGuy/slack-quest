@@ -43,6 +43,8 @@ export interface Tactic {
   ignites?: boolean;
   /** Extra damage against something Wet. */
   vsWet?: number;
+  /** Puts this condition on the user for `rounds` of their own turns: an aura, worked by the condition itself (see AURAS). */
+  aura?: { kind: Condition; rounds: number };
 }
 
 const melee = (extra: Partial<Tactic> = {}): Tactic => ({ cost: "action", reach: "melee", range: 1, shape: "single", ...extra });
@@ -60,6 +62,11 @@ export const TACTICS: Record<string, Tactic> = {
   cleave: melee({ shape: "adjacent", cooldown: 2 }),
   heavy_blow: melee({ toHit: -2 }),
   full_reckoning: melee(),
+  // Paladin class abilities
+  beacon_aura: { cost: "bonus", reach: "spell", range: 0, shape: "self", aura: { kind: "beacon", rounds: 4 } },
+  healing_aura: { cost: "bonus", reach: "spell", range: 0, shape: "self", aura: { kind: "mending", rounds: 4 } },
+  branding_strike: melee({ cooldown: 2 }),
+  stoke_the_fire: melee({ shape: "adjacent", cooldown: 2 }),
   // Mage
   firebolt: spell(6, { ignites: true }),
   mend: mend(5),
@@ -113,6 +120,17 @@ export function reactionStrike(abilities: string[]): string {
 
 // ---------- conditions ----------
 
+/**
+ * What the aura conditions reach and do. Beacon: the bearer gives light, and the bearer and every ally within
+ * `range` attack with advantage. Mending: at the start of each of the bearer's turns, the bearer and every ally
+ * standing within `range` heal `heal` (the fallen are not got up).
+ */
+export const AURAS = {
+  range: 1,
+  beaconLight: 2,
+  heal: { n: 1, d: 4, plus: 1 } satisfies Dice,
+};
+
 /** The stat that shrugs off each condition. */
 export const SAVE_STAT: Record<Condition, StatKey> = {
   bleeding: "vit",
@@ -127,6 +145,8 @@ export const SAVE_STAT: Record<Condition, StatKey> = {
   poisoned: "vit",
   prone: "agi",
   wet: "agi",
+  beacon: "vit",
+  mending: "vit",
 };
 
 const info = (kind: EffectKind, blurb: string) => ({ name: EFFECT_INFO[kind].name, color: EFFECT_INFO[kind].color, blurb });
@@ -145,6 +165,8 @@ export const CONDITION_INFO: Record<Condition, { name: string; blurb: string; co
   poisoned: { name: "Poisoned", blurb: "Its attacks are rolled with disadvantage.", color: "#a3e635" },
   prone: { name: "Prone", blurb: "Flat on the ground: standing costs half its movement. Melee attacks against it have advantage.", color: "#cbd5e1" },
   wet: { name: "Wet", blurb: "Soaked through: lightning hits harder, and it cannot burn.", color: "#7dd3fc" },
+  beacon: { name: "Beacon", blurb: "Gives light, and it and allies beside it have advantage on their attacks.", color: "#ffe9a8" },
+  mending: { name: "Healing Aura", blurb: "At the start of each of its turns, it and every ally beside it heal a little.", color: "#7dff9a" },
 };
 
 // ---------- common actions ----------
