@@ -17,6 +17,7 @@ import { DELVE_CRATES, generateDelve } from "./delve";
 import { litHexes } from "./light";
 import { CHEST_PAY, unopened } from "./loot";
 import { CRATE_HP, CRATE_PAY } from "./crates";
+import { NOISE_RANGE } from "./doors";
 import type { SurfaceKind, Unit, ZoneAction, ZoneEffect, ZoneEvent, ZoneState } from "./types";
 
 // ---------- helpers ----------
@@ -1085,7 +1086,8 @@ describe("a delve", () => {
   const delveOptions = (party = 2) => zoneOptions({ biome: "caves", delve: true, party, level: 3 });
   /** Every open hex walkable from the mouth. */
   const fromMouth = (state: ZoneState) => {
-    const open = new Set(state.map.tiles.filter((t) => !solid(t)).map((t) => posKey(t)));
+    // A locked door can be opened, so the way through it counts.
+    const open = new Set(state.map.tiles.filter((t) => !solid(t) || t.biome === "gate").map((t) => posKey(t)));
     const seen = new Set([posKey(state.start)]);
     const queue = [state.start];
     for (let i = 0; i < queue.length; i++) {
@@ -1104,7 +1106,9 @@ describe("a delve", () => {
       const where = `seed ${seed}`;
       const plan = generateDelve(`d${seed}`, delveOptions());
       expect(generateDelve(`d${seed}`, delveOptions()), where).toEqual(plan);
-      expect(plan.map.tiles.some((t) => t.biome === "gate"), where).toBe(false);
+      // Every locked door is a door to work, standing where the caverns put it.
+      const gates = plan.map.tiles.filter((t) => t.biome === "gate");
+      expect(plan.map.pois.filter((p) => p.kind === "gate").map((p) => posKey(p.pos)).sort(), where).toEqual(gates.map((t) => posKey(t)).sort());
       expect(plan.map.pois.filter((p) => p.kind === "landing").map((p) => p.pos), where).toEqual([plan.start]);
       const state = createZone("DLVE", `d${seed}`, delveOptions());
       const reach = fromMouth(state);
@@ -1133,6 +1137,129 @@ describe("a delve", () => {
     for (const n of hexNeighbors(state.start, state.map.grid)) if (!solid(state.map.tiles.find((t) => t.q === n.q && t.r === n.r))) expect(lit.has(posKey(n))).toBe(true);
     // Far down the tunnels it is still dark.
     expect(state.map.tiles.some((t) => t.biome === "cave" && !lit.has(posKey(t)))).toBe(true);
+  });
+
+  /** A delve seed with a locked door, and a hero standing beside it with nobody else about. */
+  const atDoor = () => {
+    for (let seed = 0; seed < 60; seed++) {
+      const state = createZone("DLVE", `d${seed}`, delveOptions());
+      const door = state.map.pois.find((p) => p.kind === "gate");
+      if (!door) continue;
+      const beside = hexNeighbors(door.pos, state.map.grid).find((n) => tileOf(state, n)?.biome === "cave" && !state.units.some((u) => posKey(u.pos) === posKey(n)));
+      if (!beside) continue;
+      return { state, door, beside, seed };
+    }
+    throw new Error("no delve with a door in sixty seeds");
+  };
+
+  it("shuts a room or two behind a locked door: a wall that blocks the way and the view until it opens", () => {
+    let doors = 0;
+    for (let seed = 0; seed < 30; seed++) {
+      const state = createZone("DLVE", `d${seed}`, delveOptions());
+      for (const door of state.map.pois.filter((p) => p.kind === "gate")) {
+        doors++;
+        expect(solid(tileOf(state, door.pos))).toBe(true);
+        expect(door.cleared).toBe(false);
+      }
+    }
+    expect(doors).toBeGreaterThan(0);
+  });
+
+  it("unlocks a door quietly with a key off the ring, and uses the key up", () => {
+    const { state, door, beside } = atDoor();
+    hero(state, "ann", "qa_paladin", beside);
+    expect(fails(state, { type: "unlock", by: "ann", unit: "ann", poi: "gate99" })).toMatch(/no door/);
+    state.keys = 1;
+    const events: ZoneEvent[] = [];
+    const next = must(state, { type: "unlock", by: "ann", unit: "ann", poi: door.id }, events);
+    expect(next.keys).toBe(0);
+    expect(next.map.pois.find((p) => p.id === door.id)!.cleared).toBe(true);
+    expect(tileOf(next, door.pos)!.biome).toBe("cave");
+    expect(events).toContainEqual({ t: "door", id: "ann", poi: door.id, how: "key" });
+    expect(events.some((e) => e.t === "noise" || e.t === "roll")).toBe(false);
+    expect(fails(next, { type: "unlock", by: "ann", unit: "ann", poi: door.id })).toMatch(/open already/);
+  });
+
+  it("forces a door without a key on a Strength roll, and the crash brings the nearest band that has not noticed anyone", () => {
+    let held = false;
+    let forced = false;
+    for (let rng = 1; rng < 80 && !(held && forced); rng++) {
+      const { state, door, beside } = atDoor();
+      state.rng = rng;
+      hero(state, "ann", "qa_paladin", beside);
+      const near = state.units.filter((u) => u.side === "enemy" && hexDistance(u.pos, door.pos) <= NOISE_RANGE);
+      const events: ZoneEvent[] = [];
+      const step = stepZone(state, { type: "unlock", by: "ann", unit: "ann", poi: door.id });
+      if (!step.ok) throw new Error(step.error);
+      events.push(...step.events);
+      const roll = events.find((e) => e.t === "roll" && e.roll.kind === "save");
+      expect(roll).toBeDefined();
+      const ok = roll!.t === "roll" && roll!.roll.ok;
+      expect(step.state.map.pois.find((p) => p.id === door.id)!.cleared).toBe(ok);
+      expect(events).toContainEqual({ t: "door", id: "ann", poi: door.id, how: ok ? "forced" : "held" });
+      // Heard either way, if a band is near enough.
+      expect(events.some((e) => e.t === "noise")).toBe(near.length > 0);
+      if (near.length > 0) expect(step.state.encounter).not.toBeNull();
+      if (ok) forced = true;
+      else held = true;
+    }
+    expect(forced && held).toBe(true);
+  });
+
+  it("puts a key on the ring from a chest that holds one, and from a band that carried one once it is beaten", () => {
+    for (let seed = 0; seed < 60; seed++) {
+      const state = createZone("DLVE", `d${seed}`, delveOptions());
+      const keyChest = state.map.pois.find((p) => p.kind === "cache" && p.key);
+      const band = state.keyHolders?.[0];
+      if (!keyChest && !band) continue;
+      if (keyChest) {
+        state.units = state.units.filter((u) => u.side === "hero" || (u.group !== keyChest.guard && hexDistance(u.pos, keyChest.pos) > 3));
+        const beside = hexNeighbors(keyChest.pos, state.map.grid).find((n) => tileOf(state, n)?.biome === "cave")!;
+        hero(state, "ann", "qa_paladin", beside);
+        const events: ZoneEvent[] = [];
+        const next = must(state, { type: "open", by: "ann", unit: "ann", poi: keyChest.id }, events);
+        expect(next.keys).toBe(1);
+        expect(events).toContainEqual({ t: "key", keys: 1, from: "chest", id: "ann" });
+      }
+      if (band) {
+        const fresh = createZone("DLVE", `d${seed}`, delveOptions());
+        const one = fresh.units.find((u) => u.group === band)!;
+        hero(fresh, "ann", "qa_paladin", hexNeighbors(one.pos, fresh.map.grid).find((n) => tileOf(fresh, n)?.biome === "cave" && !fresh.units.some((u) => posKey(u.pos) === posKey(n)))!);
+        let s = must(fresh, { type: "dev", by: "ann", dev: { op: "start_fight" } });
+        const events: ZoneEvent[] = [];
+        s = must(s, { type: "dev", by: "ann", dev: { op: "end_fight" } }, events);
+        if (!s.units.some((u) => u.group === band && !u.down)) {
+          expect(s.keys).toBe(1);
+          expect(events).toContainEqual({ t: "key", keys: 1, from: "band" });
+          expect(s.keyHolders ?? []).not.toContain(band);
+        }
+      }
+      return;
+    }
+    throw new Error("no delve with a key in sixty seeds");
+  });
+
+  it("sets out no chest or crate where it blocks the way up to a locked door", () => {
+    let doors = 0;
+    for (let seed = 0; seed < 60; seed++) {
+      const state = createZone("DLVE", `d${seed}`, delveOptions());
+      const things = new Set(state.map.pois.filter((p) => p.kind === "cache" || p.kind === "crate").map((p) => posKey(p.pos)));
+      const seen = new Set([posKey(state.start)]);
+      const queue = [state.start];
+      for (let i = 0; i < queue.length; i++) {
+        for (const n of hexNeighbors(queue[i], state.map.grid)) {
+          if (seen.has(posKey(n)) || things.has(posKey(n)) || solid(tileOf(state, n))) continue;
+          seen.add(posKey(n));
+          queue.push(n);
+        }
+      }
+      for (const door of state.map.pois.filter((p) => p.kind === "gate")) {
+        doors++;
+        // Some floor beside the door can be walked to from the mouth, round every chest and crate.
+        expect(hexNeighbors(door.pos, state.map.grid).some((n) => seen.has(posKey(n))), `seed ${seed} ${door.id}`).toBe(true);
+      }
+    }
+    expect(doors).toBeGreaterThan(0);
   });
 
   it("puts no chest where it shuts off any of the floor: one in the only way through is set aside in its chamber", () => {
@@ -1250,14 +1377,14 @@ describe("crates", () => {
       total += crates.length;
       expect(crates.length, where).toBeGreaterThanOrEqual(DELVE_CRATES[0]);
       expect(new Set(crates.map((c) => c.id)).size, where).toBe(crates.length);
-      /** The floor walkable from the mouth, round whatever stands on these hexes. */
+      /** The floor walkable from the mouth, round whatever stands on these hexes. A locked door can be opened, so it counts as a way through. */
       const walkable = (blocked: Set<string>) => {
         const seen = new Set([posKey(state.start)]);
         const queue = [state.start];
         for (let i = 0; i < queue.length; i++) {
           for (const n of hexNeighbors(queue[i], state.map.grid)) {
             const t = state.map.tiles.find((x) => x.q === n.q && x.r === n.r);
-            if (!t || solid(t) || seen.has(posKey(n)) || blocked.has(posKey(n))) continue;
+            if (!t || (solid(t) && t.biome !== "gate") || seen.has(posKey(n)) || blocked.has(posKey(n))) continue;
             seen.add(posKey(n));
             queue.push(n);
           }

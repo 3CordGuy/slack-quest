@@ -29,7 +29,8 @@ export const elevOf = (map: WorldMap, pos: HexPos): number => tileAt(map, pos)?.
 /** Ground nobody can stand on, whatever is on it. */
 export const solid = (tile: Tile | undefined): boolean => !tile || !!tile.built || !Number.isFinite(MOVE_COST[tile.biome]);
 
-const SIGHT_BLOCKERS: ReadonlySet<string> = new Set(["rock", "wall", "rampart", "fog"]);
+// A shut door (a delve's "gate") blocks the view and the light like the rock round it.
+const SIGHT_BLOCKERS: ReadonlySet<string> = new Set(["rock", "wall", "rampart", "fog", "gate"]);
 const blockerIndex = new WeakMap<Tile[], Set<string>>();
 
 /** The hexes sight cannot pass: living rock and walls. Trees and water do not block it. */

@@ -10,16 +10,19 @@
 //   stands in the way, so one the caverns put in the only way through (where
 //   a tunnel leaves its chamber) is set aside, to the nearest spot round its
 //   chamber where it shuts nothing off.
+// - A dead-end room or two is shut behind a locked door, with a strongbox
+//   inside, and the key to each lies on the near side, in a chest or carried
+//   by a band (zone/doors.ts says how doors are opened). A door counts as a
+//   way through when chests and crates are set out, so nothing ever blocks
+//   the way up to one.
 // - Crates are stacked against the rock here and there, in the chambers and
 //   in the nooks off the tunnels, to be broken open (crates.ts). None is put
 //   where it would shut off any of the floor, or crowd a chest or the mouth.
-// - No locked doors yet: each doorway stands open, and the room behind it
-//   keeps its strongbox.
 
 import { hexDistance, hexNeighbors, posKey, type HexGrid, type HexPos } from "@gantt-quest/core";
 import { CAVERN_LEADS, ENEMIES, cavernBand, type CavernLead } from "../content";
 import { generateCaverns } from "../caverns";
-import { BASE_HEIGHT, type Poi, type WorldMap } from "../map";
+import type { Poi, WorldMap } from "../map";
 import { makeRng, seedFromString, type Rng } from "../rng";
 import { CRATE_HP } from "./crates";
 import { threatExtras } from "./kit";
@@ -28,6 +31,9 @@ import type { ZonePlan } from "./gen";
 
 /** A delve's rock: roomier than the old caverns', so fights have space in the chambers and tunnels to retreat down. */
 export const DELVE_GRID: HexGrid = { cols: 18, rows: 16 };
+
+/** Open floor, or a locked door: either is a way through, the door once it is opened. */
+const passable = (t: { biome: string }): boolean => t.biome === "cave" || t.biome === "gate";
 
 /** The floor that can be walked to from `from`, round whatever stands on the hexes in `blocked`. */
 function walkable(map: WorldMap, floor: ReadonlySet<string>, from: HexPos, blocked: ReadonlySet<string>): Set<string> {
@@ -50,7 +56,8 @@ function walkable(map: WorldMap, floor: ReadonlySet<string>, from: HexPos, block
  * clear of the other chests, where every hex that could be walked to can still be walked to.
  */
 function clearTheWay(map: WorldMap, mouth: HexPos, chests: readonly Poi[]): void {
-  const floor = new Set(map.tiles.filter((t) => t.biome === "cave").map(posKey));
+  // A locked door is a way through (it can be opened), so the room behind it counts, and so does the way up to it.
+  const floor = new Set(map.tiles.filter(passable).map(posKey));
   const all = walkable(map, floor, mouth, new Set());
   const blocked = new Set<string>();
   const shuts = (at: HexPos): boolean => {
@@ -62,7 +69,7 @@ function clearTheWay(map: WorldMap, mouth: HexPos, chests: readonly Poi[]): void
   for (const chest of chests) {
     if (shuts(chest.pos)) {
       const aside = map.tiles
-        .filter((t) => all.has(posKey(t)) && !blocked.has(posKey(t)) && hexDistance(t, chest.pos) <= 2 && hexDistance(t, mouth) > 1)
+        .filter((t) => t.biome === "cave" && all.has(posKey(t)) && !blocked.has(posKey(t)) && hexDistance(t, chest.pos) <= 2 && hexDistance(t, mouth) > 1)
         .sort((a, b) => hexDistance(a, chest.pos) - hexDistance(b, chest.pos) || rockBeside(b) - rockBeside(a) || a.q - b.q || a.r - b.r)
         .find((t) => !shuts(t));
       if (aside) chest.pos = { q: aside.q, r: aside.r };
@@ -82,14 +89,16 @@ export const CRATE_PAIR = 0.45;
  */
 function placeCrates(rng: Rng, map: WorldMap, mouth: HexPos, taken: ReadonlySet<string>, chests: readonly HexPos[]): Poi[] {
   const { grid } = map;
-  const floor = new Set(map.tiles.filter((t) => t.biome === "cave").map(posKey));
+  // As for chests: a locked door is a way through, never a place to stack anything.
+  const floor = new Set(map.tiles.filter(passable).map(posKey));
   const blocked = new Set(chests.map(posKey));
+  const doors = new Set(map.tiles.filter((t) => t.biome === "gate").map(posKey));
   const before = walkable(map, floor, mouth, blocked);
   const crates: Poi[] = [];
   const rockBeside = (p: HexPos) => 6 - hexNeighbors(p, grid).filter((n) => floor.has(posKey(n))).length;
   const fits = (p: HexPos): boolean => {
     const key = posKey(p);
-    if (!before.has(key) || blocked.has(key) || taken.has(key) || hexDistance(p, mouth) <= 2 || chests.some((c) => hexDistance(c, p) <= 1)) return false;
+    if (!before.has(key) || doors.has(key) || blocked.has(key) || taken.has(key) || hexDistance(p, mouth) <= 2 || chests.some((c) => hexDistance(c, p) <= 1)) return false;
     // Nothing that was in reach is cut off by it, and every crate already down can still be walked up to.
     const after = walkable(map, floor, mouth, new Set([...blocked, key]));
     if (![...before].every((k) => k === key || blocked.has(k) || after.has(k))) return false;
@@ -137,14 +146,9 @@ function guardsFor(guards: string[], party: number): string[] {
 export function generateDelve(seed: string, options: ZoneOptions): ZonePlan {
   const map = generateCaverns(seed, DELVE_GRID);
   const rng = makeRng(seedFromString(`delve|${seed}`));
-  // Every doorway stands open (no locked doors yet).
-  for (const t of map.tiles) {
-    if (t.biome !== "gate") continue;
-    t.biome = "cave";
-    t.h = BASE_HEIGHT.cave;
-  }
   const mouth = map.pois.find((p) => p.kind === "landing")!.pos;
   const open = (p: HexPos) => map.tiles.some((t) => t.q === p.q && t.r === p.r && t.biome === "cave");
+  const keys: string[] = [];
   const caches = map.pois.filter((p) => p.kind === "cache");
   clearTheWay(map, mouth, caches.filter((c) => open(c.pos)));
   const taken = new Set([posKey(mouth), ...caches.map((c) => posKey(c.pos))]);
@@ -161,11 +165,14 @@ export function generateDelve(seed: string, options: ZoneOptions): ZonePlan {
       .sort((a, b) => hexDistance(a, camp.pos) - hexDistance(b, camp.pos) || rng.next() - 0.5)
       .slice(0, kinds.length);
     for (const p of posts) taken.add(posKey(p));
-    if (posts.length > 0) groups.push({ id: camp.id, kinds: kinds.slice(0, posts.length), posts });
+    if (posts.length > 0) {
+      groups.push({ id: camp.id, kinds: kinds.slice(0, posts.length), posts });
+      if (camp.key) keys.push(camp.id);
+    }
   }
 
-  // The map keeps the mouth and what can be opened; the bands are units now, and the scattered finds go.
-  const kept: Poi[] = map.pois.filter((p) => p.kind === "landing" || (p.kind === "cache" && open(p.pos)));
+  // The map keeps the mouth, what can be opened and the locked doors; the bands are units now, and the scattered finds go.
+  const kept: Poi[] = map.pois.filter((p) => p.kind === "landing" || p.kind === "gate" || (p.kind === "cache" && open(p.pos)));
   const crates = placeCrates(rng, map, mouth, taken, kept.filter((p) => p.kind === "cache").map((p) => p.pos));
-  return { map: { ...map, pois: [...kept, ...crates] }, start: mouth, groups };
+  return { map: { ...map, pois: [...kept, ...crates] }, start: mouth, groups, ...(keys.length > 0 ? { keys } : {}) };
 }

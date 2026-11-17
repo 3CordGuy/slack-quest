@@ -31,6 +31,7 @@ import { d20, heroMove, mod, statOf } from "./rules";
 import { hiddenEnemies, sentToClient } from "./light";
 import { checkPickup, clearSurfaces, lightTorch, pickUpTorch, placeSurface, standInSurface, tickLights, tickSurfaces } from "./surfaces";
 import { passTime } from "./clock";
+import { checkUnlock, dropKeys, heardBy, workDoor } from "./doors";
 import type { Budget, DevOp, Encounter, Throwable, Unit, ZoneAction, ZoneEffect, ZoneEvent, ZoneHero, ZoneOptions, ZoneState, ZoneStep, ZoneView } from "./types";
 
 /** Rounds a surface painted from the dev toolbox lasts. */
@@ -66,6 +67,7 @@ function enemyUnit(state: ZoneState, kind: string, pos: HexPos, group: string): 
 export function createZone(code: string, seed: string, options: ZoneOptions): ZoneState {
   const plan = options.delve ? generateDelve(seed, options) : generateZone(seed, options);
   const state: ZoneState = { v: 1, code, seed, rng: seedFromString(`zone-run|${seed}`), options, map: plan.map, start: plan.start, units: [], groups: {}, surfaces: {}, encounter: null, seq: 0 };
+  if (plan.keys && plan.keys.length > 0) state.keyHolders = [...plan.keys];
   for (const group of plan.groups) {
     const id = group.id ?? `g${++state.seq}`;
     state.groups[id] = { alerted: false };
@@ -575,6 +577,21 @@ function act(ctx: Ctx, action: ZoneAction): string | null {
     openChest(ctx, unit, chest!);
     return null;
   }
+  if (action.type === "unlock") {
+    const door = state.map.pois.find((p) => p.id === action.poi && p.kind === "gate");
+    const wrong = checkUnlock(state, unit, door);
+    if (wrong) return wrong;
+    const cost = spend(budget, "action");
+    if (cost) return cost;
+    // A key is quiet. Forcing it is heard, whether the door gives or not: the nearest band that has not noticed anyone comes.
+    const { forced } = workDoor(ctx, unit, door!);
+    const heard = forced ? heardBy(state, door!.pos) : undefined;
+    if (heard) {
+      ctx.events.push({ t: "noise", group: heard });
+      engage(ctx, [heard], unit);
+    }
+    return null;
+  }
   if (action.type === "light") {
     const wrong = checkLight(unit);
     if (wrong) return wrong;
@@ -616,6 +633,8 @@ export function stepZone(prev: ZoneState, action: ZoneAction): ZoneStep {
     const waiting = enc.acting.some((id) => !enc.done.includes(id) && !unitById(state, id)?.down);
     if (!waiting) advance(ctx);
   }
+  // A band beaten that carried a key: it goes on the ring.
+  dropKeys(ctx);
   sweep(state);
   state.rng = ctx.rng.state();
   return { ok: true, state, events: ctx.events, effects: ctx.effects };

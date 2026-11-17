@@ -70,6 +70,11 @@ export function openChest(ctx: Ctx, unit: Unit, chest: Poi): void {
   const loot = lootOf(chest);
   chest.cleared = true;
   ctx.events.push({ t: "opened", id: unit.id, poi: chest.id, loot });
+  // A key to a locked door, left in it: on the party's ring.
+  if (chest.key) {
+    ctx.state.keys = (ctx.state.keys ?? 0) + 1;
+    ctx.events.push({ t: "key", keys: ctx.state.keys, from: "chest", id: unit.id });
+  }
   const paid = loot === "hoard" ? ctx.state.units.filter((u) => u.side === "hero" && !u.controller) : [unit];
   for (const hero of paid) pay(ctx, hero, loot);
 }

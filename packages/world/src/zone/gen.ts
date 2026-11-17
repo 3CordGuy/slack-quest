@@ -75,6 +75,8 @@ export interface ZonePlan {
   start: HexPos;
   /** `id`: what the group is called on the map (a delve keeps its chamber's), else one is made up. */
   groups: { id?: string; kinds: string[]; posts: HexPos[] }[];
+  /** The groups that carry a key to a locked door (a delve's). */
+  keys?: string[];
 }
 
 /** Everything that can be walked to from `from`: open ground, no step of two levels. */

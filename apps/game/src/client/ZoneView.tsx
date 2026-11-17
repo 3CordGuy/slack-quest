@@ -49,6 +49,7 @@ import {
   tacticOf,
   throwRange,
   tileAt,
+  FORCE_DC,
   unopened,
   zoneBlast,
   zoneReach,
@@ -537,6 +538,12 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
           if (next.options.biome === "caves") setClearedAsk(true);
         });
         say("Nothing else stirs here.");
+      } else if (ev.t === "key") {
+        say(ev.from === "chest" ? `${ev.id ? name(ev.id) : "Someone"} finds a key in it. (${ev.keys} on the ring)` : `A key falls from the beaten band. (${ev.keys} on the ring)`);
+      } else if (ev.t === "door") {
+        say(ev.how === "key" ? `${name(ev.id)} unlocks the door.` : ev.how === "forced" ? `${name(ev.id)} forces the door: it gives way with a crash.` : `${name(ev.id)} throws a shoulder at the door: it holds.`);
+      } else if (ev.t === "noise") {
+        say("The noise carries through the tunnels. Something is coming.");
       } else if (ev.t === "opened") {
         const chest = draft.pois.find((p) => p.id === ev.poi);
         if (chest) chest.cleared = true;
@@ -865,6 +872,14 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
     if (!pick) {
       // A click on a torch burning on the ground right beside you takes it up; from further off, it is walked to.
       if (state.lights?.[posKey(pos)] && hexDistance(pos, act.pos) <= 1) return zone.send({ type: "pickup", unit: act.id, at: pos });
+      // A click on a locked door works it from beside it (a key if there is one, else a shoulder), or walks up to it first.
+      const door = state.map.pois.find((p) => p.kind === "gate" && !p.cleared && p.pos.q === pos.q && p.pos.r === pos.r);
+      if (door) {
+        if (hexDistance(door.pos, act.pos) <= 1) return zone.send({ type: "unlock", unit: act.id, poi: door.id });
+        const beside = [...reach.values()].filter((r) => r.stop && hexDistance(r.pos, door.pos) === 1).sort((a, b) => a.cost - b.cost)[0];
+        if (beside) zone.send({ type: "move", unit: act.id, to: beside.pos });
+        return;
+      }
       // A click on a chest opens it from beside it, or walks up to it first.
       const chest = state.map.pois.find((p) => p.kind === "cache" && !p.cleared && p.pos.q === pos.q && p.pos.r === pos.r);
       if (chest) {
@@ -1009,6 +1024,10 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
   const waitingFor = enc && !myTurn ? (watching && spot ? (names.current.get(spot) ?? "someone") : enc.acting.map((id) => names.current.get(id) ?? "someone").join(" and ")) : undefined;
   // A torch burning on the ground within reach, to pick up.
   const torchBeside = act && state.lights ? Object.keys(state.lights).map((k) => { const [q, r] = k.split(",").map(Number); return { q, r }; }).find((p) => hexDistance(p, act.pos) <= 1) : undefined;
+  // A locked door within reach, and the keys on the party's ring.
+  const doorBeside = act ? state.map.pois.find((p) => p.kind === "gate" && !p.cleared && hexDistance(p.pos, act.pos) <= 1) : undefined;
+  const keys = state.keys ?? 0;
+  const keysText = keys === 1 ? "1 key" : `${keys} keys`;
   // A cave's chests, and its way out.
   const caves = state.options.biome === "caves";
   const chestBeside = act ? state.map.pois.find((p) => p.kind === "cache" && !p.cleared && hexDistance(p.pos, act.pos) <= 1) : undefined;
@@ -1036,6 +1055,8 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
     ? <>{pick.kind === "ability" ? ABILITIES[pick.id].name : pick.kind === "item" ? THROWABLES[pick.item].name : COMMON_ACTIONS[pick.what].name} <span className="muted">· {pick.kind === "item" && THROWABLES[pick.item].drink ? "click where to throw it, or yourself to drink it" : pick.kind === "item" && THROWABLES[pick.item].light && !act?.torch ? "click where to throw it, or yourself to light it to hold" : "click a target on the map"}, or Esc to put it back</span></>
     : dev.tool
       ? <>Dev tool <span className="muted">· {dev.tool.tool === "spawn" ? "click a hex to place the group" : "click hexes to paint"}</span></>
+      : (!enc || !fighting) && doorBeside
+        ? <>A locked door <span className="muted">· {keys > 0 ? `${keysText} on the ring: one opens it` : "no key: it can be forced, but not quietly"}</span></>
       : (!enc || !fighting) && chestBeside
         ? <>{chestName(chestBeside, true)} <span className="muted">· {chestGuarded(chestBeside) ? "its guards still stand over it" : "right beside you"}</span></>
         : (!enc || !fighting) && atMouth
@@ -1051,6 +1072,7 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
   const under = unitOn(hover);
   const ground = hover ? tileAt(state.map, hover) : undefined;
   const hoverTorch = hover ? state.lights?.[posKey(hover)] : undefined;
+  const hoverDoor = hover ? state.map.pois.find((p) => p.kind === "gate" && p.pos.q === hover.q && p.pos.r === hover.r) : undefined;
   const hoverChest = hover ? state.map.pois.find((p) => p.kind === "cache" && p.pos.q === hover.q && p.pos.r === hover.r) : undefined;
   // A crate as the picture shows it, so its health drops as each blow is seen to land.
   const hoverCrate = hover ? (picture?.pois ?? state.map.pois).find((p) => p.kind === "crate" && p.pos.q === hover.q && p.pos.r === hover.r) : undefined;
@@ -1177,6 +1199,11 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
               <strong>A burning torch</strong>{" "}
               <span className="muted">· {hoverTorch.rounds} round{hoverTorch.rounds === 1 ? "" : "s"} of light left{act && hexDistance(hover!, act.pos) <= 1 ? " · click to pick it up" : ""}</span>
             </>
+          ) : hoverDoor ? (
+            <>
+              <strong>A locked door</strong>{" "}
+              <span className="muted">· {hoverDoor.cleared ? "standing open" : keys > 0 ? `${keysText} on the ring` : "no key: force it (loud)"}{!hoverDoor.cleared && act && hexDistance(hoverDoor.pos, act.pos) <= 1 ? " · click to open it" : ""}</span>
+            </>
           ) : hoverCrate ? (
             <>
               <strong>{hoverCrate.cleared ? "A broken crate" : "Crate"}</strong>{" "}
@@ -1284,6 +1311,8 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
           { label: "Bonus action", now: budget.bonus ? 1 : 0, max: 1, kind: "bonus" },
           { label: "Movement", now: budget.move, max: budget.moveMax, kind: "move" },
         ] : []}
+        // The keys the party has found, on its one ring.
+        chips={keys > 0 ? <span className="hud-chip" title="Keys to locked doors: any key opens any door">{keysText}</span> : undefined}
         slots={slots}
         onSlotMove={(from, to) => arrange(moveSlot(bar, from, to))}
         onSlotMenu={(index) => setBarMenu((open) => (open === index ? null : index))}
@@ -1305,6 +1334,11 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
         {torchBeside && (!fighting || myTurn) && (
           <button className="small" disabled={fighting && !budget?.bonus} title={fighting ? "A Bonus action" : undefined} onClick={() => zone.send({ type: "pickup", unit: act.id, at: torchBeside })}>
             {act.torch ? "Stow the torch" : "Pick up the torch"}
+          </button>
+        )}
+        {doorBeside && (!fighting || myTurn) && (
+          <button className="small primary" disabled={fighting && !budget?.action} title={keys > 0 ? "Uses a key off the ring" : `A Strength roll (${FORCE_DC} or better). Loud: the nearest band within earshot will come.`} onClick={() => zone.send({ type: "unlock", unit: act.id, poi: doorBeside.id })}>
+            {keys > 0 ? "Unlock the door" : "Force the door"}
           </button>
         )}
         {chestBeside && (!fighting || myTurn) && (
