@@ -76,7 +76,7 @@ import { pubLeaderboard } from "./server/pub-scores";
 import { builtProjectIds, contribute, crewWorks, projectStock } from "./server/projects";
 import { acceptTrade, announceTrade, closeTrade, listTrades, openTrade, setTradeSide } from "./server/trade";
 import { consumablesOf } from "./server/consumables";
-import { apothecaryView, brew, brewFlask, smithItem, smithyView } from "./server/workshops";
+import { apothecaryView, brew, brewFlask, buyFromKeeper, haggle, smithItem, smithyView } from "./server/workshops";
 import { cook, galleyView } from "./server/galley";
 import { announceXp, harborXpFor } from "./server/harbor-xp";
 import { createZoneRow, crewPlaces, getZoneRow, openCave } from "./server/zones";
@@ -818,6 +818,31 @@ app.post("/api/smithy/work", async (c) => {
   if (typeof result === "string") return c.json({ error: result }, 409);
   if (result.xp) c.executionCtx.waitUntil(announceXp(c.env, player.id, result.xp));
   return c.json({ ...(await smithyView(c.env.DB, player.id)), worked: result.name, xp: result.xp });
+});
+
+// Buy something ready-made off the apothecary's shelf, or off the smith's rack. The client names only the
+// entry; the price is the day's for this customer, after any haggling.
+app.post("/api/apothecary/buy", async (c) => {
+  const player = c.get("player");
+  const body = await c.req.json<{ key?: unknown }>().catch(() => ({}) as { key?: unknown });
+  const result = await buyFromKeeper(c.env.DB, player.id, "apothecary", body.key);
+  if (typeof result === "string") return c.json({ error: result }, 409);
+  return c.json({ ...(await apothecaryView(c.env.DB, player.id)), got: result.got });
+});
+
+app.post("/api/smithy/buy", async (c) => {
+  const player = c.get("player");
+  const body = await c.req.json<{ key?: unknown }>().catch(() => ({}) as { key?: unknown });
+  const result = await buyFromKeeper(c.env.DB, player.id, "smithy", body.key);
+  if (typeof result === "string") return c.json({ error: result }, 409);
+  return c.json({ ...(await smithyView(c.env.DB, player.id)), got: result.got });
+});
+
+// Ask a keeper to take something off a price: one try a day for each thing. The server rolls for it.
+app.post("/api/keeper/haggle", async (c) => {
+  const body = await c.req.json<{ shop?: unknown; key?: unknown; ask?: unknown }>().catch(() => ({}) as { shop?: unknown; key?: unknown; ask?: unknown });
+  const result = await haggle(c.env.DB, c.get("player").id, body.shop, body.key, body.ask);
+  return typeof result === "string" ? c.json({ error: result }, 409) : c.json(result);
 });
 
 // ---------- the galley ----------

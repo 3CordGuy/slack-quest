@@ -984,7 +984,7 @@ interface Anim {
  * `n` counts the figure's actions, so two flinches in a row need not be the same.
  */
 interface Act {
-  kind: "strike" | "stab" | "pounce" | "heavy" | "twin" | "cast" | "play" | "fire" | "guard" | "hit";
+  kind: "strike" | "stab" | "pounce" | "heavy" | "twin" | "cast" | "play" | "fire" | "guard" | "hit" | "hammer" | "stir";
   t: number;
   n: number;
 }
@@ -1503,8 +1503,18 @@ const FLINCH = {
 const GUARD = { hold: 0.22, over: 1.2, up: [[0, 0], [0.22, 1], [0.85, 1], [1.2, 0]] as Keys };
 /** Where a bell rung in the hand sounds from, in the hand's frame: its mouth, hanging below the fist. */
 const BELL_MOUTH = new THREE.Vector3(0, -2.2, 0);
+/**
+ * Work at a trade, not a fight: a smith's blow on the anvil (`hammer`), and a stir of a cauldron (`stir`). Neither
+ * steps in. The hammer is raised high on the near side of the head, brought straight down to the anvil before the
+ * figure as the body drops behind it (`hit`), bounces off it, and is lifted a little for the next. `up` is how high
+ * the hammer is, 0 (on the anvil) to 1 (raised). A stir goes twice round the pot before the figure, in `over`
+ * seconds (a long while, so a keeper asked to stir again and again does not straighten up between), the paddle
+ * pointing down into it in both hands.
+ */
+const HAMMER = { hit: 0.4, over: 0.86, up: [[0, 0.25], [0.3, 1], [0.4, 0], [0.48, 0.18], [0.86, 0.25]] as Keys };
+const STIR = { over: 30, turns: 25 };
 /** How long each kind of action lasts. */
-const ACT_OVER: Record<Act["kind"], number> = { strike: SWING.over, stab: THRUST.over, pounce: POUNCE.over, heavy: SWEEP.over, twin: TWIN.over, cast: CAST.over, play: PLAY.over, fire: FIRE.ends, guard: GUARD.over, hit: FLINCH.over };
+const ACT_OVER: Record<Act["kind"], number> = { strike: SWING.over, stab: THRUST.over, pounce: POUNCE.over, heavy: SWEEP.over, twin: TWIN.over, cast: CAST.over, play: PLAY.over, fire: FIRE.ends, guard: GUARD.over, hit: FLINCH.over, hammer: HAMMER.over, stir: STIR.over };
 /** When each kind of blow lands. */
 const ACT_HIT = { strike: SWING.hit, stab: THRUST.hit, pounce: POUNCE.hit, heavy: SWEEP.hit, twin: TWIN.hit };
 /**
@@ -1866,7 +1876,7 @@ function biped(top: THREE.Group, parts: Part[], elbow = ELBOW) {
     }
     const k = act.kind === "stab" ? THRUST : act.kind === "pounce" ? POUNCE : act.kind === "twin" ? TWIN : SWING;
     // Eased in over the first moments and back out over the last, so it starts and ends wherever the figure was.
-    const over = act.kind === "heavy" ? SWEEP.over : act.kind === "cast" ? CAST.over : act.kind === "play" ? PLAY.over : act.kind === "guard" ? GUARD.over : k.over;
+    const over = act.kind === "heavy" ? SWEEP.over : act.kind === "cast" ? CAST.over : act.kind === "play" ? PLAY.over : act.kind === "guard" ? GUARD.over : act.kind === "hammer" || act.kind === "stir" ? ACT_OVER[act.kind] : k.over;
     const fade = Math.min(1, Math.max(0, (over - t) / 0.18));
     const w = Math.min(1, t / 0.05) * fade * fade * (3 - 2 * fade);
     /**
@@ -1971,6 +1981,46 @@ function biped(top: THREE.Group, parts: Part[], elbow = ELBOW) {
       if (edged) sweep.want.multiply(sweep.edge);
       carry(by);
     };
+    if (act.kind === "hammer") {
+      // At the anvil: the hammer goes up beside the head and comes straight down on the work before the figure,
+      // the body bowing and the knees giving behind the blow; the other hand holds the work steady with the tongs.
+      const up = along(HAMMER.up, t);
+      const side = armR.joint.position.x;
+      // The anvil stands low, at the knuckles: the blow comes down to it with a bend at the waist and knees.
+      bow((0.16 - 0.24 * up) * w, 0.12 * up * w);
+      knees((0.12 * (1 - up)) * w);
+      head.joint.rotation.x += 0.26 * w;
+      // At the bottom of the blow the hammer's face stops on the work on her anvil, whose face is 0.44 above the
+      // floor (measured in the smithy, against the anvil itself); raised, it is up over her head.
+      sweep.grip.set(side * 0.7, 6.8 + 3.8 * up, 3.6 - 2.4 * up);
+      // The handle stays in the plane of the swing (straight ahead and up), and the hammer's face (the head's +z)
+      // always leads, at right angles to the handle on the side it is swinging toward: raised, the face is to the
+      // sky; at the blow the handle is level and the face comes straight down on the anvil. Never rolled sideways.
+      sweep.dir.set(0, -0.12 + 0.95 * up, 1 - 1.8 * up).normalize();
+      sweep.lead.set(0, -sweep.dir.z, sweep.dir.y);
+      sweep.side.crossVectors(sweep.dir, sweep.lead);
+      sweep.m.makeBasis(sweep.side, sweep.dir, sweep.lead);
+      sweep.want.setFromRotationMatrix(sweep.m);
+      carry();
+      if (levels.length === 0) reach(armL.joint, foreL.joint, -elbow, elbow - fist, sweep.grip.set(-side * 0.5, 4.3, 3.6), sweep.poleL, w);
+      return;
+    }
+    if (act.kind === "stir") {
+      // Over the cauldron: both hands on the paddle, its blade down in the pot, going round and round; the body
+      // sways with it and the head is bent to the brew.
+      const a = (t / STIR.over) * STIR.turns * Math.PI * 2;
+      const side = armR.joint.position.x;
+      // The paddle is angled out ahead into the pot, not straight down, so its shaft shows between the figure and
+      // the brew under a wide hat.
+      bow(0.32 * w, 0.12 * Math.sin(a) * w);
+      knees(0.1 * w);
+      head.joint.rotation.x += 0.3 * w;
+      sweep.grip.set(side * 0.2 + 1.3 * Math.cos(a), 5.2, 3.9 + 0.9 * Math.sin(a));
+      sweep.dir.set(-0.2 * Math.cos(a), -0.68, 0.72 - 0.12 * Math.sin(a)).normalize();
+      wield(w, false);
+      if (levels.length === 0) reach(armL.joint, foreL.joint, -elbow, elbow - fist, sweep.grip.addScaledVector(sweep.dir, -2.6), sweep.poleL, w);
+      return;
+    }
     if (act.kind === "guard") {
       // Braced: the knees bent, the weight forward, the head down behind the guard; held, then let go.
       const up = along(GUARD.up, t);
@@ -3965,6 +4015,23 @@ function drawHeld(id: string, b: Biped, trim: string, look: Look, shield: boolea
       for (const s of [-1, 1]) t.box("#5f3f24", 0.6, 5.4, 0.3, s * 2.3, 3.3, 2);
       return {};
     }
+    case "smith_hammer":
+      // A forging hammer: a short ash handle and a heavy iron head across it, a flat face one side and a peen the other.
+      shaft(GEAR.wood, 8.6, 2.6);
+      w.cyl(GEAR.iron, 0.5, 0.5, 0.7, 0, 6.6, 0, 6);
+      w.box(GEAR.iron, 1.5, 1.6, 2.4, 0, 7.6, 0.5);
+      w.box(GEAR.steel, 1.6, 1.7, 0.4, 0, 7.6, 1.8);
+      w.box(GEAR.iron, 0.6, 1.0, 1.2, 0, 7.6, -1.3);
+      return { tilt: 0.5 };
+    case "paddle":
+      // A brewer's paddle, taller than he is: a long shaft of pale, scrubbed ash, a dark band where it is gripped,
+      // and a broad blade on the end, stained green where it goes into the brew. Pale so it shows against the
+      // dark of the pot and his green coat.
+      w.cyl("#efe2c4", 0.55, 0.55, 21, 0, 6, 0, 6);
+      w.cyl("#5a3d22", 0.6, 0.6, 2.2, 0, 0.4, 0, 6);
+      w.box("#f6ecd4", 0.6, 4.4, 2.4, 0, 16, 0);
+      w.box("#9fe08a", 0.62, 1.4, 2.45, 0, 17.4, 0);
+      return {};
     case "basket": {
       // A basket of greens on the other arm.
       const p = b.heldL;
@@ -5287,6 +5354,12 @@ export interface Figure {
    * other forearm). Returns the seconds until the guard is up; 0 for a creature, which does nothing.
    */
   guard(): number;
+  /**
+   * Work at a trade: `hammer` brings a hammer down on an anvil before the figure, and returns the seconds until it
+   * lands, for the sparks and the ring of it to wait; `stir` stirs a pot before it, round and round for half a
+   * minute, and returns 0. A creature does nothing and returns 0.
+   */
+  work(how: "hammer" | "stir"): number;
   /** Take a blow: the figure flinches from it. */
   hit(): void;
   /** Greyed, for someone down in a fight. */
@@ -5391,6 +5464,11 @@ export function makeFigure(kind: string, look: Look, outfit?: Outfit, opts: Figu
       const kind = how === "heavy" ? (rig.twin ? "twin" : "heavy") : how === "stab" ? "stab" : (rig.light ?? "strike");
       asked = kind;
       return rig.acts ? ACT_HIT[kind] : 0;
+    },
+    work(how) {
+      if (!rig.acts) return 0;
+      asked = how;
+      return how === "hammer" ? HAMMER.hit : 0;
     },
     cast() {
       if (rig.acts && action?.kind === "cast" && !asked) {
