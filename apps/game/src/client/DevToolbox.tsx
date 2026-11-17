@@ -8,8 +8,9 @@
 //   Gold          add gold to your hero's purse, or take it away.
 //   Items         put a chosen piece of gear, or some of a material, in
 //                 your hero's pack, or take a material away.
-//   Figures       try the low-poly people (a prototype; render/figures.ts).
-//                 This browser only; it reloads the page.
+//   Figures       open the figure lab, a stage for trying any figure's
+//                 animations (FigureLab.tsx), or switch the people back to
+//                 their old boxes (this browser only; it reloads the page).
 //   Maps          make a zone (a map to walk and fight on) and walk into it;
 //                 while one is on screen, place enemies, paint the ground and
 //                 the rest (zone/MapsTab.tsx).
@@ -20,7 +21,7 @@
 // Open or shut, and the tab it was on, it stays that way from view to view
 // and across a reload.
 
-import { useState, type ReactNode } from "react";
+import { Suspense, lazy, useState, type ReactNode } from "react";
 import { GEAR_BASES, HERO_CLASSES, RARITIES, RESOURCE_KINDS, SLOTS, SLOT_LABEL, WEAPONS, slotOfRef, type Rarity, type ResourceKind, type Slot } from "@gantt-quest/world";
 import { api, type Me } from "./api";
 import { SkyAndSound } from "./audio/SoundButton";
@@ -30,6 +31,9 @@ import { PixelIcon } from "./PixelIcon";
 import { BLOCKY_KEY } from "./render/figures";
 import { WRENCH } from "./ui/menuIcons";
 import { MapsTab } from "./zone/MapsTab";
+
+/** Loaded only when it is opened: it is a dev tool, and no part of the game. */
+const FigureLab = lazy(() => import("./FigureLab"));
 
 const OPEN_KEY = "gq.dev.readout";
 const TAB_KEY = "gq.dev.tab";
@@ -61,6 +65,7 @@ const remember = (key: string, value: string | null) => {
 export function DevToolbox({ me, refresh }: { me: Me; refresh(): Promise<void> }) {
   const [open, setOpen] = useState(() => recall(OPEN_KEY) === "1");
   const [tab, setTab] = useState<Tab>(() => TABS.find(([id]) => id === recall(TAB_KEY))?.[0] ?? "sky");
+  const [lab, setLab] = useState(false);
   const show = (on: boolean) => {
     remember(OPEN_KEY, on ? "1" : null);
     setOpen(on);
@@ -91,17 +96,22 @@ export function DevToolbox({ me, refresh }: { me: Me; refresh(): Promise<void> }
           </div>
           {tab === "sky" && <SkyAndSound />}
           {tab === "gold" && <Seeding key="gold" me={me} refresh={refresh}>{(seed) => <GoldSeed me={me} seed={seed} />}</Seeding>}
-          {tab === "figures" && <FigureStyle />}
+          {tab === "figures" && <FigureStyle openLab={() => setLab(true)} />}
           {tab === "maps" && (me.character?.status === "active" ? <MapsTab /> : <p className="muted">Create a character first: there is no hero to walk in.</p>)}
           {tab === "items" && <Seeding key="items" me={me} refresh={refresh}>{(seed) => <ItemSeed me={me} seed={seed} />}</Seeding>}
         </DragPanel>
+      )}
+      {lab && (
+        <Suspense fallback={null}>
+          <FigureLab me={me} onClose={() => setLab(false)} />
+        </Suspense>
       )}
     </>
   );
 }
 
 /** Switch the people (in this browser) back to their old box models, to compare. Every figure is built afresh, so it reloads. */
-function FigureStyle() {
+function FigureStyle({ openLab }: { openLab(): void }) {
   const blocky = recall(BLOCKY_KEY) === "1";
   const flip = () => {
     remember(BLOCKY_KEY, blocky ? null : "1");
@@ -109,6 +119,12 @@ function FigureStyle() {
   };
   return (
     <div className="dev-seed">
+      <p>The figure lab is a stage for any hero, townsperson or enemy: walk, strike, shoot, sit, row, slowed or a frame at a time.</p>
+      <div className="dev-row">
+        <button className="small primary" onClick={openLab}>
+          Open the figure lab
+        </button>
+      </div>
       <p>
         People are drawn <strong>{blocky ? "in the old boxes" : "low-poly"}</strong>.
       </p>
