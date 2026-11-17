@@ -90,14 +90,15 @@ export const HARBOR_PIERS: HexPos[] = [at(8, 26), at(13, 27), at(18, 26)];
  * Hut plots, handed out to crew members in the order they joined: each is the doorstep of a hut that stands on the
  * two hexes behind it. They line the two dirt lanes that run up from the High Street to the north-west and the
  * north-east, facing the lane from either side, the first few nearest the street; the last few are down by the
- * shore, along the lanes to the fish shack and the lighthouse.
+ * shore, along the lanes to the fish shack and the lighthouse, and one is up the lane to the caverns. None
+ * stands against the smithy: the ground east of it is the smithy's yard, where the stonecutter's bench is.
  */
 export const HARBOR_PLOTS: HexPos[] = [
-  at(10, 12), at(16, 13), at(8, 13), at(9, 18), at(9, 10), at(17, 11),
+  at(10, 12), at(16, 13), at(12, 10), at(9, 18), at(9, 10), at(17, 11),
   at(7, 11), at(20, 10), at(8, 8), at(18, 9), at(8, 20), at(20, 18),
 ];
 /** Which way each hut plot faces (see `footing`), so its hut fronts the lane it stands on. */
-export const HARBOR_PLOT_FACING: number[] = [1, 0, 5, 0, 1, 5, 4, 2, 1, 5, 3, 0];
+export const HARBOR_PLOT_FACING: number[] = [1, 0, 5, 0, 1, 5, 5, 2, 1, 5, 3, 0];
 /**
  * The notice board: where a hero stands to read it, at the head of the square. The board itself stands on the
  * square's north-west corner, up and to the left of this hex, on the left of the lane up to the caverns, and
@@ -138,10 +139,10 @@ export const HARBOR_LIGHTHOUSE: HexPos = at(21, 24);
 /**
  * The stonecutter's bench, where lodestones are cut and worked (stonecraft.ts) before a crew goes out to the
  * atlas with them: where a hero stands to use it, at the west end of the High Street, away from the square.
- * The bench itself stands up and to the left of this hex, in the nook beside the smithy's door: the two
- * trades that work stone and iron, side by side.
+ * The bench itself stands up and to the left of this hex, in the smithy's yard with a hex of open ground
+ * between it and the smithy's door: the two trades that work stone and iron, side by side.
  */
-export const HARBOR_BENCH: HexPos = at(7, 15);
+export const HARBOR_BENCH: HexPos = at(8, 15);
 /**
  * The town chest, the crew's shared store (townchest.ts): where a hero stands to open it, at the head of the
  * square. The chest itself stands on the square's north-east corner, up and to the right of this hex, on the
