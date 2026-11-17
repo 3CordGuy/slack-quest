@@ -195,7 +195,7 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
     : hoverPoi.kind === "wreck" ? "A wreck on the rocks. Nobody remembers her name."
     : hoverPoi.kind === "pub" ? (visitor ? `The pub: a traveling salesman is in. ${visitor.name}, ${visitor.trade}` : "The pub: food, drink, Old Tam and the dice table")
     : hoverPoi.kind === "works" ? "The works: crew projects"
-    : hoverPoi.kind === "lighthouse" ? (lit ? "The lighthouse: it sees every ship out past the shoals" : lighthouseFill > 0 ? "The lighthouse going up: a crew project at the works" : "A bare point over the wreck, where the lighthouse will stand")
+    : hoverPoi.kind === "lighthouse" ? (lit ? "The lighthouse: the crew's atlas is kept in its lamp room, with the whole world to see from up there" : lighthouseFill > 0 ? "The lighthouse going up: the crew's atlas is kept out here on the point" : "A bare point over the wreck, where the lighthouse will stand: the crew's atlas is kept out here")
     : hoverPoi.kind === "apothecary" ? (apothecaryBuilt ? "The apothecary: potions and flasks, bought or brewed, and a keeper to haggle with" : "The apothecary's building site: a crew project at the works")
     : hoverPoi.kind === "smithy" ? (smithyBuilt ? "The smithy: arms and armour off the rack, your own sharpened or reinforced, and a smith to haggle with" : "The smithy's building site: a crew project at the works")
     : hoverPoi.kind === "galley" ? (galleyBuilt ? "The galley: go in to cook chowder and stores into the crew's larder" : "The galley's building site: a crew project at the works")
@@ -366,7 +366,13 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
       }
     : atPub ? { title: visitor ? <>The pub <span className="pub-visitor">· {visitor.name}, {visitor.trade}, is in</span></> : "The pub", label: "Go in", run: () => goInside("pub", "pub") }
     : atWorks ? { title: "The works", label: "See the crew's projects", run: () => setWorks(true) }
-    : atLighthouse ? { title: lit ? "The lighthouse" : <>The lighthouse's point <span className="muted">· paid for at the works</span></>, label: "See the crew's projects", run: () => setWorks(true) }
+    // The way into the atlas: from the lamp room once the tower is up, from the bare point until then (where the works is still a step away).
+    : atLighthouse ? {
+        title: lit ? <>The lighthouse <span className="muted">· the crew's atlas is kept in its lamp room</span></> : <>The lighthouse's point <span className="muted">· the crew's atlas is kept out here. The tower is paid for at the works.</span></>,
+        label: "Open the atlas",
+        run: () => (location.hash = "atlas"),
+        also: lit ? undefined : { label: "See the crew's projects", run: () => setWorks(true) },
+      }
     // A workshop still to be built points to the works, where the crew pays for it.
     : atApothecary ? (apothecaryBuilt
         ? { title: "The apothecary", label: "Go in", run: () => goInside(`${HARBOR_APOTHECARY.q},${HARBOR_APOTHECARY.r}`, "apothecary") }
@@ -418,8 +424,8 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
       {/* Down the left-hand side: the docks at the top, the crew's cards in the middle (the talk sits under them). */}
       <div className="hud-left">
         <DragPanel id="harbor.docks" title="Docks" foldOnPhone className="story panel docks">
-          <p className="muted">The crew's atlas is kept here: everywhere you have found, and the routes that run on from there.</p>
-          <p><button className="primary" onClick={() => (location.hash = "atlas")}>Open the atlas</button></p>
+          <p className="muted">The crew's atlas is kept out at the lighthouse: everywhere you have found, and the routes that run on from there. Walk out to the point to open it.</p>
+          <p><button className="small" onClick={() => renderer.current?.lookAt(HARBOR_LIGHTHOUSE)}>Show me the lighthouse</button></p>
           <h3>Voyage log</h3>
           {board.log.length === 0 && <p className="muted">No voyages yet.</p>}
           <ul className="log">
