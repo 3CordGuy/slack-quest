@@ -4023,6 +4023,16 @@ function drawHeld(id: string, b: Biped, trim: string, look: Look, shield: boolea
       w.box(GEAR.steel, 1.6, 1.7, 0.4, 0, 7.6, 1.8);
       w.box(GEAR.iron, 0.6, 1.0, 1.2, 0, 7.6, -1.3);
       return { tilt: 0.5 };
+    case "cleaver":
+      // The cook's cleaver: a short dark handle with brass rivets and a broad, heavy blade standing off it on the side
+      // the forging hammer's face is, so the same blow that lands a hammer flat lands this edge down. The edge is
+      // ground bright; a hole at the corner to hang it by.
+      shaft("#4a321c", 4.0, 0.6);
+      for (const y of [-0.5, 0.9]) w.ball(GEAR.gold, 0.22, 0.46, y, 0, 0);
+      w.box(GEAR.iron, 0.34, 5.2, 3.1, 0, 5.3, 0.5);
+      w.box(GEAR.steel, 0.36, 5.2, 0.5, 0, 5.3, 1.82);
+      w.box("#2a2623", 0.38, 0.5, 0.5, 0, 7.3, -0.5);
+      return { tilt: 0.5 };
     case "paddle":
       // A brewer's paddle, taller than he is: a long shaft of pale, scrubbed ash, a dark band where it is gripped,
       // and a broad blade on the end, stained green where it goes into the brew. Pale so it shows against the

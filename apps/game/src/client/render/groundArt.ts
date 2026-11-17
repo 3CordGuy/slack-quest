@@ -723,3 +723,91 @@ export function apothecaryWallTexture(): THREE.CanvasTexture {
     ctx.fillRect(0, rail, W, 10);
   });
 }
+
+/**
+ * The galley's walls inside: upright boards painted oxblood to waist height on a dark skirting, under a rail; over
+ * the rail a row of white tiles with a blue flower on each, for wiping down; above, limewash gone the colour of
+ * cream, browned by years of steam and frying toward the top; and a dark timber beam along the top. One sheet is
+ * one unit of wall across (eight boards, eight tiles); it repeats along the wall.
+ */
+export function galleyWallTexture(): THREE.CanvasTexture {
+  return wallSheet((ctx, W, H, at) => {
+    const beam = at(0.93);
+    const tileTop = at(0.62);
+    const tileFoot = at(0.53);
+    const rail = at(0.5);
+    const skirt = at(0.05);
+    // The limewash: cream, mottled, and browned toward the beam where the steam gathers.
+    ctx.fillStyle = "#d8ccb0";
+    ctx.fillRect(0, beam, W, tileTop - beam);
+    for (let i = 0; i < 18; i++) {
+      const x = hash(i, 1, 940) * W;
+      const y = beam + hash(i, 2, 940) * (tileTop - beam);
+      const r = 16 + hash(i, 3, 940) * 32;
+      const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+      g.addColorStop(0, "rgba(120,84,40,0.1)");
+      g.addColorStop(1, "rgba(120,84,40,0)");
+      ctx.fillStyle = g;
+      for (const shift of [-W, 0, W]) ctx.fillRect(x - r + shift, y - r, r * 2, r * 2);
+    }
+    const steam = ctx.createLinearGradient(0, beam, 0, tileTop);
+    steam.addColorStop(0, "rgba(70,44,20,0.5)");
+    steam.addColorStop(0.6, "rgba(70,44,20,0.08)");
+    steam.addColorStop(1, "rgba(70,44,20,0)");
+    ctx.fillStyle = steam;
+    ctx.fillRect(0, beam, W, tileTop - beam);
+
+    // The tiles: white, a thin grout between, each with a small blue flower and a dot in every corner.
+    const tw = W / 8;
+    ctx.fillStyle = "#8f8676";
+    ctx.fillRect(0, tileTop, W, tileFoot - tileTop);
+    for (let i = 0; i < 8; i++) {
+      const [x0, y0, w, h] = [i * tw + 1, tileTop + 1, tw - 2, tileFoot - tileTop - 2];
+      ctx.fillStyle = hash(i, 1, 941) < 0.3 ? "#e3ddcc" : "#ece7d8";
+      ctx.fillRect(x0, y0, w, h);
+      const [cx, cy] = [x0 + w / 2, y0 + h / 2];
+      ctx.fillStyle = "#3f6fa8";
+      for (let p = 0; p < 4; p++) {
+        const a = (p * Math.PI) / 2 + Math.PI / 4;
+        ctx.beginPath();
+        ctx.ellipse(cx + Math.cos(a) * 5, cy + Math.sin(a) * 5, 4.2, 2.2, a, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      for (const [dx, dy] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) ctx.fillRect(cx + dx * (w / 2 - 4) - 1, cy + dy * (h / 2 - 4) - 1, 2, 2);
+      ctx.fillStyle = "#e0b12e";
+      ctx.fillRect(cx - 1.5, cy - 1.5, 3, 3);
+      // Glazed: a little shine along the top.
+      ctx.fillStyle = "rgba(255,255,255,0.22)";
+      ctx.fillRect(x0, y0, w, 2);
+    }
+
+    // The boards: oxblood paint, each its own shade, a dark groove between and a worn foot.
+    const bw = W / 8;
+    for (let i = 0; i < 8; i++) {
+      const shade = hash(i, 2, 942);
+      ctx.fillStyle = shade < 0.33 ? "#6a3122" : shade < 0.66 ? "#733726" : "#62301f";
+      ctx.fillRect(i * bw, rail, bw, skirt - rail);
+      ctx.fillStyle = "rgba(20,8,4,0.45)";
+      ctx.fillRect(i * bw, rail, 2, skirt - rail);
+      ctx.fillStyle = "rgba(255,220,190,0.08)";
+      ctx.fillRect(i * bw + 2, rail, 2, skirt - rail);
+      // A knot or a chip in the paint here and there.
+      if (hash(i, 3, 942) < 0.4) {
+        ctx.fillStyle = "rgba(30,14,8,0.4)";
+        ctx.beginPath();
+        ctx.ellipse(i * bw + bw / 2, rail + 30 + hash(i, 4, 942) * (skirt - rail - 60), 3.5, 5, 0, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+    const scuff = ctx.createLinearGradient(0, skirt - 50, 0, skirt);
+    scuff.addColorStop(0, "rgba(20,10,6,0)");
+    scuff.addColorStop(1, "rgba(20,10,6,0.35)");
+    ctx.fillStyle = scuff;
+    ctx.fillRect(0, skirt - 50, W, 50);
+
+    // The rail, the skirting and the beam, in dark timber.
+    timberBand(ctx, W, tileFoot, rail, "#3a2a1c");
+    timberBand(ctx, W, skirt, H, "#2e2117");
+    timberBand(ctx, W, 0, beam, "#2e2117");
+  });
+}

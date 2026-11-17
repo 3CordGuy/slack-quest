@@ -211,6 +211,9 @@ export class Builder {
   }
 }
 
+/** A colour a shade darker: a lid on its crock, the well of a pan. */
+const tintOf = (color: string) => "#" + new THREE.Color(color).multiplyScalar(0.72).getHexString();
+
 const MODELS: Record<string, (b: Builder) => void> = {
   // A bedroll laid out on the ground: a blanket, a rolled end for a pillow, and a pack beside it.
   bedroll(b) {
@@ -715,6 +718,309 @@ const MODELS: Record<string, (b: Builder) => void> = {
     b.glow("#ffd98a", new THREE.BoxGeometry(0.03, 0.05, 0.03), 0.2, 0.69, -0.16);
     b.light("candle", 0.2, 0.75, -0.16);
   },
+  // ---- the galley (packages/world/src/keepers.ts): fittings, never sold ----
+  /**
+   * The galley's range, against the back wall: a brick body on a stone plinth with an iron top, a firebox on the
+   * left with its door standing open on the flames and an oven door on the right. On the top a copper stockpot of
+   * chowder with a ladle in it, a black kettle and a pan with a fish frying. Over it a sooty hood with a copper
+   * band on iron posts, a rail of ladles and skimmers hung from it, and a chimney going up the wall. Its fire is
+   * the room's great fire.
+   */
+  cook_range(b) {
+    const SOOT = "#2a2623";
+    const BLACK = "#2f3238";
+    const COPPER = "#b87333";
+    b.stone("#8d8674", 1.46, 0.1, 0.96, 0, 0, -0.06);
+    b.stone("#b0705a", 1.34, 0.52, 0.84, 0, 0.1, -0.06);
+    b.box(BLACK, 1.42, 0.06, 0.92, 0, 0.62, -0.06);
+    b.box(IRON, 1.44, 0.03, 0.02, 0, 0.63, 0.41);
+    // The firebox: a sooty mouth with embers and flames in it, an iron frame round it and its door swung open.
+    b.box(IRON, 0.52, 0.36, 0.02, -0.34, 0.14, 0.36);
+    b.box(SOOT, 0.44, 0.28, 0.02, -0.34, 0.18, 0.365);
+    b.glow("#c4421c", new THREE.BoxGeometry(0.38, 0.05, 0.02), -0.34, 0.215, 0.38);
+    b.glow("#ff8a2a", new THREE.BoxGeometry(0.22, 0.03, 0.02), -0.34, 0.235, 0.385);
+    for (const [color, radius, height, x] of [["#ff5a14", 0.07, 0.24, -0.44], ["#ff7a24", 0.08, 0.3, -0.33], ["#ffb84a", 0.05, 0.2, -0.25], ["#ffe08a", 0.035, 0.12, -0.36]] as const) {
+      b.softFlame(color, radius, height, x, 0.2, 0.4);
+    }
+    const door = b.box(BLACK, 0.03, 0.3, 0.3, -0.04, 0.17, 0.5);
+    door.rotation.y = 0.35;
+    b.ball(GOLD, 0.02, 0.0, 0.32, 0.62, 0);
+    // The oven: an iron door with a brass latch and two hinges.
+    b.box(BLACK, 0.46, 0.34, 0.03, 0.36, 0.15, 0.365);
+    b.box(IRON, 0.38, 0.26, 0.012, 0.36, 0.19, 0.385);
+    b.box(GOLD, 0.1, 0.03, 0.03, 0.36, 0.4, 0.395);
+    for (const y of [0.2, 0.4]) b.box(IRON, 0.05, 0.04, 0.02, 0.58, y, 0.39);
+    // The stockpot: copper, two handles, the chowder pale and lumpy in it, and a ladle standing in it.
+    const [px, pz] = [-0.3, -0.08];
+    b.post(COPPER, 0.27, 0.25, 0.3, px, 0.68, pz, 12);
+    b.post("#8a5a2a", 0.285, 0.285, 0.03, px, 0.96, pz, 12);
+    for (const s of [-1, 1]) b.box("#8a5a2a", 0.05, 0.03, 0.1, px + s * 0.3, 0.86, pz);
+    b.post("#e9dcae", 0.25, 0.25, 0.012, px, 0.975, pz, 12);
+    for (const [x, z, color] of [[-0.08, 0.04, "#f4ecd0"], [0.09, -0.06, "#d99a5a"], [0.02, 0.1, "#7fa850"], [-0.1, -0.08, "#f4ecd0"]] as const) b.ball(color, 0.035, px + x, 0.985, pz + z, 0);
+    const ladle = b.box("#8b95a5", 0.02, 0.36, 0.02, px + 0.12, 0.94, pz - 0.04);
+    ladle.rotation.z = -0.35;
+    // The kettle: black iron, a lid with a knob, a spout and a hooped handle.
+    const [kx, kz] = [0.36, -0.14];
+    b.post("#26262b", 0.11, 0.15, 0.16, kx, 0.68, kz, 8);
+    b.post("#3a3a42", 0.09, 0.11, 0.025, kx, 0.84, kz, 8);
+    b.ball(GOLD, 0.02, kx, 0.88, kz, 0);
+    b.box("#26262b", 0.12, 0.03, 0.03, kx + 0.15, 0.78, kz).rotation.z = 0.5;
+    b.ring("#26262b", 0.1, 0.012, kx, 0.9, kz);
+    // A pan at the front with a fish frying in it.
+    b.post("#2e2e35", 0.15, 0.13, 0.035, 0.26, 0.68, 0.18, 10);
+    b.box("#2e2e35", 0.22, 0.02, 0.035, 0.5, 0.7, 0.24).rotation.y = -0.3;
+    b.box("#d9a05a", 0.17, 0.025, 0.06, 0.25, 0.71, 0.18).rotation.y = 0.4;
+    b.cone("#c98b3a", 0.04, 0.06, 0.17, 0.71, 0.215, 3).rotation.z = Math.PI / 2;
+    // The hood on its posts, a copper band round its foot, and the chimney up the wall behind.
+    for (const x of [-0.64, 0.64]) b.box(IRON, 0.05, 0.64, 0.05, x, 0.68, 0.34);
+    b.box(COPPER, 1.36, 0.06, 0.86, 0, 1.32, -0.08);
+    const hood = b.post("#45403c", 0.3, 0.87, 0.52, 0, 1.38, -0.12, 4);
+    hood.rotation.y = Math.PI / 4;
+    hood.scale.z = 0.72;
+    b.stone("#a39888", 0.5, 0.86, 0.42, 0, 1.84, -0.22);
+    b.box("#5a5550", 0.6, 0.07, 0.5, 0, 2.7, -0.22);
+    // A rail along the band with the cook's irons hung from it: a ladle, a skimmer, a fork, a spoon.
+    b.box(IRON, 1.14, 0.022, 0.022, 0, 1.24, 0.37);
+    for (const [x, kind] of [[-0.42, "ladle"], [-0.14, "skimmer"], [0.14, "fork"], [0.42, "ladle"]] as const) {
+      b.box(IRON, 0.012, 0.05, 0.012, x, 1.19, 0.37);
+      b.box("#8b95a5", 0.016, 0.32, 0.016, x, 0.88, 0.38);
+      if (kind === "ladle") b.ball(COPPER, 0.045, x, 0.86, 0.38, 0);
+      else if (kind === "skimmer") {
+        const pan = b.post("#8b95a5", 0.06, 0.06, 0.012, x, 0, 0, 10);
+        pan.rotation.x = Math.PI / 2;
+        pan.position.set(x, 0.84, 0.38);
+      } else for (const dx of [-0.02, 0.02]) b.box("#8b95a5", 0.01, 0.1, 0.012, x + dx, 0.8, 0.38);
+    }
+    // The room's great fire: out in front of the firebox, so it spills across the floor and up the cook's back.
+    b.fire(-0.2, 0.6, 0.62, true);
+  },
+  // Firewood for the range: split logs stacked end-on between two posts, a hatchet leaning on them and a basket of kindling.
+  firewood(b) {
+    for (const x of [-0.4, 0.34]) b.box(DARK_WOOD, 0.06, 0.66, 0.5, x, 0, -0.12);
+    b.box(DARK_WOOD, 0.8, 0.05, 0.5, -0.03, 0, -0.12);
+    const tones = ["#7a5230", "#8a6a44", "#6b4a2e", "#946f48"];
+    for (let row = 0; row < 3; row++) {
+      for (let i = 0; i < 4; i++) {
+        if (row === 2 && i === 3) continue;
+        const x = -0.3 + i * 0.18 + (row % 2) * 0.03;
+        const log = b.post(tones[(i + row * 3) % tones.length], 0.085, 0.085, 0.5, x, 0, -0.12, 7);
+        log.rotation.x = Math.PI / 2;
+        log.position.y = 0.14 + row * 0.165;
+        // The pale split face of each, toward the room.
+        const face = b.post("#d9b98a", 0.06, 0.06, 0.01, x, 0, 0, 7);
+        face.rotation.x = Math.PI / 2;
+        face.position.set(x, 0.14 + row * 0.165, 0.135);
+      }
+    }
+    b.post(PALE_WOOD, 0.02, 0.02, 0.5, 0.52, 0.02, 0.1, 5).rotation.z = 0.3;
+    b.box(IRON, 0.13, 0.11, 0.03, 0.42, 0.42, 0.1);
+    b.post("#b98b5a", 0.14, 0.1, 0.14, 0.5, 0, 0.34, 8);
+    for (const [dx, dz, turn] of [[-0.03, 0, 0.3], [0.04, 0.02, -0.4], [0, -0.04, 1.2]]) b.box("#c9a877", 0.2, 0.02, 0.025, 0.5 + dx, 0.14, 0.34 + dz).rotation.y = turn;
+  },
+  // The cook's block: a slab of end-grain maple on four stout legs, bound in iron, scarred across the top. On it the
+  // fish he is taking the head off, lying across the line his cleaver comes down on, with the heads to one side,
+  // the steaks he has cut to the other, and a basket of the morning's catch waiting at the foot of the block.
+  chopping_block(b) {
+    for (const [x, z] of [[-0.24, -0.22], [0.24, -0.22], [-0.24, 0.22], [0.24, 0.22]]) b.box(DARK_WOOD, 0.1, 0.28, 0.1, x, 0, z);
+    b.box(DARK_WOOD, 0.5, 0.04, 0.46, 0, 0.1);
+    // The same height as the smith's anvil: the top at 0.44 above the floor, where a blow from the hip lands.
+    b.box("#c9a877", 0.68, 0.16, 0.66, 0, 0.28);
+    for (const y of [0.3, 0.4]) b.box(IRON, 0.7, 0.025, 0.68, 0, y);
+    for (const [x, z, w, turn] of [[-0.14, -0.1, 0.2, 0.2], [0.12, -0.2, 0.16, -0.5], [0.2, 0.2, 0.14, 1.1]]) b.box("#a8885a", w, 0.004, 0.012, x, 0.44, z).rotation.y = turn;
+    // The cleaver lands a little to the near side of the block's middle, its edge running off to the cook's right
+    // (measured in the galley, with him at his work). The fish lies square across that: `along` its length from
+    // the cut toward the tail, `across` its width.
+    const [cx, cz, yaw] = [-0.085, 0.2, 1.05];
+    const put = (mesh: THREE.Mesh, along: number, across = 0) => {
+      mesh.position.x = cx + Math.cos(yaw) * along + Math.sin(yaw) * across;
+      mesh.position.z = cz - Math.sin(yaw) * along + Math.cos(yaw) * across;
+      mesh.rotation.y = yaw;
+      return mesh;
+    };
+    // Bright, so it still reads as silver fish under a candle's yellow light.
+    const [BACK, BELLY, FIN, FLESH] = ["#c4d2dc", "#ffffff", "#8fa3b0", "#ff9c8c"];
+    // The body, from the cut back to the tail: thick at the shoulder and tapering, blue-grey along the back and
+    // pale along the belly, a fin on its back, and the tail spread flat on the block.
+    put(b.box(BELLY, 0.2, 0.055, 0.125, 0, 0.44, 0), 0.11);
+    put(b.box(BACK, 0.2, 0.03, 0.115, 0, 0.495, 0), 0.11);
+    put(b.box(BELLY, 0.12, 0.045, 0.085, 0, 0.44, 0), 0.26);
+    put(b.box(BACK, 0.12, 0.025, 0.078, 0, 0.485, 0), 0.26);
+    put(b.box(FIN, 0.12, 0.03, 0.012, 0, 0.52, 0), 0.12);
+    const tail = put(b.cone(FIN, 0.085, 0.11, 0, 0.445, 0, 3), 0.36);
+    tail.rotation.set(0, yaw, Math.PI / 2);
+    tail.scale.x = 0.25;
+    // The cut, pink and wet, and the head just off it, an eye and a gill on it.
+    put(b.box(FLESH, 0.012, 0.075, 0.115, 0, 0.445, 0), 0.006);
+    put(b.box(BELLY, 0.075, 0.05, 0.105, 0, 0.44, 0), -0.07);
+    put(b.box(BACK, 0.075, 0.03, 0.098, 0, 0.49, 0), -0.07);
+    put(b.box(FIN, 0.012, 0.06, 0.1, 0, 0.45, 0), -0.04);
+    for (const side of [-1, 1]) put(b.box("#1f2430", 0.018, 0.018, 0.012, 0, 0.495, 0), -0.085, side * 0.05);
+    // Two heads already off, at the back corner; and the steaks, cut and stacked, at the other.
+    for (const [x, z, turn] of [[-0.22, -0.2, 0.3], [-0.12, -0.24, -0.6]] as const) {
+      b.box(BACK, 0.07, 0.05, 0.09, x, 0.44, z).rotation.y = turn;
+      b.box(FLESH, 0.012, 0.045, 0.085, x + 0.036, 0.442, z).rotation.y = turn;
+    }
+    for (const [x, y, z, turn] of [[0.2, 0.44, -0.16, 0.2], [0.24, 0.44, -0.06, -0.3], [0.21, 0.465, -0.12, 0.9], [0.14, 0.44, -0.22, 0.5]] as const) {
+      b.box(FLESH, 0.075, 0.025, 0.09, x, y, z).rotation.y = turn;
+      b.box(BACK, 0.079, 0.012, 0.03, x, y + 0.007, z - 0.04).rotation.y = turn;
+    }
+    // A fat candle in a dish on the far corner to work by: the range is behind him, and his own shadow falls
+    // across the block.
+    b.post("#b87333", 0.075, 0.06, 0.02, 0.26, 0.44, 0.24, 8);
+    b.post(CLOTH, 0.035, 0.04, 0.12, 0.26, 0.46, 0.24, 6);
+    b.flame("#ffd98a", 0.04, 0.07, 0.04, 0.26, 0.58, 0.24);
+    b.light("candle", 0.12, 0.95, 0.2);
+    // The catch, in a wicker basket on the far side from him: fish laid head to tail, a tail or two over the rim.
+    const [bx, bz] = [0.62, 0.02];
+    b.post("#b98b5a", 0.24, 0.2, 0.22, bx, 0, bz, 10);
+    for (const y of [0.05, 0.13]) b.post("#8a6a44", 0.245, 0.235, 0.025, bx, y, bz, 10);
+    b.post("#8a6a44", 0.25, 0.25, 0.03, bx, 0.21, bz, 10);
+    for (const [dx, dz, turn, lift, color] of [[-0.05, -0.05, 0.4, 0, BACK], [0.05, 0.03, -0.5, 0.012, "#d2dde4"], [-0.02, 0.07, 1.3, 0.024, "#b6c6d0"], [0.03, -0.08, 2.4, 0.03, BACK]] as const) {
+      const fish = b.box(color, 0.3, 0.05, 0.085, bx + dx, 0.2 + lift, bz + dz);
+      fish.rotation.y = turn;
+      b.box(BELLY, 0.3, 0.02, 0.09, bx + dx, 0.2 + lift, bz + dz).rotation.y = turn;
+      const fin = b.cone(FIN, 0.07, 0.09, bx + dx + Math.cos(turn) * 0.19, 0.205 + lift, bz + dz - Math.sin(turn) * 0.19, 3);
+      fin.rotation.set(0, turn, Math.PI / 2);
+      fin.scale.x = 0.25;
+    }
+  },
+  // Where the cook plates up: a scrubbed table with a shelf of crocks under it; on it a stack of bowls, a loaf and a
+  // heel of cheese, a cabbage and carrots, a jar of spoons, and a candle in a dish.
+  galley_table(b) {
+    b.box("#d9c9a0", 1.2, 0.07, 0.6, 0, 0.5);
+    for (const [x, z] of [[-0.52, -0.23], [0.52, -0.23], [-0.52, 0.23], [0.52, 0.23]]) b.box(WOOD, 0.09, 0.5, 0.09, x, 0, z);
+    b.box(WOOD, 1.04, 0.04, 0.46, 0, 0.14);
+    for (const [x, color] of [[-0.3, "#8a5a3c"], [0.0, "#b8613a"], [0.28, "#6f7480"]] as const) {
+      b.post(color, 0.1, 0.085, 0.2, x, 0.18, 0, 8);
+      b.post(tintOf(color), 0.075, 0.075, 0.02, x, 0.38, 0, 8);
+    }
+    for (let i = 0; i < 4; i++) b.post(i % 2 ? "#e9e4d4" : "#d8d2c0", 0.1, 0.07, 0.035, -0.38, 0.57 + i * 0.03, 0.06, 10);
+    b.box("#c99a54", 0.26, 0.1, 0.14, -0.06, 0.57, -0.1).rotation.y = 0.25;
+    b.box("#e3c08a", 0.2, 0.02, 0.1, -0.06, 0.665, -0.1).rotation.y = 0.25;
+    b.box("#e8c84a", 0.13, 0.08, 0.1, 0.14, 0.57, 0.14).rotation.y = -0.5;
+    b.ball("#7fa850", 0.085, 0.36, 0.64, -0.06, 1);
+    for (const [x, z, turn] of [[0.3, 0.16, 0.2], [0.34, 0.2, 0.5]]) {
+      const carrot = b.cone("#e08a3a", 0.025, 0.16, x, 0.585, z, 5);
+      carrot.rotation.z = Math.PI / 2;
+      carrot.rotation.y = turn;
+    }
+    b.post("#b8613a", 0.05, 0.045, 0.1, 0.52, 0.57, -0.16, 8);
+    for (const [dx, lean] of [[-0.015, -0.2], [0.015, 0.15], [0, 0.4]]) b.box(PALE_WOOD, 0.012, 0.16, 0.012, 0.52 + dx, 0.62, -0.16).rotation.z = lean;
+    // A stub of candle in a brass dish at the back corner.
+    b.post("#b87333", 0.07, 0.06, 0.02, -0.5, 0.57, -0.2, 8);
+    b.post(CLOTH, 0.025, 0.025, 0.1, -0.5, 0.59, -0.2, 6);
+    b.flame("#ffd98a", 0.03, 0.05, 0.03, -0.5, 0.69, -0.2);
+    b.light("candle", -0.5, 0.78, -0.2);
+  },
+  // The larder: shelves to head height, with crocks and a sack at the foot, jars of preserves under cloth tops, round
+  // loaves, wheels of cheese and a basket of eggs.
+  larder_shelf(b) {
+    b.box(WOOD, 0.98, 1.5, 0.36, 0, 0, -0.14);
+    b.box(DARK_WOOD, 1.04, 0.06, 0.4, 0, 1.5, -0.14);
+    for (const x of [-0.47, 0.47]) b.box(DARK_WOOD, 0.05, 1.5, 0.38, x, 0, -0.13);
+    const jars = ["#c98b3a", "#b9433d", "#6b8c2f", "#e0b12e", "#8a3a5a", "#d9a05a"];
+    for (let shelf = 0; shelf < 4; shelf++) {
+      const y = 0.06 + shelf * 0.36;
+      b.box("#2a2018", 0.86, 0.32, 0.05, 0, y, -0.02);
+      b.box(PALE_WOOD, 0.9, 0.03, 0.3, 0, y - 0.03, -0.08);
+      if (shelf === 0) {
+        // Crocks, and a small sack slumped against them.
+        for (const [x, color] of [[-0.3, "#8a5a3c"], [-0.06, "#6f7480"]] as const) {
+          b.post(color, 0.1, 0.085, 0.2, x, y, 0.03, 8);
+          b.post(tintOf(color), 0.08, 0.08, 0.02, x, y + 0.2, 0.03, 8);
+        }
+        const sack = b.ball("#c9b48a", 0.13, 0.26, y + 0.11, 0.03, 1);
+        sack.scale.set(1.1, 0.85, 0.9);
+      } else if (shelf === 1) {
+        for (let i = 0; i < 6; i++) {
+          const x = -0.36 + i * 0.145;
+          b.post(jars[(i * 2 + 1) % jars.length], 0.05, 0.05, 0.13, x, y, 0.03, 8);
+          b.post(CLOTH, 0.058, 0.05, 0.03, x, y + 0.13, 0.03, 8);
+        }
+      } else if (shelf === 2) {
+        // Loaves, and two wheels of cheese stacked.
+        for (const x of [-0.3, -0.06]) {
+          const loaf = b.ball("#c99a54", 0.1, x, y + 0.07, 0.03, 1);
+          loaf.scale.set(1.15, 0.7, 1);
+          b.box("#8a5a2a", 0.1, 0.01, 0.015, x, y + 0.135, 0.03).rotation.y = 0.6;
+        }
+        b.post("#e8c84a", 0.12, 0.12, 0.07, 0.25, y, 0.03, 12);
+        b.post("#d9b03a", 0.1, 0.1, 0.06, 0.25, y + 0.07, 0.03, 12);
+      } else {
+        // Eggs in a basket, a jug, and more jars.
+        b.post("#b98b5a", 0.11, 0.085, 0.09, -0.28, y, 0.03, 8);
+        for (const [dx, dz] of [[-0.04, 0], [0.04, 0.01], [0, -0.04], [0, 0.04]]) b.ball("#f4efe1", 0.035, -0.28 + dx, y + 0.1, 0.03 + dz, 0);
+        b.post("#e9e4d4", 0.06, 0.075, 0.18, -0.02, y, 0.03, 8);
+        b.box("#e9e4d4", 0.02, 0.1, 0.02, 0.06, y + 0.05, 0.03);
+        for (let i = 0; i < 2; i++) {
+          b.post(jars[i * 3], 0.05, 0.05, 0.13, 0.2 + i * 0.145, y, 0.03, 8);
+          b.post(CLOTH, 0.058, 0.05, 0.03, 0.2 + i * 0.145, y + 0.13, 0.03, 8);
+        }
+      }
+    }
+  },
+  // The crockery: a dresser with cupboard doors below and a rack above, plates stood on edge along it, white with a
+  // blue rim, and mugs hung on hooks under the top.
+  plate_dresser(b) {
+    b.box(WOOD, 0.98, 0.62, 0.42, 0, 0, -0.12);
+    b.box(DARK_WOOD, 1.04, 0.05, 0.48, 0, 0.62, -0.12);
+    for (const x of [-0.23, 0.23]) {
+      b.box(PALE_WOOD, 0.42, 0.48, 0.02, x, 0.08, 0.1);
+      b.box(WOOD, 0.3, 0.34, 0.025, x, 0.15, 0.1);
+      b.ball(GOLD, 0.022, x > 0 ? 0.06 : -0.06, 0.34, 0.12, 0);
+    }
+    b.box(WOOD, 0.98, 0.86, 0.04, 0, 0.67, -0.3);
+    for (const x of [-0.47, 0.47]) b.box(DARK_WOOD, 0.05, 0.86, 0.2, x, 0.67, -0.22);
+    b.box(DARK_WOOD, 1.04, 0.05, 0.26, 0, 1.53, -0.2);
+    for (let row = 0; row < 2; row++) {
+      const y = 0.67 + row * 0.4;
+      if (row > 0) b.box(PALE_WOOD, 0.9, 0.03, 0.18, 0, y - 0.03, -0.2);
+      b.box(DARK_WOOD, 0.9, 0.03, 0.02, 0, y + 0.05, -0.1);
+      for (let i = 0; i < 4; i++) {
+        const x = -0.33 + i * 0.22;
+        for (const [color, radius, z] of [["#3f6fa8", 0.105, -0.2], ["#ece7d8", 0.085, -0.192]] as const) {
+          const plate = b.post(color, radius, radius, 0.012, x, 0, 0, 14);
+          plate.rotation.x = Math.PI / 2 - 0.18;
+          plate.position.set(x, y + 0.115, z);
+        }
+      }
+    }
+    for (let i = 0; i < 4; i++) {
+      const x = -0.3 + i * 0.2;
+      b.box(IRON, 0.01, 0.04, 0.01, x, 1.48, -0.1);
+      b.post(i % 2 ? "#b86a4a" : "#d8d2c0", 0.04, 0.035, 0.07, x, 1.41, -0.1, 8);
+    }
+  },
+  // The day's catch in brine: an open barrel with the tails of a few fish standing out of it.
+  fish_barrel(b) {
+    b.post(WOOD, 0.3, 0.27, 0.66, 0, 0, 0, 10);
+    for (const y of [0.1, 0.52]) b.post("#4a4f5a", 0.31, 0.31, 0.05, 0, y, 0, 10);
+    b.post("#4f7384", 0.27, 0.27, 0.02, 0, 0.62, 0, 10);
+    for (const [x, z, lean, color] of [[-0.08, 0.04, 0.25, "#7fa6b8"], [0.07, -0.06, -0.2, "#8fb8c8"], [0.02, 0.12, 0.1, "#6b93a6"]] as const) {
+      const body = b.box(color, 0.07, 0.2, 0.035, x, 0.6, z);
+      body.rotation.z = lean;
+      const tail = b.cone(color, 0.065, 0.09, x - Math.sin(lean) * 0.2, 0.8, z, 3);
+      tail.rotation.z = Math.PI + lean;
+      tail.scale.z = 0.4;
+    }
+  },
+  // Flour and meal: two fat sacks tied at the neck and one open, a scoop standing in the flour.
+  sacks(b) {
+    const SACK = "#c9b48a";
+    for (const [x, z, r, squash] of [[-0.26, -0.12, 0.26, 1.15], [0.24, -0.16, 0.24, 1.2], [0.02, 0.2, 0.22, 1.0]] as const) {
+      const sack = b.ball(SACK, r, x, r * squash * 0.92, z, 1);
+      sack.scale.set(1, squash, 0.95);
+      b.box("#a8946a", r * 1.5, 0.012, 0.012, x, r * squash * 0.9, z + r * 0.93);
+    }
+    for (const [x, z] of [[-0.26, -0.12], [0.24, -0.16]]) {
+      b.post("#8a6a44", 0.05, 0.07, 0.03, x, 0.55, z, 6);
+      b.cone(SACK, 0.09, 0.1, x, 0.57, z, 6).rotation.x = Math.PI;
+    }
+    // The open one: its top rolled back, flour to the brim and a wooden scoop in it.
+    b.post("#b5a078", 0.17, 0.2, 0.05, 0.02, 0.38, 0.2, 10);
+    b.post("#f4efe1", 0.15, 0.15, 0.02, 0.02, 0.42, 0.2, 10);
+    b.box(PALE_WOOD, 0.04, 0.16, 0.03, 0.08, 0.42, 0.2).rotation.z = -0.5;
+  },
   // ---- more furniture ----
   desk(b) {
     b.box(DARK_WOOD, 1.1, 0.06, 0.56, 0, 0.56);
@@ -1089,6 +1395,42 @@ const MODELS: Record<string, (b: Builder) => void> = {
       } else {
         b.ball("#5b606c", 0.08, hx, hy, 0.06, 0);
         for (const a of [0, 1.6, 3.2, 4.8]) b.cone("#8b95a5", 0.025, 0.06, hx + Math.sin(a) * 0.08, hy - 0.03 + Math.cos(a) * 0.08, 0.06, 4);
+      }
+    }
+  },
+  // ---- the galley's walls. Each hangs from its top. ----
+  // An iron rail on two brackets, hung with copper pans, a black skillet and a colander.
+  pot_rack(b) {
+    for (const x of [-0.36, 0.36]) {
+      b.box(IRON, 0.04, 0.12, 0.03, x, -0.14, 0.015);
+      b.box(IRON, 0.03, 0.03, 0.12, x, -0.1, 0.07);
+    }
+    b.box(IRON, 0.84, 0.022, 0.022, 0, -0.1, 0.12);
+    for (const [x, radius, handle, color] of [[-0.28, 0.13, 0.2, "#b87333"], [-0.02, 0.1, 0.16, "#c98b3a"], [0.2, 0.115, 0.22, "#2e2e35"], [0.36, 0.07, 0.12, "#8b95a5"]] as const) {
+      b.box(IRON, 0.012, 0.05, 0.012, x, -0.14, 0.12);
+      b.box(color === "#2e2e35" ? "#2e2e35" : "#8a5a2a", 0.028, handle, 0.016, x, -0.14 - handle, 0.12);
+      const pan = b.post(color, radius, radius * 0.92, 0.035, x, 0, 0, 12);
+      pan.rotation.x = Math.PI / 2;
+      pan.position.set(x, -0.14 - handle - radius + 0.02, 0.125);
+      // The inside of the pan, a shade darker, toward the room.
+      const well = b.post(tintOf(color), radius * 0.8, radius * 0.8, 0.01, x, 0, 0, 12);
+      well.rotation.x = Math.PI / 2;
+      well.position.set(x, -0.14 - handle - radius + 0.02, 0.146);
+    }
+  },
+  // A peg rail hung with a braid of garlic, a string of onions and a bunch of dried red peppers.
+  onion_strings(b) {
+    b.box(DARK_WOOD, 0.6, 0.07, 0.03, 0, -0.1, 0.015);
+    for (const [x, color, n, r] of [[-0.2, "#efe6c8", 5, 0.045], [0, "#c98b3a", 4, 0.06], [0.2, "#b9433d", 5, 0.03]] as const) {
+      b.box(IRON, 0.02, 0.02, 0.07, x, -0.08, 0.05);
+      b.box("#c9a877", 0.012, 0.1, 0.012, x, -0.18, 0.08);
+      for (let i = 0; i < n; i++) {
+        const y = -0.2 - i * r * 1.7;
+        const dx = (i % 2 ? 1 : -1) * r * 0.55;
+        if (color === "#b9433d") {
+          const pepper = b.cone(color, r, 0.12, x + dx, y - 0.08, 0.08, 5);
+          pepper.rotation.z = Math.PI + (i % 2 ? 0.25 : -0.25);
+        } else b.ball(color, r, x + dx, y, 0.08 + (i % 2) * 0.02, 0);
       }
     }
   },

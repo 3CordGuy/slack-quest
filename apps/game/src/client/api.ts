@@ -15,11 +15,10 @@ import type { CatchBook, PubWall } from "../server/catchbook";
 import type { PubGame, PubLeaderboard, PubScore } from "../server/pub-scores";
 import type { XpResult } from "../server/harbor-xp";
 import type { TradeList } from "../server/trade";
-import type { ApothecaryView, HaggleResult, KeeperWare, SmithyView } from "../server/workshops";
-import type { GalleyView } from "../server/galley";
+import type { ApothecaryView, GalleyKeeperView, HaggleResult, KeeperWare, SmithyView } from "../server/workshops";
 import type { ErrandPaid, RegularsView } from "../server/errands";
 
-export type { ApothecaryView, SmithyView, GalleyView, ErrandPaid, RegularsView, HaggleResult, KeeperWare };
+export type { ApothecaryView, SmithyView, GalleyKeeperView, ErrandPaid, RegularsView, HaggleResult, KeeperWare };
 
 export type { CatchBook, FishStock, GatherStatus, PubGame, PubLeaderboard, PubScore, PubWall, SittingPaid, XpResult };
 
@@ -222,8 +221,10 @@ export const api = {
   buyFromSmith: (key: string) => request<SmithyView & { got: string }>("/api/smithy/buy", { key }),
   /** Ask a keeper to take something off a price: `ask` is one of HAGGLE_ASKS. One try a day for each thing. */
   haggle: (shop: string, key: string, ask: string) => request<HaggleResult>("/api/keeper/haggle", { shop, key, ask }),
-  galley: () => request<GalleyView>("/api/galley"),
-  cook: (dishId: string) => request<GalleyView & { xp?: XpResult }>("/api/galley/cook", { dishId }),
+  galley: () => request<GalleyKeeperView>("/api/galley"),
+  cook: (dishId: string) => request<GalleyKeeperView & { xp?: XpResult }>("/api/galley/cook", { dishId }),
+  /** Buy a dish ready-made from the cook, by its key: it goes into the crew's larder. */
+  buyFromCook: (key: string) => request<GalleyKeeperView & { got: string }>("/api/galley/buy", { key }),
   giveToProject: (projectId: string, give: ProjectAmounts) => request<Works & { completed: boolean; xp?: XpResult }>("/api/projects/give", { projectId, give }),
   hut: () => request<Hut>("/api/hut"),
   craft: (defId: string) => request<{ ok: true; xp?: XpResult }>("/api/hut/craft", { defId }),

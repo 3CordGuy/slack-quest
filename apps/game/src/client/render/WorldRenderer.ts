@@ -12,7 +12,7 @@ import { makeModelShip } from "./modelShip";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { reportEnv } from "../ui/env";
 import { makeRenderer } from "./graphics";
-import { apothecaryWallTexture, panelTexture, smithyWallTexture } from "./groundArt";
+import { apothecaryWallTexture, galleyWallTexture, panelTexture, smithyWallTexture } from "./groundArt";
 import { Ambience, type RoomLight, TILE_FILLET, TILE_RADIUS, TORCH_LIFT, beaconShine, dryPatch, hexTop, meadowAt, pixelTexture, stamp, tallGrass, type BuildingGlow } from "./ambience";
 import "./camera.css";
 import { PINCH_PAN_SLACK, followIconSvg, readFollow, writeFollow } from "./cameraFollow";
@@ -118,7 +118,7 @@ export interface RenderState {
   lampOff?: boolean;
   /** With `lampOff`: a room kept dim for the mood of it, each small light a pool with dark between (the apothecary's shop). */
   gloom?: boolean;
-  /** How a room's walls are dressed inside: the pub's oak and plaster, the smithy's stone and sooted timber, the apothecary's green wainscot and paper. The pub's is the default for the pub; other rooms have bare walls without it. */
+  /** How a room's walls are dressed inside: the pub's oak and plaster, the smithy's stone and sooted timber, the apothecary's green wainscot and paper, the galley's oxblood boards, tiles and limewash. The pub's is the default for the pub; other rooms have bare walls without it. */
   walls?: WallDressing;
   /** What a room's floor is laid with: boards (the default) or flagstones (the smithy). */
   floor?: "planks" | "flags";
@@ -135,8 +135,8 @@ export interface RenderState {
 }
 
 /** The ways a room's walls can be dressed inside (see RenderState.walls). */
-export type WallDressing = "pub" | "smithy" | "apothecary";
-const WALL_DRESSINGS: Record<WallDressing, () => THREE.CanvasTexture> = { pub: panelTexture, smithy: smithyWallTexture, apothecary: apothecaryWallTexture };
+export type WallDressing = "pub" | "smithy" | "apothecary" | "galley";
+const WALL_DRESSINGS: Record<WallDressing, () => THREE.CanvasTexture> = { pub: panelTexture, smithy: smithyWallTexture, apothecary: apothecaryWallTexture, galley: galleyWallTexture };
 
 /** An enemy standing on a hex of its own. */
 export interface RenderUnit {

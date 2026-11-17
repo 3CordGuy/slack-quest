@@ -1,13 +1,14 @@
-// Buying from the smith and the apothecary in their shops, and haggling with
-// them, against a real SQLite database with the game's migrations applied
+// Buying from the smith, the apothecary and the galley's cook in their shops,
+// and haggling with them, against a real SQLite database with the game's migrations applied
 // (the same stand-in for D1 as apothecary.test.ts).
 
 import { readFileSync, readdirSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { beforeEach, describe, expect, it } from "vitest";
-import { APOTHECARY_PROJECT, SHELF_DAILY, SHELF_PRICES, SMITHY_PROJECT, shelfKey, workKey } from "@gantt-quest/world";
+import { APOTHECARY_PROJECT, DISHES, GALLEY_PROJECT, POT_PRICES, SHELF_DAILY, SHELF_PRICES, SMITHY_PROJECT, potKey, shelfKey, workKey } from "@gantt-quest/world";
 import { consumablesOf } from "../src/server/consumables";
-import { apothecaryView, buyFromKeeper, haggle, smithItem, smithyView } from "../src/server/workshops";
+import { cook, larderOf } from "../src/server/galley";
+import { apothecaryView, buyFromKeeper, galleyKeeperView, haggle, smithItem, smithyView } from "../src/server/workshops";
 
 type Row = Record<string, unknown>;
 
@@ -141,6 +142,40 @@ describe("haggling", () => {
   it("refuses an ask that is not on the list, and a shop that is not there", async () => {
     build();
     expect(await haggle(db, "ann", "apothecary", shelfKey("fire"), "everything", 0)).toMatch(/Ask for what/);
-    expect(await haggle(db, "ann", "galley", shelfKey("fire"), "nudge", 0)).toMatch(/nobody there/);
+    expect(await haggle(db, "ann", "pub", shelfKey("fire"), "nudge", 0)).toMatch(/nobody there/);
+  });
+});
+
+describe("the galley's cook", () => {
+  const stores = DISHES.find((d) => d.id === "stores")!;
+
+  it("sells a dish ready-made into the crew's larder, one of each a day, at the haggled price", async () => {
+    build(GALLEY_PROJECT);
+    setGold(1000);
+    const key = potKey("chowder");
+    expect(await haggle(db, "ann", "galley", key, "push", 0)).toMatchObject({ won: true, list: POT_PRICES.chowder, price: Math.ceil(POT_PRICES.chowder * 0.8) });
+    expect(await buyFromKeeper(db, "ann", "galley", key)).toEqual({ got: "Fish Chowder" });
+    expect(gold()).toBe(1000 - Math.ceil(POT_PRICES.chowder * 0.8));
+    expect(await larderOf(db, "CREWAA")).toEqual({ chowder: 1, stores: 0 });
+    expect(await buyFromKeeper(db, "ann", "galley", key)).toMatch(/all the chowders/);
+    expect((await galleyKeeperView(db, "ann")).wares.find((w) => w.key === key)).toMatchObject({ left: 0, price: Math.ceil(POT_PRICES.chowder * 0.8) });
+    expect(gold()).toBe(1000 - Math.ceil(POT_PRICES.chowder * 0.8));
+  });
+
+  it("sells nothing into a full larder, before the galley is built, or without the gold", async () => {
+    setGold(1000);
+    expect(await buyFromKeeper(db, "ann", "galley", potKey("stores"))).toMatch(/not built/);
+    expect(await haggle(db, "ann", "galley", potKey("stores"), "nudge", 0)).toMatch(/not built/);
+    build(GALLEY_PROJECT);
+    expect(await buyFromKeeper(db, "ann", "galley", "dish:gruel")).toMatch(/nothing like that/);
+    // Cooked full by the crew: there is no room for one bought.
+    give("fur", 2 * stores.cap);
+    give("mushrooms", 3 * stores.cap);
+    for (let i = 0; i < stores.cap; i++) expect(await cook(db, "ann", "stores")).not.toBeTypeOf("string");
+    expect(await buyFromKeeper(db, "ann", "galley", potKey("stores"))).toMatch(/already holds/);
+    expect(gold()).toBe(1000);
+    setGold(5);
+    expect(await buyFromKeeper(db, "ann", "galley", potKey("chowder"))).toMatch(/Not enough gold/);
+    expect(await larderOf(db, "CREWAA")).toEqual({ chowder: 0, stores: stores.cap });
   });
 });
