@@ -8,7 +8,7 @@ import { hexDistance, hexNeighbors, posKey, type HexPos } from "@gantt-quest/cor
 import { ABILITIES, ARMOR_DAMAGE_DIVISOR, BARD_AURA, WARLOCK_BLEED_TURNS, type AbilityDef } from "../content";
 import { tileAt } from "../map";
 import { DEBUFFS, addCondition, attackContext, attackRoll, damage, defenceOf, has, heal, removeCondition, saveBonus, saveRoll, type Ctx } from "./engine";
-import { adjacent, blast, directionToward, elevOf, inFight, lineFrom, sameHex, sees, solid, stepCost, unitAt, unitById } from "./geometry";
+import { adjacent, blast, chestAt, directionToward, elevOf, inFight, lineFrom, sameHex, sees, solid, stepCost, unitAt, unitById } from "./geometry";
 import { COMMON_ACTIONS, ENEMY_BURST, JUMP_MOVE_COST, POTION_EDGE, SAVE_STAT, THROWABLES, TORCH_GROUND_ROUNDS, abilityDice, enemyStrikes, healDice, jumpRange, reactionStrike, tacticOf, throwRange, type EnemyStrike, type Tactic } from "./kit";
 import { d20, hitChance, mod, proficiency, rollDice, statOf } from "./rules";
 import { seenByHeroes } from "./light";
@@ -103,7 +103,7 @@ export function walk(ctx: Ctx, unit: Unit, path: HexPos[], budget: Budget | null
 export function push(ctx: Ctx, from: HexPos, target: Unit, by: string): void {
   const dir = directionToward(from, target.pos);
   const dest = { q: target.pos.q + dir.q, r: target.pos.r + dir.r };
-  const open = !solid(tileAt(ctx.state.map, dest)) && Math.abs(elevOf(ctx.state.map, dest) - elevOf(ctx.state.map, target.pos)) < 2 && !unitAt(ctx.state, dest);
+  const open = !solid(tileAt(ctx.state.map, dest)) && !chestAt(ctx.state, dest) && Math.abs(elevOf(ctx.state.map, dest) - elevOf(ctx.state.map, target.pos)) < 2 && !unitAt(ctx.state, dest);
   const was = target.pos;
   if (!open) {
     ctx.events.push({ t: "shoved", id: by, target: target.id, from: was, to: null });
@@ -327,7 +327,7 @@ export function checkCommon(state: ZoneState, unit: Unit, what: CommonAction, ai
   // Jump.
   if (!aim.at || sameHex(aim.at, unit.pos)) return "Pick a hex to jump to.";
   if (hexDistance(unit.pos, aim.at) > jumpRange(mod(statOf(unit, "str")))) return "Too far to jump.";
-  if (solid(tileAt(state.map, aim.at)) || unitAt(state, aim.at)) return "There is nowhere to land.";
+  if (solid(tileAt(state.map, aim.at)) || chestAt(state, aim.at) || unitAt(state, aim.at)) return "There is nowhere to land.";
   if (elevOf(state.map, aim.at) - elevOf(state.map, unit.pos) > 1) return "Too high to jump up to.";
   if (!sees(state.map, unit.pos, aim.at)) return "Something is in the way.";
   if (budget && budget.move < JUMP_MOVE_COST) return "Not enough movement left to jump.";

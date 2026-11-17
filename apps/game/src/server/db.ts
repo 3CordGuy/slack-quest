@@ -845,17 +845,34 @@ export async function applyGrant(
  * fallen left. Unlike applyGrant this writes nothing to run_players, which belongs to voyages and
  * delves of the old kind, and there is nothing on a zone to forfeit. Returns the levels gained.
  */
-export async function applyZoneGrant(db: D1Database, playerId: string, xp: number, resources: Resources): Promise<number> {
-  const c = await getCharacter(db, playerId);
-  if (!c) return 0;
-  const next = applyXp({ classId: c.class_id, level: c.level, xp: c.xp, stats: statsOf(c), unspent: c.unspent_points }, xp);
-  await db.batch([
-    ...resourceStatements(db, playerId, resources),
+export async function applyZoneGrant(
+  db: D1Database,
+  playerId: string,
+  grant: { xp: number; resources: Resources; gold?: number; item?: ItemDef | null; blueprint?: string; furnishing?: FurnishingGrant; items?: Partial<Record<string, number>> },
+): Promise<{ levelsGained: number; place: LootPlace | null }> {
+  const [c, carry, boxes] = await Promise.all([getCharacter(db, playerId), grant.item ? carryState(db, playerId) : null, grant.item ? containersWithRoom(db, playerId) : []]);
+  if (!c) return { levelsGained: 0, place: null };
+  const next = applyXp({ classId: c.class_id, level: c.level, xp: c.xp, stats: statsOf(c), unspent: c.unspent_points }, grant.xp);
+  const stmts: D1PreparedStatement[] = [...resourceStatements(db, playerId, grant.resources)];
+  // A piece of gear goes in the pack if it has room, else the best container at home with room; it is never lost.
+  const place = carry && grant.item ? lootPlace(carry, itemCells(grant.item)) : null;
+  if (grant.item) {
+    const cells = itemCells(grant.item);
+    stmts.push(insertItem(db, playerId, grant.item, false, place === "storage" ? (boxes.find((b) => b.free >= cells)?.id ?? boxes[0]?.id ?? null) : null));
+  }
+  if (grant.blueprint) stmts.push(blueprintStatement(db, playerId, grant.blueprint));
+  if (grant.furnishing) stmts.push(furnishingStatement(db, playerId, grant.furnishing));
+  for (const [kind, qty] of Object.entries(grant.items ?? {})) {
+    if (!qty || qty <= 0) continue;
+    stmts.push(db.prepare("INSERT INTO consumables (player_id, kind, qty) VALUES (?1, ?2, ?3) ON CONFLICT(player_id, kind) DO UPDATE SET qty = qty + ?3").bind(playerId, kind, qty));
+  }
+  stmts.push(
     db
-      .prepare("UPDATE characters SET level = ?, xp = ?, str = ?, int_stat = ?, vit = ?, agi = ?, dex = ?, unspent_points = ? WHERE player_id = ?")
-      .bind(next.level, next.xp, next.stats.str, next.stats.int_stat, next.stats.vit, next.stats.agi, next.stats.dex, next.unspent, playerId),
-  ]);
-  return next.levelsGained;
+      .prepare("UPDATE characters SET level = ?, xp = ?, str = ?, int_stat = ?, vit = ?, agi = ?, dex = ?, unspent_points = ?, gold = gold + ? WHERE player_id = ?")
+      .bind(next.level, next.xp, next.stats.str, next.stats.int_stat, next.stats.vit, next.stats.agi, next.stats.dex, next.unspent, grant.gold ?? 0, playerId),
+  );
+  await db.batch(stmts);
+  return { levelsGained: next.levelsGained, place };
 }
 
 /**
