@@ -82,6 +82,9 @@ import {
   type Slot,
   type Throwable,
   type TradeSide,
+  ZONE_MODS,
+  stoneName,
+  type Lodestone,
 } from "@gantt-quest/world";
 import { api, type Hut, type InventoryItem, type Me } from "./api";
 import { useAct } from "./Harbor";
@@ -90,8 +93,8 @@ import { label } from "./labels";
 import { ThingIcon, furnishingIcon, resourceIcon } from "./thingIcons";
 import { layoutPack, loadSaved, saveSaved, under, type Saved, type Shape, type Spot } from "./ui/packLayout";
 import { DollChart, type ChartSlot } from "./ui/DollChart";
-import { SplitPrompt, StackIcon, stackName, toStacks, type Stack } from "./ui/Slots";
-import { ITEM_ICON } from "./zone/actionIcons";
+import { SplitPrompt, StackIcon, stackName, staysPut, toStacks, type Stack } from "./ui/Slots";
+import { ITEM_ICON, STONE_ICON } from "./zone/actionIcons";
 import { uiZoom } from "./uiScale";
 import "./ui/slots.css";
 
@@ -135,6 +138,7 @@ type Held = { stack: Stack; from: Zone | "worn" };
 type Verdict = "ok" | "swap" | "bad";
 /** Said when a potion or a flask is sent toward a chest or the trade table. */
 const STAYS_IN_PACK = "Potions, flasks and bombs stay in your pack: they cannot be stowed or traded yet.";
+const STONES_STAY = "Lodestones stay in your pack until you put one into a place on the atlas: there is nowhere to stow or trade them yet.";
 /** A decoration kept in a chest lies on its grid too, a square each. */
 const decorKey = (id: number) => `decor:${id}`;
 
@@ -370,7 +374,7 @@ export function InventoryScreen({ me, refresh, onClose, onIsland = false, chest 
     for (const [k, n] of Object.entries(trade?.mine.resources ?? {}) as [ResourceKind, number][]) out[k] = Math.max(0, (out[k] ?? 0) - n);
     return out;
   }, [me.materials, matAt, trade?.mine.resources]);
-  const stacks = useMemo(() => toStacks(packGear, packMats, me.consumables), [packGear, packMats, me.consumables]);
+  const stacks = useMemo(() => toStacks(packGear, packMats, me.consumables, me.lodestones), [packGear, packMats, me.consumables, me.lodestones]);
   const shapes = useMemo(() => stacks.map(shapeOf), [stacks]);
   const layout = useMemo(() => layoutPack(shapes, saved), [shapes, saved]);
   const wornStacks = [...worn.values()].map((item): Stack => ({ t: "gear", key: `gear:${item.id}`, item }));
@@ -426,11 +430,11 @@ export function InventoryScreen({ me, refresh, onClose, onIsland = false, chest 
   }, [theirShapes, theirSaved, theirLayout]);
 
   /** Whether a thing (or `n` of a stack) fits in the chest by the count of its squares. */
-  const fitsIn = (s: Stack, n = s.t === "gear" ? 1 : s.qty) => s.t !== "use" && (s.t === "gear" ? itemCells(s.item) : addedSlots(kept[s.kind] ?? 0, n)) <= chestFree;
+  const fitsIn = (s: Stack, n = s.t === "gear" ? 1 : s.qty) => !staysPut(s) && (s.t === "gear" ? itemCells(s.item) : addedSlots(kept[s.kind] ?? 0, n)) <= chestFree;
   /** The squares of the pack that are filled, as it is shown (the server's count runs behind while moves are under way). */
   const packUsed = shapes.reduce((n, s) => n + s.w * s.h, 0);
   /** Why a thing cannot come out into the pack, or null. */
-  const outProblem = (s: Stack, n = s.t === "gear" ? 1 : s.qty) => (trade || s.t === "use" ? null : carry ? carryProblem({ carried: packUsed, limit: carry.limit }, s.t === "gear" ? itemCells(s.item) : addedSlots(packMats[s.kind] ?? 0, n)) : null);
+  const outProblem = (s: Stack, n = s.t === "gear" ? 1 : s.qty) => (trade || staysPut(s) ? null : carry ? carryProblem({ carried: packUsed, limit: carry.limit }, s.t === "gear" ? itemCells(s.item) : addedSlots(packMats[s.kind] ?? 0, n)) : null);
 
   /** Show a move at once, send it when the ones before it are done, and stop showing it over the server's lists once its own answer and the lists after it are in. */
   const send = (show: (op: number) => void, run: () => Promise<unknown>) => {
@@ -447,7 +451,7 @@ export function InventoryScreen({ me, refresh, onClose, onIsland = false, chest 
   };
   /** Across between the pack and the open chest: `to` is the side it goes to. */
   const moveTo = (to: Zone, s: Stack, n = s.t === "gear" ? 1 : s.qty) => {
-    if (s.t === "use") return setRefused(STAYS_IN_PACK);
+    if (staysPut(s)) return setRefused(s.t === "stone" ? STONES_STAY : STAYS_IN_PACK);
     if (trade) {
       // Onto your side of the table, or back off it: nothing leaves the pack for real until the trade is settled.
       if (to === "chest" && !fitsIn(s, n)) return setRefused("That is more than fits on the table.");
@@ -988,6 +992,8 @@ export function InventoryScreen({ me, refresh, onClose, onIsland = false, chest 
           <aside className={`bag-card panel ${sideOpen && hover.zone !== "worn" ? "over-doll" : ""}`}>
             {shown.t === "gear"
               ? <ItemDetail item={shown.item} current={worn.get(shown.item.slot) ?? null} equipped={shown.item.equipped} classId={c.class_id} level={c.level} />
+              : shown.t === "stone"
+              ? <LodestoneDetail stone={shown.stone} total={shown.total} />
               : shown.t === "use"
               ? <ConsumableDetail kind={shown.kind} total={shown.total} how={usable ? (usable.blocked(shown.kind) ?? "Shift-click to take it in hand, then click where it goes.") : "Used on a map: thrown, or drunk."} />
               : <MaterialDetail kind={shown.kind} total={shown.total} where={hover.zone === "theirs" ? "theirs" : hover.zone === "chest" ? (trade ? "offer" : "chest") : "pack"} />}
@@ -1017,6 +1023,36 @@ export function InventoryScreen({ me, refresh, onClose, onIsland = false, chest 
         />
       )}
       {catchOpen && <CatchPanel buyer={null} onClose={() => setCatchOpen(false)} />}
+    </div>
+  );
+}
+
+/** What a lodestone carries, how many there are, and what it is for. */
+function LodestoneDetail({ stone, total }: { stone: Lodestone; total: number }) {
+  const icon = STONE_ICON(stone.length);
+  return (
+    <div className="mat-detail">
+      <div className="detail-head">
+        <span className="detail-icon" style={{ borderColor: "var(--line)" }}><Icon name={icon.name} color={icon.color} size={54} /></span>
+        <div>
+          <strong>{stoneName(stone)}</strong>
+          <div><span className="tag" style={{ marginLeft: 0 }}>for the atlas</span></div>
+        </div>
+      </div>
+      {stone.length === 0 ? (
+        <p className="muted">It carries nothing: it opens a place and changes nothing about it.</p>
+      ) : (
+        <ul className="stone-carries">
+          {stone.map((id) => (
+            <li key={id}>
+              <strong>{ZONE_MODS[id].name}</strong> <span className="muted">· {ZONE_MODS[id].kind === "map" ? "the ground" : "the enemy"}</span>
+              <br />
+              <span className="muted">{ZONE_MODS[id].blurb}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+      <p>You carry <strong>{total}</strong>. Put one into a place's slot on the atlas, at the lighthouse, to set out for it: it is spent, and what it carries is added to the place.</p>
     </div>
   );
 }

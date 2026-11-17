@@ -1306,8 +1306,9 @@ export class WorldRenderer {
       // A new map opens at its own turn.
       this.homeYaw = state.homeYaw ?? 0;
       this.userYaw = this.yaw = this.yawGoal = this.homeYaw;
-      // No sea under a hut's floor, nor in the caverns.
-      this.sea.visible = !state.indoors && state.kind !== "caverns";
+      // No sea under a hut's floor, nor in the caverns; nor under a map of the world, where what is not land is
+      // the mist itself (so nothing shows through the thin edge of whatever the view draws over it).
+      this.sea.visible = !state.indoors && state.kind !== "caverns" && !state.far;
       (this.scene.background as THREE.Color).set(state.indoors ? "#1d1a2b" : "#a9dcf7");
       // A room is framed whole: closer for a hut, further back for the pub.
       if (state.indoors) this.userDist = this.camDist = state.map.grid.cols > 10 ? 21 : 15;

@@ -20,15 +20,25 @@
 // It opens from above the cloud: the camera comes down and round while the
 // cloud parts outward from the Harbor. Picking a place shows what is known
 // of it and lights the way there from the Harbor; Set out goes to its map,
-// and coming back from one lands here again. Before setting out, one of the
-// crew's lodestones (packages/world/src/lodestone.ts) may be set into the
-// place: its map is made with what the stone carries added to its own.
+// and coming back from one lands here again.
+//
+// Nothing is shown of a place until it is clicked: then a small panel
+// stands beside it, and goes with it as the map is moved. It holds the
+// place's one slot, for a lodestone (packages/world/src/lodestone.ts): a
+// stone out of the hero's own pack is put into it before setting out, and is
+// spent as the map is made, with what it carries added to the place's own.
+// Anywhere but beside the Harbor there must be one. What a stone carries is
+// told by pointing at it. Someone with none can cut a plain one here, from
+// stone and iron.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { hexDistance, type HexPos } from "@gantt-quest/core";
-import { ATLAS_HOME, ATLAS_SPACING, ATLAS_VIEW, LAIR_RINGS, ZONE_MODS, atlasNodeById, atlasTier, atlasWorld, bountyPay, modsOf, stoneKey, stoneName, stoneOn, stoneProblem, type AtlasNode, type Lodestone } from "@gantt-quest/world";
+import { ATLAS_HOME, ATLAS_SPACING, ATLAS_VIEW, LAIR_RINGS, PLAIN_STONE_COST, ZONE_MODS, atlasNodeById, atlasTier, atlasWorld, bountyPay, modsOf, needsStone, stoneKey, stoneName, stoneOn, type AtlasNode, type Lodestone, type ResourceKind } from "@gantt-quest/world";
 import { api, type Chart, type ChartNode, type Me } from "../api";
 import { useAudioScene } from "../audio/useAudioScene";
+import { Icon } from "../items";
+import { label } from "../labels";
+import { STONE_ICON } from "../zone/actionIcons";
 import { worldToHex } from "../render/footsteps";
 import { WorldRenderer, type RenderState } from "../render/WorldRenderer";
 import { uiZoom } from "../uiScale";
@@ -49,12 +59,13 @@ const CROWDED_PX = 120;
 const DRIFT = 9;
 /** How long the opening takes, in milliseconds: the title holds the screen, then gives way to the card and the top bar. */
 const OPENING_MS = 3600;
-/** How many of the places open to the crew the card lists when none is picked. */
-const LISTED = 8;
+/** How far to the side of its place the panel for it stands, in pixels, and how near the edge of the view it may come. */
+const PANEL_OUT = 34;
+const PANEL_EDGE = 10;
 /** Where a place picked before setting out is remembered, so coming back lands on it. */
 const FOCUS_KEY = "gq.atlas.at";
 
-export function AtlasView({ me, onLeave }: { me: Me; onLeave(): void }) {
+export function AtlasView({ me, refresh, onLeave }: { me: Me; refresh(): Promise<void>; onLeave(): void }) {
   const mount = useRef<HTMLDivElement>(null);
   const root = useRef<HTMLDivElement>(null);
   const renderer = useRef<WorldRenderer | null>(null);
@@ -84,6 +95,9 @@ export function AtlasView({ me, onLeave }: { me: Me; onLeave(): void }) {
   }, [opening, onScreen]);
   /** What is written under each place, by id: moved by hand each frame, as the camera is not React's. */
   const tags = useRef(new Map<string, HTMLElement>());
+  /** The panel of the place picked: it stands beside the place, and is moved with it. */
+  const panel = useRef<HTMLDivElement>(null);
+  const pickedHex = useRef<HexPos | null>(null);
   useAudioScene("harbor");
 
   /** The chart as it last came, as text: one that says nothing new is not a new chart (and no reason to redraw the world). */
@@ -92,9 +106,10 @@ export function AtlasView({ me, onLeave }: { me: Me; onLeave(): void }) {
     const text = JSON.stringify(c);
     if (text !== last.current) setChart(c);
     last.current = text;
-    setError(null);
   }, []);
-  const load = useCallback(() => api.atlas().then(take, (e: Error) => setError(e.message)), [take]);
+  /** Why the chart could not be fetched, the last time it was tried: said until it can be. (What went wrong doing something is `error`, and stays until the next thing is tried.) */
+  const [unreached, setUnreached] = useState<string | null>(null);
+  const load = useCallback(() => api.atlas().then((c) => (take(c), setUnreached(null)), (e: Error) => setUnreached(e.message)), [take]);
   useEffect(() => {
     void load();
     const every = setInterval(() => void load(), REFRESH_MS);
@@ -279,6 +294,21 @@ export function AtlasView({ me, onLeave }: { me: Me; onLeave(): void }) {
         el.style.visibility = p?.on ? "" : "hidden";
         if (p) el.style.transform = `translate(${Math.round(p.x / z)}px, ${Math.round(p.y / z)}px)`;
       }
+      // The panel of the place picked stands to its right, or to its left where there is no room, and is kept on the screen.
+      const box = panel.current;
+      if (box && pickedHex.current) {
+        const p = view.screenOf(pickedHex.current, 0.4);
+        const wide = (root.current?.clientWidth ?? innerWidth) / z;
+        const tall = (root.current?.clientHeight ?? innerHeight) / z;
+        box.style.visibility = p?.on ? "" : "hidden";
+        if (p) {
+          const [x, y] = [p.x / z, p.y / z];
+          const left = x + PANEL_OUT + box.offsetWidth > wide - PANEL_EDGE && x - PANEL_OUT - box.offsetWidth > PANEL_EDGE;
+          const top = Math.max(PANEL_EDGE, Math.min(tall - box.offsetHeight - PANEL_EDGE, y - box.offsetHeight / 2));
+          box.style.transform = `translate(${Math.round(left ? x - PANEL_OUT - box.offsetWidth : x + PANEL_OUT)}px, ${Math.round(top)}px)`;
+          box.classList.toggle("left", left);
+        }
+      }
       // From far enough up, what is written would run together: it is put away.
       const [p0, p1] = [view.screenOf(mid), view.screenOf({ q: mid.q + ATLAS_SPACING, r: mid.r })];
       if (p0 && p1) root.current?.classList.toggle("crowded", Math.hypot(p1.x - p0.x, p1.y - p0.y) / z < CROWDED_PX);
@@ -294,26 +324,42 @@ export function AtlasView({ me, onLeave }: { me: Me; onLeave(): void }) {
 
   const node = byId.get(picked ?? "");
   const shown = known(node) ? node : null;
+  pickedHex.current = shown?.hex ?? null;
   const level = me.character?.level ?? 1;
   const cleared = nodes.filter((n) => n.state === "cleared").length;
   const furthest = Math.max(0, ...nodes.filter((n) => n.state === "cleared").map((n) => n.ring));
-  /** What the place carries: its own, and what a lodestone set into it has added. */
-  const carried = shown ? stoneOn(shown, shown.stone ?? []) : { mods: [], added: [] };
-  const pay = shown && shown.kind !== "harbor" ? bountyPay(atlasTier(shown), modsOf({ mods: carried.mods }).pay) : null;
-  const stones = chart?.stones ?? [];
-  const stoneCount = stones.reduce((n, s) => n + s.qty, 0);
-  const setIn = async (n: Known, stone: Lodestone) => {
+  /** The lodestone put into the slot of the place picked, out of the pack: not spent until someone sets out. */
+  const [slotted, setSlotted] = useState<Lodestone | null>(null);
+  useEffect(() => setSlotted(null), [picked]);
+  /** The lodestone pointed at, in the slot or the pack: what it carries is told while it is. */
+  const [over, setOver] = useState<Lodestone | null>(null);
+  useEffect(() => {
+    setOver(null);
+    setError(null);
+  }, [picked]);
+  const held = me.lodestones ?? [];
+  /** The stone in the slot is still one the hero holds (it may have been spent elsewhere meanwhile). */
+  const inSlot = slotted && held.some((h) => stoneKey(h.stone) === stoneKey(slotted)) ? slotted : null;
+  /** Whether the place picked has a map being fought through already: its slot is filled, or was never needed, and is shut. */
+  const begun = !!shown?.zone;
+  /** What the place carries: its own, and what the lodestone in its slot adds (the one its map was made with, or the one put in now). */
+  const carried = shown ? stoneOn(shown, (begun ? shown.stone : inSlot) ?? []) : { mods: [], added: [] };
+  const needs = !!shown && shown.state === "open" && needsStone(shown);
+  const cost = Object.entries(PLAIN_STONE_COST) as [ResourceKind, number][];
+  const canCut = cost.every(([kind, n]) => (me.materials?.[kind] ?? 0) >= n);
+  const cutOne = async () => {
     setBusy(true);
     setError(null);
     try {
-      take(await api.setStone(n.id, stoneKey(stone)));
+      await api.cutStone();
+      await refresh();
     } catch (e) {
       setError((e as Error).message);
-      void load();
     } finally {
       setBusy(false);
     }
   };
+  const pay = shown && shown.kind !== "harbor" ? bountyPay(atlasTier(shown), modsOf({ mods: carried.mods }).pay) : null;
   const remember = (id: string | null) => {
     try {
       if (id) sessionStorage.setItem(FOCUS_KEY, id);
@@ -326,8 +372,10 @@ export function AtlasView({ me, onLeave }: { me: Me; onLeave(): void }) {
     setBusy(true);
     setError(null);
     try {
-      const { code } = await api.openNode(n.id);
+      const { code } = await api.openNode(n.id, n.zone || !inSlot ? undefined : stoneKey(inSlot));
       remember(n.id);
+      // The stone is gone from the pack.
+      void refresh();
       location.hash = `zone/${code}`;
     } catch (e) {
       setError((e as Error).message);
@@ -342,6 +390,8 @@ export function AtlasView({ me, onLeave }: { me: Me; onLeave(): void }) {
     try {
       take(await api.devAtlas(op, id));
       if (op === "reset") setPicked(null);
+      // A lodestone found goes into the pack.
+      if (op === "stone") await refresh();
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -349,12 +399,6 @@ export function AtlasView({ me, onLeave }: { me: Me; onLeave(): void }) {
     }
   };
   const show = (n: ChartNode) => renderer.current?.lookAt(n.hex);
-  const go = (n: ChartNode) => {
-    setPicked(n.id);
-    show(n);
-  };
-  /** The places open to the crew, nearest the Harbor first: somewhere to start for anyone not pointing at the map. */
-  const open = nodes.filter(known).filter((n) => n.state === "open").sort((a, b) => a.ring - b.ring || a.level - b.level).slice(0, LISTED);
   const close = () => {
     remember(null);
     onLeave();
@@ -374,7 +418,7 @@ export function AtlasView({ me, onLeave }: { me: Me; onLeave(): void }) {
       <div className="atlas-tags" aria-hidden>
         {near.filter(known).map((n) => (
           <div key={n.id} className="atlas-tag-at" ref={(el) => { if (el) tags.current.set(n.id, el); else tags.current.delete(n.id); }}>
-            <div className={`atlas-tag ${n.state} ${n.kind} ${picked === n.id ? "picked" : ""} ${hovered === n.id ? "pointed" : ""}`}>
+            <div className={`atlas-tag is-${n.state} is-${n.kind} ${picked === n.id ? "picked" : ""} ${hovered === n.id ? "pointed" : ""}`}>
               <span className="atlas-name">{n.name}</span>
               {n.state === "open" && (
                 <span className="atlas-glance">
@@ -394,122 +438,134 @@ export function AtlasView({ me, onLeave }: { me: Me; onLeave(): void }) {
         <div className="atlas-heading">
           <span className="win-plate atlas-title">The Atlas</span>
           {chart && <span className="atlas-reckoning">{cleared === 0 ? "Nothing cleared yet" : `${cleared} cleared · ${furthest} ${furthest === 1 ? "ring" : "rings"} out`}</span>}
+          {!shown && (error ?? unreached) && <span className="atlas-reckoning bad" role="alert">{error ?? unreached}</span>}
+          {!chart && !unreached && <span className="atlas-reckoning">Unrolling the atlas…</span>}
         </div>
-        <button className="atlas-home small" onClick={() => { const home = byId.get(ATLAS_HOME); if (home) show(home); }} title="Bring the Harbor back to the middle">Find the Harbor</button>
         <button className="atlas-close" onClick={close} title="Back down to the Harbor, at the lighthouse">Close atlas</button>
+        <div className="atlas-corner">
+          <button className="small" onClick={() => { const home = byId.get(ATLAS_HOME); if (home) show(home); }} title="Bring the Harbor back to the middle">Find the Harbor</button>
+          {me.devTools && chart && <button className="small" disabled={busy} onClick={() => void dev("stone")}>Dev: find a lodestone</button>}
+          {me.devTools && chart && <button className="small" disabled={busy} onClick={() => void dev("reset")}>Dev: wipe the atlas</button>}
+        </div>
       </header>
 
-      <aside className="atlas-card panel" aria-live="polite">
-        {error && <p className="bad" role="alert">{error}</p>}
-        {!chart && !error && <p className="muted">Unrolling the atlas…</p>}
-        {chart && !shown && (
-          <>
-            <h3>{me.crew?.name ?? "The crew"}'s world</h3>
-            <p className="muted">Pick a place to see what is known of it. The blue ones are open to you: a route runs to each from the Harbor, or from somewhere the crew has cleared. The green ones are done.</p>
-            <p className="muted">Clearing a place opens the ones its routes lead on to, and lifts the fog round it. Further out is more dangerous, and pays better.</p>
-            <p className="atlas-tally">{cleared === 0 ? "Nothing cleared yet." : `${cleared} cleared.`}</p>
-            <p className="muted">
-              {stoneCount === 0 ? "No lodestones in the crew's case. They turn up in the bounty of a place cleared." : `${stoneCount} ${stoneCount === 1 ? "lodestone" : "lodestones"} in the crew's case. Pick a place that is open to set one into it: its map will be harder, and pay better.`}
-            </p>
-            {open.length > 0 && (
-              <ul className="atlas-open">
-                {open.map((n) => (
-                  <li key={n.id}>
-                    <button className="small" onClick={() => go(n)}>{n.name}</button> <span className="muted">level {n.level}</span>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </>
-        )}
-        {shown && shown.kind === "harbor" && (
-          <>
-            <h3>The Harbor</h3>
-            <p className="muted">Home, and the lighthouse the atlas is kept in. Every route starts here.</p>
-            <p className="atlas-tally">{cleared === 0 ? "Nothing cleared yet." : `${cleared} cleared.`}</p>
-            <p className="atlas-go"><button className="primary" onClick={close}>Go back down</button></p>
-          </>
-        )}
-        {shown && shown.kind !== "harbor" && (
-          <>
+      {/* The place picked: a small panel beside it, that goes with it as the map moves. */}
+      {shown && (
+        <div className="atlas-panel-at" ref={panel}>
+          <section className="atlas-panel panel" aria-live="polite" aria-label={shown.name}>
+            <button className="atlas-panel-shut" onClick={() => setPicked(null)} aria-label="Put it away" title="Put it away">×</button>
             <h3>{shown.name}</h3>
-            <p className="atlas-kind">
-              {GROUND[shown.biome]} in <span className={`atlas-clime ${shown.clime}`}>{CLIME[shown.clime]}</span> <span className="muted">· {shown.ring} {shown.ring === 1 ? "ring" : "rings"} out</span>
-            </p>
-            {shown.state === "cleared" ? (
-              <p className="good">Cleared. The routes beyond it are open.</p>
+            {shown.kind === "harbor" ? (
+              <>
+                <p className="atlas-line muted">Home. Every route starts here.</p>
+                <p className="atlas-go"><button className="primary" onClick={close}>Go back down</button></p>
+              </>
             ) : (
               <>
-                <p>
-                  What is there is <strong className={shown.level > level + 1 ? "bad" : shown.level < level ? "good" : "atlas-even"}>level {shown.level}</strong>
-                  <span className="muted"> · you are level {level}</span>
+                <p className="atlas-line">
+                  {shown.kind === "lair" ? <span className="atlas-what lair" title={`Something big has made its den here, with others for company. It pays as a place ${LAIR_RINGS} rings further out would.`}>Lair</span>
+                    : shown.kind === "lookout" ? <span className="atlas-what lookout" title="High, broken ground. Clearing it lifts the cloud far round it.">Lookout</span>
+                    : shown.kind === "seacave" ? <span className="atlas-what cave" title="Dark inside, with chests to open and a hoard at the bottom. It is cleared when the last of them is open.">Sea cave</span>
+                    : null}
+                  {shown.state === "open" && <strong className={shown.level > level + 1 ? "bad" : shown.level < level ? "good" : "atlas-even"} title={`What is there is level ${shown.level}; you are level ${level}`}>Level {shown.level}</strong>}
+                  <span className={`atlas-clime ${shown.clime}`} title={GROUND[shown.biome]}>{CLIME[shown.clime]}</span>
+                  {/* What is odd about the place itself, told by pointing at each. */}
+                  {shown.state === "open" && shown.mods.length > 0 && (
+                    <span className="atlas-own">
+                      {shown.mods.map((id) => <i key={id} className={ZONE_MODS[id].kind} title={`${ZONE_MODS[id].name}: ${ZONE_MODS[id].blurb}`} />)}
+                    </span>
+                  )}
                 </p>
-                {shown.kind === "seacave" && <p className="muted">Dark inside, with chests to open and a hoard at the bottom. It is cleared when the last of them is open.</p>}
-                {shown.kind === "lookout" && <p className="muted">A lookout: high, broken ground, where whoever holds the top has the best of it. From up there the crew will see a long way: clearing it lifts the cloud far round it.</p>}
-                {shown.kind === "lair" && <p className="muted">A lair: something big has made its den here, with others for company. It pays as a place {LAIR_RINGS} rings further out would.</p>}
-                {carried.mods.length > 0 ? (
-                  <ul className="atlas-mods">
-                    {carried.mods.map((id) => (
-                      <li key={id} className={`${ZONE_MODS[id].kind} ${carried.added.includes(id) ? "stone" : ""}`}>
-                        <strong>{ZONE_MODS[id].name}</strong> <span className="muted">· {ZONE_MODS[id].kind === "map" ? "the ground" : "the enemy"}{carried.added.includes(id) ? " · from the lodestone" : ""}</span>
-                        <br />
-                        <span className="small-note">{ZONE_MODS[id].blurb}</span>
-                      </li>
-                    ))}
-                  </ul>
+                {shown.state === "cleared" ? (
+                  <p className="good">Cleared. The routes beyond it are open.</p>
                 ) : (
-                  <p className="muted">Nothing out of the ordinary about it.</p>
+                  <>
+                    <div className={`atlas-slot-row ${begun ? "shut" : ""}`}>
+                      {/* The place's one slot. A stone dragged or clicked from the pack beside it goes in; a click takes it out again. */}
+                      <button
+                        type="button"
+                        className={`atlas-slot ${inSlot || (begun && shown.stone) ? "filled" : ""} ${needs && !inSlot && !begun ? "wanting" : ""}`}
+                        disabled={begun || !inSlot}
+                        aria-label={begun ? "The slot is shut: the map is made" : inSlot ? `${stoneName(inSlot)}: take it out again` : "An empty slot for a lodestone"}
+                        onClick={() => setSlotted(null)}
+                        onMouseEnter={() => setOver(begun ? (shown.stone ?? null) : inSlot)}
+                        onMouseLeave={() => setOver(null)}
+                        onDragOver={(e) => { if (!begun) e.preventDefault(); }}
+                        onDrop={(e) => {
+                          e.preventDefault();
+                          const found = held.find((h) => stoneKey(h.stone) === e.dataTransfer.getData("text/lodestone"));
+                          if (found && !begun) setSlotted(found.stone);
+                        }}
+                      >
+                        {begun
+                          ? shown.stone && <Icon name={STONE_ICON(shown.stone.length).name} color={STONE_ICON(shown.stone.length).color} size={40} />
+                          : inSlot && <Icon name={STONE_ICON(inSlot.length).name} color={STONE_ICON(inSlot.length).color} size={40} />}
+                      </button>
+                      {begun ? (
+                        <span className="muted">{shown.here?.length ? `${shown.here.join(", ")} ${shown.here.length === 1 ? "is" : "are"} there.` : "The crew has set out."}</span>
+                      ) : (
+                        <div className="atlas-pack">
+                          {held.map(({ stone, qty }) => {
+                            const key = stoneKey(stone);
+                            const icon = STONE_ICON(stone.length);
+                            return (
+                              <button
+                                key={key}
+                                type="button"
+                                className={`atlas-pack-stone ${inSlot && stoneKey(inSlot) === key ? "chosen" : ""}`}
+                                draggable
+                                aria-label={`${stoneName(stone)}, ${qty} in your pack: put it into the slot`}
+                                onDragStart={(e) => e.dataTransfer.setData("text/lodestone", key)}
+                                onClick={() => setSlotted(inSlot && stoneKey(inSlot) === key ? null : stone)}
+                                onMouseEnter={() => setOver(stone)}
+                                onMouseLeave={() => setOver(null)}
+                              >
+                                <Icon name={icon.name} color={icon.color} size={30} />
+                                <span className="atlas-pack-qty">{qty}</span>
+                              </button>
+                            );
+                          })}
+                          <button className="atlas-pack-stone cut" disabled={busy || !canCut} onClick={() => void cutOne()} aria-label="Cut a plain lodestone" title={`Cut a plain lodestone: ${cost.map(([kind, n]) => `${n} ${label("resource", kind).toLowerCase()}`).join(", ")}${canCut ? "" : "\nYou have not the materials in your pack"}`}>+</button>
+                        </div>
+                      )}
+                    </div>
+                    {!begun && !inSlot && <p className="atlas-line muted">{needs ? "Put a lodestone in the slot to set out." : "No lodestone needed beside the Harbor."}</p>}
+                    {pay && <p className="atlas-line atlas-bounty" title={pay.gear >= 1 ? "With a piece of gear" : `And a ${Math.round(pay.gear * 100)}% chance of a piece of gear`}>Bounty <strong>{pay.xp} XP</strong> · <strong>{pay.gold[0]}–{pay.gold[1]} gold</strong></p>}
+                    {error && <p className="bad" role="alert">{error}</p>}
+                    <p className="atlas-go">
+                      <button className="primary" disabled={busy || (!begun && needs && !inSlot)} onClick={() => void setOut(shown)}>{begun ? "Join them" : "Set out"}</button>
+                      {me.devTools && <button className="small" disabled={busy} onClick={() => void dev("clear", shown.id)}>Dev: clear it</button>}
+                    </p>
+                  </>
                 )}
-                {pay && (
-                  <p className="atlas-pay">
-                    Clearing it pays everyone there <strong>{pay.xp} XP</strong> and <strong>{pay.gold[0]} to {pay.gold[1]} gold</strong>
-                    {pay.gear >= 1 ? ", with a piece of gear." : `, and a ${Math.round(pay.gear * 100)}% chance of a piece of gear.`}
-                  </p>
-                )}
-                {shown.stone ? (
-                  <p className="atlas-stone-set">A {stoneName(shown.stone).toLowerCase()} is set in it.</p>
-                ) : shown.zone ? null : stones.length === 0 ? (
-                  <p className="muted small-note">The crew has no lodestones to set into it. They turn up in bounties.</p>
-                ) : (
-                  <div className="atlas-stones">
-                    <p className="atlas-stones-head">Set a lodestone into it <span className="muted">· harder, and pays better</span></p>
-                    <ul>
-                      {stones.map(({ stone, qty }) => {
-                        const problem = stoneProblem(shown, stone);
-                        const adds = stoneOn(shown, stone).added;
-                        return (
-                          <li key={stoneKey(stone)}>
-                            <span className="atlas-stone" title={stone.map((id) => `${ZONE_MODS[id].name}: ${ZONE_MODS[id].blurb}`).join("\n")}>
-                              <span className={`atlas-stone-gem n${stone.length}`} aria-hidden />
-                              <span>
-                                {stoneName(stone)}{qty > 1 ? ` ×${qty}` : ""}
-                                <br />
-                                <span className="small-note">{stone.map((id) => <span key={id} className={`atlas-stone-mod ${ZONE_MODS[id].kind} ${problem || adds.includes(id) ? "" : "spent"}`}>{ZONE_MODS[id].name}</span>)}</span>
-                              </span>
-                            </span>
-                            <button className="small" disabled={busy || !!problem} title={problem ?? "Set it into this place: it is spent"} onClick={() => void setIn(shown, stone)}>Set it</button>
-                          </li>
-                        );
-                      })}
-                    </ul>
-                  </div>
-                )}
-                {shown.zone && <p className="atlas-even">{shown.here?.length ? `${shown.here.join(", ")} ${shown.here.length === 1 ? "is" : "are"} there now.` : "The crew has gone in there already."}</p>}
-                <p className="atlas-go">
-                  <button className="primary" disabled={busy} onClick={() => void setOut(shown)}>{shown.zone ? "Join them" : "Set out"}</button>
-                  <button className="small" onClick={() => show(shown)}>Show it</button>
-                </p>
               </>
             )}
-            {me.devTools && shown.state === "open" && <p><button className="small" disabled={busy} onClick={() => void dev("clear", shown.id)}>Dev: clear it</button></p>}
-          </>
-        )}
-        {me.devTools && chart && (
-          <p className="atlas-dev">
-            <button className="small" disabled={busy} onClick={() => void dev("stone")}>Dev: find a lodestone</button> <button className="small" disabled={busy} onClick={() => void dev("reset")}>Dev: wipe the atlas</button>
-          </p>
-        )}
-      </aside>
+            {/* What the lodestone pointed at carries: beside the panel, while it is pointed at. */}
+            {over && shown.kind !== "harbor" && (
+              <aside className="atlas-stone-card panel">
+                <strong>{stoneName(over)}</strong>
+                {over.length === 0 ? (
+                  <p className="muted">Carries nothing: it opens the place, and changes nothing about it.</p>
+                ) : (
+                  <ul>
+                    {over.map((id) => {
+                      const takes = begun || stoneOn(shown, over).added.includes(id);
+                      return (
+                        <li key={id} className={`${ZONE_MODS[id].kind} ${takes ? "" : "spent"}`}>
+                          <strong>{ZONE_MODS[id].name}</strong> <span className="muted">· {ZONE_MODS[id].kind === "map" ? "the ground" : "the enemy"}{takes ? "" : " · will not take here"}</span>
+                          <br />
+                          <span className="small-note">{ZONE_MODS[id].blurb}</span>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+              </aside>
+            )}
+          </section>
+        </div>
+      )}
+
     </div>
   );
 }

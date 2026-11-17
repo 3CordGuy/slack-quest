@@ -5,8 +5,10 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { beforeEach, describe, expect, it } from "vitest";
-import { ATLAS_HOME, atlasNodeById, type ZoneOptions } from "@gantt-quest/world";
-import { addStone, atlasSeed, chartFor, clearNode, devClearNode, devGrantStone, devResetChart, enterProblem, openNode, setStone, stonesOf } from "../src/server/atlas";
+import { ATLAS_HOME, PLAIN_STONE_COST, atlasNodeById, needsStone, stoneItem, type ZoneModId, type ZoneOptions } from "@gantt-quest/world";
+import { atlasSeed, chartFor, clearNode, devClearNode, devResetChart, enterProblem, openNode } from "../src/server/atlas";
+import { applyZoneGrant } from "../src/server/db";
+import { cutStone, gainStone, lodestonesOf } from "../src/server/lodestones";
 import { CAVE_IDLE_MS, getZoneRow } from "../src/server/zones";
 
 type Row = Record<string, unknown>;
@@ -57,8 +59,14 @@ const first = (crew = CREW) => home(crew).links[0];
 /** A node a ring out that a route runs to from `from`. */
 const beyond = (from: string, crew = CREW) => atlasNodeById(atlasSeed(crew), from)!.links.find((id) => atlasNodeById(atlasSeed(crew), id)!.ring === 2)!;
 const states = async (crew = CREW) => new Map((await chartFor(db, crew)).nodes.map((n) => [n.id, n.state]));
+/** Put a lodestone in someone's pack: a plain one, or one that carries these. */
+const give = (who: string, stone: ZoneModId[] = []) =>
+  sql.prepare("INSERT INTO consumables (player_id, kind, qty) VALUES (?, ?, 1) ON CONFLICT(player_id, kind) DO UPDATE SET qty = qty + 1").run(who, stoneItem(stone));
+/** Set out for a place, with a plain lodestone in its slot where it needs one. */
 const went = async (node: unknown, crew = CREW, by = "ann", party = 2) => {
-  const res = await openNode(db, crew, by, node, party);
+  const needs = needsStone(atlasNodeById(atlasSeed(crew), node)!);
+  if (needs) give(by);
+  const res = await openNode(db, crew, by, node, party, needs ? "" : undefined);
   if ("error" in res) throw new Error(res.error);
   return res;
 };
@@ -154,67 +162,79 @@ describe("a crew's chart", () => {
 });
 
 describe("lodestones", () => {
-  it("are kept in the crew's case, each kind counted, and are no other crew's", async () => {
-    await addStone(db, CREW, ["hardy"]);
-    await addStone(db, CREW, "hardy");
-    await addStone(db, CREW, ["savage", "tangled"]);
-    // Not a stone: nothing is kept.
-    await addStone(db, CREW, "rainy");
-    await addStone(db, CREW, []);
-    // The ones that carry most first.
-    expect((await chartFor(db, CREW)).stones).toEqual([{ stone: ["tangled", "savage"], qty: 1 }, { stone: ["hardy"], qty: 2 }]);
-    expect((await chartFor(db, OTHER)).stones).toEqual([]);
-    await devGrantStone(db, OTHER);
-    expect((await stonesOf(db, OTHER)).reduce((n, s) => n + s.qty, 0)).toBe(1);
+  it("are a hero's own, in the pack: each kind counted, the ones that carry most first", async () => {
+    give("ann", ["hardy"]);
+    give("ann", ["hardy"]);
+    give("ann");
+    give("ann", ["tangled", "savage"]);
+    await gainStone(db, "bo", ["swift"]).run();
+    // Something else in the pack is no lodestone.
+    sql.prepare("INSERT INTO consumables (player_id, kind, qty) VALUES ('ann', 'healing', 3)").run();
+    expect(await lodestonesOf(db, "ann")).toEqual([{ stone: ["tangled", "savage"], qty: 1 }, { stone: ["hardy"], qty: 2 }, { stone: [], qty: 1 }]);
+    expect(await lodestonesOf(db, "bo")).toEqual([{ stone: ["swift"], qty: 1 }]);
+    expect(await lodestonesOf(db, "cy")).toEqual([]);
   });
 
-  it("set into a place before anyone sets out, makes its map carry what the stone does, and is spent", async () => {
-    const node = first();
-    await addStone(db, CREW, ["hardy", "numerous"]);
-    await addStone(db, CREW, ["hardy", "numerous"]);
-    expect(await setStone(db, CREW, "ann", node, "numerous+hardy")).toEqual({ ok: true });
-    const chart = await chartFor(db, CREW);
-    expect(chart.nodes.find((n) => n.id === node)).toMatchObject({ state: "open", stone: ["hardy", "numerous"] });
-    expect(chart.nodes.find((n) => n.id === node)!.zone).toBeUndefined();
-    expect(chart.stones).toEqual([{ stone: ["hardy", "numerous"], qty: 1 }]);
-    // Whoever sets out, the map made has them on it, over what the place had of its own.
-    const a = await went(node, CREW, "bo");
-    const options = JSON.parse((await getZoneRow(db, a.code))!.options_json) as ZoneOptions;
-    expect(options.mods).toEqual(["hardy", "numerous"]);
-    // And the next map made for it, if this one is let go.
-    sql.prepare("UPDATE zones SET updated_at = ? WHERE code = ?").run(Date.now() - CAVE_IDLE_MS - 1000, a.code);
-    const b = await went(node);
-    expect((JSON.parse((await getZoneRow(db, b.code))!.options_json) as ZoneOptions).mods).toEqual(["hardy", "numerous"]);
-    // Cleared, it is only cleared: the stone is not shown, and is not given back.
-    await clearNode(db, CREW, node);
-    const after = await chartFor(db, CREW);
-    expect(after.nodes.find((n) => n.id === node)).toMatchObject({ state: "cleared" });
-    expect(after.nodes.find((n) => n.id === node)!.stone).toBeUndefined();
-    expect(after.stones).toEqual([{ stone: ["hardy", "numerous"], qty: 1 }]);
+  it("one found in a bounty goes into the pack of the hero who found it", async () => {
+    await applyZoneGrant(db, "ann", { xp: 5, resources: {}, stone: ["fouled", "swift"] });
+    await applyZoneGrant(db, "ann", { xp: 5, resources: {}, stone: "nonsense" });
+    await applyZoneGrant(db, "ann", { xp: 5, resources: {} });
+    expect(await lodestonesOf(db, "ann")).toEqual([{ stone: ["fouled", "swift"], qty: 1 }]);
   });
 
-  it("cannot be set where there is no route, nor twice, nor once the crew has set out, nor without the stone", async () => {
+  it("must be in a place's slot to set out for it, anywhere but beside the Harbor, and is spent from the pack of whoever sets out", async () => {
     const node = first();
-    const other = home().links[1];
     const far = beyond(node);
-    await addStone(db, CREW, ["hardy"]);
-    await addStone(db, CREW, ["swift"]);
-    expect(await setStone(db, CREW, "ann", far, "hardy")).toMatchObject({ status: 409, error: expect.stringMatching(/No route/) });
-    expect(await setStone(db, CREW, "ann", ATLAS_HOME, "hardy")).toMatchObject({ status: 400 });
-    expect(await setStone(db, CREW, "ann", node, "rainy")).toMatchObject({ status: 400 });
-    expect(await setStone(db, CREW, "ann", node, "savage")).toMatchObject({ status: 409, error: expect.stringMatching(/no such lodestone/) });
-    // Another crew's case is not this crew's.
-    expect(await setStone(db, OTHER, "cy", first(OTHER), "hardy")).toMatchObject({ status: 409, error: expect.stringMatching(/no such lodestone/) });
+    // Beside the Harbor: none needed.
+    expect((await openNode(db, CREW, "ann", node, 2)) as { fresh: boolean }).toMatchObject({ fresh: true });
+    await clearNode(db, CREW, node);
+    // Beyond it: refused without one, with one that is not held, and with nonsense.
+    expect(await openNode(db, CREW, "ann", far, 2)).toMatchObject({ status: 409, error: expect.stringMatching(/needs a lodestone/) });
+    expect(await openNode(db, CREW, "ann", far, 2, "")).toMatchObject({ status: 409, error: expect.stringMatching(/You have no plain lodestone/) });
+    expect(await openNode(db, CREW, "ann", far, 2, "rainy")).toMatchObject({ status: 400 });
+    give("bo");
+    // Bo's stone is not Ann's.
+    expect(await openNode(db, CREW, "ann", far, 2, "")).toMatchObject({ status: 409 });
+    expect(await lodestonesOf(db, "bo")).toEqual([{ stone: [], qty: 1 }]);
+    const a = await openNode(db, CREW, "bo", far, 2, "");
+    expect(a).toMatchObject({ fresh: true });
+    expect(await lodestonesOf(db, "bo")).toEqual([]);
+    // Whoever follows joins the same map, and spends nothing, whatever they hold out.
+    give("ann", ["hardy"]);
+    expect(await openNode(db, CREW, "ann", far, 2, "hardy")).toEqual({ code: (a as { code: string }).code, fresh: false });
+    expect(await lodestonesOf(db, "ann")).toEqual([{ stone: ["hardy"], qty: 1 }]);
+    // A plain stone adds nothing to the map, and the chart says one is in the slot.
+    expect((JSON.parse((await getZoneRow(db, (a as { code: string }).code))!.options_json) as ZoneOptions).mods ?? []).toEqual(atlasNodeById(atlasSeed(CREW), far)!.mods);
+    expect((await chartFor(db, CREW)).nodes.find((n) => n.id === far)).toMatchObject({ state: "open", stone: [] });
+  });
 
-    expect(await setStone(db, CREW, "ann", node, "hardy")).toEqual({ ok: true });
-    expect(await setStone(db, CREW, "bo", node, "swift")).toMatchObject({ status: 409, error: expect.stringMatching(/already/) });
-    // Nothing was spent by the refusals.
-    expect((await chartFor(db, CREW)).stones).toEqual([{ stone: ["swift"], qty: 1 }]);
+  it("one that carries something makes the place's map carry it too, and the slot is empty again once that map is let go", async () => {
+    const node = first();
+    give("ann", ["hardy", "numerous"]);
+    give("ann", ["hardy", "numerous"]);
+    // Set into a place beside the Harbor, which needs none: it takes all the same.
+    const a = await openNode(db, CREW, "ann", node, 2, "numerous+hardy");
+    if ("error" in a) throw new Error(a.error);
+    expect((JSON.parse((await getZoneRow(db, a.code))!.options_json) as ZoneOptions).mods).toEqual(["hardy", "numerous"]);
+    expect((await chartFor(db, CREW)).nodes.find((n) => n.id === node)).toMatchObject({ zone: a.code, stone: ["hardy", "numerous"] });
+    expect(await lodestonesOf(db, "ann")).toEqual([{ stone: ["hardy", "numerous"], qty: 1 }]);
+    // Left alone too long, the map is gone and so is the stone that made it: the next is made plain.
+    sql.prepare("UPDATE zones SET updated_at = ? WHERE code = ?").run(Date.now() - CAVE_IDLE_MS - 1000, a.code);
+    expect((await chartFor(db, CREW)).nodes.find((n) => n.id === node)!.stone).toBeUndefined();
+    const b = await openNode(db, CREW, "bo", node, 2);
+    if ("error" in b) throw new Error(b.error);
+    expect((JSON.parse((await getZoneRow(db, b.code))!.options_json) as ZoneOptions).mods ?? []).toEqual([]);
+    expect((await chartFor(db, CREW)).nodes.find((n) => n.id === node)!.stone).toBeUndefined();
+  });
 
-    await went(other);
-    expect(await setStone(db, CREW, "ann", other, "swift")).toMatchObject({ status: 409, error: expect.stringMatching(/too late/) });
-    await clearNode(db, CREW, other);
-    expect(await setStone(db, CREW, "ann", other, "swift")).toMatchObject({ status: 409, error: expect.stringMatching(/cleared already/) });
-    expect((await chartFor(db, CREW)).stones).toEqual([{ stone: ["swift"], qty: 1 }]);
+  it("a plain one can be cut from stone and iron, and not without them", async () => {
+    expect(await cutStone(db, "ann")).toMatch(/stone and iron/);
+    for (const [kind, qty] of Object.entries(PLAIN_STONE_COST)) sql.prepare("INSERT INTO resources (player_id, kind, qty) VALUES ('ann', ?, ?)").run(kind, qty! * 2 + 1);
+    expect(await cutStone(db, "ann")).toBeNull();
+    expect(await cutStone(db, "ann")).toBeNull();
+    expect(await lodestonesOf(db, "ann")).toEqual([{ stone: [], qty: 2 }]);
+    // What was left is not enough for a third.
+    expect(await cutStone(db, "ann")).toMatch(/stone and iron/);
+    expect(sql.prepare("SELECT kind, qty FROM resources WHERE player_id = 'ann' ORDER BY kind").all()).toEqual(Object.keys(PLAIN_STONE_COST).sort().map((kind) => ({ kind, qty: 1 })));
   });
 });

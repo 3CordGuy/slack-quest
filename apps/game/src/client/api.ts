@@ -16,10 +16,11 @@ import type { PubGame, PubLeaderboard, PubScore } from "../server/pub-scores";
 import type { XpResult } from "../server/harbor-xp";
 import type { TradeList } from "../server/trade";
 import type { Chart, ChartNode } from "../server/atlas";
+import type { HeldStone } from "../server/lodestones";
 import type { ApothecaryView, GalleyKeeperView, HaggleResult, KeeperWare, SmithyView } from "../server/workshops";
 import type { ErrandPaid, RegularsView } from "../server/errands";
 
-export type { Chart, ChartNode };
+export type { Chart, ChartNode, HeldStone };
 export type { ApothecaryView, SmithyView, GalleyKeeperView, ErrandPaid, RegularsView, HaggleResult, KeeperWare };
 
 export type { CatchBook, FishStock, GatherStatus, PubGame, PubLeaderboard, PubScore, PubWall, SittingPaid, XpResult };
@@ -110,6 +111,8 @@ export interface Me {
   materials?: Resources;
   /** The potions, flasks and bombs in the pack, by kind: used up on a map, and kept between maps. Absent from an older server. */
   consumables?: Partial<Record<Throwable, number>>;
+  /** The lodestones in the pack: each kind held, and how many. */
+  lodestones?: HeldStone[];
   /** How full the pack is, its size, what is in storage and whether there is a home for it. Null without a character. */
   carry: CarryState | null;
   /** The crew whose Harbor this player shares, if any. The id doubles as the invite code. */
@@ -254,10 +257,11 @@ export const api = {
   /** The crew's chart: the Harbor, what is cleared, what is open, the fog beyond, and who is out on what. */
   atlas: () => request<Chart>("/api/atlas"),
   /** Set sail for a landfall: the map the crew is fighting through there, or a fresh one. */
-  openNode: (node: string) => request<{ code: string; fresh: boolean }>("/api/atlas/open", { node }),
+  /** Set out for a place, with the lodestone put into its slot (what it carries, joined with "+"; "" for a plain one). It comes out of your pack. */
+  openNode: (node: string, stone?: string) => request<{ code: string; fresh: boolean }>("/api/atlas/open", { node, stone }),
   /** The dev toolbox: clear a landfall without fighting for it, or wipe the chart. Gives the chart as it now is. */
-  /** Set one of the crew's lodestones (what it carries, joined with "+") into a place. The chart comes back, changed. */
-  setStone: (node: string, stone: string) => request<Chart>("/api/atlas/stone", { node, stone }),
+  /** Cut a plain lodestone from stone and iron, into your pack. */
+  cutStone: () => request<{ lodestones: HeldStone[] }>("/api/atlas/cut", {}),
   devAtlas: (op: "clear" | "reset" | "stone", node?: string) => request<Chart>("/api/dev/atlas", { op, node }),
   /** Down into the caves: the crew's cave still being fought through, or a fresh one. */
   caves: () => request<{ code: string; fresh: boolean }>("/api/caves", {}),

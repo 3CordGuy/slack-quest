@@ -4,7 +4,7 @@
 
 import { Hono, type Context } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
-import { HARBOR_PIERS, HARBOR_PLOTS, HERO_CLASSES, MAX_CREW, PUB_BARKEEP, PUB_DEALER, PUB_MAX_TALK, PUB_MENU, dueIn, hutPerks, nextSalesmanVisit, salesman, salesmanVisitAt, makeRng, parseAppearance, pubBuff, rollStartingStats, zoneOptions } from "@gantt-quest/world";
+import { HARBOR_PIERS, HARBOR_PLOTS, HERO_CLASSES, MAX_CREW, PUB_BARKEEP, PUB_DEALER, PUB_MAX_TALK, PUB_MENU, dueIn, hutPerks, nextSalesmanVisit, salesman, salesmanVisitAt, makeRng, parseAppearance, pubBuff, rollStartingStats, rollStone, zoneOptions } from "@gantt-quest/world";
 import { barkeepReply, heroName } from "./server/ai";
 import { contractBoard } from "./server/board";
 import { markReleaseSeen, seenRelease } from "./server/releases";
@@ -79,7 +79,8 @@ import { consumablesOf } from "./server/consumables";
 import { apothecaryView, brew, brewFlask, buyFromKeeper, galleyKeeperView, haggle, smithItem, smithyView } from "./server/workshops";
 import { cook } from "./server/galley";
 import { announceXp, harborXpFor } from "./server/harbor-xp";
-import { chartFor, devClearNode, devGrantStone, devResetChart, enterProblem, openNode, setStone } from "./server/atlas";
+import { chartFor, devClearNode, devResetChart, enterProblem, openNode } from "./server/atlas";
+import { cutStone, gainStone, lodestonesOf } from "./server/lodestones";
 import { createZoneRow, crewPlaces, getZoneRow, openCave, teleportTo } from "./server/zones";
 import {
   checkImport,
@@ -199,7 +200,7 @@ app.get("/api/me", async (c) => {
   // A hero from before looks came in is given their class's look and starting clothes the first time they
   // come in (see ensureLook).
   await ensureLook(c.env.DB, player.id);
-  const [character, inventory, crew, carry, harborXp, seen, held, consumables] = await Promise.all([
+  const [character, inventory, crew, carry, harborXp, seen, held, consumables, lodestones] = await Promise.all([
     getCharacter(c.env.DB, player.id),
     getInventory(c.env.DB, player.id),
     crewFor(c.env.DB, player.id),
@@ -208,14 +209,16 @@ app.get("/api/me", async (c) => {
     seenRelease(c.env.DB, player.id),
     c.env.DB.prepare("SELECT kind, qty FROM resources WHERE player_id = ? AND qty > 0").bind(player.id).all<{ kind: string; qty: number }>(),
     consumablesOf(c.env.DB, player.id),
+    lodestonesOf(c.env.DB, player.id),
   ]);
-  // `materials` is what is in the pack, in stacks beside the gear; `consumables` the potions and flasks there with them.
+  // `materials` is what is in the pack, in stacks beside the gear; `consumables` the potions and flasks there with
+  // them, and `lodestones` the stones that open a place on the atlas.
   const materials = Object.fromEntries(held.results.map((r) => [r.kind, r.qty]));
   // `inventory` is what the hero has with them; what is in storage at home is only listed inside their hut.
   // `isAdmin` only decides whether the client shows the admin link: every admin route checks again.
   // `seenRelease` is the newest release whose notes they have read on the notice board.
   // `devTools` shows the dev toolbox (ENVIRONMENT is "dev" on local and staging): the routes below answer only then.
-  return c.json({ player, character, inventory, materials, consumables, crew, carry, harborXp, seenRelease: seen, isAdmin: isAdmin(c.env, player), devTools: isDev(c.env) });
+  return c.json({ player, character, inventory, materials, consumables, lodestones, crew, carry, harborXp, seenRelease: seen, isAdmin: isAdmin(c.env, player), devTools: isDev(c.env) });
 });
 
 // ---------- the dev toolbox ----------
@@ -982,31 +985,30 @@ app.get("/api/atlas", async (c) => {
   return c.json(await chartFor(c.env.DB, crew.id));
 });
 
-// Set sail for a landfall: the map the crew is already fighting through there, or a fresh one, sized (like a
-// cave) for whoever of the crew is in the Harbor now. The client names only the node; what is on it is the chart's.
+// Set out for a place: the map the crew is already fighting through there, or a fresh one, sized (like a cave)
+// for whoever of the crew is in the Harbor now. The client names only the node (what is on it is the chart's) and
+// the lodestone put into its slot, which comes out of the asker's own pack.
 app.post("/api/atlas/open", async (c) => {
   const player = c.get("player");
   const [crew, character] = await Promise.all([crewFor(c.env.DB, player.id), getCharacter(c.env.DB, player.id)]);
   if (!crew) return c.json({ error: "You are not in a crew." }, 403);
   if (character?.status !== "active") return c.json({ error: "Create a character first." }, 409);
-  const body = await c.req.json<{ node?: unknown }>().catch(() => ({}) as { node?: unknown });
-  const went = await openNode(c.env.DB, crew.id, player.id, body.node, (await harborParty(c.env, crew.id, player.id)).length);
+  const body = await c.req.json<{ node?: unknown; stone?: unknown }>().catch(() => ({}) as { node?: unknown; stone?: unknown });
+  const went = await openNode(c.env.DB, crew.id, player.id, body.node, (await harborParty(c.env, crew.id, player.id)).length, body.stone);
   if ("error" in went) return c.json({ error: went.error }, went.status);
   // Crewmates looking at the chart see that someone has put in there.
   if (went.fresh) c.executionCtx.waitUntil(refreshHarbor(c.env, crew.id));
   return c.json(went);
 });
 
-// Set a lodestone from the crew's case into a place, before anyone sets out for it. The chart comes back, changed.
-app.post("/api/atlas/stone", async (c) => {
+// Cut a plain lodestone from stone and iron, into the pack: the way out for someone with none. (One that
+// carries anything is only ever found.)
+app.post("/api/atlas/cut", async (c) => {
   const player = c.get("player");
-  const crew = await crewFor(c.env.DB, player.id);
-  if (!crew) return c.json({ error: "You are not in a crew." }, 403);
-  const body = await c.req.json<{ node?: unknown; stone?: unknown }>().catch(() => ({}) as { node?: unknown; stone?: unknown });
-  const done = await setStone(c.env.DB, crew.id, player.id, body.node, body.stone);
-  if ("error" in done) return c.json({ error: done.error }, done.status);
-  c.executionCtx.waitUntil(refreshHarbor(c.env, crew.id));
-  return c.json(await chartFor(c.env.DB, crew.id));
+  const character = await getCharacter(c.env.DB, player.id);
+  if (character?.status !== "active") return c.json({ error: "Create a character first." }, 409);
+  const problem = await cutStone(c.env.DB, player.id);
+  return problem ? c.json({ error: problem }, 409) : c.json({ lodestones: await lodestonesOf(c.env.DB, player.id) });
 });
 
 // For whoever is testing: clear a landfall without fighting for it, or wipe the chart back to the Harbor.
@@ -1015,7 +1017,8 @@ app.post("/api/dev/atlas", async (c) => {
   if (!crew) return c.json({ error: "You are not in a crew." }, 403);
   const body = await c.req.json<{ op?: unknown; node?: unknown }>().catch(() => ({}) as { op?: unknown; node?: unknown });
   if (body.op === "reset") await devResetChart(c.env.DB, crew.id);
-  else if (body.op === "stone") await devGrantStone(c.env.DB, crew.id);
+  // A lodestone as one is found a good way out, into the asker's own pack.
+  else if (body.op === "stone") await gainStone(c.env.DB, c.get("player").id, rollStone(makeRng(Math.floor(Math.random() * 2 ** 31)), 4 + Math.floor(Math.random() * 8))).run();
   else if (body.op === "clear") {
     const problem = await devClearNode(c.env.DB, crew.id, body.node);
     if (problem) return c.json({ error: problem }, 409);

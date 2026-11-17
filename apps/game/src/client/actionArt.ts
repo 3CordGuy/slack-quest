@@ -305,6 +305,17 @@ export const ACTION_ART: Record<string, Art> = {
     spans(p, p.accent, [[1, 11, 11], [2, 10, 12], [3, 9, 13], [4, 9, 13]]);
     spans(p, K.flame, [[0, 11, 11], [2, 11, 11], [3, 10, 12]]);
   },
+  // A lodestone: a dark stone cut to a point at each end, with a vein of light through it (the accent: brighter
+  // the more the stone carries).
+  "item-lodestone": (p) => {
+    spans(p, C.iron, [[2, 7, 8], [3, 6, 9], [4, 5, 10], [5, 4, 11], [6, 4, 11], [7, 4, 11], [8, 4, 11], [9, 4, 11], [10, 5, 10], [11, 6, 9], [12, 7, 8]]);
+    spans(p, C.steel, [[3, 6, 7], [4, 5, 7], [5, 4, 6], [6, 4, 5], [7, 4, 4]]);
+    spans(p, C.dark, [[8, 10, 11], [9, 9, 11], [10, 8, 10], [11, 8, 9]]);
+    p.l(8, 3, 6, 7, p.accent);
+    p.l(6, 7, 9, 9, p.accent);
+    p.l(9, 9, 7, 12, p.accent);
+    p.r(6, 3, 1, 1, C.shine);
+  },
   "item-waterskin": (p) => {
     p.r(7, 1, 2, 1, C.bark);
     p.r(7, 2, 2, 2, C.hide);

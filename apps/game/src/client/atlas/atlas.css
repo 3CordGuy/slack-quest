@@ -18,11 +18,11 @@
   color: #fff1c9; background: rgba(14, 16, 26, 0.82); border: 1px solid rgba(0, 0, 0, 0.6); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 /* A name is shown for the Harbor, the place picked and the one pointed at; the rest are told by their light. */
-.atlas-tag:not(.picked):not(.pointed):not(.harbor) .atlas-name { display: none; }
-.atlas-tag.open .atlas-name { color: #d9f0ff; border-color: rgba(63, 169, 255, 0.7); }
-.atlas-tag.cleared .atlas-name { color: #c9f5d3; border-color: rgba(79, 212, 122, 0.6); }
-.atlas-tag.harbor { translate: -50% 26px; }
-.atlas-tag.harbor .atlas-name { font-family: var(--font-title, serif); font-size: 18px; border-color: rgba(255, 207, 90, 0.6); }
+.atlas-tag:not(.picked):not(.pointed):not(.is-harbor) .atlas-name { display: none; }
+.atlas-tag.is-open .atlas-name { color: #d9f0ff; border-color: rgba(63, 169, 255, 0.7); }
+.atlas-tag.is-cleared .atlas-name { color: #c9f5d3; border-color: rgba(79, 212, 122, 0.6); }
+.atlas-tag.is-harbor { translate: -50% 26px; }
+.atlas-tag.is-harbor .atlas-name { font-family: var(--font-title, serif); font-size: 18px; border-color: rgba(255, 207, 90, 0.6); }
 /* At a glance, for somewhere still to clear: how dangerous, what is odd about it, whether anyone is there. */
 .atlas-glance { display: flex; align-items: center; gap: 4px; padding: 0 5px 1px; font-family: var(--font-head, serif); font-size: 12px; line-height: 1.2; color: #cfeaff; background: rgba(14, 16, 26, 0.66); border-radius: 8px; text-shadow: 0 1px 0 #000; }
 .atlas-glance i { width: 7px; height: 7px; border: 1px solid #0d1020; rotate: 45deg; }
@@ -42,9 +42,8 @@
 @keyframes atlas-opening { 0% { opacity: 0; } 14% { opacity: 1; } 68% { opacity: 1; } 100% { opacity: 0; } }
 @keyframes atlas-opening-title { 0% { letter-spacing: 0.3em; scale: 0.9; } 100% { letter-spacing: 0.04em; scale: 1.04; } }
 /* Until it is over, nothing else is in the way of the view. */
-.atlas-top, .atlas-card, .atlas-tags { transition: opacity 0.7s ease, translate 0.7s ease; }
+.atlas-top, .atlas-tags { transition: opacity 0.7s ease, translate 0.7s ease; }
 .atlas-view.opening .atlas-top { opacity: 0; translate: 0 -18px; }
-.atlas-view.opening .atlas-card { opacity: 0; translate: -24px 0; pointer-events: none; }
 .atlas-view.opening .atlas-tags { opacity: 0; }
 
 /* ---------- along the top ---------- */
@@ -55,61 +54,71 @@
 /* How far the crew has got, under the title. */
 .atlas-reckoning { padding: 1px 10px 2px; font-family: var(--font-head, serif); font-size: 13px; letter-spacing: 0.08em; color: #fff1c9; background: rgba(14, 16, 26, 0.7); border-radius: 9px; text-shadow: 0 1px 0 #000; }
 .atlas-close { position: absolute; top: 0; right: 56px; pointer-events: auto; }
-.atlas-home { position: absolute; top: 44px; right: 56px; pointer-events: auto; }
 
-/* ---------- what is known of the place picked ---------- */
-.atlas-card {
-  position: absolute; top: 64px; left: 20px; z-index: 11; display: flex; flex-direction: column; gap: 8px;
-  width: min(320px, calc(100vw / var(--ui-z, 1) - 40px)); max-height: calc(100% - 96px); overflow: hidden auto;
-}
-.atlas-card h3 { margin: 0; font-family: var(--font-title, serif); font-size: 26px; line-height: 1.05; text-transform: none; letter-spacing: 0.01em; }
-.atlas-card p { margin: 0; }
-.atlas-kind { font-family: var(--font-head, serif); }
+/* ---------- the place picked: a small panel beside it ---------- */
+/* Placed by hand each frame: its top left corner is where the panel's is. */
+.atlas-panel-at { position: absolute; left: 0; top: 0; z-index: 11; will-change: transform; }
+.atlas-panel { position: relative; display: flex; flex-direction: column; gap: 7px; width: 250px; padding: 12px 12px 10px; }
+.atlas-panel h3 { margin: 0 18px 0 0; font-family: var(--font-title, serif); font-size: 22px; line-height: 1.05; text-transform: none; letter-spacing: 0.01em; }
+.atlas-panel p { margin: 0; }
+.atlas-panel-shut { position: absolute; top: 4px; right: 4px; width: 22px; height: 22px; padding: 0; line-height: 1; font-size: 16px; background: none; border: none; box-shadow: none; color: var(--muted); }
+.atlas-panel-shut:hover { color: #fff; background: none; }
+/* One line of what there is to know at a glance. */
+.atlas-line { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; font-family: var(--font-head, serif); font-size: 13px; }
+.atlas-own { display: inline-flex; gap: 5px; margin-left: auto; }
+.atlas-own i { width: 9px; height: 9px; rotate: 45deg; border: 1px solid #0d1020; background: #46b3bd; cursor: help; }
+.atlas-own i.enemy { background: #e0453a; }
+.atlas-bounty strong { color: var(--gold, #f4c64e); }
+.atlas-go { display: flex; align-items: center; gap: 8px; }
+.atlas-even { font-family: var(--font-head, serif); color: var(--gold, #f4c64e); }
 /* The climate a place lies in, in that climate's own colour. */
 .atlas-clime { font-weight: bold; }
 .atlas-clime.greenwood { color: #8fcf6a; } .atlas-clime.frost { color: #cfe8f7; } .atlas-clime.dunes { color: #e8c07a; } .atlas-clime.mire { color: #9aa86a; } .atlas-clime.ash { color: #ff8a55; }
-.atlas-mods { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
-.atlas-mods li { padding: 5px 8px; border: 1px solid var(--line); border-left: 4px solid #46b3bd; }
-.atlas-mods li.enemy { border-left-color: #e0453a; }
-.atlas-mods .small-note { font-size: 12px; color: var(--muted); }
-.atlas-pay { padding: 6px 8px; border: 1px solid var(--gold, #f4c64e); }
-/* What a lodestone set into the place has added: marked as the stone's. */
-.atlas-mods li.stone { background: rgba(63, 169, 255, 0.1); border-color: rgba(63, 169, 255, 0.55); }
-/* The crew's lodestones, to set into the place picked. */
-.atlas-stones { display: flex; flex-direction: column; gap: 6px; padding: 6px 8px; border: 1px solid rgba(63, 169, 255, 0.55); }
-.atlas-stones-head { font-family: var(--font-head, serif); }
-.atlas-stones ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
-.atlas-stones li { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.atlas-stone { display: flex; align-items: center; gap: 8px; min-width: 0; }
-/* The stone itself: a cut gem, brighter the more it carries. */
-.atlas-stone-gem { flex: none; width: 16px; height: 16px; rotate: 45deg; border: 2px solid #0d1020; background: linear-gradient(135deg, #cfe9ff, #3f8fd6 55%, #1c3f73); box-shadow: 0 0 0 1px rgba(160, 215, 255, 0.35); }
-.atlas-stone-gem.n2 { background: linear-gradient(135deg, #ffffff, #5fb8ff 50%, #2356a8); box-shadow: 0 0 8px rgba(110, 190, 255, 0.7); }
-.atlas-stone-gem.n3 { background: linear-gradient(135deg, #ffffff, #9fe0ff 45%, #3f7fe0); box-shadow: 0 0 12px 2px rgba(140, 210, 255, 0.9); }
-.atlas-stone-mod { margin-right: 6px; padding-left: 9px; position: relative; color: var(--muted); }
-.atlas-stone-mod::before { content: ''; position: absolute; left: 0; top: 0.42em; width: 6px; height: 6px; rotate: 45deg; background: #46b3bd; }
-.atlas-stone-mod.enemy::before { background: #e0453a; }
-/* What of a stone would not take in this place. */
-.atlas-stone-mod.spent { text-decoration: line-through; opacity: 0.55; }
-.atlas-stone-set { padding: 5px 8px; color: #d9f0ff; border: 1px solid rgba(63, 169, 255, 0.55); background: rgba(63, 169, 255, 0.1); }
-/* What kind of place it is, in what is written under it. */
-.atlas-what { padding: 0 5px; border-radius: 6px; font-weight: bold; }
+/* The place's one slot, and the lodestones in your pack to put into it. */
+.atlas-slot-row { display: flex; align-items: center; gap: 10px; }
+.atlas-slot {
+  flex: none; display: grid; place-items: center; width: 56px; height: 56px; padding: 0; border-radius: 4px;
+  background: radial-gradient(circle at 50% 45%, rgba(63, 169, 255, 0.16), rgba(8, 10, 20, 0.7) 70%); border: 2px dashed rgba(120, 180, 240, 0.55);
+  box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.6);
+}
+.atlas-slot.filled { border-style: solid; border-color: #6fc0ff; box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.6), 0 0 12px rgba(90, 180, 255, 0.55); cursor: pointer; }
+.atlas-slot.wanting { animation: atlas-slot-wants 1.8s ease-in-out infinite; }
+@keyframes atlas-slot-wants { 50% { border-color: #cfe9ff; box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.6), 0 0 10px rgba(120, 190, 255, 0.5); } }
+.atlas-slot:disabled { opacity: 1; filter: none; }
+.atlas-slot-row.shut .atlas-slot { border-style: solid; border-color: rgba(120, 132, 160, 0.6); box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.6); cursor: default; }
+.atlas-pack { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; min-width: 0; }
+.atlas-pack-stone { position: relative; display: grid; place-items: center; width: 38px; height: 38px; padding: 0; background: rgba(8, 10, 20, 0.6); border: 1px solid var(--line); border-radius: 3px; cursor: grab; }
+.atlas-pack-stone:hover { border-color: #6fc0ff; }
+.atlas-pack-stone.chosen { border-color: #6fc0ff; opacity: 0.45; }
+/* Cut a plain one: the last square of the row. */
+.atlas-pack-stone.cut { font-size: 20px; line-height: 1; color: var(--muted); border-style: dashed; cursor: pointer; }
+.atlas-pack-qty { position: absolute; right: 2px; bottom: 0; font-size: 11px; font-weight: bold; color: #fff; text-shadow: 0 1px 0 #000, 0 0 3px #000; }
+/* What the lodestone pointed at carries: a card standing out from the panel's far side. */
+.atlas-stone-card { position: absolute; left: calc(100% + 8px); top: 0; width: 230px; display: flex; flex-direction: column; gap: 6px; padding: 10px; pointer-events: none; }
+.atlas-panel-at.left .atlas-stone-card { left: auto; right: calc(100% + 8px); }
+.atlas-stone-card ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.atlas-stone-card li { padding: 4px 7px; border: 1px solid var(--line); border-left: 4px solid #46b3bd; }
+.atlas-stone-card li.enemy { border-left-color: #e0453a; }
+.atlas-stone-card li.spent { opacity: 0.55; }
+.atlas-stone-card .small-note { font-size: 12px; color: var(--muted); }
+/* What kind of place it is. */
+.atlas-what { padding: 0 5px; border-radius: 6px; font-weight: bold; cursor: help; }
 .atlas-what.lair { color: #fff; background: #8c2433; }
 .atlas-what.lookout { color: #2c2208; background: #e9dcae; }
-.atlas-go { display: flex; align-items: center; gap: 8px; }
-.atlas-tally, .atlas-even { font-family: var(--font-head, serif); color: var(--gold, #f4c64e); }
-.atlas-dev { margin-top: 4px !important; }
-/* The places open to the crew, when none is picked. */
-.atlas-open { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.atlas-what.cave { color: #e9ddff; background: #4a3a7a; }
+/* The corner under the way out: finding the Harbor again, and the dev tools. */
+.atlas-corner { position: absolute; top: 44px; right: 56px; display: flex; flex-direction: column; align-items: flex-end; gap: 4px; pointer-events: auto; }
+.atlas-reckoning.bad { color: #ffb3a8; }
 
-/* A narrow screen: the card along the bottom, out of the way of the map. */
+/* A narrow screen: the title to one side, and what a stone carries under the panel, not beside it. */
 @media (max-width: 760px) {
-  .atlas-card { top: auto; bottom: 12px; left: 8px; right: 8px; width: auto; max-height: 44%; }
-  .atlas-card h3 { font-size: 22px; }
   .atlas-close { right: 8px; }
-  .atlas-home { right: 8px; }
+  .atlas-corner { right: 8px; }
   .atlas-top { justify-content: flex-start; padding-left: 8px; }
+  .atlas-stone-card, .atlas-panel-at.left .atlas-stone-card { left: 0; right: auto; top: calc(100% + 6px); width: 100%; }
 }
 @media (prefers-reduced-motion: reduce) {
   .atlas-opening, .atlas-opening-title { animation-duration: 1.2s; }
   .atlas-opening-title { animation-name: none; }
 }
+@media (prefers-reduced-motion: reduce) { .atlas-slot.wanting { animation: none; } }
