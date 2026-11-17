@@ -19,6 +19,7 @@ import { GARB_PREFIX, INK_COLORS, INK_LEVELS, INK_REGIONS, RARITY_COLOR, WEAPONS
 import type { Look } from "./looks";
 import { torchFlame } from "./torchFlame";
 import { buildLowPoly, disposeLowPoly } from "./gearModels";
+import { makeSilhouette, type Silhouette } from "./silhouette";
 
 export const OUTLINE = "#1b1830";
 /** Set by makeFigure for the figure being built: a fishing rod goes in its right hand (gilded, for a full Catch Book). */
@@ -5479,6 +5480,11 @@ export interface Figure {
   setDim(on: boolean): void;
   /** How much of it is left to see, 1 (all there) to 0 (gone): it thins out pixel by pixel as a camera passes through it. */
   setFade(left: number): void;
+  /**
+   * Show the figure through a tree or a wall it stands behind, as a flat shape of this colour (see silhouette.ts);
+   * null stops. Only in a scene drawn with a stencil buffer and with what hides drawn first. Not while it is faded.
+   */
+  setSilhouette(color: string | null): void;
   dispose(): void;
 }
 
@@ -5542,6 +5548,9 @@ export function makeFigure(kind: string, look: Look, outfit?: Outfit, opts: Figu
   let action: { kind: Act["kind"]; at: number; n: number; air: number } | null = null;
   /** How long the jump asked for is off the ground. */
   let airtime = 0;
+  /** Its shape seen through trees and walls, made the first time it is asked for, and the colour asked for. */
+  let through: Silhouette | null = null;
+  let throughColor: string | null = null;
   let actions = 0;
   const update = (p: FigurePose) => {
     const dt = last < 0 ? 1 : Math.min(0.1, Math.max(0, p.time - last));
@@ -5633,10 +5642,27 @@ export function makeFigure(kind: string, look: Look, outfit?: Outfit, opts: Figu
       mats.ink.color.setScalar(on ? 0.5 : 1);
     },
     setFade(left) {
+      const was = fade.value;
       fade.value = Math.max(0, Math.min(1, left));
       root.visible = fade.value > 0;
+      // Thinned away for a camera passing through it, it is not then drawn solid through a wall.
+      if (through && fade.value < 1 !== was < 1) through.show(fade.value < 1 ? null : throughColor);
+    },
+    setSilhouette(color) {
+      if (color === throughColor) return;
+      throughColor = color;
+      if (!through) {
+        if (!color) return;
+        const bodies: THREE.Mesh[] = [];
+        top.traverse((o) => {
+          if (o instanceof THREE.Mesh && o.userData.body) bodies.push(o);
+        });
+        through = makeSilhouette(bodies);
+      }
+      through.show(fade.value < 1 ? null : color);
     },
     dispose() {
+      through?.dispose();
       for (const g of made) g.dispose();
       for (const thing of extras) thing.dispose();
       mats.body.dispose();

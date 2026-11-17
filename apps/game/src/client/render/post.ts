@@ -277,8 +277,13 @@ export class PostFx {
     const type = renderer.extensions.has("EXT_color_buffer_float") || renderer.extensions.has("EXT_color_buffer_half_float") ? THREE.HalfFloatType : THREE.UnsignedByteType;
     // The scene itself is drawn with four samples a pixel, so the edges of hexes, roofs and figures are smooth.
     const target = (depth = false) => {
-      const t = new THREE.WebGLRenderTarget(1, 1, { type, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, depthBuffer: depth, samples: depth ? 4 : 0 });
-      if (depth) t.depthTexture = new THREE.DepthTexture(1, 1);
+      // The scene's picture has a stencil as well, for showing figures through what hides them (silhouette.ts):
+      // its depth is kept in a texture that holds both.
+      const t = new THREE.WebGLRenderTarget(1, 1, { type, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, depthBuffer: depth, stencilBuffer: depth, samples: depth ? 4 : 0 });
+      if (depth) {
+        t.depthTexture = new THREE.DepthTexture(1, 1, THREE.UnsignedInt248Type);
+        t.depthTexture.format = THREE.DepthStencilFormat;
+      }
       return t;
     };
     this.scene = target(true);
