@@ -6,8 +6,8 @@
 // each hex), so every screen draws the same cave and nothing is saved. None
 // of it stands where anyone walks: the middle of every hex is left clear.
 //
-// Also here: the rope at the cave mouth, tied round a rock out in the
-// daylight and hanging down the shaft of light, its slack coiled on the floor;
+// Also here: the rope at the cave mouth, let down from a rock up on the
+// surface and hanging down the shaft of light, its slack coiled on the floor;
 // and the clusters of glowing mushrooms a delve grows (zone/forage.ts).
 
 import * as THREE from "three";
@@ -143,86 +143,55 @@ export function buildCaveDressing(tiles: readonly Tile[], at: (t: Tile) => Place
   return group;
 }
 
-/** Where the rope at a cave mouth is made fast, in the mouth's own space: the edge of the nearest rock, on the
- * floor, where its face looks toward the mouth; the way from the mouth to it (flat, of unit length); and how high
- * the rock's top stands above the mouth's floor. */
-export type RopeWall = { lip: THREE.Vector2; out: THREE.Vector2; top: number };
-
 /**
- * The rope at the cave mouth: tied round a boulder up on top of the rock nearest the mouth (outside, on the
- * surface), over the edge, and slung down into the shaft of light, where it is staked to the floor and its slack
- * lies coiled. Knotted for climbing. With no rock near, it hangs from the top of the shaft, `shaft` high.
+ * The rope at the cave mouth: let down from above, where it is tied off round a rock up on the surface, out of
+ * sight. It hangs straight down the shaft of daylight (`shaft` high), knotted for climbing, fading into the light
+ * as it goes up, and its slack lies coiled on the floor.
  */
-export function caveRope(wall: RopeWall | null, shaft: number): THREE.Group {
+export function caveRope(shaft: number): THREE.Group {
   const g = new THREE.Group();
-  const hemp = new THREE.MeshLambertMaterial({ color: "#c4a06a", flatShading: true });
-  const knotty = new THREE.MeshLambertMaterial({ color: "#8a6a3c", flatShading: true });
-  const iron = new THREE.MeshLambertMaterial({ color: "#3d4048", flatShading: true });
-  const v = (p: THREE.Vector2, y: number) => new THREE.Vector3(p.x, y, p.y);
-  let points: THREE.Vector3[];
-  let foot: THREE.Vector2;
-  let hangFrom = 0;
-  if (wall) {
-    const { lip, out, top } = wall;
-    /** A point on the floor plan `d` out from the lip (negative: back toward the mouth), `s` to its side. */
-    const along = (d: number, s = 0) => new THREE.Vector2(lip.x + out.x * d - out.y * s, lip.y + out.y * d + out.x * s);
-    // The boulder, sitting on the rock a little back from the edge, and two turns of rope round it.
-    const rockAt = along(0.55, 0.1);
-    const rock = new THREE.Mesh(new THREE.DodecahedronGeometry(0.3, 0), new THREE.MeshLambertMaterial({ color: "#8d9096", flatShading: true }));
-    rock.position.copy(v(rockAt, top + 0.17));
-    rock.scale.set(1.15, 0.78, 1.05);
-    rock.rotation.set(0.3, 0.7, 0.1);
-    g.add(rock);
-    for (const [i, lift] of [0.08, 0.17].entries()) {
-      const turn = new THREE.Mesh(new THREE.TorusGeometry(0.33 - i * 0.03, 0.04, 6, 20), hemp);
-      turn.position.copy(v(rockAt, top + lift));
-      turn.rotation.set(Math.PI / 2 + 0.1 * (i ? -1 : 1), 0.08, 0);
-      g.add(turn);
+  const hemp = new THREE.Color("#c4a06a");
+  const sky = new THREE.Color("#eef6ff");
+  /** How far up the rope has faded into the light: 0 low down, 1 at the top, where the light swallows it. */
+  const fade = (y: number) => THREE.MathUtils.smoothstep(y, shaft * 0.35, shaft + 0.4);
+  // Hemp low down, paling and thinning into the light as it rises.
+  const material = new THREE.MeshLambertMaterial({ vertexColors: true, transparent: true, flatShading: true });
+  const tint = (geometry: THREE.BufferGeometry, base: THREE.Color, lift = 0) => {
+    const pos = geometry.getAttribute("position");
+    const colors: number[] = [];
+    for (let i = 0; i < pos.count; i++) {
+      const k = fade(pos.getY(i) + lift);
+      const c = base.clone().lerp(sky, k);
+      colors.push(c.r, c.g, c.b, 1 - k);
     }
-    // Made fast on the side toward the edge.
-    const tied = along(0.22, 0.08);
-    const knot = new THREE.Mesh(new THREE.DodecahedronGeometry(0.08, 0), knotty);
-    knot.position.copy(v(tied, top + 0.1));
-    g.add(knot);
-    // Down in the light, short of the middle of the mouth: an iron stake it is lashed to, the slack coiled beside.
-    const span = lip.length();
-    const stake = new THREE.Vector2().copy(out).multiplyScalar(Math.min(0.32, span * 0.3));
-    foot = new THREE.Vector2(stake.x - out.y * 0.24, stake.y + out.x * 0.24);
-    const peg = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.035, 0.32, 5), iron);
-    peg.position.set(stake.x, 0.13, stake.y);
-    peg.rotation.set(-out.y * 0.35, 0, out.x * 0.35);
-    g.add(peg);
-    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.05, 0.014, 5, 10), iron);
-    ring.position.set(stake.x, 0.29, stake.y);
-    g.add(ring);
-    // Over the edge, then slung across and down, sagging, to the stake.
-    points = [v(tied, top + 0.1), v(along(0.02, 0.06), top + 0.05), v(along(-0.1, 0.05), top - 0.16)];
-    const from = along(-0.1, 0.05);
-    const steps = 6;
-    for (let i = 1; i <= steps; i++) {
-      const k = i / steps;
-      const p = new THREE.Vector2().lerpVectors(from, stake, k);
-      points.push(v(p, THREE.MathUtils.lerp(top - 0.16, 0.27, k) - 0.35 * 4 * k * (1 - k)));
-    }
-    hangFrom = 0.18;
-  } else {
-    foot = new THREE.Vector2(-0.06, 0.12);
-    points = [new THREE.Vector3(-0.12, shaft, -0.14), new THREE.Vector3(-0.09, shaft * 0.5, -0.06), new THREE.Vector3(-0.07, shaft * 0.2, 0), new THREE.Vector3(-0.06, 0.06, 0.08)];
-  }
-  const curve = new THREE.CatmullRomCurve3(points);
-  g.add(new THREE.Mesh(new THREE.TubeGeometry(curve, 80, 0.036, 6, false), hemp));
-  // Knots for the hands, a forearm apart, down its length.
-  for (let t = hangFrom + 0.06; t < 0.94; t += 0.075) {
-    const k = new THREE.Mesh(new THREE.SphereGeometry(0.06, 7, 5), knotty);
-    k.position.copy(curve.getPointAt(t));
+    geometry.setAttribute("color", new THREE.Float32BufferAttribute(colors, 4));
+    return geometry;
+  };
+  // From the coil on the floor, up off-centre in the shaft, hanging true, and on up out of the top of it.
+  const curve = new THREE.CatmullRomCurve3([
+    new THREE.Vector3(0.1, 0.08, 0.16),
+    new THREE.Vector3(-0.04, 0.22, 0.04),
+    new THREE.Vector3(-0.1, 0.7, -0.02),
+    new THREE.Vector3(-0.11, shaft * 0.5, -0.05),
+    new THREE.Vector3(-0.12, shaft + 0.6, -0.08),
+  ]);
+  const rope = new THREE.Mesh(tint(new THREE.TubeGeometry(curve, 72, 0.036, 6, false), hemp), material);
+  g.add(rope);
+  // Knots for the hands, a forearm apart, up the hanging length (fading with it).
+  const knotColor = new THREE.Color("#8a6a3c");
+  for (let t = 0.2; t < 0.9; t += 0.06) {
+    const at = curve.getPointAt(t);
+    const k = new THREE.Mesh(tint(new THREE.SphereGeometry(0.06, 7, 5), knotColor, at.y), material);
+    k.position.copy(at);
     k.scale.set(1, 0.75, 1);
     g.add(k);
   }
-  // The slack, coiled on the floor.
+  // The slack, coiled on the floor at its foot.
+  const coilMaterial = new THREE.MeshLambertMaterial({ color: hemp, flatShading: true });
   for (let i = 0; i < 3; i++) {
-    const coil = new THREE.Mesh(new THREE.TorusGeometry(0.17 - i * 0.04, 0.032, 6, 18), hemp);
+    const coil = new THREE.Mesh(new THREE.TorusGeometry(0.17 - i * 0.04, 0.032, 6, 18), coilMaterial);
     coil.rotation.x = Math.PI / 2;
-    coil.position.set(foot.x + i * 0.012, 0.035 + i * 0.045, foot.y);
+    coil.position.set(0.12 + i * 0.012, 0.035 + i * 0.045, 0.2);
     g.add(coil);
   }
   return g;

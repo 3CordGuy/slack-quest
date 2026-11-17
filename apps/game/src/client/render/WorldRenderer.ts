@@ -7,7 +7,7 @@
 
 import * as THREE from "three";
 import { flamesIn, flickerFlame, torchFlame } from "./torchFlame";
-import { SHAFT_HEIGHT, buildCaveDressing, caveRope, glowcapCluster, type RopeWall } from "./caveDressing";
+import { SHAFT_HEIGHT, buildCaveDressing, caveRope, glowcapCluster } from "./caveDressing";
 import { makeModelShip } from "./modelShip";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { reportEnv } from "../ui/env";
@@ -3245,31 +3245,6 @@ export class WorldRenderer {
     return new THREE.Vector2(p.x, p.z);
   }
 
-  /**
-   * Where the rope at a cave mouth is tied (caveDressing.ts): the nearest rock to the mouth (a delve clears a ring
-   * round its mouth, so that is two hexes off), and of those the one furthest from the camera's usual side, so the
-   * rope comes down toward it. Null when no rock stands within three hexes.
-   */
-  private ropeWall(poi: Poi): RopeWall | null {
-    const map = this.state?.map;
-    if (!map) return null;
-    const floor = tileTop(tileAt(map, poi.pos));
-    const at = hexToWorld(poi.pos);
-    let best: { t: Tile; d: number; x: number; z: number } | null = null;
-    for (const t of map.tiles) {
-      if (t.biome !== "rock") continue;
-      const d = hexDistance(t, poi.pos);
-      if (d > 3 || (best && (d > best.d || (d === best.d && hexToWorld(t).z >= best.z)))) continue;
-      best = { t, d, ...hexToWorld(t) };
-    }
-    if (!best) return null;
-    // The rock's edge on the line to the mouth: most of the way from its middle to its rim.
-    const toward = new THREE.Vector2(at.x - best.x, at.z - best.z).normalize();
-    const lip = this.inModel(poi, best.x + toward.x * 0.84, best.z + toward.y * 0.84);
-    const out = this.inModel(poi, best.x, best.z).sub(lip).normalize();
-    return { lip, out, top: (tileTop(best.t) - floor) / placeOf(poi).scale };
-  }
-
   private poiModel(poi: Poi): THREE.Group {
     const g = new THREE.Group();
     const lambert = (color: string) => new THREE.MeshLambertMaterial({ color, flatShading: true });
@@ -3287,7 +3262,7 @@ export class WorldRenderer {
         if (this.state?.kind === "caverns") {
           // The way back out of the caverns: a lantern on a spike, and a rope down into the light (see caveRope).
           add(box(0.05, 0.5, 0.05), lambert("#3d4048"), 0.35, 0.25, -0.2);
-          g.add(caveRope(this.ropeWall(poi), SHAFT_HEIGHT));
+          g.add(caveRope(SHAFT_HEIGHT));
           add(box(0.16, 0.18, 0.16), new THREE.MeshBasicMaterial({ color: "#ffd98a" }), 0.35, 0.58, -0.2).userData.glow = true;
           // And daylight falling in through it from above: a pale shaft, brightest at the floor and fading as it
           // rises, a pool of light where it lands, and real light round it, so the way out shows from across the dark.
