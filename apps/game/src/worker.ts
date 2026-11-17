@@ -78,7 +78,7 @@ import { consumablesOf } from "./server/consumables";
 import { apothecaryView, brew, brewFlask, smithItem, smithyView } from "./server/workshops";
 import { cook, galleyView } from "./server/galley";
 import { announceXp, harborXpFor } from "./server/harbor-xp";
-import { createZoneRow, crewPlaces, getZoneRow } from "./server/zones";
+import { createZoneRow, crewPlaces, getZoneRow, openCave } from "./server/zones";
 import {
   checkImport,
   checkOverride,
@@ -917,6 +917,26 @@ const RUNS_CLOSED = "Voyages and delves are being rebuilt. They will sail again 
 app.post("/api/run", (c) => c.json({ error: RUNS_CLOSED }, 503));
 app.get("/api/run/:code/ws", (c) => c.text(RUNS_CLOSED, 503));
 
+// Down into the Haunted Caverns: the crew's cave if one is still being fought through, else a fresh one.
+// A fresh cave is pitched for whoever of the crew is in the Harbor now (the asker always counts): as many
+// heroes as are there, up to four, at their average level. Crewmates who come later join by teleport.
+app.post("/api/caves", async (c) => {
+  const player = c.get("player");
+  const [crew, character] = await Promise.all([crewFor(c.env.DB, player.id), getCharacter(c.env.DB, player.id)]);
+  if (!crew) return c.json({ error: "You are not in a crew." }, 403);
+  if (character?.status !== "active") return c.json({ error: "Create a character first." }, 409);
+  const open = await openCave(c.env.DB, crew.id);
+  if (open) return c.json({ code: open, fresh: false });
+  const here = await c.env.HARBOR_ROOM.get(c.env.HARBOR_ROOM.idFromName(crew.id))
+    .fetch("https://harbor/present", { headers: { "x-crew-id": crew.id } })
+    .then((r) => (r.ok ? (r.json() as Promise<{ ids: string[] }>) : { ids: [] }))
+    .then((r) => new Set([...r.ids, player.id]), () => new Set([player.id]));
+  const party = (await crewPlaces(c.env.DB, crew.id)).filter((m) => here.has(m.id));
+  const level = party.length > 0 ? party.reduce((sum, m) => sum + m.level, 0) / party.length : character.level;
+  const options = zoneOptions({ size: "medium", biome: "caves", groups: 3, elevation: 1, obstacles: 2, clear: 3, threat: 2, party: Math.min(4, Math.max(1, party.length)), level });
+  return c.json({ code: await createZoneRow(c.env.DB, player.id, options, crypto.randomUUID().slice(0, 8), "caves", crew.id), fresh: true });
+});
+
 // Where everyone in the asker's crew is: on which zone, and whether in a fight there. For the roster shown on a zone.
 app.get("/api/crew/places", async (c) => {
   const crew = await crewFor(c.env.DB, c.get("player").id);
@@ -934,7 +954,7 @@ app.post("/api/crew/teleport", async (c) => {
   return c.json({ zone: friend.zone?.code ?? null, name: friend.name });
 });
 
-// A zone's socket. Anyone with a hero and the code can walk in; making a zone is a dev route for now.
+// A zone's socket. Anyone with a hero and the code can walk in. Zones are made by /api/caves and the dev route.
 app.get("/api/zone/:code/ws", async (c) => {
   const code = c.req.param("code").toUpperCase();
   if (!(await getZoneRow(c.env.DB, code))) return c.text("No map with that code.", 404);

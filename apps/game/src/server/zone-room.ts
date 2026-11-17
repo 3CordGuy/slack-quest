@@ -8,6 +8,8 @@
 // - Every change is persisted before it is broadcast.
 // - The turn timer is a DO Alarm. Enemy turns resolve inside the reducer, so
 //   nothing waits on a connected client to make progress.
+// - What a won fight pays (XP and materials) is written before the zone is
+//   saved, as the pack is.
 //
 // What a hero carries to drink or throw is their own pack's (consumables.ts):
 // it is read as they walk in and again before each one is used, and what was
@@ -19,7 +21,7 @@
 import { DurableObject } from "cloudflare:workers";
 import { THROWABLE_KINDS, ZONE_CLIENT_ACTIONS, createZone, stepZone, zoneAwaiting, zoneHero, zoneOptions, zoneView, type ZoneAction, type ZoneEvent, type ZoneState } from "@gantt-quest/world";
 import { consumablesOf, kitStatements, spendConsumables, type Consumables } from "./consumables";
-import { crewFor, heroInitFor, refreshHarbor, type Env } from "./db";
+import { applyZoneGrant, crewFor, heroInitFor, refreshHarbor, type Env } from "./db";
 import { isDev } from "./dev";
 import { clearPresence, getZoneRow, saveZoneStatement, setPresence } from "./zones";
 
@@ -256,6 +258,13 @@ export class ZoneRoom extends DurableObject<Env> {
     // The dev toolbox's restock is real too, for every player's hero here.
     if (action.type === "dev" && action.dev.op === "heal") for (const u of next.units) if (u.side === "hero" && !u.controller) writes.push(...kitStatements(db, u.id));
     for (const write of writes) await write.run();
+    // What a won fight paid, written before the zone is saved (and so before anyone is told of it).
+    for (const effect of res.effects) {
+      if (effect.type !== "grant") continue;
+      await applyZoneGrant(db, effect.heroId, effect.xp, effect.resources);
+      // The roster shows each hero's level.
+      this.tellHarbor(effect.heroId);
+    }
     await saveZoneStatement(db, next).run();
     await this.notePresence();
     this.broadcast(res.events);

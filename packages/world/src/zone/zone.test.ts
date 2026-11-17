@@ -10,7 +10,7 @@ import { adjacent, blast, flies, sees, solid, zoneReach } from "./geometry";
 import { ENEMY_KIT, TACTICS, enemyHp, enemyStrikes, tacticOf } from "./kit";
 import { d20, diceAverage, diceFor, heroMove, hitChance } from "./rules";
 import { createZone, standInHero, stepZone } from "./zone";
-import type { SurfaceKind, Unit, ZoneAction, ZoneEvent, ZoneState } from "./types";
+import type { SurfaceKind, Unit, ZoneAction, ZoneEffect, ZoneEvent, ZoneState } from "./types";
 
 // ---------- helpers ----------
 
@@ -695,6 +695,46 @@ describe("the end of a fight", () => {
     expect(hexDistance(unit(state, "ann").pos, state.start)).toBeLessThanOrEqual(1);
     expect(unit(state, bear.id)).toMatchObject({ hp: unit(state, bear.id).maxHp, pos: bear.home });
     expect(state.groups.g1.alerted).toBe(false);
+  });
+
+  it("pays a won fight's XP and what the fallen left to each player's hero, never a stand-in's, and says when the map is cleared", () => {
+    let { state, foe } = duel("skeleton");
+    const helper = hero(state, "bo", "devops_mage", at(3, 9));
+    helper.controller = "ann";
+    state.encounter!.order.push("bo");
+    unit(state, foe).hp = 1;
+    const events: ZoneEvent[] = [];
+    const effects: ZoneEffect[] = [];
+    for (let i = 0; i < 20 && state.encounter; i++) {
+      if (!state.encounter.acting.includes("ann") || state.encounter.done.includes("ann")) { state = must(state, { type: "timeout" }, events); continue; }
+      const target = unit(state, foe);
+      if (!adjacent(target.pos, unit(state, "ann").pos)) {
+        const reach = zoneReach(state, unit(state, "ann"), state.encounter.budgets.ann.move);
+        const spot = [...reach.values()].filter((r) => r.stop && adjacent(r.pos, target.pos)).sort((a, b) => a.cost - b.cost)[0];
+        if (spot) state = must(state, { type: "move", by: "ann", unit: "ann", to: spot.pos }, events);
+      }
+      const step = stepZone(state, { type: "use", by: "ann", unit: "ann", ability: "smite", target: foe });
+      if (step.ok) { state = step.state; events.push(...step.events); effects.push(...step.effects); }
+      if (state.encounter) state = must(state, { type: "end_turn", by: "ann", unit: "ann" }, events);
+    }
+    expect(events.some((e) => e.t === "fight_end" && e.outcome === "victory")).toBe(true);
+    expect(effects).toHaveLength(1);
+    const grant = effects[0];
+    expect(grant).toMatchObject({ type: "grant", heroId: "ann", xp: ENEMIES.skeleton.xp });
+    // A skeleton leaves bone and iron, and only those.
+    expect(Object.keys(grant.resources).every((k) => k === "bone" || k === "iron")).toBe(true);
+    expect(Object.values(grant.resources).reduce((a, b) => a + (b ?? 0), 0)).toBeGreaterThan(0);
+    expect(events).toContainEqual({ t: "spoils", id: "ann", xp: grant.xp, resources: grant.resources });
+    expect(events.some((e) => e.t === "cleared")).toBe(true);
+  });
+
+  it("says nothing of a cleared map while another group still stands", () => {
+    let { state, foe } = duel("skeleton");
+    enemy(state, "bat", at(14, 2), "g2");
+    unit(state, foe).hp = 1;
+    const events: ZoneEvent[] = [];
+    state = must(state, { type: "dev", by: "ann", dev: { op: "end_fight" } }, events);
+    expect(events.some((e) => e.t === "cleared")).toBe(false);
   });
 
   it("plays whole fights on generated maps without breaking its own rules", () => {

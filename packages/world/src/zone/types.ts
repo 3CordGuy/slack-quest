@@ -9,6 +9,7 @@
 import type { HexPos, Stats } from "@gantt-quest/core";
 import type { EffectKind } from "../content";
 import type { Outfit } from "../gear";
+import type { Resources } from "../hut";
 import type { WorldMap } from "../map";
 
 export type Side = "hero" | "enemy";
@@ -242,10 +243,14 @@ export type ZoneEvent =
   | { t: "burst"; hexes: HexPos[] }
   | { t: "shoved"; id: string; target: string; from: HexPos; to: HexPos | null }
   | { t: "jumped"; id: string; from: HexPos; to: HexPos }
-  | { t: "fight_end"; outcome: "victory" | "defeat" };
+  | { t: "fight_end"; outcome: "victory" | "defeat" }
+  /** What a hero took from a won fight: the XP it paid and the materials the fallen left. */
+  | { t: "spoils"; id: string; xp: number; resources: Resources }
+  /** The last enemy group on the map is gone. */
+  | { t: "cleared" };
 
-/** Things the server must carry out. Empty for now: the seam spoils will come through. */
-export type ZoneEffect = { type: "grant"; heroId: string; xp: number };
+/** Things the server must carry out: what a player's own hero earned from a won fight. */
+export type ZoneEffect = { type: "grant"; heroId: string; xp: number; resources: Resources };
 
 export type ZoneStep = { ok: true; state: ZoneState; events: ZoneEvent[]; effects: ZoneEffect[] } | { ok: false; error: string };
 

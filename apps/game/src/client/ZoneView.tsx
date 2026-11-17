@@ -68,6 +68,7 @@ import { HudBar, type HudSlot } from "./ui/Hud";
 import { useCountdown } from "./ui/useCountdown";
 import { useZone } from "./useZone";
 import { Icon } from "./items";
+import { label } from "./labels";
 import { THROW_COLOR, aimKind, fxFor } from "./zone/abilityFx";
 import { COMMON_ICON, ITEM_ICON, abilityIcon } from "./zone/actionIcons";
 import { BAR_SLOTS, assignSlot, barChoices, loadBar, moveSlot, saveBar } from "./zone/hotbar";
@@ -136,6 +137,7 @@ function dwell(ev: ZoneEvent, many: boolean, next: ZoneEvent | undefined): numbe
     case "shoved": case "jumped": return 400;
     case "fight_start": return 1300;
     case "fight_end": return 700;
+    case "cleared": return 900;
     default: return 0;
   }
 }
@@ -488,6 +490,14 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
           setBanner(ev.outcome === "victory" ? "Victory" : "Defeated");
         });
         say(ev.outcome === "victory" ? "The fight is won." : "The fight is lost. You wake where you started.");
+      } else if (ev.t === "spoils") {
+        const found = Object.entries(ev.resources).filter(([, n]) => n).map(([kind, n]) => `${n} ${label("resource", kind).toLowerCase()}`);
+        say(`${name(ev.id)} earns ${ev.xp} XP${found.length > 0 ? ` and takes ${found.join(", ")}` : ""}.`);
+        // Your own level, XP and materials as the server now has them.
+        if (ev.id === next.you) later(() => void refresh());
+      } else if (ev.t === "cleared") {
+        later(() => setBanner("Cleared"));
+        say("Nothing else stirs here. Leave the map, and the next way down finds a fresh one.");
       } else if (ev.t === "joined") {
         say(`${name(ev.id)} arrives.`);
       }
