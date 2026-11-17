@@ -36,7 +36,7 @@ import { LAMP_TABLES, TableLamps } from "./tableLamps";
 import { nearWater, openEar, sounds } from "../audio/gameSounds";
 import type { AttackStyle, Fighter } from "../audio/names";
 import { PUFFS, footfalls, stepGround, worldToHex, type PuffLook } from "./footsteps";
-import { bubbleTexture, fxTexture, labelTexture, lookFor, plateKey, sleepZTexture, spriteKey, textTexture, type FxKind, type PlateStats } from "./sprites";
+import { badgeTexture, badgesKey, bubbleTexture, fxTexture, labelTexture, lookFor, plateKey, sleepZTexture, spriteKey, textTexture, type Badge, type FxKind, type PlateStats } from "./sprites";
 
 /** Spells fly as a coloured bolt; these are their colours, by ability name. */
 const SPELL_COLOR: Record<string, string> = {
@@ -138,6 +138,8 @@ export interface RenderUnit {
   active?: boolean;
   /** In a fight: it wears a red ring. */
   hostile?: boolean;
+  /** Conditions on it, badged over its head. */
+  effects?: Badge[];
 }
 
 /**
@@ -175,6 +177,8 @@ export interface RenderHero {
   active?: boolean;
   /** Holding a lit torch: underground, its light goes where they go. */
   torch?: boolean;
+  /** Conditions on them, badged over their head. */
+  effects?: Badge[];
 }
 
 /** The first word of a name, for a plate: "Ewan Driftwood" is "Ewan". */
@@ -540,6 +544,9 @@ interface Unit {
   ring: THREE.Mesh | null;
   hpBack: THREE.Sprite | null;
   hpFill: THREE.Sprite | null;
+  /** Its status badges, and what they were last drawn for. */
+  badges?: THREE.Sprite | null;
+  badgesKey?: string;
   label: THREE.Sprite | null;
   labelText: string;
   goal: THREE.Vector3;
@@ -604,6 +611,8 @@ const MAX_STUCK_ARROWS = 6;
 
 interface Want {
   kind: string;
+  /** The conditions on it, shown as a row of badges over its head until each wears off. */
+  effects?: Badge[];
   /** Draw the unit wearing this instead of its kind's stock look. */
   outfit?: Outfit;
   pos: THREE.Vector3;
@@ -5130,7 +5139,7 @@ export class WorldRenderer {
       // A plate shows a first name only: full names run long over a crowd.
       const full = h.label ?? (plate ? h.name : undefined);
       const label = plate && full ? firstName(full) : full;
-      want.set(h.id, { kind: h.classId, outfit: h.outfit, pos, size: 1.5, label, plate: label ? plate : undefined, stack: i, ring: colorOf(h.id), pulse: state.turn?.heroId === h.id || !!h.active, asleep: h.asleep, rod: h.rod, boat: h.boat, down: h.down, prone: h.prone });
+      want.set(h.id, { kind: h.classId, outfit: h.outfit, pos, size: 1.5, label, plate: label ? plate : undefined, stack: i, ring: colorOf(h.id), pulse: state.turn?.heroId === h.id || !!h.active, asleep: h.asleep, rod: h.rod, boat: h.boat, down: h.down, prone: h.prone, effects: h.effects });
     }
     for (const npc of state.story?.npcs ?? []) {
       const poi = state.map.pois.find((p) => p.id === npc.poi);
@@ -5152,7 +5161,7 @@ export class WorldRenderer {
     for (const u of state.units ?? []) {
       const pos = this.standAt(u.pos);
       pos.z += 0.25;
-      want.set(u.id, { kind: u.kind, pos, size: isBoss(u.kind) ? 1.9 : isBig(u.kind) ? 1.6 : 1.4, label: u.name, ring: u.hostile ? "#e23b3b" : undefined, pulse: !!u.active, hp: u.hp, down: u.down, prone: u.prone });
+      want.set(u.id, { kind: u.kind, pos, size: isBoss(u.kind) ? 1.9 : isBig(u.kind) ? 1.6 : 1.4, label: u.name, ring: u.hostile ? "#e23b3b" : undefined, pulse: !!u.active, hp: u.hp, down: u.down, prone: u.prone, effects: u.effects });
     }
     for (const poi of state.map.pois) {
       if (poi.cleared || poi.enemies.length === 0) continue;
@@ -5177,6 +5186,11 @@ export class WorldRenderer {
       if (unit.ring) this.unitGroup.remove(unit.ring);
       if (unit.hpBack) this.unitGroup.remove(unit.hpBack);
       if (unit.hpFill) this.unitGroup.remove(unit.hpFill);
+      if (unit.badges) {
+        this.unitGroup.remove(unit.badges);
+        unit.badges.material.map?.dispose();
+        unit.badges.material.dispose();
+      }
       this.clearArrows(unit);
       this.dropLabel(unit);
       this.units.delete(id);
@@ -5246,6 +5260,27 @@ export class WorldRenderer {
           unit.hpFill.scale.set(Math.max(0.001, 1.14 * w.hp!), 0.1, 1);
           unit.hpFill.material.color.set(w.hp! > 0.5 ? "#6ee06e" : w.hp! > 0.25 ? "#ffd23f" : "#ff6b6b");
           unit.hpBack.userData.lift = unit.hpFill.userData.lift = w.size + 0.25;
+        }
+      }
+      // What it is under, badged over its head until each wears off. Redrawn only when the list or a count changes.
+      const effects = w.down ? [] : (w.effects ?? []);
+      const key = badgesKey(effects);
+      if (key !== (unit.badgesKey ?? "")) {
+        unit.badgesKey = key;
+        if (unit.badges) {
+          unit.badges.material.map?.dispose();
+          unit.badges.material.dispose();
+          this.unitGroup.remove(unit.badges);
+          unit.badges = null;
+        }
+        if (effects.length > 0) {
+          const { texture, aspect } = badgeTexture(effects);
+          const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: texture, depthTest: false, transparent: true }));
+          sprite.renderOrder = 7;
+          sprite.layers.set(OVERLAY_LAYER);
+          sprite.userData.aspect = aspect;
+          unit.badges = sprite;
+          this.unitGroup.add(sprite);
         }
       }
     }
@@ -6068,6 +6103,15 @@ export class WorldRenderer {
         const lift = unit.hpBack.userData.lift ?? 2;
         unit.hpBack.position.set(p.x - 0.6, ground + lift, p.z);
         unit.hpFill.position.set(p.x - 0.57, ground + lift, p.z);
+      }
+      if (unit.badges) {
+        // Over the name tag or plate, clear of the health bar too.
+        const bar = unit.hpBack?.visible ? ground + (unit.hpBack.userData.lift ?? 2) + 0.26 : ground + unit.head + 0.4;
+        const tag = this.plateTop(unit);
+        const over = tag !== null ? Math.max(bar, tag + 0.2) : bar;
+        const tall = 0.3;
+        unit.badges.position.set(p.x, over, p.z);
+        unit.badges.scale.set(tall * (unit.badges.userData.aspect as number), tall, 1);
       }
     }
 

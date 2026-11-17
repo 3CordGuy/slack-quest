@@ -141,7 +141,10 @@ function dwell(ev: ZoneEvent, many: boolean, next: ZoneEvent | undefined): numbe
     default: return 0;
   }
 }
-/** How a lit torch is drawn in the off hand (render/gearModels.ts "torch"). */
+/** The conditions on a unit, as badges over its head: in CONDITION_INFO's colours, with rounds left. */
+const badgesOf = (u: Unit) => u.conditions.map((c) => ({ kind: c.kind, color: CONDITION_INFO[c.kind].color, rounds: c.rounds }));
+
+/** How a lit torch is drawn in a hand (figures.ts drawTorch). */
 const TORCH_IN_HAND = { icon: "torch", ref: "torch", rarity: "common" as const };
 
 /** The breath after several have been struck at once, before the next thing is shown. */
@@ -606,9 +609,9 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
       round: 0,
       map: state.map,
       // A lit torch is held in the off hand, where a shield would be.
-      heroes: picture.units.filter((u) => u.side === "hero").map((u) => ({ id: u.id, classId: u.kind, pos: u.pos, name: u.name, outfit: u.torch ? { ...u.outfit, [u.torchHand === "main" ? "main_hand" : "off_hand"]: TORCH_IN_HAND } : u.outfit, torch: !!u.torch, level: u.level, xp: 0, hp: u.hp, maxHp: u.maxHp, down: u.down, prone: u.conditions.some((c) => c.kind === "prone"), active: turn(u.id) })),
+      heroes: picture.units.filter((u) => u.side === "hero").map((u) => ({ id: u.id, classId: u.kind, pos: u.pos, name: u.name, outfit: u.torch ? { ...u.outfit, [u.torchHand === "main" ? "main_hand" : "off_hand"]: TORCH_IN_HAND } : u.outfit, torch: !!u.torch, effects: badgesOf(u), level: u.level, xp: 0, hp: u.hp, maxHp: u.maxHp, down: u.down, prone: u.conditions.some((c) => c.kind === "prone"), active: turn(u.id) })),
       // What the dark hides is not drawn: out of a fight the server does not even send it.
-      units: picture.units.filter((u) => u.side === "enemy" && !state.dark?.includes(u.id)).map((u) => ({ id: u.id, kind: u.kind, pos: u.pos, name: u.name, hp: inFight(u.id) || u.hp < u.maxHp ? u.hp / u.maxHp : undefined, down: u.down, prone: u.conditions.some((c) => c.kind === "prone"), active: u.id === spot, hostile: inFight(u.id) })),
+      units: picture.units.filter((u) => u.side === "enemy" && !state.dark?.includes(u.id)).map((u) => ({ id: u.id, kind: u.kind, pos: u.pos, name: u.name, hp: inFight(u.id) || u.hp < u.maxHp ? u.hp / u.maxHp : undefined, down: u.down, prone: u.conditions.some((c) => c.kind === "prone"), active: u.id === spot, hostile: inFight(u.id), effects: badgesOf(u) })),
       turn: null,
       story: null,
       npcs: {},
