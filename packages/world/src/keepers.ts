@@ -53,9 +53,18 @@ export interface KeeperFitting {
   q: number;
   r: number;
   facing: number;
+  /** Drawn this far (in world units, along +x and +z) from the middle of its hex: the keeper's workpiece is pulled in to within their reach. */
+  x?: number;
+  z?: number;
 }
 
-const fit = (id: number, model: string, col: number, row: number, facing = 0): KeeperFitting => ({ id, model, ...at(col, row), facing });
+const fit = (id: number, model: string, col: number, row: number, facing = 0, pull?: { x: number; z: number }): KeeperFitting => ({ id, model, ...at(col, row), facing, ...pull });
+
+/** How a keeper keeps busy: hammering at their anvil, or stirring their cauldron, which is the fitting `fitting`. */
+export interface KeeperWork {
+  how: "hammer" | "stir";
+  fitting: number;
+}
 
 export interface KeeperPlace {
   shop: KeeperShop;
@@ -68,9 +77,16 @@ export interface KeeperPlace {
   stand: HexPos;
   /** The furniture. It never moves, and it is walked around. */
   fittings: KeeperFitting[];
+  /** What the keeper is at, the whole time: they turn to it and work, and go on working while they deal with you. */
+  work: KeeperWork;
 }
 
-/** The keeper stands in the middle of the room with their work around them; the customer comes up in front. */
+/**
+ * The keeper stands in the middle of the room with their work around them; the customer comes up in front. Their
+ * workpiece (the anvil, the cauldron) is the hex to their left, drawn pulled in against them and a little toward the
+ * room (`WORK_PULL`), so they stand three-quarters on to it and their blows and their stirring are seen from the side.
+ */
+const WORK_PULL = { x: 1.05, z: 0.55 };
 const KEEPER_POS = at(4, 2);
 const KEEPER_STAND = at(4, 3);
 
@@ -81,11 +97,14 @@ export const KEEPER_PLACES: Record<KeeperShop, KeeperPlace> = {
     keeper: { id: "keeper:smithy", name: "Greta Ironhand", short: "Greta", trade: "the smith", look: "keeper_smith", hello: "Mind the sparks. What needs an edge?", line: "Good iron costs what it costs. Mostly." },
     keeperPos: KEEPER_POS,
     stand: KEEPER_STAND,
+    work: { how: "hammer", fitting: 3 },
     fittings: [
-      // The forge against the back wall behind her, the coal beside it, the anvil at her left hand and the quench at her right.
+      // The forge against the back wall behind her, the coal beside it, the anvil close before her (she faces it, to
+      // her left as you look) and the quench behind her.
       fit(1, "forge", 4, 1),
       fit(2, "coal_bin", 3, 1),
-      fit(3, "anvil", 3, 2),
+      // Turned a sixth, so its face lies across her and the horn points off into the room.
+      fit(3, "anvil", 3, 2, 1, WORK_PULL),
       fit(4, "quench_tub", 5, 2),
       // Finished work along the back wall, and the bench and the wheel down the sides.
       fit(5, "weapon_rack", 1, 1),
@@ -102,11 +121,13 @@ export const KEEPER_PLACES: Record<KeeperShop, KeeperPlace> = {
     keeper: { id: "keeper:apothecary", name: "Ansel Reed", short: "Ansel", trade: "the apothecary", look: "keeper_apothecary", hello: "Don't touch the green ones. What ails you?", line: "Everything on the shelf is fresh. Fresh enough." },
     keeperPos: KEEPER_POS,
     stand: KEEPER_STAND,
+    work: { how: "stir", fitting: 3 },
     fittings: [
-      // Shelves of bottles along the back wall, the cauldron at his left hand and the counter with the scales at his right.
+      // Shelves of bottles along the back wall, the cauldron close before him (he faces it, to his left as you look)
+      // and the counter with the scales behind him.
       fit(1, "potion_shelf", 3, 1),
       fit(2, "potion_shelf", 4, 1),
-      fit(3, "cauldron", 3, 2),
+      fit(3, "cauldron", 3, 2, 0, WORK_PULL),
       fit(4, "shop_counter", 5, 2),
       fit(5, "herb_rack", 1, 1),
       fit(6, "potion_shelf", 6, 1),

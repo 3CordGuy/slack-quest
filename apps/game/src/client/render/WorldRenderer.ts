@@ -1498,6 +1498,18 @@ export class WorldRenderer {
     if (!unit.figure.play()) unit.figure.cast();
   }
 
+  /**
+   * Someone at their trade (a shopkeeper at work): the unit turns to the spot given and brings a hammer down on it,
+   * or stirs the pot there. Returns the seconds until a hammer lands, for its sparks and its ring; 0 for a stir,
+   * or for a unit that is not there, is down, or is walking.
+   */
+  work(unitId: string, how: "hammer" | "stir", at: { x: number; z: number }): number {
+    const unit = this.units.get(unitId);
+    if (!unit || unit.lying || unit.path.length > 0) return 0;
+    this.face(unit, at.x, at.z);
+    return unit.figure.work(how);
+  }
+
   /** A guard put up: the unit braces behind its shield, or what it has in hand. */
   brace(actorId: string) {
     const unit = this.units.get(actorId);

@@ -1,7 +1,8 @@
 // Inside the smithy or the apothecary: a small room drawn by the same
-// renderer as the pub and the huts, with the keeper standing among their
-// work. Walk up to them (or click them) to see what they sell and do, and to
-// haggle. The door at the front leads back to the Harbor.
+// renderer as the pub and the huts, with the keeper at their work (Greta
+// hammering at her anvil, Ansel stirring his cauldron), and still at it
+// while they deal with you. Walk up to them (or click them) to see what they
+// sell and do, and to haggle. The door at the front leads back to the Harbor.
 //
 // Unlike the pub, nobody else is in here: the room is this player's own copy
 // and the walking is worked out in the browser (the rules are still
@@ -9,6 +10,7 @@
 // through the server, as before.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import * as THREE from "three";
 import type { HexPos } from "@gantt-quest/core";
 import { KEEPER_PLACES, keeperPath, keeperRoom, outfitOf, type KeeperShop } from "@gantt-quest/world";
 import { api, type ApothecaryView, type Me, type SmithyView } from "./api";
@@ -17,7 +19,9 @@ import { InventoryScreen } from "./InventoryScreen";
 import { toOwned } from "./items";
 import { Logbook } from "./Logbook";
 import { OptionsMenu } from "./OptionsMenu";
-import { WorldRenderer, type RenderState } from "./render/WorldRenderer";
+import { audio } from "./audio/engine";
+import { SpellFx } from "./render/SpellFx";
+import { WorldRenderer, hexToWorld, type RenderState } from "./render/WorldRenderer";
 import { withLook } from "./render/sprites";
 import { TileAction } from "./TileAction";
 import { HudBar } from "./ui/Hud";
@@ -75,7 +79,7 @@ export function KeeperView({ shop, me, refresh, onLeave }: { shop: KeeperShop; m
       npcs: {},
       freeRoam: true,
       indoors: true,
-      props: place.fittings.map((f) => ({ id: f.id, model: f.model, pos: { q: f.q, r: f.r }, facing: f.facing })),
+      props: place.fittings.map((f) => ({ id: f.id, model: f.model, pos: { q: f.q, r: f.r }, facing: f.facing, x: f.x, z: f.z })),
     }),
     [shop, you, room, c.class_id, c.name, c.level, c.xp, pos, outfit, keeper, place],
   );
@@ -99,11 +103,40 @@ export function KeeperView({ shop, me, refresh, onLeave }: { shop: KeeperShop; m
     });
     renderer.current = r;
     r.setState(latest.current);
+    const sparks = new SpellFx(r);
+    // The keeper at their work the whole time, you there or not: Greta's hammer rings on the anvil about once a
+    // second, with a spray of sparks off the work as it lands; Ansel goes round and round his cauldron.
+    const piece = place.fittings.find((f) => f.id === place.work.fitting)!;
+    const spot = hexToWorld(piece);
+    const at = { x: spot.x + (piece.x ?? 0), z: spot.z + (piece.z ?? 0) };
+    const timers = new Set<ReturnType<typeof setTimeout>>();
+    const later = (fn: () => void, ms: number) => {
+      const t = setTimeout(() => {
+        timers.delete(t);
+        fn();
+      }, ms);
+      timers.add(t);
+    };
+    const beat = place.work.how === "hammer" ? 1150 : 2400;
+    const go = () => {
+      const wait = r.work(keeper.id, place.work.how, at);
+      if (place.work.how === "hammer" && wait > 0) {
+        later(() => {
+          sparks.burst(new THREE.Vector3(at.x, 0.78, at.z), "#ffb84a", 7);
+          audio.play("gather.pick", { at });
+        }, wait * 1000);
+      }
+      // Now and then a breath between blows, so it is not a metronome. A stir just goes round and round.
+      later(go, place.work.how === "hammer" ? beat + (Math.random() < 0.2 ? 900 : Math.random() * 200) : beat);
+    };
+    later(go, 600);
     return () => {
+      for (const t of timers) clearTimeout(t);
+      sparks.dispose();
       r.dispose();
       renderer.current = null;
     };
-  }, [place]);
+  }, [place, keeper]);
   useEffect(() => {
     renderer.current?.setState(scene);
   }, [scene]);

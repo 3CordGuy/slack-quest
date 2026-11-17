@@ -525,7 +525,7 @@ const MODELS: Record<string, (b: Builder) => void> = {
       }
     }
   },
-  // The cauldron: a black iron pot on three legs over a small fire, the brew a sickly green and bubbling, a ladle in it.
+  // The cauldron: a black iron pot on three legs over a small fire, the brew a sickly green and bubbling. The apothecary stirs it with his paddle.
   cauldron(b) {
     for (let i = 0; i < 6; i++) {
       const a = (i * Math.PI) / 3 + 0.2;
@@ -541,7 +541,6 @@ const MODELS: Record<string, (b: Builder) => void> = {
     b.post("#26262b", 0.37, 0.37, 0.05, 0, 0.56, 0, 10);
     b.glow("#7fd66a", new THREE.CylinderGeometry(0.32, 0.32, 0.02, 10), 0, 0.6, 0);
     for (const [x, z, r] of [[-0.12, 0.06, 0.05], [0.1, -0.08, 0.04], [0.04, 0.14, 0.03]]) b.glow("#b6f2a0", new THREE.IcosahedronGeometry(r, 0), x, 0.62, z);
-    b.post(PALE_WOOD, 0.015, 0.015, 0.5, 0.2, 0.5, -0.1, 5).rotation.z = -0.5;
     b.fire(0, 0.3, 0.5);
   },
   // The apothecary's counter: a panelled front, a top with the scales, a mortar and pestle, and a few bottles put out.
