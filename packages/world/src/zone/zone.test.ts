@@ -10,12 +10,13 @@ import { adjacent, blast, flies, sees, solid, zoneReach } from "./geometry";
 import { ENEMY_KIT, EXPLORE_ROUND_MS, LIGHT_RADIUS, SHIELD_SET_ASIDE, TACTICS, TORCH_GROUND_ROUNDS, TORCH_HELD_ROUNDS, TORCH_ROUND_MS, enemyHp, enemyStrikes, tacticOf } from "./kit";
 import { MAX_CATCHUP_ROUNDS } from "./clock";
 import { defenceOf } from "./engine";
-import { checkAbility } from "./combat";
+import { checkAbility, crateBlow } from "./combat";
 import { d20, diceAverage, diceFor, heroMove, hitChance } from "./rules";
 import { createZone, standInHero, stepZone, zoneView } from "./zone";
-import { generateDelve } from "./delve";
+import { DELVE_CRATES, generateDelve } from "./delve";
 import { litHexes } from "./light";
-import { CHEST_PAY } from "./loot";
+import { CHEST_PAY, unopened } from "./loot";
+import { CRATE_HP, CRATE_PAY } from "./crates";
 import { NOISE_RANGE } from "./doors";
 import type { SurfaceKind, Unit, ZoneAction, ZoneEffect, ZoneEvent, ZoneState } from "./types";
 
@@ -1238,6 +1239,53 @@ describe("a delve", () => {
     throw new Error("no delve with a key in sixty seeds");
   });
 
+  it("sets out no chest or crate where it blocks the way up to a locked door", () => {
+    let doors = 0;
+    for (let seed = 0; seed < 60; seed++) {
+      const state = createZone("DLVE", `d${seed}`, delveOptions());
+      const things = new Set(state.map.pois.filter((p) => p.kind === "cache" || p.kind === "crate").map((p) => posKey(p.pos)));
+      const seen = new Set([posKey(state.start)]);
+      const queue = [state.start];
+      for (let i = 0; i < queue.length; i++) {
+        for (const n of hexNeighbors(queue[i], state.map.grid)) {
+          if (seen.has(posKey(n)) || things.has(posKey(n)) || solid(tileOf(state, n))) continue;
+          seen.add(posKey(n));
+          queue.push(n);
+        }
+      }
+      for (const door of state.map.pois.filter((p) => p.kind === "gate")) {
+        doors++;
+        // Some floor beside the door can be walked to from the mouth, round every chest and crate.
+        expect(hexNeighbors(door.pos, state.map.grid).some((n) => seen.has(posKey(n))), `seed ${seed} ${door.id}`).toBe(true);
+      }
+    }
+    expect(doors).toBeGreaterThan(0);
+  });
+
+  it("puts no chest where it shuts off any of the floor: one in the only way through is set aside in its chamber", () => {
+    for (let seed = 0; seed < 60; seed++) {
+      const where = `seed ${seed}`;
+      const state = createZone("DLVE", `x${seed}`, delveOptions());
+      const chests = state.map.pois.filter((p) => p.kind === "cache");
+      const walk = (blocked: Set<string>) => {
+        const seen = new Set([posKey(state.start)]);
+        const queue = [state.start];
+        for (let i = 0; i < queue.length; i++) {
+          for (const n of hexNeighbors(queue[i], state.map.grid)) {
+            if (seen.has(posKey(n)) || blocked.has(posKey(n)) || solid(tileOf(state, n))) continue;
+            seen.add(posKey(n));
+            queue.push(n);
+          }
+        }
+        return seen;
+      };
+      const keys = new Set(chests.map((c) => posKey(c.pos)));
+      const round = walk(keys);
+      for (const key of walk(new Set())) if (!keys.has(key)) expect(round.has(key), `${where} ${key}`).toBe(true);
+      expect(chests.some((c) => posKey(c.pos) === posKey(state.start)), where).toBe(false);
+    }
+  });
+
   it("sends a lone hero against smaller bands, and the haunt alone", () => {
     const solo = createZone("DLVE", "d3", delveOptions(1));
     const crew = createZone("DLVE", "d3", delveOptions(4));
@@ -1297,6 +1345,336 @@ describe("a delve", () => {
     expect(state.encounter!.budgets.ann.action).toBe(false);
     state.map.pois.push({ id: "chest10", kind: "cache", pos: at(5, 6), hidden: false, cleared: false, usedBy: [], enemies: [], loot: "chest" });
     expect(fails(state, { type: "open", by: "ann", unit: "ann", poi: "chest10" })).toMatch(/Action/);
+  });
+});
+
+// ---------- crates ----------
+
+describe("crates", () => {
+  /** A crate standing on a hex, with this much left in it. */
+  const crate = (state: ZoneState, id: string, pos: HexPos, hp = CRATE_HP) => {
+    state.map.pois.push({ id, kind: "crate", pos, hidden: false, cleared: false, usedBy: [], enemies: [], hp, maxHp: CRATE_HP });
+    return id;
+  };
+  const poi = (state: ZoneState, id: string) => state.map.pois.find((p) => p.id === id)!;
+  const hits = (events: ZoneEvent[], id: string) => events.filter((e): e is Extract<ZoneEvent, { t: "crate_hit" }> => e.t === "crate_hit" && e.poi === id);
+  /** A hero beside a crate, out of any fight. */
+  function beside(classId = "qa_paladin", hp = CRATE_HP) {
+    const state = board();
+    hero(state, "ann", classId, at(5, 6));
+    crate(state, "crate1", at(6, 6), hp);
+    return state;
+  }
+
+  it("are stacked about a delve, and never shut off any of the floor, a chest or each other", () => {
+    const delveOptions = zoneOptions({ biome: "caves", delve: true, party: 2, level: 3 });
+    let total = 0;
+    for (let seed = 0; seed < 16; seed++) {
+      const where = `seed ${seed}`;
+      const state = createZone("DLVE", `d${seed}`, delveOptions);
+      const crates = state.map.pois.filter((p) => p.kind === "crate");
+      const chests = state.map.pois.filter((p) => p.kind === "cache");
+      total += crates.length;
+      expect(crates.length, where).toBeGreaterThanOrEqual(DELVE_CRATES[0]);
+      expect(new Set(crates.map((c) => c.id)).size, where).toBe(crates.length);
+      /** The floor walkable from the mouth, round whatever stands on these hexes. A locked door can be opened, so it counts as a way through. */
+      const walkable = (blocked: Set<string>) => {
+        const seen = new Set([posKey(state.start)]);
+        const queue = [state.start];
+        for (let i = 0; i < queue.length; i++) {
+          for (const n of hexNeighbors(queue[i], state.map.grid)) {
+            const t = state.map.tiles.find((x) => x.q === n.q && x.r === n.r);
+            if (!t || (solid(t) && t.biome !== "gate") || seen.has(posKey(n)) || blocked.has(posKey(n))) continue;
+            seen.add(posKey(n));
+            queue.push(n);
+          }
+        }
+        return seen;
+      };
+      const crateKeys = new Set(crates.map((c) => posKey(c.pos)));
+      const withChests = walkable(new Set(chests.map((c) => posKey(c.pos))));
+      const withAll = walkable(new Set([...chests, ...crates].map((c) => posKey(c.pos))));
+      for (const c of crates) {
+        expect(c.hp, where).toBe(CRATE_HP);
+        expect(state.map.tiles.find((t) => t.q === c.pos.q && t.r === c.pos.r)?.biome, where).toBe("cave");
+        expect(state.units.some((u) => posKey(u.pos) === posKey(c.pos)), where).toBe(false);
+        expect(hexDistance(c.pos, state.start), where).toBeGreaterThan(2);
+        // Never right beside a chest, so it never stands where a chest is opened from.
+        for (const chest of chests) expect(hexDistance(c.pos, chest.pos), where).toBeGreaterThan(1);
+        // Every crate can be walked up to, to be broken.
+        expect(hexNeighbors(c.pos, state.map.grid).some((n) => withAll.has(posKey(n))), where).toBe(true);
+      }
+      // Nothing the party could walk to before is cut off by them, and every chest can still be got beside.
+      for (const key of withChests) if (!crateKeys.has(key)) expect(withAll.has(key), `${where} ${key}`).toBe(true);
+      for (const chest of chests) expect(hexNeighbors(chest.pos, state.map.grid).some((n) => withAll.has(posKey(n))), where).toBe(true);
+      // They are something to break, not something to open: the cave is cleared without them.
+      expect(unopened(state), where).toBe(chests.length);
+    }
+    expect(total / 16).toBeGreaterThan(DELVE_CRATES[0]);
+  });
+
+  it("stand in the way like a chest: nobody walks, jumps or is shoved onto one, and the splinters can be walked over", () => {
+    let state = beside();
+    expect(zoneReach(state, unit(state, "ann"), 10).has(posKey(at(6, 6)))).toBe(false);
+    expect(fails(state, { type: "move", by: "ann", unit: "ann", to: at(6, 6) })).toMatch(/cannot get there/);
+    expect(fails(state, { type: "common", by: "ann", unit: "ann", what: "jump", at: at(6, 6) })).toMatch(/nowhere to land/);
+    // Shoved back into one, an enemy goes down where it stands.
+    const shoved = board();
+    shoved.aiOff = true;
+    hero(shoved, "ann", "qa_paladin", at(4, 6));
+    const foe = enemy(shoved, "dummy", at(5, 6));
+    crate(shoved, "crate1", at(6, 6));
+    let pushed: ZoneState | null = null;
+    for (let seed = 1; seed < 40 && !pushed; seed++) {
+      const step = stepZone({ ...shoved, rng: seed }, { type: "common", by: "ann", unit: "ann", what: "shove", target: foe.id });
+      if (step.ok && step.events.some((e) => e.t === "shoved")) pushed = step.state;
+    }
+    expect(pushed).not.toBeNull();
+    expect(unit(pushed!, foe.id).pos).toEqual(at(5, 6));
+    // Broken, it is only splinters.
+    poi(state, "crate1").cleared = true;
+    state = must(state, { type: "move", by: "ann", unit: "ann", to: at(6, 6) });
+    expect(unit(state, "ann").pos).toEqual(at(6, 6));
+  });
+
+  it("always takes a hero's blow: no roll, no fight, no Focus spent, and the damage comes off", () => {
+    const state = beside("qa_paladin", 60);
+    const events: ZoneEvent[] = [];
+    const next = must(state, { type: "use", by: "ann", unit: "ann", ability: "smite", target: "crate1", focus: true }, events);
+    const [hit] = hits(events, "crate1");
+    expect(hit).toMatchObject({ actor: "ann", what: "smite" });
+    expect(hit.amount).toBeGreaterThan(0);
+    expect(poi(next, "crate1").hp).toBe(60 - hit.amount);
+    expect(events.some((e) => e.t === "roll")).toBe(false);
+    expect(events).toContainEqual({ t: "used", id: "ann", what: "smite", name: ABILITIES.smite.name, target: "crate1", at: undefined });
+    expect(next.encounter).toBeNull();
+    expect(unit(next, "ann").focus).toBe(unit(state, "ann").focus);
+  });
+
+  it("breaks at 0 and pays whoever broke it: wood, maybe gold and a find, and no XP", () => {
+    let state = beside("qa_paladin", 1);
+    const step = stepZone(state, { type: "use", by: "ann", unit: "ann", ability: "smite", target: "crate1" });
+    if (!step.ok) throw new Error(step.error);
+    state = step.state;
+    expect(step.events).toContainEqual({ t: "crate_hit", poi: "crate1", actor: "ann", amount: 1, what: "smite" });
+    expect(step.events).toContainEqual({ t: "crate_broken", poi: "crate1", id: "ann" });
+    expect(poi(state, "crate1")).toMatchObject({ cleared: true, hp: 0 });
+    expect(step.effects).toHaveLength(1);
+    const grant = step.effects[0];
+    expect(grant).toMatchObject({ type: "grant", heroId: "ann", xp: 0 });
+    expect(grant.resources.wood).toBeGreaterThanOrEqual(CRATE_PAY.wood[0]);
+    expect(grant.item).toBeUndefined();
+    expect(step.events.some((e) => e.t === "spoils" && e.id === "ann" && e.xp === 0)).toBe(true);
+    expect(fails(state, { type: "use", by: "ann", unit: "ann", ability: "smite", target: "crate1" })).toMatch(/broken already/);
+
+    // Over many crates: always wood, often gold, now and then a potion or a torch, in the pack at once.
+    const found = { gold: 0, potion: 0, torch: 0 };
+    for (let seed = 1; seed <= 200; seed++) {
+      const fresh = beside("qa_paladin", 1);
+      fresh.rng = seed;
+      const one = stepZone(fresh, { type: "use", by: "ann", unit: "ann", ability: "smite", target: "crate1" });
+      if (!one.ok) throw new Error(one.error);
+      const g = one.effects[0];
+      const wood = g.resources.wood ?? 0;
+      expect(wood).toBeGreaterThanOrEqual(CRATE_PAY.wood[0]);
+      expect(wood).toBeLessThanOrEqual(CRATE_PAY.wood[1]);
+      if (g.gold) {
+        found.gold += 1;
+        expect(g.gold).toBeGreaterThanOrEqual(CRATE_PAY.gold[0]);
+        expect(g.gold).toBeLessThanOrEqual(CRATE_PAY.gold[1]);
+      }
+      if (g.items?.healing) found.potion += 1;
+      if (g.items?.torch) found.torch += 1;
+      expect(unit(one.state, "ann").items.healing ?? 0).toBe((unit(fresh, "ann").items.healing ?? 0) + (g.items?.healing ?? 0));
+    }
+    expect(found.gold).toBeGreaterThan(80);
+    expect(found.potion).toBeGreaterThan(5);
+    expect(found.potion).toBeLessThan(60);
+    expect(found.torch).toBeGreaterThan(5);
+  });
+
+  it("needs a melee blow from beside it, and a shot or a spell from in range with a clear line", () => {
+    const state = board(tileEdit(at(7, 6), { biome: "rock" }));
+    hero(state, "ann", "qa_paladin", at(4, 6));
+    const rogue = hero(state, "bo", "refactor_rogue", at(10, 6));
+    crate(state, "crate1", at(6, 6));
+    expect(fails(state, { type: "use", by: "ann", unit: "ann", ability: "smite", target: "crate1" })).toMatch(/next to it/);
+    expect(fails(state, { type: "use", by: "bo", unit: "bo", ability: "aimed_shot", target: "crate1" })).toMatch(/no clear line/);
+    rogue.pos = at(6, 9);
+    const events: ZoneEvent[] = [];
+    must(state, { type: "use", by: "bo", unit: "bo", ability: "aimed_shot", target: "crate1" }, events);
+    expect(hits(events, "crate1")).toHaveLength(1);
+    expect(fails(state, { type: "use", by: "ann", unit: "ann", ability: "smite", target: "nothing" })).toMatch(/Pick an enemy/);
+  });
+
+  it("is caught by a sweep all round, a blast and a thrown bomb", () => {
+    // A sweep with nothing but a crate beside you still swings.
+    let state = beside("qa_paladin", 60);
+    unit(state, "ann").abilities = ["cleave"];
+    let events: ZoneEvent[] = [];
+    must(state, { type: "use", by: "ann", unit: "ann", ability: "cleave" }, events);
+    expect(hits(events, "crate1")).toHaveLength(1);
+    poi(state, "crate1").pos = at(9, 9);
+    expect(fails(state, { type: "use", by: "ann", unit: "ann", ability: "cleave" })).toMatch(/No enemy is next to you/);
+
+    state = board();
+    const mage = hero(state, "ann", "devops_mage", at(3, 6));
+    mage.abilities = ["thunderhead"];
+    crate(state, "crate1", at(6, 6), 60);
+    crate(state, "crate2", at(7, 6), 60);
+    crate(state, "crate3", at(9, 6), 60);
+    events = [];
+    must(state, { type: "use", by: "ann", unit: "ann", ability: "thunderhead", at: at(6, 6) }, events);
+    expect(hits(events, "crate1")).toHaveLength(1);
+    expect(hits(events, "crate2")).toHaveLength(1);
+    expect(hits(events, "crate3")).toHaveLength(0);
+    // The blast's one roll, all of it: a crate makes no save.
+    expect(hits(events, "crate1")[0].amount).toBe(hits(events, "crate2")[0].amount);
+
+    // Acid eats into it; a poison flask, which does no harm as it lands, leaves it be.
+    unit(state, "ann").items.acid = 1;
+    events = [];
+    must(state, { type: "throw", by: "ann", unit: "ann", item: "acid", at: at(6, 6) }, events);
+    expect(hits(events, "crate1").map((h) => h.what)).toEqual(["throw:acid"]);
+    events = [];
+    must(state, { type: "throw", by: "ann", unit: "ann", item: "poison", at: at(6, 6) }, events);
+    expect(hits(events, "crate1")).toEqual([]);
+  });
+
+  it("burns in fire: as it takes hold, and again each round it lasts, in a fight or out of one", () => {
+    // A fire bomb: the blast, then the flames under it.
+    let state = board();
+    hero(state, "ann", "devops_mage", at(3, 6));
+    crate(state, "crate1", at(6, 6), 60);
+    let events: ZoneEvent[] = [];
+    state = must(state, { type: "throw", by: "ann", unit: "ann", item: "fire", at: at(6, 6) }, events);
+    expect(hits(events, "crate1").map((h) => h.what)).toEqual(["throw:fire", "fire"]);
+    expect(hits(events, "crate1")[1].actor).toBe("ann");
+
+    // In a fight it burns on at the turn of each round.
+    let fight = duel("dummy").state;
+    crate(fight, "crate9", at(6, 9), 60);
+    fight = paint(fight, "fire", [at(6, 9)]);
+    expect(poi(fight, "crate9").hp).toBeLessThan(60);
+    const after = poi(fight, "crate9").hp!;
+    events = [];
+    fight = must(fight, { type: "end_turn", by: "ann", unit: "ann" }, events);
+    expect(events.some((e) => e.t === "round")).toBe(true);
+    expect(hits(events, "crate9")).toHaveLength(1);
+    expect(poi(fight, "crate9").hp).toBe(after - hits(events, "crate9")[0].amount);
+
+    // Out of a fight, each round of time that passes burns it again, and its breaker is whoever started the fire.
+    state = must(state, { type: "time", now: 1_000_000 });
+    const before = poi(state, "crate1").hp!;
+    events = [];
+    state = must(state, { type: "time", now: 1_000_000 + 2 * EXPLORE_ROUND_MS }, events);
+    expect(hits(events, "crate1").map((h) => [h.what, h.actor])).toEqual([["fire", "ann"], ["fire", "ann"]]);
+    expect(poi(state, "crate1").hp).toBe(before - hits(events, "crate1").reduce((n, h) => n + h.amount, 0));
+  });
+
+  it("pays the player whose stand-in broke it, and nobody for a fire no hero started", () => {
+    const state = board();
+    hero(state, "ann", "qa_paladin", at(2, 2));
+    const helper = hero(state, "s1", "qa_paladin", at(5, 6));
+    helper.controller = "ann";
+    crate(state, "crate1", at(6, 6), 1);
+    const step = stepZone(state, { type: "use", by: "ann", unit: "s1", ability: "smite", target: "crate1" });
+    if (!step.ok) throw new Error(step.error);
+    expect(step.events).toContainEqual({ t: "crate_broken", poi: "crate1", id: "s1" });
+    expect(step.effects.map((e) => e.heroId)).toEqual(["ann"]);
+
+    const burnt = board();
+    hero(burnt, "ann", "qa_paladin", at(2, 2));
+    crate(burnt, "crate1", at(6, 6), 1);
+    const fire = stepZone(burnt, { type: "dev", by: "ann", dev: { op: "paint", kind: "fire", hexes: [at(6, 6)] } });
+    if (!fire.ok) throw new Error(fire.error);
+    expect(fire.events).toContainEqual({ t: "crate_broken", poi: "crate1", id: null });
+    expect(fire.effects).toEqual([]);
+  });
+
+  it("is broken with a hero's own blow when simply clicked: by hand from beside it, else a shot or a spell that reaches", () => {
+    const state = board();
+    const ann = hero(state, "ann", "qa_paladin", at(5, 6));
+    const bo = hero(state, "bo", "devops_mage", at(10, 6));
+    crate(state, "crate1", at(6, 6));
+    expect(crateBlow(state, ann, "crate1")).toBe("smite");
+    expect(crateBlow(state, bo, "crate1")).toBe("firebolt");
+    ann.pos = at(3, 6);
+    expect(crateBlow(state, ann, "crate1")).toBeNull();
+    // A blow that is not ready yet is passed over.
+    bo.cooldowns.firebolt = 1;
+    bo.abilities = ["firebolt", "hex_bolt"];
+    expect(crateBlow(state, bo, "crate1")).toBe("hex_bolt");
+  });
+
+  it("can be struck, shot and bombed out of a fight: no fight starts, nothing is spent, and it pays at once", () => {
+    // A band stands close by, not yet roused: only an attack that reaches one of them starts a fight.
+    let state = board();
+    hero(state, "ann", "qa_paladin", at(5, 6));
+    hero(state, "bo", "refactor_rogue", at(4, 9));
+    const mage = hero(state, "cy", "devops_mage", at(3, 3));
+    mage.abilities = ["thunderhead"];
+    mage.items = { ...mage.items, fire: 2 };
+    const foe = enemy(state, "dummy", at(10, 6));
+    crate(state, "crate1", at(6, 6), 1);
+    crate(state, "crate2", at(6, 9), 1);
+    crate(state, "crate3", at(7, 3), 60);
+    crate(state, "crate4", at(9, 6), 60);
+    const quiet = (s: ZoneState) => {
+      expect(s.encounter).toBeNull();
+      expect(s.groups.g1.alerted).toBe(false);
+    };
+
+    // A blow by hand: it breaks, and what was in it is paid there and then.
+    let step = stepZone(state, { type: "use", by: "ann", unit: "ann", ability: "smite", target: "crate1" });
+    if (!step.ok) throw new Error(step.error);
+    state = step.state;
+    quiet(state);
+    expect(step.events).toContainEqual({ t: "crate_broken", poi: "crate1", id: "ann" });
+    expect(step.effects).toMatchObject([{ type: "grant", heroId: "ann", xp: 0 }]);
+    expect(step.events.some((e) => e.t === "spoils" && e.id === "ann")).toBe(true);
+
+    // A shot from across the chamber.
+    step = stepZone(state, { type: "use", by: "bo", unit: "bo", ability: "aimed_shot", target: "crate2" });
+    if (!step.ok) throw new Error(step.error);
+    state = step.state;
+    quiet(state);
+    expect(step.effects.map((e) => e.heroId)).toEqual(["bo"]);
+
+    // A bomb thrown, and a blast with a wait on it used twice running: out of a fight neither Action nor wait counts.
+    const events: ZoneEvent[] = [];
+    state = must(state, { type: "throw", by: "cy", unit: "cy", item: "fire", at: at(7, 3) }, events);
+    state = must(state, { type: "use", by: "cy", unit: "cy", ability: "thunderhead", at: at(7, 3) }, events);
+    state = must(state, { type: "use", by: "cy", unit: "cy", ability: "thunderhead", at: at(7, 3) }, events);
+    quiet(state);
+    expect(hits(events, "crate3").map((h) => h.what)).toEqual(["throw:fire", "fire", "thunderhead", "thunderhead"]);
+    expect(unit(state, "cy").cooldowns).toEqual({});
+
+    // A blast that catches the band as well as a crate: that one starts a fight, with the band that was hit.
+    const both: ZoneEvent[] = [];
+    unit(state, "cy").pos = at(5, 4);
+    state = must(state, { type: "use", by: "cy", unit: "cy", ability: "thunderhead", at: at(9, 6) }, both);
+    expect(hits(both, "crate4")).toHaveLength(1);
+    expect(state.groups.g1.alerted).toBe(true);
+    expect(state.encounter?.order).toContain(foe.id);
+  });
+
+  it("costs the Action in a fight", () => {
+    let { state } = duel("dummy");
+    crate(state, "crate1", at(5, 7), 60);
+    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "smite", target: "crate1" });
+    expect(state.encounter!.budgets.ann.action).toBe(false);
+    expect(fails(state, { type: "use", by: "ann", unit: "ann", ability: "smite", target: "crate1" })).toMatch(/Action/);
+  });
+
+  it("keeps a hero arriving off one", () => {
+    let state = board();
+    // Every hex round the start but one has a crate on it.
+    const around = hexNeighbors(state.start, state.map.grid);
+    around.slice(1).forEach((p, i) => crate(state, `crate${i + 1}`, p));
+    crate(state, "crate0", state.start);
+    state = must(state, { type: "join", hero: standInHero("qa_paladin", "ann", 1)! });
+    expect(unit(state, "ann").pos).toEqual(around[0]);
   });
 });
 

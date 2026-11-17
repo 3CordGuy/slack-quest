@@ -205,6 +205,7 @@ export type ZoneAction =
   /** `near`: arrive beside this unit (a crewmate teleported to) and not at the start, unless they are in a fight. */
   | { type: "join"; hero: ZoneHero; near?: string }
   | { type: "move"; by: string; unit: string; to: HexPos }
+  /** `target`: a unit's id, or a crate's (it is a poi on the map) for an ability that does damage. */
   | { type: "use"; by: string; unit: string; ability: string; target?: string; at?: HexPos; focus?: boolean }
   | { type: "common"; by: string; unit: string; what: CommonAction; target?: string; at?: HexPos }
   | { type: "throw"; by: string; unit: string; item: Throwable; at: HexPos }
@@ -282,7 +283,7 @@ export type ZoneEvent =
   /** A hero takes up a torch from the ground: still lit in hand, or put out and stowed in the pack. */
   | { t: "took_torch"; id: string; at: HexPos; stowed: boolean }
   /** What a hero took, from a won fight or a chest: the XP, and whatever else came with it. */
-  | { t: "spoils"; id: string; xp: number; resources: Resources; gold?: number; item?: string; blueprint?: string; furnishing?: string; potions?: number }
+  | { t: "spoils"; id: string; xp: number; resources: Resources; gold?: number; item?: string; blueprint?: string; furnishing?: string; potions?: number; torches?: number }
   /** A piece of gear found had no room in the pack: it went home to storage, or into the pack over its limit. Told by the server. */
   | { t: "stowed"; id: string; item: string; place: "storage" | "overfull" }
   /** A key goes on the party's ring: found in a chest (by `id`), or taken from a beaten band. */
@@ -293,6 +294,10 @@ export type ZoneEvent =
   | { t: "noise"; group: string }
   /** A chest, strongbox or hoard is opened. */
   | { t: "opened"; id: string; poi: string; loot: "chest" | "vault" | "hoard" }
+  /** A crate takes a blow, a blast or the fire under it. `actor` is who did it, if anyone did. */
+  | { t: "crate_hit"; poi: string; actor: string | null; amount: number; what: string }
+  /** A crate breaks open. `id` is whose blow (or fire) broke it, if anyone's. */
+  | { t: "crate_broken"; poi: string; id: string | null }
   /** The last enemy group on the map is gone. */
   | { t: "cleared" };
 

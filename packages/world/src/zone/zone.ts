@@ -24,7 +24,8 @@ import { has, heal, removeCondition, tick, type Ctx } from "./engine";
 import { ALERT_RANGE, JOIN_RANGE, freeHexNear, generateZone } from "./gen";
 import { generateDelve } from "./delve";
 import { checkOpen, openChest } from "./loot";
-import { FREE_WALK, blast, inFight, pathIn, sameHex, sees, solid, unitAt, unitById, zoneReach } from "./geometry";
+import { isCrateId } from "./crates";
+import { FREE_WALK, blast, blockerAt, inFight, pathIn, sameHex, sees, solid, unitAt, unitById, zoneReach } from "./geometry";
 import { STARTING_ITEMS, THROWABLES, THROWABLE_KINDS, cleanItems, commonCost, enemyHp, enemyMove, tacticOf } from "./kit";
 import { d20, heroMove, mod, statOf } from "./rules";
 import { hiddenEnemies, sentToClient } from "./light";
@@ -312,7 +313,7 @@ function settle(ctx: Ctx): boolean {
       // Off the board for a moment, so each finds its own free hex by the start.
       h.pos = { q: -99, r: -99 };
     }
-    for (const h of heroes) h.pos = freeHexNear(state.map, state.start, (p) => !!unitAt(state, p), (p) => tileAt(state.map, p)) ?? state.start;
+    for (const h of heroes) h.pos = freeHexNear(state.map, state.start, (p) => !!unitAt(state, p) || blockerAt(state, p), (p) => tileAt(state.map, p)) ?? state.start;
   }
   sweep(state);
   if (won && !state.units.some((u) => u.side === "enemy")) ctx.events.push({ t: "cleared" });
@@ -407,7 +408,7 @@ function spend(budget: Budget | null, cost: "action" | "bonus"): string | null {
 
 function dev(ctx: Ctx, by: string, op: DevOp): string | null {
   const { state } = ctx;
-  const free = (near: HexPos) => freeHexNear(state.map, near, (p) => !!unitAt(state, p), (p) => tileAt(state.map, p));
+  const free = (near: HexPos) => freeHexNear(state.map, near, (p) => !!unitAt(state, p) || blockerAt(state, p), (p) => tileAt(state.map, p));
   if (op.op === "spawn") {
     const kinds = op.kinds.filter((k) => ENEMIES[k]).slice(0, 6);
     if (kinds.length === 0 || solid(tileAt(state.map, op.at))) return "Nothing to put there.";
@@ -479,7 +480,7 @@ function act(ctx: Ctx, action: ZoneAction): string | null {
     // Teleported to a crewmate: beside them, unless they have since got into a fight.
     const friend = action.near ? unitById(state, action.near) : undefined;
     const beside = friend && friend.side === "hero" && !inFight(state, friend.id) ? friend.pos : state.start;
-    const pos = freeHexNear(state.map, beside, (p) => !!unitAt(state, p), (p) => tileAt(state.map, p));
+    const pos = freeHexNear(state.map, beside, (p) => !!unitAt(state, p) || blockerAt(state, p), (p) => tileAt(state.map, p));
     if (!pos) return "There is no room to arrive.";
     state.units.push(heroUnit(hero, pos));
     ctx.events.push({ t: "joined", id: hero.id });
@@ -522,7 +523,8 @@ function act(ctx: Ctx, action: ZoneAction): string | null {
   if (action.type === "use") {
     const def = ABILITIES[action.ability];
     const tactic = tacticOf(action.ability);
-    const aim = { target: action.target, at: action.at, focus: !!action.focus };
+    // Focus is for a roll to hit: a blow at a crate always lands, so none is spent on it.
+    const aim = { target: action.target, at: action.at, focus: !!action.focus && !isCrateId(state, action.target) };
     const wrong = checkAbility(state, unit, action.ability, aim);
     if (wrong) return wrong;
     if (budget && (unit.cooldowns[action.ability] ?? 0) > 0) return `${def.name} is not ready yet.`;

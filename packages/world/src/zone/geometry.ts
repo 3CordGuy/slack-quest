@@ -5,6 +5,7 @@
 
 import { hexDistance, hexNeighbors, inBounds, posKey, type HexPos } from "@gantt-quest/core";
 import { MOVE_COST, tileAt, type Tile, type WorldMap } from "../map";
+import { crateAt } from "./crates";
 import { ENEMY_KIT } from "./kit";
 import type { Unit, ZoneState } from "./types";
 
@@ -90,19 +91,22 @@ export interface Reached {
   stop: boolean;
 }
 
+/** A chest, strongbox or hoard stands on this hex (it is opened from beside it). */
+export const chestAt = (state: Pick<ZoneState, "map">, pos: HexPos): boolean => state.map.pois.some((p) => p.kind === "cache" && p.pos.q === pos.q && p.pos.r === pos.r);
+
+/** Something stands on this hex that nobody walks, lands or is shoved onto: a chest of any kind, or a crate not yet broken. */
+export const blockerAt = (state: Pick<ZoneState, "map">, pos: HexPos): boolean => chestAt(state, pos) || !!crateAt(state, pos);
+
 /**
  * What one step costs `unit`, or Infinity if it cannot be made. Open ground is 1; forest and hills 2;
  * climbing a level 1 more; oil or slime underfoot 1 more. A drop or a climb of two levels is a cliff. Enemies
- * on their feet bar the way; allies and the fallen can be walked past but not stopped on.
+ * on their feet bar the way; allies and the fallen can be walked past but not stopped on. Chests and crates bar it.
  */
-/** A chest, strongbox or hoard stands on this hex: nobody walks, lands or is shoved onto it (it is opened from beside it). */
-export const chestAt = (state: Pick<ZoneState, "map">, pos: HexPos): boolean => state.map.pois.some((p) => p.kind === "cache" && p.pos.q === pos.q && p.pos.r === pos.r);
-
 export function stepCost(state: ZoneState, unit: Unit, from: HexPos, to: HexPos, shut?: ReadonlySet<string>): { cost: number; stop: boolean } {
   const tile = tileAt(state.map, to);
   const air = flies(unit);
   const none = { cost: Infinity, stop: false };
-  if (!tile || tile.built || shut?.has(posKey(to)) || chestAt(state, to)) return none;
+  if (!tile || tile.built || shut?.has(posKey(to)) || blockerAt(state, to)) return none;
   let cost = air ? (SIGHT_BLOCKERS.has(tile.biome) ? Infinity : 1) : MOVE_COST[tile.biome];
   if (!Number.isFinite(cost)) return none;
   if (!air) {
