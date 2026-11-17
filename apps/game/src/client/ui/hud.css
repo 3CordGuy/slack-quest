@@ -138,8 +138,9 @@
 
 @media (max-width: 760px) {
   .hud { bottom: 8px; max-width: calc(100% - 12px); }
-  /* The whole rack is drawn smaller: two screen pixels to one of its own, then one and a half. */
-  .hud-rack { --p: 2px; }
+  /* The whole rack is drawn smaller: two screen pixels to one of its own, or less where even that is too wide
+     (244 is RACK.w in rackArt.ts, with a 16px margin). */
+  .hud-rack { --p: min(2px, calc((100vw - 16px) / 244)); }
   /* Terse on a phone: the muted explainer after where you stand goes; the place itself stays. */
   .hud-place .muted { display: none; }
   /* Where you stand gets a line of its own over the buttons, rather than a narrow column beside them. */

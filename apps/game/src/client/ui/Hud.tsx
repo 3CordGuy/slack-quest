@@ -216,9 +216,10 @@ export function HudBar({ me, place, children, hp, meter, pips = [], chips, quick
       const k = e.key.toLowerCase();
       if ((k === "b" || k === "i") && onBag && !bagBlocked) onBag();
       if (k === "l" && onBook) onBook();
-      // A fight's slots answer to their numbers: the top row plain, the bottom row with Shift.
-      const digit = /^Digit([1-9])$/.exec(e.code)?.[1];
-      const slot = digit ? slotsNow.current?.[Number(digit) - 1 + (e.shiftKey ? RACK.mid.length : 0)] : undefined;
+      // A fight's slots answer to their numbers, 1 to 9 and then 0: the top row plain, the bottom row with Shift.
+      const digit = /^Digit([0-9])$/.exec(e.code)?.[1];
+      const col = digit === undefined ? -1 : (Number(digit) + 9) % 10;
+      const slot = col >= 0 && col < RACK.mid.length ? slotsNow.current?.[col + (e.shiftKey ? RACK.mid.length : 0)] : undefined;
       if (slot?.run && !slot.spent) slot.run();
     };
     addEventListener("keydown", onKey);
@@ -366,7 +367,8 @@ export function HudBar({ me, place, children, hp, meter, pips = [], chips, quick
           const col = i % RACK.mid.length;
           const lower = i >= RACK.mid.length;
           const at = box(RACK.mid[col], RACK.slotY + (lower ? RACK_ROW : 0), RACK.slot, RACK.slot);
-          const keys = `${lower ? "Shift " : ""}${col + 1}`;
+          const digit = (col + 1) % 10;
+          const keys = `${lower ? "Shift " : ""}${digit}`;
           // Any slot can be dropped on, and asked to hold something else.
           const arrange = {
             onDragOver: (e: DragEvent) => e.preventDefault(),
@@ -403,7 +405,7 @@ export function HudBar({ me, place, children, hp, meter, pips = [], chips, quick
             >
               <Icon name={s.icon.name} color={s.icon.color} size={30} flat={s.icon.flat} />
               {s.wait ? <span className="hud-wait">{s.wait}</span> : s.count !== undefined && <span className="hud-count">{s.count}</span>}
-              <span className="hud-key">{lower ? "⇧" : ""}{col + 1}</span>
+              <span className="hud-key">{lower ? "⇧" : ""}{digit}</span>
             </button>
           );
         })}
