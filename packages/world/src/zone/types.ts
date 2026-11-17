@@ -8,9 +8,10 @@
 
 import type { HexPos, Stats } from "@gantt-quest/core";
 import type { EffectKind } from "../content";
-import type { Outfit } from "../gear";
+import type { ItemDef, Outfit } from "../gear";
 import type { Resources } from "../hut";
 import type { WorldMap } from "../map";
+import type { FurnishingGrant } from "../world";
 
 export type Side = "hero" | "enemy";
 
@@ -133,6 +134,8 @@ export interface ZoneOptions {
    * they can take, how well they hit, and how many stand in a group. Absent on zones made before it: 2.
    */
   threat?: number;
+  /** A delve into the caverns (zone/delve.ts): chambers, tunnels, chests and a hoard, not open ground. */
+  delve?: boolean;
 }
 
 export interface ZoneState {
@@ -151,6 +154,15 @@ export interface ZoneState {
   surfaces: Record<string, GroundSurface>;
   /** Torches lying lit on the ground, by hex: rounds of a fight left to burn, and who threw them. */
   lights?: Record<string, { rounds: number; by: string | null }>;
+  /**
+   * Time out of a fight (zone/clock.ts): when the last round of exploring was counted, and the last torch round.
+   * Server time, in ms, as the room told it. Missing until the room first tells the time.
+   */
+  clock?: { at: number; torchAt: number };
+  /** Keys to locked doors the party has found, all on one ring (zone/doors.ts). */
+  keys?: number;
+  /** The bands that carry a key: it is the party's once the band is beaten. */
+  keyHolders?: string[];
   encounter: Encounter | null;
   /** For minting unit ids. */
   seq: number;
@@ -193,12 +205,21 @@ export type ZoneAction =
   /** `near`: arrive beside this unit (a crewmate teleported to) and not at the start, unless they are in a fight. */
   | { type: "join"; hero: ZoneHero; near?: string }
   | { type: "move"; by: string; unit: string; to: HexPos }
+  /** `target`: a unit's id, or a crate's (it is a poi on the map) for an ability that does damage. */
   | { type: "use"; by: string; unit: string; ability: string; target?: string; at?: HexPos; focus?: boolean }
   | { type: "common"; by: string; unit: string; what: CommonAction; target?: string; at?: HexPos }
   | { type: "throw"; by: string; unit: string; item: Throwable; at: HexPos }
   | { type: "drink"; by: string; unit: string; item: Throwable }
+  /** Open a chest, strongbox or hoard (a cache on the map) from beside it. */
+  | { type: "open"; by: string; unit: string; poi: string }
   /** Light a torch from the pack and hold it: in the off hand, or in the main hand to swing as a weapon. */
   | { type: "light"; by: string; unit: string; hand?: "main" }
+  /** Pick up a torch burning on the ground beside you: into a free hand still lit, or put out and into the pack. */
+  | { type: "pickup"; by: string; unit: string; at: HexPos }
+  /** Unlock a locked door from beside it with a key off the ring, or force it without one. */
+  | { type: "unlock"; by: string; unit: string; poi: string }
+  /** The server's own, never a client's: the time now, so time out of a fight can pass (zone/clock.ts). */
+  | { type: "time"; now: number }
   | { type: "end_turn"; by: string; unit: string }
   | { type: "timeout" }
   /** The server's own, never a client's: what a hero carries to drink or throw, as their pack holds it now. */
@@ -206,7 +227,7 @@ export type ZoneAction =
   | { type: "dev"; by: string; dev: DevOp };
 
 /** Action types a player's client may send. `dev` is let through only on a development deployment. */
-export const ZONE_CLIENT_ACTIONS: ReadonlySet<ZoneAction["type"]> = new Set(["move", "use", "common", "throw", "drink", "light", "end_turn", "dev"]);
+export const ZONE_CLIENT_ACTIONS: ReadonlySet<ZoneAction["type"]> = new Set(["move", "use", "common", "throw", "drink", "light", "pickup", "open", "unlock", "end_turn", "dev"]);
 
 /** One d20 roll, as shown on the roll card. */
 export interface Roll {
@@ -259,13 +280,40 @@ export type ZoneEvent =
   | { t: "torch_out"; id: string }
   /** A torch lands burning on the ground (on), or burns out or is put out there (off). */
   | { t: "light"; at: HexPos; on: boolean }
-  /** What a hero took from a won fight: the XP it paid and the materials the fallen left. */
-  | { t: "spoils"; id: string; xp: number; resources: Resources }
+  /** A hero takes up a torch from the ground: still lit in hand, or put out and stowed in the pack. */
+  | { t: "took_torch"; id: string; at: HexPos; stowed: boolean }
+  /** What a hero took, from a won fight or a chest: the XP, and whatever else came with it. */
+  | { t: "spoils"; id: string; xp: number; resources: Resources; gold?: number; item?: string; blueprint?: string; furnishing?: string; potions?: number; torches?: number }
+  /** A piece of gear found had no room in the pack: it went home to storage, or into the pack over its limit. Told by the server. */
+  | { t: "stowed"; id: string; item: string; place: "storage" | "overfull" }
+  /** A key goes on the party's ring: found in a chest (by `id`), or taken from a beaten band. */
+  | { t: "key"; keys: number; from: "chest" | "band"; id?: string }
+  /** A door is worked: unlocked with a key, forced open, or forced and held. */
+  | { t: "door"; id: string; poi: string; how: "key" | "forced" | "held" }
+  /** The crash of a forced door is heard by a band, which comes running. */
+  | { t: "noise"; group: string }
+  /** A chest, strongbox or hoard is opened. */
+  | { t: "opened"; id: string; poi: string; loot: "chest" | "vault" | "hoard" }
+  /** A crate takes a blow, a blast or the fire under it. `actor` is who did it, if anyone did. */
+  | { t: "crate_hit"; poi: string; actor: string | null; amount: number; what: string }
+  /** A crate breaks open. `id` is whose blow (or fire) broke it, if anyone's. */
+  | { t: "crate_broken"; poi: string; id: string | null }
   /** The last enemy group on the map is gone. */
   | { t: "cleared" };
 
-/** Things the server must carry out: what a player's own hero earned from a won fight. */
-export type ZoneEffect = { type: "grant"; heroId: string; xp: number; resources: Resources };
+/** Things the server must carry out: what a player's own hero earned, from a won fight or a chest. */
+export type ZoneEffect = {
+  type: "grant";
+  heroId: string;
+  xp: number;
+  resources: Resources;
+  gold?: number;
+  item?: ItemDef | null;
+  blueprint?: string;
+  furnishing?: FurnishingGrant;
+  /** Put in the pack to drink or throw. */
+  items?: Partial<Record<Throwable, number>>;
+};
 
 export type ZoneStep = { ok: true; state: ZoneState; events: ZoneEvent[]; effects: ZoneEffect[] } | { ok: false; error: string };
 

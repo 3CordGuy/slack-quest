@@ -3,10 +3,12 @@
 // lasts a set number of rounds of a fight. Laying one surface on another
 // combines them: fire runs through oil and sets off poison, water puts
 // fire out, cold turns water to ice, fire burns slime off and water washes
-// it away.
+// it away. Fire burns a crate standing in it, too: when it takes hold under
+// it, and again every round it is still burning, in a fight or out of one.
 
-import { hexNeighbors, posKey, type HexPos } from "@gantt-quest/core";
+import { hexDistance, hexNeighbors, posKey, type HexPos } from "@gantt-quest/core";
 import { tileAt } from "../map";
+import { cratesOn, hurtCrate } from "./crates";
 import { addCondition, saveRoll, tick, type Ctx } from "./engine";
 import { flies, solid } from "./geometry";
 import type { GroundSurface, SurfaceKind, Unit } from "./types";
@@ -68,6 +70,11 @@ export function standInSurface(ctx: Ctx, unit: Unit): void {
   const surface = ctx.state.surfaces[posKey(unit.pos)];
   if (surface) act(ctx, unit, surface.kind, false);
 }
+
+const fromKey = (key: string): HexPos => {
+  const [q, r] = key.split(",").map(Number);
+  return { q, r };
+};
 
 /** Every hex of the same kind joined to `from`, itself included. */
 function joined(surfaces: Record<string, GroundSurface>, grid: Ctx["state"]["map"]["grid"], from: HexPos, kind: SurfaceKind): HexPos[] {
@@ -150,6 +157,8 @@ export function placeSurface(ctx: Ctx, hexes: HexPos[], kind: SurfaceKind, round
     const now = changed.get(key);
     if (now?.kind) act(ctx, unit, now.kind, false);
   }
+  const burning = [...changed.values()].filter((c) => c.kind === "fire").map((c) => c.pos);
+  for (const crate of cratesOn(ctx.state, [...burning, ...burst.values()])) hurtCrate(ctx, crate, d(ctx, 6), { actor: by, what: "fire" });
 }
 
 /** Take surfaces off some hexes. */
@@ -207,6 +216,30 @@ export function tickLights(ctx: Ctx): void {
   }
 }
 
+/** Why `unit` cannot pick up a torch lying at `at`, or null if it can. */
+export function checkPickup(state: Ctx["state"], unit: Unit, at: HexPos): string | null {
+  if (!state.lights?.[posKey(at)]) return "There is no torch burning there.";
+  if (unit.side !== "hero") return "Only a hero can take it.";
+  if (unit.down) return "Not while you are down.";
+  if (hexDistance(unit.pos, at) > 1) return "Go up to it first.";
+  return null;
+}
+
+/**
+ * Pick up a torch burning on the ground: into the hand still lit, with what it has left to burn, or, with a
+ * torch already in hand, put out and stowed in the pack (as good as new: it is only rag and a stick).
+ */
+export function pickUpTorch(ctx: Ctx, unit: Unit, at: HexPos): void {
+  const key = posKey(at);
+  const light = ctx.state.lights![key];
+  delete ctx.state.lights![key];
+  ctx.events.push({ t: "light", at, on: false });
+  const stowed = (unit.torch ?? 0) > 0;
+  if (stowed) unit.items.torch = (unit.items.torch ?? 0) + 1;
+  else unit.torch = light.rounds;
+  ctx.events.push({ t: "took_torch", id: unit.id, at, stowed });
+}
+
 /** Light a torch to hold, from the pack. In the main hand the weapon is put away and the torch is swung instead. */
 export function lightTorch(ctx: Ctx, unit: Unit, hand?: "main"): void {
   unit.items.torch = (unit.items.torch ?? 0) - 1;
@@ -234,6 +267,10 @@ export function chill(ctx: Ctx, pos: HexPos, by: string | null): void {
 
 /** A round of the fight has passed: every surface has one less to go, and the spent ones are gone. */
 export function tickSurfaces(ctx: Ctx): void {
+  // A crate standing in a fire burns on.
+  for (const crate of cratesOn(ctx.state, Object.keys(ctx.state.surfaces).filter((k) => ctx.state.surfaces[k].kind === "fire").map(fromKey))) {
+    hurtCrate(ctx, crate, d(ctx, 6), { actor: ctx.state.surfaces[posKey(crate.pos)].by, what: "fire" });
+  }
   const gone: HexPos[] = [];
   for (const [key, surface] of Object.entries(ctx.state.surfaces)) {
     surface.rounds -= 1;

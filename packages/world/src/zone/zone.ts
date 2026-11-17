@@ -22,11 +22,16 @@ import { enemyTurn } from "./ai";
 import { abilityArea, checkAbility, checkCommon, checkDrink, checkLight, checkThrow, doCommon, drinkItem, resolveAbility, throwItem, walk } from "./combat";
 import { has, heal, removeCondition, tick, type Ctx } from "./engine";
 import { ALERT_RANGE, JOIN_RANGE, freeHexNear, generateZone } from "./gen";
-import { FREE_WALK, blast, inFight, pathIn, sameHex, sees, solid, unitAt, unitById, zoneReach } from "./geometry";
+import { generateDelve } from "./delve";
+import { checkOpen, openChest } from "./loot";
+import { isCrateId } from "./crates";
+import { FREE_WALK, blast, blockerAt, inFight, pathIn, sameHex, sees, solid, unitAt, unitById, zoneReach } from "./geometry";
 import { STARTING_ITEMS, THROWABLES, THROWABLE_KINDS, cleanItems, commonCost, enemyHp, enemyMove, tacticOf } from "./kit";
 import { d20, heroMove, mod, statOf } from "./rules";
 import { hiddenEnemies, sentToClient } from "./light";
-import { clearSurfaces, lightTorch, placeSurface, standInSurface, tickLights, tickSurfaces } from "./surfaces";
+import { checkPickup, clearSurfaces, lightTorch, pickUpTorch, placeSurface, standInSurface, tickLights, tickSurfaces } from "./surfaces";
+import { passTime } from "./clock";
+import { checkUnlock, dropKeys, heardBy, workDoor } from "./doors";
 import type { Budget, DevOp, Encounter, Throwable, Unit, ZoneAction, ZoneEffect, ZoneEvent, ZoneHero, ZoneOptions, ZoneState, ZoneStep, ZoneView } from "./types";
 
 /** Rounds a surface painted from the dev toolbox lasts. */
@@ -60,10 +65,11 @@ function enemyUnit(state: ZoneState, kind: string, pos: HexPos, group: string): 
 }
 
 export function createZone(code: string, seed: string, options: ZoneOptions): ZoneState {
-  const plan = generateZone(seed, options);
+  const plan = options.delve ? generateDelve(seed, options) : generateZone(seed, options);
   const state: ZoneState = { v: 1, code, seed, rng: seedFromString(`zone-run|${seed}`), options, map: plan.map, start: plan.start, units: [], groups: {}, surfaces: {}, encounter: null, seq: 0 };
+  if (plan.keys && plan.keys.length > 0) state.keyHolders = [...plan.keys];
   for (const group of plan.groups) {
-    const id = `g${++state.seq}`;
+    const id = group.id ?? `g${++state.seq}`;
     state.groups[id] = { alerted: false };
     group.kinds.forEach((kind, i) => state.units.push(enemyUnit(state, kind, group.posts[i], id)));
   }
@@ -307,7 +313,7 @@ function settle(ctx: Ctx): boolean {
       // Off the board for a moment, so each finds its own free hex by the start.
       h.pos = { q: -99, r: -99 };
     }
-    for (const h of heroes) h.pos = freeHexNear(state.map, state.start, (p) => !!unitAt(state, p), (p) => tileAt(state.map, p)) ?? state.start;
+    for (const h of heroes) h.pos = freeHexNear(state.map, state.start, (p) => !!unitAt(state, p) || blockerAt(state, p), (p) => tileAt(state.map, p)) ?? state.start;
   }
   sweep(state);
   if (won && !state.units.some((u) => u.side === "enemy")) ctx.events.push({ t: "cleared" });
@@ -402,7 +408,7 @@ function spend(budget: Budget | null, cost: "action" | "bonus"): string | null {
 
 function dev(ctx: Ctx, by: string, op: DevOp): string | null {
   const { state } = ctx;
-  const free = (near: HexPos) => freeHexNear(state.map, near, (p) => !!unitAt(state, p), (p) => tileAt(state.map, p));
+  const free = (near: HexPos) => freeHexNear(state.map, near, (p) => !!unitAt(state, p) || blockerAt(state, p), (p) => tileAt(state.map, p));
   if (op.op === "spawn") {
     const kinds = op.kinds.filter((k) => ENEMIES[k]).slice(0, 6);
     if (kinds.length === 0 || solid(tileAt(state.map, op.at))) return "Nothing to put there.";
@@ -474,7 +480,7 @@ function act(ctx: Ctx, action: ZoneAction): string | null {
     // Teleported to a crewmate: beside them, unless they have since got into a fight.
     const friend = action.near ? unitById(state, action.near) : undefined;
     const beside = friend && friend.side === "hero" && !inFight(state, friend.id) ? friend.pos : state.start;
-    const pos = freeHexNear(state.map, beside, (p) => !!unitAt(state, p), (p) => tileAt(state.map, p));
+    const pos = freeHexNear(state.map, beside, (p) => !!unitAt(state, p) || blockerAt(state, p), (p) => tileAt(state.map, p));
     if (!pos) return "There is no room to arrive.";
     state.units.push(heroUnit(hero, pos));
     ctx.events.push({ t: "joined", id: hero.id });
@@ -482,6 +488,10 @@ function act(ctx: Ctx, action: ZoneAction): string | null {
   }
   if (action.type === "timeout") {
     if (state.encounter) state.encounter.done = [...state.encounter.acting];
+    return null;
+  }
+  if (action.type === "time") {
+    passTime(ctx, action.now);
     return null;
   }
   if (action.type === "stock") {
@@ -513,7 +523,8 @@ function act(ctx: Ctx, action: ZoneAction): string | null {
   if (action.type === "use") {
     const def = ABILITIES[action.ability];
     const tactic = tacticOf(action.ability);
-    const aim = { target: action.target, at: action.at, focus: !!action.focus };
+    // Focus is for a roll to hit: a blow at a crate always lands, so none is spent on it.
+    const aim = { target: action.target, at: action.at, focus: !!action.focus && !isCrateId(state, action.target) };
     const wrong = checkAbility(state, unit, action.ability, aim);
     if (wrong) return wrong;
     if (budget && (unit.cooldowns[action.ability] ?? 0) > 0) return `${def.name} is not ready yet.`;
@@ -546,6 +557,39 @@ function act(ctx: Ctx, action: ZoneAction): string | null {
     const cost = spend(budget, "bonus");
     if (cost) return cost;
     drinkItem(ctx, unit, action.item);
+    return null;
+  }
+  if (action.type === "pickup") {
+    const wrong = checkPickup(state, unit, action.at);
+    if (wrong) return wrong;
+    // Out of a fight it is free; in one, a Bonus action, like lighting one.
+    const cost = spend(budget, "bonus");
+    if (cost) return cost;
+    pickUpTorch(ctx, unit, action.at);
+    return null;
+  }
+  if (action.type === "open") {
+    const chest = state.map.pois.find((p) => p.id === action.poi && p.kind === "cache");
+    const wrong = checkOpen(state, unit, chest);
+    if (wrong) return wrong;
+    const cost = spend(budget, "action");
+    if (cost) return cost;
+    openChest(ctx, unit, chest!);
+    return null;
+  }
+  if (action.type === "unlock") {
+    const door = state.map.pois.find((p) => p.id === action.poi && p.kind === "gate");
+    const wrong = checkUnlock(state, unit, door);
+    if (wrong) return wrong;
+    const cost = spend(budget, "action");
+    if (cost) return cost;
+    // A key is quiet. Forcing it is heard, whether the door gives or not: the nearest band that has not noticed anyone comes.
+    const { forced } = workDoor(ctx, unit, door!);
+    const heard = forced ? heardBy(state, door!.pos) : undefined;
+    if (heard) {
+      ctx.events.push({ t: "noise", group: heard });
+      engage(ctx, [heard], unit);
+    }
     return null;
   }
   if (action.type === "light") {
@@ -589,6 +633,8 @@ export function stepZone(prev: ZoneState, action: ZoneAction): ZoneStep {
     const waiting = enc.acting.some((id) => !enc.done.includes(id) && !unitById(state, id)?.down);
     if (!waiting) advance(ctx);
   }
+  // A band beaten that carried a key: it goes on the ring.
+  dropKeys(ctx);
   sweep(state);
   state.rng = ctx.rng.state();
   return { ok: true, state, events: ctx.events, effects: ctx.effects };

@@ -7,9 +7,9 @@
 
 import { readFileSync, readdirSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { hexDistance } from "@gantt-quest/core";
-import { ALERT_RANGE, zoneOptions, type ZoneEvent, type ZoneState, type ZoneView } from "@gantt-quest/world";
+import { ALERT_RANGE, EXPLORE_ROUND_MS, zoneOptions, type ZoneEvent, type ZoneState, type ZoneView } from "@gantt-quest/world";
 import { CAVE_IDLE_MS, createZoneRow, crewPlaces, openCave } from "../src/server/zones";
 
 const globals = globalThis as Record<string, unknown>;
@@ -335,6 +335,48 @@ describe("ZoneRoom", () => {
     expect((sql.prepare("SELECT status FROM zones WHERE code = ?").get(code) as { status: string }).status).toBe("cleared");
   });
 
+  it("pays a delve's chests into the character, and calls the delve cleared only once its foes are gone and its chests open", async () => {
+    const code = await createZoneRow(db, "ann", zoneOptions({ biome: "caves", delve: true, party: 1 }), "room-delve", "caves", "crew1");
+    let zone = room();
+    await connect(zone, code, "ann");
+    // Nobody left below but Ann, standing beside the first chest.
+    const state = saved(code);
+    const chests = state.map.pois.filter((p) => p.kind === "cache");
+    expect(chests.length).toBeGreaterThan(1);
+    const besideOf = (c: { pos: { q: number; r: number } }) => state.map.tiles.find((t) => t.biome === "cave" && hexDistance(t, c.pos) === 1)!;
+    state.units = state.units.filter((u) => u.side === "hero");
+    const b = besideOf(chests[0]);
+    hero(state, "ann").pos = { q: b.q, r: b.r };
+    sql.prepare("UPDATE zones SET state_json = ? WHERE code = ?").run(JSON.stringify(state), code);
+    zone = room();
+    const ann = await connect(zone, code, "ann");
+    const goldBefore = (sql.prepare("SELECT gold FROM characters WHERE player_id = 'ann'").get() as { gold: number }).gold;
+    await act(zone, ann, { type: "open", unit: "ann", poi: chests[0].id });
+    expect(ann.errors).toEqual([]);
+    const spoils = ann.sent.flatMap((m) => (m.type === "update" ? m.events : [])).find((e) => e.t === "spoils") as Extract<ZoneEvent, { t: "spoils" }>;
+    expect(spoils.gold).toBeGreaterThan(0);
+    expect((sql.prepare("SELECT gold FROM characters WHERE player_id = 'ann'").get() as { gold: number }).gold).toBe(goldBefore + spoils.gold!);
+    if (spoils.potions) expect((sql.prepare("SELECT qty FROM consumables WHERE player_id = 'ann' AND kind = 'healing'").get() as { qty: number }).qty).toBeGreaterThanOrEqual(spoils.potions);
+    if (spoils.item) expect(sql.prepare("SELECT name FROM inventory WHERE player_id = 'ann'").all().map((r) => (r as { name: string }).name)).toContain(spoils.item);
+    // No foes left, but chests still shut: not cleared, and the crew's cave is still there to go back to.
+    const status = () => (sql.prepare("SELECT status FROM zones WHERE code = ?").get(code) as { status: string }).status;
+    expect(status()).toBe("open");
+    expect(await openCave(db, "crew1")).toBe(code);
+    // Every chest opened: cleared.
+    for (const c of chests.slice(1)) {
+      const now = saved(code);
+      const at = besideOf(c);
+      hero(now, "ann").pos = { q: at.q, r: at.r };
+      sql.prepare("UPDATE zones SET state_json = ? WHERE code = ?").run(JSON.stringify(now), code);
+      zone = room();
+      const again = await connect(zone, code, "ann");
+      await act(zone, again, { type: "open", unit: "ann", poi: c.id });
+      expect(again.errors).toEqual([]);
+    }
+    expect(status()).toBe("cleared");
+    expect(await openCave(db, "crew1")).toBeNull();
+  });
+
   it("finds a crew's cave still being fought through, and not a cleared, stale or other crew's one", async () => {
     const options = zoneOptions({ size: "small", biome: "caves", groups: 1 });
     expect(await openCave(db, "crew1")).toBeNull();
@@ -347,6 +389,48 @@ describe("ZoneRoom", () => {
     const stale = await createZoneRow(db, "ann", options, "c2", "caves", "crew1");
     sql.prepare("UPDATE zones SET updated_at = ? WHERE code = ?").run(Date.now() - CAVE_IDLE_MS - 1000, stale);
     expect(await openCave(db, "crew1")).toBeNull();
+  });
+
+  it("lets time out of a fight pass with whatever is done next, and tells it", async () => {
+    const clock = vi.spyOn(Date, "now");
+    try {
+      const T0 = 2_000_000_000_000;
+      clock.mockReturnValue(T0);
+      const { code, zone, ann } = await arrive();
+      const at = ann.state.map.tiles.find((t) => hexDistance(t, ann.state.start) === 2 && t.biome === "plains")!;
+      await act(zone, ann, { type: "dev", dev: { op: "paint", kind: "oil", hexes: [{ q: at.q, r: at.r }] } });
+      const rounds = saved(code).surfaces[`${at.q},${at.r}`].rounds;
+      // Three rounds of exploring later, the next thing done counts them.
+      clock.mockReturnValue(T0 + 3 * EXPLORE_ROUND_MS + 500);
+      const before = ann.sent.length;
+      const step = ann.state.map.tiles.find((t) => hexDistance(t, ann.state.start) === 1 && t.biome === "plains")!;
+      await act(zone, ann, { type: "move", unit: "ann", to: { q: step.q, r: step.r } });
+      expect(saved(code).surfaces[`${at.q},${at.r}`].rounds).toBe(rounds - 3);
+      expect(saved(code).clock!.at).toBe(T0 + 3 * EXPLORE_ROUND_MS);
+      expect(ann.sent.length).toBeGreaterThan(before);
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
+  it("puts a torch picked up with one already in hand into the pack, for good", async () => {
+    const { code, zone, ann } = await arrive();
+    const state = saved(code);
+    const me = hero(state, "ann");
+    me.torch = 5;
+    const beside = state.map.tiles.find((t) => hexDistance(t, me.pos) === 1 && t.biome === "plains")!;
+    state.lights = { [`${beside.q},${beside.r}`]: { rounds: 3, by: null } };
+    sql.prepare("UPDATE zones SET state_json = ? WHERE code = ?").run(JSON.stringify(state), code);
+    const again = room();
+    const sock = await connect(again, code, "ann");
+    const inPack = () => (sql.prepare("SELECT qty FROM consumables WHERE player_id = 'ann' AND kind = 'torch'").get() as { qty: number } | undefined)?.qty ?? 0;
+    const had = inPack();
+    await act(again, sock, { type: "pickup", unit: "ann", at: { q: beside.q, r: beside.r } });
+    expect(sock.errors).toEqual([]);
+    expect(inPack()).toBe(had + 1);
+    expect(hero(saved(code), "ann").torch).toBe(5);
+    expect(zone).toBeDefined();
+    expect(ann).toBeDefined();
   });
 
   it("tells a player on the map, and only that player, that their trades changed", async () => {

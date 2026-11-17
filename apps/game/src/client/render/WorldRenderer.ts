@@ -12,7 +12,7 @@ import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js
 import { reportEnv } from "../ui/env";
 import { makeRenderer } from "./graphics";
 import { panelTexture } from "./groundArt";
-import { Ambience, type RoomLight, TILE_FILLET, TILE_RADIUS, beaconShine, dryPatch, hexTop, meadowAt, pixelTexture, stamp, tallGrass, type BuildingGlow } from "./ambience";
+import { Ambience, type RoomLight, TILE_FILLET, TILE_RADIUS, TORCH_LIFT, beaconShine, dryPatch, hexTop, meadowAt, pixelTexture, stamp, tallGrass, type BuildingGlow } from "./ambience";
 import "./camera.css";
 import { PINCH_PAN_SLACK, followIconSvg, readFollow, writeFollow } from "./cameraFollow";
 import type { HexPos } from "@gantt-quest/core";
@@ -34,6 +34,7 @@ import { NIGHT, VEIL_CLEAR_S, Veil } from "./veil";
 import { GROUND_KIND, addFancyWater, addWaterRipple, setGroundWet, setWaterNight, setWaterStanding, shoreSide, updateWater, waterAttribute, type Standing } from "./water";
 import { ghostModel, propModel, tintGhost, type LightKind } from "./props";
 import { LAMP_TABLES, TableLamps } from "./tableLamps";
+import { LID_OPEN, chestMouth, chestModel, crateMiddle, crateModel, restingLid } from "./caveProps";
 import { nearWater, openEar, sounds } from "../audio/gameSounds";
 import type { AttackStyle, Fighter } from "../audio/names";
 import { PUFFS, footfalls, stepGround, worldToHex, type PuffLook } from "./footsteps";
@@ -923,6 +924,12 @@ export class WorldRenderer {
   private userYaw = 0;
   /** The top middle of each place's model, in the world, measured when first asked for (see screenAbovePoi). */
   private poiTops = new Map<string, THREE.Vector3>();
+  /** Chests being thrown open, by poi id: when the lid began to swing (on the render clock). */
+  private lidsSwinging = new Map<string, number>();
+  /** Crates rocking from a blow, by poi id: when it landed, and how hard. */
+  private poiShakes = new Map<string, { at: number; by: number }>();
+  /** Glints on the places that twinkle (a chest not yet opened). Gathered as the places are built. */
+  private twinkles: THREE.Object3D[] = [];
   /** The turn this map opens at (RenderState.homeYaw), which the turn buttons' sixths are counted from. */
   private homeYaw = 0;
   /** The current drag turns the camera instead of panning it. */
@@ -2735,11 +2742,12 @@ export class WorldRenderer {
   // ---------- points of interest ----------
 
   private buildPois(state: RenderState) {
-    const sig = state.map.pois.map((p) => `${p.id}:${p.cleared}:${p.tier ?? ""}:${p.fill ?? ""}`).join("|");
+    const sig = state.map.pois.map((p) => `${p.id}:${p.cleared}:${p.tier ?? ""}:${p.fill ?? ""}:${p.hp ?? ""}`).join("|");
     if (sig === this.poiSig) return;
     this.poiSig = sig;
     this.poiGroup.clear();
     this.poiTops.clear();
+    this.twinkles = [];
     this.tableLamps.clear();
     this.poiGroup.add(this.tableLamps.group);
     // What stands in the water, for the fancy sea to foam round. Each model sits a little back from its hex's middle.
@@ -2785,6 +2793,7 @@ export class WorldRenderer {
       g.traverse((o) => {
         // A glow is light, not a solid: it neither casts nor takes a shadow.
         if (o instanceof THREE.Mesh) o.castShadow = o.receiveShadow = !o.userData.glow && !o.userData.ink;
+        if (o.userData.twinkle !== undefined) this.twinkles.push(o);
       });
       this.poiGroup.add(g);
       // A game table in a room (the pub's): a lantern hung over it.
@@ -3184,6 +3193,29 @@ export class WorldRenderer {
           add(box(0.04, 0.9, 0.04), lambert("#c9a877"), -0.35, 0.45, -0.3);
           add(box(0.05, 0.5, 0.05), lambert("#3d4048"), 0.35, 0.25, -0.2);
           add(box(0.16, 0.18, 0.16), new THREE.MeshBasicMaterial({ color: "#ffd98a" }), 0.35, 0.58, -0.2).userData.glow = true;
+          // And daylight falling in through it from above: a pale shaft, brightest at the floor and fading as it
+          // rises, a pool of light where it lands, and real light round it, so the way out shows from across the dark.
+          const sky = new THREE.Color("#d8ecff");
+          const glowing = (geometry: THREE.BufferGeometry, k: (x: number, y: number, z: number) => number) => {
+            const pos = geometry.getAttribute("position");
+            const colors: number[] = [];
+            for (let i = 0; i < pos.count; i++) {
+              const v = k(pos.getX(i), pos.getY(i), pos.getZ(i));
+              colors.push(sky.r * v, sky.g * v, sky.b * v);
+            }
+            geometry.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
+            const mesh = add(geometry, new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }), 0, 0, 0);
+            mesh.userData.glow = true;
+            return mesh;
+          };
+          const SHAFT = 3.6;
+          const shaft = glowing(new THREE.CylinderGeometry(0.42, 0.78, SHAFT, 18, 6, true), (_x, y) => 0.32 * Math.pow(1 - (y + SHAFT / 2) / SHAFT, 1.6));
+          shaft.position.y = SHAFT / 2;
+          const pool = glowing(new THREE.CircleGeometry(0.95, 24).rotateX(-Math.PI / 2), (x, _y, z) => 0.55 * Math.pow(Math.max(0, 1 - Math.hypot(x, z) / 0.95), 1.3));
+          pool.position.y = 0.02;
+          const daylight = new THREE.PointLight("#d8e8ff", 2.6, 4.5, 1.4);
+          daylight.position.set(0, 1.6, 0);
+          g.add(daylight);
           break;
         }
         add(box(1.0, 0.08, 0.5), lambert("#8a6a44"), 0, 0.05, 0.1);
@@ -3260,25 +3292,12 @@ export class WorldRenderer {
       }
       case "cache": {
         if (this.state?.kind === "caverns" && poi.loot) {
-          // An old chest, an iron-bound strongbox, or the hoard: bigger, and banded, and (until it is opened) glinting.
-          const k = poi.loot === "hoard" ? 1.45 : poi.loot === "vault" ? 1.2 : 1;
-          const wood = lambert(poi.cleared ? "#5b4a3a" : poi.loot === "chest" ? "#8a5a2b" : "#6b3f22");
-          const iron = lambert(poi.loot === "chest" ? "#6e6250" : "#3f4248");
-          add(box(0.44 * k, 0.24 * k, 0.3 * k), wood, 0, 0.12 * k, 0.2);
-          for (const x of [-0.15 * k, 0.15 * k]) add(box(0.04 * k, 0.25 * k, 0.31 * k), iron, x, 0.125 * k, 0.2);
-          if (poi.cleared) {
-            // Thrown open: the lid stands up at the back, and nothing glints.
-            const lid = add(box(0.44 * k, 0.04 * k, 0.3 * k), wood, 0, 0.3 * k, 0.05);
-            lid.rotation.x = -1.2;
-          } else {
-            add(box(0.46 * k, 0.07 * k, 0.32 * k), wood, 0, 0.27 * k, 0.2);
-            add(box(0.06, 0.07, 0.02), lambert("#d8b45a"), 0, 0.2 * k, 0.2 + 0.155 * k);
-            if (poi.loot !== "chest") {
-              // Coin spilling out at its foot, lit so it catches the torchlight from across a chamber.
-              const coin = new THREE.MeshBasicMaterial({ color: "#ffd45e" });
-              for (const [x, z] of [[-0.3, 0.42], [-0.18, 0.5], [0.26, 0.46], [0.34, 0.36], [0.05, 0.52]]) add(box(0.07, 0.025, 0.07), coin, x * k, 0.015, z).userData.glow = true;
-            }
-          }
+          // An old chest, an iron-bound strongbox, or the hoard (caveProps.ts). Its lid may be swinging open right now.
+          const model = chestModel(poi, this.lidNow(poi));
+          g.add(model);
+          g.userData.lid = model.userData.lid;
+          // Pointing anywhere on it means its hex, not the ground behind it.
+          g.userData.door = poi.pos;
           break;
         }
         add(box(0.38, 0.24, 0.26), lambert(poi.cleared ? "#6b6b6b" : "#9a6b2f"), 0, 0.12, 0.2);
@@ -5125,8 +5144,124 @@ export class WorldRenderer {
         add(new THREE.ConeGeometry(0.48, 0.6, 4), lambert(poi.cleared ? "#777777" : "#b9433d"), -0.2, 0.3, 0, Math.PI / 4);
         if (!poi.cleared) add(new THREE.ConeGeometry(0.1, 0.22, 4), new THREE.MeshBasicMaterial({ color: "#ff9a3c" }), 0.4, 0.11, 0.25);
         break;
+      case "crate": {
+        // A crate in a delve (caveProps.ts): whole, knocked about, or splinters.
+        const model = crateModel(poi);
+        g.add(model);
+        g.userData.body = model.userData.body;
+        if (!poi.cleared) g.userData.door = poi.pos;
+        break;
+      }
     }
     return g;
+  }
+
+  // ---------- chests and crates moving ----------
+
+  /** How long a chest's lid takes to swing open, in seconds. */
+  private static readonly LID_SWING = 0.5;
+
+  /** A chest's lid now: swinging open (eased, with a little bounce as it hits the end of its hinge), or at rest. */
+  private lidNow(poi: Poi): number {
+    const start = this.lidsSwinging.get(poi.id);
+    if (start === undefined) return restingLid(poi);
+    const t = Math.min(1, Math.max(0, (this.clock - start) / WorldRenderer.LID_SWING));
+    // Ease out with an overshoot: it is flung back, knocks against its stop and settles.
+    const c = 2.2;
+    const k = 1 + (c + 1) * (t - 1) ** 3 + c * (t - 1) ** 2;
+    const from = restingLid({ ...poi, cleared: false });
+    return from + (LID_OPEN - from) * k;
+  }
+
+  /** A chest is opened: its lid swings back over half a second. */
+  openChest(poiId: string) {
+    this.lidsSwinging.set(poiId, this.clock);
+  }
+
+  /**
+   * A blow struck by hand at a place rather than at a unit (a crate): the unit turns to it, winds up and strikes,
+   * and `onImpact` runs as the blow lands.
+   */
+  strikeAt(actorId: string, at: THREE.Vector3, name: string, onImpact: () => void) {
+    const a = this.units.get(actorId);
+    if (!a || a.lying) return onImpact();
+    sounds.attack(name, attackStyle(name), this.fighter(actorId), this.spot(actorId));
+    this.face(a, at.x, at.z);
+    const dir = at.clone().project(this.camera).x >= a.goal.clone().project(this.camera).x ? 1 : -1;
+    const heavy = SMASHES.has(name);
+    const land = () => {
+      this.spawnFx("slash", "#dfe9ff", dir < 0, { from: at, to: at, life: heavy ? 0.3 : 0.26, size: heavy ? [1.7, 3] : [1.3, 2.3], spin: -dir * (heavy ? 1.6 : 0.9), fade: true });
+      onImpact();
+    };
+    const wait = a.figure.strike(HEAVY_SWINGS.has(name) ? "heavy" : "light");
+    if (wait > 0) return this.later(0, land, wait);
+    // A creature with no swing of its own springs at it.
+    a.kick.copy(at).sub(a.goal).setY(0).setLength(Math.min(0.6, a.goal.distanceTo(at) * 0.4));
+    a.bob = 0.2;
+    land();
+  }
+
+  /** A crate takes a blow: it rocks and jolts, `by` hard (1 a good hit). */
+  shakePoi(poiId: string, by = 1) {
+    this.poiShakes.set(poiId, { at: this.clock, by });
+  }
+
+  /** A point in a place's model (caveProps' chestMouth, crateMiddle), out in the world. Null if it is not drawn. */
+  poiPoint(poiId: string, local: THREE.Vector3): THREE.Vector3 | null {
+    const g = this.poiObject(poiId);
+    if (!g) return null;
+    g.updateWorldMatrix(true, false);
+    return g.localToWorld(local.clone());
+  }
+
+  /** Where the middle of a chest's opening or a crate is, in the world: for what spills or flies out of it. */
+  poiSpot(poi: Poi): THREE.Vector3 | null {
+    return this.poiPoint(poi.id, poi.kind === "crate" ? crateMiddle(poi) : chestMouth(poi));
+  }
+
+  /** Text rising off a place: the damage a crate takes. */
+  floatAt(poiId: string, text: string, color: string) {
+    const g = this.poiObject(poiId);
+    if (!g) return;
+    const box = new THREE.Box3().setFromObject(g);
+    if (box.isEmpty()) return;
+    const map = textTexture(text, color);
+    const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map, transparent: true, depthTest: false }));
+    sprite.scale.set((0.45 * map.image.width) / 24, 0.45, 1);
+    sprite.position.set((box.min.x + box.max.x) / 2, box.max.y + 0.35, (box.min.z + box.max.z) / 2);
+    sprite.renderOrder = 10;
+    this.fxGroup.add(sprite);
+    this.floaters.push({ sprite, age: 0 });
+  }
+
+  /** Each frame: lids swinging, crates rocking, glints twinkling. */
+  private movePois() {
+    for (const [id, start] of this.lidsSwinging) {
+      const lid = this.poiObject(id)?.userData.lid as THREE.Object3D | undefined;
+      const poi = this.state?.map.pois.find((p) => p.id === id);
+      if (lid && poi) lid.rotation.x = this.lidNow({ ...poi, cleared: true });
+      if (this.clock - start > WorldRenderer.LID_SWING) this.lidsSwinging.delete(id);
+    }
+    for (const [id, shake] of this.poiShakes) {
+      const body = this.poiObject(id)?.userData.body as THREE.Object3D | undefined;
+      const t = (this.clock - shake.at) / 0.35;
+      if (body) {
+        // A jolt that dies away: rocked side to side and lifted off the ground a moment.
+        const k = t < 1 ? (1 - t) ** 2 * shake.by : 0;
+        body.rotation.x = Math.sin(t * 22) * 0.09 * k;
+        body.rotation.z = (body.userData.lean ??= body.rotation.z) + Math.sin(t * 17 + 1) * 0.12 * k;
+        body.position.y = Math.abs(Math.sin(t * 9)) * 0.06 * k;
+      }
+      if (t >= 1) this.poiShakes.delete(id);
+    }
+    for (const o of this.twinkles) {
+      const phase = o.userData.twinkle as number;
+      // Mostly a faint point, flaring now and then, each on its own beat.
+      const beat = Math.sin(this.clock * 2.3 + phase);
+      const flare = Math.max(0, beat) ** 6;
+      o.scale.setScalar((o.userData.size as number) * (0.35 + flare * 1.6));
+      o.rotation.y = this.clock * 1.5 + phase;
+    }
   }
 
   // ---------- units ----------
@@ -5958,7 +6093,8 @@ export class WorldRenderer {
         const unit = this.units.get(h.id);
         if (unit && (!lit || h.torch)) torches.push(unit.root.position);
       }
-      for (const t of this.groundTorches.children) torches.push(t.position.clone().setY(t.position.y - 0.8));
+      // A torch on the ground lights from just over its flame.
+      for (const t of this.groundTorches.children) torches.push(t.position.clone().setY(t.position.y + 0.55 - TORCH_LIFT));
       torches.sort((a, b) => a.distanceToSquared(this.target) - b.distanceToSquared(this.target));
       this.ambience.setTorches(torches);
     }
@@ -6229,6 +6365,7 @@ export class WorldRenderer {
       }
     }
 
+    this.movePois();
     for (const tick of this.tickers) tick(dt, this.camera, this.clock);
     this.ambience.settleShadows();
     // Until the veil starts to clear, the place is all down but the hex you stand on (or the middle of the view).

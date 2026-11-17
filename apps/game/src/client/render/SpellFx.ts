@@ -2,8 +2,9 @@
 // the tiles: an arrow on a low arc, a bolt of light with a tail, a flask
 // tumbling end over end, a rock falling out of the sky, a beam, forked
 // lightning, spikes and vines breaking the ground, a ring rolling outward,
-// motes rising off someone healed. Small low-poly pieces in flat colours,
-// like the rest of the world, each alive for under a second.
+// motes rising off someone healed; and in a delve, glints spilling out of a
+// chest thrown open, and splinters flying off a crate. Small low-poly pieces
+// in flat colours, like the rest of the world, most alive for under a second.
 //
 // It draws through the renderer's public hooks and knows nothing of the
 // rules: the view says what to play, where, and what to do when it lands.
@@ -25,6 +26,7 @@ const cone = new THREE.ConeGeometry(1, 1, 5);
 const rock = new THREE.IcosahedronGeometry(1, 0);
 const shaft = new THREE.BoxGeometry(1, 1, 1);
 const ringShape = new THREE.RingGeometry(0.82, 1, 24);
+const diamond = new THREE.OctahedronGeometry(1, 0);
 
 const glow = (color: string, opacity = 1) => new THREE.MeshBasicMaterial({ color, transparent: true, opacity, depthWrite: false, blending: THREE.AdditiveBlending });
 const flat = (color: string) => new THREE.MeshLambertMaterial({ color, flatShading: true, transparent: true });
@@ -281,6 +283,148 @@ export class SpellFx {
         }
         if (age < 0.8) return true;
         this.drop(...motes.map((m) => m.mote));
+        return false;
+      },
+    });
+  }
+
+  /**
+   * A chest thrown open: a flash of light out of it, a fountain of glints thrown up and falling back about it, and
+   * a few left hanging in the air over it, twinkling as they drift up and fade. `rich` is the hoard: more of
+   * everything, and gems among the gold.
+   */
+  spill(at: THREE.Vector3, rich = false) {
+    const flash = this.add(new THREE.Mesh(sphere, glow("#ffe6a0", 0.3)));
+    flash.position.copy(at);
+    const colors = rich ? ["#ffd45e", "#fff3c4", "#ffb347", "#7fe0ff", "#ff6fb5"] : ["#ffd45e", "#fff3c4", "#ffe08a"];
+    const thrown = Array.from({ length: rich ? 38 : 22 }, () => {
+      const bit = this.add(new THREE.Mesh(diamond, glow(colors[Math.floor(Math.random() * colors.length)], 1)));
+      const size = 0.035 + Math.random() * 0.04;
+      bit.scale.setScalar(size);
+      bit.position.copy(at).add(new THREE.Vector3((Math.random() - 0.5) * 0.3, 0, (Math.random() - 0.5) * 0.2));
+      const a = Math.random() * Math.PI * 2;
+      const out = 0.4 + Math.random() * (rich ? 1.5 : 1.1);
+      const v = new THREE.Vector3(Math.cos(a) * out, 2.6 + Math.random() * (rich ? 2.8 : 2.2), Math.sin(a) * out);
+      return { bit, v, size, life: 0.8 + Math.random() * 0.5, floor: at.y - 0.3, spin: Math.random() * 12 };
+    });
+    const hanging = Array.from({ length: rich ? 12 : 7 }, (_, i) => {
+      const bit = this.add(new THREE.Mesh(diamond, glow(i % 3 ? "#fff3c4" : "#ffd45e", 0)));
+      const size = 0.03 + Math.random() * 0.03;
+      const a = Math.random() * Math.PI * 2;
+      const r = 0.1 + Math.random() * 0.45;
+      bit.position.copy(at).add(new THREE.Vector3(Math.cos(a) * r, 0.15 + Math.random() * 0.55, Math.sin(a) * r));
+      return { bit, size, rise: 0.12 + Math.random() * 0.22, sway: Math.random() * 6, delay: 0.15 + Math.random() * 0.5, life: 2.2 + Math.random() * 1.4 };
+    });
+    let age = 0;
+    this.live.push({
+      step: (dt) => {
+        age += dt;
+        const f = Math.min(1, age / 0.3);
+        flash.scale.setScalar(0.15 + f * (rich ? 0.6 : 0.4));
+        (flash.material as THREE.MeshBasicMaterial).opacity = 0.3 * (1 - f) ** 2;
+        for (const g of thrown) {
+          if (age > g.life) {
+            g.bit.visible = false;
+            continue;
+          }
+          g.v.y -= 7.5 * dt;
+          g.bit.position.addScaledVector(g.v, dt);
+          // They come to rest on the floor and wink out there.
+          if (g.bit.position.y < g.floor) {
+            g.bit.position.y = g.floor;
+            g.v.set(g.v.x * 0.3, Math.abs(g.v.y) * 0.25, g.v.z * 0.3);
+          }
+          g.bit.rotation.y += g.spin * dt;
+          const k = age / g.life;
+          (g.bit.material as THREE.MeshBasicMaterial).opacity = k < 0.7 ? 1 : (1 - k) / 0.3;
+          g.bit.scale.setScalar(g.size * (0.7 + 0.5 * Math.abs(Math.sin(age * 14 + g.spin))));
+        }
+        for (const h of hanging) {
+          const t = age - h.delay;
+          if (t < 0) continue;
+          h.bit.position.y += h.rise * dt;
+          h.bit.position.x += Math.cos(h.sway + t * 1.7) * 0.05 * dt;
+          const k = t / h.life;
+          const twinkle = Math.max(0, Math.sin(t * 5 + h.sway)) ** 3;
+          (h.bit.material as THREE.MeshBasicMaterial).opacity = Math.min(1, t * 3) * (1 - Math.max(0, (k - 0.6) / 0.4)) * (0.35 + 0.65 * twinkle);
+          h.bit.scale.setScalar(h.size * (0.6 + 0.9 * twinkle));
+          h.bit.rotation.y = t * 2 + h.sway;
+        }
+        if (age < Math.max(...hanging.map((h) => h.delay + h.life))) return true;
+        this.drop(flash, ...thrown.map((g) => g.bit), ...hanging.map((h) => h.bit));
+        return false;
+      },
+    });
+  }
+
+  /**
+   * Splinters knocked off a crate (`count` a few, from a blow), or the whole crate flying apart: boards and chips
+   * thrown out and up, tumbling, bouncing once on the floor and lying a moment before they sink away. `burst`
+   * adds a puff of dust and a ring across the floor.
+   */
+  splinters(at: THREE.Vector3, count: number, burst = false) {
+    const woods = ["#a87b4a", "#8a6238", "#6b4a2a", "#c29464"];
+    const floor = at.y - (burst ? 0.38 : 0.3);
+    const bits = Array.from({ length: count }, (_, i) => {
+      const bit = this.add(new THREE.Mesh(shaft, flat(woods[i % woods.length])));
+      const long = burst && i % 2 === 0 ? 0.18 + Math.random() * 0.22 : 0.05 + Math.random() * 0.08;
+      bit.scale.set(long, 0.025 + Math.random() * 0.015, 0.05 + Math.random() * 0.03);
+      bit.position.copy(at).add(new THREE.Vector3((Math.random() - 0.5) * 0.3, (Math.random() - 0.5) * 0.3, (Math.random() - 0.5) * 0.3));
+      const a = Math.random() * Math.PI * 2;
+      const out = (burst ? 1.4 : 0.8) + Math.random() * (burst ? 1.8 : 0.9);
+      const v = new THREE.Vector3(Math.cos(a) * out, (burst ? 2.2 : 1.6) + Math.random() * 1.8, Math.sin(a) * out);
+      const spin = new THREE.Vector3(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).multiplyScalar(22);
+      return { bit, v, spin, bounced: false, rest: false };
+    });
+    const dust = burst
+      ? Array.from({ length: 7 }, (_, i) => {
+          const puff = this.add(new THREE.Mesh(sphere, new THREE.MeshLambertMaterial({ color: "#8f7a62", transparent: true, opacity: 0.5, depthWrite: false })));
+          const a = (i / 7) * Math.PI * 2;
+          puff.position.copy(at).add(new THREE.Vector3(Math.cos(a) * 0.15, -0.15, Math.sin(a) * 0.15));
+          return { puff, dir: new THREE.Vector3(Math.cos(a), 0.35, Math.sin(a)).multiplyScalar(0.7 + Math.random() * 0.4) };
+        })
+      : [];
+    if (burst) this.ring(new THREE.Vector3(at.x, floor, at.z), 1.4, "#c9a46a", 0.45);
+    const life = burst ? 1.6 : 0.9;
+    let age = 0;
+    this.live.push({
+      step: (dt) => {
+        age += dt;
+        for (const b of bits) {
+          if (!b.rest) {
+            b.v.y -= 9 * dt;
+            b.bit.position.addScaledVector(b.v, dt);
+            b.bit.rotation.x += b.spin.x * dt;
+            b.bit.rotation.y += b.spin.y * dt;
+            b.bit.rotation.z += b.spin.z * dt;
+            if (b.bit.position.y <= floor) {
+              b.bit.position.y = floor;
+              if (b.bounced) {
+                b.rest = true;
+                b.bit.rotation.x = b.bit.rotation.z = 0;
+              } else {
+                b.bounced = true;
+                b.v.set(b.v.x * 0.35, Math.abs(b.v.y) * 0.3, b.v.z * 0.35);
+                b.spin.multiplyScalar(0.4);
+              }
+            }
+          }
+          // Lying a moment, then sinking away.
+          if (age > life * 0.65) {
+            const k = (age - life * 0.65) / (life * 0.35);
+            (b.bit.material as THREE.MeshLambertMaterial).opacity = Math.max(0, 1 - k);
+            if (b.rest) b.bit.position.y = floor - k * 0.05;
+          }
+        }
+        for (const d of dust) {
+          d.puff.position.addScaledVector(d.dir, dt);
+          d.dir.multiplyScalar(1 - 2.5 * dt);
+          const k = Math.min(1, age / 0.9);
+          d.puff.scale.setScalar(0.12 + k * 0.35);
+          (d.puff.material as THREE.MeshLambertMaterial).opacity = 0.5 * (1 - k);
+        }
+        if (age < life) return true;
+        this.drop(...bits.map((b) => b.bit), ...dust.map((d) => d.puff));
         return false;
       },
     });
