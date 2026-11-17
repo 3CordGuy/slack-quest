@@ -171,7 +171,7 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
   }, [harbor.chat.length]);
 
   // Dev-only handle for driving the Harbor from the console or a test script.
-  if (import.meta.env.DEV) (window as unknown as { __harbor: unknown }).__harbor = { harbor };
+  if (import.meta.env.DEV) (window as unknown as { __harbor: unknown }).__harbor = { harbor, view: renderer.current };
   const self = players.find((p) => p.id === you);
   const shipHere = self ? moored.find((s) => same(HARBOR_PIERS[s.pier!], self.pos)) : undefined;
   const plotIndex = self ? HARBOR_PLOTS.findIndex((p) => same(p, self.pos)) : -1;

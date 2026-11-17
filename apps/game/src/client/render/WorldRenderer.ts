@@ -1493,6 +1493,35 @@ export class WorldRenderer {
   }
 
   /**
+   * A walk that was shown before the server had made it (client/zone/ahead.ts) turned out shorter than shown, or
+   * was refused: the unit's walk ends at this hex after all. Whatever it was to walk after that hex is dropped;
+   * if it has already gone past (or was never bound for it), it turns round and walks straight back.
+   */
+  stopWalkAt(id: string, at: HexPos) {
+    const unit = this.units.get(id);
+    if (!unit) return;
+    const stop = this.standAt(at);
+    const i = unit.path.findIndex((p) => Math.hypot(p.x - stop.x, p.z - stop.z) < 0.01);
+    const dropped = i >= 0 ? unit.path.splice(i + 1) : unit.path.splice(0);
+    if (i < 0) unit.path.push(stop);
+    for (const p of dropped) unit.leaps?.delete(p);
+  }
+
+  /**
+   * A unit about to do something to a spot, shown the moment it is asked for, while what comes of it is still
+   * being decided elsewhere: it turns to the spot and leans into it. Nothing of the result is shown; the blow,
+   * shot or spell itself is played when it is known (blow, cast). Not while it is walking or off its feet.
+   */
+  ready(id: string, x: number, z: number) {
+    const unit = this.units.get(id);
+    if (!unit || unit.lying || unit.path.length > 0) return;
+    this.face(unit, x, z);
+    // Toward the spot as the viewer sees it, as a stomp is leant into (see attack), but slighter.
+    const side = new THREE.Vector3(x, unit.goal.y, z).project(this.camera).x >= unit.goal.clone().project(this.camera).x ? 1 : -1;
+    unit.lean = -side * 0.35;
+  }
+
+  /**
    * A unit knocked from where it stands to another hex (a shove, a blow that throws it back): it is
    * flung there, not walked, and with `fall` lands on its back for a moment before getting up.
    */

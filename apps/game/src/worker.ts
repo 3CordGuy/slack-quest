@@ -1011,6 +1011,9 @@ app.get("/api/zone/:code/ws", async (c) => {
   const near = c.req.query("near");
   if (near && near.length <= 64) headers.set("x-zone-near", near);
   else headers.delete("x-zone-near");
+  // A client that keeps the map's tiles from its first update asks to be sent them once (zone-room.ts).
+  if (c.req.query("lean") === "1") headers.set("x-zone-lean", "1");
+  else headers.delete("x-zone-lean");
   return c.env.ZONE_ROOM.get(c.env.ZONE_ROOM.idFromName(code)).fetch(new Request(c.req.url, { headers }));
 });
 

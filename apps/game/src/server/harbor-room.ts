@@ -170,7 +170,12 @@ export class HarborRoom extends DurableObject<Env> {
       if (!Number.isInteger(to.q) || !Number.isInteger(to.r)) return;
       // With a boat, out onto the water: a barrel along the coast, a rowboat anywhere.
       const path = harborPath(MAP, player.pos, to, player.vessel ?? null);
-      if (!path) return;
+      if (!path) {
+        // No way there. A client shows its own walks at the click and counts the answers (client/useHarbor.ts), so
+        // it is told this one was not made, and where its hero really stands. Nobody else saw anything, so nobody else is told.
+        ws.send(JSON.stringify({ type: "stayed", id: player.id, pos: player.pos } satisfies HarborServerMessage));
+        return;
+      }
       // Walking off rolls the bedroll back up.
       ws.serializeAttachment({ ...player, pos: path[path.length - 1], bedroll: undefined, fishing: undefined } satisfies HarborPlayer);
       this.broadcast({ type: "moved", id: player.id, path });
