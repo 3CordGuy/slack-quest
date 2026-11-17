@@ -9,7 +9,8 @@
 // - A hero breaks it by hitting it. An ability that does damage, aimed at
 //   it, always lands (a crate cannot dodge), though never as a critical hit;
 //   a blast, a burst, a line or a thrown bomb that reaches it hurts it too,
-//   and so does fire under it. The enemy leaves crates alone.
+//   and so does fire under it, every round it burns. The enemy leaves crates
+//   alone.
 // - At 0 it breaks and pays whoever broke it: a little wood from its planks,
 //   sometimes one other material, often a little gold, and now and then a
 //   healing potion or a torch. No XP. A stand-in's blow pays the player who

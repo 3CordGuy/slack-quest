@@ -1389,7 +1389,7 @@ describe("crates", () => {
     expect(hits(events, "crate1")).toEqual([]);
   });
 
-  it("burns in fire: as it takes hold, and again each round of a fight it lasts", () => {
+  it("burns in fire: as it takes hold, and again each round it lasts, in a fight or out of one", () => {
     // A fire bomb: the blast, then the flames under it.
     let state = board();
     hero(state, "ann", "devops_mage", at(3, 6));
@@ -1410,6 +1410,14 @@ describe("crates", () => {
     expect(events.some((e) => e.t === "round")).toBe(true);
     expect(hits(events, "crate9")).toHaveLength(1);
     expect(poi(fight, "crate9").hp).toBe(after - hits(events, "crate9")[0].amount);
+
+    // Out of a fight, each round of time that passes burns it again, and its breaker is whoever started the fire.
+    state = must(state, { type: "time", now: 1_000_000 });
+    const before = poi(state, "crate1").hp!;
+    events = [];
+    state = must(state, { type: "time", now: 1_000_000 + 2 * EXPLORE_ROUND_MS }, events);
+    expect(hits(events, "crate1").map((h) => [h.what, h.actor])).toEqual([["fire", "ann"], ["fire", "ann"]]);
+    expect(poi(state, "crate1").hp).toBe(before - hits(events, "crate1").reduce((n, h) => n + h.amount, 0));
   });
 
   it("pays the player whose stand-in broke it, and nobody for a fire no hero started", () => {

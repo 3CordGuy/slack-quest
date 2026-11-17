@@ -4,7 +4,7 @@
 // combines them: fire runs through oil and sets off poison, water puts
 // fire out, cold turns water to ice, fire burns slime off and water washes
 // it away. Fire burns a crate standing in it, too: when it takes hold under
-// it, and again at each round of a fight it is still burning.
+// it, and again every round it is still burning, in a fight or out of one.
 
 import { hexDistance, hexNeighbors, posKey, type HexPos } from "@gantt-quest/core";
 import { tileAt } from "../map";
