@@ -137,9 +137,9 @@ function rand(): number {
  */
 /**
  * What is worn over what, as a number each piece carries (its `layer`): the legs under the hem of whatever is
- * worn on the body, and headgear over the hair and the head.
+ * worn on the body, a hood's mantle over the body and the tops of the arms, and headgear over the hair and the head.
  */
-const TIER = { legs: -1, body: 0, headgear: 2 };
+const TIER = { legs: -1, body: 0, mantle: 1, headgear: 2 };
 /** The layer whatever is drawn next belongs to (see TIER): set round the drawing of legs and of headgear. */
 let tier = TIER.body;
 /** How much nearer one layer is drawn than the one under it, in the figure's own units. */
@@ -260,6 +260,76 @@ function loftGeometry(rings: readonly Ring[], sides: number, shape: LoftShape = 
   };
   if (!shape.open) cap(0, false);
   if (shape.open !== "both") cap(loops.length - 1, true);
+  const g = new THREE.BufferGeometry();
+  g.setAttribute("position", new THREE.Float32BufferAttribute(out, 3));
+  g.computeVertexNormals();
+  return g;
+}
+
+/** A ring of a hanging loft (see hemmedGeometry): a Ring, and how much of the hem's fall it takes (0 to 1). */
+/**
+ * A ring of a hanging loft (see hemmedGeometry): a Ring, how much of the hem's fall it takes (0 to 1), and how far
+ * either side of the middle it is parted at the front (0, or left out, closed).
+ */
+type HemRing = readonly [y: number, rx: number, rz: number, dz: number, fall: number, open?: number];
+
+/**
+ * Cloth hung in rings stacked up y, open at the bottom and closed at the top: a mantle. Unlike loftGeometry,
+ * a corner looks straight along +z (and so one straight back), so the hem can come to a point there; each
+ * ring is let down by its `fall` share of `hem(a)`, `a` in radians from +z toward +x. Between rings both
+ * parted at the front the cloth is cut there, its two edges each that far from the middle: an opening up the
+ * front, closed where a ring is not parted. The cloth is `thick` through, its inside face set in that far and
+ * closed to the outside along the hem and the cut, so its edges are a solid's and are outlined like one.
+ */
+function hemmedGeometry(rings: readonly HemRing[], sides: number, hem: (a: number) => number, thick = 0.14): THREE.BufferGeometry {
+  const sorted = [...rings].sort((p, q) => p[0] - q[0]);
+  // Each ring runs from its front edge on the +x side round the back to the one on the -x side: on a closed
+  // ring the two are the same corner, straight ahead.
+  const loopsAt = (inset: number) =>
+    sorted.map(([y, rx, rz, dz, fall, open = 0]) => {
+      const cut = Math.asin(Math.min(0.9, open / rx));
+      return Array.from({ length: sides + 1 }, (_, k) => {
+        const a = k === 0 ? cut : k === sides ? Math.PI * 2 - cut : (k / sides) * Math.PI * 2;
+        return new THREE.Vector3(Math.sin(a) * (rx - inset), y - fall * hem(a), Math.cos(a) * (rz - inset) + dz);
+      });
+    });
+  const outer = loopsAt(0);
+  const inner = loopsAt(thick);
+  const out: number[] = [];
+  const tri = (a: THREE.Vector3, b: THREE.Vector3, c: THREE.Vector3) => {
+    if (!a.equals(b) && !b.equals(c) && !c.equals(a)) out.push(a.x, a.y, a.z, b.x, b.y, b.z, c.x, c.y, c.z);
+  };
+  // A four-cornered face, `a` to `b` along and `d` to `c` beside them, facing along (b - a) × (d - a).
+  const quad = (a: THREE.Vector3, b: THREE.Vector3, c: THREE.Vector3, d: THREE.Vector3) => {
+    tri(a, b, c);
+    tri(a, c, d);
+  };
+  const last = sorted.length - 1;
+  for (let i = 0; i < last; i++) {
+    const [lo, hi, inLo, inHi] = [outer[i], outer[i + 1], inner[i], inner[i + 1]];
+    for (let k = 0; k < sides; k++) {
+      quad(lo[k], lo[k + 1], hi[k + 1], hi[k]);
+      quad(inLo[k], inHi[k], inHi[k + 1], inLo[k + 1]);
+    }
+    if (!sorted[i][5] !== !sorted[i + 1][5]) {
+      // Across the front where a parted ring meets a closed one: the top of the opening.
+      quad(lo[sides], lo[0], hi[0], hi[sides]);
+      quad(inLo[sides], inHi[sides], inHi[0], inLo[0]);
+    } else if (sorted[i][5]) {
+      // The two edges of the cut, each facing into the opening.
+      quad(lo[0], hi[0], inHi[0], inLo[0]);
+      quad(lo[sides], inLo[sides], inHi[sides], hi[sides]);
+    }
+  }
+  // The hem, facing down, from the outside face to the inside one.
+  for (let k = 0; k < sides; k++) quad(outer[0][k], inner[0][k], inner[0][k + 1], outer[0][k + 1]);
+  // The top, closed outside and in.
+  const [y, , , dz] = sorted[last];
+  const c = new THREE.Vector3(0, y, dz);
+  for (let k = 0; k < sides; k++) {
+    tri(c, outer[last][k], outer[last][k + 1]);
+    tri(c, inner[last][k + 1], inner[last][k]);
+  }
   const g = new THREE.BufferGeometry();
   g.setAttribute("position", new THREE.Float32BufferAttribute(out, 3));
   g.computeVertexNormals();
@@ -536,6 +606,11 @@ class Part {
    */
   shell(color: string, rings: readonly Ring[], sides: number, shape: LoftShape, x = 0, y = 0, z = 0, rot?: Rot): this {
     return this.add(loftGeometry(rings, sides, shape), color, x, y, z, rot, false, !shape.inward, !shape.inward);
+  }
+
+  /** Cloth hung through `rings` with its hem let down by `hem` (see hemmedGeometry): a mantle. */
+  hanging(color: string, rings: readonly HemRing[], sides: number, hem: (a: number) => number): this {
+    return this.add(hemmedGeometry(rings, sides, hem), color, 0, 0, 0, undefined, false, true);
   }
 
   /** The smallest solid that holds all of `pts`, with no outline: an eye laid on a face (see inlayPoints). */
@@ -2848,8 +2923,8 @@ function lowHelm(head: Part, c: string, band: string, crest: string, nasal = fal
 
 /**
  * A hood, low-poly: a cloth shell round the head, from an oval opening that frames the face, swelling over
- * the ears and crown and tapering to a soft point down the back; dark inside round the face; a short mantle
- * round the neck over the shoulders. `trim` bands the opening (a worn hood).
+ * the ears and crown and tapering to a soft point down the back; dark inside round the face. `trim` bands the
+ * opening (a worn hood). Its mantle over the shoulders is drawn on the body (see lowMantle).
  *
  * The shell is a loft run front to back and laid on its side (turned so the loft's +y runs back, -z): each
  * ring's rx is its half-width, its rz its half-height and its dz how far up its middle is from `mid`. The
@@ -2880,9 +2955,43 @@ function lowHood(head: Part, c: string, rings: readonly Ring[], trim?: string) {
   // The lining round the face, in shadow.
   const lining: Ring[] = shell.slice(0, 3).map(([y, rx, rz, dz = 0]) => [y + 0.05, rx - 0.14, rz - 0.14, dz]);
   head.shell(tone(c, -0.32), lining, 12, { open: "both", inward: true }, 0, mid, 0, side);
-  // A short mantle round the neck and over the shoulders, under the chin at the front.
-  head.loft(c, [[-1.15, 3.95 + wide, 3.5, 0.1], [-0.4, 3.8 + wide, 3.35, 0.05], [0.15, 3 + wide, 2.5, -0.4]], 12);
   if (trim) head.shell(trim, [[-3.45, 2.99 + wide, half + 0.12, 0], [-3.12, 2.99 + wide, half + 0.12, 0]], 12, { open: "both" }, 0, mid, 0, side);
+}
+
+/**
+ * A hood's mantle, low-poly, on the body (so it sits on the shoulders however the head turns): up the neck
+ * under the hood, out over the tops of the arms, and down the chest and back, to a point behind and parted in
+ * front from the hem up to a bow tied below the throat. It stands `over` past whatever is worn on the chest (see
+ * amuletOver). `tie` is the bow's colour; `trim` bands the hem (a worn hood).
+ */
+function lowMantle(torso: Part, c: string, over: number, tie: string, trim?: string) {
+  // In the torso's own units (its girth is its part's scale): where the arms hang, and how far a sleeve reaches
+  // out from there at its widest and at its top.
+  const arm = (4.05 * m.shoulders + 0.45) / m.girth;
+  const [widest, top] = [1.32 / m.girth, 0.75 / m.girth];
+  const t = over + 0.18;
+  const hem = (a: number) => (Math.cos(a) > 0 ? 1.9 : 2.2) * Math.abs(Math.cos(a)) ** 2.2;
+  // The opening: wide at the hem, closing to the bow.
+  const rings: HemRing[] = [
+    [4.85, arm + widest + t + 0.3, 2.4 + t, 0.1, 1, 0.95],
+    [5.75, arm + widest + t + 0.08, 2.3 + t, 0.08, 0.12, 0.06],
+    [6.45, arm + top + t + 0.1, 2.1 + t, 0.02, 0],
+    [6.8, 2.6 + t, 1.95 + t, 0, 0],
+    [7.1, 2, 1.75, 0, 0],
+  ];
+  torso.hanging(c, rings, 16, hem);
+  if (trim) {
+    const [y, rx, rz, dz, , open = 0] = rings[0];
+    torso.hanging(trim, [[y - 0.03, rx + 0.07, rz + 0.07, dz, 1, open], [y + 0.3, rx + 0.07, rz + 0.07, dz, 1, open - 0.08]], 16, hem);
+  }
+  // The bow, where the opening closes: a knot, two loops out to the sides and two ends hanging down the opening.
+  const [y1, , rz1, dz1, fall1] = rings[1];
+  const knot: Pt = [0, y1 - fall1 * hem(0) + 0.05, rz1 + dz1 + 0.25];
+  torso.ball(tie, 0.3, ...knot, 0, [1.1, 0.9, 0.8]);
+  for (const s of [-1, 1]) {
+    torso.ball(tie, 0.36, knot[0] + s * 0.5, knot[1] + 0.08, knot[2] - 0.05, 0, [1.3, 0.65, 0.5]);
+    strut(torso, tie, knot, [knot[0] + s * 0.32, knot[1] - 1.05, knot[2] + 0.12], 0.12, 0.09);
+  }
 }
 
 /** The headgear a class, townsperson or enemy has by default, rounded to go with low-poly heads. */
@@ -4132,6 +4241,9 @@ function person(top: THREE.Group, look: Look, outfit: Outfit | undefined, asleep
   // Arms and hands.
   // A hero with ink on either arm wears the tunic with both sleeves rolled up.
   const inkedArms = !!chosen?.ink && (["armR.f", "armR.b", "armL.f", "armL.b"] as const).some((side) => !!chosen?.ink?.[side]);
+  const helmet = armor("helmet");
+  // A hood, worn or the class's own: its mantle covers the shoulders (see lowMantle).
+  const hood = helmet ? helmet.ref === "hood" || helmet.icon === "hood" : !bare("helmet") && look.hat === "hood";
   for (const [arm, s] of [[armR, -1], [armL, 1]] as const) {
     if (lowPoly) {
       lowHand(arm, look.skin, s);
@@ -4151,10 +4263,13 @@ function person(top: THREE.Group, look: Look, outfit: Outfit | undefined, asleep
         // Oilskin sleeves, cuffed in the coat's trim.
         lowSleeve(arm, oilskin, trim("body"));
       } else {
-        // Mail sleeves, a steel pauldron over the shoulder edged in the trim, and a steel vambrace.
+        // Mail sleeves, a steel pauldron over the shoulder edged in the trim (under a hood's mantle, none),
+        // and a steel vambrace.
         lowSleeve(arm, GEAR.iron, GEAR.steel);
-        arm.ball(GEAR.steel, 1.55, s * 0.25, 0.35, 0, 0, [1.05, 0.72, 1.15]);
-        arm.loft(trim("body"), [[-0.75, 1.5, 1.5], [-0.45, 1.5, 1.5]], 8, s * 0.2);
+        if (!hood) {
+          arm.ball(GEAR.steel, 1.55, s * 0.25, 0.35, 0, 0, [1.05, 0.72, 1.15]);
+          arm.loft(trim("body"), [[-0.75, 1.5, 1.5], [-0.45, 1.5, 1.5]], 8, s * 0.2);
+        }
         arm.loft(GEAR.steel, [[-3.75, 1.12, 1.12], [-2.75, 1.18, 1.18]], 8);
       }
       continue;
@@ -4190,7 +4305,6 @@ function person(top: THREE.Group, look: Look, outfit: Outfit | undefined, asleep
     const hatted = !!outfit?.helmet || (!chosen && look.hat !== "none");
     lowHead(head, look, asleep, hatted);
   } else drawHead(head, look, asleep);
-  const helmet = armor("helmet");
   // Over the hair and the head.
   tier = TIER.headgear;
   if (lowPoly && helmet) {
@@ -4224,6 +4338,11 @@ function person(top: THREE.Group, look: Look, outfit: Outfit | undefined, asleep
     // No helmet equipped: the class keeps its own hat (a hero who chose their look wears it as an item).
     if (lowPoly) lowHat(head, look);
     else drawHat(head, look);
+  }
+  // A hood's mantle lies on the shoulders, over what is worn on the body and under the hood.
+  if (lowPoly && hood) {
+    tier = TIER.mantle;
+    lowMantle(torso, helmet ? GEAR.leather : (look.hatColor ?? look.body), amuletOver, helmet ? trim("helmet") : look.accent, helmet ? trim("helmet") : undefined);
   }
   tier = TIER.body;
 
