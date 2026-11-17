@@ -10,7 +10,7 @@ import type { CommonAction, Throwable } from "@gantt-quest/world";
 export const BAR_ROW = 9;
 export const BAR_SLOTS = BAR_ROW * 2;
 
-export const COMMON_ORDER: CommonAction[] = ["dash", "disengage", "jump", "shove", "help"];
+export const COMMON_ORDER: CommonAction[] = ["dash", "disengage", "jump", "shove", "help", "flee"];
 export const ITEM_ORDER: Throwable[] = ["healing", "poison", "fire", "oil", "water", "acid", "slime", "torch"];
 
 const key = (kind: string) => `gq.zone.bar.${kind}`;
@@ -21,9 +21,10 @@ export function barChoices(abilities: string[]): string[] {
   return [...abilities.map((a) => `ab:${a}`), ...COMMON_ORDER.map((c) => `do:${c}`), ...ITEM_ORDER.map((i) => `it:${i}`)];
 }
 
-/** The bar as it starts out: abilities and the common actions along the top, the pack along the bottom. */
+/** The bar as it starts out: abilities and the common actions along the top, the pack along the bottom, and Flee at the end of it. */
 export function defaultBar(abilities: string[]): string[] {
-  return [...pad([...abilities.map((a) => `ab:${a}`), ...COMMON_ORDER.map((c) => `do:${c}`)], BAR_ROW), ...pad(ITEM_ORDER.map((i) => `it:${i}`), BAR_ROW)];
+  const top = COMMON_ORDER.filter((c) => c !== "flee");
+  return [...pad([...abilities.map((a) => `ab:${a}`), ...top.map((c) => `do:${c}`)], BAR_ROW), ...pad([...ITEM_ORDER.map((i) => `it:${i}`), "do:flee"], BAR_ROW)];
 }
 
 /**

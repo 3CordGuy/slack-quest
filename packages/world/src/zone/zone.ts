@@ -26,7 +26,7 @@ import { generateDelve } from "./delve";
 import { checkOpen, openChest } from "./loot";
 import { isCrateId } from "./crates";
 import { FREE_WALK, blast, blockerAt, inFight, pathIn, sameHex, sees, solid, unitAt, unitById, zoneReach } from "./geometry";
-import { STARTING_ITEMS, THROWABLES, THROWABLE_KINDS, cleanItems, commonCost, enemyHp, enemyMove, tacticOf } from "./kit";
+import { FLEE_RANGE, STARTING_ITEMS, THROWABLES, THROWABLE_KINDS, cleanItems, commonCost, enemyHp, enemyMove, tacticOf } from "./kit";
 import { d20, heroMove, mod, statOf } from "./rules";
 import { hiddenEnemies, sentToClient } from "./light";
 import { checkPickup, clearSurfaces, lightTorch, pickUpTorch, placeSurface, standInSurface, tickLights, tickSurfaces } from "./surfaces";
@@ -162,20 +162,63 @@ function enter(ctx: Ctx, enc: Encounter, unit: Unit): void {
   const before = (a: string, b: string) => enc.init[b] - enc.init[a] || side(a) - side(b) || a.localeCompare(b);
   const at = enc.order.findIndex((id) => before(unit.id, id) < 0);
   enc.order.splice(at < 0 ? enc.order.length : at, 0, unit.id);
+  // One who fled it and is back is simply in it again.
+  if (enc.fled?.includes(unit.id)) enc.fled = enc.fled.filter((id) => id !== unit.id);
   // A Warden walks into every fight with their guard up.
   if (unit.kind === "sre_warden" && !has(unit, "guarded")) unit.conditions.push({ kind: "guarded", rounds: 1 });
+}
+
+/**
+ * Whether a hero out of the fight is near enough to be drawn into it: within JOIN_RANGE of anyone in it.
+ * One who fled it has got clear, and only an enemy in it coming within FLEE_RANGE brings them back.
+ */
+function drawnIn(state: ZoneState, enc: Encounter, hero: Unit): boolean {
+  const fled = !!enc.fled?.includes(hero.id);
+  return state.units.some((f) => enc.order.includes(f.id) && !f.down && (fled ? f.side !== hero.side && hexDistance(f.pos, hero.pos) <= FLEE_RANGE : hexDistance(f.pos, hero.pos) <= JOIN_RANGE));
 }
 
 /** Heroes near anyone in the fight are in it. */
 function pullIn(ctx: Ctx): void {
   const enc = ctx.state.encounter;
   if (!enc) return;
-  const fighters = ctx.state.units.filter((u) => enc.order.includes(u.id) && !u.down);
   for (const hero of standing(ctx.state, "hero")) {
-    if (enc.order.includes(hero.id) || !fighters.some((f) => hexDistance(f.pos, hero.pos) <= JOIN_RANGE)) continue;
+    // Nobody is dragged into a fight while their player is not there to play it.
+    if (hero.away || enc.order.includes(hero.id) || !drawnIn(ctx.state, enc, hero)) continue;
     enter(ctx, enc, hero);
     ctx.events.push({ t: "fight_join", id: hero.id });
   }
+}
+
+/**
+ * Whatever a hero out of the fight does to someone in it, harm or help, puts them in it: a shot from afar,
+ * a bomb, a heal for a friend still fighting. (Walking near it does too: pullIn.)
+ */
+function reachIn(ctx: Ctx, unit: Unit, touched: Unit[]): void {
+  const enc = ctx.state.encounter;
+  if (!enc || unit.side !== "hero" || unit.down || enc.order.includes(unit.id)) return;
+  if (!touched.some((u) => u.id !== unit.id && enc.order.includes(u.id))) return;
+  enter(ctx, enc, unit);
+  ctx.events.push({ t: "fight_join", id: unit.id });
+}
+
+/**
+ * A hero gets away (Flee): out of the order and out of the turn, free to walk. The fight goes on for anyone
+ * still in it; once no hero is, it is over (settle).
+ */
+function flee(ctx: Ctx, unit: Unit): void {
+  const enc = ctx.state.encounter!;
+  const at = enc.order.indexOf(unit.id);
+  enc.order.splice(at, 1);
+  delete enc.init[unit.id];
+  delete enc.budgets[unit.id];
+  const acting = enc.acting.includes(unit.id);
+  enc.acting = enc.acting.filter((id) => id !== unit.id);
+  enc.done = enc.done.filter((id) => id !== unit.id);
+  // The turn was theirs alone: the next goes to whoever came after them.
+  if (acting && enc.acting.length === 0) enc.resume = enc.order[at] ?? null;
+  enc.fled = [...(enc.fled ?? []), unit.id];
+  endTurn(unit);
+  ctx.events.push({ t: "fled", id: unit.id });
 }
 
 /** Enemy groups have noticed someone: they are in a fight. One starts if none is on. */
@@ -226,7 +269,7 @@ function onStep(ctx: Ctx, unit: Unit, flush: () => void): boolean {
     return true;
   }
   const enc = ctx.state.encounter;
-  if (enc && !inFight(ctx.state, unit.id) && ctx.state.units.some((f) => enc.order.includes(f.id) && !f.down && hexDistance(f.pos, unit.pos) <= JOIN_RANGE)) {
+  if (enc && !inFight(ctx.state, unit.id) && drawnIn(ctx.state, enc, unit)) {
     flush();
     pullIn(ctx);
     return true;
@@ -281,6 +324,10 @@ function endTurn(unit: Unit): void {
 /**
  * If the fight is decided, end it. Won: the fallen heroes get up on 1 HP and the enemy dead are cleared
  * away. Lost: the heroes wake at the start on 1 HP, and the enemy are back at their posts, healed.
+ * Fled (every hero still standing got away, and none is left in it): nobody wins. The enemy go back to
+ * their posts and bind their wounds, but those of them that fell stay fallen: fleeing gets a party out,
+ * and what it killed stays killed, but it is no way to wear a band down. It never costs more than losing:
+ * nobody is moved or hurt, and nothing is paid.
  */
 function settle(ctx: Ctx): boolean {
   const { state } = ctx;
@@ -291,9 +338,10 @@ function settle(ctx: Ctx): boolean {
   const foes = fighters.filter((u) => u.side === "enemy");
   const won = foes.every((u) => u.down);
   const lost = !won && heroes.length > 0 && heroes.every((u) => u.down);
-  if (!won && !lost) return false;
+  const fled = !won && heroes.length === 0;
+  if (!won && !lost && !fled) return false;
   state.encounter = null;
-  ctx.events.push({ t: "fight_end", outcome: won ? "victory" : "defeat" });
+  ctx.events.push({ t: "fight_end", outcome: won ? "victory" : lost ? "defeat" : "fled" });
   for (const h of heroes) {
     if (h.down) {
       h.down = false;
@@ -303,6 +351,11 @@ function settle(ctx: Ctx): boolean {
     h.conditions = [];
     h.cooldowns = {};
   }
+  // Those who got away took part too: what they were waiting on in it is over with it.
+  for (const id of enc.fled ?? []) {
+    const h = unitById(state, id);
+    if (h) h.cooldowns = {};
+  }
   if (won) {
     // Every hero who fought takes the whole XP and their own roll of what the fallen left. A stand-in takes nothing.
     const xp = foes.reduce((sum, f) => sum + (ENEMIES[f.kind]?.xp ?? 0), 0);
@@ -311,6 +364,22 @@ function settle(ctx: Ctx): boolean {
       const resources = battleDrops(ctx.rng, foes.map((f) => f.kind));
       ctx.effects.push({ type: "grant", heroId: h.id, xp, resources });
       ctx.events.push({ t: "spoils", id: h.id, xp, resources });
+    }
+  } else if (fled) {
+    // Nobody left to fight: back to their posts, whole again, ready to turn on whoever they see next. The dead stay dead.
+    const groups = new Set(foes.map((f) => f.group));
+    for (const g of groups) if (g && state.groups[g]) state.groups[g].alerted = false;
+    const back = state.units.filter((u) => u.side === "enemy" && !u.down && groups.has(u.group));
+    const was = new Map(back.map((f) => [f.id, f.pos]));
+    // Off the board for a moment, so each finds its own post, or the nearest free hex if a hero stands on it.
+    for (const f of back) {
+      f.hp = f.maxHp;
+      f.conditions = [];
+      f.pos = { q: -99, r: -99 };
+    }
+    for (const f of back) {
+      const post = f.home ?? was.get(f.id)!;
+      f.pos = freeHexNear(state.map, post, (p) => !!unitAt(state, p) || blockerAt(state, p), (p) => tileAt(state.map, p)) ?? was.get(f.id)!;
     }
   } else {
     const groups = new Set(foes.map((f) => f.group));
@@ -339,6 +408,13 @@ function sweep(state: ZoneState): void {
   for (const g of Object.keys(state.groups)) if (!state.units.some((u) => u.group === g)) delete state.groups[g];
 }
 
+/** Where in the order the turn just taken ends: at its last actor, or, if the one taking it fled, just before whoever came after them. */
+function turnEnd(enc: Encounter): number {
+  if (enc.acting.length > 0) return Math.max(...enc.acting.map((id) => enc.order.indexOf(id)));
+  if (enc.resume === undefined) return -1;
+  return enc.resume === null ? enc.order.length - 1 : Math.max(-1, enc.order.indexOf(enc.resume) - 1);
+}
+
 /** Move the fight on to whoever is next, playing enemy turns as they come, until a hero's turn or the end. */
 function advance(ctx: Ctx): void {
   const { state } = ctx;
@@ -349,7 +425,8 @@ function advance(ctx: Ctx): void {
       const u = unitById(state, id);
       if (u) endTurn(u);
     }
-    let i = enc.acting.length > 0 ? Math.max(...enc.acting.map((id) => enc.order.indexOf(id))) : -1;
+    let i = turnEnd(enc);
+    delete enc.resume;
     enc.acting = [];
     enc.done = [];
     enc.budgets = {};
@@ -474,8 +551,18 @@ function dev(ctx: Ctx, by: string, op: DevOp): string | null {
 
 function act(ctx: Ctx, action: ZoneAction): string | null {
   const { state } = ctx;
+  if (action.type === "away") {
+    for (const u of state.units) {
+      if (u.side !== "hero" || (u.id !== action.player && u.controller !== action.player)) continue;
+      if (action.away) u.away = true;
+      else delete u.away;
+    }
+    return null;
+  }
   if (action.type === "join") {
     const hero = action.hero;
+    // Back on the map: their hero, and the stand-ins they play, are here again.
+    for (const u of state.units) if (u.id === hero.id || u.controller === hero.id) delete u.away;
     const here = unitById(state, hero.id);
     if (here) {
       // What their pack holds is what they carry, fight or no fight.
@@ -548,9 +635,11 @@ function act(ctx: Ctx, action: ZoneAction): string | null {
     if (budget && tactic.cooldown) unit.cooldowns[action.ability] = tactic.cooldown + 1;
     // Something that takes a shape can catch a group that had not noticed anyone: it has now.
     const area = new Set(abilityArea(state, unit, action.ability, action.at).map(posKey));
-    const struck = state.units.filter((u) => u.side === "enemy" && !u.down && (u.id === action.target || area.has(posKey(u.pos)))).map((u) => u.group!);
+    const touched = state.units.filter((u) => u.id === action.target || area.has(posKey(u.pos)));
+    const struck = touched.filter((u) => u.side === "enemy" && !u.down).map((u) => u.group!);
     resolveAbility(ctx, unit, action.ability, aim);
     engage(ctx, struck, unit);
+    reachIn(ctx, unit, touched);
     return null;
   }
   if (action.type === "common") {
@@ -559,9 +648,11 @@ function act(ctx: Ctx, action: ZoneAction): string | null {
     if (wrong) return wrong;
     const cost = spend(budget, commonCost(action.what, unit.kind));
     if (cost) return cost;
-    const shoved = action.what === "shove" ? unitById(state, action.target!)?.group : undefined;
+    const target = action.what === "shove" || action.what === "help" ? unitById(state, action.target!) : undefined;
     doCommon(ctx, unit, action.what, aim, budget);
-    if (shoved) engage(ctx, [shoved], unit);
+    if (action.what === "shove" && target?.group) engage(ctx, [target.group], unit);
+    if (target) reachIn(ctx, unit, [target]);
+    if (action.what === "flee") flee(ctx, unit);
     return null;
   }
   if (action.type === "drink") {
@@ -629,10 +720,12 @@ function act(ctx: Ctx, action: ZoneAction): string | null {
   if (cost) return cost;
   const def = THROWABLES[action.item];
   const area = new Set(blast(state.map, action.at, def.radius).map(posKey));
+  const touched = state.units.filter((u) => area.has(posKey(u.pos)));
   // A healing potion among enemies is a kindness; anything else is a declaration.
-  const struck = def.heal ? [] : state.units.filter((u) => u.side === "enemy" && !u.down && area.has(posKey(u.pos))).map((u) => u.group!);
+  const struck = def.heal ? [] : touched.filter((u) => u.side === "enemy" && !u.down).map((u) => u.group!);
   throwItem(ctx, unit, action.item, action.at);
   engage(ctx, struck, unit);
+  reachIn(ctx, unit, touched);
   return null;
 }
 

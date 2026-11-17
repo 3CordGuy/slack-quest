@@ -201,6 +201,8 @@ export class ZoneRoom extends DurableObject<Env> {
       const zone = await this.load();
       // Gone from the zone, unless another tab of theirs is still here.
       if (playerId && !this.ctx.getWebSockets(playerId).some((other) => other !== ws)) {
+        // Their hero (and any stand-in they play) stays where it is, but nothing draws it into a fight while they are gone.
+        if (zone.units.some((u) => u.side === "hero" && (u.id === playerId || u.controller === playerId) && !u.away)) await this.apply({ type: "away", player: playerId, away: true });
         this.fighting.delete(playerId);
         await clearPresence(this.env.DB, playerId, zone.code);
         this.tellHarbor(playerId);
