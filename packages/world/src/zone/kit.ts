@@ -305,9 +305,12 @@ const clampThreat = (threat: number | undefined) => Math.max(1, Math.min(3, Math
 /** How much more an enemy can take, by threat: the old fights' numbers were for foes that fell in two blows. */
 const THREAT_HP = [1, 1.9, 2.7];
 
-/** An enemy kind's attacks as they work on the tiles, for a party of this level and at this threat. */
-export function enemyStrikes(kind: string, level: number, threat?: number): EnemyStrike[] {
-  const edge = clampThreat(threat) - 1;
+/**
+ * An enemy kind's attacks as they work on the tiles, for a party of this level and at this threat.
+ * `more` is what the map's modifiers add to every attack's damage and its bonus to hit (zone/mods.ts).
+ */
+export function enemyStrikes(kind: string, level: number, threat?: number, more = 0): EnemyStrike[] {
+  const edge = clampThreat(threat) - 1 + more;
   const def = ENEMIES[kind];
   if (!def) return [];
   const kit = ENEMY_KIT[kind] ?? {};
@@ -330,8 +333,8 @@ export function enemyStrikes(kind: string, level: number, threat?: number): Enem
 /** The quick are hard to hit: 10, one more for every 30 of the old speed, one more for a boss. */
 export const enemyDefence = (kind: string): number => 10 + Math.floor((ENEMIES[kind]?.speed ?? 0) / 30) + (ENEMIES[kind]?.boss ? 1 : 0);
 
-/** Steps a turn. A training dummy stays put. */
-export const enemyMove = (kind: string): number => (kind === "dummy" ? 0 : Math.max(3, Math.min(8, 3 + Math.round((ENEMIES[kind]?.speed ?? 0) / 18))));
+/** Steps a turn, and `more` for what the map's modifiers add. A training dummy stays put. */
+export const enemyMove = (kind: string, more = 0): number => (kind === "dummy" ? 0 : Math.max(3, Math.min(8, 3 + Math.round((ENEMIES[kind]?.speed ?? 0) / 18))) + more);
 
 /** What an enemy adds to a saving throw: bosses and the big are harder to shake. */
 export const enemySave = (kind: string): number => (ENEMIES[kind]?.boss ? 3 : (ENEMIES[kind]?.hp ?? 0) >= 18 ? 2 : 0);

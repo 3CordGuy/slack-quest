@@ -84,6 +84,8 @@ export interface GroundSurface {
   rounds: number;
   /** Who laid it, for the log. */
   by: string | null;
+  /** It does not wear off: the ground a map's modifier put there (zone/mods.ts). Whatever replaces it (water on fire) wears off as usual. */
+  lasting?: boolean;
 }
 
 /** What a unit has left to spend on its turn. */
@@ -191,6 +193,8 @@ export interface ZoneState {
   /** The bands that carry a key: it is the party's once the band is beaten. */
   keyHolders?: string[];
   encounter: Encounter | null;
+  /** The atlas's bounty for clearing this map has been paid (zone/loot.ts): it is paid once. */
+  bounty?: boolean;
   /** For minting unit ids. */
   seq: number;
   /** Dev switches. */
@@ -335,7 +339,9 @@ export type ZoneEvent =
   /** A crate breaks open. `id` is whose blow (or fire) broke it, if anyone's. */
   | { t: "crate_broken"; poi: string; id: string | null }
   /** The last enemy group on the map is gone. */
-  | { t: "cleared" };
+  | { t: "cleared" }
+  /** A map the atlas made has been cleared, and its bounty paid (the `spoils` before this are it). */
+  | { t: "bounty" };
 
 /** Things the server must carry out: what a player's own hero earned, from a won fight or a chest. */
 export type ZoneEffect = {

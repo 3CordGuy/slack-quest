@@ -12,6 +12,7 @@ import { DEBUFFS, addCondition, attackContext, attackRoll, damage, defenceOf, ha
 import { cratesOn, crateById, hurtCrate, isCrateId } from "./crates";
 import { adjacent, blast, blockerAt, directionToward, elevOf, inFight, lineFrom, sameHex, sees, solid, stepCost, unitAt, unitById } from "./geometry";
 import { COMMON_ACTIONS, ENEMY_BURST, FLEE_RANGE, JUMP_MOVE_COST, POTION_EDGE, SAVE_STAT, THROWABLES, TORCH_GROUND_ROUNDS, abilityDice, enemyStrikes, healDice, jumpRange, reactionStrike, tacticOf, throwRange, type EnemyStrike, type Tactic } from "./kit";
+import { modsOf } from "./mods";
 import { d20, hitChance, mod, proficiency, rollDice, statOf } from "./rules";
 import { seenByHeroes } from "./light";
 import { chill, dropTorch, enterSurface, ignite, letGoTorch, placeSurface } from "./surfaces";
@@ -41,7 +42,7 @@ function provoke(ctx: Ctx, unit: Unit, next: HexPos, budget: Budget | null, flus
     if (foe.side === unit.side || foe.down || !inFight(ctx.state, foe.id)) continue;
     if (!adjacent(foe.pos, unit.pos) || adjacent(foe.pos, next) || sameHex(foe.pos, next)) continue;
     if (enc.reacted.includes(foe.id) || has(foe, "stunned") || has(foe, "prone")) continue;
-    const blow = foe.side === "enemy" ? enemyStrikes(foe.kind, foe.level, ctx.state.options.threat).find((s) => s.range === 1 && !s.burst) : undefined;
+    const blow = foe.side === "enemy" ? enemyStrikes(foe.kind, foe.level, ctx.state.options.threat, modsOf(ctx.state.options).edge).find((s) => s.range === 1 && !s.burst) : undefined;
     if (foe.side === "enemy" && !blow) continue;
     flush();
     enc.reacted.push(foe.id);

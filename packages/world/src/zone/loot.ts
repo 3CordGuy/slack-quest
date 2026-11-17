@@ -8,6 +8,11 @@
 //   the hoard   every player's hero on the map: 30 XP, a pile of gold and
 //               a good piece of gear
 //
+//   the bounty  on a map the atlas made (options.tier): every player's hero
+//               on it, once, when it is cleared: no enemy left standing
+//               and nothing left unopened. More the further out the node
+//               lies, and more again for each of its modifiers.
+//
 // Everything paid is an effect the server carries out (ZoneRoom), and a
 // `spoils` event the client tells.
 
@@ -16,12 +21,20 @@ import { cacheDrops } from "../drops";
 import { rollItem } from "../gear";
 import type { Poi } from "../map";
 import type { Ctx } from "./engine";
+import { modsOf } from "./mods";
 import type { Throwable, Unit, ZoneState } from "./types";
 
 type Loot = "chest" | "vault" | "hoard";
+interface Pay {
+  xp: number;
+  gold: [number, number];
+  gear: number;
+  quality: number;
+  potion: number;
+}
 
 /** What each kind pays: XP, a span of gold, the chance of a piece of gear and how good, and the chance of a potion. */
-export const CHEST_PAY: Record<Loot, { xp: number; gold: [number, number]; gear: number; quality: number; potion: number }> = {
+export const CHEST_PAY: Record<Loot, Pay> = {
   chest: { xp: 10, gold: [6, 16], gear: 0.25, quality: 0.3, potion: 0.3 },
   vault: { xp: 20, gold: [20, 35], gear: 1, quality: 0.5, potion: 1 },
   hoard: { xp: 30, gold: [30, 50], gear: 1, quality: 0.7, potion: 0 },
@@ -40,10 +53,38 @@ export function checkOpen(state: ZoneState, unit: Unit, chest: Poi | undefined):
   return null;
 }
 
-/** Pay one hero: the XP, gold and finds of this kind of chest. */
-function pay(ctx: Ctx, hero: Unit, loot: Loot): void {
+/**
+ * What clearing a map the atlas made pays each player's hero on it: more by the ring its node lies in,
+ * and more again by the share its modifiers add.
+ */
+export function bountyPay(tier: number, share: number): Pay {
+  const more = 1 + share;
+  return {
+    xp: Math.round((20 + 6 * tier) * more),
+    gold: [Math.round((14 + 5 * tier) * more), Math.round((24 + 8 * tier) * more)],
+    gear: Math.min(1, 0.35 + 0.05 * tier + share * 0.5),
+    quality: Math.min(0.9, 0.3 + 0.04 * tier + share * 0.3),
+    potion: 0.5,
+  };
+}
+
+/**
+ * Pay the bounty, if this is a map the atlas made and it has just been cleared: nobody left to fight and
+ * nothing left to open. Once only. Called wherever either of those can become true.
+ */
+export function payBounty(ctx: Ctx): void {
+  const { state } = ctx;
+  if (!state.options.tier || state.bounty) return;
+  if (state.units.some((u) => u.side === "enemy") || unopened(state) > 0) return;
+  state.bounty = true;
+  const p = bountyPay(state.options.tier, modsOf(state.options).pay);
+  for (const hero of state.units.filter((u) => u.side === "hero" && !u.controller)) pay(ctx, hero, p);
+  ctx.events.push({ t: "bounty" });
+}
+
+/** Pay one hero: the XP, gold and finds of this kind of chest, or of a bounty. */
+function pay(ctx: Ctx, hero: Unit, p: Pay): void {
   const { rng } = ctx;
-  const p = CHEST_PAY[loot];
   const drops = cacheDrops(rng);
   const gold = rng.int(p.gold[0], p.gold[1]);
   const item = rng.chance(p.gear) ? rollItem(rng, hero.kind, p.quality, hero.level) : null;
@@ -76,7 +117,9 @@ export function openChest(ctx: Ctx, unit: Unit, chest: Poi): void {
     ctx.events.push({ t: "key", keys: ctx.state.keys, from: "chest", id: unit.id });
   }
   const paid = loot === "hoard" ? ctx.state.units.filter((u) => u.side === "hero" && !u.controller) : [unit];
-  for (const hero of paid) pay(ctx, hero, loot);
+  for (const hero of paid) pay(ctx, hero, CHEST_PAY[loot]);
+  // The last thing left to open on a map the atlas made, with nobody left to fight: it is cleared.
+  payBounty(ctx);
 }
 
 /** Whether anything on the map is still to be opened. */

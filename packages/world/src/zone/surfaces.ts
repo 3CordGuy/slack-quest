@@ -273,6 +273,8 @@ export function tickSurfaces(ctx: Ctx): void {
   }
   const gone: HexPos[] = [];
   for (const [key, surface] of Object.entries(ctx.state.surfaces)) {
+    // What a map's modifier put there stays.
+    if (surface.lasting) continue;
     surface.rounds -= 1;
     if (surface.rounds > 0) continue;
     delete ctx.state.surfaces[key];

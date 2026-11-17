@@ -10,8 +10,8 @@ import { BASE_HEIGHT, type Biome, type Tile, type WorldMap } from "../map";
 import { makeRng, seedFromString } from "../rng";
 import { hexesBetween, solid } from "./geometry";
 import { threatExtras } from "./kit";
-import { cleanMods } from "./mods";
-import type { ZoneBiome, ZoneOptions, ZoneSize } from "./types";
+import { cleanMods, modsOf } from "./mods";
+import type { GroundSurface, ZoneBiome, ZoneOptions, ZoneSize } from "./types";
 
 export const ZONE_GRIDS: Record<ZoneSize, HexGrid> = {
   small: { cols: 16, rows: 14 },
@@ -82,6 +82,8 @@ export interface ZonePlan {
   groups: { id?: string; kinds: string[]; posts: HexPos[] }[];
   /** The groups that carry a key to a locked door (a delve's). */
   keys?: string[];
+  /** What lies on the ground from the start, by hex key: the patches a modifier put there, which stay. */
+  surfaces?: Record<string, GroundSurface>;
 }
 
 /** Everything that can be walked to from `from`: open ground, no step of two levels. */
@@ -101,7 +103,22 @@ function walkable(tiles: Map<string, Tile>, grid: HexGrid, from: HexPos): Set<st
   return seen;
 }
 
-export function generateZone(seed: string, options: ZoneOptions): ZonePlan {
+/** Patches of a modifier's ground on a medium map (more on a bigger one), and how many hexes each runs to. */
+const HAZARD_PATCHES = 6;
+const HAZARD_SIZE: [number, number] = [3, 7];
+/** Rounds written on ground that stays: it is never counted down, so the number only has to be above nothing. */
+const LASTING_ROUNDS = 99;
+
+export function generateZone(seed: string, asked: ZoneOptions): ZonePlan {
+  // What the map's modifiers change is changed here, once: a bigger map, more bands, more clutter, more high ground.
+  const mods = modsOf(asked);
+  const options: ZoneOptions = {
+    ...asked,
+    size: mods.size ?? asked.size,
+    groups: Math.min(6, asked.groups + mods.groups),
+    obstacles: Math.min(3, asked.obstacles + mods.obstacles),
+    elevation: Math.min(3, asked.elevation + mods.elevation),
+  };
   const grid = ZONE_GRIDS[options.size];
   const rng = makeRng(seedFromString(`zone|${seed}`));
   const caves = options.biome === "caves";
@@ -118,11 +135,11 @@ export function generateZone(seed: string, options: ZoneOptions): ZonePlan {
   const count = (n: number) => Math.round(n * scale);
 
   /** A clump of `size` hexes grown outward from `from`. */
-  const clump = (from: HexPos, size: number): HexPos[] => {
+  const clump = (from: HexPos, size: number, dice = rng): HexPos[] => {
     const out = [from];
     const have = new Set([posKey(from)]);
     for (let tries = 0; out.length < size && tries < size * 8; tries++) {
-      const next = rng.pick(hexNeighbors(rng.pick(out), grid));
+      const next = dice.pick(hexNeighbors(dice.pick(out), grid));
       if (rim(next) || have.has(posKey(next))) continue;
       have.add(posKey(next));
       out.push(next);
@@ -187,7 +204,7 @@ export function generateZone(seed: string, options: ZoneOptions): ZonePlan {
   const groups = centres.map((c, i) => {
     const kinds = groupKinds(options.kinds.length > 0 ? leads[i % leads.length] : rng.pick(leads), options.party);
     // A more dangerous zone has more of them in each group: another of whoever came with the leader. A boss still stands alone.
-    if (!ENEMIES[kinds[0]]?.boss && kinds[0] !== "dummy") for (let n = 0; n < threatExtras(options.threat); n++) kinds.push(kinds[kinds.length - 1]);
+    if (!ENEMIES[kinds[0]]?.boss && kinds[0] !== "dummy") for (let n = 0; n < threatExtras(options.threat) + mods.extras; n++) kinds.push(kinds[kinds.length - 1]);
     const posts = inner
       .filter((p) => hexDistance(p, c) <= 3 && open.has(posKey(p)) && !taken.has(posKey(p)))
       .sort((a, b) => hexDistance(a, c) - hexDistance(b, c) || a.q - b.q || a.r - b.r)
@@ -198,7 +215,22 @@ export function generateZone(seed: string, options: ZoneOptions): ZonePlan {
 
   // Heights for the eye: a level is a clear step up.
   for (const t of tiles.values()) t.h = t.biome === "water" ? BASE_HEIGHT.water : BASE_HEIGHT[t.biome] + (t.elev ?? 0) * 0.42 + rng.next() * 0.05;
-  return { map: { grid, tiles: [...tiles.values()], pois: [] }, start, groups: groups.filter((g) => g.kinds.length > 0) };
+  // Ground that stays, from a modifier: patches of it on open ground, clear of the start and of where anyone stands
+  // (an enemy left standing in fire would burn down before the party arrived). Its own dice, so a map with none
+  // is the map it always was.
+  let surfaces: Record<string, GroundSurface> | undefined;
+  if (mods.hazard) {
+    const dice = makeRng(seedFromString(`ground|${seed}`));
+    const posts = groups.flatMap((g) => g.posts);
+    const fits = (p: HexPos) => !rim(p) && !solid(at(p)) && at(p).biome !== "water" && hexDistance(p, start) > options.clear + 1 && !posts.some((post) => hexDistance(post, p) <= 1);
+    surfaces = {};
+    for (let i = 0; i < count(HAZARD_PATCHES); i++) {
+      for (const p of clump(dice.pick(inner), dice.int(HAZARD_SIZE[0], HAZARD_SIZE[1]), dice)) {
+        if (fits(p)) surfaces[posKey(p)] = { kind: mods.hazard, rounds: LASTING_ROUNDS, by: null, lasting: true };
+      }
+    }
+  }
+  return { map: { grid, tiles: [...tiles.values()], pois: [] }, start, groups: groups.filter((g) => g.kinds.length > 0), ...(surfaces ? { surfaces } : {}) };
 }
 
 /** A free hex to stand on at or near `near`: the nearest one nobody is on. */
