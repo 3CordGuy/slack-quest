@@ -7,13 +7,14 @@
 //   chamber's id ("band2", "lair"), so a chest knows who guards it.
 // - Chests, strongboxes and the hoard stay on the map as caches to open
 //   (zone.ts openChest). The mouth is the way in, and the way out.
-// - No locked doors yet: each doorway stands open, and the room behind it
-//   keeps its strongbox.
+// - A dead-end room or two is shut behind a locked door, with a strongbox
+//   inside, and the key to each lies on the near side, in a chest or carried
+//   by a band (zone/doors.ts says how doors are opened).
 
 import { hexDistance, posKey, type HexGrid, type HexPos } from "@gantt-quest/core";
 import { CAVERN_LEADS, ENEMIES, cavernBand, type CavernLead } from "../content";
 import { generateCaverns } from "../caverns";
-import { BASE_HEIGHT, type Poi } from "../map";
+import type { Poi } from "../map";
 import { makeRng, seedFromString } from "../rng";
 import { threatExtras } from "./kit";
 import type { ZoneOptions } from "./types";
@@ -37,14 +38,9 @@ function guardsFor(guards: string[], party: number): string[] {
 export function generateDelve(seed: string, options: ZoneOptions): ZonePlan {
   const map = generateCaverns(seed, DELVE_GRID);
   const rng = makeRng(seedFromString(`delve|${seed}`));
-  // Every doorway stands open (no locked doors yet).
-  for (const t of map.tiles) {
-    if (t.biome !== "gate") continue;
-    t.biome = "cave";
-    t.h = BASE_HEIGHT.cave;
-  }
   const mouth = map.pois.find((p) => p.kind === "landing")!.pos;
   const open = (p: HexPos) => map.tiles.some((t) => t.q === p.q && t.r === p.r && t.biome === "cave");
+  const keys: string[] = [];
   const caches = map.pois.filter((p) => p.kind === "cache");
   const taken = new Set([posKey(mouth), ...caches.map((c) => posKey(c.pos))]);
 
@@ -60,10 +56,13 @@ export function generateDelve(seed: string, options: ZoneOptions): ZonePlan {
       .sort((a, b) => hexDistance(a, camp.pos) - hexDistance(b, camp.pos) || rng.next() - 0.5)
       .slice(0, kinds.length);
     for (const p of posts) taken.add(posKey(p));
-    if (posts.length > 0) groups.push({ id: camp.id, kinds: kinds.slice(0, posts.length), posts });
+    if (posts.length > 0) {
+      groups.push({ id: camp.id, kinds: kinds.slice(0, posts.length), posts });
+      if (camp.key) keys.push(camp.id);
+    }
   }
 
-  // The map keeps the mouth and what can be opened; the bands are units now, and the scattered finds go.
-  const kept: Poi[] = map.pois.filter((p) => p.kind === "landing" || (p.kind === "cache" && open(p.pos)));
-  return { map: { ...map, pois: kept }, start: mouth, groups };
+  // The map keeps the mouth, what can be opened and the locked doors; the bands are units now, and the scattered finds go.
+  const kept: Poi[] = map.pois.filter((p) => p.kind === "landing" || p.kind === "gate" || (p.kind === "cache" && open(p.pos)));
+  return { map: { ...map, pois: kept }, start: mouth, groups, ...(keys.length > 0 ? { keys } : {}) };
 }

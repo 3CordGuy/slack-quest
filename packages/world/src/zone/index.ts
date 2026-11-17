@@ -49,4 +49,5 @@ export { SURFACE_INFO, HARMFUL as HARMFUL_SURFACES } from "./surfaces";
 export { isDark, litHexes, inDark, seenByHeroes, lightSources } from "./light";
 export { MAX_CATCHUP_ROUNDS } from "./clock";
 export { CHEST_PAY, checkOpen, unopened } from "./loot";
+export { FORCE_DC, NOISE_RANGE, checkUnlock, doorAt } from "./doors";
 export { DELVE_GRID, generateDelve } from "./delve";

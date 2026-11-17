@@ -159,6 +159,10 @@ export interface ZoneState {
    * Server time, in ms, as the room told it. Missing until the room first tells the time.
    */
   clock?: { at: number; torchAt: number };
+  /** Keys to locked doors the party has found, all on one ring (zone/doors.ts). */
+  keys?: number;
+  /** The bands that carry a key: it is the party's once the band is beaten. */
+  keyHolders?: string[];
   encounter: Encounter | null;
   /** For minting unit ids. */
   seq: number;
@@ -211,6 +215,8 @@ export type ZoneAction =
   | { type: "light"; by: string; unit: string; hand?: "main" }
   /** Pick up a torch burning on the ground beside you: into a free hand still lit, or put out and into the pack. */
   | { type: "pickup"; by: string; unit: string; at: HexPos }
+  /** Unlock a locked door from beside it with a key off the ring, or force it without one. */
+  | { type: "unlock"; by: string; unit: string; poi: string }
   /** The server's own, never a client's: the time now, so time out of a fight can pass (zone/clock.ts). */
   | { type: "time"; now: number }
   | { type: "end_turn"; by: string; unit: string }
@@ -220,7 +226,7 @@ export type ZoneAction =
   | { type: "dev"; by: string; dev: DevOp };
 
 /** Action types a player's client may send. `dev` is let through only on a development deployment. */
-export const ZONE_CLIENT_ACTIONS: ReadonlySet<ZoneAction["type"]> = new Set(["move", "use", "common", "throw", "drink", "light", "pickup", "open", "end_turn", "dev"]);
+export const ZONE_CLIENT_ACTIONS: ReadonlySet<ZoneAction["type"]> = new Set(["move", "use", "common", "throw", "drink", "light", "pickup", "open", "unlock", "end_turn", "dev"]);
 
 /** One d20 roll, as shown on the roll card. */
 export interface Roll {
@@ -279,6 +285,12 @@ export type ZoneEvent =
   | { t: "spoils"; id: string; xp: number; resources: Resources; gold?: number; item?: string; blueprint?: string; furnishing?: string; potions?: number }
   /** A piece of gear found had no room in the pack: it went home to storage, or into the pack over its limit. Told by the server. */
   | { t: "stowed"; id: string; item: string; place: "storage" | "overfull" }
+  /** A key goes on the party's ring: found in a chest (by `id`), or taken from a beaten band. */
+  | { t: "key"; keys: number; from: "chest" | "band"; id?: string }
+  /** A door is worked: unlocked with a key, forced open, or forced and held. */
+  | { t: "door"; id: string; poi: string; how: "key" | "forced" | "held" }
+  /** The crash of a forced door is heard by a band, which comes running. */
+  | { t: "noise"; group: string }
   /** A chest, strongbox or hoard is opened. */
   | { t: "opened"; id: string; poi: string; loot: "chest" | "vault" | "hoard" }
   /** The last enemy group on the map is gone. */
