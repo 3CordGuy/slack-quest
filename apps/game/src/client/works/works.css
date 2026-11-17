@@ -128,3 +128,33 @@
 .workshop-list .small-note { font-size: 12px; }
 
 
+
+/* Dealing with the smith or the apothecary in their shop (KeeperPanels). The keeper and what you hold stay put at the
+   top; only the list of items and services under them scrolls. */
+.story.pub-bar.keeper-panel { width: min(480px, calc(100% - 24px)); max-height: calc(100vh / var(--ui-z, 1) - 150px); }
+.story.pub-bar.keeper-panel:not(.folded) > .panel-body { display: flex; flex-direction: column; overflow: hidden; }
+.keeper-top { flex: none; display: flex; flex-direction: column; gap: 4px; padding-bottom: 6px; border-bottom: 1px solid var(--line); }
+.keeper-top .works-stock { margin: 0; }
+.keeper-list { flex: 1 1 auto; min-height: 120px; overflow-y: auto; overscroll-behavior: contain; padding: 6px 4px 4px 0; display: flex; flex-direction: column; gap: 6px; }
+.keeper-list:focus-visible { outline: 2px solid var(--gold); outline-offset: -2px; }
+.keeper-section { margin: 6px 0 0; font-size: 13px; position: sticky; top: -6px; z-index: 1; background: var(--panel); padding: 4px 0; }
+.keeper-section:first-child { margin-top: 0; }
+.keeper-section .muted { font-weight: normal; font-size: 12px; }
+.workshop-list li.keeper-row { flex-direction: column; align-items: stretch; }
+.workshop-list li.keeper-row.sold { opacity: 0.5; }
+.keeper-line { display: flex; align-items: center; gap: 8px; }
+.keeper-line > .grow { flex: 1; min-width: 0; }
+.keeper-buttons { display: flex; flex-direction: column; gap: 4px; flex: none; }
+.keeper-buttons button { min-width: 84px; }
+.keeper-price { display: inline-flex; align-items: center; gap: 4px; vertical-align: middle; }
+.keeper-price s { font-size: 12px; }
+.keeper-asks { margin-top: 6px; padding-top: 6px; border-top: 1px dashed var(--line); display: flex; flex-direction: column; gap: 4px; }
+.keeper-ask-row { display: flex; flex-wrap: wrap; gap: 4px; }
+.keeper-ask-row button { display: inline-flex; flex-direction: column; align-items: flex-start; min-width: 0; }
+.keeper-ask-odds { font-size: 11px; opacity: 0.75; }
+.keeper-panel .tag { font-size: 11px; }
+@media (max-width: 760px) {
+  .story.pub-bar.keeper-panel:not(.folded) { width: calc(100vw / var(--ui-z, 1) - 12px); top: auto; bottom: 8px; max-height: calc(58vh / var(--ui-z, 1)); z-index: 14; }
+  .keeper-line { flex-wrap: wrap; }
+  .keeper-buttons { flex-direction: row; width: 100%; justify-content: flex-end; }
+}

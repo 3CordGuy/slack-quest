@@ -15,11 +15,11 @@ import type { CatchBook, PubWall } from "../server/catchbook";
 import type { PubGame, PubLeaderboard, PubScore } from "../server/pub-scores";
 import type { XpResult } from "../server/harbor-xp";
 import type { TradeList } from "../server/trade";
-import type { ApothecaryView, SmithyView } from "../server/workshops";
+import type { ApothecaryView, HaggleResult, KeeperWare, SmithyView } from "../server/workshops";
 import type { GalleyView } from "../server/galley";
 import type { ErrandPaid, RegularsView } from "../server/errands";
 
-export type { ApothecaryView, SmithyView, GalleyView, ErrandPaid, RegularsView };
+export type { ApothecaryView, SmithyView, GalleyView, ErrandPaid, RegularsView, HaggleResult, KeeperWare };
 
 export type { CatchBook, FishStock, GatherStatus, PubGame, PubLeaderboard, PubScore, PubWall, SittingPaid, XpResult };
 
@@ -217,6 +217,11 @@ export const api = {
   brewFlask: (kind: string) => request<ApothecaryView & { xp?: XpResult }>("/api/apothecary/flask", { kind }),
   smithy: () => request<SmithyView>("/api/smithy"),
   smith: (itemId: number) => request<SmithyView & { worked: string; xp?: XpResult }>("/api/smithy/work", { itemId }),
+  /** Buy something ready-made from a keeper's own stock, by its key. */
+  buyFromApothecary: (key: string) => request<ApothecaryView & { got: string }>("/api/apothecary/buy", { key }),
+  buyFromSmith: (key: string) => request<SmithyView & { got: string }>("/api/smithy/buy", { key }),
+  /** Ask a keeper to take something off a price: `ask` is one of HAGGLE_ASKS. One try a day for each thing. */
+  haggle: (shop: string, key: string, ask: string) => request<HaggleResult>("/api/keeper/haggle", { shop, key, ask }),
   galley: () => request<GalleyView>("/api/galley"),
   cook: (dishId: string) => request<GalleyView & { xp?: XpResult }>("/api/galley/cook", { dishId }),
   giveToProject: (projectId: string, give: ProjectAmounts) => request<Works & { completed: boolean; xp?: XpResult }>("/api/projects/give", { projectId, give }),

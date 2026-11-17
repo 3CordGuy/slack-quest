@@ -421,6 +421,184 @@ const MODELS: Record<string, (b: Builder) => void> = {
     b.post(PALE_WOOD, 0.03, 0.03, 0.8, 0.25, 0.04, -0.02, 5);
     b.box(IRON, 0.22, 0.2, 0.04, 0.32, 0.68, -0.02);
   },
+  // ---- the smithy and the apothecary (packages/world/src/keepers.ts): fittings, never sold ----
+  // The forge: a stone hearth at waist height with a bed of coals, under a sooty hood that runs up the back wall,
+  // and the bellows beside it.
+  forge(b) {
+    b.box(STONE, 1.3, 0.56, 0.86, 0, 0, -0.06);
+    b.box("#7d796f", 1.36, 0.1, 0.92, 0, 0.56, -0.06);
+    b.box("#2a2623", 0.96, 0.06, 0.56, 0, 0.64, -0.04);
+    b.box("#c4421c", 0.8, 0.04, 0.42, 0, 0.68, -0.04);
+    for (const [x, z] of [[-0.24, -0.1], [0.06, 0.04], [0.26, -0.12], [-0.06, -0.16]]) b.box("#3a3632", 0.14, 0.07, 0.12, x, 0.7, z);
+    for (const [color, w, h, x, z] of [["#ff5a1a", 0.14, 0.3, -0.18, -0.06], ["#ff7a24", 0.16, 0.4, 0.02, -0.02], ["#ff6a1f", 0.13, 0.28, 0.2, -0.08], ["#ffb83a", 0.1, 0.24, -0.06, 0.04], ["#ffe27a", 0.07, 0.14, 0.1, 0.06]] as const) {
+      b.flame(color, w, h, w * 0.7, x, 0.7, z);
+    }
+    // The hood and its flue, up the wall.
+    for (const x of [-0.6, 0.6]) b.box("#4a4640", 0.1, 0.7, 0.1, x, 0.66, -0.42);
+    b.box("#3a3632", 1.36, 0.4, 0.7, 0, 1.36, -0.16);
+    b.box("#2e2a27", 0.6, 0.9, 0.44, 0, 1.76, -0.26);
+    // Bellows on the right: two boards, a leather bag between and a nozzle into the coals.
+    b.box(DARK_WOOD, 0.3, 0.05, 0.44, 0.84, 0.46, 0.06);
+    b.box("#6b4a34", 0.26, 0.14, 0.38, 0.84, 0.51, 0.06);
+    b.box(DARK_WOOD, 0.3, 0.05, 0.44, 0.84, 0.65, 0.06);
+    b.box(IRON, 0.2, 0.05, 0.05, 0.66, 0.56, 0.02);
+    b.fire(0, 1.0, 0.5, true);
+  },
+  // Coal for the forge: an open-topped bin heaped with it, and a shovel leaning in the corner.
+  coal_bin(b) {
+    b.box(DARK_WOOD, 0.8, 0.44, 0.62, 0, 0, -0.04);
+    for (const y of [0.06, 0.32]) b.box(IRON, 0.82, 0.05, 0.64, 0, y, -0.04);
+    b.box("#1f1d1c", 0.7, 0.08, 0.52, 0, 0.42, -0.04);
+    for (const [x, z, r] of [[-0.18, -0.08, 0.1], [0.08, 0.02, 0.12], [0.24, -0.14, 0.09], [-0.04, -0.18, 0.1]]) b.ball("#2a2726", r, x, 0.5, z, 0);
+    b.post(PALE_WOOD, 0.02, 0.02, 0.8, 0.36, 0.1, 0.24, 5).rotation.z = -0.25;
+    b.box(IRON, 0.16, 0.18, 0.03, 0.44, 0.02, 0.24);
+  },
+  // The anvil, on an oak stump: the body waisted, a horn to the left and the heel to the right, with the hammer lying on it.
+  anvil(b) {
+    b.post("#6b4a2e", 0.3, 0.34, 0.4, 0, 0, 0, 8);
+    b.post("#4a321c", 0.31, 0.31, 0.04, 0, 0.36, 0, 8);
+    b.box("#3d4048", 0.4, 0.07, 0.3, 0, 0.4);
+    b.box("#4a4e58", 0.22, 0.14, 0.2, 0, 0.47);
+    b.box("#5b606c", 0.62, 0.12, 0.26, 0.04, 0.61);
+    const horn = b.cone("#5b606c", 0.09, 0.3, -0.42, 0.61, 0, 6);
+    horn.rotation.z = Math.PI / 2;
+    horn.position.y = 0.67;
+    b.box("#8b95a5", 0.6, 0.012, 0.24, 0.04, 0.73);
+    b.box(IRON, 0.12, 0.1, 0.1, 0.18, 0.745, 0.02);
+    b.box(PALE_WOOD, 0.04, 0.04, 0.36, 0.18, 0.775, 0.2);
+  },
+  // The quench: a half barrel of dark water, with a pair of tongs hooked over the rim.
+  quench_tub(b) {
+    b.post(WOOD, 0.36, 0.32, 0.46, 0, 0, 0, 10);
+    for (const y of [0.08, 0.36]) b.post("#4a4f5a", 0.375, 0.375, 0.05, 0, y, 0, 10);
+    b.post("#2f4a5c", 0.33, 0.33, 0.02, 0, 0.42, 0, 10);
+    b.box(IRON, 0.03, 0.5, 0.03, 0.2, 0.3, 0.2).rotation.z = 0.3;
+    b.box(IRON, 0.03, 0.5, 0.03, 0.26, 0.3, 0.2).rotation.z = 0.42;
+  },
+  // A suit of plate on a stand: a post and crossbar, a cuirass, pauldrons and a helm on top.
+  armor_stand(b) {
+    b.box(DARK_WOOD, 0.5, 0.06, 0.5);
+    b.post(DARK_WOOD, 0.04, 0.05, 1.2, 0, 0.06, 0, 6);
+    b.box(DARK_WOOD, 0.7, 0.05, 0.05, 0, 0.98);
+    b.box("#aeb6c2", 0.44, 0.5, 0.26, 0, 0.56);
+    b.box("#8b95a5", 0.46, 0.08, 0.28, 0, 0.56);
+    b.box(GOLD, 0.06, 0.4, 0.02, 0, 0.62, 0.135);
+    for (const x of [-0.3, 0.3]) b.box("#aeb6c2", 0.2, 0.12, 0.28, x, 0.98);
+    b.post("#aeb6c2", 0.13, 0.15, 0.22, 0, 1.12, 0, 8);
+    b.box("#2a2a35", 0.16, 0.04, 0.02, 0, 1.2, 0.14);
+    b.cone("#b9433d", 0.04, 0.16, 0, 1.34, 0, 5);
+  },
+  // The grindstone: a stone wheel in a timber frame over a water trough, with a crank.
+  grindstone(b) {
+    for (const z of [-0.2, 0.2]) {
+      b.box(DARK_WOOD, 0.74, 0.07, 0.07, 0, 0, z);
+      for (const x of [-0.26, 0.26]) b.box(DARK_WOOD, 0.07, 0.6, 0.07, x, 0, z);
+      b.box(WOOD, 0.66, 0.06, 0.06, 0, 0.56, z);
+    }
+    b.box("#5a6b73", 0.5, 0.12, 0.3, 0, 0.14);
+    const wheel = b.post("#b0aca0", 0.3, 0.3, 0.14, 0, 0, 0, 14);
+    wheel.rotation.x = Math.PI / 2;
+    wheel.position.y = 0.6;
+    const axle = b.post(IRON, 0.03, 0.03, 0.6, 0, 0, 0, 6);
+    axle.rotation.x = Math.PI / 2;
+    axle.position.y = 0.6;
+    b.box(IRON, 0.03, 0.2, 0.03, 0, 0.5, 0.3);
+    b.box(PALE_WOOD, 0.05, 0.05, 0.12, 0, 0.5, 0.36);
+  },
+  // Shelves to head height, crowded with bottles and jars of every colour, a row of drawers at the foot.
+  potion_shelf(b) {
+    b.box(DARK_WOOD, 0.98, 1.5, 0.36, 0, 0, -0.14);
+    b.box("#4a321c", 1.04, 0.06, 0.4, 0, 1.5, -0.14);
+    for (let i = 0; i < 3; i++) b.box(WOOD, 0.28, 0.2, 0.03, -0.31 + i * 0.31, 0.06, 0.05);
+    for (let i = 0; i < 3; i++) b.box(GOLD, 0.05, 0.03, 0.02, -0.31 + i * 0.31, 0.15, 0.07);
+    const glassy = ["#b9433d", "#4f9a5a", "#3f6fa8", "#c98b3a", "#8c5ab0", "#4fb8b0", "#d8d2c0"];
+    for (let shelf = 0; shelf < 3; shelf++) {
+      const y = 0.34 + shelf * 0.38;
+      b.box("#2a2018", 0.88, 0.32, 0.05, 0, y, -0.02);
+      b.box(WOOD, 0.9, 0.03, 0.3, 0, y - 0.03, -0.08);
+      for (let i = 0; i < 6; i++) {
+        const color = glassy[(i * 3 + shelf * 2) % glassy.length];
+        const tall = (i + shelf) % 3 === 0;
+        const x = -0.36 + i * 0.145;
+        b.post(color, tall ? 0.035 : 0.05, tall ? 0.045 : 0.055, tall ? 0.2 : 0.13, x, y, 0.03, 6);
+        b.post("#8a6a44", 0.018, 0.018, 0.04, x, y + (tall ? 0.2 : 0.13), 0.03, 5);
+      }
+    }
+  },
+  // The cauldron: a black iron pot on three legs over a small fire, the brew a sickly green and bubbling, a ladle in it.
+  cauldron(b) {
+    for (let i = 0; i < 6; i++) {
+      const a = (i * Math.PI) / 3 + 0.2;
+      b.box(i % 2 ? STONE : "#7d796f", 0.12, 0.08, 0.12, Math.sin(a) * 0.34, 0, Math.cos(a) * 0.34);
+    }
+    b.box(DARK_WOOD, 0.4, 0.06, 0.07, 0, 0.02, 0).rotation.y = 0.5;
+    b.box("#4a321c", 0.4, 0.06, 0.07, 0, 0.04, 0).rotation.y = -0.6;
+    b.flame("#ff7a2a", 0.12, 0.2, 0.1, -0.06, 0.06, 0.04);
+    b.flame("#ffb03a", 0.09, 0.15, 0.08, 0.08, 0.06, -0.02);
+    b.flame("#ffe066", 0.06, 0.1, 0.05, 0.0, 0.06, 0.1);
+    for (const a of [0.4, 2.5, 4.6]) b.post("#26262b", 0.03, 0.035, 0.28, Math.sin(a) * 0.24, 0, Math.cos(a) * 0.24, 5);
+    b.post("#2e2e35", 0.34, 0.22, 0.34, 0, 0.24, 0, 10);
+    b.post("#26262b", 0.37, 0.37, 0.05, 0, 0.56, 0, 10);
+    b.glow("#7fd66a", new THREE.CylinderGeometry(0.32, 0.32, 0.02, 10), 0, 0.6, 0);
+    for (const [x, z, r] of [[-0.12, 0.06, 0.05], [0.1, -0.08, 0.04], [0.04, 0.14, 0.03]]) b.glow("#b6f2a0", new THREE.IcosahedronGeometry(r, 0), x, 0.62, z);
+    b.post(PALE_WOOD, 0.015, 0.015, 0.5, 0.2, 0.5, -0.1, 5).rotation.z = -0.5;
+    b.fire(0, 0.3, 0.5);
+  },
+  // The apothecary's counter: a panelled front, a top with the scales, a mortar and pestle, and a few bottles put out.
+  shop_counter(b) {
+    b.box(WOOD, 1.2, 0.62, 0.52);
+    b.box(DARK_WOOD, 1.28, 0.06, 0.6, 0, 0.62);
+    for (const x of [-0.38, 0, 0.38]) b.box(PALE_WOOD, 0.3, 0.42, 0.02, x, 0.1, 0.262);
+    // A balance: a post, a beam and two pans.
+    b.post("#b87333", 0.02, 0.03, 0.26, -0.34, 0.68, 0, 6);
+    b.box("#b87333", 0.34, 0.02, 0.02, -0.34, 0.92);
+    for (const x of [-0.5, -0.18]) {
+      b.box("#b87333", 0.008, 0.1, 0.008, x, 0.82);
+      b.post(GOLD, 0.07, 0.05, 0.02, x, 0.8, 0, 8);
+    }
+    // A mortar and pestle.
+    b.post("#c9c5bb", 0.09, 0.06, 0.09, 0.08, 0.68, 0.06, 8);
+    b.post("#8d8674", 0.02, 0.025, 0.16, 0.11, 0.72, 0.06, 5).rotation.z = -0.5;
+    for (const [x, z, color] of [[0.36, -0.04, "#b9433d"], [0.46, 0.08, "#4f9a5a"], [0.28, 0.12, "#3f6fa8"]] as const) {
+      b.post(color, 0.04, 0.05, 0.12, x, 0.68, z, 6);
+      b.post("#8a6a44", 0.018, 0.018, 0.035, x, 0.8, z, 5);
+    }
+  },
+  // A drying rack: two posts and three rails hung with bunches of herbs, heads down.
+  herb_rack(b) {
+    for (const x of [-0.46, 0.46]) b.box(DARK_WOOD, 0.07, 1.4, 0.07, x, 0, -0.16);
+    b.box(DARK_WOOD, 1.0, 0.06, 0.3, 0, 0, -0.16);
+    const greens = ["#5e9a3a", "#7ea845", "#4a7d3a", "#9aa85a", "#6b8c2f"];
+    for (let rail = 0; rail < 3; rail++) {
+      const y = 0.62 + rail * 0.36;
+      b.box(WOOD, 0.96, 0.04, 0.04, 0, y, -0.16);
+      for (let i = 0; i < 5; i++) {
+        const x = -0.36 + i * 0.18 + (rail % 2) * 0.05;
+        b.box("#c9a877", 0.015, 0.06, 0.015, x, y - 0.06, -0.14);
+        const bunch = b.cone(greens[(i + rail * 2) % greens.length], 0.06, 0.2, x, y - 0.26, -0.14, 5);
+        bunch.rotation.x = Math.PI;
+        if ((i + rail) % 4 === 0) b.ball("#b98ad6", 0.03, x, y - 0.26, -0.14, 0);
+      }
+    }
+  },
+  // A work table for the herbs: a chopping board and knife, pots of what is growing, a jar of mushrooms and a candle.
+  herb_table(b) {
+    b.box(WOOD, 1.1, 0.08, 0.6, 0, 0.46);
+    for (const [x, z] of [[-0.48, -0.23], [0.48, -0.23], [-0.48, 0.23], [0.48, 0.23]]) b.box(DARK_WOOD, 0.08, 0.46, 0.08, x, 0, z);
+    b.box(DARK_WOOD, 0.96, 0.05, 0.46, 0, 0.14);
+    b.box(PALE_WOOD, 0.3, 0.03, 0.22, -0.1, 0.54, 0.08);
+    b.box("#cfd6e0", 0.16, 0.01, 0.04, -0.06, 0.57, 0.12).rotation.y = 0.4;
+    for (const [x, z] of [[-0.14, 0.04], [-0.2, 0.1]]) b.box("#5e9a3a", 0.08, 0.02, 0.03, x, 0.57, z);
+    for (const [x, z] of [[-0.4, -0.14], [0.42, -0.12]]) {
+      b.post("#b8613a", 0.08, 0.06, 0.1, x, 0.54, z, 6);
+      for (const [dx, dz, h] of [[0, 0, 0.18], [0.04, 0.03, 0.13], [-0.04, 0.02, 0.14]]) b.cone("#5e9a3a", 0.035, h, x + dx, 0.64, z + dz, 4);
+    }
+    b.glass(b.post("#cfe4ea", 0.07, 0.07, 0.15, 0.22, 0.54, 0.1, 8), 0.4);
+    b.cone("#b9433d", 0.03, 0.03, 0.22, 0.6, 0.1, 6);
+    b.post(CLOTH, 0.025, 0.025, 0.12, 0.2, 0.54, -0.16, 6);
+    b.glow("#ffd98a", new THREE.BoxGeometry(0.03, 0.05, 0.03), 0.2, 0.69, -0.16);
+    b.light("candle", 0.2, 0.75, -0.16);
+  },
   // ---- more furniture ----
   desk(b) {
     b.box(DARK_WOOD, 1.1, 0.06, 0.56, 0, 0.56);

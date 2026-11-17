@@ -43,6 +43,10 @@ export const LOOKS: Record<string, Look> = {
   regular_dacey: { skin: "#b07a52", hair: "#1a1424", body: "#3a3030", legs: "#1f1f1f", accent: "#b9433d", hat: "hood", hatColor: "#2a2a35", weapon: "pack" },
   // The contract dealer by the pillar in the pub (packages/world/src/pub.ts): a broker in a long coat with a scroll of terms.
   dealer: { skin: "#e3b48c", hair: "#3a2a20", body: "#6b1f2a", legs: "#2a2228", accent: "#e0b12e", hat: "brim", hatColor: "#2a2228", weapon: "scroll", coat: true },
+  // The keepers of the smithy and the apothecary (packages/world/src/keepers.ts): the smith in a leather apron with her
+  // hammer, a red kerchief keeping her hair out of the fire; the apothecary in a long green coat under a wide hat.
+  keeper_smith: { skin: "#d9a67c", hair: "#3a2a20", body: "#6b4a34", legs: "#3a3030", accent: "#8b95a5", hat: "kerchief", hatColor: "#b9433d", weapon: "club" },
+  keeper_apothecary: { skin: "#e8c2a0", hair: "#d9d9e3", body: "#3e6a44", legs: "#2a3a2e", accent: "#f2d675", hat: "brim", hatColor: "#2f5a3a", weapon: "basket", coat: true },
   npc: { skin: "#e8b891", hair: "#b9b9b9", body: "#a0683a", legs: "#5a4632", accent: "#e8dcc0", hat: "none", weapon: "none" },
   bandit: { skin: "#d9a67c", hair: "#3a2a20", body: "#7a2f2f", legs: "#3a3030", accent: "#1f1f1f", hat: "hood", weapon: "club" },
   cultist: { skin: "#cdb7d6", hair: "#2a1838", body: "#5b2a7a", legs: "#34194a", accent: "#e04fd0", hat: "hood", weapon: "staff" },
