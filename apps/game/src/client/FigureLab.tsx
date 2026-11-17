@@ -32,6 +32,9 @@ const SIZE = 1.5;
 /** How fast a lean into a strike eases off, as in the game (WorldRenderer). */
 const LEAN_EASE = 8;
 const SPEEDS = [1, 0.5, 0.25, 0.1] as const;
+/** A jump of two tiles, as the game makes it (WorldRenderer's LEAP): seconds off the ground, and how high at the top. */
+const JUMP_AIR = 0.46;
+const JUMP_HIGH = 0.9;
 const ACTIONS = [
   ["strike", "Strike", "The ordinary blow for what is in hand, with a step in: a cut, with daggers or a dirk a leap and a stab downward, with a rapier a thrust. An archer draws a knife for it; bare hands jab."],
   ["stab", "Stab", "A straight thrust with whatever is held: the hand drawn back, a step into a lunge, the arm shot out. A rapier's own strike."],
@@ -40,6 +43,7 @@ const ACTIONS = [
   ["cast", "Cast", "A spell or a throw: swung round overhead, then pointed at the mark as it leaves. An orb, astrolabe or chalice is held aloft and presented; a book has a hand waved over it."],
   ["play", "Play", "A bard's song: the lute strummed, the flute lifted to the mouth or the ship's bell rung, notes and wisps rising. Only a figure carrying one plays."],
   ["guard", "Guard", "Braced: knees bent and the shield brought up in front; with no shield, what is in hand and the other forearm. Shield Wall and Hold the Line."],
+  ["jump", "Jump", "The jump from tile to tile: a crouch with the arms drawn back, a spring, the knees drawn up over the top and the feet put out to land, then a deep crouch on landing. Here it goes straight up and down; in the game it is carried across the tiles."],
   ["hit", "Flinch", "Taking a blow: thrown back, arms flung wide, then gathered again."],
   ["lean", "Lean", "The plain lean, easing off: what every attack used to be, and a stomp still is."],
 ] as const;
@@ -149,6 +153,8 @@ export default function FigureLab({ me, onClose }: { me: Me; onClose(): void }) 
     let stride = 0;
     let lean = 0;
     let sinceAct = 0;
+    /** A jump under way: when the feet leave the ground, on the stage's clock. */
+    let sprang = -Infinity;
     const draw = (dt: number) => {
       const s = stage.current;
       const now = liveRef.current;
@@ -163,6 +169,9 @@ export default function FigureLab({ me, onClose }: { me: Me; onClose(): void }) 
       // At the oars the stroke runs on its own: reach, pull, reach.
       const rowing = now.rowing ? 0.5 - 0.5 * Math.cos(t * 2.4) : undefined;
       s.figure?.update({ time: t, stride, walking: now.walking, lean, lying: now.lying, sitting: now.sitting, rowing });
+      // A jump goes up and comes down on the spot, as high as one of two tiles does in the game.
+      const up = (t - sprang) / JUMP_AIR;
+      if (s.figure) s.figure.root.position.y = up > 0 && up < 1 ? 4 * JUMP_HIGH * up * (1 - up) : 0;
       if (readout.current) readout.current.textContent = `${t.toFixed(2)}s · lean ${lean.toFixed(2)} · strike ${Math.min(1, Math.abs(lean) * 2).toFixed(2)}`;
     };
     const act = (action: Action): string => {
@@ -180,6 +189,11 @@ export default function FigureLab({ me, onClose }: { me: Me; onClose(): void }) 
       if (action === "cast") {
         const wait = figure.cast();
         return wait > 0 ? `It leaves the hand ${wait.toFixed(2)}s in.` : "A creature, or a hand already pointing: it leaves at once.";
+      }
+      if (action === "jump") {
+        const wait = figure.jump(JUMP_AIR);
+        sprang = t + wait;
+        return wait > 0 ? `The feet leave the ground ${wait.toFixed(2)}s in, and come down ${(wait + JUMP_AIR).toFixed(2)}s in.` : "A creature: it has no crouch, and springs at once.";
       }
       if (action === "guard") {
         const wait = figure.guard();

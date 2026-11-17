@@ -984,9 +984,11 @@ interface Anim {
  * `n` counts the figure's actions, so two flinches in a row need not be the same.
  */
 interface Act {
-  kind: "strike" | "stab" | "pounce" | "heavy" | "twin" | "cast" | "play" | "fire" | "guard" | "hit" | "hammer" | "stir";
+  kind: "strike" | "stab" | "pounce" | "heavy" | "twin" | "cast" | "play" | "fire" | "guard" | "hit" | "hammer" | "stir" | "jump";
   t: number;
   n: number;
+  /** A jump's seconds off the ground (see JUMP). */
+  air?: number;
 }
 
 type Keys = readonly (readonly [number, number])[];
@@ -1501,6 +1503,28 @@ const FLINCH = {
  * forearm) brought up before the body, held a moment and let down. `hold` is when the guard is up.
  */
 const GUARD = { hold: 0.22, over: 1.2, up: [[0, 0], [0.22, 1], [0.85, 1], [1.2, 0]] as Keys };
+/**
+ * A jump from one tile to another. The figure only makes the shapes of it; whoever jumps it carries it through
+ * the air (see WorldRenderer.leapUnit). A crouch with the arms drawn back (`coil`), and at `spring` the legs
+ * straighten and the feet leave the ground, the body tipping forward all the while (`lean`, and `wind` for the arms). Off it, the arms are thrown forward and up (`arms`, -1 back to 1 up),
+ * the body is laid forward into the leap and comes upright (`pitch`), one knee is driven ahead of the other
+ * (`split`), both are drawn up at the top (`tuck`) and the feet are put out ahead to land on (`reach`): all keyed
+ * to how far through the air it is, 0 to 1, however long that takes. Then it comes down into a deep crouch, arms
+ * out for balance (`sink`, in seconds from landing), and stands, `land` seconds after touching down.
+ */
+const JUMP = {
+  spring: 0.16,
+  land: 0.36,
+  coil: [[0, 0], [0.11, 1], [0.16, 0]] as Keys,
+  wind: [[0, 0], [0.1, -1], [0.16, 0.3]] as Keys,
+  lean: [[0, 0], [0.16, 0.5]] as Keys,
+  arms: [[0, 0.3], [0.3, 1], [0.65, 0.8], [1, 0.3]] as Keys,
+  pitch: [[0, 0.5], [0.35, 0.12], [0.7, -0.12], [1, 0.2]] as Keys,
+  split: [[0, 0], [0.22, 1], [0.6, 0.35], [1, 0]] as Keys,
+  tuck: [[0, 0], [0.5, 1], [0.82, 0.5], [1, 0.12]] as Keys,
+  reach: [[0.45, 0], [0.88, 1], [1, 0.6]] as Keys,
+  sink: [[0, 0], [0.07, 1], [0.16, 0.85], [0.36, 0]] as Keys,
+};
 /** Where a bell rung in the hand sounds from, in the hand's frame: its mouth, hanging below the fist. */
 const BELL_MOUTH = new THREE.Vector3(0, -2.2, 0);
 /**
@@ -1514,7 +1538,7 @@ const BELL_MOUTH = new THREE.Vector3(0, -2.2, 0);
 const HAMMER = { hit: 0.4, over: 0.86, up: [[0, 0.25], [0.3, 1], [0.4, 0], [0.48, 0.18], [0.86, 0.25]] as Keys };
 const STIR = { over: 30, turns: 25 };
 /** How long each kind of action lasts. */
-const ACT_OVER: Record<Act["kind"], number> = { strike: SWING.over, stab: THRUST.over, pounce: POUNCE.over, heavy: SWEEP.over, twin: TWIN.over, cast: CAST.over, play: PLAY.over, fire: FIRE.ends, guard: GUARD.over, hit: FLINCH.over, hammer: HAMMER.over, stir: STIR.over };
+const ACT_OVER: Record<Act["kind"], number> = { strike: SWING.over, stab: THRUST.over, pounce: POUNCE.over, heavy: SWEEP.over, twin: TWIN.over, cast: CAST.over, play: PLAY.over, fire: FIRE.ends, guard: GUARD.over, hit: FLINCH.over, hammer: HAMMER.over, stir: STIR.over, jump: JUMP.spring + JUMP.land };
 /** When each kind of blow lands. */
 const ACT_HIT = { strike: SWING.hit, stab: THRUST.hit, pounce: POUNCE.hit, heavy: SWEEP.hit, twin: TWIN.hit };
 /**
@@ -1872,6 +1896,51 @@ function biped(top: THREE.Group, parts: Part[], elbow = ELBOW) {
       foreL.joint.rotation.x -= 0.45 * fling;
       foreR.joint.rotation.x -= 0.3 * fling;
       knees(along(FLINCH.crouch, t));
+      return;
+    }
+    if (act.kind === "jump") {
+      const air = act.air ?? 0.4;
+      // How far through the air, held at 0 on the way up to the spring; and the seconds since coming down.
+      const u = Math.min(1, Math.max(0, (t - JUMP.spring) / air));
+      const down = t - JUMP.spring - air;
+      const coil = along(JUMP.coil, t);
+      const sink = along(JUMP.sink, down);
+      // What the limbs were doing in the air goes out of them as the ground takes the weight.
+      const k = Math.min(1, Math.max(0, down / 0.09));
+      const aloft = t < JUMP.spring ? 0 : 1 - k * k * (3 - 2 * k);
+      const tuck = along(JUMP.tuck, u) * aloft;
+      const split = along(JUMP.split, u) * aloft;
+      const ahead = along(JUMP.reach, u) * aloft;
+      // Crouched to spring, and again to take the landing: the feet are on the ground for both.
+      knees(0.62 * coil + 0.8 * sink);
+      const pitch = t < JUMP.spring ? along(JUMP.lean, t) : along(JUMP.pitch, u) * aloft;
+      bow(pitch + 0.5 * sink, 0);
+      head.joint.rotation.x -= (pitch + 0.5 * sink) * 0.55;
+      // In the air nothing holds the feet down: the left knee is driven up ahead and the right leg trails, both
+      // are drawn up under the body over the top, and then the feet go out in front to meet the ground.
+      thighL.joint.rotation.x -= 0.75 * split + 0.95 * tuck + 0.35 * ahead;
+      shinL.joint.rotation.x += 0.9 * split + 1.5 * tuck - 0.55 * ahead * tuck;
+      thighR.joint.rotation.x += 0.6 * split - 0.8 * tuck - 0.35 * ahead;
+      shinR.joint.rotation.x += 0.35 * split + 1.3 * tuck - 0.5 * ahead * tuck;
+      // Toes pointed while off the ground.
+      const toes = 0.45 * aloft * Math.sin(Math.PI * Math.min(1, u * 1.15));
+      footL.joint.rotation.x += toes;
+      footR.joint.rotation.x += toes;
+      // The arms: drawn back in the crouch, thrown forward and up with the spring, and brought down and out to
+      // the sides for balance on landing. An arm with something carried across the front keeps mostly to its work.
+      const swing = t < JUMP.spring ? along(JUMP.wind, t) : along(JUMP.arms, u) * (1 - Math.min(1, Math.max(0, down / 0.22)));
+      const lift = swing < 0 ? -0.9 * swing : -2.2 * swing;
+      const wide = 0.55 * sink + 0.25 * Math.max(0, swing);
+      const left = levels.length > 0 ? 0.25 : 1;
+      const right = levelsR.length > 0 ? 0.25 : 0.7;
+      armL.joint.rotation.x += lift * left;
+      armL.joint.rotation.z += wide * left;
+      foreL.joint.rotation.x -= 0.5 * foreL.joint.rotation.x * Math.max(0, -swing) * left;
+      // The weapon arm goes up less far, and what it holds stays pointing as it did, not swung over with the arm.
+      armR.joint.rotation.x += lift * right;
+      armR.joint.rotation.z -= wide * right;
+      heldR.joint.rotation.x -= lift * right;
+      if (levels.length === 0) heldL.joint.rotation.x -= lift * left;
       return;
     }
     const k = act.kind === "stab" ? THRUST : act.kind === "pounce" ? POUNCE : act.kind === "twin" ? TWIN : SWING;
@@ -5399,6 +5468,13 @@ export interface Figure {
   work(how: "hammer" | "stir"): number;
   /** Take a blow: the figure flinches from it. */
   hit(): void;
+  /**
+   * Jump, `air` seconds off the ground: a crouch, a spring with the arms thrown up, the knees drawn up over the top
+   * and the feet put out to land, then a deep crouch on landing. The figure stays on its origin: whoever asks
+   * carries it through the air. Returns the seconds until the feet leave the ground, for that to wait; 0 for a
+   * creature, which only leans into it.
+   */
+  jump(air: number): number;
   /** Greyed, for someone down in a fight. */
   setDim(on: boolean): void;
   /** How much of it is left to see, 1 (all there) to 0 (gone): it thins out pixel by pixel as a camera passes through it. */
@@ -5463,18 +5539,20 @@ export function makeFigure(kind: string, look: Look, outfit?: Outfit, opts: Figu
   let heldAway = false;
   /** The strike or hit asked for (it begins on the next frame), the one under way, and how many there have been. */
   let asked: Act["kind"] | null = null;
-  let action: { kind: Act["kind"]; at: number; n: number } | null = null;
+  let action: { kind: Act["kind"]; at: number; n: number; air: number } | null = null;
+  /** How long the jump asked for is off the ground. */
+  let airtime = 0;
   let actions = 0;
   const update = (p: FigurePose) => {
     const dt = last < 0 ? 1 : Math.min(0.1, Math.max(0, p.time - last));
     last = p.time;
-    if (asked) [action, asked] = [{ kind: asked, at: p.time, n: ++actions }, null];
+    if (asked) [action, asked] = [{ kind: asked, at: p.time, n: ++actions, air: asked === "jump" ? airtime : 0 }, null];
     const since = action ? p.time - action.at : 0;
-    if (action && (since < 0 || since >= ACT_OVER[action.kind])) action = null;
+    if (action && (since < 0 || since >= ACT_OVER[action.kind] + action.air)) action = null;
     const want = p.walking ? Math.sin(p.stride * 3.6) : 0;
     swing += (want - swing) * Math.min(1, dt * 20);
     const rowing = p.rowing !== undefined && !!rig.hands && !p.lying;
-    const anim: Anim = { t: p.time, swing, breath: Math.sin(p.time * 2.2 + beat), strike: Math.min(1, Math.abs(p.lean) * 2), act: action && rig.acts ? { kind: action.kind, t: since, n: action.n } : null, scale: 1 / scaler.scale.x, lying: p.lying, sitting: rowing ? 1 : typeof p.sitting === "number" ? Math.max(0, Math.min(1, p.sitting)) : p.sitting ? 1 : 0, oars: rowing ? Math.max(0, Math.min(1, p.rowing!)) : -1 };
+    const anim: Anim = { t: p.time, swing, breath: Math.sin(p.time * 2.2 + beat), strike: Math.min(1, Math.abs(p.lean) * 2), act: action && rig.acts ? { kind: action.kind, t: since, n: action.n, air: action.air } : null, scale: 1 / scaler.scale.x, lying: p.lying, sitting: rowing ? 1 : typeof p.sitting === "number" ? Math.max(0, Math.min(1, p.sitting)) : p.sitting ? 1 : 0, oars: rowing ? Math.max(0, Math.min(1, p.rowing!)) : -1 };
     // A rig with no animations of its own is leant into a blow, and a little into a hit, easing off as it always has.
     if (action && !rig.acts) anim.strike = Math.max(anim.strike, Math.min(1, (action.kind === "hit" ? 0.5 : 1.8) * Math.exp(-8 * since)));
     if (sling) stow(sling, p.walking, Math.max(anim.strike, anim.act && anim.act.kind !== "hit" ? 1 : 0), dt);
@@ -5543,6 +5621,11 @@ export function makeFigure(kind: string, look: Look, outfit?: Outfit, opts: Figu
     },
     hit() {
       asked = "hit";
+    },
+    jump(air) {
+      asked = "jump";
+      airtime = Math.max(0.1, air);
+      return rig.acts ? JUMP.spring : 0;
     },
     setDim(on) {
       mats.body.color.setScalar(on ? 0.5 : 1);

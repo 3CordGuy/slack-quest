@@ -154,7 +154,9 @@ function dwell(ev: ZoneEvent, many: boolean, next: ZoneEvent | undefined): numbe
     case "surface": return many ? 80 : 240;
     case "up": case "fight_join": case "round": return 240;
     case "burst": case "reaction": return 300;
-    case "shoved": case "jumped": return 400;
+    case "shoved": return 400;
+    // The crouch, the leap and the landing: what follows waits for the feet to come down.
+    case "jumped": return 700;
     case "fight_start": return 1300;
     case "fight_end": return 700;
     case "fled": return 420;
@@ -310,10 +312,8 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
       } else if (ev.t === "jumped") {
         const u = find(ev.id);
         if (u) u.pos = ev.to;
-        later(() => {
-          sounds.zone("jump", view?.whereIs(ev.id));
-          view?.walkUnit(ev.id, [ev.to]);
-        });
+        // A leap, not a walk; the view sounds it, timed to the landing.
+        later(() => (view ? view.leapUnit(ev.id, ev.to) : sounds.zone("jump")));
       } else if (ev.t === "shoved") {
         const u = find(ev.target);
         const to = ev.to;
