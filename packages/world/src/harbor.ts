@@ -123,6 +123,8 @@ export const HARBOR_LIGHTHOUSE: HexPos = at(21, 24);
  * worked here (stonecraft.ts) before a crew goes up to the atlas with them.
  */
 export const HARBOR_BENCH: HexPos = at(18, 20);
+/** The town chest: in the plaza, a step from where everyone arrives. The crew's shared store (townchest.ts). */
+export const HARBOR_CHEST: HexPos = at(15, 14);
 /** The apothecary's door, across the High Street from the pub, facing up it from the south side. A building site until the crew has paid for it. */
 export const HARBOR_APOTHECARY: HexPos = at(18, 16);
 /** The smithy's door, at the west end of the High Street by the sparring ring. A building site until the crew has paid for it. */
@@ -312,6 +314,7 @@ export function generateHarbor(): WorldMap {
     harborPoi("galley", "galley", HARBOR_GALLEY),
     harborPoi("lighthouse", "lighthouse", HARBOR_LIGHTHOUSE),
     harborPoi("bench", "bench", HARBOR_BENCH),
+    harborPoi("townchest", "townchest", HARBOR_CHEST),
     harborPoi("fishing", "fishing", HARBOR_GATHER.fishing),
     harborPoi("felling", "felling", HARBOR_GATHER.felling),
     harborPoi("quarry", "quarry", HARBOR_GATHER.quarry),

@@ -1,4 +1,5 @@
-// The town chest: one store the whole crew shares, kept at the works.
+// The town chest: one store the whole crew shares. It stands in the Harbor's
+// plaza (harbor.ts: HARBOR_CHEST), where anyone can walk up to it.
 //
 // It has tabs, each for one sort of thing, and each a grid of squares that
 // stacks sit in as they do in a pack (a square a stack of up to STACK_MAX).

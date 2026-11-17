@@ -36,6 +36,7 @@ import { hexDistance, type HexPos } from "@gantt-quest/core";
 import { ATLAS_HOME, ATLAS_SPACING, ATLAS_VIEW, LAIR_RINGS, modEffect, modName, modSide, atlasNodeById, atlasTier, atlasWorld, bountyPay, modsOf, needsStone, stoneKey, stoneName, stoneOn, type AtlasNode, type Lodestone } from "@gantt-quest/world";
 import { api, type Chart, type ChartNode, type Me } from "../api";
 import { useAudioScene } from "../audio/useAudioScene";
+import { InventoryScreen } from "../InventoryScreen";
 import { Icon } from "../items";
 import { STONE_ICON } from "../zone/actionIcons";
 import { worldToHex } from "../render/footsteps";
@@ -330,6 +331,16 @@ export function AtlasView({ me, refresh, onLeave }: { me: Me; refresh(): Promise
   /** The lodestone put into the slot of the place picked, out of the pack: not spent until someone sets out. */
   const [slotted, setSlotted] = useState<Lodestone | null>(null);
   useEffect(() => setSlotted(null), [picked]);
+  /** The sea bag is open beside the atlas: a lodestone is dragged (or shift-clicked) from it into the slot of the place picked. */
+  const [bag, setBag] = useState(false);
+  useEffect(() => {
+    const key = (e: KeyboardEvent) => {
+      const typing = e.target instanceof HTMLElement && (e.target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName));
+      if (!typing && !e.ctrlKey && !e.metaKey && !e.altKey && (e.key.toLowerCase() === "b" || e.key.toLowerCase() === "i")) setBag((open) => !open);
+    };
+    addEventListener("keydown", key);
+    return () => removeEventListener("keydown", key);
+  }, []);
   /** The lodestone pointed at, in the slot or the pack: what it carries is told while it is. */
   const [over, setOver] = useState<Lodestone | null>(null);
   useEffect(() => {
@@ -431,10 +442,24 @@ export function AtlasView({ me, refresh, onLeave }: { me: Me; refresh(): Promise
         <button className="atlas-close" onClick={close} title="Back down to the Harbor, at the lighthouse">Close atlas</button>
         <div className="atlas-corner">
           <button className="small" onClick={() => { const home = byId.get(ATLAS_HOME); if (home) show(home); }} title="Bring the Harbor back to the middle">Find the Harbor</button>
+          <button className="small" onClick={() => setBag((open) => !open)} title="Your sea bag (I): drag a lodestone from it into a place's slot">{bag ? "Close the bag" : "Sea bag"}</button>
           {me.devTools && chart && <button className="small" disabled={busy} onClick={() => void dev("stone")}>Dev: find a lodestone</button>}
           {me.devTools && chart && <button className="small" disabled={busy} onClick={() => void dev("reset")}>Dev: wipe the atlas</button>}
         </div>
       </header>
+
+      {/* The sea bag, beside the atlas: a lodestone goes from it into the slot of the place picked. */}
+      {bag && me.character && (
+        <InventoryScreen
+          me={me}
+          refresh={refresh}
+          onClose={() => setBag(false)}
+          stones={{
+            put: (stone) => setSlotted(stone),
+            blocked: () => (!shown || shown.kind === "harbor" || shown.state !== "open" ? "Pick a place on the atlas that is open to you first: its slot takes the stone." : begun ? "The crew has set out for it already: its slot is shut." : undefined),
+          }}
+        />
+      )}
 
       {/* The place picked: a small panel beside it, that goes with it as the map moves. */}
       {shown && (
@@ -471,10 +496,11 @@ export function AtlasView({ me, refresh, onLeave }: { me: Me; refresh(): Promise
                       {/* The place's one slot. A stone dragged or clicked from the pack beside it goes in; a click takes it out again. */}
                       <button
                         type="button"
+                        data-stone-slot
                         className={`atlas-slot ${inSlot || (begun && shown.stone) ? "filled" : ""} ${needs && !inSlot && !begun ? "wanting" : ""}`}
-                        disabled={begun || !inSlot}
+                        aria-disabled={begun || !inSlot}
                         aria-label={begun ? "The slot is shut: the map is made" : inSlot ? `${stoneName(inSlot)}: take it out again` : "An empty slot for a lodestone"}
-                        onClick={() => setSlotted(null)}
+                        onClick={() => !begun && setSlotted(null)}
                         onMouseEnter={() => setOver(begun ? (shown.stone ?? null) : inSlot)}
                         onMouseLeave={() => setOver(null)}
                         onDragOver={(e) => { if (!begun) e.preventDefault(); }}

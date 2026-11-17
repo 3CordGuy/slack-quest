@@ -1,4 +1,4 @@
-// The town chest: one store the whole crew shares, kept at the works
+// The town chest: one store the whole crew shares, standing in the plaza
 // (packages/world/src/townchest.ts decides what it holds and how big it is;
 // server/townchest.ts moves things in and out). A window with a tab for each
 // sort of thing it keeps: on the left what is in the chest, on the right what

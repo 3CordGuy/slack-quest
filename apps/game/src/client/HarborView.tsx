@@ -6,7 +6,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useAudioScene } from "./audio/useAudioScene";
 import type { HexPos } from "@gantt-quest/core";
-import { GATHER_SPOTS, GATHER_SPOT_IDS, HARBOR_APOTHECARY, HARBOR_BENCH, HARBOR_BOARD, HARBOR_CAVE, HARBOR_GALLEY, HARBOR_LIGHTHOUSE, HARBOR_SMITHY, HARBOR_GATHER, HARBOR_NAME, HARBOR_PIERS, HARBOR_PLOTS, HARBOR_PLOT_FACING, HARBOR_PUB, HARBOR_RING, HARBOR_SHOP, HARBOR_SPAWN, HARBOR_WORKS, MAX_PARTY, PLOT_PRICE, RESOURCE_KINDS, SHACK_COST, binFill, binNeeds, builtProjects, BOOK_TITLE, fishSpotAt, harborDoor, seaEdge, tileAt, waterSpotAt, type FishSpot, FISH_SPOTS, generateHarbor, projectById, projectProgress, harborPoi, hutTier, poiAt, salesman, type GatherSpot, type HarborShip, type Resources } from "@gantt-quest/world";
+import { GATHER_SPOTS, GATHER_SPOT_IDS, HARBOR_APOTHECARY, HARBOR_BENCH, HARBOR_BOARD, HARBOR_CAVE, HARBOR_CHEST, HARBOR_GALLEY, HARBOR_LIGHTHOUSE, HARBOR_SMITHY, HARBOR_GATHER, HARBOR_NAME, HARBOR_PIERS, HARBOR_PLOTS, HARBOR_PLOT_FACING, HARBOR_PUB, HARBOR_RING, HARBOR_SHOP, HARBOR_SPAWN, HARBOR_WORKS, MAX_PARTY, PLOT_PRICE, RESOURCE_KINDS, SHACK_COST, binFill, binNeeds, builtProjects, BOOK_TITLE, fishSpotAt, harborDoor, seaEdge, tileAt, waterSpotAt, type FishSpot, FISH_SPOTS, generateHarbor, projectById, projectProgress, harborPoi, hutTier, poiAt, salesman, type GatherSpot, type HarborShip, type Resources } from "@gantt-quest/world";
 import { api, type Me } from "./api";
 import { CatchPanel } from "./CatchPanel";
 import { AccountPanel } from "./Account";
@@ -61,7 +61,7 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
   const [gather, setGather] = useState<GatherSpot | null>(null);
   const [fishmonger, setFishmonger] = useState(false);
   const [works, setWorks] = useState(false);
-  /** The town chest, which is kept at the works: the crew's shared store. */
+  /** The town chest, which stands in the plaza: the crew's shared store. */
   const [chest, setChest] = useState(false);
   /** The stonecutter's bench, on the lane to the lighthouse: lodestones are cut and worked there. */
   const [bench, setBench] = useState(false);
@@ -200,7 +200,7 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
     : hoverPoi.kind === "rocks" ? "Rocks. Ships that miss the channel find them."
     : hoverPoi.kind === "wreck" ? "A wreck on the rocks. Nobody remembers her name."
     : hoverPoi.kind === "pub" ? (visitor ? `The pub: a traveling salesman is in. ${visitor.name}, ${visitor.trade}` : "The pub: food, drink, Old Tam and the dice table")
-    : hoverPoi.kind === "works" ? "The works: crew projects, and the town chest the crew shares"
+    : hoverPoi.kind === "works" ? "The works: crew projects"
     : hoverPoi.kind === "lighthouse" ? (lit ? "The lighthouse: the crew's atlas is kept in its lamp room, with the whole world to see from up there" : lighthouseFill > 0 ? "The lighthouse going up: the crew's atlas is kept out here on the point" : "A bare point over the wreck, where the lighthouse will stand: the crew's atlas is kept out here")
     : hoverPoi.kind === "apothecary" ? (apothecaryBuilt ? "The apothecary: potions and flasks, bought or brewed, and a keeper to haggle with" : "The apothecary's building site: a crew project at the works")
     : hoverPoi.kind === "smithy" ? (smithyBuilt ? "The smithy: arms and armour off the rack, your own sharpened or reinforced, and a smith to haggle with" : "The smithy's building site: a crew project at the works")
@@ -215,6 +215,7 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
   const ownerOf = (prefix: string) => board.members.find((m) => `${prefix}:${m.id}` === hoverPoi?.id);
   const title = !hoverPoi ? null
     : hoverPoi.kind === "cave" ? "The Haunted Caverns"
+    : hoverPoi.kind === "townchest" ? "The Town Chest"
     : hoverPoi.kind === "bench" ? "The Stonecutter's Bench"
     : hoverPoi.kind === "board" ? "Notice Board"
     : hoverPoi.kind === "shop" ? "Market Stall"
@@ -265,6 +266,7 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
   const atShop = !!self && same(self.pos, HARBOR_SHOP);
   const atBoard = !!self && same(self.pos, HARBOR_BOARD);
   const atBench = !!self && same(self.pos, HARBOR_BENCH);
+  const atChest = !!self && same(self.pos, HARBOR_CHEST);
   const atRing = !!self && same(self.pos, HARBOR_RING);
   // Fishing is from any pier head as well as the shore spot.
   // Afloat (a boat under them on a water hex): the water's own spot, or the open sea from the edge in a rowboat.
@@ -361,6 +363,7 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
   // The place under your feet and the one thing to do there, shown in the bar below and floated over the hex.
   const here: { title: ReactNode; label: string; run(): void; quiet?: boolean; closed?: boolean; also?: { label: string; run(): void } } | null =
     atBoard ? { title: unseen ? "The notice board · something new is pinned up" : "The notice board", label: "Read the notice board", run: () => setNotices(true) }
+    : atChest ? { title: <>The town chest <span className="muted">· the crew's shared store: lodestones and materials</span></>, label: "Open the town chest", run: () => setChest(true) }
     : atBench ? { title: <>The stonecutter's bench <span className="muted">· lodestones for the atlas are cut and worked here</span></>, label: "Work lodestones", run: () => setBench(true) }
     : atCave ? { title: <>The Haunted Caverns <span className="muted">· something lurks in the dark</span></>, label: "Go down", run: goDown }
     : shipHere ? { ...shut(<>{shipHere.captain}'s ship <span className="muted">· laid up while voyages are rebuilt</span></>), also: pierHere ? { label: "Cast a line", run: () => setGather("fishing") } : undefined }
@@ -374,7 +377,7 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
         also: pierHere === "shore" ? { label: "The fishmonger", run: () => setFishmonger(true) } : undefined,
       }
     : atPub ? { title: visitor ? <>The pub <span className="pub-visitor">· {visitor.name}, {visitor.trade}, is in</span></> : "The pub", label: "Go in", run: () => goInside("pub", "pub") }
-    : atWorks ? { title: <>The works <span className="muted">· the town chest is kept here</span></>, label: "See the crew's projects", run: () => setWorks(true), also: { label: "Open the town chest", run: () => setChest(true) } }
+    : atWorks ? { title: "The works", label: "See the crew's projects", run: () => setWorks(true) }
     // The way into the atlas: from the lamp room once the tower is up, from the bare point until then (where the works is still a step away).
     : atLighthouse ? {
         title: lit ? <>The lighthouse <span className="muted">· the crew's atlas is kept in its lamp room</span></> : <>The lighthouse's point <span className="muted">· the crew's atlas is kept out here. The tower is paid for at the works.</span></>,
@@ -435,7 +438,7 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
         <DragPanel id="harbor.docks" title="Docks" foldOnPhone className="story panel docks">
           <p className="muted">The crew's atlas is kept out at the lighthouse: everywhere you have found, and the routes that run on from there. Walk out to the point to open it. Setting out takes a lodestone: they are cut and worked at the stonecutter's bench, on the lane out there.</p>
           <p>
-            <button className="small" onClick={() => renderer.current?.lookAt(HARBOR_LIGHTHOUSE)}>Show me the lighthouse</button> <button className="small" onClick={() => renderer.current?.lookAt(HARBOR_BENCH)}>Show me the bench</button>
+            <button className="small" onClick={() => renderer.current?.lookAt(HARBOR_LIGHTHOUSE)}>Show me the lighthouse</button> <button className="small" onClick={() => renderer.current?.lookAt(HARBOR_BENCH)}>Show me the bench</button> <button className="small" onClick={() => renderer.current?.lookAt(HARBOR_CHEST)}>Show me the town chest</button>
           </p>
           <h3>Voyage log</h3>
           {board.log.length === 0 && <p className="muted">No voyages yet.</p>}

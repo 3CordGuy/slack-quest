@@ -557,6 +557,7 @@ const PLACE: Partial<Record<Poi["kind"], { scale: number; back: number }>> = {
   cave: { scale: 2.2, back: 1.3 },
   board: { scale: 1.6, back: 0.45 },
   bench: { scale: 1.6, back: 0.45 },
+  townchest: { scale: 1.7, back: 0.4 },
   ring: { scale: 1.5, back: 0.42 },
   felling: { scale: 1.5, back: 0.42 },
   quarry: { scale: 1.5, back: 0.42 },
@@ -5437,6 +5438,57 @@ export class WorldRenderer {
         add(box(0.9, 0.04, 0.5), lambert("#8c3b2f"), 0, 0.02, 0.28);
         for (const x of [-0.8, 0.8]) add(box(0.14, 0.9, 0.14), lambert("#5a3d22"), x, 0.45, 0.28);
         break;
+      case "townchest": {
+        // The town chest, the crew's shared store: a great iron-bound sea chest on a stone plinth, its lid propped
+        // open on a stay, with what is in it showing over the rim (gold, and the blue of lodestones). The crew's
+        // pennant flies from a pole behind it, and a lantern hangs from the pole to find it by after dark.
+        const oak = lambert("#6b4a2a");
+        const darkOak = lambert("#4a3320");
+        const iron = lambert("#33363c");
+        const brass = lambert("#c79a3e");
+        const plinth = lambert("#8b8f96");
+        // The plinth: two courses of stone.
+        add(box(1.16, 0.1, 0.82), plinth, 0, 0.05, 0);
+        add(box(1.04, 0.08, 0.7), lambert("#7b7f87"), 0, 0.14, 0);
+        // The chest's body: planks, banded with iron, cornered with brass, a lock plate on the front.
+        add(box(0.9, 0.42, 0.56), oak, 0, 0.39, 0);
+        for (const y of [0.24, 0.55]) add(box(0.92, 0.035, 0.58), darkOak, 0, y, 0);
+        for (const x of [-0.3, 0, 0.3]) add(box(0.06, 0.44, 0.585), iron, x, 0.39, 0);
+        for (const x of [-0.45, 0.45]) for (const z of [-0.28, 0.28]) add(box(0.05, 0.44, 0.05), brass, x, 0.39, z);
+        add(box(0.14, 0.16, 0.03), brass, 0, 0.42, 0.295);
+        add(box(0.04, 0.06, 0.035), iron, 0, 0.4, 0.3);
+        for (const x of [-0.47, 0.47]) add(new THREE.TorusGeometry(0.06, 0.014, 6, 12), iron, x, 0.42, 0, Math.PI / 2);
+        // What is in it, showing over the rim.
+        add(box(0.82, 0.03, 0.48), lambert("#2a2118"), 0, 0.585, 0);
+        for (let i = 0; i < 7; i++) add(new THREE.CylinderGeometry(0.045, 0.045, 0.02, 8), brass, -0.3 + (i % 4) * 0.09, 0.61 + Math.floor(i / 4) * 0.02, -0.08 + ((i * 37) % 5) * 0.045, i);
+        for (const [x, z, glow] of [[0.14, 0.02, true], [0.26, -0.1, false], [0.3, 0.1, true]] as const) {
+          const g = add(new THREE.OctahedronGeometry(0.06, 0), glow ? new THREE.MeshBasicMaterial({ color: "#7fd0ff" }) : lambert("#39445a"), x, 0.65, z, x * 9);
+          g.scale.y = 1.3;
+          if (glow) g.userData.glow = true;
+        }
+        // The lid, thrown back on its hinges and held by a stay: domed, banded like the body.
+        const lid = new THREE.Group();
+        const part = (geometry: THREE.BufferGeometry, material: THREE.Material, x: number, y: number, z: number) => {
+          const m = new THREE.Mesh(geometry, material);
+          m.position.set(x, y, z);
+          lid.add(m);
+          return m;
+        };
+        part(box(0.92, 0.1, 0.58), oak, 0, 0.05, 0.29);
+        part(box(0.86, 0.06, 0.46), lambert("#775231"), 0, 0.13, 0.29);
+        for (const x of [-0.3, 0, 0.3]) part(box(0.06, 0.17, 0.6), iron, x, 0.085, 0.29);
+        lid.position.set(0, 0.6, -0.28);
+        lid.rotation.x = -1.9;
+        g.add(lid);
+        add(box(0.02, 0.4, 0.02), iron, 0.4, 0.78, -0.22).rotation.x = -0.5;
+        // The pole behind, with the crew's pennant and a lantern.
+        add(box(0.06, 1.9, 0.06), darkOak, -0.5, 0.95, -0.46);
+        add(box(0.5, 0.26, 0.02), lambert("#b23a2e"), -0.22, 1.7, -0.46);
+        add(box(0.5, 0.05, 0.022), lambert("#e9c85a"), -0.22, 1.7, -0.46);
+        add(box(0.02, 0.12, 0.02), iron, -0.5, 1.22, -0.36);
+        add(box(0.09, 0.11, 0.09), new THREE.MeshBasicMaterial({ color: "#ffd98a" }), -0.5, 1.12, -0.36).userData.glow = true;
+        break;
+      }
       case "bench": {
         // The stonecutter's bench, where lodestones are cut and worked: a stout bench under a blue awning, with a
         // grindstone on its frame at one end and a vice at the other; stones on the top, cut and uncut, one of

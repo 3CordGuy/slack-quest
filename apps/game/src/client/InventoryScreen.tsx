@@ -140,7 +140,7 @@ type Held = { stack: Stack; from: Zone | "worn" };
 type Verdict = "ok" | "swap" | "bad";
 /** Said when a potion or a flask is sent toward a chest or the trade table. */
 const STAYS_IN_PACK = "Potions, flasks and bombs stay in your pack: they cannot be stowed or traded yet.";
-const STONES_STAY = "Lodestones are not stowed at home or traded hand to hand: the town chest, at the works, has a tab for them that the whole crew shares.";
+const STONES_STAY = "Lodestones are not stowed at home or traded hand to hand: the town chest, in the plaza, has a tab for them that the whole crew shares.";
 /** A decoration kept in a chest lies on its grid too, a square each. */
 const decorKey = (id: number) => `decor:${id}`;
 
@@ -186,10 +186,23 @@ export interface Usable {
   blocked(kind: Throwable): string | undefined;
 }
 
+/**
+ * On the atlas: the one slot of the place picked, which a lodestone from the bag is put into. The slot itself
+ * is the atlas's (any element marked `data-stone-slot`): a stone dragged out of the bag and let go over it, or
+ * picked up and clicked onto it, goes in. Nothing is spent until the crew sets out.
+ */
+export interface StoneSlot {
+  put(stone: Lodestone): void;
+  /** Why a stone cannot go in just now (no place picked, its map already made), if it cannot. */
+  blocked(stone: Lodestone): string | undefined;
+}
+
 interface Props {
   me: Me;
   refresh(): Promise<unknown>;
   onClose(): void;
+  /** On the atlas: a lodestone can be put from here into the slot of the place picked. */
+  stones?: StoneSlot;
   /** Opened during a voyage: gear can be changed, but the catch stays at home. */
   onIsland?: boolean;
   /** A chest of the hut, open beside the bag. `refresh` must re-read the hut as well. */
@@ -322,7 +335,21 @@ function EyeGlyph({ shut }: { shut: boolean }) {
   );
 }
 
-export function InventoryScreen({ me, refresh, onClose, onIsland = false, chest = null, trade = null, usable, gearLocked }: Props) {
+export function InventoryScreen({ me, refresh, onClose, onIsland = false, chest = null, trade = null, usable, gearLocked, stones }: Props) {
+  /** The atlas's slot as it is now, for the handlers that outlive a render. */
+  const stoneSlot = useRef(stones);
+  stoneSlot.current = stones;
+  /** Put a lodestone into the atlas's slot, or say why it will not go. True if it went. */
+  const putStone = (stone: Lodestone): boolean => {
+    const slot = stoneSlot.current;
+    if (!slot) return false;
+    const why = slot.blocked(stone);
+    if (why) setRefused(why);
+    else slot.put(stone);
+    return !why;
+  };
+  const stonePut = useRef(putStone);
+  stonePut.current = putStone;
   const c = me.character!;
   const { busy, error, act } = useAct(refresh);
   const [catchOpen, setCatchOpen] = useState(false);
@@ -551,7 +578,11 @@ export function InventoryScreen({ me, refresh, onClose, onIsland = false, chest 
       const slot = under?.closest<HTMLElement>(".doll-slot")?.dataset.slot as Slot | undefined;
       if (slot) drop.current.onSlot(slot);
       else if (under?.closest(".pack-grid-2")) drop.current.onGrid(e);
-      else setHeld(null);
+      else {
+        // A lodestone let go over the slot of a place on the atlas goes into it.
+        if (p.stack.t === "stone" && under?.closest("[data-stone-slot]")) stonePut.current(p.stack.stone);
+        setHeld(null);
+      }
       // The release would otherwise count as a click on whatever is under it.
       const swallow = (ev: MouseEvent) => {
         ev.stopPropagation();
@@ -566,15 +597,25 @@ export function InventoryScreen({ me, refresh, onClose, onIsland = false, chest 
       else if (chest) chest.onClose();
       else onClose();
     };
+    // A lodestone picked up (not dragged) and then clicked onto the atlas's slot goes into it, too.
+    const click = (e: MouseEvent) => {
+      if (held?.stack.t !== "stone" || !(e.target instanceof Element) || !e.target.closest("[data-stone-slot]")) return;
+      e.stopPropagation();
+      e.preventDefault();
+      stonePut.current(held.stack.stone);
+      setHeld(null);
+    };
     addEventListener("pointermove", move);
     addEventListener("pointerup", up);
     addEventListener("pointercancel", up);
     addEventListener("keydown", key);
+    addEventListener("click", click, { capture: true });
     return () => {
       removeEventListener("pointermove", move);
       removeEventListener("pointerup", up);
       removeEventListener("pointercancel", up);
       removeEventListener("keydown", key);
+      removeEventListener("click", click, { capture: true });
     };
   }, [held, onClose, catchOpen, chest]);
   // A thing in hand that is no longer where it was lifted from (sold, stowed, traded away, its chest shut) is let go of.
@@ -739,6 +780,8 @@ export function InventoryScreen({ me, refresh, onClose, onIsland = false, chest 
   const holding = held?.stack.t === "gear" && held.from === "pack" ? held.stack.item : null;
   /** A potion or a flask in hand, and why it cannot be used from here just now (if this is a map at all). */
   const holdingUse = held?.stack.t === "use" ? held.stack : null;
+  const holdingStone = held?.stack.t === "stone" ? held.stack : null;
+  const stoneBlocked = holdingStone && stones ? stones.blocked(holdingStone.stone) : undefined;
   const useBlocked = holdingUse && usable ? usable.blocked(holdingUse.kind) : undefined;
   const picked = inside.find((f) => f.id === pickedDecor) ?? null;
 
@@ -937,6 +980,15 @@ export function InventoryScreen({ me, refresh, onClose, onIsland = false, chest 
                 ? <button className="small primary" disabled={!!useBlocked} title={useBlocked ?? "Take it in hand: the bag closes, and you click where it goes"} onClick={() => { setHeld(null); usable.use(holdingUse.kind); }}>Use</button>
                 : <span className="muted">Used on a map</span>}
             </>
+          ) : holdingStone ? (
+            <>
+              <strong className="bag-who">{stoneName(holdingStone.stone)}</strong>
+              <span className="muted">× {holdingStone.total}</span>
+              <span className="spacer" />
+              {stones
+                ? <button className="small primary" disabled={!!stoneBlocked} title={stoneBlocked ?? "Into the slot of the place picked. Or drop it there yourself."} onClick={() => { setHeld(null); putStone(holdingStone.stone); }}>Put in the slot</button>
+                : <span className="muted">For a place's slot, on the atlas</span>}
+            </>
           ) : (
             <>
               <strong className="bag-who">{c.name}</strong>
@@ -967,6 +1019,9 @@ export function InventoryScreen({ me, refresh, onClose, onIsland = false, chest 
               if (s.t === "use") {
                 // On a map, straight into the hand. Anywhere else there is nothing to do with it.
                 if (usable && !usable.blocked(s.kind)) usable.use(s.kind);
+              } else if (s.t === "stone" && stones) {
+                // On the atlas, straight into the slot of the place picked.
+                putStone(s.stone);
               } else if (sideOpen) moveIn(s);
               else if (s.t === "gear" && !equipProblem(s.item, c.class_id, c.level)) void equip(s.item.id);
             }}
@@ -995,7 +1050,7 @@ export function InventoryScreen({ me, refresh, onClose, onIsland = false, chest 
             {shown.t === "gear"
               ? <ItemDetail item={shown.item} current={worn.get(shown.item.slot) ?? null} equipped={shown.item.equipped} classId={c.class_id} level={c.level} />
               : shown.t === "stone"
-              ? <LodestoneDetail stone={shown.stone} total={shown.total} />
+              ? <LodestoneDetail stone={shown.stone} total={shown.total} how={stones ? (stones.blocked(shown.stone) ?? "Drag it onto the place's slot, or shift-click it.") : undefined} />
               : shown.t === "use"
               ? <ConsumableDetail kind={shown.kind} total={shown.total} how={usable ? (usable.blocked(shown.kind) ?? "Shift-click to take it in hand, then click where it goes.") : "Used on a map: thrown, or drunk."} />
               : <MaterialDetail kind={shown.kind} total={shown.total} where={hover.zone === "theirs" ? "theirs" : hover.zone === "chest" ? (trade ? "offer" : "chest") : "pack"} />}
@@ -1030,7 +1085,7 @@ export function InventoryScreen({ me, refresh, onClose, onIsland = false, chest 
 }
 
 /** What a lodestone carries, how many there are, and what it is for. */
-function LodestoneDetail({ stone, total }: { stone: Lodestone; total: number }) {
+function LodestoneDetail({ stone, total, how }: { stone: Lodestone; total: number; how?: string }) {
   const icon = STONE_ICON(stone.length);
   return (
     <div className="mat-detail">
@@ -1055,6 +1110,7 @@ function LodestoneDetail({ stone, total }: { stone: Lodestone; total: number }) 
         </ul>
       )}
       <p>You carry <strong>{total}</strong>. Put one into a place's slot on the atlas, at the lighthouse, to set out for it: it is spent, and what it carries is added to the place. Stones are cut and worked at the stonecutter's bench, on the lane out there.</p>
+      {how && <p className="muted">{how}</p>}
     </div>
   );
 }
