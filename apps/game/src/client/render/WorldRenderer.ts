@@ -1080,6 +1080,10 @@ export class WorldRenderer {
     this.endMinigame();
     this.post?.dispose();
     this.renderer.dispose();
+    // Give the WebGL context back now, not whenever the canvas is collected: a page holds only so many, and the
+    // browser drops the oldest (the HUD's portrait renderer) to make room. Every view (the Harbor, a hut, the pub
+    // and the Harbor through its windows) makes its own canvas, so this one is not drawn on again.
+    this.renderer.forceContextLoss();
     canvas.remove();
   }
 
