@@ -49,6 +49,18 @@ const costText = (r: Resources) => {
   return parts.length > 1 ? `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}` : (parts[0] ?? "nothing");
 };
 
+/**
+ * The places that only open a window, and so open on a click with nothing more to press: by the id of their
+ * point of interest, and where a hero stands to use them. Clicking the place itself, the ground it stands on or
+ * its doorstep counts; for one used from a hex of the street (`street`), clicking that hex is only a walk.
+ */
+const CLICK_OPENS: { id: string; at: { q: number; r: number }; street?: boolean }[] = [
+  { id: "townchest", at: HARBOR_CHEST, street: true },
+  { id: "board", at: HARBOR_BOARD },
+  { id: "bench", at: HARBOR_BENCH },
+  { id: "shop", at: HARBOR_SHOP },
+];
+
 export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown> }) {
   useAudioScene("harbor");
   const mount = useRef<HTMLDivElement>(null);
@@ -63,8 +75,8 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
   const [works, setWorks] = useState(false);
   /** The town chest, which stands in the plaza: the crew's shared store. */
   const [chest, setChest] = useState(false);
-  /** The town chest itself was clicked: it is to open when the hero gets to it. */
-  const [wantChest, setWantChest] = useState(false);
+  /** A place that opens on a click (CLICK_OPENS) was clicked: it is to open when the hero gets to it. Its id. */
+  const [want, setWant] = useState<string | null>(null);
   /** The stonecutter's bench, on the lane to the lighthouse: lodestones are cut and worked there. */
   const [bench, setBench] = useState(false);
   const [account, setAccount] = useState(false);
@@ -158,12 +170,13 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
   const heroSheet = useHeroSheet();
 
   useEffect(() => {
-    // A click anywhere on a building is a walk to its door. A click on the town chest itself (or the hex it
-    // stands on) is a walk up to it and the opening of it: nothing more to press on arriving.
+    // A click anywhere on a building is a walk to its door. A click on a place that only opens a window (the
+    // town chest, the notice board, the bench, the market stall) is a walk up to it and the opening of it:
+    // nothing more to press on arriving.
     const r = new WorldRenderer(mount.current!, {
       onHexClick: (to, place) => {
         const door = harborDoor(to);
-        setWantChest(place === "townchest" || (!!door && same(door, HARBOR_CHEST)));
+        setWant(CLICK_OPENS.find((o) => o.id === place || (!!door && same(door, o.at)) || (!o.street && same(to, o.at)))?.id ?? null);
         send.current({ type: "move", to: door ?? to });
       },
       onHover: setHover,
@@ -277,23 +290,28 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
   const atBoard = !!self && same(self.pos, HARBOR_BOARD);
   const atBench = !!self && same(self.pos, HARBOR_BENCH);
   const atChest = !!self && same(self.pos, HARBOR_CHEST);
-  // The chest was clicked: it opens once the hero has walked up to it (at once, if they stand there already).
+  // Such a place was clicked: it opens once the hero has walked up to it (at once, if they stand there already).
+  const wantAt = CLICK_OPENS.find((o) => o.id === want)?.at;
+  const atWant = !!self && !!wantAt && same(self.pos, wantAt);
   useEffect(() => {
-    if (!wantChest || !atChest) return;
+    if (!want || !atWant) return;
     const arrived = () => {
       if (you && renderer.current?.isWalking(you)) return false;
-      setWantChest(false);
-      setChest(true);
+      setWant(null);
+      if (want === "townchest") setChest(true);
+      else if (want === "board") setNotices(true);
+      else if (want === "bench") setBench(true);
+      else if (want === "shop") setShop(true);
       return true;
     };
     if (arrived()) return;
     const tick = setInterval(arrived, 60);
     return () => clearInterval(tick);
-  }, [wantChest, atChest, you]);
-  // What is in it is read ahead: on coming into the Harbor, and again on setting off toward it. So it opens at once.
+  }, [want, atWant, you]);
+  // What is in the chest is read ahead: on coming into the Harbor, and again on setting off toward it. So it opens at once.
   useEffect(() => {
-    if (wantChest || !chest) readChestAhead();
-  }, [wantChest, chest]);
+    if (want === "townchest" || !chest) readChestAhead();
+  }, [want, chest]);
   // Its lid swings back while it is open, and falls shut after.
   useEffect(() => {
     renderer.current?.setChestOpen(chest);
