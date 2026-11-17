@@ -44,6 +44,15 @@ const TORCH_REACH = 12;
 const TORCH_STRENGTH = 4;
 /** How high over where a torch is carried its light hangs: above a hero's head. Export for a torch on the ground. */
 export const TORCH_LIFT = 2.1;
+/**
+ * Glowing mushrooms' light: how many patches have one at a time (the nearest the view), how far it reaches (about
+ * the hex round them the rules light, and a soft edge past it), how bright, and how long it takes to go out once
+ * they are picked.
+ */
+const GLOWCAP_LIGHTS = 3;
+const GLOWCAP_REACH = 4.2;
+const GLOWCAP_STRENGTH = 2.2;
+const GLOWCAP_FADE_S = 1.1;
 
 export function pixelTexture(w: number, h: number, draw: (ctx: CanvasRenderingContext2D) => void): THREE.CanvasTexture {
   const canvas = document.createElement("canvas");
@@ -731,6 +740,15 @@ export class Ambience {
    */
   private torches = Array.from({ length: 4 }, () => new THREE.PointLight("#ffb070", 0, TORCH_REACH, 1.1));
   private torchCount = 0;
+  /**
+   * In the caverns, a cold sea-green light over each of the nearest few patches of glowing mushrooms, real light on
+   * the rock and whoever stands by. No shadows. Always in the scene there, so a patch picked never changes the
+   * number of lights (and recompiles every material): its light just eases out.
+   */
+  private glowcaps = Array.from({ length: GLOWCAP_LIGHTS }, () => new THREE.PointLight("#5ee6c2", 0, GLOWCAP_REACH, 1.4));
+  /** Each patch on the map, where its light hangs, whether it still grows (not picked), and how lit it is now, 0 to 1. */
+  private patches = new Map<string, { at: THREE.Vector3; on: boolean; lit: number }>();
+  private patchClock = 0;
   /** Stops following the Fancy graphics switch, when these lights are done with. */
   private unfancy: () => void = () => {};
   /** The lamp's glowing lantern, dimmed when the lamp is put out. */
@@ -865,6 +883,7 @@ export class Ambience {
     });
     for (const g of this.fadeGlows) g.visible = false;
     for (const t of this.torches) t.visible = false;
+    for (const g of this.glowcaps) g.visible = false;
     // The nearest torch's shadows: six small faces, redrawn every frame as it moves.
     const lead = this.torches[0].shadow;
     lead.mapSize.set(256, 256);
@@ -873,7 +892,7 @@ export class Ambience {
     lead.bias = -0.004;
     // Fancy graphics turn its shadows on and off as they are switched.
     this.unfancy = fancy.subscribe(() => this.torchShadows());
-    scene.add(this.hemi, this.sun, this.sun.target, this.lamp, this.fireLight, ...this.slots, ...this.glows, ...this.fadeGlows, ...this.torches, this.group);
+    scene.add(this.hemi, this.sun, this.sun.target, this.lamp, this.fireLight, ...this.slots, ...this.glows, ...this.fadeGlows, ...this.torches, ...this.glowcaps, this.group);
   }
 
   /** Lay out the decoration for a map. `skip` holds the hexes to leave clear. */
@@ -1028,6 +1047,7 @@ export class Ambience {
     // The caverns light like a room with its lamp out: no sun, no sky, and the heroes' torches doing the work.
     const cave = (this.cave = tiles.some((t) => (t.biome as string) === "cave"));
     for (const t of this.torches) t.visible = cave;
+    for (const g of this.glowcaps) g.visible = cave;
     this.torchShadows();
     const inside = cave || tiles.some((t) => (t.biome as string) === "floor");
     this.lamp.visible = inside;
@@ -1730,6 +1750,48 @@ export class Ambience {
     for (let i = 0; i < this.torchCount; i++) this.torches[i].position.set(at[i].x + 0.2, at[i].y + TORCH_LIFT, at[i].z + 0.1);
   }
 
+  /**
+   * The patches of glowing mushrooms on the map, and which still grow. One seen for the first time comes as it is
+   * (lit, or dark if already picked); one picked since goes dark over a second or so. Ignored outside the caverns.
+   */
+  setGlowcaps(list: { id: string; at: THREE.Vector3; on: boolean }[]) {
+    const seen = new Set<string>();
+    for (const p of list) {
+      seen.add(p.id);
+      const had = this.patches.get(p.id);
+      if (had) {
+        had.at.copy(p.at);
+        had.on = p.on;
+      } else this.patches.set(p.id, { at: p.at.clone(), on: p.on, lit: p.on ? 1 : 0 });
+    }
+    for (const id of [...this.patches.keys()]) if (!seen.has(id)) this.patches.delete(id);
+  }
+
+  /** The mushrooms' lights this frame: each patch eased toward lit or dark, and the lights handed to the nearest still glowing. */
+  private glowcapLight(clock: number, target: THREE.Vector3) {
+    const dt = Math.min(0.1, Math.max(0, clock - this.patchClock));
+    this.patchClock = clock;
+    const glowing: { at: THREE.Vector3; lit: number; seed: number }[] = [];
+    let seed = 0;
+    for (const p of this.patches.values()) {
+      seed += 1;
+      p.lit = THREE.MathUtils.clamp(p.lit + (p.on ? 1 : -1) * (dt / GLOWCAP_FADE_S), 0, 1);
+      if (p.lit > 0) glowing.push({ at: p.at, lit: p.lit, seed });
+    }
+    glowing.sort((a, b) => a.at.distanceToSquared(target) - b.at.distanceToSquared(target));
+    this.glowcaps.forEach((g, i) => {
+      const p = glowing[i];
+      if (!p) {
+        g.intensity = 0;
+        return;
+      }
+      g.position.copy(p.at);
+      // A slow breath in the glow, each patch on its own; eased out as they are picked.
+      const breath = this.still ? 1 : 1 + Math.sin(clock * 1.3 + p.seed * 2.4) * 0.12;
+      g.intensity = GLOWCAP_STRENGTH * p.lit * p.lit * breath;
+    });
+  }
+
   setGloom(on: boolean) {
     if (on === this.gloom) return;
     this.gloom = on;
@@ -2368,6 +2430,7 @@ export class Ambience {
       this.torches.forEach((t, i) => {
         t.intensity = i < this.torchCount ? TORCH_STRENGTH * (this.still ? 1 : 1 + Math.sin(clock * 9 + i * 2.1) * 0.06 + Math.sin(clock * 15.7 + i) * 0.04) : 0;
       });
+      this.glowcapLight(clock, target);
       return;
     }
     if (this.indoors) {

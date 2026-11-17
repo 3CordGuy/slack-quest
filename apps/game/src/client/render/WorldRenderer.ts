@@ -2840,6 +2840,8 @@ export class WorldRenderer {
     /** Buildings' lit windows and lanterns, and the panes that warm at dusk. */
     const glows: BuildingGlow[] = [];
     const panes: THREE.MeshBasicMaterial[] = [];
+    /** Glowing mushrooms in the caverns, which light the rock round them until they are picked. */
+    const patches: { id: string; at: THREE.Vector3; on: boolean }[] = [];
     for (const poi of state.map.pois) {
       const g = this.poiModel(poi);
       g.userData.poiId = poi.id;
@@ -2875,12 +2877,14 @@ export class WorldRenderer {
         shine = g.userData.shine as THREE.ShaderMaterial | undefined;
       }
       for (const glow of (g.userData.glows as BuildingGlow[] | undefined) ?? []) glows.push({ ...glow, pos: out(glow.pos), size: glow.size * scale });
+      if (g.userData.glowAt) patches.push({ id: poi.id, at: out(g.userData.glowAt as THREE.Vector3), on: !poi.cleared });
       panes.push(...((g.userData.panes as THREE.MeshBasicMaterial[] | undefined) ?? []));
     }
     this.ambience.setTableLamps(this.tableLamps.lights());
     this.ambience.setSmoke(stacks);
     this.ambience.setBeacon(beacon, beaconScale, shine);
     this.ambience.setGlows(glows, panes);
+    this.ambience.setGlowcaps(patches);
     // The sea breaks around rocks standing out of it, and the wreck on them.
     this.ambience.setSeaRocks(state.map.pois.filter((p) => p.kind === "rocks" || p.kind === "wreck").map((p) => this.standAt(p.pos)));
   }
@@ -5275,6 +5279,8 @@ export class WorldRenderer {
         const spot = this.inModel(poi, at.x + toward.x, at.z + toward.y);
         cluster.position.set(spot.x, 0, spot.y);
         g.add(cluster);
+        // Their light (the ambience's): a little over the caps.
+        g.userData.glowAt = new THREE.Vector3(spot.x, 0.45, spot.y);
         // Pointing anywhere on them means their hex.
         g.userData.door = poi.pos;
         break;
