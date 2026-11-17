@@ -1480,6 +1480,58 @@ describe("crates", () => {
     expect(crateBlow(state, bo, "crate1")).toBe("hex_bolt");
   });
 
+  it("can be struck, shot and bombed out of a fight: no fight starts, nothing is spent, and it pays at once", () => {
+    // A band stands close by, not yet roused: only an attack that reaches one of them starts a fight.
+    let state = board();
+    hero(state, "ann", "qa_paladin", at(5, 6));
+    hero(state, "bo", "refactor_rogue", at(4, 9));
+    const mage = hero(state, "cy", "devops_mage", at(3, 3));
+    mage.abilities = ["thunderhead"];
+    mage.items = { ...mage.items, fire: 2 };
+    const foe = enemy(state, "dummy", at(10, 6));
+    crate(state, "crate1", at(6, 6), 1);
+    crate(state, "crate2", at(6, 9), 1);
+    crate(state, "crate3", at(7, 3), 60);
+    crate(state, "crate4", at(9, 6), 60);
+    const quiet = (s: ZoneState) => {
+      expect(s.encounter).toBeNull();
+      expect(s.groups.g1.alerted).toBe(false);
+    };
+
+    // A blow by hand: it breaks, and what was in it is paid there and then.
+    let step = stepZone(state, { type: "use", by: "ann", unit: "ann", ability: "smite", target: "crate1" });
+    if (!step.ok) throw new Error(step.error);
+    state = step.state;
+    quiet(state);
+    expect(step.events).toContainEqual({ t: "crate_broken", poi: "crate1", id: "ann" });
+    expect(step.effects).toMatchObject([{ type: "grant", heroId: "ann", xp: 0 }]);
+    expect(step.events.some((e) => e.t === "spoils" && e.id === "ann")).toBe(true);
+
+    // A shot from across the chamber.
+    step = stepZone(state, { type: "use", by: "bo", unit: "bo", ability: "aimed_shot", target: "crate2" });
+    if (!step.ok) throw new Error(step.error);
+    state = step.state;
+    quiet(state);
+    expect(step.effects.map((e) => e.heroId)).toEqual(["bo"]);
+
+    // A bomb thrown, and a blast with a wait on it used twice running: out of a fight neither Action nor wait counts.
+    const events: ZoneEvent[] = [];
+    state = must(state, { type: "throw", by: "cy", unit: "cy", item: "fire", at: at(7, 3) }, events);
+    state = must(state, { type: "use", by: "cy", unit: "cy", ability: "thunderhead", at: at(7, 3) }, events);
+    state = must(state, { type: "use", by: "cy", unit: "cy", ability: "thunderhead", at: at(7, 3) }, events);
+    quiet(state);
+    expect(hits(events, "crate3").map((h) => h.what)).toEqual(["throw:fire", "fire", "thunderhead", "thunderhead"]);
+    expect(unit(state, "cy").cooldowns).toEqual({});
+
+    // A blast that catches the band as well as a crate: that one starts a fight, with the band that was hit.
+    const both: ZoneEvent[] = [];
+    unit(state, "cy").pos = at(5, 4);
+    state = must(state, { type: "use", by: "cy", unit: "cy", ability: "thunderhead", at: at(9, 6) }, both);
+    expect(hits(both, "crate4")).toHaveLength(1);
+    expect(state.groups.g1.alerted).toBe(true);
+    expect(state.encounter?.order).toContain(foe.id);
+  });
+
   it("costs the Action in a fight", () => {
     let { state } = duel("dummy");
     crate(state, "crate1", at(5, 7), 60);
