@@ -126,7 +126,7 @@ export function reactionStrike(abilities: string[]): string {
  * standing within `range` heal `heal` (the fallen are not got up).
  */
 export const AURAS = {
-  range: 1,
+  range: 2,
   beaconLight: 2,
   heal: { n: 1, d: 4, plus: 1 } satisfies Dice,
 };
@@ -165,8 +165,8 @@ export const CONDITION_INFO: Record<Condition, { name: string; blurb: string; co
   poisoned: { name: "Poisoned", blurb: "Its attacks are rolled with disadvantage.", color: "#a3e635" },
   prone: { name: "Prone", blurb: "Flat on the ground: standing costs half its movement. Melee attacks against it have advantage.", color: "#cbd5e1" },
   wet: { name: "Wet", blurb: "Soaked through: lightning hits harder, and it cannot burn.", color: "#7dd3fc" },
-  beacon: { name: "Beacon", blurb: "Gives light, and it and allies beside it have advantage on their attacks.", color: "#ffe9a8" },
-  mending: { name: "Healing Aura", blurb: "At the start of each of its turns, it and every ally beside it heal a little.", color: "#7dff9a" },
+  beacon: { name: "Beacon", blurb: "Gives light, and it and allies within 2 hexes have advantage on their attacks.", color: "#ffe9a8" },
+  mending: { name: "Healing Aura", blurb: "At the start of each of its turns, it and every ally within 2 hexes heal a little.", color: "#7dff9a" },
 };
 
 // ---------- common actions ----------

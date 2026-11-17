@@ -2155,7 +2155,7 @@ describe("a troll", () => {
 
 describe("the Paladin's class abilities", () => {
   /**
-   * A Paladin (ann) and two crewmates in a fight with a dummy: bo right beside ann, cy two hexes off. Ann's turn.
+   * A Paladin (ann) and two crewmates in a fight with a dummy: bo two hexes from ann, cy three. Ann's turn.
    * `spare` is another hex beside ann, left empty.
    */
   function party() {
@@ -2163,16 +2163,17 @@ describe("the Paladin's class abilities", () => {
     state.aiOff = true;
     const annAt = at(5, 6);
     const dummyAt = at(6, 6);
-    const [boAt, spare] = hexNeighbors(annAt, state.map.grid).filter((p) => !sameHexes(p, dummyAt));
+    const [spare] = hexNeighbors(annAt, state.map.grid).filter((p) => !sameHexes(p, dummyAt));
     const ann = hero(state, "ann", "qa_paladin", annAt);
     ann.abilities = ["beacon_aura", "healing_aura", "branding_strike", "stoke_the_fire"];
-    hero(state, "bo", "refactor_rogue", boAt);
-    hero(state, "cy", "devops_mage", at(3, 6));
+    hero(state, "bo", "refactor_rogue", at(3, 6));
+    hero(state, "cy", "devops_mage", at(2, 6));
     const dummy = enemy(state, "dummy", dummyAt);
     state = provoke(state);
     while (!state.encounter!.acting.includes("ann")) state = must(state, { type: "timeout" });
-    expect(hexDistance(unit(state, "ann").pos, unit(state, "bo").pos)).toBe(1);
-    expect(hexDistance(unit(state, "ann").pos, unit(state, "cy").pos)).toBe(2);
+    // bo at the edge of an aura's reach, cy just past it.
+    expect(hexDistance(unit(state, "ann").pos, unit(state, "bo").pos)).toBe(AURAS.range);
+    expect(hexDistance(unit(state, "ann").pos, unit(state, "cy").pos)).toBe(AURAS.range + 1);
     expect(hexDistance(unit(state, "ann").pos, dummy.pos)).toBe(1);
     return { state, dummy: dummy.id, spare };
   }
@@ -2194,7 +2195,7 @@ describe("the Paladin's class abilities", () => {
     expect(poolFor("qa_paladin").map((e) => e.id)).toEqual(["beacon_aura", "healing_aura", "branding_strike", "stoke_the_fire"]);
   });
 
-  it("Beacon Aura: a Bonus action that gives the Paladin and allies beside them advantage, not anyone further off", () => {
+  it("Beacon Aura: a Bonus action that gives the Paladin and allies within 2 hexes advantage, not anyone further off", () => {
     let { state, dummy } = party();
     const foe = () => unit(state, dummy);
     expect(attackContext(state, unit(state, "bo"), foe(), { melee: true }).adv).toBe(0);
@@ -2207,6 +2208,7 @@ describe("the Paladin's class abilities", () => {
     expect(ann.adv).toBe(1);
     expect(ann.notes.join()).toMatch(/your Beacon/);
     expect(attackContext(state, unit(state, "cy"), foe(), { melee: false }).adv).toBe(0);
+    expect(bo.notes.join()).toMatch(/an ally's Beacon/);
     // Enemies beside the Paladin get nothing from it.
     expect(attackContext(state, foe(), unit(state, "ann"), { melee: true }).adv).toBe(0);
   });
@@ -2227,7 +2229,7 @@ describe("the Paladin's class abilities", () => {
     expect(litHexes(state)!.has(posKey(near))).toBe(false);
   });
 
-  it("Healing Aura: heals the Paladin and allies beside them at the start of each of their next 4 turns", () => {
+  it("Healing Aura: heals the Paladin and allies within 2 hexes at the start of each of their next 4 turns", () => {
     let { state } = party();
     for (const id of ["ann", "bo", "cy"]) unit(state, id).hp = 1;
     state = must(state, { type: "use", by: "ann", unit: "ann", ability: "healing_aura" });

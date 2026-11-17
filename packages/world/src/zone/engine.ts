@@ -112,7 +112,7 @@ export interface AttackContext {
  * What bears on an attack besides the attacker's skill.
  *
  * Advantage: the target is Exposed or Stunned, or Prone and struck in melee; Focus was spent; a pack
- * animal has one of its own beside the target; the attacker carries a Beacon, or an ally beside them does. Disadvantage: the attacker is Poisoned or Fumbling, is
+ * animal has one of its own beside the target; the attacker carries a Beacon, or an ally near enough (AURAS.range) does. Disadvantage: the attacker is Poisoned or Fumbling, is
  * shooting with an enemy beside them, or is shooting at something Prone. Shots also get +2 from
  * higher ground, -2 from lower, and -2 at a target standing among trees.
  */
@@ -127,7 +127,7 @@ export function attackContext(state: ZoneState, attacker: Unit, target: Unit, op
   if (has(target, "prone") && opts.melee) adv("the target is Prone");
   if (opts.focus) adv("Focus");
   if (attacker.side === "enemy" && ENEMY_KIT[attacker.kind]?.pack && state.units.some((u) => u.id !== attacker.id && u.side === "enemy" && !u.down && adjacent(u.pos, target.pos))) adv("the pack is on the target");
-  if (state.units.some((u) => u.side === attacker.side && !u.down && has(u, "beacon") && hexDistance(u.pos, attacker.pos) <= AURAS.range)) adv(has(attacker, "beacon") ? "your Beacon" : "a Beacon beside you");
+  if (state.units.some((u) => u.side === attacker.side && !u.down && has(u, "beacon") && hexDistance(u.pos, attacker.pos) <= AURAS.range)) adv(has(attacker, "beacon") ? "your Beacon" : "an ally's Beacon");
   if (has(attacker, "poisoned")) dis("Poisoned");
   if (has(attacker, "glitched")) dis("Fumbling");
   // The party strikes blind at what the light does not reach. The things of the caves see in the dark.
