@@ -273,6 +273,12 @@ const FREE_ROAM_REACH = 60;
 /** Seconds to get up onto a stool, and to get off one. */
 const SIT_S = 0.45;
 const STAND_S = 0.2;
+/**
+ * A jump from tile to tile (see leapUnit): how long it is off the ground and how high it goes at the top, each a
+ * base and so much more per world unit jumped; the longest it is ever in the air; how far it clears the lip of
+ * a ledge it is jumping up onto; and how far into the jump's sound the thud of the landing is.
+ */
+const LEAP = { air: 0.3, airPer: 0.045, longest: 0.56, high: 0.45, highPer: 0.13, clear: 0.45, thud: 0.3 };
 
 const SQRT3 = Math.sqrt(3);
 /**
@@ -537,6 +543,16 @@ interface Unit {
   rush?: number;
   /** Knocked off its feet: drawn lying until the render clock passes this. */
   floored?: number;
+  /**
+   * The waypoints in `path` that are jumped to, not walked: the Jump action (see leapUnit: true, and heard as
+   * one), and any step of a walk that goes up or down a level of the ground (see walkUnit: false).
+   */
+  leaps?: Map<THREE.Vector3, boolean>;
+  /**
+   * The jump under way, to the next waypoint `to`: from `from`, the feet leaving the ground at `at` on the
+   * render clock and off it for `air` seconds, `high` at the top of the arc.
+   */
+  leap?: { to: THREE.Vector3; from: THREE.Vector3; at: number; air: number; high: number };
   /** Afloat: the boat under them, which kind it is, and how far it sits them down. */
   boat?: THREE.Group | null;
   boatKind?: "barrel" | "rowboat";
@@ -1426,11 +1442,38 @@ export class WorldRenderer {
   // ---------- a fight on the tiles ----------
   // A zone plays its own events (ZoneView.tsx) and asks for each piece of the picture here.
 
-  /** Walk a unit along these hexes, after whatever it is already walking. Any unit, not only a hero. */
+  /**
+   * Walk a unit along these hexes, after whatever it is already walking. Any unit, not only a hero. A step
+   * onto a hex a level higher or lower than the one before is jumped, not walked (see leapUnit).
+   */
   walkUnit(id: string, path: HexPos[]) {
     const unit = this.units.get(id);
     if (!unit) return;
-    for (const p of path) unit.path.push(this.standAt(p));
+    const map = this.state?.map;
+    const level = (pos: HexPos) => (map ? (tileAt(map, pos)?.elev ?? 0) : 0);
+    // Where it sets off from: the last hex it is already bound for, or the one it stands on (a quarter hex
+    // toward the camera from the middle: see syncUnits).
+    const last = unit.path[unit.path.length - 1];
+    let from: HexPos = last ? worldToHex(last.x, last.z) : worldToHex(unit.root.position.x, unit.root.position.z - 0.25);
+    for (const p of path) {
+      const at = this.standAt(p);
+      unit.path.push(at);
+      if (level(from) !== level(p)) (unit.leaps ??= new Map()).set(at, false);
+      from = p;
+    }
+  }
+
+  /**
+   * A unit jumps to a hex, after whatever it is already walking: it crouches, springs, goes over in an arc
+   * (higher the further it is, and clear of a ledge it is jumping up onto) and lands in a crouch, with a puff
+   * of whatever it landed on. Any unit; a creature has no crouch and springs at once.
+   */
+  leapUnit(id: string, to: HexPos) {
+    const unit = this.units.get(id);
+    if (!unit) return;
+    const at = this.standAt(to);
+    unit.path.push(at);
+    (unit.leaps ??= new Map()).set(at, true);
   }
 
   /**
@@ -1853,6 +1896,19 @@ export class WorldRenderer {
     // The audio engine plays it, placed where the foot lands and falling off with distance from you.
     sounds.footstep(biome, { x: feet.x, z: feet.z }, id === state.you);
     if (!this.still) this.puff(ground, feet);
+  }
+
+  /** A unit has come down from a jump (see leapUnit): what it landed on is thrown up round its feet, twice a step's worth. */
+  private touchdown(unit: Unit) {
+    const state = this.state;
+    if (!state || this.still) return;
+    const feet = unit.feet;
+    // Everyone stands a quarter hex toward the camera from the middle of their hex (see syncUnits).
+    const tile = tileAt(state.map, worldToHex(feet.x, feet.z - 0.25));
+    const ground = stepGround(tile?.biome, !!tile?.path);
+    if (!ground) return;
+    this.puff(ground, feet);
+    this.puff(ground, feet);
   }
 
   private puff(ground: keyof typeof PUFFS, at: THREE.Vector3) {
@@ -6326,20 +6382,57 @@ export class WorldRenderer {
       p.y += unit.sunk ?? 0;
       unit.sunk = 0;
       let landed = 0;
+      let touched = false;
+      // A jump whose landing place is no longer the next on the way (knocked aside, sent elsewhere) is off.
+      if (unit.leap && unit.leap.to !== unit.path[0]) unit.leap = undefined;
+      if (unit.path.length === 0 && unit.leaps?.size) unit.leaps.clear();
       if (unit.path.length > 0) {
         const next = unit.path[0].clone();
         next.z += 0.25;
         // The last step onto a stool goes to the stool itself, wherever in its hex it stands.
         if (unit.seated && unit.path.length === 1 && Math.hypot(unit.goal.x - next.x, unit.goal.z - next.z) < 1) next.copy(unit.goal);
+        const acted = unit.rush ? undefined : unit.leaps?.get(unit.path[0]);
+        if (acted !== undefined && !unit.leap) {
+          // It begins: turned to where it is going, and crouched to spring. The further, the longer and higher.
+          const far = Math.hypot(next.x - p.x, next.z - p.z);
+          const air = Math.min(LEAP.longest, LEAP.air + LEAP.airPer * far);
+          unit.leap = { to: unit.path[0], from: p.clone(), at: this.clock + unit.figure.jump(air), air, high: Math.max(LEAP.high + LEAP.highPer * far, next.y - p.y + LEAP.clear) };
+          if (far > 1e-4) unit.turnGoal = Math.atan2(next.x - p.x, next.z - p.z);
+          unit.stride = 0;
+          // The Jump action is heard, so that its thud falls as the feet come down (the sound's own is LEAP.thud into it).
+          const spot = { x: p.x, z: p.z };
+          const land = unit.leap.at + air;
+          if (acted) this.pending.push({ at: Math.max(this.clock, land - LEAP.thud), run: () => sounds.zone("jump", spot) });
+        }
+        const leap = unit.leap;
         const step = 4.2 * (unit.rush ?? 1) * dt;
-        // Flung, not walking: no footfalls, and no turning to face the way it is going.
-        if (!unit.rush) {
+        if (leap) {
+          const k = (this.clock - leap.at) / leap.air;
+          if (k >= 1) {
+            p.copy(next);
+            unit.leaps?.delete(unit.path[0]);
+            unit.path.shift();
+            unit.leap = undefined;
+            unit.bob = 0;
+            // The Jump action lands hard; a step up or down on a walk lands as a footstep does.
+            if (acted) touched = true;
+            else landed = 1;
+          } else if (k > 0) {
+            // Straight across from where it sprang to where it lands, and over the top between.
+            p.lerpVectors(leap.from, next, k);
+            unit.bob = 4 * leap.high * k * (1 - k);
+          } else {
+            unit.bob *= Math.exp(-dt * 18);
+          }
+        } else if (!unit.rush) {
           landed = footfalls(unit.stride, unit.stride + step);
           unit.stride += step;
           // They turn to face the way they are walking.
           if (Math.hypot(next.x - p.x, next.z - p.z) > 1e-4) unit.turnGoal = Math.atan2(next.x - p.x, next.z - p.z);
         }
-        if (p.distanceTo(next) <= step) {
+        if (leap) {
+          // Carried by the jump, above.
+        } else if (p.distanceTo(next) <= step) {
           p.copy(next);
           unit.path.shift();
           if (unit.path.length === 0) unit.rush = undefined;
@@ -6347,7 +6440,7 @@ export class WorldRenderer {
           p.add(next.sub(p).setLength(step));
         }
         // Two steps per hex, with a little bounce in each, landing as each hex is reached.
-        if (!unit.rush) unit.bob = Math.abs(Math.sin(unit.stride * 3.6)) * 0.07;
+        if (!unit.rush && !leap) unit.bob = Math.abs(Math.sin(unit.stride * 3.6)) * 0.07;
       } else {
         unit.bob *= Math.exp(-dt * 18);
         unit.stride = 0;
@@ -6390,10 +6483,11 @@ export class WorldRenderer {
       unit.root.rotation.y = unit.turn;
       const rowing = this.rowingPose(unit, p, dt);
       if (rowing === undefined) unit.oarPull = undefined;
-      unit.figure.update({ time: this.clock, stride: unit.stride, walking: unit.path.length > 0 && !unit.rush, lean: unit.lean, lying: unit.lying || this.clock < (unit.floored ?? 0), rowing, sitting: unit.boatKind === "rowboat" && unit.boat?.visible ? 1 : unit.sit || undefined });
+      unit.figure.update({ time: this.clock, stride: unit.stride, walking: unit.path.length > 0 && !unit.rush && !unit.leap, lean: unit.lean, lying: unit.lying || this.clock < (unit.floored ?? 0), rowing, sitting: unit.boatKind === "rowboat" && unit.boat?.visible ? 1 : unit.sit || undefined });
       const ground = p.y;
       unit.feet.set(p.x, ground, p.z);
-      if (landed) this.footfall(id, unit);
+      if (touched) this.touchdown(unit);
+      else if (landed) this.footfall(id, unit);
       this.rideBoat(unit, p, dt);
       // On a stool: the figure's origin as far below the seat's top as a seated figure's is, with a small hop on the way up.
       let perch = 0;
