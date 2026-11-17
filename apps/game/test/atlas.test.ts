@@ -5,10 +5,10 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { beforeEach, describe, expect, it } from "vitest";
-import { ATLAS_HOME, PLAIN_STONE_COST, STACK_MAX, TOWN_CHEST_COLS, TOWN_CHEST_ROWS, atlasNodeById, chestRowCost, needsStone, stoneItem, type ZoneModId, type ZoneOptions } from "@gantt-quest/world";
+import { ATLAS_HOME, PLAIN_STONE_COST, STACK_MAX, TOWN_CHEST_COLS, TOWN_CHEST_ROWS, atlasNodeById, attuneCost, chestRowCost, needsStone, rerollCost, stoneItem, type ZoneModId, type ZoneOptions } from "@gantt-quest/world";
 import { atlasSeed, chartFor, clearNode, devClearNode, devResetChart, enterProblem, openNode } from "../src/server/atlas";
 import { applyZoneGrant } from "../src/server/db";
-import { cutStone, gainStone, lodestonesOf } from "../src/server/lodestones";
+import { attuneStone, cutStone, fuseStones, gainStone, lodestonesOf, rerollStone } from "../src/server/lodestones";
 import { chestAddRow, chestFor, chestPut, chestTake } from "../src/server/townchest";
 import { CAVE_IDLE_MS, getZoneRow } from "../src/server/zones";
 
@@ -310,5 +310,81 @@ describe("the town chest", () => {
     // The next row costs more than Bo has left.
     expect(chestRowCost(TOWN_CHEST_ROWS + 1)!.gold).toBeGreaterThan(cost.gold);
     expect(await chestAddRow(db, CREW, "bo", "materials")).toMatch(/gold and materials/);
+  });
+});
+
+describe("the lodestone bench", () => {
+  const gold = (who: string) => (sql.prepare("SELECT gold FROM characters WHERE player_id = ?").get(who) as { gold: number }).gold;
+  const hand = (who: string, kind: string, qty: number) => sql.prepare("INSERT INTO resources (player_id, kind, qty) VALUES (?, ?, ?) ON CONFLICT(player_id, kind) DO UPDATE SET qty = qty + excluded.qty").run(who, kind, qty);
+  const count = async (who: string) => (await lodestonesOf(db, who)).reduce((n, h) => n + h.qty, 0);
+
+  it("fuses three stones that carry the same into one that carries one more, and uses the three up", async () => {
+    for (let i = 0; i < 3; i++) give("ann");
+    const plain = await fuseStones(db, "ann", ["", "", ""]);
+    if (typeof plain === "string") throw new Error(plain);
+    expect(plain.made.length).toBe(1);
+    expect(await lodestonesOf(db, "ann")).toEqual([{ stone: plain.made, qty: 1 }]);
+    // Three different ones: two of what they carried.
+    sql.prepare("DELETE FROM consumables WHERE player_id = 'ann'").run();
+    give("ann", ["hardy"]);
+    give("ann", ["swift"]);
+    give("ann", ["tangled"]);
+    const two = await fuseStones(db, "ann", ["hardy", "swift", "tangled"]);
+    if (typeof two === "string") throw new Error(two);
+    expect(two.made.length).toBe(2);
+    expect(two.made.every((id) => ["hardy", "swift", "tangled"].includes(id))).toBe(true);
+    expect(await lodestonesOf(db, "ann")).toEqual([{ stone: two.made, qty: 1 }]);
+  });
+
+  it("fuses nothing it is not given three of in the pack, and uses nothing up when it does not", async () => {
+    give("ann", ["hardy"]);
+    give("ann", ["hardy"]);
+    give("ann");
+    expect(await fuseStones(db, "ann", ["hardy", "hardy", "hardy"])).toMatch(/no longer have/);
+    expect(await fuseStones(db, "ann", ["hardy", "hardy", ""])).toMatch(/same number/);
+    expect(await fuseStones(db, "ann", ["hardy", "hardy"])).toMatch(/takes 3/);
+    expect(await fuseStones(db, "ann", ["hardy", "hardy", "rainy"])).toMatch(/no lodestone/);
+    expect(await fuseStones(db, "ann", "hardy")).toMatch(/takes 3/);
+    // Bo's are not Ann's.
+    for (let i = 0; i < 3; i++) give("bo", ["swift"]);
+    expect(await fuseStones(db, "ann", ["swift", "swift", "swift"])).toMatch(/no longer have/);
+    expect(await count("ann")).toBe(3);
+    expect(await count("bo")).toBe(3);
+  });
+
+  it("attunes a stone to one more thing, for gold and what that thing is made of", async () => {
+    give("ann", ["swift"]);
+    const cost = attuneCost(["swift"], "hardy");
+    // Not without the gold and the material.
+    sql.prepare("UPDATE characters SET gold = 0 WHERE player_id = 'ann'").run();
+    expect(await attuneStone(db, "ann", "swift", "hardy")).toMatch(/no longer have/);
+    sql.prepare("UPDATE characters SET gold = ? WHERE player_id = 'ann'").run(cost.gold + 3);
+    expect(await attuneStone(db, "ann", "swift", "hardy")).toMatch(/no longer have/);
+    for (const [kind, qty] of Object.entries(cost.resources)) hand("ann", kind, qty! + 1);
+    expect(await attuneStone(db, "ann", "swift", "hardy")).toEqual({ made: ["hardy", "swift"] });
+    expect(await lodestonesOf(db, "ann")).toEqual([{ stone: ["hardy", "swift"], qty: 1 }]);
+    expect(gold("ann")).toBe(3);
+    expect(sql.prepare("SELECT qty FROM resources WHERE player_id = 'ann' AND kind = 'fur'").get()).toEqual({ qty: 1 });
+    // What cannot be: twice, a stone not held, nonsense.
+    expect(await attuneStone(db, "ann", "hardy+swift", "hardy")).toMatch(/already/);
+    expect(await attuneStone(db, "ann", "tangled", "hardy")).toMatch(/no longer have/);
+    expect(await attuneStone(db, "ann", "hardy+swift", "rainy")).toMatch(/no such thing/);
+    expect(await count("ann")).toBe(1);
+  });
+
+  it("rerolls what a stone carries for gold: as many things, and not the same", async () => {
+    give("ann", ["hardy", "swift"]);
+    sql.prepare("UPDATE characters SET gold = ? WHERE player_id = 'ann'").run(rerollCost(["hardy", "swift"]) + 5);
+    const done = await rerollStone(db, "ann", "hardy+swift");
+    if (typeof done === "string") throw new Error(done);
+    expect(done.made.length).toBe(2);
+    expect(done.made).not.toEqual(["hardy", "swift"]);
+    expect(await lodestonesOf(db, "ann")).toEqual([{ stone: done.made, qty: 1 }]);
+    expect(gold("ann")).toBe(5);
+    // Not without the gold; and a plain one has nothing to change.
+    expect(await rerollStone(db, "ann", done.made)).toMatch(/no longer have/);
+    give("ann");
+    expect(await rerollStone(db, "ann", "")).toMatch(/nothing to change/);
+    expect(await count("ann")).toBe(2);
   });
 });

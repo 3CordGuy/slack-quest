@@ -1,0 +1,32 @@
+/* The lodestone bench (StoneBench.tsx): the stones in the pack along the top,
+   the bench under them, and under that whatever the work chosen needs. */
+
+.stone-bench { width: min(520px, calc(100vw / var(--ui-z, 1) - 24px)); max-height: calc(100vh / var(--ui-z, 1) - 40px); overflow: hidden auto; display: flex; flex-direction: column; gap: 8px; }
+.stone-bench p { margin: 0; }
+.stone-bench h3 { margin: 4px 0 0; font-size: 15px; text-transform: none; letter-spacing: 0.01em; }
+.bench-head { display: flex; align-items: center; gap: 8px; }
+.bench-head h2 { margin: 0; }
+.bench-tabs { display: flex; gap: 4px; border-bottom: 2px solid var(--line); }
+.bench-tabs button { border-bottom: none; border-radius: 4px 4px 0 0; opacity: 0.7; }
+.bench-tabs button.on { opacity: 1; background: var(--panel-lit, rgba(255, 255, 255, 0.08)); color: var(--gold, #f4c64e); }
+.bench-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.bench-stone { position: relative; flex: none; display: grid; place-items: center; width: 48px; height: 48px; padding: 0; background: rgba(8, 10, 20, 0.6); border: 1px solid var(--line); border-radius: 3px; cursor: pointer; }
+.bench-stone:hover:not(:disabled) { border-color: #6fc0ff; }
+.bench-stone:disabled { opacity: 1; filter: none; cursor: default; }
+.bench-stone.dim { opacity: 0.35; }
+.bench-stone.empty { border: 2px dashed rgba(120, 180, 240, 0.5); background: radial-gradient(circle at 50% 45%, rgba(63, 169, 255, 0.14), rgba(8, 10, 20, 0.7) 70%); cursor: default; }
+.bench-slots .bench-stone:not(.empty) { border-color: #6fc0ff; box-shadow: 0 0 10px rgba(90, 180, 255, 0.45); }
+.bench-qty { position: absolute; right: 3px; bottom: 0; font-size: 11px; font-weight: bold; color: #fff; text-shadow: 0 1px 0 #000, 0 0 3px #000; }
+.bench-pips { position: absolute; left: 3px; top: 3px; display: flex; gap: 2px; }
+.bench-pips i { width: 5px; height: 5px; rotate: 45deg; background: #46b3bd; }
+.bench-pips i.enemy { background: #e0453a; }
+/* What the work made: beside the bench, until the next thing is laid on it. */
+.bench-made { display: inline-flex; align-items: center; gap: 8px; margin-left: 6px; line-height: 1.2; }
+.bench-arrow { font-size: 20px; color: var(--gold, #f4c64e); }
+.bench-made .bench-stone { border-color: var(--gold, #f4c64e); box-shadow: 0 0 12px rgba(244, 198, 78, 0.5); }
+.bench-do { display: flex; align-items: center; gap: 10px; }
+.bench-mods { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.bench-mods li { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 5px 8px; border: 1px solid var(--line); border-left: 4px solid #46b3bd; }
+.bench-mods li.enemy { border-left-color: #e0453a; }
+.bench-mods .small-note { font-size: 12px; color: var(--muted); }
+.bench-mods button { flex: none; }

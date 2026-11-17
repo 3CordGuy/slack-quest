@@ -80,7 +80,7 @@ import { apothecaryView, brew, brewFlask, buyFromKeeper, galleyKeeperView, haggl
 import { cook } from "./server/galley";
 import { announceXp, harborXpFor } from "./server/harbor-xp";
 import { chartFor, devClearNode, devResetChart, enterProblem, openNode } from "./server/atlas";
-import { cutStone, gainStone, lodestonesOf } from "./server/lodestones";
+import { attuneStone, cutStone, fuseStones, gainStone, lodestonesOf, rerollStone } from "./server/lodestones";
 import { chestAddRow, chestFor, chestPut, chestTake } from "./server/townchest";
 import { createZoneRow, crewPlaces, getZoneRow, openCave, teleportTo } from "./server/zones";
 import {
@@ -1010,6 +1010,22 @@ app.post("/api/atlas/cut", async (c) => {
   if (character?.status !== "active") return c.json({ error: "Create a character first." }, 409);
   const problem = await cutStone(c.env.DB, player.id);
   return problem ? c.json({ error: problem }, 409) : c.json({ lodestones: await lodestonesOf(c.env.DB, player.id) });
+});
+
+// The lodestone bench: fuse three stones into one that carries more, attune a stone to one more thing, or
+// reroll what a stone carries. All out of the asker's own pack. Answers with the stone made and the pack's stones.
+app.post("/api/atlas/bench", async (c) => {
+  const player = c.get("player");
+  const character = await getCharacter(c.env.DB, player.id);
+  if (character?.status !== "active") return c.json({ error: "Create a character first." }, 409);
+  const body = await c.req.json<{ op?: unknown; stones?: unknown; stone?: unknown; mod?: unknown }>().catch(() => ({}) as { op?: unknown; stones?: unknown; stone?: unknown; mod?: unknown });
+  const done =
+    body.op === "fuse" ? await fuseStones(c.env.DB, player.id, body.stones)
+    : body.op === "attune" ? await attuneStone(c.env.DB, player.id, body.stone, body.mod)
+    : body.op === "reroll" ? await rerollStone(c.env.DB, player.id, body.stone)
+    : "There is no such work at the bench.";
+  if (typeof done === "string") return c.json({ error: done }, 409);
+  return c.json({ made: done.made, lodestones: await lodestonesOf(c.env.DB, player.id) });
 });
 
 // ---------- the town chest: one store the crew shares, in tabs ----------

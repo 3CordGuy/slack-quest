@@ -44,6 +44,7 @@ import { WorldRenderer, type RenderState } from "../render/WorldRenderer";
 import { uiZoom } from "../uiScale";
 import { AtlasCloud, CLOUD_TOP } from "./AtlasCloud";
 import { AtlasLayer, type AtlasMark, type AtlasRoute, type Rise } from "./AtlasLayer";
+import { StoneBench } from "./StoneBench";
 import "./atlas.css";
 
 type Known = Extract<ChartNode, { state: "harbor" | "cleared" | "open" }>;
@@ -83,6 +84,8 @@ export function AtlasView({ me, refresh, onLeave }: { me: Me; refresh(): Promise
   /** The hex of the world the window the renderer holds is round. Null until the chart is in. */
   const [centre, setCentre] = useState<HexPos | null>(null);
   const layer = useRef<AtlasLayer | null>(null);
+  /** The lodestone bench is open: fuse, attune and reroll the stones in the pack. */
+  const [bench, setBench] = useState(false);
   const cloud = useRef<AtlasCloud | null>(null);
   /** Opened from the Harbor (not come back to from a map): it opens grandly, the title holding the screen while the cloud parts. */
   const [opening, setOpening] = useState(() => picked === null);
@@ -444,10 +447,13 @@ export function AtlasView({ me, refresh, onLeave }: { me: Me; refresh(): Promise
         <button className="atlas-close" onClick={close} title="Back down to the Harbor, at the lighthouse">Close atlas</button>
         <div className="atlas-corner">
           <button className="small" onClick={() => { const home = byId.get(ATLAS_HOME); if (home) show(home); }} title="Bring the Harbor back to the middle">Find the Harbor</button>
+          <button className="small" onClick={() => setBench(true)} title="Fuse, attune and reroll the lodestones in your pack">Lodestone bench</button>
           {me.devTools && chart && <button className="small" disabled={busy} onClick={() => void dev("stone")}>Dev: find a lodestone</button>}
           {me.devTools && chart && <button className="small" disabled={busy} onClick={() => void dev("reset")}>Dev: wipe the atlas</button>}
         </div>
       </header>
+
+      {bench && <StoneBench me={me} refresh={refresh} onClose={() => setBench(false)} />}
 
       {/* The place picked: a small panel beside it, that goes with it as the map moves. */}
       {shown && (
