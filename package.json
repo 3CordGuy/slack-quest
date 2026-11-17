@@ -16,8 +16,5 @@
   },
   "devDependencies": {
     "@types/node": "^25.9.1"
-  },
-  "pnpm": {
-    "neverBuiltDependencies": ["@tsparticles/engine"]
   }
 }

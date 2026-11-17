@@ -3,7 +3,7 @@ packages:
   - "packages/*"
 allowBuilds:
   '@3d-dice/dice-box': true
-  '@tsparticles/engine': true
+  '@tsparticles/engine': false
   esbuild: true
   sharp: true
   workerd: true
