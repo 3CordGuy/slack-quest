@@ -13,6 +13,7 @@ import { checkAbility } from "./combat";
 import { d20, diceAverage, diceFor, heroMove, hitChance } from "./rules";
 import { createZone, standInHero, stepZone, zoneView } from "./zone";
 import { generateDelve } from "./delve";
+import { litHexes } from "./light";
 import { CHEST_PAY } from "./loot";
 import type { SurfaceKind, Unit, ZoneAction, ZoneEffect, ZoneEvent, ZoneState } from "./types";
 
@@ -1016,6 +1017,15 @@ describe("a delve", () => {
       // Nobody stands on the mouth, so the party always has room to arrive.
       expect(state.units.some((u) => posKey(u.pos) === posKey(state.start)), where).toBe(false);
     }
+  });
+
+  it("lets daylight in at the mouth: the hexes round it are lit with no torch", () => {
+    const state = createZone("DLVE", "d2", delveOptions());
+    const lit = litHexes(state)!;
+    expect(lit.has(posKey(state.start))).toBe(true);
+    for (const n of hexNeighbors(state.start, state.map.grid)) if (!solid(state.map.tiles.find((t) => t.q === n.q && t.r === n.r))) expect(lit.has(posKey(n))).toBe(true);
+    // Far down the tunnels it is still dark.
+    expect(state.map.tiles.some((t) => t.biome === "cave" && !lit.has(posKey(t)))).toBe(true);
   });
 
   it("sends a lone hero against smaller bands, and the haunt alone", () => {
