@@ -5,7 +5,9 @@
 // - WebSockets use the hibernation API, so an idle room costs nothing.
 // - D1 is the system of record. this.zone is only a cache and is reloaded
 //   from zones.state_json after hibernation.
-// - Every change is persisted before it is broadcast.
+// - Every change is persisted before it is broadcast, in as few trips to
+//   D1 as the order allows: what a hero used from their pack and the zone
+//   itself go in one batch, the pack first.
 // - The turn timer is a DO Alarm. Enemy turns resolve inside the reducer, so
 //   nothing waits on a connected client to make progress.
 // - What a won fight pays (XP and materials) is written before the zone is
@@ -17,6 +19,16 @@
 //
 // Walking freely needs no clock at all: the reducer walks a hero's whole
 // path at once and says where they ended up, as the Harbor does.
+//
+// A client may show what it did before it hears back (client/zone/ahead.ts),
+// so it numbers its actions. The number comes back to that socket alone: on
+// the update that carries what the action did, or on the error that refused
+// it. That is all the room does for it: the room still decides everything.
+//
+// The tiles of a map never change, and they are most of what a state weighs,
+// so a client that says it keeps them (x-zone-lean) is sent them once per
+// socket and not with every update after. That they have been sent is
+// written on the socket itself, which outlives the room's hibernation.
 
 import { DurableObject } from "cloudflare:workers";
 import { THROWABLE_KINDS, ZONE_CLIENT_ACTIONS, createZone, ensureMouth, stepZone, zoneAwaiting, zoneHero, zoneOptions, zoneView, type ZoneAction, type ZoneEvent, type ZoneState } from "@gantt-quest/world";
@@ -30,6 +42,16 @@ export const ZONE_TURN_MS = 90_000;
 
 interface Attachment {
   playerId: string;
+  /** This client keeps the map's tiles from the first update it is sent, and needs them only once. */
+  lean?: boolean;
+  /** This socket has been sent the tiles. */
+  tiles?: boolean;
+}
+
+/** The action being answered: whose socket asked, and the number they gave it (if they gave one). */
+interface Asked {
+  ws: WebSocket;
+  n?: number;
 }
 
 const isHex = (v: unknown): v is { q: number; r: number } => !!v && typeof v === "object" && Number.isInteger((v as { q: unknown }).q) && Number.isInteger((v as { r: unknown }).r);
@@ -149,7 +171,7 @@ export class ZoneRoom extends DurableObject<Env> {
     for (const old of this.ctx.getWebSockets(playerId)) old.close(4000, "replaced by a newer connection");
     const pair = new WebSocketPair();
     this.ctx.acceptWebSocket(pair[1], [playerId]);
-    pair[1].serializeAttachment({ playerId } satisfies Attachment);
+    pair[1].serializeAttachment({ playerId, ...(request.headers.get("x-zone-lean") === "1" ? { lean: true } : {}) } satisfies Attachment);
 
     await this.serial(async () => {
       await this.resumeTimer();
@@ -162,7 +184,7 @@ export class ZoneRoom extends DurableObject<Env> {
 
   async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): Promise<void> {
     if (typeof message !== "string" || message.length > 8000) return;
-    let msg: { type?: string; action?: unknown };
+    let msg: { type?: string; action?: unknown; n?: unknown };
     try {
       msg = JSON.parse(message);
     } catch {
@@ -179,15 +201,21 @@ export class ZoneRoom extends DurableObject<Env> {
       return;
     }
     if (msg.type !== "action") return;
+    // The client's own number for this action, sent back with its answer so it can tell which of its actions was answered.
+    const n = typeof msg.n === "number" && Number.isSafeInteger(msg.n) && msg.n >= 0 ? msg.n : undefined;
     const action = zoneActionFrom(msg.action, playerId, isDev(this.env));
-    if (!action) return;
+    if (!action) {
+      // Not an action at all. A client waiting on a number is told so; anything else is dropped as before.
+      if (n !== undefined) ws.send(JSON.stringify({ type: "error", message: "That could not be done.", ack: n }));
+      return;
+    }
     // Throwing, drinking, lighting a torch or picking one up as your own hero draws on (or adds to) your own pack. (A stand-in has no pack: it carries the kit it was given.)
     const pack = (action.type === "throw" || action.type === "drink" || action.type === "light" || action.type === "pickup") && action.unit === playerId ? playerId : undefined;
     const error = await this.serial(async () => {
       await this.load();
-      return this.apply(action, pack);
+      return this.apply(action, pack, { ws, n });
     });
-    if (error) ws.send(JSON.stringify({ type: "error", message: error }));
+    if (error) ws.send(JSON.stringify({ type: "error", message: error, ...(n !== undefined ? { ack: n } : {}) }));
   }
 
   async webSocketClose(ws: WebSocket, code: number): Promise<void> {
@@ -232,8 +260,9 @@ export class ZoneRoom extends DurableObject<Env> {
   /**
    * Step the zone, persist, then broadcast. Returns an error string or null. `pack`: the player whose own
    * hero this draws a potion or flask from; their pack is read first and what was used is taken out of it.
+   * `from`: the socket that asked, which is told its own number back on the update (or, by the caller, on the error).
    */
-  private async apply(action: ZoneAction, pack?: string): Promise<string | null> {
+  private async apply(action: ZoneAction, pack?: string, from?: Asked): Promise<string | null> {
     const db = this.env.DB;
     let prev = this.zone!;
     // Time out of a fight has gone by since the last thing done here (zone/clock.ts): it passes first.
@@ -274,19 +303,24 @@ export class ZoneRoom extends DurableObject<Env> {
     if (pack) writes.push(...spendConsumables(db, pack, usedBy(prev, next, pack)), ...gainConsumables(db, pack, usedBy(prev, next, pack, -1)));
     // The dev toolbox's restock is real too, for every player's hero here.
     if (action.type === "dev" && action.dev.op === "heal") for (const u of next.units) if (u.side === "hero" && !u.controller) writes.push(...kitStatements(db, u.id));
-    for (const write of writes) await write.run();
-    // What a won fight paid, written before the zone is saved (and so before anyone is told of it).
-    for (const effect of res.effects) {
-      if (effect.type !== "grant") continue;
-      const { place } = await applyZoneGrant(db, effect.heroId, effect);
-      // A full pack never loses what was found, but the hero hears where it went.
-      if (effect.item && (place === "storage" || place === "overfull")) res.events.push({ t: "stowed", id: effect.heroId, item: effect.item.name, place });
-      // The roster shows each hero's level.
-      this.tellHarbor(effect.heroId);
+    const grants = res.effects.filter((effect) => effect.type === "grant");
+    if (grants.length === 0) {
+      // The common case, and one trip to D1 for all of it: the pack's rows and then the zone, in that order.
+      await db.batch([...writes, saveZoneStatement(db, next)]);
+    } else {
+      if (writes.length > 0) await db.batch(writes);
+      // What a won fight paid, written before the zone is saved (and so before anyone is told of it).
+      for (const effect of grants) {
+        const { place } = await applyZoneGrant(db, effect.heroId, effect);
+        // A full pack never loses what was found, but the hero hears where it went.
+        if (effect.item && (place === "storage" || place === "overfull")) res.events.push({ t: "stowed", id: effect.heroId, item: effect.item.name, place });
+        // The roster shows each hero's level.
+        this.tellHarbor(effect.heroId);
+      }
+      await saveZoneStatement(db, next).run();
     }
-    await saveZoneStatement(db, next).run();
     await this.notePresence();
-    this.broadcast([...passed, ...res.events]);
+    this.broadcast([...passed, ...res.events], from);
     return null;
   }
 
@@ -317,14 +351,21 @@ export class ZoneRoom extends DurableObject<Env> {
     return [...new Set(this.ctx.getWebSockets().map((ws) => (ws.deserializeAttachment() as Attachment).playerId))];
   }
 
-  private broadcast(events: ZoneEvent[]) {
+  /** Tell everyone here the state and what happened. `from`: whose action this answers; their socket alone gets their number back. */
+  private broadcast(events: ZoneEvent[], from?: Asked) {
     const zone = this.zone;
     if (!zone) return;
     const online = this.online();
     for (const ws of this.ctx.getWebSockets()) {
-      const { playerId } = ws.deserializeAttachment() as Attachment;
+      const seat = ws.deserializeAttachment() as Attachment;
+      const view = zoneView(zone, seat.playerId);
+      // The tiles go once to a client that keeps them: everything else about the map (its places) goes every time.
+      const { tiles: _tiles, ...rest } = view.map;
+      const state = seat.lean && seat.tiles ? { ...view, map: rest } : view;
       try {
-        ws.send(JSON.stringify({ type: "update", state: zoneView(zone, playerId), events, online }));
+        // `acks` tells a client that this room answers numbered actions, so it is safe for it to show them ahead.
+        ws.send(JSON.stringify({ type: "update", state, events, online, acks: true, ...(from?.ws === ws && from.n !== undefined ? { ack: from.n } : {}) }));
+        if (seat.lean && !seat.tiles) ws.serializeAttachment({ ...seat, tiles: true } satisfies Attachment);
       } catch {
         // Socket is closing; webSocketClose will follow.
       }
