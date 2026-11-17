@@ -26,6 +26,12 @@ interface Studio {
 let studio: Studio | null | undefined;
 
 function open(): Studio | null {
+  // The browser drops the oldest WebGL context when a page holds too many: a renderer that lost its own is
+  // let go, and a new one made, rather than drawing every picture after it blank.
+  if (studio && studio.renderer.getContext().isContextLost()) {
+    studio.renderer.dispose();
+    studio = undefined;
+  }
   if (studio !== undefined) return studio;
   try {
     const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: false, preserveDrawingBuffer: true, powerPreference: "low-power" });
@@ -48,6 +54,9 @@ function open(): Studio | null {
   }
   return studio;
 }
+
+/** Whether a picture from portraitUrl is the empty stand-in (no WebGL, or its context was lost): not one to keep. */
+export const isBlankPortrait = (url: string) => url === BLANK;
 
 /**
  * A figure's picture as an image URL. Heroes and townsfolk turn a little to their left, enemies to their
@@ -78,7 +87,8 @@ export function portraitUrl(kind: string, look: Look, outfit: Outfit | undefined
   let url = BLANK;
   try {
     s.renderer.render(s.scene, s.camera);
-    url = s.renderer.domElement.toDataURL();
+    // A context lost along the way draws nothing, without failing: no picture this time rather than an empty one.
+    if (!s.renderer.getContext().isContextLost()) url = s.renderer.domElement.toDataURL();
   } catch {
     // A lost context: no picture this time.
   }
