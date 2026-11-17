@@ -15,6 +15,8 @@
 //   by a band (zone/doors.ts says how doors are opened). A door counts as a
 //   way through when chests and crates are set out, so nothing ever blocks
 //   the way up to one.
+// - Glowing mushrooms grow in a few nooks against the rock: they light the
+//   dark round them and can be picked for mushrooms (forage.ts).
 // - Crates are stacked against the rock here and there, in the chambers and
 //   in the nooks off the tunnels, to be broken open (crates.ts). None is put
 //   where it would shut off any of the floor, or crowd a chest or the mouth.
@@ -131,6 +133,30 @@ function placeCrates(rng: Rng, map: WorldMap, mouth: HexPos, taken: ReadonlySet<
   return crates;
 }
 
+/** How many clusters of glowing mushrooms grow in a delve, fewest to most. */
+export const DELVE_GLOWCAPS: [number, number] = [2, 4];
+
+/**
+ * Glowing mushrooms, growing in nooks against the rock: on open floor with rock on at least two sides, well apart,
+ * away from the mouth, and on no hex anything else stands on. They are in nobody's way.
+ */
+function placeGlowcaps(rng: Rng, map: WorldMap, mouth: HexPos, taken: ReadonlySet<string>): Poi[] {
+  const floor = new Set(map.tiles.filter((t) => t.biome === "cave").map(posKey));
+  const rockBeside = (p: HexPos) => 6 - hexNeighbors(p, map.grid).filter((n) => floor.has(posKey(n)) || map.tiles.some((t) => t.q === n.q && t.r === n.r && t.biome === "gate")).length;
+  const spots = map.tiles
+    .filter((t) => floor.has(posKey(t)) && !taken.has(posKey(t)) && hexDistance(t, mouth) > 2 && rockBeside(t) >= 2)
+    .map((t) => ({ pos: { q: t.q, r: t.r }, order: rng.next() }))
+    .sort((a, b) => a.order - b.order);
+  const want = rng.int(DELVE_GLOWCAPS[0], DELVE_GLOWCAPS[1]);
+  const out: Poi[] = [];
+  for (const { pos } of spots) {
+    if (out.length >= want) break;
+    if (out.some((g) => hexDistance(g.pos, pos) < 4)) continue;
+    out.push({ id: `glowcap${out.length + 1}`, kind: "glowcap", pos, hidden: false, cleared: false, usedBy: [], enemies: [] });
+  }
+  return out;
+}
+
 /** Who lurks in a chamber, for a party this size: the band's lead brings the rest (cavernBand); a troll keeps its chamber to itself. */
 function bandFor(lurkers: string[], party: number): string[] {
   const lead = lurkers[0];
@@ -174,5 +200,6 @@ export function generateDelve(seed: string, options: ZoneOptions): ZonePlan {
   // The map keeps the mouth, what can be opened and the locked doors; the bands are units now, and the scattered finds go.
   const kept: Poi[] = map.pois.filter((p) => p.kind === "landing" || p.kind === "gate" || (p.kind === "cache" && open(p.pos)));
   const crates = placeCrates(rng, map, mouth, taken, kept.filter((p) => p.kind === "cache").map((p) => p.pos));
-  return { map: { ...map, pois: [...kept, ...crates] }, start: mouth, groups, ...(keys.length > 0 ? { keys } : {}) };
+  const glowcaps = placeGlowcaps(rng, map, mouth, new Set([...taken, ...[...kept, ...crates].map((p) => posKey(p.pos))]));
+  return { map: { ...map, pois: [...kept, ...crates, ...glowcaps] }, start: mouth, groups, ...(keys.length > 0 ? { keys } : {}) };
 }

@@ -18,6 +18,8 @@ import { litHexes } from "./light";
 import { CHEST_PAY, unopened } from "./loot";
 import { CRATE_HP, CRATE_PAY } from "./crates";
 import { NOISE_RANGE } from "./doors";
+import { GLOWCAP_MUSHROOMS } from "./forage";
+import { DELVE_GLOWCAPS as GLOWCAP_COUNT } from "./delve";
 import type { SurfaceKind, Unit, ZoneAction, ZoneEffect, ZoneEvent, ZoneState } from "./types";
 
 // ---------- helpers ----------
@@ -1298,6 +1300,45 @@ describe("a delve", () => {
     const delve = createZone("DLVE", "d1", delveOptions());
     expect(delve.map.pois.filter((p) => p.kind === "landing")).toHaveLength(1);
     expect(createZone("MEAD", "m1", zoneOptions({ biome: "meadow", size: "small" })).map.pois.some((p) => p.kind === "landing")).toBe(false);
+  });
+
+  it("grows a few clusters of glowing mushrooms against the rock, each lighting the dark round it until it is picked", () => {
+    for (let seed = 0; seed < 12; seed++) {
+      const where = `seed ${seed}`;
+      const state = createZone("DLVE", `g${seed}`, delveOptions());
+      const caps = state.map.pois.filter((p) => p.kind === "glowcap");
+      expect(caps.length, where).toBeGreaterThanOrEqual(GLOWCAP_COUNT[0]);
+      expect(caps.length, where).toBeLessThanOrEqual(GLOWCAP_COUNT[1]);
+      const lit = litHexes(state)!;
+      for (const c of caps) {
+        expect(tileOf(state, c.pos)?.biome, where).toBe("cave");
+        expect(state.map.pois.filter((p) => posKey(p.pos) === posKey(c.pos)), where).toHaveLength(1);
+        expect(state.units.some((u) => posKey(u.pos) === posKey(c.pos)), where).toBe(false);
+        expect(hexDistance(c.pos, state.start), where).toBeGreaterThan(2);
+        expect(lit.has(posKey(c.pos)), where).toBe(true);
+      }
+      for (const a of caps) for (const b of caps) if (a !== b) expect(hexDistance(a.pos, b.pos), where).toBeGreaterThanOrEqual(4);
+    }
+  });
+
+  it("lets a hero pick glowing mushrooms from beside them for a few mushrooms, once, and puts the glow out", () => {
+    const state = createZone("DLVE", "g1", delveOptions());
+    const cap = state.map.pois.find((p) => p.kind === "glowcap")!;
+    state.units = state.units.filter((u) => u.side === "hero" || hexDistance(u.pos, cap.pos) > 4);
+    hero(state, "ann", "qa_paladin", state.start);
+    expect(fails(state, { type: "forage", by: "ann", unit: "ann", poi: cap.id })).toMatch(/Go up to them/);
+    unit(state, "ann").pos = hexNeighbors(cap.pos, state.map.grid).find((n) => tileOf(state, n)?.biome === "cave" && !state.units.some((u) => posKey(u.pos) === posKey(n)))!;
+    const step = stepZone(state, { type: "forage", by: "ann", unit: "ann", poi: cap.id });
+    if (!step.ok) throw new Error(step.error);
+    const grant = step.effects.find((e) => e.heroId === "ann")!;
+    expect(grant.resources.mushrooms).toBeGreaterThanOrEqual(GLOWCAP_MUSHROOMS[0]);
+    expect(grant.resources.mushrooms).toBeLessThanOrEqual(GLOWCAP_MUSHROOMS[1]);
+    expect(step.events.some((e) => e.t === "spoils" && e.id === "ann" && e.resources.mushrooms === grant.resources.mushrooms)).toBe(true);
+    expect(step.state.map.pois.find((p) => p.id === cap.id)!.cleared).toBe(true);
+    // Picked, it lights nothing (unless something else does).
+    const others = step.state.map.pois.filter((p) => (p.kind === "glowcap" && !p.cleared) || p.kind === "landing").some((p) => hexDistance(p.pos, cap.pos) <= 3);
+    if (!others) expect(litHexes(step.state)!.has(posKey(cap.pos))).toBe(false);
+    expect(fails(step.state, { type: "forage", by: "ann", unit: "ann", poi: cap.id })).toMatch(/Picked already/);
   });
 
   it("sends a lone hero against smaller bands, and the haunt alone", () => {

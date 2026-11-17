@@ -32,6 +32,7 @@ import { hiddenEnemies, sentToClient } from "./light";
 import { checkPickup, clearSurfaces, lightTorch, pickUpTorch, placeSurface, standInSurface, tickLights, tickSurfaces } from "./surfaces";
 import { passTime } from "./clock";
 import { checkUnlock, dropKeys, heardBy, workDoor } from "./doors";
+import { checkForage, forage } from "./forage";
 import type { Budget, DevOp, Encounter, Throwable, Unit, ZoneAction, ZoneEffect, ZoneEvent, ZoneHero, ZoneOptions, ZoneState, ZoneStep, ZoneView } from "./types";
 
 /** Rounds a surface painted from the dev toolbox lasts. */
@@ -587,6 +588,15 @@ function act(ctx: Ctx, action: ZoneAction): string | null {
     const cost = spend(budget, "action");
     if (cost) return cost;
     openChest(ctx, unit, chest!);
+    return null;
+  }
+  if (action.type === "forage") {
+    const patch = state.map.pois.find((p) => p.id === action.poi && p.kind === "glowcap");
+    const wrong = checkForage(state, unit, patch);
+    if (wrong) return wrong;
+    const cost = spend(budget, "action");
+    if (cost) return cost;
+    forage(ctx, unit, patch!);
     return null;
   }
   if (action.type === "unlock") {
