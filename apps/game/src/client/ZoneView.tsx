@@ -102,6 +102,9 @@ interface Picture {
 
 const asState = (view: ZoneViewState) => view as unknown as ZoneState;
 
+/** How long a leave asked for mid-fight waits for the Flee before it is given up. */
+const LEAVING_WAIT_MS = 6000;
+
 /** The things that are done, as against what comes of them: each starts a new run of results. */
 const CAUSES = new Set<ZoneEvent["t"]>(["used", "moved", "jumped", "shoved", "reaction", "turn", "round", "fight_start", "fight_end"]);
 
@@ -1006,6 +1009,8 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
   /**
    * Going somewhere from the middle of a fight (off the map, or to a crewmate): the hero flees it first, and
    * goes once the server has them out of it, or stays if it says no. Nobody leaves a hero behind in a fight.
+   * It is meant for that moment only: if they are not out of it soon after (an enemy came close enough to draw
+   * them straight back in), it is dropped, and does not go off whenever the fight happens to end.
    */
   const [leaving, setLeaving] = useState<{ go: () => void } | null>(null);
   useEffect(() => {
@@ -1015,6 +1020,11 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
       leaving.go();
     } else if (zone.error) setLeaving(null);
   }, [leaving, fighting, zone.error]);
+  useEffect(() => {
+    if (!leaving) return;
+    const t = setTimeout(() => setLeaving(null), LEAVING_WAIT_MS);
+    return () => clearTimeout(t);
+  }, [leaving]);
 
   if (!state || !act) {
     return (

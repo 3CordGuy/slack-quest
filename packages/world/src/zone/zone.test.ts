@@ -1179,17 +1179,16 @@ describe("fleeing", () => {
     expect(state.encounter!.order).toContain("ann");
   });
 
-  it("puts a hero out of the fight in it when they strike at someone in it, or help them, and not for looking after themselves", () => {
+  it("keeps a hero who fled from reaching back into the fight from outside it, but not from looking after themselves", () => {
     const { state: start, wolf } = pair("devops_mage");
     const out = must(start, flee());
     // Sturdy enough to outlast a firebolt, so the fight is still on to be in.
     Object.assign(unit(out, wolf), { hp: 200, maxHp: 200 });
-    const shot = must(out, { type: "use", by: "ann", unit: "ann", ability: "firebolt", target: wolf });
-    expect(shot.encounter!.order).toContain("ann");
-    const mended = must(out, { type: "use", by: "ann", unit: "ann", ability: "mend", target: "bo" });
-    expect(mended.encounter!.order).toContain("ann");
-    const potion = must(out, { type: "throw", by: "ann", unit: "ann", item: "healing", at: unit(out, "bo").pos });
-    expect(potion.encounter!.order).toContain("ann");
+    // Out of the fight there is no Action to spend and no cooldown running: a blow, a heal or a flask for anyone in
+    // it would come free and off the turn order, every time they fled. They go back to it instead.
+    expect(fails(out, { type: "use", by: "ann", unit: "ann", ability: "firebolt", target: wolf })).toMatch(/got away from that fight/);
+    expect(fails(out, { type: "use", by: "ann", unit: "ann", ability: "mend", target: "bo" })).toMatch(/got away from that fight/);
+    expect(fails(out, { type: "throw", by: "ann", unit: "ann", item: "healing", at: unit(out, "bo").pos })).toMatch(/got away from that fight/);
     const self = must(out, { type: "use", by: "ann", unit: "ann", ability: "mend", target: "ann" });
     expect(self.encounter!.order).not.toContain("ann");
     // A hero who never was in it, shooting in from further off than JOIN_RANGE, is in it too.
@@ -1204,6 +1203,55 @@ describe("fleeing", () => {
     expect(Math.min(hexDistance(archer.pos, foe.pos), hexDistance(archer.pos, at(3, 2)))).toBeGreaterThan(JOIN_RANGE);
     far = must(far, { type: "use", by: "cy", unit: "cy", ability: "aimed_shot", target: foe.id });
     expect(far.encounter!.order).toContain("cy");
+  });
+
+  /**
+   * Bo and Ann sharing a turn, Bo first and Ann last of the two, the wolf after them, AI off: the order set out by
+   * hand so it is the same every time.
+   */
+  function shared() {
+    let state = board();
+    state.aiOff = true;
+    hero(state, "ann", "qa_paladin", at(3, 6));
+    hero(state, "bo", "qa_paladin", at(3, 9));
+    const wolf = enemy(state, "wolf", at(9, 6)).id;
+    state = provoke(state);
+    const fresh = { action: true, bonus: true, move: 5, moveMax: 5, disengaged: false };
+    Object.assign(state.encounter!, { order: ["bo", "ann", wolf], init: { bo: 20, ann: 15, [wolf]: 5 }, acting: ["bo", "ann"], done: [], budgets: { bo: { ...fresh }, ann: { ...fresh } } });
+    return { state, wolf };
+  }
+
+  it("brings one who fled back in the place they had, to wait for the next round: no second turn out of it", () => {
+    let { state, wolf } = shared();
+    const { round } = state.encounter!;
+    state = must(state, flee());
+    expect(state.encounter!.acting).toEqual(["bo"]);
+    expect(state.encounter!.waits).toEqual(["ann"]);
+    // Straight back within 2 of the wolf, while Bo still has the turn: in again, with no fresh roll for it.
+    const events: ZoneEvent[] = [];
+    state = must(state, { type: "move", by: "ann", unit: "ann", to: at(8, 6) }, events);
+    expect(hexDistance(unit(state, "ann").pos, unit(state, wolf).pos)).toBe(FLEE_RANGE);
+    expect(events.some((e) => e.t === "roll")).toBe(false);
+    expect(state.encounter!.init.ann).toBe(15);
+    expect(state.encounter!.order).toEqual(["bo", "ann", wolf]);
+    // Bo ends the turn: next in the order is Ann, but she has had this round's. The wolf goes, then a new round.
+    state = must(state, { type: "end_turn", by: "bo", unit: "bo" });
+    expect(state.encounter!.round).toBe(round + 1);
+    expect(state.encounter!.acting).toEqual(["bo", "ann"]);
+    expect(state.encounter!.waits).toBeUndefined();
+  });
+
+  it("still burns, and runs down what is on them, while a hero who fled is out of a fight that goes on", () => {
+    let { state } = shared();
+    unit(state, "ann").conditions.push({ kind: "burning", rounds: 3 }, { kind: "slowed", rounds: 2 });
+    state = must(state, flee());
+    const hp = unit(state, "ann").hp;
+    // A round of the fight goes by (Bo ends the turn, the wolf does nothing): the same as a round out of one.
+    state = must(state, { type: "end_turn", by: "bo", unit: "bo" });
+    expect(state.encounter).not.toBeNull();
+    expect(state.encounter!.order).not.toContain("ann");
+    expect(unit(state, "ann").hp).toBeLessThan(hp);
+    expect(unit(state, "ann").conditions.find((c) => c.kind === "slowed")?.rounds ?? 0).toBeLessThan(2);
   });
 
   it("hands the turn on to whoever came after a hero who fled on a turn of their own", () => {
