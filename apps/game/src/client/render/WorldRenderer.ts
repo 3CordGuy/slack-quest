@@ -556,6 +556,7 @@ const PLACE: Partial<Record<Poi["kind"], { scale: number; back: number }>> = {
   fishing: { scale: 1.6, back: 0.8 },
   cave: { scale: 2.2, back: 1.3 },
   board: { scale: 1.6, back: 0.45 },
+  bench: { scale: 1.6, back: 0.45 },
   ring: { scale: 1.5, back: 0.42 },
   felling: { scale: 1.5, back: 0.42 },
   quarry: { scale: 1.5, back: 0.42 },
@@ -5436,6 +5437,58 @@ export class WorldRenderer {
         add(box(0.9, 0.04, 0.5), lambert("#8c3b2f"), 0, 0.02, 0.28);
         for (const x of [-0.8, 0.8]) add(box(0.14, 0.9, 0.14), lambert("#5a3d22"), x, 0.45, 0.28);
         break;
+      case "bench": {
+        // The stonecutter's bench, where lodestones are cut and worked: a stout bench under a blue awning, with a
+        // grindstone on its frame at one end and a vice at the other; stones on the top, cut and uncut, one of
+        // them alight; a tub of rough stone and iron at its foot, and a lantern on the awning's post.
+        const timber = lambert("#5a3d22");
+        const dark = lambert("#46301c");
+        const iron = lambert("#33363c");
+        const stone = lambert("#7b8088");
+        const lode = lambert("#39445a");
+        // The bench: a thick top on four legs, braced.
+        add(box(1.08, 0.08, 0.5), lambert("#7d5f3c"), 0, 0.5, 0);
+        add(box(1.08, 0.03, 0.5), dark, 0, 0.445, 0);
+        for (const x of [-0.46, 0.46]) for (const z of [-0.19, 0.19]) add(box(0.08, 0.46, 0.08), timber, x, 0.23, z);
+        add(box(0.92, 0.05, 0.05), dark, 0, 0.16, -0.19);
+        for (const x of [-0.46, 0.46]) add(box(0.05, 0.05, 0.38), dark, x, 0.16, 0);
+        // The grindstone: a wheel on an axle between two uprights, with a crank, and a trough under it.
+        for (const z of [-0.09, 0.09]) add(box(0.05, 0.32, 0.04), timber, -0.3, 0.7, z);
+        const wheel = add(new THREE.CylinderGeometry(0.19, 0.19, 0.08, 18), stone, -0.3, 0.78, 0);
+        wheel.rotation.x = Math.PI / 2;
+        const axle = add(new THREE.CylinderGeometry(0.018, 0.018, 0.3, 6), iron, -0.3, 0.78, 0.02);
+        axle.rotation.x = Math.PI / 2;
+        add(box(0.02, 0.12, 0.02), iron, -0.3, 0.72, 0.17);
+        add(box(0.32, 0.05, 0.16), dark, -0.3, 0.565, 0);
+        // The vice, and the tools laid by it: a chisel, a mallet.
+        add(box(0.18, 0.1, 0.12), iron, 0.3, 0.59, -0.08);
+        add(box(0.05, 0.12, 0.14), iron, 0.24, 0.66, -0.08);
+        add(box(0.05, 0.12, 0.14), iron, 0.36, 0.66, -0.08);
+        add(box(0.2, 0.018, 0.02), iron, 0.22, 0.55, 0.14).rotation.y = 0.5;
+        add(box(0.1, 0.07, 0.07), timber, 0.42, 0.575, 0.14);
+        add(box(0.03, 0.03, 0.18), dark, 0.42, 0.575, 0.05);
+        // Stones on the bench: two rough, two cut, and one that has taken: it gives its own light.
+        const gem = (x: number, z: number, size: number, material: THREE.Material, turn: number) => {
+          const g = add(new THREE.OctahedronGeometry(size, 0), material, x, 0.54 + size * 1.1, z, turn);
+          g.scale.y = 1.35;
+          return g;
+        };
+        add(new THREE.DodecahedronGeometry(0.06, 0), stone, 0.02, 0.585, 0.14, 0.7);
+        add(new THREE.DodecahedronGeometry(0.045, 0), lambert("#5d626b"), -0.08, 0.575, 0.17, 1.9);
+        gem(0.08, -0.02, 0.05, lode, 0.4);
+        gem(-0.04, 0.02, 0.045, lode, 1.3);
+        gem(0.17, 0.08, 0.055, new THREE.MeshBasicMaterial({ color: "#7fd0ff" }), 0.9).userData.glow = true;
+        // A tub of rough stone and ore at its foot.
+        add(new THREE.CylinderGeometry(0.15, 0.12, 0.2, 10), timber, 0.62, 0.1, 0.22);
+        for (let i = 0; i < 4; i++) add(new THREE.DodecahedronGeometry(0.05, 0), i % 2 ? stone : iron, 0.62 + Math.sin(i * 1.7) * 0.06, 0.22, 0.22 + Math.cos(i * 1.7) * 0.06, i);
+        // The awning: two posts at the back, a blue cloth pitched forward over the bench, and a lantern on one post.
+        for (const x of [-0.56, 0.56]) add(box(0.06, 1.36, 0.06), timber, x, 0.68, -0.3);
+        add(box(1.3, 0.03, 0.8), lambert("#2f5d8a"), 0, 1.32, 0.02).rotation.x = 0.22;
+        add(box(1.3, 0.05, 0.04), lambert("#24486c"), 0, 1.245, 0.41);
+        add(box(0.02, 0.1, 0.02), iron, 0.56, 1.12, -0.2);
+        add(box(0.08, 0.1, 0.08), new THREE.MeshBasicMaterial({ color: "#ffd98a" }), 0.56, 1.03, -0.2).userData.glow = true;
+        break;
+      }
       case "board": {
         // The notice board: a framed back of planks between two squared posts on stone feet, under a little
         // shingled roof to keep the rain off the paper. Notices are pinned all over it, no two alike or quite

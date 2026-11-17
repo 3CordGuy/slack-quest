@@ -1054,7 +1054,7 @@ function LodestoneDetail({ stone, total }: { stone: Lodestone; total: number }) 
           ))}
         </ul>
       )}
-      <p>You carry <strong>{total}</strong>. Put one into a place's slot on the atlas, at the lighthouse, to set out for it: it is spent, and what it carries is added to the place.</p>
+      <p>You carry <strong>{total}</strong>. Put one into a place's slot on the atlas, at the lighthouse, to set out for it: it is spent, and what it carries is added to the place. Stones are cut and worked at the stonecutter's bench, on the lane out there.</p>
     </div>
   );
 }

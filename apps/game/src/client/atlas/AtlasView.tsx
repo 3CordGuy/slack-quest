@@ -28,23 +28,21 @@
 // stone out of the hero's own pack is put into it before setting out, and is
 // spent as the map is made, with what it carries added to the place's own.
 // Anywhere but beside the Harbor there must be one. What a stone carries is
-// told by pointing at it. Someone with none can cut a plain one here, from
-// stone and iron.
+// told by pointing at it. Stones are cut and worked down in the Harbor, at
+// the stonecutter's bench, before coming up here.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { hexDistance, type HexPos } from "@gantt-quest/core";
-import { ATLAS_HOME, ATLAS_SPACING, ATLAS_VIEW, LAIR_RINGS, PLAIN_STONE_COST, modEffect, modName, modSide, atlasNodeById, atlasTier, atlasWorld, bountyPay, modsOf, needsStone, stoneKey, stoneName, stoneOn, type AtlasNode, type Lodestone, type ResourceKind } from "@gantt-quest/world";
+import { ATLAS_HOME, ATLAS_SPACING, ATLAS_VIEW, LAIR_RINGS, modEffect, modName, modSide, atlasNodeById, atlasTier, atlasWorld, bountyPay, modsOf, needsStone, stoneKey, stoneName, stoneOn, type AtlasNode, type Lodestone } from "@gantt-quest/world";
 import { api, type Chart, type ChartNode, type Me } from "../api";
 import { useAudioScene } from "../audio/useAudioScene";
 import { Icon } from "../items";
-import { label } from "../labels";
 import { STONE_ICON } from "../zone/actionIcons";
 import { worldToHex } from "../render/footsteps";
 import { WorldRenderer, type RenderState } from "../render/WorldRenderer";
 import { uiZoom } from "../uiScale";
 import { AtlasCloud, CLOUD_TOP } from "./AtlasCloud";
 import { AtlasLayer, type AtlasMark, type AtlasRoute, type Rise } from "./AtlasLayer";
-import { StoneBench } from "./StoneBench";
 import "./atlas.css";
 
 type Known = Extract<ChartNode, { state: "harbor" | "cleared" | "open" }>;
@@ -84,8 +82,6 @@ export function AtlasView({ me, refresh, onLeave }: { me: Me; refresh(): Promise
   /** The hex of the world the window the renderer holds is round. Null until the chart is in. */
   const [centre, setCentre] = useState<HexPos | null>(null);
   const layer = useRef<AtlasLayer | null>(null);
-  /** The lodestone bench is open: fuse, attune and reroll the stones in the pack. */
-  const [bench, setBench] = useState(false);
   const cloud = useRef<AtlasCloud | null>(null);
   /** Opened from the Harbor (not come back to from a map): it opens grandly, the title holding the screen while the cloud parts. */
   const [opening, setOpening] = useState(() => picked === null);
@@ -348,20 +344,6 @@ export function AtlasView({ me, refresh, onLeave }: { me: Me; refresh(): Promise
   /** What the place carries: its own, and what the lodestone in its slot adds (the one its map was made with, or the one put in now). */
   const carried = shown ? stoneOn(shown, (begun ? shown.stone : inSlot) ?? []) : { mods: [], added: [] };
   const needs = !!shown && shown.state === "open" && needsStone(shown);
-  const cost = Object.entries(PLAIN_STONE_COST) as [ResourceKind, number][];
-  const canCut = cost.every(([kind, n]) => (me.materials?.[kind] ?? 0) >= n);
-  const cutOne = async () => {
-    setBusy(true);
-    setError(null);
-    try {
-      await api.cutStone();
-      await refresh();
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  };
   // The harder the map, the better it pays; and its boons are a share more of that.
   const sum = modsOf({ mods: carried.mods });
   const pay = shown && shown.kind !== "harbor" ? bountyPay(atlasTier(shown), sum.pay, sum) : null;
@@ -449,13 +431,10 @@ export function AtlasView({ me, refresh, onLeave }: { me: Me; refresh(): Promise
         <button className="atlas-close" onClick={close} title="Back down to the Harbor, at the lighthouse">Close atlas</button>
         <div className="atlas-corner">
           <button className="small" onClick={() => { const home = byId.get(ATLAS_HOME); if (home) show(home); }} title="Bring the Harbor back to the middle">Find the Harbor</button>
-          <button className="small" onClick={() => setBench(true)} title="Fuse, attune and reroll the lodestones in your pack">Lodestone bench</button>
           {me.devTools && chart && <button className="small" disabled={busy} onClick={() => void dev("stone")}>Dev: find a lodestone</button>}
           {me.devTools && chart && <button className="small" disabled={busy} onClick={() => void dev("reset")}>Dev: wipe the atlas</button>}
         </div>
       </header>
-
-      {bench && <StoneBench me={me} refresh={refresh} onClose={() => setBench(false)} />}
 
       {/* The place picked: a small panel beside it, that goes with it as the map moves. */}
       {shown && (
@@ -533,11 +512,10 @@ export function AtlasView({ me, refresh, onLeave }: { me: Me; refresh(): Promise
                               </button>
                             );
                           })}
-                          <button className="atlas-pack-stone cut" disabled={busy || !canCut} onClick={() => void cutOne()} aria-label="Cut a plain lodestone" title={`Cut a plain lodestone: ${cost.map(([kind, n]) => `${n} ${label("resource", kind).toLowerCase()}`).join(", ")}${canCut ? "" : "\nYou have not the materials in your pack"}`}>+</button>
                         </div>
                       )}
                     </div>
-                    {!begun && !inSlot && <p className="atlas-line muted">{needs ? "Put a lodestone in the slot to set out." : "No lodestone needed beside the Harbor."}</p>}
+                    {!begun && !inSlot && <p className="atlas-line muted">{!needs ? "No lodestone needed beside the Harbor." : held.length > 0 ? "Put a lodestone in the slot to set out." : "It takes a lodestone, and you carry none. One can be cut at the stonecutter's bench in the Harbor."}</p>}
                     {pay && <p className="atlas-line atlas-bounty" title={pay.gear >= 1 ? "With a piece of gear" : `And a ${Math.round(pay.gear * 100)}% chance of a piece of gear`}>Bounty <strong>{pay.xp} XP</strong> · <strong>{pay.gold[0]}–{pay.gold[1]} gold</strong></p>}
                     {error && <p className="bad" role="alert">{error}</p>}
                     <p className="atlas-go">

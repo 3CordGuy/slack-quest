@@ -1,7 +1,9 @@
 // The lodestone bench: where a hero works the stones in their pack into the
 // ones they want (packages/world/src/stonecraft.ts has the rules;
-// server/lodestones.ts does the work and rolls what comes of it). Opened
-// from the atlas.
+// server/lodestones.ts does the work and rolls what comes of it). It stands
+// in the Harbor, on the lane out to the lighthouse: stones are made ready
+// here before a crew goes up to the atlas with them. A plain one, which
+// carries nothing and only opens a place, is cut here from stone and iron.
 //
 //   Fuse     three stones that carry the same number of things, into one
 //            that carries one more.
@@ -17,7 +19,7 @@
 // by pointing at it, as everywhere.
 
 import { useEffect, useState } from "react";
-import { FUSE_COUNT, STONE_MODS, ZONE_MOD_IDS, attuneCost, attuneProblem, fuseProblem, modEffect, modName, modOf, modSide, modToken, rerollCost, rerollProblem, stoneKey, stoneName, temperCost, temperProblem, type Lodestone, type ResourceKind, type ZoneModId } from "@gantt-quest/world";
+import { FUSE_COUNT, PLAIN_STONE_COST, STONE_MODS, ZONE_MOD_IDS, attuneCost, attuneProblem, fuseProblem, modEffect, modName, modOf, modSide, modToken, rerollCost, rerollProblem, stoneKey, stoneName, temperCost, temperProblem, type Lodestone, type ResourceKind, type ZoneModId } from "@gantt-quest/world";
 import { api, type Me } from "../api";
 import { DragPanel } from "../DragPanel";
 import { Icon } from "../items";
@@ -83,6 +85,21 @@ export function StoneBench({ me, refresh, onClose }: { me: Me; refresh(): Promis
       setBusy(false);
     }
   };
+  const cutCost = Object.entries(PLAIN_STONE_COST) as [string, number][];
+  const canCut = cutCost.every(([kind, n]) => has(kind, n));
+  const cut = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await api.cutStone();
+      setMade(null);
+      await refresh();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
   const fuseWhy = work === "fuse" ? (bench.length < FUSE_COUNT ? `Lay ${FUSE_COUNT - bench.length} more on the bench.` : fuseProblem(bench)) : null;
 
   return (
@@ -101,8 +118,14 @@ export function StoneBench({ me, refresh, onClose }: { me: Me; refresh(): Promis
         <p className="muted small-note">{WORKS.find((w) => w.id === work)!.blurb}</p>
 
         <h3>In your pack</h3>
+        <p className="bench-do">
+          <button className="small" disabled={busy || !canCut} onClick={() => void cut()} title={canCut ? "Into your pack" : "You have not the materials in your pack"}>
+            Cut a plain lodestone <span className="muted">· {cutCost.map(([kind, n]) => `${n} ${label("resource", kind).toLowerCase()}`).join(", ")}</span>
+          </button>
+          <span className="muted small-note">It carries nothing: it only opens a place.</span>
+        </p>
         {held.length === 0 ? (
-          <p className="muted">You carry no lodestones. A plain one can be cut at any place's slot, from stone and iron.</p>
+          <p className="muted">You carry no lodestones.</p>
         ) : (
           <div className="bench-row">
             {held.map(({ stone, qty }) => (
