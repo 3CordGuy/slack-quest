@@ -39,6 +39,10 @@ const drift = (t: number, b: number, salt: number) => {
   return hash(i, b, salt) * (1 - e) + hash(i + 1, b, salt) * e;
 };
 
+/** How far a torch's light reaches (world units, about four hexes), and how bright it burns. */
+const TORCH_REACH = 12;
+const TORCH_STRENGTH = 4;
+
 export function pixelTexture(w: number, h: number, draw: (ctx: CanvasRenderingContext2D) => void): THREE.CanvasTexture {
   const canvas = document.createElement("canvas");
   canvas.width = w;
@@ -709,9 +713,15 @@ export class Ambience {
   private lampOn = true;
   /** In the Haunted Caverns: dark as indoors, no hanging lamp, and a torch carried by each hero. */
   private cave = false;
-  /** One warm, flickering torch per hero in the caverns (at most four). No shadows: they move with every step. */
-  private torches = Array.from({ length: 4 }, () => new THREE.PointLight("#ffb070", 0, 7, 1.4));
+  /**
+   * A warm, flickering light for each torch in the caverns (at most four, nearest the view first): carried, or
+   * lying burning on the ground. Each reaches well out round it, about the four hexes a torch lights by the
+   * rules. The nearest throws real shadows (with Fancy graphics on): rock and figures cast them across the floor.
+   */
+  private torches = Array.from({ length: 4 }, () => new THREE.PointLight("#ffb070", 0, TORCH_REACH, 1.1));
   private torchCount = 0;
+  /** Stops following the Fancy graphics switch, when these lights are done with. */
+  private unfancy: () => void = () => {};
   /** The lamp's glowing lantern, dimmed when the lamp is put out. */
   private lanternMat: THREE.MeshBasicMaterial | null = null;
   /**
@@ -844,6 +854,14 @@ export class Ambience {
     });
     for (const g of this.fadeGlows) g.visible = false;
     for (const t of this.torches) t.visible = false;
+    // The nearest torch's shadows: six small faces, redrawn every frame as it moves.
+    const lead = this.torches[0].shadow;
+    lead.mapSize.set(256, 256);
+    lead.camera.near = 0.1;
+    lead.camera.far = TORCH_REACH;
+    lead.bias = -0.004;
+    // Fancy graphics turn its shadows on and off as they are switched.
+    this.unfancy = fancy.subscribe(() => this.torchShadows());
     scene.add(this.hemi, this.sun, this.sun.target, this.lamp, this.fireLight, ...this.slots, ...this.glows, ...this.fadeGlows, ...this.torches, this.group);
   }
 
@@ -999,6 +1017,7 @@ export class Ambience {
     // The caverns light like a room with its lamp out: no sun, no sky, and the heroes' torches doing the work.
     const cave = (this.cave = tiles.some((t) => (t.biome as string) === "cave"));
     for (const t of this.torches) t.visible = cave;
+    this.torchShadows();
     const inside = cave || tiles.some((t) => (t.biome as string) === "floor");
     this.lamp.visible = inside;
     // Casting even while it is out (at no strength, its map not redrawn), so putting it out never recompiles a material.
@@ -1486,6 +1505,8 @@ export class Ambience {
   }
 
   dispose() {
+    this.unfancy();
+    this.torches[0].shadow.map?.dispose();
     this.clear();
     this.setSmoke([]);
     this.setBeacon(null);
@@ -1684,6 +1705,12 @@ export class Ambience {
   /** Draw smoke rising from these points (chimney tops). An empty list clears it. */
   /** Light or put out a hut's hanging lamp. */
   /** Where each hero's torch is in the caverns this frame (at most four). Ignored outside them. */
+  /** The nearest torch throws shadows underground, with Fancy graphics on. Changed only when either changes, as it recompiles. */
+  private torchShadows() {
+    const want = this.cave && fancy.get();
+    if (this.torches[0].castShadow !== want) this.torches[0].castShadow = want;
+  }
+
   setTorches(at: THREE.Vector3[]) {
     if (!this.cave) return;
     this.torchCount = Math.min(at.length, this.torches.length);
@@ -2315,7 +2342,7 @@ export class Ambience {
       this.hemi.groundColor.set("#141018");
       this.background.set("#07060b");
       this.torches.forEach((t, i) => {
-        t.intensity = i < this.torchCount ? 2.4 * (this.still ? 1 : 1 + Math.sin(clock * 9 + i * 2.1) * 0.06 + Math.sin(clock * 15.7 + i) * 0.04) : 0;
+        t.intensity = i < this.torchCount ? TORCH_STRENGTH * (this.still ? 1 : 1 + Math.sin(clock * 9 + i * 2.1) * 0.06 + Math.sin(clock * 15.7 + i) * 0.04) : 0;
       });
       return;
     }

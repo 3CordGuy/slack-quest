@@ -197,7 +197,7 @@ export const THROWABLES: Record<Throwable, ThrowableDef> = {
 };
 
 /** How far a torch lights, held or lying burning, and how far a burning hex does. */
-export const LIGHT_RADIUS = 3;
+export const LIGHT_RADIUS = 4;
 export const FIRE_GLOW = 1;
 /** Rounds of a fight a torch burns: lit to hold, and one lit from the pack and thrown straight down. */
 export const TORCH_HELD_ROUNDS = 10;
