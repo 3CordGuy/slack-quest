@@ -6,14 +6,18 @@
 //   Fuse     three stones that carry the same number of things, into one
 //            that carries one more.
 //   Attune   one chosen thing added to a stone, for gold and its material.
+//   Temper   one thing a stone carries raised a rank: dear, and takes gems.
 //   Reroll   what a stone carries changed for as many other things, for gold.
+//
+// A peril (teal for the ground, red for the enemy) makes a place harder and
+// its bounty bigger; a boon (gold) is more of one thing in the bounty.
 //
 // The stones in the pack are along the top; click one to lay it on the
 // bench (three for fusing, one for the rest). What a stone carries is told
 // by pointing at it, as everywhere.
 
 import { useEffect, useState } from "react";
-import { FUSE_COUNT, STONE_MODS, ZONE_MODS, ZONE_MOD_IDS, attuneCost, attuneProblem, fuseProblem, rerollCost, rerollProblem, stoneKey, stoneName, type Lodestone, type ResourceKind, type ZoneModId } from "@gantt-quest/world";
+import { FUSE_COUNT, STONE_MODS, ZONE_MOD_IDS, attuneCost, attuneProblem, fuseProblem, modEffect, modName, modOf, modSide, modToken, rerollCost, rerollProblem, stoneKey, stoneName, temperCost, temperProblem, type Lodestone, type ResourceKind, type ZoneModId } from "@gantt-quest/world";
 import { api, type Me } from "../api";
 import { DragPanel } from "../DragPanel";
 import { Icon } from "../items";
@@ -21,13 +25,14 @@ import { label } from "../labels";
 import { STONE_ICON } from "../zone/actionIcons";
 import "./bench.css";
 
-type Work = "fuse" | "attune" | "reroll";
+type Work = "fuse" | "attune" | "temper" | "reroll";
 const WORKS: { id: Work; name: string; blurb: string }[] = [
   { id: "fuse", name: "Fuse", blurb: `Lay ${FUSE_COUNT} lodestones that carry the same number of things on the bench. They become one that carries one more, drawn from what they carried.` },
-  { id: "attune", name: "Attune", blurb: "Lay one lodestone on the bench and choose one more thing for it to carry. It costs gold and what that thing is made of, and more the more the stone carries." },
+  { id: "attune", name: "Attune", blurb: "Lay one lodestone on the bench and choose one more thing for it to carry. It costs gold and what that thing is made of: more the more the stone carries, and the rarer the thing." },
+  { id: "temper", name: "Temper", blurb: "Lay one lodestone on the bench and raise one thing it carries by a rank: a peril more perilous and better paid, a boon richer. It is dear, and takes gems." },
   { id: "reroll", name: "Reroll", blurb: "Lay one lodestone on the bench. For gold it will carry as many other things: never just what it had." },
 ];
-const carries = (stone: Lodestone) => (stone.length === 0 ? "Carries nothing: it only opens a place." : stone.map((id) => `${ZONE_MODS[id].name}: ${ZONE_MODS[id].blurb}`).join("\n"));
+const carries = (stone: Lodestone) => (stone.length === 0 ? "Carries nothing: it only opens a place." : stone.map((id) => `${modName(id)}: ${modEffect(id).blurb}`).join("\n"));
 
 function StoneTile({ stone, qty, dim, onClick, label: says }: { stone: Lodestone; qty?: number; dim?: boolean; onClick?(): void; label: string }) {
   const icon = STONE_ICON(stone.length);
@@ -35,7 +40,7 @@ function StoneTile({ stone, qty, dim, onClick, label: says }: { stone: Lodestone
     <button type="button" className={`bench-stone ${dim ? "dim" : ""}`} onClick={onClick} disabled={!onClick} aria-label={says} title={`${stoneName(stone)}\n${carries(stone)}`}>
       <Icon name={icon.name} color={icon.color} size={34} />
       {qty !== undefined && <span className="bench-qty">{qty}</span>}
-      {stone.length > 0 && <span className="bench-pips">{stone.map((id) => <i key={id} className={ZONE_MODS[id].kind} />)}</span>}
+      {stone.length > 0 && <span className="bench-pips">{stone.map((id) => <i key={id} className={modEffect(id).kind} />)}</span>}
     </button>
   );
 }
@@ -119,7 +124,7 @@ export function StoneBench({ me, refresh, onClose }: { me: Me; refresh(): Promis
             <span className="bench-made">
               <span className="bench-arrow" aria-hidden>→</span>
               <StoneTile stone={made} label={stoneName(made)} />
-              <span><strong>{stoneName(made)}</strong><br /><span className="muted small-note">{made.map((id) => ZONE_MODS[id].name).join(", ")}</span></span>
+              <span><strong>{stoneName(made)}</strong><br /><span className="muted small-note">{made.map((id) => modName(id)).join(", ")}</span></span>
             </span>
           )}
         </div>
@@ -144,11 +149,11 @@ export function StoneBench({ me, refresh, onClose }: { me: Me; refresh(): Promis
                   const needs = Object.entries(cost.resources) as [string, number][];
                   const can = gold >= cost.gold && needs.every(([kind, n]) => has(kind, n));
                   return (
-                    <li key={id} className={ZONE_MODS[id].kind}>
+                    <li key={id} className={modEffect(id).kind}>
                       <span>
-                        <strong>{ZONE_MODS[id].name}</strong> <span className="muted">· {ZONE_MODS[id].kind === "map" ? "the ground" : "the enemy"}</span>
+                        <strong>{modName(id)}</strong> <span className="muted">· {modSide(id)}</span>
                         <br />
-                        <span className="small-note">{ZONE_MODS[id].blurb}</span>
+                        <span className="small-note">{modEffect(id).blurb}</span>
                       </span>
                       <button className="small" disabled={busy || !can} title={can ? "It is spent from your pack" : "You have not the gold and materials for it in your pack"} onClick={() => void run(() => api.benchAttune(stoneKey(one), id))}>
                         {cost.gold} gold, {needs.map(([kind, n]) => `${n} ${label("resource", kind).toLowerCase()}`).join(", ")}
@@ -157,6 +162,37 @@ export function StoneBench({ me, refresh, onClose }: { me: Me; refresh(): Promis
                   );
                 })}
               </ul>
+            )
+          ) : (
+            <p className="muted">Lay a lodestone on the bench.</p>
+          )
+        )}
+
+        {work === "temper" && (
+          one ? (
+            one.some((id) => !temperProblem(one, id)) ? (
+              <ul className="bench-mods">
+                {one.filter((id) => !temperProblem(one, id)).map((id) => {
+                  const cost = temperCost(id);
+                  const needs = Object.entries(cost.resources) as [string, number][];
+                  const can = gold >= cost.gold && needs.every(([kind, n]) => has(kind, n));
+                  const next = modToken(modOf(id)!.id, modOf(id)!.rank + 1);
+                  return (
+                    <li key={id} className={modEffect(id).kind}>
+                      <span>
+                        <strong>{modName(id)} → {modName(next)}</strong> <span className="muted">· {modSide(id)}</span>
+                        <br />
+                        <span className="small-note">{modEffect(next).blurb}</span>
+                      </span>
+                      <button className="small" disabled={busy || !can} title={can ? "It is spent from your pack" : "You have not the gold and materials for it in your pack"} onClick={() => void run(() => api.benchTemper(stoneKey(one), id))}>
+                        {cost.gold} gold, {needs.map(([kind, n]) => `${n} ${label("resource", kind).toLowerCase()}`).join(", ")}
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            ) : (
+              <p className="muted">{one.length === 0 ? "A plain lodestone carries nothing to temper." : "Nothing it carries can be raised any further."}</p>
             )
           ) : (
             <p className="muted">Lay a lodestone on the bench.</p>

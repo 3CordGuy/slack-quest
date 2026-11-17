@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 import { RESOURCE_KINDS } from "./hut";
 import { STONE_MODS, cleanStone, type Lodestone } from "./lodestone";
 import { makeRng } from "./rng";
-import { ATTUNE_MATERIALS, FUSE_COUNT, attuneCost, attuneProblem, attuned, fuse, fuseProblem, reroll, rerollCost, rerollProblem } from "./stonecraft";
-import { ZONE_MODS, ZONE_MOD_IDS } from "./zone/mods";
+import { ATTUNE_MATERIALS, FUSE_COUNT, attuneCost, attuneProblem, attuned, fuse, fuseProblem, reroll, rerollCost, rerollProblem, temperCost, temperProblem, tempered } from "./stonecraft";
+import { ZONE_MODS, ZONE_MOD_IDS, modEffect } from "./zone/mods";
 
 describe("fusing lodestones", () => {
   it("takes three that carry the same number of things, and less than a stone can", () => {
@@ -36,7 +36,7 @@ describe("fusing lodestones", () => {
       const ground = fuse(rng, [["fouled", "hardy"], ["frozen", "swift"], ["slick", "savage"]]);
       expect(ground.length).toBe(3);
       expect(cleanStone(ground)).toEqual(ground);
-      expect(ground.filter((id) => ZONE_MODS[id].hazard).length).toBeLessThanOrEqual(1);
+      expect(ground.filter((m) => modEffect(m).hazard).length).toBeLessThanOrEqual(1);
     }
   });
 });
@@ -82,5 +82,48 @@ describe("rerolling a lodestone", () => {
         expect(made.join("+")).not.toBe(stone.join("+"));
       }
     }
+  });
+});
+
+describe("ranks and rarity at the bench", () => {
+  it("attuning is dearer for what is rarer, and a boon takes a gem", () => {
+    expect(attuneCost([], "numerous").gold).toBeGreaterThan(attuneCost([], "hardy").gold);
+    expect(attuneCost([], "hardy").gold).toBeGreaterThan(attuneCost([], "tangled").gold);
+    expect(attuneCost([], "lodebearing").gold).toBeGreaterThan(attuneCost([], "gilded").gold);
+    for (const id of ["gilded", "storied", "laden", "lodebearing"] as const) expect(ATTUNE_MATERIALS[id].gem, id).toBeGreaterThan(0);
+    // A thing is attuned at its first rank, whatever rank the rest are at.
+    expect(attuned(["hardy2"], "gilded")).toEqual(["hardy2", "gilded"]);
+    expect(attuneProblem(["hardy2"], "hardy")).toMatch(/already/);
+    expect(attuneProblem([], "hardy2")).toMatch(/no such thing/);
+  });
+
+  it("tempering raises one thing a stone carries by a rank, for far more than attuning it cost, and no further than it goes", () => {
+    expect(temperProblem(["hardy", "swift"], "hardy")).toBeNull();
+    expect(tempered(["hardy", "swift"], "hardy")).toEqual(["hardy2", "swift"]);
+    expect(tempered(["hardy2", "swift"], "hardy2")).toEqual(["hardy3", "swift"]);
+    expect(temperProblem(["hardy3"], "hardy3")).toMatch(/as much of it/);
+    expect(temperProblem(["swift2"], "swift2")).toMatch(/as much of it/);
+    expect(temperProblem(["hardy"], "savage")).toMatch(/does not carry/);
+    expect(temperProblem(["hardy2"], "hardy")).toMatch(/does not carry/);
+    expect(temperProblem(["hardy"], 3)).toMatch(/does not carry/);
+    for (const id of ZONE_MOD_IDS) {
+      const first = temperCost(id);
+      expect(first.gold, id).toBeGreaterThan(attuneCost([], id).gold * 2);
+      expect(first.resources.gem, id).toBeGreaterThanOrEqual(2);
+      const second = modEffect(id).more!.length > 1 ? temperCost(`${id}2` as `${typeof id}2`) : null;
+      if (second) expect(second.gold, id).toBeGreaterThan(first.gold);
+    }
+  });
+
+  it("fusing keeps the ranks of what goes in, and rerolling keeps them so far as the new things have them", () => {
+    for (let i = 0; i < 100; i++) {
+      const made = fuse(makeRng(i + 9), [["hardy3"], ["hardy3"], ["hardy3"]]);
+      expect(made).toContain("hardy3");
+      const again = reroll(makeRng(i + 9), ["hardy3", "savage3"]);
+      expect(again.length).toBe(2);
+      expect(cleanStone(again)).toEqual(again);
+      for (const mod of again) expect(modEffect(mod).rank).toBe(Math.min(3, 1 + (ZONE_MODS[modEffect(mod).id].more?.length ?? 0)));
+    }
+    expect(rerollCost(["hardy3"])).toBeGreaterThan(rerollCost(["hardy"]));
   });
 });

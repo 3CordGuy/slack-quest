@@ -3,7 +3,7 @@ import { hexDistance } from "@gantt-quest/core";
 import { ATLAS_HOME, ATLAS_SPACING, atlasCell, atlasClime, atlasLevel, atlasModCount, atlasNode, atlasNodeById, atlasOpen, atlasView, nodeOptions, type AtlasCell, type AtlasNode } from "./atlas";
 import { CLIMES } from "./map";
 import { ENEMIES } from "./content";
-import { ZONE_MODS, createZone, generateZone, standInHero, stepZone, zoneOptions, zoneReach } from "./zone";
+import { ZONE_MODS, createZone, generateZone, modEffect, standInHero, stepZone, zoneOptions, zoneReach } from "./zone";
 
 const SEEDS = ["CREWAA", "CREWBB", "ZGHPQH"];
 const ring = (c: AtlasCell) => (Math.abs(c.q) + Math.abs(c.r) + Math.abs(c.q + c.r)) / 2;
@@ -107,9 +107,9 @@ describe("the chart", () => {
         expect(n.mods.length).toBeGreaterThanOrEqual(lo);
         expect(n.mods.length).toBeLessThanOrEqual(hi);
         expect(new Set(n.mods).size).toBe(n.mods.length);
-        expect(n.mods.filter((id) => ZONE_MODS[id].hazard).length).toBeLessThanOrEqual(1);
+        expect(n.mods.filter((m) => modEffect(m).hazard).length).toBeLessThanOrEqual(1);
         // A sea cave's ground is the caverns' own: nothing that changes the ground is rolled there.
-        if (n.kind === "seacave") for (const id of n.mods) expect(ZONE_MODS[id].kind).toBe("enemy");
+        if (n.kind === "seacave") for (const m of n.mods) expect(modEffect(m).kind).toBe("enemy");
       }
     }
     const far = nodes("CREWAA", 9).filter((n) => n.ring >= 7);

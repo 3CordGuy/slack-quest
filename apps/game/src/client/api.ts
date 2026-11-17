@@ -271,6 +271,7 @@ export const api = {
   /** Work lodestones at the bench, out of your pack: fuse three (each as it is sent) into one, attune one to a modifier, or reroll one. */
   benchFuse: (stones: string[]) => request<{ made: Lodestone; lodestones: HeldStone[] }>("/api/atlas/bench", { op: "fuse", stones }),
   benchAttune: (stone: string, mod: string) => request<{ made: Lodestone; lodestones: HeldStone[] }>("/api/atlas/bench", { op: "attune", stone, mod }),
+  benchTemper: (stone: string, mod: string) => request<{ made: Lodestone; lodestones: HeldStone[] }>("/api/atlas/bench", { op: "temper", stone, mod }),
   benchReroll: (stone: string) => request<{ made: Lodestone; lodestones: HeldStone[] }>("/api/atlas/bench", { op: "reroll", stone }),
   /** Cut a plain lodestone from stone and iron, into your pack. */
   cutStone: () => request<{ lodestones: HeldStone[] }>("/api/atlas/cut", {}),

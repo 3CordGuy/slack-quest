@@ -5,10 +5,10 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { beforeEach, describe, expect, it } from "vitest";
-import { ATLAS_HOME, PLAIN_STONE_COST, STACK_MAX, TOWN_CHEST_COLS, TOWN_CHEST_ROWS, atlasNodeById, attuneCost, chestRowCost, needsStone, rerollCost, stoneItem, type ZoneModId, type ZoneOptions } from "@gantt-quest/world";
+import { ATLAS_HOME, PLAIN_STONE_COST, STACK_MAX, TOWN_CHEST_COLS, TOWN_CHEST_ROWS, atlasNodeById, attuneCost, chestRowCost, modsOf, needsStone, rerollCost, stoneItem, temperCost, type ZoneMod, type ZoneOptions } from "@gantt-quest/world";
 import { atlasSeed, chartFor, clearNode, devClearNode, devResetChart, enterProblem, openNode } from "../src/server/atlas";
 import { applyZoneGrant } from "../src/server/db";
-import { attuneStone, cutStone, fuseStones, gainStone, lodestonesOf, rerollStone } from "../src/server/lodestones";
+import { attuneStone, cutStone, fuseStones, gainStone, lodestonesOf, rerollStone, temperStone } from "../src/server/lodestones";
 import { chestAddRow, chestFor, chestPut, chestTake } from "../src/server/townchest";
 import { CAVE_IDLE_MS, getZoneRow } from "../src/server/zones";
 
@@ -61,7 +61,7 @@ const first = (crew = CREW) => home(crew).links[0];
 const beyond = (from: string, crew = CREW) => atlasNodeById(atlasSeed(crew), from)!.links.find((id) => atlasNodeById(atlasSeed(crew), id)!.ring === 2)!;
 const states = async (crew = CREW) => new Map((await chartFor(db, crew)).nodes.map((n) => [n.id, n.state]));
 /** Put a lodestone in someone's pack: a plain one, or one that carries these. */
-const give = (who: string, stone: ZoneModId[] = []) =>
+const give = (who: string, stone: ZoneMod[] = []) =>
   sql.prepare("INSERT INTO consumables (player_id, kind, qty) VALUES (?, ?, 1) ON CONFLICT(player_id, kind) DO UPDATE SET qty = qty + 1").run(who, stoneItem(stone));
 /** Set out for a place, with a plain lodestone in its slot where it needs one. */
 const went = async (node: unknown, crew = CREW, by = "ann", party = 2) => {
@@ -386,5 +386,39 @@ describe("the lodestone bench", () => {
     give("ann");
     expect(await rerollStone(db, "ann", "")).toMatch(/nothing to change/);
     expect(await count("ann")).toBe(2);
+  });
+});
+
+describe("ranks and boons", () => {
+  const hand = (who: string, kind: string, qty: number) => sql.prepare("INSERT INTO resources (player_id, kind, qty) VALUES (?, ?, ?) ON CONFLICT(player_id, kind) DO UPDATE SET qty = qty + excluded.qty").run(who, kind, qty);
+
+  it("tempers one thing a stone carries up a rank, for gold, its material and gems; and no further than it goes", async () => {
+    give("ann", ["hardy", "swift"]);
+    const cost = temperCost("hardy");
+    sql.prepare("UPDATE characters SET gold = ? WHERE player_id = 'ann'").run(cost.gold);
+    // Not without the gems.
+    for (const [kind, qty] of Object.entries(cost.resources)) if (kind !== "gem") hand("ann", kind, qty!);
+    expect(await temperStone(db, "ann", "hardy+swift", "hardy")).toMatch(/no longer have/);
+    hand("ann", "gem", cost.resources.gem!);
+    expect(await temperStone(db, "ann", "hardy+swift", "hardy")).toEqual({ made: ["hardy2", "swift"] });
+    expect(await lodestonesOf(db, "ann")).toEqual([{ stone: ["hardy2", "swift"], qty: 1 }]);
+    expect((sql.prepare("SELECT gold FROM characters WHERE player_id = 'ann'").get() as { gold: number }).gold).toBe(0);
+    // What cannot be: a thing it does not carry, the rank it used to have, a stone not held.
+    expect(await temperStone(db, "ann", "hardy2+swift", "savage")).toMatch(/does not carry/);
+    expect(await temperStone(db, "ann", "hardy2+swift", "hardy")).toMatch(/does not carry/);
+    expect(await temperStone(db, "ann", "hardy+swift", "hardy")).toMatch(/no longer have/);
+    give("ann", ["swift2"]);
+    expect(await temperStone(db, "ann", "swift2", "swift2")).toMatch(/as much of it/);
+  });
+
+  it("a stone's ranks and boons go onto the map made with it, over the place's own", async () => {
+    const node = first();
+    give("ann", ["hardy2", "gilded"]);
+    const a = await openNode(db, CREW, "ann", node, 2, "gilded+hardy2");
+    if ("error" in a) throw new Error(a.error);
+    const options = JSON.parse((await getZoneRow(db, a.code))!.options_json) as ZoneOptions;
+    expect(options.mods).toEqual(["hardy2", "gilded"]);
+    expect(modsOf(options)).toMatchObject({ hp: 1.65, gold: 0.33 });
+    expect((await chartFor(db, CREW)).nodes.find((n) => n.id === node)!.stone).toEqual(["hardy2", "gilded"]);
   });
 });

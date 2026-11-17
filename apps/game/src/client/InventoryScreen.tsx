@@ -82,7 +82,9 @@ import {
   type Slot,
   type Throwable,
   type TradeSide,
-  ZONE_MODS,
+  modEffect,
+  modName,
+  modSide,
   stoneName,
   type Lodestone,
 } from "@gantt-quest/world";
@@ -1045,9 +1047,9 @@ function LodestoneDetail({ stone, total }: { stone: Lodestone; total: number }) 
         <ul className="stone-carries">
           {stone.map((id) => (
             <li key={id}>
-              <strong>{ZONE_MODS[id].name}</strong> <span className="muted">· {ZONE_MODS[id].kind === "map" ? "the ground" : "the enemy"}</span>
+              <strong>{modName(id)}</strong> <span className="muted">· {modSide(id)}</span>
               <br />
-              <span className="muted">{ZONE_MODS[id].blurb}</span>
+              <span className="muted">{modEffect(id).blurb}</span>
             </li>
           ))}
         </ul>

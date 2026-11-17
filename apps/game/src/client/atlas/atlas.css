@@ -28,6 +28,7 @@
 .atlas-glance i { width: 7px; height: 7px; border: 1px solid #0d1020; rotate: 45deg; }
 .atlas-glance i.map { background: #46b3bd; }
 .atlas-glance i.enemy { background: #e0453a; }
+.atlas-glance i.boon { background: #f4c64e; }
 .atlas-there { padding: 0 5px; font-weight: bold; color: #fff; background: #c0392b; border-radius: 7px; }
 /* From a long way up, only the place picked and the one pointed at keep what is written under them. */
 .atlas-view.crowded .atlas-tag:not(.picked):not(.pointed) .atlas-glance { display: none; }
@@ -68,6 +69,7 @@
 .atlas-own { display: inline-flex; gap: 5px; margin-left: auto; }
 .atlas-own i { width: 9px; height: 9px; rotate: 45deg; border: 1px solid #0d1020; background: #46b3bd; cursor: help; }
 .atlas-own i.enemy { background: #e0453a; }
+.atlas-own i.boon { background: #f4c64e; }
 .atlas-bounty strong { color: var(--gold, #f4c64e); }
 .atlas-go { display: flex; align-items: center; gap: 8px; }
 .atlas-even { font-family: var(--font-head, serif); color: var(--gold, #f4c64e); }
@@ -99,6 +101,7 @@
 .atlas-stone-card ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 .atlas-stone-card li { padding: 4px 7px; border: 1px solid var(--line); border-left: 4px solid #46b3bd; }
 .atlas-stone-card li.enemy { border-left-color: #e0453a; }
+.atlas-stone-card li.boon { border-left-color: #f4c64e; }
 .atlas-stone-card li.spent { opacity: 0.55; }
 .atlas-stone-card .small-note { font-size: 12px; color: var(--muted); }
 /* What kind of place it is. */

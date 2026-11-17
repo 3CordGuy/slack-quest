@@ -39,7 +39,7 @@ import type { HexPos } from "@gantt-quest/core";
 import type { Clime } from "./map";
 import { makeRng, seedFromString, type Rng } from "./rng";
 import { BIOME_LEADS, zoneOptions } from "./zone/gen";
-import { ZONE_MODS, ZONE_MOD_IDS, cleanMods, type ZoneModId } from "./zone/mods";
+import { PERIL_IDS, ZONE_MODS, cleanMods, modOf, rollMod, type ZoneMod, type ZoneModId } from "./zone/mods";
 import type { ZoneBiome, ZoneOptions } from "./zone/types";
 
 /** A cell of the chart, in axial hex coordinates. The Harbor is at 0,0. */
@@ -65,7 +65,8 @@ export interface AtlasNode {
   ring: number;
   /** The level of what stands on it. */
   level: number;
-  mods: ZoneModId[];
+  /** The perils it carries of its own (zone/mods.ts). A place has no boons of its own: those come on a lodestone. */
+  mods: ZoneMod[];
   /** The nodes its routes run to. */
   links: string[];
 }
@@ -276,20 +277,22 @@ export function atlasModCount(ring: number): [number, number] {
   return ring <= 1 ? [0, 0] : ring <= 3 ? [0, 1] : ring <= 6 ? [1, 2] : [1, 3];
 }
 
-/** The modifiers a node carries: a few picked from those that suit it, one kind of ground at most. */
-function rollMods(rng: Rng, ring: number, kind: AtlasNodeKind): ZoneModId[] {
+/** The perils a node carries: a few picked by weight from those that suit it, one kind of ground at most, at ranks its ring can show. */
+function rollMods(rng: Rng, ring: number, kind: AtlasNodeKind): ZoneMod[] {
   const [lo, hi] = atlasModCount(ring);
   const want = rng.int(lo, hi);
   // A sea cave's ground is the caverns' own: only what changes the enemy means anything there.
-  const pool = ZONE_MOD_IDS.filter((id) => kind !== "seacave" || ZONE_MODS[id].kind === "enemy");
+  const pool = PERIL_IDS.filter((id) => kind !== "seacave" || ZONE_MODS[id].kind === "enemy");
   const out: ZoneModId[] = [];
+  const picked: ZoneMod[] = [];
   for (let tries = 0; out.length < want && tries < 24; tries++) {
-    const id = rng.pick(pool);
-    if (out.includes(id) || (ZONE_MODS[id].hazard && out.some((o) => ZONE_MODS[o].hazard))) continue;
-    out.push(id);
+    const mod = rollMod(rng, pool, ring, (id) => !out.includes(id) && !(ZONE_MODS[id].hazard && out.some((o) => ZONE_MODS[o].hazard)));
+    if (!mod) break;
+    out.push(modOf(mod)!.id);
+    picked.push(mod);
   }
   // In the order they are listed, so the same set always reads the same.
-  return ZONE_MOD_IDS.filter((id) => out.includes(id));
+  return cleanMods(picked);
 }
 
 /** The node in a cell of a chart. The same seed and cell always give the same node. */
@@ -377,16 +380,17 @@ export const atlasTier = (node: Pick<AtlasNode, "ring" | "kind">): number => Mat
  * the modifiers set the rest. The nodes beside the Harbor are small and gentle. `more` is what a lodestone
  * set into the node adds to its own modifiers (lodestone.ts: `stoneOn(node, stone).added`).
  */
-export function nodeOptions(seed: string, node: AtlasNode, party: number, more: readonly ZoneModId[] = []): ZoneOptions {
+export function nodeOptions(seed: string, node: AtlasNode, party: number, more: readonly ZoneMod[] = []): ZoneOptions {
   const rng = rngFor(seed, "lay", node.id);
   const near = node.ring <= 1;
   const base = { party, level: node.level, threat: near ? 1 : 2, mods: cleanMods([...node.mods, ...more]), tier: atlasTier(node), name: node.name, clime: node.clime };
   if (node.kind === "seacave") return zoneOptions({ ...base, size: "medium", biome: "caves", delve: true });
   // High, broken ground: whoever holds the top has the best of it.
   if (node.kind === "lookout") return zoneOptions({ ...base, size: "medium", biome: node.biome, groups: rng.int(2, 3), elevation: 3, obstacles: 1, clear: 4 });
-  // The beast itself, which stands alone, and a band of whatever else lives on that ground.
+  // The beast itself, which stands alone, and a band of whatever else lives on that ground (more bands than one,
+  // if a peril adds them: never a second beast).
   if (node.kind === "lair") {
-    return zoneOptions({ ...base, size: "medium", biome: node.biome, groups: 2, kinds: [LAIR_BEAST[node.biome], rng.pick(BIOME_LEADS[node.biome])], elevation: rng.int(1, 2), obstacles: rng.int(1, 2), clear: 4 });
+    return zoneOptions({ ...base, size: "medium", biome: node.biome, groups: 2, kinds: [LAIR_BEAST[node.biome], ...[0, 1, 2].map(() => rng.pick(BIOME_LEADS[node.biome]))], elevation: rng.int(1, 2), obstacles: rng.int(1, 2), clear: 4 });
   }
   return zoneOptions({
     ...base,

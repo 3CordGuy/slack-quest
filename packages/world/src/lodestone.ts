@@ -4,10 +4,11 @@
 // A lodestone is an item, a hero's own, carried in the pack. To set out for
 // a place on the atlas beyond the Harbor's own country, someone must put one
 // into the place's slot: it is spent as the map is made. A plain lodestone
-// does no more than that. One that carries modifiers (zone/mods.ts: what
-// changes a map's ground or whoever stands on it; up to three) adds what it
-// carries to what the place already has: the map made there is harder, and
-// its bounty the richer for it.
+// does no more than that. One that carries modifiers (zone/mods.ts; up to
+// three) adds what it carries to what the place already has. A peril makes
+// the map made there harder, and its bounty the bigger for it; a boon makes
+// nothing harder, and is more of one thing in the bounty. A stone is found
+// carrying whatever it carries, wanted or not: not every stone is a good one.
 //
 // They are found in the bounty of a place cleared (zone/loot.ts), each hero
 // their own, more often and carrying more the further out the place lies.
@@ -23,10 +24,10 @@
 import type { AtlasNode } from "./atlas";
 import type { Resources } from "./hut";
 import type { Rng } from "./rng";
-import { MAX_MODS, ZONE_MODS, ZONE_MOD_IDS, type ZoneModId } from "./zone/mods";
+import { MAX_BOONS, MAX_MODS, ZONE_MODS, ZONE_MOD_IDS, modOf, modToken, rollMod, type ZoneMod, type ZoneModId } from "./zone/mods";
 
-/** What a lodestone carries: nothing (a plain one), or up to `STONE_MODS` modifiers. */
-export type Lodestone = ZoneModId[];
+/** What a lodestone carries: nothing (a plain one), or up to `STONE_MODS` modifiers, each at its rank. */
+export type Lodestone = ZoneMod[];
 
 /** The most a stone carries. */
 export const STONE_MODS = 3;
@@ -37,10 +38,11 @@ export const PLAIN_STONE_COST: Resources = { stone: 4, iron: 2 };
 export function cleanStone(raw: unknown): Lodestone | null {
   const list = typeof raw === "string" ? (raw === "" ? [] : raw.split("+")) : Array.isArray(raw) ? raw : null;
   if (!list || list.length > STONE_MODS) return null;
-  if (!list.every((id): id is ZoneModId => typeof id === "string" && id in ZONE_MODS) || new Set(list).size !== list.length) return null;
+  const mods = list.map(modOf);
+  if (mods.some((m) => !m) || new Set(mods.map((m) => m!.id)).size !== mods.length) return null;
   // One kind of ground at most: a second would only be painted over the first.
-  if (list.filter((id) => ZONE_MODS[id].hazard).length > 1) return null;
-  return ZONE_MOD_IDS.filter((id) => list.includes(id));
+  if (mods.filter((m) => ZONE_MODS[m!.id].hazard).length > 1) return null;
+  return ZONE_MOD_IDS.flatMap((id) => mods.filter((m) => m!.id === id).map((m) => modToken(id, m!.rank)));
 }
 
 /** A stone as it is sent. */
@@ -65,34 +67,49 @@ export const needsStone = (node: Pick<AtlasNode, "ring" | "kind">): boolean => n
 /** How likely a hero is to find a stone in the bounty of a place this many rings out. */
 export const stoneChance = (tier: number): number => Math.min(0.9, 0.5 + 0.03 * tier);
 
-/** A stone as one is found in a bounty: one modifier near the Harbor, up to three far out. */
+/**
+ * A stone as one is found in a bounty: one thing on it near the Harbor, up to three far out, each picked by its
+ * weight from perils and boons alike (so the best are the rarest), at a rank that ring can show.
+ */
 export function rollStone(rng: Rng, tier: number): Lodestone {
   const most = tier <= 3 ? 1 : tier <= 7 ? 2 : STONE_MODS;
   // More often one fewer than the most it could carry: the best are rare.
   const want = Math.max(1, most - (rng.chance(0.6) ? 1 : 0));
-  const out: ZoneModId[] = [];
+  const ids: ZoneModId[] = [];
+  const out: ZoneMod[] = [];
   for (let tries = 0; out.length < want && tries < 24; tries++) {
-    const id = rng.pick(ZONE_MOD_IDS);
-    if (out.includes(id) || (ZONE_MODS[id].hazard && out.some((o) => ZONE_MODS[o].hazard))) continue;
-    out.push(id);
+    const mod = rollMod(rng, ZONE_MOD_IDS, tier, (id) => !ids.includes(id) && !(ZONE_MODS[id].hazard && ids.some((o) => ZONE_MODS[o].hazard)));
+    if (!mod) break;
+    ids.push(modOf(mod)!.id);
+    out.push(mod);
   }
-  return ZONE_MOD_IDS.filter((id) => out.includes(id));
+  return cleanStone(out)!;
 }
 
 /**
  * What a stone does to a place it is set into: what of it takes (`added`), and everything the place then
- * carries (`mods`). What the place has already does not take twice; a second kind of ground does not take
- * over the first; under the earth, in a sea cave, only what changes the enemy takes; and a place carries so
- * much and no more. A stone none of which takes still opens the place: it is only the poorer spent.
+ * carries (`mods`). What the place has already does not take twice, unless the stone's is of a higher rank,
+ * which takes its place; a second kind of ground does not take over the first; under the earth, in a sea
+ * cave, nothing that changes the ground takes; and a place carries so many perils and so many boons, and no
+ * more. A stone none of which takes still opens the place: it is only the poorer spent.
  */
-export function stoneOn(node: Pick<AtlasNode, "mods" | "kind">, stone: Lodestone): { mods: ZoneModId[]; added: ZoneModId[] } {
-  const added: ZoneModId[] = [];
-  for (const id of stone) {
+export function stoneOn(node: Pick<AtlasNode, "mods" | "kind">, stone: Lodestone): { mods: ZoneMod[]; added: ZoneMod[] } {
+  const rank = new Map<ZoneModId, number>(node.mods.map((m) => [modOf(m)!.id, modOf(m)!.rank]));
+  const side = (boon: boolean) => [...rank.keys()].filter((id) => (ZONE_MODS[id].kind === "boon") === boon).length;
+  const added: ZoneMod[] = [];
+  for (const mod of stone) {
+    const { id, rank: at } = modOf(mod)!;
     const def = ZONE_MODS[id];
-    if (node.mods.includes(id) || node.mods.length + added.length >= MAX_MODS) continue;
-    if (node.kind === "seacave" && def.kind !== "enemy") continue;
-    if (def.hazard && [...node.mods, ...added].some((o) => ZONE_MODS[o].hazard)) continue;
-    added.push(id);
+    if (node.kind === "seacave" && def.kind === "map") continue;
+    const had = rank.get(id);
+    if (had !== undefined) {
+      if (at <= had) continue;
+    } else {
+      if (def.hazard && [...rank.keys()].some((o) => ZONE_MODS[o].hazard)) continue;
+      if (side(def.kind === "boon") >= (def.kind === "boon" ? MAX_BOONS : MAX_MODS)) continue;
+    }
+    rank.set(id, at);
+    added.push(mod);
   }
-  return { added, mods: ZONE_MOD_IDS.filter((id) => node.mods.includes(id) || added.includes(id)) };
+  return { added, mods: ZONE_MOD_IDS.filter((id) => rank.has(id)).map((id) => modToken(id, rank.get(id)!)) };
 }

@@ -33,7 +33,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { hexDistance, type HexPos } from "@gantt-quest/core";
-import { ATLAS_HOME, ATLAS_SPACING, ATLAS_VIEW, LAIR_RINGS, PLAIN_STONE_COST, ZONE_MODS, atlasNodeById, atlasTier, atlasWorld, bountyPay, modsOf, needsStone, stoneKey, stoneName, stoneOn, type AtlasNode, type Lodestone, type ResourceKind } from "@gantt-quest/world";
+import { ATLAS_HOME, ATLAS_SPACING, ATLAS_VIEW, LAIR_RINGS, PLAIN_STONE_COST, modEffect, modName, modSide, atlasNodeById, atlasTier, atlasWorld, bountyPay, modsOf, needsStone, stoneKey, stoneName, stoneOn, type AtlasNode, type Lodestone, type ResourceKind } from "@gantt-quest/world";
 import { api, type Chart, type ChartNode, type Me } from "../api";
 import { useAudioScene } from "../audio/useAudioScene";
 import { Icon } from "../items";
@@ -262,7 +262,7 @@ export function AtlasView({ me, refresh, onLeave }: { me: Me; refresh(): Promise
       look: n.state,
       ...(known(n) && (n.kind === "lookout" || n.kind === "lair") ? { crown: n.kind } : {}),
       // A mote for everything odd about it, what a lodestone has added among them.
-      ...(known(n) && n.state === "open" ? { motes: stoneOn(n, n.stone ?? []).mods.map((id) => ZONE_MODS[id].kind), busy: !!n.zone, danger: Math.min(1.2, (n.level - 1) * 0.12) } : {}),
+      ...(known(n) && n.state === "open" ? { motes: stoneOn(n, n.stone ?? []).mods.map((id) => modEffect(id).kind), busy: !!n.zone, danger: Math.min(1.2, (n.level - 1) * 0.12) } : {}),
     }));
     layer.current?.set(marks, routes.list, rise);
     if (looked.current) return;
@@ -362,7 +362,9 @@ export function AtlasView({ me, refresh, onLeave }: { me: Me; refresh(): Promise
       setBusy(false);
     }
   };
-  const pay = shown && shown.kind !== "harbor" ? bountyPay(atlasTier(shown), modsOf({ mods: carried.mods }).pay) : null;
+  // The harder the map, the better it pays; and its boons are a share more of that.
+  const sum = modsOf({ mods: carried.mods });
+  const pay = shown && shown.kind !== "harbor" ? bountyPay(atlasTier(shown), sum.pay, sum) : null;
   const remember = (id: string | null) => {
     try {
       if (id) sessionStorage.setItem(FOCUS_KEY, id);
@@ -428,7 +430,7 @@ export function AtlasView({ me, refresh, onLeave }: { me: Me; refresh(): Promise
                   <span className="atlas-level">Lv {n.level}</span>
                   {n.kind === "lair" && <span className="atlas-what lair">Lair</span>}
                   {n.kind === "lookout" && <span className="atlas-what lookout">Lookout</span>}
-                  {stoneOn(n, n.stone ?? []).mods.map((id) => <i key={id} className={ZONE_MODS[id].kind} />)}
+                  {stoneOn(n, n.stone ?? []).mods.map((id) => <i key={id} className={modEffect(id).kind} />)}
                   {n.zone && <span className="atlas-there">{n.here?.length ? `${n.here.length} there` : "begun"}</span>}
                 </span>
               )}
@@ -478,7 +480,7 @@ export function AtlasView({ me, refresh, onLeave }: { me: Me; refresh(): Promise
                   {/* What is odd about the place itself, told by pointing at each. */}
                   {shown.state === "open" && shown.mods.length > 0 && (
                     <span className="atlas-own">
-                      {shown.mods.map((id) => <i key={id} className={ZONE_MODS[id].kind} title={`${ZONE_MODS[id].name}: ${ZONE_MODS[id].blurb}`} />)}
+                      {shown.mods.map((id) => <i key={id} className={modEffect(id).kind} title={`${modName(id)}: ${modEffect(id).blurb}`} />)}
                     </span>
                   )}
                 </p>
@@ -557,10 +559,10 @@ export function AtlasView({ me, refresh, onLeave }: { me: Me; refresh(): Promise
                     {over.map((id) => {
                       const takes = begun || stoneOn(shown, over).added.includes(id);
                       return (
-                        <li key={id} className={`${ZONE_MODS[id].kind} ${takes ? "" : "spent"}`}>
-                          <strong>{ZONE_MODS[id].name}</strong> <span className="muted">· {ZONE_MODS[id].kind === "map" ? "the ground" : "the enemy"}{takes ? "" : " · will not take here"}</span>
+                        <li key={id} className={`${modEffect(id).kind} ${takes ? "" : "spent"}`}>
+                          <strong>{modName(id)}</strong> <span className="muted">· {modSide(id)}{takes ? "" : " · will not take here"}</span>
                           <br />
-                          <span className="small-note">{ZONE_MODS[id].blurb}</span>
+                          <span className="small-note">{modEffect(id).blurb}</span>
                         </li>
                       );
                     })}

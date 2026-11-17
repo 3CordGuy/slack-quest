@@ -7,7 +7,7 @@
 // cleared, and it breathes, with a beam standing up out of it so it can be
 // found from a long way off (taller the more dangerous it is, and gold while
 // some of the crew are there). What is odd about it circles its stone as
-// motes: teal for the ground, red for the enemy. Green is somewhere the crew
+// motes: teal for the ground, red for the enemy, gold for a boon. Green is somewhere the crew
 // has cleared: its stone has settled onto the dais and burns low and steady.
 // A lookout has three pale spires standing round its dais, and a lair a ring
 // of short dark thorns, so each can be told from a landfall at a glance.
@@ -37,7 +37,7 @@ export interface AtlasMark {
   hex: HexPos;
   look: AtlasLook;
   /** What is odd about it, for somewhere open: a mote each, circling its stone. */
-  motes?: ("map" | "enemy")[];
+  motes?: ("map" | "enemy" | "boon")[];
   /** Some of the crew are there now. */
   busy?: boolean;
   /** How much taller than the least its beam stands, from 0: the more dangerous, the taller. */
@@ -64,7 +64,7 @@ const LOOKS: Record<AtlasLook, { ring: string; stone: string; pool: number; halo
   fogged: { ring: "#3a445e", stone: "#3a445e", pool: 0, halo: 0, size: 0.74 },
 };
 const ROUTE_COLOR: Record<AtlasRoute["kind"], string> = { sailed: "#fff3d0", open: "#8fd0ff", fog: "#465070" };
-const MOTE_COLOR = { map: "#5fe6e0", enemy: "#ff6a5c" };
+const MOTE_COLOR = { map: "#5fe6e0", enemy: "#ff6a5c", boon: "#ffd24a" };
 const GOLD = new THREE.Color("#ffd772");
 const WHITE = new THREE.Color("#ffffff");
 /** How far apart a route's dashes are laid, in world units, and how far short of a place they stop. */

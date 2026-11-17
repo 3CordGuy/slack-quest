@@ -65,7 +65,7 @@ import {
   type ZoneEvent,
   type ZoneState,
   type ZoneView as ZoneViewState,
-  ZONE_MODS,
+  modName,
   stoneName,
 } from "@gantt-quest/world";
 import { api, type Me } from "./api";
@@ -545,7 +545,7 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
           ...(ev.torches ? [ev.torches === 1 ? "a torch" : `${ev.torches} torches`] : []),
           ...(ev.blueprint ? ["a blueprint"] : []),
           ...(ev.furnishing ? [ev.furnishing] : []),
-          ...(ev.stone ? [`a ${stoneName(ev.stone).toLowerCase()} (${ev.stone.map((id) => ZONE_MODS[id].name).join(", ")}) for the crew's case`] : []),
+          ...(ev.stone ? [`a ${stoneName(ev.stone).toLowerCase()} (${ev.stone.map((id) => modName(id)).join(", ")}) for the crew's case`] : []),
         ];
         // A crate pays no XP: only what was in it is told.
         if (ev.xp > 0) say(`${name(ev.id)} earns ${ev.xp} XP${found.length > 0 ? ` and takes ${found.join(", ")}` : ""}.`);

@@ -11,7 +11,8 @@ import { solid } from "./geometry";
 import { EXPLORE_ROUND_MS, enemyHp, enemyMove, enemyStrikes } from "./kit";
 import { bountyPay } from "./loot";
 import { cleanStone, stoneChance } from "../lodestone";
-import { MAX_MODS, ZONE_MODS, ZONE_MOD_IDS, cleanMods, modsOf, type ZoneModId } from "./mods";
+import { BOON_IDS, MAX_BOONS, MAX_MODS, PERIL_IDS, ZONE_MODS, ZONE_MOD_IDS, cleanMods, modEffect, modName, modOf, modRanks, modToken, modsOf, rollMod, type ZoneModId } from "./mods";
+import { makeRng } from "../rng";
 import { diceAverage } from "./rules";
 import { createZone, standInHero, stepZone } from "./zone";
 import type { Unit, ZoneAction, ZoneEffect, ZoneEvent, ZoneState } from "./types";
@@ -31,8 +32,14 @@ function must(state: ZoneState, action: ZoneAction, events: ZoneEvent[] = [], ef
 
 describe("a map's modifiers", () => {
   it("are made safe: the ones there are, each once, one kind of ground at most; and none leaves the options as they were", () => {
-    expect(cleanMods(["hardy", "hardy", "nonsense", "smouldering", "fouled", "swift", 7])).toEqual(["hardy", "smouldering", "swift"]);
-    expect(cleanMods(ZONE_MOD_IDS).length).toBe(MAX_MODS);
+    // In the modifiers' own order, whatever order they came in.
+    expect(cleanMods(["hardy", "hardy", "nonsense", "smouldering", "fouled", "swift", 7])).toEqual(["smouldering", "hardy", "swift"]);
+    // So many perils and so many boons, and no more.
+    expect(cleanMods(ZONE_MOD_IDS).length).toBe(MAX_MODS + MAX_BOONS);
+    expect(cleanMods(PERIL_IDS).length).toBe(MAX_MODS);
+    expect(cleanMods(BOON_IDS).length).toBe(MAX_BOONS);
+    // A rank is part of what is carried: the highest given is kept, and one a modifier has not got is nothing.
+    expect(cleanMods(["hardy2", "hardy", "savage3", "swift3", "gilded2"])).toEqual(["hardy2", "savage3", "gilded2"]);
     expect(cleanMods("hardy")).toEqual([]);
     expect(zoneOptions({ mods: ["hardy", "nope"] }).mods).toEqual(["hardy"]);
     expect(zoneOptions({ mods: [] })).toEqual(DEFAULT_ZONE_OPTIONS);
@@ -42,14 +49,69 @@ describe("a map's modifiers", () => {
   });
 
   it("add up to nothing when there are none, and each names what it changes", () => {
-    expect(modsOf({})).toEqual({ obstacles: 0, elevation: 0, groups: 0, hp: 1, edge: 0, move: 0, extras: 0, pay: 0 });
+    expect(modsOf({})).toEqual({ obstacles: 0, elevation: 0, groups: 0, patches: 1, hp: 1, edge: 0, move: 0, extras: 0, pay: 0, gold: 0, xp: 0, gear: 0, stones: 0 });
     expect(modsOf({ mods: ["hardy", "savage", "swift", "numerous"] })).toMatchObject({ hp: 1.3, edge: 1, move: 1, extras: 1 });
     expect(modsOf({ mods: ["sprawling", "frozen"] })).toMatchObject({ size: "large", groups: 1, hazard: "ice" });
     for (const id of ZONE_MOD_IDS) {
-      expect(ZONE_MODS[id].pay, id).toBeGreaterThan(0);
       expect(ZONE_MODS[id].blurb.length, id).toBeGreaterThan(10);
+      expect(ZONE_MODS[id].weight, id).toBeGreaterThan(0);
       expect(modsOf({ mods: [id] }).pay).toBe(ZONE_MODS[id].pay);
     }
+    // A peril makes the map harder and pays for it; a boon makes nothing harder, and is more of something in the bounty.
+    for (const id of PERIL_IDS) expect(ZONE_MODS[id].pay, id).toBeGreaterThan(0);
+    for (const id of BOON_IDS) {
+      const sum = modsOf({ mods: [id] });
+      expect(sum.pay, id).toBe(0);
+      expect({ ...sum, gold: 0, xp: 0, gear: 0, stones: 0 }, id).toEqual(modsOf({}));
+      expect(sum.gold + sum.xp + sum.gear + sum.stones, id).toBeGreaterThan(0);
+    }
+  });
+
+  it("have ranks: the same thing, more so, and better paid", () => {
+    for (const id of ZONE_MOD_IDS) {
+      expect(modRanks(id), id).toBeGreaterThanOrEqual(2);
+      let last = modsOf({ mods: [id] });
+      for (let rank = 2; rank <= modRanks(id); rank++) {
+        const mod = modToken(id, rank);
+        expect(modOf(mod)).toEqual({ id, rank });
+        expect(modName(mod)).toBe(`${ZONE_MODS[id].name} ${["", "", "II", "III"][rank]}`);
+        const sum = modsOf({ mods: [mod] });
+        // More of whatever it is: nothing it does is less than the rank below did.
+        for (const key of ["obstacles", "elevation", "groups", "patches", "hp", "edge", "move", "extras", "pay", "gold", "xp", "gear", "stones"] as const) expect(sum[key], `${mod} ${key}`).toBeGreaterThanOrEqual(last[key]);
+        expect(JSON.stringify(sum), mod).not.toBe(JSON.stringify(last));
+        if (ZONE_MODS[id].kind !== "boon") expect(sum.pay, mod).toBeGreaterThan(last.pay);
+        expect(modEffect(mod).blurb, mod).not.toBe(ZONE_MODS[id].blurb);
+        last = sum;
+      }
+      // No rank past its last.
+      expect(modOf(`${id}${modRanks(id) + 1}`), id).toBeNull();
+      expect(modToken(id, 9)).toBe(modToken(id, modRanks(id)));
+    }
+    expect(modName("hardy")).toBe("Hardy");
+    expect(modOf("hardy1")).toBeNull();
+    expect(modOf("nonsense2")).toBeNull();
+  });
+
+  it("are rolled by weight, so the ones worth most are the rarest, and at higher ranks only far out", () => {
+    const count: Record<string, number> = {};
+    const ranks = { near: new Set<number>(), far: new Set<number>() };
+    for (let i = 0; i < 6000; i++) {
+      const rng = makeRng(i * 7919 + 3);
+      const mod = rollMod(rng, ZONE_MOD_IDS, 12)!;
+      count[modOf(mod)!.id] = (count[modOf(mod)!.id] ?? 0) + 1;
+      ranks.far.add(modOf(mod)!.rank);
+      ranks.near.add(modOf(rollMod(rng, ZONE_MOD_IDS, 2)!)!.rank);
+    }
+    expect(Object.keys(count).sort()).toEqual([...ZONE_MOD_IDS].sort());
+    // The commonest turn up several times as often as the rarest.
+    expect(count.tangled).toBeGreaterThan(count.numerous * 2);
+    expect(count.slick).toBeGreaterThan(count.lodebearing * 3);
+    expect(count.hardy).toBeGreaterThan(count.numerous);
+    expect([...ranks.near]).toEqual([1]);
+    expect([...ranks.far].sort()).toEqual([1, 2, 3]);
+    // Only what fits is picked; and nothing, where nothing fits.
+    for (let i = 0; i < 50; i++) expect(modOf(rollMod(makeRng(i), ZONE_MOD_IDS, 1, (id) => id === "swift")!)!.id).toBe("swift");
+    expect(rollMod(makeRng(1), ZONE_MOD_IDS, 1, () => false)).toBeNull();
   });
 
   it("Hardy: everything takes a third more killing, on the very same map", () => {

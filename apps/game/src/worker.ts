@@ -80,7 +80,7 @@ import { apothecaryView, brew, brewFlask, buyFromKeeper, galleyKeeperView, haggl
 import { cook } from "./server/galley";
 import { announceXp, harborXpFor } from "./server/harbor-xp";
 import { chartFor, devClearNode, devResetChart, enterProblem, openNode } from "./server/atlas";
-import { attuneStone, cutStone, fuseStones, gainStone, lodestonesOf, rerollStone } from "./server/lodestones";
+import { attuneStone, cutStone, fuseStones, gainStone, lodestonesOf, rerollStone, temperStone } from "./server/lodestones";
 import { chestAddRow, chestFor, chestPut, chestTake } from "./server/townchest";
 import { createZoneRow, crewPlaces, getZoneRow, openCave, teleportTo } from "./server/zones";
 import {
@@ -1012,8 +1012,8 @@ app.post("/api/atlas/cut", async (c) => {
   return problem ? c.json({ error: problem }, 409) : c.json({ lodestones: await lodestonesOf(c.env.DB, player.id) });
 });
 
-// The lodestone bench: fuse three stones into one that carries more, attune a stone to one more thing, or
-// reroll what a stone carries. All out of the asker's own pack. Answers with the stone made and the pack's stones.
+// The lodestone bench: fuse three stones into one that carries more, attune a stone to one more thing, temper
+// one thing a stone carries up a rank, or reroll what a stone carries. All out of the asker's own pack. Answers with the stone made and the pack's stones.
 app.post("/api/atlas/bench", async (c) => {
   const player = c.get("player");
   const character = await getCharacter(c.env.DB, player.id);
@@ -1022,6 +1022,7 @@ app.post("/api/atlas/bench", async (c) => {
   const done =
     body.op === "fuse" ? await fuseStones(c.env.DB, player.id, body.stones)
     : body.op === "attune" ? await attuneStone(c.env.DB, player.id, body.stone, body.mod)
+    : body.op === "temper" ? await temperStone(c.env.DB, player.id, body.stone, body.mod)
     : body.op === "reroll" ? await rerollStone(c.env.DB, player.id, body.stone)
     : "There is no such work at the bench.";
   if (typeof done === "string") return c.json({ error: done }, 409);

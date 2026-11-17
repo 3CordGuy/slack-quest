@@ -228,7 +228,7 @@ export function generateZone(seed: string, asked: ZoneOptions): ZonePlan {
     const posts = groups.flatMap((g) => g.posts);
     const fits = (p: HexPos) => !rim(p) && !solid(at(p)) && at(p).biome !== "water" && hexDistance(p, start) > options.clear + 1 && !posts.some((post) => hexDistance(post, p) <= 1);
     surfaces = {};
-    for (let i = 0; i < count(HAZARD_PATCHES); i++) {
+    for (let i = 0; i < count(HAZARD_PATCHES * mods.patches); i++) {
       for (const p of clump(dice.pick(inner), dice.int(HAZARD_SIZE[0], HAZARD_SIZE[1]), dice)) {
         if (fits(p)) surfaces[posKey(p)] = { kind: mods.hazard, rounds: LASTING_ROUNDS, by: null, lasting: true };
       }

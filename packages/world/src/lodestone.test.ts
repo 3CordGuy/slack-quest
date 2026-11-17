@@ -2,9 +2,9 @@ import { describe, expect, it } from "vitest";
 import { atlasNode, atlasTier, nodeOptions, type AtlasNode } from "./atlas";
 import { PLAIN_STONE_COST, STONE_MODS, cleanStone, needsStone, rollStone, stoneChance, stoneItem, stoneKey, stoneName, stoneOfItem, stoneOn } from "./lodestone";
 import { makeRng } from "./rng";
-import { MAX_MODS, ZONE_MODS, ZONE_MOD_IDS, bountyPay, modsOf, type ZoneModId } from "./zone";
+import { MAX_MODS, ZONE_MODS, ZONE_MOD_IDS, bountyPay, modOf, modsOf, type ZoneMod, type ZoneModId } from "./zone";
 
-const place = (mods: ZoneModId[], kind: AtlasNode["kind"] = "landfall") => ({ mods, kind });
+const place = (mods: ZoneMod[], kind: AtlasNode["kind"] = "landfall") => ({ mods, kind });
 
 describe("a lodestone", () => {
   it("is the list of what it carries, in the modifiers' own order, however it was written down", () => {
@@ -102,5 +102,53 @@ describe("a lair's bounty", () => {
   it("is paid as a place some rings further out", () => {
     expect(atlasTier({ ring: 4, kind: "lair" })).toBeGreaterThan(atlasTier({ ring: 4, kind: "landfall" }));
     expect(atlasTier({ ring: 0, kind: "landfall" })).toBe(1);
+  });
+});
+
+describe("a stone that carries ranks and boons", () => {
+  it("raises what a place has of its own to the stone's rank, and never lowers it", () => {
+    expect(stoneOn(place(["hardy"]), ["hardy2"])).toEqual({ added: ["hardy2"], mods: ["hardy2"] });
+    expect(stoneOn(place(["hardy2"]), ["hardy"])).toEqual({ added: [], mods: ["hardy2"] });
+    expect(stoneOn(place(["hardy2"]), ["hardy2", "savage3"])).toEqual({ added: ["savage3"], mods: ["hardy2", "savage3"] });
+    expect(cleanStone("savage3+hardy2")).toEqual(["hardy2", "savage3"]);
+    // A rank a thing has not got, or the same thing at two ranks, is no stone.
+    expect(cleanStone("swift3")).toBeNull();
+    expect(cleanStone("hardy+hardy2")).toBeNull();
+  });
+
+  it("lays its boons on any place, a sea cave too, beside its perils and not in their room", () => {
+    const full: ZoneModId[] = ["tangled", "hardy", "savage", "swift"];
+    expect(stoneOn(place(full), ["gilded", "storied2"]).added).toEqual(["gilded", "storied2"]);
+    expect(stoneOn(place([], "seacave"), ["tangled", "gilded"]).added).toEqual(["gilded"]);
+    expect(stoneName(["gilded"])).toBe("Dull lodestone");
+  });
+
+  it("makes the bounty richer by its boons, and by more on a harder map", () => {
+    const plain = bountyPay(4, 0);
+    const gilded = bountyPay(4, 0, modsOf({ mods: ["gilded"] }));
+    expect(gilded.gold[0]).toBeGreaterThan(plain.gold[0]);
+    expect(gilded.xp).toBe(plain.xp);
+    expect(bountyPay(4, 0, modsOf({ mods: ["storied2"] })).xp).toBeGreaterThan(bountyPay(4, 0, modsOf({ mods: ["storied"] })).xp);
+    expect(bountyPay(4, 0, modsOf({ mods: ["laden"] })).gear).toBeGreaterThan(plain.gear);
+    // The harder the map, the better it pays: and a boon is a share of that.
+    const hard = modsOf({ mods: ["hardy3", "gilded"] });
+    const gain = (share: number, sum: ReturnType<typeof modsOf>) => bountyPay(4, share, sum).gold[0] - bountyPay(4, share).gold[0];
+    expect(gain(hard.pay, hard)).toBeGreaterThan(gain(0, modsOf({ mods: ["gilded"] })));
+  });
+
+  it("is found carrying perils or boons, by weight: most carry a peril, and a boon is the rarer find", () => {
+    let [perils, boons, ranked] = [0, 0, 0];
+    for (let i = 0; i < 1500; i++) {
+      for (const mod of rollStone(makeRng(i * 13 + 1), 12)) {
+        if (ZONE_MODS[modOf(mod)!.id].kind === "boon") boons++;
+        else perils++;
+        if (modOf(mod)!.rank > 1) ranked++;
+      }
+    }
+    expect(boons).toBeGreaterThan(100);
+    expect(perils).toBeGreaterThan(boons * 2);
+    expect(ranked).toBeGreaterThan(100);
+    // Near the Harbor nothing is above its first rank.
+    for (let i = 0; i < 300; i++) for (const mod of rollStone(makeRng(i), 2)) expect(modOf(mod)!.rank).toBe(1);
   });
 });

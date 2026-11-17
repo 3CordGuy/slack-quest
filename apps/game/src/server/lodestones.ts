@@ -23,7 +23,11 @@ import {
   stoneItem,
   stoneKey,
   stoneOfItem,
+  temperCost,
+  temperProblem,
+  tempered,
   type Lodestone,
+  type ZoneMod,
   type ZoneModId,
 } from "@gantt-quest/world";
 import { carryState, packHasRoomSql, spendStatements } from "./db";
@@ -127,6 +131,20 @@ export async function attuneStone(db: D1Database, playerId: string, raw: unknown
   if (problem) return problem;
   const made = attuned(stone, mod as ZoneModId);
   const cost = attuneCost(stone, mod as ZoneModId);
+  const used = new Map([[stoneItem(stone), 1]]);
+  const spend = spendStatements(db, playerId, cost.gold, cost.resources, await benchGuard(db, playerId, used, made));
+  const res = await db.batch([...spend, ...benchSwap(db, playerId, used, made)]);
+  return res[res.length - 1].meta.changes > 0 ? { made } : NO_LONGER;
+}
+
+/** Raise one thing a lodestone from the pack carries by a rank, for gold, its material and gems. Returns why not, or the stone made. */
+export async function temperStone(db: D1Database, playerId: string, raw: unknown, mod: unknown): Promise<string | { made: Lodestone }> {
+  const stone = cleanStone(raw);
+  if (!stone) return "That is no lodestone.";
+  const problem = temperProblem(stone, mod);
+  if (problem) return problem;
+  const made = tempered(stone, mod as ZoneMod);
+  const cost = temperCost(mod as ZoneMod);
   const used = new Map([[stoneItem(stone), 1]]);
   const spend = spendStatements(db, playerId, cost.gold, cost.resources, await benchGuard(db, playerId, used, made));
   const res = await db.batch([...spend, ...benchSwap(db, playerId, used, made)]);
