@@ -20,7 +20,7 @@ describe("cleanHeroName", () => {
 
 describe("heroName (stock generator)", () => {
   const env = { AI_MODE: "mock" } as unknown as Env;
-  const input = { className: "Tidewall Paladin", blurb: "Tough front-liner." };
+  const input = { className: "Lighthouse Paladin", blurb: "Tough front-liner." };
 
   it("gives a harbor first name and a two-part sea surname that passes the filter", async () => {
     for (let i = 0; i < 50; i++) {

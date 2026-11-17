@@ -53,7 +53,7 @@ export const WARLOCK_BLEED_TURNS = 2;
 export const HERO_CLASSES: HeroClass[] = [
   {
     id: "qa_paladin",
-    name: "Tidewall Paladin",
+    name: "Lighthouse Paladin",
     blurb: "Tough front-liner. Hits hard with Strength and shrugs off blows.",
     weapons: ["mace", "greatsword"],
     signature: "ballast_flail",
@@ -97,7 +97,7 @@ export const HERO_CLASSES: HeroClass[] = [
   },
   {
     id: "sre_warden",
-    name: "Lighthouse Warden",
+    name: "Tidewall Warden",
     blurb: "The wall. Draws every blow onto itself and hits back with Strength and the weight of its armor.",
     weapons: ["pager_axe", "maul"],
     signature: "lamp_hook",

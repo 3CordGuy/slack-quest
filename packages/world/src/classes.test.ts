@@ -107,7 +107,7 @@ describe("class passives", () => {
   });
 });
 
-describe("Lighthouse Warden", () => {
+describe("Tidewall Warden", () => {
   it("starts every fight guarded, and keeps the guard through its first turn until its second", () => {
     for (let seed = 0; seed < 20; seed++) {
       const rng = makeRng(seed);

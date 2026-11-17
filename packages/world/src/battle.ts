@@ -169,7 +169,7 @@ export function createBattle(setup: BattleSetup, rng: Rng): { state: BattleState
       down: false,
     };
   });
-  // The Lighthouse Warden comes into every fight already guarded (see advance for how long it lasts).
+  // The Tidewall Warden comes into every fight already guarded (see advance for how long it lasts).
   const combatants: Combatant[] = [
     ...setup.heroes.map((h) => {
       const down = h.hp <= 0;
@@ -378,7 +378,7 @@ function advance(state: BattleState, rng: Rng, events: BattleEvent[]) {
     actor.turns = (actor.turns ?? 0) + 1;
 
     // Guard and taunt last until the start of the combatant's next turn. The
-    // Lighthouse Warden's opening guard holds through its first turn, to its second.
+    // Tidewall Warden's opening guard holds through its first turn, to its second.
     const keepGuard = actor.kind === "sre_warden" && actor.side === "hero" && firstTurn;
     actor.effects = actor.effects.filter((e) => e.kind !== "taunting" && (keepGuard || e.kind !== "guarded"));
     for (const e of [...actor.effects]) {

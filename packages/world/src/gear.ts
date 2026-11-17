@@ -161,7 +161,7 @@ const GARB: { slot: "helmet" | "body" | "legs" | "boots"; ref: string; name: str
   { slot: "boots", ref: "garb_shoes", name: "Shoes", icon: "boots" },
 ];
 
-/** A new hero's starting clothes, named for their class ("Tidewall Paladin Tunic"). */
+/** A new hero's starting clothes, named for their class ("Lighthouse Paladin Tunic"). */
 export function starterGarb(classId: string): ItemDef[] {
   const cls = heroClass(classId);
   return GARB.map((g) => ({
