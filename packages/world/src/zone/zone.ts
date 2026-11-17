@@ -182,7 +182,8 @@ function pullIn(ctx: Ctx): void {
   const enc = ctx.state.encounter;
   if (!enc) return;
   for (const hero of standing(ctx.state, "hero")) {
-    if (enc.order.includes(hero.id) || !drawnIn(ctx.state, enc, hero)) continue;
+    // Nobody is dragged into a fight while their player is not there to play it.
+    if (hero.away || enc.order.includes(hero.id) || !drawnIn(ctx.state, enc, hero)) continue;
     enter(ctx, enc, hero);
     ctx.events.push({ t: "fight_join", id: hero.id });
   }
@@ -324,8 +325,9 @@ function endTurn(unit: Unit): void {
  * If the fight is decided, end it. Won: the fallen heroes get up on 1 HP and the enemy dead are cleared
  * away. Lost: the heroes wake at the start on 1 HP, and the enemy are back at their posts, healed.
  * Fled (every hero still standing got away, and none is left in it): nobody wins. The enemy go back to
- * their posts as hurt as they were, and those of them that fell stay fallen. It never costs more than
- * losing: nobody is moved or hurt, and nothing is paid.
+ * their posts and bind their wounds, but those of them that fell stay fallen: fleeing gets a party out,
+ * and what it killed stays killed, but it is no way to wear a band down. It never costs more than losing:
+ * nobody is moved or hurt, and nothing is paid.
  */
 function settle(ctx: Ctx): boolean {
   const { state } = ctx;
@@ -364,13 +366,17 @@ function settle(ctx: Ctx): boolean {
       ctx.events.push({ t: "spoils", id: h.id, xp, resources });
     }
   } else if (fled) {
-    // Nobody left to fight: back to their posts, wounds and all, ready to turn on whoever they see next.
+    // Nobody left to fight: back to their posts, whole again, ready to turn on whoever they see next. The dead stay dead.
     const groups = new Set(foes.map((f) => f.group));
     for (const g of groups) if (g && state.groups[g]) state.groups[g].alerted = false;
     const back = state.units.filter((u) => u.side === "enemy" && !u.down && groups.has(u.group));
     const was = new Map(back.map((f) => [f.id, f.pos]));
     // Off the board for a moment, so each finds its own post, or the nearest free hex if a hero stands on it.
-    for (const f of back) f.pos = { q: -99, r: -99 };
+    for (const f of back) {
+      f.hp = f.maxHp;
+      f.conditions = [];
+      f.pos = { q: -99, r: -99 };
+    }
     for (const f of back) {
       const post = f.home ?? was.get(f.id)!;
       f.pos = freeHexNear(state.map, post, (p) => !!unitAt(state, p) || blockerAt(state, p), (p) => tileAt(state.map, p)) ?? was.get(f.id)!;
@@ -545,8 +551,18 @@ function dev(ctx: Ctx, by: string, op: DevOp): string | null {
 
 function act(ctx: Ctx, action: ZoneAction): string | null {
   const { state } = ctx;
+  if (action.type === "away") {
+    for (const u of state.units) {
+      if (u.side !== "hero" || (u.id !== action.player && u.controller !== action.player)) continue;
+      if (action.away) u.away = true;
+      else delete u.away;
+    }
+    return null;
+  }
   if (action.type === "join") {
     const hero = action.hero;
+    // Back on the map: their hero, and the stand-ins they play, are here again.
+    for (const u of state.units) if (u.id === hero.id || u.controller === hero.id) delete u.away;
     const here = unitById(state, hero.id);
     if (here) {
       // What their pack holds is what they carry, fight or no fight.

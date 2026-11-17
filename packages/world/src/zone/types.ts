@@ -67,6 +67,12 @@ export interface Unit {
   home?: HexPos;
   /** A stand-in crewmate: the player who plays its turns. */
   controller?: string;
+  /**
+   * A hero whose player is not on the map (their last connection to it closed): nothing draws them into a
+   * fight, and no enemy blow meant for a fight lands on them. A fight they were already in goes on with them in it.
+   * Set by the server; cleared when the player comes back.
+   */
+  away?: boolean;
 }
 
 export type SurfaceKind = "poison" | "fire" | "oil" | "water" | "ice" | "slime";
@@ -231,6 +237,8 @@ export type ZoneAction =
   | { type: "time"; now: number }
   | { type: "end_turn"; by: string; unit: string }
   | { type: "timeout" }
+  /** The server's own, never a client's: a player has left the map (their last connection closed), or (false) is back. Their hero and stand-ins are `away`. */
+  | { type: "away"; player: string; away: boolean }
   /** The server's own, never a client's: what a hero carries to drink or throw, as their pack holds it now. */
   | { type: "stock"; unit: string; items: Partial<Record<Throwable, number>> }
   | { type: "dev"; by: string; dev: DevOp };

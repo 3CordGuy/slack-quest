@@ -7,10 +7,10 @@ import { walk } from "./combat";
 import { attackContext, type Ctx } from "./engine";
 import { ALERT_RANGE, DEFAULT_ZONE_OPTIONS, JOIN_RANGE, generateZone, zoneOptions } from "./gen";
 import { adjacent, blast, flies, sees, solid, zoneReach } from "./geometry";
-import { ENEMY_KIT, EXPLORE_ROUND_MS, FLEE_RANGE, LIGHT_RADIUS, SHIELD_SET_ASIDE, TACTICS, TORCH_GROUND_ROUNDS, TORCH_HELD_ROUNDS, TORCH_ROUND_MS, commonCost, enemyHp, enemyStrikes, tacticOf } from "./kit";
+import { ENEMY_BURST, ENEMY_KIT, EXPLORE_ROUND_MS, FLEE_RANGE, LIGHT_RADIUS, SHIELD_SET_ASIDE, TACTICS, TORCH_GROUND_ROUNDS, TORCH_HELD_ROUNDS, TORCH_ROUND_MS, commonCost, enemyHp, enemyStrikes, tacticOf } from "./kit";
 import { MAX_CATCHUP_ROUNDS } from "./clock";
 import { defenceOf } from "./engine";
-import { checkAbility, crateBlow } from "./combat";
+import { checkAbility, crateBlow, enemyAct } from "./combat";
 import { d20, diceAverage, diceFor, heroMove, hitChance } from "./rules";
 import { createZone, ensureMouth, standInHero, stepZone, zoneView } from "./zone";
 import { DELVE_CRATES, generateDelve } from "./delve";
@@ -1118,10 +1118,11 @@ describe("fleeing", () => {
     expect(stepZone(rogue, flee()).ok).toBe(true);
   });
 
-  it("ends the fight with nobody winning when the last hero gets away: nothing paid, nobody moved, the enemy home as hurt as they were", () => {
+  it("ends the fight with nobody winning when the last hero gets away: nothing paid, nobody moved, the enemy home and whole again", () => {
     let { state, foe } = duel("bandit", "qa_paladin", at(3, 6), at(9, 6));
     const bandit = unit(state, foe);
     bandit.hp -= 4;
+    bandit.conditions.push({ kind: "bleeding", rounds: 3 });
     bandit.pos = at(7, 6);
     unit(state, "ann").hp -= 3;
     unit(state, "ann").cooldowns = { smite: 2 };
@@ -1137,8 +1138,8 @@ describe("fleeing", () => {
     expect(state.encounter).toBeNull();
     // No worse off than losing: where she stood, as hurt as she was, never knocked down to 1 HP.
     expect(unit(state, "ann")).toMatchObject({ pos: before.pos, hp: before.hp, down: false, cooldowns: {} });
-    // The bandit is back at its post, wounds and all, and has stopped looking.
-    expect(unit(state, foe)).toMatchObject({ pos: at(9, 6), hp: bandit.maxHp - 4, down: false });
+    // The bandit is back at its post with its wounds bound, so fleeing is no way to wear it down, and has stopped looking.
+    expect(unit(state, foe)).toMatchObject({ pos: at(9, 6), hp: bandit.maxHp, down: false, conditions: [] });
     expect(state.groups.g1.alerted).toBe(false);
     // She walks free, and walking right up to it again starts a new fight.
     state = must(state, { type: "move", by: "ann", unit: "ann", to: at(6, 6) });
@@ -1251,7 +1252,7 @@ describe("fleeing", () => {
     expect(unit(state, wolf)).toMatchObject({ hp: unit(state, wolf).maxHp, pos: at(9, 6) });
   });
 
-  it("leaves the enemy who fell fallen, and finds a post taken by a hero the nearest free hex", () => {
+  it("leaves the enemy who fell fallen, heals the rest, and finds a post taken by a hero the nearest free hex", () => {
     let state = board();
     state.aiOff = true;
     hero(state, "ann", "qa_paladin", at(3, 6));
@@ -1262,6 +1263,7 @@ describe("fleeing", () => {
     Object.assign(unit(state, fallen.id), { hp: 0, down: true });
     // The other has come out to her: she has got round it to stand on its post.
     unit(state, other.id).pos = at(5, 3);
+    unit(state, other.id).hp = 2;
     unit(state, "ann").pos = at(9, 4);
     const step = stepZone(state, flee());
     if (!step.ok) throw new Error(step.error);
@@ -1269,7 +1271,46 @@ describe("fleeing", () => {
     expect(step.state.units.some((u) => u.id === fallen.id)).toBe(false);
     const back = step.state.units.find((u) => u.id === other.id)!;
     expect(hexDistance(back.pos, at(9, 4))).toBe(1);
+    expect(back.hp).toBe(back.maxHp);
     expect(unit(step.state, "ann").pos).toEqual(at(9, 4));
+  });
+
+  it("draws nobody whose player has left into a fight, nor lets its blows land on them, until they come back", () => {
+    let state = board();
+    state.aiOff = true;
+    hero(state, "ann", "qa_paladin", at(3, 6));
+    hero(state, "bo", "qa_paladin", at(3, 8));
+    const mate = hero(state, "s1", "devops_mage", at(2, 9));
+    mate.controller = "bo";
+    const ogre = enemy(state, "ogre", at(4, 7));
+    expect([hexDistance(ogre.pos, at(3, 6)), hexDistance(ogre.pos, at(3, 8))]).toEqual([ENEMY_BURST, ENEMY_BURST]);
+    // Bo has gone, and the stand-in Bo plays with him.
+    state = must(state, { type: "away", player: "bo", away: true });
+    expect([unit(state, "bo").away, unit(state, "s1").away, unit(state, "ann").away]).toEqual([true, true, undefined]);
+    state = provoke(state);
+    expect(state.encounter!.order).toEqual(expect.arrayContaining(["ann", ogre.id]));
+    expect(state.encounter!.order).not.toContain("bo");
+    expect(state.encounter!.order).not.toContain("s1");
+    // The ogre stamps the ground: Ann, in the fight, is caught; Bo, beside her and not in it, is not.
+    const stomp = enemyStrikes("ogre", 1).find((s) => s.burst)!;
+    const events: ZoneEvent[] = [];
+    const ctx: Ctx = { state: structuredClone(state), rng: makeRng(3), events, effects: [] };
+    enemyAct(ctx, unit(ctx.state, ogre.id), stomp, null);
+    expect(events.some((e) => (e.t === "hit" || e.t === "roll") && ("target" in e ? e.target === "ann" : e.roll.id === "ann"))).toBe(true);
+    expect(events.some((e) => (e.t === "hit" && e.target === "bo") || (e.t === "roll" && e.roll.id === "bo"))).toBe(false);
+    // He comes back: he is here again, and near the fight he is in it.
+    const back: ZoneEvent[] = [];
+    state = must(state, { type: "join", hero: standInHero("qa_paladin", "bo", 1)! }, back);
+    expect(unit(state, "bo").away).toBeUndefined();
+    expect(unit(state, "s1").away).toBeUndefined();
+    expect(back).toContainEqual({ t: "fight_join", id: "bo" });
+    expect(state.encounter!.order).toContain("s1");
+  });
+
+  it("keeps a hero whose player leaves in the middle of a fight in it", () => {
+    let { state } = pair();
+    state = must(state, { type: "away", player: "ann", away: true });
+    expect(state.encounter!.order).toContain("ann");
   });
 
   it("keeps its own rules through whole fights where heroes run off and get caught again", () => {

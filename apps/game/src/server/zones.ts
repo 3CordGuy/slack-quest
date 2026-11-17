@@ -102,6 +102,18 @@ export async function crewPlaces(db: D1Database, crewId: string): Promise<CrewPl
   return members.results.map((m) => ({ ...m, zone: away.get(m.id) ?? null }));
 }
 
+/**
+ * A teleport to crewmate `to`, as `me` would make it: the zone they are on (null for the Harbor), or why not.
+ * Nobody drops into someone else's fight, and nobody slips out of their own that way: they flee it first.
+ */
+export function teleportTo(places: CrewPlace[], me: string, to: unknown): { zone: string | null; name: string } | { error: string; status: 400 | 409 } {
+  const friend = places.find((m) => m.id === to);
+  if (!friend || friend.id === me) return { error: "Pick a crewmate.", status: 400 };
+  if (places.find((m) => m.id === me)?.zone?.fighting) return { error: "You are in a fight: flee it first, or see it through.", status: 409 };
+  if (friend.zone?.fighting) return { error: `${friend.name} is in a fight. Wait for it to end, or walk in from the map.`, status: 409 };
+  return { zone: friend.zone?.code ?? null, name: friend.name };
+}
+
 /** 'fight' while one is on, 'cleared' once no enemy is left on the map and nothing is left to open, else 'open'. */
 export function zoneStatus(state: ZoneState): "open" | "fight" | "cleared" {
   if (state.encounter) return "fight";

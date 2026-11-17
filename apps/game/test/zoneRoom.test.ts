@@ -10,7 +10,7 @@ import { DatabaseSync } from "node:sqlite";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { hexDistance } from "@gantt-quest/core";
 import { ALERT_RANGE, EXPLORE_ROUND_MS, zoneOptions, type ZoneEvent, type ZoneState, type ZoneView } from "@gantt-quest/world";
-import { CAVE_IDLE_MS, createZoneRow, crewPlaces, openCave } from "../src/server/zones";
+import { CAVE_IDLE_MS, createZoneRow, crewPlaces, openCave, teleportTo } from "../src/server/zones";
 
 const globals = globalThis as Record<string, unknown>;
 globals.WebSocketRequestResponsePair = class {
@@ -257,6 +257,27 @@ describe("ZoneRoom", () => {
     expect(presence("ann")).toBeUndefined();
   });
 
+  it("marks a hero whose player has left the map as away, so nothing pulls them into a fight, and not once they are back", async () => {
+    const { code, zone, ann } = await arrive();
+    expect(hero(saved(code), "ann").away).toBeUndefined();
+    ann.close();
+    await zone.webSocketClose(ann as unknown as WebSocket, 1000);
+    expect(hero(saved(code), "ann").away).toBe(true);
+    expect(presence("ann")).toBeUndefined();
+    const again = await connect(zone, code, "ann");
+    expect(hero(again.state, "ann").away).toBeUndefined();
+    expect(hero(saved(code), "ann").away).toBeUndefined();
+  });
+
+  it("sends nobody to a crewmate from the middle of their own fight, or into someone else's", () => {
+    const place = (id: string, zone: { code: string; fighting: boolean } | null) => ({ id, name: id.toUpperCase(), classId: "qa_paladin", level: 1, zone });
+    expect(teleportTo([place("ann", { code: "AAAA", fighting: false }), place("bo", { code: "BBBB", fighting: false })], "ann", "bo")).toEqual({ zone: "BBBB", name: "BO" });
+    expect(teleportTo([place("ann", { code: "AAAA", fighting: true }), place("bo", { code: "BBBB", fighting: false })], "ann", "bo")).toMatchObject({ status: 409, error: expect.stringMatching(/flee it first/) });
+    expect(teleportTo([place("ann", { code: "AAAA", fighting: true }), place("bo", null)], "ann", "bo")).toMatchObject({ status: 409 });
+    expect(teleportTo([place("ann", null), place("bo", { code: "BBBB", fighting: true })], "ann", "bo")).toMatchObject({ status: 409, error: expect.stringMatching(/BO is in a fight/) });
+    expect(teleportTo([place("ann", null)], "ann", "ann")).toMatchObject({ status: 400 });
+  });
+
   it("puts someone who teleports to a crewmate beside them, unless that crewmate is in a fight", async () => {
     const { code, zone, ann } = await arrive();
     const far = ann.state.map.tiles.find((t) => hexDistance(t, ann.state.start) === 3 && t.biome === "plains")!;
@@ -467,6 +488,7 @@ describe("ZoneRoom", () => {
     expect(zoneActionFrom({ type: "move", unit: "ann", to: { q: "1", r: 2 } }, "ann", true)).toBeNull();
     expect(zoneActionFrom({ type: "join", hero: {} }, "ann", true)).toBeNull();
     expect(zoneActionFrom({ type: "timeout" }, "ann", true)).toBeNull();
+    expect(zoneActionFrom({ type: "away", player: "bo", away: true }, "ann", true)).toBeNull();
     expect(zoneActionFrom({ type: "move", by: "bo", unit: "ann", to: { q: 1, r: 2, extra: true } }, "ann", true)).toEqual({ type: "move", by: "ann", unit: "ann", to: { q: 1, r: 2 } });
     expect(zoneActionFrom("move", "ann", true)).toBeNull();
   });

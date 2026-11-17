@@ -79,7 +79,7 @@ import { consumablesOf } from "./server/consumables";
 import { apothecaryView, brew, brewFlask, buyFromKeeper, haggle, smithItem, smithyView } from "./server/workshops";
 import { cook, galleyView } from "./server/galley";
 import { announceXp, harborXpFor } from "./server/harbor-xp";
-import { createZoneRow, crewPlaces, getZoneRow, openCave } from "./server/zones";
+import { createZoneRow, crewPlaces, getZoneRow, openCave, teleportTo } from "./server/zones";
 import {
   checkImport,
   checkOverride,
@@ -982,13 +982,12 @@ app.get("/api/crew/places", async (c) => {
 
 // Teleport to a crewmate: says where to go. The zone they are on, if they are on one and not in a
 // fight (nobody drops into a fight); the Harbor (zone null) if they are not out on a zone at all.
+// Not from the middle of a fight of your own: that is left by fleeing it (teleportTo).
 app.post("/api/crew/teleport", async (c) => {
   const body = await c.req.json<{ to?: string }>().catch(() => ({}) as { to?: string });
   const crew = await crewFor(c.env.DB, c.get("player").id);
-  const friend = crew ? (await crewPlaces(c.env.DB, crew.id)).find((m) => m.id === body.to) : undefined;
-  if (!friend || friend.id === c.get("player").id) return c.json({ error: "Pick a crewmate." }, 400);
-  if (friend.zone?.fighting) return c.json({ error: `${friend.name} is in a fight. Wait for it to end, or walk in from the map.` }, 409);
-  return c.json({ zone: friend.zone?.code ?? null, name: friend.name });
+  const go = teleportTo(crew ? await crewPlaces(c.env.DB, crew.id) : [], c.get("player").id, body.to);
+  return "error" in go ? c.json({ error: go.error }, go.status) : c.json(go);
 });
 
 // A zone's socket. Anyone with a hero and the code can walk in. Zones are made by /api/caves and the dev route.

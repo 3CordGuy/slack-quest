@@ -528,7 +528,7 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
           if (ev.outcome !== "fled") sounds.stinger(ev.outcome);
           setBanner(ev.outcome === "victory" ? "Victory" : ev.outcome === "defeat" ? "Defeated" : "Got away");
         });
-        say(ev.outcome === "victory" ? "The fight is won." : ev.outcome === "defeat" ? "The fight is lost. You wake where you started." : "Nobody is left in the fight: it is over. The enemy go back to where they stood, as hurt as they are.");
+        say(ev.outcome === "victory" ? "The fight is won." : ev.outcome === "defeat" ? "The fight is lost. You wake where you started." : "Nobody is left in the fight: it is over. The enemy go back to their posts and bind their wounds; those that fell stay fallen.");
       } else if (ev.t === "spoils") {
         const found = [
           ...(ev.gold ? [`${ev.gold} gold`] : []),
@@ -1003,14 +1003,17 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
     }
     onLeave();
   };
-  /** Leaving in the middle of a fight: the hero flees it first, and goes once the server has them out of it (or stays, if it says no). */
-  const [leaving, setLeaving] = useState(false);
+  /**
+   * Going somewhere from the middle of a fight (off the map, or to a crewmate): the hero flees it first, and
+   * goes once the server has them out of it, or stays if it says no. Nobody leaves a hero behind in a fight.
+   */
+  const [leaving, setLeaving] = useState<{ go: () => void } | null>(null);
   useEffect(() => {
     if (!leaving) return;
     if (!fighting) {
-      setLeaving(false);
-      leave();
-    } else if (zone.error) setLeaving(false);
+      setLeaving(null);
+      leaving.go();
+    } else if (zone.error) setLeaving(null);
   }, [leaving, fighting, zone.error]);
 
   if (!state || !act) {
@@ -1029,12 +1032,13 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
   // Getting away: on your turn, with the Action (a Rogue's Bonus action) for it, and no enemy in the fight within FLEE_RANGE.
   const fleeCost = commonCost("flee", act.kind);
   const fleeBlock = !fighting ? "That is for a fight." : !myTurn ? "Wait for your turn." : !budget?.[fleeCost] ? `You have used your ${costName(fleeCost)} this turn.` : checkCommon(asState(state), act, "flee", {}, budget ?? null);
-  /** Leave the map from the middle of a fight: flee it, and go once out of it. */
-  const fleeAndLeave = () => {
+  /** From the middle of a fight: flee it, then `go` once out of it. */
+  const fleeThen = (go: () => void) => {
     zone.clearError();
-    setLeaving(true);
+    setLeaving({ go });
     common("flee");
   };
+  const fleeAndLeave = () => fleeThen(leave);
   /** Everything that could be on the bar, by key, as it stands right now. */
   const entries: Record<string, HudSlot> = {};
   for (const id of act.abilities) {
@@ -1318,7 +1322,12 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
               const where = crew.find((x) => x.id === m.id)?.zone;
               return [
                 { label: "Trade", run: () => setTradeWith(m.id) },
-                { label: where ? "Teleport to them" : "Go to the Harbor", blocked: where?.fighting && where.code !== code ? "In a fight" : where?.code === code ? "Already on this map" : !where && caves && !atMouth ? "Walk back to the cave mouth to leave" : undefined, run: () => teleportTo(m.id) },
+                {
+                  label: where ? "Teleport to them" : "Go to the Harbor",
+                  blocked: where?.fighting && where.code !== code ? "In a fight" : where?.code === code ? "Already on this map" : !where && caves && !atMouth ? "Walk back to the cave mouth to leave" : fighting && fleeBlock ? `You are in a fight. ${fleeBlock}` : undefined,
+                  // From the middle of a fight of your own, you flee it first.
+                  run: () => (fighting ? fleeThen(() => teleportTo(m.id)) : teleportTo(m.id)),
+                },
               ];
             }}
           />
@@ -1405,7 +1414,12 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
               disabled: !atMouth || (fighting && !!fleeBlock),
               run: fighting ? fleeAndLeave : leave,
             }
-          : { label: "Leave the map", hint: fighting && !fleeBlock ? "Flee the fight and go back to the Harbor." : "Back to the Harbor. The map stays as you left it.", run: fighting && !fleeBlock ? fleeAndLeave : onLeave }]} />}
+          : {
+              label: "Leave the map",
+              hint: !fighting ? "Back to the Harbor. The map stays as you left it." : fleeBlock ? `In a fight: you can leave once you could flee it. ${fleeBlock}` : "Flee the fight and go back to the Harbor.",
+              disabled: fighting && !!fleeBlock,
+              run: fighting ? fleeAndLeave : leave,
+            }]} />}
       >
         {torchBeside && (!fighting || myTurn) && (
           <button className="small" disabled={fighting && !budget?.bonus} title={fighting ? "A Bonus action" : undefined} onClick={() => zone.send({ type: "pickup", unit: act.id, at: torchBeside })}>

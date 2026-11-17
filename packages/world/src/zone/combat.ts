@@ -338,7 +338,8 @@ export function enemyAct(ctx: Ctx, enemy: Unit, attack: EnemyStrike, target: Uni
   };
   if (attack.burst) {
     const rolled = rollDice(ctx.rng, attack.dice);
-    for (const victim of state.units.filter((u) => u.side !== enemy.side && !u.down && hexDistance(u.pos, enemy.pos) <= ENEMY_BURST && sees(state.map, enemy.pos, u.pos))) {
+    // A fight's blows are for those in it: a hero standing near who is not (their player away) is passed over.
+    for (const victim of state.units.filter((u) => u.side !== enemy.side && !u.down && inFight(state, u.id) && hexDistance(u.pos, enemy.pos) <= ENEMY_BURST && sees(state.map, enemy.pos, u.pos))) {
       const saved = saveRoll(ctx, victim, "agi", dc, attack.name).ok;
       damage(ctx, victim, saved ? Math.floor(rolled / 2) : rolled, { actor: enemy.id, what: attack.name });
       if (!saved) leave(victim, false);
