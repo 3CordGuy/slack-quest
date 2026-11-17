@@ -433,6 +433,17 @@ describe("ZoneRoom", () => {
     expect(ann).toBeDefined();
   });
 
+  it("gives a cave saved without a mouth one as it is loaded, so it can be left", async () => {
+    const code = await createZoneRow(db, "ann", zoneOptions({ biome: "caves", size: "small", groups: 1 }), "old-cave", "caves", "crew1");
+    await connect(room(), code, "ann");
+    const state = saved(code);
+    state.map.pois = [];
+    sql.prepare("UPDATE zones SET state_json = ? WHERE code = ?").run(JSON.stringify(state), code);
+    const ann = await connect(room(), code, "ann");
+    expect(ann.state.map.pois.filter((p) => p.kind === "landing").map((p) => p.pos)).toEqual([ann.state.start]);
+    expect(saved(code).map.pois.some((p) => p.kind === "landing")).toBe(true);
+  });
+
   it("tells a player on the map, and only that player, that their trades changed", async () => {
     const { code, zone, ann } = await arrive();
     const bo = await connect(zone, code, "bo");

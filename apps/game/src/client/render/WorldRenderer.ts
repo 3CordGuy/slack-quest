@@ -75,6 +75,9 @@ const roomOf = (kind: string) => (kind === "ogre" ? 1.5 : 1);
  * What the renderer needs to draw a scene. An island's ClientState satisfies
  * this as it is; the Harbor builds one by hand with `freeRoam` set.
  */
+/** Seconds between one pickup told over a hero's head and the next. */
+const PICKUP_GAP = 0.55;
+
 export interface RenderState {
   /** Identifies the map; the terrain is rebuilt when it changes. */
   code: string;
@@ -1886,6 +1889,27 @@ export class WorldRenderer {
         puff.spin.set((Math.random() - 0.5) * 16, (Math.random() - 0.5) * 16, (Math.random() - 0.5) * 16);
       }
     }
+  }
+
+  /**
+   * What a hero just picked up, told over their head one thing at a time (gold, then XP, then the rest), each
+   * rising off the plate and fading in about a second, a beat after the one before. XP is the Harbor's own pop,
+   * motes and all. Easier to take in than the feed.
+   */
+  pickups(unitId: string, lines: { text: string; color: string; xp?: number }[]) {
+    lines.forEach((line, i) =>
+      this.pending.push({
+        at: this.clock + i * PICKUP_GAP,
+        run: () => {
+          if (line.xp) return this.xpGain(unitId, line.xp);
+          const unit = this.units.get(unitId);
+          if (!unit) return;
+          const head = unit.goal.clone().add(new THREE.Vector3(0, unit.size * 0.75, 0.05));
+          const top = Math.max(head.y + 0.4, this.plateTop(unit) ?? 0);
+          this.float(unitId, line.text, line.color, { life: 1.05, rise: 0.6, height: 0.38, at: new THREE.Vector3(head.x, top + 0.3, head.z) });
+        },
+      }),
+    );
   }
 
   xpGain(unitId: string, amount: number, levelUp = false) {

@@ -529,6 +529,18 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
         // A crate pays no XP: only what was in it is told.
         if (ev.xp > 0) say(`${name(ev.id)} earns ${ev.xp} XP${found.length > 0 ? ` and takes ${found.join(", ")}` : ""}.`);
         else if (found.length > 0) say(`${name(ev.id)} takes ${found.join(", ")}.`);
+        // And over their head, one thing at a time: gold first, then the XP, then whatever else.
+        const pops = [
+          ...(ev.gold ? [{ text: `+${ev.gold} gold`, color: "#ffd23f" }] : []),
+          ...(ev.xp > 0 ? [{ text: `+${ev.xp} XP`, color: "#ffe27a", xp: ev.xp }] : []),
+          ...Object.entries(ev.resources).filter(([, n]) => n).map(([kind, n]) => ({ text: `+${n} ${label("resource", kind).toLowerCase()}`, color: "#e8dcc0" })),
+          ...(ev.item ? [{ text: `+${ev.item}`, color: "#c4b5fd" }] : []),
+          ...(ev.potions ? [{ text: ev.potions === 1 ? "+1 healing potion" : `+${ev.potions} healing potions`, color: "#ff8a8a" }] : []),
+          ...(ev.torches ? [{ text: ev.torches === 1 ? "+1 torch" : `+${ev.torches} torches`, color: "#ffb070" }] : []),
+          ...(ev.blueprint ? [{ text: "+a blueprint", color: "#9fd8ff" }] : []),
+          ...(ev.furnishing ? [{ text: `+${ev.furnishing}`, color: "#9fd8ff" }] : []),
+        ];
+        if (pops.length > 0) later(() => view?.pickups(ev.id, pops));
         // Your own level, XP and materials as the server now has them.
         if (ev.id === next.you) later(() => void refresh());
       } else if (ev.t === "cleared") {
@@ -539,6 +551,9 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
         });
         say("Nothing else stirs here.");
       } else if (ev.t === "key") {
+        // On the ring: over whoever found it, or (from a beaten band) your own hero, as the ring is everyone's.
+        const finder = ev.id ?? next.you;
+        later(() => view?.pickups(finder, [{ text: "+1 key", color: "#ffd98a" }]));
         say(ev.from === "chest" ? `${ev.id ? name(ev.id) : "Someone"} finds a key in it. (${ev.keys} on the ring)` : `A key falls from the beaten band. (${ev.keys} on the ring)`);
       } else if (ev.t === "door") {
         say(ev.how === "key" ? `${name(ev.id)} unlocks the door.` : ev.how === "forced" ? `${name(ev.id)} forces the door: it gives way with a crash.` : `${name(ev.id)} throws a shoulder at the door: it holds.`);
@@ -598,6 +613,7 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
       } else if (ev.t === "torch_out") {
         say(`${name(ev.id)}'s torch gutters out.`);
       } else if (ev.t === "took_torch") {
+        if (ev.stowed) later(() => view?.pickups(ev.id, [{ text: "+1 torch", color: "#ffb070" }]));
         say(ev.stowed ? `${name(ev.id)} puts out a torch and stows it in the pack.` : `${name(ev.id)} picks up a burning torch.`);
       } else if (ev.t === "light" && !ev.on) {
         // Gone from the ground because someone took it up is not burning out.
@@ -1039,7 +1055,9 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
   // A crate beside you, and what of yours would break at it.
   const crateBeside = act ? state.map.pois.find((p) => p.kind === "crate" && !p.cleared && hexDistance(p.pos, act.pos) <= 1) : undefined;
   const crateHit = crateBeside ? crateBlow(asState(state), act, crateBeside.id) : null;
-  const atMouth = caves && !!act && state.map.pois.some((p) => p.kind === "landing" && hexDistance(p.pos, act.pos) <= 1);
+  // The way out: the cave's mouth, or (should a cave ever come without one) where heroes arrive.
+  const mouthAt = state.map.pois.find((p) => p.kind === "landing")?.pos ?? state.start;
+  const atMouth = caves && !!act && hexDistance(mouthAt, act.pos) <= 1;
   /** Back up to the Harbor: out of a cave, standing at its mouth. */
   const leave = () => {
     if (caves) {
@@ -1160,7 +1178,7 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
             <h3>The cave is clear</h3>
             <p>{unopened(state) > 0 ? `${unopened(state) === 1 ? "A chest is" : `${unopened(state)} chests are`} still unopened down here.` : "Everything down here has been found."} The way out is back at the cave mouth.</p>
             <p className="zone-ask-buttons">
-              <button className="primary" onClick={() => { const mouth = state.map.pois.find((p) => p.kind === "landing"); if (mouth) renderer.current?.lookAt(mouth.pos); setClearedAsk(false); }}>Show the way out</button>
+              <button className="primary" onClick={() => { renderer.current?.lookAt(mouthAt); setClearedAsk(false); }}>Show the way out</button>
               <button onClick={() => setClearedAsk(false)}>Keep exploring</button>
             </p>
           </div>

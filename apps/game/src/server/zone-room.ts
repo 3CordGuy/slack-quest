@@ -19,7 +19,7 @@
 // path at once and says where they ended up, as the Harbor does.
 
 import { DurableObject } from "cloudflare:workers";
-import { THROWABLE_KINDS, ZONE_CLIENT_ACTIONS, createZone, stepZone, zoneAwaiting, zoneHero, zoneOptions, zoneView, type ZoneAction, type ZoneEvent, type ZoneState } from "@gantt-quest/world";
+import { THROWABLE_KINDS, ZONE_CLIENT_ACTIONS, createZone, ensureMouth, stepZone, zoneAwaiting, zoneHero, zoneOptions, zoneView, type ZoneAction, type ZoneEvent, type ZoneState } from "@gantt-quest/world";
 import { consumablesOf, gainConsumables, kitStatements, spendConsumables, type Consumables } from "./consumables";
 import { applyZoneGrant, crewFor, heroInitFor, refreshHarbor, type Env } from "./db";
 import { isDev } from "./dev";
@@ -108,7 +108,8 @@ export class ZoneRoom extends DurableObject<Env> {
     if (!zoneCode) throw new Error("zone room has no code");
     const row = await getZoneRow(this.env.DB, zoneCode);
     if (!row) throw new Error(`zone ${zoneCode} not found`);
-    this.zone = row.state_json ? (JSON.parse(row.state_json) as ZoneState) : createZone(row.code, row.seed, zoneOptions(JSON.parse(row.options_json)));
+    // A cave saved before it had a mouth gets one now, so it can be left (ensureMouth).
+    this.zone = row.state_json ? ensureMouth(JSON.parse(row.state_json) as ZoneState) : createZone(row.code, row.seed, zoneOptions(JSON.parse(row.options_json)));
     if (code) await this.ctx.storage.put("code", code);
     return this.zone;
   }
