@@ -51,6 +51,22 @@ export interface Kit {
   hull(points: V3[], paint: Paint, place?: Place): THREE.Mesh;
   /** Build some parts together, placed as one (a pair of daggers, a pair of boots). */
   within(place: Place, build: () => void): void;
+  /**
+   * Build some parts that hang loose from `pivot` (a flail's ball on its chain, a lantern from its hook), in the
+   * model's own units as usual: in a hero's hand they swing from there as a pendulum (see figures.ts), weighted
+   * at `bob`. In a picture they stay as built.
+   */
+  dangle(pivot: V3, bob: V3, build: () => void, opts?: Pick<Dangle, "limit" | "clear">): void;
+}
+
+/** What a group made by Kit.dangle carries in its userData. */
+export interface Dangle {
+  pivot: V3;
+  bob: V3;
+  /** How far it may swing from where it was built, in radians (a clapper inside its bell). */
+  limit?: number;
+  /** A haft or pole it cannot swing through: the weight is kept `r` from the line `from` to `to`. */
+  clear?: { from: V3; to: V3; r: number };
 }
 
 export interface LowPolyDef {
@@ -189,6 +205,44 @@ function spike(k: Kit, centre: V3, dir: THREE.Vector3, out: number, r: number, h
 }
 
 /** One boot, toe toward +z. */
+/** The ballast flail: the haft, and the chain and ball, which hang loose (`loose`: in a hand, a straight chain that swings). */
+function flail(k: Kit, loose: boolean) {
+  k.cyl(0.6, 0.7, 10, 6, C.wood, { at: [0, -1, 0] });
+  k.cyl(0.8, 0.8, 3, 6, C.leather, { at: [0, -3.8, 0] });
+  k.ball(0.85, C.gold, { at: [0, -6.4, 0] });
+  k.cyl(0.95, 0.85, 1.2, 6, k.a, { at: [0, 4.4, 0] });
+  k.ring(0.7, 0.22, C.iron, { at: [0, 5.5, 0], rot: [0, Math.PI / 2, 0] }, 4, 8);
+  const ball: V3 = [5.9, 3.4, 0];
+  const pivot: V3 = [0, 6.1, 0];
+  k.dangle(pivot, ball, () => {
+    const chain = loose
+      ? new THREE.LineCurve3(v3(pivot), v3(ball).lerp(v3(pivot), 2.2 / Math.hypot(ball[0] - pivot[0], ball[1] - pivot[1])))
+      : new THREE.CatmullRomCurve3([v3(pivot), v3([1.6, 7.6, 0]), v3([3.7, 7.6, 0]), v3([5.3, 6.1, 0])]);
+    const links = loose ? 4 : 7;
+    for (let i = 0; i <= links; i++) {
+      const t = i / links;
+      const at = chain.getPoint(t);
+      const along = chain.getTangent(t);
+      const link = k.ring(0.55, 0.18, C.iron, { at: [at.x, at.y, at.z], scale: [1.5, 1, 1] }, 4, 6);
+      link.rotation.order = "ZYX";
+      link.rotation.set(i % 2 ? Math.PI / 2 : 0, 0, Math.atan2(along.y, along.x));
+    }
+    k.ball(2.4, C.iron, { at: ball }, 1);
+    k.ring(2.42, 0.32, k.a, { at: ball, rot: [Math.PI / 2, 0, 0] }, 4, 16);
+    const ico = new THREE.IcosahedronGeometry(1, 0);
+    const seen = new Set<string>();
+    const p = ico.attributes.position;
+    for (let i = 0; i < p.count; i++) {
+      const d = new THREE.Vector3().fromBufferAttribute(p, i);
+      const key = d.toArray().map((n) => n.toFixed(2)).join();
+      if (seen.has(key) || Math.abs(d.y) < 0.2) continue;
+      seen.add(key);
+      spike(k, ball, d, 2.1, 0.45, 1.4, C.steel);
+    }
+    ico.dispose();
+  }, { clear: { from: [0, 5.5, 0], to: [0, -7, 0], r: 3 } });
+}
+
 function boot(k: Kit) {
   k.cyl(1.9, 2.1, 7, 6, C.leather, { at: [0, 2.5, 0] });
   k.box(3.8, 2.8, 7, C.leather, { at: [0, -1.5, 1.6] }, 0.9);
@@ -577,37 +631,9 @@ export const LOW_POLY: Record<string, LowPolyDef> = {
     // A short haft, and on a chain from its head a spiked iron ballast ball banded in the trim.
     lean: -0.35,
     spin: 0.4,
-    build: (k) => {
-      k.cyl(0.6, 0.7, 10, 6, C.wood, { at: [0, -1, 0] });
-      k.cyl(0.8, 0.8, 3, 6, C.leather, { at: [0, -3.8, 0] });
-      k.ball(0.85, C.gold, { at: [0, -6.4, 0] });
-      k.cyl(0.95, 0.85, 1.2, 6, k.a, { at: [0, 4.4, 0] });
-      k.ring(0.7, 0.22, C.iron, { at: [0, 5.5, 0], rot: [0, Math.PI / 2, 0] }, 4, 8);
-      const chain = new THREE.CatmullRomCurve3([v3([0, 6.1, 0]), v3([1.6, 7.6, 0]), v3([3.7, 7.6, 0]), v3([5.3, 6.1, 0])]);
-      const links = 7;
-      for (let i = 0; i <= links; i++) {
-        const t = i / links;
-        const at = chain.getPoint(t);
-        const along = chain.getTangent(t);
-        const link = k.ring(0.55, 0.18, C.iron, { at: [at.x, at.y, at.z], scale: [1.5, 1, 1] }, 4, 6);
-        link.rotation.order = "ZYX";
-        link.rotation.set(i % 2 ? Math.PI / 2 : 0, 0, Math.atan2(along.y, along.x));
-      }
-      const ball: V3 = [5.9, 3.4, 0];
-      k.ball(2.4, C.iron, { at: ball }, 1);
-      k.ring(2.42, 0.32, k.a, { at: ball, rot: [Math.PI / 2, 0, 0] }, 4, 16);
-      const ico = new THREE.IcosahedronGeometry(1, 0);
-      const seen = new Set<string>();
-      const p = ico.attributes.position;
-      for (let i = 0; i < p.count; i++) {
-        const d = new THREE.Vector3().fromBufferAttribute(p, i);
-        const key = d.toArray().map((n) => n.toFixed(2)).join();
-        if (seen.has(key) || Math.abs(d.y) < 0.2) continue;
-        seen.add(key);
-        spike(k, ball, d, 2.1, 0.45, 1.4, C.steel);
-      }
-      ico.dispose();
-    },
+    build: (k) => flail(k, false),
+    // In hand the chain hangs straight from the ring, and swings.
+    inHand: (k) => flail(k, true),
   },
   "barometer-rod": {
     // A staff with a barometer's dial set in it and a tube of glowing glass at its head.
@@ -673,8 +699,11 @@ export const LOW_POLY: Record<string, LowPolyDef> = {
       k.cyl(3.15, 3.15, 0.1, 10, C.dark, { at: [0, -4.62, 0] });
       k.ring(3.35, 0.3, "#b8891f", { at: [0, -3.9, 0], rot: [Math.PI / 2, 0, 0] }, 4, 16);
       k.ring(2.35, 0.22, "#b8891f", { at: [0, 0.6, 0], rot: [Math.PI / 2, 0, 0] }, 4, 14);
-      k.cyl(0.22, 0.22, 1.6, 4, C.iron, { at: [0, -4.6, 0] });
-      k.ball(0.9, k.a, { at: [0, -5.6, 0] });
+      // The clapper hangs inside, and knocks about a little within the lip.
+      k.dangle([0, -2.2, 0], [0, -5.6, 0], () => {
+        k.cyl(0.22, 0.22, 3.4, 4, C.iron, { at: [0, -3.9, 0] });
+        k.ball(0.9, k.a, { at: [0, -5.6, 0] });
+      }, { limit: 0.35 });
       k.cyl(0.95, 0.95, 0.8, 8, C.gold, { at: [0, 3.3, 0] });
       k.cyl(0.6, 0.75, 4.2, 6, C.wood, { at: [0, 5.8, 0] });
       k.ball(0.95, C.wood, { at: [0, 8.2, 0] });
@@ -711,15 +740,18 @@ export const LOW_POLY: Record<string, LowPolyDef> = {
       k.cyl(0.75, 0.75, 1.4, 6, C.iron, { at: [0, 8.4, 0] });
       k.rod([[0, 8.8, 0], [0, 10.6, 0], [0.9, 12.1, 0], [2.6, 12.4, 0], [3.8, 11.4, 0], [3.9, 10.1, 0]], 0.32, C.iron, {}, 5);
       const x = 3.9;
-      k.ring(0.6, 0.15, C.iron, { at: [x, 9.5, 0], rot: [0, Math.PI / 2, 0] }, 4, 8);
-      k.cone(1.5, 1.3, 6, C.iron, { at: [x, 8.5, 0] });
-      k.cyl(1.4, 1.4, 0.35, 6, C.iron, { at: [x, 7.7, 0] });
-      k.cyl(1.05, 1.05, 2.6, 6, { glow: "#ffd98a" }, { at: [x, 6.25, 0] });
-      for (let i = 0; i < 6; i++) {
-        const a = (i / 6) * Math.PI * 2;
-        k.cyl(0.14, 0.14, 2.6, 4, C.iron, { at: [x + Math.cos(a) * 1.15, 6.25, Math.sin(a) * 1.15] });
-      }
-      k.cyl(1.4, 1.25, 0.6, 6, C.iron, { at: [x, 4.7, 0] });
+      // The lantern hangs from the hook by its ring, and swings there.
+      k.dangle([x, 10.05, 0], [x, 6.4, 0], () => {
+        k.ring(0.6, 0.15, C.iron, { at: [x, 9.5, 0], rot: [0, Math.PI / 2, 0] }, 4, 8);
+        k.cone(1.5, 1.3, 6, C.iron, { at: [x, 8.5, 0] });
+        k.cyl(1.4, 1.4, 0.35, 6, C.iron, { at: [x, 7.7, 0] });
+        k.cyl(1.05, 1.05, 2.6, 6, { glow: "#ffd98a" }, { at: [x, 6.25, 0] });
+        for (let i = 0; i < 6; i++) {
+          const a = (i / 6) * Math.PI * 2;
+          k.cyl(0.14, 0.14, 2.6, 4, C.iron, { at: [x + Math.cos(a) * 1.15, 6.25, Math.sin(a) * 1.15] });
+        }
+        k.cyl(1.4, 1.25, 0.6, 6, C.iron, { at: [x, 4.7, 0] });
+      }, { clear: { from: [0, 8.8, 0], to: [0, -12, 0], r: 2.2 } });
     },
   },
   "bilge-chalice": {
@@ -1098,6 +1130,14 @@ export function buildLowPoly(name: string, accent: string, inHand = false): { mo
     within: (p, build) => {
       const g = new THREE.Group();
       place(g, p);
+      top().add(g);
+      parents.push(g);
+      build();
+      parents.pop();
+    },
+    dangle: (pivot, bob, build, opts) => {
+      const g = new THREE.Group();
+      g.userData.dangle = { pivot, bob, ...opts } satisfies Dangle;
       top().add(g);
       parents.push(g);
       build();
