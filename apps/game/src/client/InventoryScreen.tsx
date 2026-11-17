@@ -138,7 +138,7 @@ type Held = { stack: Stack; from: Zone | "worn" };
 type Verdict = "ok" | "swap" | "bad";
 /** Said when a potion or a flask is sent toward a chest or the trade table. */
 const STAYS_IN_PACK = "Potions, flasks and bombs stay in your pack: they cannot be stowed or traded yet.";
-const STONES_STAY = "Lodestones stay in your pack until you put one into a place on the atlas: there is nowhere to stow or trade them yet.";
+const STONES_STAY = "Lodestones are not stowed at home or traded hand to hand: the town chest, at the works, has a tab for them that the whole crew shares.";
 /** A decoration kept in a chest lies on its grid too, a square each. */
 const decorKey = (id: number) => `decor:${id}`;
 

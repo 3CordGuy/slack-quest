@@ -17,10 +17,11 @@ import type { XpResult } from "../server/harbor-xp";
 import type { TradeList } from "../server/trade";
 import type { Chart, ChartNode } from "../server/atlas";
 import type { HeldStone } from "../server/lodestones";
+import type { ChestView } from "../server/townchest";
 import type { ApothecaryView, GalleyKeeperView, HaggleResult, KeeperWare, SmithyView } from "../server/workshops";
 import type { ErrandPaid, RegularsView } from "../server/errands";
 
-export type { Chart, ChartNode, HeldStone };
+export type { Chart, ChartNode, ChestView, HeldStone };
 export type { ApothecaryView, SmithyView, GalleyKeeperView, ErrandPaid, RegularsView, HaggleResult, KeeperWare };
 
 export type { CatchBook, FishStock, GatherStatus, PubGame, PubLeaderboard, PubScore, PubWall, SittingPaid, XpResult };
@@ -260,6 +261,13 @@ export const api = {
   /** Set out for a place, with the lodestone put into its slot (what it carries, joined with "+"; "" for a plain one). It comes out of your pack. */
   openNode: (node: string, stone?: string) => request<{ code: string; fresh: boolean }>("/api/atlas/open", { node, stone }),
   /** The dev toolbox: clear a landfall without fighting for it, or wipe the chart. Gives the chart as it now is. */
+  /** The crew's town chest: its tabs, how big each is and what is in it. */
+  chest: () => request<ChestView>("/api/chest"),
+  /** Put `qty` of a kind of thing from your pack into a tab of the chest, or take it out. The chest comes back as it now is. */
+  chestPut: (tab: string, kind: string, qty: number) => request<ChestView>("/api/chest/put", { tab, kind, qty }),
+  chestTake: (tab: string, kind: string, qty: number) => request<ChestView>("/api/chest/take", { tab, kind, qty }),
+  /** Pay for a tab's next row of squares, for the whole crew. */
+  chestRow: (tab: string) => request<ChestView>("/api/chest/row", { tab }),
   /** Cut a plain lodestone from stone and iron, into your pack. */
   cutStone: () => request<{ lodestones: HeldStone[] }>("/api/atlas/cut", {}),
   devAtlas: (op: "clear" | "reset" | "stone", node?: string) => request<Chart>("/api/dev/atlas", { op, node }),

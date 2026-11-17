@@ -81,6 +81,7 @@ import { cook } from "./server/galley";
 import { announceXp, harborXpFor } from "./server/harbor-xp";
 import { chartFor, devClearNode, devResetChart, enterProblem, openNode } from "./server/atlas";
 import { cutStone, gainStone, lodestonesOf } from "./server/lodestones";
+import { chestAddRow, chestFor, chestPut, chestTake } from "./server/townchest";
 import { createZoneRow, crewPlaces, getZoneRow, openCave, teleportTo } from "./server/zones";
 import {
   checkImport,
@@ -1009,6 +1010,30 @@ app.post("/api/atlas/cut", async (c) => {
   if (character?.status !== "active") return c.json({ error: "Create a character first." }, 409);
   const problem = await cutStone(c.env.DB, player.id);
   return problem ? c.json({ error: problem }, 409) : c.json({ lodestones: await lodestonesOf(c.env.DB, player.id) });
+});
+
+// ---------- the town chest: one store the crew shares, in tabs ----------
+
+app.get("/api/chest", async (c) => {
+  const crew = await crewFor(c.env.DB, c.get("player").id);
+  if (!crew) return c.json({ error: "You are not in a crew." }, 403);
+  return c.json(await chestFor(c.env.DB, crew.id));
+});
+
+// Put something from your pack into the chest, take something out, or pay for a tab's next row. Each answers
+// with the chest as it now is.
+app.post("/api/chest/:move{put|take|row}", async (c) => {
+  const player = c.get("player");
+  const crew = await crewFor(c.env.DB, player.id);
+  if (!crew) return c.json({ error: "You are not in a crew." }, 403);
+  const body = await c.req.json<{ tab?: unknown; kind?: unknown; qty?: unknown }>().catch(() => ({}) as { tab?: unknown; kind?: unknown; qty?: unknown });
+  const move = c.req.param("move");
+  const problem =
+    move === "put" ? await chestPut(c.env.DB, crew.id, player.id, body.tab, body.kind, body.qty)
+    : move === "take" ? await chestTake(c.env.DB, crew.id, player.id, body.tab, body.kind, body.qty)
+    : await chestAddRow(c.env.DB, crew.id, player.id, body.tab);
+  if (problem) return c.json({ error: problem }, 409);
+  return c.json(await chestFor(c.env.DB, crew.id));
 });
 
 // For whoever is testing: clear a landfall without fighting for it, or wipe the chart back to the Harbor.

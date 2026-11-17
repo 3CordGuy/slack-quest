@@ -1,0 +1,19 @@
+/* The town chest (TownChest.tsx): a window with a tab for each sort of thing
+   the crew keeps in it; the chest's squares on the left, your pack's on the right. */
+
+.town-chest { width: min(760px, calc(100vw / var(--ui-z, 1) - 24px)); max-height: calc(100vh / var(--ui-z, 1) - 40px); overflow: hidden auto; display: flex; flex-direction: column; gap: 8px; }
+.town-chest-head { display: flex; align-items: center; gap: 8px; }
+.town-chest-head h2 { margin: 0; }
+.town-chest p { margin: 0; }
+.town-chest-tabs { display: flex; gap: 4px; border-bottom: 2px solid var(--line); }
+.town-chest-tabs button { border-bottom: none; border-radius: 4px 4px 0 0; opacity: 0.7; }
+.town-chest-tabs button.on { opacity: 1; background: var(--panel-lit, rgba(255, 255, 255, 0.08)); color: var(--gold, #f4c64e); }
+.town-chest-sides { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; align-items: start; }
+.town-chest-sides h3 { margin: 0 0 6px; font-size: 15px; text-transform: none; letter-spacing: 0.01em; }
+.town-chest .slot-grid { grid-template-columns: repeat(6, 48px); justify-content: start; }
+.town-chest .slot-grid .tile { width: 48px; height: 48px; }
+.town-chest-grow { margin-top: 8px !important; }
+
+@media (max-width: 720px) {
+  .town-chest-sides { grid-template-columns: 1fr; }
+}
