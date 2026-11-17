@@ -4,7 +4,9 @@
 //
 // A world is a crew: the atlas is keyed by crew id, so a new crew starts a
 // fresh chart, and its seed is the crew's id, as the salesman's and the
-// regulars' are. The seed a node's map is made from never leaves the server.
+// regulars' are. The chart's seed is no secret (it only says where things lie);
+// the seed a node's map and its dice are made from is rolled afresh and never
+// leaves the server.
 
 import { atlasNodeById, atlasOpen, atlasView, nodeOptions, type AtlasNodeView } from "@gantt-quest/world";
 import { CAVE_IDLE_MS, createZoneRow, crewPlaces, type ZoneRow } from "./zones";
@@ -22,6 +24,8 @@ interface NodeRow {
 /** A node as the chart is sent: what a crew sees of it, and (on one being fought through) its map and who is on it. */
 export type ChartNode = AtlasNodeView & { zone?: string; here?: string[] };
 export interface Chart {
+  /** What the chart was worked out from: the client makes the land it lies on from the same (atlasMap.ts). */
+  seed: string;
   nodes: ChartNode[];
 }
 
@@ -45,7 +49,7 @@ export async function chartFor(db: D1Database, crewId: string): Promise<Chart> {
     const zone = node.state === "open" ? await liveZone(db, open.get(node.id) ?? null) : null;
     nodes.push(zone ? { ...node, zone, here: places.filter((m) => m.zone?.code === zone).map((m) => m.name) } : node);
   }
-  return { nodes };
+  return { seed: atlasSeed(crewId), nodes };
 }
 
 /**
@@ -64,10 +68,11 @@ export async function openNode(db: D1Database, crewId: string, playerId: string,
   }
   const live = await liveZone(db, mine?.zone_code ?? null);
   if (live) return { code: live, fresh: false };
-  // A fresh map, and a different one each time: the last was cleared out by time, not by the crew.
+  // A fresh map, and a different one each time: the last was cleared out by time, not by the crew. Its seed is
+  // rolled here and kept here (the chart's own is the crew's id, which anyone in the crew can read).
   const attempt = (mine?.attempts ?? 0) + 1;
   const options = nodeOptions(seed, node, Math.min(4, Math.max(1, Math.round(party))));
-  const code = await createZoneRow(db, playerId, options, `${crewId}:${node.id}:${attempt}`, "atlas", crewId, node.id);
+  const code = await createZoneRow(db, playerId, options, crypto.randomUUID().slice(0, 12), "atlas", crewId, node.id);
   await db
     .prepare(
       `INSERT INTO atlas_nodes (crew_id, node, status, zone_code, attempts, opened_by, opened_at) VALUES (?1, ?2, 'open', ?3, ?4, ?5, ?6)

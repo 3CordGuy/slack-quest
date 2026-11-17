@@ -9,6 +9,7 @@ import type { KeeperShop } from "@gantt-quest/world";
 import { loadMe, type Me } from "./api";
 import { loadContent } from "./content";
 import { AdminView } from "./admin/AdminView";
+import { AtlasView } from "./atlas/AtlasView";
 import { CatchGallery } from "./CatchGallery";
 import { DevToolbox } from "./DevToolbox";
 import { Harbor } from "./Harbor";
@@ -23,6 +24,8 @@ const pubFromHash = () => location.hash === "#pub";
 const keeperFromHash = (): KeeperShop | null => (location.hash === "#smithy" ? "smithy" : location.hash === "#apothecary" ? "apothecary" : location.hash === "#galley" ? "galley" : null);
 /** A zone: a map to walk and fight on (ZoneView). */
 const zoneFromHash = () => /^#zone\/([A-Za-z]{4})$/.exec(location.hash)?.[1].toUpperCase() ?? null;
+/** The crew's atlas: the world, and where on it they can go (atlas/AtlasView.tsx). */
+const atlasFromHash = () => location.hash === "#atlas";
 const adminFromHash = () => location.hash === "#admin";
 const catchesFromHash = () => location.hash === "#catches";
 const hutFromHash = () => /^#hut\/([A-Za-z0-9-]{1,64})$/.exec(location.hash)?.[1] ?? null;
@@ -36,6 +39,7 @@ export function App() {
   const [pub, setPub] = useState(pubFromHash);
   const [keeper, setKeeper] = useState(keeperFromHash);
   const [zone, setZone] = useState(zoneFromHash);
+  const [atlas, setAtlas] = useState(atlasFromHash);
   const [admin, setAdmin] = useState(adminFromHash);
   const [catches, setCatches] = useState(catchesFromHash);
 
@@ -60,6 +64,7 @@ export function App() {
       setPub(pubFromHash());
       setKeeper(keeperFromHash());
       setZone(zoneFromHash());
+      setAtlas(atlasFromHash());
       setAdmin(adminFromHash());
       setCatches(catchesFromHash());
     };
@@ -72,18 +77,19 @@ export function App() {
   // On a development deployment (local and staging) the dev toolbox sits in the corner of every screen.
   return (
     <>
-      <Screen me={me} refresh={refresh} zone={zone} invite={invite} hut={hut} pub={pub} keeper={keeper} admin={admin} catches={catches} />
+      <Screen me={me} refresh={refresh} zone={zone} atlas={atlas} invite={invite} hut={hut} pub={pub} keeper={keeper} admin={admin} catches={catches} />
       {me.devTools && <DevToolbox me={me} refresh={refresh} />}
     </>
   );
 }
 
-function Screen({ me, refresh, zone, invite, hut, pub, keeper, admin, catches }: { me: Me; refresh(): Promise<void>; zone: string | null; invite: string | null; hut: string | null; pub: boolean; keeper: KeeperShop | null; admin: boolean; catches: boolean }) {
+function Screen({ me, refresh, zone, atlas, invite, hut, pub, keeper, admin, catches }: { me: Me; refresh(): Promise<void>; zone: string | null; atlas: boolean; invite: string | null; hut: string | null; pub: boolean; keeper: KeeperShop | null; admin: boolean; catches: boolean }) {
   const ready = me.character?.status === "active";
   if (admin) return <AdminView me={me} onLeave={() => (location.hash = "")} />;
   // Every catch's sprite and model, side by side: for admins, and on a development deployment.
   if (catches && (me.isAdmin || me.devTools || import.meta.env.DEV)) return <CatchGallery onLeave={() => (location.hash = "")} />;
   if (zone && ready) return <ZoneView key={zone} code={zone} me={me} refresh={refresh} onLeave={() => (location.hash = "")} />;
+  if (atlas && ready && me.crew) return <AtlasView me={me} onLeave={() => (location.hash = "")} />;
   // A voyage or delve link (#run/CODE) lands in the Harbor: both are shut while they are rebuilt on the new combat.
   if (pub && ready && me.crew) return <PubView me={me} refresh={refresh} onLeave={() => (location.hash = "")} />;
   if (keeper && ready && me.crew) return <KeeperView key={keeper} shop={keeper} me={me} refresh={refresh} onLeave={() => (location.hash = "")} />;

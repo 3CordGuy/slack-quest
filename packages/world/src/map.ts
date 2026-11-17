@@ -25,7 +25,7 @@ import type { ResourceKind } from "./hut";
  * `fog` is never part of a real map: it is what a client is sent in place of
  * ground the party has not seen yet.
  */
-export type Biome = "plains" | "forest" | "hills" | "water" | "dock" | "cobble" | "mud" | "rampart" | "floor" | "wall" | "cave" | "rock" | "gate" | "fog";
+export type Biome = "plains" | "forest" | "hills" | "water" | "dock" | "cobble" | "mud" | "rampart" | "floor" | "wall" | "cave" | "rock" | "gate" | "fog" | "sand";
 
 export const MOVE_COST: Record<Biome, number> = {
   plains: 1,
@@ -39,6 +39,7 @@ export const MOVE_COST: Record<Biome, number> = {
   floor: 1,
   wall: Infinity,
   cave: 1,
+  sand: 1,
   rock: Infinity,
   gate: Infinity,
   fog: Infinity,
@@ -249,7 +250,7 @@ function pickBiome(rng: Rng): Biome {
   return "plains";
 }
 
-export const BASE_HEIGHT: Record<Biome, number> = { water: 0.05, plains: 0.3, forest: 0.4, hills: 0.75, dock: 0.1, cobble: 0.26, mud: 0.2, rampart: 0.7, floor: 0.1, wall: 0.9, cave: 0.18, rock: 1.4, gate: 0.18, fog: 0.3 };
+export const BASE_HEIGHT: Record<Biome, number> = { sand: 0.22, water: 0.05, plains: 0.3, forest: 0.4, hills: 0.75, dock: 0.1, cobble: 0.26, mud: 0.2, rampart: 0.7, floor: 0.1, wall: 0.9, cave: 0.18, rock: 1.4, gate: 0.18, fog: 0.3 };
 
 /** Offset-space position of a hex, used for the island outline. */
 function flatPos(pos: HexPos): { x: number; y: number } {

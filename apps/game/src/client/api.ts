@@ -15,9 +15,11 @@ import type { CatchBook, PubWall } from "../server/catchbook";
 import type { PubGame, PubLeaderboard, PubScore } from "../server/pub-scores";
 import type { XpResult } from "../server/harbor-xp";
 import type { TradeList } from "../server/trade";
+import type { Chart, ChartNode } from "../server/atlas";
 import type { ApothecaryView, GalleyKeeperView, HaggleResult, KeeperWare, SmithyView } from "../server/workshops";
 import type { ErrandPaid, RegularsView } from "../server/errands";
 
+export type { Chart, ChartNode };
 export type { ApothecaryView, SmithyView, GalleyKeeperView, ErrandPaid, RegularsView, HaggleResult, KeeperWare };
 
 export type { CatchBook, FishStock, GatherStatus, PubGame, PubLeaderboard, PubScore, PubWall, SittingPaid, XpResult };
@@ -249,6 +251,12 @@ export const api = {
   crewPlaces: () => request<{ members: { id: string; name: string; classId: string; level: number; zone: { code: string; fighting: boolean } | null }[] }>("/api/crew/places"),
   /** Where to go to join a crewmate: the zone they are on, or null for the Harbor. Refused while they are in a fight. */
   teleport: (to: string) => request<{ zone: string | null; name: string }>("/api/crew/teleport", { to }),
+  /** The crew's chart: the Harbor, what is cleared, what is open, the fog beyond, and who is out on what. */
+  atlas: () => request<Chart>("/api/atlas"),
+  /** Set sail for a landfall: the map the crew is fighting through there, or a fresh one. */
+  openNode: (node: string) => request<{ code: string; fresh: boolean }>("/api/atlas/open", { node }),
+  /** The dev toolbox: clear a landfall without fighting for it, or wipe the chart. Gives the chart as it now is. */
+  devAtlas: (op: "clear" | "reset", node?: string) => request<Chart>("/api/dev/atlas", { op, node }),
   /** Down into the caves: the crew's cave still being fought through, or a fresh one. */
   caves: () => request<{ code: string; fresh: boolean }>("/api/caves", {}),
   /** Make a zone to try fights in, from these options (and a seed, or a fresh one), and get its code. */

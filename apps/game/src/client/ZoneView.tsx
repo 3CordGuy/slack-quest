@@ -199,6 +199,8 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
   const [banner, setBanner] = useState<string | null>(null);
   /** The last enemy in a cave has fallen: ask whether to climb out now. */
   const [clearedAsk, setClearedAsk] = useState(false);
+  /** A place on the crew's atlas has been cleared and its bounty paid: ask whether to go back to the atlas. */
+  const [chartAsk, setChartAsk] = useState(false);
   const [pick, setPick] = useState<Pick | null>(null);
   const [focus, setFocus] = useState(false);
   const [hover, setHover] = useState<HexPos | null>(null);
@@ -566,6 +568,14 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
           if (next.options.biome === "caves") setClearedAsk(true);
         });
         say("Nothing else stirs here.");
+      } else if (ev.t === "bounty") {
+        // A place on the atlas, cleared: its bounty has just been shared out (the spoils before this).
+        later(() => {
+          setBanner(`${next.options.name ?? "It"} is cleared`);
+          setClearedAsk(false);
+          setChartAsk(true);
+        });
+        say(`${next.options.name ?? "This place"} is cleared. Its bounty is shared out, and the routes beyond it are open.`);
       } else if (ev.t === "key") {
         // On the ring: over whoever found it, or (from a beaten band) your own hero, as the ring is everyone's.
         const finder = ev.id ?? next.you;
@@ -995,8 +1005,12 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
     return () => clearTimeout(t);
   }, [roll]);
 
-  /** Back up to the Harbor: out of a cave, standing at its mouth. */
+  /** Back up to the Harbor: out of a cave, standing at its mouth. From a place on the atlas, back to the atlas. */
   const leave = () => {
+    if (state?.options.tier) {
+      location.hash = "atlas";
+      return;
+    }
     if (state?.options.biome === "caves") {
       try {
         sessionStorage.setItem("gq.harborAt", `${HARBOR_CAVE.q},${HARBOR_CAVE.r}`);
@@ -1246,6 +1260,22 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
         </div>
       )}
 
+      {chartAsk && !fighting && (
+        // Cleared: back to the atlas, where the routes beyond it are now open. A sea cave is left by its mouth.
+        <div className="zone-ask">
+          <div className="panel">
+            <h3>{state.options.name ?? "This place"} is cleared</h3>
+            <p>Its bounty has been shared out, and the routes beyond it are open on the atlas.{caves && !atMouth ? " The way out is back at the cave mouth." : ""}</p>
+            <p className="zone-ask-buttons">
+              {caves && !atMouth
+                ? <button className="primary" onClick={() => { renderer.current?.lookAt(mouthAt); setChartAsk(false); }}>Show the way out</button>
+                : <button className="primary" onClick={leave}>Back to the atlas</button>}
+              <button onClick={() => setChartAsk(false)}>Stay a while</button>
+            </p>
+          </div>
+        </div>
+      )}
+
       {roll && (
         <div className={`zone-roll panel ${roll.ok ? "ok" : "no"}`} role="status">
           <span className="zone-roll-what">{names.current.get(roll.id) ?? "Someone"} · {roll.label}{roll.adv !== 0 && <em>{roll.adv > 0 ? " · advantage" : " · disadvantage"}</em>}</span>
@@ -1417,7 +1447,7 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
         // While the trade table is open it has the bag beside it already.
         onBag={() => !tradeWith && setBag((open) => !open)}
         turn={enc && fighting ? { seconds: deadline, onEnd: myTurn ? () => zone.send({ type: "end_turn", unit: act.id }) : undefined, waitingFor } : undefined}
-        menu={<OptionsMenu title={`Map ${code}`} subtitle={<>{state.options.biome} · {state.options.size}</>} actions={[caves
+        menu={<OptionsMenu title={state.options.name ?? `Map ${code}`} subtitle={<>{state.options.biome} · {state.options.size}{state.options.tier ? ` · ${state.options.tier} ${state.options.tier === 1 ? "ring" : "rings"} out` : ""}</>} actions={[caves
           ? {
               label: "Leave the cave",
               hint: !atMouth ? "The way out is the cave mouth: walk back to it to leave." : !fighting ? "Back up to the Harbor. The cave stays as you left it." : fleeBlock ? `In a fight: you can leave once you could flee it. ${fleeBlock}` : "Flee the fight and climb back up to the Harbor.",

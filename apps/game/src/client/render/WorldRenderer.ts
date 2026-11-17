@@ -133,6 +133,11 @@ export interface RenderState {
    * buttons step round from here by sixths, so they come back to it.
    */
   homeYaw?: number;
+  /**
+   * A map of the world, looked at from a long way up (the atlas): the camera starts well back, can pull back
+   * much further, and sees to the far edge of a big map.
+   */
+  far?: boolean;
 }
 
 /** The ways a room's walls can be dressed inside (see RenderState.walls). */
@@ -294,6 +299,9 @@ const PIXEL = 2;
 /** Nearest and farthest the camera may sit from what it looks at. */
 const MIN_ZOOM = 7;
 const MAX_ZOOM = 40;
+/** On a map of the world (RenderState.far): how far back the camera may pull, and where it starts. */
+const FAR_MAX_ZOOM = 130;
+const FAR_ZOOM = 62;
 /** Below 1 makes a pinch zoom less than the fingers move. */
 const PINCH_DAMPING = 0.55;
 /** The angle equal to `to` (mod a full turn) that is closest to `from`, so easing takes the short way round. */
@@ -326,7 +334,7 @@ const MAX_PITCH = 1.25;
 /** Camera distance per unit of zoom, kept from when the tilt was fixed. */
 const CAMERA_REACH = Math.hypot(0.72, 0.78);
 const PLAYER_COLORS = ["#ffd23f", "#5ce1e6", "#ff7ab6", "#9dff6b"];
-const BIOME_COLOR: Record<string, string> = { plains: "#7cb856", forest: "#4c9a52", hills: "#a39672", water: "#3f86dc", dock: "#9a7748", cobble: "#6f7279", mud: "#5f5140", rampart: "#6c6f55", floor: "#b08a5c", wall: "#6e5a48", cave: "#4a4552", rock: "#2a2730", gate: "#4a4552", fog: "#2b3140" };
+const BIOME_COLOR: Record<string, string> = { plains: "#7cb856", forest: "#4c9a52", hills: "#a39672", water: "#3f86dc", dock: "#9a7748", cobble: "#6f7279", mud: "#5f5140", rampart: "#6c6f55", floor: "#b08a5c", wall: "#6e5a48", cave: "#4a4552", rock: "#2a2730", gate: "#4a4552", fog: "#2b3140", sand: "#e2d09a" };
 /** What grass and trees are pulled toward under the Harbor's low cloud. */
 const DRAB = new THREE.Color("#5d6a5c");
 /** What open grass is pulled toward where it has dried out (see dryPatch): straw under dead grass, dusty brown on dry ground. */
@@ -440,6 +448,9 @@ function warmPane(unlit: string, lit: string): THREE.MeshBasicMaterial {
 const NIGHT_SEA = new THREE.Color("#0f1a33");
 const FOG_DAY = new THREE.Color("#3a4358");
 const FOG_NIGHT = new THREE.Color("#141824");
+/** Fog on a map of the world (RenderState.far): a grey mist over the ground not yet known, darker in patches. */
+const FAR_FOG = new THREE.Color("#7b828f");
+const FAR_FOG_DEEP = new THREE.Color("#5a616f");
 /** And the sea there: cold and grey-green. */
 const GREY_SEA = new THREE.Color("#2f4a5f");
 
@@ -967,6 +978,8 @@ export class WorldRenderer {
   private targetGoal = new THREE.Vector3();
   private dist = 24;
   private userDist = 24;
+  /** How far back the camera may pull on this map. */
+  private maxZoom = MAX_ZOOM;
   /** Active pointers on the canvas, by id. Two of them make a pinch. */
   private touches = new Map<number, { x: number; y: number }>();
   private pinch: { dist: number; x: number; y: number; zoom: number; angle: number } | null = null;
@@ -1239,6 +1252,14 @@ export class WorldRenderer {
       (this.scene.background as THREE.Color).set(state.indoors ? "#1d1a2b" : "#a9dcf7");
       // A room is framed whole: closer for a hut, further back for the pub.
       if (state.indoors) this.userDist = this.camDist = state.map.grid.cols > 10 ? 21 : 15;
+      // A map of the world is looked at from a long way up, and by daylight: it is there to be read.
+      this.ambience.heldTime = state.far ? 0.42 : null;
+      this.maxZoom = state.far ? FAR_MAX_ZOOM : MAX_ZOOM;
+      if (state.far) {
+        this.userDist = this.camDist = FAR_ZOOM;
+        this.camera.far = 700;
+        this.camera.updateProjectionMatrix();
+      }
     }
 
     const me = state.heroes.find((h) => h.id === state.you);
@@ -2032,7 +2053,9 @@ export class WorldRenderer {
   private buildTerrain(state: RenderState, recentre = true) {
     this.mapCode = state.code;
     this.sodden = state.map.tiles.some((t) => t.biome === "cobble");
-    this.seaBase.set(this.sodden ? "#2b4558" : "#3577cf");
+    // Round a map of the world there is only more fog: what lies past its edge is the fog's own grey.
+    if (state.far) this.seaBase.copy(FAR_FOG).lerp(FAR_FOG_DEEP, 0.5);
+    else this.seaBase.set(this.sodden ? "#2b4558" : "#3577cf");
     (this.sea.material as THREE.MeshLambertMaterial).color.copy(this.seaBase);
     this.wallTurn = NaN;
     this.lowered.clear();
@@ -2077,8 +2100,9 @@ export class WorldRenderer {
         .filter((t) => {
           // Water with something standing in it (rocks, a wreck) stays, so it can still be pointed at.
           if (t.biome !== "water" || state.map.pois.some((p) => p.pos.q === t.q && p.pos.r === t.r)) return false;
-          // A map that is all sea (the crossing to an island) is drawn whole.
-          if (land.length === 0) return false;
+          // A map that is all sea (the crossing to an island) is drawn whole, and so is a map of the world: its seas
+          // are part of it, and what lies round it is fog, not water.
+          if (land.length === 0 || state.far) return false;
           const near = Math.min(...land.map((l) => hexDistance(l, t)));
           return near > 2 || (near === 2 && noise(t.q, t.r, 31) < 0.45);
         })
@@ -2498,7 +2522,10 @@ export class WorldRenderer {
     this.tiles.forEach((t, i) => {
       c.set(BIOME_COLOR[t.biome]);
       // Fog is a pale mist by day and all but black by night.
-      if (t.biome === "fog") c.set(FOG_DAY).lerp(FOG_NIGHT, Math.max(0, this.paintedNight) / 10);
+      if (t.biome === "fog") {
+        if (this.state?.far) c.copy(FAR_FOG).lerp(FAR_FOG_DEEP, noise(t.q, t.r, 57));
+        else c.set(FOG_DAY).lerp(FOG_NIGHT, Math.max(0, this.paintedNight) / 10);
+      }
       // In a wet, walled port the green is tired.
       if (this.sodden && (t.biome === "plains" || t.biome === "forest")) c.lerp(DRAB, 0.5);
       if (t.biome === "plains" && !t.built && !places.has(key(t))) {
@@ -2564,6 +2591,20 @@ export class WorldRenderer {
     v.project(this.camera);
     if (v.z < -1 || v.z > 1 || Math.abs(v.x) > 1 || Math.abs(v.y) > 1) return null;
     return { x: ((v.x + 1) / 2) * this.container.clientWidth, y: ((1 - v.y) / 2) * this.container.clientHeight };
+  }
+
+  /**
+   * Where a hex is on the screen, in container pixels, `lift` above its ground, whether or not that is inside
+   * the view (`on` says). Null only when it is behind the camera. For things drawn over the map that run off
+   * its edge, as a line to somewhere out of sight does.
+   */
+  screenOf(pos: HexPos, lift = 0): { x: number; y: number; on: boolean } | null {
+    if (!this.state) return null;
+    const v = this.standAt(pos);
+    v.y += lift;
+    v.project(this.camera);
+    if (v.z < -1 || v.z > 1) return null;
+    return { x: ((v.x + 1) / 2) * this.container.clientWidth, y: ((1 - v.y) / 2) * this.container.clientHeight, on: Math.abs(v.x) <= 1 && Math.abs(v.y) <= 1 };
   }
 
   screenAbove(pos: HexPos, lift = 1.8): { x: number; y: number } | null {
@@ -6054,7 +6095,7 @@ export class WorldRenderer {
       const now = this.pinchState();
       // Fingers apart zooms in: the camera distance shrinks as the spread grows.
       // Damped: doubling the spread zooms by about a half, not by two.
-      this.userDist = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, this.pinch.zoom * Math.pow(this.pinch.dist / now.dist, PINCH_DAMPING)));
+      this.userDist = Math.max(MIN_ZOOM, Math.min(this.maxZoom, this.pinch.zoom * Math.pow(this.pinch.dist / now.dist, PINCH_DAMPING)));
       this.dist = this.userDist;
       // While following, a pinch only zooms: the little drift of spreading fingers is not a pan.
       if (!this.holdPan(now.x, now.y)) this.panBy(now.x - this.pinch.x, now.y - this.pinch.y);
@@ -6143,7 +6184,7 @@ export class WorldRenderer {
     // Proportional to how far the wheel moved, capped so one notch is about 6%.
     // A trackpad sends many small deltas and a mouse wheel a few big ones; both end up gentle.
     const step = Math.max(-50, Math.min(50, e.deltaY)) * 0.0012;
-    this.userDist = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, this.userDist * Math.exp(step)));
+    this.userDist = Math.max(MIN_ZOOM, Math.min(this.maxZoom, this.userDist * Math.exp(step)));
     this.dist = this.userDist;
   };
 

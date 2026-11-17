@@ -418,7 +418,8 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
       {/* Down the left-hand side: the docks at the top, the crew's cards in the middle (the talk sits under them). */}
       <div className="hud-left">
         <DragPanel id="harbor.docks" title="Docks" foldOnPhone className="story panel docks">
-          <p className="muted">The ships are laid up. Voyages are being rebuilt around a new way of fighting, out on the tiles themselves, and will sail again soon.</p>
+          <p className="muted">The crew's atlas is kept here: everywhere you have found, and the routes that run on from there.</p>
+          <p><button className="primary" onClick={() => (location.hash = "atlas")}>Open the atlas</button></p>
           <h3>Voyage log</h3>
           {board.log.length === 0 && <p className="muted">No voyages yet.</p>}
           <ul className="log">

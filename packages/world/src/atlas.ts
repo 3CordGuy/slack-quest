@@ -23,6 +23,7 @@
 // open to it (a route from the Harbor or from a cleared node), and a ring of
 // fog beyond those: where there is something, and nothing more.
 
+import type { HexPos } from "@gantt-quest/core";
 import { makeRng, seedFromString, type Rng } from "./rng";
 import { zoneOptions } from "./zone/gen";
 import { ZONE_MODS, ZONE_MOD_IDS, type ZoneModId } from "./zone/mods";
@@ -40,9 +41,8 @@ export interface AtlasNode {
   /** "q,r": the node's cell, and its name in the database. */
   id: string;
   cell: AtlasCell;
-  /** Where it is drawn, in cells: the cell's middle, nudged, so the chart does not look ruled. */
-  x: number;
-  y: number;
+  /** The hex of the world it stands on (atlasMap.ts): its cell's middle, nudged a hex either way, so the nodes do not lie in ruled rows. */
+  hex: HexPos;
   name: string;
   kind: AtlasNodeKind;
   biome: ZoneBiome;
@@ -60,15 +60,15 @@ export type AtlasNodeState = "harbor" | "cleared" | "open" | "fogged";
 /** A node as a crew is shown it. A fogged one is only somewhere a route leads: no name, no ground, nothing about what is there. */
 export type AtlasNodeView =
   | (AtlasNode & { state: "harbor" | "cleared" | "open" })
-  | { id: string; x: number; y: number; ring: number; links: string[]; state: "fogged" };
+  | { id: string; hex: HexPos; ring: number; links: string[]; state: "fogged" };
 
 export const ATLAS_HOME = "0,0";
 /** How far out a node may be named at all: a guard on what comes off the wire, far beyond anywhere a crew will sail. */
 export const ATLAS_REACH = 500;
 /** The share of pairs of neighbours joined by a route, besides the one route every node has toward the Harbor. */
 const EXTRA_ROUTES = 0.3;
-/** How far a node is nudged off the middle of its cell, in cells. */
-const JITTER = 0.26;
+/** How many hexes of the world lie between one cell's middle and the next. */
+export const ATLAS_SPACING = 6;
 /** One node in so many, from the second ring out, is a sea cave. */
 const SEACAVE_CHANCE = 0.16;
 
@@ -76,8 +76,8 @@ const DIRS: AtlasCell[] = [{ q: 1, r: 0 }, { q: 1, r: -1 }, { q: 0, r: -1 }, { q
 const idOf = (c: AtlasCell) => `${c.q},${c.r}`;
 const ringOf = (c: AtlasCell) => (Math.abs(c.q) + Math.abs(c.r) + Math.abs(c.q + c.r)) / 2;
 const around = (c: AtlasCell): AtlasCell[] => DIRS.map((d) => ({ q: c.q + d.q, r: c.r + d.r }));
-/** The middle of a cell on the page: pointy hexes, a cell wide. */
-const centre = (c: AtlasCell) => ({ x: c.q + c.r / 2, y: (c.r * Math.sqrt(3)) / 2 });
+/** Where a hex of the world lies on the page, in cells: pointy hexes, `ATLAS_SPACING` of them to a cell. */
+const page = (hex: HexPos) => ({ x: (hex.q + hex.r / 2) / ATLAS_SPACING, y: (hex.r * Math.sqrt(3)) / 2 / ATLAS_SPACING });
 const rngFor = (seed: string, tag: string, key: string): Rng => makeRng(seedFromString(`atlas|${seed}|${tag}|${key}`));
 const roll = (seed: string, tag: string, key: string) => rngFor(seed, tag, key).next();
 
@@ -105,27 +105,64 @@ function joined(seed: string, a: AtlasCell, b: AtlasCell): boolean {
   return roll(seed, "route", `${lo}|${hi}`) < EXTRA_ROUTES;
 }
 
-/** Slow noise over the chart, 0 to 1: a hashed value at each corner of a coarse grid, blended between them. */
-function noise(seed: string, tag: string, x: number, y: number, scale: number): number {
+/**
+ * Slow noise over the world, 0 to 1, at a hex: a hashed value at each corner of a coarse grid `scale` cells
+ * across, blended between them. `memo` keeps the corners already worked out (a whole map asks for the same ones).
+ */
+export function atlasNoise(seed: string, tag: string, hex: HexPos, scale: number, memo?: Map<string, number>): number {
+  const { x, y } = page(hex);
   const fx = x / scale;
   const fy = y / scale;
   const [x0, y0] = [Math.floor(fx), Math.floor(fy)];
   const ease = (t: number) => t * t * (3 - 2 * t);
   const [tx, ty] = [ease(fx - x0), ease(fy - y0)];
-  const at = (ix: number, iy: number) => roll(seed, tag, `${ix},${iy}`);
+  const at = (ix: number, iy: number) => {
+    const key = `${tag}|${ix},${iy}`;
+    let v = memo?.get(key);
+    if (v === undefined) {
+      v = roll(seed, tag, `${ix},${iy}`);
+      memo?.set(key, v);
+    }
+    return v;
+  };
   const top = at(x0, y0) * (1 - tx) + at(x0 + 1, y0) * tx;
   const bottom = at(x0, y0 + 1) * (1 - tx) + at(x0 + 1, y0 + 1) * tx;
   return top * (1 - ty) + bottom * ty;
 }
 
-/** The ground of the region a cell lies in. */
-function regionBiome(seed: string, cell: AtlasCell): ZoneBiome {
-  const { x, y } = centre(cell);
-  const v = noise(seed, "ground", x, y, 3.2);
+/** The ground of the region a hex of the world lies in. */
+export function atlasRegion(seed: string, hex: HexPos, memo?: Map<string, number>): "shore" | "meadow" | "woods" {
+  const v = atlasNoise(seed, "ground", hex, 2.4, memo);
   return v < 0.4 ? "shore" : v < 0.6 ? "meadow" : "woods";
 }
 
-const FIRST = ["Gull", "Widow's", "Salt", "Drowned", "Lantern", "Brine", "Kelp", "Thistle", "Crooked", "Grey", "Amber", "Wrecker's", "Tinker's", "Mizzen", "Fathom", "Barnacle", "Squall", "Ember", "Moss", "Heron", "Cinder", "Marrow", "Bellman's", "Tarry", "Whistling", "Low", "Stray", "Cutler's", "Hag's", "Pale"];
+const FIRST = [
+  "Gull", "Widow's", "Salt", "Drowned", "Lantern", "Brine", "Kelp", "Thistle", "Crooked", "Grey",
+  "Amber", "Wrecker's", "Tinker's", "Mizzen", "Fathom", "Barnacle", "Squall", "Ember", "Moss", "Heron",
+  "Cinder", "Marrow", "Bellman's", "Tarry", "Whistling", "Low", "Stray", "Cutler's", "Hag's", "Pale",
+  "Nettle", "Rook", "Sorrel", "Dunlin", "Cooper's", "Wicker", "Rust", "Sable", "Petrel", "Longshore",
+];
+/** The first words in a chart's own order, kept per seed: working it out is the same shuffle every time. */
+const shuffled = new Map<string, string[]>();
+/**
+ * The first word of a node's name. It steps through the chart's own shuffle of the list as the cells
+ * do (7 a cell one way, 13 the other), so no two landfalls side by side share one.
+ */
+function firstWord(seed: string, cell: AtlasCell): string {
+  let words = shuffled.get(seed);
+  if (!words) {
+    const rng = rngFor(seed, "names", "first");
+    words = [...FIRST];
+    for (let i = words.length - 1; i > 0; i--) {
+      const j = rng.int(0, i);
+      [words[i], words[j]] = [words[j], words[i]];
+    }
+    if (shuffled.size > 64) shuffled.clear();
+    shuffled.set(seed, words);
+  }
+  const n = words.length;
+  return words[(((cell.q * 7 + cell.r * 13) % n) + n) % n];
+}
 const LAST: Record<ZoneBiome, string[]> = {
   meadow: ["Isle", "Holm", "Green", "Down", "Lea", "Rise"],
   woods: ["Wood", "Thicket", "Grove", "Holt", "Tangle", "Copse"],
@@ -160,17 +197,15 @@ function rollMods(rng: Rng, ring: number, kind: AtlasNodeKind): ZoneModId[] {
 export function atlasNode(seed: string, cell: AtlasCell): AtlasNode {
   const id = idOf(cell);
   const ring = ringOf(cell);
-  const mid = centre(cell);
+  const mid: HexPos = { q: cell.q * ATLAS_SPACING, r: cell.r * ATLAS_SPACING };
   const links = around(cell).filter((n) => joined(seed, cell, n)).map(idOf);
-  if (ring === 0) return { id, cell, x: mid.x, y: mid.y, name: "The Harbor", kind: "harbor", biome: "shore", ring: 0, level: 1, mods: [], links };
+  if (ring === 0) return { id, cell, hex: mid, name: "The Harbor", kind: "harbor", biome: "shore", ring: 0, level: 1, mods: [], links };
   const rng = rngFor(seed, "node", id);
-  const x = mid.x + (rng.next() * 2 - 1) * JITTER;
-  const y = mid.y + (rng.next() * 2 - 1) * JITTER;
+  const hex: HexPos = { q: mid.q + rng.int(-1, 1), r: mid.r + rng.int(-1, 1) };
   const kind: AtlasNodeKind = ring >= 2 && rng.chance(SEACAVE_CHANCE) ? "seacave" : "landfall";
-  const biome = kind === "seacave" ? "caves" : regionBiome(seed, cell);
-  const first = rng.pick(FIRST);
-  const name = `${first} ${rng.pick(LAST[biome])}`;
-  return { id, cell, x, y, name, kind, biome, ring, level: atlasLevel(ring), mods: rollMods(rng, ring, kind), links };
+  const biome = kind === "seacave" ? "caves" : atlasRegion(seed, hex);
+  const name = `${firstWord(seed, cell)} ${rng.pick(LAST[biome])}`;
+  return { id, cell, hex, name, kind, biome, ring, level: atlasLevel(ring), mods: rollMods(rng, ring, kind), links };
 }
 
 /** The node an id names on a chart, or null if the id is not a node's. */
@@ -221,7 +256,7 @@ export function atlasView(seed: string, cleared: ReadonlySet<string>): AtlasNode
   return [
     ...[...known.values()].map((n): AtlasNodeView => ({ ...n, links: seen(n), state: n.kind === "harbor" ? "harbor" : "cleared" })),
     ...[...open.values()].map((n): AtlasNodeView => ({ ...n, links: seen(n), state: "open" })),
-    ...[...fog.values()].map((n): AtlasNodeView => ({ id: n.id, x: n.x, y: n.y, ring: n.ring, links: n.links.filter((l) => open.has(l)), state: "fogged" })),
+    ...[...fog.values()].map((n): AtlasNodeView => ({ id: n.id, hex: n.hex, ring: n.ring, links: n.links.filter((l) => open.has(l)), state: "fogged" })),
   ];
 }
 

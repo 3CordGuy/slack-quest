@@ -1588,7 +1588,11 @@ export class Ambience {
     return of(spell) * (1 - blend) + of(spell + 1) * blend;
   }
 
+  /** A time of day the scene is held at, whatever the clock says (0 to 1 through the day); null to follow the clock. */
+  heldTime: number | null = null;
+
   private timeOfDay(): number {
+    if (this.heldTime !== null) return this.heldTime;
     if (devTools.on) {
       const forced = (globalThis as { __gqTime?: number }).__gqTime;
       if (typeof forced === "number") return forced;

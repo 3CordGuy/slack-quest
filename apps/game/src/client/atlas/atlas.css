@@ -1,0 +1,92 @@
+/* The atlas (AtlasView.tsx): a view of its own. The world is the renderer's,
+   filling the screen; over it lie the routes, a marker on every place the
+   crew can see, a title and a way out along the top, and a card down the
+   left for the place picked. */
+
+.atlas-view { background: #2b3140; }
+
+/* ---------- routes: lines over the map, from marker to marker ---------- */
+.atlas-routes { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 4; pointer-events: none; overflow: visible; }
+.atlas-routes .route { fill: none; stroke-linecap: round; }
+.atlas-routes .route.sailed { stroke: rgba(255, 241, 201, 0.85); stroke-width: 2.5; filter: drop-shadow(0 1px 0 rgba(0, 0, 0, 0.6)); }
+.atlas-routes .route.open { stroke: rgba(244, 198, 78, 0.9); stroke-width: 2.5; stroke-dasharray: 8 7; filter: drop-shadow(0 1px 0 rgba(0, 0, 0, 0.6)); }
+.atlas-routes .route.fog { stroke: rgba(210, 218, 235, 0.38); stroke-width: 2; stroke-dasharray: 2 8; }
+
+/* ---------- markers ---------- */
+.atlas-marks { position: absolute; inset: 0; z-index: 5; pointer-events: none; }
+/* Placed by hand each frame: its top left corner is the place itself. */
+.atlas-mark-at { position: absolute; left: 0; top: 0; width: 0; height: 0; visibility: hidden; will-change: transform; }
+.atlas-mark {
+  position: absolute; left: 0; top: 0; translate: -50% -22px; display: flex; flex-direction: column; align-items: center; gap: 3px;
+  width: 150px; height: max-content; padding: 0; background: none; border: none; border-radius: 0; box-shadow: none; text-shadow: none; font: inherit; color: #fff1c9;
+  pointer-events: none;
+}
+/* Nothing in a marker gives way to anything else in it. */
+.atlas-mark > * { flex: none; }
+/* A marker is a button, but looks like none: not when pointed at, nor when it is the one picked. */
+.atlas-mark:hover, .atlas-mark:focus-visible, .atlas-marks .atlas-mark[aria-pressed="true"] { background: none; border: none; box-shadow: none; color: #fff1c9; filter: none; outline: none; }
+.atlas-orb {
+  position: relative; display: grid; place-items: center; width: 40px; height: 40px; border-radius: 50%;
+  font-family: var(--font-head, serif); font-size: 18px; font-weight: bold; line-height: 1; cursor: pointer; pointer-events: auto;
+  border: 3px solid #1b1830; box-shadow: 0 2px 0 rgba(0, 0, 0, 0.55); transition: scale 0.12s;
+}
+.atlas-mark:hover .atlas-orb, .atlas-mark:focus-visible .atlas-orb { scale: 1.12; }
+.atlas-mark:focus-visible .atlas-orb { outline: 3px solid #fff; outline-offset: 2px; }
+/* Open to the crew: gold, and breathing. */
+.atlas-mark.open .atlas-orb { color: #2c1c08; background: radial-gradient(circle at 35% 30%, #fff3bf, #f4c64e 55%, #b9831f); animation: atlas-open 2.2s ease-in-out infinite; }
+@keyframes atlas-open { 50% { box-shadow: 0 2px 0 rgba(0, 0, 0, 0.55), 0 0 0 7px rgba(244, 198, 78, 0.32), 0 0 22px 6px rgba(244, 198, 78, 0.5); } }
+.atlas-mark.open.seacave .atlas-orb { background: radial-gradient(circle at 35% 30%, #e9ddff, #a98be6 55%, #5b3fa8); color: #1d1238; }
+.atlas-mark.cleared .atlas-orb { width: 30px; height: 30px; margin: 5px 0; font-size: 15px; color: #0f2a14; background: radial-gradient(circle at 35% 30%, #c9f2b4, #5fae4a 60%, #2f6a35); }
+.atlas-mark.harbor .atlas-orb { width: 46px; height: 46px; margin-top: -3px; font-size: 22px; color: #2c1c08; background: radial-gradient(circle at 35% 30%, #ffffff, #cfe3f5 55%, #7fa6c9); }
+.atlas-mark.picked .atlas-orb { outline: 3px solid #fff; outline-offset: 3px; }
+.atlas-there {
+  position: absolute; right: -9px; top: -9px; min-width: 20px; height: 20px; padding: 0 4px; display: grid; place-items: center;
+  font-size: 12px; font-weight: bold; color: #fff; background: #c0392b; border: 2px solid #1b1830; border-radius: 10px;
+}
+.atlas-name {
+  max-width: 100%; padding: 1px 7px 2px; font-family: var(--font-head, serif); font-size: 14px; line-height: 1.15; letter-spacing: 0.02em; text-align: center;
+  color: #fff1c9; background: rgba(18, 12, 8, 0.78); border: 1px solid rgba(0, 0, 0, 0.6); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.atlas-mark.cleared .atlas-name { opacity: 0.75; }
+.atlas-mark.harbor .atlas-name { font-family: var(--font-title, serif); font-size: 18px; }
+/* From a long way up, only the place picked keeps its name. */
+.atlas-view.crowded .atlas-mark:not(.picked):not(.harbor) .atlas-name { display: none; }
+.atlas-pips { display: flex; gap: 4px; height: 9px; margin-bottom: 1px; }
+.atlas-pips i { width: 9px; height: 9px; border: 1px solid #1b1830; rotate: 45deg; box-shadow: 0 1px 0 rgba(0, 0, 0, 0.5); }
+.atlas-pips i.map { background: #46b3bd; }
+.atlas-pips i.enemy { background: #e0453a; }
+.atlas-mark:not(.open) .atlas-pips { display: none; }
+/* Somewhere a route leads, and nothing more is known. */
+.atlas-mark.fogged .atlas-orb { width: 26px; height: 26px; margin-top: 7px; font-size: 14px; color: rgba(220, 228, 245, 0.75); background: rgba(40, 46, 62, 0.8); border-color: rgba(120, 132, 160, 0.6); box-shadow: none; cursor: default; pointer-events: none; }
+
+/* ---------- along the top ---------- */
+.atlas-top { position: absolute; top: 12px; left: 0; right: 0; z-index: 12; display: flex; justify-content: center; pointer-events: none; }
+/* The title is a pennant like a window's, but stands on its own here. */
+.atlas-top .win-plate.atlas-title { position: static; transform: none; font-size: 22px; }
+.atlas-close { position: absolute; top: 0; right: 56px; pointer-events: auto; }
+
+/* ---------- what is known of the place picked ---------- */
+.atlas-card {
+  position: absolute; top: 64px; left: 20px; z-index: 11; display: flex; flex-direction: column; gap: 8px;
+  width: min(320px, calc(100vw / var(--ui-z, 1) - 40px)); max-height: calc(100% - 96px); overflow: hidden auto;
+}
+.atlas-card h3 { margin: 0; font-family: var(--font-title, serif); font-size: 26px; line-height: 1.05; text-transform: none; letter-spacing: 0.01em; }
+.atlas-card p { margin: 0; }
+.atlas-kind { font-family: var(--font-head, serif); }
+.atlas-mods { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.atlas-mods li { padding: 5px 8px; border: 1px solid var(--line); border-left: 4px solid #46b3bd; }
+.atlas-mods li.enemy { border-left-color: #e0453a; }
+.atlas-mods .small-note { font-size: 12px; color: var(--muted); }
+.atlas-pay { padding: 6px 8px; border: 1px solid var(--gold, #f4c64e); }
+.atlas-go { display: flex; align-items: center; gap: 8px; }
+.atlas-tally, .atlas-even { font-family: var(--font-head, serif); color: var(--gold, #f4c64e); }
+.atlas-dev { margin-top: 4px !important; }
+
+/* A narrow screen: the card along the bottom, out of the way of the map. */
+@media (max-width: 760px) {
+  .atlas-card { top: auto; bottom: 12px; left: 8px; right: 8px; width: auto; max-height: 44%; }
+  .atlas-card h3 { font-size: 22px; }
+  .atlas-close { right: 8px; }
+  .atlas-top { justify-content: flex-start; padding-left: 8px; }
+}
+@media (prefers-reduced-motion: reduce) { .atlas-mark.open .atlas-orb { animation: none; } }

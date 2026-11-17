@@ -204,7 +204,7 @@ export function harborDoor(pos: HexPos): HexPos | null {
   return DOOR_OF.get(keyOf(pos)) ?? null;
 }
 
-const HEIGHT: Record<Biome, number> = { water: 0.05, plains: 0.3, forest: 0.42, hills: 0.75, dock: 0.1, cobble: 0.26, mud: 0.2, rampart: 0.7, floor: 0.1, wall: 0.9, cave: 0.18, rock: 1.4, gate: 0.18, fog: 0.3 };
+const HEIGHT: Record<Biome, number> = { sand: 0.22, water: 0.05, plains: 0.3, forest: 0.42, hills: 0.75, dock: 0.1, cobble: 0.26, mud: 0.2, rampart: 0.7, floor: 0.1, wall: 0.9, cave: 0.18, rock: 1.4, gate: 0.18, fog: 0.3 };
 
 export function harborPoi(id: string, kind: PoiKind, pos: HexPos, facing = 0): Poi {
   return { id, kind, pos, hidden: false, cleared: false, usedBy: [], enemies: [], ...(facing ? { facing } : {}) };

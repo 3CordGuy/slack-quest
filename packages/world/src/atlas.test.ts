@@ -113,6 +113,21 @@ describe("the chart", () => {
     expect(far.reduce((sum, n) => sum + n.mods.length, 0) / far.length).toBeGreaterThan(1.5);
   });
 
+  it("gives no two landfalls side by side the same first word", () => {
+    for (const seed of SEEDS) {
+      const all = new Map(nodes(seed, 7).map((n) => [n.id, n]));
+      const first = (n: AtlasNode) => n.name.split(" ")[0];
+      for (const n of all.values()) {
+        if (n.ring === 0) continue;
+        const { q, r } = n.cell;
+        for (const [dq, dr] of [[1, 0], [1, -1], [0, -1], [-1, 0], [-1, 1], [0, 1]]) {
+          const other = all.get(`${q + dq},${r + dr}`);
+          if (other && other.ring > 0) expect(first(other), `${n.id} beside ${other.id}`).not.toBe(first(n));
+        }
+      }
+    }
+  });
+
   it("names a node only by a cell's own id", () => {
     expect(atlasCell("3,-2")).toEqual({ q: 3, r: -2 });
     for (const bad of ["", "3", "3,-2,1", "03,2", "3, 2", "a,b", "99999,0", "600,0", null, 7, { q: 1, r: 1 }]) expect(atlasCell(bad), String(bad)).toBeNull();
@@ -135,7 +150,7 @@ describe("what a crew sees of the chart", () => {
     for (const f of fog) {
       expect(f.ring).toBe(2);
       // Fog says where, and which open node a route runs to it from, and nothing else.
-      expect(Object.keys(f).sort()).toEqual(["id", "links", "ring", "state", "x", "y"]);
+      expect(Object.keys(f).sort()).toEqual(["hex", "id", "links", "ring", "state"]);
       expect(f.links.length).toBeGreaterThan(0);
       for (const id of f.links) expect(open.some((o) => o.id === id)).toBe(true);
     }
