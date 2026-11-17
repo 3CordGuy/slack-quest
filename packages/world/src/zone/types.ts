@@ -16,7 +16,7 @@ import type { FurnishingGrant } from "../world";
 export type Side = "hero" | "enemy";
 
 /** What can be on a unit: the old fights' effects, three the tiles bring, and the auras a hero can carry (kit.ts AURAS). */
-export type Condition = EffectKind | "poisoned" | "prone" | "wet" | "beacon" | "mending";
+export type Condition = EffectKind | "poisoned" | "prone" | "wet" | "beacon" | "mending" | "bolstered";
 
 export interface UnitCondition {
   kind: Condition;
@@ -24,6 +24,8 @@ export interface UnitCondition {
   rounds: number;
   /** Put on during the bearer's own turn: the end of that turn does not count against it. */
   fresh?: boolean;
+  /** Bolstered: the points of shield left, spent before HP. */
+  amount?: number;
 }
 
 /** What a hero carries to use in a zone: thrown at a hex, and (a healing potion) drunk. */
@@ -287,7 +289,7 @@ export type ZoneEvent =
   /** Something done, said before its rolls: an ability, a common action, a throw, an enemy's attack by name. */
   | { t: "used"; id: string; what: string; name: string; target?: string; at?: HexPos }
   | { t: "reaction"; id: string; target: string }
-  | { t: "hit"; actor: string | null; target: string; amount: number; what: string; crit: boolean }
+  | { t: "hit"; actor: string | null; target: string; amount: number; what: string; crit: boolean; blocked?: number }
   | { t: "miss"; actor: string; target: string; what: string }
   | { t: "heal"; actor: string | null; target: string; amount: number; what: string }
   | { t: "condition"; target: string; kind: Condition; rounds: number }

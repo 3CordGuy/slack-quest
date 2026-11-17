@@ -4,13 +4,13 @@ import { ABILITIES, EFFECT_TICK, ENEMIES, abilitiesFor } from "../content";
 import type { Biome, Tile } from "../map";
 import { makeRng } from "../rng";
 import { walk } from "./combat";
-import { attackContext, type Ctx } from "./engine";
+import { attackContext, damage, type Ctx } from "./engine";
 import { ALERT_RANGE, DEFAULT_ZONE_OPTIONS, JOIN_RANGE, generateZone, zoneOptions } from "./gen";
-import { adjacent, blast, flies, sees, solid, zoneReach } from "./geometry";
-import { AURAS, ENEMY_BURST, ENEMY_KIT, EXPLORE_ROUND_MS, FLEE_RANGE, LIGHT_RADIUS, SHIELD_SET_ASIDE, TACTICS, TORCH_GROUND_ROUNDS, TORCH_HELD_ROUNDS, TORCH_ROUND_MS, commonCost, enemyHp, enemyStrikes, tacticOf } from "./kit";
+import { adjacent, blast, flies, sees, solid, unitAt, zoneReach } from "./geometry";
+import { AURAS, BOLSTER, ENEMY_BURST, ENEMY_KIT, EXPLORE_ROUND_MS, FLEE_RANGE, LIGHT_RADIUS, SHIELD_SET_ASIDE, TACTICS, TORCH_GROUND_ROUNDS, TORCH_HELD_ROUNDS, TORCH_ROUND_MS, commonCost, enemyHp, enemyStrikes, tacticOf } from "./kit";
 import { MAX_CATCHUP_ROUNDS } from "./clock";
 import { defenceOf } from "./engine";
-import { checkAbility, crateBlow, enemyAct } from "./combat";
+import { checkAbility, crateBlow, enemyAct, wayBetween } from "./combat";
 import { d20, diceAverage, diceFor, heroMove, hitChance } from "./rules";
 import { createZone, ensureMouth, standInHero, stepZone, zoneView } from "./zone";
 import { DELVE_CRATES, generateDelve } from "./delve";
@@ -2165,7 +2165,7 @@ describe("the Paladin's class abilities", () => {
     const dummyAt = at(6, 6);
     const [spare] = hexNeighbors(annAt, state.map.grid).filter((p) => !sameHexes(p, dummyAt));
     const ann = hero(state, "ann", "qa_paladin", annAt);
-    ann.abilities = ["beacon_aura", "healing_aura", "branding_strike", "stoke_the_fire"];
+    ann.abilities = ["beacon_aura", "healing_aura", "branding_strike", "stoke_the_fire", "bolster", "show_the_way"];
     hero(state, "bo", "refactor_rogue", at(3, 6));
     hero(state, "cy", "devops_mage", at(2, 6));
     const dummy = enemy(state, "dummy", dummyAt);
@@ -2192,7 +2192,7 @@ describe("the Paladin's class abilities", () => {
   const lasts = (state: ZoneState, kind: string) => unit(state, "ann").conditions.find((c) => c.kind === kind)?.rounds;
 
   it("are all in the Paladin's pool", () => {
-    expect(poolFor("qa_paladin").map((e) => e.id)).toEqual(["beacon_aura", "healing_aura", "branding_strike", "stoke_the_fire"]);
+    expect(poolFor("qa_paladin").map((e) => e.id)).toEqual(["beacon_aura", "healing_aura", "branding_strike", "stoke_the_fire", "bolster", "show_the_way"]);
   });
 
   it("Beacon Aura: a Bonus action that gives the Paladin and allies within 2 hexes advantage, not anyone further off", () => {
@@ -2293,5 +2293,114 @@ describe("the Paladin's class abilities", () => {
       expect(unit(state, far).conditions).toEqual([]);
     }
     expect(hits).toBeGreaterThan(0);
+  });
+
+  const shieldOf = (state: ZoneState, id: string) => unit(state, id).conditions.find((c) => c.kind === "bolstered")?.amount;
+
+  it("Bolster: an Action that shields the Paladin and allies within 2 hexes, not anyone further off", () => {
+    let { state } = party();
+    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "bolster" });
+    expect(state.encounter!.budgets.ann).toMatchObject({ action: false, bonus: true });
+    const size = BOLSTER.shield + unit(state, "ann").level;
+    expect(shieldOf(state, "ann")).toBe(size);
+    expect(shieldOf(state, "bo")).toBe(size);
+    expect(shieldOf(state, "cy")).toBeUndefined();
+    expect(fails(nextTurn(state), { type: "use", by: "ann", unit: "ann", ability: "bolster" })).toMatch(/not ready/);
+  });
+
+  it("Bolster: the shield takes a blow's damage before HP, and is gone once spent", () => {
+    let { state } = party();
+    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "bolster" });
+    const events: ZoneEvent[] = [];
+    const ctx: Ctx = { state: structuredClone(state), rng: makeRng(3), events, effects: [] };
+    const bo = unit(ctx.state, "bo");
+    const hp = bo.hp;
+    const size = shieldOf(ctx.state, "bo")!;
+    expect(damage(ctx, bo, size - 3, { actor: null, what: "test" })).toBe(0);
+    expect(bo.hp).toBe(hp);
+    expect(shieldOf(ctx.state, "bo")).toBe(3);
+    expect(damage(ctx, bo, 5, { actor: null, what: "test" })).toBe(2);
+    expect(bo.hp).toBe(hp - 2);
+    expect(shieldOf(ctx.state, "bo")).toBeUndefined();
+    expect(events.filter((e) => e.t === "hit").map((e) => e.t === "hit" && [e.amount, e.blocked])).toEqual([[0, size - 3], [2, 3]]);
+  });
+
+  it("Bolster: wears off after 3 of the bearer's turns", () => {
+    let { state } = party();
+    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "bolster" });
+    for (let turn = 1; turn <= BOLSTER.rounds; turn++) {
+      state = nextTurn(state);
+      expect(lasts(state, "bolstered"), `turn ${turn}`).toBeGreaterThan(0);
+    }
+    state = endShared(state);
+    expect(lasts(state, "bolstered")).toBeUndefined();
+  });
+
+  it("Show the Way: lifts every harmful condition off an ally, and leaves the good ones", () => {
+    let { state } = party();
+    const bo = unit(state, "bo");
+    bo.conditions = (["burning", "poisoned", "slowed", "exposed", "hasted"] as const).map((kind) => ({ kind, rounds: 3 }));
+    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "show_the_way", target: "bo" });
+    expect(unit(state, "bo").conditions.map((c) => c.kind)).toEqual(["hasted"]);
+    expect(state.encounter!.budgets.ann.action).toBe(false);
+  });
+
+  it("Show the Way: heals the ally a little, less than a Mend", () => {
+    let { state } = party();
+    unit(state, "bo").hp = 1;
+    const events: ZoneEvent[] = [];
+    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "show_the_way", target: "bo" }, events);
+    expect(unit(state, "bo").hp).toBeGreaterThan(1);
+    expect(events.some((e) => e.t === "heal" && e.target === "bo" && e.what === "show_the_way")).toBe(true);
+    expect(ABILITIES.show_the_way.heal!).toBeLessThan(ABILITIES.mend.heal!);
+  });
+
+  it("Show the Way: clears the fire, poison, oil, ice and slime off the way you would walk, but not water, nor ground off it", () => {
+    let { state } = party();
+    const annPos = unit(state, "ann").pos;
+    const boPos = unit(state, "bo").pos;
+    // The straight way is barred: the walk goes round.
+    const between = at(4, 6);
+    expect(hexDistance(annPos, between) + hexDistance(between, boPos)).toBe(hexDistance(annPos, boPos));
+    enemy(state, "dummy", between);
+    const way = wayBetween(state, unit(state, "ann"), boPos);
+    expect(way).toHaveLength(4);
+    expect(way.some((p) => sameHexes(p, between))).toBe(false);
+    expect(way[0]).toEqual(annPos);
+    expect(way[3]).toEqual(boPos);
+    const lay = (pos: HexPos, kind: SurfaceKind) => (state.surfaces[posKey(pos)] = { kind, rounds: 5, by: null });
+    lay(way[0], "oil");
+    lay(way[1], "fire");
+    lay(way[2], "slime");
+    lay(way[3], "ice");
+    lay(between, "poison");
+    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "show_the_way", target: "bo" });
+    for (const p of way) expect(state.surfaces[posKey(p)], posKey(p)).toBeUndefined();
+    expect(state.surfaces[posKey(between)].kind).toBe("poison");
+    // Water is no harm, and stays.
+    ({ state } = party());
+    lay(at(4, 6), "water");
+    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "show_the_way", target: "bo" });
+    expect(state.surfaces[posKey(at(4, 6))].kind).toBe("water");
+  });
+
+  it("Show the Way: with no way on foot to the ally, clears the straight line instead", () => {
+    let { state } = party();
+    const annPos = unit(state, "ann").pos;
+    const boPos = unit(state, "bo").pos;
+    // Enemies all round bo (cy, who could be walked past, out of the way): there is no walking to them.
+    unit(state, "cy").pos = at(1, 1);
+    for (const p of hexNeighbors(boPos, state.map.grid)) if (!unitAt(state, p)) enemy(state, "dummy", p);
+    const way = wayBetween(state, unit(state, "ann"), boPos);
+    expect(way).toEqual([annPos, at(4, 6), boPos]);
+    for (const p of way) state.surfaces[posKey(p)] = { kind: "fire", rounds: 5, by: null };
+    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "show_the_way", target: "bo" });
+    for (const p of way) expect(state.surfaces[posKey(p)], posKey(p)).toBeUndefined();
+  });
+
+  it("Show the Way: takes the way over oil and slime, not round them", () => {
+    const { state } = party();
+    for (const p of [at(4, 6), ...hexNeighbors(at(4, 6), state.map.grid)]) state.surfaces[posKey(p)] = { kind: "slime", rounds: 5, by: null };
+    expect(wayBetween(state, unit(state, "ann"), unit(state, "bo").pos)).toHaveLength(3);
   });
 });

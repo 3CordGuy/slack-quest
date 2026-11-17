@@ -62,6 +62,8 @@ const ABILITY_FX: Record<string, Fx> = {
   healing_aura: fx("bless", "#7dff9a"),
   branding_strike: fx("melee", "#ff7a2a"),
   stoke_the_fire: fx("ring", "#ff7a2a"),
+  bolster: fx("ring", "#9ec9ff"),
+  show_the_way: fx("bless", "#fff4c2"),
   shockwave: fx("ring", "#a78bfa"),
   mend: fx("bless", "#7dff9a"),
   rejuvenate: fx("bless", "#a3e635"),

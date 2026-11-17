@@ -64,17 +64,37 @@ function fall(ctx: Ctx, unit: Unit): void {
   ctx.events.push({ t: "down", id: unit.id });
 }
 
+/** Put a shield of `amount` points on a unit for `rounds` of its turns (Bolstered). A bigger one replaces a smaller. */
+export function shieldUnit(ctx: Ctx, unit: Unit, amount: number, rounds: number): void {
+  if (unit.down || amount <= 0) return;
+  addCondition(ctx, unit, "bolstered", rounds);
+  const held = unit.conditions.find((c) => c.kind === "bolstered");
+  if (held) held.amount = Math.max(held.amount ?? 0, amount);
+}
+
+/** Spend a unit's shield on `amount` of damage. Returns how much of it the shield took; a shield used up is gone. */
+function soak(unit: Unit, amount: number): number {
+  const held = unit.conditions.find((c) => c.kind === "bolstered");
+  if (!held) return 0;
+  const took = Math.min(held.amount ?? 0, amount);
+  held.amount = (held.amount ?? 0) - took;
+  if (held.amount <= 0) removeCondition(unit, "bolstered");
+  return took;
+}
+
 /**
  * Deal damage from a blow or a blast. Guarded halves it (rounding up) unless it goes through a guard;
- * a hit that lands always does at least 1. Returns what was dealt.
+ * a hit that lands always does at least 1. A shield (Bolstered) takes what it can before HP does.
+ * Returns the HP it cost.
  */
 export function damage(ctx: Ctx, target: Unit, amount: number, opts: { actor: string | null; what: string; crit?: boolean; ignoreGuard?: boolean }): number {
   if (target.down) return 0;
   let dealt = Math.max(1, Math.round(amount));
   if (has(target, "guarded") && !opts.ignoreGuard) dealt = Math.ceil(dealt / 2);
-  dealt = Math.min(dealt, target.hp);
+  const blocked = soak(target, dealt);
+  dealt = Math.min(dealt - blocked, target.hp);
   target.hp -= dealt;
-  ctx.events.push({ t: "hit", actor: opts.actor, target: target.id, amount: dealt, what: opts.what, crit: !!opts.crit });
+  ctx.events.push({ t: "hit", actor: opts.actor, target: target.id, amount: dealt, what: opts.what, crit: !!opts.crit, ...(blocked > 0 ? { blocked } : {}) });
   if (target.hp <= 0) fall(ctx, target);
   return dealt;
 }

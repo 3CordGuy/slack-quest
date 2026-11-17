@@ -24,6 +24,8 @@ export const ABILITY_ICON: Record<string, ActionIcon> = {
   healing_aura: icon("heal", "#ffd23f"),
   branding_strike: icon("heavy", "#ff7a2a"),
   stoke_the_fire: icon("fire", "#ff5a2a"),
+  bolster: icon("shield", "#9ec9ff"),
+  show_the_way: icon("beam", "#fff4c2"),
   // Mage
   firebolt: icon("fire", "#fff1c9"),
   mend: icon("heal", "#7dff9a"),

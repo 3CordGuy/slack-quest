@@ -45,6 +45,10 @@ export interface Tactic {
   vsWet?: number;
   /** Puts this condition on the user for `rounds` of their own turns: an aura, worked by the condition itself (see AURAS). */
   aura?: { kind: Condition; rounds: number };
+  /** Shields the user and every ally within BOLSTER.range (Bolstered). */
+  bolster?: boolean;
+  /** Takes every harmful condition off the ally, and the ground that hurts or hinders (surfaces.ts HINDERING) off the way you would walk to them. */
+  clearWay?: boolean;
 }
 
 const melee = (extra: Partial<Tactic> = {}): Tactic => ({ cost: "action", reach: "melee", range: 1, shape: "single", ...extra });
@@ -67,6 +71,8 @@ export const TACTICS: Record<string, Tactic> = {
   healing_aura: { cost: "bonus", reach: "spell", range: 0, shape: "self", aura: { kind: "mending", rounds: 4 } },
   branding_strike: melee({ cooldown: 2 }),
   stoke_the_fire: melee({ shape: "adjacent", cooldown: 2 }),
+  bolster: { cost: "action", reach: "spell", range: 0, shape: "self", cooldown: 3, bolster: true },
+  show_the_way: mend(5, { cooldown: 2, clearWay: true }),
   // Mage
   firebolt: spell(6, { ignites: true }),
   mend: mend(5),
@@ -131,6 +137,9 @@ export const AURAS = {
   heal: { n: 1, d: 4, plus: 1 } satisfies Dice,
 };
 
+/** Bolster: a shield of `shield` points plus the Paladin's level on them and every ally within `range`, for `rounds` of each one's turns. */
+export const BOLSTER = { range: 2, shield: 10, rounds: 3 };
+
 /** The stat that shrugs off each condition. */
 export const SAVE_STAT: Record<Condition, StatKey> = {
   bleeding: "vit",
@@ -147,6 +156,7 @@ export const SAVE_STAT: Record<Condition, StatKey> = {
   wet: "agi",
   beacon: "vit",
   mending: "vit",
+  bolstered: "vit",
 };
 
 const info = (kind: EffectKind, blurb: string) => ({ name: EFFECT_INFO[kind].name, color: EFFECT_INFO[kind].color, blurb });
@@ -167,6 +177,7 @@ export const CONDITION_INFO: Record<Condition, { name: string; blurb: string; co
   wet: { name: "Wet", blurb: "Soaked through: lightning hits harder, and it cannot burn.", color: "#7dd3fc" },
   beacon: { name: "Beacon", blurb: "Gives light, and it and allies within 2 hexes have advantage on their attacks.", color: "#ffe9a8" },
   mending: { name: "Healing Aura", blurb: "At the start of each of its turns, it and every ally within 2 hexes heal a little.", color: "#7dff9a" },
+  bolstered: { name: "Bolstered", blurb: "A shield takes the damage of blows before its HP does, until it is spent or wears off.", color: "#9ec9ff" },
 };
 
 // ---------- common actions ----------

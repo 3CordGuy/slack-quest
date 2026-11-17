@@ -405,7 +405,12 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
         const target = find(ev.target);
         const actor = ev.actor ? find(ev.actor) : undefined;
         if (hit && target) target.hp = Math.max(0, target.hp - ev.amount);
-        const mark = hit ? () => view?.floatOver(ev.target, `-${ev.amount}`, ev.crit ? "#ffd23f" : "#ff6b6b") : () => view?.floatOver(ev.target, "miss", "#c9d1e0");
+        const blocked = hit && ev.blocked ? ev.blocked : 0;
+        const mark = !hit
+          ? () => view?.floatOver(ev.target, "miss", "#c9d1e0")
+          : blocked && ev.amount === 0
+            ? () => view?.floatOver(ev.target, `blocked ${blocked}`, "#9ec9ff")
+            : () => view?.floatOver(ev.target, blocked ? `-${ev.amount} (${blocked} blocked)` : `-${ev.amount}`, ev.crit ? "#ffd23f" : "#ff6b6b");
         const what = blowName(ev.what);
         // How this blow gets there: thrown or struck all at once (the picture is already playing), flown, or dealt by hand.
         const mine = use && use.id === ev.actor ? use : null;

@@ -5,16 +5,16 @@
 // reducer's business (zone.ts); nothing here spends an Action. A hero's
 // blows, blasts and bombs reach crates too (crates.ts).
 
-import { hexDistance, hexNeighbors, posKey, type HexPos } from "@gantt-quest/core";
+import { hexDistance, hexNeighbors, hexSegment, posKey, type HexPos } from "@gantt-quest/core";
 import { ABILITIES, ARMOR_DAMAGE_DIVISOR, BARD_AURA, WARLOCK_BLEED_TURNS, type AbilityDef } from "../content";
 import { tileAt, type Poi } from "../map";
-import { DEBUFFS, addCondition, attackContext, attackRoll, damage, defenceOf, has, heal, removeCondition, saveBonus, saveRoll, type Ctx } from "./engine";
+import { DEBUFFS, addCondition, attackContext, attackRoll, damage, defenceOf, has, heal, removeCondition, saveBonus, saveRoll, shieldUnit, type Ctx } from "./engine";
 import { cratesOn, crateById, hurtCrate, isCrateId } from "./crates";
-import { adjacent, blast, blockerAt, directionToward, elevOf, inFight, lineFrom, sameHex, sees, solid, stepCost, unitAt, unitById } from "./geometry";
-import { COMMON_ACTIONS, ENEMY_BURST, FLEE_RANGE, JUMP_MOVE_COST, POTION_EDGE, SAVE_STAT, THROWABLES, TORCH_GROUND_ROUNDS, abilityDice, enemyStrikes, healDice, jumpRange, reactionStrike, tacticOf, throwRange, type EnemyStrike, type Tactic } from "./kit";
+import { adjacent, blast, blockerAt, directionToward, elevOf, inFight, lineFrom, pathIn, sameHex, sees, solid, stepCost, unitAt, unitById, zoneReach } from "./geometry";
+import { BOLSTER, COMMON_ACTIONS, ENEMY_BURST, FLEE_RANGE, JUMP_MOVE_COST, POTION_EDGE, SAVE_STAT, THROWABLES, TORCH_GROUND_ROUNDS, abilityDice, enemyStrikes, healDice, jumpRange, reactionStrike, tacticOf, throwRange, type EnemyStrike, type Tactic } from "./kit";
 import { d20, hitChance, mod, proficiency, rollDice, statOf } from "./rules";
 import { seenByHeroes } from "./light";
-import { chill, dropTorch, enterSurface, ignite, letGoTorch, placeSurface } from "./surfaces";
+import { HINDERING, chill, clearSurfaces, dropTorch, enterSurface, ignite, letGoTorch, placeSurface } from "./surfaces";
 import type { Budget, CommonAction, Throwable, Unit, ZoneState } from "./types";
 
 /** How near a Bard has to be for their tune to help. */
@@ -172,6 +172,19 @@ export function checkAbility(state: ZoneState, unit: Unit, ability: string, aim:
   return null;
 }
 
+/** How far afield Show the Way looks for a way to walk to the ally, in steps of open ground. */
+const WAY_SEARCH = 30;
+
+/**
+ * The hexes `unit` would walk to get to `to`, both ends included: the way the walk itself takes, but over the
+ * ground as it would be with nothing lying on it (oil and slime slow the walk, so it would steer round the very
+ * stuff Show the Way is to clear). With no way on foot (a cliff, say), the straight line between.
+ */
+export function wayBetween(state: ZoneState, unit: Unit, to: HexPos): HexPos[] {
+  const path = pathIn(zoneReach({ ...state, surfaces: {} }, unit, WAY_SEARCH), to);
+  return path ? [unit.pos, ...path] : hexSegment(unit.pos, to);
+}
+
 /** What a hero adds to an ability's damage: their stat, their weapon, half their level, and a Bard's tune if one is near. */
 function damageBonus(state: ZoneState, unit: Unit, def: AbilityDef): number {
   const tune = state.units.some((u) => u.id !== unit.id && u.side === unit.side && u.kind === "frontend_bard" && !u.down && hexDistance(u.pos, unit.pos) <= BARD_AURA_RANGE) ? BARD_AURA : 0;
@@ -320,6 +333,13 @@ export function resolveAbility(ctx: Ctx, unit: Unit, ability: string, aim: Aim &
     // "Takes the very next turn" has no meaning in an initiative order: the ally is Hasted instead.
     if (def.actNext && target.id !== unit.id) addCondition(ctx, target, "hasted", 2);
     if (tactic.aura) addCondition(ctx, unit, tactic.aura.kind, tactic.aura.rounds);
+    if (tactic.bolster) {
+      for (const u of state.units) if (u.side === unit.side && !u.down && hexDistance(u.pos, unit.pos) <= BOLSTER.range) shieldUnit(ctx, u, BOLSTER.shield + unit.level, BOLSTER.rounds);
+    }
+    if (tactic.clearWay) {
+      for (const kind of DEBUFFS) removeCondition(target, kind);
+      clearSurfaces(ctx, wayBetween(state, unit, target.pos).filter((p) => { const s = state.surfaces[posKey(p)]; return !!s && HINDERING.has(s.kind); }));
+    }
     landed = true;
   }
   if (landed && def.selfEffect && !unit.down) addCondition(ctx, unit, def.selfEffect.effect, def.selfEffect.turns);

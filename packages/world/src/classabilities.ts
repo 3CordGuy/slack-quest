@@ -27,6 +27,8 @@ export const ABILITY_POOLS: AbilityPools = {
     { id: "healing_aura", level: 1 },
     { id: "branding_strike", level: 1 },
     { id: "stoke_the_fire", level: 1 },
+    { id: "bolster", level: 1 },
+    { id: "show_the_way", level: 1 },
   ],
   devops_mage: [],
   refactor_rogue: [],

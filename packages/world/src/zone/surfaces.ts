@@ -26,6 +26,9 @@ export const SURFACE_INFO: Record<SurfaceKind, { name: string; blurb: string; co
 /** Surfaces a creature would rather not walk through. The enemy looks for a way round these. */
 export const HARMFUL: ReadonlySet<SurfaceKind> = new Set(["poison", "fire"]);
 
+/** Ground that hurts, slows or trips whoever crosses it: what Show the Way sweeps away. Water stays. */
+export const HINDERING: ReadonlySet<SurfaceKind> = new Set(["poison", "fire", "oil", "ice", "slime"]);
+
 /** What a fire burning through oil or poison lasts. */
 const SPREAD_FIRE_ROUNDS = 2;
 const ICE_SAVE = 12;
