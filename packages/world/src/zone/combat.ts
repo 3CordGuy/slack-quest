@@ -2,13 +2,15 @@
 // use an ability, take one of the common actions, throw something, and,
 // for an enemy, make one of its attacks. Each has a check, which says in
 // words why it cannot be done, and the doing. Costs and turns are the
-// reducer's business (zone.ts); nothing here spends an Action.
+// reducer's business (zone.ts); nothing here spends an Action. A hero's
+// blows, blasts and bombs reach crates too (crates.ts).
 
 import { hexDistance, hexNeighbors, posKey, type HexPos } from "@gantt-quest/core";
 import { ABILITIES, ARMOR_DAMAGE_DIVISOR, BARD_AURA, WARLOCK_BLEED_TURNS, type AbilityDef } from "../content";
-import { tileAt } from "../map";
+import { tileAt, type Poi } from "../map";
 import { DEBUFFS, addCondition, attackContext, attackRoll, damage, defenceOf, has, heal, removeCondition, saveBonus, saveRoll, type Ctx } from "./engine";
-import { adjacent, blast, chestAt, directionToward, elevOf, inFight, lineFrom, sameHex, sees, solid, stepCost, unitAt, unitById } from "./geometry";
+import { cratesOn, crateById, hurtCrate, isCrateId } from "./crates";
+import { adjacent, blast, blockerAt, directionToward, elevOf, inFight, lineFrom, sameHex, sees, solid, stepCost, unitAt, unitById } from "./geometry";
 import { COMMON_ACTIONS, ENEMY_BURST, JUMP_MOVE_COST, POTION_EDGE, SAVE_STAT, THROWABLES, TORCH_GROUND_ROUNDS, abilityDice, enemyStrikes, healDice, jumpRange, reactionStrike, tacticOf, throwRange, type EnemyStrike, type Tactic } from "./kit";
 import { d20, hitChance, mod, proficiency, rollDice, statOf } from "./rules";
 import { seenByHeroes } from "./light";
@@ -61,7 +63,7 @@ function standClear(ctx: Ctx, unit: Unit): void {
     for (const n of hexNeighbors(queue[i], ctx.state.map.grid)) {
       if (seen.has(posKey(n))) continue;
       seen.add(posKey(n));
-      if (solid(tileAt(ctx.state.map, n))) continue;
+      if (solid(tileAt(ctx.state.map, n)) || blockerAt(ctx.state, n)) continue;
       if (!unitAt(ctx.state, n)) {
         unit.pos = n;
         ctx.events.push({ t: "moved", id: unit.id, path: [n] });
@@ -103,7 +105,7 @@ export function walk(ctx: Ctx, unit: Unit, path: HexPos[], budget: Budget | null
 export function push(ctx: Ctx, from: HexPos, target: Unit, by: string): void {
   const dir = directionToward(from, target.pos);
   const dest = { q: target.pos.q + dir.q, r: target.pos.r + dir.r };
-  const open = !solid(tileAt(ctx.state.map, dest)) && !chestAt(ctx.state, dest) && Math.abs(elevOf(ctx.state.map, dest) - elevOf(ctx.state.map, target.pos)) < 2 && !unitAt(ctx.state, dest);
+  const open = !solid(tileAt(ctx.state.map, dest)) && !blockerAt(ctx.state, dest) && Math.abs(elevOf(ctx.state.map, dest) - elevOf(ctx.state.map, target.pos)) < 2 && !unitAt(ctx.state, dest);
   const was = target.pos;
   if (!open) {
     ctx.events.push({ t: "shoved", id: by, target: target.id, from: was, to: null });
@@ -140,13 +142,22 @@ export function checkAbility(state: ZoneState, unit: Unit, ability: string, aim:
     return sees(state.map, unit.pos, pos) ? null : "There is no clear line to it.";
   };
   if (tactic.shape === "single" || tactic.shape === "chain") {
+    // A crate: a hero can break it with anything that does damage. It is in plain view, lit or not.
+    if (isCrateId(state, aim.target)) {
+      const crate = crateById(state, aim.target);
+      if (!crate) return "It is broken already.";
+      if (unit.side !== "hero") return "Pick an enemy.";
+      if (!def.damage) return "That does no harm to a crate.";
+      return inReach(crate.pos);
+    }
     const target = aim.target ? unitById(state, aim.target) : undefined;
     if (!target || target.down || target.side === unit.side) return "Pick an enemy.";
     if (unit.side === "hero" && !seenByHeroes(state, target)) return "It is too dark to make it out: bring a light, or get beside it.";
     return inReach(target.pos);
   }
   if (tactic.shape === "adjacent") {
-    return state.units.some((u) => u.side !== unit.side && !u.down && adjacent(u.pos, unit.pos)) ? null : "No enemy is next to you.";
+    if (state.units.some((u) => u.side !== unit.side && !u.down && adjacent(u.pos, unit.pos))) return null;
+    return unit.side === "hero" && def.damage && cratesBeside(state, unit).length > 0 ? null : "No enemy is next to you.";
   }
   if (tactic.shape === "blast") {
     if (!aim.at || !tileAt(state.map, aim.at)) return "Pick a hex.";
@@ -209,6 +220,32 @@ function strike(ctx: Ctx, unit: Unit, def: AbilityDef, tactic: Tactic, target: U
   return true;
 }
 
+/** The crates beside a unit. */
+const cratesBeside = (state: ZoneState, unit: Unit) => cratesOn(state, hexNeighbors(unit.pos, state.map.grid));
+
+/**
+ * A hero's ability at a crate. It cannot dodge, so there is no roll: the damage lands, never as a
+ * critical hit. Fire lights what will catch under it, and what an ability leaves on the ground is left there.
+ */
+function smash(ctx: Ctx, unit: Unit, def: AbilityDef, tactic: Tactic, crate: Poi): void {
+  hurtCrate(ctx, crate, rollDice(ctx.rng, abilityDice(def)) + damageBonus(ctx.state, unit, def), { actor: unit.id, what: def.id });
+  if (tactic.ignites) ignite(ctx, crate.pos, unit.id);
+  if (tactic.surface) placeSurface(ctx, [crate.pos], tactic.surface.kind, tactic.surface.rounds, unit.id);
+}
+
+/**
+ * What a hero breaks a crate with when it is simply clicked: the first of their abilities that does damage
+ * to one target for an Action, is ready, and reaches it from where they stand, a blow by hand before a shot
+ * or a spell. Null if nothing they have reaches it.
+ */
+export function crateBlow(state: ZoneState, unit: Unit, crateId: string): string | null {
+  const fits = unit.abilities.filter((a) => {
+    const t = tacticOf(a);
+    return ABILITIES[a]?.damage && t.shape === "single" && t.cost === "action" && !(unit.cooldowns[a] > 0) && !checkAbility(state, unit, a, { target: crateId });
+  });
+  return fits.find((a) => tacticOf(a).reach === "melee") ?? fits[0] ?? null;
+}
+
 /**
  * What an attack with this ability on this target would be rolled with, before it is made: the chance
  * to hit and why. Null for abilities that are saved against rather than rolled to hit.
@@ -231,10 +268,21 @@ export function resolveAbility(ctx: Ctx, unit: Unit, ability: string, aim: Aim &
   ctx.events.push({ t: "used", id: unit.id, what: ability, name: def.name, target: aim.target, at: aim.at });
   const foes = () => state.units.filter((u) => u.side !== unit.side && !u.down);
   let landed = false;
-  if (tactic.shape === "single") {
+  const crate = tactic.shape === "single" || tactic.shape === "chain" ? crateById(state, aim.target) : undefined;
+  if (crate) {
+    // Aimed at a crate, a chain goes no further: there is nothing in a crate for it to jump from.
+    smash(ctx, unit, def, tactic, crate);
+    landed = true;
+  } else if (tactic.shape === "single") {
     landed = strike(ctx, unit, def, tactic, unitById(state, aim.target!)!, aim);
   } else if (tactic.shape === "adjacent") {
     for (const foe of foes().filter((u) => adjacent(u.pos, unit.pos))) landed = strike(ctx, unit, def, tactic, foe, aim) || landed;
+    if (unit.side === "hero" && def.damage) {
+      for (const box of cratesBeside(state, unit)) {
+        smash(ctx, unit, def, tactic, box);
+        landed = true;
+      }
+    }
   } else if (tactic.shape === "chain") {
     const chain = [unitById(state, aim.target!)!];
     for (let i = 0; i < (tactic.jumps ?? 0); i++) {
@@ -260,6 +308,8 @@ export function resolveAbility(ctx: Ctx, unit: Unit, ability: string, aim: Aim &
       damage(ctx, victim, saved ? Math.floor(amount / 2) : amount, { actor: unit.id, what: def.id, ignoreGuard: def.ignoreGuard });
       if (!saved) afflict(ctx, unit, def, victim, false);
     }
+    // A crate in it takes the lot: it cannot get out of the way.
+    if (unit.side === "hero" && def.damage) for (const box of cratesOn(state, area)) hurtCrate(ctx, box, rolled, { actor: unit.id, what: def.id });
     landed = true;
     if (tactic.ignites) for (const pos of area) ignite(ctx, pos, unit.id);
     if (tactic.surface) placeSurface(ctx, area, tactic.surface.kind, tactic.surface.rounds, unit.id);
@@ -327,7 +377,7 @@ export function checkCommon(state: ZoneState, unit: Unit, what: CommonAction, ai
   // Jump.
   if (!aim.at || sameHex(aim.at, unit.pos)) return "Pick a hex to jump to.";
   if (hexDistance(unit.pos, aim.at) > jumpRange(mod(statOf(unit, "str")))) return "Too far to jump.";
-  if (solid(tileAt(state.map, aim.at)) || chestAt(state, aim.at) || unitAt(state, aim.at)) return "There is nowhere to land.";
+  if (solid(tileAt(state.map, aim.at)) || blockerAt(state, aim.at) || unitAt(state, aim.at)) return "There is nowhere to land.";
   if (elevOf(state.map, aim.at) - elevOf(state.map, unit.pos) > 1) return "Too high to jump up to.";
   if (!sees(state.map, unit.pos, aim.at)) return "Something is in the way.";
   if (budget && budget.move < JUMP_MOVE_COST) return "Not enough movement left to jump.";
@@ -431,6 +481,7 @@ export function throwItem(ctx: Ctx, unit: Unit, item: Throwable, at: HexPos): vo
       // What it leaves on them (acid's holes) only sticks to those who did not dodge it.
       if (def.condition && !saved && !u.down) addCondition(ctx, u, def.condition.kind, def.condition.rounds);
     }
+    for (const box of cratesOn(ctx.state, area)) hurtCrate(ctx, box, rolled, { actor: unit.id, what: `throw:${item}` });
   }
   if (def.surface) placeSurface(ctx, area, def.surface.kind, def.surface.rounds, unit.id);
 }
