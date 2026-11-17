@@ -267,7 +267,7 @@ export function resolveAbility(ctx: Ctx, unit: Unit, ability: string, aim: Aim &
     const target = tactic.shape === "ally" && aim.target ? unitById(state, aim.target)! : unit;
     if (def.heal) heal(ctx, target, rollDice(ctx.rng, healDice(def)) + Math.max(0, mod(statOf(unit, def.stat))) + Math.floor(unit.level / 2), { actor: unit.id, what: def.id });
     if (def.targetEffect) addCondition(ctx, target, def.targetEffect.effect, def.targetEffect.turns);
-    // "Takes the very next turn" has no meaning in an initiative order: the ally gets a fair wind instead.
+    // "Takes the very next turn" has no meaning in an initiative order: the ally is Hasted instead.
     if (def.actNext && target.id !== unit.id) addCondition(ctx, target, "hasted", 2);
     landed = true;
   }

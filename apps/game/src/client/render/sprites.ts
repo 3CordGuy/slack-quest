@@ -7,7 +7,7 @@ import * as THREE from "three";
 import { SLOTS, appearanceKey, barPixels, parseAppearance, type Appearance, healthBand, type HealthBand, type Outfit } from "@gantt-quest/world";
 import { LOOKS, mergeLook, type Look, type LookPalette } from "./looks";
 import { PIXEL_LINE_ROWS, canDrawPixelText, drawPixelText, drawSmallDigits, pixelTextWidth } from "./pixelFont";
-import { portraitUrl } from "./portraits";
+import { isBlankPortrait, portraitUrl } from "./portraits";
 
 const OUTLINE = "#1b1830";
 
@@ -64,7 +64,10 @@ export function previewSpriteUrl(kind: string, palette: LookPalette | undefined,
 export function spriteDataUrl(kind: string, outfit?: Outfit, large = false): string {
   const key = `${spriteKey(kind, outfit)}${large ? "|L" : ""}`;
   let url = pictures.get(key);
-  if (!url) pictures.set(key, (url = portraitUrl(kind, lookFor(kind), outfit, false, large ? 2 : 1)));
+  if (url) return url;
+  url = portraitUrl(kind, lookFor(kind), outfit, false, large ? 2 : 1);
+  // An empty picture (the renderer's context was lost) is not kept: it is drawn again the next time it is asked for.
+  if (!isBlankPortrait(url)) pictures.set(key, url);
   return url;
 }
 

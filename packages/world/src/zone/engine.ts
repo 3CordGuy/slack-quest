@@ -111,8 +111,8 @@ export interface AttackContext {
 /**
  * What bears on an attack besides the attacker's skill.
  *
- * Advantage: the target is Holed or Stunned, or Prone and struck in melee; Focus was spent; a pack
- * animal has one of its own beside the target. Disadvantage: the attacker is Poisoned or Fouled, is
+ * Advantage: the target is Exposed or Stunned, or Prone and struck in melee; Focus was spent; a pack
+ * animal has one of its own beside the target. Disadvantage: the attacker is Poisoned or Fumbling, is
  * shooting with an enemy beside them, or is shooting at something Prone. Shots also get +2 from
  * higher ground, -2 from lower, and -2 at a target standing among trees.
  */
@@ -122,13 +122,13 @@ export function attackContext(state: ZoneState, attacker: Unit, target: Unit, op
   let disadvantage = false;
   const adv = (why: string) => { advantage = true; notes.push(`Advantage: ${why}`); };
   const dis = (why: string) => { disadvantage = true; notes.push(`Disadvantage: ${why}`); };
-  if (has(target, "exposed")) adv("the target is Holed");
+  if (has(target, "exposed")) adv("the target is Exposed");
   if (has(target, "stunned")) adv("the target is Stunned");
   if (has(target, "prone") && opts.melee) adv("the target is Prone");
   if (opts.focus) adv("Focus");
   if (attacker.side === "enemy" && ENEMY_KIT[attacker.kind]?.pack && state.units.some((u) => u.id !== attacker.id && u.side === "enemy" && !u.down && adjacent(u.pos, target.pos))) adv("the pack is on the target");
   if (has(attacker, "poisoned")) dis("Poisoned");
-  if (has(attacker, "glitched")) dis("Fouled");
+  if (has(attacker, "glitched")) dis("Fumbling");
   // The party strikes blind at what the light does not reach. The things of the caves see in the dark.
   if (attacker.side === "hero" && inDark(state, target.pos)) dis("the target is in the dark");
   if (!opts.melee) {
@@ -145,7 +145,7 @@ export function attackContext(state: ZoneState, attacker: Unit, target: Unit, op
   return { adv: netAdvantage(advantage, disadvantage), mods, notes };
 }
 
-/** Roll an attack and say so. A Fouled attacker's next attack is the one that suffers: it clears here. */
+/** Roll an attack and say so. A Fumbling attacker's next attack is the one that suffers: it clears here. */
 export function attackRoll(ctx: Ctx, attacker: Unit, target: Unit, opts: { label: string; bonus: number; melee: boolean; focus?: boolean }): Roll {
   const c = attackContext(ctx.state, attacker, target, opts);
   const roll = d20(ctx.rng, { kind: "attack", id: attacker.id, target: target.id, label: opts.label, bonus: opts.bonus + c.mods, vs: defenceOf(target), adv: c.adv });

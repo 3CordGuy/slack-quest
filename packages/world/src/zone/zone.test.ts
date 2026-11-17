@@ -541,7 +541,7 @@ describe("surfaces", () => {
     expect(ground.surfaces[posKey(at(8, 6))]).toBeUndefined();
   });
 
-  it("leaves those an acid flask splashes Holed unless they dodge, and lays a slick where a slime flask lands", () => {
+  it("leaves those an acid flask splashes Exposed unless they dodge, and lays a slick where a slime flask lands", () => {
     let state = board();
     state.aiOff = true;
     hero(state, "ann", "qa_paladin", at(3, 6)).items = { acid: 1, slime: 1 };
@@ -552,8 +552,8 @@ describe("surfaces", () => {
     for (const f of foes) {
       const save = events.find((e) => e.t === "roll" && e.roll.kind === "save" && e.roll.id === f.id);
       expect(save).toBeDefined();
-      const holed = unit(state, f.id).conditions.some((c) => c.kind === "exposed");
-      expect(holed).toBe(save!.t === "roll" && !save!.roll.ok);
+      const exposed = unit(state, f.id).conditions.some((c) => c.kind === "exposed");
+      expect(exposed).toBe(save!.t === "roll" && !save!.roll.ok);
     }
     expect(events.some((e) => e.t === "hit" && e.what === "throw:acid")).toBe(true);
     state = must(state, { type: "throw", by: "ann", unit: "ann", item: "slime", at: at(6, 3) });
