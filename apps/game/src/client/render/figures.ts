@@ -2437,12 +2437,14 @@ function lowHead(head: Part, look: Look, asleep: boolean, covered = false) {
   const mouthY = MOUTH_Y[shape] ?? 1.45;
   const earX = ringAt(rings, 3).rx * 0.97;
   lowEars(head, tone(skin, -0.05), chosen?.ears ?? "round", earX, covered);
-  lowNose(head, tone(skin, -0.05), chosen?.nose ?? "pointy", faceAt(rings, 2.3));
+  lowNose(head, tone(skin, -0.05), chosen?.nose ?? look.nose ?? "pointy", faceAt(rings, 2.3));
   head.box(tone(skin, -0.25), 1, 0.24, 0.3, 0, mouthY, faceAt(rings, mouthY) + 0.03);
-  lowEyes(head, look.hair, chosen?.eyes ?? "round", asleep, rings);
+  lowEyes(head, look.hair, chosen?.eyes ?? look.eyes ?? "round", asleep, rings);
   lowHair(head, look.hair, chosen?.hairStyle ?? "short", rings, covered);
   if (chosen?.ink) inkPart(head, "head", chosen.ink);
   if (chosen) lowFacialHair(head, chosen.beard, chosen.mustache, skin, look.hair, rings, chinY, mouthY);
+  // A stock figure's own (the galley's cook): no beard, just what its look names.
+  else if (look.mustache) lowFacialHair(head, "none", look.mustache, skin, look.hair, rings, chinY, mouthY);
 }
 
 /**
@@ -2773,6 +2775,14 @@ function lowNose(head: Part, c: string, kind: string, z: number) {
     case "hooked":
       head.shape(c, sym([[0.4, 1.85, z - 0.2], [0, 3, z - 0.05], [0, 2.5, z + 0.6], [0, 1.85, z + 0.78], [0.22, 2.1, z + 0.55]]));
       return;
+    case "bulbous": {
+      // A great round nose, ruddier than the face it is on, a wing to each side and a bridge up between the eyes.
+      const ruddy = "#" + new THREE.Color(c).lerp(new THREE.Color("#b8493f"), 0.38).getHexString();
+      head.shape(c, sym([[0.5, 2.3, z - 0.2], [0, 3.2, z - 0.05], [0, 2.4, z + 0.6]]));
+      head.ball(ruddy, 0.92, 0, 2.3, z + 0.5, 1, [1.05, 0.95, 1]);
+      for (const s of [-1, 1]) head.ball(ruddy, 0.5, s * 0.78, 2.02, z + 0.22, 0, [1, 0.85, 0.9]);
+      return;
+    }
     default:
       head.shape(c, sym([[0.42, 1.95, z - 0.2], [0, 2.95, z - 0.05], [0, 2.05, z + 0.65]]));
   }
@@ -3662,13 +3672,20 @@ function drawHead(head: Part, look: Look, asleep: boolean) {
   head.box(look.hair, 6.6, 0.9, 0.6, 0, 4.6, 2.9);
   for (const s of [-1, 1]) {
     if (asleep) head.box(OUTLINE, 1.5, 0.4, 0.3, s * 1.5, 2.7, 2.95);
+    else if (look.eyes === "beady") head.box(OUTLINE, 0.7, 0.7, 0.3, s * 1.4, 3, 2.95);
     else {
       head.box(OUTLINE, 1.1, 1.5, 0.3, s * 1.5, 2.9, 2.95);
       head.box("#ffffff", 0.45, 0.5, 0.3, s * 1.5 + 0.3, 3.35, 3.0);
     }
   }
-  head.box(tone(skin, -0.07), 0.9, 0.8, 0.5, 0, 2.05, 3.05);
+  if (look.nose === "bulbous") head.box("#" + new THREE.Color(skin).lerp(new THREE.Color("#b8493f"), 0.38).getHexString(), 1.6, 1.4, 1, 0, 2.2, 3.2);
+  else head.box(tone(skin, -0.07), 0.9, 0.8, 0.5, 0, 2.05, 3.05);
   head.box(tone(skin, -0.22), 1.6, 0.35, 0.3, 0, 1.1, 2.95);
+  if (look.mustache) {
+    // A bar under the nose, and for the heavier ones its ends hanging past the mouth.
+    head.box(look.hair, look.mustache === "pencil" ? 2.2 : 3, look.mustache === "pencil" ? 0.35 : 0.7, 0.4, 0, 1.55, 3.05);
+    if (look.mustache !== "pencil") for (const s of [-1, 1]) head.box(look.hair, 0.6, 1, 0.4, s * 1.3, look.mustache === "handlebar" ? 1.85 : 1.1, 3.05);
+  }
 }
 
 /** The headgear a class or enemy has by default. */
@@ -4023,6 +4040,16 @@ function drawHeld(id: string, b: Biped, trim: string, look: Look, shield: boolea
       w.box(GEAR.steel, 1.6, 1.7, 0.4, 0, 7.6, 1.8);
       w.box(GEAR.iron, 0.6, 1.0, 1.2, 0, 7.6, -1.3);
       return { tilt: 0.5 };
+    case "cleaver":
+      // The cook's cleaver: a short dark handle with brass rivets and a broad, heavy blade standing off it on the side
+      // the forging hammer's face is, so the same blow that lands a hammer flat lands this edge down. The edge is
+      // ground bright; a hole at the corner to hang it by.
+      shaft("#4a321c", 4.0, 0.6);
+      for (const y of [-0.5, 0.9]) w.ball(GEAR.gold, 0.22, 0.46, y, 0, 0);
+      w.box(GEAR.iron, 0.34, 5.2, 3.1, 0, 5.3, 0.5);
+      w.box(GEAR.steel, 0.36, 5.2, 0.5, 0, 5.3, 1.82);
+      w.box("#2a2623", 0.38, 0.5, 0.5, 0, 7.3, -0.5);
+      return { tilt: 0.5 };
     case "paddle":
       // A brewer's paddle, taller than he is: a long shaft of pale, scrubbed ash, a dark band where it is gripped,
       // and a broad blade on the end, stained green where it goes into the brew. Pale so it shows against the
@@ -4315,6 +4342,16 @@ function person(top: THREE.Group, look: Look, outfit: Outfit | undefined, asleep
       }
       torso.box(cloth, 7.3, 4.6, 1, 0, -2, -1.7);
     }
+  }
+  if (look.apron && !body && !undressed) {
+    // An apron over the clothes: a bib on the chest with a strap over each shoulder, a darker tape round the
+    // waist, and a skirt hanging a little clear of the thighs to the knees, a pocket on it.
+    const apron = look.apron;
+    torso.box(apron, 4.2, 3.4, 0.4, 0, 3.7, 2.08);
+    for (const s of [-1, 1]) torso.box(tone(apron, -0.1), 0.5, 1.8, 0.3, s * 1.55, 5.75, 1.72, [-0.6, 0, -s * 0.12]);
+    torso.box(tone(apron, -0.14), 5.8, 0.6, 0.45, 0, 1.75, 2.14);
+    torso.box(apron, 5.6, 5.2, 0.4, 0, -0.9, 2.45, [-0.07, 0, 0]);
+    torso.box(tone(apron, -0.08), 2.4, 1.4, 0.3, 0, -0.5, 2.52, [-0.07, 0, 0]);
   }
   const amulet = outfit?.amulet;
   // Low-poly, it lies over whatever is worn (a hauberk's plates, a greatcoat's buttons, a tunic's placket), and

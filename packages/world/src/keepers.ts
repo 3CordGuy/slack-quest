@@ -1,9 +1,10 @@
-// Inside the smithy and the apothecary: a small room each, with the keeper
-// who runs it, what they sell from their own stock for gold, and haggling.
+// Inside the smithy, the apothecary and the galley: a small room each, with
+// the keeper who runs it, what they sell from their own stock for gold, and
+// haggling.
 //
 // The rooms work like the pub's (a fixed room, fixed fittings that are walked
 // around) but nobody else is in them: a customer walks about their own copy,
-// so there is no Durable Object behind either. What is bought, and what was
+// so there is no Durable Object behind any of them. What is bought, and what was
 // haggled, is checked and kept by the server (apps/game/src/server/keepers.ts).
 //
 // Haggling is over gold only. A customer may try once a day for each thing a
@@ -12,6 +13,7 @@
 // holds until the day turns; one that was not holds too, and that is that.
 
 import type { HexGrid, HexPos } from "@gantt-quest/core";
+import { DISHES, type DishId } from "./galley";
 import { itemPrice, rollItem, type ItemDef, type Slot } from "./gear";
 import { harborPoi } from "./harbor";
 import { HEX_DIRS, buildRoom, hutPath, wallFaces } from "./hutroom";
@@ -20,13 +22,13 @@ import { makeRng, seedFromString } from "./rng";
 import { THROWABLE_KINDS } from "./zone/kit";
 import type { Throwable } from "./zone/types";
 
-export const KEEPER_SHOPS = ["smithy", "apothecary"] as const;
+export const KEEPER_SHOPS = ["smithy", "apothecary", "galley"] as const;
 export type KeeperShop = (typeof KEEPER_SHOPS)[number];
 export const isKeeperShop = (shop: unknown): shop is KeeperShop => KEEPER_SHOPS.includes(shop as KeeperShop);
 
 // ---------- the rooms ----------
 
-/** Both shops are the same size: a floor 7 by 5, smaller than the pub and about a middling hut. */
+/** Every shop is the same size: a floor 7 by 5, smaller than the pub and about a middling hut. */
 export const KEEPER_GRID: HexGrid = { cols: 9, rows: 7 };
 
 /** Offset coordinates (column, row) to the axial coordinates the map uses. */
@@ -60,9 +62,9 @@ export interface KeeperFitting {
 
 const fit = (id: number, model: string, col: number, row: number, facing = 0, pull?: { x: number; z: number }): KeeperFitting => ({ id, model, ...at(col, row), facing, ...pull });
 
-/** How a keeper keeps busy: hammering at their anvil, or stirring their cauldron, which is the fitting `fitting`. */
+/** How a keeper keeps busy: hammering at their anvil, stirring their cauldron, or chopping at their block, which is the fitting `fitting`. */
 export interface KeeperWork {
-  how: "hammer" | "stir";
+  how: "hammer" | "stir" | "chop";
   fitting: number;
 }
 
@@ -96,7 +98,7 @@ export interface KeeperWallPiece {
 const WALL_LIGHTS = new Set(["sconce", "wall_lantern"]);
 
 /** Fittings tall enough against a wall that nothing should hang over them. */
-const TALL = new Set(["forge", "weapon_rack", "armor_stand", "potion_shelf", "potion_shelf_lit", "herb_rack", "cupboard"]);
+const TALL = new Set(["forge", "weapon_rack", "armor_stand", "potion_shelf", "potion_shelf_lit", "herb_rack", "cupboard", "cook_range", "larder_shelf", "plate_dresser"]);
 
 /**
  * Where a shop's wall pieces hang: spread evenly along the back and side walls, never over a tall fitting standing
@@ -125,6 +127,14 @@ export function keeperWallPieces(shop: KeeperShop): KeeperWallPiece[] {
 const WORK_PULL = { x: 1.05, z: 0.55 };
 const KEEPER_POS = at(4, 2);
 const KEEPER_STAND = at(4, 3);
+/**
+ * The cook is not laid out like the other two: he stands a hex nearer the larder with his block to his right (the
+ * next hex along, pulled in as far from him as the anvil is from the smith, so the same blow lands on it), nearly
+ * side-on to the room, and the customer comes up at his other shoulder.
+ */
+const COOK_PULL = { x: -0.92, z: 0.48 };
+const COOK_POS = at(3, 2);
+const COOK_STAND = at(2, 3);
 
 export const KEEPER_PLACES: Record<KeeperShop, KeeperPlace> = {
   smithy: {
@@ -178,6 +188,32 @@ export const KEEPER_PLACES: Record<KeeperShop, KeeperPlace> = {
       fit(8, "herb_table", 1, 3),
       fit(9, "barrel", 1, 5),
       fit(10, "crate", 6, 5),
+    ],
+  },
+  galley: {
+    shop: "galley",
+    title: "The galley",
+    keeper: { id: "keeper:galley", name: "Gorm Gristle", short: "Gorm", trade: "the cook", look: "keeper_cook", hello: "Boots off my boards. What d'you want?", line: "You eat what's in the pot. You pay what's on the slate." },
+    keeperPos: COOK_POS,
+    stand: COOK_STAND,
+    work: { how: "chop", fitting: 3 },
+    // Copper pans on a rail, strings of onions and garlic, a prize fish, and candles and a lantern between them.
+    wall: ["pot_rack", "sconce", "onion_strings", "wall_lantern", "mounted_fish", "pot_rack", "sconce", "onion_strings"],
+    fittings: [
+      // The range against the back wall behind him with the stockpot on it, the firewood beside it, the block close
+      // before him (he faces it, to his right as you look) and the table he plates up on at his back.
+      fit(1, "cook_range", 3, 1),
+      fit(2, "firewood", 2, 1),
+      fit(3, "chopping_block", 4, 2, 0, COOK_PULL),
+      fit(4, "galley_table", 2, 2),
+      // The larder along the back wall, and the crockery; the day's catch in brine down the side.
+      fit(5, "larder_shelf", 1, 1),
+      fit(6, "plate_dresser", 6, 1),
+      fit(7, "fish_barrel", 7, 2),
+      // The lamp is kept out here as well: the range, the table's candle and a candle on a barrel light the galley.
+      fit(8, "sacks", 5, 1),
+      fit(9, "crate", 1, 5),
+      fit(10, "barrel_lit", 6, 5),
     ],
   },
 };
@@ -272,6 +308,18 @@ const HAGGLE_LINES: Record<KeeperShop, { won: Record<HaggleAsk, string[]>; lost:
       lowball: ["I shall pretend I did not hear that.", "At that price you may lick the spoon, and nothing more."],
     },
   },
+  galley: {
+    won: {
+      nudge: ["Hrmph. A bit off. Don't make a habit of it.", "Fine. Now stop talking."],
+      push: ["A fifth off. And you scrub a pot on your way out.", "Hrm. It'll only spoil. Done."],
+      lowball: ["Hah. Cheek like that wants feeding. Take it. Not a word to the bosun.", "At that price it's charity. Lucky for you I've had my rum."],
+    },
+    lost: {
+      nudge: ["No. Fish doesn't catch itself.", "Price is on the slate. The slate doesn't haggle."],
+      push: ["A fifth? I've a crew to feed out of this.", "Not for my cooking, you don't."],
+      lowball: ["Out of my galley.", "For that you get the smell, and you've had it already."],
+    },
+  },
 };
 
 export function haggleLine(shop: KeeperShop, deal: Deal, pick = 0): string {
@@ -335,3 +383,20 @@ export function forgeStock(seed: string, classId: string, level: number): ForgeE
 
 /** The key the smith's work on one item is haggled over by. */
 export const workKey = (itemId: number) => `work:${itemId}`;
+
+/** How many of each dish the cook will sell one customer in a day, ready-made, into the crew's larder. */
+export const POT_DAILY = 1;
+
+/**
+ * What the cook asks for a dish made up and put in the crew's larder, in gold. Dearer than cooking it yourself from
+ * what you gathered, as with the apothecary's shelf; and ship's stores, which buy a day on the doom clock, dearest.
+ * The larder's caps hold whoever fills it.
+ */
+export const POT_PRICES: Record<DishId, number> = { chowder: 34, stores: 60 };
+
+/** The key a ready-made dish is bought and haggled over by. */
+export const potKey = (dish: DishId) => `dish:${dish}`;
+/** The dish a key names, if it names one. */
+export function potDish(key: unknown): DishId | undefined {
+  return DISHES.find((d) => potKey(d.id) === key)?.id;
+}

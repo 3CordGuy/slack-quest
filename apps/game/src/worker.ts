@@ -76,8 +76,8 @@ import { pubLeaderboard } from "./server/pub-scores";
 import { builtProjectIds, contribute, crewWorks, projectStock } from "./server/projects";
 import { acceptTrade, announceTrade, closeTrade, listTrades, openTrade, setTradeSide } from "./server/trade";
 import { consumablesOf } from "./server/consumables";
-import { apothecaryView, brew, brewFlask, buyFromKeeper, haggle, smithItem, smithyView } from "./server/workshops";
-import { cook, galleyView } from "./server/galley";
+import { apothecaryView, brew, brewFlask, buyFromKeeper, galleyKeeperView, haggle, smithItem, smithyView } from "./server/workshops";
+import { cook } from "./server/galley";
 import { announceXp, harborXpFor } from "./server/harbor-xp";
 import { createZoneRow, crewPlaces, getZoneRow, openCave, teleportTo } from "./server/zones";
 import {
@@ -847,8 +847,8 @@ app.post("/api/keeper/haggle", async (c) => {
 
 // ---------- the galley ----------
 
-// The crew's shared larder, and the materials this player could cook with.
-app.get("/api/galley", async (c) => c.json(await galleyView(c.env.DB, c.get("player").id)));
+// The crew's shared larder, the materials this player could cook with, and what the cook sells ready-made.
+app.get("/api/galley", async (c) => c.json(await galleyKeeperView(c.env.DB, c.get("player").id)));
 
 // Cook one dish into the crew's larder. The recipe and the cap are the catalogue's; the client names only the dish.
 app.post("/api/galley/cook", async (c) => {
@@ -857,7 +857,17 @@ app.post("/api/galley/cook", async (c) => {
   const result = await cook(c.env.DB, player.id, String(body.dishId ?? ""));
   if (typeof result === "string") return c.json({ error: result }, 409);
   if (result.xp) c.executionCtx.waitUntil(announceXp(c.env, player.id, result.xp));
-  return c.json({ ...(await galleyView(c.env.DB, player.id)), xp: result.xp });
+  return c.json({ ...(await galleyKeeperView(c.env.DB, player.id)), xp: result.xp });
+});
+
+// Buy a dish ready-made from the cook, straight into the crew's larder. The client names only the entry; the
+// price is the day's for this customer, after any haggling, and the larder's cap holds.
+app.post("/api/galley/buy", async (c) => {
+  const player = c.get("player");
+  const body = await c.req.json<{ key?: unknown }>().catch(() => ({}) as { key?: unknown });
+  const result = await buyFromKeeper(c.env.DB, player.id, "galley", body.key);
+  if (typeof result === "string") return c.json({ error: result }, 409);
+  return c.json({ ...(await galleyKeeperView(c.env.DB, player.id)), got: result.got });
 });
 
 // ---------- giving and trading between crewmates ----------

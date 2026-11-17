@@ -24,6 +24,7 @@ export interface GalleyView {
   inCrew: boolean;
   built: boolean;
   larder: Larder;
+  gold: number;
   resources: Resources;
 }
 
@@ -34,8 +35,8 @@ export async function galleyView(db: D1Database, playerId: string): Promise<Gall
     larderOf(db, crew?.id ?? null),
     projectStock(db, playerId),
   ]);
-  const { gold: _gold, ...resources } = stock;
-  return { inCrew: !!crew, built, larder, resources };
+  const { gold = 0, ...resources } = stock;
+  return { inCrew: !!crew, built, larder, gold, resources };
 }
 
 /** Cook one dish into the crew's larder. Returns an error message, or the XP it gave. */

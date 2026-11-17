@@ -30,7 +30,6 @@ import { WorldRenderer, type RenderState } from "./render/WorldRenderer";
 import { useHarbor } from "./useHarbor";
 import { useSalesman } from "./salesmanClock";
 import { WorksPanel } from "./works/WorksPanel";
-import { GalleyPanel } from "./works/WorkshopPanels";
 import { label } from "./labels";
 import { xpEvents } from "./xpEvents";
 
@@ -60,7 +59,6 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
   const [gather, setGather] = useState<GatherSpot | null>(null);
   const [fishmonger, setFishmonger] = useState(false);
   const [works, setWorks] = useState(false);
-  const [workshop, setWorkshop] = useState<"galley" | null>(null);
   const [account, setAccount] = useState(false);
   const [tradeWith, setTradeWith] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
@@ -200,7 +198,7 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
     : hoverPoi.kind === "lighthouse" ? (lit ? "The lighthouse: it sees every ship out past the shoals" : lighthouseFill > 0 ? "The lighthouse going up: a crew project at the works" : "A bare point over the wreck, where the lighthouse will stand")
     : hoverPoi.kind === "apothecary" ? (apothecaryBuilt ? "The apothecary: potions and flasks, bought or brewed, and a keeper to haggle with" : "The apothecary's building site: a crew project at the works")
     : hoverPoi.kind === "smithy" ? (smithyBuilt ? "The smithy: arms and armour off the rack, your own sharpened or reinforced, and a smith to haggle with" : "The smithy's building site: a crew project at the works")
-    : hoverPoi.kind === "galley" ? (galleyBuilt ? "The galley: cook chowder and stores into the crew's larder" : "The galley's building site: a crew project at the works")
+    : hoverPoi.kind === "galley" ? (galleyBuilt ? "The galley: go in to cook chowder and stores into the crew's larder" : "The galley's building site: a crew project at the works")
     : hoverPoi.kind === "lot" ? (myPlot === null ? `A plot for sale: ${PLOT_PRICE} gold` : "An empty plot")
     : hoverPoi.kind === "site" ? (hoverPoi.id === `site:${you}` ? "Your plot: fill the bin and the shack goes up" : `${board.members.find((m) => `site:${m.id}` === hoverPoi.id)?.name ?? "Someone"}'s plot: building a shack`)
     : hoverPoi.kind === "plot" ? `${board.members.find((m) => `plot:${m.id}` === hoverPoi.id)?.name ?? "Someone"}'s ${hutTier(hoverPoi.tier ?? 1).name.toLowerCase()}`
@@ -377,7 +375,7 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
         ? { title: "The smithy", label: "Go in", run: () => goInside(`${HARBOR_SMITHY.q},${HARBOR_SMITHY.r}`, "smithy") }
         : { title: <>The smithy's building site <span className="muted">· paid for at the works</span></>, label: "See the crew's projects", run: () => setWorks(true) })
     : atGalley ? (galleyBuilt
-        ? { title: "The galley", label: "Cook for the ship", run: () => setWorkshop("galley") }
+        ? { title: "The galley", label: "Go in", run: () => goInside(`${HARBOR_GALLEY.q},${HARBOR_GALLEY.r}`, "galley") }
         : { title: <>The galley's building site <span className="muted">· paid for at the works</span></>, label: "See the crew's projects", run: () => setWorks(true) })
     : myBin ? {
         title: (
@@ -411,7 +409,7 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
       }
     : null;
   // Anything laid over the Harbor takes the floating button away.
-  const panelOpen = sheet || book || shop || notices || !!gather || fishmonger || works || !!workshop || account || !!tradeWith;
+  const panelOpen = sheet || book || shop || notices || !!gather || fishmonger || works || account || !!tradeWith;
   const error = harbor.error;
 
   return (
@@ -514,7 +512,6 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
       {notices && <NoticeBoard seen={me.seenRelease} onSeen={() => void refresh()} onClose={() => setNotices(false)} />}
       {unseen && !panelOpen && !atBoard && <AttentionMark renderer={renderer} pos={HARBOR_BOARD} lift={2.35} label="Something new on the notice board" />}
       {works && <WorksPanel works={board.works} refresh={refresh} onClose={() => setWorks(false)} />}
-      {workshop === "galley" && <GalleyPanel onClose={() => setWorkshop(null)} />}
       {gather && me.character && <GatherPanel spot={gather} onRod={(on) => harbor.send({ type: "fishing", on })} pier={pierHere ?? undefined} at={self?.pos} vessel={self?.vessel ?? null} gilded={me.character?.title === BOOK_TITLE} shipBeside={!!shipHere} renderer={renderer} onClose={() => setGather(null)} onStamina={setStamina} />}
       {fishmonger && me.character && <CatchPanel buyer="market" onGold={() => void refresh()} onClose={() => setFishmonger(false)} />}
       {shop && me.character && <ShopScreen me={me} refresh={refreshAll} onClose={() => setShop(false)} />}

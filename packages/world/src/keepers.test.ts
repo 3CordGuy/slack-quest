@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { HAGGLE_ASKS, HEX_DIRS, KEEPER_PLACES, KEEPER_SHOPS, keeperWallPieces, forgeStock, haggleChance, haggleLine, haggleOutcome, haggledPrice, keeperPath, keeperRoom, smithyCost } from "./index";
+import { DISHES, HAGGLE_ASKS, HEX_DIRS, KEEPER_PLACES, KEEPER_SHOPS, POT_PRICES, keeperWallPieces, potDish, potKey, forgeStock, haggleChance, haggleLine, haggleOutcome, haggledPrice, keeperPath, keeperRoom, smithyCost } from "./index";
 
 describe("the keepers' rooms", () => {
   it("lets a customer walk from the door to the keeper in both shops, around the fittings", () => {
@@ -34,6 +34,34 @@ describe("the smithy's walls", () => {
     // The apothecary's walls have only candles, hung lower than the smith's weapons.
     expect(keeperWallPieces("apothecary").map((p) => p.model)).toEqual(KEEPER_PLACES.apothecary.wall);
     for (const p of keeperWallPieces("smithy")) expect(p.y).toBe(p.model === "sconce" || p.model === "wall_lantern" ? 1.35 : 1.72);
+  });
+});
+
+describe("the galley", () => {
+  it("hangs its pans, onions and lights round the walls, clear of the range and the shelves", () => {
+    const room = keeperRoom("galley");
+    const pieces = keeperWallPieces("galley");
+    expect(pieces.map((p) => p.model)).toEqual(KEEPER_PLACES.galley.wall);
+    expect(new Set(pieces.map((p) => `${p.pos.q},${p.pos.r},${p.side}`)).size).toBe(pieces.length);
+    const tall = KEEPER_PLACES.galley.fittings.filter((f) => ["cook_range", "larder_shelf", "plate_dresser"].includes(f.model)).map((f) => `${f.q},${f.r}`);
+    expect(tall).toHaveLength(3);
+    for (const p of pieces) {
+      const front = { q: p.pos.q + HEX_DIRS[p.side].q, r: p.pos.r + HEX_DIRS[p.side].r };
+      expect(room.tiles.find((t) => t.q === front.q && t.r === front.r)?.biome).toBe("floor");
+      expect(tall).not.toContain(`${front.q},${front.r}`);
+    }
+  });
+
+  it("prices every dish, and names each by a key that leads back to it", () => {
+    for (const d of DISHES) {
+      expect(POT_PRICES[d.id]).toBeGreaterThan(0);
+      expect(potDish(potKey(d.id))).toBe(d.id);
+    }
+    expect(potDish("dish:gruel")).toBeUndefined();
+    expect(potDish("flask:fire")).toBeUndefined();
+    // The cook answers a haggle like the others do.
+    expect(haggleLine("galley", { ask: "lowball", pct: 35 })).toMatch(/\w/);
+    expect(haggleLine("galley", { ask: "nudge", pct: 0 }, 1)).toMatch(/\w/);
   });
 });
 

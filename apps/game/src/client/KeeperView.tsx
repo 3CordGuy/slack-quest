@@ -1,7 +1,7 @@
-// Inside the smithy or the apothecary: a small room drawn by the same
-// renderer as the pub and the huts, with the keeper at their work (Greta
-// hammering at her anvil, Ansel stirring his cauldron), and still at it
-// while they deal with you. Walk up to them (or click them) to see what they
+// Inside the smithy, the apothecary or the galley: a small room drawn by the
+// same renderer as the pub and the huts, with the keeper at their work (Greta
+// hammering at her anvil, Ansel stirring his cauldron, Gorm chopping at his
+// block), and still at it while they deal with you. Walk up to them (or click them) to see what they
 // sell and do, and to haggle. The door at the front leads back to the Harbor.
 //
 // Unlike the pub, nobody else is in here: the room is this player's own copy
@@ -13,7 +13,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import { hexNeighbors, type HexPos } from "@gantt-quest/core";
 import { KEEPER_GRID, KEEPER_PLACES, keeperPath, keeperRoom, keeperWallPieces, outfitOf, type KeeperShop } from "@gantt-quest/world";
-import { api, type ApothecaryView, type Me, type SmithyView } from "./api";
+import { api, type ApothecaryView, type GalleyKeeperView, type Me, type SmithyView } from "./api";
 import { useAudioScene } from "./audio/useAudioScene";
 import { InventoryScreen } from "./InventoryScreen";
 import { toOwned } from "./items";
@@ -25,7 +25,7 @@ import { WorldRenderer, hexToWorld, type RenderState } from "./render/WorldRende
 import { withLook } from "./render/sprites";
 import { TileAction } from "./TileAction";
 import { HudBar } from "./ui/Hud";
-import { ApothecaryKeeperPanel, SmithyKeeperPanel } from "./works/KeeperPanels";
+import { ApothecaryKeeperPanel, GalleyKeeperPanel, SmithyKeeperPanel } from "./works/KeeperPanels";
 import "./hut.css";
 import "./pub.css";
 
@@ -49,10 +49,10 @@ export function KeeperView({ shop, me, refresh, onLeave }: { shop: KeeperShop; m
   posRef.current = pos;
 
   /** The shop as the server has it: what is for sale, what your gear would cost to work, and what you hold. */
-  const [view, setView] = useState<ApothecaryView | SmithyView | null>(null);
+  const [view, setView] = useState<ApothecaryView | SmithyView | GalleyKeeperView | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const reload = useCallback(
-    () => (shop === "apothecary" ? api.apothecary() : api.smithy()).then(setView, (e: Error) => setLoadError(e.message)),
+    () => (shop === "apothecary" ? api.apothecary() : shop === "smithy" ? api.smithy() : api.galley()).then(setView, (e: Error) => setLoadError(e.message)),
     [shop],
   );
   useEffect(() => {
@@ -79,13 +79,15 @@ export function KeeperView({ shop, me, refresh, onLeave }: { shop: KeeperShop; m
       npcs: {},
       freeRoam: true,
       indoors: true,
-      // Both keepers keep the lamp out and the shop dim, lit in pools with dark between: the apothecary by candles,
-      // the cauldron's fire and the green glow of the brew; the smithy by the forge, a lantern and a candle.
+      // Every keeper keeps the lamp out and the shop dim, lit in pools with dark between: the apothecary by candles,
+      // the cauldron's fire and the green glow of the brew; the smithy by the forge, a lantern and a candle; the
+      // galley by the range's fire, and candles and a lantern round the walls.
       lampOff: true,
       gloom: true,
-      // Each shop's walls dressed to its trade: rough stone and sooted timber; green wainscot and old printed paper.
+      // Each shop's walls dressed to its trade: rough stone and sooted timber; green wainscot and old printed paper;
+      // oxblood boards, a row of tiles and limewash.
       walls: shop,
-      // A forge stands on stone: the smithy is flagged; the apothecary keeps his boards.
+      // A forge stands on stone: the smithy is flagged; the apothecary and the galley keep their boards.
       floor: shop === "smithy" ? "flags" : "planks",
       props: [
         ...place.fittings.map((f) => ({ id: f.id, model: f.model, pos: { q: f.q, r: f.r }, facing: f.facing, x: f.x, z: f.z })),
@@ -117,7 +119,9 @@ export function KeeperView({ shop, me, refresh, onLeave }: { shop: KeeperShop; m
     r.setState(latest.current);
     const sparks = new SpellFx(r);
     // The keeper at their work the whole time, you there or not: Greta's hammer rings on the anvil about once a
-    // second, with a spray of sparks off the work as it lands; Ansel goes round and round his cauldron.
+    // second, with a spray of sparks off the work as it lands; Ansel goes round and round his cauldron; Gorm's
+    // cleaver comes down on his block, the same blow as the hammer's with an edge on it, and a thump for a ring.
+    const { how } = place.work;
     const piece = place.fittings.find((f) => f.id === place.work.fitting)!;
     const spot = hexToWorld(piece);
     const at = { x: spot.x + (piece.x ?? 0), z: spot.z + (piece.z ?? 0) };
@@ -130,18 +134,19 @@ export function KeeperView({ shop, me, refresh, onLeave }: { shop: KeeperShop; m
       timers.add(t);
     };
     // A blow about once a second; a stir runs half a minute, asked again just before it ends.
-    const beat = place.work.how === "hammer" ? 1150 : 29_000;
+    const beat = how === "stir" ? 29_000 : how === "chop" ? 1300 : 1150;
     const go = () => {
-      const wait = r.work(keeper.id, place.work.how, at);
-      if (place.work.how === "hammer" && wait > 0) {
+      const wait = r.work(keeper.id, how === "stir" ? "stir" : "hammer", at);
+      if (how !== "stir" && wait > 0) {
         later(() => {
-          // Off the work on the anvil's face, which stands on the floor (its top, not 0).
-          sparks.burst(new THREE.Vector3(at.x, r.floorTop() + 0.47, at.z), "#ffb84a", 7);
-          audio.play("gather.pick", { at });
+          // Off the work on the anvil's face, which stands on the floor (its top, not 0). A cleaver strikes no sparks.
+          if (how === "hammer") sparks.burst(new THREE.Vector3(at.x, r.floorTop() + 0.47, at.z), "#ffb84a", 7);
+          audio.play(how === "hammer" ? "gather.pick" : "gather.chop", { at });
         }, wait * 1000);
       }
-      // Now and then a breath between blows, so it is not a metronome. A stir just goes round and round.
-      later(go, place.work.how === "hammer" ? beat + (Math.random() < 0.2 ? 900 : Math.random() * 200) : beat);
+      // Now and then a breath between blows, so it is not a metronome (the cook stops to line up the next fish
+      // more often than the smith stops at all). A stir just goes round and round.
+      later(go, how === "stir" ? beat : beat + (Math.random() < (how === "chop" ? 0.35 : 0.2) ? 900 : Math.random() * 200));
     };
     later(go, 600);
     return () => {
@@ -164,6 +169,7 @@ export function KeeperView({ shop, me, refresh, onLeave }: { shop: KeeperShop; m
   const say = useCallback((text: string) => renderer.current?.say(keeper.id, text), [keeper]);
   /** Dealing with the keeper: their panel is up, and the hotbar is put away so the list has the screen. */
   const dealing = !!view?.built && atKeeper;
+  const panel = { reload, refresh, onSay: say, onDone: () => stepAway() };
   // While dealing, the camera brings the keeper clear of the panel so you can watch them work: to the right of it
   // on a wide screen (the panel is on the left), above it on a phone (it is docked along the bottom). Stepping
   // away puts the camera back on the middle of the room.
@@ -201,8 +207,9 @@ export function KeeperView({ shop, me, refresh, onLeave }: { shop: KeeperShop; m
       <div className="stage" ref={mount} />
 
       {dealing && (shop === "apothecary"
-        ? <ApothecaryKeeperPanel view={view as ApothecaryView} setView={setView} reload={reload} refresh={refresh} onSay={say} onDone={stepAway} />
-        : <SmithyKeeperPanel me={me} view={view as SmithyView} setView={setView} reload={reload} refresh={refresh} onSay={say} onDone={stepAway} />)}
+        ? <ApothecaryKeeperPanel view={view as ApothecaryView} setView={setView} {...panel} />
+        : shop === "smithy" ? <SmithyKeeperPanel me={me} view={view as SmithyView} setView={setView} {...panel} />
+        : <GalleyKeeperPanel view={view as GalleyKeeperView} setView={setView} {...panel} />)}
 
       {/* Put away while dealing with the keeper, as at the pub's game tables: the panel has the screen, and its own
           way back ("Step away"). It comes back as you step away. */}
@@ -211,7 +218,7 @@ export function KeeperView({ shop, me, refresh, onLeave }: { shop: KeeperShop; m
         place={
           atDoor ? <span>The door back to the Harbor.</span>
             : atKeeper ? <span>With {keeper.name}, {keeper.trade}.</span>
-            : <span className="muted">{place.title}. Click {keeper.short} to walk up: buy, have work done, or haggle.</span>
+            : <span className="muted">{place.title}. Click {keeper.short} to walk up: {shop === "galley" ? "cook for the ship, buy from the pot" : "buy, have work done"}, or haggle.</span>
         }
         onBag={() => (bag ? closeBag() : setBag(true))}
         onBook={() => setBook(true)}

@@ -2,7 +2,7 @@
 // crew's shared Harbor, and an Island (a live voyage). The hash carries the
 // voyage code so it survives a reload (#run/BCDF), or a crew invite
 // (#crew/BCDFGH). #hut/<player id> is the inside of that crew member's hut;
-// #pub, #smithy and #apothecary are the insides of those buildings.
+// #pub, #smithy, #apothecary and #galley are the insides of those buildings.
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { KeeperShop } from "@gantt-quest/world";
@@ -19,8 +19,8 @@ import { PubView } from "./PubView";
 import { ZoneView } from "./ZoneView";
 
 const pubFromHash = () => location.hash === "#pub";
-/** Inside the smithy or the apothecary (KeeperView). */
-const keeperFromHash = (): KeeperShop | null => (location.hash === "#smithy" ? "smithy" : location.hash === "#apothecary" ? "apothecary" : null);
+/** Inside the smithy, the apothecary or the galley (KeeperView). */
+const keeperFromHash = (): KeeperShop | null => (location.hash === "#smithy" ? "smithy" : location.hash === "#apothecary" ? "apothecary" : location.hash === "#galley" ? "galley" : null);
 /** A zone: a map to walk and fight on (ZoneView). */
 const zoneFromHash = () => /^#zone\/([A-Za-z]{4})$/.exec(location.hash)?.[1].toUpperCase() ?? null;
 const adminFromHash = () => location.hash === "#admin";
