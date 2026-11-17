@@ -7,7 +7,7 @@
 
 import * as THREE from "three";
 import { flamesIn, flickerFlame, torchFlame } from "./torchFlame";
-import { SHAFT_HEIGHT, buildCaveDressing, caveRope, glowcapCluster } from "./caveDressing";
+import { MOUTH_FACE, SHAFT_HEIGHT, buildCaveDressing, caveMouth, caveRope, glowcapCluster, mouthRope, mouthTorch } from "./caveDressing";
 import { makeModelShip } from "./modelShip";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { reportEnv } from "../ui/env";
@@ -2167,7 +2167,11 @@ export class WorldRenderer {
     );
     // The trees bend in the wind (fancy graphics), and aside as anyone walks through them.
     this.woods?.dispose();
-    this.woods = new Woods(trees, boulders, this.sodden, !fancyGrass.get());
+    // The caverns' entrance is cut into the rampart behind its hex (its model stands back into it): none of the
+    // rampart's rubble stands in the way in, or just in front of it, where it would block the arch from view.
+    const ways = state.map.pois.filter((p) => p.kind === "cave").map((p) => ({ ...hexToWorld(p.pos), back: placeOf(p).back }));
+    const clearOfWays = boulders.filter((b) => !ways.some((w) => Math.abs(b.x - w.x) < 1.4 && b.z - (w.z - w.back) > -0.9 && b.z - (w.z - w.back) < 1.3));
+    this.woods = new Woods(trees, clearOfWays, this.sodden, !fancyGrass.get());
     this.decor.add(this.woods.group);
     // The caverns: moss, puddles, loose rocks, stalagmites and stalactites (caveDressing.ts).
     this.caveDressing?.traverse((o) => {
@@ -2845,6 +2849,8 @@ export class WorldRenderer {
     for (const poi of state.map.pois) {
       const g = this.poiModel(poi);
       g.userData.poiId = poi.id;
+      // Any real flame in it (a torch by the caverns' entrance) flickers with the rest.
+      for (const f of flamesIn(g)) this.liveFlames.add(f);
       const at = this.standAt(poi.pos);
       const { scale, back } = placeOf(poi);
       if (BUILDINGS.has(poi.kind)) inkBuilding(g, scale);
@@ -3926,19 +3932,39 @@ export class WorldRenderer {
         break;
       }
       case "cave": {
-        // The Haunted Caverns' mouth in the back wall: a heap of dark rock with a black arch in it, and a torch either side.
+        // The Haunted Caverns' mouth in the back wall: a heap of dark rock with a way in cut into it, framed in stone,
+        // and a torch burning either side.
         const rock = lambert("#3d4048");
         const pale = lambert("#565a63");
-        add(new THREE.DodecahedronGeometry(0.62, 0), rock, 0, 0.42, -0.25, 0.3);
-        add(new THREE.ConeGeometry(0.42, 1.1, 5), pale, -0.55, 0.45, -0.15, 0.8);
-        add(new THREE.ConeGeometry(0.36, 0.95, 5), rock, 0.55, 0.38, -0.2, 1.7);
-        // The arch: a black opening at the foot of the rock.
-        add(box(0.46, 0.5, 0.06), new THREE.MeshBasicMaterial({ color: "#050409" }), 0, 0.25, 0.32).userData.glow = true;
-        add(new THREE.CylinderGeometry(0.23, 0.23, 0.06, 8, 1, false, 0, Math.PI), new THREE.MeshBasicMaterial({ color: "#050409" }), 0, 0.5, 0.32).rotation.set(Math.PI / 2, 0, Math.PI / 2);
-        for (const x of [-0.34, 0.34]) {
-          add(box(0.04, 0.42, 0.04), lambert("#5a3d22"), x, 0.21, 0.4);
-          add(box(0.08, 0.1, 0.08), new THREE.MeshBasicMaterial({ color: "#ffb347" }), x, 0.46, 0.4).userData.glow = true;
+        const stone = lambert("#4a4d55");
+        // The heap, set back behind the entrance so none of it stands in the way in.
+        add(new THREE.DodecahedronGeometry(0.74, 0), rock, 0, 0.46, -1.0, 0.3);
+        add(new THREE.ConeGeometry(0.44, 1.15, 5), pale, -0.76, 0.5, -0.42, 0.8);
+        add(new THREE.ConeGeometry(0.38, 1.0, 5), rock, 0.76, 0.44, -0.46, 1.7);
+        // The way in (caveDressing.ts): an arched tunnel going back into the rock, dark, darkest at its back.
+        g.add(caveMouth(MOUTH_FACE));
+        // Framed in the stone, so it is a hole in the rock from any side: rough jambs either side, a lintel over it.
+        for (const side of [-1, 1]) {
+          // Stood square to the face (turned, a long stone would swing across the way in).
+          const jamb = add(new THREE.DodecahedronGeometry(0.24, 0), side < 0 ? stone : rock, side * 0.45, 0.3, 0.08, side * 0.12);
+          jamb.scale.set(0.8, 1.55, 1.3);
+          // And a stone at each foot, half sunk.
+          add(new THREE.DodecahedronGeometry(0.1, 0), pale, side * 0.48, 0.03, 0.38, side * 1.3).scale.set(1.2, 0.7, 1);
         }
+        const lintel = add(new THREE.DodecahedronGeometry(0.26, 0), stone, 0, 0.7, 0.06, 0.08);
+        lintel.scale.set(1.85, 0.7, 1.3);
+        // A torch burning on a stake either side, clear of the frame (real flames, flickered with the others), and a
+        // halo and warm light round each at dusk.
+        const glows: BuildingGlow[] = [];
+        for (const x of [-0.6, 0.6]) {
+          const torch = mouthTorch();
+          torch.position.set(x, 0, MOUTH_FACE + 0.12);
+          g.add(torch);
+          glows.push({ pos: new THREE.Vector3(x, 0.66, MOUTH_FACE + 0.12), size: 0.3, light: "candle" });
+        }
+        g.userData.glows = glows;
+        // And the rope out of the dark: the far end of the one that hangs down inside, tied round a boulder out front.
+        g.add(mouthRope(MOUTH_FACE));
         break;
       }
       case "rocks": {

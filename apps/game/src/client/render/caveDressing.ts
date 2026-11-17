@@ -8,9 +8,12 @@
 //
 // Also here: the rope at the cave mouth, let down from a rock up on the
 // surface and hanging down the shaft of light, its slack coiled on the floor;
-// and the clusters of glowing mushrooms a delve grows (zone/forage.ts).
+// the same rope seen from outside, in the Harbor, tied round a boulder and
+// running into the dark of the entrance, between two burning torches; and the
+// clusters of glowing mushrooms a delve grows (zone/forage.ts).
 
 import * as THREE from "three";
+import { torchFlame } from "./torchFlame";
 import { posKey, type HexPos } from "@gantt-quest/core";
 import type { Tile } from "@gantt-quest/world";
 
@@ -254,5 +257,111 @@ export function glowcapCluster(seedQ: number, seedR: number, picked: boolean): T
     pool.userData.glow = true;
     g.add(pool);
   }
+  return g;
+}
+
+/** Where the face of the Harbor's cave entrance stands, in its model's space: the front of the tunnel into the rock. */
+export const MOUTH_FACE = 0.36;
+
+/**
+ * The Harbor's way into the caverns: an arched tunnel going back into the rock from `face`, seen from inside only
+ * (its walls are drawn from within), so it is a hole and not a panel. Very dark at the mouth and black at the back,
+ * unlit by the day. The rock round it is the model's; it must cover the tunnel's outside.
+ */
+export function caveMouth(face: number): THREE.Mesh {
+  // Wider and taller than the gap the stones leave, so the jambs and the lintel overlap its edges: nothing is seen
+  // past the dark, round it.
+  const half = 0.32;
+  const side = 0.34;
+  const depth = 0.55;
+  const shape = new THREE.Shape();
+  shape.moveTo(-half, 0);
+  shape.lineTo(half, 0);
+  shape.lineTo(half, side);
+  shape.absarc(0, side, half, 0, Math.PI, false);
+  shape.lineTo(-half, 0);
+  const geometry = new THREE.ExtrudeGeometry(shape, { depth, bevelEnabled: false, curveSegments: 10 });
+  const pos = geometry.getAttribute("position");
+  const mouth = new THREE.Color("#0d0c10");
+  const back = new THREE.Color("#000000");
+  const colors: number[] = [];
+  for (let i = 0; i < pos.count; i++) {
+    // Extruded from z = 0 (the back) to `depth` (the mouth): lighter toward the daylight, and the floor a shade lighter still.
+    const c = back.clone().lerp(mouth, Math.pow(pos.getZ(i) / depth, 1.6) * (pos.getY(i) < 0.01 ? 1 : 0.8));
+    colors.push(c.r, c.g, c.b);
+  }
+  geometry.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
+  const tunnel = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.BackSide }));
+  tunnel.position.z = face - depth;
+  // Its floor a hair over the ground's, so the two do not fight to be drawn.
+  tunnel.position.y = 0.012;
+  tunnel.userData.glow = true;
+  return tunnel;
+}
+
+/**
+ * The Harbor's way into the caverns, from outside: the far end of the rope that hangs down inside. Tied round a
+ * boulder out front, it runs over the ground and in through the black of the arch, knotted for climbing. In the
+ * entrance model's own space: the arch's face at z = `face`, its middle at x = 0.
+ */
+export function mouthRope(face: number): THREE.Group {
+  const g = new THREE.Group();
+  const hemp = new THREE.MeshLambertMaterial({ color: "#c4a06a", flatShading: true });
+  const knotty = new THREE.MeshLambertMaterial({ color: "#8a6a3c", flatShading: true });
+  // The boulder, out front to the right of the arch, and two turns of rope round it.
+  const rockAt = new THREE.Vector3(0.6, 0.08, face + 0.4);
+  const rock = new THREE.Mesh(new THREE.DodecahedronGeometry(0.13, 0), new THREE.MeshLambertMaterial({ color: "#6a6e76", flatShading: true }));
+  rock.position.copy(rockAt);
+  rock.scale.set(1.25, 0.8, 1.05);
+  rock.rotation.set(0.3, 0.9, 0.1);
+  g.add(rock);
+  for (const [i, lift] of [0.03, 0.07].entries()) {
+    const turn = new THREE.Mesh(new THREE.TorusGeometry(0.15 - i * 0.012, 0.016, 6, 18), hemp);
+    turn.position.set(rockAt.x, lift, rockAt.z);
+    turn.rotation.set(Math.PI / 2 + 0.08 * (i ? -1 : 1), 0, 0);
+    g.add(turn);
+  }
+  const knot = new THREE.Mesh(new THREE.DodecahedronGeometry(0.03, 0), knotty);
+  knot.position.set(rockAt.x - 0.15, 0.06, rockAt.z - 0.03);
+  g.add(knot);
+  // Over the ground and in through the arch, dropping out of sight into the dark behind its face.
+  const curve = new THREE.CatmullRomCurve3([
+    new THREE.Vector3(rockAt.x - 0.15, 0.05, rockAt.z - 0.03),
+    new THREE.Vector3(0.32, 0.025, face + 0.3),
+    new THREE.Vector3(0.12, 0.022, face + 0.16),
+    new THREE.Vector3(0.02, 0.03, face + 0.05),
+    new THREE.Vector3(0, 0.02, face - 0.06),
+    new THREE.Vector3(0, -0.06, face - 0.18),
+  ]);
+  g.add(new THREE.Mesh(new THREE.TubeGeometry(curve, 40, 0.016, 6, false), hemp));
+  for (let t = 0.12; t < 0.8; t += 0.13) {
+    const k = new THREE.Mesh(new THREE.SphereGeometry(0.026, 6, 4), knotty);
+    k.position.copy(curve.getPointAt(t));
+    k.scale.set(1, 0.7, 1);
+    g.add(k);
+  }
+  return g;
+}
+
+/**
+ * A torch on a stake by the entrance: a pole driven into the ground, an iron cup with a pitch-soaked rag in it, and
+ * a real flame on top (torchFlame), which the renderer flickers. Its root at the group's origin, in the entrance
+ * model's space.
+ */
+export function mouthTorch(): THREE.Group {
+  const g = new THREE.Group();
+  const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.024, 0.5, 6), new THREE.MeshLambertMaterial({ color: "#5a3d22", flatShading: true }));
+  pole.position.y = 0.25;
+  g.add(pole);
+  const iron = new THREE.MeshLambertMaterial({ color: "#2f2d33", flatShading: true });
+  const cup = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.028, 0.06, 7, 1, true), iron);
+  cup.position.y = 0.52;
+  g.add(cup);
+  const rag = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.03, 0.05, 7), new THREE.MeshLambertMaterial({ color: "#3a2a1e", flatShading: true }));
+  rag.position.y = 0.54;
+  g.add(rag);
+  const flame = torchFlame(0.075);
+  flame.position.y = 0.56;
+  g.add(flame);
   return g;
 }

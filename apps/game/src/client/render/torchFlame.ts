@@ -52,6 +52,8 @@ export function torchFlame(size = 1): THREE.Group {
   for (const [color, radius, height, x, z] of TONGUES) {
     const t = tongue(color, radius * size, height * size);
     t.position.set(x * size, 0, z * size);
+    // Light, not a solid: it neither casts nor takes a shadow, wherever it is set.
+    t.userData.glow = true;
     group.add(t);
   }
   return group;
