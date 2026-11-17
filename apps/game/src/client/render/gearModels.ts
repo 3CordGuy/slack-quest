@@ -56,7 +56,7 @@ export interface Kit {
    * model's own units as usual: in a hero's hand they swing from there as a pendulum (see figures.ts), weighted
    * at `bob`. In a picture they stay as built.
    */
-  dangle(pivot: V3, bob: V3, build: () => void, opts?: Pick<Dangle, "limit" | "clear" | "size">): void;
+  dangle(pivot: V3, bob: V3, build: () => void, opts?: Pick<Dangle, "limit" | "clear" | "size" | "mass">): void;
 }
 
 /** What a group made by Kit.dangle carries in its userData. */
@@ -69,6 +69,12 @@ export interface Dangle {
   clear?: { from: V3; to: V3; r: number };
   /** How big the weight is round `bob`, for keeping it off the body of whoever holds it. */
   size?: number;
+  /**
+   * How heavy it is at `bob`, against what hangs below it (1 if not given): a length of chain is light beside the
+   * ball on its end, so the ball pulls it straight. A dangle built inside another hangs from its end (its `pivot`
+   * is the outer one's `bob`), making a chain of joints.
+   */
+  mass?: number;
 }
 
 export interface LowPolyDef {
@@ -216,19 +222,18 @@ function flail(k: Kit, loose: boolean) {
   k.ring(0.7, 0.22, C.iron, { at: [0, 5.5, 0], rot: [0, Math.PI / 2, 0] }, 4, 8);
   const ball: V3 = [5.9, 3.4, 0];
   const pivot: V3 = [0, 6.1, 0];
-  k.dangle(pivot, ball, () => {
-    const chain = loose
-      ? new THREE.LineCurve3(v3(pivot), v3(ball).lerp(v3(pivot), 2.2 / Math.hypot(ball[0] - pivot[0], ball[1] - pivot[1])))
-      : new THREE.CatmullRomCurve3([v3(pivot), v3([1.6, 7.6, 0]), v3([3.7, 7.6, 0]), v3([5.3, 6.1, 0])]);
-    const links = loose ? 4 : 7;
-    for (let i = 0; i <= links; i++) {
-      const t = i / links;
+  const links = (chain: THREE.Curve<THREE.Vector3>, n: number, last: boolean, first = 0) => {
+    for (let i = 0; i <= n; i++) {
+      if (i === n && !last) continue;
+      const t = i / n;
       const at = chain.getPoint(t);
       const along = chain.getTangent(t);
       const link = k.ring(0.55, 0.18, C.iron, { at: [at.x, at.y, at.z], scale: [1.5, 1, 1] }, 4, 6);
       link.rotation.order = "ZYX";
-      link.rotation.set(i % 2 ? Math.PI / 2 : 0, 0, Math.atan2(along.y, along.x));
+      link.rotation.set((first + i) % 2 ? Math.PI / 2 : 0, 0, Math.atan2(along.y, along.x));
     }
+  };
+  const head = () => {
     k.ball(2.4, C.iron, { at: ball }, 1);
     k.ring(2.42, 0.32, k.a, { at: ball, rot: [Math.PI / 2, 0, 0] }, 4, 16);
     const ico = new THREE.IcosahedronGeometry(1, 0);
@@ -242,7 +247,27 @@ function flail(k: Kit, loose: boolean) {
       spike(k, ball, d, 2.1, 0.45, 1.4, C.steel);
     }
     ico.dispose();
-  }, { clear: { from: [0, 5.5, 0], to: [0, -7, 0], r: 3 }, size: 3 });
+  };
+  const weight = { clear: { from: [0, 5.5, 0] as V3, to: [0, -7, 0] as V3, r: 3 }, size: 3 };
+  if (!loose) {
+    // The picture: one chain curled over from the ring to the ball.
+    k.dangle(pivot, ball, () => {
+      links(new THREE.CatmullRomCurve3([v3(pivot), v3([1.6, 7.6, 0]), v3([3.7, 7.6, 0]), v3([5.3, 6.1, 0])]), 7, true);
+      head();
+    }, weight);
+    return;
+  }
+  // In hand: a straight chain, jointed half way, so it bends as it swings; the ball on the lower half.
+  const end = v3(ball).lerp(v3(pivot), 2.2 / Math.hypot(ball[0] - pivot[0], ball[1] - pivot[1]));
+  const knee = v3(pivot).lerp(end, 0.5);
+  const kneeAt = knee.toArray() as V3;
+  k.dangle(pivot, kneeAt, () => {
+    links(new THREE.LineCurve3(v3(pivot), knee), 2, false);
+    k.dangle(kneeAt, ball, () => {
+      links(new THREE.LineCurve3(knee, end), 2, true, 2);
+      head();
+    }, weight);
+  }, { size: 0.6, mass: 0.25 });
 }
 
 function boot(k: Kit) {

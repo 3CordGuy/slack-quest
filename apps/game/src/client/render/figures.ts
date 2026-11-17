@@ -830,46 +830,76 @@ function gear(p: Part, icon: string, trim: string, hold: Hold, inHand = false): 
   const scale = typeof hold.scale === "number" ? new THREE.Vector3().setScalar(hold.scale) : new THREE.Vector3(...hold.scale);
   const at = new THREE.Matrix4().compose(new THREE.Vector3(...(hold.at ?? [0, 0, 0])), new THREE.Quaternion().setFromEuler(new THREE.Euler(...(hold.turn ?? [0, 0, 0]))), scale);
   at.multiply(new THREE.Matrix4().makeTranslation(-hold.grip[0], -hold.grip[1], -hold.grip[2]));
-  // What hangs loose (a flail's ball, a lantern) goes on a joint of its own at its pivot, to swing (see swingDangles).
+  // What hangs loose (a flail's ball, a lantern) goes on a joint of its own at its pivot, to swing (see
+  // swingDangles); one built inside another hangs from its end, a second joint down the same chain.
   const loose: THREE.Object3D[] = [];
   built.model.traverse((o) => {
     if (o.userData.dangle) loose.push(o);
   });
+  const outer = new Map<THREE.Object3D, THREE.Object3D | null>();
   for (const group of loose) {
-    group.removeFromParent();
+    let up = group.parent;
+    while (up && !up.userData.dangle) up = up.parent;
+    outer.set(group, up);
+  }
+  for (const group of loose) group.removeFromParent();
+  const made = new Map<THREE.Object3D, { part: Part; pivot: THREE.Vector3; chain: Dangling }>();
+  for (const group of loose) {
     const d = group.userData.dangle as Dangle;
     const pivot = new THREE.Vector3(...d.pivot).applyMatrix4(at);
     const rest = new THREE.Vector3(...d.bob).applyMatrix4(at).sub(pivot);
-    const part = new Part(p.joint, pivot.x, pivot.y, pivot.z);
-    const clear = d.clear && { from: new THREE.Vector3(...d.clear.from).applyMatrix4(at), to: new THREE.Vector3(...d.clear.to).applyMatrix4(at), r: d.clear.r * scale.x };
+    const above = outer.get(group) ? made.get(outer.get(group)!) : undefined;
+    // Each joint is placed in the one above it, which is the hand's frame moved to its own pivot.
+    const from = above ? pivot.clone().sub(above.pivot) : pivot;
+    const part = new Part(above ? above.part.joint : p.joint, from.x, from.y, from.z);
     part.model(group, new THREE.Matrix4().makeTranslation(-pivot.x, -pivot.y, -pivot.z).multiply(at));
     disposeLowPoly(group);
     extraParts.push(part);
-    dangles.push({ joint: part.joint, rest, limit: d.limit, clear, size: (d.size ?? 0) * scale.x, bob: null, was: new THREE.Vector3(), pivot: new THREE.Vector3() });
+    const link: Link = { joint: part.joint, rest, size: (d.size ?? 0) * scale.x, weight: d.mass ?? 1, at: new THREE.Vector3(), was: new THREE.Vector3() };
+    const clear = d.clear && { from: new THREE.Vector3(...d.clear.from).applyMatrix4(at), to: new THREE.Vector3(...d.clear.to).applyMatrix4(at), r: d.clear.r * scale.x };
+    let chain: Dangling;
+    if (above) {
+      chain = above.chain;
+      chain.links.push(link);
+      chain.clear = clear ?? chain.clear;
+    } else {
+      chain = { links: [link], limit: d.limit, clear, placed: false, pivot: new THREE.Vector3() };
+      dangles.push(chain);
+    }
+    made.set(group, { part, pivot, chain });
   }
   p.model(built.model, at);
   disposeLowPoly(built.model);
   return true;
 }
 
+/** One joint of something hanging loose: a length of chain, or the weight on its end. */
+interface Link {
+  joint: THREE.Group;
+  /** From its pivot to its end (the next joint's pivot, or where its weight is), as built, in its parent's frame. */
+  rest: THREE.Vector3;
+  /** How big its end is, in the figure's units: how far it is kept off the body (0 not at all). */
+  size: number;
+  /** How heavy its end is, against the others in the chain. */
+  weight: number;
+  /** Where its end is in the world, and where it was a step ago (its speed). */
+  at: THREE.Vector3;
+  was: THREE.Vector3;
+}
+
 /**
- * Something hanging loose in a hand, swung as a pendulum by how the hand really moves through the world: a turn
- * on the spot, a run, a blow, an arm swinging on the march all fling it, and it falls back under its own weight.
+ * Something hanging loose in a hand, swung by how the hand really moves through the world: a turn on the spot, a
+ * run, a blow, an arm swinging on the march all fling it, and it falls back under its own weight. One link is a
+ * pendulum; more (a flail's chain jointed half way) bend as they swing, the ball on the end pulling the chain.
  */
 interface Dangling {
-  joint: THREE.Group;
-  /** From the pivot to where its weight is, as built, in the joint's parent's units (the figure's own). */
-  rest: THREE.Vector3;
-  /** How far it may swing from `rest`, in radians, if not all the way round. */
+  links: Link[];
+  /** How far a single link may swing from where it was built, in radians, if not all the way round (a clapper). */
   limit?: number;
-  /** The haft it hangs by, in the joint's parent's units: the weight is kept `r` from the line between. */
+  /** The haft the end hangs by, in the hand's frame: the last link's end is kept `r` from the line between. */
   clear?: { from: THREE.Vector3; to: THREE.Vector3; r: number };
-  /** How big the weight is, in the figure's units: how far it is kept off the body. */
-  size: number;
-  /** Where the weight is in the world, and where it was a step ago (its speed); null until the first frame placed. */
-  bob: THREE.Vector3 | null;
-  was: THREE.Vector3;
-  /** Where the pivot was in the world last frame. */
+  /** Whether it has been hung yet, and where the pivot was in the world last frame. */
+  placed: boolean;
   pivot: THREE.Vector3;
 }
 
@@ -933,6 +963,9 @@ const _a = new THREE.Vector3();
 const _b = new THREE.Vector3();
 const _line = new THREE.Line3();
 const _near = new THREE.Vector3();
+const _from = new THREE.Vector3();
+const _at = new THREE.Vector3();
+const _inv = new THREE.Quaternion();
 const _off = new THREE.Vector3();
 /** The body's capsules in the world this frame: two ends and a radius each. */
 const _body: { a: THREE.Vector3; b: THREE.Vector3; r: number }[] = [];
@@ -964,69 +997,103 @@ function swingDangles(list: Dangling[], dt: number, top: THREE.Object3D, body: B
     _body[i].b.copy(c.b).applyMatrix4(c.joint.matrixWorld);
   }
   for (const d of list) {
-    const parent = d.joint.parent;
-    if (!parent) continue;
-    parent.matrixWorld.decompose(_pos, _parentQ, _scale);
+    const first = d.links[0];
+    const hand = first.joint.parent;
+    if (!hand) continue;
+    hand.matrixWorld.decompose(_pos, _parentQ, _scale);
     const scale = _scale.x || 1;
-    _pivot.copy(d.joint.position).applyMatrix4(parent.matrixWorld);
-    const length = d.rest.length() * scale;
-    // In the world, where it hangs as built (for a limit), and which way is down.
-    _rest.copy(d.rest).normalize().applyQuaternion(_parentQ);
+    _pivot.copy(first.joint.position).applyMatrix4(hand.matrixWorld);
+    // In the world, which way the first link hangs as built (for a limit).
+    _rest.copy(first.rest).normalize().applyQuaternion(_parentQ);
     // The first frame, or a jump across the map (a new scene, a teleport): hang it straight down, at rest.
-    if (!d.bob || dt <= 0 || _pivot.distanceTo(d.pivot) > 40 * scale) {
-      d.bob ??= new THREE.Vector3();
+    if (!d.placed || dt <= 0 || _pivot.distanceTo(d.pivot) > 40 * scale) {
       _dir.copy(d.limit !== undefined ? _rest : DOWN);
-      d.bob.copy(_pivot).addScaledVector(_dir, length);
-      d.was.copy(d.bob);
+      let end = _pivot;
+      for (const link of d.links) {
+        link.at.copy(end).addScaledVector(_dir, link.rest.length() * scale);
+        link.was.copy(link.at);
+        end = link.at;
+      }
       d.pivot.copy(_pivot);
+      d.placed = true;
     } else {
       // A few small steps, the pivot carried along between last frame's place and this one's.
       const steps = Math.min(8, Math.max(1, Math.ceil(dt * 240)));
       const h = dt / steps;
       const keep = Math.exp(-DANGLE_DRAG * h);
       const fall = DANGLE_GRAVITY * scale * h * h;
-      const from = d.pivot.clone();
+      const from = _from.copy(d.pivot);
+      const last = d.links[d.links.length - 1];
       for (let i = 1; i <= steps; i++) {
-        const at = from.clone().lerp(_pivot, i / steps);
-        _step.subVectors(d.bob, d.was).multiplyScalar(keep);
-        d.was.copy(d.bob);
-        d.bob.add(_step);
-        d.bob.y -= fall;
-        // Held at the length of its chain from the pivot, and (a clapper) within its bell.
-        _dir.subVectors(d.bob, at);
-        if (_dir.lengthSq() < 1e-12) _dir.copy(DOWN);
-        _dir.normalize();
+        const at = _at.copy(from).lerp(_pivot, i / steps);
+        for (const link of d.links) {
+          _step.subVectors(link.at, link.was).multiplyScalar(keep);
+          link.was.copy(link.at);
+          link.at.add(_step);
+          link.at.y -= fall;
+        }
+        // Each link held at its length from the one above: the pivot does not give, and of two ends the
+        // lighter gives more (a length of chain, to the ball). A few rounds, as each pulls on the next.
+        const hold = () => {
+          for (let round = 0; round < (d.links.length > 1 ? 3 : 1); round++) {
+            for (const [n, link] of d.links.entries()) {
+              const above = n === 0 ? null : d.links[n - 1];
+              const anchor = above ? above.at : at;
+              _dir.subVectors(link.at, anchor);
+              if (_dir.lengthSq() < 1e-12) _dir.copy(DOWN);
+              const length = link.rest.length() * scale;
+              const off = _dir.length() - length;
+              _dir.normalize();
+              if (!above) {
+                link.at.addScaledVector(_dir, -off);
+                continue;
+              }
+              const share = above.weight / (above.weight + link.weight);
+              link.at.addScaledVector(_dir, -off * share);
+              above.at.addScaledVector(_dir, off * (1 - share));
+            }
+          }
+        };
+        hold();
+        // A clapper stays within its bell.
         if (d.limit !== undefined) {
-          const angle = _dir.angleTo(_rest);
-          if (angle > d.limit) {
+          _dir.subVectors(first.at, at).normalize();
+          if (_dir.angleTo(_rest) > d.limit) {
             const axis = _step.crossVectors(_rest, _dir);
             if (axis.lengthSq() < 1e-12) _dir.copy(_rest);
             else _dir.copy(_rest).applyAxisAngle(axis.normalize(), d.limit);
+            first.at.copy(at).addScaledVector(_dir, first.rest.length() * scale);
           }
         }
-        d.bob.copy(at).addScaledVector(_dir, length);
-        // Kept off the haft and the body: pushed straight out of each (twice round, as one can push it into
-        // another), then back to the chain's length. Touching the body, it rubs, and loses some speed.
-        let touched = false;
+        // Kept off the haft (the end) and the body (every end that has a size): pushed straight out of each
+        // (twice round, as one can push it into another), then held to its length again. Touching the body, it
+        // rubs, and loses some speed.
         for (let pass = 0; pass < 2; pass++) {
           let moved = false;
-          if (d.clear) moved = pushOut(d.bob, _a.copy(d.clear.from).applyMatrix4(parent.matrixWorld), _b.copy(d.clear.to).applyMatrix4(parent.matrixWorld), d.clear.r * scale);
-          if (d.size > 0) {
+          if (d.clear) moved = pushOut(last.at, _a.copy(d.clear.from).applyMatrix4(hand.matrixWorld), _b.copy(d.clear.to).applyMatrix4(hand.matrixWorld), d.clear.r * scale);
+          for (const link of d.links) {
+            if (link.size <= 0) continue;
+            let touched = false;
             for (let c = 0; c < body.length; c++) {
-              if (pushOut(d.bob, _body[c].a, _body[c].b, (body[c].r + d.size) * scale)) moved = touched = true;
+              if (pushOut(link.at, _body[c].a, _body[c].b, (body[c].r + link.size) * scale)) moved = touched = true;
             }
+            if (touched) link.was.lerp(link.at, 1 - RUB);
           }
           if (!moved) break;
-          _dir.subVectors(d.bob, at).normalize();
-          d.bob.copy(at).addScaledVector(_dir, length);
+          hold();
         }
-        if (touched) d.was.lerp(d.bob, 1 - RUB);
       }
       d.pivot.copy(_pivot);
     }
-    // Turn the joint so the weight, built along `rest`, hangs toward it.
-    _dir.subVectors(d.bob, _pivot).normalize().applyQuaternion(_parentQ.invert());
-    d.joint.quaternion.setFromUnitVectors(_rest.copy(d.rest).normalize(), _dir);
+    // Turn each joint so its link, built along `rest`, lies toward its end: the first in the hand's frame, each
+    // next in the frame the one above has just been turned to.
+    let end = _pivot;
+    for (const link of d.links) {
+      _dir.subVectors(link.at, end).normalize().applyQuaternion(_inv.copy(_parentQ).invert());
+      link.joint.quaternion.setFromUnitVectors(_rest.copy(link.rest).normalize(), _dir);
+      _parentQ.multiply(link.joint.quaternion);
+      end = link.at;
+    }
   }
 }
 
