@@ -31,8 +31,8 @@
 .tide-cards { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 6px; }
 .tide-cards li { display: flex; gap: 6px; align-items: flex-start; }
 
-@media (max-width: 760px) {
-  /* A phone: the hand at its own size doubled is most of the dock, so the rest goes under it. */
+@media (max-width: 760px), (max-height: 500px) {
+  /* A phone, either way up: the hand at its own size doubled is most of the dock, so the rest goes under it. */
   .tide-side { min-width: 0; flex-basis: 100%; }
   .tide-seen { display: none; }
 }

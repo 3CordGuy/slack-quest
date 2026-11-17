@@ -778,6 +778,17 @@ export class WorldRenderer {
   private woods: Woods | null = null;
   /** The camera's normal field of view, which a minigame may widen. */
   private baseFov = 35;
+  /**
+   * A minigame's own controls lying over the view (a pub table's dock), and how much of it they cover: a share of
+   * the height along the bottom, or of the width down the right side. The game is framed in the rest. `cover` eases
+   * toward `coverGoal`, so the view slides rather than jumps as the controls change size.
+   */
+  private coverEl: HTMLElement | null = null;
+  private coverGoal = { bottom: 0, right: 0 };
+  private cover = { bottom: 0, right: 0 };
+  private coverObserver: ResizeObserver | null = null;
+  /** The view offset last set on the camera for the cover, to skip setting it again unchanged. */
+  private coverShift = "";
   private lentFlash = 0;
   /** A room's windows: the backdrop seen through them, its picture as a texture, and the panes on the wall. */
   private outlook: WorldRenderer | null = null;
@@ -1045,6 +1056,7 @@ export class WorldRenderer {
     this.unhearLooks?.();
     this.ear.close();
     this.resizeObserver.disconnect();
+    this.coverObserver?.disconnect();
     const canvas = this.renderer.domElement;
     canvas.removeEventListener("pointerdown", this.onPointerDown);
     canvas.removeEventListener("pointermove", this.onPointerMove);
@@ -2416,8 +2428,11 @@ export class WorldRenderer {
     for (const id of this.stageHidden) this.showUnit(id);
     this.stageHidden = [];
     for (const b of [this.followButton, ...this.turnButtons]) b.style.visibility = "";
-    if (this.camera.fov !== this.baseFov) {
+    this.cover = { bottom: 0, right: 0 };
+    if (this.camera.fov !== this.baseFov || this.coverShift) {
       this.camera.fov = this.baseFov;
+      this.camera.clearViewOffset();
+      this.coverShift = "";
       this.camera.updateProjectionMatrix();
     }
   }
@@ -5632,7 +5647,37 @@ export class WorldRenderer {
 
   // ---------- frame loop ----------
 
+  /**
+   * The element a minigame keeps its controls in, over the view (null when there is none): the camera frames the
+   * game in what it leaves clear, above it when it lies along the bottom, or left of it down the right side.
+   */
+  setCover(el: HTMLElement | null) {
+    if (el === this.coverEl) return;
+    if (this.coverEl) this.coverObserver?.unobserve(this.coverEl);
+    this.coverEl = el;
+    if (el) {
+      this.coverObserver ??= new ResizeObserver(() => this.measureCover());
+      this.coverObserver.observe(el);
+    }
+    this.measureCover();
+  }
+
+  private measureCover() {
+    const el = this.coverEl;
+    const box = this.container.getBoundingClientRect();
+    const r = el?.isConnected ? el.getBoundingClientRect() : null;
+    if (!r || !r.width || !r.height || !box.width || !box.height) {
+      this.coverGoal = { bottom: 0, right: 0 };
+      return;
+    }
+    // Whichever way round leaves more of the view clear: a dock along the bottom, or one down the right side.
+    const bottom = Math.max(0, (box.bottom - r.top) / box.height);
+    const right = Math.max(0, (box.right - r.left) / box.width);
+    this.coverGoal = bottom <= right ? { bottom: Math.min(bottom, 0.6), right: 0 } : { bottom: 0, right: Math.min(right, 0.6) };
+  }
+
   private resize() {
+    this.measureCover();
     const w = Math.max(1, this.container.clientWidth);
     const h = Math.max(1, this.container.clientHeight);
     this.ambience.fine = this.fine;
@@ -5640,6 +5685,8 @@ export class WorldRenderer {
     this.post?.setSize(w, h);
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
+    // A view offset for a minigame's cover is set again next frame, in the new size.
+    if (this.coverShift) this.coverShift = "resized";
   }
 
   /** Dev server only: a lightning strike now, whatever the weather, for trying thunder takes against the flash. */
@@ -5732,7 +5779,11 @@ export class WorldRenderer {
     // and height about the game's look point all ease over together, so it orbits in rather than sliding.
     let focus = this.camera.position.distanceTo(this.target);
     if (this.minigame) {
-      const v = this.minigame.game.frame(dt, now, this.camera.aspect);
+      // The game's controls cover part of the view: it is framed in the rest, as if that were the whole window.
+      const ease = 1 - Math.exp(-dt * 6);
+      this.cover.bottom += (this.coverGoal.bottom - this.cover.bottom) * ease;
+      this.cover.right += (this.coverGoal.right - this.cover.right) * ease;
+      const v = this.minigame.game.frame(dt, now, (this.camera.aspect * (1 - this.cover.right)) / (1 - this.cover.bottom));
       const b = Math.max(0, Math.min(1, v.blend));
       // Nothing of the woods (a tree, a boulder off a heap) may stand between the game's eye and what it looks at.
       // Cleared again whenever the eye moves on (a window turned from wide to tall stands it further back).
@@ -5756,9 +5807,21 @@ export class WorldRenderer {
         this.camera.lookAt(look);
         focus = this.camera.position.distanceTo(look);
       }
-      const fov = THREE.MathUtils.lerp(this.baseFov, v.fov ?? this.baseFov, b);
-      if (Math.abs(fov - this.camera.fov) > 0.01) {
+      // The lens is opened so the game's own field of view spans the clear part of the height, and the view is
+      // shifted so the look point sits in the middle of that part (up from a dock along the bottom, left of one on the right).
+      const lb = this.cover.bottom * b;
+      const lr = this.cover.right * b;
+      const want = THREE.MathUtils.lerp(this.baseFov, v.fov ?? this.baseFov, b);
+      const fov = lb > 0.001 ? THREE.MathUtils.radToDeg(2 * Math.atan(Math.tan(THREE.MathUtils.degToRad(want) / 2) / (1 - lb))) : want;
+      const shift = lb > 0.001 || lr > 0.001 ? `${lr.toFixed(4)},${lb.toFixed(4)}` : "";
+      if (Math.abs(fov - this.camera.fov) > 0.01 || shift !== this.coverShift) {
         this.camera.fov = fov;
+        // In the view's own pixels: setViewOffset also sets the camera's aspect from them (fullWidth / fullHeight).
+        const w = Math.max(1, this.container.clientWidth);
+        const h = Math.max(1, this.container.clientHeight);
+        if (shift) this.camera.setViewOffset(w, h, (lr * w) / 2, (lb * h) / 2, w, h);
+        else this.camera.clearViewOffset();
+        this.coverShift = shift;
         this.camera.updateProjectionMatrix();
       }
       this.hideOwnHero();

@@ -68,7 +68,7 @@ export function DiceTable({ table, you, gold, error, lastXp, looks, world, host,
   const showReveal = !!table?.reveal && (table.phase === "done" || (table.bids.length === 0 && seenRound !== table.round));
 
   const confirmStand = () => !inGame || confirm("Walk away? You forfeit your stake.");
-  const { stage, standUp } = useTableStage("dice", { ...host, world }, () => undefined, confirmStand);
+  const { stage, standUp, dock } = useTableStage("dice", { ...host, world }, () => undefined, confirmStand);
   useTableCues({ phase: table?.phase ?? null, myTurn: !!myTurn && !showReveal, winner: table?.winner ?? null, you });
 
   const seats = table?.seats ?? [];
@@ -125,7 +125,7 @@ export function DiceTable({ table, you, gold, error, lastXp, looks, world, host,
 
 
   return (
-    <div className="table-dock panel dice-table">
+    <div ref={dock} className="table-dock panel dice-table">
       {/* What is happening is on the card over the table; this copy is for screen readers. */}
       <p className="td-sr" aria-live="polite">{status}</p>
 
