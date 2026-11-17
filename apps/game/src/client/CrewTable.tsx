@@ -99,7 +99,7 @@ export function CrewTable({ table, you, gold, error, lastXp, looks, world, host,
   const cargoDice = dice.filter(isCrewCargo);
 
   const confirmStand = () => !inGame || confirm("Walk away? You forfeit your stake.");
-  const { stage, standUp } = useTableStage("crew", { ...host, world }, (a) => a.type === "keep" && toggle(a.index), confirmStand);
+  const { stage, standUp, dock } = useTableStage("crew", { ...host, world }, (a) => a.type === "keep" && toggle(a.index), confirmStand);
   useTableCues({ phase: table?.phase ?? null, myTurn, winner: table?.winner ?? null, you });
 
   const lastLine = (() => {
@@ -223,7 +223,7 @@ export function CrewTable({ table, you, gold, error, lastXp, looks, world, host,
   };
 
   return (
-    <div className="table-dock panel dice-table crew-table">
+    <div ref={dock} className="table-dock panel dice-table crew-table">
       {/* What is happening is on the card over the table; this copy is for screen readers. */}
       <p className="td-sr" aria-live="polite">{reading}</p>
 

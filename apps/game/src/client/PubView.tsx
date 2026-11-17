@@ -483,7 +483,9 @@ export function PubView({ me, refresh, onLeave }: { me: Me; refresh(): Promise<u
         </div>
       </DragPanel>
 
-      <HudBar
+      {/* Put away while seated at a game table: the table's own dock has the moves and the way to stand up, and it
+          drops to the bottom of the screen (--hud-h goes with the bar). It comes back on standing up. */}
+      {!seatedAt && <HudBar
         me={me}
         place={
           <>
@@ -525,7 +527,7 @@ export function PubView({ me, refresh, onLeave }: { me: Me; refresh(): Promise<u
         {atDealer && !holdingDice && <button className="primary" disabled={dealing} onClick={() => setDealing(true)}>See contracts</button>}
         {atBoard && !holdingDice && <button className="primary" disabled={reading} onClick={() => setReading(true)}>Read the board</button>}
         <button className={atDoor ? "primary" : ""} disabled={holdingDice} onClick={onLeave}>Leave</button>
-      </HudBar>
+      </HudBar>}
       {bag && me.character && <InventoryScreen me={me} refresh={refresh} onClose={() => setBag(false)} />}
       {book && me.character && <Logbook me={me} refresh={refresh} onClose={() => setBook(false)} />}
       {atDoor && self && !holdingDice && <TileAction renderer={renderer} pos={self.pos} unitId={self.id} label="Leave" run={onLeave} />}
