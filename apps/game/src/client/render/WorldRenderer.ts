@@ -33,7 +33,7 @@ import { BOAT_SCALE, OARLOCKS, ROWER_SEAT, aimOar, rowboatModel, shipOar } from 
 import { Rise } from "./rise";
 import { gaze } from "../gaze";
 import { NIGHT, VEIL_CLEAR_S, Veil } from "./veil";
-import { GROUND_KIND, addFancyWater, addWaterRipple, setGroundWet, setWaterNight, setWaterStanding, shoreSide, updateWater, waterAttribute, type Standing } from "./water";
+import { GROUND_KIND, addFancyWater, addWaterRipple, setGroundFine, setGroundWet, setWaterNight, setWaterStanding, shoreSide, updateWater, waterAttribute, type Standing } from "./water";
 import { ghostModel, propModel, tintGhost, type LightKind } from "./props";
 import { LAMP_TABLES, TableLamps } from "./tableLamps";
 import { LID_OPEN, chestMouth, chestModel, crateMiddle, crateModel, restingLid } from "./caveProps";
@@ -134,8 +134,15 @@ export interface RenderState {
    */
   homeYaw?: number;
   /**
-   * A map of the world, looked at from a long way up (the atlas): the camera starts well back, can pull back
-   * much further, and sees to the far edge of a big map.
+   * A map of the world, looked at from a long way up (the atlas): the camera starts well back and can pull back
+   * further, and the land is dressed as a small world, with little trees in clumps, small peaks on its hills and
+   * its painted ground drawn finer.
+   *
+   * Such a map may be one window of a world too big to hold (its tiles at the world's own hexes, not counted
+   * from a corner, and none at all where the view draws something of its own over the world, as the atlas does
+   * its cloud). Hand over another window under the same `code` and the ground is redrawn while the camera stays
+   * where it is, so the world goes on past where the last window ended. The distance is lost in mist well
+   * before a window's edge, so the edge is never seen.
    */
   far?: boolean;
 }
@@ -300,8 +307,10 @@ const PIXEL = 2;
 const MIN_ZOOM = 7;
 const MAX_ZOOM = 40;
 /** On a map of the world (RenderState.far): how far back the camera may pull, and where it starts. */
-const FAR_MAX_ZOOM = 130;
-const FAR_ZOOM = 62;
+const FAR_MAX_ZOOM = 66;
+const FAR_ZOOM = 40;
+/** And how much finer its painted ground and water are drawn than a map a hero walks on. */
+const FAR_FINE = 2.6;
 /** Below 1 makes a pinch zoom less than the fingers move. */
 const PINCH_DAMPING = 0.55;
 /** The angle equal to `to` (mod a full turn) that is closest to `from`, so easing takes the short way round. */
@@ -448,9 +457,17 @@ function warmPane(unlit: string, lit: string): THREE.MeshBasicMaterial {
 const NIGHT_SEA = new THREE.Color("#0f1a33");
 const FOG_DAY = new THREE.Color("#3a4358");
 const FOG_NIGHT = new THREE.Color("#141824");
-/** Fog on a map of the world (RenderState.far): a grey mist over the ground not yet known, darker in patches. */
-const FAR_FOG = new THREE.Color("#7b828f");
-const FAR_FOG_DEEP = new THREE.Color("#5a616f");
+/** On a map of the world (RenderState.far): what lies under everything the map does not hold, and what the distance is lost in. */
+const FAR_FLOOR = new THREE.Color("#4d5568");
+export const FAR_MIST = new THREE.Color("#aeb9cf");
+/**
+ * How far off the distance begins to be lost and where it is gone, in world units past what the camera looks at.
+ * On a map of the world the mist closes in just past what the view shows; everywhere else under the open sky it
+ * only softens the far sea into the sky, so the sea has no edge.
+ */
+const MIST = { far: [20, 54], open: [90, 420] } as const;
+/** The time of day a map of the world is held at: mid-afternoon, the light warm and the shadows long enough to shape the land. */
+const FAR_TIME = 0.6;
 /** And the sea there: cold and grey-green. */
 const GREY_SEA = new THREE.Color("#2f4a5f");
 
@@ -512,7 +529,12 @@ const PLACE: Partial<Record<Poi["kind"], { scale: number; back: number }>> = {
   wreck: { scale: 1.8, back: 0.5 },
   pier: { scale: 1.8, back: 1.25 },
 };
-const placeOf = (poi: Poi) => PLACE[poi.kind] ?? { scale: 1, back: 0.28 };
+/** On a map of the world (RenderState.far) a place is a landmark of a small world: no bigger than its hex, and standing on it. */
+const FAR_PLACE: Partial<Record<Poi["kind"], { scale: number; back: number }>> = {
+  lighthouse: { scale: 1.2, back: 0.1 },
+  cave: { scale: 1, back: 0.3 },
+};
+const placeOf = (poi: Poi, far = false) => (far ? FAR_PLACE[poi.kind] : PLACE[poi.kind]) ?? { scale: far ? 0.8 : 1, back: far ? 0.1 : 0.28 };
 /** To the nearest thousandth, so offsets sent to the server stay short. */
 const round = (n: number) => Math.round(n * 1000) / 1000;
 /** Where the stools stand round a game table in the pub (its middle is at z = -0.3): four, as many as can play, clear of whoever stands at the front. */
@@ -1077,7 +1099,9 @@ export class WorldRenderer {
     this.ambience = new Ambience(this.scene, this.renderer);
     this.scene.add(this.nightLife.group, this.gulls.group, this.storm.bolt, this.panes, this.wallPanels);
 
-    const sea = new THREE.Mesh(new THREE.PlaneGeometry(240, 240), new THREE.MeshLambertMaterial({ color: "#3577cf" }));
+    // Far bigger than anything the camera can see the end of: it is kept under the camera (see frame), and its far
+    // reaches are lost in the mist.
+    const sea = new THREE.Mesh(new THREE.PlaneGeometry(6000, 6000), new THREE.MeshLambertMaterial({ color: "#3577cf" }));
     addFancyWater(sea.material);
     sea.rotation.x = -Math.PI / 2;
     sea.position.y = 0.1;
@@ -1231,7 +1255,8 @@ export class WorldRenderer {
     // The ground is redrawn for a new map, and whenever fog lifts off more of this one.
     const lifted = state.map.tiles.reduce((n, t) => n + (t.biome === "fog" ? 0 : 1), 0);
     this.ambience.floorLook = state.floor ?? "planks";
-    if (first || lifted !== this.lifted) this.buildTerrain(state, first);
+    // And for another window of a world (see RenderState.far), under a camera that stays where it is.
+    if (first || lifted !== this.lifted || (!!state.far && state.map.tiles !== this.tiles)) this.buildTerrain(state, first);
     if (first) this.buildPanes(state);
     if (first) this.buildWallPanels(state);
     this.lifted = lifted;
@@ -1252,14 +1277,15 @@ export class WorldRenderer {
       (this.scene.background as THREE.Color).set(state.indoors ? "#1d1a2b" : "#a9dcf7");
       // A room is framed whole: closer for a hut, further back for the pub.
       if (state.indoors) this.userDist = this.camDist = state.map.grid.cols > 10 ? 21 : 15;
-      // A map of the world is looked at from a long way up, and by daylight: it is there to be read.
-      this.ambience.heldTime = state.far ? 0.42 : null;
+      // A map of the world is looked at from a long way up, and by one unchanging light: it is there to be read.
+      this.ambience.heldTime = state.far ? FAR_TIME : null;
       this.maxZoom = state.far ? FAR_MAX_ZOOM : MAX_ZOOM;
-      if (state.far) {
-        this.userDist = this.camDist = FAR_ZOOM;
-        this.camera.far = 700;
-        this.camera.updateProjectionMatrix();
-      }
+      if (state.far) this.userDist = this.camDist = FAR_ZOOM;
+      // Under the open sky the distance is lost in mist (see frame), and the camera sees as far as the mist does.
+      const open = !state.indoors && state.kind !== "caverns" && !this.opts.backdrop;
+      this.scene.fog = open ? new THREE.Fog("#a9dcf7", 100, 500) : null;
+      this.camera.far = open ? 1600 : 200;
+      this.camera.updateProjectionMatrix();
     }
 
     const me = state.heroes.find((h) => h.id === state.you);
@@ -2054,7 +2080,7 @@ export class WorldRenderer {
     this.mapCode = state.code;
     this.sodden = state.map.tiles.some((t) => t.biome === "cobble");
     // Round a map of the world there is only more fog: what lies past its edge is the fog's own grey.
-    if (state.far) this.seaBase.copy(FAR_FOG).lerp(FAR_FOG_DEEP, 0.5);
+    if (state.far) this.seaBase.copy(FAR_FLOOR);
     else this.seaBase.set(this.sodden ? "#2b4558" : "#3577cf");
     (this.sea.material as THREE.MeshLambertMaterial).color.copy(this.seaBase);
     this.wallTurn = NaN;
@@ -2110,6 +2136,7 @@ export class WorldRenderer {
     );
     // For the fancy water: which hexes are water, how near the shore, and which of their sides touch land.
     addFancyWater(terrain.material as THREE.MeshLambertMaterial, true);
+    setGroundFine(terrain.material, state.far ? FAR_FINE : 1);
     const water = waterAttribute(this.tiles.length);
     const byKey = new Map(this.tiles.map((t) => [key(t), t]));
     const isLand = (t: Tile | undefined) => !!t && t.biome !== "water" && t.biome !== "fog";
@@ -2161,6 +2188,22 @@ export class WorldRenderer {
         trees.push({ x: x + dx, y: top, z: z + dz, size, kind: pine ? "pine" : "broad", yaw: n(salt + 2) * Math.PI * 2, tint: tintOf(n(salt + 3), n(salt + 4)) });
       const rock = (dx: number, dz: number, size: number, tall: number, salt: number) =>
         boulders.push({ x: x + dx, y: top, z: z + dz, size, tall, yaw: n(salt) * Math.PI * 2, tilt: (n(salt + 1) - 0.5) * 0.5, shape: Math.floor(n(salt + 2) * 3.99), tint: tintOf(n(salt + 3), n(salt + 4)) });
+      if (state.far) {
+        // A small world: little trees in clumps, thick in the forest and one or two out on the grass, and
+        // a few stones where the map has heaped boulders. (Its hills' peaks are the ambience's.)
+        const clump = (count: number, least: number, more: number, salt: number) => {
+          const turn = n(salt) * Math.PI * 2;
+          for (let i = 0; i < count; i++) {
+            const a = turn + (i / count) * Math.PI * 2 + (n(salt + 10 + i) - 0.5) * 1.5;
+            const d = i === 0 ? n(salt + 20) * 0.2 : 0.3 + n(salt + 20 + i) * 0.46;
+            tree(Math.sin(a) * d, Math.cos(a) * d * 0.92, least + n(salt + 30 + i) * more, salt + 40 + i * 5);
+          }
+        };
+        if (t.biome === "forest") clump(5 + Math.floor(n(900) * 2.99), 0.26, 0.2, 901);
+        else if (t.biome === "plains" && n(960) < 0.16) clump(1 + Math.floor(n(961) * 1.99), 0.22, 0.14, 962);
+        if (t.blocker === "boulders") for (let i = 0; i < 3; i++) rock((n(980 + i) - 0.5) * 0.9, (n(984 + i) - 0.5) * 0.8, 0.2 + n(988 + i) * 0.12, 0.3 + n(992 + i) * 0.25, 996 + i * 5);
+        continue;
+      }
       if (t.blocker === "trees") {
         // A thicket: a ring of big old trees round one in the middle, and brush between their feet.
         const ring = 5 + Math.floor(n(100) * 2.99);
@@ -2273,14 +2316,15 @@ export class WorldRenderer {
       // Nothing grows or lies about where a place stands, under a building, or in a thicket or a boulder heap.
       // The Harbor's gaps of rubble have their boulders from the woods, not the ambience's hill rocks.
       // (Grass does grow round the foot of a lone oak.)
-      (t) => poiKeys.has(key(t)) || !!t.built || (!!t.blocker && t.blocker !== "oak") || (this.sodden && t.biome === "hills"),
+      (t) => poiKeys.has(key(t)) || !!t.built || (!!t.blocker && t.blocker !== "oak" && !state.far) || (this.sodden && t.biome === "hills"),
       (t) => ({ ...hexToWorld(t), y: tileTop(t) }),
+      !!state.far,
     );
     // The trees bend in the wind (fancy graphics), and aside as anyone walks through them.
     this.woods?.dispose();
     // The caverns' entrance is cut into the rampart behind its hex (its model stands back into it): none of the
     // rampart's rubble stands in the way in, or just in front of it, where it would block the arch from view.
-    const ways = state.map.pois.filter((p) => p.kind === "cave").map((p) => ({ ...hexToWorld(p.pos), back: placeOf(p).back }));
+    const ways = state.map.pois.filter((p) => p.kind === "cave").map((p) => ({ ...hexToWorld(p.pos), back: placeOf(p, state.far).back }));
     const clearOfWays = boulders.filter((b) => !ways.some((w) => Math.abs(b.x - w.x) < 1.4 && b.z - (w.z - w.back) > -0.9 && b.z - (w.z - w.back) < 1.3));
     this.woods = new Woods(trees, clearOfWays, this.sodden, !fancyGrass.get());
     this.decor.add(this.woods.group);
@@ -2523,8 +2567,7 @@ export class WorldRenderer {
       c.set(BIOME_COLOR[t.biome]);
       // Fog is a pale mist by day and all but black by night.
       if (t.biome === "fog") {
-        if (this.state?.far) c.copy(FAR_FOG).lerp(FAR_FOG_DEEP, noise(t.q, t.r, 57));
-        else c.set(FOG_DAY).lerp(FOG_NIGHT, Math.max(0, this.paintedNight) / 10);
+        c.set(FOG_DAY).lerp(FOG_NIGHT, Math.max(0, this.paintedNight) / 10);
       }
       // In a wet, walled port the green is tired.
       if (this.sodden && (t.biome === "plains" || t.biome === "forest")) c.lerp(DRAB, 0.5);
@@ -2636,6 +2679,11 @@ export class WorldRenderer {
   /** Have your hero turn to face the camera and stay so (while the bag is open), or go back to looking toward the pointer. */
   setFacingFront(on: boolean) {
     this.faceFront = on;
+  }
+
+  /** The hex the camera is looking at: the one under the middle of the view. */
+  focus(): HexPos {
+    return worldToHex(this.target.x, this.target.z);
   }
 
   lookAt(pos: HexPos) {
@@ -2970,7 +3018,7 @@ export class WorldRenderer {
     const standing: Standing[] = [];
     for (const poi of state.map.pois) {
       const { x, z } = hexToWorld(poi.pos);
-      const { scale, back } = placeOf(poi);
+      const { scale, back } = placeOf(poi, state.far);
       /** Something in the model, by where it is modelled: where it stands in the world, and how big. */
       const stands = (mx: number, mz: number, half: number, radius: number) => standing.push({ x: x + mx * scale, z: z + mz * scale - back, half: half * scale, radius: radius * scale });
       if (poi.kind === "rocks") stands(-0.05, 0.08, 0.25, 0.5);
@@ -2996,7 +3044,7 @@ export class WorldRenderer {
       // Any real flame in it (a torch by the caverns' entrance) flickers with the rest.
       for (const f of flamesIn(g)) this.liveFlames.add(f);
       const at = this.standAt(poi.pos);
-      const { scale, back } = placeOf(poi);
+      const { scale, back } = placeOf(poi, state.far);
       if (BUILDINGS.has(poi.kind)) inkBuilding(g, scale);
       // A building turned to front a road (see `facing`) is turned about its door: it stands back from the door
       // the way it faces away from it.
@@ -3429,7 +3477,7 @@ export class WorldRenderer {
    * back, turned to face, and scaled).
    */
   private inModel(poi: Poi, x: number, z: number): THREE.Vector2 {
-    const { scale, back } = placeOf(poi);
+    const { scale, back } = placeOf(poi, this.state?.far);
     const yaw = yawOf(poi.facing ?? 0);
     const at = hexToWorld(poi.pos);
     const behind = new THREE.Vector3(0, 0, -back).applyAxisAngle(UP, yaw);
@@ -6259,6 +6307,36 @@ export class WorldRenderer {
   }
 
   private camDist = 24;
+  /** Seconds left of coming in from an opening view (see swoop). */
+  private swooping = 0;
+
+  /**
+   * Open on the map from somewhere else and come slowly in to the usual view: from `dist` away (as zoom is
+   * counted), tipped to `pitch` (radians above the horizon) and turned `turn` off the map's own bearing.
+   * Not for anyone who asked for less motion.
+   */
+  swoop(dist: number, pitch: number, turn = 0, seconds = 4) {
+    if (this.still) return;
+    this.camDist = dist;
+    this.pitch = Math.max(MIN_PITCH, Math.min(1.5, pitch));
+    this.yaw = this.yawGoal + turn;
+    this.swooping = seconds;
+  }
+
+  /** Whether the map has been shown yet: false while it is still being made behind the veil. */
+  get revealed(): boolean {
+    return this.settling < 0;
+  }
+
+  /** The direction to the sun or moon, for things a view draws itself that should be lit as the map is. */
+  get sun(): THREE.Vector3 {
+    return this.ambience.sunDir;
+  }
+
+  /** The mist the distance is lost in under the open sky (its colour, and where it begins and is whole), or null where there is none. */
+  get mist(): THREE.Fog | null {
+    return this.scene.fog as THREE.Fog | null;
+  }
 
   private frame = (now: number) => {
     if (!this.opts.backdrop) this.raf = requestAnimationFrame(this.frame);
@@ -6309,9 +6387,13 @@ export class WorldRenderer {
     }
 
     this.target.lerp(this.targetGoal, ease);
-    this.camDist += (this.dist - this.camDist) * ease;
-    this.yaw += (this.yawGoal - this.yaw) * ease;
-    this.pitch += (this.pitchGoal - this.pitch) * ease;
+    // Coming in from an opening view (see swoop), the camera takes its time coming down and round, and does not
+    // start until the map is there to be seen.
+    const settle = this.swooping > 0 ? (this.revealed ? 1 - Math.exp(-dt * 1.7) : 0) : ease;
+    if (this.revealed) this.swooping = Math.max(0, this.swooping - dt);
+    this.camDist += (this.dist - this.camDist) * settle;
+    this.yaw += (this.yawGoal - this.yaw) * settle;
+    this.pitch += (this.pitchGoal - this.pitch) * settle;
     const reach = this.camDist * CAMERA_REACH;
     const flat = reach * Math.cos(this.pitch);
     this.camera.position.set(
@@ -6453,6 +6535,20 @@ export class WorldRenderer {
     const offshore = this.land.reach + 4;
     setWaterNight(clearSky, this.land.x + (moon.x / across) * offshore, this.land.z + (moon.z / across) * offshore, Math.max(0, (clearSky - 0.55) / 0.45));
     this.ambience.smoothSea = fancy.get();
+    // The sea goes with the camera, so it has no edge to come to, and the distance is lost in mist the colour of the sky.
+    this.sea.position.x = Math.round(this.target.x);
+    this.sea.position.z = Math.round(this.target.z);
+    const mist = this.scene.fog as THREE.Fog | null;
+    if (mist) {
+      const sky = this.scene.background as THREE.Color;
+      // Over a map of the world the sky itself is mist: the land goes on into it and is never seen to stop.
+      if (this.state?.far) sky.lerp(FAR_MIST, 0.82);
+      mist.color.copy(sky);
+      const [from, to] = this.state?.far ? MIST.far : MIST.open;
+      const reach = this.camDist * CAMERA_REACH;
+      mist.near = reach + from;
+      mist.far = reach + to;
+    }
     // The HUD's trim and the health orb are lit by the same sun or moon, from wherever the camera stands.
     reportEnv(this.ambience.sunDir, this.yaw, this.ambience.sunGlint(this.litRim), this.scene.background as THREE.Color);
     updateWater(fancy.get(), this.clock, this.ambience.sunDir, this.ambience.sunGlint(this.litRim), (this.sea.material as THREE.MeshLambertMaterial).color, this.scene.background as THREE.Color, this.ambience.raining);
@@ -6751,7 +6847,7 @@ export class WorldRenderer {
       this.air.sunHeight = this.ambience.sunHeight;
       // In a room the flash is only what comes in at the windows.
       this.air.flash = this.opts.backdrop ? this.lentFlash : this.storm.flash * (this.ambience.openSky ? 1 : 0.4);
-      this.post.render(this.scene, this.camera, focus, this.ambience.night, this.air);
+      this.post.render(this.scene, this.camera, focus, this.ambience.night, this.air, !!this.state?.far);
     }
     else this.renderer.render(this.scene, this.camera);
     this.rise?.clear();

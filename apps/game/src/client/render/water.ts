@@ -67,6 +67,16 @@ export function setGroundWet(ground: THREE.Material, wet: number) {
   if (own) own.value = wet;
 }
 
+/**
+ * How fine one view's painted ground and water are drawn: 1 as they are everywhere a hero walks, more for a
+ * map of the world seen from high up, where the same marks at their usual size would make each hex look
+ * like a field and not like a piece of a small world.
+ */
+export function setGroundFine(ground: THREE.Material, fine: number) {
+  const own = ground.userData.fine as { value: number } | undefined;
+  if (own) own.value = fine;
+}
+
 let nextRipple = 0;
 /** Opens a ring on the water at a spot, as from a footstep at the water's edge. */
 export function addWaterRipple(x: number, z: number) {
@@ -171,6 +181,7 @@ uniform float waterRain;
 uniform float waterStars;
 uniform vec3 waterMoon;
 uniform float waterWet;
+uniform float waterFine;
 #ifdef WATER_TILES
 varying float vWaterTop;
 varying float vGround;
@@ -306,7 +317,7 @@ const FRAG_BODY = /* glsl */ `#include <color_fragment>
   // The ground's own detail, painted softly over the top of each hex: no two hexes alike, and nothing that
   // moves. Each kind of ground keeps its colour and gets its own marks, blended in rather than stamped.
   if (waterFancy > 0.5 && vWaterTop > 0.5 && vGround > 0.5) {
-    vec2 at = vWaterPos.xz;
+    vec2 at = vWaterPos.xz * waterFine;
     // Where the marks gather, broad patches a shade lighter or darker, and two finer mottles.
     float clump = waterNoise(at * 1.4 + 5.0);
     float shade = waterNoise(at * 0.45 + 2.0);
@@ -344,7 +355,7 @@ const FRAG_BODY = /* glsl */ `#include <color_fragment>
   #endif
   if (waterIs > 0.5) {
     // Everything is worked out at the spot itself, and every hard edge is softened over a screen pixel.
-    vec2 pix = vWaterPos.xz;
+    vec2 pix = vWaterPos.xz * waterFine;
     // Four trains of long, slow waves crossing each other, on a surface bent by slow noise so the
     // pattern never lines up or repeats.
     vec2 p = pix + 2.4 * vec2(waterNoise(pix * 0.21 + waterTime * 0.03), waterNoise(pix * 0.21 + 31.7 - waterTime * 0.025));
@@ -564,9 +575,11 @@ const FRAG_BODY = /* glsl */ `#include <color_fragment>
 export function addFancyWater(material: THREE.MeshLambertMaterial, tiles = false) {
   if (tiles) material.defines = { ...material.defines, WATER_TILES: "" };
   const wet = { value: 0 };
+  const fine = { value: 1 };
   material.userData.wet = wet;
+  material.userData.fine = fine;
   material.onBeforeCompile = (shader) => {
-    Object.assign(shader.uniforms, UNIFORMS, { waterWet: wet });
+    Object.assign(shader.uniforms, UNIFORMS, { waterWet: wet, waterFine: fine });
     shader.vertexShader = shader.vertexShader
       .replace("void main() {", VERT_HEAD)
       .replace("#include <begin_vertex>", VERT_BEGIN)

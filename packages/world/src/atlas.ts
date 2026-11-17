@@ -41,7 +41,7 @@ export interface AtlasNode {
   /** "q,r": the node's cell, and its name in the database. */
   id: string;
   cell: AtlasCell;
-  /** The hex of the world it stands on (atlasMap.ts): its cell's middle, nudged a hex either way, so the nodes do not lie in ruled rows. */
+  /** The hex of the world it stands on (atlasMap.ts): near its cell's middle, but never in a ruled row (atlasHex). */
   hex: HexPos;
   name: string;
   kind: AtlasNodeKind;
@@ -66,9 +66,18 @@ export const ATLAS_HOME = "0,0";
 /** How far out a node may be named at all: a guard on what comes off the wire, far beyond anywhere a crew will sail. */
 export const ATLAS_REACH = 500;
 /** The share of pairs of neighbours joined by a route, besides the one route every node has toward the Harbor. */
-const EXTRA_ROUTES = 0.3;
-/** How many hexes of the world lie between one cell's middle and the next. */
-export const ATLAS_SPACING = 6;
+const EXTRA_ROUTES = 0.42;
+/** How many hexes of the world lie between one cell's middle and the next: about how far apart two places are. */
+export const ATLAS_SPACING = 5;
+/**
+ * How far the lattice of cells is bent out of true, in hexes, so the places do not lie in rows. The bend is
+ * slow (neighbours are carried the same way, and stay apart), and each place is nudged a little on its own besides.
+ */
+const WARP = 1.7;
+const WARP_SCALE = 2.2;
+const NUDGE = 0.7;
+/** Two places are joined by a route of the second kind (not the one each has toward the Harbor) only if they lie this near. */
+const ROUTE_REACH = ATLAS_SPACING + 1;
 /** One node in so many, from the second ring out, is a sea cave. */
 const SEACAVE_CHANCE = 0.16;
 
@@ -90,6 +99,34 @@ export function atlasCell(id: unknown): AtlasCell | null {
   return ringOf(cell) <= ATLAS_REACH && idOf(cell) === id ? cell : null;
 }
 
+/** The hex nearest a point given in fractions of a hex (cube rounding). */
+function hexRound(fq: number, fr: number): HexPos {
+  const fs = -fq - fr;
+  let q = Math.round(fq);
+  let r = Math.round(fr);
+  const s = Math.round(fs);
+  const [dq, dr, ds] = [Math.abs(q - fq), Math.abs(r - fr), Math.abs(s - fs)];
+  if (dq > dr && dq > ds) q = -r - s;
+  else if (dr > ds) r = -q - s;
+  return { q: q + 0, r: r + 0 };
+}
+const hexGap = (a: HexPos, b: HexPos) => (Math.abs(a.q - b.q) + Math.abs(a.r - b.r) + Math.abs(a.q + a.r - b.q - b.r)) / 2;
+
+/**
+ * The hex of the world a cell's node stands on: the cell's middle, carried off by the slow bend of the
+ * lattice and nudged a little on its own. The Harbor stands dead on its middle, at 0,0.
+ */
+export function atlasHex(seed: string, cell: AtlasCell): HexPos {
+  const mid: HexPos = { q: cell.q * ATLAS_SPACING, r: cell.r * ATLAS_SPACING };
+  if (ringOf(cell) === 0) return mid;
+  const id = idOf(cell);
+  // Across the page and down it, in hexes; then back into the hexes' own two directions.
+  const dx = (atlasNoise(seed, "bend-x", mid, WARP_SCALE) - 0.5) * 2 * WARP + (roll(seed, "nudge-x", id) - 0.5) * 2 * NUDGE;
+  const dy = (atlasNoise(seed, "bend-y", mid, WARP_SCALE) - 0.5) * 2 * WARP + (roll(seed, "nudge-y", id) - 0.5) * 2 * NUDGE;
+  const dr = dy / (Math.sqrt(3) / 2);
+  return hexRound(mid.q + dx - dr / 2, mid.r + dr);
+}
+
 /** The neighbour a ring nearer the Harbor that a node's own route runs to. Every node but the Harbor has one. */
 function inward(seed: string, cell: AtlasCell): AtlasCell {
   const ring = ringOf(cell);
@@ -101,6 +138,8 @@ function inward(seed: string, cell: AtlasCell): AtlasCell {
 function joined(seed: string, a: AtlasCell, b: AtlasCell): boolean {
   if (ringOf(a) === 0 || ringOf(b) === 0) return true;
   if (idOf(inward(seed, a)) === idOf(b) || idOf(inward(seed, b)) === idOf(a)) return true;
+  // A way round, for some of the pairs that lie near each other: never a long straight haul.
+  if (hexGap(atlasHex(seed, a), atlasHex(seed, b)) > ROUTE_REACH) return false;
   const [lo, hi] = [idOf(a), idOf(b)].sort();
   return roll(seed, "route", `${lo}|${hi}`) < EXTRA_ROUTES;
 }
@@ -197,11 +236,10 @@ function rollMods(rng: Rng, ring: number, kind: AtlasNodeKind): ZoneModId[] {
 export function atlasNode(seed: string, cell: AtlasCell): AtlasNode {
   const id = idOf(cell);
   const ring = ringOf(cell);
-  const mid: HexPos = { q: cell.q * ATLAS_SPACING, r: cell.r * ATLAS_SPACING };
+  const hex = atlasHex(seed, cell);
   const links = around(cell).filter((n) => joined(seed, cell, n)).map(idOf);
-  if (ring === 0) return { id, cell, hex: mid, name: "The Harbor", kind: "harbor", biome: "shore", ring: 0, level: 1, mods: [], links };
+  if (ring === 0) return { id, cell, hex, name: "The Harbor", kind: "harbor", biome: "shore", ring: 0, level: 1, mods: [], links };
   const rng = rngFor(seed, "node", id);
-  const hex: HexPos = { q: mid.q + rng.int(-1, 1), r: mid.r + rng.int(-1, 1) };
   const kind: AtlasNodeKind = ring >= 2 && rng.chance(SEACAVE_CHANCE) ? "seacave" : "landfall";
   const biome = kind === "seacave" ? "caves" : atlasRegion(seed, hex);
   const name = `${firstWord(seed, cell)} ${rng.pick(LAST[biome])}`;

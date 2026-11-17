@@ -6,44 +6,48 @@
 // mountains. A node stands on its own hex of it (`AtlasNode.hex`), and its
 // ground is whatever lies there, so a wooded isle really is in the woods.
 //
-// What a crew is shown is a window of it, big enough for every node they can
-// see and a margin round them:
+// What a crew is shown is a window of it: the ground round whatever hex the
+// view is looking at, as far as the view can see before the distance is lost
+// in mist. The view asks for another as the camera travels, so the world
+// never comes to an edge.
 //
 //   - Round each node the ground is made fit to stand on: a clearing in the
 //     woods, an islet where a node falls in the sea, a few crags behind a
-//     sea cave, a green under the Harbor's lighthouse.
-//   - Roads are trodden between the nodes a crew has reached, wherever the
-//     way lies over grass.
-//   - Everything further than a few hexes from the Harbor, a cleared node or
-//     an open one is fog: the ground is there, and is not shown.
+//     sea cave (with its mouth in them), a green under the Harbor's lighthouse.
+//   - Only the ground within a few hexes of the Harbor, a cleared node or an
+//     open one is lit. Everything else is under cloud: the ground is there,
+//     and is not handed over at all, save a few hexes past the lit ground's
+//     edge, where the cloud thins and the land shows through it.
 //
 // The map is an ordinary WorldMap, so the view draws it with the same
-// renderer as the Harbor. Its hexes are the world's, shifted so the window's
-// corner is 0,0 (`origin` says by how much).
+// renderer as the Harbor, but its hexes are the world's own: a tile is at
+// the hex of the world it is, not counted from a corner, and there is no
+// tile where there is only cloud. So one window and the next agree about
+// every hex they share, and a view can swap one for the other under the
+// camera with nothing seeming to move. The cloud, the nodes and the routes
+// between them are the view's to draw (the client's atlas/ folder).
 
-import { allHexesInGrid, hexDistance, posKey, type HexGrid, type HexPos } from "@gantt-quest/core";
+import { hexDistance, posKey, type HexPos } from "@gantt-quest/core";
 import { ATLAS_SPACING, atlasNoise, atlasRegion, type AtlasNodeView } from "./atlas";
 import { HARBOR_SIDES } from "./harbor";
 import { BASE_HEIGHT, type Biome, type Blocker, type Poi, type Tile, type WorldMap } from "./map";
-import { hexesBetween } from "./zone/geometry";
 
 export interface AtlasWorld {
+  /** The ground the crew can see round the window's middle, and a little past its edge: tiles at the world's own hexes, none where there is only cloud. */
   map: WorldMap;
-  /** The world hex that is 0,0 on the map: take it from a node's hex to get where the node stands on the map. */
-  origin: HexPos;
+  /** The hexes of it the cloud is lifted from. The rest of the map's tiles lie under the cloud's thinning edge. */
+  lit: HexPos[];
+  /** The same, as the view wants it to part a cloud that is not made of hexes: round each of these hexes, as far as `reach` hexes. */
+  clear: { hex: HexPos; reach: number }[];
 }
 
-/** A world hex as it lies on a window's map. */
-export const onAtlasMap = (world: Pick<AtlasWorld, "origin">, hex: HexPos): HexPos => ({ q: hex.q - world.origin.q, r: hex.r - world.origin.r });
-
-/** How many hexes of margin a window keeps round the nodes it shows. */
-const MARGIN = 7;
-/** The biggest a window is made, in hexes. A chart that has outgrown it is shown round its open nodes. */
-const MAX_COLS = 96;
-const MAX_ROWS = 84;
-/** How far the fog is lifted round the Harbor and a cleared node, and round a node that is only open. */
+/** How far a window reaches from its middle, in hexes: further than the view sees before the distance is lost in mist. */
+export const ATLAS_VIEW = 62;
+/** How far the cloud is lifted round the Harbor and a cleared node, and round a node that is only open. */
 export const ATLAS_SIGHT = ATLAS_SPACING + 2;
-export const ATLAS_GLIMPSE = 3;
+export const ATLAS_GLIMPSE = 2;
+/** How far past the lit ground the land is still handed over, to show through the cloud's edge. */
+export const ATLAS_RIM = 3;
 
 type Ground = Pick<Tile, "biome" | "h" | "blocker" | "grass">;
 
@@ -66,37 +70,13 @@ export function atlasGround(seed: string, hex: HexPos, memo?: Map<string, number
 }
 
 /**
- * The world as a crew sees it: a map with every node they are shown on it, the ground round each made
- * fit to stand on, roads between the ones they have reached, and fog over what is far from all of them.
+ * The world as a crew sees it, round `centre` (a hex of the world) and as far as `reach` from it: the ground
+ * round each node they know, made fit to stand on, and which of it the cloud is lifted from.
  */
-export function atlasWorld(seed: string, nodes: readonly AtlasNodeView[]): AtlasWorld {
+export function atlasWorld(seed: string, nodes: readonly AtlasNodeView[], centre: HexPos = { q: 0, r: 0 }, reach = ATLAS_VIEW): AtlasWorld {
   const memo = new Map<string, number>();
-  const known = nodes.filter((n) => n.state !== "fogged");
-  const reached = known.filter((n) => n.state !== "open");
-  const open = known.filter((n) => n.state === "open");
-
-  // ---------- the window ----------
-  // Round every node shown; or, once that is too big, round the open ones (the edge of what is known).
-  const fits = (set: readonly AtlasNodeView[]) => {
-    const r0 = Math.min(...set.map((n) => n.hex.r)) - MARGIN;
-    const r1 = Math.max(...set.map((n) => n.hex.r)) + MARGIN;
-    const col = (hex: HexPos) => hex.q + Math.floor((hex.r - r0) / 2);
-    const c0 = Math.min(...set.map((n) => col(n.hex))) - MARGIN;
-    const c1 = Math.max(...set.map((n) => col(n.hex))) + MARGIN;
-    return { r0, c0, cols: c1 - c0 + 1, rows: r1 - r0 + 1 };
-  };
-  let box = fits(nodes.length > 0 ? nodes : [{ hex: { q: 0, r: 0 } } as AtlasNodeView]);
-  if ((box.cols > MAX_COLS || box.rows > MAX_ROWS) && open.length > 0) box = fits(open);
-  if (box.cols > MAX_COLS || box.rows > MAX_ROWS) {
-    // Still too big: the middle of it.
-    const [dc, dr] = [Math.max(0, box.cols - MAX_COLS), Math.max(0, box.rows - MAX_ROWS)];
-    // An even number of rows off the top keeps the columns where they were.
-    const top = Math.floor(dr / 4) * 2;
-    box = { r0: box.r0 + top, c0: box.c0 + Math.floor(dc / 2) + top / 2, cols: box.cols - dc, rows: box.rows - dr };
-  }
-  const grid: HexGrid = { cols: box.cols, rows: box.rows };
-  const origin: HexPos = { q: box.c0, r: box.r0 };
-  const world = (p: HexPos): HexPos => ({ q: p.q + origin.q, r: p.r + origin.r });
+  // Only what a node near the window can light, or make of the ground, matters to it.
+  const known = nodes.flatMap((n) => (n.state !== "fogged" && hexDistance(n.hex, centre) <= reach + ATLAS_SIGHT + ATLAS_RIM ? [n] : []));
 
   // ---------- what stands where ----------
   /** The ground a node makes of the hexes round it, by world hex. */
@@ -124,48 +104,41 @@ export function atlasWorld(seed: string, nodes: readonly AtlasNodeView[]): Atlas
     });
   }
 
-  // ---------- fog ----------
-  const lit = (hex: HexPos) => reached.some((n) => hexDistance(n.hex, hex) <= ATLAS_SIGHT) || open.some((n) => hexDistance(n.hex, hex) <= ATLAS_GLIMPSE);
-
-  const tiles: Tile[] = allHexesInGrid(grid).map((p) => {
-    const hex = world(p);
-    // Fog lies in banks of uneven height, so it reads as hexes of mist and not as a flat sheet.
-    if (!lit(hex)) return { q: p.q, r: p.r, biome: "fog", h: BASE_HEIGHT.fog + atlasNoise(seed, "fog", hex, 0.4, memo) * 0.22 };
-    return { q: p.q, r: p.r, ...(made.get(posKey(hex)) ?? atlasGround(seed, hex, memo)) };
-  });
-  const byKey = new Map(tiles.map((t) => [posKey(t), t]));
-
-  // ---------- roads ----------
-  // Between the nodes a crew has reached, and out to the ones open to them: trodden wherever the way is over grass.
-  const trodden = (t: Tile | undefined): t is Tile => !!t && (t.biome === "plains" || t.biome === "sand");
-  const ids = new Map(known.map((n) => [n.id, n]));
-  for (const a of known) {
-    for (const id of a.links) {
-      const b = ids.get(id);
-      if (!b || a.id >= b.id) continue;
-      const way = [a.hex, ...hexesBetween(a.hex, b.hex), b.hex];
-      for (let i = 0; i + 1 < way.length; i++) {
-        const side = HARBOR_SIDES.findIndex((d) => way[i].q + d.q === way[i + 1].q && way[i].r + d.r === way[i + 1].r);
-        const [from, to] = [byKey.get(posKey(onAtlasMap({ origin }, way[i]))), byKey.get(posKey(onAtlasMap({ origin }, way[i + 1])))];
-        if (side < 0 || !trodden(from) || !trodden(to)) continue;
-        from.path = (from.path ?? 0) | (1 << side);
-        to.path = (to.path ?? 0) | (1 << ((side + 3) % 6));
+  // ---------- what the cloud is lifted from ----------
+  const lit = new Map<string, HexPos>();
+  const shown = new Map<string, HexPos>();
+  /** Every hex within `radius` of `mid` that is on the window, into `into`. */
+  const round = (mid: HexPos, radius: number, into: Map<string, HexPos>) => {
+    for (let dq = -radius; dq <= radius; dq++) {
+      for (let dr = Math.max(-radius, -dq - radius); dr <= Math.min(radius, -dq + radius); dr++) {
+        const hex = { q: mid.q + dq, r: mid.r + dr };
+        if (hexDistance(hex, centre) <= reach) into.set(posKey(hex), hex);
       }
     }
+  };
+  const clear: AtlasWorld["clear"] = [];
+  for (const n of known) {
+    const far = n.state === "open" ? ATLAS_GLIMPSE : ATLAS_SIGHT;
+    round(n.hex, far, lit);
+    round(n.hex, far + ATLAS_RIM, shown);
+    clear.push({ hex: n.hex, reach: far });
   }
 
-  // ---------- the places themselves ----------
-  const pois: Poi[] = known
-    .filter((n) => byKey.has(posKey(onAtlasMap({ origin }, n.hex))))
-    .map((n) => ({
-      id: `node:${n.id}`,
-      kind: n.kind === "harbor" ? "lighthouse" : n.kind === "seacave" ? "cave" : "camp",
-      pos: onAtlasMap({ origin }, n.hex),
-      hidden: false,
-      cleared: n.state !== "open",
-      usedBy: [],
-      enemies: [],
-    }));
+  // Row by row, so the same ground comes out the same whatever order the nodes were given in.
+  const order = (a: HexPos, b: HexPos) => a.r - b.r || a.q - b.q;
+  const tiles: Tile[] = [...shown.values()].sort(order).map((hex) => ({ ...hex, ...(made.get(posKey(hex)) ?? atlasGround(seed, hex, memo)) }));
 
-  return { map: { grid, tiles, pois }, origin };
+  // ---------- what is built there ----------
+  // The Harbor's lighthouse, and the mouth of each sea cave, in the crags at its back. (A node itself is the view's to draw.)
+  const pois: Poi[] = [];
+  const stand = (id: string, kind: Poi["kind"], pos: HexPos, cleared: boolean) => {
+    if (lit.has(posKey(pos))) pois.push({ id, kind, pos, hidden: false, cleared, usedBy: [], enemies: [] });
+  };
+  for (const n of known) {
+    if (n.kind === "harbor") stand(`node:${n.id}`, "lighthouse", n.hex, true);
+    else if (n.kind === "seacave") stand(`node:${n.id}`, "cave", { q: n.hex.q + HARBOR_SIDES[5].q, r: n.hex.r + HARBOR_SIDES[5].r }, n.state !== "open");
+  }
+
+  // The grid is only how far across the window reaches: its tiles are not counted from a corner of it.
+  return { map: { grid: { cols: reach * 2 + 1, rows: reach * 2 + 1 }, tiles, pois }, lit: [...lit.values()].sort(order), clear };
 }

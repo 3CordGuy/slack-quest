@@ -895,8 +895,12 @@ export class Ambience {
     scene.add(this.hemi, this.sun, this.sun.target, this.lamp, this.fireLight, ...this.slots, ...this.glows, ...this.fadeGlows, ...this.torches, ...this.glowcaps, this.group);
   }
 
-  /** Lay out the decoration for a map. `skip` holds the hexes to leave clear. */
-  build(tiles: Tile[], skip: (t: Tile) => boolean, place: (t: Tile) => { x: number; y: number; z: number }) {
+  /**
+   * Lay out the decoration for a map. `skip` holds the hexes to leave clear. `small` is for a map of the world
+   * seen from high up: its hills are heaped with more and smaller stones, and no grass is laid (a blade of it
+   * would stand as tall as a tree there).
+   */
+  build(tiles: Tile[], skip: (t: Tile) => boolean, place: (t: Tile) => { x: number; y: number; z: number }, small = false) {
     this.clear();
 
     // ---- rocks: one to three per hill, in three shapes and a few greys ----
@@ -929,7 +933,28 @@ export class Ambience {
       }
       if (skip(t)) continue;
 
-      if (t.biome === "hills") {
+      if (small && t.biome === "hills") {
+        // A small world's hills: a little peak with a stone or two at its foot. The higher the ground, the bigger the peak.
+        const high = Math.min(1, Math.max(0, (p.y - 1.1) / 0.9));
+        const count = 2 + Math.floor(n(40) * 1.99 + high);
+        for (let i = 0; i < count; i++) {
+          const shape = i === 0 ? 3 : Math.floor(n(41 + i) * shapes.length);
+          const s = (i === 0 ? 0.42 + 0.4 * high : 0.2) + n(44 + i) * 0.2;
+          const tall = shape === 2 ? 0.8 + n(47 + i) * 0.7 : shape === 3 ? 1.2 + n(47 + i) * 0.8 : 0.7 + n(47 + i) * 0.4;
+          const angle = (i / (count - 1)) * Math.PI * 2 + n(50) * 6;
+          const spread = i === 0 ? 0.1 : 0.42 + n(65 + i) * 0.26;
+          rocks[shape].push({
+            m: new THREE.Matrix4().compose(
+              new THREE.Vector3(p.x + Math.sin(angle) * spread, p.y + 0.1 * s * tall, p.z + Math.cos(angle) * spread * 0.9),
+              new THREE.Quaternion().setFromEuler(new THREE.Euler((n(53 + i) - 0.5) * 0.3, n(56 + i) * 6, (n(59 + i) - 0.5) * 0.3)),
+              new THREE.Vector3(s, s * tall, s),
+            ),
+            tone: tones[Math.floor(n(62 + i) * tones.length)],
+          });
+        }
+      } else if (small) {
+        // No grass: the trees are the size grass is elsewhere.
+      } else if (t.biome === "hills") {
         const count = 1 + Math.floor(n(40) * 2.99);
         for (let i = 0; i < count; i++) {
           const shape = Math.floor(n(41 + i) * shapes.length);
@@ -1555,6 +1580,8 @@ export class Ambience {
    * A new spell starts every few minutes and the sky eases from one to the next. The Harbor runs wetter than an island.
    */
   private weather(): number {
+    // A scene held at one time of day is held in fair weather too.
+    if (this.heldTime !== null) return 0;
     if (devTools.on) {
       const forced = (globalThis as { __gqWeather?: number }).__gqWeather;
       if (typeof forced === "number") return forced;
@@ -1574,6 +1601,7 @@ export class Ambience {
    * rest are plain downpours. Shared by a crew, like the weather itself.
    */
   private stormy(): number {
+    if (this.heldTime !== null) return 0;
     if (devTools.on) {
       const forced = (globalThis as { __gqStorm?: number }).__gqStorm;
       if (typeof forced === "number") return forced;
@@ -1588,7 +1616,7 @@ export class Ambience {
     return of(spell) * (1 - blend) + of(spell + 1) * blend;
   }
 
-  /** A time of day the scene is held at, whatever the clock says (0 to 1 through the day); null to follow the clock. */
+  /** A time of day the scene is held at, whatever the clock says (0 to 1 through the day), and in fair weather; null to follow the clock and the sky. */
   heldTime: number | null = null;
 
   private timeOfDay(): number {

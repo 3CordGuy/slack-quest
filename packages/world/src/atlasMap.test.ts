@@ -1,11 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { allHexesInGrid, hexDistance, posKey } from "@gantt-quest/core";
-import { ATLAS_HOME, ATLAS_SPACING, atlasNodeById, atlasView, type AtlasNodeView } from "./atlas";
-import { ATLAS_GLIMPSE, ATLAS_SIGHT, atlasGround, atlasWorld, onAtlasMap } from "./atlasMap";
+import { hexDistance, posKey, type HexPos } from "@gantt-quest/core";
+import { ATLAS_HOME, ATLAS_SPACING, atlasHex, atlasNode, atlasNodeById, atlasView, type AtlasCell, type AtlasNodeView } from "./atlas";
+import { ATLAS_GLIMPSE, ATLAS_RIM, ATLAS_SIGHT, ATLAS_VIEW, atlasGround, atlasWorld, type AtlasWorld } from "./atlasMap";
 import type { Tile } from "./map";
 
 const SEEDS = ["CREWAA", "CREWBB", "ZGHPQH"];
-/** A chart with the first few landfalls cleared, each a route on from the last. */
+const ring = (c: AtlasCell) => (Math.abs(c.q) + Math.abs(c.r) + Math.abs(c.q + c.r)) / 2;
+/** A chart with the first few places cleared, each a route on from the last. */
 function charted(seed: string, steps: number): AtlasNodeView[] {
   const cleared = new Set<string>();
   let from = ATLAS_HOME;
@@ -16,12 +17,15 @@ function charted(seed: string, steps: number): AtlasNodeView[] {
   }
   return atlasView(seed, cleared);
 }
-const tileOf = (world: ReturnType<typeof atlasWorld>, node: AtlasNodeView): Tile | undefined => {
-  const at = onAtlasMap(world, node.hex);
-  return world.map.tiles.find((t) => t.q === at.q && t.r === at.r);
+const tileAtHex = (world: AtlasWorld, hex: HexPos): Tile | undefined => world.map.tiles.find((t) => t.q === hex.q && t.r === hex.r);
+/** Whether the cloud is lifted from a hex, by the rule: near enough the Harbor or somewhere cleared, or right by somewhere open. */
+const seenBy = (nodes: AtlasNodeView[]) => {
+  const reached = nodes.filter((n) => n.state === "harbor" || n.state === "cleared");
+  const open = nodes.filter((n) => n.state === "open");
+  return (hex: HexPos) => reached.some((n) => hexDistance(n.hex, hex) <= ATLAS_SIGHT) || open.some((n) => hexDistance(n.hex, hex) <= ATLAS_GLIMPSE);
 };
 
-describe("the world the chart lies on", () => {
+describe("the world the atlas lies on", () => {
   it("is the same land for the same seed, and other land for another", () => {
     const spots = [{ q: 0, r: 0 }, { q: 7, r: -3 }, { q: -12, r: 20 }, { q: 31, r: 4 }, { q: -40, r: -9 }, { q: 3, r: 55 }];
     for (const seed of SEEDS) for (const p of spots) expect(atlasGround(seed, p)).toEqual(atlasGround(seed, p));
@@ -40,113 +44,167 @@ describe("the world the chart lies on", () => {
       for (const kind of ["forest", "plains", "sand", "hills"]) expect(count[kind] / total, `${seed} ${kind}`).toBeGreaterThan(0.03);
     }
   });
+});
 
-  it("puts every node a few hexes from its neighbours, never two on one hex", () => {
+describe("where the places lie", () => {
+  const cells = (radius: number): AtlasCell[] => {
+    const out: AtlasCell[] = [];
+    for (let q = -radius; q <= radius; q++) for (let r = -radius; r <= radius; r++) if (ring({ q, r }) <= radius) out.push({ q, r });
+    return out;
+  };
+
+  it("keeps every place a couple of hexes clear of every other, and the Harbor dead on its middle", () => {
     for (const seed of SEEDS) {
-      const nodes = charted(seed, 4);
-      for (const a of nodes) {
-        for (const b of nodes) {
-          if (a.id < b.id) expect(hexDistance(a.hex, b.hex), `${a.id} ${b.id}`).toBeGreaterThanOrEqual(ATLAS_SPACING - 2);
+      expect(atlasHex(seed, { q: 0, r: 0 })).toEqual({ q: 0, r: 0 });
+      const all = cells(9).map((c) => ({ c, hex: atlasHex(seed, c) }));
+      const taken = new Map<string, AtlasCell>();
+      for (const a of all) {
+        for (const b of all) {
+          if (a === b || ring({ q: a.c.q - b.c.q, r: a.c.r - b.c.r }) > 2) continue;
+          expect(hexDistance(a.hex, b.hex), `${seed} ${a.c.q},${a.c.r} and ${b.c.q},${b.c.r}`).toBeGreaterThanOrEqual(2);
+        }
+        expect(taken.has(posKey(a.hex)), seed).toBe(false);
+        taken.set(posKey(a.hex), a.c);
+      }
+    }
+  });
+
+  it("does not lay them out in ruled rows: along a row of cells they wander off the line", () => {
+    for (const seed of SEEDS) {
+      // A row of cells runs straight along r = 2; their places should not.
+      const row = Array.from({ length: 13 }, (_, i) => atlasHex(seed, { q: i - 6, r: 2 }));
+      const off = row.map((hex) => hex.r - 2 * ATLAS_SPACING);
+      expect(new Set(off).size, seed).toBeGreaterThanOrEqual(3);
+      expect(Math.max(...off) - Math.min(...off), seed).toBeGreaterThanOrEqual(2);
+      // Nor are they evenly spaced along it.
+      const gaps = row.slice(1).map((hex, i) => hexDistance(hex, row[i]));
+      expect(new Set(gaps).size, seed).toBeGreaterThanOrEqual(3);
+    }
+  });
+
+  it("runs no route further than a place and a half apart, save the one each place has toward the Harbor", () => {
+    for (const seed of SEEDS) {
+      let long = 0;
+      let all = 0;
+      for (const c of cells(7)) {
+        const n = atlasNode(seed, c);
+        for (const id of n.links) {
+          const other = atlasNodeById(seed, id)!;
+          all++;
+          if (hexDistance(n.hex, other.hex) > ATLAS_SPACING + 1) long++;
+          expect(hexDistance(n.hex, other.hex), `${n.id} to ${id}`).toBeLessThanOrEqual(ATLAS_SPACING * 2);
         }
       }
+      // The long ones are only ever a place's own way in.
+      expect(long / all, seed).toBeLessThan(0.3);
     }
   });
 });
 
 describe("the window a crew is shown", () => {
-  it("holds every node they can see, well inside its edge, on a map with a tile for every hex", () => {
+  it("is the same every time, holds nothing further than it reaches from its middle, and no hex twice", () => {
     for (const seed of SEEDS) {
-      for (const steps of [0, 2, 5]) {
-        const nodes = charted(seed, steps);
-        const world = atlasWorld(seed, nodes);
-        expect(atlasWorld(seed, nodes)).toEqual(world);
-        const { cols, rows } = world.map.grid;
-        expect(world.map.tiles.map(posKey)).toEqual(allHexesInGrid(world.map.grid).map(posKey));
-        for (const n of nodes) {
-          const at = onAtlasMap(world, n.hex);
-          const col = at.q + Math.floor(at.r / 2);
-          expect(col, n.id).toBeGreaterThanOrEqual(5);
-          expect(col, n.id).toBeLessThanOrEqual(cols - 6);
-          expect(at.r, n.id).toBeGreaterThanOrEqual(5);
-          expect(at.r, n.id).toBeLessThanOrEqual(rows - 6);
-        }
+      const nodes = charted(seed, 3);
+      for (const centre of [{ q: 0, r: 0 }, { q: 17, r: -9 }, { q: 40, r: 25 }]) {
+        const world = atlasWorld(seed, nodes, centre);
+        expect(atlasWorld(seed, nodes, centre)).toEqual(world);
+        // Whatever order the chart came in.
+        expect(atlasWorld(seed, [...nodes].reverse(), centre).map.tiles).toEqual(world.map.tiles);
+        expect(new Set(world.map.tiles.map(posKey)).size).toBe(world.map.tiles.length);
+        for (const t of world.map.tiles) expect(hexDistance(t, centre), posKey(t)).toBeLessThanOrEqual(ATLAS_VIEW);
+        // What is lit is ground it holds.
+        const held = new Set(world.map.tiles.map(posKey));
+        for (const hex of world.lit) expect(held.has(posKey(hex)), posKey(hex)).toBe(true);
       }
     }
   });
 
-  it("gives every node they know somewhere to stand, and a place on the map", () => {
+  it("shows the same hex of the world as the same ground, whichever window it falls in", () => {
+    const seed = "CREWAA";
+    const nodes = charted(seed, 4);
+    const a = atlasWorld(seed, nodes, { q: 0, r: 0 });
+    const b = atlasWorld(seed, nodes, { q: 11, r: -6 });
+    const shared = a.map.tiles.filter((t) => tileAtHex(b, t));
+    expect(shared.length).toBeGreaterThan(100);
+    for (const ta of shared) {
+      const tb = tileAtHex(b, ta)!;
+      expect({ biome: ta.biome, h: ta.h, blocker: ta.blocker }, posKey(ta)).toEqual({ biome: tb.biome, h: tb.h, blocker: tb.blocker });
+    }
+  });
+
+  it("gives every place they know somewhere to stand, and builds only the lighthouse and the sea caves' mouths", () => {
     for (const seed of SEEDS) {
-      const nodes = charted(seed, 5);
+      const nodes = charted(seed, 6);
       const world = atlasWorld(seed, nodes);
       for (const n of nodes) {
-        const tile = tileOf(world, n)!;
-        // Somewhere a route leads and nothing more: the land there may be in sight, but nothing is made of it.
-        if (n.state === "fogged") {
-          expect(world.map.pois.some((p) => p.id === `node:${n.id}`), n.id).toBe(false);
-          continue;
-        }
+        if (n.state === "fogged") continue;
+        const tile = tileAtHex(world, n.hex)!;
         expect(["plains", "sand"], `${n.id} on ${tile.biome}`).toContain(tile.biome);
         expect(tile.blocker, n.id).toBeUndefined();
-        const poi = world.map.pois.find((p) => p.id === `node:${n.id}`)!;
-        expect(poi.pos).toEqual(onAtlasMap(world, n.hex));
-        expect(poi.kind).toBe(n.kind === "harbor" ? "lighthouse" : n.kind === "seacave" ? "cave" : "camp");
-        expect(poi.cleared).toBe(n.state !== "open");
       }
-      expect(world.map.pois).toHaveLength(nodes.filter((n) => n.state !== "fogged").length);
+      const caves = nodes.filter((n) => n.state !== "fogged" && n.kind === "seacave");
+      expect(world.map.pois.map((p) => p.kind).sort()).toEqual([...caves.map(() => "cave"), "lighthouse"].sort());
+      expect(world.map.pois.find((p) => p.kind === "lighthouse")!.pos).toEqual({ q: 0, r: 0 });
+      for (const c of caves) {
+        const mouth = world.map.pois.find((p) => p.id === `node:${c.id}`)!;
+        // In the crags at its back: beside the place, not on it.
+        expect(hexDistance(mouth.pos, c.hex)).toBe(1);
+        expect(tileAtHex(world, mouth.pos)!.biome).toBe("hills");
+      }
     }
   });
 
-  it("lifts the fog round the Harbor and what is cleared, a little round what is open, and nowhere else", () => {
+  it("lifts the cloud round the Harbor and what is cleared, a little round what is open, and nowhere else", () => {
     for (const seed of SEEDS) {
       const nodes = charted(seed, 3);
       const world = atlasWorld(seed, nodes);
-      const reached = nodes.filter((n) => n.state === "harbor" || n.state === "cleared");
-      const open = nodes.filter((n) => n.state === "open");
-      let fogged = 0;
-      for (const t of world.map.tiles) {
-        const hex = { q: t.q + world.origin.q, r: t.r + world.origin.r };
-        const seen = reached.some((n) => hexDistance(n.hex, hex) <= ATLAS_SIGHT) || open.some((n) => hexDistance(n.hex, hex) <= ATLAS_GLIMPSE);
-        expect(t.biome === "fog", posKey(t)).toBe(!seen);
-        if (!seen) fogged++;
+      const seen = seenBy(nodes);
+      const lit = new Set(world.lit.map(posKey));
+      // Every hex the window reaches: lit just when the rule says so.
+      for (let q = -ATLAS_VIEW; q <= ATLAS_VIEW; q++) {
+        for (let r = -ATLAS_VIEW; r <= ATLAS_VIEW; r++) {
+          const hex = { q, r };
+          if (hexDistance(hex, { q: 0, r: 0 }) > ATLAS_VIEW) continue;
+          expect(lit.has(posKey(hex)), posKey(hex)).toBe(seen(hex));
+        }
       }
-      // The window has a margin of the unknown all round it.
-      expect(fogged / world.map.tiles.length, seed).toBeGreaterThan(0.25);
-      expect(fogged / world.map.tiles.length, seed).toBeLessThan(0.9);
+      // The same rule, as rounds: one for the Harbor and each place cleared or open, as far as each lifts the cloud.
+      const told = nodes.filter((n) => n.state !== "fogged");
+      expect(world.clear.map((c) => posKey(c.hex)).sort()).toEqual(told.map((n) => posKey(n.hex)).sort());
+      for (const c of world.clear) expect(c.reach).toBe(told.find((n) => posKey(n.hex) === posKey(c.hex))!.state === "open" ? ATLAS_GLIMPSE : ATLAS_SIGHT);
+      // And no fog is handed over as ground: under the cloud there is nothing, or (at its edge) the land itself.
+      expect(world.map.tiles.some((t) => t.biome === "fog")).toBe(false);
+      expect(world.lit.length).toBeGreaterThan(150);
     }
   });
 
-  it("treads roads between the nodes they have reached, on grass and sand only, each step joined both ways", () => {
-    const SIDES = [{ q: 1, r: -1 }, { q: 1, r: 0 }, { q: 0, r: 1 }, { q: -1, r: 1 }, { q: -1, r: 0 }, { q: 0, r: -1 }];
-    let roads = 0;
+  it("hands over the land a few hexes past the lit ground, and no further", () => {
     for (const seed of SEEDS) {
-      const world = atlasWorld(seed, charted(seed, 4));
-      const byKey = new Map(world.map.tiles.map((t) => [posKey(t), t]));
-      for (const t of world.map.tiles) {
-        if (!t.path) continue;
-        roads++;
-        expect(["plains", "sand"], posKey(t)).toContain(t.biome);
-        SIDES.forEach((d, side) => {
-          if (!(t.path! & (1 << side))) return;
-          const next = byKey.get(posKey({ q: t.q + d.q, r: t.r + d.r }))!;
-          expect(next.path! & (1 << ((side + 3) % 6)), `${posKey(t)} side ${side}`).toBeGreaterThan(0);
-        });
-      }
-      // The Harbor's own hex is on a road out.
-      const home = byKey.get(posKey(onAtlasMap(world, { q: 0, r: 0 })))!;
-      expect(home.biome).toBe("plains");
-      expect(home.path).toBeGreaterThan(0);
+      const nodes = charted(seed, 3);
+      const world = atlasWorld(seed, nodes);
+      const lit = world.lit;
+      const litKeys = new Set(lit.map(posKey));
+      const rim = world.map.tiles.filter((t) => !litKeys.has(posKey(t)));
+      expect(rim.length).toBeGreaterThan(50);
+      for (const t of rim) expect(Math.min(...lit.map((l) => hexDistance(l, t))), posKey(t)).toBeLessThanOrEqual(ATLAS_RIM);
     }
-    expect(roads).toBeGreaterThan(20);
   });
 
-  it("keeps to a size it can be drawn at, however much has been cleared", () => {
+  it("is nothing but cloud a long way from anything the crew knows", () => {
+    const world = atlasWorld("CREWAA", charted("CREWAA", 2), { q: 900, r: -700 });
+    expect(world.map.tiles).toEqual([]);
+    expect(world.lit).toEqual([]);
+    expect(world.clear).toEqual([]);
+    expect(world.map.pois).toEqual([]);
+  });
+
+  it("a window off to one side still has the ground a node just outside it lights", () => {
     const seed = "CREWAA";
-    // Everything within nine rings cleared: far more than fits.
-    const cleared = new Set<string>();
-    for (let q = -9; q <= 9; q++) for (let r = -9; r <= 9; r++) if ((Math.abs(q) + Math.abs(r) + Math.abs(q + r)) / 2 <= 9 && (q || r)) cleared.add(`${q},${r}`);
-    const world = atlasWorld(seed, atlasView(seed, cleared));
-    expect(world.map.grid.cols).toBeLessThanOrEqual(96);
-    expect(world.map.grid.rows).toBeLessThanOrEqual(84);
-    expect(world.map.tiles).toHaveLength(allHexesInGrid(world.map.grid).length);
+    const nodes = charted(seed, 2);
+    // The Harbor is just off this window; its light reaches onto it.
+    const centre = { q: ATLAS_VIEW + 3, r: 0 };
+    const world = atlasWorld(seed, nodes, centre);
+    expect(world.lit.some((hex) => hexDistance(hex, { q: 0, r: 0 }) <= ATLAS_SIGHT)).toBe(true);
+    for (const hex of world.lit) expect(hexDistance(hex, centre)).toBeLessThanOrEqual(ATLAS_VIEW);
   });
 });
