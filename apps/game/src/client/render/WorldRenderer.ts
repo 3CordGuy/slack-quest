@@ -18,7 +18,7 @@ import "./camera.css";
 import { PINCH_PAN_SLACK, followIconSvg, readFollow, writeFollow } from "./cameraFollow";
 import type { HexPos } from "@gantt-quest/core";
 import { hexDistance } from "@gantt-quest/core";
-import { lookStep, lookYaw, BASE_HEIGHT, BATTLE_JOIN_RANGE, BIG_REACH, ENEMIES, HEX_DIRS, TRAIT_BY_ID, tileCost, WALL_FACE_HALF, WALL_ITEM_BOTTOM, WALL_ITEM_TOP, findPath, hexAt, xpProgress, reachable, tileAt, wallFace, wallFaces, type ClientState, type Outfit, type Phase, type Poi, type Tile, type WorldEvent, type WorldMap } from "@gantt-quest/world";
+import { lookStep, lookYaw, BASE_HEIGHT, BATTLE_JOIN_RANGE, BIG_REACH, ENEMIES, HEX_DIRS, SEATS, TRAIT_BY_ID, tileCost, WALL_FACE_HALF, WALL_ITEM_BOTTOM, WALL_ITEM_TOP, hexAt, xpProgress, reachable, tileAt, wallFace, wallFaces, type ClientState, type Outfit, type Phase, type Poi, type Tile, type WorldEvent, type WorldMap } from "@gantt-quest/world";
 import { fancy, fancyGrass } from "./fancy";
 import { NightLife } from "./nightlife";
 import { Storm } from "./storm";
@@ -270,6 +270,9 @@ export interface Holding {
 
 /** Furthest a free-roaming walk may be previewed; matches the Harbor's server-side limit. */
 const FREE_ROAM_REACH = 60;
+/** Seconds to get up onto a stool, and to get off one. */
+const SIT_S = 0.45;
+const STAND_S = 0.2;
 
 const SQRT3 = Math.sqrt(3);
 /**
@@ -538,6 +541,10 @@ interface Unit {
   boat?: THREE.Group | null;
   boatKind?: "barrel" | "rowboat";
   sunk?: number;
+  /** On a stool's hex: sat on it once they have walked up to it. `seatTop` is how high the seat is off the floor, and `sit` how far onto it they are, 0 (standing) to 1. */
+  seated?: boolean;
+  seatTop?: number;
+  sit?: number;
   /** Holding a fishing rod: in a rowboat, the oars are shipped and the hands left for the rod. */
   rod?: boolean;
   /** At the oars: how far round the stroke is (radians), and where it has the hands, 0 (forward) to 1 (pulled in). */
@@ -650,6 +657,8 @@ interface Want {
   boat?: "barrel" | "rowboat";
   /** The way to face, about y: the two sides of a fight face each other. Otherwise a unit keeps the way it last walked. */
   face?: number;
+  /** On a stool: how high its seat is off the floor. `pos` is then the stool's own spot. */
+  seat?: number;
 }
 
 interface Floater {
@@ -1203,6 +1212,7 @@ export class WorldRenderer {
     const me = state.heroes.find((h) => h.id === state.you);
     const myTurn = !!me && (state.freeRoam || (state.phase === "overworld" && state.turn?.heroId === state.you));
     this.reach = state.reach ?? (myTurn ? reachable(state.map, me!.pos, state.freeRoam ? FREE_ROAM_REACH : state.turn!.mp, this.stepCost(state)) : new Map());
+    if (!state.reach && myTurn) this.reachSeats(state);
     this.paintTiles();
     this.syncUnits(state);
     this.updatePath();
@@ -3174,6 +3184,34 @@ export class WorldRenderer {
     this.raycaster.setFromCamera(ndc, this.camera);
     const hit = this.raycaster.intersectObject(this.propGroup, true).find((h) => h.object.userData.propId !== undefined && !h.object.userData.sheetOf);
     return hit ? (hit.object.userData.propId as string | number) : null;
+  }
+
+  /** The stools standing on the floor, by the hex each is on: where in the hex to sit, and how high the seat is. */
+  private seatsOf(state: RenderState): Map<string, { pos: HexPos; x: number; z: number; top: number }> {
+    const out = new Map<string, { pos: HexPos; x: number; z: number; top: number }>();
+    for (const p of state.props ?? []) {
+      const seat = SEATS[p.model];
+      if (seat && !p.small && !p.mount && !p.flat && p.on === undefined) out.set(key(p.pos), { pos: p.pos, x: p.x ?? 0, z: p.z ?? 0, top: seat.top });
+    }
+    return out;
+  }
+
+  /**
+   * A stool is furniture, so no walk goes through its hex; but a walk may end on it, to sit down. Each free
+   * stool beside somewhere the viewer can walk to is added to their reach, as one more step from there.
+   */
+  private reachSeats(state: RenderState) {
+    const found: { cost: number; prev: string | null; pos: HexPos }[] = [];
+    for (const [k, seat] of this.seatsOf(state)) {
+      if (this.reach.has(k) || state.heroes.some((h) => key(h.pos) === k)) continue;
+      let from: { cost: number; pos: HexPos } | undefined;
+      for (const d of HEX_DIRS) {
+        const beside = this.reach.get(key({ q: seat.pos.q + d.q, r: seat.pos.r + d.r }));
+        if (beside && (!from || beside.cost < from.cost)) from = beside;
+      }
+      if (from) found.push({ cost: from.cost + 1, prev: key(from.pos), pos: seat.pos });
+    }
+    for (const f of found) this.reach.set(key(f.pos), f);
   }
 
   /** Cost of stepping onto a tile: the terrain's, except that furniture cannot be walked through. */
@@ -5362,13 +5400,19 @@ export class WorldRenderer {
         const stacks = new Map<string, number>();
     for (const h of state.heroes) stacks.set(key(h.pos), (stacks.get(key(h.pos)) ?? 0) + 1);
     const seen = new Map<string, number>();
+    const seats = this.seatsOf(state);
     for (const h of state.heroes) {
       const n = stacks.get(key(h.pos))!;
       const i = seen.get(key(h.pos)) ?? 0;
       seen.set(key(h.pos), i + 1);
       const pos = this.standAt(h.pos);
+      // Whoever is on a stool's hex sits on the stool, wherever in the hex it stands.
+      const seat = i === 0 && !h.at && !h.asleep && !h.down && !h.prone ? seats.get(key(h.pos)) : undefined;
       if (h.at) pos.add(new THREE.Vector3(h.at.x, h.at.y, h.at.z));
-      else {
+      else if (seat) {
+        pos.x += seat.x;
+        pos.z += seat.z;
+      } else {
         pos.x += (i - (n - 1) / 2) * 0.6;
         pos.z += 0.25;
       }
@@ -5377,7 +5421,7 @@ export class WorldRenderer {
       // A plate shows a first name only: full names run long over a crowd.
       const full = h.label ?? (plate ? h.name : undefined);
       const label = plate && full ? firstName(full) : full;
-      want.set(h.id, { kind: h.classId, outfit: h.outfit, pos, size: 1.5, label, plate: label ? plate : undefined, stack: i, ring: colorOf(h.id), pulse: state.turn?.heroId === h.id || !!h.active, asleep: h.asleep, rod: h.rod, boat: h.boat, down: h.down, prone: h.prone, effects: h.effects });
+      want.set(h.id, { kind: h.classId, outfit: h.outfit, pos, size: 1.5, label, plate: label ? plate : undefined, stack: i, ring: colorOf(h.id), pulse: state.turn?.heroId === h.id || !!h.active, asleep: h.asleep, rod: h.rod, boat: h.boat, down: h.down, prone: h.prone, effects: h.effects, seat: seat?.top });
     }
     for (const npc of state.story?.npcs ?? []) {
       const poi = state.map.pois.find((p) => p.id === npc.poi);
@@ -5444,9 +5488,13 @@ export class WorldRenderer {
         // New arrivals face the camera, turned a little so what they carry shows.
         const turn = turned.get(id) ?? w.face ?? this.yaw + 0.35;
         unit = { figure, root: figure.root, size: w.size, turn, turnGoal: turn, lying: false, shadowAt: w.pos.clone(), shadowTurn: turn, shadowSize: 0, ring: null, hpBack: null, hpFill: null, label: null, labelText: "", goal: w.pos.clone(), path: [], kick: new THREE.Vector3(), lean: 0, stride: 0, bob: 0, kind: spriteKey(w.kind, w.outfit, w.asleep, w.rod), asleep: false, nextZ: 0, zCount: 0, glowUntil: 0, glowing: false, head: w.size + 0.3, stack: 0, feet: w.pos.clone() };
+        // Someone found on a stool is found sitting.
+        if (w.seat !== undefined) unit.sit = 1;
         this.units.set(id, unit);
       }
       unit.goal.copy(w.pos);
+      unit.seated = w.seat !== undefined;
+      if (w.seat !== undefined) unit.seatTop = w.seat;
       if (w.asleep && !unit.asleep) unit.nextZ = this.clock + 0.4;
       unit.asleep = !!w.asleep;
       this.syncBoat(unit, w.boat);
@@ -5683,10 +5731,9 @@ export class WorldRenderer {
     this.hoverLive = !!reach && reach.cost > 0;
     const budget = state.freeRoam ? FREE_ROAM_REACH : state.turn?.mp;
     if (!reach || reach.cost === 0 || !me || (budget === undefined && !state.reach)) return;
-    // A reach handed in carries its own way back to the start; otherwise the way is found over the terrain.
+    // The reach carries its own way back to the start, whether it was handed in or found over the terrain.
     const steps: HexPos[] = [];
-    if (state.reach) for (let at: typeof reach | undefined = reach; at && at.prev !== null; at = this.reach.get(at.prev)) steps.unshift(at.pos);
-    else steps.push(...(findPath(state.map, me.pos, hovered, budget, this.stepCost(state))?.path ?? []));
+    for (let at: typeof reach | undefined = reach; at && at.prev !== null; at = this.reach.get(at.prev)) steps.unshift(at.pos);
     for (const step of steps) {
       // The way there: small lights, glowing rather than solid.
       const dot = new THREE.Mesh(new THREE.SphereGeometry(0.09, 8, 6), new THREE.MeshBasicMaterial({ color: "#eaf6ff", transparent: true, opacity: 0.85, blending: THREE.AdditiveBlending, depthWrite: false }));
@@ -6250,6 +6297,8 @@ export class WorldRenderer {
       if (unit.path.length > 0) {
         const next = unit.path[0].clone();
         next.z += 0.25;
+        // The last step onto a stool goes to the stool itself, wherever in its hex it stands.
+        if (unit.seated && unit.path.length === 1 && Math.hypot(unit.goal.x - next.x, unit.goal.z - next.z) < 1) next.copy(unit.goal);
         const step = 4.2 * (unit.rush ?? 1) * dt;
         // Flung, not walking: no footfalls, and no turning to face the way it is going.
         if (!unit.rush) {
@@ -6274,6 +6323,9 @@ export class WorldRenderer {
         p.lerp(goal, 1 - Math.exp(-dt * 14));
         unit.kick.multiplyScalar(Math.exp(-dt * 9));
       }
+      // At a stool: up onto it once they have walked to it, and off it again as they leave.
+      const atSeat = !!unit.seated && unit.path.length === 0 && !unit.lying && Math.hypot(unit.goal.x - p.x, unit.goal.z - p.z) < 0.08;
+      if (atSeat || unit.sit) unit.sit = atSeat ? Math.min(1, (unit.sit ?? 0) + dt / SIT_S) : Math.max(0, (unit.sit ?? 0) - dt / STAND_S);
       unit.lean *= Math.exp(-dt * 8);
       // Your own hero, standing idle, looks toward the pointer; with the bag open they turn to face you.
       if (id === this.state?.you && unit.path.length === 0 && !unit.asleep && !unit.lying && !this.minigame && !this.posed.has(id)) {
@@ -6306,11 +6358,18 @@ export class WorldRenderer {
       unit.root.rotation.y = unit.turn;
       const rowing = this.rowingPose(unit, p, dt);
       if (rowing === undefined) unit.oarPull = undefined;
-      unit.figure.update({ time: this.clock, stride: unit.stride, walking: unit.path.length > 0 && !unit.rush, lean: unit.lean, lying: unit.lying || this.clock < (unit.floored ?? 0), rowing, sitting: unit.boatKind === "rowboat" && unit.boat?.visible ? 1 : undefined });
+      unit.figure.update({ time: this.clock, stride: unit.stride, walking: unit.path.length > 0 && !unit.rush, lean: unit.lean, lying: unit.lying || this.clock < (unit.floored ?? 0), rowing, sitting: unit.boatKind === "rowboat" && unit.boat?.visible ? 1 : unit.sit || undefined });
       const ground = p.y;
       unit.feet.set(p.x, ground, p.z);
       if (landed) this.footfall(id, unit);
       this.rideBoat(unit, p, dt);
+      // On a stool: the figure's origin as far below the seat's top as a seated figure's is, with a small hop on the way up.
+      let perch = 0;
+      if (unit.sit) {
+        perch = ((unit.seatTop ?? 0) - SITTING_DROP * unit.size) * THREE.MathUtils.smootherstep(unit.sit, 0, 1) + Math.sin(unit.sit * Math.PI) * 0.1;
+        unit.sunk = (unit.sunk ?? 0) - perch;
+        p.y += perch;
+      }
       p.y += unit.bob;
       // Indoors the shadow maps are drawn only when something changes: a hero that moved, turned, lay down or
       // stood up asks the lights in reach of where it was and where it is now to redraw.
@@ -6330,7 +6389,7 @@ export class WorldRenderer {
       if (unit.label) {
         // A plate waits for the ground under it to come up.
         if (this.rise) unit.label.visible = unit.root.visible && this.rise.reached(p.x, p.z);
-        unit.label.position.set(p.x, ground + unit.label.userData.lift, p.z);
+        unit.label.position.set(p.x, ground + unit.label.userData.lift + perch, p.z);
         const tall = unit.label.userData.rows * labelRow;
         unit.label.scale.set(tall * unit.label.userData.aspect, tall, 1);
       }

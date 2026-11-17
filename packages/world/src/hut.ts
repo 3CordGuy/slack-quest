@@ -156,6 +156,13 @@ export interface FurnishingDef {
 /** Half the distance between the middles of two neighbouring hexes: where a two-hex piece's middle sits from its anchor. */
 const HALF_HEX = Math.sqrt(3) / 2;
 
+/**
+ * The models that are sat on, wherever they stand (a hut's stool, the pub's),
+ * and how high the top of each seat is off the floor. A seat's hex is walked
+ * onto to sit on it, and never walked through (see hutroom.ts, hutPath).
+ */
+export const SEATS: Record<string, { top: number }> = { chair: { top: 0.37 } };
+
 /** A container is a grid like the pack: this many squares across, and as many rows down as its `storage` makes. */
 export const CHEST_COLS = 12;
 /** The deepest a container is: ten rows. */

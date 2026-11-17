@@ -265,7 +265,8 @@ export class HutRoom extends DurableObject<Env> {
     if (msg.type === "move") {
       const to = { q: Number(msg.to?.q), r: Number(msg.to?.r) };
       if (!Number.isInteger(to.q) || !Number.isInteger(to.r)) return;
-      const path = hutPath(hut.room, hut.furnishings, player.pos, to);
+      // A walk may end on a stool, to sit on it, unless someone else already is.
+      const path = hutPath(hut.room, hut.furnishings, player.pos, to, undefined, this.players().filter((p) => p.id !== player.id).map((p) => p.pos));
       if (!path) return;
       // Walking off gets them up out of bed.
       ws.serializeAttachment({ ...player, pos: path[path.length - 1], bed: undefined } satisfies HarborPlayer);

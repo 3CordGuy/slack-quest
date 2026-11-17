@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { hexNeighbors } from "@gantt-quest/core";
-import { CHEST_COLS, CHEST_MAX_ROWS, FURNISHINGS, HOME_FREEBIES, HUT_TIERS, SMALL_PER_SPOT, STORAGE_CHEST, WARDROBE, displacedFurnishings, freeSpot, hutDoor, hutFloor, hutPath, hutRoom, hutTier, HEX_DIRS, besideHexes, isBeside, lieDownProblem, useOf, useProblem, placeProblem, placedFurnishings, poiAt, putInProblem, smallPlaceProblem, tileAt, validFacing, type Furnishing } from "./index";
+import { CHEST_COLS, CHEST_MAX_ROWS, FURNISHINGS, HOME_FREEBIES, HUT_TIERS, SMALL_PER_SPOT, STORAGE_CHEST, WARDROBE, displacedFurnishings, freeSpot, hutDoor, hutFloor, hutPath, hutRoom, hutTier, HEX_DIRS, besideHexes, isBeside, lieDownProblem, useOf, useProblem, placeProblem, placedFurnishings, poiAt, putInProblem, seatHexes, smallPlaceProblem, tileAt, validFacing, type Furnishing } from "./index";
 
 const at = (q: number, r: number) => ({ q, r });
 
@@ -122,6 +122,44 @@ describe("walking around furniture", () => {
   it("cannot leave a room whose doorway is boxed in", () => {
     const blockers = hexNeighbors(door, room.grid).filter((n) => tileAt(room, n)!.biome === "floor");
     expect(hutPath(room, blockers, door, floor[0])).toBeNull();
+  });
+});
+
+describe("sitting on a stool", () => {
+  const room = hutRoom(1);
+  const door = hutDoor(1);
+  const far = hutFloor(room)[0];
+  const direct = hutPath(room, [], door, far)!;
+  const spot = direct[Math.floor(direct.length / 2)];
+  const stool = [{ id: 1, defId: "chair", onId: null, q: spot.q, r: spot.r }];
+  const onStool = (p: { q: number; r: number }) => p.q === spot.q && p.r === spot.r;
+
+  it("is what a click on a stool does", () => {
+    expect(useOf("chair")).toBe("sit");
+    expect(useProblem("chair", false)).toBeNull();
+    expect(seatHexes(stool)).toEqual([spot]);
+    expect(seatHexes([{ id: 2, defId: "table", onId: null, q: spot.q, r: spot.r }])).toEqual([]);
+  });
+
+  it("ends a walk on the stool's hex, and never passes through it", () => {
+    const onto = hutPath(room, stool, door, spot)!;
+    expect(onto.at(-1)).toEqual(spot);
+    expect(onto.slice(0, -1).some(onStool)).toBe(false);
+    expect(hutPath(room, stool, door, far)!.some(onStool)).toBe(false);
+  });
+
+  it("lets whoever is sitting walk off again", () => {
+    expect(hutPath(room, stool, spot, door)!.at(-1)).toEqual(door);
+  });
+
+  it("holds one at a time", () => {
+    expect(hutPath(room, stool, door, spot, undefined, [spot])).toBeNull();
+    expect(hutPath(room, stool, door, spot, undefined, [far])).not.toBeNull();
+  });
+
+  it("cannot be sat on when nothing beside it can be reached", () => {
+    const ring = hexNeighbors(spot, room.grid).filter((n) => tileAt(room, n)!.biome === "floor").map((n) => ({ id: 10, defId: "table", onId: null, q: n.q, r: n.r }));
+    expect(hutPath(room, [...stool, ...ring], door, spot)).toBeNull();
   });
 });
 
@@ -302,7 +340,8 @@ describe("using pieces outside edit mode", () => {
     expect(useOf("hearth")).toBe("warm");
     expect(useOf("fireplace")).toBe("warm");
     expect(useOf("bookshelf")).toBe("read");
-    expect(useOf("chair")).toBe("look");
+    expect(useOf("chair")).toBe("sit");
+    expect(useOf("table")).toBe("look");
     expect(useOf("nonsense")).toBe("look");
   });
 
