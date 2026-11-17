@@ -536,6 +536,15 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
       setNotice({ text: `You warm your hands at the ${piece.label}. ${about}`, ok: true, n: Date.now() });
     } else if (use === "read") {
       setNotice({ text: `You leaf through the ${piece.label}. ${about}`, ok: true, n: Date.now() });
+    } else if (use === "sit") {
+      // A stool is walked onto: the walk ends on its hex, and whoever is on a stool's hex is drawn sitting on it.
+      // A stool still in storage has no hex to walk to.
+      if (!room || !self || piece.q === null || piece.r === null) return;
+      const seat = { q: piece.q, r: piece.r };
+      if (same(self.pos, seat)) return;
+      if (players.some((p) => p.id !== self.id && same(p.pos, seat))) return setNotice({ text: `Someone is sitting on the ${piece.label}.`, ok: false, n: Date.now() });
+      if (!hutPath(room, furnishings, self.pos, seat)) return setNotice({ text: `You cannot get to the ${piece.label}.`, ok: false, n: Date.now() });
+      hut.send({ type: "move", to: seat });
     } else {
       setNotice({ text: `${piece.label}: ${about}`, ok: true, n: Date.now() });
     }
@@ -548,14 +557,8 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
     const problem = useProblem(piece.defId, canEdit, owner?.name);
     if (problem) return setNotice({ text: `${piece.label}: ${problem}`, ok: false, n: Date.now() });
     if (use === "look") return doUse.current(piece);
-    if (use === "sit") {
-      // A stool is walked onto: the walk ends on its hex, and whoever is on a stool's hex is drawn sitting on it.
-      const seat = { q: piece.q, r: piece.r };
-      if (same(self.pos, seat)) return;
-      if (players.some((p) => p.id !== self.id && same(p.pos, seat))) return setNotice({ text: `Someone is sitting on the ${piece.label}.`, ok: false, n: Date.now() });
-      if (!hutPath(room, furnishings, self.pos, seat)) return setNotice({ text: `You cannot get to the ${piece.label}.`, ok: false, n: Date.now() });
-      return hut.send({ type: "move", to: seat });
-    }
+    // Sitting is the walk itself (doUse), from beside the stool or across the room: the same from the button over the head.
+    if (use === "sit") return doUse.current(piece);
     // No walk across the room for a rest that will not happen.
     if (use === "rest" && restBlocked) return setNotice({ text: restBlocked, ok: false, n: Date.now() });
     if (isBeside(room, furnishings, piece, self.pos)) return doUse.current(piece);

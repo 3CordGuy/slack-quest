@@ -115,9 +115,15 @@ export interface Encounter {
   deadline: number | null;
   /**
    * Heroes who fled this fight (Flee) and have not come back into it. One is drawn back in only by an enemy in
-   * it coming within FLEE_RANGE, or by doing something to someone in it; not by walking within JOIN_RANGE.
+   * it coming within FLEE_RANGE (not by walking within JOIN_RANGE), and cannot reach into it from outside: no
+   * blow, flask or help for anyone in it until they are back.
    */
   fled?: string[];
+  /**
+   * Heroes who have had their turn this round and fled on it: should they come back into the fight before the
+   * round is out, they wait for the next one. Cleared as each round begins.
+   */
+  waits?: string[];
   /** Set when the one taking a turn flees and nobody else shared it: who came after them in the order (null: they were last), so the next turn goes there. */
   resume?: string | null;
 }

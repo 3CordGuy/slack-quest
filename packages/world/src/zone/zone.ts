@@ -30,7 +30,7 @@ import { FLEE_RANGE, STARTING_ITEMS, THROWABLES, THROWABLE_KINDS, cleanItems, co
 import { d20, heroMove, mod, statOf } from "./rules";
 import { hiddenEnemies, sentToClient } from "./light";
 import { checkPickup, clearSurfaces, lightTorch, pickUpTorch, placeSurface, standInSurface, tickLights, tickSurfaces } from "./surfaces";
-import { passTime } from "./clock";
+import { exploreRound, passTime } from "./clock";
 import { checkUnlock, dropKeys, heardBy, workDoor } from "./doors";
 import { checkForage, forage } from "./forage";
 import type { Budget, DevOp, Encounter, Throwable, Unit, ZoneAction, ZoneEffect, ZoneEvent, ZoneHero, ZoneOptions, ZoneState, ZoneStep, ZoneView } from "./types";
@@ -151,13 +151,18 @@ export function standInHero(classId: string, id: string, level: number): ZoneHer
 
 const standing = (state: ZoneState, side: Unit["side"]) => state.units.filter((u) => u.side === side && !u.down);
 
-/** Roll a unit's initiative and slot it into the order: highest first, heroes ahead of enemies on a tie. */
+/**
+ * Roll a unit's initiative and slot it into the order: highest first, heroes ahead of enemies on a tie. One coming
+ * back into a fight they fled has the place they had: no fresh roll, so no fresh turn out of getting away and back.
+ */
 function enter(ctx: Ctx, enc: Encounter, unit: Unit): void {
   if (enc.order.includes(unit.id)) return;
-  const bonus = unit.side === "hero" ? mod(statOf(unit, "agi")) : Math.round(((ENEMIES[unit.kind]?.speed ?? 50) - 50) / 15);
-  const roll = d20(ctx.rng, { kind: "initiative", id: unit.id, label: "Initiative", bonus, vs: 0, adv: 0 });
-  ctx.events.push({ t: "roll", roll });
-  enc.init[unit.id] = roll.total;
+  if (enc.init[unit.id] === undefined) {
+    const bonus = unit.side === "hero" ? mod(statOf(unit, "agi")) : Math.round(((ENEMIES[unit.kind]?.speed ?? 50) - 50) / 15);
+    const roll = d20(ctx.rng, { kind: "initiative", id: unit.id, label: "Initiative", bonus, vs: 0, adv: 0 });
+    ctx.events.push({ t: "roll", roll });
+    enc.init[unit.id] = roll.total;
+  }
   const side = (id: string) => (unitById(ctx.state, id)?.side === "hero" ? 0 : 1);
   const before = (a: string, b: string) => enc.init[b] - enc.init[a] || side(a) - side(b) || a.localeCompare(b);
   const at = enc.order.findIndex((id) => before(unit.id, id) < 0);
@@ -191,7 +196,7 @@ function pullIn(ctx: Ctx): void {
 
 /**
  * Whatever a hero out of the fight does to someone in it, harm or help, puts them in it: a shot from afar,
- * a bomb, a heal for a friend still fighting. (Walking near it does too: pullIn.)
+ * a bomb, a heal for a friend still fighting. (Walking near it does too: pullIn.) Not one who fled it: see reachBack.
  */
 function reachIn(ctx: Ctx, unit: Unit, touched: Unit[]): void {
   const enc = ctx.state.encounter;
@@ -202,14 +207,25 @@ function reachIn(ctx: Ctx, unit: Unit, touched: Unit[]): void {
 }
 
 /**
+ * Why a hero who fled the fight cannot do this, in words, or null. Out of the fight they have no turn to wait for,
+ * no Action to spend and no cooldowns running, so nothing they do to anyone in it is allowed until an enemy in it
+ * draws them back (drawnIn): else every Flee would buy a free blow, flask or rescue, off the turn order.
+ */
+function reachBack(state: ZoneState, unit: Unit, touched: Unit[]): string | null {
+  const enc = state.encounter;
+  if (!enc?.fled?.includes(unit.id) || !touched.some((u) => u.id !== unit.id && enc.order.includes(u.id))) return null;
+  return `You got away from that fight: to act on anyone in it, go back until an enemy in it is within ${FLEE_RANGE} hexes of you.`;
+}
+
+/**
  * A hero gets away (Flee): out of the order and out of the turn, free to walk. The fight goes on for anyone
- * still in it; once no hero is, it is over (settle).
+ * still in it; once no hero is, it is over (settle). Their initiative is kept for if they come back, and they
+ * have had this round's turn.
  */
 function flee(ctx: Ctx, unit: Unit): void {
   const enc = ctx.state.encounter!;
   const at = enc.order.indexOf(unit.id);
   enc.order.splice(at, 1);
-  delete enc.init[unit.id];
   delete enc.budgets[unit.id];
   const acting = enc.acting.includes(unit.id);
   enc.acting = enc.acting.filter((id) => id !== unit.id);
@@ -217,6 +233,7 @@ function flee(ctx: Ctx, unit: Unit): void {
   // The turn was theirs alone: the next goes to whoever came after them.
   if (acting && enc.acting.length === 0) enc.resume = enc.order[at] ?? null;
   enc.fled = [...(enc.fled ?? []), unit.id];
+  enc.waits = [...(enc.waits ?? []), unit.id];
   endTurn(unit);
   ctx.events.push({ t: "fled", id: unit.id });
 }
@@ -437,18 +454,24 @@ function advance(ctx: Ctx): void {
         i = 0;
         enc.round += 1;
         enc.reacted = [];
+        delete enc.waits;
         ctx.events.push({ t: "round", n: enc.round });
+        // Everyone not in the fight lives through the round as well (the clock stands still while one is on):
+        // a hero who got away still burns and bleeds, and what is on them still runs down.
+        for (const out of state.units.filter((u) => !enc.order.includes(u.id))) exploreRound(ctx, out);
         tickSurfaces(ctx);
         tickLights(ctx);
       }
+      // One back in after fleeing on their turn this round waits for the next.
+      const waiting = (u: Unit | undefined) => !u || u.down || !!enc.waits?.includes(u.id);
       const u = unitById(state, enc.order[i]);
-      if (!u || u.down) continue;
-      next.push(u);
+      if (waiting(u)) continue;
+      next.push(u!);
       // Heroes one after another in the order take their turns together.
-      while (u.side === "hero" && i + 1 < enc.order.length && unitById(state, enc.order[i + 1])?.side !== "enemy") {
+      while (u!.side === "hero" && i + 1 < enc.order.length && unitById(state, enc.order[i + 1])?.side !== "enemy") {
         i += 1;
         const also = unitById(state, enc.order[i]);
-        if (also && !also.down) next.push(also);
+        if (!waiting(also)) next.push(also!);
       }
     }
     if (next.length === 0) {
@@ -627,15 +650,17 @@ function act(ctx: Ctx, action: ZoneAction): string | null {
     const aim = { target: action.target, at: action.at, focus: !!action.focus && !isCrateId(state, action.target) };
     const wrong = checkAbility(state, unit, action.ability, aim);
     if (wrong) return wrong;
+    // Something that takes a shape can catch a group that had not noticed anyone: it has now.
+    const area = new Set(abilityArea(state, unit, action.ability, action.at).map(posKey));
+    const touched = state.units.filter((u) => u.id === action.target || area.has(posKey(u.pos)));
+    const back = reachBack(state, unit, touched);
+    if (back) return back;
     if (budget && (unit.cooldowns[action.ability] ?? 0) > 0) return `${def.name} is not ready yet.`;
     if (aim.focus && unit.focus <= 0) return "You have no Focus left.";
     const cost = spend(budget, tactic.cost);
     if (cost) return cost;
     if (aim.focus) unit.focus -= 1;
     if (budget && tactic.cooldown) unit.cooldowns[action.ability] = tactic.cooldown + 1;
-    // Something that takes a shape can catch a group that had not noticed anyone: it has now.
-    const area = new Set(abilityArea(state, unit, action.ability, action.at).map(posKey));
-    const touched = state.units.filter((u) => u.id === action.target || area.has(posKey(u.pos)));
     const struck = touched.filter((u) => u.side === "enemy" && !u.down).map((u) => u.group!);
     resolveAbility(ctx, unit, action.ability, aim);
     engage(ctx, struck, unit);
@@ -646,9 +671,11 @@ function act(ctx: Ctx, action: ZoneAction): string | null {
     const aim = { target: action.target, at: action.at };
     const wrong = checkCommon(state, unit, action.what, aim, budget);
     if (wrong) return wrong;
+    const target = action.what === "shove" || action.what === "help" ? unitById(state, action.target!) : undefined;
+    const back = reachBack(state, unit, target ? [target] : []);
+    if (back) return back;
     const cost = spend(budget, commonCost(action.what, unit.kind));
     if (cost) return cost;
-    const target = action.what === "shove" || action.what === "help" ? unitById(state, action.target!) : undefined;
     doCommon(ctx, unit, action.what, aim, budget);
     if (action.what === "shove" && target?.group) engage(ctx, [target.group], unit);
     if (target) reachIn(ctx, unit, [target]);
@@ -716,11 +743,13 @@ function act(ctx: Ctx, action: ZoneAction): string | null {
   // Throw.
   const wrong = checkThrow(state, unit, action.item, action.at);
   if (wrong) return wrong;
-  const cost = spend(budget, "action");
-  if (cost) return cost;
   const def = THROWABLES[action.item];
   const area = new Set(blast(state.map, action.at, def.radius).map(posKey));
   const touched = state.units.filter((u) => area.has(posKey(u.pos)));
+  const back = reachBack(state, unit, touched);
+  if (back) return back;
+  const cost = spend(budget, "action");
+  if (cost) return cost;
   // A healing potion among enemies is a kindness; anything else is a declaration.
   const struck = def.heal ? [] : touched.filter((u) => u.side === "enemy" && !u.down).map((u) => u.group!);
   throwItem(ctx, unit, action.item, action.at);

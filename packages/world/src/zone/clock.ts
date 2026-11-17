@@ -23,8 +23,11 @@ export const MAX_CATCHUP_ROUNDS = 10;
 /** The most torch rounds counted at once: no torch burns longer than this. */
 const MAX_TORCH_CATCHUP = 12;
 
-/** A round out of a fight, for one unit: what the start and end of a turn do in a fight. */
-function exploreRound(ctx: Ctx, unit: Unit): void {
+/**
+ * A round out of a fight, for one unit: what the start and end of a turn do in a fight. Counted by the clock while
+ * no fight is on, and by the fight's own rounds, for everyone not in it, while one is (zone.ts, advance).
+ */
+export function exploreRound(ctx: Ctx, unit: Unit): void {
   if (unit.down) return;
   removeCondition(unit, "guarded");
   removeCondition(unit, "taunting");
