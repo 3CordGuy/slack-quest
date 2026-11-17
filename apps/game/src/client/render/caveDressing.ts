@@ -269,9 +269,11 @@ export const MOUTH_FACE = 0.36;
  * unlit by the day. The rock round it is the model's; it must cover the tunnel's outside.
  */
 export function caveMouth(face: number): THREE.Mesh {
-  const half = 0.23;
-  const side = 0.29;
-  const depth = 0.5;
+  // Wider and taller than the gap the stones leave, so the jambs and the lintel overlap its edges: nothing is seen
+  // past the dark, round it.
+  const half = 0.32;
+  const side = 0.34;
+  const depth = 0.55;
   const shape = new THREE.Shape();
   shape.moveTo(-half, 0);
   shape.lineTo(half, 0);
@@ -291,6 +293,8 @@ export function caveMouth(face: number): THREE.Mesh {
   geometry.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
   const tunnel = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.BackSide }));
   tunnel.position.z = face - depth;
+  // Its floor a hair over the ground's, so the two do not fight to be drawn.
+  tunnel.position.y = 0.012;
   tunnel.userData.glow = true;
   return tunnel;
 }
