@@ -598,16 +598,6 @@ function hollowGeometry(): { bank: THREE.BufferGeometry; water: THREE.BufferGeom
   return { bank: make(bank), water: make(water) };
 }
 
-/**
- * Which way the wind blows across the map, as a unit vector on the ground:
- * mostly along +x, a little toward +z. Wisps travel this way and rain slants
- * with it, and flags stream out along it, fixed in the world so turning the camera never turns the weather.
- */
-export const WIND = (() => {
-  const a = 0.35;
-  return { x: Math.cos(a), z: Math.sin(a) };
-})();
-
 /** Pixels in one wisp's trail. */
 const TRAIL = 34;
 
@@ -1766,7 +1756,7 @@ export class Ambience {
         const at = (s: number, out: THREE.Vector3) => {
           const along = (s - 0.5) * reach;
           const up = Math.sin(s * beat + r(13) * 6) * swell + Math.sin(s * underBeat + r(6) * 6) * under + (s - 0.5) * drift;
-          return out.set(x0 + WIND.x * along, y0 + up, z0 + WIND.z * along);
+          return out.set(x0 + WIND_DIR.x * along, y0 + up, z0 + WIND_DIR.z * along);
         };
         for (let i = 0; i < TRAIL; i++) {
           // Each point follows the head a little further back along the same path.
@@ -1807,10 +1797,10 @@ export class Ambience {
       const life = (clock * (0.9 + hash(i, 1, 500) * 0.5) + hash(i, 2, 500)) % 1;
       const y = 8 * (1 - life);
       // Drops are spread around wherever the camera looks, and blown downwind as they fall.
-      const x = target.x + (hash(i, 3, 500) - 0.5) * 30 + life * 2.2 * WIND.x;
-      const z = target.z + (hash(i, 4, 500) - 0.5) * 30 + life * 2.2 * WIND.z;
+      const x = target.x + (hash(i, 3, 500) - 0.5) * 30 + life * 2.2 * WIND_DIR.x;
+      const z = target.z + (hash(i, 4, 500) - 0.5) * 30 + life * 2.2 * WIND_DIR.z;
       pos.setXYZ(i * 2, x, y, z);
-      pos.setXYZ(i * 2 + 1, x - 0.07 * WIND.x, y + 0.24, z - 0.07 * WIND.z);
+      pos.setXYZ(i * 2 + 1, x - 0.07 * WIND_DIR.x, y + 0.24, z - 0.07 * WIND_DIR.z);
     }
     pos.needsUpdate = true;
   }
@@ -2390,9 +2380,9 @@ export class Ambience {
         const big = (0.07 + r(1) * 0.05) * (1 + life * (0.9 + r(2) * 0.6));
         const sway = Math.sin(life * 5 + i * 1.7 + n) * 0.05 * life;
         const lean = life * life * 0.5;
-        const cx = stack.x + WIND.x * lean + sway;
+        const cx = stack.x + WIND_DIR.x * lean + sway;
         const cy = stack.y + 0.06 + life * (1.5 + r(3) * 0.5);
-        const cz = stack.z + WIND.z * lean;
+        const cz = stack.z + WIND_DIR.z * lean;
         for (let l = 0; l < LOBES; l++) {
           const k = (n * PUFFS + i) * LOBES + l;
           const q = (salt: number) => hash(k + 1, lap, 760 + salt);

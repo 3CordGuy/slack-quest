@@ -13,7 +13,7 @@ import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js
 import { reportEnv } from "../ui/env";
 import { makeRenderer } from "./graphics";
 import { apothecaryWallTexture, galleyWallTexture, panelTexture, smithyWallTexture } from "./groundArt";
-import { Ambience, type RoomLight, TILE_FILLET, TILE_RADIUS, TORCH_LIFT, WIND, beaconShine, dryPatch, hexTop, meadowAt, pixelTexture, stamp, tallGrass, type BuildingGlow } from "./ambience";
+import { Ambience, type RoomLight, TILE_FILLET, TILE_RADIUS, TORCH_LIFT, beaconShine, dryPatch, hexTop, meadowAt, pixelTexture, stamp, tallGrass, type BuildingGlow } from "./ambience";
 import "./camera.css";
 import { PINCH_PAN_SLACK, followIconSvg, readFollow, writeFollow } from "./cameraFollow";
 import type { HexPos } from "@gantt-quest/core";
@@ -22,7 +22,7 @@ import { lookStep, lookYaw, BASE_HEIGHT, BATTLE_JOIN_RANGE, BIG_REACH, ENEMIES, 
 import { fancy, fancyGrass } from "./fancy";
 import { NightLife } from "./nightlife";
 import { Storm } from "./storm";
-import { gustAt, setFieldWalkers, updateWind } from "./wind";
+import { WIND_DIR, gustAt, setFieldWalkers, updateWind } from "./wind";
 import { pennantTexture, waveFlag } from "./flag";
 import { OAK_SHAPES, Woods, tintOf, type BoulderSpot, type TreeSpot } from "./woods";
 import { Gulls, type GullSpot } from "./gulls";
@@ -5908,7 +5908,7 @@ export class WorldRenderer {
       // Streamed out downwind, the way the wisps go, however the chest is turned: the wind brought into the
       // chest's own frame, and the cloth (which runs out along -x) turned about the pole to point along it.
       flag.parent!.getWorldQuaternion(this.flagTurn).invert();
-      const way = this.flagAt.set(WIND.x, 0, WIND.z).applyQuaternion(this.flagTurn);
+      const way = this.flagAt.set(WIND_DIR.x, 0, WIND_DIR.z).applyQuaternion(this.flagTurn);
       flag.rotation.y = Math.atan2(way.z, -way.x);
     }
     if (flag && !this.still) {
