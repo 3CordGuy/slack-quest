@@ -449,7 +449,7 @@ export default function FigureLab({ me, onClose }: { me: Me; onClose(): void }) 
           </label>
           <button
             className="small"
-            title="Killed: it goes limp and falls where it stands, knocked backward by the blow (a ragdoll), as an enemy does in a fight. Untick Lying to stand it up again."
+            title="Killed: it goes limp and falls where it stands, knocked backward by the blow (a ragdoll), as anyone downed in a fight does. Untick Lying and it gets up again."
             onClick={() => {
               const figure = stage.current?.figure;
               if (!figure) return;
@@ -459,6 +459,23 @@ export default function FigureLab({ me, onClose }: { me: Me; onClose(): void }) 
             }}
           >
             Fall dead
+          </button>
+          <button
+            className="small"
+            title="Shoved off its feet: it falls (a ragdoll), lies a moment, then gets up again, as from a shove in a fight."
+            onClick={() => {
+              const figure = stage.current?.figure;
+              if (!figure) return;
+              liveRef.current = { ...liveRef.current, lying: true };
+              set({ lying: true });
+              figure.fall(new THREE.Vector3(0, 0, -1).applyQuaternion(figure.root.getWorldQuaternion(new THREE.Quaternion())));
+              setTimeout(() => {
+                liveRef.current = { ...liveRef.current, lying: false };
+                set({ lying: false });
+              }, 1600);
+            }}
+          >
+            Knocked down
           </button>
           <label title="Eyes shut. The figure is built again.">
             <input type="checkbox" checked={asleep} onChange={(e) => setAsleep(e.target.checked)} /> Asleep
