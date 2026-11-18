@@ -1,16 +1,19 @@
 // The dev toolbox's Maps tab: make a zone to try fights in and walk into
 // it, and, while one is on screen, set up whatever is being tested: put an
 // enemy group down, paint the ground, add a stand-in crewmate, heal up,
-// end the fight, stop the enemy taking turns, show how far each group sees.
+// end the fight, stop the enemy taking turns, show how far each group sees,
+// and make any hero of yours on it (you, or a stand-in) any class, level and
+// weapon with any of the class's abilities. That last holds on that map,
+// through a reload, and leaves your own character as it is.
 //
 // Making a map is a dev route (worker.ts, /api/dev/zone); everything done
 // to an open one is a dev action over its socket (zoneDev.ts), which the
 // server refuses outside a development deployment.
 
-import { useState } from "react";
-import { DEFAULT_ZONE_OPTIONS, ENEMIES, HERO_CLASSES, SURFACE_INFO, type SurfaceKind, type ZoneBiome, type ZoneSize } from "@gantt-quest/world";
+import { useEffect, useState } from "react";
+import { ABILITIES, DEFAULT_ZONE_OPTIONS, ENEMIES, HERO_CLASSES, SURFACE_INFO, WEAPONS, poolFor, type SurfaceKind, type ZoneBiome, type ZoneSize } from "@gantt-quest/world";
 import { api, PROFILE } from "../api";
-import { setZoneDev, useZoneDev } from "./zoneDev";
+import { setZoneDev, useZoneDev, type KitHero } from "./zoneDev";
 
 const SIZES: ZoneSize[] = ["small", "medium", "large"];
 const BIOMES: ZoneBiome[] = ["meadow", "woods", "caves", "shore"];
@@ -167,10 +170,68 @@ export function MapsTab() {
             </label>
             <button className="small" onClick={() => send({ op: "standin", classId: standIn })}>Add one beside you</button>
           </div>
+          {dev.heroes.map((h) => <HeroKit key={h.id} hero={h} send={send} />)}
           <p className="muted">A second player: open <a href={link} target="_blank" rel="noreferrer">this link</a> in another window. Stand-ins are yours to play on their turns.</p>
         </>
       )}
       <p className={`dev-said ${said?.bad ? "bad" : "muted"}`} role="status">{said?.text}</p>
     </fieldset>
+  );
+}
+
+/** One of your heroes on the map, to make any class, level, weapon and set of class abilities (as many as you like). */
+function HeroKit({ hero, send }: { hero: KitHero; send: NonNullable<ReturnType<typeof useZoneDev>["open"]>["send"] }) {
+  const weaponsOf = (classId: string) => Object.values(WEAPONS).filter((w) => w.classId === classId);
+  const fresh = () => ({
+    classId: hero.classId,
+    level: hero.level,
+    weapon: hero.weapon && WEAPONS[hero.weapon]?.classId === hero.classId ? hero.weapon : (weaponsOf(hero.classId)[0]?.id ?? ""),
+    abilities: poolFor(hero.classId).map((e) => e.id).filter((id) => hero.abilities.includes(id)),
+  });
+  const [kit, setKit] = useState(fresh);
+  // What the map says they are, whenever that changes (set here, or by another window).
+  const key = `${hero.classId}|${hero.level}|${hero.weapon}|${hero.abilities.join(",")}`;
+  useEffect(() => setKit(fresh()), [key]);
+
+  const pool = poolFor(kit.classId);
+  const setClass = (classId: string) => setKit({ ...kit, classId, weapon: weaponsOf(classId)[0]?.id ?? "", abilities: poolFor(classId).map((e) => e.id).slice(0, 3) });
+  const toggle = (id: string) => setKit({ ...kit, abilities: kit.abilities.includes(id) ? kit.abilities.filter((a) => a !== id) : [...kit.abilities, id] });
+  const apply = () => send({ op: "kit", unit: hero.id, ...kit });
+
+  return (
+    <div className="dev-kit-hero">
+      <p>
+        <strong>{hero.name}</strong>
+      </p>
+      <div className="dev-row">
+        <label>
+          Class
+          <select value={kit.classId} onChange={(e) => setClass(e.target.value)}>{HERO_CLASSES.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select>
+        </label>
+        <label>
+          Weapon
+          <select value={kit.weapon} onChange={(e) => setKit({ ...kit, weapon: e.target.value })}>{weaponsOf(kit.classId).map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}</select>
+        </label>
+        <label>
+          Level
+          <input type="number" min={1} max={20} value={kit.level} onChange={(e) => setKit({ ...kit, level: Math.max(1, Math.min(20, Number(e.target.value) || 1)) })} />
+        </label>
+      </div>
+      {pool.length > 0 ? (
+        <div className="dev-row dev-abilities">
+          {pool.map((e) => (
+            <label key={e.id} title={ABILITIES[e.id]?.blurb}>
+              <input type="checkbox" checked={kit.abilities.includes(e.id)} onChange={() => toggle(e.id)} /> {ABILITIES[e.id]?.name ?? e.id}
+            </label>
+          ))}
+        </div>
+      ) : (
+        <p className="muted">This class has no class abilities yet.</p>
+      )}
+      <div className="dev-row">
+        <button className="small primary" onClick={apply}>Make it so</button>
+        <span className="muted">Full health, and every cooldown ready.</span>
+      </div>
+    </div>
   );
 }

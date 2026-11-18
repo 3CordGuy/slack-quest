@@ -54,6 +54,7 @@ import {
   sellMaterial,
   spendPoint,
   pickTrait,
+  setAbilitySlot,
   unequipItem,
   setGearHidden,
   upgradeHut,
@@ -409,6 +410,14 @@ app.post("/api/character/spend", async (c) => {
 app.post("/api/character/trait", async (c) => {
   const body = await c.req.json<{ trait?: string }>().catch(() => ({}) as { trait?: string });
   const error = await pickTrait(c.env.DB, c.get("player").id, String(body.trait ?? ""));
+  return error ? c.json({ error }, 409) : c.json({ ok: true });
+});
+
+app.post("/api/character/ability", async (c) => {
+  const body = await c.req.json<{ slot?: unknown; ability?: unknown }>().catch(() => ({}) as { slot?: unknown; ability?: unknown });
+  // A string puts that ability in the slot; null (and only null) empties it.
+  if (body.ability !== null && typeof body.ability !== "string") return c.json({ error: "Which ability?" }, 400);
+  const error = await setAbilitySlot(c.env.DB, c.get("player").id, Number(body.slot), body.ability);
   return error ? c.json({ error }, 409) : c.json({ ok: true });
 });
 

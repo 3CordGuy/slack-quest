@@ -12,27 +12,34 @@
 // turns are played here, at once, so nothing waits on a client.
 
 import { STARTING_STATS, hexDistance, posKey, type HexPos } from "@gantt-quest/core";
-import { ABILITIES, DRUID_REGEN, EFFECT_TICK, ENEMIES, HERO_CLASSES, abilitiesFor } from "../content";
+import { classAbilitiesOf, poolFor, withClassAbilities } from "../classabilities";
+import { ABILITIES, DRUID_REGEN, EFFECT_TICK, ENEMIES, HERO_CLASSES, WEAPONS, abilitiesFor } from "../content";
+import { weaponItem } from "../gear";
 import { battleDrops } from "../drops";
 import { tileAt } from "../map";
 import type { HeroSheet } from "../hero";
 import { addStats, maxFocusFor, maxHpFor } from "../progression";
 import { makeRng, seedFromString } from "../rng";
 import { enemyTurn } from "./ai";
-import { abilityArea, checkAbility, checkCommon, checkDrink, checkLight, checkThrow, doCommon, drinkItem, resolveAbility, throwItem, walk } from "./combat";
-import { has, heal, removeCondition, tick, type Ctx } from "./engine";
+import { abilityArea, checkAbility, checkCommon, checkDrink, checkLight, checkThrow, courseFor, doCommon, drinkItem, resolveAbility, throwItem, walk } from "./combat";
+import { burnOf, has, heal, regrow, removeCondition, tick, unseen, type Ctx } from "./engine";
 import { ALERT_RANGE, JOIN_RANGE, freeHexNear, generateZone } from "./gen";
 import { generateDelve } from "./delve";
 import { checkOpen, openChest, payBounty } from "./loot";
 import { isCrateId } from "./crates";
 import { FREE_WALK, blast, blockerAt, inFight, pathIn, sameHex, sees, solid, unitAt, unitById, zoneReach } from "./geometry";
-import { FLEE_RANGE, STARTING_ITEMS, THROWABLES, THROWABLE_KINDS, cleanItems, commonCost, enemyHp, enemyMove, tacticOf } from "./kit";
-import { d20, heroMove, mod, statOf } from "./rules";
+import { AURAS, CHART, FLEE_RANGE, SUMMONS, STARTING_ITEMS, THROWABLES, THROWABLE_KINDS, cleanItems, commonCost, enemyHp, enemyMove, tacticOf } from "./kit";
+import { d20, heroMove, mod, rollDice, statOf } from "./rules";
 import { hiddenEnemies, sentToClient } from "./light";
+import { tickWeather, weatherAtTurn } from "./weather";
 import { checkPickup, checkStow, clearSurfaces, lightTorch, pickUpTorch, placeSurface, stowTorch, standInSurface, tickLights, tickSurfaces } from "./surfaces";
 import { exploreRound, passTime } from "./clock";
 import { checkUnlock, dropKeys, heardBy, workDoor } from "./doors";
 import { checkForage, forage } from "./forage";
+import { dismiss } from "./summon";
+import { drown, drowningAtStart, drowningOwed, holdBreath } from "./drowning";
+import { shantyOf, songMove, windward } from "./song";
+import { courseMarks } from "./stars";
 import { modsOf } from "./mods";
 import type { Budget, DevOp, Encounter, Throwable, Unit, ZoneAction, ZoneEffect, ZoneEvent, ZoneHero, ZoneOptions, ZoneState, ZoneStep, ZoneView } from "./types";
 
@@ -105,6 +112,11 @@ export function zoneAwaiting(state: ZoneState): string | null {
   return state.encounter && state.encounter.acting.length > 0 ? `t:${state.encounter.turnNo}` : null;
 }
 
+/** Everything a hero can use in a fight: what their weapon gives, then the class abilities they chose. */
+function heroAbilities(hero: ZoneHero): string[] {
+  return withClassAbilities(abilitiesFor(hero.weapon), hero.classAbilities);
+}
+
 function heroUnit(hero: ZoneHero, pos: HexPos, controller?: string): Unit {
   return {
     id: hero.id,
@@ -120,7 +132,7 @@ function heroUnit(hero: ZoneHero, pos: HexPos, controller?: string): Unit {
     stats: hero.stats,
     armor: hero.armor,
     power: hero.weaponPower,
-    abilities: abilitiesFor(hero.weapon),
+    abilities: heroAbilities(hero),
     outfit: hero.outfit,
     conditions: [],
     down: false,
@@ -136,6 +148,7 @@ export function zoneHero(sheet: HeroSheet, items?: Partial<Record<Throwable, num
   return {
     id: sheet.id, name: sheet.name, classId: sheet.classId, level: sheet.level, stats, weapon: sheet.weapon, weaponPower: sheet.weaponPower ?? 0, armor: sheet.armor ?? 0, outfit: sheet.outfit,
     maxHp: maxHpFor(stats, sheet.level), maxFocus: maxFocusFor(sheet.level),
+    classAbilities: classAbilitiesOf(sheet.classId, sheet.level, sheet.abilityLoadout),
     ...(items ? { items: cleanItems(items) } : {}),
   };
 }
@@ -235,7 +248,7 @@ function flee(ctx: Ctx, unit: Unit): void {
   if (acting && enc.acting.length === 0) enc.resume = enc.order[at] ?? null;
   enc.fled = [...(enc.fled ?? []), unit.id];
   enc.waits = [...(enc.waits ?? []), unit.id];
-  endTurn(unit);
+  endTurn(ctx, unit);
   ctx.events.push({ t: "fled", id: unit.id });
 }
 
@@ -266,6 +279,8 @@ function engage(ctx: Ctx, groups: string[], by: Unit): void {
 /** The groups, not yet alerted, with someone who can see `unit` from close by. */
 function noticedBy(state: ZoneState, unit: Unit): string[] {
   const out = new Set<string>();
+  // Nobody notices the Unseen creeping past.
+  if (unseen(unit)) return [];
   for (const e of standing(state, "enemy")) {
     if (!e.group || state.groups[e.group]?.alerted) continue;
     if (hexDistance(e.pos, unit.pos) <= ALERT_RANGE && sees(state.map, e.pos, unit.pos)) out.add(e.group);
@@ -303,22 +318,39 @@ function beginTurn(ctx: Ctx, enc: Encounter, unit: Unit): boolean {
   }
   removeCondition(unit, "guarded");
   removeCondition(unit, "taunting");
-  for (const kind of ["bleeding", "burning"] as const) if (has(unit, kind)) tick(ctx, unit, kind, EFFECT_TICK[kind] ?? 0);
+  // A Lively Shanty's lift from those who joined it lasts until its Bard's turn comes round again.
+  const song = shantyOf(unit);
+  if (song) song.surge = 0;
+  for (const kind of ["bleeding", "burning"] as const) if (has(unit, kind)) tick(ctx, unit, kind, kind === "burning" ? burnOf(unit) : (EFFECT_TICK[kind] ?? 0));
   if (unit.down) return false;
   // A Druid mends a little every turn.
   if (unit.kind === "backend_druid" && unit.hp < unit.maxHp) heal(ctx, unit, DRUID_REGEN, { actor: unit.id, what: "regen" });
+  // A Healing Aura mends the bearer and everyone of theirs standing beside them.
+  if (has(unit, "mending")) {
+    for (const u of ctx.state.units) {
+      if (u.side === unit.side && !u.down && u.hp < u.maxHp && hexDistance(u.pos, unit.pos) <= AURAS.range) heal(ctx, u, rollDice(ctx.rng, AURAS.heal), { actor: unit.id, what: "healing_aura" });
+    }
+  }
+  // Aqueous Regeneration comes again.
+  regrow(ctx, unit);
   // A troll's wounds close at the start of each of its turns, unless it is on fire.
   const grows = unit.side === "enemy" ? ENEMIES[unit.kind]?.regen : undefined;
   if (grows && unit.hp < unit.maxHp && !has(unit, grows.unless)) heal(ctx, unit, grows.amount, { actor: unit.id, what: grows.name });
   standInSurface(ctx, unit);
+  // Drowning takes its toll (the Curse of Drowning first, for a turn started in water).
+  drowningAtStart(ctx, unit);
   if (unit.down) return false;
   if (has(unit, "stunned")) {
     removeCondition(unit, "stunned");
     ctx.events.push({ t: "skip", id: unit.id, kind: "stunned" });
     return false;
   }
-  const base = unit.side === "hero" && unit.stats ? heroMove(unit.stats) : enemyMove(unit.kind, modsOf(ctx.state.options).move);
-  let move = base;
+  const base = unit.summon ? (SUMMONS[unit.kind]?.move ?? 3) : unit.side === "hero" && unit.stats ? heroMove(unit.stats) : enemyMove(unit.kind, modsOf(ctx.state.options).move);
+  // A Wind-god's Shanty: further, and no Slowing.
+  const sung = songMove(ctx.state, unit);
+  // A Tailwind given since its last turn: the wind at its back.
+  let move = base + sung + (unit.conditions.find((c) => c.kind === "tailwind")?.amount ?? 0);
+  if (has(unit, "slowed") && windward(ctx.state, unit)) removeCondition(unit, "slowed");
   if (has(unit, "slowed")) move = Math.floor(move / 2);
   if (has(unit, "hasted")) move *= 2;
   // Getting up off the ground takes half a turn's movement.
@@ -326,17 +358,28 @@ function beginTurn(ctx: Ctx, enc: Encounter, unit: Unit): boolean {
     removeCondition(unit, "prone");
     move = Math.floor(move / 2);
   }
-  enc.budgets[unit.id] = { action: true, bonus: true, move, moveMax: base, disengaged: false };
-  return true;
+  enc.budgets[unit.id] = { action: true, bonus: true, move, moveMax: base, disengaged: false, ...(sung > 0 ? { song: sung } : {}) };
+  // A course charted by one of its side: further, on the steps that bring it nearer the mark.
+  if (courseMarks(ctx.state, unit).length > 0) enc.budgets[unit.id].course = CHART.speed;
+  // Weather it stands in acts now its turn is underway, with a budget for the winds to change.
+  weatherAtTurn(ctx, unit);
+  // Drowning: hold its breath, or lose its Action.
+  holdBreath(ctx, unit, enc.budgets[unit.id]);
+  return !unit.down;
 }
 
-/** End a unit's turn: each condition has one turn less to run, bar those put on during this very turn. */
-function endTurn(unit: Unit): void {
+/**
+ * End a unit's turn: each condition has one turn less to run, bar those put on during this very turn. Then the stacks of
+ * Drowning it is owed for how it ended the turn (drowning.ts), each running its full count.
+ */
+function endTurn(ctx: Ctx, unit: Unit): void {
+  const owed = drowningOwed(ctx.state, unit);
   for (const c of unit.conditions) {
     if (c.fresh) c.fresh = false;
     else c.rounds -= 1;
   }
   unit.conditions = unit.conditions.filter((c) => c.rounds > 0);
+  drown(ctx, unit, owed);
 }
 
 /**
@@ -352,14 +395,17 @@ function settle(ctx: Ctx): boolean {
   const enc = state.encounter;
   if (!enc) return false;
   const fighters = state.units.filter((u) => enc.order.includes(u.id));
-  const heroes = fighters.filter((u) => u.side === "hero");
+  // A creature called into the fight is no hero: it neither holds a lost fight off nor keeps a fled one going.
+  const heroes = fighters.filter((u) => u.side === "hero" && !u.summon);
   const foes = fighters.filter((u) => u.side === "enemy");
   const won = foes.every((u) => u.down);
   const lost = !won && heroes.length > 0 && heroes.every((u) => u.down);
   const fled = !won && heroes.length === 0;
   if (!won && !lost && !fled) return false;
-  state.encounter = null;
   ctx.events.push({ t: "fight_end", outcome: won ? "victory" : lost ? "defeat" : "fled" });
+  // What was called into it goes with it.
+  for (const u of state.units.filter((x) => x.summon)) dismiss(ctx, u);
+  state.encounter = null;
   for (const h of heroes) {
     if (h.down) {
       h.down = false;
@@ -446,7 +492,7 @@ function advance(ctx: Ctx): void {
     if (!enc || settle(ctx)) return;
     for (const id of enc.acting) {
       const u = unitById(state, id);
-      if (u) endTurn(u);
+      if (u) endTurn(ctx, u);
     }
     let i = turnEnd(enc);
     delete enc.resume;
@@ -466,6 +512,7 @@ function advance(ctx: Ctx): void {
         // a hero who got away still burns and bleeds, and what is on them still runs down.
         for (const out of state.units.filter((u) => !enc.order.includes(u.id))) exploreRound(ctx, out);
         tickSurfaces(ctx);
+        tickWeather(ctx);
         tickLights(ctx);
       }
       // One back in after fleeing on their turn this round waits for the next.
@@ -525,6 +572,9 @@ function spend(budget: Budget | null, cost: "action" | "bonus"): string | null {
   return null;
 }
 
+/** The highest level a dev kit (DevOp "kit") will make a hero. */
+export const KIT_MAX_LEVEL = 20;
+
 function dev(ctx: Ctx, by: string, op: DevOp): string | null {
   const { state } = ctx;
   const free = (near: HexPos) => freeHexNear(state.map, near, (p) => !!unitAt(state, p) || blockerAt(state, p), (p) => tileAt(state.map, p));
@@ -570,6 +620,22 @@ function dev(ctx: Ctx, by: string, op: DevOp): string | null {
       .sort((a, b) => hexDistance(a.pos, owner?.pos ?? state.start) - hexDistance(b.pos, owner?.pos ?? state.start))[0];
     if (!owner || !nearest) return "There is nobody to fight.";
     engage(ctx, [nearest.group!], owner);
+  } else if (op.op === "kit") {
+    const u = unitById(state, op.unit);
+    if (!u || u.side !== "hero" || u.summon || (u.id !== by && u.controller !== by)) return "That is not one of your heroes.";
+    const weapon = WEAPONS[op.weapon];
+    if (!weapon || weapon.classId !== op.classId) return "That is not a weapon of that class.";
+    const level = Math.max(1, Math.min(KIT_MAX_LEVEL, Math.floor(Number(op.level)) || 1));
+    const sheet = standInHero(op.classId, u.id, level);
+    if (!sheet) return "There is no such class.";
+    const pool = new Set(poolFor(op.classId).map((e) => e.id));
+    const abilities = withClassAbilities(weapon.abilities, op.abilities.filter((a) => pool.has(a)));
+    const item = weaponItem(weapon.id);
+    Object.assign(u, { kind: op.classId, level, stats: sheet.stats, maxHp: sheet.maxHp, hp: sheet.maxHp, maxFocus: sheet.maxFocus, focus: sheet.maxFocus, cooldowns: {}, devKit: true });
+    u.outfit = { ...u.outfit, main_hand: { icon: item.icon, ref: item.ref, rarity: item.rarity } };
+    // A torch swung in the main hand stays there: the new weapon is what is taken up when it goes.
+    if (u.torchHand === "main") u.stowed = abilities;
+    else u.abilities = abilities;
   } else if (op.op === "ai") {
     state.aiOff = op.off;
   } else if (op.op === "clear_surfaces") {
@@ -597,12 +663,12 @@ function act(ctx: Ctx, action: ZoneAction): string | null {
       // What their pack holds is what they carry, fight or no fight.
       if (hero.items) here.items = { ...hero.items };
       // Back again, perhaps with different gear: the sheet is refreshed, and where they stand and how hurt they are is kept.
-      // Not in a fight, though: that is fought in the gear it was started in.
-      if (inFight(state, here.id)) return null;
+      // Not in a fight, though: that is fought in the gear it was started in. Nor a hero given a dev kit.
+      if (inFight(state, here.id) || here.devKit) return null;
       Object.assign(here, { name: hero.name, kind: hero.classId, level: hero.level, stats: hero.stats, armor: hero.armor, power: hero.weaponPower, outfit: hero.outfit, maxHp: hero.maxHp, maxFocus: hero.maxFocus });
       // A torch swung in the main hand stays there: the new weapon is what is taken up when it goes.
-      if (here.torchHand === "main") here.stowed = abilitiesFor(hero.weapon);
-      else here.abilities = abilitiesFor(hero.weapon);
+      if (here.torchHand === "main") here.stowed = heroAbilities(hero);
+      else here.abilities = heroAbilities(hero);
       here.hp = Math.min(here.hp, here.maxHp);
       return null;
     }
@@ -642,7 +708,7 @@ function act(ctx: Ctx, action: ZoneAction): string | null {
   }
   if (action.type === "move") {
     if (sameHex(action.to, unit.pos)) return null;
-    const reach = zoneReach(state, unit, budget ? budget.move : FREE_WALK);
+    const reach = zoneReach(state, unit, budget ? budget.move : FREE_WALK, undefined, courseFor(state, unit, budget));
     const end = reach.get(posKey(action.to));
     if (!end) return budget ? "You cannot get there with the movement you have left." : "You cannot get there.";
     if (!end.stop) return "Someone is standing there.";
@@ -656,8 +722,8 @@ function act(ctx: Ctx, action: ZoneAction): string | null {
     const aim = { target: action.target, at: action.at, focus: !!action.focus && !isCrateId(state, action.target) };
     const wrong = checkAbility(state, unit, action.ability, aim);
     if (wrong) return wrong;
-    // Something that takes a shape can catch a group that had not noticed anyone: it has now.
-    const area = new Set(abilityArea(state, unit, action.ability, action.at).map(posKey));
+    // Something that takes a shape can catch a group that had not noticed anyone: it has now. A mark on the map touches nobody.
+    const area = new Set(tactic.chart ? [] : abilityArea(state, unit, action.ability, action.at, action.target).map(posKey));
     const touched = state.units.filter((u) => u.id === action.target || area.has(posKey(u.pos)));
     const back = reachBack(state, unit, touched);
     if (back) return back;
@@ -667,7 +733,8 @@ function act(ctx: Ctx, action: ZoneAction): string | null {
     if (cost) return cost;
     if (aim.focus) unit.focus -= 1;
     if (budget && tactic.cooldown) unit.cooldowns[action.ability] = tactic.cooldown + 1;
-    const struck = touched.filter((u) => u.side === "enemy" && !u.down).map((u) => u.group!);
+    // A heal splashed among enemies is a kindness, as a healing potion thrown is: it starts nothing.
+    const struck = tactic.splash ? [] : touched.filter((u) => u.side === "enemy" && !u.down).map((u) => u.group!);
     resolveAbility(ctx, unit, action.ability, aim);
     engage(ctx, struck, unit);
     reachIn(ctx, unit, touched);
@@ -792,6 +859,8 @@ export function stepZone(prev: ZoneState, action: ZoneAction): ZoneStep {
     const waiting = enc.acting.some((id) => !enc.done.includes(id) && !unitById(state, id)?.down);
     if (!waiting) advance(ctx);
   }
+  // A called creature that has fallen is gone.
+  for (const u of state.units.filter((x) => x.summon && x.down)) dismiss(ctx, u);
   // A band beaten that carried a key: it goes on the ring.
   dropKeys(ctx);
   sweep(state);

@@ -53,7 +53,7 @@ export const DEBUFFS: EffectKind[] = ["bleeding", "burning", "stunned", "slowed"
 const t = (classId: string, tier: 1 | 2, id: string, name: string, blurb: string, rule: TraitRule): TraitDef => ({ id, classId, tier, name, blurb, rule });
 
 export const TRAITS: TraitDef[] = [
-  // Tidewall Paladin
+  // Lighthouse Paladin
   t("qa_paladin", 1, "breakwater_stance", "Breakwater Stance", "While under a third of your HP, you start each turn Guarded.", { t: "low_hp_guard" }),
   t("qa_paladin", 1, "keelhaul", "Keelhaul", "+5 damage against Stunned enemies.", { t: "vs_effect", effect: "stunned", bonus: 5 }),
   t("qa_paladin", 2, "last_bulkhead", "Last Bulkhead", "Once a fight, a blow that would put you down leaves you on 1 HP.", { t: "last_stand" }),
@@ -83,7 +83,7 @@ export const TRAITS: TraitDef[] = [
   t("staff_sage", 1, "star_chart", "Star Chart", "+2 damage for each different debuff on the target.", { t: "per_debuff", bonus: 2 }),
   t("staff_sage", 2, "conjunction", "Conjunction", "Double damage to enemies under a quarter of their HP.", { t: "finisher", mult: 2 }),
   t("staff_sage", 2, "weather_the_gale", "Weather the Gale", "While under a third of your HP, you start each turn Guarded.", { t: "low_hp_guard" }),
-  // Lighthouse Warden
+  // Tidewall Warden
   t("sre_warden", 1, "steady_light", "Steady Light", "Grow back 1 HP at the start of each turn.", { t: "regen", amount: 1 }),
   t("sre_warden", 1, "hold_fast", "Hold Fast", "Once a fight, a blow that would put you down leaves you on 1 HP.", { t: "last_stand" }),
   t("sre_warden", 2, "lamp_oil", "Lamp Oil", "+3 damage against Exposed enemies.", { t: "vs_effect", effect: "exposed", bonus: 3 }),

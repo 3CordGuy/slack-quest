@@ -60,6 +60,8 @@ export interface Character {
   gold: number;
   /** JSON list of picked class trait ids (parse with parseTraits). */
   traits?: string;
+  /** JSON list of the class abilities in the hero's slots (parse with parseAbilityLoadout). */
+  ability_loadout?: string;
   /** JSON Appearance (parse with parseAppearance), or null if they never chose one. */
   appearance?: string | null;
 }
@@ -174,6 +176,8 @@ export const api = {
   reroll: () => request("/api/character/reroll", {}),
   spend: (stat: StatKey) => request("/api/character/spend", { stat }),
   pickTrait: (trait: string) => request("/api/character/trait", { trait }),
+  /** Put a class ability in a slot (null empties it). Harbor only. */
+  setAbility: (slot: number, ability: string | null) => request("/api/character/ability", { slot, ability }),
   equip: (itemId: number) => request("/api/character/equip", { itemId }),
   unequip: (itemId: number) => request("/api/character/unequip", { itemId }),
   /** Show or hide a worn piece on the hero; it counts either way. */

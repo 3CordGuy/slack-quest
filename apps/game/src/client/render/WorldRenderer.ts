@@ -44,13 +44,14 @@ import { badgeTexture, badgesKey, bubbleTexture, fxTexture, labelTexture, lookFo
 
 /** Spells fly as a coloured bolt; these are their colours, by ability name. */
 const SPELL_COLOR: Record<string, string> = {
-  Firebolt: "#ff9a3c",
-  "Chain Spark": "#7fe3ff",
-  "Hex Bolt": "#c084fc",
+  Shock: "#c4b5fd",
+  "Slicing Wind": "#dff4ff",
+  Waterbolt: "#38bdf8",
+  "Lightning Strike": "#ffe98a",
   "Dark Bolt": "#b06cff",
   Immolate: "#ff6a3c",
 };
-const ARROW_ABILITIES = new Set(["Aimed Shot", "Pin Down", "Volley", "Barbed Arrow"]);
+const ARROW_ABILITIES = new Set(["Shot", "Volley", "Barbed Arrow"]);
 /** Thrown things: a rock lobbed in an arc, tumbling, that bursts into dust where it lands. */
 const THROWN: Record<string, string> = { "Hurl Rock": "#77726a" };
 /** Melee blows heavy enough to knock the target back and raise dust at its feet. */
@@ -59,7 +60,7 @@ const SMASHES = new Set(["Club Smash"]);
  * Melee blows struck as the figure's heavy strike (see Figure.strike), a great two-handed sweep or with a blade
  * in each hand both tossed and jabbed down: the smashes, and the other all-or-nothing swings.
  */
-const HEAVY_SWINGS = new Set([...SMASHES, "Heavy Blow", "Cleave", "Crushing Maul", "Crushing Strike", "Sweeping Ruin", "Stone Fist", "Flurry", "Shockwave"]);
+const HEAVY_SWINGS = new Set([...SMASHES, "Cleave", "Eviscerate", "Crushing Maul", "Crushing Strike", "Sweeping Ruin", "Stone Fist", "Shockwave"]);
 /** A ground-pound (the ogre's Stomp, the guardian's Quake): no step in; the ground shakes out from the attacker's feet and jolts whoever it reaches. */
 const QUAKES = new Set(["Stomp", "Quake"]);
 /** Heals that are an enemy growing back (a troll's Regenerate), drawn as moss creeping over it, not a sparkle. */
@@ -108,7 +109,7 @@ export interface RenderState {
    * and what is left of a turn's movement). When set it is used as it stands: the tiles lit, the marker
    * under the pointer and the dots along the way all come from it.
    */
-  reach?: Map<string, { cost: number; prev: string | null; pos: HexPos }>;
+  reach?: Map<string, { cost: number; prev: string | null; pos: HexPos; way?: HexPos[] }>;
   /** No turns or movement points: the viewer may walk anywhere reachable, and tiles are not lit. */
   freeRoam?: boolean;
   /** Furniture standing on hexes (a hut's room). Each blocks the hex it is on. */
@@ -198,10 +199,14 @@ export interface RenderHero {
   /** Absent off a voyage, where every hero is at full health. */
   hp?: number;
   maxHp?: number;
+  /** Points of shield (Bolstered), drawn as a pale stretch after the HP. */
+  shield?: number;
   /** Knocked down in a fight: drawn lying where they fell. */
   down?: boolean;
   /** Knocked flat (Prone) but still in the fight: lying, not dimmed. */
   prone?: boolean;
+  /** Unseen (Sneak): drawn thinned out. */
+  unseen?: boolean;
   /** Whose turn it is in a fight on the tiles: their ring pulses. */
   active?: boolean;
   /** Holding a lit torch: underground, its light goes where they go. */
@@ -219,7 +224,8 @@ export function firstName(name: string): string {
 export function plateOf(h: RenderHero): PlateStats | undefined {
   if (h.level === undefined) return undefined;
   const hp = h.hp !== undefined && h.maxHp ? h.hp / h.maxHp : 1;
-  return { level: h.level, hp, xp: xpProgress(h.level, h.xp ?? 0) };
+  const shield = h.shield && h.maxHp ? h.shield / h.maxHp : 0;
+  return { level: h.level, hp, xp: xpProgress(h.level, h.xp ?? 0), ...(shield > 0 ? { shield } : {}) };
 }
 
 export interface SceneProp {
@@ -766,6 +772,8 @@ interface Want {
   face?: number;
   /** On a stool: how high its seat is off the floor. `pos` is then the stool's own spot. */
   seat?: number;
+  /** Unseen (Sneak): drawn thinned out, a ghost of itself. */
+  unseen?: boolean;
 }
 
 interface Floater {
@@ -776,6 +784,9 @@ interface Floater {
   /** World units it rises per second; 1.4 unless set. */
   rise?: number;
 }
+
+/** How much of an Unseen hero is left to see. */
+const UNSEEN_FADE = 0.4;
 
 /** XP motes: gold and pale blue, like the XP bar lighting up. */
 const XP_MOTES = ["#ffd23f", "#ffe98a", "#bfe6ff", "#8fd3ff"];
@@ -1044,7 +1055,7 @@ export class WorldRenderer {
   private pending: { at: number; run: () => void }[] = [];
 
   private state: RenderState | null = null;
-  private reach = new Map<string, { cost: number; prev: string | null; pos: HexPos }>();
+  private reach = new Map<string, { cost: number; prev: string | null; pos: HexPos; way?: HexPos[] }>();
   private hovered: HexPos | null = null;
   private turnKey = "";
 
@@ -1644,6 +1655,20 @@ export class WorldRenderer {
     unit.rush = 3.2;
     unit.bob = 0.22;
     if (fall) this.knockDown(unit, dest.clone().sub(unit.root.position).setY(0), FLOORED_S);
+  }
+
+  /** A unit gone from where it stands and on another hex at once (a blink): whatever it was walking is dropped. */
+  blinkUnit(id: string, to: HexPos) {
+    const unit = this.units.get(id);
+    if (!unit) return;
+    unit.path = [];
+    unit.leaps?.clear();
+    unit.leap = undefined;
+    unit.rush = undefined;
+    // Where it stands on the hex: a quarter hex toward the camera from the middle (see syncUnits). The goal moves with it, so it does not slide back.
+    const at = this.standAt(to).add(new THREE.Vector3(0, 0, 0.25));
+    unit.root.position.copy(at);
+    unit.goal.copy(at);
   }
 
   /** A unit knocked off its feet where it stands, by `by` if anyone (it falls away from them). */
@@ -5942,7 +5967,7 @@ export class WorldRenderer {
       // A plate shows a first name only: full names run long over a crowd.
       const full = h.label ?? (plate ? h.name : undefined);
       const label = plate && full ? firstName(full) : full;
-      want.set(h.id, { kind: h.classId, outfit: h.outfit, pos, size: 1.5, label, plate: label ? plate : undefined, stack: i, ring: colorOf(h.id), through: colorOf(h.id), pulse: state.turn?.heroId === h.id || !!h.active, asleep: h.asleep, rod: h.rod, boat: h.boat, down: h.down, falls: true, prone: h.prone, effects: h.effects, seat: seat?.top });
+      want.set(h.id, { kind: h.classId, outfit: h.outfit, pos, size: 1.5, label, plate: label ? plate : undefined, stack: i, ring: colorOf(h.id), through: colorOf(h.id), pulse: state.turn?.heroId === h.id || !!h.active, asleep: h.asleep, rod: h.rod, boat: h.boat, down: h.down, falls: true, prone: h.prone, effects: h.effects, seat: seat?.top, unseen: h.unseen });
     }
     for (const npc of state.story?.npcs ?? []) {
       const poi = state.map.pois.find((p) => p.id === npc.poi);
@@ -6039,6 +6064,7 @@ export class WorldRenderer {
       unit.size = w.size;
       unit.figure.setSize(w.size);
       unit.figure.setDim(fell);
+      unit.figure.setFade(w.unseen ? UNSEEN_FADE : 1);
       // A hero always, and an enemy once it is in a fight, is shown through the tree or wall it is behind.
       unit.figure.setSilhouette(this.seeThrough ? (w.through ?? null) : null);
       if (w.face !== undefined) unit.turnGoal = w.face;
@@ -6267,8 +6293,9 @@ export class WorldRenderer {
     const budget = state.freeRoam ? FREE_ROAM_REACH : state.turn?.mp;
     if (!reach || reach.cost === 0 || !me || (budget === undefined && !state.reach)) return;
     // The reach carries its own way back to the start, whether it was handed in or found over the terrain.
-    const steps: HexPos[] = [];
-    for (let at: typeof reach | undefined = reach; at && at.prev !== null; at = this.reach.get(at.prev)) steps.unshift(at.pos);
+    // Reckoned with a course charted (Chart a Course), the way is carried whole: the hexes before may be best reached another way.
+    const steps: HexPos[] = reach.way ? [...reach.way] : [];
+    if (!reach.way) for (let at: typeof reach | undefined = reach; at && at.prev !== null; at = this.reach.get(at.prev)) steps.unshift(at.pos);
     for (const step of steps) {
       // The way there: small lights, glowing rather than solid.
       const dot = new THREE.Mesh(new THREE.SphereGeometry(0.09, 8, 6), new THREE.MeshBasicMaterial({ color: "#eaf6ff", transparent: true, opacity: 0.85, blending: THREE.AdditiveBlending, depthWrite: false }));

@@ -39,7 +39,12 @@ export class SpellFx {
   constructor(private renderer: WorldRenderer) {
     renderer.addObject(this.group);
     this.stop = renderer.addTicker((dt) => {
-      this.live = this.live.filter((fx) => fx.step(Math.min(dt, 0.05)));
+      // An effect may start others as it steps (a bolt landing throws sparks and a ring): those go on the fresh list,
+      // and are kept with whatever is still running. Filtering the list in place would lose them, left in the scene for good.
+      const stepping = this.live;
+      this.live = [];
+      const going = stepping.filter((fx) => fx.step(Math.min(dt, 0.05)));
+      this.live = [...going, ...this.live];
     });
   }
 

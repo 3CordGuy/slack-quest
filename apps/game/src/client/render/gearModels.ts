@@ -757,28 +757,17 @@ export const LOW_POLY: Record<string, LowPolyDef> = {
       k.ball(0.85, C.gold, { at: [0, -7.2, 0] });
     },
   },
-  "lamp-hook": {
-    // A long pole with an iron hook at its head, a lantern hanging from the hook.
+  "boarding-pike": {
+    // A long pole, an iron socket, a pair of lugs and a steel spearhead.
     lean: DIAG,
     spin: 0.4,
     build: (k) => {
       k.cyl(0.6, 0.7, 20, 6, C.wood, { at: [0, -2, 0] });
       for (const y of [-10, 2.4]) k.cyl(0.82, 0.82, 1.3, 6, k.a, { at: [0, y, 0] });
       k.cyl(0.75, 0.75, 1.4, 6, C.iron, { at: [0, 8.4, 0] });
-      k.rod([[0, 8.8, 0], [0, 10.6, 0], [0.9, 12.1, 0], [2.6, 12.4, 0], [3.8, 11.4, 0], [3.9, 10.1, 0]], 0.32, C.iron, {}, 5);
-      const x = 3.9;
-      // The lantern hangs from the hook by its ring, and swings there.
-      k.dangle([x, 10.05, 0], [x, 6.4, 0], () => {
-        k.ring(0.6, 0.15, C.iron, { at: [x, 9.5, 0], rot: [0, Math.PI / 2, 0] }, 4, 8);
-        k.cone(1.5, 1.3, 6, C.iron, { at: [x, 8.5, 0] });
-        k.cyl(1.4, 1.4, 0.35, 6, C.iron, { at: [x, 7.7, 0] });
-        k.cyl(1.05, 1.05, 2.6, 6, { glow: "#ffd98a" }, { at: [x, 6.25, 0] });
-        for (let i = 0; i < 6; i++) {
-          const a = (i / 6) * Math.PI * 2;
-          k.cyl(0.14, 0.14, 2.6, 4, C.iron, { at: [x + Math.cos(a) * 1.15, 6.25, Math.sin(a) * 1.15] });
-        }
-        k.cyl(1.4, 1.25, 0.6, 6, C.iron, { at: [x, 4.7, 0] });
-      }, { clear: { from: [0, 8.8, 0], to: [0, -12, 0], r: 2.2 }, size: 1.5 });
+      k.cyl(0.28, 0.28, 3.4, 5, C.iron, { at: [0, 9.2, 0], rot: [0, 0, Math.PI / 2] });
+      k.cone(1.25, 5.6, 4, C.steel, { at: [0, 12.2, 0] });
+      k.cone(0.45, 4.6, 4, C.shine, { at: [0, 12.4, 0.5] });
     },
   },
   "bilge-chalice": {

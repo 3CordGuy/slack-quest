@@ -212,6 +212,12 @@ function hexRound(fq: number, fr: number): HexPos {
   return { q: rq, r: rr };
 }
 
+// The hexes on the straight line from `from` to `to`, both ends included.
+export function hexSegment(from: HexPos, to: HexPos): HexPos[] {
+  const dist = hexDistance(from, to);
+  return Array.from({ length: dist + 1 }, (_, i) => (dist === 0 ? { q: from.q, r: from.r } : hexRound(from.q + ((to.q - from.q) * i) / dist, from.r + ((to.r - from.r) * i) / dist)));
+}
+
 // True if there is line-of-sight from `from` to `to`. LOS is blocked by any
 // hex in `obstacles`; unit positions do NOT block LOS (MVP design choice).
 // Accepts either bare hex positions or full Obstacle objects.

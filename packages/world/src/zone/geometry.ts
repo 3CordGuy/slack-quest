@@ -7,7 +7,7 @@ import { hexDistance, hexNeighbors, inBounds, posKey, type HexPos } from "@gantt
 import { MOVE_COST, tileAt, type Tile, type WorldMap } from "../map";
 import { crateAt } from "./crates";
 import { ENEMY_KIT } from "./kit";
-import type { Unit, ZoneState } from "./types";
+import type { Side, Unit, Weather, ZoneState } from "./types";
 
 /** The six neighbours of a hex, clockwise from the upper right. */
 export const HEX_DIRS: readonly HexPos[] = [
@@ -75,6 +75,18 @@ export function sees(map: WorldMap, from: HexPos, to: HexPos): boolean {
   return hexesBetween(from, to).every((p) => !blocked.has(posKey(p)));
 }
 
+/**
+ * `sees`, for one of `side`: a wall (Fortify) raised by the other side blocks the view as rock does, and one raised by
+ * their own side they see over.
+ */
+export function seesFor(state: Pick<ZoneState, "map" | "weather">, side: Side, from: HexPos, to: HexPos): boolean {
+  if (!sees(state.map, from, to)) return false;
+  const walls = (state.weather ?? []).filter((w) => w.kind === "wall" && w.side !== side);
+  if (walls.length === 0) return true;
+  const blocked = new Set(walls.flatMap((w) => w.hexes.map(posKey)));
+  return hexesBetween(from, to).every((p) => !blocked.has(posKey(p)));
+}
+
 export const unitAt = (state: ZoneState, pos: HexPos): Unit | undefined => state.units.find((u) => sameHex(u.pos, pos));
 
 export const unitById = (state: ZoneState, id: string): Unit | undefined => state.units.find((u) => u.id === id);
@@ -89,13 +101,34 @@ export interface Reached {
   pos: HexPos;
   /** Whether the walker can end a move here: not on a hex somebody else is on. */
   stop: boolean;
+  /** Reckoned with a course charted: the way here, start excluded (the hexes before it may be best reached some other way). */
+  way?: HexPos[];
+  /** Reckoned with a course charted: the course's movement still unspent here. */
+  courseLeft?: number;
 }
+
+/** A course charted for a walk: the marks it heads for, and the movement it has left to spend on steps nearer one of them. */
+export interface Course {
+  marks: readonly HexPos[];
+  left: number;
+}
+
+/** Whether a step from one hex to the next brings the walker nearer any of the marks. */
+export const nearer = (marks: readonly HexPos[], from: HexPos, to: HexPos): boolean => marks.some((m) => hexDistance(to, m) < hexDistance(from, m));
+
+/** What a step nearer a mark takes from the course's movement (the rest of its cost comes out of the turn's). */
+export const courseShare = (course: Course | undefined, from: HexPos, to: HexPos, cost: number): number =>
+  course && course.left > 0 && nearer(course.marks, from, to) ? Math.min(course.left, cost) : 0;
 
 /** A chest, strongbox or hoard stands on this hex (it is opened from beside it). */
 export const chestAt = (state: Pick<ZoneState, "map">, pos: HexPos): boolean => state.map.pois.some((p) => p.kind === "cache" && p.pos.q === pos.q && p.pos.r === pos.r);
 
-/** Something stands on this hex that nobody walks, lands or is shoved onto: a chest of any kind, or a crate not yet broken. */
-export const blockerAt = (state: Pick<ZoneState, "map">, pos: HexPos): boolean => chestAt(state, pos) || !!crateAt(state, pos);
+/** The wall (Fortify) standing on this hex, if one is. */
+export const wallAt = (state: { weather?: Weather[] }, pos: HexPos): Weather | undefined =>
+  state.weather?.find((w) => w.kind === "wall" && w.hexes.some((p) => p.q === pos.q && p.r === pos.r));
+
+/** Something stands on this hex that nobody walks, lands or is shoved onto: a chest of any kind, a crate not yet broken, or a wall. */
+export const blockerAt = (state: Pick<ZoneState, "map"> & { weather?: Weather[] }, pos: HexPos): boolean => chestAt(state, pos) || !!crateAt(state, pos) || !!wallAt(state, pos);
 
 /**
  * What one step costs `unit`, or Infinity if it cannot be made. Open ground is 1; forest and hills 2;
@@ -126,9 +159,11 @@ export function stepCost(state: ZoneState, unit: Unit, from: HexPos, to: HexPos,
 
 /**
  * Everywhere `unit` can get to within `budget`, cheapest way first (Dijkstra). `shut` closes hexes
- * off altogether: the enemy uses it to look for a way round a burning or poisoned hex.
+ * off altogether: the enemy uses it to look for a way round a burning or poisoned hex. With a `course`
+ * (Chart a Course), steps nearer a mark spend its movement first, and `cost` is what is spent of `budget`.
  */
-export function zoneReach(state: ZoneState, unit: Unit, budget: number, shut?: ReadonlySet<string>): Map<string, Reached> {
+export function zoneReach(state: ZoneState, unit: Unit, budget: number, shut?: ReadonlySet<string>, course?: Course): Map<string, Reached> {
+  if (course && course.left > 0 && course.marks.length > 0) return chartedReach(state, unit, budget, course, shut);
   const out = new Map<string, Reached>();
   const origin: Reached = { cost: 0, prev: null, pos: unit.pos, stop: true };
   out.set(posKey(unit.pos), origin);
@@ -155,10 +190,60 @@ export function zoneReach(state: ZoneState, unit: Unit, budget: number, shut?: R
   return out;
 }
 
+/**
+ * zoneReach with a course charted. Two purses now: the turn's movement and the course's, and the same hex can be
+ * worth reaching twice, once cheaply and once with more of the course left for the steps after. So each hex is
+ * reached once for each amount of the course left (Dijkstra over the pair), and then each keeps its best: least
+ * of `budget` spent, then most of the course left. Its `way` is the way that best was found, whole.
+ */
+function chartedReach(state: ZoneState, unit: Unit, budget: number, course: Course, shut?: ReadonlySet<string>): Map<string, Reached> {
+  interface Label { cost: number; left: number; pos: HexPos; prev: Label | null; stop: boolean }
+  const labelKey = (pos: HexPos, left: number) => `${posKey(pos)}|${left}`;
+  const labels = new Map<string, Label>();
+  const origin: Label = { cost: 0, left: course.left, pos: unit.pos, prev: null, stop: true };
+  labels.set(labelKey(unit.pos, course.left), origin);
+  const frontier: Label[] = [origin];
+  const better = (a: Label, b: Label) => a.cost < b.cost || (a.cost === b.cost && a.left > b.left);
+  while (frontier.length > 0) {
+    let best = 0;
+    for (let i = 1; i < frontier.length; i++) if (better(frontier[i], frontier[best])) best = i;
+    const cur = frontier.splice(best, 1)[0];
+    if (labels.get(labelKey(cur.pos, cur.left)) !== cur) continue;
+    for (const n of hexNeighbors(cur.pos, state.map.grid)) {
+      const step = stepCost(state, unit, cur.pos, n, shut);
+      if (!Number.isFinite(step.cost)) continue;
+      const share = courseShare({ marks: course.marks, left: cur.left }, cur.pos, n, step.cost);
+      const cost = cur.cost + step.cost - share;
+      if (cost > budget) continue;
+      const left = cur.left - share;
+      const key = labelKey(n, left);
+      const seen = labels.get(key);
+      if (seen && seen.cost <= cost) continue;
+      const label: Label = { cost, left, pos: n, prev: cur, stop: step.stop };
+      labels.set(key, label);
+      frontier.push(label);
+    }
+  }
+  const chosen = new Map<string, Label>();
+  for (const label of labels.values()) {
+    const key = posKey(label.pos);
+    const had = chosen.get(key);
+    if (!had || better(label, had)) chosen.set(key, label);
+  }
+  const out = new Map<string, Reached>();
+  for (const [key, label] of chosen) {
+    const way: HexPos[] = [];
+    for (let l: Label | null = label; l && l.prev; l = l.prev) way.unshift(l.pos);
+    out.set(key, { cost: label.cost, prev: label.prev ? posKey(label.prev.pos) : null, pos: label.pos, stop: label.stop, way, courseLeft: label.left });
+  }
+  return out;
+}
+
 /** The way to a reached hex, start excluded, or null if it was not reached. */
 export function pathIn(reach: Map<string, Reached>, to: HexPos): HexPos[] | null {
   let cur = reach.get(posKey(to));
   if (!cur) return null;
+  if (cur.way) return [...cur.way];
   const path: HexPos[] = [];
   while (cur && cur.prev !== null) {
     path.unshift(cur.pos);

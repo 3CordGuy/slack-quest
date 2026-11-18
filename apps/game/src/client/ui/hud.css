@@ -30,6 +30,8 @@
 .hud-pips.bonus i { width: 14px; height: 13px; border: none; box-shadow: none; clip-path: polygon(50% 0, 100% 100%, 0 100%); background: #4a2c1c; }
 .hud-pips.bonus i.on { background: #f29a5b; box-shadow: none; }
 .hud-pips.move i.on { background: #f0c552; box-shadow: 0 0 0 2px #8a6a26; }
+/* A course charted (Chart a Course): movement good only for steps toward the mark, in the mark's red. */
+.hud-pips.course i.on { background: #ff5a5a; box-shadow: 0 0 0 2px #8a2626; }
 .hud-pips.focus i { rotate: 45deg; }
 .hud-pips.focus i.on { background: #7fc4e8; box-shadow: 0 0 0 2px #2f6f96; }
 .hud-chip { color: var(--muted); background: rgba(18, 12, 8, 0.86); border: 2px solid var(--hw-out); padding: 0 6px; white-space: nowrap; }
@@ -74,7 +76,16 @@
 /* Out of a fight the slots are there to look at and rearrange, not to press. */
 .hud .hud-slot.act.reminder { cursor: grab; }
 .hud .hud-slot.act .pixel-icon { image-rendering: pixelated; }
-.hud-wait { position: absolute; right: calc(var(--p) * 2 + 1px); bottom: calc(var(--p) * 2); font-size: 11px; line-height: 1; font-weight: bold; color: #8a2f1f; }
+/* On cooldown: the picture greyed and dimmed under a dark wash, and the turns left in a big number over it. The slot itself
+   is not faded, or the number would fade with it. */
+.hud .hud-slot.act.cooling { opacity: 1; }
+.hud .hud-slot.act.cooling .pixel-icon, .hud .hud-slot.act.cooling .voxel-icon { opacity: 0.35; filter: grayscale(0.85); }
+.hud .hud-slot.act.cooling::after { content: ""; position: absolute; inset: calc(var(--p) * 2); background: rgba(20, 10, 8, 0.45); pointer-events: none; }
+.hud-wait {
+  position: absolute; inset: 0; z-index: 1; display: grid; place-items: center; pointer-events: none;
+  font-family: var(--font-head); font-size: calc(var(--p) * 9); line-height: 1; color: #fbe6c8;
+  text-shadow: calc(var(--p) * -0.5) 0 0 #3a1d20, calc(var(--p) * 0.5) 0 0 #3a1d20, 0 calc(var(--p) * -0.5) 0 #3a1d20, 0 var(--p) 0 #3a1d20;
+}
 .hud .hud-slot:disabled { opacity: 1; cursor: default; }
 .hud button.hud-slot:hover:not(:disabled) { background: rgba(255, 244, 214, 0.35); box-shadow: inset 0 0 0 var(--p) #fff1c9; border: none; }
 .hud-slot .voxel-icon, .hud-slot .pixel-icon { width: calc(var(--p) * 10); height: calc(var(--p) * 10); }
@@ -141,8 +152,9 @@
 
 @media (max-width: 760px) {
   .hud { bottom: 8px; max-width: calc(100% - 12px); }
-  /* The whole rack is drawn smaller: two screen pixels to one of its own, then one and a half. */
-  .hud-rack { --p: 2px; }
+  /* The whole rack is drawn smaller: two screen pixels to one of its own, or less where even that is too wide
+     (244 is RACK.w in rackArt.ts, with a 16px margin). */
+  .hud-rack { --p: min(2px, calc((100vw - 16px) / 244)); }
   /* Terse on a phone: the muted explainer after where you stand goes; the place itself stays. */
   .hud-place .muted { display: none; }
   /* Where you stand gets a line of its own over the buttons, rather than a narrow column beside them. */

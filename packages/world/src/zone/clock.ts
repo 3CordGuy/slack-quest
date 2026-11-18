@@ -13,8 +13,9 @@
 // In a fight, rounds are the fight's own, and the clock only keeps up.
 
 import { DRUID_REGEN, EFFECT_TICK, ENEMIES } from "../content";
-import { has, heal, removeCondition, tick, type Ctx } from "./engine";
+import { burnOf, has, heal, regrow, removeCondition, tick, type Ctx } from "./engine";
 import { EXPLORE_ROUND_MS, TORCH_ROUND_MS } from "./kit";
+import { tickWeather } from "./weather";
 import { standInSurface, tickLights, tickSurfaces } from "./surfaces";
 import type { Unit } from "./types";
 
@@ -32,9 +33,10 @@ export function exploreRound(ctx: Ctx, unit: Unit): void {
   removeCondition(unit, "guarded");
   removeCondition(unit, "taunting");
   removeCondition(unit, "stunned");
-  for (const kind of ["bleeding", "burning"] as const) if (has(unit, kind)) tick(ctx, unit, kind, EFFECT_TICK[kind] ?? 0);
+  for (const kind of ["bleeding", "burning"] as const) if (has(unit, kind)) tick(ctx, unit, kind, kind === "burning" ? burnOf(unit) : (EFFECT_TICK[kind] ?? 0));
   if (unit.down) return;
   if (unit.kind === "backend_druid" && unit.hp < unit.maxHp) heal(ctx, unit, DRUID_REGEN, { actor: unit.id, what: "regen" });
+  regrow(ctx, unit);
   const grows = unit.side === "enemy" ? ENEMIES[unit.kind]?.regen : undefined;
   if (grows && unit.hp < unit.maxHp && !has(unit, grows.unless)) heal(ctx, unit, grows.amount, { actor: unit.id, what: grows.name });
   standInSurface(ctx, unit);
@@ -59,6 +61,7 @@ export function passTime(ctx: Ctx, now: number): void {
     for (let n = 0; n < Math.min(rounds, MAX_CATCHUP_ROUNDS); n++) {
       for (const unit of state.units) exploreRound(ctx, unit);
       tickSurfaces(ctx);
+      tickWeather(ctx);
     }
   }
   const burns = Math.floor((now - state.clock.torchAt) / TORCH_ROUND_MS);

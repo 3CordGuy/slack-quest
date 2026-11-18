@@ -61,7 +61,7 @@ const SQUARE: PackSize = { w: 2, h: 2 };
 /** Weapons that are not the usual two by three, by their id (content.ts WEAPONS). */
 export const WEAPON_SIZE: Record<string, PackSize> = {
   // Two-handed, and as long as the pack allows.
-  greatsword: LONG, staff: LONG, root_staff: LONG, coral_staff: LONG, barometer_rod: LONG, void_staff: LONG, pager_axe: LONG, maul: LONG, lamp_hook: LONG, shortbow: LONG,
+  greatsword: LONG, staff: LONG, root_staff: LONG, coral_staff: LONG, barometer_rod: LONG, void_staff: LONG, pager_axe: LONG, maul: LONG, boarding_pike: LONG, shortbow: LONG,
   // Slim things that slide in beside the rest.
   daggers: SLIM, gaff_hook: SLIM, flute: SLIM, sickle: SLIM, scepter: SLIM,
   // Books, orbs and bells.

@@ -72,6 +72,8 @@ export interface HeroInit {
   brews?: string[];
   /** Class traits picked so far (traits.ts). */
   traits?: string[];
+  /** Class abilities chosen for the hero's slots (classabilities.ts). Fixed for the voyage: they are changed only in the Harbor. */
+  abilityLoadout?: (string | null)[];
 }
 
 export interface Hero extends HeroInit {

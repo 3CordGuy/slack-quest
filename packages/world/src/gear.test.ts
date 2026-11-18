@@ -105,13 +105,13 @@ describe("what gear does", () => {
     const hero = (over: Partial<Combatant>): Combatant => ({
       id: "h", side: "hero", name: "h", kind: "qa_paladin", level: 1, hp: 60, maxHp: 60,
       pct: { str: 100, vit: 100, agi: 100, dex: 100, int_stat: 100 }, power: 0, armor: 0, speed: 0,
-      focus: 0, potions: 0, abilities: ["smite"], effects: [], down: false, ...over,
+      focus: 0, potions: 0, abilities: ["bash"], effects: [], down: false, ...over,
     });
     const run = (over: Partial<Combatant>) => {
       // Same seed both times, so enemy rolls are identical and only the gear differs.
       const start = createBattle({ heroes: [hero(over)], enemyKinds: ["bandit"], avgLevel: 1, poiId: null }, makeRng(4));
       const taken = start.events.filter((e) => e.t === "hit").reduce((a, e) => a + (e.t === "hit" ? e.amount : 0), 0);
-      const hit = stepBattle(start.state, "h", { type: "ability", ability: "smite", target: "e0" }, makeRng(4));
+      const hit = stepBattle(start.state, "h", { type: "ability", ability: "bash", target: "e0" }, makeRng(4));
       if (!hit.ok) throw new Error(hit.error);
       const dealt = hit.events.find((e) => e.t === "hit" && e.actor === "h");
       return { taken, dealt: dealt && dealt.t === "hit" ? dealt.amount : 0 };

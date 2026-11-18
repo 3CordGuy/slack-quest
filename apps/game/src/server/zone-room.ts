@@ -78,6 +78,9 @@ export function zoneActionFrom(raw: unknown, by: string, dev: boolean): ZoneActi
     }
     if (d.op === "standin" && text(d.classId)) return { type: "dev", by, dev: { op: "standin", classId: d.classId } };
     if (d.op === "ai") return { type: "dev", by, dev: { op: "ai", off: !!d.off } };
+    if (d.op === "kit" && text(d.unit) && text(d.classId) && text(d.weapon) && Array.isArray(d.abilities)) {
+      return { type: "dev", by, dev: { op: "kit", unit: d.unit, classId: d.classId, weapon: d.weapon, level: Number(d.level) || 1, abilities: d.abilities.filter(text).slice(0, 20) } };
+    }
     if (d.op === "heal" || d.op === "end_fight" || d.op === "start_fight" || d.op === "clear_surfaces") return { type: "dev", by, dev: { op: d.op } };
     return null;
   }
