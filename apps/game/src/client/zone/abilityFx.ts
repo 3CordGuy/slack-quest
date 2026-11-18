@@ -5,7 +5,7 @@
 // plays them as the fight's events arrive.
 
 import { ABILITIES, tacticOf, type Throwable } from "@gantt-quest/world";
-import type { EruptStyle } from "../render/SpellFx";
+import type { EruptStyle, SongMood, SoundKind } from "../render/SpellFx";
 
 export type FxKind =
   /** A blow up close: the attacker lunges and a slash lands. */
@@ -15,6 +15,14 @@ export type FxKind =
   | "bolt"
   /** A thunderclap: crescents of sound and light racing out to each target. */
   | "thunder"
+  /** A blow of sound: crescents racing to each target with notes in their wake (see SOUND_KIND for how each sounds). */
+  | "sound"
+  /** A blast of sound down a line. */
+  | "blast"
+  /** A roar of voices converging on the hex aimed at and bursting there. */
+  | "chorus"
+  /** A shanty struck up round the singer, and notes off them for as long as it lasts (see SONG_MOOD). */
+  | "song"
   /** A crescent blade of wind flying to each target. */
   | "blade"
   /** Lightning out of the sky onto each target, arcing from one to the next. */
@@ -43,9 +51,18 @@ export interface Fx {
   color: string;
   /** For an eruption, what comes up out of the ground. */
   style?: EruptStyle;
+  /** A heal or blessing that is sung (the Bard's): music notes rise through it rather than motes. */
+  notes?: boolean;
 }
 
 const fx = (kind: FxKind, color: string, style?: EruptStyle): Fx => ({ kind, color, ...(style ? { style } : {}) });
+/** A heal or blessing sung by a Bard. */
+const sung = (color: string): Fx => ({ kind: "bless", color, notes: true });
+
+/** How each shanty's notes move. */
+export const SONG_MOOD: Record<string, SongMood> = { lively_shanty: "lively", dour_shanty: "dour", windgod_shanty: "wind" };
+/** How each blow of sound lands: heavy, ringing like a bell, or out of tune. Plain for any not here. */
+export const SOUND_KIND: Record<string, SoundKind> = { lead_by_example: "heavy", peal: "bell", dissonance: "discord" };
 
 const ABILITY_FX: Record<string, Fx> = {
   torch_swing: fx("melee", "#ff8a2a"),
@@ -74,7 +91,7 @@ const ABILITY_FX: Record<string, Fx> = {
   waterbolt: fx("bolt", "#38bdf8"),
   lightning_strike: fx("storm", "#ffe98a"),
   winds_blessing: fx("bless", "#bfe8ff"),
-  dissonance: fx("bolt", "#c4a7ff"),
+  dissonance: fx("sound", "#c4a7ff"),
   hex: fx("bolt", "#e879f9"),
   soul_drain: fx("bolt", "#e879f9"),
   sink: fx("bolt", "#2fa4c9"),
@@ -103,11 +120,11 @@ const ABILITY_FX: Record<string, Fx> = {
   pickpocket: fx("melee", "#ffd23f"),
   tactical_retreat: fx("melee", "#ff6b6b"),
   contraband: fx("bless", "#ff8a3a"),
-  lively_shanty: fx("ring", "#ffb020"),
-  dour_shanty: fx("ring", "#6f8fff"),
-  windgod_shanty: fx("ring", "#3fe0c5"),
-  chorus: fx("lob", "#ff6fa8"),
-  lead_by_example: fx("bolt", "#ffe08a"),
+  lively_shanty: fx("song", "#ffb020"),
+  dour_shanty: fx("song", "#6f8fff"),
+  windgod_shanty: fx("song", "#3fe0c5"),
+  chorus: fx("chorus", "#ff6fa8"),
+  lead_by_example: fx("sound", "#ffe08a"),
   against_the_waves: fx("bless", "#5fb8ff"),
   overwhelm: fx("melee", "#ff9a4a"),
   fortify: fx("erupt", "#c9b48a", "stone"),
@@ -128,11 +145,11 @@ const ABILITY_FX: Record<string, Fx> = {
   sailor_scimitar: fx("melee", "#9fb59a"),
   turtle_bite: fx("melee", "#4fb286"),
   rejuvenate: fx("bless", "#a3e635"),
-  encore: fx("bless", "#7dff9a"),
-  blasting_tone: fx("beam", "#ff6b6b"),
-  soothing_tone: fx("bless", "#5eead4"),
-  peal: fx("bolt", "#ffd23f"),
-  clarion_call: fx("bless", "#ffd23f"),
+  encore: sung("#7dff9a"),
+  blasting_tone: fx("blast", "#ff6b6b"),
+  soothing_tone: sung("#5eead4"),
+  peal: fx("sound", "#ffd23f"),
+  clarion_call: sung("#ffd23f"),
   recover: fx("bless", "#ffd23f"),
   block: fx("bless", "#c9d6e8"),
 };

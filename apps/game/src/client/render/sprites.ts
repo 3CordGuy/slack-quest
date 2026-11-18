@@ -514,7 +514,7 @@ export function bubbleTexture(text: string): { texture: THREE.CanvasTexture; wid
 
 // ---------- battle effects ----------
 
-export type FxKind = "slash" | "bolt" | "arrow" | "burst" | "spark" | "mote" | "dust" | "fleck" | "splash" | "rock";
+export type FxKind = "slash" | "bolt" | "arrow" | "burst" | "spark" | "mote" | "dust" | "fleck" | "splash" | "rock" | "note" | "notes";
 
 const fxCache = new Map<string, THREE.CanvasTexture>();
 
@@ -618,6 +618,44 @@ export function fxTexture(kind: FxKind, color: string, flip = false): THREE.Canv
     for (const [x, y] of [[6, 5], [7, 5], [5, 6]] as const) dot(x, y, "#b9b3a6");
     dot(9, 9, "#4a4650");
     dot(10, 8, "#4a4650");
+  } else if (kind === "note" || kind === "notes") {
+    // A music note (a quaver, or two beamed together), in the colour with a dark line round it and a glint on
+    // each head, so it reads over grass, water or a dark cave alike.
+    const filled = new Set<string>();
+    const put = (x: number, y: number) => filled.add(`${x},${y}`);
+    const head = (x: number, y: number) => {
+      for (const [dx, dy] of [[1, 0], [2, 0], [0, 1], [1, 1], [2, 1], [0, 2], [1, 2]] as const) put(x + dx, y + dy);
+    };
+    if (kind === "note") {
+      head(4, 10);
+      for (let y = 3; y <= 11; y++) put(7, y);
+      for (const [x, y] of [[8, 3], [9, 4], [10, 5], [10, 6], [9, 7]] as const) put(x, y);
+    } else {
+      head(2, 11);
+      head(8, 10);
+      for (let y = 4; y <= 12; y++) put(5, y);
+      for (let y = 3; y <= 11; y++) put(11, y);
+      for (let x = 5; x <= 11; x++) {
+        put(x, 3);
+        put(x, 4);
+      }
+    }
+    const edge = "#1b1830";
+    for (let y = 0; y < N; y++) {
+      for (let x = 0; x < N; x++) {
+        if (filled.has(`${x},${y}`)) continue;
+        if ([[1, 0], [-1, 0], [0, 1], [0, -1]].some(([dx, dy]) => filled.has(`${x + dx},${y + dy}`))) dot(x, y, edge);
+      }
+    }
+    for (const key of filled) {
+      const [x, y] = key.split(",").map(Number);
+      dot(x, y);
+    }
+    if (kind === "note") dot(5, 11, "#ffffff");
+    else {
+      dot(3, 12, "#ffffff");
+      dot(9, 11, "#ffffff");
+    }
   } else if (kind === "mote") {
     // One XP mote: a solid 4x4 pixel, a white glint in its corner, in the middle of the tile.
     ctx.fillStyle = color;

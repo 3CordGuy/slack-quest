@@ -34,6 +34,12 @@ export type Missile = "arrow" | "bolt" | "flask" | "meteor";
  */
 export type EruptStyle = "thorn" | "kelp" | "coral" | "stone" | "water" | "shine" | "rust";
 
+/** How a song moves its notes: a lively shanty's bob up, a dour one's rise slowly and sink back, the wind-god's swirl. */
+export type SongMood = "lively" | "dour" | "wind";
+
+/** A blow of sound (see SpellFx.sound): plain, heavy (Lead by Example), ringing like a bell (Peal), or out of tune (Dissonance). */
+export type SoundKind = "plain" | "heavy" | "bell" | "discord";
+
 /** Vines caught round someone (see SpellFx.wrap): where their feet are now (null once they are gone), and whether they are still caught. */
 export interface Binding {
   /** Who is caught: vines caught round them again send the old ones withering. */
@@ -1356,6 +1362,197 @@ export class SpellFx {
   }
 
   /**
+   * Inked crescents of sound racing from `from` to `to`, one after another `stagger` seconds apart, each taking
+   * `time` to cross and swelling as it goes; music notes shed behind the first. `wobble` sends them out of tune.
+   */
+  private crescents(from: THREE.Vector3, to: THREE.Vector3, color: string, o: { count: number; stagger: number; time: number; size: number; wobble?: boolean; notes?: boolean }) {
+    const dir = to.clone().sub(from).setY(0);
+    const distance = dir.length();
+    dir.normalize();
+    const side = new THREE.Vector3(-dir.z, 0, dir.x);
+    const N = 14;
+    const waves = Array.from({ length: o.count }, (_, i) => {
+      const edge = new Ribbon(N, tinted(OUTLINE, 0.5, streakTex()));
+      const glow = new Ribbon(N, tinted(color, 1, streakTex()));
+      const core = new Ribbon(N, light("#ffffff", 1, streakTex()));
+      edge.mesh.renderOrder = 4;
+      glow.mesh.renderOrder = 5;
+      core.mesh.renderOrder = 6;
+      for (const r of [edge, glow, core]) this.add(r.mesh);
+      return { edge, glow, core, late: i * o.stagger };
+    });
+    let shed = 0;
+    const last = (o.count - 1) * o.stagger + o.time * 1.25;
+    this.run(
+      waves.flatMap((w) => [w.edge.mesh, w.glow.mesh, w.core.mesh]),
+      (age, dt) => {
+        waves.forEach((w, i) => {
+          const k = (age - w.late) / o.time;
+          if (k <= 0 || k >= 1.25) {
+            w.edge.material.opacity = w.glow.material.opacity = w.core.material.opacity = 0;
+            return;
+          }
+          const at = from.clone().addScaledVector(dir, distance * Math.min(1.1, k));
+          const r = o.size * (0.45 + 0.6 * Math.min(1, k));
+          const arc = Array.from({ length: N }, (_, j) => {
+            const a = -1.15 + (2.3 * j) / (N - 1);
+            const shake = o.wobble ? Math.sin(age * 38 + j * 1.7 + i) * 0.09 * o.size : 0;
+            return at.clone().addScaledVector(dir, Math.cos(a) * r * 0.55 - r * 0.4 + shake).addScaledVector(side, Math.sin(a) * r).addScaledVector(UP, shake * 0.6);
+          });
+          const fade = k < 1 ? 1 : 1 - (k - 1) / 0.25;
+          w.edge.material.opacity = 0.5 * fade;
+          w.glow.material.opacity = fade * (o.wobble ? 0.6 + 0.4 * Math.abs(Math.sin(age * 23 + i)) : 1);
+          w.core.material.opacity = fade;
+          w.edge.lay(arc, (t) => 0.42 * o.size * Math.sin(Math.PI * t), this.eye);
+          w.glow.lay(arc, (t) => 0.3 * o.size * Math.sin(Math.PI * t), this.eye);
+          w.core.lay(arc, (t) => 0.1 * o.size * Math.sin(Math.PI * t), this.eye);
+          if (i === 0 && o.notes && k < 1) {
+            shed -= dt;
+            if (shed <= 0) {
+              shed = 0.06;
+              this.note(at, color, "lively", Math.random() * Math.PI * 2, 0.3, 0, 0.6, 0.6);
+            }
+          }
+        });
+        return age < last;
+      },
+    );
+  }
+
+  /**
+   * A blow of sound from `from` at `to` (see SoundKind): crescents of it racing out with notes in their wake, and where
+   * they land a flash and a scatter of notes; a heavy blow lands harder and shakes the ground, a bell's rings out round
+   * its mark, and a discord wobbles out of tune all the way. `onLand` runs as it arrives. Returns how long that takes.
+   */
+  sound(from: THREE.Vector3, to: THREE.Vector3, color: string, kind: SoundKind = "plain", onLand?: () => void): number {
+    const time = Math.max(0.18, Math.min(0.5, from.distanceTo(to) / 14));
+    const heavy = kind === "heavy";
+    this.crescents(from, to, color, { count: heavy ? 4 : 3, stagger: 0.07, time, size: heavy ? 1.35 : 1, wobble: kind === "discord", notes: true });
+    this.later(time, () => {
+      this.flash(to, color, heavy ? 2.4 : 1.4);
+      this.lightUp(to, paler(color, 0.4), heavy ? 22 : 10, 5, 0.4);
+      for (let i = 0; i < (heavy ? 8 : 5); i++) this.note(to, color, "lively", Math.random() * Math.PI * 2, rand(0.8, 1.6), 0, 0.8);
+      this.ring(to.clone().setY(to.y - 0.75), heavy ? 1.8 : 1.1, color, 0.4);
+      if (heavy) this.renderer.shake(0.1, 0.25);
+      if (kind === "bell") this.toll(to, color);
+      onLand?.();
+    });
+    return time;
+  }
+
+  /** A bell's ring round something struck: circles of sound swelling out round it, upright to the eye, one after another. */
+  private toll(at: THREE.Vector3, color: string) {
+    const N = 28;
+    const rings = [0, 1, 2].map((i) => ({ r: new Ribbon(N, tinted(paler(color, 0.3), 0.9, streakTex())), late: i * 0.12 }));
+    for (const { r } of rings) this.add(r.mesh);
+    this.run(
+      rings.map((x) => x.r.mesh),
+      (age) => {
+        const look = at.clone().sub(this.eye).normalize();
+        const right = new THREE.Vector3().crossVectors(look, UP).normalize();
+        const up = new THREE.Vector3().crossVectors(right, look).normalize();
+        for (const { r, late } of rings) {
+          const k = Math.max(0, Math.min(1, (age - late) / 0.5));
+          const radius = 0.3 + 1.1 * (1 - (1 - k) ** 2);
+          const circle = Array.from({ length: N }, (_, j) => {
+            const a = (j / (N - 1)) * Math.PI * 2;
+            return at.clone().addScaledVector(right, Math.cos(a) * radius).addScaledVector(up, Math.sin(a) * radius);
+          });
+          r.material.opacity = k > 0 ? 0.9 * (1 - k) : 0;
+          r.lay(circle, () => 0.12, this.eye);
+        }
+        return age < 0.24 + 0.5;
+      },
+    );
+  }
+
+  /** A blast of sound down a line (Blasting Tone): a rush of crescents one on another, notes streaming, and a burst at its end. */
+  blast(from: THREE.Vector3, to: THREE.Vector3, color: string) {
+    const time = Math.max(0.25, Math.min(0.55, from.distanceTo(to) / 12));
+    this.crescents(from, to, color, { count: 7, stagger: 0.045, time, size: 0.9, notes: true });
+    this.flash(from, color, 1.2);
+    this.later(time, () => {
+      this.flash(to, color, 1.8);
+      this.ring(to.clone().setY(to.y - 0.75), 1.4, color, 0.4);
+      for (let i = 0; i < 6; i++) this.note(to, color, "lively", Math.random() * Math.PI * 2, rand(0.8, 1.6), 0, 0.8);
+    });
+  }
+
+  /** A roar of voices over a spot (Chorus): crescents of sound converging on it, then a burst of notes and a ring out over all it covers. */
+  chorus(from: THREE.Vector3, at: THREE.Vector3, color: string) {
+    const time = Math.max(0.25, Math.min(0.55, from.distanceTo(at) / 12));
+    this.crescents(from, at.clone().setY(at.y + 0.8), color, { count: 4, stagger: 0.06, time, size: 1.1, notes: true });
+    this.later(time, () => {
+      this.flash(at.clone().setY(at.y + 0.8), color, 2.2);
+      this.lightUp(at, color, 16, 6, 0.6);
+      this.ring(at, 2.8, color, 0.55);
+      for (let i = 0; i < 14; i++) this.note(at.clone().setY(at.y + 0.6), color, "lively", (i / 14) * Math.PI * 2, rand(1.6, 2.6), i * 0.015, 1);
+    });
+  }
+
+  /**
+   * A shanty struck up round `feet`: a ring rolling out over everyone the song reaches (`reach`, world units), a warm
+   * flash, and notes thrown up and out all round the singer, moving as the mood moves (SongMood).
+   */
+  song(feet: THREE.Vector3, color: string, mood: SongMood, reach = 3.4) {
+    this.ring(feet, reach, color, 0.7);
+    this.flash(feet.clone().setY(feet.y + 1), color, 1.6);
+    this.lightUp(feet, color, 10, 5, 0.8);
+    for (let i = 0; i < 14; i++) this.note(feet.clone().setY(feet.y + rand(0.6, 1.2)), color, mood, (i / 14) * Math.PI * 2 + rand(-0.2, 0.2), rand(1.2, 2.2), i * 0.02);
+  }
+
+  /**
+   * A song going on (a shanty while it lasts): notes drifting up off the singer now and again, moving as its mood
+   * moves, and a soft glow of its colour under their feet, following them; until `bind.holding()` says it has ended.
+   */
+  serenade(bind: Binding, color: string, mood: SongMood) {
+    let released = false;
+    const release = () => {
+      released = true;
+    };
+    this.bound.get(bind.key)?.();
+    this.bound.set(bind.key, release);
+    const glow = this.sheet(bind.follow() ?? new THREE.Vector3(), color, softTex(), 0);
+    glow.scale.setScalar(1.6);
+    let next = 0.3;
+    let gone = -1;
+    this.run([glow], (age) => {
+      const feet = bind.follow();
+      if (gone < 0 && (released || !feet || (age > 0.5 && !bind.holding()) || age > 600)) gone = age;
+      const k = gone < 0 ? Math.min(1, age / 0.4) : Math.max(0, 1 - (age - gone) / 0.5);
+      if (feet) glow.position.copy(feet).setY(feet.y + 0.05);
+      glow.material.opacity = 0.28 * k * (0.8 + 0.2 * Math.sin(age * 3));
+      if (feet && gone < 0 && age >= next) {
+        next = age + rand(0.3, 0.5);
+        const a = Math.random() * Math.PI * 2;
+        this.note(feet.clone().add(new THREE.Vector3(Math.cos(a) * 0.35, rand(0.6, 1.3), Math.sin(a) * 0.35)), color, mood, a, 0.25, 0, 1.5, 0.6);
+      }
+      if (gone >= 0 && k <= 0 && this.bound.get(bind.key) === release) this.bound.delete(bind.key);
+      return gone < 0 || k > 0;
+    });
+  }
+
+  /** One music note floating off `at`: out along `angle` at `speed`, bobbing, sinking or swirling as the mood has it, and fading over `life`. */
+  private note(at: THREE.Vector3, color: string, mood: SongMood, angle: number, speed: number, delay = 0, life = 1.1, size = 0.75) {
+    const s = this.speck(Math.random() < 0.5 ? "note" : "notes", color, at, 0);
+    const wiggle = rand(0, Math.PI * 2);
+    this.run([s], (age) => {
+      const t = age - delay;
+      if (t < 0) return true;
+      const k = Math.min(1, t / life);
+      const slow = mood === "dour" ? 0.6 : 1;
+      const a = mood === "wind" ? angle + t * 2.6 : angle;
+      const out = speed * slow * t * (1 - k * 0.5);
+      const rise = mood === "lively" ? t * 1.2 + Math.abs(Math.sin(t * 9)) * 0.15 : mood === "dour" ? t * 0.55 - k * k * 0.4 : t * 0.9;
+      s.position.set(at.x + Math.cos(a) * out, at.y + rise, at.z + Math.sin(a) * out);
+      s.scale.setScalar(size * Math.min(1, k / 0.12));
+      s.material.opacity = 1 - k * k;
+      s.material.rotation = Math.sin(t * 6 + wiggle) * 0.3;
+      return k < 1;
+    });
+  }
+
+  /**
    * A guard going up round someone: a wall of light in the shape of their hex rising up off the ground and fading as
    * it goes, a bright rim riding its top, a flash on the ground, and sparkles caught in it.
    */
@@ -1474,7 +1671,7 @@ export class SpellFx {
    * Someone healed or blessed: a glow on the ground under them, a soft column of light standing up off it, pixel motes
    * spiralling up through it, and sparkles twinkling in it.
    */
-  motes(at: THREE.Vector3, color: string) {
+  motes(at: THREE.Vector3, color: string, notes = false) {
     const foot = at.y - 0.27;
     const disc = this.sheet(at.clone().setY(foot), color, softTex(), 0);
     const pool = this.add(new THREE.Mesh(plane, tinted(color, 0, softTex())));
@@ -1486,8 +1683,9 @@ export class SpellFx {
     // Its colour under the light, so the column still shows against bright ground.
     const body = this.add(new THREE.Mesh(tube, tinted(color, 0, columnTex())));
     body.scale.copy(column.scale);
+    // A song's healing (the Bard's) rises in music notes rather than motes.
     const rising = Array.from({ length: 10 }, (_, i) => ({
-      s: this.speck("mote", i % 3 ? color : paler(color, 0.5), at, rand(0.4, 0.55)),
+      s: notes ? this.speck(i % 2 ? "note" : "notes", color, at, rand(0.65, 0.8)) : this.speck("mote", i % 3 ? color : paler(color, 0.5), at, rand(0.4, 0.55)),
       a: (i / 10) * Math.PI * 2,
       r: rand(0.25, 0.42),
       y: rand(0, 0.3),

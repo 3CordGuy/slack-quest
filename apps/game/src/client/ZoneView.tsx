@@ -109,7 +109,7 @@ import { useCountdown } from "./ui/useCountdown";
 import { useZone, type ZoneSend } from "./useZone";
 import { Icon } from "./items";
 import { label } from "./labels";
-import { AURA_ABILITIES, GUARDS, SUMMONS, THROW_COLOR, aimKind, fxFor } from "./zone/abilityFx";
+import { AURA_ABILITIES, GUARDS, SONG_MOOD, SOUND_KIND, SUMMONS, THROW_COLOR, aimKind, fxFor } from "./zone/abilityFx";
 import { COMMON_ICON, ITEM_ICON, abilityIcon } from "./zone/actionIcons";
 import { BAR_SLOTS, assignSlot, barChoices, loadBar, moveSlot, saveBar } from "./zone/hotbar";
 import { believe, foreseeWalk, giveUp, settle, standing, type Ahead } from "./zone/ahead";
@@ -544,6 +544,30 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
           } else if (look.kind === "beam" && covered.length > 0) {
             const end = point(covered[covered.length - 1], 0.9);
             cast(ev.id, ev.name, end.x, end.z, () => fxs.beam(from, end, look.color));
+          } else if (look.kind === "song") {
+            // A shanty struck up: played, the song rolls out, and its notes keep coming off the singer for as long as
+            // the picture shows them singing it.
+            const mood = SONG_MOOD[ev.what] ?? "lively";
+            const sing = () => {
+              fxs.song(point(user.pos, 0.05), look.color, mood);
+              fxs.serenade(
+                {
+                  key: `song:${ev.id}`,
+                  follow: () => renderer.current?.unitFeet(ev.id) ?? null,
+                  holding: () => !!shownNow.current?.units.find((u) => u.id === ev.id && u.hp > 0)?.conditions.some((c) => c.kind === ev.what),
+                },
+                look.color,
+                mood,
+              );
+            };
+            if (view) view.burst(ev.id, ev.name, true, sing);
+            else sing();
+          } else if (look.kind === "blast" && covered.length > 0) {
+            const line = covered.map((p) => point(p, 0.9)).sort((a, b) => a.distanceTo(from) - b.distanceTo(from));
+            const end = line[line.length - 1];
+            cast(ev.id, ev.name, end.x, end.z, () => fxs.blast(from, end, look.color));
+          } else if (look.kind === "chorus" && aim) {
+            cast(ev.id, ev.name, aim.x, aim.z, () => fxs.chorus(from, aim, look.color));
           } else if (clap) {
             cast(ev.id, ev.name, clap.x, clap.z, () => fxs.thunder(from, clap, look.color));
           } else if (look.kind === "wave" && covered.length > 0) {
@@ -585,7 +609,7 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
                 if (GUARDS.has(ev.what)) fxs.ward(on, look.color);
                 else if (ev.what === "sneak" || ev.what === "smugglers_route") fxs.puff(on);
                 else if (aim && SUMMONS.has(ev.what)) fxs.erupt([aim], look.color, "water");
-                else fxs.motes(on, look.color);
+                else fxs.motes(on, look.color, !!look.notes);
                 // An aura reaches the allies round them.
                 if (AURA_ABILITIES.has(ev.what)) fxs.ring(point(user.pos, 0.05), 3.4, look.color, 0.7);
               }, 260),
@@ -651,13 +675,15 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
             );
             return;
           }
-          if (fxs && from && to && (kind === "thunder" || kind === "blade")) {
+          if (fxs && from && to && (kind === "thunder" || kind === "blade" || kind === "sound")) {
             const end = hit ? to : to.clone().add(new THREE.Vector3(0.7, 0.5, 0.5));
             const land = () => {
               view?.landed(ev.target, what, hit, hit && ev.crit, ev.actor);
               mark();
             };
-            cast(ev.actor!, what, to.x, to.z, () => (kind === "thunder" ? fxs.thunder(from, end, color, land) : fxs.blade(from, end, color, land)));
+            cast(ev.actor!, what, to.x, to.z, () =>
+              kind === "thunder" ? fxs.thunder(from, end, color, land) : kind === "blade" ? fxs.blade(from, end, color, land) : fxs.sound(from, end, color, SOUND_KIND[mine?.what ?? ""] ?? "plain", land),
+            );
             return;
           }
           if (fxs && chained && to && target && kind === "spark") {
@@ -684,7 +710,7 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
         later(() => {
           sounds.heal(blowName(ev.what), view?.whereIs(ev.target));
           const healed = find(ev.target);
-          if (healed) spells.current?.motes(point(healed.pos, 0.3), use?.look.kind === "bless" ? use.look.color : "#7dff9a");
+          if (healed) spells.current?.motes(point(healed.pos, 0.3), use?.look.kind === "bless" ? use.look.color : "#7dff9a", !!use?.look.notes);
           view?.glint(ev.target, "#7dff9a");
           view?.floatOver(ev.target, `+${ev.amount}`, "#7dff9a");
         });
@@ -876,6 +902,7 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
           if (fxs && look === "spark") return cast(ev.actor!, what, at.x, at.z, () => { fxs.strike(at, mine?.look.color ?? "#dfe9ff"); impact(); });
           if (fxs && look === "thunder") return cast(ev.actor!, what, at.x, at.z, () => fxs.thunder(from, at, mine?.look.color ?? "#facc15", impact));
           if (fxs && look === "blade") return cast(ev.actor!, what, at.x, at.z, () => fxs.blade(from, at, mine?.look.color ?? "#dff4ff", impact));
+          if (fxs && look === "sound") return cast(ev.actor!, what, at.x, at.z, () => fxs.sound(from, at, mine?.look.color ?? "#ffd23f", SOUND_KIND[mine?.what ?? ""] ?? "plain", impact));
           impact();
         });
         say(`The crate takes ${ev.amount}${ev.what === "fire" ? " from the fire" : ""}.`);
