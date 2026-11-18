@@ -289,7 +289,6 @@ export function HudBar({ me, place, children, hp, meter, pips = [], chips, quick
           {...hover(at + 7, <Tip name={`${worn ? `${worn.name}, or` : hand === "main" ? "Main hand:" : "Off hand:"} a torch`} line={torch.light ? `Click, or drag the torch here from the bar, to light one and ${what}. A Bonus action in a fight.` : (torch.why ?? "You cannot light one now.")} more={`${torch.carried} carried.`} />)}
         >
           {worn && <Icon name={worn.icon} color={RARITY_COLOR[worn.rarity]} size={40} />}
-          <span className="hud-torch-hint"><Icon name={ITEM_ICON.torch.name} color={ITEM_ICON.torch.color} size={16} /></span>
         </button>
       );
     }
