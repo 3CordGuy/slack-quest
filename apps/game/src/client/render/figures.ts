@@ -1240,7 +1240,27 @@ interface Anim {
   sitting: number;
   /** At the oars of a rowboat (seated): where the stroke is, 0 (reached forward) to 1 (pulled back). -1: not rowing. */
   oars: number;
+  /** A stage of getting up off the ground, for a rig that has them (see Rig.getUp); null otherwise. */
+  getUp: GetUp | null;
 }
+
+/**
+ * The stages of getting up off the ground, each a pose held on the way: rolled onto the front, up on hands and
+ * knees, and up on one knee (anyone on two legs); rolled onto the belly, the legs tucked under (a beast).
+ */
+type GetUp = "front" | "crawl" | "kneel" | "belly";
+/** How a two-legged figure gets up, and a four-legged one. */
+const BIPED_GET_UP: readonly GetUp[] = ["front", "crawl", "kneel"];
+const BEAST_GET_UP: readonly GetUp[] = ["belly"];
+/** Seconds to come into each stage of getting up, and from the last of them up onto the feet. */
+const GET_UP_TIME: Record<GetUp | "stand", number> = { front: 0.45, crawl: 0.4, kneel: 0.4, belly: 0.5, stand: 0.45 };
+/**
+ * How much of the way round to the front each stage has turned (it gets up the way its head lay, and turns to face
+ * forward as it rises), and how much of the way from where it lay to where it stands it has come.
+ */
+const GET_UP_TURNED: Record<GetUp, number> = { front: 0, crawl: 0, kneel: 0.5, belly: 0 };
+/** Where the hips are along the ground, from where it stands, as it gets up on two legs: a little back. */
+const GET_UP_HIPS = -1;
 
 /**
  * A blow being struck or taken, `t` seconds into it: an ordinary strike (a cut, or with a stabbing weapon a
@@ -1838,6 +1858,8 @@ interface Rig {
   long?: boolean;
   /** A weapon in each hand: its heavy strike is both flipped over and jabbed downward, not a sweep. */
   twin?: boolean;
+  /** The stages it goes through getting up (see GetUp), posed by `animate`; without, it eases straight up from how it lay. */
+  getUp?: readonly GetUp[];
 }
 
 // ---------- people ----------
@@ -2544,6 +2566,60 @@ function biped(top: THREE.Group, parts: Part[], elbow = ELBOW) {
     if (a.lying || !heldR.joint.visible) return glow.motes.hide();
     glow.motes.show(a.t, a.act?.kind === "cast" ? a.act.t : -1, placeOf(glow.frame, glow.at, glow.from));
   };
+  /** From the shoulder to the knuckles, and from the hip to a knee on the ground. */
+  const armLength = -fist + 0.7;
+  const kneeling = shank + 0.35;
+  /**
+   * A stage of getting up (see GetUp), its hips GET_UP_HIPS along the ground. Face down: the hands set flat under
+   * the shoulders and the head lifted. On hands and knees: the thighs and arms straight down, the shins along the
+   * ground behind. On one knee: the body upright, the right foot planted before it, a hand on that knee.
+   */
+  const gettingUp = (stage: GetUp) => {
+    const grown = top.scale.y;
+    if (stage === "front") {
+      top.rotation.set(HALF_PI, 0, 0);
+      top.position.set(0, 2.2 * grown, (GET_UP_HIPS - hipY) * grown);
+      thighL.joint.rotation.set(0, 0, 0.08);
+      thighR.joint.rotation.set(0, 0, -0.08);
+      shinL.joint.rotation.x = shinR.joint.rotation.x = 0;
+      footL.joint.rotation.x = footR.joint.rotation.x = 0.9;
+      armL.joint.rotation.set(0.25, 0, 0.55);
+      armR.joint.rotation.set(0.25, 0, -0.55);
+      foreL.joint.rotation.x = foreR.joint.rotation.x = -1.5;
+      head.joint.rotation.x = -0.6;
+      return;
+    }
+    if (stage === "crawl") {
+      // Tipped up from flat so both the hands and the knees reach the ground.
+      const tilt = Math.acos(Math.max(0.15, Math.min(0.95, (armLength - kneeling) / 5.5)));
+      top.rotation.set(tilt, 0, 0);
+      top.position.set(0, (kneeling - hipY * Math.cos(tilt)) * grown, (GET_UP_HIPS - hipY * Math.sin(tilt)) * grown);
+      thighL.joint.rotation.set(-tilt, 0, 0.1);
+      thighR.joint.rotation.set(-tilt, 0, -0.1);
+      shinL.joint.rotation.x = shinR.joint.rotation.x = HALF_PI;
+      footL.joint.rotation.x = footR.joint.rotation.x = 0.4;
+      armL.joint.rotation.set(-tilt, 0, 0.08);
+      armR.joint.rotation.set(-tilt, 0, -0.08);
+      foreL.joint.rotation.x = foreR.joint.rotation.x = -0.1;
+      head.joint.rotation.x = -(HALF_PI - tilt) * 0.5 - 0.3;
+      return;
+    }
+    // On one knee.
+    const forward = 0.15;
+    top.rotation.set(forward, 0, 0);
+    top.position.set(0, (kneeling - hipY) * grown, GET_UP_HIPS * grown);
+    thighL.joint.rotation.set(-forward, 0, 0.08);
+    shinL.joint.rotation.x = HALF_PI;
+    footL.joint.rotation.x = 0.4;
+    thighR.joint.rotation.set(-HALF_PI + 0.1 - forward, 0, -0.12);
+    shinR.joint.rotation.x = HALF_PI - 0.1;
+    footR.joint.rotation.x = -(forward + thighR.joint.rotation.x + shinR.joint.rotation.x);
+    armR.joint.rotation.set(-0.55, 0, -0.2);
+    foreR.joint.rotation.x = -0.7;
+    armL.joint.rotation.set(-0.15, 0, 0.18);
+    foreL.joint.rotation.x = -0.35;
+    head.joint.rotation.x = -0.1;
+  };
   const pose = (a: Anim) => {
     // The waist and the ankles are straight unless a blow bends them (see blow).
     torso.joint.rotation.set(0, 0, 0);
@@ -2558,6 +2634,7 @@ function biped(top: THREE.Group, parts: Part[], elbow = ELBOW) {
     foreR.joint.rotation.x = rest.bendR;
     foreL.joint.rotation.x = rest.bendL;
     foreL.joint.rotation.y = rest.twistL;
+    if (a.getUp) return gettingUp(a.getUp);
 
     if (a.lying) {
       // On their back, the head toward -z, centred on where they stood.
@@ -4840,7 +4917,7 @@ function person(top: THREE.Group, look: Look, outfit: Outfit | undefined, asleep
   // How what is in hand strikes: by the weapon (its own, or the one it is drawn as), its icon, or the stock look's.
   const main = outfit?.main_hand;
   const light = outfit ? (main ? (LIGHT[main.ref] ?? LIGHT[WEAPONS[main.ref]?.looksLike ?? ""] ?? LIGHT[main.icon]) : LIGHT.none) : LIGHT[look.weapon];
-  return { parts, animate: b.animate, hands: [b.heldR.joint, b.heldL.joint], carried: b.carried, loose: b.loose, acts: true, light, plays: b.plays(), twin: b.twin(), fires: b.fires(), long: b.longGun() };
+  return { parts, animate: b.animate, hands: [b.heldR.joint, b.heldL.joint], carried: b.carried, loose: b.loose, acts: true, light, plays: b.plays(), twin: b.twin(), fires: b.fires(), long: b.longGun(), getUp: BIPED_GET_UP };
 }
 
 /** A lute in its own part's frame: the belly at the origin facing +z, the neck up +y. Its icon's model, low-poly. */
@@ -5099,7 +5176,7 @@ function skeleton(top: THREE.Group, drowned?: "cutlass" | "pistol"): Rig {
     w.loft(iron, [[1.2, 0.34, 0.34, 0.2], [5.4, 0.3, 0.3, 0.2], [5.7, 0.42, 0.42, 0.2], [5.9, 0.42, 0.42, 0.2]], 8);
     w.loft(wood, [[1.1, 0.4, 0.4, 0.2], [3.8, 0.36, 0.36, 0.2]], 6);
     apply(b, { tilt: 0.55 });
-    return { parts, animate: b.animate, acts: true };
+    return { parts, animate: b.animate, acts: true, getUp: BIPED_GET_UP };
   }
   // A rusted cutlass: a wrapped grip, a knuckle guard, and a broad blade curving forward to its point.
   w.loft(wood, [[-0.7, 0.36, 0.36], [1.1, 0.42, 0.42]], 6);
@@ -5108,7 +5185,7 @@ function skeleton(top: THREE.Group, drowned?: "cutlass" | "pistol"): Rig {
   w.shape(rust, sym([[0.5, 1.5, 0.14], [0.5, 1.5, -0.14], [0.6, 6.3, 0.32], [0.6, 6.3, 0.02]]));
   w.shape(rust, [...sym([[0.6, 6.1, 0.32], [0.6, 6.1, 0.02], [0.42, 8, 0.82], [0.42, 8, 0.52]]), [0, 9.05, 1.35], [0, 9, 1.08]]);
   apply(b, { tilt: 0.55 });
-  return { parts, animate: b.animate, acts: true };
+  return { parts, animate: b.animate, acts: true, getUp: BIPED_GET_UP };
 }
 
 // ---------- giants ----------
@@ -5131,7 +5208,7 @@ function giant(top: THREE.Group, parts: Part[], measures: Measures, grow: number
 function stooped(b: Biped, lean: number, reach: number): (a: Anim) => void {
   return (a) => {
     b.animate(a);
-    if (a.lying) {
+    if (a.lying || a.getUp) {
       b.torso.joint.rotation.x = 0;
       return;
     }
@@ -5226,7 +5303,7 @@ function ogre(top: THREE.Group): Rig {
   b.rest.bendR = -0.8;
   b.rest.tiltR = 0.75;
   b.rest.armL = -0.15;
-  return { parts, animate: stooped(b, 0.18, 0.05), acts: true };
+  return { parts, animate: stooped(b, 0.18, 0.05), acts: true, getUp: BIPED_GET_UP };
 }
 
 /**
@@ -5286,7 +5363,7 @@ function troll(top: THREE.Group): Rig {
   }
   b.rest.armR = -0.1;
   b.rest.armL = -0.1;
-  return { parts, animate: stooped(b, 0.42, 0.1), acts: true };
+  return { parts, animate: stooped(b, 0.42, 0.1), acts: true, getUp: BIPED_GET_UP };
 }
 
 // ---------- creatures ----------
@@ -5343,6 +5420,18 @@ function spot(part: Part, color: string, rx: number, ry: number, depth: number, 
  */
 function fourLegs(top: THREE.Group, legs: Part[], head: Part, tail: Part | null, across: number, tall: number, stoop = 0) {
   return (a: Anim) => {
+    if (a.getUp) {
+      // On its belly, the forelegs out in front and the hind legs tucked forward beside it, the head up.
+      top.rotation.set(0, 0, 0);
+      top.position.set(0, 1.4 - legs[0].joint.position.y, 0);
+      for (const leg of legs) {
+        const fore = leg.joint.position.z > 0;
+        leg.joint.rotation.set(fore ? -HALF_PI : -HALF_PI * 0.85, 0, fore ? 0 : Math.sign(leg.joint.position.x) * 0.35);
+      }
+      head.joint.rotation.set(stoop * 0.5 - 0.15, 0, 0);
+      if (tail) tail.joint.rotation.y = 0;
+      return;
+    }
     if (a.lying) {
       // On its side.
       top.rotation.set(0, 0, HALF_PI);
@@ -5412,7 +5501,7 @@ function wolf(top: THREE.Group, fur = "#7d8793", dark = "#59616c", eye = "#ffd23
     leg.shape(tone(dark, -0.06), sym([[0.72, -4.6, -0.55], [0.82, -4.6, 0.7], [0.5, -4.6, 1.35], [0, -4.6, 1.5], [0.58, -3.7, -0.5], [0.58, -3.8, 0.4], [0, -4, 1.2]]));
     return leg;
   });
-  return { parts, animate: fourLegs(top, legs, head, tail, 2.6, 9, 0.3) };
+  return { parts, animate: fourLegs(top, legs, head, tail, 2.6, 9, 0.3), getUp: BEAST_GET_UP };
 }
 
 /**
@@ -5447,7 +5536,7 @@ function bear(top: THREE.Group, fur = "#7a5232", dark = "#4f3420", muzzle = "#b9
     for (const cx of [-0.8, 0, 0.8]) leg.shape(GEAR.paper, [[cx - 0.25, -4.8, 1.55], [cx + 0.25, -4.8, 1.55], [cx, -4.25, 1.6], [cx, -4.75, 2.55]]);
     return leg;
   });
-  return { parts, animate: fourLegs(top, legs, head, null, 3.6, 12) };
+  return { parts, animate: fourLegs(top, legs, head, null, 3.6, 12), getUp: BEAST_GET_UP };
 }
 
 /**
@@ -5755,13 +5844,27 @@ const RAG_RATE = 120;
 const RAG_ROUNDS = 6;
 /** How much of its sideways speed a corner on the ground keeps each step: the ground grips. */
 const RAG_GRIP = 0.55;
-/** How hard a joint holds the angle it had at the moment of death, per round: a little, so limbs flop but do not fold flat. */
-const RAG_TONE = 0.06;
+/**
+ * How hard a joint holds the angle it had at the moment of death, per round: a little, so limbs flop but do not fold
+ * flat. Held harder, a beast fallen on its side kept its legs out stiff, and from above it looked to be standing.
+ */
+const RAG_TONE = 0.01;
 /** How long a body may go on settling, and how still it must be (units a step) for long enough to call it settled. */
 const RAG_MAX = 4;
 const RAG_STILL = 0.004;
 /** How fast the blow that fells it knocks its head away (units a second): enough to topple it over its feet. */
 const RAG_PUSH = 40;
+/**
+ * Turning a body over onto its side or back as it falls: how hard (radians a second squared) and how fast at most
+ * (radians a second). Its pieces are boxes, and a box stays put on any flat face: an ogre sat on the bottom of its
+ * body, and a bear stood on its four legs with only its head drooping. What carries the rest is turned till it
+ * lies down, and held there, from rolling on over (a bear onto its back) or back up onto its legs (a wolf), for as
+ * long as it goes on settling.
+ */
+const RAG_TOPPLE = 30;
+const RAG_TOPPLE_SPEED = 3;
+/** Lying, as far as that turning goes: the edge of it that stood upright now this near level (the sine of its slope). */
+const RAG_LAID_DOWN = 0.2;
 /** No piece of it moves faster than this (units a second), whatever the pushing apart of pieces caught in each other asks. */
 const RAG_FASTEST = 90;
 /** Getting up off the ground, in seconds: the arms and legs are drawn in first, and the body rises after them. */
@@ -5889,6 +5992,36 @@ function ragdoll(top: THREE.Group, parts: Part[], push: THREE.Vector3): Ragdoll 
   // The joint particle is carried on its own box too.
   for (const p of pieces) for (let i = 0; i < 8; i++) stick(p.corners[8], p.corners[i]);
 
+  // What carries the rest is turned over till the edge of its box that stood upright lies along the ground: a body
+  // onto its back or its front, a beast onto its side. It rolls about its longest edge along the ground (across
+  // the shoulders, a beast's length), the way the blow knocks it, and either way for a blow head on to that; one
+  // no wider one way than the other (a post) falls the way it was knocked. One squat already (a slime, a turtle)
+  // is left be.
+  const edgeAt = (p: ArrayLike<number>, k: number, out: THREE.Vector3) => {
+    const a = main.corners[0];
+    const b = main.corners[k];
+    return out.set(p[b * 3] - p[a * 3], p[b * 3 + 1] - p[a * 3 + 1], p[b * 3 + 2] - p[a * 3 + 2]);
+  };
+  const edges = [1, 2, 4].map((k) => {
+    const v = edgeAt(pos, k, new THREE.Vector3());
+    return { k, length: v.length(), dir: v.normalize() };
+  });
+  const upright = edges.reduce((a, b) => (Math.abs(b.dir.y) > Math.abs(a.dir.y) ? b : a));
+  const [e1, e2] = edges.filter((e) => e !== upright);
+  const along = new THREE.Vector3(push.x, 0, push.z).normalize();
+  // The way the top of it goes: across its long edge, to the side the blow knocks it.
+  const fallTo = new THREE.Vector3();
+  if (Math.max(e1.length, e2.length) < Math.min(e1.length, e2.length) * 1.25) fallTo.copy(along);
+  else {
+    const long = e1.length > e2.length ? e1 : e2;
+    fallTo.set(long.dir.x, 0, long.dir.z).cross(_ry.set(0, 1, 0)).normalize();
+    const knocked = fallTo.dot(along);
+    if (knocked < 0 || (Math.abs(knocked) < 0.2 && Math.random() < 0.5)) fallTo.negate();
+  }
+  const toppling = upright.length >= Math.min(e1.length, e2.length) * 0.9 && Math.abs(upright.dir.y) > RAG_LAID_DOWN;
+  // Turning about this, the top of it goes toward `fallTo`.
+  const axis = new THREE.Vector3().crossVectors(_ry.set(0, 1, 0), fallTo).normalize();
+  const mid = new THREE.Vector3();
   const n = pos.length / 3;
   // Nothing starts under the ground (a foot drawn a little into it, or one already lying), or it would be thrown out of it.
   let low = 0;
@@ -5898,11 +6031,13 @@ function ragdoll(top: THREE.Group, parts: Part[], push: THREE.Vector3): Ragdoll 
   const was = new Float32Array(pos);
   // Knocked away from the blow, the higher the harder, so it topples over its feet; and a little up.
   const h = 1 / RAG_RATE;
+  // Turned over, it is knocked the way it turns, or the two together lay it on an edge (a post on its crosspiece).
+  const kick = toppling ? fallTo.clone().multiplyScalar(push.length()) : push;
   for (let i = 0; i < n; i++) {
     const lift = Math.max(0, now[i * 3 + 1]) / FRAME;
-    was[i * 3] -= push.x * lift * h;
+    was[i * 3] -= kick.x * lift * h;
     was[i * 3 + 1] -= 6 * lift * h;
-    was[i * 3 + 2] -= push.z * lift * h;
+    was[i * 3 + 2] -= kick.z * lift * h;
   }
   const order = [...pieces].sort((a, b) => a.depth - b.depth);
   // Where the main joint is in the top's space, and how it is turned there (undone): the top is carried by it.
@@ -5926,6 +6061,36 @@ function ragdoll(top: THREE.Group, parts: Part[], push: THREE.Vector3): Ragdoll 
         now[j] += v;
       }
       now[i * 3 + 1] -= RAG_GRAVITY * h * h;
+    }
+    // Turning it over: the whole of it pushed round its middle, as one piece, till what carries the rest lies, and
+    // then slowed to a stop there. How fast it turns now is read off how all of it moves round the middle.
+    if (toppling) {
+      mid.set(0, 0, 0);
+      for (let i = 0; i < n; i++) (mid.x += now[i * 3]), (mid.y += now[i * 3 + 1]), (mid.z += now[i * 3 + 2]);
+      mid.divideScalar(n);
+      let spin = 0;
+      let reach = 0;
+      for (let i = 0; i < n; i++) {
+        _rx.set(now[i * 3] - mid.x, now[i * 3 + 1] - mid.y, now[i * 3 + 2] - mid.z);
+        _rx.addScaledVector(axis, -_rx.dot(axis));
+        _ry.set(now[i * 3] - was[i * 3], now[i * 3 + 1] - was[i * 3 + 1], now[i * 3 + 2] - was[i * 3 + 2]);
+        spin += _rz.crossVectors(_rx, _ry).dot(axis);
+        reach += _rx.lengthSq();
+      }
+      spin /= h * (reach || 1);
+      const lying = Math.abs(edgeAt(now, upright.k, _rv).normalize().y) <= RAG_LAID_DOWN;
+      const want = lying ? 0 : RAG_TOPPLE_SPEED;
+      const more = Math.max(-RAG_TOPPLE * h, Math.min(RAG_TOPPLE * h, want - spin));
+      // Only ever toward lying: never slowed while it is still getting there, nor turned back once it is past.
+      if (lying ? more < 0 && spin > 0 : more > 0) {
+        for (let i = 0; i < n; i++) {
+          _rx.set(now[i * 3] - mid.x, now[i * 3 + 1] - mid.y, now[i * 3 + 2] - mid.z);
+          _rz.crossVectors(axis, _rx).multiplyScalar(more * h);
+          now[i * 3] += _rz.x;
+          now[i * 3 + 1] += _rz.y;
+          now[i * 3 + 2] += _rz.z;
+        }
+      }
     }
     for (let round = 0; round < RAG_ROUNDS; round++) {
       for (const [a, b, length, stiff] of sticks) {
@@ -6176,13 +6341,45 @@ export function makeFigure(kind: string, look: Look, outfit?: Outfit, opts: Figu
   let fallen: { doll: Ragdoll; moving: boolean } | null = null;
   /** Lying the frame before, to see it get up. */
   let wasLying = false;
+  /** A pose: every joint's turn (the top first), and where the top is. */
+  type Held = { turns: THREE.Quaternion[]; place: THREE.Vector3 };
   /**
-   * Getting up: every joint (and the top: turn and place) as it lay, eased over to the pose the rig gives each frame,
-   * from `at` on the render clock.
+   * Getting up, from `at` on the render clock: from how it lay, through each of the rig's stages of getting up (see
+   * GetUp), to the pose the rig gives each frame; a rig with none eases straight there. `posed` is that last pose
+   * as the rig gave it the frame before, put back before the rig poses it again: a rig sets only some of a joint's
+   * turn (a leg swung forward and back), and would otherwise build on the blend, keeping the twist of how the body
+   * lay (legs crossed when it stood).
    */
-  let rising: { at: number; turns: [THREE.Object3D, THREE.Quaternion][]; place: THREE.Vector3 } | null = null;
+  let rising: { at: number; from: Held; stages: Held[]; posed: Held } | null = null;
   const risers: THREE.Object3D[] = [top, ...allParts.map((part) => part.joint)];
   const ease = (k: number) => (k <= 0 ? 0 : k >= 1 ? 1 : k * k * (3 - 2 * k));
+  const hold = (): Held => ({ turns: risers.map((o) => o.quaternion.clone()), place: top.position.clone() });
+  const put = (pose: Held) => {
+    risers.forEach((o, i) => o.quaternion.copy(pose.turns[i]));
+    top.position.copy(pose.place);
+  };
+  /**
+   * Lay the stages of getting up (posed facing forward, where it stands) along the ground the way the body lies,
+   * from where it lies: the first turned about upright so its head points the way the head lay, and getting into it
+   * is a roll about the length of the body (not a somersault up through standing and over onto the face). Each stage
+   * after turns and comes back to where it stands by its share (see GET_UP_TURNED), and the last of them up onto
+   * the feet the rest of the way.
+   */
+  const turnToLie = (from: Held, stages: Held[]) => {
+    const upright = new THREE.Vector3(0, 1, 0);
+    const turn = new THREE.Quaternion();
+    // Which way the head is, in the body's own frame: what points ahead along the ground in the first stage.
+    const headward = new THREE.Vector3(0, 0, 1).applyQuaternion(stages[0].turns[0].clone().invert());
+    const lay = headward.applyQuaternion(from.turns[0]);
+    const best = Math.hypot(lay.x, lay.z) > 0.2 ? Math.atan2(lay.x, lay.z) : 0;
+    const shift = from.place.clone().sub(stages[0].place.clone().applyAxisAngle(upright, best));
+    shift.y = 0;
+    rig.getUp!.forEach((stage, i) => {
+      const left = 1 - GET_UP_TURNED[stage];
+      stages[i].turns[0].premultiply(turn.setFromAxisAngle(upright, best * left));
+      stages[i].place.applyAxisAngle(upright, best * left).addScaledVector(shift, left);
+    });
+  };
   const update = (p: FigurePose) => {
     const first = last < 0;
     const dt = last < 0 ? 1 : Math.min(0.1, Math.max(0, p.time - last));
@@ -6193,7 +6390,7 @@ export function makeFigure(kind: string, look: Look, outfit?: Outfit, opts: Figu
     const want = p.walking ? Math.sin(p.stride * 3.6) : 0;
     swing += (want - swing) * Math.min(1, dt * 20);
     const rowing = p.rowing !== undefined && !!rig.hands && !p.lying;
-    const anim: Anim = { t: p.time, swing, breath: Math.sin(p.time * 2.2 + beat), strike: Math.min(1, Math.abs(p.lean) * 2), act: action && rig.acts ? { kind: action.kind, t: since, n: action.n, air: action.air } : null, scale: 1 / scaler.scale.x, lying: p.lying, sitting: rowing ? 1 : typeof p.sitting === "number" ? Math.max(0, Math.min(1, p.sitting)) : p.sitting ? 1 : 0, oars: rowing ? Math.max(0, Math.min(1, p.rowing!)) : -1 };
+    const anim: Anim = { t: p.time, swing, breath: Math.sin(p.time * 2.2 + beat), strike: Math.min(1, Math.abs(p.lean) * 2), act: action && rig.acts ? { kind: action.kind, t: since, n: action.n, air: action.air } : null, scale: 1 / scaler.scale.x, lying: p.lying, sitting: rowing ? 1 : typeof p.sitting === "number" ? Math.max(0, Math.min(1, p.sitting)) : p.sitting ? 1 : 0, oars: rowing ? Math.max(0, Math.min(1, p.rowing!)) : -1, getUp: null };
     // A rig with no animations of its own is leant into a blow, and a little into a hit, easing off as it always has.
     if (action && !rig.acts) anim.strike = Math.max(anim.strike, Math.min(1, (action.kind === "hit" ? 0.5 : 1.8) * Math.exp(-8 * since)));
     if (sling) stow(sling, p.walking, Math.max(anim.strike, anim.act && anim.act.kind !== "hit" ? 1 : 0), dt);
@@ -6204,7 +6401,21 @@ export function makeFigure(kind: string, look: Look, outfit?: Outfit, opts: Figu
       for (const thing of rig.carried ?? []) thing.visible = !rowing;
     }
     // Up off the ground (from a fall, or from lying down): it gets up from how it lay, not all at once.
-    if (wasLying && !p.lying && !first) rising = { at: p.time, turns: risers.map((o) => [o, o.quaternion.clone()]), place: top.position.clone() };
+    if (wasLying && !p.lying && !first) {
+      const from = hold();
+      if (fallen) {
+        fallen.doll.restore();
+        fallen = null;
+      }
+      const posed = hold();
+      const stages = (rig.getUp ?? []).map((stage) => {
+        rig.animate({ ...anim, act: null, strike: 0, swing: 0, getUp: stage });
+        return hold();
+      });
+      if (stages.length > 0) turnToLie(from, stages);
+      put(posed);
+      rising = { at: p.time, from, stages, posed };
+    }
     if (p.lying) rising = null;
     wasLying = p.lying;
     if (fallen && !p.lying) {
@@ -6213,14 +6424,34 @@ export function makeFigure(kind: string, look: Look, outfit?: Outfit, opts: Figu
     }
     if (fallen) {
       if (fallen.moving) fallen.moving = fallen.doll.step(first ? 0 : dt);
-    } else rig.animate(anim);
+    } else {
+      if (rising) put(rising.posed);
+      rig.animate(anim);
+    }
     if (rising) {
+      risers.forEach((o, i) => rising!.posed.turns[i].copy(o.quaternion));
+      rising.posed.place.copy(top.position);
       const since = p.time - rising.at;
-      const limbs = ease(since / RISE_LIMBS);
-      const rise = ease((since - RISE_BODY_FROM) / RISE_BODY);
-      for (const [o, from] of rising.turns) o.quaternion.slerpQuaternions(from, _rq.copy(o.quaternion), o === top ? rise : limbs);
-      top.position.lerpVectors(rising.place, _rv.copy(top.position), rise);
-      if (since >= RISE_BODY_FROM + RISE_BODY) rising = null;
+      if (rising.stages.length === 0) {
+        // Arms and legs drawn in first, the body rising after them.
+        const limbs = ease(since / RISE_LIMBS);
+        const rise = ease((since - RISE_BODY_FROM) / RISE_BODY);
+        risers.forEach((o, i) => o.quaternion.slerpQuaternions(rising!.from.turns[i], _rq.copy(o.quaternion), o === top ? rise : limbs));
+        top.position.lerpVectors(rising.from.place, _rv.copy(top.position), rise);
+        if (since >= RISE_BODY_FROM + RISE_BODY) rising = null;
+      } else {
+        // From one stage to the next, and from the last up onto the feet.
+        const times = [...rig.getUp!.map((stage) => GET_UP_TIME[stage]), GET_UP_TIME.stand];
+        let stage = 0;
+        let into = since;
+        while (stage < times.length - 1 && into >= times[stage]) into -= times[stage++];
+        const k = ease(into / times[stage]);
+        const was = stage === 0 ? rising.from : rising.stages[stage - 1];
+        const next = stage < rising.stages.length ? rising.stages[stage] : null;
+        risers.forEach((o, i) => o.quaternion.slerpQuaternions(was.turns[i], next ? next.turns[i] : _rq.copy(o.quaternion), k));
+        top.position.lerpVectors(was.place, next ? next.place : _rv.copy(top.position), k);
+        if (stage === times.length - 1 && into >= times[stage]) rising = null;
+      }
     }
     if (swinging.length > 0) swingBraids(swinging, anim);
     if (loose.length > 0) swingDangles(loose, first ? 0 : dt, top, body);
