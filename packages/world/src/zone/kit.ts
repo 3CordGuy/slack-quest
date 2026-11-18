@@ -45,13 +45,21 @@ export interface Tactic {
   ignites?: boolean;
   /** Extra damage against something Wet. */
   vsWet?: number;
+  /** Line: strikes only the other side (Blasting Tone). */
+  foesOnly?: boolean;
+  /** Self: heals the user and every ally within `range` of them, as much as the ability heals (Soothing Tone). */
+  soothe?: { range: number };
+  /** Ally: every other ally beside the target heals this much too, scaled as a heal is (Clarion Call). */
+  ripple?: number;
+  /** With `knockback`: the target saves (Strength) against being knocked back (Peal). */
+  knockSave?: boolean;
   /** Single: no blow, but the enemy saves or is held for these turns: Slowed, or Stunned if it stands in water (Binding Kelp). */
   bind?: { slowed: number; stunned: number };
   /** Ally: takes every harmful condition off them (Restore). */
   cleanse?: boolean;
   /** Extra damage when the roll to hit had advantage (Stab). */
   edge?: number;
-  /** Leaves the user Inspired, their next roll to hit with advantage, through this many of their turns after this one (Take Aim). */
+  /** Leaves the target (the user, for a self ability) Inspired, their next roll to hit with advantage, for this many of their turns (Take Aim, Second Wind). */
   steady?: number;
   /** Single: landed, drags the target this many hexes straight toward the user, as far as the way is open (Reel In). */
   pull?: number;
@@ -336,9 +344,11 @@ export const TACTICS: Record<string, Tactic> = {
   turtle_bite: melee({ wading: 4 }),
   // Bard
   dissonance: spell(5),
-  encore: mend(5),
-  cacophony: spell(0, { shape: "burst", radius: 2, cooldown: 2 }),
-  all_hands: mend(5, { cost: "bonus", cooldown: 2 }),
+  encore: mend(5, { cost: "bonus", steady: 2 }),
+  blasting_tone: spell(4, { shape: "line", length: 4, foesOnly: true }),
+  soothing_tone: { cost: "action", reach: "spell", range: 0, shape: "self", cooldown: 1, soothe: { range: 2 } },
+  peal: spell(4, { knockback: 1, knockSave: true }),
+  clarion_call: mend(5, { cooldown: 1, ripple: 6 }),
   // Bard class abilities
   lively_shanty: { ...guard(), cooldown: 4, shanty: "lively_shanty" },
   dour_shanty: { ...guard(), cooldown: 4, shanty: "dour_shanty" },
@@ -443,7 +453,7 @@ export const SAVE_STAT: Record<Condition, StatKey> = {
   drowning_curse: "vit",
   black_spot: "int_stat",
   red_sky: "int_stat",
-  winds_blessing: "agi",
+  tailwind: "agi",
 };
 
 const info = (kind: EffectKind, blurb: string) => ({ name: EFFECT_INFO[kind].name, color: EFFECT_INFO[kind].color, blurb });
@@ -481,7 +491,7 @@ export const CONDITION_INFO: Record<Condition, { name: string; blurb: string; co
   drowning: { name: "Drowning", blurb: `Loses ${DROWNING.tick} HP a stack at the start of each of its turns, then must hold its breath (harder for every stack) or lose its Action. A new stack keeps them all going ${DROWNING.rounds} more turns.`, color: "#2fa4c9" },
   drowning_curse: { name: "Curse of Drowning", blurb: "Takes a stack of Drowning each time it starts or ends a turn standing in water.", color: "#1f7fa0" },
   black_spot: { name: "The Black Spot", blurb: "Its attacks are rolled with disadvantage, and it takes a stack of Drowning at the end of each of its turns. If it falls with the Spot still on it, the Spot passes to the nearest of its side.", color: "#7a6a8f" },
-  winds_blessing: { name: "Wind's Blessing", blurb: "The wind at its back: more movement on its next turn.", color: "#bfe8ff" },
+  tailwind: { name: "Tailwind", blurb: "The wind at its back: more movement on its next turn.", color: "#bfe8ff" },
   red_sky: { name: "Red Sky at Morning", blurb: "A bad omen: its attacks are rolled with disadvantage.", color: "#e2483d" },
 };
 

@@ -4075,7 +4075,7 @@ describe("Mage weapons", () => {
     const move = state.encounter!.budgets.ann.move;
     state = must(state, { type: "use", by: "ann", unit: "ann", ability: "winds_blessing", target: "ann" });
     expect(state.encounter!.budgets.ann).toMatchObject({ action: true, bonus: false, move: move + 2 });
-    expect(unit(state, "ann").conditions.some((c) => c.kind === "winds_blessing")).toBe(false);
+    expect(unit(state, "ann").conditions.some((c) => c.kind === "tailwind")).toBe(false);
 
     // An ally whose turn is over carries it to their next.
     state = board();
@@ -4087,7 +4087,7 @@ describe("Mage weapons", () => {
     while (!state.encounter!.acting.includes("ann") || state.encounter!.done.includes("ann")) state = must(state, { type: "timeout" });
     if (state.encounter!.acting.includes("bo") && !state.encounter!.done.includes("bo")) state = must(state, { type: "end_turn", by: "bo", unit: "bo" });
     state = must(state, { type: "use", by: "ann", unit: "ann", ability: "winds_blessing", target: "bo" });
-    expect(unit(state, "bo").conditions.find((c) => c.kind === "winds_blessing")?.amount).toBe(2);
+    expect(unit(state, "bo").conditions.find((c) => c.kind === "tailwind")?.amount).toBe(2);
     state = must(state, { type: "end_turn", by: "ann", unit: "ann" });
     while (!state.encounter!.acting.includes("bo") || state.encounter!.done.includes("bo")) state = must(state, { type: "timeout" });
     const budget = state.encounter!.budgets.bo;
@@ -4270,5 +4270,134 @@ describe("Druid weapons", () => {
     expect(state.encounter!.budgets.ann).toMatchObject({ action: true, bonus: false });
     state = must(state, { type: "end_turn", by: "ann", unit: "ann" });
     expect(fails(state, { type: "use", by: "ann", unit: "ann", ability: "restore", target: "ann" })).toMatch(/not ready/);
+  });
+});
+
+describe("Bard weapons", () => {
+  /** The action tried on fresh seeds until it hits `target`: the state after, and what it said. */
+  const untilHit = (state: ZoneState, action: ZoneAction, target: string) => {
+    for (let seed = 1; seed < 80; seed++) {
+      const tryState = structuredClone(state);
+      tryState.rng = seed;
+      const events: ZoneEvent[] = [];
+      const next = must(tryState, action, events);
+      if (events.some((e) => e.t === "hit" && e.target === target)) return { state: next, events };
+    }
+    throw new Error("never landed");
+  };
+
+  it("gives each weapon two abilities, only the Pipe's Soothing Tone and the Bell's Clarion Call on a cooldown", () => {
+    expect(WEAPONS.lute.abilities).toEqual(["dissonance", "encore"]);
+    expect(WEAPONS.flute.abilities).toEqual(["blasting_tone", "soothing_tone"]);
+    expect(WEAPONS.ships_bell.abilities).toEqual(["peal", "clarion_call"]);
+    for (const id of ["dissonance", "encore", "blasting_tone", "peal"]) expect(tacticOf(id).cooldown, id).toBeUndefined();
+    expect(tacticOf("soothing_tone").cooldown).toBe(1);
+    expect(tacticOf("clarion_call").cooldown).toBe(1);
+    expect(tacticOf("encore").cost).toBe("bonus");
+    for (const id of ["dissonance", "blasting_tone", "soothing_tone", "peal", "clarion_call"]) expect(tacticOf(id).cost, id).toBe("action");
+  });
+
+  it("Dissonance: a hit leaves the target Fumbling, with no save, and its next attack is rolled with disadvantage", () => {
+    const { state, foe } = duel("dummy", "frontend_bard", at(5, 6), at(9, 6));
+    unit(state, "ann").abilities = ["dissonance"];
+    const after = untilHit(state, { type: "use", by: "ann", unit: "ann", ability: "dissonance", target: foe }, foe);
+    expect(unit(after.state, foe).conditions.some((c) => c.kind === "glitched")).toBe(true);
+    expect(unit(after.state, foe).conditions.some((c) => c.kind === "stunned")).toBe(false);
+    expect(after.events.some((e) => e.t === "roll" && e.roll.kind === "save")).toBe(false);
+    expect(attackContext(after.state, unit(after.state, foe), unit(after.state, "ann"), { melee: false }).adv).toBe(-1);
+  });
+
+  it("Second Wind: a Bonus action that heals a little and leaves the target's next roll to hit with advantage", () => {
+    let { state, foe } = duel("dummy", "frontend_bard", at(5, 6), at(9, 6));
+    hero(state, "bo", "qa_paladin", at(5, 7));
+    unit(state, "ann").abilities = ["encore", "bow_shot"];
+    unit(state, "ann").hp = 5;
+    unit(state, "bo").hp = 5;
+    const move = state.encounter!.budgets.ann.move;
+    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "encore", target: "ann" });
+    expect(unit(state, "ann").hp).toBeGreaterThan(5);
+    expect(state.encounter!.budgets.ann).toMatchObject({ action: true, bonus: false, move });
+    expect(unit(state, "ann").conditions.some((c) => c.kind === "inspired")).toBe(true);
+    expect(attackContext(state, unit(state, "ann"), unit(state, foe), { melee: false }).adv).toBe(1);
+    expect(unit(state, "ann").conditions.some((c) => c.kind === "tailwind" || c.kind === "hasted")).toBe(false);
+  });
+
+  it("Second Wind on an ally: they are healed and Inspired, and it is still there on their own turn", () => {
+    let { state } = duel("dummy", "frontend_bard", at(5, 6), at(9, 6));
+    hero(state, "bo", "qa_paladin", at(5, 7));
+    unit(state, "ann").abilities = ["encore"];
+    unit(state, "bo").hp = 5;
+    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "encore", target: "bo" });
+    expect(unit(state, "bo").hp).toBeGreaterThan(5);
+    expect(unit(state, "bo").conditions.some((c) => c.kind === "inspired")).toBe(true);
+    state = must(state, { type: "end_turn", by: "ann", unit: "ann" });
+    while (!state.encounter!.acting.includes("ann") || state.encounter!.done.includes("ann")) state = must(state, { type: "timeout" });
+    expect(unit(state, "bo").conditions.some((c) => c.kind === "inspired")).toBe(true);
+  });
+
+  it("Blasting Tone: a line of 4 hexes that strikes the enemies on it and spares an ally", () => {
+    const { state, foe } = duel("dummy", "frontend_bard", at(5, 6), at(8, 6));
+    hero(state, "bo", "qa_paladin", at(7, 6));
+    unit(state, "ann").abilities = ["blasting_tone"];
+    expect(abilityArea(state, unit(state, "ann"), "blasting_tone", at(12, 6))).toHaveLength(4);
+    const bo = unit(state, "bo").hp;
+    const events: ZoneEvent[] = [];
+    const next = must(state, { type: "use", by: "ann", unit: "ann", ability: "blasting_tone", at: at(12, 6) }, events);
+    expect(events.some((e) => e.t === "hit" && e.target === foe)).toBe(true);
+    expect(unit(next, "bo").hp).toBe(bo);
+  });
+
+  it("Soothing Tone: heals you and every ally within 2 hexes, not one further off, then waits a turn", () => {
+    let { state } = duel("dummy", "frontend_bard", at(5, 6), at(11, 6));
+    hero(state, "bo", "qa_paladin", at(8, 6));
+    hero(state, "cy", "refactor_rogue", at(9, 6));
+    unit(state, "ann").abilities = ["soothing_tone"];
+    for (const id of ["ann", "bo", "cy"]) unit(state, id).hp = 1;
+    // ann is at (6, 6): bo is 2 off, cy is 3.
+    expect(hexDistance(unit(state, "ann").pos, unit(state, "bo").pos)).toBe(2);
+    expect(hexDistance(unit(state, "ann").pos, unit(state, "cy").pos)).toBe(3);
+    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "soothing_tone" });
+    expect(unit(state, "ann").hp).toBeGreaterThan(1);
+    expect(unit(state, "bo").hp).toBeGreaterThan(1);
+    expect(unit(state, "cy").hp).toBe(1);
+    state = must(state, { type: "end_turn", by: "ann", unit: "ann" });
+    expect(fails(state, { type: "use", by: "ann", unit: "ann", ability: "soothing_tone" })).toMatch(/not ready/);
+  });
+
+  it("Peal: a hit pushes the target 1 hex back unless it saves", () => {
+    const { state, foe } = duel("dummy", "frontend_bard", at(5, 6), at(9, 6));
+    unit(state, "ann").abilities = ["peal"];
+    const from = hexDistance(unit(state, "ann").pos, unit(state, foe).pos);
+    let pushed = false;
+    let held = false;
+    for (let seed = 1; seed < 120 && !(pushed && held); seed++) {
+      const tryState = structuredClone(state);
+      tryState.rng = seed;
+      const events: ZoneEvent[] = [];
+      const next = must(tryState, { type: "use", by: "ann", unit: "ann", ability: "peal", target: foe }, events);
+      if (!events.some((e) => e.t === "hit" && e.target === foe)) continue;
+      const save = events.find((e) => e.t === "roll" && e.roll.kind === "save");
+      expect(save).toBeDefined();
+      const now = hexDistance(unit(next, "ann").pos, unit(next, foe).pos);
+      if (save?.t === "roll" && save.roll.ok) { expect(now).toBe(from); held = true; }
+      else { expect(now).toBe(from + 1); pushed = true; }
+    }
+    expect(pushed && held).toBe(true);
+  });
+
+  it("Clarion Call: a big heal on the target, and a lesser one on every ally beside it, but none further off", () => {
+    const { state } = duel("dummy", "frontend_bard", at(5, 6), at(11, 6));
+    hero(state, "bo", "qa_paladin", at(8, 6));
+    hero(state, "cy", "refactor_rogue", at(9, 6));
+    hero(state, "di", "devops_mage", at(7, 9));
+    unit(state, "ann").abilities = ["clarion_call"];
+    for (const id of ["ann", "bo", "cy", "di"]) unit(state, id).hp = 1;
+    const events: ZoneEvent[] = [];
+    const next = must(state, { type: "use", by: "ann", unit: "ann", ability: "clarion_call", target: "bo" }, events);
+    const healed = events.flatMap((e) => (e.t === "heal" ? [e.target] : [])).sort();
+    expect(healed).toEqual(["bo", "cy"]);
+    expect(unit(next, "bo").hp).toBeGreaterThan(unit(state, "bo").hp);
+    expect(unit(next, "di").hp).toBe(1);
+    expect(unit(next, "ann").hp).toBe(1);
   });
 });

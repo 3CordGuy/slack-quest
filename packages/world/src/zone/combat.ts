@@ -12,7 +12,7 @@ import { DEBUFFS, addCondition, addShield, attackContext, attackRoll, damage, de
 import { cratesOn, crateById, hurtCrate, isCrateId } from "./crates";
 import { HEX_DIRS, adjacent, blast, blockerAt, courseShare, directionToward, elevOf, inFight, lineFrom, pathIn, sameHex, sees, seesFor, solid, stepCost, unitAt, unitById, zoneReach, type Course } from "./geometry";
 import { CHART, COMMON_ACTIONS, CORAL_ARMOR, SHANTY, SUMMON_CALLS, ENEMY_BURST, FLEE_RANGE, JUMP_MOVE_COST, POTION_EDGE, SAVE_STAT, SMUGGLED, THROWABLES, TORCH_GROUND_ROUNDS, abilityDice, enemyStrikes, healDice, jumpRange, reactionStrike, tacticOf, throwRange, type EnemyStrike, type Tactic } from "./kit";
-import { d20, hitChance, mod, proficiency, rollDice, statOf } from "./rules";
+import { d20, diceFor, hitChance, mod, proficiency, rollDice, statOf } from "./rules";
 import { seenByHeroes } from "./light";
 import { HINDERING, chill, clearSurfaces, dropTorch, enterSurface, ignite, letGoTorch, placeSurface } from "./surfaces";
 import type { Budget, CommonAction, Throwable, Unit, ZoneState } from "./types";
@@ -598,7 +598,10 @@ export function resolveAbility(ctx: Ctx, unit: Unit, ability: string, aim: Aim &
       afflict(ctx, unit, def, target, false);
       landed = true;
     } else landed = strike(ctx, unit, def, tactic, target, aim);
-    for (let k = 0; landed && k < (tactic.knockback ?? 0) && !target.down; k++) push(ctx, unit.pos, target, unit.id);
+    // Knocked back unless it saves (Peal), or at once (Roar of Thunder).
+    let shoved = landed && !!tactic.knockback && !target.down;
+    if (shoved && tactic.knockSave) shoved = !saveRoll(ctx, target, "str", saveDc(unit, def), `Resist ${def.name}`).ok;
+    for (let k = 0; shoved && k < (tactic.knockback ?? 0) && !target.down; k++) push(ctx, unit.pos, target, unit.id);
     if (landed && tactic.pull && !target.down) pull(ctx, unit, target, tactic.pull);
     if (tactic.steal && landed) pocket(ctx, unit, target);
     if (tactic.inspire && landed) inspireNearest(ctx, unit, target);
@@ -658,7 +661,7 @@ export function resolveAbility(ctx: Ctx, unit: Unit, ability: string, aim: Aim &
     const area = abilityArea(state, unit, ability, aim.at);
     const keys = new Set(area.map(posKey));
     // A burst is thrown at the enemy, and so is a chorus; a blast or a line catches whoever is standing in it.
-    const caught = state.units.filter((u) => !u.down && keys.has(posKey(u.pos)) && ((tactic.shape !== "burst" && tactic.shape !== "cone" && !tactic.chorus) || u.side !== unit.side));
+    const caught = state.units.filter((u) => !u.down && keys.has(posKey(u.pos)) && ((tactic.shape !== "burst" && tactic.shape !== "cone" && !tactic.chorus && !tactic.foesOnly) || u.side !== unit.side));
     // A chorus swells with every voice of the user's side caught up in it (the user's own aside).
     const voices = tactic.chorus ? state.units.filter((u) => u.side === unit.side && u.id !== unit.id && !u.down && keys.has(posKey(u.pos))).length : 0;
     const rolled = rollDice(ctx.rng, abilityDice(def)) + damageBonus(state, unit, def) + (tactic.chorus ?? 0) * voices;
@@ -686,7 +689,11 @@ export function resolveAbility(ctx: Ctx, unit: Unit, ability: string, aim: Aim &
   } else {
     const target = tactic.shape === "ally" && aim.target ? unitById(state, aim.target)! : unit;
     const soaked = tactic.regen && inWater(state, target) ? tactic.regen.water : 0;
-    if (def.heal) heal(ctx, target, rollDice(ctx.rng, healDice(def)) + Math.max(0, mod(statOf(unit, def.stat))) + Math.floor(unit.level / 2) + soaked, { actor: unit.id, what: def.id });
+    if (def.heal && !tactic.soothe) heal(ctx, target, rollDice(ctx.rng, healDice(def)) + Math.max(0, mod(statOf(unit, def.stat))) + Math.floor(unit.level / 2) + soaked, { actor: unit.id, what: def.id });
+    // A heal that spreads: to every ally beside the one it is aimed at (Clarion Call), or round the user (Soothing Tone).
+    const healed = (u: Unit, base: number) => heal(ctx, u, rollDice(ctx.rng, diceFor(Math.max(2, base - 1))) + Math.max(0, mod(statOf(unit, def.stat))) + Math.floor(unit.level / 2), { actor: unit.id, what: def.id });
+    if (tactic.ripple) for (const u of state.units) if (u.side === unit.side && !u.down && u.id !== target.id && adjacent(u.pos, target.pos)) healed(u, tactic.ripple);
+    if (tactic.soothe) for (const u of state.units) if (u.side === unit.side && !u.down && hexDistance(u.pos, unit.pos) <= tactic.soothe.range) healed(u, def.heal ?? 0);
     if (tactic.northStar) {
       // The blow round the ally first, then the star: what it strikes now is not set alight by it.
       const rolled = rollDice(ctx.rng, abilityDice(def)) + damageBonus(state, unit, def);
@@ -709,12 +716,12 @@ export function resolveAbility(ctx: Ctx, unit: Unit, ability: string, aim: Aim &
     // "Takes the very next turn" has no meaning in an initiative order: the ally is Hasted instead.
     if (def.actNext && target.id !== unit.id) addCondition(ctx, target, "hasted", 2);
     if (tactic.aura) addCondition(ctx, unit, tactic.aura.kind, tactic.aura.rounds);
-    if (tactic.steady) addCondition(ctx, unit, "inspired", tactic.steady);
+    if (tactic.steady) addCondition(ctx, target, "inspired", tactic.steady);
     // Wind's Blessing: more movement now for one in the middle of their turn, else on their next.
     if (tactic.tailwind && !moveMore(state, target, tactic.tailwind)) {
-      addCondition(ctx, target, "winds_blessing", 1, tactic.tailwind);
+      addCondition(ctx, target, "tailwind", 1, tactic.tailwind);
       // An ally done with their turn in this same phase has it ended again as the phase does: it must outlast that.
-      const blessing = target.conditions.find((c) => c.kind === "winds_blessing");
+      const blessing = target.conditions.find((c) => c.kind === "tailwind");
       if (blessing && state.encounter?.acting.includes(target.id)) blessing.fresh = true;
     }
     if (tactic.shield) {

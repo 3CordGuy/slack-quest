@@ -73,8 +73,10 @@ export const ABILITY_ICON: Record<string, ActionIcon> = {
   lead_by_example: icon("banner", "#ffe08a"),
   dissonance: icon("note", "#a78bfa"),
   encore: icon("note", "#7dff9a"),
-  cacophony: icon("note", "#ff6b6b"),
-  all_hands: icon("bell", "#ff6b6b"),
+  blasting_tone: icon("note", "#ff6b6b"),
+  soothing_tone: icon("note", "#5eead4"),
+  peal: icon("bell", "#a78bfa"),
+  clarion_call: icon("bell", "#ffd23f"),
   // Sage
   manifest: icon("bolt", "#67e8f9"),
   arcane_ward: icon("shield", "#a78bfa"),

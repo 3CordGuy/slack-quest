@@ -347,8 +347,8 @@ function beginTurn(ctx: Ctx, enc: Encounter, unit: Unit): boolean {
   const base = unit.summon ? (SUMMONS[unit.kind]?.move ?? 3) : unit.side === "hero" && unit.stats ? heroMove(unit.stats) : enemyMove(unit.kind);
   // A Wind-god's Shanty: further, and no Slowing.
   const sung = songMove(ctx.state, unit);
-  // Wind's Blessing given since its last turn: the wind at its back.
-  let move = base + sung + (unit.conditions.find((c) => c.kind === "winds_blessing")?.amount ?? 0);
+  // A Tailwind given since its last turn: the wind at its back.
+  let move = base + sung + (unit.conditions.find((c) => c.kind === "tailwind")?.amount ?? 0);
   if (has(unit, "slowed") && windward(ctx.state, unit)) removeCondition(unit, "slowed");
   if (has(unit, "slowed")) move = Math.floor(move / 2);
   if (has(unit, "hasted")) move *= 2;

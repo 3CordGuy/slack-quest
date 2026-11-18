@@ -173,24 +173,6 @@ describe("timeline statuses", () => {
     }
   });
 
-  it("hasted brings an ally's waiting turn forward, and the Bard's Second Wind gives it", () => {
-    const { state } = setup([fighter("a", { speed: 100, hp: 20 }), fighter("b", { speed: 0, hp: 20 })], ["dummy"], 3);
-    if (state.actor !== "a") return;
-    const before = state.combatants.find((c) => c.id === "b")!.next!;
-    const r = must(stepBattle(state, "a", { type: "ability", ability: "encore", target: "b" }, makeRng(1)));
-    expect(r.events).toContainEqual({ t: "effect", target: "b", effect: "hasted", turns: 1 });
-    const b = r.state.combatants.find((c) => c.id === "b")!;
-    if (r.state.actor !== "b") expect(b.next!).toBeLessThan(before);
-  });
-
-  it("hasted on yourself shortens your own next wait", () => {
-    const { state } = setup([fighter("a", { speed: 50, hp: 20 })], ["dummy"], 3);
-    const r = must(stepBattle(state, "a", { type: "ability", ability: "encore", target: "a" }, makeRng(1)));
-    const a = r.state.combatants.find((c) => c.id === "a")!;
-    if (r.state.actor === "a") return; // already acting again; the next turn came round
-    expect(a.next! - state.clock).toBeCloseTo(turnDelay(a) * (2 / 3), 5);
-  });
-
   it("glitched makes one roll of the next check fail, then wears off", () => {
     const { state } = setup([fighter("h", { speed: 0 })], ["dummy"], 3);
     const s = structuredClone(state);
