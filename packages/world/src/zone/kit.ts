@@ -89,8 +89,9 @@ export const WEATHER = {
   wind: { rounds: 3 },
 };
 
-/** Smuggler's Route and Tactical Retreat: how far each moves the Rogue. */
-export const BLINK_RANGE = 4;
+/** How far Smuggler's Route takes the Rogue (and whoever comes along), and how far Tactical Retreat does. */
+export const ROUTE_RANGE = 3;
+export const RETREAT_RANGE = 4;
 /** Sneak: everyone beside the Rogue goes Unseen with them, for this many of their turns. */
 export const SNEAK = { range: 1, rounds: 3 };
 /** Contraband: a fire bomb slipped into a pack is good for this many of its holder's turns. */
@@ -136,10 +137,10 @@ export const TACTICS: Record<string, Tactic> = {
   pin_down: shot(8),
   land_the_catch: melee(),
   // Rogue class abilities
-  smugglers_route: { cost: "bonus", reach: "spell", range: BLINK_RANGE, shape: "self", cooldown: 3, blink: { range: BLINK_RANGE, carry: true } },
+  smugglers_route: { cost: "bonus", reach: "spell", range: ROUTE_RANGE, shape: "self", cooldown: 3, blink: { range: ROUTE_RANGE, carry: true } },
   sneak: { cost: "action", reach: "spell", range: 0, shape: "self", cooldown: 4, hide: SNEAK },
   pickpocket: melee({ cost: "bonus", steal: true }),
-  tactical_retreat: melee({ cooldown: 2, blink: { range: BLINK_RANGE } }),
+  tactical_retreat: melee({ cooldown: 2, blink: { range: RETREAT_RANGE } }),
   contraband: mend(5, { cost: "bonus", cooldown: 3, smuggle: CONTRABAND }),
   // Druid
   thornlash: spell(5),

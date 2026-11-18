@@ -2641,7 +2641,7 @@ describe("the Rogue's class abilities", () => {
     expect(poolFor("refactor_rogue").map((e) => e.id)).toEqual(ALL);
   });
 
-  it("Smuggler's Route: a Bonus action to a hex up to 4 off, through a wall, spending no movement", () => {
+  it("Smuggler's Route: a Bonus action to a hex up to 3 off, through a wall, spending no movement", () => {
     let { state } = party(rock(at(6, 5), at(6, 6), at(6, 7)));
     const move = state.encounter!.budgets.ann.move;
     const events: ZoneEvent[] = [];
@@ -2654,9 +2654,9 @@ describe("the Rogue's class abilities", () => {
     expect(unit(state, "bo").pos).toEqual(at(4, 6));
   });
 
-  it("Smuggler's Route: not further than 4, nor onto rock or someone", () => {
+  it("Smuggler's Route: not further than 3, nor onto rock or someone", () => {
     const { state } = party(rock(at(7, 6)));
-    expect(fails(state, use("smugglers_route", { at: at(10, 6) }))).toMatch(/Too far/);
+    expect(fails(state, use("smugglers_route", { at: at(9, 6) }))).toMatch(/Too far/);
     expect(fails(state, use("smugglers_route", { at: at(7, 6) }))).toMatch(/nowhere to stand/);
     expect(fails(state, use("smugglers_route", { at: at(4, 6) }))).toMatch(/nowhere to stand/);
   });
