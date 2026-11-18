@@ -629,6 +629,8 @@ interface Unit {
   floored?: number;
   /** Down in a fight, as last told. */
   down?: boolean;
+  /** Its name tag goes once it is down and lying (see UnitWant.nameless). */
+  nameless?: boolean;
   /**
    * Just killed, and still on its feet until the blow that did it lands: it falls (a ragdoll, see topple) at its
    * "down" beat, or failing one, when the render clock passes this.
@@ -762,6 +764,8 @@ interface Want {
   down?: boolean;
   /** Seen going down (a hero or an enemy), it falls limp (a ragdoll) rather than being laid out. */
   falls?: boolean;
+  /** Its name tag goes once it is down and lying (a dead enemy): it would only be in the way. A fallen hero keeps theirs, to be found and helped up. */
+  nameless?: boolean;
   /** Knocked flat but not out: lying, in full colour. */
   prone?: boolean;
   asleep?: boolean;
@@ -1709,8 +1713,11 @@ export class WorldRenderer {
     return at;
   }
 
-  /** One blow or shot from one unit at another, named for its look and sound. `onImpact` runs as it lands (or flies wide). */
-  blow(actorId: string, targetId: string, name: string, opts: { crit?: boolean; landed?: boolean; onImpact?: () => void } = {}) {
+  /**
+   * One blow or shot from one unit at another, named for its look and sound. `onImpact` runs as it lands (or flies
+   * wide). `color` tints a blow's slash (a critical one is gold whatever it is).
+   */
+  blow(actorId: string, targetId: string, name: string, opts: { crit?: boolean; landed?: boolean; onImpact?: () => void; color?: string } = {}) {
     const style = attackStyle(name);
     this.attack(actorId, targetId, name, !!opts.crit, () => {
       if (opts.landed) {
@@ -1718,7 +1725,7 @@ export class WorldRenderer {
         this.recoil(targetId, actorId, opts.crit ? 0.6 : 0.38);
       } else sounds.miss(name, style, this.spot(targetId));
       opts.onImpact?.();
-    }, !!opts.landed);
+    }, !!opts.landed, opts.color);
   }
 
   /** A unit rocked back by a blow: knocked a little away from whoever dealt it (or just jolted), and settling back. */
@@ -1822,6 +1829,11 @@ export class WorldRenderer {
     this.sparkle(id, color);
   }
 
+  /** Where a unit's feet are this frame (the hop left out), or null if it is not on the map. */
+  unitFeet(id: string): THREE.Vector3 | null {
+    return this.units.get(id)?.feet.clone() ?? null;
+  }
+
   /** Where a unit stands in the world, for a sound's distance. */
   whereIs(id: string): { x: number; z: number } | undefined {
     return this.spot(id);
@@ -1841,6 +1853,8 @@ export class WorldRenderer {
     unit.path = [];
     unit.figure.setDim(true);
     this.clearArrows(unit);
+    // A dead enemy's name goes as it falls (see nameless).
+    this.applyLabel(unit);
     const from = by ? this.units.get(by) : undefined;
     const away = from ? unit.goal.clone().sub(from.goal).setY(0) : undefined;
     unit.figure.fall(away && away.lengthSq() > 1e-6 ? away : undefined);
@@ -1878,7 +1892,7 @@ export class WorldRenderer {
    * on the target at once, or a bolt or arrow flies across first. `onImpact`
    * runs when it lands.
    */
-  private attack(actorId: string, targetId: string, ability: string, perfect: boolean, onImpact: () => void, landed = false) {
+  private attack(actorId: string, targetId: string, ability: string, perfect: boolean, onImpact: () => void, landed = false, tint?: string) {
     const a = this.units.get(actorId);
     const t = this.units.get(targetId);
     if (!a || !t || a === t) return onImpact();
@@ -1953,7 +1967,9 @@ export class WorldRenderer {
     const wait = a.figure.strike(HEAVY_SWINGS.has(ability) ? "heavy" : "light");
     const land = () => {
       // A heavy blow comes down from higher, wider, and knocks the target back with dust thrown up round its feet.
-      this.spawnFx("slash", perfect ? "#ffd23f" : "#dfe9ff", flip, { from: hitAt, to: hitAt, life: heavy ? 0.3 : 0.26, size: heavy ? [1.7, 3] : [1.3, 2.3], spin: -dir * (heavy ? 1.6 : 0.9), fade: true });
+      this.spawnFx("slash", perfect ? "#ffd23f" : (tint ?? "#dfe9ff"), flip, { from: hitAt, to: hitAt, life: heavy ? 0.3 : 0.26, size: heavy ? [1.7, 3] : [1.3, 2.3], spin: -dir * (heavy ? 1.6 : 0.9), fade: true });
+      // An ability's blow throws a burst of its colour off the target as it lands.
+      if (tint && landed) this.spawnFx("burst", tint, flip, { from: hitAt, to: hitAt, life: 0.22, size: [0.7, 1.6], spin: 0.5, fade: true });
       if (heavy && landed) {
         t.kick.set(dir * 0.35, -0.08, 0);
         this.dustAt(t, perfect);
@@ -5989,7 +6005,7 @@ export class WorldRenderer {
     for (const u of state.units ?? []) {
       const pos = this.standAt(u.pos);
       pos.z += 0.25;
-      want.set(u.id, { kind: u.kind, pos, size: isBoss(u.kind) ? 1.9 : isBig(u.kind) ? 1.6 : 1.4, label: u.name, ring: u.hostile ? ENEMY_RED : undefined, through: u.hostile ? ENEMY_RED : undefined, pulse: !!u.active, hp: u.hp, down: u.down, falls: true, prone: u.prone, effects: u.effects });
+      want.set(u.id, { kind: u.kind, pos, size: isBoss(u.kind) ? 1.9 : isBig(u.kind) ? 1.6 : 1.4, label: u.name, ring: u.hostile ? ENEMY_RED : undefined, through: u.hostile ? ENEMY_RED : undefined, pulse: !!u.active, hp: u.hp, down: u.down, falls: true, nameless: true, prone: u.prone, effects: u.effects });
     }
     for (const poi of state.map.pois) {
       if (poi.cleared || poi.enemies.length === 0) continue;
@@ -6085,6 +6101,7 @@ export class WorldRenderer {
       }
       if (w.pulse) this.pulsing.add(id);
 
+      unit.nameless = !!w.nameless;
       unit.labelWant = { label: w.label, plate: w.plate, size: w.size, asleep: w.asleep, stack: w.stack };
       this.applyLabel(unit);
 
@@ -6154,12 +6171,14 @@ export class WorldRenderer {
     if (!lw) return;
     unit.glowing = this.clock < unit.glowUntil;
     const plate = lw.plate && unit.glowing ? { ...lw.plate, glow: true } : lw.plate;
-    const labelKey = lw.label ? plateKey(lw.label, plate) : "";
+    // A dead enemy, fallen, goes without its name.
+    const label = unit.nameless && unit.down && unit.lying ? undefined : lw.label;
+    const labelKey = label ? plateKey(label, plate) : "";
     if (labelKey !== unit.labelText) {
       this.dropLabel(unit);
       unit.labelText = labelKey;
-      if (lw.label) {
-        const { texture, aspect } = labelTexture(lw.label, plate);
+      if (label) {
+        const { texture, aspect } = labelTexture(label, plate);
         // A fixed size on screen, whatever the zoom: each pixel of the label lands on exactly one pixel of the view.
         unit.label = new THREE.Sprite(new THREE.SpriteMaterial({ map: texture, transparent: true, depthTest: false, sizeAttenuation: false }));
         unit.label.layers.set(OVERLAY_LAYER);
@@ -6631,6 +6650,22 @@ export class WorldRenderer {
     if (this.coverShift) this.coverShift = "resized";
   }
 
+  /** A clap of thunder for a spell: a thunder take heard and the sky lit with it, whatever the weather (Storm.clap). */
+  thunderclap() {
+    this.storm.clap();
+  }
+
+  /** Jolt the camera, `by` world units at first and dying away over `seconds`: a thunderclap, a great blow. Not with reduced motion. */
+  shake(by: number, seconds: number) {
+    // A stronger jolt still running is not cut short by a smaller one.
+    if (this.still || this.shakeBy * (this.shakeLeft / this.shakeFor) ** 2 > by) return;
+    this.shakeBy = by;
+    this.shakeFor = this.shakeLeft = seconds;
+  }
+  private shakeBy = 0;
+  private shakeFor = 1;
+  private shakeLeft = 0;
+
   /** Dev server only: a lightning strike now, whatever the weather, for trying thunder takes against the flash. */
   strike() {
     if (import.meta.env.DEV) this.storm.strikeNow(this.camera, this.target);
@@ -6745,6 +6780,14 @@ export class WorldRenderer {
       this.target.z + Math.cos(this.yaw) * flat,
     );
     this.camera.lookAt(this.target);
+    // Shaken (see shake): rocked about where it should be, less and less, and back.
+    if (this.shakeLeft > 0) {
+      this.shakeLeft = Math.max(0, this.shakeLeft - dt);
+      const k = this.shakeBy * (this.shakeLeft / this.shakeFor) ** 2;
+      this.camera.position.x += Math.sin(this.clock * 57) * k;
+      this.camera.position.y += Math.sin(this.clock * 43 + 1.3) * k * 0.6;
+      this.camera.position.z += Math.sin(this.clock * 51 + 2.1) * k;
+    }
     // A backdrop is seen from one fixed spot, as through a window, not from the roving camera.
     if (this.vantage) {
       this.camera.position.copy(this.vantage.from);

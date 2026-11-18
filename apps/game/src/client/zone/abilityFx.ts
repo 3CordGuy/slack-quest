@@ -5,6 +5,7 @@
 // plays them as the fight's events arrive.
 
 import { ABILITIES, tacticOf, type Throwable } from "@gantt-quest/world";
+import type { EruptStyle } from "../render/SpellFx";
 
 export type FxKind =
   /** A blow up close: the attacker lunges and a slash lands. */
@@ -12,17 +13,25 @@ export type FxKind =
   /** Something flies to each target and lands. */
   | "arrow"
   | "bolt"
-  /** Lightning from the caster through each target in turn. */
+  /** A thunderclap: crescents of sound and light racing out to each target. */
+  | "thunder"
+  /** A crescent blade of wind flying to each target. */
+  | "blade"
+  /** Lightning out of the sky onto each target, arcing from one to the next. */
   | "spark"
   /** A rock falls on the hex aimed at. */
   | "meteor"
-  /** Lightning out of the sky onto the hex aimed at. */
+  /** A bolt of lightning out of the sky onto the hex aimed at. */
   | "storm"
+  /** A rain cloud gathering over the hex aimed at (the cloud itself is drawn with the weather, TacticsLayer). */
+  | "rain"
   /** A bolt to the hex aimed at, then a ring rolling out from it. */
   | "lob"
   /** A beam along the line. */
   | "beam"
-  /** Spikes out of the ground under everything it covers. */
+  /** A wave of water rolling out along the line, striking each one as it reaches them. */
+  | "wave"
+  /** Something out of the ground under everything it covers (thorns, coral, stone, water, light, rust: see `style`). */
   | "erupt"
   /** A ring rolling out from the user. */
   | "ring"
@@ -32,9 +41,11 @@ export type FxKind =
 export interface Fx {
   kind: FxKind;
   color: string;
+  /** For an eruption, what comes up out of the ground. */
+  style?: EruptStyle;
 }
 
-const fx = (kind: FxKind, color: string): Fx => ({ kind, color });
+const fx = (kind: FxKind, color: string, style?: EruptStyle): Fx => ({ kind, color, ...(style ? { style } : {}) });
 
 const ABILITY_FX: Record<string, Fx> = {
   torch_swing: fx("melee", "#ff8a2a"),
@@ -51,15 +62,15 @@ const ABILITY_FX: Record<string, Fx> = {
   goading_strike: fx("melee", "#ff6b6b"),
   throw_pike: fx("arrow", "#c9d6e8"),
   starbeam: fx("beam", "#fff3a8"),
-  moonlight: fx("erupt", "#bcd7ff"),
+  moonlight: fx("erupt", "#bcd7ff", "shine"),
   focus_light: fx("beam", "#fff3a8"),
   st_elmos_fire: fx("bless", "#ffd166"),
   water_burst: fx("bolt", "#38bdf8"),
-  rust_armor: fx("erupt", "#b0a48a"),
+  rust_armor: fx("erupt", "#c0642c", "rust"),
   bow_shot: fx("arrow", "#e8dcc0"),
   snag: fx("arrow", "#a78bfa"),
   take_aim: fx("bless", "#ffe08a"),
-  slicing_wind: fx("bolt", "#dff4ff"),
+  slicing_wind: fx("blade", "#dff4ff"),
   waterbolt: fx("bolt", "#38bdf8"),
   lightning_strike: fx("storm", "#ffe98a"),
   winds_blessing: fx("bless", "#bfe8ff"),
@@ -70,10 +81,10 @@ const ABILITY_FX: Record<string, Fx> = {
   vile_splash: fx("lob", "#84cc16"),
   drink_deeply: fx("bless", "#6dff9e"),
   pull_of_the_deep: fx("ring", "#1f7fa0"),
-  thornlash: fx("erupt", "#4f8a3a"),
+  thornlash: fx("erupt", "#4f8a3a", "thorn"),
   sea_slash: fx("melee", "#38bdf8"),
-  binding_kelp: fx("erupt", "#4ade80"),
-  coral_burst: fx("erupt", "#ff8f7a"),
+  binding_kelp: fx("erupt", "#4ade80", "kelp"),
+  coral_burst: fx("erupt", "#ff8f7a", "coral"),
   restore: fx("bless", "#5eead4"),
   cleave: fx("ring", "#dfe9ff"),
   beacon_aura: fx("bless", "#fff7d6"),
@@ -81,11 +92,11 @@ const ABILITY_FX: Record<string, Fx> = {
   branding_strike: fx("melee", "#ff7a2a"),
   stoke_the_fire: fx("ring", "#ff7a2a"),
   bolster: fx("ring", "#9ec9ff"),
-  soothing_rain: fx("lob", "#8fd3ff"),
+  soothing_rain: fx("rain", "#8fd3ff"),
   chain_lightning: fx("spark", "#c4b5fd"),
-  roar_of_thunder: fx("bolt", "#facc15"),
+  roar_of_thunder: fx("thunder", "#facc15"),
   trade_winds: fx("lob", "#d9f2e6"),
-  tidal_wave: fx("beam", "#38bdf8"),
+  tidal_wave: fx("wave", "#38bdf8"),
   show_the_way: fx("bless", "#fff4c2"),
   smugglers_route: fx("bless", "#a78bfa"),
   sneak: fx("bless", "#b8c4d6"),
@@ -99,11 +110,11 @@ const ABILITY_FX: Record<string, Fx> = {
   lead_by_example: fx("bolt", "#ffe08a"),
   against_the_waves: fx("bless", "#5fb8ff"),
   overwhelm: fx("melee", "#ff9a4a"),
-  fortify: fx("erupt", "#c9b48a"),
+  fortify: fx("erupt", "#c9b48a", "stone"),
   bulwark_strike: fx("melee", "#93c5fd"),
   taunt: fx("ring", "#ff5a3c"),
   mend: fx("bless", "#7dff9a"),
-  coral_field: fx("erupt", "#ff7f6e"),
+  coral_field: fx("erupt", "#ff7f6e", "coral"),
   aqueous_regeneration: fx("bless", "#5eead4"),
   coral_armor: fx("bless", "#ff8f7a"),
   revitalizing_splash: fx("lob", "#7dffd4"),
@@ -111,7 +122,7 @@ const ABILITY_FX: Record<string, Fx> = {
   curse_of_drowning: fx("bolt", "#2fa4c9"),
   summon_sunken_sailors: fx("bless", "#5fe0c0"),
   red_sky_at_morning: fx("lob", "#e2483d"),
-  unholy_waters: fx("erupt", "#2fa4c9"),
+  unholy_waters: fx("erupt", "#2fa4c9", "water"),
   the_black_spot: fx("bolt", "#7a6a8f"),
   sailor_pistol: fx("bolt", "#ffd23f"),
   sailor_scimitar: fx("melee", "#9fb59a"),
@@ -125,6 +136,13 @@ const ABILITY_FX: Record<string, Fx> = {
   recover: fx("bless", "#ffd23f"),
   block: fx("bless", "#c9d6e8"),
 };
+
+/** Guards: shown as a wall of light round whoever puts one up. */
+export const GUARDS = new Set(["block", "raise_guard", "stand_strong", "against_the_waves", "coral_armor"]);
+/** Auras: a ring rolls out over the allies they reach. */
+export const AURA_ABILITIES = new Set(["beacon_aura", "healing_aura"]);
+/** Calls for help: water breaks where the help comes up. */
+export const SUMMONS = new Set(["summon_sea_turtle", "summon_sunken_sailors"]);
 
 /** What enemies shoot and cast, by the attack's own name. Anything not here is a blow up close, or (an attack on every hero) a ring. */
 const ENEMY_FX: Record<string, Fx> = {
