@@ -4,6 +4,10 @@
 // is told, walking near an enemy group starts a fight with a turn clock,
 // the room coming back from hibernation finds the same turn, the clock
 // running out ends the turn, and dev actions are refused where they should be.
+// Also what the room does for a client that shows its actions ahead of the
+// answer: the number an action was sent with comes back to its sender alone,
+// on the update or on the refusal, and a client that keeps the map's tiles is
+// sent them once.
 
 import { readFileSync, readdirSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
@@ -59,7 +63,7 @@ class Stmt {
   }
 }
 
-type Update = { type: "update"; state: ZoneView; events: ZoneEvent[]; online: string[] } | { type: "error"; message: string };
+type Update = { type: "update"; state: ZoneView; events: ZoneEvent[]; online: string[]; ack?: number } | { type: "error"; message: string; ack?: number };
 class FakeSocket {
   sent: Update[] = [];
   closed: number | null = null;
@@ -114,15 +118,15 @@ function room() {
   return new ZoneRoom(ctx as never, { DB: db, ENVIRONMENT: environment } as never);
 }
 
-async function connect(to: InstanceType<typeof ZoneRoom>, code: string, playerId: string, near?: string): Promise<FakeSocket> {
+async function connect(to: InstanceType<typeof ZoneRoom>, code: string, playerId: string, near?: string, lean = false): Promise<FakeSocket> {
   const ws = new FakeSocket();
   nextServerSocket = ws;
-  const res = await to.fetch({ headers: new Headers({ Upgrade: "websocket", "x-zone-code": code, "x-player-id": playerId, ...(near ? { "x-zone-near": near } : {}) }) } as never);
+  const res = await to.fetch({ headers: new Headers({ Upgrade: "websocket", "x-zone-code": code, "x-player-id": playerId, ...(near ? { "x-zone-near": near } : {}), ...(lean ? { "x-zone-lean": "1" } : {}) }) } as never);
   if (res.status !== 101) throw new Error(`refused: ${await res.text()}`);
   return ws;
 }
 
-const act = (to: InstanceType<typeof ZoneRoom>, ws: FakeSocket, action: Record<string, unknown>) => to.webSocketMessage(ws as unknown as WebSocket, JSON.stringify({ type: "action", action }));
+const act = (to: InstanceType<typeof ZoneRoom>, ws: FakeSocket, action: Record<string, unknown>, n?: unknown) => to.webSocketMessage(ws as unknown as WebSocket, JSON.stringify({ type: "action", action, ...(n !== undefined ? { n } : {}) }));
 const saved = (code: string) => JSON.parse((sql.prepare("SELECT state_json FROM zones WHERE code = ?").get(code) as { state_json: string }).state_json) as ZoneState;
 const hero = (state: ZoneView | ZoneState, id: string) => state.units.find((u) => u.id === id)!;
 const presence = (id: string) => sql.prepare("SELECT code, fighting FROM zone_presence WHERE player_id = ?").get(id) as { code: string; fighting: number } | undefined;
@@ -486,6 +490,65 @@ describe("ZoneRoom", () => {
       type: "dev", by: "ann", dev: { op: "kit", unit: "ann", classId: "devops_mage", weapon: "tome", level: 7, abilities: ["tidal_wave"] },
     });
     expect(zoneActionFrom({ type: "dev", dev: { op: "kit", unit: "ann", classId: "devops_mage", weapon: "tome", level: 7, abilities: [] } }, "ann", false)).toBeNull();
+  });
+
+  it("sends an action's number back to whoever sent it, and to nobody else, on the update that answers it", async () => {
+    const { code, zone, ann } = await arrive();
+    const bo = await connect(zone, code, "bo");
+    const to = ann.state.map.tiles.find((t) => hexDistance(t, hero(ann.state, "ann").pos) === 2 && t.biome === "plains" && !ann.state.units.some((u) => u.pos.q === t.q && u.pos.r === t.r))!;
+    await act(zone, ann, { type: "move", unit: "ann", to: { q: to.q, r: to.r } }, 7);
+    // (Every update says the room answers numbers, so a client knows it may show its actions ahead.)
+    expect(ann.sent.at(-1)).toMatchObject({ type: "update", ack: 7, acks: true });
+    expect(bo.sent.at(-1)).toMatchObject({ type: "update" });
+    expect(bo.sent.at(-1)).not.toHaveProperty("ack");
+    // Both were told the same walk, in the same update.
+    expect(hero(bo.state, "ann").pos).toEqual({ q: to.q, r: to.r });
+    // An action sent with no number is answered with none, as it always was.
+    await act(zone, ann, { type: "move", unit: "ann", to: ann.state.start });
+    expect(ann.sent.at(-1)).not.toHaveProperty("ack");
+  });
+
+  it("sends the number back on a refusal too, and for something that is not an action at all", async () => {
+    const { zone, ann } = await arrive();
+    const before = ann.sent.length;
+    // Off the map: nowhere to walk to.
+    await act(zone, ann, { type: "move", unit: "ann", to: { q: 500, r: 500 } }, 3);
+    expect(ann.sent.at(-1)).toEqual({ type: "error", message: "You cannot get there.", ack: 3 });
+    // (The clock may be told on the way, as an update of its own: that one answers nothing.)
+    for (const m of ann.sent.slice(before, -1)) expect(m).not.toHaveProperty("ack");
+    await act(zone, ann, { type: "move", unit: "ann", to: "over there" }, 4);
+    expect(ann.sent.at(-1)).toEqual({ type: "error", message: "That could not be done.", ack: 4 });
+    // A number that is not one is not sent back; nor is anything, for a misshapen action with no number.
+    const quiet = ann.sent.length;
+    await act(zone, ann, { type: "move", unit: "ann", to: "over there" });
+    expect(ann.sent.length).toBe(quiet);
+    await act(zone, ann, { type: "move", unit: "ann", to: { q: 500, r: 500 } }, "9");
+    expect(ann.sent.at(-1)).toEqual({ type: "error", message: "You cannot get there." });
+  });
+
+  it("sends a map's tiles once to a client that keeps them, and every time to one that does not", async () => {
+    const { code, zone, ann } = await arrive();
+    const bo = await connect(zone, code, "bo", undefined, true);
+    // The first thing a keeping client is sent has the tiles; Ann, who never said she keeps them, has them every time.
+    expect(bo.sent[0]).toMatchObject({ type: "update" });
+    expect(bo.state.map.tiles.length).toBe(ann.state.map.tiles.length);
+    const to = ann.state.map.tiles.find((t) => hexDistance(t, hero(ann.state, "ann").pos) === 1 && t.biome === "plains" && !ann.state.units.some((u) => u.pos.q === t.q && u.pos.r === t.r))!;
+    await act(zone, ann, { type: "move", unit: "ann", to: { q: to.q, r: to.r } });
+    expect(ann.state.map.tiles.length).toBeGreaterThan(0);
+    expect(bo.state.map).not.toHaveProperty("tiles");
+    // Everything else about the map still comes: its grid and its places.
+    expect(bo.state.map.grid).toEqual(ann.state.map.grid);
+    expect(bo.state.map.pois).toEqual(ann.state.map.pois);
+    expect(hero(bo.state, "ann").pos).toEqual({ q: to.q, r: to.r });
+    // A room back from hibernation still knows: that the tiles were sent is written on the socket, not kept in its memory.
+    const woken = room();
+    await act(woken, ann, { type: "move", unit: "ann", to: ann.state.start });
+    expect(bo.state.map).not.toHaveProperty("tiles");
+    expect(ann.state.map.tiles.length).toBeGreaterThan(0);
+    // And a new connection is a new socket: it starts with the tiles.
+    const again = await connect(woken, code, "bo", undefined, true);
+    expect(again.sent[0]).toMatchObject({ type: "update" });
+    expect(again.state.map.tiles.length).toBe(ann.state.map.tiles.length);
   });
 
   it("drops anything misshapen, and never takes the sender's word for who they are", () => {

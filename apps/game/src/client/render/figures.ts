@@ -18,7 +18,7 @@ import { ConvexGeometry } from "three/examples/jsm/geometries/ConvexGeometry.js"
 import { GARB_PREFIX, INK_COLORS, INK_LEVELS, INK_REGIONS, RARITY_COLOR, WEAPONS, WEAPON_ICON, appearanceK, decodeInk, inkColorOf, inkLevelOf, type Appearance, type Ink, type InkRegion, type InkView, type Outfit, type Slot } from "@gantt-quest/world";
 import type { Look } from "./looks";
 import { torchFlame } from "./torchFlame";
-import { buildLowPoly, disposeLowPoly } from "./gearModels";
+import { buildLowPoly, disposeLowPoly, type Dangle } from "./gearModels";
 import { makeSilhouette, type Silhouette } from "./silhouette";
 
 export const OUTLINE = "#1b1830";
@@ -830,9 +830,271 @@ function gear(p: Part, icon: string, trim: string, hold: Hold, inHand = false): 
   const scale = typeof hold.scale === "number" ? new THREE.Vector3().setScalar(hold.scale) : new THREE.Vector3(...hold.scale);
   const at = new THREE.Matrix4().compose(new THREE.Vector3(...(hold.at ?? [0, 0, 0])), new THREE.Quaternion().setFromEuler(new THREE.Euler(...(hold.turn ?? [0, 0, 0]))), scale);
   at.multiply(new THREE.Matrix4().makeTranslation(-hold.grip[0], -hold.grip[1], -hold.grip[2]));
+  // What hangs loose (a flail's ball, a lantern) goes on a joint of its own at its pivot, to swing (see
+  // swingDangles); one built inside another hangs from its end, a second joint down the same chain.
+  const loose: THREE.Object3D[] = [];
+  built.model.traverse((o) => {
+    if (o.userData.dangle) loose.push(o);
+  });
+  const outer = new Map<THREE.Object3D, THREE.Object3D | null>();
+  for (const group of loose) {
+    let up = group.parent;
+    while (up && !up.userData.dangle) up = up.parent;
+    outer.set(group, up);
+  }
+  for (const group of loose) group.removeFromParent();
+  const made = new Map<THREE.Object3D, { part: Part; pivot: THREE.Vector3; chain: Dangling }>();
+  for (const group of loose) {
+    const d = group.userData.dangle as Dangle;
+    const pivot = new THREE.Vector3(...d.pivot).applyMatrix4(at);
+    const rest = new THREE.Vector3(...d.bob).applyMatrix4(at).sub(pivot);
+    const above = outer.get(group) ? made.get(outer.get(group)!) : undefined;
+    // Each joint is placed in the one above it, which is the hand's frame moved to its own pivot.
+    const from = above ? pivot.clone().sub(above.pivot) : pivot;
+    const part = new Part(above ? above.part.joint : p.joint, from.x, from.y, from.z);
+    part.model(group, new THREE.Matrix4().makeTranslation(-pivot.x, -pivot.y, -pivot.z).multiply(at));
+    disposeLowPoly(group);
+    extraParts.push(part);
+    const link: Link = { joint: part.joint, rest, size: (d.size ?? 0) * scale.x, weight: d.mass ?? 1, at: new THREE.Vector3(), was: new THREE.Vector3() };
+    const clear = d.clear && { from: new THREE.Vector3(...d.clear.from).applyMatrix4(at), to: new THREE.Vector3(...d.clear.to).applyMatrix4(at), r: d.clear.r * scale.x };
+    let chain: Dangling;
+    if (above) {
+      chain = above.chain;
+      chain.links.push(link);
+      chain.clear = clear ?? chain.clear;
+    } else {
+      chain = { links: [link], limit: d.limit, clear, placed: false, pivot: new THREE.Vector3() };
+      dangles.push(chain);
+    }
+    made.set(group, { part, pivot, chain });
+  }
   p.model(built.model, at);
   disposeLowPoly(built.model);
   return true;
+}
+
+/** One joint of something hanging loose: a length of chain, or the weight on its end. */
+interface Link {
+  joint: THREE.Group;
+  /** From its pivot to its end (the next joint's pivot, or where its weight is), as built, in its parent's frame. */
+  rest: THREE.Vector3;
+  /** How big its end is, in the figure's units: how far it is kept off the body (0 not at all). */
+  size: number;
+  /** How heavy its end is, against the others in the chain. */
+  weight: number;
+  /** Where its end is in the world, and where it was a step ago (its speed). */
+  at: THREE.Vector3;
+  was: THREE.Vector3;
+}
+
+/**
+ * Something hanging loose in a hand, swung by how the hand really moves through the world: a turn on the spot, a
+ * run, a blow, an arm swinging on the march all fling it, and it falls back under its own weight. One link is a
+ * pendulum; more (a flail's chain jointed half way) bend as they swing, the ball on the end pulling the chain.
+ */
+interface Dangling {
+  links: Link[];
+  /** How far a single link may swing from where it was built, in radians, if not all the way round (a clapper). */
+  limit?: number;
+  /** The haft the end hangs by, in the hand's frame: the last link's end is kept `r` from the line between. */
+  clear?: { from: THREE.Vector3; to: THREE.Vector3; r: number };
+  /** Whether it has been hung yet, and where the pivot was in the world last frame. */
+  placed: boolean;
+  pivot: THREE.Vector3;
+}
+
+/** Set by makeFigure for the figure being built: what hangs loose in its hands. */
+let dangles: Dangling[] = [];
+/** Set by biped for the figure being built: the parts of the body a weight swinging from a hand bumps against. */
+let bodyParts: Part[] = [];
+
+/** A piece of the body as a capsule (a line, rounded out by `r`) in its joint's space, for what swings to bump against. */
+interface BodyCapsule {
+  joint: THREE.Object3D;
+  a: THREE.Vector3;
+  b: THREE.Vector3;
+  r: number;
+}
+
+/**
+ * Fit a capsule round each body part, once it is built: along the longest side of what is drawn on it, as thick
+ * as the other two sides on average. So a broad-shouldered or long-legged hero's is their own shape.
+ */
+function bodyCapsules(parts: Part[]): BodyCapsule[] {
+  const out: BodyCapsule[] = [];
+  const box = new THREE.Box3();
+  const piece = new THREE.Box3();
+  const size = new THREE.Vector3();
+  const mid = new THREE.Vector3();
+  for (const part of parts) {
+    box.makeEmpty();
+    part.skin.updateMatrix();
+    for (const o of part.skin.children) {
+      if (!(o instanceof THREE.Mesh) || !o.userData.body) continue;
+      o.geometry.computeBoundingBox();
+      box.union(piece.copy(o.geometry.boundingBox!).applyMatrix4(part.skin.matrix));
+    }
+    if (box.isEmpty()) continue;
+    box.getSize(size);
+    box.getCenter(mid);
+    const half = size.toArray().map((n) => n / 2);
+    const long = half.indexOf(Math.max(...half));
+    const r = (half.reduce((sum, n) => sum + n, 0) - half[long]) / 2;
+    const along = new THREE.Vector3().setComponent(long, Math.max(0, half[long] - r));
+    out.push({ joint: part.joint, a: mid.clone().sub(along), b: mid.clone().add(along), r });
+  }
+  return out;
+}
+
+/** Gravity, in the figure's units (22 to its height) a second squared: a little light, so a swing reads. */
+const DANGLE_GRAVITY = 95;
+/** How much of its speed a swing loses a second, to the air and the chain. */
+const DANGLE_DRAG = 2.2;
+
+const _pivot = new THREE.Vector3();
+const _step = new THREE.Vector3();
+const _dir = new THREE.Vector3();
+const _rest = new THREE.Vector3();
+const _parentQ = new THREE.Quaternion();
+const _scale = new THREE.Vector3();
+const _pos = new THREE.Vector3();
+const DOWN = new THREE.Vector3(0, -1, 0);
+const _a = new THREE.Vector3();
+const _b = new THREE.Vector3();
+const _line = new THREE.Line3();
+const _near = new THREE.Vector3();
+const _from = new THREE.Vector3();
+const _at = new THREE.Vector3();
+const _inv = new THREE.Quaternion();
+const _off = new THREE.Vector3();
+/** The body's capsules in the world this frame: two ends and a radius each. */
+const _body: { a: THREE.Vector3; b: THREE.Vector3; r: number }[] = [];
+/** How much of its speed a weight keeps each step it is rubbing against the body. */
+const RUB = 0.85;
+
+/** Push `bob` out of the capsule from `a` to `b` of radius `r`. True if it was inside. */
+function pushOut(bob: THREE.Vector3, a: THREE.Vector3, b: THREE.Vector3, r: number): boolean {
+  _line.set(a, b);
+  _line.closestPointToPoint(bob, true, _near);
+  const off = _off.subVectors(bob, _near);
+  const gap = off.length();
+  if (gap >= r) return false;
+  if (gap < 1e-6) off.set(1, 0, 0);
+  bob.copy(_near).addScaledVector(off.normalize(), r);
+  return true;
+}
+
+/**
+ * Swing what hangs loose: each is a weight on a rod from its pivot, stepped in the world (Verlet), so it keeps
+ * its speed while the hand carrying it moves and turns under it. Then its joint is turned to hang toward it.
+ */
+function swingDangles(list: Dangling[], dt: number, top: THREE.Object3D, body: BodyCapsule[]) {
+  // The whole figure, posed for this frame, into the world: the hands that carry and the body they swing against.
+  top.updateWorldMatrix(true, true);
+  while (_body.length < body.length) _body.push({ a: new THREE.Vector3(), b: new THREE.Vector3(), r: 0 });
+  for (const [i, c] of body.entries()) {
+    _body[i].a.copy(c.a).applyMatrix4(c.joint.matrixWorld);
+    _body[i].b.copy(c.b).applyMatrix4(c.joint.matrixWorld);
+  }
+  for (const d of list) {
+    const first = d.links[0];
+    const hand = first.joint.parent;
+    if (!hand) continue;
+    hand.matrixWorld.decompose(_pos, _parentQ, _scale);
+    const scale = _scale.x || 1;
+    _pivot.copy(first.joint.position).applyMatrix4(hand.matrixWorld);
+    // In the world, which way the first link hangs as built (for a limit).
+    _rest.copy(first.rest).normalize().applyQuaternion(_parentQ);
+    // The first frame, or a jump across the map (a new scene, a teleport): hang it straight down, at rest.
+    if (!d.placed || dt <= 0 || _pivot.distanceTo(d.pivot) > 40 * scale) {
+      _dir.copy(d.limit !== undefined ? _rest : DOWN);
+      let end = _pivot;
+      for (const link of d.links) {
+        link.at.copy(end).addScaledVector(_dir, link.rest.length() * scale);
+        link.was.copy(link.at);
+        end = link.at;
+      }
+      d.pivot.copy(_pivot);
+      d.placed = true;
+    } else {
+      // A few small steps, the pivot carried along between last frame's place and this one's.
+      const steps = Math.min(8, Math.max(1, Math.ceil(dt * 240)));
+      const h = dt / steps;
+      const keep = Math.exp(-DANGLE_DRAG * h);
+      const fall = DANGLE_GRAVITY * scale * h * h;
+      const from = _from.copy(d.pivot);
+      const last = d.links[d.links.length - 1];
+      for (let i = 1; i <= steps; i++) {
+        const at = _at.copy(from).lerp(_pivot, i / steps);
+        for (const link of d.links) {
+          _step.subVectors(link.at, link.was).multiplyScalar(keep);
+          link.was.copy(link.at);
+          link.at.add(_step);
+          link.at.y -= fall;
+        }
+        // Each link held at its length from the one above: the pivot does not give, and of two ends the
+        // lighter gives more (a length of chain, to the ball). A few rounds, as each pulls on the next.
+        const hold = () => {
+          for (let round = 0; round < (d.links.length > 1 ? 3 : 1); round++) {
+            for (const [n, link] of d.links.entries()) {
+              const above = n === 0 ? null : d.links[n - 1];
+              const anchor = above ? above.at : at;
+              _dir.subVectors(link.at, anchor);
+              if (_dir.lengthSq() < 1e-12) _dir.copy(DOWN);
+              const length = link.rest.length() * scale;
+              const off = _dir.length() - length;
+              _dir.normalize();
+              if (!above) {
+                link.at.addScaledVector(_dir, -off);
+                continue;
+              }
+              const share = above.weight / (above.weight + link.weight);
+              link.at.addScaledVector(_dir, -off * share);
+              above.at.addScaledVector(_dir, off * (1 - share));
+            }
+          }
+        };
+        hold();
+        // A clapper stays within its bell.
+        if (d.limit !== undefined) {
+          _dir.subVectors(first.at, at).normalize();
+          if (_dir.angleTo(_rest) > d.limit) {
+            const axis = _step.crossVectors(_rest, _dir);
+            if (axis.lengthSq() < 1e-12) _dir.copy(_rest);
+            else _dir.copy(_rest).applyAxisAngle(axis.normalize(), d.limit);
+            first.at.copy(at).addScaledVector(_dir, first.rest.length() * scale);
+          }
+        }
+        // Kept off the haft (the end) and the body (every end that has a size): pushed straight out of each
+        // (twice round, as one can push it into another), then held to its length again. Touching the body, it
+        // rubs, and loses some speed.
+        for (let pass = 0; pass < 2; pass++) {
+          let moved = false;
+          if (d.clear) moved = pushOut(last.at, _a.copy(d.clear.from).applyMatrix4(hand.matrixWorld), _b.copy(d.clear.to).applyMatrix4(hand.matrixWorld), d.clear.r * scale);
+          for (const link of d.links) {
+            if (link.size <= 0) continue;
+            let touched = false;
+            for (let c = 0; c < body.length; c++) {
+              if (pushOut(link.at, _body[c].a, _body[c].b, (body[c].r + link.size) * scale)) moved = touched = true;
+            }
+            if (touched) link.was.lerp(link.at, 1 - RUB);
+          }
+          if (!moved) break;
+          hold();
+        }
+      }
+      d.pivot.copy(_pivot);
+    }
+    // Turn each joint so its link, built along `rest`, lies toward its end: the first in the hand's frame, each
+    // next in the frame the one above has just been turned to.
+    let end = _pivot;
+    for (const link of d.links) {
+      _dir.subVectors(link.at, end).normalize().applyQuaternion(_inv.copy(_parentQ).invert());
+      link.joint.quaternion.setFromUnitVectors(_rest.copy(link.rest).normalize(), _dir);
+      _parentQ.multiply(link.joint.quaternion);
+      end = link.at;
+    }
+  }
 }
 
 /** A grip in a fist angled out from the body (`s` 1 for the right hand, -1 the left), for a dagger or a hook. */
@@ -945,7 +1207,8 @@ function heldGear(icon: string, b: Biped, trim: string, shield: boolean): Carry 
     }
     return hold.pose ?? {};
   }
-  if (!gear(b.heldR, icon, trim, hold)) return null;
+  // A flail is held with its chain hanging straight, to swing (its picture curls it round).
+  if (!gear(b.heldR, icon, trim, hold, icon === "ballast-flail")) return null;
   // Held as it is made (nothing with an edge is: see HOLD), a thing is flat to the front and its sides lead.
   if (!hold.turn) b.cutsAlong("x");
   const motes = MOTES[icon];
@@ -1618,6 +1881,8 @@ function biped(top: THREE.Group, parts: Part[], elbow = ELBOW) {
   for (const arm of [armR, armL, foreR, foreL]) arm.skin.scale.set(limbGirth, 1, limbGirth);
   const legR = limb(thighR, shinR);
   const legL = limb(thighL, shinL);
+  // What a weight swinging from the right hand can bump: all but that arm, which carries it.
+  bodyParts = [torso, head, thighR, thighL, shinR, shinL, armL, foreL];
   // What each hand holds, in the middle of the fist, kept upright however the arm is bent.
   const fist = lowPoly ? -5.25 : -5;
   const heldR = part(foreR.joint, 0, fist - elbow, 0);
@@ -5443,6 +5708,253 @@ function castShape(top: THREE.Group, made: THREE.BufferGeometry[]): THREE.Mesh |
 /** The animals that stand side-on in a portrait, as they did in their sprites. */
 export const FOUR_LEGGED = new Set(["wolf", "alpha", "bear", "great_bear"]);
 
+// ---------- falling dead ----------
+
+/** Gravity for a body falling, in the figure's units (22 to its height) a second squared: about the real thing. */
+const RAG_GRAVITY = 130;
+/** Steps a second the fall is worked out in, and rounds of holding each piece together per step. */
+const RAG_RATE = 120;
+const RAG_ROUNDS = 6;
+/** How much of its sideways speed a corner on the ground keeps each step: the ground grips. */
+const RAG_GRIP = 0.55;
+/** How hard a joint holds the angle it had at the moment of death, per round: a little, so limbs flop but do not fold flat. */
+const RAG_TONE = 0.06;
+/** How long a body may go on settling, and how still it must be (units a step) for long enough to call it settled. */
+const RAG_MAX = 4;
+const RAG_STILL = 0.004;
+/** How fast the blow that fells it knocks its head away (units a second): enough to topple it over its feet. */
+const RAG_PUSH = 40;
+/** No piece of it moves faster than this (units a second), whatever the pushing apart of pieces caught in each other asks. */
+const RAG_FASTEST = 90;
+
+interface RagPiece {
+  part: Part;
+  /** Its box's eight corners and its joint: indices into the particles. */
+  corners: number[];
+  /** The part its box hangs from (null: the one that carries the rest, or one hung straight from the body's top). */
+  parent: RagPiece | null;
+  /** Its joint's turn, relative to the figure, as it fell, and the middle of its box then. */
+  q0: THREE.Quaternion;
+  mid0: THREE.Vector3;
+  origin0: THREE.Vector3;
+  /** Its box's three edges as it fell (corner 0 to 1, 2 and 4), for working out how it has turned since. */
+  frame0: THREE.Matrix4;
+  depth: number;
+}
+
+/** Two particles held `length` apart, `stiff` of the way each round. */
+type RagStick = [number, number, number, number];
+
+export interface Ragdoll {
+  /** Work the fall on by `dt` seconds and pose the figure to match. False once it has come to rest. */
+  step(dt: number): boolean;
+  /** Put every joint back as it was when it fell (for one got up again). */
+  restore(): void;
+}
+
+const _rq = new THREE.Quaternion();
+const _rm = new THREE.Matrix4();
+const _rv = new THREE.Vector3();
+const _rx = new THREE.Vector3();
+const _ry = new THREE.Vector3();
+const _rz = new THREE.Vector3();
+
+/** A frame (a turn) from three edges of a box: the first as it is, the second squared to it, the third across both. */
+function frameOf(p: Float32Array, c: number[], out: THREE.Matrix4) {
+  const at = (i: number, v: THREE.Vector3) => v.set(p[c[i] * 3], p[c[i] * 3 + 1], p[c[i] * 3 + 2]);
+  const o = at(0, _rv);
+  at(1, _rx).sub(o).normalize();
+  at(2, _ry).sub(o);
+  _ry.addScaledVector(_rx, -_ry.dot(_rx)).normalize();
+  _rz.crossVectors(_rx, _ry);
+  return out.makeBasis(_rx, _ry, _rz);
+}
+
+/**
+ * Let a figure go limp and fall: each part of it a solid box of eight particles, each joint a particle held to
+ * the boxes either side of it, all of them dropped under gravity onto the ground under its feet (y = 0 in the
+ * figure's own space) and pushed `push` (in that space, along the ground) by the blow that felled it. Each frame
+ * the boxes are read back as turns of the joints, so whatever the rig is (a man, a wolf, a slime), it crumples
+ * as it is jointed.
+ */
+function ragdoll(top: THREE.Group, parts: Part[], push: THREE.Vector3): Ragdoll {
+  const scaler = top.parent!;
+  scaler.updateWorldMatrix(true, true);
+  const toFigure = new THREE.Matrix4().copy(scaler.matrixWorld).invert();
+  const figureQ = new THREE.Quaternion();
+  scaler.getWorldQuaternion(figureQ);
+  const fromFigure = figureQ.clone().invert();
+  const byJoint = new Map(parts.map((p) => [p.joint as THREE.Object3D, p]));
+  const saved = new Map<THREE.Object3D, THREE.Quaternion>(parts.map((p) => [p.joint, p.joint.quaternion.clone()]));
+  saved.set(top, top.quaternion.clone());
+  const savedTop = top.position.clone();
+
+  const pos: number[] = [];
+  const sticks: RagStick[] = [];
+  const add = (v: THREE.Vector3) => (pos.push(v.x, v.y, v.z), pos.length / 3 - 1);
+  const dist = (a: number, b: number) => Math.hypot(pos[a * 3] - pos[b * 3], pos[a * 3 + 1] - pos[b * 3 + 1], pos[a * 3 + 2] - pos[b * 3 + 2]);
+  const stick = (a: number, b: number, stiff = 1) => sticks.push([a, b, dist(a, b), stiff]);
+
+  // Each part's box, in the figure's space as it stands now.
+  const pieces: RagPiece[] = [];
+  const box = new THREE.Box3();
+  const piece = new THREE.Box3();
+  for (const part of parts) {
+    box.makeEmpty();
+    part.skin.updateMatrix();
+    for (const o of part.skin.children) {
+      if (!(o instanceof THREE.Mesh) || !o.userData.body) continue;
+      o.geometry.computeBoundingBox();
+      box.union(piece.copy(o.geometry.boundingBox!).applyMatrix4(part.skin.matrix));
+    }
+    if (box.isEmpty()) box.setFromCenterAndSize(new THREE.Vector3(), new THREE.Vector3(1, 1, 1));
+    // Nothing quite flat, so its box always has a turn to read back.
+    const size = box.getSize(new THREE.Vector3()).max(new THREE.Vector3(0.8, 0.8, 0.8));
+    box.setFromCenterAndSize(box.getCenter(new THREE.Vector3()), size);
+    const m = _rm.multiplyMatrices(toFigure, part.joint.matrixWorld);
+    const corners: number[] = [];
+    for (let i = 0; i < 8; i++) {
+      const c = new THREE.Vector3(i & 1 ? box.max.x : box.min.x, i & 2 ? box.max.y : box.min.y, i & 4 ? box.max.z : box.min.z);
+      corners.push(add(c.applyMatrix4(m)));
+    }
+    corners.push(add(new THREE.Vector3().setFromMatrixPosition(m)));
+    for (let a = 0; a < 8; a++) for (let b = a + 1; b < 8; b++) stick(corners[a], corners[b]);
+    const q0 = new THREE.Quaternion();
+    part.joint.getWorldQuaternion(q0).premultiply(fromFigure);
+    let depth = 0;
+    for (let o = part.joint.parent; o && o !== top; o = o.parent) depth++;
+    pieces.push({ part, corners, parent: null, q0, mid0: box.getCenter(new THREE.Vector3()).applyMatrix4(m), origin0: new THREE.Vector3().setFromMatrixPosition(m), frame0: new THREE.Matrix4(), depth });
+  }
+  if (pieces.length === 0) return { step: () => false, restore() {} };
+  const atStart = new Float32Array(pos);
+  for (const p of pieces) frameOf(atStart, p.corners, p.frame0);
+  // What carries the rest: the biggest part hung straight from the top (a body, a torso).
+  const volume = (p: RagPiece) => dist(p.corners[0], p.corners[1]) * dist(p.corners[0], p.corners[2]) * dist(p.corners[0], p.corners[4]);
+  const roots = pieces.filter((p) => p.depth === 0);
+  const main = (roots.length > 0 ? roots : pieces).reduce((a, b) => (volume(b) > volume(a) ? b : a));
+  // Each joint held to the box above it (a part hung from the top, to the main one's), and a little to the angle it had.
+  for (const p of pieces) {
+    if (p === main) continue;
+    let up: THREE.Object3D | null = p.part.joint.parent;
+    while (up && up !== top && !byJoint.has(up)) up = up.parent;
+    const parentPart = up && up !== top ? byJoint.get(up)! : main.part;
+    p.parent = pieces.find((q) => q.part === parentPart) ?? main;
+    const joint = p.corners[8];
+    for (let i = 0; i < 8; i++) stick(joint, p.parent.corners[i]);
+    stick(p.corners[0], p.parent.corners[7], RAG_TONE);
+    stick(p.corners[7], p.parent.corners[0], RAG_TONE);
+  }
+  // The joint particle is carried on its own box too.
+  for (const p of pieces) for (let i = 0; i < 8; i++) stick(p.corners[8], p.corners[i]);
+
+  const n = pos.length / 3;
+  // Nothing starts under the ground (a foot drawn a little into it, or one already lying), or it would be thrown out of it.
+  let low = 0;
+  for (let i = 0; i < n; i++) low = Math.min(low, pos[i * 3 + 1]);
+  for (let i = 0; i < n; i++) pos[i * 3 + 1] -= low;
+  const now = new Float32Array(pos);
+  const was = new Float32Array(pos);
+  // Knocked away from the blow, the higher the harder, so it topples over its feet; and a little up.
+  const h = 1 / RAG_RATE;
+  for (let i = 0; i < n; i++) {
+    const lift = Math.max(0, now[i * 3 + 1]) / FRAME;
+    was[i * 3] -= push.x * lift * h;
+    was[i * 3 + 1] -= 6 * lift * h;
+    was[i * 3 + 2] -= push.z * lift * h;
+  }
+  const order = [...pieces].sort((a, b) => a.depth - b.depth);
+  // Where the main joint is in the top's space, and how it is turned there (undone): the top is carried by it.
+  top.updateWorldMatrix(true, true);
+  const mainAt = new THREE.Vector3().setFromMatrixPosition(_rm.copy(top.matrixWorld).invert().multiply(main.part.joint.matrixWorld));
+  const topQ0 = new THREE.Quaternion();
+  top.getWorldQuaternion(topQ0).premultiply(fromFigure);
+  const mainQ0 = main.q0.clone();
+  const mainInTop = topQ0.clone().invert().multiply(main.q0).invert();
+  let time = 0;
+  let spare = 0;
+  let still = 0;
+
+  const solve = () => {
+    const keep = 0.998;
+    for (let i = 0; i < n; i++) {
+      for (let k = 0; k < 3; k++) {
+        const j = i * 3 + k;
+        const v = Math.max(-RAG_FASTEST * h, Math.min(RAG_FASTEST * h, (now[j] - was[j]) * keep));
+        was[j] = now[j];
+        now[j] += v;
+      }
+      now[i * 3 + 1] -= RAG_GRAVITY * h * h;
+    }
+    for (let round = 0; round < RAG_ROUNDS; round++) {
+      for (const [a, b, length, stiff] of sticks) {
+        const dx = now[b * 3] - now[a * 3];
+        const dy = now[b * 3 + 1] - now[a * 3 + 1];
+        const dz = now[b * 3 + 2] - now[a * 3 + 2];
+        const d = Math.hypot(dx, dy, dz) || 1e-6;
+        const k = ((d - length) / d) * 0.5 * stiff;
+        now[a * 3] += dx * k;
+        now[a * 3 + 1] += dy * k;
+        now[a * 3 + 2] += dz * k;
+        now[b * 3] -= dx * k;
+        now[b * 3 + 1] -= dy * k;
+        now[b * 3 + 2] -= dz * k;
+      }
+      // The ground: nothing goes under it, and what touches it is held back by it.
+      for (let i = 0; i < n; i++) {
+        if (now[i * 3 + 1] >= 0) continue;
+        now[i * 3 + 1] = 0;
+        // Stopped dead on it: being pushed up out of it (a foot drawn a little into the ground) is no leap.
+        was[i * 3 + 1] = 0;
+        was[i * 3] = now[i * 3] - (now[i * 3] - was[i * 3]) * RAG_GRIP;
+        was[i * 3 + 2] = now[i * 3 + 2] - (now[i * 3 + 2] - was[i * 3 + 2]) * RAG_GRIP;
+      }
+    }
+    let most = 0;
+    for (let j = 0; j < now.length; j++) most = Math.max(most, Math.abs(now[j] - was[j]));
+    return most;
+  };
+
+  const turned = new THREE.Matrix4();
+  const parentQ = new THREE.Quaternion();
+  /** Read the boxes back as the figure's pose: the top carried with the main box, every other joint turned with its own. */
+  const pose = () => {
+    const rel = (p: RagPiece) => {
+      frameOf(now, p.corners, turned);
+      return _rq.setFromRotationMatrix(turned.multiply(_rm.copy(p.frame0).transpose()));
+    };
+    // The top: turned as the main box has, and placed so the main joint lands where its particle is.
+    top.quaternion.copy(rel(main)).multiply(mainQ0).multiply(mainInTop);
+    const j = main.corners[8];
+    top.position.set(now[j * 3], now[j * 3 + 1], now[j * 3 + 2]).sub(_rv.copy(mainAt).applyQuaternion(top.quaternion));
+    top.updateMatrixWorld(true);
+    for (const p of order) {
+      if (p === main) continue;
+      const want = rel(p).multiply(p.q0);
+      p.part.joint.parent!.getWorldQuaternion(parentQ).premultiply(fromFigure);
+      p.part.joint.quaternion.copy(parentQ.invert().multiply(want));
+      p.part.joint.updateMatrixWorld(true);
+    }
+  };
+
+  return {
+    step(dt) {
+      if (time >= RAG_MAX) return false;
+      spare += Math.min(dt, 0.1);
+      while (spare >= h) {
+        spare -= h;
+        time += h;
+        still = solve() < RAG_STILL ? still + h : 0;
+      }
+      pose();
+      return still < 0.5 && time < RAG_MAX;
+    },
+    restore() {
+      for (const [joint, q] of saved) joint.quaternion.copy(q);
+      top.position.copy(savedTop);
+    },
+  };
+}
+
 // ---------- the figure ----------
 
 export interface FigurePose {
@@ -5530,6 +6042,12 @@ export interface Figure {
    * creature, which only leans into it.
    */
   jump(air: number): number;
+  /**
+   * Go limp and fall where it stands (a ragdoll), knocked along `push` (in the world, along the ground: away from
+   * the blow) or, without one, any way. It lies as it fell for as long as it is posed lying; stood up again, it
+   * takes its usual poses.
+   */
+  fall(push?: THREE.Vector3): void;
   /** Greyed, for someone down in a fight. */
   setDim(on: boolean): void;
   /** How much of it is left to see, 1 (all there) to 0 (gone): it thins out pixel by pixel as a camera passes through it. */
@@ -5571,6 +6089,8 @@ export function makeFigure(kind: string, look: Look, outfit?: Outfit, opts: Figu
   rodInHand = opts.rod ?? false;
   extraParts = [];
   braids = [];
+  dangles = [];
+  bodyParts = [];
   beardFront = null;
   slung = null;
   chosen = outfit?.appearance ?? null;
@@ -5587,8 +6107,12 @@ export function makeFigure(kind: string, look: Look, outfit?: Outfit, opts: Figu
     ink: fadeable(inkMaterial(), fade, "gq-figure-ink"),
   };
   const made: THREE.BufferGeometry[] = [];
-  for (const part of [...rig.parts, ...extraParts]) part.build(mats, made);
+  const allParts = [...rig.parts, ...extraParts];
+  for (const part of allParts) part.build(mats, made);
   const swinging = braids;
+  const loose = dangles;
+  // What a swinging weight bumps against: only worth fitting for someone carrying one.
+  const body = loose.length > 0 ? bodyCapsules(bodyParts) : [];
   const sling = slung;
   if (!rig.clean) muddy(scaler, mats.body);
   // Each figure breathes on its own beat.
@@ -5606,7 +6130,10 @@ export function makeFigure(kind: string, look: Look, outfit?: Outfit, opts: Figu
   let through: Silhouette | null = null;
   let throughColor: string | null = null;
   let actions = 0;
+  /** Fallen dead: the fall under way (or come to rest), which poses it in place of the rig while it lies. */
+  let fallen: { doll: Ragdoll; moving: boolean } | null = null;
   const update = (p: FigurePose) => {
+    const first = last < 0;
     const dt = last < 0 ? 1 : Math.min(0.1, Math.max(0, p.time - last));
     last = p.time;
     if (asked) [action, asked] = [{ kind: asked, at: p.time, n: ++actions, air: asked === "jump" ? airtime : 0 }, null];
@@ -5625,8 +6152,15 @@ export function makeFigure(kind: string, look: Look, outfit?: Outfit, opts: Figu
       for (const hand of rig.hands) for (const held of hand.children) held.visible = !rowing;
       for (const thing of rig.carried ?? []) thing.visible = !rowing;
     }
-    rig.animate(anim);
+    if (fallen && !p.lying) {
+      fallen.doll.restore();
+      fallen = null;
+    }
+    if (fallen) {
+      if (fallen.moving) fallen.moving = fallen.doll.step(first ? 0 : dt);
+    } else rig.animate(anim);
     if (swinging.length > 0) swingBraids(swinging, anim);
+    if (loose.length > 0) swingDangles(loose, first ? 0 : dt, top, body);
   };
   update({ time: 0, stride: 0, walking: false, lean: 0, lying: false });
   last = -1;
@@ -5689,6 +6223,16 @@ export function makeFigure(kind: string, look: Look, outfit?: Outfit, opts: Figu
       asked = "jump";
       airtime = Math.max(0.1, air);
       return rig.acts ? JUMP.spring : 0;
+    },
+    fall(push) {
+      if (fallen) return;
+      // Into the figure's own space, along the ground; a blow from nowhere in particular knocks it any way.
+      const dir = push ? push.clone() : new THREE.Vector3(Math.random() - 0.5, 0, Math.random() - 0.5);
+      dir.applyQuaternion(scaler.getWorldQuaternion(new THREE.Quaternion()).invert());
+      dir.y = 0;
+      if (dir.lengthSq() < 1e-6) dir.set(0, 0, -1);
+      dir.setLength(RAG_PUSH);
+      fallen = { doll: ragdoll(top, allParts, dir), moving: true };
     },
     setDim(on) {
       mats.body.color.setScalar(on ? 0.5 : 1);

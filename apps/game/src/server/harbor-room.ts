@@ -170,15 +170,21 @@ export class HarborRoom extends DurableObject<Env> {
       if (!Number.isInteger(to.q) || !Number.isInteger(to.r)) return;
       // With a boat, out onto the water: a barrel along the coast, a rowboat anywhere.
       const path = harborPath(MAP, player.pos, to, player.vessel ?? null);
-      if (!path) return;
+      if (!path) {
+        // No way there. A client shows its own walks at the click and counts the answers (client/useHarbor.ts), so
+        // it is told this one was not made, and where its hero really stands. Nobody else saw anything, so nobody else is told.
+        ws.send(JSON.stringify({ type: "stayed", id: player.id, pos: player.pos } satisfies HarborServerMessage));
+        return;
+      }
       // Walking off rolls the bedroll back up.
       ws.serializeAttachment({ ...player, pos: path[path.length - 1], bedroll: undefined, fishing: undefined } satisfies HarborPlayer);
       this.broadcast({ type: "moved", id: player.id, path });
     } else if (msg.type === "refresh") {
-      // They changed gear or levelled: re-read the character and show everyone the new look.
-      const hero = await heroInitFor(this.env.DB, player.id);
+      // They changed gear or levelled: re-read the character and show everyone the new look. The three
+      // readings do not wait on one another, so they are asked for together.
+      const [hero, vessel, gilded] = await Promise.all([heroInitFor(this.env.DB, player.id), ownedVessel(this.env.DB, player.id), gildedRod(this.env.DB, player.id)]);
       if (!hero) return;
-      const next: HarborPlayer = { ...player, name: hero.name, classId: hero.classId, level: hero.level, xp: hero.xp, outfit: hero.outfit, vessel: await ownedVessel(this.env.DB, player.id), gilded: await gildedRod(this.env.DB, player.id) };
+      const next: HarborPlayer = { ...player, name: hero.name, classId: hero.classId, level: hero.level, xp: hero.xp, outfit: hero.outfit, vessel, gilded };
       ws.serializeAttachment(next);
       this.broadcast({ type: "joined", player: next });
     } else if (msg.type === "bedroll") {

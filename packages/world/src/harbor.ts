@@ -551,6 +551,8 @@ export type HarborServerMessage =
   | { type: "moved"; id: string; path: HexPos[] }
   /** Someone was put straight onto `pos` (no walk): a stuck hero sent back by "unstick". */
   | { type: "placed"; id: string; pos: HexPos }
+  /** A walk you asked for was not made (no way there): you stand where you stood, on `pos`. Sent to you only, so a client that shows its own walks at the click can put the picture right. */
+  | { type: "stayed"; id: string; pos: HexPos }
   | { type: "said"; id: string; name: string; text: string }
   /** A trade you are part of changed (opened, laid out, accepted, closed): ask the server for your trades again. Sent to that player only. */
   | { type: "trades" }

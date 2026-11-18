@@ -196,19 +196,23 @@ app.use("/api/*", async (c, next) => {
 
 app.get("/api/me", async (c) => {
   const player = c.get("player");
+  const read = () =>
+    Promise.all([
+      getCharacter(c.env.DB, player.id),
+      getInventory(c.env.DB, player.id),
+      crewFor(c.env.DB, player.id),
+      carryState(c.env.DB, player.id),
+      harborXpFor(c.env.DB, player.id),
+      seenRelease(c.env.DB, player.id),
+      c.env.DB.prepare("SELECT kind, qty FROM resources WHERE player_id = ? AND qty > 0").bind(player.id).all<{ kind: string; qty: number }>(),
+      consumablesOf(c.env.DB, player.id),
+    ]);
+  let all = await read();
   // A hero from before looks came in is given their class's look and starting clothes the first time they
-  // come in (see ensureLook).
-  await ensureLook(c.env.DB, player.id);
-  const [character, inventory, crew, carry, harborXp, seen, held, consumables] = await Promise.all([
-    getCharacter(c.env.DB, player.id),
-    getInventory(c.env.DB, player.id),
-    crewFor(c.env.DB, player.id),
-    carryState(c.env.DB, player.id),
-    harborXpFor(c.env.DB, player.id),
-    seenRelease(c.env.DB, player.id),
-    c.env.DB.prepare("SELECT kind, qty FROM resources WHERE player_id = ? AND qty > 0").bind(player.id).all<{ kind: string; qty: number }>(),
-    consumablesOf(c.env.DB, player.id),
-  ]);
+  // come in (see ensureLook). Whether that is still to do shows in the character just read, so nobody else
+  // waits on a question about it; for the one it is done for, everything is read again with the clothes on.
+  if (all[0]?.status === "active" && all[0].appearance == null && (await ensureLook(c.env.DB, player.id))) all = await read();
+  const [character, inventory, crew, carry, harborXp, seen, held, consumables] = all;
   // `materials` is what is in the pack, in stacks beside the gear; `consumables` the potions and flasks there with them.
   const materials = Object.fromEntries(held.results.map((r) => [r.kind, r.qty]));
   // `inventory` is what the hero has with them; what is in storage at home is only listed inside their hut.
@@ -1020,6 +1024,9 @@ app.get("/api/zone/:code/ws", async (c) => {
   const near = c.req.query("near");
   if (near && near.length <= 64) headers.set("x-zone-near", near);
   else headers.delete("x-zone-near");
+  // A client that keeps the map's tiles from its first update asks to be sent them once (zone-room.ts).
+  if (c.req.query("lean") === "1") headers.set("x-zone-lean", "1");
+  else headers.delete("x-zone-lean");
   return c.env.ZONE_ROOM.get(c.env.ZONE_ROOM.idFromName(code)).fetch(new Request(c.req.url, { headers }));
 });
 
