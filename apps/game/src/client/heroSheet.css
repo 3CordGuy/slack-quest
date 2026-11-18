@@ -16,16 +16,19 @@
 .hs-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
 .hs-face { width: 36px; height: 44px; image-rendering: pixelated; flex: none; }
 .hs-title { display: flex; flex-direction: column; flex: 1; min-width: 0; }
-.hs-title strong { font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* Renaming your own hero from their sheet: a pencil after the name, then the name as a field with Save and Cancel. */
-.hs-rename-btn { margin-left: 6px; padding: 0 4px; border: 0; background: none; color: inherit; opacity: 0.6; cursor: pointer; font-size: 12px; }
-.hs-rename-btn:hover, .hs-rename-btn:focus-visible { opacity: 1; }
+/* A long name is cut short, but "(you)" after it always shows. */
+.hs-name { display: flex; align-items: baseline; min-width: 0; font-size: 14px; white-space: nowrap; }
+.hs-name-text { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.hs-you { flex: none; margin-left: 0.4em; }
+/* Your own sheet: Change look and Change name side by side under the header. Renaming turns the name into a field with Save and Cancel. */
+.hs-own-actions { display: flex; flex-wrap: wrap; gap: 6px; margin: 2px 0 4px; }
 .hs-rename { display: flex; gap: 4px; align-items: center; min-width: 0; }
 .hs-rename input { flex: 1; min-width: 0; font-size: 14px; padding: 2px 6px; }
 .hs-rename-error { font-size: 12px; }
 .hs-level { color: var(--gold); }
 
-.hs-bars .bar { height: 14px; margin: 3px 0; }
+/* The theme gives bars a 3px border, so the height leaves 12px inside for the label. */
+.hs-bars .bar { height: 18px; margin: 3px 0; }
 .hs-bars .bar > span:last-child { font-size: 10px; line-height: 12px; }
 .hs-hp.good { background: #3f9a4a; }
 .hs-hp.hurt { background: #b8932a; }

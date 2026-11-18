@@ -207,14 +207,9 @@ export function HeroSheet({ id, you, onClose, live }: Props) {
               </button>
             </form>
           ) : (
-            <strong>
-              {hero.name}
-              {hero.id === you && <span className="muted"> (you)</span>}
-              {hero.id === you && !live && (
-                <button type="button" className="hs-rename-btn" onClick={() => startRename(hero.name)} title="Change your name" aria-label="Change your name">
-                  ✎
-                </button>
-              )}
+            <strong className="hs-name">
+              <span className="hs-name-text">{hero.name}</span>
+              {hero.id === you && <span className="muted hs-you">(you)</span>}
             </strong>
           )}
           {renameError && <span className="error hs-rename-error">{renameError}</span>}
@@ -222,11 +217,16 @@ export function HeroSheet({ id, you, onClose, live }: Props) {
         </div>
         <button className="small" onClick={onClose} aria-label="Close">✕</button>
       </header>
-      {/* Your own look can be changed here, but not on a voyage. */}
+      {/* Your own look and name can be changed here, but not on a voyage. */}
       {hero.id === you && !live && (
-        <button type="button" className="small hs-change-look" onClick={() => setChanging(true)}>
-          Change look
-        </button>
+        <div className="hs-own-actions">
+          <button type="button" className="small" onClick={() => setChanging(true)}>
+            Change look
+          </button>
+          <button type="button" className="small" onClick={() => startRename(hero.name)} disabled={renaming !== null}>
+            Change name
+          </button>
+        </div>
       )}
       {changing && (
         <ChangeLook
