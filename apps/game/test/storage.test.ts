@@ -351,37 +351,37 @@ describe("resting at home", () => {
 });
 
 describe("class ability slots", () => {
-  const pools = { qa_paladin: [{ id: "smite", level: 1 }, { id: "cleave", level: 1 }, { id: "shield_wall", level: 50 }] };
+  const pools = { qa_paladin: [{ id: "bash", level: 1 }, { id: "cleave", level: 1 }, { id: "block", level: 50 }] };
   const slots = () => one<{ ability_loadout: string }>("SELECT ability_loadout FROM characters WHERE player_id = 'ann'").ability_loadout;
 
   it("starts empty, then keeps what is slotted", async () => {
     expect(slots()).toBe("[]");
-    expect(await setAbilitySlot(db, "ann", 0, "smite", pools)).toBeNull();
-    expect(JSON.parse(slots())).toEqual(["smite", null, null]);
+    expect(await setAbilitySlot(db, "ann", 0, "bash", pools)).toBeNull();
+    expect(JSON.parse(slots())).toEqual(["bash", null, null]);
     expect(await setAbilitySlot(db, "ann", 2, "cleave", pools)).toBeNull();
-    expect(JSON.parse(slots())).toEqual(["smite", null, "cleave"]);
+    expect(JSON.parse(slots())).toEqual(["bash", null, "cleave"]);
   });
 
   it("trades places when an ability is moved to another slot, and empties a slot", async () => {
-    await setAbilitySlot(db, "ann", 0, "smite", pools);
-    await setAbilitySlot(db, "ann", 1, "smite", pools);
-    expect(JSON.parse(slots())).toEqual([null, "smite", null]);
+    await setAbilitySlot(db, "ann", 0, "bash", pools);
+    await setAbilitySlot(db, "ann", 1, "bash", pools);
+    expect(JSON.parse(slots())).toEqual([null, "bash", null]);
     expect(await setAbilitySlot(db, "ann", 1, null, pools)).toBeNull();
     expect(JSON.parse(slots())).toEqual([null, null, null]);
   });
 
   it("refuses what the class lacks, what the level has not opened, and a slot that is not there", async () => {
     expect(await setAbilitySlot(db, "ann", 0, "firebolt", pools)).toMatch(/class's abilities/);
-    expect(await setAbilitySlot(db, "ann", 0, "shield_wall", pools)).toMatch(/level 50/);
-    expect(await setAbilitySlot(db, "ann", 3, "smite", pools)).toMatch(/no such slot/);
+    expect(await setAbilitySlot(db, "ann", 0, "block", pools)).toMatch(/level 50/);
+    expect(await setAbilitySlot(db, "ann", 3, "bash", pools)).toMatch(/no such slot/);
     expect(slots()).toBe("[]");
   });
 
   it("is refused out on a zone, and allowed again back in the Harbor", async () => {
     await setPresence(db, "ann", "ZONEAA", false);
-    expect(await setAbilitySlot(db, "ann", 0, "smite", pools)).toMatch(/only be changed in the Harbor/);
+    expect(await setAbilitySlot(db, "ann", 0, "bash", pools)).toMatch(/only be changed in the Harbor/);
     expect(slots()).toBe("[]");
     sql.prepare("DELETE FROM zone_presence WHERE player_id = 'ann'").run();
-    expect(await setAbilitySlot(db, "ann", 0, "smite", pools)).toBeNull();
+    expect(await setAbilitySlot(db, "ann", 0, "bash", pools)).toBeNull();
   });
 });

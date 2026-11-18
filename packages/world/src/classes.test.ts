@@ -94,7 +94,7 @@ describe("class passives", () => {
       const party = withBard ? [hero("p", "qa_paladin"), hero("b", "frontend_bard")] : [hero("p", "qa_paladin")];
       const hits: number[] = [];
       for (let seed = 0; seed < 60; seed++) {
-        const { events } = spar(party, { p: "smite", b: "dissonance" }, seed, 2);
+        const { events } = spar(party, { p: "bash", b: "dissonance" }, seed, 2);
         for (const e of events) if (e.t === "hit" && e.actor === "p" && e.perfect) hits.push(e.amount);
       }
       return hits;
@@ -125,7 +125,7 @@ describe("Tidewall Warden", () => {
           // At the start of its first turn the guard is still up; at its second it is gone.
           expect(guarded(state, "w")).toBe(wardenTurns === 1);
         }
-        const res = stepBattle(state, actor.id, { type: "ability", ability: actor.id === "w" ? "seawall_blow" : "smite", target: "e0" }, rng);
+        const res = stepBattle(state, actor.id, { type: "ability", ability: actor.id === "w" ? "seawall_blow" : "bash", target: "e0" }, rng);
         if (!res.ok) throw new Error(res.error);
         state = res.state;
       }
@@ -146,7 +146,7 @@ describe("Tidewall Warden", () => {
     let elsewhere = 0;
     for (let seed = 0; seed < 30; seed++) {
       const party = [hero("w", "sre_warden"), hero("p", "qa_paladin"), hero("m", "devops_mage")];
-      const { events } = spar(party, { w: "challenge", p: "shield_wall", m: "mend" }, seed, 30, [DUMMY_KIND, DUMMY_KIND, DUMMY_KIND]);
+      const { events } = spar(party, { w: "challenge", p: "recover", m: "mend" }, seed, 30, [DUMMY_KIND, DUMMY_KIND, DUMMY_KIND]);
       let active = false;
       for (const e of events) {
         if (e.t === "effect" && e.target === "w" && e.effect === "taunting") active = true;

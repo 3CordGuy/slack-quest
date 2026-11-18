@@ -107,7 +107,8 @@ const ABILITY_FX: Record<string, Fx> = {
   rejuvenate: fx("bless", "#a3e635"),
   encore: fx("bless", "#7dff9a"),
   all_hands: fx("bless", "#ffd23f"),
-  shield_wall: fx("bless", "#93c5fd"),
+  recover: fx("bless", "#ffd23f"),
+  block: fx("bless", "#c9d6e8"),
   hold_the_line: fx("bless", "#fbbf24"),
   arcane_ward: fx("bless", "#a78bfa"),
 };

@@ -5,7 +5,7 @@
 import type { StatKey, Stats } from "@gantt-quest/core";
 
 /** Effect names match EFFECT_META in packages/core/src/flavor.ts, plus `guarded`, `taunting` and the timeline effects (`slowed`, `hasted`, `glitched`, `exposed`). */
-export type EffectKind = "bleeding" | "burning" | "stunned" | "guarded" | "taunting" | "slowed" | "hasted" | "glitched" | "exposed";
+export type EffectKind = "bleeding" | "burning" | "stunned" | "guarded" | "taunting" | "slowed" | "hasted" | "glitched" | "exposed" | "prone" | "sundered";
 
 export const EFFECT_INFO: Record<EffectKind, { name: string; blurb: string; color: string }> = {
   bleeding: { name: "Bleeding", blurb: "Loses 2 HP at the start of each turn.", color: "#f87171" },
@@ -17,10 +17,14 @@ export const EFFECT_INFO: Record<EffectKind, { name: string; blurb: string; colo
   hasted: { name: "Hasted", blurb: "Its next turn comes a third sooner on the timeline.", color: "#67e8f9" },
   glitched: { name: "Fumbling", blurb: "One roll of its next attack fails, whatever happens.", color: "#e879f9" },
   exposed: { name: "Exposed", blurb: "Takes 3 more damage from every direct hit, for 2 of its turns.", color: "#facc15" },
+  prone: { name: "Prone", blurb: "Knocked flat: standing up costs half its movement.", color: "#cbd5e1" },
+  sundered: { name: "Sundered", blurb: "Its armor is dented: 2 less Defence.", color: "#b0a48a" },
 };
 
 /** Exposed targets take this much more from each direct hit. */
 export const EXPOSED_BONUS = 3;
+/** Sundered targets have this much less Defence. */
+export const SUNDERED_DEFENCE = 2;
 /** A hasted combatant's wait between turns is multiplied by this; a slowed one's by SLOW_FACTOR. */
 export const HASTE_FACTOR = 2 / 3;
 export const SLOW_FACTOR = 1.5;
@@ -162,11 +166,14 @@ export const ABILITIES: Record<string, AbilityDef> = {
   // Bare hands: what a hero has with no weapon. Weak on purpose, and never on a weapon.
   // A lit torch swung in the main hand (zones only): the weapon is put away while it is held.
   torch_swing: { id: "torch_swing", name: "Torch Swing", stat: "str", rolls: 2, target: "enemy", damage: 6, perfect: { effect: "burning", turns: 2 }, blurb: "A swing of a lit torch. Whoever it hits may catch fire." },
+  // Paladin weapons. Mace: Bash and Recover. Greatsword: Cleave and Block. Flail: Strike and Armor Crush.
+  bash: { id: "bash", name: "Bash", stat: "str", rolls: 3, target: "enemy", damage: 9, perfect: { effect: "prone", turns: 1 }, blurb: "A heavy blow with the mace. On a hit, the target must save or be knocked Prone." },
+  recover: { id: "recover", name: "Recover", stat: "vit", rolls: 1, target: "self", heal: 7, blurb: "A Bonus action: catch your breath and heal yourself a fair amount." },
+  block: { id: "block", name: "Block", stat: "vit", rolls: 1, target: "self", blurb: "A Bonus action: set the flat of the blade before you, for a shield of 8 plus your level that takes the damage of blows before HP does, through your next turn." },
+  flail_strike: { id: "flail_strike", name: "Strike", stat: "str", rolls: 3, target: "enemy", damage: 9, perfect: { effect: "slowed", turns: 2 }, blurb: "A swing of the flail. On a hit, the target must save or be Slowed." },
+  armor_crush: { id: "armor_crush", name: "Armor Crush", stat: "str", rolls: 2, target: "enemy", damage: 4, perfect: { effect: "sundered", turns: 2 }, blurb: "A Bonus action: a quick blow at the joints of its armor. On a hit, the target must save or be Sundered, with 2 less Defence for 2 turns." },
   punch: { id: "punch", name: "Punch", stat: "str", rolls: 2, target: "enemy", damage: 4, blurb: "Bare knuckles. All you have without a weapon in hand." },
-  smite: { id: "smite", name: "Smite", stat: "str", rolls: 3, target: "enemy", damage: 9, perfect: { effect: "stunned", turns: 1 }, blurb: "A solid blow. On a hit, the target must save or be Stunned." },
-  shield_wall: { id: "shield_wall", name: "Shield Wall", stat: "vit", rolls: 2, target: "self", selfEffect: { effect: "guarded", turns: 1 }, blurb: "Guard yourself, and raise a shield of 6 plus your level that takes the damage of blows before HP does, through your next turn." },
-  cleave: { id: "cleave", name: "Cleave", stat: "str", rolls: 4, target: "all_enemies", damage: 7, perfect: { effect: "exposed", turns: 2 }, blurb: "Swing through every enemy beside you. Each one hit must save or be Exposed." },
-  heavy_blow: { id: "heavy_blow", name: "Heavy Blow", stat: "str", rolls: 2, target: "enemy", damage: 12, perfect: { effect: "bleeding", turns: 3 }, blurb: "A big swing that is harder to land. On a hit, the target must save or start Bleeding." },
+  cleave: { id: "cleave", name: "Cleave", stat: "str", rolls: 3, target: "all_enemies", damage: 7, blurb: "A wide swing through three hexes beside you, an attack on each enemy in them." },
   firebolt: { id: "firebolt", name: "Firebolt", stat: "int_stat", rolls: 3, target: "enemy", damage: 9, perfect: { effect: "burning", turns: 3 }, blurb: "A bolt of fire. On a hit, the target must save or catch Burning." },
   mend: { id: "mend", name: "Mend", stat: "int_stat", rolls: 2, target: "ally", heal: 10, blurb: "Heal an ally (or yourself)." },
   chain_spark: { id: "chain_spark", name: "Chain Spark", stat: "int_stat", rolls: 4, target: "all_enemies", damage: 6, perfect: { effect: "glitched", turns: 1 }, blurb: "A spark that arcs from enemy to enemy. Each one hit must save or be Fumbling." },
@@ -237,7 +244,6 @@ export const ABILITIES: Record<string, AbilityDef> = {
   sailor_scimitar: { id: "sailor_scimitar", name: "Scimitar", stat: "str", rolls: 2, target: "enemy", damage: 8, blurb: "A drowned sailor's scimitar, rusted but sharp enough." },
   stoke_the_fire: { id: "stoke_the_fire", name: "Stoke the Fire", stat: "str", rolls: 3, target: "all_enemies", damage: 6, targetEffect: { effect: "burning", turns: 2 }, blurb: "Flame bursts off you: every enemy beside you is struck and set Burning." },
   // Signature abilities: one per class, on its signature weapon.
-  full_reckoning: { id: "full_reckoning", name: "Full Reckoning", stat: "str", rolls: 3, target: "enemy", damage: 8, perDebuffDamage: 2, blurb: "Every wound it carries counts against it: +2 damage per different debuff on the target." },
   thunderhead: { id: "thunderhead", name: "Thunderhead", stat: "int_stat", rolls: 3, target: "all_enemies", damage: 7, vsEffect: { effect: "burning", bonus: 3 }, blurb: "Lightning on every enemy, +3 on any already Burning." },
   land_the_catch: { id: "land_the_catch", name: "Land the Catch", stat: "dex", rolls: 3, target: "enemy", damage: 9, finisher: 2, blurb: "Hook the weakest: double damage to an enemy under a quarter of its HP." },
   riptide: { id: "riptide", name: "Riptide", stat: "int_stat", rolls: 3, target: "all_enemies", damage: 4, targetEffect: { effect: "slowed", turns: 1 }, blurb: "Drags at every enemy, and leaves them Slowed." },
@@ -258,8 +264,8 @@ export interface WeaponDef {
 }
 
 export const WEAPONS: Record<string, WeaponDef> = {
-  mace: { id: "mace", name: "Anchor Mace", classId: "qa_paladin", abilities: ["smite", "shield_wall"] },
-  greatsword: { id: "greatsword", name: "Breakwater Greatsword", classId: "qa_paladin", abilities: ["cleave", "heavy_blow", "shield_wall"] },
+  mace: { id: "mace", name: "Anchor Mace", classId: "qa_paladin", abilities: ["bash", "recover"] },
+  greatsword: { id: "greatsword", name: "Breakwater Greatsword", classId: "qa_paladin", abilities: ["cleave", "block"] },
   staff: { id: "staff", name: "Squall Staff", classId: "devops_mage", abilities: ["firebolt", "mend"] },
   tome: { id: "tome", name: "Logbook of Gales", classId: "devops_mage", abilities: ["chain_spark", "hex_bolt", "mend"] },
   daggers: { id: "daggers", name: "Twin Gutting Knives", classId: "refactor_rogue", abilities: ["quick_stab", "flurry"] },
@@ -274,7 +280,7 @@ export const WEAPONS: Record<string, WeaponDef> = {
   maul: { id: "maul", name: "Bell-Buoy Maul", classId: "sre_warden", abilities: ["shockwave", "seawall_blow", "challenge"] },
   grimoire: { id: "grimoire", name: "Drowned Grimoire", classId: "data_warlock", abilities: ["hex", "soul_drain"] },
   // Signature weapons: each class's own ability plus a staple, drawn like a weapon the class already has.
-  ballast_flail: { id: "ballast_flail", name: "Ballast Flail", classId: "qa_paladin", abilities: ["full_reckoning", "smite", "shield_wall"], looksLike: "mace" },
+  ballast_flail: { id: "ballast_flail", name: "Ballast Flail", classId: "qa_paladin", abilities: ["flail_strike", "armor_crush"], looksLike: "mace" },
   barometer_rod: { id: "barometer_rod", name: "Barometer Rod", classId: "devops_mage", abilities: ["thunderhead", "firebolt", "mend"], looksLike: "staff" },
   gaff_hook: { id: "gaff_hook", name: "Gaff Hook", classId: "refactor_rogue", abilities: ["land_the_catch", "quick_stab", "flurry"], looksLike: "daggers" },
   coral_staff: { id: "coral_staff", name: "Coral Staff", classId: "backend_druid", abilities: ["riptide", "thornlash", "rejuvenate"], looksLike: "root_staff" },

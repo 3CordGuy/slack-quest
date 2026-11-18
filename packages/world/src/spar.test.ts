@@ -147,7 +147,7 @@ describe("the training dummy", () => {
       expect(state.boss).toBe(false);
       for (let i = 0; i < 200 && state.status === "active"; i++) {
         expect(currentActor(state)!.id).toBe("p1");
-        const res = stepBattle(state, "p1", { type: "ability", ability: "heavy_blow", target: "e0" }, rng);
+        const res = stepBattle(state, "p1", { type: "ability", ability: "cleave", target: "e0" }, rng);
         if (!res.ok) throw new Error(res.error);
         state = res.state;
       }

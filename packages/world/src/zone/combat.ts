@@ -260,7 +260,15 @@ export function abilityArea(state: ZoneState, unit: Unit, ability: string, at?: 
   if (tactic.shape === "burst") return blast(state.map, unit.pos, tactic.radius ?? 1).filter((p) => !sameHex(p, unit.pos));
   if (tactic.shape === "line") return at ? lineFrom(state.map, unit.pos, at, tactic.length ?? 3) : [];
   if (tactic.shape === "adjacent") return hexNeighbors(unit.pos, state.map.grid);
+  if (tactic.shape === "arc") return at && !sameHex(at, unit.pos) ? arcHexes(state, unit.pos, at) : [];
   return [];
+}
+
+/** A swing's three hexes: the one beside `from` toward `toward`, and the two beside both it and `from`. */
+export function arcHexes(state: ZoneState, from: HexPos, toward: HexPos): HexPos[] {
+  const dir = directionToward(from, toward);
+  const middle = { q: from.q + dir.q, r: from.r + dir.r };
+  return hexNeighbors(from, state.map.grid).filter((p) => hexDistance(p, middle) <= 1);
 }
 
 /** Why `unit` cannot use this ability on this aim, in words, or null if it can. */
@@ -288,6 +296,12 @@ export function checkAbility(state: ZoneState, unit: Unit, ability: string, aim:
     if (unit.side === "hero" && !seenByHeroes(state, target)) return "It is too dark to make it out: bring a light, or get beside it.";
     // A blow and then away: where to is checked now, and nothing about the blow can take the hex.
     return inReach(target.pos) ?? (tactic.blink && aim.at ? blinkWrong(state, unit, aim.at, tactic.blink.range) : null);
+  }
+  if (tactic.shape === "arc") {
+    if (!aim.at || sameHex(aim.at, unit.pos)) return "Pick which way to swing.";
+    const keys = new Set(arcHexes(state, unit.pos, aim.at).map(posKey));
+    if (state.units.some((u) => u.side !== unit.side && !u.down && keys.has(posKey(u.pos)))) return null;
+    return unit.side === "hero" && def.damage && cratesBeside(state, unit).some((c) => keys.has(posKey(c.pos))) ? null : "No enemy is in that swing.";
   }
   if (tactic.shape === "adjacent") {
     if (state.units.some((u) => u.side !== unit.side && !u.down && adjacent(u.pos, unit.pos))) return null;
@@ -440,7 +454,7 @@ export function crateBlow(state: ZoneState, unit: Unit, crateId: string): string
 export function previewAttack(state: ZoneState, unit: Unit, ability: string, target: Unit): { chance: number; bonus: number; vs: number; adv: -1 | 0 | 1; notes: string[] } | null {
   const def = ABILITIES[ability];
   const tactic = tacticOf(ability);
-  if (!def || !["single", "chain", "adjacent"].includes(tactic.shape) || tactic.overwhelm || tactic.sure) return null;
+  if (!def || !["single", "chain", "adjacent", "arc"].includes(tactic.shape) || tactic.overwhelm || tactic.sure) return null;
   const c = attackContext(state, unit, target, { melee: tactic.reach === "melee" });
   const bonus = proficiency(unit.level) + mod(statOf(unit, def.stat)) + (tactic.toHit ?? 0) + c.mods;
   const vs = defenceOf(target, state);
@@ -559,6 +573,15 @@ export function resolveAbility(ctx: Ctx, unit: Unit, ability: string, aim: Aim &
     for (const foe of foes().filter((u) => adjacent(u.pos, unit.pos))) landed = strike(ctx, unit, def, tactic, foe, aim) || landed;
     if (unit.side === "hero" && def.damage) {
       for (const box of cratesBeside(state, unit)) {
+        smash(ctx, unit, def, tactic, box);
+        landed = true;
+      }
+    }
+  } else if (tactic.shape === "arc") {
+    const keys = new Set(arcHexes(state, unit.pos, aim.at!).map(posKey));
+    for (const foe of foes().filter((u) => keys.has(posKey(u.pos)))) landed = strike(ctx, unit, def, tactic, foe, aim) || landed;
+    if (unit.side === "hero" && def.damage) {
+      for (const box of cratesBeside(state, unit).filter((c) => keys.has(posKey(c.pos)))) {
         smash(ctx, unit, def, tactic, box);
         landed = true;
       }

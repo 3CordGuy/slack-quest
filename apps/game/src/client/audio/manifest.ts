@@ -266,7 +266,7 @@ function bladeImpacts(): Record<string, SoundEvent> {
 function effectTells(): Record<string, SoundEvent> {
   const tell = (e: EffectKind) => (e === "bleeding" ? "bleed" : e === "burning" ? "burn" : e === "stunned" ? "stun" : e === "guarded" || e === "taunting" || e === "hasted" ? "buff" : "debuff");
   const out: Record<string, SoundEvent> = { effect: { files: "sfx/combat/effect_*", fallback: built("debuff"), gainDb: -4 } };
-  const all: EffectKind[] = ["bleeding", "burning", "stunned", "guarded", "taunting", "slowed", "hasted", "glitched", "exposed"];
+  const all: EffectKind[] = ["bleeding", "burning", "stunned", "guarded", "taunting", "slowed", "hasted", "glitched", "exposed", "prone", "sundered"];
   for (const e of all) out[`effect.${e}`] = { files: `sfx/combat/effect_${e}_*`, fallback: built(tell(e)), gainDb: -4 };
   return out;
 }

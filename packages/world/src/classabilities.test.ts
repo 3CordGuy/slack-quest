@@ -9,10 +9,10 @@ import { zoneHero } from "./zone/zone";
 // Real pools are still empty, so the rules are tried on a made-up one.
 const pools: AbilityPools = {
   qa_paladin: [
-    { id: "smite", level: 1 },
+    { id: "bash", level: 1 },
     { id: "cleave", level: 1 },
-    { id: "heavy_blow", level: 1 },
-    { id: "shield_wall", level: 5 },
+    { id: "flail_strike", level: 1 },
+    { id: "block", level: 5 },
   ],
 };
 
@@ -35,62 +35,62 @@ describe("parseAbilityLoadout", () => {
   it("always gives one entry per slot", () => {
     expect(parseAbilityLoadout(undefined)).toEqual([null, null, null]);
     expect(parseAbilityLoadout("[]")).toEqual([null, null, null]);
-    expect(parseAbilityLoadout('["smite"]')).toEqual(["smite", null, null]);
-    expect(parseAbilityLoadout('["smite",null,"cleave","heavy_blow"]')).toHaveLength(ABILITY_SLOTS);
+    expect(parseAbilityLoadout('["bash"]')).toEqual(["bash", null, null]);
+    expect(parseAbilityLoadout('["bash",null,"cleave","flail_strike"]')).toHaveLength(ABILITY_SLOTS);
   });
   it("drops what is malformed or unknown", () => {
     expect(parseAbilityLoadout("not json")).toEqual([null, null, null]);
     expect(parseAbilityLoadout('{"a":1}')).toEqual([null, null, null]);
-    expect(parseAbilityLoadout('[1,"no_such_ability","smite"]')).toEqual([null, null, "smite"]);
+    expect(parseAbilityLoadout('[1,"no_such_ability","bash"]')).toEqual([null, null, "bash"]);
   });
 });
 
 describe("abilitySlotError", () => {
   it("allows a pool ability the hero's level reaches, and emptying a slot", () => {
-    expect(abilitySlotError("qa_paladin", 1, 0, "smite", pools)).toBeNull();
+    expect(abilitySlotError("qa_paladin", 1, 0, "bash", pools)).toBeNull();
     expect(abilitySlotError("qa_paladin", 1, 2, null, pools)).toBeNull();
   });
   it("refuses another class's ability, a bad slot, and one not yet opened", () => {
-    expect(abilitySlotError("devops_mage", 9, 0, "smite", pools)).toMatch(/class's abilities/);
-    expect(abilitySlotError("qa_paladin", 1, 3, "smite", pools)).toMatch(/no such slot/);
-    expect(abilitySlotError("qa_paladin", 1, -1, "smite", pools)).toMatch(/no such slot/);
-    expect(abilitySlotError("qa_paladin", 1, 0, "shield_wall", pools)).toMatch(/level 5/);
-    expect(abilitySlotError("qa_paladin", 5, 0, "shield_wall", pools)).toBeNull();
+    expect(abilitySlotError("devops_mage", 9, 0, "bash", pools)).toMatch(/class's abilities/);
+    expect(abilitySlotError("qa_paladin", 1, 3, "bash", pools)).toMatch(/no such slot/);
+    expect(abilitySlotError("qa_paladin", 1, -1, "bash", pools)).toMatch(/no such slot/);
+    expect(abilitySlotError("qa_paladin", 1, 0, "block", pools)).toMatch(/level 5/);
+    expect(abilitySlotError("qa_paladin", 5, 0, "block", pools)).toBeNull();
   });
 });
 
 describe("withAbilityInSlot", () => {
   it("fills and empties a slot", () => {
-    expect(withAbilityInSlot([null, null, null], 1, "smite")).toEqual([null, "smite", null]);
-    expect(withAbilityInSlot([null, "smite", null], 1, null)).toEqual([null, null, null]);
+    expect(withAbilityInSlot([null, null, null], 1, "bash")).toEqual([null, "bash", null]);
+    expect(withAbilityInSlot([null, "bash", null], 1, null)).toEqual([null, null, null]);
   });
   it("trades places rather than putting one ability in two slots", () => {
-    expect(withAbilityInSlot(["smite", "cleave", null], 1, "smite")).toEqual(["cleave", "smite", null]);
-    expect(withAbilityInSlot(["smite", null, null], 2, "smite")).toEqual([null, null, "smite"]);
+    expect(withAbilityInSlot(["bash", "cleave", null], 1, "bash")).toEqual(["cleave", "bash", null]);
+    expect(withAbilityInSlot(["bash", null, null], 2, "bash")).toEqual([null, null, "bash"]);
   });
   it("does not change what it was given", () => {
-    const before: (string | null)[] = ["smite", null, null];
+    const before: (string | null)[] = ["bash", null, null];
     withAbilityInSlot(before, 1, "cleave");
-    expect(before).toEqual(["smite", null, null]);
+    expect(before).toEqual(["bash", null, null]);
   });
 });
 
 describe("classAbilitiesOf", () => {
   it("gives the slotted abilities the hero's level has opened, in slot order", () => {
-    expect(classAbilitiesOf("qa_paladin", 1, ["cleave", null, "smite"], pools)).toEqual(["cleave", "smite"]);
-    expect(classAbilitiesOf("qa_paladin", 1, ["smite", "shield_wall", null], pools)).toEqual(["smite"]);
-    expect(classAbilitiesOf("qa_paladin", 5, ["smite", "shield_wall", null], pools)).toEqual(["smite", "shield_wall"]);
+    expect(classAbilitiesOf("qa_paladin", 1, ["cleave", null, "bash"], pools)).toEqual(["cleave", "bash"]);
+    expect(classAbilitiesOf("qa_paladin", 1, ["bash", "block", null], pools)).toEqual(["bash"]);
+    expect(classAbilitiesOf("qa_paladin", 5, ["bash", "block", null], pools)).toEqual(["bash", "block"]);
   });
   it("ignores another class's picks, repeats and nothing at all", () => {
-    expect(classAbilitiesOf("devops_mage", 9, ["smite", null, null], pools)).toEqual([]);
-    expect(classAbilitiesOf("qa_paladin", 1, ["smite", "smite", "smite"], pools)).toEqual(["smite"]);
+    expect(classAbilitiesOf("devops_mage", 9, ["bash", null, null], pools)).toEqual([]);
+    expect(classAbilitiesOf("qa_paladin", 1, ["bash", "bash", "bash"], pools)).toEqual(["bash"]);
     expect(classAbilitiesOf("qa_paladin", 1, undefined, pools)).toEqual([]);
   });
 });
 
 describe("withClassAbilities", () => {
   it("puts the class's after the weapon's, with none twice", () => {
-    expect(withClassAbilities(["smite", "shield_wall"], ["cleave", "smite"])).toEqual(["smite", "shield_wall", "cleave"]);
+    expect(withClassAbilities(["bash", "block"], ["cleave", "bash"])).toEqual(["bash", "block", "cleave"]);
     expect(withClassAbilities(["punch"], undefined)).toEqual(["punch"]);
   });
 });
@@ -100,7 +100,7 @@ describe("a hero's loadout, as they go into a fight", () => {
   let saved: typeof ABILITY_POOLS.qa_paladin;
   beforeEach(() => {
     saved = ABILITY_POOLS.qa_paladin;
-    ABILITY_POOLS.qa_paladin = [{ id: "cleave", level: 1 }, { id: "heavy_blow", level: 4 }];
+    ABILITY_POOLS.qa_paladin = [{ id: "cleave", level: 1 }, { id: "flail_strike", level: 4 }];
   });
   afterEach(() => {
     ABILITY_POOLS.qa_paladin = saved;
@@ -111,13 +111,13 @@ describe("a hero's loadout, as they go into a fight", () => {
   });
 
   it("adds what the level has opened to the weapon's, in a voyage battle", () => {
-    expect(heroCombatant(sheet(1, ["cleave", "heavy_blow", null])).abilities).toEqual([...abilitiesFor("mace"), "cleave"]);
-    expect(heroCombatant(sheet(4, ["cleave", "heavy_blow", null])).abilities).toEqual([...abilitiesFor("mace"), "cleave", "heavy_blow"]);
+    expect(heroCombatant(sheet(1, ["cleave", "flail_strike", null])).abilities).toEqual([...abilitiesFor("mace"), "cleave"]);
+    expect(heroCombatant(sheet(4, ["cleave", "flail_strike", null])).abilities).toEqual([...abilitiesFor("mace"), "cleave", "flail_strike"]);
   });
 
   it("adds the same in a zone", () => {
-    expect(zoneHero(sheet(1, ["cleave", "heavy_blow", null])).classAbilities).toEqual(["cleave"]);
-    expect(zoneHero(sheet(4, [null, "heavy_blow", "cleave"])).classAbilities).toEqual(["heavy_blow", "cleave"]);
+    expect(zoneHero(sheet(1, ["cleave", "flail_strike", null])).classAbilities).toEqual(["cleave"]);
+    expect(zoneHero(sheet(4, [null, "flail_strike", "cleave"])).classAbilities).toEqual(["flail_strike", "cleave"]);
   });
 
   it("adds nothing for an empty loadout, or none at all", () => {

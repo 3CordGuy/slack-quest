@@ -5,13 +5,14 @@
 // puts them on a map. A test fails if an ability or an enemy has no entry.
 
 import type { StatKey, Stats } from "@gantt-quest/core";
-import { ABILITIES, EFFECT_INFO, ENEMIES, type AbilityDef, type EffectKind, type EnemyAttack } from "../content";
+import { ABILITIES, EFFECT_INFO, ENEMIES, SUNDERED_DEFENCE, type AbilityDef, type EffectKind, type EnemyAttack } from "../content";
 import { diceFor, type Dice } from "./rules";
 import type { CommonAction, Condition, ShantyKind, SurfaceKind, Throwable, WeatherKind } from "./types";
 
 /**
  * - `single`: one enemy, an attack roll.
  * - `adjacent`: every enemy next to you, an attack roll each.
+ * - `arc`: three hexes next to you, around the one swung at (any hex that way will do), an attack roll for each enemy in them.
  * - `chain`: one enemy, then on to others nearby, an attack roll each.
  * - `blast`: a hex you pick and all around it. Everyone there saves for half, friend and foe.
  * - `burst`: all around yourself. Enemies save for half.
@@ -19,7 +20,7 @@ import type { CommonAction, Condition, ShantyKind, SurfaceKind, Throwable, Weath
  * - `ally`: one friend (or yourself). No roll.
  * - `self`: yourself.
  */
-export type Shape = "single" | "adjacent" | "chain" | "blast" | "burst" | "line" | "ally" | "self";
+export type Shape = "single" | "adjacent" | "arc" | "chain" | "blast" | "burst" | "line" | "ally" | "self";
 
 export interface Tactic {
   cost: "action" | "bonus";
@@ -257,18 +258,19 @@ export const BLACK_SPOT = { rounds: 4 };
 export const RED_SKY = { rounds: 3 };
 export const UNHOLY_WATERS = { water: 3, fire: 2 };
 
-/** Shield Wall: a shield of `shield` points plus the Paladin's level on themselves alone, through their next turn. */
-export const SHIELD_WALL = { range: 0, shield: 6, rounds: 1 };
+/** Block (the greatsword): a shield of `shield` points plus the user's level on themselves, through their next turn. */
+export const BLOCK = { range: 0, shield: 8, rounds: 1 };
 
 export const TACTICS: Record<string, Tactic> = {
   punch: melee(),
   torch_swing: melee(),
   // Paladin
-  smite: melee(),
-  shield_wall: { ...guard(), shield: SHIELD_WALL },
-  cleave: melee({ shape: "adjacent", cooldown: 2 }),
-  heavy_blow: melee({ toHit: -2 }),
-  full_reckoning: melee(),
+  bash: melee(),
+  recover: guard(),
+  block: { ...guard(), shield: BLOCK },
+  flail_strike: melee(),
+  armor_crush: melee({ cost: "bonus" }),
+  cleave: melee({ shape: "arc" }),
   // Paladin class abilities
   beacon_aura: { cost: "bonus", reach: "spell", range: 0, shape: "self", aura: { kind: "beacon", rounds: 4 } },
   healing_aura: { cost: "bonus", reach: "spell", range: 0, shape: "self", aura: { kind: "mending", rounds: 4 } },
@@ -371,7 +373,7 @@ export const healDice = (def: AbilityDef): Dice => diceFor(Math.max(2, (def.heal
 
 /** What a hero strikes with when an enemy walks out of reach: their first melee ability, or bare hands. */
 export function reactionStrike(abilities: string[]): string {
-  return abilities.find((a) => ABILITIES[a]?.damage && tacticOf(a).reach === "melee" && tacticOf(a).shape === "single" && tacticOf(a).cost === "action") ?? "punch";
+  return abilities.find((a) => ABILITIES[a]?.damage && tacticOf(a).reach === "melee" && (tacticOf(a).shape === "single" || tacticOf(a).shape === "arc") && tacticOf(a).cost === "action") ?? "punch";
 }
 
 // ---------- conditions ----------
@@ -399,6 +401,7 @@ export const SAVE_STAT: Record<Condition, StatKey> = {
   hasted: "agi",
   glitched: "int_stat",
   exposed: "agi",
+  sundered: "str",
   poisoned: "vit",
   prone: "agi",
   wet: "agi",
@@ -437,7 +440,8 @@ export const CONDITION_INFO: Record<Condition, { name: string; blurb: string; co
   glitched: info("glitched", "Its next attack is rolled with disadvantage."),
   exposed: info("exposed", "Attacks against it have advantage."),
   poisoned: { name: "Poisoned", blurb: "Its attacks are rolled with disadvantage.", color: "#a3e635" },
-  prone: { name: "Prone", blurb: "Flat on the ground: standing costs half its movement. Melee attacks against it have advantage.", color: "#cbd5e1" },
+  prone: info("prone", "Flat on the ground: standing costs half its movement. Melee attacks against it have advantage, ranged attacks disadvantage."),
+  sundered: info("sundered", `Its armor is dented: ${SUNDERED_DEFENCE} less Defence.`),
   wet: { name: "Wet", blurb: "Soaked through: lightning hits harder, and it cannot burn.", color: "#7dd3fc" },
   beacon: { name: "Beacon", blurb: "Gives light, and it and allies within 2 hexes have advantage on their attacks.", color: "#fff7d6" },
   mending: { name: "Healing Aura", blurb: "At the start of each of its turns, it and every ally within 2 hexes heal a little.", color: "#5dffa0" },

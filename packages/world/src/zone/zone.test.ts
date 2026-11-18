@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { STARTING_STATS, allHexesInGrid, hexDistance, hexNeighbors, posKey, type HexGrid, type HexPos } from "@gantt-quest/core";
-import { ABILITIES, EFFECT_TICK, ENEMIES, WEAPONS, abilitiesFor } from "../content";
+import { ABILITIES, EFFECT_TICK, ENEMIES, SUNDERED_DEFENCE, WEAPONS, abilitiesFor } from "../content";
 import type { Biome, Tile } from "../map";
 import { makeRng } from "../rng";
 import { walk } from "./combat";
@@ -9,7 +9,7 @@ import { shantyOf, shantyRadius, songsOn } from "./song";
 import { chartOf, constellationLinks } from "./stars";
 import { ALERT_RANGE, DEFAULT_ZONE_OPTIONS, JOIN_RANGE, generateZone, zoneOptions } from "./gen";
 import { adjacent, blast, flies, sees, seesFor, solid, stepCost, unitAt, zoneReach } from "./geometry";
-import { AURAS, BOLSTER, ENEMY_BURST, SHIELD_WALL, ENEMY_KIT, EXPLORE_ROUND_MS, FLEE_RANGE, LIGHT_RADIUS, SHIELD_SET_ASIDE, TACTICS, TORCH_GROUND_ROUNDS, TORCH_HELD_ROUNDS, TORCH_ROUND_MS, abilityDice as abilityDiceFor, commonCost, enemyHp, enemyStrikes, tacticOf } from "./kit";
+import { AURAS, BLOCK, BOLSTER, ENEMY_BURST, ENEMY_KIT, EXPLORE_ROUND_MS, FLEE_RANGE, LIGHT_RADIUS, SHIELD_SET_ASIDE, TACTICS, TORCH_GROUND_ROUNDS, TORCH_HELD_ROUNDS, TORCH_ROUND_MS, abilityDice as abilityDiceFor, commonCost, enemyHp, enemyStrikes, tacticOf } from "./kit";
 import { MAX_CATCHUP_ROUNDS } from "./clock";
 import { defenceOf } from "./engine";
 import { abilityArea, checkAbility, crateBlow, enemyAct, wayBetween } from "./combat";
@@ -43,7 +43,7 @@ function hero(state: ZoneState, id: string, classId: string, pos: HexPos): Unit 
   const sheet = standInHero(classId, id, 1)!;
   const unit: Unit = {
     id, side: "hero", name: id, kind: classId, level: 1, pos, hp: sheet.maxHp, maxHp: sheet.maxHp, focus: 2, maxFocus: 2,
-    stats: STARTING_STATS[classId], armor: 2, power: 1, abilities: classId === "refactor_rogue" ? ["aimed_shot", "quick_stab"] : classId === "devops_mage" ? ["firebolt", "mend"] : ["smite", "shield_wall"],
+    stats: STARTING_STATS[classId], armor: 2, power: 1, abilities: classId === "refactor_rogue" ? ["aimed_shot", "quick_stab"] : classId === "devops_mage" ? ["firebolt", "mend"] : ["bash", "block"],
     conditions: [], down: false, cooldowns: {}, items: { healing: 2, poison: 2, fire: 1, oil: 1, water: 1 },
   };
   state.units.push(unit);
@@ -313,12 +313,12 @@ describe("turns", () => {
     const move = budget().move;
     state = must(state, { type: "move", by: "ann", unit: "ann", to: at(7, 6) });
     expect(budget().move).toBe(move - 1);
-    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "smite", target: foe });
+    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "bash", target: foe });
     expect(budget().action).toBe(false);
-    expect(fails(state, { type: "use", by: "ann", unit: "ann", ability: "smite", target: foe })).toMatch(/used your Action/);
-    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "shield_wall" });
+    expect(fails(state, { type: "use", by: "ann", unit: "ann", ability: "bash", target: foe })).toMatch(/used your Action/);
+    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "block" });
     expect(budget().bonus).toBe(false);
-    expect(unit(state, "ann").conditions.some((c) => c.kind === "guarded")).toBe(true);
+    expect(shieldOf(unit(state, "ann"))).toBeGreaterThan(0);
     expect(fails(state, { type: "drink", by: "ann", unit: "ann", item: "healing" })).toMatch(/Bonus action/);
     expect(fails(state, { type: "move", by: "ann", unit: "ann", to: at(1, 1) })).toMatch(/movement/);
   });
@@ -404,22 +404,22 @@ describe("attacks", () => {
 
   it("puts an ability with a cooldown out of use for that many turns", () => {
     let { state, foe } = duel("dummy", "qa_paladin", at(6, 6), at(8, 6));
-    unit(state, "ann").abilities = ["cleave"];
-    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "cleave" });
-    const wait = tacticOf("cleave").cooldown!;
+    unit(state, "ann").abilities = ["stoke_the_fire"];
+    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "stoke_the_fire" });
+    const wait = tacticOf("stoke_the_fire").cooldown!;
     for (let turn = 0; turn < wait; turn++) {
       state = must(state, { type: "end_turn", by: "ann", unit: "ann" });
-      expect(fails(state, { type: "use", by: "ann", unit: "ann", ability: "cleave" }), `turn ${turn}`).toMatch(/not ready/);
+      expect(fails(state, { type: "use", by: "ann", unit: "ann", ability: "stoke_the_fire" }), `turn ${turn}`).toMatch(/not ready/);
     }
     state = must(state, { type: "end_turn", by: "ann", unit: "ann" });
-    must(state, { type: "use", by: "ann", unit: "ann", ability: "cleave" });
+    must(state, { type: "use", by: "ann", unit: "ann", ability: "stoke_the_fire" });
     expect(foe).toBeDefined();
   });
 
   it("spends Focus for advantage", () => {
     let { state, foe } = duel("dummy", "qa_paladin", at(6, 6), at(8, 6));
     const events: ZoneEvent[] = [];
-    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "smite", target: foe, focus: true }, events);
+    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "bash", target: foe, focus: true }, events);
     expect(unit(state, "ann").focus).toBe(1);
     const roll = events.find((e) => e.t === "roll" && e.roll.kind === "attack");
     expect(roll && roll.t === "roll" && roll.roll.adv).toBe(1);
@@ -968,7 +968,7 @@ describe("the end of a fight", () => {
         const spot = [...reach.values()].filter((r) => r.stop && adjacent(r.pos, target.pos)).sort((a, b) => a.cost - b.cost)[0];
         if (spot) state = must(state, { type: "move", by: "ann", unit: "ann", to: spot.pos }, events);
       }
-      const step = stepZone(state, { type: "use", by: "ann", unit: "ann", ability: "smite", target: foe.id, focus: unit(state, "ann").focus > 0 });
+      const step = stepZone(state, { type: "use", by: "ann", unit: "ann", ability: "bash", target: foe.id, focus: unit(state, "ann").focus > 0 });
       if (step.ok) { state = step.state; events.push(...step.events); }
       if (state.encounter) state = must(state, { type: "end_turn", by: "ann", unit: "ann" }, events);
     }
@@ -1013,7 +1013,7 @@ describe("the end of a fight", () => {
         const spot = [...reach.values()].filter((r) => r.stop && adjacent(r.pos, target.pos)).sort((a, b) => a.cost - b.cost)[0];
         if (spot) state = must(state, { type: "move", by: "ann", unit: "ann", to: spot.pos }, events);
       }
-      const step = stepZone(state, { type: "use", by: "ann", unit: "ann", ability: "smite", target: foe });
+      const step = stepZone(state, { type: "use", by: "ann", unit: "ann", ability: "bash", target: foe });
       if (step.ok) { state = step.state; events.push(...step.events); effects.push(...step.effects); }
       if (state.encounter) state = must(state, { type: "end_turn", by: "ann", unit: "ann" }, events);
     }
@@ -1128,7 +1128,7 @@ describe("fleeing", () => {
     bandit.conditions.push({ kind: "bleeding", rounds: 3 });
     bandit.pos = at(7, 6);
     unit(state, "ann").hp -= 3;
-    unit(state, "ann").cooldowns = { smite: 2 };
+    unit(state, "ann").cooldowns = { bash: 2 };
     const before = structuredClone(unit(state, "ann"));
     const step = stepZone(state, flee());
     if (!step.ok) throw new Error(step.error);
@@ -1360,9 +1360,9 @@ describe("fleeing", () => {
 
   it("brings a hero's class abilities with them, after the weapon's, and refreshes them on a return", () => {
     const sheet = standInHero("qa_paladin", "cy", 3)!;
-    let state = must(board(), { type: "join", hero: { ...sheet, classAbilities: ["firebolt", "smite"] } });
+    let state = must(board(), { type: "join", hero: { ...sheet, classAbilities: ["firebolt", "bash"] } });
     const weapon = abilitiesFor(sheet.weapon);
-    expect(unit(state, "cy").abilities).toEqual([...new Set([...weapon, "firebolt", "smite"])]);
+    expect(unit(state, "cy").abilities).toEqual([...new Set([...weapon, "firebolt", "bash"])]);
     state = must(state, { type: "join", hero: { ...sheet, classAbilities: [] } });
     expect(unit(state, "cy").abilities).toEqual(weapon);
   });
@@ -1854,23 +1854,23 @@ describe("crates", () => {
   it("always takes a hero's blow: no roll, no fight, no Focus spent, and the damage comes off", () => {
     const state = beside("qa_paladin", 60);
     const events: ZoneEvent[] = [];
-    const next = must(state, { type: "use", by: "ann", unit: "ann", ability: "smite", target: "crate1", focus: true }, events);
+    const next = must(state, { type: "use", by: "ann", unit: "ann", ability: "bash", target: "crate1", focus: true }, events);
     const [hit] = hits(events, "crate1");
-    expect(hit).toMatchObject({ actor: "ann", what: "smite" });
+    expect(hit).toMatchObject({ actor: "ann", what: "bash" });
     expect(hit.amount).toBeGreaterThan(0);
     expect(poi(next, "crate1").hp).toBe(60 - hit.amount);
     expect(events.some((e) => e.t === "roll")).toBe(false);
-    expect(events).toContainEqual({ t: "used", id: "ann", what: "smite", name: ABILITIES.smite.name, target: "crate1", at: undefined });
+    expect(events).toContainEqual({ t: "used", id: "ann", what: "bash", name: ABILITIES.bash.name, target: "crate1", at: undefined });
     expect(next.encounter).toBeNull();
     expect(unit(next, "ann").focus).toBe(unit(state, "ann").focus);
   });
 
   it("breaks at 0 and pays whoever broke it: wood, maybe gold and a find, and no XP", () => {
     let state = beside("qa_paladin", 1);
-    const step = stepZone(state, { type: "use", by: "ann", unit: "ann", ability: "smite", target: "crate1" });
+    const step = stepZone(state, { type: "use", by: "ann", unit: "ann", ability: "bash", target: "crate1" });
     if (!step.ok) throw new Error(step.error);
     state = step.state;
-    expect(step.events).toContainEqual({ t: "crate_hit", poi: "crate1", actor: "ann", amount: 1, what: "smite" });
+    expect(step.events).toContainEqual({ t: "crate_hit", poi: "crate1", actor: "ann", amount: 1, what: "bash" });
     expect(step.events).toContainEqual({ t: "crate_broken", poi: "crate1", id: "ann" });
     expect(poi(state, "crate1")).toMatchObject({ cleared: true, hp: 0 });
     expect(step.effects).toHaveLength(1);
@@ -1879,14 +1879,14 @@ describe("crates", () => {
     expect(grant.resources.wood).toBeGreaterThanOrEqual(CRATE_PAY.wood[0]);
     expect(grant.item).toBeUndefined();
     expect(step.events.some((e) => e.t === "spoils" && e.id === "ann" && e.xp === 0)).toBe(true);
-    expect(fails(state, { type: "use", by: "ann", unit: "ann", ability: "smite", target: "crate1" })).toMatch(/broken already/);
+    expect(fails(state, { type: "use", by: "ann", unit: "ann", ability: "bash", target: "crate1" })).toMatch(/broken already/);
 
     // Over many crates: always wood, often gold, now and then a potion or a torch, in the pack at once.
     const found = { gold: 0, potion: 0, torch: 0 };
     for (let seed = 1; seed <= 200; seed++) {
       const fresh = beside("qa_paladin", 1);
       fresh.rng = seed;
-      const one = stepZone(fresh, { type: "use", by: "ann", unit: "ann", ability: "smite", target: "crate1" });
+      const one = stepZone(fresh, { type: "use", by: "ann", unit: "ann", ability: "bash", target: "crate1" });
       if (!one.ok) throw new Error(one.error);
       const g = one.effects[0];
       const wood = g.resources.wood ?? 0;
@@ -1912,24 +1912,29 @@ describe("crates", () => {
     hero(state, "ann", "qa_paladin", at(4, 6));
     const rogue = hero(state, "bo", "refactor_rogue", at(10, 6));
     crate(state, "crate1", at(6, 6));
-    expect(fails(state, { type: "use", by: "ann", unit: "ann", ability: "smite", target: "crate1" })).toMatch(/next to it/);
+    expect(fails(state, { type: "use", by: "ann", unit: "ann", ability: "bash", target: "crate1" })).toMatch(/next to it/);
     expect(fails(state, { type: "use", by: "bo", unit: "bo", ability: "aimed_shot", target: "crate1" })).toMatch(/no clear line/);
     rogue.pos = at(6, 9);
     const events: ZoneEvent[] = [];
     must(state, { type: "use", by: "bo", unit: "bo", ability: "aimed_shot", target: "crate1" }, events);
     expect(hits(events, "crate1")).toHaveLength(1);
-    expect(fails(state, { type: "use", by: "ann", unit: "ann", ability: "smite", target: "nothing" })).toMatch(/Pick an enemy/);
+    expect(fails(state, { type: "use", by: "ann", unit: "ann", ability: "bash", target: "nothing" })).toMatch(/Pick an enemy/);
   });
 
-  it("is caught by a sweep all round, a blast and a thrown bomb", () => {
+  it("is caught by a sweep all round, a swing, a blast and a thrown bomb", () => {
     // A sweep with nothing but a crate beside you still swings.
     let state = beside("qa_paladin", 60);
-    unit(state, "ann").abilities = ["cleave"];
+    unit(state, "ann").abilities = ["stoke_the_fire", "cleave"];
     let events: ZoneEvent[] = [];
-    must(state, { type: "use", by: "ann", unit: "ann", ability: "cleave" }, events);
+    must(state, { type: "use", by: "ann", unit: "ann", ability: "stoke_the_fire" }, events);
     expect(hits(events, "crate1")).toHaveLength(1);
+    // So does a swing at it, but not one the other way.
+    events = [];
+    must(state, { type: "use", by: "ann", unit: "ann", ability: "cleave", at: at(6, 6) }, events);
+    expect(hits(events, "crate1")).toHaveLength(1);
+    expect(fails(state, { type: "use", by: "ann", unit: "ann", ability: "cleave", at: at(4, 6) })).toMatch(/No enemy is in that swing/);
     poi(state, "crate1").pos = at(9, 9);
-    expect(fails(state, { type: "use", by: "ann", unit: "ann", ability: "cleave" })).toMatch(/No enemy is next to you/);
+    expect(fails(state, { type: "use", by: "ann", unit: "ann", ability: "stoke_the_fire" })).toMatch(/No enemy is next to you/);
 
     state = board();
     const mage = hero(state, "ann", "devops_mage", at(3, 6));
@@ -1992,7 +1997,7 @@ describe("crates", () => {
     const helper = hero(state, "s1", "qa_paladin", at(5, 6));
     helper.controller = "ann";
     crate(state, "crate1", at(6, 6), 1);
-    const step = stepZone(state, { type: "use", by: "ann", unit: "s1", ability: "smite", target: "crate1" });
+    const step = stepZone(state, { type: "use", by: "ann", unit: "s1", ability: "bash", target: "crate1" });
     if (!step.ok) throw new Error(step.error);
     expect(step.events).toContainEqual({ t: "crate_broken", poi: "crate1", id: "s1" });
     expect(step.effects.map((e) => e.heroId)).toEqual(["ann"]);
@@ -2011,7 +2016,7 @@ describe("crates", () => {
     const ann = hero(state, "ann", "qa_paladin", at(5, 6));
     const bo = hero(state, "bo", "devops_mage", at(10, 6));
     crate(state, "crate1", at(6, 6));
-    expect(crateBlow(state, ann, "crate1")).toBe("smite");
+    expect(crateBlow(state, ann, "crate1")).toBe("bash");
     expect(crateBlow(state, bo, "crate1")).toBe("firebolt");
     ann.pos = at(3, 6);
     expect(crateBlow(state, ann, "crate1")).toBeNull();
@@ -2040,7 +2045,7 @@ describe("crates", () => {
     };
 
     // A blow by hand: it breaks, and what was in it is paid there and then.
-    let step = stepZone(state, { type: "use", by: "ann", unit: "ann", ability: "smite", target: "crate1" });
+    let step = stepZone(state, { type: "use", by: "ann", unit: "ann", ability: "bash", target: "crate1" });
     if (!step.ok) throw new Error(step.error);
     state = step.state;
     quiet(state);
@@ -2076,9 +2081,9 @@ describe("crates", () => {
   it("costs the Action in a fight", () => {
     let { state } = duel("dummy");
     crate(state, "crate1", at(5, 7), 60);
-    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "smite", target: "crate1" });
+    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "bash", target: "crate1" });
     expect(state.encounter!.budgets.ann.action).toBe(false);
-    expect(fails(state, { type: "use", by: "ann", unit: "ann", ability: "smite", target: "crate1" })).toMatch(/Action/);
+    expect(fails(state, { type: "use", by: "ann", unit: "ann", ability: "bash", target: "crate1" })).toMatch(/Action/);
   });
 
   it("keeps a hero arriving off one", () => {
@@ -2272,8 +2277,8 @@ describe("the Paladin's class abilities", () => {
     expect(hits).toBeGreaterThan(0);
   });
 
-  it("Branding Strike: hits harder than a Smite", () => {
-    expect(ABILITIES.branding_strike.damage!).toBeGreaterThan(ABILITIES.smite.damage!);
+  it("Branding Strike: hits harder than a Bash", () => {
+    expect(ABILITIES.branding_strike.damage!).toBeGreaterThan(ABILITIES.bash.damage!);
   });
 
   it("Stoke the Fire: strikes every enemy beside the Paladin and sets the ones it hits Burning, and nothing further off", () => {
@@ -2330,23 +2335,6 @@ describe("the Paladin's class abilities", () => {
     expect(events.filter((e) => e.t === "hit").map((e) => e.t === "hit" && [e.amount, e.blocked])).toEqual([[0, size - 3], [2, 3]]);
   });
 
-  it("Shield Wall: guards the Paladin and gives them alone a shield through their next turn, and heals nothing", () => {
-    let { state } = party();
-    unit(state, "ann").abilities.push("shield_wall");
-    unit(state, "ann").hp = 5;
-    const events: ZoneEvent[] = [];
-    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "shield_wall" }, events);
-    expect(state.encounter!.budgets.ann).toMatchObject({ action: true, bonus: false });
-    expect(unit(state, "ann").hp).toBe(5);
-    expect(events.some((e) => e.t === "heal")).toBe(false);
-    expect(lasts(state, "guarded")).toBeGreaterThan(0);
-    expect(shieldOf(state, "ann")).toBe(SHIELD_WALL.shield + unit(state, "ann").level);
-    expect(shieldOf(state, "bo")).toBeUndefined();
-    state = nextTurn(state);
-    expect(shieldOf(state, "ann")).toBeGreaterThan(0);
-    state = endShared(state);
-    expect(shieldOf(state, "ann")).toBeUndefined();
-  });
 
   it("Bolster: wears off after 3 of the bearer's turns", () => {
     let { state } = party();
@@ -3211,7 +3199,7 @@ describe("the Bard's shanties", () => {
     state = must(state, sing("lively_shanty"));
     state = must(state, join("bo"));
     unit(state, "bo").pos = at(12, 6);
-    state = must(state, { type: "use", by: "bo", unit: "bo", ability: "smite", target: dummy });
+    state = must(state, { type: "use", by: "bo", unit: "bo", ability: "bash", target: dummy });
     expect(has(state, "bo", "inspired")).toBe(false);
   });
 
@@ -3545,8 +3533,8 @@ describe("the Sage's stars", () => {
       const tryState = structuredClone(state);
       tryState.rng = seed;
       const events: ZoneEvent[] = [];
-      const next = must(tryState, { type: "use", by: "bo", unit: "bo", ability: "smite", target: foes[0] }, events);
-      if (events.some((e) => e.t === "hit" && e.what === "smite")) burned = has(next, foes[0], "burning");
+      const next = must(tryState, { type: "use", by: "bo", unit: "bo", ability: "bash", target: foes[0] }, events);
+      if (events.some((e) => e.t === "hit" && e.what === "bash")) burned = has(next, foes[0], "burning");
     }
     expect(burned).toBe(true);
   });
@@ -3558,7 +3546,7 @@ describe("the Sage's stars", () => {
     kindle(ctx, unit(state, "bo"), target, 3);
     expect(burnOf(target)).toBe(EFFECT_TICK.burning);
     addCondition(ctx, unit(state, "bo"), "north_star", 3);
-    damage(ctx, target, 1, { actor: "bo", what: "smite" });
+    damage(ctx, target, 1, { actor: "bo", what: "bash" });
     expect(burnOf(target)).toBe(EFFECT_TICK.burning);
     kindle(ctx, unit(state, "bo"), target, 3);
     expect(burnOf(target)).toBe(2 * EFFECT_TICK.burning!);
@@ -3997,3 +3985,63 @@ describe("the Warlock's drowning", () => {
 
 /** An ability's damage dice, from its content. */
 const abilityDiceOf = (id: string) => abilityDiceFor(ABILITIES[id]);
+
+describe("Paladin weapons", () => {
+  it("gives each weapon two abilities of its own, none on a cooldown", () => {
+    expect(WEAPONS.mace.abilities).toEqual(["bash", "recover"]);
+    expect(WEAPONS.greatsword.abilities).toEqual(["cleave", "block"]);
+    expect(WEAPONS.ballast_flail.abilities).toEqual(["flail_strike", "armor_crush"]);
+    for (const id of ["bash", "recover", "cleave", "block", "flail_strike", "armor_crush"]) expect(tacticOf(id).cooldown, id).toBeUndefined();
+    expect(ABILITIES.bash.perfect).toEqual({ effect: "prone", turns: 1 });
+    expect(ABILITIES.flail_strike.perfect).toEqual({ effect: "slowed", turns: 2 });
+    expect(ABILITIES.armor_crush.perfect).toEqual({ effect: "sundered", turns: 2 });
+  });
+
+  it("Cleave: swings through the three hexes beside you on the side aimed at, however far off the aim", () => {
+    const { state, foe } = duel("dummy", "qa_paladin", at(5, 6), at(7, 6));
+    const ann = unit(state, "ann");
+    ann.abilities = ["cleave"];
+    for (const aim of [unit(state, foe).pos, at(12, 6)]) {
+      const area = abilityArea(state, ann, "cleave", aim);
+      expect(area).toHaveLength(3);
+      for (const p of area) expect(hexDistance(p, ann.pos)).toBe(1);
+      expect(area.map(posKey)).toContain(posKey(unit(state, foe).pos));
+    }
+    expect(checkAbility(state, ann, "cleave", { at: unit(state, foe).pos })).toBeNull();
+    expect(checkAbility(state, ann, "cleave", { at: at(3, 6) })).toMatch(/No enemy is in that swing/);
+    expect(checkAbility(state, ann, "cleave", {})).toMatch(/which way/);
+  });
+
+  it("Bash with the Action and Armor Crush with the Bonus action, both in one turn", () => {
+    let { state, foe } = duel("dummy", "qa_paladin", at(5, 6), at(7, 6));
+    unit(state, "ann").abilities = ["bash", "armor_crush"];
+    expect(tacticOf("armor_crush").cost).toBe("bonus");
+    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "bash", target: foe });
+    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "armor_crush", target: foe });
+    expect(state.encounter!.budgets.ann).toMatchObject({ action: false, bonus: false });
+  });
+
+  it("Recover heals and Block shields, each for the Bonus action alone", () => {
+    let { state } = duel("dummy", "qa_paladin", at(5, 6), at(7, 6));
+    unit(state, "ann").abilities = ["recover", "block"];
+    unit(state, "ann").hp = 5;
+    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "recover" });
+    expect(unit(state, "ann").hp).toBeGreaterThan(5);
+    expect(state.encounter!.budgets.ann).toMatchObject({ action: true, bonus: false });
+    expect(fails(state, { type: "use", by: "ann", unit: "ann", ability: "block" })).toMatch(/Bonus/);
+    state = duel("dummy", "qa_paladin", at(5, 6), at(7, 6)).state;
+    unit(state, "ann").abilities = ["block"];
+    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "block" });
+    expect(shieldOf(unit(state, "ann"))).toBe(BLOCK.shield + unit(state, "ann").level);
+    expect(state.encounter!.budgets.ann).toMatchObject({ action: true, bonus: false });
+  });
+
+  it("Sundered takes Defence off", () => {
+    const { state, foe } = duel("dummy", "qa_paladin", at(5, 6), at(7, 6));
+    const target = unit(state, foe);
+    const before = defenceOf(target, state);
+    const ctx: Ctx = { state, rng: makeRng(1), events: [], effects: [] };
+    addCondition(ctx, target, "sundered", 2);
+    expect(defenceOf(target, state)).toBe(before - SUNDERED_DEFENCE);
+  });
+});

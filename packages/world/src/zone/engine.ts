@@ -6,7 +6,7 @@ import { hexDistance, posKey, type StatKey } from "@gantt-quest/core";
 import { tileAt } from "../map";
 import type { Rng } from "../rng";
 import { adjacent, elevOf, inFight } from "./geometry";
-import { EFFECT_TICK } from "../content";
+import { EFFECT_TICK, SUNDERED_DEFENCE } from "../content";
 import { AQUEOUS, AURAS, CORAL_ARMOR, ENEMY_KIT, FORTIFY, NORTH_STAR, SHIELD_SET_ASIDE, enemyDefence, enemySave } from "./kit";
 import { inDark } from "./light";
 import { d20, heroDefence, mod, netAdvantage, rollDice, statOf } from "./rules";
@@ -82,7 +82,7 @@ export function giveAway(ctx: Ctx, unit: Unit): void {
 }
 
 /** The conditions that count as wounds, for abilities that grow with them. */
-export const DEBUFFS: readonly Condition[] = ["bleeding", "burning", "stunned", "slowed", "glitched", "exposed", "poisoned", "prone"];
+export const DEBUFFS: readonly Condition[] = ["bleeding", "burning", "stunned", "slowed", "glitched", "exposed", "poisoned", "prone", "sundered"];
 
 /** Fortify: one of the side that raised a wall, standing beside it, is the steadier for it. */
 export const wallDefence = (state: Pick<ZoneState, "weather">, unit: Unit): number =>
@@ -92,7 +92,8 @@ export const wallDefence = (state: Pick<ZoneState, "weather">, unit: Unit): numb
 export const defenceOf = (unit: Unit, state?: Pick<ZoneState, "units" | "weather">): number =>
   (state ? songDefence(state, unit) + wallDefence(state, unit) : 0) +
   (unit.side === "hero" && unit.stats ? heroDefence(unit.stats, unit.armor) - ((unit.torch ?? 0) > 0 && unit.torchHand !== "main" && unit.outfit?.off_hand ? SHIELD_SET_ASIDE : 0) : enemyDefence(unit.kind)) +
-  (has(unit, "coral_armor") ? CORAL_ARMOR.defence : 0);
+  (has(unit, "coral_armor") ? CORAL_ARMOR.defence : 0) -
+  (has(unit, "sundered") ? SUNDERED_DEFENCE : 0);
 
 /** Whether a unit stands in water (Aqueous Regeneration heals more there). */
 export const inWater = (state: ZoneState, unit: Unit): boolean => state.surfaces[posKey(unit.pos)]?.kind === "water";

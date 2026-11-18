@@ -24,7 +24,7 @@ const hero = (id: string, over: Partial<Combatant> = {}): Combatant => ({
   id, side: "hero", name: id, kind: "qa_paladin", level: 1, hp: 60, maxHp: 60,
   pct: { str: 100, int_stat: 100, vit: 100, agi: 100, dex: 100 },
   power: 0, armor: 0, speed: 100, focus: 3, potions: 2,
-  abilities: ["smite", "shield_wall", "full_reckoning", "thunderhead", "land_the_catch", "riptide", "all_hands", "plot_the_course", "lighthouse_beam", "red_tide", "firebolt"],
+  abilities: ["bash", "block", "cleave", "thunderhead", "land_the_catch", "riptide", "all_hands", "plot_the_course", "lighthouse_beam", "red_tide", "firebolt"],
   effects: [], down: false, traits: [], ...over,
 });
 const fight = (heroes: Combatant[], enemies = ["dummy"], seed = 3) => createBattle({ heroes, enemyKinds: enemies, avgLevel: 1, poiId: null }, makeRng(seed)).state;
@@ -78,19 +78,19 @@ describe("trait data", () => {
 describe("trait rules in a fight", () => {
   it("vs_effect: Keelhaul hits Stunned enemies 3 harder", () => {
     const stunned = { effects: [{ kind: "stunned" as const, turns: 1 }] };
-    expect(strike("smite", ["keelhaul"], stunned) - strike("smite", [], stunned)).toBe(5);
-    expect(strike("smite", ["keelhaul"]) - strike("smite", [])).toBe(0);
+    expect(strike("bash", ["keelhaul"], stunned) - strike("bash", [], stunned)).toBe(5);
+    expect(strike("bash", ["keelhaul"]) - strike("bash", [])).toBe(0);
   });
 
   it("per_debuff: Read the Wreckage adds 2 per different debuff", () => {
     const two = { effects: [{ kind: "bleeding" as const, turns: 2 }, { kind: "slowed" as const, turns: 2 }] };
-    expect(strike("smite", ["read_the_wreckage"], two) - strike("smite", [], two)).toBe(4);
+    expect(strike("bash", ["read_the_wreckage"], two) - strike("bash", [], two)).toBe(4);
   });
 
   it("finisher: Cutthroat does half again to an enemy under a quarter HP", () => {
     const low = { hp: 100, maxHp: 500 };
-    expect(strike("smite", ["cutthroat"], low)).toBe(Math.round(strike("smite", [], low) * 1.5));
-    expect(strike("smite", ["cutthroat"], { hp: 400, maxHp: 500 })).toBe(strike("smite", [], { hp: 400, maxHp: 500 }));
+    expect(strike("bash", ["cutthroat"], low)).toBe(Math.round(strike("bash", [], low) * 1.5));
+    expect(strike("bash", ["cutthroat"], { hp: 400, maxHp: 500 })).toBe(strike("bash", [], { hp: 400, maxHp: 500 }));
   });
 
   it("last_stand: once a fight, a killing blow leaves the hero on 1 HP", () => {
@@ -101,7 +101,7 @@ describe("trait rules in a fight", () => {
       const rng = makeRng(seed);
       const events = [];
       for (let i = 0; i < 20 && s.status === "active"; i++) {
-        const r = ok(stepBattle(s, "h", { type: "ability", ability: "shield_wall" }, rng));
+        const r = ok(stepBattle(s, "h", { type: "ability", ability: "block" }, rng));
         events.push(...r.events);
         s = r.state;
       }
@@ -128,23 +128,23 @@ describe("trait rules in a fight", () => {
 
   it("on_kill_heal: Drowned Debts heals 3 when an enemy goes down", () => {
     const s = tune(fight([hero("h", { hp: 20, traits: ["drowned_debts"] })], ["dummy", "dummy"]), { hp: 1 });
-    const r = ok(stepBattle(s, "h", { type: "ability", ability: "smite", target: "e0" }, makeRng(1)));
+    const r = ok(stepBattle(s, "h", { type: "ability", ability: "bash", target: "e0" }, makeRng(1)));
     expect(r.events).toContainEqual({ t: "heal", actor: "h", target: "h", amount: 3, ability: "Drowned Debts" });
   });
 
   it("ally_perfect_focus: Call and Response gives focus on a crewmate's perfect", () => {
     const s = fight([hero("a", { speed: 100 }), hero("b", { speed: 0, focus: 0, traits: ["call_and_response"] })]);
-    const r = ok(stepBattle(s, "a", { type: "ability", ability: "smite", target: "e0" }, makeRng(1)));
+    const r = ok(stepBattle(s, "a", { type: "ability", ability: "bash", target: "e0" }, makeRng(1)));
     expect(r.state.combatants.find((c) => c.id === "b")!.focus).toBe(1);
   });
 
   it("first_focus_free: Eye of the Storm refunds the first focus, once", () => {
     let s = tune(fight([hero("h", { focus: 3, traits: ["eye_of_the_storm"] })]), { hp: 500, maxHp: 500 });
-    const r1 = ok(stepBattle(s, "h", { type: "ability", ability: "smite", target: "e0", focus: 2 }, makeRng(1)));
+    const r1 = ok(stepBattle(s, "h", { type: "ability", ability: "bash", target: "e0", focus: 2 }, makeRng(1)));
     expect(r1.state.combatants.find((c) => c.id === "h")!.focus).toBe(2);
     s = r1.state;
     if (s.actor !== "h") return;
-    const r2 = ok(stepBattle(s, "h", { type: "ability", ability: "smite", target: "e0", focus: 1 }, makeRng(1)));
+    const r2 = ok(stepBattle(s, "h", { type: "ability", ability: "bash", target: "e0", focus: 1 }, makeRng(1)));
     expect(r2.state.combatants.find((c) => c.id === "h")!.focus).toBe(1);
   });
 
@@ -156,7 +156,7 @@ describe("trait rules in a fight", () => {
 
   it("perfect_effect: Spyglass exposes the target on a perfect", () => {
     const s = tune(fight([hero("h", { traits: ["spyglass"] })]), { hp: 500, maxHp: 500 });
-    const r = ok(stepBattle(s, "h", { type: "ability", ability: "full_reckoning", target: "e0" }, makeRng(1)));
+    const r = ok(stepBattle(s, "h", { type: "ability", ability: "cleave", target: "e0" }, makeRng(1)));
     expect(r.events).toContainEqual({ t: "effect", target: "e0", effect: "exposed", turns: 2 });
   });
 
@@ -194,11 +194,6 @@ describe("signature abilities", () => {
     expect(high).toBeGreaterThan(50);
   });
 
-  it("Full Reckoning: +2 per different debuff", () => {
-    const two = { effects: [{ kind: "bleeding" as const, turns: 2 }, { kind: "burning" as const, turns: 2 }] };
-    expect(strike("full_reckoning", [], two) - strike("full_reckoning", [])).toBe(4);
-  });
-
   it("Thunderhead: +3 on Burning enemies", () => {
     expect(strike("thunderhead", [], { effects: [{ kind: "burning", turns: 2 }] }) - strike("thunderhead", [])).toBe(3);
   });
@@ -210,7 +205,7 @@ describe("signature abilities", () => {
   it("Plot the Course goes through Guarded", () => {
     const guarded = { effects: [{ kind: "guarded" as const, turns: 1 }] };
     expect(strike("plot_the_course", [], guarded)).toBe(strike("plot_the_course", []));
-    expect(strike("smite", [], guarded)).toBeLessThan(strike("smite", []));
+    expect(strike("bash", [], guarded)).toBeLessThan(strike("bash", []));
   });
 
   it("Red Tide: +2 per turn of Bleeding left, and the bleeding stops", () => {
