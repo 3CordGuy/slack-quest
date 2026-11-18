@@ -26,7 +26,7 @@ PRs are squash-merged, so one PR is one commit on `main`, and so one entry on th
    ```
    The squash commit's message is every commit message on the branch joined together. The PR description is **not** part of it, so a trailer written only there is lost.
 3. **Use `Release-note: skip` only when the whole PR changes nothing a player can notice** (a refactor, a dev tool, a test helper that lives in `src`). Because the messages are joined, a `skip` on any one commit hides the entire PR, whatever its title says. This is how Atlas (#500) and class abilities (#494) never reached the board: a commit inside each said `skip`. For a commit inside a larger PR that players should hear about, leave the trailer off.
-4. **Before merging, read the commit messages on the branch for stray trailers**: `git log origin/main..HEAD --format=%B | grep -i '^Release-note'`. If you merge from the command line you can set the message yourself and be sure: `gh pr merge --squash --subject "Area: what changed (#123)" --body "Release-note: …"`.
+4. **Before merging, read the commit messages on the branch for stray trailers**: `git log origin/main..HEAD --format=%B | grep -i '^Release-note:'`. If you merge from the command line you can set the message yourself and be sure: `gh pr merge --squash --subject "Area: what changed (#123)" --body "Release-note: …"`.
 
 ### When you cut a release
 
