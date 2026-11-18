@@ -81,11 +81,16 @@ export const ABILITY_ICON: Record<string, ActionIcon> = {
   chart_a_course: icon("chart", "#ff4d4d"),
   north_star: icon("north-star", "#ffd166"),
   // Warden
-  bulwark_strike: icon("heavy", "#93c5fd"),
-  taunt: icon("shout", "#ff6b6b"),
+  seawall_blow: icon("heavy", "#93c5fd"),
+  challenge: icon("shout", "#ff6b6b"),
   hold_the_line: icon("shield", "#fbbf24"),
   shockwave: icon("quake", "#a78bfa"),
   lighthouse_beam: icon("beam", "#ffd23f"),
+  against_the_waves: icon("breakwater", "#5fb8ff"),
+  overwhelm: icon("overwhelm", "#ff9a4a"),
+  fortify: icon("fortify", "#c9b48a"),
+  bulwark_strike: icon("bulwark", "#93c5fd"),
+  taunt: icon("taunt", "#ff5a3c"),
   // Warlock
   hex: icon("skull", "#e879f9"),
   soul_drain: icon("drain", "#e879f9"),

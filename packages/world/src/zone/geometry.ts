@@ -7,7 +7,7 @@ import { hexDistance, hexNeighbors, inBounds, posKey, type HexPos } from "@gantt
 import { MOVE_COST, tileAt, type Tile, type WorldMap } from "../map";
 import { crateAt } from "./crates";
 import { ENEMY_KIT } from "./kit";
-import type { Unit, ZoneState } from "./types";
+import type { Side, Unit, Weather, ZoneState } from "./types";
 
 /** The six neighbours of a hex, clockwise from the upper right. */
 export const HEX_DIRS: readonly HexPos[] = [
@@ -75,6 +75,18 @@ export function sees(map: WorldMap, from: HexPos, to: HexPos): boolean {
   return hexesBetween(from, to).every((p) => !blocked.has(posKey(p)));
 }
 
+/**
+ * `sees`, for one of `side`: a wall (Fortify) raised by the other side blocks the view as rock does, and one raised by
+ * their own side they see over.
+ */
+export function seesFor(state: Pick<ZoneState, "map" | "weather">, side: Side, from: HexPos, to: HexPos): boolean {
+  if (!sees(state.map, from, to)) return false;
+  const walls = (state.weather ?? []).filter((w) => w.kind === "wall" && w.side !== side);
+  if (walls.length === 0) return true;
+  const blocked = new Set(walls.flatMap((w) => w.hexes.map(posKey)));
+  return hexesBetween(from, to).every((p) => !blocked.has(posKey(p)));
+}
+
 export const unitAt = (state: ZoneState, pos: HexPos): Unit | undefined => state.units.find((u) => sameHex(u.pos, pos));
 
 export const unitById = (state: ZoneState, id: string): Unit | undefined => state.units.find((u) => u.id === id);
@@ -111,8 +123,12 @@ export const courseShare = (course: Course | undefined, from: HexPos, to: HexPos
 /** A chest, strongbox or hoard stands on this hex (it is opened from beside it). */
 export const chestAt = (state: Pick<ZoneState, "map">, pos: HexPos): boolean => state.map.pois.some((p) => p.kind === "cache" && p.pos.q === pos.q && p.pos.r === pos.r);
 
-/** Something stands on this hex that nobody walks, lands or is shoved onto: a chest of any kind, or a crate not yet broken. */
-export const blockerAt = (state: Pick<ZoneState, "map">, pos: HexPos): boolean => chestAt(state, pos) || !!crateAt(state, pos);
+/** The wall (Fortify) standing on this hex, if one is. */
+export const wallAt = (state: { weather?: Weather[] }, pos: HexPos): Weather | undefined =>
+  state.weather?.find((w) => w.kind === "wall" && w.hexes.some((p) => p.q === pos.q && p.r === pos.r));
+
+/** Something stands on this hex that nobody walks, lands or is shoved onto: a chest of any kind, a crate not yet broken, or a wall. */
+export const blockerAt = (state: Pick<ZoneState, "map"> & { weather?: Weather[] }, pos: HexPos): boolean => chestAt(state, pos) || !!crateAt(state, pos) || !!wallAt(state, pos);
 
 /**
  * What one step costs `unit`, or Infinity if it cannot be made. Open ground is 1; forest and hills 2;

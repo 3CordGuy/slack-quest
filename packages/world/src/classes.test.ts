@@ -125,7 +125,7 @@ describe("Tidewall Warden", () => {
           // At the start of its first turn the guard is still up; at its second it is gone.
           expect(guarded(state, "w")).toBe(wardenTurns === 1);
         }
-        const res = stepBattle(state, actor.id, { type: "ability", ability: actor.id === "w" ? "bulwark_strike" : "smite", target: "e0" }, rng);
+        const res = stepBattle(state, actor.id, { type: "ability", ability: actor.id === "w" ? "seawall_blow" : "smite", target: "e0" }, rng);
         if (!res.ok) throw new Error(res.error);
         state = res.state;
       }
@@ -146,7 +146,7 @@ describe("Tidewall Warden", () => {
     let elsewhere = 0;
     for (let seed = 0; seed < 30; seed++) {
       const party = [hero("w", "sre_warden"), hero("p", "qa_paladin"), hero("m", "devops_mage")];
-      const { events } = spar(party, { w: "taunt", p: "shield_wall", m: "mend" }, seed, 30, [DUMMY_KIND, DUMMY_KIND, DUMMY_KIND]);
+      const { events } = spar(party, { w: "challenge", p: "shield_wall", m: "mend" }, seed, 30, [DUMMY_KIND, DUMMY_KIND, DUMMY_KIND]);
       let active = false;
       for (const e of events) {
         if (e.t === "effect" && e.target === "w" && e.effect === "taunting") active = true;
@@ -164,11 +164,11 @@ describe("Tidewall Warden", () => {
     expect(elsewhere).toBeGreaterThan(0);
   });
 
-  it("adds a share of its armor to Bulwark Strike", () => {
+  it("adds a share of its armor to Seawall Blow", () => {
     const perfect = (armor: number) => {
       const hits = new Set<number>();
       for (let seed = 0; seed < 60; seed++) {
-        const { events } = spar([{ ...hero("w", "sre_warden"), armor }], { w: "bulwark_strike" }, seed, 2);
+        const { events } = spar([{ ...hero("w", "sre_warden"), armor }], { w: "seawall_blow" }, seed, 2);
         // Only the opening blow: a perfect one leaves the target exposed, which adds to the ones after.
         const first = events.find((e) => e.t === "hit" && e.actor === "w");
         if (first?.t === "hit" && first.perfect) hits.add(first.amount);

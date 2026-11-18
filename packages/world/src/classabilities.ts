@@ -65,7 +65,13 @@ export const ABILITY_POOLS: AbilityPools = {
     { id: "chart_a_course", level: 1 },
     { id: "north_star", level: 1 },
   ],
-  sre_warden: [],
+  sre_warden: [
+    { id: "against_the_waves", level: 1 },
+    { id: "overwhelm", level: 1 },
+    { id: "fortify", level: 1 },
+    { id: "bulwark_strike", level: 1 },
+    { id: "taunt", level: 1 },
+  ],
   data_warlock: [],
 };
 

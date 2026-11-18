@@ -6,7 +6,7 @@
 export * from "./types";
 export { createZone, ensureMouth, stepZone, zoneView, zoneAwaiting, zoneHero, standInHero } from "./zone";
 export { ZONE_GRIDS, ALERT_RANGE, JOIN_RANGE, DEFAULT_ZONE_OPTIONS, BIOME_LEADS, zoneOptions, generateZone, groupKinds, type ZonePlan } from "./gen";
-export { FREE_WALK, zoneReach, pathIn, sees, sameHex, elevOf, inFight, flies, unitAt, unitById, lineFrom, stepCost, blockerAt, blast as zoneBlast, type Reached, type Course } from "./geometry";
+export { FREE_WALK, zoneReach, pathIn, sees, sameHex, elevOf, inFight, flies, unitAt, unitById, lineFrom, stepCost, blockerAt, seesFor, wallAt, blast as zoneBlast, type Reached, type Course } from "./geometry";
 export {
   TACTICS,
   tacticOf,
@@ -37,6 +37,11 @@ export {
   CONSTELLATION,
   CHART,
   NORTH_STAR,
+  AGAINST_WAVES,
+  OVERWHELM,
+  FORTIFY,
+  BULWARK,
+  TAUNT,
   cleanItems,
   throwRange,
   jumpRange,
@@ -60,7 +65,7 @@ export { attackContext, defenceOf, has as hasCondition, shieldOf, unseen, type A
 export { abilityArea, carrySpot, checkAbility, checkCommon, checkDrink, checkLight, checkThrow, courseFor, crateBlow, previewAttack, BARD_AURA_RANGE, type Aim } from "./combat";
 export { chartOf, constellationHexes, constellationLinks, courseMarks, litFoes } from "./stars";
 export { SURFACE_INFO, HARMFUL as HARMFUL_SURFACES } from "./surfaces";
-export { WEATHER_INFO } from "./weather";
+export { WEATHER_INFO, wallHexes } from "./weather";
 export { summonsOf } from "./summon";
 export { SHANTIES, isShanty, joinable, shantyOf, shantyRadius, songsOn, type Song } from "./song";
 export { isDark, litHexes, inDark, seenByHeroes, lightSources } from "./light";

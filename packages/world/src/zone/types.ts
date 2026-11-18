@@ -21,9 +21,10 @@ export type Side = "hero" | "enemy";
  * the Druid's: a heal that comes again each turn (Aqueous Regeneration), and a shell of coral (Coral Armor);
  * the Bard's: a shanty sung (song.ts), and Inspired (from joining one, or Lead by Example: the next roll to hit has advantage);
  * and the Sage's (stars.ts): Guiding Light on an enemy (whoever attacks it has advantage), North Star on an ally (their blows
- * set what they hit Burning), and a course charted (on the Sage: the mark their allies move faster toward).
+ * set what they hit Burning), and a course charted (on the Sage: the mark their allies move faster toward);
+ * and the Warden's: Taunted, on an enemy (it must go for the Warden who taunted it, if it can).
  */
-export type Condition = EffectKind | "poisoned" | "prone" | "wet" | "beacon" | "mending" | "bolstered" | "invisible" | "contraband" | "regenerating" | "coral_armor" | ShantyKind | "inspired" | "guiding_light" | "north_star" | "charted";
+export type Condition = EffectKind | "poisoned" | "prone" | "wet" | "beacon" | "mending" | "bolstered" | "invisible" | "contraband" | "regenerating" | "coral_armor" | ShantyKind | "inspired" | "guiding_light" | "north_star" | "charted" | "taunted";
 
 /** The shanties a Bard sings (song.ts): a condition on the Bard, reaching everyone of theirs nearby. */
 export type ShantyKind = "lively_shanty" | "dour_shanty" | "windgod_shanty";
@@ -42,6 +43,8 @@ export interface UnitCondition {
   joined?: string[];
   /** A shanty: how many have joined it since the Bard's turn last began (the extra each joining gives lasts that long). */
   surge?: number;
+  /** Taunted: the unit that taunted it. */
+  by?: string;
 }
 
 /** What a hero carries to use in a zone: thrown at a hex, and (a healing potion) drunk. */
@@ -102,8 +105,8 @@ export interface Unit {
   away?: boolean;
 }
 
-/** What a spell can leave hanging over some hexes (weather.ts). */
-export type WeatherKind = "rain" | "wind" | "coral";
+/** What a spell can leave hanging over (or standing on) some hexes (weather.ts). A wall (Fortify) is one too: nobody passes it. */
+export type WeatherKind = "rain" | "wind" | "coral" | "wall";
 
 export interface Weather {
   kind: WeatherKind;

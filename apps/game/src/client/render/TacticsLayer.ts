@@ -311,7 +311,7 @@ export class TacticsLayer {
 
   /**
    * Draw the weather: a pale wash and an outline over its hexes, and rain falling on them or wind
-   * streaming across them, or (a Coral Field) branches of coral standing up out of them.
+   * streaming across them, or (a Coral Field) branches of coral standing up out of them, or (Fortify) a wall of stone on them.
    */
   setWeather(list: { kind: WeatherKind; hexes: HexPos[] }[]) {
     const sig = list.map((w) => `${w.kind}:${w.hexes.map(posKey).join(",")}`).join("|");
@@ -329,6 +329,10 @@ export class TacticsLayer {
       this.sky.add(rim);
       if (w.kind === "coral") {
         this.sky.add(this.coral(w.hexes, color));
+        continue;
+      }
+      if (w.kind === "wall") {
+        this.sky.add(this.stones(w.hexes, color));
         continue;
       }
       // Motes scattered over each hex: drops that fall, or gusts that run along the wind.
@@ -381,6 +385,39 @@ export class TacticsLayer {
         mesh.setMatrixAt(i, m);
         mesh.setColorAt(i, tint.copy(base).offsetHSL((Math.random() - 0.5) * 0.06, 0, (Math.random() - 0.5) * 0.2));
         i++;
+      }
+    }
+    mesh.renderOrder = 2;
+    return mesh;
+  }
+
+  /** A wall (Fortify): courses of rough stone blocks stacked up off each hex, each a little off true, in shades of the colour. */
+  private stones(hexes: HexPos[], color: string): THREE.InstancedMesh {
+    const courses = 3;
+    const per = 2;
+    const geometry = new THREE.BoxGeometry(0.62, 0.3, 0.62);
+    geometry.translate(0, 0.15, 0);
+    const mesh = new THREE.InstancedMesh(geometry, new THREE.MeshLambertMaterial({ flatShading: true }), hexes.length * courses * per);
+    const m = new THREE.Matrix4();
+    const q = new THREE.Quaternion();
+    const e = new THREE.Euler();
+    const tint = new THREE.Color();
+    const base = new THREE.Color(color);
+    let i = 0;
+    for (const p of hexes) {
+      const { x, z } = hexToWorld(p);
+      const y = this.top(p);
+      for (let c = 0; c < courses; c++) {
+        // Each course turned a little against the one under it, so the joints do not line up.
+        const turn = c * 0.7 + Math.random() * 0.2;
+        for (let k = 0; k < per; k++) {
+          const a = turn + k * Math.PI;
+          q.setFromEuler(e.set((Math.random() - 0.5) * 0.08, turn, (Math.random() - 0.5) * 0.08));
+          m.compose(new THREE.Vector3(x + Math.cos(a) * 0.2, y + c * 0.3, z + Math.sin(a) * 0.2), q, new THREE.Vector3(1, 0.9 + Math.random() * 0.2, 1));
+          mesh.setMatrixAt(i, m);
+          mesh.setColorAt(i, tint.copy(base).offsetHSL(0, -0.1, (Math.random() - 0.5) * 0.18));
+          i++;
+        }
       }
     }
     mesh.renderOrder = 2;

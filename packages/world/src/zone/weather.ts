@@ -2,7 +2,8 @@
 // fight, acting on whoever is in it. Soothing Rain heals the caster's side
 // and keeps its hexes under water; Trade Winds speed the caster's side and
 // slow the other; a Coral Field cuts and slows the other side, and lets the
-// caster's walk through untouched. What is laid on the ground (surfaces.ts) is the ground's
+// caster's walk through untouched; a wall (Fortify) stands on its hexes, and
+// nobody passes it (geometry.ts blockerAt). What is laid on the ground (surfaces.ts) is the ground's
 // business; weather hangs over it, and puts water down where it rains.
 //
 // It acts on a unit as the weather is made, as the unit's turn starts in it,
@@ -11,8 +12,9 @@
 
 import { hexDistance, hexNeighbors, posKey, type HexPos } from "@gantt-quest/core";
 import { addCondition, damage, heal, type Ctx } from "./engine";
-import { flies, inFight } from "./geometry";
-import { WEATHER } from "./kit";
+import { HEX_DIRS, blockerAt, directionToward, flies, inFight, solid, unitAt } from "./geometry";
+import { FORTIFY, WEATHER } from "./kit";
+import { tileAt } from "../map";
 import { rollDice } from "./rules";
 import { placeSurface } from "./surfaces";
 import type { Unit, Weather, WeatherKind, ZoneState } from "./types";
@@ -22,7 +24,18 @@ export const WEATHER_INFO: Record<WeatherKind, { name: string; blurb: string; co
   rain: { name: "Soothing Rain", blurb: "Lays water, and heals the caster's side as each starts a turn in it or first walks in on a turn.", color: "#8fd3ff" },
   wind: { name: "Trade Winds", blurb: "The caster's side is Hasted in it, the other side Slowed.", color: "#d9f2e6" },
   coral: { name: "Coral Field", blurb: "Harmless to the caster's side. The other side is cut and Slowed, once a turn, as each starts a turn in it or walks into it.", color: "#ff7f6e" },
+  wall: { name: "Fortification", blurb: `Nobody gets through it. The side that raised it sees over it, and has +${FORTIFY.defence} Defence beside it; the other side cannot see through it.`, color: "#c9b48a" },
 };
+
+/**
+ * The hexes a wall (Fortify) raised on `at` stands on: that hex and the two beside it that are as far from `from` (the
+ * user's hex) as it is, so it stands broadside on to them. A hex nobody could stand on (rock, a chest, somebody already there) is left out.
+ */
+export function wallHexes(state: Pick<ZoneState, "map" | "units" | "weather">, from: HexPos, at: HexPos): HexPos[] {
+  const i = HEX_DIRS.indexOf(directionToward(from, at));
+  const wings = [HEX_DIRS[(i + 2) % 6], HEX_DIRS[(i + 4) % 6]].slice(0, FORTIFY.hexes - 1).map((d) => ({ q: at.q + d.q, r: at.r + d.r }));
+  return [at, ...wings].filter((p) => !!tileAt(state.map, p) && !solid(tileAt(state.map, p)) && !blockerAt(state, p) && !unitAt(state as ZoneState, p));
+}
 
 /**
  * `n` hexes in a clump: the one aimed at, the one beside it nearest `from`, and then, nearest `from` first, those
@@ -60,7 +73,8 @@ function wetGround(ctx: Ctx, w: Weather): void {
 
 /** What a weather does to one unit in it. `turn`: the turn it counts against, for rain's once-a-turn heal and coral's once-a-turn cut. */
 function weatherOn(ctx: Ctx, w: Weather, unit: Unit, turn: number): void {
-  if (unit.down) return;
+  // A wall acts on nobody: nobody is ever in it.
+  if (unit.down || w.kind === "wall") return;
   const friend = unit.side === w.side;
   if (w.kind === "rain") {
     if (!friend || w.touched[unit.id] === turn) return;

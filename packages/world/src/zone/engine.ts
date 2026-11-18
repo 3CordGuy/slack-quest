@@ -7,7 +7,7 @@ import { tileAt } from "../map";
 import type { Rng } from "../rng";
 import { adjacent, elevOf, inFight } from "./geometry";
 import { EFFECT_TICK } from "../content";
-import { AQUEOUS, AURAS, CORAL_ARMOR, ENEMY_KIT, NORTH_STAR, SHIELD_SET_ASIDE, enemyDefence, enemySave } from "./kit";
+import { AQUEOUS, AURAS, CORAL_ARMOR, ENEMY_KIT, FORTIFY, NORTH_STAR, SHIELD_SET_ASIDE, enemyDefence, enemySave } from "./kit";
 import { inDark } from "./light";
 import { d20, heroDefence, mod, netAdvantage, rollDice, statOf } from "./rules";
 import { songDefence, songHit, windward } from "./song";
@@ -84,9 +84,13 @@ export function giveAway(ctx: Ctx, unit: Unit): void {
 /** The conditions that count as wounds, for abilities that grow with them. */
 export const DEBUFFS: readonly Condition[] = ["bleeding", "burning", "stunned", "slowed", "glitched", "exposed", "poisoned", "prone"];
 
-/** A unit's Defence. With the board (`state`), a Dour Shanty it stands in counts too. */
-export const defenceOf = (unit: Unit, state?: Pick<ZoneState, "units">): number =>
-  (state ? songDefence(state, unit) : 0) +
+/** Fortify: one of the side that raised a wall, standing beside it, is the steadier for it. */
+export const wallDefence = (state: Pick<ZoneState, "weather">, unit: Unit): number =>
+  (state.weather ?? []).some((w) => w.kind === "wall" && w.side === unit.side && w.hexes.some((p) => adjacent(p, unit.pos))) ? FORTIFY.defence : 0;
+
+/** A unit's Defence. With the board (`state`), a Dour Shanty it stands in, and a wall of its side's it stands beside, count too. */
+export const defenceOf = (unit: Unit, state?: Pick<ZoneState, "units" | "weather">): number =>
+  (state ? songDefence(state, unit) + wallDefence(state, unit) : 0) +
   (unit.side === "hero" && unit.stats ? heroDefence(unit.stats, unit.armor) - ((unit.torch ?? 0) > 0 && unit.torchHand !== "main" && unit.outfit?.off_hand ? SHIELD_SET_ASIDE : 0) : enemyDefence(unit.kind)) +
   (has(unit, "coral_armor") ? CORAL_ARMOR.defence : 0);
 
@@ -111,6 +115,11 @@ function fall(ctx: Ctx, unit: Unit): void {
 /** Put a shield of `amount` points on a unit for `rounds` of its turns (Bolstered). A bigger one replaces a smaller. */
 export function shieldUnit(ctx: Ctx, unit: Unit, amount: number, rounds: number): void {
   if (amount > 0) addCondition(ctx, unit, "bolstered", rounds, amount);
+}
+
+/** Add `amount` points to whatever shield a unit already has (Bulwark Strike), lasting `rounds` of its turns at least. */
+export function addShield(ctx: Ctx, unit: Unit, amount: number, rounds: number): void {
+  if (amount > 0) addCondition(ctx, unit, "bolstered", rounds, shieldOf(unit) + amount);
 }
 
 /** The points of shield a unit has left (Bolstered), 0 for none. */

@@ -391,7 +391,7 @@ export function HudBar({ me, place, children, hp, meter, pips = [], chips, quick
           return (
             <button
               key={s.id}
-              className={`hud-slot act ${s.picked ? "picked" : ""} ${s.spent ? "spent" : ""} ${slots ? "" : "reminder"}`}
+              className={`hud-slot act ${s.picked ? "picked" : ""} ${s.spent ? "spent" : ""} ${s.wait ? "cooling" : ""} ${slots ? "" : "reminder"}`}
               style={at}
               aria-label={s.name}
               aria-pressed={!!s.picked}
@@ -407,7 +407,7 @@ export function HudBar({ me, place, children, hp, meter, pips = [], chips, quick
               {...hover(RACK.mid[col] + 7, <Tip name={s.name} line={s.line} more={s.more} keys={keys} />)}
             >
               <Icon name={s.icon.name} color={s.icon.color} size={30} flat={s.icon.flat} />
-              {s.wait ? <span className="hud-wait">{s.wait}</span> : s.count !== undefined && <span className="hud-count">{s.count}</span>}
+              {s.wait ? <span className="hud-wait" aria-label={`${s.wait} turn${s.wait === 1 ? "" : "s"} to wait`}>{s.wait}</span> : s.count !== undefined && <span className="hud-count">{s.count}</span>}
               <span className="hud-key">{lower ? "⇧" : ""}{digit}</span>
             </button>
           );

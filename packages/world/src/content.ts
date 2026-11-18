@@ -45,7 +45,7 @@ export interface HeroClass {
 export const DRUID_REGEN = 1;
 /** Extra damage on every other hero's attacks while a Shanty Bard is standing. One Bard's worth, however many there are. */
 export const BARD_AURA = 2;
-/** Bulwark Strike adds the Warden's armor divided by this to its damage. */
+/** Seawall Blow adds the Warden's armor divided by this to its damage. */
 export const ARMOR_DAMAGE_DIVISOR = 3;
 /** Turns of bleeding the Wreck Warlock's perfect hits leave behind. */
 export const WARLOCK_BLEED_TURNS = 2;
@@ -183,8 +183,8 @@ export const ABILITIES: Record<string, AbilityDef> = {
   manifest: { id: "manifest", name: "Manifest", stat: "int_stat", rolls: 3, target: "enemy", damage: 12, perfect: { effect: "exposed", turns: 2 }, blurb: "Raw force. The heaviest single spell there is. Perfect: exposed." },
   arcane_ward: { id: "arcane_ward", name: "Arcane Ward", stat: "int_stat", rolls: 2, target: "self", heal: 3, selfEffect: { effect: "guarded", turns: 1 }, blurb: "Wrap yourself in a ward and steady your breath." },
   meteor: { id: "meteor", name: "Meteor", stat: "int_stat", rolls: 4, target: "all_enemies", damage: 9, perfect: { effect: "burning", turns: 3 }, blurb: "Everything has to land. Perfect: sets them all burning." },
-  bulwark_strike: { id: "bulwark_strike", name: "Bulwark Strike", stat: "str", rolls: 3, target: "enemy", damage: 7, armorDamage: true, perfect: { effect: "exposed", turns: 2 }, blurb: "Your whole weight behind the blow: adds a third of your armor to the damage. Perfect: exposed." },
-  taunt: { id: "taunt", name: "Taunt", stat: "str", rolls: 2, target: "enemy", damage: 4, selfEffect: { effect: "taunting", turns: 1 }, blurb: "A jab and a shout. Until your next turn, enemies aiming at one hero aim at you." },
+  seawall_blow: { id: "seawall_blow", name: "Seawall Blow", stat: "str", rolls: 3, target: "enemy", damage: 7, armorDamage: true, perfect: { effect: "exposed", turns: 2 }, blurb: "Your whole weight behind the blow: adds a third of your armor to the damage. Perfect: exposed." },
+  challenge: { id: "challenge", name: "Challenge", stat: "str", rolls: 2, target: "enemy", damage: 4, selfEffect: { effect: "taunting", turns: 1 }, blurb: "A jab and a shout. Until your next turn, enemies aiming at one hero aim at you." },
   hold_the_line: { id: "hold_the_line", name: "Hold the Line", stat: "vit", rolls: 2, target: "self", heal: 4, selfEffect: { effect: "guarded", turns: 1 }, blurb: "Plant your feet: guard yourself and catch your breath." },
   shockwave: { id: "shockwave", name: "Shockwave", stat: "str", rolls: 4, target: "all_enemies", damage: 5, perfect: { effect: "stunned", turns: 1 }, blurb: "Slam the ground under every enemy. Perfect: stuns them all." },
   hex: { id: "hex", name: "Hex", stat: "int_stat", rolls: 3, target: "enemy", damage: 6, maxHpDamage: 0.05, perfect: { effect: "glitched", turns: 1 }, blurb: "A slow query on the target: adds 5% of its max HP to the damage. Perfect: fumbling." },
@@ -223,6 +223,11 @@ export const ABILITIES: Record<string, AbilityDef> = {
   new_moon: { id: "new_moon", name: "New Moon", stat: "int_stat", rolls: 3, target: "all_enemies", damage: 15, blurb: "Put out every Guiding Light at once, wherever it is: each enemy that was lit takes heavy damage, no roll to dodge it." },
   chart_a_course: { id: "chart_a_course", name: "Chart a Course", stat: "int_stat", rolls: 1, target: "self", blurb: "Mark a hex up to 8 off with a red X for 4 turns: you and your allies move 3 further each turn, on steps that bring you nearer the mark. A new mark takes the place of the old." },
   north_star: { id: "north_star", name: "North Star", stat: "int_stat", rolls: 2, target: "ally", damage: 9, blurb: "Make an ally (or yourself) the north star for 3 turns: every enemy beside them is struck, no roll, and lit with Guiding Light, and every blow they land sets its target Burning (one stack more if it would have anyway)." },
+  against_the_waves: { id: "against_the_waves", name: "Against the Waves", stat: "vit", rolls: 1, target: "self", blurb: "Brace as the sea breaks on you: a high shield of 10 plus your level, which takes the damage of blows before HP does, for 2 turns. 8 more if you stand in water." },
+  overwhelm: { id: "overwhelm", name: "Overwhelm", stat: "str", rolls: 1, target: "enemy", blurb: "Throw your weight at an enemy beside you, Strength against its footing: win, and it is driven 2 hexes back. Driven into a wall, rock or anything else nobody can pass, it is Stunned and loses its next turn." },
+  fortify: { id: "fortify", name: "Fortify", stat: "vit", rolls: 1, target: "self", blurb: "Raise a wall 3 hexes long, up to 5 off, bowed toward you, for 3 rounds. Nobody gets through it. Your side sees and shoots over it, and has +1 Defence standing beside it; the enemy cannot see through it at all." },
+  bulwark_strike: { id: "bulwark_strike", name: "Bulwark Strike", stat: "str", rolls: 3, target: "enemy", damage: 8, blurb: "Set your shield and swing: you gain a small shield of 4 plus your level on top of any you have, then the blow lands harder by half of all the shield you carry." },
+  taunt: { id: "taunt", name: "Taunt", stat: "str", rolls: 1, target: "all_enemies", blurb: "Bellow a challenge: every enemy beside you is Taunted for 2 of its turns, and must come at you if it can reach you." },
   stoke_the_fire: { id: "stoke_the_fire", name: "Stoke the Fire", stat: "str", rolls: 3, target: "all_enemies", damage: 6, targetEffect: { effect: "burning", turns: 2 }, blurb: "Flame bursts off you: every enemy beside you is struck and set Burning." },
   // Signature abilities: one per class, on its signature weapon.
   full_reckoning: { id: "full_reckoning", name: "Full Reckoning", stat: "str", rolls: 3, target: "enemy", damage: 8, perDebuffDamage: 2, blurb: "Every wound it carries counts against it: +2 damage per different debuff on the target." },
@@ -258,8 +263,8 @@ export const WEAPONS: Record<string, WeaponDef> = {
   flute: { id: "flute", name: "Bosun's Pipe", classId: "frontend_bard", abilities: ["cacophony", "dissonance", "encore"] },
   orb: { id: "orb", name: "Sextant Orb", classId: "staff_sage", abilities: ["manifest", "arcane_ward"] },
   scepter: { id: "scepter", name: "Tidestone Scepter", classId: "staff_sage", abilities: ["meteor", "manifest", "arcane_ward"] },
-  pager_axe: { id: "pager_axe", name: "Foghorn Axe", classId: "sre_warden", abilities: ["bulwark_strike", "taunt", "hold_the_line"] },
-  maul: { id: "maul", name: "Bell-Buoy Maul", classId: "sre_warden", abilities: ["shockwave", "bulwark_strike", "taunt"] },
+  pager_axe: { id: "pager_axe", name: "Foghorn Axe", classId: "sre_warden", abilities: ["seawall_blow", "challenge", "hold_the_line"] },
+  maul: { id: "maul", name: "Bell-Buoy Maul", classId: "sre_warden", abilities: ["shockwave", "seawall_blow", "challenge"] },
   grimoire: { id: "grimoire", name: "Drowned Grimoire", classId: "data_warlock", abilities: ["hex", "soul_drain"] },
   // Signature weapons: each class's own ability plus a staple, drawn like a weapon the class already has.
   ballast_flail: { id: "ballast_flail", name: "Ballast Flail", classId: "qa_paladin", abilities: ["full_reckoning", "smite", "shield_wall"], looksLike: "mace" },
@@ -268,7 +273,7 @@ export const WEAPONS: Record<string, WeaponDef> = {
   coral_staff: { id: "coral_staff", name: "Coral Staff", classId: "backend_druid", abilities: ["riptide", "thornlash", "rejuvenate"], looksLike: "root_staff" },
   ships_bell: { id: "ships_bell", name: "Ship's Bell", classId: "frontend_bard", abilities: ["all_hands", "dissonance", "encore"], looksLike: "lute" },
   astrolabe: { id: "astrolabe", name: "Astrolabe", classId: "staff_sage", abilities: ["plot_the_course", "manifest", "arcane_ward"], looksLike: "orb" },
-  lamp_hook: { id: "lamp_hook", name: "Lamp Hook", classId: "sre_warden", abilities: ["lighthouse_beam", "bulwark_strike", "hold_the_line"], looksLike: "pager_axe" },
+  lamp_hook: { id: "lamp_hook", name: "Lamp Hook", classId: "sre_warden", abilities: ["lighthouse_beam", "seawall_blow", "hold_the_line"], looksLike: "pager_axe" },
   bilge_chalice: { id: "bilge_chalice", name: "Bilge Chalice", classId: "data_warlock", abilities: ["red_tide", "hex", "soul_drain"], looksLike: "grimoire" },
   void_staff: { id: "void_staff", name: "Undertow Staff", classId: "data_warlock", abilities: ["blight", "hex", "soul_drain"] },
 };

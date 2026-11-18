@@ -623,7 +623,7 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
       } else if (ev.t === "skip") {
         say(`${name(ev.id)} is ${CONDITION_INFO[ev.kind].name} and loses the turn.`);
       } else if (ev.t === "weather") {
-        say(ev.kind ? `${WEATHER_INFO[ev.kind].name} gathers.` : "The weather clears.");
+        say(ev.kind === "wall" ? "A wall goes up." : ev.kind ? `${WEATHER_INFO[ev.kind].name} gathers.` : "The weather clears.");
       } else if (ev.t === "surface") {
         for (const p of ev.hexes) {
           if (ev.kind) draft.surfaces[posKey(p)] = { kind: ev.kind, rounds: 1, by: null };
@@ -1370,7 +1370,7 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
     const def = ABILITIES[id];
     const tactic = tacticOf(id);
     const wait = act.cooldowns[id] ?? 0;
-    const reachText = tactic.chart ? `a hex up to ${tactic.range} off` : tactic.constellation ? `allies within ${tactic.constellation.link}, one to the next` : tactic.newMoon ? "every lit enemy" : tactic.northStar ? `an ally within ${tactic.range}, and every enemy beside them` : tactic.summon ? `a hex up to ${tactic.range} off` : tactic.blink ? (tactic.shape === "self" ? `a hex up to ${tactic.blink.range} off` : `an enemy beside you, then up to ${tactic.blink.range} off`) : tactic.shape === "self" ? "yourself" : tactic.shape === "burst" ? `everyone within ${tactic.radius}` : tactic.reach === "melee" ? (tactic.shape === "adjacent" ? "every enemy beside you" : "an enemy beside you") : `${tactic.shape === "line" ? `a line of ${tactic.length}` : `range ${tactic.range}`}${tactic.weather === "rain" ? ", 3 hexes" : tactic.splash ? `, ${tactic.splash.hexes} hexes` : tactic.shape === "blast" ? `, blast ${tactic.radius}` : ""}`;
+    const reachText = tactic.chart ? `a hex up to ${tactic.range} off` : tactic.constellation ? `allies within ${tactic.constellation.link}, one to the next` : tactic.newMoon ? "every lit enemy" : tactic.taunt ? `every enemy within ${tactic.taunt.range}` : tactic.northStar ? `an ally within ${tactic.range}, and every enemy beside them` : tactic.summon ? `a hex up to ${tactic.range} off` : tactic.blink ? (tactic.shape === "self" ? `a hex up to ${tactic.blink.range} off` : `an enemy beside you, then up to ${tactic.blink.range} off`) : tactic.shape === "self" ? "yourself" : tactic.shape === "burst" ? `everyone within ${tactic.radius}` : tactic.reach === "melee" ? (tactic.shape === "adjacent" ? "every enemy beside you" : "an enemy beside you") : `${tactic.shape === "line" ? `a line of ${tactic.length}` : `range ${tactic.range}`}${tactic.weather === "rain" ? ", 3 hexes" : tactic.splash ? `, ${tactic.splash.hexes} hexes` : tactic.fortify ? `, a wall of ${tactic.fortify.hexes}` : tactic.shape === "blast" ? `, blast ${tactic.radius}` : ""}`;
     const dice = def.damage ? `${diceText(abilityDice(def))} damage` : def.heal ? `heals ${diceText(healDice(def))}` : "";
     entries[`ab:${id}`] = {
       id: `ab:${id}`,

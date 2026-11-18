@@ -596,6 +596,68 @@ export const ACTION_ART: Record<string, Art> = {
     p.r(8, 4, 1, 3, C.shine);
     p.r(1, 15, 5, 1, C.bark);
   },
+  /** Against the Waves: a shield held up as a wave breaks white over it. */
+  "act-breakwater": (p) => {
+    spans(p, C.steel, [[5, 4, 11], [6, 4, 11], [7, 4, 11], [8, 4, 11], [9, 5, 10], [10, 5, 10], [11, 6, 9], [12, 7, 8]]);
+    p.r(7, 5, 2, 7, C.gold);
+    p.r(4, 5, 1, 4, C.shine);
+    spans(p, p.accent, [[1, 6, 12], [2, 3, 14], [3, 1, 4], [3, 12, 15], [4, 1, 2], [4, 14, 15]]);
+    p.r(9, 1, 3, 1, C.shine);
+    p.r(13, 2, 1, 1, C.shine);
+    spans(p, p.shade, [[13, 0, 5], [13, 10, 15], [14, 0, 15]]);
+    p.r(1, 12, 2, 1, p.accent);
+    p.r(13, 12, 2, 1, p.accent);
+  },
+  /** Overwhelm: a shoulder driving into a figure, sent back hard against a wall. */
+  "act-overwhelm": (p) => {
+    p.r(13, 1, 2, 14, C.iron);
+    p.r(14, 1, 1, 14, C.dark);
+    p.r(13, 4, 1, 1, C.steel);
+    p.r(13, 10, 1, 1, C.steel);
+    p.r(9, 4, 3, 3, C.bone);
+    p.r(9, 7, 3, 6, p.shade);
+    p.r(10, 13, 1, 2, p.shade);
+    spans(p, p.accent, [[6, 2, 6], [7, 1, 7], [8, 1, 7], [9, 1, 7], [10, 2, 6]]);
+    p.r(3, 7, 3, 2, C.shine);
+    for (const [x, y] of [[12, 2], [12, 13], [11, 1]] as const) p.r(x, y, 1, 1, C.shine);
+  },
+  /** Fortify: a short wall of stone blocks, a banner of light along its top. */
+  "act-fortify": (p) => {
+    p.r(1, 6, 14, 9, C.iron);
+    for (const y of [8, 11, 14]) p.r(1, y, 14, 1, C.dark);
+    for (const [x, y] of [[5, 6], [10, 6], [3, 9], [8, 9], [13, 9], [5, 12], [10, 12]] as const) p.r(x, y, 1, 2, C.dark);
+    p.r(1, 6, 14, 1, C.steel);
+    for (const x of [1, 6, 11]) p.r(x, 3, 3, 3, C.iron);
+    for (const x of [1, 6, 11]) p.r(x, 3, 3, 1, C.steel);
+    spans(p, p.accent, [[1, 4, 12]]);
+    p.r(2, 7, 2, 1, p.accent);
+    p.r(12, 10, 2, 1, p.accent);
+  },
+  /** Bulwark Strike: a hammer swung from behind a shield, its blow glowing with the shield's light. */
+  "act-bulwark": (p) => {
+    spans(p, C.steel, [[6, 1, 7], [7, 1, 7], [8, 1, 7], [9, 1, 7], [10, 2, 6], [11, 2, 6], [12, 3, 5], [13, 4, 4]]);
+    p.r(4, 6, 1, 7, C.gold);
+    p.r(1, 8, 7, 1, C.gold);
+    p.r(1, 6, 1, 3, C.shine);
+    p.l(7, 13, 12, 5, C.wood);
+    p.r(10, 1, 5, 4, C.iron);
+    p.r(10, 1, 5, 1, C.steel);
+    for (const [x, y] of [[15, 0], [9, 0], [15, 5], [8, 3]] as const) p.r(x, y, 1, 1, p.accent);
+    p.r(11, 2, 3, 2, p.accent);
+  },
+  /** Taunt: a raised fist, a ring of red shouting out round it. */
+  "act-taunt": (p) => {
+    p.r(6, 5, 4, 5, C.bone);
+    p.r(6, 5, 4, 1, C.shine);
+    for (const x of [7, 8]) p.r(x, 6, 1, 3, C.paper);
+    p.r(7, 10, 3, 5, C.bone);
+    p.r(5, 7, 1, 2, C.bone);
+    for (const [x, y] of [[7, 1], [8, 1], [3, 2], [12, 2], [1, 6], [14, 6], [1, 9], [14, 9], [3, 13], [12, 13]] as const) p.r(x, y, 1, 1, p.accent);
+    p.l(4, 1, 2, 3, p.shade);
+    p.l(11, 1, 13, 3, p.shade);
+    p.r(0, 7, 2, 2, p.accent);
+    p.r(14, 7, 2, 2, p.accent);
+  },
   // ---- the common actions ----
   "act-dash": (p) => {
     spans(p, C.leather, [[4, 8, 10], [5, 8, 10], [6, 8, 10], [7, 8, 10], [8, 8, 11], [9, 8, 13], [10, 8, 13]]);

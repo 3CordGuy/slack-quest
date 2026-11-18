@@ -47,8 +47,11 @@ export interface Tactic {
   wading?: number;
   /** Puts this condition on the user for `rounds` of their own turns: an aura, worked by the condition itself (see AURAS). */
   aura?: { kind: Condition; rounds: number };
-  /** Shields the user, and every ally within `range` of them, with `shield` points plus the user's level, for `rounds` of each one's turns (Bolstered). */
-  shield?: { range: number; shield: number; rounds: number };
+  /**
+   * Shields the user, and every ally within `range` of them, with `shield` points plus the user's level, for `rounds` of each one's
+   * turns (Bolstered), and `water` more for each one standing in water.
+   */
+  shield?: { range: number; shield: number; rounds: number; water?: number };
   /** Leaves this weather over the hexes it covers (weather.ts), instead of striking them. */
   weather?: WeatherKind;
   /** Single: lands without an attack roll. */
@@ -95,6 +98,14 @@ export interface Tactic {
   chart?: typeof CHART;
   /** Ally: strikes every enemy beside them, no roll, lighting them with Guiding Light, and leaves the ally's blows setting fires (North Star). */
   northStar?: typeof NORTH_STAR;
+  /** Single: no blow, but a contest of Strength: won, the enemy is driven back some hexes, and Stunned if it is driven into a wall (Overwhelm). */
+  overwhelm?: typeof OVERWHELM;
+  /** Blast: raises a short wall on the hex aimed at (weather.ts), the user's side seeing over it and steadier beside it (Fortify). */
+  fortify?: typeof FORTIFY;
+  /** Single: shields the user first, a little, then the blow lands harder for every point of shield they have (Bulwark Strike). */
+  bulwark?: typeof BULWARK;
+  /** Taunts every enemy within `range` of the user for `rounds` of its turns: it must go for the user if it can (Taunt). */
+  taunt?: typeof TAUNT;
 }
 
 const melee = (extra: Partial<Tactic> = {}): Tactic => ({ cost: "action", reach: "melee", range: 1, shape: "single", ...extra });
@@ -107,6 +118,18 @@ const mend = (range: number, extra: Partial<Tactic> = {}): Tactic => ({ cost: "a
 export const BOLSTER = { range: 2, shield: 10, rounds: 3 };
 
 /**
+ * The Warden's. Against the Waves: a shield of `shield` plus the Warden's level on themselves, `water` more standing in water.
+ * Overwhelm drives an enemy `hexes` back, and Stuns it `stun` of its turns if it is driven into a wall. Fortify raises a wall of
+ * `hexes` hexes for `rounds` rounds; the user's side gets `defence` more Defence beside it. Bulwark Strike shields the Warden
+ * `shield` plus their level first, then adds `perShield` of their shield to the damage. Taunt reaches `range` hexes, for `rounds`.
+ */
+export const AGAINST_WAVES = { range: 0, shield: 10, rounds: 2, water: 8 };
+export const OVERWHELM = { hexes: 2, stun: 1 };
+export const FORTIFY = { hexes: 3, rounds: 3, defence: 1 };
+export const BULWARK = { shield: 4, rounds: 2, perShield: 0.5 };
+export const TAUNT = { range: 1, rounds: 2 };
+
+/**
  * Weather (weather.ts), by kind: how many rounds of a fight it hangs on after the one it is made in. Rain heals
  * `heal` (once a turn) and keeps `water` rounds of water under itself; the winds Haste the caster's side and Slow the other.
  */
@@ -115,6 +138,8 @@ export const WEATHER = {
   wind: { rounds: 3 },
   // Coral Field: cuts and Slows the other side, once a turn, as one starts a turn in it or walks into it on its turn.
   coral: { rounds: 4, damage: { n: 1, d: 6, plus: 1 } satisfies Dice },
+  // Fortify: a wall, standing where it was raised.
+  wall: { rounds: FORTIFY.rounds },
 };
 
 /** Aqueous Regeneration: the heal again at the start of each of the ally's turns for `rounds`, and `water` more on each heal for one standing in water. */
@@ -253,11 +278,17 @@ export const TACTICS: Record<string, Tactic> = {
   chart_a_course: { cost: "bonus", reach: "spell", range: CHART.range, shape: "blast", radius: 0, cooldown: 2, chart: CHART },
   north_star: mend(6, { cooldown: 3, guide: GUIDING_LIGHT.rounds, northStar: NORTH_STAR }),
   // Warden
-  bulwark_strike: melee(),
-  taunt: melee({ cost: "bonus" }),
+  seawall_blow: melee(),
+  challenge: melee({ cost: "bonus" }),
   hold_the_line: guard(),
   shockwave: melee({ shape: "adjacent", cooldown: 2 }),
   lighthouse_beam: spell(5, { shape: "line", length: 5, cooldown: 2 }),
+  // Warden class abilities
+  against_the_waves: { ...guard(), cooldown: 2, shield: AGAINST_WAVES },
+  overwhelm: melee({ cost: "bonus", cooldown: 2, overwhelm: OVERWHELM }),
+  fortify: spell(5, { shape: "blast", radius: 0, cooldown: 3, weather: "wall", fortify: FORTIFY }),
+  bulwark_strike: melee({ cooldown: 2, bulwark: BULWARK }),
+  taunt: { ...guard(), cooldown: 3, taunt: TAUNT },
   // Warlock
   hex: spell(6),
   soul_drain: spell(5),
@@ -318,6 +349,7 @@ export const SAVE_STAT: Record<Condition, StatKey> = {
   guiding_light: "int_stat",
   north_star: "int_stat",
   charted: "int_stat",
+  taunted: "int_stat",
 };
 
 const info = (kind: EffectKind, blurb: string) => ({ name: EFFECT_INFO[kind].name, color: EFFECT_INFO[kind].color, blurb });
@@ -349,6 +381,7 @@ export const CONDITION_INFO: Record<Condition, { name: string; blurb: string; co
   inspired: { name: "Inspired", blurb: "Its next roll to hit has advantage.", color: "#ffe08a" },
   guiding_light: { name: "Guiding Light", blurb: "Lit up by a star: every attack against it has advantage.", color: "#fff3a8" },
   north_star: { name: "North Star", blurb: "Every blow it lands sets the target Burning, one stack more if the blow would have set it Burning anyway.", color: "#ffd166" },
+  taunted: { name: "Taunted", blurb: "Goaded: it must go for the one who taunted it, if it can reach them.", color: "#ff5a3c" },
   charted: { name: "Course Charted", blurb: `A mark on the map: it and its allies move ${CHART.speed} further each turn, on steps that bring them nearer the mark.`, color: "#ff4d4d" },
 };
 

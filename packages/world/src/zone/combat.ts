@@ -8,15 +8,15 @@
 import { hexDistance, hexNeighbors, hexSegment, posKey, type HexPos } from "@gantt-quest/core";
 import { ABILITIES, ARMOR_DAMAGE_DIVISOR, BARD_AURA, WARLOCK_BLEED_TURNS, type AbilityDef, type EffectKind } from "../content";
 import { tileAt, type Poi } from "../map";
-import { DEBUFFS, addCondition, attackContext, attackRoll, damage, defenceOf, giveAway, has, heal, inWater, kindle, removeCondition, saveBonus, saveRoll, shieldUnit, unseen, type Ctx } from "./engine";
+import { DEBUFFS, addCondition, addShield, attackContext, attackRoll, damage, defenceOf, giveAway, has, heal, inWater, kindle, removeCondition, saveBonus, saveRoll, shieldOf, shieldUnit, unseen, type Ctx } from "./engine";
 import { cratesOn, crateById, hurtCrate, isCrateId } from "./crates";
-import { adjacent, blast, blockerAt, courseShare, directionToward, elevOf, inFight, lineFrom, pathIn, sameHex, sees, solid, stepCost, unitAt, unitById, zoneReach, type Course } from "./geometry";
+import { adjacent, blast, blockerAt, courseShare, directionToward, elevOf, inFight, lineFrom, pathIn, sameHex, sees, seesFor, solid, stepCost, unitAt, unitById, zoneReach, type Course } from "./geometry";
 import { CHART, COMMON_ACTIONS, CORAL_ARMOR, SHANTY, ENEMY_BURST, FLEE_RANGE, JUMP_MOVE_COST, POTION_EDGE, SAVE_STAT, SMUGGLED, THROWABLES, TORCH_GROUND_ROUNDS, abilityDice, enemyStrikes, healDice, jumpRange, reactionStrike, tacticOf, throwRange, type EnemyStrike, type Tactic } from "./kit";
 import { d20, hitChance, mod, proficiency, rollDice, statOf } from "./rules";
 import { seenByHeroes } from "./light";
 import { HINDERING, chill, clearSurfaces, dropTorch, enterSurface, ignite, letGoTorch, placeSurface } from "./surfaces";
 import type { Budget, CommonAction, Throwable, Unit, ZoneState } from "./types";
-import { clusterHexes, enterWeather, makeWeather, rainHexes } from "./weather";
+import { clusterHexes, enterWeather, makeWeather, rainHexes, wallHexes } from "./weather";
 import { summonTurtle } from "./summon";
 import { SHANTIES, joinable, shantyOf, songDamage, songMove, windward } from "./song";
 import { constellationHexes, constellationLinks, courseMarks, litFoes } from "./stars";
@@ -136,6 +136,42 @@ export function push(ctx: Ctx, from: HexPos, target: Unit, by: string): void {
   enterWeather(ctx, target);
 }
 
+/**
+ * Overwhelm: Strength against the target's footing (as a Shove). Won, it is driven straight back from the user, a hex at a time,
+ * up to `hexes`. Driven into what nobody can pass (rock, a wall, a chest, a cliff, the map's edge) it is Stunned; into somebody
+ * else, it just stops. Returns whether the contest was won.
+ */
+function overwhelm(ctx: Ctx, unit: Unit, def: AbilityDef, target: Unit, opts: { hexes: number; stun: number }): boolean {
+  const { state } = ctx;
+  const roll = d20(ctx.rng, { kind: "shove", id: unit.id, target: target.id, label: def.name, bonus: proficiency(unit.level) + mod(statOf(unit, "str")), vs: 10 + Math.max(saveBonus(target, "str"), saveBonus(target, "agi")), adv: unseen(unit) ? 1 : 0 });
+  ctx.events.push({ t: "roll", roll });
+  if (!roll.ok) {
+    ctx.events.push({ t: "miss", actor: unit.id, target: target.id, what: def.id });
+    return false;
+  }
+  const dir = directionToward(unit.pos, target.pos);
+  for (let i = 0; i < opts.hexes && !target.down; i++) {
+    const dest = { q: target.pos.q + dir.q, r: target.pos.r + dir.r };
+    const tile = tileAt(state.map, dest);
+    if (!tile || solid(tile) || blockerAt(state, dest) || Math.abs(elevOf(state.map, dest) - elevOf(state.map, target.pos)) >= 2) {
+      ctx.events.push({ t: "shoved", id: unit.id, target: target.id, from: target.pos, to: null });
+      addCondition(ctx, target, "stunned", opts.stun);
+      return true;
+    }
+    if (unitAt(state, dest)) {
+      if (i === 0) ctx.events.push({ t: "shoved", id: unit.id, target: target.id, from: target.pos, to: null });
+      return true;
+    }
+    const was = target.pos;
+    target.pos = dest;
+    ctx.events.push({ t: "shoved", id: unit.id, target: target.id, from: was, to: dest });
+    // Ground that trips it (ice) ends the drive there.
+    if (enterSurface(ctx, target) || target.down) return true;
+    enterWeather(ctx, target);
+  }
+  return true;
+}
+
 /** Can a unit be moved from one hex onto the next by force: open ground, nobody on it, no cliff between. */
 function openFor(state: ZoneState, from: HexPos, to: HexPos): boolean {
   return !solid(tileAt(state.map, to)) && !blockerAt(state, to) && Math.abs(elevOf(state.map, to) - elevOf(state.map, from)) < 2 && !unitAt(state, to);
@@ -217,6 +253,7 @@ export function abilityArea(state: ZoneState, unit: Unit, ability: string, at?: 
     return ally ? hexNeighbors(ally.pos, state.map.grid) : [];
   }
   if (tactic.weather === "rain") return at ? rainHexes(state, unit.pos, at) : [];
+  if (tactic.fortify) return at && !sameHex(at, unit.pos) ? wallHexes(state, unit.pos, at) : [];
   if (tactic.splash) return at ? clusterHexes(state, unit.pos, at, tactic.splash.hexes) : [];
   if (tactic.shape === "blast") return at ? blast(state.map, at, tactic.radius ?? 1) : [];
   if (tactic.shape === "burst") return blast(state.map, unit.pos, tactic.radius ?? 1).filter((p) => !sameHex(p, unit.pos));
@@ -262,6 +299,8 @@ export function checkAbility(state: ZoneState, unit: Unit, ability: string, aim:
   }
   if (tactic.shape === "blast") {
     if (!aim.at || !tileAt(state.map, aim.at)) return "Pick a hex.";
+    // A wall goes up on open ground: the hex aimed at has to be one somebody could stand on.
+    if (tactic.fortify && (sameHex(aim.at, unit.pos) || !standable(state, aim.at))) return "There is no room to raise a wall there.";
     return inReach(aim.at);
   }
   if (tactic.shape === "line") return aim.at && !sameHex(aim.at, unit.pos) ? null : "Pick a direction.";
@@ -272,6 +311,7 @@ export function checkAbility(state: ZoneState, unit: Unit, ability: string, aim:
   }
   if (tactic.constellation) return constellationLinks(state, unit).length > 0 ? null : `No ally of yours is within ${tactic.constellation.link} hexes, in clear sight, to link to.`;
   if (tactic.newMoon) return litFoes(state, unit).length > 0 ? null : "No enemy is lit by Guiding Light.";
+  if (tactic.taunt) return foesWithin(state, unit, tactic.taunt.range).length > 0 ? null : tactic.taunt.range === 1 ? "No enemy in the fight is beside you." : `No enemy in the fight is within ${tactic.taunt.range} hexes of you.`;
   if (tactic.summon) {
     if (!state.encounter || !inFight(state, unit.id)) return "That is for a fight.";
     if (!aim.at || sameHex(aim.at, unit.pos) || !tileAt(state.map, aim.at)) return "Pick a hex to call it to.";
@@ -341,6 +381,7 @@ function strike(ctx: Ctx, unit: Unit, def: AbilityDef, tactic: Tactic, target: U
   if (def.vsEffect && has(target, def.vsEffect.effect)) amount += def.vsEffect.bonus;
   if (tactic.vsWet && has(target, "wet")) amount += tactic.vsWet;
   if (tactic.wading && inWater(ctx.state, unit)) amount += tactic.wading;
+  if (tactic.bulwark) amount += Math.floor(shieldOf(unit) * tactic.bulwark.perShield);
   if (def.bleedPayoff) {
     amount += def.bleedPayoff * (target.conditions.find((c) => c.kind === "bleeding")?.rounds ?? 0);
     removeCondition(target, "bleeding");
@@ -397,7 +438,7 @@ export function crateBlow(state: ZoneState, unit: Unit, crateId: string): string
 export function previewAttack(state: ZoneState, unit: Unit, ability: string, target: Unit): { chance: number; bonus: number; vs: number; adv: -1 | 0 | 1; notes: string[] } | null {
   const def = ABILITIES[ability];
   const tactic = tacticOf(ability);
-  if (!def || !["single", "chain", "adjacent"].includes(tactic.shape)) return null;
+  if (!def || !["single", "chain", "adjacent"].includes(tactic.shape) || tactic.overwhelm) return null;
   const c = attackContext(state, unit, target, { melee: tactic.reach === "melee" });
   const bonus = proficiency(unit.level) + mod(statOf(unit, def.stat)) + (tactic.toHit ?? 0) + c.mods;
   const vs = defenceOf(target, state);
@@ -416,6 +457,7 @@ export function resolveAbility(ctx: Ctx, unit: Unit, ability: string, aim: Aim &
   let landed = false;
   const crate = tactic.shape === "single" || tactic.shape === "chain" ? crateById(state, aim.target) : undefined;
   if (crate) {
+    if (tactic.bulwark) addShield(ctx, unit, tactic.bulwark.shield + unit.level, tactic.bulwark.rounds);
     // Aimed at a crate, a chain goes no further: there is nothing in a crate for it to jump from.
     smash(ctx, unit, def, tactic, crate);
     landed = true;
@@ -460,8 +502,11 @@ export function resolveAbility(ctx: Ctx, unit: Unit, ability: string, aim: Aim &
     landed = true;
   } else if (tactic.shape === "single") {
     const target = unitById(state, aim.target!)!;
+    // The shield is set before the swing, and counts toward it.
+    if (tactic.bulwark) addShield(ctx, unit, tactic.bulwark.shield + unit.level, tactic.bulwark.rounds);
     // A pocket picked unseen is no blow, just a quick hand.
     if (tactic.steal && wasUnseen) landed = true;
+    else if (tactic.overwhelm) landed = overwhelm(ctx, unit, def, target, tactic.overwhelm);
     else if (tactic.sure) {
       if (def.damage) damage(ctx, target, rollDice(ctx.rng, abilityDice(def)) + damageBonus(state, unit, def), { actor: unit.id, what: def.id, ignoreGuard: def.ignoreGuard });
       afflict(ctx, unit, def, target, false);
@@ -567,12 +612,21 @@ export function resolveAbility(ctx: Ctx, unit: Unit, ability: string, aim: Aim &
     if (def.actNext && target.id !== unit.id) addCondition(ctx, target, "hasted", 2);
     if (tactic.aura) addCondition(ctx, unit, tactic.aura.kind, tactic.aura.rounds);
     if (tactic.shield) {
-      const { range, shield, rounds } = tactic.shield;
-      for (const u of state.units) if (u.side === unit.side && !u.down && hexDistance(u.pos, unit.pos) <= range) shieldUnit(ctx, u, shield + unit.level, rounds);
+      const { range, shield, rounds, water } = tactic.shield;
+      for (const u of state.units) if (u.side === unit.side && !u.down && hexDistance(u.pos, unit.pos) <= range) shieldUnit(ctx, u, shield + unit.level + (water && inWater(state, u) ? water : 0), rounds);
     }
     if (tactic.clearWay) {
       for (const kind of DEBUFFS) removeCondition(target, kind);
       clearSurfaces(ctx, wayBetween(state, unit, target.pos).filter((p) => { const s = state.surfaces[posKey(p)]; return !!s && HINDERING.has(s.kind); }));
+    }
+    if (tactic.taunt) {
+      for (const foe of foesWithin(state, unit, tactic.taunt.range)) {
+        // Taunted afresh, by whoever did it last.
+        removeCondition(foe, "taunted");
+        addCondition(ctx, foe, "taunted", tactic.taunt.rounds);
+        const c = foe.conditions.find((x) => x.kind === "taunted");
+        if (c) c.by = unit.id;
+      }
     }
     if (tactic.hide) {
       const { range, rounds } = tactic.hide;
@@ -636,7 +690,7 @@ export function enemyAct(ctx: Ctx, enemy: Unit, attack: EnemyStrike, target: Uni
   if (attack.burst) {
     const rolled = rollDice(ctx.rng, attack.dice);
     // A fight's blows are for those in it: a hero standing near who is not (their player away) is passed over.
-    for (const victim of state.units.filter((u) => u.side !== enemy.side && !u.down && !unseen(u) && inFight(state, u.id) && hexDistance(u.pos, enemy.pos) <= ENEMY_BURST && sees(state.map, enemy.pos, u.pos))) {
+    for (const victim of state.units.filter((u) => u.side !== enemy.side && !u.down && !unseen(u) && inFight(state, u.id) && hexDistance(u.pos, enemy.pos) <= ENEMY_BURST && seesFor(state, enemy.side, enemy.pos, u.pos))) {
       const saved = saveRoll(ctx, victim, "agi", dc, attack.name).ok;
       damage(ctx, victim, saved ? Math.floor(rolled / 2) : rolled, { actor: enemy.id, what: attack.name });
       if (!saved) leave(victim, false);

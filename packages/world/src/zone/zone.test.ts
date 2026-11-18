@@ -4,11 +4,11 @@ import { ABILITIES, EFFECT_TICK, ENEMIES, WEAPONS, abilitiesFor } from "../conte
 import type { Biome, Tile } from "../map";
 import { makeRng } from "../rng";
 import { walk } from "./combat";
-import { addCondition, attackContext, burnOf, damage, kindle, type Ctx } from "./engine";
+import { addCondition, attackContext, burnOf, damage, kindle, shieldOf, type Ctx } from "./engine";
 import { shantyOf, shantyRadius, songsOn } from "./song";
 import { chartOf, constellationLinks } from "./stars";
 import { ALERT_RANGE, DEFAULT_ZONE_OPTIONS, JOIN_RANGE, generateZone, zoneOptions } from "./gen";
-import { adjacent, blast, flies, sees, solid, unitAt, zoneReach } from "./geometry";
+import { adjacent, blast, flies, sees, seesFor, solid, stepCost, unitAt, zoneReach } from "./geometry";
 import { AURAS, BOLSTER, ENEMY_BURST, SHIELD_WALL, ENEMY_KIT, EXPLORE_ROUND_MS, FLEE_RANGE, LIGHT_RADIUS, SHIELD_SET_ASIDE, TACTICS, TORCH_GROUND_ROUNDS, TORCH_HELD_ROUNDS, TORCH_ROUND_MS, commonCost, enemyHp, enemyStrikes, tacticOf } from "./kit";
 import { MAX_CATCHUP_ROUNDS } from "./clock";
 import { defenceOf } from "./engine";
@@ -3562,5 +3562,217 @@ describe("the Sage's stars", () => {
     expect(burnOf(target)).toBe(EFFECT_TICK.burning);
     kindle(ctx, unit(state, "bo"), target, 3);
     expect(burnOf(target)).toBe(2 * EFFECT_TICK.burning!);
+  });
+});
+
+describe("the Warden's wall", () => {
+  const ALL = ["against_the_waves", "overwhelm", "fortify", "bulwark_strike", "taunt"];
+  /**
+   * A Warden (ann) with a crewmate (bo, a Mage) in a fight with `foes` (dummies with HP to spare, unless `kind` says
+   * otherwise). The two heroes share one turn, and it is theirs. `edit` changes the board first.
+   */
+  function party(foes: HexPos[] = [at(6, 6)], opts: { bo?: HexPos; kind?: string; edit?: (t: Tile) => void } = {}) {
+    let state = board(opts.edit);
+    state.aiOff = true;
+    hero(state, "ann", "sre_warden", at(5, 6)).abilities = ["seawall_blow", ...ALL];
+    hero(state, "bo", "devops_mage", opts.bo ?? at(3, 8));
+    const ids = foes.map((pos) => {
+      const e = enemy(state, opts.kind ?? "dummy", pos);
+      e.hp = e.maxHp = 500;
+      return e.id;
+    });
+    state = provoke(state);
+    const enc = state.encounter!;
+    enc.order = ["ann", "bo", ...ids];
+    Object.assign(enc.init, { ann: 20, bo: 19 }, Object.fromEntries(ids.map((id) => [id, 1])));
+    while (!["ann", "bo"].every((id) => state.encounter!.acting.includes(id))) state = must(state, { type: "timeout" });
+    return { state, foes: ids };
+  }
+  function nextTurn(state: ZoneState, sink: ZoneEvent[] = []): ZoneState {
+    for (const id of [...state.encounter!.acting]) if (!state.encounter!.done.includes(id) && !unit(state, id).down) state = must(state, { type: "end_turn", by: id, unit: id }, sink);
+    while (!state.encounter!.acting.includes("ann") || state.encounter!.done.includes("ann")) state = must(state, { type: "timeout" }, sink);
+    return state;
+  }
+  const use = (ability: string, aim: { target?: string; at?: HexPos } = {}): ZoneAction => ({ type: "use", by: "ann", unit: "ann", ability, ...aim });
+  const has = (state: ZoneState, id: string, kind: string) => unit(state, id).conditions.some((c) => c.kind === kind);
+  const rock = (...hexes: HexPos[]) => (t: Tile) => { if (hexes.some((p) => p.q === t.q && p.r === t.r)) t.biome = "rock"; };
+
+  it("are all in the Warden's pool, and the weapons keep their old blows under new names", () => {
+    expect(poolFor("sre_warden").map((e) => e.id)).toEqual(ALL);
+    for (const w of ["pager_axe", "maul", "lamp_hook"]) expect(WEAPONS[w].abilities.some((a) => ALL.includes(a)), w).toBe(false);
+    expect(ABILITIES.seawall_blow.armorDamage).toBe(true);
+    expect(ABILITIES.challenge.selfEffect?.effect).toBe("taunting");
+  });
+
+  it("Against the Waves: a Bonus action, 2 turns to wait; a high shield on the Warden, higher standing in water", () => {
+    let { state } = party();
+    state = must(state, use("against_the_waves"));
+    expect(state.encounter!.budgets.ann).toMatchObject({ action: true, bonus: false });
+    expect(unit(state, "ann").cooldowns.against_the_waves).toBe(3);
+    expect(shieldOf(unit(state, "ann"))).toBe(10 + 1);
+    expect(shieldOf(unit(state, "bo"))).toBe(0);
+    ({ state } = party());
+    state = paint(state, "water", [at(5, 6)]);
+    state = must(state, use("against_the_waves"));
+    expect(shieldOf(unit(state, "ann"))).toBe(10 + 1 + 8);
+  });
+
+  /** Overwhelm tried over seeds until the contest goes one way or the other. */
+  function overwhelmed(won: boolean, foes: HexPos[], opts: Parameters<typeof party>[1] = {}) {
+    for (let seed = 1; seed < 80; seed++) {
+      let { state, foes: ids } = party(foes, opts);
+      state.rng = seed;
+      const events: ZoneEvent[] = [];
+      state = must(state, use("overwhelm", { target: ids[0] }), events);
+      const lost = events.some((e) => e.t === "miss" && e.what === "overwhelm");
+      if (lost !== won) return { state, ids, events };
+    }
+    throw new Error("the contest never went that way");
+  }
+
+  it("Overwhelm: a Bonus action, 2 turns to wait; won, the enemy beside you is driven 2 hexes straight back", () => {
+    const { state, ids } = overwhelmed(true, [at(6, 6)]);
+    expect(state.encounter!.budgets.ann).toMatchObject({ action: true, bonus: false });
+    expect(unit(state, "ann").cooldowns.overwhelm).toBe(3);
+    expect(unit(state, ids[0]).pos).toEqual(at(8, 6));
+    expect(has(state, ids[0], "stunned")).toBe(false);
+    // Lost, it stands its ground.
+    const lost = overwhelmed(false, [at(6, 6)]);
+    expect(unit(lost.state, lost.ids[0]).pos).toEqual(at(6, 6));
+    // Only an enemy beside you.
+    const { state: far, foes } = party([at(7, 6)]);
+    expect(fails(far, use("overwhelm", { target: foes[0] }))).toMatch(/next to/);
+  });
+
+  it("Overwhelm: driven into rock, or a wall, it is Stunned and loses its next turn; into somebody, it just stops", () => {
+    const flat = overwhelmed(true, [at(6, 6)], { edit: rock(at(7, 6)) });
+    expect(unit(flat.state, flat.ids[0]).pos).toEqual(at(6, 6));
+    expect(has(flat.state, flat.ids[0], "stunned")).toBe(true);
+    const events: ZoneEvent[] = [];
+    nextTurn(flat.state, events);
+    expect(events.some((e) => e.t === "skip" && e.id === flat.ids[0])).toBe(true);
+    // A hex, then the rock.
+    const one = overwhelmed(true, [at(6, 6)], { edit: rock(at(8, 6)) });
+    expect(unit(one.state, one.ids[0]).pos).toEqual(at(7, 6));
+    expect(has(one.state, one.ids[0], "stunned")).toBe(true);
+    // Into another enemy: no further, and no stun.
+    const body = overwhelmed(true, [at(6, 6), at(8, 6)]);
+    expect(unit(body.state, body.ids[0]).pos).toEqual(at(7, 6));
+    expect(has(body.state, body.ids[0], "stunned")).toBe(false);
+  });
+
+  it("Fortify: an Action, 5 hexes, 3 turns to wait; a wall of 3 hexes, broadside on to the Warden, that nobody walks through", () => {
+    let { state, foes } = party([at(12, 6)]);
+    state = must(state, use("fortify", { at: at(8, 6) }));
+    expect(state.encounter!.budgets.ann).toMatchObject({ action: false, bonus: true });
+    expect(unit(state, "ann").cooldowns.fortify).toBe(4);
+    const wall = state.weather!.find((w) => w.kind === "wall")!;
+    expect(wall.hexes).toHaveLength(3);
+    expect(wall.hexes).toContainEqual(at(8, 6));
+    for (const p of wall.hexes) {
+      expect(hexDistance(p, at(8, 6))).toBeLessThanOrEqual(1);
+      // Broadside on: every hex of it as far from the Warden as the one aimed at.
+      expect(hexDistance(p, at(5, 6))).toBe(3);
+      for (const u of [unit(state, "ann"), unit(state, foes[0])]) expect(stepCost(state, u, { q: p.q - 1, r: p.r }, p).cost).toBe(Infinity);
+    }
+    // Out of reach, and nowhere to raise it.
+    expect(fails(state, use("fortify", { at: at(11, 6) }))).toBeTruthy();
+    ({ state } = party([at(8, 6)]));
+    expect(fails(state, use("fortify", { at: at(8, 6) }))).toMatch(/room/);
+  });
+
+  it("Fortify: the Warden's side sees over it and is steadier beside it; the enemy sees nothing through it and is no steadier", () => {
+    let { state, foes } = party([at(10, 6)], { bo: at(7, 6) });
+    const before = { bo: defenceOf(unit(state, "bo"), state), foe: defenceOf(unit(state, foes[0]), state) };
+    state = must(state, use("fortify", { at: at(8, 6) }));
+    expect(defenceOf(unit(state, "bo"), state)).toBe(before.bo + 1);
+    // Walk the dummy up to the far side of it: no steadier there.
+    unit(state, foes[0]).pos = at(9, 6);
+    expect(defenceOf(unit(state, foes[0]), state)).toBe(before.foe);
+    expect(seesFor(state, "hero", at(5, 6), at(11, 6))).toBe(true);
+    expect(seesFor(state, "enemy", at(11, 6), at(5, 6))).toBe(false);
+  });
+
+  it("Fortify: the wall comes down after its rounds", () => {
+    let { state } = party([at(12, 6)]);
+    state = must(state, use("fortify", { at: at(8, 6) }));
+    // The round it goes up in, and 3 more.
+    for (let i = 0; i < 4; i++) {
+      expect(state.weather!.some((w) => w.kind === "wall")).toBe(true);
+      state = nextTurn(state);
+    }
+    expect(state.weather!.some((w) => w.kind === "wall")).toBe(false);
+  });
+
+  it("an enemy shooter cannot see a hero behind the wall to shoot", () => {
+    // An archer in a hollow it cannot climb out of (it may shoot, but not go round), the Mage far out of its range.
+    const pit = (t: Tile) => { if (hexDistance(t, at(11, 6)) === 1) t.elev = 2; };
+    const shotAtAnn = (wall: boolean) => {
+      let { state, foes } = party([at(11, 6)], { kind: "archer", bo: at(0, 11), edit: pit });
+      if (wall) state = must(state, use("fortify", { at: at(7, 6) }));
+      state.aiOff = false;
+      const events: ZoneEvent[] = [];
+      nextTurn(state, events);
+      return events.some((e) => e.t === "roll" && e.roll.id === foes[0] && e.roll.target === "ann");
+    };
+    expect(shotAtAnn(false)).toBe(true);
+    expect(shotAtAnn(true)).toBe(false);
+  });
+
+  it("Bulwark Strike: an Action, 2 turns to wait; shields first, on top of what is there, then hits harder for the shield", () => {
+    const blow = (shield: number) => {
+      for (let seed = 1; seed < 60; seed++) {
+        let { state, foes } = party();
+        state.rng = seed;
+        if (shield > 0) unit(state, "ann").conditions.push({ kind: "bolstered", rounds: 2, amount: shield });
+        const events: ZoneEvent[] = [];
+        state = must(state, use("bulwark_strike", { target: foes[0] }), events);
+        expect(unit(state, "ann").cooldowns.bulwark_strike).toBe(3);
+        expect(shieldOf(unit(state, "ann"))).toBe(shield + 4 + 1);
+        const hit = events.find((e) => e.t === "hit" && e.what === "bulwark_strike");
+        if (hit?.t === "hit" && !hit.crit) return { seed, amount: hit.amount };
+      }
+      throw new Error("never landed");
+    };
+    const bare = blow(0);
+    const braced = blow(20);
+    expect(braced.seed).toBe(bare.seed);
+    expect(braced.amount - bare.amount).toBe(Math.floor((20 + 5) / 2) - Math.floor(5 / 2));
+  });
+
+  it("Taunt: a Bonus action, 3 turns to wait; every enemy beside the Warden is Taunted by them for 2 of its turns", () => {
+    let { state, foes } = party([at(6, 6), at(7, 6), at(8, 6)]);
+    state = must(state, use("taunt"));
+    expect(state.encounter!.budgets.ann).toMatchObject({ action: true, bonus: false });
+    expect(unit(state, "ann").cooldowns.taunt).toBe(4);
+    expect(unit(state, foes[0]).conditions.find((c) => c.kind === "taunted")).toMatchObject({ rounds: 2, by: "ann" });
+    for (const id of foes.slice(1)) expect(has(state, id, "taunted")).toBe(false);
+    state = nextTurn(state);
+    expect(has(state, foes[0], "taunted")).toBe(true);
+    state = nextTurn(state);
+    expect(has(state, foes[0], "taunted")).toBe(false);
+    ({ state } = party([at(7, 6)]));
+    expect(fails(state, use("taunt"))).toMatch(/beside you/);
+  });
+
+  it("Taunt: a Taunted enemy goes for the Warden over a softer target it would rather hit, and for anyone else only if it cannot", () => {
+    const swings = (hide: boolean) => {
+      const targets = new Set<string>();
+      for (let seed = 1; seed < 12; seed++) {
+        // The bandit stands between the Warden and the Mage, beside both.
+        let { state, foes } = party([at(6, 6)], { kind: "bandit", bo: at(7, 6) });
+        state.rng = seed;
+        state = must(state, use("taunt"));
+        if (hide) unit(state, "ann").conditions.push({ kind: "invisible", rounds: 3 });
+        state.aiOff = false;
+        const events: ZoneEvent[] = [];
+        nextTurn(state, events);
+        for (const e of events) if (e.t === "roll" && e.roll.kind === "attack" && e.roll.id === foes[0]) targets.add(e.roll.target!);
+      }
+      return targets;
+    };
+    expect(swings(false)).toEqual(new Set(["ann"]));
+    // The Warden Unseen: there is nobody to go for but the Mage.
+    expect(swings(true)).toEqual(new Set(["bo"]));
   });
 });
