@@ -29,7 +29,7 @@ import { FREE_WALK, blast, blockerAt, inFight, pathIn, sameHex, sees, solid, uni
 import { FLEE_RANGE, STARTING_ITEMS, THROWABLES, THROWABLE_KINDS, cleanItems, commonCost, enemyHp, enemyMove, tacticOf } from "./kit";
 import { d20, heroMove, mod, statOf } from "./rules";
 import { hiddenEnemies, sentToClient } from "./light";
-import { checkPickup, clearSurfaces, lightTorch, pickUpTorch, placeSurface, standInSurface, tickLights, tickSurfaces } from "./surfaces";
+import { checkPickup, checkStow, clearSurfaces, lightTorch, pickUpTorch, placeSurface, stowTorch, standInSurface, tickLights, tickSurfaces } from "./surfaces";
 import { exploreRound, passTime } from "./clock";
 import { checkUnlock, dropKeys, heardBy, workDoor } from "./doors";
 import { checkForage, forage } from "./forage";
@@ -738,6 +738,15 @@ function act(ctx: Ctx, action: ZoneAction): string | null {
     const cost = spend(budget, "bonus");
     if (cost) return cost;
     lightTorch(ctx, unit, action.hand);
+    return null;
+  }
+  if (action.type === "stow") {
+    const wrong = checkStow(unit);
+    if (wrong) return wrong;
+    // Like lighting one: free out of a fight, a Bonus action in one.
+    const cost = spend(budget, "bonus");
+    if (cost) return cost;
+    stowTorch(ctx, unit);
     return null;
   }
   // Throw.
