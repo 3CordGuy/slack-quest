@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { noteFrom, notesFor, readReleases, releaseMarkdown } from "../scripts/release-notes.ts";
-import { hasUnseen, releaseTitle, unseenCount, type Release } from "../src/releases";
+import { hasUnseen, incomingNotes, newestTagged, parseReleases, releaseTitle, releasesSince, unseenCount, type Release } from "../src/releases";
 
 describe("noteFrom", () => {
   it("takes the area off the front and the PR number off the end", () => {
@@ -127,5 +127,50 @@ describe("what a player has seen", () => {
     expect(releaseTitle(r("game-v2026.11.13.9"))).toBe("13 November 2026 · update 9");
     expect(releaseTitle(r("game-v2026.11.13"))).toBe("13 November 2026");
     expect(releaseTitle({ ...r("next-abc"), unreleased: true })).toBe("Coming next");
+  });
+});
+
+describe("what a newer build brings", () => {
+  const r = (id: string, ...lines: string[]): Release => ({ id, date: "2026-11-18T00:00:00Z", notes: lines.map((text) => ({ area: null, text })) });
+  const next = (id: string, ...lines: string[]): Release => ({ ...r(id, ...lines), unreleased: true });
+  // The newer build's list, as production has it: tagged releases only.
+  const server = [r("game-v3", "Bigger fish", "Louder bells"), r("game-v2", "A dealer in the pub"), r("game-v1", "Gems in the quarry")];
+
+  it("names the newest tagged release a build knows, past any untagged commits", () => {
+    expect(newestTagged(server)).toBe("game-v3");
+    expect(newestTagged([next("next-abc", "Something"), ...server])).toBe("game-v3");
+    expect(newestTagged([])).toBeNull();
+  });
+
+  it("lists every release after the one the tab is on, newest first", () => {
+    expect(releasesSince("game-v1", server).map((x) => x.id)).toEqual(["game-v3", "game-v2"]);
+    expect(releasesSince("game-v2", server).map((x) => x.id)).toEqual(["game-v3"]);
+  });
+
+  it("lists nothing for a tab on the newest release", () => {
+    expect(releasesSince("game-v3", server)).toEqual([]);
+  });
+
+  it("lists only the newest for a tab that names no release, or one no longer listed", () => {
+    for (const since of [null, undefined, "", "game-v0"]) expect(releasesSince(since, server).map((x) => x.id)).toEqual(["game-v3"]);
+    expect(releasesSince("game-v1", [])).toEqual([]);
+  });
+
+  it("leaves out lines a staging tab already shows as coming next, and releases with nothing left", () => {
+    // The tab was built with one commit not yet tagged; the newer build has that commit under a tag, and two more after it.
+    const mine = [next("next-abc", "Bigger fish"), ...server.slice(1)];
+    const newer = [next("next-def", "Softer rain"), ...server];
+    const incoming = incomingNotes(releasesSince(newestTagged(mine), newer), mine);
+    expect(incoming.map((x) => [x.id, x.notes.map((n) => n.text)])).toEqual([["next-def", ["Softer rain"]], ["game-v3", ["Louder bells"]]]);
+    // The same build on both sides: its own untagged commits are not news.
+    expect(incomingNotes(releasesSince(newestTagged(mine), mine), mine)).toEqual([]);
+    // A release with no player-facing lines says nothing.
+    expect(incomingNotes([r("game-v4")], server)).toEqual([]);
+  });
+
+  it("reads another build's answer, keeping only what is a release", () => {
+    const sent = JSON.parse(JSON.stringify([...server.slice(0, 1), { id: 7 }, null, { id: "game-vX", notes: [{ text: "Kept", area: "Pub" }, { text: 3 }, null, { area: "No text" }] }])) as unknown;
+    expect(parseReleases(sent)).toEqual([server[0], { id: "game-vX", date: "", notes: [{ area: "Pub", text: "Kept" }] }]);
+    for (const not of [undefined, null, "nope", { incoming: [] }]) expect(parseReleases(not)).toEqual([]);
   });
 });

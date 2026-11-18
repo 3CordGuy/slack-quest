@@ -75,6 +75,18 @@ input:focus, button:focus-visible, select:focus { outline: 2px solid var(--accen
 }
 .new-version-text { flex: 0 1 auto; }
 .new-version-actions { display: flex; gap: 8px; flex: none; }
+/* "What's in this release?": a link in the sentence that opens the newer build's notes under it. The notes take the row below the
+   buttons and scroll inside themselves, so however long the list is the buttons stay where they were, on screen. */
+.new-version button.new-version-more { padding: 0; color: #f6d77a; text-decoration: underline; text-underline-offset: 3px; font: inherit; }
+.new-version button.new-version-more:hover:not(:disabled) { background: none; border: none; box-shadow: none; color: #fff0c4; }
+.new-version.open { width: min(760px, calc(100vw - 20px)); }
+.new-version-notes {
+  flex: 1 0 100%; max-height: min(45dvh, 300px); overflow-y: auto; overscroll-behavior: contain;
+  padding-top: 8px; border-top: 1px solid rgba(241, 246, 230, 0.3); font-size: 14px; text-align: left;
+}
+.new-version-notes h3 { margin: 8px 0 2px; font-size: 13px; color: #cfe3c4; }
+.new-version-notes section:first-child h3 { margin-top: 0; }
+.new-version-notes ul { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 3px; }
 
 .bar { position: relative; display: block; height: 16px; background: #14122a; border: 1px solid var(--line); margin: 4px 0; overflow: hidden; }
 .bar-fill { position: absolute; inset: 0 auto 0 0; }
