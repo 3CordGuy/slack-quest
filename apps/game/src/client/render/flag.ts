@@ -44,13 +44,19 @@ export function waveFlag(cloth: THREE.BufferGeometry, clock: number, blow: numbe
   if (!(length > 0)) return;
   const k = Math.min(1.6, blow);
   const amp = length * (0.06 + 0.1 * k);
-  const speed = 5 + 4 * k;
+  // How far the ripples have run, added up a frame at a time: as a gust comes and goes they run faster or
+  // slower, but always out from the pole. (Worked out as clock × speed, a change of speed late in the day
+  // would throw them a long way, backward as often as forward.)
+  const seen = cloth.userData.seen as number | undefined;
+  cloth.userData.seen = clock;
+  const dt = seen === undefined ? 0 : Math.min(0.1, Math.max(0, clock - seen));
+  const run = (cloth.userData.run = ((cloth.userData.run as number | undefined) ?? 0) + (5 + 4 * k) * dt);
   // In a lull the free end sags; it streams out level as the wind picks up.
   const sag = length * 0.18 * Math.max(0, 1 - k);
   for (let i = 0; i < pos.count; i++) {
     const x = rest[i * 3], y = rest[i * 3 + 1];
     const u = (hoist - x) / length;
-    const phase = u * 7 - clock * speed;
+    const phase = u * 7 - run;
     const z = amp * u * (Math.sin(phase) + 0.35 * Math.sin(phase * 1.9 + y * 9 + 1.3));
     // The cloth does not stretch: the more it ripples the nearer its end comes in to the pole.
     pos.setXYZ(i, hoist - (hoist - x) * (1 - 0.06 * k * u), y - sag * u * u, z);
