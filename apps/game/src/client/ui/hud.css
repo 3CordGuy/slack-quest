@@ -87,6 +87,9 @@
 .hud-torch-hint { position: absolute; right: calc(var(--p) * 1); top: calc(var(--p) * 1); line-height: 0; pointer-events: none; }
 .hud-slot.hand.lit { box-shadow: inset 0 0 calc(var(--p) * 4) rgba(255, 150, 60, 0.75); }
 .hud-slot.hand.lit .hud-count { color: #ffe08a; text-shadow: 0 1px 0 #3a1d20; }
+/* The lit torch is a button: a click puts it away. When it cannot be (not your turn), it is only there to read. */
+.hud .hud-slot.hand.lit { box-shadow: inset 0 0 calc(var(--p) * 4) rgba(255, 150, 60, 0.75); cursor: pointer; }
+.hud .hud-slot.hand.lit[aria-disabled="true"] { cursor: default; }
 /* A tab lies over its block in the picture: a key's letter, or a small glyph, in pale cream. */
 .hud .hud-tab {
   position: absolute; padding: 0; display: grid; place-items: center; border: none; border-radius: 0; background: none; box-shadow: none;

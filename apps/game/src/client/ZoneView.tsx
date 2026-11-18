@@ -712,6 +712,9 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
       } else if (ev.t === "took_torch") {
         if (ev.stowed) later(() => view?.pickups(ev.id, [{ text: "+1 torch", color: "#ffb070" }]));
         say(ev.stowed ? `${name(ev.id)} puts out a torch and stows it in the pack.` : `${name(ev.id)} picks up a burning torch.`);
+      } else if (ev.t === "torch_stowed") {
+        later(() => view?.pickups(ev.id, [{ text: "+1 torch", color: "#ffb070" }]));
+        say(`${name(ev.id)} puts out the torch and stows it in the pack.`);
       } else if (ev.t === "light" && !ev.on) {
         // Gone from the ground because someone took it up is not burning out.
         const taken = events.some((e) => e.t === "took_torch" && e.at.q === ev.at.q && e.at.r === ev.at.r);
@@ -1265,6 +1268,10 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
   // (Those sharing the turn who have ended theirs are not waited on; with nobody left, the turn is passing on.)
   const still = enc ? enc.acting.filter((id) => !enc.done.includes(id)) : [];
   const waitingFor = enc && !myTurn ? (watching && spot ? (names.current.get(spot) ?? "someone") : still.length > 0 ? still.map((id) => names.current.get(id) ?? "someone").join(" and ") : "the next turn") : undefined;
+  // A torch is lit into a hand, or put away from one, freely out of a fight; in one, for a Bonus action on your turn.
+  const handFree = !fighting || (myTurn && !!budget?.bonus);
+  const handWhy = fighting && !myTurn ? "Wait for your turn." : fighting && !budget?.bonus ? "You have used your Bonus action this turn." : undefined;
+  const stowTorch = act && act.torch && !act.down && handFree ? () => reachFor({ type: "stow", unit: act.id }, "bonus", null) : undefined;
   // A torch burning on the ground within reach, to pick up.
   const torchBeside = act && state.lights ? Object.keys(state.lights).map((k) => { const [q, r] = k.split(",").map(Number); return { q, r }; }).find((p) => hexDistance(p, act.pos) <= 1) : undefined;
   // A locked door within reach, and the keys on the party's ring.
@@ -1506,6 +1513,8 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
       {me.character && <Trading me={me} partners={crew.filter((m) => m.id !== state.you)} withId={tradeWith} onWith={setTradeWith} refresh={refresh} nudge={zone.trades} />}
       {bag && !tradeWith && me.character && (
         <InventoryScreen
+          // A lit torch in a hand is shown in that hand's slot, and put away from there. Your own hero's only: the bag is theirs.
+          torch={act.id === state.you && act.torch ? { hand: act.torchHand === "main" ? "main" : "off", rounds: act.torch, stow: stowTorch, why: handWhy } : undefined}
           me={me}
           onIsland
           // Gear changed here is gear changed on the map: the server reads the hero again (and leaves them be in a fight).
@@ -1571,8 +1580,9 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
           rounds: act.torch ?? null,
           hand: act.torchHand === "main" ? "main" : "off",
           carried: act.items.torch ?? 0,
-          light: !act.torch && (act.items.torch ?? 0) > 0 && !act.down && (!fighting || (myTurn && !!budget?.bonus)) ? (hand) => reachFor({ type: "light", unit: act.id, ...(hand === "main" ? { hand } : {}) }, "bonus", null) : undefined,
-          why: fighting && !myTurn ? "Wait for your turn." : fighting && !budget?.bonus ? "You have used your Bonus action this turn." : undefined,
+          light: !act.torch && (act.items.torch ?? 0) > 0 && !act.down && handFree ? (hand) => reachFor({ type: "light", unit: act.id, ...(hand === "main" ? { hand } : {}) }, "bonus", null) : undefined,
+          stow: stowTorch,
+          why: handWhy,
         }}
         // While the trade table is open it has the bag beside it already.
         onBag={() => !tradeWith && setBag((open) => !open)}
