@@ -333,6 +333,8 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
     let use: { id: string; what: string; look: ReturnType<typeof fxFor>; last: THREE.Vector3 | null } | null = null;
     const find = (id: string) => draft.units.find((u) => u.id === id);
     const lines: string[] = [];
+    /** Who last struck each one, so one that goes down falls away from them. */
+    const struck = new Map<string, string>();
     let at = 0;
     const later = (run: () => void) => timers.current.push(setTimeout(run, at));
     /** Whoever the last thing shown was done by, so a new actor can be announced once as their turn comes up. */
@@ -389,7 +391,7 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
           // Flung back and off their feet; with nowhere to go, flattened where they stand.
           sounds.zone("shove", view?.whereIs(ev.target));
           if (to) view?.knock(ev.target, to);
-          else view?.floor(ev.target);
+          else view?.floor(ev.target, undefined, ev.id);
           timers.current.push(setTimeout(() => sounds.zone("fall", view?.whereIs(ev.target)), 260));
         });
         say(to ? `${name(ev.id)} shoves ${name(ev.target)} back.` : `${name(ev.id)} shoves ${name(ev.target)}, who has nowhere to go and falls.`);
@@ -471,6 +473,7 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
         }
       } else if (ev.t === "hit" || ev.t === "miss") {
         const hit = ev.t === "hit";
+        if (hit && ev.actor && ev.actor !== ev.target) struck.set(ev.target, ev.actor);
         const target = find(ev.target);
         const actor = ev.actor ? find(ev.actor) : undefined;
         if (hit && target) target.hp = Math.max(0, target.hp - ev.amount);
@@ -541,7 +544,14 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
         const u = find(ev.id);
         if (u) u.down = ev.t === "down";
         if (u && ev.t === "down") u.hp = 0;
-        if (u && ev.t === "down") later(() => sounds.down({ side: u.side, kind: u.kind }, view?.whereIs(ev.id)));
+        if (u && ev.t === "down") {
+          const by = struck.get(ev.id);
+          later(() => {
+            sounds.down({ side: u.side, kind: u.kind }, view?.whereIs(ev.id));
+            // Limp, and away from the blow, as the picture has them down.
+            view?.fell(ev.id, by);
+          });
+        }
         say(ev.t === "down" ? `${name(ev.id)} is down.` : `${name(ev.id)} is back up.`);
       } else if (ev.t === "skip") {
         say(`${name(ev.id)} is ${CONDITION_INFO[ev.kind].name} and loses the turn.`);
