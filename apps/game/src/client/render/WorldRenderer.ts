@@ -192,6 +192,8 @@ export interface RenderHero {
   down?: boolean;
   /** Knocked flat (Prone) but still in the fight: lying, not dimmed. */
   prone?: boolean;
+  /** Unseen (Sneak): drawn thinned out. */
+  unseen?: boolean;
   /** Whose turn it is in a fight on the tiles: their ring pulses. */
   active?: boolean;
   /** Holding a lit torch: underground, its light goes where they go. */
@@ -685,6 +687,8 @@ interface Want {
   face?: number;
   /** On a stool: how high its seat is off the floor. `pos` is then the stool's own spot. */
   seat?: number;
+  /** Unseen (Sneak): drawn thinned out, a ghost of itself. */
+  unseen?: boolean;
 }
 
 interface Floater {
@@ -695,6 +699,9 @@ interface Floater {
   /** World units it rises per second; 1.4 unless set. */
   rise?: number;
 }
+
+/** How much of an Unseen hero is left to see. */
+const UNSEEN_FADE = 0.4;
 
 /** XP motes: gold and pale blue, like the XP bar lighting up. */
 const XP_MOTES = ["#ffd23f", "#ffe98a", "#bfe6ff", "#8fd3ff"];
@@ -1506,6 +1513,20 @@ export class WorldRenderer {
     unit.rush = 3.2;
     unit.bob = 0.22;
     if (fall) unit.floored = this.clock + 1;
+  }
+
+  /** A unit gone from where it stands and on another hex at once (a blink): whatever it was walking is dropped. */
+  blinkUnit(id: string, to: HexPos) {
+    const unit = this.units.get(id);
+    if (!unit) return;
+    unit.path = [];
+    unit.leaps?.clear();
+    unit.leap = undefined;
+    unit.rush = undefined;
+    // Where it stands on the hex: a quarter hex toward the camera from the middle (see syncUnits). The goal moves with it, so it does not slide back.
+    const at = this.standAt(to).add(new THREE.Vector3(0, 0, 0.25));
+    unit.root.position.copy(at);
+    unit.goal.copy(at);
   }
 
   /** A unit knocked off its feet where it stands. */
@@ -5559,7 +5580,7 @@ export class WorldRenderer {
       // A plate shows a first name only: full names run long over a crowd.
       const full = h.label ?? (plate ? h.name : undefined);
       const label = plate && full ? firstName(full) : full;
-      want.set(h.id, { kind: h.classId, outfit: h.outfit, pos, size: 1.5, label, plate: label ? plate : undefined, stack: i, ring: colorOf(h.id), through: colorOf(h.id), pulse: state.turn?.heroId === h.id || !!h.active, asleep: h.asleep, rod: h.rod, boat: h.boat, down: h.down, prone: h.prone, effects: h.effects, seat: seat?.top });
+      want.set(h.id, { kind: h.classId, outfit: h.outfit, pos, size: 1.5, label, plate: label ? plate : undefined, stack: i, ring: colorOf(h.id), through: colorOf(h.id), pulse: state.turn?.heroId === h.id || !!h.active, asleep: h.asleep, rod: h.rod, boat: h.boat, down: h.down, prone: h.prone, effects: h.effects, seat: seat?.top, unseen: h.unseen });
     }
     for (const npc of state.story?.npcs ?? []) {
       const poi = state.map.pois.find((p) => p.id === npc.poi);
@@ -5644,6 +5665,7 @@ export class WorldRenderer {
       unit.size = w.size;
       unit.figure.setSize(w.size);
       unit.figure.setDim(!!w.down);
+      unit.figure.setFade(w.unseen ? UNSEEN_FADE : 1);
       // A hero always, and an enemy once it is in a fight, is shown through the tree or wall it is behind.
       unit.figure.setSilhouette(this.seeThrough ? (w.through ?? null) : null);
       if (w.face !== undefined) unit.turnGoal = w.face;

@@ -2599,6 +2599,265 @@ describe("the Mage's class abilities", () => {
   });
 });
 
+describe("the Rogue's class abilities", () => {
+  const ALL = ["smugglers_route", "sneak", "pickpocket", "tactical_retreat", "contraband"];
+  /**
+   * A Rogue (ann) with a crewmate (bo) beside her and another (cy) further off, in a fight with a dummy far down
+   * row 6. Ann's turn. `edit` changes the board first.
+   */
+  function party(edit?: (tile: Tile) => void) {
+    let state = board(edit);
+    state.aiOff = true;
+    const ann = hero(state, "ann", "refactor_rogue", at(5, 6));
+    ann.abilities = [...ann.abilities, ...ALL];
+    hero(state, "bo", "qa_paladin", at(4, 6));
+    hero(state, "cy", "devops_mage", at(2, 8));
+    const dummy = enemy(state, "dummy", at(13, 6));
+    state = provoke(state);
+    while (!state.encounter!.acting.includes("ann")) state = must(state, { type: "timeout" });
+    return { state, dummy: dummy.id };
+  }
+  function addFoe(state: ZoneState, pos: HexPos, kind = "dummy"): string {
+    const e = enemy(state, kind, pos);
+    state.encounter!.order.push(e.id);
+    state.encounter!.init[e.id] = 0;
+    return e.id;
+  }
+  function nextTurn(state: ZoneState, sink: ZoneEvent[] = []): ZoneState {
+    for (const id of [...state.encounter!.acting]) if (!state.encounter!.done.includes(id) && !unit(state, id).down) state = must(state, { type: "end_turn", by: id, unit: id }, sink);
+    while (!state.encounter!.acting.includes("ann") || state.encounter!.done.includes("ann")) state = must(state, { type: "timeout" }, sink);
+    return state;
+  }
+  const step = (state: ZoneState, action: ZoneAction) => {
+    const s = stepZone(state, action);
+    if (!s.ok) throw new Error(s.error);
+    return s;
+  };
+  const has = (state: ZoneState, id: string, kind: string) => unit(state, id).conditions.some((c) => c.kind === kind);
+  const use = (ability: string, aim: { target?: string; at?: HexPos } = {}): ZoneAction => ({ type: "use", by: "ann", unit: "ann", ability, ...aim });
+  const rock = (...hexes: HexPos[]) => (t: Tile) => { if (hexes.some((p) => p.q === t.q && p.r === t.r)) t.biome = "rock"; };
+
+  it("are all in the Rogue's pool", () => {
+    expect(poolFor("refactor_rogue").map((e) => e.id)).toEqual(ALL);
+  });
+
+  it("Smuggler's Route: a Bonus action to a hex up to 4 off, through a wall, spending no movement", () => {
+    let { state } = party(rock(at(6, 5), at(6, 6), at(6, 7)));
+    const move = state.encounter!.budgets.ann.move;
+    const events: ZoneEvent[] = [];
+    state = must(state, use("smugglers_route", { at: at(8, 6) }), events);
+    expect(unit(state, "ann").pos).toEqual(at(8, 6));
+    expect(events.some((e) => e.t === "blinked" && e.id === "ann")).toBe(true);
+    expect(state.encounter!.budgets.ann).toMatchObject({ move, bonus: false, action: true });
+    expect(unit(state, "ann").cooldowns.smugglers_route).toBe(4);
+    // Bo stayed: nobody was picked to come along.
+    expect(unit(state, "bo").pos).toEqual(at(4, 6));
+  });
+
+  it("Smuggler's Route: not further than 4, nor onto rock or someone", () => {
+    const { state } = party(rock(at(7, 6)));
+    expect(fails(state, use("smugglers_route", { at: at(10, 6) }))).toMatch(/Too far/);
+    expect(fails(state, use("smugglers_route", { at: at(7, 6) }))).toMatch(/nowhere to stand/);
+    expect(fails(state, use("smugglers_route", { at: at(4, 6) }))).toMatch(/nowhere to stand/);
+  });
+
+  it("Smuggler's Route: an ally beside you comes too, to the same side of where you land, or the nearest open hex", () => {
+    let { state } = party();
+    state = must(state, use("smugglers_route", { target: "bo", at: at(8, 6) }));
+    expect(unit(state, "ann").pos).toEqual(at(8, 6));
+    expect(unit(state, "bo").pos).toEqual(at(7, 6));
+    // With that side taken, the nearest open hex beside it.
+    let again = party().state;
+    addFoe(again, at(7, 6));
+    again = must(again, use("smugglers_route", { target: "bo", at: at(8, 6) }));
+    expect(hexDistance(unit(again, "bo").pos, at(8, 6))).toBe(1);
+    expect(hexDistance(unit(again, "bo").pos, at(7, 6))).toBe(1);
+  });
+
+  it("Smuggler's Route: the ally has to be beside you, and there has to be room for them", () => {
+    const { state } = party();
+    expect(fails(state, use("smugglers_route", { target: "cy", at: at(8, 6) }))).toMatch(/beside you/);
+    const boxed = party(rock(...hexNeighbors(at(8, 6), GRID))).state;
+    expect(fails(boxed, use("smugglers_route", { target: "bo", at: at(8, 6) }))).toMatch(/no room/);
+    // Alone, the same hex is fine.
+    expect(unit(must(boxed, use("smugglers_route", { at: at(8, 6) })), "ann").pos).toEqual(at(8, 6));
+  });
+
+  it("Smuggler's Route: leaving an enemy's side draws no blow", () => {
+    let { state } = party();
+    addFoe(state, at(6, 6), "bandit");
+    const events: ZoneEvent[] = [];
+    state = must(state, use("smugglers_route", { at: at(5, 9) }), events);
+    expect(events.some((e) => e.t === "reaction")).toBe(false);
+  });
+
+  it("Sneak: you and every ally beside you go Unseen for 3 turns; one further off does not", () => {
+    let { state } = party();
+    state = must(state, use("sneak"));
+    expect(has(state, "ann", "invisible")).toBe(true);
+    expect(has(state, "bo", "invisible")).toBe(true);
+    expect(has(state, "cy", "invisible")).toBe(false);
+    expect(state.encounter!.budgets.ann.action).toBe(false);
+    // Through the 3 turns after the one it is used on (and every enemy turn between), and no further.
+    for (let turn = 1; turn <= 4; turn++) {
+      expect(has(state, "ann", "invisible"), `turn ${turn}`).toBe(true);
+      state = nextTurn(state);
+    }
+    expect(has(state, "ann", "invisible")).toBe(false);
+  });
+
+  it("Sneak: an enemy will not attack the Unseen, nor strike at them as they walk off", () => {
+    let { state } = party();
+    const bandit = addFoe(state, at(6, 6), "bandit");
+    state = must(state, use("sneak"));
+    state.encounter!.budgets.ann.move = 20;
+    const walked: ZoneEvent[] = [];
+    state = must(state, { type: "move", by: "ann", unit: "ann", to: at(7, 4) }, walked);
+    expect(walked.some((e) => e.t === "reaction")).toBe(false);
+    // The bandit's turn: it has only cy to go for.
+    state.aiOff = false;
+    const turn: ZoneEvent[] = [];
+    state = nextTurn(state, turn);
+    const aimedAt = turn.filter((e) => e.t === "used" && e.id === bandit).map((e) => e.t === "used" && e.target);
+    expect(aimedAt).not.toContain("ann");
+    expect(aimedAt).not.toContain("bo");
+  });
+
+  it("Sneak: using an ability gives you away, with advantage on its roll to hit", () => {
+    let { state, dummy } = party();
+    state = must(state, use("sneak"));
+    state = nextTurn(state);
+    unit(state, dummy).pos = at(6, 6);
+    const events: ZoneEvent[] = [];
+    state = must(state, use("quick_stab", { target: dummy }), events);
+    const roll = events.find((e) => e.t === "roll" && e.roll.kind === "attack");
+    expect(roll?.t === "roll" && roll.roll.adv).toBe(1);
+    expect(has(state, "ann", "invisible")).toBe(false);
+    expect(events.some((e) => e.t === "seen" && e.id === "ann")).toBe(true);
+    // Bo, who did nothing, is still Unseen.
+    expect(has(state, "bo", "invisible")).toBe(true);
+  });
+
+  it("Sneak: nobody out of a fight notices the Unseen walking by", () => {
+    let state = board();
+    const ann = hero(state, "ann", "refactor_rogue", at(2, 6));
+    ann.conditions.push({ kind: "invisible", rounds: 3 });
+    enemy(state, "bandit", at(8, 6));
+    state = must(state, { type: "move", by: "ann", unit: "ann", to: at(6, 6) });
+    expect(state.encounter).toBeNull();
+  });
+
+  it("Pickpocket: a Bonus action blow that, landing, pays gold equal to your level, once an enemy", () => {
+    let paid = 0;
+    let missed = 0;
+    for (let seed = 1; seed <= 12; seed++) {
+      let { state, dummy } = party();
+      state.rng = seed;
+      unit(state, "ann").level = 3;
+      unit(state, dummy).pos = at(6, 6);
+      const first = step(state, use("pickpocket", { target: dummy }));
+      expect(first.state.encounter!.budgets.ann).toMatchObject({ bonus: false, action: true });
+      const hit = first.events.some((e) => e.t === "hit" && e.target === dummy);
+      const gold = first.effects.filter((e) => e.type === "grant").map((e) => e.gold);
+      expect(gold).toEqual(hit ? [3] : []);
+      if (!hit) {
+        missed += 1;
+        continue;
+      }
+      paid += 1;
+      expect(unit(first.state, dummy).picked).toBe(true);
+      // Its pockets are empty now: the next one, even landing, pays nothing.
+      state = first.state;
+      state.encounter!.budgets.ann.bonus = true;
+      expect(step(state, use("pickpocket", { target: dummy })).effects).toEqual([]);
+    }
+    expect(paid).toBeGreaterThan(0);
+    expect(missed).toBeGreaterThan(0);
+  });
+
+  it("Pickpocket: Unseen, it is no blow, just the gold, and you stay Unseen", () => {
+    let { state, dummy } = party();
+    state = must(state, use("sneak"));
+    state = nextTurn(state);
+    unit(state, dummy).pos = at(6, 6);
+    const hp = unit(state, dummy).hp;
+    const s = step(state, use("pickpocket", { target: dummy }));
+    expect(s.events.some((e) => e.t === "roll")).toBe(false);
+    expect(unit(s.state, dummy).hp).toBe(hp);
+    expect(s.effects).toEqual([{ type: "grant", heroId: "ann", xp: 0, resources: {}, gold: 1 }]);
+    expect(has(s.state, "ann", "invisible")).toBe(true);
+  });
+
+  it("Tactical Retreat: a heavy blow, then away to a hex up to 4 off if one is picked, hit or miss", () => {
+    for (let seed = 1; seed <= 4; seed++) {
+      let { state, dummy } = party(rock(at(6, 5), at(5, 5)));
+      state.rng = seed;
+      unit(state, dummy).pos = at(6, 6);
+      const events: ZoneEvent[] = [];
+      state = must(state, use("tactical_retreat", { target: dummy, at: at(5, 3) }), events);
+      expect(events.filter((e) => e.t === "roll" && e.roll.kind === "attack")).toHaveLength(1);
+      expect(unit(state, "ann").pos).toEqual(at(5, 3));
+      expect(state.encounter!.budgets.ann.action).toBe(false);
+    }
+    // No hex picked: the blow alone.
+    let { state, dummy } = party();
+    unit(state, dummy).pos = at(6, 6);
+    state = must(state, use("tactical_retreat", { target: dummy }));
+    expect(unit(state, "ann").pos).toEqual(at(5, 6));
+    expect(fails(party().state, use("tactical_retreat", { target: dummy, at: at(10, 6) }))).toBeTruthy();
+  });
+
+  it("Tactical Retreat: hits harder than a Quick Stab", () => {
+    expect(ABILITIES.tactical_retreat.damage!).toBeGreaterThan(ABILITIES.quick_stab.damage!);
+  });
+
+  it("Contraband: you and an ally each get a fire bomb, thrown before any of your own, gone after 3 turns", () => {
+    let { state } = party();
+    unit(state, "ann").items.fire = 0;
+    state = must(state, use("contraband", { target: "bo" }));
+    expect(state.encounter!.budgets.ann.bonus).toBe(false);
+    expect(has(state, "ann", "contraband")).toBe(true);
+    expect(has(state, "bo", "contraband")).toBe(true);
+    // Ann has none of her own, and can throw one all the same.
+    state = must(state, { type: "throw", by: "ann", unit: "ann", item: "fire", at: at(10, 6) });
+    expect(has(state, "ann", "contraband")).toBe(false);
+    expect(unit(state, "ann").items.fire ?? 0).toBe(0);
+    // Bo's own bomb is still in his pack after throwing the smuggled one.
+    state = must(state, { type: "throw", by: "bo", unit: "bo", item: "fire", at: at(10, 7) });
+    expect(unit(state, "bo").items.fire).toBe(1);
+    expect(has(state, "bo", "contraband")).toBe(false);
+    // Not thrown, it is gone after the 3 turns that follow.
+    let later = party().state;
+    later = must(later, use("contraband", { target: "ann" }));
+    for (let turn = 1; turn <= 3; turn++) later = nextTurn(later);
+    expect(has(later, "ann", "contraband")).toBe(true);
+    later = nextTurn(later);
+    expect(has(later, "ann", "contraband")).toBe(false);
+  });
+
+  it("Contraband: used on yourself, both bombs are yours", () => {
+    let { state } = party();
+    unit(state, "ann").items.fire = 0;
+    state = must(state, use("contraband"));
+    expect(has(state, "bo", "contraband")).toBe(false);
+    state = must(state, { type: "throw", by: "ann", unit: "ann", item: "fire", at: at(10, 6) });
+    expect(has(state, "ann", "contraband")).toBe(true);
+    state = nextTurn(state);
+    state = must(state, { type: "throw", by: "ann", unit: "ann", item: "fire", at: at(10, 6) });
+    expect(has(state, "ann", "contraband")).toBe(false);
+    state.encounter!.budgets.ann.action = true;
+    expect(fails(state, { type: "throw", by: "ann", unit: "ann", item: "fire", at: at(10, 6) })).toMatch(/no fire bomb/i);
+  });
+
+  it("throwing gives the Unseen away too", () => {
+    let { state } = party();
+    state = must(state, use("sneak"));
+    state = nextTurn(state);
+    state = must(state, { type: "throw", by: "ann", unit: "ann", item: "fire", at: at(10, 6) });
+    expect(has(state, "ann", "invisible")).toBe(false);
+  });
+});
+
 describe("a dev kit", () => {
   function onMap() {
     const state = board();

@@ -15,8 +15,11 @@ import type { FurnishingGrant } from "../world";
 
 export type Side = "hero" | "enemy";
 
-/** What can be on a unit: the old fights' effects, three the tiles bring, and the auras a hero can carry (kit.ts AURAS). */
-export type Condition = EffectKind | "poisoned" | "prone" | "wet" | "beacon" | "mending" | "bolstered";
+/**
+ * What can be on a unit: the old fights' effects, three the tiles bring, the auras a hero can carry (kit.ts AURAS),
+ * and what the Rogue's tricks leave: Unseen (Sneak), and a fire bomb smuggled into the pack for a few turns (Contraband).
+ */
+export type Condition = EffectKind | "poisoned" | "prone" | "wet" | "beacon" | "mending" | "bolstered" | "invisible" | "contraband";
 
 export interface UnitCondition {
   kind: Condition;
@@ -69,6 +72,8 @@ export interface Unit {
   home?: HexPos;
   /** A stand-in crewmate: the player who plays its turns. */
   controller?: string;
+  /** Enemies: its pockets have been picked (Pickpocket pays once an enemy). */
+  picked?: boolean;
   /** Given a dev kit (DevOp "kit", the Maps tab): coming back to the map does not put the hero's own sheet back on. */
   devKit?: boolean;
   /**
@@ -329,6 +334,10 @@ export type ZoneEvent =
   | { t: "burst"; hexes: HexPos[] }
   | { t: "shoved"; id: string; target: string; from: HexPos; to: HexPos | null }
   | { t: "jumped"; id: string; from: HexPos; to: HexPos }
+  /** One who was Unseen gives themselves away. */
+  | { t: "seen"; id: string }
+  /** Gone from one hex and there on another, with nothing crossed between (Smuggler's Route, Tactical Retreat). */
+  | { t: "blinked"; id: string; from: HexPos; to: HexPos }
   /** A hero gets away from the fight (Flee): out of the order, walking free. */
   | { t: "fled"; id: string }
   /** `fled`: every hero still standing got away, and none is left in it. */

@@ -43,6 +43,11 @@ export const ABILITY_ICON: Record<string, ActionIcon> = {
   aimed_shot: icon("bow", "#7dff9a"),
   pin_down: icon("bow", "#a78bfa"),
   land_the_catch: icon("hook", "#38bdf8"),
+  smugglers_route: icon("jump", "#a78bfa"),
+  sneak: icon("disengage", "#b8c4d6"),
+  pickpocket: icon("hook", "#ffd23f"),
+  tactical_retreat: icon("flee", "#ff6b6b"),
+  contraband: { name: "item-bomb", color: "#ff8a3a" },
   // Druid
   thornlash: icon("thorn", "#ff8fb1"),
   rejuvenate: icon("heal", "#a3e635"),

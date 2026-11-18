@@ -33,8 +33,10 @@ import {
   SURFACE_INFO,
   WEATHER_INFO,
   THROWABLES,
+  SMUGGLED,
   abilityArea,
   abilityDice,
+  carrySpot,
   checkAbility,
   checkCommon,
   checkThrow,
@@ -92,7 +94,8 @@ import { setZoneDev, useZoneDev } from "./zone/zoneDev";
 import "./zone/zone.css";
 
 /** What is waiting for a click on the map. */
-type Pick = { kind: "ability"; id: string } | { kind: "common"; what: CommonAction } | { kind: "item"; item: Throwable };
+/** `first`: for an ability aimed in two clicks (a blink: Smuggler's Route, Tactical Retreat), who was clicked first. */
+type Pick = { kind: "ability"; id: string; first?: string } | { kind: "common"; what: CommonAction } | { kind: "item"; item: Throwable };
 
 /** The part of the state the picture shows, which lags the truth while events play out. */
 interface Picture {
@@ -108,7 +111,7 @@ const asState = (view: ZoneViewState) => view as unknown as ZoneState;
 const LEAVING_WAIT_MS = 6000;
 
 /** The things that are done, as against what comes of them: each starts a new run of results. */
-const CAUSES = new Set<ZoneEvent["t"]>(["used", "moved", "jumped", "shoved", "reaction", "turn", "round", "fight_start", "fight_end"]);
+const CAUSES = new Set<ZoneEvent["t"]>(["used", "moved", "jumped", "blinked", "shoved", "reaction", "turn", "round", "fight_start", "fight_end"]);
 
 /**
  * Which events land on several at once, and which is the last of its run. What comes of one thing done
@@ -159,6 +162,8 @@ function dwell(ev: ZoneEvent, many: boolean, next: ZoneEvent | undefined): numbe
     case "shoved": return 400;
     // The crouch, the leap and the landing: what follows waits for the feet to come down.
     case "jumped": return 700;
+    case "blinked": return 450;
+    case "seen": return 200;
     case "fight_start": return 1300;
     case "fight_end": return 700;
     case "fled": return 420;
@@ -320,7 +325,7 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
       const view = renderer.current;
       /** The unit makes its gesture (a cast, or a bow drawn), and `go`, what leaves its hand, runs as the gesture ends: at once with no view to draw it. */
       const cast = (id: string, name: string, x: number, z: number, go: () => void, thrown = false) => (view ? view.cast(id, name, x, z, go, thrown) : go());
-      if ((ev.t === "moved" || ev.t === "used" || ev.t === "jumped") && next.encounter?.order.includes(ev.id)) nowActing(ev.id);
+      if ((ev.t === "moved" || ev.t === "used" || ev.t === "jumped" || ev.t === "blinked") && next.encounter?.order.includes(ev.id)) nowActing(ev.id);
       if (ev.t === "moved") {
         const u = find(ev.id);
         if (u) u.pos = ev.path[ev.path.length - 1];
@@ -330,6 +335,19 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
         if (u) u.pos = ev.to;
         // A leap, not a walk; the view sounds it, timed to the landing.
         later(() => (view ? view.leapUnit(ev.id, ev.to) : sounds.zone("jump")));
+      } else if (ev.t === "blinked") {
+        const u = find(ev.id);
+        if (u) u.pos = ev.to;
+        // Gone in a puff and there: no walk, no leap.
+        later(() => {
+          sounds.zone("jump");
+          view?.blinkUnit(ev.id, ev.to);
+        });
+      } else if (ev.t === "seen") {
+        const u = find(ev.id);
+        if (u) u.conditions = u.conditions.filter((c) => c.kind !== "invisible");
+        later(() => view?.floatOver(ev.id, "Seen!", CONDITION_INFO.invisible.color));
+        say(`${name(ev.id)} gives themselves away.`);
       } else if (ev.t === "shoved") {
         const u = find(ev.target);
         const to = ev.to;
@@ -772,7 +790,7 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
       // Chests and crates as the picture has them: thrown open, or knocked about and broken, as each is shown.
       map: { ...state.map, pois: picture.pois },
       // A lit torch is held in the off hand, where a shield would be.
-      heroes: picture.units.filter((u) => u.side === "hero").map((u) => ({ id: u.id, classId: u.kind, pos: u.pos, name: u.name, outfit: u.torch ? { ...u.outfit, [u.torchHand === "main" ? "main_hand" : "off_hand"]: TORCH_IN_HAND } : u.outfit, torch: !!u.torch || u.conditions.some((c) => c.kind === "beacon"), effects: badgesOf(u), level: u.level, xp: 0, hp: u.hp, maxHp: u.maxHp, shield: shieldOf(u), down: u.down, prone: u.conditions.some((c) => c.kind === "prone"), active: turn(u.id) })),
+      heroes: picture.units.filter((u) => u.side === "hero").map((u) => ({ id: u.id, classId: u.kind, pos: u.pos, name: u.name, outfit: u.torch ? { ...u.outfit, [u.torchHand === "main" ? "main_hand" : "off_hand"]: TORCH_IN_HAND } : u.outfit, torch: !!u.torch || u.conditions.some((c) => c.kind === "beacon"), effects: badgesOf(u), level: u.level, xp: 0, hp: u.hp, maxHp: u.maxHp, shield: shieldOf(u), down: u.down, prone: u.conditions.some((c) => c.kind === "prone"), unseen: u.conditions.some((c) => c.kind === "invisible"), active: turn(u.id) })),
       // What the dark hides is not drawn: out of a fight the server does not even send it.
       units: picture.units.filter((u) => u.side === "enemy" && !state.dark?.includes(u.id)).map((u) => ({ id: u.id, kind: u.kind, pos: u.pos, name: u.name, hp: inFight(u.id) || u.hp < u.maxHp ? u.hp / u.maxHp : undefined, down: u.down, prone: u.conditions.some((c) => c.kind === "prone"), active: u.id === spot, hostile: inFight(u.id), effects: badgesOf(u) })),
       turn: null,
@@ -811,7 +829,26 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
     if (dev.tool?.tool === "paint" && hover) out.push({ hexes: dev.tool.wide ? zoneBlast(state.map, hover, 1) : [hover], color: dev.tool.surface ? SURFACE_INFO[dev.tool.surface].color : "#ffffff", fill: 0.35, line: 0.9 });
     if (dev.tool?.tool === "spawn" && hover) out.push({ hexes: [hover], color: "#ff3b3b", fill: 0.35, line: 0.9 });
     if (!pick) return out;
-    if (pick.kind === "ability") {
+    if (pick.kind === "ability" && tacticOf(pick.id).blink) {
+      // A blink: first who (an ally to take along, or the enemy to strike), then where to.
+      const tactic = tacticOf(pick.id);
+      const self = tactic.shape === "self";
+      const first = pick.first ? state.units.find((u) => u.id === pick.first) : undefined;
+      if (!self && !first) {
+        out.push({ hexes: within(1, false), color: "#ffd23f", fill: 0.1, line: 0.8 });
+        if (hover && unitOn(hover)) out.push({ hexes: [hover], color: "#ff6b6b", fill: 0.3, line: 0.9 });
+        return out;
+      }
+      const aim = (at: HexPos) => ({ at, ...(first ? { target: first.id } : {}) });
+      out.push({ hexes: within(tactic.blink!.range, false).filter((t) => !checkAbility(z, act, pick.id, aim(t))), color: "#a78bfa", fill: 0.14, line: 0.8 });
+      if (self && !first) out.push({ hexes: state.units.filter((u) => u.side === "hero" && u.id !== act.id && hexDistance(u.pos, act.pos) === 1).map((u) => u.pos), color: "#7dff9a", fill: 0.22, line: 0.9 });
+      if (first) out.push({ hexes: [first.pos], color: self ? "#7dff9a" : "#ff6b6b", fill: 0.35, line: 0.9 });
+      if (hover && !checkAbility(z, act, pick.id, aim(hover))) {
+        out.push({ hexes: [hover], color: "#a78bfa", fill: 0.4, line: 0.9 });
+        const spot = self && first ? carrySpot(z, act, first, hover) : null;
+        if (spot) out.push({ hexes: [spot], color: "#7dff9a", fill: 0.3, line: 0.9 });
+      }
+    } else if (pick.kind === "ability") {
       const tactic = tacticOf(pick.id);
       const melee = tactic.reach === "melee";
       if (tactic.shape !== "line") out.push({ hexes: within(melee ? 1 : tactic.range, !melee), color: "#ffd23f", fill: 0.1, line: 0.8 });
@@ -881,6 +918,13 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
     };
   }, [state, enc, act, budget, myTurn, picking, hover, reach, far]);
   useEffect(() => layer.current?.setPath(moveTip && !moveTip.none ? moveTip.steps : []), [moveTip]);
+  /** What to click next, for an ability aimed in two clicks (a blink). */
+  const aimHint = (() => {
+    if (pick?.kind !== "ability" || !tacticOf(pick.id).blink) return null;
+    const first = pick.first ? state?.units.find((u) => u.id === pick.first)?.name : undefined;
+    if (tacticOf(pick.id).shape === "self") return first ? `Taking ${first} (click yourself to go alone): pick where to go` : "Pick where to go alone, or an ally beside you to take along first";
+    return first ? "Pick where to go after the blow, or yourself to stay" : "Pick an enemy beside you";
+  })();
 
   // A marker over whoever's turn it is: gold for yours, pale for a crewmate's, red for the enemy's.
   useEffect(() => {
@@ -929,8 +973,8 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
   };
   const choose = (ability: string) => {
     const shape = tacticOf(ability).shape;
-    // Something with nothing to aim goes off at once.
-    if (shape === "self" || shape === "adjacent" || shape === "burst") return use(ability);
+    // Something with nothing to aim goes off at once. A blink is aimed, at where to go.
+    if ((shape === "self" && !tacticOf(ability).blink) || shape === "adjacent" || shape === "burst") return use(ability);
     setPick((p) => (p?.kind === "ability" && p.id === ability ? null : { kind: "ability", id: ability }));
   };
 
@@ -982,6 +1026,22 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
         return;
       }
       return zone.send({ type: "move", unit: act.id, to: pos });
+    }
+    if (pick.kind === "ability" && tacticOf(pick.id).blink) {
+      const self = tacticOf(pick.id).shape === "self";
+      const onSelf = pos.q === act.pos.q && pos.r === act.pos.r;
+      if (self) {
+        // Smuggler's Route: who goes first (an ally beside you comes along; yourself, or that ally again, and you go alone), then where to.
+        if (there && there.side === "hero" && there.id !== act.id && hexDistance(there.pos, act.pos) === 1) return setPick({ ...pick, first: pick.first === there.id ? undefined : there.id });
+        if (onSelf) return setPick({ ...pick, first: undefined });
+        return use(pick.id, { at: pos, ...(pick.first ? { target: pick.first } : {}) });
+      }
+      // Tactical Retreat: the enemy first, then where to go after the blow; yourself to stay put.
+      if (!pick.first) {
+        if (there && !checkAbility(asState(state), act, pick.id, { target: there.id })) setPick({ ...pick, first: there.id });
+        return;
+      }
+      return use(pick.id, onSelf ? { target: pick.first } : { target: pick.first, at: pos });
     }
     if (pick.kind === "ability") {
       const shape = tacticOf(pick.id).shape;
@@ -1091,7 +1151,7 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
     const def = ABILITIES[id];
     const tactic = tacticOf(id);
     const wait = act.cooldowns[id] ?? 0;
-    const reachText = tactic.shape === "self" ? "yourself" : tactic.shape === "burst" ? `everyone within ${tactic.radius}` : tactic.reach === "melee" ? (tactic.shape === "adjacent" ? "every enemy beside you" : "an enemy beside you") : `${tactic.shape === "line" ? `a line of ${tactic.length}` : `range ${tactic.range}`}${tactic.weather === "rain" ? ", 3 hexes" : tactic.shape === "blast" ? `, blast ${tactic.radius}` : ""}`;
+    const reachText = tactic.blink ? (tactic.shape === "self" ? `a hex up to ${tactic.blink.range} off` : `an enemy beside you, then up to ${tactic.blink.range} off`) : tactic.shape === "self" ? "yourself" : tactic.shape === "burst" ? `everyone within ${tactic.radius}` : tactic.reach === "melee" ? (tactic.shape === "adjacent" ? "every enemy beside you" : "an enemy beside you") : `${tactic.shape === "line" ? `a line of ${tactic.length}` : `range ${tactic.range}`}${tactic.weather === "rain" ? ", 3 hexes" : tactic.shape === "blast" ? `, blast ${tactic.radius}` : ""}`;
     const dice = def.damage ? `${diceText(abilityDice(def))} damage` : def.heal ? `heals ${diceText(healDice(def))}` : "";
     entries[`ab:${id}`] = {
       id: `ab:${id}`,
@@ -1121,7 +1181,8 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
   }
   for (const item of Object.keys(ITEM_ICON) as Throwable[]) {
     const def = THROWABLES[item];
-    const have = act.items[item] ?? 0;
+    // A fire bomb smuggled in (Contraband) is thrown before the pack's own.
+    const have = (act.items[item] ?? 0) + (item === SMUGGLED ? (act.conditions.find((c) => c.kind === "contraband")?.amount ?? 0) : 0);
     // A torch lit in the hand can be thrown with none left in the pack.
     const held = !!def.light && (act.torch ?? 0) > 0;
     entries[`it:${item}`] = {
@@ -1215,7 +1276,7 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
         </div>
       )}
 
-      <div ref={cursor} className={`zone-cursor ${moveTip ? "" : "off"} ${moveTip && (moveTip.none || moveTip.beyond || moveTip.taken) ? "bad" : ""}`} aria-hidden>
+      <div ref={cursor} className={`zone-cursor ${moveTip || aimHint ? "" : "off"} ${moveTip && (moveTip.none || moveTip.beyond || moveTip.taken) ? "bad" : ""}`} aria-hidden>
         {moveTip && (moveTip.none ? (
           <strong>No way there</strong>
         ) : (
@@ -1226,6 +1287,7 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
             {moveTip.ground.map((k) => <span key={k} className="zone-cursor-warn" style={{ color: SURFACE_INFO[k].color }}>Through {SURFACE_INFO[k].name.toLowerCase()}</span>)}
           </>
         ))}
+        {!moveTip && aimHint && <span className="zone-cursor-note">{aimHint}</span>}
       </div>
 
       {enc && (

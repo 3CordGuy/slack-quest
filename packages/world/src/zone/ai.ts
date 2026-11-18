@@ -9,7 +9,7 @@
 
 import { hexDistance, posKey, type HexPos } from "@gantt-quest/core";
 import { enemyAct, walk } from "./combat";
-import { attackContext, defenceOf, has, type Ctx } from "./engine";
+import { attackContext, defenceOf, has, unseen, type Ctx } from "./engine";
 import { adjacent, flies, inFight, pathIn, sees, zoneReach } from "./geometry";
 import { ENEMY_BURST, ENEMY_KIT, enemyStrikes, type EnemyStrike } from "./kit";
 import { diceAverage, hitChance } from "./rules";
@@ -60,7 +60,8 @@ export function enemyTurn(ctx: Ctx, enemy: Unit, budget: Budget): void {
   const { state } = ctx;
   if (state.aiOff) return;
   const strikes = enemyStrikes(enemy.kind, enemy.level, state.options.threat);
-  const heroes = state.units.filter((u) => u.side === "hero" && !u.down && inFight(state, u.id));
+  // The Unseen are not there, as far as it knows.
+  const heroes = state.units.filter((u) => u.side === "hero" && !u.down && !unseen(u) && inFight(state, u.id));
   if (strikes.length === 0 || heroes.length === 0) return;
   const kit = ENEMY_KIT[enemy.kind] ?? {};
   const air = flies(enemy);
@@ -117,7 +118,7 @@ export function enemyTurn(ctx: Ctx, enemy: Unit, budget: Budget): void {
   if (enemy.down || has(enemy, "prone") || !budget.action) return;
   if (enemy.down || has(enemy, "prone")) return;
   // It may not have got where it meant to: look again from where it stands.
-  const still = state.units.filter((u) => u.side === "hero" && !u.down && inFight(state, u.id));
+  const still = state.units.filter((u) => u.side === "hero" && !u.down && !unseen(u) && inFight(state, u.id));
   const option = still.length > 0 ? bestAttack(state, enemy, enemy.pos, strikes, still) : null;
   if (!option) return;
   budget.action = false;

@@ -22,7 +22,7 @@ import { addStats, maxFocusFor, maxHpFor } from "../progression";
 import { makeRng, seedFromString } from "../rng";
 import { enemyTurn } from "./ai";
 import { abilityArea, checkAbility, checkCommon, checkDrink, checkLight, checkThrow, doCommon, drinkItem, resolveAbility, throwItem, walk } from "./combat";
-import { has, heal, removeCondition, tick, type Ctx } from "./engine";
+import { has, heal, removeCondition, tick, unseen, type Ctx } from "./engine";
 import { ALERT_RANGE, JOIN_RANGE, freeHexNear, generateZone } from "./gen";
 import { generateDelve } from "./delve";
 import { checkOpen, openChest } from "./loot";
@@ -274,6 +274,8 @@ function engage(ctx: Ctx, groups: string[], by: Unit): void {
 /** The groups, not yet alerted, with someone who can see `unit` from close by. */
 function noticedBy(state: ZoneState, unit: Unit): string[] {
   const out = new Set<string>();
+  // Nobody notices the Unseen creeping past.
+  if (unseen(unit)) return [];
   for (const e of standing(state, "enemy")) {
     if (!e.group || state.groups[e.group]?.alerted) continue;
     if (hexDistance(e.pos, unit.pos) <= ALERT_RANGE && sees(state.map, e.pos, unit.pos)) out.add(e.group);

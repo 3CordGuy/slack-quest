@@ -8,10 +8,10 @@
 import { hexDistance, hexNeighbors, hexSegment, posKey, type HexPos } from "@gantt-quest/core";
 import { ABILITIES, ARMOR_DAMAGE_DIVISOR, BARD_AURA, WARLOCK_BLEED_TURNS, type AbilityDef } from "../content";
 import { tileAt, type Poi } from "../map";
-import { DEBUFFS, addCondition, attackContext, attackRoll, damage, defenceOf, has, heal, removeCondition, saveBonus, saveRoll, shieldUnit, type Ctx } from "./engine";
+import { DEBUFFS, addCondition, attackContext, attackRoll, damage, defenceOf, giveAway, has, heal, removeCondition, saveBonus, saveRoll, shieldUnit, unseen, type Ctx } from "./engine";
 import { cratesOn, crateById, hurtCrate, isCrateId } from "./crates";
 import { adjacent, blast, blockerAt, directionToward, elevOf, inFight, lineFrom, pathIn, sameHex, sees, solid, stepCost, unitAt, unitById, zoneReach } from "./geometry";
-import { COMMON_ACTIONS, ENEMY_BURST, FLEE_RANGE, JUMP_MOVE_COST, POTION_EDGE, SAVE_STAT, THROWABLES, TORCH_GROUND_ROUNDS, abilityDice, enemyStrikes, healDice, jumpRange, reactionStrike, tacticOf, throwRange, type EnemyStrike, type Tactic } from "./kit";
+import { COMMON_ACTIONS, ENEMY_BURST, FLEE_RANGE, JUMP_MOVE_COST, POTION_EDGE, SAVE_STAT, SMUGGLED, THROWABLES, TORCH_GROUND_ROUNDS, abilityDice, enemyStrikes, healDice, jumpRange, reactionStrike, tacticOf, throwRange, type EnemyStrike, type Tactic } from "./kit";
 import { d20, hitChance, mod, proficiency, rollDice, statOf } from "./rules";
 import { seenByHeroes } from "./light";
 import { HINDERING, chill, clearSurfaces, dropTorch, enterSurface, ignite, letGoTorch, placeSurface } from "./surfaces";
@@ -36,7 +36,8 @@ export interface Aim {
  */
 function provoke(ctx: Ctx, unit: Unit, next: HexPos, budget: Budget | null, flush: () => void): void {
   const enc = ctx.state.encounter;
-  if (!enc || !inFight(ctx.state, unit.id) || budget?.disengaged) return;
+  // Nobody strikes at what they cannot see.
+  if (!enc || !inFight(ctx.state, unit.id) || budget?.disengaged || unseen(unit)) return;
   for (const foe of ctx.state.units) {
     if (unit.down) return;
     if (foe.side === unit.side || foe.down || !inFight(ctx.state, foe.id)) continue;
@@ -139,6 +140,46 @@ function sweepAlong(ctx: Ctx, target: Unit, line: HexPos[], by: string): void {
   enterWeather(ctx, target);
 }
 
+/** Open ground a unit could be put down on: a floor, nothing built on it, nobody on it. */
+const standable = (state: ZoneState, pos: HexPos): boolean => !!tileAt(state.map, pos) && !solid(tileAt(state.map, pos)) && !blockerAt(state, pos) && !unitAt(state, pos);
+
+/** Why `unit` cannot blink (Smuggler's Route, Tactical Retreat) to `at`, `range` hexes at most, or null if it can. Nothing between counts. */
+function blinkWrong(state: ZoneState, unit: Unit, at: HexPos | undefined, range: number): string | null {
+  if (!at || sameHex(at, unit.pos) || !tileAt(state.map, at)) return "Pick a hex to go to.";
+  if (hexDistance(unit.pos, at) > range) return "Too far.";
+  return standable(state, at) ? null : "There is nowhere to stand there.";
+}
+
+/**
+ * Where an ally beside `unit` arrives when it is taken along to `dest`: beside it, on the same side of it as they
+ * stood of `unit` if that is open, else the open hex nearest that. The hexes the two of them are leaving count as
+ * open. Null if there is no room beside `dest`.
+ */
+export function carrySpot(state: ZoneState, unit: Unit, ally: Unit, dest: HexPos): HexPos | null {
+  const want = { q: dest.q + ally.pos.q - unit.pos.q, r: dest.r + ally.pos.r - unit.pos.r };
+  const leaving = (p: HexPos) => sameHex(p, unit.pos) || sameHex(p, ally.pos);
+  const open = hexNeighbors(dest, state.map.grid).filter((p) => leaving(p) ? !solid(tileAt(state.map, p)) : standable(state, p));
+  return open.sort((a, b) => hexDistance(a, want) - hexDistance(b, want) || a.q - b.q || a.r - b.r)[0] ?? null;
+}
+
+/** Put a unit on another hex at once, crossing nothing: no blows drawn on the way, only the ground where it lands. */
+function blinkTo(ctx: Ctx, unit: Unit, to: HexPos): void {
+  if (sameHex(unit.pos, to)) return;
+  const from = unit.pos;
+  unit.pos = to;
+  ctx.events.push({ t: "blinked", id: unit.id, from, to });
+  if (!enterSurface(ctx, unit) && !unit.down) enterWeather(ctx, unit);
+}
+
+/** Pickpocket: gold equal to the user's level, from an enemy whose pockets are not picked yet. A stand-in shows it but banks none. */
+function pocket(ctx: Ctx, unit: Unit, target: Unit): void {
+  if (target.picked || target.side !== "enemy") return;
+  target.picked = true;
+  const gold = Math.max(1, unit.level);
+  if (!unit.controller) ctx.effects.push({ type: "grant", heroId: unit.id, xp: 0, resources: {}, gold });
+  ctx.events.push({ t: "spoils", id: unit.id, xp: 0, resources: {}, gold });
+}
+
 // ---------- a hero's abilities ----------
 
 /** The hexes an ability covers, for one that takes a shape: what is lit up before it is used, and what it then hits. */
@@ -175,7 +216,8 @@ export function checkAbility(state: ZoneState, unit: Unit, ability: string, aim:
     const target = aim.target ? unitById(state, aim.target) : undefined;
     if (!target || target.down || target.side === unit.side) return "Pick an enemy.";
     if (unit.side === "hero" && !seenByHeroes(state, target)) return "It is too dark to make it out: bring a light, or get beside it.";
-    return inReach(target.pos);
+    // A blow and then away: where to is checked now, and nothing about the blow can take the hex.
+    return inReach(target.pos) ?? (tactic.blink && aim.at ? blinkWrong(state, unit, aim.at, tactic.blink.range) : null);
   }
   if (tactic.shape === "adjacent") {
     if (state.units.some((u) => u.side !== unit.side && !u.down && adjacent(u.pos, unit.pos))) return null;
@@ -190,6 +232,14 @@ export function checkAbility(state: ZoneState, unit: Unit, ability: string, aim:
     const target = aim.target ? unitById(state, aim.target) : unit;
     if (!target || target.side !== unit.side) return "Pick an ally.";
     return target.id === unit.id ? null : inReach(target.pos);
+  }
+  if (tactic.blink) {
+    const wrong = blinkWrong(state, unit, aim.at, tactic.blink.range);
+    if (wrong || !aim.target || aim.target === unit.id) return wrong;
+    const ally = unitById(state, aim.target);
+    if (!tactic.blink.carry || !ally || ally.side !== unit.side) return "Pick an ally beside you to take along.";
+    if (!adjacent(ally.pos, unit.pos)) return `${ally.name} has to be beside you to come along.`;
+    return carrySpot(state, unit, ally, aim.at!) ? null : `There is no room there for ${ally.name} to arrive.`;
   }
   return null;
 }
@@ -302,6 +352,8 @@ export function resolveAbility(ctx: Ctx, unit: Unit, ability: string, aim: Aim &
   const { state } = ctx;
   ctx.events.push({ t: "used", id: unit.id, what: ability, name: def.name, target: aim.target, at: aim.at });
   const foes = () => state.units.filter((u) => u.side !== unit.side && !u.down);
+  // Unseen, any ability gives the user away once it is done (bar going Unseen again, or a pocket picked unseen).
+  const wasUnseen = unseen(unit);
   let landed = false;
   const crate = tactic.shape === "single" || tactic.shape === "chain" ? crateById(state, aim.target) : undefined;
   if (crate) {
@@ -313,12 +365,20 @@ export function resolveAbility(ctx: Ctx, unit: Unit, ability: string, aim: Aim &
     landed = true;
   } else if (tactic.shape === "single") {
     const target = unitById(state, aim.target!)!;
-    if (tactic.sure) {
+    // A pocket picked unseen is no blow, just a quick hand.
+    if (tactic.steal && wasUnseen) landed = true;
+    else if (tactic.sure) {
       if (def.damage) damage(ctx, target, rollDice(ctx.rng, abilityDice(def)) + damageBonus(state, unit, def), { actor: unit.id, what: def.id, ignoreGuard: def.ignoreGuard });
       afflict(ctx, unit, def, target, false);
       landed = true;
     } else landed = strike(ctx, unit, def, tactic, target, aim);
     for (let k = 0; landed && k < (tactic.knockback ?? 0) && !target.down; k++) push(ctx, unit.pos, target, unit.id);
+    if (tactic.steal && landed) pocket(ctx, unit, target);
+    // Then away, hit or miss, if a hex was picked.
+    if (tactic.blink && aim.at && !unit.down && standable(state, aim.at)) {
+      blinkTo(ctx, unit, aim.at);
+      if (!unit.down) ctx.onStep?.(unit, () => {});
+    }
   } else if (tactic.sweep) {
     // A wave: the far ones are swept first, so the near ones have somewhere to go.
     const line = abilityArea(state, unit, ability, aim.at);
@@ -374,6 +434,14 @@ export function resolveAbility(ctx: Ctx, unit: Unit, ability: string, aim: Aim &
     landed = true;
     if (tactic.ignites) for (const pos of area) ignite(ctx, pos, unit.id);
     if (tactic.surface) placeSurface(ctx, area, tactic.surface.kind, tactic.surface.rounds, unit.id);
+  } else if (tactic.blink) {
+    // Smuggler's Route: the ally's place beside the far end is settled before either of them goes.
+    const ally = aim.target && aim.target !== unit.id ? unitById(state, aim.target) : undefined;
+    const spot = ally ? carrySpot(state, unit, ally, aim.at!) : null;
+    blinkTo(ctx, unit, aim.at!);
+    if (ally && spot) blinkTo(ctx, ally, spot);
+    for (const u of [unit, ...(ally && spot ? [ally] : [])]) if (!u.down) ctx.onStep?.(u, () => {});
+    landed = true;
   } else {
     const target = tactic.shape === "ally" && aim.target ? unitById(state, aim.target)! : unit;
     if (def.heal) heal(ctx, target, rollDice(ctx.rng, healDice(def)) + Math.max(0, mod(statOf(unit, def.stat))) + Math.floor(unit.level / 2), { actor: unit.id, what: def.id });
@@ -389,9 +457,19 @@ export function resolveAbility(ctx: Ctx, unit: Unit, ability: string, aim: Aim &
       for (const kind of DEBUFFS) removeCondition(target, kind);
       clearSurfaces(ctx, wayBetween(state, unit, target.pos).filter((p) => { const s = state.surfaces[posKey(p)]; return !!s && HINDERING.has(s.kind); }));
     }
+    if (tactic.hide) {
+      const { range, rounds } = tactic.hide;
+      for (const u of state.units) if (u.side === unit.side && !u.down && hexDistance(u.pos, unit.pos) <= range) addCondition(ctx, u, "invisible", rounds);
+    }
+    // One each for the user and an ally; used on yourself, both are yours.
+    if (tactic.smuggle) {
+      if (target.id === unit.id) addCondition(ctx, unit, "contraband", tactic.smuggle.rounds, 2);
+      else for (const u of [unit, target]) addCondition(ctx, u, "contraband", tactic.smuggle.rounds, 1);
+    }
     landed = true;
   }
   if (landed && def.selfEffect && !unit.down) addCondition(ctx, unit, def.selfEffect.effect, def.selfEffect.turns);
+  if (wasUnseen && !tactic.hide && !tactic.steal) giveAway(ctx, unit);
 }
 
 // ---------- an enemy's attacks ----------
@@ -409,7 +487,7 @@ export function enemyAct(ctx: Ctx, enemy: Unit, attack: EnemyStrike, target: Uni
   if (attack.burst) {
     const rolled = rollDice(ctx.rng, attack.dice);
     // A fight's blows are for those in it: a hero standing near who is not (their player away) is passed over.
-    for (const victim of state.units.filter((u) => u.side !== enemy.side && !u.down && inFight(state, u.id) && hexDistance(u.pos, enemy.pos) <= ENEMY_BURST && sees(state.map, enemy.pos, u.pos))) {
+    for (const victim of state.units.filter((u) => u.side !== enemy.side && !u.down && !unseen(u) && inFight(state, u.id) && hexDistance(u.pos, enemy.pos) <= ENEMY_BURST && sees(state.map, enemy.pos, u.pos))) {
       const saved = saveRoll(ctx, victim, "agi", dc, attack.name).ok;
       damage(ctx, victim, saved ? Math.floor(rolled / 2) : rolled, { actor: enemy.id, what: attack.name });
       if (!saved) leave(victim, false);
@@ -476,8 +554,9 @@ export function doCommon(ctx: Ctx, unit: Unit, what: CommonAction, aim: Aim, bud
     heal(ctx, target, 1, { actor: unit.id, what: "help" });
   } else if (what === "shove") {
     const target = unitById(ctx.state, aim.target!)!;
-    const roll = d20(ctx.rng, { kind: "shove", id: unit.id, target: target.id, label: "Shove", bonus: mod(statOf(unit, "str")), vs: 10 + Math.max(saveBonus(target, "str"), saveBonus(target, "agi")), adv: 0 });
+    const roll = d20(ctx.rng, { kind: "shove", id: unit.id, target: target.id, label: "Shove", bonus: mod(statOf(unit, "str")), vs: 10 + Math.max(saveBonus(target, "str"), saveBonus(target, "agi")), adv: unseen(unit) ? 1 : 0 });
     ctx.events.push({ t: "roll", roll });
+    giveAway(ctx, unit);
     if (roll.ok) push(ctx, unit.pos, target, unit.id);
     else ctx.events.push({ t: "miss", actor: unit.id, target: target.id, what: "shove" });
   } else if (what === "jump") {
@@ -497,12 +576,14 @@ export function doCommon(ctx: Ctx, unit: Unit, what: CommonAction, aim: Aim, bud
 // ---------- throwing ----------
 
 const carried = (unit: Unit, item: Throwable): number => unit.items[item] ?? 0;
+/** Fire bombs slipped into the pack by Contraband (the condition's `amount`): not the hero's own, thrown before any of theirs, and never written home. */
+const smuggled = (unit: Unit, item: Throwable): number => (item === SMUGGLED ? (unit.conditions.find((c) => c.kind === "contraband")?.amount ?? 0) : 0);
 
 /** Why `unit` cannot throw this there, in words, or null if it can. */
 export function checkThrow(state: ZoneState, unit: Unit, item: Throwable, at: HexPos): string | null {
   if (!THROWABLES[item]) return "No such thing to throw.";
   // A torch already lit in the hand can be thrown with none left in the pack.
-  if (carried(unit, item) <= 0 && !(THROWABLES[item].light && (unit.torch ?? 0) > 0)) return `You have no ${THROWABLES[item].name.toLowerCase()} left.`;
+  if (carried(unit, item) + smuggled(unit, item) <= 0 && !(THROWABLES[item].light && (unit.torch ?? 0) > 0)) return `You have no ${THROWABLES[item].name.toLowerCase()} left.`;
   if (!tileAt(state.map, at)) return "Pick a hex.";
   if (hexDistance(unit.pos, at) > throwRange(mod(statOf(unit, "str")))) return "Too far to throw.";
   return sees(state.map, unit.pos, at) ? null : "There is no clear line to it.";
@@ -533,6 +614,8 @@ export function drinkItem(ctx: Ctx, unit: Unit, item: Throwable): void {
 /** Throw something that has passed its check: it lands on `at` and reaches the hexes around it. */
 export function throwItem(ctx: Ctx, unit: Unit, item: Throwable, at: HexPos): void {
   const def = THROWABLES[item];
+  // Anything thrown gives an Unseen thrower away.
+  giveAway(ctx, unit);
   if (def.light) {
     // The torch in the hand if one is lit, burning on for what it has left; else one from the pack, lit as it goes.
     const held = unit.torch ?? 0;
@@ -542,7 +625,12 @@ export function throwItem(ctx: Ctx, unit: Unit, item: Throwable, at: HexPos): vo
     dropTorch(ctx, at, held > 0 ? held : TORCH_GROUND_ROUNDS, unit.id);
     return;
   }
-  unit.items[item] = carried(unit, item) - 1;
+  const contraband = item === SMUGGLED ? unit.conditions.find((c) => c.kind === "contraband") : undefined;
+  if (contraband && (contraband.amount ?? 0) > 0) {
+    contraband.amount! -= 1;
+    if (contraband.amount! <= 0) removeCondition(unit, "contraband");
+  }
+  else unit.items[item] = carried(unit, item) - 1;
   ctx.events.push({ t: "used", id: unit.id, what: `throw:${item}`, name: def.name, at });
   const area = blast(ctx.state.map, at, def.radius);
   const keys = new Set(area.map(posKey));

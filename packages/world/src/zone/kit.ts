@@ -57,6 +57,18 @@ export interface Tactic {
   sweep?: boolean;
   /** Takes every harmful condition off the ally, and the ground that hurts or hinders (surfaces.ts HINDERING) off the way you would walk to them. */
   clearWay?: boolean;
+  /**
+   * Moves the user to a hex they pick (`at`) up to `range` hexes off, over anything between and drawing no blows:
+   * a self ability goes there, and with `carry` takes an ally beside the user (`target`) along to a hex beside it;
+   * a blow lands first, and the move after it is the user's choice (no `at`, no move).
+   */
+  blink?: { range: number; carry?: boolean };
+  /** Pickpocket: gold equal to the user's level from an enemy whose pockets are not picked yet. Used Unseen it is no blow, just the gold, and does not give the user away. */
+  steal?: boolean;
+  /** Makes the user and every ally within `range` of them Unseen for `rounds` of each one's turns. */
+  hide?: { range: number; rounds: number };
+  /** Slips the user and the ally a fire bomb each (the user two, used on themselves), good for `rounds` of each one's turns (Contraband). */
+  smuggle?: { rounds: number };
 }
 
 const melee = (extra: Partial<Tactic> = {}): Tactic => ({ cost: "action", reach: "melee", range: 1, shape: "single", ...extra });
@@ -76,6 +88,15 @@ export const WEATHER = {
   rain: { rounds: 3, heal: { n: 1, d: 4, plus: 2 } satisfies Dice, water: 2 },
   wind: { rounds: 3 },
 };
+
+/** Smuggler's Route and Tactical Retreat: how far each moves the Rogue. */
+export const BLINK_RANGE = 4;
+/** Sneak: everyone beside the Rogue goes Unseen with them, for this many of their turns. */
+export const SNEAK = { range: 1, rounds: 3 };
+/** Contraband: a fire bomb slipped into a pack is good for this many of its holder's turns. */
+export const CONTRABAND = { rounds: 3 };
+/** The item Contraband slips into a pack. */
+export const SMUGGLED: Throwable = "fire";
 
 /** Shield Wall: a shield of `shield` points plus the Paladin's level on themselves alone, through their next turn. */
 export const SHIELD_WALL = { range: 0, shield: 6, rounds: 1 };
@@ -114,6 +135,12 @@ export const TACTICS: Record<string, Tactic> = {
   aimed_shot: shot(8),
   pin_down: shot(8),
   land_the_catch: melee(),
+  // Rogue class abilities
+  smugglers_route: { cost: "bonus", reach: "spell", range: BLINK_RANGE, shape: "self", cooldown: 3, blink: { range: BLINK_RANGE, carry: true } },
+  sneak: { cost: "action", reach: "spell", range: 0, shape: "self", cooldown: 4, hide: SNEAK },
+  pickpocket: melee({ cost: "bonus", steal: true }),
+  tactical_retreat: melee({ cooldown: 2, blink: { range: BLINK_RANGE } }),
+  contraband: mend(5, { cost: "bonus", cooldown: 3, smuggle: CONTRABAND }),
   // Druid
   thornlash: spell(5),
   rejuvenate: mend(5),
@@ -184,6 +211,8 @@ export const SAVE_STAT: Record<Condition, StatKey> = {
   beacon: "vit",
   mending: "vit",
   bolstered: "vit",
+  invisible: "agi",
+  contraband: "agi",
 };
 
 const info = (kind: EffectKind, blurb: string) => ({ name: EFFECT_INFO[kind].name, color: EFFECT_INFO[kind].color, blurb });
@@ -205,6 +234,8 @@ export const CONDITION_INFO: Record<Condition, { name: string; blurb: string; co
   beacon: { name: "Beacon", blurb: "Gives light, and it and allies within 2 hexes have advantage on their attacks.", color: "#ffe9a8" },
   mending: { name: "Healing Aura", blurb: "At the start of each of its turns, it and every ally within 2 hexes heal a little.", color: "#7dff9a" },
   bolstered: { name: "Bolstered", blurb: "A shield takes the damage of blows before its HP does, until it is spent or wears off.", color: "#9ec9ff" },
+  invisible: { name: "Unseen", blurb: "Enemies cannot see it to attack it. Its next roll to hit has advantage, and using any ability (or throwing, or shoving) gives it away.", color: "#b8c4d6" },
+  contraband: { name: "Contraband", blurb: "Smuggled fire bombs in the pack, to throw before they are found out.", color: "#ff8a3a" },
 };
 
 // ---------- common actions ----------
