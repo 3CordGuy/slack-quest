@@ -251,6 +251,8 @@ export type ZoneAction =
   | { type: "light"; by: string; unit: string; hand?: "main" }
   /** Pick up a torch burning on the ground beside you: into a free hand still lit, or put out and into the pack. */
   | { type: "pickup"; by: string; unit: string; at: HexPos }
+  /** Put out the lit torch in your hand and stow it in the pack: a weapon or shield set aside for it is taken up again. */
+  | { type: "stow"; by: string; unit: string }
   /** Pick a cluster of glowing mushrooms from beside it, for a few mushrooms. */
   | { type: "forage"; by: string; unit: string; poi: string }
   /** Unlock a locked door from beside it with a key off the ring, or force it without one. */
@@ -266,7 +268,7 @@ export type ZoneAction =
   | { type: "dev"; by: string; dev: DevOp };
 
 /** Action types a player's client may send. `dev` is let through only on a development deployment. */
-export const ZONE_CLIENT_ACTIONS: ReadonlySet<ZoneAction["type"]> = new Set(["move", "use", "common", "throw", "drink", "light", "pickup", "open", "unlock", "forage", "end_turn", "dev"]);
+export const ZONE_CLIENT_ACTIONS: ReadonlySet<ZoneAction["type"]> = new Set(["move", "use", "common", "throw", "drink", "light", "pickup", "stow", "open", "unlock", "forage", "end_turn", "dev"]);
 
 /** One d20 roll, as shown on the roll card. */
 export interface Roll {
@@ -324,6 +326,8 @@ export type ZoneEvent =
   | { t: "light"; at: HexPos; on: boolean }
   /** A hero takes up a torch from the ground: still lit in hand, or put out and stowed in the pack. */
   | { t: "took_torch"; id: string; at: HexPos; stowed: boolean }
+  /** A hero puts out the torch in their hand and stows it in the pack. */
+  | { t: "torch_stowed"; id: string }
   /** What a hero took, from a won fight or a chest: the XP, and whatever else came with it. */
   | { t: "spoils"; id: string; xp: number; resources: Resources; gold?: number; item?: string; blueprint?: string; furnishing?: string; potions?: number; torches?: number; /** A lodestone, in a bounty: what it carries. It goes to the crew's case. */ stone?: ZoneMod[] }
   /** A piece of gear found had no room in the pack: it went home to storage, or into the pack over its limit. Told by the server. */

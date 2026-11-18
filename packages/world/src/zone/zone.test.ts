@@ -836,6 +836,71 @@ describe("picking up a torch", () => {
   });
 });
 
+describe("putting a held torch away", () => {
+  it("puts out a torch swung in the main hand and stows it in the pack, and the weapon is taken up again", () => {
+    let state = board();
+    const ann = hero(state, "ann", "qa_paladin", at(3, 6));
+    ann.items = { torch: 1 };
+    const weapon = [...ann.abilities];
+    state = must(state, { type: "light", by: "ann", unit: "ann", hand: "main" });
+    expect(unit(state, "ann")).toMatchObject({ torchHand: "main", abilities: ["torch_swing"], items: { torch: 0 } });
+    const events: ZoneEvent[] = [];
+    state = must(state, { type: "stow", by: "ann", unit: "ann" }, events);
+    const after = unit(state, "ann");
+    expect(after.abilities).toEqual(weapon);
+    expect(after.items.torch).toBe(1);
+    expect(after.torch).toBeUndefined();
+    expect(after.torchHand).toBeUndefined();
+    expect(after.stowed).toBeUndefined();
+    expect(events).toContainEqual({ t: "torch_stowed", id: "ann" });
+    // With none in hand there is nothing to put away, and it can be lit again.
+    expect(fails(state, { type: "stow", by: "ann", unit: "ann" })).toMatch(/not holding/);
+    must(state, { type: "light", by: "ann", unit: "ann" });
+  });
+
+  it("takes up the weapon put on while the torch was in the main hand", () => {
+    let state = board();
+    const ann = hero(state, "ann", "qa_paladin", at(3, 6));
+    ann.items = { torch: 1 };
+    state = must(state, { type: "light", by: "ann", unit: "ann", hand: "main" });
+    // Gear changed in the bag meanwhile: the map hears of it, and the torch stays in the hand.
+    unit(state, "ann").stowed = ["cleave"];
+    state = must(state, { type: "stow", by: "ann", unit: "ann" });
+    expect(unit(state, "ann").abilities).toEqual(["cleave"]);
+  });
+
+  it("takes the shield up again from the off hand", () => {
+    let state = board();
+    const ann = hero(state, "ann", "qa_paladin", at(3, 6));
+    ann.items = { torch: 1 };
+    ann.outfit = { off_hand: { icon: "round-shield", ref: "buckler", rarity: "common" } };
+    const guarded = defenceOf(ann);
+    const weapon = [...ann.abilities];
+    state = must(state, { type: "light", by: "ann", unit: "ann" });
+    expect(defenceOf(unit(state, "ann"))).toBe(guarded - SHIELD_SET_ASIDE);
+    state = must(state, { type: "stow", by: "ann", unit: "ann" });
+    expect(defenceOf(unit(state, "ann"))).toBe(guarded);
+    expect(unit(state, "ann")).toMatchObject({ abilities: weapon, items: { torch: 1 } });
+  });
+
+  it("costs a Bonus action in a fight, and is not done while down", () => {
+    let { state } = duel("dummy");
+    unit(state, "ann").items.torch = 2;
+    state = must(state, { type: "light", by: "ann", unit: "ann", hand: "main" });
+    expect(fails(state, { type: "stow", by: "ann", unit: "ann" })).toMatch(/Bonus/);
+    expect(unit(state, "ann").torchHand).toBe("main");
+    const fresh = duel("dummy").state;
+    unit(fresh, "ann").torch = 4;
+    const stowed = must(fresh, { type: "stow", by: "ann", unit: "ann" });
+    expect(stowed.encounter!.budgets.ann.bonus).toBe(false);
+    const down = board();
+    const bo = hero(down, "bo", "qa_paladin", at(3, 6));
+    bo.torch = 4;
+    bo.down = true;
+    expect(fails(down, { type: "stow", by: "bo", unit: "bo" })).toMatch(/down/);
+  });
+});
+
 describe("items", () => {
   it("heals the drinker in full for a Bonus action, and uses the potion up", () => {
     let { state } = duel("dummy");

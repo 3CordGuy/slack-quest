@@ -74,6 +74,8 @@ interface Live {
   speed: number;
   paused: boolean;
   spin: boolean;
+  /** The figure itself turns on the spot, a quarter turn one way and then the other, to fling what hangs loose. */
+  pivot: boolean;
   repeat: Action | null;
   every: number;
 }
@@ -86,7 +88,7 @@ export default function FigureLab({ me, onClose }: { me: Me; onClose(): void }) 
   const [ownLook, setOwnLook] = useState(false);
   const [rod, setRod] = useState(false);
   const [asleep, setAsleep] = useState(false);
-  const [live, setLive] = useState<Live>({ walking: false, pace: 1.5, lying: false, sitting: 0, rowing: false, speed: 1, paused: false, spin: false, repeat: null, every: 1.6 });
+  const [live, setLive] = useState<Live>({ walking: false, pace: 1.5, lying: false, sitting: 0, rowing: false, speed: 1, paused: false, spin: false, pivot: false, repeat: null, every: 1.6 });
   const [note, setNote] = useState("");
   const set = (patch: Partial<Live>) => setLive((was) => ({ ...was, ...patch }));
 
@@ -165,6 +167,12 @@ export default function FigureLab({ me, onClose }: { me: Me; onClose(): void }) 
       if (now.repeat) {
         sinceAct += dt;
         if (sinceAct >= now.every) s.act(now.repeat);
+      }
+      // Turned on the spot (before the pose, so what hangs loose feels this frame's turn).
+      if (s.figure) {
+        const facing = now.pivot ? [0, 1, 0, -1][Math.floor(t / 1.4) % 4] * (Math.PI / 2) : 0;
+        const r = s.figure.root.rotation;
+        r.y += (facing - r.y) * Math.min(1, dt * 9);
       }
       // At the oars the stroke runs on its own: reach, pull, reach.
       const rowing = now.rowing ? 0.5 - 0.5 * Math.cos(t * 2.4) : undefined;
@@ -439,6 +447,36 @@ export default function FigureLab({ me, onClose }: { me: Me; onClose(): void }) 
           <label title="Down in a fight, or on a bedroll.">
             <input type="checkbox" checked={live.lying} onChange={(e) => set({ lying: e.target.checked })} /> Lying
           </label>
+          <button
+            className="small"
+            title="Killed: it goes limp and falls where it stands, knocked backward by the blow (a ragdoll), as anyone downed in a fight does. Untick Lying and it gets up again."
+            onClick={() => {
+              const figure = stage.current?.figure;
+              if (!figure) return;
+              liveRef.current = { ...liveRef.current, lying: true };
+              set({ lying: true });
+              figure.fall(new THREE.Vector3(0, 0, -1).applyQuaternion(figure.root.getWorldQuaternion(new THREE.Quaternion())));
+            }}
+          >
+            Fall dead
+          </button>
+          <button
+            className="small"
+            title="Shoved off its feet: it falls (a ragdoll), lies a moment, then gets up again, as from a shove in a fight."
+            onClick={() => {
+              const figure = stage.current?.figure;
+              if (!figure) return;
+              liveRef.current = { ...liveRef.current, lying: true };
+              set({ lying: true });
+              figure.fall(new THREE.Vector3(0, 0, -1).applyQuaternion(figure.root.getWorldQuaternion(new THREE.Quaternion())));
+              setTimeout(() => {
+                liveRef.current = { ...liveRef.current, lying: false };
+                set({ lying: false });
+              }, 1600);
+            }}
+          >
+            Knocked down
+          </button>
           <label title="Eyes shut. The figure is built again.">
             <input type="checkbox" checked={asleep} onChange={(e) => setAsleep(e.target.checked)} /> Asleep
           </label>
@@ -488,6 +526,9 @@ export default function FigureLab({ me, onClose }: { me: Me; onClose(): void }) 
           </button>
           <label>
             <input type="checkbox" checked={live.spin} onChange={(e) => set({ spin: e.target.checked })} /> Turn
+          </label>
+          <label title="The figure turns on the spot, a quarter turn each way: a flail's ball or a lantern swings out and back.">
+            <input type="checkbox" checked={live.pivot} onChange={(e) => set({ pivot: e.target.checked })} /> Pivot
           </label>
         </div>
         <p className="muted">Drag the stage to look round the figure; scroll to come closer. Space pauses, Escape closes.</p>

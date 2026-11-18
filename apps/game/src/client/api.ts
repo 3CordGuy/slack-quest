@@ -168,6 +168,8 @@ export const api = {
   suggestName: (classId: string, avoid: string[]) => request<{ name: string }>("/api/character/name", { classId, avoid }),
   roll: (classId: string, name: string) => request<{ character: Character }>("/api/character/roll", { classId, name }),
   confirm: () => request("/api/character/confirm", {}),
+  /** A new name for your hero (2 to 20 characters, not another hero's). Answers with the name as saved. */
+  rename: (name: string) => request<{ name: string }>("/api/character/rename", { name }),
   setAppearance: (appearance: Appearance) => request("/api/character/appearance", { appearance }),
   reroll: () => request("/api/character/reroll", {}),
   spend: (stat: StatKey) => request("/api/character/spend", { stat }),

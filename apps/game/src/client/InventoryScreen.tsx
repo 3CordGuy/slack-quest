@@ -46,6 +46,11 @@
 // order, and each is shown over what the server last said until its answer
 // (and the fresh lists after it) are in. A move the server refuses goes back.
 //
+// Gear put on or taken off is shown the same way (wearAhead.ts): the piece is
+// in its slot, or back in the pack, at the click, and what it replaced has
+// come off. The hero out in the view is drawn in it at once too (ownLook.ts).
+// If the server refuses, the piece goes back and the bag says why.
+//
 // What there is to drink or throw (potions, flasks, bombs) lies in the pack in
 // stacks like a material's, and stays in the pack: it is not stowed or
 // traded. Opened on a map, one can be taken in hand out of the bag
@@ -75,6 +80,7 @@ import {
   canHide,
   carryProblem,
   equipProblem,
+  outfitOf,
   itemCells,
   itemSize,
   loadoutOf,
@@ -113,6 +119,9 @@ import { DollChart, type ChartSlot } from "./ui/DollChart";
 import { SplitPrompt, StackIcon, stackName, toStacks, type Stack } from "./ui/Slots";
 import { ITEM_ICON, STONE_ICON } from "./zone/actionIcons";
 import { uiZoom } from "./uiScale";
+import { ownLook } from "./ownLook";
+import { withLook } from "./render/sprites";
+import { wornAhead, type WearChange } from "./wearAhead";
 import "./ui/slots.css";
 
 /** Where the pointer is, in screen pixels. */
@@ -135,6 +144,8 @@ const DOLL: Record<Slot, { x: number; y: number; w: number; h: number }> = {
   legs: { x: 2.7, y: 5.55, w: 2, h: 2 },
   boots: { x: 7.3, y: 5.55, w: 2, h: 2 },
 };
+/** The gear slot of each hand a lit torch can be held in. */
+const TORCH_SLOT: Record<"main" | "off", Slot> = { main: "main_hand", off: "off_hand" };
 /** Slots drawn for gear that is still to come: a second ring beside the coat, a belt under it. Nothing goes in them yet. */
 const TO_COME = [
   { id: "ring2", label: "Ring", icon: "ring", x: 7.5, y: 3.75, w: 1, h: 1 },
@@ -258,6 +269,12 @@ interface Props {
   usable?: Usable;
   /** Why the gear worn cannot be changed just now (a fight is on), if it cannot. */
   gearLocked?: string;
+  /**
+   * On a map, a lit torch held in a hand: it is shown in that hand's slot, over what is worn there (put away, or
+   * set aside, while it is held). `stow` puts it out and back in the pack (absent when it cannot be done now;
+   * `why` says why).
+   */
+  torch?: { hand: "main" | "off"; rounds: number; stow?(): void; why?: string };
 }
 
 /**
@@ -382,7 +399,7 @@ function EyeGlyph({ shut }: { shut: boolean }) {
   );
 }
 
-export function InventoryScreen({ me, refresh, onClose, onIsland = false, chest = null, trade = null, town = null, usable, gearLocked, stones }: Props) {
+export function InventoryScreen({ me, refresh, onClose, onIsland = false, chest = null, trade = null, town = null, usable, gearLocked, stones, torch }: Props) {
   /** The atlas's slot as it is now, for the handlers that outlive a render. */
   const stoneSlot = useRef(stones);
   stoneSlot.current = stones;
@@ -415,6 +432,8 @@ export function InventoryScreen({ me, refresh, onClose, onIsland = false, chest 
   const [gearAt, setGearAt] = useState<Map<number, { item: OwnedItem; to: Zone; box: number; op: number }>>(() => new Map());
   /** The same for stacks (materials, and lodestones at the town chest), by what they are counted under: how many of a kind are shown on each side while a move of them is under way. */
   const [matAt, setMatAt] = useState<Map<string, { pack: number; chest: number; box: number; op: number }>>(() => new Map());
+  /** Gear put on or taken off whose answer is still to come: each is shown as made meanwhile (wearAhead.ts). */
+  const [wearing, setWearing] = useState<WearChange[]>([]);
   /** The moves go to the server one after another, so each answer is about a state the screen knows. */
   const sending = useRef<Promise<unknown>>(Promise.resolve());
   const opCount = useRef(0);
@@ -434,7 +453,8 @@ export function InventoryScreen({ me, refresh, onClose, onIsland = false, chest 
     return () => removeEventListener("resize", on);
   }, []);
 
-  const items = useMemo(() => me.inventory.map(toOwned), [me.inventory]);
+  // What the hero has with them, with the changes of gear still on their way already made.
+  const items = useMemo(() => wornAhead(me.inventory, wearing).map(toOwned), [me.inventory, wearing]);
   const carry = me.carry;
   const worn = useMemo(() => new Map(items.filter((i) => i.equipped).map((i) => [i.slot, i])), [items]);
   /** The pack as it is shown: what the server lists, with the moves still under way already made. */
@@ -553,6 +573,7 @@ export function InventoryScreen({ me, refresh, onClose, onIsland = false, chest 
       .finally(() => {
         setGearAt(settled);
         setMatAt(settled);
+        setWearing((was) => (was.some((w) => w.op === op) ? was.filter((w) => w.op !== op) : was));
       });
   };
   /** Across between the pack and the open chest: `to` is the side it goes to. */
@@ -719,12 +740,32 @@ export function InventoryScreen({ me, refresh, onClose, onIsland = false, chest 
   }, [pickedDecor, inside]);
 
   // A fight has the gear held as it is (the bag says so under the figure): nothing is worn or taken off.
-  const equip = async (id: number) => {
-    if (!gearLocked) await act(() => api.equip(id));
+  // Otherwise the change is shown at once and sent after any move still on its way. Only a piece the hero
+  // can wear is shown worn: anything else is just sent, and the server says why not.
+  const equip = (id: number) => {
+    if (gearLocked) return;
+    const item = items.find((i) => i.id === id && !i.equipped);
+    if (!item || equipProblem(item, c.class_id, c.level)) return void act(() => api.equip(id));
+    // Put into the hand a lit torch is held in, it is what the hand holds: the torch is put out and stowed.
+    if (torch && item.slot === TORCH_SLOT[torch.hand]) torch.stow?.();
+    send((op) => setWearing((was) => [...was, { op, itemId: id, on: true }]), () => api.equip(id));
   };
-  const unequip = async (id: number) => {
-    if (!gearLocked) await act(() => api.unequip(id));
+  const unequip = (id: number) => {
+    if (gearLocked) return;
+    send((op) => setWearing((was) => [...was, { op, itemId: id, on: false }]), () => api.unequip(id));
   };
+  // The hero out in the view wears what the bag shows, while the room they stand in has yet to hear of it.
+  const lookAhead = useRef(false);
+  useEffect(() => {
+    const outfit = withLook(outfitOf(items.filter((i) => i.equipped)), c.appearance);
+    if (wearing.length > 0) ownLook.show(outfit);
+    else if (lookAhead.current) ownLook.settle(outfit);
+    lookAhead.current = wearing.length > 0;
+  }, [items, wearing, c.appearance]);
+  // The bag shut on a change still on its way: what was shown stands a little longer, and then the room's word does.
+  useEffect(() => () => {
+    if (lookAhead.current) ownLook.settle();
+  }, []);
   const setHidden = (id: number, hidden: boolean) => act(() => api.hideGear(id, hidden));
   const lift = (stack: Stack, from: Held["from"], e: Point) => {
     setHeld({ stack, from });
@@ -792,6 +833,10 @@ export function InventoryScreen({ me, refresh, onClose, onIsland = false, chest 
   const wearHeld = () => {
     const inHand = held?.stack.t === "gear" && held.from === "pack" ? held.stack.item : null;
     if (inHand && !equipProblem(inHand, c.class_id, c.level)) void equip(inHand.id);
+    // The weapon or shield worn in a hand a lit torch is held in, lifted and set back there: it is taken up
+    // again, and the torch put out and stowed. (Otherwise it would just go back where it was, still put away.)
+    const back = held?.stack.t === "gear" && held.from === "worn" ? held.stack.item : null;
+    if (back && torch && back.slot === TORCH_SLOT[torch.hand]) torch.stow?.();
     setHeld(null);
   };
   /** Set what is in hand down on a tab of the town chest that has no squares: out of the pack it goes in; out of the tab itself it goes back. */
@@ -856,10 +901,13 @@ export function InventoryScreen({ me, refresh, onClose, onIsland = false, chest 
     const fits = inHand?.slot === slot;
     const cannot = fits && !!equipProblem(inHand!, c.class_id, c.level);
     const style: CSSProperties = { left: at.x * U, top: at.y * U, width: at.w * U, height: at.h * U, ...(item ? ({ borderColor: RARITY_COLOR[item.rarity], "--tint": RARITY_COLOR[item.rarity] } as CSSProperties) : {}) };
+    // A lit torch held in this hand, on a map: what is worn here is put away (or set aside) while it is.
+    const lit = torch && TORCH_SLOT[torch.hand] === slot ? torch : null;
+    const aside = !item ? "" : slot === "main_hand" ? ` Your ${item.name} is put away while you hold it.` : ` Your ${item.name} is set aside while you hold it.`;
     return (
       <Fragment key={slot}>
       <button
-        className={`doll-slot ${item ? "" : "empty"} ${item?.hidden ? "unseen" : ""} ${fits ? (cannot ? "cannot" : "fits") : ""} ${held?.from === "worn" && held.stack.key === `gear:${item?.id}` ? "lifted" : ""}`}
+        className={`doll-slot ${item ? "" : "empty"} ${lit ? "aside" : ""} ${item?.hidden ? "unseen" : ""} ${fits ? (cannot ? "cannot" : "fits") : ""} ${held?.from === "worn" && held.stack.key === `gear:${item?.id}` ? "lifted" : ""}`}
         style={style}
         title={item ? undefined : `${SLOT_LABEL[slot]}: empty`}
         onPointerEnter={() => !held && setHover(item ? { zone: "worn", key: `gear:${item.id}` } : null)}
@@ -882,6 +930,20 @@ export function InventoryScreen({ me, refresh, onClose, onIsland = false, chest 
         {!item && <span className="slot-name">{SLOT_LABEL[slot]}</span>}
         {item && item.power > 0 && <span className="badge br">+{item.power}</span>}
       </button>
+      {/* Over the slot, not in it (a button cannot hold a button): the lit torch held in this hand. A click puts it away. */}
+      {lit && (
+        <button
+          className="doll-torch"
+          style={{ left: at.x * U, top: at.y * U, width: at.w * U }}
+          aria-label={`Put away the lit torch in your ${lit.hand} hand`}
+          aria-disabled={!lit.stow}
+          title={`Lit torch, in your ${lit.hand} hand: ${lit.rounds} round${lit.rounds === 1 ? "" : "s"} of light left.${aside} ${lit.stow ? `Click to put it out and stow it in your pack${item ? `, and take up your ${item.name} again` : ""}.` : (lit.why ?? "You cannot put it away now.")}`}
+          onClick={() => lit.stow?.()}
+        >
+          <Icon name={ITEM_ICON.torch.name} color={ITEM_ICON.torch.color} size={iconPx(1, 1)} />
+          <span className="doll-torch-text"><strong>Lit torch</strong>{lit.rounds} left</span>
+        </button>
+      )}
       {/* Beside the slot, not in it (a button cannot hold a button): show or hide the piece on the hero. It counts either way. Not for what is held in the hands. */}
       {item && canHide(slot) && (
         <button

@@ -16,6 +16,14 @@
 // happened. The state is believed at once by the bar (so you can keep
 // acting), but the picture catches up one event at a time: a walk is
 // walked, a blow lands, the bar over a head drops when it does.
+//
+// The answer takes a round trip, and a click that shows nothing until then
+// feels slow. So what can be known at the click is shown at the click
+// (zone/ahead.ts): a walk sets off along the way the server will find, an
+// action's cost comes off the bar and the hero turns to what it was aimed
+// at, a turn ended is ended. When the answer comes the picture is put right
+// against it: a walk the server cut short or refused is cut back, and what
+// was already shown is not played twice. Nothing with dice in it is guessed.
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { hexDistance, posKey, type HexPos } from "@gantt-quest/core";
@@ -47,6 +55,7 @@ import {
   isCrateId,
   jumpRange,
   previewAttack,
+  sameHex,
   sees,
   statMod,
   tacticOf,
@@ -82,12 +91,13 @@ import { spriteDataUrl } from "./render/sprites";
 import { WorldRenderer, hexToWorld, tileTop, type RenderState } from "./render/WorldRenderer";
 import { HudBar, type HudSlot } from "./ui/Hud";
 import { useCountdown } from "./ui/useCountdown";
-import { useZone } from "./useZone";
+import { useZone, type ZoneSend } from "./useZone";
 import { Icon } from "./items";
 import { label } from "./labels";
 import { THROW_COLOR, aimKind, fxFor } from "./zone/abilityFx";
 import { COMMON_ICON, ITEM_ICON, abilityIcon } from "./zone/actionIcons";
 import { BAR_SLOTS, assignSlot, barChoices, loadBar, moveSlot, saveBar } from "./zone/hotbar";
+import { believe, foreseeWalk, giveUp, settle, standing, type Ahead } from "./zone/ahead";
 import { setZoneDev, useZoneDev } from "./zone/zoneDev";
 import "./zone/zone.css";
 
@@ -106,6 +116,9 @@ const asState = (view: ZoneViewState) => view as unknown as ZoneState;
 
 /** How long a leave asked for mid-fight waits for the Flee before it is given up. */
 const LEAVING_WAIT_MS = 6000;
+
+/** How long something shown ahead of the server waits for its answer before it is taken back as lost. */
+const AHEAD_WAIT_MS = 6000;
 
 /** The things that are done, as against what comes of them: each starts a new run of results. */
 const CAUSES = new Set<ZoneEvent["t"]>(["used", "moved", "jumped", "shoved", "reaction", "turn", "round", "fight_start", "fight_end"]);
@@ -254,20 +267,60 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
   const names = useRef(new Map<string, string>());
   const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
   const settled = useRef<Picture | null>(null);
+  /** Units with a move still to be shown from the update being played out: nothing is shown ahead for them until it has been. */
+  const owed = useRef(new Set<string>());
+  /**
+   * What has been done and shown but not yet answered (zone/ahead.ts), in the order sent: kept in a ref for
+   * the connection's handlers, which must read the newest, and in state for everything drawn from it.
+   */
+  const aheadNow = useRef<Ahead[]>([]);
+  const [ahead, setAheadShown] = useState<Ahead[]>([]);
+  const setAhead = (next: Ahead[]) => {
+    aheadNow.current = next;
+    setAheadShown(next);
+  };
+  /** Walks shown ahead that did not happen as shown: each hero is sent back to where they really got to. */
+  const takeBack = (told: { walk: { unit: string; back: HexPos | null } | null; recall: { unit: string; to: HexPos }[] }) => {
+    for (const r of told.recall) renderer.current?.stopWalkAt(r.unit, r.to);
+    if (told.walk?.back) renderer.current?.stopWalkAt(told.walk.unit, told.walk.back);
+  };
   const dev = useZoneDev();
 
   // ---------- the connection, and playing out what happened ----------
 
-  const zone = useZone(code, (next, events, prev) => {
+  const zone = useZone(code, { onRefused: (n) => {
+    // Refused: whatever was shown for it is taken back, and the bar has its Action again.
+    const told = settle(aheadNow.current, n, false, []);
+    takeBack(told);
+    setAhead(told.ahead);
+  }, onUpdate: (next, events, prev, ack) => {
     for (const u of next.units) names.current.set(u.id, u.name);
     mapNow.current = next.map;
     const name = (id: string | null | undefined) => (id ? (names.current.get(id) ?? (isCrateId(next, id) ? "the crate" : "Someone")) : "Something");
     // Anything still playing from the last update is finished at once.
     for (const t of timers.current) clearTimeout(t);
     timers.current = [];
+    owed.current.clear();
     const end: Picture = { units: next.units, surfaces: next.surfaces, pois: next.map.pois };
-    const from = settled.current;
+    let from = settled.current;
     settled.current = end;
+    // The answer to something of your own that was shown ahead of it: what of that stood, and what is taken back.
+    const told = ack !== undefined ? settle(aheadNow.current, ack, true, events) : null;
+    if (told) {
+      takeBack(told);
+      setAhead(told.ahead);
+    }
+    const walked = told?.walk ?? null;
+    if (walked && walked.kept > 0 && told?.entry?.kind === "walk" && from) {
+      // As much of the walk as stood is already on screen: the picture starts from there, with no step back first.
+      const there = told.entry.path[walked.kept - 1];
+      from = { ...from, units: from.units.map((u) => (u.id === walked.unit ? { ...u, pos: there } : u)) };
+      if (prev && events.length > 0) setPicture(from);
+    }
+    /** How much of a walk shown ahead has already played, in ms: it comes off the wait for the walk's own events. */
+    let played = walked ? performance.now() - walked.at : 0;
+    /** Your own action's name went up over the hero at the click: it is not put up a second time. */
+    let named = told?.entry?.kind === "act" && told.entry.named ? told.entry.unit : null;
     if (!prev || !from || events.length === 0) {
       // Nothing to play out: whatever was being shown is over.
       setSpot(null);
@@ -284,6 +337,8 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
     let use: { id: string; what: string; look: ReturnType<typeof fxFor>; last: THREE.Vector3 | null } | null = null;
     const find = (id: string) => draft.units.find((u) => u.id === id);
     const lines: string[] = [];
+    /** Who last struck each one, so one that goes down falls away from them. */
+    const struck = new Map<string, string>();
     let at = 0;
     const later = (run: () => void) => timers.current.push(setTimeout(run, at));
     /** Whoever the last thing shown was done by, so a new actor can be announced once as their turn comes up. */
@@ -309,24 +364,38 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
       /** The unit makes its gesture (a cast, or a bow drawn), and `go`, what leaves its hand, runs as the gesture ends: at once with no view to draw it. */
       const cast = (id: string, name: string, x: number, z: number, go: () => void, thrown = false) => (view ? view.cast(id, name, x, z, go, thrown) : go());
       if ((ev.t === "moved" || ev.t === "used" || ev.t === "jumped") && next.encounter?.order.includes(ev.id)) nowActing(ev.id);
+      /** How many of this walk's first hexes were shown ahead of the answer, and are walked (or being walked) already. */
+      const already = ev.t === "moved" && walked && ev.id === walked.unit ? (walked.shown.get(i) ?? 0) : 0;
+      // A move that is shown later than now is owed: until it has been, the picture is behind where the unit really is.
+      const owe = (id: string) => {
+        if (at === 0) return;
+        owed.current.add(id);
+        later(() => owed.current.delete(id));
+      };
       if (ev.t === "moved") {
         const u = find(ev.id);
         if (u) u.pos = ev.path[ev.path.length - 1];
-        later(() => view?.walkUnit(ev.id, ev.path));
+        const rest = ev.path.slice(already);
+        if (rest.length > 0) {
+          later(() => view?.walkUnit(ev.id, rest));
+          owe(ev.id);
+        }
       } else if (ev.t === "jumped") {
         const u = find(ev.id);
         if (u) u.pos = ev.to;
         // A leap, not a walk; the view sounds it, timed to the landing.
         later(() => (view ? view.leapUnit(ev.id, ev.to) : sounds.zone("jump")));
+        owe(ev.id);
       } else if (ev.t === "shoved") {
         const u = find(ev.target);
         const to = ev.to;
         if (u && to) u.pos = to;
+        owe(ev.target);
         later(() => {
           // Flung back and off their feet; with nowhere to go, flattened where they stand.
           sounds.zone("shove", view?.whereIs(ev.target));
           if (to) view?.knock(ev.target, to);
-          else view?.floor(ev.target);
+          else view?.floor(ev.target, undefined, ev.id);
           timers.current.push(setTimeout(() => sounds.zone("fall", view?.whereIs(ev.target)), 260));
         });
         say(to ? `${name(ev.id)} shoves ${name(ev.target)} back.` : `${name(ev.id)} shoves ${name(ev.target)}, who has nowhere to go and falls.`);
@@ -341,9 +410,11 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
         use = { id: ev.id, what: ev.what === "attack" ? ev.name : ev.what, look, last: from };
         // What it covers, for the things that come up out of the ground or roll across it.
         const covered = user && ABILITIES[ev.what] ? abilityArea(asState({ ...next, units: draft.units }), user, ev.what, ev.at) : [];
+        const said = named === ev.id;
+        if (said) named = null;
         later(() => {
           const fxs = spells.current;
-          view?.floatOver(ev.id, ev.name, "#fff1c9");
+          if (!said) view?.floatOver(ev.id, ev.name, "#fff1c9");
           if (!fxs || !from || !user) return;
           if (thrown && ev.at) {
             sounds.zone("throw", view?.whereIs(ev.id));
@@ -406,6 +477,7 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
         }
       } else if (ev.t === "hit" || ev.t === "miss") {
         const hit = ev.t === "hit";
+        if (hit && ev.actor && ev.actor !== ev.target) struck.set(ev.target, ev.actor);
         const target = find(ev.target);
         const actor = ev.actor ? find(ev.actor) : undefined;
         if (hit && target) target.hp = Math.max(0, target.hp - ev.amount);
@@ -476,7 +548,14 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
         const u = find(ev.id);
         if (u) u.down = ev.t === "down";
         if (u && ev.t === "down") u.hp = 0;
-        if (u && ev.t === "down") later(() => sounds.down({ side: u.side, kind: u.kind }, view?.whereIs(ev.id)));
+        if (u && ev.t === "down") {
+          const by = struck.get(ev.id);
+          later(() => {
+            sounds.down({ side: u.side, kind: u.kind }, view?.whereIs(ev.id));
+            // Limp, and away from the blow, as the picture has them down.
+            view?.fell(ev.id, by);
+          });
+        }
         say(ev.t === "down" ? `${name(ev.id)} is down.` : `${name(ev.id)} is back up.`);
       } else if (ev.t === "skip") {
         say(`${name(ev.id)} is ${CONDITION_INFO[ev.kind].name} and loses the turn.`);
@@ -647,6 +726,9 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
       } else if (ev.t === "took_torch") {
         if (ev.stowed) later(() => view?.pickups(ev.id, [{ text: "+1 torch", color: "#ffb070" }]));
         say(ev.stowed ? `${name(ev.id)} puts out a torch and stows it in the pack.` : `${name(ev.id)} picks up a burning torch.`);
+      } else if (ev.t === "torch_stowed") {
+        later(() => view?.pickups(ev.id, [{ text: "+1 torch", color: "#ffb070" }]));
+        say(`${name(ev.id)} puts out the torch and stows it in the pack.`);
       } else if (ev.t === "light" && !ev.on) {
         // Gone from the ground because someone took it up is not burning out.
         const taken = events.some((e) => e.t === "took_torch" && e.at.q === ev.at.q && e.at.r === ev.at.r);
@@ -657,7 +739,14 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
       // What the picture shows once this event has been seen.
       const shown: Picture = structuredClone(draft);
       later(() => setPicture(shown));
-      at += dwell(ev, many[i], events[i + 1]) + (many[i] && last[i] ? AFTER_MANY : 0);
+      let wait = dwell(ev, many[i], events[i + 1]);
+      if (ev.t === "moved" && already > 0) {
+        // The part of this walk shown ahead has been playing since the click: only what is left of it is waited for.
+        const spent = Math.min(played, (wait * already) / ev.path.length);
+        wait -= spent;
+        played -= spent;
+      }
+      at += wait + (many[i] && last[i] ? AFTER_MANY : 0);
     }
     if (lines.length > 0) setFeed((f) => [...f, ...lines].slice(-40));
     later(() => {
@@ -665,10 +754,30 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
       setSpot(null);
       setWatching(false);
     });
-  });
+  } });
   useEffect(() => () => timers.current.forEach(clearTimeout), []);
 
-  const state = zone.state;
+  // The connection dropped with answers still owed: they will not come. What was shown for them is taken
+  // back, and the state the new connection is sent says where everything really is.
+  useEffect(() => {
+    if (zone.status === "open" || aheadNow.current.length === 0) return;
+    takeBack({ walk: null, recall: giveUp(aheadNow.current) });
+    setAhead([]);
+  }, [zone.status]);
+  // And an answer that never comes at all is not waited on for ever.
+  useEffect(() => {
+    if (ahead.length === 0) return;
+    const oldest = ahead[0].n;
+    const t = setTimeout(() => {
+      if (aheadNow.current[0]?.n !== oldest) return;
+      takeBack({ walk: null, recall: giveUp(aheadNow.current) });
+      setAhead([]);
+    }, AHEAD_WAIT_MS);
+    return () => clearTimeout(t);
+  }, [ahead]);
+
+  // The state as it is believed to be: the server's last, with what has been done since and not yet answered.
+  const state = useMemo(() => (zone.state ? believe(zone.state, ahead) : null), [zone.state, ahead]);
   const enc = state?.encounter ?? null;
   // Which of your own you are playing: your hero, or a stand-in whose turn it is.
   // What your own hero carries comes out of your pack: when the count on the map changes, the pack is read again.
@@ -728,8 +837,8 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
 
   // In a dev build, the state and a way to act on it, for the console.
   useEffect(() => {
-    if (import.meta.env.DEV) (window as unknown as Record<string, unknown>).__gqZone = { state: zone.state, send, layer: layer.current, view: renderer.current };
-  }, [zone.state, send]);
+    if (import.meta.env.DEV) (window as unknown as Record<string, unknown>).__gqZone = { state: zone.state, believed: state, ahead, send, layer: layer.current, view: renderer.current, click: (pos: HexPos) => click.current(pos) };
+  }, [zone.state, state, ahead, send]);
 
   const picking = !!pick || !!dev.tool;
   const reach = useMemo(() => {
@@ -742,6 +851,8 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
     if (!view || !state || !picture) return;
     const inFight = (id: string) => !!enc?.order.includes(id);
     const turn = (id: string) => !!enc && enc.acting.includes(id) && !enc.done.includes(id);
+    // A hero whose walk was shown ahead of the server stands where it was shown ending, until the answer says otherwise.
+    const shownAt = standing(ahead);
     const scene: RenderState = {
       code: `zone:${code}`,
       kind: state.options.biome === "caves" ? "caverns" : "voyage",
@@ -751,7 +862,7 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
       // Chests and crates as the picture has them: thrown open, or knocked about and broken, as each is shown.
       map: { ...state.map, pois: picture.pois },
       // A lit torch is held in the off hand, where a shield would be.
-      heroes: picture.units.filter((u) => u.side === "hero").map((u) => ({ id: u.id, classId: u.kind, pos: u.pos, name: u.name, outfit: u.torch ? { ...u.outfit, [u.torchHand === "main" ? "main_hand" : "off_hand"]: TORCH_IN_HAND } : u.outfit, torch: !!u.torch, effects: badgesOf(u), level: u.level, xp: 0, hp: u.hp, maxHp: u.maxHp, down: u.down, prone: u.conditions.some((c) => c.kind === "prone"), active: turn(u.id) })),
+      heroes: picture.units.filter((u) => u.side === "hero").map((u) => ({ id: u.id, classId: u.kind, pos: shownAt.get(u.id) ?? u.pos, name: u.name, outfit: u.torch ? { ...u.outfit, [u.torchHand === "main" ? "main_hand" : "off_hand"]: TORCH_IN_HAND } : u.outfit, torch: !!u.torch, effects: badgesOf(u), level: u.level, xp: 0, hp: u.hp, maxHp: u.maxHp, down: u.down, prone: u.conditions.some((c) => c.kind === "prone"), active: turn(u.id) })),
       // What the dark hides is not drawn: out of a fight the server does not even send it.
       units: picture.units.filter((u) => u.side === "enemy" && !state.dark?.includes(u.id)).map((u) => ({ id: u.id, kind: u.kind, pos: u.pos, name: u.name, hp: inFight(u.id) || u.hp < u.maxHp ? u.hp / u.maxHp : undefined, down: u.down, prone: u.conditions.some((c) => c.kind === "prone"), active: u.id === spot, hostile: inFight(u.id), effects: badgesOf(u) })),
       turn: null,
@@ -766,7 +877,7 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
     view.setState(scene);
     layer.current?.setMap(state.map);
     layer.current?.setSurfaces(picture.surfaces);
-  }, [state, picture, reach, act?.id, fighting, code, enc, spot]);
+  }, [state, picture, reach, act?.id, fighting, code, enc, spot, ahead]);
 
   // ---------- what a pick reaches, and what it would cover ----------
 
@@ -894,16 +1005,65 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
 
   // ---------- acting ----------
 
-  const use = (ability: string, aim: { target?: string; at?: HexPos } = {}) => {
+  /** Whether the turn has this left to spend. Out of a fight everything is free. */
+  const canPay = (cost: "action" | "bonus") => !fighting || (myTurn && !!budget?.[cost]);
+
+  /**
+   * Send a walk, and show at once as much of it as can be foreseen (zone/ahead.ts): the hero sets off at the
+   * click, along the way the server will find. Nothing is shown ahead for a hero who still has a move to be
+   * played out, or whose earlier walk was called off: where they really stand is not yet on screen.
+   */
+  const walkTo = (to: HexPos) => {
+    if (!act || !state) return;
+    const unsure = owed.current.has(act.id) || aheadNow.current.some((a) => a.kind === "walk" && a.off && a.unit === act.id);
+    const seen = unsure ? null : foreseeWalk(state, act.id, to);
+    const n = zone.send({ type: "move", unit: act.id, to });
+    if (n === null || !seen) return;
+    renderer.current?.walkUnit(act.id, seen.path);
+    setAhead([...aheadNow.current, { n, kind: "walk", unit: act.id, from: act.pos, path: seen.path, cost: seen.cost, at: performance.now() }]);
+  };
+
+  /**
+   * Send something whose result is the server's to say, and show at once that it has been asked for: what it
+   * costs comes off the bar, its slot is shown taken, the hero turns to what it is aimed at, and (`name`) its
+   * name goes up over them. None of what comes of it is shown until the answer says. `sure` is false when the
+   * client can already see it will be refused: then it is only sent, for the server to say why.
+   */
+  const declare = (action: ZoneSend, sure: boolean, shown: { cost: "action" | "bonus"; gain?: "dash" | "disengage"; slot?: string; name?: string; toward?: HexPos | null }) => {
     if (!act) return;
-    zone.send({ type: "use", unit: act.id, ability, ...aim, focus: focus && ABILITIES[ability]?.damage !== undefined });
+    const n = zone.send(action);
+    if (n === null || !sure || !canPay(shown.cost)) return;
+    const view = renderer.current;
+    if (shown.toward && !sameHex(shown.toward, act.pos)) {
+      const spot = point(shown.toward);
+      view?.ready(act.id, spot.x, spot.z);
+    }
+    if (shown.name) view?.floatOver(act.id, shown.name, "#fff1c9");
+    setAhead([...aheadNow.current, { n, kind: "act", unit: act.id, cost: fighting ? shown.cost : null, gain: shown.gain, slot: shown.slot, named: !!shown.name }]);
+  };
+  /** Where something aimed at a unit, a crate or a hex is aimed. */
+  const aimedAt = (aim: { target?: string; at?: HexPos }) => aim.at ?? state?.units.find((u) => u.id === aim.target)?.pos ?? state?.map.pois.find((p) => p.id === aim.target)?.pos ?? null;
+
+  const use = (ability: string, aim: { target?: string; at?: HexPos } = {}) => {
+    if (!act || !z) return;
+    const spend = focus && ABILITIES[ability]?.damage !== undefined;
+    const sure = !checkAbility(z, act, ability, aim) && !(fighting && (act.cooldowns[ability] ?? 0) > 0);
+    declare({ type: "use", unit: act.id, ability, ...aim, focus: spend }, sure, { cost: tacticOf(ability).cost, slot: `ab:${ability}`, name: ABILITIES[ability]?.name, toward: aimedAt(aim) });
     setPick(null);
     setFocus(false);
   };
   const common = (what: CommonAction, aim: { target?: string; at?: HexPos } = {}) => {
-    if (!act) return;
-    zone.send({ type: "common", unit: act.id, what, ...aim });
+    if (!act || !z) return;
+    const sure = !checkCommon(z, act, what, aim, fighting ? (budget ?? null) : null);
+    declare({ type: "common", unit: act.id, what, ...aim }, sure, { cost: commonCost(what, act.kind), gain: what === "dash" || what === "disengage" ? what : undefined, slot: `do:${what}`, name: COMMON_ACTIONS[what].name, toward: aimedAt(aim) });
     setPick(null);
+  };
+  /** The small things done to what is beside you (a chest, a door, a torch, mushrooms): the cost shows at once, and the hero turns to it. */
+  const reachFor = (action: ZoneSend, cost: "action" | "bonus", toward: HexPos | null) => declare(action, true, { cost, toward });
+  const endTurn = () => {
+    if (!act) return;
+    const n = zone.send({ type: "end_turn", unit: act.id });
+    if (n !== null) setAhead([...aheadNow.current, { n, kind: "end", unit: act.id }]);
   };
   const choose = (ability: string) => {
     const shape = tacticOf(ability).shape;
@@ -919,21 +1079,21 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
     if (dev.tool?.tool === "paint") return dev.open?.send({ op: "paint", kind: dev.tool.surface, hexes: dev.tool.wide ? zoneBlast(state.map, pos, 1) : [pos] });
     if (!pick) {
       // A click on a torch burning on the ground right beside you takes it up; from further off, it is walked to.
-      if (state.lights?.[posKey(pos)] && hexDistance(pos, act.pos) <= 1) return zone.send({ type: "pickup", unit: act.id, at: pos });
+      if (state.lights?.[posKey(pos)] && hexDistance(pos, act.pos) <= 1) return reachFor({ type: "pickup", unit: act.id, at: pos }, "bonus", pos);
       // A click on a locked door works it from beside it (a key if there is one, else a shoulder), or walks up to it first.
       const door = state.map.pois.find((p) => p.kind === "gate" && !p.cleared && p.pos.q === pos.q && p.pos.r === pos.r);
       if (door) {
-        if (hexDistance(door.pos, act.pos) <= 1) return zone.send({ type: "unlock", unit: act.id, poi: door.id });
+        if (hexDistance(door.pos, act.pos) <= 1) return reachFor({ type: "unlock", unit: act.id, poi: door.id }, "action", door.pos);
         const beside = [...reach.values()].filter((r) => r.stop && hexDistance(r.pos, door.pos) === 1).sort((a, b) => a.cost - b.cost)[0];
-        if (beside) zone.send({ type: "move", unit: act.id, to: beside.pos });
+        if (beside) walkTo(beside.pos);
         return;
       }
       // A click on a chest opens it from beside it, or walks up to it first.
       const chest = state.map.pois.find((p) => p.kind === "cache" && !p.cleared && p.pos.q === pos.q && p.pos.r === pos.r);
       if (chest) {
-        if (hexDistance(chest.pos, act.pos) <= 1) return zone.send({ type: "open", unit: act.id, poi: chest.id });
+        if (hexDistance(chest.pos, act.pos) <= 1) return reachFor({ type: "open", unit: act.id, poi: chest.id }, "action", chest.pos);
         const beside = [...reach.values()].filter((r) => r.stop && hexDistance(r.pos, chest.pos) === 1).sort((a, b) => a.cost - b.cost)[0];
-        if (beside) zone.send({ type: "move", unit: act.id, to: beside.pos });
+        if (beside) walkTo(beside.pos);
         return;
       }
       // A click on a crate breaks at it with your own blow, if anything of yours reaches it; else it walks you up to it.
@@ -942,24 +1102,24 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
         const blow = crateBlow(asState(state), act, box.id);
         if (blow) return use(blow, { target: box.id });
         const beside = [...reach.values()].filter((r) => r.stop && hexDistance(r.pos, box.pos) === 1).sort((a, b) => a.cost - b.cost)[0];
-        if (beside && beside.cost > 0) zone.send({ type: "move", unit: act.id, to: beside.pos });
+        if (beside && beside.cost > 0) walkTo(beside.pos);
         return;
       }
       // A click on an enemy means "go up to it": the nearest hex beside it that can be reached.
       if (there && there.side === "enemy" && !there.down) {
         const beside = [...reach.values()].filter((r) => r.stop && hexDistance(r.pos, there.pos) === 1).sort((a, b) => a.cost - b.cost)[0];
-        if (beside && beside.cost > 0) zone.send({ type: "move", unit: act.id, to: beside.pos });
+        if (beside && beside.cost > 0) walkTo(beside.pos);
         return;
       }
       // A click on glowing mushrooms picks them from beside them (or among them), or walks up to them first.
       const patch = state.map.pois.find((p) => p.kind === "glowcap" && !p.cleared && p.pos.q === pos.q && p.pos.r === pos.r);
       if (patch) {
-        if (hexDistance(patch.pos, act.pos) <= 1) return zone.send({ type: "forage", unit: act.id, poi: patch.id });
+        if (hexDistance(patch.pos, act.pos) <= 1) return reachFor({ type: "forage", unit: act.id, poi: patch.id }, "action", patch.pos);
         const beside = [...reach.values()].filter((r) => r.stop && hexDistance(r.pos, patch.pos) <= 1).sort((a, b) => a.cost - b.cost)[0];
-        if (beside) zone.send({ type: "move", unit: act.id, to: beside.pos });
+        if (beside) walkTo(beside.pos);
         return;
       }
-      return zone.send({ type: "move", unit: act.id, to: pos });
+      return walkTo(pos);
     }
     if (pick.kind === "ability") {
       const shape = tacticOf(pick.id).shape;
@@ -973,9 +1133,9 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
       // Clicked on yourself, something drinkable is drunk and a torch is lit to hold; anywhere else it is thrown there.
       const onSelf = pos.q === act.pos.q && pos.r === act.pos.r;
       const def = THROWABLES[pick.item];
-      if (def.drink && onSelf) zone.send({ type: "drink", unit: act.id, item: pick.item });
-      else if (def.light && onSelf && !act.torch) zone.send({ type: "light", unit: act.id });
-      else zone.send({ type: "throw", unit: act.id, item: pick.item, at: pos });
+      if (def.drink && onSelf) declare({ type: "drink", unit: act.id, item: pick.item }, (act.items[pick.item] ?? 0) > 0, { cost: "bonus", slot: `it:${pick.item}`, name: def.name });
+      else if (def.light && onSelf && !act.torch) declare({ type: "light", unit: act.id }, (act.items.torch ?? 0) > 0, { cost: "bonus", slot: `it:${pick.item}` });
+      else declare({ type: "throw", unit: act.id, item: pick.item, at: pos }, !checkThrow(asState(state), act, pick.item, pos), { cost: "action", slot: `it:${pick.item}`, name: def.name, toward: pos });
       setPick(null);
     } else if (pick.what === "jump") common("jump", { at: pos });
     else if (there) common(pick.what, { target: there.id });
@@ -1055,7 +1215,6 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
 
   // ---------- the bar ----------
 
-  const canPay = (cost: "action" | "bonus") => !fighting || (myTurn && !!budget?.[cost]);
   const costName = (cost: "action" | "bonus") => (cost === "action" ? "Action" : "Bonus action");
   // Getting away: on your turn, with the Action (a Rogue's Bonus action) for it, and no enemy in the fight within FLEE_RANGE.
   const fleeCost = commonCost("flee", act.kind);
@@ -1067,6 +1226,8 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
     common("flee");
   };
   const fleeAndLeave = () => fleeThen(leave);
+  /** The slots something was just done from, and not yet answered: each is shown taken until it is. */
+  const taken = new Set(ahead.flatMap((a) => (a.kind === "act" && a.slot ? [a.slot] : [])));
   /** Everything that could be on the bar, by key, as it stands right now. */
   const entries: Record<string, HudSlot> = {};
   for (const id of act.abilities) {
@@ -1082,7 +1243,7 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
       line: [costName(tactic.cost), reachText, dice].filter(Boolean).join(" · "),
       more: `${def.blurb}${tactic.cooldown ? ` Then ${tactic.cooldown} turn${tactic.cooldown === 1 ? "" : "s"} before it can be used again.` : ""}`,
       wait: wait || undefined,
-      picked: pick?.kind === "ability" && pick.id === id,
+      picked: (pick?.kind === "ability" && pick.id === id) || taken.has(`ab:${id}`),
       spent: !canPay(tactic.cost) || (fighting && wait > 0),
       run: () => choose(id),
     };
@@ -1096,7 +1257,7 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
       name: COMMON_ACTIONS[what].name,
       line: costName(cost),
       more: what === "flee" && myTurn && fleeBlock ? `${COMMON_ACTIONS[what].blurb} ${fleeBlock}` : COMMON_ACTIONS[what].blurb,
-      picked: pick?.kind === "common" && pick.what === what,
+      picked: (pick?.kind === "common" && pick.what === what) || taken.has(`do:${what}`),
       spent: !canPay(cost) || (needsFight && !fighting) || (what === "flee" && !!fleeBlock),
       run: () => (needsFight ? common(what) : setPick((p) => (p?.kind === "common" && p.what === what ? null : { kind: "common", what }))),
     };
@@ -1113,7 +1274,7 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
       line: def.drink ? "Throw it (Action), or click yourself to drink it (Bonus action)" : def.light ? (held ? "Throw the lit torch down where it should burn (Action)" : "Throw it lit (Action), or click yourself to light it to hold (Bonus action)") : "Throw it (Action)",
       more: def.blurb,
       count: have,
-      picked: pick?.kind === "item" && pick.item === item,
+      picked: (pick?.kind === "item" && pick.item === item) || taken.has(`it:${item}`),
       // Thrown for an Action; a potion can still be drunk, or a torch lit, when only the Bonus action is left.
       spent: (have <= 0 && !held) || !(canPay("action") || ((!!def.drink || (!!def.light && !held)) && canPay("bonus"))),
       run: () => setPick((p) => (p?.kind === "item" && p.item === item ? null : { kind: "item", item })),
@@ -1122,7 +1283,13 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
   const slots = Array.from({ length: BAR_SLOTS }, (_, i) => entries[bar[i] ?? ""] ?? null);
 
   // Whoever is being shown acting, while the enemy's turn plays out; otherwise whoever the server waits on.
-  const waitingFor = enc && !myTurn ? (watching && spot ? (names.current.get(spot) ?? "someone") : enc.acting.map((id) => names.current.get(id) ?? "someone").join(" and ")) : undefined;
+  // (Those sharing the turn who have ended theirs are not waited on; with nobody left, the turn is passing on.)
+  const still = enc ? enc.acting.filter((id) => !enc.done.includes(id)) : [];
+  const waitingFor = enc && !myTurn ? (watching && spot ? (names.current.get(spot) ?? "someone") : still.length > 0 ? still.map((id) => names.current.get(id) ?? "someone").join(" and ") : "the next turn") : undefined;
+  // A torch is lit into a hand, or put away from one, freely out of a fight; in one, for a Bonus action on your turn.
+  const handFree = !fighting || (myTurn && !!budget?.bonus);
+  const handWhy = fighting && !myTurn ? "Wait for your turn." : fighting && !budget?.bonus ? "You have used your Bonus action this turn." : undefined;
+  const stowTorch = act && act.torch && !act.down && handFree ? () => reachFor({ type: "stow", unit: act.id }, "bonus", null) : undefined;
   // A torch burning on the ground within reach, to pick up.
   const torchBeside = act && state.lights ? Object.keys(state.lights).map((k) => { const [q, r] = k.split(",").map(Number); return { q, r }; }).find((p) => hexDistance(p, act.pos) <= 1) : undefined;
   // A locked door within reach, and the keys on the party's ring.
@@ -1380,6 +1547,8 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
       {me.character && <Trading me={me} partners={crew.filter((m) => m.id !== state.you)} withId={tradeWith} onWith={setTradeWith} refresh={refresh} nudge={zone.trades} />}
       {bag && !tradeWith && me.character && (
         <InventoryScreen
+          // A lit torch in a hand is shown in that hand's slot, and put away from there. Your own hero's only: the bag is theirs.
+          torch={act.id === state.you && act.torch ? { hand: act.torchHand === "main" ? "main" : "off", rounds: act.torch, stow: stowTorch, why: handWhy } : undefined}
           me={me}
           onIsland
           // Gear changed here is gear changed on the map: the server reads the hero again (and leaves them be in a fight).
@@ -1445,12 +1614,13 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
           rounds: act.torch ?? null,
           hand: act.torchHand === "main" ? "main" : "off",
           carried: act.items.torch ?? 0,
-          light: !act.torch && (act.items.torch ?? 0) > 0 && !act.down && (!fighting || (myTurn && !!budget?.bonus)) ? (hand) => zone.send({ type: "light", unit: act.id, ...(hand === "main" ? { hand } : {}) }) : undefined,
-          why: fighting && !myTurn ? "Wait for your turn." : fighting && !budget?.bonus ? "You have used your Bonus action this turn." : undefined,
+          light: !act.torch && (act.items.torch ?? 0) > 0 && !act.down && handFree ? (hand) => reachFor({ type: "light", unit: act.id, ...(hand === "main" ? { hand } : {}) }, "bonus", null) : undefined,
+          stow: stowTorch,
+          why: handWhy,
         }}
         // While the trade table is open it has the bag beside it already.
         onBag={() => !tradeWith && setBag((open) => !open)}
-        turn={enc && fighting ? { seconds: deadline, onEnd: myTurn ? () => zone.send({ type: "end_turn", unit: act.id }) : undefined, waitingFor } : undefined}
+        turn={enc && fighting ? { seconds: deadline, onEnd: myTurn ? endTurn : undefined, waitingFor } : undefined}
         menu={<OptionsMenu title={state.options.name ?? `Map ${code}`} subtitle={<>{state.options.biome} · {state.options.size}{state.options.tier ? ` · ${state.options.tier} ${state.options.tier === 1 ? "ring" : "rings"} out` : ""}</>} actions={[caves
           ? {
               label: "Leave the cave",
@@ -1466,22 +1636,22 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
             }]} />}
       >
         {torchBeside && (!fighting || myTurn) && (
-          <button className="small" disabled={fighting && !budget?.bonus} title={fighting ? "A Bonus action" : undefined} onClick={() => zone.send({ type: "pickup", unit: act.id, at: torchBeside })}>
+          <button className="small" disabled={fighting && !budget?.bonus} title={fighting ? "A Bonus action" : undefined} onClick={() => reachFor({ type: "pickup", unit: act.id, at: torchBeside }, "bonus", torchBeside)}>
             {act.torch ? "Stow the torch" : "Pick up the torch"}
           </button>
         )}
         {doorBeside && (!fighting || myTurn) && (
-          <button className="small primary" disabled={fighting && !budget?.action} title={keys > 0 ? "Uses a key off the ring" : `A Strength roll (${FORCE_DC} or better). Loud: the nearest band within earshot will come.`} onClick={() => zone.send({ type: "unlock", unit: act.id, poi: doorBeside.id })}>
+          <button className="small primary" disabled={fighting && !budget?.action} title={keys > 0 ? "Uses a key off the ring" : `A Strength roll (${FORCE_DC} or better). Loud: the nearest band within earshot will come.`} onClick={() => reachFor({ type: "unlock", unit: act.id, poi: doorBeside.id }, "action", doorBeside.pos)}>
             {keys > 0 ? "Unlock the door" : "Force the door"}
           </button>
         )}
         {chestBeside && (!fighting || myTurn) && (
-          <button className="small primary" disabled={chestGuarded(chestBeside) || (fighting && !budget?.action)} title={chestGuarded(chestBeside) ? "Its guards still stand over it" : fighting ? "An Action" : undefined} onClick={() => zone.send({ type: "open", unit: act.id, poi: chestBeside.id })}>
+          <button className="small primary" disabled={chestGuarded(chestBeside) || (fighting && !budget?.action)} title={chestGuarded(chestBeside) ? "Its guards still stand over it" : fighting ? "An Action" : undefined} onClick={() => reachFor({ type: "open", unit: act.id, poi: chestBeside.id }, "action", chestBeside.pos)}>
             Open {chestName(chestBeside)}
           </button>
         )}
         {glowBeside && (!fighting || myTurn) && (
-          <button className="small" disabled={fighting && !budget?.action} title={fighting ? "An Action" : "Mushrooms for the apothecary. Picked, they stop glowing."} onClick={() => zone.send({ type: "forage", unit: act.id, poi: glowBeside.id })}>
+          <button className="small" disabled={fighting && !budget?.action} title={fighting ? "An Action" : "Mushrooms for the apothecary. Picked, they stop glowing."} onClick={() => reachFor({ type: "forage", unit: act.id, poi: glowBeside.id }, "action", glowBeside.pos)}>
             Pick the mushrooms
           </button>
         )}

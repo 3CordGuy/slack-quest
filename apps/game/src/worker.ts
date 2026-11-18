@@ -47,6 +47,8 @@ import {
   refreshHarbor,
   refreshHut,
   saveDraft,
+  cleanHeroName,
+  renameCharacter,
   sellFurniture,
   sellItem,
   sellMaterial,
@@ -198,20 +200,24 @@ app.use("/api/*", async (c, next) => {
 
 app.get("/api/me", async (c) => {
   const player = c.get("player");
+  const read = () =>
+    Promise.all([
+      getCharacter(c.env.DB, player.id),
+      getInventory(c.env.DB, player.id),
+      crewFor(c.env.DB, player.id),
+      carryState(c.env.DB, player.id),
+      harborXpFor(c.env.DB, player.id),
+      seenRelease(c.env.DB, player.id),
+      c.env.DB.prepare("SELECT kind, qty FROM resources WHERE player_id = ? AND qty > 0").bind(player.id).all<{ kind: string; qty: number }>(),
+      consumablesOf(c.env.DB, player.id),
+      lodestonesOf(c.env.DB, player.id),
+    ]);
+  let all = await read();
   // A hero from before looks came in is given their class's look and starting clothes the first time they
-  // come in (see ensureLook).
-  await ensureLook(c.env.DB, player.id);
-  const [character, inventory, crew, carry, harborXp, seen, held, consumables, lodestones] = await Promise.all([
-    getCharacter(c.env.DB, player.id),
-    getInventory(c.env.DB, player.id),
-    crewFor(c.env.DB, player.id),
-    carryState(c.env.DB, player.id),
-    harborXpFor(c.env.DB, player.id),
-    seenRelease(c.env.DB, player.id),
-    c.env.DB.prepare("SELECT kind, qty FROM resources WHERE player_id = ? AND qty > 0").bind(player.id).all<{ kind: string; qty: number }>(),
-    consumablesOf(c.env.DB, player.id),
-    lodestonesOf(c.env.DB, player.id),
-  ]);
+  // come in (see ensureLook). Whether that is still to do shows in the character just read, so nobody else
+  // waits on a question about it; for the one it is done for, everything is read again with the clothes on.
+  if (all[0]?.status === "active" && all[0].appearance == null && (await ensureLook(c.env.DB, player.id))) all = await read();
+  const [character, inventory, crew, carry, harborXp, seen, held, consumables, lodestones] = all;
   // `materials` is what is in the pack, in stacks beside the gear; `consumables` the potions and flasks there with
   // them, and `lodestones` the stones that open a place on the atlas.
   const materials = Object.fromEntries(held.results.map((r) => [r.kind, r.qty]));
@@ -349,8 +355,8 @@ app.post("/api/character/name", async (c) => {
 app.post("/api/character/roll", async (c) => {
   const player = c.get("player");
   const body = await c.req.json<{ classId?: string; name?: string }>().catch(() => ({}) as { classId?: string; name?: string });
-  const name = String(body.name ?? "").replace(/\s+/g, " ").trim();
-  if (name.length < 2 || name.length > 20) return c.json({ error: "Name must be 2 to 20 characters." }, 400);
+  const name = cleanHeroName(body.name);
+  if (!name) return c.json({ error: "Name must be 2 to 20 characters." }, 400);
   if (!HERO_CLASSES.some((k) => k.id === body.classId)) return c.json({ error: "Unknown class." }, 400);
   const existing = await getCharacter(c.env.DB, player.id);
   if (existing?.status === "active") return c.json({ error: "You already have a character." }, 409);
@@ -371,6 +377,19 @@ app.post("/api/character/reroll", async (c) => {
   // Their hut and roster entry disappear until the new character is confirmed.
   c.executionCtx.waitUntil(crewFor(c.env.DB, player.id).then((crew) => refreshHarbor(c.env, crew?.id ?? null)));
   return c.json({ ok: true });
+});
+
+// A new name for a confirmed hero, from their sheet. The client then has the rooms it is in re-read the hero (refresh).
+app.post("/api/character/rename", async (c) => {
+  const body = await c.req.json<{ name?: unknown }>().catch(() => ({}) as { name?: unknown });
+  const name = cleanHeroName(body.name);
+  if (!name) return c.json({ error: "Name must be 2 to 20 characters." }, 400);
+  const player = c.get("player");
+  const problem = await renameCharacter(c.env.DB, player.id, name);
+  if (problem) return c.json({ error: problem }, 409);
+  // The crew's cards (the Harbor's notice board) show the new name to everyone there.
+  c.executionCtx.waitUntil(crewFor(c.env.DB, player.id).then((crew) => refreshHarbor(c.env, crew?.id ?? null)));
+  return c.json({ name });
 });
 
 // How the hero looks: body, face and colouring, from fixed presets (appearance.ts). Draft or active.
@@ -1124,6 +1143,9 @@ app.get("/api/zone/:code/ws", async (c) => {
   const near = c.req.query("near");
   if (near && near.length <= 64) headers.set("x-zone-near", near);
   else headers.delete("x-zone-near");
+  // A client that keeps the map's tiles from its first update asks to be sent them once (zone-room.ts).
+  if (c.req.query("lean") === "1") headers.set("x-zone-lean", "1");
+  else headers.delete("x-zone-lean");
   return c.env.ZONE_ROOM.get(c.env.ZONE_ROOM.idFromName(code)).fetch(new Request(c.req.url, { headers }));
 });
 
