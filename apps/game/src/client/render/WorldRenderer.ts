@@ -22,7 +22,8 @@ import { lookStep, lookYaw, BASE_HEIGHT, BATTLE_JOIN_RANGE, BIG_REACH, ENEMIES, 
 import { fancy, fancyGrass } from "./fancy";
 import { NightLife } from "./nightlife";
 import { Storm } from "./storm";
-import { setFieldWalkers, updateWind } from "./wind";
+import { gustAt, setFieldWalkers, updateWind } from "./wind";
+import { pennantTexture, waveFlag } from "./flag";
 import { OAK_SHAPES, Woods, tintOf, type BoulderSpot, type TreeSpot } from "./woods";
 import { Gulls, type GullSpot } from "./gulls";
 import { OVERLAY_LAYER, PostFx, type Air } from "./post";
@@ -5608,8 +5609,13 @@ export class WorldRenderer {
         g.userData.townLid = lid;
         // The pole behind, with the crew's pennant and a lantern.
         add(box(0.06, 1.9, 0.06), darkOak, 0.5, 0.95, -0.46);
-        add(box(0.5, 0.26, 0.02), lambert("#b23a2e"), 0.22, 1.7, -0.46);
-        add(box(0.5, 0.05, 0.022), lambert("#e9c85a"), 0.22, 1.7, -0.46);
+        add(new THREE.SphereGeometry(0.045, 6, 4), brass, 0.5, 1.92, -0.46);
+        // The pennant: a sheet of cloth off the pole, a gold stripe along it; waveFlag ripples it each frame.
+        const cloth = new THREE.PlaneGeometry(0.5, 0.26, 12, 3);
+        cloth.translate(-0.25, 0, 0);
+        cloth.userData.rest = Float32Array.from(cloth.getAttribute("position").array);
+        const flag = add(cloth, new THREE.MeshLambertMaterial({ map: pennantTexture(), side: THREE.DoubleSide, flatShading: true }), 0.47, 1.7, -0.46);
+        g.userData.flag = flag;
         add(box(0.02, 0.12, 0.02), iron, 0.5, 1.22, -0.36);
         add(box(0.09, 0.11, 0.09), new THREE.MeshBasicMaterial({ color: "#ffd98a" }), 0.5, 1.12, -0.36).userData.glow = true;
         break;
@@ -5812,6 +5818,8 @@ export class WorldRenderer {
   private static readonly TOWN_LID = -1.9;
   /** The town chest's lid: whether it is meant to be open, how far open it is now (0 shut, 1 thrown back), and how fast it is swinging. */
   private chestLid = { open: false, at: 0, speed: 0, seen: 0 };
+  /** Scratch: where the town chest's pennant is, for the gust on it. */
+  private flagAt = new THREE.Vector3();
 
   /** Open the town chest's lid, or shut it: it swings on a spring, a little past where it is going and back. */
   setChestOpen(open: boolean) {
@@ -5891,8 +5899,14 @@ export class WorldRenderer {
     this.floaters.push({ sprite, age: 0 });
   }
 
-  /** Each frame: lids swinging, crates rocking, glints twinkling. */
+  /** Each frame: lids swinging, crates rocking, glints twinkling, the town chest's pennant flying. */
   private movePois() {
+    const flag = this.poiObject("townchest")?.userData.flag as THREE.Mesh | undefined;
+    if (flag && !this.still) {
+      flag.getWorldPosition(this.flagAt);
+      // Always a breeze off the sea, and harder as a gust goes by (when the wind is drawn at all).
+      waveFlag(flag.geometry, this.clock, 0.45 + gustAt(this.flagAt.x, this.flagAt.z));
+    }
     {
       // The town chest's lid, sprung toward open or shut. Opening it is flung; shutting it is let fall and thuds home.
       const lid = this.chestLid;
