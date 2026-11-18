@@ -58,7 +58,13 @@ export const ABILITY_POOLS: AbilityPools = {
     { id: "chorus", level: 1 },
     { id: "lead_by_example", level: 1 },
   ],
-  staff_sage: [],
+  staff_sage: [
+    { id: "falling_star", level: 1 },
+    { id: "constellation", level: 1 },
+    { id: "new_moon", level: 1 },
+    { id: "chart_a_course", level: 1 },
+    { id: "north_star", level: 1 },
+  ],
   sre_warden: [],
   data_warlock: [],
 };

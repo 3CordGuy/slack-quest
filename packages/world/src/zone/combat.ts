@@ -6,12 +6,12 @@
 // blows, blasts and bombs reach crates too (crates.ts).
 
 import { hexDistance, hexNeighbors, hexSegment, posKey, type HexPos } from "@gantt-quest/core";
-import { ABILITIES, ARMOR_DAMAGE_DIVISOR, BARD_AURA, WARLOCK_BLEED_TURNS, type AbilityDef } from "../content";
+import { ABILITIES, ARMOR_DAMAGE_DIVISOR, BARD_AURA, WARLOCK_BLEED_TURNS, type AbilityDef, type EffectKind } from "../content";
 import { tileAt, type Poi } from "../map";
-import { DEBUFFS, addCondition, attackContext, attackRoll, damage, defenceOf, giveAway, has, heal, inWater, removeCondition, saveBonus, saveRoll, shieldUnit, unseen, type Ctx } from "./engine";
+import { DEBUFFS, addCondition, attackContext, attackRoll, damage, defenceOf, giveAway, has, heal, inWater, kindle, removeCondition, saveBonus, saveRoll, shieldUnit, unseen, type Ctx } from "./engine";
 import { cratesOn, crateById, hurtCrate, isCrateId } from "./crates";
-import { adjacent, blast, blockerAt, directionToward, elevOf, inFight, lineFrom, pathIn, sameHex, sees, solid, stepCost, unitAt, unitById, zoneReach } from "./geometry";
-import { COMMON_ACTIONS, CORAL_ARMOR, SHANTY, ENEMY_BURST, FLEE_RANGE, JUMP_MOVE_COST, POTION_EDGE, SAVE_STAT, SMUGGLED, THROWABLES, TORCH_GROUND_ROUNDS, abilityDice, enemyStrikes, healDice, jumpRange, reactionStrike, tacticOf, throwRange, type EnemyStrike, type Tactic } from "./kit";
+import { adjacent, blast, blockerAt, courseShare, directionToward, elevOf, inFight, lineFrom, pathIn, sameHex, sees, solid, stepCost, unitAt, unitById, zoneReach, type Course } from "./geometry";
+import { CHART, COMMON_ACTIONS, CORAL_ARMOR, SHANTY, ENEMY_BURST, FLEE_RANGE, JUMP_MOVE_COST, POTION_EDGE, SAVE_STAT, SMUGGLED, THROWABLES, TORCH_GROUND_ROUNDS, abilityDice, enemyStrikes, healDice, jumpRange, reactionStrike, tacticOf, throwRange, type EnemyStrike, type Tactic } from "./kit";
 import { d20, hitChance, mod, proficiency, rollDice, statOf } from "./rules";
 import { seenByHeroes } from "./light";
 import { HINDERING, chill, clearSurfaces, dropTorch, enterSurface, ignite, letGoTorch, placeSurface } from "./surfaces";
@@ -19,6 +19,7 @@ import type { Budget, CommonAction, Throwable, Unit, ZoneState } from "./types";
 import { clusterHexes, enterWeather, makeWeather, rainHexes } from "./weather";
 import { summonTurtle } from "./summon";
 import { SHANTIES, joinable, shantyOf, songDamage, songMove, windward } from "./song";
+import { constellationHexes, constellationLinks, courseMarks, litFoes } from "./stars";
 
 /** How near a Bard has to be for their tune to help. */
 export const BARD_AURA_RANGE = 3;
@@ -85,6 +86,8 @@ function standClear(ctx: Ctx, unit: Unit): void {
  */
 export function walk(ctx: Ctx, unit: Unit, path: HexPos[], budget: Budget | null): void {
   let taken: HexPos[] = [];
+  // A course charted: steps nearer a mark spend its movement first.
+  const course = courseFor(ctx.state, unit, budget);
   const flush = () => {
     if (taken.length > 0) ctx.events.push({ t: "moved", id: unit.id, path: taken });
     taken = [];
@@ -92,11 +95,13 @@ export function walk(ctx: Ctx, unit: Unit, path: HexPos[], budget: Budget | null
   for (const next of path) {
     if (unit.down) break;
     const step = stepCost(ctx.state, unit, unit.pos, next);
-    if (!Number.isFinite(step.cost) || (budget && step.cost > budget.move)) break;
+    const share = course ? courseShare(course, unit.pos, next, step.cost) : 0;
+    if (!Number.isFinite(step.cost) || (budget && step.cost - share > budget.move)) break;
     provoke(ctx, unit, next, budget, flush);
     if (unit.down) break;
     unit.pos = next;
-    if (budget) budget.move -= step.cost;
+    if (budget) budget.move -= step.cost - share;
+    if (course && share > 0) course.left = budget!.course = course.left - share;
     taken.push(next);
     if (enterSurface(ctx, unit, flush) || unit.down) break;
     enterWeather(ctx, unit);
@@ -104,6 +109,13 @@ export function walk(ctx: Ctx, unit: Unit, path: HexPos[], budget: Budget | null
   }
   flush();
   standClear(ctx, unit);
+}
+
+/** The course charted for `unit` to walk this turn, if one is and it has some of its movement left: zoneReach and walk spend it. */
+export function courseFor(state: ZoneState, unit: Unit, budget: Budget | null | undefined): Course | undefined {
+  if (!budget?.course) return undefined;
+  const marks = courseMarks(state, unit);
+  return marks.length > 0 ? { marks, left: budget.course } : undefined;
 }
 
 /** Knock `target` one hex directly away from `from`. Against a wall, a cliff or another body it takes a knock and falls Prone instead. */
@@ -192,9 +204,18 @@ function pocket(ctx: Ctx, unit: Unit, target: Unit): void {
 
 // ---------- a hero's abilities ----------
 
-/** The hexes an ability covers, for one that takes a shape: what is lit up before it is used, and what it then hits. */
-export function abilityArea(state: ZoneState, unit: Unit, ability: string, at?: HexPos): HexPos[] {
+/**
+ * The hexes an ability covers, for one that takes a shape: what is lit up before it is used, and what it then hits.
+ * `target`: the ally an ability that reaches round an ally (North Star) is used on.
+ */
+export function abilityArea(state: ZoneState, unit: Unit, ability: string, at?: HexPos, target?: string): HexPos[] {
   const tactic = tacticOf(ability);
+  if (tactic.constellation) return constellationHexes(state, unit);
+  if (tactic.newMoon) return litFoes(state, unit).map((u) => u.pos);
+  if (tactic.northStar) {
+    const ally = target ? unitById(state, target) : unit;
+    return ally ? hexNeighbors(ally.pos, state.map.grid) : [];
+  }
   if (tactic.weather === "rain") return at ? rainHexes(state, unit.pos, at) : [];
   if (tactic.splash) return at ? clusterHexes(state, unit.pos, at, tactic.splash.hexes) : [];
   if (tactic.shape === "blast") return at ? blast(state.map, at, tactic.radius ?? 1) : [];
@@ -234,6 +255,11 @@ export function checkAbility(state: ZoneState, unit: Unit, ability: string, aim:
     if (state.units.some((u) => u.side !== unit.side && !u.down && adjacent(u.pos, unit.pos))) return null;
     return unit.side === "hero" && def.damage && cratesBeside(state, unit).length > 0 ? null : "No enemy is next to you.";
   }
+  // A course is charted by the stars, not by sight: any hex in range will do, seen or not.
+  if (tactic.chart) {
+    if (!aim.at || !tileAt(state.map, aim.at)) return "Pick a hex to mark.";
+    return hexDistance(unit.pos, aim.at) > tactic.range ? "Out of range." : null;
+  }
   if (tactic.shape === "blast") {
     if (!aim.at || !tileAt(state.map, aim.at)) return "Pick a hex.";
     return inReach(aim.at);
@@ -244,6 +270,8 @@ export function checkAbility(state: ZoneState, unit: Unit, ability: string, aim:
     if (!target || target.side !== unit.side) return "Pick an ally.";
     return target.id === unit.id ? null : inReach(target.pos);
   }
+  if (tactic.constellation) return constellationLinks(state, unit).length > 0 ? null : `No ally of yours is within ${tactic.constellation.link} hexes, in clear sight, to link to.`;
+  if (tactic.newMoon) return litFoes(state, unit).length > 0 ? null : "No enemy is lit by Guiding Light.";
   if (tactic.summon) {
     if (!state.encounter || !inFight(state, unit.id)) return "That is for a fight.";
     if (!aim.at || sameHex(aim.at, unit.pos) || !tileAt(state.map, aim.at)) return "Pick a hex to call it to.";
@@ -287,9 +315,15 @@ function afflict(ctx: Ctx, unit: Unit, def: AbilityDef, target: Unit, save: bool
   if (target.down) return;
   if (def.perfect) {
     const effect = def.perfect.effect;
-    if (!save || !saveRoll(ctx, target, SAVE_STAT[effect], saveDc(unit, def), `Resist ${def.name}`).ok) addCondition(ctx, target, effect, def.perfect.turns);
+    if (!save || !saveRoll(ctx, target, SAVE_STAT[effect], saveDc(unit, def), `Resist ${def.name}`).ok) give(ctx, unit, target, effect, def.perfect.turns);
   }
-  if (def.targetEffect && !target.down) addCondition(ctx, target, def.targetEffect.effect, def.targetEffect.turns);
+  if (def.targetEffect && !target.down) give(ctx, unit, target, def.targetEffect.effect, def.targetEffect.turns);
+}
+
+/** An ability's condition on a target: Burning is set by the user's hand, a stack more under North Star. */
+function give(ctx: Ctx, unit: Unit, target: Unit, effect: EffectKind, turns: number): void {
+  if (effect === "burning") kindle(ctx, unit, target, turns);
+  else addCondition(ctx, target, effect, turns);
 }
 
 /** One attack roll with an ability against one target. Returns whether it landed. */
@@ -317,6 +351,7 @@ function strike(ctx: Ctx, unit: Unit, def: AbilityDef, tactic: Tactic, target: U
   // A Warlock's critical hits open a wound.
   if (roll.crit && unit.kind === "data_warlock") addCondition(ctx, target, "bleeding", WARLOCK_BLEED_TURNS);
   afflict(ctx, unit, def, target, true);
+  if (tactic.guide && !target.down) addCondition(ctx, target, "guiding_light", tactic.guide);
   if (melee) thorns(ctx, unit, target);
   if (tactic.ignites) ignite(ctx, target.pos, unit.id);
   if (tactic.surface) placeSurface(ctx, [target.pos], tactic.surface.kind, tactic.surface.rounds, unit.id);
@@ -398,6 +433,30 @@ export function resolveAbility(ctx: Ctx, unit: Unit, ability: string, aim: Aim &
   } else if (tactic.summon) {
     const turtle = summonTurtle(ctx, unit, aim.at!);
     if (!turtle.down) ctx.onStep?.(turtle, () => {});
+    landed = true;
+  } else if (tactic.chart) {
+    // One mark at a time: the new one takes the old one's place.
+    removeCondition(unit, "charted");
+    addCondition(ctx, unit, "charted", tactic.chart.rounds);
+    const mark = unit.conditions.find((c) => c.kind === "charted");
+    if (mark) mark.at = { q: aim.at!.q, r: aim.at!.r };
+    chartCourse(ctx, unit);
+    landed = true;
+  } else if (tactic.constellation) {
+    // The links pass harmlessly over the user's side; every enemy on one is struck once and lit, however many cross it.
+    const keys = new Set(abilityArea(state, unit, ability).map(posKey));
+    const rolled = rollDice(ctx.rng, abilityDice(def)) + damageBonus(state, unit, def);
+    for (const victim of foes().filter((u) => keys.has(posKey(u.pos)))) {
+      damage(ctx, victim, rolled, { actor: unit.id, what: def.id, ignoreGuard: def.ignoreGuard });
+      if (!victim.down) addCondition(ctx, victim, "guiding_light", tactic.guide ?? 0);
+    }
+    landed = true;
+  } else if (tactic.newMoon) {
+    // Every light put out at once, each for a blow that cannot be dodged.
+    const lit = litFoes(state, unit);
+    const rolled = rollDice(ctx.rng, abilityDice(def)) + damageBonus(state, unit, def);
+    for (const victim of lit) removeCondition(victim, "guiding_light");
+    for (const victim of lit) damage(ctx, victim, rolled, { actor: unit.id, what: def.id, ignoreGuard: def.ignoreGuard });
     landed = true;
   } else if (tactic.shape === "single") {
     const target = unitById(state, aim.target!)!;
@@ -485,6 +544,15 @@ export function resolveAbility(ctx: Ctx, unit: Unit, ability: string, aim: Aim &
     const target = tactic.shape === "ally" && aim.target ? unitById(state, aim.target)! : unit;
     const soaked = tactic.regen && inWater(state, target) ? tactic.regen.water : 0;
     if (def.heal) heal(ctx, target, rollDice(ctx.rng, healDice(def)) + Math.max(0, mod(statOf(unit, def.stat))) + Math.floor(unit.level / 2) + soaked, { actor: unit.id, what: def.id });
+    if (tactic.northStar) {
+      // The blow round the ally first, then the star: what it strikes now is not set alight by it.
+      const rolled = rollDice(ctx.rng, abilityDice(def)) + damageBonus(state, unit, def);
+      for (const foe of foes().filter((u) => adjacent(u.pos, target.pos))) {
+        damage(ctx, foe, rolled, { actor: unit.id, what: def.id, ignoreGuard: def.ignoreGuard });
+        if (!foe.down) addCondition(ctx, foe, "guiding_light", tactic.guide ?? 0);
+      }
+      addCondition(ctx, target, "north_star", tactic.northStar.rounds);
+    }
     if (tactic.regen) addCondition(ctx, target, "regenerating", tactic.regen.rounds);
     if (tactic.armor) addCondition(ctx, target, "coral_armor", tactic.armor.rounds);
     if (tactic.shanty) {
@@ -519,6 +587,19 @@ export function resolveAbility(ctx: Ctx, unit: Unit, ability: string, aim: Aim &
   }
   if (landed && def.selfEffect && !unit.down) addCondition(ctx, unit, def.selfEffect.effect, def.selfEffect.turns);
   if (wasUnseen && !tactic.hide && !tactic.steal) giveAway(ctx, unit);
+}
+
+/**
+ * After a course is charted: everyone of the user's side whose turn is underway, and who has had no course this turn,
+ * gets its movement now. One who has had theirs (even spent) gets no more for a mark moved.
+ */
+export function chartCourse(ctx: Ctx, unit: Unit): void {
+  const enc = ctx.state.encounter;
+  if (!enc) return;
+  for (const u of ctx.state.units) {
+    const budget = u.side === unit.side && !u.down && enc.acting.includes(u.id) && !enc.done.includes(u.id) ? enc.budgets[u.id] : undefined;
+    if (budget && budget.course === undefined) budget.course = CHART.speed;
+  }
 }
 
 /**

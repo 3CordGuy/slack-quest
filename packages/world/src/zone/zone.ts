@@ -21,14 +21,14 @@ import type { HeroSheet } from "../hero";
 import { addStats, maxFocusFor, maxHpFor } from "../progression";
 import { makeRng, seedFromString } from "../rng";
 import { enemyTurn } from "./ai";
-import { abilityArea, checkAbility, checkCommon, checkDrink, checkLight, checkThrow, doCommon, drinkItem, resolveAbility, throwItem, walk } from "./combat";
-import { has, heal, regrow, removeCondition, tick, unseen, type Ctx } from "./engine";
+import { abilityArea, checkAbility, checkCommon, checkDrink, checkLight, checkThrow, courseFor, doCommon, drinkItem, resolveAbility, throwItem, walk } from "./combat";
+import { burnOf, has, heal, regrow, removeCondition, tick, unseen, type Ctx } from "./engine";
 import { ALERT_RANGE, JOIN_RANGE, freeHexNear, generateZone } from "./gen";
 import { generateDelve } from "./delve";
 import { checkOpen, openChest } from "./loot";
 import { isCrateId } from "./crates";
 import { FREE_WALK, blast, blockerAt, inFight, pathIn, sameHex, sees, solid, unitAt, unitById, zoneReach } from "./geometry";
-import { AURAS, FLEE_RANGE, SEA_TURTLE, STARTING_ITEMS, THROWABLES, THROWABLE_KINDS, cleanItems, commonCost, enemyHp, enemyMove, tacticOf } from "./kit";
+import { AURAS, CHART, FLEE_RANGE, SEA_TURTLE, STARTING_ITEMS, THROWABLES, THROWABLE_KINDS, cleanItems, commonCost, enemyHp, enemyMove, tacticOf } from "./kit";
 import { d20, heroMove, mod, rollDice, statOf } from "./rules";
 import { hiddenEnemies, sentToClient } from "./light";
 import { tickWeather, weatherAtTurn } from "./weather";
@@ -38,6 +38,7 @@ import { checkUnlock, dropKeys, heardBy, workDoor } from "./doors";
 import { checkForage, forage } from "./forage";
 import { dismiss } from "./summon";
 import { shantyOf, songMove, windward } from "./song";
+import { courseMarks } from "./stars";
 import type { Budget, DevOp, Encounter, Throwable, Unit, ZoneAction, ZoneEffect, ZoneEvent, ZoneHero, ZoneOptions, ZoneState, ZoneStep, ZoneView } from "./types";
 
 /** Rounds a surface painted from the dev toolbox lasts. */
@@ -318,7 +319,7 @@ function beginTurn(ctx: Ctx, enc: Encounter, unit: Unit): boolean {
   // A Lively Shanty's lift from those who joined it lasts until its Bard's turn comes round again.
   const song = shantyOf(unit);
   if (song) song.surge = 0;
-  for (const kind of ["bleeding", "burning"] as const) if (has(unit, kind)) tick(ctx, unit, kind, EFFECT_TICK[kind] ?? 0);
+  for (const kind of ["bleeding", "burning"] as const) if (has(unit, kind)) tick(ctx, unit, kind, kind === "burning" ? burnOf(unit) : (EFFECT_TICK[kind] ?? 0));
   if (unit.down) return false;
   // A Druid mends a little every turn.
   if (unit.kind === "backend_druid" && unit.hp < unit.maxHp) heal(ctx, unit, DRUID_REGEN, { actor: unit.id, what: "regen" });
@@ -353,6 +354,8 @@ function beginTurn(ctx: Ctx, enc: Encounter, unit: Unit): boolean {
     move = Math.floor(move / 2);
   }
   enc.budgets[unit.id] = { action: true, bonus: true, move, moveMax: base, disengaged: false, ...(sung > 0 ? { song: sung } : {}) };
+  // A course charted by one of its side: further, on the steps that bring it nearer the mark.
+  if (courseMarks(ctx.state, unit).length > 0) enc.budgets[unit.id].course = CHART.speed;
   // Weather it stands in acts now its turn is underway, with a budget for the winds to change.
   weatherAtTurn(ctx, unit);
   return !unit.down;
@@ -688,7 +691,7 @@ function act(ctx: Ctx, action: ZoneAction): string | null {
   }
   if (action.type === "move") {
     if (sameHex(action.to, unit.pos)) return null;
-    const reach = zoneReach(state, unit, budget ? budget.move : FREE_WALK);
+    const reach = zoneReach(state, unit, budget ? budget.move : FREE_WALK, undefined, courseFor(state, unit, budget));
     const end = reach.get(posKey(action.to));
     if (!end) return budget ? "You cannot get there with the movement you have left." : "You cannot get there.";
     if (!end.stop) return "Someone is standing there.";
@@ -702,8 +705,8 @@ function act(ctx: Ctx, action: ZoneAction): string | null {
     const aim = { target: action.target, at: action.at, focus: !!action.focus && !isCrateId(state, action.target) };
     const wrong = checkAbility(state, unit, action.ability, aim);
     if (wrong) return wrong;
-    // Something that takes a shape can catch a group that had not noticed anyone: it has now.
-    const area = new Set(abilityArea(state, unit, action.ability, action.at).map(posKey));
+    // Something that takes a shape can catch a group that had not noticed anyone: it has now. A mark on the map touches nobody.
+    const area = new Set(tactic.chart ? [] : abilityArea(state, unit, action.ability, action.at, action.target).map(posKey));
     const touched = state.units.filter((u) => u.id === action.target || area.has(posKey(u.pos)));
     const back = reachBack(state, unit, touched);
     if (back) return back;

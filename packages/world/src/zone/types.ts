@@ -19,9 +19,11 @@ export type Side = "hero" | "enemy";
  * What can be on a unit: the old fights' effects, three the tiles bring, the auras a hero can carry (kit.ts AURAS),
  * what the Rogue's tricks leave: Unseen (Sneak), and a fire bomb smuggled into the pack for a few turns (Contraband);
  * the Druid's: a heal that comes again each turn (Aqueous Regeneration), and a shell of coral (Coral Armor);
- * and the Bard's: a shanty sung (song.ts), and Inspired (from joining one, or Lead by Example: the next roll to hit has advantage).
+ * the Bard's: a shanty sung (song.ts), and Inspired (from joining one, or Lead by Example: the next roll to hit has advantage);
+ * and the Sage's (stars.ts): Guiding Light on an enemy (whoever attacks it has advantage), North Star on an ally (their blows
+ * set what they hit Burning), and a course charted (on the Sage: the mark their allies move faster toward).
  */
-export type Condition = EffectKind | "poisoned" | "prone" | "wet" | "beacon" | "mending" | "bolstered" | "invisible" | "contraband" | "regenerating" | "coral_armor" | ShantyKind | "inspired";
+export type Condition = EffectKind | "poisoned" | "prone" | "wet" | "beacon" | "mending" | "bolstered" | "invisible" | "contraband" | "regenerating" | "coral_armor" | ShantyKind | "inspired" | "guiding_light" | "north_star" | "charted";
 
 /** The shanties a Bard sings (song.ts): a condition on the Bard, reaching everyone of theirs nearby. */
 export type ShantyKind = "lively_shanty" | "dour_shanty" | "windgod_shanty";
@@ -32,8 +34,10 @@ export interface UnitCondition {
   rounds: number;
   /** Put on during the bearer's own turn: the end of that turn does not count against it. */
   fresh?: boolean;
-  /** Bolstered: the points of shield left, spent before HP. */
+  /** Bolstered: the points of shield left, spent before HP. Burning: its stacks (none said is one), each burning for the full tick. */
   amount?: number;
+  /** A course charted (Chart a Course): the hex marked. */
+  at?: HexPos;
   /** A shanty: the allies who have joined it (each once), each widening it a hex. */
   joined?: string[];
   /** A shanty: how many have joined it since the Bard's turn last began (the extra each joining gives lasts that long). */
@@ -137,6 +141,11 @@ export interface Budget {
   disengaged: boolean;
   /** The movement a Wind-god's Shanty has added this turn, so a shanty widened or begun mid-turn adds only what is still owed. */
   song?: number;
+  /**
+   * Movement from a course charted (Chart a Course) left this turn: spent, before `move`, only on steps that bring the
+   * unit nearer a mark. Missing: no course was charted for it this turn (one charted mid-turn gives it then).
+   */
+  course?: number;
 }
 
 export interface Encounter {

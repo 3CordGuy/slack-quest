@@ -30,6 +30,8 @@
 .hud-pips.bonus i { width: 14px; height: 13px; border: none; box-shadow: none; clip-path: polygon(50% 0, 100% 100%, 0 100%); background: #4a2c1c; }
 .hud-pips.bonus i.on { background: #f29a5b; box-shadow: none; }
 .hud-pips.move i.on { background: #f0c552; box-shadow: 0 0 0 2px #8a6a26; }
+/* A course charted (Chart a Course): movement good only for steps toward the mark, in the mark's red. */
+.hud-pips.course i.on { background: #ff5a5a; box-shadow: 0 0 0 2px #8a2626; }
 .hud-pips.focus i { rotate: 45deg; }
 .hud-pips.focus i.on { background: #7fc4e8; box-shadow: 0 0 0 2px #2f6f96; }
 .hud-chip { color: var(--muted); background: rgba(18, 12, 8, 0.86); border: 2px solid var(--hw-out); padding: 0 6px; white-space: nowrap; }

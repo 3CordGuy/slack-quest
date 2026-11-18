@@ -6,7 +6,7 @@
 export * from "./types";
 export { createZone, ensureMouth, stepZone, zoneView, zoneAwaiting, zoneHero, standInHero } from "./zone";
 export { ZONE_GRIDS, ALERT_RANGE, JOIN_RANGE, DEFAULT_ZONE_OPTIONS, BIOME_LEADS, zoneOptions, generateZone, groupKinds, type ZonePlan } from "./gen";
-export { FREE_WALK, zoneReach, pathIn, sees, sameHex, elevOf, inFight, flies, unitAt, unitById, lineFrom, stepCost, blockerAt, blast as zoneBlast, type Reached } from "./geometry";
+export { FREE_WALK, zoneReach, pathIn, sees, sameHex, elevOf, inFight, flies, unitAt, unitById, lineFrom, stepCost, blockerAt, blast as zoneBlast, type Reached, type Course } from "./geometry";
 export {
   TACTICS,
   tacticOf,
@@ -33,6 +33,10 @@ export {
   SHANTY,
   AURAS,
   CHORUS_PER_ALLY,
+  GUIDING_LIGHT,
+  CONSTELLATION,
+  CHART,
+  NORTH_STAR,
   cleanItems,
   throwRange,
   jumpRange,
@@ -53,7 +57,8 @@ export {
 } from "./kit";
 export { mod as statMod, proficiency, heroMove, heroDefence, diceFor, diceText, diceAverage, hitChance, type Dice } from "./rules";
 export { attackContext, defenceOf, has as hasCondition, shieldOf, unseen, type AttackContext } from "./engine";
-export { abilityArea, carrySpot, checkAbility, checkCommon, checkDrink, checkLight, checkThrow, crateBlow, previewAttack, BARD_AURA_RANGE, type Aim } from "./combat";
+export { abilityArea, carrySpot, checkAbility, checkCommon, checkDrink, checkLight, checkThrow, courseFor, crateBlow, previewAttack, BARD_AURA_RANGE, type Aim } from "./combat";
+export { chartOf, constellationHexes, constellationLinks, courseMarks, litFoes } from "./stars";
 export { SURFACE_INFO, HARMFUL as HARMFUL_SURFACES } from "./surfaces";
 export { WEATHER_INFO } from "./weather";
 export { summonsOf } from "./summon";

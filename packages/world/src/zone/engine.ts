@@ -6,7 +6,8 @@ import { hexDistance, posKey, type StatKey } from "@gantt-quest/core";
 import { tileAt } from "../map";
 import type { Rng } from "../rng";
 import { adjacent, elevOf, inFight } from "./geometry";
-import { AQUEOUS, AURAS, CORAL_ARMOR, ENEMY_KIT, SHIELD_SET_ASIDE, enemyDefence, enemySave } from "./kit";
+import { EFFECT_TICK } from "../content";
+import { AQUEOUS, AURAS, CORAL_ARMOR, ENEMY_KIT, NORTH_STAR, SHIELD_SET_ASIDE, enemyDefence, enemySave } from "./kit";
 import { inDark } from "./light";
 import { d20, heroDefence, mod, netAdvantage, rollDice, statOf } from "./rules";
 import { songDefence, songHit, windward } from "./song";
@@ -54,7 +55,20 @@ export function addCondition(ctx: Ctx, unit: Unit, kind: Condition, rounds: numb
   }
   const now = unit.conditions.find((c) => c.kind === kind)!;
   if (amount !== undefined) now.amount = Math.max(now.amount ?? 0, amount);
+  // Burning's stacks: none said is one, and a burning set alight again keeps the stacks it has.
+  if (kind === "burning" && (now.amount ?? 1) <= 1) delete now.amount;
   ctx.events.push({ t: "condition", target: unit.id, kind, rounds, ...(now.amount !== undefined ? { amount: now.amount } : {}) });
+}
+
+/** What Burning takes off a unit at the start of its turn: the tick for each of its stacks. */
+export const burnOf = (unit: Unit): number => (EFFECT_TICK.burning ?? 0) * (unit.conditions.find((c) => c.kind === "burning")?.amount ?? 1);
+
+/**
+ * Set a unit Burning by a blow of `by`'s: under North Star, one stack more than the blow would give (one, if it gives
+ * none). `stacks` is what the blow gives itself.
+ */
+export function kindle(ctx: Ctx, by: Unit | undefined, target: Unit, rounds: number, stacks = 1): void {
+  addCondition(ctx, target, "burning", rounds, stacks + (by && has(by, "north_star") ? 1 : 0));
 }
 
 /** Whether a unit is Unseen (Sneak): no enemy can attack it, or pick it out to. */
@@ -126,6 +140,9 @@ export function damage(ctx: Ctx, target: Unit, amount: number, opts: { actor: st
   target.hp -= dealt;
   ctx.events.push({ t: "hit", actor: opts.actor, target: target.id, amount: dealt, what: opts.what, crit: !!opts.crit, ...(blocked > 0 ? { blocked } : {}) });
   if (target.hp <= 0) fall(ctx, target);
+  // North Star: whatever its bearer strikes on the other side catches fire.
+  const by = opts.actor ? ctx.state.units.find((u) => u.id === opts.actor) : undefined;
+  if (by && by.side !== target.side && has(by, "north_star")) addCondition(ctx, target, "burning", NORTH_STAR.burn);
   return dealt;
 }
 
@@ -179,6 +196,7 @@ export function attackContext(state: ZoneState, attacker: Unit, target: Unit, op
   if (opts.focus) adv("Focus");
   if (has(attacker, "invisible")) adv("you are Unseen");
   if (has(attacker, "inspired")) adv("you are Inspired");
+  if (has(target, "guiding_light") && target.side !== attacker.side) adv("the target is lit by Guiding Light");
   if (attacker.side === "enemy" && ENEMY_KIT[attacker.kind]?.pack && state.units.some((u) => u.id !== attacker.id && u.side === "enemy" && !u.down && adjacent(u.pos, target.pos))) adv("the pack is on the target");
   if (state.units.some((u) => u.side === attacker.side && !u.down && has(u, "beacon") && hexDistance(u.pos, attacker.pos) <= AURAS.range)) adv(has(attacker, "beacon") ? "your Beacon" : "an ally's Beacon");
   if (has(attacker, "poisoned")) dis("Poisoned");

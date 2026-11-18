@@ -4,8 +4,9 @@ import { ABILITIES, EFFECT_TICK, ENEMIES, WEAPONS, abilitiesFor } from "../conte
 import type { Biome, Tile } from "../map";
 import { makeRng } from "../rng";
 import { walk } from "./combat";
-import { addCondition, attackContext, damage, type Ctx } from "./engine";
+import { addCondition, attackContext, burnOf, damage, kindle, type Ctx } from "./engine";
 import { shantyOf, shantyRadius, songsOn } from "./song";
+import { chartOf, constellationLinks } from "./stars";
 import { ALERT_RANGE, DEFAULT_ZONE_OPTIONS, JOIN_RANGE, generateZone, zoneOptions } from "./gen";
 import { adjacent, blast, flies, sees, solid, unitAt, zoneReach } from "./geometry";
 import { AURAS, BOLSTER, ENEMY_BURST, SHIELD_WALL, ENEMY_KIT, EXPLORE_ROUND_MS, FLEE_RANGE, LIGHT_RADIUS, SHIELD_SET_ASIDE, TACTICS, TORCH_GROUND_ROUNDS, TORCH_HELD_ROUNDS, TORCH_ROUND_MS, commonCost, enemyHp, enemyStrikes, tacticOf } from "./kit";
@@ -3367,5 +3368,199 @@ describe("a dev kit", () => {
     let state = must(onMap(), kit("ann"));
     state = must(state, { type: "join", hero: { ...standInHero("qa_paladin", "ann", 1)!, name: "ann" } });
     expect(unit(state, "ann")).toMatchObject({ kind: "devops_mage", level: 7 });
+  });
+});
+
+describe("the Sage's stars", () => {
+  const ALL = ["falling_star", "constellation", "new_moon", "chart_a_course", "north_star"];
+  /**
+   * A Sage (ann) with a crewmate 3 hexes along row 6 (bo) and another 3 past him (cy), in a fight with `foes` (dummies,
+   * with HP to spare). The three heroes share one turn, and it is theirs.
+   */
+  function party(foes: HexPos[] = [at(14, 10)]) {
+    let state = board();
+    state.aiOff = true;
+    hero(state, "ann", "staff_sage", at(5, 6)).abilities = [...ALL];
+    hero(state, "bo", "qa_paladin", at(8, 6));
+    hero(state, "cy", "devops_mage", at(11, 6));
+    const ids = foes.map((pos) => {
+      const e = enemy(state, "dummy", pos);
+      e.hp = e.maxHp = 500;
+      return e.id;
+    });
+    state = provoke(state);
+    const enc = state.encounter!;
+    enc.order = ["ann", "bo", "cy", ...ids];
+    Object.assign(enc.init, { ann: 20, bo: 19, cy: 18 }, Object.fromEntries(ids.map((id) => [id, 1])));
+    while (!["ann", "bo", "cy"].every((id) => state.encounter!.acting.includes(id))) state = must(state, { type: "timeout" });
+    return { state, foes: ids };
+  }
+  function nextTurn(state: ZoneState, sink: ZoneEvent[] = []): ZoneState {
+    for (const id of [...state.encounter!.acting]) if (!state.encounter!.done.includes(id) && !unit(state, id).down) state = must(state, { type: "end_turn", by: id, unit: id }, sink);
+    while (!state.encounter!.acting.includes("ann") || state.encounter!.done.includes("ann")) state = must(state, { type: "timeout" }, sink);
+    return state;
+  }
+  const cast = (ability: string, aim: { target?: string; at?: HexPos } = {}): ZoneAction => ({ type: "use", by: "ann", unit: "ann", ability, ...aim });
+  const has = (state: ZoneState, id: string, kind: string) => unit(state, id).conditions.some((c) => c.kind === kind);
+  const hurt = (state: ZoneState, id: string) => unit(state, id).maxHp - unit(state, id).hp;
+
+  it("are all in the Sage's pool", () => {
+    expect(poolFor("staff_sage").map((e) => e.id)).toEqual(ALL);
+  });
+
+  it("Guiding Light: anyone attacking a lit enemy has advantage", () => {
+    const { state, foes } = party();
+    const ctx = () => attackContext(state, unit(state, "bo"), unit(state, foes[0]), { melee: false });
+    expect(ctx().adv).toBe(0);
+    unit(state, foes[0]).conditions.push({ kind: "guiding_light", rounds: 3 });
+    expect(ctx().adv).toBe(1);
+    expect(ctx().notes.join(" ")).toMatch(/Guiding Light/);
+  });
+
+  it("Falling Star: an Action, 7 hexes, 3 turns to wait; landed, the target burns and is lit for 3 of its turns", () => {
+    let landed: ZoneState | null = null;
+    for (let seed = 1; seed < 40 && !landed; seed++) {
+      let { state, foes } = party([at(12, 6)]);
+      state.rng = seed;
+      const events: ZoneEvent[] = [];
+      state = must(state, cast("falling_star", { target: foes[0] }), events);
+      expect(state.encounter!.budgets.ann).toMatchObject({ action: false, bonus: true });
+      expect(unit(state, "ann").cooldowns.falling_star).toBe(4);
+      if (events.some((e) => e.t === "hit" && e.what === "falling_star")) landed = state;
+      else expect(has(state, foes[0], "guiding_light")).toBe(false);
+    }
+    expect(landed).not.toBeNull();
+    const target = landed!.units.find((u) => u.side === "enemy")!;
+    expect(target.conditions.find((c) => c.kind === "guiding_light")?.rounds).toBe(3);
+    expect(target.conditions.some((c) => c.kind === "burning")).toBe(true);
+    // 7 hexes, and no further.
+    const { state, foes } = party([at(13, 6)]);
+    expect(fails(state, cast("falling_star", { target: foes[0] }))).toMatch(/range/);
+  });
+
+  it("Constellation: a Bonus action linking the Sage to ally after ally within 4; enemies on the links are struck and lit, the Sage's side untouched", () => {
+    // Two foes on the line from ann to bo, one between bo and cy, one off the links altogether.
+    let { state, foes } = party([at(6, 6), at(7, 6), at(10, 6), at(6, 9)]);
+    expect(constellationLinks(state, unit(state, "ann")).map((l) => [l.from.id, l.to.id])).toEqual([["ann", "bo"], ["bo", "cy"]]);
+    state = must(state, cast("constellation"));
+    expect(state.encounter!.budgets.ann).toMatchObject({ action: true, bonus: false });
+    expect(unit(state, "ann").cooldowns.constellation).toBe(4);
+    for (const id of foes.slice(0, 3)) {
+      expect(hurt(state, id)).toBeGreaterThan(0);
+      expect(has(state, id, "guiding_light")).toBe(true);
+    }
+    expect(hurt(state, foes[3])).toBe(0);
+    expect(has(state, foes[3], "guiding_light")).toBe(false);
+    for (const id of ["ann", "bo", "cy"]) expect(hurt(state, id)).toBe(0);
+  });
+
+  it("Constellation: an ally more than 4 from the last one linked is left out, and with nobody to link it cannot be used", () => {
+    let { state } = party();
+    unit(state, "cy").pos = at(13, 6);
+    expect(constellationLinks(state, unit(state, "ann")).map((l) => l.to.id)).toEqual(["bo"]);
+    unit(state, "bo").pos = at(10, 6);
+    expect(fails(state, cast("constellation"))).toMatch(/No ally/);
+  });
+
+  it("New Moon: puts out every Guiding Light, striking each lit enemy hard; the unlit are untouched", () => {
+    let { state, foes } = party([at(12, 6), at(14, 9), at(2, 10)]);
+    expect(fails(state, cast("new_moon"))).toMatch(/No enemy is lit/);
+    for (const id of foes.slice(0, 2)) unit(state, id).conditions.push({ kind: "guiding_light", rounds: 3 });
+    state = must(state, cast("new_moon"));
+    expect(state.encounter!.budgets.ann.action).toBe(false);
+    expect(unit(state, "ann").cooldowns.new_moon).toBe(5);
+    for (const id of foes.slice(0, 2)) {
+      expect(has(state, id, "guiding_light")).toBe(false);
+      expect(hurt(state, id)).toBeGreaterThanOrEqual(10);
+    }
+    expect(hurt(state, foes[2])).toBe(0);
+  });
+
+  it("Chart a Course: a Bonus action marking a hex; the Sage's side moves 3 further, but only on steps toward it", () => {
+    let { state } = party();
+    const move = state.encounter!.budgets.bo.move;
+    expect(fails(state, cast("chart_a_course", { at: at(14, 6) }))).toMatch(/range/);
+    state = must(state, cast("chart_a_course", { at: at(13, 6) }));
+    expect(state.encounter!.budgets.ann.bonus).toBe(false);
+    expect(chartOf(unit(state, "ann"))).toEqual(at(13, 6));
+    expect(state.encounter!.budgets.bo.course).toBe(3);
+    // Away from the mark, no further than ever.
+    expect(fails(state, { type: "move", by: "bo", unit: "bo", to: at(8 - move - 1, 6) })).toMatch(/movement/);
+    // Toward it, 3 further, the course's movement spent first. (Up row 6 from bo: cy is passed, the mark is past the end.)
+    unit(state, "cy").pos = at(11, 2);
+    unit(state, "ann").pos = at(5, 2);
+    unit(state, "bo").pos = at(2, 6);
+    expect(fails(state, { type: "move", by: "bo", unit: "bo", to: at(2 + move + 4, 6) })).toMatch(/movement/);
+    state = must(state, { type: "move", by: "bo", unit: "bo", to: at(5, 6) });
+    expect(state.encounter!.budgets.bo).toMatchObject({ course: 0, move });
+    state = must(state, { type: "move", by: "bo", unit: "bo", to: at(5 + move, 6) });
+    expect(state.encounter!.budgets.bo.move).toBe(0);
+  });
+
+  it("Chart a Course: a way that wanders off and back still gets the course's movement for its steps toward the mark", () => {
+    let { state } = party();
+    state = must(state, cast("chart_a_course", { at: at(13, 6) }));
+    const move = state.encounter!.budgets.bo.move;
+    // Rock in the way along row 6 a hex past bo: the walk has to go round it, a step off the row and back.
+    for (const t of state.map.tiles) if (t.q === at(9, 6).q && t.r === 6) t.biome = "rock";
+    unit(state, "cy").pos = at(11, 2);
+    const reach = zoneReach(state, unit(state, "bo"), move, undefined, { marks: [at(13, 6)], left: 3 });
+    expect(reach.get(posKey(at(10, 6)))?.cost).toBeLessThan(3);
+  });
+
+  it("Chart a Course: the mark lasts 4 of the Sage's turns, gives each turn's movement anew, and a new mark replaces it", () => {
+    let { state } = party();
+    state = must(state, cast("chart_a_course", { at: at(13, 6) }));
+    state = nextTurn(state);
+    expect(state.encounter!.budgets.bo.course).toBe(3);
+    // Ready again once 2 more of the Sage's turns have gone by.
+    state = nextTurn(state);
+    expect(fails(state, cast("chart_a_course", { at: at(2, 6) }))).toMatch(/not ready/);
+    state = nextTurn(state);
+    state = must(state, cast("chart_a_course", { at: at(2, 6) }));
+    expect(unit(state, "ann").conditions.filter((c) => c.kind === "charted")).toHaveLength(1);
+    expect(chartOf(unit(state, "ann"))).toEqual(at(2, 6));
+    for (let turn = 1; turn <= 4; turn++) state = nextTurn(state);
+    expect(chartOf(unit(state, "ann"))).toBeDefined();
+    state = nextTurn(state);
+    expect(chartOf(unit(state, "ann"))).toBeUndefined();
+    expect(state.encounter!.budgets.bo.course).toBeUndefined();
+  });
+
+  it("North Star: strikes and lights every enemy beside the ally, then the ally's blows set what they hit Burning", () => {
+    let { state, foes } = party([at(9, 6), at(8, 7), at(12, 10)]);
+    state = must(state, cast("north_star", { target: "bo" }));
+    expect(unit(state, "ann").cooldowns.north_star).toBe(4);
+    for (const id of foes.slice(0, 2)) {
+      expect(hurt(state, id)).toBeGreaterThan(0);
+      expect(has(state, id, "guiding_light")).toBe(true);
+      // The star's own blow sets nothing alight.
+      expect(has(state, id, "burning")).toBe(false);
+    }
+    expect(hurt(state, foes[2])).toBe(0);
+    expect(unit(state, "bo").conditions.find((c) => c.kind === "north_star")?.rounds).toBe(3);
+    // Lit, the blow has advantage; landed, the target burns.
+    let burned = false;
+    for (let seed = 1; seed < 20 && !burned; seed++) {
+      const tryState = structuredClone(state);
+      tryState.rng = seed;
+      const events: ZoneEvent[] = [];
+      const next = must(tryState, { type: "use", by: "bo", unit: "bo", ability: "smite", target: foes[0] }, events);
+      if (events.some((e) => e.t === "hit" && e.what === "smite")) burned = has(next, foes[0], "burning");
+    }
+    expect(burned).toBe(true);
+  });
+
+  it("North Star: a blow that would set a fire anyway sets one more stack, and each stack burns", () => {
+    const { state, foes } = party();
+    const ctx: Ctx = { state, rng: makeRng(3), events: [], effects: [] };
+    const target = unit(state, foes[0]);
+    kindle(ctx, unit(state, "bo"), target, 3);
+    expect(burnOf(target)).toBe(EFFECT_TICK.burning);
+    addCondition(ctx, unit(state, "bo"), "north_star", 3);
+    damage(ctx, target, 1, { actor: "bo", what: "smite" });
+    expect(burnOf(target)).toBe(EFFECT_TICK.burning);
+    kindle(ctx, unit(state, "bo"), target, 3);
+    expect(burnOf(target)).toBe(2 * EFFECT_TICK.burning!);
   });
 });

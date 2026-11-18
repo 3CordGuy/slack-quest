@@ -85,6 +85,16 @@ export interface Tactic {
   chorus?: number;
   /** Single: landed, it leaves the user's ally nearest the target Inspired, with advantage on their next roll to hit (Lead by Example). */
   inspire?: boolean;
+  /** Leaves Guiding Light on each enemy it gets through to, for this many of its turns: whoever attacks it has advantage. */
+  guide?: number;
+  /** Links the user to their allies, one to the next (stars.ts), and strikes the enemies the links cross (Constellation). */
+  constellation?: typeof CONSTELLATION;
+  /** Takes Guiding Light off every enemy that has it, and strikes each of them, no roll (New Moon). */
+  newMoon?: boolean;
+  /** Marks a hex (`at`) the user's side moves faster toward, in place of the user's last mark (Chart a Course). */
+  chart?: typeof CHART;
+  /** Ally: strikes every enemy beside them, no roll, lighting them with Guiding Light, and leaves the ally's blows setting fires (North Star). */
+  northStar?: typeof NORTH_STAR;
 }
 
 const melee = (extra: Partial<Tactic> = {}): Tactic => ({ cost: "action", reach: "melee", range: 1, shape: "single", ...extra });
@@ -152,6 +162,17 @@ export const SNEAK = { range: 1, rounds: 3 };
 export const CONTRABAND = { rounds: 3 };
 /** The item Contraband slips into a pack. */
 export const SMUGGLED: Throwable = "fire";
+
+/**
+ * The Sage's stars (stars.ts). Guiding Light lasts `rounds` of the enemy's turns. Constellation links an ally at most
+ * `link` hexes from the last one linked, in clear sight. Chart a Course gives `speed` movement a turn toward a mark up to
+ * `range` hexes off, for `rounds` of the Sage's turns. North Star lasts `rounds` of the ally's turns, and each blow of theirs
+ * leaves `burn` rounds of Burning.
+ */
+export const GUIDING_LIGHT = { rounds: 3 };
+export const CONSTELLATION = { link: 4 };
+export const CHART = { range: 8, speed: 3, rounds: 4 };
+export const NORTH_STAR = { rounds: 3, burn: 2 };
 
 /** Shield Wall: a shield of `shield` points plus the Paladin's level on themselves alone, through their next turn. */
 export const SHIELD_WALL = { range: 0, shield: 6, rounds: 1 };
@@ -225,6 +246,12 @@ export const TACTICS: Record<string, Tactic> = {
   arcane_ward: guard(),
   meteor: spell(6, { shape: "blast", radius: 1, cooldown: 3, ignites: true, surface: { kind: "fire", rounds: 2 } }),
   plot_the_course: spell(7),
+  // Sage class abilities
+  falling_star: spell(7, { cooldown: 3, ignites: true, guide: GUIDING_LIGHT.rounds }),
+  constellation: { cost: "bonus", reach: "spell", range: 0, shape: "self", cooldown: 3, guide: GUIDING_LIGHT.rounds, constellation: CONSTELLATION },
+  new_moon: { cost: "action", reach: "spell", range: 0, shape: "self", cooldown: 4, newMoon: true },
+  chart_a_course: { cost: "bonus", reach: "spell", range: CHART.range, shape: "blast", radius: 0, cooldown: 2, chart: CHART },
+  north_star: mend(6, { cooldown: 3, guide: GUIDING_LIGHT.rounds, northStar: NORTH_STAR }),
   // Warden
   bulwark_strike: melee(),
   taunt: melee({ cost: "bonus" }),
@@ -288,6 +315,9 @@ export const SAVE_STAT: Record<Condition, StatKey> = {
   dour_shanty: "int_stat",
   windgod_shanty: "int_stat",
   inspired: "int_stat",
+  guiding_light: "int_stat",
+  north_star: "int_stat",
+  charted: "int_stat",
 };
 
 const info = (kind: EffectKind, blurb: string) => ({ name: EFFECT_INFO[kind].name, color: EFFECT_INFO[kind].color, blurb });
@@ -295,7 +325,7 @@ const info = (kind: EffectKind, blurb: string) => ({ name: EFFECT_INFO[kind].nam
 /** Every condition as it works on the tiles. Names and colours are the old ones where there was one. */
 export const CONDITION_INFO: Record<Condition, { name: string; blurb: string; color: string }> = {
   bleeding: info("bleeding", "Loses 2 HP at the start of each of its turns."),
-  burning: info("burning", "Loses 3 HP at the start of each of its turns. Water puts it out."),
+  burning: info("burning", "Loses 3 HP at the start of each of its turns, 3 more for each stack past the first. Water puts it out."),
   stunned: info("stunned", "Loses its next turn. Attacks against it have advantage."),
   guarded: info("guarded", "Takes half damage until its next turn."),
   taunting: info("taunting", "Enemies that can reach it go for it, until its next turn."),
@@ -317,6 +347,9 @@ export const CONDITION_INFO: Record<Condition, { name: string; blurb: string; co
   dour_shanty: { name: "Dour Shanty", blurb: `Singing: allies within reach get +${SHANTY.dour.defence} Defence. Each who joins widens it a hex and adds +${SHANTY.dour.perJoin} Defence until the Bard's next turn.`, color: "#6f8fff" },
   windgod_shanty: { name: "Wind-god's Shanty", blurb: `Singing: allies within reach move ${SHANTY.windgod.move} further and cannot be Slowed. Each who joins widens it a hex and adds ${SHANTY.windgod.perJoin} more movement until the Bard's next turn.`, color: "#3fe0c5" },
   inspired: { name: "Inspired", blurb: "Its next roll to hit has advantage.", color: "#ffe08a" },
+  guiding_light: { name: "Guiding Light", blurb: "Lit up by a star: every attack against it has advantage.", color: "#fff3a8" },
+  north_star: { name: "North Star", blurb: "Every blow it lands sets the target Burning, one stack more if the blow would have set it Burning anyway.", color: "#ffd166" },
+  charted: { name: "Course Charted", blurb: `A mark on the map: it and its allies move ${CHART.speed} further each turn, on steps that bring them nearer the mark.`, color: "#ff4d4d" },
 };
 
 // ---------- common actions ----------

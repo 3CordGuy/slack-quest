@@ -42,6 +42,9 @@ export class TacticsLayer {
   private markSig = "";
   private overlaySig = "";
   private groundSig = "";
+  /** Courses charted (Chart a Course): a red X on each hex marked. */
+  private charts = new THREE.Group();
+  private chartSig = "";
   private stop: () => void;
   /** Surfaces breathe a little, so the ground looks alive. */
   private pulse: THREE.MeshBasicMaterial[] = [];
@@ -55,7 +58,7 @@ export class TacticsLayer {
   private drift: { points: THREE.Points; base: Float32Array; floor: Float32Array; kind: WeatherKind }[] = [];
 
   constructor(private renderer: WorldRenderer) {
-    this.group.add(this.ground, this.sky, this.overlays, this.path);
+    this.group.add(this.ground, this.sky, this.overlays, this.charts, this.path);
     renderer.addObject(this.group);
     this.stop = renderer.addTicker((_dt, _camera, clock) => {
       for (const [i, m] of this.pulse.entries()) m.opacity = (m.userData.base as number) * (0.82 + 0.18 * Math.sin(clock * 2.2 + i));
@@ -78,6 +81,7 @@ export class TacticsLayer {
     this.clear(this.ground);
     this.clear(this.sky);
     this.clear(this.path);
+    this.clear(this.charts);
     this.setArc(null);
     this.setTurnMarkers([]);
     this.renderer.removeObject(this.group);
@@ -88,7 +92,7 @@ export class TacticsLayer {
     this.map = map;
     // Whatever comes next is drawn afresh, nothing included: "" is what an empty list's signature is, so it would match
     // and leave the old marks standing.
-    this.overlaySig = this.groundSig = this.skySig = STALE;
+    this.overlaySig = this.groundSig = this.skySig = this.chartSig = STALE;
   }
 
   private clear(group: THREE.Group) {
@@ -217,6 +221,24 @@ export class TacticsLayer {
       });
       dots.renderOrder = 3;
       this.path.add(dots);
+    }
+  }
+
+  /** The hexes courses are charted to (Chart a Course): a red X painted across each, a little above the ground. */
+  setCharts(marks: HexPos[]) {
+    const sig = marks.map(posKey).join(" ");
+    if (sig === this.chartSig) return;
+    this.chartSig = sig;
+    this.clear(this.charts);
+    for (const pos of marks) {
+      const { x, z } = hexToWorld(pos);
+      for (const turn of [Math.PI / 4, -Math.PI / 4]) {
+        const stroke = new THREE.Mesh(new THREE.BoxGeometry(1.25, 0.03, 0.2), new THREE.MeshBasicMaterial({ color: "#ff3030", transparent: true, opacity: 0.92, depthWrite: false }));
+        stroke.position.set(x, this.top(pos) + 0.09, z);
+        stroke.rotation.y = turn;
+        stroke.renderOrder = 4;
+        this.charts.add(stroke);
+      }
     }
   }
 

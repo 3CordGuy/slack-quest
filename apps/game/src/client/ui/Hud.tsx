@@ -57,7 +57,9 @@ export interface HudPips {
   label: string;
   now: number;
   max: number;
-  kind: "action" | "bonus" | "move" | "focus";
+  kind: "action" | "bonus" | "move" | "focus" | "course";
+  /** Said in the tooltip in place of "now of max left". */
+  title?: string;
 }
 
 /** One of the nine slots, when the view fills them itself: something the hero can do now, by button or number key. */
@@ -300,7 +302,7 @@ export function HudBar({ me, place, children, hp, meter, pips = [], chips, quick
   const left = pips.filter((p) => p.kind !== "focus");
   const right = pips.filter((p) => p.kind === "focus");
   const pipRow = (p: HudPips) => (
-    <span key={p.label} className={`hud-pips ${p.kind}`} title={`${p.label}: ${p.now} of ${p.max} left`}>
+    <span key={p.label} className={`hud-pips ${p.kind}`} title={p.title ?? `${p.label}: ${p.now} of ${p.max} left`}>
       {Array.from({ length: Math.max(p.max, p.now) }, (_, i) => <i key={i} className={i < p.now ? "on" : ""} />)}
     </span>
   );

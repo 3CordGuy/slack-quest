@@ -50,6 +50,8 @@
 .zone-cursor.off { display: none; }
 .zone-cursor-cost { font-family: var(--font-head); font-size: 15px; letter-spacing: 0.03em; }
 .zone-cursor-cost strong { font-size: 24px; line-height: 1; }
+/* What a charted course adds: the movement it gives toward the mark, in the mark's red. */
+.zone-cursor-cost .course { color: #ff7a7a; }
 .zone-cursor-note { color: #c9d1e0; }
 .zone-cursor-warn { color: #ff8a8a; font-weight: bold; }
 .zone-cursor.bad { border-color: #ff4d4d; color: #ff8a8a; }

@@ -13,7 +13,7 @@
 // In a fight, rounds are the fight's own, and the clock only keeps up.
 
 import { DRUID_REGEN, EFFECT_TICK, ENEMIES } from "../content";
-import { has, heal, regrow, removeCondition, tick, type Ctx } from "./engine";
+import { burnOf, has, heal, regrow, removeCondition, tick, type Ctx } from "./engine";
 import { EXPLORE_ROUND_MS, TORCH_ROUND_MS } from "./kit";
 import { tickWeather } from "./weather";
 import { standInSurface, tickLights, tickSurfaces } from "./surfaces";
@@ -33,7 +33,7 @@ export function exploreRound(ctx: Ctx, unit: Unit): void {
   removeCondition(unit, "guarded");
   removeCondition(unit, "taunting");
   removeCondition(unit, "stunned");
-  for (const kind of ["bleeding", "burning"] as const) if (has(unit, kind)) tick(ctx, unit, kind, EFFECT_TICK[kind] ?? 0);
+  for (const kind of ["bleeding", "burning"] as const) if (has(unit, kind)) tick(ctx, unit, kind, kind === "burning" ? burnOf(unit) : (EFFECT_TICK[kind] ?? 0));
   if (unit.down) return;
   if (unit.kind === "backend_druid" && unit.hp < unit.maxHp) heal(ctx, unit, DRUID_REGEN, { actor: unit.id, what: "regen" });
   regrow(ctx, unit);

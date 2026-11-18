@@ -108,7 +108,7 @@ export interface RenderState {
    * and what is left of a turn's movement). When set it is used as it stands: the tiles lit, the marker
    * under the pointer and the dots along the way all come from it.
    */
-  reach?: Map<string, { cost: number; prev: string | null; pos: HexPos }>;
+  reach?: Map<string, { cost: number; prev: string | null; pos: HexPos; way?: HexPos[] }>;
   /** No turns or movement points: the viewer may walk anywhere reachable, and tiles are not lit. */
   freeRoam?: boolean;
   /** Furniture standing on hexes (a hut's room). Each blocks the hex it is on. */
@@ -969,7 +969,7 @@ export class WorldRenderer {
   private pending: { at: number; run: () => void }[] = [];
 
   private state: RenderState | null = null;
-  private reach = new Map<string, { cost: number; prev: string | null; pos: HexPos }>();
+  private reach = new Map<string, { cost: number; prev: string | null; pos: HexPos; way?: HexPos[] }>();
   private hovered: HexPos | null = null;
   private turnKey = "";
 
@@ -5894,8 +5894,9 @@ export class WorldRenderer {
     const budget = state.freeRoam ? FREE_ROAM_REACH : state.turn?.mp;
     if (!reach || reach.cost === 0 || !me || (budget === undefined && !state.reach)) return;
     // The reach carries its own way back to the start, whether it was handed in or found over the terrain.
-    const steps: HexPos[] = [];
-    for (let at: typeof reach | undefined = reach; at && at.prev !== null; at = this.reach.get(at.prev)) steps.unshift(at.pos);
+    // Reckoned with a course charted (Chart a Course), the way is carried whole: the hexes before may be best reached another way.
+    const steps: HexPos[] = reach.way ? [...reach.way] : [];
+    if (!reach.way) for (let at: typeof reach | undefined = reach; at && at.prev !== null; at = this.reach.get(at.prev)) steps.unshift(at.pos);
     for (const step of steps) {
       // The way there: small lights, glowing rather than solid.
       const dot = new THREE.Mesh(new THREE.SphereGeometry(0.09, 8, 6), new THREE.MeshBasicMaterial({ color: "#eaf6ff", transparent: true, opacity: 0.85, blending: THREE.AdditiveBlending, depthWrite: false }));
