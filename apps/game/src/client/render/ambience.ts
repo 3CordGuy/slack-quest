@@ -601,9 +601,9 @@ function hollowGeometry(): { bank: THREE.BufferGeometry; water: THREE.BufferGeom
 /**
  * Which way the wind blows across the map, as a unit vector on the ground:
  * mostly along +x, a little toward +z. Wisps travel this way and rain slants
- * with it, fixed in the world so turning the camera never turns the weather.
+ * with it, and flags stream out along it, fixed in the world so turning the camera never turns the weather.
  */
-const WIND = (() => {
+export const WIND = (() => {
   const a = 0.35;
   return { x: Math.cos(a), z: Math.sin(a) };
 })();

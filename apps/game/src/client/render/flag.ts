@@ -27,17 +27,21 @@ export function pennantTexture(): THREE.CanvasTexture {
 }
 
 /**
- * Ripple a flag's cloth. `cloth` is a plane in x and y with its pole edge at x = 0 and its free end out along
- * -x, its resting places kept in `userData.rest`. `blow` is how hard the wind is on it: about 0.5 a breeze,
- * over 1 a gale.
+ * Ripple a flag's cloth. `cloth` is a plane in x and y with its pole edge nearest x = 0 and its free end out
+ * along -x, its resting places kept in `userData.rest`. `blow` is how hard the wind is on it: about 0.5 a
+ * breeze, over 1 a gale.
  */
 export function waveFlag(cloth: THREE.BufferGeometry, clock: number, blow: number) {
   const rest = cloth.userData.rest as Float32Array | undefined;
   if (!rest) return;
   const pos = cloth.getAttribute("position") as THREE.BufferAttribute;
-  let length = 0;
-  for (let i = 0; i < pos.count; i++) length = Math.max(length, -rest[i * 3]);
-  if (length <= 0) return;
+  let hoist = -Infinity, end = Infinity;
+  for (let i = 0; i < pos.count; i++) {
+    hoist = Math.max(hoist, rest[i * 3]);
+    end = Math.min(end, rest[i * 3]);
+  }
+  const length = hoist - end;
+  if (!(length > 0)) return;
   const k = Math.min(1.6, blow);
   const amp = length * (0.06 + 0.1 * k);
   const speed = 5 + 4 * k;
@@ -45,11 +49,11 @@ export function waveFlag(cloth: THREE.BufferGeometry, clock: number, blow: numbe
   const sag = length * 0.18 * Math.max(0, 1 - k);
   for (let i = 0; i < pos.count; i++) {
     const x = rest[i * 3], y = rest[i * 3 + 1];
-    const u = -x / length;
+    const u = (hoist - x) / length;
     const phase = u * 7 - clock * speed;
     const z = amp * u * (Math.sin(phase) + 0.35 * Math.sin(phase * 1.9 + y * 9 + 1.3));
     // The cloth does not stretch: the more it ripples the nearer its end comes in to the pole.
-    pos.setXYZ(i, x * (1 - 0.06 * k * u), y - sag * u * u, z);
+    pos.setXYZ(i, hoist - (hoist - x) * (1 - 0.06 * k * u), y - sag * u * u, z);
   }
   pos.needsUpdate = true;
 }

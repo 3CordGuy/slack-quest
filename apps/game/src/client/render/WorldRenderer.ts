@@ -13,7 +13,7 @@ import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js
 import { reportEnv } from "../ui/env";
 import { makeRenderer } from "./graphics";
 import { apothecaryWallTexture, galleyWallTexture, panelTexture, smithyWallTexture } from "./groundArt";
-import { Ambience, type RoomLight, TILE_FILLET, TILE_RADIUS, TORCH_LIFT, beaconShine, dryPatch, hexTop, meadowAt, pixelTexture, stamp, tallGrass, type BuildingGlow } from "./ambience";
+import { Ambience, type RoomLight, TILE_FILLET, TILE_RADIUS, TORCH_LIFT, WIND, beaconShine, dryPatch, hexTop, meadowAt, pixelTexture, stamp, tallGrass, type BuildingGlow } from "./ambience";
 import "./camera.css";
 import { PINCH_PAN_SLACK, followIconSvg, readFollow, writeFollow } from "./cameraFollow";
 import type { HexPos } from "@gantt-quest/core";
@@ -5610,11 +5610,12 @@ export class WorldRenderer {
         // The pole behind, with the crew's pennant and a lantern.
         add(box(0.06, 1.9, 0.06), darkOak, 0.5, 0.95, -0.46);
         add(new THREE.SphereGeometry(0.045, 6, 4), brass, 0.5, 1.92, -0.46);
-        // The pennant: a sheet of cloth off the pole, a gold stripe along it; waveFlag ripples it each frame.
+        // The pennant: a sheet of cloth off the pole, a gold stripe along it. It hangs from the middle of the pole
+        // so movePois can turn it about the pole to stream downwind, and waveFlag ripples it each frame.
         const cloth = new THREE.PlaneGeometry(0.5, 0.26, 12, 3);
-        cloth.translate(-0.25, 0, 0);
+        cloth.translate(-0.28, 0, 0);
         cloth.userData.rest = Float32Array.from(cloth.getAttribute("position").array);
-        const flag = add(cloth, new THREE.MeshLambertMaterial({ map: pennantTexture(), side: THREE.DoubleSide, flatShading: true }), 0.47, 1.7, -0.46);
+        const flag = add(cloth, new THREE.MeshLambertMaterial({ map: pennantTexture(), side: THREE.DoubleSide, flatShading: true }), 0.5, 1.7, -0.46);
         g.userData.flag = flag;
         add(box(0.02, 0.12, 0.02), iron, 0.5, 1.22, -0.36);
         add(box(0.09, 0.11, 0.09), new THREE.MeshBasicMaterial({ color: "#ffd98a" }), 0.5, 1.12, -0.36).userData.glow = true;
@@ -5820,6 +5821,7 @@ export class WorldRenderer {
   private chestLid = { open: false, at: 0, speed: 0, seen: 0 };
   /** Scratch: where the town chest's pennant is, for the gust on it. */
   private flagAt = new THREE.Vector3();
+  private flagTurn = new THREE.Quaternion();
 
   /** Open the town chest's lid, or shut it: it swings on a spring, a little past where it is going and back. */
   setChestOpen(open: boolean) {
@@ -5902,6 +5904,13 @@ export class WorldRenderer {
   /** Each frame: lids swinging, crates rocking, glints twinkling, the town chest's pennant flying. */
   private movePois() {
     const flag = this.poiObject("townchest")?.userData.flag as THREE.Mesh | undefined;
+    if (flag) {
+      // Streamed out downwind, the way the wisps go, however the chest is turned: the wind brought into the
+      // chest's own frame, and the cloth (which runs out along -x) turned about the pole to point along it.
+      flag.parent!.getWorldQuaternion(this.flagTurn).invert();
+      const way = this.flagAt.set(WIND.x, 0, WIND.z).applyQuaternion(this.flagTurn);
+      flag.rotation.y = Math.atan2(way.z, -way.x);
+    }
     if (flag && !this.still) {
       flag.getWorldPosition(this.flagAt);
       // Always a breeze off the sea, and harder as a gust goes by (when the wind is drawn at all).
