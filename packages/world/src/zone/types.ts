@@ -69,6 +69,8 @@ export interface Unit {
   home?: HexPos;
   /** A stand-in crewmate: the player who plays its turns. */
   controller?: string;
+  /** Given a dev kit (DevOp "kit", the Maps tab): coming back to the map does not put the hero's own sheet back on. */
+  devKit?: boolean;
   /**
    * A hero whose player is not on the map (their last connection to it closed): nothing draws them into a
    * fight, and no enemy blow meant for a fight lands on them. A fight they were already in goes on with them in it.
@@ -240,7 +242,12 @@ export type DevOp =
   /** Set the nearest group that has not noticed anyone on whoever asked, wherever they stand. */
   | { op: "start_fight" }
   | { op: "ai"; off: boolean }
-  | { op: "clear_surfaces" };
+  | { op: "clear_surfaces" }
+  /**
+   * A dev kit (the Maps tab): make one of your own heroes (yourself, or a stand-in you play) a hero of this class and level, with
+   * this weapon and any of the class's abilities (as many as you like). It holds until changed again, through a reload.
+   */
+  | { op: "kit"; unit: string; classId: string; weapon: string; level: number; abilities: string[] };
 
 /** `by` is the player an action came from: the server sets it, never the client. */
 export type ZoneAction =

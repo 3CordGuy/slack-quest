@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { STARTING_STATS, allHexesInGrid, hexDistance, hexNeighbors, posKey, type HexGrid, type HexPos } from "@gantt-quest/core";
-import { ABILITIES, EFFECT_TICK, ENEMIES, abilitiesFor } from "../content";
+import { ABILITIES, EFFECT_TICK, ENEMIES, WEAPONS, abilitiesFor } from "../content";
 import type { Biome, Tile } from "../map";
 import { makeRng } from "../rng";
 import { walk } from "./combat";
@@ -2596,5 +2596,38 @@ describe("the Mage's class abilities", () => {
       for (const id of [near, far]) expect(unit(state, id).conditions.some((c) => c.kind === "wet")).toBe(true);
     }
     expect(swept).toBeGreaterThan(0);
+  });
+});
+
+describe("a dev kit", () => {
+  function onMap() {
+    const state = board();
+    hero(state, "ann", "qa_paladin", at(5, 6));
+    hero(state, "bo", "devops_mage", at(3, 6));
+    return state;
+  }
+  const kit = (unit: string, over: Partial<{ classId: string; weapon: string; level: number; abilities: string[] }> = {}): ZoneAction => ({
+    type: "dev", by: "ann", dev: { op: "kit", unit, classId: "devops_mage", weapon: "tome", level: 7, abilities: ["chain_lightning", "tidal_wave", "soothing_rain", "trade_winds"], ...over },
+  });
+
+  it("makes your hero any class, level and weapon, with as many of the class's abilities as you like", () => {
+    const state = must(onMap(), kit("ann"));
+    const ann = unit(state, "ann");
+    expect(ann).toMatchObject({ kind: "devops_mage", level: 7, devKit: true });
+    expect(ann.abilities).toEqual([...WEAPONS.tome.abilities, "chain_lightning", "tidal_wave", "soothing_rain", "trade_winds"]);
+    expect(ann.outfit?.main_hand?.ref).toBe("tome");
+    expect(ann.hp).toBe(ann.maxHp);
+  });
+
+  it("drops abilities that are not the class's, and refuses a weapon of another class or a hero not yours", () => {
+    expect(unit(must(onMap(), kit("ann", { abilities: ["bolster", "tidal_wave"] })), "ann").abilities).not.toContain("bolster");
+    expect(fails(onMap(), kit("ann", { weapon: "mace" }))).toMatch(/weapon/);
+    expect(fails(onMap(), kit("bo"))).toMatch(/not one of your heroes/);
+  });
+
+  it("holds through coming back to the map", () => {
+    let state = must(onMap(), kit("ann"));
+    state = must(state, { type: "join", hero: { ...standInHero("qa_paladin", "ann", 1)!, name: "ann" } });
+    expect(unit(state, "ann")).toMatchObject({ kind: "devops_mage", level: 7 });
   });
 });

@@ -482,6 +482,10 @@ describe("ZoneRoom", () => {
     expect(Object.values(ann.state.surfaces).map((s) => s.kind)).toEqual(["fire"]);
     expect(zoneActionFrom({ type: "dev", dev: { op: "heal" } }, "ann", false)).toBeNull();
     expect(zoneActionFrom({ type: "dev", dev: { op: "heal" } }, "ann", true)).toEqual({ type: "dev", by: "ann", dev: { op: "heal" } });
+    expect(zoneActionFrom({ type: "dev", dev: { op: "kit", unit: "ann", classId: "devops_mage", weapon: "tome", level: "7", abilities: ["tidal_wave", 3] } }, "ann", true)).toEqual({
+      type: "dev", by: "ann", dev: { op: "kit", unit: "ann", classId: "devops_mage", weapon: "tome", level: 7, abilities: ["tidal_wave"] },
+    });
+    expect(zoneActionFrom({ type: "dev", dev: { op: "kit", unit: "ann", classId: "devops_mage", weapon: "tome", level: 7, abilities: [] } }, "ann", false)).toBeNull();
   });
 
   it("drops anything misshapen, and never takes the sender's word for who they are", () => {

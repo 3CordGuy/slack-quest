@@ -693,6 +693,11 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
     if (carried !== "null") void refresh();
   }, [carried]);
   const mine = useMemo(() => state?.units.filter((u) => u.side === "hero" && (u.id === state.you || u.controller === state.you)) ?? [], [state]);
+  // The Maps tab (dev toolbox) can change these: it is told who they are and what they have.
+  const mineKey = mine.map((u) => `${u.id}:${u.kind}:${u.level}:${u.outfit?.main_hand?.ref}:${u.abilities.join(",")}`).join("|");
+  useEffect(() => {
+    setZoneDev({ heroes: mine.map((u) => ({ id: u.id, name: u.name, classId: u.kind, level: u.level, weapon: u.outfit?.main_hand?.ref, abilities: u.torchHand === "main" ? (u.stowed ?? []) : u.abilities })) });
+  }, [mineKey]);
   const ready = (u: Unit) => !!enc && enc.acting.includes(u.id) && !enc.done.includes(u.id) && !u.down;
   const act = mine.find((u) => u.id === playAs && (!enc || !enc.order.includes(u.id) || ready(u))) ?? mine.find(ready) ?? mine.find((u) => u.id === state?.you) ?? mine[0];
   const fighting = !!act && !!enc?.order.includes(act.id);
@@ -739,7 +744,7 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
   const send = zone.send;
   useEffect(() => {
     setZoneDev({ open: { code, send: (op) => send({ type: "dev", dev: op }) } });
-    return () => setZoneDev({ open: null, tool: null });
+    return () => setZoneDev({ open: null, tool: null, heroes: [] });
   }, [code, send]);
 
   // In a dev build, the state and a way to act on it, for the console.

@@ -12,8 +12,9 @@
 // turns are played here, at once, so nothing waits on a client.
 
 import { STARTING_STATS, hexDistance, posKey, type HexPos } from "@gantt-quest/core";
-import { classAbilitiesOf, withClassAbilities } from "../classabilities";
-import { ABILITIES, DRUID_REGEN, EFFECT_TICK, ENEMIES, HERO_CLASSES, abilitiesFor } from "../content";
+import { classAbilitiesOf, poolFor, withClassAbilities } from "../classabilities";
+import { ABILITIES, DRUID_REGEN, EFFECT_TICK, ENEMIES, HERO_CLASSES, WEAPONS, abilitiesFor } from "../content";
+import { weaponItem } from "../gear";
 import { battleDrops } from "../drops";
 import { tileAt } from "../map";
 import type { HeroSheet } from "../hero";
@@ -536,6 +537,9 @@ function spend(budget: Budget | null, cost: "action" | "bonus"): string | null {
   return null;
 }
 
+/** The highest level a dev kit (DevOp "kit") will make a hero. */
+export const KIT_MAX_LEVEL = 20;
+
 function dev(ctx: Ctx, by: string, op: DevOp): string | null {
   const { state } = ctx;
   const free = (near: HexPos) => freeHexNear(state.map, near, (p) => !!unitAt(state, p) || blockerAt(state, p), (p) => tileAt(state.map, p));
@@ -581,6 +585,22 @@ function dev(ctx: Ctx, by: string, op: DevOp): string | null {
       .sort((a, b) => hexDistance(a.pos, owner?.pos ?? state.start) - hexDistance(b.pos, owner?.pos ?? state.start))[0];
     if (!owner || !nearest) return "There is nobody to fight.";
     engage(ctx, [nearest.group!], owner);
+  } else if (op.op === "kit") {
+    const u = unitById(state, op.unit);
+    if (!u || u.side !== "hero" || (u.id !== by && u.controller !== by)) return "That is not one of your heroes.";
+    const weapon = WEAPONS[op.weapon];
+    if (!weapon || weapon.classId !== op.classId) return "That is not a weapon of that class.";
+    const level = Math.max(1, Math.min(KIT_MAX_LEVEL, Math.floor(Number(op.level)) || 1));
+    const sheet = standInHero(op.classId, u.id, level);
+    if (!sheet) return "There is no such class.";
+    const pool = new Set(poolFor(op.classId).map((e) => e.id));
+    const abilities = withClassAbilities(weapon.abilities, op.abilities.filter((a) => pool.has(a)));
+    const item = weaponItem(weapon.id);
+    Object.assign(u, { kind: op.classId, level, stats: sheet.stats, maxHp: sheet.maxHp, hp: sheet.maxHp, maxFocus: sheet.maxFocus, focus: sheet.maxFocus, cooldowns: {}, devKit: true });
+    u.outfit = { ...u.outfit, main_hand: { icon: item.icon, ref: item.ref, rarity: item.rarity } };
+    // A torch swung in the main hand stays there: the new weapon is what is taken up when it goes.
+    if (u.torchHand === "main") u.stowed = abilities;
+    else u.abilities = abilities;
   } else if (op.op === "ai") {
     state.aiOff = op.off;
   } else if (op.op === "clear_surfaces") {
@@ -608,8 +628,8 @@ function act(ctx: Ctx, action: ZoneAction): string | null {
       // What their pack holds is what they carry, fight or no fight.
       if (hero.items) here.items = { ...hero.items };
       // Back again, perhaps with different gear: the sheet is refreshed, and where they stand and how hurt they are is kept.
-      // Not in a fight, though: that is fought in the gear it was started in.
-      if (inFight(state, here.id)) return null;
+      // Not in a fight, though: that is fought in the gear it was started in. Nor a hero given a dev kit.
+      if (inFight(state, here.id) || here.devKit) return null;
       Object.assign(here, { name: hero.name, kind: hero.classId, level: hero.level, stats: hero.stats, armor: hero.armor, power: hero.weaponPower, outfit: hero.outfit, maxHp: hero.maxHp, maxFocus: hero.maxFocus });
       // A torch swung in the main hand stays there: the new weapon is what is taken up when it goes.
       if (here.torchHand === "main") here.stowed = heroAbilities(hero);
