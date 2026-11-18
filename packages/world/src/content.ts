@@ -103,8 +103,8 @@ export const HERO_CLASSES: HeroClass[] = [
     id: "sre_warden",
     name: "Tidewall Warden",
     blurb: "The wall. Draws every blow onto itself and hits back with Strength and the weight of its armor.",
-    weapons: ["pager_axe", "maul"],
-    signature: "lamp_hook",
+    weapons: ["maul", "pager_axe"],
+    signature: "boarding_pike",
     passive: "Night watch: starts every fight guarded (half damage) until its second turn.",
   },
   {
@@ -206,14 +206,17 @@ export const ABILITIES: Record<string, AbilityDef> = {
   // Astrolabe: Moonlight and Focus Light.
   moonlight: { id: "moonlight", name: "Moonlight", stat: "int_stat", rolls: 3, target: "all_enemies", damage: 7, blurb: "Moonlight pours over 3 hexes up to 7 off. Every enemy in it takes damage (half if they brace), and those that fail to brace are lit with Guiding Light for 3 turns: every attack on them has advantage." },
   focus_light: { id: "focus_light", name: "Focus Light", stat: "int_stat", rolls: 2, target: "enemy", damage: 4, blurb: "A Bonus action: a thin focused beam at an enemy up to 5 hexes off. If it is lit by Guiding Light, a hit also sets it Burning." },
+  // Warden weapons. Bell-Buoy Maul: Sturdy Blow and Stand Strong. Foghorn Axe: Disarming Chop and Guard. Boarding Pike: Goading Strike and Throw Pike.
+  sturdy_blow: { id: "sturdy_blow", name: "Sturdy Blow", stat: "str", rolls: 3, target: "enemy", damage: 9, blurb: "A heavy, careful blow with the maul. Hit or miss, you gain a shield of 3 plus your level on top of any you have, through your next turn." },
+  stand_strong: { id: "stand_strong", name: "Stand Strong", stat: "vit", rolls: 1, target: "self", blurb: "A Bonus action: plant your feet. A shield of 3 plus your level, and 3 more for each enemy beside you, on top of any you have, through your next turn." },
+  disarming_chop: { id: "disarming_chop", name: "Disarming Chop", stat: "str", rolls: 3, target: "enemy", damage: 9, perfect: { effect: "glitched", turns: 1 }, blurb: "A chop at the weapon arm. On a hit, the target must save or its next attack is rolled with disadvantage." },
+  raise_guard: { id: "raise_guard", name: "Guard", stat: "vit", rolls: 1, target: "self", selfEffect: { effect: "guarded", turns: 1 }, blurb: "A Bonus action: set yourself behind the axe. You are Guarded (half damage) until your next turn, and have a shield of 4 plus your level. 1 turn to wait." },
+  goading_strike: { id: "goading_strike", name: "Goading Strike", stat: "str", rolls: 3, target: "enemy", damage: 9, blurb: "A jab with the pike to get its attention. On a hit, the target must save or be Taunted for 2 turns: it must come at you if it can." },
+  throw_pike: { id: "throw_pike", name: "Throw Pike", stat: "str", rolls: 3, target: "enemy", damage: 8, blurb: "Hurl the pike at an enemy up to 3 hexes off. On a hit, it is dragged straight toward you, as far as beside you. 2 turns to wait." },
   punch: { id: "punch", name: "Punch", stat: "str", rolls: 2, target: "enemy", damage: 4, blurb: "Bare knuckles. All you have without a weapon in hand." },
   cleave: { id: "cleave", name: "Cleave", stat: "str", rolls: 3, target: "all_enemies", damage: 7, blurb: "A wide swing through three hexes beside you, an attack on each enemy in them." },
   thornlash: { id: "thornlash", name: "Thornlash", stat: "int_stat", rolls: 3, target: "enemy", damage: 10, perfect: { effect: "slowed", turns: 2 }, blurb: "Thorns that dig in. On a hit, the target must save or be Slowed." },
   rejuvenate: { id: "rejuvenate", name: "Rejuvenate", stat: "int_stat", rolls: 2, target: "ally", heal: 9, blurb: "Heal an ally (or yourself)." },
-  seawall_blow: { id: "seawall_blow", name: "Seawall Blow", stat: "str", rolls: 3, target: "enemy", damage: 7, armorDamage: true, perfect: { effect: "exposed", turns: 2 }, blurb: "Your whole weight behind the blow: adds a third of your armor to the damage. On a hit, the target must save or be Exposed." },
-  challenge: { id: "challenge", name: "Challenge", stat: "str", rolls: 2, target: "enemy", damage: 4, selfEffect: { effect: "taunting", turns: 1 }, blurb: "A jab and a shout. Until your next turn, enemies aiming at one hero aim at you." },
-  hold_the_line: { id: "hold_the_line", name: "Hold the Line", stat: "vit", rolls: 2, target: "self", heal: 4, selfEffect: { effect: "guarded", turns: 1 }, blurb: "Plant your feet: guard yourself and catch your breath." },
-  shockwave: { id: "shockwave", name: "Shockwave", stat: "str", rolls: 4, target: "all_enemies", damage: 5, perfect: { effect: "stunned", turns: 1 }, blurb: "Slam the ground under every enemy beside you. Each one hit must save or be Stunned." },
   hex: { id: "hex", name: "Hex", stat: "int_stat", rolls: 3, target: "enemy", damage: 6, maxHpDamage: 0.05, perfect: { effect: "glitched", turns: 1 }, blurb: "A slow query on the target: adds 5% of its max HP to the damage. On a hit, the target must save or be Fumbling." },
   blight: { id: "blight", name: "Blight", stat: "int_stat", rolls: 4, target: "all_enemies", damage: 5, blurb: "A curse on every enemy at once." },
   soul_drain: { id: "soul_drain", name: "Soul Drain", stat: "int_stat", rolls: 2, target: "enemy", damage: 7, drain: 0.34, blurb: "Takes some of their life for yours: heals you a third of the damage dealt." },
@@ -264,7 +267,6 @@ export const ABILITIES: Record<string, AbilityDef> = {
   sailor_scimitar: { id: "sailor_scimitar", name: "Scimitar", stat: "str", rolls: 2, target: "enemy", damage: 8, blurb: "A drowned sailor's scimitar, rusted but sharp enough." },
   stoke_the_fire: { id: "stoke_the_fire", name: "Stoke the Fire", stat: "str", rolls: 3, target: "all_enemies", damage: 6, targetEffect: { effect: "burning", turns: 2 }, blurb: "Flame bursts off you: every enemy beside you is struck and set Burning." },
   // Signature abilities: one per class, on its signature weapon.
-  lighthouse_beam: { id: "lighthouse_beam", name: "Lighthouse Beam", stat: "str", rolls: 3, target: "all_enemies", damage: 4, selfEffect: { effect: "taunting", turns: 1 }, blurb: "Sweep the light across every enemy, and every one of them comes for you." },
   red_tide: { id: "red_tide", name: "Red Tide", stat: "int_stat", rolls: 3, target: "enemy", damage: 6, bleedPayoff: 2, blurb: "Calls in the debt: +2 damage per turn of Bleeding left on the target, and the bleeding stops." },
 };
 
@@ -290,8 +292,8 @@ export const WEAPONS: Record<string, WeaponDef> = {
   flute: { id: "flute", name: "Bosun's Pipe", classId: "frontend_bard", abilities: ["blasting_tone", "soothing_tone"] },
   orb: { id: "orb", name: "Sextant Orb", classId: "staff_sage", abilities: ["starbeam", "st_elmos_fire"] },
   scepter: { id: "scepter", name: "Tidestone Scepter", classId: "staff_sage", abilities: ["water_burst", "rust_armor"] },
-  pager_axe: { id: "pager_axe", name: "Foghorn Axe", classId: "sre_warden", abilities: ["seawall_blow", "challenge", "hold_the_line"] },
-  maul: { id: "maul", name: "Bell-Buoy Maul", classId: "sre_warden", abilities: ["shockwave", "seawall_blow", "challenge"] },
+  pager_axe: { id: "pager_axe", name: "Foghorn Axe", classId: "sre_warden", abilities: ["disarming_chop", "raise_guard"] },
+  maul: { id: "maul", name: "Bell-Buoy Maul", classId: "sre_warden", abilities: ["sturdy_blow", "stand_strong"] },
   grimoire: { id: "grimoire", name: "Drowned Grimoire", classId: "data_warlock", abilities: ["hex", "soul_drain"] },
   // Signature weapons: each class's own ability plus a staple, drawn like a weapon the class already has.
   ballast_flail: { id: "ballast_flail", name: "Ballast Flail", classId: "qa_paladin", abilities: ["flail_strike", "armor_crush"], looksLike: "mace" },
@@ -300,7 +302,7 @@ export const WEAPONS: Record<string, WeaponDef> = {
   coral_staff: { id: "coral_staff", name: "Coral Staff", classId: "backend_druid", abilities: ["coral_burst", "restore"], looksLike: "root_staff" },
   ships_bell: { id: "ships_bell", name: "Ship's Bell", classId: "frontend_bard", abilities: ["peal", "clarion_call"], looksLike: "lute" },
   astrolabe: { id: "astrolabe", name: "Astrolabe", classId: "staff_sage", abilities: ["moonlight", "focus_light"], looksLike: "orb" },
-  lamp_hook: { id: "lamp_hook", name: "Lamp Hook", classId: "sre_warden", abilities: ["lighthouse_beam", "seawall_blow", "hold_the_line"], looksLike: "pager_axe" },
+  boarding_pike: { id: "boarding_pike", name: "Boarding Pike", classId: "sre_warden", abilities: ["goading_strike", "throw_pike"], looksLike: "pager_axe" },
   bilge_chalice: { id: "bilge_chalice", name: "Bilge Chalice", classId: "data_warlock", abilities: ["red_tide", "hex", "soul_drain"], looksLike: "grimoire" },
   void_staff: { id: "void_staff", name: "Undertow Staff", classId: "data_warlock", abilities: ["blight", "hex", "soul_drain"] },
 };

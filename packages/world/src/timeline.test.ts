@@ -18,7 +18,7 @@ import {
 
 const fighter = (id: string, over: Partial<Combatant> = {}): Combatant => ({
   id, side: "hero", name: id, kind: "qa_paladin", level: 1, hp: 60, maxHp: 60, pct: { str: 100, int_stat: 100, vit: 100, agi: 100, dex: 100 },
-  power: 0, armor: 0, speed: 50, focus: 3, potions: 2, abilities: ["bash", "block", "cleave", "challenge", "encore", "thornlash", "hex"], effects: [], down: false, ...over,
+  power: 0, armor: 0, speed: 50, focus: 3, potions: 2, abilities: ["bash", "block", "cleave", "encore", "thornlash", "hex"], effects: [], down: false, ...over,
 });
 const setup = (heroes: Combatant[], enemyKinds: string[], seed = 3) =>
   createBattle({ heroes, enemyKinds, avgLevel: 1, poiId: null }, makeRng(seed));
@@ -108,21 +108,6 @@ describe("enemy intents", () => {
       const hit = r.events.find((e) => (e.t === "hit" || e.t === "miss") && e.actor === "e0");
       if (hit && (hit.t === "hit" || hit.t === "miss") && intent.target) expect(hit.target).toBe(intent.target);
     }
-  });
-
-  it("a taunt pulls the named attack onto the taunter", () => {
-    let pulled = 0;
-    for (let seed = 1; seed < 40; seed++) {
-      const { state } = setup([fighter("w", { speed: 0, hp: 999, maxHp: 999 }), fighter("s", { speed: 0, hp: 999, maxHp: 999 })], ["brute"], seed);
-      if (state.actor !== "w" || enemy(state).intent?.target !== "s") continue;
-      const r = must(stepBattle(state, "w", { type: "ability", ability: "challenge", target: "e0", focus: 2 }, makeRng(seed)));
-      const hits = r.events.filter((e) => (e.t === "hit" || e.t === "miss") && e.actor === "e0");
-      // The next swing goes to the taunter (later ones may not: a stun can end the taunt early).
-      const h = hits[0];
-      if (h && (h.t === "hit" || h.t === "miss")) expect(h.target).toBe("w");
-      if (hits.length) pulled += 1;
-    }
-    expect(pulled).toBeGreaterThan(0);
   });
 
   it("a stunned enemy picks a new move after losing its turn", () => {

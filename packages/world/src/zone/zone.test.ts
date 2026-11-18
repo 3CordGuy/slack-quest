@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { STARTING_STATS, allHexesInGrid, hexDistance, hexNeighbors, posKey, type HexGrid, type HexPos } from "@gantt-quest/core";
-import { ABILITIES, EFFECT_TICK, ENEMIES, SUNDERED_DEFENCE, WEAPONS, abilitiesFor } from "../content";
+import { ABILITIES, EFFECT_TICK, ENEMIES, HERO_CLASSES, SUNDERED_DEFENCE, WEAPONS, abilitiesFor } from "../content";
 import type { Biome, Tile } from "../map";
 import { makeRng } from "../rng";
 import { walk } from "./combat";
@@ -9,7 +9,7 @@ import { shantyOf, shantyRadius, songsOn } from "./song";
 import { chartOf, constellationLinks } from "./stars";
 import { ALERT_RANGE, DEFAULT_ZONE_OPTIONS, JOIN_RANGE, generateZone, zoneOptions } from "./gen";
 import { adjacent, blast, flies, sees, seesFor, solid, stepCost, unitAt, zoneReach } from "./geometry";
-import { AURAS, BLOCK, BOLSTER, ENEMY_BURST, ENEMY_KIT, EXPLORE_ROUND_MS, FLEE_RANGE, LIGHT_RADIUS, SHIELD_SET_ASIDE, TACTICS, TORCH_GROUND_ROUNDS, TORCH_HELD_ROUNDS, TORCH_ROUND_MS, abilityDice as abilityDiceFor, commonCost, enemyHp, enemyStrikes, tacticOf } from "./kit";
+import { AURAS, BLOCK, BOLSTER, GUARD_UP, STAND_STRONG, STURDY, ENEMY_BURST, ENEMY_KIT, EXPLORE_ROUND_MS, FLEE_RANGE, LIGHT_RADIUS, SHIELD_SET_ASIDE, TACTICS, TORCH_GROUND_ROUNDS, TORCH_HELD_ROUNDS, TORCH_ROUND_MS, abilityDice as abilityDiceFor, commonCost, enemyHp, enemyStrikes, tacticOf } from "./kit";
 import { MAX_CATCHUP_ROUNDS } from "./clock";
 import { defenceOf } from "./engine";
 import { abilityArea, checkAbility, crateBlow, enemyAct, wayBetween } from "./combat";
@@ -3562,7 +3562,7 @@ describe("the Warden's wall", () => {
   function party(foes: HexPos[] = [at(6, 6)], opts: { bo?: HexPos; kind?: string; edit?: (t: Tile) => void } = {}) {
     let state = board(opts.edit);
     state.aiOff = true;
-    hero(state, "ann", "sre_warden", at(5, 6)).abilities = ["seawall_blow", ...ALL];
+    hero(state, "ann", "sre_warden", at(5, 6)).abilities = ["sturdy_blow", ...ALL];
     hero(state, "bo", "devops_mage", opts.bo ?? at(3, 8));
     const ids = foes.map((pos) => {
       const e = enemy(state, opts.kind ?? "dummy", pos);
@@ -3585,11 +3585,9 @@ describe("the Warden's wall", () => {
   const has = (state: ZoneState, id: string, kind: string) => unit(state, id).conditions.some((c) => c.kind === kind);
   const rock = (...hexes: HexPos[]) => (t: Tile) => { if (hexes.some((p) => p.q === t.q && p.r === t.r)) t.biome = "rock"; };
 
-  it("are all in the Warden's pool, and the weapons keep their old blows under new names", () => {
+  it("are all in the Warden's pool, and on none of its weapons", () => {
     expect(poolFor("sre_warden").map((e) => e.id)).toEqual(ALL);
-    for (const w of ["pager_axe", "maul", "lamp_hook"]) expect(WEAPONS[w].abilities.some((a) => ALL.includes(a)), w).toBe(false);
-    expect(ABILITIES.seawall_blow.armorDamage).toBe(true);
-    expect(ABILITIES.challenge.selfEffect?.effect).toBe("taunting");
+    for (const w of ["pager_axe", "maul", "boarding_pike"]) expect(WEAPONS[w].abilities.some((a) => ALL.includes(a)), w).toBe(false);
   });
 
   it("Against the Waves: a Bonus action, 2 turns to wait; a high shield on the Warden, higher standing in water", () => {
@@ -4514,5 +4512,100 @@ describe("Sage weapons", () => {
     addCondition(ctx, unit(state, foe), "guiding_light", 3);
     const lit = untilHit(state, { type: "use", by: "ann", unit: "ann", ability: "focus_light", target: foe }, foe);
     expect(burning(lit.state)).toBe(true);
+  });
+});
+
+describe("Warden weapons", () => {
+  /** The action tried on fresh seeds until it hits `target` and `want` holds: the state after, and what it said. */
+  const untilHit = (state: ZoneState, action: ZoneAction, target: string, want: (events: ZoneEvent[]) => boolean = () => true) => {
+    for (let seed = 1; seed < 120; seed++) {
+      const tryState = structuredClone(state);
+      tryState.rng = seed;
+      const events: ZoneEvent[] = [];
+      const next = must(tryState, action, events);
+      if (events.some((e) => e.t === "hit" && e.target === target) && want(events)) return { state: next, events };
+    }
+    throw new Error("never landed");
+  };
+  const failedSave = (events: ZoneEvent[]) => events.some((e) => e.t === "roll" && e.roll.kind === "save" && !e.roll.ok);
+  const savedAll = (events: ZoneEvent[]) => events.some((e) => e.t === "roll" && e.roll.kind === "save") && !failedSave(events);
+
+  it("starts the Warden with the maul, and gives each weapon two abilities, only Guard and Throw Pike on a cooldown", () => {
+    expect(HERO_CLASSES.find((c) => c.id === "sre_warden")!.weapons[0]).toBe("maul");
+    expect(WEAPONS.maul.abilities).toEqual(["sturdy_blow", "stand_strong"]);
+    expect(WEAPONS.pager_axe.abilities).toEqual(["disarming_chop", "raise_guard"]);
+    expect(WEAPONS.boarding_pike.abilities).toEqual(["goading_strike", "throw_pike"]);
+    for (const id of ["sturdy_blow", "stand_strong", "disarming_chop", "goading_strike"]) expect(tacticOf(id).cooldown, id).toBeUndefined();
+    expect(tacticOf("raise_guard").cooldown).toBe(1);
+    expect(tacticOf("throw_pike").cooldown).toBe(2);
+    for (const id of ["stand_strong", "raise_guard"]) expect(tacticOf(id).cost, id).toBe("bonus");
+    expect(ABILITIES.disarming_chop.perfect).toEqual({ effect: "glitched", turns: 1 });
+  });
+
+  it("Sturdy Blow: a shield, hit or miss, on top of any already there", () => {
+    const { state, foe } = duel("dummy", "sre_warden", at(5, 6), at(7, 6));
+    unit(state, "ann").abilities = ["sturdy_blow"];
+    const shield = STURDY.shield + unit(state, "ann").level;
+    let missed = false;
+    for (let seed = 1; seed < 60 && !missed; seed++) {
+      const tryState = structuredClone(state);
+      tryState.rng = seed;
+      const events: ZoneEvent[] = [];
+      const next = must(tryState, { type: "use", by: "ann", unit: "ann", ability: "sturdy_blow", target: foe }, events);
+      expect(shieldOf(unit(next, "ann"))).toBe(shield);
+      missed = events.some((e) => e.t === "miss");
+    }
+    expect(missed).toBe(true);
+  });
+
+  it("Stand Strong: a Bonus action shield, bigger for each enemy beside the Warden", () => {
+    let { state } = duel("dummy", "sre_warden", at(5, 6), at(7, 6));
+    enemy(state, "dummy", at(6, 7));
+    enemy(state, "dummy", at(10, 9));
+    unit(state, "ann").abilities = ["stand_strong"];
+    const beside = state.units.filter((u) => u.side === "enemy" && adjacent(u.pos, unit(state, "ann").pos)).length;
+    expect(beside).toBe(2);
+    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "stand_strong" });
+    expect(shieldOf(unit(state, "ann"))).toBe(STAND_STRONG.shield + unit(state, "ann").level + STAND_STRONG.perFoe * beside);
+    expect(state.encounter!.budgets.ann).toMatchObject({ action: true, bonus: false });
+  });
+
+  it("Disarming Chop: a hit leaves the target Fumbling unless it saves", () => {
+    const { state, foe } = duel("dummy", "sre_warden", at(5, 6), at(7, 6));
+    unit(state, "ann").abilities = ["disarming_chop"];
+    const fumbling = (s: ZoneState) => unit(s, foe).conditions.some((c) => c.kind === "glitched");
+    expect(fumbling(untilHit(state, { type: "use", by: "ann", unit: "ann", ability: "disarming_chop", target: foe }, foe, failedSave).state)).toBe(true);
+    expect(fumbling(untilHit(state, { type: "use", by: "ann", unit: "ann", ability: "disarming_chop", target: foe }, foe, savedAll).state)).toBe(false);
+  });
+
+  it("Guard: a Bonus action that leaves the Warden Guarded with a shield, then waits a turn", () => {
+    let { state } = duel("dummy", "sre_warden", at(5, 6), at(9, 6));
+    unit(state, "ann").abilities = ["raise_guard"];
+    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "raise_guard" });
+    expect(unit(state, "ann").conditions.some((c) => c.kind === "guarded")).toBe(true);
+    expect(shieldOf(unit(state, "ann"))).toBe(GUARD_UP.shield + unit(state, "ann").level);
+    expect(state.encounter!.budgets.ann).toMatchObject({ action: true, bonus: false });
+    state = must(state, { type: "end_turn", by: "ann", unit: "ann" });
+    while (!state.encounter!.acting.includes("ann") || state.encounter!.done.includes("ann")) state = must(state, { type: "timeout" });
+    expect(fails(state, { type: "use", by: "ann", unit: "ann", ability: "raise_guard" })).toMatch(/not ready/);
+  });
+
+  it("Goading Strike: a hit leaves the target Taunted by the Warden unless it saves", () => {
+    const { state, foe } = duel("dummy", "sre_warden", at(5, 6), at(7, 6));
+    unit(state, "ann").abilities = ["goading_strike"];
+    const taunted = (s: ZoneState) => unit(s, foe).conditions.find((c) => c.kind === "taunted");
+    const failed = untilHit(state, { type: "use", by: "ann", unit: "ann", ability: "goading_strike", target: foe }, foe, failedSave);
+    expect(taunted(failed.state)).toMatchObject({ rounds: 2, by: "ann" });
+    expect(taunted(untilHit(state, { type: "use", by: "ann", unit: "ann", ability: "goading_strike", target: foe }, foe, savedAll).state)).toBeUndefined();
+  });
+
+  it("Throw Pike: reaches 3 hexes and drags what it hits straight in to beside the Warden", () => {
+    const { state, foe } = duel("dummy", "sre_warden", at(4, 6), at(8, 6));
+    unit(state, "ann").abilities = ["throw_pike"];
+    expect(hexDistance(unit(state, "ann").pos, unit(state, foe).pos)).toBe(3);
+    const after = untilHit(state, { type: "use", by: "ann", unit: "ann", ability: "throw_pike", target: foe }, foe);
+    expect(unit(after.state, foe).pos).toEqual(at(6, 6));
+    unit(state, foe).pos = at(9, 6);
+    expect(checkAbility(state, unit(state, "ann"), "throw_pike", { target: foe })).toMatch(/Out of range/);
   });
 });

@@ -516,7 +516,7 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
           } else if (look.kind === "bless") {
             // A guard is braced behind; a heal or a blessing is played or cast, toward whoever it is for.
             const whom = ev.target && ev.target !== ev.id ? find(ev.target) : null;
-            if (ev.what === "block" || ev.what === "hold_the_line") view?.brace(ev.id);
+            if (ev.what === "block" || ev.what === "raise_guard" || ev.what === "stand_strong") view?.brace(ev.id);
             else view?.bless(ev.id, whom ? point(whom.pos) : null);
           }
         });

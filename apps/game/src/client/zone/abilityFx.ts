@@ -44,6 +44,12 @@ const ABILITY_FX: Record<string, Fx> = {
   chart_a_course: fx("bless", "#ff4d4d"),
   north_star: fx("bless", "#ffd166"),
   shock: fx("spark", "#c4b5fd"),
+  sturdy_blow: fx("melee", "#c9b48a"),
+  stand_strong: fx("bless", "#9ec9ff"),
+  disarming_chop: fx("melee", "#93c5fd"),
+  raise_guard: fx("bless", "#fbbf24"),
+  goading_strike: fx("melee", "#ff6b6b"),
+  throw_pike: fx("arrow", "#c9d6e8"),
   starbeam: fx("beam", "#fff3a8"),
   moonlight: fx("erupt", "#bcd7ff"),
   focus_light: fx("beam", "#fff3a8"),
@@ -67,7 +73,6 @@ const ABILITY_FX: Record<string, Fx> = {
   coral_burst: fx("erupt", "#ff8f7a"),
   restore: fx("bless", "#5eead4"),
   blight: fx("lob", "#84cc16"),
-  lighthouse_beam: fx("beam", "#ffe9a8"),
   cleave: fx("ring", "#dfe9ff"),
   beacon_aura: fx("bless", "#fff7d6"),
   healing_aura: fx("bless", "#5dffa0"),
@@ -90,7 +95,6 @@ const ABILITY_FX: Record<string, Fx> = {
   windgod_shanty: fx("ring", "#3fe0c5"),
   chorus: fx("lob", "#ff6fa8"),
   lead_by_example: fx("bolt", "#ffe08a"),
-  shockwave: fx("ring", "#a78bfa"),
   against_the_waves: fx("bless", "#5fb8ff"),
   overwhelm: fx("melee", "#ff9a4a"),
   fortify: fx("erupt", "#c9b48a"),
@@ -118,7 +122,6 @@ const ABILITY_FX: Record<string, Fx> = {
   clarion_call: fx("bless", "#ffd23f"),
   recover: fx("bless", "#ffd23f"),
   block: fx("bless", "#c9d6e8"),
-  hold_the_line: fx("bless", "#fbbf24"),
 };
 
 /** What enemies shoot and cast, by the attack's own name. Anything not here is a blow up close, or (an attack on every hero) a ring. */

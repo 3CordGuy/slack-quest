@@ -102,7 +102,7 @@ export const WEAPON_ICON: Record<string, string> = {
   coral_staff: "coral-staff",
   ships_bell: "ships-bell",
   astrolabe: "astrolabe",
-  lamp_hook: "lamp-hook",
+  boarding_pike: "boarding-pike",
   bilge_chalice: "bilge-chalice",
 };
 

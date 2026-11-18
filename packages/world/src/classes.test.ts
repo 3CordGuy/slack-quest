@@ -108,76 +108,12 @@ describe("class passives", () => {
 });
 
 describe("Tidewall Warden", () => {
-  it("starts every fight guarded, and keeps the guard through its first turn until its second", () => {
-    for (let seed = 0; seed < 20; seed++) {
-      const rng = makeRng(seed);
-      const { state: start } = createBattle({ heroes: [heroCombatant(hero("w", "sre_warden")), heroCombatant(hero("p", "qa_paladin"))], enemyKinds: [DUMMY_KIND], avgLevel: 1, poiId: "ring" }, rng);
-      const guarded = (s: BattleState, id: string) => s.combatants.find((c) => c.id === id)!.effects.some((e) => e.kind === "guarded");
-      expect(guarded(start, "w")).toBe(true);
-      expect(guarded(start, "p")).toBe(false);
-      // Both heroes attack, never guarding themselves, so any guard the Warden has is the passive's.
-      let state = start;
-      let wardenTurns = 0;
-      for (let i = 0; i < 8 && state.status === "active"; i++) {
-        const actor = currentActor(state)!;
-        if (actor.id === "w") {
-          wardenTurns += 1;
-          // At the start of its first turn the guard is still up; at its second it is gone.
-          expect(guarded(state, "w")).toBe(wardenTurns === 1);
-        }
-        const res = stepBattle(state, actor.id, { type: "ability", ability: actor.id === "w" ? "seawall_blow" : "bash", target: "e0" }, rng);
-        if (!res.ok) throw new Error(res.error);
-        state = res.state;
-      }
-      expect(wardenTurns).toBeGreaterThanOrEqual(2);
-    }
-  });
-
   it("does not guard any other class at the start of a fight", () => {
     const heroes = HERO_CLASSES.filter((c) => c.id !== "sre_warden").map((c) => heroCombatant(hero(c.id, c.id)));
     const { state } = createBattle({ heroes, enemyKinds: [DUMMY_KIND], avgLevel: 1, poiId: "ring" }, makeRng(1));
     for (const c of state.combatants) expect(c.effects.some((e) => e.kind === "guarded"), c.id).toBe(false);
   });
 
-  it("draws every single-target enemy attack onto itself while taunting, until its next turn", () => {
-    // Three dummies swing at a party of three. The Warden taunts every turn; the
-    // others only look after themselves, so the fight runs long.
-    let taunted = 0;
-    let elsewhere = 0;
-    for (let seed = 0; seed < 30; seed++) {
-      const party = [hero("w", "sre_warden"), hero("p", "qa_paladin"), hero("m", "devops_mage")];
-      const { events } = spar(party, { w: "challenge", p: "recover", m: "mend" }, seed, 30, [DUMMY_KIND, DUMMY_KIND, DUMMY_KIND]);
-      let active = false;
-      for (const e of events) {
-        if (e.t === "effect" && e.target === "w" && e.effect === "taunting") active = true;
-        else if ((e.t === "turn" && e.id === "w") || (e.t === "down" && e.id === "w")) active = false;
-        else if ((e.t === "hit" || e.t === "miss") && e.actor.startsWith("e")) {
-          if (active) {
-            expect(e.target).toBe("w");
-            taunted += 1;
-          } else if (e.target !== "w") elsewhere += 1;
-        }
-      }
-    }
-    expect(taunted).toBeGreaterThan(20);
-    // Without a taunt up, the dummies spread their swings around as usual.
-    expect(elsewhere).toBeGreaterThan(0);
-  });
-
-  it("adds a share of its armor to Seawall Blow", () => {
-    const perfect = (armor: number) => {
-      const hits = new Set<number>();
-      for (let seed = 0; seed < 60; seed++) {
-        const { events } = spar([{ ...hero("w", "sre_warden"), armor }], { w: "seawall_blow" }, seed, 2);
-        // Only the opening blow: a perfect one leaves the target exposed, which adds to the ones after.
-        const first = events.find((e) => e.t === "hit" && e.actor === "w");
-        if (first?.t === "hit" && first.perfect) hits.add(first.amount);
-      }
-      expect(hits.size).toBe(1);
-      return [...hits][0];
-    };
-    expect(perfect(9) - perfect(0)).toBe(Math.floor(9 / ARMOR_DAMAGE_DIVISOR));
-  });
 });
 
 describe("Wreck Warlock", () => {

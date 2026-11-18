@@ -458,6 +458,13 @@ function strike(ctx: Ctx, unit: Unit, def: AbilityDef, tactic: Tactic, target: U
   if (roll.crit && unit.kind === "data_warlock") addCondition(ctx, target, "bleeding", WARLOCK_BLEED_TURNS);
   afflict(ctx, unit, def, target, true);
   if (tactic.guide && !target.down && (!tactic.guideSave || !saveRoll(ctx, target, SAVE_STAT.guiding_light, saveDc(unit, def), `Resist ${def.name}`).ok)) addCondition(ctx, target, "guiding_light", tactic.guide);
+  if (tactic.goad && !target.down && !saveRoll(ctx, target, SAVE_STAT.taunted, saveDc(unit, def), `Resist ${def.name}`).ok) {
+    // Taunted afresh, by whoever did it last.
+    removeCondition(target, "taunted");
+    addCondition(ctx, target, "taunted", tactic.goad);
+    const c = target.conditions.find((x) => x.kind === "taunted");
+    if (c) c.by = unit.id;
+  }
   if (tactic.kindleLit && !target.down && has(target, "guiding_light")) kindle(ctx, unit, target, tactic.kindleLit);
   // Water Burst: the drench reaches whoever stands beside the target, no roll to hit.
   if (tactic.spray) {
@@ -537,6 +544,7 @@ export function resolveAbility(ctx: Ctx, unit: Unit, ability: string, aim: Aim &
   const crate = tactic.shape === "single" || tactic.shape === "chain" ? crateById(state, aim.target) : undefined;
   if (crate) {
     if (tactic.bulwark) addShield(ctx, unit, tactic.bulwark.shield + unit.level, tactic.bulwark.rounds);
+    if (tactic.ward) addShield(ctx, unit, tactic.ward.shield + unit.level, tactic.ward.rounds);
     // Aimed at a crate, a chain goes no further: there is nothing in a crate for it to jump from.
     smash(ctx, unit, def, tactic, crate);
     landed = true;
@@ -597,6 +605,7 @@ export function resolveAbility(ctx: Ctx, unit: Unit, ability: string, aim: Aim &
     const target = unitById(state, aim.target!)!;
     // The shield is set before the swing, and counts toward it.
     if (tactic.bulwark) addShield(ctx, unit, tactic.bulwark.shield + unit.level, tactic.bulwark.rounds);
+    if (tactic.ward) addShield(ctx, unit, tactic.ward.shield + unit.level, tactic.ward.rounds);
     // A pocket picked unseen is no blow, just a quick hand.
     if (tactic.steal && wasUnseen) landed = true;
     else if (tactic.overwhelm) landed = overwhelm(ctx, unit, def, target, tactic.overwhelm);
@@ -715,6 +724,10 @@ export function resolveAbility(ctx: Ctx, unit: Unit, ability: string, aim: Aim &
     }
     if (tactic.regen) addCondition(ctx, target, "regenerating", tactic.regen.rounds);
     if (tactic.starlit) addCondition(ctx, target, "north_star", tactic.starlit);
+    if (tactic.standStrong) {
+      const { shield, perFoe, rounds } = tactic.standStrong;
+      addShield(ctx, unit, shield + unit.level + perFoe * foes().filter((u) => adjacent(u.pos, unit.pos)).length, rounds);
+    }
     if (tactic.armor) addCondition(ctx, target, "coral_armor", tactic.armor.rounds);
     if (tactic.shanty) {
       // One shanty at a time: the new one starts afresh, nobody joined yet.

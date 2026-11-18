@@ -45,6 +45,12 @@ export interface Tactic {
   ignites?: boolean;
   /** Extra damage against something Wet. */
   vsWet?: number;
+  /** Single: shields the user before the blow, hit or miss, on top of any shield they have (Sturdy Blow). */
+  ward?: typeof STURDY;
+  /** Self: a shield on top of any the user has, bigger for each enemy beside them (Stand Strong). */
+  standStrong?: typeof STAND_STRONG;
+  /** Single: a hit leaves the target Taunted by the user for this many of its turns, unless it saves (Goading Strike). */
+  goad?: number;
   /** Single: a hit also sets the target Burning for this many turns if it is lit by Guiding Light (Focus Light). */
   kindleLit?: number;
   /** With `guide`: the enemy saves against being lit (Starbeam). */
@@ -170,6 +176,12 @@ export const OVERWHELM = { hexes: 2, stun: 1 };
 export const FORTIFY = { hexes: 3, rounds: 3, defence: 1 };
 export const BULWARK = { shield: 4, rounds: 2, perShield: 0.5 };
 export const TAUNT = { range: 1, rounds: 2 };
+/** Sturdy Blow (the maul): a shield of `shield` plus the user's level, on top of any they have, hit or miss. */
+export const STURDY = { shield: 3, rounds: 1 };
+/** Stand Strong (the maul): a shield of `shield` plus the user's level and `perFoe` for each enemy beside them, on top of any they have. */
+export const STAND_STRONG = { shield: 3, perFoe: 3, rounds: 1 };
+/** Guard (the axe): a shield of `shield` plus the user's level, with Guarded. */
+export const GUARD_UP = { range: 0, shield: 4, rounds: 1 };
 
 /**
  * Weather (weather.ts), by kind: how many rounds of a fight it hangs on after the one it is made in. Rain heals
@@ -379,12 +391,13 @@ export const TACTICS: Record<string, Tactic> = {
   chart_a_course: { cost: "bonus", reach: "spell", range: CHART.range, shape: "blast", radius: 0, cooldown: 2, chart: CHART },
   north_star: mend(6, { cooldown: 3, guide: GUIDING_LIGHT.rounds, northStar: NORTH_STAR }),
   // Warden
-  seawall_blow: melee(),
-  challenge: melee({ cost: "bonus" }),
-  hold_the_line: guard(),
-  shockwave: melee({ shape: "adjacent", cooldown: 2 }),
-  lighthouse_beam: spell(5, { shape: "line", length: 5, cooldown: 2 }),
   // Warden class abilities
+  sturdy_blow: melee({ ward: STURDY }),
+  stand_strong: { ...guard(), standStrong: STAND_STRONG },
+  disarming_chop: melee(),
+  raise_guard: { ...guard(), cooldown: 1, shield: GUARD_UP },
+  goading_strike: melee({ goad: TAUNT.rounds }),
+  throw_pike: shot(3, { pull: 2, cooldown: 2 }),
   against_the_waves: { ...guard(), cooldown: 2, shield: AGAINST_WAVES },
   overwhelm: melee({ cost: "bonus", cooldown: 2, overwhelm: OVERWHELM }),
   fortify: spell(5, { shape: "blast", radius: 0, cooldown: 3, weather: "wall", fortify: FORTIFY }),

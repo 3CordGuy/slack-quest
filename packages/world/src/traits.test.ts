@@ -24,7 +24,7 @@ const hero = (id: string, over: Partial<Combatant> = {}): Combatant => ({
   id, side: "hero", name: id, kind: "qa_paladin", level: 1, hp: 60, maxHp: 60,
   pct: { str: 100, int_stat: 100, vit: 100, agi: 100, dex: 100 },
   power: 0, armor: 0, speed: 100, focus: 3, potions: 2,
-  abilities: ["bash", "block", "cleave", "snag", "lighthouse_beam", "red_tide", "torch_swing"],
+  abilities: ["bash", "block", "cleave", "snag", "red_tide", "torch_swing"],
   effects: [], down: false, traits: [], ...over,
 });
 const fight = (heroes: Combatant[], enemies = ["dummy"], seed = 3) => createBattle({ heroes, enemyKinds: enemies, avgLevel: 1, poiId: null }, makeRng(seed)).state;
@@ -201,9 +201,4 @@ describe("signature abilities", () => {
     expect(r.state.combatants.find((c) => c.id === "e0")!.effects.some((e) => e.kind === "bleeding")).toBe(false);
   });
 
-  it("Lighthouse Beam taunts", () => {
-    const s = tune(fight([hero("h")], ["dummy", "dummy"]), { hp: 500, maxHp: 500 });
-    const b = ok(stepBattle(s, "h", { type: "ability", ability: "lighthouse_beam" }, makeRng(1)));
-    expect(b.events).toContainEqual({ t: "effect", target: "h", effect: "taunting", turns: 1 });
-  });
 });

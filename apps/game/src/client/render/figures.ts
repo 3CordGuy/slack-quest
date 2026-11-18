@@ -810,7 +810,7 @@ const HOLD: Record<string, Hold> = {
   // Rung: held up by the handle, the bell hanging below the fist.
   "ships-bell": { grip: [0, 5.6, 0], scale: 0.5, pose: { arm: -0.7 } },
   astrolabe: { grip: [0, -4.2, 0], scale: 0.45, pose: { arm: -0.5 } },
-  "lamp-hook": { grip: [0, -6.5, 0], scale: 0.65, turn: FORWARD, pose: { tilt: 0.15 } },
+  "boarding-pike": { grip: [0, -6.5, 0], scale: 0.65, turn: FORWARD, pose: { tilt: 0.15 } },
   // Held up in front by the stem.
   "bilge-chalice": { grip: [0, -3, 0], scale: 0.46, at: [0, 0, 0.4], pose: { arm: -0.9 } },
   "round-shield": { grip: [0, 0, 0], scale: 0.39, at: [0.5, -3.4, 1.9], turn: ON_ARM },
@@ -4487,12 +4487,12 @@ function drawHeld(id: string, b: Biped, trim: string, look: Look, shield: boolea
       w.box(GEAR.steel, 0.3, 4.2, 0.36, 0, 4.8, 0.05, [0, 0, 0.7]);
       w.glowBall(trim, 0.6, 0, 4.8, 0.2);
       return { arm: -0.5 };
-    case "lamp_hook":
-      shaft(GEAR.wood, 14, 3.4);
+    case "boarding_pike":
+      shaft(GEAR.wood, 15, 3.4);
       w.cyl(trim, 0.6, 0.6, 0.8, 0, 6, 0, 6);
-      w.box(GEAR.steel, 0.4, 0.6, 2.6, 0, 10.6, 1.1);
-      w.box(GEAR.steel, 0.4, 1.4, 0.5, 0, 10, 2.2);
-      lantern(7.6, 2.2);
+      w.cyl(GEAR.iron, 0.55, 0.55, 1.2, 0, 10.8, 0, 6);
+      w.box(GEAR.iron, 3.4, 0.5, 0.5, 0, 11.6, 0);
+      w.cone(GEAR.steel, 0.95, 4.8, 0, 14, 0, 4);
       return { tilt: 0.15 };
     case "bilge_chalice": {
       w.cyl(GEAR.gold, 0.36, 0.36, 2.4, 0, 1.2, 0, 6);

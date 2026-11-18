@@ -242,20 +242,17 @@ const ART: Record<string, Art> = {
     p.r(7, 12, 2, 3, C.wood);
     p.r(7, 15, 2, 1, C.gold);
   },
-  "lamp-hook": (p) => {
-    // A long pole, an iron hook at its head, a lantern hanging from it.
-    p.l(3, 15, 7, 5, C.wood);
-    p.l(4, 15, 8, 5, C.bark);
+  "boarding-pike": (p) => {
+    // A long pole, an iron band at the grip, a steel spearhead with a pair of lugs at its base.
+    p.l(3, 15, 8, 6, C.wood);
+    p.l(4, 15, 9, 6, C.bark);
     p.r(4, 12, 2, 1, p.accent);
-    p.r(7, 2, 1, 3, C.iron);
-    p.r(8, 1, 3, 1, C.iron);
-    p.r(11, 2, 1, 3, C.iron);
-    spans(p, C.iron, [[5, 10, 12], [6, 9, 13]]);
-    p.r(10, 7, 3, 4, "#ffd98a");
-    p.r(10, 7, 1, 1, "#fff4c0");
-    p.r(9, 7, 1, 4, C.iron);
-    p.r(13, 7, 1, 4, C.iron);
-    p.r(9, 11, 5, 1, C.iron);
+    p.r(8, 5, 2, 1, C.iron);
+    p.r(6, 4, 6, 1, C.iron);
+    p.r(8, 2, 2, 2, C.steel);
+    p.r(9, 1, 1, 1, C.steel);
+    p.r(9, 0, 1, 1, C.shine);
+    p.r(8, 2, 1, 2, C.shine);
   },
   "bilge-chalice": (p) => {
     // A gold chalice brimming with glowing bilge, bubbles rising and a drip down the side.
