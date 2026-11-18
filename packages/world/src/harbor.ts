@@ -29,8 +29,10 @@ const keyOf = (p: HexPos) => `${p.q},${p.r}`;
  * building itself stands on the hexes north of it, which nobody can walk through:
  * a `pair` is the two hexes behind the door (three tiles with the doorstep), a `trio` those and the one behind them
  * (a diamond of four with the doorstep), and a `flower` a whole ring of seven whose two nearest petals touch the door.
+ * A `single` is one hex, the one up and to the right of where a hero stands to use it: for a thing rather than a
+ * building (the town chest, the notice board, the stonecutter's bench).
  */
-export type Footing = "pair" | "trio" | "flower";
+export type Footing = "single" | "pair" | "trio" | "flower";
 
 /**
  * The six sides of a hex, clockwise from the top right: the same order as `HEX_DIRS` (hutroom.ts), which a
@@ -51,7 +53,7 @@ function turned(d: HexPos, times: number): HexPos {
  */
 export function footing(door: HexPos, shape: Footing, facing = 0): HexPos[] {
   const pair = [{ q: 0, r: -1 }, { q: 1, r: -1 }];
-  const offsets = shape === "pair" ? pair : shape === "trio" ? [...pair, { q: 1, r: -2 }] : [...pair, { q: 1, r: -2 }, { q: 0, r: -2 }, { q: 2, r: -2 }, { q: 1, r: -3 }, { q: 2, r: -3 }];
+  const offsets = shape === "single" ? [{ q: 1, r: -1 }] : shape === "pair" ? pair : shape === "trio" ? [...pair, { q: 1, r: -2 }] : [...pair, { q: 1, r: -2 }, { q: 0, r: -2 }, { q: 2, r: -2 }, { q: 1, r: -3 }, { q: 2, r: -3 }];
   return offsets.map((d) => {
     const t = turned(d, facing);
     return { q: door.q + t.q, r: door.r + t.r };
@@ -69,25 +71,41 @@ export function frontOf(door: HexPos, facing = 0): HexPos[] {
   });
 }
 
-/** Where a player appears on arrival: the middle of the plaza, at the island's heart. */
+/**
+ * Where a player appears on arrival: the middle of the square, at the island's heart. The square is this hex and
+ * the two rings round it (`HARBOR_SQUARE`), and what a crew uses every day stands on its rim, a step from here:
+ * the notice board and the town chest either side of the lane up to the caverns, and the market stall down the
+ * west side. The trades are out along the High Street: the smithy, the stonecutter's bench and the sparring
+ * ring at its west end, the pub and the apothecary at its east.
+ */
 export const HARBOR_SPAWN: HexPos = at(13, 15);
+/** The square: every hex within two of where everyone arrives. All of it cobbled. */
+export const HARBOR_SQUARE: HexPos[] = allHexesInGrid({ cols: 28, rows: 31 }).filter((p) => {
+  const dq = p.q - HARBOR_SPAWN.q, dr = p.r - HARBOR_SPAWN.r;
+  return (Math.abs(dq) + Math.abs(dr) + Math.abs(dq + dr)) / 2 <= 2;
+});
 /** Pier heads, off the south shore: the end of each pier's planking. A moored ship lies in the water beyond each one. */
 export const HARBOR_PIERS: HexPos[] = [at(8, 26), at(13, 27), at(18, 26)];
 /**
  * Hut plots, handed out to crew members in the order they joined: each is the doorstep of a hut that stands on the
  * two hexes behind it. They line the two dirt lanes that run up from the High Street to the north-west and the
  * north-east, facing the lane from either side, the first few nearest the street; the last few are down by the
- * shore, along the lanes to the fish shack and the lighthouse.
+ * shore, along the lanes to the fish shack and the lighthouse, and one is up the lane to the caverns. None
+ * stands against the smithy: the ground east of it is the smithy's yard, where the stonecutter's bench is.
  */
 export const HARBOR_PLOTS: HexPos[] = [
-  at(10, 12), at(16, 13), at(8, 13), at(9, 18), at(9, 10), at(17, 11),
+  at(10, 12), at(16, 13), at(12, 10), at(9, 18), at(9, 10), at(17, 11),
   at(7, 11), at(20, 10), at(8, 8), at(18, 9), at(8, 20), at(20, 18),
 ];
 /** Which way each hut plot faces (see `footing`), so its hut fronts the lane it stands on. */
-export const HARBOR_PLOT_FACING: number[] = [1, 5, 4, 0, 1, 5, 4, 2, 1, 5, 3, 0];
-/** The notice board, at the plaza's north edge beside the lane up to the caverns. */
-export const HARBOR_BOARD: HexPos = at(14, 13);
-/** The market stall, where gear is bought and sold: on the High Street, just west of the plaza. */
+export const HARBOR_PLOT_FACING: number[] = [1, 0, 5, 0, 1, 5, 5, 2, 1, 5, 3, 0];
+/**
+ * The notice board: where a hero stands to read it, at the head of the square. The board itself stands on the
+ * square's north-west corner, up and to the left of this hex, on the left of the lane up to the caverns, and
+ * faces in.
+ */
+export const HARBOR_BOARD: HexPos = at(13, 14);
+/** The market stall, where gear is bought and sold: its doorstep, on the square's west side. The stall stands west of it and fronts the square. */
 export const HARBOR_SHOP: HexPos = at(12, 14);
 /** The sparring ring, where crewmates try out their gear: at the west end of the High Street. */
 export const HARBOR_RING: HexPos = at(5, 15);
@@ -118,6 +136,20 @@ export const HARBOR_WORKS: HexPos = at(11, 18);
  * a bare point (then a building site) until the crew has paid for it at the works.
  */
 export const HARBOR_LIGHTHOUSE: HexPos = at(21, 24);
+/**
+ * The stonecutter's bench, where lodestones are cut and worked (stonecraft.ts) before a crew goes out to the
+ * atlas with them: where a hero stands to use it, at the west end of the High Street, away from the square.
+ * The bench itself stands up and to the left of this hex, in the smithy's yard with a hex of open ground
+ * between it and the smithy's door: the two trades that work stone and iron, side by side.
+ */
+export const HARBOR_BENCH: HexPos = at(8, 15);
+/**
+ * The town chest, the crew's shared store (townchest.ts): where a hero stands to open it, at the head of the
+ * square. The chest itself stands on the square's north-east corner, up and to the right of this hex, on the
+ * right of the lane up to the caverns (the notice board is on the left), and faces in. Nobody walks through
+ * it, and pointing at it is pointing here.
+ */
+export const HARBOR_CHEST: HexPos = at(14, 14);
 /** The apothecary's door, across the High Street from the pub, facing up it from the south side. A building site until the crew has paid for it. */
 export const HARBOR_APOTHECARY: HexPos = at(18, 16);
 /** The smithy's door, at the west end of the High Street by the sparring ring. A building site until the crew has paid for it. */
@@ -146,11 +178,14 @@ export const HARBOR_BUILDINGS: { id: string; door: HexPos; shape: Footing; groun
   { id: "pub", door: HARBOR_PUB, shape: "trio", ground: "cobble" },
   { id: "lighthouse", door: HARBOR_LIGHTHOUSE, shape: "flower", ground: "mud" },
   { id: "works", door: HARBOR_WORKS, shape: "pair", ground: "cobble", facing: 5 },
-  { id: "shop", door: HARBOR_SHOP, shape: "pair", ground: "cobble" },
+  { id: "shop", door: HARBOR_SHOP, shape: "pair", ground: "cobble", facing: 5 },
   { id: "apothecary", door: HARBOR_APOTHECARY, shape: "trio", ground: "cobble", facing: 3 },
   { id: "smithy", door: HARBOR_SMITHY, shape: "trio", ground: "cobble" },
   { id: "galley", door: HARBOR_GALLEY, shape: "trio", ground: "cobble", facing: 4 },
   { id: "fishing", door: HARBOR_GATHER.fishing, shape: "pair", ground: "mud" },
+  { id: "townchest", door: HARBOR_CHEST, shape: "single", ground: "cobble" },
+  { id: "board", door: HARBOR_BOARD, shape: "single", ground: "cobble", facing: 5 },
+  { id: "bench", door: HARBOR_BENCH, shape: "single", ground: "cobble", facing: 5 },
   ...HARBOR_PLOTS.map((door, i) => ({ id: `plot:${i}`, door, shape: "pair" as const, ground: "plains" as const, facing: HARBOR_PLOT_FACING[i] })),
 ];
 
@@ -204,7 +239,7 @@ export function harborDoor(pos: HexPos): HexPos | null {
   return DOOR_OF.get(keyOf(pos)) ?? null;
 }
 
-const HEIGHT: Record<Biome, number> = { water: 0.05, plains: 0.3, forest: 0.42, hills: 0.75, dock: 0.1, cobble: 0.26, mud: 0.2, rampart: 0.7, floor: 0.1, wall: 0.9, cave: 0.18, rock: 1.4, gate: 0.18, fog: 0.3 };
+const HEIGHT: Record<Biome, number> = { sand: 0.22, water: 0.05, plains: 0.3, forest: 0.42, hills: 0.75, dock: 0.1, cobble: 0.26, mud: 0.2, rampart: 0.7, floor: 0.1, wall: 0.9, cave: 0.18, rock: 1.4, gate: 0.18, fog: 0.3 };
 
 export function harborPoi(id: string, kind: PoiKind, pos: HexPos, facing = 0): Poi {
   return { id, kind, pos, hidden: false, cleared: false, usedBy: [], enemies: [], ...(facing ? { facing } : {}) };
@@ -270,8 +305,8 @@ export function generateHarbor(): WorldMap {
     t.h = HEIGHT[biome];
     return t;
   };
-  // The plaza: cobbles under the place everyone arrives and all round it, and under the notice board and the ring.
-  for (const p of [HARBOR_SPAWN, ...around(HARBOR_SPAWN), HARBOR_BOARD, HARBOR_RING]) lay(p, "cobble");
+  // The square: cobbles under the place everyone arrives and two rings round it. And under the sparring ring.
+  for (const p of [...HARBOR_SQUARE, HARBOR_RING]) lay(p, "cobble");
   // The cobbled streets, before the buildings that front them.
   for (const road of HARBOR_ROADS) if (road.kind === "cobble") for (const p of roadHexes(road)) lay(p, "cobble");
   // Each building's ground: its doorstep and the hexes it stands on, all level. Nobody walks through the building.
@@ -306,6 +341,8 @@ export function generateHarbor(): WorldMap {
     harborPoi("apothecary", "apothecary", HARBOR_APOTHECARY), harborPoi("smithy", "smithy", HARBOR_SMITHY),
     harborPoi("galley", "galley", HARBOR_GALLEY),
     harborPoi("lighthouse", "lighthouse", HARBOR_LIGHTHOUSE),
+    harborPoi("bench", "bench", HARBOR_BENCH),
+    harborPoi("townchest", "townchest", HARBOR_CHEST),
     harborPoi("fishing", "fishing", HARBOR_GATHER.fishing),
     harborPoi("felling", "felling", HARBOR_GATHER.felling),
     harborPoi("quarry", "quarry", HARBOR_GATHER.quarry),

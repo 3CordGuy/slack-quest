@@ -5,3 +5,10 @@ SET ref = 'boarding_pike',
     icon = 'boarding-pike',
     name = REPLACE(name, 'Lamp Hook', 'Boarding Pike')
 WHERE kind = 'weapon' AND ref = 'lamp_hook';
+
+-- The same for any kept in a crew's town chest (0042_town_chest.sql), which holds gear as `inventory` does.
+UPDATE town_gear
+SET ref = 'boarding_pike',
+    icon = 'boarding-pike',
+    name = REPLACE(name, 'Lamp Hook', 'Boarding Pike')
+WHERE kind = 'weapon' AND ref = 'lamp_hook';

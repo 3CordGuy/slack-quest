@@ -1,0 +1,12 @@
+-- Lodestones (packages/world/src/lodestone.ts): stones a hero carries, one of which must be put into a
+-- place's slot on the atlas before anyone can set out for it. What a stone carries is added to the place's
+-- own modifiers when its map is made.
+--
+-- The stones themselves need no table of their own: each kind of stone is a kind of item in a hero's pack,
+-- kept with what there is to drink or throw (`consumables`: 'lodestone' for a plain one, 'lodestone:' and
+-- what it carries, joined with '+', for the rest).
+--
+-- What is kept here is the stone a node's map was made with, written as it is sent (what it carries joined
+-- with '+'; the empty string for a plain one), or null for none: so the chart can show what is odd about a
+-- place being fought through, and why.
+ALTER TABLE atlas_nodes ADD COLUMN stone TEXT;

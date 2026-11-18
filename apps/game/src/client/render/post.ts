@@ -370,8 +370,10 @@ export class PostFx {
    * @param focus how far the camera is from what it looks at
    * @param night how dark it is outdoors, 0 to 1: glow comes up as the light goes
    * @param air the sky this frame, for cloud shadows, light shafts and haze
+   * @param wide a map of the world, seen whole from high up: nearly all of it is kept sharp and clear, where a
+   *   view from among the houses lets its distance blur and sink into the sky
    */
-  render(scene: THREE.Scene, camera: THREE.PerspectiveCamera, focus: number, night: number, air: Air) {
+  render(scene: THREE.Scene, camera: THREE.PerspectiveCamera, focus: number, night: number, air: Air, wide = false) {
     const p = this.params;
     const r = this.renderer;
     const layers = camera.layers.mask;
@@ -393,7 +395,7 @@ export class PostFx {
     u.far.value = camera.far;
     u.focus.value = focus;
     (u.focusRange.value as THREE.Vector2).set(p.focusNear, p.focusFar);
-    u.dof.value = p.dof;
+    u.dof.value = p.dof * (wide ? 0.3 : 1);
     u.focusSlack.value = p.focusSlack;
     u.bloom.value = p.bloom + (p.bloomNight - p.bloom) * night;
     u.grade.value = p.grade;
@@ -438,7 +440,7 @@ export class PostFx {
     u.airShadow.value = air.outdoors ? p.cloudShadow * light : 0;
     u.airShafts.value = air.outdoors ? p.shafts * light * (0.35 + 0.65 * (1 - Math.max(0, air.sunDir.y))) : 0;
     // Less haze while the sun is low: with the sky all one colour it lays a flat veil over the whole island.
-    u.airHaze.value = air.outdoors ? p.haze * (1 - 0.45 * low) : 0;
+    u.airHaze.value = air.outdoors ? p.haze * (1 - 0.45 * low) * (wide ? 0.15 : 1) : 0;
     this.pass(this.final, null);
 
     // The overlay layer, straight onto the finished picture: no sky to clear it, and no shadow maps to redraw.

@@ -10,8 +10,9 @@ import type { HexPos, Stats } from "@gantt-quest/core";
 import type { EffectKind } from "../content";
 import type { ItemDef, Outfit } from "../gear";
 import type { Resources } from "../hut";
-import type { WorldMap } from "../map";
+import type { Clime, WorldMap } from "../map";
 import type { FurnishingGrant } from "../world";
+import type { ZoneMod } from "./mods";
 
 export type Side = "hero" | "enemy";
 
@@ -131,6 +132,8 @@ export interface GroundSurface {
   rounds: number;
   /** Who laid it, for the log. */
   by: string | null;
+  /** It does not wear off: the ground a map's modifier put there (zone/mods.ts). Whatever replaces it (water on fire) wears off as usual. */
+  lasting?: boolean;
 }
 
 /** What a unit has left to spend on its turn. */
@@ -210,6 +213,17 @@ export interface ZoneOptions {
   threat?: number;
   /** A delve into the caverns (zone/delve.ts): chambers, tunnels, chests and a hoard, not open ground. */
   delve?: boolean;
+  /** What makes this map unlike the next (zone/mods.ts): changes to its ground and to whoever stands on it. */
+  mods?: ZoneMod[];
+  /**
+   * Set on a map the atlas made (atlas.ts): how many rings out from the Harbor its node lies. Clearing
+   * such a map pays everyone on it a bounty, and its fights pay by the enemy's level.
+   */
+  tier?: number;
+  /** What the place is called, on a map the atlas made: its node's name. */
+  name?: string;
+  /** The climate it lies in, on a map the atlas made (left out for the greenwood): its ground is painted to suit. */
+  clime?: Clime;
 }
 
 export interface ZoneState {
@@ -240,6 +254,8 @@ export interface ZoneState {
   /** The bands that carry a key: it is the party's once the band is beaten. */
   keyHolders?: string[];
   encounter: Encounter | null;
+  /** The atlas's bounty for clearing this map has been paid (zone/loot.ts): it is paid once. */
+  bounty?: boolean;
   /** For minting unit ids. */
   seq: number;
   /** Dev switches. */
@@ -388,7 +404,7 @@ export type ZoneEvent =
   /** A hero puts out the torch in their hand and stows it in the pack. */
   | { t: "torch_stowed"; id: string }
   /** What a hero took, from a won fight or a chest: the XP, and whatever else came with it. */
-  | { t: "spoils"; id: string; xp: number; resources: Resources; gold?: number; item?: string; blueprint?: string; furnishing?: string; potions?: number; torches?: number }
+  | { t: "spoils"; id: string; xp: number; resources: Resources; gold?: number; item?: string; blueprint?: string; furnishing?: string; potions?: number; torches?: number; /** A lodestone, in a bounty: what it carries. It goes to the crew's case. */ stone?: ZoneMod[] }
   /** A piece of gear found had no room in the pack: it went home to storage, or into the pack over its limit. Told by the server. */
   | { t: "stowed"; id: string; item: string; place: "storage" | "overfull" }
   /** A key goes on the party's ring: found in a chest (by `id`), or taken from a beaten band. */
@@ -406,7 +422,9 @@ export type ZoneEvent =
   /** A crate breaks open. `id` is whose blow (or fire) broke it, if anyone's. */
   | { t: "crate_broken"; poi: string; id: string | null }
   /** The last enemy group on the map is gone. */
-  | { t: "cleared" };
+  | { t: "cleared" }
+  /** A map the atlas made has been cleared, and its bounty paid (the `spoils` before this are it). */
+  | { t: "bounty" };
 
 /** Things the server must carry out: what a player's own hero earned, from a won fight or a chest. */
 export type ZoneEffect = {
@@ -420,6 +438,8 @@ export type ZoneEffect = {
   furnishing?: FurnishingGrant;
   /** Put in the pack to drink or throw. */
   items?: Partial<Record<Throwable, number>>;
+  /** A lodestone found in a bounty (lodestone.ts): it goes into the crew's case, not the hero's pack. */
+  stone?: ZoneMod[];
 };
 
 export type ZoneStep = { ok: true; state: ZoneState; events: ZoneEvent[]; effects: ZoneEffect[] } | { ok: false; error: string };

@@ -18,7 +18,7 @@ import "./camera.css";
 import { PINCH_PAN_SLACK, followIconSvg, readFollow, writeFollow } from "./cameraFollow";
 import type { HexPos } from "@gantt-quest/core";
 import { hexDistance } from "@gantt-quest/core";
-import { lookStep, lookYaw, BASE_HEIGHT, BATTLE_JOIN_RANGE, BIG_REACH, ENEMIES, HEX_DIRS, SEATS, TRAIT_BY_ID, tileCost, WALL_FACE_HALF, WALL_ITEM_BOTTOM, WALL_ITEM_TOP, hexAt, xpProgress, reachable, tileAt, wallFace, wallFaces, type ClientState, type Outfit, type Phase, type Poi, type Tile, type WorldEvent, type WorldMap } from "@gantt-quest/world";
+import { lookStep, lookYaw, BASE_HEIGHT, BATTLE_JOIN_RANGE, BIG_REACH, ENEMIES, HEX_DIRS, SEATS, TRAIT_BY_ID, tileCost, WALL_FACE_HALF, WALL_ITEM_BOTTOM, WALL_ITEM_TOP, hexAt, xpProgress, reachable, tileAt, wallFace, wallFaces, type Biome, type ClientState, type Clime, type Outfit, type Phase, type Poi, type Tile, type WorldEvent, type WorldMap } from "@gantt-quest/world";
 import { fancy, fancyGrass } from "./fancy";
 import { NightLife } from "./nightlife";
 import { Storm } from "./storm";
@@ -33,7 +33,7 @@ import { BOAT_SCALE, OARLOCKS, ROWER_SEAT, aimOar, rowboatModel, shipOar } from 
 import { Rise } from "./rise";
 import { gaze } from "../gaze";
 import { NIGHT, VEIL_CLEAR_S, Veil } from "./veil";
-import { GROUND_KIND, addFancyWater, addWaterRipple, setGroundWet, setWaterNight, setWaterStanding, shoreSide, updateWater, waterAttribute, type Standing } from "./water";
+import { GROUND_KIND, addFancyWater, addWaterRipple, setGroundFine, setGroundWet, setWaterNight, setWaterStanding, shoreSide, updateWater, waterAttribute, type Standing } from "./water";
 import { ghostModel, propModel, tintGhost, type LightKind } from "./props";
 import { LAMP_TABLES, TableLamps } from "./tableLamps";
 import { LID_OPEN, chestMouth, chestModel, crateMiddle, crateModel, restingLid } from "./caveProps";
@@ -134,6 +134,18 @@ export interface RenderState {
    * buttons step round from here by sixths, so they come back to it.
    */
   homeYaw?: number;
+  /**
+   * A map of the world, looked at from a long way up (the atlas): the camera starts well back and can pull back
+   * further, and the land is dressed as a small world, with little trees in clumps, small peaks on its hills and
+   * its painted ground drawn finer.
+   *
+   * Such a map may be one window of a world too big to hold (its tiles at the world's own hexes, not counted
+   * from a corner, and none at all where the view draws something of its own over the world, as the atlas does
+   * its cloud). Hand over another window under the same `code` and the ground is redrawn while the camera stays
+   * where it is, so the world goes on past where the last window ended. The distance is lost in mist well
+   * before a window's edge, so the edge is never seen.
+   */
+  far?: boolean;
 }
 
 /** The ways a room's walls can be dressed inside (see RenderState.walls). */
@@ -300,6 +312,11 @@ const PIXEL = 2;
 /** Nearest and farthest the camera may sit from what it looks at. */
 const MIN_ZOOM = 7;
 const MAX_ZOOM = 40;
+/** On a map of the world (RenderState.far): how far back the camera may pull, and where it starts. */
+const FAR_MAX_ZOOM = 66;
+const FAR_ZOOM = 40;
+/** And how much finer its painted ground and water are drawn than a map a hero walks on. */
+const FAR_FINE = 2.6;
 /** Below 1 makes a pinch zoom less than the fingers move. */
 const PINCH_DAMPING = 0.55;
 /** The angle equal to `to` (mod a full turn) that is closest to `from`, so easing takes the short way round. */
@@ -334,7 +351,41 @@ const MAX_PITCH = 1.25;
 /** Camera distance per unit of zoom, kept from when the tilt was fixed. */
 const CAMERA_REACH = Math.hypot(0.72, 0.78);
 const PLAYER_COLORS = ["#ffd23f", "#5ce1e6", "#ff7ab6", "#9dff6b"];
-const BIOME_COLOR: Record<string, string> = { plains: "#7cb856", forest: "#4c9a52", hills: "#a39672", water: "#3f86dc", dock: "#9a7748", cobble: "#6f7279", mud: "#5f5140", rampart: "#6c6f55", floor: "#b08a5c", wall: "#6e5a48", cave: "#4a4552", rock: "#2a2730", gate: "#4a4552", fog: "#2b3140" };
+const BIOME_COLOR: Record<string, string> = { plains: "#7cb856", forest: "#4c9a52", hills: "#a39672", water: "#3f86dc", dock: "#9a7748", cobble: "#6f7279", mud: "#5f5140", rampart: "#6c6f55", floor: "#b08a5c", wall: "#6e5a48", cave: "#4a4552", rock: "#2a2730", gate: "#4a4552", fog: "#2b3140", sand: "#e2d09a" };
+/**
+ * How the ground is painted in each climate that is not the greenwood (Tile.clime): the same kinds of ground,
+ * in that climate's own colours. Snowfields and blue ice in the frost; sand, scrub and red rock in the dunes;
+ * moss, mud and dark water in the mire; cinders and black rock in the ashlands.
+ */
+const CLIME_COLOR: Record<Exclude<Clime, "greenwood">, Partial<Record<Biome, string>>> = {
+  frost: { plains: "#e6edf4", forest: "#cfdbe6", hills: "#a3afbf", sand: "#b9dcec", water: "#2b5a8a", rock: "#8793a4" },
+  dunes: { plains: "#d9aa66", forest: "#c2965a", hills: "#ad5c38", sand: "#ead29a", water: "#2f9ea4", rock: "#874830" },
+  mire: { plains: "#586a3a", forest: "#3f5238", hills: "#625d4c", sand: "#66553a", water: "#3b5a44", rock: "#3a372e" },
+  ash: { plains: "#58525d", forest: "#443d46", hills: "#36303a", sand: "#29232b", water: "#3b3340", rock: "#221e26" },
+};
+/** The ashlands' lowest ground is molten: far brighter than anything lit can be, so it glows where there is glow to be had. */
+const MOLTEN = new THREE.Color(1.5, 0.4, 0.07);
+const MOLTEN_DEEP = new THREE.Color(0.7, 0.11, 0.03);
+/** What a loose stone's own colour is multiplied by in a climate: the stone there is not the greenwood's grey. */
+const ROCK_TINT: Partial<Record<Clime, THREE.Color>> = { frost: new THREE.Color(1.3, 1.36, 1.46), dunes: new THREE.Color(1.3, 0.8, 0.55), mire: new THREE.Color(0.74, 0.74, 0.6), ash: new THREE.Color(0.44, 0.41, 0.47) };
+/** Such a hex is molten (and not the cooled crust beside it) when it lies this low. */
+const MOLTEN_BELOW = 0.09;
+/** On a map of the world the greenwood is painted a little deeper than underfoot: seen whole, the brighter greens are too much. */
+const FAR_COLOR: Partial<Record<Biome, string>> = { plains: "#6c9c4b", forest: "#3f7b47", hills: "#93886b", sand: "#d8c58f", water: "#2c72c0" };
+/** What a tree's own colours are multiplied by in a climate: rimed with frost, dark with wet, charred. */
+const TREE_TINT: Partial<Record<Clime, THREE.Color>> = { frost: new THREE.Color(1.22, 1.5, 1.72), mire: new THREE.Color(0.72, 0.82, 0.6), ash: new THREE.Color(0.42, 0.38, 0.4), dunes: new THREE.Color(1.15, 1.0, 0.78) };
+/** How much of a greenwood's trees stand in a climate's woods. */
+const TREE_SHARE: Partial<Record<Clime, number>> = { dunes: 0.3, ash: 0.5, mire: 0.75 };
+/** Which painted detail a hex of ground gets on top (see GROUND_KIND), by its climate: a snowfield has no flowers in it. */
+const groundKind = (t: Tile): number => {
+  if (!t.clime) return GROUND_KIND[t.biome] ?? 0;
+  if (t.biome === "water") return 0;
+  if (t.clime === "ash" && t.biome === "sand" && t.h < MOLTEN_BELOW) return 0;
+  return t.clime === "mire" && (t.biome === "plains" || t.biome === "forest") ? 2 : 3;
+};
+/** How the water of a climate is told to the shader (see water.ts): 0 the sea as it is, 1 cold, 2 dark and still, 3 clear and green. */
+const WATER_KIND: Partial<Record<Clime, number>> = { frost: 1, mire: 2, dunes: 3 };
+
 /** What grass and trees are pulled toward under the Harbor's low cloud. */
 const DRAB = new THREE.Color("#5d6a5c");
 /** What open grass is pulled toward where it has dried out (see dryPatch): straw under dead grass, dusty brown on dry ground. */
@@ -448,6 +499,17 @@ function warmPane(unlit: string, lit: string): THREE.MeshBasicMaterial {
 const NIGHT_SEA = new THREE.Color("#0f1a33");
 const FOG_DAY = new THREE.Color("#3a4358");
 const FOG_NIGHT = new THREE.Color("#141824");
+/** On a map of the world (RenderState.far): what lies under everything the map does not hold, and what the distance is lost in. */
+const FAR_FLOOR = new THREE.Color("#4d5568");
+export const FAR_MIST = new THREE.Color("#aeb9cf");
+/**
+ * How far off the distance begins to be lost and where it is gone, in world units past what the camera looks at.
+ * On a map of the world the mist closes in just past what the view shows; everywhere else under the open sky it
+ * only softens the far sea into the sky, so the sea has no edge.
+ */
+const MIST = { far: [20, 54], open: [90, 420] } as const;
+/** The time of day a map of the world is held at: mid-afternoon, the light warm and the shadows long enough to shape the land. */
+const FAR_TIME = 0.6;
 /** And the sea there: cold and grey-green. */
 const GREY_SEA = new THREE.Color("#2f4a5f");
 
@@ -487,8 +549,10 @@ const key = (p: HexPos) => `${p.q},${p.r}`;
  * `back` behind the hex's (0.28 unless said here). The Harbor's places are drawn bigger than that, so a hero
  * looks the right size beside them: `scale` times as big, and far enough back that the building stands on the
  * ground behind its door (see `footing` in the world's harbor.ts) with the hero on the doorstep in front.
+ * `turn` (in sixths of a turn, as a facing is) turns it further about its door: half a sixth for a thing that
+ * stands on the one hex up and to the right of where it is used from, and so faces down and to the left.
  */
-const PLACE: Partial<Record<Poi["kind"], { scale: number; back: number }>> = {
+const PLACE: Partial<Record<Poi["kind"], { scale: number; back: number; turn?: number }>> = {
   pub: { scale: 2.2, back: 1.6 },
   lighthouse: { scale: 3, back: 3 },
   works: { scale: 2, back: 1.8 },
@@ -501,7 +565,9 @@ const PLACE: Partial<Record<Poi["kind"], { scale: number; back: number }>> = {
   site: { scale: 2, back: 1.6 },
   fishing: { scale: 1.6, back: 0.8 },
   cave: { scale: 2.2, back: 1.3 },
-  board: { scale: 1.6, back: 0.45 },
+  board: { scale: 1.6, back: SQRT3, turn: 0.5 },
+  bench: { scale: 1.6, back: SQRT3, turn: 0.5 },
+  townchest: { scale: 1.75, back: SQRT3, turn: 0.5 },
   ring: { scale: 1.5, back: 0.42 },
   felling: { scale: 1.5, back: 0.42 },
   quarry: { scale: 1.5, back: 0.42 },
@@ -509,7 +575,12 @@ const PLACE: Partial<Record<Poi["kind"], { scale: number; back: number }>> = {
   wreck: { scale: 1.8, back: 0.5 },
   pier: { scale: 1.8, back: 1.25 },
 };
-const placeOf = (poi: Poi) => PLACE[poi.kind] ?? { scale: 1, back: 0.28 };
+/** On a map of the world (RenderState.far) a place is a landmark of a small world: no bigger than its hex, and standing on it. */
+const FAR_PLACE: Partial<Record<Poi["kind"], { scale: number; back: number; turn?: number }>> = {
+  lighthouse: { scale: 1.2, back: 0.1 },
+  cave: { scale: 1, back: 0.3 },
+};
+const placeOf = (poi: Poi, far = false): { scale: number; back: number; turn?: number } => (far ? FAR_PLACE[poi.kind] : PLACE[poi.kind]) ?? { scale: far ? 0.8 : 1, back: far ? 0.1 : 0.28 };
 /** To the nearest thousandth, so offsets sent to the server stay short. */
 const round = (n: number) => Math.round(n * 1000) / 1000;
 /** Where the stools stand round a game table in the pub (its middle is at z = -0.3): four, as many as can play, clear of whoever stands at the front. */
@@ -810,7 +881,8 @@ export interface WorldMinigame {
 }
 
 export interface RendererCallbacks {
-  onHexClick(pos: HexPos): void;
+  /** `place` is the id of the point of interest whose model was clicked, when the click landed on one (and so means its door). */
+  onHexClick(pos: HexPos, place?: string): void;
   onHover(pos: HexPos | null): void;
   /** A click on a prop. Return true if it was handled; otherwise the click falls through to its hex. */
   onPropClick?(id: string | number): boolean;
@@ -991,6 +1063,8 @@ export class WorldRenderer {
   private targetGoal = new THREE.Vector3();
   private dist = 24;
   private userDist = 24;
+  /** How far back the camera may pull on this map. */
+  private maxZoom = MAX_ZOOM;
   /** Active pointers on the canvas, by id. Two of them make a pinch. */
   private touches = new Map<number, { x: number; y: number }>();
   private pinch: { dist: number; x: number; y: number; zoom: number; angle: number } | null = null;
@@ -1088,7 +1162,9 @@ export class WorldRenderer {
     this.ambience = new Ambience(this.scene, this.renderer);
     this.scene.add(this.nightLife.group, this.gulls.group, this.storm.bolt, this.panes, this.wallPanels);
 
-    const sea = new THREE.Mesh(new THREE.PlaneGeometry(240, 240), new THREE.MeshLambertMaterial({ color: "#3577cf" }));
+    // Far bigger than anything the camera can see the end of: it is kept under the camera (see frame), and its far
+    // reaches are lost in the mist.
+    const sea = new THREE.Mesh(new THREE.PlaneGeometry(6000, 6000), new THREE.MeshLambertMaterial({ color: "#3577cf" }));
     addFancyWater(sea.material);
     sea.rotation.x = -Math.PI / 2;
     sea.position.y = 0.1;
@@ -1242,7 +1318,8 @@ export class WorldRenderer {
     // The ground is redrawn for a new map, and whenever fog lifts off more of this one.
     const lifted = state.map.tiles.reduce((n, t) => n + (t.biome === "fog" ? 0 : 1), 0);
     this.ambience.floorLook = state.floor ?? "planks";
-    if (first || lifted !== this.lifted) this.buildTerrain(state, first);
+    // And for another window of a world (see RenderState.far), under a camera that stays where it is.
+    if (first || lifted !== this.lifted || (!!state.far && state.map.tiles !== this.tiles)) this.buildTerrain(state, first);
     if (first) this.buildPanes(state);
     if (first) this.buildWallPanels(state);
     this.lifted = lifted;
@@ -1258,11 +1335,21 @@ export class WorldRenderer {
       // A new map opens at its own turn.
       this.homeYaw = state.homeYaw ?? 0;
       this.userYaw = this.yaw = this.yawGoal = this.homeYaw;
-      // No sea under a hut's floor, nor in the caverns.
-      this.sea.visible = !state.indoors && state.kind !== "caverns";
+      // No sea under a hut's floor, nor in the caverns; nor under a map of the world, where what is not land is
+      // the mist itself (so nothing shows through the thin edge of whatever the view draws over it).
+      this.sea.visible = !state.indoors && state.kind !== "caverns" && !state.far;
       (this.scene.background as THREE.Color).set(state.indoors ? "#1d1a2b" : "#a9dcf7");
       // A room is framed whole: closer for a hut, further back for the pub.
       if (state.indoors) this.userDist = this.camDist = state.map.grid.cols > 10 ? 21 : 15;
+      // A map of the world is looked at from a long way up, and by one unchanging light: it is there to be read.
+      this.ambience.heldTime = state.far ? FAR_TIME : null;
+      this.maxZoom = state.far ? FAR_MAX_ZOOM : MAX_ZOOM;
+      if (state.far) this.userDist = this.camDist = FAR_ZOOM;
+      // Under the open sky the distance is lost in mist (see frame), and the camera sees as far as the mist does.
+      const open = !state.indoors && state.kind !== "caverns" && !this.opts.backdrop;
+      this.scene.fog = open ? new THREE.Fog("#a9dcf7", 100, 500) : null;
+      this.camera.far = open ? 1600 : 200;
+      this.camera.updateProjectionMatrix();
     }
 
     const me = state.heroes.find((h) => h.id === state.you);
@@ -2152,7 +2239,9 @@ export class WorldRenderer {
   private buildTerrain(state: RenderState, recentre = true) {
     this.mapCode = state.code;
     this.sodden = state.map.tiles.some((t) => t.biome === "cobble");
-    this.seaBase.set(this.sodden ? "#2b4558" : "#3577cf");
+    // Round a map of the world there is only more fog: what lies past its edge is the fog's own grey.
+    if (state.far) this.seaBase.copy(FAR_FLOOR);
+    else this.seaBase.set(this.sodden ? "#2b4558" : "#3577cf");
     (this.sea.material as THREE.MeshLambertMaterial).color.copy(this.seaBase);
     this.wallTurn = NaN;
     this.lowered.clear();
@@ -2197,8 +2286,9 @@ export class WorldRenderer {
         .filter((t) => {
           // Water with something standing in it (rocks, a wreck) stays, so it can still be pointed at.
           if (t.biome !== "water" || state.map.pois.some((p) => p.pos.q === t.q && p.pos.r === t.r)) return false;
-          // A map that is all sea (the crossing to an island) is drawn whole.
-          if (land.length === 0) return false;
+          // A map that is all sea (the crossing to an island) is drawn whole, and so is a map of the world: its seas
+          // are part of it, and what lies round it is fog, not water.
+          if (land.length === 0 || state.far) return false;
           const near = Math.min(...land.map((l) => hexDistance(l, t)));
           return near > 2 || (near === 2 && noise(t.q, t.r, 31) < 0.45);
         })
@@ -2206,6 +2296,7 @@ export class WorldRenderer {
     );
     // For the fancy water: which hexes are water, how near the shore, and which of their sides touch land.
     addFancyWater(terrain.material as THREE.MeshLambertMaterial, true);
+    setGroundFine(terrain.material, state.far ? FAR_FINE : 1);
     const water = waterAttribute(this.tiles.length);
     const byKey = new Map(this.tiles.map((t) => [key(t), t]));
     const isLand = (t: Tile | undefined) => !!t && t.biome !== "water" && t.biome !== "fog";
@@ -2215,7 +2306,7 @@ export class WorldRenderer {
       m.compose(new THREE.Vector3(x, tileTop(t), z), new THREE.Quaternion(), new THREE.Vector3(shown, shown ? 1 : 0, shown));
       terrain.setMatrixAt(i, m);
       if (t.biome !== "water") {
-        water.setXYZ(i, 0, 0, GROUND_KIND[t.biome] ?? 0);
+        water.setXYZ(i, 0, 0, groundKind(t));
         return;
       }
       let sides = 0;
@@ -2225,7 +2316,7 @@ export class WorldRenderer {
         const to = hexToWorld(next);
         sides |= 1 << shoreSide(to.x - x, to.z - z);
       }
-      water.setXYZ(i, 1, sides, 0);
+      water.setXYZ(i, 1, sides, (t.clime && WATER_KIND[t.clime]) || 0);
     });
     geo.setAttribute("aWater", water);
     terrain.castShadow = true;
@@ -2253,10 +2344,56 @@ export class WorldRenderer {
       const { x, z } = hexToWorld(t);
       const top = tileTop(t);
       const n = (salt: number) => noise(t.q, t.r, salt);
-      const tree = (dx: number, dz: number, size: number, salt: number, pine = n(salt + 1) < 0.68) =>
-        trees.push({ x: x + dx, y: top, z: z + dz, size, kind: pine ? "pine" : "broad", yaw: n(salt + 2) * Math.PI * 2, tint: tintOf(n(salt + 3), n(salt + 4)) });
-      const rock = (dx: number, dz: number, size: number, tall: number, salt: number) =>
-        boulders.push({ x: x + dx, y: top, z: z + dz, size, tall, yaw: n(salt) * Math.PI * 2, tilt: (n(salt + 1) - 0.5) * 0.5, shape: Math.floor(n(salt + 2) * 3.99), tint: tintOf(n(salt + 3), n(salt + 4)) });
+      // What grows is the climate's own: rimed pines in the frost, dead wood in the dunes and the ashlands (and half the mire's).
+      const clime = t.clime;
+      const tree = (dx: number, dz: number, size: number, salt: number, pine = n(salt + 1) < 0.68) => {
+        const tint = tintOf(n(salt + 3), n(salt + 4));
+        if (clime && TREE_TINT[clime]) tint.multiply(TREE_TINT[clime]!);
+        const dead = clime === "dunes" || clime === "ash" || (clime === "mire" && n(salt + 5) < 0.45);
+        trees.push({
+          x: x + dx, y: top, z: z + dz, yaw: n(salt + 2) * Math.PI * 2, tint,
+          size: dead ? size * 1.2 : size,
+          kind: dead ? "snag" : pine || clime === "frost" ? "pine" : "broad",
+          ...(dead ? { shape: Math.floor(n(salt + 6) * OAK_SHAPES * 0.999) } : {}),
+        });
+      };
+      const rock = (dx: number, dz: number, size: number, tall: number, salt: number) => {
+        const tint = tintOf(n(salt + 3), n(salt + 4));
+        if (t.clime && ROCK_TINT[t.clime]) tint.multiply(ROCK_TINT[t.clime]!);
+        boulders.push({ x: x + dx, y: top, z: z + dz, size, tall, yaw: n(salt) * Math.PI * 2, tilt: (n(salt + 1) - 0.5) * 0.5, shape: Math.floor(n(salt + 2) * 3.99), tint });
+      };
+      if (state.far) {
+        // A small world: little trees in clumps, thick in the forest and one or two out on the grass, and
+        // a few stones where the map has heaped boulders. (Its hills' peaks are the ambience's.)
+        const clump = (count: number, least: number, more: number, salt: number) => {
+          const turn = n(salt) * Math.PI * 2;
+          for (let i = 0; i < count; i++) {
+            const a = turn + (i / count) * Math.PI * 2 + (n(salt + 10 + i) - 0.5) * 1.5;
+            const d = i === 0 ? n(salt + 20) * 0.2 : 0.3 + n(salt + 20 + i) * 0.46;
+            tree(Math.sin(a) * d, Math.cos(a) * d * 0.92, least + n(salt + 30 + i) * more, salt + 40 + i * 5);
+          }
+        };
+        const share = (clime && TREE_SHARE[clime]) || 1;
+        // Deep in the woods the trees stand taller and closer; out on the grass, one or two.
+        const deep = n(905) > 0.62;
+        if (t.biome === "forest") clump(Math.max(1, Math.round((5 + Math.floor(n(900) * 2.99) + (deep ? 2 : 0)) * share)), deep ? 0.34 : 0.26, 0.2, 901);
+        else if (t.biome === "plains" && n(960) < 0.16 * share) clump(1 + Math.floor(n(961) * 1.99), 0.22, 0.14, 962);
+        if (t.blocker === "boulders") for (let i = 0; i < 3; i++) rock((n(980 + i) - 0.5) * 0.9, (n(984 + i) - 0.5) * 0.8, 0.2 + n(988 + i) * 0.12, 0.3 + n(992 + i) * 0.25, 996 + i * 5);
+        // Here and there on open ground, a ring of standing stones: someone was here before the crew.
+        else if (t.biome === "plains" && n(1060) < 0.014) {
+          const turn = n(1061) * Math.PI * 2;
+          for (let i = 0; i < 6; i++) {
+            if (i === 4 && n(1062) < 0.5) continue;
+            const a = turn + (i / 6) * Math.PI * 2;
+            rock(Math.sin(a) * 0.5, Math.cos(a) * 0.46, 0.085, 0.34 + n(1064 + i) * 0.2, 1070 + i * 5);
+          }
+        }
+        // A stone or two lying about on open ground: more of them where little grows.
+        else if ((t.biome === "plains" || t.biome === "sand") && top > 0.45 && n(1020) < (clime === "dunes" || clime === "ash" ? 0.34 : 0.1)) {
+          for (let i = 0; i < 1 + Math.floor(n(1021) * 1.99); i++) rock((n(1024 + i) - 0.5) * 1.1, (n(1028 + i) - 0.5) * 1.0, 0.09 + n(1032 + i) * 0.1, 0.1 + n(1036 + i) * 0.14, 1040 + i * 5);
+        }
+        continue;
+      }
       if (t.blocker === "trees") {
         // A thicket: a ring of big old trees round one in the middle, and brush between their feet.
         const ring = 5 + Math.floor(n(100) * 2.99);
@@ -2369,14 +2506,15 @@ export class WorldRenderer {
       // Nothing grows or lies about where a place stands, under a building, or in a thicket or a boulder heap.
       // The Harbor's gaps of rubble have their boulders from the woods, not the ambience's hill rocks.
       // (Grass does grow round the foot of a lone oak.)
-      (t) => poiKeys.has(key(t)) || !!t.built || (!!t.blocker && t.blocker !== "oak") || (this.sodden && t.biome === "hills"),
+      (t) => poiKeys.has(key(t)) || !!t.built || (!!t.blocker && t.blocker !== "oak" && !state.far) || (this.sodden && t.biome === "hills"),
       (t) => ({ ...hexToWorld(t), y: tileTop(t) }),
+      !!state.far,
     );
     // The trees bend in the wind (fancy graphics), and aside as anyone walks through them.
     this.woods?.dispose();
     // The caverns' entrance is cut into the rampart behind its hex (its model stands back into it): none of the
     // rampart's rubble stands in the way in, or just in front of it, where it would block the arch from view.
-    const ways = state.map.pois.filter((p) => p.kind === "cave").map((p) => ({ ...hexToWorld(p.pos), back: placeOf(p).back }));
+    const ways = state.map.pois.filter((p) => p.kind === "cave").map((p) => ({ ...hexToWorld(p.pos), back: placeOf(p, state.far).back }));
     const clearOfWays = boulders.filter((b) => !ways.some((w) => Math.abs(b.x - w.x) < 1.4 && b.z - (w.z - w.back) > -0.9 && b.z - (w.z - w.back) < 1.3));
     this.woods = new Woods(trees, clearOfWays, this.sodden, !fancyGrass.get());
     this.decor.add(this.woods.group);
@@ -2616,12 +2754,16 @@ export class WorldRenderer {
     // A place's hex keeps its green: the ambience lays no dry grass there, so it would be parched for nothing.
     const places = new Set(this.state?.map.pois.map((p) => key(p.pos)) ?? []);
     this.tiles.forEach((t, i) => {
-      c.set(BIOME_COLOR[t.biome]);
+      c.set((t.clime && t.clime !== "greenwood" && CLIME_COLOR[t.clime][t.biome]) || (this.state?.far && FAR_COLOR[t.biome]) || BIOME_COLOR[t.biome]);
+      // Molten, in the ashlands: brighter and darker in slow patches, like a crust breaking up.
+      if (t.clime === "ash" && t.biome === "sand" && t.h < MOLTEN_BELOW) c.copy(MOLTEN_DEEP).lerp(MOLTEN, noise(t.q, t.r, 61));
       // Fog is a pale mist by day and all but black by night.
-      if (t.biome === "fog") c.set(FOG_DAY).lerp(FOG_NIGHT, Math.max(0, this.paintedNight) / 10);
+      if (t.biome === "fog") {
+        c.set(FOG_DAY).lerp(FOG_NIGHT, Math.max(0, this.paintedNight) / 10);
+      }
       // In a wet, walled port the green is tired.
       if (this.sodden && (t.biome === "plains" || t.biome === "forest")) c.lerp(DRAB, 0.5);
-      if (t.biome === "plains" && !t.built && !places.has(key(t))) {
+      if (t.biome === "plains" && !t.clime && !t.built && !places.has(key(t))) {
         const { x, z } = hexToWorld(t);
         const dry = dryPatch(t, x, z);
         if (dry >= 0) c.lerp(dry === 2 ? DUSTY : PARCHED, dry === 2 ? 0.62 : 0.45);
@@ -2686,6 +2828,20 @@ export class WorldRenderer {
     return { x: ((v.x + 1) / 2) * this.container.clientWidth, y: ((1 - v.y) / 2) * this.container.clientHeight };
   }
 
+  /**
+   * Where a hex is on the screen, in container pixels, `lift` above its ground, whether or not that is inside
+   * the view (`on` says). Null only when it is behind the camera. For things drawn over the map that run off
+   * its edge, as a line to somewhere out of sight does.
+   */
+  screenOf(pos: HexPos, lift = 0): { x: number; y: number; on: boolean } | null {
+    if (!this.state) return null;
+    const v = this.standAt(pos);
+    v.y += lift;
+    v.project(this.camera);
+    if (v.z < -1 || v.z > 1) return null;
+    return { x: ((v.x + 1) / 2) * this.container.clientWidth, y: ((1 - v.y) / 2) * this.container.clientHeight, on: Math.abs(v.x) <= 1 && Math.abs(v.y) <= 1 };
+  }
+
   screenAbove(pos: HexPos, lift = 1.8): { x: number; y: number } | null {
     if (!this.state) return null;
     const v = this.standAt(pos);
@@ -2715,6 +2871,11 @@ export class WorldRenderer {
   /** Have your hero turn to face the camera and stay so (while the bag is open), or go back to looking toward the pointer. */
   setFacingFront(on: boolean) {
     this.faceFront = on;
+  }
+
+  /** The hex the camera is looking at: the one under the middle of the view. */
+  focus(): HexPos {
+    return worldToHex(this.target.x, this.target.z);
   }
 
   lookAt(pos: HexPos) {
@@ -3049,7 +3210,7 @@ export class WorldRenderer {
     const standing: Standing[] = [];
     for (const poi of state.map.pois) {
       const { x, z } = hexToWorld(poi.pos);
-      const { scale, back } = placeOf(poi);
+      const { scale, back } = placeOf(poi, state.far);
       /** Something in the model, by where it is modelled: where it stands in the world, and how big. */
       const stands = (mx: number, mz: number, half: number, radius: number) => standing.push({ x: x + mx * scale, z: z + mz * scale - back, half: half * scale, radius: radius * scale });
       if (poi.kind === "rocks") stands(-0.05, 0.08, 0.25, 0.5);
@@ -3075,14 +3236,14 @@ export class WorldRenderer {
       // Any real flame in it (a torch by the caverns' entrance) flickers with the rest.
       for (const f of flamesIn(g)) this.liveFlames.add(f);
       const at = this.standAt(poi.pos);
-      const { scale, back } = placeOf(poi);
+      const { scale, back, turn = 0 } = placeOf(poi, state.far);
       if (BUILDINGS.has(poi.kind)) inkBuilding(g, scale);
       // A building turned to front a road (see `facing`) is turned about its door: it stands back from the door
       // the way it faces away from it.
       // A hut is not set out with a surveyor's chain: each stands a few degrees askew of its lane, its own way
       // (the same for a plot staked out, its building site and the hut that goes up on it).
       const askew = HUT_KINDS.has(poi.kind) ? (noise(poi.pos.q, poi.pos.r, 77) - 0.5) * 0.3 : 0;
-      const yaw = yawOf(poi.facing ?? 0) + askew;
+      const yaw = yawOf((poi.facing ?? 0) + turn) + askew;
       const behind = new THREE.Vector3(0, 0, -back).applyAxisAngle(UP, yaw);
       g.position.set(at.x + behind.x, at.y, at.z + behind.z);
       g.rotation.y = yaw;
@@ -3508,8 +3669,8 @@ export class WorldRenderer {
    * back, turned to face, and scaled).
    */
   private inModel(poi: Poi, x: number, z: number): THREE.Vector2 {
-    const { scale, back } = placeOf(poi);
-    const yaw = yawOf(poi.facing ?? 0);
+    const { scale, back, turn = 0 } = placeOf(poi, this.state?.far);
+    const yaw = yawOf((poi.facing ?? 0) + turn);
     const at = hexToWorld(poi.pos);
     const behind = new THREE.Vector3(0, 0, -back).applyAxisAngle(UP, yaw);
     const p = new THREE.Vector3(x - at.x - behind.x, 0, z - at.z - behind.z).applyAxisAngle(UP, -yaw).divideScalar(scale);
@@ -5400,6 +5561,111 @@ export class WorldRenderer {
         add(box(0.9, 0.04, 0.5), lambert("#8c3b2f"), 0, 0.02, 0.28);
         for (const x of [-0.8, 0.8]) add(box(0.14, 0.9, 0.14), lambert("#5a3d22"), x, 0.45, 0.28);
         break;
+      case "townchest": {
+        // The town chest, the crew's shared store: a great iron-bound sea chest on a stone plinth. Its lid is shut
+        // until someone opens it (setChestOpen swings it back), and then what is in it shows over the rim: gold,
+        // and the blue of lodestones. The crew's pennant flies from a pole behind it, and a lantern hangs from the
+        // pole to find it by after dark.
+        const oak = lambert("#6b4a2a");
+        const darkOak = lambert("#4a3320");
+        const iron = lambert("#33363c");
+        const brass = lambert("#c79a3e");
+        const plinth = lambert("#8b8f96");
+        // The plinth: two courses of stone.
+        add(box(1.16, 0.1, 0.82), plinth, 0, 0.05, 0);
+        add(box(1.04, 0.08, 0.7), lambert("#7b7f87"), 0, 0.14, 0);
+        // The chest's body: planks, banded with iron, cornered with brass, a lock plate on the front.
+        add(box(0.9, 0.42, 0.56), oak, 0, 0.39, 0);
+        for (const y of [0.24, 0.55]) add(box(0.92, 0.035, 0.58), darkOak, 0, y, 0);
+        for (const x of [-0.3, 0, 0.3]) add(box(0.06, 0.44, 0.585), iron, x, 0.39, 0);
+        for (const x of [-0.45, 0.45]) for (const z of [-0.28, 0.28]) add(box(0.05, 0.44, 0.05), brass, x, 0.39, z);
+        add(box(0.14, 0.16, 0.03), brass, 0, 0.42, 0.295);
+        add(box(0.04, 0.06, 0.035), iron, 0, 0.4, 0.3);
+        for (const x of [-0.47, 0.47]) add(new THREE.TorusGeometry(0.06, 0.014, 6, 12), iron, x, 0.42, 0, Math.PI / 2);
+        // What is in it, showing over the rim.
+        add(box(0.82, 0.03, 0.48), lambert("#2a2118"), 0, 0.585, 0);
+        for (let i = 0; i < 7; i++) add(new THREE.CylinderGeometry(0.045, 0.045, 0.02, 8), brass, -0.3 + (i % 4) * 0.09, 0.61 + Math.floor(i / 4) * 0.02, -0.08 + ((i * 37) % 5) * 0.045, i);
+        for (const [x, z, glow] of [[0.14, 0.02, true], [0.26, -0.1, false], [0.3, 0.1, true]] as const) {
+          const g = add(new THREE.OctahedronGeometry(0.06, 0), glow ? new THREE.MeshBasicMaterial({ color: "#7fd0ff" }) : lambert("#39445a"), x, 0.65, z, x * 9);
+          g.scale.y = 1.3;
+          if (glow) g.userData.glow = true;
+        }
+        // The lid, on its hinges along the back: domed, banded like the body. movePois swings it.
+        const lid = new THREE.Group();
+        const part = (geometry: THREE.BufferGeometry, material: THREE.Material, x: number, y: number, z: number) => {
+          const m = new THREE.Mesh(geometry, material);
+          m.position.set(x, y, z);
+          lid.add(m);
+          return m;
+        };
+        part(box(0.92, 0.1, 0.58), oak, 0, 0.05, 0.29);
+        part(box(0.86, 0.06, 0.46), lambert("#775231"), 0, 0.13, 0.29);
+        for (const x of [-0.3, 0, 0.3]) part(box(0.06, 0.17, 0.6), iron, x, 0.085, 0.29);
+        part(box(0.1, 0.05, 0.03), brass, 0, 0.02, 0.585);
+        lid.position.set(0, 0.6, -0.28);
+        lid.rotation.x = WorldRenderer.TOWN_LID * this.chestLid.at;
+        g.add(lid);
+        g.userData.townLid = lid;
+        // The pole behind, with the crew's pennant and a lantern.
+        add(box(0.06, 1.9, 0.06), darkOak, 0.5, 0.95, -0.46);
+        add(box(0.5, 0.26, 0.02), lambert("#b23a2e"), 0.22, 1.7, -0.46);
+        add(box(0.5, 0.05, 0.022), lambert("#e9c85a"), 0.22, 1.7, -0.46);
+        add(box(0.02, 0.12, 0.02), iron, 0.5, 1.22, -0.36);
+        add(box(0.09, 0.11, 0.09), new THREE.MeshBasicMaterial({ color: "#ffd98a" }), 0.5, 1.12, -0.36).userData.glow = true;
+        break;
+      }
+      case "bench": {
+        // The stonecutter's bench, where lodestones are cut and worked: a stout bench under a blue awning, with a
+        // grindstone on its frame at one end and a vice at the other; stones on the top, cut and uncut, one of
+        // them alight; a tub of rough stone and iron at its foot, and a lantern on the awning's post.
+        const timber = lambert("#5a3d22");
+        const dark = lambert("#46301c");
+        const iron = lambert("#33363c");
+        const stone = lambert("#7b8088");
+        const lode = lambert("#39445a");
+        // The bench: a thick top on four legs, braced.
+        add(box(1.08, 0.08, 0.5), lambert("#7d5f3c"), 0, 0.5, 0);
+        add(box(1.08, 0.03, 0.5), dark, 0, 0.445, 0);
+        for (const x of [-0.46, 0.46]) for (const z of [-0.19, 0.19]) add(box(0.08, 0.46, 0.08), timber, x, 0.23, z);
+        add(box(0.92, 0.05, 0.05), dark, 0, 0.16, -0.19);
+        for (const x of [-0.46, 0.46]) add(box(0.05, 0.05, 0.38), dark, x, 0.16, 0);
+        // The grindstone: a wheel on an axle between two uprights, with a crank, and a trough under it.
+        for (const z of [-0.09, 0.09]) add(box(0.05, 0.32, 0.04), timber, -0.3, 0.7, z);
+        const wheel = add(new THREE.CylinderGeometry(0.19, 0.19, 0.08, 18), stone, -0.3, 0.78, 0);
+        wheel.rotation.x = Math.PI / 2;
+        const axle = add(new THREE.CylinderGeometry(0.018, 0.018, 0.3, 6), iron, -0.3, 0.78, 0.02);
+        axle.rotation.x = Math.PI / 2;
+        add(box(0.02, 0.12, 0.02), iron, -0.3, 0.72, 0.17);
+        add(box(0.32, 0.05, 0.16), dark, -0.3, 0.565, 0);
+        // The vice, and the tools laid by it: a chisel, a mallet.
+        add(box(0.18, 0.1, 0.12), iron, 0.3, 0.59, -0.08);
+        add(box(0.05, 0.12, 0.14), iron, 0.24, 0.66, -0.08);
+        add(box(0.05, 0.12, 0.14), iron, 0.36, 0.66, -0.08);
+        add(box(0.2, 0.018, 0.02), iron, 0.22, 0.55, 0.14).rotation.y = 0.5;
+        add(box(0.1, 0.07, 0.07), timber, 0.42, 0.575, 0.14);
+        add(box(0.03, 0.03, 0.18), dark, 0.42, 0.575, 0.05);
+        // Stones on the bench: two rough, two cut, and one that has taken: it gives its own light.
+        const gem = (x: number, z: number, size: number, material: THREE.Material, turn: number) => {
+          const g = add(new THREE.OctahedronGeometry(size, 0), material, x, 0.54 + size * 1.1, z, turn);
+          g.scale.y = 1.35;
+          return g;
+        };
+        add(new THREE.DodecahedronGeometry(0.06, 0), stone, 0.02, 0.585, 0.14, 0.7);
+        add(new THREE.DodecahedronGeometry(0.045, 0), lambert("#5d626b"), -0.08, 0.575, 0.17, 1.9);
+        gem(0.08, -0.02, 0.05, lode, 0.4);
+        gem(-0.04, 0.02, 0.045, lode, 1.3);
+        gem(0.17, 0.08, 0.055, new THREE.MeshBasicMaterial({ color: "#7fd0ff" }), 0.9).userData.glow = true;
+        // A tub of rough stone and ore at its foot.
+        add(new THREE.CylinderGeometry(0.15, 0.12, 0.2, 10), timber, 0.62, 0.1, 0.22);
+        for (let i = 0; i < 4; i++) add(new THREE.DodecahedronGeometry(0.05, 0), i % 2 ? stone : iron, 0.62 + Math.sin(i * 1.7) * 0.06, 0.22, 0.22 + Math.cos(i * 1.7) * 0.06, i);
+        // The awning: two posts at the back, a blue cloth pitched forward over the bench, and a lantern on one post.
+        for (const x of [-0.56, 0.56]) add(box(0.06, 1.36, 0.06), timber, x, 0.68, -0.3);
+        add(box(1.3, 0.03, 0.8), lambert("#2f5d8a"), 0, 1.32, 0.02).rotation.x = 0.22;
+        add(box(1.3, 0.05, 0.04), lambert("#24486c"), 0, 1.245, 0.41);
+        add(box(0.02, 0.1, 0.02), iron, 0.56, 1.12, -0.2);
+        add(box(0.08, 0.1, 0.08), new THREE.MeshBasicMaterial({ color: "#ffd98a" }), 0.56, 1.03, -0.2).userData.glow = true;
+        break;
+      }
       case "board": {
         // The notice board: a framed back of planks between two squared posts on stone feet, under a little
         // shingled roof to keep the rain off the paper. Notices are pinned all over it, no two alike or quite
@@ -5542,6 +5808,15 @@ export class WorldRenderer {
 
   /** How long a chest's lid takes to swing open, in seconds. */
   private static readonly LID_SWING = 0.5;
+  /** How far back the town chest's lid is thrown when it is open, in radians about its hinges. */
+  private static readonly TOWN_LID = -1.9;
+  /** The town chest's lid: whether it is meant to be open, how far open it is now (0 shut, 1 thrown back), and how fast it is swinging. */
+  private chestLid = { open: false, at: 0, speed: 0, seen: 0 };
+
+  /** Open the town chest's lid, or shut it: it swings on a spring, a little past where it is going and back. */
+  setChestOpen(open: boolean) {
+    this.chestLid.open = open;
+  }
 
   /** A chest's lid now: swinging open (eased, with a little bounce as it hits the end of its hinge), or at rest. */
   private lidNow(poi: Poi): number {
@@ -5618,6 +5893,22 @@ export class WorldRenderer {
 
   /** Each frame: lids swinging, crates rocking, glints twinkling. */
   private movePois() {
+    {
+      // The town chest's lid, sprung toward open or shut. Opening it is flung; shutting it is let fall and thuds home.
+      const lid = this.chestLid;
+      const dt = Math.min(0.05, Math.max(0, this.clock - lid.seen));
+      lid.seen = this.clock;
+      const goal = lid.open ? 1 : 0;
+      if (lid.at !== goal || lid.speed !== 0) {
+        lid.speed += ((goal - lid.at) * (lid.open ? 150 : 90) - lid.speed * (lid.open ? 13 : 9)) * dt;
+        lid.at += lid.speed * dt;
+        // It cannot swing down through the chest: it lands on the rim and stops.
+        if (lid.at < 0) [lid.at, lid.speed] = [0, 0];
+        if (Math.abs(goal - lid.at) < 0.001 && Math.abs(lid.speed) < 0.01) [lid.at, lid.speed] = [goal, 0];
+        const model = this.poiObject("townchest")?.userData.townLid as THREE.Object3D | undefined;
+        if (model) model.rotation.x = WorldRenderer.TOWN_LID * lid.at;
+      }
+    }
     for (const [id, start] of this.lidsSwinging) {
       const lid = this.poiObject(id)?.userData.lid as THREE.Object3D | undefined;
       const poi = this.state?.map.pois.find((p) => p.id === id);
@@ -6014,7 +6305,11 @@ export class WorldRenderer {
     }
   }
 
+  /** The place whose model the last `pick` landed on, if it landed on one. */
+  private pickedPlace: string | null = null;
+
   private pick(): HexPos | null {
+    this.pickedPlace = null;
     if (!this.terrain) return null;
     const rect = this.renderer.domElement.getBoundingClientRect();
     const ndc = new THREE.Vector2(((this.pointer.x - rect.left) / rect.width) * 2 - 1, -((this.pointer.y - rect.top) / rect.height) * 2 + 1);
@@ -6045,7 +6340,10 @@ export class WorldRenderer {
       if (onPlace && (!hit || onPlace.distance < hit.distance)) {
         let o: THREE.Object3D | null = onPlace.object;
         while (o && !o.userData.door) o = o.parent;
-        if (o) return { ...(o.userData.door as HexPos) };
+        if (o) {
+          this.pickedPlace = (o.userData.poiId as string | undefined) ?? null;
+          return { ...(o.userData.door as HexPos) };
+        }
       }
     }
     if (!hit || hit.instanceId === undefined) return null;
@@ -6188,7 +6486,7 @@ export class WorldRenderer {
       const now = this.pinchState();
       // Fingers apart zooms in: the camera distance shrinks as the spread grows.
       // Damped: doubling the spread zooms by about a half, not by two.
-      this.userDist = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, this.pinch.zoom * Math.pow(this.pinch.dist / now.dist, PINCH_DAMPING)));
+      this.userDist = Math.max(MIN_ZOOM, Math.min(this.maxZoom, this.pinch.zoom * Math.pow(this.pinch.dist / now.dist, PINCH_DAMPING)));
       this.dist = this.userDist;
       // While following, a pinch only zooms: the little drift of spreading fingers is not a pan.
       if (!this.holdPan(now.x, now.y)) this.panBy(now.x - this.pinch.x, now.y - this.pinch.y);
@@ -6256,7 +6554,7 @@ export class WorldRenderer {
     }
     const pos = this.pick();
     // Nobody walks during a fight, and a practice bout borrows the Harbor's view.
-    if (pos) this.callbacks.onHexClick(pos);
+    if (pos) this.callbacks.onHexClick(pos, this.pickedPlace ?? undefined);
   };
 
   private onPointerLeave = () => {
@@ -6277,7 +6575,7 @@ export class WorldRenderer {
     // Proportional to how far the wheel moved, capped so one notch is about 6%.
     // A trackpad sends many small deltas and a mouse wheel a few big ones; both end up gentle.
     const step = Math.max(-50, Math.min(50, e.deltaY)) * 0.0012;
-    this.userDist = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, this.userDist * Math.exp(step)));
+    this.userDist = Math.max(MIN_ZOOM, Math.min(this.maxZoom, this.userDist * Math.exp(step)));
     this.dist = this.userDist;
   };
 
@@ -6352,6 +6650,36 @@ export class WorldRenderer {
   }
 
   private camDist = 24;
+  /** Seconds left of coming in from an opening view (see swoop). */
+  private swooping = 0;
+
+  /**
+   * Open on the map from somewhere else and come slowly in to the usual view: from `dist` away (as zoom is
+   * counted), tipped to `pitch` (radians above the horizon) and turned `turn` off the map's own bearing.
+   * Not for anyone who asked for less motion.
+   */
+  swoop(dist: number, pitch: number, turn = 0, seconds = 4) {
+    if (this.still) return;
+    this.camDist = dist;
+    this.pitch = Math.max(MIN_PITCH, Math.min(1.5, pitch));
+    this.yaw = this.yawGoal + turn;
+    this.swooping = seconds;
+  }
+
+  /** Whether the map has been shown yet: false while it is still being made behind the veil. */
+  get revealed(): boolean {
+    return this.settling < 0;
+  }
+
+  /** The direction to the sun or moon, for things a view draws itself that should be lit as the map is. */
+  get sun(): THREE.Vector3 {
+    return this.ambience.sunDir;
+  }
+
+  /** The mist the distance is lost in under the open sky (its colour, and where it begins and is whole), or null where there is none. */
+  get mist(): THREE.Fog | null {
+    return this.scene.fog as THREE.Fog | null;
+  }
 
   private frame = (now: number) => {
     if (!this.opts.backdrop) this.raf = requestAnimationFrame(this.frame);
@@ -6402,9 +6730,13 @@ export class WorldRenderer {
     }
 
     this.target.lerp(this.targetGoal, ease);
-    this.camDist += (this.dist - this.camDist) * ease;
-    this.yaw += (this.yawGoal - this.yaw) * ease;
-    this.pitch += (this.pitchGoal - this.pitch) * ease;
+    // Coming in from an opening view (see swoop), the camera takes its time coming down and round, and does not
+    // start until the map is there to be seen.
+    const settle = this.swooping > 0 ? (this.revealed ? 1 - Math.exp(-dt * 1.7) : 0) : ease;
+    if (this.revealed) this.swooping = Math.max(0, this.swooping - dt);
+    this.camDist += (this.dist - this.camDist) * settle;
+    this.yaw += (this.yawGoal - this.yaw) * settle;
+    this.pitch += (this.pitchGoal - this.pitch) * settle;
     const reach = this.camDist * CAMERA_REACH;
     const flat = reach * Math.cos(this.pitch);
     this.camera.position.set(
@@ -6546,6 +6878,20 @@ export class WorldRenderer {
     const offshore = this.land.reach + 4;
     setWaterNight(clearSky, this.land.x + (moon.x / across) * offshore, this.land.z + (moon.z / across) * offshore, Math.max(0, (clearSky - 0.55) / 0.45));
     this.ambience.smoothSea = fancy.get();
+    // The sea goes with the camera, so it has no edge to come to, and the distance is lost in mist the colour of the sky.
+    this.sea.position.x = Math.round(this.target.x);
+    this.sea.position.z = Math.round(this.target.z);
+    const mist = this.scene.fog as THREE.Fog | null;
+    if (mist) {
+      const sky = this.scene.background as THREE.Color;
+      // Over a map of the world the sky itself is mist: the land goes on into it and is never seen to stop.
+      if (this.state?.far) sky.lerp(FAR_MIST, 0.82);
+      mist.color.copy(sky);
+      const [from, to] = this.state?.far ? MIST.far : MIST.open;
+      const reach = this.camDist * CAMERA_REACH;
+      mist.near = reach + from;
+      mist.far = reach + to;
+    }
     // The HUD's trim and the health orb are lit by the same sun or moon, from wherever the camera stands.
     reportEnv(this.ambience.sunDir, this.yaw, this.ambience.sunGlint(this.litRim), this.scene.background as THREE.Color);
     updateWater(fancy.get(), this.clock, this.ambience.sunDir, this.ambience.sunGlint(this.litRim), (this.sea.material as THREE.MeshLambertMaterial).color, this.scene.background as THREE.Color, this.ambience.raining);
@@ -6848,7 +7194,7 @@ export class WorldRenderer {
       this.air.sunHeight = this.ambience.sunHeight;
       // In a room the flash is only what comes in at the windows.
       this.air.flash = this.opts.backdrop ? this.lentFlash : this.storm.flash * (this.ambience.openSky ? 1 : 0.4);
-      this.post.render(this.scene, this.camera, focus, this.ambience.night, this.air);
+      this.post.render(this.scene, this.camera, focus, this.ambience.night, this.air, !!this.state?.far);
     }
     else this.renderer.render(this.scene, this.camera);
     this.rise?.clear();
