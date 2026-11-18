@@ -8,7 +8,7 @@
 import { FREE_POINTS_PER_LEVEL, LEVELUP_AUTO_ALLOC, STARTING_STATS, type Stats } from "@gantt-quest/core";
 import { createBattle, currentActor, stepBattle, type BattleAction, type BattleEvent, type BattleState, type Combatant } from "./battle";
 import { ABILITIES, ENEMIES, HERO_CLASSES, WEAPONS, bandKinds, cavernBand, heroClass, type CavernLead, type RoamerLead } from "./content";
-import { DEBUFFS, traitsFor } from "./traits";
+import { traitsFor } from "./traits";
 import { heroCombatant, type HeroSheet } from "./hero";
 import { makeRng } from "./rng";
 
@@ -98,23 +98,12 @@ function sheet(h: SimHero, i: number): HeroSheet {
 const living = (s: BattleState, side: "hero" | "enemy") => s.combatants.filter((c) => c.side === side && !c.down);
 
 /** Expected damage of one use, summed over the targets it would hit. */
-function expectedDamage(s: BattleState, actor: Combatant, abilityId: string, target?: Combatant): number {
+function expectedDamage(s: BattleState, actor: Combatant, abilityId: string): number {
   const def = ABILITIES[abilityId];
   if (!def.damage) return 0;
   const p = (actor.pct[def.stat] ?? 45) / 100;
   const targets = def.target === "all_enemies" ? living(s, "enemy").length : 1;
-  // What the ability gets from the state of the one it's aimed at (a player would see this).
-  let flat = 0;
-  let mult = 1;
-  if (target && def.target === "enemy") {
-    const debuffs = target.effects.filter((e) => DEBUFFS.includes(e.kind)).length;
-    if (def.perDebuffDamage) flat += def.perDebuffDamage * debuffs;
-    if (def.vsEffect && target.effects.some((e) => e.kind === def.vsEffect!.effect)) flat += def.vsEffect.bonus;
-    if (def.bleedPayoff) flat += def.bleedPayoff * (target.effects.find((e) => e.kind === "bleeding")?.turns ?? 0);
-    if (def.finisher && target.hp * 4 < target.maxHp) mult *= def.finisher;
-    if (def.ignoreGuard && target.effects.some((e) => e.kind === "guarded")) mult *= 2;
-  }
-  return ((def.damage + actor.level + actor.power) * p + flat) * mult * targets;
+  return (def.damage + actor.level + actor.power) * p * targets;
 }
 
 /** An enemy whose next move is a heavy single-target attack (8+ base damage) aimed at someone other than `not`. */
@@ -149,7 +138,7 @@ export function choose(s: BattleState, actor: Combatant): BattleAction {
   if (guard && actor.hp / actor.maxHp < 0.34) return { type: "ability", ability: guard, focus: 0 };
   const attacks = actor.abilities.filter((a) => ABILITIES[a].damage);
   const target = living(s, "enemy").sort((a, b) => a.hp - b.hp)[0];
-  const best = attacks.sort((a, b) => expectedDamage(s, actor, b, target) - expectedDamage(s, actor, a, target))[0];
+  const best = attacks.sort((a, b) => expectedDamage(s, actor, b) - expectedDamage(s, actor, a))[0];
   const focus = s.boss && actor.focus > 0 ? 1 : 0;
   return { type: "ability", ability: best, target: target.id, focus };
 }

@@ -10,13 +10,26 @@ import type { HexPos, Stats } from "@gantt-quest/core";
 import type { EffectKind } from "../content";
 import type { ItemDef, Outfit } from "../gear";
 import type { Resources } from "../hut";
-import type { WorldMap } from "../map";
+import type { Clime, WorldMap } from "../map";
 import type { FurnishingGrant } from "../world";
+import type { ZoneMod } from "./mods";
 
 export type Side = "hero" | "enemy";
 
-/** What can be on a unit: the old fights' effects, and three the tiles bring. */
-export type Condition = EffectKind | "poisoned" | "prone" | "wet";
+/**
+ * What can be on a unit: the old fights' effects, three the tiles bring, the auras a hero can carry (kit.ts AURAS),
+ * what the Rogue's tricks leave: Unseen (Sneak), and a fire bomb smuggled into the pack for a few turns (Contraband);
+ * the Druid's: a heal that comes again each turn (Aqueous Regeneration), and a shell of coral (Coral Armor);
+ * the Bard's: a shanty sung (song.ts), and Inspired (from joining one, or Lead by Example: the next roll to hit has advantage);
+ * and the Sage's (stars.ts): Guiding Light on an enemy (whoever attacks it has advantage), North Star on an ally (their blows
+ * set what they hit Burning), and a course charted (on the Sage: the mark their allies move faster toward);
+ * and the Warden's: Taunted, on an enemy (it must go for the Warden who taunted it, if it can);
+ * and the Warlock's (drowning.ts), all on an enemy: Drowning (stacks, `amount`), the Curse of Drowning, the Black Spot and Red Sky at Morning.
+ */
+export type Condition = EffectKind | "poisoned" | "wet" | "beacon" | "mending" | "bolstered" | "invisible" | "contraband" | "regenerating" | "coral_armor" | ShantyKind | "inspired" | "guiding_light" | "north_star" | "charted" | "taunted" | "drowning" | "drowning_curse" | "black_spot" | "red_sky" | "tailwind";
+
+/** The shanties a Bard sings (song.ts): a condition on the Bard, reaching everyone of theirs nearby. */
+export type ShantyKind = "lively_shanty" | "dour_shanty" | "windgod_shanty";
 
 export interface UnitCondition {
   kind: Condition;
@@ -24,6 +37,16 @@ export interface UnitCondition {
   rounds: number;
   /** Put on during the bearer's own turn: the end of that turn does not count against it. */
   fresh?: boolean;
+  /** Bolstered: the points of shield left, spent before HP. Burning: its stacks (none said is one), each burning for the full tick. Drowning: its stacks. Tailwind: the movement it adds. */
+  amount?: number;
+  /** A course charted (Chart a Course): the hex marked. */
+  at?: HexPos;
+  /** A shanty: the allies who have joined it (each once), each widening it a hex. */
+  joined?: string[];
+  /** A shanty: how many have joined it since the Bard's turn last began (the extra each joining gives lasts that long). */
+  surge?: number;
+  /** Taunted: the unit that taunted it. The Curse of Drowning and the Black Spot: who laid it. */
+  by?: string;
 }
 
 /** What a hero carries to use in a zone: thrown at a hex, and (a healing potion) drunk. */
@@ -67,12 +90,38 @@ export interface Unit {
   home?: HexPos;
   /** A stand-in crewmate: the player who plays its turns. */
   controller?: string;
+  /** Enemies: its pockets have been picked (Pickpocket pays once an enemy). */
+  picked?: boolean;
+  /** Given a dev kit (DevOp "kit", the Maps tab): coming back to the map does not put the hero's own sheet back on. */
+  devKit?: boolean;
+  /**
+   * A creature a hero has called into a fight (Summon Sea Turtle): on the hero's side, played by the hero's player
+   * (`controller`) on the hero's initiative, and gone when it falls, when another is called in its place, or when the fight ends.
+   */
+  summon?: { by: string };
   /**
    * A hero whose player is not on the map (their last connection to it closed): nothing draws them into a
    * fight, and no enemy blow meant for a fight lands on them. A fight they were already in goes on with them in it.
    * Set by the server; cleared when the player comes back.
    */
   away?: boolean;
+}
+
+/** What a spell can leave hanging over (or standing on) some hexes (weather.ts). A wall (Fortify) is one too: nobody passes it. */
+export type WeatherKind = "rain" | "wind" | "coral" | "wall";
+
+export interface Weather {
+  kind: WeatherKind;
+  hexes: HexPos[];
+  /** Rounds of a fight it has left. */
+  rounds: number;
+  /** Made this round: the end of it does not count against it. */
+  fresh?: boolean;
+  /** Who made it, and their side: the side it helps. */
+  by: string;
+  side: Side;
+  /** Rain and coral: the turn (Encounter.turnNo, or -1 out of a fight) each unit was last healed or cut by it in. */
+  touched: Record<string, number>;
 }
 
 export type SurfaceKind = "poison" | "fire" | "oil" | "water" | "ice" | "slime";
@@ -83,6 +132,8 @@ export interface GroundSurface {
   rounds: number;
   /** Who laid it, for the log. */
   by: string | null;
+  /** It does not wear off: the ground a map's modifier put there (zone/mods.ts). Whatever replaces it (water on fire) wears off as usual. */
+  lasting?: boolean;
 }
 
 /** What a unit has left to spend on its turn. */
@@ -95,6 +146,13 @@ export interface Budget {
   moveMax: number;
   /** Disengaged: moving away from an enemy draws no opportunity attack this turn. */
   disengaged: boolean;
+  /** The movement a Wind-god's Shanty has added this turn, so a shanty widened or begun mid-turn adds only what is still owed. */
+  song?: number;
+  /**
+   * Movement from a course charted (Chart a Course) left this turn: spent, before `move`, only on steps that bring the
+   * unit nearer a mark. Missing: no course was charted for it this turn (one charted mid-turn gives it then).
+   */
+  course?: number;
 }
 
 export interface Encounter {
@@ -155,6 +213,17 @@ export interface ZoneOptions {
   threat?: number;
   /** A delve into the caverns (zone/delve.ts): chambers, tunnels, chests and a hoard, not open ground. */
   delve?: boolean;
+  /** What makes this map unlike the next (zone/mods.ts): changes to its ground and to whoever stands on it. */
+  mods?: ZoneMod[];
+  /**
+   * Set on a map the atlas made (atlas.ts): how many rings out from the Harbor its node lies. Clearing
+   * such a map pays everyone on it a bounty, and its fights pay by the enemy's level.
+   */
+  tier?: number;
+  /** What the place is called, on a map the atlas made: its node's name. */
+  name?: string;
+  /** The climate it lies in, on a map the atlas made (left out for the greenwood): its ground is painted to suit. */
+  clime?: Clime;
 }
 
 export interface ZoneState {
@@ -171,6 +240,8 @@ export interface ZoneState {
   groups: Record<string, { alerted: boolean }>;
   /** The ground, by hex key. */
   surfaces: Record<string, GroundSurface>;
+  /** Weather spells have left over the ground (weather.ts). */
+  weather?: Weather[];
   /** Torches lying lit on the ground, by hex: rounds of a fight left to burn, and who threw them. */
   lights?: Record<string, { rounds: number; by: string | null }>;
   /**
@@ -183,6 +254,8 @@ export interface ZoneState {
   /** The bands that carry a key: it is the party's once the band is beaten. */
   keyHolders?: string[];
   encounter: Encounter | null;
+  /** The atlas's bounty for clearing this map has been paid (zone/loot.ts): it is paid once. */
+  bounty?: boolean;
   /** For minting unit ids. */
   seq: number;
   /** Dev switches. */
@@ -202,11 +275,13 @@ export interface ZoneHero {
   outfit?: Outfit;
   maxHp: number;
   maxFocus: number;
+  /** The class abilities they carry in, already checked against their class and level (classabilities.ts), on top of the weapon's. */
+  classAbilities?: string[];
   /** What they carry to drink or throw, out of their own pack. A stand-in has no pack and is given the starting kit. */
   items?: Partial<Record<Throwable, number>>;
 }
 
-export type CommonAction = "dash" | "disengage" | "help" | "shove" | "jump" | "flee";
+export type CommonAction = "dash" | "disengage" | "help" | "shove" | "jump" | "flee" | "join";
 
 export type DevOp =
   | { op: "spawn"; kinds: string[]; at: HexPos }
@@ -217,7 +292,12 @@ export type DevOp =
   /** Set the nearest group that has not noticed anyone on whoever asked, wherever they stand. */
   | { op: "start_fight" }
   | { op: "ai"; off: boolean }
-  | { op: "clear_surfaces" };
+  | { op: "clear_surfaces" }
+  /**
+   * A dev kit (the Maps tab): make one of your own heroes (yourself, or a stand-in you play) a hero of this class and level, with
+   * this weapon and any of the class's abilities (as many as you like). It holds until changed again, through a reload.
+   */
+  | { op: "kit"; unit: string; classId: string; weapon: string; level: number; abilities: string[] };
 
 /** `by` is the player an action came from: the server sets it, never the client. */
 export type ZoneAction =
@@ -235,6 +315,8 @@ export type ZoneAction =
   | { type: "light"; by: string; unit: string; hand?: "main" }
   /** Pick up a torch burning on the ground beside you: into a free hand still lit, or put out and into the pack. */
   | { type: "pickup"; by: string; unit: string; at: HexPos }
+  /** Put out the lit torch in your hand and stow it in the pack: a weapon or shield set aside for it is taken up again. */
+  | { type: "stow"; by: string; unit: string }
   /** Pick a cluster of glowing mushrooms from beside it, for a few mushrooms. */
   | { type: "forage"; by: string; unit: string; poi: string }
   /** Unlock a locked door from beside it with a key off the ring, or force it without one. */
@@ -250,7 +332,7 @@ export type ZoneAction =
   | { type: "dev"; by: string; dev: DevOp };
 
 /** Action types a player's client may send. `dev` is let through only on a development deployment. */
-export const ZONE_CLIENT_ACTIONS: ReadonlySet<ZoneAction["type"]> = new Set(["move", "use", "common", "throw", "drink", "light", "pickup", "open", "unlock", "forage", "end_turn", "dev"]);
+export const ZONE_CLIENT_ACTIONS: ReadonlySet<ZoneAction["type"]> = new Set(["move", "use", "common", "throw", "drink", "light", "pickup", "stow", "open", "unlock", "forage", "end_turn", "dev"]);
 
 /** One d20 roll, as shown on the roll card. */
 export interface Roll {
@@ -285,18 +367,29 @@ export type ZoneEvent =
   /** Something done, said before its rolls: an ability, a common action, a throw, an enemy's attack by name. */
   | { t: "used"; id: string; what: string; name: string; target?: string; at?: HexPos }
   | { t: "reaction"; id: string; target: string }
-  | { t: "hit"; actor: string | null; target: string; amount: number; what: string; crit: boolean }
+  | { t: "hit"; actor: string | null; target: string; amount: number; what: string; crit: boolean; blocked?: number }
   | { t: "miss"; actor: string; target: string; what: string }
   | { t: "heal"; actor: string | null; target: string; amount: number; what: string }
-  | { t: "condition"; target: string; kind: Condition; rounds: number }
+  | { t: "condition"; target: string; kind: Condition; rounds: number; amount?: number }
   | { t: "tick"; target: string; kind: Condition | SurfaceKind; amount: number }
+  /** Weather made over some hexes, or (`kind` null) cleared from them. */
+  | { t: "weather"; kind: WeatherKind | null; hexes: HexPos[]; by: string }
   | { t: "skip"; id: string; kind: Condition }
+  /** Drowning: it failed to hold its breath, and loses its Action this turn (it can still move). */
+  | { t: "choked"; id: string }
   | { t: "down"; id: string }
   | { t: "up"; id: string }
   | { t: "surface"; kind: SurfaceKind | null; hexes: HexPos[] }
   | { t: "burst"; hexes: HexPos[] }
   | { t: "shoved"; id: string; target: string; from: HexPos; to: HexPos | null }
   | { t: "jumped"; id: string; from: HexPos; to: HexPos }
+  /** One who was Unseen gives themselves away. */
+  | { t: "seen"; id: string }
+  /** Gone from one hex and there on another, with nothing crossed between (Smuggler's Route, Tactical Retreat). */
+  | { t: "blinked"; id: string; from: HexPos; to: HexPos }
+  /** A creature is called into the fight (Summon Sea Turtle) by `by`; or one is gone (it fell, was replaced, or the fight is over). */
+  | { t: "summoned"; id: string; by: string }
+  | { t: "dismissed"; id: string }
   /** A hero gets away from the fight (Flee): out of the order, walking free. */
   | { t: "fled"; id: string }
   /** `fled`: every hero still standing got away, and none is left in it. */
@@ -308,8 +401,10 @@ export type ZoneEvent =
   | { t: "light"; at: HexPos; on: boolean }
   /** A hero takes up a torch from the ground: still lit in hand, or put out and stowed in the pack. */
   | { t: "took_torch"; id: string; at: HexPos; stowed: boolean }
+  /** A hero puts out the torch in their hand and stows it in the pack. */
+  | { t: "torch_stowed"; id: string }
   /** What a hero took, from a won fight or a chest: the XP, and whatever else came with it. */
-  | { t: "spoils"; id: string; xp: number; resources: Resources; gold?: number; item?: string; blueprint?: string; furnishing?: string; potions?: number; torches?: number }
+  | { t: "spoils"; id: string; xp: number; resources: Resources; gold?: number; item?: string; blueprint?: string; furnishing?: string; potions?: number; torches?: number; /** A lodestone, in a bounty: what it carries. It goes to the crew's case. */ stone?: ZoneMod[] }
   /** A piece of gear found had no room in the pack: it went home to storage, or into the pack over its limit. Told by the server. */
   | { t: "stowed"; id: string; item: string; place: "storage" | "overfull" }
   /** A key goes on the party's ring: found in a chest (by `id`), or taken from a beaten band. */
@@ -327,7 +422,9 @@ export type ZoneEvent =
   /** A crate breaks open. `id` is whose blow (or fire) broke it, if anyone's. */
   | { t: "crate_broken"; poi: string; id: string | null }
   /** The last enemy group on the map is gone. */
-  | { t: "cleared" };
+  | { t: "cleared" }
+  /** A map the atlas made has been cleared, and its bounty paid (the `spoils` before this are it). */
+  | { t: "bounty" };
 
 /** Things the server must carry out: what a player's own hero earned, from a won fight or a chest. */
 export type ZoneEffect = {
@@ -341,6 +438,8 @@ export type ZoneEffect = {
   furnishing?: FurnishingGrant;
   /** Put in the pack to drink or throw. */
   items?: Partial<Record<Throwable, number>>;
+  /** A lodestone found in a bounty (lodestone.ts): it goes into the crew's case, not the hero's pack. */
+  stone?: ZoneMod[];
 };
 
 export type ZoneStep = { ok: true; state: ZoneState; events: ZoneEvent[]; effects: ZoneEffect[] } | { ok: false; error: string };

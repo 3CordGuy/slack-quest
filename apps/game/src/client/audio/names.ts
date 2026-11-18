@@ -2,7 +2,7 @@
 //
 // The engine plays the first name in a list that the manifest has files for,
 // so you can start with one general sound ("impact") and add specific ones
-// ("impact.firebolt") whenever you like, without touching code. `soundNames()`
+// ("impact.shock") whenever you like, without touching code. `soundNames()`
 // lists every name the game can ask for; a test checks the manifest against it,
 // so a misspelt event is caught rather than silently never playing.
 
@@ -19,8 +19,8 @@ export interface Fighter {
   kind: string;
 }
 
-const BIOMES: Record<Biome, true> = { plains: true, forest: true, hills: true, water: true, dock: true, cobble: true, mud: true, rampart: true, floor: true, wall: true, cave: true, rock: true, gate: true, fog: true };
-const EFFECTS: Record<EffectKind, true> = { bleeding: true, burning: true, stunned: true, guarded: true, taunting: true, slowed: true, hasted: true, glitched: true, exposed: true };
+const BIOMES: Record<Biome, true> = { plains: true, forest: true, hills: true, water: true, dock: true, cobble: true, mud: true, rampart: true, floor: true, wall: true, cave: true, rock: true, gate: true, fog: true, sand: true };
+const EFFECTS: Record<EffectKind, true> = { bleeding: true, burning: true, stunned: true, guarded: true, taunting: true, slowed: true, hasted: true, glitched: true, exposed: true, prone: true, sundered: true };
 const FORAGE: Record<ForageKind, true> = { berries: true, wood: true, bones: true, treasure: true, wolves: true };
 
 const voice = (f: Fighter, what: "attack" | "hurt" | "down") =>

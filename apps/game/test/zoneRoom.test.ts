@@ -13,7 +13,8 @@ import { readFileSync, readdirSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { hexDistance } from "@gantt-quest/core";
-import { ALERT_RANGE, EXPLORE_ROUND_MS, zoneOptions, type ZoneEvent, type ZoneState, type ZoneView } from "@gantt-quest/world";
+import { ALERT_RANGE, ATLAS_HOME, EXPLORE_ROUND_MS, atlasNodeById, zoneOptions, type ZoneEvent, type ZoneState, type ZoneView } from "@gantt-quest/world";
+import { atlasSeed, chartFor, openNode } from "../src/server/atlas";
 import { CAVE_IDLE_MS, createZoneRow, crewPlaces, openCave, teleportTo } from "../src/server/zones";
 
 const globals = globalThis as Record<string, unknown>;
@@ -479,6 +480,41 @@ describe("ZoneRoom", () => {
     expect(ann.sent.length).toBe(before[0]);
   });
 
+  it("marks a landfall cleared on the crew's chart when its map is, once, and opens the ones beyond it", async () => {
+    const at = Date.now();
+    sql.prepare("INSERT INTO crews (id, name, created_by, created_at) VALUES ('CREWAA', 'Crew', 'ann', ?)").run(at);
+    sql.prepare("INSERT INTO crew_members (crew_id, player_id, joined_at) VALUES ('CREWAA', 'ann', ?)").run(at);
+    const node = atlasNodeById(atlasSeed("CREWAA"), ATLAS_HOME)!.links[0];
+    const went = await openNode(db, "CREWAA", "ann", node, 1);
+    if ("error" in went) throw new Error(went.error);
+    const status = () => (sql.prepare("SELECT status FROM atlas_nodes WHERE crew_id = 'CREWAA' AND node = ?").get(node) as { status: string }).status;
+    const zone = room();
+    const ann = await connect(zone, went.code, "ann");
+    expect(ann.state.options).toMatchObject({ tier: 1, name: atlasNodeById(atlasSeed("CREWAA"), node)!.name });
+    expect(status()).toBe("open");
+
+    // Every band on it beaten, one fight at a time.
+    for (let i = 0; i < 8 && ann.state.units.some((u) => u.side === "enemy"); i++) {
+      await act(zone, ann, { type: "dev", dev: { op: "start_fight" } });
+      await act(zone, ann, { type: "dev", dev: { op: "end_fight" } });
+    }
+    expect(ann.state.units.some((u) => u.side === "enemy")).toBe(false);
+    expect(status()).toBe("cleared");
+    expect(ann.state.bounty).toBe(true);
+    expect(ann.sent.some((m) => m.type === "update" && m.events.some((e) => e.t === "bounty"))).toBe(true);
+    const chart = await chartFor(db, "CREWAA");
+    expect(chart.nodes.find((n) => n.id === node)!.state).toBe("cleared");
+    expect(chart.nodes.filter((n) => n.state === "open").length).toBeGreaterThanOrEqual(5);
+
+    // A room woken afresh on the same map knows it has been told.
+    const clearedAt = () => (sql.prepare("SELECT cleared_at FROM atlas_nodes WHERE crew_id = 'CREWAA' AND node = ?").get(node) as { cleared_at: number }).cleared_at;
+    const was = clearedAt();
+    const again = room();
+    const back = await connect(again, went.code, "ann");
+    await act(again, back, { type: "dev", dev: { op: "heal" } });
+    expect(clearedAt()).toBe(was);
+  });
+
   it("takes dev actions on a development deployment only", async () => {
     const { zone, ann } = await arrive();
     const at = ann.state.map.tiles.find((t) => hexDistance(t, ann.state.start) === 1 && t.biome === "plains")!;
@@ -486,6 +522,10 @@ describe("ZoneRoom", () => {
     expect(Object.values(ann.state.surfaces).map((s) => s.kind)).toEqual(["fire"]);
     expect(zoneActionFrom({ type: "dev", dev: { op: "heal" } }, "ann", false)).toBeNull();
     expect(zoneActionFrom({ type: "dev", dev: { op: "heal" } }, "ann", true)).toEqual({ type: "dev", by: "ann", dev: { op: "heal" } });
+    expect(zoneActionFrom({ type: "dev", dev: { op: "kit", unit: "ann", classId: "devops_mage", weapon: "tome", level: "7", abilities: ["tidal_wave", 3] } }, "ann", true)).toEqual({
+      type: "dev", by: "ann", dev: { op: "kit", unit: "ann", classId: "devops_mage", weapon: "tome", level: 7, abilities: ["tidal_wave"] },
+    });
+    expect(zoneActionFrom({ type: "dev", dev: { op: "kit", unit: "ann", classId: "devops_mage", weapon: "tome", level: 7, abilities: [] } }, "ann", false)).toBeNull();
   });
 
   it("sends an action's number back to whoever sent it, and to nobody else, on the update that answers it", async () => {

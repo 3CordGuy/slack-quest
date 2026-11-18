@@ -5,7 +5,7 @@ import type { ContractBoard } from "../server/board";
 
 /** What the contract dealer in the pub has: the crew goal and the contracts on offer. */
 export type Board = ContractBoard;
-import type { Appearance, CarryState, FishSpot, GatherChoice, HarborXpStatus, GatherSpot, HarborWorks, HutSummary, ItemDef, Perk, ProjectAmounts, PublicHero, Resources, SalesEntry, SalesmanId, SalesmanVisit, ShopEntry, Throwable, TradeSide } from "@gantt-quest/world";
+import type { Appearance, CarryState, FishSpot, GatherChoice, HarborXpStatus, GatherSpot, HarborWorks, HutSummary, ItemDef, Lodestone, Perk, ProjectAmounts, PublicHero, Resources, SalesEntry, SalesmanId, SalesmanVisit, ShopEntry, Throwable, TradeSide } from "@gantt-quest/world";
 import { devTools } from "./devTools";
 import { forcedSalesman } from "./salesmanClock";
 import type { GatherStatus } from "../server/gather";
@@ -15,9 +15,13 @@ import type { CatchBook, PubWall } from "../server/catchbook";
 import type { PubGame, PubLeaderboard, PubScore } from "../server/pub-scores";
 import type { XpResult } from "../server/harbor-xp";
 import type { TradeList } from "../server/trade";
+import type { Chart, ChartNode } from "../server/atlas";
+import type { HeldStone } from "../server/lodestones";
+import type { ChestView } from "../server/townchest";
 import type { ApothecaryView, GalleyKeeperView, HaggleResult, KeeperWare, SmithyView } from "../server/workshops";
 import type { ErrandPaid, RegularsView } from "../server/errands";
 
+export type { Chart, ChartNode, ChestView, HeldStone };
 export type { ApothecaryView, SmithyView, GalleyKeeperView, ErrandPaid, RegularsView, HaggleResult, KeeperWare };
 
 export type { CatchBook, FishStock, GatherStatus, PubGame, PubLeaderboard, PubScore, PubWall, SittingPaid, XpResult };
@@ -56,6 +60,8 @@ export interface Character {
   gold: number;
   /** JSON list of picked class trait ids (parse with parseTraits). */
   traits?: string;
+  /** JSON list of the class abilities in the hero's slots (parse with parseAbilityLoadout). */
+  ability_loadout?: string;
   /** JSON Appearance (parse with parseAppearance), or null if they never chose one. */
   appearance?: string | null;
 }
@@ -108,6 +114,8 @@ export interface Me {
   materials?: Resources;
   /** The potions, flasks and bombs in the pack, by kind: used up on a map, and kept between maps. Absent from an older server. */
   consumables?: Partial<Record<Throwable, number>>;
+  /** The lodestones in the pack: each kind held, and how many. */
+  lodestones?: HeldStone[];
   /** How full the pack is, its size, what is in storage and whether there is a home for it. Null without a character. */
   carry: CarryState | null;
   /** The crew whose Harbor this player shares, if any. The id doubles as the invite code. */
@@ -168,6 +176,8 @@ export const api = {
   reroll: () => request("/api/character/reroll", {}),
   spend: (stat: StatKey) => request("/api/character/spend", { stat }),
   pickTrait: (trait: string) => request("/api/character/trait", { trait }),
+  /** Put a class ability in a slot (null empties it). Harbor only. */
+  setAbility: (slot: number, ability: string | null) => request("/api/character/ability", { slot, ability }),
   equip: (itemId: number) => request("/api/character/equip", { itemId }),
   unequip: (itemId: number) => request("/api/character/unequip", { itemId }),
   /** Show or hide a worn piece on the hero; it counts either way. */
@@ -251,6 +261,33 @@ export const api = {
   crewPlaces: () => request<{ members: { id: string; name: string; classId: string; level: number; zone: { code: string; fighting: boolean } | null }[] }>("/api/crew/places"),
   /** Where to go to join a crewmate: the zone they are on, or null for the Harbor. Refused while they are in a fight. */
   teleport: (to: string) => request<{ zone: string | null; name: string }>("/api/crew/teleport", { to }),
+  /** The crew's chart: the Harbor, what is cleared, what is open, the fog beyond, and who is out on what. */
+  atlas: () => request<Chart>("/api/atlas"),
+  /** Set sail for a landfall: the map the crew is fighting through there, or a fresh one. */
+  /** Set out for a place, with the lodestone put into its slot (what it carries, joined with "+"; "" for a plain one). It comes out of your pack. */
+  openNode: (node: string, stone?: string) => request<{ code: string; fresh: boolean }>("/api/atlas/open", { node, stone }),
+  /** The dev toolbox: clear a landfall without fighting for it, or wipe the chart. Gives the chart as it now is. */
+  /** The crew's town chest: its tabs and what is in each. Every call below gives the chest back as it now is. */
+  chest: () => request<ChestView>("/api/chest"),
+  /** Put a piece of gear from your pack into a tab of the chest, or take one (by its id in the chest) out into your pack. */
+  chestStow: (tab: number, item: number) => request<ChestView>("/api/chest/stow", { tab, item }),
+  chestUnstow: (item: number) => request<ChestView>("/api/chest/unstow", { item }),
+  /** Put `qty` of a kind of stack (a material, a lodestone) from your pack into a tab of the chest, or take it out. */
+  chestPut: (tab: number, kind: string, qty: number) => request<ChestView>("/api/chest/put", { tab, kind, qty }),
+  chestTake: (tab: number, kind: string, qty: number) => request<ChestView>("/api/chest/take", { tab, kind, qty }),
+  /** Buy the chest another tab with your gold, for the whole crew; or give a tab another name, a colour (null for none), or another place among the tabs (from 0). */
+  chestBuyTab: (name?: string) => request<ChestView>("/api/chest/tab", { name }),
+  chestRenameTab: (tab: number, name: string) => request<ChestView>("/api/chest/rename", { tab, name }),
+  chestColorTab: (tab: number, color: string | null) => request<ChestView>("/api/chest/color", { tab, color }),
+  chestMoveTab: (tab: number, to: number) => request<ChestView>("/api/chest/move", { tab, to }),
+  /** Work lodestones at the bench, out of your pack: fuse three (each as it is sent) into one, attune one to a modifier, or reroll one. */
+  benchFuse: (stones: string[]) => request<{ made: Lodestone; lodestones: HeldStone[] }>("/api/atlas/bench", { op: "fuse", stones }),
+  benchAttune: (stone: string, mod: string) => request<{ made: Lodestone; lodestones: HeldStone[] }>("/api/atlas/bench", { op: "attune", stone, mod }),
+  benchTemper: (stone: string, mod: string) => request<{ made: Lodestone; lodestones: HeldStone[] }>("/api/atlas/bench", { op: "temper", stone, mod }),
+  benchReroll: (stone: string) => request<{ made: Lodestone; lodestones: HeldStone[] }>("/api/atlas/bench", { op: "reroll", stone }),
+  /** Cut a plain lodestone from stone and iron, into your pack. */
+  cutStone: () => request<{ lodestones: HeldStone[] }>("/api/atlas/cut", {}),
+  devAtlas: (op: "clear" | "reset" | "stone", node?: string) => request<Chart>("/api/dev/atlas", { op, node }),
   /** Down into the caves: the crew's cave still being fought through, or a fresh one. */
   caves: () => request<{ code: string; fresh: boolean }>("/api/caves", {}),
   /** Make a zone to try fights in, from these options (and a seed, or a fresh one), and get its code. */

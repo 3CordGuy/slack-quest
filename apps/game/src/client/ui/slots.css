@@ -61,6 +61,22 @@
 .bag .gear-eye:hover:not(:disabled) { background: rgba(10, 8, 6, 0.9); border-color: var(--brass-hi); box-shadow: 0 0 6px rgba(227, 183, 87, 0.45); opacity: 1; }
 .bag .gear-eye[aria-pressed="true"] { color: var(--muted); background: rgba(10, 8, 6, 0.85); border-color: var(--brass-lo); box-shadow: none; opacity: 1; }
 .bag.holding .gear-eye { pointer-events: none; }
+/* A lit torch held in a hand, on a map: it lies across the top of that hand's slot (a sibling laid over it, as the slot
+   is a button), glowing, and what is worn there is shown faint under it: put away while the torch is held. */
+.doll-slot.aside > .voxel-icon { opacity: 0.35; filter: grayscale(0.5); }
+.bag .doll-torch {
+  position: absolute; z-index: 2; translate: 3px 8px; min-height: calc(var(--u) * 1.15); padding: 2px 4px 2px 2px;
+  display: flex; align-items: center; gap: 2px; text-align: left;
+  color: #ffe08a; background: rgba(38, 18, 8, 0.92); border: 1px solid #c8762c; border-radius: 0;
+  box-shadow: inset 0 0 10px rgba(255, 150, 60, 0.55), 0 0 10px rgba(255, 150, 60, 0.45); text-shadow: 0 1px 0 #1a0c06; cursor: pointer;
+}
+.bag .doll-torch:hover:not([aria-disabled="true"]) { background: rgba(64, 30, 12, 0.95); border-color: #ffd23f; box-shadow: inset 0 0 12px rgba(255, 170, 70, 0.7), 0 0 12px rgba(255, 170, 70, 0.6); }
+.bag .doll-torch[aria-disabled="true"] { cursor: not-allowed; }
+.bag .doll-torch .voxel-icon, .bag .doll-torch .pixel-icon { flex: none; }
+.doll-torch-text { display: grid; font-size: 10px; line-height: 1.15; min-width: 0; }
+.doll-torch-text strong { font-size: 11px; white-space: nowrap; }
+.bag.holding .doll-torch { pointer-events: none; }
+
 /* A slot for gear still to come: there, but faint, and nothing to press. */
 .doll-slot.to-come { opacity: 0.6; cursor: default; }
 .doll-slot.to-come.belt .slot-name { bottom: 50%; translate: 0 50%; }
@@ -161,3 +177,41 @@
 /* Opened on a map while a fight is on: the word that the gear is held as it is. */
 .bag-locked { flex: none; margin: 0 4px 6px; padding: 4px 8px; font-size: 12px; color: #ffb3a8; background: rgba(74, 26, 24, 0.6); border: 2px solid var(--bad); }
 .bag-doll.locked .doll-slot:not(.empty) { cursor: not-allowed; }
+
+/* ---------- The town chest, in a chest's place ----------
+   Its tabs run across the top (chest/townchest.css). A general tab is a grid like any chest's. The materials
+   tab and the lodestones tab are ledgers: a place for each kind of thing, as tall as a general tab so the
+   window does not jump from one to the next, and what is in hand goes in wherever on them it is set down. */
+.town-ledger {
+  flex: 0 1 auto; min-height: calc(var(--u) * 8 + 8px); overflow: hidden auto; display: flex; flex-direction: column; gap: 12px; padding: 12px;
+  border: 1px solid transparent;
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0.1), rgba(0, 0, 0, 0.5)) padding-box, var(--tex-hide, none) 0 0 / 256px 256px padding-box, linear-gradient(#211a14, #211a14) padding-box, linear-gradient(135deg, #a48652, #3a2c1a 50%, #7d6540) border-box;
+  box-shadow: inset 0 0 26px rgba(0, 0, 0, 0.7);
+}
+.town-ledger.takes { box-shadow: inset 0 0 0 2px var(--good), inset 0 0 30px rgba(127, 227, 166, 0.22); }
+.town-ledger.refuses { box-shadow: inset 0 0 0 2px var(--bad), inset 0 0 30px rgba(255, 90, 70, 0.2); }
+.town-places { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }
+.town-ledger.lodestones .town-places { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.bag .town-place {
+  display: flex; flex-direction: column; align-items: center; gap: 2px; min-width: 0; padding: 8px 4px 6px; border: 1px solid transparent; border-radius: 0; text-shadow: none;
+  background: radial-gradient(circle at 50% 30%, #2a2119, #0d0a08 90%) padding-box, linear-gradient(135deg, #a48652 0, #4a3a23 45%, #2e2416 60%, #7d6540 100%) border-box;
+  box-shadow: inset 0 0 12px rgba(0, 0, 0, 0.8), 0 2px 5px rgba(0, 0, 0, 0.5);
+}
+.bag .town-place:hover:not(:disabled) { background: radial-gradient(circle at 50% 30%, #3a2d20, #130f0b 90%) padding-box, linear-gradient(135deg, #f3dfa0, #8a6a3a) border-box; border-color: transparent; }
+.town-place-icon { display: grid; place-items: center; width: var(--u); height: var(--u); }
+.town-place-name { max-width: 100%; font-size: 12px; line-height: 1.15; color: var(--muted); text-align: center; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.town-place-qty { font-size: 16px; font-variant-numeric: tabular-nums; color: var(--text); }
+/* Nothing of it kept: its place is there, faint, waiting. */
+.bag .town-place.none { cursor: default; box-shadow: inset 0 0 12px rgba(0, 0, 0, 0.8); }
+.town-place.none .town-place-icon { opacity: 0.28; filter: grayscale(0.8); }
+.town-place.none .town-place-qty { color: var(--muted); opacity: 0.6; }
+.town-place.lifted .town-place-icon { opacity: 0.25; }
+.bag.holding .town-place { pointer-events: none; }
+.town-shelf { display: flex; flex-direction: column; gap: 6px; }
+.town-shelf h3 { margin: 0; font-family: var(--font-head); font-size: 15px; font-weight: normal; letter-spacing: 0.06em; color: var(--brass-hi, var(--gold)); border-bottom: 1px solid rgba(164, 134, 82, 0.35); padding-bottom: 2px; }
+.town-shelf h3 .muted { font-family: var(--font-body, inherit); font-size: 12px; letter-spacing: 0; }
+.town-none { grid-column: 1 / -1; font-size: 13px; padding: 2px 0; }
+@media (max-width: 760px) {
+  .town-places, .town-ledger.lodestones .town-places { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+.town-window .bag-foot button { flex: none; white-space: nowrap; }

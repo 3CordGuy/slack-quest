@@ -13,6 +13,12 @@
 // middle of the view with the bag beside it. The two share one hand, so a
 // thing lifted out of either can be set down in the other.
 //
+// The town chest, in the Harbor's square, is the same again: the crew's own
+// store in the chest's place, with its tabs across the top (chest/TownChest.tsx
+// reads it and draws them). A general tab is a grid like any chest's. The
+// materials tab and the lodestones tab are laid out their own way, a place for
+// each thing, and take what is dropped anywhere on them.
+//
 // A trade with a crewmate is a third window of the same screen, in the chest's
 // place: their side of the table above, yours below. Your side is a grid
 // like a chest's: things go onto it out of the pack and come back the same
@@ -52,7 +58,7 @@
 // where it goes. While a fight is on the gear worn stays as it is; the pack
 // can still be looked through.
 
-import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { CatchPanel } from "./CatchPanel";
 import {
   CARRY_FORMULA,
@@ -88,8 +94,22 @@ import {
   type Slot,
   type Throwable,
   type TradeSide,
+  modEffect,
+  modName,
+  modSide,
+  stoneName,
+  type Lodestone,
+  RESOURCE_KINDS,
+  TOWN_STACK_MAX,
+  TOWN_TAB_CELLS,
+  gearPutProblem,
+  stackPutProblem,
+  stackSort,
+  stoneItem,
+  stoneKey,
+  stoneOfItem,
 } from "@gantt-quest/world";
-import { api, type Hut, type InventoryItem, type Me } from "./api";
+import { api, type ChestView, type Hut, type InventoryItem, type Me } from "./api";
 import { useAct } from "./Harbor";
 import { Icon, ItemDetail, ItemTile, toOwned, type OwnedItem } from "./items";
 import { label } from "./labels";
@@ -97,7 +117,7 @@ import { ThingIcon, furnishingIcon, resourceIcon } from "./thingIcons";
 import { layoutPack, loadSaved, saveSaved, under, type Saved, type Shape, type Spot } from "./ui/packLayout";
 import { DollChart, type ChartSlot } from "./ui/DollChart";
 import { SplitPrompt, StackIcon, stackName, toStacks, type Stack } from "./ui/Slots";
-import { ITEM_ICON } from "./zone/actionIcons";
+import { ITEM_ICON, STONE_ICON } from "./zone/actionIcons";
 import { uiZoom } from "./uiScale";
 import { ownLook } from "./ownLook";
 import { withLook } from "./render/sprites";
@@ -124,6 +144,8 @@ const DOLL: Record<Slot, { x: number; y: number; w: number; h: number }> = {
   legs: { x: 2.7, y: 5.55, w: 2, h: 2 },
   boots: { x: 7.3, y: 5.55, w: 2, h: 2 },
 };
+/** The gear slot of each hand a lit torch can be held in. */
+const TORCH_SLOT: Record<"main" | "off", Slot> = { main: "main_hand", off: "off_hand" };
 /** Slots drawn for gear that is still to come: a second ring beside the coat, a belt under it. Nothing goes in them yet. */
 const TO_COME = [
   { id: "ring2", label: "Ring", icon: "ring", x: 7.5, y: 3.75, w: 1, h: 1 },
@@ -144,6 +166,17 @@ type Held = { stack: Stack; from: Zone | "worn" };
 type Verdict = "ok" | "swap" | "bad";
 /** Said when a potion or a flask is sent toward a chest or the trade table. */
 const STAYS_IN_PACK = "Potions, flasks and bombs stay in your pack: they cannot be stowed or traded yet.";
+const STONES_STAY = "Lodestones are not stowed at home or traded hand to hand: the town chest, in the square, takes them, and the whole crew shares it.";
+/** A stack that can be split, and so moved in part: a material's, or (at the town chest) lodestones'. */
+type Splittable = Extract<Stack, { t: "mat" | "stone" }>;
+/** What a stack is counted under on either side: a material's kind, or a lodestone's kind as an item. Gear is not counted. */
+const countKey = (s: Stack): string => (s.t === "mat" ? s.kind : s.t === "stone" ? stoneItem(s.stone) : s.t === "use" ? s.kind : "");
+/** The first stack of a kind of thing, which is where it lies when it first arrives. */
+const firstKey = (s: Splittable): string => (s.t === "mat" ? `mat:${s.kind}:0` : `stone:${stoneKey(s.stone)}:0`);
+/** Where a tab of the town chest keeps how its things lie, beside the chests of the hut (which are numbered from 1). */
+const TOWN_SIDE = 1_000_000;
+/** The lodestones tab's shelves: what a stone that carries so many is called. */
+const STONE_SHELVES = ["Plain", "Dull", "Bright", "Singing"];
 /** A decoration kept in a chest lies on its grid too, a square each. */
 const decorKey = (id: number) => `decor:${id}`;
 
@@ -157,6 +190,24 @@ export interface OpenChest {
   send(message: HutClientMessage): void;
   /** Pick a decoration up to set it down in the room. */
   carry(id: number): void;
+  onClose(): void;
+}
+
+/**
+ * The town chest, open beside the bag: the tab of it that is being looked at. Each move asks the server and
+ * settles once the chest has been read again; the screen shows it meanwhile, and re-reads the pack after.
+ */
+export interface OpenTown {
+  /** The tab that is open; null while the chest is being read. */
+  tab: ChestView["tabs"][number] | null;
+  /** The tabs across the top: to pick one, name it again, or buy another. */
+  bar: ReactNode;
+  /** A piece of gear from the pack into this tab, or out of the chest into the pack. */
+  stow(itemId: number): Promise<unknown>;
+  unstow(itemId: number): Promise<unknown>;
+  /** So many of a kind of stack (a material, a lodestone as an item) from the pack into this tab, or out of it. */
+  put(kind: string, qty: number): Promise<unknown>;
+  take(kind: string, qty: number): Promise<unknown>;
   onClose(): void;
 }
 
@@ -189,27 +240,48 @@ export interface Usable {
   blocked(kind: Throwable): string | undefined;
 }
 
+/**
+ * On the atlas: the one slot of the place picked, which a lodestone from the bag is put into. The slot itself
+ * is the atlas's (any element marked `data-stone-slot`): a stone dragged out of the bag and let go over it, or
+ * picked up and clicked onto it, goes in. Nothing is spent until the crew sets out.
+ */
+export interface StoneSlot {
+  put(stone: Lodestone): void;
+  /** Why a stone cannot go in just now (no place picked, its map already made), if it cannot. */
+  blocked(stone: Lodestone): string | undefined;
+}
+
 interface Props {
   me: Me;
   refresh(): Promise<unknown>;
   onClose(): void;
+  /** On the atlas: a lodestone can be put from here into the slot of the place picked. */
+  stones?: StoneSlot;
   /** Opened during a voyage: gear can be changed, but the catch stays at home. */
   onIsland?: boolean;
   /** A chest of the hut, open beside the bag. `refresh` must re-read the hut as well. */
   chest?: OpenChest | null;
   /** A trade with a crewmate, open beside the bag in a chest's place. */
   trade?: OpenTrade | null;
+  /** The crew's town chest, open beside the bag in a chest's place. `refresh` re-reads the pack. */
+  town?: OpenTown | null;
   /** On a map: what there is to drink or throw can be used from here. */
   usable?: Usable;
   /** Why the gear worn cannot be changed just now (a fight is on), if it cannot. */
   gearLocked?: string;
+  /**
+   * On a map, a lit torch held in a hand: it is shown in that hand's slot, over what is worn there (put away, or
+   * set aside, while it is held). `stow` puts it out and back in the pack (absent when it cannot be done now;
+   * `why` says why).
+   */
+  torch?: { hand: "main" | "off"; rounds: number; stow?(): void; why?: string };
 }
 
 /**
  * One grid of squares with things lying on it at their own size: the pack, or a chest.
  * It reports the square under the pointer and what is done to each thing; the screen decides what that means.
  */
-function PackGrid({ zone, name, u, rows, baseRows, stacks, decor = [], spots, held, target, lockedOf, onCell, onSetDown, onHover, onPress, onPick, onQuick, onSplit, onDecor, pickedDecor }: {
+function PackGrid({ zone, name, u, rows, baseRows, stacks, decor = [], spots, held, target, lockedOf, onCell, onSetDown, onHover, onPress, onPick, onQuick, onSplit, splitStones = false, onDecor, pickedDecor }: {
   /** "theirs" is the other player's side of a trade: there to be looked at, not handled. */
   zone: Zone | "theirs";
   name: string;
@@ -231,7 +303,9 @@ function PackGrid({ zone, name, u, rows, baseRows, stacks, decor = [], spots, he
   onPress(s: Stack, e: Point): void;
   onPick(s: Stack, e: Point): void;
   onQuick(s: Stack): void;
-  onSplit?(s: Stack & { t: "mat" }, at: { x: number; y: number }): void;
+  onSplit?(s: Splittable, at: { x: number; y: number }): void;
+  /** Whether lodestones can be split here too (at the town chest), and not only materials. */
+  splitStones?: boolean;
   onDecor?(id: number): void;
   pickedDecor?: number | null;
 }) {
@@ -277,7 +351,7 @@ function PackGrid({ zone, name, u, rows, baseRows, stacks, decor = [], spots, he
               else onPick(s, e);
             }}
             onContextMenu={(e: ReactMouseEvent) => {
-              if (held || !onSplit || s.t !== "mat") return;
+              if (held || !onSplit || !(s.t === "mat" || (s.t === "stone" && splitStones))) return;
               e.preventDefault();
               e.stopPropagation();
               onSplit(s, { x: e.clientX, y: e.clientY });
@@ -325,7 +399,21 @@ function EyeGlyph({ shut }: { shut: boolean }) {
   );
 }
 
-export function InventoryScreen({ me, refresh, onClose, onIsland = false, chest = null, trade = null, usable, gearLocked }: Props) {
+export function InventoryScreen({ me, refresh, onClose, onIsland = false, chest = null, trade = null, town = null, usable, gearLocked, stones, torch }: Props) {
+  /** The atlas's slot as it is now, for the handlers that outlive a render. */
+  const stoneSlot = useRef(stones);
+  stoneSlot.current = stones;
+  /** Put a lodestone into the atlas's slot, or say why it will not go. True if it went. */
+  const putStone = (stone: Lodestone): boolean => {
+    const slot = stoneSlot.current;
+    if (!slot) return false;
+    const why = slot.blocked(stone);
+    if (why) setRefused(why);
+    else slot.put(stone);
+    return !why;
+  };
+  const stonePut = useRef(putStone);
+  stonePut.current = putStone;
   const c = me.character!;
   const { busy, error, act } = useAct(refresh);
   const [catchOpen, setCatchOpen] = useState(false);
@@ -336,14 +424,14 @@ export function InventoryScreen({ me, refresh, onClose, onIsland = false, chest 
   /** The square under the pointer, and which grid it is in. */
   const [cell, setCell] = useState<(Spot & { zone: Zone }) | null>(null);
   /** A stack of material being split across to the other grid. */
-  const [split, setSplit] = useState<{ stack: Stack & { t: "mat" }; into: boolean; at: { x: number; y: number } } | null>(null);
+  const [split, setSplit] = useState<{ stack: Splittable; into: boolean; at: { x: number; y: number } } | null>(null);
   /** The decoration in the chest that was last clicked, for its buttons under the grid. */
   const [pickedDecor, setPickedDecor] = useState<number | null>(null);
   const [addPiece, setAddPiece] = useState("");
   /** Moves between the bag and a chest that are still on their way to the server: where each thing is shown meanwhile. */
   const [gearAt, setGearAt] = useState<Map<number, { item: OwnedItem; to: Zone; box: number; op: number }>>(() => new Map());
-  /** The same for materials: how many of a kind are shown on each side while a move of them is under way. */
-  const [matAt, setMatAt] = useState<Map<ResourceKind, { pack: number; chest: number; box: number; op: number }>>(() => new Map());
+  /** The same for stacks (materials, and lodestones at the town chest), by what they are counted under: how many of a kind are shown on each side while a move of them is under way. */
+  const [matAt, setMatAt] = useState<Map<string, { pack: number; chest: number; box: number; op: number }>>(() => new Map());
   /** Gear put on or taken off whose answer is still to come: each is shown as made meanwhile (wearAhead.ts). */
   const [wearing, setWearing] = useState<WearChange[]>([]);
   /** The moves go to the server one after another, so each answer is about a state the screen knows. */
@@ -355,7 +443,7 @@ export function InventoryScreen({ me, refresh, onClose, onIsland = false, chest 
   /** A press on a thing that may turn into a drag: where it began, and whether it has moved far enough to count. */
   const press = useRef<{ stack: Stack; from: Held["from"]; x: number; y: number; dragging: boolean } | null>(null);
   /** The newest of the handlers a drag's release calls, so the window's listeners need not be re-made every render. */
-  const drop = useRef<{ onGrid(at: Point): void; onSlot(slot: Slot): void }>({ onGrid: () => undefined, onSlot: () => undefined });
+  const drop = useRef<{ onGrid(at: Point): void; onSlot(slot: Slot): void; onTown(): void }>({ onGrid: () => undefined, onSlot: () => undefined, onTown: () => undefined });
   /** The view's width in the screen's own pixels: a chest's squares shrink to fit beside the bag. */
   const [viewW, setViewW] = useState(() => innerWidth / uiZoom());
   const [viewH, setViewH] = useState(() => innerHeight / uiZoom());
@@ -377,44 +465,65 @@ export function InventoryScreen({ me, refresh, onClose, onIsland = false, chest 
   }, [items, gearAt, trade?.mine.items]);
   const packMats = useMemo(() => {
     const out: Resources = { ...(me.materials ?? {}) };
-    for (const [k, m] of matAt) out[k] = m.pack;
+    for (const [k, m] of matAt) if (stackSort(k) === "material") out[k as ResourceKind] = m.pack;
     // What is laid on the trade table is still yours, but it is on the table, not in the pack.
     for (const [k, n] of Object.entries(trade?.mine.resources ?? {}) as [ResourceKind, number][]) out[k] = Math.max(0, (out[k] ?? 0) - n);
     return out;
   }, [me.materials, matAt, trade?.mine.resources]);
-  const stacks = useMemo(() => toStacks(packGear, packMats, me.consumables), [packGear, packMats, me.consumables]);
+  /** The lodestones in the pack as they are shown: the server's list, with the moves to and from the town chest already made. */
+  const packStones = useMemo(() => {
+    const listed = me.lodestones ?? [];
+    const moving = [...matAt].filter(([k]) => stackSort(k) === "lodestone");
+    if (moving.length === 0) return listed;
+    const out = listed.map((h) => ({ ...h, qty: matAt.get(stoneItem(h.stone))?.pack ?? h.qty }));
+    for (const [k, m] of moving) if (!listed.some((h) => stoneItem(h.stone) === k)) out.push({ stone: stoneOfItem(k)!, qty: m.pack });
+    return out.filter((h) => h.qty > 0);
+  }, [me.lodestones, matAt]);
+  /** How many of each stack the pack holds, by what it is counted under. */
+  const packHeld = useMemo(() => ({ ...(packMats as Record<string, number>), ...Object.fromEntries(packStones.map((h) => [stoneItem(h.stone), h.qty])) }), [packMats, packStones]);
+  const stacks = useMemo(() => toStacks(packGear, packMats, me.consumables, packStones), [packGear, packMats, me.consumables, packStones]);
   const shapes = useMemo(() => stacks.map(shapeOf), [stacks]);
   const layout = useMemo(() => layoutPack(shapes, saved), [shapes, saved]);
   const wornStacks = [...worn.values()].map((item): Stack => ({ t: "gear", key: `gear:${item.id}`, item }));
 
   // ---- the grid beside the pack: a chest's, when one is open, or your side of a trade ----
   const box = chest?.box ?? null;
-  const boxId = box?.id ?? null;
+  /** The tab of the town chest that is open, and whether it is a grid of squares (the materials and lodestones tabs are laid out their own way). */
+  const tab = town?.tab ?? null;
+  const gridded = !tab || tab.kind === "general";
+  const boxId = box?.id ?? (tab ? TOWN_SIDE + tab.id : null);
   const own = chest?.own ?? null;
   /** Which grid is open beside the pack, for remembering where things lie in it: a chest's id, or -1 for the trade table. */
   const sideId = boxId ?? (trade ? -1 : null);
   const sideOpen = sideId !== null;
-  /** The materials in this chest, by kind. */
+  /** The stacks in this chest, by what they are counted under: its materials, and in the town chest its lodestones. */
   const kept = useMemo(() => {
-    const out: Resources = {};
-    if (trade) return { ...trade.mine.resources };
+    const out: Record<string, number> = {};
+    if (trade) return { ...trade.mine.resources } as Record<string, number>;
+    for (const s of tab?.stacks ?? []) out[s.kind] = s.qty;
     for (const s of own?.stash ?? []) if (s.containerId === boxId) out[s.kind] = s.qty;
     for (const [k, m] of matAt) if (m.box === boxId) out[k] = m.chest;
     return out;
-  }, [own, boxId, matAt, trade?.mine.resources]);
+  }, [own, tab, boxId, matAt, trade?.mine.resources]);
   const chestStacks = useMemo(() => {
     // Your side of the table: the gear you laid on it, in the order it was laid, and the materials.
-    if (trade) return toStacks(trade.mine.items.flatMap((id) => items.filter((i) => i.id === id && !i.equipped)), kept);
+    if (trade) return toStacks(trade.mine.items.flatMap((id) => items.filter((i) => i.id === id && !i.equipped)), kept as Resources);
     if (boxId === null) return [];
-    const listed = (own?.stowed ?? []).filter((g) => g.containerId === boxId).map((g) => toOwned({ ...g, id: g.itemId, equipped: 0 } as unknown as InventoryItem));
+    const listed = tab
+      ? tab.gear.map((g) => toOwned({ ...g, equipped: 0 } as unknown as InventoryItem))
+      : (own?.stowed ?? []).filter((g) => g.containerId === boxId).map((g) => toOwned({ ...g, id: g.itemId, equipped: 0 } as unknown as InventoryItem));
     const gear = listed.filter((i) => gearAt.get(i.id)?.to !== "pack");
     for (const g of gearAt.values()) if (g.to === "chest" && g.box === boxId && !listed.some((i) => i.id === g.item.id)) gear.push(g.item);
-    return toStacks(gear, kept);
-  }, [own, boxId, kept, gearAt, trade?.mine.items, items]);
+    const keptStones = Object.entries(kept).flatMap(([k, qty]) => {
+      const stone = qty > 0 ? stoneOfItem(k) : null;
+      return stone ? [{ stone, qty }] : [];
+    });
+    return toStacks(gear, kept as Resources, {}, keptStones);
+  }, [own, tab, boxId, kept, gearAt, trade?.mine.items, items]);
   const inside = useMemo(() => (boxId === null ? [] : (chest?.furnishings ?? []).filter((f) => f.inId === boxId)), [chest?.furnishings, boxId]);
   const looseDecor = boxId === null ? [] : (chest?.furnishings ?? []).filter((f) => f.q === null && f.inId === null && f.id !== boxId && !FURNISHINGS[f.defId]?.storage);
-  const chestShapes = useMemo(() => [...chestStacks.map(shapeOf), ...inside.map((f): Shape => ({ key: decorKey(f.id), w: 1, h: 1 }))], [chestStacks, inside]);
-  const chestTotal = trade ? TRADE_CELLS : box ? FURNISHINGS[box.defId]?.storage ?? 0 : 0;
+  const chestShapes = useMemo(() => (gridded ? [...chestStacks.map(shapeOf), ...inside.map((f): Shape => ({ key: decorKey(f.id), w: 1, h: 1 }))] : []), [chestStacks, inside, gridded]);
+  const chestTotal = trade ? TRADE_CELLS : tab ? (gridded ? TOWN_TAB_CELLS : 0) : box ? FURNISHINGS[box.defId]?.storage ?? 0 : 0;
   const chestRows = Math.max(1, Math.ceil(chestTotal / CHEST_COLS));
   /** Where things lie in this chest: as last arranged here, or as remembered for it. */
   const [chestEdits, setChestEdits] = useState<{ id: number; saved: Saved } | null>(null);
@@ -437,12 +546,21 @@ export function InventoryScreen({ me, refresh, onClose, onIsland = false, chest 
     if (theirShapes.some((s) => !theirSaved[s.key])) setTheirSaved(Object.fromEntries(theirLayout.spots));
   }, [theirShapes, theirSaved, theirLayout]);
 
+  /** What stays in the pack it is in: what there is to drink or throw, always; lodestones, anywhere but at the town chest. */
+  const fixed = (s: Stack) => s.t === "use" || (s.t === "stone" && !tab);
   /** Whether a thing (or `n` of a stack) fits in the chest by the count of its squares. */
-  const fitsIn = (s: Stack, n = s.t === "gear" ? 1 : s.qty) => s.t !== "use" && (s.t === "gear" ? itemCells(s.item) : addedSlots(kept[s.kind] ?? 0, n)) <= chestFree;
+  const fitsIn = (s: Stack, n = s.t === "gear" ? 1 : s.qty) => !fixed(s) && (s.t === "gear" ? itemCells(s.item) : addedSlots(kept[countKey(s)] ?? 0, n)) <= chestFree;
+  /** Why a thing (or `n` of a stack) cannot go into what is open beside the pack, or null. The town chest's tabs each take their own. */
+  const inProblem = (s: Stack, n = s.t === "gear" ? 1 : s.qty): string | null =>
+    fixed(s) ? (s.t === "stone" ? STONES_STAY : STAYS_IN_PACK)
+    : tab ? (s.t === "gear" ? gearPutProblem(tab.kind, chestUsed, itemCells(s.item)) : stackPutProblem(tab.kind, chestUsed, kept, countKey(s), n))
+    : fitsIn(s, n) ? null
+    : trade ? "That is more than fits on the table."
+    : `The ${box?.label ?? "chest"} is too full for that.`;
   /** The squares of the pack that are filled, as it is shown (the server's count runs behind while moves are under way). */
   const packUsed = shapes.reduce((n, s) => n + s.w * s.h, 0);
   /** Why a thing cannot come out into the pack, or null. */
-  const outProblem = (s: Stack, n = s.t === "gear" ? 1 : s.qty) => (trade || s.t === "use" ? null : carry ? carryProblem({ carried: packUsed, limit: carry.limit }, s.t === "gear" ? itemCells(s.item) : addedSlots(packMats[s.kind] ?? 0, n)) : null);
+  const outProblem = (s: Stack, n = s.t === "gear" ? 1 : s.qty) => (trade || fixed(s) ? null : carry ? carryProblem({ carried: packUsed, limit: carry.limit }, s.t === "gear" ? itemCells(s.item) : addedSlots(packHeld[countKey(s)] ?? 0, n)) : null);
 
   /** Show a move at once, send it when the ones before it are done, and stop showing it over the server's lists once its own answer and the lists after it are in. */
   const send = (show: (op: number) => void, run: () => Promise<unknown>) => {
@@ -460,7 +578,7 @@ export function InventoryScreen({ me, refresh, onClose, onIsland = false, chest 
   };
   /** Across between the pack and the open chest: `to` is the side it goes to. */
   const moveTo = (to: Zone, s: Stack, n = s.t === "gear" ? 1 : s.qty) => {
-    if (s.t === "use") return setRefused(STAYS_IN_PACK);
+    if (fixed(s)) return setRefused(s.t === "stone" ? STONES_STAY : STAYS_IN_PACK);
     if (trade) {
       // Onto your side of the table, or back off it: nothing leaves the pack for real until the trade is settled.
       if (to === "chest" && !fitsIn(s, n)) return setRefused("That is more than fits on the table.");
@@ -470,6 +588,7 @@ export function InventoryScreen({ me, refresh, onClose, onIsland = false, chest 
         const others = mine.items.filter((id) => id !== s.item.id);
         return trade.setMine({ ...mine, items: to === "chest" ? [...others, s.item.id] : others });
       }
+      if (s.t !== "mat") return;
       const laid = mine.resources[s.kind] ?? 0;
       const next = to === "chest" ? laid + Math.min(n, packMats[s.kind] ?? 0) : laid - Math.min(n, laid);
       const resources = { ...mine.resources };
@@ -479,20 +598,30 @@ export function InventoryScreen({ me, refresh, onClose, onIsland = false, chest 
     }
     if (boxId === null) return;
     const b = boxId;
-    const problem = to === "chest" ? (fitsIn(s, n) ? null : `The ${box?.label ?? "chest"} is too full for that.`) : outProblem(s, n);
+    const problem = to === "chest" ? inProblem(s, n) : outProblem(s, n);
     if (problem) return setRefused(problem);
     if (s.t === "gear") {
       const item = s.item;
-      send((op) => setGearAt((was) => new Map(was).set(item.id, { item, to, box: b, op })), () => api.stow(to === "chest" ? b : null, item.id));
+      send(
+        (op) => setGearAt((was) => new Map(was).set(item.id, { item, to, box: b, op })),
+        () => (town ? (to === "chest" ? town.stow(item.id) : town.unstow(item.id)) : api.stow(to === "chest" ? b : null, item.id)),
+      );
     } else {
-      const kind = s.kind;
-      const from = to === "chest" ? packMats[kind] ?? 0 : kept[kind] ?? 0;
+      const kind = countKey(s);
+      const from = to === "chest" ? packHeld[kind] ?? 0 : kept[kind] ?? 0;
       const qty = Math.min(n, from);
       if (qty <= 0) return;
-      const pack = (packMats[kind] ?? 0) + (to === "chest" ? -qty : qty);
+      const pack = (packHeld[kind] ?? 0) + (to === "chest" ? -qty : qty);
       const chest = (kept[kind] ?? 0) + (to === "chest" ? qty : -qty);
-      send((op) => setMatAt((was) => new Map(was).set(kind, { pack, chest, box: b, op })), () => api.stash(b, kind, to === "chest" ? qty : -qty));
+      send(
+        (op) => setMatAt((was) => new Map(was).set(kind, { pack, chest, box: b, op })),
+        () => (town ? (to === "chest" ? town.put(kind, qty) : town.take(kind, qty)) : api.stash(b, kind, to === "chest" ? qty : -qty)),
+      );
     }
+  };
+  /** At the town chest: everything of a sort that is in the pack, into the tab that keeps that sort. */
+  const putAll = (sort: "mat" | "stone") => {
+    for (const s of stacks) if (s.t === sort && s.key === firstKey(s)) moveTo("chest", s, s.total);
   };
   const moveIn = (s: Stack, n?: number) => moveTo("chest", s, n);
   const moveOut = (s: Stack, n?: number) => moveTo("pack", s, n);
@@ -558,7 +687,12 @@ export function InventoryScreen({ me, refresh, onClose, onIsland = false, chest 
       const slot = under?.closest<HTMLElement>(".doll-slot")?.dataset.slot as Slot | undefined;
       if (slot) drop.current.onSlot(slot);
       else if (under?.closest(".pack-grid-2")) drop.current.onGrid(e);
-      else setHeld(null);
+      else if (under?.closest("[data-town-drop]")) drop.current.onTown();
+      else {
+        // A lodestone let go over the slot of a place on the atlas goes into it.
+        if (p.stack.t === "stone" && under?.closest("[data-stone-slot]")) stonePut.current(p.stack.stone);
+        setHeld(null);
+      }
       // The release would otherwise count as a click on whatever is under it.
       const swallow = (ev: MouseEvent) => {
         ev.stopPropagation();
@@ -573,15 +707,25 @@ export function InventoryScreen({ me, refresh, onClose, onIsland = false, chest 
       else if (chest) chest.onClose();
       else onClose();
     };
+    // A lodestone picked up (not dragged) and then clicked onto the atlas's slot goes into it, too.
+    const click = (e: MouseEvent) => {
+      if (held?.stack.t !== "stone" || !(e.target instanceof Element) || !e.target.closest("[data-stone-slot]")) return;
+      e.stopPropagation();
+      e.preventDefault();
+      stonePut.current(held.stack.stone);
+      setHeld(null);
+    };
     addEventListener("pointermove", move);
     addEventListener("pointerup", up);
     addEventListener("pointercancel", up);
     addEventListener("keydown", key);
+    addEventListener("click", click, { capture: true });
     return () => {
       removeEventListener("pointermove", move);
       removeEventListener("pointerup", up);
       removeEventListener("pointercancel", up);
       removeEventListener("keydown", key);
+      removeEventListener("click", click, { capture: true });
     };
   }, [held, onClose, catchOpen, chest]);
   // A thing in hand that is no longer where it was lifted from (sold, stowed, traded away, its chest shut) is let go of.
@@ -602,6 +746,8 @@ export function InventoryScreen({ me, refresh, onClose, onIsland = false, chest 
     if (gearLocked) return;
     const item = items.find((i) => i.id === id && !i.equipped);
     if (!item || equipProblem(item, c.class_id, c.level)) return void act(() => api.equip(id));
+    // Put into the hand a lit torch is held in, it is what the hand holds: the torch is put out and stowed.
+    if (torch && item.slot === TORCH_SLOT[torch.hand]) torch.stow?.();
     send((op) => setWearing((was) => [...was, { op, itemId: id, on: true }]), () => api.equip(id));
   };
   const unequip = (id: number) => {
@@ -650,7 +796,7 @@ export function InventoryScreen({ me, refresh, onClose, onIsland = false, chest 
       : hits.length > 0 ? "bad"
       // Off the figure it goes into the pack; between the grids there has to be the room on the other side.
       : held.from === "worn" ? (z === "pack" ? "ok" : "bad")
-      : z === "chest" ? (fitsIn(held.stack) ? "ok" : "bad")
+      : z === "chest" ? (inProblem(held.stack) ? "bad" : "ok")
       : outProblem(held.stack) ? "bad" : "ok";
     return { zone: z, at, hits, verdict };
   })();
@@ -676,7 +822,7 @@ export function InventoryScreen({ me, refresh, onClose, onIsland = false, chest 
     } else {
       // Across to the other grid: it lies where it was put, if it is a thing of its own or the first of its kind there.
       if (s.t === "gear") rememberIn(zone, { [s.key]: at });
-      else if (s.t === "mat" && !(zone === "chest" ? kept[s.kind] : packMats[s.kind])) rememberIn(zone, { [`mat:${s.kind}:0`]: at });
+      else if ((s.t === "mat" || s.t === "stone") && !(zone === "chest" ? kept : packHeld)[countKey(s)]) rememberIn(zone, { [firstKey(s)]: at });
       setHeld(null);
       if (zone === "chest") moveIn(s);
       else moveOut(s);
@@ -687,9 +833,51 @@ export function InventoryScreen({ me, refresh, onClose, onIsland = false, chest 
   const wearHeld = () => {
     const inHand = held?.stack.t === "gear" && held.from === "pack" ? held.stack.item : null;
     if (inHand && !equipProblem(inHand, c.class_id, c.level)) void equip(inHand.id);
+    // The weapon or shield worn in a hand a lit torch is held in, lifted and set back there: it is taken up
+    // again, and the torch put out and stowed. (Otherwise it would just go back where it was, still put away.)
+    const back = held?.stack.t === "gear" && held.from === "worn" ? held.stack.item : null;
+    if (back && torch && back.slot === TORCH_SLOT[torch.hand]) torch.stow?.();
     setHeld(null);
   };
-  drop.current = { onGrid: setDown, onSlot: wearHeld };
+  /** Set what is in hand down on a tab of the town chest that has no squares: out of the pack it goes in; out of the tab itself it goes back. */
+  const dropOnTown = () => {
+    if (held?.from === "pack") moveIn(held.stack);
+    setHeld(null);
+  };
+  drop.current = { onGrid: setDown, onSlot: wearHeld, onTown: dropOnTown };
+
+  /** A place in a tab of the town chest that is laid out its own way: one kind of thing, and how many of it the crew keeps. */
+  const townPlace = (key: string, name: string, icon: ReactNode, total: number) => {
+    const s = (chestStacks.find((o) => o.key === key) ?? null) as Splittable | null;
+    return (
+      <button
+        key={key}
+        className={`town-place ${s ? "" : "none"} ${s && held?.from === "chest" && held.stack.key === key ? "lifted" : ""}`}
+        aria-label={`${name}, ${total}`}
+        onPointerEnter={() => !held && s && setHover({ zone: "chest", key })}
+        onPointerLeave={() => setHover(null)}
+        onPointerDown={(e) => {
+          if (!held && s && e.button === 0 && !e.shiftKey) press.current = { stack: s, from: "chest", x: e.clientX, y: e.clientY, dragging: false };
+        }}
+        onClick={(e) => {
+          if (held || !s) return; // The tab takes what is in hand.
+          e.stopPropagation();
+          if (e.shiftKey) moveOut(s);
+          else lift(s, "chest", e);
+        }}
+        onContextMenu={(e) => {
+          if (held || !s) return;
+          e.preventDefault();
+          e.stopPropagation();
+          setSplit({ stack: s, into: false, at: { x: e.clientX, y: e.clientY } });
+        }}
+      >
+        <span className="town-place-icon">{icon}</span>
+        <span className="town-place-name">{name}</span>
+        <strong className="town-place-qty">{total}</strong>
+      </button>
+    );
+  };
 
   /** What a grid needs to hear from the things on it. */
   const gridHandlers = (zone: Zone) => ({
@@ -713,10 +901,13 @@ export function InventoryScreen({ me, refresh, onClose, onIsland = false, chest 
     const fits = inHand?.slot === slot;
     const cannot = fits && !!equipProblem(inHand!, c.class_id, c.level);
     const style: CSSProperties = { left: at.x * U, top: at.y * U, width: at.w * U, height: at.h * U, ...(item ? ({ borderColor: RARITY_COLOR[item.rarity], "--tint": RARITY_COLOR[item.rarity] } as CSSProperties) : {}) };
+    // A lit torch held in this hand, on a map: what is worn here is put away (or set aside) while it is.
+    const lit = torch && TORCH_SLOT[torch.hand] === slot ? torch : null;
+    const aside = !item ? "" : slot === "main_hand" ? ` Your ${item.name} is put away while you hold it.` : ` Your ${item.name} is set aside while you hold it.`;
     return (
       <Fragment key={slot}>
       <button
-        className={`doll-slot ${item ? "" : "empty"} ${item?.hidden ? "unseen" : ""} ${fits ? (cannot ? "cannot" : "fits") : ""} ${held?.from === "worn" && held.stack.key === `gear:${item?.id}` ? "lifted" : ""}`}
+        className={`doll-slot ${item ? "" : "empty"} ${lit ? "aside" : ""} ${item?.hidden ? "unseen" : ""} ${fits ? (cannot ? "cannot" : "fits") : ""} ${held?.from === "worn" && held.stack.key === `gear:${item?.id}` ? "lifted" : ""}`}
         style={style}
         title={item ? undefined : `${SLOT_LABEL[slot]}: empty`}
         onPointerEnter={() => !held && setHover(item ? { zone: "worn", key: `gear:${item.id}` } : null)}
@@ -739,6 +930,20 @@ export function InventoryScreen({ me, refresh, onClose, onIsland = false, chest 
         {!item && <span className="slot-name">{SLOT_LABEL[slot]}</span>}
         {item && item.power > 0 && <span className="badge br">+{item.power}</span>}
       </button>
+      {/* Over the slot, not in it (a button cannot hold a button): the lit torch held in this hand. A click puts it away. */}
+      {lit && (
+        <button
+          className="doll-torch"
+          style={{ left: at.x * U, top: at.y * U, width: at.w * U }}
+          aria-label={`Put away the lit torch in your ${lit.hand} hand`}
+          aria-disabled={!lit.stow}
+          title={`Lit torch, in your ${lit.hand} hand: ${lit.rounds} round${lit.rounds === 1 ? "" : "s"} of light left.${aside} ${lit.stow ? `Click to put it out and stow it in your pack${item ? `, and take up your ${item.name} again` : ""}.` : (lit.why ?? "You cannot put it away now.")}`}
+          onClick={() => lit.stow?.()}
+        >
+          <Icon name={ITEM_ICON.torch.name} color={ITEM_ICON.torch.color} size={iconPx(1, 1)} />
+          <span className="doll-torch-text"><strong>Lit torch</strong>{lit.rounds} left</span>
+        </button>
+      )}
       {/* Beside the slot, not in it (a button cannot hold a button): show or hide the piece on the hero. It counts either way. Not for what is held in the hands. */}
       {item && canHide(slot) && (
         <button
@@ -764,6 +969,8 @@ export function InventoryScreen({ me, refresh, onClose, onIsland = false, chest 
   const holding = held?.stack.t === "gear" && held.from === "pack" ? held.stack.item : null;
   /** A potion or a flask in hand, and why it cannot be used from here just now (if this is a map at all). */
   const holdingUse = held?.stack.t === "use" ? held.stack : null;
+  const holdingStone = held?.stack.t === "stone" ? held.stack : null;
+  const stoneBlocked = holdingStone && stones ? stones.blocked(holdingStone.stone) : undefined;
   const useBlocked = holdingUse && usable ? usable.blocked(holdingUse.kind) : undefined;
   const picked = inside.find((f) => f.id === pickedDecor) ?? null;
 
@@ -911,6 +1118,89 @@ export function InventoryScreen({ me, refresh, onClose, onIsland = false, chest 
           </footer>
         </div>
       )}
+      {town && (
+        <div className={`bag chest-window town-window panel window ${held ? "holding" : ""}`} role="dialog" aria-label="The town chest" style={{ "--u": `${CU}px` } as CSSProperties} onContextMenu={putBack}>
+          <span className="win-plate">Town Chest</span>
+          <button className="bag-close hud-btn" aria-label="Close the town chest" title="Close (Esc)" onClick={town.onClose}>×</button>
+          {town.bar}
+          {/* Not read yet (the Harbor reads it ahead, so this is rare): the bare squares, which fill as it comes. */}
+          {!tab ? <div className="pack-wrap"><div className="pack-grid-2" style={{ height: 8 * CU }} aria-hidden /></div> : tab.kind === "general" ? (
+            <div className="pack-wrap">
+              <PackGrid
+                zone="chest"
+                name={`In ${tab.name}`}
+                u={CU}
+                rows={chestLayout.rows}
+                baseRows={chestRows}
+                stacks={chestStacks}
+                spots={chestLayout.spots}
+                held={held}
+                target={targetIn("chest")}
+                {...gridHandlers("chest")}
+                // Shift-click: straight out into the pack.
+                onQuick={(s) => moveOut(s)}
+                onSplit={(s, at) => setSplit({ stack: s, into: false, at })}
+                splitStones
+              />
+            </div>
+          ) : (
+            // A tab laid out its own way: what is in hand goes in wherever on it it is set down.
+            <div className={`town-ledger ${tab.kind} ${held?.from === "pack" ? (inProblem(held.stack) ? "refuses" : "takes") : ""}`} data-town-drop role="group" aria-label={`In ${tab.name}`} onClick={() => held && dropOnTown()}>
+              {tab.kind === "materials" ? (
+                <div className="town-places">
+                  {RESOURCE_KINDS.map((k) => townPlace(`mat:${k}:0`, label("resource", k), <ThingIcon icon={resourceIcon(k)} size={Math.round(CU * 0.9)} />, kept[k] ?? 0))}
+                </div>
+              ) : (
+                STONE_SHELVES.map((shelf, n) => {
+                  const here = Object.entries(kept).flatMap(([k, qty]) => {
+                    const stone = qty > 0 ? stoneOfItem(k) : null;
+                    return stone && stone.length === n ? [{ stone, qty }] : [];
+                  }).sort((a, b) => stoneKey(a.stone).localeCompare(stoneKey(b.stone)));
+                  return (
+                    <section key={shelf} className="town-shelf">
+                      <h3>{shelf} <span className="muted">· {n === 0 ? "carries nothing" : n === 1 ? "carries one thing" : `carries ${n} things`}</span></h3>
+                      <div className="town-places">
+                        {here.length === 0
+                          ? <span className="muted town-none">None kept.</span>
+                          : here.map((h) => townPlace(`stone:${stoneKey(h.stone)}:0`, h.stone.length ? h.stone.map((id) => modName(id)).join(", ") : "Plain", <Icon name={STONE_ICON(n).name} color={STONE_ICON(n).color} size={Math.round(CU * 0.9)} />, h.qty))}
+                      </div>
+                    </section>
+                  );
+                })
+              )}
+            </div>
+          )}
+
+          <footer className="bag-foot">
+            {tab?.kind === "general" ? (
+              <>
+                <span
+                  className={`carry ${chestUsed > chestTotal ? "bad" : chestUsed === chestTotal ? "warn" : "muted"}`}
+                  title={`${CHEST_COLS} × ${chestRows} squares. Each thing takes its own footprint; a stack of up to ${STACK_MAX} of a material or of lodestones takes one. Whatever one of the crew puts in, any of you may take out.`}
+                >
+                  {chestUsed} / {chestTotal}{chestUsed > chestTotal ? " · over" : ""}
+                </span>
+                <span className="muted chest-keys">Shift-click sends a thing across · right-click splits a stack</span>
+                <span className="spacer" />
+                <button className="small" title="Pack everything tight, biggest first" onClick={() => tidy("chest")}>Tidy</button>
+              </>
+            ) : tab ? (
+              <>
+                <span className="muted chest-keys">Drop {tab.kind === "materials" ? "materials" : "lodestones"} anywhere here · shift-click takes a stack out · right-click takes part</span>
+                <span className="spacer" />
+                <button
+                  className="small"
+                  disabled={!stacks.some((s) => s.t === (tab.kind === "materials" ? "mat" : "stone"))}
+                  title={tab.kind === "materials" ? "Every material in your pack, into the chest" : "Every lodestone in your pack, into the chest"}
+                  onClick={() => putAll(tab.kind === "materials" ? "mat" : "stone")}
+                >
+                  Put in all you carry
+                </button>
+              </>
+            ) : <span className="spacer" />}
+          </footer>
+        </div>
+      )}
 
       <div className={`bag panel window ${held ? "holding" : ""}`} role="dialog" aria-label="Sea bag" style={{ "--u": `${U}px` } as CSSProperties} onContextMenu={putBack}>
         <span className="win-plate">Sea Bag</span>
@@ -962,6 +1252,15 @@ export function InventoryScreen({ me, refresh, onClose, onIsland = false, chest 
                 ? <button className="small primary" disabled={!!useBlocked} title={useBlocked ?? "Take it in hand: the bag closes, and you click where it goes"} onClick={() => { setHeld(null); usable.use(holdingUse.kind); }}>Use</button>
                 : <span className="muted">Used on a map</span>}
             </>
+          ) : holdingStone ? (
+            <>
+              <strong className="bag-who">{stoneName(holdingStone.stone)}</strong>
+              <span className="muted">× {holdingStone.total}</span>
+              <span className="spacer" />
+              {stones
+                ? <button className="small primary" disabled={!!stoneBlocked} title={stoneBlocked ?? "Into the slot of the place picked. Or drop it there yourself."} onClick={() => { setHeld(null); putStone(holdingStone.stone); }}>Put in the slot</button>
+                : <span className="muted">For a place's slot, on the atlas</span>}
+            </>
           ) : (
             <>
               <strong className="bag-who">{c.name}</strong>
@@ -992,10 +1291,14 @@ export function InventoryScreen({ me, refresh, onClose, onIsland = false, chest 
               if (s.t === "use") {
                 // On a map, straight into the hand. Anywhere else there is nothing to do with it.
                 if (usable && !usable.blocked(s.kind)) usable.use(s.kind);
+              } else if (s.t === "stone" && stones) {
+                // On the atlas, straight into the slot of the place picked.
+                putStone(s.stone);
               } else if (sideOpen) moveIn(s);
               else if (s.t === "gear" && !equipProblem(s.item, c.class_id, c.level)) void equip(s.item.id);
             }}
             onSplit={sideOpen ? (s, at) => setSplit({ stack: s, into: true, at }) : undefined}
+            splitStones={!!tab}
           />
         </div>
 
@@ -1019,9 +1322,11 @@ export function InventoryScreen({ me, refresh, onClose, onIsland = false, chest 
           <aside className={`bag-card panel ${sideOpen && hover.zone !== "worn" ? "over-doll" : ""}`}>
             {shown.t === "gear"
               ? <ItemDetail item={shown.item} current={worn.get(shown.item.slot) ?? null} equipped={shown.item.equipped} classId={c.class_id} level={c.level} />
+              : shown.t === "stone"
+              ? <LodestoneDetail stone={shown.stone} total={shown.total} inChest={hover.zone === "chest"} how={stones ? (stones.blocked(shown.stone) ?? "Drag it onto the place's slot, or shift-click it.") : tab ? (hover.zone === "chest" ? "Shift-click to take a stack out, or right-click to take part of it." : "Drag it into the town chest, or shift-click it.") : undefined} />
               : shown.t === "use"
               ? <ConsumableDetail kind={shown.kind} total={shown.total} how={usable ? (usable.blocked(shown.kind) ?? "Shift-click to take it in hand, then click where it goes.") : "Used on a map: thrown, or drunk."} />
-              : <MaterialDetail kind={shown.kind} total={shown.total} where={hover.zone === "theirs" ? "theirs" : hover.zone === "chest" ? (trade ? "offer" : "chest") : "pack"} />}
+              : <MaterialDetail kind={shown.kind} total={shown.total} where={hover.zone === "theirs" ? "theirs" : hover.zone === "chest" ? (trade ? "offer" : tab ? "town" : "chest") : tab ? "at-town" : "pack"} />}
           </aside>
         )}
       </div>
@@ -1037,9 +1342,15 @@ export function InventoryScreen({ me, refresh, onClose, onIsland = false, chest 
         <SplitPrompt
           name={stackName(split.stack)}
           // Into the chest: as many as fit in its free squares (topping up a part-full stack first). Out: the stack.
-          max={split.into ? Math.min(split.stack.qty, chestFree * STACK_MAX + (stackSlots(kept[split.stack.kind] ?? 0) * STACK_MAX - (kept[split.stack.kind] ?? 0))) || 1 : split.stack.qty}
+          // A tab of the town chest with no squares takes all there is of a kind up to its limit, and gives out as many as are asked for.
+          max={
+            tab && !gridded
+              ? (split.into ? Math.min(packHeld[countKey(split.stack)] ?? 0, TOWN_STACK_MAX - (kept[countKey(split.stack)] ?? 0)) : split.stack.total) || 1
+              : split.into ? Math.min(split.stack.qty, chestFree * STACK_MAX + (stackSlots(kept[countKey(split.stack)] ?? 0) * STACK_MAX - (kept[countKey(split.stack)] ?? 0))) || 1
+              : split.stack.qty
+          }
           at={split.at}
-          verb={split.into ? (trade ? "Offer" : "Stow") : trade ? "Take back" : "Take"}
+          verb={split.into ? (trade ? "Offer" : tab ? "Put in" : "Stow") : trade ? "Take back" : "Take"}
           onPick={(n) => {
             (split.into ? moveIn : moveOut)(split.stack, n);
             setSplit(null);
@@ -1048,6 +1359,37 @@ export function InventoryScreen({ me, refresh, onClose, onIsland = false, chest 
         />
       )}
       {catchOpen && <CatchPanel buyer={null} onClose={() => setCatchOpen(false)} />}
+    </div>
+  );
+}
+
+/** What a lodestone carries, how many there are, and what it is for. */
+function LodestoneDetail({ stone, total, how, inChest = false }: { stone: Lodestone; total: number; how?: string; inChest?: boolean }) {
+  const icon = STONE_ICON(stone.length);
+  return (
+    <div className="mat-detail">
+      <div className="detail-head">
+        <span className="detail-icon" style={{ borderColor: "var(--line)" }}><Icon name={icon.name} color={icon.color} size={54} /></span>
+        <div>
+          <strong>{stoneName(stone)}</strong>
+          <div><span className="tag" style={{ marginLeft: 0 }}>for the atlas</span></div>
+        </div>
+      </div>
+      {stone.length === 0 ? (
+        <p className="muted">It carries nothing: it opens a place and changes nothing about it.</p>
+      ) : (
+        <ul className="stone-carries">
+          {stone.map((id) => (
+            <li key={id}>
+              <strong>{modName(id)}</strong> <span className="muted">· {modSide(id)}</span>
+              <br />
+              <span className="muted">{modEffect(id).blurb}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+      <p>{inChest ? "The crew keeps" : "You carry"} <strong>{total}</strong>{inChest ? " here" : ""}. Put one into a place's slot on the atlas, at the lighthouse, to set out for it: it is spent, and what it carries is added to the place. Stones are cut and worked at the stonecutter's bench, beside the smithy at the west end of the High Street.</p>
+      {how && <p className="muted">{how}</p>}
     </div>
   );
 }
@@ -1072,7 +1414,7 @@ function ConsumableDetail({ kind, total, how }: { kind: Throwable; total: number
 }
 
 /** What a material is and where it goes. */
-function MaterialDetail({ kind, total, where = "pack" }: { kind: ResourceKind; total: number; where?: "pack" | "chest" | "offer" | "theirs" }) {
+function MaterialDetail({ kind, total, where = "pack" }: { kind: ResourceKind; total: number; where?: "pack" | "at-town" | "chest" | "town" | "offer" | "theirs" }) {
   const price = (STALL_BUYS as Partial<Record<ResourceKind, number>>)[kind];
   return (
     <div className="mat-detail">
@@ -1083,10 +1425,13 @@ function MaterialDetail({ kind, total, where = "pack" }: { kind: ResourceKind; t
           <div><span className="tag" style={{ marginLeft: 0 }}>material</span></div>
         </div>
       </div>
-      <p>{where === "chest" ? "Kept in here:" : where === "offer" ? "You offer" : where === "theirs" ? "Offered to you:" : "You carry"} <strong>{total}</strong>, {Math.ceil(total / STACK_MAX)} square{total > STACK_MAX ? "s" : ""} of up to {STACK_MAX}.</p>
+      {where === "town"
+        ? <p>The crew keeps <strong>{total}</strong> in the town chest. Whatever one of you puts in, any of you may take out.</p>
+        : <p>{where === "chest" ? "Kept in here:" : where === "offer" ? "You offer" : where === "theirs" ? "Offered to you:" : "You carry"} <strong>{total}</strong>, {Math.ceil(total / STACK_MAX)} square{total > STACK_MAX ? "s" : ""} of up to {STACK_MAX}.</p>}
       <p className="muted">Spent from your pack on crafting, building, crew projects and the workshops. Inside your own hut, what is in its chests counts too.</p>
-      {where === "chest" || where === "offer"
-        ? <p className="muted">Shift-click to take the stack {where === "offer" ? "back" : "out"}, or right-click to take part of it.</p>
+      {where === "chest" || where === "offer" || where === "town"
+        ? <p className="muted">Shift-click to take {where === "town" ? "a" : "the"} stack {where === "offer" ? "back" : "out"}, or right-click to take part of it.</p>
+        : where === "at-town" ? <p className="muted">Drag it into the town chest, or shift-click it; right-click to put in part of it.</p>
         : where === "pack" && <p className="muted">Stow it in a chest in your hut to free the square, or hand it to a crewmate in a trade.</p>}
       {price && <p className="muted">The market stall buys it for {price}g each.</p>}
     </div>

@@ -199,7 +199,7 @@ describe("settling what was shown against the server's answer", () => {
 
   it("settles an action that was not a walk by simply dropping it", () => {
     const act: Ahead = { n: 7, kind: "act", unit: "ann", cost: "action", named: true };
-    const told = settle([act], 7, true, [{ t: "used", id: "ann", what: "smite", name: "Smite" }]);
+    const told = settle([act], 7, true, [{ t: "used", id: "ann", what: "bash", name: "Bash" }]);
     expect(told).toMatchObject({ ahead: [], entry: act, walk: null, recall: [] });
   });
 

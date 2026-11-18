@@ -6,7 +6,7 @@
 //
 // Event names are the ones the game asks for (names.ts lists them all, most
 // specific first). You only need the general ones to start: "impact" covers
-// every blow until you add "impact.melee" or "impact.firebolt".
+// every blow until you add "impact.melee" or "impact.shock".
 
 import { ABILITIES, ENEMIES, type EffectKind } from "@gantt-quest/world";
 import { slug } from "./select";
@@ -253,7 +253,7 @@ export const AUDIO: AudioManifest = {
 
 function bladeImpacts(): Record<string, SoundEvent> {
   /** Cutting and biting blows, heroes' and enemies': these land with a blade's bite rather than a thump. */
-  const BLADE = new Set(["Cleave", "Quick Stab", "Flurry", "Land the Catch", "Slash", "Cheap Shot", "Bite", "Savage Bite", "Pounce", "Sweeping Ruin", "Rake"]);
+  const BLADE = new Set(["Cleave", "Stab", "Eviscerate", "Tear", "Slash", "Cheap Shot", "Bite", "Savage Bite", "Pounce", "Sweeping Ruin", "Rake"]);
   const names = new Set([...Object.values(ABILITIES).map((a) => a.name), ...Object.values(ENEMIES).flatMap((e) => e.attacks.map((a) => a.name))]);
   const out: Record<string, SoundEvent> = {};
   for (const name of names) {
@@ -266,7 +266,7 @@ function bladeImpacts(): Record<string, SoundEvent> {
 function effectTells(): Record<string, SoundEvent> {
   const tell = (e: EffectKind) => (e === "bleeding" ? "bleed" : e === "burning" ? "burn" : e === "stunned" ? "stun" : e === "guarded" || e === "taunting" || e === "hasted" ? "buff" : "debuff");
   const out: Record<string, SoundEvent> = { effect: { files: "sfx/combat/effect_*", fallback: built("debuff"), gainDb: -4 } };
-  const all: EffectKind[] = ["bleeding", "burning", "stunned", "guarded", "taunting", "slowed", "hasted", "glitched", "exposed"];
+  const all: EffectKind[] = ["bleeding", "burning", "stunned", "guarded", "taunting", "slowed", "hasted", "glitched", "exposed", "prone", "sundered"];
   for (const e of all) out[`effect.${e}`] = { files: `sfx/combat/effect_${e}_*`, fallback: built(tell(e)), gainDb: -4 };
   return out;
 }

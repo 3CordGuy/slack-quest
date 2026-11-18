@@ -10,7 +10,7 @@
 
 import { hexDistance, posKey, type HexPos } from "@gantt-quest/core";
 import { adjacent, inFight, sees } from "./geometry";
-import { FIRE_GLOW, LIGHT_RADIUS } from "./kit";
+import { AURAS, FIRE_GLOW, LIGHT_RADIUS } from "./kit";
 import { GLOWCAP_LIGHT } from "./forage";
 
 /** How far the daylight at a cave mouth reaches into the dark. */
@@ -24,6 +24,8 @@ export const isDark = (state: Pick<ZoneState, "options">): boolean => state.opti
 export function lightSources(state: ZoneState): { at: HexPos; radius: number }[] {
   const out: { at: HexPos; radius: number }[] = [];
   for (const u of state.units) if ((u.torch ?? 0) > 0) out.push({ at: u.pos, radius: LIGHT_RADIUS });
+  // A hero shining with a Beacon Aura.
+  for (const u of state.units) if (!u.down && u.conditions.some((c) => c.kind === "beacon")) out.push({ at: u.pos, radius: AURAS.beaconLight });
   for (const key of Object.keys(state.lights ?? {})) {
     const [q, r] = key.split(",").map(Number);
     out.push({ at: { q, r }, radius: LIGHT_RADIUS });

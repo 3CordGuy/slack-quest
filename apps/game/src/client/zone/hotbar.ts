@@ -1,4 +1,5 @@
-// How a fight's bar is laid out: eighteen slots in two rows, each holding
+// How a fight's bar is laid out: twenty slots in two rows of ten (keys 1 to 9
+// and 0, the bottom row with Shift), each holding
 // one thing the hero can do, by key: `ab:<ability>`, `do:<common action>`,
 // `it:<item>`, or "" for an empty slot. The player arranges it (drag to swap,
 // right-click to choose) and the arrangement is kept in this browser, one
@@ -7,7 +8,9 @@
 
 import type { CommonAction, Throwable } from "@gantt-quest/world";
 
-export const BAR_ROW = 9;
+export const BAR_ROW = 10;
+/** How wide a row was before it grew to ten: a bar saved then is widened, not thrown away. */
+const OLD_BAR_ROW = 9;
 export const BAR_SLOTS = BAR_ROW * 2;
 
 export const COMMON_ORDER: CommonAction[] = ["dash", "disengage", "jump", "shove", "help", "flee"];
@@ -21,10 +24,19 @@ export function barChoices(abilities: string[]): string[] {
   return [...abilities.map((a) => `ab:${a}`), ...COMMON_ORDER.map((c) => `do:${c}`), ...ITEM_ORDER.map((i) => `it:${i}`)];
 }
 
-/** The bar as it starts out: abilities and the common actions along the top, the pack along the bottom, and Flee at the end of it. */
+/**
+ * The bar as it starts out: abilities and the common actions along the top, the pack along the bottom, and Flee
+ * at the end of it. What the top row has no room for goes on the bottom one, before Flee.
+ */
 export function defaultBar(abilities: string[]): string[] {
-  const top = COMMON_ORDER.filter((c) => c !== "flee");
-  return [...pad([...abilities.map((a) => `ab:${a}`), ...top.map((c) => `do:${c}`)], BAR_ROW), ...pad([...ITEM_ORDER.map((i) => `it:${i}`), "do:flee"], BAR_ROW)];
+  const top = [...abilities.map((a) => `ab:${a}`), ...COMMON_ORDER.filter((c) => c !== "flee").map((c) => `do:${c}`)];
+  return [...pad(top, BAR_ROW), ...pad([...ITEM_ORDER.map((i) => `it:${i}`), ...top.slice(BAR_ROW), "do:flee"], BAR_ROW)];
+}
+
+/** A bar saved when a row was OLD_BAR_ROW long, as it is now: each row gets the new slots on its end, empty. */
+function widened(saved: unknown): unknown {
+  if (!Array.isArray(saved) || saved.length !== OLD_BAR_ROW * 2) return saved;
+  return [...pad(saved.slice(0, OLD_BAR_ROW), BAR_ROW), ...pad(saved.slice(OLD_BAR_ROW), BAR_ROW)];
 }
 
 /**
@@ -34,7 +46,7 @@ export function defaultBar(abilities: string[]): string[] {
 export function loadBar(kind: string, abilities: string[]): string[] {
   let saved: unknown = null;
   try {
-    saved = JSON.parse(localStorage.getItem(key(kind)) ?? "null");
+    saved = widened(JSON.parse(localStorage.getItem(key(kind)) ?? "null"));
   } catch {
     // Blocked or broken storage: the default it is.
   }

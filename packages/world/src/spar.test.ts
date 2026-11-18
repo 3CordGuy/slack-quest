@@ -77,7 +77,7 @@ describe("gearSheet", () => {
     expect(sheet.weapon).toBe("");
     expect(sheet.weaponPower).toBe(0);
     expect(abilitiesFor(sheet.weapon)).toEqual(["punch"]);
-    expect(abilitiesFor("staff")).toContain("firebolt");
+    expect(abilitiesFor("staff")).toContain("shock");
     expect(ABILITIES.punch.target).toBe("enemy");
     // No weapon gives a punch: it is what is left when the weapon is put down.
     for (const w of Object.values(WEAPONS)) expect(w.abilities).not.toContain("punch");
@@ -147,7 +147,7 @@ describe("the training dummy", () => {
       expect(state.boss).toBe(false);
       for (let i = 0; i < 200 && state.status === "active"; i++) {
         expect(currentActor(state)!.id).toBe("p1");
-        const res = stepBattle(state, "p1", { type: "ability", ability: "heavy_blow", target: "e0" }, rng);
+        const res = stepBattle(state, "p1", { type: "ability", ability: "cleave", target: "e0" }, rng);
         if (!res.ok) throw new Error(res.error);
         state = res.state;
       }

@@ -47,6 +47,10 @@ import {
   lootPlace,
   storeProblem,
   parseTraits,
+  abilitySlotError,
+  type AbilityPools,
+  parseAbilityLoadout,
+  withAbilityInSlot,
   parseAppearance,
   starterGarb,
   DEFAULT_APPEARANCE,
@@ -73,6 +77,8 @@ import {
   type Slot,
   type WorldState,
   HARBOR_XP,
+  cleanStone,
+  stoneItem,
 } from "@gantt-quest/world";
 import { LOOKS } from "../client/render/looks";
 import { prepareXp, xpOutcome, type XpResult } from "./harbor-xp";
@@ -84,7 +90,7 @@ import type { HutRoom } from "./hut-room";
 import type { PubRoom } from "./pub-room";
 import type { RunRoom } from "./run-room";
 import type { ZoneRoom } from "./zone-room";
-import { crewPresence } from "./zones";
+import { crewPresence, onAZone } from "./zones";
 
 export interface Env {
   DB: D1Database;
@@ -132,6 +138,8 @@ export interface CharacterRow {
   gold: number;
   /** JSON list of picked class trait ids. */
   traits: string;
+  /** JSON list of the class abilities chosen for the hero's slots (parse with parseAbilityLoadout). */
+  ability_loadout: string;
   /** JSON Appearance (appearance.ts), or null if they never chose one. */
   appearance?: string | null;
 }
@@ -563,6 +571,25 @@ export async function pickTrait(db: D1Database, playerId: string, traitId: strin
   return res.meta.changes > 0 ? null : "Try again.";
 }
 
+/**
+ * Put a class ability in one of the hero's slots, or (`null`) empty it. Null on success, else why not.
+ * Only in the Harbor: a hero out on a zone keeps the loadout they walked out with.
+ */
+export async function setAbilitySlot(db: D1Database, playerId: string, slot: number, abilityId: string | null, pools?: AbilityPools): Promise<string | null> {
+  const c = await getCharacter(db, playerId);
+  if (!c || c.status !== "active") return "No character.";
+  const error = abilitySlotError(c.class_id, c.level, slot, abilityId, pools);
+  if (error) return error;
+  if (await onAZone(db, playerId)) return "Abilities can only be changed in the Harbor.";
+  const next = JSON.stringify(withAbilityInSlot(parseAbilityLoadout(c.ability_loadout), slot, abilityId));
+  // Only if the loadout is still what was read, so two quick clicks can't both land.
+  const res = await db
+    .prepare("UPDATE characters SET ability_loadout = ? WHERE player_id = ? AND status = 'active' AND ability_loadout = ?")
+    .bind(next, playerId, c.ability_loadout)
+    .run();
+  return res.meta.changes > 0 ? null : "Try again.";
+}
+
 export async function spendPoint(db: D1Database, playerId: string, stat: string): Promise<boolean> {
   if (!STAT_COLUMNS.includes(stat as StatKey)) return false;
   // `stat` is checked against the fixed column list above before being inlined.
@@ -721,6 +748,7 @@ export async function heroInitFor(db: D1Database, playerId: string): Promise<Her
     unspent: c.unspent_points,
     base: statsOf(c),
     traits: parseTraits(c.traits),
+    abilityLoadout: parseAbilityLoadout(c.ability_loadout),
     ...gear,
     // Their chosen look travels with what they wear, so they are drawn as themselves wherever they are drawn.
     outfit: appearance ? { ...gear.outfit, appearance } : gear.outfit,
@@ -865,7 +893,7 @@ export async function applyGrant(
 export async function applyZoneGrant(
   db: D1Database,
   playerId: string,
-  grant: { xp: number; resources: Resources; gold?: number; item?: ItemDef | null; blueprint?: string; furnishing?: FurnishingGrant; items?: Partial<Record<string, number>> },
+  grant: { xp: number; resources: Resources; gold?: number; item?: ItemDef | null; blueprint?: string; furnishing?: FurnishingGrant; items?: Partial<Record<string, number>>; stone?: unknown },
 ): Promise<{ levelsGained: number; place: LootPlace | null }> {
   const [c, carry, boxes] = await Promise.all([getCharacter(db, playerId), grant.item ? carryState(db, playerId) : null, grant.item ? containersWithRoom(db, playerId) : []]);
   if (!c) return { levelsGained: 0, place: null };
@@ -883,6 +911,9 @@ export async function applyZoneGrant(
     if (!qty || qty <= 0) continue;
     stmts.push(db.prepare("INSERT INTO consumables (player_id, kind, qty) VALUES (?1, ?2, ?3) ON CONFLICT(player_id, kind) DO UPDATE SET qty = qty + ?3").bind(playerId, kind, qty));
   }
+  // A lodestone found in a bounty goes in the pack with the rest: a kind of item of its own (see server/lodestones.ts).
+  const stone = grant.stone === undefined ? null : cleanStone(grant.stone);
+  if (stone) stmts.push(db.prepare("INSERT INTO consumables (player_id, kind, qty) VALUES (?1, ?2, 1) ON CONFLICT(player_id, kind) DO UPDATE SET qty = qty + 1").bind(playerId, stoneItem(stone)));
   stmts.push(
     db
       .prepare("UPDATE characters SET level = ?, xp = ?, str = ?, int_stat = ?, vit = ?, agi = ?, dex = ?, unspent_points = ?, gold = gold + ? WHERE player_id = ?")

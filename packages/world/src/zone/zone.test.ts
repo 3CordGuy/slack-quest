@@ -1,20 +1,23 @@
 import { describe, expect, it } from "vitest";
 import { STARTING_STATS, allHexesInGrid, hexDistance, hexNeighbors, posKey, type HexGrid, type HexPos } from "@gantt-quest/core";
-import { ABILITIES, EFFECT_TICK, ENEMIES } from "../content";
+import { ABILITIES, EFFECT_TICK, ENEMIES, HERO_CLASSES, SUNDERED_DEFENCE, WEAPONS, abilitiesFor } from "../content";
 import type { Biome, Tile } from "../map";
 import { makeRng } from "../rng";
 import { walk } from "./combat";
-import { attackContext, type Ctx } from "./engine";
+import { addCondition, attackContext, burnOf, damage, kindle, shieldOf, type Ctx } from "./engine";
+import { shantyOf, shantyRadius, songsOn } from "./song";
+import { chartOf, constellationLinks } from "./stars";
 import { ALERT_RANGE, DEFAULT_ZONE_OPTIONS, JOIN_RANGE, generateZone, zoneOptions } from "./gen";
-import { adjacent, blast, flies, sees, solid, zoneReach } from "./geometry";
-import { ENEMY_BURST, ENEMY_KIT, EXPLORE_ROUND_MS, FLEE_RANGE, LIGHT_RADIUS, SHIELD_SET_ASIDE, TACTICS, TORCH_GROUND_ROUNDS, TORCH_HELD_ROUNDS, TORCH_ROUND_MS, commonCost, enemyHp, enemyStrikes, tacticOf } from "./kit";
+import { adjacent, blast, flies, sees, seesFor, solid, stepCost, unitAt, zoneReach } from "./geometry";
+import { AURAS, BLOCK, BOLSTER, GUARD_UP, STAND_STRONG, STURDY, ENEMY_BURST, ENEMY_KIT, EXPLORE_ROUND_MS, FLEE_RANGE, LIGHT_RADIUS, SHIELD_SET_ASIDE, TACTICS, TORCH_GROUND_ROUNDS, TORCH_HELD_ROUNDS, TORCH_ROUND_MS, abilityDice as abilityDiceFor, commonCost, enemyHp, enemyStrikes, tacticOf } from "./kit";
 import { MAX_CATCHUP_ROUNDS } from "./clock";
 import { defenceOf } from "./engine";
-import { checkAbility, crateBlow, enemyAct } from "./combat";
+import { abilityArea, checkAbility, crateBlow, enemyAct, wayBetween } from "./combat";
 import { d20, diceAverage, diceFor, heroMove, hitChance } from "./rules";
 import { createZone, ensureMouth, standInHero, stepZone, zoneView } from "./zone";
 import { DELVE_CRATES, generateDelve } from "./delve";
 import { litHexes } from "./light";
+import { poolFor } from "../classabilities";
 import { CHEST_PAY, unopened } from "./loot";
 import { CRATE_HP, CRATE_PAY } from "./crates";
 import { NOISE_RANGE } from "./doors";
@@ -40,7 +43,7 @@ function hero(state: ZoneState, id: string, classId: string, pos: HexPos): Unit 
   const sheet = standInHero(classId, id, 1)!;
   const unit: Unit = {
     id, side: "hero", name: id, kind: classId, level: 1, pos, hp: sheet.maxHp, maxHp: sheet.maxHp, focus: 2, maxFocus: 2,
-    stats: STARTING_STATS[classId], armor: 2, power: 1, abilities: classId === "refactor_rogue" ? ["aimed_shot", "quick_stab"] : classId === "devops_mage" ? ["firebolt", "mend"] : ["smite", "shield_wall"],
+    stats: STARTING_STATS[classId], armor: 2, power: 1, abilities: classId === "refactor_rogue" ? ["bow_shot", "stab"] : classId === "devops_mage" ? ["shock", "mend"] : ["bash", "block"],
     conditions: [], down: false, cooldowns: {}, items: { healing: 2, poison: 2, fire: 1, oil: 1, water: 1 },
   };
   state.units.push(unit);
@@ -310,12 +313,12 @@ describe("turns", () => {
     const move = budget().move;
     state = must(state, { type: "move", by: "ann", unit: "ann", to: at(7, 6) });
     expect(budget().move).toBe(move - 1);
-    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "smite", target: foe });
+    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "bash", target: foe });
     expect(budget().action).toBe(false);
-    expect(fails(state, { type: "use", by: "ann", unit: "ann", ability: "smite", target: foe })).toMatch(/used your Action/);
-    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "shield_wall" });
+    expect(fails(state, { type: "use", by: "ann", unit: "ann", ability: "bash", target: foe })).toMatch(/used your Action/);
+    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "block" });
     expect(budget().bonus).toBe(false);
-    expect(unit(state, "ann").conditions.some((c) => c.kind === "guarded")).toBe(true);
+    expect(shieldOf(unit(state, "ann"))).toBeGreaterThan(0);
     expect(fails(state, { type: "drink", by: "ann", unit: "ann", item: "healing" })).toMatch(/Bonus action/);
     expect(fails(state, { type: "move", by: "ann", unit: "ann", to: at(1, 1) })).toMatch(/movement/);
   });
@@ -357,11 +360,11 @@ describe("attacks", () => {
     hero(state, "ann", "refactor_rogue", at(4, 6));
     const foe = enemy(state, "dummy", at(9, 6));
     state = provoke(must(state, { type: "move", by: "ann", unit: "ann", to: at(5, 6) }));
-    expect(fails(state, { type: "use", by: "ann", unit: "ann", ability: "quick_stab", target: foe.id })).toMatch(/next to it/);
-    expect(fails(state, { type: "use", by: "ann", unit: "ann", ability: "aimed_shot", target: foe.id })).toMatch(/clear line/);
+    expect(fails(state, { type: "use", by: "ann", unit: "ann", ability: "stab", target: foe.id })).toMatch(/next to it/);
+    expect(fails(state, { type: "use", by: "ann", unit: "ann", ability: "bow_shot", target: foe.id })).toMatch(/clear line/);
     state = must(state, { type: "move", by: "ann", unit: "ann", to: at(5, 5) });
     const events: ZoneEvent[] = [];
-    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "aimed_shot", target: foe.id }, events);
+    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "bow_shot", target: foe.id }, events);
     const roll = events.find((e) => e.t === "roll" && e.roll.kind === "attack");
     expect(roll).toBeDefined();
     expect(events.some((e) => e.t === "hit" || e.t === "miss")).toBe(true);
@@ -401,22 +404,22 @@ describe("attacks", () => {
 
   it("puts an ability with a cooldown out of use for that many turns", () => {
     let { state, foe } = duel("dummy", "qa_paladin", at(6, 6), at(8, 6));
-    unit(state, "ann").abilities = ["cleave"];
-    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "cleave" });
-    const wait = tacticOf("cleave").cooldown!;
+    unit(state, "ann").abilities = ["stoke_the_fire"];
+    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "stoke_the_fire" });
+    const wait = tacticOf("stoke_the_fire").cooldown!;
     for (let turn = 0; turn < wait; turn++) {
       state = must(state, { type: "end_turn", by: "ann", unit: "ann" });
-      expect(fails(state, { type: "use", by: "ann", unit: "ann", ability: "cleave" }), `turn ${turn}`).toMatch(/not ready/);
+      expect(fails(state, { type: "use", by: "ann", unit: "ann", ability: "stoke_the_fire" }), `turn ${turn}`).toMatch(/not ready/);
     }
     state = must(state, { type: "end_turn", by: "ann", unit: "ann" });
-    must(state, { type: "use", by: "ann", unit: "ann", ability: "cleave" });
+    must(state, { type: "use", by: "ann", unit: "ann", ability: "stoke_the_fire" });
     expect(foe).toBeDefined();
   });
 
   it("spends Focus for advantage", () => {
     let { state, foe } = duel("dummy", "qa_paladin", at(6, 6), at(8, 6));
     const events: ZoneEvent[] = [];
-    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "smite", target: foe, focus: true }, events);
+    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "bash", target: foe, focus: true }, events);
     expect(unit(state, "ann").focus).toBe(1);
     const roll = events.find((e) => e.t === "roll" && e.roll.kind === "attack");
     expect(roll && roll.t === "roll" && roll.roll.adv).toBe(1);
@@ -633,11 +636,11 @@ describe("light and the dark", () => {
     state.aiOff = true;
     const ann = hero(state, "ann", "refactor_rogue", at(3, 6));
     const far = enemy(state, "dummy", at(6, 6));
-    expect(checkAbility(state, ann, "aimed_shot", { target: far.id })).toMatch(/too dark/);
+    expect(checkAbility(state, ann, "bow_shot", { target: far.id })).toMatch(/too dark/);
     const near = enemy(state, "dummy", at(4, 6), "g2");
     expect(attackContext(state, ann, near, { melee: true }).notes).toContain("Disadvantage: the target is in the dark");
     ann.torch = 5;
-    expect(checkAbility(state, ann, "aimed_shot", { target: far.id })).toBeNull();
+    expect(checkAbility(state, ann, "bow_shot", { target: far.id })).toBeNull();
     expect(attackContext(state, ann, near, { melee: true }).notes).not.toContain("Disadvantage: the target is in the dark");
     // The enemy sees in the dark.
     ann.torch = undefined;
@@ -836,6 +839,71 @@ describe("picking up a torch", () => {
   });
 });
 
+describe("putting a held torch away", () => {
+  it("puts out a torch swung in the main hand and stows it in the pack, and the weapon is taken up again", () => {
+    let state = board();
+    const ann = hero(state, "ann", "qa_paladin", at(3, 6));
+    ann.items = { torch: 1 };
+    const weapon = [...ann.abilities];
+    state = must(state, { type: "light", by: "ann", unit: "ann", hand: "main" });
+    expect(unit(state, "ann")).toMatchObject({ torchHand: "main", abilities: ["torch_swing"], items: { torch: 0 } });
+    const events: ZoneEvent[] = [];
+    state = must(state, { type: "stow", by: "ann", unit: "ann" }, events);
+    const after = unit(state, "ann");
+    expect(after.abilities).toEqual(weapon);
+    expect(after.items.torch).toBe(1);
+    expect(after.torch).toBeUndefined();
+    expect(after.torchHand).toBeUndefined();
+    expect(after.stowed).toBeUndefined();
+    expect(events).toContainEqual({ t: "torch_stowed", id: "ann" });
+    // With none in hand there is nothing to put away, and it can be lit again.
+    expect(fails(state, { type: "stow", by: "ann", unit: "ann" })).toMatch(/not holding/);
+    must(state, { type: "light", by: "ann", unit: "ann" });
+  });
+
+  it("takes up the weapon put on while the torch was in the main hand", () => {
+    let state = board();
+    const ann = hero(state, "ann", "qa_paladin", at(3, 6));
+    ann.items = { torch: 1 };
+    state = must(state, { type: "light", by: "ann", unit: "ann", hand: "main" });
+    // Gear changed in the bag meanwhile: the map hears of it, and the torch stays in the hand.
+    unit(state, "ann").stowed = ["cleave"];
+    state = must(state, { type: "stow", by: "ann", unit: "ann" });
+    expect(unit(state, "ann").abilities).toEqual(["cleave"]);
+  });
+
+  it("takes the shield up again from the off hand", () => {
+    let state = board();
+    const ann = hero(state, "ann", "qa_paladin", at(3, 6));
+    ann.items = { torch: 1 };
+    ann.outfit = { off_hand: { icon: "round-shield", ref: "buckler", rarity: "common" } };
+    const guarded = defenceOf(ann);
+    const weapon = [...ann.abilities];
+    state = must(state, { type: "light", by: "ann", unit: "ann" });
+    expect(defenceOf(unit(state, "ann"))).toBe(guarded - SHIELD_SET_ASIDE);
+    state = must(state, { type: "stow", by: "ann", unit: "ann" });
+    expect(defenceOf(unit(state, "ann"))).toBe(guarded);
+    expect(unit(state, "ann")).toMatchObject({ abilities: weapon, items: { torch: 1 } });
+  });
+
+  it("costs a Bonus action in a fight, and is not done while down", () => {
+    let { state } = duel("dummy");
+    unit(state, "ann").items.torch = 2;
+    state = must(state, { type: "light", by: "ann", unit: "ann", hand: "main" });
+    expect(fails(state, { type: "stow", by: "ann", unit: "ann" })).toMatch(/Bonus/);
+    expect(unit(state, "ann").torchHand).toBe("main");
+    const fresh = duel("dummy").state;
+    unit(fresh, "ann").torch = 4;
+    const stowed = must(fresh, { type: "stow", by: "ann", unit: "ann" });
+    expect(stowed.encounter!.budgets.ann.bonus).toBe(false);
+    const down = board();
+    const bo = hero(down, "bo", "qa_paladin", at(3, 6));
+    bo.torch = 4;
+    bo.down = true;
+    expect(fails(down, { type: "stow", by: "bo", unit: "bo" })).toMatch(/down/);
+  });
+});
+
 describe("items", () => {
   it("heals the drinker in full for a Bonus action, and uses the potion up", () => {
     let { state } = duel("dummy");
@@ -965,7 +1033,7 @@ describe("the end of a fight", () => {
         const spot = [...reach.values()].filter((r) => r.stop && adjacent(r.pos, target.pos)).sort((a, b) => a.cost - b.cost)[0];
         if (spot) state = must(state, { type: "move", by: "ann", unit: "ann", to: spot.pos }, events);
       }
-      const step = stepZone(state, { type: "use", by: "ann", unit: "ann", ability: "smite", target: foe.id, focus: unit(state, "ann").focus > 0 });
+      const step = stepZone(state, { type: "use", by: "ann", unit: "ann", ability: "bash", target: foe.id, focus: unit(state, "ann").focus > 0 });
       if (step.ok) { state = step.state; events.push(...step.events); }
       if (state.encounter) state = must(state, { type: "end_turn", by: "ann", unit: "ann" }, events);
     }
@@ -1010,7 +1078,7 @@ describe("the end of a fight", () => {
         const spot = [...reach.values()].filter((r) => r.stop && adjacent(r.pos, target.pos)).sort((a, b) => a.cost - b.cost)[0];
         if (spot) state = must(state, { type: "move", by: "ann", unit: "ann", to: spot.pos }, events);
       }
-      const step = stepZone(state, { type: "use", by: "ann", unit: "ann", ability: "smite", target: foe });
+      const step = stepZone(state, { type: "use", by: "ann", unit: "ann", ability: "bash", target: foe });
       if (step.ok) { state = step.state; events.push(...step.events); effects.push(...step.effects); }
       if (state.encounter) state = must(state, { type: "end_turn", by: "ann", unit: "ann" }, events);
     }
@@ -1212,7 +1280,7 @@ describe("fleeing", () => {
     bandit.conditions.push({ kind: "bleeding", rounds: 3 });
     bandit.pos = at(7, 6);
     unit(state, "ann").hp -= 3;
-    unit(state, "ann").cooldowns = { smite: 2 };
+    unit(state, "ann").cooldowns = { bash: 2 };
     const before = structuredClone(unit(state, "ann"));
     const step = stepZone(state, flee());
     if (!step.ok) throw new Error(step.error);
@@ -1269,11 +1337,11 @@ describe("fleeing", () => {
   it("keeps a hero who fled from reaching back into the fight from outside it, but not from looking after themselves", () => {
     const { state: start, wolf } = pair("devops_mage");
     const out = must(start, flee());
-    // Sturdy enough to outlast a firebolt, so the fight is still on to be in.
+    // Sturdy enough to outlast a shock, so the fight is still on to be in.
     Object.assign(unit(out, wolf), { hp: 200, maxHp: 200 });
     // Out of the fight there is no Action to spend and no cooldown running: a blow, a heal or a flask for anyone in
     // it would come free and off the turn order, every time they fled. They go back to it instead.
-    expect(fails(out, { type: "use", by: "ann", unit: "ann", ability: "firebolt", target: wolf })).toMatch(/got away from that fight/);
+    expect(fails(out, { type: "use", by: "ann", unit: "ann", ability: "shock", target: wolf })).toMatch(/got away from that fight/);
     expect(fails(out, { type: "use", by: "ann", unit: "ann", ability: "mend", target: "bo" })).toMatch(/got away from that fight/);
     expect(fails(out, { type: "throw", by: "ann", unit: "ann", item: "healing", at: unit(out, "bo").pos })).toMatch(/got away from that fight/);
     const self = must(out, { type: "use", by: "ann", unit: "ann", ability: "mend", target: "ann" });
@@ -1288,7 +1356,7 @@ describe("fleeing", () => {
     far = provoke(far);
     expect(far.encounter!.order).not.toContain(archer.id);
     expect(Math.min(hexDistance(archer.pos, foe.pos), hexDistance(archer.pos, at(3, 2)))).toBeGreaterThan(JOIN_RANGE);
-    far = must(far, { type: "use", by: "cy", unit: "cy", ability: "aimed_shot", target: foe.id });
+    far = must(far, { type: "use", by: "cy", unit: "cy", ability: "bow_shot", target: foe.id });
     expect(far.encounter!.order).toContain("cy");
   });
 
@@ -1440,6 +1508,15 @@ describe("fleeing", () => {
     expect(unit(state, "s1").away).toBeUndefined();
     expect(back).toContainEqual({ t: "fight_join", id: "bo" });
     expect(state.encounter!.order).toContain("s1");
+  });
+
+  it("brings a hero's class abilities with them, after the weapon's, and refreshes them on a return", () => {
+    const sheet = standInHero("qa_paladin", "cy", 3)!;
+    let state = must(board(), { type: "join", hero: { ...sheet, classAbilities: ["shock", "bash"] } });
+    const weapon = abilitiesFor(sheet.weapon);
+    expect(unit(state, "cy").abilities).toEqual([...new Set([...weapon, "shock", "bash"])]);
+    state = must(state, { type: "join", hero: { ...sheet, classAbilities: [] } });
+    expect(unit(state, "cy").abilities).toEqual(weapon);
   });
 
   it("keeps a hero whose player leaves in the middle of a fight in it", () => {
@@ -1929,23 +2006,23 @@ describe("crates", () => {
   it("always takes a hero's blow: no roll, no fight, no Focus spent, and the damage comes off", () => {
     const state = beside("qa_paladin", 60);
     const events: ZoneEvent[] = [];
-    const next = must(state, { type: "use", by: "ann", unit: "ann", ability: "smite", target: "crate1", focus: true }, events);
+    const next = must(state, { type: "use", by: "ann", unit: "ann", ability: "bash", target: "crate1", focus: true }, events);
     const [hit] = hits(events, "crate1");
-    expect(hit).toMatchObject({ actor: "ann", what: "smite" });
+    expect(hit).toMatchObject({ actor: "ann", what: "bash" });
     expect(hit.amount).toBeGreaterThan(0);
     expect(poi(next, "crate1").hp).toBe(60 - hit.amount);
     expect(events.some((e) => e.t === "roll")).toBe(false);
-    expect(events).toContainEqual({ t: "used", id: "ann", what: "smite", name: ABILITIES.smite.name, target: "crate1", at: undefined });
+    expect(events).toContainEqual({ t: "used", id: "ann", what: "bash", name: ABILITIES.bash.name, target: "crate1", at: undefined });
     expect(next.encounter).toBeNull();
     expect(unit(next, "ann").focus).toBe(unit(state, "ann").focus);
   });
 
   it("breaks at 0 and pays whoever broke it: wood, maybe gold and a find, and no XP", () => {
     let state = beside("qa_paladin", 1);
-    const step = stepZone(state, { type: "use", by: "ann", unit: "ann", ability: "smite", target: "crate1" });
+    const step = stepZone(state, { type: "use", by: "ann", unit: "ann", ability: "bash", target: "crate1" });
     if (!step.ok) throw new Error(step.error);
     state = step.state;
-    expect(step.events).toContainEqual({ t: "crate_hit", poi: "crate1", actor: "ann", amount: 1, what: "smite" });
+    expect(step.events).toContainEqual({ t: "crate_hit", poi: "crate1", actor: "ann", amount: 1, what: "bash" });
     expect(step.events).toContainEqual({ t: "crate_broken", poi: "crate1", id: "ann" });
     expect(poi(state, "crate1")).toMatchObject({ cleared: true, hp: 0 });
     expect(step.effects).toHaveLength(1);
@@ -1954,14 +2031,14 @@ describe("crates", () => {
     expect(grant.resources.wood).toBeGreaterThanOrEqual(CRATE_PAY.wood[0]);
     expect(grant.item).toBeUndefined();
     expect(step.events.some((e) => e.t === "spoils" && e.id === "ann" && e.xp === 0)).toBe(true);
-    expect(fails(state, { type: "use", by: "ann", unit: "ann", ability: "smite", target: "crate1" })).toMatch(/broken already/);
+    expect(fails(state, { type: "use", by: "ann", unit: "ann", ability: "bash", target: "crate1" })).toMatch(/broken already/);
 
     // Over many crates: always wood, often gold, now and then a potion or a torch, in the pack at once.
     const found = { gold: 0, potion: 0, torch: 0 };
     for (let seed = 1; seed <= 200; seed++) {
       const fresh = beside("qa_paladin", 1);
       fresh.rng = seed;
-      const one = stepZone(fresh, { type: "use", by: "ann", unit: "ann", ability: "smite", target: "crate1" });
+      const one = stepZone(fresh, { type: "use", by: "ann", unit: "ann", ability: "bash", target: "crate1" });
       if (!one.ok) throw new Error(one.error);
       const g = one.effects[0];
       const wood = g.resources.wood ?? 0;
@@ -1987,33 +2064,38 @@ describe("crates", () => {
     hero(state, "ann", "qa_paladin", at(4, 6));
     const rogue = hero(state, "bo", "refactor_rogue", at(10, 6));
     crate(state, "crate1", at(6, 6));
-    expect(fails(state, { type: "use", by: "ann", unit: "ann", ability: "smite", target: "crate1" })).toMatch(/next to it/);
-    expect(fails(state, { type: "use", by: "bo", unit: "bo", ability: "aimed_shot", target: "crate1" })).toMatch(/no clear line/);
+    expect(fails(state, { type: "use", by: "ann", unit: "ann", ability: "bash", target: "crate1" })).toMatch(/next to it/);
+    expect(fails(state, { type: "use", by: "bo", unit: "bo", ability: "bow_shot", target: "crate1" })).toMatch(/no clear line/);
     rogue.pos = at(6, 9);
     const events: ZoneEvent[] = [];
-    must(state, { type: "use", by: "bo", unit: "bo", ability: "aimed_shot", target: "crate1" }, events);
+    must(state, { type: "use", by: "bo", unit: "bo", ability: "bow_shot", target: "crate1" }, events);
     expect(hits(events, "crate1")).toHaveLength(1);
-    expect(fails(state, { type: "use", by: "ann", unit: "ann", ability: "smite", target: "nothing" })).toMatch(/Pick an enemy/);
+    expect(fails(state, { type: "use", by: "ann", unit: "ann", ability: "bash", target: "nothing" })).toMatch(/Pick an enemy/);
   });
 
-  it("is caught by a sweep all round, a blast and a thrown bomb", () => {
+  it("is caught by a sweep all round, a swing, a blast and a thrown bomb", () => {
     // A sweep with nothing but a crate beside you still swings.
     let state = beside("qa_paladin", 60);
-    unit(state, "ann").abilities = ["cleave"];
+    unit(state, "ann").abilities = ["stoke_the_fire", "cleave"];
     let events: ZoneEvent[] = [];
-    must(state, { type: "use", by: "ann", unit: "ann", ability: "cleave" }, events);
+    must(state, { type: "use", by: "ann", unit: "ann", ability: "stoke_the_fire" }, events);
     expect(hits(events, "crate1")).toHaveLength(1);
+    // So does a swing at it, but not one the other way.
+    events = [];
+    must(state, { type: "use", by: "ann", unit: "ann", ability: "cleave", at: at(6, 6) }, events);
+    expect(hits(events, "crate1")).toHaveLength(1);
+    expect(fails(state, { type: "use", by: "ann", unit: "ann", ability: "cleave", at: at(4, 6) })).toMatch(/No enemy is in that swing/);
     poi(state, "crate1").pos = at(9, 9);
-    expect(fails(state, { type: "use", by: "ann", unit: "ann", ability: "cleave" })).toMatch(/No enemy is next to you/);
+    expect(fails(state, { type: "use", by: "ann", unit: "ann", ability: "stoke_the_fire" })).toMatch(/No enemy is next to you/);
 
     state = board();
     const mage = hero(state, "ann", "devops_mage", at(3, 6));
-    mage.abilities = ["thunderhead"];
+    mage.abilities = ["chorus"];
     crate(state, "crate1", at(6, 6), 60);
     crate(state, "crate2", at(7, 6), 60);
     crate(state, "crate3", at(9, 6), 60);
     events = [];
-    must(state, { type: "use", by: "ann", unit: "ann", ability: "thunderhead", at: at(6, 6) }, events);
+    must(state, { type: "use", by: "ann", unit: "ann", ability: "chorus", at: at(6, 6) }, events);
     expect(hits(events, "crate1")).toHaveLength(1);
     expect(hits(events, "crate2")).toHaveLength(1);
     expect(hits(events, "crate3")).toHaveLength(0);
@@ -2067,7 +2149,7 @@ describe("crates", () => {
     const helper = hero(state, "s1", "qa_paladin", at(5, 6));
     helper.controller = "ann";
     crate(state, "crate1", at(6, 6), 1);
-    const step = stepZone(state, { type: "use", by: "ann", unit: "s1", ability: "smite", target: "crate1" });
+    const step = stepZone(state, { type: "use", by: "ann", unit: "s1", ability: "bash", target: "crate1" });
     if (!step.ok) throw new Error(step.error);
     expect(step.events).toContainEqual({ t: "crate_broken", poi: "crate1", id: "s1" });
     expect(step.effects.map((e) => e.heroId)).toEqual(["ann"]);
@@ -2086,14 +2168,14 @@ describe("crates", () => {
     const ann = hero(state, "ann", "qa_paladin", at(5, 6));
     const bo = hero(state, "bo", "devops_mage", at(10, 6));
     crate(state, "crate1", at(6, 6));
-    expect(crateBlow(state, ann, "crate1")).toBe("smite");
-    expect(crateBlow(state, bo, "crate1")).toBe("firebolt");
+    expect(crateBlow(state, ann, "crate1")).toBe("bash");
+    expect(crateBlow(state, bo, "crate1")).toBe("shock");
     ann.pos = at(3, 6);
     expect(crateBlow(state, ann, "crate1")).toBeNull();
     // A blow that is not ready yet is passed over.
-    bo.cooldowns.firebolt = 1;
-    bo.abilities = ["firebolt", "hex_bolt"];
-    expect(crateBlow(state, bo, "crate1")).toBe("hex_bolt");
+    bo.cooldowns.chain_lightning = 1;
+    bo.abilities = ["chain_lightning", "shock"];
+    expect(crateBlow(state, bo, "crate1")).toBe("shock");
   });
 
   it("can be struck, shot and bombed out of a fight: no fight starts, nothing is spent, and it pays at once", () => {
@@ -2102,7 +2184,7 @@ describe("crates", () => {
     hero(state, "ann", "qa_paladin", at(5, 6));
     hero(state, "bo", "refactor_rogue", at(4, 9));
     const mage = hero(state, "cy", "devops_mage", at(3, 3));
-    mage.abilities = ["thunderhead"];
+    mage.abilities = ["chorus"];
     mage.items = { ...mage.items, fire: 2 };
     const foe = enemy(state, "dummy", at(10, 6));
     crate(state, "crate1", at(6, 6), 1);
@@ -2115,7 +2197,7 @@ describe("crates", () => {
     };
 
     // A blow by hand: it breaks, and what was in it is paid there and then.
-    let step = stepZone(state, { type: "use", by: "ann", unit: "ann", ability: "smite", target: "crate1" });
+    let step = stepZone(state, { type: "use", by: "ann", unit: "ann", ability: "bash", target: "crate1" });
     if (!step.ok) throw new Error(step.error);
     state = step.state;
     quiet(state);
@@ -2124,7 +2206,7 @@ describe("crates", () => {
     expect(step.events.some((e) => e.t === "spoils" && e.id === "ann")).toBe(true);
 
     // A shot from across the chamber.
-    step = stepZone(state, { type: "use", by: "bo", unit: "bo", ability: "aimed_shot", target: "crate2" });
+    step = stepZone(state, { type: "use", by: "bo", unit: "bo", ability: "bow_shot", target: "crate2" });
     if (!step.ok) throw new Error(step.error);
     state = step.state;
     quiet(state);
@@ -2133,16 +2215,16 @@ describe("crates", () => {
     // A bomb thrown, and a blast with a wait on it used twice running: out of a fight neither Action nor wait counts.
     const events: ZoneEvent[] = [];
     state = must(state, { type: "throw", by: "cy", unit: "cy", item: "fire", at: at(7, 3) }, events);
-    state = must(state, { type: "use", by: "cy", unit: "cy", ability: "thunderhead", at: at(7, 3) }, events);
-    state = must(state, { type: "use", by: "cy", unit: "cy", ability: "thunderhead", at: at(7, 3) }, events);
+    state = must(state, { type: "use", by: "cy", unit: "cy", ability: "chorus", at: at(7, 3) }, events);
+    state = must(state, { type: "use", by: "cy", unit: "cy", ability: "chorus", at: at(7, 3) }, events);
     quiet(state);
-    expect(hits(events, "crate3").map((h) => h.what)).toEqual(["throw:fire", "fire", "thunderhead", "thunderhead"]);
+    expect(hits(events, "crate3").map((h) => h.what)).toEqual(["throw:fire", "fire", "chorus", "chorus"]);
     expect(unit(state, "cy").cooldowns).toEqual({});
 
     // A blast that catches the band as well as a crate: that one starts a fight, with the band that was hit.
     const both: ZoneEvent[] = [];
     unit(state, "cy").pos = at(5, 4);
-    state = must(state, { type: "use", by: "cy", unit: "cy", ability: "thunderhead", at: at(9, 6) }, both);
+    state = must(state, { type: "use", by: "cy", unit: "cy", ability: "chorus", at: at(9, 6) }, both);
     expect(hits(both, "crate4")).toHaveLength(1);
     expect(state.groups.g1.alerted).toBe(true);
     expect(state.encounter?.order).toContain(foe.id);
@@ -2151,9 +2233,9 @@ describe("crates", () => {
   it("costs the Action in a fight", () => {
     let { state } = duel("dummy");
     crate(state, "crate1", at(5, 7), 60);
-    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "smite", target: "crate1" });
+    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "bash", target: "crate1" });
     expect(state.encounter!.budgets.ann.action).toBe(false);
-    expect(fails(state, { type: "use", by: "ann", unit: "ann", ability: "smite", target: "crate1" })).toMatch(/Action/);
+    expect(fails(state, { type: "use", by: "ann", unit: "ann", ability: "bash", target: "crate1" })).toMatch(/Action/);
   });
 
   it("keeps a hero arriving off one", () => {
@@ -2227,5 +2309,2578 @@ describe("a troll", () => {
     unit(state, foe).conditions.push({ kind: "burning", rounds: 3 });
     const lit = must(state, { type: "end_turn", by: "ann", unit: "ann" });
     expect(unit(lit, foe).hp).toBeLessThan(5);
+  });
+});
+
+describe("the Paladin's class abilities", () => {
+  /**
+   * A Paladin (ann) and two crewmates in a fight with a dummy: bo two hexes from ann, cy three. Ann's turn.
+   * `spare` is another hex beside ann, left empty.
+   */
+  function party() {
+    let state = board();
+    state.aiOff = true;
+    const annAt = at(5, 6);
+    const dummyAt = at(6, 6);
+    const [spare] = hexNeighbors(annAt, state.map.grid).filter((p) => !sameHexes(p, dummyAt));
+    const ann = hero(state, "ann", "qa_paladin", annAt);
+    ann.abilities = ["beacon_aura", "healing_aura", "branding_strike", "stoke_the_fire", "bolster", "show_the_way"];
+    hero(state, "bo", "refactor_rogue", at(3, 6));
+    hero(state, "cy", "devops_mage", at(2, 6));
+    const dummy = enemy(state, "dummy", dummyAt);
+    state = provoke(state);
+    while (!state.encounter!.acting.includes("ann")) state = must(state, { type: "timeout" });
+    // bo at the edge of an aura's reach, cy just past it.
+    expect(hexDistance(unit(state, "ann").pos, unit(state, "bo").pos)).toBe(AURAS.range);
+    expect(hexDistance(unit(state, "ann").pos, unit(state, "cy").pos)).toBe(AURAS.range + 1);
+    expect(hexDistance(unit(state, "ann").pos, dummy.pos)).toBe(1);
+    return { state, dummy: dummy.id, spare };
+  }
+  /** Everyone sharing ann's turn ends it (conditions run down as a shared turn ends, not as each one in it does). */
+  function endShared(state: ZoneState, sink: ZoneEvent[] = []): ZoneState {
+    for (const id of [...state.encounter!.acting]) if (!state.encounter!.done.includes(id) && !unit(state, id).down) state = must(state, { type: "end_turn", by: id, unit: id }, sink);
+    return state;
+  }
+  /** On to ann's next turn. */
+  function nextTurn(state: ZoneState, sink: ZoneEvent[] = []): ZoneState {
+    state = endShared(state, sink);
+    while (!state.encounter!.acting.includes("ann") || state.encounter!.done.includes("ann")) state = must(state, { type: "timeout" }, sink);
+    return state;
+  }
+  const sameHexes = (a: HexPos, b: HexPos) => a.q === b.q && a.r === b.r;
+  const lasts = (state: ZoneState, kind: string) => unit(state, "ann").conditions.find((c) => c.kind === kind)?.rounds;
+
+  it("are all in the Paladin's pool", () => {
+    expect(poolFor("qa_paladin").map((e) => e.id)).toEqual(["beacon_aura", "healing_aura", "branding_strike", "stoke_the_fire", "bolster", "show_the_way"]);
+  });
+
+  it("Beacon Aura: a Bonus action that gives the Paladin and allies within 2 hexes advantage, not anyone further off", () => {
+    let { state, dummy } = party();
+    const foe = () => unit(state, dummy);
+    expect(attackContext(state, unit(state, "bo"), foe(), { melee: true }).adv).toBe(0);
+    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "beacon_aura" });
+    expect(state.encounter!.budgets.ann).toMatchObject({ bonus: false, action: true });
+    const bo = attackContext(state, unit(state, "bo"), foe(), { melee: true });
+    expect(bo.adv).toBe(1);
+    expect(bo.notes.join()).toMatch(/Beacon/);
+    const ann = attackContext(state, unit(state, "ann"), foe(), { melee: true });
+    expect(ann.adv).toBe(1);
+    expect(ann.notes.join()).toMatch(/your Beacon/);
+    expect(attackContext(state, unit(state, "cy"), foe(), { melee: false }).adv).toBe(0);
+    expect(bo.notes.join()).toMatch(/an ally's Beacon/);
+    // Enemies beside the Paladin get nothing from it.
+    expect(attackContext(state, foe(), unit(state, "ann"), { melee: true }).adv).toBe(0);
+  });
+
+  it("Beacon Aura: lights the dark around the Paladin while it lasts, and lasts 4 of the Paladin's turns after this one", () => {
+    let { state } = party();
+    state.options = { ...state.options, biome: "caves" };
+    const near = hexNeighbors(unit(state, "ann").pos, state.map.grid)[0];
+    expect(litHexes(state)!.has(posKey(near))).toBe(false);
+    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "beacon_aura" });
+    expect(litHexes(state)!.has(posKey(near))).toBe(true);
+    for (let turn = 1; turn <= 4; turn++) {
+      state = nextTurn(state);
+      expect(lasts(state, "beacon"), `turn ${turn}`).toBeGreaterThan(0);
+    }
+    state = endShared(state);
+    expect(lasts(state, "beacon")).toBeUndefined();
+    expect(litHexes(state)!.has(posKey(near))).toBe(false);
+  });
+
+  it("Healing Aura: heals the Paladin and allies within 2 hexes at the start of each of their next 4 turns", () => {
+    let { state } = party();
+    for (const id of ["ann", "bo", "cy"]) unit(state, id).hp = 1;
+    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "healing_aura" });
+    expect(state.encounter!.budgets.ann.bonus).toBe(false);
+    // Nothing on the turn it is put up.
+    expect(unit(state, "ann").hp).toBe(1);
+    const events: ZoneEvent[] = [];
+    for (let turn = 0; turn < 6; turn++) state = nextTurn(state, events);
+    const healed = (id: string) => events.filter((e) => e.t === "heal" && e.what === "healing_aura" && e.target === id);
+    expect(healed("ann")).toHaveLength(4);
+    expect(healed("bo")).toHaveLength(4);
+    expect(healed("cy")).toHaveLength(0);
+    for (const e of healed("ann")) if (e.t === "heal") expect(e.amount).toBeGreaterThanOrEqual(AURAS.heal.plus + 1);
+    expect(unit(state, "cy").hp).toBe(1);
+  });
+
+  it("Healing Aura: does not get a fallen ally up", () => {
+    let { state } = party();
+    Object.assign(unit(state, "bo"), { hp: 0, down: true });
+    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "healing_aura" });
+    state = nextTurn(state);
+    expect(unit(state, "bo").down).toBe(true);
+  });
+
+  it("Branding Strike: an Action blow that sets what it hits Burning, and needs a rest after", () => {
+    let hits = 0;
+    for (let seed = 1; seed <= 12; seed++) {
+      let { state, dummy } = party();
+      state.rng = seed;
+      const events: ZoneEvent[] = [];
+      state = must(state, { type: "use", by: "ann", unit: "ann", ability: "branding_strike", target: dummy }, events);
+      const hit = events.some((e) => e.t === "hit" && e.target === dummy);
+      if (hit) hits++;
+      expect(unit(state, dummy).conditions.some((c) => c.kind === "burning")).toBe(hit);
+      expect(state.encounter!.budgets.ann.action).toBe(false);
+      expect(fails(nextTurn(state), { type: "use", by: "ann", unit: "ann", ability: "branding_strike", target: dummy })).toMatch(/not ready/);
+    }
+    expect(hits).toBeGreaterThan(0);
+  });
+
+  it("Branding Strike: hits harder than a Bash", () => {
+    expect(ABILITIES.branding_strike.damage!).toBeGreaterThan(ABILITIES.bash.damage!);
+  });
+
+  it("Stoke the Fire: strikes every enemy beside the Paladin and sets the ones it hits Burning, and nothing further off", () => {
+    let hits = 0;
+    for (let seed = 1; seed <= 12; seed++) {
+      let { state, dummy, spare } = party();
+      const second = enemy(state, "dummy", spare).id;
+      const far = enemy(state, "dummy", at(8, 6)).id;
+      expect(hexDistance(unit(state, "ann").pos, unit(state, second).pos)).toBe(1);
+      state.rng = seed;
+      const events: ZoneEvent[] = [];
+      state = must(state, { type: "use", by: "ann", unit: "ann", ability: "stoke_the_fire" }, events);
+      for (const id of [dummy, second]) {
+        const hit = events.some((e) => e.t === "hit" && e.target === id);
+        if (hit) hits++;
+        expect(unit(state, id).conditions.some((c) => c.kind === "burning"), `seed ${seed} ${id}`).toBe(hit);
+      }
+      expect(events.some((e) => (e.t === "roll" && e.roll.target === far) || (e.t === "hit" && e.target === far))).toBe(false);
+      expect(unit(state, far).conditions).toEqual([]);
+    }
+    expect(hits).toBeGreaterThan(0);
+  });
+
+  const shieldOf = (state: ZoneState, id: string) => unit(state, id).conditions.find((c) => c.kind === "bolstered")?.amount;
+
+  it("Bolster: an Action that shields the Paladin and allies within 2 hexes, not anyone further off", () => {
+    let { state } = party();
+    const events: ZoneEvent[] = [];
+    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "bolster" }, events);
+    expect(state.encounter!.budgets.ann).toMatchObject({ action: false, bonus: true });
+    const size = BOLSTER.shield + unit(state, "ann").level;
+    // The event says how big the shield is, for the bars to show it as the fight is played out.
+    expect(events.filter((e) => e.t === "condition" && e.kind === "bolstered").map((e) => e.t === "condition" && [e.target, e.amount])).toEqual([["ann", size], ["bo", size]]);
+    expect(shieldOf(state, "ann")).toBe(size);
+    expect(shieldOf(state, "bo")).toBe(size);
+    expect(shieldOf(state, "cy")).toBeUndefined();
+    expect(fails(nextTurn(state), { type: "use", by: "ann", unit: "ann", ability: "bolster" })).toMatch(/not ready/);
+  });
+
+  it("Bolster: the shield takes a blow's damage before HP, and is gone once spent", () => {
+    let { state } = party();
+    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "bolster" });
+    const events: ZoneEvent[] = [];
+    const ctx: Ctx = { state: structuredClone(state), rng: makeRng(3), events, effects: [] };
+    const bo = unit(ctx.state, "bo");
+    const hp = bo.hp;
+    const size = shieldOf(ctx.state, "bo")!;
+    expect(damage(ctx, bo, size - 3, { actor: null, what: "test" })).toBe(0);
+    expect(bo.hp).toBe(hp);
+    expect(shieldOf(ctx.state, "bo")).toBe(3);
+    expect(damage(ctx, bo, 5, { actor: null, what: "test" })).toBe(2);
+    expect(bo.hp).toBe(hp - 2);
+    expect(shieldOf(ctx.state, "bo")).toBeUndefined();
+    expect(events.filter((e) => e.t === "hit").map((e) => e.t === "hit" && [e.amount, e.blocked])).toEqual([[0, size - 3], [2, 3]]);
+  });
+
+
+  it("Bolster: wears off after 3 of the bearer's turns", () => {
+    let { state } = party();
+    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "bolster" });
+    for (let turn = 1; turn <= BOLSTER.rounds; turn++) {
+      state = nextTurn(state);
+      expect(lasts(state, "bolstered"), `turn ${turn}`).toBeGreaterThan(0);
+    }
+    state = endShared(state);
+    expect(lasts(state, "bolstered")).toBeUndefined();
+  });
+
+  it("Show the Way: lifts every harmful condition off an ally, and leaves the good ones", () => {
+    let { state } = party();
+    const bo = unit(state, "bo");
+    bo.conditions = (["burning", "poisoned", "slowed", "exposed", "hasted"] as const).map((kind) => ({ kind, rounds: 3 }));
+    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "show_the_way", target: "bo" });
+    expect(unit(state, "bo").conditions.map((c) => c.kind)).toEqual(["hasted"]);
+    expect(state.encounter!.budgets.ann.action).toBe(false);
+  });
+
+  it("Show the Way: heals the ally a little, less than a Mend", () => {
+    let { state } = party();
+    unit(state, "bo").hp = 1;
+    const events: ZoneEvent[] = [];
+    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "show_the_way", target: "bo" }, events);
+    expect(unit(state, "bo").hp).toBeGreaterThan(1);
+    expect(events.some((e) => e.t === "heal" && e.target === "bo" && e.what === "show_the_way")).toBe(true);
+    expect(ABILITIES.show_the_way.heal!).toBeLessThan(ABILITIES.mend.heal!);
+  });
+
+  it("Show the Way: clears the fire, poison, oil, ice and slime off the way you would walk, but not water, nor ground off it", () => {
+    let { state } = party();
+    const annPos = unit(state, "ann").pos;
+    const boPos = unit(state, "bo").pos;
+    // The straight way is barred: the walk goes round.
+    const between = at(4, 6);
+    expect(hexDistance(annPos, between) + hexDistance(between, boPos)).toBe(hexDistance(annPos, boPos));
+    enemy(state, "dummy", between);
+    const way = wayBetween(state, unit(state, "ann"), boPos);
+    expect(way).toHaveLength(4);
+    expect(way.some((p) => sameHexes(p, between))).toBe(false);
+    expect(way[0]).toEqual(annPos);
+    expect(way[3]).toEqual(boPos);
+    const lay = (pos: HexPos, kind: SurfaceKind) => (state.surfaces[posKey(pos)] = { kind, rounds: 5, by: null });
+    lay(way[0], "oil");
+    lay(way[1], "fire");
+    lay(way[2], "slime");
+    lay(way[3], "ice");
+    lay(between, "poison");
+    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "show_the_way", target: "bo" });
+    for (const p of way) expect(state.surfaces[posKey(p)], posKey(p)).toBeUndefined();
+    expect(state.surfaces[posKey(between)].kind).toBe("poison");
+    // Water is no harm, and stays.
+    ({ state } = party());
+    lay(at(4, 6), "water");
+    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "show_the_way", target: "bo" });
+    expect(state.surfaces[posKey(at(4, 6))].kind).toBe("water");
+  });
+
+  it("Show the Way: with no way on foot to the ally, clears the straight line instead", () => {
+    let { state } = party();
+    const annPos = unit(state, "ann").pos;
+    const boPos = unit(state, "bo").pos;
+    // Enemies all round bo (cy, who could be walked past, out of the way): there is no walking to them.
+    unit(state, "cy").pos = at(1, 1);
+    for (const p of hexNeighbors(boPos, state.map.grid)) if (!unitAt(state, p)) enemy(state, "dummy", p);
+    const way = wayBetween(state, unit(state, "ann"), boPos);
+    expect(way).toEqual([annPos, at(4, 6), boPos]);
+    for (const p of way) state.surfaces[posKey(p)] = { kind: "fire", rounds: 5, by: null };
+    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "show_the_way", target: "bo" });
+    for (const p of way) expect(state.surfaces[posKey(p)], posKey(p)).toBeUndefined();
+  });
+
+  it("Show the Way: takes the way over oil and slime, not round them", () => {
+    const { state } = party();
+    for (const p of [at(4, 6), ...hexNeighbors(at(4, 6), state.map.grid)]) state.surfaces[posKey(p)] = { kind: "slime", rounds: 5, by: null };
+    expect(wayBetween(state, unit(state, "ann"), unit(state, "bo").pos)).toHaveLength(3);
+  });
+});
+
+describe("the Mage's class abilities", () => {
+  /**
+   * A Mage (ann) and a crewmate (bo) two hexes off along the row, in a fight with a dummy far down it. Ann's turn.
+   * Everyone stands on row 6, so hexes along it are in a straight line.
+   */
+  function party(abilities = ["soothing_rain", "chain_lightning", "roar_of_thunder", "trade_winds", "tidal_wave"]) {
+    let state = board();
+    state.aiOff = true;
+    const ann = hero(state, "ann", "devops_mage", at(5, 6));
+    ann.abilities = abilities;
+    hero(state, "bo", "qa_paladin", at(3, 6));
+    const dummy = enemy(state, "dummy", at(13, 6));
+    state = provoke(state);
+    while (!state.encounter!.acting.includes("ann")) state = must(state, { type: "timeout" });
+    return { state, dummy: dummy.id };
+  }
+  function endShared(state: ZoneState, sink: ZoneEvent[] = []): ZoneState {
+    for (const id of [...state.encounter!.acting]) if (!state.encounter!.done.includes(id) && !unit(state, id).down) state = must(state, { type: "end_turn", by: id, unit: id }, sink);
+    return state;
+  }
+  function nextTurn(state: ZoneState, sink: ZoneEvent[] = []): ZoneState {
+    state = endShared(state, sink);
+    while (!state.encounter!.acting.includes("ann") || state.encounter!.done.includes("ann")) state = must(state, { type: "timeout" }, sink);
+    return state;
+  }
+  /** Put a dummy down somewhere, in the fight. */
+  function addDummy(state: ZoneState, pos: HexPos): string {
+    const e = enemy(state, "dummy", pos);
+    state.encounter!.order.push(e.id);
+    state.encounter!.init[e.id] = 0;
+    return e.id;
+  }
+  const healsOf = (events: ZoneEvent[], id: string) => events.filter((e) => e.t === "heal" && e.what === "soothing_rain" && e.target === id).length;
+  const has = (state: ZoneState, id: string, kind: string) => unit(state, id).conditions.some((c) => c.kind === kind);
+
+  it("are all in the Mage's pool", () => {
+    expect(poolFor("devops_mage").map((e) => e.id)).toEqual(["soothing_rain", "chain_lightning", "roar_of_thunder", "trade_winds", "tidal_wave"]);
+  });
+
+  it("Soothing Rain: a 3-hex cloud that lays water, and heals the caster's side under it as it comes, not the enemy", () => {
+    let { state } = party();
+    const foe = addDummy(state, at(3, 7));
+    for (const id of ["ann", "bo", foe]) unit(state, id).hp = 1;
+    const events: ZoneEvent[] = [];
+    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "soothing_rain", at: at(3, 6) }, events);
+    const area = abilityArea(state, unit(state, "ann"), "soothing_rain", at(3, 6));
+    expect(area).toHaveLength(3);
+    for (const p of area) for (const q of area) expect(hexDistance(p, q)).toBeLessThanOrEqual(1);
+    for (const p of area) expect(state.surfaces[posKey(p)]?.kind).toBe("water");
+    expect(state.weather).toHaveLength(1);
+    expect(healsOf(events, "bo")).toBe(1);
+    expect(healsOf(events, "ann")).toBe(0);
+    expect(healsOf(events, foe)).toBe(0);
+    expect(state.encounter!.budgets.ann.action).toBe(false);
+  });
+
+  it("Soothing Rain: heals as a turn starts in it, and once a turn for walking in, however often", () => {
+    let { state } = party();
+    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "soothing_rain", at: at(3, 6) });
+    const area = state.weather![0].hexes;
+    const out = at(3, 4);
+    expect(area.some((p) => hexDistance(p, out) === 0)).toBe(false);
+    unit(state, "bo").hp = 1;
+    // Ann walks in and out and in again on her turn: one heal.
+    unit(state, "ann").hp = 1;
+    const walked: ZoneEvent[] = [];
+    const inside = area.find((p) => !state.units.some((u) => u.pos.q === p.q && u.pos.r === p.r))!;
+    state.encounter!.budgets.ann.move = 99;
+    state = must(state, { type: "move", by: "ann", unit: "ann", to: inside }, walked);
+    state = must(state, { type: "move", by: "ann", unit: "ann", to: at(6, 6) }, walked);
+    state = must(state, { type: "move", by: "ann", unit: "ann", to: inside }, walked);
+    expect(healsOf(walked, "ann")).toBe(1);
+    // On the next turn, bo (still standing in it) is healed as it starts.
+    const turn: ZoneEvent[] = [];
+    state = nextTurn(state, turn);
+    expect(healsOf(turn, "bo")).toBe(1);
+  });
+
+  it("Soothing Rain: puts its water back at the start of every turn, and clears after 3 rounds", () => {
+    let { state } = party();
+    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "soothing_rain", at: at(3, 6) });
+    const area = state.weather![0].hexes;
+    for (const p of area) delete state.surfaces[posKey(p)];
+    state = nextTurn(state);
+    for (const p of area) expect(state.surfaces[posKey(p)]?.kind).toBe("water");
+    for (let round = 1; round <= 3; round++) {
+      expect(state.weather, `round ${round}`).toHaveLength(1);
+      state = nextTurn(state);
+    }
+    expect(state.weather).toHaveLength(0);
+  });
+
+  it("Chain Lightning: leaps to the nearest enemy within 2 hexes it has not struck, on and on, each struck once", () => {
+    for (let seed = 1; seed <= 6; seed++) {
+      let { state, dummy } = party();
+      state.rng = seed;
+      const chain = [at(7, 6), at(9, 6), at(10, 6), at(8, 7)].map((p) => addDummy(state, p));
+      // 3 hexes from the nearest of the chain: never reached. (The first dummy is further still.)
+      const apart = addDummy(state, at(13, 8));
+      const events: ZoneEvent[] = [];
+      state = must(state, { type: "use", by: "ann", unit: "ann", ability: "chain_lightning", target: chain[0] }, events);
+      const struck = events.filter((e) => e.t === "roll" && e.roll.kind === "attack").map((e) => e.t === "roll" && e.roll.target);
+      expect(new Set(struck).size).toBe(struck.length);
+      expect(new Set(struck)).toEqual(new Set(chain));
+      expect(struck).not.toContain(apart);
+      expect(struck).not.toContain(dummy);
+    }
+  });
+
+  it("Roar of Thunder: never misses, Stuns, and throws the enemy a hex back", () => {
+    for (let seed = 1; seed <= 6; seed++) {
+      let { state } = party();
+      state.rng = seed;
+      const foe = addDummy(state, at(7, 6));
+      const events: ZoneEvent[] = [];
+      state = must(state, { type: "use", by: "ann", unit: "ann", ability: "roar_of_thunder", target: foe }, events);
+      expect(events.some((e) => e.t === "roll" && e.roll.kind === "attack")).toBe(false);
+      expect(has(state, foe, "stunned")).toBe(true);
+      expect(unit(state, foe).pos).toEqual(at(8, 6));
+      expect(fails(nextTurn(state), { type: "use", by: "ann", unit: "ann", ability: "roar_of_thunder", target: foe })).toMatch(/not ready/);
+    }
+  });
+
+  it("Trade Winds: 7 hexes that Haste the caster's side and Slow the enemy in them", () => {
+    let { state } = party();
+    const foe = addDummy(state, at(4, 6));
+    const outside = addDummy(state, at(9, 6));
+    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "trade_winds", at: at(3, 6) });
+    expect(state.weather![0].hexes).toHaveLength(7);
+    expect(has(state, "bo", "hasted")).toBe(true);
+    expect(has(state, foe, "slowed")).toBe(true);
+    expect(has(state, outside, "slowed")).toBe(false);
+    expect(has(state, "ann", "hasted")).toBe(false);
+  });
+
+  it("Trade Winds: a turn started in them goes twice as far, or half, and walking in on your turn counts too", () => {
+    let { state } = party();
+    const before = state.encounter!.budgets.bo.move;
+    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "trade_winds", at: at(3, 6) });
+    // Bo shares ann's turn: Hasted now, the move doubles at once.
+    expect(state.encounter!.budgets.bo.move).toBe(before * 2);
+    state = nextTurn(state);
+    expect(has(state, "bo", "hasted")).toBe(true);
+    // Ann walks into the winds on her turn.
+    state.encounter!.budgets.ann.move = 3;
+    state = must(state, { type: "move", by: "ann", unit: "ann", to: at(4, 6) });
+    expect(has(state, "ann", "hasted")).toBe(true);
+  });
+
+  it("Tidal Wave: strikes only enemies in the line, and sweeps those that fail to brace to the far end", () => {
+    let swept = 0;
+    for (let seed = 1; seed <= 10; seed++) {
+      let { state } = party();
+      state.rng = seed;
+      const near = addDummy(state, at(6, 6));
+      const far = addDummy(state, at(8, 6));
+      const events: ZoneEvent[] = [];
+      state = must(state, { type: "use", by: "ann", unit: "ann", ability: "tidal_wave", at: at(6, 6) }, events);
+      const saved = (id: string) => events.some((e) => e.t === "roll" && e.roll.kind === "save" && e.roll.id === id && e.roll.ok);
+      // The line runs from at(6,6) to at(10,6). The far one goes first, to the end; the near one as far as it can get.
+      expect(unit(state, far).pos).toEqual(saved(far) ? at(8, 6) : at(10, 6));
+      if (!saved(near)) expect(unit(state, near).pos).toEqual(saved(far) ? at(7, 6) : at(9, 6));
+      else expect(unit(state, near).pos).toEqual(at(6, 6));
+      swept += [near, far].filter((id) => !saved(id)).length;
+      expect(events.some((e) => e.t === "hit" && e.target === "bo")).toBe(false);
+      // The line is left under water, and whoever is on it soaked.
+      for (let col = 6; col <= 10; col++) expect(state.surfaces[posKey(at(col, 6))]?.kind, `col ${col}`).toBe("water");
+      for (const id of [near, far]) expect(unit(state, id).conditions.some((c) => c.kind === "wet")).toBe(true);
+    }
+    expect(swept).toBeGreaterThan(0);
+  });
+});
+
+describe("the Rogue's class abilities", () => {
+  const ALL = ["smugglers_route", "sneak", "pickpocket", "tactical_retreat", "contraband"];
+  /**
+   * A Rogue (ann) with a crewmate (bo) beside her and another (cy) further off, in a fight with a dummy far down
+   * row 6. Ann's turn. `edit` changes the board first.
+   */
+  function party(edit?: (tile: Tile) => void) {
+    let state = board(edit);
+    state.aiOff = true;
+    const ann = hero(state, "ann", "refactor_rogue", at(5, 6));
+    ann.abilities = [...ann.abilities, ...ALL];
+    hero(state, "bo", "qa_paladin", at(4, 6));
+    hero(state, "cy", "devops_mage", at(2, 8));
+    const dummy = enemy(state, "dummy", at(13, 6));
+    state = provoke(state);
+    while (!state.encounter!.acting.includes("ann")) state = must(state, { type: "timeout" });
+    return { state, dummy: dummy.id };
+  }
+  function addFoe(state: ZoneState, pos: HexPos, kind = "dummy"): string {
+    const e = enemy(state, kind, pos);
+    state.encounter!.order.push(e.id);
+    state.encounter!.init[e.id] = 0;
+    return e.id;
+  }
+  function nextTurn(state: ZoneState, sink: ZoneEvent[] = []): ZoneState {
+    for (const id of [...state.encounter!.acting]) if (!state.encounter!.done.includes(id) && !unit(state, id).down) state = must(state, { type: "end_turn", by: id, unit: id }, sink);
+    while (!state.encounter!.acting.includes("ann") || state.encounter!.done.includes("ann")) state = must(state, { type: "timeout" }, sink);
+    return state;
+  }
+  const step = (state: ZoneState, action: ZoneAction) => {
+    const s = stepZone(state, action);
+    if (!s.ok) throw new Error(s.error);
+    return s;
+  };
+  const has = (state: ZoneState, id: string, kind: string) => unit(state, id).conditions.some((c) => c.kind === kind);
+  const use = (ability: string, aim: { target?: string; at?: HexPos } = {}): ZoneAction => ({ type: "use", by: "ann", unit: "ann", ability, ...aim });
+  const rock = (...hexes: HexPos[]) => (t: Tile) => { if (hexes.some((p) => p.q === t.q && p.r === t.r)) t.biome = "rock"; };
+
+  it("are all in the Rogue's pool", () => {
+    expect(poolFor("refactor_rogue").map((e) => e.id)).toEqual(ALL);
+  });
+
+  it("Smuggler's Route: a Bonus action to a hex up to 3 off, through a wall, spending no movement", () => {
+    let { state } = party(rock(at(6, 5), at(6, 6), at(6, 7)));
+    const move = state.encounter!.budgets.ann.move;
+    const events: ZoneEvent[] = [];
+    state = must(state, use("smugglers_route", { at: at(8, 6) }), events);
+    expect(unit(state, "ann").pos).toEqual(at(8, 6));
+    expect(events.some((e) => e.t === "blinked" && e.id === "ann")).toBe(true);
+    expect(state.encounter!.budgets.ann).toMatchObject({ move, bonus: false, action: true });
+    expect(unit(state, "ann").cooldowns.smugglers_route).toBe(4);
+    // Bo stayed: nobody was picked to come along.
+    expect(unit(state, "bo").pos).toEqual(at(4, 6));
+  });
+
+  it("Smuggler's Route: not further than 3, nor onto rock or someone", () => {
+    const { state } = party(rock(at(7, 6)));
+    expect(fails(state, use("smugglers_route", { at: at(9, 6) }))).toMatch(/Too far/);
+    expect(fails(state, use("smugglers_route", { at: at(7, 6) }))).toMatch(/nowhere to stand/);
+    expect(fails(state, use("smugglers_route", { at: at(4, 6) }))).toMatch(/nowhere to stand/);
+  });
+
+  it("Smuggler's Route: an ally beside you comes too, to the same side of where you land, or the nearest open hex", () => {
+    let { state } = party();
+    state = must(state, use("smugglers_route", { target: "bo", at: at(8, 6) }));
+    expect(unit(state, "ann").pos).toEqual(at(8, 6));
+    expect(unit(state, "bo").pos).toEqual(at(7, 6));
+    // With that side taken, the nearest open hex beside it.
+    let again = party().state;
+    addFoe(again, at(7, 6));
+    again = must(again, use("smugglers_route", { target: "bo", at: at(8, 6) }));
+    expect(hexDistance(unit(again, "bo").pos, at(8, 6))).toBe(1);
+    expect(hexDistance(unit(again, "bo").pos, at(7, 6))).toBe(1);
+  });
+
+  it("Smuggler's Route: the ally has to be beside you, and there has to be room for them", () => {
+    const { state } = party();
+    expect(fails(state, use("smugglers_route", { target: "cy", at: at(8, 6) }))).toMatch(/beside you/);
+    const boxed = party(rock(...hexNeighbors(at(8, 6), GRID))).state;
+    expect(fails(boxed, use("smugglers_route", { target: "bo", at: at(8, 6) }))).toMatch(/no room/);
+    // Alone, the same hex is fine.
+    expect(unit(must(boxed, use("smugglers_route", { at: at(8, 6) })), "ann").pos).toEqual(at(8, 6));
+  });
+
+  it("Smuggler's Route: leaving an enemy's side draws no blow", () => {
+    let { state } = party();
+    addFoe(state, at(6, 6), "bandit");
+    const events: ZoneEvent[] = [];
+    state = must(state, use("smugglers_route", { at: at(5, 9) }), events);
+    expect(events.some((e) => e.t === "reaction")).toBe(false);
+  });
+
+  it("Sneak: you and every ally beside you go Unseen for 3 turns; one further off does not", () => {
+    let { state } = party();
+    state = must(state, use("sneak"));
+    expect(has(state, "ann", "invisible")).toBe(true);
+    expect(has(state, "bo", "invisible")).toBe(true);
+    expect(has(state, "cy", "invisible")).toBe(false);
+    expect(state.encounter!.budgets.ann.action).toBe(false);
+    // Through the 3 turns after the one it is used on (and every enemy turn between), and no further.
+    for (let turn = 1; turn <= 4; turn++) {
+      expect(has(state, "ann", "invisible"), `turn ${turn}`).toBe(true);
+      state = nextTurn(state);
+    }
+    expect(has(state, "ann", "invisible")).toBe(false);
+  });
+
+  it("Sneak: an enemy will not attack the Unseen, nor strike at them as they walk off", () => {
+    let { state } = party();
+    const bandit = addFoe(state, at(6, 6), "bandit");
+    state = must(state, use("sneak"));
+    state.encounter!.budgets.ann.move = 20;
+    const walked: ZoneEvent[] = [];
+    state = must(state, { type: "move", by: "ann", unit: "ann", to: at(7, 4) }, walked);
+    expect(walked.some((e) => e.t === "reaction")).toBe(false);
+    // The bandit's turn: it has only cy to go for.
+    state.aiOff = false;
+    const turn: ZoneEvent[] = [];
+    state = nextTurn(state, turn);
+    const aimedAt = turn.filter((e) => e.t === "used" && e.id === bandit).map((e) => e.t === "used" && e.target);
+    expect(aimedAt).not.toContain("ann");
+    expect(aimedAt).not.toContain("bo");
+  });
+
+  it("Sneak: using an ability gives you away, with advantage on its roll to hit", () => {
+    let { state, dummy } = party();
+    state = must(state, use("sneak"));
+    state = nextTurn(state);
+    unit(state, dummy).pos = at(6, 6);
+    const events: ZoneEvent[] = [];
+    state = must(state, use("stab", { target: dummy }), events);
+    const roll = events.find((e) => e.t === "roll" && e.roll.kind === "attack");
+    expect(roll?.t === "roll" && roll.roll.adv).toBe(1);
+    expect(has(state, "ann", "invisible")).toBe(false);
+    expect(events.some((e) => e.t === "seen" && e.id === "ann")).toBe(true);
+    // Bo, who did nothing, is still Unseen.
+    expect(has(state, "bo", "invisible")).toBe(true);
+  });
+
+  it("Sneak: nobody out of a fight notices the Unseen walking by", () => {
+    let state = board();
+    const ann = hero(state, "ann", "refactor_rogue", at(2, 6));
+    ann.conditions.push({ kind: "invisible", rounds: 3 });
+    enemy(state, "bandit", at(8, 6));
+    state = must(state, { type: "move", by: "ann", unit: "ann", to: at(6, 6) });
+    expect(state.encounter).toBeNull();
+  });
+
+  it("Pickpocket: a Bonus action blow that, landing, pays gold equal to your level, once an enemy", () => {
+    let paid = 0;
+    let missed = 0;
+    for (let seed = 1; seed <= 12; seed++) {
+      let { state, dummy } = party();
+      state.rng = seed;
+      unit(state, "ann").level = 3;
+      unit(state, dummy).pos = at(6, 6);
+      const first = step(state, use("pickpocket", { target: dummy }));
+      expect(first.state.encounter!.budgets.ann).toMatchObject({ bonus: false, action: true });
+      const hit = first.events.some((e) => e.t === "hit" && e.target === dummy);
+      const gold = first.effects.filter((e) => e.type === "grant").map((e) => e.gold);
+      expect(gold).toEqual(hit ? [3] : []);
+      if (!hit) {
+        missed += 1;
+        continue;
+      }
+      paid += 1;
+      expect(unit(first.state, dummy).picked).toBe(true);
+      // Its pockets are empty now: the next one, even landing, pays nothing.
+      state = first.state;
+      state.encounter!.budgets.ann.bonus = true;
+      expect(step(state, use("pickpocket", { target: dummy })).effects).toEqual([]);
+    }
+    expect(paid).toBeGreaterThan(0);
+    expect(missed).toBeGreaterThan(0);
+  });
+
+  it("Pickpocket: Unseen, it is no blow, just the gold, and you stay Unseen", () => {
+    let { state, dummy } = party();
+    state = must(state, use("sneak"));
+    state = nextTurn(state);
+    unit(state, dummy).pos = at(6, 6);
+    const hp = unit(state, dummy).hp;
+    const s = step(state, use("pickpocket", { target: dummy }));
+    expect(s.events.some((e) => e.t === "roll")).toBe(false);
+    expect(unit(s.state, dummy).hp).toBe(hp);
+    expect(s.effects).toEqual([{ type: "grant", heroId: "ann", xp: 0, resources: {}, gold: 1 }]);
+    expect(has(s.state, "ann", "invisible")).toBe(true);
+  });
+
+  it("Tactical Retreat: a heavy blow, then away to a hex up to 4 off if one is picked, hit or miss", () => {
+    for (let seed = 1; seed <= 4; seed++) {
+      let { state, dummy } = party(rock(at(6, 5), at(5, 5)));
+      state.rng = seed;
+      unit(state, dummy).pos = at(6, 6);
+      const events: ZoneEvent[] = [];
+      state = must(state, use("tactical_retreat", { target: dummy, at: at(5, 3) }), events);
+      expect(events.filter((e) => e.t === "roll" && e.roll.kind === "attack")).toHaveLength(1);
+      expect(unit(state, "ann").pos).toEqual(at(5, 3));
+      expect(state.encounter!.budgets.ann.action).toBe(false);
+    }
+    // No hex picked: the blow alone.
+    let { state, dummy } = party();
+    unit(state, dummy).pos = at(6, 6);
+    state = must(state, use("tactical_retreat", { target: dummy }));
+    expect(unit(state, "ann").pos).toEqual(at(5, 6));
+    expect(fails(party().state, use("tactical_retreat", { target: dummy, at: at(10, 6) }))).toBeTruthy();
+  });
+
+  it("Tactical Retreat: hits harder than a Stab", () => {
+    expect(ABILITIES.tactical_retreat.damage!).toBeGreaterThan(ABILITIES.stab.damage!);
+  });
+
+  it("Contraband: you and an ally each get a fire bomb, thrown before any of your own, gone after 3 turns", () => {
+    let { state } = party();
+    unit(state, "ann").items.fire = 0;
+    state = must(state, use("contraband", { target: "bo" }));
+    expect(state.encounter!.budgets.ann.bonus).toBe(false);
+    expect(has(state, "ann", "contraband")).toBe(true);
+    expect(has(state, "bo", "contraband")).toBe(true);
+    // Ann has none of her own, and can throw one all the same.
+    state = must(state, { type: "throw", by: "ann", unit: "ann", item: "fire", at: at(10, 6) });
+    expect(has(state, "ann", "contraband")).toBe(false);
+    expect(unit(state, "ann").items.fire ?? 0).toBe(0);
+    // Bo's own bomb is still in his pack after throwing the smuggled one.
+    state = must(state, { type: "throw", by: "bo", unit: "bo", item: "fire", at: at(10, 7) });
+    expect(unit(state, "bo").items.fire).toBe(1);
+    expect(has(state, "bo", "contraband")).toBe(false);
+    // Not thrown, it is gone after the 3 turns that follow.
+    let later = party().state;
+    later = must(later, use("contraband", { target: "ann" }));
+    for (let turn = 1; turn <= 3; turn++) later = nextTurn(later);
+    expect(has(later, "ann", "contraband")).toBe(true);
+    later = nextTurn(later);
+    expect(has(later, "ann", "contraband")).toBe(false);
+  });
+
+  it("Contraband: used on yourself, both bombs are yours", () => {
+    let { state } = party();
+    unit(state, "ann").items.fire = 0;
+    state = must(state, use("contraband"));
+    expect(has(state, "bo", "contraband")).toBe(false);
+    state = must(state, { type: "throw", by: "ann", unit: "ann", item: "fire", at: at(10, 6) });
+    expect(has(state, "ann", "contraband")).toBe(true);
+    state = nextTurn(state);
+    state = must(state, { type: "throw", by: "ann", unit: "ann", item: "fire", at: at(10, 6) });
+    expect(has(state, "ann", "contraband")).toBe(false);
+    state.encounter!.budgets.ann.action = true;
+    expect(fails(state, { type: "throw", by: "ann", unit: "ann", item: "fire", at: at(10, 6) })).toMatch(/no fire bomb/i);
+  });
+
+  it("throwing gives the Unseen away too", () => {
+    let { state } = party();
+    state = must(state, use("sneak"));
+    state = nextTurn(state);
+    state = must(state, { type: "throw", by: "ann", unit: "ann", item: "fire", at: at(10, 6) });
+    expect(has(state, "ann", "invisible")).toBe(false);
+  });
+});
+
+describe("the Druid's class abilities", () => {
+  const ALL = ["coral_field", "aqueous_regeneration", "coral_armor", "revitalizing_splash", "summon_sea_turtle"];
+  /** A Druid (ann) with a crewmate (bo) beside her and another (cy) further off, in a fight with a dummy far down row 6. Ann's turn. */
+  function party() {
+    let state = board();
+    state.aiOff = true;
+    const ann = hero(state, "ann", "backend_druid", at(5, 6));
+    ann.abilities = [...ALL];
+    hero(state, "bo", "qa_paladin", at(4, 6));
+    hero(state, "cy", "devops_mage", at(2, 8));
+    const dummy = enemy(state, "dummy", at(13, 6));
+    state = provoke(state);
+    while (!state.encounter!.acting.includes("ann")) state = must(state, { type: "timeout" });
+    return { state, dummy: dummy.id };
+  }
+  function addFoe(state: ZoneState, pos: HexPos, kind = "dummy"): string {
+    const e = enemy(state, kind, pos);
+    state.encounter!.order.push(e.id);
+    state.encounter!.init[e.id] = -5;
+    return e.id;
+  }
+  function endShared(state: ZoneState, sink: ZoneEvent[] = []): ZoneState {
+    for (const id of [...state.encounter!.acting]) if (!state.encounter!.done.includes(id) && !unit(state, id).down) state = must(state, { type: "end_turn", by: unit(state, id).controller ?? id, unit: id }, sink);
+    return state;
+  }
+  function nextTurn(state: ZoneState, sink: ZoneEvent[] = []): ZoneState {
+    state = endShared(state, sink);
+    while (!state.encounter!.acting.includes("ann") || state.encounter!.done.includes("ann")) state = must(state, { type: "timeout" }, sink);
+    return state;
+  }
+  const has = (state: ZoneState, id: string, kind: string) => unit(state, id).conditions.some((c) => c.kind === kind);
+  const use = (ability: string, aim: { target?: string; at?: HexPos } = {}): ZoneAction => ({ type: "use", by: "ann", unit: "ann", ability, ...aim });
+  const cuts = (events: ZoneEvent[], id: string) => events.filter((e) => e.t === "hit" && e.what === "coral_field" && e.target === id).length;
+  const turtleOf = (state: ZoneState) => state.units.filter((u) => u.summon?.by === "ann");
+
+  it("are all in the Druid's pool", () => {
+    expect(poolFor("backend_druid").map((e) => e.id)).toEqual(ALL);
+  });
+
+  it("Coral Field: 7 hexes for 4 rounds that cut and Slow the enemy under them, and leave your side alone", () => {
+    let { state } = party();
+    const foe = addFoe(state, at(8, 7));
+    unit(state, "bo").pos = at(7, 5);
+    const events: ZoneEvent[] = [];
+    state = must(state, use("coral_field", { at: at(8, 6) }), events);
+    expect(state.weather).toHaveLength(1);
+    expect(state.weather![0]).toMatchObject({ kind: "coral", rounds: 4, side: "hero" });
+    expect(state.weather![0].hexes).toHaveLength(7);
+    expect(cuts(events, foe)).toBe(1);
+    expect(has(state, foe, "slowed")).toBe(true);
+    expect(cuts(events, "bo")).toBe(0);
+    expect(has(state, "bo", "slowed")).toBe(false);
+    expect(state.encounter!.budgets.ann.action).toBe(false);
+    expect(unit(state, "ann").cooldowns.coral_field).toBe(4);
+  });
+
+  it("Coral Field: cuts an enemy again as its turn starts in it, once a turn; your side walks through untouched; gone after 4 rounds", () => {
+    let { state } = party();
+    const foe = addFoe(state, at(8, 7));
+    state = must(state, use("coral_field", { at: at(8, 6) }));
+    const walked: ZoneEvent[] = [];
+    state.encounter!.budgets.ann.move = 99;
+    state = must(state, { type: "move", by: "ann", unit: "ann", to: at(9, 6) }, walked);
+    expect(cuts(walked, "ann")).toBe(0);
+    expect(has(state, "ann", "slowed")).toBe(false);
+    const turn: ZoneEvent[] = [];
+    state = nextTurn(state, turn);
+    expect(cuts(turn, foe)).toBe(1);
+    // Made part-way through a round, it lasts 4 whole rounds after it.
+    for (let round = 2; round <= 5; round++) {
+      expect(state.weather, `round ${round}`).toHaveLength(1);
+      state = nextTurn(state);
+    }
+    expect(state.weather).toHaveLength(0);
+  });
+
+  it("Coral Field: the enemy steers round it if it can", () => {
+    let state = board();
+    hero(state, "ann", "backend_druid", at(5, 6)).abilities = [...ALL];
+    const bandit = enemy(state, "bandit", at(10, 6));
+    state = provoke(state);
+    while (!state.encounter!.acting.includes("ann")) state = must(state, { type: "timeout" });
+    // Coral on the straight way between them; open ground either side.
+    state = must(state, use("coral_field", { at: at(8, 6) }));
+    const events: ZoneEvent[] = [];
+    state = must(state, { type: "end_turn", by: "ann", unit: "ann" }, events);
+    expect(cuts(events, bandit.id)).toBe(0);
+  });
+
+  it("Aqueous Regeneration: a Bonus action that heals now and at the start of each of the ally's next 3 turns, then stops", () => {
+    let { state } = party();
+    unit(state, "bo").hp = 1;
+    const events: ZoneEvent[] = [];
+    state = must(state, use("aqueous_regeneration", { target: "bo" }), events);
+    expect(events.filter((e) => e.t === "heal" && e.target === "bo")).toHaveLength(1);
+    expect(state.encounter!.budgets.ann).toMatchObject({ bonus: false, action: true });
+    const ticks = (evs: ZoneEvent[]) => evs.filter((e) => e.t === "heal" && e.target === "bo" && e.what === "aqueous_regeneration" && e.actor === null).length;
+    for (let turn = 1; turn <= 3; turn++) {
+      unit(state, "bo").hp = 1;
+      const seen: ZoneEvent[] = [];
+      state = nextTurn(state, seen);
+      expect(ticks(seen), `turn ${turn}`).toBe(1);
+    }
+    unit(state, "bo").hp = 1;
+    const after: ZoneEvent[] = [];
+    state = nextTurn(state, after);
+    expect(ticks(after)).toBe(0);
+    expect(has(state, "bo", "regenerating")).toBe(false);
+  });
+
+  it("Aqueous Regeneration: heals 3 more, now and each turn, for one standing in water", () => {
+    const amounts = (wet: boolean) => {
+      let { state } = party();
+      if (wet) state = paint(state, "water", [at(4, 6)]);
+      unit(state, "bo").hp = 1;
+      const events: ZoneEvent[] = [];
+      state = must(state, use("aqueous_regeneration", { target: "bo" }), events);
+      unit(state, "bo").hp = 1;
+      state = nextTurn(state, events);
+      return events.filter((e) => e.t === "heal" && e.target === "bo").map((e) => (e.t === "heal" ? e.amount : 0));
+    };
+    const dry = amounts(false);
+    const wet = amounts(true);
+    expect(dry).toHaveLength(2);
+    expect(wet).toEqual(dry.map((n) => n + 3));
+  });
+
+  it("Coral Armor: +2 Defence on the ally for 3 of their turns, in reach 3", () => {
+    let { state } = party();
+    const before = defenceOf(unit(state, "bo"));
+    state = must(state, use("coral_armor", { target: "bo" }));
+    expect(defenceOf(unit(state, "bo"))).toBe(before + 2);
+    expect(state.encounter!.budgets.ann).toMatchObject({ bonus: false, action: true });
+    // Put on during bo's own (shared) turn: that turn does not count against it.
+    for (let turn = 1; turn <= 3; turn++) state = nextTurn(state);
+    expect(has(state, "bo", "coral_armor")).toBe(true);
+    state = nextTurn(state);
+    expect(has(state, "bo", "coral_armor")).toBe(false);
+    expect(fails(party().state, use("coral_armor", { target: "cy" }))).toMatch(/Out of range/);
+  });
+
+  it("Coral Armor: an enemy that lands a blow up close is cut; one that shoots, or misses, is not", () => {
+    let cut = 0;
+    for (let seed = 1; seed <= 12; seed++) {
+      let { state } = party();
+      state = must(state, use("coral_armor", { target: "bo" }));
+      const bandit = enemy(state, "bandit", at(4, 5));
+      const archer = enemy(state, "archer", at(4, 9));
+      const ctx: Ctx = { state, rng: makeRng(seed), events: [], effects: [] };
+      enemyAct(ctx, bandit, enemyStrikes("bandit", 1)[0], unit(state, "bo"));
+      enemyAct(ctx, archer, enemyStrikes("archer", 1).find((s) => s.range > 1)!, unit(state, "bo"));
+      const landed = (id: string) => ctx.events.some((e) => e.t === "hit" && e.actor === id && e.target === "bo");
+      const thorns = (id: string) => ctx.events.some((e) => e.t === "hit" && e.what === "coral_armor" && e.target === id);
+      expect(thorns(bandit.id)).toBe(landed(bandit.id));
+      expect(thorns(archer.id)).toBe(false);
+      if (landed(bandit.id)) cut++;
+    }
+    expect(cut).toBeGreaterThan(0);
+  });
+
+  it("Revitalizing Splash: a big heal over 4 hexes for your side, the fallen got up, enemies passed over, and water left", () => {
+    let { state } = party();
+    const foe = addFoe(state, at(7, 6));
+    unit(state, "bo").pos = at(7, 5);
+    Object.assign(unit(state, "bo"), { hp: 0, down: true });
+    unit(state, foe).hp = 1;
+    unit(state, "ann").hp = 1;
+    const events: ZoneEvent[] = [];
+    state = must(state, use("revitalizing_splash", { at: at(7, 5) }), events);
+    const area = abilityArea(state, unit(state, "ann"), "revitalizing_splash", at(7, 5));
+    expect(area).toHaveLength(4);
+    for (const p of area) expect(state.surfaces[posKey(p)]?.kind).toBe("water");
+    expect(unit(state, "bo").down).toBe(false);
+    expect(unit(state, "bo").hp).toBeGreaterThan(8);
+    expect(events.some((e) => e.t === "heal" && e.target === foe)).toBe(false);
+    expect(events.some((e) => e.t === "heal" && e.target === "ann")).toBe(false);
+    expect(state.encounter!.budgets.ann.action).toBe(false);
+    expect(unit(state, "ann").cooldowns.revitalizing_splash).toBe(3);
+  });
+
+  it("Summon Sea Turtle: called to a hex in reach, it takes its turn with you, played by you, and bites", () => {
+    let { state } = party();
+    const foe = addFoe(state, at(8, 6));
+    state = must(state, use("summon_sea_turtle", { at: at(7, 6) }));
+    const [turtle] = turtleOf(state);
+    expect(turtle).toMatchObject({ side: "hero", kind: "sea_turtle", controller: "ann", pos: at(7, 6) });
+    expect(turtle.maxHp).toBeGreaterThan(unit(state, "ann").maxHp);
+    expect(defenceOf(turtle)).toBeGreaterThanOrEqual(16);
+    const enc = state.encounter!;
+    expect(enc.order[enc.order.indexOf("ann") + 1]).toBe(turtle.id);
+    expect(enc.acting).toContain(turtle.id);
+    expect(enc.budgets[turtle.id].move).toBe(3);
+    // Ann's player plays it; nobody else does.
+    expect(fails(state, { type: "use", by: "bo", unit: turtle.id, ability: "turtle_bite", target: foe })).toMatch(/not yours/);
+    const events: ZoneEvent[] = [];
+    state = must(state, { type: "use", by: "ann", unit: turtle.id, ability: "turtle_bite", target: foe }, events);
+    expect(events.some((e) => e.t === "roll" && e.roll.id === turtle.id)).toBe(true);
+    // Next round it is in the shared turn again.
+    state = nextTurn(state);
+    expect(state.encounter!.acting).toContain(turtle.id);
+    expect(fails(state, { type: "common", by: "ann", unit: turtle.id, what: "flee" })).toMatch(/stays/);
+  });
+
+  it("Summon Sea Turtle: its Bite does 4 more while it stands in water", () => {
+    const bites = (wet: boolean, seed: number) => {
+      let { state } = party();
+      const foe = addFoe(state, at(8, 6));
+      if (wet) state = paint(state, "water", [at(7, 6)]);
+      state = must(state, use("summon_sea_turtle", { at: at(7, 6) }));
+      const turtle = turtleOf(state)[0];
+      state.rng = seed;
+      unit(state, foe).hp = 999;
+      const events: ZoneEvent[] = [];
+      must(state, { type: "use", by: "ann", unit: turtle.id, ability: "turtle_bite", target: foe }, events);
+      return events.filter((e) => e.t === "hit" && e.actor === turtle.id).map((e) => (e.t === "hit" ? e.amount : 0));
+    };
+    // The same dice either way: a seed whose bite lands.
+    const seed = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10].find((n) => bites(false, n).length === 1)!;
+    const dry = bites(false, seed);
+    expect(bites(true, seed)).toEqual([dry[0] + 4]);
+  });
+
+  it("Summon Sea Turtle: only in a fight, in reach, on open ground; a second sends the first away", () => {
+    let { state } = party();
+    expect(fails(state, use("summon_sea_turtle", { at: at(9, 6) }))).toMatch(/Out of range/);
+    expect(fails(state, use("summon_sea_turtle", { at: at(4, 6) }))).toMatch(/nowhere/);
+    state = must(state, use("summon_sea_turtle", { at: at(7, 6) }));
+    const first = turtleOf(state)[0].id;
+    for (let i = 0; i < 5; i++) state = nextTurn(state);
+    const events: ZoneEvent[] = [];
+    state = must(state, use("summon_sea_turtle", { at: at(6, 7) }), events);
+    expect(turtleOf(state)).toHaveLength(1);
+    expect(turtleOf(state)[0].id).not.toBe(first);
+    expect(state.encounter!.order).not.toContain(first);
+    expect(events.some((e) => e.t === "dismissed" && e.id === first)).toBe(true);
+    // Out of a fight there is nothing to call it to.
+    let calm = board();
+    hero(calm, "ann", "backend_druid", at(5, 6)).abilities = [...ALL];
+    expect(fails(calm, use("summon_sea_turtle", { at: at(6, 6) }))).toMatch(/for a fight/);
+  });
+
+  it("Summon Sea Turtle: gone when it falls, and when the fight is over; it holds no lost fight off", () => {
+    let { state } = party();
+    state = must(state, use("summon_sea_turtle", { at: at(7, 6) }));
+    let turtle = turtleOf(state)[0];
+    // Falls.
+    let fell = structuredClone(state);
+    const ctx: Ctx = { state: fell, rng: makeRng(1), events: [], effects: [] };
+    damage(ctx, turtleOf(fell)[0], 999, { actor: null, what: "test" });
+    fell = must(fell, { type: "end_turn", by: "ann", unit: "ann" });
+    expect(turtleOf(fell)).toHaveLength(0);
+    expect(fell.encounter!.order).not.toContain(turtle.id);
+    // The fight ends.
+    const won = must(state, { type: "dev", by: "ann", dev: { op: "end_fight" } });
+    expect(won.encounter).toBeNull();
+    expect(turtleOf(won)).toHaveLength(0);
+    // Every hero down, the turtle still standing: the fight is lost.
+    turtle = turtleOf(state)[0];
+    for (const id of ["ann", "bo", "cy"]) Object.assign(unit(state, id), { hp: 0, down: true });
+    const lost: ZoneEvent[] = [];
+    state = must(state, { type: "end_turn", by: "ann", unit: turtle.id }, lost);
+    expect(lost.some((e) => e.t === "fight_end" && e.outcome === "defeat")).toBe(true);
+    expect(turtleOf(state)).toHaveLength(0);
+  });
+});
+
+describe("the Bard's shanties", () => {
+  const ALL = ["lively_shanty", "dour_shanty", "windgod_shanty", "chorus", "lead_by_example"];
+  /**
+   * A Bard (ann) with a crewmate beside her (bo) and another 4 hexes off (cy), in a fight with a dummy far down row 6.
+   * The three heroes share one turn, and it is theirs.
+   */
+  function party() {
+    let state = board();
+    state.aiOff = true;
+    hero(state, "ann", "frontend_bard", at(5, 6)).abilities = [...ALL];
+    hero(state, "bo", "qa_paladin", at(4, 6));
+    hero(state, "cy", "devops_mage", at(2, 8));
+    const dummy = enemy(state, "dummy", at(13, 6));
+    state = provoke(state);
+    const enc = state.encounter!;
+    enc.order = ["ann", "bo", "cy", dummy.id];
+    Object.assign(enc.init, { ann: 20, bo: 19, cy: 18, [dummy.id]: 1 });
+    while (!["ann", "bo", "cy"].every((id) => state.encounter!.acting.includes(id))) state = must(state, { type: "timeout" });
+    return { state, dummy: dummy.id };
+  }
+  function nextTurn(state: ZoneState, sink: ZoneEvent[] = []): ZoneState {
+    for (const id of [...state.encounter!.acting]) if (!state.encounter!.done.includes(id) && !unit(state, id).down) state = must(state, { type: "end_turn", by: id, unit: id }, sink);
+    while (!state.encounter!.acting.includes("ann") || state.encounter!.done.includes("ann")) state = must(state, { type: "timeout" }, sink);
+    return state;
+  }
+  const sing = (kind: string): ZoneAction => ({ type: "use", by: "ann", unit: "ann", ability: kind });
+  const join = (who: string, bard = "ann"): ZoneAction => ({ type: "common", by: who, unit: who, what: "join", target: bard });
+  const has = (state: ZoneState, id: string, kind: string) => unit(state, id).conditions.some((c) => c.kind === kind);
+  const song = (state: ZoneState) => shantyOf(unit(state, "ann"))!;
+  const hitMods = (state: ZoneState, id: string, dummy: string) => attackContext(state, unit(state, id), unit(state, dummy), { melee: false }).mods;
+
+  it("are all in the Bard's pool", () => {
+    expect(poolFor("frontend_bard").map((e) => e.id)).toEqual(ALL);
+  });
+
+  it("a shanty is a Bonus action, sung for 4 turns, 4 to wait; one at a time, the new one replacing the old", () => {
+    let { state } = party();
+    state = must(state, sing("lively_shanty"));
+    expect(state.encounter!.budgets.ann).toMatchObject({ bonus: false, action: true });
+    expect(song(state)).toMatchObject({ kind: "lively_shanty", rounds: 4, joined: [] });
+    expect(unit(state, "ann").cooldowns.lively_shanty).toBe(5);
+    state = nextTurn(state);
+    state = must(state, sing("dour_shanty"));
+    expect(has(state, "ann", "lively_shanty")).toBe(false);
+    expect(song(state).kind).toBe("dour_shanty");
+    // Sung through 4 more of the Bard's turns (the one it was struck up in does not count), then gone.
+    for (let turn = 1; turn <= 4; turn++) state = nextTurn(state);
+    expect(has(state, "ann", "dour_shanty")).toBe(true);
+    state = nextTurn(state);
+    expect(has(state, "ann", "dour_shanty")).toBe(false);
+  });
+
+  it("Lively Shanty: +2 to hit and more damage for the Bard and allies within 2, not one further off", () => {
+    let { state, dummy } = party();
+    const before = { ann: hitMods(state, "ann", dummy), bo: hitMods(state, "bo", dummy), cy: hitMods(state, "cy", dummy) };
+    state = must(state, sing("lively_shanty"));
+    expect(hitMods(state, "ann", dummy)).toBe(before.ann + 2);
+    expect(hitMods(state, "bo", dummy)).toBe(before.bo + 2);
+    expect(hitMods(state, "cy", dummy)).toBe(before.cy);
+    expect(songsOn(state, unit(state, "bo"))).toHaveLength(1);
+  });
+
+  it("Lively Shanty: joining is a Bonus action, once: a hex wider, advantage on your next attack, and +1 more to hit for all until the Bard's next turn", () => {
+    let { state, dummy } = party();
+    state = must(state, sing("lively_shanty"));
+    state = must(state, join("bo"));
+    expect(state.encounter!.budgets.bo.bonus).toBe(false);
+    expect(song(state).joined).toEqual(["bo"]);
+    expect(shantyRadius(song(state))).toBe(3);
+    expect(has(state, "bo", "inspired")).toBe(true);
+    expect(attackContext(state, unit(state, "bo"), unit(state, dummy), { melee: false }).adv).toBe(1);
+    const mods = hitMods(state, "ann", dummy);
+    // Never twice, and never your own.
+    expect(fails(nextTurn(state), join("bo"))).toMatch(/not joined/);
+    expect(fails(state, join("ann"))).toMatch(/not joined|own/);
+    // The extra +1 is gone once the Bard's turn comes round.
+    state = nextTurn(state);
+    expect(hitMods(state, "ann", dummy)).toBe(mods - 1);
+  });
+
+  it("Lively Shanty: the advantage from joining is spent on the next roll to hit", () => {
+    let { state, dummy } = party();
+    state = must(state, sing("lively_shanty"));
+    state = must(state, join("bo"));
+    unit(state, "bo").pos = at(12, 6);
+    state = must(state, { type: "use", by: "bo", unit: "bo", ability: "bash", target: dummy });
+    expect(has(state, "bo", "inspired")).toBe(false);
+  });
+
+  it("Dour Shanty: +2 Defence within reach; joining Guards you and adds +1 for everyone in it until the Bard's next turn", () => {
+    let { state } = party();
+    const before = { ann: defenceOf(unit(state, "ann"), state), bo: defenceOf(unit(state, "bo"), state), cy: defenceOf(unit(state, "cy"), state) };
+    state = must(state, sing("dour_shanty"));
+    expect(defenceOf(unit(state, "bo"), state)).toBe(before.bo + 2);
+    expect(defenceOf(unit(state, "cy"), state)).toBe(before.cy);
+    state = must(state, join("bo"));
+    expect(has(state, "bo", "guarded")).toBe(true);
+    expect(defenceOf(unit(state, "ann"), state)).toBe(before.ann + 3);
+    expect(defenceOf(unit(state, "bo"), state)).toBe(before.bo + 3);
+    state = nextTurn(state);
+    expect(defenceOf(unit(state, "bo"), state)).toBe(before.bo + 2);
+    // The hex it widened by stays.
+    expect(shantyRadius(song(state))).toBe(3);
+  });
+
+  it("a shanty widens a hex for each who joins, reaching those it did not", () => {
+    let { state } = party();
+    state = must(state, sing("dour_shanty"));
+    // cy is 4 off: out of reach, and so cannot join yet.
+    expect(fails(state, join("cy"))).toMatch(/no shanty/);
+    hero(state, "di", "qa_paladin", at(6, 6));
+    state.encounter!.order.splice(3, 0, "di");
+    state.encounter!.acting.push("di");
+    state.encounter!.budgets.di = { ...state.encounter!.budgets.bo };
+    state = must(state, join("bo"));
+    expect(songsOn(state, unit(state, "cy"))).toHaveLength(0);
+    state = must(state, join("di"));
+    expect(songsOn(state, unit(state, "cy"))).toHaveLength(1);
+    state = must(state, join("cy"));
+    expect(song(state).joined).toEqual(["bo", "di", "cy"]);
+  });
+
+  it("Wind-god's Shanty: 2 more movement at once and every turn after, and no Slowing", () => {
+    let { state } = party();
+    unit(state, "bo").conditions.push({ kind: "slowed", rounds: 3 });
+    const moved = state.encounter!.budgets.bo.move;
+    state = must(state, sing("windgod_shanty"));
+    expect(state.encounter!.budgets.bo.move).toBe(moved + 2);
+    expect(has(state, "bo", "slowed")).toBe(false);
+    // Struck up again on a later turn, nothing more is owed for the turn the movement was already given in.
+    state = nextTurn(state);
+    expect(state.encounter!.budgets.bo.move).toBe(state.encounter!.budgets.bo.moveMax + 2);
+    const ctx: Ctx = { state, rng: makeRng(1), events: [], effects: [] };
+    addCondition(ctx, unit(state, "bo"), "slowed", 2);
+    expect(has(state, "bo", "slowed")).toBe(false);
+    // Out of its reach, Slowing takes as ever.
+    addCondition(ctx, unit(state, "cy"), "slowed", 2);
+    expect(has(state, "cy", "slowed")).toBe(true);
+  });
+
+  it("Wind-god's Shanty: joining Disengages you, and gives 1 more movement to everyone in it, that turn only", () => {
+    let { state } = party();
+    state = must(state, sing("windgod_shanty"));
+    const { ann, bo } = state.encounter!.budgets;
+    const [annMove, boMove] = [ann.move, bo.move];
+    state = must(state, join("bo"));
+    expect(state.encounter!.budgets.bo.disengaged).toBe(true);
+    expect(state.encounter!.budgets.ann.disengaged).toBe(false);
+    expect(state.encounter!.budgets.bo.move).toBe(boMove + 1);
+    expect(state.encounter!.budgets.ann.move).toBe(annMove + 1);
+    state = nextTurn(state);
+    expect(state.encounter!.budgets.bo.move).toBe(state.encounter!.budgets.bo.moveMax + 2);
+  });
+
+  function addFoe(state: ZoneState, pos: HexPos): string {
+    const e = enemy(state, "dummy", pos);
+    e.hp = e.maxHp = 999;
+    state.encounter!.order.push(e.id);
+    state.encounter!.init[e.id] = 0;
+    return e.id;
+  }
+
+  it("Chorus: 7 hexes that strike and Slow only the enemy, 3 harder for each ally in it", () => {
+    const strike = (allyIn: boolean, seed: number) => {
+      let { state } = party();
+      const foe = addFoe(state, at(8, 6));
+      addFoe(state, at(9, 6));
+      if (allyIn) unit(state, "bo").pos = at(7, 6);
+      state.rng = seed;
+      const events: ZoneEvent[] = [];
+      state = must(state, { type: "use", by: "ann", unit: "ann", ability: "chorus", at: at(8, 6) }, events);
+      const saved = events.some((e) => e.t === "roll" && e.roll.kind === "save" && e.roll.id === foe && e.roll.ok);
+      const amount = events.filter((e) => e.t === "hit" && e.target === foe).map((e) => (e.t === "hit" ? e.amount : 0))[0];
+      return { state, events, saved, amount, foe };
+    };
+    const seed = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].find((n) => !strike(false, n).saved)!;
+    const alone = strike(false, seed);
+    const sung = strike(true, seed);
+    expect(sung.amount).toBe(alone.amount + 3);
+    expect(sung.events.some((e) => e.t === "hit" && e.target === "bo")).toBe(false);
+    expect(sung.state.units.find((u) => u.id === sung.foe)!.conditions.some((c) => c.kind === "slowed")).toBe(true);
+    expect(sung.state.encounter!.budgets.ann.action).toBe(false);
+    expect(unit(sung.state, "ann").cooldowns.chorus).toBe(4);
+  });
+
+  it("Lead by Example: landed, it Inspires the ally nearest the target; missed, nobody", () => {
+    let landedOnce = false;
+    for (let seed = 1; seed <= 12; seed++) {
+      let { state } = party();
+      const foe = addFoe(state, at(8, 6));
+      unit(state, "cy").pos = at(9, 7);
+      state.rng = seed;
+      const events: ZoneEvent[] = [];
+      state = must(state, { type: "use", by: "ann", unit: "ann", ability: "lead_by_example", target: foe }, events);
+      const landed = events.some((e) => e.t === "hit" && e.target === foe);
+      landedOnce ||= landed;
+      expect(has(state, "cy", "inspired")).toBe(landed);
+      expect(has(state, "bo", "inspired")).toBe(false);
+      expect(has(state, "ann", "inspired")).toBe(false);
+      expect(unit(state, "ann").cooldowns.lead_by_example).toBe(3);
+    }
+    expect(landedOnce).toBe(true);
+  });
+
+  it("Join the Song is for a fight", () => {
+    const state = board();
+    hero(state, "ann", "frontend_bard", at(5, 6)).conditions.push({ kind: "lively_shanty", rounds: 4, joined: [] });
+    hero(state, "bo", "qa_paladin", at(4, 6));
+    expect(fails(state, join("bo"))).toMatch(/for a fight/);
+  });
+});
+
+describe("a dev kit", () => {
+  function onMap() {
+    const state = board();
+    hero(state, "ann", "qa_paladin", at(5, 6));
+    hero(state, "bo", "devops_mage", at(3, 6));
+    return state;
+  }
+  const kit = (unit: string, over: Partial<{ classId: string; weapon: string; level: number; abilities: string[] }> = {}): ZoneAction => ({
+    type: "dev", by: "ann", dev: { op: "kit", unit, classId: "devops_mage", weapon: "tome", level: 7, abilities: ["chain_lightning", "tidal_wave", "soothing_rain", "trade_winds"], ...over },
+  });
+
+  it("makes your hero any class, level and weapon, with as many of the class's abilities as you like", () => {
+    const state = must(onMap(), kit("ann"));
+    const ann = unit(state, "ann");
+    expect(ann).toMatchObject({ kind: "devops_mage", level: 7, devKit: true });
+    expect(ann.abilities).toEqual([...WEAPONS.tome.abilities, "chain_lightning", "tidal_wave", "soothing_rain", "trade_winds"]);
+    expect(ann.outfit?.main_hand?.ref).toBe("tome");
+    expect(ann.hp).toBe(ann.maxHp);
+  });
+
+  it("drops abilities that are not the class's, and refuses a weapon of another class or a hero not yours", () => {
+    expect(unit(must(onMap(), kit("ann", { abilities: ["bolster", "tidal_wave"] })), "ann").abilities).not.toContain("bolster");
+    expect(fails(onMap(), kit("ann", { weapon: "mace" }))).toMatch(/weapon/);
+    expect(fails(onMap(), kit("bo"))).toMatch(/not one of your heroes/);
+  });
+
+  it("holds through coming back to the map", () => {
+    let state = must(onMap(), kit("ann"));
+    state = must(state, { type: "join", hero: { ...standInHero("qa_paladin", "ann", 1)!, name: "ann" } });
+    expect(unit(state, "ann")).toMatchObject({ kind: "devops_mage", level: 7 });
+  });
+});
+
+describe("the Sage's stars", () => {
+  const ALL = ["falling_star", "constellation", "new_moon", "chart_a_course", "north_star"];
+  /**
+   * A Sage (ann) with a crewmate 3 hexes along row 6 (bo) and another 3 past him (cy), in a fight with `foes` (dummies,
+   * with HP to spare). The three heroes share one turn, and it is theirs.
+   */
+  function party(foes: HexPos[] = [at(14, 10)]) {
+    let state = board();
+    state.aiOff = true;
+    hero(state, "ann", "staff_sage", at(5, 6)).abilities = [...ALL];
+    hero(state, "bo", "qa_paladin", at(8, 6));
+    hero(state, "cy", "devops_mage", at(11, 6));
+    const ids = foes.map((pos) => {
+      const e = enemy(state, "dummy", pos);
+      e.hp = e.maxHp = 500;
+      return e.id;
+    });
+    state = provoke(state);
+    const enc = state.encounter!;
+    enc.order = ["ann", "bo", "cy", ...ids];
+    Object.assign(enc.init, { ann: 20, bo: 19, cy: 18 }, Object.fromEntries(ids.map((id) => [id, 1])));
+    while (!["ann", "bo", "cy"].every((id) => state.encounter!.acting.includes(id))) state = must(state, { type: "timeout" });
+    return { state, foes: ids };
+  }
+  function nextTurn(state: ZoneState, sink: ZoneEvent[] = []): ZoneState {
+    for (const id of [...state.encounter!.acting]) if (!state.encounter!.done.includes(id) && !unit(state, id).down) state = must(state, { type: "end_turn", by: id, unit: id }, sink);
+    while (!state.encounter!.acting.includes("ann") || state.encounter!.done.includes("ann")) state = must(state, { type: "timeout" }, sink);
+    return state;
+  }
+  const cast = (ability: string, aim: { target?: string; at?: HexPos } = {}): ZoneAction => ({ type: "use", by: "ann", unit: "ann", ability, ...aim });
+  const has = (state: ZoneState, id: string, kind: string) => unit(state, id).conditions.some((c) => c.kind === kind);
+  const hurt = (state: ZoneState, id: string) => unit(state, id).maxHp - unit(state, id).hp;
+
+  it("are all in the Sage's pool", () => {
+    expect(poolFor("staff_sage").map((e) => e.id)).toEqual(ALL);
+  });
+
+  it("Guiding Light: anyone attacking a lit enemy has advantage", () => {
+    const { state, foes } = party();
+    const ctx = () => attackContext(state, unit(state, "bo"), unit(state, foes[0]), { melee: false });
+    expect(ctx().adv).toBe(0);
+    unit(state, foes[0]).conditions.push({ kind: "guiding_light", rounds: 3 });
+    expect(ctx().adv).toBe(1);
+    expect(ctx().notes.join(" ")).toMatch(/Guiding Light/);
+  });
+
+  it("Falling Star: an Action, 7 hexes, 3 turns to wait; landed, the target burns and is lit for 3 of its turns", () => {
+    let landed: ZoneState | null = null;
+    for (let seed = 1; seed < 40 && !landed; seed++) {
+      let { state, foes } = party([at(12, 6)]);
+      state.rng = seed;
+      const events: ZoneEvent[] = [];
+      state = must(state, cast("falling_star", { target: foes[0] }), events);
+      expect(state.encounter!.budgets.ann).toMatchObject({ action: false, bonus: true });
+      expect(unit(state, "ann").cooldowns.falling_star).toBe(4);
+      if (events.some((e) => e.t === "hit" && e.what === "falling_star")) landed = state;
+      else expect(has(state, foes[0], "guiding_light")).toBe(false);
+    }
+    expect(landed).not.toBeNull();
+    const target = landed!.units.find((u) => u.side === "enemy")!;
+    expect(target.conditions.find((c) => c.kind === "guiding_light")?.rounds).toBe(3);
+    expect(target.conditions.some((c) => c.kind === "burning")).toBe(true);
+    // 7 hexes, and no further.
+    const { state, foes } = party([at(13, 6)]);
+    expect(fails(state, cast("falling_star", { target: foes[0] }))).toMatch(/range/);
+  });
+
+  it("Constellation: a Bonus action linking the Sage to ally after ally within 4; enemies on the links are struck and lit, the Sage's side untouched", () => {
+    // Two foes on the line from ann to bo, one between bo and cy, one off the links altogether.
+    let { state, foes } = party([at(6, 6), at(7, 6), at(10, 6), at(6, 9)]);
+    expect(constellationLinks(state, unit(state, "ann")).map((l) => [l.from.id, l.to.id])).toEqual([["ann", "bo"], ["bo", "cy"]]);
+    state = must(state, cast("constellation"));
+    expect(state.encounter!.budgets.ann).toMatchObject({ action: true, bonus: false });
+    expect(unit(state, "ann").cooldowns.constellation).toBe(4);
+    for (const id of foes.slice(0, 3)) {
+      expect(hurt(state, id)).toBeGreaterThan(0);
+      expect(has(state, id, "guiding_light")).toBe(true);
+    }
+    expect(hurt(state, foes[3])).toBe(0);
+    expect(has(state, foes[3], "guiding_light")).toBe(false);
+    for (const id of ["ann", "bo", "cy"]) expect(hurt(state, id)).toBe(0);
+  });
+
+  it("Constellation: an ally more than 4 from the last one linked is left out, and with nobody to link it cannot be used", () => {
+    let { state } = party();
+    unit(state, "cy").pos = at(13, 6);
+    expect(constellationLinks(state, unit(state, "ann")).map((l) => l.to.id)).toEqual(["bo"]);
+    unit(state, "bo").pos = at(10, 6);
+    expect(fails(state, cast("constellation"))).toMatch(/No ally/);
+  });
+
+  it("New Moon: puts out every Guiding Light, striking each lit enemy hard; the unlit are untouched", () => {
+    let { state, foes } = party([at(12, 6), at(14, 9), at(2, 10)]);
+    expect(fails(state, cast("new_moon"))).toMatch(/No enemy is lit/);
+    for (const id of foes.slice(0, 2)) unit(state, id).conditions.push({ kind: "guiding_light", rounds: 3 });
+    state = must(state, cast("new_moon"));
+    expect(state.encounter!.budgets.ann.action).toBe(false);
+    expect(unit(state, "ann").cooldowns.new_moon).toBe(5);
+    for (const id of foes.slice(0, 2)) {
+      expect(has(state, id, "guiding_light")).toBe(false);
+      expect(hurt(state, id)).toBeGreaterThanOrEqual(10);
+    }
+    expect(hurt(state, foes[2])).toBe(0);
+  });
+
+  it("Chart a Course: a Bonus action marking a hex; the Sage's side moves 3 further, but only on steps toward it", () => {
+    let { state } = party();
+    const move = state.encounter!.budgets.bo.move;
+    expect(fails(state, cast("chart_a_course", { at: at(14, 6) }))).toMatch(/range/);
+    state = must(state, cast("chart_a_course", { at: at(13, 6) }));
+    expect(state.encounter!.budgets.ann.bonus).toBe(false);
+    expect(chartOf(unit(state, "ann"))).toEqual(at(13, 6));
+    expect(state.encounter!.budgets.bo.course).toBe(3);
+    // Away from the mark, no further than ever.
+    expect(fails(state, { type: "move", by: "bo", unit: "bo", to: at(8 - move - 1, 6) })).toMatch(/movement/);
+    // Toward it, 3 further, the course's movement spent first. (Up row 6 from bo: cy is passed, the mark is past the end.)
+    unit(state, "cy").pos = at(11, 2);
+    unit(state, "ann").pos = at(5, 2);
+    unit(state, "bo").pos = at(2, 6);
+    expect(fails(state, { type: "move", by: "bo", unit: "bo", to: at(2 + move + 4, 6) })).toMatch(/movement/);
+    state = must(state, { type: "move", by: "bo", unit: "bo", to: at(5, 6) });
+    expect(state.encounter!.budgets.bo).toMatchObject({ course: 0, move });
+    state = must(state, { type: "move", by: "bo", unit: "bo", to: at(5 + move, 6) });
+    expect(state.encounter!.budgets.bo.move).toBe(0);
+  });
+
+  it("Chart a Course: a way that wanders off and back still gets the course's movement for its steps toward the mark", () => {
+    let { state } = party();
+    state = must(state, cast("chart_a_course", { at: at(13, 6) }));
+    const move = state.encounter!.budgets.bo.move;
+    // Rock in the way along row 6 a hex past bo: the walk has to go round it, a step off the row and back.
+    for (const t of state.map.tiles) if (t.q === at(9, 6).q && t.r === 6) t.biome = "rock";
+    unit(state, "cy").pos = at(11, 2);
+    const reach = zoneReach(state, unit(state, "bo"), move, undefined, { marks: [at(13, 6)], left: 3 });
+    expect(reach.get(posKey(at(10, 6)))?.cost).toBeLessThan(3);
+  });
+
+  it("Chart a Course: the mark lasts 4 of the Sage's turns, gives each turn's movement anew, and a new mark replaces it", () => {
+    let { state } = party();
+    state = must(state, cast("chart_a_course", { at: at(13, 6) }));
+    state = nextTurn(state);
+    expect(state.encounter!.budgets.bo.course).toBe(3);
+    // Ready again once 2 more of the Sage's turns have gone by.
+    state = nextTurn(state);
+    expect(fails(state, cast("chart_a_course", { at: at(2, 6) }))).toMatch(/not ready/);
+    state = nextTurn(state);
+    state = must(state, cast("chart_a_course", { at: at(2, 6) }));
+    expect(unit(state, "ann").conditions.filter((c) => c.kind === "charted")).toHaveLength(1);
+    expect(chartOf(unit(state, "ann"))).toEqual(at(2, 6));
+    for (let turn = 1; turn <= 4; turn++) state = nextTurn(state);
+    expect(chartOf(unit(state, "ann"))).toBeDefined();
+    state = nextTurn(state);
+    expect(chartOf(unit(state, "ann"))).toBeUndefined();
+    expect(state.encounter!.budgets.bo.course).toBeUndefined();
+  });
+
+  it("North Star: strikes and lights every enemy beside the ally, then the ally's blows set what they hit Burning", () => {
+    let { state, foes } = party([at(9, 6), at(8, 7), at(12, 10)]);
+    state = must(state, cast("north_star", { target: "bo" }));
+    expect(unit(state, "ann").cooldowns.north_star).toBe(4);
+    for (const id of foes.slice(0, 2)) {
+      expect(hurt(state, id)).toBeGreaterThan(0);
+      expect(has(state, id, "guiding_light")).toBe(true);
+      // The star's own blow sets nothing alight.
+      expect(has(state, id, "burning")).toBe(false);
+    }
+    expect(hurt(state, foes[2])).toBe(0);
+    expect(unit(state, "bo").conditions.find((c) => c.kind === "north_star")?.rounds).toBe(3);
+    // Lit, the blow has advantage; landed, the target burns.
+    let burned = false;
+    for (let seed = 1; seed < 20 && !burned; seed++) {
+      const tryState = structuredClone(state);
+      tryState.rng = seed;
+      const events: ZoneEvent[] = [];
+      const next = must(tryState, { type: "use", by: "bo", unit: "bo", ability: "bash", target: foes[0] }, events);
+      if (events.some((e) => e.t === "hit" && e.what === "bash")) burned = has(next, foes[0], "burning");
+    }
+    expect(burned).toBe(true);
+  });
+
+  it("North Star: a blow that would set a fire anyway sets one more stack, and each stack burns", () => {
+    const { state, foes } = party();
+    const ctx: Ctx = { state, rng: makeRng(3), events: [], effects: [] };
+    const target = unit(state, foes[0]);
+    kindle(ctx, unit(state, "bo"), target, 3);
+    expect(burnOf(target)).toBe(EFFECT_TICK.burning);
+    addCondition(ctx, unit(state, "bo"), "north_star", 3);
+    damage(ctx, target, 1, { actor: "bo", what: "bash" });
+    expect(burnOf(target)).toBe(EFFECT_TICK.burning);
+    kindle(ctx, unit(state, "bo"), target, 3);
+    expect(burnOf(target)).toBe(2 * EFFECT_TICK.burning!);
+  });
+});
+
+describe("the Warden's wall", () => {
+  const ALL = ["against_the_waves", "overwhelm", "fortify", "bulwark_strike", "taunt"];
+  /**
+   * A Warden (ann) with a crewmate (bo, a Mage) in a fight with `foes` (dummies with HP to spare, unless `kind` says
+   * otherwise). The two heroes share one turn, and it is theirs. `edit` changes the board first.
+   */
+  function party(foes: HexPos[] = [at(6, 6)], opts: { bo?: HexPos; kind?: string; edit?: (t: Tile) => void } = {}) {
+    let state = board(opts.edit);
+    state.aiOff = true;
+    hero(state, "ann", "sre_warden", at(5, 6)).abilities = ["sturdy_blow", ...ALL];
+    hero(state, "bo", "devops_mage", opts.bo ?? at(3, 8));
+    const ids = foes.map((pos) => {
+      const e = enemy(state, opts.kind ?? "dummy", pos);
+      e.hp = e.maxHp = 500;
+      return e.id;
+    });
+    state = provoke(state);
+    const enc = state.encounter!;
+    enc.order = ["ann", "bo", ...ids];
+    Object.assign(enc.init, { ann: 20, bo: 19 }, Object.fromEntries(ids.map((id) => [id, 1])));
+    while (!["ann", "bo"].every((id) => state.encounter!.acting.includes(id))) state = must(state, { type: "timeout" });
+    return { state, foes: ids };
+  }
+  function nextTurn(state: ZoneState, sink: ZoneEvent[] = []): ZoneState {
+    for (const id of [...state.encounter!.acting]) if (!state.encounter!.done.includes(id) && !unit(state, id).down) state = must(state, { type: "end_turn", by: id, unit: id }, sink);
+    while (!state.encounter!.acting.includes("ann") || state.encounter!.done.includes("ann")) state = must(state, { type: "timeout" }, sink);
+    return state;
+  }
+  const use = (ability: string, aim: { target?: string; at?: HexPos } = {}): ZoneAction => ({ type: "use", by: "ann", unit: "ann", ability, ...aim });
+  const has = (state: ZoneState, id: string, kind: string) => unit(state, id).conditions.some((c) => c.kind === kind);
+  const rock = (...hexes: HexPos[]) => (t: Tile) => { if (hexes.some((p) => p.q === t.q && p.r === t.r)) t.biome = "rock"; };
+
+  it("are all in the Warden's pool, and on none of its weapons", () => {
+    expect(poolFor("sre_warden").map((e) => e.id)).toEqual(ALL);
+    for (const w of ["pager_axe", "maul", "boarding_pike"]) expect(WEAPONS[w].abilities.some((a) => ALL.includes(a)), w).toBe(false);
+  });
+
+  it("Against the Waves: a Bonus action, 2 turns to wait; a high shield on the Warden, higher standing in water", () => {
+    let { state } = party();
+    state = must(state, use("against_the_waves"));
+    expect(state.encounter!.budgets.ann).toMatchObject({ action: true, bonus: false });
+    expect(unit(state, "ann").cooldowns.against_the_waves).toBe(3);
+    expect(shieldOf(unit(state, "ann"))).toBe(10 + 1);
+    expect(shieldOf(unit(state, "bo"))).toBe(0);
+    ({ state } = party());
+    state = paint(state, "water", [at(5, 6)]);
+    state = must(state, use("against_the_waves"));
+    expect(shieldOf(unit(state, "ann"))).toBe(10 + 1 + 8);
+  });
+
+  /** Overwhelm tried over seeds until the contest goes one way or the other. */
+  function overwhelmed(won: boolean, foes: HexPos[], opts: Parameters<typeof party>[1] = {}) {
+    for (let seed = 1; seed < 80; seed++) {
+      let { state, foes: ids } = party(foes, opts);
+      state.rng = seed;
+      const events: ZoneEvent[] = [];
+      state = must(state, use("overwhelm", { target: ids[0] }), events);
+      const lost = events.some((e) => e.t === "miss" && e.what === "overwhelm");
+      if (lost !== won) return { state, ids, events };
+    }
+    throw new Error("the contest never went that way");
+  }
+
+  it("Overwhelm: a Bonus action, 2 turns to wait; won, the enemy beside you is driven 2 hexes straight back", () => {
+    const { state, ids } = overwhelmed(true, [at(6, 6)]);
+    expect(state.encounter!.budgets.ann).toMatchObject({ action: true, bonus: false });
+    expect(unit(state, "ann").cooldowns.overwhelm).toBe(3);
+    expect(unit(state, ids[0]).pos).toEqual(at(8, 6));
+    expect(has(state, ids[0], "stunned")).toBe(false);
+    // Lost, it stands its ground.
+    const lost = overwhelmed(false, [at(6, 6)]);
+    expect(unit(lost.state, lost.ids[0]).pos).toEqual(at(6, 6));
+    // Only an enemy beside you.
+    const { state: far, foes } = party([at(7, 6)]);
+    expect(fails(far, use("overwhelm", { target: foes[0] }))).toMatch(/next to/);
+  });
+
+  it("Overwhelm: driven into rock, or a wall, it is Stunned and loses its next turn; into somebody, it just stops", () => {
+    const flat = overwhelmed(true, [at(6, 6)], { edit: rock(at(7, 6)) });
+    expect(unit(flat.state, flat.ids[0]).pos).toEqual(at(6, 6));
+    expect(has(flat.state, flat.ids[0], "stunned")).toBe(true);
+    const events: ZoneEvent[] = [];
+    nextTurn(flat.state, events);
+    expect(events.some((e) => e.t === "skip" && e.id === flat.ids[0])).toBe(true);
+    // A hex, then the rock.
+    const one = overwhelmed(true, [at(6, 6)], { edit: rock(at(8, 6)) });
+    expect(unit(one.state, one.ids[0]).pos).toEqual(at(7, 6));
+    expect(has(one.state, one.ids[0], "stunned")).toBe(true);
+    // Into another enemy: no further, and no stun.
+    const body = overwhelmed(true, [at(6, 6), at(8, 6)]);
+    expect(unit(body.state, body.ids[0]).pos).toEqual(at(7, 6));
+    expect(has(body.state, body.ids[0], "stunned")).toBe(false);
+  });
+
+  it("Fortify: an Action, 5 hexes, 3 turns to wait; a wall of 3 hexes, broadside on to the Warden, that nobody walks through", () => {
+    let { state, foes } = party([at(12, 6)]);
+    state = must(state, use("fortify", { at: at(8, 6) }));
+    expect(state.encounter!.budgets.ann).toMatchObject({ action: false, bonus: true });
+    expect(unit(state, "ann").cooldowns.fortify).toBe(4);
+    const wall = state.weather!.find((w) => w.kind === "wall")!;
+    expect(wall.hexes).toHaveLength(3);
+    expect(wall.hexes).toContainEqual(at(8, 6));
+    for (const p of wall.hexes) {
+      expect(hexDistance(p, at(8, 6))).toBeLessThanOrEqual(1);
+      // Broadside on: every hex of it as far from the Warden as the one aimed at.
+      expect(hexDistance(p, at(5, 6))).toBe(3);
+      for (const u of [unit(state, "ann"), unit(state, foes[0])]) expect(stepCost(state, u, { q: p.q - 1, r: p.r }, p).cost).toBe(Infinity);
+    }
+    // Out of reach, and nowhere to raise it.
+    expect(fails(state, use("fortify", { at: at(11, 6) }))).toBeTruthy();
+    ({ state } = party([at(8, 6)]));
+    expect(fails(state, use("fortify", { at: at(8, 6) }))).toMatch(/room/);
+  });
+
+  it("Fortify: the Warden's side sees over it and is steadier beside it; the enemy sees nothing through it and is no steadier", () => {
+    let { state, foes } = party([at(10, 6)], { bo: at(7, 6) });
+    const before = { bo: defenceOf(unit(state, "bo"), state), foe: defenceOf(unit(state, foes[0]), state) };
+    state = must(state, use("fortify", { at: at(8, 6) }));
+    expect(defenceOf(unit(state, "bo"), state)).toBe(before.bo + 1);
+    // Walk the dummy up to the far side of it: no steadier there.
+    unit(state, foes[0]).pos = at(9, 6);
+    expect(defenceOf(unit(state, foes[0]), state)).toBe(before.foe);
+    expect(seesFor(state, "hero", at(5, 6), at(11, 6))).toBe(true);
+    expect(seesFor(state, "enemy", at(11, 6), at(5, 6))).toBe(false);
+  });
+
+  it("Fortify: the wall comes down after its rounds", () => {
+    let { state } = party([at(12, 6)]);
+    state = must(state, use("fortify", { at: at(8, 6) }));
+    // The round it goes up in, and 3 more.
+    for (let i = 0; i < 4; i++) {
+      expect(state.weather!.some((w) => w.kind === "wall")).toBe(true);
+      state = nextTurn(state);
+    }
+    expect(state.weather!.some((w) => w.kind === "wall")).toBe(false);
+  });
+
+  it("an enemy shooter cannot see a hero behind the wall to shoot", () => {
+    // An archer in a hollow it cannot climb out of (it may shoot, but not go round), the Mage far out of its range.
+    const pit = (t: Tile) => { if (hexDistance(t, at(11, 6)) === 1) t.elev = 2; };
+    const shotAtAnn = (wall: boolean) => {
+      let { state, foes } = party([at(11, 6)], { kind: "archer", bo: at(0, 11), edit: pit });
+      if (wall) state = must(state, use("fortify", { at: at(7, 6) }));
+      state.aiOff = false;
+      const events: ZoneEvent[] = [];
+      nextTurn(state, events);
+      return events.some((e) => e.t === "roll" && e.roll.id === foes[0] && e.roll.target === "ann");
+    };
+    expect(shotAtAnn(false)).toBe(true);
+    expect(shotAtAnn(true)).toBe(false);
+  });
+
+  it("Bulwark Strike: an Action, 2 turns to wait; shields first, on top of what is there, then hits harder for the shield", () => {
+    const blow = (shield: number) => {
+      for (let seed = 1; seed < 60; seed++) {
+        let { state, foes } = party();
+        state.rng = seed;
+        if (shield > 0) unit(state, "ann").conditions.push({ kind: "bolstered", rounds: 2, amount: shield });
+        const events: ZoneEvent[] = [];
+        state = must(state, use("bulwark_strike", { target: foes[0] }), events);
+        expect(unit(state, "ann").cooldowns.bulwark_strike).toBe(3);
+        expect(shieldOf(unit(state, "ann"))).toBe(shield + 4 + 1);
+        const hit = events.find((e) => e.t === "hit" && e.what === "bulwark_strike");
+        if (hit?.t === "hit" && !hit.crit) return { seed, amount: hit.amount };
+      }
+      throw new Error("never landed");
+    };
+    const bare = blow(0);
+    const braced = blow(20);
+    expect(braced.seed).toBe(bare.seed);
+    expect(braced.amount - bare.amount).toBe(Math.floor((20 + 5) / 2) - Math.floor(5 / 2));
+  });
+
+  it("Taunt: a Bonus action, 3 turns to wait; every enemy beside the Warden is Taunted by them for 2 of its turns", () => {
+    let { state, foes } = party([at(6, 6), at(7, 6), at(8, 6)]);
+    state = must(state, use("taunt"));
+    expect(state.encounter!.budgets.ann).toMatchObject({ action: true, bonus: false });
+    expect(unit(state, "ann").cooldowns.taunt).toBe(4);
+    expect(unit(state, foes[0]).conditions.find((c) => c.kind === "taunted")).toMatchObject({ rounds: 2, by: "ann" });
+    for (const id of foes.slice(1)) expect(has(state, id, "taunted")).toBe(false);
+    state = nextTurn(state);
+    expect(has(state, foes[0], "taunted")).toBe(true);
+    state = nextTurn(state);
+    expect(has(state, foes[0], "taunted")).toBe(false);
+    ({ state } = party([at(7, 6)]));
+    expect(fails(state, use("taunt"))).toMatch(/beside you/);
+  });
+
+  it("Taunt: a Taunted enemy goes for the Warden over a softer target it would rather hit, and for anyone else only if it cannot", () => {
+    const swings = (hide: boolean) => {
+      const targets = new Set<string>();
+      for (let seed = 1; seed < 12; seed++) {
+        // The bandit stands between the Warden and the Mage, beside both.
+        let { state, foes } = party([at(6, 6)], { kind: "bandit", bo: at(7, 6) });
+        state.rng = seed;
+        state = must(state, use("taunt"));
+        if (hide) unit(state, "ann").conditions.push({ kind: "invisible", rounds: 3 });
+        state.aiOff = false;
+        const events: ZoneEvent[] = [];
+        nextTurn(state, events);
+        for (const e of events) if (e.t === "roll" && e.roll.kind === "attack" && e.roll.id === foes[0]) targets.add(e.roll.target!);
+      }
+      return targets;
+    };
+    expect(swings(false)).toEqual(new Set(["ann"]));
+    // The Warden Unseen: there is nobody to go for but the Mage.
+    expect(swings(true)).toEqual(new Set(["bo"]));
+  });
+});
+
+describe("the Warlock's drowning", () => {
+  const ALL = ["curse_of_drowning", "summon_sunken_sailors", "red_sky_at_morning", "unholy_waters", "the_black_spot"];
+  /**
+   * A Warlock (ann) with a crewmate (bo, a Mage) in a fight with `foes` (dummies with HP to spare, unless `kind` says
+   * otherwise). The two heroes share one turn, and it is theirs.
+   */
+  function party(foes: HexPos[] = [at(8, 6)], opts: { bo?: HexPos; kind?: string } = {}) {
+    let state = board();
+    state.aiOff = true;
+    hero(state, "ann", "data_warlock", at(5, 6)).abilities = ["hex", ...ALL];
+    hero(state, "bo", "devops_mage", opts.bo ?? at(3, 8));
+    const ids = foes.map((pos) => {
+      const e = enemy(state, opts.kind ?? "dummy", pos);
+      e.hp = e.maxHp = 500;
+      return e.id;
+    });
+    state = provoke(state);
+    const enc = state.encounter!;
+    enc.order = ["ann", "bo", ...ids];
+    Object.assign(enc.init, { ann: 20, bo: 19 }, Object.fromEntries(ids.map((id) => [id, 1])));
+    while (!["ann", "bo"].every((id) => state.encounter!.acting.includes(id))) state = must(state, { type: "timeout" });
+    return { state, foes: ids };
+  }
+  function nextTurn(state: ZoneState, sink: ZoneEvent[] = []): ZoneState {
+    for (const id of [...state.encounter!.acting]) if (!state.encounter!.done.includes(id) && !unit(state, id).down) state = must(state, { type: "end_turn", by: unit(state, id).controller ?? id, unit: id }, sink);
+    while (!state.encounter!.acting.includes("ann") || state.encounter!.done.includes("ann")) state = must(state, { type: "timeout" }, sink);
+    return state;
+  }
+  const use = (ability: string, aim: { target?: string; at?: HexPos } = {}): ZoneAction => ({ type: "use", by: "ann", unit: "ann", ability, ...aim });
+  const has = (state: ZoneState, id: string, kind: string) => unit(state, id).conditions.some((c) => c.kind === kind);
+  const cond = (state: ZoneState, id: string, kind: string) => unit(state, id).conditions.find((c) => c.kind === kind);
+  const stacks = (state: ZoneState, id: string) => cond(state, id, "drowning")?.amount ?? 0;
+  const sailors = (state: ZoneState) => state.units.filter((u) => u.summon?.by === "ann");
+
+  it("are all in the Warlock's pool", () => {
+    expect(poolFor("data_warlock").map((e) => e.id)).toEqual(ALL);
+    for (const id of ALL) expect(TACTICS[id], id).toBeDefined();
+  });
+
+  it("Curse of Drowning: a Bonus action, 5 hexes, 3 turns to wait; struck without a roll, Slowed, and cursed for 3 of its turns", () => {
+    let { state, foes } = party();
+    const events: ZoneEvent[] = [];
+    state = must(state, use("curse_of_drowning", { target: foes[0] }), events);
+    expect(state.encounter!.budgets.ann).toMatchObject({ action: true, bonus: false });
+    expect(unit(state, "ann").cooldowns.curse_of_drowning).toBe(4);
+    expect(events.some((e) => e.t === "roll" && e.roll.id === "ann")).toBe(false);
+    expect(events.some((e) => e.t === "hit" && e.what === "curse_of_drowning" && e.target === foes[0])).toBe(true);
+    expect(has(state, foes[0], "slowed")).toBe(true);
+    expect(cond(state, foes[0], "drowning_curse")).toMatchObject({ rounds: 3, by: "ann" });
+    // Out of water it drowns no more for it.
+    state = nextTurn(state);
+    expect(stacks(state, foes[0])).toBe(0);
+    // Too far.
+    ({ state, foes } = party([at(11, 6)]));
+    expect(fails(state, use("curse_of_drowning", { target: foes[0] }))).toMatch(/Out of range/);
+  });
+
+  it("Curse of Drowning: a stack each time the enemy starts, and each time it ends, a turn in water, for as long as the curse lasts", () => {
+    let { state, foes } = party();
+    state = paint(state, "water", [at(8, 6)]);
+    state = must(state, use("curse_of_drowning", { target: foes[0] }));
+    // Its first turn: one for starting it in water, one for ending it there.
+    state = nextTurn(state);
+    expect(stacks(state, foes[0])).toBe(2);
+    state = nextTurn(state);
+    expect(stacks(state, foes[0])).toBe(4);
+    // Its third and last cursed turn still counts at the end.
+    state = nextTurn(state);
+    expect(stacks(state, foes[0])).toBe(6);
+    expect(has(state, foes[0], "drowning_curse")).toBe(false);
+    state = nextTurn(state);
+    expect(stacks(state, foes[0])).toBe(6);
+  });
+
+  it("Drowning: HP lost for every stack at the start of its turn, then a breath held against a low mark that every stack raises", () => {
+    let { state, foes } = party();
+    unit(state, foes[0]).conditions.push({ kind: "drowning", rounds: 3, amount: 3 });
+    const events: ZoneEvent[] = [];
+    state = nextTurn(state, events);
+    expect(events.find((e) => e.t === "tick" && e.kind === "drowning")).toMatchObject({ target: foes[0], amount: 2 * 3 });
+    const breath = events.find((e) => e.t === "roll" && e.roll.kind === "save" && e.roll.id === foes[0]);
+    expect(breath?.t === "roll" && breath.roll.vs).toBe(2 + 2 * 3);
+    // No new stack: it runs down, and is gone after its third turn.
+    expect(cond(state, foes[0], "drowning")).toMatchObject({ rounds: 2, amount: 3 });
+    state = nextTurn(nextTurn(state));
+    expect(has(state, foes[0], "drowning")).toBe(false);
+  });
+
+  it("Drowning: a breath not held costs the Action, but not the move", () => {
+    /** A bandit beside the Warlock, drowning deep, its turn played over seeds until the breath goes the way asked. */
+    const turn = (held: boolean) => {
+      for (let seed = 1; seed < 80; seed++) {
+        let { state, foes } = party([at(6, 6)], { kind: "bandit" });
+        unit(state, foes[0]).conditions.push({ kind: "drowning", rounds: 3, amount: 4 });
+        state.aiOff = false;
+        state.rng = seed;
+        const events: ZoneEvent[] = [];
+        nextTurn(state, events);
+        const choked = events.some((e) => e.t === "choked" && e.id === foes[0]);
+        if (choked !== held) return events.filter((e) => e.t === "roll" && e.roll.kind === "attack" && e.roll.id === foes[0]).length;
+      }
+      throw new Error("the breath never went that way");
+    };
+    expect(turn(true)).toBe(1);
+    expect(turn(false)).toBe(0);
+  });
+
+  it("The Black Spot: an Action, 4 turns to wait; no roll; the enemy attacks with disadvantage, and drowns a stack deeper at the end of each of 4 turns", () => {
+    let { state, foes } = party();
+    const events: ZoneEvent[] = [];
+    state = must(state, use("the_black_spot", { target: foes[0] }), events);
+    expect(state.encounter!.budgets.ann).toMatchObject({ action: false, bonus: true });
+    expect(unit(state, "ann").cooldowns.the_black_spot).toBe(5);
+    expect(events.some((e) => e.t === "roll" && e.roll.id === "ann")).toBe(false);
+    expect(cond(state, foes[0], "black_spot")).toMatchObject({ rounds: 4, by: "ann" });
+    expect(attackContext(state, unit(state, foes[0]), unit(state, "ann"), { melee: false }).adv).toBe(-1);
+    for (let turn = 1; turn <= 4; turn++) {
+      state = nextTurn(state);
+      // Every stack laid on starts the count again for all of them.
+      expect(cond(state, foes[0], "drowning")).toMatchObject({ rounds: 3, amount: turn });
+    }
+    expect(has(state, foes[0], "black_spot")).toBe(false);
+    state = nextTurn(state);
+    expect(cond(state, foes[0], "drowning")).toMatchObject({ rounds: 2, amount: 4 });
+  });
+
+  it("The Black Spot: one that falls with it on passes it to the nearest of its side, for what it had left", () => {
+    let { state, foes } = party([at(8, 6), at(10, 6), at(13, 6)]);
+    state = must(state, use("the_black_spot", { target: foes[0] }));
+    state = nextTurn(state);
+    const ctx: Ctx = { state, rng: makeRng(1), events: [], effects: [] };
+    damage(ctx, unit(state, foes[0]), 999, { actor: "ann", what: "hex" });
+    expect(has(state, foes[0], "black_spot")).toBe(false);
+    expect(cond(state, foes[1], "black_spot")).toMatchObject({ rounds: 3, by: "ann" });
+    expect(has(state, foes[2], "black_spot")).toBe(false);
+    // And on again from that one.
+    damage(ctx, unit(state, foes[1]), 999, { actor: "ann", what: "hex" });
+    expect(cond(state, foes[2], "black_spot")).toMatchObject({ rounds: 3, by: "ann" });
+    // The last of them takes it to the grave.
+    damage(ctx, unit(state, foes[2]), 999, { actor: "ann", what: "hex" });
+    expect(state.units.some((u) => u.conditions.some((c) => c.kind === "black_spot"))).toBe(false);
+  });
+
+  it("Red Sky at Morning: an Action, 5 hexes, 5 turns to wait; every enemy within 2 of the hex attacks with disadvantage for 3 turns, nobody else", () => {
+    let { state, foes } = party([at(8, 6), at(9, 7), at(12, 6)], { bo: at(7, 6) });
+    state = must(state, use("red_sky_at_morning", { at: at(9, 6) }));
+    expect(state.encounter!.budgets.ann).toMatchObject({ action: false, bonus: true });
+    expect(unit(state, "ann").cooldowns.red_sky_at_morning).toBe(6);
+    expect(cond(state, foes[0], "red_sky")).toMatchObject({ rounds: 3 });
+    expect(has(state, foes[1], "red_sky")).toBe(true);
+    expect(has(state, foes[2], "red_sky")).toBe(false);
+    expect(has(state, "bo", "red_sky")).toBe(false);
+    expect(attackContext(state, unit(state, foes[0]), unit(state, "bo"), { melee: true }).adv).toBe(-1);
+    expect(fails(state, { ...use("red_sky_at_morning", { at: at(11, 6) }) })).toBeTruthy();
+  });
+
+  it("Unholy Waters: a Bonus action, 5 hexes, 2 turns to wait; water over 7 hexes, but fire under each enemy in them", () => {
+    let { state, foes } = party([at(8, 6), at(9, 6)], { bo: at(7, 6) });
+    // Water already under one of them: it still comes up burning.
+    state = paint(state, "water", [at(9, 6)]);
+    const events: ZoneEvent[] = [];
+    state = must(state, use("unholy_waters", { at: at(8, 6) }), events);
+    expect(state.encounter!.budgets.ann).toMatchObject({ action: true, bonus: false });
+    expect(unit(state, "ann").cooldowns.unholy_waters).toBe(3);
+    const kind = (p: HexPos) => state.surfaces[posKey(p)]?.kind;
+    expect(kind(at(8, 6))).toBe("fire");
+    expect(kind(at(9, 6))).toBe("fire");
+    for (const p of blast(state.map, at(8, 6), 1).filter((p) => !foes.some((id) => posKey(unit(state, id).pos) === posKey(p)))) expect(kind(p), posKey(p)).toBe("water");
+    expect(state.surfaces[posKey(at(7, 6))]).toMatchObject({ kind: "water", rounds: 3 });
+    expect(state.surfaces[posKey(at(8, 6))]).toMatchObject({ kind: "fire", rounds: 2 });
+    for (const id of foes) expect(events.some((e) => e.t === "tick" && e.kind === "fire" && e.target === id), id).toBe(true);
+    expect(has(state, "bo", "wet")).toBe(true);
+  });
+
+  it("Summon Sunken Sailors: an Action, 4 turns to wait; a cutlass on the hex picked and a gunner beside it, nearer the Warlock, both played by its player", () => {
+    let { state, foes } = party([at(13, 6)]);
+    state = must(state, use("summon_sunken_sailors", { at: at(8, 6) }));
+    expect(unit(state, "ann").cooldowns.summon_sunken_sailors).toBe(5);
+    const [cutlass, gunner] = sailors(state);
+    expect(cutlass).toMatchObject({ kind: "drowned_cutlass", controller: "ann", pos: at(8, 6) });
+    expect(gunner).toMatchObject({ kind: "drowned_gunner", controller: "ann", pos: at(7, 6) });
+    // The cutlass stands up to more; the gunner's pistol hits harder, and reaches 4 hexes.
+    expect(cutlass.maxHp).toBeGreaterThan(gunner.maxHp);
+    expect(defenceOf(cutlass)).toBeGreaterThan(defenceOf(gunner));
+    expect(diceAverage(abilityDiceOf("sailor_pistol"))).toBeGreaterThan(diceAverage(abilityDiceOf("sailor_scimitar")));
+    expect(TACTICS.sailor_pistol).toMatchObject({ reach: "ranged", range: 4 });
+    expect(TACTICS.sailor_scimitar).toMatchObject({ reach: "melee" });
+    // Straight after the Warlock in the order, in the turn they share.
+    const enc = state.encounter!;
+    expect(enc.order.slice(enc.order.indexOf("ann") + 1, enc.order.indexOf("ann") + 3)).toEqual([cutlass.id, gunner.id]);
+    for (const s of [cutlass, gunner]) expect(enc.budgets[s.id]).toMatchObject({ action: true, move: 4 });
+    expect(fails(state, { type: "use", by: "ann", unit: gunner.id, ability: "sailor_pistol", target: foes[0] })).toMatch(/Out of range/);
+    state = must(state, { type: "move", by: "ann", unit: gunner.id, to: at(9, 7) });
+    const events: ZoneEvent[] = [];
+    state = must(state, { type: "use", by: "ann", unit: gunner.id, ability: "sailor_pistol", target: foes[0] }, events);
+    expect(events.some((e) => e.t === "roll" && e.roll.id === gunner.id)).toBe(true);
+  });
+
+  it("Summon Sunken Sailors: room is needed for both; calling them again sends the first two away", () => {
+    let { state } = party([at(13, 6)]);
+    // Rock all round the hex but one side, and that side is the Mage's: no room for the second.
+    const walled = party([at(13, 6)], { bo: at(6, 6) }).state;
+    for (const p of hexNeighbors(at(7, 6), walled.map.grid)) if (posKey(p) !== posKey(at(6, 6))) walled.map.tiles.find((t) => t.q === p.q && t.r === p.r)!.biome = "rock";
+    expect(fails(walled, use("summon_sunken_sailors", { at: at(7, 6) }))).toMatch(/room for them all/);
+    state = must(state, use("summon_sunken_sailors", { at: at(8, 6) }));
+    const first = sailors(state).map((u) => u.id);
+    for (let i = 0; i < 5; i++) state = nextTurn(state);
+    // Again, on the very hex one of the first two holds: they are going, so there is room.
+    const events: ZoneEvent[] = [];
+    state = must(state, use("summon_sunken_sailors", { at: at(8, 6) }), events);
+    expect(sailors(state)).toHaveLength(2);
+    for (const id of first) {
+      expect(events.some((e) => e.t === "dismissed" && e.id === id)).toBe(true);
+      expect(state.encounter!.order).not.toContain(id);
+    }
+  });
+});
+
+/** An ability's damage dice, from its content. */
+const abilityDiceOf = (id: string) => abilityDiceFor(ABILITIES[id]);
+
+describe("Paladin weapons", () => {
+  it("gives each weapon two abilities of its own, none on a cooldown", () => {
+    expect(WEAPONS.mace.abilities).toEqual(["bash", "recover"]);
+    expect(WEAPONS.greatsword.abilities).toEqual(["cleave", "block"]);
+    expect(WEAPONS.ballast_flail.abilities).toEqual(["flail_strike", "armor_crush"]);
+    for (const id of ["bash", "recover", "cleave", "block", "flail_strike", "armor_crush"]) expect(tacticOf(id).cooldown, id).toBeUndefined();
+    expect(ABILITIES.bash.perfect).toEqual({ effect: "prone", turns: 1 });
+    expect(ABILITIES.flail_strike.perfect).toEqual({ effect: "slowed", turns: 2 });
+    expect(ABILITIES.armor_crush.perfect).toEqual({ effect: "sundered", turns: 2 });
+  });
+
+  it("Cleave: swings through the three hexes beside you on the side aimed at, however far off the aim", () => {
+    const { state, foe } = duel("dummy", "qa_paladin", at(5, 6), at(7, 6));
+    const ann = unit(state, "ann");
+    ann.abilities = ["cleave"];
+    for (const aim of [unit(state, foe).pos, at(12, 6)]) {
+      const area = abilityArea(state, ann, "cleave", aim);
+      expect(area).toHaveLength(3);
+      for (const p of area) expect(hexDistance(p, ann.pos)).toBe(1);
+      expect(area.map(posKey)).toContain(posKey(unit(state, foe).pos));
+    }
+    expect(checkAbility(state, ann, "cleave", { at: unit(state, foe).pos })).toBeNull();
+    expect(checkAbility(state, ann, "cleave", { at: at(3, 6) })).toMatch(/No enemy is in that swing/);
+    expect(checkAbility(state, ann, "cleave", {})).toMatch(/which way/);
+  });
+
+  it("Bash with the Action and Armor Crush with the Bonus action, both in one turn", () => {
+    let { state, foe } = duel("dummy", "qa_paladin", at(5, 6), at(7, 6));
+    unit(state, "ann").abilities = ["bash", "armor_crush"];
+    expect(tacticOf("armor_crush").cost).toBe("bonus");
+    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "bash", target: foe });
+    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "armor_crush", target: foe });
+    expect(state.encounter!.budgets.ann).toMatchObject({ action: false, bonus: false });
+  });
+
+  it("Recover heals and Block shields, each for the Bonus action alone", () => {
+    let { state } = duel("dummy", "qa_paladin", at(5, 6), at(7, 6));
+    unit(state, "ann").abilities = ["recover", "block"];
+    unit(state, "ann").hp = 5;
+    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "recover" });
+    expect(unit(state, "ann").hp).toBeGreaterThan(5);
+    expect(state.encounter!.budgets.ann).toMatchObject({ action: true, bonus: false });
+    expect(fails(state, { type: "use", by: "ann", unit: "ann", ability: "block" })).toMatch(/Bonus/);
+    state = duel("dummy", "qa_paladin", at(5, 6), at(7, 6)).state;
+    unit(state, "ann").abilities = ["block"];
+    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "block" });
+    expect(shieldOf(unit(state, "ann"))).toBe(BLOCK.shield + unit(state, "ann").level);
+    expect(state.encounter!.budgets.ann).toMatchObject({ action: true, bonus: false });
+  });
+
+  it("Sundered takes Defence off", () => {
+    const { state, foe } = duel("dummy", "qa_paladin", at(5, 6), at(7, 6));
+    const target = unit(state, foe);
+    const before = defenceOf(target, state);
+    const ctx: Ctx = { state, rng: makeRng(1), events: [], effects: [] };
+    addCondition(ctx, target, "sundered", 2);
+    expect(defenceOf(target, state)).toBe(before - SUNDERED_DEFENCE);
+  });
+});
+
+describe("Mage weapons", () => {
+  it("gives each weapon two abilities of its own, none on a cooldown", () => {
+    expect(WEAPONS.staff.abilities).toEqual(["shock", "mend"]);
+    expect(WEAPONS.tome.abilities).toEqual(["slicing_wind", "winds_blessing"]);
+    expect(WEAPONS.barometer_rod.abilities).toEqual(["waterbolt", "lightning_strike"]);
+    for (const id of ["shock", "mend", "slicing_wind", "winds_blessing", "waterbolt", "lightning_strike"]) expect(tacticOf(id).cooldown, id).toBeUndefined();
+    // Lightning hits harder on the Wet, and a Waterbolt leaves them Wet.
+    expect(tacticOf("shock").vsWet).toBeGreaterThan(0);
+    expect(tacticOf("lightning_strike").vsWet).toBeGreaterThan(0);
+    expect(tacticOf("waterbolt").surface?.kind).toBe("water");
+    expect(ABILITIES.lightning_strike.perfect).toEqual({ effect: "stunned", turns: 1 });
+    expect(tacticOf("mend").cost).toBe("action");
+    expect(tacticOf("winds_blessing").cost).toBe("bonus");
+  });
+
+  it("Slicing Wind: the Mage gets a hex more movement this turn, hit or miss", () => {
+    let { state, foe } = duel("dummy", "devops_mage", at(5, 6), at(8, 6));
+    unit(state, "ann").abilities = ["slicing_wind"];
+    const move = state.encounter!.budgets.ann.move;
+    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "slicing_wind", target: foe });
+    expect(state.encounter!.budgets.ann).toMatchObject({ action: false, move: move + 1 });
+  });
+
+  it("Wind's Blessing: two more movement now on yourself, else on the ally's next turn", () => {
+    let { state } = duel("dummy", "devops_mage", at(5, 6), at(8, 6));
+    unit(state, "ann").abilities = ["winds_blessing"];
+    const move = state.encounter!.budgets.ann.move;
+    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "winds_blessing", target: "ann" });
+    expect(state.encounter!.budgets.ann).toMatchObject({ action: true, bonus: false, move: move + 2 });
+    expect(unit(state, "ann").conditions.some((c) => c.kind === "tailwind")).toBe(false);
+
+    // An ally whose turn is over carries it to their next.
+    state = board();
+    state.aiOff = true;
+    hero(state, "ann", "devops_mage", at(5, 6)).abilities = ["winds_blessing"];
+    hero(state, "bo", "qa_paladin", at(4, 6));
+    enemy(state, "dummy", at(9, 6));
+    state = provoke(state);
+    while (!state.encounter!.acting.includes("ann") || state.encounter!.done.includes("ann")) state = must(state, { type: "timeout" });
+    if (state.encounter!.acting.includes("bo") && !state.encounter!.done.includes("bo")) state = must(state, { type: "end_turn", by: "bo", unit: "bo" });
+    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "winds_blessing", target: "bo" });
+    expect(unit(state, "bo").conditions.find((c) => c.kind === "tailwind")?.amount).toBe(2);
+    state = must(state, { type: "end_turn", by: "ann", unit: "ann" });
+    while (!state.encounter!.acting.includes("bo") || state.encounter!.done.includes("bo")) state = must(state, { type: "timeout" });
+    const budget = state.encounter!.budgets.bo;
+    expect(budget.move).toBe(budget.moveMax + 2);
+  });
+
+  it("Waterbolt: a hit leaves water under the target, and soaks it", () => {
+    let { state, foe } = duel("dummy", "devops_mage", at(5, 6), at(8, 6));
+    unit(state, "ann").abilities = ["waterbolt"];
+    const events: ZoneEvent[] = [];
+    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "waterbolt", target: foe }, events);
+    const hit = events.some((e) => e.t === "hit" && e.target === foe);
+    expect(state.surfaces[posKey(unit(state, foe).pos)]?.kind === "water").toBe(hit);
+    expect(unit(state, foe).conditions.some((c) => c.kind === "wet")).toBe(hit);
+  });
+});
+
+describe("Rogue weapons", () => {
+  /** The action tried on fresh seeds until it hits `target`: the state after, and what it said. */
+  const untilHit = (state: ZoneState, action: ZoneAction, target: string) => {
+    for (let seed = 1; seed < 80; seed++) {
+      const tryState = structuredClone(state);
+      tryState.rng = seed;
+      const events: ZoneEvent[] = [];
+      const next = must(tryState, action, events);
+      if (events.some((e) => e.t === "hit" && e.target === target)) return { state: next, events };
+    }
+    throw new Error("never landed");
+  };
+
+  it("gives each weapon two abilities of its own, only Eviscerate on a cooldown", () => {
+    expect(WEAPONS.daggers.abilities).toEqual(["stab", "eviscerate"]);
+    expect(WEAPONS.shortbow.abilities).toEqual(["bow_shot", "take_aim"]);
+    expect(WEAPONS.gaff_hook.abilities).toEqual(["tear", "snag"]);
+    for (const id of ["stab", "bow_shot", "take_aim", "tear", "snag"]) expect(tacticOf(id).cooldown, id).toBeUndefined();
+    expect(tacticOf("eviscerate").cooldown).toBe(2);
+    expect(tacticOf("take_aim").cost).toBe("bonus");
+    expect(tacticOf("stab").edge).toBeGreaterThan(0);
+    expect(ABILITIES.tear.perfect).toEqual({ effect: "bleeding", turns: 3 });
+    expect(ABILITIES.snag.perfect).toEqual({ effect: "slowed", turns: 2 });
+  });
+
+  it("Take Aim: the next roll to hit has advantage, and is spent by it", () => {
+    let { state, foe } = duel("dummy", "refactor_rogue", at(5, 6), at(9, 6));
+    unit(state, "ann").abilities = ["take_aim", "bow_shot"];
+    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "take_aim" });
+    expect(state.encounter!.budgets.ann).toMatchObject({ action: true, bonus: false });
+    expect(unit(state, "ann").conditions.some((c) => c.kind === "inspired")).toBe(true);
+    const events: ZoneEvent[] = [];
+    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "bow_shot", target: foe }, events);
+    const roll = events.find((e) => e.t === "roll" && e.roll.kind === "attack");
+    expect(roll?.t === "roll" && roll.roll.adv).toBe(1);
+    expect(unit(state, "ann").conditions.some((c) => c.kind === "inspired")).toBe(false);
+  });
+
+  it("Eviscerate: a hit always leaves the target Bleeding, no save", () => {
+    const { state, foe } = duel("dummy", "refactor_rogue", at(5, 6), at(7, 6));
+    unit(state, "ann").abilities = ["eviscerate"];
+    const after = untilHit(state, { type: "use", by: "ann", unit: "ann", ability: "eviscerate", target: foe }, foe);
+    expect(unit(after.state, foe).conditions.some((c) => c.kind === "bleeding")).toBe(true);
+    expect(after.events.some((e) => e.t === "roll" && e.roll.kind === "save")).toBe(false);
+  });
+
+  it("Snag: reaches 3 hexes, leaves the target where it is, and Slows it unless it saves", () => {
+    const { state, foe } = duel("dummy", "refactor_rogue", at(4, 6), at(8, 6));
+    unit(state, "ann").abilities = ["snag"];
+    expect(hexDistance(unit(state, "ann").pos, unit(state, foe).pos)).toBe(3);
+    const where = unit(state, foe).pos;
+    let slowed = false;
+    let held = false;
+    for (let seed = 1; seed < 120 && !(slowed && held); seed++) {
+      const tryState = structuredClone(state);
+      tryState.rng = seed;
+      const events: ZoneEvent[] = [];
+      const next = must(tryState, { type: "use", by: "ann", unit: "ann", ability: "snag", target: foe }, events);
+      if (!events.some((e) => e.t === "hit" && e.target === foe)) continue;
+      expect(unit(next, foe).pos).toEqual(where);
+      const save = events.find((e) => e.t === "roll" && e.roll.kind === "save");
+      const isSlowed = unit(next, foe).conditions.some((c) => c.kind === "slowed");
+      expect(isSlowed).toBe(save?.t === "roll" && !save.roll.ok);
+      if (isSlowed) slowed = true;
+      else held = true;
+    }
+    expect(slowed && held).toBe(true);
+    unit(state, foe).pos = at(9, 6);
+    expect(checkAbility(state, unit(state, "ann"), "snag", { target: foe })).toMatch(/Out of range/);
+  });
+});
+
+describe("Druid weapons", () => {
+  const rows = (state: ZoneState, from: HexPos, toward: HexPos) => {
+    const hexes = abilityArea(state, { ...unit(state, "ann"), pos: from }, "coral_burst", toward);
+    return [1, 2, 3].map((n) => hexes.filter((p) => hexDistance(p, from) === n).length);
+  };
+
+  it("gives each weapon two abilities, only Restore on a cooldown", () => {
+    expect(WEAPONS.root_staff.abilities).toEqual(["thornlash", "rejuvenate"]);
+    expect(WEAPONS.sickle.abilities).toEqual(["sea_slash", "binding_kelp"]);
+    expect(WEAPONS.coral_staff.abilities).toEqual(["coral_burst", "restore"]);
+    for (const id of ["sea_slash", "binding_kelp", "coral_burst"]) expect(tacticOf(id).cooldown, id).toBeUndefined();
+    expect(tacticOf("restore").cooldown).toBe(1);
+    expect(tacticOf("binding_kelp").cost).toBe("bonus");
+    expect(tacticOf("restore").cost).toBe("bonus");
+    expect(tacticOf("coral_burst").cost).toBe("action");
+  });
+
+  it("Coral Burst: a cone of 1 hex, then 2, then 3, whichever way it is aimed", () => {
+    const state = board();
+    hero(state, "ann", "backend_druid", at(8, 6)).abilities = ["coral_burst"];
+    for (const to of [at(12, 6), at(4, 6), at(8, 2), at(8, 10), at(11, 3), at(10, 9), at(12, 7)]) expect(rows(state, at(8, 6), to), `${to.q},${to.r}`).toEqual([1, 2, 3]);
+    // It starts beside you, in the direction aimed at, and stays one clump.
+    const cone = abilityArea(state, unit(state, "ann"), "coral_burst", at(12, 6));
+    expect(new Set(cone.map(posKey)).size).toBe(6);
+    expect(cone.map(posKey)).toContain(posKey(at(9, 6)));
+    const checked = checkAbility(state, unit(state, "ann"), "coral_burst", {});
+    expect(checked).toMatch(/Pick a direction/);
+  });
+
+  it("Coral Burst: strikes only enemies in it, leaving an ally in the cone alone, and cuts those who fail to brace", () => {
+    let { state, foe } = duel("dummy", "backend_druid", at(5, 6), at(7, 6));
+    hero(state, "bo", "qa_paladin", at(6, 6));
+    state.encounter!.acting = ["ann"];
+    unit(state, "ann").abilities = ["coral_burst"];
+    const bo = unit(state, "bo").hp;
+    let bled = false;
+    for (let seed = 1; seed < 80 && !bled; seed++) {
+      const tryState = structuredClone(state);
+      tryState.rng = seed;
+      const events: ZoneEvent[] = [];
+      const next = must(tryState, { type: "use", by: "ann", unit: "ann", ability: "coral_burst", at: unit(tryState, foe).pos }, events);
+      expect(unit(next, "bo").hp).toBe(bo);
+      expect(events.some((e) => e.t === "hit" && e.target === foe)).toBe(true);
+      bled = unit(next, foe).conditions.some((c) => c.kind === "bleeding");
+    }
+    expect(bled).toBe(true);
+  });
+
+  it("Sea Slash: a hit leaves water under the target and under you", () => {
+    let { state, foe } = duel("dummy", "backend_druid", at(5, 6), at(7, 6));
+    unit(state, "ann").abilities = ["sea_slash"];
+    const here = unit(state, "ann").pos;
+    for (let seed = 1; seed < 80; seed++) {
+      const tryState = structuredClone(state);
+      tryState.rng = seed;
+      const events: ZoneEvent[] = [];
+      const next = must(tryState, { type: "use", by: "ann", unit: "ann", ability: "sea_slash", target: foe }, events);
+      const hit = events.some((e) => e.t === "hit" && e.target === foe);
+      expect(next.surfaces[posKey(here)]?.kind === "water").toBe(hit);
+      expect(next.surfaces[posKey(unit(next, foe).pos)]?.kind === "water").toBe(hit);
+      if (hit) return;
+    }
+    throw new Error("never landed");
+  });
+
+  it("Binding Kelp: a Bonus action at range 4, no roll to hit: Slowed on a failed save, Stunned instead if the target stands in water", () => {
+    const { state, foe } = duel("dummy", "backend_druid", at(5, 6), at(9, 6));
+    unit(state, "ann").abilities = ["binding_kelp"];
+    unit(state, foe).pos = at(9, 6);
+    expect(checkAbility(state, unit(state, "ann"), "binding_kelp", { target: foe })).toBeNull();
+    unit(state, foe).pos = at(11, 6);
+    expect(checkAbility(state, unit(state, "ann"), "binding_kelp", { target: foe })).toMatch(/Out of range/);
+    unit(state, foe).pos = at(9, 6);
+    const held = (water: boolean) => {
+      const s = structuredClone(state);
+      if (water) s.surfaces[posKey(unit(s, foe).pos)] = { kind: "water", rounds: 5, by: null };
+      let got: string | null = null;
+      for (let seed = 1; seed < 80 && !got; seed++) {
+        const tryState = structuredClone(s);
+        tryState.rng = seed;
+        const events: ZoneEvent[] = [];
+        const next = must(tryState, { type: "use", by: "ann", unit: "ann", ability: "binding_kelp", target: foe }, events);
+        expect(events.some((e) => e.t === "roll" && e.roll.kind === "attack")).toBe(false);
+        expect(next.encounter!.budgets.ann).toMatchObject({ action: true, bonus: false });
+        got = unit(next, foe).conditions.find((c) => c.kind === "slowed" || c.kind === "stunned")?.kind ?? null;
+      }
+      return got;
+    };
+    expect(held(false)).toBe("slowed");
+    expect(held(true)).toBe("stunned");
+  });
+
+  it("Restore: heals a little and lifts every debuff, then waits a turn", () => {
+    let { state } = duel("dummy", "backend_druid", at(5, 6), at(9, 6));
+    unit(state, "ann").abilities = ["restore"];
+    unit(state, "ann").hp = 5;
+    const ctx: Ctx = { state, rng: makeRng(1), events: [], effects: [] };
+    for (const kind of ["bleeding", "slowed", "exposed", "sundered"] as const) addCondition(ctx, unit(state, "ann"), kind, 3);
+    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "restore", target: "ann" });
+    expect(unit(state, "ann").hp).toBeGreaterThan(5);
+    expect(unit(state, "ann").conditions.filter((c) => ["bleeding", "slowed", "exposed", "sundered"].includes(c.kind))).toEqual([]);
+    expect(state.encounter!.budgets.ann).toMatchObject({ action: true, bonus: false });
+    state = must(state, { type: "end_turn", by: "ann", unit: "ann" });
+    expect(fails(state, { type: "use", by: "ann", unit: "ann", ability: "restore", target: "ann" })).toMatch(/not ready/);
+  });
+});
+
+describe("Bard weapons", () => {
+  /** The action tried on fresh seeds until it hits `target`: the state after, and what it said. */
+  const untilHit = (state: ZoneState, action: ZoneAction, target: string) => {
+    for (let seed = 1; seed < 80; seed++) {
+      const tryState = structuredClone(state);
+      tryState.rng = seed;
+      const events: ZoneEvent[] = [];
+      const next = must(tryState, action, events);
+      if (events.some((e) => e.t === "hit" && e.target === target)) return { state: next, events };
+    }
+    throw new Error("never landed");
+  };
+
+  it("gives each weapon two abilities, only the Pipe's Soothing Tone and the Bell's Clarion Call on a cooldown", () => {
+    expect(WEAPONS.lute.abilities).toEqual(["dissonance", "encore"]);
+    expect(WEAPONS.flute.abilities).toEqual(["blasting_tone", "soothing_tone"]);
+    expect(WEAPONS.ships_bell.abilities).toEqual(["peal", "clarion_call"]);
+    for (const id of ["dissonance", "encore", "blasting_tone", "peal"]) expect(tacticOf(id).cooldown, id).toBeUndefined();
+    expect(tacticOf("soothing_tone").cooldown).toBe(1);
+    expect(tacticOf("clarion_call").cooldown).toBe(1);
+    expect(tacticOf("encore").cost).toBe("bonus");
+    for (const id of ["dissonance", "blasting_tone", "soothing_tone", "peal", "clarion_call"]) expect(tacticOf(id).cost, id).toBe("action");
+  });
+
+  it("Dissonance: a hit leaves the target Fumbling, with no save, and its next attack is rolled with disadvantage", () => {
+    const { state, foe } = duel("dummy", "frontend_bard", at(5, 6), at(9, 6));
+    unit(state, "ann").abilities = ["dissonance"];
+    const after = untilHit(state, { type: "use", by: "ann", unit: "ann", ability: "dissonance", target: foe }, foe);
+    expect(unit(after.state, foe).conditions.some((c) => c.kind === "glitched")).toBe(true);
+    expect(unit(after.state, foe).conditions.some((c) => c.kind === "stunned")).toBe(false);
+    expect(after.events.some((e) => e.t === "roll" && e.roll.kind === "save")).toBe(false);
+    expect(attackContext(after.state, unit(after.state, foe), unit(after.state, "ann"), { melee: false }).adv).toBe(-1);
+  });
+
+  it("Second Wind: a Bonus action that heals a little and leaves the target's next roll to hit with advantage", () => {
+    let { state, foe } = duel("dummy", "frontend_bard", at(5, 6), at(9, 6));
+    hero(state, "bo", "qa_paladin", at(5, 7));
+    unit(state, "ann").abilities = ["encore", "bow_shot"];
+    unit(state, "ann").hp = 5;
+    unit(state, "bo").hp = 5;
+    const move = state.encounter!.budgets.ann.move;
+    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "encore", target: "ann" });
+    expect(unit(state, "ann").hp).toBeGreaterThan(5);
+    expect(state.encounter!.budgets.ann).toMatchObject({ action: true, bonus: false, move });
+    expect(unit(state, "ann").conditions.some((c) => c.kind === "inspired")).toBe(true);
+    expect(attackContext(state, unit(state, "ann"), unit(state, foe), { melee: false }).adv).toBe(1);
+    expect(unit(state, "ann").conditions.some((c) => c.kind === "tailwind" || c.kind === "hasted")).toBe(false);
+  });
+
+  it("Second Wind on an ally: they are healed and Inspired, and it is still there on their own turn", () => {
+    let { state } = duel("dummy", "frontend_bard", at(5, 6), at(9, 6));
+    hero(state, "bo", "qa_paladin", at(5, 7));
+    unit(state, "ann").abilities = ["encore"];
+    unit(state, "bo").hp = 5;
+    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "encore", target: "bo" });
+    expect(unit(state, "bo").hp).toBeGreaterThan(5);
+    expect(unit(state, "bo").conditions.some((c) => c.kind === "inspired")).toBe(true);
+    state = must(state, { type: "end_turn", by: "ann", unit: "ann" });
+    while (!state.encounter!.acting.includes("ann") || state.encounter!.done.includes("ann")) state = must(state, { type: "timeout" });
+    expect(unit(state, "bo").conditions.some((c) => c.kind === "inspired")).toBe(true);
+  });
+
+  it("Blasting Tone: a line of 4 hexes that strikes the enemies on it and spares an ally", () => {
+    const { state, foe } = duel("dummy", "frontend_bard", at(5, 6), at(8, 6));
+    hero(state, "bo", "qa_paladin", at(7, 6));
+    unit(state, "ann").abilities = ["blasting_tone"];
+    expect(abilityArea(state, unit(state, "ann"), "blasting_tone", at(12, 6))).toHaveLength(4);
+    const bo = unit(state, "bo").hp;
+    const events: ZoneEvent[] = [];
+    const next = must(state, { type: "use", by: "ann", unit: "ann", ability: "blasting_tone", at: at(12, 6) }, events);
+    expect(events.some((e) => e.t === "hit" && e.target === foe)).toBe(true);
+    expect(unit(next, "bo").hp).toBe(bo);
+  });
+
+  it("Soothing Tone: heals you and every ally within 2 hexes, not one further off, then waits a turn", () => {
+    let { state } = duel("dummy", "frontend_bard", at(5, 6), at(11, 6));
+    hero(state, "bo", "qa_paladin", at(8, 6));
+    hero(state, "cy", "refactor_rogue", at(9, 6));
+    unit(state, "ann").abilities = ["soothing_tone"];
+    for (const id of ["ann", "bo", "cy"]) unit(state, id).hp = 1;
+    // ann is at (6, 6): bo is 2 off, cy is 3.
+    expect(hexDistance(unit(state, "ann").pos, unit(state, "bo").pos)).toBe(2);
+    expect(hexDistance(unit(state, "ann").pos, unit(state, "cy").pos)).toBe(3);
+    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "soothing_tone" });
+    expect(unit(state, "ann").hp).toBeGreaterThan(1);
+    expect(unit(state, "bo").hp).toBeGreaterThan(1);
+    expect(unit(state, "cy").hp).toBe(1);
+    state = must(state, { type: "end_turn", by: "ann", unit: "ann" });
+    expect(fails(state, { type: "use", by: "ann", unit: "ann", ability: "soothing_tone" })).toMatch(/not ready/);
+  });
+
+  it("Peal: a hit pushes the target 1 hex back unless it saves", () => {
+    const { state, foe } = duel("dummy", "frontend_bard", at(5, 6), at(9, 6));
+    unit(state, "ann").abilities = ["peal"];
+    const from = hexDistance(unit(state, "ann").pos, unit(state, foe).pos);
+    let pushed = false;
+    let held = false;
+    for (let seed = 1; seed < 120 && !(pushed && held); seed++) {
+      const tryState = structuredClone(state);
+      tryState.rng = seed;
+      const events: ZoneEvent[] = [];
+      const next = must(tryState, { type: "use", by: "ann", unit: "ann", ability: "peal", target: foe }, events);
+      if (!events.some((e) => e.t === "hit" && e.target === foe)) continue;
+      const save = events.find((e) => e.t === "roll" && e.roll.kind === "save");
+      expect(save).toBeDefined();
+      const now = hexDistance(unit(next, "ann").pos, unit(next, foe).pos);
+      if (save?.t === "roll" && save.roll.ok) { expect(now).toBe(from); held = true; }
+      else { expect(now).toBe(from + 1); pushed = true; }
+    }
+    expect(pushed && held).toBe(true);
+  });
+
+  it("Clarion Call: a big heal on the target, and a lesser one on every ally beside it, but none further off", () => {
+    const { state } = duel("dummy", "frontend_bard", at(5, 6), at(11, 6));
+    hero(state, "bo", "qa_paladin", at(8, 6));
+    hero(state, "cy", "refactor_rogue", at(9, 6));
+    hero(state, "di", "devops_mage", at(7, 9));
+    unit(state, "ann").abilities = ["clarion_call"];
+    for (const id of ["ann", "bo", "cy", "di"]) unit(state, id).hp = 1;
+    const events: ZoneEvent[] = [];
+    const next = must(state, { type: "use", by: "ann", unit: "ann", ability: "clarion_call", target: "bo" }, events);
+    const healed = events.flatMap((e) => (e.t === "heal" ? [e.target] : [])).sort();
+    expect(healed).toEqual(["bo", "cy"]);
+    expect(unit(next, "bo").hp).toBeGreaterThan(unit(state, "bo").hp);
+    expect(unit(next, "di").hp).toBe(1);
+    expect(unit(next, "ann").hp).toBe(1);
+  });
+});
+
+describe("Sage weapons", () => {
+  /** The action tried on fresh seeds until it hits `target`: the state after, and what it said. */
+  const untilHit = (state: ZoneState, action: ZoneAction, target: string, want: (events: ZoneEvent[]) => boolean = () => true) => {
+    for (let seed = 1; seed < 120; seed++) {
+      const tryState = structuredClone(state);
+      tryState.rng = seed;
+      const events: ZoneEvent[] = [];
+      const next = must(tryState, action, events);
+      if (events.some((e) => e.t === "hit" && e.target === target) && want(events)) return { state: next, events };
+    }
+    throw new Error("never landed");
+  };
+  const failedSave = (events: ZoneEvent[]) => events.some((e) => e.t === "roll" && e.roll.kind === "save" && !e.roll.ok);
+  const savedAll = (events: ZoneEvent[]) => events.some((e) => e.t === "roll" && e.roll.kind === "save") && !failedSave(events);
+
+  it("gives the orb and scepter two abilities each, with St. Elmo's Fire and Rust Armor on a cooldown", () => {
+    expect(WEAPONS.orb.abilities).toEqual(["starbeam", "st_elmos_fire"]);
+    expect(WEAPONS.scepter.abilities).toEqual(["water_burst", "rust_armor"]);
+    for (const id of ["starbeam", "water_burst"]) expect(tacticOf(id).cooldown, id).toBeUndefined();
+    expect(tacticOf("st_elmos_fire").cooldown).toBe(2);
+    expect(tacticOf("rust_armor").cooldown).toBe(1);
+    expect(tacticOf("st_elmos_fire").cost).toBe("bonus");
+    expect(ABILITIES.starbeam.damage).toBe(12);
+    expect(ABILITIES.rust_armor.perfect).toEqual({ effect: "sundered", turns: 3 });
+  });
+
+  it("Starbeam: a hit lights the target with Guiding Light only if it fails its save", () => {
+    const { state, foe } = duel("dummy", "staff_sage", at(5, 6), at(9, 6));
+    unit(state, "ann").abilities = ["starbeam"];
+    const lit = (s: ZoneState) => unit(s, foe).conditions.some((c) => c.kind === "guiding_light");
+    const failed = untilHit(state, { type: "use", by: "ann", unit: "ann", ability: "starbeam", target: foe }, foe, failedSave);
+    expect(lit(failed.state)).toBe(true);
+    const saved = untilHit(state, { type: "use", by: "ann", unit: "ann", ability: "starbeam", target: foe }, foe, savedAll);
+    expect(lit(saved.state)).toBe(false);
+    expect(unit(failed.state, foe).conditions.some((c) => c.kind === "exposed")).toBe(false);
+  });
+
+  it("St. Elmo's Fire: a Bonus action that gives an ally within 4 hexes North Star, none of it a blow", () => {
+    let { state } = duel("dummy", "staff_sage", at(5, 6), at(11, 6));
+    hero(state, "bo", "qa_paladin", at(9, 6));
+    hero(state, "cy", "refactor_rogue", at(12, 9));
+    unit(state, "ann").abilities = ["st_elmos_fire"];
+    expect(hexDistance(unit(state, "ann").pos, unit(state, "bo").pos)).toBe(3);
+    expect(checkAbility(state, unit(state, "ann"), "st_elmos_fire", { target: "cy" })).toMatch(/Out of range/);
+    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "st_elmos_fire", target: "bo" });
+    expect(unit(state, "bo").conditions.some((c) => c.kind === "north_star")).toBe(true);
+    expect(state.encounter!.budgets.ann).toMatchObject({ action: true, bonus: false });
+    state = must(state, { type: "end_turn", by: "ann", unit: "ann" });
+    while (!state.encounter!.acting.includes("ann") || state.encounter!.done.includes("ann")) state = must(state, { type: "timeout" });
+    expect(fails(state, { type: "use", by: "ann", unit: "ann", ability: "st_elmos_fire", target: "bo" })).toMatch(/not ready/);
+  });
+
+  it("Water Burst: a hit drenches every other enemy beside the target, and none further off", () => {
+    const { state, foe } = duel("dummy", "devops_mage", at(5, 6), at(9, 6));
+    const next = enemy(state, "dummy", at(10, 6));
+    const far = enemy(state, "dummy", at(9, 9));
+    expect(adjacent(unit(state, foe).pos, next.pos)).toBe(true);
+    expect(adjacent(unit(state, foe).pos, far.pos)).toBe(false);
+    unit(state, "ann").abilities = ["water_burst"];
+    const after = untilHit(state, { type: "use", by: "ann", unit: "ann", ability: "water_burst", target: foe }, foe);
+    expect(unit(after.state, next.id).hp).toBeLessThan(unit(state, next.id).hp);
+    expect(unit(after.state, far.id).hp).toBe(unit(state, far.id).hp);
+    expect(after.events.filter((e) => e.t === "hit" && e.what === "water_burst")).toHaveLength(2);
+  });
+
+  it("Rust Armor: 3 hexes, strikes only enemies, and Sunders those that fail to brace", () => {
+    const { state, foe } = duel("dummy", "staff_sage", at(5, 6), at(9, 6));
+    hero(state, "bo", "qa_paladin", at(10, 6));
+    unit(state, "ann").abilities = ["rust_armor"];
+    expect(abilityArea(state, unit(state, "ann"), "rust_armor", unit(state, foe).pos)).toHaveLength(3);
+    const bo = unit(state, "bo").hp;
+    const after = untilHit(state, { type: "use", by: "ann", unit: "ann", ability: "rust_armor", at: unit(state, foe).pos }, foe, failedSave);
+    expect(unit(after.state, foe).conditions.find((c) => c.kind === "sundered")?.rounds).toBeGreaterThan(0);
+    expect(unit(after.state, "bo").hp).toBe(bo);
+    const dc = defenceOf(unit(after.state, foe), after.state);
+    expect(dc).toBe(defenceOf(unit(state, foe), state) - 2);
+  });
+
+  it("gives the astrolabe Moonlight and Focus Light, neither on a cooldown", () => {
+    expect(WEAPONS.astrolabe.abilities).toEqual(["moonlight", "focus_light"]);
+    expect(tacticOf("moonlight").cooldown).toBeUndefined();
+    expect(tacticOf("focus_light").cooldown).toBeUndefined();
+    expect(tacticOf("focus_light").cost).toBe("bonus");
+    expect(tacticOf("moonlight").range).toBe(7);
+    expect(tacticOf("focus_light").range).toBe(5);
+  });
+
+  it("Moonlight: 3 hexes, strikes only enemies, and lights those that fail to brace", () => {
+    const { state, foe } = duel("dummy", "staff_sage", at(5, 6), at(9, 6));
+    hero(state, "bo", "qa_paladin", at(10, 6));
+    unit(state, "ann").abilities = ["moonlight"];
+    expect(abilityArea(state, unit(state, "ann"), "moonlight", unit(state, foe).pos)).toHaveLength(3);
+    const bo = unit(state, "bo").hp;
+    const lit = (s: ZoneState) => unit(s, foe).conditions.some((c) => c.kind === "guiding_light");
+    const failed = untilHit(state, { type: "use", by: "ann", unit: "ann", ability: "moonlight", at: unit(state, foe).pos }, foe, failedSave);
+    expect(lit(failed.state)).toBe(true);
+    expect(unit(failed.state, "bo").hp).toBe(bo);
+    const saved = untilHit(state, { type: "use", by: "ann", unit: "ann", ability: "moonlight", at: unit(state, foe).pos }, foe, savedAll);
+    expect(lit(saved.state)).toBe(false);
+  });
+
+  it("Focus Light: a Bonus action that sets a target Burning only if it is lit by Guiding Light", () => {
+    const { state, foe } = duel("dummy", "staff_sage", at(5, 6), at(9, 6));
+    unit(state, "ann").abilities = ["focus_light"];
+    const burning = (s: ZoneState) => unit(s, foe).conditions.some((c) => c.kind === "burning");
+    const plain = untilHit(state, { type: "use", by: "ann", unit: "ann", ability: "focus_light", target: foe }, foe);
+    expect(burning(plain.state)).toBe(false);
+    expect(plain.state.encounter!.budgets.ann).toMatchObject({ action: true, bonus: false });
+    const ctx: Ctx = { state, rng: makeRng(1), events: [], effects: [] };
+    addCondition(ctx, unit(state, foe), "guiding_light", 3);
+    const lit = untilHit(state, { type: "use", by: "ann", unit: "ann", ability: "focus_light", target: foe }, foe);
+    expect(burning(lit.state)).toBe(true);
+  });
+});
+
+describe("Warden weapons", () => {
+  /** The action tried on fresh seeds until it hits `target` and `want` holds: the state after, and what it said. */
+  const untilHit = (state: ZoneState, action: ZoneAction, target: string, want: (events: ZoneEvent[]) => boolean = () => true) => {
+    for (let seed = 1; seed < 120; seed++) {
+      const tryState = structuredClone(state);
+      tryState.rng = seed;
+      const events: ZoneEvent[] = [];
+      const next = must(tryState, action, events);
+      if (events.some((e) => e.t === "hit" && e.target === target) && want(events)) return { state: next, events };
+    }
+    throw new Error("never landed");
+  };
+  const failedSave = (events: ZoneEvent[]) => events.some((e) => e.t === "roll" && e.roll.kind === "save" && !e.roll.ok);
+  const savedAll = (events: ZoneEvent[]) => events.some((e) => e.t === "roll" && e.roll.kind === "save") && !failedSave(events);
+
+  it("starts the Warden with the maul, and gives each weapon two abilities, only Guard and Throw Pike on a cooldown", () => {
+    expect(HERO_CLASSES.find((c) => c.id === "sre_warden")!.weapons[0]).toBe("maul");
+    expect(WEAPONS.maul.abilities).toEqual(["sturdy_blow", "stand_strong"]);
+    expect(WEAPONS.pager_axe.abilities).toEqual(["disarming_chop", "raise_guard"]);
+    expect(WEAPONS.boarding_pike.abilities).toEqual(["goading_strike", "throw_pike"]);
+    for (const id of ["sturdy_blow", "stand_strong", "disarming_chop", "goading_strike"]) expect(tacticOf(id).cooldown, id).toBeUndefined();
+    expect(tacticOf("raise_guard").cooldown).toBe(1);
+    expect(tacticOf("throw_pike").cooldown).toBe(2);
+    for (const id of ["stand_strong", "raise_guard"]) expect(tacticOf(id).cost, id).toBe("bonus");
+    expect(ABILITIES.disarming_chop.perfect).toEqual({ effect: "glitched", turns: 1 });
+  });
+
+  it("Sturdy Blow: a shield, hit or miss, on top of any already there", () => {
+    const { state, foe } = duel("dummy", "sre_warden", at(5, 6), at(7, 6));
+    unit(state, "ann").abilities = ["sturdy_blow"];
+    const shield = STURDY.shield + unit(state, "ann").level;
+    let missed = false;
+    for (let seed = 1; seed < 60 && !missed; seed++) {
+      const tryState = structuredClone(state);
+      tryState.rng = seed;
+      const events: ZoneEvent[] = [];
+      const next = must(tryState, { type: "use", by: "ann", unit: "ann", ability: "sturdy_blow", target: foe }, events);
+      expect(shieldOf(unit(next, "ann"))).toBe(shield);
+      missed = events.some((e) => e.t === "miss");
+    }
+    expect(missed).toBe(true);
+  });
+
+  it("Stand Strong: a Bonus action shield, bigger for each enemy beside the Warden", () => {
+    let { state } = duel("dummy", "sre_warden", at(5, 6), at(7, 6));
+    enemy(state, "dummy", at(6, 7));
+    enemy(state, "dummy", at(10, 9));
+    unit(state, "ann").abilities = ["stand_strong"];
+    const beside = state.units.filter((u) => u.side === "enemy" && adjacent(u.pos, unit(state, "ann").pos)).length;
+    expect(beside).toBe(2);
+    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "stand_strong" });
+    expect(shieldOf(unit(state, "ann"))).toBe(STAND_STRONG.shield + unit(state, "ann").level + STAND_STRONG.perFoe * beside);
+    expect(state.encounter!.budgets.ann).toMatchObject({ action: true, bonus: false });
+  });
+
+  it("Disarming Chop: a hit leaves the target Fumbling unless it saves", () => {
+    const { state, foe } = duel("dummy", "sre_warden", at(5, 6), at(7, 6));
+    unit(state, "ann").abilities = ["disarming_chop"];
+    const fumbling = (s: ZoneState) => unit(s, foe).conditions.some((c) => c.kind === "glitched");
+    expect(fumbling(untilHit(state, { type: "use", by: "ann", unit: "ann", ability: "disarming_chop", target: foe }, foe, failedSave).state)).toBe(true);
+    expect(fumbling(untilHit(state, { type: "use", by: "ann", unit: "ann", ability: "disarming_chop", target: foe }, foe, savedAll).state)).toBe(false);
+  });
+
+  it("Guard: a Bonus action that leaves the Warden Guarded with a shield, then waits a turn", () => {
+    let { state } = duel("dummy", "sre_warden", at(5, 6), at(9, 6));
+    unit(state, "ann").abilities = ["raise_guard"];
+    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "raise_guard" });
+    expect(unit(state, "ann").conditions.some((c) => c.kind === "guarded")).toBe(true);
+    expect(shieldOf(unit(state, "ann"))).toBe(GUARD_UP.shield + unit(state, "ann").level);
+    expect(state.encounter!.budgets.ann).toMatchObject({ action: true, bonus: false });
+    state = must(state, { type: "end_turn", by: "ann", unit: "ann" });
+    while (!state.encounter!.acting.includes("ann") || state.encounter!.done.includes("ann")) state = must(state, { type: "timeout" });
+    expect(fails(state, { type: "use", by: "ann", unit: "ann", ability: "raise_guard" })).toMatch(/not ready/);
+  });
+
+  it("Goading Strike: a hit leaves the target Taunted by the Warden unless it saves", () => {
+    const { state, foe } = duel("dummy", "sre_warden", at(5, 6), at(7, 6));
+    unit(state, "ann").abilities = ["goading_strike"];
+    const taunted = (s: ZoneState) => unit(s, foe).conditions.find((c) => c.kind === "taunted");
+    const failed = untilHit(state, { type: "use", by: "ann", unit: "ann", ability: "goading_strike", target: foe }, foe, failedSave);
+    expect(taunted(failed.state)).toMatchObject({ rounds: 2, by: "ann" });
+    expect(taunted(untilHit(state, { type: "use", by: "ann", unit: "ann", ability: "goading_strike", target: foe }, foe, savedAll).state)).toBeUndefined();
+  });
+
+  it("Throw Pike: reaches 3 hexes and drags what it hits straight in to beside the Warden", () => {
+    const { state, foe } = duel("dummy", "sre_warden", at(4, 6), at(8, 6));
+    unit(state, "ann").abilities = ["throw_pike"];
+    expect(hexDistance(unit(state, "ann").pos, unit(state, foe).pos)).toBe(3);
+    const after = untilHit(state, { type: "use", by: "ann", unit: "ann", ability: "throw_pike", target: foe }, foe);
+    expect(unit(after.state, foe).pos).toEqual(at(6, 6));
+    unit(state, foe).pos = at(9, 6);
+    expect(checkAbility(state, unit(state, "ann"), "throw_pike", { target: foe })).toMatch(/Out of range/);
+  });
+});
+
+describe("Warlock weapons", () => {
+  const drowning = (s: ZoneState, id: string) => unit(s, id).conditions.find((c) => c.kind === "drowning")?.amount ?? 0;
+
+  it("keeps Hex and Soul Drain on the grimoire, Hex with no share of max HP and Soul Drain on a 2-turn wait", () => {
+    expect(WEAPONS.grimoire.abilities).toEqual(["hex", "soul_drain"]);
+    expect(WEAPONS.void_staff.abilities).toEqual(["sink", "pull_of_the_deep"]);
+    expect(ABILITIES.hex.damage).toBe(8);
+    expect(ABILITIES.soul_drain.damage).toBe(11);
+    expect(tacticOf("soul_drain").cooldown).toBe(2);
+    expect(tacticOf("hex").cooldown).toBeUndefined();
+    expect(tacticOf("sink").cooldown).toBeUndefined();
+    expect(tacticOf("pull_of_the_deep").cooldown).toBe(2);
+  });
+
+  it("Sink: a hit leaves a stack of Drowning unless the target saves", () => {
+    const { state, foe } = duel("dummy", "data_warlock", at(5, 6), at(9, 6));
+    unit(state, "ann").abilities = ["sink"];
+    let sunk = false;
+    let held = false;
+    for (let seed = 1; seed < 120 && !(sunk && held); seed++) {
+      const tryState = structuredClone(state);
+      tryState.rng = seed;
+      const events: ZoneEvent[] = [];
+      const next = must(tryState, { type: "use", by: "ann", unit: "ann", ability: "sink", target: foe }, events);
+      if (!events.some((e) => e.t === "hit" && e.target === foe)) continue;
+      const save = events.find((e) => e.t === "roll" && e.roll.kind === "save");
+      const failed = save?.t === "roll" && !save.roll.ok;
+      expect(drowning(next, foe)).toBe(failed ? 1 : 0);
+      if (failed) sunk = true;
+      else held = true;
+    }
+    expect(sunk && held).toBe(true);
+  });
+
+  it("Pull of the Deep: strikes every enemy beside the Warlock, not an ally or one further off, and drowns those that fail to brace", () => {
+    const { state, foe } = duel("dummy", "data_warlock", at(5, 6), at(7, 6));
+    const far = enemy(state, "dummy", at(9, 9));
+    hero(state, "bo", "qa_paladin", at(6, 7));
+    unit(state, "ann").abilities = ["pull_of_the_deep"];
+    const bo = unit(state, "bo").hp;
+    let drowned = false;
+    for (let seed = 1; seed < 120 && !drowned; seed++) {
+      const tryState = structuredClone(state);
+      tryState.rng = seed;
+      const events: ZoneEvent[] = [];
+      const next = must(tryState, { type: "use", by: "ann", unit: "ann", ability: "pull_of_the_deep" }, events);
+      expect(events.some((e) => e.t === "hit" && e.target === foe)).toBe(true);
+      expect(unit(next, far.id).hp).toBe(unit(state, far.id).hp);
+      expect(unit(next, "bo").hp).toBe(bo);
+      expect(drowning(next, "bo")).toBe(0);
+      drowned = drowning(next, foe) === 1;
+    }
+    expect(drowned).toBe(true);
+  });
+
+  it("gives the chalice Vile Splash and Drink Deeply, only Drink Deeply on a cooldown", () => {
+    expect(WEAPONS.bilge_chalice.abilities).toEqual(["vile_splash", "drink_deeply"]);
+    expect(tacticOf("vile_splash").cooldown).toBeUndefined();
+    expect(tacticOf("drink_deeply").cooldown).toBe(2);
+    expect(tacticOf("drink_deeply").cost).toBe("bonus");
+  });
+
+  it("Vile Splash: a hit leaves poison under the target, which Poisons it", () => {
+    const { state, foe } = duel("dummy", "data_warlock", at(5, 6), at(9, 6));
+    unit(state, "ann").abilities = ["vile_splash"];
+    for (let seed = 1; seed < 80; seed++) {
+      const tryState = structuredClone(state);
+      tryState.rng = seed;
+      const events: ZoneEvent[] = [];
+      const next = must(tryState, { type: "use", by: "ann", unit: "ann", ability: "vile_splash", target: foe }, events);
+      const hit = events.some((e) => e.t === "hit" && e.target === foe);
+      expect(next.surfaces[posKey(unit(next, foe).pos)]?.kind === "poison").toBe(hit);
+      if (!hit) continue;
+      expect(unit(next, foe).conditions.some((c) => c.kind === "poisoned")).toBe(true);
+      return;
+    }
+    throw new Error("never landed");
+  });
+
+  it("Drink Deeply: a Bonus action that heals the Warlock a lot and Poisons them, then waits", () => {
+    let { state, foe } = duel("dummy", "data_warlock", at(5, 6), at(9, 6));
+    unit(state, "ann").abilities = ["drink_deeply"];
+    unit(state, "ann").hp = 1;
+    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "drink_deeply" });
+    expect(unit(state, "ann").hp).toBeGreaterThan(10);
+    expect(unit(state, "ann").conditions.some((c) => c.kind === "poisoned")).toBe(true);
+    expect(attackContext(state, unit(state, "ann"), unit(state, foe), { melee: false }).adv).toBe(-1);
+    expect(state.encounter!.budgets.ann).toMatchObject({ action: true, bonus: false });
+    state = must(state, { type: "end_turn", by: "ann", unit: "ann" });
+    while (!state.encounter!.acting.includes("ann") || state.encounter!.done.includes("ann")) state = must(state, { type: "timeout" });
+    expect(unit(state, "ann").conditions.some((c) => c.kind === "poisoned")).toBe(true);
+    expect(fails(state, { type: "use", by: "ann", unit: "ann", ability: "drink_deeply" })).toMatch(/not ready/);
+  });
+
+  it("Riptide: a Warlock's critical hit adds a stack of Drowning, not Bleeding", () => {
+    const { state, foe } = duel("dummy", "data_warlock", at(5, 6), at(9, 6));
+    unit(state, "ann").abilities = ["vile_splash"];
+    for (let seed = 1; seed < 400; seed++) {
+      const tryState = structuredClone(state);
+      tryState.rng = seed;
+      const events: ZoneEvent[] = [];
+      const next = must(tryState, { type: "use", by: "ann", unit: "ann", ability: "vile_splash", target: foe }, events);
+      const hit = events.find((e) => e.t === "hit" && e.target === foe);
+      if (!hit || hit.t !== "hit") continue;
+      expect(drowning(next, foe)).toBe(hit.crit ? 1 : 0);
+      expect(unit(next, foe).conditions.some((c) => c.kind === "bleeding")).toBe(false);
+      if (hit.crit) return;
+    }
+    throw new Error("never a critical hit");
   });
 });

@@ -157,7 +157,7 @@ describe("battle", () => {
   const fighter = (id: string, over: Partial<Combatant> = {}): Combatant => ({
     id, side: "hero", name: id, kind: "qa_paladin", level: 1, hp: 30, maxHp: 30,
     pct: { str: 100, vit: 100, agi: 100, dex: 100, int_stat: 100 },
-    power: 0, armor: 0, speed: 200, focus: 2, potions: 1, abilities: ["smite", "shield_wall", "cleave"], effects: [], down: false, ...over,
+    power: 0, armor: 0, speed: 200, focus: 2, potions: 1, abilities: ["bash", "block", "cleave"], effects: [], down: false, ...over,
   });
   const setup = (heroes: Combatant[], enemyKinds: string[], seed = 3) =>
     createBattle({ heroes, enemyKinds, avgLevel: 1, poiId: "camp" }, makeRng(seed));
@@ -174,25 +174,25 @@ describe("battle", () => {
     const rng = makeRng(1);
     const me = state.actor!;
     const other = me === "h1" ? "h2" : "h1";
-    expect(stepBattle(state, other, { type: "ability", ability: "smite" }, rng).ok).toBe(false);
-    expect(stepBattle(state, me, { type: "ability", ability: "firebolt" }, rng).ok).toBe(false);
-    expect(stepBattle(state, me, { type: "ability", ability: "smite", focus: 9 }, rng).ok).toBe(false);
-    expect(stepBattle(state, me, { type: "ability", ability: "smite", target: other }, rng).ok).toBe(false);
+    expect(stepBattle(state, other, { type: "ability", ability: "bash" }, rng).ok).toBe(false);
+    expect(stepBattle(state, me, { type: "ability", ability: "shock" }, rng).ok).toBe(false);
+    expect(stepBattle(state, me, { type: "ability", ability: "bash", focus: 9 }, rng).ok).toBe(false);
+    expect(stepBattle(state, me, { type: "ability", ability: "bash", target: other }, rng).ok).toBe(false);
   });
 
   it("runs to victory, with perfect results applying effects", () => {
     let { state } = setup([fighter("h1")], ["bandit"]);
     const rng = makeRng(9);
-    const first = stepBattle(state, "h1", { type: "ability", ability: "smite", target: "e0" }, rng);
+    const first = stepBattle(state, "h1", { type: "ability", ability: "bash", target: "e0" }, rng);
     if (!first.ok) throw new Error(first.error);
-    // 100% over 3 rolls is perfect: full damage (9 + level) and a stun.
+    // 100% over 3 rolls is perfect: full damage (9 + level) and a knock off its feet.
     expect(first.events).toContainEqual(expect.objectContaining({ t: "hit", amount: 10, perfect: true }));
-    expect(first.events).toContainEqual({ t: "effect", target: "e0", effect: "stunned", turns: 1 });
-    // The hero is so fast it acts again before the bandit comes round, still stunned.
+    expect(first.events).toContainEqual({ t: "effect", target: "e0", effect: "prone", turns: 1 });
+    // The hero is so fast it acts again before the bandit comes round, still Prone.
     expect(first.state.actor).toBe("h1");
-    expect(first.state.combatants.find((c) => c.id === "e0")!.effects).toContainEqual({ kind: "stunned", turns: 1 });
+    expect(first.state.combatants.find((c) => c.id === "e0")!.effects).toContainEqual({ kind: "prone", turns: 1 });
     state = first.state;
-    const second = stepBattle(state, "h1", { type: "ability", ability: "smite", target: "e0" }, rng);
+    const second = stepBattle(state, "h1", { type: "ability", ability: "bash", target: "e0" }, rng);
     if (!second.ok) throw new Error(second.error);
     expect(second.state.status).toBe("victory");
     expect(second.events.at(-1)).toEqual({ t: "end", status: "victory" });
@@ -206,7 +206,7 @@ describe("battle", () => {
     let s: BattleState = state;
     const rng = makeRng(11);
     for (let i = 0; i < 30 && s.status === "active"; i++) {
-      const r = stepBattle(s, "h1", { type: "ability", ability: "smite" }, rng);
+      const r = stepBattle(s, "h1", { type: "ability", ability: "bash" }, rng);
       if (!r.ok) throw new Error(r.error);
       s = r.state;
     }

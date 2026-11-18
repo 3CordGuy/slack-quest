@@ -8,16 +8,21 @@ export interface ZoneRow {
   seed: string;
   options_json: string;
   state_json: string | null;
+  status: "open" | "fight" | "cleared";
+  kind: ZoneKind;
+  crew_id: string | null;
+  /** On a zone the atlas made: the node of the crew's chart it was made for. */
+  node: string | null;
 }
 
-/** What a zone is for: a map made in the dev toolbox, or a crew's delve into the caves. */
-export type ZoneKind = "dev" | "caves";
+/** What a zone is for: a map made in the dev toolbox, a crew's delve into the caves, or a landfall on a crew's chart (atlas.ts). */
+export type ZoneKind = "dev" | "caves" | "atlas";
 
 /** A crew's cave left alone this long is let go: going down again makes a fresh one. */
 export const CAVE_IDLE_MS = 12 * 60 * 60_000;
 
 /** Make a zone's row and return its code: four letters, no vowels, so codes never spell anything. */
-export async function createZoneRow(db: D1Database, playerId: string, options: ZoneOptions, seed: string, kind: ZoneKind = "dev", crewId: string | null = null): Promise<string> {
+export async function createZoneRow(db: D1Database, playerId: string, options: ZoneOptions, seed: string, kind: ZoneKind = "dev", crewId: string | null = null, node: string | null = null): Promise<string> {
   const alphabet = "BCDFGHJKLMNPQRSTVWXZ";
   const now = Date.now();
   for (let attempt = 0; attempt < 5; attempt++) {
@@ -25,8 +30,8 @@ export async function createZoneRow(db: D1Database, playerId: string, options: Z
     const code = [...bytes].map((b) => alphabet[b % alphabet.length]).join("");
     try {
       await db
-        .prepare("INSERT INTO zones (code, seed, options_json, status, created_by, created_at, updated_at, kind, crew_id) VALUES (?, ?, ?, 'open', ?, ?, ?, ?, ?)")
-        .bind(code, seed, JSON.stringify(options), playerId, now, now, kind, crewId)
+        .prepare("INSERT INTO zones (code, seed, options_json, status, created_by, created_at, updated_at, kind, crew_id, node) VALUES (?, ?, ?, 'open', ?, ?, ?, ?, ?, ?)")
+        .bind(code, seed, JSON.stringify(options), playerId, now, now, kind, crewId, node)
         .run();
       return code;
     } catch {
@@ -37,7 +42,7 @@ export async function createZoneRow(db: D1Database, playerId: string, options: Z
 }
 
 export async function getZoneRow(db: D1Database, code: string): Promise<ZoneRow | null> {
-  return db.prepare("SELECT code, seed, options_json, state_json FROM zones WHERE code = ?").bind(code).first<ZoneRow>();
+  return db.prepare("SELECT code, seed, options_json, state_json, status, kind, crew_id, node FROM zones WHERE code = ?").bind(code).first<ZoneRow>();
 }
 
 /** The crew's cave still being fought through: not cleared, and visited lately. Null if there is none. */
@@ -69,6 +74,16 @@ export async function setPresence(db: D1Database, playerId: string, code: string
 export async function clearPresence(db: D1Database, playerId: string, code?: string): Promise<void> {
   const gone = code ? db.prepare("DELETE FROM zone_presence WHERE player_id = ? AND code = ?").bind(playerId, code) : db.prepare("DELETE FROM zone_presence WHERE player_id = ?").bind(playerId);
   await gone.run().catch(unwritten("clear"));
+}
+
+/** Whether a player is out on a zone right now (as opposed to in the Harbor). Not on one, if presence cannot be read. */
+export async function onAZone(db: D1Database, playerId: string): Promise<boolean> {
+  const row = await db
+    .prepare("SELECT 1 AS here FROM zone_presence WHERE player_id = ? AND seen_at > ?")
+    .bind(playerId, Date.now() - PRESENCE_STALE_MS)
+    .first()
+    .catch((err) => (unwritten("read")(err), null));
+  return !!row;
 }
 
 /** Who of a crew is out on a zone, by player id. Nobody, if presence cannot be read. */

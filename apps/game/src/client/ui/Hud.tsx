@@ -36,7 +36,7 @@
 // typing. The bag's button does the same: press it again to put the bag away.
 
 import { Children, useEffect, useRef, useState, type CSSProperties, type DragEvent, type MouseEvent, type ReactNode } from "react";
-import { ABILITIES, COMMON_ACTIONS, RARITY_COLOR, THROWABLES, abilitiesFor, commonCost, loadoutOf, maxHpFor, parseTraits, pendingTraitTiers, tacticOf, xpToNext, type CommonAction, type Throwable } from "@gantt-quest/world";
+import { ABILITIES, COMMON_ACTIONS, RARITY_COLOR, THROWABLES, abilitiesFor, classAbilitiesOf, commonCost, loadoutOf, maxHpFor, parseAbilityLoadout, parseTraits, pendingTraitTiers, tacticOf, withClassAbilities, xpToNext, type CommonAction, type Throwable } from "@gantt-quest/world";
 import type { Me } from "../api";
 import { Icon, ItemDetail, toOwned } from "../items";
 import { blurb, label } from "../labels";
@@ -57,7 +57,9 @@ export interface HudPips {
   label: string;
   now: number;
   max: number;
-  kind: "action" | "bonus" | "move" | "focus";
+  kind: "action" | "bonus" | "move" | "focus" | "course";
+  /** Said in the tooltip in place of "now of max left". */
+  title?: string;
 }
 
 /** One of the nine slots, when the view fills them itself: something the hero can do now, by button or number key. */
@@ -107,7 +109,8 @@ interface Props {
   /** The button for what can be done here. */
   children?: ReactNode;
   /** Hit points right now; omitted off a voyage, where the hero is whole. */
-  hp?: { now: number; max: number };
+  /** `shield`: points of shield (Bolstered), shown after the HP. */
+  hp?: { now: number; max: number; shield?: number };
   /** What the right-hand meter counts here. */
   meter?: HudMeter;
   pips?: HudPips[];
@@ -122,10 +125,11 @@ interface Props {
   onSlotMenu?(index: number): void;
   /**
    * On a map, either hand can hold a lit torch (in the main hand it is swung as a weapon): rounds of light left on
-   * the one held (null with none) and which hand it is in, how many are carried, and `light` to light one into a
-   * hand (absent when it cannot be done now; `why` says why).
+   * the one held (null with none) and which hand it is in, how many are carried, `light` to light one into a
+   * hand, and `stow` to put the one held out and back in the pack (each absent when it cannot be done now; `why`
+   * says why).
    */
-  torch?: { rounds: number | null; hand: "main" | "off"; carried: number; light?(hand: "main" | "off"): void; why?: string };
+  torch?: { rounds: number | null; hand: "main" | "off"; carried: number; light?(hand: "main" | "off"): void; stow?(): void; why?: string };
   /** The turn: seconds left on it (null with no clock), and ending it when it is yours. */
   turn?: { seconds: number | null; onEnd?(): void; waitingFor?: string };
   /** Resting, where it can be done. */
@@ -162,7 +166,7 @@ export function HudBar({ me, place, children, hp, meter, pips = [], chips, quick
   const weapon = worn.find((i) => i.slot === "main_hand");
   const offhand = worn.find((i) => i.slot === "off_hand");
   // With nothing in hand there is only the punch.
-  const abilities = abilitiesFor(weapon?.ref);
+  const abilities = withClassAbilities(abilitiesFor(weapon?.ref), c ? classAbilitiesOf(c.class_id, c.level, parseAbilityLoadout(c.ability_loadout)) : []);
 
   /** What the pointer is over on the bar, and where along it (in the picture's pixels), for the card that explains it. */
   const [tip, setTip] = useState<{ x: number; node: ReactNode } | null>(null);
@@ -216,9 +220,10 @@ export function HudBar({ me, place, children, hp, meter, pips = [], chips, quick
       const k = e.key.toLowerCase();
       if ((k === "b" || k === "i") && onBag && !bagBlocked) onBag();
       if (k === "l" && onBook) onBook();
-      // A fight's slots answer to their numbers: the top row plain, the bottom row with Shift.
-      const digit = /^Digit([1-9])$/.exec(e.code)?.[1];
-      const slot = digit ? slotsNow.current?.[Number(digit) - 1 + (e.shiftKey ? RACK.mid.length : 0)] : undefined;
+      // A fight's slots answer to their numbers, 1 to 9 and then 0: the top row plain, the bottom row with Shift.
+      const digit = /^Digit([0-9])$/.exec(e.code)?.[1];
+      const col = digit === undefined ? -1 : (Number(digit) + 9) % 10;
+      const slot = col >= 0 && col < RACK.mid.length ? slotsNow.current?.[col + (e.shiftKey ? RACK.mid.length : 0)] : undefined;
       if (slot?.run && !slot.spent) slot.run();
     };
     addEventListener("keydown", onKey);
@@ -238,18 +243,31 @@ export function HudBar({ me, place, children, hp, meter, pips = [], chips, quick
   };
   const shown = slots ?? layout.map(reminder);
 
-  /** A hand's slot: what it holds, with its card; on a map, a lit torch there, or a click (or the bar's torch dropped on it) to light one into it. */
+  /**
+   * A hand's slot: what it holds, with its card. On a map, a lit torch there (a click puts it away, and what was
+   * in the hand is taken up again), or a click (or the bar's torch dropped on it) to light one into it.
+   */
   const handSlot = (hand: "main" | "off") => {
     const at = RACK.hands[hand === "main" ? 0 : 1];
     const worn = hand === "main" ? weapon : offhand;
     const slot = hand === "main" ? "main_hand" : "off_hand";
     if (torch && torch.rounds !== null && torch.hand === hand) {
       const line = hand === "main" ? `${torch.rounds} rounds of light left. Swung as a weapon: it may set whoever it hits Burning. Your weapon is put away while you hold it.` : `${torch.rounds} rounds of light left.${offhand ? " Your shield is set aside while you hold it." : ""}`;
+      const back = worn ? `take up your ${worn.name} again` : "free the hand";
+      const away = torch.stow ? `Click to put it out, stow it in your pack and ${back}. A Bonus action in a fight.` : `${torch.why ?? "You cannot put it away now."} Putting it away is a Bonus action in a fight.`;
       return (
-        <span key={slot} className="hud-slot hand lit" style={well(at)} {...hover(at + 7, <Tip name="Lit torch" line={line} more="It burns down only while a fight goes on. Throw it from the bar to leave it burning on the ground." />)}>
+        <button
+          key={slot}
+          className={`hud-slot hand lit ${torch.stow ? "" : "spent"}`}
+          style={well(at)}
+          aria-label={`Put away the lit torch in your ${hand} hand`}
+          aria-disabled={!torch.stow}
+          onClick={() => torch.stow?.()}
+          {...hover(at + 7, <Tip name="Lit torch" line={line} more={`${away} It burns down only while a fight goes on. Throw it from the bar to leave it burning on the ground.`} />)}
+        >
           <Icon name={ITEM_ICON.torch.name} color={ITEM_ICON.torch.color} size={34} />
           <span className="hud-count">{torch.rounds}</span>
-        </span>
+        </button>
       );
     }
     if (torch && torch.rounds === null && torch.carried > 0) {
@@ -298,7 +316,7 @@ export function HudBar({ me, place, children, hp, meter, pips = [], chips, quick
   const left = pips.filter((p) => p.kind !== "focus");
   const right = pips.filter((p) => p.kind === "focus");
   const pipRow = (p: HudPips) => (
-    <span key={p.label} className={`hud-pips ${p.kind}`} title={`${p.label}: ${p.now} of ${p.max} left`}>
+    <span key={p.label} className={`hud-pips ${p.kind}`} title={p.title ?? `${p.label}: ${p.now} of ${p.max} left`}>
       {Array.from({ length: Math.max(p.max, p.now) }, (_, i) => <i key={i} className={i < p.now ? "on" : ""} />)}
     </span>
   );
@@ -324,8 +342,8 @@ export function HudBar({ me, place, children, hp, meter, pips = [], chips, quick
         </div>
 
         {/* Over the cornice: health, the plaque, and the view's other count. Their numbers are in their tooltips. */}
-        <div className="hud-meter" style={box(hpAt.x, hpAt.y, hpAt.w, hpAt.h)} {...hover(hpAt.x + hpAt.w / 2, <Tip name="Health" line={`${nowHp} of ${maxHp} hit points`} />)}>
-          <LiquidMeter kind="hp" now={nowHp} max={maxHp} w={hpAt.w} h={hpAt.h} />
+        <div className="hud-meter" style={box(hpAt.x, hpAt.y, hpAt.w, hpAt.h)} {...hover(hpAt.x + hpAt.w / 2, <Tip name="Health" line={`${nowHp} of ${maxHp} hit points${hp?.shield ? `, and a shield of ${hp.shield}` : ""}`} />)}>
+          <LiquidMeter kind="hp" now={nowHp} max={maxHp} shield={hp?.shield} w={hpAt.w} h={hpAt.h} />
         </div>
         {meter && (
           <div className="hud-meter" style={box(otherAt.x, otherAt.y, otherAt.w, otherAt.h)} {...hover(otherAt.x + otherAt.w / 2, <Tip name={meter.name} line={`${meter.now} of ${meter.max}${meter.note ? ` · ${meter.note}` : ""}`} />)}>
@@ -366,7 +384,8 @@ export function HudBar({ me, place, children, hp, meter, pips = [], chips, quick
           const col = i % RACK.mid.length;
           const lower = i >= RACK.mid.length;
           const at = box(RACK.mid[col], RACK.slotY + (lower ? RACK_ROW : 0), RACK.slot, RACK.slot);
-          const keys = `${lower ? "Shift " : ""}${col + 1}`;
+          const digit = (col + 1) % 10;
+          const keys = `${lower ? "Shift " : ""}${digit}`;
           // Any slot can be dropped on, and asked to hold something else.
           const arrange = {
             onDragOver: (e: DragEvent) => e.preventDefault(),
@@ -386,7 +405,7 @@ export function HudBar({ me, place, children, hp, meter, pips = [], chips, quick
           return (
             <button
               key={s.id}
-              className={`hud-slot act ${s.picked ? "picked" : ""} ${s.spent ? "spent" : ""} ${slots ? "" : "reminder"}`}
+              className={`hud-slot act ${s.picked ? "picked" : ""} ${s.spent ? "spent" : ""} ${s.wait ? "cooling" : ""} ${slots ? "" : "reminder"}`}
               style={at}
               aria-label={s.name}
               aria-pressed={!!s.picked}
@@ -402,8 +421,8 @@ export function HudBar({ me, place, children, hp, meter, pips = [], chips, quick
               {...hover(RACK.mid[col] + 7, <Tip name={s.name} line={s.line} more={s.more} keys={keys} />)}
             >
               <Icon name={s.icon.name} color={s.icon.color} size={30} flat={s.icon.flat} />
-              {s.wait ? <span className="hud-wait">{s.wait}</span> : s.count !== undefined && <span className="hud-count">{s.count}</span>}
-              <span className="hud-key">{lower ? "⇧" : ""}{col + 1}</span>
+              {s.wait ? <span className="hud-wait" aria-label={`${s.wait} turn${s.wait === 1 ? "" : "s"} to wait`}>{s.wait}</span> : s.count !== undefined && <span className="hud-count">{s.count}</span>}
+              <span className="hud-key">{lower ? "⇧" : ""}{digit}</span>
             </button>
           );
         })}

@@ -12,12 +12,20 @@
 // says, what is in a slot, what a tab does) is laid over it by Hud.tsx, at
 // the places given in RACK.
 
+import { BAR_ROW } from "../zone/hotbar";
+
 /** Rows the meters and plaque take up, over the cornice. */
 const TOP = 15;
+/** Where the slots between the posts start, and how far apart they are. Everything right of them follows from how many there are. */
+const MID_X = 51;
+const MID_STEP = 16;
+const POST_RIGHT = MID_X + BAR_ROW * MID_STEP;
+const BAG = POST_RIGHT + 10;
+const W = BAG + 23;
 
 /** The bar's layout, in art pixels from the picture's top left. */
 export const RACK = {
-  w: 228,
+  w: W,
   h: TOP + 36,
   /** A slot's well, across and down, outline included. */
   slot: 14,
@@ -25,19 +33,19 @@ export const RACK = {
   slotY: TOP + 16,
   /** The two wells left of the first post: weapon and shield. */
   hands: [9, 25],
-  /** The nine between the posts. */
-  mid: Array.from({ length: 9 }, (_, i) => 51 + i * 16),
+  /** The row's worth between the posts (the bottom row lies under them). */
+  mid: Array.from({ length: BAR_ROW }, (_, i) => MID_X + i * MID_STEP),
   /** The one right of the second post: the bag. */
-  bag: 205,
-  posts: [41, 195],
+  bag: BAG,
+  posts: [41, POST_RIGHT],
   /** The tabs off each end: where they start, and the two heights they hang at. */
-  tabs: { left: 0, right: 221, w: 7, h: 9, y: [TOP + 14, TOP + 24] },
+  tabs: { left: 0, right: W - 7, w: 7, h: 9, y: [TOP + 14, TOP + 24] },
   /** The experience bar's channel in the beam. */
-  xp: { x: 22, y: TOP + 7, w: 184, h: 3 },
+  xp: { x: 22, y: TOP + 7, w: W - 44, h: 3 },
   /** The two meters' channels: health on the left, the view's other count on the right. */
-  meters: [{ x: 22, y: 7, w: 60, h: 4 }, { x: 146, y: 7, w: 60, h: 4 }],
-  /** The plaque's face, for the level (or the turn) to be written on. */
-  plaque: { x: 96, y: 2, w: 36, h: 11 },
+  meters: [{ x: 22, y: 7, w: 60, h: 4 }, { x: W - 82, y: 7, w: 60, h: 4 }],
+  /** The plaque's face, for the level (or the turn) to be written on, in the middle. */
+  plaque: { x: (W - 36) / 2, y: 2, w: 36, h: 11 },
 };
 
 /** How much taller the rack is for each row of slots after the first (a fight's bar has two). */
@@ -194,7 +202,7 @@ export function paintRack(canvas: HTMLCanvasElement, rows = 1) {
   row(bx0 + 1, bx1 - 1, T + 11, DARK);
 
   // The rack itself: a board with a lit top edge and a shadowed foot.
-  const [rx0, rx1] = [6, 221];
+  const [rx0, rx1] = [6, w - 7];
   row(rx0, rx1, T + 12, OUT);
   row(rx0 + 1, rx1 - 1, T + 13, (x) => grain(x, T + 13, HIGH, HIGH, LIGHT));
   row(rx0 + 1, rx1 - 1, T + 14, (x) => grain(x, T + 14, LIGHT, HIGH, MID));

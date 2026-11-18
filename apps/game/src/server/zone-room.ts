@@ -35,7 +35,8 @@ import { THROWABLE_KINDS, ZONE_CLIENT_ACTIONS, createZone, ensureMouth, stepZone
 import { consumablesOf, gainConsumables, kitStatements, spendConsumables, type Consumables } from "./consumables";
 import { applyZoneGrant, crewFor, heroInitFor, refreshHarbor, type Env } from "./db";
 import { isDev } from "./dev";
-import { clearPresence, getZoneRow, saveZoneStatement, setPresence } from "./zones";
+import { clearNode } from "./atlas";
+import { clearPresence, getZoneRow, saveZoneStatement, setPresence, zoneStatus } from "./zones";
 
 /** How long a turn in a fight may take before it ends itself. */
 export const ZONE_TURN_MS = 90_000;
@@ -77,6 +78,9 @@ export function zoneActionFrom(raw: unknown, by: string, dev: boolean): ZoneActi
     }
     if (d.op === "standin" && text(d.classId)) return { type: "dev", by, dev: { op: "standin", classId: d.classId } };
     if (d.op === "ai") return { type: "dev", by, dev: { op: "ai", off: !!d.off } };
+    if (d.op === "kit" && text(d.unit) && text(d.classId) && text(d.weapon) && Array.isArray(d.abilities)) {
+      return { type: "dev", by, dev: { op: "kit", unit: d.unit, classId: d.classId, weapon: d.weapon, level: Number(d.level) || 1, abilities: d.abilities.filter(text).slice(0, 20) } };
+    }
     if (d.op === "heal" || d.op === "end_fight" || d.op === "start_fight" || d.op === "clear_surfaces") return { type: "dev", by, dev: { op: d.op } };
     return null;
   }
@@ -91,6 +95,7 @@ export function zoneActionFrom(raw: unknown, by: string, dev: boolean): ZoneActi
   if (a.type === "unlock") return text(a.poi) ? { type: "unlock", by, unit: a.unit, poi: a.poi } : null;
   if (a.type === "forage") return text(a.poi) ? { type: "forage", by, unit: a.unit, poi: a.poi } : null;
   if (a.type === "light") return { type: "light", by, unit: a.unit, ...(a.hand === "main" ? { hand: "main" as const } : {}) };
+  if (a.type === "stow") return { type: "stow", by, unit: a.unit };
   return { type: "end_turn", by, unit: a.unit };
 }
 
@@ -108,6 +113,8 @@ function usedBy(prev: ZoneState, next: ZoneState, id: string, sign: 1 | -1 = 1):
 
 export class ZoneRoom extends DurableObject<Env> {
   private zone: ZoneState | null = null;
+  /** On a zone the atlas made: whose chart and which node of it, and whether that node has been marked cleared from here. */
+  private landfall: { crewId: string; node: string; told: boolean } | null = null;
   private queue: Promise<unknown> = Promise.resolve();
   /** Whether each player here was last written down as fighting, so presence is only rewritten when it changes. */
   private fighting = new Map<string, boolean>();
@@ -133,6 +140,7 @@ export class ZoneRoom extends DurableObject<Env> {
     if (!row) throw new Error(`zone ${zoneCode} not found`);
     // A cave saved before it had a mouth gets one now, so it can be left (ensureMouth).
     this.zone = row.state_json ? ensureMouth(JSON.parse(row.state_json) as ZoneState) : createZone(row.code, row.seed, zoneOptions(JSON.parse(row.options_json)));
+    this.landfall = row.kind === "atlas" && row.crew_id && row.node ? { crewId: row.crew_id, node: row.node, told: row.status === "cleared" } : null;
     if (code) await this.ctx.storage.put("code", code);
     return this.zone;
   }
@@ -209,8 +217,8 @@ export class ZoneRoom extends DurableObject<Env> {
       if (n !== undefined) ws.send(JSON.stringify({ type: "error", message: "That could not be done.", ack: n }));
       return;
     }
-    // Throwing, drinking, lighting a torch or picking one up as your own hero draws on (or adds to) your own pack. (A stand-in has no pack: it carries the kit it was given.)
-    const pack = (action.type === "throw" || action.type === "drink" || action.type === "light" || action.type === "pickup") && action.unit === playerId ? playerId : undefined;
+    // Throwing, drinking, lighting a torch, picking one up or putting one away as your own hero draws on (or adds to) your own pack. (A stand-in has no pack: it carries the kit it was given.)
+    const pack = (action.type === "throw" || action.type === "drink" || action.type === "light" || action.type === "pickup" || action.type === "stow") && action.unit === playerId ? playerId : undefined;
     const error = await this.serial(async () => {
       await this.load();
       return this.apply(action, pack, { ws, n });
@@ -318,6 +326,14 @@ export class ZoneRoom extends DurableObject<Env> {
         this.tellHarbor(effect.heroId);
       }
       await saveZoneStatement(db, next).run();
+    }
+    // A landfall cleared (nobody left to fight, nothing left to open) is cleared on the crew's chart: once, and
+    // the Harbor is told, so a chart that is open there shows the routes beyond it.
+    const landfall = this.landfall;
+    if (landfall && !landfall.told && zoneStatus(next) === "cleared") {
+      landfall.told = true;
+      await clearNode(db, landfall.crewId, landfall.node);
+      this.ctx.waitUntil(refreshHarbor(this.env, landfall.crewId));
     }
     await this.notePresence();
     this.broadcast([...passed, ...res.events], from);

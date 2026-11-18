@@ -26,7 +26,7 @@ It runs entirely on Cloudflare: Workers, Durable Objects, D1, Workers AI and Ema
 - **Islanders:** you talk to them in free text. The AI writes what they say, but it can only change the game through a fixed, validated set of actions.
 - **Returning home:** win or lose, you come back with XP, gold, loot and hut materials. Defeat costs a capped amount of gold and nothing else.
 
-**Heroes:** eight classes, each with a passive, two weapons, traits chosen at levels 2 and 4, and a signature weapon. The classes are Tidewall Paladin, Stormcall Mage, Smuggler Rogue, Reef Druid, Shanty Bard, Starchart Sage, Lighthouse Warden and Wreck Warlock. Characters persist and level up, and sign-in is by email code, so guests can save their progress.
+**Heroes:** eight classes, each with a passive, two weapons, traits chosen at levels 2 and 4, and a signature weapon. The classes are Lighthouse Paladin, Stormcall Mage, Smuggler Rogue, Reef Druid, Shanty Bard, Starchart Sage, Tidewall Warden and Wreck Warlock. Characters persist and level up, and sign-in is by email code, so guests can save their progress.
 
 **For admins:** an admin page (`#admin`) renames things, recolours sprites and swaps item icons without code changes. It's presentation only and never changes the rules.
 

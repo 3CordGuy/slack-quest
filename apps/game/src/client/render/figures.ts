@@ -810,7 +810,7 @@ const HOLD: Record<string, Hold> = {
   // Rung: held up by the handle, the bell hanging below the fist.
   "ships-bell": { grip: [0, 5.6, 0], scale: 0.5, pose: { arm: -0.7 } },
   astrolabe: { grip: [0, -4.2, 0], scale: 0.45, pose: { arm: -0.5 } },
-  "lamp-hook": { grip: [0, -6.5, 0], scale: 0.65, turn: FORWARD, pose: { tilt: 0.15 } },
+  "boarding-pike": { grip: [0, -6.5, 0], scale: 0.65, turn: FORWARD, pose: { tilt: 0.15 } },
   // Held up in front by the stem.
   "bilge-chalice": { grip: [0, -3, 0], scale: 0.46, at: [0, 0, 0.4], pose: { arm: -0.9 } },
   "round-shield": { grip: [0, 0, 0], scale: 0.39, at: [0.5, -3.4, 1.9], turn: ON_ARM },
@@ -4487,12 +4487,12 @@ function drawHeld(id: string, b: Biped, trim: string, look: Look, shield: boolea
       w.box(GEAR.steel, 0.3, 4.2, 0.36, 0, 4.8, 0.05, [0, 0, 0.7]);
       w.glowBall(trim, 0.6, 0, 4.8, 0.2);
       return { arm: -0.5 };
-    case "lamp_hook":
-      shaft(GEAR.wood, 14, 3.4);
+    case "boarding_pike":
+      shaft(GEAR.wood, 15, 3.4);
       w.cyl(trim, 0.6, 0.6, 0.8, 0, 6, 0, 6);
-      w.box(GEAR.steel, 0.4, 0.6, 2.6, 0, 10.6, 1.1);
-      w.box(GEAR.steel, 0.4, 1.4, 0.5, 0, 10, 2.2);
-      lantern(7.6, 2.2);
+      w.cyl(GEAR.iron, 0.55, 0.55, 1.2, 0, 10.8, 0, 6);
+      w.box(GEAR.iron, 3.4, 0.5, 0.5, 0, 11.6, 0);
+      w.cone(GEAR.steel, 0.95, 4.8, 0, 14, 0, 4);
       return { tilt: 0.15 };
     case "bilge_chalice": {
       w.cyl(GEAR.gold, 0.36, 0.36, 2.4, 0, 1.2, 0, 6);
@@ -5011,12 +5011,16 @@ function carryLeft(b: Biped, tilt: number) {
 }
 
 /** One of the smugglers' dead: a skeleton with a rusted cutlass and a scrap of its old bandana. */
-function skeleton(top: THREE.Group): Rig {
+/**
+ * A skeleton in a bandana with a rusted cutlass. `drowned`: one of a Warlock's sunken sailors, called up off the sea floor,
+ * its bones stained by the sea and hung with kelp, in a navy kerchief with its cutlass, or under a tricorn with a pistol.
+ */
+function skeleton(top: THREE.Group, drowned?: "cutlass" | "pistol"): Rig {
   const parts: Part[] = [];
   const b = biped(top, parts);
-  const bone = "#e8e2d0";
-  const dim = "#c9c1aa";
-  const rag = "#8a3b2f";
+  const bone = drowned ? "#c3cbb2" : "#e8e2d0";
+  const dim = drowned ? "#98a48d" : "#c9c1aa";
+  const rag = drowned ? "#2c4f73" : "#8a3b2f";
   for (const [thigh, shin, foot] of [[b.thighR, b.shinR, b.footR], [b.thighL, b.shinL, b.footL]]) {
     // A thigh bone from a round head at the hip, a kneecap, a shin bone, and a long bony foot.
     thigh.loft(bone, [[0.55, 0.5, 0.5], [0.15, 0.72, 0.72], [-0.5, 0.48, 0.48], [-1.9, 0.4, 0.4], [-2.55, 0.62, 0.6]], 6);
@@ -5060,14 +5064,44 @@ function skeleton(top: THREE.Group): Rig {
   for (const s of [-1, 1]) h.ball(OUTLINE, 1, s * 1.3, 3.45, 2.55, 1, [0.82, 0.92, 0.5]);
   h.shape(OUTLINE, sym([[0.42, 2.55, 2.2], [0.42, 2.55, 2.95], [0, 1.75, 2.2], [0, 1.75, 2.95]]));
   for (const x of [-1.2, -0.4, 0.4, 1.2]) h.shape(bone, [[x - 0.26, 1.55, 1.9], [x + 0.26, 1.55, 1.9], [x - 0.22, 1.55, 2.45 - Math.abs(x) * 0.18], [x + 0.22, 1.55, 2.45 - Math.abs(x) * 0.18], [x, 0.75, 2.25 - Math.abs(x) * 0.18]]);
-  // The bandana tied over its crown, a tail of it hanging behind.
-  h.loft(rag, [[4.55, 3.2, 3, -0.1], [5.1, 3.18, 2.98, -0.11], [5.85, 2.6, 2.5, -0.15], [6.45, 1.15, 1.15, -0.15]], 10);
-  h.ball(rag, 0.6, 1.9, 5.05, -2.75, 0);
-  h.shape(rag, [[1.55, 5.1, -2.7], [2.35, 5.1, -2.65], [2.65, 2.7, -3.15], [3.3, 2.95, -3], [2.2, 4.3, -3.2]]);
-  // A rusted cutlass: a wrapped grip, a knuckle guard, and a broad blade curving forward to its point.
+  if (drowned === "pistol") {
+    // A gunner's tricorn: a three-cornered brim of sodden felt round a low crown.
+    const felt = "#26303a";
+    h.loft(felt, [[5.15, 4.3, 4.3], [5.5, 4.3, 4.3]], 3, 0, 0, -0.15, [0, Math.PI, 0]);
+    h.loft(felt, [[5.3, 2.75, 2.6, -0.15], [6.6, 2.5, 2.35, -0.15], [7.1, 1.6, 1.5, -0.15]], 8);
+    h.loft("#7a5a2a", [[5.45, 2.8, 2.65, -0.15], [5.8, 2.75, 2.6, -0.15]], 8);
+  } else {
+    // The bandana tied over its crown, a tail of it hanging behind.
+    h.loft(rag, [[4.55, 3.2, 3, -0.1], [5.1, 3.18, 2.98, -0.11], [5.85, 2.6, 2.5, -0.15], [6.45, 1.15, 1.15, -0.15]], 10);
+    h.ball(rag, 0.6, 1.9, 5.05, -2.75, 0);
+    h.shape(rag, [[1.55, 5.1, -2.7], [2.35, 5.1, -2.65], [2.65, 2.7, -3.15], [3.3, 2.95, -3], [2.2, 4.3, -3.2]]);
+  }
+  if (drowned) {
+    // The sea floor still on it: kelp trailing off the collarbones and the hips, and barnacles crusted on the bone.
+    const weed = "#4f7a3a";
+    const crust = "#ddd6c2";
+    for (const [x, len] of [[-3.1, 2.6], [-1.2, 1.7], [2.3, 2.2], [3.6, 1.5]] as const) strut(t, weed, [x, 5.7, 0.55], [x * 1.05, 5.7 - len, 1.1], 0.24, 0.1, 5);
+    for (const x of [-1.9, 1.4]) strut(t, weed, [x, 1.2, 1.05], [x * 1.1, -0.9, 1.25], 0.22, 0.1, 5);
+    for (const [x, y, z] of [[3.9, 5.95, 0.5], [-4.4, 5.3, 0.3], [1.7, 0.6, 1.2], [-0.6, 3.6, -0.75]] as const) t.ball(crust, 0.3, x, y, z);
+    h.ball(crust, 0.32, 2.4, 3.1, 1.6);
+    h.ball(crust, 0.26, -2.1, 4.1, 1.5);
+  }
   const w = b.heldR;
   const wood = "#6b4a2b";
   const rust = "#a3896a";
+  if (drowned === "pistol") {
+    // A flintlock pistol held up: a curved wooden butt in the fist, the lock and its hammer, and a long iron barrel, belled at the muzzle.
+    const iron = "#5d6670";
+    w.loft(wood, [[-0.8, 0.5, 0.42, -0.35], [0.2, 0.42, 0.38, -0.1], [1.1, 0.38, 0.36]], 6);
+    w.ball(wood, 0.55, 0, -0.9, -0.45);
+    w.shape(iron, sym([[0.3, 0.9, 0.5], [0.3, 0.9, -0.3], [0.3, 1.7, 0.5], [0.3, 1.7, -0.3]]));
+    strut(w, iron, [0, 1.5, -0.35], [0, 2.1, -0.75], 0.16);
+    w.loft(iron, [[1.2, 0.34, 0.34, 0.2], [5.4, 0.3, 0.3, 0.2], [5.7, 0.42, 0.42, 0.2], [5.9, 0.42, 0.42, 0.2]], 8);
+    w.loft(wood, [[1.1, 0.4, 0.4, 0.2], [3.8, 0.36, 0.36, 0.2]], 6);
+    apply(b, { tilt: 0.55 });
+    return { parts, animate: b.animate, acts: true };
+  }
+  // A rusted cutlass: a wrapped grip, a knuckle guard, and a broad blade curving forward to its point.
   w.loft(wood, [[-0.7, 0.36, 0.36], [1.1, 0.42, 0.42]], 6);
   w.ball(wood, 0.5, 0, -0.85, 0);
   w.shape(wood, sym([[1.4, 1.15, 0.65], [1.4, 1.5, 0.65], [1.4, 1.15, -0.2], [1.4, 1.5, -0.2], [0.5, 1.0, 0.85], [0.5, 1.65, 0.85], [0.5, 1.0, -0.45], [0.5, 1.65, -0.45]]));
@@ -5531,6 +5565,58 @@ function slime(top: THREE.Group): Rig {
   return { parts: [body], animate, clean: true };
 }
 
+/** A Druid's sea turtle, nose toward +z: a high domed shell over four broad flippers, a blunt beaked head. */
+function seaTurtle(top: THREE.Group): Rig {
+  const shell = "#5b7a3a";
+  const scute = "#7f9a4a";
+  const rim = "#3e5428";
+  const skin = "#86ad97";
+  const belly = "#d9c98a";
+  const parts: Part[] = [];
+  const part = (parent: THREE.Object3D, x: number, y: number, z: number) => (parts[parts.length] = new Part(parent, x, y, z));
+  const body = part(top, 0, 0, 0);
+  // The pale belly plate, the dark rim of the shell over it, and the dome rising to a crown.
+  body.loft(belly, [[1.4, 5.2, 6.2], [2.2, 6, 7]], 12);
+  body.loft(rim, [[2.1, 6.4, 7.5], [2.9, 6.7, 7.8]], 12);
+  body.loft(shell, [[2.8, 6.5, 7.6], [4.2, 6.2, 7.2], [5.6, 5.1, 5.9], [6.6, 3.4, 4], [7.1, 1.4, 1.6]], 12);
+  // Plates on the dome: one down the crown, a ring of them round it.
+  for (const z of [-3, 0, 3]) spot(body, scute, 1.7, 1.25, 0.5, 0, 6.6 - Math.abs(z) * 0.32, z, [-z * 0.12, 0, 0]);
+  for (let i = 0; i < 6; i++) {
+    const a = (i / 6) * Math.PI * 2 + Math.PI / 6;
+    spot(body, scute, 1.5, 1.1, 0.45, Math.sin(a) * 4.4, 5.2, Math.cos(a) * 5.1, [Math.cos(a) * -0.55, 0, Math.sin(a) * 0.55]);
+  }
+  const head = part(top, 0, 3.3, 7.2);
+  lengthwise(head, skin, [[-1.2, 1.35, 1.25], [0.6, 1.55, 1.4, 0.1], [2.3, 1.5, 1.35, 0.25], [3.4, 1.05, 0.95, 0.2], [3.9, 0.45, 0.4, 0.1]]);
+  head.shape(rim, sym([[0.55, -0.2, 3.2], [0.3, 0.55, 3.55], [0, -0.55, 4.25]]));
+  for (const s of [-1, 1]) head.ball(OUTLINE, 0.36, s * 1.05, 0.75, 2.4);
+  const flipper = (x: number, z: number, long: number, sweep: number) => {
+    const f = part(top, x, 2.4, z);
+    f.ball(skin, 1, Math.sign(x) * long * 0.8, -0.2, sweep, 1, [long, 0.42, 1.25]);
+    return f;
+  };
+  const flippers = [flipper(5.4, 3.6, 2.6, 1.2), flipper(-5.4, 3.6, 2.6, 1.2), flipper(4.8, -4.6, 1.7, -0.6), flipper(-4.8, -4.6, 1.7, -0.6)];
+  body.ball(skin, 0.6, 0, 2.2, -7.6, 0, [1, 0.8, 1.6]);
+  const animate = (a: Anim) => {
+    if (a.lying) {
+      // Flipped onto its back.
+      top.rotation.set(0, 0, Math.PI);
+      top.position.set(0, 7.6, 0);
+      return;
+    }
+    top.rotation.set(-a.strike * 0.12, 0, 0);
+    top.position.set(0, (a.breath + 1) * 0.05, a.strike * 1.4);
+    // Flippers row, the near pair against the far.
+    flippers.forEach((f, i) => {
+      const side = i % 2 === 0 ? 1 : -1;
+      const pair = i < 2 ? 1 : -1;
+      f.joint.rotation.set(0, side * pair * a.swing * 0.5, side * (0.08 + Math.abs(a.swing) * 0.15));
+    });
+    head.joint.rotation.set(a.breath * 0.05 - a.strike * 0.25, Math.sin(a.t * 0.7) * 0.12, 0);
+    head.joint.position.z = 7.2 + a.strike * 1.6;
+  };
+  return { parts, animate };
+}
+
 /** The sparring ring's training dummy: a straw sack on a post, with a target painted on its chest. */
 function dummy(top: THREE.Group): Rig {
   const straw = "#d9b662";
@@ -5592,6 +5678,12 @@ function rigFor(kind: string, top: THREE.Group, look: Look, outfit: Outfit | und
       return ogre(top);
     case "troll":
       return troll(top);
+    case "sea_turtle":
+      return seaTurtle(top);
+    case "drowned_cutlass":
+      return skeleton(top, "cutlass");
+    case "drowned_gunner":
+      return skeleton(top, "pistol");
   }
   return person(top, look, undefined, asleep);
 }
