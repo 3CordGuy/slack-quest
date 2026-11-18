@@ -44,6 +44,12 @@ export interface Tactic {
   ignites?: boolean;
   /** Extra damage against something Wet. */
   vsWet?: number;
+  /** Extra damage when the roll to hit had advantage (Stab). */
+  edge?: number;
+  /** Leaves the user Inspired, their next roll to hit with advantage, through this many of their turns after this one (Take Aim). */
+  steady?: number;
+  /** Single: landed, drags the target this many hexes straight toward the user, as far as the way is open (Reel In). */
+  pull?: number;
   /** Adds this much to the user's movement for the rest of their turn (Slicing Wind). */
   stride?: number;
   /** Adds this much to the ally's movement: now if it is their turn, else on their next (Wind's Blessing). */
@@ -285,6 +291,12 @@ export const TACTICS: Record<string, Tactic> = {
   // Mage
   shock: spell(6, { vsWet: 3 }),
   mend: mend(5),
+  stab: melee({ edge: 3 }),
+  eviscerate: melee({ cooldown: 2 }),
+  bow_shot: shot(8),
+  take_aim: { ...guard(), steady: 1 },
+  snag: melee(),
+  reel_in: shot(3, { pull: 2 }),
   slicing_wind: spell(6, { stride: 1 }),
   winds_blessing: mend(5, { cost: "bonus", tailwind: 2 }),
   waterbolt: spell(6, { surface: { kind: "water", rounds: 3 } }),
@@ -296,11 +308,6 @@ export const TACTICS: Record<string, Tactic> = {
   trade_winds: spell(5, { shape: "blast", radius: 1, cooldown: 3, weather: "wind" }),
   tidal_wave: spell(5, { shape: "line", length: 5, cooldown: 3, sweep: true, surface: { kind: "water", rounds: 2 } }),
   // Rogue
-  quick_stab: melee(),
-  flurry: melee({ cooldown: 1 }),
-  aimed_shot: shot(8),
-  pin_down: shot(8),
-  land_the_catch: melee(),
   // Rogue class abilities
   smugglers_route: { cost: "bonus", reach: "spell", range: ROUTE_RANGE, shape: "self", cooldown: 3, blink: { range: ROUTE_RANGE, carry: true } },
   sneak: { cost: "action", reach: "spell", range: 0, shape: "self", cooldown: 4, hide: SNEAK },

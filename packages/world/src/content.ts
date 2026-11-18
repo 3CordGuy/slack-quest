@@ -179,11 +179,15 @@ export const ABILITIES: Record<string, AbilityDef> = {
   winds_blessing: { id: "winds_blessing", name: "Wind's Blessing", stat: "int_stat", rolls: 1, target: "ally", heal: 4, blurb: "A Bonus action: heal an ally (or yourself) a little, and put the wind at their back for 2 more movement, this turn if they are taking it, else their next." },
   waterbolt: { id: "waterbolt", name: "Waterbolt", stat: "int_stat", rolls: 3, target: "enemy", damage: 8, blurb: "A bolt of seawater. On a hit, it leaves water under the target, soaking it Wet." },
   lightning_strike: { id: "lightning_strike", name: "Lightning Strike", stat: "int_stat", rolls: 3, target: "enemy", damage: 12, perfect: { effect: "stunned", turns: 1 }, blurb: "Lightning out of the sky: a heavy blow, 3 harder on anything Wet. On a hit, the target must save or be Stunned." },
+  // Rogue weapons. Knives: Stab and Eviscerate. Shortbow: Shot and Take Aim. Gaff Hook: Snag and Reel In.
+  stab: { id: "stab", name: "Stab", stat: "dex", rolls: 2, target: "enemy", damage: 8, blurb: "A quick stab with the knives. Made with advantage, it finds a gap: 3 more damage." },
+  eviscerate: { id: "eviscerate", name: "Eviscerate", stat: "dex", rolls: 3, target: "enemy", damage: 14, targetEffect: { effect: "bleeding", turns: 3 }, blurb: "Open them up with both knives: a heavy blow, and on a hit the target is Bleeding." },
+  bow_shot: { id: "bow_shot", name: "Shot", stat: "dex", rolls: 3, target: "enemy", damage: 9, blurb: "An arrow from the shortbow." },
+  take_aim: { id: "take_aim", name: "Take Aim", stat: "dex", rolls: 1, target: "self", blurb: "A Bonus action: steady your hand. Your next roll to hit has advantage." },
+  snag: { id: "snag", name: "Snag", stat: "dex", rolls: 2, target: "enemy", damage: 8, perfect: { effect: "bleeding", turns: 3 }, blurb: "A tearing swing of the hook. On a hit, the target must save or start Bleeding." },
+  reel_in: { id: "reel_in", name: "Reel In", stat: "dex", rolls: 2, target: "enemy", damage: 8, blurb: "Throw the hook at an enemy up to 3 hexes off. On a hit, it is dragged 2 hexes straight toward you." },
   punch: { id: "punch", name: "Punch", stat: "str", rolls: 2, target: "enemy", damage: 4, blurb: "Bare knuckles. All you have without a weapon in hand." },
   cleave: { id: "cleave", name: "Cleave", stat: "str", rolls: 3, target: "all_enemies", damage: 7, blurb: "A wide swing through three hexes beside you, an attack on each enemy in them." },
-  quick_stab: { id: "quick_stab", name: "Quick Stab", stat: "dex", rolls: 2, target: "enemy", damage: 8, perfect: { effect: "bleeding", turns: 3 }, blurb: "A quick, reliable stab. On a hit, the target must save or start Bleeding." },
-  flurry: { id: "flurry", name: "Flurry", stat: "dex", rolls: 4, target: "enemy", damage: 12, perfect: { effect: "exposed", turns: 2 }, blurb: "A storm of cuts. On a hit, the target must save or be Exposed." },
-  aimed_shot: { id: "aimed_shot", name: "Aimed Shot", stat: "dex", rolls: 3, target: "enemy", damage: 10, blurb: "A careful, heavy shot." },
   thornlash: { id: "thornlash", name: "Thornlash", stat: "int_stat", rolls: 3, target: "enemy", damage: 10, perfect: { effect: "slowed", turns: 2 }, blurb: "Thorns that dig in. On a hit, the target must save or be Slowed." },
   rejuvenate: { id: "rejuvenate", name: "Rejuvenate", stat: "int_stat", rolls: 2, target: "ally", heal: 9, blurb: "Heal an ally (or yourself)." },
   overgrowth: { id: "overgrowth", name: "Overgrowth", stat: "int_stat", rolls: 3, target: "all_enemies", damage: 5, perfect: { effect: "slowed", turns: 2 }, blurb: "Roots burst up under every enemy in the area. Those that fail to brace are also Slowed." },
@@ -247,13 +251,11 @@ export const ABILITIES: Record<string, AbilityDef> = {
   sailor_scimitar: { id: "sailor_scimitar", name: "Scimitar", stat: "str", rolls: 2, target: "enemy", damage: 8, blurb: "A drowned sailor's scimitar, rusted but sharp enough." },
   stoke_the_fire: { id: "stoke_the_fire", name: "Stoke the Fire", stat: "str", rolls: 3, target: "all_enemies", damage: 6, targetEffect: { effect: "burning", turns: 2 }, blurb: "Flame bursts off you: every enemy beside you is struck and set Burning." },
   // Signature abilities: one per class, on its signature weapon.
-  land_the_catch: { id: "land_the_catch", name: "Land the Catch", stat: "dex", rolls: 3, target: "enemy", damage: 9, finisher: 2, blurb: "Hook the weakest: double damage to an enemy under a quarter of its HP." },
   riptide: { id: "riptide", name: "Riptide", stat: "int_stat", rolls: 3, target: "all_enemies", damage: 4, targetEffect: { effect: "slowed", turns: 1 }, blurb: "Drags at every enemy, and leaves them Slowed." },
   all_hands: { id: "all_hands", name: "All Hands", stat: "int_stat", rolls: 2, target: "ally", heal: 4, actNext: true, blurb: "Ring the bell: a crewmate patches up a little and takes the very next turn." },
   plot_the_course: { id: "plot_the_course", name: "Plot the Course", stat: "int_stat", rolls: 3, target: "enemy", damage: 10, ignoreGuard: true, perfect: { effect: "exposed", turns: 2 }, blurb: "Goes straight through a guard. On a hit, the target must save or be Exposed." },
   lighthouse_beam: { id: "lighthouse_beam", name: "Lighthouse Beam", stat: "str", rolls: 3, target: "all_enemies", damage: 4, selfEffect: { effect: "taunting", turns: 1 }, blurb: "Sweep the light across every enemy, and every one of them comes for you." },
   red_tide: { id: "red_tide", name: "Red Tide", stat: "int_stat", rolls: 3, target: "enemy", damage: 6, bleedPayoff: 2, blurb: "Calls in the debt: +2 damage per turn of Bleeding left on the target, and the bleeding stops." },
-  pin_down: { id: "pin_down", name: "Pin Down", stat: "agi", rolls: 2, target: "enemy", damage: 4, perfect: { effect: "stunned", turns: 1 }, blurb: "A pinning shot. On a hit, the target must save or be Stunned." },
 };
 
 export interface WeaponDef {
@@ -270,8 +272,8 @@ export const WEAPONS: Record<string, WeaponDef> = {
   greatsword: { id: "greatsword", name: "Breakwater Greatsword", classId: "qa_paladin", abilities: ["cleave", "block"] },
   staff: { id: "staff", name: "Squall Staff", classId: "devops_mage", abilities: ["shock", "mend"] },
   tome: { id: "tome", name: "Logbook of Gales", classId: "devops_mage", abilities: ["slicing_wind", "winds_blessing"] },
-  daggers: { id: "daggers", name: "Twin Gutting Knives", classId: "refactor_rogue", abilities: ["quick_stab", "flurry"] },
-  shortbow: { id: "shortbow", name: "Crow's Nest Shortbow", classId: "refactor_rogue", abilities: ["aimed_shot", "pin_down", "quick_stab"] },
+  daggers: { id: "daggers", name: "Twin Gutting Knives", classId: "refactor_rogue", abilities: ["stab", "eviscerate"] },
+  shortbow: { id: "shortbow", name: "Crow's Nest Shortbow", classId: "refactor_rogue", abilities: ["bow_shot", "take_aim"] },
   root_staff: { id: "root_staff", name: "Driftwood Staff", classId: "backend_druid", abilities: ["thornlash", "rejuvenate"] },
   sickle: { id: "sickle", name: "Kelp Sickle", classId: "backend_druid", abilities: ["overgrowth", "thornlash", "rejuvenate"] },
   lute: { id: "lute", name: "Dockside Lute", classId: "frontend_bard", abilities: ["dissonance", "encore"] },
@@ -284,7 +286,7 @@ export const WEAPONS: Record<string, WeaponDef> = {
   // Signature weapons: each class's own ability plus a staple, drawn like a weapon the class already has.
   ballast_flail: { id: "ballast_flail", name: "Ballast Flail", classId: "qa_paladin", abilities: ["flail_strike", "armor_crush"], looksLike: "mace" },
   barometer_rod: { id: "barometer_rod", name: "Barometer Rod", classId: "devops_mage", abilities: ["waterbolt", "lightning_strike"], looksLike: "staff" },
-  gaff_hook: { id: "gaff_hook", name: "Gaff Hook", classId: "refactor_rogue", abilities: ["land_the_catch", "quick_stab", "flurry"], looksLike: "daggers" },
+  gaff_hook: { id: "gaff_hook", name: "Gaff Hook", classId: "refactor_rogue", abilities: ["snag", "reel_in"], looksLike: "daggers" },
   coral_staff: { id: "coral_staff", name: "Coral Staff", classId: "backend_druid", abilities: ["riptide", "thornlash", "rejuvenate"], looksLike: "root_staff" },
   ships_bell: { id: "ships_bell", name: "Ship's Bell", classId: "frontend_bard", abilities: ["all_hands", "dissonance", "encore"], looksLike: "lute" },
   astrolabe: { id: "astrolabe", name: "Astrolabe", classId: "staff_sage", abilities: ["plot_the_course", "manifest", "arcane_ward"], looksLike: "orb" },

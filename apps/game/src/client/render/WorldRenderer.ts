@@ -51,7 +51,7 @@ const SPELL_COLOR: Record<string, string> = {
   "Dark Bolt": "#b06cff",
   Immolate: "#ff6a3c",
 };
-const ARROW_ABILITIES = new Set(["Aimed Shot", "Pin Down", "Volley", "Barbed Arrow"]);
+const ARROW_ABILITIES = new Set(["Shot", "Volley", "Barbed Arrow"]);
 /** Thrown things: a rock lobbed in an arc, tumbling, that bursts into dust where it lands. */
 const THROWN: Record<string, string> = { "Hurl Rock": "#77726a" };
 /** Melee blows heavy enough to knock the target back and raise dust at its feet. */
@@ -60,7 +60,7 @@ const SMASHES = new Set(["Club Smash"]);
  * Melee blows struck as the figure's heavy strike (see Figure.strike), a great two-handed sweep or with a blade
  * in each hand both tossed and jabbed down: the smashes, and the other all-or-nothing swings.
  */
-const HEAVY_SWINGS = new Set([...SMASHES, "Heavy Blow", "Cleave", "Crushing Maul", "Crushing Strike", "Sweeping Ruin", "Stone Fist", "Flurry", "Shockwave"]);
+const HEAVY_SWINGS = new Set([...SMASHES, "Cleave", "Eviscerate", "Crushing Maul", "Crushing Strike", "Sweeping Ruin", "Stone Fist", "Shockwave"]);
 /** A ground-pound (the ogre's Stomp, the guardian's Quake): no step in; the ground shakes out from the attacker's feet and jolts whoever it reaches. */
 const QUAKES = new Set(["Stomp", "Quake"]);
 /** Heals that are an enemy growing back (a troll's Regenerate), drawn as moss creeping over it, not a sparkle. */

@@ -43,7 +43,7 @@ function hero(state: ZoneState, id: string, classId: string, pos: HexPos): Unit 
   const sheet = standInHero(classId, id, 1)!;
   const unit: Unit = {
     id, side: "hero", name: id, kind: classId, level: 1, pos, hp: sheet.maxHp, maxHp: sheet.maxHp, focus: 2, maxFocus: 2,
-    stats: STARTING_STATS[classId], armor: 2, power: 1, abilities: classId === "refactor_rogue" ? ["aimed_shot", "quick_stab"] : classId === "devops_mage" ? ["shock", "mend"] : ["bash", "block"],
+    stats: STARTING_STATS[classId], armor: 2, power: 1, abilities: classId === "refactor_rogue" ? ["bow_shot", "stab"] : classId === "devops_mage" ? ["shock", "mend"] : ["bash", "block"],
     conditions: [], down: false, cooldowns: {}, items: { healing: 2, poison: 2, fire: 1, oil: 1, water: 1 },
   };
   state.units.push(unit);
@@ -360,11 +360,11 @@ describe("attacks", () => {
     hero(state, "ann", "refactor_rogue", at(4, 6));
     const foe = enemy(state, "dummy", at(9, 6));
     state = provoke(must(state, { type: "move", by: "ann", unit: "ann", to: at(5, 6) }));
-    expect(fails(state, { type: "use", by: "ann", unit: "ann", ability: "quick_stab", target: foe.id })).toMatch(/next to it/);
-    expect(fails(state, { type: "use", by: "ann", unit: "ann", ability: "aimed_shot", target: foe.id })).toMatch(/clear line/);
+    expect(fails(state, { type: "use", by: "ann", unit: "ann", ability: "stab", target: foe.id })).toMatch(/next to it/);
+    expect(fails(state, { type: "use", by: "ann", unit: "ann", ability: "bow_shot", target: foe.id })).toMatch(/clear line/);
     state = must(state, { type: "move", by: "ann", unit: "ann", to: at(5, 5) });
     const events: ZoneEvent[] = [];
-    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "aimed_shot", target: foe.id }, events);
+    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "bow_shot", target: foe.id }, events);
     const roll = events.find((e) => e.t === "roll" && e.roll.kind === "attack");
     expect(roll).toBeDefined();
     expect(events.some((e) => e.t === "hit" || e.t === "miss")).toBe(true);
@@ -636,11 +636,11 @@ describe("light and the dark", () => {
     state.aiOff = true;
     const ann = hero(state, "ann", "refactor_rogue", at(3, 6));
     const far = enemy(state, "dummy", at(6, 6));
-    expect(checkAbility(state, ann, "aimed_shot", { target: far.id })).toMatch(/too dark/);
+    expect(checkAbility(state, ann, "bow_shot", { target: far.id })).toMatch(/too dark/);
     const near = enemy(state, "dummy", at(4, 6), "g2");
     expect(attackContext(state, ann, near, { melee: true }).notes).toContain("Disadvantage: the target is in the dark");
     ann.torch = 5;
-    expect(checkAbility(state, ann, "aimed_shot", { target: far.id })).toBeNull();
+    expect(checkAbility(state, ann, "bow_shot", { target: far.id })).toBeNull();
     expect(attackContext(state, ann, near, { melee: true }).notes).not.toContain("Disadvantage: the target is in the dark");
     // The enemy sees in the dark.
     ann.torch = undefined;
@@ -1204,7 +1204,7 @@ describe("fleeing", () => {
     far = provoke(far);
     expect(far.encounter!.order).not.toContain(archer.id);
     expect(Math.min(hexDistance(archer.pos, foe.pos), hexDistance(archer.pos, at(3, 2)))).toBeGreaterThan(JOIN_RANGE);
-    far = must(far, { type: "use", by: "cy", unit: "cy", ability: "aimed_shot", target: foe.id });
+    far = must(far, { type: "use", by: "cy", unit: "cy", ability: "bow_shot", target: foe.id });
     expect(far.encounter!.order).toContain("cy");
   });
 
@@ -1913,10 +1913,10 @@ describe("crates", () => {
     const rogue = hero(state, "bo", "refactor_rogue", at(10, 6));
     crate(state, "crate1", at(6, 6));
     expect(fails(state, { type: "use", by: "ann", unit: "ann", ability: "bash", target: "crate1" })).toMatch(/next to it/);
-    expect(fails(state, { type: "use", by: "bo", unit: "bo", ability: "aimed_shot", target: "crate1" })).toMatch(/no clear line/);
+    expect(fails(state, { type: "use", by: "bo", unit: "bo", ability: "bow_shot", target: "crate1" })).toMatch(/no clear line/);
     rogue.pos = at(6, 9);
     const events: ZoneEvent[] = [];
-    must(state, { type: "use", by: "bo", unit: "bo", ability: "aimed_shot", target: "crate1" }, events);
+    must(state, { type: "use", by: "bo", unit: "bo", ability: "bow_shot", target: "crate1" }, events);
     expect(hits(events, "crate1")).toHaveLength(1);
     expect(fails(state, { type: "use", by: "ann", unit: "ann", ability: "bash", target: "nothing" })).toMatch(/Pick an enemy/);
   });
@@ -2054,7 +2054,7 @@ describe("crates", () => {
     expect(step.events.some((e) => e.t === "spoils" && e.id === "ann")).toBe(true);
 
     // A shot from across the chamber.
-    step = stepZone(state, { type: "use", by: "bo", unit: "bo", ability: "aimed_shot", target: "crate2" });
+    step = stepZone(state, { type: "use", by: "bo", unit: "bo", ability: "bow_shot", target: "crate2" });
     if (!step.ok) throw new Error(step.error);
     state = step.state;
     quiet(state);
@@ -2719,7 +2719,7 @@ describe("the Rogue's class abilities", () => {
     state = nextTurn(state);
     unit(state, dummy).pos = at(6, 6);
     const events: ZoneEvent[] = [];
-    state = must(state, use("quick_stab", { target: dummy }), events);
+    state = must(state, use("stab", { target: dummy }), events);
     const roll = events.find((e) => e.t === "roll" && e.roll.kind === "attack");
     expect(roll?.t === "roll" && roll.roll.adv).toBe(1);
     expect(has(state, "ann", "invisible")).toBe(false);
@@ -2797,8 +2797,8 @@ describe("the Rogue's class abilities", () => {
     expect(fails(party().state, use("tactical_retreat", { target: dummy, at: at(10, 6) }))).toBeTruthy();
   });
 
-  it("Tactical Retreat: hits harder than a Quick Stab", () => {
-    expect(ABILITIES.tactical_retreat.damage!).toBeGreaterThan(ABILITIES.quick_stab.damage!);
+  it("Tactical Retreat: hits harder than a Stab", () => {
+    expect(ABILITIES.tactical_retreat.damage!).toBeGreaterThan(ABILITIES.stab.damage!);
   });
 
   it("Contraband: you and an ally each get a fire bomb, thrown before any of your own, gone after 3 turns", () => {
@@ -4102,5 +4102,66 @@ describe("Mage weapons", () => {
     const hit = events.some((e) => e.t === "hit" && e.target === foe);
     expect(state.surfaces[posKey(unit(state, foe).pos)]?.kind === "water").toBe(hit);
     expect(unit(state, foe).conditions.some((c) => c.kind === "wet")).toBe(hit);
+  });
+});
+
+describe("Rogue weapons", () => {
+  /** The action tried on fresh seeds until it hits `target`: the state after, and what it said. */
+  const untilHit = (state: ZoneState, action: ZoneAction, target: string) => {
+    for (let seed = 1; seed < 80; seed++) {
+      const tryState = structuredClone(state);
+      tryState.rng = seed;
+      const events: ZoneEvent[] = [];
+      const next = must(tryState, action, events);
+      if (events.some((e) => e.t === "hit" && e.target === target)) return { state: next, events };
+    }
+    throw new Error("never landed");
+  };
+
+  it("gives each weapon two abilities of its own, only Eviscerate on a cooldown", () => {
+    expect(WEAPONS.daggers.abilities).toEqual(["stab", "eviscerate"]);
+    expect(WEAPONS.shortbow.abilities).toEqual(["bow_shot", "take_aim"]);
+    expect(WEAPONS.gaff_hook.abilities).toEqual(["snag", "reel_in"]);
+    for (const id of ["stab", "bow_shot", "take_aim", "snag", "reel_in"]) expect(tacticOf(id).cooldown, id).toBeUndefined();
+    expect(tacticOf("eviscerate").cooldown).toBe(2);
+    expect(tacticOf("take_aim").cost).toBe("bonus");
+    expect(tacticOf("stab").edge).toBeGreaterThan(0);
+    expect(ABILITIES.snag.perfect).toEqual({ effect: "bleeding", turns: 3 });
+  });
+
+  it("Take Aim: the next roll to hit has advantage, and is spent by it", () => {
+    let { state, foe } = duel("dummy", "refactor_rogue", at(5, 6), at(9, 6));
+    unit(state, "ann").abilities = ["take_aim", "bow_shot"];
+    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "take_aim" });
+    expect(state.encounter!.budgets.ann).toMatchObject({ action: true, bonus: false });
+    expect(unit(state, "ann").conditions.some((c) => c.kind === "inspired")).toBe(true);
+    const events: ZoneEvent[] = [];
+    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "bow_shot", target: foe }, events);
+    const roll = events.find((e) => e.t === "roll" && e.roll.kind === "attack");
+    expect(roll?.t === "roll" && roll.roll.adv).toBe(1);
+    expect(unit(state, "ann").conditions.some((c) => c.kind === "inspired")).toBe(false);
+  });
+
+  it("Eviscerate: a hit always leaves the target Bleeding, no save", () => {
+    const { state, foe } = duel("dummy", "refactor_rogue", at(5, 6), at(7, 6));
+    unit(state, "ann").abilities = ["eviscerate"];
+    const after = untilHit(state, { type: "use", by: "ann", unit: "ann", ability: "eviscerate", target: foe }, foe);
+    expect(unit(after.state, foe).conditions.some((c) => c.kind === "bleeding")).toBe(true);
+    expect(after.events.some((e) => e.t === "roll" && e.roll.kind === "save")).toBe(false);
+  });
+
+  it("Reel In: reaches 3 hexes, and drags what it hooks 2 hexes straight in, stopping beside you", () => {
+    let { state, foe } = duel("dummy", "refactor_rogue", at(4, 6), at(8, 6));
+    unit(state, "ann").abilities = ["reel_in"];
+    // The step in leaves the Rogue at (5, 6), 3 off.
+    expect(hexDistance(unit(state, "ann").pos, unit(state, foe).pos)).toBe(3);
+    let after = untilHit(state, { type: "use", by: "ann", unit: "ann", ability: "reel_in", target: foe }, foe);
+    expect(unit(after.state, foe).pos).toEqual(at(6, 6));
+    // From 2 off it can only come the one hex, to beside you.
+    unit(state, foe).pos = at(7, 6);
+    after = untilHit(state, { type: "use", by: "ann", unit: "ann", ability: "reel_in", target: foe }, foe);
+    expect(unit(after.state, foe).pos).toEqual(at(6, 6));
+    unit(state, foe).pos = at(9, 6);
+    expect(checkAbility(state, unit(state, "ann"), "reel_in", { target: foe })).toMatch(/Out of range/);
   });
 });

@@ -174,6 +174,21 @@ function overwhelm(ctx: Ctx, unit: Unit, def: AbilityDef, target: Unit, opts: { 
 }
 
 /** Can a unit be moved from one hex onto the next by force: open ground, nobody on it, no cliff between. */
+/** Drag `target` up to `hexes` straight toward `unit`, stopping beside them or at anything in the way (Reel In). */
+function pull(ctx: Ctx, unit: Unit, target: Unit, hexes: number): void {
+  const dir = directionToward(target.pos, unit.pos);
+  for (let i = 0; i < hexes && !target.down; i++) {
+    const dest = { q: target.pos.q + dir.q, r: target.pos.r + dir.r };
+    if (sameHex(dest, unit.pos) || !openFor(ctx.state, target.pos, dest)) return;
+    const was = target.pos;
+    target.pos = dest;
+    ctx.events.push({ t: "shoved", id: unit.id, target: target.id, from: was, to: dest });
+    // Ground that trips it (ice) ends the drag there.
+    if (enterSurface(ctx, target) || target.down) return;
+    enterWeather(ctx, target);
+  }
+}
+
 function openFor(state: ZoneState, from: HexPos, to: HexPos): boolean {
   return !solid(tileAt(state.map, to)) && !blockerAt(state, to) && Math.abs(elevOf(state.map, to) - elevOf(state.map, from)) < 2 && !unitAt(state, to);
 }
@@ -405,6 +420,7 @@ function strike(ctx: Ctx, unit: Unit, def: AbilityDef, tactic: Tactic, target: U
   if (def.perDebuffDamage) amount += def.perDebuffDamage * DEBUFFS.filter((k) => has(target, k)).length;
   if (def.vsEffect && has(target, def.vsEffect.effect)) amount += def.vsEffect.bonus;
   if (tactic.vsWet && has(target, "wet")) amount += tactic.vsWet;
+  if (tactic.edge && roll.adv === 1) amount += tactic.edge;
   if (tactic.wading && inWater(ctx.state, unit)) amount += tactic.wading;
   if (tactic.bulwark) amount += Math.floor(shieldOf(unit) * tactic.bulwark.perShield);
   if (def.bleedPayoff) {
@@ -552,6 +568,7 @@ export function resolveAbility(ctx: Ctx, unit: Unit, ability: string, aim: Aim &
       landed = true;
     } else landed = strike(ctx, unit, def, tactic, target, aim);
     for (let k = 0; landed && k < (tactic.knockback ?? 0) && !target.down; k++) push(ctx, unit.pos, target, unit.id);
+    if (landed && tactic.pull && !target.down) pull(ctx, unit, target, tactic.pull);
     if (tactic.steal && landed) pocket(ctx, unit, target);
     if (tactic.inspire && landed) inspireNearest(ctx, unit, target);
     if (tactic.curse && landed) layCurse(ctx, unit, target, "drowning_curse", tactic.curse.rounds);
@@ -661,6 +678,7 @@ export function resolveAbility(ctx: Ctx, unit: Unit, ability: string, aim: Aim &
     // "Takes the very next turn" has no meaning in an initiative order: the ally is Hasted instead.
     if (def.actNext && target.id !== unit.id) addCondition(ctx, target, "hasted", 2);
     if (tactic.aura) addCondition(ctx, unit, tactic.aura.kind, tactic.aura.rounds);
+    if (tactic.steady) addCondition(ctx, unit, "inspired", tactic.steady);
     // Wind's Blessing: more movement now for one in the middle of their turn, else on their next.
     if (tactic.tailwind && !moveMore(state, target, tactic.tailwind)) {
       addCondition(ctx, target, "winds_blessing", 1, tactic.tailwind);

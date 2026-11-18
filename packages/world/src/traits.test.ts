@@ -24,7 +24,7 @@ const hero = (id: string, over: Partial<Combatant> = {}): Combatant => ({
   id, side: "hero", name: id, kind: "qa_paladin", level: 1, hp: 60, maxHp: 60,
   pct: { str: 100, int_stat: 100, vit: 100, agi: 100, dex: 100 },
   power: 0, armor: 0, speed: 100, focus: 3, potions: 2,
-  abilities: ["bash", "block", "cleave", "land_the_catch", "riptide", "all_hands", "plot_the_course", "lighthouse_beam", "red_tide", "torch_swing"],
+  abilities: ["bash", "block", "cleave", "snag", "riptide", "all_hands", "plot_the_course", "lighthouse_beam", "red_tide", "torch_swing"],
   effects: [], down: false, traits: [], ...over,
 });
 const fight = (heroes: Combatant[], enemies = ["dummy"], seed = 3) => createBattle({ heroes, enemyKinds: enemies, avgLevel: 1, poiId: null }, makeRng(seed)).state;
@@ -192,10 +192,6 @@ describe("signature abilities", () => {
     }
     expect(low).toBe(0);
     expect(high).toBeGreaterThan(50);
-  });
-
-  it("Land the Catch: double damage under a quarter HP", () => {
-    expect(strike("land_the_catch", [], { hp: 100, maxHp: 500 })).toBe(2 * strike("land_the_catch", [], { hp: 400, maxHp: 500 }));
   });
 
   it("Plot the Course goes through Guarded", () => {

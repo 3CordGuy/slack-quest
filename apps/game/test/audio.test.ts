@@ -271,7 +271,7 @@ describe("built-in sounds", () => {
   });
 
   it("cuts with a blade and thumps with a mace, as before", () => {
-    expect(AUDIO.events[`impact.${slug("Quick Stab")}`]?.fallback).toBe("synth/combat/blade_*");
+    expect(AUDIO.events[`impact.${slug("Stab")}`]?.fallback).toBe("synth/combat/blade_*");
     expect(AUDIO.events[`impact.${slug("Smite")}`]).toBeUndefined();
     expect(AUDIO.events.impact.fallback).toBe("synth/combat/blunt_*");
   });
