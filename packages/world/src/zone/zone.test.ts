@@ -43,7 +43,7 @@ function hero(state: ZoneState, id: string, classId: string, pos: HexPos): Unit 
   const sheet = standInHero(classId, id, 1)!;
   const unit: Unit = {
     id, side: "hero", name: id, kind: classId, level: 1, pos, hp: sheet.maxHp, maxHp: sheet.maxHp, focus: 2, maxFocus: 2,
-    stats: STARTING_STATS[classId], armor: 2, power: 1, abilities: classId === "refactor_rogue" ? ["aimed_shot", "quick_stab"] : classId === "devops_mage" ? ["firebolt", "mend"] : ["bash", "block"],
+    stats: STARTING_STATS[classId], armor: 2, power: 1, abilities: classId === "refactor_rogue" ? ["aimed_shot", "quick_stab"] : classId === "devops_mage" ? ["shock", "mend"] : ["bash", "block"],
     conditions: [], down: false, cooldowns: {}, items: { healing: 2, poison: 2, fire: 1, oil: 1, water: 1 },
   };
   state.units.push(unit);
@@ -1185,11 +1185,11 @@ describe("fleeing", () => {
   it("keeps a hero who fled from reaching back into the fight from outside it, but not from looking after themselves", () => {
     const { state: start, wolf } = pair("devops_mage");
     const out = must(start, flee());
-    // Sturdy enough to outlast a firebolt, so the fight is still on to be in.
+    // Sturdy enough to outlast a shock, so the fight is still on to be in.
     Object.assign(unit(out, wolf), { hp: 200, maxHp: 200 });
     // Out of the fight there is no Action to spend and no cooldown running: a blow, a heal or a flask for anyone in
     // it would come free and off the turn order, every time they fled. They go back to it instead.
-    expect(fails(out, { type: "use", by: "ann", unit: "ann", ability: "firebolt", target: wolf })).toMatch(/got away from that fight/);
+    expect(fails(out, { type: "use", by: "ann", unit: "ann", ability: "shock", target: wolf })).toMatch(/got away from that fight/);
     expect(fails(out, { type: "use", by: "ann", unit: "ann", ability: "mend", target: "bo" })).toMatch(/got away from that fight/);
     expect(fails(out, { type: "throw", by: "ann", unit: "ann", item: "healing", at: unit(out, "bo").pos })).toMatch(/got away from that fight/);
     const self = must(out, { type: "use", by: "ann", unit: "ann", ability: "mend", target: "ann" });
@@ -1360,9 +1360,9 @@ describe("fleeing", () => {
 
   it("brings a hero's class abilities with them, after the weapon's, and refreshes them on a return", () => {
     const sheet = standInHero("qa_paladin", "cy", 3)!;
-    let state = must(board(), { type: "join", hero: { ...sheet, classAbilities: ["firebolt", "bash"] } });
+    let state = must(board(), { type: "join", hero: { ...sheet, classAbilities: ["shock", "bash"] } });
     const weapon = abilitiesFor(sheet.weapon);
-    expect(unit(state, "cy").abilities).toEqual([...new Set([...weapon, "firebolt", "bash"])]);
+    expect(unit(state, "cy").abilities).toEqual([...new Set([...weapon, "shock", "bash"])]);
     state = must(state, { type: "join", hero: { ...sheet, classAbilities: [] } });
     expect(unit(state, "cy").abilities).toEqual(weapon);
   });
@@ -1938,12 +1938,12 @@ describe("crates", () => {
 
     state = board();
     const mage = hero(state, "ann", "devops_mage", at(3, 6));
-    mage.abilities = ["thunderhead"];
+    mage.abilities = ["overgrowth"];
     crate(state, "crate1", at(6, 6), 60);
     crate(state, "crate2", at(7, 6), 60);
     crate(state, "crate3", at(9, 6), 60);
     events = [];
-    must(state, { type: "use", by: "ann", unit: "ann", ability: "thunderhead", at: at(6, 6) }, events);
+    must(state, { type: "use", by: "ann", unit: "ann", ability: "overgrowth", at: at(6, 6) }, events);
     expect(hits(events, "crate1")).toHaveLength(1);
     expect(hits(events, "crate2")).toHaveLength(1);
     expect(hits(events, "crate3")).toHaveLength(0);
@@ -2017,13 +2017,13 @@ describe("crates", () => {
     const bo = hero(state, "bo", "devops_mage", at(10, 6));
     crate(state, "crate1", at(6, 6));
     expect(crateBlow(state, ann, "crate1")).toBe("bash");
-    expect(crateBlow(state, bo, "crate1")).toBe("firebolt");
+    expect(crateBlow(state, bo, "crate1")).toBe("shock");
     ann.pos = at(3, 6);
     expect(crateBlow(state, ann, "crate1")).toBeNull();
     // A blow that is not ready yet is passed over.
-    bo.cooldowns.firebolt = 1;
-    bo.abilities = ["firebolt", "hex_bolt"];
-    expect(crateBlow(state, bo, "crate1")).toBe("hex_bolt");
+    bo.cooldowns.chain_lightning = 1;
+    bo.abilities = ["chain_lightning", "shock"];
+    expect(crateBlow(state, bo, "crate1")).toBe("shock");
   });
 
   it("can be struck, shot and bombed out of a fight: no fight starts, nothing is spent, and it pays at once", () => {
@@ -2032,7 +2032,7 @@ describe("crates", () => {
     hero(state, "ann", "qa_paladin", at(5, 6));
     hero(state, "bo", "refactor_rogue", at(4, 9));
     const mage = hero(state, "cy", "devops_mage", at(3, 3));
-    mage.abilities = ["thunderhead"];
+    mage.abilities = ["overgrowth"];
     mage.items = { ...mage.items, fire: 2 };
     const foe = enemy(state, "dummy", at(10, 6));
     crate(state, "crate1", at(6, 6), 1);
@@ -2063,16 +2063,16 @@ describe("crates", () => {
     // A bomb thrown, and a blast with a wait on it used twice running: out of a fight neither Action nor wait counts.
     const events: ZoneEvent[] = [];
     state = must(state, { type: "throw", by: "cy", unit: "cy", item: "fire", at: at(7, 3) }, events);
-    state = must(state, { type: "use", by: "cy", unit: "cy", ability: "thunderhead", at: at(7, 3) }, events);
-    state = must(state, { type: "use", by: "cy", unit: "cy", ability: "thunderhead", at: at(7, 3) }, events);
+    state = must(state, { type: "use", by: "cy", unit: "cy", ability: "overgrowth", at: at(7, 3) }, events);
+    state = must(state, { type: "use", by: "cy", unit: "cy", ability: "overgrowth", at: at(7, 3) }, events);
     quiet(state);
-    expect(hits(events, "crate3").map((h) => h.what)).toEqual(["throw:fire", "fire", "thunderhead", "thunderhead"]);
+    expect(hits(events, "crate3").map((h) => h.what)).toEqual(["throw:fire", "fire", "overgrowth", "overgrowth"]);
     expect(unit(state, "cy").cooldowns).toEqual({});
 
     // A blast that catches the band as well as a crate: that one starts a fight, with the band that was hit.
     const both: ZoneEvent[] = [];
     unit(state, "cy").pos = at(5, 4);
-    state = must(state, { type: "use", by: "cy", unit: "cy", ability: "thunderhead", at: at(9, 6) }, both);
+    state = must(state, { type: "use", by: "cy", unit: "cy", ability: "overgrowth", at: at(9, 6) }, both);
     expect(hits(both, "crate4")).toHaveLength(1);
     expect(state.groups.g1.alerted).toBe(true);
     expect(state.encounter?.order).toContain(foe.id);
@@ -4043,5 +4043,64 @@ describe("Paladin weapons", () => {
     const ctx: Ctx = { state, rng: makeRng(1), events: [], effects: [] };
     addCondition(ctx, target, "sundered", 2);
     expect(defenceOf(target, state)).toBe(before - SUNDERED_DEFENCE);
+  });
+});
+
+describe("Mage weapons", () => {
+  it("gives each weapon two abilities of its own, none on a cooldown", () => {
+    expect(WEAPONS.staff.abilities).toEqual(["shock", "mend"]);
+    expect(WEAPONS.tome.abilities).toEqual(["slicing_wind", "winds_blessing"]);
+    expect(WEAPONS.barometer_rod.abilities).toEqual(["waterbolt", "lightning_strike"]);
+    for (const id of ["shock", "mend", "slicing_wind", "winds_blessing", "waterbolt", "lightning_strike"]) expect(tacticOf(id).cooldown, id).toBeUndefined();
+    // Lightning hits harder on the Wet, and a Waterbolt leaves them Wet.
+    expect(tacticOf("shock").vsWet).toBeGreaterThan(0);
+    expect(tacticOf("lightning_strike").vsWet).toBeGreaterThan(0);
+    expect(tacticOf("waterbolt").surface?.kind).toBe("water");
+    expect(ABILITIES.lightning_strike.perfect).toEqual({ effect: "stunned", turns: 1 });
+    expect(tacticOf("mend").cost).toBe("action");
+    expect(tacticOf("winds_blessing").cost).toBe("bonus");
+  });
+
+  it("Slicing Wind: the Mage gets a hex more movement this turn, hit or miss", () => {
+    let { state, foe } = duel("dummy", "devops_mage", at(5, 6), at(8, 6));
+    unit(state, "ann").abilities = ["slicing_wind"];
+    const move = state.encounter!.budgets.ann.move;
+    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "slicing_wind", target: foe });
+    expect(state.encounter!.budgets.ann).toMatchObject({ action: false, move: move + 1 });
+  });
+
+  it("Wind's Blessing: two more movement now on yourself, else on the ally's next turn", () => {
+    let { state } = duel("dummy", "devops_mage", at(5, 6), at(8, 6));
+    unit(state, "ann").abilities = ["winds_blessing"];
+    const move = state.encounter!.budgets.ann.move;
+    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "winds_blessing", target: "ann" });
+    expect(state.encounter!.budgets.ann).toMatchObject({ action: true, bonus: false, move: move + 2 });
+    expect(unit(state, "ann").conditions.some((c) => c.kind === "winds_blessing")).toBe(false);
+
+    // An ally whose turn is over carries it to their next.
+    state = board();
+    state.aiOff = true;
+    hero(state, "ann", "devops_mage", at(5, 6)).abilities = ["winds_blessing"];
+    hero(state, "bo", "qa_paladin", at(4, 6));
+    enemy(state, "dummy", at(9, 6));
+    state = provoke(state);
+    while (!state.encounter!.acting.includes("ann") || state.encounter!.done.includes("ann")) state = must(state, { type: "timeout" });
+    if (state.encounter!.acting.includes("bo") && !state.encounter!.done.includes("bo")) state = must(state, { type: "end_turn", by: "bo", unit: "bo" });
+    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "winds_blessing", target: "bo" });
+    expect(unit(state, "bo").conditions.find((c) => c.kind === "winds_blessing")?.amount).toBe(2);
+    state = must(state, { type: "end_turn", by: "ann", unit: "ann" });
+    while (!state.encounter!.acting.includes("bo") || state.encounter!.done.includes("bo")) state = must(state, { type: "timeout" });
+    const budget = state.encounter!.budgets.bo;
+    expect(budget.move).toBe(budget.moveMax + 2);
+  });
+
+  it("Waterbolt: a hit leaves water under the target, and soaks it", () => {
+    let { state, foe } = duel("dummy", "devops_mage", at(5, 6), at(8, 6));
+    unit(state, "ann").abilities = ["waterbolt"];
+    const events: ZoneEvent[] = [];
+    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "waterbolt", target: foe }, events);
+    const hit = events.some((e) => e.t === "hit" && e.target === foe);
+    expect(state.surfaces[posKey(unit(state, foe).pos)]?.kind === "water").toBe(hit);
+    expect(unit(state, foe).conditions.some((c) => c.kind === "wet")).toBe(hit);
   });
 });

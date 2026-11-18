@@ -371,7 +371,7 @@ describe("class ability slots", () => {
   });
 
   it("refuses what the class lacks, what the level has not opened, and a slot that is not there", async () => {
-    expect(await setAbilitySlot(db, "ann", 0, "firebolt", pools)).toMatch(/class's abilities/);
+    expect(await setAbilitySlot(db, "ann", 0, "shock", pools)).toMatch(/class's abilities/);
     expect(await setAbilitySlot(db, "ann", 0, "block", pools)).toMatch(/level 50/);
     expect(await setAbilitySlot(db, "ann", 3, "bash", pools)).toMatch(/no such slot/);
     expect(slots()).toBe("[]");

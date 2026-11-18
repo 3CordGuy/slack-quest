@@ -2,7 +2,7 @@
 //
 // The engine plays the first name in a list that the manifest has files for,
 // so you can start with one general sound ("impact") and add specific ones
-// ("impact.firebolt") whenever you like, without touching code. `soundNames()`
+// ("impact.shock") whenever you like, without touching code. `soundNames()`
 // lists every name the game can ask for; a test checks the manifest against it,
 // so a misspelt event is caught rather than silently never playing.
 

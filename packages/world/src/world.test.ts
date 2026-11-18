@@ -175,7 +175,7 @@ describe("battle", () => {
     const me = state.actor!;
     const other = me === "h1" ? "h2" : "h1";
     expect(stepBattle(state, other, { type: "ability", ability: "bash" }, rng).ok).toBe(false);
-    expect(stepBattle(state, me, { type: "ability", ability: "firebolt" }, rng).ok).toBe(false);
+    expect(stepBattle(state, me, { type: "ability", ability: "shock" }, rng).ok).toBe(false);
     expect(stepBattle(state, me, { type: "ability", ability: "bash", focus: 9 }, rng).ok).toBe(false);
     expect(stepBattle(state, me, { type: "ability", ability: "bash", target: other }, rng).ok).toBe(false);
   });

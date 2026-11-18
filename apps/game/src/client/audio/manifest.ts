@@ -6,7 +6,7 @@
 //
 // Event names are the ones the game asks for (names.ts lists them all, most
 // specific first). You only need the general ones to start: "impact" covers
-// every blow until you add "impact.melee" or "impact.firebolt".
+// every blow until you add "impact.melee" or "impact.shock".
 
 import { ABILITIES, ENEMIES, type EffectKind } from "@gantt-quest/world";
 import { slug } from "./select";

@@ -77,7 +77,7 @@ describe("gearSheet", () => {
     expect(sheet.weapon).toBe("");
     expect(sheet.weaponPower).toBe(0);
     expect(abilitiesFor(sheet.weapon)).toEqual(["punch"]);
-    expect(abilitiesFor("staff")).toContain("firebolt");
+    expect(abilitiesFor("staff")).toContain("shock");
     expect(ABILITIES.punch.target).toBe("enemy");
     // No weapon gives a punch: it is what is left when the weapon is put down.
     for (const w of Object.values(WEAPONS)) expect(w.abilities).not.toContain("punch");

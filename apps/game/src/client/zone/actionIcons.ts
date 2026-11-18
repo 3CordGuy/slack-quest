@@ -34,11 +34,12 @@ export const ABILITY_ICON: Record<string, ActionIcon> = {
   tidal_wave: icon("tidal", "#38bdf8"),
   show_the_way: icon("signpost", "#fff4c2"),
   // Mage
-  firebolt: icon("fire", "#fff1c9"),
+  shock: icon("spark", "#c4b5fd"),
   mend: icon("heal", "#7dff9a"),
-  chain_spark: icon("spark", "#8fd3ff"),
-  hex_bolt: icon("bolt", "#a78bfa"),
-  thunderhead: icon("spark", "#ffffff"),
+  slicing_wind: icon("slash", "#dff4ff"),
+  winds_blessing: icon("heal", "#bfe8ff"),
+  waterbolt: icon("bolt", "#38bdf8"),
+  lightning_strike: icon("spark", "#ffe98a"),
   // Rogue
   quick_stab: icon("dagger", "#ff6b6b"),
   flurry: icon("flurry", "#facc15"),

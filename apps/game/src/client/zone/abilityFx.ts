@@ -37,9 +37,7 @@ export interface Fx {
 const fx = (kind: FxKind, color: string): Fx => ({ kind, color });
 
 const ABILITY_FX: Record<string, Fx> = {
-  firebolt: fx("bolt", "#ff7a2a"),
   torch_swing: fx("melee", "#ff8a2a"),
-  hex_bolt: fx("bolt", "#a78bfa"),
   manifest: fx("bolt", "#67e8f9"),
   plot_the_course: fx("bolt", "#facc15"),
   falling_star: fx("meteor", "#ffcf5a"),
@@ -47,6 +45,11 @@ const ABILITY_FX: Record<string, Fx> = {
   new_moon: fx("ring", "#9aa7ff"),
   chart_a_course: fx("bless", "#ff4d4d"),
   north_star: fx("bless", "#ffd166"),
+  shock: fx("spark", "#c4b5fd"),
+  slicing_wind: fx("bolt", "#dff4ff"),
+  waterbolt: fx("bolt", "#38bdf8"),
+  lightning_strike: fx("storm", "#ffe98a"),
+  winds_blessing: fx("bless", "#bfe8ff"),
   dissonance: fx("bolt", "#c4a7ff"),
   hex: fx("bolt", "#e879f9"),
   soul_drain: fx("bolt", "#e879f9"),
@@ -55,8 +58,6 @@ const ABILITY_FX: Record<string, Fx> = {
   pin_down: fx("arrow", "#a78bfa"),
   thornlash: fx("erupt", "#4f8a3a"),
   overgrowth: fx("erupt", "#4f8a3a"),
-  chain_spark: fx("spark", "#8fd3ff"),
-  thunderhead: fx("storm", "#ffe98a"),
   meteor: fx("meteor", "#ff7a2a"),
   blight: fx("lob", "#84cc16"),
   riptide: fx("beam", "#38bdf8"),

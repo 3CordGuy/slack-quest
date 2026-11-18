@@ -264,6 +264,15 @@ export function abilityArea(state: ZoneState, unit: Unit, ability: string, at?: 
   return [];
 }
 
+/** Adds `more` to a unit's movement if it is in the middle of its turn in a fight. Says whether it was. */
+function moveMore(state: ZoneState, unit: Unit, more: number): boolean {
+  const enc = state.encounter;
+  const budget = enc && enc.acting.includes(unit.id) && !enc.done.includes(unit.id) ? enc.budgets[unit.id] : undefined;
+  if (!budget) return false;
+  budget.move += more;
+  return true;
+}
+
 /** A swing's three hexes: the one beside `from` toward `toward`, and the two beside both it and `from`. */
 export function arcHexes(state: ZoneState, from: HexPos, toward: HexPos): HexPos[] {
   const dir = directionToward(from, toward);
@@ -652,6 +661,13 @@ export function resolveAbility(ctx: Ctx, unit: Unit, ability: string, aim: Aim &
     // "Takes the very next turn" has no meaning in an initiative order: the ally is Hasted instead.
     if (def.actNext && target.id !== unit.id) addCondition(ctx, target, "hasted", 2);
     if (tactic.aura) addCondition(ctx, unit, tactic.aura.kind, tactic.aura.rounds);
+    // Wind's Blessing: more movement now for one in the middle of their turn, else on their next.
+    if (tactic.tailwind && !moveMore(state, target, tactic.tailwind)) {
+      addCondition(ctx, target, "winds_blessing", 1, tactic.tailwind);
+      // An ally done with their turn in this same phase has it ended again as the phase does: it must outlast that.
+      const blessing = target.conditions.find((c) => c.kind === "winds_blessing");
+      if (blessing && state.encounter?.acting.includes(target.id)) blessing.fresh = true;
+    }
     if (tactic.shield) {
       const { range, shield, rounds, water } = tactic.shield;
       for (const u of state.units) if (u.side === unit.side && !u.down && hexDistance(u.pos, unit.pos) <= range) shieldUnit(ctx, u, shield + unit.level + (water && inWater(state, u) ? water : 0), rounds);
@@ -681,6 +697,7 @@ export function resolveAbility(ctx: Ctx, unit: Unit, ability: string, aim: Aim &
     landed = true;
   }
   if (landed && def.selfEffect && !unit.down) addCondition(ctx, unit, def.selfEffect.effect, def.selfEffect.turns);
+  if (tactic.stride && !unit.down) moveMore(state, unit, tactic.stride);
   if (wasUnseen && !tactic.hide && !tactic.steal) giveAway(ctx, unit);
 }
 

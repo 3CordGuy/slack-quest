@@ -44,9 +44,10 @@ import { badgeTexture, badgesKey, bubbleTexture, fxTexture, labelTexture, lookFo
 
 /** Spells fly as a coloured bolt; these are their colours, by ability name. */
 const SPELL_COLOR: Record<string, string> = {
-  Firebolt: "#ff9a3c",
-  "Chain Spark": "#7fe3ff",
-  "Hex Bolt": "#c084fc",
+  Shock: "#c4b5fd",
+  "Slicing Wind": "#dff4ff",
+  Waterbolt: "#38bdf8",
+  "Lightning Strike": "#ffe98a",
   "Dark Bolt": "#b06cff",
   Immolate: "#ff6a3c",
 };

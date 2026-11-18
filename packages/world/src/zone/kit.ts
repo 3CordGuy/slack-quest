@@ -44,6 +44,10 @@ export interface Tactic {
   ignites?: boolean;
   /** Extra damage against something Wet. */
   vsWet?: number;
+  /** Adds this much to the user's movement for the rest of their turn (Slicing Wind). */
+  stride?: number;
+  /** Adds this much to the ally's movement: now if it is their turn, else on their next (Wind's Blessing). */
+  tailwind?: number;
   /** Extra damage while the user stands in water (the sea turtle's Bite). */
   wading?: number;
   /** Puts this condition on the user for `rounds` of their own turns: an aura, worked by the condition itself (see AURAS). */
@@ -279,11 +283,12 @@ export const TACTICS: Record<string, Tactic> = {
   bolster: { cost: "action", reach: "spell", range: 0, shape: "self", cooldown: 3, shield: BOLSTER },
   show_the_way: mend(5, { cooldown: 2, clearWay: true }),
   // Mage
-  firebolt: spell(6, { ignites: true }),
+  shock: spell(6, { vsWet: 3 }),
   mend: mend(5),
-  chain_spark: spell(5, { shape: "chain", jumps: 2, cooldown: 2, vsWet: 3 }),
-  hex_bolt: spell(6),
-  thunderhead: spell(6, { shape: "blast", radius: 1, cooldown: 3, vsWet: 3 }),
+  slicing_wind: spell(6, { stride: 1 }),
+  winds_blessing: mend(5, { cost: "bonus", tailwind: 2 }),
+  waterbolt: spell(6, { surface: { kind: "water", rounds: 3 } }),
+  lightning_strike: spell(5, { vsWet: 3 }),
   // Mage class abilities
   soothing_rain: spell(5, { shape: "blast", radius: 1, cooldown: 3, weather: "rain" }),
   chain_lightning: spell(5, { shape: "chain", jumps: Infinity, cooldown: 2, vsWet: 3 }),
@@ -424,6 +429,7 @@ export const SAVE_STAT: Record<Condition, StatKey> = {
   drowning_curse: "vit",
   black_spot: "int_stat",
   red_sky: "int_stat",
+  winds_blessing: "agi",
 };
 
 const info = (kind: EffectKind, blurb: string) => ({ name: EFFECT_INFO[kind].name, color: EFFECT_INFO[kind].color, blurb });
@@ -461,6 +467,7 @@ export const CONDITION_INFO: Record<Condition, { name: string; blurb: string; co
   drowning: { name: "Drowning", blurb: `Loses ${DROWNING.tick} HP a stack at the start of each of its turns, then must hold its breath (harder for every stack) or lose its Action. A new stack keeps them all going ${DROWNING.rounds} more turns.`, color: "#2fa4c9" },
   drowning_curse: { name: "Curse of Drowning", blurb: "Takes a stack of Drowning each time it starts or ends a turn standing in water.", color: "#1f7fa0" },
   black_spot: { name: "The Black Spot", blurb: "Its attacks are rolled with disadvantage, and it takes a stack of Drowning at the end of each of its turns. If it falls with the Spot still on it, the Spot passes to the nearest of its side.", color: "#7a6a8f" },
+  winds_blessing: { name: "Wind's Blessing", blurb: "The wind at its back: more movement on its next turn.", color: "#bfe8ff" },
   red_sky: { name: "Red Sky at Morning", blurb: "A bad omen: its attacks are rolled with disadvantage.", color: "#e2483d" },
 };
 

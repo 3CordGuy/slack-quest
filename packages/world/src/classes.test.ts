@@ -84,7 +84,7 @@ describe("class passives", () => {
   });
 
   it("does not regrow anyone else", () => {
-    const { events } = spar([hero("m", "devops_mage")], { m: "firebolt" }, 3);
+    const { events } = spar([hero("m", "devops_mage")], { m: "shock" }, 3);
     expect(events.some((e) => e.t === "heal" && e.ability === "Deep Roots")).toBe(false);
   });
 
