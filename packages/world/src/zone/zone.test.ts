@@ -4119,12 +4119,13 @@ describe("Rogue weapons", () => {
   it("gives each weapon two abilities of its own, only Eviscerate on a cooldown", () => {
     expect(WEAPONS.daggers.abilities).toEqual(["stab", "eviscerate"]);
     expect(WEAPONS.shortbow.abilities).toEqual(["bow_shot", "take_aim"]);
-    expect(WEAPONS.gaff_hook.abilities).toEqual(["snag", "reel_in"]);
-    for (const id of ["stab", "bow_shot", "take_aim", "snag", "reel_in"]) expect(tacticOf(id).cooldown, id).toBeUndefined();
+    expect(WEAPONS.gaff_hook.abilities).toEqual(["tear", "snag"]);
+    for (const id of ["stab", "bow_shot", "take_aim", "tear", "snag"]) expect(tacticOf(id).cooldown, id).toBeUndefined();
     expect(tacticOf("eviscerate").cooldown).toBe(2);
     expect(tacticOf("take_aim").cost).toBe("bonus");
     expect(tacticOf("stab").edge).toBeGreaterThan(0);
-    expect(ABILITIES.snag.perfect).toEqual({ effect: "bleeding", turns: 3 });
+    expect(ABILITIES.tear.perfect).toEqual({ effect: "bleeding", turns: 3 });
+    expect(ABILITIES.snag.perfect).toEqual({ effect: "slowed", turns: 2 });
   });
 
   it("Take Aim: the next roll to hit has advantage, and is spent by it", () => {
@@ -4148,19 +4149,29 @@ describe("Rogue weapons", () => {
     expect(after.events.some((e) => e.t === "roll" && e.roll.kind === "save")).toBe(false);
   });
 
-  it("Reel In: reaches 3 hexes, and drags what it hooks 2 hexes straight in, stopping beside you", () => {
-    let { state, foe } = duel("dummy", "refactor_rogue", at(4, 6), at(8, 6));
-    unit(state, "ann").abilities = ["reel_in"];
-    // The step in leaves the Rogue at (5, 6), 3 off.
+  it("Snag: reaches 3 hexes, leaves the target where it is, and Slows it unless it saves", () => {
+    const { state, foe } = duel("dummy", "refactor_rogue", at(4, 6), at(8, 6));
+    unit(state, "ann").abilities = ["snag"];
     expect(hexDistance(unit(state, "ann").pos, unit(state, foe).pos)).toBe(3);
-    let after = untilHit(state, { type: "use", by: "ann", unit: "ann", ability: "reel_in", target: foe }, foe);
-    expect(unit(after.state, foe).pos).toEqual(at(6, 6));
-    // From 2 off it can only come the one hex, to beside you.
-    unit(state, foe).pos = at(7, 6);
-    after = untilHit(state, { type: "use", by: "ann", unit: "ann", ability: "reel_in", target: foe }, foe);
-    expect(unit(after.state, foe).pos).toEqual(at(6, 6));
+    const where = unit(state, foe).pos;
+    let slowed = false;
+    let held = false;
+    for (let seed = 1; seed < 120 && !(slowed && held); seed++) {
+      const tryState = structuredClone(state);
+      tryState.rng = seed;
+      const events: ZoneEvent[] = [];
+      const next = must(tryState, { type: "use", by: "ann", unit: "ann", ability: "snag", target: foe }, events);
+      if (!events.some((e) => e.t === "hit" && e.target === foe)) continue;
+      expect(unit(next, foe).pos).toEqual(where);
+      const save = events.find((e) => e.t === "roll" && e.roll.kind === "save");
+      const isSlowed = unit(next, foe).conditions.some((c) => c.kind === "slowed");
+      expect(isSlowed).toBe(save?.t === "roll" && !save.roll.ok);
+      if (isSlowed) slowed = true;
+      else held = true;
+    }
+    expect(slowed && held).toBe(true);
     unit(state, foe).pos = at(9, 6);
-    expect(checkAbility(state, unit(state, "ann"), "reel_in", { target: foe })).toMatch(/Out of range/);
+    expect(checkAbility(state, unit(state, "ann"), "snag", { target: foe })).toMatch(/Out of range/);
   });
 });
 

@@ -179,13 +179,13 @@ export const ABILITIES: Record<string, AbilityDef> = {
   winds_blessing: { id: "winds_blessing", name: "Wind's Blessing", stat: "int_stat", rolls: 1, target: "ally", heal: 4, blurb: "A Bonus action: heal an ally (or yourself) a little, and put the wind at their back for 2 more movement, this turn if they are taking it, else their next." },
   waterbolt: { id: "waterbolt", name: "Waterbolt", stat: "int_stat", rolls: 3, target: "enemy", damage: 8, blurb: "A bolt of seawater. On a hit, it leaves water under the target, soaking it Wet." },
   lightning_strike: { id: "lightning_strike", name: "Lightning Strike", stat: "int_stat", rolls: 3, target: "enemy", damage: 12, perfect: { effect: "stunned", turns: 1 }, blurb: "Lightning out of the sky: a heavy blow, 3 harder on anything Wet. On a hit, the target must save or be Stunned." },
-  // Rogue weapons. Knives: Stab and Eviscerate. Shortbow: Shot and Take Aim. Gaff Hook: Snag and Reel In.
+  // Rogue weapons. Knives: Stab and Eviscerate. Shortbow: Shot and Take Aim. Gaff Hook: Tear and Snag.
   stab: { id: "stab", name: "Stab", stat: "dex", rolls: 2, target: "enemy", damage: 8, blurb: "A quick stab with the knives. Made with advantage, it finds a gap: 3 more damage." },
   eviscerate: { id: "eviscerate", name: "Eviscerate", stat: "dex", rolls: 3, target: "enemy", damage: 14, targetEffect: { effect: "bleeding", turns: 3 }, blurb: "Open them up with both knives: a heavy blow, and on a hit the target is Bleeding." },
   bow_shot: { id: "bow_shot", name: "Shot", stat: "dex", rolls: 3, target: "enemy", damage: 9, blurb: "An arrow from the shortbow." },
   take_aim: { id: "take_aim", name: "Take Aim", stat: "dex", rolls: 1, target: "self", blurb: "A Bonus action: steady your hand. Your next roll to hit has advantage." },
-  snag: { id: "snag", name: "Snag", stat: "dex", rolls: 2, target: "enemy", damage: 8, perfect: { effect: "bleeding", turns: 3 }, blurb: "A tearing swing of the hook. On a hit, the target must save or start Bleeding." },
-  reel_in: { id: "reel_in", name: "Reel In", stat: "dex", rolls: 2, target: "enemy", damage: 8, blurb: "Throw the hook at an enemy up to 3 hexes off. On a hit, it is dragged 2 hexes straight toward you." },
+  tear: { id: "tear", name: "Tear", stat: "dex", rolls: 2, target: "enemy", damage: 8, perfect: { effect: "bleeding", turns: 3 }, blurb: "A tearing swing of the hook. On a hit, the target must save or start Bleeding." },
+  snag: { id: "snag", name: "Snag", stat: "dex", rolls: 3, target: "enemy", damage: 8, perfect: { effect: "slowed", turns: 2 }, blurb: "Throw the hook at an enemy up to 3 hexes off. On a hit, the target must save or be Slowed." },
   // Druid weapons. Driftwood Staff: Thornlash and Rejuvenate. Sickle: Sea Slash and Binding Kelp. Coral Staff: Coral Burst and Restore.
   sea_slash: { id: "sea_slash", name: "Sea Slash", stat: "int_stat", rolls: 2, target: "enemy", damage: 8, blurb: "A slash of the sickle with the sea behind it. On a hit, water pools under the target and under you." },
   binding_kelp: { id: "binding_kelp", name: "Binding Kelp", stat: "int_stat", rolls: 1, target: "enemy", blurb: "A Bonus action: kelp lashes round an enemy up to 4 hexes off, no roll to hit. It must save or be Slowed for 1 turn. Standing in water, it must instead save against being Stunned for 1 turn." },
@@ -298,7 +298,7 @@ export const WEAPONS: Record<string, WeaponDef> = {
   // Signature weapons: each class's own ability plus a staple, drawn like a weapon the class already has.
   ballast_flail: { id: "ballast_flail", name: "Ballast Flail", classId: "qa_paladin", abilities: ["flail_strike", "armor_crush"], looksLike: "mace" },
   barometer_rod: { id: "barometer_rod", name: "Barometer Rod", classId: "devops_mage", abilities: ["waterbolt", "lightning_strike"], looksLike: "staff" },
-  gaff_hook: { id: "gaff_hook", name: "Gaff Hook", classId: "refactor_rogue", abilities: ["snag", "reel_in"], looksLike: "daggers" },
+  gaff_hook: { id: "gaff_hook", name: "Gaff Hook", classId: "refactor_rogue", abilities: ["tear", "snag"], looksLike: "daggers" },
   coral_staff: { id: "coral_staff", name: "Coral Staff", classId: "backend_druid", abilities: ["coral_burst", "restore"], looksLike: "root_staff" },
   ships_bell: { id: "ships_bell", name: "Ship's Bell", classId: "frontend_bard", abilities: ["peal", "clarion_call"], looksLike: "lute" },
   astrolabe: { id: "astrolabe", name: "Astrolabe", classId: "staff_sage", abilities: ["moonlight", "focus_light"], looksLike: "orb" },

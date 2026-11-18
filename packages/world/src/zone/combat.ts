@@ -174,7 +174,7 @@ function overwhelm(ctx: Ctx, unit: Unit, def: AbilityDef, target: Unit, opts: { 
 }
 
 /** Can a unit be moved from one hex onto the next by force: open ground, nobody on it, no cliff between. */
-/** Drag `target` up to `hexes` straight toward `unit`, stopping beside them or at anything in the way (Reel In). */
+/** Drag `target` up to `hexes` straight toward `unit`, stopping beside them or at anything in the way (Throw Pike). */
 function pull(ctx: Ctx, unit: Unit, target: Unit, hexes: number): void {
   const dir = directionToward(target.pos, unit.pos);
   for (let i = 0; i < hexes && !target.down; i++) {

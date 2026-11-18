@@ -57,7 +57,7 @@ const ABILITY_FX: Record<string, Fx> = {
   water_burst: fx("bolt", "#38bdf8"),
   rust_armor: fx("erupt", "#b0a48a"),
   bow_shot: fx("arrow", "#e8dcc0"),
-  reel_in: fx("arrow", "#a78bfa"),
+  snag: fx("arrow", "#a78bfa"),
   take_aim: fx("bless", "#ffe08a"),
   slicing_wind: fx("bolt", "#dff4ff"),
   waterbolt: fx("bolt", "#38bdf8"),

@@ -77,7 +77,7 @@ export interface Tactic {
   edge?: number;
   /** Leaves the target (the user, for a self ability) Inspired, their next roll to hit with advantage, for this many of their turns (Take Aim, Second Wind). */
   steady?: number;
-  /** Single: landed, drags the target this many hexes straight toward the user, as far as the way is open (Reel In). */
+  /** Single: landed, drags the target this many hexes straight toward the user, as far as the way is open (Throw Pike). */
   pull?: number;
   /** Adds this much to the user's movement for the rest of their turn (Slicing Wind). */
   stride?: number;
@@ -330,8 +330,8 @@ export const TACTICS: Record<string, Tactic> = {
   eviscerate: melee({ cooldown: 2 }),
   bow_shot: shot(8),
   take_aim: { ...guard(), steady: 1 },
-  snag: melee(),
-  reel_in: shot(3, { pull: 2 }),
+  tear: melee(),
+  snag: shot(3),
   slicing_wind: spell(6, { stride: 1 }),
   winds_blessing: mend(5, { cost: "bonus", tailwind: 2 }),
   waterbolt: spell(6, { surface: { kind: "water", rounds: 3 } }),
