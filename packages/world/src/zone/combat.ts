@@ -6,7 +6,7 @@
 // blows, blasts and bombs reach crates too (crates.ts).
 
 import { hexDistance, hexNeighbors, hexSegment, posKey, type HexPos } from "@gantt-quest/core";
-import { ABILITIES, ARMOR_DAMAGE_DIVISOR, BARD_AURA, WARLOCK_BLEED_TURNS, type AbilityDef, type EffectKind } from "../content";
+import { ABILITIES, ARMOR_DAMAGE_DIVISOR, BARD_AURA, type AbilityDef, type EffectKind } from "../content";
 import { tileAt, type Poi } from "../map";
 import { DEBUFFS, addCondition, addShield, attackContext, attackRoll, damage, defenceOf, giveAway, has, heal, inWater, kindle, removeCondition, saveBonus, saveRoll, shieldOf, shieldUnit, unseen, type Ctx } from "./engine";
 import { cratesOn, crateById, hurtCrate, isCrateId } from "./crates";
@@ -18,7 +18,7 @@ import { HINDERING, chill, clearSurfaces, dropTorch, enterSurface, ignite, letGo
 import type { Budget, CommonAction, Throwable, Unit, ZoneState } from "./types";
 import { clusterHexes, enterWeather, makeWeather, rainHexes, wallHexes } from "./weather";
 import { summonCall, summonSpots } from "./summon";
-import { layCurse } from "./drowning";
+import { layCurse, drown } from "./drowning";
 import { SHANTIES, joinable, shantyOf, songDamage, songMove, windward } from "./song";
 import { constellationHexes, constellationLinks, courseMarks, litFoes } from "./stars";
 
@@ -454,10 +454,11 @@ function strike(ctx: Ctx, unit: Unit, def: AbilityDef, tactic: Tactic, target: U
   if (def.finisher && target.hp < target.maxHp / 4) amount *= def.finisher;
   const dealt = damage(ctx, target, amount, { actor: unit.id, what: def.id, crit: roll.crit, ignoreGuard: def.ignoreGuard });
   if (def.drain && dealt > 0 && !unit.down) heal(ctx, unit, Math.max(1, Math.round(dealt * def.drain)), { actor: unit.id, what: def.id });
-  // A Warlock's critical hits open a wound.
-  if (roll.crit && unit.kind === "data_warlock") addCondition(ctx, target, "bleeding", WARLOCK_BLEED_TURNS);
+  // A Warlock's critical hits drag the target under (Riptide).
+  if (roll.crit && unit.kind === "data_warlock") drown(ctx, target, 1);
   afflict(ctx, unit, def, target, true);
   if (tactic.guide && !target.down && (!tactic.guideSave || !saveRoll(ctx, target, SAVE_STAT.guiding_light, saveDc(unit, def), `Resist ${def.name}`).ok)) addCondition(ctx, target, "guiding_light", tactic.guide);
+  if (tactic.drowns && !target.down && !saveRoll(ctx, target, SAVE_STAT.drowning, saveDc(unit, def), `Resist ${def.name}`).ok) drown(ctx, target, tactic.drowns);
   if (tactic.goad && !target.down && !saveRoll(ctx, target, SAVE_STAT.taunted, saveDc(unit, def), `Resist ${def.name}`).ok) {
     // Taunted afresh, by whoever did it last.
     removeCondition(target, "taunted");
@@ -691,6 +692,8 @@ export function resolveAbility(ctx: Ctx, unit: Unit, ability: string, aim: Aim &
       if (!saved) afflict(ctx, unit, def, victim, false);
       // Moonlight: whoever fails to brace is lit.
       if (!saved && tactic.guide && !victim.down) addCondition(ctx, victim, "guiding_light", tactic.guide);
+      // Pull of the Deep: whoever fails to brace is dragged under.
+      if (!saved && tactic.drowns) drown(ctx, victim, tactic.drowns);
     }
     // A crate in it takes the lot: it cannot get out of the way.
     if (unit.side === "hero" && def.damage) for (const box of cratesOn(state, area)) hurtCrate(ctx, box, rolled, { actor: unit.id, what: def.id });
@@ -724,6 +727,7 @@ export function resolveAbility(ctx: Ctx, unit: Unit, ability: string, aim: Aim &
     }
     if (tactic.regen) addCondition(ctx, target, "regenerating", tactic.regen.rounds);
     if (tactic.starlit) addCondition(ctx, target, "north_star", tactic.starlit);
+    if (tactic.sicken) addCondition(ctx, unit, "poisoned", tactic.sicken);
     if (tactic.standStrong) {
       const { shield, perFoe, rounds } = tactic.standStrong;
       addShield(ctx, unit, shield + unit.level + perFoe * foes().filter((u) => adjacent(u.pos, unit.pos)).length, rounds);

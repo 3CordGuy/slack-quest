@@ -104,8 +104,10 @@ export const ABILITY_ICON: Record<string, ActionIcon> = {
   // Warlock
   hex: icon("skull", "#e879f9"),
   soul_drain: icon("drain", "#e879f9"),
-  blight: icon("skull", "#84cc16"),
-  red_tide: icon("wave", "#e23b3b"),
+  sink: icon("drain", "#2fa4c9"),
+  vile_splash: icon("wave", "#6dff9e"),
+  drink_deeply: icon("heal", "#6dff9e"),
+  pull_of_the_deep: icon("skull", "#1f7fa0"),
   curse_of_drowning: icon("drown-curse", "#2fa4c9"),
   summon_sunken_sailors: icon("sailors", "#5fe0c0"),
   red_sky_at_morning: icon("red-sky", "#e2483d"),

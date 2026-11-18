@@ -117,19 +117,6 @@ describe("Tidewall Warden", () => {
 });
 
 describe("Wreck Warlock", () => {
-  it("lands Hex harder on bigger enemies: about 5% of their max HP", () => {
-    const perfect = (hp: number) => {
-      const hits = new Set<number>();
-      for (let seed = 0; seed < 60; seed++) {
-        const { events } = spar([hero("k", "data_warlock")], { k: "hex" }, seed, 2, [DUMMY_KIND], hp);
-        for (const e of events) if (e.t === "hit" && e.actor === "k" && e.perfect) hits.add(e.amount);
-      }
-      expect(hits.size).toBe(1);
-      return [...hits][0];
-    };
-    expect(perfect(400) - perfect(60)).toBe(20 - 3);
-  });
-
   it("leaves the target bleeding on every perfect hit, and only on a perfect hit", () => {
     let perfects = 0;
     let plain = 0;

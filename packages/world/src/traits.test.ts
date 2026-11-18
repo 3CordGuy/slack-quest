@@ -24,7 +24,7 @@ const hero = (id: string, over: Partial<Combatant> = {}): Combatant => ({
   id, side: "hero", name: id, kind: "qa_paladin", level: 1, hp: 60, maxHp: 60,
   pct: { str: 100, int_stat: 100, vit: 100, agi: 100, dex: 100 },
   power: 0, armor: 0, speed: 100, focus: 3, potions: 2,
-  abilities: ["bash", "block", "cleave", "snag", "red_tide", "torch_swing"],
+  abilities: ["bash", "block", "cleave", "snag", "torch_swing"],
   effects: [], down: false, traits: [], ...over,
 });
 const fight = (heroes: Combatant[], enemies = ["dummy"], seed = 3) => createBattle({ heroes, enemyKinds: enemies, avgLevel: 1, poiId: null }, makeRng(seed)).state;
@@ -192,13 +192,6 @@ describe("signature abilities", () => {
     }
     expect(low).toBe(0);
     expect(high).toBeGreaterThan(50);
-  });
-
-  it("Red Tide: +2 per turn of Bleeding left, and the bleeding stops", () => {
-    const s = tune(fight([hero("h")]), { hp: 500, maxHp: 500, effects: [{ kind: "bleeding", turns: 3 }] });
-    const r = ok(stepBattle(s, "h", { type: "ability", ability: "red_tide", target: "e0" }, makeRng(1)));
-    expect(hitOf(r)).toBe(strike("red_tide", []) + 6);
-    expect(r.state.combatants.find((c) => c.id === "e0")!.effects.some((e) => e.kind === "bleeding")).toBe(false);
   });
 
 });

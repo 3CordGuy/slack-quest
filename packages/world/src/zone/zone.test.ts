@@ -4620,3 +4620,116 @@ describe("Warden weapons", () => {
     expect(checkAbility(state, unit(state, "ann"), "throw_pike", { target: foe })).toMatch(/Out of range/);
   });
 });
+
+describe("Warlock weapons", () => {
+  const drowning = (s: ZoneState, id: string) => unit(s, id).conditions.find((c) => c.kind === "drowning")?.amount ?? 0;
+
+  it("keeps Hex and Soul Drain on the grimoire, Hex with no share of max HP and Soul Drain on a 2-turn wait", () => {
+    expect(WEAPONS.grimoire.abilities).toEqual(["hex", "soul_drain"]);
+    expect(WEAPONS.void_staff.abilities).toEqual(["sink", "pull_of_the_deep"]);
+    expect(ABILITIES.hex.maxHpDamage).toBeUndefined();
+    expect(ABILITIES.hex.damage).toBe(8);
+    expect(ABILITIES.soul_drain.damage).toBe(11);
+    expect(tacticOf("soul_drain").cooldown).toBe(2);
+    expect(tacticOf("hex").cooldown).toBeUndefined();
+    expect(tacticOf("sink").cooldown).toBeUndefined();
+    expect(tacticOf("pull_of_the_deep").cooldown).toBe(2);
+  });
+
+  it("Sink: a hit leaves a stack of Drowning unless the target saves", () => {
+    const { state, foe } = duel("dummy", "data_warlock", at(5, 6), at(9, 6));
+    unit(state, "ann").abilities = ["sink"];
+    let sunk = false;
+    let held = false;
+    for (let seed = 1; seed < 120 && !(sunk && held); seed++) {
+      const tryState = structuredClone(state);
+      tryState.rng = seed;
+      const events: ZoneEvent[] = [];
+      const next = must(tryState, { type: "use", by: "ann", unit: "ann", ability: "sink", target: foe }, events);
+      if (!events.some((e) => e.t === "hit" && e.target === foe)) continue;
+      const save = events.find((e) => e.t === "roll" && e.roll.kind === "save");
+      const failed = save?.t === "roll" && !save.roll.ok;
+      expect(drowning(next, foe)).toBe(failed ? 1 : 0);
+      if (failed) sunk = true;
+      else held = true;
+    }
+    expect(sunk && held).toBe(true);
+  });
+
+  it("Pull of the Deep: strikes every enemy beside the Warlock, not an ally or one further off, and drowns those that fail to brace", () => {
+    const { state, foe } = duel("dummy", "data_warlock", at(5, 6), at(7, 6));
+    const far = enemy(state, "dummy", at(9, 9));
+    hero(state, "bo", "qa_paladin", at(6, 7));
+    unit(state, "ann").abilities = ["pull_of_the_deep"];
+    const bo = unit(state, "bo").hp;
+    let drowned = false;
+    for (let seed = 1; seed < 120 && !drowned; seed++) {
+      const tryState = structuredClone(state);
+      tryState.rng = seed;
+      const events: ZoneEvent[] = [];
+      const next = must(tryState, { type: "use", by: "ann", unit: "ann", ability: "pull_of_the_deep" }, events);
+      expect(events.some((e) => e.t === "hit" && e.target === foe)).toBe(true);
+      expect(unit(next, far.id).hp).toBe(unit(state, far.id).hp);
+      expect(unit(next, "bo").hp).toBe(bo);
+      expect(drowning(next, "bo")).toBe(0);
+      drowned = drowning(next, foe) === 1;
+    }
+    expect(drowned).toBe(true);
+  });
+
+  it("gives the chalice Vile Splash and Drink Deeply, only Drink Deeply on a cooldown", () => {
+    expect(WEAPONS.bilge_chalice.abilities).toEqual(["vile_splash", "drink_deeply"]);
+    expect(tacticOf("vile_splash").cooldown).toBeUndefined();
+    expect(tacticOf("drink_deeply").cooldown).toBe(2);
+    expect(tacticOf("drink_deeply").cost).toBe("bonus");
+  });
+
+  it("Vile Splash: a hit leaves poison under the target, which Poisons it", () => {
+    const { state, foe } = duel("dummy", "data_warlock", at(5, 6), at(9, 6));
+    unit(state, "ann").abilities = ["vile_splash"];
+    for (let seed = 1; seed < 80; seed++) {
+      const tryState = structuredClone(state);
+      tryState.rng = seed;
+      const events: ZoneEvent[] = [];
+      const next = must(tryState, { type: "use", by: "ann", unit: "ann", ability: "vile_splash", target: foe }, events);
+      const hit = events.some((e) => e.t === "hit" && e.target === foe);
+      expect(next.surfaces[posKey(unit(next, foe).pos)]?.kind === "poison").toBe(hit);
+      if (!hit) continue;
+      expect(unit(next, foe).conditions.some((c) => c.kind === "poisoned")).toBe(true);
+      return;
+    }
+    throw new Error("never landed");
+  });
+
+  it("Drink Deeply: a Bonus action that heals the Warlock a lot and Poisons them, then waits", () => {
+    let { state, foe } = duel("dummy", "data_warlock", at(5, 6), at(9, 6));
+    unit(state, "ann").abilities = ["drink_deeply"];
+    unit(state, "ann").hp = 1;
+    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "drink_deeply" });
+    expect(unit(state, "ann").hp).toBeGreaterThan(10);
+    expect(unit(state, "ann").conditions.some((c) => c.kind === "poisoned")).toBe(true);
+    expect(attackContext(state, unit(state, "ann"), unit(state, foe), { melee: false }).adv).toBe(-1);
+    expect(state.encounter!.budgets.ann).toMatchObject({ action: true, bonus: false });
+    state = must(state, { type: "end_turn", by: "ann", unit: "ann" });
+    while (!state.encounter!.acting.includes("ann") || state.encounter!.done.includes("ann")) state = must(state, { type: "timeout" });
+    expect(unit(state, "ann").conditions.some((c) => c.kind === "poisoned")).toBe(true);
+    expect(fails(state, { type: "use", by: "ann", unit: "ann", ability: "drink_deeply" })).toMatch(/not ready/);
+  });
+
+  it("Riptide: a Warlock's critical hit adds a stack of Drowning, not Bleeding", () => {
+    const { state, foe } = duel("dummy", "data_warlock", at(5, 6), at(9, 6));
+    unit(state, "ann").abilities = ["vile_splash"];
+    for (let seed = 1; seed < 400; seed++) {
+      const tryState = structuredClone(state);
+      tryState.rng = seed;
+      const events: ZoneEvent[] = [];
+      const next = must(tryState, { type: "use", by: "ann", unit: "ann", ability: "vile_splash", target: foe }, events);
+      const hit = events.find((e) => e.t === "hit" && e.target === foe);
+      if (!hit || hit.t !== "hit") continue;
+      expect(drowning(next, foe)).toBe(hit.crit ? 1 : 0);
+      expect(unit(next, foe).conditions.some((c) => c.kind === "bleeding")).toBe(false);
+      if (hit.crit) return;
+    }
+    throw new Error("never a critical hit");
+  });
+});

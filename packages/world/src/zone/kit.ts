@@ -45,6 +45,10 @@ export interface Tactic {
   ignites?: boolean;
   /** Extra damage against something Wet. */
   vsWet?: number;
+  /** Self: leaves the user Poisoned for this many of their turns (Drink Deeply). */
+  sicken?: number;
+  /** Leaves this many stacks of Drowning on an enemy it gets through to that fails its save (Sink, Pull of the Deep). */
+  drowns?: number;
   /** Single: shields the user before the blow, hit or miss, on top of any shield they have (Sturdy Blow). */
   ward?: typeof STURDY;
   /** Self: a shield on top of any the user has, bigger for each enemy beside them (Stand Strong). */
@@ -405,9 +409,11 @@ export const TACTICS: Record<string, Tactic> = {
   taunt: { ...guard(), cooldown: 3, taunt: TAUNT },
   // Warlock
   hex: spell(6),
-  soul_drain: spell(5),
-  blight: spell(5, { shape: "blast", radius: 1, cooldown: 2, surface: { kind: "poison", rounds: 3 } }),
-  red_tide: spell(5),
+  soul_drain: spell(5, { cooldown: 2 }),
+  sink: spell(6, { drowns: 1 }),
+  vile_splash: spell(5, { surface: { kind: "poison", rounds: 3 } }),
+  drink_deeply: { ...guard(), cooldown: 2, sicken: 2 },
+  pull_of_the_deep: spell(0, { shape: "burst", radius: 1, cooldown: 2, drowns: 1 }),
   // Warlock class abilities
   curse_of_drowning: spell(5, { cost: "bonus", cooldown: 3, sure: true, curse: DROWNING_CURSE }),
   summon_sunken_sailors: { cost: "action", reach: "spell", range: 3, shape: "self", cooldown: 4, summon: "sunken_sailors" },

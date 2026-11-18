@@ -110,10 +110,10 @@ export const HERO_CLASSES: HeroClass[] = [
   {
     id: "data_warlock",
     name: "Wreck Warlock",
-    blurb: "Curses and drains with Intelligence. The bigger the enemy, the harder its Hex lands.",
+    blurb: "Curses, drowns and drains with Intelligence.",
     weapons: ["grimoire", "void_staff"],
     signature: "bilge_chalice",
-    passive: `Riptide: every perfect hit also leaves the target bleeding for ${WARLOCK_BLEED_TURNS} turns.`,
+    passive: "Riptide: every critical hit also drags the target under: a stack of Drowning.",
   },
 ];
 
@@ -213,13 +213,17 @@ export const ABILITIES: Record<string, AbilityDef> = {
   raise_guard: { id: "raise_guard", name: "Guard", stat: "vit", rolls: 1, target: "self", selfEffect: { effect: "guarded", turns: 1 }, blurb: "A Bonus action: set yourself behind the axe. You are Guarded (half damage) until your next turn, and have a shield of 4 plus your level. 1 turn to wait." },
   goading_strike: { id: "goading_strike", name: "Goading Strike", stat: "str", rolls: 3, target: "enemy", damage: 9, blurb: "A jab with the pike to get its attention. On a hit, the target must save or be Taunted for 2 turns: it must come at you if it can." },
   throw_pike: { id: "throw_pike", name: "Throw Pike", stat: "str", rolls: 3, target: "enemy", damage: 8, blurb: "Hurl the pike at an enemy up to 3 hexes off. On a hit, it is dragged straight toward you, as far as beside you. 2 turns to wait." },
+  // Warlock weapons. Grimoire: Hex and Soul Drain. Undertow Staff: Sink and Pull of the Deep. Bilge Chalice: Vile Splash and Drink Deeply.
+  sink: { id: "sink", name: "Sink", stat: "int_stat", rolls: 3, target: "enemy", damage: 8, blurb: "A weight of black water on an enemy. On a hit, it must save or take a stack of Drowning." },
+  pull_of_the_deep: { id: "pull_of_the_deep", name: "Pull of the Deep", stat: "int_stat", rolls: 3, target: "all_enemies", damage: 5, blurb: "The sea drags at everything beside you. Every enemy beside you takes a little damage (half if they brace), and those that fail to brace take a stack of Drowning. 2 turns to wait." },
+  vile_splash: { id: "vile_splash", name: "Vile Splash", stat: "int_stat", rolls: 3, target: "enemy", damage: 8, blurb: "A splash of foul bilge at an enemy up to 5 hexes off. On a hit, it leaves poison on the ground under the target: whoever stands in it is hurt and Poisoned." },
+  drink_deeply: { id: "drink_deeply", name: "Drink Deeply", stat: "int_stat", rolls: 1, target: "self", heal: 14, blurb: "A Bonus action: drink deep from the chalice. Heal yourself a great deal, but you are Poisoned for 2 turns: your attacks are rolled with disadvantage. 2 turns to wait." },
   punch: { id: "punch", name: "Punch", stat: "str", rolls: 2, target: "enemy", damage: 4, blurb: "Bare knuckles. All you have without a weapon in hand." },
   cleave: { id: "cleave", name: "Cleave", stat: "str", rolls: 3, target: "all_enemies", damage: 7, blurb: "A wide swing through three hexes beside you, an attack on each enemy in them." },
   thornlash: { id: "thornlash", name: "Thornlash", stat: "int_stat", rolls: 3, target: "enemy", damage: 10, perfect: { effect: "slowed", turns: 2 }, blurb: "Thorns that dig in. On a hit, the target must save or be Slowed." },
   rejuvenate: { id: "rejuvenate", name: "Rejuvenate", stat: "int_stat", rolls: 2, target: "ally", heal: 9, blurb: "Heal an ally (or yourself)." },
-  hex: { id: "hex", name: "Hex", stat: "int_stat", rolls: 3, target: "enemy", damage: 6, maxHpDamage: 0.05, perfect: { effect: "glitched", turns: 1 }, blurb: "A slow query on the target: adds 5% of its max HP to the damage. On a hit, the target must save or be Fumbling." },
-  blight: { id: "blight", name: "Blight", stat: "int_stat", rolls: 4, target: "all_enemies", damage: 5, blurb: "A curse on every enemy at once." },
-  soul_drain: { id: "soul_drain", name: "Soul Drain", stat: "int_stat", rolls: 2, target: "enemy", damage: 7, drain: 0.34, blurb: "Takes some of their life for yours: heals you a third of the damage dealt." },
+  hex: { id: "hex", name: "Hex", stat: "int_stat", rolls: 3, target: "enemy", damage: 8, perfect: { effect: "glitched", turns: 1 }, blurb: "A slow curse on the target. On a hit, it must save or be Fumbling: its next attack is rolled with disadvantage." },
+  soul_drain: { id: "soul_drain", name: "Soul Drain", stat: "int_stat", rolls: 3, target: "enemy", damage: 11, drain: 0.34, blurb: "Takes some of their life for yours: heals you a third of the damage dealt. 2 turns to wait." },
   // Class abilities: chosen for a hero's slots from their class's pool (classabilities.ts), not given by a weapon.
   // Paladin. The two auras are conditions on the Paladin in a zone fight (zone/kit.ts AURAS); a voyage battle has no tiles for them to reach across.
   beacon_aura: { id: "beacon_aura", name: "Beacon Aura", stat: "vit", rolls: 1, target: "self", blurb: "For 4 turns you shine: you light the dark around you, and you and allies within 2 hexes have advantage on your attacks." },
@@ -267,7 +271,6 @@ export const ABILITIES: Record<string, AbilityDef> = {
   sailor_scimitar: { id: "sailor_scimitar", name: "Scimitar", stat: "str", rolls: 2, target: "enemy", damage: 8, blurb: "A drowned sailor's scimitar, rusted but sharp enough." },
   stoke_the_fire: { id: "stoke_the_fire", name: "Stoke the Fire", stat: "str", rolls: 3, target: "all_enemies", damage: 6, targetEffect: { effect: "burning", turns: 2 }, blurb: "Flame bursts off you: every enemy beside you is struck and set Burning." },
   // Signature abilities: one per class, on its signature weapon.
-  red_tide: { id: "red_tide", name: "Red Tide", stat: "int_stat", rolls: 3, target: "enemy", damage: 6, bleedPayoff: 2, blurb: "Calls in the debt: +2 damage per turn of Bleeding left on the target, and the bleeding stops." },
 };
 
 export interface WeaponDef {
@@ -303,8 +306,8 @@ export const WEAPONS: Record<string, WeaponDef> = {
   ships_bell: { id: "ships_bell", name: "Ship's Bell", classId: "frontend_bard", abilities: ["peal", "clarion_call"], looksLike: "lute" },
   astrolabe: { id: "astrolabe", name: "Astrolabe", classId: "staff_sage", abilities: ["moonlight", "focus_light"], looksLike: "orb" },
   boarding_pike: { id: "boarding_pike", name: "Boarding Pike", classId: "sre_warden", abilities: ["goading_strike", "throw_pike"], looksLike: "pager_axe" },
-  bilge_chalice: { id: "bilge_chalice", name: "Bilge Chalice", classId: "data_warlock", abilities: ["red_tide", "hex", "soul_drain"], looksLike: "grimoire" },
-  void_staff: { id: "void_staff", name: "Undertow Staff", classId: "data_warlock", abilities: ["blight", "hex", "soul_drain"] },
+  bilge_chalice: { id: "bilge_chalice", name: "Bilge Chalice", classId: "data_warlock", abilities: ["vile_splash", "drink_deeply"], looksLike: "grimoire" },
+  void_staff: { id: "void_staff", name: "Undertow Staff", classId: "data_warlock", abilities: ["sink", "pull_of_the_deep"] },
 };
 
 /** What a hero can do with nothing in hand. */
