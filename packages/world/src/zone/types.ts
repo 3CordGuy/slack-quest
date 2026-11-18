@@ -18,9 +18,13 @@ export type Side = "hero" | "enemy";
 /**
  * What can be on a unit: the old fights' effects, three the tiles bring, the auras a hero can carry (kit.ts AURAS),
  * what the Rogue's tricks leave: Unseen (Sneak), and a fire bomb smuggled into the pack for a few turns (Contraband);
- * and the Druid's: a heal that comes again each turn (Aqueous Regeneration), and a shell of coral (Coral Armor).
+ * the Druid's: a heal that comes again each turn (Aqueous Regeneration), and a shell of coral (Coral Armor);
+ * and the Bard's: a shanty sung (song.ts), and Inspired (from joining one, or Lead by Example: the next roll to hit has advantage).
  */
-export type Condition = EffectKind | "poisoned" | "prone" | "wet" | "beacon" | "mending" | "bolstered" | "invisible" | "contraband" | "regenerating" | "coral_armor";
+export type Condition = EffectKind | "poisoned" | "prone" | "wet" | "beacon" | "mending" | "bolstered" | "invisible" | "contraband" | "regenerating" | "coral_armor" | ShantyKind | "inspired";
+
+/** The shanties a Bard sings (song.ts): a condition on the Bard, reaching everyone of theirs nearby. */
+export type ShantyKind = "lively_shanty" | "dour_shanty" | "windgod_shanty";
 
 export interface UnitCondition {
   kind: Condition;
@@ -30,6 +34,10 @@ export interface UnitCondition {
   fresh?: boolean;
   /** Bolstered: the points of shield left, spent before HP. */
   amount?: number;
+  /** A shanty: the allies who have joined it (each once), each widening it a hex. */
+  joined?: string[];
+  /** A shanty: how many have joined it since the Bard's turn last began (the extra each joining gives lasts that long). */
+  surge?: number;
 }
 
 /** What a hero carries to use in a zone: thrown at a hex, and (a healing potion) drunk. */
@@ -127,6 +135,8 @@ export interface Budget {
   moveMax: number;
   /** Disengaged: moving away from an enemy draws no opportunity attack this turn. */
   disengaged: boolean;
+  /** The movement a Wind-god's Shanty has added this turn, so a shanty widened or begun mid-turn adds only what is still owed. */
+  song?: number;
 }
 
 export interface Encounter {
@@ -242,7 +252,7 @@ export interface ZoneHero {
   items?: Partial<Record<Throwable, number>>;
 }
 
-export type CommonAction = "dash" | "disengage" | "help" | "shove" | "jump" | "flee";
+export type CommonAction = "dash" | "disengage" | "help" | "shove" | "jump" | "flee" | "join";
 
 export type DevOp =
   | { op: "spawn"; kinds: string[]; at: HexPos }

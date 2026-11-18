@@ -222,6 +222,64 @@ export const ACTION_ART: Record<string, Art> = {
     p.r(2, 4, 2, 1, p.shade);
     p.r(3, 7, 2, 1, p.shade);
   },
+  // ---- the Bard's songs: each its own picture, not just a note in another colour ----
+  /** Lively Shanty: a tankard raised, its head frothing over, and a note springing off it. */
+  "act-shanty-lively": (p) => {
+    spans(p, C.bone, [[4, 3, 8], [5, 2, 9], [6, 2, 9]]);
+    p.r(3, 3, 2, 1, C.bone);
+    p.r(7, 3, 1, 1, C.bone);
+    p.r(2, 7, 1, 2, C.bone);
+    spans(p, C.wood, [[7, 3, 9], [8, 3, 9], [9, 3, 9], [10, 3, 9], [11, 3, 9], [12, 3, 9], [13, 3, 9], [14, 3, 9]]);
+    p.r(3, 9, 7, 1, C.iron);
+    p.r(3, 13, 7, 1, C.iron);
+    p.r(4, 7, 1, 7, C.leather);
+    p.r(10, 8, 2, 1, C.bark);
+    p.r(11, 9, 1, 3, C.bark);
+    p.r(10, 12, 2, 1, C.bark);
+    p.r(13, 1, 1, 5, p.accent);
+    p.r(14, 1, 2, 1, p.accent);
+    p.r(15, 2, 1, 1, p.accent);
+    p.r(11, 5, 3, 2, p.accent);
+  },
+  /** Dour Shanty: a heavy anchor, its ring and flukes in the song's colour. */
+  "act-shanty-dour": (p) => {
+    spans(p, p.accent, [[1, 6, 9], [2, 5, 5], [2, 10, 10], [3, 6, 9]]);
+    p.r(7, 4, 2, 9, C.iron);
+    p.r(8, 4, 1, 9, C.steel);
+    p.r(4, 5, 8, 2, C.iron);
+    p.r(4, 5, 8, 1, C.steel);
+    spans(p, C.iron, [[11, 2, 3], [11, 12, 13], [12, 3, 4], [12, 11, 12], [13, 4, 11], [14, 6, 9]]);
+    p.r(1, 9, 2, 2, p.accent);
+    p.r(13, 9, 2, 2, p.accent);
+  },
+  /** Wind-god's Shanty: a cloud with a face, cheeks puffed, blowing gusts off to the side. */
+  "act-shanty-wind": (p) => {
+    spans(p, C.shine, [[3, 3, 6], [4, 2, 8], [5, 1, 9], [6, 1, 9], [7, 1, 9], [8, 1, 9], [9, 2, 8], [10, 3, 7]]);
+    p.r(3, 5, 1, 1, C.dark);
+    p.r(6, 5, 1, 1, C.dark);
+    p.r(2, 7, 2, 1, C.paper);
+    p.r(9, 7, 1, 1, C.dark);
+    p.r(11, 5, 4, 1, p.accent);
+    p.r(14, 4, 1, 1, p.accent);
+    p.r(11, 7, 5, 1, p.accent);
+    p.r(11, 9, 3, 1, p.accent);
+    p.r(13, 10, 1, 1, p.accent);
+    p.r(3, 12, 6, 1, p.shade);
+    p.r(5, 14, 7, 1, p.shade);
+  },
+  /** Chorus: three notes rising together, many voices at once. */
+  "act-chorus": (p) => {
+    for (const [x, y] of [[1, 9], [6, 5], [11, 1]] as const) {
+      p.r(x + 2, y, 1, 5, p.accent);
+      p.r(x + 3, y, 1, 1, p.accent);
+      p.r(x + 4, y + 1, 1, 1, p.accent);
+      spans(p, p.accent, [[y + 5, x, x + 2], [y + 6, x, x + 2]]);
+      p.r(x, y + 5, 1, 1, C.shine);
+    }
+    // Voices rising off the lowest.
+    p.r(6, 13, 2, 1, p.shade);
+    p.r(10, 11, 2, 1, p.shade);
+  },
   // ---- the common actions ----
   "act-dash": (p) => {
     spans(p, C.leather, [[4, 8, 10], [5, 8, 10], [6, 8, 10], [7, 8, 10], [8, 8, 11], [9, 8, 13], [10, 8, 13]]);

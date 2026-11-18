@@ -37,6 +37,7 @@ import { exploreRound, passTime } from "./clock";
 import { checkUnlock, dropKeys, heardBy, workDoor } from "./doors";
 import { checkForage, forage } from "./forage";
 import { dismiss } from "./summon";
+import { shantyOf, songMove, windward } from "./song";
 import type { Budget, DevOp, Encounter, Throwable, Unit, ZoneAction, ZoneEffect, ZoneEvent, ZoneHero, ZoneOptions, ZoneState, ZoneStep, ZoneView } from "./types";
 
 /** Rounds a surface painted from the dev toolbox lasts. */
@@ -314,6 +315,9 @@ function beginTurn(ctx: Ctx, enc: Encounter, unit: Unit): boolean {
   }
   removeCondition(unit, "guarded");
   removeCondition(unit, "taunting");
+  // A Lively Shanty's lift from those who joined it lasts until its Bard's turn comes round again.
+  const song = shantyOf(unit);
+  if (song) song.surge = 0;
   for (const kind of ["bleeding", "burning"] as const) if (has(unit, kind)) tick(ctx, unit, kind, EFFECT_TICK[kind] ?? 0);
   if (unit.down) return false;
   // A Druid mends a little every turn.
@@ -337,7 +341,10 @@ function beginTurn(ctx: Ctx, enc: Encounter, unit: Unit): boolean {
     return false;
   }
   const base = unit.summon ? SEA_TURTLE.move : unit.side === "hero" && unit.stats ? heroMove(unit.stats) : enemyMove(unit.kind);
-  let move = base;
+  // A Wind-god's Shanty: further, and no Slowing.
+  const sung = songMove(ctx.state, unit);
+  let move = base + sung;
+  if (has(unit, "slowed") && windward(ctx.state, unit)) removeCondition(unit, "slowed");
   if (has(unit, "slowed")) move = Math.floor(move / 2);
   if (has(unit, "hasted")) move *= 2;
   // Getting up off the ground takes half a turn's movement.
@@ -345,7 +352,7 @@ function beginTurn(ctx: Ctx, enc: Encounter, unit: Unit): boolean {
     removeCondition(unit, "prone");
     move = Math.floor(move / 2);
   }
-  enc.budgets[unit.id] = { action: true, bonus: true, move, moveMax: base, disengaged: false };
+  enc.budgets[unit.id] = { action: true, bonus: true, move, moveMax: base, disengaged: false, ...(sung > 0 ? { song: sung } : {}) };
   // Weather it stands in acts now its turn is underway, with a budget for the winds to change.
   weatherAtTurn(ctx, unit);
   return !unit.down;

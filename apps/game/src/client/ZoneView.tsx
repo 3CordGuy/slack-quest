@@ -22,6 +22,7 @@ import { hexDistance, posKey, type HexPos } from "@gantt-quest/core";
 import {
   ABILITIES,
   ALERT_RANGE,
+  AURAS,
   COMMON_ACTIONS,
   CONDITION_INFO,
   CRATE_HP,
@@ -37,6 +38,9 @@ import {
   abilityArea,
   abilityDice,
   carrySpot,
+  joinable,
+  shantyOf,
+  shantyRadius,
   checkAbility,
   checkCommon,
   checkThrow,
@@ -67,6 +71,7 @@ import {
   type Throwable,
   type Unit,
   type ZoneEvent,
+  type ShantyKind,
   type ZoneState,
   type ZoneView as ZoneViewState,
 } from "@gantt-quest/world";
@@ -106,6 +111,13 @@ interface Picture {
 }
 
 const asState = (view: ZoneViewState) => view as unknown as ZoneState;
+
+/** What joining a shanty does, in a few lines, for the Join button's tooltip. */
+function joinTip(bard: string, kind: ShantyKind): string {
+  const who = bard.split(" ")[0];
+  const lift = kind === "lively_shanty" ? ["You: advantage on your next attack", "Everyone in it: +1 to hit"] : kind === "dour_shanty" ? ["You: Guarded (half damage)", "Everyone in it: +1 Defence"] : ["You: Disengage (no blows drawn moving away)", "Everyone in it: +1 movement"];
+  return [`Join ${who}'s ${CONDITION_INFO[kind].name}`, "Bonus action · once per shanty", lift[0], `${lift[1]}, until ${who}'s next turn`, "The shanty reaches 1 hex further"].join("\n");
+}
 
 /** How long a leave asked for mid-fight waits for the Flee before it is given up. */
 const LEAVING_WAIT_MS = 6000;
@@ -840,6 +852,14 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
     }
     if (dev.tool?.tool === "paint" && hover) out.push({ hexes: dev.tool.wide ? zoneBlast(state.map, hover, 1) : [hover], color: dev.tool.surface ? SURFACE_INFO[dev.tool.surface].color : "#ffffff", fill: 0.35, line: 0.9 });
     if (dev.tool?.tool === "spawn" && hover) out.push({ hexes: [hover], color: "#ff3b3b", fill: 0.35, line: 0.9 });
+    // How far each aura reaches (a shanty, a Paladin's Beacon or Healing Aura): a dashed outline of its colour round its
+    // bearer (what is being aimed is drawn solid), and nothing over the ground inside, so allies can see where to stand to have it and where they would lose it.
+    for (const u of state.units) {
+      if (u.down) continue;
+      const song = shantyOf(u);
+      if (song) out.push({ hexes: zoneBlast(state.map, u.pos, shantyRadius(song)), color: CONDITION_INFO[song.kind].color, line: 0.6, dashed: true });
+      for (const kind of ["beacon", "mending"] as const) if (u.conditions.some((c) => c.kind === kind)) out.push({ hexes: zoneBlast(state.map, u.pos, AURAS.range), color: CONDITION_INFO[kind].color, line: 0.6, dashed: true });
+    }
     if (!pick) return out;
     if (pick.kind === "ability" && tacticOf(pick.id).blink) {
       // A blink: first who (an ally to take along, or the enemy to strike), then where to.
@@ -1379,7 +1399,7 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
         <div className="zone-tip panel">
           {under ? (
             <>
-              <strong>{under.name}</strong> <span className="muted">· {under.hp}/{under.maxHp} HP · Defence {defenceOf(under)}{under.down ? " · down" : ""}</span>
+              <strong>{under.name}</strong> <span className="muted">· {under.hp}/{under.maxHp} HP · Defence {defenceOf(under, state)}{under.down ? " · down" : ""}</span>
               {under.conditions.length > 0 && <div>{under.conditions.map((c) => <span key={c.kind} className="zone-cond" style={{ color: CONDITION_INFO[c.kind].color }} title={CONDITION_INFO[c.kind].blurb}>{CONDITION_INFO[c.kind].name} {c.rounds}</span>)}</div>}
               {under.side === "enemy" && <div className="muted">{ENEMIES[under.kind]?.attacks.map((a) => a.name).join(", ")}</div>}
               {preview && (
@@ -1548,6 +1568,11 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
               run: fighting ? fleeAndLeave : leave,
             }]} />}
       >
+        {fighting && myTurn && joinable(asState(state), act).map((s) => (
+          <button key={`join:${s.bard.id}`} className="small" style={{ fontSize: 12, padding: "1px 7px", color: CONDITION_INFO[s.song.kind].color, borderColor: CONDITION_INFO[s.song.kind].color }} disabled={!budget?.bonus} title={joinTip(s.bard.name, s.song.kind)} onClick={() => common("join", { target: s.bard.id })}>
+            ♪ Join song
+          </button>
+        ))}
         {torchBeside && (!fighting || myTurn) && (
           <button className="small" disabled={fighting && !budget?.bonus} title={fighting ? "A Bonus action" : undefined} onClick={() => zone.send({ type: "pickup", unit: act.id, at: torchBeside })}>
             {act.torch ? "Stow the torch" : "Pick up the torch"}

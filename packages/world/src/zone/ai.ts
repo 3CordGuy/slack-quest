@@ -44,7 +44,7 @@ function bestAttack(state: ZoneState, enemy: Unit, pos: HexPos, strikes: EnemySt
       const dist = hexDistance(pos, hero.pos);
       if (attack.range === 1 ? dist !== 1 : dist > attack.range || dist === 0 || !sees(state.map, pos, hero.pos)) continue;
       const c = attackContext(state, there, hero, { melee: attack.range === 1 });
-      let worth = hitChance(attack.bonus + c.mods, defenceOf(hero), c.adv) * average * (has(hero, "guarded") ? 0.5 : 1);
+      let worth = hitChance(attack.bonus + c.mods, defenceOf(hero, state), c.adv) * average * (has(hero, "guarded") ? 0.5 : 1);
       // Go for the weak, finish the dying, and rise to a taunt.
       worth *= 1 + 0.5 * (1 - hero.hp / hero.maxHp);
       if (average >= hero.hp) worth += 3;

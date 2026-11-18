@@ -11,13 +11,14 @@ import { tileAt, type Poi } from "../map";
 import { DEBUFFS, addCondition, attackContext, attackRoll, damage, defenceOf, giveAway, has, heal, inWater, removeCondition, saveBonus, saveRoll, shieldUnit, unseen, type Ctx } from "./engine";
 import { cratesOn, crateById, hurtCrate, isCrateId } from "./crates";
 import { adjacent, blast, blockerAt, directionToward, elevOf, inFight, lineFrom, pathIn, sameHex, sees, solid, stepCost, unitAt, unitById, zoneReach } from "./geometry";
-import { COMMON_ACTIONS, CORAL_ARMOR, ENEMY_BURST, FLEE_RANGE, JUMP_MOVE_COST, POTION_EDGE, SAVE_STAT, SMUGGLED, THROWABLES, TORCH_GROUND_ROUNDS, abilityDice, enemyStrikes, healDice, jumpRange, reactionStrike, tacticOf, throwRange, type EnemyStrike, type Tactic } from "./kit";
+import { COMMON_ACTIONS, CORAL_ARMOR, SHANTY, ENEMY_BURST, FLEE_RANGE, JUMP_MOVE_COST, POTION_EDGE, SAVE_STAT, SMUGGLED, THROWABLES, TORCH_GROUND_ROUNDS, abilityDice, enemyStrikes, healDice, jumpRange, reactionStrike, tacticOf, throwRange, type EnemyStrike, type Tactic } from "./kit";
 import { d20, hitChance, mod, proficiency, rollDice, statOf } from "./rules";
 import { seenByHeroes } from "./light";
 import { HINDERING, chill, clearSurfaces, dropTorch, enterSurface, ignite, letGoTorch, placeSurface } from "./surfaces";
 import type { Budget, CommonAction, Throwable, Unit, ZoneState } from "./types";
 import { clusterHexes, enterWeather, makeWeather, rainHexes } from "./weather";
 import { summonTurtle } from "./summon";
+import { SHANTIES, joinable, shantyOf, songDamage, songMove, windward } from "./song";
 
 /** How near a Bard has to be for their tune to help. */
 export const BARD_AURA_RANGE = 3;
@@ -172,6 +173,14 @@ function blinkTo(ctx: Ctx, unit: Unit, to: HexPos): void {
   if (!enterSurface(ctx, unit) && !unit.down) enterWeather(ctx, unit);
 }
 
+/** Lead by Example: the user's ally nearest the target (not the user) is Inspired, with advantage on their next roll to hit. */
+function inspireNearest(ctx: Ctx, unit: Unit, target: Unit): void {
+  const ally = ctx.state.units
+    .filter((u) => u.side === unit.side && u.id !== unit.id && !u.down)
+    .sort((a, b) => hexDistance(a.pos, target.pos) - hexDistance(b.pos, target.pos) || a.id.localeCompare(b.id))[0];
+  if (ally) addCondition(ctx, ally, "inspired", 2);
+}
+
 /** Pickpocket: gold equal to the user's level, from an enemy whose pockets are not picked yet. A stand-in shows it but banks none. */
 function pocket(ctx: Ctx, unit: Unit, target: Unit): void {
   if (target.picked || target.side !== "enemy") return;
@@ -268,7 +277,7 @@ export function wayBetween(state: ZoneState, unit: Unit, to: HexPos): HexPos[] {
 function damageBonus(state: ZoneState, unit: Unit, def: AbilityDef): number {
   const tune = state.units.some((u) => u.id !== unit.id && u.side === unit.side && u.kind === "frontend_bard" && !u.down && hexDistance(u.pos, unit.pos) <= BARD_AURA_RANGE) ? BARD_AURA : 0;
   // A torch swung in the hand hits with the torch, not the weapon put away for it.
-  return mod(statOf(unit, def.stat)) + (def.id === "torch_swing" ? 0 : unit.power) + Math.floor(unit.level / 2) + tune;
+  return mod(statOf(unit, def.stat)) + (def.id === "torch_swing" ? 0 : unit.power) + Math.floor(unit.level / 2) + tune + songDamage(state, unit);
 }
 
 const saveDc = (unit: Unit, def: AbilityDef): number => 8 + proficiency(unit.level) + mod(statOf(unit, def.stat));
@@ -356,7 +365,7 @@ export function previewAttack(state: ZoneState, unit: Unit, ability: string, tar
   if (!def || !["single", "chain", "adjacent"].includes(tactic.shape)) return null;
   const c = attackContext(state, unit, target, { melee: tactic.reach === "melee" });
   const bonus = proficiency(unit.level) + mod(statOf(unit, def.stat)) + (tactic.toHit ?? 0) + c.mods;
-  const vs = defenceOf(target);
+  const vs = defenceOf(target, state);
   return { chance: hitChance(bonus, vs, c.adv), bonus, vs, adv: c.adv, notes: c.notes };
 }
 
@@ -401,6 +410,7 @@ export function resolveAbility(ctx: Ctx, unit: Unit, ability: string, aim: Aim &
     } else landed = strike(ctx, unit, def, tactic, target, aim);
     for (let k = 0; landed && k < (tactic.knockback ?? 0) && !target.down; k++) push(ctx, unit.pos, target, unit.id);
     if (tactic.steal && landed) pocket(ctx, unit, target);
+    if (tactic.inspire && landed) inspireNearest(ctx, unit, target);
     // Then away, hit or miss, if a hex was picked.
     if (tactic.blink && aim.at && !unit.down && standable(state, aim.at)) {
       blinkTo(ctx, unit, aim.at);
@@ -445,9 +455,11 @@ export function resolveAbility(ctx: Ctx, unit: Unit, ability: string, aim: Aim &
   } else if (tactic.shape === "blast" || tactic.shape === "burst" || tactic.shape === "line") {
     const area = abilityArea(state, unit, ability, aim.at);
     const keys = new Set(area.map(posKey));
-    // A burst is thrown at the enemy; a blast or a line catches whoever is standing in it.
-    const caught = state.units.filter((u) => !u.down && keys.has(posKey(u.pos)) && (tactic.shape !== "burst" || u.side !== unit.side));
-    const rolled = rollDice(ctx.rng, abilityDice(def)) + damageBonus(state, unit, def);
+    // A burst is thrown at the enemy, and so is a chorus; a blast or a line catches whoever is standing in it.
+    const caught = state.units.filter((u) => !u.down && keys.has(posKey(u.pos)) && ((tactic.shape !== "burst" && !tactic.chorus) || u.side !== unit.side));
+    // A chorus swells with every voice of the user's side caught up in it (the user's own aside).
+    const voices = tactic.chorus ? state.units.filter((u) => u.side === unit.side && u.id !== unit.id && !u.down && keys.has(posKey(u.pos))).length : 0;
+    const rolled = rollDice(ctx.rng, abilityDice(def)) + damageBonus(state, unit, def) + (tactic.chorus ?? 0) * voices;
     for (const victim of caught) {
       const saved = saveRoll(ctx, victim, "agi", saveDc(unit, def), def.name, aim.focus).ok;
       let amount = rolled;
@@ -475,6 +487,13 @@ export function resolveAbility(ctx: Ctx, unit: Unit, ability: string, aim: Aim &
     if (def.heal) heal(ctx, target, rollDice(ctx.rng, healDice(def)) + Math.max(0, mod(statOf(unit, def.stat))) + Math.floor(unit.level / 2) + soaked, { actor: unit.id, what: def.id });
     if (tactic.regen) addCondition(ctx, target, "regenerating", tactic.regen.rounds);
     if (tactic.armor) addCondition(ctx, target, "coral_armor", tactic.armor.rounds);
+    if (tactic.shanty) {
+      // One shanty at a time: the new one starts afresh, nobody joined yet.
+      for (const kind of SHANTIES) removeCondition(unit, kind);
+      addCondition(ctx, unit, tactic.shanty, SHANTY.rounds);
+      Object.assign(shantyOf(unit)!, { joined: [], surge: 0 });
+      retune(ctx);
+    }
     if (def.targetEffect) addCondition(ctx, target, def.targetEffect.effect, def.targetEffect.turns);
     // "Takes the very next turn" has no meaning in an initiative order: the ally is Hasted instead.
     if (def.actNext && target.id !== unit.id) addCondition(ctx, target, "hasted", 2);
@@ -500,6 +519,25 @@ export function resolveAbility(ctx: Ctx, unit: Unit, ability: string, aim: Aim &
   }
   if (landed && def.selfEffect && !unit.down) addCondition(ctx, unit, def.selfEffect.effect, def.selfEffect.turns);
   if (wasUnseen && !tactic.hide && !tactic.steal) giveAway(ctx, unit);
+}
+
+/**
+ * After a shanty is struck up or widened: whoever it now reaches is no longer Slowed under a Wind-god's Shanty, and
+ * whoever is mid-turn gets whatever movement it now owes them (Budget.song is what it has given this turn).
+ */
+export function retune(ctx: Ctx): void {
+  const enc = ctx.state.encounter;
+  for (const u of ctx.state.units) {
+    if (u.down) continue;
+    if (has(u, "slowed") && windward(ctx.state, u)) removeCondition(u, "slowed");
+    const budget = enc && enc.acting.includes(u.id) && !enc.done.includes(u.id) ? enc.budgets[u.id] : undefined;
+    if (!budget) continue;
+    const owed = songMove(ctx.state, u) - (budget.song ?? 0);
+    if (owed > 0) {
+      budget.move += owed;
+      budget.song = (budget.song ?? 0) + owed;
+    }
+  }
 }
 
 // ---------- an enemy's attacks ----------
@@ -553,6 +591,13 @@ export function checkCommon(state: ZoneState, unit: Unit, what: CommonAction, ai
     if (unit.summon) return "It was called to this fight, and stays in it.";
     return foesWithin(state, unit, FLEE_RANGE).length > 0 ? `An enemy is too close to get away: get more than ${FLEE_RANGE} hexes from every one in the fight first.` : null;
   }
+  if (what === "join") {
+    if (!budget) return "That is for a fight.";
+    const songs = joinable(state, unit).filter((s) => !aim.target || s.bard.id === aim.target);
+    if (songs.length > 0) return null;
+    if (shantyOf(unit) && !aim.target) return "You cannot join your own shanty.";
+    return "There is no shanty here you have not joined: stand within one an ally is singing.";
+  }
   if (what === "help") {
     const target = aim.target ? unitById(state, aim.target) : undefined;
     if (!target || target.side !== unit.side || !target.down) return "Pick a fallen ally.";
@@ -576,7 +621,8 @@ export function checkCommon(state: ZoneState, unit: Unit, what: CommonAction, ai
 /** Take a common action that has passed its check. */
 export function doCommon(ctx: Ctx, unit: Unit, what: CommonAction, aim: Aim, budget: Budget | null): void {
   ctx.events.push({ t: "used", id: unit.id, what, name: COMMON_ACTIONS[what].name, target: aim.target, at: aim.at });
-  if (what === "dash" && budget) budget.move += budget.moveMax;
+  if (what === "join") joinSong(ctx, unit, aim, budget);
+  else if (what === "dash" && budget) budget.move += budget.moveMax;
   else if (what === "disengage" && budget) budget.disengaged = true;
   else if (what === "help") {
     const target = unitById(ctx.state, aim.target!)!;
@@ -603,6 +649,19 @@ export function doCommon(ctx: Ctx, unit: Unit, what: CommonAction, aim: Aim, bud
       ctx.onStep?.(unit, () => {});
     }
   }
+}
+
+/** Join a shanty (checked already): it reaches a hex further, and the one joining gets the lift of joining that kind. */
+function joinSong(ctx: Ctx, unit: Unit, aim: Aim, budget: Budget | null): void {
+  const { song } = joinable(ctx.state, unit).find((s) => !aim.target || s.bard.id === aim.target)!;
+  song.joined = [...(song.joined ?? []), unit.id];
+  // Everyone in it gets a little more of what it gives, until the Bard's next turn.
+  song.surge = (song.surge ?? 0) + 1;
+  if (song.kind === "lively_shanty") addCondition(ctx, unit, "inspired", 2);
+  else if (song.kind === "dour_shanty") addCondition(ctx, unit, "guarded", 1);
+  // Wind-god's: away on the wind, drawing no blows for the rest of the turn.
+  else if (budget) budget.disengaged = true;
+  retune(ctx);
 }
 
 // ---------- throwing ----------

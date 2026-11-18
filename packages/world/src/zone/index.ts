@@ -30,6 +30,9 @@ export {
   AQUEOUS,
   CORAL_ARMOR,
   SPLASH,
+  SHANTY,
+  AURAS,
+  CHORUS_PER_ALLY,
   cleanItems,
   throwRange,
   jumpRange,
@@ -54,6 +57,7 @@ export { abilityArea, carrySpot, checkAbility, checkCommon, checkDrink, checkLig
 export { SURFACE_INFO, HARMFUL as HARMFUL_SURFACES } from "./surfaces";
 export { WEATHER_INFO } from "./weather";
 export { summonsOf } from "./summon";
+export { SHANTIES, isShanty, joinable, shantyOf, shantyRadius, songsOn, type Song } from "./song";
 export { isDark, litHexes, inDark, seenByHeroes, lightSources } from "./light";
 export { MAX_CATCHUP_ROUNDS } from "./clock";
 export { CHEST_PAY, checkOpen, unopened } from "./loot";

@@ -20,8 +20,8 @@ export const ABILITY_ICON: Record<string, ActionIcon> = {
   cleave: icon("cleave", "#ff6b6b"),
   heavy_blow: icon("heavy", "#ff8a3a"),
   full_reckoning: icon("slash", "#e879f9"),
-  beacon_aura: icon("beam", "#ffe9a8"),
-  healing_aura: icon("heal", "#ffd23f"),
+  beacon_aura: icon("beam", "#fff7d6"),
+  healing_aura: icon("heal", "#5dffa0"),
   branding_strike: icon("heavy", "#ff7a2a"),
   stoke_the_fire: icon("fire", "#ff5a2a"),
   bolster: icon("shield", "#9ec9ff"),
@@ -60,6 +60,11 @@ export const ABILITY_ICON: Record<string, ActionIcon> = {
   summon_sea_turtle: icon("help", "#4fb286"),
   turtle_bite: icon("fist", "#4fb286"),
   // Bard
+  lively_shanty: icon("shanty-lively", "#ffb020"),
+  dour_shanty: icon("shanty-dour", "#6f8fff"),
+  windgod_shanty: icon("shanty-wind", "#3fe0c5"),
+  chorus: icon("chorus", "#ff6fa8"),
+  lead_by_example: icon("shout", "#ffe08a"),
   dissonance: icon("note", "#a78bfa"),
   encore: icon("note", "#7dff9a"),
   cacophony: icon("note", "#ff6b6b"),
@@ -91,6 +96,7 @@ export const COMMON_ICON: Record<CommonAction, ActionIcon> = {
   shove: icon("shove", "#ff8a3a"),
   help: icon("help", "#7dff9a"),
   flee: icon("flee", "#ffd98a"),
+  join: icon("note", "#ffe08a"),
 };
 
 export const ITEM_ICON: Record<Throwable, ActionIcon> = {

@@ -7,7 +7,7 @@
 import type { StatKey, Stats } from "@gantt-quest/core";
 import { ABILITIES, EFFECT_INFO, ENEMIES, type AbilityDef, type EffectKind, type EnemyAttack } from "../content";
 import { diceFor, type Dice } from "./rules";
-import type { CommonAction, Condition, SurfaceKind, Throwable, WeatherKind } from "./types";
+import type { CommonAction, Condition, ShantyKind, SurfaceKind, Throwable, WeatherKind } from "./types";
 
 /**
  * - `single`: one enemy, an attack roll.
@@ -79,6 +79,12 @@ export interface Tactic {
   splash?: typeof SPLASH;
   /** Calls a creature onto an open hex in range (`at`), and sends away the one this hero called before, if it is still there. */
   summon?: "sea_turtle";
+  /** Strikes up a shanty around the Bard (song.ts), in place of the one they were singing. */
+  shanty?: ShantyKind;
+  /** Blast: strikes only the other side, and hits this much harder for each of the user's allies standing in it (Chorus). */
+  chorus?: number;
+  /** Single: landed, it leaves the user's ally nearest the target Inspired, with advantage on their next roll to hit (Lead by Example). */
+  inspire?: boolean;
 }
 
 const melee = (extra: Partial<Tactic> = {}): Tactic => ({ cost: "action", reach: "melee", range: 1, shape: "single", ...extra });
@@ -105,6 +111,22 @@ export const WEATHER = {
 export const AQUEOUS = { rounds: 3, tick: { n: 1, d: 4, plus: 2 } satisfies Dice, water: 3 };
 /** Coral Armor: `defence` more, for `rounds` of the wearer's turns; whoever lands a blow on them up close takes `thorns`. */
 export const CORAL_ARMOR = { defence: 2, rounds: 3, thorns: { n: 1, d: 4, plus: 1 } satisfies Dice };
+/**
+ * The Bard's shanties (song.ts): sung for `rounds` of the Bard's turns, reaching `radius` hexes and a hex more for each
+ * ally who joins. Lively: `hit` to hit and `damage(the Bard's level)` more damage. Dour: `defence`. Wind-god's: `move`
+ * more movement and no Slowing. Each joining adds `surge` (Lively) or `perJoin` more of it, until the Bard's next turn.
+ */
+export const SHANTY = {
+  rounds: 4,
+  radius: 2,
+  lively: { hit: 2, damage: (level: number) => 1 + Math.floor(level / 4), surge: 1 },
+  dour: { defence: 2, perJoin: 1 },
+  windgod: { move: 2, perJoin: 1 },
+};
+
+/** Chorus: extra damage for each of the Bard's allies standing in it. */
+export const CHORUS_PER_ALLY = 3;
+
 /** Revitalizing Splash: how many hexes it covers, and the rounds of water it leaves on them. */
 export const SPLASH = { hexes: 4, water: 3 };
 
@@ -192,6 +214,12 @@ export const TACTICS: Record<string, Tactic> = {
   encore: mend(5),
   cacophony: spell(0, { shape: "burst", radius: 2, cooldown: 2 }),
   all_hands: mend(5, { cost: "bonus", cooldown: 2 }),
+  // Bard class abilities
+  lively_shanty: { ...guard(), cooldown: 4, shanty: "lively_shanty" },
+  dour_shanty: { ...guard(), cooldown: 4, shanty: "dour_shanty" },
+  windgod_shanty: { ...guard(), cooldown: 4, shanty: "windgod_shanty" },
+  chorus: spell(5, { shape: "blast", radius: 1, cooldown: 3, chorus: CHORUS_PER_ALLY }),
+  lead_by_example: spell(5, { cooldown: 2, inspire: true }),
   // Sage
   manifest: spell(6),
   arcane_ward: guard(),
@@ -256,6 +284,10 @@ export const SAVE_STAT: Record<Condition, StatKey> = {
   contraband: "agi",
   regenerating: "vit",
   coral_armor: "vit",
+  lively_shanty: "int_stat",
+  dour_shanty: "int_stat",
+  windgod_shanty: "int_stat",
+  inspired: "int_stat",
 };
 
 const info = (kind: EffectKind, blurb: string) => ({ name: EFFECT_INFO[kind].name, color: EFFECT_INFO[kind].color, blurb });
@@ -274,13 +306,17 @@ export const CONDITION_INFO: Record<Condition, { name: string; blurb: string; co
   poisoned: { name: "Poisoned", blurb: "Its attacks are rolled with disadvantage.", color: "#a3e635" },
   prone: { name: "Prone", blurb: "Flat on the ground: standing costs half its movement. Melee attacks against it have advantage.", color: "#cbd5e1" },
   wet: { name: "Wet", blurb: "Soaked through: lightning hits harder, and it cannot burn.", color: "#7dd3fc" },
-  beacon: { name: "Beacon", blurb: "Gives light, and it and allies within 2 hexes have advantage on their attacks.", color: "#ffe9a8" },
-  mending: { name: "Healing Aura", blurb: "At the start of each of its turns, it and every ally within 2 hexes heal a little.", color: "#7dff9a" },
+  beacon: { name: "Beacon", blurb: "Gives light, and it and allies within 2 hexes have advantage on their attacks.", color: "#fff7d6" },
+  mending: { name: "Healing Aura", blurb: "At the start of each of its turns, it and every ally within 2 hexes heal a little.", color: "#5dffa0" },
   bolstered: { name: "Bolstered", blurb: "A shield takes the damage of blows before its HP does, until it is spent or wears off.", color: "#9ec9ff" },
   invisible: { name: "Unseen", blurb: "Enemies cannot see it to attack it. Its next roll to hit has advantage, and using any ability (or throwing, or shoving) gives it away.", color: "#b8c4d6" },
   contraband: { name: "Contraband", blurb: "Smuggled fire bombs in the pack, to throw before they are found out.", color: "#ff8a3a" },
   regenerating: { name: "Regenerating", blurb: "Heals at the start of each of its turns, more when it stands in water.", color: "#5eead4" },
   coral_armor: { name: "Coral Armor", blurb: `+${CORAL_ARMOR.defence} Defence, and whoever lands a blow on it up close is cut.`, color: "#ff8f7a" },
+  lively_shanty: { name: "Lively Shanty", blurb: `Singing: allies within reach get +${SHANTY.lively.hit} to hit and a little more damage. Each who joins widens it a hex and adds +${SHANTY.lively.surge} to hit until the Bard's next turn.`, color: "#ffb020" },
+  dour_shanty: { name: "Dour Shanty", blurb: `Singing: allies within reach get +${SHANTY.dour.defence} Defence. Each who joins widens it a hex and adds +${SHANTY.dour.perJoin} Defence until the Bard's next turn.`, color: "#6f8fff" },
+  windgod_shanty: { name: "Wind-god's Shanty", blurb: `Singing: allies within reach move ${SHANTY.windgod.move} further and cannot be Slowed. Each who joins widens it a hex and adds ${SHANTY.windgod.perJoin} more movement until the Bard's next turn.`, color: "#3fe0c5" },
+  inspired: { name: "Inspired", blurb: "Its next roll to hit has advantage.", color: "#ffe08a" },
 };
 
 // ---------- common actions ----------
@@ -291,6 +327,7 @@ export const COMMON_ACTIONS: Record<CommonAction, { name: string; cost: "action"
   help: { name: "Help", cost: "action", blurb: "Get a fallen ally beside you back on their feet with 1 HP." },
   shove: { name: "Shove", cost: "bonus", blurb: "Push an enemy beside you one hex away: into fire, off a path, out of reach." },
   jump: { name: "Jump", cost: "bonus", blurb: "Leap a few hexes, over whatever lies between. Costs 2 movement." },
+  join: { name: "Join the Song", cost: "bonus", blurb: "Join an ally's shanty you are standing in, once a shanty: it reaches a hex further, and you get its joining lift (Lively: advantage on your next attack; Dour: Guarded; Wind-god's: Disengaged), and everyone in it gets a little more of what it gives until the Bard's next turn." },
   flee: { name: "Flee", cost: "action", blurb: "Get out of the fight, once no enemy in it is within 2 hexes of you. You walk free and it goes on without you; an enemy coming that close again brings you back into it." },
 };
 

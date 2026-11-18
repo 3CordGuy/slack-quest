@@ -18,8 +18,12 @@ export interface Overlay {
   fill?: number;
   /** How solid the outline is, 0 to 1. Left out: no outline. */
   line?: number;
+  /** The outline dashed, not solid: what lasts on the ground (an aura's reach), told apart from what is being aimed. */
+  dashed?: boolean;
 }
 
+/** A signature no list of marks has: set after the map changes, so the next list is drawn whatever it is. */
+const STALE = "\u0000stale";
 const SQRT3 = Math.sqrt(3);
 /** Corner `i` of a hex of this size around the origin (pointy end up the map). */
 const corner = (i: number, size: number): [number, number] => [Math.sin((i * Math.PI) / 3) * size, Math.cos((i * Math.PI) / 3) * size];
@@ -82,7 +86,9 @@ export class TacticsLayer {
   setMap(map: WorldMap) {
     if (this.map?.tiles === map.tiles) return;
     this.map = map;
-    this.overlaySig = this.groundSig = this.skySig = "";
+    // Whatever comes next is drawn afresh, nothing included: "" is what an empty list's signature is, so it would match
+    // and leave the old marks standing.
+    this.overlaySig = this.groundSig = this.skySig = STALE;
   }
 
   private clear(group: THREE.Group) {
@@ -141,7 +147,7 @@ export class TacticsLayer {
 
   /** Mark these regions, replacing whatever was marked before. Later ones are drawn over earlier ones. */
   setOverlays(list: Overlay[]) {
-    const sig = list.map((o) => `${o.color}:${o.fill ?? 0}:${o.line ?? 0}:${o.hexes.map(posKey).join(" ")}`).join("|");
+    const sig = list.map((o) => `${o.color}:${o.fill ?? 0}:${o.line ?? 0}:${o.dashed ? "d" : ""}:${o.hexes.map(posKey).join(" ")}`).join("|");
     if (sig === this.overlaySig) return;
     this.overlaySig = sig;
     this.clear(this.overlays);
@@ -153,7 +159,12 @@ export class TacticsLayer {
         this.overlays.add(mesh);
       }
       if (o.line) {
-        const lines = new THREE.LineSegments(this.outline(o.hexes, 0.07 + i * 0.004), new THREE.LineBasicMaterial({ color: o.color, transparent: true, opacity: o.line, depthTest: false }));
+        // Each edge of the outline is its own segment, a hex side long: dashes measured along it start afresh at each corner.
+        const material = o.dashed
+          ? new THREE.LineDashedMaterial({ color: o.color, transparent: true, opacity: o.line, depthTest: false, dashSize: 0.22, gapSize: 0.16 })
+          : new THREE.LineBasicMaterial({ color: o.color, transparent: true, opacity: o.line, depthTest: false });
+        const lines = new THREE.LineSegments(this.outline(o.hexes, 0.07 + i * 0.004), material);
+        if (o.dashed) lines.computeLineDistances();
         lines.renderOrder = 3;
         this.overlays.add(lines);
       }

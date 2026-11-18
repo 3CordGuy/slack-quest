@@ -9,6 +9,7 @@ import { adjacent, elevOf, inFight } from "./geometry";
 import { AQUEOUS, AURAS, CORAL_ARMOR, ENEMY_KIT, SHIELD_SET_ASIDE, enemyDefence, enemySave } from "./kit";
 import { inDark } from "./light";
 import { d20, heroDefence, mod, netAdvantage, rollDice, statOf } from "./rules";
+import { songDefence, songHit, windward } from "./song";
 import type { Condition, Roll, Unit, ZoneEffect, ZoneEvent, ZoneState } from "./types";
 
 export interface Ctx {
@@ -36,6 +37,8 @@ export function removeCondition(unit: Unit, kind: Condition): void {
 export function addCondition(ctx: Ctx, unit: Unit, kind: Condition, rounds: number, amount?: number): void {
   if (unit.down || rounds <= 0) return;
   if (kind === "burning" && has(unit, "wet")) return;
+  // A Wind-god's Shanty keeps everyone in it light on their feet.
+  if (kind === "slowed" && windward(ctx.state, unit)) return;
   if (kind === "wet") removeCondition(unit, "burning");
   const enc = ctx.state.encounter;
   const mine = !!enc && enc.acting.includes(unit.id) && !enc.done.includes(unit.id);
@@ -67,7 +70,9 @@ export function giveAway(ctx: Ctx, unit: Unit): void {
 /** The conditions that count as wounds, for abilities that grow with them. */
 export const DEBUFFS: readonly Condition[] = ["bleeding", "burning", "stunned", "slowed", "glitched", "exposed", "poisoned", "prone"];
 
-export const defenceOf = (unit: Unit): number =>
+/** A unit's Defence. With the board (`state`), a Dour Shanty it stands in counts too. */
+export const defenceOf = (unit: Unit, state?: Pick<ZoneState, "units">): number =>
+  (state ? songDefence(state, unit) : 0) +
   (unit.side === "hero" && unit.stats ? heroDefence(unit.stats, unit.armor) - ((unit.torch ?? 0) > 0 && unit.torchHand !== "main" && unit.outfit?.off_hand ? SHIELD_SET_ASIDE : 0) : enemyDefence(unit.kind)) +
   (has(unit, "coral_armor") ? CORAL_ARMOR.defence : 0);
 
@@ -173,6 +178,7 @@ export function attackContext(state: ZoneState, attacker: Unit, target: Unit, op
   if (has(target, "prone") && opts.melee) adv("the target is Prone");
   if (opts.focus) adv("Focus");
   if (has(attacker, "invisible")) adv("you are Unseen");
+  if (has(attacker, "inspired")) adv("you are Inspired");
   if (attacker.side === "enemy" && ENEMY_KIT[attacker.kind]?.pack && state.units.some((u) => u.id !== attacker.id && u.side === "enemy" && !u.down && adjacent(u.pos, target.pos))) adv("the pack is on the target");
   if (state.units.some((u) => u.side === attacker.side && !u.down && has(u, "beacon") && hexDistance(u.pos, attacker.pos) <= AURAS.range)) adv(has(attacker, "beacon") ? "your Beacon" : "an ally's Beacon");
   if (has(attacker, "poisoned")) dis("Poisoned");
@@ -184,6 +190,8 @@ export function attackContext(state: ZoneState, attacker: Unit, target: Unit, op
     if (has(target, "prone")) dis("the target is Prone");
   }
   let mods = 0;
+  const sung = songHit(state, attacker);
+  if (sung > 0) { mods += sung; notes.push(`+${sung} Lively Shanty`); }
   if (!opts.melee) {
     const rise = elevOf(state.map, attacker.pos) - elevOf(state.map, target.pos);
     if (rise > 0) { mods += 2; notes.push("+2 high ground"); }
@@ -196,8 +204,9 @@ export function attackContext(state: ZoneState, attacker: Unit, target: Unit, op
 /** Roll an attack and say so. A Fumbling attacker's next attack is the one that suffers: it clears here. */
 export function attackRoll(ctx: Ctx, attacker: Unit, target: Unit, opts: { label: string; bonus: number; melee: boolean; focus?: boolean }): Roll {
   const c = attackContext(ctx.state, attacker, target, opts);
-  const roll = d20(ctx.rng, { kind: "attack", id: attacker.id, target: target.id, label: opts.label, bonus: opts.bonus + c.mods, vs: defenceOf(target), adv: c.adv });
+  const roll = d20(ctx.rng, { kind: "attack", id: attacker.id, target: target.id, label: opts.label, bonus: opts.bonus + c.mods, vs: defenceOf(target, ctx.state), adv: c.adv });
   removeCondition(attacker, "glitched");
+  removeCondition(attacker, "inspired");
   ctx.events.push({ t: "roll", roll });
   return roll;
 }

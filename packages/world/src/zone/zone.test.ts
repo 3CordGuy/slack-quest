@@ -4,7 +4,8 @@ import { ABILITIES, EFFECT_TICK, ENEMIES, WEAPONS, abilitiesFor } from "../conte
 import type { Biome, Tile } from "../map";
 import { makeRng } from "../rng";
 import { walk } from "./combat";
-import { attackContext, damage, type Ctx } from "./engine";
+import { addCondition, attackContext, damage, type Ctx } from "./engine";
+import { shantyOf, shantyRadius, songsOn } from "./song";
 import { ALERT_RANGE, DEFAULT_ZONE_OPTIONS, JOIN_RANGE, generateZone, zoneOptions } from "./gen";
 import { adjacent, blast, flies, sees, solid, unitAt, zoneReach } from "./geometry";
 import { AURAS, BOLSTER, ENEMY_BURST, SHIELD_WALL, ENEMY_KIT, EXPLORE_ROUND_MS, FLEE_RANGE, LIGHT_RADIUS, SHIELD_SET_ASIDE, TACTICS, TORCH_GROUND_ROUNDS, TORCH_HELD_ROUNDS, TORCH_ROUND_MS, commonCost, enemyHp, enemyStrikes, tacticOf } from "./kit";
@@ -3121,6 +3122,218 @@ describe("the Druid's class abilities", () => {
     state = must(state, { type: "end_turn", by: "ann", unit: turtle.id }, lost);
     expect(lost.some((e) => e.t === "fight_end" && e.outcome === "defeat")).toBe(true);
     expect(turtleOf(state)).toHaveLength(0);
+  });
+});
+
+describe("the Bard's shanties", () => {
+  const ALL = ["lively_shanty", "dour_shanty", "windgod_shanty", "chorus", "lead_by_example"];
+  /**
+   * A Bard (ann) with a crewmate beside her (bo) and another 4 hexes off (cy), in a fight with a dummy far down row 6.
+   * The three heroes share one turn, and it is theirs.
+   */
+  function party() {
+    let state = board();
+    state.aiOff = true;
+    hero(state, "ann", "frontend_bard", at(5, 6)).abilities = [...ALL];
+    hero(state, "bo", "qa_paladin", at(4, 6));
+    hero(state, "cy", "devops_mage", at(2, 8));
+    const dummy = enemy(state, "dummy", at(13, 6));
+    state = provoke(state);
+    const enc = state.encounter!;
+    enc.order = ["ann", "bo", "cy", dummy.id];
+    Object.assign(enc.init, { ann: 20, bo: 19, cy: 18, [dummy.id]: 1 });
+    while (!["ann", "bo", "cy"].every((id) => state.encounter!.acting.includes(id))) state = must(state, { type: "timeout" });
+    return { state, dummy: dummy.id };
+  }
+  function nextTurn(state: ZoneState, sink: ZoneEvent[] = []): ZoneState {
+    for (const id of [...state.encounter!.acting]) if (!state.encounter!.done.includes(id) && !unit(state, id).down) state = must(state, { type: "end_turn", by: id, unit: id }, sink);
+    while (!state.encounter!.acting.includes("ann") || state.encounter!.done.includes("ann")) state = must(state, { type: "timeout" }, sink);
+    return state;
+  }
+  const sing = (kind: string): ZoneAction => ({ type: "use", by: "ann", unit: "ann", ability: kind });
+  const join = (who: string, bard = "ann"): ZoneAction => ({ type: "common", by: who, unit: who, what: "join", target: bard });
+  const has = (state: ZoneState, id: string, kind: string) => unit(state, id).conditions.some((c) => c.kind === kind);
+  const song = (state: ZoneState) => shantyOf(unit(state, "ann"))!;
+  const hitMods = (state: ZoneState, id: string, dummy: string) => attackContext(state, unit(state, id), unit(state, dummy), { melee: false }).mods;
+
+  it("are all in the Bard's pool", () => {
+    expect(poolFor("frontend_bard").map((e) => e.id)).toEqual(ALL);
+  });
+
+  it("a shanty is a Bonus action, sung for 4 turns, 4 to wait; one at a time, the new one replacing the old", () => {
+    let { state } = party();
+    state = must(state, sing("lively_shanty"));
+    expect(state.encounter!.budgets.ann).toMatchObject({ bonus: false, action: true });
+    expect(song(state)).toMatchObject({ kind: "lively_shanty", rounds: 4, joined: [] });
+    expect(unit(state, "ann").cooldowns.lively_shanty).toBe(5);
+    state = nextTurn(state);
+    state = must(state, sing("dour_shanty"));
+    expect(has(state, "ann", "lively_shanty")).toBe(false);
+    expect(song(state).kind).toBe("dour_shanty");
+    // Sung through 4 more of the Bard's turns (the one it was struck up in does not count), then gone.
+    for (let turn = 1; turn <= 4; turn++) state = nextTurn(state);
+    expect(has(state, "ann", "dour_shanty")).toBe(true);
+    state = nextTurn(state);
+    expect(has(state, "ann", "dour_shanty")).toBe(false);
+  });
+
+  it("Lively Shanty: +2 to hit and more damage for the Bard and allies within 2, not one further off", () => {
+    let { state, dummy } = party();
+    const before = { ann: hitMods(state, "ann", dummy), bo: hitMods(state, "bo", dummy), cy: hitMods(state, "cy", dummy) };
+    state = must(state, sing("lively_shanty"));
+    expect(hitMods(state, "ann", dummy)).toBe(before.ann + 2);
+    expect(hitMods(state, "bo", dummy)).toBe(before.bo + 2);
+    expect(hitMods(state, "cy", dummy)).toBe(before.cy);
+    expect(songsOn(state, unit(state, "bo"))).toHaveLength(1);
+  });
+
+  it("Lively Shanty: joining is a Bonus action, once: a hex wider, advantage on your next attack, and +1 more to hit for all until the Bard's next turn", () => {
+    let { state, dummy } = party();
+    state = must(state, sing("lively_shanty"));
+    state = must(state, join("bo"));
+    expect(state.encounter!.budgets.bo.bonus).toBe(false);
+    expect(song(state).joined).toEqual(["bo"]);
+    expect(shantyRadius(song(state))).toBe(3);
+    expect(has(state, "bo", "inspired")).toBe(true);
+    expect(attackContext(state, unit(state, "bo"), unit(state, dummy), { melee: false }).adv).toBe(1);
+    const mods = hitMods(state, "ann", dummy);
+    // Never twice, and never your own.
+    expect(fails(nextTurn(state), join("bo"))).toMatch(/not joined/);
+    expect(fails(state, join("ann"))).toMatch(/not joined|own/);
+    // The extra +1 is gone once the Bard's turn comes round.
+    state = nextTurn(state);
+    expect(hitMods(state, "ann", dummy)).toBe(mods - 1);
+  });
+
+  it("Lively Shanty: the advantage from joining is spent on the next roll to hit", () => {
+    let { state, dummy } = party();
+    state = must(state, sing("lively_shanty"));
+    state = must(state, join("bo"));
+    unit(state, "bo").pos = at(12, 6);
+    state = must(state, { type: "use", by: "bo", unit: "bo", ability: "smite", target: dummy });
+    expect(has(state, "bo", "inspired")).toBe(false);
+  });
+
+  it("Dour Shanty: +2 Defence within reach; joining Guards you and adds +1 for everyone in it until the Bard's next turn", () => {
+    let { state } = party();
+    const before = { ann: defenceOf(unit(state, "ann"), state), bo: defenceOf(unit(state, "bo"), state), cy: defenceOf(unit(state, "cy"), state) };
+    state = must(state, sing("dour_shanty"));
+    expect(defenceOf(unit(state, "bo"), state)).toBe(before.bo + 2);
+    expect(defenceOf(unit(state, "cy"), state)).toBe(before.cy);
+    state = must(state, join("bo"));
+    expect(has(state, "bo", "guarded")).toBe(true);
+    expect(defenceOf(unit(state, "ann"), state)).toBe(before.ann + 3);
+    expect(defenceOf(unit(state, "bo"), state)).toBe(before.bo + 3);
+    state = nextTurn(state);
+    expect(defenceOf(unit(state, "bo"), state)).toBe(before.bo + 2);
+    // The hex it widened by stays.
+    expect(shantyRadius(song(state))).toBe(3);
+  });
+
+  it("a shanty widens a hex for each who joins, reaching those it did not", () => {
+    let { state } = party();
+    state = must(state, sing("dour_shanty"));
+    // cy is 4 off: out of reach, and so cannot join yet.
+    expect(fails(state, join("cy"))).toMatch(/no shanty/);
+    hero(state, "di", "qa_paladin", at(6, 6));
+    state.encounter!.order.splice(3, 0, "di");
+    state.encounter!.acting.push("di");
+    state.encounter!.budgets.di = { ...state.encounter!.budgets.bo };
+    state = must(state, join("bo"));
+    expect(songsOn(state, unit(state, "cy"))).toHaveLength(0);
+    state = must(state, join("di"));
+    expect(songsOn(state, unit(state, "cy"))).toHaveLength(1);
+    state = must(state, join("cy"));
+    expect(song(state).joined).toEqual(["bo", "di", "cy"]);
+  });
+
+  it("Wind-god's Shanty: 2 more movement at once and every turn after, and no Slowing", () => {
+    let { state } = party();
+    unit(state, "bo").conditions.push({ kind: "slowed", rounds: 3 });
+    const moved = state.encounter!.budgets.bo.move;
+    state = must(state, sing("windgod_shanty"));
+    expect(state.encounter!.budgets.bo.move).toBe(moved + 2);
+    expect(has(state, "bo", "slowed")).toBe(false);
+    // Struck up again on a later turn, nothing more is owed for the turn the movement was already given in.
+    state = nextTurn(state);
+    expect(state.encounter!.budgets.bo.move).toBe(state.encounter!.budgets.bo.moveMax + 2);
+    const ctx: Ctx = { state, rng: makeRng(1), events: [], effects: [] };
+    addCondition(ctx, unit(state, "bo"), "slowed", 2);
+    expect(has(state, "bo", "slowed")).toBe(false);
+    // Out of its reach, Slowing takes as ever.
+    addCondition(ctx, unit(state, "cy"), "slowed", 2);
+    expect(has(state, "cy", "slowed")).toBe(true);
+  });
+
+  it("Wind-god's Shanty: joining Disengages you, and gives 1 more movement to everyone in it, that turn only", () => {
+    let { state } = party();
+    state = must(state, sing("windgod_shanty"));
+    const { ann, bo } = state.encounter!.budgets;
+    const [annMove, boMove] = [ann.move, bo.move];
+    state = must(state, join("bo"));
+    expect(state.encounter!.budgets.bo.disengaged).toBe(true);
+    expect(state.encounter!.budgets.ann.disengaged).toBe(false);
+    expect(state.encounter!.budgets.bo.move).toBe(boMove + 1);
+    expect(state.encounter!.budgets.ann.move).toBe(annMove + 1);
+    state = nextTurn(state);
+    expect(state.encounter!.budgets.bo.move).toBe(state.encounter!.budgets.bo.moveMax + 2);
+  });
+
+  function addFoe(state: ZoneState, pos: HexPos): string {
+    const e = enemy(state, "dummy", pos);
+    e.hp = e.maxHp = 999;
+    state.encounter!.order.push(e.id);
+    state.encounter!.init[e.id] = 0;
+    return e.id;
+  }
+
+  it("Chorus: 7 hexes that strike and Slow only the enemy, 3 harder for each ally in it", () => {
+    const strike = (allyIn: boolean, seed: number) => {
+      let { state } = party();
+      const foe = addFoe(state, at(8, 6));
+      addFoe(state, at(9, 6));
+      if (allyIn) unit(state, "bo").pos = at(7, 6);
+      state.rng = seed;
+      const events: ZoneEvent[] = [];
+      state = must(state, { type: "use", by: "ann", unit: "ann", ability: "chorus", at: at(8, 6) }, events);
+      const saved = events.some((e) => e.t === "roll" && e.roll.kind === "save" && e.roll.id === foe && e.roll.ok);
+      const amount = events.filter((e) => e.t === "hit" && e.target === foe).map((e) => (e.t === "hit" ? e.amount : 0))[0];
+      return { state, events, saved, amount, foe };
+    };
+    const seed = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].find((n) => !strike(false, n).saved)!;
+    const alone = strike(false, seed);
+    const sung = strike(true, seed);
+    expect(sung.amount).toBe(alone.amount + 3);
+    expect(sung.events.some((e) => e.t === "hit" && e.target === "bo")).toBe(false);
+    expect(sung.state.units.find((u) => u.id === sung.foe)!.conditions.some((c) => c.kind === "slowed")).toBe(true);
+    expect(sung.state.encounter!.budgets.ann.action).toBe(false);
+    expect(unit(sung.state, "ann").cooldowns.chorus).toBe(4);
+  });
+
+  it("Lead by Example: landed, it Inspires the ally nearest the target; missed, nobody", () => {
+    let landedOnce = false;
+    for (let seed = 1; seed <= 12; seed++) {
+      let { state } = party();
+      const foe = addFoe(state, at(8, 6));
+      unit(state, "cy").pos = at(9, 7);
+      state.rng = seed;
+      const events: ZoneEvent[] = [];
+      state = must(state, { type: "use", by: "ann", unit: "ann", ability: "lead_by_example", target: foe }, events);
+      const landed = events.some((e) => e.t === "hit" && e.target === foe);
+      landedOnce ||= landed;
+      expect(has(state, "cy", "inspired")).toBe(landed);
+      expect(has(state, "bo", "inspired")).toBe(false);
+      expect(has(state, "ann", "inspired")).toBe(false);
+      expect(unit(state, "ann").cooldowns.lead_by_example).toBe(3);
+    }
+    expect(landedOnce).toBe(true);
+  });
+
+  it("Join the Song is for a fight", () => {
+    const state = board();
+    hero(state, "ann", "frontend_bard", at(5, 6)).conditions.push({ kind: "lively_shanty", rounds: 4, joined: [] });
+    hero(state, "bo", "qa_paladin", at(4, 6));
+    expect(fails(state, join("bo"))).toMatch(/for a fight/);
   });
 });
 
