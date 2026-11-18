@@ -1,12 +1,15 @@
-// Creatures a hero calls into a fight (Summon Sea Turtle). One is a unit on
-// the hero's side, played by the hero's player on the hero's initiative: it
-// stands right after them in the order, so it shares their turn. It is gone
-// when it falls, when its caller calls another, or when the fight is over;
-// it never walks the map out of a fight.
+// Creatures a hero calls into a fight (Summon Sea Turtle, Summon Sunken
+// Sailors). Each is a unit on the hero's side, played by the hero's player
+// on the hero's initiative: it stands right after them in the order, so it
+// shares their turn. It is gone when it falls, when its caller calls again
+// (everything they called before goes), or when the fight is over; it never
+// walks the map out of a fight.
 
-import type { HexPos } from "@gantt-quest/core";
+import { hexDistance, hexNeighbors, type HexPos } from "@gantt-quest/core";
+import { tileAt } from "../map";
 import type { Ctx } from "./engine";
-import { SEA_TURTLE } from "./kit";
+import { blockerAt, sameHex, solid, unitAt } from "./geometry";
+import { SUMMONS, SUMMON_CALLS, type SummonCall } from "./kit";
 import { enterSurface } from "./surfaces";
 import type { Unit, ZoneState } from "./types";
 import { enterWeather } from "./weather";
@@ -31,46 +34,81 @@ export function dismiss(ctx: Ctx, unit: Unit): void {
 }
 
 /**
- * A sea turtle on `at`, for `caller`: the one they called before is sent away first. It goes into the order just
- * after its caller, on their initiative, and if their turn is underway it has one too, starting now.
+ * Where each creature of a call would stand, aimed at `at` by `caller`: the first on `at`, each one after on the open hex
+ * beside it nearest the caller. What the caller called before is about to go, so the hexes it holds count as open.
+ * Null if any of them has nowhere to stand.
  */
-export function summonTurtle(ctx: Ctx, caller: Unit, at: HexPos): Unit {
-  const { state } = ctx;
-  for (const old of summonsOf(state, caller.id)) dismiss(ctx, old);
-  const hp = SEA_TURTLE.hp(caller.level);
-  const turtle: Unit = {
-    id: `t${++state.seq}`,
-    side: caller.side,
-    name: SEA_TURTLE.name,
-    kind: "sea_turtle",
-    level: caller.level,
-    pos: { q: at.q, r: at.r },
-    hp,
-    maxHp: hp,
-    focus: 0,
-    maxFocus: 0,
-    stats: { ...SEA_TURTLE.stats },
-    armor: SEA_TURTLE.armor,
-    power: 0,
-    abilities: [...SEA_TURTLE.abilities],
-    conditions: [],
-    down: false,
-    cooldowns: {},
-    items: {},
-    controller: caller.controller ?? caller.id,
-    summon: { by: caller.id },
+export function summonSpots(state: ZoneState, caller: Unit, call: SummonCall, at: HexPos): HexPos[] | null {
+  const leaving = new Set(summonsOf(state, caller.id).map((u) => u.id));
+  const open = (p: HexPos) => {
+    const tile = tileAt(state.map, p);
+    const there = unitAt(state, p);
+    return !!tile && !solid(tile) && !blockerAt(state, p) && (!there || leaving.has(there.id));
   };
-  state.units.push(turtle);
-  ctx.events.push({ t: "summoned", id: turtle.id, by: caller.id });
-  const enc = state.encounter;
-  if (enc && enc.order.includes(caller.id)) {
-    enc.order.splice(enc.order.indexOf(caller.id) + 1, 0, turtle.id);
-    enc.init[turtle.id] = enc.init[caller.id];
-    if (enc.acting.includes(caller.id)) {
-      enc.acting.push(turtle.id);
-      enc.budgets[turtle.id] = { action: true, bonus: true, move: SEA_TURTLE.move, moveMax: SEA_TURTLE.move, disengaged: false };
-    }
+  const spots: HexPos[] = [];
+  for (let i = 0; i < SUMMON_CALLS[call].length; i++) {
+    const spot =
+      i === 0
+        ? open(at) ? at : undefined
+        : hexNeighbors(at, state.map.grid)
+            .filter((p) => open(p) && !spots.some((s) => sameHex(s, p)))
+            .sort((a, b) => hexDistance(a, caller.pos) - hexDistance(b, caller.pos) || a.q - b.q || a.r - b.r)[0];
+    if (!spot) return null;
+    spots.push(spot);
   }
-  if (!enterSurface(ctx, turtle) && !turtle.down) enterWeather(ctx, turtle);
-  return turtle;
+  return spots;
+}
+
+/**
+ * The creatures of a call, for `caller`, aimed at `at` (checked already: summonSpots has room for them all). Whatever the caller
+ * called before is sent away first. They go into the order just after the caller, on their initiative, in the order called,
+ * and if the caller's turn is underway each has one too, starting now.
+ */
+export function summonCall(ctx: Ctx, caller: Unit, call: SummonCall, at: HexPos): Unit[] {
+  const { state } = ctx;
+  const spots = summonSpots(state, caller, call, at) ?? [];
+  for (const old of summonsOf(state, caller.id)) dismiss(ctx, old);
+  const called: Unit[] = [];
+  SUMMON_CALLS[call].forEach((kind, i) => {
+    const pos = spots[i];
+    if (!pos) return;
+    const def = SUMMONS[kind];
+    const hp = def.hp(caller.level);
+    const unit: Unit = {
+      id: `t${++state.seq}`,
+      side: caller.side,
+      name: def.name,
+      kind,
+      level: caller.level,
+      pos: { q: pos.q, r: pos.r },
+      hp,
+      maxHp: hp,
+      focus: 0,
+      maxFocus: 0,
+      stats: { ...def.stats },
+      armor: def.armor,
+      power: 0,
+      abilities: [...def.abilities],
+      conditions: [],
+      down: false,
+      cooldowns: {},
+      items: {},
+      controller: caller.controller ?? caller.id,
+      summon: { by: caller.id },
+    };
+    state.units.push(unit);
+    ctx.events.push({ t: "summoned", id: unit.id, by: caller.id });
+    const enc = state.encounter;
+    if (enc && enc.order.includes(caller.id)) {
+      enc.order.splice(enc.order.indexOf(caller.id) + 1 + called.length, 0, unit.id);
+      enc.init[unit.id] = enc.init[caller.id];
+      if (enc.acting.includes(caller.id)) {
+        enc.acting.push(unit.id);
+        enc.budgets[unit.id] = { action: true, bonus: true, move: def.move, moveMax: def.move, disengaged: false };
+      }
+    }
+    called.push(unit);
+  });
+  for (const unit of called) if (!enterSurface(ctx, unit) && !unit.down) enterWeather(ctx, unit);
+  return called;
 }

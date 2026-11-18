@@ -19,6 +19,9 @@ const K = {
   skin: "#e0b08a",
   skinDark: "#b98562",
   glass: "#cfe6ee",
+  drowned: "#b8c2a6",
+  drownedDark: "#8a9580",
+  paperDark: "#b8a77f",
 };
 
 export const ACTION_ART: Record<string, Art> = {
@@ -657,6 +660,89 @@ export const ACTION_ART: Record<string, Art> = {
     p.l(11, 1, 13, 3, p.shade);
     p.r(0, 7, 2, 2, p.accent);
     p.r(14, 7, 2, 2, p.accent);
+  },
+  // ---- the Warlock's ----
+  /** Curse of Drowning: a pale drowned hand reaching up out of the waves, bubbles rising off it. */
+  "act-drown-curse": (p) => {
+    p.r(6, 7, 4, 5, K.drowned);
+    p.r(6, 7, 1, 5, K.drownedDark);
+    p.r(5, 4, 6, 4, K.drowned);
+    p.r(5, 4, 1, 4, K.drownedDark);
+    p.r(5, 1, 1, 3, K.drowned);
+    p.r(7, 0, 1, 4, K.drowned);
+    p.r(9, 1, 1, 3, K.drowned);
+    p.r(11, 4, 1, 2, K.drowned);
+    spans(p, p.accent, [[11, 0, 5], [11, 10, 15], [12, 0, 15], [13, 0, 15]]);
+    spans(p, p.shade, [[14, 0, 15], [15, 1, 14]]);
+    p.r(1, 11, 3, 1, C.shine);
+    p.r(12, 11, 3, 1, C.shine);
+    for (const [x, y] of [[13, 3], [14, 1], [2, 6], [12, 6]] as const) p.r(x, y, 1, 1, C.shine);
+  },
+  /** Summon Sunken Sailors: a sailor's skull under a tricorn, kelp hanging off it, its eyes lit from the deep. */
+  "act-sailors": (p) => {
+    spans(p, C.dark, [[1, 5, 10], [2, 4, 11], [3, 1, 14], [4, 2, 13]]);
+    p.r(2, 3, 12, 1, C.gold);
+    spans(p, K.drowned, [[5, 4, 11], [6, 3, 12], [7, 3, 12], [8, 3, 12], [9, 4, 11], [10, 5, 10]]);
+    p.r(5, 7, 2, 2, C.dark);
+    p.r(9, 7, 2, 2, C.dark);
+    p.r(5, 7, 1, 1, p.accent);
+    p.r(10, 7, 1, 1, p.accent);
+    p.r(7, 9, 2, 1, C.dark);
+    p.r(5, 11, 6, 2, K.drowned);
+    p.r(6, 12, 1, 1, C.dark);
+    p.r(9, 12, 1, 1, C.dark);
+    p.l(3, 8, 2, 15, K.leaf);
+    p.l(12, 8, 13, 15, K.leaf);
+    p.r(4, 13, 1, 2, K.leafLit);
+  },
+  /** Red Sky at Morning: a red dawn, the sun half up out of a dark sea and its light running red across the water. */
+  "act-red-sky": (p) => {
+    spans(p, p.shade, [[1, 2, 13], [2, 1, 14]]);
+    spans(p, p.accent, [[3, 1, 14], [4, 1, 14], [5, 1, 14]]);
+    spans(p, K.ember, [[6, 1, 14], [7, 1, 14], [8, 1, 14]]);
+    spans(p, K.flame, [[5, 6, 9], [6, 5, 10], [7, 4, 11], [8, 4, 11]]);
+    spans(p, K.light, [[6, 7, 8], [7, 6, 9]]);
+    spans(p, "#24405e", [[9, 1, 14], [10, 1, 14], [11, 2, 13], [12, 2, 13], [13, 3, 12]]);
+    p.r(4, 9, 8, 1, K.flame);
+    p.r(6, 11, 4, 1, p.accent);
+    p.r(7, 13, 2, 1, p.accent);
+  },
+  /** Unholy Waters: a flood of dark water, and fire bursting up out of the middle of it. */
+  "act-unholy": (p) => {
+    spans(p, K.ember, [[1, 7, 8], [2, 6, 8], [3, 6, 9], [4, 5, 9], [5, 5, 10], [6, 4, 10], [7, 4, 11], [8, 5, 10], [9, 5, 10]]);
+    spans(p, K.flame, [[4, 7, 7], [5, 6, 8], [6, 6, 9], [7, 6, 9], [8, 7, 8]]);
+    p.r(7, 7, 1, 2, K.light);
+    spans(p, p.accent, [[8, 0, 3], [8, 12, 15], [9, 0, 4], [9, 11, 15], [10, 0, 15], [11, 0, 15]]);
+    spans(p, p.shade, [[12, 0, 15], [13, 0, 15], [14, 1, 14]]);
+    p.r(1, 8, 2, 1, C.shine);
+    p.r(13, 8, 2, 1, C.shine);
+    p.r(4, 12, 2, 1, C.shine);
+    p.r(10, 13, 2, 1, C.shine);
+  },
+  /** The Black Spot: a torn scrap of a page, a round black spot daubed on it and a word scrawled under. */
+  "act-black-spot": (p) => {
+    spans(p, C.paper, [[2, 3, 12], [3, 2, 13], [4, 2, 13], [5, 2, 14], [6, 2, 14], [7, 1, 14], [8, 2, 14], [9, 2, 13], [10, 2, 13], [11, 3, 13], [12, 3, 12], [13, 4, 11]]);
+    for (const [x, y] of [[5, 2], [9, 2], [14, 6], [1, 7], [13, 10], [7, 13]] as const) p.r(x, y, 1, 1, K.paperDark);
+    p.r(2, 9, 1, 2, K.paperDark);
+    spans(p, C.dark, [[4, 6, 9], [5, 5, 10], [6, 5, 10], [7, 5, 10], [8, 6, 9]]);
+    p.r(6, 5, 1, 1, p.accent);
+    p.r(4, 10, 3, 1, C.bark);
+    p.r(8, 10, 4, 1, C.bark);
+    p.r(6, 12, 3, 1, C.bark);
+  },
+  /** A drowned gunner's flintlock: a long iron barrel belled at the muzzle, the lock and hammer, a curved wooden butt. */
+  "act-pistol": (p) => {
+    p.r(4, 5, 10, 2, C.iron);
+    p.r(4, 5, 10, 1, C.steel);
+    p.r(14, 4, 1, 4, C.iron);
+    p.r(4, 7, 6, 1, C.wood);
+    p.r(3, 4, 3, 3, C.steel);
+    p.r(3, 2, 1, 2, C.iron);
+    spans(p, C.wood, [[7, 1, 4], [8, 1, 4], [9, 0, 3], [10, 0, 3], [11, 0, 3], [12, 0, 2]]);
+    p.r(0, 13, 3, 1, C.gold);
+    p.r(6, 8, 1, 2, C.iron);
+    p.r(15, 3, 1, 1, p.accent);
+    p.r(15, 7, 1, 1, p.accent);
   },
   // ---- the common actions ----
   "act-dash": (p) => {

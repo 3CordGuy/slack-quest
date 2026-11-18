@@ -185,7 +185,7 @@ function dwell(ev: ZoneEvent, many: boolean, next: ZoneEvent | undefined): numbe
     case "miss": return many ? 130 : 380;
     case "condition": return many ? 50 : 150;
     case "down": return many ? 130 : 320;
-    case "skip": return 320;
+    case "skip": case "choked": return 320;
     case "surface": return many ? 80 : 240;
     case "up": case "fight_join": case "round": return 240;
     case "burst": case "reaction": return 300;
@@ -205,8 +205,12 @@ function dwell(ev: ZoneEvent, many: boolean, next: ZoneEvent | undefined): numbe
     default: return 0;
   }
 }
-/** The conditions on a unit, as badges over its head: in CONDITION_INFO's colours, with rounds left. */
-const badgesOf = (u: Unit) => u.conditions.map((c) => ({ kind: c.kind, color: CONDITION_INFO[c.kind].color, rounds: c.rounds }));
+/** Conditions that come in stacks (the condition's `amount`), shown with how many. */
+const STACKED = new Set(["burning", "drowning"]);
+const stacksOf = (c: { kind: string; amount?: number }): number => (STACKED.has(c.kind) ? (c.amount ?? 1) : 0);
+
+/** The conditions on a unit, as badges over its head: in CONDITION_INFO's colours, with rounds left, and stacks where there are more than one. */
+const badgesOf = (u: Unit) => u.conditions.map((c) => ({ kind: c.kind, color: CONDITION_INFO[c.kind].color, rounds: c.rounds, ...(stacksOf(c) > 1 ? { stacks: stacksOf(c) } : {}) }));
 
 /**
  * A unit's HP in the order of turns, with any shield (Bolstered) as a pale stretch after it. Should the two
@@ -608,12 +612,14 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
         const u = find(ev.target);
         const held = u?.conditions.find((c) => c.kind === ev.kind);
         if (u && !held) u.conditions.push({ kind: ev.kind, rounds: ev.rounds, ...(ev.amount !== undefined ? { amount: ev.amount } : {}) });
+        if (held) held.rounds = Math.max(held.rounds, ev.rounds);
         if (held && ev.amount !== undefined) held.amount = ev.amount;
+        const stacks = stacksOf({ kind: ev.kind, amount: ev.amount }) > 1 ? ` ×${ev.amount}` : "";
         later(() => {
           sounds.effect(ev.kind, view?.whereIs(ev.target));
-          view?.floatOver(ev.target, CONDITION_INFO[ev.kind].name, CONDITION_INFO[ev.kind].color);
+          view?.floatOver(ev.target, `${CONDITION_INFO[ev.kind].name}${stacks}`, CONDITION_INFO[ev.kind].color);
         });
-        say(`${name(ev.target)} is ${CONDITION_INFO[ev.kind].name}.`);
+        say(`${name(ev.target)} is ${CONDITION_INFO[ev.kind].name}${stacks}.`);
       } else if (ev.t === "down" || ev.t === "up") {
         const u = find(ev.id);
         if (u) u.down = ev.t === "down";
@@ -622,6 +628,9 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
         say(ev.t === "down" ? `${name(ev.id)} is down.` : `${name(ev.id)} is back up.`);
       } else if (ev.t === "skip") {
         say(`${name(ev.id)} is ${CONDITION_INFO[ev.kind].name} and loses the turn.`);
+      } else if (ev.t === "choked") {
+        later(() => view?.floatOver(ev.id, "No breath", CONDITION_INFO.drowning.color));
+        say(`${name(ev.id)} chokes on seawater and loses its Action.`);
       } else if (ev.t === "weather") {
         say(ev.kind === "wall" ? "A wall goes up." : ev.kind ? `${WEATHER_INFO[ev.kind].name} gathers.` : "The weather clears.");
       } else if (ev.t === "surface") {
@@ -1588,7 +1597,7 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
           {under ? (
             <>
               <strong>{under.name}</strong> <span className="muted">· {under.hp}/{under.maxHp} HP · Defence {defenceOf(under, state)}{under.down ? " · down" : ""}</span>
-              {under.conditions.length > 0 && <div>{under.conditions.map((c) => <span key={c.kind} className="zone-cond" style={{ color: CONDITION_INFO[c.kind].color }} title={CONDITION_INFO[c.kind].blurb}>{CONDITION_INFO[c.kind].name}{c.kind === "burning" && (c.amount ?? 1) > 1 ? ` ×${c.amount}` : ""} {c.rounds}</span>)}</div>}
+              {under.conditions.length > 0 && <div>{under.conditions.map((c) => <span key={c.kind} className="zone-cond" style={{ color: CONDITION_INFO[c.kind].color }} title={CONDITION_INFO[c.kind].blurb}>{CONDITION_INFO[c.kind].name}{stacksOf(c) > 1 ? ` ×${c.amount}` : ""} {c.rounds}</span>)}</div>}
               {under.side === "enemy" && <div className="muted">{ENEMIES[under.kind]?.attacks.map((a) => a.name).join(", ")}</div>}
               {preview && (
                 <div className="zone-chance">

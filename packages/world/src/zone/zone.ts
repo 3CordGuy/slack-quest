@@ -28,7 +28,7 @@ import { generateDelve } from "./delve";
 import { checkOpen, openChest } from "./loot";
 import { isCrateId } from "./crates";
 import { FREE_WALK, blast, blockerAt, inFight, pathIn, sameHex, sees, solid, unitAt, unitById, zoneReach } from "./geometry";
-import { AURAS, CHART, FLEE_RANGE, SEA_TURTLE, STARTING_ITEMS, THROWABLES, THROWABLE_KINDS, cleanItems, commonCost, enemyHp, enemyMove, tacticOf } from "./kit";
+import { AURAS, CHART, FLEE_RANGE, SUMMONS, STARTING_ITEMS, THROWABLES, THROWABLE_KINDS, cleanItems, commonCost, enemyHp, enemyMove, tacticOf } from "./kit";
 import { d20, heroMove, mod, rollDice, statOf } from "./rules";
 import { hiddenEnemies, sentToClient } from "./light";
 import { tickWeather, weatherAtTurn } from "./weather";
@@ -37,6 +37,7 @@ import { exploreRound, passTime } from "./clock";
 import { checkUnlock, dropKeys, heardBy, workDoor } from "./doors";
 import { checkForage, forage } from "./forage";
 import { dismiss } from "./summon";
+import { drown, drowningAtStart, drowningOwed, holdBreath } from "./drowning";
 import { shantyOf, songMove, windward } from "./song";
 import { courseMarks } from "./stars";
 import type { Budget, DevOp, Encounter, Throwable, Unit, ZoneAction, ZoneEffect, ZoneEvent, ZoneHero, ZoneOptions, ZoneState, ZoneStep, ZoneView } from "./types";
@@ -246,7 +247,7 @@ function flee(ctx: Ctx, unit: Unit): void {
   if (acting && enc.acting.length === 0) enc.resume = enc.order[at] ?? null;
   enc.fled = [...(enc.fled ?? []), unit.id];
   enc.waits = [...(enc.waits ?? []), unit.id];
-  endTurn(unit);
+  endTurn(ctx, unit);
   ctx.events.push({ t: "fled", id: unit.id });
 }
 
@@ -335,13 +336,15 @@ function beginTurn(ctx: Ctx, enc: Encounter, unit: Unit): boolean {
   const grows = unit.side === "enemy" ? ENEMIES[unit.kind]?.regen : undefined;
   if (grows && unit.hp < unit.maxHp && !has(unit, grows.unless)) heal(ctx, unit, grows.amount, { actor: unit.id, what: grows.name });
   standInSurface(ctx, unit);
+  // Drowning takes its toll (the Curse of Drowning first, for a turn started in water).
+  drowningAtStart(ctx, unit);
   if (unit.down) return false;
   if (has(unit, "stunned")) {
     removeCondition(unit, "stunned");
     ctx.events.push({ t: "skip", id: unit.id, kind: "stunned" });
     return false;
   }
-  const base = unit.summon ? SEA_TURTLE.move : unit.side === "hero" && unit.stats ? heroMove(unit.stats) : enemyMove(unit.kind);
+  const base = unit.summon ? (SUMMONS[unit.kind]?.move ?? 3) : unit.side === "hero" && unit.stats ? heroMove(unit.stats) : enemyMove(unit.kind);
   // A Wind-god's Shanty: further, and no Slowing.
   const sung = songMove(ctx.state, unit);
   let move = base + sung;
@@ -358,16 +361,23 @@ function beginTurn(ctx: Ctx, enc: Encounter, unit: Unit): boolean {
   if (courseMarks(ctx.state, unit).length > 0) enc.budgets[unit.id].course = CHART.speed;
   // Weather it stands in acts now its turn is underway, with a budget for the winds to change.
   weatherAtTurn(ctx, unit);
+  // Drowning: hold its breath, or lose its Action.
+  holdBreath(ctx, unit, enc.budgets[unit.id]);
   return !unit.down;
 }
 
-/** End a unit's turn: each condition has one turn less to run, bar those put on during this very turn. */
-function endTurn(unit: Unit): void {
+/**
+ * End a unit's turn: each condition has one turn less to run, bar those put on during this very turn. Then the stacks of
+ * Drowning it is owed for how it ended the turn (drowning.ts), each running its full count.
+ */
+function endTurn(ctx: Ctx, unit: Unit): void {
+  const owed = drowningOwed(ctx.state, unit);
   for (const c of unit.conditions) {
     if (c.fresh) c.fresh = false;
     else c.rounds -= 1;
   }
   unit.conditions = unit.conditions.filter((c) => c.rounds > 0);
+  drown(ctx, unit, owed);
 }
 
 /**
@@ -475,7 +485,7 @@ function advance(ctx: Ctx): void {
     if (!enc || settle(ctx)) return;
     for (const id of enc.acting) {
       const u = unitById(state, id);
-      if (u) endTurn(u);
+      if (u) endTurn(ctx, u);
     }
     let i = turnEnd(enc);
     delete enc.resume;

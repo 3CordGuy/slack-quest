@@ -11,7 +11,7 @@ import { AQUEOUS, AURAS, CORAL_ARMOR, ENEMY_KIT, FORTIFY, NORTH_STAR, SHIELD_SET
 import { inDark } from "./light";
 import { d20, heroDefence, mod, netAdvantage, rollDice, statOf } from "./rules";
 import { songDefence, songHit, windward } from "./song";
-import type { Condition, Roll, Unit, ZoneEffect, ZoneEvent, ZoneState } from "./types";
+import type { Condition, Roll, Unit, UnitCondition, ZoneEffect, ZoneEvent, ZoneState } from "./types";
 
 export interface Ctx {
   state: ZoneState;
@@ -106,10 +106,27 @@ export function regrow(ctx: Ctx, unit: Unit): void {
 export const saveBonus = (unit: Unit, stat: StatKey): number => (unit.side === "hero" ? mod(statOf(unit, stat)) : enemySave(unit.kind));
 
 function fall(ctx: Ctx, unit: Unit): void {
+  const spot = unit.conditions.find((c) => c.kind === "black_spot");
   unit.hp = 0;
   unit.down = true;
   unit.conditions = [];
   ctx.events.push({ t: "down", id: unit.id });
+  if (spot) passSpot(ctx, unit, spot);
+}
+
+/**
+ * The Black Spot on one who has fallen before it ran out goes to the nearest of their side still standing (in the fight,
+ * if one is on), for what it had left, still laid by whoever laid it.
+ */
+function passSpot(ctx: Ctx, from: Unit, spot: UnitCondition): void {
+  const { state } = ctx;
+  const next = state.units
+    .filter((u) => u.side === from.side && u.id !== from.id && !u.down && (!state.encounter || inFight(state, u.id)))
+    .sort((a, b) => hexDistance(a.pos, from.pos) - hexDistance(b.pos, from.pos) || a.id.localeCompare(b.id))[0];
+  if (!next) return;
+  addCondition(ctx, next, "black_spot", spot.rounds);
+  const laid = next.conditions.find((c) => c.kind === "black_spot");
+  if (laid) laid.by = spot.by;
 }
 
 /** Put a shield of `amount` points on a unit for `rounds` of its turns (Bolstered). A bigger one replaces a smaller. */
@@ -189,7 +206,7 @@ export interface AttackContext {
  *
  * Advantage: the target is Exposed or Stunned, or Prone and struck in melee; Focus was spent; a pack
  * animal has one of its own beside the target; the attacker carries a Beacon, or an ally near enough (AURAS.range) does;
- * the attacker is Unseen. Disadvantage: the attacker is Poisoned or Fumbling, is
+ * the attacker is Unseen. Disadvantage: the attacker is Poisoned or Fumbling, carries the Black Spot or a Red Sky, is
  * shooting with an enemy beside them, or is shooting at something Prone. Shots also get +2 from
  * higher ground, -2 from lower, and -2 at a target standing among trees.
  */
@@ -210,6 +227,8 @@ export function attackContext(state: ZoneState, attacker: Unit, target: Unit, op
   if (state.units.some((u) => u.side === attacker.side && !u.down && has(u, "beacon") && hexDistance(u.pos, attacker.pos) <= AURAS.range)) adv(has(attacker, "beacon") ? "your Beacon" : "an ally's Beacon");
   if (has(attacker, "poisoned")) dis("Poisoned");
   if (has(attacker, "glitched")) dis("Fumbling");
+  if (has(attacker, "black_spot")) dis("the Black Spot is on you");
+  if (has(attacker, "red_sky")) dis("Red Sky at Morning");
   // The party strikes blind at what the light does not reach. The things of the caves see in the dark.
   if (attacker.side === "hero" && inDark(state, target.pos)) dis("the target is in the dark");
   if (!opts.melee) {

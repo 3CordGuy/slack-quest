@@ -80,8 +80,8 @@ export interface Tactic {
   armor?: typeof CORAL_ARMOR;
   /** Heals the caster's side on a cluster of `hexes` hexes about the one aimed at, and leaves water there (Revitalizing Splash). No harm to anyone. */
   splash?: typeof SPLASH;
-  /** Calls a creature onto an open hex in range (`at`), and sends away the one this hero called before, if it is still there. */
-  summon?: "sea_turtle";
+  /** Calls creatures onto an open hex in range (`at`) and beside it (summon.ts), and sends away those this hero called before, if they are still there. */
+  summon?: SummonCall;
   /** Strikes up a shanty around the Bard (song.ts), in place of the one they were singing. */
   shanty?: ShantyKind;
   /** Blast: strikes only the other side, and hits this much harder for each of the user's allies standing in it (Chorus). */
@@ -106,6 +106,14 @@ export interface Tactic {
   bulwark?: typeof BULWARK;
   /** Taunts every enemy within `range` of the user for `rounds` of its turns: it must go for the user if it can (Taunt). */
   taunt?: typeof TAUNT;
+  /** Single: lays the Curse of Drowning on the enemy (drowning.ts): a stack of Drowning each time it starts or ends a turn in water. */
+  curse?: typeof DROWNING_CURSE;
+  /** Single: lays the Black Spot on the enemy (drowning.ts): its attacks are worse, it drowns a little more each turn, and it is passed on when it falls. */
+  blackSpot?: typeof BLACK_SPOT;
+  /** Blast: no blow, but every enemy in it attacks with disadvantage for some of its turns (Red Sky at Morning). */
+  redSky?: typeof RED_SKY;
+  /** Blast: water over the hexes it covers, and fire under every enemy standing in it (Unholy Waters). */
+  unholy?: typeof UNHOLY_WATERS;
 }
 
 const melee = (extra: Partial<Tactic> = {}): Tactic => ({ cost: "action", reach: "melee", range: 1, shape: "single", ...extra });
@@ -165,18 +173,56 @@ export const CHORUS_PER_ALLY = 3;
 /** Revitalizing Splash: how many hexes it covers, and the rounds of water it leaves on them. */
 export const SPLASH = { hexes: 4, water: 3 };
 
+/** A creature a hero can call into a fight (summon.ts): played by the hero's player, on the hero's initiative. Defence is 10, its Agility, and half its armor, as a hero's. */
+export interface SummonDef {
+  name: string;
+  hp: (level: number) => number;
+  move: number;
+  armor: number;
+  stats: Stats;
+  abilities: string[];
+}
+
 /**
- * The Druid's sea turtle: slow, hard to hurt and hard to get through, with a fair bite that is worse from the water. Defence is the stock 10
- * plus its shell (half its armor, as a hero's). It lasts until it falls, another is called, or the fight is over.
+ * The Druid's sea turtle: slow, hard to hurt and hard to get through, with a fair bite that is worse from the water.
+ * It lasts until it falls, another is called, or the fight is over.
  */
-export const SEA_TURTLE = {
+export const SEA_TURTLE: SummonDef = {
   name: "Sea Turtle",
   hp: (level: number) => 34 + 6 * level,
   move: 3,
   armor: 12,
-  stats: { str: 7, int_stat: 3, vit: 10, agi: 5, dex: 3 } satisfies Stats,
+  stats: { str: 7, int_stat: 3, vit: 10, agi: 5, dex: 3 },
   abilities: ["turtle_bite"],
 };
+
+/**
+ * The Warlock's sunken sailors, called up two at a time: a gunner with a pistol that reaches 4 hexes and hits the harder
+ * of the two, and a cutlass who stands up to more. Between them about as much to get through as a sea turtle.
+ */
+export const DROWNED_GUNNER: SummonDef = {
+  name: "Drowned Gunner",
+  hp: (level: number) => 14 + 3 * level,
+  move: 4,
+  armor: 4,
+  stats: { str: 4, int_stat: 3, vit: 5, agi: 6, dex: 9 },
+  abilities: ["sailor_pistol"],
+};
+export const DROWNED_CUTLASS: SummonDef = {
+  name: "Drowned Cutlass",
+  hp: (level: number) => 22 + 4 * level,
+  move: 4,
+  armor: 8,
+  stats: { str: 8, int_stat: 3, vit: 8, agi: 5, dex: 4 },
+  abilities: ["sailor_scimitar"],
+};
+
+/** Every creature that can be called, by its kind (the unit's `kind`). */
+export const SUMMONS: Record<string, SummonDef> = { sea_turtle: SEA_TURTLE, drowned_cutlass: DROWNED_CUTLASS, drowned_gunner: DROWNED_GUNNER };
+
+/** What a summoning ability calls: the creatures' kinds, the first on the hex aimed at and the rest beside it. */
+export type SummonCall = "sea_turtle" | "sunken_sailors";
+export const SUMMON_CALLS: Record<SummonCall, string[]> = { sea_turtle: ["sea_turtle"], sunken_sailors: ["drowned_cutlass", "drowned_gunner"] };
 
 /** How far Smuggler's Route takes the Rogue (and whoever comes along), and how far Tactical Retreat does. */
 export const ROUTE_RANGE = 3;
@@ -198,6 +244,18 @@ export const GUIDING_LIGHT = { rounds: 3 };
 export const CONSTELLATION = { link: 4 };
 export const CHART = { range: 8, speed: 3, rounds: 4 };
 export const NORTH_STAR = { rounds: 3, burn: 2 };
+
+/**
+ * The Warlock's (drowning.ts). Drowning is stacks on an enemy, for `rounds` of its turns, each stack laid on starting the count
+ * again for all of them. At the start of each of its turns it takes `tick` for every stack, then saves (Vitality) against `dc` and
+ * `perStack` more for every stack, or loses its Action. Curse of Drowning lasts `rounds` of the enemy's turns. The Black Spot lasts
+ * `rounds`. Red Sky at Morning lasts `rounds`. Unholy Waters leaves `water` rounds of water and `fire` rounds of fire.
+ */
+export const DROWNING = { rounds: 3, tick: 2, dc: 2, perStack: 2 };
+export const DROWNING_CURSE = { rounds: 3 };
+export const BLACK_SPOT = { rounds: 4 };
+export const RED_SKY = { rounds: 3 };
+export const UNHOLY_WATERS = { water: 3, fire: 2 };
 
 /** Shield Wall: a shield of `shield` points plus the Paladin's level on themselves alone, through their next turn. */
 export const SHIELD_WALL = { range: 0, shield: 6, rounds: 1 };
@@ -294,6 +352,15 @@ export const TACTICS: Record<string, Tactic> = {
   soul_drain: spell(5),
   blight: spell(5, { shape: "blast", radius: 1, cooldown: 2, surface: { kind: "poison", rounds: 3 } }),
   red_tide: spell(5),
+  // Warlock class abilities
+  curse_of_drowning: spell(5, { cost: "bonus", cooldown: 3, sure: true, curse: DROWNING_CURSE }),
+  summon_sunken_sailors: { cost: "action", reach: "spell", range: 3, shape: "self", cooldown: 4, summon: "sunken_sailors" },
+  red_sky_at_morning: spell(5, { shape: "blast", radius: 2, cooldown: 5, redSky: RED_SKY }),
+  unholy_waters: spell(5, { cost: "bonus", shape: "blast", radius: 1, cooldown: 2, unholy: UNHOLY_WATERS }),
+  the_black_spot: spell(5, { cooldown: 4, sure: true, blackSpot: BLACK_SPOT }),
+  // The sunken sailors' own
+  sailor_pistol: shot(4),
+  sailor_scimitar: melee(),
 };
 
 export const tacticOf = (ability: string): Tactic => TACTICS[ability] ?? TACTICS.punch;
@@ -350,6 +417,10 @@ export const SAVE_STAT: Record<Condition, StatKey> = {
   north_star: "int_stat",
   charted: "int_stat",
   taunted: "int_stat",
+  drowning: "vit",
+  drowning_curse: "vit",
+  black_spot: "int_stat",
+  red_sky: "int_stat",
 };
 
 const info = (kind: EffectKind, blurb: string) => ({ name: EFFECT_INFO[kind].name, color: EFFECT_INFO[kind].color, blurb });
@@ -383,6 +454,10 @@ export const CONDITION_INFO: Record<Condition, { name: string; blurb: string; co
   north_star: { name: "North Star", blurb: "Every blow it lands sets the target Burning, one stack more if the blow would have set it Burning anyway.", color: "#ffd166" },
   taunted: { name: "Taunted", blurb: "Goaded: it must go for the one who taunted it, if it can reach them.", color: "#ff5a3c" },
   charted: { name: "Course Charted", blurb: `A mark on the map: it and its allies move ${CHART.speed} further each turn, on steps that bring them nearer the mark.`, color: "#ff4d4d" },
+  drowning: { name: "Drowning", blurb: `Loses ${DROWNING.tick} HP a stack at the start of each of its turns, then must hold its breath (harder for every stack) or lose its Action. A new stack keeps them all going ${DROWNING.rounds} more turns.`, color: "#2fa4c9" },
+  drowning_curse: { name: "Curse of Drowning", blurb: "Takes a stack of Drowning each time it starts or ends a turn standing in water.", color: "#1f7fa0" },
+  black_spot: { name: "The Black Spot", blurb: "Its attacks are rolled with disadvantage, and it takes a stack of Drowning at the end of each of its turns. If it falls with the Spot still on it, the Spot passes to the nearest of its side.", color: "#7a6a8f" },
+  red_sky: { name: "Red Sky at Morning", blurb: "A bad omen: its attacks are rolled with disadvantage.", color: "#e2483d" },
 };
 
 // ---------- common actions ----------

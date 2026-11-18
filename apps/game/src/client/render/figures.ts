@@ -5011,12 +5011,16 @@ function carryLeft(b: Biped, tilt: number) {
 }
 
 /** One of the smugglers' dead: a skeleton with a rusted cutlass and a scrap of its old bandana. */
-function skeleton(top: THREE.Group): Rig {
+/**
+ * A skeleton in a bandana with a rusted cutlass. `drowned`: one of a Warlock's sunken sailors, called up off the sea floor,
+ * its bones stained by the sea and hung with kelp, in a navy kerchief with its cutlass, or under a tricorn with a pistol.
+ */
+function skeleton(top: THREE.Group, drowned?: "cutlass" | "pistol"): Rig {
   const parts: Part[] = [];
   const b = biped(top, parts);
-  const bone = "#e8e2d0";
-  const dim = "#c9c1aa";
-  const rag = "#8a3b2f";
+  const bone = drowned ? "#c3cbb2" : "#e8e2d0";
+  const dim = drowned ? "#98a48d" : "#c9c1aa";
+  const rag = drowned ? "#2c4f73" : "#8a3b2f";
   for (const [thigh, shin, foot] of [[b.thighR, b.shinR, b.footR], [b.thighL, b.shinL, b.footL]]) {
     // A thigh bone from a round head at the hip, a kneecap, a shin bone, and a long bony foot.
     thigh.loft(bone, [[0.55, 0.5, 0.5], [0.15, 0.72, 0.72], [-0.5, 0.48, 0.48], [-1.9, 0.4, 0.4], [-2.55, 0.62, 0.6]], 6);
@@ -5060,14 +5064,44 @@ function skeleton(top: THREE.Group): Rig {
   for (const s of [-1, 1]) h.ball(OUTLINE, 1, s * 1.3, 3.45, 2.55, 1, [0.82, 0.92, 0.5]);
   h.shape(OUTLINE, sym([[0.42, 2.55, 2.2], [0.42, 2.55, 2.95], [0, 1.75, 2.2], [0, 1.75, 2.95]]));
   for (const x of [-1.2, -0.4, 0.4, 1.2]) h.shape(bone, [[x - 0.26, 1.55, 1.9], [x + 0.26, 1.55, 1.9], [x - 0.22, 1.55, 2.45 - Math.abs(x) * 0.18], [x + 0.22, 1.55, 2.45 - Math.abs(x) * 0.18], [x, 0.75, 2.25 - Math.abs(x) * 0.18]]);
-  // The bandana tied over its crown, a tail of it hanging behind.
-  h.loft(rag, [[4.55, 3.2, 3, -0.1], [5.1, 3.18, 2.98, -0.11], [5.85, 2.6, 2.5, -0.15], [6.45, 1.15, 1.15, -0.15]], 10);
-  h.ball(rag, 0.6, 1.9, 5.05, -2.75, 0);
-  h.shape(rag, [[1.55, 5.1, -2.7], [2.35, 5.1, -2.65], [2.65, 2.7, -3.15], [3.3, 2.95, -3], [2.2, 4.3, -3.2]]);
-  // A rusted cutlass: a wrapped grip, a knuckle guard, and a broad blade curving forward to its point.
+  if (drowned === "pistol") {
+    // A gunner's tricorn: a three-cornered brim of sodden felt round a low crown.
+    const felt = "#26303a";
+    h.loft(felt, [[5.15, 4.3, 4.3], [5.5, 4.3, 4.3]], 3, 0, 0, -0.15, [0, Math.PI, 0]);
+    h.loft(felt, [[5.3, 2.75, 2.6, -0.15], [6.6, 2.5, 2.35, -0.15], [7.1, 1.6, 1.5, -0.15]], 8);
+    h.loft("#7a5a2a", [[5.45, 2.8, 2.65, -0.15], [5.8, 2.75, 2.6, -0.15]], 8);
+  } else {
+    // The bandana tied over its crown, a tail of it hanging behind.
+    h.loft(rag, [[4.55, 3.2, 3, -0.1], [5.1, 3.18, 2.98, -0.11], [5.85, 2.6, 2.5, -0.15], [6.45, 1.15, 1.15, -0.15]], 10);
+    h.ball(rag, 0.6, 1.9, 5.05, -2.75, 0);
+    h.shape(rag, [[1.55, 5.1, -2.7], [2.35, 5.1, -2.65], [2.65, 2.7, -3.15], [3.3, 2.95, -3], [2.2, 4.3, -3.2]]);
+  }
+  if (drowned) {
+    // The sea floor still on it: kelp trailing off the collarbones and the hips, and barnacles crusted on the bone.
+    const weed = "#4f7a3a";
+    const crust = "#ddd6c2";
+    for (const [x, len] of [[-3.1, 2.6], [-1.2, 1.7], [2.3, 2.2], [3.6, 1.5]] as const) strut(t, weed, [x, 5.7, 0.55], [x * 1.05, 5.7 - len, 1.1], 0.24, 0.1, 5);
+    for (const x of [-1.9, 1.4]) strut(t, weed, [x, 1.2, 1.05], [x * 1.1, -0.9, 1.25], 0.22, 0.1, 5);
+    for (const [x, y, z] of [[3.9, 5.95, 0.5], [-4.4, 5.3, 0.3], [1.7, 0.6, 1.2], [-0.6, 3.6, -0.75]] as const) t.ball(crust, 0.3, x, y, z);
+    h.ball(crust, 0.32, 2.4, 3.1, 1.6);
+    h.ball(crust, 0.26, -2.1, 4.1, 1.5);
+  }
   const w = b.heldR;
   const wood = "#6b4a2b";
   const rust = "#a3896a";
+  if (drowned === "pistol") {
+    // A flintlock pistol held up: a curved wooden butt in the fist, the lock and its hammer, and a long iron barrel, belled at the muzzle.
+    const iron = "#5d6670";
+    w.loft(wood, [[-0.8, 0.5, 0.42, -0.35], [0.2, 0.42, 0.38, -0.1], [1.1, 0.38, 0.36]], 6);
+    w.ball(wood, 0.55, 0, -0.9, -0.45);
+    w.shape(iron, sym([[0.3, 0.9, 0.5], [0.3, 0.9, -0.3], [0.3, 1.7, 0.5], [0.3, 1.7, -0.3]]));
+    strut(w, iron, [0, 1.5, -0.35], [0, 2.1, -0.75], 0.16);
+    w.loft(iron, [[1.2, 0.34, 0.34, 0.2], [5.4, 0.3, 0.3, 0.2], [5.7, 0.42, 0.42, 0.2], [5.9, 0.42, 0.42, 0.2]], 8);
+    w.loft(wood, [[1.1, 0.4, 0.4, 0.2], [3.8, 0.36, 0.36, 0.2]], 6);
+    apply(b, { tilt: 0.55 });
+    return { parts, animate: b.animate, acts: true };
+  }
+  // A rusted cutlass: a wrapped grip, a knuckle guard, and a broad blade curving forward to its point.
   w.loft(wood, [[-0.7, 0.36, 0.36], [1.1, 0.42, 0.42]], 6);
   w.ball(wood, 0.5, 0, -0.85, 0);
   w.shape(wood, sym([[1.4, 1.15, 0.65], [1.4, 1.5, 0.65], [1.4, 1.15, -0.2], [1.4, 1.5, -0.2], [0.5, 1.0, 0.85], [0.5, 1.65, 0.85], [0.5, 1.0, -0.45], [0.5, 1.65, -0.45]]));
@@ -5646,6 +5680,10 @@ function rigFor(kind: string, top: THREE.Group, look: Look, outfit: Outfit | und
       return troll(top);
     case "sea_turtle":
       return seaTurtle(top);
+    case "drowned_cutlass":
+      return skeleton(top, "cutlass");
+    case "drowned_gunner":
+      return skeleton(top, "pistol");
   }
   return person(top, look, undefined, asleep);
 }

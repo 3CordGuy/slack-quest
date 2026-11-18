@@ -11,13 +11,14 @@ import { tileAt, type Poi } from "../map";
 import { DEBUFFS, addCondition, addShield, attackContext, attackRoll, damage, defenceOf, giveAway, has, heal, inWater, kindle, removeCondition, saveBonus, saveRoll, shieldOf, shieldUnit, unseen, type Ctx } from "./engine";
 import { cratesOn, crateById, hurtCrate, isCrateId } from "./crates";
 import { adjacent, blast, blockerAt, courseShare, directionToward, elevOf, inFight, lineFrom, pathIn, sameHex, sees, seesFor, solid, stepCost, unitAt, unitById, zoneReach, type Course } from "./geometry";
-import { CHART, COMMON_ACTIONS, CORAL_ARMOR, SHANTY, ENEMY_BURST, FLEE_RANGE, JUMP_MOVE_COST, POTION_EDGE, SAVE_STAT, SMUGGLED, THROWABLES, TORCH_GROUND_ROUNDS, abilityDice, enemyStrikes, healDice, jumpRange, reactionStrike, tacticOf, throwRange, type EnemyStrike, type Tactic } from "./kit";
+import { CHART, COMMON_ACTIONS, CORAL_ARMOR, SHANTY, SUMMON_CALLS, ENEMY_BURST, FLEE_RANGE, JUMP_MOVE_COST, POTION_EDGE, SAVE_STAT, SMUGGLED, THROWABLES, TORCH_GROUND_ROUNDS, abilityDice, enemyStrikes, healDice, jumpRange, reactionStrike, tacticOf, throwRange, type EnemyStrike, type Tactic } from "./kit";
 import { d20, hitChance, mod, proficiency, rollDice, statOf } from "./rules";
 import { seenByHeroes } from "./light";
 import { HINDERING, chill, clearSurfaces, dropTorch, enterSurface, ignite, letGoTorch, placeSurface } from "./surfaces";
 import type { Budget, CommonAction, Throwable, Unit, ZoneState } from "./types";
 import { clusterHexes, enterWeather, makeWeather, rainHexes, wallHexes } from "./weather";
-import { summonTurtle } from "./summon";
+import { summonCall, summonSpots } from "./summon";
+import { layCurse } from "./drowning";
 import { SHANTIES, joinable, shantyOf, songDamage, songMove, windward } from "./song";
 import { constellationHexes, constellationLinks, courseMarks, litFoes } from "./stars";
 
@@ -315,7 +316,8 @@ export function checkAbility(state: ZoneState, unit: Unit, ability: string, aim:
   if (tactic.summon) {
     if (!state.encounter || !inFight(state, unit.id)) return "That is for a fight.";
     if (!aim.at || sameHex(aim.at, unit.pos) || !tileAt(state.map, aim.at)) return "Pick a hex to call it to.";
-    return inReach(aim.at) ?? (standable(state, aim.at) ? null : "There is nowhere for it to stand there.");
+    const many = SUMMON_CALLS[tactic.summon].length > 1;
+    return inReach(aim.at) ?? (summonSpots(state, unit, tactic.summon, aim.at) ? null : many ? "There is no room for them all there." : "There is nowhere for it to stand there.");
   }
   if (tactic.blink) {
     const wrong = blinkWrong(state, unit, aim.at, tactic.blink.range);
@@ -433,12 +435,12 @@ export function crateBlow(state: ZoneState, unit: Unit, crateId: string): string
 
 /**
  * What an attack with this ability on this target would be rolled with, before it is made: the chance
- * to hit and why. Null for abilities that are saved against rather than rolled to hit.
+ * to hit and why. Null for abilities that are saved against, or that land without a roll, rather than rolled to hit.
  */
 export function previewAttack(state: ZoneState, unit: Unit, ability: string, target: Unit): { chance: number; bonus: number; vs: number; adv: -1 | 0 | 1; notes: string[] } | null {
   const def = ABILITIES[ability];
   const tactic = tacticOf(ability);
-  if (!def || !["single", "chain", "adjacent"].includes(tactic.shape) || tactic.overwhelm) return null;
+  if (!def || !["single", "chain", "adjacent"].includes(tactic.shape) || tactic.overwhelm || tactic.sure) return null;
   const c = attackContext(state, unit, target, { melee: tactic.reach === "melee" });
   const bonus = proficiency(unit.level) + mod(statOf(unit, def.stat)) + (tactic.toHit ?? 0) + c.mods;
   const vs = defenceOf(target, state);
@@ -473,8 +475,7 @@ export function resolveAbility(ctx: Ctx, unit: Unit, ability: string, aim: Aim &
     placeSurface(ctx, area, "water", tactic.splash.water, unit.id);
     landed = true;
   } else if (tactic.summon) {
-    const turtle = summonTurtle(ctx, unit, aim.at!);
-    if (!turtle.down) ctx.onStep?.(turtle, () => {});
+    for (const called of summonCall(ctx, unit, tactic.summon, aim.at!)) if (!called.down) ctx.onStep?.(called, () => {});
     landed = true;
   } else if (tactic.chart) {
     // One mark at a time: the new one takes the old one's place.
@@ -500,6 +501,21 @@ export function resolveAbility(ctx: Ctx, unit: Unit, ability: string, aim: Aim &
     for (const victim of lit) removeCondition(victim, "guiding_light");
     for (const victim of lit) damage(ctx, victim, rolled, { actor: unit.id, what: def.id, ignoreGuard: def.ignoreGuard });
     landed = true;
+  } else if (tactic.redSky) {
+    // An omen, not a blow: no roll and no save, and only the other side reads it.
+    const keys = new Set(abilityArea(state, unit, ability, aim.at).map(posKey));
+    for (const foe of foes().filter((u) => keys.has(posKey(u.pos)))) addCondition(ctx, foe, "red_sky", tactic.redSky.rounds);
+    landed = true;
+  } else if (tactic.unholy) {
+    // Water over it all, bar where an enemy stands: that hex comes up burning, whatever water or ice was on it gone first.
+    // (Oil or poison under an enemy goes up with it, and takes the rest of its spill along.)
+    const area = abilityArea(state, unit, ability, aim.at);
+    const held = new Set(foes().map((u) => posKey(u.pos)));
+    const burning = area.filter((p) => held.has(posKey(p)));
+    placeSurface(ctx, area.filter((p) => !held.has(posKey(p))), "water", tactic.unholy.water, unit.id);
+    clearSurfaces(ctx, burning.filter((p) => ["water", "ice"].includes(state.surfaces[posKey(p)]?.kind ?? "")));
+    placeSurface(ctx, burning, "fire", tactic.unholy.fire, unit.id);
+    landed = true;
   } else if (tactic.shape === "single") {
     const target = unitById(state, aim.target!)!;
     // The shield is set before the swing, and counts toward it.
@@ -515,6 +531,8 @@ export function resolveAbility(ctx: Ctx, unit: Unit, ability: string, aim: Aim &
     for (let k = 0; landed && k < (tactic.knockback ?? 0) && !target.down; k++) push(ctx, unit.pos, target, unit.id);
     if (tactic.steal && landed) pocket(ctx, unit, target);
     if (tactic.inspire && landed) inspireNearest(ctx, unit, target);
+    if (tactic.curse && landed) layCurse(ctx, unit, target, "drowning_curse", tactic.curse.rounds);
+    if (tactic.blackSpot && landed) layCurse(ctx, unit, target, "black_spot", tactic.blackSpot.rounds);
     // Then away, hit or miss, if a hex was picked.
     if (tactic.blink && aim.at && !unit.down && standable(state, aim.at)) {
       blinkTo(ctx, unit, aim.at);

@@ -648,6 +648,8 @@ export interface Badge {
   kind: string;
   color: string;
   rounds: number;
+  /** For a condition that comes in stacks (Burning, Drowning), how many, when there is more than one. */
+  stacks?: number;
 }
 
 /** A small pixel glyph for each condition, 7 by 7, "#" lit. */
@@ -678,15 +680,20 @@ const GLYPHS: Record<string, string[]> = {
   north_star: ["...#...", "...#...", "..###..", "#######", "..###..", "...#...", "...#..."],
   taunted: ["##...##", "#.#.#.#", "...#...", ".#####.", "#.....#", ".......", "..###.."],
   charted: ["#.....#", ".#...#.", "..#.#..", "...#...", "..#.#..", ".#...#.", "#.....#"],
+  // The Warlock's: bubbles rising off a sinking head; a hand reaching up out of the waves; a black spot on a scrap of paper; a red sun on the sea.
+  drowning: [".#...#.", "....#..", ".#.....", "..###..", ".#####.", "#.#.#.#", ".#.#.#."],
+  drowning_curse: ["..#.#..", "..#.#.#", "..#####", "..####.", "...###.", "#.#.#.#", ".#.#.#."],
+  black_spot: ["#######", "#.....#", "#.###.#", "#.###.#", "#.###.#", "#.....#", "#######"],
+  red_sky: ["..###..", ".#####.", "#######", ".......", "#######", ".......", "##.##.#"],
   coral_armor: ["#..#..#", "#.##.##", ".##.##.", "..###..", "#..#..#", ".###.#.", "..##..."],
 };
 
 /** The key a badge row is drawn for, to know when it has changed. */
-export const badgesKey = (badges: readonly Badge[]): string => badges.map((b) => `${b.kind}:${b.rounds}`).join(",");
+export const badgesKey = (badges: readonly Badge[]): string => badges.map((b) => `${b.kind}:${b.rounds}:${b.stacks ?? 1}`).join(",");
 
 /**
  * A row of status badges: each a dark square edged and tinted in the condition's colour, its glyph in that
- * colour, and how many rounds it has left in the corner. Drawn crisp, like the plates.
+ * colour, how many rounds it has left in the bottom corner, and its stacks (if more than one) in the top one. Drawn crisp, like the plates.
  */
 export function badgeTexture(badges: readonly Badge[]): { texture: THREE.CanvasTexture; aspect: number } {
   const SIZE = 22;
@@ -718,6 +725,16 @@ export function badgeTexture(badges: readonly Badge[]): { texture: THREE.CanvasT
       ctx.strokeText(String(b.rounds), x + SIZE - 1, SIZE);
       ctx.fillStyle = "#fbe6c8";
       ctx.fillText(String(b.rounds), x + SIZE - 1, SIZE);
+    }
+    if ((b.stacks ?? 1) > 1) {
+      ctx.font = "bold 9px ui-monospace, Menlo, monospace";
+      ctx.textAlign = "left";
+      ctx.textBaseline = "top";
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = "#14101f";
+      ctx.strokeText(`×${b.stacks}`, x + 1, 0);
+      ctx.fillStyle = b.color;
+      ctx.fillText(`×${b.stacks}`, x + 1, 0);
     }
   });
   const texture = new THREE.CanvasTexture(canvas);

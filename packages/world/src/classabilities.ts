@@ -72,7 +72,13 @@ export const ABILITY_POOLS: AbilityPools = {
     { id: "bulwark_strike", level: 1 },
     { id: "taunt", level: 1 },
   ],
-  data_warlock: [],
+  data_warlock: [
+    { id: "curse_of_drowning", level: 1 },
+    { id: "summon_sunken_sailors", level: 1 },
+    { id: "red_sky_at_morning", level: 1 },
+    { id: "unholy_waters", level: 1 },
+    { id: "the_black_spot", level: 1 },
+  ],
 };
 
 /** A hero's chosen abilities, one per slot, or null for an empty slot. */

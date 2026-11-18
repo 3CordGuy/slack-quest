@@ -22,9 +22,10 @@ export type Side = "hero" | "enemy";
  * the Bard's: a shanty sung (song.ts), and Inspired (from joining one, or Lead by Example: the next roll to hit has advantage);
  * and the Sage's (stars.ts): Guiding Light on an enemy (whoever attacks it has advantage), North Star on an ally (their blows
  * set what they hit Burning), and a course charted (on the Sage: the mark their allies move faster toward);
- * and the Warden's: Taunted, on an enemy (it must go for the Warden who taunted it, if it can).
+ * and the Warden's: Taunted, on an enemy (it must go for the Warden who taunted it, if it can);
+ * and the Warlock's (drowning.ts), all on an enemy: Drowning (stacks, `amount`), the Curse of Drowning, the Black Spot and Red Sky at Morning.
  */
-export type Condition = EffectKind | "poisoned" | "prone" | "wet" | "beacon" | "mending" | "bolstered" | "invisible" | "contraband" | "regenerating" | "coral_armor" | ShantyKind | "inspired" | "guiding_light" | "north_star" | "charted" | "taunted";
+export type Condition = EffectKind | "poisoned" | "prone" | "wet" | "beacon" | "mending" | "bolstered" | "invisible" | "contraband" | "regenerating" | "coral_armor" | ShantyKind | "inspired" | "guiding_light" | "north_star" | "charted" | "taunted" | "drowning" | "drowning_curse" | "black_spot" | "red_sky";
 
 /** The shanties a Bard sings (song.ts): a condition on the Bard, reaching everyone of theirs nearby. */
 export type ShantyKind = "lively_shanty" | "dour_shanty" | "windgod_shanty";
@@ -35,7 +36,7 @@ export interface UnitCondition {
   rounds: number;
   /** Put on during the bearer's own turn: the end of that turn does not count against it. */
   fresh?: boolean;
-  /** Bolstered: the points of shield left, spent before HP. Burning: its stacks (none said is one), each burning for the full tick. */
+  /** Bolstered: the points of shield left, spent before HP. Burning: its stacks (none said is one), each burning for the full tick. Drowning: its stacks. */
   amount?: number;
   /** A course charted (Chart a Course): the hex marked. */
   at?: HexPos;
@@ -43,7 +44,7 @@ export interface UnitCondition {
   joined?: string[];
   /** A shanty: how many have joined it since the Bard's turn last began (the extra each joining gives lasts that long). */
   surge?: number;
-  /** Taunted: the unit that taunted it. */
+  /** Taunted: the unit that taunted it. The Curse of Drowning and the Black Spot: who laid it. */
   by?: string;
 }
 
@@ -356,6 +357,8 @@ export type ZoneEvent =
   /** Weather made over some hexes, or (`kind` null) cleared from them. */
   | { t: "weather"; kind: WeatherKind | null; hexes: HexPos[]; by: string }
   | { t: "skip"; id: string; kind: Condition }
+  /** Drowning: it failed to hold its breath, and loses its Action this turn (it can still move). */
+  | { t: "choked"; id: string }
   | { t: "down"; id: string }
   | { t: "up"; id: string }
   | { t: "surface"; kind: SurfaceKind | null; hexes: HexPos[] }

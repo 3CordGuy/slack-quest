@@ -96,6 +96,14 @@ export const ABILITY_ICON: Record<string, ActionIcon> = {
   soul_drain: icon("drain", "#e879f9"),
   blight: icon("skull", "#84cc16"),
   red_tide: icon("wave", "#e23b3b"),
+  curse_of_drowning: icon("drown-curse", "#2fa4c9"),
+  summon_sunken_sailors: icon("sailors", "#5fe0c0"),
+  red_sky_at_morning: icon("red-sky", "#e2483d"),
+  unholy_waters: icon("unholy", "#2fa4c9"),
+  the_black_spot: icon("black-spot", "#7a6a8f"),
+  // The sunken sailors' own
+  sailor_pistol: icon("pistol", "#ffd23f"),
+  sailor_scimitar: icon("slash", "#9fb59a"),
 };
 
 export const abilityIcon = (id: string): ActionIcon => ABILITY_ICON[id] ?? ABILITY_ICON.punch;

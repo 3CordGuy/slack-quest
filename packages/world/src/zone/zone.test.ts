@@ -9,7 +9,7 @@ import { shantyOf, shantyRadius, songsOn } from "./song";
 import { chartOf, constellationLinks } from "./stars";
 import { ALERT_RANGE, DEFAULT_ZONE_OPTIONS, JOIN_RANGE, generateZone, zoneOptions } from "./gen";
 import { adjacent, blast, flies, sees, seesFor, solid, stepCost, unitAt, zoneReach } from "./geometry";
-import { AURAS, BOLSTER, ENEMY_BURST, SHIELD_WALL, ENEMY_KIT, EXPLORE_ROUND_MS, FLEE_RANGE, LIGHT_RADIUS, SHIELD_SET_ASIDE, TACTICS, TORCH_GROUND_ROUNDS, TORCH_HELD_ROUNDS, TORCH_ROUND_MS, commonCost, enemyHp, enemyStrikes, tacticOf } from "./kit";
+import { AURAS, BOLSTER, ENEMY_BURST, SHIELD_WALL, ENEMY_KIT, EXPLORE_ROUND_MS, FLEE_RANGE, LIGHT_RADIUS, SHIELD_SET_ASIDE, TACTICS, TORCH_GROUND_ROUNDS, TORCH_HELD_ROUNDS, TORCH_ROUND_MS, abilityDice as abilityDiceFor, commonCost, enemyHp, enemyStrikes, tacticOf } from "./kit";
 import { MAX_CATCHUP_ROUNDS } from "./clock";
 import { defenceOf } from "./engine";
 import { abilityArea, checkAbility, crateBlow, enemyAct, wayBetween } from "./combat";
@@ -3776,3 +3776,224 @@ describe("the Warden's wall", () => {
     expect(swings(true)).toEqual(new Set(["bo"]));
   });
 });
+
+describe("the Warlock's drowning", () => {
+  const ALL = ["curse_of_drowning", "summon_sunken_sailors", "red_sky_at_morning", "unholy_waters", "the_black_spot"];
+  /**
+   * A Warlock (ann) with a crewmate (bo, a Mage) in a fight with `foes` (dummies with HP to spare, unless `kind` says
+   * otherwise). The two heroes share one turn, and it is theirs.
+   */
+  function party(foes: HexPos[] = [at(8, 6)], opts: { bo?: HexPos; kind?: string } = {}) {
+    let state = board();
+    state.aiOff = true;
+    hero(state, "ann", "data_warlock", at(5, 6)).abilities = ["hex", ...ALL];
+    hero(state, "bo", "devops_mage", opts.bo ?? at(3, 8));
+    const ids = foes.map((pos) => {
+      const e = enemy(state, opts.kind ?? "dummy", pos);
+      e.hp = e.maxHp = 500;
+      return e.id;
+    });
+    state = provoke(state);
+    const enc = state.encounter!;
+    enc.order = ["ann", "bo", ...ids];
+    Object.assign(enc.init, { ann: 20, bo: 19 }, Object.fromEntries(ids.map((id) => [id, 1])));
+    while (!["ann", "bo"].every((id) => state.encounter!.acting.includes(id))) state = must(state, { type: "timeout" });
+    return { state, foes: ids };
+  }
+  function nextTurn(state: ZoneState, sink: ZoneEvent[] = []): ZoneState {
+    for (const id of [...state.encounter!.acting]) if (!state.encounter!.done.includes(id) && !unit(state, id).down) state = must(state, { type: "end_turn", by: unit(state, id).controller ?? id, unit: id }, sink);
+    while (!state.encounter!.acting.includes("ann") || state.encounter!.done.includes("ann")) state = must(state, { type: "timeout" }, sink);
+    return state;
+  }
+  const use = (ability: string, aim: { target?: string; at?: HexPos } = {}): ZoneAction => ({ type: "use", by: "ann", unit: "ann", ability, ...aim });
+  const has = (state: ZoneState, id: string, kind: string) => unit(state, id).conditions.some((c) => c.kind === kind);
+  const cond = (state: ZoneState, id: string, kind: string) => unit(state, id).conditions.find((c) => c.kind === kind);
+  const stacks = (state: ZoneState, id: string) => cond(state, id, "drowning")?.amount ?? 0;
+  const sailors = (state: ZoneState) => state.units.filter((u) => u.summon?.by === "ann");
+
+  it("are all in the Warlock's pool", () => {
+    expect(poolFor("data_warlock").map((e) => e.id)).toEqual(ALL);
+    for (const id of ALL) expect(TACTICS[id], id).toBeDefined();
+  });
+
+  it("Curse of Drowning: a Bonus action, 5 hexes, 3 turns to wait; struck without a roll, Slowed, and cursed for 3 of its turns", () => {
+    let { state, foes } = party();
+    const events: ZoneEvent[] = [];
+    state = must(state, use("curse_of_drowning", { target: foes[0] }), events);
+    expect(state.encounter!.budgets.ann).toMatchObject({ action: true, bonus: false });
+    expect(unit(state, "ann").cooldowns.curse_of_drowning).toBe(4);
+    expect(events.some((e) => e.t === "roll" && e.roll.id === "ann")).toBe(false);
+    expect(events.some((e) => e.t === "hit" && e.what === "curse_of_drowning" && e.target === foes[0])).toBe(true);
+    expect(has(state, foes[0], "slowed")).toBe(true);
+    expect(cond(state, foes[0], "drowning_curse")).toMatchObject({ rounds: 3, by: "ann" });
+    // Out of water it drowns no more for it.
+    state = nextTurn(state);
+    expect(stacks(state, foes[0])).toBe(0);
+    // Too far.
+    ({ state, foes } = party([at(11, 6)]));
+    expect(fails(state, use("curse_of_drowning", { target: foes[0] }))).toMatch(/Out of range/);
+  });
+
+  it("Curse of Drowning: a stack each time the enemy starts, and each time it ends, a turn in water, for as long as the curse lasts", () => {
+    let { state, foes } = party();
+    state = paint(state, "water", [at(8, 6)]);
+    state = must(state, use("curse_of_drowning", { target: foes[0] }));
+    // Its first turn: one for starting it in water, one for ending it there.
+    state = nextTurn(state);
+    expect(stacks(state, foes[0])).toBe(2);
+    state = nextTurn(state);
+    expect(stacks(state, foes[0])).toBe(4);
+    // Its third and last cursed turn still counts at the end.
+    state = nextTurn(state);
+    expect(stacks(state, foes[0])).toBe(6);
+    expect(has(state, foes[0], "drowning_curse")).toBe(false);
+    state = nextTurn(state);
+    expect(stacks(state, foes[0])).toBe(6);
+  });
+
+  it("Drowning: HP lost for every stack at the start of its turn, then a breath held against a low mark that every stack raises", () => {
+    let { state, foes } = party();
+    unit(state, foes[0]).conditions.push({ kind: "drowning", rounds: 3, amount: 3 });
+    const events: ZoneEvent[] = [];
+    state = nextTurn(state, events);
+    expect(events.find((e) => e.t === "tick" && e.kind === "drowning")).toMatchObject({ target: foes[0], amount: 2 * 3 });
+    const breath = events.find((e) => e.t === "roll" && e.roll.kind === "save" && e.roll.id === foes[0]);
+    expect(breath?.t === "roll" && breath.roll.vs).toBe(2 + 2 * 3);
+    // No new stack: it runs down, and is gone after its third turn.
+    expect(cond(state, foes[0], "drowning")).toMatchObject({ rounds: 2, amount: 3 });
+    state = nextTurn(nextTurn(state));
+    expect(has(state, foes[0], "drowning")).toBe(false);
+  });
+
+  it("Drowning: a breath not held costs the Action, but not the move", () => {
+    /** A bandit beside the Warlock, drowning deep, its turn played over seeds until the breath goes the way asked. */
+    const turn = (held: boolean) => {
+      for (let seed = 1; seed < 80; seed++) {
+        let { state, foes } = party([at(6, 6)], { kind: "bandit" });
+        unit(state, foes[0]).conditions.push({ kind: "drowning", rounds: 3, amount: 4 });
+        state.aiOff = false;
+        state.rng = seed;
+        const events: ZoneEvent[] = [];
+        nextTurn(state, events);
+        const choked = events.some((e) => e.t === "choked" && e.id === foes[0]);
+        if (choked !== held) return events.filter((e) => e.t === "roll" && e.roll.kind === "attack" && e.roll.id === foes[0]).length;
+      }
+      throw new Error("the breath never went that way");
+    };
+    expect(turn(true)).toBe(1);
+    expect(turn(false)).toBe(0);
+  });
+
+  it("The Black Spot: an Action, 4 turns to wait; no roll; the enemy attacks with disadvantage, and drowns a stack deeper at the end of each of 4 turns", () => {
+    let { state, foes } = party();
+    const events: ZoneEvent[] = [];
+    state = must(state, use("the_black_spot", { target: foes[0] }), events);
+    expect(state.encounter!.budgets.ann).toMatchObject({ action: false, bonus: true });
+    expect(unit(state, "ann").cooldowns.the_black_spot).toBe(5);
+    expect(events.some((e) => e.t === "roll" && e.roll.id === "ann")).toBe(false);
+    expect(cond(state, foes[0], "black_spot")).toMatchObject({ rounds: 4, by: "ann" });
+    expect(attackContext(state, unit(state, foes[0]), unit(state, "ann"), { melee: false }).adv).toBe(-1);
+    for (let turn = 1; turn <= 4; turn++) {
+      state = nextTurn(state);
+      // Every stack laid on starts the count again for all of them.
+      expect(cond(state, foes[0], "drowning")).toMatchObject({ rounds: 3, amount: turn });
+    }
+    expect(has(state, foes[0], "black_spot")).toBe(false);
+    state = nextTurn(state);
+    expect(cond(state, foes[0], "drowning")).toMatchObject({ rounds: 2, amount: 4 });
+  });
+
+  it("The Black Spot: one that falls with it on passes it to the nearest of its side, for what it had left", () => {
+    let { state, foes } = party([at(8, 6), at(10, 6), at(13, 6)]);
+    state = must(state, use("the_black_spot", { target: foes[0] }));
+    state = nextTurn(state);
+    const ctx: Ctx = { state, rng: makeRng(1), events: [], effects: [] };
+    damage(ctx, unit(state, foes[0]), 999, { actor: "ann", what: "hex" });
+    expect(has(state, foes[0], "black_spot")).toBe(false);
+    expect(cond(state, foes[1], "black_spot")).toMatchObject({ rounds: 3, by: "ann" });
+    expect(has(state, foes[2], "black_spot")).toBe(false);
+    // And on again from that one.
+    damage(ctx, unit(state, foes[1]), 999, { actor: "ann", what: "hex" });
+    expect(cond(state, foes[2], "black_spot")).toMatchObject({ rounds: 3, by: "ann" });
+    // The last of them takes it to the grave.
+    damage(ctx, unit(state, foes[2]), 999, { actor: "ann", what: "hex" });
+    expect(state.units.some((u) => u.conditions.some((c) => c.kind === "black_spot"))).toBe(false);
+  });
+
+  it("Red Sky at Morning: an Action, 5 hexes, 5 turns to wait; every enemy within 2 of the hex attacks with disadvantage for 3 turns, nobody else", () => {
+    let { state, foes } = party([at(8, 6), at(9, 7), at(12, 6)], { bo: at(7, 6) });
+    state = must(state, use("red_sky_at_morning", { at: at(9, 6) }));
+    expect(state.encounter!.budgets.ann).toMatchObject({ action: false, bonus: true });
+    expect(unit(state, "ann").cooldowns.red_sky_at_morning).toBe(6);
+    expect(cond(state, foes[0], "red_sky")).toMatchObject({ rounds: 3 });
+    expect(has(state, foes[1], "red_sky")).toBe(true);
+    expect(has(state, foes[2], "red_sky")).toBe(false);
+    expect(has(state, "bo", "red_sky")).toBe(false);
+    expect(attackContext(state, unit(state, foes[0]), unit(state, "bo"), { melee: true }).adv).toBe(-1);
+    expect(fails(state, { ...use("red_sky_at_morning", { at: at(11, 6) }) })).toBeTruthy();
+  });
+
+  it("Unholy Waters: a Bonus action, 5 hexes, 2 turns to wait; water over 7 hexes, but fire under each enemy in them", () => {
+    let { state, foes } = party([at(8, 6), at(9, 6)], { bo: at(7, 6) });
+    // Water already under one of them: it still comes up burning.
+    state = paint(state, "water", [at(9, 6)]);
+    const events: ZoneEvent[] = [];
+    state = must(state, use("unholy_waters", { at: at(8, 6) }), events);
+    expect(state.encounter!.budgets.ann).toMatchObject({ action: true, bonus: false });
+    expect(unit(state, "ann").cooldowns.unholy_waters).toBe(3);
+    const kind = (p: HexPos) => state.surfaces[posKey(p)]?.kind;
+    expect(kind(at(8, 6))).toBe("fire");
+    expect(kind(at(9, 6))).toBe("fire");
+    for (const p of blast(state.map, at(8, 6), 1).filter((p) => !foes.some((id) => posKey(unit(state, id).pos) === posKey(p)))) expect(kind(p), posKey(p)).toBe("water");
+    expect(state.surfaces[posKey(at(7, 6))]).toMatchObject({ kind: "water", rounds: 3 });
+    expect(state.surfaces[posKey(at(8, 6))]).toMatchObject({ kind: "fire", rounds: 2 });
+    for (const id of foes) expect(events.some((e) => e.t === "tick" && e.kind === "fire" && e.target === id), id).toBe(true);
+    expect(has(state, "bo", "wet")).toBe(true);
+  });
+
+  it("Summon Sunken Sailors: an Action, 4 turns to wait; a cutlass on the hex picked and a gunner beside it, nearer the Warlock, both played by its player", () => {
+    let { state, foes } = party([at(13, 6)]);
+    state = must(state, use("summon_sunken_sailors", { at: at(8, 6) }));
+    expect(unit(state, "ann").cooldowns.summon_sunken_sailors).toBe(5);
+    const [cutlass, gunner] = sailors(state);
+    expect(cutlass).toMatchObject({ kind: "drowned_cutlass", controller: "ann", pos: at(8, 6) });
+    expect(gunner).toMatchObject({ kind: "drowned_gunner", controller: "ann", pos: at(7, 6) });
+    // The cutlass stands up to more; the gunner's pistol hits harder, and reaches 4 hexes.
+    expect(cutlass.maxHp).toBeGreaterThan(gunner.maxHp);
+    expect(defenceOf(cutlass)).toBeGreaterThan(defenceOf(gunner));
+    expect(diceAverage(abilityDiceOf("sailor_pistol"))).toBeGreaterThan(diceAverage(abilityDiceOf("sailor_scimitar")));
+    expect(TACTICS.sailor_pistol).toMatchObject({ reach: "ranged", range: 4 });
+    expect(TACTICS.sailor_scimitar).toMatchObject({ reach: "melee" });
+    // Straight after the Warlock in the order, in the turn they share.
+    const enc = state.encounter!;
+    expect(enc.order.slice(enc.order.indexOf("ann") + 1, enc.order.indexOf("ann") + 3)).toEqual([cutlass.id, gunner.id]);
+    for (const s of [cutlass, gunner]) expect(enc.budgets[s.id]).toMatchObject({ action: true, move: 4 });
+    expect(fails(state, { type: "use", by: "ann", unit: gunner.id, ability: "sailor_pistol", target: foes[0] })).toMatch(/Out of range/);
+    state = must(state, { type: "move", by: "ann", unit: gunner.id, to: at(9, 7) });
+    const events: ZoneEvent[] = [];
+    state = must(state, { type: "use", by: "ann", unit: gunner.id, ability: "sailor_pistol", target: foes[0] }, events);
+    expect(events.some((e) => e.t === "roll" && e.roll.id === gunner.id)).toBe(true);
+  });
+
+  it("Summon Sunken Sailors: room is needed for both; calling them again sends the first two away", () => {
+    let { state } = party([at(13, 6)]);
+    // Rock all round the hex but one side, and that side is the Mage's: no room for the second.
+    const walled = party([at(13, 6)], { bo: at(6, 6) }).state;
+    for (const p of hexNeighbors(at(7, 6), walled.map.grid)) if (posKey(p) !== posKey(at(6, 6))) walled.map.tiles.find((t) => t.q === p.q && t.r === p.r)!.biome = "rock";
+    expect(fails(walled, use("summon_sunken_sailors", { at: at(7, 6) }))).toMatch(/room for them all/);
+    state = must(state, use("summon_sunken_sailors", { at: at(8, 6) }));
+    const first = sailors(state).map((u) => u.id);
+    for (let i = 0; i < 5; i++) state = nextTurn(state);
+    // Again, on the very hex one of the first two holds: they are going, so there is room.
+    const events: ZoneEvent[] = [];
+    state = must(state, use("summon_sunken_sailors", { at: at(8, 6) }), events);
+    expect(sailors(state)).toHaveLength(2);
+    for (const id of first) {
+      expect(events.some((e) => e.t === "dismissed" && e.id === id)).toBe(true);
+      expect(state.encounter!.order).not.toContain(id);
+    }
+  });
+});
+
+/** An ability's damage dice, from its content. */
+const abilityDiceOf = (id: string) => abilityDiceFor(ABILITIES[id]);

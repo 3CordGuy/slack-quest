@@ -27,6 +27,15 @@ export {
   SHIELD_SET_ASIDE,
   SMUGGLED,
   SEA_TURTLE,
+  DROWNED_GUNNER,
+  DROWNED_CUTLASS,
+  SUMMONS,
+  SUMMON_CALLS,
+  DROWNING,
+  DROWNING_CURSE,
+  BLACK_SPOT,
+  RED_SKY,
+  UNHOLY_WATERS,
   AQUEOUS,
   CORAL_ARMOR,
   SPLASH,
@@ -56,6 +65,8 @@ export {
   enemyHp,
   DEFAULT_THREAT,
   type Tactic,
+  type SummonDef,
+  type SummonCall,
   type Shape,
   type ThrowableDef,
   type EnemyStrike,
@@ -66,7 +77,8 @@ export { abilityArea, carrySpot, checkAbility, checkCommon, checkDrink, checkLig
 export { chartOf, constellationHexes, constellationLinks, courseMarks, litFoes } from "./stars";
 export { SURFACE_INFO, HARMFUL as HARMFUL_SURFACES } from "./surfaces";
 export { WEATHER_INFO, wallHexes } from "./weather";
-export { summonsOf } from "./summon";
+export { summonsOf, summonSpots } from "./summon";
+export { breathDc, drowningStacks } from "./drowning";
 export { SHANTIES, isShanty, joinable, shantyOf, shantyRadius, songsOn, type Song } from "./song";
 export { isDark, litHexes, inDark, seenByHeroes, lightSources } from "./light";
 export { MAX_CATCHUP_ROUNDS } from "./clock";
