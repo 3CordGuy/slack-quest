@@ -38,14 +38,18 @@ const fx = (kind: FxKind, color: string): Fx => ({ kind, color });
 
 const ABILITY_FX: Record<string, Fx> = {
   torch_swing: fx("melee", "#ff8a2a"),
-  manifest: fx("bolt", "#67e8f9"),
-  plot_the_course: fx("bolt", "#facc15"),
   falling_star: fx("meteor", "#ffcf5a"),
   constellation: fx("beam", "#bcd7ff"),
   new_moon: fx("ring", "#9aa7ff"),
   chart_a_course: fx("bless", "#ff4d4d"),
   north_star: fx("bless", "#ffd166"),
   shock: fx("spark", "#c4b5fd"),
+  starbeam: fx("beam", "#fff3a8"),
+  moonlight: fx("erupt", "#bcd7ff"),
+  focus_light: fx("beam", "#fff3a8"),
+  st_elmos_fire: fx("bless", "#ffd166"),
+  water_burst: fx("bolt", "#38bdf8"),
+  rust_armor: fx("erupt", "#b0a48a"),
   bow_shot: fx("arrow", "#e8dcc0"),
   reel_in: fx("arrow", "#a78bfa"),
   take_aim: fx("bless", "#ffe08a"),
@@ -62,7 +66,6 @@ const ABILITY_FX: Record<string, Fx> = {
   binding_kelp: fx("erupt", "#4ade80"),
   coral_burst: fx("erupt", "#ff8f7a"),
   restore: fx("bless", "#5eead4"),
-  meteor: fx("meteor", "#ff7a2a"),
   blight: fx("lob", "#84cc16"),
   lighthouse_beam: fx("beam", "#ffe9a8"),
   cleave: fx("ring", "#dfe9ff"),
@@ -116,7 +119,6 @@ const ABILITY_FX: Record<string, Fx> = {
   recover: fx("bless", "#ffd23f"),
   block: fx("bless", "#c9d6e8"),
   hold_the_line: fx("bless", "#fbbf24"),
-  arcane_ward: fx("bless", "#a78bfa"),
 };
 
 /** What enemies shoot and cast, by the attack's own name. Anything not here is a blow up close, or (an attack on every hero) a ring. */

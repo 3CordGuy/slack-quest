@@ -218,13 +218,6 @@ describe("Wreck Warlock", () => {
     expect(plain).toBeGreaterThan(0);
   });
 
-  it("does not make anyone else's perfect hits bleed", () => {
-    for (let seed = 0; seed < 40; seed++) {
-      const { events } = spar([hero("s", "staff_sage")], { s: "manifest" }, seed, 6, [DUMMY_KIND], 500);
-      expect(events.some((e) => e.t === "effect" && e.effect === "bleeding")).toBe(false);
-    }
-  });
-
   it("heals itself a third of the damage Soul Drain deals", () => {
     let drains = 0;
     for (let seed = 0; seed < 40; seed++) {

@@ -4401,3 +4401,118 @@ describe("Bard weapons", () => {
     expect(unit(next, "ann").hp).toBe(1);
   });
 });
+
+describe("Sage weapons", () => {
+  /** The action tried on fresh seeds until it hits `target`: the state after, and what it said. */
+  const untilHit = (state: ZoneState, action: ZoneAction, target: string, want: (events: ZoneEvent[]) => boolean = () => true) => {
+    for (let seed = 1; seed < 120; seed++) {
+      const tryState = structuredClone(state);
+      tryState.rng = seed;
+      const events: ZoneEvent[] = [];
+      const next = must(tryState, action, events);
+      if (events.some((e) => e.t === "hit" && e.target === target) && want(events)) return { state: next, events };
+    }
+    throw new Error("never landed");
+  };
+  const failedSave = (events: ZoneEvent[]) => events.some((e) => e.t === "roll" && e.roll.kind === "save" && !e.roll.ok);
+  const savedAll = (events: ZoneEvent[]) => events.some((e) => e.t === "roll" && e.roll.kind === "save") && !failedSave(events);
+
+  it("gives the orb and scepter two abilities each, with St. Elmo's Fire and Rust Armor on a cooldown", () => {
+    expect(WEAPONS.orb.abilities).toEqual(["starbeam", "st_elmos_fire"]);
+    expect(WEAPONS.scepter.abilities).toEqual(["water_burst", "rust_armor"]);
+    for (const id of ["starbeam", "water_burst"]) expect(tacticOf(id).cooldown, id).toBeUndefined();
+    expect(tacticOf("st_elmos_fire").cooldown).toBe(2);
+    expect(tacticOf("rust_armor").cooldown).toBe(1);
+    expect(tacticOf("st_elmos_fire").cost).toBe("bonus");
+    expect(ABILITIES.starbeam.damage).toBe(12);
+    expect(ABILITIES.rust_armor.perfect).toEqual({ effect: "sundered", turns: 3 });
+  });
+
+  it("Starbeam: a hit lights the target with Guiding Light only if it fails its save", () => {
+    const { state, foe } = duel("dummy", "staff_sage", at(5, 6), at(9, 6));
+    unit(state, "ann").abilities = ["starbeam"];
+    const lit = (s: ZoneState) => unit(s, foe).conditions.some((c) => c.kind === "guiding_light");
+    const failed = untilHit(state, { type: "use", by: "ann", unit: "ann", ability: "starbeam", target: foe }, foe, failedSave);
+    expect(lit(failed.state)).toBe(true);
+    const saved = untilHit(state, { type: "use", by: "ann", unit: "ann", ability: "starbeam", target: foe }, foe, savedAll);
+    expect(lit(saved.state)).toBe(false);
+    expect(unit(failed.state, foe).conditions.some((c) => c.kind === "exposed")).toBe(false);
+  });
+
+  it("St. Elmo's Fire: a Bonus action that gives an ally within 4 hexes North Star, none of it a blow", () => {
+    let { state } = duel("dummy", "staff_sage", at(5, 6), at(11, 6));
+    hero(state, "bo", "qa_paladin", at(9, 6));
+    hero(state, "cy", "refactor_rogue", at(12, 9));
+    unit(state, "ann").abilities = ["st_elmos_fire"];
+    expect(hexDistance(unit(state, "ann").pos, unit(state, "bo").pos)).toBe(3);
+    expect(checkAbility(state, unit(state, "ann"), "st_elmos_fire", { target: "cy" })).toMatch(/Out of range/);
+    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "st_elmos_fire", target: "bo" });
+    expect(unit(state, "bo").conditions.some((c) => c.kind === "north_star")).toBe(true);
+    expect(state.encounter!.budgets.ann).toMatchObject({ action: true, bonus: false });
+    state = must(state, { type: "end_turn", by: "ann", unit: "ann" });
+    while (!state.encounter!.acting.includes("ann") || state.encounter!.done.includes("ann")) state = must(state, { type: "timeout" });
+    expect(fails(state, { type: "use", by: "ann", unit: "ann", ability: "st_elmos_fire", target: "bo" })).toMatch(/not ready/);
+  });
+
+  it("Water Burst: a hit drenches every other enemy beside the target, and none further off", () => {
+    const { state, foe } = duel("dummy", "devops_mage", at(5, 6), at(9, 6));
+    const next = enemy(state, "dummy", at(10, 6));
+    const far = enemy(state, "dummy", at(9, 9));
+    expect(adjacent(unit(state, foe).pos, next.pos)).toBe(true);
+    expect(adjacent(unit(state, foe).pos, far.pos)).toBe(false);
+    unit(state, "ann").abilities = ["water_burst"];
+    const after = untilHit(state, { type: "use", by: "ann", unit: "ann", ability: "water_burst", target: foe }, foe);
+    expect(unit(after.state, next.id).hp).toBeLessThan(unit(state, next.id).hp);
+    expect(unit(after.state, far.id).hp).toBe(unit(state, far.id).hp);
+    expect(after.events.filter((e) => e.t === "hit" && e.what === "water_burst")).toHaveLength(2);
+  });
+
+  it("Rust Armor: 3 hexes, strikes only enemies, and Sunders those that fail to brace", () => {
+    const { state, foe } = duel("dummy", "staff_sage", at(5, 6), at(9, 6));
+    hero(state, "bo", "qa_paladin", at(10, 6));
+    unit(state, "ann").abilities = ["rust_armor"];
+    expect(abilityArea(state, unit(state, "ann"), "rust_armor", unit(state, foe).pos)).toHaveLength(3);
+    const bo = unit(state, "bo").hp;
+    const after = untilHit(state, { type: "use", by: "ann", unit: "ann", ability: "rust_armor", at: unit(state, foe).pos }, foe, failedSave);
+    expect(unit(after.state, foe).conditions.find((c) => c.kind === "sundered")?.rounds).toBeGreaterThan(0);
+    expect(unit(after.state, "bo").hp).toBe(bo);
+    const dc = defenceOf(unit(after.state, foe), after.state);
+    expect(dc).toBe(defenceOf(unit(state, foe), state) - 2);
+  });
+
+  it("gives the astrolabe Moonlight and Focus Light, neither on a cooldown", () => {
+    expect(WEAPONS.astrolabe.abilities).toEqual(["moonlight", "focus_light"]);
+    expect(tacticOf("moonlight").cooldown).toBeUndefined();
+    expect(tacticOf("focus_light").cooldown).toBeUndefined();
+    expect(tacticOf("focus_light").cost).toBe("bonus");
+    expect(tacticOf("moonlight").range).toBe(7);
+    expect(tacticOf("focus_light").range).toBe(5);
+  });
+
+  it("Moonlight: 3 hexes, strikes only enemies, and lights those that fail to brace", () => {
+    const { state, foe } = duel("dummy", "staff_sage", at(5, 6), at(9, 6));
+    hero(state, "bo", "qa_paladin", at(10, 6));
+    unit(state, "ann").abilities = ["moonlight"];
+    expect(abilityArea(state, unit(state, "ann"), "moonlight", unit(state, foe).pos)).toHaveLength(3);
+    const bo = unit(state, "bo").hp;
+    const lit = (s: ZoneState) => unit(s, foe).conditions.some((c) => c.kind === "guiding_light");
+    const failed = untilHit(state, { type: "use", by: "ann", unit: "ann", ability: "moonlight", at: unit(state, foe).pos }, foe, failedSave);
+    expect(lit(failed.state)).toBe(true);
+    expect(unit(failed.state, "bo").hp).toBe(bo);
+    const saved = untilHit(state, { type: "use", by: "ann", unit: "ann", ability: "moonlight", at: unit(state, foe).pos }, foe, savedAll);
+    expect(lit(saved.state)).toBe(false);
+  });
+
+  it("Focus Light: a Bonus action that sets a target Burning only if it is lit by Guiding Light", () => {
+    const { state, foe } = duel("dummy", "staff_sage", at(5, 6), at(9, 6));
+    unit(state, "ann").abilities = ["focus_light"];
+    const burning = (s: ZoneState) => unit(s, foe).conditions.some((c) => c.kind === "burning");
+    const plain = untilHit(state, { type: "use", by: "ann", unit: "ann", ability: "focus_light", target: foe }, foe);
+    expect(burning(plain.state)).toBe(false);
+    expect(plain.state.encounter!.budgets.ann).toMatchObject({ action: true, bonus: false });
+    const ctx: Ctx = { state, rng: makeRng(1), events: [], effects: [] };
+    addCondition(ctx, unit(state, foe), "guiding_light", 3);
+    const lit = untilHit(state, { type: "use", by: "ann", unit: "ann", ability: "focus_light", target: foe }, foe);
+    expect(burning(lit.state)).toBe(true);
+  });
+});

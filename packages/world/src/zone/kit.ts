@@ -45,7 +45,17 @@ export interface Tactic {
   ignites?: boolean;
   /** Extra damage against something Wet. */
   vsWet?: number;
-  /** Line: strikes only the other side (Blasting Tone). */
+  /** Single: a hit also sets the target Burning for this many turns if it is lit by Guiding Light (Focus Light). */
+  kindleLit?: number;
+  /** With `guide`: the enemy saves against being lit (Starbeam). */
+  guideSave?: boolean;
+  /** Ally: leaves the ally with North Star for this many of their turns, no strike (St. Elmo's Fire). */
+  starlit?: number;
+  /** Single: landed, every other enemy beside the target takes a little damage too, no roll, this much before bonuses (Water Burst). */
+  spray?: number;
+  /** Blast: covers this many hexes in a clump about the one aimed at, in place of a radius (Rust Armor). */
+  cluster?: number;
+  /** Blast or line: strikes only the other side (Blasting Tone, Rust Armor). */
   foesOnly?: boolean;
   /** Self: heals the user and every ally within `range` of them, as much as the ability heals (Soothing Tone). */
   soothe?: { range: number };
@@ -356,10 +366,12 @@ export const TACTICS: Record<string, Tactic> = {
   chorus: spell(5, { shape: "blast", radius: 1, cooldown: 3, chorus: CHORUS_PER_ALLY }),
   lead_by_example: spell(5, { cooldown: 2, inspire: true }),
   // Sage
-  manifest: spell(6),
-  arcane_ward: guard(),
-  meteor: spell(6, { shape: "blast", radius: 1, cooldown: 3, ignites: true, surface: { kind: "fire", rounds: 2 } }),
-  plot_the_course: spell(7),
+  moonlight: spell(7, { shape: "blast", cluster: 3, foesOnly: true, guide: GUIDING_LIGHT.rounds }),
+  focus_light: spell(5, { cost: "bonus", kindleLit: 3 }),
+  starbeam: spell(6, { guide: GUIDING_LIGHT.rounds, guideSave: true }),
+  st_elmos_fire: mend(4, { cost: "bonus", cooldown: 2, starlit: NORTH_STAR.rounds }),
+  water_burst: spell(5, { spray: 4 }),
+  rust_armor: spell(5, { shape: "blast", cluster: 3, cooldown: 1, foesOnly: true }),
   // Sage class abilities
   falling_star: spell(7, { cooldown: 3, ignites: true, guide: GUIDING_LIGHT.rounds }),
   constellation: { cost: "bonus", reach: "spell", range: 0, shape: "self", cooldown: 3, guide: GUIDING_LIGHT.rounds, constellation: CONSTELLATION },

@@ -18,7 +18,7 @@ import {
 
 const fighter = (id: string, over: Partial<Combatant> = {}): Combatant => ({
   id, side: "hero", name: id, kind: "qa_paladin", level: 1, hp: 60, maxHp: 60, pct: { str: 100, int_stat: 100, vit: 100, agi: 100, dex: 100 },
-  power: 0, armor: 0, speed: 50, focus: 3, potions: 2, abilities: ["bash", "block", "cleave", "challenge", "manifest", "encore", "thornlash", "hex"], effects: [], down: false, ...over,
+  power: 0, armor: 0, speed: 50, focus: 3, potions: 2, abilities: ["bash", "block", "cleave", "challenge", "encore", "thornlash", "hex"], effects: [], down: false, ...over,
 });
 const setup = (heroes: Combatant[], enemyKinds: string[], seed = 3) =>
   createBattle({ heroes, enemyKinds, avgLevel: 1, poiId: null }, makeRng(seed));
@@ -202,11 +202,6 @@ describe("timeline statuses", () => {
     expect(hits(true) - hits(false)).toBe(EXPOSED_BONUS);
   });
 
-  it("Manifest's perfect leaves the target exposed", () => {
-    const { state } = setup([fighter("h", { speed: 100 })], ["guardian"], 3);
-    const r = must(stepBattle(state, "h", { type: "ability", ability: "manifest", target: "e0" }, makeRng(1)));
-    expect(r.events).toContainEqual({ t: "effect", target: "e0", effect: "exposed", turns: 2 });
-  });
 });
 
 describe("the fight log reads in order", () => {

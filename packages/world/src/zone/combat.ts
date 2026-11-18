@@ -271,6 +271,7 @@ export function abilityArea(state: ZoneState, unit: Unit, ability: string, at?: 
   if (tactic.weather === "rain") return at ? rainHexes(state, unit.pos, at) : [];
   if (tactic.fortify) return at && !sameHex(at, unit.pos) ? wallHexes(state, unit.pos, at) : [];
   if (tactic.splash) return at ? clusterHexes(state, unit.pos, at, tactic.splash.hexes) : [];
+  if (tactic.cluster) return at ? clusterHexes(state, unit.pos, at, tactic.cluster) : [];
   if (tactic.shape === "blast") return at ? blast(state.map, at, tactic.radius ?? 1) : [];
   if (tactic.shape === "burst") return blast(state.map, unit.pos, tactic.radius ?? 1).filter((p) => !sameHex(p, unit.pos));
   if (tactic.shape === "line") return at ? lineFrom(state.map, unit.pos, at, tactic.length ?? 3) : [];
@@ -456,7 +457,14 @@ function strike(ctx: Ctx, unit: Unit, def: AbilityDef, tactic: Tactic, target: U
   // A Warlock's critical hits open a wound.
   if (roll.crit && unit.kind === "data_warlock") addCondition(ctx, target, "bleeding", WARLOCK_BLEED_TURNS);
   afflict(ctx, unit, def, target, true);
-  if (tactic.guide && !target.down) addCondition(ctx, target, "guiding_light", tactic.guide);
+  if (tactic.guide && !target.down && (!tactic.guideSave || !saveRoll(ctx, target, SAVE_STAT.guiding_light, saveDc(unit, def), `Resist ${def.name}`).ok)) addCondition(ctx, target, "guiding_light", tactic.guide);
+  if (tactic.kindleLit && !target.down && has(target, "guiding_light")) kindle(ctx, unit, target, tactic.kindleLit);
+  // Water Burst: the drench reaches whoever stands beside the target, no roll to hit.
+  if (tactic.spray) {
+    for (const foe of ctx.state.units.filter((u) => u.id !== target.id && u.side !== unit.side && !u.down && adjacent(u.pos, target.pos))) {
+      damage(ctx, foe, rollDice(ctx.rng, diceFor(Math.max(2, tactic.spray - 2))) + damageBonus(ctx.state, unit, def), { actor: unit.id, what: def.id, ignoreGuard: def.ignoreGuard });
+    }
+  }
   if (melee) thorns(ctx, unit, target);
   if (tactic.ignites) ignite(ctx, target.pos, unit.id);
   if (tactic.surface) placeSurface(ctx, tactic.surface.self ? [target.pos, unit.pos] : [target.pos], tactic.surface.kind, tactic.surface.rounds, unit.id);
@@ -672,6 +680,8 @@ export function resolveAbility(ctx: Ctx, unit: Unit, ability: string, aim: Aim &
       if (tactic.vsWet && has(victim, "wet")) amount += tactic.vsWet;
       damage(ctx, victim, saved ? Math.floor(amount / 2) : amount, { actor: unit.id, what: def.id, ignoreGuard: def.ignoreGuard });
       if (!saved) afflict(ctx, unit, def, victim, false);
+      // Moonlight: whoever fails to brace is lit.
+      if (!saved && tactic.guide && !victim.down) addCondition(ctx, victim, "guiding_light", tactic.guide);
     }
     // A crate in it takes the lot: it cannot get out of the way.
     if (unit.side === "hero" && def.damage) for (const box of cratesOn(state, area)) hurtCrate(ctx, box, rolled, { actor: unit.id, what: def.id });
@@ -704,6 +714,7 @@ export function resolveAbility(ctx: Ctx, unit: Unit, ability: string, aim: Aim &
       addCondition(ctx, target, "north_star", tactic.northStar.rounds);
     }
     if (tactic.regen) addCondition(ctx, target, "regenerating", tactic.regen.rounds);
+    if (tactic.starlit) addCondition(ctx, target, "north_star", tactic.starlit);
     if (tactic.armor) addCondition(ctx, target, "coral_armor", tactic.armor.rounds);
     if (tactic.shanty) {
       // One shanty at a time: the new one starts afresh, nobody joined yet.
