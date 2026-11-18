@@ -17,6 +17,12 @@
 .hs-face { width: 36px; height: 44px; image-rendering: pixelated; flex: none; }
 .hs-title { display: flex; flex-direction: column; flex: 1; min-width: 0; }
 .hs-title strong { font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Renaming your own hero from their sheet: a pencil after the name, then the name as a field with Save and Cancel. */
+.hs-rename-btn { margin-left: 6px; padding: 0 4px; border: 0; background: none; color: inherit; opacity: 0.6; cursor: pointer; font-size: 12px; }
+.hs-rename-btn:hover, .hs-rename-btn:focus-visible { opacity: 1; }
+.hs-rename { display: flex; gap: 4px; align-items: center; min-width: 0; }
+.hs-rename input { flex: 1; min-width: 0; font-size: 14px; padding: 2px 6px; }
+.hs-rename-error { font-size: 12px; }
 .hs-level { color: var(--gold); }
 
 .hs-bars .bar { height: 14px; margin: 3px 0; }

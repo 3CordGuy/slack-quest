@@ -98,13 +98,41 @@ export function HeroSheet({ id, you, onClose, live }: Props) {
   const { hero, error } = useHero(id, reload);
   const [picked, setPicked] = useState<Slot | null>(null);
   const [changing, setChanging] = useState(false);
-  useEffect(() => setPicked(null), [id]);
+  /** Their new name while they are typing it (your own sheet only); null when not renaming. */
+  const [renaming, setRenaming] = useState<string | null>(null);
+  const [renameError, setRenameError] = useState<string | null>(null);
+  const [savingName, setSavingName] = useState(false);
   useEffect(() => {
-    // While their look is being changed, Escape is for that (see ChangeLook).
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && !changing && onClose();
+    setPicked(null);
+    setRenaming(null);
+  }, [id]);
+  useEffect(() => {
+    // While their look is being changed or they are renaming, Escape is for that (see ChangeLook).
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && !changing && renaming === null && onClose();
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose, changing]);
+  }, [onClose, changing, renaming]);
+
+  const startRename = (name: string) => {
+    setRenameError(null);
+    setRenaming(name);
+  };
+  const saveName = async () => {
+    if (renaming === null || savingName) return;
+    setSavingName(true);
+    setRenameError(null);
+    try {
+      await api.rename(renaming);
+      // The same as a new look: kept sheets are dropped and the room (Harbor, hut) re-reads the hero for everyone.
+      window.dispatchEvent(new Event(LOOK_CHANGED));
+      setRenaming(null);
+      setReload((n) => n + 1);
+    } catch (err) {
+      setRenameError(err instanceof Error ? err.message : "Could not rename them.");
+    } finally {
+      setSavingName(false);
+    }
+  };
 
   if (!hero) {
     return (
@@ -147,7 +175,49 @@ export function HeroSheet({ id, you, onClose, live }: Props) {
       <header className="hs-head">
         <img className="hs-face" src={spriteDataUrl(hero.classId, withLook(outfitOf(hero.gear), hero.appearance))} alt="" />
         <div className="hs-title">
-          <strong>{hero.name}{hero.id === you && <span className="muted"> (you)</span>}</strong>
+          {renaming !== null ? (
+            <form
+              className="hs-rename"
+              onSubmit={(e) => {
+                e.preventDefault();
+                void saveName();
+              }}
+            >
+              <input
+                autoFocus
+                onFocus={(e) => e.target.select()}
+                value={renaming}
+                maxLength={20}
+                autoComplete="nickname"
+                aria-label="New name"
+                onChange={(e) => setRenaming(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Escape") {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setRenaming(null);
+                  }
+                }}
+              />
+              <button type="submit" className="small primary" disabled={savingName || renaming.trim().length < 2}>
+                {savingName ? "…" : "Save"}
+              </button>
+              <button type="button" className="small" onClick={() => setRenaming(null)} disabled={savingName} aria-label="Cancel rename">
+                ✕
+              </button>
+            </form>
+          ) : (
+            <strong>
+              {hero.name}
+              {hero.id === you && <span className="muted"> (you)</span>}
+              {hero.id === you && !live && (
+                <button type="button" className="hs-rename-btn" onClick={() => startRename(hero.name)} title="Change your name" aria-label="Change your name">
+                  ✎
+                </button>
+              )}
+            </strong>
+          )}
+          {renameError && <span className="error hs-rename-error">{renameError}</span>}
           <span className="muted">{label("class", hero.classId)} · <span className="hs-level">Lv {hero.level}</span></span>
         </div>
         <button className="small" onClick={onClose} aria-label="Close">✕</button>
