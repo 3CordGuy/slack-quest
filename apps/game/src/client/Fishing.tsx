@@ -26,6 +26,7 @@ import {
 import { api, type GatherStatus, type SittingPaid, type XpResult } from "./api";
 import { ResourceChips } from "./hutDrops";
 import { CatchBookPanel } from "./CatchBook";
+import { outingPaid } from "./gatherPaid";
 import { catchIcon } from "./render/catchArt";
 import { FishingStage, type FishHooks, type FishPhase } from "./render/FishingStage";
 import { hexToWorld, type WorldRenderer } from "./render/WorldRenderer";
@@ -483,7 +484,7 @@ function Sitting({ outing, world, pier, at: here, vessel, gilded, shipBeside, ap
 }
 
 /** Fishing at a pier or the shore: the card, or the sitting under way. */
-export function Fishing({ pier, at, vessel = null, gilded = false, world, shipBeside, onRod, onClose, onStamina }: {
+export function Fishing({ pier, at, vessel = null, gilded = false, world, shipBeside, onRod, onClose, onStamina, onPaid }: {
   pier: Pier;
   at: HexPos;
   vessel?: Vessel | null;
@@ -493,8 +494,17 @@ export function Fishing({ pier, at, vessel = null, gilded = false, world, shipBe
   onRod?(on: boolean): void;
   onClose(): void;
   onStamina?(s: { left: number; max: number }): void;
+  /** Told when a sitting has ended and been paid: the pack, the purse and the XP have changed, and are read again. */
+  onPaid?(): void;
 }) {
-  const [status, setStatus] = useState<Status | null>(null);
+  const [status, setStatusOnly] = useState<Status | null>(null);
+  const paidOut = useRef(onPaid);
+  paidOut.current = onPaid;
+  /** Every answer about the sitting comes in through here, so none that pays can be shown without the bag hearing of it. */
+  const setStatus = (next: Status) => {
+    setStatusOnly(next);
+    if (outingPaid(next)) paidOut.current?.();
+  };
   const [ended, setEnded] = useState<Status | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
