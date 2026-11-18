@@ -158,10 +158,10 @@ function soak(unit: Unit, amount: number): number {
  * a hit that lands always does at least 1. A shield (Bolstered) takes what it can before HP does.
  * Returns the HP it cost.
  */
-export function damage(ctx: Ctx, target: Unit, amount: number, opts: { actor: string | null; what: string; crit?: boolean; ignoreGuard?: boolean }): number {
+export function damage(ctx: Ctx, target: Unit, amount: number, opts: { actor: string | null; what: string; crit?: boolean }): number {
   if (target.down) return 0;
   let dealt = Math.max(1, Math.round(amount));
-  if (has(target, "guarded") && !opts.ignoreGuard) dealt = Math.ceil(dealt / 2);
+  if (has(target, "guarded")) dealt = Math.ceil(dealt / 2);
   const blocked = soak(target, dealt);
   dealt = Math.min(dealt - blocked, target.hp);
   target.hp -= dealt;

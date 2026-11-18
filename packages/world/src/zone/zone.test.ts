@@ -4627,7 +4627,6 @@ describe("Warlock weapons", () => {
   it("keeps Hex and Soul Drain on the grimoire, Hex with no share of max HP and Soul Drain on a 2-turn wait", () => {
     expect(WEAPONS.grimoire.abilities).toEqual(["hex", "soul_drain"]);
     expect(WEAPONS.void_staff.abilities).toEqual(["sink", "pull_of_the_deep"]);
-    expect(ABILITIES.hex.maxHpDamage).toBeUndefined();
     expect(ABILITIES.hex.damage).toBe(8);
     expect(ABILITIES.soul_drain.damage).toBe(11);
     expect(tacticOf("soul_drain").cooldown).toBe(2);

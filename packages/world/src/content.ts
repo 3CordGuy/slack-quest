@@ -49,8 +49,6 @@ export interface HeroClass {
 export const DRUID_REGEN = 1;
 /** Extra damage on every other hero's attacks while a Shanty Bard is standing. One Bard's worth, however many there are. */
 export const BARD_AURA = 2;
-/** Seawall Blow adds the Warden's armor divided by this to its damage. */
-export const ARMOR_DAMAGE_DIVISOR = 3;
 /** Turns of bleeding the Wreck Warlock's perfect hits leave behind. */
 export const WARLOCK_BLEED_TURNS = 2;
 
@@ -141,24 +139,8 @@ export interface AbilityDef {
   perfect?: { effect: EffectKind; turns: number };
   /** Applied to each target when at least one roll succeeds. */
   targetEffect?: { effect: EffectKind; turns: number };
-  /** Adds a share of the user's armor (ARMOR_DAMAGE_DIVISOR) to the damage. */
-  armorDamage?: boolean;
-  /** Adds this share of the target's max HP to the damage, so it lands hardest on big enemies. */
-  maxHpDamage?: number;
   /** Heals the user this share of the damage it deals. */
   drain?: number;
-  /** Extra damage for each different debuff on the target. */
-  perDebuffDamage?: number;
-  /** Extra damage against a target carrying this effect. */
-  vsEffect?: { effect: EffectKind; bonus: number };
-  /** Damage multiplied by this against a target under a quarter of its max HP. */
-  finisher?: number;
-  /** The ally it targets takes the next turn (not when used on yourself). */
-  actNext?: boolean;
-  /** Goes straight through Guarded. */
-  ignoreGuard?: boolean;
-  /** Extra damage per turn of Bleeding left on the target, and the bleeding stops. */
-  bleedPayoff?: number;
   blurb: string;
 }
 

@@ -7,7 +7,6 @@ import { describe, expect, it } from "vitest";
 import { LEVELUP_AUTO_ALLOC, STARTING_STATS } from "@gantt-quest/core";
 import {
   ABILITIES,
-  ARMOR_DAMAGE_DIVISOR,
   BARD_AURA,
   DRUID_REGEN,
   DUMMY_KIND,

@@ -13,7 +13,6 @@ import type { StatKey } from "@gantt-quest/core";
 import { rollCheck, statPct, type CheckResult } from "./check";
 import {
   ABILITIES,
-  ARMOR_DAMAGE_DIVISOR,
   BARD_AURA,
   DRUID_REGEN,
   EFFECT_TICK,
@@ -298,10 +297,9 @@ function addEffect(state: BattleState, target: Combatant, effect: EffectKind, tu
  * Apply damage. `direct` hits are blunted by armor; bleeding and burning are not.
  * `cause` is the event saying what did it (the hit, the tick): it is logged
  * first, so a "goes down" always comes after the blow that caused it.
- * `ignoreGuard` hits go straight through Guarded.
  */
-function damage(state: BattleState, target: Combatant, raw: number, events: BattleEvent[], direct: boolean, cause: (amount: number) => BattleEvent, ignoreGuard = false): number {
-  const guarded = !ignoreGuard && hasEffect(target, "guarded");
+function damage(state: BattleState, target: Combatant, raw: number, events: BattleEvent[], direct: boolean, cause: (amount: number) => BattleEvent): number {
+  const guarded = hasEffect(target, "guarded");
   const exposed = direct && hasEffect(target, "exposed") ? EXPOSED_BONUS : 0;
   const blunted = direct ? afterArmor(raw + exposed, target.armor) : raw;
   const amount = Math.max(0, guarded ? Math.ceil(blunted / 2) : blunted);
@@ -510,26 +508,17 @@ function resolveAbility(
         events.push({ t: "miss", actor: actor.id, target: target.id, ability: def.name });
         continue;
       }
-      // Bulwark Strike leans on the Warden's armor; Hex on the size of its target.
-      const armorBonus = def.armorDamage ? Math.floor(actor.armor / ARMOR_DAMAGE_DIVISOR) : 0;
-      const sizeBonus = def.maxHpDamage ? Math.round(target.maxHp * def.maxHpDamage) : 0;
-      // Payoffs for what the target already carries, from the ability and from traits.
+      // Payoffs for what the target already carries, from traits.
       let flat = 0;
       let mult = 1;
-      if (def.perDebuffDamage) flat += def.perDebuffDamage * debuffCount(target);
-      if (def.vsEffect && hasEffect(target, def.vsEffect.effect)) flat += def.vsEffect.bonus;
-      const bleed = def.bleedPayoff ? target.effects.find((e) => e.kind === "bleeding") : undefined;
-      if (bleed) flat += def.bleedPayoff! * bleed.turns;
       for (const { rule } of rulesOf(actor, "vs_effect")) if (hasEffect(target, rule.effect)) flat += rule.bonus;
       for (const { rule } of rulesOf(actor, "per_debuff")) flat += rule.bonus * debuffCount(target);
       const weak = target.hp * 4 < target.maxHp;
-      if (weak && def.finisher) mult *= def.finisher;
       if (weak) for (const { rule } of rulesOf(actor, "finisher")) mult *= rule.mult;
-      const base = Math.round((def.damage + actor.level + actor.power + aura + armorBonus + sizeBonus) * scale);
+      const base = Math.round((def.damage + actor.level + actor.power + aura) * scale);
       const amount = damage(state, target, Math.round((base + flat) * mult), events, true, (amount) => ({
         t: "hit", actor: actor.id, target: target.id, amount, ability: def.name, perfect: check.perfect,
-      }), def.ignoreGuard);
-      if (bleed) target.effects = target.effects.filter((e) => e.kind !== "bleeding");
+      }));
       if (check.perfect && def.perfect && !target.down) addEffect(state, target, def.perfect.effect, def.perfect.turns, events, actor);
       // The Wreck Warlock's perfect hits leave the target bleeding.
       if (check.perfect && actor.side === "hero" && actor.kind === "data_warlock" && !target.down) addEffect(state, target, "bleeding", WARLOCK_BLEED_TURNS, events, actor);
@@ -550,8 +539,6 @@ function resolveAbility(
       events.push({ t: "heal", actor: actor.id, target: target.id, amount, ability: def.name });
     }
     if (def.targetEffect && !check.fumble && !target.down) addEffect(state, target, def.targetEffect.effect, def.targetEffect.turns, events, actor);
-    // All Hands: the crewmate it picks takes the very next turn.
-    if (def.actNext && !check.fumble && target !== actor && !target.down) target.next = state.clock;
   }
   if (def.selfEffect && !check.fumble) addEffect(state, actor, def.selfEffect.effect, def.selfEffect.turns, events, actor);
   return null;

@@ -6,7 +6,7 @@
 // blows, blasts and bombs reach crates too (crates.ts).
 
 import { hexDistance, hexNeighbors, hexSegment, posKey, type HexPos } from "@gantt-quest/core";
-import { ABILITIES, ARMOR_DAMAGE_DIVISOR, BARD_AURA, type AbilityDef, type EffectKind } from "../content";
+import { ABILITIES, BARD_AURA, type AbilityDef, type EffectKind } from "../content";
 import { tileAt, type Poi } from "../map";
 import { DEBUFFS, addCondition, addShield, attackContext, attackRoll, damage, defenceOf, giveAway, has, heal, inWater, kindle, removeCondition, saveBonus, saveRoll, shieldOf, shieldUnit, unseen, type Ctx } from "./engine";
 import { cratesOn, crateById, hurtCrate, isCrateId } from "./crates";
@@ -439,20 +439,11 @@ function strike(ctx: Ctx, unit: Unit, def: AbilityDef, tactic: Tactic, target: U
     return false;
   }
   let amount = rollDice(ctx.rng, abilityDice(def), roll.crit) + damageBonus(ctx.state, unit, def);
-  if (def.armorDamage) amount += Math.floor(unit.armor / ARMOR_DAMAGE_DIVISOR);
-  if (def.maxHpDamage) amount += Math.round(target.maxHp * def.maxHpDamage);
-  if (def.perDebuffDamage) amount += def.perDebuffDamage * DEBUFFS.filter((k) => has(target, k)).length;
-  if (def.vsEffect && has(target, def.vsEffect.effect)) amount += def.vsEffect.bonus;
   if (tactic.vsWet && has(target, "wet")) amount += tactic.vsWet;
   if (tactic.edge && roll.adv === 1) amount += tactic.edge;
   if (tactic.wading && inWater(ctx.state, unit)) amount += tactic.wading;
   if (tactic.bulwark) amount += Math.floor(shieldOf(unit) * tactic.bulwark.perShield);
-  if (def.bleedPayoff) {
-    amount += def.bleedPayoff * (target.conditions.find((c) => c.kind === "bleeding")?.rounds ?? 0);
-    removeCondition(target, "bleeding");
-  }
-  if (def.finisher && target.hp < target.maxHp / 4) amount *= def.finisher;
-  const dealt = damage(ctx, target, amount, { actor: unit.id, what: def.id, crit: roll.crit, ignoreGuard: def.ignoreGuard });
+  const dealt = damage(ctx, target, amount, { actor: unit.id, what: def.id, crit: roll.crit });
   if (def.drain && dealt > 0 && !unit.down) heal(ctx, unit, Math.max(1, Math.round(dealt * def.drain)), { actor: unit.id, what: def.id });
   // A Warlock's critical hits drag the target under (Riptide).
   if (roll.crit && unit.kind === "data_warlock") drown(ctx, target, 1);
@@ -470,7 +461,7 @@ function strike(ctx: Ctx, unit: Unit, def: AbilityDef, tactic: Tactic, target: U
   // Water Burst: the drench reaches whoever stands beside the target, no roll to hit.
   if (tactic.spray) {
     for (const foe of ctx.state.units.filter((u) => u.id !== target.id && u.side !== unit.side && !u.down && adjacent(u.pos, target.pos))) {
-      damage(ctx, foe, rollDice(ctx.rng, diceFor(Math.max(2, tactic.spray - 2))) + damageBonus(ctx.state, unit, def), { actor: unit.id, what: def.id, ignoreGuard: def.ignoreGuard });
+      damage(ctx, foe, rollDice(ctx.rng, diceFor(Math.max(2, tactic.spray - 2))) + damageBonus(ctx.state, unit, def), { actor: unit.id, what: def.id });
     }
   }
   if (melee) thorns(ctx, unit, target);
@@ -576,7 +567,7 @@ export function resolveAbility(ctx: Ctx, unit: Unit, ability: string, aim: Aim &
     const keys = new Set(abilityArea(state, unit, ability).map(posKey));
     const rolled = rollDice(ctx.rng, abilityDice(def)) + damageBonus(state, unit, def);
     for (const victim of foes().filter((u) => keys.has(posKey(u.pos)))) {
-      damage(ctx, victim, rolled, { actor: unit.id, what: def.id, ignoreGuard: def.ignoreGuard });
+      damage(ctx, victim, rolled, { actor: unit.id, what: def.id });
       if (!victim.down) addCondition(ctx, victim, "guiding_light", tactic.guide ?? 0);
     }
     landed = true;
@@ -585,7 +576,7 @@ export function resolveAbility(ctx: Ctx, unit: Unit, ability: string, aim: Aim &
     const lit = litFoes(state, unit);
     const rolled = rollDice(ctx.rng, abilityDice(def)) + damageBonus(state, unit, def);
     for (const victim of lit) removeCondition(victim, "guiding_light");
-    for (const victim of lit) damage(ctx, victim, rolled, { actor: unit.id, what: def.id, ignoreGuard: def.ignoreGuard });
+    for (const victim of lit) damage(ctx, victim, rolled, { actor: unit.id, what: def.id });
     landed = true;
   } else if (tactic.redSky) {
     // An omen, not a blow: no roll and no save, and only the other side reads it.
@@ -612,7 +603,7 @@ export function resolveAbility(ctx: Ctx, unit: Unit, ability: string, aim: Aim &
     else if (tactic.overwhelm) landed = overwhelm(ctx, unit, def, target, tactic.overwhelm);
     else if (tactic.bind) landed = bind(ctx, unit, def, target, tactic.bind);
     else if (tactic.sure) {
-      if (def.damage) damage(ctx, target, rollDice(ctx.rng, abilityDice(def)) + damageBonus(state, unit, def), { actor: unit.id, what: def.id, ignoreGuard: def.ignoreGuard });
+      if (def.damage) damage(ctx, target, rollDice(ctx.rng, abilityDice(def)) + damageBonus(state, unit, def), { actor: unit.id, what: def.id });
       afflict(ctx, unit, def, target, false);
       landed = true;
     } else landed = strike(ctx, unit, def, tactic, target, aim);
@@ -640,7 +631,7 @@ export function resolveAbility(ctx: Ctx, unit: Unit, ability: string, aim: Aim &
       const saved = saveRoll(ctx, victim, "agi", saveDc(unit, def), def.name, aim.focus).ok;
       let amount = rolled;
       if (tactic.vsWet && has(victim, "wet")) amount += tactic.vsWet;
-      damage(ctx, victim, saved ? Math.floor(amount / 2) : amount, { actor: unit.id, what: def.id, ignoreGuard: def.ignoreGuard });
+      damage(ctx, victim, saved ? Math.floor(amount / 2) : amount, { actor: unit.id, what: def.id });
       if (!saved && !victim.down) sweepAlong(ctx, victim, line, unit.id);
     }
     if (unit.side === "hero" && def.damage) for (const box of cratesOn(state, line)) hurtCrate(ctx, box, rolled, { actor: unit.id, what: def.id });
@@ -686,9 +677,8 @@ export function resolveAbility(ctx: Ctx, unit: Unit, ability: string, aim: Aim &
     for (const victim of caught) {
       const saved = saveRoll(ctx, victim, "agi", saveDc(unit, def), def.name, aim.focus).ok;
       let amount = rolled;
-      if (def.vsEffect && has(victim, def.vsEffect.effect)) amount += def.vsEffect.bonus;
       if (tactic.vsWet && has(victim, "wet")) amount += tactic.vsWet;
-      damage(ctx, victim, saved ? Math.floor(amount / 2) : amount, { actor: unit.id, what: def.id, ignoreGuard: def.ignoreGuard });
+      damage(ctx, victim, saved ? Math.floor(amount / 2) : amount, { actor: unit.id, what: def.id });
       if (!saved) afflict(ctx, unit, def, victim, false);
       // Moonlight: whoever fails to brace is lit.
       if (!saved && tactic.guide && !victim.down) addCondition(ctx, victim, "guiding_light", tactic.guide);
@@ -720,7 +710,7 @@ export function resolveAbility(ctx: Ctx, unit: Unit, ability: string, aim: Aim &
       // The blow round the ally first, then the star: what it strikes now is not set alight by it.
       const rolled = rollDice(ctx.rng, abilityDice(def)) + damageBonus(state, unit, def);
       for (const foe of foes().filter((u) => adjacent(u.pos, target.pos))) {
-        damage(ctx, foe, rolled, { actor: unit.id, what: def.id, ignoreGuard: def.ignoreGuard });
+        damage(ctx, foe, rolled, { actor: unit.id, what: def.id });
         if (!foe.down) addCondition(ctx, foe, "guiding_light", tactic.guide ?? 0);
       }
       addCondition(ctx, target, "north_star", tactic.northStar.rounds);
@@ -741,8 +731,6 @@ export function resolveAbility(ctx: Ctx, unit: Unit, ability: string, aim: Aim &
       retune(ctx);
     }
     if (def.targetEffect) addCondition(ctx, target, def.targetEffect.effect, def.targetEffect.turns);
-    // "Takes the very next turn" has no meaning in an initiative order: the ally is Hasted instead.
-    if (def.actNext && target.id !== unit.id) addCondition(ctx, target, "hasted", 2);
     if (tactic.aura) addCondition(ctx, unit, tactic.aura.kind, tactic.aura.rounds);
     if (tactic.steady) addCondition(ctx, target, "inspired", tactic.steady);
     // Wind's Blessing: more movement now for one in the middle of their turn, else on their next.
