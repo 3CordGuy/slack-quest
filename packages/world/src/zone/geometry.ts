@@ -87,7 +87,14 @@ export function seesFor(state: Pick<ZoneState, "map" | "weather">, side: Side, f
   return hexesBetween(from, to).every((p) => !blocked.has(posKey(p)));
 }
 
-export const unitAt = (state: ZoneState, pos: HexPos): Unit | undefined => state.units.find((u) => sameHex(u.pos, pos));
+/**
+ * A fallen enemy is dead: its body lies where it fell until the fight is over, but takes up no room. A fallen
+ * hero is only down, and keeps their hex: they are brought back to their feet on it.
+ */
+export const isDead = (unit: Unit): boolean => unit.down && unit.side === "enemy";
+
+/** Who takes up a hex: whoever is on it, bar the dead. */
+export const unitAt = (state: ZoneState, pos: HexPos): Unit | undefined => state.units.find((u) => sameHex(u.pos, pos) && !isDead(u));
 
 export const unitById = (state: ZoneState, id: string): Unit | undefined => state.units.find((u) => u.id === id);
 
@@ -133,7 +140,8 @@ export const blockerAt = (state: Pick<ZoneState, "map"> & { weather?: Weather[] 
 /**
  * What one step costs `unit`, or Infinity if it cannot be made. Open ground is 1; forest and hills 2;
  * climbing a level 1 more; oil or slime underfoot 1 more. A drop or a climb of two levels is a cliff. Enemies
- * on their feet bar the way; allies and the fallen can be walked past but not stopped on. Chests and crates bar it.
+ * on their feet bar the way; allies and fallen heroes can be walked past but not stopped on; a dead enemy is
+ * in nobody's way, and its hex can be stopped on. Chests and crates bar it.
  */
 export function stepCost(state: ZoneState, unit: Unit, from: HexPos, to: HexPos, shut?: ReadonlySet<string>): { cost: number; stop: boolean } {
   const tile = tileAt(state.map, to);

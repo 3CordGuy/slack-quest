@@ -10,7 +10,7 @@ import { ABILITIES, BARD_AURA, type AbilityDef, type EffectKind } from "../conte
 import { tileAt, type Poi } from "../map";
 import { DEBUFFS, addCondition, addShield, attackContext, attackRoll, damage, defenceOf, giveAway, has, heal, inWater, kindle, removeCondition, saveBonus, saveRoll, shieldOf, shieldUnit, unseen, type Ctx } from "./engine";
 import { cratesOn, crateById, hurtCrate, isCrateId } from "./crates";
-import { HEX_DIRS, adjacent, blast, blockerAt, courseShare, directionToward, elevOf, inFight, lineFrom, pathIn, sameHex, sees, seesFor, solid, stepCost, unitAt, unitById, zoneReach, type Course } from "./geometry";
+import { HEX_DIRS, adjacent, blast, blockerAt, courseShare, directionToward, elevOf, inFight, isDead, lineFrom, pathIn, sameHex, sees, seesFor, solid, stepCost, unitAt, unitById, zoneReach, type Course } from "./geometry";
 import { CHART, COMMON_ACTIONS, CORAL_ARMOR, SHANTY, SUMMON_CALLS, ENEMY_BURST, FLEE_RANGE, JUMP_MOVE_COST, POTION_EDGE, SAVE_STAT, SMUGGLED, THROWABLES, TORCH_GROUND_ROUNDS, abilityDice, enemyStrikes, healDice, jumpRange, reactionStrike, tacticOf, throwRange, type EnemyStrike, type Tactic } from "./kit";
 import { modsOf } from "./mods";
 import { d20, diceFor, hitChance, mod, proficiency, rollDice, statOf } from "./rules";
@@ -61,9 +61,9 @@ function provoke(ctx: Ctx, unit: Unit, next: HexPos, budget: Budget | null, flus
   }
 }
 
-/** If someone else is on a unit's hex (it was stopped part-way past an ally), it shuffles to the nearest free one. */
+/** If someone else is on a unit's hex (it was stopped part-way past an ally), it shuffles to the nearest free one. A dead enemy underfoot is nobody. */
 function standClear(ctx: Ctx, unit: Unit): void {
-  if (!ctx.state.units.some((u) => u.id !== unit.id && sameHex(u.pos, unit.pos))) return;
+  if (!ctx.state.units.some((u) => u.id !== unit.id && !isDead(u) && sameHex(u.pos, unit.pos))) return;
   const seen = new Set([posKey(unit.pos)]);
   const queue = [unit.pos];
   for (let i = 0; i < queue.length && i < 60; i++) {
