@@ -1021,7 +1021,7 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
       const tactic = tacticOf(pick.id);
       const melee = tactic.reach === "melee";
       // A course is charted by the stars: any hex in range, seen or not.
-      if (tactic.shape !== "line") out.push({ hexes: within(melee ? 1 : tactic.range, !melee && !tactic.chart), color: "#ffd23f", fill: 0.1, line: 0.8 });
+      if (tactic.shape !== "line" && tactic.shape !== "cone") out.push({ hexes: within(melee ? 1 : tactic.range, !melee && !tactic.chart), color: "#ffd23f", fill: 0.1, line: 0.8 });
       // Round an ally (North Star): the ally under the pointer, or yourself.
       const ally = tactic.northStar && hover && unitOn(hover)?.side === act.side ? unitOn(hover)!.id : undefined;
       const area = abilityArea(z, act, pick.id, hover ?? undefined, ally);
@@ -1126,7 +1126,7 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
       if (pick.kind === "item") return { from, to, height: SpellFx.arcHeight("flask", distance), color: checkThrow(z, act, pick.item, hover) ? "#ff6b6b" : "#fff1c9" };
       if (pick.kind !== "ability") return null;
       const tactic = tacticOf(pick.id);
-      if (tactic.reach === "melee" || tactic.shape === "line" || tactic.shape === "self" || tactic.shape === "burst" || tactic.shape === "adjacent") return null;
+      if (tactic.reach === "melee" || tactic.shape === "line" || tactic.shape === "cone" || tactic.shape === "self" || tactic.shape === "burst" || tactic.shape === "adjacent") return null;
       const wrong = checkAbility(z, act, pick.id, tactic.shape === "blast" ? { at: hover } : { target: there?.id ?? box?.id });
       // Aimed at open ground with something that needs a target: no line at all.
       if (tactic.shape !== "blast" && !there && !box) return null;
@@ -1272,7 +1272,7 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
     if (pick.kind === "ability") {
       const shape = tacticOf(pick.id).shape;
       if (tacticOf(pick.id).summon) return use(pick.id, { at: pos });
-      if (shape === "blast" || shape === "line" || shape === "arc") return use(pick.id, { at: pos });
+      if (shape === "blast" || shape === "line" || shape === "arc" || shape === "cone") return use(pick.id, { at: pos });
       // An ally ability clicked on open ground is meant for yourself.
       if (shape === "ally") return use(pick.id, { target: there?.side === "hero" ? there.id : act.id });
       const box = crateOn(pos);
@@ -1379,7 +1379,7 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
     const def = ABILITIES[id];
     const tactic = tacticOf(id);
     const wait = act.cooldowns[id] ?? 0;
-    const reachText = tactic.chart ? `a hex up to ${tactic.range} off` : tactic.constellation ? `allies within ${tactic.constellation.link}, one to the next` : tactic.newMoon ? "every lit enemy" : tactic.taunt ? `every enemy within ${tactic.taunt.range}` : tactic.northStar ? `an ally within ${tactic.range}, and every enemy beside them` : tactic.summon ? `a hex up to ${tactic.range} off` : tactic.blink ? (tactic.shape === "self" ? `a hex up to ${tactic.blink.range} off` : `an enemy beside you, then up to ${tactic.blink.range} off`) : tactic.shape === "self" ? "yourself" : tactic.shape === "burst" ? `everyone within ${tactic.radius}` : tactic.reach === "melee" ? (tactic.shape === "adjacent" ? "every enemy beside you" : tactic.shape === "arc" ? "three hexes beside you" : "an enemy beside you") : `${tactic.shape === "line" ? `a line of ${tactic.length}` : `range ${tactic.range}`}${tactic.weather === "rain" ? ", 3 hexes" : tactic.splash ? `, ${tactic.splash.hexes} hexes` : tactic.fortify ? `, a wall of ${tactic.fortify.hexes}` : tactic.shape === "blast" ? `, blast ${tactic.radius}` : ""}`;
+    const reachText = tactic.chart ? `a hex up to ${tactic.range} off` : tactic.constellation ? `allies within ${tactic.constellation.link}, one to the next` : tactic.newMoon ? "every lit enemy" : tactic.taunt ? `every enemy within ${tactic.taunt.range}` : tactic.northStar ? `an ally within ${tactic.range}, and every enemy beside them` : tactic.summon ? `a hex up to ${tactic.range} off` : tactic.blink ? (tactic.shape === "self" ? `a hex up to ${tactic.blink.range} off` : `an enemy beside you, then up to ${tactic.blink.range} off`) : tactic.shape === "self" ? "yourself" : tactic.shape === "burst" ? `everyone within ${tactic.radius}` : tactic.reach === "melee" ? (tactic.shape === "adjacent" ? "every enemy beside you" : tactic.shape === "arc" ? "three hexes beside you" : "an enemy beside you") : `${tactic.shape === "line" ? `a line of ${tactic.length}` : tactic.shape === "cone" ? `a cone ${tactic.length} long` : `range ${tactic.range}`}${tactic.weather === "rain" ? ", 3 hexes" : tactic.splash ? `, ${tactic.splash.hexes} hexes` : tactic.fortify ? `, a wall of ${tactic.fortify.hexes}` : tactic.shape === "blast" ? `, blast ${tactic.radius}` : ""}`;
     const dice = def.damage ? `${diceText(abilityDice(def))} damage` : def.heal ? `heals ${diceText(healDice(def))}` : "";
     entries[`ab:${id}`] = {
       id: `ab:${id}`,

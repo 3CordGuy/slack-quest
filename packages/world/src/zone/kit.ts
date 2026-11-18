@@ -12,6 +12,7 @@ import type { CommonAction, Condition, ShantyKind, SurfaceKind, Throwable, Weath
 /**
  * - `single`: one enemy, an attack roll.
  * - `adjacent`: every enemy next to you, an attack roll each.
+ * - `cone`: a fan of hexes ahead of you, 1 hex, then 2, then 3, leaning toward the side aimed at. Only the other side is struck: it saves for half.
  * - `arc`: three hexes next to you, around the one swung at (any hex that way will do), an attack roll for each enemy in them.
  * - `chain`: one enemy, then on to others nearby, an attack roll each.
  * - `blast`: a hex you pick and all around it. Everyone there saves for half, friend and foe.
@@ -20,7 +21,7 @@ import type { CommonAction, Condition, ShantyKind, SurfaceKind, Throwable, Weath
  * - `ally`: one friend (or yourself). No roll.
  * - `self`: yourself.
  */
-export type Shape = "single" | "adjacent" | "arc" | "chain" | "blast" | "burst" | "line" | "ally" | "self";
+export type Shape = "single" | "adjacent" | "arc" | "cone" | "chain" | "blast" | "burst" | "line" | "ally" | "self";
 
 export interface Tactic {
   cost: "action" | "bonus";
@@ -38,12 +39,16 @@ export interface Tactic {
   cooldown?: number;
   /** Added to the attack roll. */
   toHit?: number;
-  /** Left on the hexes it covers (or under a single target). */
-  surface?: { kind: SurfaceKind; rounds: number };
+  /** Left on the hexes it covers (or under a single target). `self`: also under the user, when it lands (Sea Slash). */
+  surface?: { kind: SurfaceKind; rounds: number; self?: boolean };
   /** Fire: sets light to oil or poison under whatever it hits. */
   ignites?: boolean;
   /** Extra damage against something Wet. */
   vsWet?: number;
+  /** Single: no blow, but the enemy saves or is held for these turns: Slowed, or Stunned if it stands in water (Binding Kelp). */
+  bind?: { slowed: number; stunned: number };
+  /** Ally: takes every harmful condition off them (Restore). */
+  cleanse?: boolean;
   /** Extra damage when the roll to hit had advantage (Stab). */
   edge?: number;
   /** Leaves the user Inspired, their next roll to hit with advantage, through this many of their turns after this one (Take Aim). */
@@ -317,8 +322,10 @@ export const TACTICS: Record<string, Tactic> = {
   // Druid
   thornlash: spell(5),
   rejuvenate: mend(5),
-  overgrowth: spell(5, { shape: "blast", radius: 1, cooldown: 2 }),
-  riptide: spell(4, { shape: "line", length: 4, cooldown: 2, surface: { kind: "water", rounds: 3 } }),
+  sea_slash: melee({ surface: { kind: "water", rounds: 3, self: true } }),
+  binding_kelp: spell(4, { cost: "bonus", bind: { slowed: 1, stunned: 1 } }),
+  coral_burst: spell(3, { shape: "cone", length: 3 }),
+  restore: mend(5, { cost: "bonus", cooldown: 1, cleanse: true }),
   // Druid class abilities
   coral_field: spell(5, { shape: "blast", radius: 1, cooldown: 3, weather: "coral" }),
   aqueous_regeneration: mend(5, { cost: "bonus", cooldown: 3, regen: AQUEOUS }),

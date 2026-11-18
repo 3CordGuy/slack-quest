@@ -55,8 +55,10 @@ export const ABILITY_ICON: Record<string, ActionIcon> = {
   // Druid
   thornlash: icon("thorn", "#ff8fb1"),
   rejuvenate: icon("heal", "#a3e635"),
-  overgrowth: icon("thorn", "#facc15"),
-  riptide: icon("wave", "#38bdf8"),
+  sea_slash: icon("slash", "#38bdf8"),
+  binding_kelp: icon("thorn", "#4ade80"),
+  coral_burst: icon("wave", "#ff8f7a"),
+  restore: icon("heal", "#5eead4"),
   coral_field: icon("coral", "#ff7f6e"),
   aqueous_regeneration: icon("droplet", "#5eead4"),
   coral_armor: icon("shell", "#ff8f7a"),

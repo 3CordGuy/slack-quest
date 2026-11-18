@@ -10,7 +10,7 @@ import { ABILITIES, ARMOR_DAMAGE_DIVISOR, BARD_AURA, WARLOCK_BLEED_TURNS, type A
 import { tileAt, type Poi } from "../map";
 import { DEBUFFS, addCondition, addShield, attackContext, attackRoll, damage, defenceOf, giveAway, has, heal, inWater, kindle, removeCondition, saveBonus, saveRoll, shieldOf, shieldUnit, unseen, type Ctx } from "./engine";
 import { cratesOn, crateById, hurtCrate, isCrateId } from "./crates";
-import { adjacent, blast, blockerAt, courseShare, directionToward, elevOf, inFight, lineFrom, pathIn, sameHex, sees, seesFor, solid, stepCost, unitAt, unitById, zoneReach, type Course } from "./geometry";
+import { HEX_DIRS, adjacent, blast, blockerAt, courseShare, directionToward, elevOf, inFight, lineFrom, pathIn, sameHex, sees, seesFor, solid, stepCost, unitAt, unitById, zoneReach, type Course } from "./geometry";
 import { CHART, COMMON_ACTIONS, CORAL_ARMOR, SHANTY, SUMMON_CALLS, ENEMY_BURST, FLEE_RANGE, JUMP_MOVE_COST, POTION_EDGE, SAVE_STAT, SMUGGLED, THROWABLES, TORCH_GROUND_ROUNDS, abilityDice, enemyStrikes, healDice, jumpRange, reactionStrike, tacticOf, throwRange, type EnemyStrike, type Tactic } from "./kit";
 import { d20, hitChance, mod, proficiency, rollDice, statOf } from "./rules";
 import { seenByHeroes } from "./light";
@@ -276,6 +276,7 @@ export function abilityArea(state: ZoneState, unit: Unit, ability: string, at?: 
   if (tactic.shape === "line") return at ? lineFrom(state.map, unit.pos, at, tactic.length ?? 3) : [];
   if (tactic.shape === "adjacent") return hexNeighbors(unit.pos, state.map.grid);
   if (tactic.shape === "arc") return at && !sameHex(at, unit.pos) ? arcHexes(state, unit.pos, at) : [];
+  if (tactic.shape === "cone") return at && !sameHex(at, unit.pos) ? coneHexes(state, unit.pos, at, tactic.length ?? 3) : [];
   return [];
 }
 
@@ -286,6 +287,28 @@ function moveMore(state: ZoneState, unit: Unit, more: number): boolean {
   if (!budget) return false;
   budget.move += more;
   return true;
+}
+
+/**
+ * A cone's hexes: 1 hex ahead of `from`, then 2 behind it, then 3, as far as `length` rows. It fans out toward the side
+ * of the straight line that `toward` leans to, and leaves out what a wall or a corner hides from `from`.
+ */
+export function coneHexes(state: ZoneState, from: HexPos, toward: HexPos, length: number): HexPos[] {
+  const dir = directionToward(from, toward);
+  const at = HEX_DIRS.findIndex((h) => h.q === dir.q && h.r === dir.r);
+  // Which of the two directions beside the straight one the aim leans to, by which side of the line it falls.
+  const flat = (p: HexPos) => ({ x: Math.sqrt(3) * (p.q + p.r / 2), y: 1.5 * p.r });
+  const a = flat({ q: toward.q - from.q, r: toward.r - from.r });
+  const d = flat(dir);
+  const lean = HEX_DIRS[(at + (d.x * a.y - d.y * a.x < 0 ? 5 : 1)) % 6];
+  const out: HexPos[] = [];
+  for (let row = 1; row <= length; row++) {
+    for (let j = 0; j < row; j++) {
+      const p = { q: from.q + (row - j) * dir.q + j * lean.q, r: from.r + (row - j) * dir.r + j * lean.r };
+      if (tileAt(state.map, p) && !solid(tileAt(state.map, p)) && sees(state.map, from, p)) out.push(p);
+    }
+  }
+  return out;
 }
 
 /** A swing's three hexes: the one beside `from` toward `toward`, and the two beside both it and `from`. */
@@ -342,7 +365,7 @@ export function checkAbility(state: ZoneState, unit: Unit, ability: string, aim:
     if (tactic.fortify && (sameHex(aim.at, unit.pos) || !standable(state, aim.at))) return "There is no room to raise a wall there.";
     return inReach(aim.at);
   }
-  if (tactic.shape === "line") return aim.at && !sameHex(aim.at, unit.pos) ? null : "Pick a direction.";
+  if (tactic.shape === "line" || tactic.shape === "cone") return aim.at && !sameHex(aim.at, unit.pos) ? null : "Pick a direction.";
   if (tactic.shape === "ally") {
     const target = aim.target ? unitById(state, aim.target) : unit;
     if (!target || target.side !== unit.side) return "Pick an ally.";
@@ -436,7 +459,14 @@ function strike(ctx: Ctx, unit: Unit, def: AbilityDef, tactic: Tactic, target: U
   if (tactic.guide && !target.down) addCondition(ctx, target, "guiding_light", tactic.guide);
   if (melee) thorns(ctx, unit, target);
   if (tactic.ignites) ignite(ctx, target.pos, unit.id);
-  if (tactic.surface) placeSurface(ctx, [target.pos], tactic.surface.kind, tactic.surface.rounds, unit.id);
+  if (tactic.surface) placeSurface(ctx, tactic.surface.self ? [target.pos, unit.pos] : [target.pos], tactic.surface.kind, tactic.surface.rounds, unit.id);
+  return true;
+}
+
+/** Binding Kelp: no blow and no roll to hit, but the enemy saves or is held: Slowed, or Stunned if it stands in water. */
+function bind(ctx: Ctx, unit: Unit, def: AbilityDef, target: Unit, turns: { slowed: number; stunned: number }): boolean {
+  const effect = inWater(ctx.state, target) ? "stunned" : "slowed";
+  if (!saveRoll(ctx, target, SAVE_STAT[effect], saveDc(unit, def), `Resist ${def.name}`).ok) addCondition(ctx, target, effect, turns[effect]);
   return true;
 }
 
@@ -479,7 +509,7 @@ export function crateBlow(state: ZoneState, unit: Unit, crateId: string): string
 export function previewAttack(state: ZoneState, unit: Unit, ability: string, target: Unit): { chance: number; bonus: number; vs: number; adv: -1 | 0 | 1; notes: string[] } | null {
   const def = ABILITIES[ability];
   const tactic = tacticOf(ability);
-  if (!def || !["single", "chain", "adjacent", "arc"].includes(tactic.shape) || tactic.overwhelm || tactic.sure) return null;
+  if (!def || !["single", "chain", "adjacent", "arc"].includes(tactic.shape) || tactic.overwhelm || tactic.sure || tactic.bind) return null;
   const c = attackContext(state, unit, target, { melee: tactic.reach === "melee" });
   const bonus = proficiency(unit.level) + mod(statOf(unit, def.stat)) + (tactic.toHit ?? 0) + c.mods;
   const vs = defenceOf(target, state);
@@ -562,6 +592,7 @@ export function resolveAbility(ctx: Ctx, unit: Unit, ability: string, aim: Aim &
     // A pocket picked unseen is no blow, just a quick hand.
     if (tactic.steal && wasUnseen) landed = true;
     else if (tactic.overwhelm) landed = overwhelm(ctx, unit, def, target, tactic.overwhelm);
+    else if (tactic.bind) landed = bind(ctx, unit, def, target, tactic.bind);
     else if (tactic.sure) {
       if (def.damage) damage(ctx, target, rollDice(ctx.rng, abilityDice(def)) + damageBonus(state, unit, def), { actor: unit.id, what: def.id, ignoreGuard: def.ignoreGuard });
       afflict(ctx, unit, def, target, false);
@@ -623,11 +654,11 @@ export function resolveAbility(ctx: Ctx, unit: Unit, ability: string, aim: Aim &
       chain.push(next);
     }
     for (const foe of chain) if (!foe.down) landed = strike(ctx, unit, def, tactic, foe, aim) || landed;
-  } else if (tactic.shape === "blast" || tactic.shape === "burst" || tactic.shape === "line") {
+  } else if (tactic.shape === "blast" || tactic.shape === "burst" || tactic.shape === "line" || tactic.shape === "cone") {
     const area = abilityArea(state, unit, ability, aim.at);
     const keys = new Set(area.map(posKey));
     // A burst is thrown at the enemy, and so is a chorus; a blast or a line catches whoever is standing in it.
-    const caught = state.units.filter((u) => !u.down && keys.has(posKey(u.pos)) && ((tactic.shape !== "burst" && !tactic.chorus) || u.side !== unit.side));
+    const caught = state.units.filter((u) => !u.down && keys.has(posKey(u.pos)) && ((tactic.shape !== "burst" && tactic.shape !== "cone" && !tactic.chorus) || u.side !== unit.side));
     // A chorus swells with every voice of the user's side caught up in it (the user's own aside).
     const voices = tactic.chorus ? state.units.filter((u) => u.side === unit.side && u.id !== unit.id && !u.down && keys.has(posKey(u.pos))).length : 0;
     const rolled = rollDice(ctx.rng, abilityDice(def)) + damageBonus(state, unit, def) + (tactic.chorus ?? 0) * voices;
@@ -690,6 +721,7 @@ export function resolveAbility(ctx: Ctx, unit: Unit, ability: string, aim: Aim &
       const { range, shield, rounds, water } = tactic.shield;
       for (const u of state.units) if (u.side === unit.side && !u.down && hexDistance(u.pos, unit.pos) <= range) shieldUnit(ctx, u, shield + unit.level + (water && inWater(state, u) ? water : 0), rounds);
     }
+    if (tactic.cleanse) for (const kind of DEBUFFS) removeCondition(target, kind);
     if (tactic.clearWay) {
       for (const kind of DEBUFFS) removeCondition(target, kind);
       clearSurfaces(ctx, wayBetween(state, unit, target.pos).filter((p) => { const s = state.surfaces[posKey(p)]; return !!s && HINDERING.has(s.kind); }));
