@@ -10,7 +10,7 @@ import { ABILITIES, ARMOR_DAMAGE_DIVISOR, BARD_AURA, WARLOCK_BLEED_TURNS, type A
 import { tileAt, type Poi } from "../map";
 import { DEBUFFS, addCondition, attackContext, attackRoll, damage, defenceOf, has, heal, removeCondition, saveBonus, saveRoll, type Ctx } from "./engine";
 import { cratesOn, crateById, hurtCrate, isCrateId } from "./crates";
-import { adjacent, blast, blockerAt, directionToward, elevOf, inFight, lineFrom, sameHex, sees, solid, stepCost, unitAt, unitById } from "./geometry";
+import { adjacent, blast, blockerAt, directionToward, elevOf, inFight, isDead, lineFrom, sameHex, sees, solid, stepCost, unitAt, unitById } from "./geometry";
 import { COMMON_ACTIONS, ENEMY_BURST, FLEE_RANGE, JUMP_MOVE_COST, POTION_EDGE, SAVE_STAT, THROWABLES, TORCH_GROUND_ROUNDS, abilityDice, enemyStrikes, healDice, jumpRange, reactionStrike, tacticOf, throwRange, type EnemyStrike, type Tactic } from "./kit";
 import { d20, hitChance, mod, proficiency, rollDice, statOf } from "./rules";
 import { seenByHeroes } from "./light";
@@ -54,9 +54,9 @@ function provoke(ctx: Ctx, unit: Unit, next: HexPos, budget: Budget | null, flus
   }
 }
 
-/** If someone else is on a unit's hex (it was stopped part-way past an ally), it shuffles to the nearest free one. */
+/** If someone else is on a unit's hex (it was stopped part-way past an ally), it shuffles to the nearest free one. A dead enemy underfoot is nobody. */
 function standClear(ctx: Ctx, unit: Unit): void {
-  if (!ctx.state.units.some((u) => u.id !== unit.id && sameHex(u.pos, unit.pos))) return;
+  if (!ctx.state.units.some((u) => u.id !== unit.id && !isDead(u) && sameHex(u.pos, unit.pos))) return;
   const seen = new Set([posKey(unit.pos)]);
   const queue = [unit.pos];
   for (let i = 0; i < queue.length && i < 60; i++) {

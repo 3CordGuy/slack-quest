@@ -1084,6 +1084,93 @@ describe("the end of a fight", () => {
 
 // ---------- fleeing ----------
 
+describe("a dead enemy's hex", () => {
+  /** Ann in a fight with two bandits, AI off, on her turn. The one beside her has just died where it stood; the other is far off. */
+  function overTheBody() {
+    let state = board();
+    state.aiOff = true;
+    hero(state, "ann", "qa_paladin", at(4, 6));
+    const dead = enemy(state, "bandit", at(5, 6));
+    const other = enemy(state, "bandit", at(12, 2));
+    state = provoke(state);
+    while (!state.encounter!.acting.includes("ann")) state = must(state, { type: "timeout" });
+    Object.assign(unit(state, dead.id), { hp: 0, down: true });
+    return { state, dead: dead.id, other: other.id };
+  }
+
+  it("is free the moment it dies, with the fight still on: it is walked onto and walked through", () => {
+    const { state, dead } = overTheBody();
+    expect(state.encounter).not.toBeNull();
+    // The body is still there (it is cleared when the fight ends), and it is in nobody's way.
+    expect(unit(state, dead)).toMatchObject({ down: true, pos: at(5, 6) });
+    expect(zoneReach(state, unit(state, "ann"), state.encounter!.budgets.ann.move).get(posKey(at(5, 6)))).toMatchObject({ cost: 1, stop: true });
+    // Onto it: she stops there, and is not shuffled off it.
+    const onto: ZoneEvent[] = [];
+    const stood = must(state, { type: "move", by: "ann", unit: "ann", to: at(5, 6) }, onto);
+    expect(unit(stood, "ann").pos).toEqual(at(5, 6));
+    expect(onto.filter((e) => e.t === "moved")).toEqual([{ t: "moved", id: "ann", path: [at(5, 6)] }]);
+    // Through it: the straight way to the hex beyond.
+    const through: ZoneEvent[] = [];
+    const past = must(state, { type: "move", by: "ann", unit: "ann", to: at(6, 6) }, through);
+    expect(unit(past, "ann").pos).toEqual(at(6, 6));
+    expect(through.filter((e) => e.t === "moved")).toEqual([{ t: "moved", id: "ann", path: [at(5, 6), at(6, 6)] }]);
+  });
+
+  it("can be jumped onto, and an enemy can be shoved onto it", () => {
+    const { state } = overTheBody();
+    const jumped = must(state, { type: "common", by: "ann", unit: "ann", what: "jump", at: at(5, 6) });
+    expect(unit(jumped, "ann").pos).toEqual(at(5, 6));
+    // A dummy between her and a body: shoved, it lands on the body's hex instead of being knocked down where it stands.
+    const shoved = board();
+    shoved.aiOff = true;
+    hero(shoved, "ann", "qa_paladin", at(4, 6));
+    const foe = enemy(shoved, "dummy", at(5, 6));
+    Object.assign(enemy(shoved, "bandit", at(6, 6)), { hp: 0, down: true });
+    let pushed: ZoneState | null = null;
+    for (let seed = 1; seed < 40 && !pushed; seed++) {
+      const step = stepZone({ ...shoved, rng: seed }, { type: "common", by: "ann", unit: "ann", what: "shove", target: foe.id });
+      if (step.ok && step.events.some((e) => e.t === "shoved")) pushed = step.state;
+    }
+    expect(pushed).not.toBeNull();
+    expect(unit(pushed!, foe.id).pos).toEqual(at(6, 6));
+    expect(unit(pushed!, foe.id).conditions.some((c) => c.kind === "prone")).toBe(false);
+  });
+
+  it("is the only one: an enemy on its feet still bars the way, and a fallen hero is walked past but not stopped on", () => {
+    let state = board();
+    state.aiOff = true;
+    hero(state, "ann", "qa_paladin", at(4, 6));
+    hero(state, "bo", "qa_paladin", at(4, 7));
+    const foe = enemy(state, "bandit", at(5, 6));
+    state = provoke(state);
+    while (!state.encounter!.acting.includes("ann")) state = must(state, { type: "timeout" });
+    Object.assign(unit(state, "bo"), { hp: 0, down: true });
+    const reach = zoneReach(state, unit(state, "ann"), 10);
+    expect(reach.has(posKey(unit(state, foe.id).pos))).toBe(false);
+    expect(fails(state, { type: "move", by: "ann", unit: "ann", to: unit(state, foe.id).pos })).toMatch(/cannot get there/);
+    expect(reach.get(posKey(unit(state, "bo").pos))).toMatchObject({ stop: false });
+    expect(fails(state, { type: "move", by: "ann", unit: "ann", to: unit(state, "bo").pos })).toMatch(/standing there/);
+    expect(fails(state, { type: "common", by: "ann", unit: "ann", what: "jump", at: unit(state, "bo").pos })).toMatch(/nowhere to land/);
+  });
+
+  it("is given back to it if the fight is lost, unless someone not in the fight stands there: then it takes the nearest free hex", () => {
+    let { state, dead, other } = overTheBody();
+    // Bo, who is in no fight, has walked onto the body's hex (its post); Ann falls to the other bandit.
+    hero(state, "bo", "qa_paladin", at(5, 6));
+    unit(state, other).pos = at(13, 3);
+    Object.assign(unit(state, "ann"), { hp: 0, down: true });
+    const events: ZoneEvent[] = [];
+    state = must(state, { type: "timeout" }, events);
+    expect(events).toContainEqual({ t: "fight_end", outcome: "defeat" });
+    expect(state.encounter).toBeNull();
+    expect(unit(state, "bo").pos).toEqual(at(5, 6));
+    expect(unit(state, dead)).toMatchObject({ down: false, hp: unit(state, dead).maxHp });
+    expect(hexDistance(unit(state, dead).pos, at(5, 6))).toBe(1);
+    expect(unit(state, other)).toMatchObject({ pos: at(12, 2), hp: unit(state, other).maxHp });
+    expect(new Set(state.units.map((u) => posKey(u.pos))).size).toBe(state.units.length);
+  });
+});
+
 describe("fleeing", () => {
   const flee = (id = "ann"): ZoneAction => ({ type: "common", by: id, unit: id, what: "flee" });
   /** Ann and Bo in a fight with a wolf, AI off, and it is Ann's turn. */

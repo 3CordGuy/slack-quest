@@ -401,16 +401,24 @@ function settle(ctx: Ctx): boolean {
   } else {
     const groups = new Set(foes.map((f) => f.group));
     for (const g of groups) if (g && state.groups[g]) state.groups[g].alerted = false;
-    for (const f of state.units.filter((u) => u.side === "enemy" && groups.has(u.group))) {
+    const band = state.units.filter((u) => u.side === "enemy" && groups.has(u.group));
+    const was = new Map(band.map((f) => [f.id, f.pos]));
+    // Off the board for a moment: the enemy, so each finds its own post, or the nearest free hex if someone
+    // not in the fight stands on it (a body takes up no room, so its post may have been walked onto); and
+    // the heroes, so each finds its own free hex by the start.
+    for (const f of band) {
       f.down = false;
       f.hp = f.maxHp;
       f.conditions = [];
-      f.pos = f.home ?? f.pos;
+      f.pos = { q: -99, r: -99 };
     }
     for (const h of heroes) {
       h.hp = 1;
-      // Off the board for a moment, so each finds its own free hex by the start.
       h.pos = { q: -99, r: -99 };
+    }
+    for (const f of band) {
+      const post = f.home ?? was.get(f.id)!;
+      f.pos = freeHexNear(state.map, post, (p) => !!unitAt(state, p) || blockerAt(state, p), (p) => tileAt(state.map, p)) ?? post;
     }
     for (const h of heroes) h.pos = freeHexNear(state.map, state.start, (p) => !!unitAt(state, p) || blockerAt(state, p), (p) => tileAt(state.map, p)) ?? state.start;
   }

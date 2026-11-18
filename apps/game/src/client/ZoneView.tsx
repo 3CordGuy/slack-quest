@@ -62,6 +62,7 @@ import {
   throwRange,
   tileAt,
   FORCE_DC,
+  unitAt,
   unopened,
   zoneBlast,
   zoneReach,
@@ -865,7 +866,8 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
   // ---------- what a pick reaches, and what it would cover ----------
 
   const z = state ? asState(state) : null;
-  const unitOn = (pos: HexPos | null) => (pos && state ? state.units.find((u) => u.pos.q === pos.q && u.pos.r === pos.r) : undefined);
+  /** Who is on this hex: whoever stands on it or, with nobody standing there, a dead enemy lying on it. */
+  const unitOn = (pos: HexPos | null) => (pos && z ? (unitAt(z, pos) ?? z.units.find((u) => sameHex(u.pos, pos))) : undefined);
   /** A crate still whole on this hex. */
   const crateOn = (pos: HexPos | null) => (pos && state ? crateAt(state, pos) : undefined);
   const within = (range: number, sight: boolean) => (state && act ? state.map.tiles.filter((t) => hexDistance(t, act.pos) <= range && hexDistance(t, act.pos) > 0 && (!sight || sees(state.map, act.pos, t))) : []);
@@ -904,7 +906,7 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
         if (def.heal) out.push({ hexes: [hover], color: tint, fill: 0.4 });
       }
     } else if (pick.what === "jump") {
-      out.push({ hexes: within(jumpRange(statMod(act.stats?.str ?? 5)), true).filter((t) => !unitOn(t)), color: "#8fd3ff", fill: 0.14, line: 0.8 });
+      out.push({ hexes: within(jumpRange(statMod(act.stats?.str ?? 5)), true).filter((t) => !unitAt(z, t)), color: "#8fd3ff", fill: 0.14, line: 0.8 });
       if (hover) out.push({ hexes: [hover], color: "#8fd3ff", fill: 0.35, line: 0.9 });
     } else {
       out.push({ hexes: within(1, false), color: pick.what === "help" ? "#7dff9a" : "#ffd23f", fill: 0.12, line: 0.8 });
