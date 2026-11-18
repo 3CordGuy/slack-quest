@@ -12,6 +12,7 @@ import { enemyAct, walk } from "./combat";
 import { attackContext, defenceOf, has, type Ctx } from "./engine";
 import { adjacent, flies, inFight, pathIn, sees, zoneReach } from "./geometry";
 import { ENEMY_BURST, ENEMY_KIT, enemyStrikes, type EnemyStrike } from "./kit";
+import { modsOf } from "./mods";
 import { diceAverage, hitChance } from "./rules";
 import { HARMFUL } from "./surfaces";
 import type { Budget, Unit, ZoneState } from "./types";
@@ -59,7 +60,7 @@ function bestAttack(state: ZoneState, enemy: Unit, pos: HexPos, strikes: EnemySt
 export function enemyTurn(ctx: Ctx, enemy: Unit, budget: Budget): void {
   const { state } = ctx;
   if (state.aiOff) return;
-  const strikes = enemyStrikes(enemy.kind, enemy.level, state.options.threat);
+  const strikes = enemyStrikes(enemy.kind, enemy.level, state.options.threat, modsOf(state.options).edge);
   const heroes = state.units.filter((u) => u.side === "hero" && !u.down && inFight(state, u.id));
   if (strikes.length === 0 || heroes.length === 0) return;
   const kit = ENEMY_KIT[enemy.kind] ?? {};

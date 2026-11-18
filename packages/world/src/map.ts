@@ -25,7 +25,7 @@ import type { ResourceKind } from "./hut";
  * `fog` is never part of a real map: it is what a client is sent in place of
  * ground the party has not seen yet.
  */
-export type Biome = "plains" | "forest" | "hills" | "water" | "dock" | "cobble" | "mud" | "rampart" | "floor" | "wall" | "cave" | "rock" | "gate" | "fog";
+export type Biome = "plains" | "forest" | "hills" | "water" | "dock" | "cobble" | "mud" | "rampart" | "floor" | "wall" | "cave" | "rock" | "gate" | "fog" | "sand";
 
 export const MOVE_COST: Record<Biome, number> = {
   plains: 1,
@@ -39,15 +39,26 @@ export const MOVE_COST: Record<Biome, number> = {
   floor: 1,
   wall: Infinity,
   cave: 1,
+  sand: 1,
   rock: Infinity,
   gate: Infinity,
   fog: Infinity,
 };
 
+/**
+ * The climate a stretch of the world lies in (the atlas lays them out: atlas.ts). The same kinds of ground are
+ * found in each (open ground, woods, hills, shore, water), but look nothing alike: the greenwood's grass is the
+ * frost's snowfield, the dunes' sand, the mire's moss and the ashlands' cinders.
+ */
+export type Clime = "greenwood" | "frost" | "dunes" | "mire" | "ash";
+export const CLIMES: Clime[] = ["greenwood", "frost", "dunes", "mire", "ash"];
+
 export interface Tile {
   q: number;
   r: number;
   biome: Biome;
+  /** The climate it lies in, where that is not the greenwood: it changes how its ground is painted and what grows on it, not what it is. */
+  clime?: Clime;
   /** Visual height of the hex prism, 0..1. */
   h: number;
   /** A building stands on this hex (part of the ground a Harbor building takes up): it cannot be walked through. */
@@ -80,7 +91,7 @@ export function tileCost(t: Tile): number {
  * hut, the notice board, the market stall and the pub's contract dealer. `door` is the way out of a hut's room.
  * `gate` is a locked door in the Haunted Caverns, standing on a `gate` tile.
  */
-export type PoiKind = "cave" | "landing" | "hut" | "lair" | "shrine" | "cache" | "camp" | "pier" | "plot" | "board" | "shop" | "ring" | "dice" | "door" | "works" | "pub" | "counter" | "shoals" | "crew" | "tide" | "trader" | "rocks" | "wreck" | "lot" | "site" | "ship" | "pickup" | "fishing" | "felling" | "quarry" | "apothecary" | "smithy" | "galley" | "lighthouse" | "gate" | "dealer" | "crate" | "glowcap";
+export type PoiKind = "cave" | "landing" | "hut" | "lair" | "shrine" | "cache" | "camp" | "pier" | "plot" | "board" | "shop" | "ring" | "dice" | "door" | "works" | "pub" | "counter" | "shoals" | "crew" | "tide" | "trader" | "rocks" | "wreck" | "lot" | "site" | "ship" | "pickup" | "fishing" | "felling" | "quarry" | "apothecary" | "smithy" | "galley" | "lighthouse" | "gate" | "dealer" | "crate" | "glowcap" | "bench" | "townchest";
 
 export interface Poi {
   id: string;
@@ -249,7 +260,7 @@ function pickBiome(rng: Rng): Biome {
   return "plains";
 }
 
-export const BASE_HEIGHT: Record<Biome, number> = { water: 0.05, plains: 0.3, forest: 0.4, hills: 0.75, dock: 0.1, cobble: 0.26, mud: 0.2, rampart: 0.7, floor: 0.1, wall: 0.9, cave: 0.18, rock: 1.4, gate: 0.18, fog: 0.3 };
+export const BASE_HEIGHT: Record<Biome, number> = { sand: 0.22, water: 0.05, plains: 0.3, forest: 0.4, hills: 0.75, dock: 0.1, cobble: 0.26, mud: 0.2, rampart: 0.7, floor: 0.1, wall: 0.9, cave: 0.18, rock: 1.4, gate: 0.18, fog: 0.3 };
 
 /** Offset-space position of a hex, used for the island outline. */
 function flatPos(pos: HexPos): { x: number; y: number } {

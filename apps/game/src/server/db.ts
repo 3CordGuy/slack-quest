@@ -73,6 +73,8 @@ import {
   type Slot,
   type WorldState,
   HARBOR_XP,
+  cleanStone,
+  stoneItem,
 } from "@gantt-quest/world";
 import { LOOKS } from "../client/render/looks";
 import { prepareXp, xpOutcome, type XpResult } from "./harbor-xp";
@@ -865,7 +867,7 @@ export async function applyGrant(
 export async function applyZoneGrant(
   db: D1Database,
   playerId: string,
-  grant: { xp: number; resources: Resources; gold?: number; item?: ItemDef | null; blueprint?: string; furnishing?: FurnishingGrant; items?: Partial<Record<string, number>> },
+  grant: { xp: number; resources: Resources; gold?: number; item?: ItemDef | null; blueprint?: string; furnishing?: FurnishingGrant; items?: Partial<Record<string, number>>; stone?: unknown },
 ): Promise<{ levelsGained: number; place: LootPlace | null }> {
   const [c, carry, boxes] = await Promise.all([getCharacter(db, playerId), grant.item ? carryState(db, playerId) : null, grant.item ? containersWithRoom(db, playerId) : []]);
   if (!c) return { levelsGained: 0, place: null };
@@ -883,6 +885,9 @@ export async function applyZoneGrant(
     if (!qty || qty <= 0) continue;
     stmts.push(db.prepare("INSERT INTO consumables (player_id, kind, qty) VALUES (?1, ?2, ?3) ON CONFLICT(player_id, kind) DO UPDATE SET qty = qty + ?3").bind(playerId, kind, qty));
   }
+  // A lodestone found in a bounty goes in the pack with the rest: a kind of item of its own (see server/lodestones.ts).
+  const stone = grant.stone === undefined ? null : cleanStone(grant.stone);
+  if (stone) stmts.push(db.prepare("INSERT INTO consumables (player_id, kind, qty) VALUES (?1, ?2, 1) ON CONFLICT(player_id, kind) DO UPDATE SET qty = qty + 1").bind(playerId, stoneItem(stone)));
   stmts.push(
     db
       .prepare("UPDATE characters SET level = ?, xp = ?, str = ?, int_stat = ?, vit = ?, agi = ?, dex = ?, unspent_points = ?, gold = gold + ? WHERE player_id = ?")

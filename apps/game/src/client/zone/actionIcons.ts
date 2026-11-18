@@ -71,6 +71,9 @@ export const COMMON_ICON: Record<CommonAction, ActionIcon> = {
   flee: icon("flee", "#ffd98a"),
 };
 
+/** A lodestone's picture, by how much it carries: a plain one is dull, and the vein brightens with each thing more. */
+export const STONE_ICON = (carries: number): ActionIcon => ({ name: "item-lodestone", color: ["#8ea0b5", "#4fa8ff", "#7fd4ff", "#d6f4ff"][Math.min(3, Math.max(0, carries))] });
+
 export const ITEM_ICON: Record<Throwable, ActionIcon> = {
   healing: { name: "item-flask", color: "#e0453a" },
   poison: { name: "item-flask", color: "#84cc16" },

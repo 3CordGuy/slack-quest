@@ -23,7 +23,7 @@ import { abilityArea, checkAbility, checkCommon, checkDrink, checkLight, checkTh
 import { has, heal, removeCondition, tick, type Ctx } from "./engine";
 import { ALERT_RANGE, JOIN_RANGE, freeHexNear, generateZone } from "./gen";
 import { generateDelve } from "./delve";
-import { checkOpen, openChest } from "./loot";
+import { checkOpen, openChest, payBounty } from "./loot";
 import { isCrateId } from "./crates";
 import { FREE_WALK, blast, blockerAt, inFight, pathIn, sameHex, sees, solid, unitAt, unitById, zoneReach } from "./geometry";
 import { FLEE_RANGE, STARTING_ITEMS, THROWABLES, THROWABLE_KINDS, cleanItems, commonCost, enemyHp, enemyMove, tacticOf } from "./kit";
@@ -33,6 +33,7 @@ import { checkPickup, checkStow, clearSurfaces, lightTorch, pickUpTorch, placeSu
 import { exploreRound, passTime } from "./clock";
 import { checkUnlock, dropKeys, heardBy, workDoor } from "./doors";
 import { checkForage, forage } from "./forage";
+import { modsOf } from "./mods";
 import type { Budget, DevOp, Encounter, Throwable, Unit, ZoneAction, ZoneEffect, ZoneEvent, ZoneHero, ZoneOptions, ZoneState, ZoneStep, ZoneView } from "./types";
 
 /** Rounds a surface painted from the dev toolbox lasts. */
@@ -41,7 +42,7 @@ const PAINT_ROUNDS = 6;
 // ---------- making a zone ----------
 
 function enemyUnit(state: ZoneState, kind: string, pos: HexPos, group: string): Unit {
-  const hp = enemyHp(kind, state.options.level, state.options.threat);
+  const hp = Math.round(enemyHp(kind, state.options.level, state.options.threat) * modsOf(state.options).hp);
   return {
     id: `e${++state.seq}`,
     side: "enemy",
@@ -78,7 +79,7 @@ export function ensureMouth(state: ZoneState): ZoneState {
 
 export function createZone(code: string, seed: string, options: ZoneOptions): ZoneState {
   const plan = options.delve ? generateDelve(seed, options) : generateZone(seed, options);
-  const state: ZoneState = { v: 1, code, seed, rng: seedFromString(`zone-run|${seed}`), options, map: plan.map, start: plan.start, units: [], groups: {}, surfaces: {}, encounter: null, seq: 0 };
+  const state: ZoneState = { v: 1, code, seed, rng: seedFromString(`zone-run|${seed}`), options, map: plan.map, start: plan.start, units: [], groups: {}, surfaces: { ...(plan.surfaces ?? {}) }, encounter: null, seq: 0 };
   if (plan.keys && plan.keys.length > 0) state.keyHolders = [...plan.keys];
   for (const group of plan.groups) {
     const id = group.id ?? `g${++state.seq}`;
@@ -316,7 +317,7 @@ function beginTurn(ctx: Ctx, enc: Encounter, unit: Unit): boolean {
     ctx.events.push({ t: "skip", id: unit.id, kind: "stunned" });
     return false;
   }
-  const base = unit.side === "hero" && unit.stats ? heroMove(unit.stats) : enemyMove(unit.kind);
+  const base = unit.side === "hero" && unit.stats ? heroMove(unit.stats) : enemyMove(unit.kind, modsOf(ctx.state.options).move);
   let move = base;
   if (has(unit, "slowed")) move = Math.floor(move / 2);
   if (has(unit, "hasted")) move *= 2;
@@ -375,7 +376,9 @@ function settle(ctx: Ctx): boolean {
   }
   if (won) {
     // Every hero who fought takes the whole XP and their own roll of what the fallen left. A stand-in takes nothing.
-    const xp = foes.reduce((sum, f) => sum + (ENEMIES[f.kind]?.xp ?? 0), 0);
+    // On a map the atlas made, the fallen are worth more the higher their level, as they took more killing.
+    const worth = (f: Unit) => (ENEMIES[f.kind]?.xp ?? 0) * (state.options.tier ? 1 + 0.15 * Math.max(0, f.level - 1) : 1);
+    const xp = Math.round(foes.reduce((sum, f) => sum + worth(f), 0));
     for (const h of heroes) {
       if (h.controller) continue;
       const resources = battleDrops(ctx.rng, foes.map((f) => f.kind));
@@ -415,7 +418,10 @@ function settle(ctx: Ctx): boolean {
     for (const h of heroes) h.pos = freeHexNear(state.map, state.start, (p) => !!unitAt(state, p) || blockerAt(state, p), (p) => tileAt(state.map, p)) ?? state.start;
   }
   sweep(state);
-  if (won && !state.units.some((u) => u.side === "enemy")) ctx.events.push({ t: "cleared" });
+  if (won && !state.units.some((u) => u.side === "enemy")) {
+    ctx.events.push({ t: "cleared" });
+    payBounty(ctx);
+  }
   return true;
 }
 
