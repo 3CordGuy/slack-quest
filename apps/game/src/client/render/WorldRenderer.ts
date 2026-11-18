@@ -685,7 +685,7 @@ interface Want {
   pulse?: boolean;
   hp?: number;
   down?: boolean;
-  /** Seen going down, it falls limp (a ragdoll) rather than being laid out. */
+  /** Seen going down (a hero or an enemy), it falls limp (a ragdoll) rather than being laid out. */
   falls?: boolean;
   /** Knocked flat but not out: lying, in full colour. */
   prone?: boolean;
@@ -5648,7 +5648,7 @@ export class WorldRenderer {
       // A plate shows a first name only: full names run long over a crowd.
       const full = h.label ?? (plate ? h.name : undefined);
       const label = plate && full ? firstName(full) : full;
-      want.set(h.id, { kind: h.classId, outfit: h.outfit, pos, size: 1.5, label, plate: label ? plate : undefined, stack: i, ring: colorOf(h.id), through: colorOf(h.id), pulse: state.turn?.heroId === h.id || !!h.active, asleep: h.asleep, rod: h.rod, boat: h.boat, down: h.down, prone: h.prone, effects: h.effects, seat: seat?.top, unseen: h.unseen });
+      want.set(h.id, { kind: h.classId, outfit: h.outfit, pos, size: 1.5, label, plate: label ? plate : undefined, stack: i, ring: colorOf(h.id), through: colorOf(h.id), pulse: state.turn?.heroId === h.id || !!h.active, asleep: h.asleep, rod: h.rod, boat: h.boat, down: h.down, falls: true, prone: h.prone, effects: h.effects, seat: seat?.top, unseen: h.unseen });
     }
     for (const npc of state.story?.npcs ?? []) {
       const poi = state.map.pois.find((p) => p.id === npc.poi);
