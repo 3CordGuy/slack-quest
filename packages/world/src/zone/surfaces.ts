@@ -255,7 +255,24 @@ export function lightTorch(ctx: Ctx, unit: Unit, hand?: "main"): void {
   ctx.events.push({ t: "lit", id: unit.id });
 }
 
-/** The torch in a hand is gone (burnt out, or thrown): a weapon put away for it is taken up again. */
+/** Why `unit` cannot put away the torch in its hand, or null if it can. */
+export function checkStow(unit: Unit): string | null {
+  if (unit.side !== "hero") return "Only a hero carries a torch.";
+  if (unit.down) return "Not while you are down.";
+  return (unit.torch ?? 0) > 0 ? null : "You are not holding a lit torch.";
+}
+
+/**
+ * Put out the torch in a hand and stow it in the pack (as good as new, as one picked up with a hand full is):
+ * a weapon put away for it, or a shield set aside, is taken up again.
+ */
+export function stowTorch(ctx: Ctx, unit: Unit): void {
+  letGoTorch(unit);
+  unit.items.torch = (unit.items.torch ?? 0) + 1;
+  ctx.events.push({ t: "torch_stowed", id: unit.id });
+}
+
+/** The torch in a hand is gone (burnt out, thrown, or put away): a weapon put away for it is taken up again. */
 export function letGoTorch(unit: Unit): void {
   delete unit.torch;
   if (unit.torchHand === "main") unit.abilities = unit.stowed ?? unit.abilities;

@@ -94,6 +94,7 @@ export function zoneActionFrom(raw: unknown, by: string, dev: boolean): ZoneActi
   if (a.type === "unlock") return text(a.poi) ? { type: "unlock", by, unit: a.unit, poi: a.poi } : null;
   if (a.type === "forage") return text(a.poi) ? { type: "forage", by, unit: a.unit, poi: a.poi } : null;
   if (a.type === "light") return { type: "light", by, unit: a.unit, ...(a.hand === "main" ? { hand: "main" as const } : {}) };
+  if (a.type === "stow") return { type: "stow", by, unit: a.unit };
   return { type: "end_turn", by, unit: a.unit };
 }
 
@@ -212,8 +213,8 @@ export class ZoneRoom extends DurableObject<Env> {
       if (n !== undefined) ws.send(JSON.stringify({ type: "error", message: "That could not be done.", ack: n }));
       return;
     }
-    // Throwing, drinking, lighting a torch or picking one up as your own hero draws on (or adds to) your own pack. (A stand-in has no pack: it carries the kit it was given.)
-    const pack = (action.type === "throw" || action.type === "drink" || action.type === "light" || action.type === "pickup") && action.unit === playerId ? playerId : undefined;
+    // Throwing, drinking, lighting a torch, picking one up or putting one away as your own hero draws on (or adds to) your own pack. (A stand-in has no pack: it carries the kit it was given.)
+    const pack = (action.type === "throw" || action.type === "drink" || action.type === "light" || action.type === "pickup" || action.type === "stow") && action.unit === playerId ? playerId : undefined;
     const error = await this.serial(async () => {
       await this.load();
       return this.apply(action, pack, { ws, n });

@@ -421,6 +421,23 @@ export async function storeItem(db: D1Database, playerId: string, itemId: number
   return res.meta.changes > 0 ? null : "That item or your chests changed just now. Try again.";
 }
 
+/** A hero name as typed, tidied (runs of spaces made one), or null when it is not 2 to 20 characters. */
+export function cleanHeroName(raw: unknown): string | null {
+  const name = String(raw ?? "").replace(/\s+/g, " ").trim();
+  return name.length >= 2 && name.length <= 20 ? name : null;
+}
+
+/**
+ * Rename a confirmed hero. Refused (with the reason) when another player's hero already has the name, any case;
+ * their own hero may change only its capitals.
+ */
+export async function renameCharacter(db: D1Database, playerId: string, name: string): Promise<string | null> {
+  const taken = await db.prepare("SELECT 1 FROM characters WHERE name = ?1 COLLATE NOCASE AND player_id != ?2 LIMIT 1").bind(name, playerId).first();
+  if (taken) return "Another hero already goes by that name.";
+  const res = await db.prepare("UPDATE characters SET name = ? WHERE player_id = ? AND status = 'active'").bind(name, playerId).run();
+  return res.meta.changes > 0 ? null : "No hero to rename.";
+}
+
 /** Create or overwrite the player's draft character with freshly rolled stats. */
 export async function saveDraft(db: D1Database, playerId: string, name: string, classId: string, stats: Stats): Promise<void> {
   await db

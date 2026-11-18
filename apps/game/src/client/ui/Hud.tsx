@@ -125,10 +125,11 @@ interface Props {
   onSlotMenu?(index: number): void;
   /**
    * On a map, either hand can hold a lit torch (in the main hand it is swung as a weapon): rounds of light left on
-   * the one held (null with none) and which hand it is in, how many are carried, and `light` to light one into a
-   * hand (absent when it cannot be done now; `why` says why).
+   * the one held (null with none) and which hand it is in, how many are carried, `light` to light one into a
+   * hand, and `stow` to put the one held out and back in the pack (each absent when it cannot be done now; `why`
+   * says why).
    */
-  torch?: { rounds: number | null; hand: "main" | "off"; carried: number; light?(hand: "main" | "off"): void; why?: string };
+  torch?: { rounds: number | null; hand: "main" | "off"; carried: number; light?(hand: "main" | "off"): void; stow?(): void; why?: string };
   /** The turn: seconds left on it (null with no clock), and ending it when it is yours. */
   turn?: { seconds: number | null; onEnd?(): void; waitingFor?: string };
   /** Resting, where it can be done. */
@@ -242,18 +243,31 @@ export function HudBar({ me, place, children, hp, meter, pips = [], chips, quick
   };
   const shown = slots ?? layout.map(reminder);
 
-  /** A hand's slot: what it holds, with its card; on a map, a lit torch there, or a click (or the bar's torch dropped on it) to light one into it. */
+  /**
+   * A hand's slot: what it holds, with its card. On a map, a lit torch there (a click puts it away, and what was
+   * in the hand is taken up again), or a click (or the bar's torch dropped on it) to light one into it.
+   */
   const handSlot = (hand: "main" | "off") => {
     const at = RACK.hands[hand === "main" ? 0 : 1];
     const worn = hand === "main" ? weapon : offhand;
     const slot = hand === "main" ? "main_hand" : "off_hand";
     if (torch && torch.rounds !== null && torch.hand === hand) {
       const line = hand === "main" ? `${torch.rounds} rounds of light left. Swung as a weapon: it may set whoever it hits Burning. Your weapon is put away while you hold it.` : `${torch.rounds} rounds of light left.${offhand ? " Your shield is set aside while you hold it." : ""}`;
+      const back = worn ? `take up your ${worn.name} again` : "free the hand";
+      const away = torch.stow ? `Click to put it out, stow it in your pack and ${back}. A Bonus action in a fight.` : `${torch.why ?? "You cannot put it away now."} Putting it away is a Bonus action in a fight.`;
       return (
-        <span key={slot} className="hud-slot hand lit" style={well(at)} {...hover(at + 7, <Tip name="Lit torch" line={line} more="It burns down only while a fight goes on. Throw it from the bar to leave it burning on the ground." />)}>
+        <button
+          key={slot}
+          className={`hud-slot hand lit ${torch.stow ? "" : "spent"}`}
+          style={well(at)}
+          aria-label={`Put away the lit torch in your ${hand} hand`}
+          aria-disabled={!torch.stow}
+          onClick={() => torch.stow?.()}
+          {...hover(at + 7, <Tip name="Lit torch" line={line} more={`${away} It burns down only while a fight goes on. Throw it from the bar to leave it burning on the ground.`} />)}
+        >
           <Icon name={ITEM_ICON.torch.name} color={ITEM_ICON.torch.color} size={34} />
           <span className="hud-count">{torch.rounds}</span>
-        </span>
+        </button>
       );
     }
     if (torch && torch.rounds === null && torch.carried > 0) {

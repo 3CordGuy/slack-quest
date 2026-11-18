@@ -5764,6 +5764,10 @@ const RAG_STILL = 0.004;
 const RAG_PUSH = 40;
 /** No piece of it moves faster than this (units a second), whatever the pushing apart of pieces caught in each other asks. */
 const RAG_FASTEST = 90;
+/** Getting up off the ground, in seconds: the arms and legs are drawn in first, and the body rises after them. */
+const RISE_LIMBS = 0.5;
+const RISE_BODY_FROM = 0.15;
+const RISE_BODY = 0.75;
 
 interface RagPiece {
   part: Part;
@@ -6083,7 +6087,7 @@ export interface Figure {
   /**
    * Go limp and fall where it stands (a ragdoll), knocked along `push` (in the world, along the ground: away from
    * the blow) or, without one, any way. It lies as it fell for as long as it is posed lying; stood up again, it
-   * takes its usual poses.
+   * gets up from how it lay (as from any lying down) and takes its usual poses.
    */
   fall(push?: THREE.Vector3): void;
   /** Greyed, for someone down in a fight. */
@@ -6170,6 +6174,15 @@ export function makeFigure(kind: string, look: Look, outfit?: Outfit, opts: Figu
   let actions = 0;
   /** Fallen dead: the fall under way (or come to rest), which poses it in place of the rig while it lies. */
   let fallen: { doll: Ragdoll; moving: boolean } | null = null;
+  /** Lying the frame before, to see it get up. */
+  let wasLying = false;
+  /**
+   * Getting up: every joint (and the top: turn and place) as it lay, eased over to the pose the rig gives each frame,
+   * from `at` on the render clock.
+   */
+  let rising: { at: number; turns: [THREE.Object3D, THREE.Quaternion][]; place: THREE.Vector3 } | null = null;
+  const risers: THREE.Object3D[] = [top, ...allParts.map((part) => part.joint)];
+  const ease = (k: number) => (k <= 0 ? 0 : k >= 1 ? 1 : k * k * (3 - 2 * k));
   const update = (p: FigurePose) => {
     const first = last < 0;
     const dt = last < 0 ? 1 : Math.min(0.1, Math.max(0, p.time - last));
@@ -6190,6 +6203,10 @@ export function makeFigure(kind: string, look: Look, outfit?: Outfit, opts: Figu
       for (const hand of rig.hands) for (const held of hand.children) held.visible = !rowing;
       for (const thing of rig.carried ?? []) thing.visible = !rowing;
     }
+    // Up off the ground (from a fall, or from lying down): it gets up from how it lay, not all at once.
+    if (wasLying && !p.lying && !first) rising = { at: p.time, turns: risers.map((o) => [o, o.quaternion.clone()]), place: top.position.clone() };
+    if (p.lying) rising = null;
+    wasLying = p.lying;
     if (fallen && !p.lying) {
       fallen.doll.restore();
       fallen = null;
@@ -6197,6 +6214,14 @@ export function makeFigure(kind: string, look: Look, outfit?: Outfit, opts: Figu
     if (fallen) {
       if (fallen.moving) fallen.moving = fallen.doll.step(first ? 0 : dt);
     } else rig.animate(anim);
+    if (rising) {
+      const since = p.time - rising.at;
+      const limbs = ease(since / RISE_LIMBS);
+      const rise = ease((since - RISE_BODY_FROM) / RISE_BODY);
+      for (const [o, from] of rising.turns) o.quaternion.slerpQuaternions(from, _rq.copy(o.quaternion), o === top ? rise : limbs);
+      top.position.lerpVectors(rising.place, _rv.copy(top.position), rise);
+      if (since >= RISE_BODY_FROM + RISE_BODY) rising = null;
+    }
     if (swinging.length > 0) swingBraids(swinging, anim);
     if (loose.length > 0) swingDangles(loose, first ? 0 : dt, top, body);
   };

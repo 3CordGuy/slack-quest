@@ -47,6 +47,8 @@ import {
   refreshHarbor,
   refreshHut,
   saveDraft,
+  cleanHeroName,
+  renameCharacter,
   sellFurniture,
   sellItem,
   sellMaterial,
@@ -349,8 +351,8 @@ app.post("/api/character/name", async (c) => {
 app.post("/api/character/roll", async (c) => {
   const player = c.get("player");
   const body = await c.req.json<{ classId?: string; name?: string }>().catch(() => ({}) as { classId?: string; name?: string });
-  const name = String(body.name ?? "").replace(/\s+/g, " ").trim();
-  if (name.length < 2 || name.length > 20) return c.json({ error: "Name must be 2 to 20 characters." }, 400);
+  const name = cleanHeroName(body.name);
+  if (!name) return c.json({ error: "Name must be 2 to 20 characters." }, 400);
   if (!HERO_CLASSES.some((k) => k.id === body.classId)) return c.json({ error: "Unknown class." }, 400);
   const existing = await getCharacter(c.env.DB, player.id);
   if (existing?.status === "active") return c.json({ error: "You already have a character." }, 409);
@@ -371,6 +373,19 @@ app.post("/api/character/reroll", async (c) => {
   // Their hut and roster entry disappear until the new character is confirmed.
   c.executionCtx.waitUntil(crewFor(c.env.DB, player.id).then((crew) => refreshHarbor(c.env, crew?.id ?? null)));
   return c.json({ ok: true });
+});
+
+// A new name for a confirmed hero, from their sheet. The client then has the rooms it is in re-read the hero (refresh).
+app.post("/api/character/rename", async (c) => {
+  const body = await c.req.json<{ name?: unknown }>().catch(() => ({}) as { name?: unknown });
+  const name = cleanHeroName(body.name);
+  if (!name) return c.json({ error: "Name must be 2 to 20 characters." }, 400);
+  const player = c.get("player");
+  const problem = await renameCharacter(c.env.DB, player.id, name);
+  if (problem) return c.json({ error: problem }, 409);
+  // The crew's cards (the Harbor's notice board) show the new name to everyone there.
+  c.executionCtx.waitUntil(crewFor(c.env.DB, player.id).then((crew) => refreshHarbor(c.env, crew?.id ?? null)));
+  return c.json({ name });
 });
 
 // How the hero looks: body, face and colouring, from fixed presets (appearance.ts). Draft or active.

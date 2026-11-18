@@ -323,6 +323,8 @@ const PAN_KEYS: Record<string, [number, number]> = {
 const LOOK_SEND_S = 0.15;
 /** How long a figure lying down is, as a share of its size: its tag hangs over the middle of it. */
 const LYING = 0.45;
+/** How long a shove that knocks someone off their feet keeps them down, at least, before they get up (longer if Prone). */
+const FLOORED_S = 1.4;
 /** The turn, about y, from `from` to `to` by the shorter way round. */
 const turnBy = (from: number, to: number) => Math.atan2(Math.sin(to - from), Math.cos(to - from));
 /** The camera's usual tilt (about 47° above the horizon) and how far it may be tipped. */
@@ -561,6 +563,8 @@ interface Unit {
    * "down" beat, or failing one, when the render clock passes this.
    */
   dying?: number;
+  /** Told it fell (see fell) before the picture had it down, at this time on the render clock, and to whom. */
+  felled?: { at: number; by?: string };
   /**
    * The waypoints in `path` that are jumped to, not walked: the Jump action (see leapUnit: true, and heard as
    * one), and any step of a walk that goes up or down a level of the ground (see walkUnit: false).
@@ -1559,10 +1563,11 @@ export class WorldRenderer {
   knock(id: string, to: HexPos, fall = true) {
     const unit = this.units.get(id);
     if (!unit) return;
-    unit.path = [this.standAt(to)];
+    const dest = this.standAt(to);
+    unit.path = [dest];
     unit.rush = 3.2;
     unit.bob = 0.22;
-    if (fall) unit.floored = this.clock + 1;
+    if (fall) this.knockDown(unit, dest.clone().sub(unit.root.position).setY(0), FLOORED_S);
   }
 
   /** A unit gone from where it stands and on another hex at once (a blink): whatever it was walking is dropped. */
@@ -1579,10 +1584,33 @@ export class WorldRenderer {
     unit.goal.copy(at);
   }
 
-  /** A unit knocked off its feet where it stands. */
-  floor(id: string, seconds = 1) {
+  /** A unit knocked off its feet where it stands, by `by` if anyone (it falls away from them). */
+  floor(id: string, seconds = FLOORED_S, by?: string) {
     const unit = this.units.get(id);
-    if (unit) unit.floored = this.clock + seconds;
+    if (!unit) return;
+    const from = by ? this.units.get(by) : undefined;
+    this.knockDown(unit, from ? unit.root.position.clone().sub(from.root.position).setY(0) : undefined, seconds);
+  }
+
+  /**
+   * Off their feet for `seconds` (longer while Prone, or down): they fall limp along `away` (see Figure.fall),
+   * and get up again once nothing keeps them lying.
+   */
+  private knockDown(unit: Unit, away: THREE.Vector3 | undefined, seconds: number) {
+    unit.floored = Math.max(unit.floored ?? 0, this.clock + seconds);
+    if (unit.lying) return;
+    unit.figure.fall(away && away.lengthSq() > 1e-6 ? away : undefined);
+  }
+
+  /**
+   * Shown going down now (a zone fight's "down"): it falls at once, away from `by`, rather than waiting on a beat.
+   * Told before the picture has it down, it falls as soon as the picture does.
+   */
+  fell(id: string, by?: string) {
+    const unit = this.units.get(id);
+    if (!unit) return;
+    if (unit.dying !== undefined) return this.topple(id, by);
+    if (!unit.down) unit.felled = { at: this.clock, by };
   }
 
   /** The top of a unit's head in the world, wherever it has got to: for something drawn over it. Null if it is not on the map. */
@@ -5730,6 +5758,12 @@ export class WorldRenderer {
       // Seen going down: it stays on its feet for the blow to land, then falls (see topple).
       if (w.down && !unit.down && seen && w.falls) unit.dying = this.clock + 2;
       if (!w.down) unit.dying = undefined;
+      // Told it fell just before this: it falls now. (Told long ago, the word is stale.)
+      if (unit.felled && this.clock - unit.felled.at > 1) unit.felled = undefined;
+      if (unit.felled && unit.dying !== undefined) {
+        this.topple(id, unit.felled.by);
+        unit.felled = undefined;
+      }
       unit.down = !!w.down;
       const fell = !!w.down && unit.dying === undefined;
       // Down or asleep: on their back, low to the ground.
@@ -6601,8 +6635,10 @@ export class WorldRenderer {
       const atSeat = !!unit.seated && unit.path.length === 0 && !unit.lying && Math.hypot(unit.goal.x - p.x, unit.goal.z - p.z) < 0.08;
       if (atSeat || unit.sit) unit.sit = atSeat ? Math.min(1, (unit.sit ?? 0) + dt / SIT_S) : Math.max(0, (unit.sit ?? 0) - dt / STAND_S);
       unit.lean *= Math.exp(-dt * 8);
+      /** On the ground: lying down, or knocked off their feet for now. */
+      const flat = unit.lying || this.clock < (unit.floored ?? 0);
       // Your own hero, standing idle, looks toward the pointer; with the bag open they turn to face you.
-      if (id === this.state?.you && unit.path.length === 0 && !unit.asleep && !unit.lying && !this.minigame && !this.posed.has(id)) {
+      if (id === this.state?.you && unit.path.length === 0 && !unit.asleep && !flat && !this.minigame && !this.posed.has(id)) {
         if (this.faceFront) unit.turnGoal = this.yaw;
         else if (this.gaze && this.pointer.inside) {
           const dx = this.gaze.x - p.x;
@@ -6624,16 +6660,17 @@ export class WorldRenderer {
       } else if (this.looks.has(id)) {
         // Someone else's hero looks where their player's pointer is, while they stand idle. Walking off, they face the way they go.
         if (unit.path.length > 0) this.looks.delete(id);
-        else if (!unit.asleep && !unit.lying && !this.posed.has(id)) unit.turnGoal = this.looks.get(id)!;
+        else if (!unit.asleep && !flat && !this.posed.has(id)) unit.turnGoal = this.looks.get(id)!;
       }
       // A sleeper lies with their head toward the left of the view, as the bedrolls are laid.
       if (unit.asleep) unit.turnGoal = this.yaw + Math.PI / 2;
-      unit.turn += turnBy(unit.turn, unit.turnGoal) * (1 - Math.exp(-dt * 12));
+      // Fallen in a heap, they are not turned about on the ground (a sleeper is still laid along the bedroll).
+      if (!flat || unit.asleep) unit.turn += turnBy(unit.turn, unit.turnGoal) * (1 - Math.exp(-dt * 12));
       unit.root.rotation.y = unit.turn;
       if (unit.dying !== undefined && this.clock >= unit.dying) this.topple(id);
       const rowing = this.rowingPose(unit, p, dt);
       if (rowing === undefined) unit.oarPull = undefined;
-      unit.figure.update({ time: this.clock, stride: unit.stride, walking: unit.path.length > 0 && !unit.rush && !unit.leap, lean: unit.lean, lying: unit.lying || this.clock < (unit.floored ?? 0), rowing, sitting: unit.boatKind === "rowboat" && unit.boat?.visible ? 1 : unit.sit || undefined });
+      unit.figure.update({ time: this.clock, stride: unit.stride, walking: unit.path.length > 0 && !unit.rush && !unit.leap, lean: unit.lean, lying: flat, rowing, sitting: unit.boatKind === "rowboat" && unit.boat?.visible ? 1 : unit.sit || undefined });
       const ground = p.y;
       unit.feet.set(p.x, ground, p.z);
       if (touched) this.touchdown(unit);
