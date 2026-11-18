@@ -9,6 +9,7 @@ import { api, type GatherStatus, type XpResult } from "./api";
 import { DragPanel } from "./DragPanel";
 import { FellingGame } from "./FellingGame";
 import { Fishing } from "./Fishing";
+import { outingPaid } from "./gatherPaid";
 import type { WorldRenderer } from "./render/WorldRenderer";
 import { TimingBar } from "./TimingBar";
 import { Quarry } from "./Quarry";
@@ -59,7 +60,7 @@ function Water({ outing, busy, cast }: { outing: GatherView; busy: boolean; cast
   );
 }
 
-export function GatherPanel({ spot, pier, at, vessel = null, gilded = false, shipBeside = false, onRod, renderer, onClose, onStamina }: {
+export function GatherPanel({ spot, pier, at, vessel = null, gilded = false, shipBeside = false, onRod, renderer, onClose, onStamina, onPaid }: {
   spot: GatherSpot;
   /** Fishing: where the hero is fishing from (a pier, the shore, or afloat), and the hex they are on. */
   pier?: FishSpot;
@@ -77,8 +78,17 @@ export function GatherPanel({ spot, pier, at, vessel = null, gilded = false, shi
   onClose(): void;
   /** Told each time the outings left change, so the plate can follow. */
   onStamina?(s: { left: number; max: number }): void;
+  /** Told when an outing has ended and been paid: the pack, the purse and the XP have changed, and are read again. */
+  onPaid?(): void;
 }) {
-  const [status, setStatus] = useState<GatherStatus | null>(null);
+  const [status, setStatusOnly] = useState<GatherStatus | null>(null);
+  const paidOut = useRef(onPaid);
+  paidOut.current = onPaid;
+  /** Every answer about gathering comes in through here, so none that pays can be shown without the bag hearing of it. */
+  const setStatus = (next: GatherStatus & { paid?: Resources; sitting?: unknown }) => {
+    setStatusOnly(next);
+    if (outingPaid(next)) paidOut.current?.();
+  };
   const [atPier] = useState(pier);
   const [atHex] = useState(at);
   const [shipAtOpen] = useState(shipBeside);
@@ -150,7 +160,7 @@ export function GatherPanel({ spot, pier, at, vessel = null, gilded = false, shi
     : null;
   if (spot === "fishing" && from && renderer.current) {
     if (!status && !error) return null;
-    if (!open || open.sitting) return <Fishing pier={from.spot} at={from.at} vessel={vessel} gilded={gilded} world={renderer.current} shipBeside={shipAtOpen} onRod={onRod} onClose={onClose} onStamina={onStamina} />;
+    if (!open || open.sitting) return <Fishing pier={from.spot} at={from.at} vessel={vessel} gilded={gilded} world={renderer.current} shipBeside={shipAtOpen} onRod={onRod} onClose={onClose} onStamina={onStamina} onPaid={onPaid} />;
   }
   // Felling is played in the Harbor itself, through the hero's eyes: no panel over it.
   if (outing?.felling && outing.spot === spot) {
