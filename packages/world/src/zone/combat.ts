@@ -8,15 +8,16 @@
 import { hexDistance, hexNeighbors, hexSegment, posKey, type HexPos } from "@gantt-quest/core";
 import { ABILITIES, ARMOR_DAMAGE_DIVISOR, BARD_AURA, WARLOCK_BLEED_TURNS, type AbilityDef } from "../content";
 import { tileAt, type Poi } from "../map";
-import { DEBUFFS, addCondition, attackContext, attackRoll, damage, defenceOf, giveAway, has, heal, removeCondition, saveBonus, saveRoll, shieldUnit, unseen, type Ctx } from "./engine";
+import { DEBUFFS, addCondition, attackContext, attackRoll, damage, defenceOf, giveAway, has, heal, inWater, removeCondition, saveBonus, saveRoll, shieldUnit, unseen, type Ctx } from "./engine";
 import { cratesOn, crateById, hurtCrate, isCrateId } from "./crates";
 import { adjacent, blast, blockerAt, directionToward, elevOf, inFight, lineFrom, pathIn, sameHex, sees, solid, stepCost, unitAt, unitById, zoneReach } from "./geometry";
-import { COMMON_ACTIONS, ENEMY_BURST, FLEE_RANGE, JUMP_MOVE_COST, POTION_EDGE, SAVE_STAT, SMUGGLED, THROWABLES, TORCH_GROUND_ROUNDS, abilityDice, enemyStrikes, healDice, jumpRange, reactionStrike, tacticOf, throwRange, type EnemyStrike, type Tactic } from "./kit";
+import { COMMON_ACTIONS, CORAL_ARMOR, ENEMY_BURST, FLEE_RANGE, JUMP_MOVE_COST, POTION_EDGE, SAVE_STAT, SMUGGLED, THROWABLES, TORCH_GROUND_ROUNDS, abilityDice, enemyStrikes, healDice, jumpRange, reactionStrike, tacticOf, throwRange, type EnemyStrike, type Tactic } from "./kit";
 import { d20, hitChance, mod, proficiency, rollDice, statOf } from "./rules";
 import { seenByHeroes } from "./light";
 import { HINDERING, chill, clearSurfaces, dropTorch, enterSurface, ignite, letGoTorch, placeSurface } from "./surfaces";
 import type { Budget, CommonAction, Throwable, Unit, ZoneState } from "./types";
-import { enterWeather, makeWeather, rainHexes } from "./weather";
+import { clusterHexes, enterWeather, makeWeather, rainHexes } from "./weather";
+import { summonTurtle } from "./summon";
 
 /** How near a Bard has to be for their tune to help. */
 export const BARD_AURA_RANGE = 3;
@@ -186,6 +187,7 @@ function pocket(ctx: Ctx, unit: Unit, target: Unit): void {
 export function abilityArea(state: ZoneState, unit: Unit, ability: string, at?: HexPos): HexPos[] {
   const tactic = tacticOf(ability);
   if (tactic.weather === "rain") return at ? rainHexes(state, unit.pos, at) : [];
+  if (tactic.splash) return at ? clusterHexes(state, unit.pos, at, tactic.splash.hexes) : [];
   if (tactic.shape === "blast") return at ? blast(state.map, at, tactic.radius ?? 1) : [];
   if (tactic.shape === "burst") return blast(state.map, unit.pos, tactic.radius ?? 1).filter((p) => !sameHex(p, unit.pos));
   if (tactic.shape === "line") return at ? lineFrom(state.map, unit.pos, at, tactic.length ?? 3) : [];
@@ -232,6 +234,11 @@ export function checkAbility(state: ZoneState, unit: Unit, ability: string, aim:
     const target = aim.target ? unitById(state, aim.target) : unit;
     if (!target || target.side !== unit.side) return "Pick an ally.";
     return target.id === unit.id ? null : inReach(target.pos);
+  }
+  if (tactic.summon) {
+    if (!state.encounter || !inFight(state, unit.id)) return "That is for a fight.";
+    if (!aim.at || sameHex(aim.at, unit.pos) || !tileAt(state.map, aim.at)) return "Pick a hex to call it to.";
+    return inReach(aim.at) ?? (standable(state, aim.at) ? null : "There is nowhere for it to stand there.");
   }
   if (tactic.blink) {
     const wrong = blinkWrong(state, unit, aim.at, tactic.blink.range);
@@ -290,6 +297,7 @@ function strike(ctx: Ctx, unit: Unit, def: AbilityDef, tactic: Tactic, target: U
   if (def.perDebuffDamage) amount += def.perDebuffDamage * DEBUFFS.filter((k) => has(target, k)).length;
   if (def.vsEffect && has(target, def.vsEffect.effect)) amount += def.vsEffect.bonus;
   if (tactic.vsWet && has(target, "wet")) amount += tactic.vsWet;
+  if (tactic.wading && inWater(ctx.state, unit)) amount += tactic.wading;
   if (def.bleedPayoff) {
     amount += def.bleedPayoff * (target.conditions.find((c) => c.kind === "bleeding")?.rounds ?? 0);
     removeCondition(target, "bleeding");
@@ -300,9 +308,16 @@ function strike(ctx: Ctx, unit: Unit, def: AbilityDef, tactic: Tactic, target: U
   // A Warlock's critical hits open a wound.
   if (roll.crit && unit.kind === "data_warlock") addCondition(ctx, target, "bleeding", WARLOCK_BLEED_TURNS);
   afflict(ctx, unit, def, target, true);
+  if (melee) thorns(ctx, unit, target);
   if (tactic.ignites) ignite(ctx, target.pos, unit.id);
   if (tactic.surface) placeSurface(ctx, [target.pos], tactic.surface.kind, tactic.surface.rounds, unit.id);
   return true;
+}
+
+/** Coral Armor: whoever lands a blow up close on one wearing it is cut by it. */
+function thorns(ctx: Ctx, attacker: Unit, target: Unit): void {
+  if (attacker.down || !has(target, "coral_armor")) return;
+  damage(ctx, attacker, rollDice(ctx.rng, CORAL_ARMOR.thorns), { actor: target.id, what: "coral_armor" });
 }
 
 /** The crates beside a unit. */
@@ -362,6 +377,18 @@ export function resolveAbility(ctx: Ctx, unit: Unit, ability: string, aim: Aim &
     landed = true;
   } else if (tactic.weather) {
     makeWeather(ctx, tactic.weather, abilityArea(state, unit, ability, aim.at), unit);
+    landed = true;
+  } else if (tactic.splash) {
+    // Healing for the caster's side alone, the fallen got up with it; then the water, which soaks whoever is there.
+    const area = abilityArea(state, unit, ability, aim.at);
+    const keys = new Set(area.map(posKey));
+    const amount = rollDice(ctx.rng, healDice(def)) + Math.max(0, mod(statOf(unit, def.stat))) + Math.floor(unit.level / 2);
+    for (const u of state.units.filter((x) => x.side === unit.side && keys.has(posKey(x.pos)))) heal(ctx, u, amount, { actor: unit.id, what: def.id });
+    placeSurface(ctx, area, "water", tactic.splash.water, unit.id);
+    landed = true;
+  } else if (tactic.summon) {
+    const turtle = summonTurtle(ctx, unit, aim.at!);
+    if (!turtle.down) ctx.onStep?.(turtle, () => {});
     landed = true;
   } else if (tactic.shape === "single") {
     const target = unitById(state, aim.target!)!;
@@ -444,7 +471,10 @@ export function resolveAbility(ctx: Ctx, unit: Unit, ability: string, aim: Aim &
     landed = true;
   } else {
     const target = tactic.shape === "ally" && aim.target ? unitById(state, aim.target)! : unit;
-    if (def.heal) heal(ctx, target, rollDice(ctx.rng, healDice(def)) + Math.max(0, mod(statOf(unit, def.stat))) + Math.floor(unit.level / 2), { actor: unit.id, what: def.id });
+    const soaked = tactic.regen && inWater(state, target) ? tactic.regen.water : 0;
+    if (def.heal) heal(ctx, target, rollDice(ctx.rng, healDice(def)) + Math.max(0, mod(statOf(unit, def.stat))) + Math.floor(unit.level / 2) + soaked, { actor: unit.id, what: def.id });
+    if (tactic.regen) addCondition(ctx, target, "regenerating", tactic.regen.rounds);
+    if (tactic.armor) addCondition(ctx, target, "coral_armor", tactic.armor.rounds);
     if (def.targetEffect) addCondition(ctx, target, def.targetEffect.effect, def.targetEffect.turns);
     // "Takes the very next turn" has no meaning in an initiative order: the ally is Hasted instead.
     if (def.actNext && target.id !== unit.id) addCondition(ctx, target, "hasted", 2);
@@ -501,6 +531,7 @@ export function enemyAct(ctx: Ctx, enemy: Unit, attack: EnemyStrike, target: Uni
     return;
   }
   damage(ctx, target, rollDice(ctx.rng, attack.dice, roll.crit), { actor: enemy.id, what: attack.name, crit: roll.crit });
+  if (attack.range === 1) thorns(ctx, enemy, target);
   leave(target, true);
   if (attack.kit.surface) placeSurface(ctx, [target.pos], attack.kit.surface.kind, attack.kit.surface.rounds, enemy.id);
   if (attack.kit.chills) chill(ctx, target.pos, enemy.id);
@@ -519,6 +550,7 @@ export function checkCommon(state: ZoneState, unit: Unit, what: CommonAction, ai
   if (what === "dash" || what === "disengage") return budget ? null : "That is for a fight.";
   if (what === "flee") {
     if (!budget) return "That is for a fight.";
+    if (unit.summon) return "It was called to this fight, and stays in it.";
     return foesWithin(state, unit, FLEE_RANGE).length > 0 ? `An enemy is too close to get away: get more than ${FLEE_RANGE} hexes from every one in the fight first.` : null;
   }
   if (what === "help") {

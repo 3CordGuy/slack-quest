@@ -26,6 +26,10 @@ export {
   TORCH_ROUND_MS,
   SHIELD_SET_ASIDE,
   SMUGGLED,
+  SEA_TURTLE,
+  AQUEOUS,
+  CORAL_ARMOR,
+  SPLASH,
   cleanItems,
   throwRange,
   jumpRange,
@@ -49,6 +53,7 @@ export { attackContext, defenceOf, has as hasCondition, shieldOf, unseen, type A
 export { abilityArea, carrySpot, checkAbility, checkCommon, checkDrink, checkLight, checkThrow, crateBlow, previewAttack, BARD_AURA_RANGE, type Aim } from "./combat";
 export { SURFACE_INFO, HARMFUL as HARMFUL_SURFACES } from "./surfaces";
 export { WEATHER_INFO } from "./weather";
+export { summonsOf } from "./summon";
 export { isDark, litHexes, inDark, seenByHeroes, lightSources } from "./light";
 export { MAX_CATCHUP_ROUNDS } from "./clock";
 export { CHEST_PAY, checkOpen, unopened } from "./loot";

@@ -53,6 +53,12 @@ export const ABILITY_ICON: Record<string, ActionIcon> = {
   rejuvenate: icon("heal", "#a3e635"),
   overgrowth: icon("thorn", "#facc15"),
   riptide: icon("wave", "#38bdf8"),
+  coral_field: icon("thorn", "#ff7f6e"),
+  aqueous_regeneration: icon("heal", "#5eead4"),
+  coral_armor: icon("shield", "#ff8f7a"),
+  revitalizing_splash: icon("wave", "#7dffd4"),
+  summon_sea_turtle: icon("help", "#4fb286"),
+  turtle_bite: icon("fist", "#4fb286"),
   // Bard
   dissonance: icon("note", "#a78bfa"),
   encore: icon("note", "#7dff9a"),

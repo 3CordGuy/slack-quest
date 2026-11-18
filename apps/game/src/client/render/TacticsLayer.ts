@@ -7,7 +7,7 @@
 import * as THREE from "three";
 import { fireField, gooMaterial, tickGround } from "./groundFx";
 import { posKey, type HexPos } from "@gantt-quest/core";
-import { SURFACE_INFO, WEATHER_INFO, tileAt, type SurfaceKind, type WorldMap } from "@gantt-quest/world";
+import { SURFACE_INFO, WEATHER_INFO, tileAt, type SurfaceKind, type WeatherKind, type WorldMap } from "@gantt-quest/world";
 import { hexToWorld, tileTop, type WorldRenderer } from "./WorldRenderer";
 
 /** A set of hexes to mark: filled faintly, outlined round its edge, or both. */
@@ -48,7 +48,7 @@ export class TacticsLayer {
   /** Weather over the ground (zone/weather.ts): its drops or gusts, each with where it started and its kind. */
   private sky = new THREE.Group();
   private skySig = "";
-  private drift: { points: THREE.Points; base: Float32Array; floor: Float32Array; kind: "rain" | "wind" }[] = [];
+  private drift: { points: THREE.Points; base: Float32Array; floor: Float32Array; kind: WeatherKind }[] = [];
 
   constructor(private renderer: WorldRenderer) {
     this.group.add(this.ground, this.sky, this.overlays, this.path);
@@ -278,9 +278,9 @@ export class TacticsLayer {
 
   /**
    * Draw the weather: a pale wash and an outline over its hexes, and rain falling on them or wind
-   * streaming across them.
+   * streaming across them, or (a Coral Field) branches of coral standing up out of them.
    */
-  setWeather(list: { kind: "rain" | "wind"; hexes: HexPos[] }[]) {
+  setWeather(list: { kind: WeatherKind; hexes: HexPos[] }[]) {
     const sig = list.map((w) => `${w.kind}:${w.hexes.map(posKey).join(",")}`).join("|");
     if (sig === this.skySig) return;
     this.skySig = sig;
@@ -294,6 +294,10 @@ export class TacticsLayer {
       const rim = new THREE.LineSegments(this.outline(w.hexes, 0.06), new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.85 }));
       rim.renderOrder = 2;
       this.sky.add(rim);
+      if (w.kind === "coral") {
+        this.sky.add(this.coral(w.hexes, color));
+        continue;
+      }
       // Motes scattered over each hex: drops that fall, or gusts that run along the wind.
       const per = w.kind === "rain" ? 26 : 14;
       const base = new Float32Array(w.hexes.length * per * 3);
@@ -318,6 +322,36 @@ export class TacticsLayer {
       this.sky.add(points);
       this.drift.push({ points, base, floor, kind: w.kind });
     }
+  }
+
+  /** Branches of coral standing up off each hex, leaning every which way, in a few shades of the colour. */
+  private coral(hexes: HexPos[], color: string): THREE.InstancedMesh {
+    const per = 7;
+    const geometry = new THREE.ConeGeometry(0.06, 1, 5);
+    geometry.translate(0, 0.5, 0);
+    const mesh = new THREE.InstancedMesh(geometry, new THREE.MeshLambertMaterial({ flatShading: true }), hexes.length * per);
+    const m = new THREE.Matrix4();
+    const q = new THREE.Quaternion();
+    const e = new THREE.Euler();
+    const tint = new THREE.Color();
+    const base = new THREE.Color(color);
+    let i = 0;
+    for (const p of hexes) {
+      const { x, z } = hexToWorld(p);
+      const y = this.top(p);
+      for (let k = 0; k < per; k++) {
+        const a = Math.random() * Math.PI * 2;
+        const d = Math.sqrt(Math.random()) * 0.7;
+        const tall = 0.18 + Math.random() * 0.28;
+        q.setFromEuler(e.set((Math.random() - 0.5) * 0.9, Math.random() * Math.PI, (Math.random() - 0.5) * 0.9));
+        m.compose(new THREE.Vector3(x + Math.cos(a) * d, y, z + Math.sin(a) * d), q, new THREE.Vector3(1 + Math.random(), tall, 1 + Math.random()));
+        mesh.setMatrixAt(i, m);
+        mesh.setColorAt(i, tint.copy(base).offsetHSL((Math.random() - 0.5) * 0.06, 0, (Math.random() - 0.5) * 0.2));
+        i++;
+      }
+    }
+    mesh.renderOrder = 2;
+    return mesh;
   }
 
   /** Rain falls and starts again at the top; wind blows its motes along and round again. */

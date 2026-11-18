@@ -2,13 +2,13 @@
 // off, damage dealt, someone healed, an attack or a save rolled. Each one
 // changes the state in the context and adds what happened to its events.
 
-import { hexDistance, type StatKey } from "@gantt-quest/core";
+import { hexDistance, posKey, type StatKey } from "@gantt-quest/core";
 import { tileAt } from "../map";
 import type { Rng } from "../rng";
 import { adjacent, elevOf, inFight } from "./geometry";
-import { AURAS, ENEMY_KIT, SHIELD_SET_ASIDE, enemyDefence, enemySave } from "./kit";
+import { AQUEOUS, AURAS, CORAL_ARMOR, ENEMY_KIT, SHIELD_SET_ASIDE, enemyDefence, enemySave } from "./kit";
 import { inDark } from "./light";
-import { d20, heroDefence, mod, netAdvantage, statOf } from "./rules";
+import { d20, heroDefence, mod, netAdvantage, rollDice, statOf } from "./rules";
 import type { Condition, Roll, Unit, ZoneEffect, ZoneEvent, ZoneState } from "./types";
 
 export interface Ctx {
@@ -68,7 +68,17 @@ export function giveAway(ctx: Ctx, unit: Unit): void {
 export const DEBUFFS: readonly Condition[] = ["bleeding", "burning", "stunned", "slowed", "glitched", "exposed", "poisoned", "prone"];
 
 export const defenceOf = (unit: Unit): number =>
-  unit.side === "hero" && unit.stats ? heroDefence(unit.stats, unit.armor) - ((unit.torch ?? 0) > 0 && unit.torchHand !== "main" && unit.outfit?.off_hand ? SHIELD_SET_ASIDE : 0) : enemyDefence(unit.kind);
+  (unit.side === "hero" && unit.stats ? heroDefence(unit.stats, unit.armor) - ((unit.torch ?? 0) > 0 && unit.torchHand !== "main" && unit.outfit?.off_hand ? SHIELD_SET_ASIDE : 0) : enemyDefence(unit.kind)) +
+  (has(unit, "coral_armor") ? CORAL_ARMOR.defence : 0);
+
+/** Whether a unit stands in water (Aqueous Regeneration heals more there). */
+export const inWater = (state: ZoneState, unit: Unit): boolean => state.surfaces[posKey(unit.pos)]?.kind === "water";
+
+/** Aqueous Regeneration comes again as a unit's turn starts (or a round passes out of a fight): more for one standing in water. */
+export function regrow(ctx: Ctx, unit: Unit): void {
+  if (unit.down || !has(unit, "regenerating") || unit.hp >= unit.maxHp) return;
+  heal(ctx, unit, rollDice(ctx.rng, AQUEOUS.tick) + (inWater(ctx.state, unit) ? AQUEOUS.water : 0), { actor: null, what: "aqueous_regeneration" });
+}
 
 export const saveBonus = (unit: Unit, stat: StatKey): number => (unit.side === "hero" ? mod(statOf(unit, stat)) : enemySave(unit.kind));
 

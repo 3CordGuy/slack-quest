@@ -2858,6 +2858,272 @@ describe("the Rogue's class abilities", () => {
   });
 });
 
+describe("the Druid's class abilities", () => {
+  const ALL = ["coral_field", "aqueous_regeneration", "coral_armor", "revitalizing_splash", "summon_sea_turtle"];
+  /** A Druid (ann) with a crewmate (bo) beside her and another (cy) further off, in a fight with a dummy far down row 6. Ann's turn. */
+  function party() {
+    let state = board();
+    state.aiOff = true;
+    const ann = hero(state, "ann", "backend_druid", at(5, 6));
+    ann.abilities = [...ALL];
+    hero(state, "bo", "qa_paladin", at(4, 6));
+    hero(state, "cy", "devops_mage", at(2, 8));
+    const dummy = enemy(state, "dummy", at(13, 6));
+    state = provoke(state);
+    while (!state.encounter!.acting.includes("ann")) state = must(state, { type: "timeout" });
+    return { state, dummy: dummy.id };
+  }
+  function addFoe(state: ZoneState, pos: HexPos, kind = "dummy"): string {
+    const e = enemy(state, kind, pos);
+    state.encounter!.order.push(e.id);
+    state.encounter!.init[e.id] = -5;
+    return e.id;
+  }
+  function endShared(state: ZoneState, sink: ZoneEvent[] = []): ZoneState {
+    for (const id of [...state.encounter!.acting]) if (!state.encounter!.done.includes(id) && !unit(state, id).down) state = must(state, { type: "end_turn", by: unit(state, id).controller ?? id, unit: id }, sink);
+    return state;
+  }
+  function nextTurn(state: ZoneState, sink: ZoneEvent[] = []): ZoneState {
+    state = endShared(state, sink);
+    while (!state.encounter!.acting.includes("ann") || state.encounter!.done.includes("ann")) state = must(state, { type: "timeout" }, sink);
+    return state;
+  }
+  const has = (state: ZoneState, id: string, kind: string) => unit(state, id).conditions.some((c) => c.kind === kind);
+  const use = (ability: string, aim: { target?: string; at?: HexPos } = {}): ZoneAction => ({ type: "use", by: "ann", unit: "ann", ability, ...aim });
+  const cuts = (events: ZoneEvent[], id: string) => events.filter((e) => e.t === "hit" && e.what === "coral_field" && e.target === id).length;
+  const turtleOf = (state: ZoneState) => state.units.filter((u) => u.summon?.by === "ann");
+
+  it("are all in the Druid's pool", () => {
+    expect(poolFor("backend_druid").map((e) => e.id)).toEqual(ALL);
+  });
+
+  it("Coral Field: 7 hexes for 4 rounds that cut and Slow the enemy under them, and leave your side alone", () => {
+    let { state } = party();
+    const foe = addFoe(state, at(8, 7));
+    unit(state, "bo").pos = at(7, 5);
+    const events: ZoneEvent[] = [];
+    state = must(state, use("coral_field", { at: at(8, 6) }), events);
+    expect(state.weather).toHaveLength(1);
+    expect(state.weather![0]).toMatchObject({ kind: "coral", rounds: 4, side: "hero" });
+    expect(state.weather![0].hexes).toHaveLength(7);
+    expect(cuts(events, foe)).toBe(1);
+    expect(has(state, foe, "slowed")).toBe(true);
+    expect(cuts(events, "bo")).toBe(0);
+    expect(has(state, "bo", "slowed")).toBe(false);
+    expect(state.encounter!.budgets.ann.action).toBe(false);
+    expect(unit(state, "ann").cooldowns.coral_field).toBe(4);
+  });
+
+  it("Coral Field: cuts an enemy again as its turn starts in it, once a turn; your side walks through untouched; gone after 4 rounds", () => {
+    let { state } = party();
+    const foe = addFoe(state, at(8, 7));
+    state = must(state, use("coral_field", { at: at(8, 6) }));
+    const walked: ZoneEvent[] = [];
+    state.encounter!.budgets.ann.move = 99;
+    state = must(state, { type: "move", by: "ann", unit: "ann", to: at(9, 6) }, walked);
+    expect(cuts(walked, "ann")).toBe(0);
+    expect(has(state, "ann", "slowed")).toBe(false);
+    const turn: ZoneEvent[] = [];
+    state = nextTurn(state, turn);
+    expect(cuts(turn, foe)).toBe(1);
+    // Made part-way through a round, it lasts 4 whole rounds after it.
+    for (let round = 2; round <= 5; round++) {
+      expect(state.weather, `round ${round}`).toHaveLength(1);
+      state = nextTurn(state);
+    }
+    expect(state.weather).toHaveLength(0);
+  });
+
+  it("Coral Field: the enemy steers round it if it can", () => {
+    let state = board();
+    hero(state, "ann", "backend_druid", at(5, 6)).abilities = [...ALL];
+    const bandit = enemy(state, "bandit", at(10, 6));
+    state = provoke(state);
+    while (!state.encounter!.acting.includes("ann")) state = must(state, { type: "timeout" });
+    // Coral on the straight way between them; open ground either side.
+    state = must(state, use("coral_field", { at: at(8, 6) }));
+    const events: ZoneEvent[] = [];
+    state = must(state, { type: "end_turn", by: "ann", unit: "ann" }, events);
+    expect(cuts(events, bandit.id)).toBe(0);
+  });
+
+  it("Aqueous Regeneration: a Bonus action that heals now and at the start of each of the ally's next 3 turns, then stops", () => {
+    let { state } = party();
+    unit(state, "bo").hp = 1;
+    const events: ZoneEvent[] = [];
+    state = must(state, use("aqueous_regeneration", { target: "bo" }), events);
+    expect(events.filter((e) => e.t === "heal" && e.target === "bo")).toHaveLength(1);
+    expect(state.encounter!.budgets.ann).toMatchObject({ bonus: false, action: true });
+    const ticks = (evs: ZoneEvent[]) => evs.filter((e) => e.t === "heal" && e.target === "bo" && e.what === "aqueous_regeneration" && e.actor === null).length;
+    for (let turn = 1; turn <= 3; turn++) {
+      unit(state, "bo").hp = 1;
+      const seen: ZoneEvent[] = [];
+      state = nextTurn(state, seen);
+      expect(ticks(seen), `turn ${turn}`).toBe(1);
+    }
+    unit(state, "bo").hp = 1;
+    const after: ZoneEvent[] = [];
+    state = nextTurn(state, after);
+    expect(ticks(after)).toBe(0);
+    expect(has(state, "bo", "regenerating")).toBe(false);
+  });
+
+  it("Aqueous Regeneration: heals 3 more, now and each turn, for one standing in water", () => {
+    const amounts = (wet: boolean) => {
+      let { state } = party();
+      if (wet) state = paint(state, "water", [at(4, 6)]);
+      unit(state, "bo").hp = 1;
+      const events: ZoneEvent[] = [];
+      state = must(state, use("aqueous_regeneration", { target: "bo" }), events);
+      unit(state, "bo").hp = 1;
+      state = nextTurn(state, events);
+      return events.filter((e) => e.t === "heal" && e.target === "bo").map((e) => (e.t === "heal" ? e.amount : 0));
+    };
+    const dry = amounts(false);
+    const wet = amounts(true);
+    expect(dry).toHaveLength(2);
+    expect(wet).toEqual(dry.map((n) => n + 3));
+  });
+
+  it("Coral Armor: +2 Defence on the ally for 3 of their turns, in reach 3", () => {
+    let { state } = party();
+    const before = defenceOf(unit(state, "bo"));
+    state = must(state, use("coral_armor", { target: "bo" }));
+    expect(defenceOf(unit(state, "bo"))).toBe(before + 2);
+    expect(state.encounter!.budgets.ann).toMatchObject({ bonus: false, action: true });
+    // Put on during bo's own (shared) turn: that turn does not count against it.
+    for (let turn = 1; turn <= 3; turn++) state = nextTurn(state);
+    expect(has(state, "bo", "coral_armor")).toBe(true);
+    state = nextTurn(state);
+    expect(has(state, "bo", "coral_armor")).toBe(false);
+    expect(fails(party().state, use("coral_armor", { target: "cy" }))).toMatch(/Out of range/);
+  });
+
+  it("Coral Armor: an enemy that lands a blow up close is cut; one that shoots, or misses, is not", () => {
+    let cut = 0;
+    for (let seed = 1; seed <= 12; seed++) {
+      let { state } = party();
+      state = must(state, use("coral_armor", { target: "bo" }));
+      const bandit = enemy(state, "bandit", at(4, 5));
+      const archer = enemy(state, "archer", at(4, 9));
+      const ctx: Ctx = { state, rng: makeRng(seed), events: [], effects: [] };
+      enemyAct(ctx, bandit, enemyStrikes("bandit", 1)[0], unit(state, "bo"));
+      enemyAct(ctx, archer, enemyStrikes("archer", 1).find((s) => s.range > 1)!, unit(state, "bo"));
+      const landed = (id: string) => ctx.events.some((e) => e.t === "hit" && e.actor === id && e.target === "bo");
+      const thorns = (id: string) => ctx.events.some((e) => e.t === "hit" && e.what === "coral_armor" && e.target === id);
+      expect(thorns(bandit.id)).toBe(landed(bandit.id));
+      expect(thorns(archer.id)).toBe(false);
+      if (landed(bandit.id)) cut++;
+    }
+    expect(cut).toBeGreaterThan(0);
+  });
+
+  it("Revitalizing Splash: a big heal over 4 hexes for your side, the fallen got up, enemies passed over, and water left", () => {
+    let { state } = party();
+    const foe = addFoe(state, at(7, 6));
+    unit(state, "bo").pos = at(7, 5);
+    Object.assign(unit(state, "bo"), { hp: 0, down: true });
+    unit(state, foe).hp = 1;
+    unit(state, "ann").hp = 1;
+    const events: ZoneEvent[] = [];
+    state = must(state, use("revitalizing_splash", { at: at(7, 5) }), events);
+    const area = abilityArea(state, unit(state, "ann"), "revitalizing_splash", at(7, 5));
+    expect(area).toHaveLength(4);
+    for (const p of area) expect(state.surfaces[posKey(p)]?.kind).toBe("water");
+    expect(unit(state, "bo").down).toBe(false);
+    expect(unit(state, "bo").hp).toBeGreaterThan(8);
+    expect(events.some((e) => e.t === "heal" && e.target === foe)).toBe(false);
+    expect(events.some((e) => e.t === "heal" && e.target === "ann")).toBe(false);
+    expect(state.encounter!.budgets.ann.action).toBe(false);
+    expect(unit(state, "ann").cooldowns.revitalizing_splash).toBe(3);
+  });
+
+  it("Summon Sea Turtle: called to a hex in reach, it takes its turn with you, played by you, and bites", () => {
+    let { state } = party();
+    const foe = addFoe(state, at(8, 6));
+    state = must(state, use("summon_sea_turtle", { at: at(7, 6) }));
+    const [turtle] = turtleOf(state);
+    expect(turtle).toMatchObject({ side: "hero", kind: "sea_turtle", controller: "ann", pos: at(7, 6) });
+    expect(turtle.maxHp).toBeGreaterThan(unit(state, "ann").maxHp);
+    expect(defenceOf(turtle)).toBeGreaterThanOrEqual(16);
+    const enc = state.encounter!;
+    expect(enc.order[enc.order.indexOf("ann") + 1]).toBe(turtle.id);
+    expect(enc.acting).toContain(turtle.id);
+    expect(enc.budgets[turtle.id].move).toBe(3);
+    // Ann's player plays it; nobody else does.
+    expect(fails(state, { type: "use", by: "bo", unit: turtle.id, ability: "turtle_bite", target: foe })).toMatch(/not yours/);
+    const events: ZoneEvent[] = [];
+    state = must(state, { type: "use", by: "ann", unit: turtle.id, ability: "turtle_bite", target: foe }, events);
+    expect(events.some((e) => e.t === "roll" && e.roll.id === turtle.id)).toBe(true);
+    // Next round it is in the shared turn again.
+    state = nextTurn(state);
+    expect(state.encounter!.acting).toContain(turtle.id);
+    expect(fails(state, { type: "common", by: "ann", unit: turtle.id, what: "flee" })).toMatch(/stays/);
+  });
+
+  it("Summon Sea Turtle: its Bite does 4 more while it stands in water", () => {
+    const bites = (wet: boolean, seed: number) => {
+      let { state } = party();
+      const foe = addFoe(state, at(8, 6));
+      if (wet) state = paint(state, "water", [at(7, 6)]);
+      state = must(state, use("summon_sea_turtle", { at: at(7, 6) }));
+      const turtle = turtleOf(state)[0];
+      state.rng = seed;
+      unit(state, foe).hp = 999;
+      const events: ZoneEvent[] = [];
+      must(state, { type: "use", by: "ann", unit: turtle.id, ability: "turtle_bite", target: foe }, events);
+      return events.filter((e) => e.t === "hit" && e.actor === turtle.id).map((e) => (e.t === "hit" ? e.amount : 0));
+    };
+    // The same dice either way: a seed whose bite lands.
+    const seed = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10].find((n) => bites(false, n).length === 1)!;
+    const dry = bites(false, seed);
+    expect(bites(true, seed)).toEqual([dry[0] + 4]);
+  });
+
+  it("Summon Sea Turtle: only in a fight, in reach, on open ground; a second sends the first away", () => {
+    let { state } = party();
+    expect(fails(state, use("summon_sea_turtle", { at: at(9, 6) }))).toMatch(/Out of range/);
+    expect(fails(state, use("summon_sea_turtle", { at: at(4, 6) }))).toMatch(/nowhere/);
+    state = must(state, use("summon_sea_turtle", { at: at(7, 6) }));
+    const first = turtleOf(state)[0].id;
+    for (let i = 0; i < 5; i++) state = nextTurn(state);
+    const events: ZoneEvent[] = [];
+    state = must(state, use("summon_sea_turtle", { at: at(6, 7) }), events);
+    expect(turtleOf(state)).toHaveLength(1);
+    expect(turtleOf(state)[0].id).not.toBe(first);
+    expect(state.encounter!.order).not.toContain(first);
+    expect(events.some((e) => e.t === "dismissed" && e.id === first)).toBe(true);
+    // Out of a fight there is nothing to call it to.
+    let calm = board();
+    hero(calm, "ann", "backend_druid", at(5, 6)).abilities = [...ALL];
+    expect(fails(calm, use("summon_sea_turtle", { at: at(6, 6) }))).toMatch(/for a fight/);
+  });
+
+  it("Summon Sea Turtle: gone when it falls, and when the fight is over; it holds no lost fight off", () => {
+    let { state } = party();
+    state = must(state, use("summon_sea_turtle", { at: at(7, 6) }));
+    let turtle = turtleOf(state)[0];
+    // Falls.
+    let fell = structuredClone(state);
+    const ctx: Ctx = { state: fell, rng: makeRng(1), events: [], effects: [] };
+    damage(ctx, turtleOf(fell)[0], 999, { actor: null, what: "test" });
+    fell = must(fell, { type: "end_turn", by: "ann", unit: "ann" });
+    expect(turtleOf(fell)).toHaveLength(0);
+    expect(fell.encounter!.order).not.toContain(turtle.id);
+    // The fight ends.
+    const won = must(state, { type: "dev", by: "ann", dev: { op: "end_fight" } });
+    expect(won.encounter).toBeNull();
+    expect(turtleOf(won)).toHaveLength(0);
+    // Every hero down, the turtle still standing: the fight is lost.
+    turtle = turtleOf(state)[0];
+    for (const id of ["ann", "bo", "cy"]) Object.assign(unit(state, id), { hp: 0, down: true });
+    const lost: ZoneEvent[] = [];
+    state = must(state, { type: "end_turn", by: "ann", unit: turtle.id }, lost);
+    expect(lost.some((e) => e.t === "fight_end" && e.outcome === "defeat")).toBe(true);
+    expect(turtleOf(state)).toHaveLength(0);
+  });
+});
+
 describe("a dev kit", () => {
   function onMap() {
     const state = board();

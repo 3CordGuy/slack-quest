@@ -22,13 +22,13 @@ import { addStats, maxFocusFor, maxHpFor } from "../progression";
 import { makeRng, seedFromString } from "../rng";
 import { enemyTurn } from "./ai";
 import { abilityArea, checkAbility, checkCommon, checkDrink, checkLight, checkThrow, doCommon, drinkItem, resolveAbility, throwItem, walk } from "./combat";
-import { has, heal, removeCondition, tick, unseen, type Ctx } from "./engine";
+import { has, heal, regrow, removeCondition, tick, unseen, type Ctx } from "./engine";
 import { ALERT_RANGE, JOIN_RANGE, freeHexNear, generateZone } from "./gen";
 import { generateDelve } from "./delve";
 import { checkOpen, openChest } from "./loot";
 import { isCrateId } from "./crates";
 import { FREE_WALK, blast, blockerAt, inFight, pathIn, sameHex, sees, solid, unitAt, unitById, zoneReach } from "./geometry";
-import { AURAS, FLEE_RANGE, STARTING_ITEMS, THROWABLES, THROWABLE_KINDS, cleanItems, commonCost, enemyHp, enemyMove, tacticOf } from "./kit";
+import { AURAS, FLEE_RANGE, SEA_TURTLE, STARTING_ITEMS, THROWABLES, THROWABLE_KINDS, cleanItems, commonCost, enemyHp, enemyMove, tacticOf } from "./kit";
 import { d20, heroMove, mod, rollDice, statOf } from "./rules";
 import { hiddenEnemies, sentToClient } from "./light";
 import { tickWeather, weatherAtTurn } from "./weather";
@@ -36,6 +36,7 @@ import { checkPickup, clearSurfaces, lightTorch, pickUpTorch, placeSurface, stan
 import { exploreRound, passTime } from "./clock";
 import { checkUnlock, dropKeys, heardBy, workDoor } from "./doors";
 import { checkForage, forage } from "./forage";
+import { dismiss } from "./summon";
 import type { Budget, DevOp, Encounter, Throwable, Unit, ZoneAction, ZoneEffect, ZoneEvent, ZoneHero, ZoneOptions, ZoneState, ZoneStep, ZoneView } from "./types";
 
 /** Rounds a surface painted from the dev toolbox lasts. */
@@ -323,6 +324,8 @@ function beginTurn(ctx: Ctx, enc: Encounter, unit: Unit): boolean {
       if (u.side === unit.side && !u.down && u.hp < u.maxHp && hexDistance(u.pos, unit.pos) <= AURAS.range) heal(ctx, u, rollDice(ctx.rng, AURAS.heal), { actor: unit.id, what: "healing_aura" });
     }
   }
+  // Aqueous Regeneration comes again.
+  regrow(ctx, unit);
   // A troll's wounds close at the start of each of its turns, unless it is on fire.
   const grows = unit.side === "enemy" ? ENEMIES[unit.kind]?.regen : undefined;
   if (grows && unit.hp < unit.maxHp && !has(unit, grows.unless)) heal(ctx, unit, grows.amount, { actor: unit.id, what: grows.name });
@@ -333,7 +336,7 @@ function beginTurn(ctx: Ctx, enc: Encounter, unit: Unit): boolean {
     ctx.events.push({ t: "skip", id: unit.id, kind: "stunned" });
     return false;
   }
-  const base = unit.side === "hero" && unit.stats ? heroMove(unit.stats) : enemyMove(unit.kind);
+  const base = unit.summon ? SEA_TURTLE.move : unit.side === "hero" && unit.stats ? heroMove(unit.stats) : enemyMove(unit.kind);
   let move = base;
   if (has(unit, "slowed")) move = Math.floor(move / 2);
   if (has(unit, "hasted")) move *= 2;
@@ -370,14 +373,17 @@ function settle(ctx: Ctx): boolean {
   const enc = state.encounter;
   if (!enc) return false;
   const fighters = state.units.filter((u) => enc.order.includes(u.id));
-  const heroes = fighters.filter((u) => u.side === "hero");
+  // A creature called into the fight is no hero: it neither holds a lost fight off nor keeps a fled one going.
+  const heroes = fighters.filter((u) => u.side === "hero" && !u.summon);
   const foes = fighters.filter((u) => u.side === "enemy");
   const won = foes.every((u) => u.down);
   const lost = !won && heroes.length > 0 && heroes.every((u) => u.down);
   const fled = !won && heroes.length === 0;
   if (!won && !lost && !fled) return false;
-  state.encounter = null;
   ctx.events.push({ t: "fight_end", outcome: won ? "victory" : lost ? "defeat" : "fled" });
+  // What was called into it goes with it.
+  for (const u of state.units.filter((x) => x.summon)) dismiss(ctx, u);
+  state.encounter = null;
   for (const h of heroes) {
     if (h.down) {
       h.down = false;
@@ -589,7 +595,7 @@ function dev(ctx: Ctx, by: string, op: DevOp): string | null {
     engage(ctx, [nearest.group!], owner);
   } else if (op.op === "kit") {
     const u = unitById(state, op.unit);
-    if (!u || u.side !== "hero" || (u.id !== by && u.controller !== by)) return "That is not one of your heroes.";
+    if (!u || u.side !== "hero" || u.summon || (u.id !== by && u.controller !== by)) return "That is not one of your heroes.";
     const weapon = WEAPONS[op.weapon];
     if (!weapon || weapon.classId !== op.classId) return "That is not a weapon of that class.";
     const level = Math.max(1, Math.min(KIT_MAX_LEVEL, Math.floor(Number(op.level)) || 1));
@@ -700,7 +706,8 @@ function act(ctx: Ctx, action: ZoneAction): string | null {
     if (cost) return cost;
     if (aim.focus) unit.focus -= 1;
     if (budget && tactic.cooldown) unit.cooldowns[action.ability] = tactic.cooldown + 1;
-    const struck = touched.filter((u) => u.side === "enemy" && !u.down).map((u) => u.group!);
+    // A heal splashed among enemies is a kindness, as a healing potion thrown is: it starts nothing.
+    const struck = tactic.splash ? [] : touched.filter((u) => u.side === "enemy" && !u.down).map((u) => u.group!);
     resolveAbility(ctx, unit, action.ability, aim);
     engage(ctx, struck, unit);
     reachIn(ctx, unit, touched);
@@ -816,6 +823,8 @@ export function stepZone(prev: ZoneState, action: ZoneAction): ZoneStep {
     const waiting = enc.acting.some((id) => !enc.done.includes(id) && !unitById(state, id)?.down);
     if (!waiting) advance(ctx);
   }
+  // A called creature that has fallen is gone.
+  for (const u of state.units.filter((x) => x.summon && x.down)) dismiss(ctx, u);
   // A band beaten that carried a key: it goes on the ring.
   dropKeys(ctx);
   sweep(state);

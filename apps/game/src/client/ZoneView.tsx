@@ -453,7 +453,10 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
         const what = blowName(ev.what);
         // How this blow gets there: thrown or struck all at once (the picture is already playing), flown, or dealt by hand.
         const mine = use && use.id === ev.actor ? use : null;
-        const kind = !ev.actor || ev.actor === ev.target || ev.what.startsWith("throw:") || ev.what === "shove" ? "none" : (mine?.look.kind ?? "melee");
+        // Coral cutting whoever is in it or strikes it is the coral's doing, not a blow by whoever grew it: the victim
+        // flinches, and nobody swings (when the field is first grown, the cast's own look plays as usual).
+        const passive = !mine && (ev.what === "coral_field" || ev.what === "coral_armor");
+        const kind = passive ? "ground" : !ev.actor || ev.actor === ev.target || ev.what.startsWith("throw:") || ev.what === "shove" ? "none" : (mine?.look.kind ?? "melee");
         const color = mine?.look.color ?? "#dfe9ff";
         const to = target ? point(target.pos, 0.8) : null;
         const from = actor ? point(actor.pos, 0.9) : null;
@@ -481,7 +484,8 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
             });
             return;
           }
-          if (kind !== "none") view?.landed(ev.target, what, hit, hit && ev.crit, ev.actor);
+          if (kind === "ground") view?.landed(ev.target, what, hit);
+          else if (kind !== "none") view?.landed(ev.target, what, hit, hit && ev.crit, ev.actor);
           mark();
         });
         say(hit ? `${name(ev.target)} takes ${ev.amount}${ev.crit ? " (critical hit)" : ""}.` : `${name(ev.actor)} misses ${name(ev.target)}.`);
@@ -687,6 +691,14 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
         if (!taken) say("A torch on the ground burns out.");
       } else if (ev.t === "joined") {
         say(`${name(ev.id)} arrives.`);
+      } else if (ev.t === "summoned") {
+        // In the picture from now, as it is at the end of this (it is gone again by then if it fell in it).
+        const called = next.units.find((u) => u.id === ev.id);
+        if (called && !find(ev.id)) draft.units.push(structuredClone(called));
+        say(`${name(ev.by)} calls a ${name(ev.id)}.`);
+      } else if (ev.t === "dismissed") {
+        draft.units = draft.units.filter((u) => u.id !== ev.id);
+        say(`The ${name(ev.id)} is gone.`);
       }
       // What the picture shows once this event has been seen.
       const shown: Picture = structuredClone(draft);
@@ -714,7 +726,7 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
   // The Maps tab (dev toolbox) can change these: it is told who they are and what they have.
   const mineKey = mine.map((u) => `${u.id}:${u.kind}:${u.level}:${u.outfit?.main_hand?.ref}:${u.abilities.join(",")}`).join("|");
   useEffect(() => {
-    setZoneDev({ heroes: mine.map((u) => ({ id: u.id, name: u.name, classId: u.kind, level: u.level, weapon: u.outfit?.main_hand?.ref, abilities: u.torchHand === "main" ? (u.stowed ?? []) : u.abilities })) });
+    setZoneDev({ heroes: mine.filter((u) => !u.summon).map((u) => ({ id: u.id, name: u.name, classId: u.kind, level: u.level, weapon: u.outfit?.main_hand?.ref, abilities: u.torchHand === "main" ? (u.stowed ?? []) : u.abilities })) });
   }, [mineKey]);
   const ready = (u: Unit) => !!enc && enc.acting.includes(u.id) && !enc.done.includes(u.id) && !u.down;
   const act = mine.find((u) => u.id === playAs && (!enc || !enc.order.includes(u.id) || ready(u))) ?? mine.find(ready) ?? mine.find((u) => u.id === state?.you) ?? mine[0];
@@ -848,6 +860,10 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
         const spot = self && first ? carrySpot(z, act, first, hover) : null;
         if (spot) out.push({ hexes: [spot], color: "#7dff9a", fill: 0.3, line: 0.9 });
       }
+    } else if (pick.kind === "ability" && tacticOf(pick.id).summon) {
+      // A creature called: any open hex in reach and in sight.
+      out.push({ hexes: within(tacticOf(pick.id).range, true).filter((t) => !checkAbility(z, act, pick.id, { at: t })), color: "#4fb286", fill: 0.14, line: 0.8 });
+      if (hover && !checkAbility(z, act, pick.id, { at: hover })) out.push({ hexes: [hover], color: "#4fb286", fill: 0.4, line: 0.9 });
     } else if (pick.kind === "ability") {
       const tactic = tacticOf(pick.id);
       const melee = tactic.reach === "melee";
@@ -973,8 +989,8 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
   };
   const choose = (ability: string) => {
     const shape = tacticOf(ability).shape;
-    // Something with nothing to aim goes off at once. A blink is aimed, at where to go.
-    if ((shape === "self" && !tacticOf(ability).blink) || shape === "adjacent" || shape === "burst") return use(ability);
+    // Something with nothing to aim goes off at once. A blink is aimed, at where to go; a creature called, at where it stands.
+    if ((shape === "self" && !tacticOf(ability).blink && !tacticOf(ability).summon) || shape === "adjacent" || shape === "burst") return use(ability);
     setPick((p) => (p?.kind === "ability" && p.id === ability ? null : { kind: "ability", id: ability }));
   };
 
@@ -1045,6 +1061,7 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
     }
     if (pick.kind === "ability") {
       const shape = tacticOf(pick.id).shape;
+      if (tacticOf(pick.id).summon) return use(pick.id, { at: pos });
       if (shape === "blast" || shape === "line") return use(pick.id, { at: pos });
       // An ally ability clicked on open ground is meant for yourself.
       if (shape === "ally") return use(pick.id, { target: there?.side === "hero" ? there.id : act.id });
@@ -1151,7 +1168,7 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
     const def = ABILITIES[id];
     const tactic = tacticOf(id);
     const wait = act.cooldowns[id] ?? 0;
-    const reachText = tactic.blink ? (tactic.shape === "self" ? `a hex up to ${tactic.blink.range} off` : `an enemy beside you, then up to ${tactic.blink.range} off`) : tactic.shape === "self" ? "yourself" : tactic.shape === "burst" ? `everyone within ${tactic.radius}` : tactic.reach === "melee" ? (tactic.shape === "adjacent" ? "every enemy beside you" : "an enemy beside you") : `${tactic.shape === "line" ? `a line of ${tactic.length}` : `range ${tactic.range}`}${tactic.weather === "rain" ? ", 3 hexes" : tactic.shape === "blast" ? `, blast ${tactic.radius}` : ""}`;
+    const reachText = tactic.summon ? `a hex up to ${tactic.range} off` : tactic.blink ? (tactic.shape === "self" ? `a hex up to ${tactic.blink.range} off` : `an enemy beside you, then up to ${tactic.blink.range} off`) : tactic.shape === "self" ? "yourself" : tactic.shape === "burst" ? `everyone within ${tactic.radius}` : tactic.reach === "melee" ? (tactic.shape === "adjacent" ? "every enemy beside you" : "an enemy beside you") : `${tactic.shape === "line" ? `a line of ${tactic.length}` : `range ${tactic.range}`}${tactic.weather === "rain" ? ", 3 hexes" : tactic.splash ? `, ${tactic.splash.hexes} hexes` : tactic.shape === "blast" ? `, blast ${tactic.radius}` : ""}`;
     const dice = def.damage ? `${diceText(abilityDice(def))} damage` : def.heal ? `heals ${diceText(healDice(def))}` : "";
     entries[`ab:${id}`] = {
       id: `ab:${id}`,

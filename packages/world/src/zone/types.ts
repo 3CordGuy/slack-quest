@@ -17,9 +17,10 @@ export type Side = "hero" | "enemy";
 
 /**
  * What can be on a unit: the old fights' effects, three the tiles bring, the auras a hero can carry (kit.ts AURAS),
- * and what the Rogue's tricks leave: Unseen (Sneak), and a fire bomb smuggled into the pack for a few turns (Contraband).
+ * what the Rogue's tricks leave: Unseen (Sneak), and a fire bomb smuggled into the pack for a few turns (Contraband);
+ * and the Druid's: a heal that comes again each turn (Aqueous Regeneration), and a shell of coral (Coral Armor).
  */
-export type Condition = EffectKind | "poisoned" | "prone" | "wet" | "beacon" | "mending" | "bolstered" | "invisible" | "contraband";
+export type Condition = EffectKind | "poisoned" | "prone" | "wet" | "beacon" | "mending" | "bolstered" | "invisible" | "contraband" | "regenerating" | "coral_armor";
 
 export interface UnitCondition {
   kind: Condition;
@@ -77,6 +78,11 @@ export interface Unit {
   /** Given a dev kit (DevOp "kit", the Maps tab): coming back to the map does not put the hero's own sheet back on. */
   devKit?: boolean;
   /**
+   * A creature a hero has called into a fight (Summon Sea Turtle): on the hero's side, played by the hero's player
+   * (`controller`) on the hero's initiative, and gone when it falls, when another is called in its place, or when the fight ends.
+   */
+  summon?: { by: string };
+  /**
    * A hero whose player is not on the map (their last connection to it closed): nothing draws them into a
    * fight, and no enemy blow meant for a fight lands on them. A fight they were already in goes on with them in it.
    * Set by the server; cleared when the player comes back.
@@ -85,7 +91,7 @@ export interface Unit {
 }
 
 /** What a spell can leave hanging over some hexes (weather.ts). */
-export type WeatherKind = "rain" | "wind";
+export type WeatherKind = "rain" | "wind" | "coral";
 
 export interface Weather {
   kind: WeatherKind;
@@ -97,7 +103,7 @@ export interface Weather {
   /** Who made it, and their side: the side it helps. */
   by: string;
   side: Side;
-  /** Rain: the turn (Encounter.turnNo, or -1 out of a fight) each unit was last healed by it in. */
+  /** Rain and coral: the turn (Encounter.turnNo, or -1 out of a fight) each unit was last healed or cut by it in. */
   touched: Record<string, number>;
 }
 
@@ -338,6 +344,9 @@ export type ZoneEvent =
   | { t: "seen"; id: string }
   /** Gone from one hex and there on another, with nothing crossed between (Smuggler's Route, Tactical Retreat). */
   | { t: "blinked"; id: string; from: HexPos; to: HexPos }
+  /** A creature is called into the fight (Summon Sea Turtle) by `by`; or one is gone (it fell, was replaced, or the fight is over). */
+  | { t: "summoned"; id: string; by: string }
+  | { t: "dismissed"; id: string }
   /** A hero gets away from the fight (Flee): out of the order, walking free. */
   | { t: "fled"; id: string }
   /** `fled`: every hero still standing got away, and none is left in it. */

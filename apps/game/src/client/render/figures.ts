@@ -5266,6 +5266,58 @@ function slime(top: THREE.Group): Rig {
   return { parts: [body], animate, clean: true };
 }
 
+/** A Druid's sea turtle, nose toward +z: a high domed shell over four broad flippers, a blunt beaked head. */
+function seaTurtle(top: THREE.Group): Rig {
+  const shell = "#5b7a3a";
+  const scute = "#7f9a4a";
+  const rim = "#3e5428";
+  const skin = "#86ad97";
+  const belly = "#d9c98a";
+  const parts: Part[] = [];
+  const part = (parent: THREE.Object3D, x: number, y: number, z: number) => (parts[parts.length] = new Part(parent, x, y, z));
+  const body = part(top, 0, 0, 0);
+  // The pale belly plate, the dark rim of the shell over it, and the dome rising to a crown.
+  body.loft(belly, [[1.4, 5.2, 6.2], [2.2, 6, 7]], 12);
+  body.loft(rim, [[2.1, 6.4, 7.5], [2.9, 6.7, 7.8]], 12);
+  body.loft(shell, [[2.8, 6.5, 7.6], [4.2, 6.2, 7.2], [5.6, 5.1, 5.9], [6.6, 3.4, 4], [7.1, 1.4, 1.6]], 12);
+  // Plates on the dome: one down the crown, a ring of them round it.
+  for (const z of [-3, 0, 3]) spot(body, scute, 1.7, 1.25, 0.5, 0, 6.6 - Math.abs(z) * 0.32, z, [-z * 0.12, 0, 0]);
+  for (let i = 0; i < 6; i++) {
+    const a = (i / 6) * Math.PI * 2 + Math.PI / 6;
+    spot(body, scute, 1.5, 1.1, 0.45, Math.sin(a) * 4.4, 5.2, Math.cos(a) * 5.1, [Math.cos(a) * -0.55, 0, Math.sin(a) * 0.55]);
+  }
+  const head = part(top, 0, 3.3, 7.2);
+  lengthwise(head, skin, [[-1.2, 1.35, 1.25], [0.6, 1.55, 1.4, 0.1], [2.3, 1.5, 1.35, 0.25], [3.4, 1.05, 0.95, 0.2], [3.9, 0.45, 0.4, 0.1]]);
+  head.shape(rim, sym([[0.55, -0.2, 3.2], [0.3, 0.55, 3.55], [0, -0.55, 4.25]]));
+  for (const s of [-1, 1]) head.ball(OUTLINE, 0.36, s * 1.05, 0.75, 2.4);
+  const flipper = (x: number, z: number, long: number, sweep: number) => {
+    const f = part(top, x, 2.4, z);
+    f.ball(skin, 1, Math.sign(x) * long * 0.8, -0.2, sweep, 1, [long, 0.42, 1.25]);
+    return f;
+  };
+  const flippers = [flipper(5.4, 3.6, 2.6, 1.2), flipper(-5.4, 3.6, 2.6, 1.2), flipper(4.8, -4.6, 1.7, -0.6), flipper(-4.8, -4.6, 1.7, -0.6)];
+  body.ball(skin, 0.6, 0, 2.2, -7.6, 0, [1, 0.8, 1.6]);
+  const animate = (a: Anim) => {
+    if (a.lying) {
+      // Flipped onto its back.
+      top.rotation.set(0, 0, Math.PI);
+      top.position.set(0, 7.6, 0);
+      return;
+    }
+    top.rotation.set(-a.strike * 0.12, 0, 0);
+    top.position.set(0, (a.breath + 1) * 0.05, a.strike * 1.4);
+    // Flippers row, the near pair against the far.
+    flippers.forEach((f, i) => {
+      const side = i % 2 === 0 ? 1 : -1;
+      const pair = i < 2 ? 1 : -1;
+      f.joint.rotation.set(0, side * pair * a.swing * 0.5, side * (0.08 + Math.abs(a.swing) * 0.15));
+    });
+    head.joint.rotation.set(a.breath * 0.05 - a.strike * 0.25, Math.sin(a.t * 0.7) * 0.12, 0);
+    head.joint.position.z = 7.2 + a.strike * 1.6;
+  };
+  return { parts, animate };
+}
+
 /** The sparring ring's training dummy: a straw sack on a post, with a target painted on its chest. */
 function dummy(top: THREE.Group): Rig {
   const straw = "#d9b662";
@@ -5327,6 +5379,8 @@ function rigFor(kind: string, top: THREE.Group, look: Look, outfit: Outfit | und
       return ogre(top);
     case "troll":
       return troll(top);
+    case "sea_turtle":
+      return seaTurtle(top);
   }
   return person(top, look, undefined, asleep);
 }

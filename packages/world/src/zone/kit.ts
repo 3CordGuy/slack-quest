@@ -4,7 +4,7 @@
 // names and their numbers, are still content.ts: this is the layer that
 // puts them on a map. A test fails if an ability or an enemy has no entry.
 
-import type { StatKey } from "@gantt-quest/core";
+import type { StatKey, Stats } from "@gantt-quest/core";
 import { ABILITIES, EFFECT_INFO, ENEMIES, type AbilityDef, type EffectKind, type EnemyAttack } from "../content";
 import { diceFor, type Dice } from "./rules";
 import type { CommonAction, Condition, SurfaceKind, Throwable, WeatherKind } from "./types";
@@ -43,6 +43,8 @@ export interface Tactic {
   ignites?: boolean;
   /** Extra damage against something Wet. */
   vsWet?: number;
+  /** Extra damage while the user stands in water (the sea turtle's Bite). */
+  wading?: number;
   /** Puts this condition on the user for `rounds` of their own turns: an aura, worked by the condition itself (see AURAS). */
   aura?: { kind: Condition; rounds: number };
   /** Shields the user, and every ally within `range` of them, with `shield` points plus the user's level, for `rounds` of each one's turns (Bolstered). */
@@ -69,6 +71,14 @@ export interface Tactic {
   hide?: { range: number; rounds: number };
   /** Slips the user and the ally a fire bomb each (the user two, used on themselves), good for `rounds` of each one's turns (Contraband). */
   smuggle?: { rounds: number };
+  /** Heals at once, then again at the start of each of the ally's turns for some rounds, more for one standing in water (Aqueous Regeneration). */
+  regen?: typeof AQUEOUS;
+  /** Raises the ally's Defence, and cuts whoever lands a blow on them up close, for some rounds of their turns (Coral Armor). */
+  armor?: typeof CORAL_ARMOR;
+  /** Heals the caster's side on a cluster of `hexes` hexes about the one aimed at, and leaves water there (Revitalizing Splash). No harm to anyone. */
+  splash?: typeof SPLASH;
+  /** Calls a creature onto an open hex in range (`at`), and sends away the one this hero called before, if it is still there. */
+  summon?: "sea_turtle";
 }
 
 const melee = (extra: Partial<Tactic> = {}): Tactic => ({ cost: "action", reach: "melee", range: 1, shape: "single", ...extra });
@@ -87,6 +97,28 @@ export const BOLSTER = { range: 2, shield: 10, rounds: 3 };
 export const WEATHER = {
   rain: { rounds: 3, heal: { n: 1, d: 4, plus: 2 } satisfies Dice, water: 2 },
   wind: { rounds: 3 },
+  // Coral Field: cuts and Slows the other side, once a turn, as one starts a turn in it or walks into it on its turn.
+  coral: { rounds: 4, damage: { n: 1, d: 6, plus: 1 } satisfies Dice },
+};
+
+/** Aqueous Regeneration: the heal again at the start of each of the ally's turns for `rounds`, and `water` more on each heal for one standing in water. */
+export const AQUEOUS = { rounds: 3, tick: { n: 1, d: 4, plus: 2 } satisfies Dice, water: 3 };
+/** Coral Armor: `defence` more, for `rounds` of the wearer's turns; whoever lands a blow on them up close takes `thorns`. */
+export const CORAL_ARMOR = { defence: 2, rounds: 3, thorns: { n: 1, d: 4, plus: 1 } satisfies Dice };
+/** Revitalizing Splash: how many hexes it covers, and the rounds of water it leaves on them. */
+export const SPLASH = { hexes: 4, water: 3 };
+
+/**
+ * The Druid's sea turtle: slow, hard to hurt and hard to get through, with a fair bite that is worse from the water. Defence is the stock 10
+ * plus its shell (half its armor, as a hero's). It lasts until it falls, another is called, or the fight is over.
+ */
+export const SEA_TURTLE = {
+  name: "Sea Turtle",
+  hp: (level: number) => 34 + 6 * level,
+  move: 3,
+  armor: 12,
+  stats: { str: 7, int_stat: 3, vit: 10, agi: 5, dex: 3 } satisfies Stats,
+  abilities: ["turtle_bite"],
 };
 
 /** How far Smuggler's Route takes the Rogue (and whoever comes along), and how far Tactical Retreat does. */
@@ -147,6 +179,14 @@ export const TACTICS: Record<string, Tactic> = {
   rejuvenate: mend(5),
   overgrowth: spell(5, { shape: "blast", radius: 1, cooldown: 2 }),
   riptide: spell(4, { shape: "line", length: 4, cooldown: 2, surface: { kind: "water", rounds: 3 } }),
+  // Druid class abilities
+  coral_field: spell(5, { shape: "blast", radius: 1, cooldown: 3, weather: "coral" }),
+  aqueous_regeneration: mend(5, { cost: "bonus", cooldown: 3, regen: AQUEOUS }),
+  coral_armor: mend(3, { cost: "bonus", cooldown: 3, armor: CORAL_ARMOR }),
+  revitalizing_splash: spell(5, { shape: "blast", cooldown: 2, splash: SPLASH }),
+  summon_sea_turtle: { cost: "action", reach: "spell", range: 3, shape: "self", cooldown: 4, summon: "sea_turtle" },
+  // The sea turtle's own
+  turtle_bite: melee({ wading: 4 }),
   // Bard
   dissonance: spell(5),
   encore: mend(5),
@@ -214,6 +254,8 @@ export const SAVE_STAT: Record<Condition, StatKey> = {
   bolstered: "vit",
   invisible: "agi",
   contraband: "agi",
+  regenerating: "vit",
+  coral_armor: "vit",
 };
 
 const info = (kind: EffectKind, blurb: string) => ({ name: EFFECT_INFO[kind].name, color: EFFECT_INFO[kind].color, blurb });
@@ -237,6 +279,8 @@ export const CONDITION_INFO: Record<Condition, { name: string; blurb: string; co
   bolstered: { name: "Bolstered", blurb: "A shield takes the damage of blows before its HP does, until it is spent or wears off.", color: "#9ec9ff" },
   invisible: { name: "Unseen", blurb: "Enemies cannot see it to attack it. Its next roll to hit has advantage, and using any ability (or throwing, or shoving) gives it away.", color: "#b8c4d6" },
   contraband: { name: "Contraband", blurb: "Smuggled fire bombs in the pack, to throw before they are found out.", color: "#ff8a3a" },
+  regenerating: { name: "Regenerating", blurb: "Heals at the start of each of its turns, more when it stands in water.", color: "#5eead4" },
+  coral_armor: { name: "Coral Armor", blurb: `+${CORAL_ARMOR.defence} Defence, and whoever lands a blow on it up close is cut.`, color: "#ff8f7a" },
 };
 
 // ---------- common actions ----------

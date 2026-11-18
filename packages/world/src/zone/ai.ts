@@ -66,6 +66,8 @@ export function enemyTurn(ctx: Ctx, enemy: Unit, budget: Budget): void {
   const kit = ENEMY_KIT[enemy.kind] ?? {};
   const air = flies(enemy);
   const harmful = new Set(Object.entries(state.surfaces).filter(([, s]) => HARMFUL.has(s.kind)).map(([key]) => key));
+  // The other side's coral cuts as well as fire does.
+  for (const w of state.weather ?? []) if (w.kind === "coral" && w.side !== enemy.side) for (const p of w.hexes) harmful.add(posKey(p));
   const nearest = (pos: HexPos) => Math.min(...heroes.map((h) => hexDistance(pos, h.pos)));
 
   /** The best place to end this move, weighing what could be done from there against what getting there costs. */
