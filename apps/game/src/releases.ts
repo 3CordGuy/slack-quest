@@ -53,6 +53,52 @@ export function unseenCount(seen: string | null | undefined, list: readonly Rele
   return at >= 0 ? at : 1;
 }
 
+// ---------- what a newer build brings ----------
+//
+// A tab left open on an older build is told a newer one is out (client/NewVersion.tsx)
+// and can list what it brings. The tab names the newest tagged release it knows when
+// it asks /api/version; the Worker, which carries the newer build's list, answers
+// with the releases after that one. So it is the same list the board shows, a build ahead.
+
+/** The newest tagged release in a list: what a build names when it asks what is newer. Null when it lists none. */
+export const newestTagged = (list: readonly Release[] = RELEASES): string | null => list.find((r) => !r.unreleased)?.id ?? null;
+
+/**
+ * The releases newer than the tagged release `since`, newest first: what a build
+ * that old is missing. One that names no release, or one this build no longer
+ * lists, is told only the newest, as the board marks only the newest as new.
+ */
+export function releasesSince(since: string | null | undefined, list: readonly Release[] = RELEASES): Release[] {
+  const at = since ? list.findIndex((r) => r.id === since) : -1;
+  return list.slice(0, at >= 0 ? at : 1);
+}
+
+/** A release list from another build's answer, with anything that is not a release left out. */
+export function parseReleases(raw: unknown): Release[] {
+  if (!Array.isArray(raw)) return [];
+  const out: Release[] = [];
+  for (const r of raw as Partial<Release>[]) {
+    if (!r || typeof r.id !== "string" || !Array.isArray(r.notes)) continue;
+    const notes = r.notes
+      .filter((n) => !!n && typeof n.text === "string" && n.text !== "")
+      .map((n) => ({ area: typeof n.area === "string" && n.area ? n.area : null, text: n.text }));
+    out.push({ id: r.id, date: typeof r.date === "string" ? r.date : "", notes, ...(r.unreleased ? { unreleased: true } : {}) });
+  }
+  return out;
+}
+
+/**
+ * Of the releases a newer build lists, what is news to this one. A staging build
+ * already shows its untagged commits as "Coming next", and a later build lists
+ * them again (there, or under the tag they went out in), so those lines are
+ * dropped; a release left with nothing to say is dropped too.
+ */
+export function incomingNotes(newer: readonly Release[], mine: readonly Release[] = RELEASES): Release[] {
+  const line = (n: ReleaseNote) => `${n.area ?? ""}\n${n.text}`;
+  const have = new Set(mine.filter((r) => r.unreleased).flatMap((r) => r.notes.map(line)));
+  return newer.map((r) => ({ ...r, notes: r.notes.filter((n) => !have.has(line(n))) })).filter((r) => r.notes.length > 0);
+}
+
 /** "13 November 2026 · update 9" for `game-v2026.11.13.9`; "Coming next" for untagged commits. */
 export function releaseTitle(r: Release): string {
   if (r.unreleased) return "Coming next";

@@ -16,4 +16,24 @@ export const OVERRIDES: Record<string, string[]> = {
     "Heroes: existing heroes get a look from their class; change it any time with Change look on your hero sheet",
     "Heroes: starting hat, tunic, trousers and shoes are items you can take off",
   ],
+  // game-v2026.11.18 (#500). Left off the board by a "Release-note: skip" on three commits inside the squash.
+  "c15abb8e37d3838186b85b7b9fe80ff44678ce7d": [
+    "Atlas: a world for your crew to explore, opened from the lighthouse; clear a place to open the ones beyond it",
+    "Atlas: places differ by climate and by kind (landfalls, sea caves, lookouts and lairs), and clearing one pays everyone there a bounty",
+    "Lodestones: found in bounties and kept in your pack; put one into a far-off place's slot to set out, and what it carries makes that map harder or richer",
+    "Stonecutter's bench: beside the smithy, cut a plain lodestone, or fuse, attune, temper and reroll the ones you carry",
+    "Town chest: a chest in the town square that the whole crew shares, with tabs you can buy, name, colour and reorder",
+    "Harbor: a bigger town square with the notice board and the town chest at its head; one hut plot has moved up the lane to the caverns",
+    "Harbor: click the notice board, town chest, stonecutter's bench or market stall to walk up and open it",
+  ],
+  // game-v2026.11.18 (#494). Left off the board by a "Release-note: skip" on one commit inside the squash.
+  "1c738e6bd932583bec48e4feb8f245826e48944f": [
+    "Abilities: every class has abilities of its own; choose three on the Skills page of your logbook, in the Harbor, on top of what your weapon gives",
+    "Abilities: every weapon gives two abilities of its own, in place of the old ones",
+    "Classes: the Paladin is now the Lighthouse Paladin and the Warden the Tidewall Warden",
+    "Warden: the Boarding Pike replaces the Lamp Hook, and the Bell-Buoy Maul is the starting weapon",
+    "Fights: the ability bar holds ten a row (keys 1 to 9 and 0, the bottom row with Shift), and a cooldown shows as a big number on its slot",
+    "Fights: a shield shows as a pale stretch on health bars, and an aura shows its reach as a dashed outline",
+    "Fights: the ring and sparks from a landing spell or flask no longer stay frozen on the ground",
+  ],
 };
