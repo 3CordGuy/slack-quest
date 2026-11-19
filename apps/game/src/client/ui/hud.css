@@ -24,11 +24,9 @@
 .hud-points-side.end { justify-content: flex-end; }
 .hud-pips { display: inline-flex; align-items: center; gap: 4px; }
 .hud-pips i { width: 10px; height: 10px; background: var(--well); border: 2px solid var(--hw-out); box-shadow: 0 0 0 2px var(--hw-dark); margin: 2px; }
-.hud-pips.action i.on { background: #8fd49a; box-shadow: 0 0 0 2px #3f7a52; }
-/* An Action is a round pip, a Bonus action a triangle: told apart by shape as well as colour. */
-.hud-pips.action i { border-radius: 50%; width: 12px; height: 12px; }
-.hud-pips.bonus i { width: 14px; height: 13px; border: none; box-shadow: none; clip-path: polygon(50% 0, 100% 100%, 0 100%); background: #4a2c1c; }
-.hud-pips.bonus i.on { background: #f29a5b; box-shadow: none; }
+/* Action Points: round pips, told apart from movement by shape as well as colour. */
+.hud-pips.ap i { border-radius: 50%; width: 12px; height: 12px; }
+.hud-pips.ap i.on { background: #8fd49a; box-shadow: 0 0 0 2px #3f7a52; }
 .hud-pips.move i.on { background: #f0c552; box-shadow: 0 0 0 2px #8a6a26; }
 /* A course charted (Chart a Course): movement good only for steps toward the mark, in the mark's red. */
 .hud-pips.course i.on { background: #ff5a5a; box-shadow: 0 0 0 2px #8a2626; }

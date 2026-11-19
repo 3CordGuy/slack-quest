@@ -54,7 +54,11 @@ export {
   cleanItems,
   throwRange,
   jumpRange,
-  JUMP_MOVE_COST,
+  AP_TURN,
+  AP_MAX,
+  ACTION_AP,
+  BONUS_AP,
+  ITEM_AP,
   POTION_DICE,
   POTION_EDGE,
   ENEMY_KIT,
@@ -73,7 +77,7 @@ export {
 } from "./kit";
 export { mod as statMod, proficiency, heroMove, heroDefence, diceFor, diceText, diceAverage, hitChance, type Dice } from "./rules";
 export { attackContext, defenceOf, has as hasCondition, shieldOf, unseen, type AttackContext } from "./engine";
-export { abilityArea, carrySpot, checkAbility, checkCommon, checkDrink, checkLight, checkThrow, courseFor, crateBlow, previewAttack, BARD_AURA_RANGE, type Aim } from "./combat";
+export { abilityArea, carrySpot, checkAbility, checkCommon, checkDrink, checkLight, checkThrow, courseFor, crateBlow, moveLeft, apForMove, payMove, previewAttack, BARD_AURA_RANGE, type Aim } from "./combat";
 export { chartOf, constellationHexes, constellationLinks, courseMarks, litFoes } from "./stars";
 export { SURFACE_INFO, HARMFUL as HARMFUL_SURFACES } from "./surfaces";
 export { WEATHER_INFO, wallHexes } from "./weather";

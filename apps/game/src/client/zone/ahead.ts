@@ -12,7 +12,7 @@
 //   and at the first hex where the ground or an enemy's notice may stop it.
 // - Anything with dice (a blow, a shove, a flask): nothing of the result is
 //   shown. What it costs is: the Action or Bonus action is taken off the bar.
-// - Dash, Disengage and ending the turn: what they do to the turn is known.
+// - Disengage and ending the turn: what they do to the turn is known.
 //
 // Each action sent carries a number, and the server's answer to it carries
 // the number back (an update, or an error). Until then the action is "ahead":
@@ -27,7 +27,7 @@
 // what is drawn while the answer is on its way.
 
 import { hexDistance, posKey, type HexPos } from "@gantt-quest/core";
-import { ALERT_RANGE, FLEE_RANGE, FREE_WALK, JOIN_RANGE, hasCondition, pathIn, sameHex, sees, zoneReach, type Budget, type Unit, type ZoneEvent, type ZoneState, type ZoneView } from "@gantt-quest/world";
+import { ALERT_RANGE, FLEE_RANGE, FREE_WALK, JOIN_RANGE, courseFor, hasCondition, moveLeft, pathIn, payMove, sameHex, sees, zoneReach, type Budget, type Unit, type ZoneEvent, type ZoneState, type ZoneView } from "@gantt-quest/world";
 
 /** A walk shown before the server has made it. */
 export interface WalkAhead {
@@ -51,10 +51,10 @@ export interface ActAhead {
   n: number;
   kind: "act";
   unit: string;
-  /** What it takes from the turn, in a fight. */
-  cost: "action" | "bonus" | null;
-  /** Dash and Disengage change the turn in a way that is known at once. */
-  gain?: "dash" | "disengage";
+  /** The AP it takes from the turn, in a fight. */
+  cost: number | null;
+  /** Disengage changes the turn in a way that is known at once. */
+  gain?: "disengage";
   /** The bar slot it was done from, shown taken until the answer comes. */
   slot?: string;
   /** Its name was put up over the hero at the click, so it is not put up again when the answer says it was used. */
@@ -126,7 +126,7 @@ export function foreseeWalk(view: ZoneView, unitId: string, to: HexPos): { path:
   if (!unit || unit.side !== "hero" || unit.down || (unit.id !== view.you && unit.controller !== view.you)) return null;
   const budget = budgetOf(view, unit);
   if (budget === undefined || sameHex(to, unit.pos)) return null;
-  const reach = zoneReach(asState(view), unit, budget ? budget.move : FREE_WALK);
+  const reach = zoneReach(asState(view), unit, budget ? moveLeft(budget) : FREE_WALK, undefined, courseFor(asState(view), unit, budget));
   const end = reach.get(posKey(to));
   if (!end || !end.stop) return null;
   const path: HexPos[] = [];
@@ -143,7 +143,7 @@ export function foreseeWalk(view: ZoneView, unitId: string, to: HexPos): { path:
 
 /**
  * The server's state with everything still ahead laid over it: heroes stand where their walks were shown
- * ending, with the movement those cost gone; an Action or Bonus action spent is spent; a turn ended is ended.
+ * ending, with the movement (and the AP it bought) those cost gone; AP spent are spent; a turn ended is ended.
  * The same object comes back when nothing is ahead.
  */
 export function believe(view: ZoneView, ahead: readonly Ahead[]): ZoneView {
@@ -158,10 +158,9 @@ export function believe(view: ZoneView, ahead: readonly Ahead[]): ZoneView {
     const budget = mine ? (enc!.budgets[a.unit] = { ...mine }) : undefined;
     if (a.kind === "walk") {
       unit.pos = a.path[a.path.length - 1];
-      if (budget) budget.move = Math.max(0, budget.move - a.cost);
+      if (budget) payMove(budget, a.cost);
     } else if (a.kind === "act") {
-      if (budget && a.cost) budget[a.cost] = false;
-      if (budget && a.gain === "dash") budget.move += budget.moveMax;
+      if (budget && a.cost) budget.ap = Math.max(0, budget.ap - a.cost);
       if (budget && a.gain === "disengage") budget.disengaged = true;
     } else if (enc && enc.acting.includes(a.unit) && !enc.done.includes(a.unit)) {
       enc.done.push(a.unit);

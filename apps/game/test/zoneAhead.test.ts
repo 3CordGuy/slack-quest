@@ -113,22 +113,21 @@ describe("the state as the client believes it", () => {
     expect(ann(view).pos).toEqual(was);
   });
 
-  it("takes what was spent off the turn: movement, the Action, the turn itself; and adds what a Dash gives", () => {
+  it("takes what was spent off the turn: movement and the AP it bought, AP, the turn itself", () => {
     const view = zoneView(meadow("turn", { groups: 0 }), "ann");
-    view.encounter = { round: 1, order: ["ann"], init: { ann: 10 }, acting: ["ann"], done: [], budgets: { ann: { action: true, bonus: true, move: 4, moveMax: 4, disengaged: false } }, reacted: [], turnNo: 1, deadline: null };
+    view.encounter = { round: 1, order: ["ann"], init: { ann: 10 }, acting: ["ann"], done: [], budgets: { ann: { ap: 4, move: 1, stride: 2, disengaged: false } }, reacted: [], turnNo: 1, deadline: null };
+    // 3 movement: the 1 already bought, and an AP for 2 more.
     const walked = believe(view, [walkAhead(1, ann(view).pos, [hex(5, 5), hex(6, 5)], { cost: 3 })]);
-    expect(walked.encounter!.budgets.ann.move).toBe(1);
-    const struck = believe(view, [{ n: 1, kind: "act", unit: "ann", cost: "action" }]);
-    expect(struck.encounter!.budgets.ann).toMatchObject({ action: false, bonus: true });
-    const dashed = believe(view, [{ n: 1, kind: "act", unit: "ann", cost: "action", gain: "dash" }]);
-    expect(dashed.encounter!.budgets.ann).toMatchObject({ action: false, move: 8 });
-    const slipped = believe(view, [{ n: 1, kind: "act", unit: "ann", cost: "bonus", gain: "disengage" }]);
-    expect(slipped.encounter!.budgets.ann).toMatchObject({ bonus: false, disengaged: true });
+    expect(walked.encounter!.budgets.ann).toMatchObject({ ap: 3, move: 0 });
+    const struck = believe(view, [{ n: 1, kind: "act", unit: "ann", cost: 2 }]);
+    expect(struck.encounter!.budgets.ann).toMatchObject({ ap: 2, move: 1 });
+    const slipped = believe(view, [{ n: 1, kind: "act", unit: "ann", cost: 1, gain: "disengage" }]);
+    expect(slipped.encounter!.budgets.ann).toMatchObject({ ap: 3, disengaged: true });
     const ended = believe(view, [{ n: 1, kind: "end", unit: "ann" }]);
     expect(ended.encounter!.done).toEqual(["ann"]);
     // Nothing spent after the turn is ended, and the server's own state untouched by any of it.
-    expect(believe(view, [{ n: 1, kind: "end", unit: "ann" }, { n: 2, kind: "act", unit: "ann", cost: "bonus" }]).encounter!.budgets.ann.bonus).toBe(true);
-    expect(view.encounter.budgets.ann).toEqual({ action: true, bonus: true, move: 4, moveMax: 4, disengaged: false });
+    expect(believe(view, [{ n: 1, kind: "end", unit: "ann" }, { n: 2, kind: "act", unit: "ann", cost: 1 }]).encounter!.budgets.ann.ap).toBe(4);
+    expect(view.encounter.budgets.ann).toEqual({ ap: 4, move: 1, stride: 2, disengaged: false });
     expect(view.encounter.done).toEqual([]);
   });
 });

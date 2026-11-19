@@ -36,7 +36,7 @@
 // typing. The bag's button does the same: press it again to put the bag away.
 
 import { Children, useEffect, useRef, useState, type CSSProperties, type DragEvent, type MouseEvent, type ReactNode } from "react";
-import { ABILITIES, COMMON_ACTIONS, RARITY_COLOR, THROWABLES, abilitiesFor, classAbilitiesOf, commonCost, loadoutOf, maxHpFor, parseAbilityLoadout, parseTraits, pendingTraitTiers, tacticOf, withClassAbilities, xpToNext, type CommonAction, type Throwable } from "@gantt-quest/world";
+import { ABILITIES, COMMON_ACTIONS, ITEM_AP, RARITY_COLOR, THROWABLES, abilitiesFor, classAbilitiesOf, commonCost, loadoutOf, maxHpFor, parseAbilityLoadout, parseTraits, pendingTraitTiers, tacticOf, withClassAbilities, xpToNext, type CommonAction, type Throwable } from "@gantt-quest/world";
 import type { Me } from "../api";
 import { Icon, ItemDetail, toOwned } from "../items";
 import { blurb, label } from "../labels";
@@ -57,7 +57,7 @@ export interface HudPips {
   label: string;
   now: number;
   max: number;
-  kind: "action" | "bonus" | "move" | "focus" | "course";
+  kind: "ap" | "move" | "focus" | "course";
   /** Said in the tooltip in place of "now of max left". */
   title?: string;
 }
@@ -77,7 +77,7 @@ export interface HudSlot {
   wait?: number;
   /** Picked: waiting for its target. */
   picked?: boolean;
-  /** Cannot be used right now: no Action left, on cooldown, none to throw. */
+  /** Cannot be used right now: too few AP left, on cooldown, none to throw. */
   spent?: boolean;
   run?(): void;
 }
@@ -235,7 +235,7 @@ export function HudBar({ me, place, children, hp, meter, pips = [], chips, quick
   /** One slot of the bar as it is shown out of a fight: what it is and what it costs, with nothing to press. */
   const reminder = (key: string): HudSlot | null => {
     const [kind, id] = [key.slice(0, 2), key.slice(3)];
-    const cost = (c: "action" | "bonus") => (c === "action" ? "Action" : "Bonus action");
+    const cost = (ap: number) => `${ap} AP`;
     if (kind === "ab" && ABILITIES[id]) return { id: key, icon: { ...abilityIcon(id), flat: true }, name: label("ability", id), line: `${cost(tacticOf(id).cost)} · used in a fight`, more: blurb("ability", id) };
     if (kind === "do" && COMMON_ACTIONS[id as CommonAction]) return { id: key, icon: { ...COMMON_ICON[id as CommonAction], flat: true }, name: COMMON_ACTIONS[id as CommonAction].name, line: `${cost(commonCost(id as CommonAction, c.class_id))} · used in a fight`, more: COMMON_ACTIONS[id as CommonAction].blurb };
     if (kind === "it" && THROWABLES[id as Throwable]) return { id: key, icon: ITEM_ICON[id as Throwable], name: THROWABLES[id as Throwable].name, line: "Carried into a fight", more: THROWABLES[id as Throwable].blurb, count: me.consumables?.[id as Throwable] ?? 0 };
@@ -255,7 +255,7 @@ export function HudBar({ me, place, children, hp, meter, pips = [], chips, quick
     if (torch && torch.rounds !== null && torch.hand === hand) {
       const line = hand === "main" ? `${torch.rounds} rounds of light left. Swung as a weapon: it may set whoever it hits Burning. Your weapon is put away while you hold it.` : `${torch.rounds} rounds of light left.${offhand ? " Your shield is set aside while you hold it." : ""}`;
       const back = worn ? `take up your ${worn.name} again` : "free the hand";
-      const away = torch.stow ? `Click to put it out, stow it in your pack and ${back}. A Bonus action in a fight.` : `${torch.why ?? "You cannot put it away now."} Putting it away is a Bonus action in a fight.`;
+      const away = torch.stow ? `Click to put it out, stow it in your pack and ${back}. ${ITEM_AP.stow} AP in a fight.` : `${torch.why ?? "You cannot put it away now."} Putting it away takes ${ITEM_AP.stow} AP in a fight.`;
       return (
         <button
           key={slot}
@@ -275,7 +275,7 @@ export function HudBar({ me, place, children, hp, meter, pips = [], chips, quick
     if (torch && torch.rounds === null && torch.carried > 0) {
       // What the hand holds, as anywhere else; and the bar's torch dragged here lights one into it.
       const what = hand === "main" ? "swing it as a weapon (your weapon put away; it may set whoever it hits Burning)" : `hold it up${offhand ? " (your shield set aside)" : ""}`;
-      const hint = torch.light ? `Drag the torch here from the bar to light one and ${what}. A Bonus action in a fight.` : (torch.why ?? "You cannot light one now.");
+      const hint = torch.light ? `Drag the torch here from the bar to light one and ${what}. ${ITEM_AP.light} AP in a fight.` : (torch.why ?? "You cannot light one now.");
       return (
         <span
           key={slot}

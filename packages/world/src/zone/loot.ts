@@ -1,5 +1,5 @@
 // What a delve's chests give (delve.ts lays them out). A chest is opened from
-// beside it, by a player's own hero: an Action in a fight, free out of one,
+// beside it, by a player's own hero: 2 AP in a fight, free out of one,
 // and not while the band that guards it still stands.
 //
 //   chest       its opener: 10 XP, a little gold, materials, and now and then

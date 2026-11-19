@@ -1,5 +1,5 @@
 // What each thing a hero or an enemy can do means on the tiles: what it
-// costs (an Action or a Bonus action), how far it reaches, what shape it
+// costs (in Action Points), how far it reaches, what shape it
 // takes and what it leaves on the ground. The abilities themselves, their
 // names and their numbers, are still content.ts: this is the layer that
 // puts them on a map. A test fails if an ability or an enemy has no entry.
@@ -23,8 +23,19 @@ import type { CommonAction, Condition, ShantyKind, SurfaceKind, Throwable, Weath
  */
 export type Shape = "single" | "adjacent" | "arc" | "cone" | "chain" | "blast" | "burst" | "line" | "ally" | "self";
 
+/**
+ * Action Points (AP): every unit gets AP_TURN at the start of its turn, on top of what it saved (AP_MAX at most), and spends
+ * them on anything in any order. What was once an Action costs ACTION_AP, a Bonus action BONUS_AP; 1 AP buys a unit's
+ * stride of movement (half its old speed).
+ */
+export const AP_TURN = 4;
+export const AP_MAX = 6;
+export const ACTION_AP = 2;
+export const BONUS_AP = 1;
+
 export interface Tactic {
-  cost: "action" | "bonus";
+  /** Action Points it takes: ACTION_AP for what was an Action, BONUS_AP for what was a Bonus action. */
+  cost: number;
   /** `melee` needs the target next to you. `ranged` and `spell` reach `range` hexes and need a clear line. */
   reach: "melee" | "ranged" | "spell";
   range: number;
@@ -35,7 +46,10 @@ export interface Tactic {
   length?: number;
   /** Chain: how many more targets after the first. */
   jumps?: number;
-  /** Rounds before it can be used again. */
+  /**
+   * The user's turns it is not ready for, counted from the one it is used in, each ticking off as that turn ends: 1 is
+   * once a turn, 3 is not again until the third turn after. None (0): as often as the AP allow (a weapon's basic attack).
+   */
   cooldown?: number;
   /** Added to the attack roll. */
   toHit?: number;
@@ -83,9 +97,9 @@ export interface Tactic {
   steady?: number;
   /** Single: landed, drags the target this many hexes straight toward the user, as far as the way is open (Throw Pike). */
   pull?: number;
-  /** Adds this much to the user's movement for the rest of their turn (Slicing Wind). */
+  /** Adds this much to each AP of the user's movement for the rest of their turn (Slicing Wind). */
   stride?: number;
-  /** Adds this much to the ally's movement: now if it is their turn, else on their next (Wind's Blessing). */
+  /** Adds this much to each AP of the ally's movement: for the rest of their turn if it is theirs, else their next (Wind's Blessing). */
   tailwind?: number;
   /** Extra damage while the user stands in water (the sea turtle's Bite). */
   wading?: number;
@@ -160,11 +174,11 @@ export interface Tactic {
   unholy?: typeof UNHOLY_WATERS;
 }
 
-const melee = (extra: Partial<Tactic> = {}): Tactic => ({ cost: "action", reach: "melee", range: 1, shape: "single", ...extra });
-const shot = (range: number, extra: Partial<Tactic> = {}): Tactic => ({ cost: "action", reach: "ranged", range, shape: "single", ...extra });
-const spell = (range: number, extra: Partial<Tactic> = {}): Tactic => ({ cost: "action", reach: "spell", range, shape: "single", ...extra });
-const guard = (): Tactic => ({ cost: "bonus", reach: "spell", range: 0, shape: "self" });
-const mend = (range: number, extra: Partial<Tactic> = {}): Tactic => ({ cost: "action", reach: "spell", range, shape: "ally", ...extra });
+const melee = (extra: Partial<Tactic> = {}): Tactic => ({ cost: 2, reach: "melee", range: 1, shape: "single", ...extra });
+const shot = (range: number, extra: Partial<Tactic> = {}): Tactic => ({ cost: 2, reach: "ranged", range, shape: "single", ...extra });
+const spell = (range: number, extra: Partial<Tactic> = {}): Tactic => ({ cost: 2, reach: "spell", range, shape: "single", ...extra });
+const guard = (): Tactic => ({ cost: 1, reach: "spell", range: 0, shape: "self" });
+const mend = (range: number, extra: Partial<Tactic> = {}): Tactic => ({ cost: 2, reach: "spell", range, shape: "ally", ...extra });
 
 /** Bolster: a shield of `shield` points plus the Paladin's level on them and every ally within `range`, for `rounds` of each one's turns. */
 export const BOLSTER = { range: 2, shield: 10, rounds: 3 };
@@ -214,7 +228,7 @@ export const SHANTY = {
   radius: 2,
   lively: { hit: 2, damage: (level: number) => 1 + Math.floor(level / 4), surge: 1 },
   dour: { defence: 2, perJoin: 1 },
-  windgod: { move: 2, perJoin: 1 },
+  windgod: { move: 1, perJoin: 1 },
 };
 
 /** Chorus: extra damage for each of the Bard's allies standing in it. */
@@ -240,7 +254,7 @@ export interface SummonDef {
 export const SEA_TURTLE: SummonDef = {
   name: "Sea Turtle",
   hp: (level: number) => 34 + 6 * level,
-  move: 3,
+  move: 1,
   armor: 12,
   stats: { str: 7, int_stat: 3, vit: 10, agi: 5, dex: 3 },
   abilities: ["turtle_bite"],
@@ -253,7 +267,7 @@ export const SEA_TURTLE: SummonDef = {
 export const DROWNED_GUNNER: SummonDef = {
   name: "Drowned Gunner",
   hp: (level: number) => 14 + 3 * level,
-  move: 4,
+  move: 2,
   armor: 4,
   stats: { str: 4, int_stat: 3, vit: 5, agi: 6, dex: 9 },
   abilities: ["sailor_pistol"],
@@ -261,7 +275,7 @@ export const DROWNED_GUNNER: SummonDef = {
 export const DROWNED_CUTLASS: SummonDef = {
   name: "Drowned Cutlass",
   hp: (level: number) => 22 + 4 * level,
-  move: 4,
+  move: 2,
   armor: 8,
   stats: { str: 8, int_stat: 3, vit: 8, agi: 5, dex: 4 },
   abilities: ["sailor_scimitar"],
@@ -286,19 +300,19 @@ export const SMUGGLED: Throwable = "fire";
 
 /**
  * The Sage's stars (stars.ts). Guiding Light lasts `rounds` of the enemy's turns. Constellation links an ally at most
- * `link` hexes from the last one linked, in clear sight. Chart a Course gives `speed` movement a turn toward a mark up to
+ * `link` hexes from the last one linked, in clear sight. Chart a Course gives `speed` movement for each AP of movement toward a mark up to
  * `range` hexes off, for `rounds` of the Sage's turns. North Star lasts `rounds` of the ally's turns, and each blow of theirs
  * leaves `burn` rounds of Burning.
  */
 export const GUIDING_LIGHT = { rounds: 3 };
 export const CONSTELLATION = { link: 4 };
-export const CHART = { range: 8, speed: 3, rounds: 4 };
+export const CHART = { range: 8, speed: 1, rounds: 4 };
 export const NORTH_STAR = { rounds: 3, burn: 2 };
 
 /**
  * The Warlock's (drowning.ts). Drowning is stacks on an enemy, for `rounds` of its turns, each stack laid on starting the count
  * again for all of them. At the start of each of its turns it takes `tick` for every stack, then saves (Vitality) against `dc` and
- * `perStack` more for every stack, or loses its Action. Curse of Drowning lasts `rounds` of the enemy's turns. The Black Spot lasts
+ * `perStack` more for every stack, or loses ACTION_AP of its AP. Curse of Drowning lasts `rounds` of the enemy's turns. The Black Spot lasts
  * `rounds`. Red Sky at Morning lasts `rounds`. Unholy Waters leaves `water` rounds of water and `fire` rounds of fire.
  */
 export const DROWNING = { rounds: 3, tick: 2, dc: 2, perStack: 2 };
@@ -315,120 +329,120 @@ export const TACTICS: Record<string, Tactic> = {
   torch_swing: melee(),
   // Paladin
   bash: melee(),
-  recover: guard(),
-  block: { ...guard(), shield: BLOCK },
+  recover: { ...guard(), cooldown: 1 },
+  block: { ...guard(), shield: BLOCK, cooldown: 1 },
   flail_strike: melee(),
-  armor_crush: melee({ cost: "bonus" }),
+  armor_crush: melee({ cost: 1, cooldown: 1 }),
   cleave: melee({ shape: "arc" }),
   // Paladin class abilities
-  beacon_aura: { cost: "bonus", reach: "spell", range: 0, shape: "self", aura: { kind: "beacon", rounds: 4 } },
-  healing_aura: { cost: "bonus", reach: "spell", range: 0, shape: "self", aura: { kind: "mending", rounds: 4 } },
-  branding_strike: melee({ cooldown: 2 }),
-  stoke_the_fire: melee({ shape: "adjacent", cooldown: 2 }),
-  bolster: { cost: "action", reach: "spell", range: 0, shape: "self", cooldown: 3, shield: BOLSTER },
-  show_the_way: mend(5, { cooldown: 2, clearWay: true }),
+  beacon_aura: { cost: 1, reach: "spell", range: 0, shape: "self", aura: { kind: "beacon", rounds: 4 }, cooldown: 1 },
+  healing_aura: { cost: 1, reach: "spell", range: 0, shape: "self", aura: { kind: "mending", rounds: 4 }, cooldown: 1 },
+  branding_strike: melee({ cooldown: 3 }),
+  stoke_the_fire: melee({ shape: "adjacent", cooldown: 3 }),
+  bolster: { cost: 2, reach: "spell", range: 0, shape: "self", cooldown: 4, shield: BOLSTER },
+  show_the_way: mend(5, { cooldown: 3, clearWay: true }),
   // Mage
   shock: spell(6, { vsWet: 3 }),
-  mend: mend(5),
+  mend: mend(5, { cooldown: 1 }),
   stab: melee({ edge: 3 }),
-  eviscerate: melee({ cooldown: 2 }),
+  eviscerate: melee({ cooldown: 3 }),
   bow_shot: shot(8),
-  take_aim: { ...guard(), steady: 1 },
+  take_aim: { ...guard(), steady: 1, cooldown: 1 },
   tear: melee(),
-  snag: shot(3),
+  snag: shot(3, { cooldown: 1 }),
   // Ship's guns
   pistol_shot: shot(5),
-  pistol_whip: melee({ cost: "bonus" }),
-  scattershot: shot(3, { shape: "cone", length: 3, cooldown: 1 }),
-  butt_stroke: melee(),
-  harpoon_shot: shot(6, { pull: 2, cooldown: 2 }),
-  barbed_line: shot(3),
+  pistol_whip: melee({ cost: 1, cooldown: 1 }),
+  scattershot: shot(3, { shape: "cone", length: 3, cooldown: 2 }),
+  butt_stroke: melee({ cooldown: 1 }),
+  harpoon_shot: shot(6, { pull: 2, cooldown: 3 }),
+  barbed_line: shot(3, { cooldown: 1 }),
   slicing_wind: spell(6, { stride: 1 }),
-  winds_blessing: mend(5, { cost: "bonus", tailwind: 2 }),
+  winds_blessing: mend(5, { cost: 1, tailwind: 1, cooldown: 1 }),
   waterbolt: spell(6, { surface: { kind: "water", rounds: 3 } }),
-  lightning_strike: spell(5, { vsWet: 3 }),
+  lightning_strike: spell(5, { vsWet: 3, cooldown: 1 }),
   // Mage class abilities
-  soothing_rain: spell(5, { shape: "blast", radius: 1, cooldown: 3, weather: "rain" }),
-  chain_lightning: spell(5, { shape: "chain", jumps: Infinity, cooldown: 2, vsWet: 3 }),
-  roar_of_thunder: spell(5, { cooldown: 3, sure: true, knockback: 1 }),
-  trade_winds: spell(5, { shape: "blast", radius: 1, cooldown: 3, weather: "wind" }),
-  tidal_wave: spell(5, { shape: "line", length: 5, cooldown: 3, sweep: true, surface: { kind: "water", rounds: 2 } }),
+  soothing_rain: spell(5, { shape: "blast", radius: 1, cooldown: 4, weather: "rain" }),
+  chain_lightning: spell(5, { shape: "chain", jumps: Infinity, cooldown: 3, vsWet: 3 }),
+  roar_of_thunder: spell(5, { cooldown: 4, sure: true, knockback: 1 }),
+  trade_winds: spell(5, { shape: "blast", radius: 1, cooldown: 4, weather: "wind" }),
+  tidal_wave: spell(5, { shape: "line", length: 5, cooldown: 4, sweep: true, surface: { kind: "water", rounds: 2 } }),
   // Rogue
   // Rogue class abilities
-  smugglers_route: { cost: "bonus", reach: "spell", range: ROUTE_RANGE, shape: "self", cooldown: 3, blink: { range: ROUTE_RANGE, carry: true } },
-  sneak: { cost: "action", reach: "spell", range: 0, shape: "self", cooldown: 4, hide: SNEAK },
-  pickpocket: melee({ cost: "bonus", steal: true }),
-  tactical_retreat: melee({ cooldown: 2, blink: { range: RETREAT_RANGE } }),
-  contraband: mend(5, { cost: "bonus", cooldown: 3, smuggle: CONTRABAND }),
+  smugglers_route: { cost: 1, reach: "spell", range: ROUTE_RANGE, shape: "self", cooldown: 4, blink: { range: ROUTE_RANGE, carry: true } },
+  sneak: { cost: 2, reach: "spell", range: 0, shape: "self", cooldown: 5, hide: SNEAK },
+  pickpocket: melee({ cost: 1, steal: true, cooldown: 1 }),
+  tactical_retreat: melee({ cooldown: 3, blink: { range: RETREAT_RANGE } }),
+  contraband: mend(5, { cost: 1, cooldown: 4, smuggle: CONTRABAND }),
   // Druid
   thornlash: spell(5),
-  rejuvenate: mend(5),
+  rejuvenate: mend(5, { cooldown: 1 }),
   sea_slash: melee({ surface: { kind: "water", rounds: 3, self: true } }),
-  binding_kelp: spell(4, { cost: "bonus", bind: { slowed: 1, stunned: 1 } }),
+  binding_kelp: spell(4, { cost: 1, bind: { slowed: 1, stunned: 1 }, cooldown: 1 }),
   coral_burst: spell(3, { shape: "cone", length: 3 }),
-  restore: mend(5, { cost: "bonus", cooldown: 1, cleanse: true }),
+  restore: mend(5, { cost: 1, cooldown: 2, cleanse: true }),
   // Druid class abilities
-  coral_field: spell(5, { shape: "blast", radius: 1, cooldown: 3, weather: "coral" }),
-  aqueous_regeneration: mend(5, { cost: "bonus", cooldown: 3, regen: AQUEOUS }),
-  coral_armor: mend(3, { cost: "bonus", cooldown: 3, armor: CORAL_ARMOR }),
-  revitalizing_splash: spell(5, { shape: "blast", cooldown: 2, splash: SPLASH }),
-  summon_sea_turtle: { cost: "action", reach: "spell", range: 3, shape: "self", cooldown: 4, summon: "sea_turtle" },
+  coral_field: spell(5, { shape: "blast", radius: 1, cooldown: 4, weather: "coral" }),
+  aqueous_regeneration: mend(5, { cost: 1, cooldown: 4, regen: AQUEOUS }),
+  coral_armor: mend(3, { cost: 1, cooldown: 4, armor: CORAL_ARMOR }),
+  revitalizing_splash: spell(5, { shape: "blast", cooldown: 3, splash: SPLASH }),
+  summon_sea_turtle: { cost: 2, reach: "spell", range: 3, shape: "self", cooldown: 5, summon: "sea_turtle" },
   // The sea turtle's own
   turtle_bite: melee({ wading: 4 }),
   // Bard
   dissonance: spell(5),
-  encore: mend(5, { cost: "bonus", steady: 2 }),
+  encore: mend(5, { cost: 1, steady: 2, cooldown: 1 }),
   blasting_tone: spell(4, { shape: "line", length: 4, foesOnly: true }),
-  soothing_tone: { cost: "action", reach: "spell", range: 0, shape: "self", cooldown: 1, soothe: { range: 2 } },
+  soothing_tone: { cost: 2, reach: "spell", range: 0, shape: "self", cooldown: 2, soothe: { range: 2 } },
   peal: spell(4, { knockback: 1, knockSave: true }),
-  clarion_call: mend(5, { cooldown: 1, ripple: 6 }),
-  bellows_blast: spell(0, { shape: "burst", radius: 1, cooldown: 1, knockback: 1 }),
-  hornpipe: mend(5, { cost: "bonus", tailwind: 3 }),
+  clarion_call: mend(5, { cooldown: 2, ripple: 6 }),
+  bellows_blast: spell(0, { shape: "burst", radius: 1, cooldown: 2, knockback: 1 }),
+  hornpipe: mend(5, { cost: 1, tailwind: 1, cooldown: 1 }),
   // Bard class abilities
-  lively_shanty: { ...guard(), cooldown: 4, shanty: "lively_shanty" },
-  dour_shanty: { ...guard(), cooldown: 4, shanty: "dour_shanty" },
-  windgod_shanty: { ...guard(), cooldown: 4, shanty: "windgod_shanty" },
-  chorus: spell(5, { shape: "blast", radius: 1, cooldown: 3, chorus: CHORUS_PER_ALLY }),
-  lead_by_example: spell(5, { cooldown: 2, inspire: true }),
+  lively_shanty: { ...guard(), cooldown: 5, shanty: "lively_shanty" },
+  dour_shanty: { ...guard(), cooldown: 5, shanty: "dour_shanty" },
+  windgod_shanty: { ...guard(), cooldown: 5, shanty: "windgod_shanty" },
+  chorus: spell(5, { shape: "blast", radius: 1, cooldown: 4, chorus: CHORUS_PER_ALLY }),
+  lead_by_example: spell(5, { cooldown: 3, inspire: true }),
   // Sage
   moonlight: spell(7, { shape: "blast", cluster: 3, foesOnly: true, guide: GUIDING_LIGHT.rounds }),
-  focus_light: spell(5, { cost: "bonus", kindleLit: 3 }),
+  focus_light: spell(5, { cost: 1, kindleLit: 3, cooldown: 1 }),
   starbeam: spell(6, { guide: GUIDING_LIGHT.rounds, guideSave: true }),
-  st_elmos_fire: mend(4, { cost: "bonus", cooldown: 2, starlit: NORTH_STAR.rounds }),
+  st_elmos_fire: mend(4, { cost: 1, cooldown: 3, starlit: NORTH_STAR.rounds }),
   water_burst: spell(5, { spray: 4 }),
-  rust_armor: spell(5, { shape: "blast", cluster: 3, cooldown: 1, foesOnly: true }),
+  rust_armor: spell(5, { shape: "blast", cluster: 3, cooldown: 2, foesOnly: true }),
   // Sage class abilities
-  falling_star: spell(7, { cooldown: 3, ignites: true, guide: GUIDING_LIGHT.rounds }),
-  constellation: { cost: "bonus", reach: "spell", range: 0, shape: "self", cooldown: 3, guide: GUIDING_LIGHT.rounds, constellation: CONSTELLATION },
-  new_moon: { cost: "action", reach: "spell", range: 0, shape: "self", cooldown: 4, newMoon: true },
-  chart_a_course: { cost: "bonus", reach: "spell", range: CHART.range, shape: "blast", radius: 0, cooldown: 2, chart: CHART },
-  north_star: mend(6, { cooldown: 3, guide: GUIDING_LIGHT.rounds, northStar: NORTH_STAR }),
+  falling_star: spell(7, { cooldown: 4, ignites: true, guide: GUIDING_LIGHT.rounds }),
+  constellation: { cost: 1, reach: "spell", range: 0, shape: "self", cooldown: 4, guide: GUIDING_LIGHT.rounds, constellation: CONSTELLATION },
+  new_moon: { cost: 2, reach: "spell", range: 0, shape: "self", cooldown: 5, newMoon: true },
+  chart_a_course: { cost: 1, reach: "spell", range: CHART.range, shape: "blast", radius: 0, cooldown: 3, chart: CHART },
+  north_star: mend(6, { cooldown: 4, guide: GUIDING_LIGHT.rounds, northStar: NORTH_STAR }),
   // Warden
   // Warden class abilities
   sturdy_blow: melee({ ward: STURDY }),
-  stand_strong: { ...guard(), standStrong: STAND_STRONG },
+  stand_strong: { ...guard(), standStrong: STAND_STRONG, cooldown: 1 },
   disarming_chop: melee(),
-  raise_guard: { ...guard(), cooldown: 1, shield: GUARD_UP },
+  raise_guard: { ...guard(), cooldown: 2, shield: GUARD_UP },
   goading_strike: melee({ goad: TAUNT.rounds }),
-  throw_pike: shot(3, { pull: 2, cooldown: 2 }),
-  against_the_waves: { ...guard(), cooldown: 2, shield: AGAINST_WAVES },
-  overwhelm: melee({ cost: "bonus", cooldown: 2, overwhelm: OVERWHELM }),
-  fortify: spell(5, { shape: "blast", radius: 0, cooldown: 3, weather: "wall", fortify: FORTIFY }),
-  bulwark_strike: melee({ cooldown: 2, bulwark: BULWARK }),
-  taunt: { ...guard(), cooldown: 3, taunt: TAUNT },
+  throw_pike: shot(3, { pull: 2, cooldown: 3 }),
+  against_the_waves: { ...guard(), cooldown: 3, shield: AGAINST_WAVES },
+  overwhelm: melee({ cost: 1, cooldown: 3, overwhelm: OVERWHELM }),
+  fortify: spell(5, { shape: "blast", radius: 0, cooldown: 4, weather: "wall", fortify: FORTIFY }),
+  bulwark_strike: melee({ cooldown: 3, bulwark: BULWARK }),
+  taunt: { ...guard(), cooldown: 4, taunt: TAUNT },
   // Warlock
   hex: spell(6),
-  soul_drain: spell(5, { cooldown: 2 }),
+  soul_drain: spell(5, { cooldown: 3 }),
   sink: spell(6, { drowns: 1 }),
   vile_splash: spell(5, { surface: { kind: "poison", rounds: 3 } }),
-  drink_deeply: { ...guard(), cooldown: 2, sicken: 2 },
-  pull_of_the_deep: spell(0, { shape: "burst", radius: 1, cooldown: 2, drowns: 1 }),
+  drink_deeply: { ...guard(), cooldown: 3, sicken: 2 },
+  pull_of_the_deep: spell(0, { shape: "burst", radius: 1, cooldown: 3, drowns: 1 }),
   // Warlock class abilities
-  curse_of_drowning: spell(5, { cost: "bonus", cooldown: 3, sure: true, curse: DROWNING_CURSE }),
-  summon_sunken_sailors: { cost: "action", reach: "spell", range: 3, shape: "self", cooldown: 4, summon: "sunken_sailors" },
-  red_sky_at_morning: spell(5, { shape: "blast", radius: 2, cooldown: 5, redSky: RED_SKY }),
-  unholy_waters: spell(5, { cost: "bonus", shape: "blast", radius: 1, cooldown: 2, unholy: UNHOLY_WATERS }),
-  the_black_spot: spell(5, { cooldown: 4, sure: true, blackSpot: BLACK_SPOT }),
+  curse_of_drowning: spell(5, { cost: 1, cooldown: 4, sure: true, curse: DROWNING_CURSE }),
+  summon_sunken_sailors: { cost: 2, reach: "spell", range: 3, shape: "self", cooldown: 5, summon: "sunken_sailors" },
+  red_sky_at_morning: spell(5, { shape: "blast", radius: 2, cooldown: 6, redSky: RED_SKY }),
+  unholy_waters: spell(5, { cost: 1, shape: "blast", radius: 1, cooldown: 3, unholy: UNHOLY_WATERS }),
+  the_black_spot: spell(5, { cooldown: 5, sure: true, blackSpot: BLACK_SPOT }),
   // The sunken sailors' own
   sailor_pistol: shot(4),
   sailor_scimitar: melee(),
@@ -442,7 +456,7 @@ export const healDice = (def: AbilityDef): Dice => diceFor(Math.max(2, (def.heal
 
 /** What a hero strikes with when an enemy walks out of reach: their first melee ability, or bare hands. */
 export function reactionStrike(abilities: string[]): string {
-  return abilities.find((a) => ABILITIES[a]?.damage && tacticOf(a).reach === "melee" && (tacticOf(a).shape === "single" || tacticOf(a).shape === "arc") && tacticOf(a).cost === "action") ?? "punch";
+  return abilities.find((a) => ABILITIES[a]?.damage && tacticOf(a).reach === "melee" && (tacticOf(a).shape === "single" || tacticOf(a).shape === "arc") && tacticOf(a).cost === ACTION_AP) ?? "punch";
 }
 
 // ---------- conditions ----------
@@ -505,12 +519,12 @@ export const CONDITION_INFO: Record<Condition, { name: string; blurb: string; co
   stunned: info("stunned", "Loses its next turn. Attacks against it have advantage."),
   guarded: info("guarded", "Takes half damage until its next turn."),
   taunting: info("taunting", "Enemies that can reach it go for it, until its next turn."),
-  slowed: info("slowed", "Half movement."),
-  hasted: info("hasted", "Double movement."),
+  slowed: info("slowed", "Half movement for each AP."),
+  hasted: info("hasted", "Double movement for each AP."),
   glitched: info("glitched", "Its next attack is rolled with disadvantage."),
   exposed: info("exposed", "Attacks against it have advantage."),
   poisoned: { name: "Poisoned", blurb: "Its attacks are rolled with disadvantage.", color: "#a3e635" },
-  prone: info("prone", "Flat on the ground: standing costs half its movement. Melee attacks against it have advantage, ranged attacks disadvantage."),
+  prone: info("prone", "Flat on the ground: standing up costs 1 AP. Melee attacks against it have advantage, ranged attacks disadvantage."),
   sundered: info("sundered", `Its armor is dented: ${SUNDERED_DEFENCE} less Defence.`),
   wet: { name: "Wet", blurb: "Soaked through: lightning hits harder, and it cannot burn.", color: "#7dd3fc" },
   beacon: { name: "Beacon", blurb: "Gives light, and it and allies within 2 hexes have advantage on their attacks.", color: "#fff7d6" },
@@ -522,38 +536,38 @@ export const CONDITION_INFO: Record<Condition, { name: string; blurb: string; co
   coral_armor: { name: "Coral Armor", blurb: `+${CORAL_ARMOR.defence} Defence, and whoever lands a blow on it up close is cut.`, color: "#ff8f7a" },
   lively_shanty: { name: "Lively Shanty", blurb: `Singing: allies within reach get +${SHANTY.lively.hit} to hit and a little more damage. Each who joins widens it a hex and adds +${SHANTY.lively.surge} to hit until the Bard's next turn.`, color: "#ffb020" },
   dour_shanty: { name: "Dour Shanty", blurb: `Singing: allies within reach get +${SHANTY.dour.defence} Defence. Each who joins widens it a hex and adds +${SHANTY.dour.perJoin} Defence until the Bard's next turn.`, color: "#6f8fff" },
-  windgod_shanty: { name: "Wind-god's Shanty", blurb: `Singing: allies within reach move ${SHANTY.windgod.move} further and cannot be Slowed. Each who joins widens it a hex and adds ${SHANTY.windgod.perJoin} more movement until the Bard's next turn.`, color: "#3fe0c5" },
+  windgod_shanty: { name: "Wind-god's Shanty", blurb: `Singing: allies within reach move ${SHANTY.windgod.move} further for each AP of movement and cannot be Slowed. Each who joins widens it a hex and adds ${SHANTY.windgod.perJoin} more for each AP until the Bard's next turn.`, color: "#3fe0c5" },
   inspired: { name: "Inspired", blurb: "Its next roll to hit has advantage.", color: "#ffe08a" },
   guiding_light: { name: "Guiding Light", blurb: "Lit up by a star: every attack against it has advantage.", color: "#fff3a8" },
   north_star: { name: "North Star", blurb: "Every blow it lands sets the target Burning, one stack more if the blow would have set it Burning anyway.", color: "#ffd166" },
   taunted: { name: "Taunted", blurb: "Goaded: it must go for the one who taunted it, if it can reach them.", color: "#ff5a3c" },
   charted: { name: "Course Charted", blurb: `A mark on the map: it and its allies move ${CHART.speed} further each turn, on steps that bring them nearer the mark.`, color: "#ff4d4d" },
-  drowning: { name: "Drowning", blurb: `Loses ${DROWNING.tick} HP a stack at the start of each of its turns, then must hold its breath (harder for every stack) or lose its Action. A new stack keeps them all going ${DROWNING.rounds} more turns.`, color: "#2fa4c9" },
+  drowning: { name: "Drowning", blurb: `Loses ${DROWNING.tick} HP a stack at the start of each of its turns, then must hold its breath (harder for every stack) or lose ${ACTION_AP} AP. A new stack keeps them all going ${DROWNING.rounds} more turns.`, color: "#2fa4c9" },
   drowning_curse: { name: "Curse of Drowning", blurb: "Takes a stack of Drowning each time it starts or ends a turn standing in water.", color: "#1f7fa0" },
   black_spot: { name: "The Black Spot", blurb: "Its attacks are rolled with disadvantage, and it takes a stack of Drowning at the end of each of its turns. If it falls with the Spot still on it, the Spot passes to the nearest of its side.", color: "#7a6a8f" },
-  tailwind: { name: "Tailwind", blurb: "The wind at its back: more movement on its next turn.", color: "#bfe8ff" },
+  tailwind: { name: "Tailwind", blurb: "The wind at its back: more movement for each AP on its next turn.", color: "#bfe8ff" },
   red_sky: { name: "Red Sky at Morning", blurb: "A bad omen: its attacks are rolled with disadvantage.", color: "#e2483d" },
 };
 
 // ---------- common actions ----------
 
-export const COMMON_ACTIONS: Record<CommonAction, { name: string; cost: "action" | "bonus"; blurb: string }> = {
-  dash: { name: "Dash", cost: "action", blurb: "Double your movement this turn." },
-  disengage: { name: "Disengage", cost: "action", blurb: "Moving away from enemies draws no opportunity attacks this turn." },
-  help: { name: "Help", cost: "action", blurb: "Get a fallen ally beside you back on their feet with 1 HP." },
-  shove: { name: "Shove", cost: "bonus", blurb: "Push an enemy beside you one hex away: into fire, off a path, out of reach." },
-  jump: { name: "Jump", cost: "bonus", blurb: "Leap a few hexes, over whatever lies between. Costs 2 movement." },
-  join: { name: "Join the Song", cost: "bonus", blurb: "Join an ally's shanty you are standing in, once a shanty: it reaches a hex further, and you get its joining lift (Lively: advantage on your next attack; Dour: Guarded; Wind-god's: Disengaged), and everyone in it gets a little more of what it gives until the Bard's next turn." },
-  flee: { name: "Flee", cost: "action", blurb: "Get out of the fight, once no enemy in it is within 2 hexes of you. You walk free and it goes on without you; an enemy coming that close again brings you back into it." },
+export const COMMON_ACTIONS: Record<CommonAction, { name: string; cost: number; blurb: string }> = {
+  disengage: { name: "Disengage", cost: 2, blurb: "Moving away from enemies draws no opportunity attacks this turn." },
+  help: { name: "Help", cost: 2, blurb: "Get a fallen ally beside you back on their feet with 1 HP." },
+  shove: { name: "Shove", cost: 1, blurb: "Push an enemy beside you one hex away: into fire, off a path, out of reach." },
+  jump: { name: "Jump", cost: 2, blurb: "Leap a few hexes, over whatever lies between." },
+  join: { name: "Join the Song", cost: 1, blurb: "Join an ally's shanty you are standing in, once a shanty: it reaches a hex further, and you get its joining lift (Lively: advantage on your next attack; Dour: Guarded; Wind-god's: Disengaged), and everyone in it gets a little more of what it gives until the Bard's next turn." },
+  flee: { name: "Flee", cost: 2, blurb: "Get out of the fight, once no enemy in it is within 2 hexes of you. You walk free and it goes on without you; an enemy coming that close again brings you back into it." },
 };
 
 /** How far clear of every enemy in a fight a hero must be to flee it, and how near one must come to draw them back in. */
 export const FLEE_RANGE = 2;
 
-/** Light on their feet: a Rogue disengages, and flees, as a Bonus action. */
-export const commonCost = (what: CommonAction, classId: string): "action" | "bonus" => ((what === "disengage" || what === "flee") && classId === "refactor_rogue" ? "bonus" : COMMON_ACTIONS[what].cost);
+/** Light on their feet: a Rogue disengages, and flees, for BONUS_AP. */
+export const commonCost = (what: CommonAction, classId: string): number => ((what === "disengage" || what === "flee") && classId === "refactor_rogue" ? BONUS_AP : COMMON_ACTIONS[what].cost);
 
-export const JUMP_MOVE_COST = 2;
+/** AP each of these takes in a fight (out of one they are free). */
+export const ITEM_AP = { drink: BONUS_AP, throw: ACTION_AP, light: BONUS_AP, stow: BONUS_AP, pickup: BONUS_AP, open: ACTION_AP, forage: ACTION_AP, unlock: ACTION_AP, attack: ACTION_AP };
 /** What a healing potion heals: all of it when drunk or at the heart of where it lands, half of it on the hexes around. */
 export const POTION_DICE: Dice = { n: 2, d: 4, plus: 6 };
 export const POTION_EDGE = 0.5;
@@ -570,7 +584,7 @@ export interface ThrowableDef {
   damage?: Dice;
   /** Healing to everyone caught in it: in full on the hex it lands on, and `POTION_EDGE` of that on the hexes around. */
   heal?: Dice;
-  /** Can be drunk instead of thrown, as a Bonus action: its healing, in full, for the drinker alone. */
+  /** Can be drunk instead of thrown, for 1 AP: its healing, in full, for the drinker alone. */
   drink?: boolean;
   /** Left on everyone caught in it who fails the Agility save. */
   condition?: { kind: Condition; rounds: number };
@@ -586,7 +600,7 @@ export const THROWABLES: Record<Throwable, ThrowableDef> = {
   water: { name: "Water skin", blurb: "Douses fire and leaves the ground wet for 3 rounds.", radius: 1, surface: { kind: "water", rounds: 3 } },
   acid: { name: "Acid flask", blurb: "Splashes slime acid: a little damage to everyone near, and leaves them Exposed for 2 rounds unless they dodge it.", radius: 1, damage: { n: 1, d: 6, plus: 0 }, condition: { kind: "exposed", rounds: 2 } },
   slime: { name: "Slime flask", blurb: "Leaves a sticky slick for 3 rounds: it costs a step more to cross and slows whoever walks into it.", radius: 1, surface: { kind: "slime", rounds: 3 } },
-  torch: { name: "Torch", blurb: "Light it to hold in your off hand (a Bonus action) and see in the dark, with your shield set aside. Thrown, it lies burning where it lands, and sets oil alight.", radius: 0, light: true },
+  torch: { name: "Torch", blurb: "Light it to hold in your off hand (1 AP) and see in the dark, with your shield set aside. Thrown, it lies burning where it lands, and sets oil alight.", radius: 0, light: true },
 };
 
 /** How far a torch lights, held or lying burning, and how far a burning hex does. */
@@ -722,8 +736,8 @@ export function enemyStrikes(kind: string, level: number, threat?: number, more 
 /** The quick are hard to hit: 10, one more for every 30 of the old speed, one more for a boss. */
 export const enemyDefence = (kind: string): number => 10 + Math.floor((ENEMIES[kind]?.speed ?? 0) / 30) + (ENEMIES[kind]?.boss ? 1 : 0);
 
-/** Steps a turn, and `more` for what the map's modifiers add. A training dummy stays put. */
-export const enemyMove = (kind: string, more = 0): number => (kind === "dummy" ? 0 : Math.max(3, Math.min(8, 3 + Math.round((ENEMIES[kind]?.speed ?? 0) / 18))) + more);
+/** Steps 1 AP buys (half its old speed, 1 to 4), and `more` for what the map's modifiers add. A training dummy stays put. */
+export const enemyMove = (kind: string, more = 0): number => (kind === "dummy" ? 0 : Math.max(1, Math.floor(Math.max(3, Math.min(8, 3 + Math.round((ENEMIES[kind]?.speed ?? 0) / 18))) / 2)) + more);
 
 /** What an enemy adds to a saving throw: bosses and the big are harder to shake. */
 export const enemySave = (kind: string): number => (ENEMIES[kind]?.boss ? 3 : (ENEMIES[kind]?.hp ?? 0) >= 18 ? 2 : 0);

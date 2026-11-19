@@ -58,6 +58,11 @@ import {
   checkCommon,
   checkThrow,
   commonCost,
+  AP_MAX,
+  AP_TURN,
+  ITEM_AP,
+  apForMove,
+  moveLeft,
   crateAt,
   crateBlow,
   crateHp,
@@ -131,11 +136,18 @@ interface Picture {
 
 const asState = (view: ZoneViewState) => view as unknown as ZoneState;
 
+/** What a cooldown means, for an ability's tooltip: it ticks off as each of your turns ends, the turn it was used in too. */
+function cooldownText(turns: number): string {
+  if (turns <= 0) return "";
+  if (turns === 1) return " Once a turn.";
+  return ` Then ${turns - 1} turn${turns === 2 ? "" : "s"} to wait before it can be used again.`;
+}
+
 /** What joining a shanty does, in a few lines, for the Join button's tooltip. */
 function joinTip(bard: string, kind: ShantyKind): string {
   const who = bard.split(" ")[0];
-  const lift = kind === "lively_shanty" ? ["You: advantage on your next attack", "Everyone in it: +1 to hit"] : kind === "dour_shanty" ? ["You: Guarded (half damage)", "Everyone in it: +1 Defence"] : ["You: Disengage (no blows drawn moving away)", "Everyone in it: +1 movement"];
-  return [`Join ${who}'s ${CONDITION_INFO[kind].name}`, "Bonus action · once per shanty", lift[0], `${lift[1]}, until ${who}'s next turn`, "The shanty reaches 1 hex further"].join("\n");
+  const lift = kind === "lively_shanty" ? ["You: advantage on your next attack", "Everyone in it: +1 to hit"] : kind === "dour_shanty" ? ["You: Guarded (half damage)", "Everyone in it: +1 Defence"] : ["You: Disengage (no blows drawn moving away)", "Everyone in it: +1 movement for each AP"];
+  return [`Join ${who}'s ${CONDITION_INFO[kind].name}`, `${COMMON_ACTIONS.join.cost} AP · once per shanty`, lift[0], `${lift[1]}, until ${who}'s next turn`, "The shanty reaches 1 hex further"].join("\n");
 }
 
 /** How long a leave asked for mid-fight waits for the Flee before it is given up. */
@@ -1340,13 +1352,13 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
   const picking = !!pick || !!dev.tool;
   const reach = useMemo(() => {
     if (!state || !act || act.down || picking || (fighting && !myTurn)) return new Map();
-    return zoneReach(asState(state), act, budget ? budget.move : FREE_WALK, undefined, courseFor(asState(state), act, budget));
+    return zoneReach(asState(state), act, budget ? moveLeft(budget) : FREE_WALK, undefined, courseFor(asState(state), act, budget));
   }, [state, act, picking, fighting, myTurn, budget]);
   // The course charted for this turn's walk (Chart a Course), and the hexes only it brings within reach: shown apart, in the mark's red.
   const course = state && act && budget ? courseFor(asState(state), act, budget) : undefined;
   const courseOnly = useMemo(() => {
     if (!state || !act || !budget || !course || reach.size === 0) return [];
-    const plain = zoneReach(asState(state), act, budget.move);
+    const plain = zoneReach(asState(state), act, moveLeft(budget));
     return [...reach.values()].filter((r) => r.stop && !plain.has(posKey(r.pos))).map((r) => r.pos);
     // `reach` is remade whenever the state, the hero or the budget changes, and `course` is new each render: reach alone keys it.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1479,7 +1491,7 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
   // Further than this turn's movement reaches: how far it would be, so the way can be shown in red.
   const far = useMemo(() => {
     if (!z || !act || !budget || !myTurn || picking || !hover || reach.has(posKey(hover))) return null;
-    return zoneReach(z, act, budget.move + 18, undefined, courseFor(z, act, budget));
+    return zoneReach(z, act, moveLeft(budget) + 18, undefined, courseFor(z, act, budget));
   }, [z, act, budget, myTurn, picking, hover, reach]);
   const moveTip = useMemo(() => {
     if (!state || !enc || !act || !budget || !myTurn || picking || !hover) return null;
@@ -1504,10 +1516,15 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
     // A course charted: what of the way its movement pays for (steps toward the mark), and what it has left.
     const courseLeft = courseFor(asState(state), act, budget)?.left ?? 0;
     const courseUsed = got.courseLeft !== undefined ? courseLeft - got.courseLeft : 0;
+    const left = moveLeft(budget);
+    // What AP the way would buy: none while movement already bought covers it.
+    const ap = got.cost <= left ? apForMove(budget, got.cost) : null;
     return {
       none: false as const,
       cost: got.cost,
-      left: budget.move,
+      left,
+      ap,
+      apLeft: ap === null ? 0 : budget.ap - ap,
       courseLeft,
       courseUsed,
       // Out of reach, or somebody is standing there.
@@ -1515,7 +1532,7 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
       taken: !got.stop,
       drawn: drawn.size,
       ground,
-      steps: near ? [] : path.map((pos) => ({ pos, ok: (from.get(posKey(pos))?.cost ?? Infinity) <= budget.move })),
+      steps: near ? [] : path.map((pos) => ({ pos, ok: (from.get(posKey(pos))?.cost ?? Infinity) <= left })),
     };
   }, [state, enc, act, budget, myTurn, picking, hover, reach, far]);
   useEffect(() => layer.current?.setPath(moveTip && !moveTip.none ? moveTip.steps : []), [moveTip]);
@@ -1565,7 +1582,7 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
   // ---------- acting ----------
 
   /** Whether the turn has this left to spend. Out of a fight everything is free. */
-  const canPay = (cost: "action" | "bonus") => !fighting || (myTurn && !!budget?.[cost]);
+  const canPay = (cost: number) => !fighting || (myTurn && (budget?.ap ?? 0) >= cost);
 
   /**
    * Send a walk, and show at once as much of it as can be foreseen (zone/ahead.ts): the hero sets off at the
@@ -1588,7 +1605,7 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
    * name goes up over them. None of what comes of it is shown until the answer says. `sure` is false when the
    * client can already see it will be refused: then it is only sent, for the server to say why.
    */
-  const declare = (action: ZoneSend, sure: boolean, shown: { cost: "action" | "bonus"; gain?: "dash" | "disengage"; slot?: string; name?: string; toward?: HexPos | null }) => {
+  const declare = (action: ZoneSend, sure: boolean, shown: { cost: number; gain?: "disengage"; slot?: string; name?: string; toward?: HexPos | null }) => {
     if (!act) return;
     const n = zone.send(action);
     if (n === null || !sure || !canPay(shown.cost)) return;
@@ -1614,11 +1631,11 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
   const common = (what: CommonAction, aim: { target?: string; at?: HexPos } = {}) => {
     if (!act || !z) return;
     const sure = !checkCommon(z, act, what, aim, fighting ? (budget ?? null) : null);
-    declare({ type: "common", unit: act.id, what, ...aim }, sure, { cost: commonCost(what, act.kind), gain: what === "dash" || what === "disengage" ? what : undefined, slot: `do:${what}`, name: COMMON_ACTIONS[what].name, toward: aimedAt(aim) });
+    declare({ type: "common", unit: act.id, what, ...aim }, sure, { cost: commonCost(what, act.kind), gain: what === "disengage" ? what : undefined, slot: `do:${what}`, name: COMMON_ACTIONS[what].name, toward: aimedAt(aim) });
     setPick(null);
   };
   /** The small things done to what is beside you (a chest, a door, a torch, mushrooms): the cost shows at once, and the hero turns to it. */
-  const reachFor = (action: ZoneSend, cost: "action" | "bonus", toward: HexPos | null) => declare(action, true, { cost, toward });
+  const reachFor = (action: ZoneSend, cost: number, toward: HexPos | null) => declare(action, true, { cost, toward });
   const endTurn = () => {
     if (!act) return;
     const n = zone.send({ type: "end_turn", unit: act.id });
@@ -1638,11 +1655,11 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
     if (dev.tool?.tool === "paint") return dev.open?.send({ op: "paint", kind: dev.tool.surface, hexes: dev.tool.wide ? zoneBlast(state.map, pos, 1) : [pos] });
     if (!pick) {
       // A click on a torch burning on the ground right beside you takes it up; from further off, it is walked to.
-      if (state.lights?.[posKey(pos)] && hexDistance(pos, act.pos) <= 1) return reachFor({ type: "pickup", unit: act.id, at: pos }, "bonus", pos);
+      if (state.lights?.[posKey(pos)] && hexDistance(pos, act.pos) <= 1) return reachFor({ type: "pickup", unit: act.id, at: pos }, ITEM_AP.pickup, pos);
       // A click on a locked door works it from beside it (a key if there is one, else a shoulder), or walks up to it first.
       const door = state.map.pois.find((p) => p.kind === "gate" && !p.cleared && p.pos.q === pos.q && p.pos.r === pos.r);
       if (door) {
-        if (hexDistance(door.pos, act.pos) <= 1) return reachFor({ type: "unlock", unit: act.id, poi: door.id }, "action", door.pos);
+        if (hexDistance(door.pos, act.pos) <= 1) return reachFor({ type: "unlock", unit: act.id, poi: door.id }, ITEM_AP.unlock, door.pos);
         const beside = [...reach.values()].filter((r) => r.stop && hexDistance(r.pos, door.pos) === 1).sort((a, b) => a.cost - b.cost)[0];
         if (beside) walkTo(beside.pos);
         return;
@@ -1650,7 +1667,7 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
       // A click on a chest opens it from beside it, or walks up to it first.
       const chest = state.map.pois.find((p) => p.kind === "cache" && !p.cleared && p.pos.q === pos.q && p.pos.r === pos.r);
       if (chest) {
-        if (hexDistance(chest.pos, act.pos) <= 1) return reachFor({ type: "open", unit: act.id, poi: chest.id }, "action", chest.pos);
+        if (hexDistance(chest.pos, act.pos) <= 1) return reachFor({ type: "open", unit: act.id, poi: chest.id }, ITEM_AP.open, chest.pos);
         const beside = [...reach.values()].filter((r) => r.stop && hexDistance(r.pos, chest.pos) === 1).sort((a, b) => a.cost - b.cost)[0];
         if (beside) walkTo(beside.pos);
         return;
@@ -1673,7 +1690,7 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
       // A click on glowing mushrooms picks them from beside them (or among them), or walks up to them first.
       const patch = state.map.pois.find((p) => p.kind === "glowcap" && !p.cleared && p.pos.q === pos.q && p.pos.r === pos.r);
       if (patch) {
-        if (hexDistance(patch.pos, act.pos) <= 1) return reachFor({ type: "forage", unit: act.id, poi: patch.id }, "action", patch.pos);
+        if (hexDistance(patch.pos, act.pos) <= 1) return reachFor({ type: "forage", unit: act.id, poi: patch.id }, ITEM_AP.forage, patch.pos);
         const beside = [...reach.values()].filter((r) => r.stop && hexDistance(r.pos, patch.pos) <= 1).sort((a, b) => a.cost - b.cost)[0];
         if (beside) walkTo(beside.pos);
         return;
@@ -1709,9 +1726,9 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
       // Clicked on yourself, something drinkable is drunk and a torch is lit to hold; anywhere else it is thrown there.
       const onSelf = pos.q === act.pos.q && pos.r === act.pos.r;
       const def = THROWABLES[pick.item];
-      if (def.drink && onSelf) declare({ type: "drink", unit: act.id, item: pick.item }, (act.items[pick.item] ?? 0) > 0, { cost: "bonus", slot: `it:${pick.item}`, name: def.name });
-      else if (def.light && onSelf && !act.torch) declare({ type: "light", unit: act.id }, (act.items.torch ?? 0) > 0, { cost: "bonus", slot: `it:${pick.item}` });
-      else declare({ type: "throw", unit: act.id, item: pick.item, at: pos }, !checkThrow(asState(state), act, pick.item, pos), { cost: "action", slot: `it:${pick.item}`, name: def.name, toward: pos });
+      if (def.drink && onSelf) declare({ type: "drink", unit: act.id, item: pick.item }, (act.items[pick.item] ?? 0) > 0, { cost: ITEM_AP.drink, slot: `it:${pick.item}`, name: def.name });
+      else if (def.light && onSelf && !act.torch) declare({ type: "light", unit: act.id }, (act.items.torch ?? 0) > 0, { cost: ITEM_AP.light, slot: `it:${pick.item}` });
+      else declare({ type: "throw", unit: act.id, item: pick.item, at: pos }, !checkThrow(asState(state), act, pick.item, pos), { cost: ITEM_AP.throw, slot: `it:${pick.item}`, name: def.name, toward: pos });
       setPick(null);
     } else if (pick.what === "jump") common("jump", { at: pos });
     else if (there) common(pick.what, { target: there.id });
@@ -1791,10 +1808,12 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
 
   // ---------- the bar ----------
 
-  const costName = (cost: "action" | "bonus") => (cost === "action" ? "Action" : "Bonus action");
-  // Getting away: on your turn, with the Action (a Rogue's Bonus action) for it, and no enemy in the fight within FLEE_RANGE.
+  const costName = (cost: number) => `${cost} AP`;
+  /** Why the AP are not there for something that costs `cost`, in words. */
+  const short = (cost: number) => `That takes ${cost} AP, and you have ${budget?.ap ?? 0} left.`;
+  // Getting away: on your turn, with the AP for it (fewer for a Rogue), and no enemy in the fight within FLEE_RANGE.
   const fleeCost = commonCost("flee", act.kind);
-  const fleeBlock = !fighting ? "That is for a fight." : !myTurn ? "Wait for your turn." : !budget?.[fleeCost] ? `You have used your ${costName(fleeCost)} this turn.` : checkCommon(asState(state), act, "flee", {}, budget ?? null);
+  const fleeBlock = !fighting ? "That is for a fight." : !myTurn ? "Wait for your turn." : !canPay(fleeCost) ? short(fleeCost) : checkCommon(asState(state), act, "flee", {}, budget ?? null);
   /** From the middle of a fight: flee it, then `go` once out of it. */
   const fleeThen = (go: () => void) => {
     zone.clearError();
@@ -1817,7 +1836,7 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
       icon: { ...abilityIcon(id), flat: true },
       name: def.name,
       line: [costName(tactic.cost), reachText, dice].filter(Boolean).join(" · "),
-      more: `${def.blurb}${tactic.cooldown ? ` Then ${tactic.cooldown} turn${tactic.cooldown === 1 ? "" : "s"} before it can be used again.` : ""}`,
+      more: `${def.blurb}${cooldownText(tactic.cooldown ?? 0)}`,
       wait: wait || undefined,
       picked: (pick?.kind === "ability" && pick.id === id) || taken.has(`ab:${id}`),
       spent: !canPay(tactic.cost) || (fighting && wait > 0),
@@ -1826,7 +1845,7 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
   }
   for (const what of Object.keys(COMMON_ICON) as CommonAction[]) {
     const cost = commonCost(what, act.kind);
-    const needsFight = what === "dash" || what === "disengage" || what === "flee";
+    const needsFight = what === "disengage" || what === "flee";
     entries[`do:${what}`] = {
       id: `do:${what}`,
       icon: { ...COMMON_ICON[what], flat: true },
@@ -1848,12 +1867,12 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
       id: `it:${item}`,
       icon: ITEM_ICON[item],
       name: held ? `${def.name} (lit, ${act.torch} rounds left)` : def.name,
-      line: def.drink ? "Throw it (Action), or click yourself to drink it (Bonus action)" : def.light ? (held ? "Throw the lit torch down where it should burn (Action)" : "Throw it lit (Action), or click yourself to light it to hold (Bonus action)") : "Throw it (Action)",
+      line: def.drink ? `Throw it (${ITEM_AP.throw} AP), or click yourself to drink it (${ITEM_AP.drink} AP)` : def.light ? (held ? `Throw the lit torch down where it should burn (${ITEM_AP.throw} AP)` : `Throw it lit (${ITEM_AP.throw} AP), or click yourself to light it to hold (${ITEM_AP.light} AP)`) : `Throw it (${ITEM_AP.throw} AP)`,
       more: def.blurb,
       count: have,
       picked: (pick?.kind === "item" && pick.item === item) || taken.has(`it:${item}`),
-      // Thrown for an Action; a potion can still be drunk, or a torch lit, when only the Bonus action is left.
-      spent: (have <= 0 && !held) || !(canPay("action") || ((!!def.drink || (!!def.light && !held)) && canPay("bonus"))),
+      // Thrown for more AP than a potion is drunk, or a torch lit, for: those can still be done with too few left to throw.
+      spent: (have <= 0 && !held) || !(canPay(ITEM_AP.throw) || ((!!def.drink || (!!def.light && !held)) && canPay(ITEM_AP.drink))),
       run: () => setPick((p) => (p?.kind === "item" && p.item === item ? null : { kind: "item", item })),
     };
   }
@@ -1863,10 +1882,10 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
   // (Those sharing the turn who have ended theirs are not waited on; with nobody left, the turn is passing on.)
   const still = enc ? enc.acting.filter((id) => !enc.done.includes(id)) : [];
   const waitingFor = enc && !myTurn ? (watching && spot ? (names.current.get(spot) ?? "someone") : still.length > 0 ? still.map((id) => names.current.get(id) ?? "someone").join(" and ") : "the next turn") : undefined;
-  // A torch is lit into a hand, or put away from one, freely out of a fight; in one, for a Bonus action on your turn.
-  const handFree = !fighting || (myTurn && !!budget?.bonus);
-  const handWhy = fighting && !myTurn ? "Wait for your turn." : fighting && !budget?.bonus ? "You have used your Bonus action this turn." : undefined;
-  const stowTorch = act && act.torch && !act.down && handFree ? () => reachFor({ type: "stow", unit: act.id }, "bonus", null) : undefined;
+  // A torch is lit into a hand, or put away from one, freely out of a fight; in one, for AP on your turn.
+  const handFree = canPay(ITEM_AP.light);
+  const handWhy = fighting && !myTurn ? "Wait for your turn." : !handFree ? short(ITEM_AP.light) : undefined;
+  const stowTorch = act && act.torch && !act.down && canPay(ITEM_AP.stow) ? () => reachFor({ type: "stow", unit: act.id }, ITEM_AP.stow, null) : undefined;
   // A torch burning on the ground within reach, to pick up.
   const torchBeside = act && state.lights ? Object.keys(state.lights).map((k) => { const [q, r] = k.split(",").map(Number); return { q, r }; }).find((p) => hexDistance(p, act.pos) <= 1) : undefined;
   // A locked door within reach, and the keys on the party's ring.
@@ -1948,10 +1967,10 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
           <>
             {/* Your own movement, and beside it (a course charted) the course's: what of each the way takes. */}
             <span className="zone-cursor-cost">
-              <strong>{moveTip.cost}</strong> / {moveTip.left}
+              {moveTip.ap !== null ? <><strong>{moveTip.ap} AP</strong> · {moveTip.cost} hex{moveTip.cost === 1 ? "" : "es"}</> : <><strong>{moveTip.cost}</strong> / {moveTip.left}</>}
               {moveTip.courseLeft > 0 && <span className="course" title="Charted course: movement for steps toward the red X"> · <strong>{moveTip.courseUsed}</strong> / {moveTip.courseLeft}</span>}
             </span>
-            <span className="zone-cursor-note">{moveTip.beyond ? `${moveTip.cost - moveTip.left} too far` : moveTip.taken ? "someone is standing there" : `${moveTip.left - moveTip.cost} left after`}</span>
+            <span className="zone-cursor-note">{moveTip.beyond || moveTip.ap === null ? `${moveTip.cost - moveTip.left} too far` : moveTip.taken ? "someone is standing there" : `${moveTip.apLeft} AP left after`}</span>
             {moveTip.drawn > 0 && <span className="zone-cursor-warn">Draws {moveTip.drawn === 1 ? "an attack" : `${moveTip.drawn} attacks`} as you leave</span>}
             {moveTip.ground.map((k) => <span key={k} className="zone-cursor-warn" style={{ color: SURFACE_INFO[k].color }}>Through {SURFACE_INFO[k].name.toLowerCase()}</span>)}
           </>
@@ -2150,7 +2169,7 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
               : (act.items[item] ?? 0) <= 0 ? "You have none left."
               : !entries[`it:${item}`]?.spent ? undefined
               : fighting && !myTurn ? "It is not your turn."
-              : "You have neither an Action nor a Bonus action left for it this turn.",
+              : `You have too few AP left for it this turn (${budget?.ap ?? 0}).`,
           }}
         />
       )}
@@ -2184,12 +2203,12 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
         hp={{ now: seen(act).hp, max: act.maxHp, shield: shieldOf(seen(act)) }}
         meter={{ name: "Focus", note: "spend one to roll an attack with advantage", now: act.focus, max: act.maxFocus, kind: "focus" }}
         pips={fighting && budget ? [
-          { label: "Action", now: budget.action ? 1 : 0, max: 1, kind: "action" },
-          { label: "Bonus action", now: budget.bonus ? 1 : 0, max: 1, kind: "bonus" },
-          { label: "Movement", now: budget.move, max: budget.moveMax, kind: "move" },
+          { label: "AP", now: budget.ap, max: AP_MAX, kind: "ap", title: `Action Points: ${budget.ap} of ${AP_MAX}. Spend them on anything, moving too. You get ${AP_TURN} more each turn, and what you do not spend carries over.` },
+          // Movement bought with AP and not yet walked: it is spent before another AP is, and lost at the end of the turn.
+          { label: "Movement", now: budget.move, max: Math.max(budget.move, budget.stride), kind: "move", title: `Movement: ${budget.move} bought and left this turn. 1 AP buys ${budget.stride} more${budget.stride === 0 ? " (you cannot move this turn)" : ""}.` },
           // A course charted: movement for steps toward the mark alone.
           ...(budget.course !== undefined && courseMarks(asState(state), act).length > 0
-            ? [{ label: "Course", now: budget.course, max: CHART.speed, kind: "course" as const, title: `Charted course: ${budget.course} of ${CHART.speed} movement left, spent first on steps that bring you nearer the red X` }]
+            ? [{ label: "Course", now: budget.course, max: Math.max(budget.course, CHART.speed), kind: "course" as const, title: `Charted course: ${budget.course} movement left, spent first on steps that bring you nearer the red X. Each AP of movement adds ${CHART.speed} more.` }]
             : []),
         ] : []}
         // The keys the party has found, on its one ring.
@@ -2202,7 +2221,7 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
           rounds: act.torch ?? null,
           hand: act.torchHand === "main" ? "main" : "off",
           carried: act.items.torch ?? 0,
-          light: !act.torch && (act.items.torch ?? 0) > 0 && !act.down && handFree ? (hand) => reachFor({ type: "light", unit: act.id, ...(hand === "main" ? { hand } : {}) }, "bonus", null) : undefined,
+          light: !act.torch && (act.items.torch ?? 0) > 0 && !act.down && handFree ? (hand) => reachFor({ type: "light", unit: act.id, ...(hand === "main" ? { hand } : {}) }, ITEM_AP.light, null) : undefined,
           stow: stowTorch,
           why: handWhy,
         }}
@@ -2224,27 +2243,27 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
             }]} />}
       >
         {fighting && myTurn && joinable(asState(state), act).map((s) => (
-          <button key={`join:${s.bard.id}`} className="small" style={{ fontSize: 12, padding: "1px 7px", color: CONDITION_INFO[s.song.kind].color, borderColor: CONDITION_INFO[s.song.kind].color }} disabled={!budget?.bonus} title={joinTip(s.bard.name, s.song.kind)} onClick={() => common("join", { target: s.bard.id })}>
+          <button key={`join:${s.bard.id}`} className="small" style={{ fontSize: 12, padding: "1px 7px", color: CONDITION_INFO[s.song.kind].color, borderColor: CONDITION_INFO[s.song.kind].color }} disabled={!canPay(commonCost("join", act.kind))} title={joinTip(s.bard.name, s.song.kind)} onClick={() => common("join", { target: s.bard.id })}>
             ♪ Join song
           </button>
         ))}
         {torchBeside && (!fighting || myTurn) && (
-          <button className="small" disabled={fighting && !budget?.bonus} title={fighting ? "A Bonus action" : undefined} onClick={() => reachFor({ type: "pickup", unit: act.id, at: torchBeside }, "bonus", torchBeside)}>
+          <button className="small" disabled={!canPay(ITEM_AP.pickup)} title={fighting ? costName(ITEM_AP.pickup) : undefined} onClick={() => reachFor({ type: "pickup", unit: act.id, at: torchBeside }, ITEM_AP.pickup, torchBeside)}>
             {act.torch ? "Stow the torch" : "Pick up the torch"}
           </button>
         )}
         {doorBeside && (!fighting || myTurn) && (
-          <button className="small primary" disabled={fighting && !budget?.action} title={keys > 0 ? "Uses a key off the ring" : `A Strength roll (${FORCE_DC} or better). Loud: the nearest band within earshot will come.`} onClick={() => reachFor({ type: "unlock", unit: act.id, poi: doorBeside.id }, "action", doorBeside.pos)}>
+          <button className="small primary" disabled={!canPay(ITEM_AP.unlock)} title={`${fighting ? `${costName(ITEM_AP.unlock)}. ` : ""}${keys > 0 ? "Uses a key off the ring" : `A Strength roll (${FORCE_DC} or better). Loud: the nearest band within earshot will come.`}`} onClick={() => reachFor({ type: "unlock", unit: act.id, poi: doorBeside.id }, ITEM_AP.unlock, doorBeside.pos)}>
             {keys > 0 ? "Unlock the door" : "Force the door"}
           </button>
         )}
         {chestBeside && (!fighting || myTurn) && (
-          <button className="small primary" disabled={chestGuarded(chestBeside) || (fighting && !budget?.action)} title={chestGuarded(chestBeside) ? "Its guards still stand over it" : fighting ? "An Action" : undefined} onClick={() => reachFor({ type: "open", unit: act.id, poi: chestBeside.id }, "action", chestBeside.pos)}>
+          <button className="small primary" disabled={chestGuarded(chestBeside) || !canPay(ITEM_AP.open)} title={chestGuarded(chestBeside) ? "Its guards still stand over it" : fighting ? costName(ITEM_AP.open) : undefined} onClick={() => reachFor({ type: "open", unit: act.id, poi: chestBeside.id }, ITEM_AP.open, chestBeside.pos)}>
             Open {chestName(chestBeside)}
           </button>
         )}
         {glowBeside && (!fighting || myTurn) && (
-          <button className="small" disabled={fighting && !budget?.action} title={fighting ? "An Action" : "Mushrooms for the apothecary. Picked, they stop glowing."} onClick={() => reachFor({ type: "forage", unit: act.id, poi: glowBeside.id }, "action", glowBeside.pos)}>
+          <button className="small" disabled={!canPay(ITEM_AP.forage)} title={fighting ? costName(ITEM_AP.forage) : "Mushrooms for the apothecary. Picked, they stop glowing."} onClick={() => reachFor({ type: "forage", unit: act.id, poi: glowBeside.id }, ITEM_AP.forage, glowBeside.pos)}>
             Pick the mushrooms
           </button>
         )}
@@ -2272,7 +2291,7 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
         )}
         <button className={`small ${focus ? "primary" : ""}`} disabled={act.focus <= 0} aria-pressed={focus} title="Spend 1 Focus on your next attack to roll it with advantage" onClick={() => setFocus((f) => !f)}>Focus {act.focus}</button>
         {crateBeside && (!fighting || myTurn) && (
-          <button className="small" disabled={!crateHit || (fighting && !budget?.action)} title={crateHit ? `${ABILITIES[crateHit].name}${fighting ? ", for an Action" : ""}: every blow at a crate lands` : "Nothing you have reaches it"} onClick={() => crateHit && use(crateHit, { target: crateBeside.id })}>
+          <button className="small" disabled={!crateHit || !canPay(tacticOf(crateHit).cost)} title={crateHit ? `${ABILITIES[crateHit].name}${fighting ? `, for ${costName(tacticOf(crateHit).cost)}` : ""}: every blow at a crate lands` : "Nothing you have reaches it"} onClick={() => crateHit && use(crateHit, { target: crateBeside.id })}>
             Break the crate
           </button>
         )}

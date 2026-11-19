@@ -2,8 +2,8 @@
 // striking up another ends the first), and it reaches everyone on the Bard's
 // side within its radius, the Bard among them. What it gives is worked out
 // from where everyone stands right now, so walking into it or out of it
-// counts at once. An ally standing in it can join it, once a shanty, as a
-// Bonus action (combat.ts): the shanty reaches a hex further for as long as it
+// counts at once. An ally standing in it can join it, once a shanty, for
+// 1 AP (combat.ts): the shanty reaches a hex further for as long as it
 // is sung, the one who joined gets a lift of their own, and everyone in it a
 // little more of what it gives until the Bard's next turn. The Bard cannot join their own.
 //

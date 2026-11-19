@@ -1,7 +1,7 @@
 // The Warlock's sea. Drowning is a condition on an enemy that comes in
 // stacks (its `amount`): at the start of each of its turns it loses a little
 // HP for every stack, then must hold its breath (a Vitality save, harder for
-// every stack) or lose its Action. Every stack laid on starts the count again
+// every stack) or lose 2 of its AP. Every stack laid on starts the count again
 // for all of them. Two curses lay the stacks: the Curse of Drowning, one
 // whenever the enemy starts or ends a turn standing in water, and the Black
 // Spot, one at the end of each of its turns. The Black Spot also spoils its
@@ -13,7 +13,7 @@
 
 import { addCondition, has, inWater, removeCondition, saveRoll, tick, type Ctx } from "./engine";
 import { flies } from "./geometry";
-import { DROWNING, SAVE_STAT } from "./kit";
+import { ACTION_AP, DROWNING, SAVE_STAT } from "./kit";
 import type { Budget, Unit, ZoneState } from "./types";
 
 /** The stacks of Drowning on a unit, 0 for none. */
@@ -40,12 +40,12 @@ export function drowningAtStart(ctx: Ctx, unit: Unit): void {
   if (stacks > 0) tick(ctx, unit, "drowning", DROWNING.tick * stacks);
 }
 
-/** With its turn underway and its budget set: it holds its breath, or loses its Action. */
+/** With its turn underway and its budget set: it holds its breath, or loses ACTION_AP of its AP. */
 export function holdBreath(ctx: Ctx, unit: Unit, budget: Budget): void {
   const stacks = drowningStacks(unit);
   if (unit.down || stacks <= 0) return;
   if (saveRoll(ctx, unit, SAVE_STAT.drowning, breathDc(stacks), "Hold your breath").ok) return;
-  budget.action = false;
+  budget.ap = Math.max(0, budget.ap - ACTION_AP);
   ctx.events.push({ t: "choked", id: unit.id });
 }
 
