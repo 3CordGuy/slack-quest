@@ -4,7 +4,7 @@
 
 export const HATS = ["helm", "wizard", "hood", "horns", "leaves", "feather", "circlet", "brim", "turban", "kerchief", "greathelm", "none"] as const;
 export type Hat = (typeof HATS)[number];
-export const LOOK_WEAPONS = ["sword", "staff", "daggers", "club", "bow", "lute", "orb", "lantern", "scroll", "pack", "basket", "axe_shield", "grimoire", "smith_hammer", "paddle", "cleaver", "none"] as const;
+export const LOOK_WEAPONS = ["sword", "staff", "daggers", "club", "bow", "lute", "orb", "lantern", "scroll", "pack", "basket", "axe_shield", "grimoire", "smith_hammer", "paddle", "cleaver", "root_staff", "none"] as const;
 export type Weapon = (typeof LOOK_WEAPONS)[number];
 
 export interface Look {
@@ -65,6 +65,8 @@ export const LOOKS: Record<string, Look> = {
   brute: { skin: "#c9a27c", hair: "#2a1c14", body: "#5a4632", legs: "#3a2e22", accent: "#b9433d", hat: "none", weapon: "club" },
   archer: { skin: "#d9a67c", hair: "#3a2a20", body: "#4f6b3a", legs: "#33402a", accent: "#e8dcc0", hat: "hood", weapon: "bow" },
   guardian: { skin: "#9aa4b2", hair: "#7b8494", body: "#6b7280", legs: "#4b5563", accent: "#7fe3ff", hat: "none", weapon: "none" },
+  // The Hedge Witch: sallow and hook-nosed under a wide bent hat, in a ragged moss-green robe to the ankles, with a gnarled staff of root.
+  witch: { skin: "#c3c79c", hair: "#9a9f8e", body: "#4c6134", legs: "#2c3122", accent: "#9fcb46", hat: "wizard", hatColor: "#33402a", weapon: "root_staff", coat: true, nose: "hooked", eyes: "narrow" },
   villain: { skin: "#b8c7b0", hair: "#101010", body: "#2a2a35", legs: "#15151c", accent: "#e23b3b", hat: "horns", weapon: "sword" },
 };
 

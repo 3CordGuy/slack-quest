@@ -460,6 +460,60 @@ export const ENEMIES: Record<string, EnemyDef> = {
       { name: "Keening", rolls: 4, pct: 49, damage: 5, target: "all_heroes", perfect: { effect: "slowed", turns: 2 }, weight: 2 },
     ],
   },
+  // ---- what lives out on the atlas's maps ----
+  // A hunting spider the size of a hound: quick and frail, its bite leaves venom on the ground, and its web slows
+  // whoever it catches from across the way.
+  spider: {
+    kind: "spider", name: "Giant Spider", hp: 10, speed: 72, xp: 11,
+    attacks: [
+      { name: "Venomous Bite", rolls: 3, pct: 53, damage: 5, target: "hero", weight: 3 },
+      { name: "Web Spit", rolls: 2, pct: 49, damage: 3, target: "hero", perfect: { effect: "slowed", turns: 2 }, weight: 2 },
+    ],
+  },
+  // What the nest belongs to: a spider the size of a cart, that webs the whole crew at once.
+  broodmother: {
+    kind: "broodmother", name: "Broodmother", hp: 38, speed: 50, xp: 44, boss: true,
+    attacks: [
+      { name: "Impaling Fang", rolls: 3, pct: 57, damage: 11, target: "hero", perfect: { effect: "bleeding", turns: 3 }, weight: 3 },
+      { name: "Web Spit", rolls: 2, pct: 53, damage: 5, target: "hero", perfect: { effect: "slowed", turns: 2 }, weight: 2 },
+      { name: "Brood Swarm", rolls: 4, pct: 45, damage: 5, target: "all_heroes", perfect: { effect: "slowed", turns: 1 }, weight: 1 },
+    ],
+  },
+  // The frost's wolves: a dire wolf in all but coat, and the cold in its bite slows what it bleeds.
+  frost_wolf: {
+    kind: "frost_wolf", name: "Frost Wolf", hp: 10, speed: 75, xp: 11,
+    attacks: [{ name: "Rime Bite", rolls: 2, pct: 57, damage: 5, target: "hero", perfect: { effect: "slowed", turns: 2 }, weight: 1 }],
+  },
+  // The ashlands' hounds, and what they bite catches fire.
+  ember_hound: {
+    kind: "ember_hound", name: "Ember Hound", hp: 11, speed: 70, xp: 12,
+    attacks: [{ name: "Searing Bite", rolls: 2, pct: 57, damage: 5, target: "hero", perfect: { effect: "burning", turns: 2 }, weight: 1 }],
+  },
+  // A cave bear's white cousin: as slow, as thick-hided, and every bit as cross.
+  snow_bear: {
+    kind: "snow_bear", name: "Snow Bear", hp: 28, speed: 30, xp: 21,
+    attacks: [
+      { name: "Mauling Swipe", rolls: 2, pct: 53, damage: 12, target: "hero", perfect: { effect: "bleeding", turns: 2 }, weight: 3 },
+      { name: "Roar", rolls: 2, pct: 45, damage: 4, target: "hero", perfect: { effect: "stunned", turns: 1 }, weight: 1 },
+    ],
+  },
+  // The frost's dead: it keeps its distance, and what its cold reaches is slow to move after.
+  wraith: {
+    kind: "wraith", name: "Rime Wraith", hp: 11, speed: 60, xp: 14,
+    attacks: [
+      { name: "Frost Lance", rolls: 3, pct: 53, damage: 6, target: "hero", perfect: { effect: "slowed", turns: 2 }, weight: 3 },
+      { name: "Wail", rolls: 3, pct: 45, damage: 3, target: "all_heroes", weight: 1 },
+    ],
+  },
+  // Whoever it is that lives alone in the wood or the fen, and does not care for callers. Thorns from across the
+  // clearing, and a hex that leaves whoever it lands on easy to hit.
+  witch: {
+    kind: "witch", name: "Hedge Witch", hp: 12, speed: 50, xp: 15,
+    attacks: [
+      { name: "Thorn Hex", rolls: 3, pct: 53, damage: 6, target: "hero", perfect: { effect: "bleeding", turns: 2 }, weight: 3 },
+      { name: "Evil Eye", rolls: 2, pct: 45, damage: 4, target: "hero", perfect: { effect: "exposed", turns: 2 }, weight: 2 },
+    ],
+  },
   villain: {
     kind: "villain", name: "Villain", hp: 26, speed: 55, xp: 40, boss: true,
     attacks: [

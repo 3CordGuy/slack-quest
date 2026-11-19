@@ -35,7 +35,7 @@ const at = (col: number, row: number): HexPos => ({ q: col - Math.floor(row / 2)
 function board(edit: (tile: Tile) => void = () => {}): ZoneState {
   const tiles: Tile[] = allHexesInGrid(GRID).map((p) => ({ q: p.q, r: p.r, biome: "plains" as Biome, h: 0.3, elev: 0 }));
   tiles.forEach(edit);
-  return { v: 1, code: "TEST", seed: "test", rng: 12345, options: { ...DEFAULT_ZONE_OPTIONS, party: 1 }, map: { grid: GRID, tiles, pois: [] }, start: at(2, 6), units: [], groups: {}, surfaces: {}, encounter: null, seq: 100 };
+  return { v: 1, code: "TEST", seed: "test", rng: 12345, options: { ...DEFAULT_ZONE_OPTIONS, party: 1 }, map: { grid: GRID, tiles, pois: [] }, start: at(2, 6), units: [], groups: {}, surfaces: {}, encounter: null, seq: 100, shareTurns: true };
 }
 const tileEdit = (pos: HexPos, change: Partial<Tile>) => (t: Tile) => { if (t.q === pos.q && t.r === pos.r) Object.assign(t, change); };
 

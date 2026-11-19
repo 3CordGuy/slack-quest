@@ -118,7 +118,7 @@ export function waterAttribute(count: number): THREE.InstancedBufferAttribute {
 }
 
 /** The kinds of ground that get painted detail on top: 0 is none (it is left one flat colour). */
-export const GROUND_KIND: Record<string, number> = { plains: 1, forest: 2, hills: 3 };
+export const GROUND_KIND: Record<string, number> = { plains: 1, forest: 2, hills: 3, paved: 4 };
 
 /**
  * Which side of a hex faces a neighbour that lies toward (dx, dz) in the world: 0 to 5, matching the shader.
@@ -340,12 +340,31 @@ const FRAG_BODY = /* glsl */ `#include <color_fragment>
       ground *= 0.9 + 0.12 * shade;
       ground = mix(ground, ground * vec3(1.3, 1.02, 0.66), smoothstep(0.68, 0.84, fine) * 0.7);
       ground = mix(ground, ground * 0.8, smoothstep(0.7, 0.86, fine2) * 0.8);
-    } else {
+    } else if (vGround < 3.5) {
       // Hills: soft bands through the rock, with paler and darker patches.
       ground *= 0.93 + 0.1 * shade;
       ground *= 1.0 - 0.05 * (0.5 + 0.5 * sin(waterNoise(at * 0.9 + 8.0) * 37.7));
       ground = mix(ground, ground * 1.15, smoothstep(0.7, 0.86, fine) * 0.8);
       ground = mix(ground, ground * 0.82, smoothstep(0.72, 0.88, fine2) * 0.8);
+    } else {
+      // Laid stone: flags in courses, one or two cells long, each its own shade, with dark joints between them
+      // and a worn, mottled face. The courses run on across the hexes, so a floor is one floor.
+      vec2 flag = at * vec2(1.3, 1.95);
+      float course = floor(flag.y);
+      flag.x += waterHash(vec2(course, 7.0)) * 3.0;
+      float cell = floor(flag.x);
+      float pair = step(0.45, waterHash(vec2(floor(cell * 0.5), course) + 3.0));
+      float first = mix(cell, floor(cell * 0.5) * 2.0, pair);
+      float wide = 1.0 + pair;
+      vec2 within = vec2((flag.x - first) / wide, fract(flag.y));
+      ground *= 0.82 + 0.3 * waterHash(vec2(first, course) + 17.0);
+      ground *= 0.95 + 0.1 * shade;
+      ground = mix(ground, ground * 1.12, smoothstep(0.7, 0.86, fine) * 0.6);
+      ground = mix(ground, ground * 0.84, smoothstep(0.72, 0.88, fine2) * 0.6);
+      float joint = min(min(within.x, 1.0 - within.x) * wide / 1.3, min(within.y, 1.0 - within.y) / 1.95);
+      float soft = waterPx(at);
+      ground *= 1.0 + 0.1 * (1.0 - smoothstep(0.03, 0.075, joint));
+      ground = mix(ground * 0.48, ground, smoothstep(0.012 - soft, 0.028 + soft, joint));
     }
     diffuseColor.rgb = ground;
   }

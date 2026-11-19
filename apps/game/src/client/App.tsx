@@ -4,7 +4,7 @@
 // (#crew/BCDFGH). #hut/<player id> is the inside of that crew member's hut;
 // #pub, #smithy, #apothecary and #galley are the insides of those buildings.
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Suspense, lazy, useCallback, useEffect, useRef, useState } from "react";
 import type { KeeperShop } from "@gantt-quest/world";
 import { loadMe, type Me } from "./api";
 import { loadContent } from "./content";
@@ -30,6 +30,8 @@ const adminFromHash = () => location.hash === "#admin";
 const catchesFromHash = () => location.hash === "#catches";
 const hutFromHash = () => /^#hut\/([A-Za-z0-9-]{1,64})$/.exec(location.hash)?.[1] ?? null;
 const inviteFromHash = () => /^#crew\/([A-Za-z]{6})$/.exec(location.hash)?.[1].toUpperCase() ?? null;
+/** A bench for the fight interface with made-up data (development only): #lab/fightui. */
+const FightUiLab = import.meta.env.DEV ? lazy(() => import("./zone/FightUiLab")) : null;
 
 export function App() {
   const [me, setMe] = useState<Me | null>(null);
@@ -85,6 +87,7 @@ export function App() {
 
 function Screen({ me, refresh, zone, atlas, invite, hut, pub, keeper, admin, catches }: { me: Me; refresh(): Promise<void>; zone: string | null; atlas: boolean; invite: string | null; hut: string | null; pub: boolean; keeper: KeeperShop | null; admin: boolean; catches: boolean }) {
   const ready = me.character?.status === "active";
+  if (FightUiLab && location.hash === "#lab/fightui") return <Suspense fallback={null}><FightUiLab me={me} refresh={refresh} /></Suspense>;
   if (admin) return <AdminView me={me} onLeave={() => (location.hash = "")} />;
   // Every catch's sprite and model, side by side: for admins, and on a development deployment.
   if (catches && (me.isAdmin || me.devTools || import.meta.env.DEV)) return <CatchGallery onLeave={() => (location.hash = "")} />;

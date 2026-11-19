@@ -5,6 +5,7 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { beforeEach, describe, expect, it } from "vitest";
+import { ENEMIES } from "@gantt-quest/world";
 import {
   PNG_MAX_BYTES,
   checkImport,
@@ -18,6 +19,7 @@ import {
   putOverride,
   putOverrides,
   recentLog,
+  validTarget,
 } from "../src/server/content";
 
 type Row = Record<string, unknown>;
@@ -131,6 +133,9 @@ describe("checkOverride", () => {
     expect(checkOverride("icon", "chest-armor", { png: fakePng(17, 16) }).ok).toBe(false);
     expect(checkOverride("sprite", "wolf", { png: fakePng(18, 22) }).ok).toBe(true);
     expect(checkOverride("sprite", "qa_paladin", { png: fakePng(16, 16) }).ok).toBe(false);
+  });
+  it("knows every enemy kind as a figure: a look of its own, or a body of its own", () => {
+    for (const kind of Object.keys(ENEMIES)) expect(validTarget("sprite", kind), kind).toBe(true);
   });
   it("rejects oversized, non-PNG and malformed images", () => {
     expect(checkOverride("icon", "chest-armor", { png: fakePng(16, 16, PNG_MAX_BYTES + 1) }).ok).toBe(false);

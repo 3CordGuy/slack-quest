@@ -11,8 +11,11 @@ import { makeRng, seedFromString } from "../rng";
 import { hexesBetween, solid } from "./geometry";
 import { threatExtras } from "./kit";
 import { cleanMods, modsOf } from "./mods";
+import { layZone } from "./lay";
+import { SITES } from "./sites";
 import type { GroundSurface, ZoneBiome, ZoneOptions, ZoneSize } from "./types";
 
+/** How big a map of open cave floor is (a dev map: the atlas's caves are delves). Every other map is laid by lay.ts, on its own grids (`LAY_GRIDS`). */
 export const ZONE_GRIDS: Record<ZoneSize, HexGrid> = {
   small: { cols: 16, rows: 14 },
   medium: { cols: 22, rows: 18 },
@@ -51,7 +54,7 @@ export function zoneOptions(raw: unknown): ZoneOptions {
   return {
     size: SIZES.includes(o.size as ZoneSize) ? (o.size as ZoneSize) : d.size,
     biome: BIOMES.includes(o.biome as ZoneBiome) ? (o.biome as ZoneBiome) : d.biome,
-    groups: whole(o.groups, 0, 6, d.groups),
+    groups: whole(o.groups, 0, 8, d.groups),
     kinds: Array.isArray(o.kinds) ? o.kinds.filter((k): k is string => typeof k === "string" && !!ENEMIES[k]).slice(0, 6) : [],
     elevation: whole(o.elevation, 0, 3, d.elevation),
     obstacles: whole(o.obstacles, 0, 3, d.obstacles),
@@ -63,6 +66,8 @@ export function zoneOptions(raw: unknown): ZoneOptions {
     ...(cleanMods(o.mods).length > 0 ? { mods: cleanMods(o.mods) } : {}),
     ...(typeof o.tier === "number" && Number.isFinite(o.tier) && o.tier >= 1 ? { tier: Math.min(ATLAS_TIERS, Math.round(o.tier)) } : {}),
     ...(typeof o.name === "string" && o.name.trim() ? { name: o.name.trim().slice(0, 40) } : {}),
+    ...(typeof o.site === "string" && o.site in SITES ? { site: o.site } : {}),
+    ...(typeof o.stone === "number" && Number.isFinite(o.stone) ? { stone: Math.max(0, Math.min(3, Math.round(o.stone))) } : {}),
     ...(CLIMES.includes(o.clime as Clime) && o.clime !== "greenwood" ? { clime: o.clime as Clime } : {}),
   };
 }
@@ -86,6 +91,8 @@ export interface ZonePlan {
   keys?: string[];
   /** What lies on the ground from the start, by hex key: the patches a modifier put there, which stay. */
   surfaces?: Record<string, GroundSurface>;
+  /** What kind of place it is, and what lies round its land (lay.ts). */
+  scene?: { site: string; backdrop: string };
 }
 
 /** Everything that can be walked to from `from`: open ground, no step of two levels. */
@@ -111,7 +118,17 @@ const HAZARD_SIZE: [number, number] = [3, 7];
 /** Rounds written on ground that stays: it is never counted down, so the number only has to be above nothing. */
 const LASTING_ROUNDS = 99;
 
+/**
+ * A map's plan. Anywhere under the sky it is laid out as a site (lay.ts): ragged land with nothing beyond its
+ * edge, cliffs and ladders, set pieces, and bands posted by what they do. Open cave floor (a dev map) is still
+ * made the old way, below.
+ */
 export function generateZone(seed: string, asked: ZoneOptions): ZonePlan {
+  if (asked.biome !== "caves") return layZone(seed, asked);
+  return generateCaveFloor(seed, asked);
+}
+
+function generateCaveFloor(seed: string, asked: ZoneOptions): ZonePlan {
   // What the map's modifiers change is changed here, once: a bigger map, more bands, more clutter, more high ground.
   const mods = modsOf(asked);
   const options: ZoneOptions = {

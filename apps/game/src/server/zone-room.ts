@@ -92,6 +92,8 @@ export function zoneActionFrom(raw: unknown, by: string, dev: boolean): ZoneActi
   if (a.type === "drink") return text(a.item) ? { type: "drink", by, unit: a.unit, item: a.item as never } : null;
   if (a.type === "pickup") return isHex(a.at) ? { type: "pickup", by, unit: a.unit, at: hex(a.at)! } : null;
   if (a.type === "open") return text(a.poi) ? { type: "open", by, unit: a.unit, poi: a.poi } : null;
+  if (a.type === "loot") return text(a.spot) ? { type: "loot", by, unit: a.unit, spot: a.spot } : null;
+  if (a.type === "take") return text(a.spot) ? { type: "take", by, unit: a.unit, spot: a.spot, ...(Number.isInteger(a.index) && (a.index as number) >= 0 ? { index: a.index as number } : {}) } : null;
   if (a.type === "unlock") return text(a.poi) ? { type: "unlock", by, unit: a.unit, poi: a.poi } : null;
   if (a.type === "forage") return text(a.poi) ? { type: "forage", by, unit: a.unit, poi: a.poi } : null;
   if (a.type === "light") return { type: "light", by, unit: a.unit, ...(a.hand === "main" ? { hand: "main" as const } : {}) };

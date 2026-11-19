@@ -23,7 +23,7 @@ import { lookFor } from "./render/sprites";
 import "./figureLab.css";
 
 /** The kinds drawn as creatures, with a body of their own: they wear no gear (dressed, a kind is drawn as a person). */
-const CREATURES = new Set(["wolf", "alpha", "bear", "great_bear", "dummy", "shade", "haunt", "bat", "skeleton", "slime", "ogre", "troll"]);
+const CREATURES = new Set(["wolf", "alpha", "bear", "great_bear", "dummy", "shade", "haunt", "bat", "skeleton", "slime", "ogre", "troll", "spider", "broodmother", "frost_wolf", "ember_hound", "snow_bear", "wraith"]);
 const HEROES = HERO_CLASSES.map((c) => c.id);
 const FOES = Object.keys(ENEMIES);
 const TOWNSFOLK = Object.keys(LOOKS).filter((k) => !HEROES.includes(k) && !FOES.includes(k));

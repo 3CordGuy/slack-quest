@@ -5,7 +5,7 @@
 
 import * as THREE from "three";
 import { ENEMIES, type Outfit } from "@gantt-quest/world";
-import { FOUR_LEGGED, makeFigure } from "./figures";
+import { FOUR_LEGGED, SEEN_FROM_ABOVE, makeFigure } from "./figures";
 import { makeRenderer } from "./graphics";
 import type { Look } from "./looks";
 
@@ -66,7 +66,8 @@ export const isBlankPortrait = (url: string) => url === BLANK;
 
 /**
  * A figure's picture as an image URL. Heroes and townsfolk turn a little to their left, enemies to their
- * right (they face the heroes), and the animals stand side-on. `detail` multiplies the pixel size.
+ * right (they face the heroes), the animals stand side-on, and a spider is tipped up to show its back.
+ * `detail` multiplies the pixel size.
  */
 export function portraitUrl(kind: string, look: Look, outfit: Outfit | undefined, asleep: boolean, detail = 1): string {
   const s = open();
@@ -76,6 +77,7 @@ export function portraitUrl(kind: string, look: Look, outfit: Outfit | undefined
   figure.setSize(22);
   const foe = !outfit && !!ENEMIES[kind];
   figure.root.rotation.y = (foe ? -1 : 1) * (FOUR_LEGGED.has(kind) ? 1.15 : 0.5);
+  if (SEEN_FROM_ABOVE.has(kind)) figure.root.rotation.x = 0.65;
   s.stand.add(figure.root);
   s.stand.updateMatrixWorld(true);
   const box = new THREE.Box3().setFromObject(s.stand);

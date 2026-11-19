@@ -6,14 +6,14 @@
 // blows, blasts and bombs reach crates too (crates.ts).
 
 import { hexDistance, hexNeighbors, hexSegment, posKey, type HexPos } from "@gantt-quest/core";
-import { ABILITIES, BARD_AURA, type AbilityDef, type EffectKind } from "../content";
+import { ABILITIES, BARD_AURA, ENEMIES, type AbilityDef, type EffectKind } from "../content";
 import { tileAt, type Poi } from "../map";
-import { DEBUFFS, addCondition, addShield, attackContext, attackRoll, damage, defenceOf, giveAway, has, heal, inWater, kindle, removeCondition, saveBonus, saveRoll, shieldOf, shieldUnit, unseen, type Ctx } from "./engine";
+import { DEBUFFS, addCondition, addShield, attackContext, attackRoll, damage, defenceOf, giveAway, has, heal, inWater, kindle, removeCondition, saveBonus, saveRoll, shieldOf, shieldUnit, strikeDown, unseen, type Ctx } from "./engine";
 import { cratesOn, crateById, hurtCrate, isCrateId } from "./crates";
-import { HEX_DIRS, adjacent, blast, blockerAt, courseShare, directionToward, elevOf, inFight, lineFrom, pathIn, sameHex, sees, seesFor, solid, stepCost, unitAt, unitById, zoneReach, type Course } from "./geometry";
-import { CHART, COMMON_ACTIONS, CORAL_ARMOR, SHANTY, SUMMON_CALLS, ENEMY_BURST, FLEE_RANGE, JUMP_MOVE_COST, POTION_EDGE, SAVE_STAT, SMUGGLED, THROWABLES, TORCH_GROUND_ROUNDS, abilityDice, enemyStrikes, healDice, jumpRange, reactionStrike, tacticOf, throwRange, type EnemyStrike, type Tactic } from "./kit";
+import { HEX_DIRS, close, blast, blockerAt, courseShare, directionToward, elevOf, flies, inFight, lineFrom, pathIn, pitAt, reachFrom, roomAt, sameHex, sees, seesFor, solid, stepCost, strikes, unitById, zoneReach, type Course, type Pit } from "./geometry";
+import { CHART, COMMON_ACTIONS, CORAL_ARMOR, SHANTY, SUMMON_CALLS, ENEMY_BURST, FLEE_RANGE, JUMP_DOWN, JUMP_MOVE_COST, JUMP_UP, POTION_EDGE, SAVE_STAT, SMUGGLED, THROWABLES, TORCH_GROUND_ROUNDS, abilityDice, enemySave, enemyShove, enemyStrikes, healDice, jumpRange, reactionStrike, tacticOf, throwRange, type EnemyStrike, type Tactic } from "./kit";
 import { modsOf } from "./mods";
-import { d20, diceFor, hitChance, mod, proficiency, rollDice, statOf } from "./rules";
+import { d20, diceFor, hitChance, mod, proficiency, rollDice, rollShown, statOf } from "./rules";
 import { seenByHeroes } from "./light";
 import { HINDERING, chill, clearSurfaces, dropTorch, enterSurface, ignite, letGoTorch, placeSurface } from "./surfaces";
 import type { Budget, CommonAction, Throwable, Unit, ZoneState } from "./types";
@@ -36,7 +36,15 @@ export interface Aim {
 // ---------- walking ----------
 
 /**
- * Enemies beside `unit` that it is about to step out of reach of strike at it, if they still have
+ * Whether stepping from `from` to `next` takes a walker out of the reach of someone standing at `foe`: they could
+ * strike it where it is, and either cannot where it is going, or it is shouldering its way off the very hex they
+ * share (which is never done quietly).
+ */
+export const leavesReach = (state: Pick<ZoneState, "map">, foe: HexPos, from: HexPos, next: HexPos): boolean =>
+  strikes(state.map, foe, from) && (sameHex(foe, from) || !strikes(state.map, foe, next));
+
+/**
+ * Enemies within reach of `unit` that it is about to step out of reach of strike at it, if they still have
  * their reaction. Disengaged, it slips away untouched.
  */
 function provoke(ctx: Ctx, unit: Unit, next: HexPos, budget: Budget | null, flush: () => void): void {
@@ -46,7 +54,7 @@ function provoke(ctx: Ctx, unit: Unit, next: HexPos, budget: Budget | null, flus
   for (const foe of ctx.state.units) {
     if (unit.down) return;
     if (foe.side === unit.side || foe.down || !inFight(ctx.state, foe.id)) continue;
-    if (!adjacent(foe.pos, unit.pos) || adjacent(foe.pos, next) || sameHex(foe.pos, next)) continue;
+    if (!leavesReach(ctx.state, foe.pos, unit.pos, next)) continue;
     if (enc.reacted.includes(foe.id) || has(foe, "stunned") || has(foe, "prone")) continue;
     const blow = foe.side === "enemy" ? enemyStrikes(foe.kind, foe.level, ctx.state.options.threat, modsOf(ctx.state.options).edge).find((s) => s.range === 1 && !s.burst) : undefined;
     if (foe.side === "enemy" && !blow) continue;
@@ -61,17 +69,17 @@ function provoke(ctx: Ctx, unit: Unit, next: HexPos, budget: Budget | null, flus
   }
 }
 
-/** If someone else is on a unit's hex (it was stopped part-way past an ally), it shuffles to the nearest free one. */
+/** If a unit's hex has no room for it (it was stopped part-way through a full one), it shuffles to the nearest that has: no cliff climbed or dropped to get there. */
 function standClear(ctx: Ctx, unit: Unit): void {
-  if (!ctx.state.units.some((u) => u.id !== unit.id && sameHex(u.pos, unit.pos))) return;
+  if (roomAt(ctx.state, unit.pos, unit.id)) return;
   const seen = new Set([posKey(unit.pos)]);
   const queue = [unit.pos];
   for (let i = 0; i < queue.length && i < 60; i++) {
     for (const n of hexNeighbors(queue[i], ctx.state.map.grid)) {
       if (seen.has(posKey(n))) continue;
       seen.add(posKey(n));
-      if (solid(tileAt(ctx.state.map, n)) || blockerAt(ctx.state, n)) continue;
-      if (!unitAt(ctx.state, n)) {
+      if (solid(tileAt(ctx.state.map, n)) || blockerAt(ctx.state, n) || Math.abs(elevOf(ctx.state.map, n) - elevOf(ctx.state.map, queue[i])) >= 2) continue;
+      if (roomAt(ctx.state, n, unit.id)) {
         unit.pos = n;
         ctx.events.push({ t: "moved", id: unit.id, path: [n] });
         return;
@@ -120,28 +128,132 @@ export function courseFor(state: ZoneState, unit: Unit, budget: Budget | null | 
   return marks.length > 0 ? { marks, left: budget.course } : undefined;
 }
 
-/** Knock `target` one hex directly away from `from`. Against a wall, a cliff or another body it takes a knock and falls Prone instead. */
-export function push(ctx: Ctx, from: HexPos, target: Unit, by: string): void {
-  const dir = directionToward(from, target.pos);
-  const dest = { q: target.pos.q + dir.q, r: target.pos.r + dir.r };
-  const open = openFor(ctx.state, target.pos, dest);
+/**
+ * A unit has come down from `from` to where it stands now. A drop of more than `safe` levels hurts: a d4 for each
+ * level past that, and it lands flat on the ground. Shoved off a height it was not ready for any of it (`safe` 1);
+ * leaping down, the first `JUMP_DOWN` levels are its own doing.
+ */
+export function tumble(ctx: Ctx, unit: Unit, from: HexPos, by: string | null, safe = 1): void {
+  const drop = elevOf(ctx.state.map, from) - elevOf(ctx.state.map, unit.pos);
+  if (drop <= safe || unit.down || flies(unit)) return;
+  ctx.events.push({ t: "fell", id: unit.id, levels: drop });
+  const rolled = rollShown(ctx.rng, { n: drop - safe, d: 4, plus: 0 });
+  damage(ctx, unit, rolled.total, { actor: by, what: "fall", dice: rolled });
+  addCondition(ctx, unit, "prone", 1);
+}
+
+/** What a save to catch the edge is rolled against when nothing says otherwise: a thrown thing, the ground giving way. */
+export const EDGE_DC = 12;
+
+/** What whoever `by` shoves must roll to catch the edge of a drop or a pit: harder against the strong, and against a boss's shove. */
+export function edgeDc(state: ZoneState, by: Unit | undefined): number {
+  if (!by) return EDGE_DC;
+  if (by.side === "hero") return 10 + Math.max(0, mod(statOf(by, "str"))) + Math.floor(proficiency(by.level) / 2);
+  return 10 + enemySave(by.kind) + (Math.max(1, Math.min(3, state.options.threat ?? 2)) - 1);
+}
+
+/** How a unit made to move a hex fared: it went, it went over an edge and fell, it caught the edge and stayed, something was in the way, or it is lost to a pit. */
+export type Shift = "moved" | "fell" | "held" | "blocked" | "lost";
+
+/**
+ * Where a forced move from `from` onto `to` would put `who`: on open ground (`open`), over a drop of two levels or
+ * more (`drop`), into a pit (`pit`: deep water, lava, or off the edge of the land), or nowhere, something being in
+ * the way: rock, a wall, a cliff face going up, or a hex with no room left on it (`null`).
+ */
+export function shiftInto(state: ZoneState, from: HexPos, to: HexPos, who?: Unit): { how: "open" | "drop"; levels: number } | { how: "pit"; pit: Pit } | null {
+  const pit = pitAt(state.map, to);
+  if (pit) return who && flies(who) ? (pit === "void" ? null : { how: "open", levels: 0 }) : { how: "pit", pit };
+  if (solid(tileAt(state.map, to)) || blockerAt(state, to) || !roomAt(state, to, who?.id)) return null;
+  const levels = elevOf(state.map, from) - elevOf(state.map, to);
+  if (levels <= -2) return null;
+  return levels >= 2 && !(who && flies(who)) ? { how: "drop", levels } : { how: "open", levels };
+}
+
+/**
+ * Move `target` one hex onto `dest` by force (a shove, a blast, a wave, a hook). Toward a drop of two levels or
+ * more, or a pit, it first rolls to catch the edge (Agility, against `dc`; a boss with advantage): made, it stays
+ * where it is. Failed, it goes over: down a drop it falls (tumble), and into a pit it is lost (sink). `by` is
+ * whoever is doing it. Says what became of it; the caller says what a blocked way means.
+ */
+export function shift(ctx: Ctx, target: Unit, dest: HexPos, by: string, dc?: number): Shift {
+  const { state } = ctx;
+  const into = shiftInto(state, target.pos, dest, target);
+  if (!into) return "blocked";
   const was = target.pos;
-  if (!open) {
-    ctx.events.push({ t: "shoved", id: by, target: target.id, from: was, to: null });
-    damage(ctx, target, ctx.rng.int(1, 4), { actor: by, what: "shove" });
-    addCondition(ctx, target, "prone", 1);
-    return;
+  if (into.how !== "open") {
+    const boss = target.side === "enemy" && !!ENEMIES[target.kind]?.boss;
+    const vs = dc ?? edgeDc(state, unitById(state, by));
+    const roll = d20(ctx.rng, { kind: "save", id: target.id, label: "Catch the edge", bonus: saveBonus(target, "agi"), vs, adv: has(target, "prone") || has(target, "stunned") ? (boss ? 0 : -1) : boss ? 1 : 0 });
+    ctx.events.push({ t: "roll", roll });
+    if (roll.ok) {
+      ctx.events.push({ t: "held", id: target.id, at: dest });
+      return "held";
+    }
+  }
+  if (into.how === "pit") {
+    sink(ctx, target, dest, into.pit, by);
+    return "lost";
   }
   target.pos = dest;
   ctx.events.push({ t: "shoved", id: by, target: target.id, from: was, to: dest });
-  enterSurface(ctx, target);
-  enterWeather(ctx, target);
+  if (into.how === "drop") {
+    tumble(ctx, target, was, by);
+    return "fell";
+  }
+  return "moved";
+}
+
+/**
+ * Someone goes into a pit: deep water, lava, or over the edge of the land. An enemy is gone for good, with whatever
+ * it carried. A hero (or what a hero called) is hauled back to the brink they went over, down, to be got up again
+ * like anyone who has fallen.
+ */
+export function sink(ctx: Ctx, unit: Unit, into: HexPos, pit: Pit, by: string | null): void {
+  ctx.events.push({ t: "sunk", id: unit.id, by, from: unit.pos, into, pit });
+  if (unit.side === "enemy") unit.lost = pit;
+  strikeDown(ctx, unit);
+}
+
+/**
+ * Where a shove from `from` would send someone standing at `at`: the hex straight away from the shover. Shoved by
+ * someone on their own hex there is no straight away, so they go off the hex's lowest side: over the edge, if it has one.
+ */
+export function shoveDest(state: ZoneState, from: HexPos, at: HexPos, who?: Unit): HexPos {
+  if (!sameHex(from, at)) {
+    const dir = directionToward(from, at);
+    return { q: at.q + dir.q, r: at.r + dir.r };
+  }
+  // A pit is the lowest of all; then the deepest drop; then level ground.
+  const depth = (p: HexPos) => {
+    const into = shiftInto(state, at, p, who);
+    return !into ? Infinity : into.how === "pit" ? -99 : -into.levels;
+  };
+  return HEX_DIRS.map((d) => ({ q: at.q + d.q, r: at.r + d.r })).sort((a, b) => depth(a) - depth(b))[0];
+}
+
+/**
+ * Knock `target` one hex directly away from `from`. Against a wall, a cliff face or a full hex it takes a knock and
+ * falls Prone instead. Toward a drop or a pit it may catch the edge; if it does not, it goes over (shift).
+ */
+export function push(ctx: Ctx, from: HexPos, target: Unit, by: string): Shift {
+  const dest = shoveDest(ctx.state, from, target.pos, target);
+  const went = shift(ctx, target, dest, by);
+  if (went === "blocked") {
+    ctx.events.push({ t: "shoved", id: by, target: target.id, from: target.pos, to: null });
+    const rolled = rollShown(ctx.rng, { n: 1, d: 4, plus: 0 });
+    damage(ctx, target, rolled.total, { actor: by, what: "shove", dice: rolled });
+    addCondition(ctx, target, "prone", 1);
+  } else if (went === "moved" && !target.down) {
+    enterSurface(ctx, target);
+    enterWeather(ctx, target);
+  }
+  return went;
 }
 
 /**
  * Overwhelm: Strength against the target's footing (as a Shove). Won, it is driven straight back from the user, a hex at a time,
- * up to `hexes`. Driven into what nobody can pass (rock, a wall, a chest, a cliff, the map's edge) it is Stunned; into somebody
- * else, it just stops. Returns whether the contest was won.
+ * up to `hexes`. Driven into what nobody can pass (rock, a wall, a chest, a cliff face) it is Stunned; into a hex with no room
+ * on it, it just stops; over an edge, it falls (unless it catches the edge), and that ends the drive. Returns whether the contest was won.
  */
 function overwhelm(ctx: Ctx, unit: Unit, def: AbilityDef, target: Unit, opts: { hexes: number; stun: number }): boolean {
   const { state } = ctx;
@@ -151,70 +263,64 @@ function overwhelm(ctx: Ctx, unit: Unit, def: AbilityDef, target: Unit, opts: { 
     ctx.events.push({ t: "miss", actor: unit.id, target: target.id, what: def.id });
     return false;
   }
-  const dir = directionToward(unit.pos, target.pos);
+  const dir = sameHex(unit.pos, target.pos) ? null : directionToward(unit.pos, target.pos);
   for (let i = 0; i < opts.hexes && !target.down; i++) {
-    const dest = { q: target.pos.q + dir.q, r: target.pos.r + dir.r };
-    const tile = tileAt(state.map, dest);
-    if (!tile || solid(tile) || blockerAt(state, dest) || Math.abs(elevOf(state.map, dest) - elevOf(state.map, target.pos)) >= 2) {
-      ctx.events.push({ t: "shoved", id: unit.id, target: target.id, from: target.pos, to: null });
-      addCondition(ctx, target, "stunned", opts.stun);
+    const dest = dir ? { q: target.pos.q + dir.q, r: target.pos.r + dir.r } : shoveDest(state, unit.pos, target.pos, target);
+    const full = !pitAt(state.map, dest) && !solid(tileAt(state.map, dest)) && !blockerAt(state, dest) && elevOf(state.map, dest) - elevOf(state.map, target.pos) < 2 && !roomAt(state, dest, target.id);
+    const went = shift(ctx, target, dest, unit.id);
+    if (went === "blocked") {
+      if (!full || i === 0) ctx.events.push({ t: "shoved", id: unit.id, target: target.id, from: target.pos, to: null });
+      if (!full) addCondition(ctx, target, "stunned", opts.stun);
       return true;
     }
-    if (unitAt(state, dest)) {
-      if (i === 0) ctx.events.push({ t: "shoved", id: unit.id, target: target.id, from: target.pos, to: null });
-      return true;
-    }
-    const was = target.pos;
-    target.pos = dest;
-    ctx.events.push({ t: "shoved", id: unit.id, target: target.id, from: was, to: dest });
+    if (went !== "moved") return true;
     // Ground that trips it (ice) ends the drive there.
     if (enterSurface(ctx, target) || target.down) return true;
     enterWeather(ctx, target);
+    if (!dir) return true;
   }
   return true;
 }
 
-/** Can a unit be moved from one hex onto the next by force: open ground, nobody on it, no cliff between. */
-/** Drag `target` up to `hexes` straight toward `unit`, stopping beside them or at anything in the way (Throw Pike). */
+/** Drag `target` up to `hexes` straight toward `unit`, stopping beside them or at anything in the way (Throw Pike). Dragged over an edge, it falls. */
 function pull(ctx: Ctx, unit: Unit, target: Unit, hexes: number): void {
+  if (sameHex(target.pos, unit.pos)) return;
   const dir = directionToward(target.pos, unit.pos);
   for (let i = 0; i < hexes && !target.down; i++) {
     const dest = { q: target.pos.q + dir.q, r: target.pos.r + dir.r };
-    if (sameHex(dest, unit.pos) || !openFor(ctx.state, target.pos, dest)) return;
-    const was = target.pos;
-    target.pos = dest;
-    ctx.events.push({ t: "shoved", id: unit.id, target: target.id, from: was, to: dest });
+    if (sameHex(dest, unit.pos) && !roomAt(ctx.state, dest, target.id)) return;
+    if (shift(ctx, target, dest, unit.id) !== "moved") return;
     // Ground that trips it (ice) ends the drag there.
     if (enterSurface(ctx, target) || target.down) return;
     enterWeather(ctx, target);
+    if (sameHex(target.pos, unit.pos)) return;
   }
 }
 
-function openFor(state: ZoneState, from: HexPos, to: HexPos): boolean {
-  return !solid(tileAt(state.map, to)) && !blockerAt(state, to) && Math.abs(elevOf(state.map, to) - elevOf(state.map, from)) < 2 && !unitAt(state, to);
-}
-
-/** Carry a unit along `line` from where it stands toward the far end, as far as the way is open. */
+/** Carry a unit along `line` from where it stands toward the far end, as far as the way is open: over an edge or into a pit, if that is where the line goes. */
 function sweepAlong(ctx: Ctx, target: Unit, line: HexPos[], by: string): void {
   const from = line.findIndex((p) => sameHex(p, target.pos));
-  let dest = target.pos;
-  for (let j = from + 1; j < line.length && openFor(ctx.state, dest, line[j]); j++) dest = line[j];
-  if (sameHex(dest, target.pos)) return;
-  const was = target.pos;
-  target.pos = dest;
-  ctx.events.push({ t: "shoved", id: by, target: target.id, from: was, to: dest });
-  enterSurface(ctx, target);
-  enterWeather(ctx, target);
+  for (let j = from + 1; j < line.length && !target.down; j++) {
+    if (shift(ctx, target, line[j], by) !== "moved") return;
+    if (enterSurface(ctx, target) || target.down) return;
+    enterWeather(ctx, target);
+  }
+  // A line that ends at the water's edge, or the land's: the wave carries on over it.
+  const last = line[line.length - 1];
+  if (target.down || !last || !sameHex(target.pos, last) || line.length < 2) return;
+  const before = line[line.length - 2];
+  const beyond = { q: last.q + (last.q - before.q), r: last.r + (last.r - before.r) };
+  if (pitAt(ctx.state.map, beyond)) shift(ctx, target, beyond, by);
 }
 
-/** Open ground a unit could be put down on: a floor, nothing built on it, nobody on it. */
-const standable = (state: ZoneState, pos: HexPos): boolean => !!tileAt(state.map, pos) && !solid(tileAt(state.map, pos)) && !blockerAt(state, pos) && !unitAt(state, pos);
+/** Open ground a unit could be put down on: a floor, nothing built on it, and room to stand. */
+const standable = (state: ZoneState, pos: HexPos, who?: string): boolean => !!tileAt(state.map, pos) && !solid(tileAt(state.map, pos)) && !blockerAt(state, pos) && roomAt(state, pos, who);
 
 /** Why `unit` cannot blink (Smuggler's Route, Tactical Retreat) to `at`, `range` hexes at most, or null if it can. Nothing between counts. */
 function blinkWrong(state: ZoneState, unit: Unit, at: HexPos | undefined, range: number): string | null {
   if (!at || sameHex(at, unit.pos) || !tileAt(state.map, at)) return "Pick a hex to go to.";
   if (hexDistance(unit.pos, at) > range) return "Too far.";
-  return standable(state, at) ? null : "There is nowhere to stand there.";
+  return standable(state, at, unit.id) ? null : "There is nowhere to stand there.";
 }
 
 /**
@@ -267,16 +373,17 @@ export function abilityArea(state: ZoneState, unit: Unit, ability: string, at?: 
   if (tactic.newMoon) return litFoes(state, unit).map((u) => u.pos);
   if (tactic.northStar) {
     const ally = target ? unitById(state, target) : unit;
-    return ally ? hexNeighbors(ally.pos, state.map.grid) : [];
+    return ally ? [ally.pos, ...hexNeighbors(ally.pos, state.map.grid)] : [];
   }
   if (tactic.weather === "rain") return at ? rainHexes(state, unit.pos, at) : [];
   if (tactic.fortify) return at && !sameHex(at, unit.pos) ? wallHexes(state, unit.pos, at) : [];
   if (tactic.splash) return at ? clusterHexes(state, unit.pos, at, tactic.splash.hexes) : [];
   if (tactic.cluster) return at ? clusterHexes(state, unit.pos, at, tactic.cluster) : [];
   if (tactic.shape === "blast") return at ? blast(state.map, at, tactic.radius ?? 1) : [];
-  if (tactic.shape === "burst") return blast(state.map, unit.pos, tactic.radius ?? 1).filter((p) => !sameHex(p, unit.pos));
+  // Round the user, their own hex with the rest: an enemy may be standing on it with them.
+  if (tactic.shape === "burst") return blast(state.map, unit.pos, tactic.radius ?? 1);
   if (tactic.shape === "line") return at ? lineFrom(state.map, unit.pos, at, tactic.length ?? 3) : [];
-  if (tactic.shape === "adjacent") return hexNeighbors(unit.pos, state.map.grid);
+  if (tactic.shape === "adjacent") return [unit.pos, ...hexNeighbors(unit.pos, state.map.grid)];
   if (tactic.shape === "arc") return at && !sameHex(at, unit.pos) ? arcHexes(state, unit.pos, at) : [];
   if (tactic.shape === "cone") return at && !sameHex(at, unit.pos) ? coneHexes(state, unit.pos, at, tactic.length ?? 3) : [];
   return [];
@@ -313,11 +420,11 @@ export function coneHexes(state: ZoneState, from: HexPos, toward: HexPos, length
   return out;
 }
 
-/** A swing's three hexes: the one beside `from` toward `toward`, and the two beside both it and `from`. */
+/** A swing's hexes: the one beside `from` toward `toward`, the two beside both it and `from`, and `from` itself, for whoever shares it. */
 export function arcHexes(state: ZoneState, from: HexPos, toward: HexPos): HexPos[] {
   const dir = directionToward(from, toward);
   const middle = { q: from.q + dir.q, r: from.r + dir.r };
-  return hexNeighbors(from, state.map.grid).filter((p) => hexDistance(p, middle) <= 1);
+  return [from, ...hexNeighbors(from, state.map.grid).filter((p) => hexDistance(p, middle) <= 1)];
 }
 
 /** Why `unit` cannot use this ability on this aim, in words, or null if it can. */
@@ -327,8 +434,11 @@ export function checkAbility(state: ZoneState, unit: Unit, ability: string, aim:
   const tactic = tacticOf(ability);
   const inReach = (pos: HexPos): string | null => {
     const dist = hexDistance(unit.pos, pos);
-    if (tactic.reach === "melee") return dist === 1 ? null : "Too far: you have to be next to it.";
-    if (dist > tactic.range) return "Out of range.";
+    if (tactic.reach === "melee") {
+      if (dist > 1) return "Too far: you have to be next to it.";
+      return strikes(state.map, unit.pos, pos) ? null : elevOf(state.map, pos) > elevOf(state.map, unit.pos) ? "It is out of reach up there: climb up to it, or find a ladder." : "It is out of reach down there: climb down to it, or find a ladder.";
+    }
+    if (dist > reachFrom(state.map, unit.pos, pos, tactic.range)) return "Out of range.";
     return sees(state.map, unit.pos, pos) ? null : "There is no clear line to it.";
   };
   if (tactic.shape === "single" || tactic.shape === "chain") {
@@ -349,11 +459,11 @@ export function checkAbility(state: ZoneState, unit: Unit, ability: string, aim:
   if (tactic.shape === "arc") {
     if (!aim.at || sameHex(aim.at, unit.pos)) return "Pick which way to swing.";
     const keys = new Set(arcHexes(state, unit.pos, aim.at).map(posKey));
-    if (state.units.some((u) => u.side !== unit.side && !u.down && keys.has(posKey(u.pos)))) return null;
+    if (state.units.some((u) => u.side !== unit.side && !u.down && keys.has(posKey(u.pos)) && strikes(state.map, unit.pos, u.pos))) return null;
     return unit.side === "hero" && def.damage && cratesBeside(state, unit).some((c) => keys.has(posKey(c.pos))) ? null : "No enemy is in that swing.";
   }
   if (tactic.shape === "adjacent") {
-    if (state.units.some((u) => u.side !== unit.side && !u.down && adjacent(u.pos, unit.pos))) return null;
+    if (state.units.some((u) => u.side !== unit.side && !u.down && strikes(state.map, unit.pos, u.pos))) return null;
     return unit.side === "hero" && def.damage && cratesBeside(state, unit).length > 0 ? null : "No enemy is next to you.";
   }
   // A course is charted by the stars, not by sight: any hex in range will do, seen or not.
@@ -364,7 +474,7 @@ export function checkAbility(state: ZoneState, unit: Unit, ability: string, aim:
   if (tactic.shape === "blast") {
     if (!aim.at || !tileAt(state.map, aim.at)) return "Pick a hex.";
     // A wall goes up on open ground: the hex aimed at has to be one somebody could stand on.
-    if (tactic.fortify && (sameHex(aim.at, unit.pos) || !standable(state, aim.at))) return "There is no room to raise a wall there.";
+    if (tactic.fortify && (sameHex(aim.at, unit.pos) || !standable(state, aim.at) || state.units.some((u) => sameHex(u.pos, aim.at!)))) return "There is no room to raise a wall there.";
     return inReach(aim.at);
   }
   if (tactic.shape === "line" || tactic.shape === "cone") return aim.at && !sameHex(aim.at, unit.pos) ? null : "Pick a direction.";
@@ -387,7 +497,7 @@ export function checkAbility(state: ZoneState, unit: Unit, ability: string, aim:
     if (wrong || !aim.target || aim.target === unit.id) return wrong;
     const ally = unitById(state, aim.target);
     if (!tactic.blink.carry || !ally || ally.side !== unit.side) return "Pick an ally beside you to take along.";
-    if (!adjacent(ally.pos, unit.pos)) return `${ally.name} has to be beside you to come along.`;
+    if (!close(ally.pos, unit.pos)) return `${ally.name} has to be beside you to come along.`;
     return carrySpot(state, unit, ally, aim.at!) ? null : `There is no room there for ${ally.name} to arrive.`;
   }
   return null;
@@ -439,12 +549,13 @@ function strike(ctx: Ctx, unit: Unit, def: AbilityDef, tactic: Tactic, target: U
     ctx.events.push({ t: "miss", actor: unit.id, target: target.id, what: def.id });
     return false;
   }
-  let amount = rollDice(ctx.rng, abilityDice(def), roll.crit) + damageBonus(ctx.state, unit, def);
-  if (tactic.vsWet && has(target, "wet")) amount += tactic.vsWet;
-  if (tactic.edge && roll.adv === 1) amount += tactic.edge;
-  if (tactic.wading && inWater(ctx.state, unit)) amount += tactic.wading;
-  if (tactic.bulwark) amount += Math.floor(shieldOf(unit) * tactic.bulwark.perShield);
-  const dealt = damage(ctx, target, amount, { actor: unit.id, what: def.id, crit: roll.crit });
+  let more = damageBonus(ctx.state, unit, def);
+  if (tactic.vsWet && has(target, "wet")) more += tactic.vsWet;
+  if (tactic.edge && roll.adv === 1) more += tactic.edge;
+  if (tactic.wading && inWater(ctx.state, unit)) more += tactic.wading;
+  if (tactic.bulwark) more += Math.floor(shieldOf(unit) * tactic.bulwark.perShield);
+  const rolled = rollShown(ctx.rng, abilityDice(def), more, roll.crit);
+  const dealt = damage(ctx, target, rolled.total, { actor: unit.id, what: def.id, crit: roll.crit, dice: rolled });
   if (def.drain && dealt > 0 && !unit.down) heal(ctx, unit, Math.max(1, Math.round(dealt * def.drain)), { actor: unit.id, what: def.id });
   // A Warlock's critical hits drag the target under (Riptide).
   if (roll.crit && unit.kind === "data_warlock") drown(ctx, target, 1);
@@ -461,8 +572,9 @@ function strike(ctx: Ctx, unit: Unit, def: AbilityDef, tactic: Tactic, target: U
   if (tactic.kindleLit && !target.down && has(target, "guiding_light")) kindle(ctx, unit, target, tactic.kindleLit);
   // Water Burst: the drench reaches whoever stands beside the target, no roll to hit.
   if (tactic.spray) {
-    for (const foe of ctx.state.units.filter((u) => u.id !== target.id && u.side !== unit.side && !u.down && adjacent(u.pos, target.pos))) {
-      damage(ctx, foe, rollDice(ctx.rng, diceFor(Math.max(2, tactic.spray - 2))) + damageBonus(ctx.state, unit, def), { actor: unit.id, what: def.id });
+    for (const foe of ctx.state.units.filter((u) => u.id !== target.id && u.side !== unit.side && !u.down && close(u.pos, target.pos))) {
+      const splash = rollShown(ctx.rng, diceFor(Math.max(2, tactic.spray - 2)), damageBonus(ctx.state, unit, def));
+      damage(ctx, foe, splash.total, { actor: unit.id, what: def.id, dice: splash });
     }
   }
   if (melee) thorns(ctx, unit, target);
@@ -481,7 +593,8 @@ function bind(ctx: Ctx, unit: Unit, def: AbilityDef, target: Unit, turns: { slow
 /** Coral Armor: whoever lands a blow up close on one wearing it is cut by it. */
 function thorns(ctx: Ctx, attacker: Unit, target: Unit): void {
   if (attacker.down || !has(target, "coral_armor")) return;
-  damage(ctx, attacker, rollDice(ctx.rng, CORAL_ARMOR.thorns), { actor: target.id, what: "coral_armor" });
+  const rolled = rollShown(ctx.rng, CORAL_ARMOR.thorns);
+  damage(ctx, attacker, rolled.total, { actor: target.id, what: "coral_armor", dice: rolled });
 }
 
 /** The crates beside a unit. */
@@ -566,18 +679,18 @@ export function resolveAbility(ctx: Ctx, unit: Unit, ability: string, aim: Aim &
   } else if (tactic.constellation) {
     // The links pass harmlessly over the user's side; every enemy on one is struck once and lit, however many cross it.
     const keys = new Set(abilityArea(state, unit, ability).map(posKey));
-    const rolled = rollDice(ctx.rng, abilityDice(def)) + damageBonus(state, unit, def);
+    const rolled = rollShown(ctx.rng, abilityDice(def), damageBonus(state, unit, def));
     for (const victim of foes().filter((u) => keys.has(posKey(u.pos)))) {
-      damage(ctx, victim, rolled, { actor: unit.id, what: def.id });
+      damage(ctx, victim, rolled.total, { actor: unit.id, what: def.id, dice: rolled });
       if (!victim.down) addCondition(ctx, victim, "guiding_light", tactic.guide ?? 0);
     }
     landed = true;
   } else if (tactic.newMoon) {
     // Every light put out at once, each for a blow that cannot be dodged.
     const lit = litFoes(state, unit);
-    const rolled = rollDice(ctx.rng, abilityDice(def)) + damageBonus(state, unit, def);
+    const rolled = rollShown(ctx.rng, abilityDice(def), damageBonus(state, unit, def));
     for (const victim of lit) removeCondition(victim, "guiding_light");
-    for (const victim of lit) damage(ctx, victim, rolled, { actor: unit.id, what: def.id });
+    for (const victim of lit) damage(ctx, victim, rolled.total, { actor: unit.id, what: def.id, dice: rolled });
     landed = true;
   } else if (tactic.redSky) {
     // An omen, not a blow: no roll and no save, and only the other side reads it.
@@ -604,7 +717,10 @@ export function resolveAbility(ctx: Ctx, unit: Unit, ability: string, aim: Aim &
     else if (tactic.overwhelm) landed = overwhelm(ctx, unit, def, target, tactic.overwhelm);
     else if (tactic.bind) landed = bind(ctx, unit, def, target, tactic.bind);
     else if (tactic.sure) {
-      if (def.damage) damage(ctx, target, rollDice(ctx.rng, abilityDice(def)) + damageBonus(state, unit, def), { actor: unit.id, what: def.id });
+      if (def.damage) {
+        const rolled = rollShown(ctx.rng, abilityDice(def), damageBonus(state, unit, def));
+        damage(ctx, target, rolled.total, { actor: unit.id, what: def.id, dice: rolled });
+      }
       afflict(ctx, unit, def, target, false);
       landed = true;
     } else landed = strike(ctx, unit, def, tactic, target, aim);
@@ -618,7 +734,7 @@ export function resolveAbility(ctx: Ctx, unit: Unit, ability: string, aim: Aim &
     if (tactic.curse && landed) layCurse(ctx, unit, target, "drowning_curse", tactic.curse.rounds);
     if (tactic.blackSpot && landed) layCurse(ctx, unit, target, "black_spot", tactic.blackSpot.rounds);
     // Then away, hit or miss, if a hex was picked.
-    if (tactic.blink && aim.at && !unit.down && standable(state, aim.at)) {
+    if (tactic.blink && aim.at && !unit.down && standable(state, aim.at, unit.id)) {
       blinkTo(ctx, unit, aim.at);
       if (!unit.down) ctx.onStep?.(unit, () => {});
     }
@@ -627,12 +743,13 @@ export function resolveAbility(ctx: Ctx, unit: Unit, ability: string, aim: Aim &
     const line = abilityArea(state, unit, ability, aim.at);
     const along = (u: Unit) => line.findIndex((p) => sameHex(p, u.pos));
     const caught = foes().filter((u) => along(u) >= 0).sort((a, b) => along(b) - along(a));
-    const rolled = rollDice(ctx.rng, abilityDice(def)) + damageBonus(state, unit, def);
+    const dice = rollShown(ctx.rng, abilityDice(def), damageBonus(state, unit, def));
+    const rolled = dice.total;
     for (const victim of caught) {
       const saved = saveRoll(ctx, victim, "agi", saveDc(unit, def), def.name, aim.focus).ok;
       let amount = rolled;
       if (tactic.vsWet && has(victim, "wet")) amount += tactic.vsWet;
-      damage(ctx, victim, saved ? Math.floor(amount / 2) : amount, { actor: unit.id, what: def.id });
+      damage(ctx, victim, saved ? Math.floor(amount / 2) : amount, { actor: unit.id, what: def.id, dice, halved: saved });
       if (!saved && !victim.down) sweepAlong(ctx, victim, line, unit.id);
     }
     if (unit.side === "hero" && def.damage) for (const box of cratesOn(state, line)) hurtCrate(ctx, box, rolled, { actor: unit.id, what: def.id });
@@ -640,7 +757,7 @@ export function resolveAbility(ctx: Ctx, unit: Unit, ability: string, aim: Aim &
     if (tactic.surface) placeSurface(ctx, line, tactic.surface.kind, tactic.surface.rounds, unit.id);
     landed = true;
   } else if (tactic.shape === "adjacent") {
-    for (const foe of foes().filter((u) => adjacent(u.pos, unit.pos))) landed = strike(ctx, unit, def, tactic, foe, aim) || landed;
+    for (const foe of foes().filter((u) => strikes(state.map, unit.pos, u.pos))) landed = strike(ctx, unit, def, tactic, foe, aim) || landed;
     if (unit.side === "hero" && def.damage) {
       for (const box of cratesBeside(state, unit)) {
         smash(ctx, unit, def, tactic, box);
@@ -649,7 +766,7 @@ export function resolveAbility(ctx: Ctx, unit: Unit, ability: string, aim: Aim &
     }
   } else if (tactic.shape === "arc") {
     const keys = new Set(arcHexes(state, unit.pos, aim.at!).map(posKey));
-    for (const foe of foes().filter((u) => keys.has(posKey(u.pos)))) landed = strike(ctx, unit, def, tactic, foe, aim) || landed;
+    for (const foe of foes().filter((u) => keys.has(posKey(u.pos)) && strikes(state.map, unit.pos, u.pos))) landed = strike(ctx, unit, def, tactic, foe, aim) || landed;
     if (unit.side === "hero" && def.damage) {
       for (const box of cratesBeside(state, unit).filter((c) => keys.has(posKey(c.pos)))) {
         smash(ctx, unit, def, tactic, box);
@@ -674,12 +791,15 @@ export function resolveAbility(ctx: Ctx, unit: Unit, ability: string, aim: Aim &
     const caught = state.units.filter((u) => !u.down && keys.has(posKey(u.pos)) && ((tactic.shape !== "burst" && tactic.shape !== "cone" && !tactic.chorus && !tactic.foesOnly) || u.side !== unit.side));
     // A chorus swells with every voice of the user's side caught up in it (the user's own aside).
     const voices = tactic.chorus ? state.units.filter((u) => u.side === unit.side && u.id !== unit.id && !u.down && keys.has(posKey(u.pos))).length : 0;
-    const rolled = rollDice(ctx.rng, abilityDice(def)) + damageBonus(state, unit, def) + (tactic.chorus ?? 0) * voices;
+    const dice = rollShown(ctx.rng, abilityDice(def), damageBonus(state, unit, def) + (tactic.chorus ?? 0) * voices);
+    const rolled = dice.total;
     for (const victim of caught) {
+      // The user's own hex is in a burst round them (an enemy may share it): the burst is not thrown at themselves.
+      if (victim.id === unit.id && tactic.shape === "burst") continue;
       const saved = saveRoll(ctx, victim, "agi", saveDc(unit, def), def.name, aim.focus).ok;
       let amount = rolled;
       if (tactic.vsWet && has(victim, "wet")) amount += tactic.vsWet;
-      damage(ctx, victim, saved ? Math.floor(amount / 2) : amount, { actor: unit.id, what: def.id });
+      damage(ctx, victim, saved ? Math.floor(amount / 2) : amount, { actor: unit.id, what: def.id, dice, halved: saved });
       if (!saved) afflict(ctx, unit, def, victim, false);
       // Moonlight: whoever fails to brace is lit.
       if (!saved && tactic.guide && !victim.down) addCondition(ctx, victim, "guiding_light", tactic.guide);
@@ -702,16 +822,22 @@ export function resolveAbility(ctx: Ctx, unit: Unit, ability: string, aim: Aim &
   } else {
     const target = tactic.shape === "ally" && aim.target ? unitById(state, aim.target)! : unit;
     const soaked = tactic.regen && inWater(state, target) ? tactic.regen.water : 0;
-    if (def.heal && !tactic.soothe) heal(ctx, target, rollDice(ctx.rng, healDice(def)) + Math.max(0, mod(statOf(unit, def.stat))) + Math.floor(unit.level / 2) + soaked, { actor: unit.id, what: def.id });
+    if (def.heal && !tactic.soothe) {
+      const mended = rollShown(ctx.rng, healDice(def), Math.max(0, mod(statOf(unit, def.stat))) + Math.floor(unit.level / 2) + soaked);
+      heal(ctx, target, mended.total, { actor: unit.id, what: def.id, dice: mended });
+    }
     // A heal that spreads: to every ally beside the one it is aimed at (Clarion Call), or round the user (Soothing Tone).
-    const healed = (u: Unit, base: number) => heal(ctx, u, rollDice(ctx.rng, diceFor(Math.max(2, base - 1))) + Math.max(0, mod(statOf(unit, def.stat))) + Math.floor(unit.level / 2), { actor: unit.id, what: def.id });
-    if (tactic.ripple) for (const u of state.units) if (u.side === unit.side && !u.down && u.id !== target.id && adjacent(u.pos, target.pos)) healed(u, tactic.ripple);
+    const healed = (u: Unit, base: number) => {
+      const mended = rollShown(ctx.rng, diceFor(Math.max(2, base - 1)), Math.max(0, mod(statOf(unit, def.stat))) + Math.floor(unit.level / 2));
+      return heal(ctx, u, mended.total, { actor: unit.id, what: def.id, dice: mended });
+    };
+    if (tactic.ripple) for (const u of state.units) if (u.side === unit.side && !u.down && u.id !== target.id && close(u.pos, target.pos)) healed(u, tactic.ripple);
     if (tactic.soothe) for (const u of state.units) if (u.side === unit.side && !u.down && hexDistance(u.pos, unit.pos) <= tactic.soothe.range) healed(u, def.heal ?? 0);
     if (tactic.northStar) {
       // The blow round the ally first, then the star: what it strikes now is not set alight by it.
-      const rolled = rollDice(ctx.rng, abilityDice(def)) + damageBonus(state, unit, def);
-      for (const foe of foes().filter((u) => adjacent(u.pos, target.pos))) {
-        damage(ctx, foe, rolled, { actor: unit.id, what: def.id });
+      const rolled = rollShown(ctx.rng, abilityDice(def), damageBonus(state, unit, def));
+      for (const foe of foes().filter((u) => close(u.pos, target.pos))) {
+        damage(ctx, foe, rolled.total, { actor: unit.id, what: def.id, dice: rolled });
         if (!foe.down) addCondition(ctx, foe, "guiding_light", tactic.guide ?? 0);
       }
       addCondition(ctx, target, "north_star", tactic.northStar.rounds);
@@ -721,7 +847,7 @@ export function resolveAbility(ctx: Ctx, unit: Unit, ability: string, aim: Aim &
     if (tactic.sicken) addCondition(ctx, unit, "poisoned", tactic.sicken);
     if (tactic.standStrong) {
       const { shield, perFoe, rounds } = tactic.standStrong;
-      addShield(ctx, unit, shield + unit.level + perFoe * foes().filter((u) => adjacent(u.pos, unit.pos)).length, rounds);
+      addShield(ctx, unit, shield + unit.level + perFoe * foes().filter((u) => close(u.pos, unit.pos)).length, rounds);
     }
     if (tactic.armor) addCondition(ctx, target, "coral_armor", tactic.armor.rounds);
     if (tactic.shanty) {
@@ -820,11 +946,12 @@ export function enemyAct(ctx: Ctx, enemy: Unit, attack: EnemyStrike, target: Uni
     if (!save || !saveRoll(ctx, victim, SAVE_STAT[effect], dc, `Resist ${attack.name}`).ok) addCondition(ctx, victim, effect, attack.perfect.turns);
   };
   if (attack.burst) {
-    const rolled = rollDice(ctx.rng, attack.dice);
+    const dice = rollShown(ctx.rng, attack.dice);
+    const rolled = dice.total;
     // A fight's blows are for those in it: a hero standing near who is not (their player away) is passed over.
     for (const victim of state.units.filter((u) => u.side !== enemy.side && !u.down && !unseen(u) && inFight(state, u.id) && hexDistance(u.pos, enemy.pos) <= ENEMY_BURST && seesFor(state, enemy.side, enemy.pos, u.pos))) {
       const saved = saveRoll(ctx, victim, "agi", dc, attack.name).ok;
-      damage(ctx, victim, saved ? Math.floor(rolled / 2) : rolled, { actor: enemy.id, what: attack.name });
+      damage(ctx, victim, saved ? Math.floor(rolled / 2) : rolled, { actor: enemy.id, what: attack.name, dice, halved: saved });
       if (!saved) leave(victim, false);
     }
     return;
@@ -835,7 +962,8 @@ export function enemyAct(ctx: Ctx, enemy: Unit, attack: EnemyStrike, target: Uni
     ctx.events.push({ t: "miss", actor: enemy.id, target: target.id, what: attack.name });
     return;
   }
-  damage(ctx, target, rollDice(ctx.rng, attack.dice, roll.crit), { actor: enemy.id, what: attack.name, crit: roll.crit });
+  const rolled = rollShown(ctx.rng, attack.dice, 0, roll.crit);
+  damage(ctx, target, rolled.total, { actor: enemy.id, what: attack.name, crit: roll.crit, dice: rolled });
   if (attack.range === 1) thorns(ctx, enemy, target);
   leave(target, true);
   if (attack.kit.surface) placeSurface(ctx, [target.pos], attack.kit.surface.kind, attack.kit.surface.rounds, enemy.id);
@@ -868,18 +996,18 @@ export function checkCommon(state: ZoneState, unit: Unit, what: CommonAction, ai
   if (what === "help") {
     const target = aim.target ? unitById(state, aim.target) : undefined;
     if (!target || target.side !== unit.side || !target.down) return "Pick a fallen ally.";
-    return adjacent(target.pos, unit.pos) ? null : "You have to be next to them.";
+    return strikes(state.map, unit.pos, target.pos) ? null : "You have to be next to them.";
   }
   if (what === "shove") {
     const target = aim.target ? unitById(state, aim.target) : undefined;
     if (!target || target.side === unit.side || target.down) return "Pick an enemy.";
-    return adjacent(target.pos, unit.pos) ? null : "You have to be next to it.";
+    return strikes(state.map, unit.pos, target.pos) ? null : "You have to be next to it.";
   }
   // Jump.
   if (!aim.at || sameHex(aim.at, unit.pos)) return "Pick a hex to jump to.";
   if (hexDistance(unit.pos, aim.at) > jumpRange(mod(statOf(unit, "str")))) return "Too far to jump.";
-  if (solid(tileAt(state.map, aim.at)) || blockerAt(state, aim.at) || unitAt(state, aim.at)) return "There is nowhere to land.";
-  if (elevOf(state.map, aim.at) - elevOf(state.map, unit.pos) > 1) return "Too high to jump up to.";
+  if (solid(tileAt(state.map, aim.at)) || blockerAt(state, aim.at) || !roomAt(state, aim.at, unit.id)) return "There is nowhere to land.";
+  if (elevOf(state.map, aim.at) - elevOf(state.map, unit.pos) > JUMP_UP) return "Too high to jump up to.";
   if (!sees(state.map, unit.pos, aim.at)) return "Something is in the way.";
   if (budget && budget.move < JUMP_MOVE_COST) return "Not enough movement left to jump.";
   return null;
@@ -899,7 +1027,7 @@ export function doCommon(ctx: Ctx, unit: Unit, what: CommonAction, aim: Aim, bud
     heal(ctx, target, 1, { actor: unit.id, what: "help" });
   } else if (what === "shove") {
     const target = unitById(ctx.state, aim.target!)!;
-    const roll = d20(ctx.rng, { kind: "shove", id: unit.id, target: target.id, label: "Shove", bonus: mod(statOf(unit, "str")), vs: 10 + Math.max(saveBonus(target, "str"), saveBonus(target, "agi")), adv: unseen(unit) ? 1 : 0 });
+    const roll = d20(ctx.rng, { kind: "shove", id: unit.id, target: target.id, label: "Shove", bonus: unit.side === "enemy" && !unit.stats ? enemyShove(unit.kind) : mod(statOf(unit, "str")), vs: 10 + Math.max(saveBonus(target, "str"), saveBonus(target, "agi")), adv: unseen(unit) ? 1 : 0 });
     ctx.events.push({ t: "roll", roll });
     giveAway(ctx, unit);
     if (roll.ok) push(ctx, unit.pos, target, unit.id);
@@ -911,7 +1039,9 @@ export function doCommon(ctx: Ctx, unit: Unit, what: CommonAction, aim: Aim, bud
     unit.pos = aim.at!;
     if (budget) budget.move -= JUMP_MOVE_COST;
     ctx.events.push({ t: "jumped", id: unit.id, from, to: unit.pos });
-    if (!enterSurface(ctx, unit) && !unit.down) {
+    // A leap down is the leaper's own doing, as far as it goes: past that it is a fall.
+    tumble(ctx, unit, from, null, JUMP_DOWN);
+    if (!unit.down && !enterSurface(ctx, unit) && !unit.down) {
       enterWeather(ctx, unit);
       ctx.onStep?.(unit, () => {});
     }
@@ -966,7 +1096,10 @@ export function drinkItem(ctx: Ctx, unit: Unit, item: Throwable): void {
   const def = THROWABLES[item];
   unit.items[item] = carried(unit, item) - 1;
   ctx.events.push({ t: "used", id: unit.id, what: `drink:${item}`, name: def.name });
-  if (def.heal) heal(ctx, unit, rollDice(ctx.rng, def.heal), { actor: unit.id, what: `drink:${item}` });
+  if (def.heal) {
+    const rolled = rollShown(ctx.rng, def.heal);
+    heal(ctx, unit, rolled.total, { actor: unit.id, what: `drink:${item}`, dice: rolled });
+  }
 }
 
 /** Throw something that has passed its check: it lands on `at` and reaches the hexes around it. */
@@ -994,18 +1127,20 @@ export function throwItem(ctx: Ctx, unit: Unit, item: Throwable, at: HexPos): vo
   const keys = new Set(area.map(posKey));
   const caught = ctx.state.units.filter((u) => keys.has(posKey(u.pos)));
   if (def.heal) {
-    const amount = rollDice(ctx.rng, def.heal);
+    const dice = rollShown(ctx.rng, def.heal);
+    const amount = dice.total;
     // It heals whoever it splashes, most of all whoever it lands on, and gets a fallen hero up. The enemy's dead stay dead.
     for (const u of caught) {
       if (u.down && u.side !== "hero") continue;
-      heal(ctx, u, sameHex(u.pos, at) ? amount : Math.ceil(amount * POTION_EDGE), { actor: unit.id, what: `throw:${item}` });
+      heal(ctx, u, sameHex(u.pos, at) ? amount : Math.ceil(amount * POTION_EDGE), { actor: unit.id, what: `throw:${item}`, ...(sameHex(u.pos, at) ? { dice } : {}) });
     }
   }
   if (def.damage) {
-    const rolled = rollDice(ctx.rng, def.damage);
+    const dice = rollShown(ctx.rng, def.damage);
+    const rolled = dice.total;
     for (const u of caught.filter((c) => !c.down)) {
       const saved = saveRoll(ctx, u, "agi", THROW_SAVE, def.name).ok;
-      damage(ctx, u, saved ? Math.floor(rolled / 2) : rolled, { actor: unit.id, what: `throw:${item}` });
+      damage(ctx, u, saved ? Math.floor(rolled / 2) : rolled, { actor: unit.id, what: `throw:${item}`, dice, halved: saved });
       // What it leaves on them (acid's holes) only sticks to those who did not dodge it.
       if (def.condition && !saved && !u.down) addCondition(ctx, u, def.condition.kind, def.condition.rounds);
     }

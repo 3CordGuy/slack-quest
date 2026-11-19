@@ -33,6 +33,8 @@ import { BOAT_SCALE, OARLOCKS, ROWER_SEAT, aimOar, rowboatModel, shipOar } from 
 import { Rise } from "./rise";
 import { gaze } from "../gaze";
 import { NIGHT, VEIL_CLEAR_S, Veil } from "./veil";
+import { VoidBackdrop, type BackdropKind } from "./backdrop";
+import { ZoneScenery } from "./zoneScenery";
 import { GROUND_KIND, addFancyWater, addWaterRipple, setGroundFine, setGroundWet, setWaterNight, setWaterStanding, shoreSide, updateWater, waterAttribute, type Standing } from "./water";
 import { ghostModel, propModel, tintGhost, type LightKind } from "./props";
 import { LAMP_TABLES, TableLamps } from "./tableLamps";
@@ -146,6 +148,13 @@ export interface RenderState {
    * before a window's edge, so the edge is never seen.
    */
   far?: boolean;
+  /**
+   * What lies round the map. "sea" (or nothing said) is the open sea. Any other is a void the land floats over as
+   * a thick slab of rock, with slow cloud below and the distance lost in haze (render/backdrop.ts): `mist` pale
+   * grey-green, `abyss` near-black blue with drifting motes, `lava` a molten glow from underneath, `frost` a pale
+   * blue sea of cloud, `dusk` warm sand-coloured haze. Each leans on the day's light in its own way.
+   */
+  backdrop?: BackdropKind;
 }
 
 /** The ways a room's walls can be dressed inside (see RenderState.walls). */
@@ -351,17 +360,17 @@ const MAX_PITCH = 1.25;
 /** Camera distance per unit of zoom, kept from when the tilt was fixed. */
 const CAMERA_REACH = Math.hypot(0.72, 0.78);
 const PLAYER_COLORS = ["#ffd23f", "#5ce1e6", "#ff7ab6", "#9dff6b"];
-const BIOME_COLOR: Record<string, string> = { plains: "#7cb856", forest: "#4c9a52", hills: "#a39672", water: "#3f86dc", dock: "#9a7748", cobble: "#6f7279", mud: "#5f5140", rampart: "#6c6f55", floor: "#b08a5c", wall: "#6e5a48", cave: "#4a4552", rock: "#2a2730", gate: "#4a4552", fog: "#2b3140", sand: "#e2d09a" };
+const BIOME_COLOR: Record<string, string> = { plains: "#7cb856", forest: "#4c9a52", hills: "#a39672", water: "#3f86dc", dock: "#9a7748", cobble: "#6f7279", mud: "#5f5140", rampart: "#6c6f55", floor: "#b08a5c", wall: "#6e5a48", cave: "#4a4552", rock: "#2a2730", gate: "#4a4552", fog: "#2b3140", sand: "#e2d09a", paved: "#8b8f98" };
 /**
  * How the ground is painted in each climate that is not the greenwood (Tile.clime): the same kinds of ground,
  * in that climate's own colours. Snowfields and blue ice in the frost; sand, scrub and red rock in the dunes;
  * moss, mud and dark water in the mire; cinders and black rock in the ashlands.
  */
 const CLIME_COLOR: Record<Exclude<Clime, "greenwood">, Partial<Record<Biome, string>>> = {
-  frost: { plains: "#e6edf4", forest: "#cfdbe6", hills: "#a3afbf", sand: "#b9dcec", water: "#2b5a8a", rock: "#8793a4" },
-  dunes: { plains: "#d9aa66", forest: "#c2965a", hills: "#ad5c38", sand: "#ead29a", water: "#2f9ea4", rock: "#874830" },
-  mire: { plains: "#586a3a", forest: "#3f5238", hills: "#625d4c", sand: "#66553a", water: "#3b5a44", rock: "#3a372e" },
-  ash: { plains: "#58525d", forest: "#443d46", hills: "#36303a", sand: "#29232b", water: "#3b3340", rock: "#221e26" },
+  frost: { plains: "#e6edf4", forest: "#cfdbe6", hills: "#a3afbf", sand: "#b9dcec", water: "#2b5a8a", rock: "#8793a4", paved: "#9aa6b8" },
+  dunes: { plains: "#d9aa66", forest: "#c2965a", hills: "#ad5c38", sand: "#ead29a", water: "#2f9ea4", rock: "#874830", paved: "#cdab7c" },
+  mire: { plains: "#586a3a", forest: "#3f5238", hills: "#625d4c", sand: "#66553a", water: "#3b5a44", rock: "#3a372e", paved: "#69725f" },
+  ash: { plains: "#58525d", forest: "#443d46", hills: "#36303a", sand: "#29232b", water: "#3b3340", rock: "#221e26", paved: "#4d4751" },
 };
 /** The ashlands' lowest ground is molten: far brighter than anything lit can be, so it glows where there is glow to be had. */
 const MOLTEN = new THREE.Color(1.5, 0.4, 0.07);
@@ -378,6 +387,8 @@ const TREE_TINT: Partial<Record<Clime, THREE.Color>> = { frost: new THREE.Color(
 const TREE_SHARE: Partial<Record<Clime, number>> = { dunes: 0.3, ash: 0.5, mire: 0.75 };
 /** Which painted detail a hex of ground gets on top (see GROUND_KIND), by its climate: a snowfield has no flowers in it. */
 const groundKind = (t: Tile): number => {
+  // Laid stone is laid stone in every climate.
+  if (t.biome === "paved") return GROUND_KIND.paved;
   if (!t.clime) return GROUND_KIND[t.biome] ?? 0;
   if (t.biome === "water") return 0;
   if (t.clime === "ash" && t.biome === "sand" && t.h < MOLTEN_BELOW) return 0;
@@ -1000,6 +1011,11 @@ export class WorldRenderer {
   private decor = new THREE.Group();
   /** The caverns' moss, puddles, rocks and spikes, in the decor while underground. */
   private caveDressing: THREE.Group | null = null;
+  /** What stands on a zone's hexes (walls, pillars, braziers, ladders: zoneScenery.ts), in the decor while the map has any. */
+  private scenery: ZoneScenery | null = null;
+  /** The void a map floats over when it does not stand in the sea (RenderState.backdrop), and which kind was last asked for. */
+  private voidBackdrop: VoidBackdrop | null = null;
+  private backdropKind: BackdropKind = "sea";
   private poiGroup = new THREE.Group();
   /** The lanterns over the pub's game tables. Hung in poiGroup, and rebuilt with it. */
   private tableLamps = new TableLamps();
@@ -1263,6 +1279,8 @@ export class WorldRenderer {
     this.gulls.dispose();
     this.storm.dispose();
     this.outlookMap?.dispose();
+    this.scenery?.dispose();
+    this.voidBackdrop?.dispose();
     this.ambience.dispose();
     this.tableLamps.clear();
     this.endMinigame();
@@ -1318,8 +1336,21 @@ export class WorldRenderer {
     // The ground is redrawn for a new map, and whenever fog lifts off more of this one.
     const lifted = state.map.tiles.reduce((n, t) => n + (t.biome === "fog" ? 0 : 1), 0);
     this.ambience.floorLook = state.floor ?? "planks";
+    // What lies round the map, the sea or a void it floats over: known before the ground is built, whose rim is faced to suit.
+    const backdrop: BackdropKind = state.indoors || state.far || this.opts.backdrop ? "sea" : (state.backdrop ?? "sea");
+    const turned = backdrop !== this.backdropKind;
+    this.backdropKind = backdrop;
     // And for another window of a world (see RenderState.far), under a camera that stays where it is.
-    if (first || lifted !== this.lifted || (!!state.far && state.map.tiles !== this.tiles)) this.buildTerrain(state, first);
+    if (first || turned || lifted !== this.lifted || (!!state.far && state.map.tiles !== this.tiles)) this.buildTerrain(state, first);
+    if (first || turned) {
+      if (this.voidBackdrop) {
+        this.scene.remove(this.voidBackdrop.group);
+        this.voidBackdrop.dispose();
+      }
+      this.voidBackdrop = backdrop === "sea" ? null : new VoidBackdrop(backdrop, this.land);
+      if (this.voidBackdrop) this.scene.add(this.voidBackdrop.group);
+      if (!first) this.sea.visible = !this.voidBackdrop && state.kind !== "caverns";
+    }
     if (first) this.buildPanes(state);
     if (first) this.buildWallPanels(state);
     this.lifted = lifted;
@@ -1337,7 +1368,7 @@ export class WorldRenderer {
       this.userYaw = this.yaw = this.yawGoal = this.homeYaw;
       // No sea under a hut's floor, nor in the caverns; nor under a map of the world, where what is not land is
       // the mist itself (so nothing shows through the thin edge of whatever the view draws over it).
-      this.sea.visible = !state.indoors && state.kind !== "caverns" && !state.far;
+      this.sea.visible = !state.indoors && state.kind !== "caverns" && !state.far && !this.voidBackdrop;
       (this.scene.background as THREE.Color).set(state.indoors ? "#1d1a2b" : "#a9dcf7");
       // A room is framed whole: closer for a hut, further back for the pub.
       if (state.indoors) this.userDist = this.camDist = state.map.grid.cols > 10 ? 21 : 15;
@@ -2288,7 +2319,8 @@ export class WorldRenderer {
           if (t.biome !== "water" || state.map.pois.some((p) => p.pos.q === t.q && p.pos.r === t.r)) return false;
           // A map that is all sea (the crossing to an island) is drawn whole, and so is a map of the world: its seas
           // are part of it, and what lies round it is fog, not water.
-          if (land.length === 0 || state.far) return false;
+          // Nor is any of it left out over a void: there is no sea there to show in its place.
+          if (land.length === 0 || state.far || this.backdropKind !== "sea") return false;
           const near = Math.min(...land.map((l) => hexDistance(l, t)));
           return near > 2 || (near === 2 && noise(t.q, t.r, 31) < 0.45);
         })
@@ -2340,7 +2372,8 @@ export class WorldRenderer {
     const boulders: BoulderSpot[] = [];
     const setOaks = this.tiles.filter((t) => t.blocker === "oak");
     for (const t of this.tiles) {
-      if (poiKeys.has(key(t))) continue;
+      // Nor where something stands on a zone's hex (a wall, a pillar: see zoneScenery.ts).
+      if (poiKeys.has(key(t)) || t.prop) continue;
       const { x, z } = hexToWorld(t);
       const top = tileTop(t);
       const n = (salt: number) => noise(t.q, t.r, salt);
@@ -2506,7 +2539,7 @@ export class WorldRenderer {
       // Nothing grows or lies about where a place stands, under a building, or in a thicket or a boulder heap.
       // The Harbor's gaps of rubble have their boulders from the woods, not the ambience's hill rocks.
       // (Grass does grow round the foot of a lone oak.)
-      (t) => poiKeys.has(key(t)) || !!t.built || (!!t.blocker && t.blocker !== "oak" && !state.far) || (this.sodden && t.biome === "hills"),
+      (t) => poiKeys.has(key(t)) || !!t.built || !!t.prop || (!!t.blocker && t.blocker !== "oak" && !state.far) || (this.sodden && t.biome === "hills"),
       (t) => ({ ...hexToWorld(t), y: tileTop(t) }),
       !!state.far,
     );
@@ -2526,6 +2559,11 @@ export class WorldRenderer {
     });
     this.caveDressing = state.kind === "caverns" ? buildCaveDressing(this.tiles, (t) => ({ ...hexToWorld(t), y: tileTop(t) }), hexToWorld, (p) => poiKeys.has(key(p))) : null;
     if (this.caveDressing) this.decor.add(this.caveDressing);
+    // What stands on a zone's hexes, its ladders and the rock of its cliffs (zoneScenery.ts); and, over a void, the rim of the slab.
+    this.scenery?.dispose();
+    const floating = this.backdropKind !== "sea";
+    this.scenery = floating || this.tiles.some((t) => t.prop || t.ladder) ? new ZoneScenery(this.tiles, (t) => ({ ...hexToWorld(t), y: tileTop(t) }), { floating }) : null;
+    if (this.scenery) this.decor.add(this.scenery.group);
 
     // Start centred on the island. Fog lifting redraws the ground but leaves the camera where the player put it.
     if (!recentre) return;
@@ -6892,6 +6930,10 @@ export class WorldRenderer {
       mist.near = reach + from;
       mist.far = reach + to;
     }
+    // A map floating over a void has that void's sky and haze in place of these, and its cast on the day's light.
+    this.voidBackdrop?.frame(this.clock, this.target, this.camDist * CAMERA_REACH, night, this.scene.background as THREE.Color, mist, this.scene, this.ambience.openSky);
+    // Fire shows by how dark it is: at night, underground, or in a place the void keeps dim.
+    this.scenery?.update(this.clock, dt, this.target, Math.max(night, this.ambience.underground ? 1 : 0, this.voidBackdrop && this.ambience.openSky ? this.voidBackdrop.gloom : 0));
     // The HUD's trim and the health orb are lit by the same sun or moon, from wherever the camera stands.
     reportEnv(this.ambience.sunDir, this.yaw, this.ambience.sunGlint(this.litRim), this.scene.background as THREE.Color);
     updateWater(fancy.get(), this.clock, this.ambience.sunDir, this.ambience.sunGlint(this.litRim), (this.sea.material as THREE.MeshLambertMaterial).color, this.scene.background as THREE.Color, this.ambience.raining);

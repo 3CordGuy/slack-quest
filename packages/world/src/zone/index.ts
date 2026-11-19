@@ -6,7 +6,14 @@
 export * from "./types";
 export { createZone, ensureMouth, stepZone, zoneView, zoneAwaiting, zoneHero, standInHero } from "./zone";
 export { ZONE_GRIDS, ALERT_RANGE, JOIN_RANGE, DEFAULT_ZONE_OPTIONS, BIOME_LEADS, zoneOptions, generateZone, groupKinds, type ZonePlan } from "./gen";
-export { FREE_WALK, zoneReach, pathIn, sees, sameHex, elevOf, inFight, flies, unitAt, unitById, lineFrom, stepCost, blockerAt, seesFor, wallAt, blast as zoneBlast, type Reached, type Course } from "./geometry";
+export {
+  FREE_WALK, MAX_ELEV, HEX_ROOM, SCOOT_COST, HIGH_REACH,
+  zoneReach, pathIn, sees, sameHex, elevOf, inFight, flies, unitAt, unitsAt, roomAt, unitById, lineFrom, stepCost, blockerAt, seesFor, wallAt, ladderBetween, strikes, reachFrom, pitAt, solid as zoneSolid,
+  blast as zoneBlast, type Reached, type Course, type Pit,
+} from "./geometry";
+export { PROPS, PROP_KINDS, propOf, type PropKind, type PropDef } from "./props";
+export { SITES, SITE_IDS, FACTIONS, siteFor, backdropOf, factionsOf, bandOf, type SiteId, type SiteDef, type Backdrop, type PieceKind, type FactionId } from "./sites";
+export { LAY_GRIDS, layZone } from "./lay";
 export {
   TACTICS,
   tacticOf,
@@ -55,6 +62,9 @@ export {
   throwRange,
   jumpRange,
   JUMP_MOVE_COST,
+  JUMP_UP,
+  JUMP_DOWN,
+  enemyShove,
   POTION_DICE,
   POTION_EDGE,
   ENEMY_KIT,
@@ -71,9 +81,9 @@ export {
   type ThrowableDef,
   type EnemyStrike,
 } from "./kit";
-export { mod as statMod, proficiency, heroMove, heroDefence, diceFor, diceText, diceAverage, hitChance, type Dice } from "./rules";
+export { mod as statMod, proficiency, heroMove, heroDefence, diceFor, diceText, diceAverage, hitChance, rollShown, type Dice } from "./rules";
 export { attackContext, defenceOf, has as hasCondition, shieldOf, unseen, type AttackContext } from "./engine";
-export { abilityArea, carrySpot, checkAbility, checkCommon, checkDrink, checkLight, checkThrow, courseFor, crateBlow, previewAttack, BARD_AURA_RANGE, type Aim } from "./combat";
+export { abilityArea, carrySpot, checkAbility, checkCommon, checkDrink, checkLight, checkThrow, courseFor, crateBlow, previewAttack, leavesReach, shiftInto, shoveDest, edgeDc, EDGE_DC, BARD_AURA_RANGE, type Aim, type Shift } from "./combat";
 export { chartOf, constellationHexes, constellationLinks, courseMarks, litFoes } from "./stars";
 export { SURFACE_INFO, HARMFUL as HARMFUL_SURFACES } from "./surfaces";
 export { WEATHER_INFO, wallHexes } from "./weather";
@@ -82,7 +92,9 @@ export { breathDc, drowningStacks } from "./drowning";
 export { SHANTIES, isShanty, joinable, shantyOf, shantyRadius, songsOn, type Song } from "./song";
 export { isDark, litHexes, inDark, seenByHeroes, lightSources } from "./light";
 export { MAX_CATCHUP_ROUNDS } from "./clock";
-export { CHEST_PAY, bountyPay, checkOpen, unopened } from "./loot";
+export { CHEST_PAY, SPOILS_ID, bountyPay, checkOpen, checkLoot, unopened, unlooted, zoneCleared } from "./loot";
+export { ENEMY_FAMILY, FAMILY_LOOT, BOSS_LOOT, rollBody, rollChest, rollSpoils, type Family } from "./spoils";
+export { HEAR_RANGE } from "./zone";
 export { FORCE_DC, NOISE_RANGE, checkUnlock, doorAt } from "./doors";
 export { GLOWCAP_LIGHT, GLOWCAP_MUSHROOMS, checkForage } from "./forage";
 export { CRATE_HP, CRATE_PAY, crateAt, crateById, crateHp, isCrateId } from "./crates";

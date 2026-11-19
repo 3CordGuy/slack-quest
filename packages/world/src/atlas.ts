@@ -38,7 +38,8 @@
 import type { HexPos } from "@gantt-quest/core";
 import type { Clime } from "./map";
 import { makeRng, seedFromString, type Rng } from "./rng";
-import { BIOME_LEADS, zoneOptions } from "./zone/gen";
+import { zoneOptions } from "./zone/gen";
+import { siteFor } from "./zone/sites";
 import { PERIL_IDS, ZONE_MODS, cleanMods, modOf, rollMod, type ZoneMod, type ZoneModId } from "./zone/mods";
 import type { ZoneBiome, ZoneOptions } from "./zone/types";
 
@@ -100,8 +101,9 @@ const LOOKOUT_CHANCE = 0.07;
 const LAIR_CHANCE = 0.07;
 /** A lair's bounty is that of a place this many rings further out. */
 export const LAIR_RINGS = 3;
-/** What has made its den in a lair, by the ground it is on. */
+/** What has made its den in a lair, by the ground it is on; and, in some climates, whatever the ground. */
 const LAIR_BEAST: Record<ZoneBiome, string> = { meadow: "alpha", woods: "great_bear", shore: "guardian", caves: "haunt" };
+const CLIME_BEAST: Partial<Record<Clime, string>> = { mire: "broodmother" };
 
 const DIRS: AtlasCell[] = [{ q: 1, r: 0 }, { q: 1, r: -1 }, { q: 0, r: -1 }, { q: -1, r: 0 }, { q: -1, r: 1 }, { q: 0, r: 1 }];
 const idOf = (c: AtlasCell) => `${c.q},${c.r}`;
@@ -375,29 +377,37 @@ export function atlasView(seed: string, cleared: ReadonlySet<string>): AtlasNode
 /** The ring a node's bounty is paid as: its own, or further out for a lair. */
 export const atlasTier = (node: Pick<AtlasNode, "ring" | "kind">): number => Math.max(1, node.ring + (node.kind === "lair" ? LAIR_RINGS : 0));
 
+/** The kind of place a node is (zone/sites.ts): what its map is laid out as. The same node is always the same kind of place. */
+export const nodeSite = (seed: string, node: Pick<AtlasNode, "id" | "kind" | "biome" | "clime">): string =>
+  siteFor(node.biome, node.clime, node.kind === "lookout" ? "lookout" : node.kind === "lair" ? "lair" : "landfall", roll(seed, "site", node.id));
+
 /**
- * What a node's map is made from, for a party of this many. The ring sets the level; the ground and
- * the modifiers set the rest. The nodes beside the Harbor are small and gentle. `more` is what a lodestone
- * set into the node adds to its own modifiers (lodestone.ts: `stoneOn(node, stone).added`).
+ * What a node's map is made from, for a party of this many. The ring sets the level; the ground, the climate and
+ * what the place is (its site) set the rest. The nodes beside the Harbor are small and gentle; further out a
+ * place is a sprawl with several bands on it. `more` is what a lodestone set into the node adds to its own
+ * modifiers (lodestone.ts: `stoneOn(node, stone).added`), and `stone` how much that stone carried in all (left
+ * out with no stone): the lodestones in the place's spoils are reckoned from it.
  */
-export function nodeOptions(seed: string, node: AtlasNode, party: number, more: readonly ZoneMod[] = []): ZoneOptions {
+export function nodeOptions(seed: string, node: AtlasNode, party: number, more: readonly ZoneMod[] = [], stone?: number): ZoneOptions {
   const rng = rngFor(seed, "lay", node.id);
   const near = node.ring <= 1;
-  const base = { party, level: node.level, threat: near ? 1 : 2, mods: cleanMods([...node.mods, ...more]), tier: atlasTier(node), name: node.name, clime: node.clime };
+  const base = { party, level: node.level, threat: near ? 1 : 2, mods: cleanMods([...node.mods, ...more]), tier: atlasTier(node), name: node.name, clime: node.clime, ...(stone !== undefined ? { stone } : {}) };
   if (node.kind === "seacave") return zoneOptions({ ...base, size: "medium", biome: "caves", delve: true });
+  const site = nodeSite(seed, node);
   // High, broken ground: whoever holds the top has the best of it.
-  if (node.kind === "lookout") return zoneOptions({ ...base, size: "medium", biome: node.biome, groups: rng.int(2, 3), elevation: 3, obstacles: 1, clear: 4 });
-  // The beast itself, which stands alone, and a band of whatever else lives on that ground (more bands than one,
-  // if a peril adds them: never a second beast).
+  if (node.kind === "lookout") return zoneOptions({ ...base, site, size: "medium", biome: node.biome, groups: rng.int(3, 4), elevation: 3, obstacles: 1, clear: 4 });
+  // The beast itself in its den, with a band of whatever else lives there about it, and more bands out on the
+  // ground round it (never a second beast).
   if (node.kind === "lair") {
-    return zoneOptions({ ...base, size: "medium", biome: node.biome, groups: 2, kinds: [LAIR_BEAST[node.biome], ...[0, 1, 2].map(() => rng.pick(BIOME_LEADS[node.biome]))], elevation: rng.int(1, 2), obstacles: rng.int(1, 2), clear: 4 });
+    return zoneOptions({ ...base, site, size: "medium", biome: node.biome, groups: 3, kinds: [CLIME_BEAST[node.clime] ?? LAIR_BEAST[node.biome]], elevation: rng.int(1, 2), obstacles: rng.int(1, 2), clear: 4 });
   }
   return zoneOptions({
     ...base,
+    site,
     size: near ? "small" : "medium",
     biome: node.biome,
-    groups: near ? rng.int(1, 2) : rng.int(2, 3),
-    elevation: rng.int(0, node.biome === "shore" ? 1 : 2),
+    groups: near ? rng.int(2, 3) : rng.int(3, 5),
+    elevation: rng.int(1, node.biome === "shore" ? 2 : 3),
     obstacles: rng.int(0, 1) + (node.biome === "woods" ? 1 : 0),
     clear: 4,
   });

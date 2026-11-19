@@ -532,8 +532,8 @@ export const COMMON_ACTIONS: Record<CommonAction, { name: string; cost: "action"
   dash: { name: "Dash", cost: "action", blurb: "Double your movement this turn." },
   disengage: { name: "Disengage", cost: "action", blurb: "Moving away from enemies draws no opportunity attacks this turn." },
   help: { name: "Help", cost: "action", blurb: "Get a fallen ally beside you back on their feet with 1 HP." },
-  shove: { name: "Shove", cost: "bonus", blurb: "Push an enemy beside you one hex away: into fire, off a path, out of reach." },
-  jump: { name: "Jump", cost: "bonus", blurb: "Leap a few hexes, over whatever lies between. Costs 2 movement." },
+  shove: { name: "Shove", cost: "bonus", blurb: "Push an enemy beside you one hex away: into fire, out of reach, or off a height, where they fall (a d4 for each level past the first) and land flat." },
+  jump: { name: "Jump", cost: "bonus", blurb: "Leap a few hexes, over whatever lies between: up a ledge two levels high, or down one. Further down than two levels is a fall. Costs 2 movement." },
   join: { name: "Join the Song", cost: "bonus", blurb: "Join an ally's shanty you are standing in, once a shanty: it reaches a hex further, and you get its joining lift (Lively: advantage on your next attack; Dour: Guarded; Wind-god's: Disengaged), and everyone in it gets a little more of what it gives until the Bard's next turn." },
   flee: { name: "Flee", cost: "action", blurb: "Get out of the fight, once no enemy in it is within 2 hexes of you. You walk free and it goes on without you; an enemy coming that close again brings you back into it." },
 };
@@ -545,6 +545,9 @@ export const FLEE_RANGE = 2;
 export const commonCost = (what: CommonAction, classId: string): "action" | "bonus" => ((what === "disengage" || what === "flee") && classId === "refactor_rogue" ? "bonus" : COMMON_ACTIONS[what].cost);
 
 export const JUMP_MOVE_COST = 2;
+/** How many levels a jump can go up, and how many it can come down before it is a fall (a d4 a level past that, and landing flat). */
+export const JUMP_UP = 2;
+export const JUMP_DOWN = 2;
 /** What a healing potion heals: all of it when drunk or at the heart of where it lands, half of it on the hexes around. */
 export const POTION_DICE: Dice = { n: 2, d: 4, plus: 6 };
 export const POTION_EDGE = 0.5;
@@ -637,31 +640,40 @@ export interface EnemyKit {
   fly?: boolean;
   /** Advantage on an attack when one of its own is next to the target. */
   pack?: boolean;
+  /** It has the hands and the wit for it: it will shove someone beside it over a drop or into a pit (its bonus action). */
+  shoves?: boolean;
   /** Attacks that are not plain blows, by name. */
   attacks?: Record<string, EnemyAttackKit>;
 }
 
 export const ENEMY_KIT: Record<string, EnemyKit> = {
   dummy: {},
-  bandit: {},
+  bandit: { shoves: true },
   wolf: { pack: true },
-  bear: {},
+  bear: { shoves: true },
   // Its Stomp, like anything that strikes the whole crew, is a burst around it.
-  ogre: {},
+  ogre: { shoves: true },
   // It rakes up close, and will throw a rock at whoever keeps away. (Its wounds closing is in zone.ts, at the start of its turn.)
-  troll: { attacks: { "Hurl Rock": { range: 5 } } },
+  troll: { shoves: true, attacks: { "Hurl Rock": { range: 5 } } },
   cultist: { ranged: true, attacks: { "Dark Bolt": { range: 5 }, Immolate: { range: 5, surface: { kind: "fire", rounds: 2 } } } },
-  brute: { attacks: { Shove: { push: true } } },
+  brute: { shoves: true, attacks: { Shove: { push: true } } },
   archer: { ranged: true, attacks: { Volley: { range: 7 }, "Barbed Arrow": { range: 7 } } },
   alpha: { pack: true },
-  great_bear: {},
-  guardian: {},
+  great_bear: { shoves: true },
+  guardian: { shoves: true },
   shade: { attacks: { "Chill Touch": { chills: true } } },
   bat: { fly: true },
-  skeleton: {},
+  skeleton: { shoves: true },
   slime: { attacks: { "Acid Splash": { range: 3, surface: { kind: "poison", rounds: 2 } } } },
   haunt: {},
-  villain: {},
+  villain: { shoves: true },
+  spider: { pack: true, attacks: { "Venomous Bite": { surface: { kind: "poison", rounds: 2 } }, "Web Spit": { range: 4, surface: { kind: "slime", rounds: 2 } } } },
+  broodmother: { attacks: { "Web Spit": { range: 5, surface: { kind: "slime", rounds: 2 } } } },
+  frost_wolf: { pack: true, attacks: { "Rime Bite": { chills: true } } },
+  ember_hound: { pack: true },
+  snow_bear: { shoves: true },
+  wraith: { ranged: true, attacks: { "Frost Lance": { range: 5, chills: true } } },
+  witch: { ranged: true, attacks: { "Thorn Hex": { range: 5 }, "Evil Eye": { range: 5 } } },
 };
 
 /** How far an attack on every hero reaches out from the enemy making it. */
@@ -715,6 +727,9 @@ export const enemyDefence = (kind: string): number => 10 + Math.floor((ENEMIES[k
 
 /** Steps a turn, and `more` for what the map's modifiers add. A training dummy stays put. */
 export const enemyMove = (kind: string, more = 0): number => (kind === "dummy" ? 0 : Math.max(3, Math.min(8, 3 + Math.round((ENEMIES[kind]?.speed ?? 0) / 18))) + more);
+
+/** What an enemy adds to its roll when it shoves someone: the big shove hard. */
+export const enemyShove = (kind: string): number => 1 + enemySave(kind);
 
 /** What an enemy adds to a saving throw: bosses and the big are harder to shake. */
 export const enemySave = (kind: string): number => (ENEMIES[kind]?.boss ? 3 : (ENEMIES[kind]?.hp ?? 0) >= 18 ? 2 : 0);

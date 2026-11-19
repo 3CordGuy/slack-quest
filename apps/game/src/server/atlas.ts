@@ -90,7 +90,8 @@ export async function openNode(db: D1Database, crewId: string, playerId: string,
   // A fresh map, and a different one each time: the last was cleared out by time, not by the crew. Its seed is
   // rolled here and kept here (the chart's own is the crew's id, which anyone in the crew can read).
   const attempt = (mine?.attempts ?? 0) + 1;
-  const options = nodeOptions(seed, node, Math.min(4, Math.max(1, Math.round(party))), set ? stoneOn(node, set).added : []);
+  // How much the stone carried goes with the map: the lodestones in its spoils are reckoned from it.
+  const options = nodeOptions(seed, node, Math.min(4, Math.max(1, Math.round(party))), set ? stoneOn(node, set).added : [], set ? set.length : undefined);
   const code = await createZoneRow(db, playerId, options, crypto.randomUUID().slice(0, 12), "atlas", crewId, node.id);
   await db
     .prepare(

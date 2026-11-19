@@ -1,0 +1,628 @@
+/* The fight interface on the tiles: the turn bar over the rack (TurnBar.tsx), the announcement that sweeps the
+   screen (TurnBanner.tsx), the turn order along the top (InitiativeStrip.tsx), the combat log and the roll shown
+   large (CombatLog.tsx), and the loot window (LootPanel.tsx).
+
+   All of it is the ship's timber by lamplight: tarred boards, dull brass, parchment for what must be read at
+   once. Each piece is placed in the view (.run) by itself and takes presses only on its own boxes, so the map
+   underneath stays clickable. Lengths are in the view's own pixels: the view is zoomed by the UI scale, so
+   --hud-h (measured on the screen) and viewport units are divided by --ui-z wherever they are used.
+
+   Hooks a view may set on .run (or on a piece itself):
+     --fight-bar-w   how wide the turn bar is (the rack's width by default)
+     --fight-turn-h  how much room the turn bar takes above the rack (the log and the roll sit clear of it)
+     --fight-log-w   how wide the combat log is */
+
+.fight-ui {
+  --f-out: #1c0d0e; --f-rim: #6b3524; --f-wood: #2a1614; --f-wood-hi: #3d231d;
+  --f-brass: #c9a24a; --f-brass-hi: #f6e2a1; --f-brass-lo: #6f5222;
+  --f-gold: #f4c64e; --f-parch: #e9d8ab; --f-ink: #33180e;
+  --f-hero: #f6cf68; --f-ally: #8fd3c8; --f-enemy: #ff8571;
+  --f-action: #7fd88c; --f-bonus: #f59a4e; --f-move: #f2c552; --f-course: #ff5a5a; --f-warn: #ff6a55;
+  --f-good: #9be08a; --f-bad: #ff8571;
+  --f-bar-w: var(--fight-bar-w, 732px);
+  --f-turn-h: var(--fight-turn-h, 98px);
+  --f-hud: calc(var(--hud-h, 0px) / var(--ui-z, 1));
+  /* The room either side of the rack. */
+  --f-side: calc((100vw / var(--ui-z, 1) - var(--f-bar-w)) / 2);
+}
+.fight-ui button { font: inherit; }
+
+/* ==========================================================================
+   The turn bar: one board, directly over the rack. From the left: whose turn
+   it is on a pennant; the Action (a round token) and the Bonus action (a
+   three-cornered one); the movement left, as a run of chevrons with its
+   number; and End Turn, with the turn's clock in a ring.
+   ========================================================================== */
+.fight-turn {
+  position: absolute; left: 50%; bottom: calc(var(--f-hud) + 4px); translate: -50% 0; z-index: 14;
+  width: min(var(--f-bar-w), calc(100% - 24px)); display: flex; flex-direction: column; gap: 8px; pointer-events: none;
+}
+.fight-turn > * { pointer-events: auto; }
+.fight-turn-extra { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; pointer-events: none; }
+.fight-turn-extra > * { pointer-events: auto; }
+.fight-turn-bar {
+  position: relative; display: flex; align-items: stretch; gap: 8px; height: 80px; padding: 0 9px 0 0;
+  background:
+    linear-gradient(180deg, rgba(255, 214, 170, 0.1), rgba(0, 0, 0, 0) 32%, rgba(0, 0, 0, 0.42)),
+    linear-gradient(rgba(96, 30, 24, 0.34), rgba(96, 30, 24, 0.34)),
+    var(--tex-wood, none) 0 0 / 128px 128px,
+    var(--f-wood);
+  border: 3px solid var(--f-out);
+  box-shadow: inset 0 2px 0 rgba(214, 150, 96, 0.32), inset 0 -2px 0 rgba(0, 0, 0, 0.55), 0 0 0 1px var(--f-rim), 0 8px 20px rgba(0, 0, 0, 0.55);
+  transition: box-shadow 0.4s, border-color 0.4s;
+}
+/* Yours: the board is rimmed in gold, breathing, with a light running along its top edge. */
+.fight-turn.mine .fight-turn-bar {
+  border-color: #3b2408;
+  box-shadow: inset 0 2px 0 rgba(255, 226, 150, 0.45), inset 0 -2px 0 rgba(0, 0, 0, 0.55), 0 0 0 2px var(--f-gold), 0 0 22px 2px rgba(244, 198, 78, 0.45), 0 8px 20px rgba(0, 0, 0, 0.55);
+  animation: ft-breathe 2.2s ease-in-out infinite;
+}
+@keyframes ft-breathe { 50% { box-shadow: inset 0 2px 0 rgba(255, 226, 150, 0.45), inset 0 -2px 0 rgba(0, 0, 0, 0.55), 0 0 0 2px #ffe08a, 0 0 34px 6px rgba(244, 198, 78, 0.62), 0 8px 20px rgba(0, 0, 0, 0.55); } }
+.fight-turn.mine .fight-turn-bar::before {
+  content: ""; position: absolute; left: 0; right: 0; top: -3px; height: 3px; pointer-events: none; z-index: 2;
+  background: linear-gradient(90deg, transparent, #fff6cf 50%, transparent) 0 0 / 34% 100% no-repeat;
+  animation: ft-sheen 2.6s linear infinite;
+}
+@keyframes ft-sheen { from { background-position: -60% 0; } to { background-position: 160% 0; } }
+/* The clock running out: the rim goes red. */
+.fight-turn.mine.urgent .fight-turn-bar { animation: ft-urgent 0.9s ease-in-out infinite; }
+@keyframes ft-urgent {
+  0%, 100% { box-shadow: inset 0 2px 0 rgba(255, 226, 150, 0.45), inset 0 -2px 0 rgba(0, 0, 0, 0.55), 0 0 0 2px var(--f-gold), 0 0 20px 2px rgba(244, 198, 78, 0.4), 0 8px 20px rgba(0, 0, 0, 0.55); }
+  50% { box-shadow: inset 0 2px 0 rgba(255, 226, 150, 0.45), inset 0 -2px 0 rgba(0, 0, 0, 0.55), 0 0 0 2px #ff5a3c, 0 0 34px 8px rgba(255, 80, 50, 0.6), 0 8px 20px rgba(0, 0, 0, 0.55); }
+}
+
+/* The pennant: it stands a little proud of the board, top and bottom, with a notched fly. */
+.ft-plate { position: relative; flex: none; width: 204px; margin: -9px 0 -9px -9px; z-index: 1; filter: drop-shadow(0 3px 0 rgba(0, 0, 0, 0.55)) drop-shadow(0 0 1px #000); }
+.ft-plate-in {
+  position: absolute; inset: 0; display: flex; flex-direction: column; justify-content: center; gap: 1px; padding: 0 28px 3px 16px; overflow: hidden;
+  clip-path: polygon(0 0, 100% 0, calc(100% - 17px) 50%, 100% 100%, 0 100%);
+  color: var(--f-parch);
+  background: linear-gradient(180deg, #4a332c, #2b1a17);
+  box-shadow: inset 0 0 0 2px rgba(0, 0, 0, 0.35);
+}
+.ft-plate strong, .ft-plate small { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: normal; }
+.ft-plate small { display: flex; align-items: baseline; gap: 8px; font-family: var(--font-head); font-size: 13px; line-height: 1.15; letter-spacing: 0.04em; }
+.ft-plate small span { overflow: hidden; text-overflow: ellipsis; }
+.ft-plate small em { flex: none; margin-left: auto; font-style: normal; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; opacity: 0.8; }
+.ft-plate strong { font-family: var(--font-title); font-size: 28px; line-height: 1; letter-spacing: 0.03em; }
+.fight-turn.mine .ft-plate-in {
+  color: var(--f-ink);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.42), rgba(255, 255, 255, 0) 38%, rgba(128, 62, 8, 0.38)),
+    var(--tex-paper, none) 0 0 / 512px 512px,
+    #f2c450;
+  background-blend-mode: normal, multiply, normal;
+  box-shadow: inset 0 0 0 2px rgba(120, 66, 10, 0.5), inset 0 0 0 3px rgba(255, 244, 200, 0.35);
+}
+.fight-turn.mine .ft-plate strong { font-size: 36px; text-shadow: 0 1px 0 rgba(255, 246, 210, 0.65); }
+.fight-turn.mine .ft-plate small { color: #5a3410; }
+/* The turn coming to you: the pennant is run up, and a light crosses it. */
+.fight-turn.mine .ft-plate { animation: ft-plate-in 0.55s cubic-bezier(0.2, 1.4, 0.4, 1) both; }
+@keyframes ft-plate-in { from { translate: -40px 0; opacity: 0; scale: 0.9 1.25; } to { translate: 0 0; opacity: 1; scale: 1; } }
+.fight-turn.mine .ft-plate-in::after {
+  content: ""; position: absolute; inset: 0; pointer-events: none;
+  background: linear-gradient(105deg, transparent 35%, rgba(255, 255, 255, 0.75) 50%, transparent 65%) 0 0 / 250% 100% no-repeat;
+  animation: ft-plate-shine 3.4s ease-in-out infinite;
+}
+@keyframes ft-plate-shine { 0%, 55% { background-position: 130% 0; } 85%, 100% { background-position: -80% 0; } }
+/* Waiting: a dull board, the name of whoever is being waited on, and three dots counting. */
+.fight-turn.waiting .ft-plate small { color: #b89a82; text-transform: uppercase; font-size: 11px; letter-spacing: 0.09em; }
+.fight-turn.waiting .ft-plate small span { flex: none; }
+.fight-turn.waiting .ft-plate small em { overflow: hidden; text-overflow: ellipsis; }
+.fight-turn.waiting .ft-plate strong { font-size: 25px; color: #e9d8ab; }
+.ft-dots { display: inline-flex; gap: 3px; margin-left: 6px; vertical-align: 2px; }
+.ft-dots i { width: 4px; height: 4px; border-radius: 50%; background: currentColor; animation: ft-dot 1.2s ease-in-out infinite; }
+.ft-dots i:nth-child(2) { animation-delay: 0.2s; }
+.ft-dots i:nth-child(3) { animation-delay: 0.4s; }
+@keyframes ft-dot { 0%, 100% { opacity: 0.2; } 40% { opacity: 1; } }
+
+/* What the turn has to spend. */
+.ft-res { flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px; transition: opacity 0.3s, filter 0.3s; }
+.fight-turn.waiting .ft-res { opacity: 0.42; filter: grayscale(0.85) brightness(0.8); }
+
+/* A token: its picture, its name under it, and (pointed at) a card over it. */
+.ft-token { position: relative; flex: none; width: 64px; display: flex; flex-direction: column; align-items: center; gap: 1px; cursor: help; --c: var(--f-action); }
+.ft-token.bonus { --c: var(--f-bonus); }
+.ft-token-art { position: relative; width: 56px; height: 56px; display: grid; place-items: center; }
+.ft-token-art svg { display: block; width: 56px; height: 56px; overflow: visible; }
+.ft-token.on .ft-token-art { filter: drop-shadow(0 0 7px color-mix(in srgb, var(--c) 75%, transparent)); }
+.fight-turn.mine .ft-token.on .ft-token-art { animation: ft-token-idle 2.2s ease-in-out infinite; }
+@keyframes ft-token-idle { 50% { filter: drop-shadow(0 0 12px var(--c)); } }
+.ft-token .ft-face, .ft-token .ft-glyph, .ft-token .ft-rim, .ft-token .ft-shine, .ft-token .ft-strike { transition: fill 0.2s, opacity 0.2s, stroke 0.2s; }
+.ft-token .ft-strike { stroke: #c2523f; stroke-width: 4.5; stroke-linecap: round; opacity: 0; }
+.ft-token .ft-glyph { fill: #0f2a16; }
+.ft-token.bonus .ft-glyph { fill: #3a1606; }
+.ft-token.spent .ft-face { fill: #1a100e; }
+.ft-token.spent .ft-rim { fill: #4a3526; }
+.ft-token.spent .ft-glyph { fill: #3c2a22; }
+.ft-token.spent .ft-shine { opacity: 0; }
+.ft-token.spent .ft-strike { opacity: 0.95; }
+.ft-token-label { font-family: var(--font-head); font-size: 13px; line-height: 1; letter-spacing: 0.07em; color: color-mix(in srgb, var(--c) 70%, #fff); text-shadow: 0 1px 0 #000; white-space: nowrap; }
+.ft-token.spent .ft-token-label { color: #8d7462; text-decoration: line-through; text-decoration-color: rgba(194, 82, 63, 0.9); }
+/* Spent: it flares white-hot, turns on its edge and comes back dark, and a ring of its colour blows off it.
+   Given back (a new turn): it pops up lit. Both play when the token changes, not while waiting. */
+.fight-turn.mine .ft-token.spent .ft-token-art svg { animation: ft-burn 0.6s cubic-bezier(0.3, 0, 0.3, 1) both; }
+.fight-turn.mine .ft-token.on .ft-token-art svg { animation: ft-gain 0.5s cubic-bezier(0.2, 1.5, 0.4, 1) both; }
+@keyframes ft-burn {
+  0% { transform: rotateY(0) scale(1.2); filter: brightness(3.2) saturate(2) drop-shadow(0 0 14px var(--c)); }
+  45% { transform: rotateY(88deg) scale(1.1); filter: brightness(1.6); }
+  100% { transform: rotateY(0) scale(1); filter: none; }
+}
+@keyframes ft-gain { from { transform: scale(0.4) rotate(-40deg); opacity: 0; filter: brightness(2.6); } to { transform: none; opacity: 1; filter: none; } }
+.fight-turn.mine .ft-token.spent .ft-token-art::after {
+  content: ""; position: absolute; inset: 2px; border-radius: 50%; border: 3px solid var(--c); pointer-events: none; opacity: 0;
+  animation: ft-ring 0.6s ease-out both;
+}
+@keyframes ft-ring { from { scale: 0.6; opacity: 0.95; } to { scale: 2; opacity: 0; } }
+
+/* The card over a part of the bar. */
+.ft-tip {
+  position: absolute; left: 50%; bottom: calc(100% + 12px); translate: -50% 4px; z-index: 5; width: max-content; max-width: 250px; padding: 6px 10px 7px;
+  display: flex; flex-direction: column; gap: 2px; font-size: 12px; line-height: 1.35; text-align: left; color: var(--text, #fbe6c8); white-space: normal;
+  background: rgba(30, 15, 13, 0.97); border: 2px solid var(--f-out); box-shadow: 0 0 0 1px var(--f-brass-lo), 0 6px 14px rgba(0, 0, 0, 0.55);
+  opacity: 0; visibility: hidden; pointer-events: none; transition: opacity 0.12s, translate 0.12s, visibility 0s 0.12s;
+}
+.ft-tip b { font-family: var(--font-head); font-size: 15px; font-weight: normal; letter-spacing: 0.04em; color: var(--f-brass-hi); }
+.ft-tip span { color: var(--muted, #d2a585); }
+:hover > .ft-tip, :focus-visible > .ft-tip { opacity: 1; visibility: visible; translate: -50% 0; transition-delay: 0.25s, 0.25s, 0.25s; }
+
+/* Movement: its number, and a run of chevrons, lit for what is left. */
+.ft-move { position: relative; flex: 1; min-width: 0; align-self: stretch; display: flex; flex-direction: column; justify-content: center; gap: 4px; margin: 8px 0; padding: 0 6px 0 12px; cursor: help; border-left: 2px solid rgba(0, 0, 0, 0.45); box-shadow: inset 1px 0 0 rgba(214, 150, 96, 0.16); }
+.ft-move-head { display: flex; align-items: baseline; gap: 8px; height: 26px; }
+.ft-move-label { font-family: var(--font-head); font-size: 13px; letter-spacing: 0.07em; color: color-mix(in srgb, var(--f-move) 70%, #fff); text-shadow: 0 1px 0 #000; }
+.ft-move-num { margin-left: auto; display: inline-flex; align-items: baseline; gap: 5px; font-family: var(--font-title); color: #ffe9a8; text-shadow: 0 2px 0 #000; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.ft-move-num b { display: inline-block; font-size: 30px; line-height: 26px; font-weight: normal; animation: ft-num 0.3s ease-out; }
+.ft-move-num i { font-style: normal; font-size: 20px; color: #c9a877; letter-spacing: 0.06em; }
+@keyframes ft-num { from { scale: 1.45; color: #fff; } to { scale: 1; } }
+.ft-move.none .ft-move-num b { color: #8d7462; }
+.ft-move-cost { order: 3; min-width: 34px; padding: 0 5px; text-align: center; font: bold 15px/20px ui-monospace, Consolas, monospace; color: #2a1608; background: var(--f-move); border: 2px solid var(--f-out); animation: ft-cost 0.16s ease-out; }
+@keyframes ft-cost { from { scale: 0.6; opacity: 0; } to { scale: 1; opacity: 1; } }
+.ft-move.over .ft-move-cost { color: #fff; background: #c8321f; }
+.ft-move.over .ft-move-num b { color: var(--f-warn); }
+.ft-track { display: flex; height: 17px; padding: 2px 3px; background: #130a09; border: 2px solid var(--f-out); box-shadow: 0 0 0 1px rgba(107, 53, 36, 0.8), inset 0 2px 3px rgba(0, 0, 0, 0.7); }
+.ft-track i { flex: 1; min-width: 0; margin-right: -3px; background: #2a1915; clip-path: polygon(0 0, calc(100% - 5px) 0, 100% 50%, calc(100% - 5px) 100%, 0 100%, 5px 50%); transition: background 0.25s; }
+.ft-track i:first-child { clip-path: polygon(0 0, calc(100% - 5px) 0, 100% 50%, calc(100% - 5px) 100%, 0 100%); }
+.ft-track i:last-child { margin-right: 0; }
+.ft-track i.on { background: linear-gradient(180deg, #fff0b8 0, #f2c552 42%, #b9822a 100%); }
+.fight-turn.mine .ft-track i.on { animation: ft-pip-in 0.36s cubic-bezier(0.2, 1.5, 0.4, 1) both; animation-delay: calc(var(--i, 0) * 28ms); }
+.fight-turn.mine .ft-track i.off { animation: ft-pip-out 0.45s ease-out both; }
+@keyframes ft-pip-in { from { scale: 1 0; opacity: 0; filter: brightness(2.5); } to { scale: 1; opacity: 1; filter: none; } }
+@keyframes ft-pip-out { 0% { background: #fff; filter: brightness(2); } 100% { background: #2a1915; filter: none; } }
+/* What the move under the pointer would spend: those chevrons go hollow and blink. Too far: all that is left, in red.
+   The hatching is laid over the chevron, so its own lighting-up is not played again each time the pointer moves. */
+.ft-track i { position: relative; }
+.fight-turn.mine .ft-track i.cost::after { content: ""; position: absolute; inset: 0; background: repeating-linear-gradient(115deg, rgba(19, 10, 9, 0) 0 3px, rgba(19, 10, 9, 0.88) 3px 6px), rgba(19, 10, 9, 0.25); animation: ft-pip-cost 0.7s steps(2, jump-none) infinite; }
+.fight-turn.mine .ft-move.over .ft-track i.cost { background: linear-gradient(180deg, #ffc0b0 0, #ff6046 45%, #a02a1a 100%); }
+@keyframes ft-pip-cost { from { opacity: 1; } to { opacity: 0.35; } }
+/* More than can be drawn as chevrons: one bar. */
+.ft-track.plain { padding: 2px; }
+.ft-track.plain span { display: block; height: 100%; background: linear-gradient(180deg, #fff0b8 0, #f2c552 42%, #b9822a 100%); transition: width 0.25s; }
+/* A course charted: a second, slighter run in the mark's red. */
+.ft-course { display: flex; align-items: center; gap: 6px; margin-top: -1px; font-family: var(--font-head); font-size: 11px; line-height: 1; letter-spacing: 0.07em; color: #ff9c8c; white-space: nowrap; }
+.ft-course .ft-track { flex: 1; height: 10px; padding: 1px 2px; }
+.ft-course .ft-track i.on { background: linear-gradient(180deg, #ffb0a0 0, #ff5a5a 45%, #a02626 100%); }
+.ft-course b { font: bold 11px/1 ui-monospace, Consolas, monospace; color: #ffb0a0; }
+.ft-move.has-course { gap: 2px; }
+.ft-move.has-course .ft-move-head { height: 22px; }
+.ft-move.has-course .ft-move-num b { font-size: 25px; line-height: 22px; }
+.ft-move.has-course .ft-track:not(.ft-course .ft-track) { height: 15px; }
+
+/* End Turn: a brass-bound block at the bar's right end, the clock in a ring on its left. */
+.fight-ui button.ft-end {
+  position: relative; align-self: center; flex: none; width: 176px; height: 60px; display: flex; align-items: center; gap: 9px; padding: 0 10px 0 7px;
+  color: #8d7462; background: linear-gradient(180deg, #3d2a24, #261714); border: 3px solid var(--f-out); border-radius: 0;
+  box-shadow: inset 0 2px 0 rgba(255, 226, 190, 0.12), inset 0 -3px 0 rgba(0, 0, 0, 0.4), 0 0 0 1px var(--f-rim); text-shadow: none; opacity: 1; cursor: default;
+}
+.fight-ui button.ft-end:not(:disabled) {
+  color: var(--f-ink); cursor: pointer;
+  background: linear-gradient(180deg, #ffe9a0 0, #f4c64e 38%, #d59a2c 100%);
+  box-shadow: inset 0 3px 0 rgba(255, 250, 220, 0.7), inset 0 -4px 0 #9a6a18, 0 0 0 1px #6b4a12, 0 3px 0 rgba(0, 0, 0, 0.5), 0 0 16px rgba(244, 198, 78, 0.5);
+}
+.fight-ui button.ft-end:hover:not(:disabled) { background: linear-gradient(180deg, #fff4c4 0, #ffd662 38%, #e0a534 100%); border-color: var(--f-out); box-shadow: inset 0 3px 0 #fffbe6, inset 0 -4px 0 #9a6a18, 0 0 0 1px #6b4a12, 0 3px 0 rgba(0, 0, 0, 0.5), 0 0 26px rgba(255, 214, 98, 0.85); }
+.fight-ui button.ft-end:active:not(:disabled) { translate: 0 2px; box-shadow: inset 0 3px 6px rgba(90, 50, 0, 0.6), 0 0 0 1px #6b4a12; }
+.ft-end-text { display: flex; flex-direction: column; align-items: flex-start; min-width: 0; }
+.ft-end-text strong { font-family: var(--font-title); font-size: 27px; line-height: 1; font-weight: normal; letter-spacing: 0.04em; white-space: nowrap; }
+.ft-end-text small { font-family: var(--font-head); font-size: 11px; line-height: 1.1; letter-spacing: 0.08em; white-space: nowrap; opacity: 0.85; }
+.ft-ring { position: relative; flex: none; width: 44px; height: 44px; display: grid; place-items: center; }
+.ft-ring svg { position: absolute; inset: 0; width: 100%; height: 100%; rotate: -90deg; }
+.ft-ring circle { fill: none; stroke-width: 5; }
+.ft-ring .ft-ring-bed { fill: rgba(20, 10, 8, 0.82); stroke: rgba(0, 0, 0, 0.55); }
+.ft-ring .ft-ring-now { stroke: #9a8572; stroke-linecap: butt; transition: stroke-dashoffset 1s linear, stroke 0.3s; }
+.ft-end:not(:disabled) .ft-ring .ft-ring-now { stroke: #ffe9a0; }
+.ft-ring b { position: relative; font: bold 17px/1 ui-monospace, Consolas, monospace; color: #c9b39c; font-variant-numeric: tabular-nums; }
+.ft-end:not(:disabled) .ft-ring b { color: #fff3c4; }
+.ft-ring .ft-glass { position: relative; width: 18px; height: 18px; fill: currentColor; color: #c9b39c; rotate: none; }
+.ft-end:not(:disabled) .ft-ring .ft-glass { color: #fff3c4; }
+/* Under fifteen seconds: the ring and its number go red and beat. */
+.fight-turn.urgent .ft-ring .ft-ring-now { stroke: #ff5a3c; }
+.fight-turn.urgent .ft-ring b { color: #ff8a70; animation: ft-tick 1s ease-out infinite; }
+@keyframes ft-tick { 0% { scale: 1.45; color: #fff; } 40% { scale: 1; } }
+.fight-turn.mine.urgent button.ft-end:not(:disabled) { background: linear-gradient(180deg, #ffc08a 0, #f0683c 40%, #b4321c 100%); color: #fff6e6; text-shadow: 0 2px 0 #5a1408; box-shadow: inset 0 3px 0 rgba(255, 230, 200, 0.6), inset 0 -4px 0 #7a1c0e, 0 0 0 1px #5a1408, 0 3px 0 rgba(0, 0, 0, 0.5), 0 0 22px rgba(255, 90, 60, 0.7); }
+
+/* ==========================================================================
+   The announcement: a band that sweeps the upper middle of the view and is
+   gone. Your own turn is the big one.
+   ========================================================================== */
+.fight-banner {
+  --dur: 1.6s; --c: var(--f-parch); --band: rgba(22, 11, 9, 0.9); --line: rgba(233, 216, 171, 0.6); --size: 44px;
+  position: absolute; left: 0; right: 0; top: clamp(156px, 22%, 250px); z-index: 13; display: grid; place-items: center; pointer-events: none;
+  animation: fb-life var(--dur) linear both;
+}
+@keyframes fb-life { 0% { opacity: 0; } 7% { opacity: 1; } 78% { opacity: 1; } 100% { opacity: 0; } }
+.fb-band {
+  position: relative; width: min(var(--wide, 880px), 100%); display: flex; align-items: center; justify-content: center; gap: 22px; padding: 9px 0 12px; overflow: hidden;
+  background: linear-gradient(90deg, transparent 4%, var(--band) 28%, var(--band) 72%, transparent 96%);
+  animation: fb-band var(--dur) cubic-bezier(0.2, 0.9, 0.2, 1) both;
+}
+.fb-band::before, .fb-band::after { content: ""; position: absolute; left: 0; right: 0; height: 2px; background: linear-gradient(90deg, transparent 10%, var(--line) 35%, var(--line) 65%, transparent 90%); animation: fb-line var(--dur) ease-out both; }
+.fb-band::before { top: 0; }
+.fb-band::after { bottom: 0; }
+@keyframes fb-band { 0% { scale: 1 0; } 9% { scale: 1 1.12; } 14% { scale: 1 1; } 100% { scale: 1 1; } }
+@keyframes fb-line { 0% { scale: 0 1; } 22% { scale: 1 1; } 100% { scale: 1 1; } }
+.fb-words { display: flex; flex-direction: column; align-items: center; gap: 2px; animation: fb-words var(--dur) cubic-bezier(0.15, 0.85, 0.25, 1) both; }
+.fb-words strong { font-family: var(--font-title); font-size: var(--size); line-height: 1.05; font-weight: normal; letter-spacing: 0.05em; color: var(--c); text-shadow: 0 3px 0 rgba(0, 0, 0, 0.75), 0 0 22px rgba(0, 0, 0, 0.6); white-space: nowrap; }
+.fb-words span { font-family: var(--font-head); font-size: 15px; letter-spacing: 0.24em; text-transform: uppercase; color: color-mix(in srgb, var(--c) 55%, #f3e3c8); text-shadow: 0 2px 0 rgba(0, 0, 0, 0.7); white-space: nowrap; }
+@keyframes fb-words { 0% { translate: -90px 0; opacity: 0; letter-spacing: 0.3em; } 16% { translate: 0 0; opacity: 1; letter-spacing: 0; } 78% { translate: 10px 0; opacity: 1; } 100% { translate: 60px 0; opacity: 0; } }
+.fb-flourish { flex: none; width: 112px; height: 24px; background: var(--flourish, none) center / 112px 24px no-repeat; opacity: 0.9; animation: fb-flourish var(--dur) ease-out both; }
+.fb-flourish.r { scale: -1 1; }
+@keyframes fb-flourish { 0%, 10% { opacity: 0; translate: 40px 0; } 26% { opacity: 0.9; translate: 0 0; } 78% { opacity: 0.9; } 100% { opacity: 0; } }
+.fb-shine { position: absolute; top: 0; bottom: 0; left: 0; width: 26%; pointer-events: none; background: linear-gradient(100deg, transparent, rgba(255, 246, 210, 0.42) 50%, transparent); animation: fb-shine var(--dur) ease-in both; opacity: 0; }
+@keyframes fb-shine { 0%, 12% { translate: -110% 0; opacity: 0; } 14% { opacity: 1; } 42% { translate: 400% 0; opacity: 1; } 43%, 100% { translate: 400% 0; opacity: 0; } }
+
+/* Yours: gold, twice the size, the letters struck from bright metal, and a flare behind them. */
+.fight-banner.yours { --dur: 2.1s; --size: 84px; --wide: 100%; --band: rgba(38, 20, 6, 0.9); --line: rgba(255, 224, 138, 0.95); top: clamp(150px, 19%, 230px); }
+.fight-banner.yours .fb-band { padding: 12px 0 16px; box-shadow: 0 0 60px 10px rgba(244, 198, 78, 0.12); }
+.fight-banner.yours .fb-band::before, .fight-banner.yours .fb-band::after { height: 3px; box-shadow: 0 0 12px rgba(255, 214, 98, 0.9); }
+.fight-banner.yours .fb-words strong {
+  color: transparent; background: linear-gradient(180deg, #fffbe0 8%, #ffe08a 38%, #f4c64e 55%, #b9822a 92%); -webkit-background-clip: text; background-clip: text;
+  text-shadow: none; filter: drop-shadow(0 4px 0 #3b1c06) drop-shadow(0 0 18px rgba(255, 200, 70, 0.65)); letter-spacing: 0.06em;
+}
+.fight-banner.yours .fb-words span { color: #ffe9a8; font-size: 17px; }
+.fight-banner.yours .fb-words { animation-name: fb-words-yours; }
+@keyframes fb-words-yours { 0% { scale: 1.9; opacity: 0; filter: blur(8px) brightness(3); } 11% { scale: 0.96; opacity: 1; filter: blur(0) brightness(1.6); } 16% { scale: 1.03; filter: brightness(1); } 22% { scale: 1; } 78% { scale: 1.02; opacity: 1; } 100% { scale: 1.1; opacity: 0; } }
+.fight-banner.yours::before {
+  content: ""; position: absolute; left: 50%; top: 50%; width: 760px; height: 300px; translate: -50% -50%; pointer-events: none;
+  background: radial-gradient(ellipse at center, rgba(255, 210, 90, 0.4), rgba(255, 190, 60, 0.12) 40%, transparent 68%);
+  animation: fb-flare var(--dur) ease-out both;
+}
+@keyframes fb-flare { 0% { scale: 0.2 0.4; opacity: 0; } 12% { scale: 1.15 1.2; opacity: 1; } 30% { scale: 1 1; opacity: 0.65; } 100% { opacity: 0; } }
+
+/* A crewmate's turn: smaller, in sea-green. An enemy's: smaller, red, and it comes from the other side. */
+.fight-banner.ally { --c: var(--f-ally); --line: rgba(143, 211, 200, 0.6); --band: rgba(10, 24, 24, 0.86); --size: 40px; --dur: 1.5s; }
+.fight-banner.enemy { --c: #ff8d78; --line: rgba(255, 110, 90, 0.7); --band: rgba(46, 8, 8, 0.88); --size: 42px; --dur: 1.5s; }
+.fight-banner.enemy .fb-words { animation-name: fb-words-enemy; }
+@keyframes fb-words-enemy { 0% { translate: 90px 0; opacity: 0; } 16% { translate: 0 0; opacity: 1; } 78% { translate: -10px 0; opacity: 1; } 100% { translate: -60px 0; opacity: 0; } }
+.fight-banner.enemy .fb-shine, .fight-banner.ally .fb-shine, .fight-banner.round .fb-shine, .fight-banner.defeat .fb-shine { display: none; }
+.fight-banner.round { --c: #f3e3c8; --size: 50px; --dur: 1.7s; }
+/* The opening card: the view darkens top and bottom and COMBAT comes across it. */
+.fight-banner.fight { --dur: 2.4s; --size: 104px; --c: #ffe9a8; --band: rgba(64, 10, 10, 0.93); --line: rgba(255, 210, 63, 0.85); --wide: 100%; inset: 0; top: 0; background: linear-gradient(rgba(10, 4, 4, 0.78), transparent 34%, transparent 66%, rgba(10, 4, 4, 0.78)); }
+.fight-banner.fight .fb-band { padding: 16px 0 20px; }
+.fight-banner.fight .fb-words strong { letter-spacing: 0.14em; text-transform: uppercase; text-shadow: 0 5px 0 #3a1008, 0 0 34px rgba(255, 80, 40, 0.55); }
+.fight-banner.fight .fb-words span { font-size: 18px; letter-spacing: 0.32em; color: #f0c8a0; }
+.fight-banner.fight .fb-words { animation-name: fb-words-yours; }
+/* Won, lost, and a place cleared. */
+.fight-banner.victory { --dur: 3s; --size: 92px; --wide: 100%; --band: rgba(38, 20, 6, 0.9); --line: rgba(255, 224, 138, 0.95); top: clamp(150px, 19%, 230px); }
+.fight-banner.victory .fb-words strong { color: transparent; background: linear-gradient(180deg, #fffbe0 8%, #ffe08a 38%, #f4c64e 55%, #b9822a 92%); -webkit-background-clip: text; background-clip: text; text-shadow: none; filter: drop-shadow(0 4px 0 #3b1c06) drop-shadow(0 0 22px rgba(255, 200, 70, 0.75)); letter-spacing: 0.1em; text-transform: uppercase; }
+.fight-banner.victory .fb-words { animation-name: fb-words-yours; }
+.fight-banner.victory .fb-words span { color: #ffe9a8; }
+.fight-banner.defeat { --dur: 3.2s; --size: 80px; --c: #c7a59c; --band: rgba(12, 6, 8, 0.94); --line: rgba(160, 60, 50, 0.7); --wide: 100%; top: clamp(150px, 19%, 230px); }
+.fight-banner.defeat .fb-words strong { letter-spacing: 0.16em; text-transform: uppercase; text-shadow: 0 4px 0 #000, 0 0 30px rgba(140, 20, 20, 0.8); }
+.fight-banner.defeat .fb-words { animation-name: fb-words-defeat; }
+@keyframes fb-words-defeat { 0% { opacity: 0; letter-spacing: 0.4em; filter: blur(6px); } 30% { opacity: 1; letter-spacing: 0; filter: blur(0); } 80% { opacity: 1; } 100% { opacity: 0; translate: 0 10px; } }
+.fight-banner.cleared { --dur: 2.6s; --size: 64px; --wide: 1100px; --c: #c9f0b0; --band: rgba(12, 28, 14, 0.88); --line: rgba(155, 224, 138, 0.75); }
+.fight-banner.cleared .fb-words { animation-name: fb-words-yours; }
+
+/* ==========================================================================
+   The turn order: a board hung from the top of the view, a face for every
+   fighter in the order they act. Whose turn it is hangs lower and larger,
+   lit, with a pointer and their name under it.
+   ========================================================================== */
+.fight-order {
+  --room: min(1040px, max(420px, calc(100vw / var(--ui-z, 1) - 620px)));
+  --face: clamp(32px, calc((var(--room) - 96px) / var(--n, 8) - 6px), 50px);
+  position: absolute; top: 0; left: 50%; translate: -50% 0; z-index: 10; max-width: var(--room); display: flex; align-items: flex-start; pointer-events: none;
+  animation: fo-in 0.5s cubic-bezier(0.2, 1.2, 0.4, 1) both;
+}
+@keyframes fo-in { from { translate: -50% -110%; } to { translate: -50% 0; } }
+.fo-board {
+  display: flex; align-items: flex-start; min-width: 0; pointer-events: auto;
+  background:
+    linear-gradient(180deg, rgba(0, 0, 0, 0.35), rgba(0, 0, 0, 0) 40%, rgba(0, 0, 0, 0.35)),
+    linear-gradient(rgba(96, 30, 24, 0.34), rgba(96, 30, 24, 0.34)),
+    var(--tex-wood, none) 0 0 / 128px 128px,
+    var(--f-wood);
+  border: 3px solid var(--f-out); border-top: 0;
+  box-shadow: inset 0 -2px 0 rgba(0, 0, 0, 0.55), inset 0 -3px 0 rgba(201, 162, 74, 0.35), 0 0 0 1px var(--f-rim), 0 8px 18px rgba(0, 0, 0, 0.5);
+}
+.fo-round { flex: none; align-self: stretch; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; width: 62px; padding-bottom: 4px; border-right: 2px solid var(--f-out); background: linear-gradient(180deg, rgba(0, 0, 0, 0.25), rgba(0, 0, 0, 0.05)); font-family: var(--font-head); font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; color: #c9a877; }
+.fo-round strong { display: inline-block; font-family: var(--font-title); font-size: 34px; line-height: 0.95; font-weight: normal; letter-spacing: 0; color: #ffe9a8; text-shadow: 0 2px 0 #000; animation: fo-round 0.6s cubic-bezier(0.2, 1.6, 0.4, 1); }
+@keyframes fo-round { from { scale: 2.2; color: #fff; } to { scale: 1; } }
+/* The row of faces. It is cut off at the board's ends only: whoever's turn it is hangs out of the bottom. */
+.fo-view { position: relative; flex: 1; min-width: 0; overflow-x: clip; overflow-y: visible; }
+.fo-track { position: relative; display: flex; align-items: flex-start; gap: 6px; width: max-content; height: calc(var(--face) * 44 / 36 + 23px); padding: 7px 10px 0; transition: translate 0.35s cubic-bezier(0.2, 0.9, 0.3, 1); }
+.fo-view::before, .fo-view::after { content: ""; position: absolute; top: 0; bottom: 0; width: 26px; z-index: 2; pointer-events: none; opacity: 0; transition: opacity 0.2s; }
+.fo-view::before { left: 0; background: linear-gradient(90deg, #2a1614, rgba(42, 22, 20, 0)); }
+.fo-view::after { right: 0; background: linear-gradient(270deg, #2a1614, rgba(42, 22, 20, 0)); }
+.fo-view.more-left::before, .fo-view.more-right::after { opacity: 1; }
+/* A face: the picture in a frame of its side's colour, and its health under it. */
+.fight-ui button.fo-face {
+  --c: #5d968c; --w: var(--face);
+  position: relative; flex: none; width: var(--w); padding: 0; display: flex; flex-direction: column; align-items: stretch; gap: 3px;
+  background: none; border: none; border-radius: 0; box-shadow: none; text-shadow: none; color: inherit; cursor: pointer;
+  transition: opacity 0.25s, filter 0.25s;
+}
+.fight-ui button.fo-face:hover:not(:disabled) { background: none; border: none; box-shadow: none; }
+.fight-ui button.fo-face.enemy { --c: #c9483a; }
+.fight-ui button.fo-face.mine { --c: var(--f-gold); }
+.fo-pic { position: relative; display: block; aspect-ratio: 36 / 44; overflow: hidden; background: radial-gradient(circle at 50% 35%, #4a3a33, #1a0f0d 85%); border: 2px solid var(--c); box-shadow: 0 0 0 1px var(--f-out), inset 0 0 0 1px rgba(0, 0, 0, 0.5); transition: box-shadow 0.2s; }
+.fo-face.enemy .fo-pic { background: radial-gradient(circle at 50% 35%, #5a2a26, #1f0c0b 85%); }
+.fo-pic img { display: block; width: 100%; height: 100%; object-fit: cover; image-rendering: pixelated; }
+.fo-face.mine .fo-pic { box-shadow: 0 0 0 1px var(--f-out), 0 0 0 3px var(--f-gold), 0 0 0 4px var(--f-out), inset 0 0 0 1px rgba(0, 0, 0, 0.5); margin: 3px 3px 0; }
+.fo-face:hover .fo-pic { box-shadow: 0 0 0 1px var(--f-out), 0 0 0 3px #fff6cf, inset 0 0 0 1px rgba(0, 0, 0, 0.5); }
+.fo-unseen { position: absolute; inset: 0; display: grid; place-items: center; font-family: var(--font-title); font-size: calc(var(--w) * 0.6); color: #7d5b52; }
+.fo-hp { display: flex; height: 5px; background: #120908; border: 1px solid var(--f-out); box-shadow: 0 0 0 1px rgba(107, 53, 36, 0.6); }
+.fo-hp i { display: block; height: 100%; background: linear-gradient(180deg, #b6f09a, #5fbf4a); transition: width 0.3s; }
+.fo-face.enemy .fo-hp i { background: linear-gradient(180deg, #ff9a86, #d8342a); }
+.fo-hp b { display: block; height: 100%; background: #d6dde8; transition: width 0.3s; }
+.fo-face.mine .fo-hp { margin: 0 3px; }
+.fo-face.spent { opacity: 0.5; }
+.fo-face.down { opacity: 0.45; filter: grayscale(1) brightness(0.75); }
+.fo-face.down .fo-pic::after { content: ""; position: absolute; inset: 0; background: linear-gradient(to top right, transparent calc(50% - 2px), #b8443a calc(50% - 2px), #b8443a calc(50% + 2px), transparent calc(50% + 2px)); }
+.fo-face.down .fo-hp i { width: 0 !important; }
+/* Whose turn it is. */
+.fight-ui button.fo-face.turn { --w: calc(var(--face) * 1.36); opacity: 1; margin: 0 3px; }
+.fo-face.turn .fo-pic { border-width: 3px; box-shadow: 0 0 0 1px var(--f-out), 0 0 0 3px color-mix(in srgb, var(--c) 55%, #fff), 0 0 18px 4px color-mix(in srgb, var(--c) 80%, transparent); animation: fo-turn 1.6s ease-in-out infinite; margin: 0; }
+@keyframes fo-turn { 50% { box-shadow: 0 0 0 1px var(--f-out), 0 0 0 3px #fff, 0 0 26px 8px var(--c); } }
+.fo-face.turn .fo-hp { margin: 0; height: 6px; }
+.fo-point { align-self: center; margin-top: 2px; border: 7px solid transparent; border-top: 0; border-bottom: 8px solid color-mix(in srgb, var(--c) 70%, #fff); filter: drop-shadow(0 0 4px var(--c)); animation: fo-point 0.9s ease-in-out infinite; }
+@keyframes fo-point { 50% { translate: 0 3px; } }
+.fo-face.turn { z-index: 3; }
+/* Their name, on a tag hung under the pointer. It is drawn outside the row, so the board's ends do not cut it off. */
+.fo-now { --c: #5d968c; position: absolute; top: calc(var(--face) * 1.36 * 44 / 36 + 36px); translate: -50% 0; z-index: 2; width: max-content; max-width: 170px; overflow: hidden; text-overflow: ellipsis; padding: 0 10px 1px; pointer-events: none; font-family: var(--font-head); font-size: 14px; line-height: 1.3; letter-spacing: 0.05em; white-space: nowrap; color: var(--f-ink); background: color-mix(in srgb, var(--c) 45%, #f3e3c8); border: 2px solid var(--f-out); box-shadow: 0 2px 0 rgba(0, 0, 0, 0.5); animation: fo-now 0.25s ease-out both; transition: left 0.3s; }
+.fo-now.enemy { --c: #c9483a; }
+.fo-now.mine { --c: var(--f-gold); }
+@keyframes fo-now { from { opacity: 0; translate: -50% -6px; } }
+/* The card for the face pointed at: who, what they have left, what they rolled for the order. */
+.fo-tip { position: absolute; top: calc(100% + 8px); z-index: 3; translate: -50% 0; width: max-content; max-width: 240px; padding: 6px 10px 7px; display: flex; flex-direction: column; gap: 2px; font-size: 12px; line-height: 1.35; pointer-events: none; color: var(--text, #fbe6c8); background: rgba(30, 15, 13, 0.97); border: 2px solid var(--f-out); box-shadow: 0 0 0 1px var(--f-brass-lo), 0 6px 14px rgba(0, 0, 0, 0.55); animation: fo-tip 0.12s ease-out; }
+@keyframes fo-tip { from { opacity: 0; translate: -50% -4px; } }
+.fo-tip.low { top: calc(var(--face) * 1.36 * 44 / 36 + 66px); }
+.fo-tip b { font-family: var(--font-head); font-size: 15px; font-weight: normal; letter-spacing: 0.04em; color: var(--f-ally); }
+.fo-tip.mine b { color: var(--f-hero); }
+.fo-tip.enemy b { color: var(--f-enemy); }
+.fo-tip span { color: var(--muted, #d2a585); }
+.fo-tip em { font-style: normal; color: #ffe9a8; }
+
+/* ==========================================================================
+   The combat log: the whole fight, line by line, at the bottom right. Rolls
+   are shown as the dice that fell.
+   ========================================================================== */
+.fight-log {
+  /* As wide as the room beside the rack allows, between these two. */
+  --w-min: 240px;
+  --w: clamp(var(--w-min), calc(var(--f-side) - 28px), var(--fight-log-w, 348px));
+  /* A length that is huge where the log does not fit beside the rack and less than nothing where it does: it picks between the two places. */
+  --tight: calc((var(--w-min) + 28px - var(--f-side)) * 9999);
+  --lifted: calc(var(--f-hud) + var(--f-turn-h) + 8px);
+  position: absolute; right: 16px; z-index: 12; width: min(var(--w), calc(100% - 32px)); display: flex; flex-direction: column; pointer-events: auto;
+  /* In the corner beside the rack, where the view is wide enough to hold both; otherwise above the rack and the turn bar, and shorter. */
+  bottom: max(16px, min(var(--lifted), var(--tight)));
+  max-height: min(330px, max(96px, calc(100vh / var(--ui-z, 1) - var(--lifted) - 170px), calc(var(--tight) * -1)));
+  font-size: 12px; line-height: 1.4; color: var(--text, #fbe6c8);
+  background: linear-gradient(180deg, rgba(40, 20, 17, 0.93), rgba(24, 12, 10, 0.9));
+  border: 3px solid var(--f-out); box-shadow: 0 0 0 1px var(--f-rim), 0 8px 20px rgba(0, 0, 0, 0.5);
+}
+/* Held above the rack and the turn bar whatever the room. */
+.fight-log.above { bottom: var(--lifted); max-height: min(330px, max(96px, calc(100vh / var(--ui-z, 1) - var(--lifted) - 170px))); }
+.fight-ui button.fl-head {
+  flex: none; display: flex; align-items: center; gap: 8px; width: 100%; min-height: 28px; padding: 2px 8px 3px 10px; text-align: left; cursor: pointer;
+  color: var(--f-brass-hi); border: none; border-bottom: 2px solid var(--f-out); border-radius: 0; text-shadow: 0 1px 0 #000;
+  background: linear-gradient(180deg, rgba(255, 214, 170, 0.12), rgba(0, 0, 0, 0.2)), linear-gradient(rgba(96, 30, 24, 0.34), rgba(96, 30, 24, 0.34)), var(--tex-wood, none) 0 0 / 128px 128px, var(--f-wood-hi);
+  box-shadow: inset 0 1px 0 rgba(214, 150, 96, 0.3);
+}
+.fight-ui button.fl-head:hover:not(:disabled) { color: #fff6cf; border: none; border-bottom: 2px solid var(--f-out); box-shadow: inset 0 1px 0 rgba(214, 150, 96, 0.5); background: linear-gradient(180deg, rgba(255, 214, 170, 0.2), rgba(0, 0, 0, 0.14)), linear-gradient(rgba(96, 30, 24, 0.34), rgba(96, 30, 24, 0.34)), var(--tex-wood, none) 0 0 / 128px 128px, var(--f-wood-hi); }
+.fl-title { flex: none; font-family: var(--font-head); font-size: 15px; letter-spacing: 0.07em; }
+.fl-last { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--muted, #d2a585); text-shadow: none; }
+.fl-count { margin-left: auto; font-size: 11px; color: #a98a72; text-shadow: none; }
+.fl-chev { flex: none; width: 0; height: 0; border: 5px solid transparent; border-bottom: 0; border-top: 6px solid currentColor; transition: rotate 0.15s; }
+.fight-log.shut .fl-chev { rotate: 180deg; }
+.fight-log.shut .fl-head { border-bottom: 0; }
+.fl-body { flex: 1; min-height: 60px; overflow-y: auto; overscroll-behavior: contain; padding: 4px 0 6px; scrollbar-width: thin; scrollbar-color: var(--f-brass-lo) transparent; }
+.fl-empty { padding: 14px 10px; text-align: center; color: var(--muted, #d2a585); }
+.fl-e { position: relative; padding: 2px 10px 2px 13px; --c: #cdb8a0; }
+.fl-e.hero { --c: var(--f-hero); }
+.fl-e.enemy { --c: var(--f-enemy); }
+.fl-e::before { content: ""; position: absolute; left: 4px; top: 4px; bottom: 4px; width: 3px; background: var(--c); opacity: 0.55; }
+.fl-e.fresh { animation: fl-fresh 0.9s ease-out; }
+@keyframes fl-fresh { from { background: rgba(255, 233, 168, 0.22); } to { background: transparent; } }
+.fl-e b { font-weight: bold; color: var(--c); }
+.fl-e .fl-tgt { color: #f6ead2; }
+.fl-e .fl-what { color: var(--muted, #d2a585); }
+/* A heading: the round, the fight beginning. */
+.fl-e.head { display: flex; align-items: center; gap: 8px; margin: 5px 0 2px; padding: 0 10px; font-family: var(--font-head); font-size: 14px; letter-spacing: 0.1em; color: var(--f-brass-hi); }
+.fl-e.head::before, .fl-e.head::after { content: ""; position: static; flex: 1; height: 1px; width: auto; background: linear-gradient(90deg, transparent, var(--f-brass-lo)); opacity: 1; }
+.fl-e.head::after { background: linear-gradient(90deg, var(--f-brass-lo), transparent); }
+/* Whose turn starts. */
+.fl-e.turn { margin-top: 4px; padding-top: 3px; padding-bottom: 1px; font-family: var(--font-head); font-size: 13px; letter-spacing: 0.05em; color: var(--c); background: linear-gradient(90deg, color-mix(in srgb, var(--c) 16%, transparent), transparent 70%); }
+.fl-e.turn::before { opacity: 1; top: 0; bottom: 0; }
+.fl-e.note { color: #e2d2b6; }
+.fl-e.note::before, .fl-e.miss::before { opacity: 0.25; }
+.fl-e.note.good { color: var(--f-good); }
+.fl-e.note.bad { color: var(--f-bad); }
+.fl-e.note.dim, .fl-e.miss { color: #a98a72; }
+.fl-e.miss b { color: color-mix(in srgb, var(--c) 60%, #a98a72); }
+.fl-e.miss .fl-tgt { color: #cdb8a0; }
+.fl-line { display: flex; align-items: baseline; gap: 6px; }
+.fl-line > span:first-child { flex: 1; min-width: 0; }
+.fl-amt { flex: none; font: bold 15px/1.2 ui-monospace, Consolas, monospace; color: #ff9a86; text-shadow: 0 1px 0 #000; }
+.fl-amt.heal { color: var(--f-good); }
+.fl-e.crit .fl-amt { color: #ffe08a; font-size: 17px; }
+/* The sum: dice, what was added, what it came to, what it had to reach, and how it came out. */
+.fl-math { display: flex; flex-wrap: wrap; align-items: center; gap: 3px 5px; margin-top: 1px; color: #d9c7ab; font-variant-numeric: tabular-nums; }
+.fl-math strong { color: #fff3d6; font-size: 13px; }
+.fl-math i { font-style: normal; color: #a98a72; }
+.fl-math .fl-nd { color: #a98a72; }
+.fl-math .fl-mod { padding: 0 4px; font-size: 10px; line-height: 14px; letter-spacing: 0.04em; text-transform: uppercase; border: 1px solid; }
+.fl-math .fl-mod.adv { color: var(--f-good); }
+.fl-math .fl-mod.dis { color: var(--f-bad); }
+.fl-math .fl-mod.half { color: #9ec9ff; }
+.fl-math .fl-mod.blk { color: #d6dde8; border: none; padding: 0; text-transform: none; font-size: 12px; }
+.fl-tag { margin-left: auto; flex: none; padding: 0 7px 1px; font-family: var(--font-head); font-size: 13px; line-height: 17px; letter-spacing: 0.08em; color: #10240f; background: var(--f-good); border: 1px solid #000; box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.45); }
+.fl-tag.no { color: #2c0b07; background: #e8705c; }
+.fl-tag.crit { color: #3b2408; background: linear-gradient(180deg, #fff0b8, #f4c64e); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.6), 0 0 8px rgba(244, 198, 78, 0.8); }
+.fl-tag.flat { color: #2c2318; background: #cdb8a0; }
+.fight-ui button.fl-jump { position: absolute; right: 12px; bottom: 8px; padding: 1px 9px 2px; font-size: 11px; color: var(--f-ink); background: var(--f-gold); border: 2px solid var(--f-out); border-radius: 0; box-shadow: 0 2px 0 rgba(0, 0, 0, 0.5); text-shadow: none; }
+.fight-ui button.fl-jump:hover:not(:disabled) { background: #ffe08a; border-color: var(--f-out); box-shadow: 0 2px 0 rgba(0, 0, 0, 0.5); }
+
+/* A die, as a chip in its own shape: three corners for a d4, a square d6, a d8's diamond, a kite, a d12's five
+   sides, a d20's six. Bone, with the number inked on; the one dropped is struck through. */
+.fd { --s: 19px; position: relative; flex: none; display: inline-grid; place-items: center; width: var(--s); height: var(--s); vertical-align: middle; filter: drop-shadow(0 1px 0 rgba(0, 0, 0, 0.7)); }
+.fd::before { content: ""; position: absolute; inset: 0; background: linear-gradient(160deg, #fff6dc, #e3cf9f 60%, #bfa670); clip-path: var(--shape); }
+.fd > span { position: relative; font: bold 11px/1 ui-monospace, Consolas, monospace; color: #2a160c; letter-spacing: -0.04em; }
+.fd.d4 { --s: 19px; --shape: polygon(50% 2%, 100% 94%, 0 94%); }
+.fd.d4 > span { translate: 0 3px; font-size: 10px; }
+.fd.d6 { --s: 17px; --shape: polygon(8% 0, 92% 0, 100% 8%, 100% 92%, 92% 100%, 8% 100%, 0 92%, 0 8%); }
+.fd.d8 { --s: 21px; --shape: polygon(50% 0, 100% 50%, 50% 100%, 0 50%); }
+.fd.d8 > span { font-size: 10px; }
+.fd.d10 { --s: 21px; --shape: polygon(50% 0, 100% 40%, 50% 100%, 0 40%); }
+.fd.d10 > span { translate: 0 -1px; font-size: 10px; }
+.fd.d12 { --s: 21px; --shape: polygon(50% 0, 100% 38%, 81% 100%, 19% 100%, 0 38%); }
+.fd.d20 { --s: 23px; --shape: polygon(50% 0, 100% 25%, 100% 75%, 50% 100%, 0 75%, 0 25%); }
+.fd.top::before { background: linear-gradient(160deg, #fffbe6, #ffe08a 55%, #e0a534); }
+.fd.low::before { background: linear-gradient(160deg, #ffd9cf, #e8907e 60%, #b8503e); }
+.fd.dropped { opacity: 0.8; }
+.fd.dropped::before { background: linear-gradient(160deg, #a89c84, #7b705c); }
+.fd.dropped > span { color: #3a2c20; }
+.fd.dropped::after { content: ""; position: absolute; left: -1px; right: -1px; top: 50%; height: 2px; margin-top: -1px; background: #ff6a55; rotate: -24deg; }
+
+/* ==========================================================================
+   The roll, large: the d20 tumbles in and lands on its number, then the sum,
+   then how it came out. Shown for a moment over the turn bar.
+   ========================================================================== */
+.fight-roll {
+  --c: var(--f-good);
+  position: absolute; left: 50%; bottom: calc(var(--f-hud) + var(--f-turn-h) + 14px); translate: -50% 0; z-index: 13; width: max-content; max-width: calc(100% - 24px); padding: 12px 90px 14px;
+  display: flex; align-items: center; gap: 20px; pointer-events: none;
+  background: linear-gradient(90deg, rgba(14, 7, 6, 0), rgba(14, 7, 6, 0.9) 16%, rgba(14, 7, 6, 0.9) 84%, rgba(14, 7, 6, 0));
+  animation: fr-in 0.18s ease-out both;
+}
+.fight-roll::before, .fight-roll::after { content: ""; position: absolute; left: 0; right: 0; height: 2px; background: linear-gradient(90deg, transparent 8%, color-mix(in srgb, var(--c) 70%, transparent) 30%, color-mix(in srgb, var(--c) 70%, transparent) 70%, transparent 92%); opacity: 0.35; transition: opacity 0.3s; }
+.fight-roll::before { top: 0; }
+.fight-roll::after { bottom: 0; }
+.fight-roll.landed::before, .fight-roll.landed::after { opacity: 1; }
+.fr-text { display: flex; flex-direction: column; gap: 3px; min-width: 250px; }
+.fr-line { display: flex; align-items: center; gap: 16px; min-height: 46px; }
+.fight-roll.no { --c: var(--f-bad); }
+.fight-roll.crit { --c: #ffe08a; }
+.fight-roll.flat { --c: #f3e3c8; }
+.fight-roll.out { animation: fr-out 0.35s ease-in both; }
+@keyframes fr-in { from { opacity: 0; scale: 0.9; } }
+@keyframes fr-out { to { opacity: 0; translate: -50% -14px; } }
+.fr-who em { vertical-align: 1px; }
+.fr-who { font-family: var(--font-head); font-size: 16px; letter-spacing: 0.06em; color: #f3e3c8; text-shadow: 0 2px 0 #000; white-space: nowrap; }
+.fr-who b { font-weight: normal; color: var(--f-hero); }
+.fr-who em { font-style: normal; margin-left: 8px; padding: 0 6px; font-size: 12px; letter-spacing: 0.1em; text-transform: uppercase; border: 1px solid; color: var(--f-good); }
+.fr-who em.dis { color: var(--f-bad); }
+.fr-dice { flex: none; display: flex; align-items: center; justify-content: center; gap: 10px; height: 92px; }
+.fr-d20 { position: relative; width: 88px; height: 88px; display: grid; place-items: center; animation: fr-tumble 0.72s cubic-bezier(0.25, 0.8, 0.3, 1) both; transition: scale 0.3s, opacity 0.3s, filter 0.3s, margin 0.3s; }
+.fr-d20:nth-child(2) { animation-name: fr-tumble-b; animation-duration: 0.78s; }
+.fr-d20 svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; filter: drop-shadow(0 6px 5px rgba(0, 0, 0, 0.6)); }
+.fr-d20 .fr-body { fill: #ead9aa; stroke: #2a160c; stroke-width: 3; stroke-linejoin: round; transition: fill 0.25s; }
+.fr-d20 .fr-edge { fill: none; stroke: rgba(74, 46, 20, 0.55); stroke-width: 1.6; stroke-linejoin: round; }
+.fr-d20 .fr-top { fill: rgba(255, 255, 255, 0.38); transition: fill 0.25s; }
+.fr-d20 b { position: relative; translate: 0 1px; font-family: var(--font-title); font-size: 36px; line-height: 1; font-weight: normal; color: #2a160c; }
+@keyframes fr-tumble {
+  0% { translate: -150px -70px; rotate: -560deg; scale: 0.45; opacity: 0; }
+  12% { opacity: 1; }
+  62% { translate: 6px 6px; rotate: 14deg; scale: 1.08; }
+  80% { translate: -2px -8px; rotate: -5deg; scale: 0.98; }
+  100% { translate: 0 0; rotate: 0deg; scale: 1; }
+}
+@keyframes fr-tumble-b {
+  0% { translate: 150px -80px; rotate: 600deg; scale: 0.45; opacity: 0; }
+  12% { opacity: 1; }
+  62% { translate: -6px 6px; rotate: -16deg; scale: 1.08; }
+  80% { translate: 2px -8px; rotate: 6deg; scale: 0.98; }
+  100% { translate: 0 0; rotate: 0deg; scale: 1; }
+}
+/* Landed: the die that counts takes the colour of how it came out; the one dropped shrinks away. */
+.fight-roll.landed .fr-d20.kept b { animation: fr-pop 0.34s cubic-bezier(0.2, 1.8, 0.4, 1); }
+@keyframes fr-pop { from { scale: 1.9; } to { scale: 1; } }
+.fight-roll.landed .fr-d20.kept svg { filter: drop-shadow(0 6px 5px rgba(0, 0, 0, 0.6)) drop-shadow(0 0 14px color-mix(in srgb, var(--c) 80%, transparent)); }
+.fight-roll.landed.crit .fr-d20.kept .fr-body { fill: #ffd662; }
+.fight-roll.landed.crit .fr-d20.kept .fr-top { fill: rgba(255, 251, 224, 0.7); }
+.fight-roll.landed.botch .fr-d20.kept .fr-body { fill: #d9897a; }
+.fight-roll.landed .fr-d20.dropped { scale: 0.62; opacity: 0.5; filter: grayscale(0.8); margin: 0 -14px; }
+.fight-roll.landed .fr-d20.dropped::after { content: ""; position: absolute; left: 4px; right: 4px; top: 50%; height: 4px; background: #ff6a55; rotate: -20deg; box-shadow: 0 0 0 1px #000; }
+.fr-sum, .fr-out, .fr-dmg { opacity: 0; }
+.fight-roll.landed .fr-sum { animation: fr-rise 0.25s ease-out 0.08s both; }
+.fight-roll.landed .fr-out { animation: fr-stamp 0.3s cubic-bezier(0.2, 1.6, 0.4, 1) 0.3s both; }
+.fight-roll.landed .fr-dmg { animation: fr-rise 0.25s ease-out 0.6s both; }
+@keyframes fr-rise { from { opacity: 0; translate: 0 8px; } to { opacity: 1; translate: 0 0; } }
+@keyframes fr-stamp { from { opacity: 0; scale: 2.6; rotate: -8deg; } to { opacity: 1; scale: 1; rotate: 0deg; } }
+.fr-sum { font: 16px/1.3 ui-monospace, Consolas, monospace; color: #e2d2b6; text-shadow: 0 1px 0 #000; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.fr-sum strong { font-size: 28px; color: #fff; margin: 0 4px; }
+.fr-sum i { font-style: normal; color: #a98a72; }
+.fr-out { font-family: var(--font-title); font-size: 44px; line-height: 1; letter-spacing: 0.06em; color: var(--c); text-shadow: 0 3px 0 #000, 0 0 18px color-mix(in srgb, var(--c) 60%, transparent); white-space: nowrap; }
+.fight-roll.crit .fr-out { font-size: 48px; }
+.fr-dmg { display: flex; align-items: center; gap: 6px; font: 14px/1.3 ui-monospace, Consolas, monospace; color: #e2d2b6; text-shadow: 0 1px 0 #000; white-space: nowrap; }
+.fr-dmg strong { font-size: 22px; color: #ff9a86; }
+.fr-dmg.heal strong { color: var(--f-good); }
+.fr-dmg i { font-style: normal; color: #a98a72; }
+.fr-dmg .fd { --s: 26px; }
+.fr-dmg .fd > span { font-size: 13px; }
+
+/* ==========================================================================
+   The loot window: a fallen enemy, a chest, or the spoils of a place, as a
+   small grid of the bag's own squares. It sits at the right of the view, or
+   just left of the sea bag while that is open.
+   ========================================================================== */
+.fight-loot.panel {
+  --lu: 56px;
+  position: absolute; right: 24px; top: calc(50% - 60px); translate: 0 -50%; z-index: 26; width: calc(var(--lu) * 4 + 42px); max-width: calc(100% - 24px);
+  display: flex; flex-direction: column; gap: 8px; padding: 20px 18px 12px; pointer-events: auto;
+  animation: loot-in 0.2s cubic-bezier(0.2, 1.3, 0.4, 1) both;
+}
+@keyframes loot-in { from { opacity: 0; translate: 16px -50%; } }
+/* The bag is 12 squares of 51 and its frame wide, 22px in from the right: the loot stands just clear of it. */
+.run:has(.bag-overlay) .fight-loot.panel { right: calc(22px + 51px * 12 + 46px + 20px); z-index: 51; }
+.fight-loot .win-plate { max-width: calc(100% + 30px); overflow: hidden; text-overflow: ellipsis; }
+/* The bag's own close button, held to its corner here whatever order the stylesheets load in. */
+.fight-loot .bag-close { position: absolute; top: -6px; right: -6px; width: 30px; height: 30px; padding: 0; font-size: 20px; line-height: 1; z-index: 5; }
+.loot-sub { margin: 0; text-align: center; font-family: var(--font-book); font-size: 14px; line-height: 1.25; color: var(--muted, #d2a585); }
+.loot-blocked { margin: 0; padding: 4px 8px; font-size: 12px; line-height: 1.35; color: #ffb3a8; background: rgba(74, 26, 24, 0.6); border: 2px solid var(--bad, #ff8a7a); }
+.loot-wrap { align-self: center; border: 3px solid var(--out, #3a1d20); background: #1b110f; }
+.loot-grid { display: grid; grid-template-columns: repeat(4, var(--lu)); grid-auto-rows: var(--lu); min-height: calc(var(--lu) * 2); max-height: calc(var(--lu) * 4); overflow-y: auto; background: var(--tex-cell, none) 0 0 / var(--lu) var(--lu), #1b110f; }
+.fight-ui button.loot-slot {
+  position: relative; width: var(--lu); height: var(--lu); padding: 0; display: grid; place-items: center; border: none; border-radius: 0; text-shadow: none; cursor: grab;
+  background: var(--tex-lines, none) 0 0 / var(--lu) var(--lu), color-mix(in srgb, var(--tint, #b1633c) 17%, #170f12);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--tint, #8e4a2f) 70%, #000);
+  animation: loot-slot 0.25s ease-out both; animation-delay: calc(var(--i, 0) * 35ms);
+}
+@keyframes loot-slot { from { opacity: 0; scale: 0.7; } }
+.loot-slot::before { content: ""; position: absolute; inset: 5px 3px 3px 5px; pointer-events: none; background: rgba(0, 0, 0, 0.08); border: 1px solid; border-color: rgba(0, 0, 0, 0.14) rgba(255, 214, 170, 0.04) rgba(255, 214, 170, 0.04) rgba(0, 0, 0, 0.14); }
+.loot-slot > img, .loot-slot > .blueprint-icon { position: relative; z-index: 1; }
+.fight-ui button.loot-slot:hover:not(:disabled) { border: none; background: var(--tex-lines, none) 0 0 / var(--lu) var(--lu), color-mix(in srgb, var(--tint, #b1633c) 28%, #170f12); box-shadow: inset 0 0 0 1px var(--tint, #fbe08a), 0 0 10px color-mix(in srgb, var(--tint, #fbe08a) 45%, transparent); }
+.fight-ui button.loot-slot:active:not(:disabled) { box-shadow: inset 0 0 0 2px var(--tint, #fbe08a); }
+.loot-slot.dragging { opacity: 0.35; }
+.fight-loot.blocked .loot-slot { cursor: not-allowed; }
+.fight-loot.blocked .loot-slot > img, .fight-loot.blocked .loot-slot > .blueprint-icon { opacity: 0.55; filter: grayscale(0.5); }
+.loot-none { margin: 0; padding: 26px 0 28px; text-align: center; font-family: var(--font-book); font-style: italic; font-size: 16px; color: var(--muted, #d2a585); }
+.loot-foot { display: flex; align-items: center; gap: 8px; }
+.loot-hint { flex: 1; min-width: 0; font-size: 11px; line-height: 1.25; color: var(--muted, #d2a585); }
+.fight-ui button.loot-all { flex: none; display: inline-flex; align-items: center; gap: 7px; padding: 5px 12px 6px; white-space: nowrap; }
+.loot-all kbd { font: bold 11px/1.3 ui-monospace, Consolas, monospace; padding: 0 5px; color: var(--text, #fbe6c8); background: rgba(0, 0, 0, 0.3); border: 1px solid rgba(0, 0, 0, 0.5); }
+/* The card for the thing pointed at: out to the window's left, as the bag's is. */
+.loot-card.panel { position: absolute; right: calc(100% + 22px); top: 0; z-index: 7; width: 270px; max-height: 420px; overflow-y: auto; padding: 10px 12px; pointer-events: none; font-size: 13px; }
+.loot-card .detail p, .loot-card .mat-detail p { margin: 0; }
+.loot-card .loot-how { color: var(--f-brass-hi); font-size: 12px; }
+/* The sea bag while loot is dragged over it: it is where the loot goes. */
+.bag.panel.loot-over { outline: 3px solid var(--good, #86d86c); outline-offset: 4px; box-shadow: 0 0 0 9px rgba(134, 216, 108, 0.16), 0 9px 0 16px rgba(0, 0, 0, 0.45); }
+
+@media (prefers-reduced-motion: reduce) {
+  .fight-turn *, .fight-turn *::before, .fight-turn *::after, .fight-turn-bar, .fight-turn-bar::before { animation: none !important; }
+  .fight-banner * , .fight-banner *::before, .fight-banner *::after, .fight-banner::before { animation: none !important; }
+  .fight-order, .fo-face.turn .fo-pic, .fo-point, .fo-now, .fo-round strong { animation: none; }
+  .fr-d20, .fight-roll.landed .fr-d20.kept b { animation: none; }
+  .fight-roll.landed .fr-sum, .fight-roll.landed .fr-out, .fight-roll.landed .fr-dmg { animation: none; opacity: 1; }
+  .fight-loot.panel, .fight-ui button.loot-slot, .fl-e.fresh { animation: none; }
+}

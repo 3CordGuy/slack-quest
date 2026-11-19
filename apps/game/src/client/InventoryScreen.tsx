@@ -58,7 +58,7 @@
 // where it goes. While a fight is on the gear worn stays as it is; the pack
 // can still be looked through.
 
-import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent as ReactDragEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { CatchPanel } from "./CatchPanel";
 import {
   CARRY_FORMULA,
@@ -275,6 +275,11 @@ interface Props {
    * `why` says why).
    */
   torch?: { hand: "main" | "off"; rounds: number; stow?(): void; why?: string };
+  /**
+   * On a map: something dragged out of a loot window (zone/LootPanel.tsx, a "text/gq-loot" drag carrying its index
+   * there) was dropped anywhere on the bag. The server decides where in the pack it lands.
+   */
+  onLootDrop?: (index: number) => void;
 }
 
 /**
@@ -399,7 +404,28 @@ function EyeGlyph({ shut }: { shut: boolean }) {
   );
 }
 
-export function InventoryScreen({ me, refresh, onClose, onIsland = false, chest = null, trade = null, town = null, usable, gearLocked, stones, torch }: Props) {
+export function InventoryScreen({ me, refresh, onClose, onIsland = false, chest = null, trade = null, town = null, usable, gearLocked, stones, torch, onLootDrop }: Props) {
+  /** Loot is being dragged over the bag: it is lit as the place to drop it. */
+  const [lootOver, setLootOver] = useState(false);
+  const lootDrop = onLootDrop && {
+    onDragOver: (e: ReactDragEvent) => {
+      if (!e.dataTransfer.types.includes("text/gq-loot")) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "move";
+      if (!lootOver) setLootOver(true);
+    },
+    onDragLeave: (e: ReactDragEvent) => {
+      if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setLootOver(false);
+    },
+    onDrop: (e: ReactDragEvent) => {
+      setLootOver(false);
+      const raw = e.dataTransfer.getData("text/gq-loot");
+      if (raw === "") return;
+      e.preventDefault();
+      const index = Number(raw);
+      if (Number.isInteger(index) && index >= 0) onLootDrop(index);
+    },
+  };
   /** The atlas's slot as it is now, for the handlers that outlive a render. */
   const stoneSlot = useRef(stones);
   stoneSlot.current = stones;
@@ -1202,7 +1228,7 @@ export function InventoryScreen({ me, refresh, onClose, onIsland = false, chest 
         </div>
       )}
 
-      <div className={`bag panel window ${held ? "holding" : ""}`} role="dialog" aria-label="Sea bag" style={{ "--u": `${U}px` } as CSSProperties} onContextMenu={putBack}>
+      <div className={`bag panel window ${held ? "holding" : ""} ${lootOver ? "loot-over" : ""}`} role="dialog" aria-label="Sea bag" style={{ "--u": `${U}px` } as CSSProperties} onContextMenu={putBack} {...lootDrop}>
         <span className="win-plate">Sea Bag</span>
         <button className="bag-close hud-btn" aria-label="Close" title="Close (Esc)" onClick={onClose}>×</button>
         {(error ?? (trade ? null : refused)) && <div className="banner error">{error ?? refused}</div>}

@@ -9,7 +9,7 @@
 import type { HexPos, Stats } from "@gantt-quest/core";
 import type { EffectKind } from "../content";
 import type { ItemDef, Outfit } from "../gear";
-import type { Resources } from "../hut";
+import type { ResourceKind, Resources } from "../hut";
 import type { Clime, WorldMap } from "../map";
 import type { FurnishingGrant } from "../world";
 import type { ZoneMod } from "./mods";
@@ -92,6 +92,8 @@ export interface Unit {
   controller?: string;
   /** Enemies: its pockets have been picked (Pickpocket pays once an enemy). */
   picked?: boolean;
+  /** Enemies: gone into a pit (deep water, lava, off the edge of the land): it is down for good, and leaves no body to search. */
+  lost?: "water" | "lava" | "void";
   /** Given a dev kit (DevOp "kit", the Maps tab): coming back to the map does not put the hero's own sheet back on. */
   devKit?: boolean;
   /**
@@ -160,7 +162,12 @@ export interface Encounter {
   /** Everyone in the fight, highest initiative first. The down stay in it and are passed over. */
   order: string[];
   init: Record<string, number>;
-  /** Whose turn it is. Heroes next to each other in the order share one turn and act in any order. */
+  /**
+   * Nobody shares a place in the order: two who rolled the same initiative roll off against each other (and again,
+   * should that be the same too), and this is what each rolled. The higher goes first.
+   */
+  tie?: Record<string, number>;
+  /** Whose turn it is: one, and only ever one (a list from when heroes side by side in the order shared a turn). */
   acting: string[];
   /** Of `acting`, who has ended their turn. */
   done: string[];
@@ -222,8 +229,46 @@ export interface ZoneOptions {
   tier?: number;
   /** What the place is called, on a map the atlas made: its node's name. */
   name?: string;
+  /** What kind of place it is: how its ground is laid out and what stands on it (zone/sites.ts). Left out: one that suits its ground and climate. */
+  site?: string;
+  /**
+   * On a map the atlas made with a lodestone in its slot: how much that stone carried (0 for a plain one, up to 3).
+   * The stones found in the place's spoils are reckoned from it (lodestone.ts `spoilStones`).
+   */
+  stone?: number;
   /** The climate it lies in, on a map the atlas made (left out for the greenwood): its ground is painted to suit. */
   clime?: Clime;
+}
+
+/** One thing lying in something that can be looted (zone/spoils.ts): taken, it goes to the taker's own pack or purse. */
+export type LootItem =
+  | { t: "gold"; n: number }
+  | { t: "res"; kind: ResourceKind; n: number }
+  /** Something to drink or throw. */
+  | { t: "use"; kind: Throwable; n: number }
+  | { t: "gear"; item: ItemDef }
+  /** A lodestone: what it carries. */
+  | { t: "stone"; stone: ZoneMod[] }
+  | { t: "blueprint"; id: string }
+  | { t: "furnishing"; grant: FurnishingGrant };
+
+/**
+ * Something on the map with things in it to take: a fallen enemy, a chest thrown open, or the spoils of a place
+ * cleared. What is in it is each hero's own: rolled for them the first time they look, and nobody else's to take.
+ */
+export interface LootSpot {
+  /** A body keeps the id of whoever fell; a chest, its place's. */
+  id: string;
+  kind: "body" | "chest" | "spoils";
+  name: string;
+  pos: HexPos;
+  /** A body: the enemy kind it was (it drives the figure lying there, and what it carried), and its level. */
+  unit?: string;
+  level?: number;
+  /** A chest: which kind. */
+  chest?: "chest" | "vault" | "hoard";
+  /** What is in it, by hero: what is left of what was rolled for them. Missing: they have not looked yet. Empty: they have taken it all. */
+  loot: Record<string, LootItem[]>;
 }
 
 export interface ZoneState {
@@ -256,10 +301,20 @@ export interface ZoneState {
   encounter: Encounter | null;
   /** The atlas's bounty for clearing this map has been paid (zone/loot.ts): it is paid once. */
   bounty?: boolean;
+  /** What there is to loot (zone/loot.ts): the fallen, the chests that stand open, the spoils of the place. */
+  loot?: LootSpot[];
+  /** What kind of place it is (zone/sites.ts), and what lies under and round its land: the open sea, or a void it floats over. */
+  scene?: { site: string; backdrop: string };
   /** For minting unit ids. */
   seq: number;
   /** Dev switches. */
   aiOff?: boolean;
+  /**
+   * A switch for the tests alone: heroes one after another in the order take their turns together, as fights
+   * once went, so what one hero's ability does for another's can be tried within a single turn. Nothing sets
+   * it in play: there, a turn is always one fighter's alone.
+   */
+  shareTurns?: boolean;
 }
 
 /** A hero walking in: the parts of their sheet a fight needs. */
@@ -311,6 +366,10 @@ export type ZoneAction =
   | { type: "drink"; by: string; unit: string; item: Throwable }
   /** Open a chest, strongbox or hoard (a cache on the map) from beside it. */
   | { type: "open"; by: string; unit: string; poi: string }
+  /** Look into something lootable (a body, an open chest, the spoils) from beside it: what is in it for you is rolled the first time. */
+  | { type: "loot"; by: string; unit: string; spot: string }
+  /** Take from it what is yours: the `index`th thing, or (none given) all of it. Out of a fight only. */
+  | { type: "take"; by: string; unit: string; spot: string; index?: number }
   /** Light a torch from the pack and hold it: in the off hand, or in the main hand to swing as a weapon. */
   | { type: "light"; by: string; unit: string; hand?: "main" }
   /** Pick up a torch burning on the ground beside you: into a free hand still lit, or put out and into the pack. */
@@ -332,7 +391,7 @@ export type ZoneAction =
   | { type: "dev"; by: string; dev: DevOp };
 
 /** Action types a player's client may send. `dev` is let through only on a development deployment. */
-export const ZONE_CLIENT_ACTIONS: ReadonlySet<ZoneAction["type"]> = new Set(["move", "use", "common", "throw", "drink", "light", "pickup", "stow", "open", "unlock", "forage", "end_turn", "dev"]);
+export const ZONE_CLIENT_ACTIONS: ReadonlySet<ZoneAction["type"]> = new Set(["move", "use", "common", "throw", "drink", "light", "pickup", "stow", "open", "loot", "take", "unlock", "forage", "end_turn", "dev"]);
 
 /** One d20 roll, as shown on the roll card. */
 export interface Roll {
@@ -355,6 +414,21 @@ export interface Roll {
   crit: boolean;
 }
 
+/** Damage or healing dice as they fell, as shown in the log: "1d8 (6) + 3 = 9". */
+export interface Rolled {
+  /** The size of the dice: each of `faces` is one of them. */
+  d: number;
+  /** What each die showed. A critical hit rolls twice as many. */
+  faces: number[];
+  /** The flat part added to them. */
+  plus: number;
+  /** What they came to (before a save halved it, or a guard or a shield took its share). */
+  total: number;
+  crit?: boolean;
+  /** The target saved, and took half. */
+  halved?: boolean;
+}
+
 export type ZoneEvent =
   | { t: "joined"; id: string }
   | { t: "moved"; id: string; path: HexPos[] }
@@ -367,9 +441,16 @@ export type ZoneEvent =
   /** Something done, said before its rolls: an ability, a common action, a throw, an enemy's attack by name. */
   | { t: "used"; id: string; what: string; name: string; target?: string; at?: HexPos }
   | { t: "reaction"; id: string; target: string }
-  | { t: "hit"; actor: string | null; target: string; amount: number; what: string; crit: boolean; blocked?: number }
+  /** `dice`: what was rolled for it, where dice were. */
+  | { t: "hit"; actor: string | null; target: string; amount: number; what: string; crit: boolean; blocked?: number; dice?: Rolled }
   | { t: "miss"; actor: string; target: string; what: string }
-  | { t: "heal"; actor: string | null; target: string; amount: number; what: string }
+  | { t: "heal"; actor: string | null; target: string; amount: number; what: string; dice?: Rolled }
+  /** Someone drops off a height (shoved off it, or leaping from too high): how many levels. The harm follows as a `hit` by "fall". */
+  | { t: "fell"; id: string; levels: number }
+  /** Someone knocked toward a drop or a pit (`at`) catches the edge, and stays where they are. */
+  | { t: "held"; id: string; at: HexPos }
+  /** Someone goes into a pit: deep water, lava, or over the edge of the land. An enemy is gone; a hero is hauled back to the brink, down. */
+  | { t: "sunk"; id: string; by: string | null; from: HexPos; into: HexPos; pit: "water" | "lava" | "void" }
   | { t: "condition"; target: string; kind: Condition; rounds: number; amount?: number }
   | { t: "tick"; target: string; kind: Condition | SurfaceKind; amount: number }
   /** Weather made over some hexes, or (`kind` null) cleared from them. */
@@ -417,14 +498,18 @@ export type ZoneEvent =
   | { t: "foraged"; id: string; poi: string }
   /** A chest, strongbox or hoard is opened. */
   | { t: "opened"; id: string; poi: string; loot: "chest" | "vault" | "hoard" }
+  /** A hero looks into something lootable: what is in it for them is in the state they are sent. */
+  | { t: "looked"; id: string; spot: string }
+  /** A hero takes things out of it. */
+  | { t: "took"; id: string; spot: string; items: LootItem[] }
   /** A crate takes a blow, a blast or the fire under it. `actor` is who did it, if anyone did. */
   | { t: "crate_hit"; poi: string; actor: string | null; amount: number; what: string }
   /** A crate breaks open. `id` is whose blow (or fire) broke it, if anyone's. */
   | { t: "crate_broken"; poi: string; id: string | null }
   /** The last enemy group on the map is gone. */
   | { t: "cleared" }
-  /** A map the atlas made has been cleared, and its bounty paid (the `spoils` before this are it). */
-  | { t: "bounty" };
+  /** A map the atlas made has been cleared: its experience is paid (the `spoils` before this), and its spoils lie at `spot` for the taking. */
+  | { t: "bounty"; spot?: string };
 
 /** Things the server must carry out: what a player's own hero earned, from a won fight or a chest. */
 export type ZoneEffect = {
@@ -446,4 +531,5 @@ export type ZoneStep = { ok: true; state: ZoneState; events: ZoneEvent[]; effect
 
 /** What a client is sent: the zone, less its dice. */
 /** `dark`: enemies in the fight that stand where the party cannot see them (those out of a fight are not sent at all). */
+/** `loot`: of what there is to loot, each thing holds only what is in it for you. */
 export type ZoneView = Omit<ZoneState, "rng" | "seed"> & { you: string; dark?: string[] };

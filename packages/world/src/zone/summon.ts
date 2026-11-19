@@ -1,7 +1,7 @@
 // Creatures a hero calls into a fight (Summon Sea Turtle, Summon Sunken
 // Sailors). Each is a unit on the hero's side, played by the hero's player
-// on the hero's initiative: it stands right after them in the order, so it
-// shares their turn. It is gone when it falls, when its caller calls again
+// on the hero's initiative: it stands right after them in the order, and
+// takes its own turn as soon as theirs is over. It is gone when it falls, when its caller calls again
 // (everything they called before goes), or when the fight is over; it never
 // walks the map out of a fight.
 
@@ -100,9 +100,12 @@ export function summonCall(ctx: Ctx, caller: Unit, call: SummonCall, at: HexPos)
     ctx.events.push({ t: "summoned", id: unit.id, by: caller.id });
     const enc = state.encounter;
     if (enc && enc.order.includes(caller.id)) {
+      // Just behind its caller in the order, on their initiative: its own turn comes as soon as theirs is over.
       enc.order.splice(enc.order.indexOf(caller.id) + 1 + called.length, 0, unit.id);
       enc.init[unit.id] = enc.init[caller.id];
-      if (enc.acting.includes(caller.id)) {
+      if (enc.tie?.[caller.id] !== undefined) enc.tie[unit.id] = enc.tie[caller.id] - 0.01 * (1 + called.length);
+      // (The tests' switch for shared turns: called in the middle of its caller's turn, it shares what is left of it.)
+      if (state.shareTurns && enc.acting.includes(caller.id)) {
         enc.acting.push(unit.id);
         enc.budgets[unit.id] = { action: true, bonus: true, move: def.move, moveMax: def.move, disengaged: false };
       }

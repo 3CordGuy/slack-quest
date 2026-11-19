@@ -1,7 +1,7 @@
 // Zones in D1: the row a ZoneRoom loads its map from and saves it back to.
 // D1 is the system of record, as for voyages: the room's copy is a cache.
 
-import { unopened, type ZoneOptions, type ZoneState } from "@gantt-quest/world";
+import { zoneCleared, type ZoneOptions, type ZoneState } from "@gantt-quest/world";
 
 export interface ZoneRow {
   code: string;
@@ -129,10 +129,10 @@ export function teleportTo(places: CrewPlace[], me: string, to: unknown): { zone
   return { zone: friend.zone?.code ?? null, name: friend.name };
 }
 
-/** 'fight' while one is on, 'cleared' once no enemy is left on the map and nothing is left to open, else 'open'. */
+/** 'fight' while one is on, 'cleared' once no enemy is left on the map (and, in a cave, nothing is left to open), else 'open'. */
 export function zoneStatus(state: ZoneState): "open" | "fight" | "cleared" {
   if (state.encounter) return "fight";
-  return state.units.some((u) => u.side === "enemy") || unopened(state) > 0 ? "open" : "cleared";
+  return zoneCleared(state) ? "cleared" : "open";
 }
 
 export function saveZoneStatement(db: D1Database, state: ZoneState): D1PreparedStatement {
