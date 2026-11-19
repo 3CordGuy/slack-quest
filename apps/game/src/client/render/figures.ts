@@ -3673,41 +3673,52 @@ function lowHat(head: Part, look: Look) {
       return;
     }
     case "diver": {
-      // A deep-sea diver's helmet: a round brass bowl over the whole head down to the neck, bolted at its foot,
-      // a big round port of dark glass in front (barred across, with a glint), a smaller one on each side, and a
-      // valve on top. It hides the face, as a great helm does.
+      // A deep-sea diver's helmet: a round brass bowl over the whole head on a collar round the neck, bolted at
+      // its foot, a clear round window in front (an opening, so the face shows through), a smaller one of glass
+      // on each side, and a valve on top. The bowl is a loft run front to back and laid on its side (as the hood
+      // is): its first ring is the window, and each ring's rx is its half-width, rz its half-height and dz how
+      // far up its middle is from `mid`.
       const c = look.hatColor ?? "#c2893a";
       const dark = tone(c, -0.2);
-      const glass = "#1d3a44";
-      const bowl = fitted([[-0.5, 3, 3, 0.1], [0.6, 3.65, 3.6, 0.15], [2.2, 3.9, 3.85, 0.15], [4, 3.9, 3.82, 0.08], [5.6, 3.75, 3.48, -0.02], [6.9, 2.95, 2.75, -0.05], [7.7, 1.7, 1.6, -0.05], [8.05, 0.4, 0.4, -0.05]]);
-      head.loft(c, bowl, 12);
-      head.loft(dark, fitted([[-0.7, 3.25, 3.25, 0.1], [-0.15, 3.3, 3.3, 0.1]]), 12);
+      const d = headDelta(4);
+      const w = (r: number) => r + d.rx;
+      const mid = 4;
+      const portY = 3;
+      const side: Rot = [-HALF_PI, 0, 0];
+      // Round as a ball, front to back, but for the window cut flat across its front.
+      const bowl: Ring[] = [[-3.75, 2.05, 2.05, portY - mid]];
+      for (const y of [-3.55, -3.1, -2.6, -1.8, -0.8, 0.3, 1.4, 2.4, 3.2, 3.8, 4.15, 4.3]) {
+        const k = Math.sqrt(Math.max(0, 1 - (y / 4.35) ** 2));
+        bowl.push([y, Math.max(0.3, w(4.05) * k), Math.max(0.3, 4.15 * k), (portY - mid) * Math.min(1, Math.max(0, (-y - 1.8) / 1.95))]);
+      }
+      head.shell(c, bowl, 16, { open: "start" }, 0, mid, d.dz, side);
+      // Its lining, in shadow, round the window.
+      head.shell(tone(c, -0.45), bowl.slice(0, 3).map(([y, rx, rz, dz = 0]) => [y + 0.05, rx - 0.14, rz - 0.14, dz] as Ring), 16, { open: "both", inward: true }, 0, mid, d.dz, side);
+      // The window's rim, and a glint on the glass at its edge.
+      head.ring(dark, 2.15, 0.34, 0, portY, 3.8 + d.dz);
+      head.box("#e8f6f8", 0.2, 0.6, 0.08, -1.3, portY + 1.15, 3.78 + d.dz, [0, 0, 0.6]);
+      // The collar round the neck that the bowl sits on, bolted round.
+      head.loft(c, fitted([[-0.6, 3.15, 3.15, 0.1], [0.4, 3.45, 3.45, 0.1], [1, 3.2, 3.2, 0.1]]), 12);
+      head.loft(dark, fitted([[-0.75, 3.3, 3.3, 0.1], [-0.2, 3.35, 3.35, 0.1]]), 12);
       for (let i = 0; i < 8; i++) {
         const a = ((i + 0.5) / 8) * Math.PI * 2;
-        head.ball(tone(c, 0.12), 0.2, Math.sin(a) * 3.36, -0.42, Math.cos(a) * 3.36 + 0.1, 0);
+        head.ball(tone(c, 0.12), 0.2, Math.sin(a) * 3.42, -0.45, Math.cos(a) * 3.42 + 0.1, 0);
       }
-      // A port: a disc of glass in the bowl's face turned `turn`, with a brass rim round it.
-      const port = (y: number, k: number, r: number) => {
-        const f = facet(bowl, 12, y, k, 0.05);
+      // A small window of glass on each side.
+      for (const s of [-1, 1]) {
+        const x = s * (w(4.05) + 0.05);
         const pts: Pt[] = [];
         for (let i = 0; i < 10; i++) {
           const a = (i / 10) * Math.PI * 2;
-          const u = Math.cos(a) * r;
-          for (const d of [-0.25, 0.08]) pts.push([f.x + Math.cos(f.turn) * u + Math.sin(f.turn) * d, y + Math.sin(a) * r, f.z - Math.sin(f.turn) * u + Math.cos(f.turn) * d]);
+          for (const k of [-0.25, 0.06]) pts.push([x + s * k, 3.6 + Math.sin(a) * 0.75, Math.cos(a) * 0.75 + d.dz]);
         }
-        head.shape(glass, pts);
-        head.ring(dark, r + 0.12, 0.3, f.x + Math.sin(f.turn) * 0.1, y, f.z + Math.cos(f.turn) * 0.1, [0, f.turn, 0]);
-        return f;
-      };
-      const front = port(3.2, 0, 1.35);
-      for (const k of [-3, 3]) port(3.5, k, 0.75);
-      head.box(dark, 2.65, 0.2, 0.2, 0, 3.2, front.z + 0.2);
-      head.box(dark, 0.2, 2.65, 0.2, 0, 3.2, front.z + 0.2);
-      head.box("#cfe9ee", 0.24, 0.65, 0.1, -0.6, 3.75, front.z + 0.15, [0, 0, 0.55]);
+        head.shape("#2c5560", pts);
+        head.ring(dark, 0.87, 0.26, x + s * 0.1, 3.6, d.dz, [0, s * HALF_PI, 0]);
+      }
       // The air valve on top, and the hose coupling at the back.
-      head.cyl(dark, 0.4, 0.55, 0.5, 0, 8.2, -0.05, 8);
-      head.cyl(c, 0.6, 0.6, 0.9, 0, 5, -3.75, 8, [HALF_PI, 0, 0]);
-      head.cyl(dark, 0.75, 0.75, 0.3, 0, 5, -4.2, 8, [HALF_PI, 0, 0]);
+      head.cyl(dark, 0.4, 0.55, 0.5, 0, mid + 4.1, d.dz, 8);
+      head.cyl(c, 0.6, 0.6, 0.9, 0, 5, -4.05 + d.dz, 8, [HALF_PI, 0, 0]);
+      head.cyl(dark, 0.75, 0.75, 0.3, 0, 5, -4.5 + d.dz, 8, [HALF_PI, 0, 0]);
       return;
     }
     case "horns": {
