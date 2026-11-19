@@ -5125,9 +5125,12 @@ function drawHeld(id: string, b: Biped, trim: string, look: Look, shield: boolea
     case "ballast_flail":
       shaft(GEAR.wood, 6.4, 1.6);
       w.cyl(trim, 0.62, 0.62, 0.7, 0, 4.4, 0, 6);
-      for (const [y, z] of [[5.3, 0.5], [5.7, 1.3], [5.3, 2.1]]) w.box(GEAR.iron, 0.5, 0.5, 0.6, 0, y, z);
-      w.ball(GEAR.iron, 1.7, 0, 4, 3);
-      for (const [x, y, z, r] of [[0, 2.2, 3, Math.PI], [0, 4, 4.8, HALF_PI], [1.8, 4, 3, 0], [-1.8, 4, 3, 0]] as const) w.cone(GEAR.steel, 0.5, 1.2, x, y, z, 4, x ? [0, 0, -Math.sign(x) * HALF_PI] : [r, 0, 0]);
+      // The Chainshot Flail: three chains from the head, a small cannon ball on each.
+      for (const [y, z] of [[5.3, 0.5], [5.7, 1.3], [5.3, 2.1]]) w.box(GEAR.iron, 0.5, 0.5, 0.6, 0.6, y, z);
+      for (const [y, z] of [[4.8, 0.5], [4.2, 1.2], [3.5, 1.8]]) w.box(GEAR.iron, 0.5, 0.5, 0.6, -0.6, y, z);
+      w.ball(GEAR.iron, 0.95, 0.7, 4.6, 3.0, 1);
+      w.ball(GEAR.iron, 0.95, -0.7, 2.6, 2.5, 1);
+      w.ball(GEAR.iron, 0.95, 0, 3.3, 4.3, 1);
       return { tilt: 0.3 };
     case "barometer_rod":
       shaft(GEAR.wood, 15, 2.4);

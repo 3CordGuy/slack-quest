@@ -292,7 +292,7 @@ export const WEAPONS: Record<string, WeaponDef> = {
   maul: { id: "maul", name: "Ship's Anchor", classId: "sre_warden", abilities: ["sturdy_blow", "stand_strong"] },
   grimoire: { id: "grimoire", name: "Drowned Grimoire", classId: "data_warlock", abilities: ["hex", "soul_drain"] },
   // Signature weapons: each class's own ability plus a staple, drawn like a weapon the class already has.
-  ballast_flail: { id: "ballast_flail", name: "Ballast Flail", classId: "qa_paladin", abilities: ["flail_strike", "armor_crush"], looksLike: "mace" },
+  ballast_flail: { id: "ballast_flail", name: "Chainshot Flail", classId: "qa_paladin", abilities: ["flail_strike", "armor_crush"], looksLike: "mace" },
   barometer_rod: { id: "barometer_rod", name: "Barometer Rod", classId: "devops_mage", abilities: ["waterbolt", "lightning_strike"], looksLike: "staff" },
   gaff_hook: { id: "gaff_hook", name: "Gaff Hook", classId: "refactor_rogue", abilities: ["tear", "snag"], looksLike: "daggers" },
   coral_staff: { id: "coral_staff", name: "Coral Staff", classId: "backend_druid", abilities: ["coral_burst", "restore"], looksLike: "root_staff" },
