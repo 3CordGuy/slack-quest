@@ -502,15 +502,22 @@ export const LOW_POLY: Record<string, LowPolyDef> = {
     },
   },
   maul: {
+    // A ship's anchor swung upside down: gripped by the shank below its stock, the eye hanging under the fist,
+    // and the crown up top, its two arms sweeping out and down in a gentle arc to broad flukes either side. Rope wound round the grip.
     lean: DIAG,
     spin: 0.5,
     build: (k) => {
-      k.cyl(0.6, 0.7, 18, 6, C.wood, { at: [0, -2.5, 0] });
-      k.cyl(0.85, 0.85, 4, 6, C.leather, { at: [0, -9, 0] });
-      k.ball(0.9, C.iron, { at: [0, -11.6, 0] });
-      k.box(8, 5, 5, C.iron, { at: [0, 8.5, 0] }, 0.7);
-      for (const x of [-4.2, 4.2]) k.box(0.6, 4, 4, C.steel, { at: [x, 8.5, 0] }, 0.3);
-      k.box(2, 5.4, 5.4, k.a, { at: [0, 8.5, 0] }, 0.3);
+      k.cyl(0.7, 0.85, 19.5, 6, C.iron, { at: [0, -1.6, 0] });
+      k.cyl(0.95, 0.95, 3.6, 6, C.leather, { at: [0, -9, 0] });
+      k.cyl(1, 1, 0.6, 6, k.a, { at: [0, -7, 0] });
+      k.ring(1.3, 0.38, C.iron, { at: [0, -12.4, 0] }, 6, 10);
+      k.box(0.75, 0.75, 7.4, C.wood, { at: [0, -5.2, 0] }, 0.2);
+      for (const z of [-3.8, 3.8]) k.ball(0.55, C.iron, { at: [0, -5.2, z] });
+      k.ball(1.25, C.iron, { at: [0, 8.4, 0] });
+      for (const s of [-1, 1]) {
+        k.rod([[0, 8.5, 0], [s * 2.6, 8.3, 0], [s * 4.6, 7.4, 0], [s * 5.9, 6.1, 0]], 0.55, C.iron, {}, 6);
+        k.plate(s < 0 ? [[-4.4, 5.8], [-7, 4.9], [-6.2, 7.6]] : [[4.4, 5.8], [6.2, 7.6], [7, 4.9]], 0.7, C.steel, {}, 0.2);
+      }
     },
   },
   grimoire: {

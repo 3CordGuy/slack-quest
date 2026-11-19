@@ -281,7 +281,7 @@ export const WEAPONS: Record<string, WeaponDef> = {
   orb: { id: "orb", name: "Sextant Orb", classId: "staff_sage", abilities: ["starbeam", "st_elmos_fire"] },
   scepter: { id: "scepter", name: "Tidestone Scepter", classId: "staff_sage", abilities: ["water_burst", "rust_armor"] },
   pager_axe: { id: "pager_axe", name: "Foghorn Axe", classId: "sre_warden", abilities: ["disarming_chop", "raise_guard"] },
-  maul: { id: "maul", name: "Bell-Buoy Maul", classId: "sre_warden", abilities: ["sturdy_blow", "stand_strong"] },
+  maul: { id: "maul", name: "Ship's Anchor", classId: "sre_warden", abilities: ["sturdy_blow", "stand_strong"] },
   grimoire: { id: "grimoire", name: "Drowned Grimoire", classId: "data_warlock", abilities: ["hex", "soul_drain"] },
   // Signature weapons: each class's own ability plus a staple, drawn like a weapon the class already has.
   ballast_flail: { id: "ballast_flail", name: "Ballast Flail", classId: "qa_paladin", abilities: ["flail_strike", "armor_crush"], looksLike: "mace" },

@@ -4416,10 +4416,12 @@ function drawHeld(id: string, b: Biped, trim: string, look: Look, shield: boolea
       w.box(GEAR.steel, 4.3, 2.6, 0.5, 0, 7.5, 0);
       return { tilt: 0.4 };
     case "maul":
-      shaft(GEAR.wood, 13, 3);
-      w.box(GEAR.iron, 3.2, 3.2, 5.2, 0, 10.4, 0);
-      for (const s of [-1, 1]) w.box(GEAR.steel, 3.5, 3.5, 0.7, 0, 10.4, s * 2.6);
-      w.box(trim, 3.4, 3.4, 1.2, 0, 10.4, 0);
+      // An anchor upside down: the shank, a stock across it, and the crown with its arms hanging to the flukes.
+      shaft(GEAR.iron, 13, 3);
+      w.box(GEAR.wood, 0.6, 0.6, 4.6, 0, 1.4, 0);
+      w.box(trim, 0.9, 0.5, 0.9, 0, 0.4, 0);
+      w.box(GEAR.iron, 6.4, 0.9, 0.9, 0, 10.6, 0);
+      for (const s of [-1, 1]) w.box(GEAR.steel, 2.4, 1.3, 0.7, s * 3.6, 9.8, 0, [0, 0, -s * 0.6]);
       return { tilt: 0.2 };
     case "pager_axe":
       axe(trim);
