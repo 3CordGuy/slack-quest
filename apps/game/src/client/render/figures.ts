@@ -3275,10 +3275,16 @@ let castPace = 1;
 const BOOK_CAST_PACE = 2;
 /** A townsperson's face and hair, picked for them from a name (see faceFor): what a hero chooses for themselves. */
 type Face = Pick<Appearance, "headShape" | "ears" | "hairStyle" | "eyes" | "nose" | "mustache" | "beard"> & { skin?: string; hair?: string };
-/** Set by makeFigure for the figure being built: a townsperson's own face, or null (a hero has `chosen`; others neither). */
+/** Set by makeFigure for the figure being built: a townsperson's or an enemy's own face, or null (a hero has `chosen`; beasts neither). */
 let face: Face | null = null;
 /** The kinds that are townsfolk, each given a face of their own (see faceFor). */
 const TOWNSFOLK = /^(npc|dealer|regular_|salesman_|keeper_)/;
+/** The enemies drawn as people, each given a face of its own by its id (see faceFor), so no two in a fight are twins. */
+const FACED_FOES = new Set(["bandit", "brute", "archer", "cultist", "guardian", "villain"]);
+/** Of those, the living raiders, who also get their own skin, hair colour and facial hair; the drowned and the stone keep their look's. */
+const COLOURED_FOES = new Set(["bandit", "brute", "archer"]);
+/** Whether a kind's figure picks its face from a key (makeFigure's `face`): townsfolk and the enemies drawn as people. */
+export const hasOwnFace = (kind: string) => TOWNSFOLK.test(kind) || FACED_FOES.has(kind);
 /** Skin tones and hair colours a townsperson may have: the everyday ones, not the painted. */
 const TOWN_SKIN = SKIN_TONES.slice(0, 8);
 const TOWN_HAIR = HAIR_COLORS.slice(0, 9);
@@ -7268,7 +7274,7 @@ export interface FigureOptions {
   edge?: number;
   /** Draw it low-poly whatever the dev toolbox says (a hero with a chosen appearance always is). */
   lowPoly?: boolean;
-  /** A townsperson's own name or id, which picks their face (see faceFor); without one, their kind picks it. */
+  /** A townsperson's or an enemy's own name or id, which picks their face (see faceFor); without one, their kind picks it. */
   face?: string;
 }
 
@@ -7303,9 +7309,9 @@ export function makeFigure(kind: string, look: Look, outfit?: Outfit, opts: Figu
   chosen = outfit?.appearance ?? null;
   lowPoly = !!chosen || !!opts.lowPoly || !BLOCKY_PREF;
   m = lowPoly ? measuresOf(chosen) : USUAL;
-  // A hero's own colouring over their class's; a townsperson's own face, and a villager's own colouring.
+  // A hero's own colouring over their class's; a townsperson's or an enemy's own face, and a villager's or a raider's own colouring.
   if (chosen) look = { ...look, skin: chosen.skin, hair: chosen.hair };
-  face = !chosen && TOWNSFOLK.test(kind) ? faceFor(opts.face ?? kind, kind === "npc") : null;
+  face = !chosen && hasOwnFace(kind) ? faceFor(opts.face ?? kind, kind === "npc" || COLOURED_FOES.has(kind)) : null;
   if (face?.skin && face.hair) look = { ...look, skin: face.skin, hair: face.hair };
   const rig = rigFor(kind, top, look, outfit, !!opts.asleep);
   const fade = { value: 1 };
