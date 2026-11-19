@@ -3070,9 +3070,9 @@ function lowWizardBeard(head: Part, c: string, rings: readonly Ring[], chinY: nu
  * Hang a length of hair in two jointed pieces, to swing as the figure moves. `side` staggers its idle stir;
  * `drape` is a braid lying over a shoulder and down the chest, which can lift off them but not swing into them.
  */
-function hang(root: Part, end: Part, side: number, drape: Drape = 0, leg?: THREE.Object3D) {
+function hang(root: Part, end: Part, side: number, drape: Drape = 0, leg?: THREE.Object3D, fence?: Fence) {
   extraParts.push(root, end);
-  braids.push({ root, end, side, drape, leg, x: 0, vx: 0, z: 0, vz: 0, ex: 0, evx: 0, ez: 0, evz: 0, last: -1 });
+  braids.push({ root, end, side, drape, leg, fence, x: 0, vx: 0, z: 0, vz: 0, ex: 0, evx: 0, ez: 0, evz: 0, last: -1 });
 }
 
 /** Turn a part's meshes, drawn hanging straight down, to hang along `dir` instead. */
@@ -3092,6 +3092,28 @@ function plait(y0: number, y1: number, dz0: number, dz1: number, r: number, rEnd
   return out;
 }
 
+/**
+ * What a sash's end may not swing into: where its two pieces hang from (in the torso's frame), how long each is,
+ * and the body's section at a height `y` as an ellipse about the torso's axis (half-widths across and front to
+ * back, and how far forward its middle is).
+ */
+interface Fence {
+  at: Pt;
+  lengths: [number, number];
+  section(y: number): [rx: number, rz: number, dz: number];
+}
+
+/** The direction a piece hangs when it is turned `x` about the across axis and `z` about the front-to-back one. */
+function hangDir(x: number, z: number, out: THREE.Vector3): THREE.Vector3 {
+  return out.set(Math.sin(z), -Math.cos(z) * Math.cos(x), -Math.cos(z) * Math.sin(x));
+}
+const _hang = new THREE.Vector3();
+/** How far inside a section a point is: over 0 when it is within it (1 at its middle), 0 or under outside. */
+function sunk(fence: Fence, x: number, y: number, z: number): number {
+  const [rx, rz, dz] = fence.section(y);
+  return 1 - Math.hypot(x / rx, (z - dz) / rz);
+}
+
 /** Where hair hangs against the body: 0 free (a ponytail), 1 down the chest, -1 down the back. */
 type Drape = 0 | 1 | -1;
 
@@ -3103,6 +3125,8 @@ interface Braid {
   drape: Drape;
   /** The thigh it hangs beside, on the outside of it (a sash's end): pushed ahead and out by it, never through it. */
   leg?: THREE.Object3D;
+  /** The body (a coat's skirts, the hips and thighs) it hangs against, which it may not swing into. */
+  fence?: Fence;
   x: number;
   vx: number;
   z: number;
@@ -3170,6 +3194,29 @@ function swingBraids(list: Braid[], a: Anim) {
       if (b.x + b.ex > front + 0.08) [b.ex, b.evx] = [front + 0.08 - b.x, Math.min(0, b.evx)];
       if (b.z < out) [b.z, b.vz] = [out, Math.max(0, b.vz)];
       if (b.z + b.ez < out) [b.ez, b.evz] = [out - b.z, Math.max(0, b.evz)];
+    }
+    if (b.fence) {
+      // A sash's end is stopped by the coat or the legs it hangs over: whichever of its two pieces is inside the
+      // body is swung out (and then the lower one, if it is still), a step at a time, its speed lost where it
+      // is stopped, so it rides over the cloth instead of sinking into it.
+      const f = b.fence;
+      const [x0, y0, z0] = f.at;
+      for (let i = 0; i < 24; i++) {
+        const d1 = hangDir(b.x, b.z, _hang);
+        const [x1, y1, z1] = [x0 + f.lengths[0] * d1.x, y0 + f.lengths[0] * d1.y, z0 + f.lengths[0] * d1.z];
+        const d2 = hangDir(b.x + b.ex, b.z + b.ez, _hang);
+        const [x2, y2, z2] = [x1 + f.lengths[1] * d2.x, y1 + f.lengths[1] * d2.y, z1 + f.lengths[1] * d2.z];
+        const upper = Math.min(sunk(f, (x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2), sunk(f, x1, y1, z1));
+        const lower = Math.min(sunk(f, (x1 + x2) / 2, (y1 + y2) / 2, (z1 + z2) / 2), sunk(f, x2, y2, z2));
+        // (Never out past a third of a turn, whatever is in the way.)
+        if (upper > -0.02 && b.z < 0.6) {
+          b.z += 0.05;
+          b.vz = Math.max(0, b.vz);
+        } else if (lower > -0.02 && b.ez < 0.6) {
+          b.ez += 0.05;
+          b.evz = Math.max(0, b.evz);
+        } else break;
+      }
     }
     b.root.joint.rotation.set(b.x, 0, b.z);
     b.end.joint.rotation.set(b.ex, 0, b.ez);
@@ -3743,6 +3790,16 @@ function lowHat(head: Part, look: Look) {
       // Tied close over the hair, knotted at the back with two tails.
       const c = look.hatColor ?? look.accent;
       head.loft(c, fitted(grown(OVER_HAIR, -0.05)), 10);
+      if (look.knotSide) {
+        // Knotted on the left side, above the ear, its two tails hanging down past the jaw.
+        const d = headDelta(4.4);
+        const x = 3.85 + d.rx;
+        const z = d.dz - 0.7;
+        head.ball(tone(c, -0.08), 0.65, x + 0.1, 4.45, z, 1);
+        head.shape(c, [[x + 0.1, 4.4, z - 0.1], [x + 0.35, 4.3, z - 0.45], [x + 0.75, 2.2, z - 0.9], [x + 0.6, 2.0, z - 0.35], [x + 0.45, 2.3, z - 0.6]]);
+        head.shape(tone(c, -0.08), [[x + 0.1, 4.4, z + 0.15], [x + 0.35, 4.3, z + 0.45], [x + 0.55, 2.7, z + 0.25], [x + 0.45, 2.85, z + 0.75]]);
+        return;
+      }
       // The knot and its tails stay on the back of the head, however deep it is.
       const d = headDelta(4.9);
       const back = d.dz - d.rz;
@@ -5248,7 +5305,18 @@ function person(top: THREE.Group, look: Look, outfit: Outfit | undefined, asleep
         end.loft(tone(sash, -0.05), [[0.15, 0.78, 0.15, 0.1], [-tail * 0.4, 0.84, 0.15, -0.14], [-tail * 0.8, 0.88, 0.14, 0.12], [-tail, 0.84, 0.13, 0]], 6);
         // A fringe of gold thread at the end.
         end.loft(GEAR.gold, [[-tail - 0.05, 0.85, 0.13], [-tail - 0.4, 0.78, 0.1]], 6);
-        hang(root, end, 1.5 + n * 2, 0, b.thighL.joint);
+        // The body it hangs over: a long coat's skirts (flaring over the hips and out to the shin), or the hips
+        // and tops of the thighs; a little thicker than the cloth so the sash lies on it.
+        const hip = m.hips;
+        const g = m.girth;
+        const section = (y: number): [number, number, number] => {
+          if (look.coat) {
+            const t = Math.min(1, Math.max(0, (1.4 - y) / 6));
+            return [(2.85 * (1 + hip) * 0.5 + (Math.max(3.5 * hip, thighReach(0.2) + 0.25) - 2.85 * (1 + hip) * 0.5) * t) * g + 0.25, (2 + 0.7 * t) * g + 0.25, 0.05 * (1 - t) - 0.2 * t];
+          }
+          return [Math.max(2.85 * hip, thighReach(y)) * g + 0.2, (1.95 + (hip - 1) * 0.6) * g + 0.2, 0];
+        };
+        hang(root, end, 1.5 + n * 2, 0, b.thighL.joint, { at: [root.joint.position.x, root.joint.position.y, root.joint.position.z], lengths: [len, tail], section });
       }
     } else {
       torso.box(sash, 7.4, 1.5, 4.15, 0, 1.1, 0);
