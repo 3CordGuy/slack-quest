@@ -407,17 +407,40 @@ export const LOW_POLY: Record<string, LowPolyDef> = {
     },
   },
   "hammer-drop": {
+    // The Anchor Mace: a grappling iron on a stout haft. Four hooked tines spring from the crown at its head and
+    // curve out and down, their barbed points turned back up; a ring on top, a collar in the rarity colour where
+    // the iron meets the wood, a coil of line wound round the haft below it and a wrapped grip.
     lean: -0.6,
     spin: 0.6,
     build: (k) => {
-      k.cyl(0.6, 0.7, 12, 6, C.wood, { at: [0, 0, 0] });
-      k.box(8, 5, 5, C.iron, { at: [0, 7.5, 0] }, 0.8);
-      for (const x of [-4.3, 4.3]) k.cyl(2.1, 2.1, 0.8, 8, C.steel, { at: [x, 7.5, 0], rot: [0, 0, Math.PI / 2] });
-      k.box(8.25, 1.4, 5.25, k.a, { at: [0, 7.5, 0] }, 0.2);
-      for (const z of [-2.7, 2.7]) k.cyl(0.45, 0.45, 0.3, 6, C.gold, { at: [0, 7.5, z], rot: [Math.PI / 2, 0, 0] });
-      whipping(k, [0, -3.6, 0], 0.78, 3.4);
-      k.cyl(0.95, 0.95, 0.8, 6, C.gold, { at: [0, 4.6, 0] });
-      k.ball(1, C.gold, { at: [0, -6.3, 0] });
+      const iron = "#4f535b";
+      const rope = "#c9b58a";
+      k.cyl(0.62, 0.72, 11, 6, C.wood, { at: [0, -0.5, 0] });
+      k.ring(0.7, 0.22, C.iron, { at: [0, -6.6, 0] }, 4, 10);
+      whipping(k, [0, -3.6, 0], 0.8, 3.4);
+      // The coil of line round the haft, and its end hanging.
+      for (let i = 0; i < 4; i++) k.ring(0.95, 0.24, rope, { at: [0, 1.0 + i * 0.42, 0], rot: [Math.PI / 2, 0, i * 0.1] }, 5, 12);
+      k.rod([[0.85, 1.0, 0.3], [1.15, 0.0, 0.4], [1.0, -1.1, 0.3]], 0.17, rope, {}, 4);
+      // The iron: a collar banded in the trim, the shank up to the crown, and a ring on top.
+      k.cyl(0.95, 0.85, 0.9, 6, iron, { at: [0, 3.5, 0] });
+      k.cyl(1.0, 1.0, 0.5, 6, k.a, { at: [0, 4.15, 0] });
+      k.cyl(0.5, 0.62, 5.2, 6, iron, { at: [0, 6.8, 0] });
+      k.ball(1.05, iron, { at: [0, 9.5, 0] });
+      k.ring(0.75, 0.24, iron, { at: [0, 10.9, 0] }, 4, 10);
+      // The tines: up and out from the crown, over, and down, each ending in an arrowhead point turned back up.
+      for (let i = 0; i < 4; i++) {
+        const a = (i / 4) * Math.PI * 2 + 0.35;
+        const [c, s] = [Math.cos(a), Math.sin(a)];
+        const at = (r: number, y: number): V3 => [c * r, y, s * r];
+        k.rod([at(0.5, 9.6), at(1.7, 10.4), at(2.9, 9.8), at(3.45, 8.2), at(3.2, 6.7)], 0.46, iron, {}, 5);
+        // The point: a flat, broad arrowhead, its tip turned up and in toward the shank.
+        const dir = new THREE.Vector3(-c * 0.3, 1, -s * 0.3).normalize();
+        const turn = new THREE.Euler().setFromQuaternion(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir));
+        const face = new THREE.Euler().setFromQuaternion(
+          new THREE.Quaternion().setFromEuler(turn).multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), -a)),
+        );
+        k.cone(0.85, 1.7, 4, C.steel, { at: at(3.05, 6.6), rot: [face.x, face.y, face.z], scale: [1, 1, 0.45] });
+      }
     },
   },
   "wizard-staff": {
