@@ -982,15 +982,34 @@ export const LOW_POLY: Record<string, LowPolyDef> = {
     },
   },
   "lantern-helm": {
-    // The Lighthouse Paladin's Lantern Helm: a steel dome banded in brass, cheek guards, and a little lantern
-    // burning on top between four brass posts, under a red peaked cap.
+    // The Lighthouse Paladin's Lantern Helm: a steel dome with a brass comb over the crown, a twist of brass rope
+    // round the brow and a short peak, riveted cheek guards, and a little lantern burning on top between four
+    // brass posts, under a red peaked cap.
     spin: 0.45,
     tip: 0.2,
     build: (k) => {
       const steel = "#aeb6c2";
-      k.lathe([[4.8, -4.2], [5.1, -2.6], [5.2, 0], [4.7, 2.2], [3.4, 3.6], [1.6, 4.3], [0, 4.5]], 10, steel);
-      k.cyl(5.25, 5.25, 1, 10, C.gold, { at: [0, -2.2, 0] });
-      for (const sx of [-1, 1]) k.box(1.2, 3, 3.4, steel, { at: [sx * 4.5, -5.1, 1.2], rot: [0, 0, -sx * 0.1] }, 0.3);
+      const dome: [number, number][] = [[4.8, -4.2], [5.1, -2.6], [5.2, 0], [4.7, 2.2], [3.4, 3.6], [1.6, 4.3], [0, 4.5]];
+      k.lathe(dome, 10, steel);
+      // The comb: a crescent of brass standing up along the crown from brow to nape, its inside lost in the dome.
+      const arc = (out: number, from: number) => dome.slice(from).map(([r, y]) => [r + out, y + out * 0.3] as [number, number]);
+      const outer = arc(0.75, 1);
+      const inner = arc(-0.8, 1);
+      k.plate([...outer, ...outer.slice(0, -1).reverse().map(([r, y]) => [-r, y] as [number, number]), ...inner.map(([r, y]) => [-r, y] as [number, number]), ...inner.slice(0, -1).reverse()], 0.55, C.gold, { rot: [0, Math.PI / 2, 0] }, 0.12);
+      // The brow band a twist of brass rope, its strands slanting round.
+      k.ring(5.25, 0.6, C.gold, { at: [0, -2.2, 0], rot: [Math.PI / 2, 0, 0] }, 6, 28);
+      for (let i = 0; i < 32; i++) {
+        const t = (i / 32) * Math.PI * 2;
+        k.box(0.16, 1.15, 0.12, "#a07a22", { at: [Math.sin(t) * 5.84, -2.2, Math.cos(t) * 5.84], rot: [0, t, 0.7] });
+      }
+      // A short peak over the brow.
+      k.plate([[-3.4, 0], [3.4, 0], [2.6, 1.3], [0, 1.8], [-2.6, 1.3]], 0.3, steel, { at: [0, -2.95, 4.6], rot: [Math.PI / 2 + 0.2, 0, 0] }, 0.08);
+      for (const sx of [-1, 1]) {
+        k.box(1.2, 3, 3.4, steel, { at: [sx * 4.5, -5.1, 1.2], rot: [0, 0, -sx * 0.1] }, 0.3);
+        for (const y of [-4.3, -5.9]) k.ball(0.3, C.gold, { at: [sx * 5.15, y, 1.4] });
+        // The same line of rivets carried on up each side of the dome over the band, as far apart and in line.
+        for (const [r, y] of [[5.16, -1.1], [5.1, 0.5], [4.72, 2.1], [3.27, 3.7]]) k.ball(0.3, C.gold, { at: [sx * (Math.sqrt(r * r - 1.4 * 1.4) + 0.05), y, 1.4] });
+      }
       k.cyl(2, 2.3, 0.8, 8, C.gold, { at: [0, 4.6, 0] });
       k.box(2.6, 2.8, 2.6, { glow: "#ffd27a" }, { at: [0, 6.3, 0] });
       for (const [x, z] of [[-1.45, -1.45], [1.45, -1.45], [-1.45, 1.45], [1.45, 1.45]]) k.box(0.45, 3.1, 0.45, C.gold, { at: [x, 6.3, z] });
