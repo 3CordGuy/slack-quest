@@ -220,12 +220,16 @@ const ART: Record<string, Art> = {
     p.r(3, 13, 2, 1, p.accent);
   },
   maul: (p) => {
-    // A block of iron on a long handle, banded in the accent.
-    p.l(3, 15, 9, 6, C.wood);
-    p.l(4, 15, 10, 6, C.bark);
-    spans(p, C.iron, [[1, 8, 13], [2, 7, 14], [3, 7, 14], [4, 7, 14], [5, 7, 14], [6, 8, 13]]);
-    spans(p, C.steel, [[2, 8, 13]]);
-    p.r(10, 2, 1, 4, p.accent);
+    // A rusted anchor upside down: the eye at the bottom, a broad shank, and at the top the crown's wide arc
+    // with a barbed fluke at each end. A band of the accent round the grip.
+    const rust = "#7a4b34";
+    p.l(3, 14, 11, 4, rust);
+    p.l(4, 14, 12, 4, "#5a3626");
+    p.l(3, 13, 11, 3, rust);
+    spans(p, C.iron, [[12, 1, 3], [13, 1, 1], [13, 4, 4], [14, 1, 1], [15, 2, 3]]);
+    spans(p, rust, [[1, 11, 12], [2, 9, 14], [3, 7, 9], [3, 14, 15], [4, 6, 7], [4, 15, 15]]);
+    spans(p, "#5a3626", [[2, 5, 7], [3, 4, 6], [4, 4, 5], [5, 5, 5], [6, 5, 5], [2, 15, 15], [3, 15, 15]]);
+    p.r(6, 11, 2, 1, p.accent);
   },
   grimoire: (p) => {
     // A dark book, clasped, with glowing runes on the cover.
