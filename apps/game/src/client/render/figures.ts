@@ -3643,14 +3643,6 @@ function lowMantle(torso: Part, c: string, over: number, tie: string, trim?: str
   }
 }
 
-/** A plain knitted cap, low-poly: snug over the hair, the brim rolled up round it, a small nub on the crown. */
-function lowKnitCap(head: Part, c: string) {
-  head.loft(c, fitted([[3.9, 3.76, 3.46], [5.3, 3.72, 3.42, -0.05], [6.5, 3.1, 2.9, -0.1], [7.2, 1.9, 1.8, -0.1], [7.6, 0.8, 0.8, -0.1]]), 10);
-  head.loft(tone(c, 0.1), fitted([[3.75, 3.95, 3.65], [4.75, 3.97, 3.67, -0.02]]), 10);
-  head.loft(tone(c, 0.18), fitted([[4.7, 4.02, 3.72, -0.02], [5.05, 4.0, 3.7, -0.03]]), 10);
-  head.ball(c, 0.55, 0, 7.75, -0.1, 1);
-}
-
 /** The headgear a class, townsperson or enemy has by default, rounded to go with low-poly heads. */
 function lowHat(head: Part, look: Look) {
   const rings = HEAD_RINGS[chosen?.headShape ?? "round"] ?? HEAD_RINGS.round;
@@ -4054,19 +4046,6 @@ function lowTorso(torso: Part, look: Look, sh: number) {
   torso.shape(GEAR.gold, sym([[0.6, 0.85, 1.75], [0.6, 1.75, 1.8], [0.5, 0.95, 2.05], [0.5, 1.65, 2.08]]));
 }
 
-/** The starter tunic: plain navy cloth, a leather belt, a pale open collar and a row of brass buttons. */
-function lowNavalTunic(torso: Part, look: Look, sh: number) {
-  const rings = lowChest(torso, look.skin, "#2f4562", sh, GEAR.leather);
-  for (const s of [1, -1]) {
-    const on = onChest(rings, s * 1.5, 5.2, 0.05);
-    torso.box("#e8edf2", 2.2, 0.5, 0.35, on.at[0], on.at[1], on.at[2], [0.5, on.yaw, -s * 0.6]);
-  }
-  for (const y of [3.9, 2.9, 1.9]) {
-    const on = onChest(rings, 0, y, 0.08);
-    torso.ball(GEAR.gold, 0.28, on.at[0], on.at[1], on.at[2], 0);
-  }
-}
-
 /** What is under the clothes: a plain linen vest, and short drawers on the hips. */
 const LINEN = "#e6dcc4";
 function lowUndershirt(torso: Part, skin: string, sh: number) {
@@ -4447,13 +4426,6 @@ function lowBoots(foot: Part, shin: Part, ref: string, trim: string) {
   shin.loft(GEAR.leather, [[-2.35, 1.1, 1.14], [-1, 1.3, 1.34, -0.05], [-0.5, 1.32, 1.36]], 6);
   shin.loft(tone(GEAR.leather, 0.08), [[-0.85, 1.44, 1.48], [-0.2, 1.48, 1.52]], 6);
   shin.loft(trim, [[-1.15, 1.36, 1.4], [-0.92, 1.37, 1.41]], 6);
-}
-
-/** The starter boots: plain leather, round-toed, with a short shaft up the shin. */
-function lowDeckBoot(foot: Part, shin: Part) {
-  const leather = "#7a5230";
-  lowShoe(foot, leather);
-  shin.loft(leather, [[-2.35, 1.1, 1.14], [-1, 1.25, 1.29, -0.05], [-0.3, 1.27, 1.31]], 6);
 }
 
 /** A chunky round-toed shoe, its sole on the ground at the foot's origin. */
@@ -5112,7 +5084,6 @@ function person(top: THREE.Group, look: Look, outfit: Outfit | undefined, asleep
     }
     if (lowPoly && !boots) {
       if (bare("boots")) lowBareFoot(foot, look.skin);
-      else if (garb("boots")) lowDeckBoot(foot, shin);
       else if (look.boots) lowBoots(foot, shin, "sea", look.boots);
       else lowShoe(foot, GEAR.dark);
     }
@@ -5149,7 +5120,6 @@ function person(top: THREE.Group, look: Look, outfit: Outfit | undefined, asleep
   torso.skin.scale.set(lowPoly ? m.girth : m.shoulders, 1, m.girth);
   if (lowPoly && !greatcoat && !body) {
     if (undressed) lowUndershirt(torso, look.skin, m.shoulders / m.girth);
-    else if (garb("body")) lowNavalTunic(torso, look, m.shoulders / m.girth);
     else lowTorso(torso, look, m.shoulders / m.girth);
   } else if (lowPoly && greatcoat) {
     front = lowGreatcoat(torso, look.skin, oilskin, m.shoulders / m.girth, trim("body"));
@@ -5351,7 +5321,7 @@ function person(top: THREE.Group, look: Look, outfit: Outfit | undefined, asleep
   const inkedArms = !!chosen?.ink && (["armR.f", "armR.b", "armL.f", "armL.b"] as const).some((side) => !!chosen?.ink?.[side]);
   const helmet = armor("helmet");
   // A hood, worn or the class's own: its mantle covers the shoulders (see lowMantle).
-  const hood = helmet ? helmet.ref === "hood" || helmet.icon === "hood" : !bare("helmet") && !(lowPoly && garb("helmet")) && look.hat === "hood";
+  const hood = helmet ? helmet.ref === "hood" || helmet.icon === "hood" : !bare("helmet") && look.hat === "hood";
   for (const [arm, s] of [[armR, -1], [armL, 1]] as const) {
     if (lowPoly) {
       lowHand(arm, look.skin, s);
@@ -5454,7 +5424,8 @@ function person(top: THREE.Group, look: Look, outfit: Outfit | undefined, asleep
   if (lowPoly) {
     head.joint.scale.setScalar(BIG_HEAD * m.head);
     // Something on the head: worn headgear, or the class's own hat on a figure that has no choice in it.
-    const hatted = !!outfit?.helmet || (!chosen && look.hat !== "none");
+    // (The starting hat is the class's own, so it covers the hair only if the class has one.)
+    const hatted = (!!outfit?.helmet && !garb("helmet")) || ((!chosen || garb("helmet")) && look.hat !== "none");
     lowHead(head, look, asleep, hatted);
   } else drawHead(head, look, asleep);
   // Over the hair and the head.
@@ -5486,9 +5457,6 @@ function person(top: THREE.Group, look: Look, outfit: Outfit | undefined, asleep
     head.box(GEAR.steel, 0.9, 2.4, 0.5, 0, 3.2, 3.2);
     head.box(GEAR.steel, 7.1, 2.6, 1, 0, 2.6, -3);
     head.box(trim("helmet"), 1.2, 1.6, 5.2, 0, 8.2, -0.2);
-  } else if (lowPoly && garb("helmet")) {
-    // The starter hat: a plain knitted cap, whatever the class.
-    lowKnitCap(head, "#5b3f2a");
   } else if (!bare("helmet")) {
     // No helmet equipped: the class keeps its own hat (a hero who chose their look wears it as an item).
     if (lowPoly) lowHat(head, look);
