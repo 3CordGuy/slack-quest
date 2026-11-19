@@ -100,7 +100,7 @@ export interface Tactic {
   weather?: WeatherKind;
   /** Single: lands without an attack roll. */
   sure?: boolean;
-  /** Single: pushes the target this many hexes away from the user. */
+  /** Single: pushes the target this many hexes away from the user. Burst: pushes whoever fails to brace (Bellows Blast). */
   knockback?: number;
   /** Line: strikes only the other side; whoever fails to save is swept to the far end of the line. */
   sweep?: boolean;
@@ -375,6 +375,8 @@ export const TACTICS: Record<string, Tactic> = {
   soothing_tone: { cost: "action", reach: "spell", range: 0, shape: "self", cooldown: 1, soothe: { range: 2 } },
   peal: spell(4, { knockback: 1, knockSave: true }),
   clarion_call: mend(5, { cooldown: 1, ripple: 6 }),
+  bellows_blast: spell(0, { shape: "burst", radius: 1, cooldown: 1, knockback: 1 }),
+  hornpipe: mend(5, { cost: "bonus", tailwind: 3 }),
   // Bard class abilities
   lively_shanty: { ...guard(), cooldown: 4, shanty: "lively_shanty" },
   dour_shanty: { ...guard(), cooldown: 4, shanty: "dour_shanty" },

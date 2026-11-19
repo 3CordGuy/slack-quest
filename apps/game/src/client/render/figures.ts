@@ -817,6 +817,9 @@ const HOLD: Record<string, Hold> = {
   shield: { grip: [0, -0.5, 0], scale: 0.43, at: [0.5, -2.9, 1.95], turn: ON_ARM },
 };
 
+/** What a bard plays (see Biped.instrument). */
+type Instrument = "lute" | "flute" | "bell" | "accordion";
+
 /** Icons held one in each fist (see heldGear). */
 const PAIRED = new Set(["daggers", "gaff-hook"]);
 
@@ -1150,7 +1153,7 @@ function openBook(b: Biped, cover: string, glows: boolean, trim: string): Carry 
 
 /**
  * A low-poly hero's weapon as its icon's model, and how the arm carries it; null when it has none, or is played
- * across the body (the lute and flute: drawHeld lays those out).
+ * across the body (the lute, flute and squeeze box: drawHeld lays those out).
  */
 function heldGear(icon: string, b: Biped, trim: string, shield: boolean): Carry | null {
   const hold = HOLD[icon];
@@ -1450,8 +1453,10 @@ let spare: { dispose(): void }[] = [];
  * The notes of a song: quavers that pop out of the instrument, rise swaying and fade, some in `color` and some
  * pale, and wisps of pale ribbon that curl up among them, turning and thinning as they go. Where each is depends
  * only on how far into the song it is, so a song held still, or stepped a frame at a time, shows the same notes.
+ * Past a `spread` of 1 they start further apart and fan out wider as they climb (a squeeze box's, off the width
+ * of its bellows).
  */
-function makeNotes(color: string) {
+function makeNotes(color: string, spread = 1) {
   const group = new THREE.Group();
   group.visible = false;
   // A quaver: a tilted head, a stem and a flag.
@@ -1488,7 +1493,8 @@ function makeNotes(color: string) {
         if (!mesh.visible) return;
         const k = age / NOTE_LIFE;
         // Each keeps to its own side of the rest, and wanders as it climbs.
-        mesh.position.set(from.x + (((i * 37) % 7) - 3) * 0.75 + Math.sin(age * 4.5 + i * 1.9) * 1.1, from.y + 0.5 + age * 8.5, from.z + 1.2 + age * 1.2);
+        const side = (((i * 37) % 7) - 3) * 0.75 * spread * (1 + age * (spread - 1));
+        mesh.position.set(from.x + side + Math.sin(age * 4.5 + i * 1.9) * 1.1, from.y + 0.5 + age * 8.5, from.z + 1.2 + age * 1.2);
         mesh.rotation.z = Math.sin(age * 5 + i) * 0.35;
         const size = (2.1 + (i % 2) * 0.6) * Math.min(1, age / 0.12);
         mesh.scale.set(i % 2 ? -size : size, size, size);
@@ -1499,7 +1505,7 @@ function makeNotes(color: string) {
         mesh.visible = age > 0 && age < WISP_LIFE;
         if (!mesh.visible) return;
         const k = age / WISP_LIFE;
-        mesh.position.set(from.x + Math.sin(age * 2 + j * 2.1) * 0.9 + (j % 2 ? 1.4 : -1.4), from.y + 0.2 + age * 5.5, from.z + 0.9);
+        mesh.position.set(from.x + Math.sin(age * 2 + j * 2.1) * 0.9 + (j % 2 ? 1.4 : -1.4) * spread, from.y + 0.2 + age * 5.5, from.z + 0.9);
         mesh.rotation.y = age * 3.2 + j * 2;
         mesh.scale.setScalar(1.7 + k * 2.6);
         material.opacity = 0.8 * (1 - k) * Math.min(1, age / 0.15);
@@ -2036,9 +2042,9 @@ function biped(top: THREE.Group, parts: Part[], elbow = ELBOW) {
     reach(armR.joint, foreR.joint, -elbow, elbow - fist, aim.nock, aim.back, up);
   };
   /** An instrument played in the hands (see sling): where it is held at rest, how long it is, and the notes of its song. */
-  let music: { kind: "lute" | "flute" | "bell"; joint: THREE.Object3D; home: { pos: THREE.Vector3; quat: THREE.Quaternion }; span: number; notes: ReturnType<typeof makeNotes>; from: THREE.Vector3; mouth: THREE.Vector3; axis: THREE.Vector3 } | null = null;
-  const instrument = (kind: "lute" | "flute" | "bell", held: Part, span: number, color: string) => {
-    const notes = makeNotes(color);
+  let music: { kind: Instrument; joint: THREE.Object3D; home: { pos: THREE.Vector3; quat: THREE.Quaternion }; span: number; notes: ReturnType<typeof makeNotes>; from: THREE.Vector3; mouth: THREE.Vector3; axis: THREE.Vector3 } | null = null;
+  const instrument = (kind: Instrument, held: Part, span: number, color: string) => {
+    const notes = makeNotes(color, kind === "accordion" ? 1.8 : 1);
     torso.joint.add(notes.group);
     music = { kind, joint: held.joint, home: { pos: held.joint.position.clone(), quat: held.joint.quaternion.clone() }, span, notes, from: new THREE.Vector3(), mouth: new THREE.Vector3(), axis: new THREE.Vector3(1, 0.14, 0).normalize() };
   };
@@ -2305,6 +2311,27 @@ function biped(top: THREE.Group, parts: Part[], elbow = ELBOW) {
         head.joint.rotation.x += 0.06 * Math.sin(beat) * w;
         music.from.copy(music.home.pos);
         music.from.y += 1.6;
+      } else if (music.kind === "accordion") {
+        // Squeezed shut and drawn open on the beat, an end board in each hand, about its middle; the head sways along.
+        const open = 1 + 0.16 * Math.sin(beat * 0.5) * w;
+        music.axis.set(0, 1, 0).applyQuaternion(music.home.quat);
+        music.from.copy(music.home.pos).addScaledVector(music.axis, music.span / 2);
+        music.joint.position.copy(music.from).addScaledVector(music.axis, (-music.span / 2) * open);
+        music.joint.scale.y = open;
+        reach(armR.joint, foreR.joint, -elbow, elbow - fist, music.joint.position, sweep.poleR, w);
+        sweep.grip.copy(music.from).addScaledVector(music.axis, (music.span / 2) * open);
+        reach(armL.joint, foreL.joint, -elbow, elbow - fist, sweep.grip, sweep.poleL, w);
+        head.joint.rotation.z += 0.12 * Math.sin(beat * 0.5 + 0.6) * w;
+        music.from.y += 2;
+        // And a jig to it: a foot kicked out ahead on every squeeze and every draw, the right then the left, the
+        // knee bent as it comes up and straight at the top of the kick, the body leaning back a little into each.
+        const step = Math.sin(beat * 0.5);
+        for (const [thigh, shin, foot, kick] of [[thighR, shinR, footR, Math.max(0, step)], [thighL, shinL, footL, Math.max(0, -step)]] as const) {
+          thigh.joint.rotation.x -= 0.8 * kick * w;
+          shin.joint.rotation.x += 1.6 * kick * (1 - kick) * w;
+          foot.joint.rotation.x += 0.35 * kick * w;
+        }
+        bow(-0.08 * Math.abs(step) * w, 0);
       } else {
         // The flute comes up level before the mouth, a hand toward each end (as near the middle as such short
         // arms and so broad a chest allow), the fingers working.
@@ -2520,6 +2547,7 @@ function biped(top: THREE.Group, parts: Part[], elbow = ELBOW) {
       if (music.kind !== "bell") {
         music.joint.position.copy(music.home.pos);
         music.joint.quaternion.copy(music.home.quat);
+        music.joint.scale.y = 1;
       }
       if (a.act?.kind !== "play" || a.lying || a.sitting !== 0) music.notes.hide();
     }
@@ -4364,6 +4392,26 @@ function drawHeld(id: string, b: Biped, trim: string, look: Look, shield: boolea
       for (const y of [1.5, 3, 4.5]) w.box(GEAR.dark, 0.3, 0.4, 0.3, 0, y, 0.3);
       w.cyl(trim, 0.5, 0.5, 0.8, 0, 6.8, 0, 6);
       return { tilt: 0.6 };
+    case "accordion":
+      if (lowPoly) {
+        // Held before the chest by an end board in each hand, the bellows between.
+        const right = handAt(-1, ACCORDION_ARMS.right, -0.1);
+        const left = handAt(1, ACCORDION_ARMS.left, 0.1);
+        const span = left.clone().sub(right);
+        const box = new Part(b.torso.joint);
+        layAlong(box.joint, right, span);
+        drawAccordion(box, trim, span.length());
+        // Slung across the back while they walk, lying along the shoulders.
+        const back = new Part(b.torso.joint, -4, 2.6, -(1.9 * m.girth + 1.4));
+        back.joint.rotation.set(0, Math.PI, HALF_PI - 0.12);
+        drawAccordion(back, trim, 8);
+        return sling(b, box, back, ACCORDION_ARMS, "accordion", span.length(), trim);
+      }
+      w.box("#b8333a", 2.4, 2.6, 1.6, 0, 1.4, 0.6);
+      w.box(GEAR.paper, 2, 2.2, 1.4, 0, 3.6, 0.6);
+      w.box("#b8333a", 2.4, 2.6, 1.6, 0, 5.8, 0.6);
+      w.box(trim, 0.4, 7, 0.5, 1.3, 3.6, 0);
+      return { arm: -0.9 };
     case "orb":
       shaft(GEAR.wood, 6, 0.6);
       w.cyl(GEAR.gold, 1, 0.5, 0.9, 0, 4, 0, 6);
@@ -4935,6 +4983,19 @@ function drawLute(p: Part, trim: string) {
 const LUTE_ARMS = { right: -0.5, left: -1.35 };
 const FLUTE_ARMS = { right: -0.9, left: -1.2 };
 
+/** How far forward each arm comes (radians) to hold a squeeze box before the chest. */
+const ACCORDION_ARMS = { right: -1.0, left: -1.0 };
+
+/** A squeeze box in its own part's frame: from the end board at the origin up +y to the other at `span`, keys to the front. */
+function drawAccordion(p: Part, trim: string, span: number) {
+  // Its icon's model, drawn out to reach from hand to hand: 15.5 long from board to board.
+  if (gear(p, "accordion", trim, { grip: [0, -7.75, 0], scale: [0.5, span / 15.5, 0.5] })) return;
+  p.box("#b8333a", 3.4, 1, 2.2, 0, 0.5, 0);
+  p.box(GEAR.paper, 3, span - 2, 1.9, 0, span / 2, 0);
+  p.box("#b8333a", 3.4, 1, 2.2, 0, span - 0.5, 0);
+  p.box(trim, 0.3, span - 2, 0.8, -1.7, span / 2, -0.5);
+}
+
 /** A flute in its own part's frame: a pipe up +y from just below the grip at the origin to past `span`, finger holes to the front. */
 function drawFlute(p: Part, trim: string, span: number) {
   // Its icon's model, slimmed and drawn out to reach from hand to hand: 16 long from foot to mouthpiece.
@@ -4960,7 +5021,7 @@ function layAlong(joint: THREE.Object3D, at: THREE.Vector3, dir: THREE.Vector3) 
 }
 
 /** An instrument played in front and slung behind (see stow): its two parts, and the arms it is played with. */
-function sling(b: Biped, front: Part, back: Part, arms: { right: number; left: number }, kind: "lute" | "flute", span: number, color: string) {
+function sling(b: Biped, front: Part, back: Part, arms: { right: number; left: number }, kind: Exclude<Instrument, "bell">, span: number, color: string) {
   extraParts.push(front, back);
   b.instrument(kind, front, span, color);
   slung = {

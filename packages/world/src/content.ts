@@ -86,7 +86,7 @@ export const HERO_CLASSES: HeroClass[] = [
     id: "frontend_bard",
     name: "Shanty Bard",
     blurb: "Makes everyone better. Plays the party up and the enemy down with Intelligence.",
-    weapons: ["lute", "flute"],
+    weapons: ["lute", "flute", "accordion"],
     signature: "ships_bell",
     passive: `Encore: while the Bard is standing, every other hero's attacks do +${BARD_AURA} damage.`,
   },
@@ -173,11 +173,13 @@ export const ABILITIES: Record<string, AbilityDef> = {
   binding_kelp: { id: "binding_kelp", name: "Binding Kelp", stat: "int_stat", rolls: 1, target: "enemy", blurb: "A Bonus action: kelp lashes round an enemy up to 4 hexes off, no roll to hit. It must save or be Slowed for 1 turn. Standing in water, it must instead save against being Stunned for 1 turn." },
   coral_burst: { id: "coral_burst", name: "Coral Burst", stat: "int_stat", rolls: 3, target: "all_enemies", damage: 5, perfect: { effect: "bleeding", turns: 3 }, blurb: "Coral bursts out in a cone 3 hexes long: 1 hex, then 2, then 3. Every enemy in it takes a little damage (half if they brace), and those that fail to brace are cut and start Bleeding." },
   restore: { id: "restore", name: "Restore", stat: "int_stat", rolls: 1, target: "ally", heal: 4, blurb: "A Bonus action: heal an ally (or yourself) a little and lift every harmful condition off them." },
-  // Bard weapons. Lute: Dissonance and Second Wind. Bosun's Pipe: Blasting Tone and Soothing Tone. Ship's Bell: Peal and Clarion Call.
+  // Bard weapons. Lute: Dissonance and Second Wind. Bosun's Pipe: Blasting Tone and Soothing Tone. Squeeze Box: Bellows Blast and Hornpipe. Ship's Bell: Peal and Clarion Call.
   dissonance: { id: "dissonance", name: "Dissonance", stat: "int_stat", rolls: 3, target: "enemy", damage: 9, targetEffect: { effect: "glitched", turns: 1 }, blurb: "A note nobody can think through. On a hit, the target's next roll to hit is made with disadvantage. No save." },
   encore: { id: "encore", name: "Second Wind", stat: "int_stat", rolls: 1, target: "ally", heal: 4, blurb: "A Bonus action: a tune that gets an ally (or yourself) back on their feet. Heal a little, and their next roll to hit has advantage." },
   blasting_tone: { id: "blasting_tone", name: "Blasting Tone", stat: "int_stat", rolls: 3, target: "all_enemies", damage: 6, blurb: "A blast of sound in a line 4 hexes long. Every enemy on it takes a little damage (half if they brace). Your allies on the line are spared." },
   soothing_tone: { id: "soothing_tone", name: "Soothing Tone", stat: "int_stat", rolls: 1, target: "self", heal: 6, blurb: "A calming tone: you and every ally within 2 hexes heal a fair amount." },
+  bellows_blast: { id: "bellows_blast", name: "Bellows Blast", stat: "int_stat", rolls: 3, target: "all_enemies", damage: 6, blurb: "Squeeze the bellows shut on a great blare of a chord. Every enemy beside you takes a little damage (half if they brace), and those that fail to brace are pushed 1 hex back. 1 turn to wait." },
+  hornpipe: { id: "hornpipe", name: "Hornpipe", stat: "int_stat", rolls: 1, target: "ally", blurb: "A Bonus action: a quick jig for an ally (or yourself) up to 5 hexes off, and their feet can't keep still: 3 more movement, this turn if they are taking it, else their next." },
   peal: { id: "peal", name: "Peal", stat: "int_stat", rolls: 3, target: "enemy", damage: 8, blurb: "A ringing blow of sound at an enemy up to 4 hexes off. On a hit, the target must save or be pushed 1 hex back." },
   clarion_call: { id: "clarion_call", name: "Clarion Call", stat: "int_stat", rolls: 1, target: "ally", heal: 14, blurb: "A call that carries: heal an ally (or yourself) a great deal, and every ally beside them heals a fair amount too." },
   // Sage weapons. Orb: Starbeam and St. Elmo's Fire. Scepter: Water Burst and Rust Armor. Astrolabe: Moonlight and Focus Light.
@@ -275,6 +277,7 @@ export const WEAPONS: Record<string, WeaponDef> = {
   sickle: { id: "sickle", name: "Kelp Sickle", classId: "backend_druid", abilities: ["sea_slash", "binding_kelp"] },
   lute: { id: "lute", name: "Dockside Lute", classId: "frontend_bard", abilities: ["dissonance", "encore"] },
   flute: { id: "flute", name: "Bosun's Pipe", classId: "frontend_bard", abilities: ["blasting_tone", "soothing_tone"] },
+  accordion: { id: "accordion", name: "Squeeze Box", classId: "frontend_bard", abilities: ["bellows_blast", "hornpipe"] },
   orb: { id: "orb", name: "Sextant Orb", classId: "staff_sage", abilities: ["starbeam", "st_elmos_fire"] },
   scepter: { id: "scepter", name: "Tidestone Scepter", classId: "staff_sage", abilities: ["water_burst", "rust_armor"] },
   pager_axe: { id: "pager_axe", name: "Foghorn Axe", classId: "sre_warden", abilities: ["disarming_chop", "raise_guard"] },

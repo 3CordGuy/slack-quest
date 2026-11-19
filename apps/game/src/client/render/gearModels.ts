@@ -434,6 +434,32 @@ export const LOW_POLY: Record<string, LowPolyDef> = {
       for (const y of [1.6, -0.2, -2, -3.8, -5.6]) k.cyl(0.36, 0.36, 0.3, 6, C.dark, { at: [0, y, 0.78], rot: [Math.PI / 2, 0, 0] });
     },
   },
+  accordion: {
+    // A squeeze box, built along its length (y), the top edge toward -x: a lacquered end board at each end, the
+    // treble one keyed on its face and the bass one studded with buttons, pleated bellows between and a strap
+    // along the top in the rarity colour. Laid on its side in the picture; held by an end board in each hand.
+    lean: -Math.PI / 2,
+    spin: 0.35,
+    tip: 0.15,
+    build: (k) => {
+      const lacquer = "#b8333a";
+      for (const s of [-1, 1]) {
+        k.box(7.4, 2.2, 4.6, lacquer, { at: [0, s * 6.4, 0] }, 0.3);
+        k.box(7.6, 0.35, 4.8, C.gold, { at: [0, s * 7.6, 0] }, 0.1);
+      }
+      // The bellows: folds standing out pale, and the dark between them.
+      for (let i = 0; i <= 20; i++) {
+        const y = -5 + i * 0.5;
+        if (i % 2 === 0) k.box(6.9, 0.32, 4.3, C.paper, { at: [0, y, 0] }, 0.08);
+        else k.box(6.2, 0.5, 3.7, C.dark, { at: [0, y, 0] });
+      }
+      // The treble keys, white with the black among them, and the bass buttons.
+      for (let i = 0; i < 7; i++) k.box(0.8, 1.6, 0.35, C.bone, { at: [-2.7 + i * 0.9, -6.5, 2.42] }, 0.06);
+      for (const i of [0, 1, 3, 4, 5]) k.box(0.45, 0.9, 0.3, C.dark, { at: [-2.25 + i * 0.9, -6.1, 2.66] });
+      for (const x of [-2.1, -0.7, 0.7, 2.1]) for (const y of [5.9, 6.9]) k.cyl(0.32, 0.32, 0.3, 6, C.shine, { at: [x, y, 2.42], rot: [Math.PI / 2, 0, 0] });
+      k.box(0.5, 10.6, 1.6, k.a, { at: [-3.95, 0, -1.1] }, 0.1);
+    },
+  },
   orb: {
     lean: -0.2,
     build: (k) => {
