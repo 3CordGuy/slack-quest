@@ -59,10 +59,11 @@ export interface Kit {
   dangle(pivot: V3, bob: V3, build: () => void, opts?: Pick<Dangle, "limit" | "clear" | "size" | "mass">): void;
   /**
    * Build some parts that turn freely about the line through `pivot` along `axis` (an armillary sphere's inner
-   * rings on its spine): in a hero's hand they turn slowly on their own and lag behind as the hand turns, then
-   * catch up (see figures.ts). In a picture they stay as built.
+   * rings on its spine): in a hero's hand they turn slowly on their own, or at `speed` (radians a second, a
+   * whirlpool's water), and lag behind as the hand turns, then catch up (see figures.ts). In a picture they stay
+   * as built.
    */
-  spin(pivot: V3, axis: V3, build: () => void): void;
+  spin(pivot: V3, axis: V3, build: () => void, speed?: number): void;
   /**
    * Build one of a set of shapes that flash in turn (a bolt of lightning, each a different fork): in a hero's hand
    * one or none of them shows at a time, changing many times a second (see figures.ts). In a picture only the
@@ -75,6 +76,7 @@ export interface Kit {
 export interface Spin {
   pivot: V3;
   axis: V3;
+  speed?: number;
 }
 
 /** What a group made by Kit.dangle carries in its userData. */
@@ -807,14 +809,80 @@ export const LOW_POLY: Record<string, LowPolyDef> = {
     },
   },
   "void-staff": {
-    // A black staff with a hollow ring at the head and a spark inside it.
+    // The Undertow Staff: a snapped length of drowned mast, black and waterlogged, barnacled and hung with weed,
+    // a rusted iron band and a frayed stub of rigging round it, and over the broken top a whirlpool of dark water
+    // funnelling down into the wood, turning on its own in the hand.
     lean: DIAG,
+    tip: 0.45,
     build: (k) => {
-      k.cyl(0.55, 0.7, 17, 6, C.dark, { at: [0, -1.5, 0] });
-      for (const y of [-8.4, 0]) whipping(k, [0, y, 0], 0.75, 1.6);
-      k.cyl(0.6, 1.1, 1.6, 6, C.dark, { at: [0, 7.4, 0] });
-      k.ring(2.9, 0.6, C.dark, { at: [0, 10.6, 0] }, 5, 10);
-      k.ball(0.75, { glow: "#b9a8ff" }, { at: [0, 10.6, 0] });
+      const wet = "#2c3236";
+      const rust = "#7a4b34";
+      const weed = "#4a6a3c";
+      // Long, and gripped low (see HOLD in figures.ts), so the whirlpool rides up clear of a hat's brim.
+      k.rod([[0, -12.6, 0], [0.2, -8, 0.1], [0.25, -5, 0.1], [-0.15, 0, -0.1], [0.2, 4, 0.1], [0, 8, 0]], 0.72, wet, {}, 7);
+      k.cyl(0.8, 0.62, 0.8, 6, C.iron, { at: [0, -12.8, 0] });
+      whipping(k, [0.1, -6, 0.05], 0.86, 3);
+      // The broken top: splinters standing up at odd heights round the snap.
+      for (const [a, h, r] of [[0, 1.6, 0.32], [1.3, 0.9, 0.28], [2.5, 1.3, 0.3], [3.8, 0.7, 0.26], [5.0, 1.1, 0.28]] as const) {
+        k.cone(r, h, 4, wet, { at: [Math.cos(a) * 0.42, 8 + h / 2, Math.sin(a) * 0.42], rot: [Math.sin(a) * 0.15, 0, -Math.cos(a) * 0.15] });
+      }
+      // A rusted mast band, its rivets standing out, and under it a stub of rigging wound round and frayed.
+      k.cyl(0.92, 0.92, 0.9, 7, rust, { at: [0.1, 5.6, 0.05] });
+      for (let i = 0; i < 4; i++) {
+        const a = (i / 4) * Math.PI * 2 + 0.4;
+        k.ball(0.17, "#5a3626", { at: [0.1 + Math.cos(a) * 0.95, 5.6, 0.05 + Math.sin(a) * 0.95] });
+      }
+      whipping(k, [0.15, 4.2, 0.08], 0.86, 1.4);
+      k.rod([[0.95, 4.0, 0.3], [1.35, 2.9, 0.45], [1.25, 1.7, 0.4]], 0.2, k.a, {}, 4);
+      for (const [dx, dz] of [[-0.25, 0.1], [0.05, 0.25], [0.3, -0.05]] as const) k.rod([[1.25, 1.7, 0.4], [1.25 + dx, 1.0, 0.4 + dz]], 0.07, k.a, {}, 3);
+      // Barnacles in clusters, and weed hanging off the band and the wood.
+      for (const [y, a, r] of [[2.2, 0.3, 0.34], [2.6, 0.9, 0.26], [-4.6, 2.6, 0.32], [-4.1, 3.1, 0.24], [-6.8, 4.4, 0.3], [6.8, 4.0, 0.26]] as const) {
+        k.cone(r, r * 1.1, 5, "#cfc6b0", { at: [Math.cos(a) * 0.72, y, Math.sin(a) * 0.72], rot: [Math.sin(a) * 1.5, 0, -Math.cos(a) * 1.5] });
+      }
+      for (const [a, len] of [[2.2, 3.4], [4.6, 2.4]] as const) {
+        const [x, z] = [Math.cos(a) * 0.95, Math.sin(a) * 0.95];
+        k.rod([[x, 5.3, z], [x * 1.15 + 0.2, 4.3, z * 1.15], [x * 1.1 - 0.15, 5.3 - len * 0.6, z * 1.1], [x * 1.2, 5.3 - len, z * 1.2]], 0.15, weed, {}, 4);
+      }
+      // The whirlpool: a funnel of water over the snap, dark underneath and bright green-blue on its face, foam
+      // spiralling round and down into a throat with a glint of the deep in it, froth broken round the rim, and the
+      // water drawn on down round the mast. It turns, so the foam goes round and down. Kept narrow (`W`).
+      const W = 0.82;
+      const ring = (pts: [number, number][]) => pts.map(([r, y]) => [r * W, y] as [number, number]);
+      k.spin([0, 10.2, 0], [0, 1, 0], () => {
+        k.lathe(ring([[0.25, 8.9], [0.9, 9.4], [1.7, 10.0], [2.5, 10.7], [2.95, 11.2], [2.8, 11.4], [1.9, 10.9], [1.0, 10.2], [0.3, 9.6]]), 12, "#1f4d58");
+        // The face of the water, bright, a skin over the funnel's upper side (rising from (0.3, 9.6) to (2.8, 11.4)).
+        k.lathe(ring([[0.3, 9.66], [2.86, 11.5], [2.8, 11.58], [0.28, 9.74]]), 14, "#3f9aa5");
+        const face = (r: number) => 9.6 + (r - 0.3) * 0.72;
+        for (let arm = 0; arm < 4; arm++) {
+          const pts: V3[] = [];
+          for (let i = 0; i <= 7; i++) {
+            const t = i / 7;
+            // Wound so that, turning the way the whirlpool does, the foam seems drawn in and down to the throat.
+            const a = arm * (Math.PI / 2) - t * 2.8;
+            const r = 2.7 - t * 2.3;
+            pts.push([Math.cos(a) * r * W, face(r) + 0.2, Math.sin(a) * r * W]);
+          }
+          k.rod(pts, 0.17 - (arm % 2) * 0.05, "#eaf7f7", {}, 5);
+        }
+        k.ball(0.3, { glow: "#6ff0e0" }, { at: [0, 9.3, 0] });
+        // Water drawn down out of the throat and wound round and round the mast, a thread of foam beside it. It
+        // climbs as it goes round the way the whirlpool turns, so as it turns the water seems to run down.
+        for (const [r, thick, color, lag] of [[1.0, 0.15, "#3f9aa5", 0], [1.02, 0.07, "#eaf7f7", 0.5]] as const) {
+          const pts: V3[] = [];
+          for (let i = 0; i <= 30; i++) {
+            const t = i / 30;
+            const a = lag + t * Math.PI * 2 * 2.5;
+            pts.push([Math.cos(a) * r, 3.2 + t * 5.6, Math.sin(a) * r]);
+          }
+          k.rod(pts, thick, color, {}, 4);
+        }
+        // Froth round the rim, in clumps.
+        for (let i = 0; i < 9; i++) {
+          const a = (i / 9) * Math.PI * 2 + (i % 3) * 0.12;
+          const r = 0.22 + ((i * 7) % 5) * 0.04;
+          k.ball(r, "#eaf7f7", { at: [Math.cos(a) * 2.85 * W, 11.55, Math.sin(a) * 2.85 * W], scale: [1, 0.7, 1] });
+        }
+      }, 2.2);
     },
   },
 
@@ -1420,9 +1488,9 @@ export function buildLowPoly(name: string, accent: string, inHand = false): { mo
       build();
       parents.pop();
     },
-    spin: (pivot, axis, build) => {
+    spin: (pivot, axis, build, speed) => {
       const g = new THREE.Group();
-      g.userData.spin = { pivot, axis } satisfies Spin;
+      g.userData.spin = { pivot, axis, speed } satisfies Spin;
       top().add(g);
       parents.push(g);
       build();
