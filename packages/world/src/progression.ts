@@ -86,12 +86,16 @@ export function applyXp(p: Progress, amount: number): Progress & { levelsGained:
   return { ...out, levelsGained };
 }
 
+/** Hit points every hero has before Vitality and level. */
+export const HP_BASE = 20;
 /** Hit points each point of Vitality gives a hero. */
 export const HP_PER_VIT = 3;
+/** Hit points each level gives a hero. */
+export const HP_PER_LEVEL = 3;
 
-/** A hero's hit points: 16, 3 a point of Vitality and 2 a level. (The old game keeps its own formula in packages/core, at 2 a point.) */
+/** A hero's hit points: 20, 3 a point of Vitality and 3 a level. (The old game keeps its own formula in packages/core.) */
 export function maxHpFor(stats: Stats, level: number): number {
-  return 16 + HP_PER_VIT * stats.vit + 2 * level;
+  return HP_BASE + HP_PER_VIT * stats.vit + HP_PER_LEVEL * level;
 }
 
 /** Focus pool: 2, plus one per five levels. */

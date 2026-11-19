@@ -253,7 +253,7 @@ export interface SummonDef {
  */
 export const SEA_TURTLE: SummonDef = {
   name: "Sea Turtle",
-  hp: (level: number) => 34 + 6 * level,
+  hp: (level: number) => 34 + 4 * level,
   move: 1,
   armor: 12,
   stats: { str: 7, int_stat: 3, vit: 10, agi: 5, dex: 3 },

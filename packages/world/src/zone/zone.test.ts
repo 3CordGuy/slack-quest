@@ -3290,7 +3290,8 @@ describe("the Druid's class abilities", () => {
     state = must(state, use("summon_sea_turtle", { at: at(7, 6) }));
     const [turtle] = turtleOf(state);
     expect(turtle).toMatchObject({ side: "hero", kind: "sea_turtle", controller: "ann", pos: at(7, 6) });
-    expect(turtle.maxHp).toBeGreaterThan(unit(state, "ann").maxHp);
+    // Hard to hurt for its armor, not its HP: early on it has less to get through than the Druid who called it.
+    expect(turtle.maxHp).toBeLessThan(unit(state, "ann").maxHp);
     expect(defenceOf(turtle)).toBeGreaterThanOrEqual(16);
     const enc = state.encounter!;
     expect(enc.order[enc.order.indexOf("ann") + 1]).toBe(turtle.id);
