@@ -383,15 +383,20 @@ const ART: Record<string, Art> = {
     p.r(10, 12, 3, 2, C.iron);
   },
   "brutal-helm": (p) => {
-    p.r(1, 0, 2, 5, C.bone);
-    p.r(13, 0, 2, 5, C.bone);
-    p.r(3, 3, 10, 9, C.iron);
-    p.r(4, 2, 8, 1, C.steel);
-    p.r(5, 6, 2, 2, p.accent);
-    p.r(9, 6, 2, 2, p.accent);
-    p.r(5, 12, 6, 2, C.iron);
-    p.r(6, 10, 1, 3, C.dark);
-    p.r(9, 10, 1, 3, C.dark);
+    // The Spyglass Visor: a lookout's leather cap banded in brass, flaps over the ears, and goggles, the
+    // spyglass's lens in the rarity colour.
+    spans(p, C.leather, [[1, 6, 9], [2, 4, 11], [3, 3, 12], [4, 2, 13], [5, 2, 13], [6, 2, 13], [7, 2, 13]]);
+    p.r(7, 1, 2, 7, C.hide);
+    p.r(1, 8, 14, 2, C.gold);
+    p.r(3, 8, 1, 1, C.paper);
+    p.r(12, 8, 1, 1, C.paper);
+    p.r(1, 10, 2, 5, C.leather);
+    p.r(13, 10, 2, 5, C.leather);
+    p.r(3, 10, 4, 4, C.gold);
+    p.r(4, 11, 2, 2, C.dark);
+    p.r(7, 11, 2, 1, C.hide);
+    p.r(9, 10, 4, 4, C.gold);
+    p.r(10, 11, 2, 2, p.accent);
   },
   hood: (p) => {
     // A peaked hood with a lined opening and two eyes in the shadow.
