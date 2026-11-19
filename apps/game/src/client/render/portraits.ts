@@ -66,13 +66,14 @@ export const isBlankPortrait = (url: string) => url === BLANK;
 
 /**
  * A figure's picture as an image URL. Heroes and townsfolk turn a little to their left, enemies to their
- * right (they face the heroes), and the animals stand side-on. `detail` multiplies the pixel size.
+ * right (they face the heroes), and the animals stand side-on. `detail` multiplies the pixel size; `face` picks
+ * the face of a townsperson or an enemy drawn as a person (see makeFigure).
  */
-export function portraitUrl(kind: string, look: Look, outfit: Outfit | undefined, asleep: boolean, detail = 1): string {
+export function portraitUrl(kind: string, look: Look, outfit: Outfit | undefined, asleep: boolean, detail = 1, face?: string): string {
   const s = open();
   if (!s) return BLANK;
   // The outline is about a pixel wide whatever the detail.
-  const figure = makeFigure(kind, look, outfit, { asleep, edge: 0.55 / detail });
+  const figure = makeFigure(kind, look, outfit, { asleep, edge: 0.55 / detail, face });
   figure.setSize(22);
   const foe = !outfit && !!ENEMIES[kind];
   figure.root.rotation.y = (foe ? -1 : 1) * (FOUR_LEGGED.has(kind) ? 1.15 : 0.5);

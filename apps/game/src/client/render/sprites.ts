@@ -7,6 +7,7 @@ import * as THREE from "three";
 import { SLOTS, appearanceKey, barPixels, parseAppearance, type Appearance, healthBand, type HealthBand, type Outfit } from "@gantt-quest/world";
 import { LOOKS, mergeLook, type Look, type LookPalette } from "./looks";
 import { PIXEL_LINE_ROWS, canDrawPixelText, drawPixelText, drawSmallDigits, pixelTextWidth } from "./pixelFont";
+import { hasOwnFace } from "./figures";
 import { isBlankPortrait, portraitUrl } from "./portraits";
 
 const OUTLINE = "#1b1830";
@@ -59,13 +60,15 @@ export function previewSpriteUrl(kind: string, palette: LookPalette | undefined,
 
 /**
  * A hero class, enemy kind or townsperson as an image URL, for the HUD. Pass a hero's outfit to show
- * them wearing it. `large` draws it at twice the detail, for the character sheet's full figure.
+ * them wearing it. `large` draws it at twice the detail, for the character sheet's full figure. `face`
+ * (an enemy's id) picks the face of one drawn as a person, to match the one on the board.
  */
-export function spriteDataUrl(kind: string, outfit?: Outfit, large = false): string {
-  const key = `${spriteKey(kind, outfit)}${large ? "|L" : ""}`;
+export function spriteDataUrl(kind: string, outfit?: Outfit, large = false, face?: string): string {
+  const faced = face && hasOwnFace(kind) ? face : undefined;
+  const key = `${spriteKey(kind, outfit)}${large ? "|L" : ""}${faced ? `|f:${faced}` : ""}`;
   let url = pictures.get(key);
   if (url) return url;
-  url = portraitUrl(kind, lookFor(kind), outfit, false, large ? 2 : 1);
+  url = portraitUrl(kind, lookFor(kind), outfit, false, large ? 2 : 1, faced);
   // An empty picture (the renderer's context was lost) is not kept: it is drawn again the next time it is asked for.
   if (!isBlankPortrait(url)) pictures.set(key, url);
   return url;

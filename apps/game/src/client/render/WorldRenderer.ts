@@ -775,7 +775,7 @@ interface Want {
   boat?: "barrel" | "rowboat";
   /** The way to face, about y: the two sides of a fight face each other. Otherwise a unit keeps the way it last walked. */
   face?: number;
-  /** A townsperson's id, which picks their face and hair (see makeFigure's `face`). */
+  /** A townsperson's or an enemy's id, which picks their face and hair (see makeFigure's `face`). */
   faceKey?: string;
   /** On a stool: how high its seat is off the floor. `pos` is then the stool's own spot. */
   seat?: number;
@@ -6034,14 +6034,14 @@ export class WorldRenderer {
         const pos = this.standAt(band.pos);
         pos.x += (i - (band.kinds.length - 1) / 2) * 0.55;
         pos.z += 0.15;
-        want.set(`roam:${band.id}:${i}`, { kind, pos, size: isBig(kind) ? 1.5 : 1.3, ring: i === 0 ? "#ff3b3b" : undefined, pulse: i === 0 });
+        want.set(`roam:${band.id}:${i}`, { kind, pos, faceKey: `roam:${band.id}:${i}`, size: isBig(kind) ? 1.5 : 1.3, ring: i === 0 ? "#ff3b3b" : undefined, pulse: i === 0 });
       });
     }
     // A zone's enemies, each on its own hex.
     for (const u of state.units ?? []) {
       const pos = this.standAt(u.pos);
       pos.z += 0.25;
-      want.set(u.id, { kind: u.kind, pos, size: isBoss(u.kind) ? 1.9 : isBig(u.kind) ? 1.6 : 1.4, label: u.name, ring: u.hostile ? ENEMY_RED : undefined, through: u.hostile ? ENEMY_RED : undefined, pulse: !!u.active, hp: u.hp, down: u.down, falls: true, nameless: true, prone: u.prone, effects: u.effects });
+      want.set(u.id, { kind: u.kind, pos, faceKey: u.id, size: isBoss(u.kind) ? 1.9 : isBig(u.kind) ? 1.6 : 1.4, label: u.name, ring: u.hostile ? ENEMY_RED : undefined, through: u.hostile ? ENEMY_RED : undefined, pulse: !!u.active, hp: u.hp, down: u.down, falls: true, nameless: true, prone: u.prone, effects: u.effects });
     }
     for (const poi of state.map.pois) {
       if (poi.cleared || poi.enemies.length === 0) continue;
@@ -6049,7 +6049,7 @@ export class WorldRenderer {
         const pos = this.standAt(poi.pos);
         pos.x += (i - (poi.enemies.length - 1) / 2) * 0.6 + 0.2;
         pos.z += 0.05;
-        want.set(`poi:${poi.id}:${i}`, { kind, pos, size: isBoss(kind) ? 1.7 : isBig(kind) ? 1.5 : 1.3 });
+        want.set(`poi:${poi.id}:${i}`, { kind, pos, faceKey: `poi:${poi.id}:${i}`, size: isBoss(kind) ? 1.7 : isBig(kind) ? 1.5 : 1.3 });
       });
     }
 

@@ -2122,7 +2122,7 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
                 title={`${u.name} · ${u.hp}/${u.maxHp} HP${shieldOf(u) ? ` · ${shieldOf(u)} shield` : ""} · initiative ${enc.init[id]}`}
                 onClick={() => renderer.current?.lookAt(u.pos)}
               >
-                <img className="pixel-icon" src={spriteDataUrl(u.kind, u.outfit)} alt="" draggable={false} />
+                <img className="pixel-icon" src={spriteDataUrl(u.kind, u.outfit, false, u.side === "hero" ? undefined : u.id)} alt="" draggable={false} />
                 <HpBar now={seen(u).hp} max={u.maxHp} shield={shieldOf(seen(u))} />
                 <span className="zone-face-name">{u.name.split(" ")[0]}</span>
               </button>
