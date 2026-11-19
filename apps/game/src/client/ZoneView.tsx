@@ -136,11 +136,26 @@ interface Picture {
 
 const asState = (view: ZoneViewState) => view as unknown as ZoneState;
 
-/** What a cooldown means, for an ability's tooltip: it ticks off as each of your turns ends, the turn it was used in too. */
+/** How often an ability can be used, for the cost line of its tooltip: a cooldown ticks off as each of your turns ends, the turn it was used in too. */
 function cooldownText(turns: number): string {
-  if (turns <= 0) return "";
-  if (turns === 1) return " Once a turn.";
-  return ` Then ${turns - 1} turn${turns === 2 ? "" : "s"} to wait before it can be used again.`;
+  return turns > 0 ? `cooldown ${turns}` : "";
+}
+
+/** Where an ability reaches, in a few words, for the cost line of its tooltip: "range 4", "melee", "cone 3". */
+function reachLabel(tactic: ReturnType<typeof tacticOf>): string {
+  if (tactic.constellation) return `allies, chained ${tactic.constellation.link}`;
+  if (tactic.newMoon) return "lit enemies";
+  if (tactic.taunt) return `enemies, radius ${tactic.taunt.range}`;
+  if (tactic.northStar) return `ally, range ${tactic.range}`;
+  if (tactic.chart || tactic.summon) return `range ${tactic.range}`;
+  if (tactic.blink) return tactic.shape === "self" ? `range ${tactic.blink.range}` : `melee, then range ${tactic.blink.range}`;
+  if (tactic.soothe) return `allies, radius ${tactic.soothe.range}`;
+  if (tactic.shape === "self") return "self";
+  if (tactic.shape === "burst") return `radius ${tactic.radius}`;
+  if (tactic.reach === "melee") return tactic.shape === "adjacent" ? "melee, all round" : tactic.shape === "arc" ? "melee, arc" : "melee";
+  const base = tactic.shape === "line" ? `line ${tactic.length}` : tactic.shape === "cone" ? `cone ${tactic.length}` : `range ${tactic.range}`;
+  const extra = tactic.weather === "rain" ? ", 3 hexes" : tactic.splash ? `, ${tactic.splash.hexes} hexes` : tactic.fortify ? `, wall ${tactic.fortify.hexes}` : tactic.cluster ? `, ${tactic.cluster} hexes` : tactic.shape === "blast" ? `, blast ${tactic.radius}` : "";
+  return base + extra;
 }
 
 /** What joining a shanty does, in a few lines, for the Join button's tooltip. */
@@ -1831,14 +1846,14 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
     const def = ABILITIES[id];
     const tactic = tacticOf(id);
     const wait = act.cooldowns[id] ?? 0;
-    const reachText = tactic.chart ? `a hex up to ${tactic.range} off` : tactic.constellation ? `allies within ${tactic.constellation.link}, one to the next` : tactic.newMoon ? "every lit enemy" : tactic.taunt ? `every enemy within ${tactic.taunt.range}` : tactic.northStar ? `an ally within ${tactic.range}, and every enemy beside them` : tactic.summon ? `a hex up to ${tactic.range} off` : tactic.blink ? (tactic.shape === "self" ? `a hex up to ${tactic.blink.range} off` : `an enemy beside you, then up to ${tactic.blink.range} off`) : tactic.soothe ? `you and allies within ${tactic.soothe.range}` : tactic.shape === "self" ? "yourself" : tactic.shape === "burst" ? `everyone within ${tactic.radius}` : tactic.reach === "melee" ? (tactic.shape === "adjacent" ? "every enemy beside you" : tactic.shape === "arc" ? "three hexes beside you" : "an enemy beside you") : `${tactic.shape === "line" ? `a line of ${tactic.length}` : tactic.shape === "cone" ? `a cone ${tactic.length} long` : `range ${tactic.range}`}${tactic.weather === "rain" ? ", 3 hexes" : tactic.splash ? `, ${tactic.splash.hexes} hexes` : tactic.fortify ? `, a wall of ${tactic.fortify.hexes}` : tactic.cluster ? `, ${tactic.cluster} hexes` : tactic.shape === "blast" ? `, blast ${tactic.radius}` : ""}`;
+    const reachText = reachLabel(tactic);
     const dice = def.damage ? `${diceText(abilityDice(def))} damage` : def.heal ? `heals ${diceText(healDice(def))}` : "";
     entries[`ab:${id}`] = {
       id: `ab:${id}`,
       icon: { ...abilityIcon(id), flat: true },
       name: def.name,
-      line: [costName(tactic.cost), reachText, dice].filter(Boolean).join(" · "),
-      more: `${def.blurb}${cooldownText(tactic.cooldown ?? 0)}`,
+      line: [costName(tactic.cost), cooldownText(tactic.cooldown ?? 0), reachText, dice].filter(Boolean).join(" · "),
+      more: def.blurb,
       wait: wait || undefined,
       picked: (pick?.kind === "ability" && pick.id === id) || taken.has(`ab:${id}`),
       spent: !canPay(tactic.cost) || (fighting && wait > 0),
