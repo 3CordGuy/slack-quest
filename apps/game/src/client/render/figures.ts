@@ -5447,6 +5447,29 @@ function person(top: THREE.Group, look: Look, outfit: Outfit | undefined, asleep
         torso.shape(look.coatColor, pts);
       }
     }
+    if (look.vines) {
+      // Kelp growing up round the torso: three vines from the waist, each winding half round the body as it climbs
+      // to the shoulders, a little wavy, thinning toward the top, with a frond off it here and there.
+      const out = (a: number, y: number, by: number): Pt => {
+        const r = ringAt(rings, y);
+        return [Math.sin(a) * (r.rx + by), y, Math.cos(a) * (r.rz + by) + r.dz];
+      };
+      for (let v = 0; v < 3; v++) {
+        const start = (v / 3) * Math.PI * 2 + 0.4;
+        const pts: Pt[] = [];
+        for (let i = 0; i <= 8; i++) {
+          const t = i / 8;
+          const y = 0.6 + t * 5.2;
+          pts.push(out(start + t * Math.PI * (v % 2 ? -1 : 1) + 0.18 * Math.sin(t * 9 + v), y, 0.14));
+        }
+        for (let i = 0; i + 1 < pts.length; i++) strut(torso, i % 2 ? tone(look.vines, -0.08) : look.vines, pts[i], pts[i + 1], 0.26 - i * 0.014, 0.25 - i * 0.014);
+        // Fronds: long, flat blades sprouting off the vine, lying along the body.
+        for (const i of [2, 4, 6]) {
+          const a = start + (i / 8) * Math.PI * (v % 2 ? -1 : 1) + (i % 4 ? 0.28 : -0.28);
+          torso.ball(tone(look.vines, 0.12), 0.32, ...out(a, 0.6 + (i / 8) * 5.2 + 0.35, 0.2), 0, [0.7, 1.7, 0.35]);
+        }
+      }
+    }
     if (look.stripes) {
       // Bands round the chest, like a lighthouse's.
       for (const [y0, y1] of [[1.9, 2.7], [3.5, 4.3]]) torso.loft(look.stripes, [around(rings, y0, 0.07), around(rings, y1, 0.08)]);
