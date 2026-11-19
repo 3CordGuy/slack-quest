@@ -245,7 +245,8 @@ export function HudBar({ me, place, children, hp, meter, pips = [], chips, quick
 
   /**
    * A hand's slot: what it holds, with its card. On a map, a lit torch there (a click puts it away, and what was
-   * in the hand is taken up again), or a click (or the bar's torch dropped on it) to light one into it.
+   * in the hand is taken up again); or, carrying torches, the bar's torch dropped on it lights one into it. A
+   * plain click never does: it put the weapon away unasked, and in a fight left it out of reach till the next turn.
    */
   const handSlot = (hand: "main" | "off") => {
     const at = RACK.hands[hand === "main" ? 0 : 1];
@@ -270,29 +271,28 @@ export function HudBar({ me, place, children, hp, meter, pips = [], chips, quick
         </button>
       );
     }
+    const card = worn ? <ItemDetail item={worn} equipped classId={c.class_id} level={c.level} /> : hand === "main" ? <Tip name="Nothing in hand" line="Bare fists: all you can do in a fight is punch." /> : <Tip name="Off hand" line="Empty." />;
     if (torch && torch.rounds === null && torch.carried > 0) {
+      // What the hand holds, as anywhere else; and the bar's torch dragged here lights one into it.
       const what = hand === "main" ? "swing it as a weapon (your weapon put away; it may set whoever it hits Burning)" : `hold it up${offhand ? " (your shield set aside)" : ""}`;
+      const hint = torch.light ? `Drag the torch here from the bar to light one and ${what}. A Bonus action in a fight.` : (torch.why ?? "You cannot light one now.");
       return (
-        <button
+        <span
           key={slot}
-          className={`hud-slot hand ${torch.light ? "" : "spent"}`}
+          className="hud-slot hand"
           style={well(at)}
-          aria-label={`Light a torch in your ${hand} hand`}
-          aria-disabled={!torch.light}
-          onClick={() => torch.light?.(hand)}
           onDragOver={(e) => e.preventDefault()}
           onDrop={(e) => {
             e.preventDefault();
             const from = Number(e.dataTransfer.getData("text/gq-slot"));
             if (Number.isInteger(from) && shown[from]?.id === "it:torch") torch.light?.(hand);
           }}
-          {...hover(at + 7, <Tip name={`${worn ? `${worn.name}, or` : hand === "main" ? "Main hand:" : "Off hand:"} a torch`} line={torch.light ? `Click, or drag the torch here from the bar, to light one and ${what}. A Bonus action in a fight.` : (torch.why ?? "You cannot light one now.")} more={`${torch.carried} carried.`} />)}
+          {...hover(at + 7, <>{card}<Tip name="A torch" line={hint} more={`${torch.carried} carried.`} /></>)}
         >
           {worn && <Icon name={worn.icon} color={RARITY_COLOR[worn.rarity]} size={40} />}
-        </button>
+        </span>
       );
     }
-    const card = worn ? <ItemDetail item={worn} equipped classId={c.class_id} level={c.level} /> : hand === "main" ? <Tip name="Nothing in hand" line="Bare fists: all you can do in a fight is punch." /> : <Tip name="Off hand" line="Empty." />;
     return (
       <span key={slot} className="hud-slot hand" style={well(at)} {...hover(at + 7, card)}>
         {worn && <Icon name={worn.icon} color={RARITY_COLOR[worn.rarity]} size={40} />}
