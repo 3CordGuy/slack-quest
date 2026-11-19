@@ -267,15 +267,17 @@ const ART: Record<string, Art> = {
   },
   // ---- signature weapons ----
   "ballast-flail": (p) => {
-    // A short haft, a chain, and a spiked iron ball banded in the accent.
+    // The Chainshot Flail: a short haft banded in the accent, and three chains, each with a small cannon ball.
     p.l(3, 15, 7, 9, C.wood);
     p.l(4, 15, 8, 9, C.bark);
     p.r(7, 8, 2, 2, p.accent);
-    for (const [x, y] of [[9, 7], [9, 6], [10, 5]]) p.r(x, y, 1, 1, C.iron);
-    spans(p, C.iron, [[1, 11, 13], [2, 10, 14], [3, 10, 14], [4, 10, 14], [5, 11, 13]]);
-    p.r(10, 3, 5, 1, p.accent);
-    p.r(11, 2, 1, 1, C.steel);
-    for (const [x, y] of [[12, 0], [15, 3], [12, 6], [9, 3]]) p.r(x, y, 1, 1, C.steel);
+    for (const [x, y] of [[8, 7], [8, 6], [8, 5], [8, 4]]) p.r(x, y, 1, 1, C.iron);
+    for (const [x, y] of [[9, 7], [10, 6], [11, 6]]) p.r(x, y, 1, 1, C.iron);
+    for (const [x, y] of [[10, 8], [11, 9], [12, 10]]) p.r(x, y, 1, 1, C.iron);
+    spans(p, C.iron, [[0, 8, 9], [1, 7, 10], [2, 7, 10], [3, 8, 9]]);
+    spans(p, C.iron, [[4, 12, 13], [5, 12, 14], [6, 12, 14], [7, 13, 13]]);
+    spans(p, C.iron, [[10, 13, 14], [11, 12, 15], [12, 12, 15], [13, 13, 14]]);
+    for (const [x, y] of [[8, 1], [12, 5], [13, 11]]) p.r(x, y, 1, 1, C.steel);
   },
   "barometer-rod": (p) => {
     // A staff with a dial set in it and a tube of glowing glass at the head.

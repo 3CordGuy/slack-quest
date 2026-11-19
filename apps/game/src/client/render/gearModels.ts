@@ -227,71 +227,76 @@ function gaffHook(k: Kit) {
   k.cone(0.25, 1.1, 4, C.steel, { at: [4.6, 3.9, 0], rot: [0, 0, -0.6] });
 }
 
-/** A cone pointing out from `centre` along `dir`, its base `out` from the centre: a spike on a ball. */
-function spike(k: Kit, centre: V3, dir: THREE.Vector3, out: number, r: number, h: number, paint: Paint) {
-  const d = dir.clone().normalize();
-  const turn = new THREE.Euler().setFromQuaternion(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), d));
-  k.cone(r, h, 4, paint, { at: [centre[0] + d.x * (out + h / 2), centre[1] + d.y * (out + h / 2), centre[2] + d.z * (out + h / 2)], rot: [turn.x, turn.y, turn.z] });
-}
-
-/** One boot, toe toward +z. */
-/** The ballast flail: the haft, and the chain and ball, which hang loose (`loose`: in a hand, a straight chain that swings). */
+/**
+ * The chainshot flail: a short haft, and from its iron cap three chains of different lengths, each with a small
+ * cannon ball on its end, which hang loose (`loose`: in a hand, straight chains that swing, each on its own).
+ */
 function flail(k: Kit, loose: boolean) {
   k.cyl(0.6, 0.7, 10, 6, C.wood, { at: [0, -1, 0] });
-  k.cyl(0.8, 0.8, 3, 6, C.leather, { at: [0, -3.8, 0] });
+  whipping(k, [0, -3.8, 0], 0.8, 3);
   k.ball(0.85, C.gold, { at: [0, -6.4, 0] });
   k.cyl(0.95, 0.85, 1.2, 6, k.a, { at: [0, 4.4, 0] });
-  k.ring(0.7, 0.22, C.iron, { at: [0, 5.5, 0], rot: [0, Math.PI / 2, 0] }, 4, 8);
-  const ball: V3 = [5.9, 3.4, 0];
-  const pivot: V3 = [0, 6.1, 0];
+  k.cyl(0.75, 0.95, 0.9, 6, C.iron, { at: [0, 5.4, 0] });
+  // A spider of three short iron arms on the cap, a ring on each, so the chains hang apart.
+  const arm = (a: number): V3 => [Math.cos(a) * 1.3, 6.3, Math.sin(a) * 1.3];
+  for (const a of [0, (Math.PI * 2) / 3, (Math.PI * 4) / 3]) {
+    const [x, y, z] = arm(a);
+    k.rod([[0, 5.7, 0], [x * 0.6, 6.1, z * 0.6], [x, y, z]], 0.2, C.iron, {}, 5);
+    k.ring(0.42, 0.16, C.iron, { at: [x, y + 0.2, z], rot: [0, Math.PI / 2 - a, 0] }, 4, 8);
+  }
   const links = (chain: THREE.Curve<THREE.Vector3>, n: number, last: boolean, first = 0) => {
     for (let i = 0; i <= n; i++) {
       if (i === n && !last) continue;
       const t = i / n;
       const at = chain.getPoint(t);
       const along = chain.getTangent(t);
-      const link = k.ring(0.55, 0.18, C.iron, { at: [at.x, at.y, at.z], scale: [1.5, 1, 1] }, 4, 6);
+      const link = k.ring(0.5, 0.17, C.iron, { at: [at.x, at.y, at.z], scale: [1.5, 1, 1] }, 4, 6);
       link.rotation.order = "ZYX";
       link.rotation.set((first + i) % 2 ? Math.PI / 2 : 0, 0, Math.atan2(along.y, along.x));
     }
   };
-  const head = () => {
-    k.ball(2.4, C.iron, { at: ball }, 1);
-    k.ring(2.42, 0.32, k.a, { at: ball, rot: [Math.PI / 2, 0, 0] }, 4, 16);
-    const ico = new THREE.IcosahedronGeometry(1, 0);
-    const seen = new Set<string>();
-    const p = ico.attributes.position;
-    for (let i = 0; i < p.count; i++) {
-      const d = new THREE.Vector3().fromBufferAttribute(p, i);
-      const key = d.toArray().map((n) => n.toFixed(2)).join();
-      if (seen.has(key) || Math.abs(d.y) < 0.2) continue;
-      seen.add(key);
-      spike(k, ball, d, 2.1, 0.45, 1.4, C.steel);
-    }
-    ico.dispose();
+  const R = 1.3;
+  // Each shot: where its chain hangs from, where the ball is and (for the picture) the way its chain curls over,
+  // and how long its chain is in the hand: short, middling and long, so the three hang in a staggered cluster.
+  const pivot = (a: number): V3 => {
+    const [x, y, z] = arm(a);
+    return [x, y + 0.4, z];
   };
-  const weight = { clear: { from: [0, 5.5, 0] as V3, to: [0, -7, 0] as V3, r: 3 }, size: 3 };
-  if (!loose) {
-    // The picture: one chain curled over from the ring to the ball.
-    k.dangle(pivot, ball, () => {
-      links(new THREE.CatmullRomCurve3([v3(pivot), v3([1.6, 7.6, 0]), v3([3.7, 7.6, 0]), v3([5.3, 6.1, 0])]), 7, true);
-      head();
-    }, weight);
-    return;
+  const shots: { pivot: V3; ball: V3; curl: V3[]; hang: number }[] = [
+    { pivot: pivot(0), ball: [5.4, 4.9, 0.6], curl: [[2.6, 8.1, 0.3], [4.1, 7.9, 0.5], [5.3, 6.3, 0.6]], hang: 1.6 },
+    { pivot: pivot((Math.PI * 4) / 3), ball: [3.2, 0.9, -0.9], curl: [[0.4, 7.6, -1.1], [2.3, 5.9, -1], [3.2, 2.3, -0.9]], hang: 3.0 },
+    { pivot: pivot((Math.PI * 2) / 3), ball: [7.0, 1.6, 0.6], curl: [[0.6, 8.8, 1.1], [4.6, 8.9, 0.8], [6.8, 6.6, 0.6], [7.1, 3.0, 0.6]], hang: 4.4 },
+  ];
+  const shot = (at: V3) => k.ball(R, "#5b5f68", { at }, 1);
+  const weight = { clear: { from: [0, 5.5, 0] as V3, to: [0, -7, 0] as V3, r: 2.2 }, size: R };
+  for (const s of shots) {
+    if (!loose) {
+      // The picture: each chain curled over from the cap to its ball.
+      k.dangle(s.pivot, s.ball, () => {
+        links(new THREE.CatmullRomCurve3([v3(s.pivot), ...s.curl.map(v3)]), 6, true);
+        shot(s.ball);
+      }, weight);
+      continue;
+    }
+    // In hand: a straight chain `hang` long, out the way the picture's ball lies, jointed half way, so it bends as
+    // it swings; the ball on the lower half.
+    const along = v3(s.ball).sub(v3(s.pivot)).normalize();
+    const end = v3(s.pivot).addScaledVector(along, s.hang);
+    const ball = end.clone().addScaledVector(along, R * 0.95).toArray() as V3;
+    const knee = v3(s.pivot).lerp(end, 0.5);
+    const kneeAt = knee.toArray() as V3;
+    const n = Math.max(1, Math.round(s.hang / 2.2));
+    k.dangle(s.pivot, kneeAt, () => {
+      links(new THREE.LineCurve3(v3(s.pivot), knee), n, false);
+      k.dangle(kneeAt, ball, () => {
+        links(new THREE.LineCurve3(knee, end), n, true, n);
+        shot(ball);
+      }, weight);
+    }, { size: 0.6, mass: 0.25 });
   }
-  // In hand: a straight chain, jointed half way, so it bends as it swings; the ball on the lower half.
-  const end = v3(ball).lerp(v3(pivot), 2.2 / Math.hypot(ball[0] - pivot[0], ball[1] - pivot[1]));
-  const knee = v3(pivot).lerp(end, 0.5);
-  const kneeAt = knee.toArray() as V3;
-  k.dangle(pivot, kneeAt, () => {
-    links(new THREE.LineCurve3(v3(pivot), knee), 2, false);
-    k.dangle(kneeAt, ball, () => {
-      links(new THREE.LineCurve3(knee, end), 2, true, 2);
-      head();
-    }, weight);
-  }, { size: 0.6, mass: 0.25 });
 }
 
+/** One boot, toe toward +z. */
 function boot(k: Kit) {
   k.cyl(1.9, 2.1, 7, 6, C.leather, { at: [0, 2.5, 0] });
   k.box(3.8, 2.8, 7, C.leather, { at: [0, -1.5, 1.6] }, 0.9);
@@ -744,7 +749,7 @@ export const LOW_POLY: Record<string, LowPolyDef> = {
 
   // ---- signature weapons: each class's own, dropped by lairs and bosses ----
   "ballast-flail": {
-    // A short haft, and on a chain from its head a spiked iron ballast ball banded in the trim.
+    // The Chainshot Flail: a short haft, and on three chains from its cap three small iron cannon balls.
     lean: -0.35,
     spin: 0.4,
     build: (k) => flail(k, false),
