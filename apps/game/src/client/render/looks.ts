@@ -4,7 +4,7 @@
 
 export const HATS = ["helm", "wizard", "hood", "horns", "leaves", "feather", "tricorn", "circlet", "brim", "turban", "kerchief", "greathelm", "diver", "coral", "lamphelm", "none"] as const;
 export type Hat = (typeof HATS)[number];
-export const LOOK_WEAPONS = ["sword", "staff", "daggers", "club", "bow", "lute", "orb", "lantern", "scroll", "pack", "basket", "axe_shield", "grimoire", "smith_hammer", "paddle", "cleaver", "none"] as const;
+export const LOOK_WEAPONS = ["sword", "staff", "daggers", "club", "bow", "lute", "orb", "lantern", "scroll", "pack", "basket", "axe_shield", "grimoire", "smith_hammer", "paddle", "cleaver", "cutlass", "pager_axe", "blunderbuss", "coral_staff", "none"] as const;
 export type Weapon = (typeof LOOK_WEAPONS)[number];
 
 export interface Look {
@@ -113,12 +113,23 @@ export const LOOKS: Record<string, Look> = {
   // apron, a cook's cloth cap wound round his head, and the cleaver he is never seen without.
   keeper_cook: { skin: "#c98f68", hair: "#2a1c14", body: "#5f6f7a", legs: "#4a3a2e", accent: "#7a3a22", hat: "turban", hatColor: "#ece7d8", weapon: "cleaver", mustache: "walrus", apron: "#e2d9c2", nose: "bulbous", eyes: "beady" },
   npc: { skin: "#e8b891", hair: "#b9b9b9", body: "#a0683a", legs: "#5a4632", accent: "#e8dcc0", hat: "none", weapon: "none" },
-  bandit: { skin: "#d9a67c", hair: "#3a2a20", body: "#7a2f2f", legs: "#3a3030", accent: "#1f1f1f", hat: "hood", weapon: "club" },
-  cultist: { skin: "#cdb7d6", hair: "#2a1838", body: "#5b2a7a", legs: "#34194a", accent: "#e04fd0", hat: "hood", weapon: "staff" },
-  brute: { skin: "#c9a27c", hair: "#2a1c14", body: "#5a4632", legs: "#3a2e22", accent: "#b9433d", hat: "none", weapon: "club" },
-  archer: { skin: "#d9a67c", hair: "#3a2a20", body: "#4f6b3a", legs: "#33402a", accent: "#e8dcc0", hat: "hood", weapon: "bow" },
-  guardian: { skin: "#9aa4b2", hair: "#7b8494", body: "#6b7280", legs: "#4b5563", accent: "#7fe3ff", hat: "none", weapon: "none" },
-  villain: { skin: "#b8c7b0", hair: "#101010", body: "#2a2a35", legs: "#15151c", accent: "#e23b3b", hat: "horns", weapon: "sword" },
+  // Fight enemies, made over for the sea. The Bandit is a deckhand raider: a red kerchief knotted at the side, a
+  // shirt banded in navy, a leather vest, a sash, and a cutlass.
+  bandit: { skin: "#d9a67c", hair: "#3a2a20", body: "#e3dccb", legs: "#3a3a3a", accent: "#8a2a2a", hat: "kerchief", hatColor: "#8a2a2a", knotSide: true, weapon: "cutlass", stripes: "#2d3a5a", vest: "#4a3426", sash: "#5a2a2a", boots: "#2a2220" },
+  // The Cultist serves a drowned god: a sea-green hood, eyes lit cyan, a scarf over the face, barnacles on the
+  // shoulders, a necklace of teeth, and a coral staff.
+  cultist: { skin: "#a9b8b2", hair: "#1f2a28", body: "#2a4a44", legs: "#1a2a28", accent: "#5fe0d0", hat: "hood", hatColor: "#1f4a46", weapon: "coral_staff", glowEyes: "#5fe0d0", mask: "#24302f", barnacles: true, teeth: "#5fe0d0", coat: true, coatTrim: "#1a3a36" },
+  // The Brute is a dockside bruiser: bare arms, a band round the brow, a leather vest and straps, and an axe.
+  brute: { skin: "#c9a27c", hair: "#2a1c14", body: "#8a7a62", legs: "#3a2e22", accent: "#b9433d", hat: "none", weapon: "pager_axe", sleeveless: true, bandana: "#3a3030", vest: "#5a3d26", straps: "#3a2a1c", boots: "#2a2220" },
+  // The Archer keeps the lookout with a blunderbuss: a wide-brimmed hat, a long oilskin coat over a dark shirt, and
+  // a strap across the chest.
+  archer: { skin: "#d9a67c", hair: "#3a2a20", body: "#3a3a34", legs: "#33402a", accent: "#e8dcc0", hat: "brim", hatColor: "#3a2f22", weapon: "blunderbuss", coat: true, coatColor: "#9a7f3a", coatTrim: "#6b5828", straps: "#4a3426", boots: "#2a2220" },
+  // The Guardian is a statue raised from the seabed: grey stone crusted with barnacles, kelp wound round its waist,
+  // and eyes alight.
+  guardian: { skin: "#9aa4b2", hair: "#7b8494", body: "#6b7280", legs: "#4b5563", accent: "#7fe3ff", hat: "none", weapon: "none", barnacles: true, sash: "#3d6b2e", glowEyes: "#7fe3ff" },
+  // The Villain captains a ghost ship: a black tricorn, a pale face with eyes alight, a long black coat edged in
+  // silver with silver epaulettes, a blood-red sash, and a cutlass.
+  villain: { skin: "#9fb2b0", hair: "#101010", body: "#1a1d22", legs: "#15151c", accent: "#e23b3b", hat: "tricorn", hatColor: "#121216", weapon: "cutlass", coat: true, coatColor: "#20242b", coatTrim: "#8a8a9a", epaulettes: "#8a8a9a", sash: "#5a1a1a", glowEyes: "#9fe8ff", boots: "#111114" },
 };
 
 /** The colour fields of a look, which an admin palette override may change. */
