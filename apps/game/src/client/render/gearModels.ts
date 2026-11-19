@@ -190,7 +190,30 @@ function dagger(k: Kit) {
   k.hull(bladePoints(8, 1.9, 0.75, 2.6, 0.3), C.steel);
   k.box(4.6, 0.8, 1.2, C.gold, {}, 0.25);
   k.cyl(0.5, 0.55, 2.8, 6, C.bark, { at: [0, -1.8, 0] });
-  k.ball(0.8, k.a, { at: [0, -3.5, 0] });
+  k.ball(0.8, C.gold, { at: [0, -3.5, 0] });
+  whipping(k, [0, -1.8, 0], 0.6, 2.4);
+}
+
+/**
+ * Cord whipped tight round a grip or shaft, in the rarity colour, the turns showing: how a weapon shows its
+ * rarity, on the stuff of a ship rather than on a gem. Along y, `len` long, centred at `at`.
+ */
+function whipping(k: Kit, at: V3, r: number, len: number) {
+  k.cyl(r, r, len, 6, k.a, { at });
+  const turns = Math.max(2, Math.round(len / 0.6));
+  for (let i = 1; i < turns; i++) k.cyl(r + 0.05, r + 0.05, 0.14, 6, k.s, { at: [at[0], at[1] - len / 2 + (i * len) / turns, at[2]] });
+}
+
+/**
+ * A sword knot: a loop of cord from the pommel at `at`, a knot and a tassel, in the rarity colour. Built fast to
+ * the hilt, not as a dangle: soldiers and bandits carry these swords too, and a knot left swinging after a fall
+ * would keep one who got up from standing as one never knocked down (see ragdoll.test.ts).
+ */
+function swordKnot(k: Kit, at: V3) {
+  const [x, y, z] = at;
+  k.rod([[x, y, z], [x + 0.75, y - 1.4, z + 0.2], [x + 0.5, y - 2.6, z]], 0.2, k.a, {}, 4);
+  k.ball(0.45, k.s, { at: [x + 0.5, y - 2.8, z] });
+  k.cyl(0.25, 0.7, 1.6, 6, k.a, { at: [x + 0.5, y - 3.8, z] });
 }
 
 /** A gaff hook, its collar at the origin: a bound wooden grip, a steel shank curling over into a barbed point toward +x. */
@@ -316,8 +339,9 @@ export const LOW_POLY: Record<string, LowPolyDef> = {
       k.hull(bladePoints(13.5, 2.7, 0.9, 3.2, 3), C.steel);
       k.box(8, 1.1, 1.6, C.gold, { at: [0, 2.7, 0] }, 0.3);
       for (const x of [-4.1, 4.1]) k.ball(0.75, C.gold, { at: [x, 2.7, 0] });
-      k.cyl(0.6, 0.65, 3.8, 6, C.bark, { at: [0, 0.3, 0] });
-      k.ball(1.15, k.a, { at: [0, -2, 0] });
+      whipping(k, [0, 0.3, 0], 0.65, 3.8);
+      k.ball(1.15, C.gold, { at: [0, -2, 0] });
+      swordKnot(k, [0, -2.9, 0]);
     },
   },
   "hammer-drop": {
@@ -327,7 +351,9 @@ export const LOW_POLY: Record<string, LowPolyDef> = {
       k.cyl(0.6, 0.7, 12, 6, C.wood, { at: [0, 0, 0] });
       k.box(8, 5, 5, C.iron, { at: [0, 7.5, 0] }, 0.8);
       for (const x of [-4.3, 4.3]) k.cyl(2.1, 2.1, 0.8, 8, C.steel, { at: [x, 7.5, 0], rot: [0, 0, Math.PI / 2] });
-      k.gem(1.3, 2, { glow: k.a }, { at: [0, 7.5, 2.7], rot: [Math.PI / 2, 0, 0] });
+      k.box(8.25, 1.4, 5.25, k.a, { at: [0, 7.5, 0] }, 0.2);
+      for (const z of [-2.7, 2.7]) k.cyl(0.45, 0.45, 0.3, 6, C.gold, { at: [0, 7.5, z], rot: [Math.PI / 2, 0, 0] });
+      whipping(k, [0, -3.6, 0], 0.78, 3.4);
       k.cyl(0.95, 0.95, 0.8, 6, C.gold, { at: [0, 4.6, 0] });
       k.ball(1, C.gold, { at: [0, -6.3, 0] });
     },
@@ -339,7 +365,7 @@ export const LOW_POLY: Record<string, LowPolyDef> = {
       // wood twists up and curls over a stone alight with the storm.
       const drift = "#7d6e5a";
       k.rod([[0, -10, 0], [0.4, -6, 0.2], [-0.3, -2, -0.2], [0.35, 2, 0.15], [-0.2, 6, 0], [0.2, 7.6, 0]], 0.62, drift, {}, 6);
-      k.cyl(0.85, 0.85, 2.6, 6, C.leather, { at: [0.2, -1, 0] });
+      whipping(k, [0.2, -1, 0], 0.85, 2.6);
       for (const [y, x, z, r] of [[4.2, 0.55, 0.3, 0.38], [5, -0.5, 0.25, 0.32], [3.3, -0.2, -0.6, 0.3], [-5.5, 0.6, 0.2, 0.34], [-6.6, -0.35, 0.45, 0.28]]) {
         k.ball(r, "#cfc6b0", { at: [x, y, z], scale: [1, 0.7, 1] });
       }
@@ -394,7 +420,8 @@ export const LOW_POLY: Record<string, LowPolyDef> = {
       k.rod([[0, 7, 0], [-1.6, 8.5, 0.5], [-2.5, 10.5, 0], [-1.3, 12.2, 0]], 0.45, C.wood, {}, 5);
       k.rod([[0, 7, 0], [1.5, 9, -0.3], [2.3, 11, 0.2], [1.2, 12.7, 0.4]], 0.45, C.bark, {}, 5);
       k.rod([[0, 7, 0], [0.2, 9.5, 0.9], [-0.3, 11.8, 0.5]], 0.4, C.bark, {}, 5);
-      k.ball(1.4, { glow: k.a }, { at: [0, 10.4, 0] });
+      k.ball(1.4, "#8d8f86", { at: [0, 10.4, 0] });
+      whipping(k, [0, 6.4, 0], 0.85, 1.6);
       k.add(new THREE.OctahedronGeometry(1), "#a6d06a", { at: [2.3, 4.6, 0.2], rot: [0, 0, -0.9], scale: [1.2, 2.1, 0.35] });
       k.add(new THREE.OctahedronGeometry(1), "#7fae4a", { at: [-1.9, 1.4, 0], rot: [0, 0, 0.8], scale: [1, 1.8, 0.3] });
     },
@@ -468,20 +495,21 @@ export const LOW_POLY: Record<string, LowPolyDef> = {
   orb: {
     lean: -0.2,
     build: (k) => {
-      // An armillary sphere: a fixed brass frame (a meridian and a horizon ring) round a glowing star on the axis
-      // rod, and inside it two rings that turn about the rod on their own (see Kit.spin), lagging as the hand turns.
-      k.ball(2.1, { glow: k.a }, { at: [0, 3.6, 0] }, 1);
-      k.ball(0.7, C.shine, { at: [-0.8, 4.4, 1.7] });
+      // An armillary sphere: a fixed brass frame (a meridian and a horizon ring) round a brass globe on the axis
+      // rod, and inside it two rings that turn about the rod on their own (see Kit.spin), lagging as the hand turns;
+      // the tilted one enamelled in the rarity colour.
+      k.ball(1.6, C.gold, { at: [0, 3.6, 0] }, 1);
       k.rod([[0, -1.2, 0], [0, 8.6, 0]], 0.22, C.gold, {}, 6);
       k.ball(0.45, C.gold, { at: [0, 8.8, 0] });
       k.ring(4.6, 0.34, C.gold, { at: [0, 3.6, 0] }, 6, 20);
       k.ring(4.6, 0.3, C.gold, { at: [0, 3.6, 0], rot: [Math.PI / 2, 0, 0] }, 6, 20);
       k.spin([0, 3.6, 0], [0, 1, 0], () => {
         k.ring(3.9, 0.3, C.gold, { at: [0, 3.6, 0], rot: [0, Math.PI / 2, 0] }, 6, 20);
-        k.ring(3.4, 0.22, "#c9a24a", { at: [0, 3.6, 0], rot: [Math.PI / 2, 0, 0.45] }, 6, 18);
+        k.ring(3.4, 0.34, k.a, { at: [0, 3.6, 0], rot: [Math.PI / 2, 0, 0.45] }, 6, 18);
       });
       k.cyl(1.4, 0.9, 1.2, 6, C.gold, { at: [0, -1.5, 0] });
       k.cyl(0.7, 0.8, 6, 6, C.wood, { at: [0, -5, 0] });
+      whipping(k, [0, -5, 0], 0.82, 3);
       k.ball(0.85, C.gold, { at: [0, -8.2, 0] });
     },
   },
@@ -490,12 +518,14 @@ export const LOW_POLY: Record<string, LowPolyDef> = {
     build: (k) => {
       k.cyl(0.55, 0.65, 13, 6, C.gold, { at: [0, -3, 0] });
       for (const y of [-9.6, -2.2]) k.cyl(0.9, 0.9, 0.6, 6, "#b8891f", { at: [0, y, 0] });
+      whipping(k, [0, -5.9, 0], 0.7, 3.6);
+      k.cyl(2.65, 2.65, 0.7, 6, k.a, { at: [0, 5, 0] });
       k.lathe([[0, 3.2], [1.6, 3.6], [2.6, 5], [2.4, 6.6], [1.4, 7.5], [0, 7.8]], 6, C.gold);
       for (let i = 0; i < 6; i++) {
         const a = (i / 6) * Math.PI * 2;
         k.cone(0.4, 1.4, 4, C.gold, { at: [Math.cos(a) * 1.9, 7.7, Math.sin(a) * 1.9] });
       }
-      k.gem(1.4, 2.9, { glow: k.a }, { at: [0, 9, 0] });
+      k.ball(1.45, "#7f9c96", { at: [0, 8.6, 0], scale: [1, 1.2, 1] });
     },
   },
   "pager-axe": {
@@ -542,14 +572,16 @@ export const LOW_POLY: Record<string, LowPolyDef> = {
     },
   },
   grimoire: {
-    // A dark book, clasped, with a glowing sigil on the cover.
+    // A dark book, clasped and strapped, a brass boss on the cover and a ribbon marker hanging out.
     spin: 0.55,
     tip: 0.25,
     lean: 0.12,
     build: (k) => {
       book(k, "#2e2440", "#3a2a4a", C.iron);
-      k.ring(2.5, 0.35, { glow: k.a }, { at: [0.4, 0.6, 2.05] }, 4, 10);
-      k.gem(0.9, 1.8, { glow: k.a }, { at: [0.4, 0.6, 2.2] });
+      k.ring(2.5, 0.35, C.gold, { at: [0.4, 0.6, 2.05] }, 4, 10);
+      k.cyl(1, 1, 0.4, 8, C.gold, { at: [0.4, 0.6, 2.1], rot: [Math.PI / 2, 0, 0] });
+      k.box(1.1, 4.2, 0.12, k.a, { at: [1.8, -7.6, 0.3], rot: [0, 0, 0.15] });
+      k.box(10.6, 1.3, 4.5, k.a, { at: [0, -2.6, 0] }, 0.1);
       k.box(2.2, 2.4, 4.4, C.gold, { at: [5.3, 0, 0] }, 0.3);
     },
   },
@@ -563,8 +595,9 @@ export const LOW_POLY: Record<string, LowPolyDef> = {
       k.box(0.5, 9, 0.2, C.shine, { at: [-0.9, 8, 0.4], rot: [0, 0, 0.14] });
       k.cyl(2.1, 1.7, 0.6, 10, C.gold, { at: [0.3, 2.7, 0] });
       k.rod([[2.0, 2.6, 0], [3.0, 0.9, 0], [2.6, -1.3, 0], [0.5, -2.1, 0]], 0.38, C.gold, {}, 5);
-      k.cyl(0.62, 0.68, 3.8, 6, C.bark, { at: [0, 0.3, 0] });
-      k.ball(1.1, k.a, { at: [0, -2.1, 0] });
+      whipping(k, [0, 0.3, 0], 0.68, 3.8);
+      k.ball(1.1, C.gold, { at: [0, -2.1, 0] });
+      swordKnot(k, [0, -2.9, 0]);
     },
   },
   sabre: {
@@ -577,7 +610,8 @@ export const LOW_POLY: Record<string, LowPolyDef> = {
       k.rod([[2.2, 2.7, 0], [2.9, 1.0, 0], [2.4, -1.3, 0], [0.4, -2.2, 0]], 0.26, C.gold, {}, 5);
       k.cyl(0.55, 0.6, 4, 6, C.dark, { at: [0, 0.3, 0] });
       for (const y of [-0.7, 0.3, 1.3]) k.cyl(0.66, 0.66, 0.22, 6, C.gold, { at: [0, y, 0] });
-      k.ball(0.95, k.a, { at: [0, -2.2, 0] });
+      k.ball(0.95, C.gold, { at: [0, -2.2, 0] });
+      swordKnot(k, [0, -3, 0]);
     },
   },
   rapier: {
@@ -589,8 +623,8 @@ export const LOW_POLY: Record<string, LowPolyDef> = {
       k.box(7, 0.5, 0.6, C.gold, { at: [0, 2.3, 0] }, 0.15);
       for (const x of [-3.6, 3.6]) k.ball(0.5, C.gold, { at: [x, 2.3, 0] });
       k.rod([[2.0, 2.3, 0], [2.6, 0.7, 0], [2.1, -1.4, 0], [0.4, -2.2, 0]], 0.24, C.gold, {}, 5);
-      k.cyl(0.5, 0.55, 3.8, 6, C.bark, { at: [0, 0.2, 0] });
-      k.ball(0.95, k.a, { at: [0, -2.2, 0] });
+      whipping(k, [0, 0.2, 0], 0.55, 3.8);
+      k.ball(0.95, C.gold, { at: [0, -2.2, 0] });
     },
   },
   dirk: {
@@ -602,7 +636,8 @@ export const LOW_POLY: Record<string, LowPolyDef> = {
       k.box(4.4, 0.8, 1.3, C.gold, { at: [0, 2.7, 0] }, 0.25);
       for (const x of [-2.3, 2.3]) k.ball(0.55, C.gold, { at: [x, 2.7, 0] });
       k.cyl(0.55, 0.6, 3.4, 6, C.bone, { at: [0, 0.5, 0] });
-      k.ball(0.95, k.a, { at: [0, -1.6, 0] });
+      k.ball(0.95, C.gold, { at: [0, -1.6, 0] });
+      for (const y of [-0.6, 1.6]) k.cyl(0.66, 0.66, 0.4, 6, k.a, { at: [0, y, 0] });
     },
   },
   // ---- guns and the crossbow: the barrel up the model, muzzle at the top. A gun's grip and stock fall away
@@ -619,7 +654,7 @@ export const LOW_POLY: Record<string, LowPolyDef> = {
       k.box(1.6, 8, 1.5, C.wood, { at: [-0.95, 1.6, 0] }, 0.35);
       k.box(2.2, 2.6, 1.9, C.iron, { at: [-0.3, -2.4, 0] }, 0.35);
       k.rod([[-0.7, -3, 0], [-2.2, -4.8, 0], [-3.4, -7.2, 0]], 1.0, C.wood, {}, 6);
-      k.ball(1.2, k.a, { at: [-3.6, -7.7, 0] });
+      k.ball(1.2, C.gold, { at: [-3.6, -7.7, 0] });
       k.box(0.6, 1.9, 0.5, C.steel, { at: [1.0, -1.7, 0], rot: [0, 0, -0.55] });
       k.box(0.5, 0.7, 0.45, C.paper, { at: [1.5, -0.8, 0] });
       k.ring(1.0, 0.2, C.gold, { at: [-2.1, -3, 0] }, 4, 12);
@@ -700,11 +735,10 @@ export const LOW_POLY: Record<string, LowPolyDef> = {
     lean: DIAG,
     build: (k) => {
       k.cyl(0.55, 0.7, 17, 6, C.dark, { at: [0, -1.5, 0] });
-      for (const y of [-8.4, 0]) k.cyl(0.8, 0.8, 1, 6, "#4a3a6a", { at: [0, y, 0] });
+      for (const y of [-8.4, 0]) whipping(k, [0, y, 0], 0.75, 1.6);
       k.cyl(0.6, 1.1, 1.6, 6, C.dark, { at: [0, 7.4, 0] });
       k.ring(2.9, 0.6, C.dark, { at: [0, 10.6, 0] }, 5, 10);
-      k.gem(1.15, 2.3, { glow: k.a }, { at: [0, 10.6, 0] });
-      k.gem(0.5, 1, { glow: C.shine }, { at: [0, 10.6, 0.6], rot: [0, 0, Math.PI / 2] });
+      k.ball(0.75, { glow: "#b9a8ff" }, { at: [0, 10.6, 0] });
     },
   },
 
@@ -722,13 +756,13 @@ export const LOW_POLY: Record<string, LowPolyDef> = {
     lean: DIAG,
     build: (k) => {
       k.cyl(0.55, 0.7, 17, 6, C.wood, { at: [0, -1.5, 0] });
-      k.cyl(0.8, 0.8, 2.6, 6, C.leather, { at: [0, -1, 0] });
+      whipping(k, [0, -1, 0], 0.8, 2.6);
       k.cyl(0.78, 0.6, 0.9, 6, C.iron, { at: [0, -9.6, 0] });
       const face: Place["rot"] = [Math.PI / 2, 0, 0];
       k.cyl(2, 2, 0.7, 12, C.gold, { at: [0, 3.6, 0.5], rot: face });
       k.cyl(1.6, 1.6, 0.3, 12, C.paper, { at: [0, 3.6, 0.85], rot: face });
       k.box(0.25, 1.4, 0.12, C.dark, { at: [0.3, 4.1, 1.05], rot: [0, 0, -0.5] });
-      k.ball(0.28, k.a, { at: [0, 3.6, 1.1] });
+      k.ball(0.28, C.dark, { at: [0, 3.6, 1.1] });
       for (const y of [7.4, 11.6]) k.cyl(1.2, 1.2, 0.7, 8, C.gold, { at: [0, y, 0] });
       k.cyl(0.8, 0.8, 3.6, 8, { glow: "#8fd3ff" }, { at: [0, 9.5, 0] });
       for (let i = 0; i < 3; i++) {
@@ -736,7 +770,7 @@ export const LOW_POLY: Record<string, LowPolyDef> = {
         k.cyl(0.18, 0.18, 4.2, 4, C.gold, { at: [Math.cos(a) * 1.05, 9.5, Math.sin(a) * 1.05] });
       }
       k.cone(1.1, 1.6, 6, C.gold, { at: [0, 12.75, 0] });
-      k.gem(0.9, 1.9, { glow: k.a }, { at: [0, 14.2, 0] });
+      k.ball(0.75, C.gold, { at: [0, 13.9, 0] });
     },
   },
   "gaff-hook": {
@@ -749,7 +783,7 @@ export const LOW_POLY: Record<string, LowPolyDef> = {
     },
   },
   "coral-staff": {
-    // Bleached driftwood, crowned with branching coral round a glowing pearl, barnacles on the shaft.
+    // Bleached driftwood, crowned with branching coral round a pearl, barnacles on the shaft.
     lean: DIAG,
     build: (k) => {
       const drift = "#c2a785";
@@ -769,7 +803,8 @@ export const LOW_POLY: Record<string, LowPolyDef> = {
         k.rod(b, 0.58, coral, {}, 5);
         k.ball(0.68, tips, { at: b[b.length - 1] });
       }
-      k.ball(1.55, { glow: k.a }, { at: [0, 10.3, 0.4] }, 1);
+      k.ball(1.4, "#efe6d4", { at: [0, 10.3, 0.4] }, 1);
+      whipping(k, [-0.3, -1.2, 0.05], 0.98, 3);
     },
   },
   "ships-bell": {
@@ -779,12 +814,12 @@ export const LOW_POLY: Record<string, LowPolyDef> = {
     build: (k) => {
       k.lathe([[0, -4.6], [3.4, -4.6], [3.6, -4.1], [3.2, -3.5], [2.6, -1], [2.2, 1.4], [1.6, 2.6], [0, 3]], 10, C.gold);
       k.cyl(3.15, 3.15, 0.1, 10, C.dark, { at: [0, -4.62, 0] });
-      k.ring(3.35, 0.3, "#b8891f", { at: [0, -3.9, 0], rot: [Math.PI / 2, 0, 0] }, 4, 16);
+      k.ring(3.35, 0.36, k.a, { at: [0, -3.9, 0], rot: [Math.PI / 2, 0, 0] }, 4, 16);
       k.ring(2.35, 0.22, "#b8891f", { at: [0, 0.6, 0], rot: [Math.PI / 2, 0, 0] }, 4, 14);
       // The clapper hangs inside, and knocks about a little within the lip.
       k.dangle([0, -2.2, 0], [0, -5.6, 0], () => {
         k.cyl(0.22, 0.22, 3.4, 4, C.iron, { at: [0, -3.9, 0] });
-        k.ball(0.9, k.a, { at: [0, -5.6, 0] });
+        k.ball(0.9, C.iron, { at: [0, -5.6, 0] });
       }, { limit: 0.35 });
       k.cyl(0.95, 0.95, 0.8, 8, C.gold, { at: [0, 3.3, 0] });
       k.cyl(0.6, 0.75, 4.2, 6, C.wood, { at: [0, 5.8, 0] });
@@ -792,7 +827,7 @@ export const LOW_POLY: Record<string, LowPolyDef> = {
     },
   },
   astrolabe: {
-    // A brass astrolabe on a short handle: the star plate, a rete, the sighting rule across it and a glowing pin.
+    // A brass astrolabe on a short handle: the star plate, a rete, the sighting rule across it and its brass pin.
     spin: 0.35,
     tip: 0.2,
     lean: -0.15,
@@ -804,11 +839,12 @@ export const LOW_POLY: Record<string, LowPolyDef> = {
       for (const [x, y] of [[-2, 1.1], [1.7, 1.4], [-1.1, -1.9], [2.1, -1.3], [0.4, 2.4]] as const) k.ball(0.22, C.shine, { at: [x, 3.6 + y, 0.65] });
       k.ring(2.2, 0.18, C.gold, { at: [0.6, 4, 0.75] }, 4, 14);
       k.box(8.2, 0.5, 0.25, C.steel, { at: [0, 3.6, 0.95], rot: [0, 0, 0.7] });
-      k.gem(0.6, 1.3, { glow: k.a }, { at: [0, 3.6, 1.15], rot: face });
+      k.cyl(0.5, 0.5, 0.5, 6, C.gold, { at: [0, 3.6, 1.15], rot: face });
       k.box(1.6, 1.2, 0.8, C.gold, { at: [0, 8.2, 0] }, 0.2);
       k.ring(0.9, 0.25, C.gold, { at: [0, 9.3, 0], rot: [0, Math.PI / 2, 0] }, 4, 10);
       k.cyl(1, 0.7, 1, 6, C.gold, { at: [0, -1, 0] });
       k.cyl(0.7, 0.8, 5.5, 6, C.wood, { at: [0, -4.2, 0] });
+      whipping(k, [0, -4.2, 0], 0.82, 3);
       k.ball(0.85, C.gold, { at: [0, -7.2, 0] });
     },
   },
@@ -833,9 +869,9 @@ export const LOW_POLY: Record<string, LowPolyDef> = {
       const bilge = { glow: "#6dff9e" };
       k.lathe([[0, -6], [3, -6], [3.1, -5.5], [1.6, -5], [0.7, -4], [0.6, -1], [0.9, -0.4], [2.6, 0.6], [3.6, 2.5], [3.9, 5]], 12, C.gold);
       k.cyl(3.75, 3.75, 0.3, 12, bilge, { at: [0, 4.65, 0] });
-      k.ring(3.9, 0.3, "#b8891f", { at: [0, 5, 0], rot: [Math.PI / 2, 0, 0] }, 4, 20);
-      k.ball(1, k.a, { at: [0, -2.5, 0] });
-      k.gem(0.6, 1.2, k.a, { at: [0, 2.4, 3.45], rot: [Math.PI / 2 - 0.4, 0, 0] });
+      k.ring(3.9, 0.36, k.a, { at: [0, 5, 0], rot: [Math.PI / 2, 0, 0] }, 4, 20);
+      k.ball(1, C.gold, { at: [0, -2.5, 0] });
+      k.cyl(1.0, 1.0, 0.5, 8, k.a, { at: [0, -2.5, 0] });
       k.ball(0.55, bilge, { at: [1, 6.2, 0.6] });
       k.ball(0.4, bilge, { at: [-1.2, 7.4, -0.3] });
       k.ball(0.3, bilge, { at: [0.3, 8.5, 0.2] });
