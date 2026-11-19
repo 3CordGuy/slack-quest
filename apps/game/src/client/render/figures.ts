@@ -2912,6 +2912,22 @@ function lowHead(head: Part, look: Look, asleep: boolean, covered = false) {
   lowNose(head, tone(skin, -0.05), chosen?.nose ?? look.nose ?? "pointy", faceAt(rings, 2.3));
   head.box(tone(skin, -0.25), 1, 0.24, 0.3, 0, mouthY, faceAt(rings, mouthY) + 0.03);
   lowEyes(head, look.hair, chosen?.eyes ?? look.eyes ?? "round", asleep, rings);
+  if (look.glowEyes && !asleep) {
+    // Alight over the eyes the face has: a glow in each, with a fainter halo.
+    for (const s of [-1, 1]) {
+      const x = s * 1.15;
+      head.glowBall(look.glowEyes, 0.36, x, 3.05, faceZ(rings, x, 3.05) + 0.12);
+    }
+  }
+  if (look.mask) {
+    // A scarf pulled up over the mouth and the nose, a little loose, gathered under the chin.
+    const r = (y: number, by: number): Ring => {
+      const at = ringAt(rings, y);
+      return [y, at.rx + by, at.rz + by, at.dz + by * 0.6];
+    };
+    head.loft(look.mask, [r(chinY + 0.15, 0.1), r(1.2, 0.13), r(2, 0.24), r(2.5, 0.14)], 10);
+    head.loft(tone(look.mask, -0.12), [r(2.4, 0.16), r(2.56, 0.16)], 10);
+  }
   lowHair(head, look.hair, chosen?.hairStyle ?? "short", rings, covered);
   if (chosen?.ink) inkPart(head, "head", chosen.ink);
   if (chosen) lowFacialHair(head, chosen.beard, chosen.mustache, skin, look.hair, rings, chinY, mouthY);
@@ -3608,6 +3624,7 @@ function lowHat(head: Part, look: Look) {
       const rx = (r: number) => r + d.rx;
       const rz = (r: number) => r + d.rz;
       head.loft(c, fitted([[4.2, 3.86, 3.56], [5.5, 3.78, 3.48, -0.05], [6.5, 3.2, 2.95, -0.1], [7.05, 2, 1.85, -0.1], [7.25, 0.4, 0.4, -0.1]]), 10);
+      if (look.bandana) head.loft(look.bandana, fitted([[3.85, 3.84, 3.54], [4.45, 3.87, 3.57]]), 10);
       // Where the walls stand, going round from the front point: a point, the middle of a wall, the next point...
       const foot: { a: number; r: number; y: number; top: number }[] = [];
       for (let i = 0; i < 6; i++) {
@@ -5032,7 +5049,7 @@ function person(top: THREE.Group, look: Look, outfit: Outfit | undefined, asleep
   }
   if (greatcoat || (look.coat && !body && !undressed)) {
     // A long coat, open at the front, down over the legs.
-    const edgeColor = greatcoat ? trim("body") : look.accent;
+    const edgeColor = greatcoat ? trim("body") : look.coatTrim ?? look.accent;
     if (lowPoly) {
       for (const s of [-1, 1]) {
         coatPanel(torso, cloth, s, 0.42, Math.PI + 0.05);
@@ -5073,6 +5090,13 @@ function person(top: THREE.Group, look: Look, outfit: Outfit | undefined, asleep
       torso.box(c, 7.8, 1.8, 4.6, 0, 5.3, 0);
       torso.box(tone(c, -0.2), 7.9, 0.4, 4.7, 0, 4.4, 0);
     }
+  }
+  if (look.mask && lowPoly && !body && !undressed) {
+    // The scarf's end, hanging from the throat down the chest.
+    const rings = chestRings(m.shoulders / m.girth);
+    const p = onChest(rings, 0.4, 5.6, 0.12);
+    const q = onChest(rings, 0.7, 3.4, 0.12);
+    torso.shape(look.mask, [[p.at[0] - 0.7, 6.1, p.at[2]], [p.at[0] + 0.7, 6.1, p.at[2]], [q.at[0] - 0.45, 3.4, q.at[2]], [q.at[0] + 0.5, 3.1, q.at[2]], [p.at[0], 6, p.at[2] - 0.2], [q.at[0], 3.3, q.at[2] - 0.2]]);
   }
   if (look.sash && !body && !undressed) {
     // A sash wound tight round the waist over the belt, knotted on the left hip, its two ends hanging to the
@@ -5145,6 +5169,14 @@ function person(top: THREE.Group, look: Look, outfit: Outfit | undefined, asleep
           lowRolledSleeve(arm, look.skin, cloth);
           inkPart(arm, region, chosen!.ink!);
         } else lowSleeve(arm, cloth, look.accent);
+        if (look.barnacles && !undressed) {
+          // Barnacles crusted over the top of the shoulder, and a sprig of red coral among them.
+          for (const [x, z, r] of [[0.35, 0.3, 0.34], [0.75, -0.25, 0.28], [0.1, -0.45, 0.24], [0.95, 0.45, 0.22], [-0.2, 0.55, 0.2]] as const) {
+            arm.ball(r > 0.25 ? "#cfc6b0" : "#b3ab95", r, s * x, 1.25, z, 0, [1, 0.75, 1]);
+          }
+          strut(arm, "#c4604f", [s * 0.45, 1.3, 0.1], [s * 0.6, 2.2, 0.25], 0.12, 0.07);
+          strut(arm, "#c4604f", [s * 0.52, 1.75, 0.16], [s * 0.95, 2.15, 0], 0.08, 0.05);
+        }
         continue;
       }
       if (greatcoat) {

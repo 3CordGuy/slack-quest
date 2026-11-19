@@ -21,6 +21,16 @@ export interface Look {
   boots?: string;
   /** A brass plate of this colour over the shoulders, bolted round, that a diving helmet seats on. */
   corselet?: string;
+  /** Eyes that glow this colour, over the eyes the face is drawn with (a drowned thing's). */
+  glowEyes?: string;
+  /** A scarf of this colour pulled up over the mouth and nose, its end hanging down the chest. */
+  mask?: string;
+  /** A band of this colour round the brow under the hat. */
+  bandana?: string;
+  /** The colour of a long coat's edges, where it is not the accent. */
+  coatTrim?: string;
+  /** Barnacles and a little coral grown over the shoulders, as on something long under the sea. */
+  barnacles?: boolean;
   /** A sash of this colour knotted at the hip, its long ends hanging in waves down the leg. */
   sash?: string;
   /** A full-length coat over the legs, for travellers. */
@@ -47,7 +57,10 @@ export const LOOKS: Record<string, Look> = {
   // The Warden is a deep-sea diver: a brass helmet with a glass port, a brass plate on the shoulders, a canvas suit
   // and lead-weighted boots. The sea does not move them, and neither will you.
   sre_warden: { skin: "#d9a67c", hair: "#3a2a20", body: "#8f7f5c", legs: "#7d6f50", accent: "#e8742e", hat: "diver", hatColor: "#c2893a", weapon: "axe_shield", boots: "#4a4a52", corselet: "#c2893a" },
-  data_warlock: { skin: "#c9b8c4", hair: "#1a1424", body: "#241b33", legs: "#15101f", accent: "#6dff9e", hat: "hood", hatColor: "#4a2f6b", weapon: "grimoire" },
+  // The Warlock is a captain the sea gave back: a dripping tricorn over a red band, eyes alight, a scarf over the
+  // face, a long sea-dark coat edged in tarnished gold, a red sash, barnacles on the shoulders, and a grimoire
+  // glowing purple.
+  data_warlock: { skin: "#a3aca4", hair: "#2a2f2c", body: "#1f2e2b", legs: "#1a1f1e", accent: "#b06cff", hat: "tricorn", hatColor: "#1d2624", weapon: "grimoire", coat: true, coatTrim: "#a8863a", sash: "#6b2230", bandana: "#6b2230", glowEyes: "#c48bff", mask: "#2c3a39", boots: "#1d1f1f", barnacles: true },
   // Traveling salesmen (packages/world/src/salesman.ts): each one easy to tell from the crew at a glance.
   salesman_curio: { skin: "#f1d3b8", hair: "#1f1a24", body: "#5b2f63", legs: "#2a1838", accent: "#e0b12e", hat: "brim", hatColor: "#2a1f2e", weapon: "lantern", coat: true },
   salesman_plans: { skin: "#d9a67c", hair: "#9a9aa2", body: "#2f5f73", legs: "#24323a", accent: "#e8dcc0", hat: "kerchief", hatColor: "#3f6fa8", weapon: "scroll" },
