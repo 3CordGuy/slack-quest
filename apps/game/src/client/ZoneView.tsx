@@ -89,6 +89,7 @@ import {
   type Poi,
   type Roll,
   type Throwable,
+  type Budget,
   type Unit,
   type ZoneEvent,
   type ShantyKind,
@@ -432,8 +433,9 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
       return setPicture(end);
     }
     const yours = (id: string) => next.units.some((u) => u.id === id && (u.id === next.you || u.controller === next.you));
-    // The turn has passed to the enemy in this: it is watched through before the turn is yours again.
-    setWatching(!!next.encounter && events.some((ev) => ev.t === "turn" && !ev.ids.some(yours)));
+    // The turn has changed hands in this (to the enemy, to someone else, or round to you again after the enemy has had theirs):
+    // it is watched through, and the turn is yours to play only once the picture reaches it.
+    setWatching(!!next.encounter && events.some((ev) => ev.t === "turn"));
     const { many, last } = runs(events);
     const cards = cardsFor(events, many);
     const carried = new Set([...cards.values()]);
@@ -1422,6 +1424,11 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
   /** A unit as the picture shows it now: its health moves as each blow and heal lands, not ahead of them. */
   const seen = (u: Unit) => picture?.units.find((x) => x.id === u.id) ?? u;
   const budget = act && enc ? enc.budgets[act.id] : undefined;
+  // The AP bar keeps what it last showed on your turn while what came after it is watched through: the fresh AP of
+  // your next turn go up when that turn is seen to start, not the moment the server has dealt them.
+  const heldBudget = useRef<{ id: string; budget: Budget } | null>(null);
+  if (myTurn && act && budget) heldBudget.current = { id: act.id, budget };
+  const shownBudget = watching && act && budget && heldBudget.current?.id === act.id ? heldBudget.current.budget : budget;
   const deadline = useCountdown(enc?.deadline);
 
   // The bar is the one this class was last left with, made to fit the abilities in hand.
@@ -2104,9 +2111,9 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
             if (!u) return null;
             const turn = spot ? id === spot : enc.acting.includes(id) && !enc.done.includes(id);
             const spent = !spot && enc.acting.includes(id) && enc.done.includes(id);
-            // Heroes side by side in the order take their turns together: drawn joined up.
+            // Heroes on the very same initiative take their turns together: drawn joined up.
             const before = state.units.find((x) => x.id === enc.order[i - 1]);
-            const joined = u.side === "hero" && before?.side === "hero";
+            const joined = u.side === "hero" && before?.side === "hero" && enc.init[id] === enc.init[before.id];
             return (
               <button
                 key={id}
@@ -2320,13 +2327,13 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
         place={place}
         hp={{ now: seen(act).hp, max: act.maxHp, shield: shieldOf(seen(act)) }}
         meter={{ name: "Focus", note: "spend one to roll an attack with advantage", now: act.focus, max: act.maxFocus, kind: "focus" }}
-        pips={fighting && budget ? [
-          { label: "AP", now: budget.ap, max: AP_MAX, kind: "ap", title: `Action Points: ${budget.ap} of ${AP_MAX}. Spend them on anything, moving too. You get ${AP_TURN} more each turn, and what you do not spend carries over.` },
+        pips={fighting && shownBudget ? [
+          { label: "AP", now: shownBudget.ap, max: AP_MAX, kind: "ap", title: `Action Points: ${shownBudget.ap} of ${AP_MAX}. Spend them on anything, moving too. You get ${AP_TURN} more each turn, and what you do not spend carries over.` },
           // Movement bought with AP and not yet walked: it is spent before another AP is, and lost at the end of the turn.
-          { label: "Movement", now: budget.move, max: Math.max(budget.move, budget.stride), kind: "move", title: `Movement: ${budget.move} bought and left this turn. 1 AP buys ${budget.stride} more${budget.stride === 0 ? " (you cannot move this turn)" : ""}.` },
+          { label: "Movement", now: shownBudget.move, max: Math.max(shownBudget.move, shownBudget.stride), kind: "move", title: `Movement: ${shownBudget.move} bought and left this turn. 1 AP buys ${shownBudget.stride} more${shownBudget.stride === 0 ? " (you cannot move this turn)" : ""}.` },
           // A course charted: movement for steps toward the mark alone.
-          ...(budget.course !== undefined && courseMarks(asState(state), act).length > 0
-            ? [{ label: "Course", now: budget.course, max: Math.max(budget.course, CHART.speed), kind: "course" as const, title: `Charted course: ${budget.course} movement left, spent first on steps that bring you nearer the red X. Each AP of movement adds ${CHART.speed} more.` }]
+          ...(shownBudget.course !== undefined && courseMarks(asState(state), act).length > 0
+            ? [{ label: "Course", now: shownBudget.course, max: Math.max(shownBudget.course, CHART.speed), kind: "course" as const, title: `Charted course: ${shownBudget.course} movement left, spent first on steps that bring you nearer the red X. Each AP of movement adds ${CHART.speed} more.` }]
             : []),
         ] : []}
         // The keys the party has found, on its one ring.
