@@ -75,6 +75,10 @@ export type FxKind =
   | "drench"
   /** A gust of wind sweeping over the hexes it covers (Trade Winds). */
   | "gust"
+  /** A wave of healing rolling over the hexes it covers, healing each ally as it reaches them (Revitalizing Splash). */
+  | "healwave"
+  /** A blare of sound bursting all round the player (Bellows Blast). */
+  | "blare"
   /** A crescent blade of wind flying to each target. */
   | "blade"
   /** Lightning out of the sky onto each target, arcing from one to the next. */
@@ -214,7 +218,7 @@ const ABILITY_FX: Record<string, Fx> = {
   coral_field: fx("erupt", "#ff7f6e", "coral"),
   aqueous_regeneration: fx("bless", "#5eead4"),
   coral_armor: fx("bless", "#ff8f7a"),
-  revitalizing_splash: fx("lob", "#7dffd4"),
+  revitalizing_splash: fx("healwave", "#5eead4"),
   summon_sea_turtle: fx("bless", "#4fb286"),
   curse_of_drowning: fx("drown", "#2fa4c9"),
   summon_sunken_sailors: fx("bless", "#5fe0c0"),
@@ -228,7 +232,7 @@ const ABILITY_FX: Record<string, Fx> = {
   encore: sung("#7dff9a"),
   blasting_tone: fx("blast", "#ff6b6b"),
   soothing_tone: sung("#5eead4"),
-  bellows_blast: fx("ring", "#f97316"),
+  bellows_blast: fx("blare", "#f97316"),
   hornpipe: sung("#facc15"),
   peal: fx("sound", "#ffd23f"),
   clarion_call: sung("#ffd23f"),

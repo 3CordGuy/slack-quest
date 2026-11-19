@@ -236,6 +236,8 @@ const TORCH_IN_HAND = { icon: "torch", ref: "torch", rarity: "common" as const }
 const AFTER_MANY = 340;
 /** How far into a long gun's firing the shot goes (render/figures.ts FIRE.long.shot), in ms. */
 const LONG_GUN_SHOT_MS = 360;
+/** How far into playing an instrument the song takes hold (render/figures.ts PLAY.emit), in ms. */
+const PLAY_EMIT_MS = 500;
 /** How far into a heavy swing the blow lands (render/figures.ts SWEEP.hit), in ms. */
 const HEAVY_HIT_MS = 350;
 /** How far into a cast the spell leaves the hand (render/figures.ts CAST.emit), in ms. */
@@ -494,7 +496,7 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
         // Where each target of this use stood, so lightning can run from one to the next.
         // A wave strikes each one as it reaches them: when it set off is known once the gesture has let it go.
         let rolled: (t: number) => void = () => {};
-        const wave = look.kind === "wave" && from ? { from, at, rolled: new Promise<number>((done) => (rolled = done)) } : undefined;
+        const wave = (look.kind === "wave" || look.kind === "healwave") && from ? { from, at, rolled: new Promise<number>((done) => (rolled = done)) } : undefined;
         use = { id: ev.id, what: ev.what === "attack" ? ev.name : ev.what, look, last: from, wave };
         // What it covers, for the things that come up out of the ground or roll across it.
         const covered = user && ABILITIES[ev.what] ? abilityArea(asState({ ...next, units: draft.units }), user, ev.what, ev.at, ev.target) : [];
@@ -703,7 +705,12 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
             cast(ev.id, ev.name, aim.x, aim.z, () => fxs.chorus(from, aim, look.color));
           } else if (clap) {
             cast(ev.id, ev.name, clap.x, clap.z, () => fxs.thunder(from, clap, look.color));
-          } else if (look.kind === "wave" && covered.length > 0) {
+          } else if (look.kind === "blare") {
+            // A chord blared from the squeeze box: the burst goes as the bellows close.
+            const go = () => fxs.blare(point(user.pos, 0.05), look.color);
+            if (view) view.burst(ev.id, ev.name, true, go);
+            else go();
+          } else if ((look.kind === "wave" || look.kind === "healwave") && covered.length > 0) {
             const line = covered.map((p) => point(p)).sort((a, b) => a.distanceTo(from) - b.distanceTo(from));
             const end = line[line.length - 1];
             cast(ev.id, ev.name, end.x, end.z, () => {
@@ -749,6 +756,8 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
                 } else if (ev.what === "smugglers_route") fxs.puff(on);
                 else if (aim && SUMMONS.has(ev.what)) fxs.erupt([aim], look.color, "water");
                 else fxs.motes(on, look.color, !!look.notes);
+                // A jig: their feet made light.
+                if (ev.what === "hornpipe") fxs.jig(point((whom ?? user).pos, 0.05), look.color);
               }, 260),
             );
           }
@@ -757,6 +766,8 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
         // A blow struck all round (Cleave's sweep, Stoke the Fire's flames) lands as the heavy swing comes down: what it
         // does to each waits till then, not before the swing is seen.
         if (look.kind === "sweep" || look.kind === "nova") at += HEAVY_HIT_MS + 150;
+        // A chord blared (Bellows Blast) goes as the song takes hold: what it does waits till then.
+        if (look.kind === "blare") at += PLAY_EMIT_MS + 150;
       } else if (ev.t === "roll") {
         if (ev.roll.kind === "initiative") {
           // Each fighter's roll comes up over their head, one after another.
@@ -978,9 +989,14 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
         later(() => {
           sounds.heal(blowName(ev.what), view?.whereIs(ev.target));
           const healed = find(ev.target);
-          if (healed) spells.current?.motes(point(healed.pos, 0.3), use?.look.kind === "bless" || use?.look.kind === "way" || use?.look.kind === "starfire" ? use.look.color : "#7dff9a", !!use?.look.notes);
-          view?.glint(ev.target, "#7dff9a");
-          view?.floatOver(ev.target, `+${ev.amount}`, "#7dff9a");
+          // A wave of healing heals each as it reaches them.
+          const go = () => {
+            if (healed) spells.current?.motes(point(healed.pos, 0.3), use?.look.kind === "bless" || use?.look.kind === "way" || use?.look.kind === "starfire" || use?.look.kind === "healwave" ? use.look.color : "#7dff9a", !!use?.look.notes);
+            view?.glint(ev.target, "#7dff9a");
+            view?.floatOver(ev.target, `+${ev.amount}`, "#7dff9a");
+          };
+          if (use?.wave && healed) whenReached(use.wave, point(healed.pos), go);
+          else go();
         });
       } else if (ev.t === "tick") {
         const u = find(ev.target);
