@@ -449,11 +449,14 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
         owe(ev.id);
       } else if (ev.t === "blinked") {
         const u = find(ev.id);
+        const was = u ? u.pos : null;
         if (u) u.pos = ev.to;
-        // Gone in a puff and there: no walk, no leap.
+        // Gone in a puff and there: no walk, no leap. Smoke where they were, and where they come out.
         later(() => {
           sounds.zone("jump");
+          if (was) spells.current?.puff(point(was, 0.3));
           view?.blinkUnit(ev.id, ev.to);
+          spells.current?.puff(point(ev.to, 0.3));
         });
         owe(ev.id);
       } else if (ev.t === "seen") {
@@ -611,6 +614,19 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
             const them = find(ev.target);
             view?.bless(ev.id, them ? point(them.pos) : null);
             if (them) timers.current.push(setTimeout(() => fxs.way(point(user.pos, 0.05), point(them.pos, 0.05), look.color), 260));
+          } else if (look.kind === "bomb") {
+            // A bomb tossed to the ally, and one popped into the user's own hand (both, if they keep both).
+            const ally = ev.target && ev.target !== ev.id ? find(ev.target) : null;
+            view?.bless(ev.id, ally ? point(ally.pos) : null);
+            timers.current.push(
+              setTimeout(() => {
+                const hand = point(user.pos, 0.9);
+                fxs.bomb(hand, hand);
+                if (ally) fxs.bomb(hand, point(ally.pos, 0.9));
+              }, 260),
+            );
+          } else if (look.kind === "aim") {
+            fxs.focus(point(user.pos, 0.05), look.color);
           } else if (look.kind === "taunt") {
             // A bellow, and a "!" over every enemy beside them that hears it.
             const near = draft.units.filter((u) => u.side !== user.side && u.hp > 0 && hexDistance(u.pos, user.pos) === 1).map((u) => u.id);
@@ -704,7 +720,10 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
                   fxs.ward(on, look.color);
                   if (ev.what === "against_the_waves") fxs.breaker(on, look.color);
                 }
-                else if (ev.what === "sneak" || ev.what === "smugglers_route") fxs.puff(on);
+                else if (ev.what === "sneak") {
+                  // Everyone it hides goes in smoke: the user, and every ally beside them.
+                  for (const u of draft.units.filter((x) => x.side === user.side && x.hp > 0 && hexDistance(x.pos, user.pos) <= 1)) fxs.puff(point(u.pos, 0.3));
+                } else if (ev.what === "smugglers_route") fxs.puff(on);
                 else if (aim && SUMMONS.has(ev.what)) fxs.erupt([aim], look.color, "water");
                 else fxs.motes(on, look.color, !!look.notes);
               }, 260),
@@ -771,6 +790,8 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
               if (flourish === "shield" && actor) fxs.ward(point(actor.pos, 0.3), mine!.look.color);
               else if (hit && flourish === "sparks" && to) fxs.sparks(to);
               else if (hit && flourish === "brand" && target) fxs.brand(point(target.pos));
+              else if (hit && flourish === "coins" && to && actor) fxs.coins(to, () => view?.unitHead(ev.actor!)?.add(new THREE.Vector3(0, -0.6, 0)) ?? null);
+              else if (hit && flourish === "cross" && to) fxs.cross(to, mine!.look.color);
               else if (hit && flourish === "thud" && to) fxs.slam(to, mine!.look.color);
               else if (hit && flourish === "goad") {
                 const head = view?.unitHead(ev.target);
@@ -778,6 +799,24 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
               }
             };
             return view?.blow(ev.actor!, ev.target, what, { crit: hit && ev.crit, landed: hit, onImpact: landedBlow, color: mine && ABILITIES[mine.what] ? mine.look.color : undefined });
+          }
+          if (fxs && from && to && target && kind === "hook") {
+            // Thrown on a line from the hand, and yanked back home along it.
+            const end = hit ? to : point(target.pos, 0.05).add(to.clone().sub(from).setY(0).normalize().multiplyScalar(0.6));
+            const hand = () => view?.unitHead(ev.actor!)?.add(new THREE.Vector3(0, -0.7, 0)) ?? null;
+            cast(
+              ev.actor!,
+              what,
+              to.x,
+              to.z,
+              () =>
+                fxs.hook(from, end, hand, () => {
+                  view?.landed(ev.target, what, hit, hit && ev.crit, ev.actor);
+                  mark();
+                }),
+              true,
+            );
+            return;
           }
           if (fxs && from && to && target && kind === "pike") {
             // Hurled; on a hit, a rope stays strung from the thrower's hand to them as they are hauled in. A miss

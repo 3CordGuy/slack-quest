@@ -57,6 +57,12 @@ export type FxKind =
   | "sweep"
   /** A path of light laid to the ally helped (Show the Way). */
   | "way"
+  /** A gaff hook thrown on a line at each target, and yanked back (Snag). */
+  | "hook"
+  /** A fire bomb tossed to the ally aimed at, and one popped into the user's own hand (Contraband). */
+  | "bomb"
+  /** A ring closing in round the user like a sight narrowing (Take Aim). */
+  | "aim"
   /** A crescent blade of wind flying to each target. */
   | "blade"
   /** Lightning out of the sky onto each target, arcing from one to the next. */
@@ -100,7 +106,7 @@ export const SONG_MOOD: Record<string, SongMood> = { lively_shanty: "lively", do
  * hit or miss), steel sparks off the target, a "!" over it (it is goaded into coming at them), flames on it (it is set
  * alight), or a thud of dust at its feet.
  */
-export const FLOURISH: Record<string, "shield" | "sparks" | "goad" | "brand" | "thud"> = {
+export const FLOURISH: Record<string, "shield" | "sparks" | "goad" | "brand" | "thud" | "coins" | "cross"> = {
   sturdy_blow: "shield",
   bulwark_strike: "shield",
   disarming_chop: "sparks",
@@ -109,6 +115,9 @@ export const FLOURISH: Record<string, "shield" | "sparks" | "goad" | "brand" | "
   branding_strike: "brand",
   bash: "thud",
   armor_crush: "sparks",
+  // The Rogue's: a cut and a quick hand lifts gold; both knives at once cross their cuts.
+  pickpocket: "coins",
+  eviscerate: "cross",
 };
 
 /** How each blow of sound lands: heavy, ringing like a bell, or out of tune. Plain for any not here. */
@@ -135,8 +144,8 @@ const ABILITY_FX: Record<string, Fx> = {
   water_burst: fx("bolt", "#38bdf8"),
   rust_armor: fx("erupt", "#c0642c", "rust"),
   bow_shot: fx("arrow", "#e8dcc0"),
-  snag: fx("arrow", "#a78bfa"),
-  take_aim: fx("bless", "#ffe08a"),
+  snag: fx("hook", "#a78bfa"),
+  take_aim: fx("aim", "#ffe08a"),
   slicing_wind: fx("blade", "#dff4ff"),
   waterbolt: fx("bolt", "#38bdf8"),
   lightning_strike: fx("storm", "#ffe98a"),
@@ -169,7 +178,10 @@ const ABILITY_FX: Record<string, Fx> = {
   sneak: fx("bless", "#b8c4d6"),
   pickpocket: fx("melee", "#ffd23f"),
   tactical_retreat: fx("melee", "#ff6b6b"),
-  contraband: fx("bless", "#ff8a3a"),
+  contraband: fx("bomb", "#ff8a3a"),
+  stab: fx("melee", "#dfe9ff"),
+  eviscerate: fx("melee", "#ff8a8a"),
+  tear: fx("melee", "#c9b48a"),
   lively_shanty: fx("song", "#ffb020"),
   dour_shanty: fx("song", "#6f8fff"),
   windgod_shanty: fx("song", "#3fe0c5"),

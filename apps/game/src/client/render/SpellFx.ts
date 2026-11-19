@@ -2200,6 +2200,178 @@ export class SpellFx {
     });
   }
 
+  /**
+   * A gaff hook thrown on a line (Snag): the hook (an inked shaft and a curved iron hook) flies from `from` to `to` with
+   * its line strung back to the thrower's hand all the way; `onLand` runs as it bites (or falls short). Then it is
+   * yanked back along the line to the hand. Returns how long the throw takes.
+   */
+  hook(from: THREE.Vector3, to: THREE.Vector3, hand: () => THREE.Vector3 | null, onLand?: () => void): number {
+    const time = SpellFx.pikeTime(from.distanceTo(to));
+    const back = 0.3;
+    const g = this.add(new THREE.Group());
+    const ink = new THREE.MeshBasicMaterial({ color: OUTLINE, side: THREE.BackSide, transparent: true });
+    const pole = new THREE.Mesh(shaft, flat("#7a5530"));
+    pole.scale.set(0.06, 0.06, 0.7);
+    const curve = new THREE.Mesh(new THREE.TorusGeometry(0.16, 0.035, 5, 10, Math.PI * 1.2), flat("#aab4bf"));
+    curve.userData.ownGeometry = true;
+    curve.position.set(0, 0.12, 0.38);
+    curve.rotation.y = Math.PI / 2;
+    for (const m of [pole, curve]) {
+      const edge = new THREE.Mesh(m.geometry, ink);
+      edge.scale.setScalar(1.15);
+      m.add(edge);
+      g.add(m);
+    }
+    const N = 12;
+    const line = new Ribbon(N, tinted("#b48a55", 1, streakTex()));
+    const lineInk = new Ribbon(N, tinted(OUTLINE, 0.8, streakTex()));
+    lineInk.mesh.renderOrder = 4;
+    line.mesh.renderOrder = 5;
+    this.add(lineInk.mesh);
+    this.add(line.mesh);
+    const height = SpellFx.arcHeight("arrow", from.distanceTo(to)) * 0.6;
+    let bit = false;
+    this.run([g, line.mesh, lineInk.mesh], (age) => {
+      const h = hand() ?? from;
+      let at: THREE.Vector3;
+      if (age < time) {
+        const t = age / time;
+        at = SpellFx.arcPoint(from, to, height, t);
+        g.position.copy(at);
+        g.lookAt(SpellFx.arcPoint(from, to, height, t + 0.02));
+      } else {
+        if (!bit) {
+          bit = true;
+          this.fling(to, "#e8e4da", 4, { out: 1.2, up: 1.2 });
+          onLand?.();
+        }
+        // Held a beat as it bites, then yanked home along the line.
+        const k = Math.max(0, Math.min(1, (age - time - 0.12) / back));
+        at = to.clone().lerp(h, k * k);
+        g.position.copy(at);
+        g.lookAt(to.clone().lerp(h, 1).add(to.clone().sub(h)));
+      }
+      const sag = age < time ? 0.25 : 0.05;
+      const pts = Array.from({ length: N }, (_, i) => {
+        const t = i / (N - 1);
+        return h.clone().lerp(at, t).add(new THREE.Vector3(0, -sag * 4 * t * (1 - t), 0));
+      });
+      lineInk.lay(pts, () => 0.11, this.eye);
+      line.lay(pts, () => 0.07, this.eye);
+      return age < time + 0.12 + back;
+    });
+    return time;
+  }
+
+  /** Gold lifted off someone (Pickpocket): a few coins flicked up off them, glinting, arcing over to the one who took them. */
+  coins(from: THREE.Vector3, to: () => THREE.Vector3 | null) {
+    for (let i = 0; i < 5; i++) {
+      const coin = this.add(new THREE.Mesh(diamond, glow(i % 2 ? "#ffd45e" : "#fff3c4", 1)));
+      coin.scale.setScalar(0.07);
+      const late = i * 0.06;
+      const start = from.clone().add(new THREE.Vector3(rand(-0.15, 0.15), rand(0, 0.2), rand(-0.15, 0.15)));
+      const height = rand(0.9, 1.4);
+      this.run([coin], (age) => {
+        const t = Math.max(0, Math.min(1, (age - late) / 0.55));
+        const end = to() ?? from;
+        coin.position.copy(SpellFx.arcPoint(start, end, height, t));
+        coin.rotation.y = age * 14;
+        coin.visible = age >= late;
+        if (t >= 1) this.flash(end, "#ffd45e", 0.4);
+        return t < 1;
+      });
+    }
+  }
+
+  /**
+   * A fire bomb slipped to someone (Contraband): a round black bomb with a sputtering fuse, tossed from `from` to `to`
+   * on a high arc (or just popped into hand when they are the same), landing with a pop of sparks.
+   */
+  bomb(from: THREE.Vector3, to: THREE.Vector3) {
+    const g = this.add(new THREE.Group());
+    const ink = new THREE.MeshBasicMaterial({ color: OUTLINE, side: THREE.BackSide, transparent: true });
+    const ball = new THREE.Mesh(new THREE.IcosahedronGeometry(0.16, 1), new THREE.MeshToonMaterial({ color: "#2a2730", gradientMap: toonRamp() }));
+    ball.userData.ownGeometry = true;
+    const edge = new THREE.Mesh(ball.geometry, ink);
+    edge.scale.setScalar(1.12);
+    ball.add(edge);
+    const fuse = new THREE.Mesh(shaft, flat("#c9a46a"));
+    fuse.scale.set(0.03, 0.12, 0.03);
+    fuse.position.y = 0.2;
+    const spark = new THREE.Sprite(new THREE.SpriteMaterial({ map: softTex(), color: "#ffb347", transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
+    spark.position.y = 0.28;
+    spark.scale.setScalar(0.3);
+    g.add(ball, fuse, spark);
+    const time = from.distanceTo(to) < 0.3 ? 0.25 : Math.max(0.35, Math.min(0.7, from.distanceTo(to) / 7));
+    const height = 0.6 + from.distanceTo(to) * 0.2;
+    let shed = 0;
+    this.run([g], (age, dt) => {
+      const t = Math.min(1, age / time);
+      g.position.copy(SpellFx.arcPoint(from, to, height, t));
+      g.rotation.z = Math.sin(t * Math.PI * 2) * 0.4;
+      spark.scale.setScalar(0.24 + Math.random() * 0.14);
+      shed -= dt;
+      if (shed <= 0) {
+        shed = 0.05;
+        this.fling(g.position.clone().add(new THREE.Vector3(0, 0.28, 0)), "#ffb347", 1, { out: 0.4, up: 0.6, fall: 3, life: 0.3, size: 0.32 });
+      }
+      if (t < 1) return true;
+      this.flash(to, "#ffb347", 0.8);
+      this.fling(to, "#ffd23f", 6, { out: 1.2, up: 1.4, life: 0.4, size: 0.36 });
+      return false;
+    });
+  }
+
+  /** Both knives at once (Eviscerate): two inked slashes crossing on whoever they open up, one hard after the other. */
+  cross(at: THREE.Vector3, color: string) {
+    const look = at.clone().sub(this.eye).setY(0).normalize();
+    const side = new THREE.Vector3(-look.z, 0, look.x);
+    [1, -1].forEach((dir, i) => {
+      const N = 10;
+      const edge = new Ribbon(N, tinted(OUTLINE, 0.55, streakTex()));
+      const body = new Ribbon(N, tinted(color, 1, streakTex()));
+      const core = new Ribbon(N, light("#ffffff", 1, streakTex()));
+      edge.mesh.renderOrder = 4;
+      body.mesh.renderOrder = 5;
+      core.mesh.renderOrder = 6;
+      for (const r of [edge, body, core]) this.add(r.mesh);
+      const late = i * 0.09;
+      this.run([edge.mesh, body.mesh, core.mesh], (age) => {
+        const k = (age - late) / 0.12;
+        const fade = age - late < 0.12 ? 1 : Math.max(0, 1 - (age - late - 0.12) / 0.25);
+        const reach = Math.max(0, Math.min(1, k));
+        // A stroke from high on one side to low on the other, bowed a little, drawn as the blade passes.
+        const pts = Array.from({ length: N }, (_, j) => {
+          const t = (j / (N - 1)) * reach;
+          return at.clone().addScaledVector(side, dir * (0.55 - 1.1 * t)).add(new THREE.Vector3(0, 0.5 - 1.0 * t + Math.sin(t * Math.PI) * 0.12, 0));
+        });
+        for (const [r, o] of [[edge, 0.55], [body, 1], [core, 1]] as const) r.material.opacity = k > 0 ? o * fade : 0;
+        edge.lay(pts, (t) => 0.3 * Math.sin(Math.PI * t), this.eye);
+        body.lay(pts, (t) => 0.2 * Math.sin(Math.PI * t), this.eye);
+        core.lay(pts, (t) => 0.06 * Math.sin(Math.PI * t), this.eye);
+        return age - late < 0.4;
+      });
+    });
+    this.fling(at, color, 6, { out: 1.6, up: 1.2, life: 0.4 });
+  }
+
+  /** A hand steadied (Take Aim): a ring closing in round someone like a sight narrowing on its mark, and a glint as it settles. */
+  focus(at: THREE.Vector3, color: string) {
+    const ring = this.sheet(at.clone().setY(at.y + 0.05), color, ringTex(), 0);
+    this.run([ring], (age) => {
+      const k = Math.min(1, age / 0.5);
+      const r = 1.8 - 1.3 * (1 - (1 - k) ** 2);
+      ring.scale.set(r * 2, r * 2, 1);
+      ring.material.opacity = k < 0.8 ? 0.9 : (1 - k) / 0.2;
+      return k < 1;
+    });
+    this.later(0.45, () => {
+      const chest = at.clone().setY(at.y + 1);
+      this.flash(chest, paler(color, 0.4), 0.8);
+      this.fling(chest, paler(color, 0.3), 3, { out: 0.4, up: 0.6, fall: 0, life: 0.5, kind: "spark", size: 0.6 });
+    });
+  }
+
   /** One music note floating off `at`: out along `angle` at `speed`, bobbing, sinking or swirling as the mood has it, and fading over `life`. */
   private note(at: THREE.Vector3, color: string, mood: SongMood, angle: number, speed: number, delay = 0, life = 1.1, size = 0.75) {
     const s = this.speck(Math.random() < 0.5 ? "note" : "notes", color, at, 0);
