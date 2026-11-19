@@ -4,7 +4,7 @@
 
 export const HATS = ["helm", "wizard", "hood", "horns", "leaves", "feather", "tricorn", "circlet", "brim", "turban", "kerchief", "greathelm", "diver", "coral", "lamphelm", "none"] as const;
 export type Hat = (typeof HATS)[number];
-export const LOOK_WEAPONS = ["sword", "staff", "daggers", "club", "bow", "lute", "orb", "lantern", "scroll", "pack", "basket", "axe_shield", "grimoire", "smith_hammer", "paddle", "cleaver", "cutlass", "pager_axe", "blunderbuss", "coral_staff", "none"] as const;
+export const LOOK_WEAPONS = ["sword", "staff", "daggers", "club", "bow", "lute", "orb", "lantern", "scroll", "pack", "basket", "axe_shield", "grimoire", "smith_hammer", "paddle", "cleaver", "cutlass", "pager_axe", "blunderbuss", "coral_staff", "mace", "maul", "root_staff", "none"] as const;
 export type Weapon = (typeof LOOK_WEAPONS)[number];
 
 export interface Look {
@@ -68,7 +68,7 @@ export interface Look {
 export const LOOKS: Record<string, Look> = {
   // The Paladin keeps the light: a steel helm with a little lantern burning on top, a white surcoat banded in
   // lighthouse red, and sturdy boots.
-  qa_paladin: { skin: "#f1c9a5", hair: "#8a5a2b", body: "#ece6d6", legs: "#5b6475", accent: "#c23b30", hat: "lamphelm", weapon: "sword", stripes: "#c23b30", boots: "#4a3a2e" },
+  qa_paladin: { skin: "#f1c9a5", hair: "#8a5a2b", body: "#ece6d6", legs: "#5b6475", accent: "#c23b30", hat: "lamphelm", weapon: "mace", stripes: "#c23b30", boots: "#4a3a2e" },
   // The Mage is a storm witch of the open deck: a hood, eyes alight with lightning, a tattered sea-green robe over
   // dark trousers, a necklace of teeth, a teal sash, and a driftwood staff grown over with barnacles.
   devops_mage: { skin: "#e8c4a6", hair: "#6b5440", body: "#2f5f5c", legs: "#2a2d2c", accent: "#7fd8ff", hat: "hood", hatColor: "#24403e", weapon: "staff", coat: true, coatTrim: "#1f3836", sash: "#3a6d70", glowEyes: "#8fe0ff", glowOnCast: true, teeth: "#3fb8a8", boots: "#2a2622" },
@@ -77,7 +77,7 @@ export const LOOKS: Record<string, Look> = {
   refactor_rogue: { skin: "#d9a67c", hair: "#1f1c22", body: "#5a5a3e", legs: "#3d3e2e", accent: "#7a3a34", hat: "none", weapon: "daggers", bandana: "#8a8370", coat: true, coatColor: "#2a3038", coatTrim: "#1c2126", straps: "#5a3d26", boots: "#1f1f22" },
   // The Druid tends the reef: a crown of branching coral on a band of kelp, a sea-green tunic, a scallop shell on
   // each shoulder, and a kelp sash whose ends sway with the tide.
-  backend_druid: { skin: "#c99a74", hair: "#4a3a26", body: "#2f6b5e", legs: "#3a4a3a", accent: "#ff8a6b", hat: "coral", hatColor: "#ef7a5f", weapon: "staff", sash: "#3d6b2e", shell: "#f0dcc8" },
+  backend_druid: { skin: "#c99a74", hair: "#4a3a26", body: "#2f6b5e", legs: "#3a4a3a", accent: "#ff8a6b", hat: "coral", hatColor: "#ef7a5f", weapon: "root_staff", sash: "#3d6b2e", shell: "#f0dcc8" },
   // The Bard sings at the capstan: a red bandana knotted at the side, a sleeveless linen shirt under a weathered teal vest, a red
   // sash, olive trousers and boots.
   frontend_bard: { skin: "#d9a67c", hair: "#3a2a20", body: "#e3d9c0", legs: "#4f5440", accent: "#e0b12e", hat: "kerchief", hatColor: "#a8322a", knotSide: true, weapon: "lute", sleeveless: true, vest: "#4f6463", sash: "#a8322a", straps: "#5a3d26", boots: "#4a3426" },
@@ -86,7 +86,7 @@ export const LOOKS: Record<string, Look> = {
   staff_sage: { skin: "#e3b897", hair: "#c9c9cc", body: "#1f4a46", legs: "#2a2420", accent: "#f2d675", hat: "tricorn", hatColor: "#1f2826", weapon: "orb", coat: true, coatTrim: "#c9a24a", bandana: "#7a2a2a", epaulettes: "#d4ab4a", sash: "#6b2a2a", boots: "#3a2c22" },
   // The Warden is a deep-sea diver: a brass helmet with a glass port, a brass plate on the shoulders, a canvas suit
   // and lead-weighted boots. The sea does not move them, and neither will you.
-  sre_warden: { skin: "#d9a67c", hair: "#3a2a20", body: "#8f7f5c", legs: "#7d6f50", accent: "#e8742e", hat: "diver", hatColor: "#c2893a", weapon: "axe_shield", boots: "#4a4a52", corselet: "#c2893a" },
+  sre_warden: { skin: "#d9a67c", hair: "#3a2a20", body: "#8f7f5c", legs: "#7d6f50", accent: "#e8742e", hat: "diver", hatColor: "#c2893a", weapon: "maul", boots: "#4a4a52", corselet: "#c2893a" },
   // The Warlock is a captain the sea gave back: a dripping tricorn over a red band, eyes alight, a scarf over the
   // face, a long sea-dark coat edged in tarnished gold, a red sash, barnacles on the shoulders, and a grimoire
   // glowing purple.
