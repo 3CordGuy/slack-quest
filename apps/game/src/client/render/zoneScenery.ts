@@ -179,6 +179,15 @@ function unit(name: string, make: () => THREE.BufferGeometry): Float32Array {
   }
   return got;
 }
+/** A sheet's triangles twice over, the second time turned about: it is seen from behind as well. */
+function bothSides(g: THREE.BufferGeometry): THREE.BufferGeometry {
+  const flat = g.index ? g.toNonIndexed() : g;
+  const p = flat.getAttribute("position").array;
+  const out = new Float32Array(p.length * 2);
+  out.set(p);
+  for (let i = 0; i < p.length; i += 9) out.set([p[i], p[i + 1], p[i + 2], p[i + 6], p[i + 7], p[i + 8], p[i + 3], p[i + 4], p[i + 5]], p.length + i);
+  return new THREE.BufferGeometry().setAttribute("position", new THREE.BufferAttribute(out, 3));
+}
 /** A lump of rock: a regular solid knocked out of true, every corner by its own amount. */
 function rockGeometry(variant: number): THREE.BufferGeometry {
   const base = [new THREE.IcosahedronGeometry(1, 0), new THREE.DodecahedronGeometry(1, 0), new THREE.IcosahedronGeometry(1, 1), new THREE.OctahedronGeometry(1, 0)][variant % 4];
@@ -458,12 +467,12 @@ class Kit {
     for (let i = 0; i < n - 1; i++)
       for (let s = 0; s < sides; s++) {
         const [a, b, c, d] = [rings[i][s], rings[i][(s + 1) % sides], rings[i + 1][(s + 1) % sides], rings[i + 1][s]];
-        tri(a, c, b);
-        tri(a, d, c);
+        tri(a, b, c);
+        tri(a, c, d);
       }
     for (let s = 1; s < sides - 1; s++) {
-      tri(rings[0][0], rings[0][s], rings[0][s + 1]);
-      tri(rings[n - 1][0], rings[n - 1][s + 1], rings[n - 1][s]);
+      tri(rings[0][0], rings[0][s + 1], rings[0][s]);
+      tri(rings[n - 1][0], rings[n - 1][s], rings[n - 1][s + 1]);
     }
     this.put(layer, tris, null, tone, plain);
   }
@@ -800,7 +809,7 @@ function tower(k: Kit, c: Ctx) {
     k.disc(P.stoneDark, 0.8, 0, H + 0.125, 0, 10);
     if (top > 0.74) {
       // The roof fell in long ago: a few rafters and what is left of the cone.
-      k.put(SOLID, unit("roofBroken", () => new THREE.ConeGeometry(1, 1, 10, 1, true, 0, Math.PI * 1.05).translate(0, 0.5, 0)), placed(0, H + 0.12, 0, 0.98, 1.2, 0.98, turn + c.n(4) * 6, 0, 0), P.roof);
+      k.put(SOLID, unit("roofBroken", () => bothSides(new THREE.ConeGeometry(1, 1, 10, 1, true, 0, Math.PI * 1.05).translate(0, 0.5, 0))), placed(0, H + 0.12, 0, 0.98, 1.2, 0.98, turn + c.n(4) * 6, 0, 0), P.roof);
       for (let j = 0; j < 3; j++) {
         const a = turn + 2 + j * 1.1;
         k.tube(P.woodDark, [[Math.sin(a) * 0.82, H + 0.16, Math.cos(a) * 0.82], [Math.sin(a) * 0.1, H + 1.1, Math.cos(a) * 0.1]], () => 0.035, 4);
@@ -1908,13 +1917,15 @@ export class ZoneScenery {
 
   constructor(tiles: readonly Tile[], place: (t: Tile) => Place, opts: SceneryOptions = {}) {
     const byKey = new Map<string, Tile>();
-    for (const t of tiles) if (t.biome !== "fog") byKey.set(key(t.q, t.r), t);
+    for (const t of tiles) byKey.set(key(t.q, t.r), t);
     const at = new Map<Tile, Place>();
     for (const t of byKey.values()) at.set(t, place(t));
     const kit = new Kit();
     const walkable = (t: Tile | undefined) => !!t && t.biome !== "water" && t.biome !== "rock" && (!t.prop || WALKABLE.has(t.prop));
 
     for (const t of byKey.values()) {
+      // Ground not yet seen is only fog: nothing stands on it, and nothing is known of its edges.
+      if (t.biome === "fog") continue;
       const p = at.get(t)!;
       const clime = t.clime ?? "greenwood";
       const nb = (i: number) => byKey.get(key(t.q + DIRS[i].q, t.r + DIRS[i].r));
@@ -2056,13 +2067,14 @@ export class ZoneScenery {
     for (let i = 0; i < 6; i++) {
       const next = nb(i);
       const drop = next ? p.y - at.get(next)!.y : Infinity;
-      walled.push(paved && (drop === Infinity || drop >= LEVEL * 2 - 0.12));
+      walled.push(paved && next?.biome !== "fog" && (drop === Infinity || drop >= LEVEL * 2 - 0.12));
     }
     for (let i = 0; i < 6; i++) {
       const next = nb(i);
       const side = SIDE[i];
       // How far down the face goes: to the hex below, to the rim of a floating map, or (paved, by the sea) to the water.
       let foot: number;
+      if (next?.biome === "fog") continue;
       if (next) foot = at.get(next)!.y - 0.03;
       else if (floating) foot = RIM;
       else if (paved) foot = 0.04;

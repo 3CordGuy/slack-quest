@@ -24,11 +24,9 @@
 .hud-points-side.end { justify-content: flex-end; }
 .hud-pips { display: inline-flex; align-items: center; gap: 4px; }
 .hud-pips i { width: 10px; height: 10px; background: var(--well); border: 2px solid var(--hw-out); box-shadow: 0 0 0 2px var(--hw-dark); margin: 2px; }
-.hud-pips.action i.on { background: #8fd49a; box-shadow: 0 0 0 2px #3f7a52; }
-/* An Action is a round pip, a Bonus action a triangle: told apart by shape as well as colour. */
-.hud-pips.action i { border-radius: 50%; width: 12px; height: 12px; }
-.hud-pips.bonus i { width: 14px; height: 13px; border: none; box-shadow: none; clip-path: polygon(50% 0, 100% 100%, 0 100%); background: #4a2c1c; }
-.hud-pips.bonus i.on { background: #f29a5b; box-shadow: none; }
+/* Action Points: round pips, told apart from movement by shape as well as colour. */
+.hud-pips.ap i { border-radius: 50%; width: 12px; height: 12px; }
+.hud-pips.ap i.on { background: #8fd49a; box-shadow: 0 0 0 2px #3f7a52; }
 .hud-pips.move i.on { background: #f0c552; box-shadow: 0 0 0 2px #8a6a26; }
 /* A course charted (Chart a Course): movement good only for steps toward the mark, in the mark's red. */
 .hud-pips.course i.on { background: #ff5a5a; box-shadow: 0 0 0 2px #8a2626; }
@@ -94,8 +92,7 @@
 .hud-glyph { font-family: var(--font-title); font-size: calc(var(--p) * 6.4); line-height: 1; color: #5a2a17; }
 .hud-key { position: absolute; left: calc(var(--p) * 2 + 1px); top: calc(var(--p) * 2); font-size: 9px; line-height: 1; font-weight: bold; color: #9a5a3a; }
 .hud-count { position: absolute; right: calc(var(--p) * 2 + 1px); bottom: calc(var(--p) * 2); font-size: 11px; line-height: 1; font-weight: bold; color: #4a2418; }
-/* The off hand on a map: a torch can be lit into it (a small torch in its corner says so), and glows while one burns. */
-.hud-torch-hint { position: absolute; right: calc(var(--p) * 1); top: calc(var(--p) * 1); line-height: 0; pointer-events: none; }
+/* A hand on a map glows while a lit torch burns in it. (Where one can be lit, the slot shows only what it holds: the tip says a torch can be lit there.) */
 .hud-slot.hand.lit { box-shadow: inset 0 0 calc(var(--p) * 4) rgba(255, 150, 60, 0.75); }
 .hud-slot.hand.lit .hud-count { color: #ffe08a; text-shadow: 0 1px 0 #3a1d20; }
 /* The lit torch is a button: a click puts it away. When it cannot be (not your turn), it is only there to read. */

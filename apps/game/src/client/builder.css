@@ -108,7 +108,6 @@
 .look-dialog-foot .error { margin-right: auto; color: #ff8a80; font-size: 13px; }
 /* The bottom bar (the hotbar) goes while a look is being changed. */
 body.changing-look .hud { display: none !important; }
-.hs-change-look { align-self: flex-start; margin: 2px 0 4px; }
 
 /* Tattoo stamps (inkStamps.ts): a row of little designs to drop onto the doll. */
 .ink-stamps { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; }

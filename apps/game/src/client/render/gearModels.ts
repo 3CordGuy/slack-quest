@@ -14,6 +14,8 @@ import * as THREE from "three";
 import { ConvexGeometry } from "three/examples/jsm/geometries/ConvexGeometry.js";
 import { mergeVertices } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { C } from "../artKit";
+import { parseGarbIcon, type GarbPiece } from "@gantt-quest/world";
+import { LOOKS, type Look } from "./looks";
 
 type V3 = [number, number, number];
 
@@ -57,6 +59,26 @@ export interface Kit {
    * at `bob`. In a picture they stay as built.
    */
   dangle(pivot: V3, bob: V3, build: () => void, opts?: Pick<Dangle, "limit" | "clear" | "size" | "mass">): void;
+  /**
+   * Build some parts that turn freely about the line through `pivot` along `axis` (an armillary sphere's inner
+   * rings on its spine): in a hero's hand they turn slowly on their own, or at `speed` (radians a second, a
+   * whirlpool's water), and lag behind as the hand turns, then catch up (see figures.ts). In a picture they stay
+   * as built.
+   */
+  spin(pivot: V3, axis: V3, build: () => void, speed?: number): void;
+  /**
+   * Build one of a set of shapes that flash in turn (a bolt of lightning, each a different fork): in a hero's hand
+   * one or none of them shows at a time, changing many times a second (see figures.ts). In a picture only the
+   * first is drawn.
+   */
+  flicker(build: () => void): void;
+}
+
+/** What a group made by Kit.spin carries in its userData. */
+export interface Spin {
+  pivot: V3;
+  axis: V3;
+  speed?: number;
 }
 
 /** What a group made by Kit.dangle carries in its userData. */
@@ -138,19 +160,6 @@ const curvedBlade = (len: number, sweep: number, w0: number, w1: number, tip: nu
 
 const v3 = ([x, y, z]: V3) => new THREE.Vector3(x, y, z);
 
-/** A horn: a cone curled toward +x (or -x), `h` long, its base at the origin. */
-function hornGeometry(r: number, h: number, curl: number): THREE.BufferGeometry {
-  const g = new THREE.ConeGeometry(r, h, 6, 5);
-  g.translate(0, h / 2, 0);
-  const p = g.attributes.position;
-  for (let i = 0; i < p.count; i++) {
-    const t = p.getY(i) / h;
-    p.setX(i, p.getX(i) + curl * t * t);
-  }
-  g.computeVertexNormals();
-  return g;
-}
-
 /** Push each corner of a rough solid in or out a little, the same way every time, so a stone looks hewn. */
 function roughen(geo: THREE.BufferGeometry, by: number, seed: number): THREE.BufferGeometry {
   const g = mergeVertices(geo);
@@ -190,8 +199,78 @@ function bowStave(k: Kit) {
 function dagger(k: Kit) {
   k.hull(bladePoints(8, 1.9, 0.75, 2.6, 0.3), C.steel);
   k.box(4.6, 0.8, 1.2, C.gold, {}, 0.25);
-  k.cyl(0.5, 0.55, 2.8, 6, C.bark, { at: [0, -1.8, 0] });
-  k.ball(0.8, k.a, { at: [0, -3.5, 0] });
+  whipping(k, [0, -1.8, 0], 0.6, 2.4);
+  k.ball(0.8, C.gold, { at: [0, -3.5, 0] });
+  // The whipping is under the fist, so a turn of the same cord round the pommel and a little knot below it show
+  // the rarity in the hand.
+  k.ring(0.8, 0.3, k.a, { at: [0, -3.5, 0], rot: [Math.PI / 2, 0, 0] }, 4, 10);
+  k.within({ at: [0, -4.1, 0], scale: 0.7 }, () => swordKnot(k, [0, 0, 0]));
+}
+
+/** A straight bar from `a` to `b`, `r` thick: one stroke of something drawn in straight lines (a bolt of lightning). */
+function bar(k: Kit, a: V3, b: V3, r: number, paint: Paint) {
+  const from = v3(a);
+  const along = v3(b).sub(from);
+  const turn = new THREE.Euler().setFromQuaternion(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), along.clone().normalize()));
+  const mid = from.addScaledVector(along, 0.5);
+  k.cyl(r, r, along.length() + r, 4, paint, { at: [mid.x, mid.y, mid.z], rot: [turn.x, turn.y, turn.z] });
+}
+
+/**
+ * A bolt of lightning down the face of a glass `R` round, from `top` to `bottom` (heights), turned `turn` round
+ * from the front: a jagged line of short straight strokes, kinked hard left and right, with a fork splitting
+ * off part way. `seed` makes each bolt its own.
+ */
+function lightning(k: Kit, turn: number, R: number, top: number, bottom: number, seed: number, paint: Paint) {
+  let s = seed;
+  const rnd = () => (s = (s * 9301 + 49297) % 233280) / 233280;
+  const on = (a: number, y: number): V3 => [Math.sin(turn + a / R) * R, y, Math.cos(turn + a / R) * R];
+  const steps = 6;
+  const path: { across: number; y: number }[] = [];
+  for (let i = 0; i <= steps; i++) {
+    const y = top - ((top - bottom) * (i + (i > 0 && i < steps ? (rnd() - 0.5) * 0.5 : 0))) / steps;
+    path.push({ across: i === 0 ? 0 : (i % 2 ? 1 : -1) * (0.3 + rnd() * 0.45), y });
+  }
+  for (let i = 0; i < steps; i++) bar(k, on(path[i].across, path[i].y), on(path[i + 1].across, path[i + 1].y), 0.12, paint);
+  // A fork off one of the kinks, out and down to the side it kinked toward.
+  const fork = path[2 + Math.floor(rnd() * 2)];
+  const out = Math.sign(fork.across) || 1;
+  const knee = { across: fork.across + out * 0.55, y: fork.y - 0.6 };
+  const tip = { across: knee.across - out * 0.25, y: knee.y - 0.7 };
+  bar(k, on(fork.across, fork.y), on(knee.across, knee.y), 0.09, paint);
+  bar(k, on(knee.across, knee.y), on(tip.across, tip.y), 0.07, paint);
+}
+
+/**
+ * Cord whipped tight round a grip or shaft, in the rarity colour, the turns showing: how a weapon shows its
+ * rarity, on the stuff of a ship rather than on a gem. Along y, `len` long, centred at `at`.
+ */
+function whipping(k: Kit, at: V3, r: number, len: number) {
+  k.cyl(r, r, len, 6, k.a, { at });
+  const turns = Math.max(2, Math.round(len / 0.6));
+  for (let i = 1; i < turns; i++) k.cyl(r + 0.05, r + 0.05, 0.14, 6, k.s, { at: [at[0], at[1] - len / 2 + (i * len) / turns, at[2]] });
+}
+
+/**
+ * A sword knot: a loop of cord from the pommel at `at`, a knot and a tassel, in the rarity colour. Built fast to
+ * the hilt, not as a dangle: soldiers and bandits carry these swords too, and a knot left swinging after a fall
+ * would keep one who got up from standing as one never knocked down (see ragdoll.test.ts).
+ */
+function swordKnot(k: Kit, at: V3) {
+  const [x, y, z] = at;
+  k.rod([[x, y, z], [x + 0.75, y - 1.4, z + 0.2], [x + 0.5, y - 2.6, z]], 0.2, k.a, {}, 4);
+  k.ball(0.45, k.s, { at: [x + 0.5, y - 2.8, z] });
+  k.cyl(0.25, 0.7, 1.6, 6, k.a, { at: [x + 0.5, y - 3.8, z] });
+}
+
+/** A midshipman's dirk, its grip at the origin: a short straight blade, a small brass cross, an ivory grip banded in the trim, a capped pommel. */
+function dirk(k: Kit) {
+  k.hull(bladePoints(9, 1.7, 0.7, 3, 3), C.steel);
+  k.box(4.4, 0.8, 1.3, C.gold, { at: [0, 2.7, 0] }, 0.25);
+  for (const x of [-2.3, 2.3]) k.ball(0.55, C.gold, { at: [x, 2.7, 0] });
+  k.cyl(0.55, 0.6, 3.4, 6, C.bone, { at: [0, 0.5, 0] });
+  k.ball(0.95, C.gold, { at: [0, -1.6, 0] });
+  for (const y of [-0.6, 1.6]) k.cyl(0.66, 0.66, 0.4, 6, k.a, { at: [0, y, 0] });
 }
 
 /** A gaff hook, its collar at the origin: a bound wooden grip, a steel shank curling over into a barbed point toward +x. */
@@ -205,71 +284,76 @@ function gaffHook(k: Kit) {
   k.cone(0.25, 1.1, 4, C.steel, { at: [4.6, 3.9, 0], rot: [0, 0, -0.6] });
 }
 
-/** A cone pointing out from `centre` along `dir`, its base `out` from the centre: a spike on a ball. */
-function spike(k: Kit, centre: V3, dir: THREE.Vector3, out: number, r: number, h: number, paint: Paint) {
-  const d = dir.clone().normalize();
-  const turn = new THREE.Euler().setFromQuaternion(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), d));
-  k.cone(r, h, 4, paint, { at: [centre[0] + d.x * (out + h / 2), centre[1] + d.y * (out + h / 2), centre[2] + d.z * (out + h / 2)], rot: [turn.x, turn.y, turn.z] });
-}
-
-/** One boot, toe toward +z. */
-/** The ballast flail: the haft, and the chain and ball, which hang loose (`loose`: in a hand, a straight chain that swings). */
+/**
+ * The chainshot flail: a short haft, and from its iron cap three chains of different lengths, each with a small
+ * cannon ball on its end, which hang loose (`loose`: in a hand, straight chains that swing, each on its own).
+ */
 function flail(k: Kit, loose: boolean) {
   k.cyl(0.6, 0.7, 10, 6, C.wood, { at: [0, -1, 0] });
-  k.cyl(0.8, 0.8, 3, 6, C.leather, { at: [0, -3.8, 0] });
+  whipping(k, [0, -3.8, 0], 0.8, 3);
   k.ball(0.85, C.gold, { at: [0, -6.4, 0] });
   k.cyl(0.95, 0.85, 1.2, 6, k.a, { at: [0, 4.4, 0] });
-  k.ring(0.7, 0.22, C.iron, { at: [0, 5.5, 0], rot: [0, Math.PI / 2, 0] }, 4, 8);
-  const ball: V3 = [5.9, 3.4, 0];
-  const pivot: V3 = [0, 6.1, 0];
+  k.cyl(0.75, 0.95, 0.9, 6, C.iron, { at: [0, 5.4, 0] });
+  // A spider of three short iron arms on the cap, a ring on each, so the chains hang apart.
+  const arm = (a: number): V3 => [Math.cos(a) * 1.3, 6.3, Math.sin(a) * 1.3];
+  for (const a of [0, (Math.PI * 2) / 3, (Math.PI * 4) / 3]) {
+    const [x, y, z] = arm(a);
+    k.rod([[0, 5.7, 0], [x * 0.6, 6.1, z * 0.6], [x, y, z]], 0.2, C.iron, {}, 5);
+    k.ring(0.42, 0.16, C.iron, { at: [x, y + 0.2, z], rot: [0, Math.PI / 2 - a, 0] }, 4, 8);
+  }
   const links = (chain: THREE.Curve<THREE.Vector3>, n: number, last: boolean, first = 0) => {
     for (let i = 0; i <= n; i++) {
       if (i === n && !last) continue;
       const t = i / n;
       const at = chain.getPoint(t);
       const along = chain.getTangent(t);
-      const link = k.ring(0.55, 0.18, C.iron, { at: [at.x, at.y, at.z], scale: [1.5, 1, 1] }, 4, 6);
+      const link = k.ring(0.5, 0.17, C.iron, { at: [at.x, at.y, at.z], scale: [1.5, 1, 1] }, 4, 6);
       link.rotation.order = "ZYX";
       link.rotation.set((first + i) % 2 ? Math.PI / 2 : 0, 0, Math.atan2(along.y, along.x));
     }
   };
-  const head = () => {
-    k.ball(2.4, C.iron, { at: ball }, 1);
-    k.ring(2.42, 0.32, k.a, { at: ball, rot: [Math.PI / 2, 0, 0] }, 4, 16);
-    const ico = new THREE.IcosahedronGeometry(1, 0);
-    const seen = new Set<string>();
-    const p = ico.attributes.position;
-    for (let i = 0; i < p.count; i++) {
-      const d = new THREE.Vector3().fromBufferAttribute(p, i);
-      const key = d.toArray().map((n) => n.toFixed(2)).join();
-      if (seen.has(key) || Math.abs(d.y) < 0.2) continue;
-      seen.add(key);
-      spike(k, ball, d, 2.1, 0.45, 1.4, C.steel);
-    }
-    ico.dispose();
+  const R = 1.3;
+  // Each shot: where its chain hangs from, where the ball is and (for the picture) the way its chain curls over,
+  // and how long its chain is in the hand: short, middling and long, so the three hang in a staggered cluster.
+  const pivot = (a: number): V3 => {
+    const [x, y, z] = arm(a);
+    return [x, y + 0.4, z];
   };
-  const weight = { clear: { from: [0, 5.5, 0] as V3, to: [0, -7, 0] as V3, r: 3 }, size: 3 };
-  if (!loose) {
-    // The picture: one chain curled over from the ring to the ball.
-    k.dangle(pivot, ball, () => {
-      links(new THREE.CatmullRomCurve3([v3(pivot), v3([1.6, 7.6, 0]), v3([3.7, 7.6, 0]), v3([5.3, 6.1, 0])]), 7, true);
-      head();
-    }, weight);
-    return;
+  const shots: { pivot: V3; ball: V3; curl: V3[]; hang: number }[] = [
+    { pivot: pivot(0), ball: [5.4, 4.9, 0.6], curl: [[2.6, 8.1, 0.3], [4.1, 7.9, 0.5], [5.3, 6.3, 0.6]], hang: 1.6 },
+    { pivot: pivot((Math.PI * 4) / 3), ball: [3.2, 0.9, -0.9], curl: [[0.4, 7.6, -1.1], [2.3, 5.9, -1], [3.2, 2.3, -0.9]], hang: 3.0 },
+    { pivot: pivot((Math.PI * 2) / 3), ball: [7.0, 1.6, 0.6], curl: [[0.6, 8.8, 1.1], [4.6, 8.9, 0.8], [6.8, 6.6, 0.6], [7.1, 3.0, 0.6]], hang: 4.4 },
+  ];
+  const shot = (at: V3) => k.ball(R, "#5b5f68", { at }, 1);
+  const weight = { clear: { from: [0, 5.5, 0] as V3, to: [0, -7, 0] as V3, r: 2.2 }, size: R };
+  for (const s of shots) {
+    if (!loose) {
+      // The picture: each chain curled over from the cap to its ball.
+      k.dangle(s.pivot, s.ball, () => {
+        links(new THREE.CatmullRomCurve3([v3(s.pivot), ...s.curl.map(v3)]), 6, true);
+        shot(s.ball);
+      }, weight);
+      continue;
+    }
+    // In hand: a straight chain `hang` long, out the way the picture's ball lies, jointed half way, so it bends as
+    // it swings; the ball on the lower half.
+    const along = v3(s.ball).sub(v3(s.pivot)).normalize();
+    const end = v3(s.pivot).addScaledVector(along, s.hang);
+    const ball = end.clone().addScaledVector(along, R * 0.95).toArray() as V3;
+    const knee = v3(s.pivot).lerp(end, 0.5);
+    const kneeAt = knee.toArray() as V3;
+    const n = Math.max(1, Math.round(s.hang / 2.2));
+    k.dangle(s.pivot, kneeAt, () => {
+      links(new THREE.LineCurve3(v3(s.pivot), knee), n, false);
+      k.dangle(kneeAt, ball, () => {
+        links(new THREE.LineCurve3(knee, end), n, true, n);
+        shot(ball);
+      }, weight);
+    }, { size: 0.6, mass: 0.25 });
   }
-  // In hand: a straight chain, jointed half way, so it bends as it swings; the ball on the lower half.
-  const end = v3(ball).lerp(v3(pivot), 2.2 / Math.hypot(ball[0] - pivot[0], ball[1] - pivot[1]));
-  const knee = v3(pivot).lerp(end, 0.5);
-  const kneeAt = knee.toArray() as V3;
-  k.dangle(pivot, kneeAt, () => {
-    links(new THREE.LineCurve3(v3(pivot), knee), 2, false);
-    k.dangle(kneeAt, ball, () => {
-      links(new THREE.LineCurve3(knee, end), 2, true, 2);
-      head();
-    }, weight);
-  }, { size: 0.6, mass: 0.25 });
 }
 
+/** One boot, toe toward +z. */
 function boot(k: Kit) {
   k.cyl(1.9, 2.1, 7, 6, C.leather, { at: [0, 2.5, 0] });
   k.box(3.8, 2.8, 7, C.leather, { at: [0, -1.5, 1.6] }, 0.9);
@@ -317,33 +401,81 @@ export const LOW_POLY: Record<string, LowPolyDef> = {
       k.hull(bladePoints(13.5, 2.7, 0.9, 3.2, 3), C.steel);
       k.box(8, 1.1, 1.6, C.gold, { at: [0, 2.7, 0] }, 0.3);
       for (const x of [-4.1, 4.1]) k.ball(0.75, C.gold, { at: [x, 2.7, 0] });
-      k.cyl(0.6, 0.65, 3.8, 6, C.bark, { at: [0, 0.3, 0] });
-      k.ball(1.15, k.a, { at: [0, -2, 0] });
+      whipping(k, [0, 0.3, 0], 0.65, 3.8);
+      k.ball(1.15, C.gold, { at: [0, -2, 0] });
+      swordKnot(k, [0, -2.9, 0]);
     },
   },
   "hammer-drop": {
+    // The Anchor Mace: a grappling iron on a stout haft. Four hooked tines spring from the crown at its head and
+    // curve out and down, their barbed points turned back up; a ring on top, a collar in the rarity colour where
+    // the iron meets the wood, a coil of line wound round the haft below it and a wrapped grip.
     lean: -0.6,
     spin: 0.6,
     build: (k) => {
-      k.cyl(0.6, 0.7, 12, 6, C.wood, { at: [0, 0, 0] });
-      k.box(8, 5, 5, C.iron, { at: [0, 7.5, 0] }, 0.8);
-      for (const x of [-4.3, 4.3]) k.cyl(2.1, 2.1, 0.8, 8, C.steel, { at: [x, 7.5, 0], rot: [0, 0, Math.PI / 2] });
-      k.gem(1.3, 2, { glow: k.a }, { at: [0, 7.5, 2.7], rot: [Math.PI / 2, 0, 0] });
-      k.cyl(0.95, 0.95, 0.8, 6, C.gold, { at: [0, 4.6, 0] });
-      k.ball(1, C.gold, { at: [0, -6.3, 0] });
+      const iron = "#4f535b";
+      const rope = "#c9b58a";
+      k.cyl(0.62, 0.72, 11, 6, C.wood, { at: [0, -0.5, 0] });
+      k.ring(0.7, 0.22, C.iron, { at: [0, -6.6, 0] }, 4, 10);
+      whipping(k, [0, -3.6, 0], 0.8, 3.4);
+      // The coil of line round the haft, and its end hanging.
+      for (let i = 0; i < 4; i++) k.ring(0.95, 0.24, rope, { at: [0, 1.0 + i * 0.42, 0], rot: [Math.PI / 2, 0, i * 0.1] }, 5, 12);
+      k.rod([[0.85, 1.0, 0.3], [1.15, 0.0, 0.4], [1.0, -1.1, 0.3]], 0.17, rope, {}, 4);
+      // The iron: a collar banded in the trim, the shank up to the crown, and a ring on top.
+      k.cyl(0.95, 0.85, 0.9, 6, iron, { at: [0, 3.5, 0] });
+      k.cyl(1.0, 1.0, 0.5, 6, k.a, { at: [0, 4.15, 0] });
+      k.cyl(0.5, 0.62, 5.2, 6, iron, { at: [0, 6.8, 0] });
+      k.ball(1.05, iron, { at: [0, 9.5, 0] });
+      k.ring(0.75, 0.24, iron, { at: [0, 10.9, 0] }, 4, 10);
+      // The tines: up and out from the crown, over, and down, each ending in an arrowhead point turned back up.
+      for (let i = 0; i < 4; i++) {
+        const a = (i / 4) * Math.PI * 2 + 0.35;
+        const [c, s] = [Math.cos(a), Math.sin(a)];
+        const at = (r: number, y: number): V3 => [c * r, y, s * r];
+        k.rod([at(0.5, 9.6), at(1.7, 10.4), at(2.9, 9.8), at(3.45, 8.2), at(3.2, 6.7)], 0.46, iron, {}, 5);
+        // The point: a flat, broad arrowhead, its tip turned up and in toward the shank.
+        const dir = new THREE.Vector3(-c * 0.3, 1, -s * 0.3).normalize();
+        const turn = new THREE.Euler().setFromQuaternion(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir));
+        const face = new THREE.Euler().setFromQuaternion(
+          new THREE.Quaternion().setFromEuler(turn).multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), -a)),
+        );
+        k.cone(0.85, 1.7, 4, C.steel, { at: at(3.05, 6.6), rot: [face.x, face.y, face.z], scale: [1, 1, 0.45] });
+      }
     },
   },
   "wizard-staff": {
+    // The Squall Staff: a straight ash staff with a rope grip, and at its head a storm glass, a brass cage round
+    // a glass with a dark squall turning inside it and lightning zapping through.
     lean: DIAG,
     build: (k) => {
-      k.cyl(0.55, 0.7, 17, 6, C.wood, { at: [0, -1.5, 0] });
-      k.cyl(0.8, 0.8, 2.6, 6, C.leather, { at: [0, -1, 0] });
-      k.cyl(1, 0.7, 1, 6, C.gold, { at: [0, 7.4, 0] });
-      for (let i = 0; i < 3; i++) {
-        const a = (i / 3) * Math.PI * 2 + 0.5;
-        k.rod([[0, 7.6, 0], [Math.cos(a) * 1.8, 9.5, Math.sin(a) * 1.8], [Math.cos(a) * 1.1, 11.6, Math.sin(a) * 1.1]], 0.3, C.gold, {}, 4);
+      const ash = "#b48d5e";
+      k.cyl(0.58, 0.68, 17.4, 6, ash, { at: [0, -1.5, 0] });
+      k.cyl(0.78, 0.62, 1, 6, C.gold, { at: [0, -10.3, 0] });
+      whipping(k, [0, -1, 0], 0.78, 3.4);
+      k.cyl(0.95, 0.78, 1, 8, C.gold, { at: [0, 6.9, 0] });
+      // The cage: a cap below and above, four bars between, and a ring to hang it by.
+      k.cyl(2.25, 2.0, 0.8, 8, C.gold, { at: [0, 7.7, 0] });
+      k.cyl(2.0, 2.25, 0.8, 8, C.gold, { at: [0, 13.7, 0] });
+      k.cone(1.6, 1.3, 8, C.gold, { at: [0, 14.75, 0] });
+      k.ring(0.6, 0.18, C.gold, { at: [0, 15.75, 0] }, 4, 10);
+      for (let i = 0; i < 4; i++) {
+        const t = (i / 4) * Math.PI * 2 + Math.PI / 4;
+        k.cyl(0.2, 0.2, 5.6, 4, C.gold, { at: [Math.cos(t) * 1.95, 10.7, Math.sin(t) * 1.95] });
       }
-      k.gem(1.5, 3.8, { glow: k.a }, { at: [0, 10.2, 0] });
+      // Glints on the glass, between the bars.
+      for (const t of [0.25, Math.PI - 0.25]) k.box(0.14, 4.2, 0.14, C.shine, { at: [Math.sin(t) * 1.8, 10.9, Math.cos(t) * 1.8] });
+      // The squall: dark storm cloud filling the glass and swirling round in it, lightning forking down through it.
+      k.spin([0, 10.7, 0], [0, 1, 0], () => {
+        for (let i = 0; i < 7; i++) {
+          const t = i * 2.4;
+          const y = 8.6 + i * 0.7;
+          k.ball(1.05 + (i % 2) * 0.15, ["#46505e", "#5b6574", "#6f7a8a"][i % 3], { at: [Math.cos(t) * 0.55, y, Math.sin(t) * 0.55] }, 1);
+        }
+      });
+      // Lightning zapping through it: a different fork each flash, round the glass, now here, now there, now none.
+      for (const [turn, seed] of [[0, 11], [1.7, 47], [-1.4, 83], [3.0, 131], [0.6, 197]] as const) {
+        k.flicker(() => lightning(k, turn, 1.75, 13.0, 8.4, seed, { glow: "#eefaff" }));
+      }
     },
   },
   "scroll-unfurled": {
@@ -389,7 +521,8 @@ export const LOW_POLY: Record<string, LowPolyDef> = {
       k.rod([[0, 7, 0], [-1.6, 8.5, 0.5], [-2.5, 10.5, 0], [-1.3, 12.2, 0]], 0.45, C.wood, {}, 5);
       k.rod([[0, 7, 0], [1.5, 9, -0.3], [2.3, 11, 0.2], [1.2, 12.7, 0.4]], 0.45, C.bark, {}, 5);
       k.rod([[0, 7, 0], [0.2, 9.5, 0.9], [-0.3, 11.8, 0.5]], 0.4, C.bark, {}, 5);
-      k.ball(1.4, { glow: k.a }, { at: [0, 10.4, 0] });
+      k.ball(1.4, "#8d8f86", { at: [0, 10.4, 0] });
+      whipping(k, [0, 6.4, 0], 0.85, 1.6);
       k.add(new THREE.OctahedronGeometry(1), "#a6d06a", { at: [2.3, 4.6, 0.2], rot: [0, 0, -0.9], scale: [1.2, 2.1, 0.35] });
       k.add(new THREE.OctahedronGeometry(1), "#7fae4a", { at: [-1.9, 1.4, 0], rot: [0, 0, 0.8], scale: [1, 1.8, 0.3] });
     },
@@ -434,17 +567,50 @@ export const LOW_POLY: Record<string, LowPolyDef> = {
       for (const y of [1.6, -0.2, -2, -3.8, -5.6]) k.cyl(0.36, 0.36, 0.3, 6, C.dark, { at: [0, y, 0.78], rot: [Math.PI / 2, 0, 0] });
     },
   },
+  accordion: {
+    // A squeeze box, built along its length (y), the top edge toward -x: a lacquered end board at each end, the
+    // treble one keyed on its face and the bass one studded with buttons, pleated bellows between and a strap
+    // along the top in the rarity colour. Laid on its side in the picture; held by an end board in each hand.
+    lean: -Math.PI / 2,
+    spin: 0.35,
+    tip: 0.15,
+    build: (k) => {
+      const lacquer = "#b8333a";
+      for (const s of [-1, 1]) {
+        k.box(7.4, 2.2, 4.6, lacquer, { at: [0, s * 6.4, 0] }, 0.3);
+        k.box(7.6, 0.35, 4.8, C.gold, { at: [0, s * 7.6, 0] }, 0.1);
+      }
+      // The bellows: folds standing out pale, and the dark between them.
+      for (let i = 0; i <= 20; i++) {
+        const y = -5 + i * 0.5;
+        if (i % 2 === 0) k.box(6.9, 0.32, 4.3, C.paper, { at: [0, y, 0] }, 0.08);
+        else k.box(6.2, 0.5, 3.7, C.dark, { at: [0, y, 0] });
+      }
+      // The treble keys, white with the black among them, and the bass buttons.
+      for (let i = 0; i < 7; i++) k.box(0.8, 1.6, 0.35, C.bone, { at: [-2.7 + i * 0.9, -6.5, 2.42] }, 0.06);
+      for (const i of [0, 1, 3, 4, 5]) k.box(0.45, 0.9, 0.3, C.dark, { at: [-2.25 + i * 0.9, -6.1, 2.66] });
+      for (const x of [-2.1, -0.7, 0.7, 2.1]) for (const y of [5.9, 6.9]) k.cyl(0.32, 0.32, 0.3, 6, C.shine, { at: [x, y, 2.42], rot: [Math.PI / 2, 0, 0] });
+      k.box(0.5, 10.6, 1.6, k.a, { at: [-3.95, 0, -1.1] }, 0.1);
+    },
+  },
   orb: {
     lean: -0.2,
     build: (k) => {
-      k.add(new THREE.IcosahedronGeometry(4.6, 1), { glow: k.a }, { at: [0, 3.6, 0] });
-      k.ball(0.9, C.shine, { at: [-1.7, 5.3, 3.8] });
-      for (let i = 0; i < 4; i++) {
-        const a = (i / 4) * Math.PI * 2 + Math.PI / 4;
-        k.rod([[0, -1.5, 0], [Math.cos(a) * 2.6, 0, Math.sin(a) * 2.6], [Math.cos(a) * 3.8, 2.4, Math.sin(a) * 3.8]], 0.35, C.gold, {}, 4);
-      }
+      // An armillary sphere: a fixed brass frame (a meridian and a horizon ring) round a brass globe on the axis
+      // rod, and inside it two rings that turn about the rod on their own (see Kit.spin), lagging as the hand turns;
+      // the tilted one enamelled in the rarity colour.
+      k.ball(1.6, C.gold, { at: [0, 3.6, 0] }, 1);
+      k.rod([[0, -1.2, 0], [0, 8.6, 0]], 0.22, C.gold, {}, 6);
+      k.ball(0.45, C.gold, { at: [0, 8.8, 0] });
+      k.ring(4.6, 0.34, C.gold, { at: [0, 3.6, 0] }, 6, 20);
+      k.ring(4.6, 0.3, C.gold, { at: [0, 3.6, 0], rot: [Math.PI / 2, 0, 0] }, 6, 20);
+      k.spin([0, 3.6, 0], [0, 1, 0], () => {
+        k.ring(3.9, 0.3, C.gold, { at: [0, 3.6, 0], rot: [0, Math.PI / 2, 0] }, 6, 20);
+        k.ring(3.4, 0.34, k.a, { at: [0, 3.6, 0], rot: [Math.PI / 2, 0, 0.45] }, 6, 18);
+      });
       k.cyl(1.4, 0.9, 1.2, 6, C.gold, { at: [0, -1.5, 0] });
       k.cyl(0.7, 0.8, 6, 6, C.wood, { at: [0, -5, 0] });
+      whipping(k, [0, -5, 0], 0.82, 3);
       k.ball(0.85, C.gold, { at: [0, -8.2, 0] });
     },
   },
@@ -453,12 +619,14 @@ export const LOW_POLY: Record<string, LowPolyDef> = {
     build: (k) => {
       k.cyl(0.55, 0.65, 13, 6, C.gold, { at: [0, -3, 0] });
       for (const y of [-9.6, -2.2]) k.cyl(0.9, 0.9, 0.6, 6, "#b8891f", { at: [0, y, 0] });
+      whipping(k, [0, -5.9, 0], 0.7, 3.6);
+      k.cyl(3, 3, 0.6, 6, k.a, { at: [0, 5, 0] });
       k.lathe([[0, 3.2], [1.6, 3.6], [2.6, 5], [2.4, 6.6], [1.4, 7.5], [0, 7.8]], 6, C.gold);
       for (let i = 0; i < 6; i++) {
         const a = (i / 6) * Math.PI * 2;
         k.cone(0.4, 1.4, 4, C.gold, { at: [Math.cos(a) * 1.9, 7.7, Math.sin(a) * 1.9] });
       }
-      k.gem(1.4, 2.9, { glow: k.a }, { at: [0, 9, 0] });
+      k.ball(1.45, "#7f9c96", { at: [0, 8.6, 0], scale: [1, 1.2, 1] });
     },
   },
   "pager-axe": {
@@ -475,26 +643,46 @@ export const LOW_POLY: Record<string, LowPolyDef> = {
     },
   },
   maul: {
+    // A ship's anchor swung upside down, rusted and hung with weed: gripped low on a broad flat shank, the eye
+    // and a length of chain under the fist, and up top a pointed crown whose arms spread in a wide, shallow arc
+    // to big barbed flukes. Rope wound round the grip, banded in the accent.
     lean: DIAG,
     spin: 0.5,
     build: (k) => {
-      k.cyl(0.6, 0.7, 18, 6, C.wood, { at: [0, -2.5, 0] });
-      k.cyl(0.85, 0.85, 4, 6, C.leather, { at: [0, -9, 0] });
-      k.ball(0.9, C.iron, { at: [0, -11.6, 0] });
-      k.box(8, 5, 5, C.iron, { at: [0, 8.5, 0] }, 0.7);
-      for (const x of [-4.2, 4.2]) k.box(0.6, 4, 4, C.steel, { at: [x, 8.5, 0] }, 0.3);
-      k.box(2, 5.4, 5.4, k.a, { at: [0, 8.5, 0] }, 0.3);
+      const rust = "#7a4b34";
+      const dark = "#5a3626";
+      const weed = "#6f6a2c";
+      k.box(1.7, 18, 1.1, rust, { at: [0, -1.2, 0] }, 0.25);
+      k.cyl(1.15, 1.15, 3.6, 6, C.leather, { at: [0, -9, 0] });
+      k.cyl(1.2, 1.2, 0.6, 6, k.a, { at: [0, -7, 0] });
+      k.ring(1.45, 0.42, dark, { at: [0, -12.5, 0] }, 6, 10);
+      k.ring(0.75, 0.22, C.iron, { at: [0, -14.6, 0], rot: [0, Math.PI / 2, 0] }, 4, 8);
+      k.ring(0.75, 0.22, C.iron, { at: [0, -15.9, 0] }, 4, 8);
+      // The crown and arms: one broad crescent, pointed at the top.
+      k.plate([[-6.9, 6.7], [-5.4, 8.5], [-3, 9.6], [0, 11], [3, 9.6], [5.4, 8.5], [6.9, 6.7], [6, 6.1], [4.6, 7.3], [2.6, 8.1], [0.9, 8.3], [-0.9, 8.3], [-2.6, 8.1], [-4.6, 7.3], [-6, 6.1]], 1.4, rust, {}, 0.3);
+      for (const s of [-1, 1]) {
+        // A fluke: a spade on the arm's end, its point down toward the fist and a barb out to the side.
+        const f: [number, number][] = [[5.3, 7.3], [6.8, 8.2], [9, 7.8], [7.8, 6.6], [6.6, 3.5]];
+        k.plate(s > 0 ? f : f.map(([x, y]) => [-x, y] as [number, number]).reverse(), 0.9, dark, {}, 0.2);
+      }
+      // Weed hanging off the arms and wound round the shank.
+      for (const [x, z] of [[2.6, 0.8], [-4.4, -0.75], [5.6, 0.6]]) {
+        k.rod([[x, 9.2 - Math.abs(x) * 0.25, z], [x + 0.3, 7, z * 1.1], [x - 0.2, 5.2, z], [x + 0.2, 4, z * 0.9]], 0.18, weed, {}, 4);
+      }
+      k.rod([[0.95, 6, 0.7], [-0.95, 4.6, 0.7], [-0.95, 4, -0.7], [0.95, 2.6, -0.7], [0.95, 2, 0.7], [-0.6, 0.6, 0.75], [-0.3, -1.4, 0.8]], 0.2, weed, {}, 4);
     },
   },
   grimoire: {
-    // A dark book, clasped, with a glowing sigil on the cover.
+    // A dark book, clasped and strapped, a brass boss on the cover and a ribbon marker hanging out.
     spin: 0.55,
     tip: 0.25,
     lean: 0.12,
     build: (k) => {
       book(k, "#2e2440", "#3a2a4a", C.iron);
-      k.ring(2.5, 0.35, { glow: k.a }, { at: [0.4, 0.6, 2.05] }, 4, 10);
-      k.gem(0.9, 1.8, { glow: k.a }, { at: [0.4, 0.6, 2.2] });
+      k.ring(2.5, 0.35, C.gold, { at: [0.4, 0.6, 2.05] }, 4, 10);
+      k.cyl(1, 1, 0.4, 8, C.gold, { at: [0.4, 0.6, 2.1], rot: [Math.PI / 2, 0, 0] });
+      k.box(1.1, 4.2, 0.12, k.a, { at: [1.8, -7.6, 0.3], rot: [0, 0, 0.15] });
+      k.box(10.6, 1.3, 4.5, k.a, { at: [0, -2.6, 0] }, 0.1);
       k.box(2.2, 2.4, 4.4, C.gold, { at: [5.3, 0, 0] }, 0.3);
     },
   },
@@ -508,8 +696,9 @@ export const LOW_POLY: Record<string, LowPolyDef> = {
       k.box(0.5, 9, 0.2, C.shine, { at: [-0.9, 8, 0.4], rot: [0, 0, 0.14] });
       k.cyl(2.1, 1.7, 0.6, 10, C.gold, { at: [0.3, 2.7, 0] });
       k.rod([[2.0, 2.6, 0], [3.0, 0.9, 0], [2.6, -1.3, 0], [0.5, -2.1, 0]], 0.38, C.gold, {}, 5);
-      k.cyl(0.62, 0.68, 3.8, 6, C.bark, { at: [0, 0.3, 0] });
-      k.ball(1.1, k.a, { at: [0, -2.1, 0] });
+      whipping(k, [0, 0.3, 0], 0.68, 3.8);
+      k.ball(1.1, C.gold, { at: [0, -2.1, 0] });
+      swordKnot(k, [0, -2.9, 0]);
     },
   },
   sabre: {
@@ -522,7 +711,8 @@ export const LOW_POLY: Record<string, LowPolyDef> = {
       k.rod([[2.2, 2.7, 0], [2.9, 1.0, 0], [2.4, -1.3, 0], [0.4, -2.2, 0]], 0.26, C.gold, {}, 5);
       k.cyl(0.55, 0.6, 4, 6, C.dark, { at: [0, 0.3, 0] });
       for (const y of [-0.7, 0.3, 1.3]) k.cyl(0.66, 0.66, 0.22, 6, C.gold, { at: [0, y, 0] });
-      k.ball(0.95, k.a, { at: [0, -2.2, 0] });
+      k.ball(0.95, C.gold, { at: [0, -2.2, 0] });
+      swordKnot(k, [0, -3, 0]);
     },
   },
   rapier: {
@@ -534,29 +724,32 @@ export const LOW_POLY: Record<string, LowPolyDef> = {
       k.box(7, 0.5, 0.6, C.gold, { at: [0, 2.3, 0] }, 0.15);
       for (const x of [-3.6, 3.6]) k.ball(0.5, C.gold, { at: [x, 2.3, 0] });
       k.rod([[2.0, 2.3, 0], [2.6, 0.7, 0], [2.1, -1.4, 0], [0.4, -2.2, 0]], 0.24, C.gold, {}, 5);
-      k.cyl(0.5, 0.55, 3.8, 6, C.bark, { at: [0, 0.2, 0] });
-      k.ball(0.95, k.a, { at: [0, -2.2, 0] });
+      whipping(k, [0, 0.2, 0], 0.55, 3.8);
+      k.ball(0.95, C.gold, { at: [0, -2.2, 0] });
+      swordKnot(k, [0, -3, 0]);
     },
   },
   dirk: {
-    // A midshipman's dirk: a short straight blade, a small brass cross, an ivory grip and a capped pommel.
+    // A midshipman's dirk, alone: the knife a Rogue's archer draws for close work (see figures.ts).
     lean: DIAG,
     pad: 0.25,
+    build: dirk,
+  },
+  dirks: {
+    // The Rogue's Twin Gutting Knives: a pair of dirks, crossed at the guards.
+    spin: 0.3,
+    inHand: dirk,
     build: (k) => {
-      k.hull(bladePoints(9, 1.7, 0.7, 3, 3), C.steel);
-      k.box(4.4, 0.8, 1.3, C.gold, { at: [0, 2.7, 0] }, 0.25);
-      for (const x of [-2.3, 2.3]) k.ball(0.55, C.gold, { at: [x, 2.7, 0] });
-      k.cyl(0.55, 0.6, 3.4, 6, C.bone, { at: [0, 0.5, 0] });
-      k.ball(0.95, k.a, { at: [0, -1.6, 0] });
+      for (const s of [-1, 1]) k.within({ at: [0, 0, s * 0.5], rot: [0, 0, -s * 0.62] }, () => k.within({ at: [0, -2.7, 0] }, () => dirk(k)));
     },
   },
   // ---- guns and the crossbow: the barrel up the model, muzzle at the top. A gun's grip and stock fall away
-  // toward -x, so the picture shows it side on; the crossbow's top is toward +z, so the picture looks down on
+  // toward -x, so the picture shows it side on (turned half round, so the stock hangs underneath, not above); the crossbow's top is toward +z, so the picture looks down on
   // its bow. In the hand they are turned to point ahead (see GUN and BOLT in figures.ts).
   pistol: {
     // A flintlock: an iron barrel on a walnut stock, a curved grip with a capped butt, a cock and a brass guard.
     lean: -0.7,
-    spin: 0.25,
+    spin: Math.PI + 0.25,
     build: (k) => {
       k.cyl(0.75, 0.9, 9.5, 8, C.iron, { at: [0, 3.2, 0] });
       k.cyl(1.0, 1.0, 0.6, 8, C.steel, { at: [0, 7.7, 0] });
@@ -564,7 +757,7 @@ export const LOW_POLY: Record<string, LowPolyDef> = {
       k.box(1.6, 8, 1.5, C.wood, { at: [-0.95, 1.6, 0] }, 0.35);
       k.box(2.2, 2.6, 1.9, C.iron, { at: [-0.3, -2.4, 0] }, 0.35);
       k.rod([[-0.7, -3, 0], [-2.2, -4.8, 0], [-3.4, -7.2, 0]], 1.0, C.wood, {}, 6);
-      k.ball(1.2, k.a, { at: [-3.6, -7.7, 0] });
+      k.ball(1.2, C.gold, { at: [-3.6, -7.7, 0] });
       k.box(0.6, 1.9, 0.5, C.steel, { at: [1.0, -1.7, 0], rot: [0, 0, -0.55] });
       k.box(0.5, 0.7, 0.45, C.paper, { at: [1.5, -0.8, 0] });
       k.ring(1.0, 0.2, C.gold, { at: [-2.1, -3, 0] }, 4, 12);
@@ -574,7 +767,7 @@ export const LOW_POLY: Record<string, LowPolyDef> = {
   blunderbuss: {
     // A short, fat gun with a brass barrel belled out at the muzzle, a heavy stock and an iron butt plate.
     lean: DIAG,
-    spin: 0.25,
+    spin: Math.PI + 0.25,
     build: (k) => {
       const brass = "#c99a3a";
       k.lathe([[1.0, -4], [1.0, 4.5], [1.3, 7], [2.5, 9.6], [2.8, 10]], 10, brass);
@@ -594,7 +787,7 @@ export const LOW_POLY: Record<string, LowPolyDef> = {
     // A whaler's gun: a stout iron tube with a barbed harpoon standing out of it, a coil of line at its side,
     // a winding handle and a pistol grip.
     lean: DIAG,
-    spin: 0.25,
+    spin: Math.PI + 0.25,
     build: (k) => {
       const rope = "#c9b58a";
       k.cyl(1.15, 1.3, 9, 8, C.iron, { at: [0, 0, 0] });
@@ -641,21 +834,86 @@ export const LOW_POLY: Record<string, LowPolyDef> = {
     },
   },
   "void-staff": {
-    // A black staff with a hollow ring at the head and a spark inside it.
+    // The Undertow Staff: a snapped length of drowned mast, black and waterlogged, barnacled and hung with weed,
+    // a rusted iron band and a frayed stub of rigging round it, and over the broken top a whirlpool of dark water
+    // funnelling down into the wood, turning on its own in the hand.
     lean: DIAG,
+    tip: 0.45,
     build: (k) => {
-      k.cyl(0.55, 0.7, 17, 6, C.dark, { at: [0, -1.5, 0] });
-      for (const y of [-8.4, 0]) k.cyl(0.8, 0.8, 1, 6, "#4a3a6a", { at: [0, y, 0] });
-      k.cyl(0.6, 1.1, 1.6, 6, C.dark, { at: [0, 7.4, 0] });
-      k.ring(2.9, 0.6, C.dark, { at: [0, 10.6, 0] }, 5, 10);
-      k.gem(1.15, 2.3, { glow: k.a }, { at: [0, 10.6, 0] });
-      k.gem(0.5, 1, { glow: C.shine }, { at: [0, 10.6, 0.6], rot: [0, 0, Math.PI / 2] });
+      const wet = "#2c3236";
+      const rust = "#7a4b34";
+      const weed = "#4a6a3c";
+      // Long, and gripped low (see HOLD in figures.ts), so the whirlpool rides up clear of a hat's brim.
+      k.rod([[0, -12.6, 0], [0.2, -8, 0.1], [0.25, -5, 0.1], [-0.15, 0, -0.1], [0.2, 4, 0.1], [0, 8, 0]], 0.72, wet, {}, 7);
+      k.cyl(0.8, 0.62, 0.8, 6, C.iron, { at: [0, -12.8, 0] });
+      whipping(k, [0.1, -6, 0.05], 0.86, 3);
+      // The broken top: splinters standing up at odd heights round the snap.
+      for (const [a, h, r] of [[0, 1.6, 0.32], [1.3, 0.9, 0.28], [2.5, 1.3, 0.3], [3.8, 0.7, 0.26], [5.0, 1.1, 0.28]] as const) {
+        k.cone(r, h, 4, wet, { at: [Math.cos(a) * 0.42, 8 + h / 2, Math.sin(a) * 0.42], rot: [Math.sin(a) * 0.15, 0, -Math.cos(a) * 0.15] });
+      }
+      // A rusted mast band, its rivets standing out, and under it a stub of rigging wound round and frayed.
+      k.cyl(0.92, 0.92, 0.9, 7, rust, { at: [0.1, 5.6, 0.05] });
+      for (let i = 0; i < 4; i++) {
+        const a = (i / 4) * Math.PI * 2 + 0.4;
+        k.ball(0.17, "#5a3626", { at: [0.1 + Math.cos(a) * 0.95, 5.6, 0.05 + Math.sin(a) * 0.95] });
+      }
+      whipping(k, [0.15, 4.2, 0.08], 0.86, 1.4);
+      k.rod([[0.95, 4.0, 0.3], [1.35, 2.9, 0.45], [1.25, 1.7, 0.4]], 0.2, k.a, {}, 4);
+      for (const [dx, dz] of [[-0.25, 0.1], [0.05, 0.25], [0.3, -0.05]] as const) k.rod([[1.25, 1.7, 0.4], [1.25 + dx, 1.0, 0.4 + dz]], 0.07, k.a, {}, 3);
+      // Barnacles in clusters, and weed hanging off the band and the wood.
+      for (const [y, a, r] of [[2.2, 0.3, 0.34], [2.6, 0.9, 0.26], [-4.6, 2.6, 0.32], [-4.1, 3.1, 0.24], [-6.8, 4.4, 0.3], [6.8, 4.0, 0.26]] as const) {
+        k.cone(r, r * 1.1, 5, "#cfc6b0", { at: [Math.cos(a) * 0.72, y, Math.sin(a) * 0.72], rot: [Math.sin(a) * 1.5, 0, -Math.cos(a) * 1.5] });
+      }
+      for (const [a, len] of [[2.2, 3.4], [4.6, 2.4]] as const) {
+        const [x, z] = [Math.cos(a) * 0.95, Math.sin(a) * 0.95];
+        k.rod([[x, 5.3, z], [x * 1.15 + 0.2, 4.3, z * 1.15], [x * 1.1 - 0.15, 5.3 - len * 0.6, z * 1.1], [x * 1.2, 5.3 - len, z * 1.2]], 0.15, weed, {}, 4);
+      }
+      // The whirlpool: a funnel of water over the snap, dark underneath and bright green-blue on its face, foam
+      // spiralling round and down into a throat with a glint of the deep in it, froth broken round the rim, and the
+      // water drawn on down round the mast. It turns, so the foam goes round and down. Kept narrow (`W`).
+      const W = 0.82;
+      const ring = (pts: [number, number][]) => pts.map(([r, y]) => [r * W, y] as [number, number]);
+      k.spin([0, 10.2, 0], [0, 1, 0], () => {
+        k.lathe(ring([[0.25, 8.9], [0.9, 9.4], [1.7, 10.0], [2.5, 10.7], [2.95, 11.2], [2.8, 11.4], [1.9, 10.9], [1.0, 10.2], [0.3, 9.6]]), 12, "#1f4d58");
+        // The face of the water, bright, a skin over the funnel's upper side (rising from (0.3, 9.6) to (2.8, 11.4)).
+        k.lathe(ring([[0.3, 9.66], [2.86, 11.5], [2.8, 11.58], [0.28, 9.74]]), 14, "#3f9aa5");
+        const face = (r: number) => 9.6 + (r - 0.3) * 0.72;
+        for (let arm = 0; arm < 4; arm++) {
+          const pts: V3[] = [];
+          for (let i = 0; i <= 7; i++) {
+            const t = i / 7;
+            // Wound so that, turning the way the whirlpool does, the foam seems drawn in and down to the throat.
+            const a = arm * (Math.PI / 2) - t * 2.8;
+            const r = 2.7 - t * 2.3;
+            pts.push([Math.cos(a) * r * W, face(r) + 0.2, Math.sin(a) * r * W]);
+          }
+          k.rod(pts, 0.17 - (arm % 2) * 0.05, "#eaf7f7", {}, 5);
+        }
+        k.ball(0.3, { glow: "#6ff0e0" }, { at: [0, 9.3, 0] });
+        // Water drawn down out of the throat and wound round and round the mast, a thread of foam beside it. It
+        // climbs as it goes round the way the whirlpool turns, so as it turns the water seems to run down.
+        for (const [r, thick, color, lag] of [[1.0, 0.15, "#3f9aa5", 0], [1.02, 0.07, "#eaf7f7", 0.5]] as const) {
+          const pts: V3[] = [];
+          for (let i = 0; i <= 30; i++) {
+            const t = i / 30;
+            const a = lag + t * Math.PI * 2 * 2.5;
+            pts.push([Math.cos(a) * r, 3.2 + t * 5.6, Math.sin(a) * r]);
+          }
+          k.rod(pts, thick, color, {}, 4);
+        }
+        // Froth round the rim, in clumps.
+        for (let i = 0; i < 9; i++) {
+          const a = (i / 9) * Math.PI * 2 + (i % 3) * 0.12;
+          const r = 0.22 + ((i * 7) % 5) * 0.04;
+          k.ball(r, "#eaf7f7", { at: [Math.cos(a) * 2.85 * W, 11.55, Math.sin(a) * 2.85 * W], scale: [1, 0.7, 1] });
+        }
+      }, 2.2);
     },
   },
 
   // ---- signature weapons: each class's own, dropped by lairs and bosses ----
   "ballast-flail": {
-    // A short haft, and on a chain from its head a spiked iron ballast ball banded in the trim.
+    // The Chainshot Flail: a short haft, and on three chains from its cap three small iron cannon balls.
     lean: -0.35,
     spin: 0.4,
     build: (k) => flail(k, false),
@@ -667,13 +925,13 @@ export const LOW_POLY: Record<string, LowPolyDef> = {
     lean: DIAG,
     build: (k) => {
       k.cyl(0.55, 0.7, 17, 6, C.wood, { at: [0, -1.5, 0] });
-      k.cyl(0.8, 0.8, 2.6, 6, C.leather, { at: [0, -1, 0] });
+      whipping(k, [0, -1, 0], 0.8, 2.6);
       k.cyl(0.78, 0.6, 0.9, 6, C.iron, { at: [0, -9.6, 0] });
       const face: Place["rot"] = [Math.PI / 2, 0, 0];
       k.cyl(2, 2, 0.7, 12, C.gold, { at: [0, 3.6, 0.5], rot: face });
       k.cyl(1.6, 1.6, 0.3, 12, C.paper, { at: [0, 3.6, 0.85], rot: face });
       k.box(0.25, 1.4, 0.12, C.dark, { at: [0.3, 4.1, 1.05], rot: [0, 0, -0.5] });
-      k.ball(0.28, k.a, { at: [0, 3.6, 1.1] });
+      k.ball(0.28, C.dark, { at: [0, 3.6, 1.1] });
       for (const y of [7.4, 11.6]) k.cyl(1.2, 1.2, 0.7, 8, C.gold, { at: [0, y, 0] });
       k.cyl(0.8, 0.8, 3.6, 8, { glow: "#8fd3ff" }, { at: [0, 9.5, 0] });
       for (let i = 0; i < 3; i++) {
@@ -681,7 +939,7 @@ export const LOW_POLY: Record<string, LowPolyDef> = {
         k.cyl(0.18, 0.18, 4.2, 4, C.gold, { at: [Math.cos(a) * 1.05, 9.5, Math.sin(a) * 1.05] });
       }
       k.cone(1.1, 1.6, 6, C.gold, { at: [0, 12.75, 0] });
-      k.gem(0.9, 1.9, { glow: k.a }, { at: [0, 14.2, 0] });
+      k.ball(0.75, C.gold, { at: [0, 13.9, 0] });
     },
   },
   "gaff-hook": {
@@ -694,7 +952,7 @@ export const LOW_POLY: Record<string, LowPolyDef> = {
     },
   },
   "coral-staff": {
-    // Bleached driftwood, crowned with branching coral round a glowing pearl, barnacles on the shaft.
+    // Bleached driftwood, crowned with branching coral round a pearl, barnacles on the shaft.
     lean: DIAG,
     build: (k) => {
       const drift = "#c2a785";
@@ -714,7 +972,8 @@ export const LOW_POLY: Record<string, LowPolyDef> = {
         k.rod(b, 0.58, coral, {}, 5);
         k.ball(0.68, tips, { at: b[b.length - 1] });
       }
-      k.ball(1.55, { glow: k.a }, { at: [0, 10.3, 0.4] }, 1);
+      k.ball(1.4, "#efe6d4", { at: [0, 10.3, 0.4] }, 1);
+      whipping(k, [-0.3, -1.2, 0.05], 0.98, 3);
     },
   },
   "ships-bell": {
@@ -724,12 +983,12 @@ export const LOW_POLY: Record<string, LowPolyDef> = {
     build: (k) => {
       k.lathe([[0, -4.6], [3.4, -4.6], [3.6, -4.1], [3.2, -3.5], [2.6, -1], [2.2, 1.4], [1.6, 2.6], [0, 3]], 10, C.gold);
       k.cyl(3.15, 3.15, 0.1, 10, C.dark, { at: [0, -4.62, 0] });
-      k.ring(3.35, 0.3, "#b8891f", { at: [0, -3.9, 0], rot: [Math.PI / 2, 0, 0] }, 4, 16);
+      k.ring(3.35, 0.36, k.a, { at: [0, -3.9, 0], rot: [Math.PI / 2, 0, 0] }, 4, 16);
       k.ring(2.35, 0.22, "#b8891f", { at: [0, 0.6, 0], rot: [Math.PI / 2, 0, 0] }, 4, 14);
       // The clapper hangs inside, and knocks about a little within the lip.
       k.dangle([0, -2.2, 0], [0, -5.6, 0], () => {
         k.cyl(0.22, 0.22, 3.4, 4, C.iron, { at: [0, -3.9, 0] });
-        k.ball(0.9, k.a, { at: [0, -5.6, 0] });
+        k.ball(0.9, C.iron, { at: [0, -5.6, 0] });
       }, { limit: 0.35 });
       k.cyl(0.95, 0.95, 0.8, 8, C.gold, { at: [0, 3.3, 0] });
       k.cyl(0.6, 0.75, 4.2, 6, C.wood, { at: [0, 5.8, 0] });
@@ -737,7 +996,7 @@ export const LOW_POLY: Record<string, LowPolyDef> = {
     },
   },
   astrolabe: {
-    // A brass astrolabe on a short handle: the star plate, a rete, the sighting rule across it and a glowing pin.
+    // A brass astrolabe on a short handle: the star plate, a rete, the sighting rule across it and its brass pin.
     spin: 0.35,
     tip: 0.2,
     lean: -0.15,
@@ -749,11 +1008,12 @@ export const LOW_POLY: Record<string, LowPolyDef> = {
       for (const [x, y] of [[-2, 1.1], [1.7, 1.4], [-1.1, -1.9], [2.1, -1.3], [0.4, 2.4]] as const) k.ball(0.22, C.shine, { at: [x, 3.6 + y, 0.65] });
       k.ring(2.2, 0.18, C.gold, { at: [0.6, 4, 0.75] }, 4, 14);
       k.box(8.2, 0.5, 0.25, C.steel, { at: [0, 3.6, 0.95], rot: [0, 0, 0.7] });
-      k.gem(0.6, 1.3, { glow: k.a }, { at: [0, 3.6, 1.15], rot: face });
+      k.cyl(0.5, 0.5, 0.5, 6, C.gold, { at: [0, 3.6, 1.15], rot: face });
       k.box(1.6, 1.2, 0.8, C.gold, { at: [0, 8.2, 0] }, 0.2);
       k.ring(0.9, 0.25, C.gold, { at: [0, 9.3, 0], rot: [0, Math.PI / 2, 0] }, 4, 10);
       k.cyl(1, 0.7, 1, 6, C.gold, { at: [0, -1, 0] });
       k.cyl(0.7, 0.8, 5.5, 6, C.wood, { at: [0, -4.2, 0] });
+      whipping(k, [0, -4.2, 0], 0.82, 3);
       k.ball(0.85, C.gold, { at: [0, -7.2, 0] });
     },
   },
@@ -778,9 +1038,9 @@ export const LOW_POLY: Record<string, LowPolyDef> = {
       const bilge = { glow: "#6dff9e" };
       k.lathe([[0, -6], [3, -6], [3.1, -5.5], [1.6, -5], [0.7, -4], [0.6, -1], [0.9, -0.4], [2.6, 0.6], [3.6, 2.5], [3.9, 5]], 12, C.gold);
       k.cyl(3.75, 3.75, 0.3, 12, bilge, { at: [0, 4.65, 0] });
-      k.ring(3.9, 0.3, "#b8891f", { at: [0, 5, 0], rot: [Math.PI / 2, 0, 0] }, 4, 20);
-      k.ball(1, k.a, { at: [0, -2.5, 0] });
-      k.gem(0.6, 1.2, k.a, { at: [0, 2.4, 3.45], rot: [Math.PI / 2 - 0.4, 0, 0] });
+      k.ring(3.9, 0.36, k.a, { at: [0, 5, 0], rot: [Math.PI / 2, 0, 0] }, 4, 20);
+      k.ball(1, C.gold, { at: [0, -2.5, 0] });
+      k.cyl(1.3, 1.3, 0.45, 8, k.a, { at: [0, -2.5, 0] });
       k.ball(0.55, bilge, { at: [1, 6.2, 0.6] });
       k.ball(0.4, bilge, { at: [-1.2, 7.4, -0.3] });
       k.ball(0.3, bilge, { at: [0.3, 8.5, 0.2] });
@@ -842,16 +1102,31 @@ export const LOW_POLY: Record<string, LowPolyDef> = {
     },
   },
   "brutal-helm": {
-    spin: 0.5,
+    // The Spyglass Visor: a lookout's leather cap with a seam over the top, a riveted brass band, flaps over the
+    // ears, goggles, and a spyglass drawn out over one eye with its lens alight.
+    spin: -0.75,
     tip: 0.15,
     build: (k) => {
-      k.lathe([[4.4, -4.6], [4.9, -2], [5, 1], [4.4, 4], [2.6, 5.8], [0, 6.2]], 8, C.iron);
-      k.add(hornGeometry(1.15, 6.5, 2.4), C.bone, { at: [-3.8, 3, 0], rot: [0, 0, 1.15] });
-      k.add(hornGeometry(1.15, 6.5, -2.4), C.bone, { at: [3.8, 3, 0], rot: [0, 0, -1.15] });
-      k.box(7.6, 1, 1.2, C.steel, { at: [0, 2, 4.2] }, 0.25);
-      for (const x of [-1.6, 1.6]) k.box(1.9, 0.9, 0.8, { glow: k.a }, { at: [x, 0.6, 4.6] });
-      for (const sx of [-1, 1]) k.box(2.2, 3.6, 1, C.iron, { at: [sx * 3.1, -3.4, 3.3], rot: [0, -sx * 0.5, 0] }, 0.3);
-      for (const x of [-0.9, 0.9]) k.box(0.5, 2.4, 0.6, C.dark, { at: [x, -2.8, 4.5] });
+      const [leather, stitch, brass, bright] = ["#7a4a2a", "#5a3520", "#b8893a", "#d9ac55"];
+      k.lathe([[4.6, -2.6], [4.85, -0.5], [4.65, 2], [3.75, 4.2], [2.2, 5.6], [0, 6]], 12, leather);
+      k.rod([[0, -0.5, 4.95], [0, 2, 4.75], [0, 4.2, 3.85], [0, 5.65, 2.25], [0, 6.1, 0], [0, 5.65, -2.25], [0, 4.2, -3.85]], 0.35, stitch);
+      k.cyl(5.05, 5.05, 1.4, 12, brass, { at: [0, -2.3, 0] });
+      for (const a of [-1.1, -0.55, 0.55, 1.1]) k.ball(0.32, bright, { at: [Math.sin(a) * 5.1, -2.3, Math.cos(a) * 5.1] });
+      for (const sx of [-1, 1]) {
+        k.box(1.1, 4.4, 3.2, leather, { at: [sx * 4.55, -5, -0.2], rot: [0, 0, sx * 0.08] }, 0.3);
+        k.ball(0.35, bright, { at: [sx * 5.15, -5.4, -0.2] });
+      }
+      // The goggles under the band, and the strap between them.
+      k.box(6, 0.8, 0.8, stitch, { at: [0, -4.3, 4.1] }, 0.2);
+      for (const sx of [-1, 1]) k.cyl(1.35, 1.45, 1.1, 12, brass, { at: [sx * 1.9, -4.3, 4.5], rot: [Math.PI / 2, 0, 0] });
+      k.ring(1.3, 0.3, bright, { at: [1.9, -4.3, 5.1] }, 6, 14);
+      k.cyl(1.05, 1.05, 0.2, 12, C.dark, { at: [1.9, -4.3, 5.1], rot: [Math.PI / 2, 0, 0] });
+      // The spyglass over the other eye: a bright drawn length, a leather grip, the barrel, and its lens.
+      k.cyl(0.95, 0.95, 1.6, 12, bright, { at: [-1.9, -4.3, 5.8], rot: [Math.PI / 2, 0, 0] });
+      k.cyl(1.2, 1.2, 1.5, 12, leather, { at: [-1.9, -4.3, 7.3], rot: [Math.PI / 2, 0, 0] });
+      k.cyl(1.55, 1.4, 1.6, 12, brass, { at: [-1.9, -4.3, 8.8], rot: [Math.PI / 2, 0, 0] });
+      k.ring(1.5, 0.3, bright, { at: [-1.9, -4.3, 9.6] }, 6, 14);
+      k.cyl(1.25, 1.25, 0.2, 12, { glow: k.a }, { at: [-1.9, -4.3, 9.55], rot: [Math.PI / 2, 0, 0] });
     },
   },
   hood: {
@@ -868,6 +1143,92 @@ export const LOW_POLY: Record<string, LowPolyDef> = {
       k.ring(2.9, 0.55, k.a, { at: [0, 0.2, 4.6], scale: [1, 1.3, 1] }, 5, 12);
       for (const x of [-1, 1]) k.ball(0.4, { glow: C.shine }, { at: [x, 0.7, 4.8] });
       k.ball(0.75, C.gold, { at: [0, -4.1, 4.6] });
+    },
+  },
+  "lantern-helm": {
+    // The Lighthouse Paladin's Lantern Helm: a steel dome with a brass comb over the crown, a twist of brass rope
+    // round the brow and a short peak, riveted cheek guards, and a little lantern burning on top between four
+    // brass posts, under a red peaked cap.
+    spin: 0.45,
+    tip: 0.2,
+    build: (k) => {
+      const steel = "#aeb6c2";
+      const dome: [number, number][] = [[4.8, -4.2], [5.1, -2.6], [5.2, 0], [4.7, 2.2], [3.4, 3.6], [1.6, 4.3], [0, 4.5]];
+      k.lathe(dome, 10, steel);
+      // The comb: a crescent of brass standing up along the crown from brow to nape, its inside lost in the dome.
+      const arc = (out: number, from: number) => dome.slice(from).map(([r, y]) => [r + out, y + out * 0.3] as [number, number]);
+      const outer = arc(0.75, 1);
+      const inner = arc(-0.8, 1);
+      k.plate([...outer, ...outer.slice(0, -1).reverse().map(([r, y]) => [-r, y] as [number, number]), ...inner.map(([r, y]) => [-r, y] as [number, number]), ...inner.slice(0, -1).reverse()], 0.55, C.gold, { rot: [0, Math.PI / 2, 0] }, 0.12);
+      // The brow band a twist of brass rope, its strands slanting round.
+      k.ring(5.25, 0.6, C.gold, { at: [0, -2.2, 0], rot: [Math.PI / 2, 0, 0] }, 6, 28);
+      for (let i = 0; i < 32; i++) {
+        const t = (i / 32) * Math.PI * 2;
+        k.box(0.16, 1.15, 0.12, "#a07a22", { at: [Math.sin(t) * 5.84, -2.2, Math.cos(t) * 5.84], rot: [0, t, 0.7] });
+      }
+      // A short peak over the brow.
+      k.plate([[-3.4, 0], [3.4, 0], [2.6, 1.3], [0, 1.8], [-2.6, 1.3]], 0.3, steel, { at: [0, -2.95, 4.6], rot: [Math.PI / 2 + 0.2, 0, 0] }, 0.08);
+      for (const sx of [-1, 1]) {
+        k.box(1.2, 3, 3.4, steel, { at: [sx * 4.5, -5.1, 1.2], rot: [0, 0, -sx * 0.1] }, 0.3);
+        for (const y of [-4.3, -5.9]) k.ball(0.3, C.gold, { at: [sx * 5.15, y, 1.4] });
+        // The same line of rivets carried on up each side of the dome over the band, as far apart and in line.
+        for (const [r, y] of [[5.16, -1.1], [5.1, 0.5], [4.72, 2.1], [3.27, 3.7]]) k.ball(0.3, C.gold, { at: [sx * (Math.sqrt(r * r - 1.4 * 1.4) + 0.05), y, 1.4] });
+      }
+      k.cyl(2, 2.3, 0.8, 8, C.gold, { at: [0, 4.6, 0] });
+      k.box(2.6, 2.8, 2.6, { glow: "#ffd27a" }, { at: [0, 6.3, 0] });
+      for (const [x, z] of [[-1.45, -1.45], [1.45, -1.45], [-1.45, 1.45], [1.45, 1.45]]) k.box(0.45, 3.1, 0.45, C.gold, { at: [x, 6.3, z] });
+      k.cyl(2.2, 2.2, 0.45, 8, C.gold, { at: [0, 7.95, 0] });
+      k.cone(2.2, 1.9, 8, "#c23b30", { at: [0, 9.1, 0] });
+      k.ball(0.45, C.gold, { at: [0, 10.2, 0] });
+    },
+  },
+  "knit-cap": {
+    // A plain knitted cap, the brim rolled up round the head and a small nub on the crown.
+    spin: 0.35,
+    tip: 0.3,
+    build: (k) => {
+      const wool = "#5b3f2a";
+      k.lathe([[4.6, -1.6], [4.75, 1], [4.3, 3.4], [3.1, 5.2], [1.5, 6.2], [0.6, 6.5]], 10, wool);
+      k.cyl(5.1, 5.1, 2.6, 10, "#6e4e36", { at: [0, -1.2, 0] });
+      k.cyl(5.2, 5.2, 0.7, 10, "#7d5b40", { at: [0, 0.2, 0] });
+      k.ball(0.85, wool, { at: [0, 6.8, 0] });
+    },
+  },
+  "naval-tunic": {
+    // A plain navy tunic: a white open collar, a row of brass buttons and a leather belt.
+    spin: 0.45,
+    tip: 0.2,
+    build: (k) => {
+      const navy = "#2f4562";
+      const pts: V3[] = [];
+      for (const [y, w, front, back] of [[6, 4.6, 2.4, 2.4], [3, 5, 3.2, 2.6], [-3, 4.4, 2.6, 2.3], [-6.2, 4.8, 2.7, 2.5]] as const) {
+        pts.push([-w, y, 0], [w, y, 0], [0, y, front], [0, y, -back]);
+        for (const sx of [-1, 1]) pts.push([sx * w * 0.72, y, front * 0.85], [sx * w * 0.72, y, -back * 0.9]);
+      }
+      k.hull(pts, navy);
+      k.cyl(2, 2.4, 0.5, 8, C.dark, { at: [0, 6.05, 0] });
+      for (const sx of [-1, 1]) {
+        k.box(2.8, 0.7, 2.6, "#e8edf2", { at: [sx * 1.9, 5.5, 2.2], rot: [0.5, 0, -sx * 0.6] }, 0.2);
+        k.cyl(1.6, 1.9, 4.2, 6, navy, { at: [sx * 5.4, 4.2, 0], rot: [0, 0, sx * 0.5] });
+      }
+      for (const y of [3.4, 1.4, -0.6]) k.ball(0.45, C.gold, { at: [0, y, 3.15 - (3.4 - y) * 0.1] });
+      k.box(8.8, 1.1, 5.6, C.leather, { at: [0, -3.8, 0.1] }, 0.25);
+      k.box(1.4, 1.4, 0.5, C.gold, { at: [0, -3.8, 3] }, 0.1);
+    },
+  },
+  "deck-boots": {
+    // Plain leather sea boots with no trim: a short shaft and a round toe.
+    spin: 0,
+    tip: 0.3,
+    build: (k) => {
+      const plain = (x: number, z: number, turn: number) =>
+        k.within({ at: [x, 0, z], rot: [0, turn, 0] }, () => {
+          k.cyl(1.9, 2.1, 6, 6, "#7a5230", { at: [0, 2, 0] });
+          k.box(3.8, 2.8, 7, "#7a5230", { at: [0, -1.5, 1.6] }, 0.9);
+          k.box(4, 0.7, 7.6, C.bark, { at: [0, -3.2, 1.8] }, 0.25);
+        });
+      plain(-2.6, -0.6, -0.45);
+      plain(2.6, 0.4, -0.3);
     },
   },
   "armored-pants": {
@@ -1072,6 +1433,299 @@ export const LOW_POLY: Record<string, LowPolyDef> = {
   },
 };
 
+// ---------- starting clothes ----------
+// Each class's own hat, tunic, trousers and shoes (garbIcon in packages/world/src/gear.ts), pictured in the class's
+// stock look as the figure draws them on a hero of that class (figures.ts): the same hat, the same colours, a coat
+// or a vest where the class has one, and what it wears over them.
+
+/** A colour a little lighter (k > 0) or darker (k < 0), as figures.ts tones its cloth. */
+const tone = (hex: string, k: number) => `#${new THREE.Color(hex).offsetHSL(0, 0, k).getHexString()}`;
+
+/** A class's hat, as its look draws it: [hat, its colour]. */
+function garbHat(k: Kit, look: Look) {
+  const c = look.hatColor ?? look.body;
+  switch (look.hat) {
+    case "lamphelm":
+      LOW_POLY["lantern-helm"].build(k);
+      return;
+    case "hood": {
+      // A peaked hood with a shadowed opening, and a mantle over the shoulders.
+      const cowl = new THREE.LatheGeometry([[0, 8.5], [1.2, 7.8], [3, 5.8], [4.4, 3], [4.9, 0], [4.8, -2.6], [4.4, -4]].reverse().map(([r, y]) => new THREE.Vector2(r, y)), 8);
+      const p = cowl.attributes.position;
+      for (let i = 0; i < p.count; i++) p.setZ(i, p.getZ(i) - Math.max(0, p.getY(i) - 2) * 0.35);
+      k.add(cowl, c);
+      k.cyl(4.4, 6.6, 3, 8, tone(c, -0.04), { at: [0, -5.4, 0] });
+      k.cyl(2.8, 2.8, 1, 10, "#141a1a", { at: [0, 0.2, 4.2], rot: [Math.PI / 2, 0, 0], scale: [1, 1, 1.3] });
+      k.ring(2.9, 0.5, tone(c, 0.06), { at: [0, 0.2, 4.6], scale: [1, 1.3, 1] }, 5, 12);
+      return;
+    }
+    case "tricorn": {
+      // A low round crown over a band, and round it a brim cocked up into three walls meeting in three points, one
+      // over the brow; a gold braid along their tops and a cockade on the left.
+      if (look.bandana) k.cyl(3.55, 3.6, 1.1, 10, look.bandana, { at: [0, -0.4, 0] });
+      k.lathe([[3.45, 0], [3.5, 2], [3, 3.6], [1.8, 4.4], [0, 4.6]], 10, c);
+      const foot = Array.from({ length: 6 }, (_, i) => {
+        const point = i % 2 === 0;
+        return { a: (i / 6) * Math.PI * 2, r: point ? 6.6 : 4.5, y: point ? 0.6 : 0, top: point ? 1.4 : 3.8 };
+      });
+      const at = (f: (typeof foot)[number], s: number, y: number): V3 => [Math.sin(f.a) * f.r * s, y, Math.cos(f.a) * f.r * s];
+      for (let i = 0; i < 6; i++) {
+        const [f, g] = [foot[i], foot[(i + 1) % 6]];
+        const pts: V3[] = [];
+        for (const s of [1, 0.88]) pts.push(at(f, s, f.y), at(g, s, g.y), at(f, s * 1.05, f.top), at(g, s * 1.05, g.top));
+        k.hull(pts, c);
+        k.rod([at(f, 1.02, f.top + 0.05), at(g, 1.02, g.top + 0.05)], 0.2, C.gold, {}, 4);
+      }
+      const w = foot[1];
+      k.ball(0.8, look.accent, { at: at(w, 1.08, 2.2), scale: [1, 1, 0.5], rot: [0, w.a, 0] });
+      k.ball(0.32, C.gold, { at: at(w, 1.16, 2.2) });
+      return;
+    }
+    case "kerchief": {
+      // Tied close over the crown, knotted on one side, two tails hanging from the knot.
+      k.lathe([[4.5, -1.2], [4.6, 0.8], [4.1, 3], [2.8, 4.6], [1.3, 5.4], [0, 5.6]], 10, c);
+      const side = look.knotSide ? 1 : 0;
+      const [x, z] = side ? [4.5, -0.6] : [0, -4.5];
+      k.ball(0.95, tone(c, -0.08), { at: [x, 0, z] }, 1);
+      for (const [dx, dz, len] of [[0.4, -0.5, 3.4], [0.2, 0.6, 2.6]] as const) {
+        const [ox, oz] = side ? [dx, dz] : [dz, -dx];
+        k.rod([[x, -0.3, z], [x + ox * 1.5, -len * 0.5, z + oz * 1.5], [x + ox * 2.2, -len, z + oz * 2.2]], 0.45, dx > 0.3 ? c : tone(c, -0.08), {}, 4);
+      }
+      return;
+    }
+    case "coral": {
+      // A band of kelp, and on it a crown of branching coral, tallest at the front, with a little shell there.
+      k.cyl(4.4, 4.5, 1.4, 10, "#3d6b2e", {});
+      for (let i = 0; i < 7; i++) {
+        const a = ((i - 3) / 3) * 1.9;
+        const tall = 1 - Math.abs(i - 3) * 0.12;
+        const col = i % 2 ? c : tone(c, 0.1);
+        const base: V3 = [Math.sin(a) * 4.3, 0.5, Math.cos(a) * 4.3];
+        const tip: V3 = [base[0] * 1.2, 0.5 + 4.4 * tall, base[2] * 1.2];
+        k.rod([base, tip], 0.42, col, {}, 5);
+        k.ball(0.32, tone(col, 0.15), { at: tip });
+        for (const [t, side, up] of [[0.4, 1, 1.8], [0.65, -1, 1.4]] as const) {
+          const mid: V3 = [base[0] + (tip[0] - base[0]) * t, base[1] + (tip[1] - base[1]) * t, base[2] + (tip[2] - base[2]) * t];
+          const end: V3 = [mid[0] + Math.cos(a) * 1.1 * side, mid[1] + up, mid[2] - Math.sin(a) * 1.1 * side];
+          k.rod([mid, end], 0.24, col, {}, 4);
+          k.ball(0.22, tone(col, 0.15), { at: end });
+        }
+      }
+      k.ball(0.6, "#f0dcc8", { at: [0, 0.3, 4.6], scale: [1, 0.8, 0.5] });
+      return;
+    }
+    case "diver": {
+      // A round brass helmet on a bolted collar: a big round window in front, a smaller one each side, a valve on top.
+      const dark = tone(c, -0.2);
+      k.lathe([[0, -3.6], [3.6, -3.3], [5, -1.5], [5.3, 0.6], [4.8, 2.8], [3.4, 4.6], [1.6, 5.5], [0, 5.7]], 12, c);
+      k.cyl(5.4, 6.2, 1.8, 12, dark, { at: [0, -4.2, 0] });
+      for (let i = 0; i < 8; i++) {
+        const a = (i / 8) * Math.PI * 2 + Math.PI / 8;
+        k.ball(0.35, tone(c, 0.12), { at: [Math.sin(a) * 6, -4.2, Math.cos(a) * 6] });
+      }
+      const port = (r: number, at: V3, rot: V3) => {
+        k.cyl(r, r, 0.5, 12, "#2b3d48", { at, rot });
+        k.ring(r, 0.32, dark, { at, rot: [rot[0] - Math.PI / 2, rot[1], rot[2]] }, 4, 14);
+      };
+      port(2.4, [0, 0.4, 5], [Math.PI / 2, 0, 0]);
+      for (const s of [-1, 1]) port(1.2, [s * 5, 0.8, -0.3], [0, 0, Math.PI / 2]);
+      k.cyl(0.6, 0.8, 1.2, 8, dark, { at: [0, 6.1, -0.6] });
+      return;
+    }
+    default: {
+      // No hat but a band of cloth round the brow, knotted behind, its two ends hanging.
+      const band = look.bandana ?? c;
+      // Turned so the knot shows, behind on the right.
+      k.within({ rot: [0, 2.3, 0] }, () => {
+        k.ring(4.3, 0.55, band, { rot: [Math.PI / 2, 0, 0], scale: [1, 1, 1.9] }, 6, 14);
+        k.ball(0.95, tone(band, -0.08), { at: [0, 0, -4.5] }, 1);
+        for (const s of [-1, 1]) k.rod([[0, -0.2, -4.6], [s * 0.9, -2, -4.9], [s * 1.5, -3.8, -4.8]], 0.45, s > 0 ? band : tone(band, -0.08), {}, 4);
+      });
+    }
+  }
+}
+
+/** A tunic's body, from the collar (y 6) to below the waist: rows of [y, half-width, front, back]. */
+type Row = readonly [y: number, halfWidth: number, front: number, back: number];
+const TORSO: readonly Row[] = [[6, 4.6, 2.4, 2.4], [3, 5, 3.2, 2.6], [-3, 4.4, 2.6, 2.3], [-6.2, 4.8, 2.7, 2.5]];
+function torsoPoints(rows: readonly Row[], grow = 0): V3[] {
+  const pts: V3[] = [];
+  for (const [y, w0, f0, b0] of rows) {
+    const [w, front, back] = [w0 + grow, f0 + grow, b0 + grow];
+    pts.push([-w, y, 0], [w, y, 0], [0, y, front], [0, y, -back]);
+    for (const sx of [-1, 1]) pts.push([sx * w * 0.72, y, front * 0.85], [sx * w * 0.72, y, -back * 0.9]);
+  }
+  return pts;
+}
+/** How far forward the tunic's front is at height `y`. */
+function frontAt(y: number, rows: readonly Row[] = TORSO): number {
+  for (let i = 0; i + 1 < rows.length; i++) {
+    const [p, q] = [rows[i], rows[i + 1]];
+    if (y <= p[0] && y >= q[0]) return p[2] + ((q[2] - p[2]) * (p[0] - y)) / (p[0] - q[0]);
+  }
+  return y > rows[0][0] ? rows[0][2] : rows[rows.length - 1][2];
+}
+
+/** A class's tunic: its shirt, and over it the coat or vest the class wears, with its sash, straps and the rest. */
+function garbTunic(k: Kit, look: Look) {
+  const shirt = look.body;
+  const coat = look.coat ? (look.coatColor ?? look.body) : null;
+  const outer = coat ?? look.vest ?? null;
+  const trim = coat ? (look.coatTrim ?? look.accent) : look.vest ? tone(look.vest, -0.1) : tone(shirt, 0.08);
+  if (outer) {
+    // Open down the front: the outer garment all round, the shirt in a strip between its fronts, trimmed either
+    // side. A coat hangs to the shins; a vest covers the chest, the shirt showing below it.
+    if (!coat) k.hull(torsoPoints(TORSO), shirt);
+    const rows: readonly Row[] = coat ? [...TORSO.slice(0, 3), [-6.2, 5, 2.8, 2.6], [-11, 5.8, 3.2, 3]] : [TORSO[0], TORSO[1], [-1.6, 4.55, 2.75, 2.35]];
+    k.hull(torsoPoints(rows, 0.15), outer);
+    const top = 5.8;
+    const bottom = coat ? -2.6 : -1.6;
+    const strip: V3[] = [];
+    for (const y of [top, 3, bottom]) {
+      const z = frontAt(y, rows) + 0.2;
+      const w = y === top ? 1.1 : 0.6;
+      strip.push([-w, y, z], [w, y, z], [-w, y, z - 0.6], [w, y, z - 0.6]);
+    }
+    k.hull(strip, shirt);
+    for (const s of [-1, 1]) {
+      const edge: V3[] = [];
+      for (const y of [top, 3, bottom]) edge.push([s * (y === top ? 1.25 : 0.75), y, frontAt(y, rows) + 0.28]);
+      k.rod(edge, 0.24, trim, {}, 4);
+    }
+    if (coat) {
+      // Below the waist the coat hangs open over the legs: a dark gap between its skirts, edged in the trim.
+      k.box(1.2, 8.2, 0.4, tone(coat, -0.25), { at: [0, -6.9, frontAt(-6.9, rows) + 0.05] });
+      for (const s of [-1, 1]) k.rod([[s * 0.75, -2.6, frontAt(-2.6, rows) + 0.28], [s * 0.75, -6.2, frontAt(-6.2, rows) + 0.3], [s * 0.9, -11, frontAt(-11, rows) + 0.25]], 0.24, trim, {}, 4);
+    } else {
+      for (const y of [1.2, 3]) for (const s of [-1, 1]) k.ball(0.28, C.gold, { at: [s * 1.25, y, frontAt(y) + 0.3] });
+    }
+  } else {
+    // A plain tunic: a placket down the front with brass buttons.
+    k.hull(torsoPoints(TORSO), shirt);
+    k.box(1.2, 6.5, 0.3, tone(shirt, 0.08), { at: [0, 2.2, frontAt(2.2) + 0.05] });
+    for (const y of [4, 2.2, 0.4]) k.ball(0.38, C.gold, { at: [0, y, frontAt(y) + 0.25] });
+  }
+  // The neck, open.
+  k.cyl(2, 2.4, 0.5, 8, C.dark, { at: [0, 6.05, 0] });
+  // Sleeves, in the outer cloth where there is a coat; none on a sleeveless shirt (a vest's arms are bare).
+  if (look.sleeveless) {
+    // Only a cap of the shirt over each shoulder.
+    for (const s of [-1, 1]) k.cyl(1.7, 1.9, 1.8, 6, shirt, { at: [s * 5, 5.1, 0], rot: [0, 0, s * 0.5] });
+  } else {
+    for (const s of [-1, 1]) {
+      const cloth = coat ?? shirt;
+      k.cyl(1.6, 1.9, 4.6, 6, cloth, { at: [s * 5.5, 4, 0], rot: [0, 0, s * 0.5] });
+      k.cyl(1.75, 1.75, 0.9, 6, coat ? trim : tone(shirt, -0.08), { at: [s * 6.6, 2.05, 0], rot: [0, 0, s * 0.5] });
+    }
+  }
+  // Bands of colour round the chest (the Paladin's surcoat).
+  if (look.stripes) for (const y of [0.6, 2.4]) k.hull(torsoPoints([[y + 0.5, 5, frontAt(y + 0.5), 2.6], [y - 0.5, 4.9, frontAt(y - 0.5), 2.55]], 0.12), look.stripes);
+  // Round the waist: the sash, wound twice and knotted on the left hip with its ends hanging; else a belt.
+  const waist = -3.8;
+  const belt = (h: number, color: string) => k.hull(torsoPoints([[waist + h / 2, 4.5, 2.7, 2.4], [waist - h / 2, 4.5, 2.7, 2.4]], outer ? 0.3 : 0.15), color);
+  if (look.sash) {
+    belt(1.8, look.sash);
+    k.ball(1, tone(look.sash, -0.06), { at: [3.4, waist, 2.2], scale: [1.1, 0.85, 0.7] });
+    for (const [dx, len] of [[0.2, 4.2], [-0.4, 3.2]] as const) k.rod([[3.4 + dx, waist - 0.4, 2.4], [3.8 + dx, waist - len * 0.55, 2.6], [3.9 + dx, waist - len, 2.5]], 0.4, look.sash, {}, 4);
+  } else {
+    belt(1.1, C.leather);
+    k.box(1.4, 1.4, 0.5, C.gold, { at: [0, waist, frontAt(waist) + 0.45] }, 0.1);
+  }
+  if (look.straps) {
+    // A strap from the right shoulder across the chest to the left hip, with a buckle.
+    const pts: V3[] = [0, 0.5, 1].map((t): V3 => {
+      const y = 5.4 - 7.6 * t;
+      return [-3 + 6 * t, y, frontAt(y) + (outer ? 0.45 : 0.3)];
+    });
+    k.rod(pts, 0.42, look.straps, {}, 4);
+    k.box(0.8, 0.8, 0.3, C.iron, { at: [-0.1, 1.6, frontAt(1.6) + 0.6] });
+  }
+  if (look.teeth) {
+    // Teeth strung round the throat, pointing down, a stone at the middle.
+    for (let i = 0; i < 9; i++) {
+      const x = -2 + (4 * i) / 8;
+      const y = 5.2 - 0.6 * Math.cos((x / 2) * (Math.PI / 2));
+      k.cone(0.24, 0.9, 4, C.bone, { at: [x, y - 0.45, frontAt(y) + 0.4], rot: [Math.PI, 0, 0] });
+    }
+    k.ball(0.4, { glow: look.teeth }, { at: [0, 4.3, frontAt(4.3) + 0.5] });
+  }
+  for (const s of [-1, 1]) {
+    const shoulder: V3 = [s * 4.4, 6.1, 0];
+    if (look.epaulettes) {
+      k.box(3, 0.6, 3.2, look.epaulettes, { at: shoulder, rot: [0, 0, -s * 0.25] }, 0.2);
+      for (let i = 0; i < 5; i++) k.box(0.22, 1.1, 0.22, tone(look.epaulettes, -0.08), { at: [s * 5.8, 5.3, -1.2 + (2.4 * i) / 4] });
+    }
+    if (look.shell) {
+      // A scallop shell on each shoulder: a fan of ribs.
+      k.dome(2.2, 7, look.shell, { at: [s * 4.6, 5.9, 0], rot: [0, 0, -s * 0.5], scale: [1, 0.45, 1.1] });
+      for (let i = 0; i < 5; i++) k.rod([[s * 4.6, 6.4, 0], [s * (4.6 + 1.4 * Math.cos(-s * 0.5)), 6.9 - 0.3 * s * s, -1.7 + (3.4 * i) / 4]], 0.09, tone(look.shell, -0.18), {}, 3);
+    }
+    if (look.barnacles) for (const [dx, dz, r] of [[0, 0.6, 0.55], [0.7, -0.8, 0.45], [-0.6, -0.3, 0.4]] as const) k.cone(r, r * 1.3, 5, "#cfc6b0", { at: [s * (4.4 + dx), 6.5, dz] });
+  }
+  if (look.corselet) {
+    // A brass plate over the shoulders, bolted round, that the diving helmet seats on.
+    k.cyl(3.4, 5.2, 1.6, 12, look.corselet, { at: [0, 6, 0] });
+    for (let i = 0; i < 8; i++) {
+      const a = (i / 8) * Math.PI * 2;
+      k.ball(0.3, tone(look.corselet, 0.12), { at: [Math.sin(a) * 4.5, 5.6, Math.cos(a) * 4.5] });
+    }
+  }
+  if (look.vines) {
+    // Kelp growing up round the torso from the hem, leaves along it.
+    for (const s of [-1, 1]) {
+      const pts: V3[] = [-5.5, -2, 1.5, 4.5].map((y, i): V3 => [s * (2.6 - i * 0.4 + (i % 2) * 0.8), y, frontAt(y) + 0.3]);
+      k.rod(pts, 0.28, look.vines, {}, 4);
+      for (const p of pts.slice(1)) k.ball(0.4, tone(look.vines, 0.12), { at: [p[0] + s * 0.4, p[1], p[2] + 0.1], scale: [0.7, 1.7, 0.35] });
+    }
+  }
+}
+
+/** A class's trousers: a waistband and two legs, in its leg colour. */
+function garbTrousers(k: Kit, look: Look) {
+  const c = look.legs;
+  k.box(8.6, 2, 4.2, tone(c, -0.06), { at: [0, 6, 0] }, 0.4);
+  k.box(8.2, 3, 4, c, { at: [0, 3.8, 0] }, 0.5);
+  for (const sx of [-1, 1]) {
+    k.cyl(2, 1.75, 10, 6, c, { at: [sx * 2.3, -2.6, 0], rot: [0, 0, sx * 0.05] });
+    k.cyl(1.85, 1.85, 0.8, 6, tone(c, -0.08), { at: [sx * 2.55, -7.2, 0] });
+  }
+  k.box(0.5, 2.2, 0.3, tone(c, -0.12), { at: [0, 3.9, 2.05] });
+}
+
+/** A class's shoes: tall leather sea boots with a band in its boot colour, turned down at the top; or plain dark shoes. */
+function garbShoes(k: Kit, look: Look) {
+  const pair = (one: () => void) => {
+    k.within({ at: [-2.6, 0, -0.6], rot: [0, -0.45, 0] }, one);
+    k.within({ at: [2.6, 0, 0.4], rot: [0, -0.3, 0] }, one);
+  };
+  if (!look.boots) {
+    pair(() => {
+      k.box(3.8, 2.6, 7, C.dark, { at: [0, -1.6, 1.6] }, 0.9);
+      k.box(4, 0.7, 7.6, tone(C.dark, -0.06), { at: [0, -3.2, 1.8] }, 0.25);
+    });
+    return;
+  }
+  const band = look.boots;
+  pair(() => {
+    k.cyl(1.9, 2.1, 6, 6, C.leather, { at: [0, 2, 0] });
+    k.cyl(2.35, 2.25, 1.6, 6, tone(C.leather, 0.08), { at: [0, 5.4, 0] });
+    k.cyl(2.15, 2.15, 0.8, 6, band, { at: [0, 4.1, 0] });
+    k.box(3.8, 2.8, 7, C.leather, { at: [0, -1.5, 1.6] }, 0.9);
+    k.box(4, 0.7, 7.6, C.bark, { at: [0, -3.2, 1.8] }, 0.25);
+  });
+}
+
+const GARB_BUILD: Record<GarbPiece, (k: Kit, look: Look) => void> = { hat: garbHat, tunic: garbTunic, trousers: garbTrousers, shoes: garbShoes };
+const GARB_VIEW: Record<GarbPiece, Omit<LowPolyDef, "build">> = { hat: { spin: 0.4, tip: 0.25 }, tunic: { spin: 0.45, tip: 0.2 }, trousers: { spin: 0.45, tip: 0.15 }, shoes: { spin: 0, tip: 0.3 } };
+
+/** The model for a class's own piece of starting clothes ("garb-tunic:staff_sage"), or null for any other icon. */
+function garbModel(icon: string): LowPolyDef | null {
+  const g = parseGarbIcon(icon);
+  const look = g && LOOKS[g.classId];
+  if (!g || !look) return null;
+  return { ...GARB_VIEW[g.piece], build: (k) => GARB_BUILD[g.piece](k, look) };
+}
+
 // ---------- building ----------
 
 const materials = new Map<string, THREE.Material>();
@@ -1107,11 +1761,12 @@ function place(o: THREE.Object3D, p: Place = {}) {
  * holds of it instead (see LowPolyDef.inHand), where that differs.
  */
 export function buildLowPoly(name: string, accent: string, inHand = false): { model: THREE.Object3D; def: LowPolyDef } | null {
-  const def = LOW_POLY[name];
+  const def = LOW_POLY[name] ?? garbModel(name);
   if (!def) return null;
   const root = new THREE.Group();
   const parents: THREE.Object3D[] = [root];
   const top = () => parents[parents.length - 1];
+  let flickers = 0;
   const add: Kit["add"] = (geo, paint, p) => {
     const mesh = new THREE.Mesh(geo, Array.isArray(paint) ? paint.map(material) : material(paint));
     place(mesh, p);
@@ -1151,9 +1806,26 @@ export function buildLowPoly(name: string, accent: string, inHand = false): { mo
       build();
       parents.pop();
     },
+    spin: (pivot, axis, build, speed) => {
+      const g = new THREE.Group();
+      g.userData.spin = { pivot, axis, speed } satisfies Spin;
+      top().add(g);
+      parents.push(g);
+      build();
+      parents.pop();
+    },
     dangle: (pivot, bob, build, opts) => {
       const g = new THREE.Group();
       g.userData.dangle = { pivot, bob, ...opts } satisfies Dangle;
+      top().add(g);
+      parents.push(g);
+      build();
+      parents.pop();
+    },
+    flicker: (build) => {
+      if (!inHand && flickers++ > 0) return;
+      const g = new THREE.Group();
+      g.userData.flicker = true;
       top().add(g);
       parents.push(g);
       build();

@@ -50,7 +50,7 @@ interface ModEffect {
   hp?: number;
   /** Added to every enemy attack's damage and its bonus to hit. */
   edge?: number;
-  /** Hexes of movement added to every enemy's turn. */
+  /** Hexes of movement added to each AP of every enemy's movement. */
   move?: number;
   /** More in every group: another of whoever came with its leader. */
   extras?: number;
@@ -100,7 +100,7 @@ export const ZONE_MODS: Record<ZoneModId, ZoneModDef> = {
   // ---- perils: the enemy ----
   hardy: { id: "hardy", name: "Hardy", kind: "enemy", weight: 5, blurb: "Everything here takes a third more killing.", pay: 0.2, hp: 1.3, more: [{ blurb: "Everything here takes two thirds more killing.", pay: 0.36, hp: 1.65 }, { blurb: "Everything here takes twice the killing.", pay: 0.55, hp: 2 }] },
   savage: { id: "savage", name: "Savage", kind: "enemy", weight: 5, blurb: "They hit harder, and miss less.", pay: 0.2, edge: 1, more: [{ blurb: "They hit a good deal harder, and seldom miss.", pay: 0.36, edge: 2 }, { blurb: "They hit like a falling mast, and do not miss.", pay: 0.55, edge: 3 }] },
-  swift: { id: "swift", name: "Swift", kind: "enemy", weight: 7, blurb: "They cover one more hex a turn.", pay: 0.15, move: 1, more: [{ blurb: "They cover two more hexes a turn.", pay: 0.28, move: 2 }] },
+  swift: { id: "swift", name: "Swift", kind: "enemy", weight: 7, blurb: "They cover one more hex for each AP of movement.", pay: 0.15, move: 1, more: [{ blurb: "They cover two more hexes for each AP of movement.", pay: 0.28, move: 2 }] },
   numerous: { id: "numerous", name: "Numerous", kind: "enemy", weight: 3, blurb: "One more in every band.", pay: 0.25, extras: 1, more: [{ blurb: "Two more in every band.", pay: 0.46, extras: 2 }] },
   // ---- boons: the bounty ----
   gilded: { id: "gilded", name: "Gilded", kind: "boon", weight: 5, blurb: "A third more gold in its bounty.", pay: 0, gold: 0.33, more: [{ blurb: "Two thirds more gold in its bounty.", pay: 0, gold: 0.66 }, { blurb: "Twice the gold in its bounty.", pay: 0, gold: 1 }] },

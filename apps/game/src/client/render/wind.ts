@@ -1,7 +1,7 @@
 // Wind, part of "Fancy graphics". Gusts cross the island in fronts, all going
-// the way the sea's long swell goes, and the trees and the grass lean as each
-// one passes: a ripple you can watch travel from one shore to the other. It
-// blows harder in rain and hardest in a storm.
+// the one way the wind blows (WIND_DIR), and the trees and the grass lean as
+// each one passes: a ripple you can watch travel from one shore to the other.
+// It blows harder in rain and hardest in a storm.
 //
 // The same gust is worked out in two places, and they must agree: here in
 // JavaScript for the grass (whose tufts are placed one by one every frame),
@@ -9,10 +9,21 @@
 
 import * as THREE from "three";
 
-/** The way the wind blows across the map (x, z): the same heading as the sea's longest waves. */
-export const WIND_DIR = { x: 0.8, z: 0.6 };
+/**
+ * The way the wind blows across the map, a unit vector on the ground (x, z): mostly along +x, a little toward
+ * +z. Everything the wind moves goes by it: the trees and grass lean this way, the wisps travel it, rain and
+ * chimney smoke slant with it and flags stream out along it. Fixed in the world, so turning the camera never
+ * turns the weather.
+ */
+export const WIND_DIR = { x: Math.cos(0.35), z: Math.sin(0.35) };
 
-const UNIFORMS = { windTime: { value: 0 }, windPower: { value: 0 } };
+/** How many squalls (see setSqualls) can blow at once. */
+const SQUALLS = 4;
+/**
+ * `windSqualls` are winds called up in a fight (Trade Winds): x and z of the middle, the radius, and in w how hard
+ * (0: unused). Gusts blow far harder inside each, whatever the weather, the same way the wind blows everywhere.
+ */
+const UNIFORMS = { windTime: { value: 0 }, windPower: { value: 0 }, windSqualls: { value: Array.from({ length: SQUALLS }, () => new THREE.Vector4()) } };
 
 const still = typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
 
@@ -73,6 +84,19 @@ export function setFieldCalm(calm: number) {
 export const windPower = () => UNIFORMS.windPower.value;
 
 /**
+ * Winds called up over parts of the map (Trade Winds): each a middle (x, z), a radius and how hard it blows (about 1.5
+ * to lash the grass and set the trees heaving). An empty list stills them all. Nothing sways with reduced motion.
+ */
+export function setSqualls(list: { x: number; z: number; radius: number; power: number }[]) {
+  const slots = UNIFORMS.windSqualls.value;
+  for (let i = 0; i < SQUALLS; i++) {
+    const q = list[i];
+    if (q && !still) slots[i].set(q.x, q.z, q.radius, q.power);
+    else slots[i].set(0, 0, 0, 0);
+  }
+}
+
+/**
  * How far something standing at (x, z) is pushed over at this moment, 0 upward (it scales with `windPower`).
  * A steady lean, plus the gust front that happens to be passing, which comes in patches so that the
  * fronts are not unbroken lines.
@@ -82,17 +106,34 @@ export function gustAt(x: number, z: number): number {
   const front = (x * WIND_DIR.x + z * WIND_DIR.z) * 0.42 - t * 1.3;
   const gust = (0.5 + 0.5 * Math.sin(front)) ** 2;
   const patchy = 0.6 + 0.4 * Math.sin((x * -WIND_DIR.z + z * WIND_DIR.x) * 0.23 + t * 0.21);
-  return UNIFORMS.windPower.value * (0.25 + 0.75 * gust * patchy);
+  let squall = 0;
+  for (const q of UNIFORMS.windSqualls.value) {
+    if (q.w <= 0) continue;
+    const d = Math.hypot(x - q.x, z - q.y);
+    const k = Math.min(1, Math.max(0, (q.z - d) / (q.z * 0.4)));
+    const beat = 0.55 + 0.45 * Math.sin((x * WIND_DIR.x + z * WIND_DIR.z) * 1.3 - t * 4);
+    squall += q.w * k * k * (3 - 2 * k) * beat;
+  }
+  return UNIFORMS.windPower.value * (0.25 + 0.75 * gust * patchy) + squall;
 }
 
 const GUST = /* glsl */ `
 uniform float windTime;
 uniform float windPower;
+uniform vec4 windSqualls[${SQUALLS}];
 float windGust(vec2 at) {
   float front = dot(at, vec2(${WIND_DIR.x}, ${WIND_DIR.z})) * 0.42 - windTime * 1.3;
   float gust = pow(0.5 + 0.5 * sin(front), 2.0);
   float patchy = 0.6 + 0.4 * sin(dot(at, vec2(${-WIND_DIR.z}, ${WIND_DIR.x})) * 0.23 + windTime * 0.21);
-  return windPower * (0.25 + 0.75 * gust * patchy);
+  float squall = 0.0;
+  for (int i = 0; i < ${SQUALLS}; i++) {
+    vec4 q = windSqualls[i];
+    if (q.w <= 0.0) continue;
+    float k = smoothstep(0.0, 1.0, (q.z - length(at - q.xy)) / (q.z * 0.4));
+    float beat = 0.55 + 0.45 * sin(dot(at, vec2(${WIND_DIR.x}, ${WIND_DIR.z})) * 1.3 - windTime * 4.0);
+    squall += q.w * k * beat;
+  }
+  return windPower * (0.25 + 0.75 * gust * patchy) + squall;
 }
 void main() {`;
 

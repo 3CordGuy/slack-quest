@@ -41,7 +41,7 @@ const ACTIONS = [
   ["heavy", "Heavy strike", "A great two-handed sweep from one side to the other; with a blade in each hand (the rogue), both are tossed up, caught points down and jabbed downward."],
   ["shoot", "Shoot", "Whatever shoots: a bow is drawn and loosed; a pistol is levelled at arm's length and a long gun or crossbow brought to the shoulder, then the kick, flash and smoke. Only a figure carrying one of them shoots."],
   ["cast", "Cast", "A spell or a throw: swung round overhead, then pointed at the mark as it leaves. An orb, astrolabe or chalice is held aloft and presented; a book has a hand waved over it."],
-  ["play", "Play", "A bard's song: the lute strummed, the flute lifted to the mouth or the ship's bell rung, notes and wisps rising. Only a figure carrying one plays."],
+  ["play", "Play", "A bard's song: the lute strummed, the flute lifted to the mouth, the squeeze box squeezed or the ship's bell rung, notes and wisps rising. Only a figure carrying one plays."],
   ["guard", "Guard", "Braced: knees bent and the shield brought up in front; with no shield, what is in hand and the other forearm. Shield Wall and Hold the Line."],
   ["jump", "Jump", "The jump from tile to tile: a crouch with the arms drawn back, a spring, the knees drawn up over the top and the feet put out to land, then a deep crouch on landing. Here it goes straight up and down; in the game it is carried across the tiles."],
   ["hit", "Flinch", "Taking a blow: thrown back, arms flung wide, then gathered again."],
@@ -52,13 +52,9 @@ type Action = (typeof ACTIONS)[number][0];
 const nameOf = (kind: string) => (HEROES.includes(kind) ? label("class", kind) : FOES.includes(kind) ? label("enemy", kind) : kind.replace(/_/g, " "));
 /** Models with no weapon in the game yet: offered in the main hand, to see them held. */
 const SPARE_MODELS = [
-  ["cutlass", "Cutlass (model only)"],
   ["sabre", "Sabre (model only)"],
   ["rapier", "Rapier (model only)"],
   ["dirk", "Dirk (model only)"],
-  ["pistol", "Pistol (model only)"],
-  ["blunderbuss", "Blunderbuss (model only)"],
-  ["harpoon-gun", "Harpoon gun (model only)"],
   ["heavy-crossbow", "Crossbow (model only)"],
 ] as const;
 const gearChoices = (slot: Slot): { ref: string; icon: string; name: string }[] =>
@@ -209,7 +205,7 @@ export default function FigureLab({ me, onClose }: { me: Me; onClose(): void }) 
       }
       if (action === "play") {
         const wait = figure.play();
-        return wait > 0 ? `The song takes hold ${wait.toFixed(2)}s in.` : "No instrument in hand, or already mid-song. Pick the Shanty Bard, or give a person a lute, a flute or the ship's bell.";
+        return wait > 0 ? `The song takes hold ${wait.toFixed(2)}s in.` : "No instrument in hand, or already mid-song. Pick the Shanty Bard, or give a person a lute, a flute, a squeeze box or the ship's bell.";
       }
       if (action === "shoot") {
         // As the game does it: a bow if there is one, else a gun or a crossbow.

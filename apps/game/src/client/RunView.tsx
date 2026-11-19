@@ -726,7 +726,7 @@ function TurnBar({ state, run, me, code, status, onInventory, onBook, onLeave }:
         : <>Waiting for <strong>{hero.name}</strong>…</>}
       hp={self ? { now: self.hp, max: self.maxHp } : undefined}
       pips={[
-        ...(mine ? [{ label: "Action", now: turn.acted ? 0 : 1, max: 1, kind: "action" as const }, { label: "Move", now: turn.mp, max: Math.max(turn.mp, moveMax.current), kind: "move" as const }] : []),
+        ...(mine ? [{ label: "Action", now: turn.acted ? 0 : 1, max: 1, kind: "ap" as const }, { label: "Move", now: turn.mp, max: Math.max(turn.mp, moveMax.current), kind: "move" as const }] : []),
       ]}
       meter={self ? { name: "Focus", note: "spent to steady a roll", now: self.focus, max: self.maxFocus, kind: "focus" } : undefined}
       quick={self ? [{ icon: brewIcon("healing"), label: "Potions", note: `${self.potions} left. Drunk in a fight.`, count: self.potions }] : []}

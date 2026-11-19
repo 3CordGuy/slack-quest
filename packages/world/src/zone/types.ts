@@ -43,6 +43,8 @@ export interface UnitCondition {
   at?: HexPos;
   /** A shanty: the allies who have joined it (each once), each widening it a hex. */
   joined?: string[];
+  /** A shanty: the creatures called into the fight who have joined it (each once): only they get the lift of joining. */
+  joinedOwn?: string[];
   /** A shanty: how many have joined it since the Bard's turn last began (the extra each joining gives lasts that long). */
   surge?: number;
   /** Taunted: the unit that taunted it. The Curse of Drowning and the Black Spot: who laid it. */
@@ -73,6 +75,8 @@ export interface Unit {
   /** A hero's ability ids. Enemies attack with what their kind has. */
   abilities: string[];
   outfit?: Outfit;
+  /** A hero's lantern helm, shown or hidden (HeroSheet.lantern): it lights the dark round them. */
+  lantern?: boolean;
   conditions: UnitCondition[];
   down: boolean;
   /** Rounds until each ability can be used again. */
@@ -138,21 +142,25 @@ export interface GroundSurface {
   lasting?: boolean;
 }
 
-/** What a unit has left to spend on its turn. */
+/**
+ * What a unit has left to spend on its turn. A turn is Action Points (AP), spent on anything in any order: abilities,
+ * common actions, items, and movement, bought `stride` steps at a time. AP left at the end of a turn carry over (AP_MAX at most).
+ */
 export interface Budget {
-  action: boolean;
-  bonus: boolean;
-  /** Movement left, in steps of open ground. */
+  /** Action Points left. */
+  ap: number;
+  /** Movement already bought this turn and not yet walked, in steps of open ground. Lost when the turn ends. */
   move: number;
-  /** What a turn's movement was before any of it was spent (Dash adds this much again). */
-  moveMax: number;
+  /** Steps of open ground 1 AP buys this turn: half the unit's speed, with whatever hastens or slows it. 0: it cannot move (knocked flat). */
+  stride: number;
   /** Disengaged: moving away from an enemy draws no opportunity attack this turn. */
   disengaged: boolean;
-  /** The movement a Wind-god's Shanty has added this turn, so a shanty widened or begun mid-turn adds only what is still owed. */
+  /** What a Wind-god's Shanty has added to `stride` this turn, so a shanty widened or begun mid-turn adds only what is still owed. */
   song?: number;
   /**
-   * Movement from a course charted (Chart a Course) left this turn: spent, before `move`, only on steps that bring the
-   * unit nearer a mark. Missing: no course was charted for it this turn (one charted mid-turn gives it then).
+   * Movement from a course charted (Chart a Course) bought and left this turn: spent, before `move`, only on steps that bring
+   * the unit nearer a mark. Each AP spent on movement buys CHART.speed more of it. Missing: no course was charted for it this
+   * turn (one charted mid-turn gives it then).
    */
   course?: number;
 }
@@ -172,6 +180,8 @@ export interface Encounter {
   /** Of `acting`, who has ended their turn. */
   done: string[];
   budgets: Record<string, Budget>;
+  /** AP each unit ended its last turn with, carried into its next (AP_MAX at most). Missing: none. */
+  banked?: Record<string, number>;
   /** Who has used their reaction this round. */
   reacted: string[];
   /** Turns begun so far. Keys the turn timer. */
@@ -328,6 +338,8 @@ export interface ZoneHero {
   weaponPower: number;
   armor: number;
   outfit?: Outfit;
+  /** A lantern helm on the head, shown or hidden (HeroSheet.lantern). */
+  lantern?: boolean;
   maxHp: number;
   maxFocus: number;
   /** The class abilities they carry in, already checked against their class and level (classabilities.ts), on top of the weapon's. */
@@ -336,7 +348,7 @@ export interface ZoneHero {
   items?: Partial<Record<Throwable, number>>;
 }
 
-export type CommonAction = "dash" | "disengage" | "help" | "shove" | "jump" | "flee" | "join";
+export type CommonAction = "disengage" | "help" | "shove" | "jump" | "flee" | "join";
 
 export type DevOp =
   | { op: "spawn"; kinds: string[]; at: HexPos }
@@ -456,13 +468,14 @@ export type ZoneEvent =
   /** Weather made over some hexes, or (`kind` null) cleared from them. */
   | { t: "weather"; kind: WeatherKind | null; hexes: HexPos[]; by: string }
   | { t: "skip"; id: string; kind: Condition }
-  /** Drowning: it failed to hold its breath, and loses its Action this turn (it can still move). */
+  /** Drowning: it failed to hold its breath, and loses 2 of its AP this turn. */
   | { t: "choked"; id: string }
   | { t: "down"; id: string }
   | { t: "up"; id: string }
   | { t: "surface"; kind: SurfaceKind | null; hexes: HexPos[] }
   | { t: "burst"; hexes: HexPos[] }
-  | { t: "shoved"; id: string; target: string; from: HexPos; to: HexPos | null }
+  /** Driven from `from` to `to`, or flattened where it stands (`to` null). `pulled`: hauled toward `id` on a line, not struck back (Throw Pike, Harpoon); the number of this step of the haul, from 1. */
+  | { t: "shoved"; id: string; target: string; from: HexPos; to: HexPos | null; pulled?: number }
   | { t: "jumped"; id: string; from: HexPos; to: HexPos }
   /** One who was Unseen gives themselves away. */
   | { t: "seen"; id: string }

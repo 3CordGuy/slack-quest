@@ -80,21 +80,26 @@ export const statPoints = (item: Pick<ItemDef, "statBonus">) => Object.values(it
 /** The icon each weapon is drawn with (the admin page lists which items share an icon). */
 export const WEAPON_ICON: Record<string, string> = {
   mace: "hammer-drop",
-  greatsword: "broadsword",
+  greatsword: "cutlass",
   staff: "wizard-staff",
   tome: "scroll-unfurled",
-  daggers: "daggers",
+  daggers: "dirks",
   shortbow: "crossbow",
   root_staff: "root-staff",
   sickle: "sickle",
   lute: "lute",
   flute: "flute",
+  accordion: "accordion",
   orb: "orb",
   scepter: "scepter",
   pager_axe: "pager-axe",
   maul: "maul",
   grimoire: "grimoire",
   void_staff: "void-staff",
+  // Ship's guns (the models are in the client's gearModels).
+  pistol: "pistol",
+  blunderbuss: "blunderbuss",
+  harpoon_gun: "harpoon-gun",
   // Signature weapons, each with an icon of its own (saved items were moved over by migration 0031).
   ballast_flail: "ballast-flail",
   barometer_rod: "barometer-rod",
@@ -120,6 +125,8 @@ const BASES: Record<Exclude<Slot, "main_hand">, Base[]> = {
   body: [
     { ref: "hauberk", name: "Hauberk of Calm Seas", icon: "chest-armor" },
     { ref: "greatcoat", name: "Oilskin Greatcoat", icon: "chest-armor" },
+    // The diving set (with the Diving Helm): riveted iron and brass, as worn on the sea floor.
+    { ref: "diving_plate", name: "Diver's Plate", icon: "chest-armor" },
   ],
   helmet: [
     { ref: "hardhat", name: "Diving Helm", icon: "heavy-helm" },
@@ -129,10 +136,12 @@ const BASES: Record<Exclude<Slot, "main_hand">, Base[]> = {
   legs: [
     { ref: "greaves", name: "Deckhand Greaves", icon: "armored-pants" },
     { ref: "trousers", name: "Sailcloth Trousers", icon: "armored-pants" },
+    { ref: "diving_legs", name: "Riveted Leggings", icon: "armored-pants" },
   ],
   boots: [
     { ref: "boots", name: "Sea Boots", icon: "boots" },
     { ref: "treads", name: "Gangplank Treads", icon: "boots" },
+    { ref: "lead_boots", name: "Lead Boots", icon: "boots" },
   ],
   ring: [
     { ref: "ring", name: "Ring of Steady Tides", icon: "ring" },
@@ -154,26 +163,66 @@ export const GEAR_BASES: readonly Base[] = Object.values(BASES).flat();
  * seen in what is under them) or swap them for armor. Drawn in the wearer's class colours.
  */
 export const GARB_PREFIX = "garb_";
-const GARB: { slot: "helmet" | "body" | "legs" | "boots"; ref: string; name: string; icon: string }[] = [
-  { slot: "helmet", ref: "garb_hat", name: "Hat", icon: "hood" },
-  { slot: "body", ref: "garb_tunic", name: "Tunic", icon: "chest-armor" },
-  { slot: "legs", ref: "garb_trousers", name: "Trousers", icon: "armored-pants" },
-  { slot: "boots", ref: "garb_shoes", name: "Shoes", icon: "boots" },
+/** The starter hat's ref. */
+export const GARB_HAT = "garb_hat";
+/** The pieces of starting clothes. `piece` names the class's own picture of it (garbIcon); `icon` is the plain one, for a piece with no class. */
+const GARB: { slot: "helmet" | "body" | "legs" | "boots"; ref: string; name: string; piece: GarbPiece; icon: string }[] = [
+  { slot: "helmet", ref: GARB_HAT, name: "Hat", piece: "hat", icon: "knit-cap" },
+  { slot: "body", ref: "garb_tunic", name: "Tunic", piece: "tunic", icon: "naval-tunic" },
+  { slot: "legs", ref: "garb_trousers", name: "Trousers", piece: "trousers", icon: "armored-pants" },
+  { slot: "boots", ref: "garb_shoes", name: "Shoes", piece: "shoes", icon: "deck-boots" },
 ];
+export type GarbPiece = "hat" | "tunic" | "trousers" | "shoes";
 
-/** A new hero's starting clothes, named for their class ("Lighthouse Paladin Tunic"). */
+/**
+ * The icon of a class's own piece of starting clothes, "garb-tunic:staff_sage": pictured in that class's look, as
+ * it is drawn on a hero of that class. Read back with parseGarbIcon.
+ */
+export const garbIcon = (piece: GarbPiece, classId: string) => `garb-${piece}:${classId}`;
+export function parseGarbIcon(icon: string): { piece: GarbPiece; classId: string } | null {
+  const m = /^garb-(hat|tunic|trousers|shoes):([a-z_]+)$/.exec(icon);
+  return m ? { piece: m[1] as GarbPiece, classId: m[2] } : null;
+}
+
+/** The class whose own hat is a lantern helm: a steel helm with a little lantern burning on top. */
+export const LANTERN_HELM_CLASS = "qa_paladin";
+/** The lantern helm's icon: the Lighthouse Paladin's starter hat is saved with it, and it is what makes a hat one. */
+export const LANTERN_HELM_ICON = "lantern-helm";
+
+/**
+ * Whether this hat, on someone of this class, is a lantern helm: the Lantern Helm itself (on whoever has it on: it
+ * can be passed on through the crew's chest), or any starter hat on a Lighthouse Paladin, whose own hat is the helm.
+ */
+export function isLanternHelm(classId: string, helmet: { icon: string; ref: string }): boolean {
+  return helmet.icon === LANTERN_HELM_ICON || (helmet.ref === GARB_HAT && classId === LANTERN_HELM_CLASS);
+}
+
+/**
+ * Whether a hero is drawn in a lantern helm, which lights the dark around them as far as a held torch does and
+ * never burns down: a hat that is one (isLanternHelm), or a Paladin's own class hat on a figure with nothing on the
+ * head and no look of their own chosen. The one rule for what is drawn and what is lit; a helm worn hidden still
+ * lights (HeroSheet.lantern), since hidden gear is worn for what it does.
+ */
+export function wearsLanternHelm(classId: string, outfit: Outfit | undefined): boolean {
+  const helmet = outfit?.helmet;
+  if (helmet) return isLanternHelm(classId, helmet);
+  return classId === LANTERN_HELM_CLASS && !outfit?.appearance;
+}
+
+/** A new hero's starting clothes, named for their class ("Lighthouse Paladin Tunic"); the Paladin's hat is their Lantern Helm. */
 export function starterGarb(classId: string): ItemDef[] {
   const cls = heroClass(classId);
+  const lantern = classId === LANTERN_HELM_CLASS;
   return GARB.map((g) => ({
     kind: kindOfSlot(g.slot),
     ref: g.ref,
-    name: `${cls?.name ?? "Plain"} ${g.name}`,
+    name: lantern && g.ref === GARB_HAT ? "Lantern Helm" : `${cls?.name ?? "Plain"} ${g.name}`,
     rarity: "common",
     slot: g.slot,
     power: 0,
     statBonus: {},
     levelReq: 1,
-    icon: g.icon,
+    icon: lantern && g.ref === GARB_HAT ? LANTERN_HELM_ICON : cls ? garbIcon(g.piece, cls.id) : g.icon,
   }));
 }
 
@@ -200,6 +249,11 @@ export function rollRarity(rng: Rng, quality: number): Rarity {
   return "common";
 }
 
+/** Weapons with no class: any hero can use them. */
+export const SHIPS_GUNS: string[] = Object.values(WEAPONS).filter((w) => !w.classId).map((w) => w.id);
+/** The share of weapon drops that are a ship's gun. */
+export const GUN_CHANCE = 0.2;
+
 /** A class's weapon as an item. Common ones are the starting kit. */
 export function weaponItem(weaponId: string, rarity: Rarity = "common", level = 1, statBonus: Partial<Stats> = {}): ItemDef {
   const w = WEAPONS[weaponId];
@@ -221,8 +275,9 @@ export function weaponItem(weaponId: string, rarity: Rarity = "common", level = 
  * Roll one item for a hero of `classId` at `level`. Weapons are always ones
  * the class can use. Pass `slot` to force where it goes (the shop does, to
  * stock one of everything). `minRarity` lifts anything rolled below it.
+ * A weapon can also be a ship's gun, which no class owns, unless `guns` is false (the shop sells only class weapons).
  */
-export function rollItem(rng: Rng, classId: string, quality: number, level: number, slot?: Slot, minRarity?: Rarity): ItemDef {
+export function rollItem(rng: Rng, classId: string, quality: number, level: number, slot?: Slot, minRarity?: Rarity, guns = true): ItemDef {
   if (!slot) {
     const total = SLOT_WEIGHT.reduce((a, [, w]) => a + w, 0);
     let r = rng.next() * total;
@@ -244,8 +299,11 @@ export function rollItem(rng: Rng, classId: string, quality: number, level: numb
   if (kind === "weapon") {
     // Good loot (lairs and bosses) can also be the class's signature weapon. Same one draw either way.
     const cls = heroClass(classId);
-    const weapons = cls ? (quality >= 0.5 ? [...cls.weapons, cls.signature] : cls.weapons) : Object.keys(WEAPONS);
-    return weaponItem(rng.pick(weapons), rarity, level, statBonus);
+    const own = cls ? (quality >= 0.5 ? [...cls.weapons, cls.signature] : cls.weapons) : Object.keys(WEAPONS);
+    // A ship's gun turns up about one weapon drop in five, whatever the class.
+    const gun = rng.chance(GUN_CHANCE) && guns;
+    const pick = rng.pick(gun ? SHIPS_GUNS : own);
+    return weaponItem(pick, rarity, level, statBonus);
   }
   return baseItem(slot as Exclude<Slot, "main_hand">, rng.pick(BASES[slot as Exclude<Slot, "main_hand">]), rarity, level, statBonus);
 }
@@ -359,7 +417,8 @@ export function afterArmor(raw: number, armor: number): number {
 /** Why a hero cannot equip an item, or null if they can. */
 export function equipProblem(item: ItemDef, classId: string, level: number): string | null {
   if (level < item.levelReq) return `Requires level ${item.levelReq}`;
-  if (item.kind === "weapon" && WEAPONS[item.ref]?.classId !== classId) return `Only a ${heroClass(WEAPONS[item.ref]?.classId ?? "")?.name ?? "different class"} can use this`;
+  const only = item.kind === "weapon" ? WEAPONS[item.ref]?.classId : undefined;
+  if (only && only !== classId) return `Only a ${heroClass(only)?.name ?? "different class"} can use this`;
   return null;
 }
 
@@ -390,7 +449,7 @@ export interface ShopEntry {
 export function shopStock(seed: string, classId: string, level: number): ShopEntry[] {
   const rng = makeRng(seedFromString(`shop|${seed}`));
   return SLOTS.map((slot, index) => {
-    const item = rollItem(rng, classId, 0.3, index >= SLOTS.length - 2 ? level + 1 : level, slot);
+    const item = rollItem(rng, classId, 0.3, index >= SLOTS.length - 2 ? level + 1 : level, slot, undefined, false);
     return { index, item, price: itemPrice(item) };
   });
 }

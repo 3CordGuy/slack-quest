@@ -34,7 +34,7 @@ To send real mail (staging does), the environment needs a `send_email` binding n
 
 A test copy runs as the `gantt-quest-game-staging` Worker with its own D1 database and live Workers AI. It is defined as the `staging` environment in `wrangler.jsonc` (put the real database id in your local, gitignored copy).
 
-CI deploys it on every merge to `main` that touches the game, and production from a `game-v*` tag after a reviewer approves; the root README has the steps. To deploy staging by hand instead (the fallback):
+CI deploys it on every merge to `main` that touches the game, and production from a `game-v*` tag, with no approval step; the root README has the steps. To deploy staging by hand instead (the fallback):
 
 ```bash
 pnpm --filter @gantt-quest/game exec wrangler d1 migrations apply DB --remote --env staging
@@ -50,16 +50,22 @@ Build before deploying: `wrangler deploy` ships whatever the last build produced
 
 Every `game-v*` tag is a release. The build reads its notes out of git (the commits since the tag before it) and the game pins them on the Harbor's notice board, which wears a bouncing "!" until a player has read the newest. Production deploys also write the tag's GitHub release from the same notes. Development and staging builds add a "Coming next" entry for commits not yet tagged.
 
-A commit makes a line when it changes code that ships in the game (tests, docs and CI are left out). The line is its subject, so write subjects for players: `Felling: chops cut a notch` shows as **Felling:** Chops cut a notch. To say something better, or nothing, put trailer lines in the commit message (for a squash merge, in the PR description):
+A commit makes a line when it changes code that ships in the game (`src`, `public`, `audio` and `index.html` here, and `packages/world/src` and `packages/core/src`; tests, docs, scripts and CI are left out). The line is its subject, so write subjects for players: `Felling: chops cut a notch` shows as **Felling:** Chops cut a notch. To say something better, or nothing, put trailer lines in the commit message:
 
 ```
 Release-note: Fishing pays a little more for a perfect catch.
 Release-note: skip
 ```
 
+Each `Release-note:` line is a line on the board, in place of the subject; `skip` leaves the commit out.
+
+PRs are squash-merged, and this repo builds the squash commit's message from the commit messages on the branch, not from the PR description. So a trailer belongs in a commit message on the branch, every trailer on the branch counts, and a `Release-note: skip` on any one commit hides the whole PR. Keep `skip` for PRs that change nothing a player can notice.
+
 A commit already merged can't be reworded, so its lines are corrected in `apps/game/scripts/release-note-overrides.ts`, keyed by commit hash.
 
-Preview what the next tag would say with `node apps/game/scripts/release-notes.ts --unreleased`.
+Before pushing a tag, print what it would say with `node --experimental-strip-types apps/game/scripts/release-notes.ts --unreleased` and read the first entry (`next-<sha>`) as a player would; the root README and [`AGENTS.md`](../../AGENTS.md) have the steps and what a good note looks like.
+
+A tab left open on an older build is told when a newer one is out (`src/client/NewVersion.tsx`), with a "What's in this release?" link that lists the notes for every release it is behind. The tab names the newest release it knows when it asks `GET /api/version?since=…`, and the Worker answers with the releases after it from its own list, so the link and the board show the same notes. With no notes to show there is no link. In local dev, add `?stale` to the address to see the notice as a tab left open one release back would (`?stale=game-v2026.11.17.7` names the release).
 
 ## Where things live
 

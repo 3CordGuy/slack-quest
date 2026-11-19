@@ -98,7 +98,7 @@ The game has two environments, both set in `apps/game/wrangler.jsonc`:
   ```bash
   git fetch origin && git tag game-v2026.11.13 origin/main && git push origin game-v2026.11.13
   ```
-  The job runs in the `production` GitHub Environment, which has a required reviewer. It waits until the reviewer opens the run in the Actions tab, chooses **Review deployments**, ticks **production** and approves. Nothing reaches production before that click.
+  There is no approval step: the push deploys to production once the tests and migrations pass. Before tagging, read what the release will say on the notice board (see [Release notes](#release-notes) below). The run's last job writes the tag's GitHub release from the same notes.
 - **Config:** CI gets the whole `apps/game/wrangler.jsonc` from the repo secret `WRANGLER_GAME_CONFIG`. When you change an environment block (a new binding, var or Durable Object), update the secret too, or CI keeps deploying the old config: `gh secret set WRANGLER_GAME_CONFIG < apps/game/wrangler.jsonc`.
 
 ### By hand (fallback)
@@ -127,10 +127,34 @@ For collaborators, a change goes out like this:
 
 1. Branch from `origin/main`, make the change, and run the tests and typechecks above.
 2. Try it in the browser locally (reload, a second player with `?p=2`, and a phone-sized window) before committing.
-3. Open a PR into `main`. CI runs the tests and typechecks; list what you checked by hand in the description.
+3. Open a PR into `main`, with a title a player would understand (`Area: what changed`): it becomes the line on the notice board. CI runs the tests and typechecks; list what you checked by hand in the description.
 4. Merge once CI is green. Staging deploys on its own: check the run in the Actions tab and try the change on https://harbor-staging.heylets.party.
-5. When staging looks right, tag for production (above) and ask the reviewer to approve the run.
-6. If a new binding, var or Durable Object came with the change, update the `WRANGLER_GAME_CONFIG` secret before tagging.
+5. If a new binding, var or Durable Object came with the change, update the `WRANGLER_GAME_CONFIG` secret before tagging.
+6. When staging looks right, check the release notes (below), then tag for production (above).
+
+### Release notes
+
+The Harbor's notice board lists what changed in each release, and a tab left open on an older build offers the same list ("What's in this release?") when a newer one is out. The notes are not written at release time: the build reads them out of git. Every `game-v*` tag is a release, and its notes are the commits on `main` since the tag before it. So the notes are written when a PR is merged, and checked when a release is cut.
+
+**In every PR that changes the game:**
+
+- The squash commit's subject is the note, so the PR title (or the only commit's subject) is written for players: `Fishing: a perfect catch pays a little more`.
+- To say more than one line, or something better than the title, put `Release-note:` lines in a commit message on the branch, one per change a player would notice. The squash commit's message is the branch's commit messages joined together; the PR description is not part of it.
+- `Release-note: skip` leaves the commit off the board. Use it only when the whole PR changes nothing a player can notice: a `skip` in any one commit on the branch hides the entire PR.
+- Commits that touch no shipped code (docs, CI, scripts, tests) make no line and need nothing.
+
+**Before pushing a tag:**
+
+```bash
+git fetch origin --tags
+node --experimental-strip-types apps/game/scripts/release-notes.ts --unreleased   # run on the commit you will tag
+```
+
+The first entry, `next-<sha>`, is what the board will say for the release (staging's board shows it as "Coming next"). If a change players would notice is missing, or a line reads like a commit rather than news, correct it in `apps/game/scripts/release-note-overrides.ts` (keyed by commit hash), merge that, and tag the new tip. After the tag there is nothing more to write: the deploy builds the board and the GitHub release from git.
+
+**A good note** is written for players, in plain words, one line per change they would notice: what they can now do or see, not what the code does. It starts with the area (`Fights:`, `Pub:`, `Sea bag:`) and leaves out file names, PR numbers and internal terms.
+
+[`AGENTS.md`](AGENTS.md) has the same steps for coding agents, and [`apps/game/README.md`](apps/game/README.md#release-notes) has the rules the script follows.
 
 ## How the code is built
 
@@ -148,6 +172,7 @@ A few rules that keep the game fair and replayable:
 | Doc | What |
 |---|---|
 | [`apps/game/README.md`](apps/game/README.md) | The game app in depth: where each piece of code lives, and more rules worth knowing |
+| [`AGENTS.md`](AGENTS.md) | For coding agents: writing release notes for the notice board, and what to check before committing |
 | [`docs/overworld-revamp.md`](docs/overworld-revamp.md) | The design behind the rewrite, and what's been built |
 | [`docs/game-production-checklist.md`](docs/game-production-checklist.md) | Taking the game to production, and rolling back |
 | [`docs/legacy-gantt-quest.md`](docs/legacy-gantt-quest.md) | The original Gantt Quest: architecture, setup and Slack app |

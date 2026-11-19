@@ -58,6 +58,11 @@ import {
   checkCommon,
   checkThrow,
   commonCost,
+  AP_MAX,
+  AP_TURN,
+  ITEM_AP,
+  apForMove,
+  moveLeft,
   crateAt,
   crateBlow,
   crateHp,
@@ -75,6 +80,7 @@ import {
   throwRange,
   tileAt,
   FORCE_DC,
+  unitAt,
   unopened,
   zoneBlast,
   zoneReach,
@@ -90,6 +96,7 @@ import {
   type ZoneView as ZoneViewState,
   modName,
   stoneName,
+  carriesLantern,
 } from "@gantt-quest/world";
 import { api, type Me } from "./api";
 import { CrewRoster, type RosterMember } from "./CrewRoster";
@@ -99,7 +106,7 @@ import { useAudioScene } from "./audio/useAudioScene";
 import { sounds } from "./audio/gameSounds";
 import { OptionsMenu } from "./OptionsMenu";
 import * as THREE from "three";
-import { SpellFx } from "./render/SpellFx";
+import { SpellFx, WAVE_PACE } from "./render/SpellFx";
 import { TacticsLayer, type Overlay } from "./render/TacticsLayer";
 import { spriteDataUrl } from "./render/sprites";
 import { WorldRenderer, hexToWorld, tileTop, type RenderState } from "./render/WorldRenderer";
@@ -108,10 +115,11 @@ import { useCountdown } from "./ui/useCountdown";
 import { useZone, type ZoneSend } from "./useZone";
 import { Icon } from "./items";
 import { label } from "./labels";
-import { THROW_COLOR, aimKind, fxFor } from "./zone/abilityFx";
+import { FLOURISH, GUARDS, SONG_MOOD, SOUND_KIND, SUMMONS, THROW_COLOR, aimKind, fxFor } from "./zone/abilityFx";
 import { COMMON_ICON, ITEM_ICON, abilityIcon } from "./zone/actionIcons";
 import { BAR_SLOTS, assignSlot, barChoices, loadBar, moveSlot, saveBar } from "./zone/hotbar";
 import { believe, foreseeWalk, giveUp, settle, standing, type Ahead } from "./zone/ahead";
+import { playback, type Playback } from "./zone/playback";
 import { setZoneDev, useZoneDev } from "./zone/zoneDev";
 import "./zone/zone.css";
 
@@ -129,11 +137,35 @@ interface Picture {
 
 const asState = (view: ZoneViewState) => view as unknown as ZoneState;
 
+/** How often an ability can be used, for the cost line of its tooltip: a cooldown ticks off as each of your turns ends, the turn it was used in too. */
+function cooldownText(turns: number): string {
+  return turns > 0 ? `cooldown ${turns}` : "";
+}
+
+/** Where an ability reaches, in a few words, for the cost line of its tooltip: "range 4", "melee", "cone 3". */
+function reachLabel(tactic: ReturnType<typeof tacticOf>): string {
+  if (tactic.constellation) return `allies, chained ${tactic.constellation.link}`;
+  if (tactic.newMoon) return "lit enemies";
+  if (tactic.taunt) return `enemies, radius ${tactic.taunt.range}`;
+  if (tactic.northStar) return `ally, range ${tactic.range}`;
+  if (tactic.chart || tactic.summon) return `range ${tactic.range}`;
+  if (tactic.blink) return tactic.shape === "self" ? `range ${tactic.blink.range}` : `melee, then range ${tactic.blink.range}`;
+  if (tactic.soothe) return `allies, radius ${tactic.soothe.range}`;
+  if (tactic.shape === "self") return "self";
+  if (tactic.shape === "burst") return `radius ${tactic.radius}`;
+  if (tactic.reach === "melee") return tactic.shape === "adjacent" ? "melee, all round" : tactic.shape === "arc" ? "melee, arc" : "melee";
+  const base = tactic.shape === "line" ? `line ${tactic.length}` : tactic.shape === "cone" ? `cone ${tactic.length}` : `range ${tactic.range}`;
+  const extra = tactic.weather === "rain" ? ", 3 hexes" : tactic.splash ? `, ${tactic.splash.hexes} hexes` : tactic.fortify ? `, wall ${tactic.fortify.hexes}` : tactic.cluster ? `, ${tactic.cluster} hexes` : tactic.shape === "blast" ? `, blast ${tactic.radius}` : "";
+  return base + extra;
+}
+
 /** What joining a shanty does, in a few lines, for the Join button's tooltip. */
-function joinTip(bard: string, kind: ShantyKind): string {
+function joinTip(bard: string, kind: ShantyKind, summoned = false): string {
   const who = bard.split(" ")[0];
-  const lift = kind === "lively_shanty" ? ["You: advantage on your next attack", "Everyone in it: +1 to hit"] : kind === "dour_shanty" ? ["You: Guarded (half damage)", "Everyone in it: +1 Defence"] : ["You: Disengage (no blows drawn moving away)", "Everyone in it: +1 movement"];
-  return [`Join ${who}'s ${CONDITION_INFO[kind].name}`, "Bonus action · once per shanty", lift[0], `${lift[1]}, until ${who}'s next turn`, "The shanty reaches 1 hex further"].join("\n");
+  const lift = kind === "lively_shanty" ? ["You: advantage on your next attack", "Everyone in it: +1 to hit"] : kind === "dour_shanty" ? ["You: Guarded (half damage)", "Everyone in it: +1 Defence"] : ["You: Disengage (no blows drawn moving away)", "Everyone in it: +1 movement for each AP"];
+  // A creature called into the fight gets its own lift, and nothing for the rest.
+  if (summoned) return [`Join ${who}'s ${CONDITION_INFO[kind].name}`, `${COMMON_ACTIONS.join.cost} AP · once per shanty`, lift[0].replace(/^You/, "It"), "Called into the fight: the shanty reaches no further, and nobody else gets more of it"].join("\n");
+  return [`Join ${who}'s ${CONDITION_INFO[kind].name}`, `${COMMON_ACTIONS.join.cost} AP · once per shanty`, lift[0], `${lift[1]}, until ${who}'s next turn`, "The shanty reaches 1 hex further"].join("\n");
 }
 
 /** How long a leave asked for mid-fight waits for the Flee before it is given up. */
@@ -174,14 +206,34 @@ function runs(events: ZoneEvent[]): { many: boolean[]; last: boolean[] } {
 }
 
 /**
+ * The roll each blow decides, by the blow's index: an attack's roll (or a save against harm) is shown as the blow
+ * lands or goes wide, not before the swing. A roll with no blow after it in its run (a save against a condition, a
+ * shove won) is shown at its own time, as is one of several at once (no card: the numbers over heads say it).
+ */
+function cardsFor(events: ZoneEvent[], many: boolean[]): Map<number, Roll> {
+  const cards = new Map<number, Roll>();
+  events.forEach((ev, i) => {
+    if (ev.t !== "roll" || ev.roll.kind === "initiative" || many[i]) return;
+    const on = ev.roll.target ?? ev.roll.id;
+    for (let k = i + 1; k < events.length; k++) {
+      const next = events[k];
+      if (CAUSES.has(next.t) || next.t === "roll") return;
+      if ((next.t === "hit" || next.t === "miss") && next.target === on) return void cards.set(k, ev.roll);
+    }
+  });
+  return cards;
+}
+
+/**
  * How long the picture dwells on each thing that happened, in ms. `many`: it is one of several that
  * land together. `next`: what follows, so that going down or catching fire comes on the heels of the blow.
  */
-function dwell(ev: ZoneEvent, many: boolean, next: ZoneEvent | undefined): number {
+function dwell(ev: ZoneEvent, many: boolean, next: ZoneEvent | undefined, carried = false): number {
   const follows = (id: string) => !!next && ((next.t === "down" && next.id === id) || (next.t === "condition" && next.target === id));
   switch (ev.t) {
     case "moved": return Math.min(2400, ev.path.length * 400);
-    case "roll": return ev.roll.kind === "initiative" ? 110 : many ? 0 : 440;
+    // A roll a blow carries is read as the blow lands: the blow's own dwell is the time to read it.
+    case "roll": return ev.roll.kind === "initiative" ? 110 : many || carried ? 0 : 440;
     case "used": return ev.what.startsWith("throw:") ? 620 : 280;
     case "hit": case "heal": case "tick": return many ? 130 : follows(ev.target) ? 200 : 380;
     case "miss": return many ? 130 : 380;
@@ -233,6 +285,8 @@ const TORCH_IN_HAND = { icon: "torch", ref: "torch", rarity: "common" as const }
 
 /** The breath after several have been struck at once, before the next thing is shown. */
 const AFTER_MANY = 340;
+/** A wave on its way: who sent it from where, when on the playback's timeline, and when it really set off. */
+type Wave = { from: THREE.Vector3; at: number; rolled: Promise<number> };
 
 /** What an attack is called, for its look and sound: an ability's name, or an enemy attack's own. */
 const blowName = (what: string) => ABILITIES[what]?.name ?? what;
@@ -251,6 +305,9 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
     return new THREE.Vector3(x, tileTop(mapNow.current ? tileAt(mapNow.current, pos) : undefined) + lift, z + (lift > 0 ? 0.25 : 0));
   };
   const [picture, setPicture] = useState<Picture | null>(null);
+  /** The picture on screen, for effects that last as long as something shown in it (vines round the Slowed). */
+  const shownNow = useRef<Picture | null>(null);
+  shownNow.current = picture;
   const [feed, setFeed] = useState<string[]>([]);
   const [roll, setRoll] = useState<Roll | null>(null);
   const [banner, setBanner] = useState<string | null>(null);
@@ -308,6 +365,8 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
   };
   const names = useRef(new Map<string, string>());
   const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
+  /** The update being played out (zone/playback.ts): its clock stops while a blow is on its way. */
+  const playing = useRef<Playback | null>(null);
   const settled = useRef<Picture | null>(null);
   /** Units with a move still to be shown from the update being played out: nothing is shown ahead for them until it has been. */
   const owed = useRef(new Set<string>());
@@ -342,6 +401,9 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
     // Anything still playing from the last update is finished at once.
     for (const t of timers.current) clearTimeout(t);
     timers.current = [];
+    playing.current?.stop();
+    const play = playback();
+    playing.current = play;
     owed.current.clear();
     const end: Picture = { units: next.units, surfaces: next.surfaces, pois: next.map.pois };
     let from = settled.current;
@@ -373,16 +435,27 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
     // The turn has passed to the enemy in this: it is watched through before the turn is yours again.
     setWatching(!!next.encounter && events.some((ev) => ev.t === "turn" && !ev.ids.some(yours)));
     const { many, last } = runs(events);
+    const cards = cardsFor(events, many);
+    const carried = new Set([...cards.values()]);
 
     const draft: Picture = structuredClone(from);
     /** The thing last used, whose blows the hits and misses after it are. */
-    let use: { id: string; what: string; look: ReturnType<typeof fxFor>; last: THREE.Vector3 | null } | null = null;
+    let use: { id: string; what: string; look: ReturnType<typeof fxFor>; last: THREE.Vector3 | null; wave?: Wave } | null = null;
+    /** Run `go` when a wave rolling from `wave.from` reaches `to` (at once if there is no wave). */
+    const whenReached = (wave: Wave | undefined, to: THREE.Vector3, go: () => void) => {
+      if (!wave) return go();
+      void wave.rolled.then((t0) => {
+        const due = t0 + wave.from.clone().setY(0).distanceTo(to.clone().setY(0)) * WAVE_PACE * 1000 - performance.now();
+        if (due <= 0) go();
+        else timers.current.push(setTimeout(go, due));
+      });
+    };
     const find = (id: string) => draft.units.find((u) => u.id === id);
     const lines: string[] = [];
     /** Who last struck each one, so one that goes down falls away from them. */
     const struck = new Map<string, string>();
     let at = 0;
-    const later = (run: () => void) => timers.current.push(setTimeout(run, at));
+    const later = (run: () => void) => play.at(at, run);
     /** Whoever the last thing shown was done by, so a new actor can be announced once as their turn comes up. */
     let acting: string | null = null;
     const nowActing = (id: string) => {
@@ -400,7 +473,18 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
         }
       });
     };
+    /** The last of each run's falls: several struck down at once fall together, and the last of them is waited for. */
+    const lastFall = new Set<number>();
+    events.forEach((ev, i) => {
+      if (ev.t !== "down") return;
+      if (!many[i]) return void lastFall.add(i);
+      let k = i + 1;
+      while (k < events.length && !CAUSES.has(events[k].t) && events[k].t !== "down") k++;
+      if (k >= events.length || events[k].t !== "down" || !many[k]) lastFall.add(i);
+    });
     for (const [i, ev] of events.entries()) {
+      /** Run once the picture has caught up with this event (see the end of the loop). */
+      let afterShown: (() => void) | null = null;
       const say = (line: string) => later(() => setFeed((f) => [...f, line].slice(-40)));
       const view = renderer.current;
       /** The unit makes its gesture (a cast, or a bow drawn), and `go`, what leaves its hand, runs as the gesture ends: at once with no view to draw it. */
@@ -430,11 +514,14 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
         owe(ev.id);
       } else if (ev.t === "blinked") {
         const u = find(ev.id);
+        const was = u ? u.pos : null;
         if (u) u.pos = ev.to;
-        // Gone in a puff and there: no walk, no leap.
+        // Gone in a puff and there: no walk, no leap. Smoke where they were, and where they come out.
         later(() => {
           sounds.zone("jump");
+          if (was) spells.current?.puff(point(was, 0.3));
           view?.blinkUnit(ev.id, ev.to);
+          spells.current?.puff(point(ev.to, 0.3));
         });
         owe(ev.id);
       } else if (ev.t === "seen") {
@@ -446,15 +533,21 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
         const u = find(ev.target);
         const to = ev.to;
         if (u && to) u.pos = to;
+        // Swept away by a wave: not till it reaches them. Everything after waits too, so the picture never has them
+        // at the end of the line before the wave gets there.
+        const wave = use && use.id === ev.id ? use.wave : undefined;
+        // (The clock stood still through the gesture that sent it: only its roll across the ground is waited for.)
+        if (wave) at = Math.max(at, wave.at + point(ev.from).setY(0).distanceTo(wave.from.clone().setY(0)) * WAVE_PACE * 1000);
         owe(ev.target);
         later(() => {
-          // Flung back and off their feet; with nowhere to go, flattened where they stand.
+          // Flung back and off their feet; with nowhere to go, flattened where they stand. Hauled in on a line, they stay on their feet.
           sounds.zone("shove", view?.whereIs(ev.target));
-          if (to) view?.knock(ev.target, to);
+          if (to) view?.knock(ev.target, to, !ev.pulled);
           else view?.floor(ev.target, undefined, ev.id);
-          timers.current.push(setTimeout(() => sounds.zone("fall", view?.whereIs(ev.target)), 260));
+          if (!ev.pulled) timers.current.push(setTimeout(() => sounds.zone("fall", view?.whereIs(ev.target)), 260));
         });
-        say(!to ? `${name(ev.id)} shoves ${name(ev.target)}, who has nowhere to go and falls.` : hexDistance(ev.from, to) > 1 ? `${name(ev.target)} is swept away.` : `${name(ev.id)} shoves ${name(ev.target)} back.`);
+        // A haul of two hexes is two events; it is said once.
+        if (!ev.pulled || ev.pulled === 1) say(!to ? `${name(ev.id)} shoves ${name(ev.target)}, who has nowhere to go and falls.` : ev.pulled ? `${name(ev.id)} hauls ${name(ev.target)} in.` : hexDistance(ev.from, to) > 1 ? `${name(ev.target)} is swept away.` : `${name(ev.id)} shoves ${name(ev.target)} back.`);
       } else if (ev.t === "used") {
         // Getting away has a line of its own (fled).
         if (ev.what !== "flee") say(`${name(ev.id)}: ${ev.name}${ev.target ? ` on ${name(ev.target)}` : ""}.`);
@@ -463,17 +556,52 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
         const thrown = ev.what.startsWith("throw:") ? (ev.what.slice(6) as Throwable) : null;
         const look = fxFor(ev.what === "attack" ? ev.name : ev.what, ev.what === "attack" && !ev.target);
         // Where each target of this use stood, so lightning can run from one to the next.
-        use = { id: ev.id, what: ev.what === "attack" ? ev.name : ev.what, look, last: from };
+        // A wave strikes each one as it reaches them: when it set off is known once the gesture has let it go.
+        let rolled: (t: number) => void = () => {};
+        const wave = (look.kind === "wave" || look.kind === "healwave") && from ? { from, at, rolled: new Promise<number>((done) => (rolled = done)) } : undefined;
+        use = { id: ev.id, what: ev.what === "attack" ? ev.name : ev.what, look, last: from, wave };
         // What it covers, for the things that come up out of the ground or roll across it.
         const covered = user && ABILITIES[ev.what] ? abilityArea(asState({ ...next, units: draft.units }), user, ev.what, ev.at, ev.target) : [];
         // Constellation: the lines of starlight, from the user through each ally in turn, as they stood when it was cast.
         const links = user && tacticOf(ev.what)?.constellation ? constellationLinks(asState({ ...next, units: draft.units }), user).map((l) => [point(l.from.pos, 0.9), point(l.to.pos, 0.9)] as const) : [];
         const said = named === ev.id;
         if (said) named = null;
+        // A thunderclap that does no harm has no blow to ride on (Roar of Thunder Stuns and throws): it is played
+        // here, at whoever it is aimed at, and what it does to them waits till it reaches them.
+        const struckBy = look.kind === "thunder" && ev.target && !ABILITIES[ev.what]?.damage ? find(ev.target) : undefined;
+        const clap = struckBy ? point(struckBy.pos, 0.8) : null;
+        const gesture = cast;
+        /**
+         * When what comes of it would be shown had nothing been waited for: once it has landed, that pause is spent.
+         * Not for a wave, whose reach along the ground is timed from when it set off (see shoved).
+         */
+        const due = wave ? undefined : at + dwell(ev, many[i], events[i + 1]);
         later(() => {
           const fxs = spells.current;
           if (!said) view?.floatOver(ev.id, ev.name, "#fff1c9");
           if (!fxs || !from || !user) return;
+          // What comes of it (the blows it lands, the ground it changes, whoever it moves) waits till it leaves the
+          // hand or the blow comes down, and, flung or fallen from the sky, till it lands: the clock stops till then.
+          const release = play.hold();
+          let held = false;
+          /** `go`, as the gesture lets it go, and the clock on after it. */
+          const thenOn = (go: () => void) => {
+            held = true;
+            return () => {
+              go();
+              release(due);
+            };
+          };
+          /** Something in flight: the clock waits on till the function returned is called as it lands. */
+          const landing = () => {
+            const down = play.hold();
+            return () => down(due);
+          };
+          const cast: typeof gesture = (id, name, x, z, go, thrown) => gesture(id, name, x, z, thenOn(go), thrown);
+          // Nothing let go of (a guard, a blessing, a drink): the clock goes on as soon as it is shown.
+          queueMicrotask(() => {
+            if (!held) release();
+          });
           if (thrown && ev.at) {
             sounds.zone("throw", view?.whereIs(ev.id));
             const land = point(ev.at, 0.05);
@@ -482,11 +610,16 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
               ev.name,
               land.x,
               land.z,
-              () =>
+              () => {
+                const down = landing();
                 fxs.launch("flask", from, land, THROW_COLOR[thrown], () => {
+                  down();
                   sounds.zone("shatter", { x: land.x, z: land.z });
                   fxs.ring(land, 2.4, THROW_COLOR[thrown]);
-                }),
+                  // Acid leaves nothing lying on the ground: it eats into it, fizzing and fuming, and is spent.
+                  if (thrown === "acid") fxs.fizz(land, THROW_COLOR.acid);
+                });
+              },
               true,
             );
             return;
@@ -501,29 +634,240 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
             return;
           }
           if (look.kind === "meteor" && aim) {
-            cast(ev.id, ev.name, aim.x, aim.z, () => fxs.launch("meteor", from, aim, look.color, () => fxs.ring(aim, 2.6, look.color)));
+            cast(ev.id, ev.name, aim.x, aim.z, () => {
+              const down = landing();
+              fxs.launch("meteor", from, aim, look.color, () => {
+                down();
+                fxs.ring(aim, 2.6, look.color);
+              });
+            });
           } else if (look.kind === "storm" && aim) {
             cast(ev.id, ev.name, aim.x, aim.z, () => {
-              fxs.spark([aim.clone().add(new THREE.Vector3(0.6, 9, -0.4)), aim], look.color);
+              fxs.strike(aim, look.color);
               fxs.ring(aim, 2.6, look.color);
             });
+          } else if (look.kind === "rain" && aim) {
+            cast(ev.id, ev.name, aim.x, aim.z, () => fxs.gather(aim, look.color));
           } else if (look.kind === "lob" && aim) {
-            cast(ev.id, ev.name, aim.x, aim.z, () => fxs.launch("bolt", from, aim, look.color, () => fxs.ring(aim, 2.4, look.color)));
+            cast(ev.id, ev.name, aim.x, aim.z, () => {
+              const down = landing();
+              fxs.launch("bolt", from, aim, look.color, () => {
+                down();
+                fxs.ring(aim, 2.4, look.color);
+              });
+            });
           } else if (look.kind === "beam" && covered.length > 0) {
             const end = point(covered[covered.length - 1], 0.9);
             cast(ev.id, ev.name, end.x, end.z, () => fxs.beam(from, end, look.color));
-          } else if (look.kind === "erupt" && covered.length > 0) {
-            cast(ev.id, ev.name, point(covered[0]).x, point(covered[0]).z, () => fxs.erupt(covered.map((p) => point(p)), look.color));
+          } else if (look.kind === "spot" && ev.target) {
+            // The Black Spot: no blow to ride on (it does no harm of itself). Pressed on as the hand points, and held
+            // over whoever carries it for as long as the picture shows them carrying it.
+            const marked = ev.target;
+            const on = find(marked);
+            if (on) {
+              const at = point(on.pos, 0.8);
+              cast(ev.id, ev.name, at.x, at.z, () =>
+                fxs.spot(
+                  {
+                    key: `spot:${marked}`,
+                    follow: () => renderer.current?.unitHead(marked) ?? null,
+                    holding: () => !!shownNow.current?.units.find((u) => u.id === marked && u.hp > 0)?.conditions.some((c) => c.kind === "black_spot"),
+                  },
+                  look.color,
+                ),
+              );
+            }
+          } else if (look.kind === "beacon" || look.kind === "aura") {
+            // An aura taken up: played or cast, a ring out over its reach, and then its beams (a Beacon) or its ring (a
+            // Healing Aura) on the user, following them, for as long as the picture shows them carrying it.
+            view?.bless(ev.id, null);
+            const holder = ev.id;
+            const kind = look.kind === "beacon" ? "beacon" : "mending";
+            const holding = () => !!shownNow.current?.units.find((u) => u.id === holder && u.hp > 0)?.conditions.some((c) => c.kind === kind);
+            timers.current.push(
+              setTimeout(() => {
+                fxs.ring(point(user.pos, 0.05), 3.4, look.color, 0.7);
+                if (look.kind === "beacon") fxs.beacon({ key: `beacon:${holder}`, follow: () => renderer.current?.unitHead(holder) ?? null, holding }, look.color);
+                else fxs.aura({ key: `mending:${holder}`, follow: () => renderer.current?.unitFeet(holder) ?? null, holding }, look.color);
+              }, 260),
+            );
+          } else if (look.kind === "bolster") {
+            // A great ward: up round the user and every ally within reach of it.
+            view?.bless(ev.id, null);
+            const shielded = draft.units.filter((u) => u.side === user.side && u.hp > 0 && hexDistance(u.pos, user.pos) <= 2).map((u) => u.pos);
+            timers.current.push(
+              setTimeout(() => {
+                fxs.ring(point(user.pos, 0.05), 3.4, look.color, 0.6);
+                for (const p of shielded) fxs.ward(point(p, 0.3), look.color);
+              }, 260),
+            );
+          } else if (look.kind === "nova") {
+            // Flame bursts off them as the blow comes down.
+            const go = () => fxs.nova(point(user.pos, 0.05), look.color);
+            if (view) view.burst(ev.id, ev.name, false, thenOn(go));
+            else go();
+          } else if (look.kind === "sweep" && covered.length > 0) {
+            // One wide swing through the hexes beside them, from one end of them to the other.
+            const middle = point(user.pos);
+            const angles = covered.map((p) => {
+              const q = point(p);
+              return Math.atan2(q.z - middle.z, q.x - middle.x);
+            });
+            const across = angles.reduce((v, a) => v.add(new THREE.Vector2(Math.cos(a), Math.sin(a))), new THREE.Vector2());
+            const mid = Math.atan2(across.y, across.x);
+            const half = Math.max(...angles.map((a) => Math.abs(Math.atan2(Math.sin(a - mid), Math.cos(a - mid))))) + 0.45;
+            const go = () => fxs.sweep(point(user.pos, 0.8).setZ(middle.z), mid - half, mid + half, look.color, 1.35);
+            if (view) view.burst(ev.id, ev.name, false, thenOn(go));
+            else go();
+          } else if (look.kind === "way" && ev.target) {
+            // A path of light laid to them; the heal itself shows as it lands.
+            const them = find(ev.target);
+            view?.bless(ev.id, them ? point(them.pos) : null);
+            if (them) timers.current.push(setTimeout(() => fxs.way(point(user.pos, 0.05), point(them.pos, 0.05), look.color), 260));
+          } else if (look.kind === "snuff") {
+            // Every light put out at once: a crescent moon over each that was lit.
+            const lit = covered.map((p) => point(p));
+            const toward = lit[0] ?? point(user.pos);
+            cast(ev.id, ev.name, toward.x, toward.z, () => lit.forEach((p, i) => timers.current.push(setTimeout(() => fxs.snuff(p, look.color), i * 70))));
+          } else if (look.kind === "gust" && covered.length > 0) {
+            const over = covered.map((p) => point(p, 0.05));
+            const mid = over[Math.floor(over.length / 2)];
+            cast(ev.id, ev.name, mid.x, mid.z, () => fxs.gust(point(user.pos, 0.05), over, look.color));
+          } else if (look.kind === "chart" && aim) {
+            cast(ev.id, ev.name, aim.x, aim.z, () => fxs.chart(from, aim, look.color));
+          } else if (look.kind === "starfire") {
+            // Starfire on whoever it is for, for as long as the picture shows them carrying it.
+            const holder = ev.target ?? ev.id;
+            const them = find(holder);
+            view?.bless(ev.id, holder !== ev.id && them ? point(them.pos) : null);
+            const holding = () => !!shownNow.current?.units.find((u) => u.id === holder && u.hp > 0)?.conditions.some((c) => c.kind === "north_star");
+            timers.current.push(
+              setTimeout(() => fxs.starfire({ key: `star:${holder}`, follow: () => renderer.current?.unitHead(holder) ?? null, holding }, look.color, ev.what === "north_star"), 260),
+            );
+          } else if (look.kind === "bomb") {
+            // A bomb tossed to the ally, and one popped into the user's own hand (both, if they keep both).
+            const ally = ev.target && ev.target !== ev.id ? find(ev.target) : null;
+            view?.bless(ev.id, ally ? point(ally.pos) : null);
+            timers.current.push(
+              setTimeout(() => {
+                const hand = point(user.pos, 0.9);
+                fxs.bomb(hand, hand);
+                if (ally) fxs.bomb(hand, point(ally.pos, 0.9));
+              }, 260),
+            );
+          } else if (look.kind === "aim") {
+            fxs.focus(point(user.pos, 0.05), look.color);
+          } else if (look.kind === "taunt") {
+            // A bellow, and a "!" over every enemy beside them that hears it.
+            const near = draft.units.filter((u) => u.side !== user.side && u.hp > 0 && hexDistance(u.pos, user.pos) === 1).map((u) => u.id);
+            const go = () => {
+              fxs.shout(point(user.pos, 0.05), look.color);
+              for (const id of near) {
+                const head = view?.unitHead(id);
+                if (head) fxs.exclaim(head, look.color);
+              }
+            };
+            // The roar goes at once: a bellow has no wind-up, and it must come before the "Taunted" it causes. The
+            // figure throws its arms wide and roars alongside it (its own gesture, not a blow).
+            view?.roar(ev.id, ev.name);
+            go();
+          } else if (look.kind === "charge" && ev.target) {
+            // Thrown bodily at them: the blow is the user's own weight, and it slams.
+            const them = find(ev.target);
+            if (them && view) {
+              const at = point(them.pos, 0.8);
+              view.strikeAt(ev.id, at, ev.name, thenOn(() => fxs.slam(at, look.color)));
+            }
+          } else if (look.kind === "whirl") {
+            const go = () => fxs.whirl(point(user.pos, 0.05), look.color);
+            if (view) view.burst(ev.id, ev.name, true, thenOn(go));
+            else go();
+          } else if (look.kind === "omen" && aim) {
+            cast(ev.id, ev.name, aim.x, aim.z, () => fxs.omen(aim, look.color));
+          } else if (look.kind === "song") {
+            // A shanty struck up: played, the song rolls out, and its notes keep coming off the singer for as long as
+            // the picture shows them singing it.
+            const mood = SONG_MOOD[ev.what] ?? "lively";
+            const sing = () => {
+              fxs.song(point(user.pos, 0.05), look.color, mood);
+              fxs.serenade(
+                {
+                  key: `song:${ev.id}`,
+                  follow: () => renderer.current?.unitFeet(ev.id) ?? null,
+                  holding: () => !!shownNow.current?.units.find((u) => u.id === ev.id && u.hp > 0)?.conditions.some((c) => c.kind === ev.what),
+                },
+                look.color,
+                mood,
+              );
+            };
+            if (view) view.burst(ev.id, ev.name, true, thenOn(sing));
+            else sing();
+          } else if (look.kind === "blast" && covered.length > 0) {
+            const line = covered.map((p) => point(p, 0.9)).sort((a, b) => a.distanceTo(from) - b.distanceTo(from));
+            const end = line[line.length - 1];
+            cast(ev.id, ev.name, end.x, end.z, () => fxs.blast(from, end, look.color));
+          } else if (look.kind === "chorus" && aim) {
+            cast(ev.id, ev.name, aim.x, aim.z, () => fxs.chorus(from, aim, look.color));
+          } else if (clap) {
+            cast(ev.id, ev.name, clap.x, clap.z, () => {
+              const down = landing();
+              fxs.thunder(from, clap, look.color, down);
+            });
+          } else if (look.kind === "blare") {
+            // A chord blared from the squeeze box: the burst goes as the bellows close.
+            const go = () => fxs.blare(point(user.pos, 0.05), look.color);
+            if (view) view.burst(ev.id, ev.name, true, thenOn(go));
+            else go();
+          } else if ((look.kind === "wave" || look.kind === "healwave") && covered.length > 0) {
+            const line = covered.map((p) => point(p)).sort((a, b) => a.distanceTo(from) - b.distanceTo(from));
+            const end = line[line.length - 1];
+            cast(ev.id, ev.name, end.x, end.z, () => {
+              rolled(performance.now());
+              fxs.wave(from, line, look.color);
+            });
+          } else if (look.kind === "erupt" && (covered.length > 0 || ev.target)) {
+            // Over all it covers; or, struck at one (thorns, kelp), up out of the ground under them, and staying
+            // wound round them, wherever they go, for as long as the picture shows them Slowed (or Stunned) by it.
+            const under = covered.length > 0 ? covered : [find(ev.target!)?.pos].filter((p): p is HexPos => !!p);
+            const caught = covered.length === 0 ? ev.target : undefined;
+            const bind = caught
+              ? {
+                  key: caught,
+                  follow: () => renderer.current?.unitFeet(caught) ?? null,
+                  holding: () => !!shownNow.current?.units.find((u) => u.id === caught && u.hp > 0)?.conditions.some((c) => c.kind === "slowed" || c.kind === "stunned"),
+                }
+              : undefined;
+            if (under.length > 0) cast(ev.id, ev.name, point(under[0]).x, point(under[0]).z, () => fxs.erupt(under.map((p) => point(p)), look.color, look.style, bind));
           } else if (look.kind === "ring") {
             // Struck all round (a song, played): the ring goes out as the blow lands.
             const ring = () => fxs.ring(point(user.pos, 0.05), ev.what === "attack" ? 3.6 : covered.length > 6 ? 3.6 : 1.9, look.color);
-            if (view) view.burst(ev.id, ev.name, ABILITIES[ev.what]?.stat === "int_stat", ring);
+            if (view) view.burst(ev.id, ev.name, ABILITIES[ev.what]?.stat === "int_stat", thenOn(ring));
             else ring();
           } else if (look.kind === "bless") {
             // A guard is braced behind; a heal or a blessing is played or cast, toward whoever it is for.
             const whom = ev.target && ev.target !== ev.id ? find(ev.target) : null;
             if (ev.what === "block" || ev.what === "raise_guard" || ev.what === "stand_strong") view?.brace(ev.id);
             else view?.bless(ev.id, whom ? point(whom.pos) : null);
+            // A heal shows as it lands (see heal). Anything else shows on whoever it is for as the gesture ends:
+            // a guard as a ward round them, a slip out of sight as smoke, a call as water where it is called to.
+            if (ABILITIES[ev.what]?.heal) return;
+            const on = point((whom ?? user).pos, 0.3);
+            timers.current.push(
+              setTimeout(() => {
+                if (GUARDS.has(ev.what)) {
+                  fxs.ward(on, look.color);
+                  if (ev.what === "against_the_waves") fxs.breaker(on, look.color);
+                }
+                else if (ev.what === "sneak") {
+                  // Everyone it hides goes in smoke: the user, and every ally beside them.
+                  for (const u of draft.units.filter((x) => x.side === user.side && x.hp > 0 && hexDistance(x.pos, user.pos) <= 1)) fxs.puff(point(u.pos, 0.3));
+                } else if (ev.what === "smugglers_route") fxs.puff(on);
+                else if (aim && SUMMONS.has(ev.what)) fxs.erupt([aim], look.color, "water");
+                else fxs.motes(on, look.color, !!look.notes);
+                // A jig: their feet made light.
+                if (ev.what === "hornpipe") fxs.jig(point((whom ?? user).pos, 0.05), look.color);
+              }, 260),
+            );
           }
         });
       } else if (ev.t === "roll") {
@@ -533,8 +877,9 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
             sounds.zone("roll");
             view?.floatOver(ev.roll.id, String(ev.roll.total), "#ffe9a8");
           });
-        } else if (!many[i]) {
+        } else if (!many[i] && !carried.has(ev.roll)) {
           // One of several struck at once has no card of its own: the numbers over their heads say how each fared.
+          // One a blow decides comes up as that blow lands (see hit), not before the swing.
           later(() => {
             sounds.zone(ev.roll.crit ? "roll.crit" : "roll");
             setRoll(ev.roll);
@@ -552,7 +897,8 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
           if (shield) shield.amount = Math.max(0, (shield.amount ?? 0) - blocked);
           if (shield && !shield.amount) target.conditions = target.conditions.filter((c) => c !== shield);
         }
-        const mark = !hit
+        const card = cards.get(i);
+        const marked = !hit
           ? () => view?.floatOver(ev.target, "miss", "#c9d1e0")
           : blocked && ev.amount === 0
             ? () => view?.floatOver(ev.target, `blocked ${blocked}`, "#9ec9ff")
@@ -571,7 +917,121 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
         if (mine && to) mine.last = to;
         later(() => {
           const fxs = spells.current;
-          if (kind === "melee") return view?.blow(ev.actor!, ev.target, what, { crit: hit && ev.crit, landed: hit, onImpact: mark });
+          // Whatever comes of the blow (the health it costs, the line in the log, the roll's card, and everything
+          // after it) waits till it lands or goes wide: the clock stops until it does.
+          const release = play.hold();
+          const mark = () => {
+            marked();
+            if (card) {
+              sounds.zone(card.crit ? "roll.crit" : "roll");
+              setRoll(card);
+            }
+            release();
+          };
+          // A class or weapon ability's blow is drawn in its own colour (a torch's swing in fire, a sea slash in sea).
+          if (kind === "melee") {
+            // And what the blow leaves besides its slash (FLOURISH): a shield on the striker hit or miss; sparks, or a
+            // challenge taken up, on a hit.
+            const flourish = mine ? FLOURISH[mine.what] : undefined;
+            const landedBlow = () => {
+              mark();
+              if (!fxs || !flourish) return;
+              if (flourish === "shield" && actor) fxs.ward(point(actor.pos, 0.3), mine!.look.color);
+              else if (hit && flourish === "sparks" && to) fxs.sparks(to);
+              else if (hit && flourish === "brand" && target) fxs.brand(point(target.pos));
+              else if (hit && flourish === "coins" && to && actor) fxs.coins(to, () => view?.unitHead(ev.actor!)?.add(new THREE.Vector3(0, -0.6, 0)) ?? null);
+              else if (hit && flourish === "cross" && to) fxs.cross(to, mine!.look.color);
+              else if (hit && flourish === "thud" && to) fxs.slam(to, mine!.look.color);
+              else if (hit && flourish === "goad") {
+                const head = view?.unitHead(ev.target);
+                if (head) fxs.exclaim(head, mine!.look.color);
+              }
+            };
+            if (!view) return mark();
+            return view.blow(ev.actor!, ev.target, what, { crit: hit && ev.crit, landed: hit, onImpact: landedBlow, color: mine && ABILITIES[mine.what] ? mine.look.color : undefined });
+          }
+          if (fxs && from && to && target && kind === "drench") {
+            // A bolt of seawater, bursting on them and spraying whoever stands beside them.
+            const end = hit ? to : to.clone().add(new THREE.Vector3(0.7, 0.5, 0.5));
+            const beside = draft.units.filter((u) => u.side === target.side && u.id !== target.id && u.hp > 0 && hexDistance(u.pos, target.pos) === 1).map((u) => point(u.pos, 0.6));
+            cast(ev.actor!, what, to.x, to.z, () =>
+              fxs.launch("bolt", from, end, color, () => {
+                view?.landed(ev.target, what, hit, hit && ev.crit, ev.actor);
+                mark();
+                if (hit) fxs.drench(end, color, beside);
+              }),
+            );
+            return;
+          }
+          if (fxs && from && to && target && kind === "harpoon") {
+            // Fired from the gun on a line: on a hit, Harpoon Shot's line goes taut and hauls them in, Barbed Line's barb
+            // is reeled home; a miss stands in the ground beyond them.
+            const haul = mine?.what === "harpoon_shot";
+            const end = hit ? to : point(target.pos, 0.05).add(to.clone().sub(from).setY(0).normalize().multiplyScalar(1.1));
+            const muzzle = () => view?.unitHead(ev.actor!)?.add(new THREE.Vector3(0, -0.6, 0)) ?? null;
+            const caught = () => view?.unitFeet(ev.target)?.add(new THREE.Vector3(0, 0.6, 0)) ?? null;
+            cast(ev.actor!, what, to.x, to.z, () =>
+              fxs.harpoon(
+                from,
+                end,
+                muzzle,
+                !hit ? "stuck" : haul ? "haul" : "reel",
+                () => {
+                  view?.landed(ev.target, what, hit, hit && ev.crit, ev.actor);
+                  mark();
+                },
+                caught,
+              ),
+            );
+            return;
+          }
+          if (fxs && from && to && target && kind === "hook") {
+            // Thrown on a line from the hand, and yanked back home along it.
+            const end = hit ? to : point(target.pos, 0.05).add(to.clone().sub(from).setY(0).normalize().multiplyScalar(0.6));
+            const hand = () => view?.unitHead(ev.actor!)?.add(new THREE.Vector3(0, -0.7, 0)) ?? null;
+            cast(
+              ev.actor!,
+              what,
+              to.x,
+              to.z,
+              () =>
+                fxs.hook(from, end, hand, () => {
+                  view?.landed(ev.target, what, hit, hit && ev.crit, ev.actor);
+                  mark();
+                }),
+              true,
+            );
+            return;
+          }
+          if (fxs && from && to && target && kind === "pike") {
+            // Hurled; on a hit, a rope stays strung from the thrower's hand to them as they are hauled in. A miss
+            // flies past them and sticks in the ground beyond.
+            const past = to.clone().sub(from).setY(0).normalize().multiplyScalar(1.1);
+            const end = hit ? to : point(target.pos, 0.05).add(past);
+            // The thrower's end at their hand; the caught end low on whoever it struck, from their feet, so it goes
+            // down with them if they are knocked flat (their head's height does not, while they fall).
+            const chest = (id: string) => () => view?.unitHead(id)?.add(new THREE.Vector3(0, -0.7, 0)) ?? null;
+            const low = (id: string) => () => view?.unitFeet(id)?.add(new THREE.Vector3(0, 0.45, 0)) ?? null;
+            cast(
+              ev.actor!,
+              what,
+              to.x,
+              to.z,
+              () =>
+                fxs.pike(
+                  from,
+                  end,
+                  () => {
+                    view?.landed(ev.target, what, hit, hit && ev.crit, ev.actor);
+                    mark();
+                  },
+                  hit ? { hand: chest(ev.actor!), caught: low(ev.target) } : undefined,
+                  !hit,
+                ),
+              true,
+            );
+            return;
+          }
           if (fxs && from && to && (kind === "arrow" || kind === "bolt")) {
             // A miss flies wide of the mark.
             const end = hit ? to : to.clone().add(new THREE.Vector3(0.7, 0.5, 0.5));
@@ -583,17 +1043,56 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
             );
             return;
           }
-          if (fxs && chained && to && kind === "spark") {
+          if (fxs && from && to && (kind === "thunder" || kind === "blade" || kind === "sound")) {
+            const end = hit ? to : to.clone().add(new THREE.Vector3(0.7, 0.5, 0.5));
+            const land = () => {
+              view?.landed(ev.target, what, hit, hit && ev.crit, ev.actor);
+              mark();
+            };
+            cast(ev.actor!, what, to.x, to.z, () =>
+              kind === "thunder" ? fxs.thunder(from, end, color, land) : kind === "blade" ? fxs.blade(from, end, color, land) : fxs.sound(from, end, color, SOUND_KIND[mine?.what ?? ""] ?? "plain", land),
+            );
+            return;
+          }
+          if (fxs && from && to && target && (kind === "drain" || kind === "hex" || kind === "drown" || kind === "flask" || kind === "sink")) {
+            // A curse flies (a bolt, or a flask of bilge breaking on them), or black water falls on them; what it
+            // leaves (life drained, a sigil, a drowning spiral) follows if it took.
+            const ground = point(target.pos, 0.05);
+            const end = hit ? to : to.clone().add(new THREE.Vector3(0.7, 0.5, 0.5));
+            const land = () => {
+              view?.landed(ev.target, what, hit, hit && ev.crit, ev.actor);
+              mark();
+            };
+            const after = () => {
+              land();
+              if (!hit) return;
+              if (kind === "drain") fxs.siphon(end, from, color);
+              else if (kind === "hex") fxs.sigil(point(target.pos), color);
+              else if (kind === "drown") fxs.drown(point(target.pos), color);
+            };
             cast(ev.actor!, what, to.x, to.z, () => {
-              fxs.spark([chained, to], color);
+              if (kind === "sink") fxs.sink(hit ? end : end.clone().setY(end.y - 0.3), color, land);
+              else if (kind === "flask") fxs.launch("flask", from, hit ? ground : ground.clone().add(new THREE.Vector3(0.7, 0, 0.5)), color, land);
+              else fxs.launch("bolt", from, end, color, after);
+            });
+            return;
+          }
+          if (fxs && chained && to && target && kind === "spark") {
+            cast(ev.actor!, what, to.x, to.z, () => {
+              // Lightning comes down out of the sky onto each one struck (wide of it on a miss), and arcs on from the last.
+              const ground = point(target.pos, 0.05);
+              fxs.strike(hit ? ground : ground.clone().add(new THREE.Vector3(0.6, 0, 0.5)), color);
+              if (chained !== from) fxs.spark([chained, to], color);
               view?.landed(ev.target, what, hit, hit && ev.crit, ev.actor);
               mark();
             });
             return;
           }
-          if (kind === "ground") view?.landed(ev.target, what, hit);
-          else if (kind !== "none") view?.landed(ev.target, what, hit, hit && ev.crit, ev.actor);
-          mark();
+          whenReached(kind === "wave" && to ? mine?.wave : undefined, to ?? new THREE.Vector3(), () => {
+            if (kind === "ground") view?.landed(ev.target, what, hit);
+            else if (kind !== "none") view?.landed(ev.target, what, hit, hit && ev.crit, ev.actor);
+            mark();
+          });
         });
         say(hit ? `${name(ev.target)} takes ${ev.amount}${ev.crit ? " (critical hit)" : ""}.` : `${name(ev.actor)} misses ${name(ev.target)}.`);
       } else if (ev.t === "heal") {
@@ -602,9 +1101,14 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
         later(() => {
           sounds.heal(blowName(ev.what), view?.whereIs(ev.target));
           const healed = find(ev.target);
-          if (healed) spells.current?.motes(point(healed.pos, 0.3), use?.look.kind === "bless" ? use.look.color : "#7dff9a");
-          view?.glint(ev.target, "#7dff9a");
-          view?.floatOver(ev.target, `+${ev.amount}`, "#7dff9a");
+          // A wave of healing heals each as it reaches them.
+          const go = () => {
+            if (healed) spells.current?.motes(point(healed.pos, 0.3), use?.look.kind === "bless" || use?.look.kind === "way" || use?.look.kind === "starfire" || use?.look.kind === "healwave" ? use.look.color : "#7dff9a", !!use?.look.notes);
+            view?.glint(ev.target, "#7dff9a");
+            view?.floatOver(ev.target, `+${ev.amount}`, "#7dff9a");
+          };
+          if (use?.wave && healed) whenReached(use.wave, point(healed.pos), go);
+          else go();
         });
       } else if (ev.t === "tick") {
         const u = find(ev.target);
@@ -633,11 +1137,17 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
         if (u && ev.t === "down") u.hp = 0;
         if (u && ev.t === "down") {
           const by = struck.get(ev.id);
-          later(() => {
+          // Once the picture has them down: they fall then, limp and away from the blow, and nothing more is shown
+          // till they are down on the ground (the last of several struck down at once, for them all). The pause
+          // after a fall is spent falling.
+          const due = at + dwell(ev, many[i], events[i + 1]);
+          const wait = lastFall.has(i);
+          afterShown = () => {
             sounds.down({ side: u.side, kind: u.kind }, view?.whereIs(ev.id));
-            // Limp, and away from the blow, as the picture has them down.
-            view?.fell(ev.id, by);
-          });
+            const release = wait ? play.hold() : null;
+            if (!view) return release?.();
+            view.fell(ev.id, by, release ? () => release(due) : undefined);
+          };
         }
         say(ev.t === "down" ? `${name(ev.id)} is down.` : `${name(ev.id)} is back up.`);
       } else if (ev.t === "skip") {
@@ -782,7 +1292,10 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
         later(() => {
           const fxs = spells.current;
           const at = shown ? view?.poiSpot(shown) : null;
+          // The crate's damage, and what follows, wait for the blow to reach it.
+          const release = play.hold();
           const impact = () => {
+            release();
             sounds.zone("crate_hit", at ? { x: at.x, z: at.z } : undefined);
             view?.shakePoi(ev.poi, ev.amount >= 6 ? 1.4 : 1);
             view?.floatAt(ev.poi, `-${ev.amount}`, ev.what === "fire" ? "#ffa94d" : "#ff6b6b");
@@ -791,7 +1304,10 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
           if (!at || !from || !look) return impact();
           if (look === "melee") return view ? view.strikeAt(ev.actor!, at, what, impact) : impact();
           if (fxs && (look === "arrow" || look === "bolt")) return cast(ev.actor!, what, at.x, at.z, () => fxs.launch(look, from, at, mine?.look.color ?? "#dfe9ff", impact));
-          if (fxs && look === "spark") return cast(ev.actor!, what, at.x, at.z, () => { fxs.spark([from, at], mine?.look.color ?? "#dfe9ff"); impact(); });
+          if (fxs && look === "spark") return cast(ev.actor!, what, at.x, at.z, () => { fxs.strike(at, mine?.look.color ?? "#dfe9ff"); impact(); });
+          if (fxs && look === "thunder") return cast(ev.actor!, what, at.x, at.z, () => fxs.thunder(from, at, mine?.look.color ?? "#facc15", impact));
+          if (fxs && look === "blade") return cast(ev.actor!, what, at.x, at.z, () => fxs.blade(from, at, mine?.look.color ?? "#dff4ff", impact));
+          if (fxs && look === "sound") return cast(ev.actor!, what, at.x, at.z, () => fxs.sound(from, at, mine?.look.color ?? "#ffd23f", SOUND_KIND[mine?.what ?? ""] ?? "plain", impact));
           impact();
         });
         say(`The crate takes ${ev.amount}${ev.what === "fire" ? " from the fire" : ""}.`);
@@ -834,8 +1350,12 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
       }
       // What the picture shows once this event has been seen.
       const shown: Picture = structuredClone(draft);
-      later(() => setPicture(shown));
-      let wait = dwell(ev, many[i], events[i + 1]);
+      const then = afterShown as (() => void) | null;
+      later(() => {
+        setPicture(shown);
+        then?.();
+      });
+      let wait = dwell(ev, many[i], events[i + 1], ev.t === "roll" && carried.has(ev.roll));
       if (ev.t === "moved" && already > 0) {
         // The part of this walk shown ahead has been playing since the click: only what is left of it is waited for.
         const spent = Math.min(played, (wait * already) / ev.path.length);
@@ -851,7 +1371,13 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
       setWatching(false);
     });
   } });
-  useEffect(() => () => timers.current.forEach(clearTimeout), []);
+  useEffect(
+    () => () => {
+      timers.current.forEach(clearTimeout);
+      playing.current?.stop();
+    },
+    [],
+  );
 
   // The connection dropped with answers still owed: they will not come. What was shown for them is taken
   // back, and the state the new connection is sent says where everything really is.
@@ -938,19 +1464,19 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
 
   // In a dev build, the state and a way to act on it, for the console.
   useEffect(() => {
-    if (import.meta.env.DEV) (window as unknown as Record<string, unknown>).__gqZone = { state: zone.state, believed: state, ahead, send, layer: layer.current, view: renderer.current, click: (pos: HexPos) => click.current(pos) };
+    if (import.meta.env.DEV) (window as unknown as Record<string, unknown>).__gqZone = { state: zone.state, believed: state, ahead, send, layer: layer.current, view: renderer.current, fx: spells.current, click: (pos: HexPos) => click.current(pos) };
   }, [zone.state, state, ahead, send]);
 
   const picking = !!pick || !!dev.tool;
   const reach = useMemo(() => {
     if (!state || !act || act.down || picking || (fighting && !myTurn)) return new Map();
-    return zoneReach(asState(state), act, budget ? budget.move : FREE_WALK, undefined, courseFor(asState(state), act, budget));
+    return zoneReach(asState(state), act, budget ? moveLeft(budget) : FREE_WALK, undefined, courseFor(asState(state), act, budget));
   }, [state, act, picking, fighting, myTurn, budget]);
   // The course charted for this turn's walk (Chart a Course), and the hexes only it brings within reach: shown apart, in the mark's red.
   const course = state && act && budget ? courseFor(asState(state), act, budget) : undefined;
   const courseOnly = useMemo(() => {
     if (!state || !act || !budget || !course || reach.size === 0) return [];
-    const plain = zoneReach(asState(state), act, budget.move);
+    const plain = zoneReach(asState(state), act, moveLeft(budget));
     return [...reach.values()].filter((r) => r.stop && !plain.has(posKey(r.pos))).map((r) => r.pos);
     // `reach` is remade whenever the state, the hero or the budget changes, and `course` is new each render: reach alone keys it.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -972,7 +1498,7 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
       // Chests and crates as the picture has them: thrown open, or knocked about and broken, as each is shown.
       map: { ...state.map, pois: picture.pois },
       // A lit torch is held in the off hand, where a shield would be.
-      heroes: picture.units.filter((u) => u.side === "hero").map((u) => ({ id: u.id, classId: u.kind, pos: shownAt.get(u.id) ?? u.pos, name: u.name, outfit: u.torch ? { ...u.outfit, [u.torchHand === "main" ? "main_hand" : "off_hand"]: TORCH_IN_HAND } : u.outfit, torch: !!u.torch || u.conditions.some((c) => c.kind === "beacon"), effects: badgesOf(u), level: u.level, xp: 0, hp: u.hp, maxHp: u.maxHp, shield: shieldOf(u), down: u.down, prone: u.conditions.some((c) => c.kind === "prone"), unseen: u.conditions.some((c) => c.kind === "invisible"), active: turn(u.id) })),
+      heroes: picture.units.filter((u) => u.side === "hero").map((u) => ({ id: u.id, classId: u.kind, pos: shownAt.get(u.id) ?? u.pos, name: u.name, outfit: u.torch ? { ...u.outfit, [u.torchHand === "main" ? "main_hand" : "off_hand"]: TORCH_IN_HAND } : u.outfit, torch: !!u.torch || u.conditions.some((c) => c.kind === "beacon") || carriesLantern(u), effects: badgesOf(u), level: u.level, xp: 0, hp: u.hp, maxHp: u.maxHp, shield: shieldOf(u), down: u.down, prone: u.conditions.some((c) => c.kind === "prone"), unseen: u.conditions.some((c) => c.kind === "invisible"), active: turn(u.id) })),
       // What the dark hides is not drawn: out of a fight the server does not even send it.
       units: picture.units.filter((u) => u.side === "enemy" && !state.dark?.includes(u.id)).map((u) => ({ id: u.id, kind: u.kind, pos: u.pos, name: u.name, hp: inFight(u.id) || u.hp < u.maxHp ? u.hp / u.maxHp : undefined, down: u.down, prone: u.conditions.some((c) => c.kind === "prone"), active: u.id === spot, hostile: inFight(u.id), effects: badgesOf(u) })),
       turn: null,
@@ -994,7 +1520,8 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
   // ---------- what a pick reaches, and what it would cover ----------
 
   const z = state ? asState(state) : null;
-  const unitOn = (pos: HexPos | null) => (pos && state ? state.units.find((u) => u.pos.q === pos.q && u.pos.r === pos.r) : undefined);
+  /** Who is on this hex: whoever stands on it or, with nobody standing there, a dead enemy lying on it. */
+  const unitOn = (pos: HexPos | null) => (pos && z ? (unitAt(z, pos) ?? z.units.find((u) => sameHex(u.pos, pos))) : undefined);
   /** A crate still whole on this hex. */
   const crateOn = (pos: HexPos | null) => (pos && state ? crateAt(state, pos) : undefined);
   const within = (range: number, sight: boolean) => (state && act ? state.map.tiles.filter((t) => hexDistance(t, act.pos) <= range && hexDistance(t, act.pos) > 0 && (!sight || sees(state.map, act.pos, t))) : []);
@@ -1068,7 +1595,7 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
         if (def.heal) out.push({ hexes: [hover], color: tint, fill: 0.4 });
       }
     } else if (pick.what === "jump") {
-      out.push({ hexes: within(jumpRange(statMod(act.stats?.str ?? 5)), true).filter((t) => !unitOn(t)), color: "#8fd3ff", fill: 0.14, line: 0.8 });
+      out.push({ hexes: within(jumpRange(statMod(act.stats?.str ?? 5)), true).filter((t) => !unitAt(z, t)), color: "#8fd3ff", fill: 0.14, line: 0.8 });
       if (hover) out.push({ hexes: [hover], color: "#8fd3ff", fill: 0.35, line: 0.9 });
     } else {
       out.push({ hexes: within(1, false), color: pick.what === "help" ? "#7dff9a" : "#ffd23f", fill: 0.12, line: 0.8 });
@@ -1082,7 +1609,7 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
   // Further than this turn's movement reaches: how far it would be, so the way can be shown in red.
   const far = useMemo(() => {
     if (!z || !act || !budget || !myTurn || picking || !hover || reach.has(posKey(hover))) return null;
-    return zoneReach(z, act, budget.move + 18, undefined, courseFor(z, act, budget));
+    return zoneReach(z, act, moveLeft(budget) + 18, undefined, courseFor(z, act, budget));
   }, [z, act, budget, myTurn, picking, hover, reach]);
   const moveTip = useMemo(() => {
     if (!state || !enc || !act || !budget || !myTurn || picking || !hover) return null;
@@ -1107,10 +1634,15 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
     // A course charted: what of the way its movement pays for (steps toward the mark), and what it has left.
     const courseLeft = courseFor(asState(state), act, budget)?.left ?? 0;
     const courseUsed = got.courseLeft !== undefined ? courseLeft - got.courseLeft : 0;
+    const left = moveLeft(budget);
+    // What AP the way would buy: none while movement already bought covers it.
+    const ap = got.cost <= left ? apForMove(budget, got.cost) : null;
     return {
       none: false as const,
       cost: got.cost,
-      left: budget.move,
+      left,
+      ap,
+      apLeft: ap === null ? 0 : budget.ap - ap,
       courseLeft,
       courseUsed,
       // Out of reach, or somebody is standing there.
@@ -1118,7 +1650,7 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
       taken: !got.stop,
       drawn: drawn.size,
       ground,
-      steps: near ? [] : path.map((pos) => ({ pos, ok: (from.get(posKey(pos))?.cost ?? Infinity) <= budget.move })),
+      steps: near ? [] : path.map((pos) => ({ pos, ok: (from.get(posKey(pos))?.cost ?? Infinity) <= left })),
     };
   }, [state, enc, act, budget, myTurn, picking, hover, reach, far]);
   useEffect(() => layer.current?.setPath(moveTip && !moveTip.none ? moveTip.steps : []), [moveTip]);
@@ -1160,12 +1692,15 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
       return { from, to, height: SpellFx.arcHeight(aimKind(pick.id) === "arrow" ? "arrow" : "bolt", distance) + (tactic.shape === "blast" ? 0.6 : 0), color: wrong ? "#ff6b6b" : "#fff1c9" };
     })();
     layer.current?.setArc(aimed);
+    // Charting a course: a compass rose glowing over the hex the mark would go on.
+    const charting = !!z && !!act && pick?.kind === "ability" && !!tacticOf(pick.id).chart && !!hover;
+    layer.current?.setCompass(charting ? { from: act!.pos, at: hover!, wrong: !!checkAbility(z!, act!, pick!.id, { at: hover! }) } : null);
   }, [z, act, pick, hover]);
 
   // ---------- acting ----------
 
   /** Whether the turn has this left to spend. Out of a fight everything is free. */
-  const canPay = (cost: "action" | "bonus") => !fighting || (myTurn && !!budget?.[cost]);
+  const canPay = (cost: number) => !fighting || (myTurn && (budget?.ap ?? 0) >= cost);
 
   /**
    * Send a walk, and show at once as much of it as can be foreseen (zone/ahead.ts): the hero sets off at the
@@ -1188,7 +1723,7 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
    * name goes up over them. None of what comes of it is shown until the answer says. `sure` is false when the
    * client can already see it will be refused: then it is only sent, for the server to say why.
    */
-  const declare = (action: ZoneSend, sure: boolean, shown: { cost: "action" | "bonus"; gain?: "dash" | "disengage"; slot?: string; name?: string; toward?: HexPos | null }) => {
+  const declare = (action: ZoneSend, sure: boolean, shown: { cost: number; gain?: "disengage"; slot?: string; name?: string; toward?: HexPos | null }) => {
     if (!act) return;
     const n = zone.send(action);
     if (n === null || !sure || !canPay(shown.cost)) return;
@@ -1214,11 +1749,11 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
   const common = (what: CommonAction, aim: { target?: string; at?: HexPos } = {}) => {
     if (!act || !z) return;
     const sure = !checkCommon(z, act, what, aim, fighting ? (budget ?? null) : null);
-    declare({ type: "common", unit: act.id, what, ...aim }, sure, { cost: commonCost(what, act.kind), gain: what === "dash" || what === "disengage" ? what : undefined, slot: `do:${what}`, name: COMMON_ACTIONS[what].name, toward: aimedAt(aim) });
+    declare({ type: "common", unit: act.id, what, ...aim }, sure, { cost: commonCost(what, act.kind), gain: what === "disengage" ? what : undefined, slot: `do:${what}`, name: COMMON_ACTIONS[what].name, toward: aimedAt(aim) });
     setPick(null);
   };
   /** The small things done to what is beside you (a chest, a door, a torch, mushrooms): the cost shows at once, and the hero turns to it. */
-  const reachFor = (action: ZoneSend, cost: "action" | "bonus", toward: HexPos | null) => declare(action, true, { cost, toward });
+  const reachFor = (action: ZoneSend, cost: number, toward: HexPos | null) => declare(action, true, { cost, toward });
   const endTurn = () => {
     if (!act) return;
     const n = zone.send({ type: "end_turn", unit: act.id });
@@ -1238,11 +1773,11 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
     if (dev.tool?.tool === "paint") return dev.open?.send({ op: "paint", kind: dev.tool.surface, hexes: dev.tool.wide ? zoneBlast(state.map, pos, 1) : [pos] });
     if (!pick) {
       // A click on a torch burning on the ground right beside you takes it up; from further off, it is walked to.
-      if (state.lights?.[posKey(pos)] && hexDistance(pos, act.pos) <= 1) return reachFor({ type: "pickup", unit: act.id, at: pos }, "bonus", pos);
+      if (state.lights?.[posKey(pos)] && hexDistance(pos, act.pos) <= 1) return reachFor({ type: "pickup", unit: act.id, at: pos }, ITEM_AP.pickup, pos);
       // A click on a locked door works it from beside it (a key if there is one, else a shoulder), or walks up to it first.
       const door = state.map.pois.find((p) => p.kind === "gate" && !p.cleared && p.pos.q === pos.q && p.pos.r === pos.r);
       if (door) {
-        if (hexDistance(door.pos, act.pos) <= 1) return reachFor({ type: "unlock", unit: act.id, poi: door.id }, "action", door.pos);
+        if (hexDistance(door.pos, act.pos) <= 1) return reachFor({ type: "unlock", unit: act.id, poi: door.id }, ITEM_AP.unlock, door.pos);
         const beside = [...reach.values()].filter((r) => r.stop && hexDistance(r.pos, door.pos) === 1).sort((a, b) => a.cost - b.cost)[0];
         if (beside) walkTo(beside.pos);
         return;
@@ -1250,7 +1785,7 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
       // A click on a chest opens it from beside it, or walks up to it first.
       const chest = state.map.pois.find((p) => p.kind === "cache" && !p.cleared && p.pos.q === pos.q && p.pos.r === pos.r);
       if (chest) {
-        if (hexDistance(chest.pos, act.pos) <= 1) return reachFor({ type: "open", unit: act.id, poi: chest.id }, "action", chest.pos);
+        if (hexDistance(chest.pos, act.pos) <= 1) return reachFor({ type: "open", unit: act.id, poi: chest.id }, ITEM_AP.open, chest.pos);
         const beside = [...reach.values()].filter((r) => r.stop && hexDistance(r.pos, chest.pos) === 1).sort((a, b) => a.cost - b.cost)[0];
         if (beside) walkTo(beside.pos);
         return;
@@ -1273,7 +1808,7 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
       // A click on glowing mushrooms picks them from beside them (or among them), or walks up to them first.
       const patch = state.map.pois.find((p) => p.kind === "glowcap" && !p.cleared && p.pos.q === pos.q && p.pos.r === pos.r);
       if (patch) {
-        if (hexDistance(patch.pos, act.pos) <= 1) return reachFor({ type: "forage", unit: act.id, poi: patch.id }, "action", patch.pos);
+        if (hexDistance(patch.pos, act.pos) <= 1) return reachFor({ type: "forage", unit: act.id, poi: patch.id }, ITEM_AP.forage, patch.pos);
         const beside = [...reach.values()].filter((r) => r.stop && hexDistance(r.pos, patch.pos) <= 1).sort((a, b) => a.cost - b.cost)[0];
         if (beside) walkTo(beside.pos);
         return;
@@ -1309,9 +1844,9 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
       // Clicked on yourself, something drinkable is drunk and a torch is lit to hold; anywhere else it is thrown there.
       const onSelf = pos.q === act.pos.q && pos.r === act.pos.r;
       const def = THROWABLES[pick.item];
-      if (def.drink && onSelf) declare({ type: "drink", unit: act.id, item: pick.item }, (act.items[pick.item] ?? 0) > 0, { cost: "bonus", slot: `it:${pick.item}`, name: def.name });
-      else if (def.light && onSelf && !act.torch) declare({ type: "light", unit: act.id }, (act.items.torch ?? 0) > 0, { cost: "bonus", slot: `it:${pick.item}` });
-      else declare({ type: "throw", unit: act.id, item: pick.item, at: pos }, !checkThrow(asState(state), act, pick.item, pos), { cost: "action", slot: `it:${pick.item}`, name: def.name, toward: pos });
+      if (def.drink && onSelf) declare({ type: "drink", unit: act.id, item: pick.item }, (act.items[pick.item] ?? 0) > 0, { cost: ITEM_AP.drink, slot: `it:${pick.item}`, name: def.name });
+      else if (def.light && onSelf && !act.torch) declare({ type: "light", unit: act.id }, (act.items.torch ?? 0) > 0, { cost: ITEM_AP.light, slot: `it:${pick.item}` });
+      else declare({ type: "throw", unit: act.id, item: pick.item, at: pos }, !checkThrow(asState(state), act, pick.item, pos), { cost: ITEM_AP.throw, slot: `it:${pick.item}`, name: def.name, toward: pos });
       setPick(null);
     } else if (pick.what === "jump") common("jump", { at: pos });
     else if (there) common(pick.what, { target: there.id });
@@ -1391,10 +1926,12 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
 
   // ---------- the bar ----------
 
-  const costName = (cost: "action" | "bonus") => (cost === "action" ? "Action" : "Bonus action");
-  // Getting away: on your turn, with the Action (a Rogue's Bonus action) for it, and no enemy in the fight within FLEE_RANGE.
+  const costName = (cost: number) => `${cost} AP`;
+  /** Why the AP are not there for something that costs `cost`, in words. */
+  const short = (cost: number) => `That takes ${cost} AP, and you have ${budget?.ap ?? 0} left.`;
+  // Getting away: on your turn, with the AP for it (fewer for a Rogue), and no enemy in the fight within FLEE_RANGE.
   const fleeCost = commonCost("flee", act.kind);
-  const fleeBlock = !fighting ? "That is for a fight." : !myTurn ? "Wait for your turn." : !budget?.[fleeCost] ? `You have used your ${costName(fleeCost)} this turn.` : checkCommon(asState(state), act, "flee", {}, budget ?? null);
+  const fleeBlock = !fighting ? "That is for a fight." : !myTurn ? "Wait for your turn." : !canPay(fleeCost) ? short(fleeCost) : checkCommon(asState(state), act, "flee", {}, budget ?? null);
   /** From the middle of a fight: flee it, then `go` once out of it. */
   const fleeThen = (go: () => void) => {
     zone.clearError();
@@ -1410,14 +1947,14 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
     const def = ABILITIES[id];
     const tactic = tacticOf(id);
     const wait = act.cooldowns[id] ?? 0;
-    const reachText = tactic.chart ? `a hex up to ${tactic.range} off` : tactic.constellation ? `allies within ${tactic.constellation.link}, one to the next` : tactic.newMoon ? "every lit enemy" : tactic.taunt ? `every enemy within ${tactic.taunt.range}` : tactic.northStar ? `an ally within ${tactic.range}, and every enemy beside them` : tactic.summon ? `a hex up to ${tactic.range} off` : tactic.blink ? (tactic.shape === "self" ? `a hex up to ${tactic.blink.range} off` : `an enemy beside you, then up to ${tactic.blink.range} off`) : tactic.soothe ? `you and allies within ${tactic.soothe.range}` : tactic.shape === "self" ? "yourself" : tactic.shape === "burst" ? `everyone within ${tactic.radius}` : tactic.reach === "melee" ? (tactic.shape === "adjacent" ? "every enemy beside you" : tactic.shape === "arc" ? "three hexes beside you" : "an enemy beside you") : `${tactic.shape === "line" ? `a line of ${tactic.length}` : tactic.shape === "cone" ? `a cone ${tactic.length} long` : `range ${tactic.range}`}${tactic.weather === "rain" ? ", 3 hexes" : tactic.splash ? `, ${tactic.splash.hexes} hexes` : tactic.fortify ? `, a wall of ${tactic.fortify.hexes}` : tactic.cluster ? `, ${tactic.cluster} hexes` : tactic.shape === "blast" ? `, blast ${tactic.radius}` : ""}`;
+    const reachText = reachLabel(tactic);
     const dice = def.damage ? `${diceText(abilityDice(def))} damage` : def.heal ? `heals ${diceText(healDice(def))}` : "";
     entries[`ab:${id}`] = {
       id: `ab:${id}`,
       icon: { ...abilityIcon(id), flat: true },
       name: def.name,
-      line: [costName(tactic.cost), reachText, dice].filter(Boolean).join(" · "),
-      more: `${def.blurb}${tactic.cooldown ? ` Then ${tactic.cooldown} turn${tactic.cooldown === 1 ? "" : "s"} before it can be used again.` : ""}`,
+      line: [costName(tactic.cost), cooldownText(tactic.cooldown ?? 0), reachText, dice].filter(Boolean).join(" · "),
+      more: def.blurb,
       wait: wait || undefined,
       picked: (pick?.kind === "ability" && pick.id === id) || taken.has(`ab:${id}`),
       spent: !canPay(tactic.cost) || (fighting && wait > 0),
@@ -1426,7 +1963,7 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
   }
   for (const what of Object.keys(COMMON_ICON) as CommonAction[]) {
     const cost = commonCost(what, act.kind);
-    const needsFight = what === "dash" || what === "disengage" || what === "flee";
+    const needsFight = what === "disengage" || what === "flee";
     entries[`do:${what}`] = {
       id: `do:${what}`,
       icon: { ...COMMON_ICON[what], flat: true },
@@ -1448,12 +1985,12 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
       id: `it:${item}`,
       icon: ITEM_ICON[item],
       name: held ? `${def.name} (lit, ${act.torch} rounds left)` : def.name,
-      line: def.drink ? "Throw it (Action), or click yourself to drink it (Bonus action)" : def.light ? (held ? "Throw the lit torch down where it should burn (Action)" : "Throw it lit (Action), or click yourself to light it to hold (Bonus action)") : "Throw it (Action)",
+      line: def.drink ? `Throw it (${ITEM_AP.throw} AP), or click yourself to drink it (${ITEM_AP.drink} AP)` : def.light ? (held ? `Throw the lit torch down where it should burn (${ITEM_AP.throw} AP)` : `Throw it lit (${ITEM_AP.throw} AP), or click yourself to light it to hold (${ITEM_AP.light} AP)`) : `Throw it (${ITEM_AP.throw} AP)`,
       more: def.blurb,
       count: have,
       picked: (pick?.kind === "item" && pick.item === item) || taken.has(`it:${item}`),
-      // Thrown for an Action; a potion can still be drunk, or a torch lit, when only the Bonus action is left.
-      spent: (have <= 0 && !held) || !(canPay("action") || ((!!def.drink || (!!def.light && !held)) && canPay("bonus"))),
+      // Thrown for more AP than a potion is drunk, or a torch lit, for: those can still be done with too few left to throw.
+      spent: (have <= 0 && !held) || !(canPay(ITEM_AP.throw) || ((!!def.drink || (!!def.light && !held)) && canPay(ITEM_AP.drink))),
       run: () => setPick((p) => (p?.kind === "item" && p.item === item ? null : { kind: "item", item })),
     };
   }
@@ -1463,10 +2000,10 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
   // (Those sharing the turn who have ended theirs are not waited on; with nobody left, the turn is passing on.)
   const still = enc ? enc.acting.filter((id) => !enc.done.includes(id)) : [];
   const waitingFor = enc && !myTurn ? (watching && spot ? (names.current.get(spot) ?? "someone") : still.length > 0 ? still.map((id) => names.current.get(id) ?? "someone").join(" and ") : "the next turn") : undefined;
-  // A torch is lit into a hand, or put away from one, freely out of a fight; in one, for a Bonus action on your turn.
-  const handFree = !fighting || (myTurn && !!budget?.bonus);
-  const handWhy = fighting && !myTurn ? "Wait for your turn." : fighting && !budget?.bonus ? "You have used your Bonus action this turn." : undefined;
-  const stowTorch = act && act.torch && !act.down && handFree ? () => reachFor({ type: "stow", unit: act.id }, "bonus", null) : undefined;
+  // A torch is lit into a hand, or put away from one, freely out of a fight; in one, for AP on your turn.
+  const handFree = canPay(ITEM_AP.light);
+  const handWhy = fighting && !myTurn ? "Wait for your turn." : !handFree ? short(ITEM_AP.light) : undefined;
+  const stowTorch = act && act.torch && !act.down && canPay(ITEM_AP.stow) ? () => reachFor({ type: "stow", unit: act.id }, ITEM_AP.stow, null) : undefined;
   // A torch burning on the ground within reach, to pick up.
   const torchBeside = act && state.lights ? Object.keys(state.lights).map((k) => { const [q, r] = k.split(",").map(Number); return { q, r }; }).find((p) => hexDistance(p, act.pos) <= 1) : undefined;
   // A locked door within reach, and the keys on the party's ring.
@@ -1548,10 +2085,10 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
           <>
             {/* Your own movement, and beside it (a course charted) the course's: what of each the way takes. */}
             <span className="zone-cursor-cost">
-              <strong>{moveTip.cost}</strong> / {moveTip.left}
+              {moveTip.ap !== null ? <><strong>{moveTip.ap} AP</strong> · {moveTip.cost} hex{moveTip.cost === 1 ? "" : "es"}</> : <><strong>{moveTip.cost}</strong> / {moveTip.left}</>}
               {moveTip.courseLeft > 0 && <span className="course" title="Charted course: movement for steps toward the red X"> · <strong>{moveTip.courseUsed}</strong> / {moveTip.courseLeft}</span>}
             </span>
-            <span className="zone-cursor-note">{moveTip.beyond ? `${moveTip.cost - moveTip.left} too far` : moveTip.taken ? "someone is standing there" : `${moveTip.left - moveTip.cost} left after`}</span>
+            <span className="zone-cursor-note">{moveTip.beyond || moveTip.ap === null ? `${moveTip.cost - moveTip.left} too far` : moveTip.taken ? "someone is standing there" : `${moveTip.apLeft} AP left after`}</span>
             {moveTip.drawn > 0 && <span className="zone-cursor-warn">Draws {moveTip.drawn === 1 ? "an attack" : `${moveTip.drawn} attacks`} as you leave</span>}
             {moveTip.ground.map((k) => <span key={k} className="zone-cursor-warn" style={{ color: SURFACE_INFO[k].color }}>Through {SURFACE_INFO[k].name.toLowerCase()}</span>)}
           </>
@@ -1750,7 +2287,7 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
               : (act.items[item] ?? 0) <= 0 ? "You have none left."
               : !entries[`it:${item}`]?.spent ? undefined
               : fighting && !myTurn ? "It is not your turn."
-              : "You have neither an Action nor a Bonus action left for it this turn.",
+              : `You have too few AP left for it this turn (${budget?.ap ?? 0}).`,
           }}
         />
       )}
@@ -1784,12 +2321,12 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
         hp={{ now: seen(act).hp, max: act.maxHp, shield: shieldOf(seen(act)) }}
         meter={{ name: "Focus", note: "spend one to roll an attack with advantage", now: act.focus, max: act.maxFocus, kind: "focus" }}
         pips={fighting && budget ? [
-          { label: "Action", now: budget.action ? 1 : 0, max: 1, kind: "action" },
-          { label: "Bonus action", now: budget.bonus ? 1 : 0, max: 1, kind: "bonus" },
-          { label: "Movement", now: budget.move, max: budget.moveMax, kind: "move" },
+          { label: "AP", now: budget.ap, max: AP_MAX, kind: "ap", title: `Action Points: ${budget.ap} of ${AP_MAX}. Spend them on anything, moving too. You get ${AP_TURN} more each turn, and what you do not spend carries over.` },
+          // Movement bought with AP and not yet walked: it is spent before another AP is, and lost at the end of the turn.
+          { label: "Movement", now: budget.move, max: Math.max(budget.move, budget.stride), kind: "move", title: `Movement: ${budget.move} bought and left this turn. 1 AP buys ${budget.stride} more${budget.stride === 0 ? " (you cannot move this turn)" : ""}.` },
           // A course charted: movement for steps toward the mark alone.
           ...(budget.course !== undefined && courseMarks(asState(state), act).length > 0
-            ? [{ label: "Course", now: budget.course, max: CHART.speed, kind: "course" as const, title: `Charted course: ${budget.course} of ${CHART.speed} movement left, spent first on steps that bring you nearer the red X` }]
+            ? [{ label: "Course", now: budget.course, max: Math.max(budget.course, CHART.speed), kind: "course" as const, title: `Charted course: ${budget.course} movement left, spent first on steps that bring you nearer the red X. Each AP of movement adds ${CHART.speed} more.` }]
             : []),
         ] : []}
         // The keys the party has found, on its one ring.
@@ -1802,7 +2339,7 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
           rounds: act.torch ?? null,
           hand: act.torchHand === "main" ? "main" : "off",
           carried: act.items.torch ?? 0,
-          light: !act.torch && (act.items.torch ?? 0) > 0 && !act.down && handFree ? (hand) => reachFor({ type: "light", unit: act.id, ...(hand === "main" ? { hand } : {}) }, "bonus", null) : undefined,
+          light: !act.torch && (act.items.torch ?? 0) > 0 && !act.down && handFree ? (hand) => reachFor({ type: "light", unit: act.id, ...(hand === "main" ? { hand } : {}) }, ITEM_AP.light, null) : undefined,
           stow: stowTorch,
           why: handWhy,
         }}
@@ -1824,27 +2361,27 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
             }]} />}
       >
         {fighting && myTurn && joinable(asState(state), act).map((s) => (
-          <button key={`join:${s.bard.id}`} className="small" style={{ fontSize: 12, padding: "1px 7px", color: CONDITION_INFO[s.song.kind].color, borderColor: CONDITION_INFO[s.song.kind].color }} disabled={!budget?.bonus} title={joinTip(s.bard.name, s.song.kind)} onClick={() => common("join", { target: s.bard.id })}>
+          <button key={`join:${s.bard.id}`} className="small" style={{ fontSize: 12, padding: "1px 7px", color: CONDITION_INFO[s.song.kind].color, borderColor: CONDITION_INFO[s.song.kind].color }} disabled={!canPay(commonCost("join", act.kind))} title={joinTip(s.bard.name, s.song.kind, !!act.summon)} onClick={() => common("join", { target: s.bard.id })}>
             ♪ Join song
           </button>
         ))}
         {torchBeside && (!fighting || myTurn) && (
-          <button className="small" disabled={fighting && !budget?.bonus} title={fighting ? "A Bonus action" : undefined} onClick={() => reachFor({ type: "pickup", unit: act.id, at: torchBeside }, "bonus", torchBeside)}>
+          <button className="small" disabled={!canPay(ITEM_AP.pickup)} title={fighting ? costName(ITEM_AP.pickup) : undefined} onClick={() => reachFor({ type: "pickup", unit: act.id, at: torchBeside }, ITEM_AP.pickup, torchBeside)}>
             {act.torch ? "Stow the torch" : "Pick up the torch"}
           </button>
         )}
         {doorBeside && (!fighting || myTurn) && (
-          <button className="small primary" disabled={fighting && !budget?.action} title={keys > 0 ? "Uses a key off the ring" : `A Strength roll (${FORCE_DC} or better). Loud: the nearest band within earshot will come.`} onClick={() => reachFor({ type: "unlock", unit: act.id, poi: doorBeside.id }, "action", doorBeside.pos)}>
+          <button className="small primary" disabled={!canPay(ITEM_AP.unlock)} title={`${fighting ? `${costName(ITEM_AP.unlock)}. ` : ""}${keys > 0 ? "Uses a key off the ring" : `A Strength roll (${FORCE_DC} or better). Loud: the nearest band within earshot will come.`}`} onClick={() => reachFor({ type: "unlock", unit: act.id, poi: doorBeside.id }, ITEM_AP.unlock, doorBeside.pos)}>
             {keys > 0 ? "Unlock the door" : "Force the door"}
           </button>
         )}
         {chestBeside && (!fighting || myTurn) && (
-          <button className="small primary" disabled={chestGuarded(chestBeside) || (fighting && !budget?.action)} title={chestGuarded(chestBeside) ? "Its guards still stand over it" : fighting ? "An Action" : undefined} onClick={() => reachFor({ type: "open", unit: act.id, poi: chestBeside.id }, "action", chestBeside.pos)}>
+          <button className="small primary" disabled={chestGuarded(chestBeside) || !canPay(ITEM_AP.open)} title={chestGuarded(chestBeside) ? "Its guards still stand over it" : fighting ? costName(ITEM_AP.open) : undefined} onClick={() => reachFor({ type: "open", unit: act.id, poi: chestBeside.id }, ITEM_AP.open, chestBeside.pos)}>
             Open {chestName(chestBeside)}
           </button>
         )}
         {glowBeside && (!fighting || myTurn) && (
-          <button className="small" disabled={fighting && !budget?.action} title={fighting ? "An Action" : "Mushrooms for the apothecary. Picked, they stop glowing."} onClick={() => reachFor({ type: "forage", unit: act.id, poi: glowBeside.id }, "action", glowBeside.pos)}>
+          <button className="small" disabled={!canPay(ITEM_AP.forage)} title={fighting ? costName(ITEM_AP.forage) : "Mushrooms for the apothecary. Picked, they stop glowing."} onClick={() => reachFor({ type: "forage", unit: act.id, poi: glowBeside.id }, ITEM_AP.forage, glowBeside.pos)}>
             Pick the mushrooms
           </button>
         )}
@@ -1872,7 +2409,7 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
         )}
         <button className={`small ${focus ? "primary" : ""}`} disabled={act.focus <= 0} aria-pressed={focus} title="Spend 1 Focus on your next attack to roll it with advantage" onClick={() => setFocus((f) => !f)}>Focus {act.focus}</button>
         {crateBeside && (!fighting || myTurn) && (
-          <button className="small" disabled={!crateHit || (fighting && !budget?.action)} title={crateHit ? `${ABILITIES[crateHit].name}${fighting ? ", for an Action" : ""}: every blow at a crate lands` : "Nothing you have reaches it"} onClick={() => crateHit && use(crateHit, { target: crateBeside.id })}>
+          <button className="small" disabled={!crateHit || !canPay(tacticOf(crateHit).cost)} title={crateHit ? `${ABILITIES[crateHit].name}${fighting ? `, for ${costName(tacticOf(crateHit).cost)}` : ""}: every blow at a crate lands` : "Nothing you have reaches it"} onClick={() => crateHit && use(crateHit, { target: crateBeside.id })}>
             Break the crate
           </button>
         )}

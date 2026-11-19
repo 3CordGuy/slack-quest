@@ -9,7 +9,7 @@ import { hexDistance, hexNeighbors, type HexPos } from "@gantt-quest/core";
 import { tileAt } from "../map";
 import type { Ctx } from "./engine";
 import { blockerAt, sameHex, solid, unitAt } from "./geometry";
-import { SUMMONS, SUMMON_CALLS, type SummonCall } from "./kit";
+import { AP_TURN, SUMMONS, SUMMON_CALLS, type SummonCall } from "./kit";
 import { enterSurface } from "./surfaces";
 import type { Unit, ZoneState } from "./types";
 import { enterWeather } from "./weather";
@@ -107,7 +107,7 @@ export function summonCall(ctx: Ctx, caller: Unit, call: SummonCall, at: HexPos)
       // (The tests' switch for shared turns: called in the middle of its caller's turn, it shares what is left of it.)
       if (state.shareTurns && enc.acting.includes(caller.id)) {
         enc.acting.push(unit.id);
-        enc.budgets[unit.id] = { action: true, bonus: true, move: def.move, moveMax: def.move, disengaged: false };
+        enc.budgets[unit.id] = { ap: AP_TURN, move: 0, stride: def.move, disengaged: false };
       }
     }
     called.push(unit);

@@ -22,7 +22,7 @@ const COLOURS = [
 const SAMPLE_OUTFIT: Outfit = {
   body: { icon: "chest-armor", ref: "hauberk", rarity: "rare" },
   helmet: { icon: "heavy-helm", ref: "helm", rarity: "rare" },
-  main_hand: { icon: "broadsword", ref: "greatsword", rarity: "rare" },
+  main_hand: { icon: "cutlass", ref: "greatsword", rarity: "rare" },
 };
 
 /** Keep only the fields that differ from the code default, so a later code change to the rest still shows. */

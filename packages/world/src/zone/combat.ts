@@ -2,7 +2,7 @@
 // use an ability, take one of the common actions, throw something, and,
 // for an enemy, make one of its attacks. Each has a check, which says in
 // words why it cannot be done, and the doing. Costs and turns are the
-// reducer's business (zone.ts); nothing here spends an Action. A hero's
+// reducer's business (zone.ts); nothing here spends AP but walking. A hero's
 // blows, blasts and bombs reach crates too (crates.ts).
 
 import { hexDistance, hexNeighbors, hexSegment, posKey, type HexPos } from "@gantt-quest/core";
@@ -10,8 +10,8 @@ import { ABILITIES, BARD_AURA, ENEMIES, type AbilityDef, type EffectKind } from 
 import { tileAt, type Poi } from "../map";
 import { DEBUFFS, addCondition, addShield, attackContext, attackRoll, damage, defenceOf, giveAway, has, heal, inWater, kindle, removeCondition, saveBonus, saveRoll, shieldOf, shieldUnit, strikeDown, unseen, type Ctx } from "./engine";
 import { cratesOn, crateById, hurtCrate, isCrateId } from "./crates";
-import { HEX_DIRS, close, blast, blockerAt, courseShare, directionToward, elevOf, flies, inFight, lineFrom, pathIn, pitAt, reachFrom, roomAt, sameHex, sees, seesFor, solid, stepCost, strikes, unitById, zoneReach, type Course, type Pit } from "./geometry";
-import { CHART, COMMON_ACTIONS, CORAL_ARMOR, SHANTY, SUMMON_CALLS, ENEMY_BURST, FLEE_RANGE, JUMP_DOWN, JUMP_MOVE_COST, JUMP_UP, POTION_EDGE, SAVE_STAT, SMUGGLED, THROWABLES, TORCH_GROUND_ROUNDS, abilityDice, enemySave, enemyShove, enemyStrikes, healDice, jumpRange, reactionStrike, tacticOf, throwRange, type EnemyStrike, type Tactic } from "./kit";
+import { HEX_DIRS, close, blast, blockerAt, courseShare, directionToward, elevOf, flies, inFight, isDead, lineFrom, pathIn, pitAt, reachFrom, roomAt, sameHex, sees, seesFor, solid, stepCost, strikes, unitById, zoneReach, type Course, type Pit } from "./geometry";
+import { ACTION_AP, CHART, COMMON_ACTIONS, CORAL_ARMOR, SHANTY, SUMMON_CALLS, ENEMY_BURST, FLEE_RANGE, JUMP_DOWN, JUMP_UP, POTION_EDGE, SAVE_STAT, SMUGGLED, THROWABLES, TORCH_GROUND_ROUNDS, abilityDice, enemySave, enemyShove, enemyStrikes, healDice, jumpRange, reactionStrike, tacticOf, throwRange, type EnemyStrike, type Tactic } from "./kit";
 import { modsOf } from "./mods";
 import { d20, diceFor, hitChance, mod, proficiency, rollDice, rollShown, statOf } from "./rules";
 import { seenByHeroes } from "./light";
@@ -89,15 +89,42 @@ function standClear(ctx: Ctx, unit: Unit): void {
   }
 }
 
+/** Movement `budget` can still cover this turn: what is bought, and what its AP would buy. */
+export const moveLeft = (budget: Budget): number => budget.move + budget.ap * budget.stride;
+
+/** Spend 1 AP on movement: a stride more, and a course charted's share with it. False if there is nothing to buy it with. */
+function buyStride(budget: Budget, course?: Course): boolean {
+  if (budget.ap <= 0 || budget.stride <= 0) return false;
+  budget.ap -= 1;
+  budget.move += budget.stride;
+  if (budget.course !== undefined) {
+    budget.course += CHART.speed;
+    if (course) course.left = budget.course;
+  }
+  return true;
+}
+
+/** The AP a walk costing `cost` movement would buy, on top of the movement already bought. Infinity if it cannot buy any. */
+export const apForMove = (budget: Budget, cost: number): number =>
+  cost <= budget.move ? 0 : budget.stride > 0 ? Math.ceil((cost - budget.move) / budget.stride) : Infinity;
+
+/** Take `cost` movement from a budget as a walk would, buying strides with AP as it needs them (for a client foreseeing a walk). */
+export function payMove(budget: Budget, cost: number): void {
+  while (budget.move < cost && buyStride(budget));
+  budget.move = Math.max(0, budget.move - cost);
+}
+
 /**
  * Walk a unit along a path, a step at a time. Each step may draw an opportunity attack, costs
- * movement (when there is a budget), and lands the unit on whatever the ground holds. The walk
- * stops when the unit falls, slips, runs out of movement, or walks into a fight.
+ * movement (when there is a budget: bought with AP as it is needed, a stride at a time), and lands
+ * the unit on whatever the ground holds. The walk stops when the unit falls, slips, runs out of
+ * movement and AP, or walks into a fight.
  */
 export function walk(ctx: Ctx, unit: Unit, path: HexPos[], budget: Budget | null): void {
   let taken: HexPos[] = [];
   // A course charted: steps nearer a mark spend its movement first.
-  const course = courseFor(ctx.state, unit, budget);
+  const marks = budget?.course !== undefined ? courseMarks(ctx.state, unit) : [];
+  const course: Course | undefined = marks.length > 0 ? { marks, left: budget!.course! } : undefined;
   const flush = () => {
     if (taken.length > 0) ctx.events.push({ t: "moved", id: unit.id, path: taken });
     taken = [];
@@ -105,8 +132,11 @@ export function walk(ctx: Ctx, unit: Unit, path: HexPos[], budget: Budget | null
   for (const next of path) {
     if (unit.down) break;
     const step = stepCost(ctx.state, unit, unit.pos, next);
-    const share = course ? courseShare(course, unit.pos, next, step.cost) : 0;
-    if (!Number.isFinite(step.cost) || (budget && step.cost - share > budget.move)) break;
+    if (!Number.isFinite(step.cost)) break;
+    const shareOf = () => (course ? courseShare(course, unit.pos, next, step.cost) : 0);
+    while (budget && step.cost - shareOf() > budget.move && buyStride(budget, course));
+    const share = shareOf();
+    if (budget && step.cost - share > budget.move) break;
     provoke(ctx, unit, next, budget, flush);
     if (unit.down) break;
     unit.pos = next;
@@ -121,11 +151,15 @@ export function walk(ctx: Ctx, unit: Unit, path: HexPos[], budget: Budget | null
   standClear(ctx, unit);
 }
 
-/** The course charted for `unit` to walk this turn, if one is and it has some of its movement left: zoneReach and walk spend it. */
+/**
+ * The course charted for `unit` to walk this turn, if one is: what of its movement is bought and left, and what its AP would
+ * buy. For zoneReach, with moveLeft, to say how far the unit can still get (walk spends it).
+ */
 export function courseFor(state: ZoneState, unit: Unit, budget: Budget | null | undefined): Course | undefined {
-  if (!budget?.course) return undefined;
-  const marks = courseMarks(state, unit);
-  return marks.length > 0 ? { marks, left: budget.course } : undefined;
+  if (!budget || budget.course === undefined) return undefined;
+  const left = budget.course + (budget.stride > 0 ? budget.ap * CHART.speed : 0);
+  const marks = left > 0 ? courseMarks(state, unit) : [];
+  return marks.length > 0 ? { marks, left } : undefined;
 }
 
 /**
@@ -289,7 +323,11 @@ function pull(ctx: Ctx, unit: Unit, target: Unit, hexes: number): void {
   for (let i = 0; i < hexes && !target.down; i++) {
     const dest = { q: target.pos.q + dir.q, r: target.pos.r + dir.r };
     if (sameHex(dest, unit.pos) && !roomAt(ctx.state, dest, target.id)) return;
-    if (shift(ctx, target, dest, unit.id) !== "moved") return;
+    const went = shift(ctx, target, dest, unit.id);
+    // Each hex of a drag is told with how far along it is, so it is drawn as one haul.
+    const told = [...ctx.events].reverse().find((e) => e.t === "shoved" && e.target === target.id);
+    if (told && told.t === "shoved" && (went === "moved" || went === "fell")) told.pulled = i + 1;
+    if (went !== "moved") return;
     // Ground that trips it (ice) ends the drag there.
     if (enterSurface(ctx, target) || target.down) return;
     enterWeather(ctx, target);
@@ -389,12 +427,12 @@ export function abilityArea(state: ZoneState, unit: Unit, ability: string, at?: 
   return [];
 }
 
-/** Adds `more` to a unit's movement if it is in the middle of its turn in a fight. Says whether it was. */
+/** Adds `more` to each AP of a unit's movement for the rest of its turn, if it is in the middle of one in a fight. Says whether it was. */
 function moveMore(state: ZoneState, unit: Unit, more: number): boolean {
   const enc = state.encounter;
   const budget = enc && enc.acting.includes(unit.id) && !enc.done.includes(unit.id) ? enc.budgets[unit.id] : undefined;
   if (!budget) return false;
-  budget.move += more;
+  if (budget.stride > 0) budget.stride += more;
   return true;
 }
 
@@ -612,13 +650,13 @@ function smash(ctx: Ctx, unit: Unit, def: AbilityDef, tactic: Tactic, crate: Poi
 
 /**
  * What a hero breaks a crate with when it is simply clicked: the first of their abilities that does damage
- * to one target for an Action, is ready, and reaches it from where they stand, a blow by hand before a shot
+ * to one target for ACTION_AP, is ready, and reaches it from where they stand, a blow by hand before a shot
  * or a spell. Null if nothing they have reaches it.
  */
 export function crateBlow(state: ZoneState, unit: Unit, crateId: string): string | null {
   const fits = unit.abilities.filter((a) => {
     const t = tacticOf(a);
-    return ABILITIES[a]?.damage && t.shape === "single" && t.cost === "action" && !(unit.cooldowns[a] > 0) && !checkAbility(state, unit, a, { target: crateId });
+    return ABILITIES[a]?.damage && t.shape === "single" && t.cost === ACTION_AP && !(unit.cooldowns[a] > 0) && !checkAbility(state, unit, a, { target: crateId });
   });
   return fits.find((a) => tacticOf(a).reach === "melee") ?? fits[0] ?? null;
 }
@@ -805,6 +843,8 @@ export function resolveAbility(ctx: Ctx, unit: Unit, ability: string, aim: Aim &
       if (!saved && tactic.guide && !victim.down) addCondition(ctx, victim, "guiding_light", tactic.guide);
       // Pull of the Deep: whoever fails to brace is dragged under.
       if (!saved && tactic.drowns) drown(ctx, victim, tactic.drowns);
+      // Bellows Blast: whoever fails to brace is blown back, away from the user.
+      for (let k = 0; !saved && k < (tactic.knockback ?? 0) && !victim.down; k++) push(ctx, unit.pos, victim, unit.id);
     }
     // A crate in it takes the lot: it cannot get out of the way.
     if (unit.side === "hero" && def.damage) for (const box of cratesOn(state, area)) hurtCrate(ctx, box, rolled, { actor: unit.id, what: def.id });
@@ -854,13 +894,13 @@ export function resolveAbility(ctx: Ctx, unit: Unit, ability: string, aim: Aim &
       // One shanty at a time: the new one starts afresh, nobody joined yet.
       for (const kind of SHANTIES) removeCondition(unit, kind);
       addCondition(ctx, unit, tactic.shanty, SHANTY.rounds);
-      Object.assign(shantyOf(unit)!, { joined: [], surge: 0 });
+      Object.assign(shantyOf(unit)!, { joined: [], joinedOwn: [], surge: 0 });
       retune(ctx);
     }
     if (def.targetEffect) addCondition(ctx, target, def.targetEffect.effect, def.targetEffect.turns);
     if (tactic.aura) addCondition(ctx, unit, tactic.aura.kind, tactic.aura.rounds);
     if (tactic.steady) addCondition(ctx, target, "inspired", tactic.steady);
-    // Wind's Blessing: more movement now for one in the middle of their turn, else on their next.
+    // Wind's Blessing: more movement for each AP, now for one in the middle of their turn, else on their next.
     if (tactic.tailwind && !moveMore(state, target, tactic.tailwind)) {
       addCondition(ctx, target, "tailwind", 1, tactic.tailwind);
       // An ally done with their turn in this same phase has it ended again as the phase does: it must outlast that.
@@ -903,20 +943,20 @@ export function resolveAbility(ctx: Ctx, unit: Unit, ability: string, aim: Aim &
 
 /**
  * After a course is charted: everyone of the user's side whose turn is underway, and who has had no course this turn,
- * gets its movement now. One who has had theirs (even spent) gets no more for a mark moved.
+ * gets it now, for each AP they spend on movement from here on. One who has had theirs gets no more for a mark moved.
  */
 export function chartCourse(ctx: Ctx, unit: Unit): void {
   const enc = ctx.state.encounter;
   if (!enc) return;
   for (const u of ctx.state.units) {
     const budget = u.side === unit.side && !u.down && enc.acting.includes(u.id) && !enc.done.includes(u.id) ? enc.budgets[u.id] : undefined;
-    if (budget && budget.course === undefined) budget.course = CHART.speed;
+    if (budget && budget.course === undefined) budget.course = 0;
   }
 }
 
 /**
  * After a shanty is struck up or widened: whoever it now reaches is no longer Slowed under a Wind-god's Shanty, and
- * whoever is mid-turn gets whatever movement it now owes them (Budget.song is what it has given this turn).
+ * whoever is mid-turn gets whatever movement for each AP it now owes them (Budget.song is what it has given this turn).
  */
 export function retune(ctx: Ctx): void {
   const enc = ctx.state.encounter;
@@ -926,8 +966,8 @@ export function retune(ctx: Ctx): void {
     const budget = enc && enc.acting.includes(u.id) && !enc.done.includes(u.id) ? enc.budgets[u.id] : undefined;
     if (!budget) continue;
     const owed = songMove(ctx.state, u) - (budget.song ?? 0);
-    if (owed > 0) {
-      budget.move += owed;
+    if (owed > 0 && budget.stride > 0) {
+      budget.stride += owed;
       budget.song = (budget.song ?? 0) + owed;
     }
   }
@@ -980,7 +1020,7 @@ export const foesWithin = (state: ZoneState, unit: Unit, range: number): Unit[] 
 /** Why `unit` cannot take this common action, in words, or null if it can. `budget` is null out of a fight. */
 export function checkCommon(state: ZoneState, unit: Unit, what: CommonAction, aim: Aim, budget: Budget | null): string | null {
   if (!COMMON_ACTIONS[what]) return "No such action.";
-  if (what === "dash" || what === "disengage") return budget ? null : "That is for a fight.";
+  if (what === "disengage") return budget ? null : "That is for a fight.";
   if (what === "flee") {
     if (!budget) return "That is for a fight.";
     if (unit.summon) return "It was called to this fight, and stays in it.";
@@ -1009,7 +1049,6 @@ export function checkCommon(state: ZoneState, unit: Unit, what: CommonAction, ai
   if (solid(tileAt(state.map, aim.at)) || blockerAt(state, aim.at) || !roomAt(state, aim.at, unit.id)) return "There is nowhere to land.";
   if (elevOf(state.map, aim.at) - elevOf(state.map, unit.pos) > JUMP_UP) return "Too high to jump up to.";
   if (!sees(state.map, unit.pos, aim.at)) return "Something is in the way.";
-  if (budget && budget.move < JUMP_MOVE_COST) return "Not enough movement left to jump.";
   return null;
 }
 
@@ -1017,7 +1056,6 @@ export function checkCommon(state: ZoneState, unit: Unit, what: CommonAction, ai
 export function doCommon(ctx: Ctx, unit: Unit, what: CommonAction, aim: Aim, budget: Budget | null): void {
   ctx.events.push({ t: "used", id: unit.id, what, name: COMMON_ACTIONS[what].name, target: aim.target, at: aim.at });
   if (what === "join") joinSong(ctx, unit, aim, budget);
-  else if (what === "dash" && budget) budget.move += budget.moveMax;
   else if (what === "disengage" && budget) budget.disengaged = true;
   else if (what === "help") {
     const target = unitById(ctx.state, aim.target!)!;
@@ -1037,7 +1075,6 @@ export function doCommon(ctx: Ctx, unit: Unit, what: CommonAction, aim: Aim, bud
     provoke(ctx, unit, aim.at!, budget, () => {});
     if (unit.down) return;
     unit.pos = aim.at!;
-    if (budget) budget.move -= JUMP_MOVE_COST;
     ctx.events.push({ t: "jumped", id: unit.id, from, to: unit.pos });
     // A leap down is the leaper's own doing, as far as it goes: past that it is a fall.
     tumble(ctx, unit, from, null, JUMP_DOWN);
@@ -1051,9 +1088,13 @@ export function doCommon(ctx: Ctx, unit: Unit, what: CommonAction, aim: Aim, bud
 /** Join a shanty (checked already): it reaches a hex further, and the one joining gets the lift of joining that kind. */
 function joinSong(ctx: Ctx, unit: Unit, aim: Aim, budget: Budget | null): void {
   const { song } = joinable(ctx.state, unit).find((s) => !aim.target || s.bard.id === aim.target)!;
-  song.joined = [...(song.joined ?? []), unit.id];
-  // Everyone in it gets a little more of what it gives, until the Bard's next turn.
-  song.surge = (song.surge ?? 0) + 1;
+  // A creature called into the fight gets the lift of joining, and nothing more: the shanty reaches no further, and gives nobody else any more.
+  if (unit.summon) song.joinedOwn = [...(song.joinedOwn ?? []), unit.id];
+  else {
+    song.joined = [...(song.joined ?? []), unit.id];
+    // Everyone in it gets a little more of what it gives, until the Bard's next turn.
+    song.surge = (song.surge ?? 0) + 1;
+  }
   if (song.kind === "lively_shanty") addCondition(ctx, unit, "inspired", 2);
   else if (song.kind === "dour_shanty") addCondition(ctx, unit, "guarded", 1);
   // Wind-god's: away on the wind, drawing no blows for the rest of the turn.

@@ -8,7 +8,7 @@
 // back with a wobble after.
 //
 // Old oaks stand alone in the open grass: a stout trunk, a few heavy limbs and a
-// broad crown of leaf clumps that shivers and heaves in the wind while the
+// broad crown of leafy lumps that shivers in the wind while the
 // trunk barely moves. Where the grass has died the oaks have too: the same
 // trees, bare, their limbs forking out to pointed twigs. They are too stout to
 // be pushed aside, so they are stood at the corners of hexes, out of the way.
@@ -140,45 +140,51 @@ function limb(from: THREE.Vector3, to: THREE.Vector3, r0: number, r1: number, co
 }
 
 /**
- * A spray of oak leaves round `at`, reaching about `r` out from it: each a little pointed blade like a blade of
- * grass (narrow at the stem, widest half way, a point at the tip; three triangles, both faces), standing out
- * from the middle of the clump and drooping a little, dark at the stem and light at the tip. Few hang
- * underneath. Each leaf is marked with its own stem, so the wind turns every one of them separately.
+ * Leaves pinned to the outside of a clump's lump (a leafCore): one on most of the faces that look up or out,
+ * hardly any underneath. Each is a pointed diamond (two triangles, both faces) with its stem in the middle of
+ * its face, lying along the face and tipped out from it a little, pointing down the slope like a shingle, so
+ * the tips stand past the lump's edges and break its outline. Dark at the stem, light at the tip. Each leaf
+ * is marked with its own stem, so the wind turns every one of them separately while the lump stays put.
  */
-function leafSpray(at: THREE.Vector3, r: number, count: number, leaves: THREE.Color, salt: number): THREE.BufferGeometry {
+function leafSkin(core: THREE.BufferGeometry, r: number, leaves: THREE.Color, salt: number): THREE.BufferGeometry {
   const rnd = (i: number) => lumpAt(salt * 1.3 + 0.7, i * 0.37, salt * 0.11, 17);
-  const pos: number[] = [], nor: number[] = [], col: number[] = [], mark: number[] = [];
-  const out = new THREE.Vector3(), side = new THREE.Vector3(), tipWay = new THREE.Vector3();
-  const stem = leaves.clone().multiplyScalar(0.62), tip = leaves.clone().multiplyScalar(1.22);
+  const src = core.getAttribute("position") as THREE.BufferAttribute;
+  const pos: number[] = [], col: number[] = [], mark: number[] = [];
+  const a = new THREE.Vector3(), b = new THREE.Vector3(), c3 = new THREE.Vector3();
+  const mid = new THREE.Vector3(), n = new THREE.Vector3(), down = new THREE.Vector3(), way = new THREE.Vector3(), side = new THREE.Vector3();
+  const stem = leaves.clone().multiplyScalar(0.7), tip = leaves.clone().multiplyScalar(1.25);
   const c = new THREE.Color();
-  for (let i = 0; i < count; i++) {
-    // Spread evenly over the ball (a spiral round it), then jostled; thinned out underneath.
-    const y = 1 - ((i + 0.5) / count) * 1.75;
-    if (y < -0.35 && rnd(i * 7) < 0.6) continue;
-    const a = i * 2.39996 + rnd(i * 7 + 1) * 0.8;
-    const flat = Math.sqrt(Math.max(0, 1 - y * y));
-    out.set(Math.cos(a) * flat, y, Math.sin(a) * flat).normalize();
-    const root = at.clone().addScaledVector(out, r * (0.42 + rnd(i * 7 + 2) * 0.2));
-    // The way the leaf points: out, a little aside, and drooping.
-    tipWay.copy(out).add(new THREE.Vector3((rnd(i * 7 + 3) - 0.5) * 0.7, -0.22 - rnd(i * 7 + 4) * 0.2, (rnd(i * 7 + 5) - 0.5) * 0.7)).normalize();
-    side.crossVectors(tipWay, Math.abs(tipWay.y) > 0.9 ? new THREE.Vector3(1, 0, 0) : new THREE.Vector3(0, 1, 0)).normalize();
-    // Turned about its own length, so they do not all show the same face.
-    side.applyAxisAngle(tipWay, (rnd(i * 7 + 6) - 0.5) * 2.2);
-    const len = r * (0.55 + rnd(i * 7 + 2) * 0.35);
-    const wide = len * (0.2 + rnd(i * 7 + 4) * 0.08);
-    const shade = 0.86 + rnd(i * 7 + 5) * 0.28;
-    const at_ = (f: number, w: number, s: number) => root.clone().addScaledVector(tipWay, len * f).addScaledVector(side, w * s);
-    const a0 = at_(0, wide * 0.25, -1), a1 = at_(0, wide * 0.25, 1), m0 = at_(0.5, wide, -1), m1 = at_(0.5, wide, 1), t = at_(1, 0, 0);
-    const mid = leaves;
-    const tris: [THREE.Vector3, THREE.Color][][] = [
-      [[a0, stem], [a1, stem], [m1, mid]],
-      [[a0, stem], [m1, mid], [m0, mid]],
-      [[m0, mid], [m1, mid], [t, tip]],
-    ];
+  for (let f = 0, i = 0; f < src.count; f += 3, i++) {
+    a.fromBufferAttribute(src, f);
+    b.fromBufferAttribute(src, f + 1);
+    c3.fromBufferAttribute(src, f + 2);
+    n.crossVectors(b.clone().sub(a), c3.clone().sub(a)).normalize();
+    // Few underneath, where they would not be seen; a few gaps elsewhere, so the lump shows between them.
+    if (n.y < -0.35 ? rnd(i * 5) < 0.8 : rnd(i * 5) < 0.12) continue;
+    mid.copy(a).add(b).add(c3).multiplyScalar(1 / 3);
+    // Down the face's slope (any way along it, for a face that looks straight up), turned a little either way.
+    down.set(0, -1, 0).addScaledVector(n, n.y);
+    if (down.lengthSq() < 0.04) down.set(Math.cos(i * 2.4), 0, Math.sin(i * 2.4)).addScaledVector(n, -n.x * Math.cos(i * 2.4) - n.z * Math.sin(i * 2.4));
+    down.normalize().applyAxisAngle(n, (rnd(i * 5 + 1) - 0.5) * 1.4);
+    // Tipped out from the face.
+    const lift = 0.35 + rnd(i * 5 + 2) * 0.35;
+    way.copy(down).multiplyScalar(Math.cos(lift)).addScaledVector(n, Math.sin(lift));
+    side.crossVectors(way, n).normalize();
+    const len = r * (0.62 + rnd(i * 5 + 3) * 0.3);
+    const wide = len * (0.26 + rnd(i * 5 + 4) * 0.08);
+    // Back up the slope a little, so the leaf covers its face rather than hanging off its lower edge.
+    const root = mid.clone().addScaledVector(down, -len * 0.25).addScaledVector(n, r * 0.02);
+    const at = (along: number, across: number) => root.clone().addScaledVector(way, len * along).addScaledVector(side, wide * across);
+    const s = root, m0 = at(0.45, -1), m1 = at(0.45, 1), t = at(1, 0);
+    const shade = 0.86 + rnd(i * 5 + 4) * 0.28;
+    // One face, the outer one: the lump hides the back of every leaf.
+    const outward = a.subVectors(m0, s).cross(b.subVectors(t, s)).dot(n) > 0;
+    const tris: [THREE.Vector3, THREE.Color][][] = outward
+      ? [[[s, stem], [m0, leaves], [t, tip]], [[s, stem], [t, tip], [m1, leaves]]]
+      : [[[s, stem], [m1, leaves], [t, tip]], [[s, stem], [t, tip], [m0, leaves]]];
     for (const tri of tris)
-      for (const [v, tone] of [...tri, ...[...tri].reverse()]) {
+      for (const [v, tone] of tri) {
         pos.push(v.x, v.y, v.z);
-        nor.push(out.x, out.y, out.z);
         c.copy(tone).multiplyScalar(shade);
         col.push(c.r, c.g, c.b);
         mark.push(root.x, root.y, root.z, 1);
@@ -186,16 +192,16 @@ function leafSpray(at: THREE.Vector3, r: number, count: number, leaves: THREE.Co
   }
   const g = new THREE.BufferGeometry();
   g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
-  g.setAttribute("normal", new THREE.Float32BufferAttribute(nor, 3));
   g.setAttribute("color", new THREE.Float32BufferAttribute(col, 3));
   g.setAttribute("aLeaf", new THREE.Float32BufferAttribute(mark, 4));
+  g.computeVertexNormals();
   return g;
 }
 
 /**
- * The heart of a clump of oak leaves, about `r` across at `at`: a dark lump knocked out of round, for the
- * leaves to stand out from and so that the sky does not show through the crown. It does not move, unless it
- * `sways`: a plain oak's clump is the lump alone, and it heaves in the wind as a whole.
+ * A clump of oak leaves, about `r` across at `at`: a lump knocked out of round, so that the sky does not show
+ * through the crown. It does not move, unless it `sways`: a plain oak's clump is the lump alone, and it heaves
+ * in the wind as a whole.
  */
 function leafCore(at: THREE.Vector3, r: number, leaves: THREE.Color, salt: number, sways = false): THREE.BufferGeometry {
   const g = new THREE.IcosahedronGeometry(1, 0);
@@ -226,8 +232,8 @@ function leafCore(at: THREE.Vector3, r: number, leaves: THREE.Color, salt: numbe
  * out from its top and a leader going on up, and a broad crown: a clump of leaves on the end of each limb, a
  * big one on top, and smaller ones filling in between. The first is broad and low, the second taller, the
  * third leans, with its crown out to one side. `bare` is the same tree dead: no leaves, grey wood, and each
- * limb forking out into pointed twigs. A `plain` oak (no "Fancy grass") has the same limbs, but each clump of
- * its crown is a faceted lump with no leaves standing out of it, like the broadleaves'.
+ * limb forking out into pointed twigs. Each clump of the crown is a faceted lump with a leaf pinned to most of
+ * its faces; a `plain` oak (no "Fancy grass") has the lumps alone, like the broadleaves'.
  */
 function oakGeometry(shape: number, bare: boolean, sodden: boolean, plain = false): THREE.BufferGeometry {
   const r = (i: number) => lumpAt(shape * 3.7 + 1, i * 0.61, bare ? 2.3 : 0.9, 5 + shape);
@@ -283,14 +289,14 @@ function oakGeometry(shape: number, bare: boolean, sodden: boolean, plain = fals
   } else {
     // Leaves, in clumps: one on each limb's end, a big one on top, smaller ones between to fill the crown out,
     // and small ones standing proud of it round its sides and across its top, so its outline is broken. Each
-    // clump is a dark heart with a spray of leaves standing out all round it.
+    // clump is a faceted lump; in full leaf, a little darker, with leaves pinned all over the outside of it.
     const clump = (at: THREE.Vector3, size: number, tone: THREE.Color, salt: number) => {
       if (plain) {
         parts.push(leafCore(at, size * 0.95, tone, salt, true));
         return;
       }
-      parts.push(leafCore(at, size * 0.6, tone.clone().multiplyScalar(0.6), salt));
-      parts.push(leafSpray(at, size * 1.15, Math.round(26 + size * 150), tone, salt + 100));
+      const core = leafCore(at, size * 0.88, tone.clone().multiplyScalar(0.78), salt);
+      parts.push(core, leafSkin(core, size * 0.88, tone, salt + 100));
     };
     ends.forEach((end, i) => clump(end.clone().add(V(0, 0.04, 0)), 0.19 + r(60 + i) * 0.05, green(i), 10 + i + shape * 7));
     clump(crown.clone().add(V(0, 0.02, 0)), 0.24 + r(70) * 0.04, green(9), 31 + shape * 7);

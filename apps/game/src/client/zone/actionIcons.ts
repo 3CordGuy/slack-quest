@@ -39,6 +39,12 @@ export const ABILITY_ICON: Record<string, ActionIcon> = {
   stab: icon("dagger", "#ff6b6b"),
   eviscerate: icon("flurry", "#e23b3b"),
   bow_shot: icon("bow", "#7dff9a"),
+  pistol_shot: icon("pistol", "#ffd23f"),
+  pistol_whip: icon("heavy", "#c9b48a"),
+  scattershot: icon("pistol", "#ffb347"),
+  butt_stroke: icon("heavy", "#e8dcc0"),
+  harpoon_shot: icon("hook", "#c9d6e8"),
+  barbed_line: icon("hook", "#a78bfa"),
   take_aim: icon("bow", "#ffe08a"),
   tear: icon("hook", "#38bdf8"),
   snag: icon("hook", "#a78bfa"),
@@ -75,6 +81,8 @@ export const ABILITY_ICON: Record<string, ActionIcon> = {
   encore: icon("note", "#7dff9a"),
   blasting_tone: icon("note", "#ff6b6b"),
   soothing_tone: icon("note", "#5eead4"),
+  bellows_blast: icon("shout", "#f97316"),
+  hornpipe: icon("dash", "#facc15"),
   peal: icon("bell", "#a78bfa"),
   clarion_call: icon("bell", "#ffd23f"),
   // Sage
@@ -121,7 +129,6 @@ export const ABILITY_ICON: Record<string, ActionIcon> = {
 export const abilityIcon = (id: string): ActionIcon => ABILITY_ICON[id] ?? ABILITY_ICON.punch;
 
 export const COMMON_ICON: Record<CommonAction, ActionIcon> = {
-  dash: icon("dash", "#facc15"),
   disengage: icon("disengage", "#8fd3ff"),
   jump: icon("jump", "#7dff9a"),
   shove: icon("shove", "#ff8a3a"),

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { HP_PER_VIT } from "./progression";
 import { STARTING_STATS, hexDistance } from "@gantt-quest/core";
 import { upcomingTurns, BATTLE_JOIN_RANGE, BERRY_HEAL, FORAGE_ODDS, ROAMERS_AT_START, ROAMERS_MAX, ROAMER_SCENT, VISION,
   PERK_CAPS, PUB_BUFF_CAPS, pubBuff,
@@ -554,7 +555,7 @@ describe("world reducer", () => {
     const after = s.heroes.find((h) => h.id === "p1")!;
     expect(after.weapon).toBe("greatsword");
     expect(after.armor).toBe(7);
-    expect(after.maxHp).toBe(before.maxHp + 6);
+    expect(after.maxHp).toBe(before.maxHp + 3 * HP_PER_VIT);
     expect(after.hp).toBe(10);
     // Taking the Vitality back off clamps HP to the lower ceiling, and never raises it.
     s = { ...s, heroes: s.heroes.map((h) => (h.id === "p1" ? { ...h, hp: h.maxHp } : h)) };
@@ -618,7 +619,7 @@ describe("world reducer", () => {
     const h = s.heroes.find((x) => x.id === "p1")!;
     const gear = { base: h.base, unspent: 0, bonus: { vit: 1 }, weapon: h.weapon, weaponPower: 0, armor: 0, outfit: {} };
     s = must(s, { type: "gear", heroId: "p1", gear });
-    expect(s.heroes.find((x) => x.id === "p1")!.maxHp).toBe(h.maxHp + 2);
+    expect(s.heroes.find((x) => x.id === "p1")!.maxHp).toBe(h.maxHp + HP_PER_VIT);
     s = must(s, { type: "gear", heroId: "p1", gear: { ...gear, bonus: {} } });
     expect(s.heroes.find((x) => x.id === "p1")!.maxHp).toBe(h.maxHp);
     s = placeAll(s, "camp");
@@ -663,7 +664,7 @@ describe("world reducer", () => {
     const h = s.heroes.find((x) => x.id === "p1")!;
     const gear = { base: { ...h.base, vit: h.base.vit + 1 }, unspent: 0, bonus: h.bonus, weapon: h.weapon, weaponPower: 0, armor: 0, outfit: {} };
     s = must(s, { type: "gear", heroId: "p1", gear });
-    expect(s.heroes.find((x) => x.id === "p1")!.maxHp).toBe(h.maxHp + 2);
+    expect(s.heroes.find((x) => x.id === "p1")!.maxHp).toBe(h.maxHp + HP_PER_VIT);
   });
 
   it("reveals the hidden lair when a hero walks next to it", () => {
@@ -837,7 +838,9 @@ describe("forest finds", () => {
       }
     }
     expect([...seen].sort()).toEqual(["berries", "bones", "treasure", "wolves", "wood"]);
-  });
+    // Four hundred walks into the forest: about 2s alone, but past the 5s default when the whole suite runs at
+    // once, where it failed at random.
+  }, 30_000);
 
   it("gives the same find for the same seed, and nothing the second time through", () => {
     for (let i = 0; i < 60; i++) {

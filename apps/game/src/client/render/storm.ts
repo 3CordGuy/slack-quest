@@ -60,6 +60,8 @@ export class Storm {
   /** How loud the loudest crack so far in this take was, 0 to 1. */
   private loudest = 0;
   private indoors = false;
+  /** This flash is a spell's thunder (clap), not the storm's: there is no bolt out over the sea to show. */
+  private boltless = false;
 
   constructor() {
     const geometry = new THREE.BufferGeometry();
@@ -72,6 +74,22 @@ export class Storm {
   /** For trying it out: strike now, whatever the weather. */
   strikeNow(camera: THREE.Camera, target: THREE.Vector3) {
     this.strike(camera, target);
+  }
+
+  /**
+   * A clap of thunder called up by a spell (Roar of Thunder), in any weather: a thunder take is heard and the sky
+   * lights with it, as for a strike, but no bolt is drawn out over the sea (the spell draws its own).
+   */
+  clap() {
+    this.since = 0;
+    this.take = null;
+    this.crackAt = -1;
+    this.loudest = 0;
+    this.boltless = true;
+    sounds.thunder((take) => {
+      this.take = take;
+      this.since = 0;
+    });
   }
 
   /**
@@ -125,11 +143,12 @@ export class Storm {
     // peaks in a crack run together into a flicker instead of a strobe.
     this.flash = want > this.flash ? want : Math.max(want, this.flash * Math.exp(-dt * 9));
     if (this.since < 0 && this.flash < 0.01) this.flash = 0;
-    this.bolt.visible = this.flash > 0.12 && !this.indoors;
+    this.bolt.visible = this.flash > 0.12 && !this.indoors && !this.boltless;
     (this.bolt.material as THREE.LineBasicMaterial).opacity = Math.min(1, this.flash * 1.4);
   }
 
   private strike(camera: THREE.Camera, target: THREE.Vector3) {
+    this.boltless = false;
     this.since = 0;
     this.take = null;
     this.crackAt = -1;

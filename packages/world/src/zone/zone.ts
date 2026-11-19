@@ -7,8 +7,9 @@
 // roll initiative, and from then on those in the fight take turns while
 // everyone else keeps walking. Walk near the fight and you are in it.
 //
-// A turn is an Action, a Bonus action and movement, spent in any order, and
-// it is one fighter's alone: nobody shares a place in the order (two who
+// A turn is Action Points (AP): AP_TURN more at its start, on top of any saved
+// from the last (AP_MAX at most), spent on anything in any order, movement too.
+// And it is one fighter's alone: nobody shares a place in the order (two who
 // roll the same initiative roll off for it). Enemy turns are played here,
 // at once, so nothing waits on a client. A fight is heard: at the start of
 // each round, any band near enough to hear it comes to join it.
@@ -26,14 +27,14 @@ import type { HeroSheet } from "../hero";
 import { addStats, maxFocusFor, maxHpFor } from "../progression";
 import { makeRng, seedFromString } from "../rng";
 import { enemyTurn } from "./ai";
-import { abilityArea, checkAbility, checkCommon, checkDrink, checkLight, checkThrow, courseFor, doCommon, drinkItem, resolveAbility, throwItem, walk } from "./combat";
+import { abilityArea, checkAbility, checkCommon, checkDrink, checkLight, checkThrow, courseFor, doCommon, drinkItem, moveLeft, resolveAbility, throwItem, walk } from "./combat";
 import { burnOf, has, heal, regrow, removeCondition, tick, unseen, type Ctx } from "./engine";
 import { ALERT_RANGE, JOIN_RANGE, freeHexNear, generateZone } from "./gen";
 import { generateDelve } from "./delve";
 import { checkLoot, checkOpen, leaveBody, look, lootFor, openChest, payBounty, take } from "./loot";
 import { isCrateId } from "./crates";
 import { FREE_WALK, blast, blockerAt, inFight, pathIn, sameHex, sees, solid, unitAt, unitById, zoneReach } from "./geometry";
-import { AURAS, CHART, FLEE_RANGE, SUMMONS, STARTING_ITEMS, THROWABLES, THROWABLE_KINDS, cleanItems, commonCost, enemyHp, enemyMove, tacticOf } from "./kit";
+import { AP_MAX, AP_TURN, AURAS, FLEE_RANGE, ITEM_AP, SUMMONS, STARTING_ITEMS, THROWABLES, THROWABLE_KINDS, cleanItems, commonCost, enemyHp, enemyMove, tacticOf } from "./kit";
 import { d20, heroMove, mod, rollDice, statOf } from "./rules";
 import { hiddenEnemies, sentToClient } from "./light";
 import { tickWeather, weatherAtTurn } from "./weather";
@@ -143,6 +144,7 @@ function heroUnit(hero: ZoneHero, pos: HexPos, controller?: string): Unit {
     power: hero.weaponPower,
     abilities: heroAbilities(hero),
     outfit: hero.outfit,
+    ...(hero.lantern ? { lantern: true } : {}),
     conditions: [],
     down: false,
     cooldowns: {},
@@ -156,6 +158,7 @@ export function zoneHero(sheet: HeroSheet, items?: Partial<Record<Throwable, num
   const stats = addStats(sheet.base, sheet.bonus);
   return {
     id: sheet.id, name: sheet.name, classId: sheet.classId, level: sheet.level, stats, weapon: sheet.weapon, weaponPower: sheet.weaponPower ?? 0, armor: sheet.armor ?? 0, outfit: sheet.outfit,
+    ...(sheet.lantern ? { lantern: true } : {}),
     maxHp: maxHpFor(stats, sheet.level), maxFocus: maxFocusFor(sheet.level),
     classAbilities: classAbilitiesOf(sheet.classId, sheet.level, sheet.abilityLoadout),
     ...(items ? { items: cleanItems(items) } : {}),
@@ -280,6 +283,7 @@ function flee(ctx: Ctx, unit: Unit): void {
   const at = enc.order.indexOf(unit.id);
   enc.order.splice(at, 1);
   delete enc.budgets[unit.id];
+  if (enc.banked) delete enc.banked[unit.id];
   const acting = enc.acting.includes(unit.id);
   enc.acting = enc.acting.filter((id) => id !== unit.id);
   enc.done = enc.done.filter((id) => id !== unit.id);
@@ -374,10 +378,6 @@ function onStep(ctx: Ctx, unit: Unit, flush: () => void): boolean {
 
 /** Start a unit's turn: its conditions and the ground act on it, and it gets its budget. False if it has no turn to take. */
 function beginTurn(ctx: Ctx, enc: Encounter, unit: Unit): boolean {
-  for (const key of Object.keys(unit.cooldowns)) {
-    unit.cooldowns[key] -= 1;
-    if (unit.cooldowns[key] <= 0) delete unit.cooldowns[key];
-  }
   removeCondition(unit, "guarded");
   removeCondition(unit, "taunting");
   // A Lively Shanty's lift from those who joined it lasts until its Bard's turn comes round again.
@@ -407,34 +407,42 @@ function beginTurn(ctx: Ctx, enc: Encounter, unit: Unit): boolean {
     ctx.events.push({ t: "skip", id: unit.id, kind: "stunned" });
     return false;
   }
-  const base = unit.summon ? (SUMMONS[unit.kind]?.move ?? 3) : unit.side === "hero" && unit.stats ? heroMove(unit.stats) : enemyMove(unit.kind, modsOf(ctx.state.options).move);
+  // What 1 AP of movement buys it.
+  const base = unit.summon ? (SUMMONS[unit.kind]?.move ?? 1) : unit.side === "hero" && unit.stats ? heroMove(unit.stats) : enemyMove(unit.kind, modsOf(ctx.state.options).move);
   // A Wind-god's Shanty: further, and no Slowing.
-  const sung = songMove(ctx.state, unit);
+  const sung = base > 0 ? songMove(ctx.state, unit) : 0;
   // A Tailwind given since its last turn: the wind at its back.
-  let move = base + sung + (unit.conditions.find((c) => c.kind === "tailwind")?.amount ?? 0);
+  let stride = base > 0 ? base + sung + (unit.conditions.find((c) => c.kind === "tailwind")?.amount ?? 0) : 0;
   if (has(unit, "slowed") && windward(ctx.state, unit)) removeCondition(unit, "slowed");
-  if (has(unit, "slowed")) move = Math.floor(move / 2);
-  if (has(unit, "hasted")) move *= 2;
-  // Getting up off the ground takes half a turn's movement.
+  if (has(unit, "slowed") && stride > 0) stride = Math.max(1, Math.floor(stride / 2));
+  if (has(unit, "hasted")) stride *= 2;
+  // Fresh AP on top of what was saved from its last turn.
+  let ap = Math.min(AP_MAX, (enc.banked?.[unit.id] ?? 0) + AP_TURN);
+  if (enc.banked) delete enc.banked[unit.id];
+  // Getting up off the ground takes an AP.
   if (has(unit, "prone")) {
     removeCondition(unit, "prone");
-    move = Math.floor(move / 2);
+    ap -= 1;
   }
-  enc.budgets[unit.id] = { action: true, bonus: true, move, moveMax: base, disengaged: false, ...(sung > 0 ? { song: sung } : {}) };
+  enc.budgets[unit.id] = { ap, move: 0, stride, disengaged: false, ...(sung > 0 ? { song: sung } : {}) };
   // A course charted by one of its side: further, on the steps that bring it nearer the mark.
-  if (courseMarks(ctx.state, unit).length > 0) enc.budgets[unit.id].course = CHART.speed;
+  if (courseMarks(ctx.state, unit).length > 0) enc.budgets[unit.id].course = 0;
   // Weather it stands in acts now its turn is underway, with a budget for the winds to change.
   weatherAtTurn(ctx, unit);
-  // Drowning: hold its breath, or lose its Action.
+  // Drowning: hold its breath, or lose some of its AP.
   holdBreath(ctx, unit, enc.budgets[unit.id]);
   return !unit.down;
 }
 
 /**
- * End a unit's turn: each condition has one turn less to run, bar those put on during this very turn. Then the stacks of
- * Drowning it is owed for how it ended the turn (drowning.ts), each running its full count.
+ * End a unit's turn: each cooldown and each condition has one turn less to run, bar conditions put on during this very turn.
+ * Then the stacks of Drowning it is owed for how it ended the turn (drowning.ts), each running its full count.
  */
 function endTurn(ctx: Ctx, unit: Unit): void {
+  for (const key of Object.keys(unit.cooldowns)) {
+    unit.cooldowns[key] -= 1;
+    if (unit.cooldowns[key] <= 0) delete unit.cooldowns[key];
+  }
   const owed = drowningOwed(ctx.state, unit);
   for (const c of unit.conditions) {
     if (c.fresh) c.fresh = false;
@@ -512,16 +520,24 @@ function settle(ctx: Ctx): boolean {
   } else {
     const groups = new Set(foes.map((f) => f.group));
     for (const g of groups) if (g && state.groups[g]) state.groups[g].alerted = false;
-    for (const f of state.units.filter((u) => u.side === "enemy" && groups.has(u.group))) {
+    const band = state.units.filter((u) => u.side === "enemy" && groups.has(u.group));
+    const was = new Map(band.map((f) => [f.id, f.pos]));
+    // Off the board for a moment: the enemy, so each finds its own post, or the nearest free hex if someone
+    // not in the fight stands on it (a body takes up no room, so its post may have been walked onto); and
+    // the heroes, so each finds its own free hex by the start.
+    for (const f of band) {
       f.down = false;
       f.hp = f.maxHp;
       f.conditions = [];
-      f.pos = f.home ?? f.pos;
+      f.pos = { q: -99, r: -99 };
     }
     for (const h of heroes) {
       h.hp = 1;
-      // Off the board for a moment, so each finds its own free hex by the start.
       h.pos = { q: -99, r: -99 };
+    }
+    for (const f of band) {
+      const post = f.home ?? was.get(f.id)!;
+      f.pos = freeHexNear(state.map, post, (p) => !!unitAt(state, p) || blockerAt(state, p), (p) => tileAt(state.map, p)) ?? post;
     }
     for (const h of heroes) h.pos = freeHexNear(state.map, state.start, (p) => !!unitAt(state, p) || blockerAt(state, p), (p) => tileAt(state.map, p)) ?? state.start;
   }
@@ -560,6 +576,9 @@ function advance(ctx: Ctx): void {
     for (const id of enc.acting) {
       const u = unitById(state, id);
       if (u) endTurn(ctx, u);
+      // What AP it has not spent it keeps for its next turn (the movement it bought and did not walk is lost).
+      const left = enc.budgets[id]?.ap ?? 0;
+      if (left > 0 && u && !u.down) enc.banked = { ...enc.banked, [id]: Math.min(AP_MAX, left) };
     }
     let i = turnEnd(enc);
     delete enc.resume;
@@ -635,10 +654,11 @@ function budgetOf(state: ZoneState, unit: Unit): Budget | null | string {
   return enc.budgets[unit.id] ?? "It is not your turn.";
 }
 
-function spend(budget: Budget | null, cost: "action" | "bonus"): string | null {
+/** Take `cost` AP from the budget, if there is one (out of a fight everything is free), or say why not. */
+function spend(budget: Budget | null, cost: number): string | null {
   if (!budget) return null;
-  if (!budget[cost]) return cost === "action" ? "You have used your Action this turn." : "You have used your Bonus action this turn.";
-  budget[cost] = false;
+  if (budget.ap < cost) return `That takes ${cost} AP, and you have ${budget.ap} left.`;
+  budget.ap -= cost;
   return null;
 }
 
@@ -694,7 +714,7 @@ function dev(ctx: Ctx, by: string, op: DevOp): string | null {
     const u = unitById(state, op.unit);
     if (!u || u.side !== "hero" || u.summon || (u.id !== by && u.controller !== by)) return "That is not one of your heroes.";
     const weapon = WEAPONS[op.weapon];
-    if (!weapon || weapon.classId !== op.classId) return "That is not a weapon of that class.";
+    if (!weapon || (weapon.classId && weapon.classId !== op.classId)) return "That is not a weapon of that class.";
     const level = Math.max(1, Math.min(KIT_MAX_LEVEL, Math.floor(Number(op.level)) || 1));
     const sheet = standInHero(op.classId, u.id, level);
     if (!sheet) return "There is no such class.";
@@ -735,7 +755,7 @@ function act(ctx: Ctx, action: ZoneAction): string | null {
       // Back again, perhaps with different gear: the sheet is refreshed, and where they stand and how hurt they are is kept.
       // Not in a fight, though: that is fought in the gear it was started in. Nor a hero given a dev kit.
       if (inFight(state, here.id) || here.devKit) return null;
-      Object.assign(here, { name: hero.name, kind: hero.classId, level: hero.level, stats: hero.stats, armor: hero.armor, power: hero.weaponPower, outfit: hero.outfit, maxHp: hero.maxHp, maxFocus: hero.maxFocus });
+      Object.assign(here, { name: hero.name, kind: hero.classId, level: hero.level, stats: hero.stats, armor: hero.armor, power: hero.weaponPower, outfit: hero.outfit, lantern: hero.lantern, maxHp: hero.maxHp, maxFocus: hero.maxFocus });
       // A torch swung in the main hand stays there: the new weapon is what is taken up when it goes.
       if (here.torchHand === "main") here.stowed = heroAbilities(hero);
       else here.abilities = heroAbilities(hero);
@@ -778,9 +798,9 @@ function act(ctx: Ctx, action: ZoneAction): string | null {
   }
   if (action.type === "move") {
     if (sameHex(action.to, unit.pos)) return null;
-    const reach = zoneReach(state, unit, budget ? budget.move : FREE_WALK, undefined, courseFor(state, unit, budget));
+    const reach = zoneReach(state, unit, budget ? moveLeft(budget) : FREE_WALK, undefined, courseFor(state, unit, budget));
     const end = reach.get(posKey(action.to));
-    if (!end) return budget ? "You cannot get there with the movement you have left." : "You cannot get there.";
+    if (!end) return budget ? "You cannot get there with the AP you have left." : "You cannot get there.";
     if (!end.stop) return "Someone is standing there.";
     walk(ctx, unit, pathIn(reach, action.to) ?? [], budget);
     return null;
@@ -802,7 +822,7 @@ function act(ctx: Ctx, action: ZoneAction): string | null {
     const cost = spend(budget, tactic.cost);
     if (cost) return cost;
     if (aim.focus) unit.focus -= 1;
-    if (budget && tactic.cooldown) unit.cooldowns[action.ability] = tactic.cooldown + 1;
+    if (budget && tactic.cooldown) unit.cooldowns[action.ability] = tactic.cooldown;
     // A heal splashed among enemies is a kindness, as a healing potion thrown is: it starts nothing.
     const struck = tactic.splash ? [] : touched.filter((u) => u.side === "enemy" && !u.down).map((u) => u.group!);
     resolveAbility(ctx, unit, action.ability, aim);
@@ -828,7 +848,7 @@ function act(ctx: Ctx, action: ZoneAction): string | null {
   if (action.type === "drink") {
     const wrong = checkDrink(unit, action.item);
     if (wrong) return wrong;
-    const cost = spend(budget, "bonus");
+    const cost = spend(budget, ITEM_AP.drink);
     if (cost) return cost;
     drinkItem(ctx, unit, action.item);
     return null;
@@ -836,8 +856,8 @@ function act(ctx: Ctx, action: ZoneAction): string | null {
   if (action.type === "pickup") {
     const wrong = checkPickup(state, unit, action.at);
     if (wrong) return wrong;
-    // Out of a fight it is free; in one, a Bonus action, like lighting one.
-    const cost = spend(budget, "bonus");
+    // Out of a fight it is free; in one, it takes AP, like lighting one.
+    const cost = spend(budget, ITEM_AP.pickup);
     if (cost) return cost;
     pickUpTorch(ctx, unit, action.at);
     return null;
@@ -846,7 +866,7 @@ function act(ctx: Ctx, action: ZoneAction): string | null {
     const chest = state.map.pois.find((p) => p.id === action.poi && p.kind === "cache");
     const wrong = checkOpen(state, unit, chest);
     if (wrong) return wrong;
-    const cost = spend(budget, "action");
+    const cost = spend(budget, ITEM_AP.open);
     if (cost) return cost;
     openChest(ctx, unit, chest!);
     // Out of a fight, whoever opened it is looking into it.
@@ -870,7 +890,7 @@ function act(ctx: Ctx, action: ZoneAction): string | null {
     const patch = state.map.pois.find((p) => p.id === action.poi && p.kind === "glowcap");
     const wrong = checkForage(state, unit, patch);
     if (wrong) return wrong;
-    const cost = spend(budget, "action");
+    const cost = spend(budget, ITEM_AP.forage);
     if (cost) return cost;
     forage(ctx, unit, patch!);
     return null;
@@ -879,7 +899,7 @@ function act(ctx: Ctx, action: ZoneAction): string | null {
     const door = state.map.pois.find((p) => p.id === action.poi && p.kind === "gate");
     const wrong = checkUnlock(state, unit, door);
     if (wrong) return wrong;
-    const cost = spend(budget, "action");
+    const cost = spend(budget, ITEM_AP.unlock);
     if (cost) return cost;
     // A key is quiet. Forcing it is heard, whether the door gives or not: the nearest band that has not noticed anyone comes.
     const { forced } = workDoor(ctx, unit, door!);
@@ -893,7 +913,7 @@ function act(ctx: Ctx, action: ZoneAction): string | null {
   if (action.type === "light") {
     const wrong = checkLight(unit);
     if (wrong) return wrong;
-    const cost = spend(budget, "bonus");
+    const cost = spend(budget, ITEM_AP.light);
     if (cost) return cost;
     lightTorch(ctx, unit, action.hand);
     return null;
@@ -901,8 +921,8 @@ function act(ctx: Ctx, action: ZoneAction): string | null {
   if (action.type === "stow") {
     const wrong = checkStow(unit);
     if (wrong) return wrong;
-    // Like lighting one: free out of a fight, a Bonus action in one.
-    const cost = spend(budget, "bonus");
+    // Like lighting one: free out of a fight, AP in one.
+    const cost = spend(budget, ITEM_AP.stow);
     if (cost) return cost;
     stowTorch(ctx, unit);
     return null;
@@ -915,7 +935,7 @@ function act(ctx: Ctx, action: ZoneAction): string | null {
   const touched = state.units.filter((u) => area.has(posKey(u.pos)));
   const back = reachBack(state, unit, touched);
   if (back) return back;
-  const cost = spend(budget, "action");
+  const cost = spend(budget, ITEM_AP.throw);
   if (cost) return cost;
   // A healing potion among enemies is a kindness; anything else is a declaration.
   const struck = def.heal ? [] : touched.filter((u) => u.side === "enemy" && !u.down).map((u) => u.group!);

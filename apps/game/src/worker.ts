@@ -9,7 +9,7 @@ import { barkeepReply, heroName } from "./server/ai";
 import { contractBoard } from "./server/board";
 import { markReleaseSeen, seenRelease } from "./server/releases";
 import { BUILD_ID } from "./build";
-import { RELEASES } from "./releases";
+import { RELEASES, releasesSince } from "./releases";
 import { dropErrand, handInErrand, regularsView, takeErrand, tradeWithRegular } from "./server/errands";
 import { sendSignInCode } from "./server/email";
 import {
@@ -183,11 +183,15 @@ app.post("/api/auth/signout", async (c) => {
 /**
  * The build now deployed (see build.ts). A tab asks from time to time and tells its player when it is running
  * an older one. Open to anyone and never cached: it must be this Worker's own answer, and it says nothing
- * that the page's script name does not.
+ * that the page's script does not.
+ *
+ * A tab that names the newest release it knows (`?since=game-v2026.11.18.3`) is also told what this build
+ * brings on top of it: the notice board's notes for every release after that one (see releases.ts).
  */
 app.get("/api/version", (c) => {
   c.header("Cache-Control", "no-store");
-  return c.json({ build: BUILD_ID });
+  const since = c.req.query("since");
+  return c.json(since === undefined ? { build: BUILD_ID } : { build: BUILD_ID, incoming: releasesSince(since) });
 });
 
 app.use("/api/*", async (c, next) => {

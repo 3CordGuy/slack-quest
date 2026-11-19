@@ -11,15 +11,19 @@ import {
   DRUID_REGEN,
   DUMMY_KIND,
   HERO_CLASSES,
+  SHIPS_GUNS,
   WARLOCK_BLEED_TURNS,
   WEAPONS,
+  WEAPON_ICON,
   createBattle,
   currentActor,
+  equipProblem,
   gearSheet,
   heroCombatant,
   makeRng,
   rollItem,
   stepBattle,
+  weaponItem,
   type BattleEvent,
   type BattleState,
   type HeroInit,
@@ -40,11 +44,28 @@ describe("hero classes", () => {
         expect(WEAPONS[w]?.classId, w).toBe(cls.id);
         for (const a of WEAPONS[w].abilities) expect(ABILITIES[a], a).toBeDefined();
       }
-      // Loot rolled for the class only ever gives it weapons it can use.
+      // Loot rolled for the class only ever gives it weapons it can use: its own, or a ship's gun anyone can.
       const rng = makeRng(cls.id.length);
       for (let i = 0; i < 40; i++) {
         const item = rollItem(rng, cls.id, 0.5, 3, "main_hand");
-        expect(WEAPONS[item.ref]?.classId).toBe(cls.id);
+        expect(equipProblem(item, cls.id, 99), item.ref).toBeNull();
+      }
+    }
+  });
+
+  it("drops the ship's guns for any class, and lets any class equip and fire them", () => {
+    expect(SHIPS_GUNS.sort()).toEqual(["blunderbuss", "harpoon_gun", "pistol"]);
+    for (const id of SHIPS_GUNS) {
+      expect(WEAPON_ICON[id], id).toBeTruthy();
+      for (const a of WEAPONS[id].abilities) expect(ABILITIES[a], a).toBeDefined();
+    }
+    for (const cls of HERO_CLASSES) {
+      const rng = makeRng(7);
+      const seen = new Set<string>();
+      for (let i = 0; i < 300; i++) seen.add(rollItem(rng, cls.id, 0.3, 3, "main_hand").ref);
+      for (const id of SHIPS_GUNS) {
+        expect(seen.has(id), `${cls.id} finds a ${id}`).toBe(true);
+        expect(equipProblem(weaponItem(id), cls.id, 1)).toBeNull();
       }
     }
   });

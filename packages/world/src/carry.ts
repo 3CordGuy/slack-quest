@@ -63,9 +63,10 @@ export const WEAPON_SIZE: Record<string, PackSize> = {
   // Two-handed, and as long as the pack allows.
   greatsword: LONG, staff: LONG, root_staff: LONG, coral_staff: LONG, barometer_rod: LONG, void_staff: LONG, pager_axe: LONG, maul: LONG, boarding_pike: LONG, shortbow: LONG,
   // Slim things that slide in beside the rest.
+  blunderbuss: LONG, harpoon_gun: LONG, pistol: SLIM,
   daggers: SLIM, gaff_hook: SLIM, flute: SLIM, sickle: SLIM, scepter: SLIM,
-  // Books, orbs and bells.
-  tome: SQUARE, grimoire: SQUARE, orb: SQUARE, astrolabe: SQUARE, bilge_chalice: SQUARE, ships_bell: SQUARE,
+  // Books, orbs, bells and the squeeze box.
+  tome: SQUARE, grimoire: SQUARE, orb: SQUARE, astrolabe: SQUARE, bilge_chalice: SQUARE, ships_bell: SQUARE, accordion: SQUARE,
 };
 
 /** The squares a piece of gear takes up in the pack. */

@@ -1,6 +1,6 @@
 // Light and the dark. Underground (a caves zone) nothing is lit but what
 // a torch or a fire lights, and the daylight at the mouth: a lit torch held in a hero's off hand, one
-// thrown down and still burning, and the ground on fire. A hero can only
+// thrown down and still burning, a Paladin's lantern helm, and the ground on fire. A hero can only
 // make out an enemy that stands in the light or right beside one of the
 // party; one in the dark cannot be picked out to strike or shoot at, and a
 // blow at one that is beside you but unlit is struck blind (disadvantage).
@@ -13,10 +13,14 @@ import { close, inFight, sees } from "./geometry";
 import { propOf } from "./props";
 import { AURAS, FIRE_GLOW, LIGHT_RADIUS } from "./kit";
 import { GLOWCAP_LIGHT } from "./forage";
+import { wearsLanternHelm } from "../gear";
 
 /** How far the daylight at a cave mouth reaches into the dark. */
 export const DAYLIGHT_RADIUS = 2;
 import type { Unit, ZoneState } from "./types";
+
+/** Whether a hero has a lantern helm on, drawn or worn hidden: it lights the dark round them as a held torch does. */
+export const carriesLantern = (u: Unit): boolean => u.side === "hero" && (!!u.lantern || wearsLanternHelm(u.kind, u.outfit));
 
 /** Whether this zone is dark but where it is lit. */
 export const isDark = (state: Pick<ZoneState, "options">): boolean => state.options.biome === "caves";
@@ -25,6 +29,8 @@ export const isDark = (state: Pick<ZoneState, "options">): boolean => state.opti
 export function lightSources(state: ZoneState): { at: HexPos; radius: number }[] {
   const out: { at: HexPos; radius: number }[] = [];
   for (const u of state.units) if ((u.torch ?? 0) > 0) out.push({ at: u.pos, radius: LIGHT_RADIUS });
+  // A hero in a lantern helm carries a torch's light on their head, and it never burns down.
+  for (const u of state.units) if (!u.torch && carriesLantern(u)) out.push({ at: u.pos, radius: LIGHT_RADIUS });
   // A hero shining with a Beacon Aura.
   for (const u of state.units) if (!u.down && u.conditions.some((c) => c.kind === "beacon")) out.push({ at: u.pos, radius: AURAS.beaconLight });
   for (const key of Object.keys(state.lights ?? {})) {

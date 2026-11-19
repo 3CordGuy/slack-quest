@@ -8,6 +8,7 @@
 // fare, brews, hut furniture) live in thingArt.ts and are merged in below,
 // so they go through the same lookup and admin overrides as gear.
 
+import { parseGarbIcon, type GarbPiece } from "@gantt-quest/world";
 import { C, spans, type Art, type Pen } from "./artKit";
 import { ACTION_ART } from "./actionArt";
 import { THING_ART } from "./thingArt";
@@ -27,23 +28,61 @@ const ART: Record<string, Art> = {
     p.r(7, 12, 2, 3, C.bark);
     p.r(7, 15, 2, 1, p.accent);
   },
-  "hammer-drop": (p) => {
-    p.r(7, 6, 2, 9, C.wood);
-    p.r(4, 1, 8, 5, C.iron);
-    p.r(5, 2, 6, 1, C.steel);
-    p.r(3, 2, 1, 3, C.steel);
-    p.r(12, 2, 1, 3, C.steel);
-    p.r(7, 3, 2, 2, p.accent);
+  cutlass: (p) => {
+    // A cutlass: a broad blade curving back to a clipped point, a brass shell and bow round a corded grip.
+    spans(p, C.steel, [[0, 4, 5], [1, 4, 6], [2, 5, 7], [3, 5, 7], [4, 6, 8], [5, 6, 8], [6, 6, 8], [7, 6, 8], [8, 7, 8], [9, 7, 8]]);
+    for (const [x, y] of [[4, 0], [5, 2], [6, 4], [6, 6], [7, 8]]) p.r(x, y, 1, 1, C.shine);
+    p.r(4, 10, 7, 1, C.gold);
+    p.r(10, 11, 1, 3, C.gold);
+    p.r(7, 11, 2, 3, p.accent);
+    p.r(7, 12, 2, 1, p.shade);
+    p.r(7, 14, 4, 1, C.gold);
     p.r(7, 15, 2, 1, C.gold);
   },
+  dirks: (p) => {
+    // A pair of dirks, crossed at the guards: straight blades, a brass cross, ivory grips banded in the accent.
+    p.l(3, 1, 8, 6, C.steel);
+    p.l(4, 1, 9, 6, C.shine);
+    p.l(12, 1, 7, 6, C.steel);
+    p.l(11, 1, 6, 6, C.iron);
+    p.r(5, 7, 6, 1, C.gold);
+    p.l(9, 8, 12, 11, C.bone);
+    p.l(6, 8, 3, 11, C.bone);
+    p.r(10, 9, 1, 1, p.accent);
+    p.r(5, 9, 1, 1, p.accent);
+    p.r(12, 12, 1, 1, C.gold);
+    p.r(3, 12, 1, 1, C.gold);
+  },
+  "hammer-drop": (p) => {
+    // The Anchor Mace: a grappling iron on a haft, four hooked tines curling out and down from a ringed crown,
+    // a collar in the accent, a coil of line round the haft and a wrapped grip.
+    p.r(7, 7, 2, 8, C.wood);
+    p.r(8, 7, 1, 8, C.bark);
+    p.r(7, 11, 2, 3, p.accent);
+    p.r(7, 8, 2, 2, "#c9b58a");
+    p.r(7, 6, 2, 1, p.accent);
+    p.r(7, 3, 2, 3, "#4f535b");
+    p.r(7, 0, 2, 1, "#4f535b");
+    p.r(6, 1, 4, 2, "#4f535b");
+    spans(p, "#4f535b", [[1, 3, 5], [1, 10, 12], [2, 2, 2], [2, 13, 13], [3, 2, 2], [3, 13, 13], [4, 2, 2], [4, 13, 13]]);
+    for (const [x, y] of [[2, 5], [13, 5], [3, 4], [12, 4]]) p.r(x, y, 1, 1, C.steel);
+    p.r(7, 15, 2, 1, C.iron);
+  },
   "wizard-staff": (p) => {
-    p.r(7, 5, 2, 11, C.wood);
-    p.r(8, 5, 1, 11, C.bark);
-    p.r(6, 0, 4, 4, p.accent);
-    p.r(7, 1, 1, 1, C.shine);
-    p.r(5, 3, 1, 2, C.gold);
-    p.r(10, 3, 1, 2, C.gold);
-    p.r(6, 4, 4, 1, C.gold);
+    // The Squall Staff: an ash staff with a rope grip, and a storm glass at its head, a brass cage round a dark
+    // squall with lightning through it.
+    p.r(7, 7, 2, 8, C.wood);
+    p.r(8, 7, 1, 8, C.bark);
+    p.r(7, 10, 2, 2, p.accent);
+    p.r(7, 15, 2, 1, C.gold);
+    p.r(6, 0, 4, 1, C.gold);
+    p.r(5, 1, 6, 1, C.gold);
+    p.r(5, 2, 1, 4, C.gold);
+    p.r(10, 2, 1, 4, C.gold);
+    p.r(6, 2, 4, 4, "#4c5563");
+    p.r(6, 3, 2, 2, "#6f7a8a");
+    for (const [x, y] of [[8, 2], [7, 3], [8, 4], [7, 5]]) p.r(x, y, 1, 1, "#e8f8ff");
+    p.r(5, 6, 6, 1, C.gold);
   },
   "scroll-unfurled": (p) => {
     // A closed tome.
@@ -75,6 +114,92 @@ const ART: Record<string, Art> = {
     spans(p, C.steel, [[6, 2, 2], [7, 1, 2], [8, 2, 2]]);
     p.r(9, 6, 2, 1, p.accent);
     p.r(9, 8, 2, 1, p.accent);
+  },
+
+  pistol: (p) => {
+    // A flintlock, side on: a long iron barrel, the lock and hammer, a curved wooden butt.
+    p.r(3, 5, 11, 2, C.iron);
+    p.r(3, 5, 11, 1, C.steel);
+    p.r(13, 4, 2, 4, C.iron);
+    p.r(4, 7, 5, 1, C.wood);
+    p.r(2, 3, 2, 3, C.steel);
+    spans(p, C.wood, [[8, 2, 5], [9, 2, 5], [10, 1, 4], [11, 1, 4], [12, 0, 3]]);
+    p.r(7, 8, 1, 2, C.iron);
+    p.r(1, 12, 2, 1, p.accent);
+  },
+  blunderbuss: (p) => {
+    // A short, fat gun with a flared brass muzzle and a stock.
+    spans(p, C.gold, [[2, 11, 14], [3, 10, 14], [4, 10, 14], [5, 11, 14]]);
+    p.r(14, 3, 1, 2, C.dark);
+    p.r(4, 3, 7, 3, C.iron);
+    p.r(4, 3, 7, 1, C.steel);
+    p.r(3, 2, 2, 2, C.steel);
+    spans(p, C.wood, [[6, 1, 8], [7, 0, 6], [8, 0, 3], [9, 0, 3], [10, 0, 2]]);
+    p.r(7, 6, 1, 2, C.iron);
+    p.r(1, 12, 3, 1, p.accent);
+  },
+  "harpoon-gun": (p) => {
+    // A stout iron tube with a barbed harpoon standing out of it, a coil of line at its side.
+    p.r(2, 7, 8, 3, C.iron);
+    p.r(2, 7, 8, 1, C.steel);
+    p.r(9, 8, 6, 1, C.steel);
+    spans(p, C.shine, [[7, 14, 14], [8, 15, 15], [9, 14, 14]]);
+    p.r(12, 6, 1, 1, C.steel);
+    p.r(12, 10, 1, 1, C.steel);
+    p.r(4, 10, 2, 4, C.wood);
+    p.r(3, 11, 1, 3, C.wood);
+    p.r(6, 11, 3, 3, C.paper);
+    p.r(7, 12, 1, 1, C.bark);
+    p.r(1, 14, 3, 1, p.accent);
+  },
+
+  "lantern-helm": (p) => {
+    // The Lighthouse Paladin's Lantern Helm: a steel dome with a brass comb and side rivets, a band of brass rope,
+    // riveted cheek guards, and a lantern burning on top.
+    p.r(6, 0, 4, 1, "#c23b30");
+    p.r(5, 1, 6, 1, "#c23b30");
+    p.r(5, 2, 6, 1, C.gold);
+    p.r(6, 3, 4, 2, "#ffd27a");
+    p.r(5, 3, 1, 2, C.gold);
+    p.r(10, 3, 1, 2, C.gold);
+    p.r(5, 5, 6, 1, C.gold);
+    spans(p, "#aeb6c2", [[6, 4, 11], [7, 3, 12], [8, 2, 13], [9, 2, 13], [10, 2, 13]]);
+    p.r(4, 6, 3, 1, C.shine);
+    p.r(2, 11, 12, 1, C.gold);
+    p.r(2, 12, 3, 3, "#aeb6c2");
+    p.r(11, 12, 3, 3, "#aeb6c2");
+    p.r(5, 12, 6, 1, C.dark);
+    p.r(7, 6, 2, 5, C.gold);
+    for (let x = 3; x <= 13; x += 2) p.r(x, 11, 1, 1, "#a07a22");
+    for (const [x, y] of [[3, 7], [2, 9], [12, 7], [13, 9], [3, 13], [12, 13]]) p.r(x, y, 1, 1, C.gold);
+  },
+  "knit-cap": (p) => {
+    // A knitted cap with a rolled brim and a nub.
+    spans(p, "#5b3f2a", [[3, 6, 9], [4, 4, 11], [5, 3, 12], [6, 3, 12], [7, 3, 12]]);
+    p.r(7, 1, 1, 1, "#5b3f2a");
+    p.r(2, 8, 1, 1, "#7a5a3f");
+    p.r(2, 8, 12, 4, "#7a5a3f");
+    p.r(2, 8, 12, 1, "#8f6c4d");
+    p.r(2, 11, 12, 1, "#4a3220");
+    p.r(7, 2, 2, 1, "#7a5a3f");
+  },
+  "naval-tunic": (p) => {
+    spans(p, "#2f4562", [[2, 4, 11], [3, 3, 12], [4, 2, 13], [5, 2, 13], [6, 3, 12], [7, 3, 12], [8, 3, 12], [9, 3, 12], [10, 3, 12], [11, 3, 12]]);
+    p.r(5, 2, 1, 4, "#2f4562");
+    p.r(2, 2, 3, 1, "#e8edf2");
+    p.r(11, 2, 3, 1, "#e8edf2");
+    p.r(3, 3, 2, 1, "#e8edf2");
+    p.r(11, 3, 2, 1, "#e8edf2");
+    for (const y of [4, 6, 8]) p.r(8, y, 1, 1, C.gold);
+    p.r(3, 9, 10, 1, C.leather);
+    p.r(8, 9, 1, 1, C.gold);
+  },
+  "deck-boots": (p) => {
+    for (const x of [2, 9]) {
+      p.r(x, 3, 4, 6, "#7a5230");
+      p.r(x, 9, 5, 3, "#7a5230");
+      p.r(x, 12, 5, 1, C.bark);
+    }
   },
 
   // ---- armor ----
@@ -113,6 +238,22 @@ const ART: Record<string, Art> = {
     for (const [x, y] of [[5, 11], [7, 9], [9, 7], [11, 5]]) p.r(x, y, 1, 1, C.dark);
     p.r(12, 2, 2, 2, p.accent);
   },
+  accordion: (p) => {
+    // A squeeze box side on: a lacquered end board each side, the pleated bellows between, keys down one board,
+    // buttons on the other, and a strap over the top.
+    const lacquer = "#b8333a";
+    for (let x = 4; x <= 11; x++) p.r(x, 5, 1, 7, x % 2 ? "#8f8470" : C.paper);
+    p.r(1, 3, 3, 11, lacquer);
+    p.r(12, 3, 3, 11, lacquer);
+    for (const x of [1, 12]) {
+      p.r(x, 3, 3, 1, C.gold);
+      p.r(x, 13, 3, 1, C.gold);
+    }
+    for (const y of [5, 7, 9, 11]) p.r(2, y, 1, 1, C.shine);
+    p.r(13, 4, 1, 9, C.bone);
+    for (const y of [5, 7, 10]) p.r(13, y, 1, 1, C.dark);
+    p.r(3, 2, 10, 1, p.accent);
+  },
   orb: (p) => {
     // A glowing sphere on a short haft.
     spans(p, p.accent, [[1, 6, 9], [2, 4, 11], [3, 3, 12], [4, 3, 12], [5, 3, 12], [6, 3, 12], [7, 4, 11], [8, 6, 9]]);
@@ -138,12 +279,16 @@ const ART: Record<string, Art> = {
     p.r(3, 13, 2, 1, p.accent);
   },
   maul: (p) => {
-    // A block of iron on a long handle, banded in the accent.
-    p.l(3, 15, 9, 6, C.wood);
-    p.l(4, 15, 10, 6, C.bark);
-    spans(p, C.iron, [[1, 8, 13], [2, 7, 14], [3, 7, 14], [4, 7, 14], [5, 7, 14], [6, 8, 13]]);
-    spans(p, C.steel, [[2, 8, 13]]);
-    p.r(10, 2, 1, 4, p.accent);
+    // A rusted anchor upside down: the eye at the bottom, a broad shank, and at the top the crown's wide arc
+    // with a barbed fluke at each end. A band of the accent round the grip.
+    const rust = "#7a4b34";
+    p.l(3, 14, 11, 4, rust);
+    p.l(4, 14, 12, 4, "#5a3626");
+    p.l(3, 13, 11, 3, rust);
+    spans(p, C.iron, [[12, 1, 3], [13, 1, 1], [13, 4, 4], [14, 1, 1], [15, 2, 3]]);
+    spans(p, rust, [[1, 11, 12], [2, 9, 14], [3, 7, 9], [3, 14, 15], [4, 6, 7], [4, 15, 15]]);
+    spans(p, "#5a3626", [[2, 5, 7], [3, 4, 6], [4, 4, 5], [5, 5, 5], [6, 5, 5], [2, 15, 15], [3, 15, 15]]);
+    p.r(6, 11, 2, 1, p.accent);
   },
   grimoire: (p) => {
     // A dark book, clasped, with glowing runes on the cover.
@@ -156,24 +301,32 @@ const ART: Record<string, Art> = {
     p.r(11, 7, 2, 2, C.gold);
   },
   "void-staff": (p) => {
-    // A black staff with a hollow ring at the head and a spark inside it.
-    p.l(3, 15, 9, 6, C.dark);
-    p.l(4, 15, 10, 6, "#3a2a4a");
-    spans(p, C.dark, [[0, 10, 13], [1, 9, 9], [1, 14, 14], [2, 9, 9], [2, 14, 14], [3, 9, 9], [3, 14, 14], [4, 10, 13]]);
-    p.r(11, 2, 2, 1, p.accent);
-    p.r(11, 1, 1, 1, C.shine);
+    // The Undertow Staff: a snapped length of black drowned mast, a rusted band and a stub of rigging in the
+    // accent, water wound down it, and at its top a whirlpool, bright water frothing round a dark throat.
+    p.l(3, 15, 9, 6, "#2c3236");
+    p.l(4, 15, 10, 6, "#3d454a");
+    p.r(8, 8, 2, 1, "#7a4b34");
+    p.r(6, 10, 2, 2, p.accent);
+    p.r(4, 12, 1, 1, "#cfc6b0");
+    for (const [x, y] of [[10, 6], [9, 7], [8, 9]]) p.r(x, y, 1, 1, "#3f9aa5");
+    spans(p, "#1f4d58", [[1, 9, 14], [2, 9, 14], [3, 10, 13], [4, 10, 13], [5, 11, 12]]);
+    spans(p, "#3f9aa5", [[1, 10, 13], [2, 10, 13], [3, 11, 12]]);
+    p.r(11, 2, 2, 1, "#1f4d58");
+    for (const [x, y] of [[9, 0], [11, 0], [13, 0], [14, 1], [10, 1], [12, 2], [11, 3]]) p.r(x, y, 1, 1, "#eaf7f7");
   },
   // ---- signature weapons ----
   "ballast-flail": (p) => {
-    // A short haft, a chain, and a spiked iron ball banded in the accent.
+    // The Chainshot Flail: a short haft banded in the accent, and three chains, each with a small cannon ball.
     p.l(3, 15, 7, 9, C.wood);
     p.l(4, 15, 8, 9, C.bark);
     p.r(7, 8, 2, 2, p.accent);
-    for (const [x, y] of [[9, 7], [9, 6], [10, 5]]) p.r(x, y, 1, 1, C.iron);
-    spans(p, C.iron, [[1, 11, 13], [2, 10, 14], [3, 10, 14], [4, 10, 14], [5, 11, 13]]);
-    p.r(10, 3, 5, 1, p.accent);
-    p.r(11, 2, 1, 1, C.steel);
-    for (const [x, y] of [[12, 0], [15, 3], [12, 6], [9, 3]]) p.r(x, y, 1, 1, C.steel);
+    for (const [x, y] of [[8, 7], [8, 6], [8, 5], [8, 4]]) p.r(x, y, 1, 1, C.iron);
+    for (const [x, y] of [[9, 7], [10, 6], [11, 6]]) p.r(x, y, 1, 1, C.iron);
+    for (const [x, y] of [[10, 8], [11, 9], [12, 10]]) p.r(x, y, 1, 1, C.iron);
+    spans(p, C.iron, [[0, 8, 9], [1, 7, 10], [2, 7, 10], [3, 8, 9]]);
+    spans(p, C.iron, [[4, 12, 13], [5, 12, 14], [6, 12, 14], [7, 13, 13]]);
+    spans(p, C.iron, [[10, 13, 14], [11, 12, 15], [12, 12, 15], [13, 13, 14]]);
+    for (const [x, y] of [[8, 1], [12, 5], [13, 11]]) p.r(x, y, 1, 1, C.steel);
   },
   "barometer-rod": (p) => {
     // A staff with a dial set in it and a tube of glowing glass at the head.
@@ -297,15 +450,20 @@ const ART: Record<string, Art> = {
     p.r(10, 12, 3, 2, C.iron);
   },
   "brutal-helm": (p) => {
-    p.r(1, 0, 2, 5, C.bone);
-    p.r(13, 0, 2, 5, C.bone);
-    p.r(3, 3, 10, 9, C.iron);
-    p.r(4, 2, 8, 1, C.steel);
-    p.r(5, 6, 2, 2, p.accent);
-    p.r(9, 6, 2, 2, p.accent);
-    p.r(5, 12, 6, 2, C.iron);
-    p.r(6, 10, 1, 3, C.dark);
-    p.r(9, 10, 1, 3, C.dark);
+    // The Spyglass Visor: a lookout's leather cap banded in brass, flaps over the ears, and goggles, the
+    // spyglass's lens in the rarity colour.
+    spans(p, C.leather, [[1, 6, 9], [2, 4, 11], [3, 3, 12], [4, 2, 13], [5, 2, 13], [6, 2, 13], [7, 2, 13]]);
+    p.r(7, 1, 2, 7, C.hide);
+    p.r(1, 8, 14, 2, C.gold);
+    p.r(3, 8, 1, 1, C.paper);
+    p.r(12, 8, 1, 1, C.paper);
+    p.r(1, 10, 2, 5, C.leather);
+    p.r(13, 10, 2, 5, C.leather);
+    p.r(3, 10, 4, 4, C.gold);
+    p.r(4, 11, 2, 2, C.dark);
+    p.r(7, 11, 2, 1, C.hide);
+    p.r(9, 10, 4, 4, C.gold);
+    p.r(10, 11, 2, 2, p.accent);
   },
   hood: (p) => {
     // A peaked hood with a lined opening and two eyes in the shadow.
@@ -598,7 +756,12 @@ function paintIcon(art: Art, accent: string, silhouette: boolean, lines = false)
 
 const drawIcon = (art: Art, accent: string, silhouette: boolean, lines = false): string => paintIcon(art, accent, silhouette, lines).toDataURL();
 
-const codeArt = (name: string): Art => ART[name] ?? ART["gem-chain"];
+/** The flat picture of a class's own piece of starting clothes ("garb-tunic:staff_sage"): the plain one of its kind. */
+const GARB_ART: Record<GarbPiece, string> = { hat: "knit-cap", tunic: "naval-tunic", trousers: "armored-pants", shoes: "deck-boots" };
+const codeArt = (name: string): Art => {
+  const garb = parseGarbIcon(name);
+  return ART[garb ? GARB_ART[garb.piece] : name] ?? ART["gem-chain"];
+};
 
 /**
  * Image URL for an item icon. `accent` is the rarity colour. With

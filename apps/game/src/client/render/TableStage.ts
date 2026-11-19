@@ -825,7 +825,7 @@ export class TableStage implements WorldMinigame {
         r.seat.remove(r.figure.root);
         r.figure.dispose();
       }
-      r.figure = makeFigure(info.classId, lookFor(info.classId), info.outfit);
+      r.figure = makeFigure(info.classId, lookFor(info.classId), info.outfit, { face: info.id });
       r.figure.setSize(FOLK_H);
       r.seat.add(r.figure.root);
     }

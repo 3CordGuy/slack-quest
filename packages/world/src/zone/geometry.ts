@@ -136,18 +136,24 @@ export function seesFor(state: Pick<ZoneState, "map" | "weather">, side: Side, f
   return hexesBetween(from, to).every((p) => !blocked.has(posKey(p)));
 }
 
+/**
+ * A fallen enemy is dead: its body lies where it fell until the fight is over, but takes up no room. A fallen
+ * hero is only down, and keeps their place on their hex: they are brought back to their feet on it.
+ */
+export const isDead = (unit: Unit): boolean => unit.down && unit.side === "enemy";
+
 /** Everyone on a hex, standing or fallen. */
 export const unitsAt = (state: Pick<ZoneState, "units">, pos: HexPos): Unit[] => state.units.filter((u) => sameHex(u.pos, pos));
 
-/** Someone on a hex: one still standing, if anyone there is. */
+/** Someone on a hex: one still standing, if anyone there is; else a hero who is down there. Never the dead. */
 export const unitAt = (state: Pick<ZoneState, "units">, pos: HexPos): Unit | undefined => {
-  const there = unitsAt(state, pos);
+  const there = unitsAt(state, pos).filter((u) => !isDead(u));
   return there.find((u) => !u.down) ?? there[0];
 };
 
-/** Whether there is room on a hex for one more to stand (`but`: someone who does not count, being the one who would). */
+/** Whether there is room on a hex for one more to stand (`but`: someone who does not count, being the one who would). The dead take up none. */
 export const roomAt = (state: Pick<ZoneState, "units">, pos: HexPos, but?: string): boolean =>
-  state.units.reduce((n, u) => n + (!u.down && u.id !== but && sameHex(u.pos, pos) ? 1 : 0), 0) < HEX_ROOM;
+  state.units.reduce((n, u) => n + (!isDead(u) && u.id !== but && sameHex(u.pos, pos) ? 1 : 0), 0) < HEX_ROOM;
 
 export const unitById = (state: ZoneState, id: string): Unit | undefined => state.units.find((u) => u.id === id);
 
@@ -197,9 +203,9 @@ export const SCOOT_COST = 1;
  * What one step costs `unit`, or Infinity if it cannot be made. Open ground is 1; forest and hills 2;
  * climbing a level 1 more; oil or slime underfoot 1 more. A drop or a climb of two levels or more is a cliff:
  * it is crossed only where a ladder stands (a step more for each level climbed, one more to climb down).
- * Nobody bars the way: a hex is shared, friend or foe, up to `HEX_ROOM` standing on it, and a full one can
- * still be passed through, though not stopped on. Squeezing past an enemy on their feet costs a step more.
- * Chests, crates and whatever else stands in the way bar it.
+ * Nobody bars the way: a hex is shared, friend or foe, up to `HEX_ROOM` on it (a hero who is down keeps their
+ * place; a dead enemy takes up none), and a full one can still be passed through, though not stopped on.
+ * Squeezing past an enemy on their feet costs a step more. Chests, crates and whatever else stands in the way bar it.
  */
 export function stepCost(state: ZoneState, unit: Unit, from: HexPos, to: HexPos, shut?: ReadonlySet<string>): { cost: number; stop: boolean } {
   const tile = tileAt(state.map, to);
