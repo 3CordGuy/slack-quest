@@ -37,6 +37,8 @@ export interface Look {
   vest?: string;
   /** Leather of this colour: a strap from the shoulder across the chest, and a belt with pouches at the hips. */
   straps?: string;
+  /** Kelp of this colour growing up round the torso from the waist to the shoulders, in winding vines with fronds. */
+  vines?: string;
   /** Bands of this colour round the chest over the tunic, like a lighthouse's. */
   stripes?: string;
   /** A scallop shell of this colour on each shoulder. */
@@ -76,8 +78,8 @@ export const LOOKS: Record<string, Look> = {
   // with pouches, and two knives.
   refactor_rogue: { skin: "#d9a67c", hair: "#1f1c22", body: "#5a5a3e", legs: "#3d3e2e", accent: "#7a3a34", hat: "none", weapon: "daggers", bandana: "#8a8370", coat: true, coatColor: "#2a3038", coatTrim: "#1c2126", straps: "#5a3d26", boots: "#1f1f22" },
   // The Druid tends the reef: a crown of branching coral on a band of kelp, a sea-green tunic, a scallop shell on
-  // each shoulder, and a kelp sash whose ends sway with the tide.
-  backend_druid: { skin: "#c99a74", hair: "#4a3a26", body: "#2f6b5e", legs: "#3a4a3a", accent: "#ff8a6b", hat: "coral", hatColor: "#ef7a5f", weapon: "root_staff", sash: "#3d6b2e", shell: "#f0dcc8" },
+  // each shoulder, kelp growing up round the torso, and a kelp sash whose ends sway with the tide.
+  backend_druid: { skin: "#c99a74", hair: "#4a3a26", body: "#2f6b5e", legs: "#3a4a3a", accent: "#ff8a6b", hat: "coral", hatColor: "#ef7a5f", weapon: "root_staff", sash: "#3d6b2e", shell: "#f0dcc8", vines: "#8a7a2a" },
   // The Bard sings at the capstan: a red bandana knotted at the side, a sleeveless linen shirt under a weathered teal vest, a red
   // sash, olive trousers and boots.
   frontend_bard: { skin: "#d9a67c", hair: "#3a2a20", body: "#e3d9c0", legs: "#4f5440", accent: "#e0b12e", hat: "kerchief", hatColor: "#a8322a", knotSide: true, weapon: "lute", sleeveless: true, vest: "#4f6463", sash: "#a8322a", straps: "#5a3d26", boots: "#4a3426" },
