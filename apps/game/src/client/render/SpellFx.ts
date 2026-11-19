@@ -2003,6 +2003,203 @@ export class SpellFx {
     for (let i = 0; i < 3; i++) this.smoke(hit.clone().add(new THREE.Vector3(rand(-0.2, 0.2), rand(0, 0.4), rand(-0.2, 0.2))), "#e8f6ff", 0.8, 0.55);
   }
 
+  /**
+   * A lighthouse's lamp on someone (Beacon Aura): two beams of light sweeping round and round from just over their
+   * head, wide at their far ends, a bright lamp where they meet and a warm glow on the ground under them; following
+   * them, for as long as `bind.holding()` says the Beacon lasts.
+   */
+  beacon(bind: Binding, color: string) {
+    let released = false;
+    const release = () => {
+      released = true;
+    };
+    this.bound.get(bind.key)?.();
+    this.bound.set(bind.key, release);
+    const N = 10;
+    const beams = [0, Math.PI].map((off) => ({ off, r: new Ribbon(N, light(color, 0, streakTex())) }));
+    for (const b of beams) this.add(b.r.mesh);
+    const lamp = this.halo(new THREE.Vector3(), paler(color, 0.4), 0.9, 0);
+    const pool = this.sheet(new THREE.Vector3(), color, softTex(), 0);
+    pool.scale.setScalar(3);
+    let gone = -1;
+    this.run([...beams.map((b) => b.r.mesh), lamp, pool], (age) => {
+      const head = bind.follow();
+      if (gone < 0 && (released || !head || (age > GRACE && !bind.holding()) || age > 600)) gone = age;
+      const k = gone < 0 ? Math.min(1, age / 0.5) : Math.max(0, 1 - (age - gone) / 0.6);
+      if (head) {
+        const src = head.clone().add(new THREE.Vector3(0, 0.25, 0));
+        lamp.position.copy(src);
+        lamp.material.opacity = k * (0.8 + 0.2 * Math.sin(age * 6));
+        pool.position.copy(head).setY(head.y - 1.85);
+        pool.material.opacity = 0.35 * k;
+        for (const b of beams) {
+          const a = age * 1.1 + b.off;
+          const dir = new THREE.Vector3(Math.cos(a), -0.12, Math.sin(a));
+          const line = Array.from({ length: N }, (_, i) => src.clone().addScaledVector(dir, (i / (N - 1)) * 3.6));
+          b.r.material.opacity = 0.42 * k;
+          b.r.lay(line, (t) => 0.12 + 1.1 * t, this.eye);
+        }
+      }
+      if (k <= 0 && gone >= 0 && this.bound.get(bind.key) === release) this.bound.delete(bind.key);
+      return gone < 0 || k > 0;
+    });
+  }
+
+  /**
+   * A healing aura on someone (Healing Aura): a soft ring on the ground at the edge of its reach (`radius`), pulsing
+   * gently, and motes rising now and again inside it; following them for as long as `bind.holding()` says it lasts.
+   */
+  aura(bind: Binding, color: string, radius = 3.4) {
+    let released = false;
+    const release = () => {
+      released = true;
+    };
+    this.bound.get(bind.key)?.();
+    this.bound.set(bind.key, release);
+    const ring = this.sheet(new THREE.Vector3(), color, ringTex(), 0);
+    let next = 0.4;
+    let gone = -1;
+    this.run([ring], (age) => {
+      const feet = bind.follow();
+      if (gone < 0 && (released || !feet || (age > GRACE && !bind.holding()) || age > 600)) gone = age;
+      const k = gone < 0 ? Math.min(1, age / 0.5) : Math.max(0, 1 - (age - gone) / 0.6);
+      if (feet) {
+        ring.position.copy(feet).setY(feet.y + 0.07);
+        const breathe = 1 + Math.sin(age * 2.2) * 0.03;
+        ring.scale.set(radius * 2 * breathe, radius * 2 * breathe, 1);
+        ring.material.opacity = 0.55 * k * (0.75 + 0.25 * Math.sin(age * 2.2));
+        if (gone < 0 && age >= next) {
+          next = age + rand(0.2, 0.4);
+          const a = Math.random() * Math.PI * 2;
+          const d = Math.sqrt(Math.random()) * radius * 0.9;
+          this.fling(feet.clone().add(new THREE.Vector3(Math.cos(a) * d, 0.1, Math.sin(a) * d)), color, 1, { out: 0.1, up: 0.9, fall: -0.4, life: 1 });
+        }
+      }
+      if (k <= 0 && gone >= 0 && this.bound.get(bind.key) === release) this.bound.delete(bind.key);
+      return gone < 0 || k > 0;
+    });
+  }
+
+  /**
+   * Flames licking up at points round `at` (torch flames, swelling and dying away over `life`), with embers thrown up
+   * among them, a flash of heat and the ground lit orange: a burn taking hold.
+   */
+  private flames(at: THREE.Vector3, count: number, from: number, to: number, size: number, life: number) {
+    const lit = at.clone().setY(at.y + 0.5);
+    this.flash(lit, "#ff9a3a", 1 + size * 2);
+    this.lightUp(at, "#ff8a2a", 14 + size * 20, 5, life);
+    const tongues = Array.from({ length: count }, (_, i) => {
+      const flame = this.add(torchFlame(size * rand(0.8, 1.15)));
+      flame.traverse((o) => {
+        if ((o as THREE.Mesh).isMesh) o.userData.ownGeometry = true;
+      });
+      return { flame, a: (i / count) * Math.PI * 2 + rand(-0.3, 0.3), late: rand(0, 0.08) };
+    });
+    this.fling(at.clone().setY(at.y + 0.3), "#ffb347", count * 2, { out: 1.2 + to * 0.5, up: 2.6, fall: 3, life: 0.9 });
+    this.run(
+      tongues.map((t) => t.flame),
+      (age) => {
+        for (const t of tongues) {
+          const k = Math.max(0, Math.min(1, (age - t.late) / life));
+          const r = from + (to - from) * (1 - (1 - k) ** 2);
+          t.flame.position.set(at.x + Math.cos(t.a) * r, at.y + 0.02, at.z + Math.sin(t.a) * r);
+          t.flame.scale.setScalar(k < 0.2 ? k / 0.2 : (1 - k) / 0.8);
+          flickerFlame(t.flame, this.clock + t.a);
+        }
+        return age < life + 0.1;
+      },
+    );
+  }
+
+  /** Flame bursting off someone (Stoke the Fire): a ring of flames rolling out round them, embers, heat, and a ring of fire light. */
+  nova(feet: THREE.Vector3, color: string) {
+    this.flames(feet, 9, 0.3, 1.7, 0.42, 0.9);
+    this.ring(feet, 2.2, color, 0.5);
+    this.renderer.shake(0.06, 0.2);
+  }
+
+  /** A searing blow taking (Branding Strike): flames flaring up round whoever it struck, embers, and a flash of heat. */
+  brand(at: THREE.Vector3) {
+    this.flames(at, 4, 0.15, 0.4, 0.34, 0.8);
+  }
+
+  /**
+   * A wide swing through the hexes beside someone (Cleave): a great inked crescent swept round them from `from` to `to`
+   * (angles about the y axis, as Math.atan2(z, x)), at `radius`, drawn as the blade passes and fading behind it.
+   */
+  sweep(center: THREE.Vector3, from: number, to: number, color: string, radius = 1.3) {
+    const N = 22;
+    const edge = new Ribbon(N, tinted(OUTLINE, 0.55, streakTex()));
+    const body = new Ribbon(N, tinted(color, 1, streakTex()));
+    const core = new Ribbon(N, light("#ffffff", 1, streakTex()));
+    edge.mesh.renderOrder = 4;
+    body.mesh.renderOrder = 5;
+    core.mesh.renderOrder = 6;
+    for (const r of [edge, body, core]) this.add(r.mesh);
+    const swing = 0.2;
+    this.run([edge.mesh, body.mesh, core.mesh], (age) => {
+      const reach = Math.min(1, age / swing);
+      const fade = age < swing ? 1 : Math.max(0, 1 - (age - swing) / 0.3);
+      const tail = Math.max(0, reach - 0.65);
+      const arc = Array.from({ length: N }, (_, i) => {
+        const t = tail + (reach - tail) * (i / (N - 1));
+        const a = from + (to - from) * t;
+        return center.clone().add(new THREE.Vector3(Math.cos(a) * radius, Math.sin(t * Math.PI) * 0.15, Math.sin(a) * radius));
+      });
+      for (const [r, o] of [[edge, 0.55], [body, 1], [core, 1]] as const) r.material.opacity = o * fade;
+      edge.lay(arc, (t) => 0.42 * t, this.eye);
+      body.lay(arc, (t) => 0.3 * t, this.eye);
+      core.lay(arc, (t) => 0.09 * t, this.eye);
+      return age < swing + 0.3;
+    });
+  }
+
+  /**
+   * A way shown to someone (Show the Way): a path of light laid out along the ground from one to the other, and real
+   * light off it: a light running along with its leading edge as it is laid, lighting the ground and whoever it passes,
+   * and another over its middle once it is down; soft glows along it, motes rising off it, and then gone.
+   */
+  way(from: THREE.Vector3, to: THREE.Vector3, color: string) {
+    const N = 16;
+    const path = Array.from({ length: N }, (_, i) => from.clone().lerp(to, i / (N - 1)).setY(from.y + (to.y - from.y) * (i / (N - 1)) + 0.1));
+    const glow = new Ribbon(N, light(color, 0, streakTex()));
+    const body = new Ribbon(N, tinted(paler(color, 0.2), 0, streakTex()));
+    this.add(glow.mesh);
+    this.add(body.mesh);
+    const glows = Math.max(2, Math.round(from.distanceTo(to) / 0.6));
+    const lights = Array.from({ length: glows }, (_, i) => ({ t: (i + 0.5) / glows, s: this.halo(from, color, 0.9, 0) }));
+    const front = this.lamp(color, 4.5);
+    const middle = this.lamp(color, 5);
+    const mid = from.clone().lerp(to, 0.5).setY(from.y + 0.7);
+    let shed = 0;
+    this.run([glow.mesh, body.mesh, ...lights.map((l) => l.s)], (age, dt) => {
+      const reach = Math.min(1, age / 0.35);
+      const fade = age < 1.1 ? 1 : Math.max(0, 1 - (age - 1.1) / 0.5);
+      glow.material.opacity = 0.9 * fade;
+      body.material.opacity = 0.5 * fade;
+      const shown = path.map((p, i) => (i / (N - 1) <= reach ? p : path[Math.floor(reach * (N - 1))]));
+      glow.lay(shown, () => 0.6, this.eye);
+      body.lay(shown, () => 0.24, this.eye);
+      for (const l of lights) {
+        l.s.position.copy(from).lerp(to, l.t).setY(from.y + 0.25);
+        l.s.material.opacity = l.t <= reach ? 0.75 * fade * (0.85 + 0.15 * Math.sin(age * 7 + l.t * 9)) : 0;
+      }
+      // The light running with the path as it is laid, then the light over its middle while it lies there.
+      front(from.clone().lerp(to, reach).setY(from.y + 0.6), reach < 1 ? 7 : 7 * fade);
+      middle(mid, reach >= 1 ? 5 * fade : 0);
+      shed -= dt;
+      if (shed <= 0 && fade > 0.5) {
+        shed = 0.04;
+        this.fling(from.clone().lerp(to, Math.random() * reach).setY(from.y + 0.15), paler(color, 0.3), 1, { out: 0.1, up: 1, fall: -0.3, life: 0.7 });
+      }
+      if (fade <= 0) {
+        front(mid, 0);
+        middle(mid, 0);
+      }
+      return fade > 0;
+    });
+  }
+
   /** One music note floating off `at`: out along `angle` at `speed`, bobbing, sinking or swirling as the mood has it, and fading over `life`. */
   private note(at: THREE.Vector3, color: string, mood: SongMood, angle: number, speed: number, delay = 0, life = 1.1, size = 0.75) {
     const s = this.speck(Math.random() < 0.5 ? "note" : "notes", color, at, 0);
