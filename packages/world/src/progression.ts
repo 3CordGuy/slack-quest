@@ -87,8 +87,11 @@ export function applyXp(p: Progress, amount: number): Progress & { levelsGained:
   return { ...out, levelsGained };
 }
 
+/** Every hero's hit points, at every level, against the old game's formula (deriveMaxHp, which the old game still uses as it is). */
+export const HERO_HP_SCALE = 1.2;
+
 export function maxHpFor(stats: Stats, level: number): number {
-  return deriveMaxHp(stats, level);
+  return Math.round(deriveMaxHp(stats, level) * HERO_HP_SCALE);
 }
 
 /** Focus pool: 2, plus one per five levels. */
