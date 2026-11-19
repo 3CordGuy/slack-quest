@@ -2913,10 +2913,17 @@ function lowHead(head: Part, look: Look, asleep: boolean, covered = false) {
   head.box(tone(skin, -0.25), 1, 0.24, 0.3, 0, mouthY, faceAt(rings, mouthY) + 0.03);
   lowEyes(head, look.hair, chosen?.eyes ?? look.eyes ?? "round", asleep, rings);
   if (look.glowEyes && !asleep) {
-    // Alight over the eyes the face has: a glow in each, with a fainter halo.
+    // Alight over the eyes the face has: a glow in each. For a look whose eyes light only with a spell, each is a
+    // part of its own, swelled and shrunk as the spell is cast (see castEyes).
     for (const s of [-1, 1]) {
       const x = s * 1.15;
-      head.glowBall(look.glowEyes, 0.36, x, 3.05, faceZ(rings, x, 3.05) + 0.12);
+      const z = faceZ(rings, x, 3.05) + 0.12;
+      if (look.glowOnCast) {
+        const eye = new Part(head.joint, x, 3.05, z);
+        eye.glowBall(look.glowEyes, 0.36);
+        extraParts.push(eye);
+        castEyes.push(eye.joint);
+      } else head.glowBall(look.glowEyes, 0.36, x, 3.05, z);
     }
   }
   if (look.mask) {
@@ -3106,6 +3113,8 @@ interface Braid {
 /** Set by makeFigure for the figure being built: parts hung on others outside the rig (braids), and the braids to swing. */
 let extraParts: Part[] = [];
 let braids: Braid[] = [];
+/** Set by makeFigure for the figure being built: eyes that light only while a spell is cast (see Look.glowOnCast). */
+let castEyes: THREE.Object3D[] = [];
 /** The front of a long (wizard's) beard on the figure being built, if it has one: where an amulet goes. */
 let beardFront: { part: Part; at: Pt } | null = null;
 
@@ -6766,6 +6775,7 @@ export function makeFigure(kind: string, look: Look, outfit?: Outfit, opts: Figu
   dangles = [];
   bodyParts = [];
   beardFront = null;
+  castEyes = [];
   slung = null;
   chosen = outfit?.appearance ?? null;
   lowPoly = !!chosen || !!opts.lowPoly || !BLOCKY_PREF;
@@ -6785,6 +6795,7 @@ export function makeFigure(kind: string, look: Look, outfit?: Outfit, opts: Figu
   for (const part of allParts) part.build(mats, made);
   const swinging = braids;
   const loose = dangles;
+  const spellEyes = castEyes;
   // What a swinging weight bumps against: only worth fitting for someone carrying one.
   const body = loose.length > 0 ? bodyCapsules(bodyParts) : [];
   const sling = slung;
@@ -6922,6 +6933,15 @@ export function makeFigure(kind: string, look: Look, outfit?: Outfit, opts: Figu
     }
     if (swinging.length > 0) swingBraids(swinging, anim);
     if (loose.length > 0) swingDangles(loose, first ? 0 : dt, top, body);
+    if (spellEyes.length > 0) {
+      // Eyes that light with a spell: swelling up as it gathers, brightest as it leaves, and out again after.
+      const t = anim.act?.kind === "cast" ? anim.act.t / CAST.over : -1;
+      const k = t < 0 || t >= 1 ? 0 : Math.sin(Math.PI * Math.min(1, t * 1.25));
+      for (const eye of spellEyes) {
+        eye.visible = k > 0.02;
+        eye.scale.setScalar(Math.max(0.01, k));
+      }
+    }
   };
   update({ time: 0, stride: 0, walking: false, lean: 0, lying: false });
   last = -1;

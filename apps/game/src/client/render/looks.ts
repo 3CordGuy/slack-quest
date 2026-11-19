@@ -23,6 +23,8 @@ export interface Look {
   corselet?: string;
   /** Eyes that glow this colour, over the eyes the face is drawn with (a drowned thing's). */
   glowEyes?: string;
+  /** The glowing eyes light only while a spell is cast, not all the time. */
+  glowOnCast?: boolean;
   /** A scarf of this colour pulled up over the mouth and nose, its end hanging down the chest. */
   mask?: string;
   /** A band of this colour round the brow (under the hat, if there is one), knotted behind with two short tails. */
@@ -59,7 +61,7 @@ export const LOOKS: Record<string, Look> = {
   qa_paladin: { skin: "#f1c9a5", hair: "#8a5a2b", body: "#c9ced6", legs: "#5b6475", accent: "#e0b12e", hat: "helm", weapon: "sword" },
   // The Mage is a storm witch of the open deck: a hood, eyes alight with lightning, a tattered sea-green robe over
   // dark trousers, a necklace of teeth, a teal sash, and a driftwood staff grown over with barnacles.
-  devops_mage: { skin: "#e8c4a6", hair: "#6b5440", body: "#2f5f5c", legs: "#2a2d2c", accent: "#7fd8ff", hat: "hood", hatColor: "#24403e", weapon: "staff", coat: true, coatTrim: "#1f3836", sash: "#3a6d70", glowEyes: "#8fe0ff", teeth: "#3fb8a8", boots: "#2a2622" },
+  devops_mage: { skin: "#e8c4a6", hair: "#6b5440", body: "#2f5f5c", legs: "#2a2d2c", accent: "#7fd8ff", hat: "hood", hatColor: "#24403e", weapon: "staff", coat: true, coatTrim: "#1f3836", sash: "#3a6d70", glowEyes: "#8fe0ff", glowOnCast: true, teeth: "#3fb8a8", boots: "#2a2622" },
   // The Rogue is a smuggler: a cloth band round the brow, a long dark coat over an olive shirt, belts and straps
   // with pouches, and two knives.
   refactor_rogue: { skin: "#d9a67c", hair: "#1f1c22", body: "#5a5a3e", legs: "#3d3e2e", accent: "#7a3a34", hat: "none", weapon: "daggers", bandana: "#8a8370", coat: true, coatColor: "#2a3038", coatTrim: "#1c2126", straps: "#5a3d26", boots: "#1f1f22" },
@@ -76,7 +78,7 @@ export const LOOKS: Record<string, Look> = {
   // The Warlock is a captain the sea gave back: a dripping tricorn over a red band, eyes alight, a scarf over the
   // face, a long sea-dark coat edged in tarnished gold, a red sash, barnacles on the shoulders, and a grimoire
   // glowing purple.
-  data_warlock: { skin: "#a3aca4", hair: "#2a2f2c", body: "#1f2e2b", legs: "#1a1f1e", accent: "#b06cff", hat: "tricorn", hatColor: "#1d2624", weapon: "grimoire", coat: true, coatTrim: "#a8863a", sash: "#6b2230", bandana: "#6b2230", glowEyes: "#c48bff", mask: "#2c3a39", boots: "#1d1f1f", barnacles: true },
+  data_warlock: { skin: "#a3aca4", hair: "#2a2f2c", body: "#1f2e2b", legs: "#1a1f1e", accent: "#b06cff", hat: "tricorn", hatColor: "#1d2624", weapon: "grimoire", coat: true, coatTrim: "#a8863a", sash: "#6b2230", bandana: "#6b2230", glowEyes: "#c48bff", glowOnCast: true, mask: "#2c3a39", boots: "#1d1f1f", barnacles: true },
   // Traveling salesmen (packages/world/src/salesman.ts): each one easy to tell from the crew at a glance.
   salesman_curio: { skin: "#f1d3b8", hair: "#1f1a24", body: "#5b2f63", legs: "#2a1838", accent: "#e0b12e", hat: "brim", hatColor: "#2a1f2e", weapon: "lantern", coat: true },
   salesman_plans: { skin: "#d9a67c", hair: "#9a9aa2", body: "#2f5f73", legs: "#24323a", accent: "#e8dcc0", hat: "kerchief", hatColor: "#3f6fa8", weapon: "scroll" },
