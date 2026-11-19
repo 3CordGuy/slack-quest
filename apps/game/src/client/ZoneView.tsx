@@ -622,6 +622,10 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
             const lit = covered.map((p) => point(p));
             const toward = lit[0] ?? point(user.pos);
             cast(ev.id, ev.name, toward.x, toward.z, () => lit.forEach((p, i) => timers.current.push(setTimeout(() => fxs.snuff(p, look.color), i * 70))));
+          } else if (look.kind === "gust" && covered.length > 0) {
+            const over = covered.map((p) => point(p, 0.05));
+            const mid = over[Math.floor(over.length / 2)];
+            cast(ev.id, ev.name, mid.x, mid.z, () => fxs.gust(point(user.pos, 0.05), over, look.color));
           } else if (look.kind === "chart" && aim) {
             cast(ev.id, ev.name, aim.x, aim.z, () => fxs.chart(from, aim, look.color));
           } else if (look.kind === "starfire") {

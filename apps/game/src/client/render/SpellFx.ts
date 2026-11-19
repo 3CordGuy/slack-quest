@@ -2576,6 +2576,50 @@ export class SpellFx {
     for (const b of beside) this.fling(b, color, 6, { out: 0.9, up: 2, fall: 9, life: 0.5, kind: "drop" });
   }
 
+  /**
+   * A wind called up over `points` (Trade Winds): streaks of air sweeping across them from `from`'s side, pale and
+   * curling as they go, leaves of light tumbling in them, and a puff of air off the ground where they pass.
+   */
+  gust(from: THREE.Vector3, points: THREE.Vector3[], color: string) {
+    if (points.length === 0) return;
+    const middle = points.reduce((a, p) => a.add(p), new THREE.Vector3()).divideScalar(points.length);
+    const dir = middle.clone().sub(from).setY(0);
+    if (dir.lengthSq() < 1e-6) dir.set(1, 0, 0);
+    dir.normalize();
+    const side = new THREE.Vector3(-dir.z, 0, dir.x);
+    const reach = Math.max(2.4, Math.max(...points.map((p) => p.distanceTo(middle))) + 1.4);
+    const N = 10;
+    const streaks = Array.from({ length: 9 }, (_, i) => {
+      const r = new Ribbon(N, tinted(paler(color, 0.2), 0, streakTex()));
+      this.add(r.mesh);
+      return { r, off: (i / 8 - 0.5) * reach * 1.6 + rand(-0.2, 0.2), h: rand(0.25, 1.1), late: rand(0, 0.25), curl: rand(-1, 1) };
+    });
+    const life = 0.9;
+    this.run(
+      streaks.map((s) => s.r.mesh),
+      (age) => {
+        for (const s of streaks) {
+          const k = Math.max(0, Math.min(1, (age - s.late) / life));
+          const head = -reach + 2 * reach * k;
+          const pts = Array.from({ length: N }, (_, j) => {
+            const t = j / (N - 1);
+            const along = head - 1.4 * t;
+            // Curling up at its head as it goes, like a gust lifting.
+            const lift = s.curl * Math.sin((1 - t) * Math.PI) * 0.18;
+            return middle.clone().addScaledVector(dir, along).addScaledVector(side, s.off + lift).setY(middle.y + s.h + lift * 0.6);
+          });
+          s.r.material.opacity = k > 0 && k < 1 ? 0.85 * Math.sin(Math.PI * k) : 0;
+          s.r.lay(pts, (t) => 0.09 * (1 - t), this.eye);
+        }
+        return age < life + 0.3;
+      },
+    );
+    for (const p of points) {
+      this.smoke(p.clone().setY(p.y + 0.1), "#eef7ff", 0.7, 0.45);
+      this.fling(p.clone().setY(p.y + 0.4), paler(color, 0.4), 2, { out: 0.4, up: 0.8, fall: 1, life: 0.8, kind: "spark", size: 0.45 });
+    }
+  }
+
   /** One music note floating off `at`: out along `angle` at `speed`, bobbing, sinking or swirling as the mood has it, and fading over `life`. */
   private note(at: THREE.Vector3, color: string, mood: SongMood, angle: number, speed: number, delay = 0, life = 1.1, size = 0.75) {
     const s = this.speck(Math.random() < 0.5 ? "note" : "notes", color, at, 0);

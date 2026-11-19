@@ -10,6 +10,7 @@ import { posKey, type HexPos } from "@gantt-quest/core";
 import { SURFACE_INFO, WEATHER_INFO, tileAt, type SurfaceKind, type WeatherKind, type WorldMap } from "@gantt-quest/world";
 import { OUTLINE } from "./figures";
 import { toonRamp } from "./SpellFx";
+import { setSqualls } from "./wind";
 import { hexToWorld, tileTop, type WorldRenderer } from "./WorldRenderer";
 
 /**
@@ -157,6 +158,8 @@ export class TacticsLayer {
   private sky = new THREE.Group();
   private skySig = "";
   private drift: { points: THREE.Points; base: Float32Array; floor: Float32Array }[] = [];
+  /** Streaks of wind over the hexes Trade Winds blows across (see streaks). */
+  private winds: THREE.InstancedMesh[] = [];
   /** Each rain cloud over the ground, its drops, and when it was first drawn (it grows in from nothing). */
   private clouds: { cloud: THREE.Group; drops: THREE.InstancedMesh; base: Float32Array; floor: Float32Array; born: number }[] = [];
 
@@ -190,6 +193,7 @@ export class TacticsLayer {
 
   dispose() {
     this.stop();
+    setSqualls([]);
     this.clear(this.overlays);
     this.clear(this.ground);
     this.clear(this.sky);
@@ -486,8 +490,20 @@ export class TacticsLayer {
     if (sig === this.skySig) return;
     this.skySig = sig;
     this.clear(this.sky);
+    // Each wind called up blows hard over its own hexes: the grass and trees there lash about (wind.ts).
+    setSqualls(
+      list
+        .filter((w) => w.kind === "wind" && w.hexes.length > 0)
+        .map((w) => {
+          const pts = w.hexes.map((p) => hexToWorld(p));
+          const x = pts.reduce((a, p) => a + p.x, 0) / pts.length;
+          const z = pts.reduce((a, p) => a + p.z, 0) / pts.length;
+          return { x, z, radius: Math.max(...pts.map((p) => Math.hypot(p.x - x, p.z - z))) + 1.2, power: 1.4 };
+        }),
+    );
     this.drift = [];
     this.clouds = [];
+    this.winds = [];
     for (const w of list) {
       const color = WEATHER_INFO[w.kind].color;
       const wash = new THREE.Mesh(this.fill(w.hexes, 0.05, 0.95), new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.16, depthWrite: false, side: THREE.DoubleSide }));
@@ -512,8 +528,9 @@ export class TacticsLayer {
         this.rain(w.hexes);
         continue;
       }
-      // Motes scattered over each hex: gusts that run along the wind.
-      const per = 14;
+      // Streaks of air running along the wind over each hex, and motes tumbling in them.
+      this.sky.add(this.streaks(w.hexes, color));
+      const per = 8;
       const base = new Float32Array(w.hexes.length * per * 3);
       const floor = new Float32Array(w.hexes.length * per);
       let k = 0;
@@ -608,6 +625,27 @@ export class TacticsLayer {
     this.clouds.push({ cloud, drops, base, floor, born: -1 });
   }
 
+  /**
+   * Streaks of wind over `hexes` (Trade Winds): thin pale strokes at a few heights, each running along the wind across
+   * its hex, stretching out as it goes and thinning away, and round again (see tickSky).
+   */
+  private streaks(hexes: HexPos[], color: string): THREE.InstancedMesh {
+    const per = 6;
+    const geometry = new THREE.PlaneGeometry(1, 0.035);
+    const mesh = new THREE.InstancedMesh(geometry, new THREE.MeshBasicMaterial({ color: new THREE.Color(color).lerp(new THREE.Color("#ffffff"), 0.3), transparent: true, opacity: 0.75, depthWrite: false, side: THREE.DoubleSide }), hexes.length * per);
+    const base: number[] = [];
+    for (const p of hexes) {
+      const { x, z } = hexToWorld(p);
+      const y = this.top(p);
+      for (let i = 0; i < per; i++) base.push(x + (Math.random() - 0.5) * 0.6, y + 0.2 + Math.random() * 0.9, z + (Math.random() - 0.5) * 1.2, Math.random());
+    }
+    mesh.userData.wind = base;
+    mesh.frustumCulled = false;
+    mesh.renderOrder = 3;
+    this.winds.push(mesh);
+    return mesh;
+  }
+
   /** Branches of coral standing up off each hex, leaning every which way, in a few shades of the colour. */
   private coral(hexes: HexPos[], color: string): THREE.InstancedMesh {
     const per = 7;
@@ -694,6 +732,23 @@ export class TacticsLayer {
         c.drops.setMatrixAt(i, m);
       }
       c.drops.instanceMatrix.needsUpdate = true;
+    }
+    // Each streak runs along the wind over its hex, swelling in and thinning away, and round again.
+    const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(-0.35, 0, 0));
+    const at = new THREE.Vector3();
+    const size = new THREE.Vector3();
+    for (const mesh of this.winds) {
+      const base = mesh.userData.wind as number[];
+      for (let i = 0; i < mesh.count; i++) {
+        const [x, y, z, phase] = base.slice(i * 4, i * 4 + 4);
+        const t = (clock * 0.7 + phase) % 1;
+        const swell = Math.sin(Math.PI * t);
+        at.set(x - 0.6 + 1.2 * t, y + Math.sin(clock * 2 + phase * 9) * 0.05, z);
+        size.set(0.2 + 0.6 * swell, Math.max(0.01, swell), 1);
+        m.compose(at, q, size);
+        mesh.setMatrixAt(i, m);
+      }
+      mesh.instanceMatrix.needsUpdate = true;
     }
     for (const { points, base, floor } of this.drift) {
       const pos = points.geometry.getAttribute("position") as THREE.BufferAttribute;
