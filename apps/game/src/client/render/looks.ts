@@ -23,10 +23,22 @@ export interface Look {
   corselet?: string;
   /** Eyes that glow this colour, over the eyes the face is drawn with (a drowned thing's). */
   glowEyes?: string;
+  /** The glowing eyes light only while a spell is cast, not all the time. */
+  glowOnCast?: boolean;
   /** A scarf of this colour pulled up over the mouth and nose, its end hanging down the chest. */
   mask?: string;
-  /** A band of this colour round the brow under the hat. */
+  /** A band of this colour round the brow (under the hat, if there is one), knotted behind with two short tails. */
   bandana?: string;
+  /** A vest of this colour over the shirt, open down the front. */
+  vest?: string;
+  /** Leather of this colour: a strap from the shoulder across the chest, and a belt with pouches at the hips. */
+  straps?: string;
+  /** Gold epaulettes of this colour on the shoulders, fringed. */
+  epaulettes?: string;
+  /** A necklace of teeth round the throat, with a stone of this colour at the middle. */
+  teeth?: string;
+  /** The colour of a long coat (its skirts, sleeves and fronts), where it is not the body's. */
+  coatColor?: string;
   /** The colour of a long coat's edges, where it is not the accent. */
   coatTrim?: string;
   /** Barnacles and a little coral grown over the shoulders, as on something long under the sea. */
@@ -47,20 +59,26 @@ export interface Look {
 
 export const LOOKS: Record<string, Look> = {
   qa_paladin: { skin: "#f1c9a5", hair: "#8a5a2b", body: "#c9ced6", legs: "#5b6475", accent: "#e0b12e", hat: "helm", weapon: "sword" },
-  // The Wizard is a sea sorceress, not a pointy-hatted greybeard: a tricorn, a cream shirt, trousers and tall boots, a long
-  // wavy red sash knotted at the hip, and a staff that throws teal light.
-  devops_mage: { skin: "#f1c9a5", hair: "#8a4a2b", body: "#ddd5bb", legs: "#4a4742", accent: "#c2432a", hat: "tricorn", hatColor: "#3b2b22", weapon: "staff", boots: "#3a2a20", sash: "#c2432a" },
-  refactor_rogue: { skin: "#d9a67c", hair: "#2b2b33", body: "#3d7a4f", legs: "#2f3b33", accent: "#b9433d", hat: "hood", weapon: "daggers" },
+  // The Mage is a storm witch of the open deck: a hood, eyes alight with lightning, a tattered sea-green robe over
+  // dark trousers, a necklace of teeth, a teal sash, and a driftwood staff grown over with barnacles.
+  devops_mage: { skin: "#e8c4a6", hair: "#6b5440", body: "#2f5f5c", legs: "#2a2d2c", accent: "#7fd8ff", hat: "hood", hatColor: "#24403e", weapon: "staff", coat: true, coatTrim: "#1f3836", sash: "#3a6d70", glowEyes: "#8fe0ff", glowOnCast: true, teeth: "#3fb8a8", boots: "#2a2622" },
+  // The Rogue is a smuggler: a cloth band round the brow, a long dark coat over an olive shirt, belts and straps
+  // with pouches, and two knives.
+  refactor_rogue: { skin: "#d9a67c", hair: "#1f1c22", body: "#5a5a3e", legs: "#3d3e2e", accent: "#7a3a34", hat: "none", weapon: "daggers", bandana: "#8a8370", coat: true, coatColor: "#2a3038", coatTrim: "#1c2126", straps: "#5a3d26", boots: "#1f1f22" },
   backend_druid: { skin: "#d9a67c", hair: "#5a3d22", body: "#5d7d3a", legs: "#4a3a26", accent: "#a6d06a", hat: "leaves", weapon: "staff" },
-  frontend_bard: { skin: "#f1c9a5", hair: "#c9743a", body: "#b9433d", legs: "#3b2f5a", accent: "#e0b12e", hat: "feather", weapon: "lute" },
-  staff_sage: { skin: "#e8c2a0", hair: "#d9d9e3", body: "#6a3fa0", legs: "#3a2560", accent: "#f2d675", hat: "circlet", weapon: "orb" },
+  // The Bard sings at the capstan: a red bandana knotted behind, a linen shirt under a weathered teal vest, a red
+  // sash, olive trousers and boots.
+  frontend_bard: { skin: "#d9a67c", hair: "#3a2a20", body: "#e3d9c0", legs: "#4f5440", accent: "#e0b12e", hat: "kerchief", hatColor: "#a8322a", weapon: "lute", vest: "#4f6463", sash: "#a8322a", straps: "#5a3d26", boots: "#4a3426" },
+  // The Sage is the ship's navigator: a tricorn over a red band, long grey hair, a teal captain's coat edged in gold
+  // with gold epaulettes, a red sash, and a glowing armillary sphere on the palm.
+  staff_sage: { skin: "#e3b897", hair: "#c9c9cc", body: "#1f4a46", legs: "#2a2420", accent: "#f2d675", hat: "tricorn", hatColor: "#1f2826", weapon: "orb", coat: true, coatTrim: "#c9a24a", bandana: "#7a2a2a", epaulettes: "#d4ab4a", sash: "#6b2a2a", boots: "#3a2c22" },
   // The Warden is a deep-sea diver: a brass helmet with a glass port, a brass plate on the shoulders, a canvas suit
   // and lead-weighted boots. The sea does not move them, and neither will you.
   sre_warden: { skin: "#d9a67c", hair: "#3a2a20", body: "#8f7f5c", legs: "#7d6f50", accent: "#e8742e", hat: "diver", hatColor: "#c2893a", weapon: "axe_shield", boots: "#4a4a52", corselet: "#c2893a" },
   // The Warlock is a captain the sea gave back: a dripping tricorn over a red band, eyes alight, a scarf over the
   // face, a long sea-dark coat edged in tarnished gold, a red sash, barnacles on the shoulders, and a grimoire
   // glowing purple.
-  data_warlock: { skin: "#a3aca4", hair: "#2a2f2c", body: "#1f2e2b", legs: "#1a1f1e", accent: "#b06cff", hat: "tricorn", hatColor: "#1d2624", weapon: "grimoire", coat: true, coatTrim: "#a8863a", sash: "#6b2230", bandana: "#6b2230", glowEyes: "#c48bff", mask: "#2c3a39", boots: "#1d1f1f", barnacles: true },
+  data_warlock: { skin: "#a3aca4", hair: "#2a2f2c", body: "#1f2e2b", legs: "#1a1f1e", accent: "#b06cff", hat: "tricorn", hatColor: "#1d2624", weapon: "grimoire", coat: true, coatTrim: "#a8863a", sash: "#6b2230", bandana: "#6b2230", glowEyes: "#c48bff", glowOnCast: true, mask: "#2c3a39", boots: "#1d1f1f", barnacles: true },
   // Traveling salesmen (packages/world/src/salesman.ts): each one easy to tell from the crew at a glance.
   salesman_curio: { skin: "#f1d3b8", hair: "#1f1a24", body: "#5b2f63", legs: "#2a1838", accent: "#e0b12e", hat: "brim", hatColor: "#2a1f2e", weapon: "lantern", coat: true },
   salesman_plans: { skin: "#d9a67c", hair: "#9a9aa2", body: "#2f5f73", legs: "#24323a", accent: "#e8dcc0", hat: "kerchief", hatColor: "#3f6fa8", weapon: "scroll" },
