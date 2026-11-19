@@ -163,26 +163,46 @@ export const GEAR_BASES: readonly Base[] = Object.values(BASES).flat();
  * seen in what is under them) or swap them for armor. Drawn in the wearer's class colours.
  */
 export const GARB_PREFIX = "garb_";
+/** The starter hat's ref. */
+export const GARB_HAT = "garb_hat";
 const GARB: { slot: "helmet" | "body" | "legs" | "boots"; ref: string; name: string; icon: string }[] = [
-  { slot: "helmet", ref: "garb_hat", name: "Hat", icon: "knit-cap" },
+  { slot: "helmet", ref: GARB_HAT, name: "Hat", icon: "knit-cap" },
   { slot: "body", ref: "garb_tunic", name: "Tunic", icon: "naval-tunic" },
   { slot: "legs", ref: "garb_trousers", name: "Trousers", icon: "armored-pants" },
   { slot: "boots", ref: "garb_shoes", name: "Shoes", icon: "deck-boots" },
 ];
 
-/** A new hero's starting clothes, named for their class ("Lighthouse Paladin Tunic"). */
+/** The class whose own hat is a lantern helm: a steel helm with a little lantern burning on top. */
+export const LANTERN_HELM_CLASS = "qa_paladin";
+/** The lantern helm's icon: the Lighthouse Paladin's starter hat is saved with it, and it is what makes a hat one. */
+export const LANTERN_HELM_ICON = "lantern-helm";
+
+/**
+ * Whether a hero is wearing a lantern helm, which lights the dark around them as far as a held torch does and
+ * never burns down: the Lighthouse Paladin's starter hat (on whoever has it on: it can be passed on through the
+ * crew's chest), or a Paladin's own class hat on a figure with nothing on the head and no look of their own
+ * chosen. Any other helmet, or a bare or hidden head, gives no light.
+ */
+export function wearsLanternHelm(classId: string, outfit: Outfit | undefined): boolean {
+  const helmet = outfit?.helmet;
+  if (helmet) return helmet.icon === LANTERN_HELM_ICON;
+  return classId === LANTERN_HELM_CLASS && !outfit?.appearance;
+}
+
+/** A new hero's starting clothes, named for their class ("Lighthouse Paladin Tunic"); the Paladin's hat is their Lantern Helm. */
 export function starterGarb(classId: string): ItemDef[] {
   const cls = heroClass(classId);
+  const lantern = classId === LANTERN_HELM_CLASS;
   return GARB.map((g) => ({
     kind: kindOfSlot(g.slot),
     ref: g.ref,
-    name: `${cls?.name ?? "Plain"} ${g.name}`,
+    name: lantern && g.ref === GARB_HAT ? "Lantern Helm" : `${cls?.name ?? "Plain"} ${g.name}`,
     rarity: "common",
     slot: g.slot,
     power: 0,
     statBonus: {},
     levelReq: 1,
-    icon: g.icon,
+    icon: lantern && g.ref === GARB_HAT ? LANTERN_HELM_ICON : g.icon,
   }));
 }
 

@@ -923,6 +923,24 @@ export const LOW_POLY: Record<string, LowPolyDef> = {
       k.ball(0.75, C.gold, { at: [0, -4.1, 4.6] });
     },
   },
+  "lantern-helm": {
+    // The Lighthouse Paladin's Lantern Helm: a steel dome banded in brass, cheek guards, and a little lantern
+    // burning on top between four brass posts, under a red peaked cap.
+    spin: 0.45,
+    tip: 0.2,
+    build: (k) => {
+      const steel = "#aeb6c2";
+      k.lathe([[4.8, -4.2], [5.1, -2.6], [5.2, 0], [4.7, 2.2], [3.4, 3.6], [1.6, 4.3], [0, 4.5]], 10, steel);
+      k.cyl(5.25, 5.25, 1, 10, C.gold, { at: [0, -2.2, 0] });
+      for (const sx of [-1, 1]) k.box(1.2, 3, 3.4, steel, { at: [sx * 4.5, -5.1, 1.2], rot: [0, 0, -sx * 0.1] }, 0.3);
+      k.cyl(2, 2.3, 0.8, 8, C.gold, { at: [0, 4.6, 0] });
+      k.box(2.6, 2.8, 2.6, { glow: "#ffd27a" }, { at: [0, 6.3, 0] });
+      for (const [x, z] of [[-1.45, -1.45], [1.45, -1.45], [-1.45, 1.45], [1.45, 1.45]]) k.box(0.45, 3.1, 0.45, C.gold, { at: [x, 6.3, z] });
+      k.cyl(2.2, 2.2, 0.45, 8, C.gold, { at: [0, 7.95, 0] });
+      k.cone(2.2, 1.9, 8, "#c23b30", { at: [0, 9.1, 0] });
+      k.ball(0.45, C.gold, { at: [0, 10.2, 0] });
+    },
+  },
   "knit-cap": {
     // A plain knitted cap, the brim rolled up round the head and a small nub on the crown.
     spin: 0.35,

@@ -18,6 +18,8 @@ import { createZone, ensureMouth, standInHero, stepZone, zoneView } from "./zone
 import { DELVE_CRATES, generateDelve } from "./delve";
 import { litHexes } from "./light";
 import { poolFor } from "../classabilities";
+import { DEFAULT_APPEARANCE } from "../appearance";
+import { GARB_HAT, LANTERN_HELM_ICON, type Outfit } from "../gear";
 import { CHEST_PAY, unopened } from "./loot";
 import { CRATE_HP, CRATE_PAY } from "./crates";
 import { NOISE_RANGE } from "./doors";
@@ -30,6 +32,12 @@ import type { SurfaceKind, Unit, ZoneAction, ZoneEffect, ZoneEvent, ZoneState } 
 const GRID: HexGrid = { cols: 16, rows: 12 };
 /** Offset coordinates (column, row) to a hex, so tests can talk about a flat board. */
 const at = (col: number, row: number): HexPos => ({ q: col - Math.floor(row / 2), r: row });
+/** A Diving Helm on the head: a Paladin in it has no lantern helm to light the dark. */
+const IN_A_DIVING_HELM: Outfit = { helmet: { icon: "heavy-helm", ref: "hardhat", rarity: "common" } };
+/** The Lighthouse Paladin's starter hat on the head: the lantern helm. */
+const IN_THE_LANTERN_HELM: Outfit = { helmet: { icon: LANTERN_HELM_ICON, ref: GARB_HAT, rarity: "common" } };
+/** Any other class's starter hat: a plain knitted cap. */
+const IN_A_KNIT_CAP: Outfit = { helmet: { icon: "knit-cap", ref: GARB_HAT, rarity: "common" } };
 
 /** A flat, open board with nothing on it. */
 function board(edit: (tile: Tile) => void = () => {}): ZoneState {
@@ -616,6 +624,7 @@ describe("light and the dark", () => {
   it("hides an enemy in the dark from the party, and shows it once a torch or a hero is near", () => {
     let state = cave();
     const ann = hero(state, "ann", "qa_paladin", at(3, 6));
+    ann.outfit = IN_A_DIVING_HELM;
     ann.items.torch = 1;
     const wolf = enemy(state, "wolf", at(9, 6));
     expect(zoneView(state, "ann").units.map((u) => u.id)).toEqual(["ann"]);
@@ -629,6 +638,41 @@ describe("light and the dark", () => {
     hero(open, "ann", "qa_paladin", at(3, 6));
     enemy(open, "wolf", at(14, 6));
     expect(zoneView(open, "ann").units).toHaveLength(2);
+  });
+
+  it("lights the dark around a Paladin in the lantern helm (their starter hat) as far as a torch does, and it never burns down", () => {
+    let state = cave();
+    state.aiOff = true;
+    const ann = hero(state, "ann", "qa_paladin", at(3, 6));
+    ann.outfit = { ...IN_THE_LANTERN_HELM, appearance: DEFAULT_APPEARANCE };
+    const wolf = enemy(state, "wolf", at(3 + LIGHT_RADIUS, 6));
+    let lit = litHexes(state)!;
+    expect(lit.has(posKey(at(3 + LIGHT_RADIUS, 6)))).toBe(true);
+    expect(lit.has(posKey(at(4 + LIGHT_RADIUS, 6)))).toBe(false);
+    expect(zoneView(state, "ann").units.map((u) => u.id)).toContain(wolf.id);
+    // Lit as it walks, with no torch in hand to burn down.
+    state = must(state, { type: "move", by: "ann", unit: "ann", to: at(5, 6) });
+    lit = litHexes(state)!;
+    expect(lit.has(posKey(at(5 + LIGHT_RADIUS, 6)))).toBe(true);
+    expect(unit(state, "ann").torch).toBeUndefined();
+  });
+
+  it("gives no light from any other helmet, a bare head, or another class's starter hat, but does from the lantern helm on anyone", () => {
+    const state = cave();
+    const ann = hero(state, "ann", "qa_paladin", at(3, 6));
+    const near = at(4, 6);
+    ann.outfit = IN_A_DIVING_HELM;
+    expect(litHexes(state)!.has(posKey(near))).toBe(false);
+    // Bare-headed, with a look of their own: nothing on the head.
+    ann.outfit = { appearance: DEFAULT_APPEARANCE };
+    expect(litHexes(state)!.has(posKey(near))).toBe(false);
+    // Another class's starter hat is a plain knitted cap.
+    ann.kind = "refactor_rogue";
+    ann.outfit = IN_A_KNIT_CAP;
+    expect(litHexes(state)!.has(posKey(near))).toBe(false);
+    // But the Paladin's, passed on through the crew's chest, lights the dark for whoever wears it.
+    ann.outfit = IN_THE_LANTERN_HELM;
+    expect(litHexes(state)!.has(posKey(near))).toBe(true);
   });
 
   it("will not pick out an enemy in the dark, and strikes blind at one beside you that is unlit", () => {
@@ -1836,7 +1880,8 @@ describe("a delve", () => {
     const state = createZone("DLVE", "g1", delveOptions());
     const cap = state.map.pois.find((p) => p.kind === "glowcap")!;
     state.units = state.units.filter((u) => u.side === "hero" || hexDistance(u.pos, cap.pos) > 4);
-    hero(state, "ann", "qa_paladin", state.start);
+    // In a Diving Helm: the lantern helm would light the mushrooms too.
+    hero(state, "ann", "qa_paladin", state.start).outfit = IN_A_DIVING_HELM;
     expect(fails(state, { type: "forage", by: "ann", unit: "ann", poi: cap.id })).toMatch(/Go up to them/);
     unit(state, "ann").pos = hexNeighbors(cap.pos, state.map.grid).find((n) => tileOf(state, n)?.biome === "cave" && !state.units.some((u) => posKey(u.pos) === posKey(n)))!;
     const step = stepZone(state, { type: "forage", by: "ann", unit: "ann", poi: cap.id });
@@ -2375,6 +2420,8 @@ describe("the Paladin's class abilities", () => {
   it("Beacon Aura: lights the dark around the Paladin while it lasts, and lasts 4 of the Paladin's turns after this one", () => {
     let { state } = party();
     state.options = { ...state.options, biome: "caves" };
+    // In a Diving Helm, so only the Beacon lights the dark.
+    unit(state, "ann").outfit = IN_A_DIVING_HELM;
     const near = hexNeighbors(unit(state, "ann").pos, state.map.grid)[0];
     expect(litHexes(state)!.has(posKey(near))).toBe(false);
     state = must(state, { type: "use", by: "ann", unit: "ann", ability: "beacon_aura" });
