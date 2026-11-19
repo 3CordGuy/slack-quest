@@ -217,14 +217,14 @@ function bar(k: Kit, a: V3, b: V3, r: number, paint: Paint) {
 }
 
 /**
- * A bolt of lightning down the face of a glass `R` round, from `top` to `bottom` (heights), turned `turn` round
- * from the front: a jagged line of short straight strokes, kinked hard left and right, with a fork splitting
- * off part way. `seed` makes each bolt its own.
+ * A bolt of lightning down the middle of a glass, from `top` to `bottom` (heights), in an upright plane through
+ * its middle turned `turn` round from the front, its kinks reaching `R` either side: a jagged line of short
+ * straight strokes, kinked hard left and right, with a fork splitting off part way. `seed` makes each bolt its own.
  */
 function lightning(k: Kit, turn: number, R: number, top: number, bottom: number, seed: number, paint: Paint) {
   let s = seed;
   const rnd = () => (s = (s * 9301 + 49297) % 233280) / 233280;
-  const on = (a: number, y: number): V3 => [Math.sin(turn + a / R) * R, y, Math.cos(turn + a / R) * R];
+  const on = (a: number, y: number): V3 => [Math.cos(turn) * a * R, y, -Math.sin(turn) * a * R];
   const steps = 6;
   const path: { across: number; y: number }[] = [];
   for (let i = 0; i <= steps; i++) {
@@ -464,17 +464,18 @@ export const LOW_POLY: Record<string, LowPolyDef> = {
       }
       // Glints on the glass, between the bars.
       for (const t of [0.25, Math.PI - 0.25]) k.box(0.14, 4.2, 0.14, C.shine, { at: [Math.sin(t) * 1.8, 10.9, Math.cos(t) * 1.8] });
-      // The squall: dark storm cloud filling the glass and swirling round in it, lightning forking down through it.
+      // The squall: dark storm cloud swirling round inside the glass, in puffs with gaps between, so the
+      // lightning down its middle shows through.
       k.spin([0, 10.7, 0], [0, 1, 0], () => {
-        for (let i = 0; i < 7; i++) {
+        for (let i = 0; i < 6; i++) {
           const t = i * 2.4;
-          const y = 8.6 + i * 0.7;
-          k.ball(1.05 + (i % 2) * 0.15, ["#46505e", "#5b6574", "#6f7a8a"][i % 3], { at: [Math.cos(t) * 0.55, y, Math.sin(t) * 0.55] }, 1);
+          const y = 8.5 + i * 0.85;
+          k.ball(0.72 + (i % 2) * 0.12, ["#46505e", "#5b6574", "#6f7a8a"][i % 3], { at: [Math.cos(t) * 1.05, y, Math.sin(t) * 1.05] }, 1);
         }
       });
-      // Lightning zapping through it: a different fork each flash, round the glass, now here, now there, now none.
-      for (const [turn, seed] of [[0, 11], [1.7, 47], [-1.4, 83], [3.0, 131], [0.6, 197]] as const) {
-        k.flicker(() => lightning(k, turn, 1.75, 13.0, 8.4, seed, { glow: "#eefaff" }));
+      // Lightning zapping down the middle of it: a different fork each flash, now this way, now that, now none.
+      for (const [turn, seed] of [[0.3, 11], [1.7, 47], [-1.1, 83], [2.6, 131], [0.9, 197]] as const) {
+        k.flicker(() => lightning(k, turn, 1, 13.0, 8.4, seed, { glow: "#eefaff" }));
       }
     },
   },
@@ -1031,20 +1032,47 @@ export const LOW_POLY: Record<string, LowPolyDef> = {
     },
   },
   "bilge-chalice": {
-    // A gold chalice brimming with glowing bilge, bubbles rising and a drip running down its side.
+    // The Bilge Chalice: a battered ship's tin mug, dented and rust-spotted, a rolled rim and a hooked handle with a
+    // lanyard in the rarity colour tied through it, brimming over with glowing bilge that slops down its side,
+    // bubbles swirling up off it.
     spin: 0.4,
     tip: 0.3,
     build: (k) => {
       const bilge = { glow: "#6dff9e" };
-      k.lathe([[0, -6], [3, -6], [3.1, -5.5], [1.6, -5], [0.7, -4], [0.6, -1], [0.9, -0.4], [2.6, 0.6], [3.6, 2.5], [3.9, 5]], 12, C.gold);
-      k.cyl(3.75, 3.75, 0.3, 12, bilge, { at: [0, 4.65, 0] });
-      k.ring(3.9, 0.36, k.a, { at: [0, 5, 0], rot: [Math.PI / 2, 0, 0] }, 4, 20);
-      k.ball(1, C.gold, { at: [0, -2.5, 0] });
-      k.cyl(1.3, 1.3, 0.45, 8, k.a, { at: [0, -2.5, 0] });
-      k.ball(0.55, bilge, { at: [1, 6.2, 0.6] });
-      k.ball(0.4, bilge, { at: [-1.2, 7.4, -0.3] });
-      k.ball(0.3, bilge, { at: [0.3, 8.5, 0.2] });
-      k.rod([[2.8, 5.1, 2.7], [2.9, 4, 2.75], [2.6, 2.6, 2.6]], 0.3, bilge, {}, 4);
+      const tin = "#9aa1a8";
+      const dark = "#6f767d";
+      const rust = "#8a5a3a";
+      k.lathe([[0, -3.6], [2.55, -3.6], [2.75, -3.3], [2.85, -0.4], [2.78, 0.4], [2.95, 2.6], [3.0, 2.9], [0, 2.9]], 9, tin);
+      k.ring(3.0, 0.24, dark, { at: [0, 2.95, 0], rot: [Math.PI / 2, 0, 0] }, 4, 20);
+      k.ring(2.68, 0.2, dark, { at: [0, -3.35, 0], rot: [Math.PI / 2, 0, 0] }, 4, 20);
+      // A seam up the back, riveted, and rust running down from the rim and spotting the tin.
+      k.box(0.3, 6.2, 0.16, dark, { at: [-2.9, -0.3, 0], rot: [0, -Math.PI / 2, 0] });
+      for (let i = 0; i < 5; i++) k.ball(0.14, dark, { at: [-2.98, -3 + i * 1.35, 0] });
+      for (const [a, len] of [[-0.7, 2.2], [-0.45, 1.3], [2.5, 1.8]] as const) {
+        k.rod([[Math.sin(a) * 2.98, 2.7, Math.cos(a) * 2.98], [Math.sin(a) * 2.95, 2.7 - len, Math.cos(a) * 2.95]], 0.12, rust, {}, 4);
+      }
+      for (const [a, y, r] of [[0.5, -2.4, 0.26], [0.75, -2.1, 0.18], [-1.6, -1.2, 0.22], [3.5, 0.2, 0.24]] as const) {
+        k.ball(r, rust, { at: [Math.sin(a) * 2.9, y, Math.cos(a) * 2.9], scale: [1, 1, 0.4], rot: [0, a, 0] });
+      }
+      // The handle, a hooked loop of tin strap riveted on, and the lanyard tied through it, swinging.
+      k.rod([[2.9, 2.1, 0], [4.2, 2.0, 0], [4.7, 0.6, 0], [4.4, -1.0, 0], [2.95, -1.5, 0]], 0.32, tin, {}, 5);
+      for (const y of [2.1, -1.5]) k.ball(0.22, dark, { at: [2.98, y, 0] });
+      k.ring(0.45, 0.16, k.a, { at: [4.5, -0.6, 0], rot: [Math.PI / 2, 0, 0.3] }, 4, 8);
+      k.dangle([4.55, -0.8, 0], [4.3, -3.6, 0.25], () => {
+        k.rod([[4.55, -0.8, 0], [4.85, -2.2, 0.3], [4.3, -3.4, 0.25], [3.95, -2.2, 0.05], [4.4, -0.85, 0]], 0.13, k.a, {}, 4);
+        k.ball(0.26, k.s, { at: [4.3, -3.5, 0.25] });
+      }, { size: 0.4, mass: 0.3 });
+      // The bilge, brimming over the rim and slopping down one side, a drop gathering at the end.
+      k.cyl(2.85, 2.85, 0.3, 12, bilge, { at: [0, 3.0, 0] });
+      k.ball(2.6, bilge, { at: [0, 2.85, 0], scale: [1, 0.22, 1] });
+      k.rod([[1.5, 3.2, 2.5], [1.75, 2.6, 2.85], [1.7, 1.7, 2.95]], 0.42, bilge, {}, 6);
+      k.ball(0.45, bilge, { at: [1.7, 1.45, 2.95] });
+      // Bubbles rising off it, swirling round over the cup.
+      k.spin([0, 4, 0], [0, 1, 0], () => {
+        for (const [x, y, z, r] of [[0.9, 3.7, 0.5, 0.5], [-1.1, 4.5, -0.3, 0.38], [0.3, 5.4, -0.9, 0.3], [-0.5, 6.2, 0.6, 0.24], [1.4, 4.4, -1.0, 0.28]] as const) {
+          k.ball(r, bilge, { at: [x, y, z] });
+        }
+      }, 1.4);
     },
   },
 

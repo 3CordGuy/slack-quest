@@ -825,8 +825,8 @@ const HOLD: Record<string, Hold> = {
   "ships-bell": { grip: [0, 5.6, 0], scale: 0.5, pose: { arm: -0.7 } },
   astrolabe: { grip: [0, -4.2, 0], scale: 0.45, pose: { arm: -0.5 } },
   "boarding-pike": { grip: [0, -6.5, 0], scale: 0.65, turn: FORWARD, pose: { tilt: 0.15 } },
-  // Held up in front by the stem.
-  "bilge-chalice": { grip: [0, -3, 0], scale: 0.46, at: [0, 0, 0.4], pose: { arm: -0.9 } },
+  // Held up by its handle, the mug out in front of the fist (its handle toward +x, turned to face ahead).
+  "bilge-chalice": { grip: [4.6, 0.4, 0], scale: 0.5, at: [0, 0, 0.4], turn: [0, HALF_PI, 0], pose: { arm: -0.9 } },
   "round-shield": { grip: [0, 0, 0], scale: 0.39, at: [0.5, -3.4, 1.9], turn: ON_ARM },
   shield: { grip: [0, -0.5, 0], scale: 0.43, at: [0.5, -2.9, 1.95], turn: ON_ARM },
 };
@@ -1650,7 +1650,9 @@ const laid = new THREE.Object3D();
  * its trim.
  */
 const MOTES: Record<string, { at: Pt; color?: string }> = {
-  "bilge-chalice": { at: [0, 3.9, 0.4], color: "#6dff9e" },
+  // Over the middle of the mug, held out in front by its handle (see HOLD): the bilge's face is 4.6 ahead of the
+  // grip and 2.6 above it, at half size.
+  "bilge-chalice": { at: [0, 1.5, 2.7], color: "#6dff9e" },
 };
 /** How many motes drift up at rest, how long each takes to rise and fade, and how many more a cast throws out. */
 const MOTES_IDLE = 5;
