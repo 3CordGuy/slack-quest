@@ -29,6 +29,8 @@ export interface Look {
   mask?: string;
   /** A band of this colour round the brow (under the hat, if there is one), knotted behind with two short tails. */
   bandana?: string;
+  /** A shirt with no sleeves: the arms bare from the shoulder. */
+  sleeveless?: boolean;
   /** A vest of this colour over the shirt, open down the front. */
   vest?: string;
   /** Leather of this colour: a strap from the shoulder across the chest, and a belt with pouches at the hips. */
@@ -74,9 +76,9 @@ export const LOOKS: Record<string, Look> = {
   // The Druid tends the reef: a crown of branching coral on a band of kelp, a sea-green tunic, a scallop shell on
   // each shoulder, and a kelp sash whose ends sway with the tide.
   backend_druid: { skin: "#c99a74", hair: "#4a3a26", body: "#2f6b5e", legs: "#3a4a3a", accent: "#ff8a6b", hat: "coral", hatColor: "#ef7a5f", weapon: "staff", sash: "#3d6b2e", shell: "#f0dcc8" },
-  // The Bard sings at the capstan: a red bandana knotted behind, a linen shirt under a weathered teal vest, a red
+  // The Bard sings at the capstan: a red bandana knotted behind, a sleeveless linen shirt under a weathered teal vest, a red
   // sash, olive trousers and boots.
-  frontend_bard: { skin: "#d9a67c", hair: "#3a2a20", body: "#e3d9c0", legs: "#4f5440", accent: "#e0b12e", hat: "kerchief", hatColor: "#a8322a", weapon: "lute", vest: "#4f6463", sash: "#a8322a", straps: "#5a3d26", boots: "#4a3426" },
+  frontend_bard: { skin: "#d9a67c", hair: "#3a2a20", body: "#e3d9c0", legs: "#4f5440", accent: "#e0b12e", hat: "kerchief", hatColor: "#a8322a", weapon: "lute", sleeveless: true, vest: "#4f6463", sash: "#a8322a", straps: "#5a3d26", boots: "#4a3426" },
   // The Sage is the ship's navigator: a tricorn over a red band, long grey hair, a teal captain's coat edged in gold
   // with gold epaulettes, a red sash, and a glowing armillary sphere on the palm.
   staff_sage: { skin: "#e3b897", hair: "#c9c9cc", body: "#1f4a46", legs: "#2a2420", accent: "#f2d675", hat: "tricorn", hatColor: "#1f2826", weapon: "orb", coat: true, coatTrim: "#c9a24a", bandana: "#7a2a2a", epaulettes: "#d4ab4a", sash: "#6b2a2a", boots: "#3a2c22" },

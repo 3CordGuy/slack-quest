@@ -5289,7 +5289,8 @@ function person(top: THREE.Group, look: Look, outfit: Outfit | undefined, asleep
       lowHand(arm, look.skin, s);
       if (!greatcoat && !body) {
         const region = s < 0 ? "armR" : "armL";
-        if (undressed) {
+        if (undressed || look.sleeveless) {
+          // Bare arms: undressed, or a shirt with no sleeves.
           lowBareArm(arm, look.skin);
           if (chosen?.ink) inkPart(arm, region, chosen.ink);
         } else if (inkedArms) {
