@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { GARB_HAT, LANTERN_HELM_ICON, starterGarb, wearsLanternHelm } from "./gear";
+import { gearSheet } from "./hero";
 import {
   RARITIES,
   SLOTS,
@@ -133,13 +134,26 @@ describe("the Lighthouse Paladin's Lantern Helm", () => {
     expect(hat("refactor_rogue")).toMatchObject({ name: "Smuggler Rogue Hat", icon: "knit-cap" });
   });
 
-  it("is worn by whoever has it on, and a Paladin with no look chosen is drawn in it with nothing on the head", () => {
-    const on = (icon: string) => ({ helmet: { icon, ref: GARB_HAT, rarity: "common" as const } });
+  it("is worn by whoever has it on; any starter hat on a Paladin is one; and a Paladin with no look chosen is drawn in it bare-headed", () => {
+    const on = (icon: string, ref = GARB_HAT) => ({ helmet: { icon, ref, rarity: "common" as const } });
     expect(wearsLanternHelm("qa_paladin", on(LANTERN_HELM_ICON))).toBe(true);
     expect(wearsLanternHelm("refactor_rogue", on(LANTERN_HELM_ICON))).toBe(true);
-    expect(wearsLanternHelm("qa_paladin", on("knit-cap"))).toBe(false);
+    // Another class's starter hat, or an old one of their own saved before it was the helm, is the Paladin's own hat on them.
+    expect(wearsLanternHelm("qa_paladin", on("knit-cap"))).toBe(true);
+    expect(wearsLanternHelm("refactor_rogue", on("knit-cap"))).toBe(false);
+    // Armor on the head is not.
+    expect(wearsLanternHelm("qa_paladin", on("heavy-helm", "hardhat"))).toBe(false);
     expect(wearsLanternHelm("qa_paladin", undefined)).toBe(true);
     expect(wearsLanternHelm("qa_paladin", { appearance: {} as never })).toBe(false);
     expect(wearsLanternHelm("refactor_rogue", undefined)).toBe(false);
+  });
+
+  it("still lights the way worn hidden, though it is not drawn", () => {
+    const hat = { ...starterGarb("qa_paladin").find((i) => i.ref === GARB_HAT)!, hidden: true };
+    const sheet = gearSheet("qa_paladin", [hat]);
+    expect(sheet.outfit?.helmet).toBeUndefined();
+    expect(sheet.lantern).toBe(true);
+    expect(gearSheet("qa_paladin", []).lantern).toBeUndefined();
+    expect(gearSheet("refactor_rogue", [{ ...starterGarb("refactor_rogue").find((i) => i.ref === GARB_HAT)!, hidden: true }]).lantern).toBeUndefined();
   });
 });

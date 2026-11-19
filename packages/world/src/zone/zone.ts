@@ -134,6 +134,7 @@ function heroUnit(hero: ZoneHero, pos: HexPos, controller?: string): Unit {
     power: hero.weaponPower,
     abilities: heroAbilities(hero),
     outfit: hero.outfit,
+    ...(hero.lantern ? { lantern: true } : {}),
     conditions: [],
     down: false,
     cooldowns: {},
@@ -147,6 +148,7 @@ export function zoneHero(sheet: HeroSheet, items?: Partial<Record<Throwable, num
   const stats = addStats(sheet.base, sheet.bonus);
   return {
     id: sheet.id, name: sheet.name, classId: sheet.classId, level: sheet.level, stats, weapon: sheet.weapon, weaponPower: sheet.weaponPower ?? 0, armor: sheet.armor ?? 0, outfit: sheet.outfit,
+    ...(sheet.lantern ? { lantern: true } : {}),
     maxHp: maxHpFor(stats, sheet.level), maxFocus: maxFocusFor(sheet.level),
     classAbilities: classAbilitiesOf(sheet.classId, sheet.level, sheet.abilityLoadout),
     ...(items ? { items: cleanItems(items) } : {}),
@@ -673,7 +675,7 @@ function act(ctx: Ctx, action: ZoneAction): string | null {
       // Back again, perhaps with different gear: the sheet is refreshed, and where they stand and how hurt they are is kept.
       // Not in a fight, though: that is fought in the gear it was started in. Nor a hero given a dev kit.
       if (inFight(state, here.id) || here.devKit) return null;
-      Object.assign(here, { name: hero.name, kind: hero.classId, level: hero.level, stats: hero.stats, armor: hero.armor, power: hero.weaponPower, outfit: hero.outfit, maxHp: hero.maxHp, maxFocus: hero.maxFocus });
+      Object.assign(here, { name: hero.name, kind: hero.classId, level: hero.level, stats: hero.stats, armor: hero.armor, power: hero.weaponPower, outfit: hero.outfit, lantern: hero.lantern, maxHp: hero.maxHp, maxFocus: hero.maxFocus });
       // A torch swung in the main hand stays there: the new weapon is what is taken up when it goes.
       if (here.torchHand === "main") here.stowed = heroAbilities(hero);
       else here.abilities = heroAbilities(hero);

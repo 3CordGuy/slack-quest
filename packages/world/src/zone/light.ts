@@ -18,6 +18,9 @@ import { wearsLanternHelm } from "../gear";
 export const DAYLIGHT_RADIUS = 2;
 import type { Unit, ZoneState } from "./types";
 
+/** Whether a hero has a lantern helm on, drawn or worn hidden: it lights the dark round them as a held torch does. */
+export const carriesLantern = (u: Unit): boolean => u.side === "hero" && (!!u.lantern || wearsLanternHelm(u.kind, u.outfit));
+
 /** Whether this zone is dark but where it is lit. */
 export const isDark = (state: Pick<ZoneState, "options">): boolean => state.options.biome === "caves";
 
@@ -25,8 +28,8 @@ export const isDark = (state: Pick<ZoneState, "options">): boolean => state.opti
 export function lightSources(state: ZoneState): { at: HexPos; radius: number }[] {
   const out: { at: HexPos; radius: number }[] = [];
   for (const u of state.units) if ((u.torch ?? 0) > 0) out.push({ at: u.pos, radius: LIGHT_RADIUS });
-  // A hero in the Paladin's lantern helm carries a torch's light on their head, and it never burns down.
-  for (const u of state.units) if (u.side === "hero" && !u.torch && wearsLanternHelm(u.kind, u.outfit)) out.push({ at: u.pos, radius: LIGHT_RADIUS });
+  // A hero in a lantern helm carries a torch's light on their head, and it never burns down.
+  for (const u of state.units) if (!u.torch && carriesLantern(u)) out.push({ at: u.pos, radius: LIGHT_RADIUS });
   // A hero shining with a Beacon Aura.
   for (const u of state.units) if (!u.down && u.conditions.some((c) => c.kind === "beacon")) out.push({ at: u.pos, radius: AURAS.beaconLight });
   for (const key of Object.keys(state.lights ?? {})) {

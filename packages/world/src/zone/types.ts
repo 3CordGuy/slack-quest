@@ -73,6 +73,8 @@ export interface Unit {
   /** A hero's ability ids. Enemies attack with what their kind has. */
   abilities: string[];
   outfit?: Outfit;
+  /** A hero's lantern helm, shown or hidden (HeroSheet.lantern): it lights the dark round them. */
+  lantern?: boolean;
   conditions: UnitCondition[];
   down: boolean;
   /** Rounds until each ability can be used again. */
@@ -273,6 +275,8 @@ export interface ZoneHero {
   weaponPower: number;
   armor: number;
   outfit?: Outfit;
+  /** A lantern helm on the head, shown or hidden (HeroSheet.lantern). */
+  lantern?: boolean;
   maxHp: number;
   maxFocus: number;
   /** The class abilities they carry in, already checked against their class and level (classabilities.ts), on top of the weapon's. */

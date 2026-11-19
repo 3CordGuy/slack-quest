@@ -675,6 +675,15 @@ describe("light and the dark", () => {
     expect(litHexes(state)!.has(posKey(near))).toBe(true);
   });
 
+  it("lights the dark from a lantern helm worn hidden, though the head is drawn bare", () => {
+    const state = cave();
+    const ann = hero(state, "ann", "qa_paladin", at(3, 6));
+    ann.outfit = { appearance: DEFAULT_APPEARANCE };
+    expect(litHexes(state)!.has(posKey(at(4, 6)))).toBe(false);
+    ann.lantern = true;
+    expect(litHexes(state)!.has(posKey(at(4, 6)))).toBe(true);
+  });
+
   it("will not pick out an enemy in the dark, and strikes blind at one beside you that is unlit", () => {
     let state = cave();
     state.aiOff = true;
