@@ -339,11 +339,12 @@ export const LOW_POLY: Record<string, LowPolyDef> = {
       k.cyl(0.55, 0.7, 17, 6, C.wood, { at: [0, -1.5, 0] });
       k.cyl(0.8, 0.8, 2.6, 6, C.leather, { at: [0, -1, 0] });
       k.cyl(1, 0.7, 1, 6, C.gold, { at: [0, 7.4, 0] });
+      // A carved head, verdigris-green like old ship fittings, round a gem that throws teal light.
       for (let i = 0; i < 3; i++) {
         const a = (i / 3) * Math.PI * 2 + 0.5;
-        k.rod([[0, 7.6, 0], [Math.cos(a) * 1.8, 9.5, Math.sin(a) * 1.8], [Math.cos(a) * 1.1, 11.6, Math.sin(a) * 1.1]], 0.3, C.gold, {}, 4);
+        k.rod([[0, 7.6, 0], [Math.cos(a) * 1.8, 9.5, Math.sin(a) * 1.8], [Math.cos(a) * 1.1, 11.6, Math.sin(a) * 1.1]], 0.3, "#3f8f86", {}, 4);
       }
-      k.gem(1.5, 3.8, { glow: k.a }, { at: [0, 10.2, 0] });
+      k.gem(1.5, 3.8, { glow: "#5fe6e0" }, { at: [0, 10.2, 0] });
     },
   },
   "scroll-unfurled": {

@@ -2,7 +2,7 @@
 // hero class, NPC or enemy kind. Pure data with no three.js or DOM, so the
 // Worker can import it to validate admin palette overrides.
 
-export const HATS = ["helm", "wizard", "hood", "horns", "leaves", "feather", "circlet", "brim", "turban", "kerchief", "greathelm", "none"] as const;
+export const HATS = ["helm", "wizard", "hood", "horns", "leaves", "feather", "tricorn", "circlet", "brim", "turban", "kerchief", "greathelm", "none"] as const;
 export type Hat = (typeof HATS)[number];
 export const LOOK_WEAPONS = ["sword", "staff", "daggers", "club", "bow", "lute", "orb", "lantern", "scroll", "pack", "basket", "axe_shield", "grimoire", "smith_hammer", "paddle", "cleaver", "none"] as const;
 export type Weapon = (typeof LOOK_WEAPONS)[number];
@@ -17,6 +17,10 @@ export interface Look {
   weapon: Weapon;
   /** Colour of the hat, where it is not the body's. */
   hatColor?: string;
+  /** Tall boots of this colour, turned down at the top, in place of the usual plain shoes. */
+  boots?: string;
+  /** A sash of this colour knotted at the hip, its long ends hanging in waves down the leg. */
+  sash?: string;
   /** A full-length coat over the legs, for travellers. */
   coat?: boolean;
   /** A mustache, in the hair's colour, on a stock figure (a hero's own is in their appearance). */
@@ -31,7 +35,9 @@ export interface Look {
 
 export const LOOKS: Record<string, Look> = {
   qa_paladin: { skin: "#f1c9a5", hair: "#8a5a2b", body: "#c9ced6", legs: "#5b6475", accent: "#e0b12e", hat: "helm", weapon: "sword" },
-  devops_mage: { skin: "#f1c9a5", hair: "#e8e8f0", body: "#4b5fd1", legs: "#2d357a", accent: "#7fe3ff", hat: "wizard", weapon: "staff" },
+  // The Wizard is a sea sorceress, not a pointy-hatted greybeard: a tricorn, a cream shirt, trousers and tall boots, a long
+  // wavy red sash knotted at the hip, and a staff that throws teal light.
+  devops_mage: { skin: "#f1c9a5", hair: "#8a4a2b", body: "#ddd5bb", legs: "#4a4742", accent: "#c2432a", hat: "tricorn", hatColor: "#3b2b22", weapon: "staff", boots: "#3a2a20", sash: "#c2432a" },
   refactor_rogue: { skin: "#d9a67c", hair: "#2b2b33", body: "#3d7a4f", legs: "#2f3b33", accent: "#b9433d", hat: "hood", weapon: "daggers" },
   backend_druid: { skin: "#d9a67c", hair: "#5a3d22", body: "#5d7d3a", legs: "#4a3a26", accent: "#a6d06a", hat: "leaves", weapon: "staff" },
   frontend_bard: { skin: "#f1c9a5", hair: "#c9743a", body: "#b9433d", legs: "#3b2f5a", accent: "#e0b12e", hat: "feather", weapon: "lute" },
