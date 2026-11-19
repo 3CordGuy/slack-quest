@@ -62,13 +62,20 @@ const ART: Record<string, Art> = {
     p.r(7, 15, 2, 1, C.gold);
   },
   "wizard-staff": (p) => {
-    p.r(7, 5, 2, 11, C.wood);
-    p.r(8, 5, 1, 11, C.bark);
-    p.r(6, 0, 4, 4, p.accent);
-    p.r(7, 1, 1, 1, C.shine);
-    p.r(5, 3, 1, 2, C.gold);
-    p.r(10, 3, 1, 2, C.gold);
-    p.r(6, 4, 4, 1, C.gold);
+    // The Squall Staff: an ash staff with a rope grip, and a storm glass at its head, a brass cage round a dark
+    // squall with lightning through it.
+    p.r(7, 7, 2, 8, C.wood);
+    p.r(8, 7, 1, 8, C.bark);
+    p.r(7, 10, 2, 2, p.accent);
+    p.r(7, 15, 2, 1, C.gold);
+    p.r(6, 0, 4, 1, C.gold);
+    p.r(5, 1, 6, 1, C.gold);
+    p.r(5, 2, 1, 4, C.gold);
+    p.r(10, 2, 1, 4, C.gold);
+    p.r(6, 2, 4, 4, "#4c5563");
+    p.r(6, 3, 2, 2, "#6f7a8a");
+    for (const [x, y] of [[8, 2], [7, 3], [8, 4], [7, 5]]) p.r(x, y, 1, 1, "#e8f8ff");
+    p.r(5, 6, 6, 1, C.gold);
   },
   "scroll-unfurled": (p) => {
     // A closed tome.

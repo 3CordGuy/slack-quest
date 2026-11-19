@@ -893,6 +893,24 @@ function gear(p: Part, icon: string, trim: string, hold: Hold, inHand = false): 
     extraParts.push(part);
     spinners.push({ joint: part.joint, axis, angle: 0, speed: SPIN_SPEED, was: new THREE.Quaternion(), seen: false });
   }
+  // What flashes (a bolt of lightning, in several forks) goes on joints of its own, one shown at a time or none
+  // (see flashBolts).
+  const flashing: THREE.Object3D[] = [];
+  built.model.traverse((o) => {
+    if (o.userData.flicker) flashing.push(o);
+  });
+  if (flashing.length > 0) {
+    const set: THREE.Object3D[] = [];
+    for (const group of flashing) {
+      group.removeFromParent();
+      const part = new Part(p.joint);
+      part.model(group, at);
+      disposeLowPoly(group);
+      extraParts.push(part);
+      set.push(part.joint);
+    }
+    flickers.push(set);
+  }
   p.model(built.model, at);
   disposeLowPoly(built.model);
   return true;
@@ -911,6 +929,25 @@ interface Spinner {
 }
 /** Set by makeFigure for the figure being built: what turns freely in its hands. */
 let spinners: Spinner[] = [];
+/** Set by makeFigure for the figure being built: each set of shapes in its hands that flash in turn (see Kit.flicker). */
+let flickers: THREE.Object3D[][] = [];
+/** How many times a second a flashing thing may change, and how often it is dark between flashes. */
+const FLASH_RATE = 15;
+const FLASH_DARK = 0.45;
+
+/**
+ * Flash what flickers in the hand: many times a second one of its shapes shows, or none, picked from the clock
+ * (the same for anyone watching, and for a test), so a bolt zaps about the glass, a different fork each time.
+ * A slot's length wanders too, so it never settles into a beat.
+ */
+function flashBolts(sets: THREE.Object3D[][], time: number) {
+  const slot = Math.floor(time * FLASH_RATE + Math.sin(time * 2.3) * 1.5);
+  sets.forEach((set, k) => {
+    const h = Math.abs(Math.sin((slot + 1) * 12.9898 + k * 78.233) * 43758.5453) % 1;
+    const pick = h < FLASH_DARK ? -1 : Math.min(set.length - 1, Math.floor(((h - FLASH_DARK) / (1 - FLASH_DARK)) * set.length));
+    set.forEach((joint, i) => (joint.visible = i === pick));
+  });
+}
 /** How fast a spinner turns on its own, in radians a second, and how quickly it eases back to that after a jolt. */
 const SPIN_SPEED = 0.7;
 const SPIN_EASE = 1.4;
@@ -7223,6 +7260,7 @@ export function makeFigure(kind: string, look: Look, outfit?: Outfit, opts: Figu
   braids = [];
   dangles = [];
   spinners = [];
+  flickers = [];
   bodyParts = [];
   beardFront = null;
   castEyes = [];
@@ -7251,6 +7289,7 @@ export function makeFigure(kind: string, look: Look, outfit?: Outfit, opts: Figu
   const swinging = braids;
   const loose = dangles;
   const turners = spinners;
+  const flashers = flickers;
   const spellEyes = castEyes;
   const hems = skirts;
   const pace = castPace;
@@ -7394,6 +7433,7 @@ export function makeFigure(kind: string, look: Look, outfit?: Outfit, opts: Figu
     if (swinging.length > 0) swingBraids(swinging, anim);
     if (loose.length > 0) swingDangles(loose, first ? 0 : dt, top, body);
     if (turners.length > 0) turnSpinners(turners, first ? 0 : dt);
+    if (flashers.length > 0) flashBolts(flashers, p.time);
     // A long coat's skirts swing with the legs under them, forward and back and out to the side.
     for (const h of hems) {
       h.joint.rotation.set(h.thigh.rotation.x * SKIRT_FOLLOW, 0, h.thigh.rotation.z * SKIRT_FOLLOW);
