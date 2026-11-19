@@ -2128,6 +2128,7 @@ function biped(top: THREE.Group, parts: Part[], elbow = ELBOW) {
   let reading: THREE.Object3D | null = null;
   const reads = (book: THREE.Object3D) => {
     reading = book;
+    castPace = BOOK_CAST_PACE;
   };
   const chain = new THREE.Matrix4();
   /** Where `at`, a point in `frame` (any joint hung, however far down, from the torso), is in the torso's own frame (or `root`'s, further up). */
@@ -2494,14 +2495,16 @@ function biped(top: THREE.Group, parts: Part[], elbow = ELBOW) {
         reach(armL.joint, foreL.joint, -elbow, elbow - fist, sweep.grip.set(1.5, 5.9, 4.0), sweep.poleL, p * w);
         return;
       }
-      // The hand goes round a circle beside and over the head, what it holds tipped out along the circle, then
-      // comes down and forward to arm's length, levelled at the mark.
+      // The hand goes round a circle held out to the side and a little forward, clear of the head, what it holds
+      // tipped out along the circle and leaning away from the head, then comes down and forward to arm's length,
+      // levelled at the mark.
       const turn = along(CAST.turn, t);
       const p = along(CAST.point, t);
       const side = armR.joint.position.x;
-      const [cx, cy, cz] = [side * 0.95 + 0.9 * Math.cos(turn), 9.3, 0.4 + 0.9 * Math.sin(turn)];
+      const out = Math.sign(side);
+      const [cx, cy, cz] = [side * 1.5 + 0.6 * Math.cos(turn), 8.4, 1.7 + 0.6 * Math.sin(turn)];
       sweep.grip.set(cx + (side * 0.62 - cx) * p, cy + (5.9 - cy) * p, cz + (4.8 - cz) * p);
-      sweep.dir.set(0.55 * Math.cos(turn) * (1 - p) + 0.1 * p, 0.83 * (1 - p) + 0.1 * p, 0.55 * Math.sin(turn) * (1 - p) + p).normalize();
+      sweep.dir.set((0.4 * Math.cos(turn) + 0.75 * out) * (1 - p) + 0.1 * p, 0.8 * (1 - p) + 0.1 * p, (0.45 * Math.sin(turn) + 0.15) * (1 - p) + p).normalize();
       wield();
       if (levels.length === 0) armL.joint.rotation.x += along(CAST.off, t);
       return;
@@ -2913,10 +2916,17 @@ function lowHead(head: Part, look: Look, asleep: boolean, covered = false) {
   head.box(tone(skin, -0.25), 1, 0.24, 0.3, 0, mouthY, faceAt(rings, mouthY) + 0.03);
   lowEyes(head, look.hair, chosen?.eyes ?? look.eyes ?? "round", asleep, rings);
   if (look.glowEyes && !asleep) {
-    // Alight over the eyes the face has: a glow in each, with a fainter halo.
+    // Alight over the eyes the face has: a glow in each. For a look whose eyes light only with a spell, each is a
+    // part of its own, swelled and shrunk as the spell is cast (see castEyes).
     for (const s of [-1, 1]) {
       const x = s * 1.15;
-      head.glowBall(look.glowEyes, 0.36, x, 3.05, faceZ(rings, x, 3.05) + 0.12);
+      const z = faceZ(rings, x, 3.05) + 0.12;
+      if (look.glowOnCast) {
+        const eye = new Part(head.joint, x, 3.05, z);
+        eye.glowBall(look.glowEyes, 0.36);
+        extraParts.push(eye);
+        castEyes.push(eye.joint);
+      } else head.glowBall(look.glowEyes, 0.36, x, 3.05, z);
     }
   }
   if (look.mask) {
@@ -2929,6 +2939,14 @@ function lowHead(head: Part, look: Look, asleep: boolean, covered = false) {
     head.loft(tone(look.mask, -0.12), [r(2.4, 0.16), r(2.56, 0.16)], 10);
   }
   lowHair(head, look.hair, chosen?.hairStyle ?? "short", rings, covered);
+  if (look.bandana) {
+    // A cloth band round the brow, knotted behind with two short tails.
+    head.loft(look.bandana, fitted([[3.85, 3.86, 3.56], [4.5, 3.89, 3.59]]), 10);
+    const d = headDelta(4.2);
+    const back = d.dz - d.rz;
+    head.ball(tone(look.bandana, -0.1), 0.45, 0, 4.15, -3.6 + back, 0);
+    for (const s of [-1, 1]) head.shape(look.bandana, [[s * 0.1, 4.2, -3.6 + back], [s * 0.45, 4.2, -3.7 + back], [s * 1.1, 2.7, -3.85 + back], [s * 1.5, 2.85, -3.85 + back]]);
+  }
   if (chosen?.ink) inkPart(head, "head", chosen.ink);
   if (chosen) lowFacialHair(head, chosen.beard, chosen.mustache, skin, look.hair, rings, chinY, mouthY);
   // A stock figure's own (the galley's cook): no beard, just what its look names.
@@ -3098,6 +3116,15 @@ interface Braid {
 /** Set by makeFigure for the figure being built: parts hung on others outside the rig (braids), and the braids to swing. */
 let extraParts: Part[] = [];
 let braids: Braid[] = [];
+/**
+ * How many times longer than CAST a spell takes the figure being built (set by makeFigure, and by a rig carrying
+ * an open book): the hand waved over the pages is slow and deliberate, so a book's cast is played slower, the
+ * spell leaving as much later.
+ */
+let castPace = 1;
+const BOOK_CAST_PACE = 2;
+/** Set by makeFigure for the figure being built: eyes that light only while a spell is cast (see Look.glowOnCast). */
+let castEyes: THREE.Object3D[] = [];
 /** The front of a long (wizard's) beard on the figure being built, if it has one: where an amulet goes. */
 let beardFront: { part: Part; at: Pt } | null = null;
 
@@ -3624,7 +3651,6 @@ function lowHat(head: Part, look: Look) {
       const rx = (r: number) => r + d.rx;
       const rz = (r: number) => r + d.rz;
       head.loft(c, fitted([[4.2, 3.86, 3.56], [5.5, 3.78, 3.48, -0.05], [6.5, 3.2, 2.95, -0.1], [7.05, 2, 1.85, -0.1], [7.25, 0.4, 0.4, -0.1]]), 10);
-      if (look.bandana) head.loft(look.bandana, fitted([[3.85, 3.84, 3.54], [4.45, 3.87, 3.57]]), 10);
       // Where the walls stand, going round from the front point: a point, the middle of a wall, the next point...
       const foot: { a: number; r: number; y: number; top: number }[] = [];
       for (let i = 0; i < 6; i++) {
@@ -5052,15 +5078,15 @@ function person(top: THREE.Group, look: Look, outfit: Outfit | undefined, asleep
     const edgeColor = greatcoat ? trim("body") : look.coatTrim ?? look.accent;
     if (lowPoly) {
       for (const s of [-1, 1]) {
-        coatPanel(torso, cloth, s, 0.42, Math.PI + 0.05);
+        coatPanel(torso, greatcoat ? cloth : look.coatColor ?? cloth, s, 0.42, Math.PI + 0.05);
         coatPanel(torso, edgeColor, s, 0.38, 0.52, 0.06);
       }
     } else {
       for (const s of [-1, 1]) {
-        torso.box(cloth, 2.7, 4.6, 4.3, s * 2.4, -2, 0);
+        torso.box(greatcoat ? cloth : look.coatColor ?? cloth, 2.7, 4.6, 4.3, s * 2.4, -2, 0);
         torso.box(edgeColor, 0.5, 4.6, 0.4, s * 1.25, -2, 2.05);
       }
-      torso.box(cloth, 7.3, 4.6, 1, 0, -2, -1.7);
+      torso.box(greatcoat ? cloth : look.coatColor ?? cloth, 7.3, 4.6, 1, 0, -2, -1.7);
     }
   }
   if (look.apron && !body && !undressed) {
@@ -5089,6 +5115,53 @@ function person(top: THREE.Group, look: Look, outfit: Outfit | undefined, asleep
     } else {
       torso.box(c, 7.8, 1.8, 4.6, 0, 5.3, 0);
       torso.box(tone(c, -0.2), 7.9, 0.4, 4.7, 0, 4.4, 0);
+    }
+  }
+  if (lowPoly && !body && !undressed) {
+    const rings = chestRings(m.shoulders / m.girth);
+    if (look.coat && look.coatColor) {
+      // The coat's fronts over the chest, open down the middle where the shirt shows.
+      for (const s of [-1, 1]) {
+        const pts: Pt[] = [];
+        for (const y of [0.4, 2.4, 4.4, 5.7]) {
+          const r = ringAt(rings, y);
+          for (const deg of [s * 28, s * 60, s * 95, s * 130]) {
+            const a = (deg / 180) * Math.PI;
+            pts.push([Math.sin(a) * (r.rx + 0.14), y, Math.cos(a) * (r.rz + 0.14) + r.dz]);
+          }
+        }
+        torso.shape(look.coatColor, pts);
+      }
+    }
+    if (look.vest) {
+      // A vest over the shirt, open down the front: the shirt shows in a strip between its fronts.
+      torso.loft(look.vest, [around(rings, 0.7, 0.1), around(rings, 3.6, 0.12), around(rings, 5.45, 0.12), around(rings, 5.95, 0.08)]);
+      const f = (y: number) => onChest(rings, 0, y, 0.16).at;
+      torso.shape(look.body, [[-0.55, 5.6, f(5.6)[2] - 0.3], [0.55, 5.6, f(5.6)[2] - 0.3], [-0.45, 0.8, f(0.8)[2] - 0.2], [0.45, 0.8, f(0.8)[2] - 0.2], [-0.5, 5.6, f(5.6)[2]], [0.5, 5.6, f(5.6)[2]], [-0.4, 0.8, f(0.8)[2]], [0.4, 0.8, f(0.8)[2]]]);
+      for (const y of [2.2, 3.3]) for (const s of [-1, 1]) torso.ball(GEAR.gold, 0.16, ...onChest(rings, s * 0.75, y, 0.18).at, 0);
+    }
+    if (look.straps) {
+      // A strap from the right shoulder across the chest to the left hip, buckled; a belt with a pouch on each hip.
+      const pts = [0, 0.25, 0.5, 0.75, 1].map((t) => onChest(rings, -2.2 + 4.2 * t, 5.2 - 4 * t, 0.16).at);
+      for (let i = 0; i + 1 < pts.length; i++) strut(torso, look.straps, pts[i], pts[i + 1], 0.24);
+      torso.box(GEAR.iron, 0.6, 0.6, 0.2, ...onChest(rings, -0.1, 3.2, 0.32).at);
+      torso.loft(look.straps, [around(rings, 0.25, 0.14, 0.02), around(rings, 0.75, 0.14, 0.02)]);
+      torso.box(GEAR.iron, 0.75, 0.6, 0.25, ...onChest(rings, 0, 0.5, 0.2).at);
+      for (const s of [-1, 1]) {
+        const p = onChest(rings, s * 0.85 * ringAt(rings, 0).rx, -0.1, 0.3);
+        torso.box(tone(look.straps, -0.08), 1, 1.1, 0.6, ...p.at, [0, p.yaw, 0]);
+      }
+    }
+    if (look.teeth) {
+      // Teeth strung round the throat, pointing down, with a stone at the middle.
+      for (let i = 0; i < 9; i++) {
+        const x = -1.7 + (3.4 * i) / 8;
+        const y = 5.55 - 0.35 * Math.cos((x / 1.7) * HALF_PI);
+        // Over a hood's mantle, where there is one, and low enough to clear its tie.
+        const p = onChest(rings, x, y - (look.hat === "hood" ? 0.9 : 0), look.hat === "hood" ? 1.05 : 0.12);
+        torso.cone(GEAR.bone, 0.18, 0.7, p.at[0], p.at[1] - 0.35, p.at[2], 6, [Math.PI, p.yaw, 0]);
+      }
+      torso.glowBall(look.teeth, 0.3, ...onChest(rings, 0, look.hat === "hood" ? 4.2 : 5.1, look.hat === "hood" ? 1.15 : 0.22).at);
     }
   }
   if (look.mask && lowPoly && !body && !undressed) {
@@ -5168,7 +5241,13 @@ function person(top: THREE.Group, look: Look, outfit: Outfit | undefined, asleep
           // Sleeves rolled up, to show off the ink on the forearms.
           lowRolledSleeve(arm, look.skin, cloth);
           inkPart(arm, region, chosen!.ink!);
-        } else lowSleeve(arm, cloth, look.accent);
+        } else lowSleeve(arm, look.coat && look.coatColor ? look.coatColor : cloth, look.accent);
+        if (look.epaulettes && !undressed) {
+          // A gold pad over the shoulder, fringed all along its edge.
+          arm.box(look.epaulettes, 2.3, 0.4, 2.5, s * 0.35, 1.35, 0);
+          for (let i = 0; i < 6; i++) arm.box(tone(look.epaulettes, -0.08), 0.16, 0.85, 0.16, s * 1.45, 0.85, -1 + (2 * i) / 5);
+          for (let i = 0; i < 3; i++) arm.box(tone(look.epaulettes, -0.08), 0.16, 0.85, 0.16, s * (1.0 - i * 0.45), 0.85, 1.2);
+        }
         if (look.barnacles && !undressed) {
           // Barnacles crusted over the top of the shoulder, and a sprig of red coral among them.
           for (const [x, z, r] of [[0.35, 0.3, 0.34], [0.75, -0.25, 0.28], [0.1, -0.45, 0.24], [0.95, 0.45, 0.22], [-0.2, 0.55, 0.2]] as const) {
@@ -6706,6 +6785,8 @@ export function makeFigure(kind: string, look: Look, outfit?: Outfit, opts: Figu
   dangles = [];
   bodyParts = [];
   beardFront = null;
+  castEyes = [];
+  castPace = 1;
   slung = null;
   chosen = outfit?.appearance ?? null;
   lowPoly = !!chosen || !!opts.lowPoly || !BLOCKY_PREF;
@@ -6725,6 +6806,10 @@ export function makeFigure(kind: string, look: Look, outfit?: Outfit, opts: Figu
   for (const part of allParts) part.build(mats, made);
   const swinging = braids;
   const loose = dangles;
+  const spellEyes = castEyes;
+  const pace = castPace;
+  /** How long an action of this kind takes this figure. */
+  const lasts = (kind: Act["kind"]) => ACT_OVER[kind] * (kind === "cast" ? pace : 1);
   // What a swinging weight bumps against: only worth fitting for someone carrying one.
   const body = loose.length > 0 ? bodyCapsules(bodyParts) : [];
   const sling = slung;
@@ -6793,11 +6878,11 @@ export function makeFigure(kind: string, look: Look, outfit?: Outfit, opts: Figu
     last = p.time;
     if (asked) [action, asked] = [{ kind: asked, at: p.time, n: ++actions, air: asked === "jump" ? airtime : 0 }, null];
     const since = action ? p.time - action.at : 0;
-    if (action && (since < 0 || since >= ACT_OVER[action.kind] + action.air)) action = null;
+    if (action && (since < 0 || since >= lasts(action.kind) + action.air)) action = null;
     const want = p.walking ? Math.sin(p.stride * 3.6) : 0;
     swing += (want - swing) * Math.min(1, dt * 20);
     const rowing = p.rowing !== undefined && !!rig.hands && !p.lying;
-    const anim: Anim = { t: p.time, swing, breath: Math.sin(p.time * 2.2 + beat), strike: Math.min(1, Math.abs(p.lean) * 2), act: action && rig.acts ? { kind: action.kind, t: since, n: action.n, air: action.air } : null, scale: 1 / scaler.scale.x, lying: p.lying, sitting: rowing ? 1 : typeof p.sitting === "number" ? Math.max(0, Math.min(1, p.sitting)) : p.sitting ? 1 : 0, oars: rowing ? Math.max(0, Math.min(1, p.rowing!)) : -1, getUp: null };
+    const anim: Anim = { t: p.time, swing, breath: Math.sin(p.time * 2.2 + beat), strike: Math.min(1, Math.abs(p.lean) * 2), act: action && rig.acts ? { kind: action.kind, t: action.kind === "cast" ? since / pace : since, n: action.n, air: action.air } : null, scale: 1 / scaler.scale.x, lying: p.lying, sitting: rowing ? 1 : typeof p.sitting === "number" ? Math.max(0, Math.min(1, p.sitting)) : p.sitting ? 1 : 0, oars: rowing ? Math.max(0, Math.min(1, p.rowing!)) : -1, getUp: null };
     // A rig with no animations of its own is leant into a blow, and a little into a hit, easing off as it always has.
     if (action && !rig.acts) anim.strike = Math.max(anim.strike, Math.min(1, (action.kind === "hit" ? 0.5 : 1.8) * Math.exp(-8 * since)));
     if (sling) stow(sling, p.walking, Math.max(anim.strike, anim.act && anim.act.kind !== "hit" ? 1 : 0), dt);
@@ -6862,6 +6947,15 @@ export function makeFigure(kind: string, look: Look, outfit?: Outfit, opts: Figu
     }
     if (swinging.length > 0) swingBraids(swinging, anim);
     if (loose.length > 0) swingDangles(loose, first ? 0 : dt, top, body);
+    if (spellEyes.length > 0) {
+      // Eyes that light with a spell: swelling up as it gathers, brightest as it leaves, and out again after.
+      const t = anim.act?.kind === "cast" ? anim.act.t / CAST.over : -1;
+      const k = t < 0 || t >= 1 ? 0 : Math.sin(Math.PI * Math.min(1, t * 1.25));
+      for (const eye of spellEyes) {
+        eye.visible = k > 0.02;
+        eye.scale.setScalar(Math.max(0.01, k));
+      }
+    }
   };
   update({ time: 0, stride: 0, walking: false, lean: 0, lying: false });
   last = -1;
@@ -6886,14 +6980,14 @@ export function makeFigure(kind: string, look: Look, outfit?: Outfit, opts: Figu
     cast() {
       if (rig.acts && action?.kind === "cast" && !asked) {
         const since = last - action.at;
-        if (since < CAST.emit) return CAST.emit - since;
-        if (since < CAST.over - 0.25) {
-          action.at = last - CAST.emit;
+        if (since < CAST.emit * pace) return CAST.emit * pace - since;
+        if (since < (CAST.over - 0.25) * pace) {
+          action.at = last - CAST.emit * pace;
           return 0;
         }
       }
       asked = "cast";
-      return rig.acts ? CAST.emit : 0;
+      return rig.acts ? CAST.emit * pace : 0;
     },
     play() {
       if (!rig.plays) return 0;
