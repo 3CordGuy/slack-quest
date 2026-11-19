@@ -15,7 +15,7 @@
 import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { ConvexGeometry } from "three/examples/jsm/geometries/ConvexGeometry.js";
-import { GARB_PREFIX, INK_COLORS, LANTERN_HELM_ICON, INK_LEVELS, INK_REGIONS, RARITY_COLOR, WEAPONS, WEAPON_ICON, appearanceK, decodeInk, inkColorOf, inkLevelOf, type Appearance, type Ink, type InkRegion, type InkView, type Outfit, type Slot } from "@gantt-quest/world";
+import { APPEARANCE_OPTIONS, GARB_PREFIX, HAIR_COLORS, SKIN_TONES, INK_COLORS, LANTERN_HELM_ICON, INK_LEVELS, INK_REGIONS, RARITY_COLOR, WEAPONS, WEAPON_ICON, appearanceK, decodeInk, inkColorOf, inkLevelOf, type Appearance, type Ink, type InkRegion, type InkView, type Outfit, type Slot } from "@gantt-quest/world";
 import type { Look } from "./looks";
 import { torchFlame } from "./torchFlame";
 import { buildLowPoly, disposeLowPoly, type Dangle } from "./gearModels";
@@ -2862,7 +2862,7 @@ const MOUTH_Y: Record<string, number> = { long: 1.15, squat: 1.7 };
  * with its ears and hair, is wider than the shoulders, so a staff held upright passes beside it, not through it.
  */
 function heldLean(shoulderX: number): number {
-  const rings = HEAD_RINGS[chosen?.headShape ?? "round"] ?? HEAD_RINGS.round;
+  const rings = HEAD_RINGS[(chosen ?? face)?.headShape ?? "round"] ?? HEAD_RINGS.round;
   const k = BIG_HEAD * m.head;
   const half = (Math.max(...rings.map((r) => r[1])) + 0.5) * k;
   // From the hand (about half a unit above the hips) up to the widest of the head.
@@ -2873,7 +2873,7 @@ function heldLean(shoulderX: number): number {
 
 /** How far a head of the chosen shape sits above the usual, on its neck, in the torso's units. */
 function headLift(): number {
-  return chosen?.headShape === "long" ? 0.45 : chosen?.headShape === "squat" ? -0.35 : 0;
+  return (chosen ?? face)?.headShape === "long" ? 0.45 : (chosen ?? face)?.headShape === "squat" ? -0.35 : 0;
 }
 
 /** A head's half-width, half-depth and forward offset at height `y`, from its rings. */
@@ -2905,16 +2905,16 @@ const faceAt = (rings: readonly Ring[], y: number) => {
  */
 function lowHead(head: Part, look: Look, asleep: boolean, covered = false) {
   const skin = look.skin;
-  const shape = chosen?.headShape ?? "round";
+  const shape = (chosen ?? face)?.headShape ?? "round";
   const rings = HEAD_RINGS[shape] ?? HEAD_RINGS.round;
   head.loft(skin, rings);
   const chinY = rings[0][0];
   const mouthY = MOUTH_Y[shape] ?? 1.45;
   const earX = ringAt(rings, 3).rx * 0.97;
-  lowEars(head, tone(skin, -0.05), chosen?.ears ?? "round", earX, covered);
-  lowNose(head, tone(skin, -0.05), chosen?.nose ?? look.nose ?? "pointy", faceAt(rings, 2.3));
+  lowEars(head, tone(skin, -0.05), (chosen ?? face)?.ears ?? "round", earX, covered);
+  lowNose(head, tone(skin, -0.05), chosen?.nose ?? look.nose ?? face?.nose ?? "pointy", faceAt(rings, 2.3));
   head.box(tone(skin, -0.25), 1, 0.24, 0.3, 0, mouthY, faceAt(rings, mouthY) + 0.03);
-  lowEyes(head, look.hair, chosen?.eyes ?? look.eyes ?? "round", asleep, rings);
+  lowEyes(head, look.hair, chosen?.eyes ?? look.eyes ?? face?.eyes ?? "round", asleep, rings);
   if (look.glowEyes && !asleep) {
     // Alight over the eyes the face has: a glow in each. For a look whose eyes light only with a spell, each is a
     // part of its own, swelled and shrunk as the spell is cast (see castEyes).
@@ -2938,7 +2938,7 @@ function lowHead(head: Part, look: Look, asleep: boolean, covered = false) {
     head.loft(look.mask, [r(chinY + 0.15, 0.1), r(1.2, 0.13), r(2, 0.24), r(2.5, 0.14)], 10);
     head.loft(tone(look.mask, -0.12), [r(2.4, 0.16), r(2.56, 0.16)], 10);
   }
-  lowHair(head, look.hair, chosen?.hairStyle ?? "short", rings, covered);
+  lowHair(head, look.hair, (chosen ?? face)?.hairStyle ?? "short", rings, covered);
   if (look.bandana) {
     // A cloth band round the brow, knotted behind with two short tails.
     head.loft(look.bandana, fitted([[3.85, 3.86, 3.56], [4.5, 3.89, 3.59]]), 10);
@@ -2950,7 +2950,7 @@ function lowHead(head: Part, look: Look, asleep: boolean, covered = false) {
   if (chosen?.ink) inkPart(head, "head", chosen.ink);
   if (chosen) lowFacialHair(head, chosen.beard, chosen.mustache, skin, look.hair, rings, chinY, mouthY);
   // A stock figure's own (the galley's cook): no beard, just what its look names.
-  else if (look.mustache) lowFacialHair(head, "none", look.mustache, skin, look.hair, rings, chinY, mouthY);
+  else if (face || look.mustache) lowFacialHair(head, face?.beard ?? "none", look.mustache ?? face?.mustache ?? "none", skin, look.hair, rings, chinY, mouthY);
 }
 
 /**
@@ -3147,6 +3147,48 @@ let braids: Braid[] = [];
  */
 let castPace = 1;
 const BOOK_CAST_PACE = 2;
+/** A townsperson's face and hair, picked for them from a name (see faceFor): what a hero chooses for themselves. */
+type Face = Pick<Appearance, "headShape" | "ears" | "hairStyle" | "eyes" | "nose" | "mustache" | "beard"> & { skin?: string; hair?: string };
+/** Set by makeFigure for the figure being built: a townsperson's own face, or null (a hero has `chosen`; others neither). */
+let face: Face | null = null;
+/** The kinds that are townsfolk, each given a face of their own (see faceFor). */
+const TOWNSFOLK = /^(npc|dealer|regular_|salesman_|keeper_)/;
+/** Skin tones and hair colours a townsperson may have: the everyday ones, not the painted. */
+const TOWN_SKIN = SKIN_TONES.slice(0, 8);
+const TOWN_HAIR: readonly string[] = [...HAIR_COLORS.slice(0, 7), HAIR_COLORS[7], HAIR_COLORS[8]];
+
+/**
+ * A face for a townsperson, the same every time for the same `key` (their id, or their kind for one who is always
+ * the same person): head shape, ears, hair, eyes and nose. With `colours` (a generic villager), their skin and
+ * hair colour too, and a mustache or beard on some; a named one keeps the colouring and facial hair their look gives.
+ */
+function faceFor(key: string, colours: boolean): Face {
+  let h = 2166136261;
+  for (let i = 0; i < key.length; i++) h = Math.imul(h ^ key.charCodeAt(i), 16777619);
+  const next = () => {
+    h = Math.imul(h ^ (h >>> 15), 2246822507);
+    h = Math.imul(h ^ (h >>> 13), 3266489909);
+    return ((h ^= h >>> 16) >>> 0) / 4294967296;
+  };
+  const pick = <T extends { id: string }>(list: readonly T[]): T["id"] => list[Math.floor(next() * list.length)].id;
+  const o = APPEARANCE_OPTIONS;
+  const f: Face = {
+    headShape: pick(o.headShape),
+    ears: pick(o.ears),
+    hairStyle: pick(o.hairStyle),
+    eyes: pick(o.eyes),
+    nose: pick(o.nose),
+    // A villager may have a mustache, a beard or both; a named townsperson has only what their look gives them.
+    mustache: !colours || next() < 0.6 ? "none" : pick(o.mustache),
+    beard: !colours || next() < 0.65 ? "none" : pick(o.beard),
+  };
+  if (colours) {
+    f.skin = TOWN_SKIN[Math.floor(next() * TOWN_SKIN.length)];
+    f.hair = TOWN_HAIR[Math.floor(next() * TOWN_HAIR.length)];
+  }
+  return f;
+}
+
 /** How high above the hips a long coat's skirts are hinged, in the torso's units: at the hip joints, so each turns with its leg. */
 const SKIRT_PIVOT = 0.15;
 /** How much of its leg's swing a long coat's skirt follows: all of it, or the leg strides out through the cloth. */
@@ -3470,7 +3512,7 @@ const OVER_HAIR: Ring[] = [[3.95, 3.72, 3.42], [5.4, 3.66, 3.38, -0.05], [6.7, 2
 const grown = (rings: readonly Ring[], by: number): Ring[] => rings.map(([y, rx, rz, dz = 0]) => [y, rx + by, rz + by, dz]);
 
 /** The rings of the head being dressed: its chosen shape, or the usual round one. */
-const headRings = (): readonly Ring[] => HEAD_RINGS[chosen?.headShape ?? "round"] ?? HEAD_RINGS.round;
+const headRings = (): readonly Ring[] => HEAD_RINGS[(chosen ?? face)?.headShape ?? "round"] ?? HEAD_RINGS.round;
 
 /** A head of these rings as headgear meets it: the face and jaw, and the cap of hair from the brow up. */
 const crownOf = (rings: readonly Ring[]): Ring[] => [...rings.filter((r) => r[0] < 4), ...hairCap(rings)];
@@ -3670,7 +3712,7 @@ function lowLanternHelm(head: Part, cap: string) {
 
 /** The headgear a class, townsperson or enemy has by default, rounded to go with low-poly heads. */
 function lowHat(head: Part, look: Look) {
-  const rings = HEAD_RINGS[chosen?.headShape ?? "round"] ?? HEAD_RINGS.round;
+  const rings = HEAD_RINGS[(chosen ?? face)?.headShape ?? "round"] ?? HEAD_RINGS.round;
   switch (look.hat) {
     case "helm":
       lowHelm(head, "#aeb6c2", tone("#aeb6c2", 0.07), look.accent);
@@ -3978,7 +4020,7 @@ function lowSpyglassVisor(head: Part, trim: string) {
 
 /** Armor on the head, rounded: a leather hood, the Spyglass Visor, or a diving helm (anything else). */
 function lowWornHelmet(head: Part, helmet: { ref: string; icon: string }, trim: string) {
-  const rings = HEAD_RINGS[chosen?.headShape ?? "round"] ?? HEAD_RINGS.round;
+  const rings = HEAD_RINGS[(chosen ?? face)?.headShape ?? "round"] ?? HEAD_RINGS.round;
   if (helmet.ref === "hood" || helmet.icon === "hood") {
     lowHood(head, GEAR.leather, rings, trim);
     return;
@@ -5284,12 +5326,12 @@ function person(top: THREE.Group, look: Look, outfit: Outfit | undefined, asleep
   if (lowPoly && !body && !undressed) {
     const rings = chestRings(m.shoulders / m.girth);
     if (look.coat && look.coatColor) {
-      // The coat's fronts over the chest, open down the middle where the shirt shows.
+      // The coat over the chest and all round the back, open down the front where the shirt shows.
       for (const s of [-1, 1]) {
         const pts: Pt[] = [];
         for (const y of [0.4, 2.4, 4.4, 5.7]) {
           const r = ringAt(rings, y);
-          for (const deg of [s * 28, s * 60, s * 95, s * 130]) {
+          for (const deg of [s * 28, s * 60, s * 95, s * 130, s * 160, s * 180]) {
             const a = (deg / 180) * Math.PI;
             pts.push([Math.sin(a) * (r.rx + 0.14), y, Math.cos(a) * (r.rz + 0.14) + r.dz]);
           }
@@ -6963,6 +7005,8 @@ export interface FigureOptions {
   edge?: number;
   /** Draw it low-poly whatever the dev toolbox says (a hero with a chosen appearance always is). */
   lowPoly?: boolean;
+  /** A townsperson's own name or id, which picks their face (see faceFor); without one, their kind picks it. */
+  face?: string;
 }
 
 /**
@@ -6993,8 +7037,10 @@ export function makeFigure(kind: string, look: Look, outfit?: Outfit, opts: Figu
   chosen = outfit?.appearance ?? null;
   lowPoly = !!chosen || !!opts.lowPoly || !BLOCKY_PREF;
   m = lowPoly ? measuresOf(chosen) : USUAL;
-  // A hero's own colouring over their class's.
+  // A hero's own colouring over their class's; a townsperson's own face, and a villager's own colouring.
   if (chosen) look = { ...look, skin: chosen.skin, hair: chosen.hair };
+  face = !chosen && TOWNSFOLK.test(kind) ? faceFor(opts.face ?? kind, kind === "npc") : null;
+  if (face?.skin && face.hair) look = { ...look, skin: face.skin, hair: face.hair };
   const rig = rigFor(kind, top, look, outfit, !!opts.asleep);
   const fade = { value: 1 };
   const mats: Mats = {
