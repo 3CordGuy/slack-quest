@@ -37,6 +37,8 @@ export interface Look {
   vest?: string;
   /** Leather of this colour: a strap from the shoulder across the chest, and a belt with pouches at the hips. */
   straps?: string;
+  /** The colour of a band round a hood's face opening; without one, its edge is outlined like any other. */
+  hoodTrim?: string;
   /** Kelp of this colour growing up round the torso from the waist to the shoulders, in winding vines with fronds. */
   vines?: string;
   /** Bands of this colour round the chest over the tunic, like a lighthouse's. */
