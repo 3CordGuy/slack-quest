@@ -89,6 +89,7 @@ export const WEAPON_ICON: Record<string, string> = {
   sickle: "sickle",
   lute: "lute",
   flute: "flute",
+  accordion: "accordion",
   orb: "orb",
   scepter: "scepter",
   pager_axe: "pager-axe",

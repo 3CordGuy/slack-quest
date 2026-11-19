@@ -4546,6 +4546,42 @@ describe("Bard weapons", () => {
     expect(pushed && held).toBe(true);
   });
 
+  it("Bellows Blast: strikes every enemy beside you, spares an ally, pushes back whoever fails to brace, then waits a turn", () => {
+    let { state, foe } = duel("dummy", "frontend_bard", at(5, 6), at(7, 6));
+    hero(state, "bo", "qa_paladin", at(6, 7));
+    unit(state, "ann").abilities = ["bellows_blast"];
+    expect(WEAPONS.accordion.abilities).toEqual(["bellows_blast", "hornpipe"]);
+    expect(hexDistance(unit(state, "ann").pos, unit(state, foe).pos)).toBe(1);
+    const bo = unit(state, "bo").hp;
+    let pushed = false;
+    let held = false;
+    for (let seed = 1; seed < 120 && !(pushed && held); seed++) {
+      const tryState = structuredClone(state);
+      tryState.rng = seed;
+      const events: ZoneEvent[] = [];
+      const next = must(tryState, { type: "use", by: "ann", unit: "ann", ability: "bellows_blast" }, events);
+      expect(unit(next, "bo").hp).toBe(bo);
+      expect(unit(next, foe).hp).toBeLessThan(unit(state, foe).hp);
+      const save = events.find((e) => e.t === "roll" && e.roll.kind === "save");
+      const now = hexDistance(unit(next, "ann").pos, unit(next, foe).pos);
+      if (save?.t === "roll" && save.roll.ok) { expect(now).toBe(1); held = true; }
+      else { expect(now).toBe(2); pushed = true; }
+    }
+    expect(pushed && held).toBe(true);
+    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "bellows_blast" });
+    state = must(state, { type: "end_turn", by: "ann", unit: "ann" });
+    while (!state.encounter!.acting.includes("ann") || state.encounter!.done.includes("ann")) state = must(state, { type: "timeout" });
+    expect(fails(state, { type: "use", by: "ann", unit: "ann", ability: "bellows_blast" })).toMatch(/not ready/);
+  });
+
+  it("Hornpipe: a Bonus action that gives three more movement, leaving the Action free", () => {
+    let { state } = duel("dummy", "frontend_bard", at(5, 6), at(11, 6));
+    unit(state, "ann").abilities = ["hornpipe"];
+    const move = state.encounter!.budgets.ann.move;
+    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "hornpipe", target: "ann" });
+    expect(state.encounter!.budgets.ann).toMatchObject({ action: true, bonus: false, move: move + 3 });
+  });
+
   it("Clarion Call: a big heal on the target, and a lesser one on every ally beside it, but none further off", () => {
     const { state } = duel("dummy", "frontend_bard", at(5, 6), at(11, 6));
     hero(state, "bo", "qa_paladin", at(8, 6));

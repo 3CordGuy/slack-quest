@@ -176,6 +176,8 @@ const ABILITY_FX: Record<string, Fx> = {
   encore: sung("#7dff9a"),
   blasting_tone: fx("blast", "#ff6b6b"),
   soothing_tone: sung("#5eead4"),
+  bellows_blast: fx("ring", "#f97316"),
+  hornpipe: sung("#facc15"),
   peal: fx("sound", "#ffd23f"),
   clarion_call: sung("#ffd23f"),
   recover: fx("bless", "#ffd23f"),
