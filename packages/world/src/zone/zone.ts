@@ -9,7 +9,8 @@
 //
 // A turn is Action Points (AP): AP_TURN more at its start, on top of any saved
 // from the last (AP_MAX at most), spent on anything in any order, movement too.
-// Heroes next to each other in the initiative order share a turn. Enemy
+// Heroes who rolled the very same initiative share a turn (as does a creature
+// with whoever called it); otherwise each goes in turn. Enemy
 // turns are played here, at once, so nothing waits on a client.
 
 import { STARTING_STATS, hexDistance, posKey, type HexPos } from "@gantt-quest/core";
@@ -539,8 +540,9 @@ function advance(ctx: Ctx): void {
       const u = unitById(state, enc.order[i]);
       if (waiting(u)) continue;
       next.push(u!);
-      // Heroes one after another in the order take their turns together.
-      while (u!.side === "hero" && i + 1 < enc.order.length && unitById(state, enc.order[i + 1])?.side !== "enemy") {
+      // Heroes on the very same initiative take their turns together (a called creature has its caller's).
+      const shares = (id: string) => unitById(state, id)?.side === "hero" && enc.init[id] === enc.init[u!.id];
+      while (u!.side === "hero" && i + 1 < enc.order.length && shares(enc.order[i + 1])) {
         i += 1;
         const also = unitById(state, enc.order[i]);
         if (!waiting(also)) next.push(also!);
@@ -583,6 +585,12 @@ function budgetOf(state: ZoneState, unit: Unit): Budget | null | string {
   if (!enc.acting.includes(unit.id) || enc.done.includes(unit.id)) return "It is not your turn.";
   return enc.budgets[unit.id] ?? "It is not your turn.";
 }
+
+/**
+ * Spent out: no AP left, and no movement bought with it still to walk. A unit's turn ends on its own once it is, after
+ * whatever it did has played out in full (stepZone), so nobody has to press End turn with nothing left to do.
+ */
+export const spentOut = (budget: Budget): boolean => budget.ap <= 0 && budget.move < 1 && (budget.course ?? 0) < 1;
 
 /** Take `cost` AP from the budget, if there is one (out of a fight everything is free), or say why not. */
 function spend(budget: Budget | null, cost: number): string | null {
@@ -876,6 +884,10 @@ export function stepZone(prev: ZoneState, action: ZoneAction): ZoneStep {
   }
   const enc = state.encounter;
   if (enc && !settle(ctx)) {
+    // Its last AP spent, the unit that acted has had its turn.
+    const id = "unit" in action ? action.unit : undefined;
+    const left = id ? enc.budgets[id] : undefined;
+    if (id && left && enc.acting.includes(id) && !enc.done.includes(id) && spentOut(left)) enc.done.push(id);
     const waiting = enc.acting.some((id) => !enc.done.includes(id) && !unitById(state, id)?.down);
     if (!waiting) advance(ctx);
   }

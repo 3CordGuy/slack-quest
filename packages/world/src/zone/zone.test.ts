@@ -289,30 +289,37 @@ describe("starting a fight", () => {
 // ---------- turns ----------
 
 describe("turns", () => {
-  it("gives heroes next to each other in the order one shared turn", () => {
+  /** Ann and Bo in a fight with a dummy, on the initiatives given, with the dummy's turn just over: the round comes round to them. */
+  function rolled(init: { ann: number; bo: number }) {
     let state = board();
     state.aiOff = true;
     hero(state, "ann", "qa_paladin", at(5, 6));
     hero(state, "bo", "qa_paladin", at(5, 7));
-    enemy(state, "dummy", at(9, 6));
+    const dummy = enemy(state, "dummy", at(9, 6));
     state = provoke(must(state, { type: "move", by: "ann", unit: "ann", to: at(6, 6) }));
-    const enc = state.encounter!;
-    const a = enc.order.indexOf("ann");
-    const b = enc.order.indexOf("bo");
-    if (Math.abs(a - b) === 1) {
-      while (state.encounter!.acting.length !== 2) state = must(state, { type: "timeout" });
-      expect(new Set(state.encounter!.acting)).toEqual(new Set(["ann", "bo"]));
-      // Either can go first, and the turn passes only when both have ended theirs.
-      state = must(state, { type: "end_turn", by: "bo", unit: "bo" });
-      expect(state.encounter!.acting).toContain("ann");
-      expect(fails(state, { type: "end_turn", by: "bo", unit: "bo" })).toMatch(/not your turn/);
-      const turn = state.encounter!.turnNo;
-      state = must(state, { type: "end_turn", by: "ann", unit: "ann" });
-      expect(state.encounter!.turnNo).toBeGreaterThan(turn);
-    } else {
-      // The dummy rolled between them: each has a turn alone.
-      expect(state.encounter!.acting.length).toBe(1);
-    }
+    Object.assign(state.encounter!, { order: ["ann", "bo", dummy.id], init: { ...init, [dummy.id]: 1 }, acting: [dummy.id], done: [dummy.id], budgets: {} });
+    return must(state, { type: "timeout" });
+  }
+
+  it("gives heroes on the very same initiative one shared turn", () => {
+    let state = rolled({ ann: 15, bo: 15 });
+    expect(new Set(state.encounter!.acting)).toEqual(new Set(["ann", "bo"]));
+    // Either can go first, and the turn passes only when both have ended theirs.
+    state = must(state, { type: "end_turn", by: "bo", unit: "bo" });
+    expect(state.encounter!.acting).toContain("ann");
+    expect(fails(state, { type: "end_turn", by: "bo", unit: "bo" })).toMatch(/not your turn/);
+    const turn = state.encounter!.turnNo;
+    state = must(state, { type: "end_turn", by: "ann", unit: "ann" });
+    expect(state.encounter!.turnNo).toBeGreaterThan(turn);
+  });
+
+  it("gives heroes next to each other on different initiatives a turn each, one right after the other", () => {
+    let state = rolled({ ann: 15, bo: 14 });
+    expect(state.encounter!.acting).toEqual(["ann"]);
+    expect(fails(state, { type: "end_turn", by: "bo", unit: "bo" })).toMatch(/not your turn/);
+    const turn = state.encounter!.turnNo;
+    state = must(state, { type: "end_turn", by: "ann", unit: "ann" });
+    expect(state.encounter).toMatchObject({ turnNo: turn + 1, acting: ["bo"] });
   });
 
   it("spends AP on anything, in any order, and refuses what it cannot pay for", () => {
@@ -355,6 +362,54 @@ describe("turns", () => {
     expect(ann().move).toBeGreaterThan(0);
     state = nextTurn(state);
     expect(ann()).toMatchObject({ ap: AP_MAX, move: 0 });
+  });
+
+  it("ends a turn on its own once the last AP is spent, after what spent it has played out", () => {
+    let { state, foe } = duel("dummy", "qa_paladin", at(5, 6), at(7, 6));
+    const turn = state.encounter!.turnNo;
+    Object.assign(state.encounter!.budgets.ann, { ap: ACTION_AP + BONUS_AP, move: 0 });
+    // AP still left: the turn goes on.
+    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "block" });
+    expect(state.encounter).toMatchObject({ turnNo: turn, acting: ["ann"], done: [] });
+    // The last of them: the blow lands, then the dummy has its turn, and it is hers again with a fresh 4.
+    const events: ZoneEvent[] = [];
+    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "bash", target: foe }, events);
+    const turnAt = events.findIndex((e) => e.t === "turn");
+    expect(turnAt).toBeGreaterThan(0);
+    const usedAt = events.findIndex((e) => e.t === "used" && e.what === "bash");
+    expect(usedAt).toBeGreaterThanOrEqual(0);
+    expect(usedAt).toBeLessThan(turnAt);
+    expect(state.encounter!.turnNo).toBeGreaterThan(turn);
+    expect(state.encounter!.acting).toEqual(["ann"]);
+    expect(state.encounter!.budgets.ann.ap).toBe(AP_TURN);
+  });
+
+  it("keeps a spent-out turn going while movement bought with the last AP is left to walk", () => {
+    let { state } = duel("dummy", "qa_paladin", at(5, 6), at(8, 6));
+    const turn = state.encounter!.turnNo;
+    Object.assign(state.encounter!.budgets.ann, { ap: 1, move: 0, stride: 3 });
+    state = must(state, { type: "move", by: "ann", unit: "ann", to: at(5, 6) });
+    expect(state.encounter!.budgets.ann).toMatchObject({ ap: 0, move: 2 });
+    expect(state.encounter).toMatchObject({ turnNo: turn, done: [] });
+    state = must(state, { type: "move", by: "ann", unit: "ann", to: at(3, 6) });
+    expect(state.encounter!.turnNo).toBeGreaterThan(turn);
+  });
+
+  it("ends only the spent-out hero's part of a shared turn", () => {
+    let state = board();
+    state.aiOff = true;
+    hero(state, "ann", "qa_paladin", at(3, 6));
+    hero(state, "bo", "qa_paladin", at(3, 8));
+    enemy(state, "wolf", at(9, 6));
+    state = provoke(state);
+    const fresh = () => ({ ap: AP_TURN, move: 0, stride: 2, disengaged: false });
+    Object.assign(state.encounter!, { acting: ["ann", "bo"], done: [], budgets: { ann: { ...fresh(), ap: BONUS_AP }, bo: fresh() } });
+    const turn = state.encounter!.turnNo;
+    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "block" });
+    expect(state.encounter).toMatchObject({ turnNo: turn, acting: ["ann", "bo"], done: ["ann"] });
+    expect(fails(state, { type: "use", by: "ann", unit: "ann", ability: "block" })).toMatch(/not your turn/);
+    state = must(state, { type: "end_turn", by: "bo", unit: "bo" });
+    expect(state.encounter!.turnNo).toBeGreaterThan(turn);
   });
 
   it("charges 2 for forest and 1 more to climb, buying a stride at a time", () => {
