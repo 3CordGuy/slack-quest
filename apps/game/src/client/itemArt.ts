@@ -77,6 +77,72 @@ const ART: Record<string, Art> = {
     p.r(9, 8, 2, 1, p.accent);
   },
 
+  pistol: (p) => {
+    // A flintlock, side on: a long iron barrel, the lock and hammer, a curved wooden butt.
+    p.r(3, 5, 11, 2, C.iron);
+    p.r(3, 5, 11, 1, C.steel);
+    p.r(13, 4, 2, 4, C.iron);
+    p.r(4, 7, 5, 1, C.wood);
+    p.r(2, 3, 2, 3, C.steel);
+    spans(p, C.wood, [[8, 2, 5], [9, 2, 5], [10, 1, 4], [11, 1, 4], [12, 0, 3]]);
+    p.r(7, 8, 1, 2, C.iron);
+    p.r(1, 12, 2, 1, p.accent);
+  },
+  blunderbuss: (p) => {
+    // A short, fat gun with a flared brass muzzle and a stock.
+    spans(p, C.gold, [[2, 11, 14], [3, 10, 14], [4, 10, 14], [5, 11, 14]]);
+    p.r(14, 3, 1, 2, C.dark);
+    p.r(4, 3, 7, 3, C.iron);
+    p.r(4, 3, 7, 1, C.steel);
+    p.r(3, 2, 2, 2, C.steel);
+    spans(p, C.wood, [[6, 1, 8], [7, 0, 6], [8, 0, 3], [9, 0, 3], [10, 0, 2]]);
+    p.r(7, 6, 1, 2, C.iron);
+    p.r(1, 12, 3, 1, p.accent);
+  },
+  "harpoon-gun": (p) => {
+    // A stout iron tube with a barbed harpoon standing out of it, a coil of line at its side.
+    p.r(2, 7, 8, 3, C.iron);
+    p.r(2, 7, 8, 1, C.steel);
+    p.r(9, 8, 6, 1, C.steel);
+    spans(p, C.shine, [[7, 14, 14], [8, 15, 15], [9, 14, 14]]);
+    p.r(12, 6, 1, 1, C.steel);
+    p.r(12, 10, 1, 1, C.steel);
+    p.r(4, 10, 2, 4, C.wood);
+    p.r(3, 11, 1, 3, C.wood);
+    p.r(6, 11, 3, 3, C.paper);
+    p.r(7, 12, 1, 1, C.bark);
+    p.r(1, 14, 3, 1, p.accent);
+  },
+
+  "knit-cap": (p) => {
+    // A knitted cap with a rolled brim and a nub.
+    spans(p, "#5b3f2a", [[3, 6, 9], [4, 4, 11], [5, 3, 12], [6, 3, 12], [7, 3, 12]]);
+    p.r(7, 1, 1, 1, "#5b3f2a");
+    p.r(2, 8, 1, 1, "#7a5a3f");
+    p.r(2, 8, 12, 4, "#7a5a3f");
+    p.r(2, 8, 12, 1, "#8f6c4d");
+    p.r(2, 11, 12, 1, "#4a3220");
+    p.r(7, 2, 2, 1, "#7a5a3f");
+  },
+  "naval-tunic": (p) => {
+    spans(p, "#2f4562", [[2, 4, 11], [3, 3, 12], [4, 2, 13], [5, 2, 13], [6, 3, 12], [7, 3, 12], [8, 3, 12], [9, 3, 12], [10, 3, 12], [11, 3, 12]]);
+    p.r(5, 2, 1, 4, "#2f4562");
+    p.r(2, 2, 3, 1, "#e8edf2");
+    p.r(11, 2, 3, 1, "#e8edf2");
+    p.r(3, 3, 2, 1, "#e8edf2");
+    p.r(11, 3, 2, 1, "#e8edf2");
+    for (const y of [4, 6, 8]) p.r(8, y, 1, 1, C.gold);
+    p.r(3, 9, 10, 1, C.leather);
+    p.r(8, 9, 1, 1, C.gold);
+  },
+  "deck-boots": (p) => {
+    for (const x of [2, 9]) {
+      p.r(x, 3, 4, 6, "#7a5230");
+      p.r(x, 9, 5, 3, "#7a5230");
+      p.r(x, 12, 5, 1, C.bark);
+    }
+  },
+
   // ---- armor ----
   "root-staff": (p) => {
     // A crooked staff, roots at the top, a leaf budding.

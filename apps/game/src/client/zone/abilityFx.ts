@@ -45,6 +45,18 @@ export type FxKind =
   | "taunt"
   /** The user thrown bodily at the one aimed at, slamming into them (Overwhelm). */
   | "charge"
+  /** A lighthouse's beams sweeping round the user for as long as their Beacon lasts. */
+  | "beacon"
+  /** A healing ring on the ground round the user for as long as it lasts. */
+  | "aura"
+  /** A ward going up round the user and every ally in reach (Bolster). */
+  | "bolster"
+  /** Flames bursting off the user all round (Stoke the Fire). */
+  | "nova"
+  /** A wide crescent swept through the hexes beside the user (Cleave). */
+  | "sweep"
+  /** A path of light laid to the ally helped (Show the Way). */
+  | "way"
   /** A crescent blade of wind flying to each target. */
   | "blade"
   /** Lightning out of the sky onto each target, arcing from one to the next. */
@@ -85,9 +97,19 @@ const sung = (color: string): Fx => ({ kind: "bless", color, notes: true });
 export const SONG_MOOD: Record<string, SongMood> = { lively_shanty: "lively", dour_shanty: "dour", windgod_shanty: "wind" };
 /**
  * What a blow by hand leaves as it lands, besides its slash: a shield gone up round the one who struck (they gain one,
- * hit or miss), steel sparks off the target, or a "!" over it (it is goaded into coming at them).
+ * hit or miss), steel sparks off the target, a "!" over it (it is goaded into coming at them), flames on it (it is set
+ * alight), or a thud of dust at its feet.
  */
-export const FLOURISH: Record<string, "shield" | "sparks" | "goad"> = { sturdy_blow: "shield", bulwark_strike: "shield", disarming_chop: "sparks", goading_strike: "goad" };
+export const FLOURISH: Record<string, "shield" | "sparks" | "goad" | "brand" | "thud"> = {
+  sturdy_blow: "shield",
+  bulwark_strike: "shield",
+  disarming_chop: "sparks",
+  goading_strike: "goad",
+  // The Paladin's: a searing blow sets them alight; a mace's heavy blow thuds into the ground; a blow at the joints of armor strikes sparks.
+  branding_strike: "brand",
+  bash: "thud",
+  armor_crush: "sparks",
+};
 
 /** How each blow of sound lands: heavy, ringing like a bell, or out of tune. Plain for any not here. */
 export const SOUND_KIND: Record<string, SoundKind> = { lead_by_example: "heavy", peal: "bell", dissonance: "discord" };
@@ -113,6 +135,12 @@ const ABILITY_FX: Record<string, Fx> = {
   water_burst: fx("bolt", "#38bdf8"),
   rust_armor: fx("erupt", "#c0642c", "rust"),
   bow_shot: fx("arrow", "#e8dcc0"),
+  pistol_shot: fx("bolt", "#ffd23f"),
+  pistol_whip: fx("melee", "#c9b48a"),
+  scattershot: fx("erupt", "#ffb347"),
+  butt_stroke: fx("melee", "#c9b48a"),
+  harpoon_shot: fx("arrow", "#c9d6e8"),
+  barbed_line: fx("arrow", "#a78bfa"),
   snag: fx("arrow", "#a78bfa"),
   take_aim: fx("bless", "#ffe08a"),
   slicing_wind: fx("blade", "#dff4ff"),
@@ -131,18 +159,18 @@ const ABILITY_FX: Record<string, Fx> = {
   binding_kelp: fx("erupt", "#4ade80", "kelp"),
   coral_burst: fx("erupt", "#ff8f7a", "coral"),
   restore: fx("bless", "#5eead4"),
-  cleave: fx("ring", "#dfe9ff"),
-  beacon_aura: fx("bless", "#fff7d6"),
-  healing_aura: fx("bless", "#5dffa0"),
+  cleave: fx("sweep", "#dfe9ff"),
+  beacon_aura: fx("beacon", "#ffe9a8"),
+  healing_aura: fx("aura", "#5dffa0"),
   branding_strike: fx("melee", "#ff7a2a"),
-  stoke_the_fire: fx("ring", "#ff7a2a"),
-  bolster: fx("ring", "#9ec9ff"),
+  stoke_the_fire: fx("nova", "#ff7a2a"),
+  bolster: fx("bolster", "#9ec9ff"),
   soothing_rain: fx("rain", "#8fd3ff"),
   chain_lightning: fx("spark", "#c4b5fd"),
   roar_of_thunder: fx("thunder", "#facc15"),
   trade_winds: fx("lob", "#d9f2e6"),
   tidal_wave: fx("wave", "#38bdf8"),
-  show_the_way: fx("bless", "#fff4c2"),
+  show_the_way: fx("way", "#fff4c2"),
   smugglers_route: fx("bless", "#a78bfa"),
   sneak: fx("bless", "#b8c4d6"),
   pickpocket: fx("melee", "#ffd23f"),
@@ -186,8 +214,6 @@ const ABILITY_FX: Record<string, Fx> = {
 
 /** Guards: shown as a wall of light round whoever puts one up. */
 export const GUARDS = new Set(["block", "raise_guard", "stand_strong", "against_the_waves", "coral_armor"]);
-/** Auras: a ring rolls out over the allies they reach. */
-export const AURA_ABILITIES = new Set(["beacon_aura", "healing_aura"]);
 /** Calls for help: water breaks where the help comes up. */
 export const SUMMONS = new Set(["summon_sea_turtle", "summon_sunken_sailors"]);
 

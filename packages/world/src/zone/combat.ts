@@ -183,7 +183,7 @@ function pull(ctx: Ctx, unit: Unit, target: Unit, hexes: number): void {
     if (sameHex(dest, unit.pos) || !openFor(ctx.state, target.pos, dest)) return;
     const was = target.pos;
     target.pos = dest;
-    ctx.events.push({ t: "shoved", id: unit.id, target: target.id, from: was, to: dest });
+    ctx.events.push({ t: "shoved", id: unit.id, target: target.id, from: was, to: dest, pulled: i + 1 });
     // Ground that trips it (ice) ends the drag there.
     if (enterSurface(ctx, target) || target.down) return;
     enterWeather(ctx, target);

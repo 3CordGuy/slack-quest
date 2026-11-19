@@ -4920,3 +4920,72 @@ describe("Warlock weapons", () => {
     throw new Error("never a critical hit");
   });
 });
+
+describe("Ship's guns", () => {
+  const untilHit = (state: ZoneState, action: ZoneAction, target: string) => {
+    for (let seed = 1; seed < 80; seed++) {
+      const tryState = structuredClone(state);
+      tryState.rng = seed;
+      const events: ZoneEvent[] = [];
+      const next = must(tryState, action, events);
+      if (events.some((e) => e.t === "hit" && e.target === target)) return { state: next, events };
+    }
+    throw new Error("never landed");
+  };
+  /** A Paladin on one hex and a dummy `gap` hexes off along the row. */
+  const gap = (n: number) => {
+    const d = duel("dummy", "qa_paladin", at(4, 6), at(4 + n, 6));
+    unit(d.state, "ann").pos = at(4, 6);
+    unit(d.state, d.foe).pos = at(4 + n, 6);
+    return d;
+  };
+  it("are weapons no class owns, with two abilities each, that a Paladin can carry into a fight", () => {
+    expect(WEAPONS.pistol.abilities).toEqual(["pistol_shot", "pistol_whip"]);
+    expect(WEAPONS.blunderbuss.abilities).toEqual(["scattershot", "butt_stroke"]);
+    expect(WEAPONS.harpoon_gun.abilities).toEqual(["harpoon_shot", "barbed_line"]);
+    for (const id of ["pistol", "blunderbuss", "harpoon_gun"]) expect(WEAPONS[id].classId, id).toBeUndefined();
+    const { state } = duel("dummy", "qa_paladin", at(4, 6), at(8, 6));
+    unit(state, "ann").abilities = abilitiesFor("pistol");
+    expect(unit(state, "ann").abilities).toContain("pistol_shot");
+  });
+
+  it("reach as they say: the pistol 5 hexes, the harpoon 6, the barbed line 3, the whip and butt only beside you", () => {
+    expect(TACTICS.pistol_shot).toMatchObject({ reach: "ranged", range: 5 });
+    expect(TACTICS.harpoon_shot).toMatchObject({ reach: "ranged", range: 6, pull: 2, cooldown: 2 });
+    expect(TACTICS.barbed_line).toMatchObject({ reach: "ranged", range: 3 });
+    expect(TACTICS.pistol_whip).toMatchObject({ reach: "melee", cost: "bonus" });
+    expect(TACTICS.butt_stroke).toMatchObject({ reach: "melee" });
+    const { state, foe } = gap(5);
+    unit(state, "ann").abilities = ["pistol_shot"];
+    expect(hexDistance(unit(state, "ann").pos, unit(state, foe).pos)).toBe(5);
+    expect(checkAbility(state, unit(state, "ann"), "pistol_shot", { target: foe })).toBeNull();
+    unit(state, foe).pos = at(10, 6);
+    expect(checkAbility(state, unit(state, "ann"), "pistol_shot", { target: foe })).toMatch(/Out of range/);
+  });
+
+  it("Harpoon: reaches 6 hexes and hauls what it hits 2 hexes toward the shooter", () => {
+    const { state, foe } = gap(6);
+    unit(state, "ann").abilities = ["harpoon_shot"];
+    const after = untilHit(state, { type: "use", by: "ann", unit: "ann", ability: "harpoon_shot", target: foe }, foe);
+    expect(unit(after.state, foe).pos).toEqual(at(8, 6));
+    // The haul is told as pulled, a step at a time, not as a shove back.
+    expect(after.events.filter((e) => e.t === "shoved").map((e) => (e.t === "shoved" ? e.pulled : 0))).toEqual([1, 2]);
+    unit(state, foe).pos = at(11, 6);
+    expect(checkAbility(state, unit(state, "ann"), "harpoon_shot", { target: foe })).toMatch(/Out of range/);
+  });
+
+  it("Scattershot: a cone 3 hexes long that strikes the enemies in it and leaves an ally in the cone alone", () => {
+    let { state, foe } = duel("dummy", "qa_paladin", at(5, 6), at(7, 6));
+    hero(state, "bo", "qa_paladin", at(6, 6));
+    state.encounter!.acting = ["ann"];
+    unit(state, "ann").abilities = ["scattershot"];
+    const bo = unit(state, "bo").hp;
+    const cone = abilityArea(state, unit(state, "ann"), "scattershot", unit(state, foe).pos);
+    expect(cone.map(posKey)).toContain(posKey(unit(state, foe).pos));
+    expect(Math.max(...cone.map((p) => hexDistance(p, unit(state, "ann").pos)))).toBe(3);
+    const events: ZoneEvent[] = [];
+    const next = must(state, { type: "use", by: "ann", unit: "ann", ability: "scattershot", at: unit(state, foe).pos }, events);
+    expect(unit(next, "bo").hp).toBe(bo);
+    expect(events.some((e) => e.t === "hit" && e.target === foe)).toBe(true);
+  });
+});

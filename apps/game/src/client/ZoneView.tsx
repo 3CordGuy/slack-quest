@@ -109,7 +109,7 @@ import { useCountdown } from "./ui/useCountdown";
 import { useZone, type ZoneSend } from "./useZone";
 import { Icon } from "./items";
 import { label } from "./labels";
-import { AURA_ABILITIES, FLOURISH, GUARDS, SONG_MOOD, SOUND_KIND, SUMMONS, THROW_COLOR, aimKind, fxFor } from "./zone/abilityFx";
+import { FLOURISH, GUARDS, SONG_MOOD, SOUND_KIND, SUMMONS, THROW_COLOR, aimKind, fxFor } from "./zone/abilityFx";
 import { COMMON_ICON, ITEM_ICON, abilityIcon } from "./zone/actionIcons";
 import { BAR_SLOTS, assignSlot, barChoices, loadBar, moveSlot, saveBar } from "./zone/hotbar";
 import { believe, foreseeWalk, giveUp, settle, standing, type Ahead } from "./zone/ahead";
@@ -234,6 +234,8 @@ const TORCH_IN_HAND = { icon: "torch", ref: "torch", rarity: "common" as const }
 
 /** The breath after several have been struck at once, before the next thing is shown. */
 const AFTER_MANY = 340;
+/** How far into a heavy swing the blow lands (render/figures.ts SWEEP.hit), in ms. */
+const HEAVY_HIT_MS = 350;
 /** How far into a cast the spell leaves the hand (render/figures.ts CAST.emit), in ms. */
 const CAST_EMIT_MS = 440;
 /** A wave on its way: who sent it from where, when on the playback's timeline, and when it really set off. */
@@ -469,13 +471,14 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
         if (wave) at = Math.max(at, wave.at + CAST_EMIT_MS + point(ev.from).setY(0).distanceTo(wave.from.clone().setY(0)) * WAVE_PACE * 1000);
         owe(ev.target);
         later(() => {
-          // Flung back and off their feet; with nowhere to go, flattened where they stand.
+          // Flung back and off their feet; with nowhere to go, flattened where they stand. Hauled in on a line, they stay on their feet.
           sounds.zone("shove", view?.whereIs(ev.target));
-          if (to) view?.knock(ev.target, to);
+          if (to) view?.knock(ev.target, to, !ev.pulled);
           else view?.floor(ev.target, undefined, ev.id);
-          timers.current.push(setTimeout(() => sounds.zone("fall", view?.whereIs(ev.target)), 260));
+          if (!ev.pulled) timers.current.push(setTimeout(() => sounds.zone("fall", view?.whereIs(ev.target)), 260));
         });
-        say(!to ? `${name(ev.id)} shoves ${name(ev.target)}, who has nowhere to go and falls.` : hexDistance(ev.from, to) > 1 ? `${name(ev.target)} is swept away.` : `${name(ev.id)} shoves ${name(ev.target)} back.`);
+        // A haul of two hexes is two events; it is said once.
+        if (!ev.pulled || ev.pulled === 1) say(!to ? `${name(ev.id)} shoves ${name(ev.target)}, who has nowhere to go and falls.` : ev.pulled ? `${name(ev.id)} hauls ${name(ev.target)} in.` : hexDistance(ev.from, to) > 1 ? `${name(ev.target)} is swept away.` : `${name(ev.id)} shoves ${name(ev.target)} back.`);
       } else if (ev.t === "used") {
         // Getting away has a line of its own (fled).
         if (ev.what !== "flee") say(`${name(ev.id)}: ${ev.name}${ev.target ? ` on ${name(ev.target)}` : ""}.`);
@@ -562,6 +565,53 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
                 ),
               );
             }
+          } else if (look.kind === "beacon" || look.kind === "aura") {
+            // An aura taken up: played or cast, a ring out over its reach, and then its beams (a Beacon) or its ring (a
+            // Healing Aura) on the user, following them, for as long as the picture shows them carrying it.
+            view?.bless(ev.id, null);
+            const holder = ev.id;
+            const kind = look.kind === "beacon" ? "beacon" : "mending";
+            const holding = () => !!shownNow.current?.units.find((u) => u.id === holder && u.hp > 0)?.conditions.some((c) => c.kind === kind);
+            timers.current.push(
+              setTimeout(() => {
+                fxs.ring(point(user.pos, 0.05), 3.4, look.color, 0.7);
+                if (look.kind === "beacon") fxs.beacon({ key: `beacon:${holder}`, follow: () => renderer.current?.unitHead(holder) ?? null, holding }, look.color);
+                else fxs.aura({ key: `mending:${holder}`, follow: () => renderer.current?.unitFeet(holder) ?? null, holding }, look.color);
+              }, 260),
+            );
+          } else if (look.kind === "bolster") {
+            // A great ward: up round the user and every ally within reach of it.
+            view?.bless(ev.id, null);
+            const shielded = draft.units.filter((u) => u.side === user.side && u.hp > 0 && hexDistance(u.pos, user.pos) <= 2).map((u) => u.pos);
+            timers.current.push(
+              setTimeout(() => {
+                fxs.ring(point(user.pos, 0.05), 3.4, look.color, 0.6);
+                for (const p of shielded) fxs.ward(point(p, 0.3), look.color);
+              }, 260),
+            );
+          } else if (look.kind === "nova") {
+            // Flame bursts off them as the blow comes down.
+            const go = () => fxs.nova(point(user.pos, 0.05), look.color);
+            if (view) view.burst(ev.id, ev.name, false, go);
+            else go();
+          } else if (look.kind === "sweep" && covered.length > 0) {
+            // One wide swing through the hexes beside them, from one end of them to the other.
+            const middle = point(user.pos);
+            const angles = covered.map((p) => {
+              const q = point(p);
+              return Math.atan2(q.z - middle.z, q.x - middle.x);
+            });
+            const across = angles.reduce((v, a) => v.add(new THREE.Vector2(Math.cos(a), Math.sin(a))), new THREE.Vector2());
+            const mid = Math.atan2(across.y, across.x);
+            const half = Math.max(...angles.map((a) => Math.abs(Math.atan2(Math.sin(a - mid), Math.cos(a - mid))))) + 0.45;
+            const go = () => fxs.sweep(point(user.pos, 0.8).setZ(middle.z), mid - half, mid + half, look.color, 1.35);
+            if (view) view.burst(ev.id, ev.name, false, go);
+            else go();
+          } else if (look.kind === "way" && ev.target) {
+            // A path of light laid to them; the heal itself shows as it lands.
+            const them = find(ev.target);
+            view?.bless(ev.id, them ? point(them.pos) : null);
+            if (them) timers.current.push(setTimeout(() => fxs.way(point(user.pos, 0.05), point(them.pos, 0.05), look.color), 260));
           } else if (look.kind === "taunt") {
             // A bellow, and a "!" over every enemy beside them that hears it.
             const near = draft.units.filter((u) => u.side !== user.side && u.hp > 0 && hexDistance(u.pos, user.pos) === 1).map((u) => u.id);
@@ -658,13 +708,14 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
                 else if (ev.what === "sneak" || ev.what === "smugglers_route") fxs.puff(on);
                 else if (aim && SUMMONS.has(ev.what)) fxs.erupt([aim], look.color, "water");
                 else fxs.motes(on, look.color, !!look.notes);
-                // An aura reaches the allies round them.
-                if (AURA_ABILITIES.has(ev.what)) fxs.ring(point(user.pos, 0.05), 3.4, look.color, 0.7);
               }, 260),
             );
           }
         });
         if (clap && from) at += CAST_EMIT_MS + SpellFx.thunderTime(from.clone().setY(0).distanceTo(clap.clone().setY(0))) * 1000;
+        // A blow struck all round (Cleave's sweep, Stoke the Fire's flames) lands as the heavy swing comes down: what it
+        // does to each waits till then, not before the swing is seen.
+        if (look.kind === "sweep" || look.kind === "nova") at += HEAVY_HIT_MS + 150;
       } else if (ev.t === "roll") {
         if (ev.roll.kind === "initiative") {
           // Each fighter's roll comes up over their head, one after another.
@@ -720,6 +771,8 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
               if (!fxs || !flourish) return;
               if (flourish === "shield" && actor) fxs.ward(point(actor.pos, 0.3), mine!.look.color);
               else if (hit && flourish === "sparks" && to) fxs.sparks(to);
+              else if (hit && flourish === "brand" && target) fxs.brand(point(target.pos));
+              else if (hit && flourish === "thud" && to) fxs.slam(to, mine!.look.color);
               else if (hit && flourish === "goad") {
                 const head = view?.unitHead(ev.target);
                 if (head) fxs.exclaim(head, mine!.look.color);
@@ -827,7 +880,7 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
         later(() => {
           sounds.heal(blowName(ev.what), view?.whereIs(ev.target));
           const healed = find(ev.target);
-          if (healed) spells.current?.motes(point(healed.pos, 0.3), use?.look.kind === "bless" ? use.look.color : "#7dff9a", !!use?.look.notes);
+          if (healed) spells.current?.motes(point(healed.pos, 0.3), use?.look.kind === "bless" || use?.look.kind === "way" ? use.look.color : "#7dff9a", !!use?.look.notes);
           view?.glint(ev.target, "#7dff9a");
           view?.floatOver(ev.target, `+${ev.amount}`, "#7dff9a");
         });
