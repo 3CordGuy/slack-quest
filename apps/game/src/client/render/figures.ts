@@ -15,10 +15,10 @@
 import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { ConvexGeometry } from "three/examples/jsm/geometries/ConvexGeometry.js";
-import { GARB_PREFIX, INK_COLORS, LANTERN_HELM_ICON, INK_LEVELS, INK_REGIONS, RARITY_COLOR, WEAPONS, WEAPON_ICON, appearanceK, decodeInk, inkColorOf, inkLevelOf, type Appearance, type Ink, type InkRegion, type InkView, type Outfit, type Slot } from "@gantt-quest/world";
+import { APPEARANCE_OPTIONS, GARB_PREFIX, HAIR_COLORS, SKIN_TONES, INK_COLORS, LANTERN_HELM_ICON, INK_LEVELS, INK_REGIONS, RARITY_COLOR, WEAPONS, WEAPON_ICON, appearanceK, decodeInk, inkColorOf, inkLevelOf, type Appearance, type Ink, type InkRegion, type InkView, type Outfit, type Slot } from "@gantt-quest/world";
 import type { Look } from "./looks";
 import { torchFlame } from "./torchFlame";
-import { buildLowPoly, disposeLowPoly, type Dangle } from "./gearModels";
+import { buildLowPoly, disposeLowPoly, type Dangle, type Spin } from "./gearModels";
 import { makeSilhouette, type Silhouette } from "./silhouette";
 
 export const OUTLINE = "#1b1830";
@@ -875,9 +875,70 @@ function gear(p: Part, icon: string, trim: string, hold: Hold, inHand = false): 
     }
     made.set(group, { part, pivot, chain });
   }
+  // What turns freely (an armillary sphere's inner rings) goes on a joint of its own at its pivot, turned about
+  // its axis each frame (see turnSpinners).
+  const turning: THREE.Object3D[] = [];
+  built.model.traverse((o) => {
+    if (o.userData.spin) turning.push(o);
+  });
+  for (const group of turning) {
+    group.removeFromParent();
+    const sp = group.userData.spin as Spin;
+    const pivot = new THREE.Vector3(...sp.pivot).applyMatrix4(at);
+    const axis = new THREE.Vector3(...sp.axis).transformDirection(at);
+    const part = new Part(p.joint, pivot.x, pivot.y, pivot.z);
+    part.model(group, new THREE.Matrix4().makeTranslation(-pivot.x, -pivot.y, -pivot.z).multiply(at));
+    disposeLowPoly(group);
+    extraParts.push(part);
+    spinners.push({ joint: part.joint, axis, angle: 0, speed: SPIN_SPEED, was: null });
+  }
   p.model(built.model, at);
   disposeLowPoly(built.model);
   return true;
+}
+
+/** Something turning freely about an axis in the hand (see Kit.spin): its angle, how fast it turns, and the hand's last turn. */
+interface Spinner {
+  joint: THREE.Object3D;
+  /** The axis it turns about, in the hand's frame. */
+  axis: THREE.Vector3;
+  angle: number;
+  speed: number;
+  was: THREE.Quaternion | null;
+}
+/** Set by makeFigure for the figure being built: what turns freely in its hands. */
+let spinners: Spinner[] = [];
+/** How fast a spinner turns on its own, in radians a second, and how quickly it eases back to that after a jolt. */
+const SPIN_SPEED = 0.7;
+const SPIN_EASE = 1.4;
+const _spinQ = new THREE.Quaternion();
+const _spinAxis = new THREE.Vector3();
+
+/**
+ * Turn what spins freely: on its own, slowly; and as the hand turns about its axis it stays behind, as a loose
+ * ring would, its speed taking up the difference and easing back to its own turn.
+ */
+function turnSpinners(list: Spinner[], dt: number) {
+  for (const sp of list) {
+    const hand = sp.joint.parent;
+    if (!hand) continue;
+    hand.updateWorldMatrix(true, false);
+    const now = new THREE.Quaternion();
+    hand.matrixWorld.decompose(_pos, now, _scale);
+    if (sp.was && dt > 0) {
+      // How far the hand has turned about the spinner's axis since last frame (the axis in the world).
+      _spinQ.copy(now).multiply(_inv.copy(sp.was).invert());
+      _spinAxis.copy(sp.axis).applyQuaternion(now).normalize();
+      const turned = 2 * Math.atan2(_spinQ.x * _spinAxis.x + _spinQ.y * _spinAxis.y + _spinQ.z * _spinAxis.z, _spinQ.w);
+      // Left behind by the hand's turn, it is set spinning the other way, then eases back to its own speed.
+      sp.speed -= (turned / dt) * 0.6;
+      sp.speed += (SPIN_SPEED - sp.speed) * (1 - Math.exp(-SPIN_EASE * dt));
+      sp.speed = Math.max(-8, Math.min(8, sp.speed));
+      sp.angle += sp.speed * dt;
+    }
+    sp.was = now;
+    sp.joint.quaternion.setFromAxisAngle(sp.axis, sp.angle);
+  }
 }
 
 /** One joint of something hanging loose: a length of chain, or the weight on its end. */
@@ -2862,7 +2923,7 @@ const MOUTH_Y: Record<string, number> = { long: 1.15, squat: 1.7 };
  * with its ears and hair, is wider than the shoulders, so a staff held upright passes beside it, not through it.
  */
 function heldLean(shoulderX: number): number {
-  const rings = HEAD_RINGS[chosen?.headShape ?? "round"] ?? HEAD_RINGS.round;
+  const rings = HEAD_RINGS[(chosen ?? face)?.headShape ?? "round"] ?? HEAD_RINGS.round;
   const k = BIG_HEAD * m.head;
   const half = (Math.max(...rings.map((r) => r[1])) + 0.5) * k;
   // From the hand (about half a unit above the hips) up to the widest of the head.
@@ -2873,7 +2934,7 @@ function heldLean(shoulderX: number): number {
 
 /** How far a head of the chosen shape sits above the usual, on its neck, in the torso's units. */
 function headLift(): number {
-  return chosen?.headShape === "long" ? 0.45 : chosen?.headShape === "squat" ? -0.35 : 0;
+  return (chosen ?? face)?.headShape === "long" ? 0.45 : (chosen ?? face)?.headShape === "squat" ? -0.35 : 0;
 }
 
 /** A head's half-width, half-depth and forward offset at height `y`, from its rings. */
@@ -2905,16 +2966,16 @@ const faceAt = (rings: readonly Ring[], y: number) => {
  */
 function lowHead(head: Part, look: Look, asleep: boolean, covered = false) {
   const skin = look.skin;
-  const shape = chosen?.headShape ?? "round";
+  const shape = (chosen ?? face)?.headShape ?? "round";
   const rings = HEAD_RINGS[shape] ?? HEAD_RINGS.round;
   head.loft(skin, rings);
   const chinY = rings[0][0];
   const mouthY = MOUTH_Y[shape] ?? 1.45;
   const earX = ringAt(rings, 3).rx * 0.97;
-  lowEars(head, tone(skin, -0.05), chosen?.ears ?? "round", earX, covered);
-  lowNose(head, tone(skin, -0.05), chosen?.nose ?? look.nose ?? "pointy", faceAt(rings, 2.3));
+  lowEars(head, tone(skin, -0.05), (chosen ?? face)?.ears ?? "round", earX, covered);
+  lowNose(head, tone(skin, -0.05), chosen?.nose ?? look.nose ?? face?.nose ?? "pointy", faceAt(rings, 2.3));
   head.box(tone(skin, -0.25), 1, 0.24, 0.3, 0, mouthY, faceAt(rings, mouthY) + 0.03);
-  lowEyes(head, look.hair, chosen?.eyes ?? look.eyes ?? "round", asleep, rings);
+  lowEyes(head, look.hair, chosen?.eyes ?? look.eyes ?? face?.eyes ?? "round", asleep, rings);
   if (look.glowEyes && !asleep) {
     // Alight over the eyes the face has: a glow in each. For a look whose eyes light only with a spell, each is a
     // part of its own, swelled and shrunk as the spell is cast (see castEyes).
@@ -2938,7 +2999,7 @@ function lowHead(head: Part, look: Look, asleep: boolean, covered = false) {
     head.loft(look.mask, [r(chinY + 0.15, 0.1), r(1.2, 0.13), r(2, 0.24), r(2.5, 0.14)], 10);
     head.loft(tone(look.mask, -0.12), [r(2.4, 0.16), r(2.56, 0.16)], 10);
   }
-  lowHair(head, look.hair, chosen?.hairStyle ?? "short", rings, covered);
+  lowHair(head, look.hair, (chosen ?? face)?.hairStyle ?? "short", rings, covered);
   if (look.bandana) {
     // A cloth band round the brow, knotted behind with two short tails.
     head.loft(look.bandana, fitted([[3.85, 3.86, 3.56], [4.5, 3.89, 3.59]]), 10);
@@ -2950,7 +3011,7 @@ function lowHead(head: Part, look: Look, asleep: boolean, covered = false) {
   if (chosen?.ink) inkPart(head, "head", chosen.ink);
   if (chosen) lowFacialHair(head, chosen.beard, chosen.mustache, skin, look.hair, rings, chinY, mouthY);
   // A stock figure's own (the galley's cook): no beard, just what its look names.
-  else if (look.mustache) lowFacialHair(head, "none", look.mustache, skin, look.hair, rings, chinY, mouthY);
+  else if (face || look.mustache) lowFacialHair(head, face?.beard ?? "none", look.mustache ?? face?.mustache ?? "none", skin, look.hair, rings, chinY, mouthY);
 }
 
 /**
@@ -3147,14 +3208,62 @@ let braids: Braid[] = [];
  */
 let castPace = 1;
 const BOOK_CAST_PACE = 2;
+/** A townsperson's face and hair, picked for them from a name (see faceFor): what a hero chooses for themselves. */
+type Face = Pick<Appearance, "headShape" | "ears" | "hairStyle" | "eyes" | "nose" | "mustache" | "beard"> & { skin?: string; hair?: string };
+/** Set by makeFigure for the figure being built: a townsperson's own face, or null (a hero has `chosen`; others neither). */
+let face: Face | null = null;
+/** The kinds that are townsfolk, each given a face of their own (see faceFor). */
+const TOWNSFOLK = /^(npc|dealer|regular_|salesman_|keeper_)/;
+/** Skin tones and hair colours a townsperson may have: the everyday ones, not the painted. */
+const TOWN_SKIN = SKIN_TONES.slice(0, 8);
+const TOWN_HAIR: readonly string[] = [...HAIR_COLORS.slice(0, 7), HAIR_COLORS[7], HAIR_COLORS[8]];
+
+/**
+ * A face for a townsperson, the same every time for the same `key` (their id, or their kind for one who is always
+ * the same person): head shape, ears, hair, eyes and nose. With `colours` (a generic villager), their skin and
+ * hair colour too, and a mustache or beard on some; a named one keeps the colouring and facial hair their look gives.
+ */
+function faceFor(key: string, colours: boolean): Face {
+  let h = 2166136261;
+  for (let i = 0; i < key.length; i++) h = Math.imul(h ^ key.charCodeAt(i), 16777619);
+  const next = () => {
+    h = Math.imul(h ^ (h >>> 15), 2246822507);
+    h = Math.imul(h ^ (h >>> 13), 3266489909);
+    return ((h ^= h >>> 16) >>> 0) / 4294967296;
+  };
+  const pick = <T extends { id: string }>(list: readonly T[]): T["id"] => list[Math.floor(next() * list.length)].id;
+  const o = APPEARANCE_OPTIONS;
+  const f: Face = {
+    headShape: pick(o.headShape),
+    ears: pick(o.ears),
+    hairStyle: pick(o.hairStyle),
+    eyes: pick(o.eyes),
+    nose: pick(o.nose),
+    // A villager may have a mustache, a beard or both; a named townsperson has only what their look gives them.
+    mustache: !colours || next() < 0.6 ? "none" : pick(o.mustache),
+    beard: !colours || next() < 0.65 ? "none" : pick(o.beard),
+  };
+  if (colours) {
+    f.skin = TOWN_SKIN[Math.floor(next() * TOWN_SKIN.length)];
+    f.hair = TOWN_HAIR[Math.floor(next() * TOWN_HAIR.length)];
+  }
+  return f;
+}
+
 /** How high above the hips a long coat's skirts are hinged, in the torso's units: at the hip joints, so each turns with its leg. */
 const SKIRT_PIVOT = 0.15;
 /** How much of its leg's swing a long coat's skirt follows: all of it, or the leg strides out through the cloth. */
 const SKIRT_FOLLOW = 1;
 /** How far a long coat's skirts stand off the legs, so a bent knee stays inside the cloth. */
 const SKIRT_EASE = 0.18;
-/** Set by makeFigure for the figure being built: a long coat's two skirts and the thigh each swings with. */
-let skirts: { joint: THREE.Object3D; thigh: THREE.Object3D }[] = [];
+/** Set by makeFigure for the figure being built: a long coat's two skirts, each folded at the knee, and the leg each swings with. */
+let skirts: { joint: THREE.Object3D; thigh: THREE.Object3D; fold: THREE.Object3D; shin: THREE.Object3D }[] = [];
+/** How much of the knee's bend the lower piece of a long coat's skirt follows: cloth bends less than a leg. */
+const FOLD_FOLLOW = 0.6;
+/** How far down a long coat's hem hangs, in the torso's units: a little below the knee. */
+const COAT_HEM = -3.7;
+/** How far a long coat's upper and lower skirt pieces overlap above and below the knee, so a bend opens no gap. */
+const FOLD_OVERLAP = 0.7;
 /** Set by makeFigure for the figure being built: eyes that light only while a spell is cast (see Look.glowOnCast). */
 let castEyes: THREE.Object3D[] = [];
 /** The front of a long (wizard's) beard on the figure being built, if it has one: where an amulet goes. */
@@ -3470,7 +3579,7 @@ const OVER_HAIR: Ring[] = [[3.95, 3.72, 3.42], [5.4, 3.66, 3.38, -0.05], [6.7, 2
 const grown = (rings: readonly Ring[], by: number): Ring[] => rings.map(([y, rx, rz, dz = 0]) => [y, rx + by, rz + by, dz]);
 
 /** The rings of the head being dressed: its chosen shape, or the usual round one. */
-const headRings = (): readonly Ring[] => HEAD_RINGS[chosen?.headShape ?? "round"] ?? HEAD_RINGS.round;
+const headRings = (): readonly Ring[] => HEAD_RINGS[(chosen ?? face)?.headShape ?? "round"] ?? HEAD_RINGS.round;
 
 /** A head of these rings as headgear meets it: the face and jaw, and the cap of hair from the brow up. */
 const crownOf = (rings: readonly Ring[]): Ring[] => [...rings.filter((r) => r[0] < 4), ...hairCap(rings)];
@@ -3670,7 +3779,7 @@ function lowLanternHelm(head: Part, cap: string) {
 
 /** The headgear a class, townsperson or enemy has by default, rounded to go with low-poly heads. */
 function lowHat(head: Part, look: Look) {
-  const rings = HEAD_RINGS[chosen?.headShape ?? "round"] ?? HEAD_RINGS.round;
+  const rings = HEAD_RINGS[(chosen ?? face)?.headShape ?? "round"] ?? HEAD_RINGS.round;
   switch (look.hat) {
     case "helm":
       lowHelm(head, "#aeb6c2", tone("#aeb6c2", 0.07), look.accent);
@@ -3978,7 +4087,7 @@ function lowSpyglassVisor(head: Part, trim: string) {
 
 /** Armor on the head, rounded: a leather hood, the Spyglass Visor, or a diving helm (anything else). */
 function lowWornHelmet(head: Part, helmet: { ref: string; icon: string }, trim: string) {
-  const rings = HEAD_RINGS[chosen?.headShape ?? "round"] ?? HEAD_RINGS.round;
+  const rings = HEAD_RINGS[(chosen ?? face)?.headShape ?? "round"] ?? HEAD_RINGS.round;
   if (helmet.ref === "hood" || helmet.icon === "hood") {
     lowHood(head, GEAR.leather, rings, trim);
     return;
@@ -4137,22 +4246,36 @@ function lowUndershirt(torso: Part, skin: string, sh: number) {
  * The skirts of a long coat, open at the front, as two panels round the legs from the waist to the shin:
  * each a slice of a flaring ring from `a0` to `a1` (radians from +z, toward +x), a little thick.
  */
-function coatPanel(part: Part, color: string, s: number, a0: number, a1: number, grow = 0) {
-  const pts: Pt[] = [];
+function coatPanel(part: Part, color: string, s: number, a0: number, a1: number, grow = 0, span?: [top: number, bottom: number]) {
   const steps = 6;
-  for (let i = 0; i <= steps; i++) {
-    const a = a0 + ((a1 - a0) * i) / steps;
-    // The skirts flare over the hips, wider for wide ones, and out over the tops of the thighs.
-    const rings: [number, number, number, number][] = [
-      [1.4, 2.85 * (1 + m.hips) * 0.5 + grow, 2 + grow, 0.05],
-      [0.2, Math.max(3.1 * m.hips, thighReach(0.2) + 0.1) + grow, 2.25 + grow, 0],
-      [-4.6, Math.max(3.5 * m.hips, thighReach(0.2) + 0.25) + grow, 2.7 + grow, -0.2],
-    ];
-    for (const [y, rx, rz, dz] of rings) {
-      for (const k of [1, 0.82]) pts.push([s * Math.sin(a) * rx * k, y, Math.cos(a) * rz * k + dz]);
+  // The skirts flare over the hips, wider for wide ones, and out over the tops of the thighs.
+  const all: [number, number, number, number][] = [
+    [1.4, 2.85 * (1 + m.hips) * 0.5 + grow, 2 + grow, 0.05],
+    [0.2, Math.max(3.1 * m.hips, thighReach(0.2) + 0.1) + grow, 2.25 + grow, 0],
+    [COAT_HEM, Math.max(3.4 * m.hips, thighReach(0.2) + 0.25) + grow, 2.6 + grow, -0.15],
+  ];
+  // Only the stretch from `span`'s top to its bottom (a skirt folded at the knee is two): the rings inside it, and
+  // one at each end, between the rings either side of it.
+  const at = (y: number): [number, number, number, number] => {
+    const i = Math.max(0, all.findIndex(([ry], k) => k + 1 < all.length && y <= ry && y >= all[k + 1][0]));
+    const [p, q] = [all[i], all[i + 1]];
+    const t = (p[0] - y) / (p[0] - q[0]);
+    return [y, p[1] + (q[1] - p[1]) * t, p[2] + (q[2] - p[2]) * t, p[3] + (q[3] - p[3]) * t];
+  };
+  const rings = span ? [at(span[0]), ...all.filter(([y]) => y < span[0] && y > span[1]), at(span[1])] : all;
+  // A thin shell of cloth, hollow inside: built as small curved tiles, one per step round and per band down, each
+  // the smallest solid holding its corners on the outer face and the same a cloth's thickness further in. (One
+  // solid round the whole arc would fill the inside of the curve, a slab between the legs.)
+  const thick = 0.16;
+  const on = (a: number, [y, rx, rz, dz]: [number, number, number, number], inset: number): Pt => [s * Math.sin(a) * (rx - inset), y, Math.cos(a) * (rz - inset) + dz];
+  for (let i = 0; i < steps; i++) {
+    const [p, q] = [a0 + ((a1 - a0) * i) / steps, a0 + ((a1 - a0) * (i + 1)) / steps];
+    for (let j = 0; j + 1 < rings.length; j++) {
+      const pts: Pt[] = [];
+      for (const a of [p, q]) for (const r of [rings[j], rings[j + 1]]) for (const inset of [0, thick]) pts.push(on(a, r, inset));
+      part.shape(color, pts);
     }
   }
-  part.shape(color, pts);
 }
 
 /** An arm in a sleeve with a cuff, from the shoulder joint down. */
@@ -5240,10 +5363,22 @@ function person(top: THREE.Group, look: Look, outfit: Outfit | undefined, asleep
         const skirt = new Part(torso.joint, 0, SKIRT_PIVOT, 0);
         skirt.skin.position.y = -SKIRT_PIVOT;
         skirt.skin.scale.set(m.girth, 1, m.girth);
-        coatPanel(skirt, greatcoat ? cloth : look.coatColor ?? cloth, s, 0.42, Math.PI + 0.05, SKIRT_EASE);
-        coatPanel(skirt, edgeColor, s, 0.38, 0.52, SKIRT_EASE + 0.06);
-        extraParts.push(skirt);
-        skirts.push({ joint: skirt.joint, thigh: (s > 0 ? b.thighL : b.thighR).joint });
+        const coatCloth = greatcoat ? cloth : look.coatColor ?? cloth;
+        const thigh = (s > 0 ? b.thighL : b.thighR).joint;
+        // Folded at the knee: the upper skirt turns with the thigh, and below the knee a second piece, hinged
+        // there, bends with the shin, so the hem follows the lower leg as it kicks back.
+        // The two overlap round the knee, the lower just inside the upper, so a bend slides one under the other
+        // instead of opening a gap between them.
+        const knee = KNEE * m.legs;
+        coatPanel(skirt, coatCloth, s, 0.42, Math.PI + 0.05, SKIRT_EASE, [1.4, knee - FOLD_OVERLAP]);
+        coatPanel(skirt, edgeColor, s, 0.38, 0.52, SKIRT_EASE + 0.06, [1.4, knee - FOLD_OVERLAP]);
+        const fold = new Part(skirt.joint, 0, knee - SKIRT_PIVOT, 0);
+        fold.skin.position.y = -knee;
+        fold.skin.scale.set(m.girth, 1, m.girth);
+        coatPanel(fold, coatCloth, s, 0.42, Math.PI + 0.05, SKIRT_EASE - 0.14, [knee + FOLD_OVERLAP, COAT_HEM]);
+        coatPanel(fold, edgeColor, s, 0.38, 0.52, SKIRT_EASE - 0.08, [knee + FOLD_OVERLAP, COAT_HEM]);
+        extraParts.push(skirt, fold);
+        skirts.push({ joint: skirt.joint, thigh, fold: fold.joint, shin: (s > 0 ? b.shinL : b.shinR).joint });
       }
     } else {
       for (const s of [-1, 1]) {
@@ -5283,18 +5418,56 @@ function person(top: THREE.Group, look: Look, outfit: Outfit | undefined, asleep
   }
   if (lowPoly && !body && !undressed) {
     const rings = chestRings(m.shoulders / m.girth);
+    if (look.coat) {
+      // The coat's front edges, trimmed, carried up from the skirts over the chest to the collar: the same line as
+      // the skirts' edge, so it reads as one coat from the hem to the neck.
+      const trimEdge = look.coatTrim ?? look.accent;
+      for (const s of [-1, 1]) {
+        const line = [1.3, 2.4, 3.5, 4.5, 5.3, 5.95].map((y, i, ys): Pt => {
+          const r = ringAt(rings, y);
+          // It turns out a little toward the shoulder at the top, a lapel opening round the neck.
+          const a = 0.47 + 0.25 * Math.max(0, (i - (ys.length - 3)) / 2);
+          return [s * Math.sin(a) * (r.rx + 0.16), y, Math.cos(a) * (r.rz + 0.16) + r.dz];
+        });
+        for (let i = 0; i + 1 < line.length; i++) strut(torso, trimEdge, line[i], line[i + 1], 0.17);
+      }
+    }
     if (look.coat && look.coatColor) {
-      // The coat's fronts over the chest, open down the middle where the shirt shows.
+      // The coat over the chest, all round the back and up over the shoulders to a collar at the neck, open down
+      // the front where the shirt shows.
       for (const s of [-1, 1]) {
         const pts: Pt[] = [];
-        for (const y of [0.4, 2.4, 4.4, 5.7]) {
+        for (const y of [0.4, 2.4, 4.4, 5.3, 5.9, 6.3]) {
           const r = ringAt(rings, y);
-          for (const deg of [s * 28, s * 60, s * 95, s * 130]) {
+          for (const deg of [s * 28, s * 60, s * 95, s * 130, s * 160, s * 180]) {
             const a = (deg / 180) * Math.PI;
             pts.push([Math.sin(a) * (r.rx + 0.14), y, Math.cos(a) * (r.rz + 0.14) + r.dz]);
           }
         }
         torso.shape(look.coatColor, pts);
+      }
+    }
+    if (look.vines) {
+      // Kelp growing up round the torso: three vines from the waist, each winding half round the body as it climbs
+      // to the shoulders, a little wavy, thinning toward the top, with a frond off it here and there.
+      const out = (a: number, y: number, by: number): Pt => {
+        const r = ringAt(rings, y);
+        return [Math.sin(a) * (r.rx + by), y, Math.cos(a) * (r.rz + by) + r.dz];
+      };
+      for (let v = 0; v < 3; v++) {
+        const start = (v / 3) * Math.PI * 2 + 0.4;
+        const pts: Pt[] = [];
+        for (let i = 0; i <= 8; i++) {
+          const t = i / 8;
+          const y = 0.6 + t * 5.2;
+          pts.push(out(start + t * Math.PI * (v % 2 ? -1 : 1) + 0.18 * Math.sin(t * 9 + v), y, 0.14));
+        }
+        for (let i = 0; i + 1 < pts.length; i++) strut(torso, i % 2 ? tone(look.vines, -0.08) : look.vines, pts[i], pts[i + 1], 0.26 - i * 0.014, 0.25 - i * 0.014);
+        // Fronds: long, flat blades sprouting off the vine, lying along the body.
+        for (const i of [2, 4, 6]) {
+          const a = start + (i / 8) * Math.PI * (v % 2 ? -1 : 1) + (i % 4 ? 0.28 : -0.28);
+          torso.ball(tone(look.vines, 0.12), 0.32, ...out(a, 0.6 + (i / 8) * 5.2 + 0.35, 0.2), 0, [0.7, 1.7, 0.35]);
+        }
       }
     }
     if (look.stripes) {
@@ -6963,6 +7136,8 @@ export interface FigureOptions {
   edge?: number;
   /** Draw it low-poly whatever the dev toolbox says (a hero with a chosen appearance always is). */
   lowPoly?: boolean;
+  /** A townsperson's own name or id, which picks their face (see faceFor); without one, their kind picks it. */
+  face?: string;
 }
 
 /**
@@ -6984,6 +7159,7 @@ export function makeFigure(kind: string, look: Look, outfit?: Outfit, opts: Figu
   extraParts = [];
   braids = [];
   dangles = [];
+  spinners = [];
   bodyParts = [];
   beardFront = null;
   castEyes = [];
@@ -6993,8 +7169,10 @@ export function makeFigure(kind: string, look: Look, outfit?: Outfit, opts: Figu
   chosen = outfit?.appearance ?? null;
   lowPoly = !!chosen || !!opts.lowPoly || !BLOCKY_PREF;
   m = lowPoly ? measuresOf(chosen) : USUAL;
-  // A hero's own colouring over their class's.
+  // A hero's own colouring over their class's; a townsperson's own face, and a villager's own colouring.
   if (chosen) look = { ...look, skin: chosen.skin, hair: chosen.hair };
+  face = !chosen && TOWNSFOLK.test(kind) ? faceFor(opts.face ?? kind, kind === "npc") : null;
+  if (face?.skin && face.hair) look = { ...look, skin: face.skin, hair: face.hair };
   const rig = rigFor(kind, top, look, outfit, !!opts.asleep);
   const fade = { value: 1 };
   const mats: Mats = {
@@ -7008,6 +7186,7 @@ export function makeFigure(kind: string, look: Look, outfit?: Outfit, opts: Figu
   for (const part of allParts) part.build(mats, made);
   const swinging = braids;
   const loose = dangles;
+  const turners = spinners;
   const spellEyes = castEyes;
   const hems = skirts;
   const pace = castPace;
@@ -7150,8 +7329,12 @@ export function makeFigure(kind: string, look: Look, outfit?: Outfit, opts: Figu
     }
     if (swinging.length > 0) swingBraids(swinging, anim);
     if (loose.length > 0) swingDangles(loose, first ? 0 : dt, top, body);
+    if (turners.length > 0) turnSpinners(turners, first ? 0 : dt);
     // A long coat's skirts swing with the legs under them, forward and back and out to the side.
-    for (const h of hems) h.joint.rotation.set(h.thigh.rotation.x * SKIRT_FOLLOW, 0, h.thigh.rotation.z * SKIRT_FOLLOW);
+    for (const h of hems) {
+      h.joint.rotation.set(h.thigh.rotation.x * SKIRT_FOLLOW, 0, h.thigh.rotation.z * SKIRT_FOLLOW);
+      h.fold.rotation.x = h.shin.rotation.x * FOLD_FOLLOW;
+    }
     if (spellEyes.length > 0) {
       // Eyes that light with a spell: swelling up as it gathers, brightest as it leaves, and out again after.
       const t = anim.act?.kind === "cast" ? anim.act.t / CAST.over : -1;

@@ -57,6 +57,18 @@ export interface Kit {
    * at `bob`. In a picture they stay as built.
    */
   dangle(pivot: V3, bob: V3, build: () => void, opts?: Pick<Dangle, "limit" | "clear" | "size" | "mass">): void;
+  /**
+   * Build some parts that turn freely about the line through `pivot` along `axis` (an armillary sphere's inner
+   * rings on its spine): in a hero's hand they turn slowly on their own and lag behind as the hand turns, then
+   * catch up (see figures.ts). In a picture they stay as built.
+   */
+  spin(pivot: V3, axis: V3, build: () => void): void;
+}
+
+/** What a group made by Kit.spin carries in its userData. */
+export interface Spin {
+  pivot: V3;
+  axis: V3;
 }
 
 /** What a group made by Kit.dangle carries in its userData. */
@@ -483,14 +495,18 @@ export const LOW_POLY: Record<string, LowPolyDef> = {
   orb: {
     lean: -0.2,
     build: (k) => {
-      // An armillary sphere: brass rings crossed round a brass globe at the middle, on its axis rod, one band enamelled.
+      // An armillary sphere: a fixed brass frame (a meridian and a horizon ring) round a brass globe on the axis
+      // rod, and inside it two rings that turn about the rod on their own (see Kit.spin), lagging as the hand turns;
+      // the tilted one enamelled in the rarity colour.
       k.ball(1.6, C.gold, { at: [0, 3.6, 0] }, 1);
-      k.ring(4.4, 0.32, C.gold, { at: [0, 3.6, 0] }, 6, 20);
-      k.ring(4.4, 0.32, C.gold, { at: [0, 3.6, 0], rot: [0, Math.PI / 2, 0] }, 6, 20);
-      k.ring(4.6, 0.36, C.gold, { at: [0, 3.6, 0], rot: [Math.PI / 2, 0, 0.4] }, 6, 20);
-      k.ring(3.6, 0.45, k.a, { at: [0, 3.6, 0], rot: [0.9, 0.6, 0], scale: [1, 1, 0.5] }, 6, 18);
       k.rod([[0, -1.2, 0], [0, 8.6, 0]], 0.22, C.gold, {}, 6);
       k.ball(0.45, C.gold, { at: [0, 8.8, 0] });
+      k.ring(4.6, 0.34, C.gold, { at: [0, 3.6, 0] }, 6, 20);
+      k.ring(4.6, 0.3, C.gold, { at: [0, 3.6, 0], rot: [Math.PI / 2, 0, 0] }, 6, 20);
+      k.spin([0, 3.6, 0], [0, 1, 0], () => {
+        k.ring(3.9, 0.3, C.gold, { at: [0, 3.6, 0], rot: [0, Math.PI / 2, 0] }, 6, 20);
+        k.ring(3.4, 0.34, k.a, { at: [0, 3.6, 0], rot: [Math.PI / 2, 0, 0.45] }, 6, 18);
+      });
       k.cyl(1.4, 0.9, 1.2, 6, C.gold, { at: [0, -1.5, 0] });
       k.cyl(0.7, 0.8, 6, 6, C.wood, { at: [0, -5, 0] });
       whipping(k, [0, -5, 0], 0.82, 3);
@@ -1303,6 +1319,14 @@ export function buildLowPoly(name: string, accent: string, inHand = false): { mo
     within: (p, build) => {
       const g = new THREE.Group();
       place(g, p);
+      top().add(g);
+      parents.push(g);
+      build();
+      parents.pop();
+    },
+    spin: (pivot, axis, build) => {
+      const g = new THREE.Group();
+      g.userData.spin = { pivot, axis } satisfies Spin;
       top().add(g);
       parents.push(g);
       build();
