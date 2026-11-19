@@ -336,15 +336,20 @@ export const LOW_POLY: Record<string, LowPolyDef> = {
   "wizard-staff": {
     lean: DIAG,
     build: (k) => {
-      k.cyl(0.55, 0.7, 17, 6, C.wood, { at: [0, -1.5, 0] });
-      k.cyl(0.8, 0.8, 2.6, 6, C.leather, { at: [0, -1, 0] });
-      k.cyl(1, 0.7, 1, 6, C.gold, { at: [0, 7.4, 0] });
-      // A carved head, verdigris-green like old ship fittings, round a gem that throws teal light.
+      // A length of driftwood, crooked and grey, grown over with barnacles and hung with kelp; at its head the
+      // wood twists up and curls over a stone alight with the storm.
+      const drift = "#7d6e5a";
+      k.rod([[0, -10, 0], [0.4, -6, 0.2], [-0.3, -2, -0.2], [0.35, 2, 0.15], [-0.2, 6, 0], [0.2, 7.6, 0]], 0.62, drift, {}, 6);
+      k.cyl(0.85, 0.85, 2.6, 6, C.leather, { at: [0.2, -1, 0] });
+      for (const [y, x, z, r] of [[4.2, 0.55, 0.3, 0.38], [5, -0.5, 0.25, 0.32], [3.3, -0.2, -0.6, 0.3], [-5.5, 0.6, 0.2, 0.34], [-6.6, -0.35, 0.45, 0.28]]) {
+        k.ball(r, "#cfc6b0", { at: [x, y, z], scale: [1, 0.7, 1] });
+      }
+      for (const [x, z] of [[0.6, 0.4], [-0.55, -0.3]]) k.rod([[x, 6.4, z], [x * 1.4, 4.6, z], [x * 0.9, 3, z * 1.2], [x * 1.3, 1.6, z]], 0.15, "#7a7a2c", {}, 4);
       for (let i = 0; i < 3; i++) {
         const a = (i / 3) * Math.PI * 2 + 0.5;
-        k.rod([[0, 7.6, 0], [Math.cos(a) * 1.8, 9.5, Math.sin(a) * 1.8], [Math.cos(a) * 1.1, 11.6, Math.sin(a) * 1.1]], 0.3, "#3f8f86", {}, 4);
+        k.rod([[0.2, 7.4, 0], [Math.cos(a) * 2.1, 9.2, Math.sin(a) * 2.1], [Math.cos(a) * 1.9, 11.4, Math.sin(a) * 1.9], [Math.cos(a + 1) * 0.8, 12.2, Math.sin(a + 1) * 0.8]], 0.38, drift, {}, 5);
       }
-      k.gem(1.5, 3.8, { glow: "#5fe6e0" }, { at: [0, 10.2, 0] });
+      k.ball(1.6, { glow: "#8fe0ff" }, { at: [0, 10, 0] }, 1);
     },
   },
   "scroll-unfurled": {
@@ -464,12 +469,15 @@ export const LOW_POLY: Record<string, LowPolyDef> = {
   orb: {
     lean: -0.2,
     build: (k) => {
-      k.add(new THREE.IcosahedronGeometry(4.6, 1), { glow: k.a }, { at: [0, 3.6, 0] });
-      k.ball(0.9, C.shine, { at: [-1.7, 5.3, 3.8] });
-      for (let i = 0; i < 4; i++) {
-        const a = (i / 4) * Math.PI * 2 + Math.PI / 4;
-        k.rod([[0, -1.5, 0], [Math.cos(a) * 2.6, 0, Math.sin(a) * 2.6], [Math.cos(a) * 3.8, 2.4, Math.sin(a) * 3.8]], 0.35, C.gold, {}, 4);
-      }
+      // An armillary sphere: brass rings crossed round a glowing star at the middle, on its axis rod.
+      k.ball(2.1, { glow: k.a }, { at: [0, 3.6, 0] }, 1);
+      k.ball(0.7, C.shine, { at: [-0.8, 4.4, 1.7] });
+      k.ring(4.4, 0.32, C.gold, { at: [0, 3.6, 0] }, 6, 20);
+      k.ring(4.4, 0.32, C.gold, { at: [0, 3.6, 0], rot: [0, Math.PI / 2, 0] }, 6, 20);
+      k.ring(4.6, 0.36, C.gold, { at: [0, 3.6, 0], rot: [Math.PI / 2, 0, 0.4] }, 6, 20);
+      k.ring(3.6, 0.22, "#c9a24a", { at: [0, 3.6, 0], rot: [0.9, 0.6, 0] }, 6, 18);
+      k.rod([[0, -1.2, 0], [0, 8.6, 0]], 0.22, C.gold, {}, 6);
+      k.ball(0.45, C.gold, { at: [0, 8.8, 0] });
       k.cyl(1.4, 0.9, 1.2, 6, C.gold, { at: [0, -1.5, 0] });
       k.cyl(0.7, 0.8, 6, 6, C.wood, { at: [0, -5, 0] });
       k.ball(0.85, C.gold, { at: [0, -8.2, 0] });
