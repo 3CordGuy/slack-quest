@@ -3004,9 +3004,9 @@ function lowWizardBeard(head: Part, c: string, rings: readonly Ring[], chinY: nu
  * Hang a length of hair in two jointed pieces, to swing as the figure moves. `side` staggers its idle stir;
  * `drape` is a braid lying over a shoulder and down the chest, which can lift off them but not swing into them.
  */
-function hang(root: Part, end: Part, side: number, drape: Drape = 0) {
+function hang(root: Part, end: Part, side: number, drape: Drape = 0, leg?: THREE.Object3D) {
   extraParts.push(root, end);
-  braids.push({ root, end, side, drape, x: 0, vx: 0, z: 0, vz: 0, ex: 0, evx: 0, ez: 0, evz: 0, last: -1 });
+  braids.push({ root, end, side, drape, leg, x: 0, vx: 0, z: 0, vz: 0, ex: 0, evx: 0, ez: 0, evz: 0, last: -1 });
 }
 
 /** Turn a part's meshes, drawn hanging straight down, to hang along `dir` instead. */
@@ -3035,6 +3035,8 @@ interface Braid {
   end: Part;
   side: number;
   drape: Drape;
+  /** The thigh it hangs beside, on the outside of it (a sash's end): pushed ahead and out by it, never through it. */
+  leg?: THREE.Object3D;
   x: number;
   vx: number;
   z: number;
@@ -3083,6 +3085,16 @@ function swingBraids(list: Braid[], a: Anim) {
       if (s * b.z > 0) [b.z, b.vz] = [0, s * b.vz > 0 ? 0 : b.vz];
       if (d * b.ex > 0) [b.ex, b.evx] = [0, d * b.evx > 0 ? 0 : b.evx];
       if (s * b.ez > 0.04) [b.ez, b.evz] = [s * 0.04, s * b.evz > 0 ? 0 : b.evz];
+    }
+    if (b.leg) {
+      // The thigh swings under it: forward (its angle falling) it shoves the end ahead of it and out to the
+      // side; back, it falls away and the end swings free. Neither piece may swing in toward the leg.
+      const front = b.leg.rotation.x + 0.12;
+      const out = 0.05 + 0.35 * Math.max(0, -b.leg.rotation.x);
+      if (b.x > front) [b.x, b.vx] = [front, Math.min(0, b.vx)];
+      if (b.x + b.ex > front + 0.08) [b.ex, b.evx] = [front + 0.08 - b.x, Math.min(0, b.evx)];
+      if (b.z < out) [b.z, b.vz] = [out, Math.max(0, b.vz)];
+      if (b.z + b.ez < out) [b.ez, b.evz] = [out - b.z, Math.max(0, b.evz)];
     }
     b.root.joint.rotation.set(b.x, 0, b.z);
     b.end.joint.rotation.set(b.ex, 0, b.ez);
@@ -3545,6 +3557,36 @@ function lowHat(head: Part, look: Look) {
       head.loft(c, fitted([[4.2, 3.84, 3.54], [5.2, 3.9, 3.6, -0.15], [6.3, 3.35, 3.1, -0.4], [7, 2.15, 2.05, -0.65], [7.35, 0.6, 0.6, -0.8]]), 10);
       head.loft(tone(c, -0.08), fitted([[4.12, 3.9, 3.6], [4.6, 3.92, 3.62]]), 10);
       head.shape(look.accent, [[-2.3, 5.6, -1.6], [-2.75, 5.6, -1.8], [-3.2, 8.4, -2.9], [-3.55, 9.6, -3.6], [-3.8, 10.6, -4.5], [-3.0, 8.6, -2.5], [-2.9, 7.4, -2.1]]);
+      return;
+    }
+    case "tricorn": {
+      // A low round crown, and round it a broad brim cocked up into three walls that meet in three points: one
+      // over the brow and one behind each ear. Each wall bows out where it passes the crown, rises highest there,
+      // and leans out a little; a gold braid runs along its top edge.
+      const c = look.hatColor ?? look.body;
+      const d = headDelta(4.6);
+      const rx = (r: number) => r + d.rx;
+      const rz = (r: number) => r + d.rz;
+      head.loft(c, fitted([[4.2, 3.86, 3.56], [5.5, 3.78, 3.48, -0.05], [6.5, 3.2, 2.95, -0.1], [7.05, 2, 1.85, -0.1], [7.25, 0.4, 0.4, -0.1]]), 10);
+      // Where the walls stand, going round from the front point: a point, the middle of a wall, the next point...
+      const foot: { a: number; r: number; y: number; top: number }[] = [];
+      for (let i = 0; i < 6; i++) {
+        const point = i % 2 === 0;
+        foot.push({ a: (i / 6) * Math.PI * 2, r: point ? 6.1 : 4.35, y: point ? 4.75 : 4.35, top: point ? 5.15 : 6.75 });
+      }
+      const at = (f: (typeof foot)[number], k: number, y: number, out = 1): Pt => [Math.sin(f.a) * rx(f.r) * k * out, y, Math.cos(f.a) * rz(f.r) * k * out + d.dz];
+      for (let i = 0; i < 6; i++) {
+        const f = foot[i];
+        const g = foot[(i + 1) % 6];
+        const pts: Pt[] = [];
+        for (const k of [1, 0.9]) pts.push(at(f, k, f.y), at(g, k, g.y), at(f, k, f.top, 1.05), at(g, k, g.top, 1.05));
+        head.shape(c, pts);
+        strut(head, GEAR.gold, at(f, 0.97, f.top + 0.05, 1.05), at(g, 0.97, g.top + 0.05, 1.05), 0.17);
+      }
+      // A cockade of the sash's red on the left wall.
+      const w = foot[1];
+      head.ball(look.accent, 0.62, ...at(w, 1.06, 5.7, 1.03), 0, [1, 1, 0.45]);
+      head.ball(GEAR.gold, 0.25, ...at(w, 1.13, 5.7, 1.03), 0);
       return;
     }
     case "circlet": {
@@ -4155,6 +4197,13 @@ function drawHat(head: Part, look: Look) {
     head.box(look.body, 2.6, 1.1, 4.6, 3.8, 5.5, -0.2, [0, 0, -0.25]);
     head.box(tone(look.body, -0.08), 7.3, 0.5, 6.9, 0, 5.3, 0);
     head.box(look.accent, 0.5, 4, 1.5, -2.6, 8.2, -1, [-0.35, 0, 0.15]);
+  } else if (hat === "tricorn") {
+    const c = look.hatColor ?? look.body;
+    head.cyl(c, 3.4, 3.7, 1.6, 0, 6, 0, 8);
+    head.cyl(look.accent, 3.8, 3.8, 0.5, 0, 5.4, 0, 8);
+    head.box(tone(c, 0.05), 10, 0.5, 10, 0, 5, 0);
+    for (const s of [-1, 1]) head.box(c, 0.7, 1.6, 8, s * 5, 5.6, 0, [0, 0, -s * 0.4]);
+    head.box(c, 9.5, 2, 0.7, 0, 5.9, -4.8, [-0.25, 0, 0]);
   } else if (hat === "circlet") {
     head.box(look.accent, 7.1, 0.7, 6.6, 0, 4.9, -0.1);
     head.glowBox("#7fe3ff", 1.2, 1.2, 0.5, 0, 5.2, 3.3);
@@ -4723,6 +4772,7 @@ function person(top: THREE.Group, look: Look, outfit: Outfit | undefined, asleep
     }
     if (lowPoly && !boots) {
       if (bare("boots")) lowBareFoot(foot, look.skin);
+      else if (look.boots) lowBoots(foot, shin, "sea", look.boots);
       else lowShoe(foot, GEAR.dark);
     }
     else if (lowPoly && boots) lowBoots(foot, shin, boots.ref, trim("boots"));
@@ -4812,6 +4862,38 @@ function person(top: THREE.Group, look: Look, outfit: Outfit | undefined, asleep
     torso.box(tone(apron, -0.14), 5.8, 0.6, 0.45, 0, 1.75, 2.14);
     torso.box(apron, 5.6, 5.2, 0.4, 0, -0.9, 2.45, [-0.07, 0, 0]);
     torso.box(tone(apron, -0.08), 2.4, 1.4, 0.3, 0, -0.5, 2.52, [-0.07, 0, 0]);
+  }
+  if (look.sash && !body && !undressed) {
+    // A sash wound tight round the waist over the belt, knotted on the left hip, its two ends hanging to the
+    // thigh and swinging as the figure moves (see swingBraids).
+    const sash = look.sash;
+    if (lowPoly) {
+      const rings = chestRings(m.shoulders / m.girth);
+      torso.loft(sash, [around(rings, 0.45, 0.13, 0.02), around(rings, 1.15, 0.15, 0.03), around(rings, 1.95, 0.13, 0.05)]);
+      // The fold where it is wound round a second time.
+      torso.loft(tone(sash, -0.16), [around(rings, 1.08, 0.17, 0.03), around(rings, 1.24, 0.17, 0.03)]);
+      const knot = onChest(rings, 0.78 * ringAt(rings, 1.1).rx, 1.1, 0.35);
+      torso.ball(tone(sash, -0.06), 0.8, ...knot.at, 0, [1.1, 0.85, 0.7]);
+      // The ends hang from under the knot, a little proud of the hip, turned to lie along it.
+      for (const [n, len, lean] of [[0, 2.4, 0.1], [1, 1.8, -0.12]] as const) {
+        const root = new Part(torso.joint, knot.at[0] * m.girth + (n ? -0.2 : 0.15), knot.at[1] - 0.3, knot.at[2] * m.girth + 0.15 + n * 0.15);
+        root.skin.rotation.set(0, knot.yaw, lean);
+        root.loft(sash, [[0.35, 0.55, 0.14, 0], [-len * 0.35, 0.68, 0.15, 0.14], [-len * 0.7, 0.74, 0.15, -0.06], [-len - 0.1, 0.78, 0.15, 0.1]], 6);
+        const end = new Part(root.joint, Math.sin(lean) * len, -len, 0);
+        end.skin.rotation.set(0, knot.yaw, -lean * 0.5);
+        const tail = len * 0.85;
+        end.loft(tone(sash, -0.05), [[0.15, 0.78, 0.15, 0.1], [-tail * 0.4, 0.84, 0.15, -0.14], [-tail * 0.8, 0.88, 0.14, 0.12], [-tail, 0.84, 0.13, 0]], 6);
+        // A fringe of gold thread at the end.
+        end.loft(GEAR.gold, [[-tail - 0.05, 0.85, 0.13], [-tail - 0.4, 0.78, 0.1]], 6);
+        hang(root, end, 1.5 + n * 2, 0, b.thighL.joint);
+      }
+    } else {
+      torso.box(sash, 7.4, 1.5, 4.15, 0, 1.1, 0);
+      torso.ball(tone(sash, -0.1), 0.85, 3.2, 1, 1.4, 1, [1, 1, 0.8]);
+      for (const [k, x] of [[0, 3.4], [1, 3.9]] as const) {
+        for (let i = 0; i < 3 - k; i++) torso.box(i % 2 ? tone(sash, -0.07) : sash, 1.1, 1.4, 0.35, x + Math.sin(i + k) * 0.3, 0.1 - i * 1.2, 1.4 + k * 0.3);
+      }
+    }
   }
   const amulet = outfit?.amulet;
   // Low-poly, it lies over whatever is worn (a hauberk's plates, a greatcoat's buttons, a tunic's placket), and
