@@ -828,7 +828,7 @@ type Instrument = "lute" | "flute" | "bell" | "accordion";
 const PAIRED = new Set(["daggers", "gaff-hook"]);
 
 /** The icon (so the model) a stock look's weapon is drawn as: a class weapon's own, or the one most like it. */
-const STOCK_ICON: Record<string, string> = { ...WEAPON_ICON, sword: "broadsword", bow: "crossbow" };
+const STOCK_ICON: Record<string, string> = { ...WEAPON_ICON, sword: "broadsword", bow: "crossbow", cutlass: "cutlass" };
 
 /** Put an icon's model in a part, held as `hold` says, in the trim colour. False when the icon has no model. */
 function gear(p: Part, icon: string, trim: string, hold: Hold, inHand = false): boolean {

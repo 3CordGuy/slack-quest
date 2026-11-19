@@ -14,9 +14,10 @@ describe("mergeLook", () => {
   });
 
   it("replaces only the fields given, and never touches the stock look", () => {
+    const stockBody = LOOKS.bandit.body;
     const merged = mergeLook(base, { body: "#000000", hat: "wizard", weapon: "bow" });
     expect(merged).toEqual({ ...base, body: "#000000", hat: "wizard", weapon: "bow" });
-    expect(LOOKS.bandit.body).toBe("#7a2f2f");
+    expect(LOOKS.bandit.body).toBe(stockBody);
   });
 
   it("ignores anything a stored palette gets wrong", () => {
