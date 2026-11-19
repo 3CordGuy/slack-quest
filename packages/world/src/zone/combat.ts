@@ -764,7 +764,7 @@ export function resolveAbility(ctx: Ctx, unit: Unit, ability: string, aim: Aim &
       // One shanty at a time: the new one starts afresh, nobody joined yet.
       for (const kind of SHANTIES) removeCondition(unit, kind);
       addCondition(ctx, unit, tactic.shanty, SHANTY.rounds);
-      Object.assign(shantyOf(unit)!, { joined: [], surge: 0 });
+      Object.assign(shantyOf(unit)!, { joined: [], joinedOwn: [], surge: 0 });
       retune(ctx);
     }
     if (def.targetEffect) addCondition(ctx, target, def.targetEffect.effect, def.targetEffect.turns);
@@ -954,9 +954,13 @@ export function doCommon(ctx: Ctx, unit: Unit, what: CommonAction, aim: Aim, bud
 /** Join a shanty (checked already): it reaches a hex further, and the one joining gets the lift of joining that kind. */
 function joinSong(ctx: Ctx, unit: Unit, aim: Aim, budget: Budget | null): void {
   const { song } = joinable(ctx.state, unit).find((s) => !aim.target || s.bard.id === aim.target)!;
-  song.joined = [...(song.joined ?? []), unit.id];
-  // Everyone in it gets a little more of what it gives, until the Bard's next turn.
-  song.surge = (song.surge ?? 0) + 1;
+  // A creature called into the fight gets the lift of joining, and nothing more: the shanty reaches no further, and gives nobody else any more.
+  if (unit.summon) song.joinedOwn = [...(song.joinedOwn ?? []), unit.id];
+  else {
+    song.joined = [...(song.joined ?? []), unit.id];
+    // Everyone in it gets a little more of what it gives, until the Bard's next turn.
+    song.surge = (song.surge ?? 0) + 1;
+  }
   if (song.kind === "lively_shanty") addCondition(ctx, unit, "inspired", 2);
   else if (song.kind === "dour_shanty") addCondition(ctx, unit, "guarded", 1);
   // Wind-god's: away on the wind, drawing no blows for the rest of the turn.

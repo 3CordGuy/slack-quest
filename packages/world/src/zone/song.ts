@@ -5,7 +5,8 @@
 // counts at once. An ally standing in it can join it, once a shanty, for
 // 1 AP (combat.ts): the shanty reaches a hex further for as long as it
 // is sung, the one who joined gets a lift of their own, and everyone in it a
-// little more of what it gives until the Bard's next turn. The Bard cannot join their own.
+// little more of what it gives until the Bard's next turn. A creature called into the fight
+// (summon.ts) can join too, but gets only the lift of its own. The Bard cannot join their own.
 //
 // Only queries here: what changes a unit is in engine.ts and combat.ts.
 
@@ -66,4 +67,4 @@ export const windward = (state: Pick<ZoneState, "units">, unit: Unit): boolean =
 
 /** The shanties a unit could join now: ones it stands in, not its own, that it has not joined already. */
 export const joinable = (state: Pick<ZoneState, "units">, unit: Unit): Song[] =>
-  songsOn(state, unit).filter((s) => s.bard.id !== unit.id && !s.song.joined?.includes(unit.id));
+  songsOn(state, unit).filter((s) => s.bard.id !== unit.id && !s.song.joined?.includes(unit.id) && !s.song.joinedOwn?.includes(unit.id));

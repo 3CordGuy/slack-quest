@@ -43,6 +43,8 @@ export interface UnitCondition {
   at?: HexPos;
   /** A shanty: the allies who have joined it (each once), each widening it a hex. */
   joined?: string[];
+  /** A shanty: the creatures called into the fight who have joined it (each once): only they get the lift of joining. */
+  joinedOwn?: string[];
   /** A shanty: how many have joined it since the Bard's turn last began (the extra each joining gives lasts that long). */
   surge?: number;
   /** Taunted: the unit that taunted it. The Curse of Drowning and the Black Spot: who laid it. */

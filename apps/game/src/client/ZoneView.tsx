@@ -144,9 +144,11 @@ function cooldownText(turns: number): string {
 }
 
 /** What joining a shanty does, in a few lines, for the Join button's tooltip. */
-function joinTip(bard: string, kind: ShantyKind): string {
+function joinTip(bard: string, kind: ShantyKind, summoned = false): string {
   const who = bard.split(" ")[0];
   const lift = kind === "lively_shanty" ? ["You: advantage on your next attack", "Everyone in it: +1 to hit"] : kind === "dour_shanty" ? ["You: Guarded (half damage)", "Everyone in it: +1 Defence"] : ["You: Disengage (no blows drawn moving away)", "Everyone in it: +1 movement for each AP"];
+  // A creature called into the fight gets its own lift, and nothing for the rest.
+  if (summoned) return [`Join ${who}'s ${CONDITION_INFO[kind].name}`, `${COMMON_ACTIONS.join.cost} AP · once per shanty`, lift[0].replace(/^You/, "It"), "Called into the fight: the shanty reaches no further, and nobody else gets more of it"].join("\n");
   return [`Join ${who}'s ${CONDITION_INFO[kind].name}`, `${COMMON_ACTIONS.join.cost} AP · once per shanty`, lift[0], `${lift[1]}, until ${who}'s next turn`, "The shanty reaches 1 hex further"].join("\n");
 }
 
@@ -2243,7 +2245,7 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
             }]} />}
       >
         {fighting && myTurn && joinable(asState(state), act).map((s) => (
-          <button key={`join:${s.bard.id}`} className="small" style={{ fontSize: 12, padding: "1px 7px", color: CONDITION_INFO[s.song.kind].color, borderColor: CONDITION_INFO[s.song.kind].color }} disabled={!canPay(commonCost("join", act.kind))} title={joinTip(s.bard.name, s.song.kind)} onClick={() => common("join", { target: s.bard.id })}>
+          <button key={`join:${s.bard.id}`} className="small" style={{ fontSize: 12, padding: "1px 7px", color: CONDITION_INFO[s.song.kind].color, borderColor: CONDITION_INFO[s.song.kind].color }} disabled={!canPay(commonCost("join", act.kind))} title={joinTip(s.bard.name, s.song.kind, !!act.summon)} onClick={() => common("join", { target: s.bard.id })}>
             ♪ Join song
           </button>
         ))}

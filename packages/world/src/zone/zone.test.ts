@@ -3432,6 +3432,30 @@ describe("the Bard's shanties", () => {
     expect(songsOn(state, unit(state, "bo"))).toHaveLength(1);
   });
 
+  it("a creature called into the fight can join a shanty, once, for its own lift alone: no wider, and no more for anyone else", () => {
+    let { state, dummy } = party();
+    state = must(state, sing("lively_shanty"));
+    // A sea turtle of Bo's, beside the Bard, taking its turn with Bo's.
+    const turtle: Unit = { ...structuredClone(unit(state, "bo")), id: "s9", kind: "sea_turtle", pos: at(5, 7), summon: { by: "bo" }, controller: "bo", abilities: ["turtle_bite"], conditions: [] };
+    state.units.push(turtle);
+    const enc = state.encounter!;
+    enc.order.splice(enc.order.indexOf("bo") + 1, 0, turtle.id);
+    enc.init[turtle.id] = enc.init.bo;
+    enc.acting.push(turtle.id);
+    enc.budgets[turtle.id] = { ap: AP_TURN, move: 0, stride: 1, disengaged: false };
+    const before = { radius: shantyRadius(song(state)), bo: hitMods(state, "bo", dummy) };
+    const joinTurtle: ZoneAction = { type: "common", by: "bo", unit: turtle.id, what: "join", target: "ann" };
+    state = must(state, joinTurtle);
+    expect(has(state, turtle.id, "inspired")).toBe(true);
+    expect(song(state)).toMatchObject({ joined: [], joinedOwn: [turtle.id], surge: 0 });
+    expect(shantyRadius(song(state))).toBe(before.radius);
+    expect(hitMods(state, "bo", dummy)).toBe(before.bo);
+    expect(fails(state, joinTurtle)).toMatch(/no shanty here you have not joined/);
+    // An ally joining still widens it and lifts everyone.
+    state = must(state, join("bo"));
+    expect(shantyRadius(song(state))).toBe(before.radius + 1);
+  });
+
   it("Lively Shanty: joining is a Bonus action, once: a hex wider, advantage on your next attack, and +1 more to hit for all until the Bard's next turn", () => {
     let { state, dummy } = party();
     state = must(state, sing("lively_shanty"));
