@@ -3147,6 +3147,12 @@ let braids: Braid[] = [];
  */
 let castPace = 1;
 const BOOK_CAST_PACE = 2;
+/** How high above the hips a long coat's skirts are hinged, in the torso's units: just under the waist. */
+const SKIRT_PIVOT = 0.6;
+/** How much of its leg's swing a long coat's skirt follows. */
+const SKIRT_FOLLOW = 0.7;
+/** Set by makeFigure for the figure being built: a long coat's two skirts and the thigh each swings with. */
+let skirts: { joint: THREE.Object3D; thigh: THREE.Object3D }[] = [];
 /** Set by makeFigure for the figure being built: eyes that light only while a spell is cast (see Look.glowOnCast). */
 let castEyes: THREE.Object3D[] = [];
 /** The front of a long (wizard's) beard on the figure being built, if it has one: where an amulet goes. */
@@ -5155,9 +5161,17 @@ function person(top: THREE.Group, look: Look, outfit: Outfit | undefined, asleep
     // A long coat, open at the front, down over the legs.
     const edgeColor = greatcoat ? trim("body") : look.coatTrim ?? look.accent;
     if (lowPoly) {
+      // Each side's skirt hangs from the hip on a joint of its own and swings with the leg on that side (see
+      // skirts), so the legs stride under the coat instead of through it. Its pivot is just below the waist,
+      // so the top barely moves; it is the torso's girth, as the torso's own cloth is.
       for (const s of [-1, 1]) {
-        coatPanel(torso, greatcoat ? cloth : look.coatColor ?? cloth, s, 0.42, Math.PI + 0.05);
-        coatPanel(torso, edgeColor, s, 0.38, 0.52, 0.06);
+        const skirt = new Part(torso.joint, 0, SKIRT_PIVOT, 0);
+        skirt.skin.position.y = -SKIRT_PIVOT;
+        skirt.skin.scale.set(m.girth, 1, m.girth);
+        coatPanel(skirt, greatcoat ? cloth : look.coatColor ?? cloth, s, 0.42, Math.PI + 0.05);
+        coatPanel(skirt, edgeColor, s, 0.38, 0.52, 0.06);
+        extraParts.push(skirt);
+        skirts.push({ joint: skirt.joint, thigh: (s > 0 ? b.thighL : b.thighR).joint });
       }
     } else {
       for (const s of [-1, 1]) {
@@ -6894,6 +6908,7 @@ export function makeFigure(kind: string, look: Look, outfit?: Outfit, opts: Figu
   bodyParts = [];
   beardFront = null;
   castEyes = [];
+  skirts = [];
   castPace = 1;
   slung = null;
   chosen = outfit?.appearance ?? null;
@@ -6915,6 +6930,7 @@ export function makeFigure(kind: string, look: Look, outfit?: Outfit, opts: Figu
   const swinging = braids;
   const loose = dangles;
   const spellEyes = castEyes;
+  const hems = skirts;
   const pace = castPace;
   /** How long an action of this kind takes this figure. */
   const lasts = (kind: Act["kind"]) => ACT_OVER[kind] * (kind === "cast" ? pace : 1);
@@ -7055,6 +7071,8 @@ export function makeFigure(kind: string, look: Look, outfit?: Outfit, opts: Figu
     }
     if (swinging.length > 0) swingBraids(swinging, anim);
     if (loose.length > 0) swingDangles(loose, first ? 0 : dt, top, body);
+    // A long coat's skirts swing with the legs under them, forward and back and out to the side.
+    for (const h of hems) h.joint.rotation.set(h.thigh.rotation.x * SKIRT_FOLLOW, 0, h.thigh.rotation.z * SKIRT_FOLLOW);
     if (spellEyes.length > 0) {
       // Eyes that light with a spell: swelling up as it gathers, brightest as it leaves, and out again after.
       const t = anim.act?.kind === "cast" ? anim.act.t / CAST.over : -1;
