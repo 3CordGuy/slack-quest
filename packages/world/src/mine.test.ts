@@ -336,7 +336,9 @@ describe("the quarry's rock face", () => {
     expect(tally.careful).toBeGreaterThan(tally.reader);
     expect(tally.carefulLost).toBeLessThan(tally.readerLost);
     expect(tally.carefulUnits / N).toBeGreaterThan(5);
-  });
+    // Three hundred faces played three ways: about 2s alone, but past the 5s default when the whole suite runs at
+    // once, where it failed at random.
+  }, 30_000);
 
   it("an outing from the old 3×3 face can only be hauled out", () => {
     const old = { ...startGather("quarry", 1, 9), mine: undefined, face: ["stone"], cracks: 1, haul: { stone: 2 } } as GatherState;

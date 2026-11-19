@@ -837,7 +837,9 @@ describe("forest finds", () => {
       }
     }
     expect([...seen].sort()).toEqual(["berries", "bones", "treasure", "wolves", "wood"]);
-  });
+    // Four hundred walks into the forest: about 2s alone, but past the 5s default when the whole suite runs at
+    // once, where it failed at random.
+  }, 30_000);
 
   it("gives the same find for the same seed, and nothing the second time through", () => {
     for (let i = 0; i < 60; i++) {
