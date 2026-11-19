@@ -336,6 +336,13 @@ export const TACTICS: Record<string, Tactic> = {
   take_aim: { ...guard(), steady: 1 },
   tear: melee(),
   snag: shot(3),
+  // Ship's guns
+  pistol_shot: shot(5),
+  pistol_whip: melee({ cost: "bonus" }),
+  scattershot: shot(3, { shape: "cone", length: 3, cooldown: 1 }),
+  butt_stroke: melee(),
+  harpoon_shot: shot(6, { pull: 2, cooldown: 2 }),
+  barbed_line: shot(3),
   slicing_wind: spell(6, { stride: 1 }),
   winds_blessing: mend(5, { cost: "bonus", tailwind: 2 }),
   waterbolt: spell(6, { surface: { kind: "water", rounds: 3 } }),

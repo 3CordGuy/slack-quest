@@ -34,7 +34,7 @@ describe("item generation", () => {
       expect(item.icon).toMatch(/^[a-z-]+$/);
       expect(item.levelReq).toBeGreaterThanOrEqual(1);
       expect(item.levelReq).toBeLessThanOrEqual(level);
-      if (item.kind === "weapon") expect(WEAPONS[item.ref].classId).toBe(classId);
+      if (item.kind === "weapon") expect([classId, undefined]).toContain(WEAPONS[item.ref].classId);
       if (item.kind === "trinket") expect(item.power).toBe(0);
       if (item.kind === "armor") expect(item.power).toBeGreaterThanOrEqual(2);
       expect(equipProblem(item, classId, level)).toBeNull();
