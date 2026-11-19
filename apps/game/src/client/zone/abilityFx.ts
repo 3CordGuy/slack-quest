@@ -63,6 +63,8 @@ export type FxKind =
   | "bomb"
   /** A ring closing in round the user like a sight narrowing (Take Aim). */
   | "aim"
+  /** A harpoon fired from a gun on a line at each target: hauling them in (Harpoon Shot) or reeled back (Barbed Line). */
+  | "harpoon"
   /** A crescent blade of wind flying to each target. */
   | "blade"
   /** Lightning out of the sky onto each target, arcing from one to the next. */
@@ -148,8 +150,8 @@ const ABILITY_FX: Record<string, Fx> = {
   pistol_whip: fx("melee", "#c9b48a"),
   scattershot: fx("erupt", "#ffb347"),
   butt_stroke: fx("melee", "#c9b48a"),
-  harpoon_shot: fx("arrow", "#c9d6e8"),
-  barbed_line: fx("arrow", "#a78bfa"),
+  harpoon_shot: fx("harpoon", "#c9d6e8"),
+  barbed_line: fx("harpoon", "#a78bfa"),
   snag: fx("hook", "#a78bfa"),
   take_aim: fx("aim", "#ffe08a"),
   slicing_wind: fx("blade", "#dff4ff"),
@@ -248,4 +250,4 @@ export function fxFor(what: string, burst = false): Fx {
 export const THROW_COLOR: Record<Throwable, string> = { healing: "#ff6b6b", poison: "#84cc16", fire: "#ff7a2a", oil: "#8a7f6a", water: "#38bdf8", acid: "#d9f99d", slime: "#65a30d", torch: "#ffb070" };
 
 /** How high a shot or a spell arcs when it is aimed, as SpellFx flies it. */
-export const aimKind = (what: string): "arrow" | "spell" => (fxFor(what).kind === "arrow" ? "arrow" : "spell");
+export const aimKind = (what: string): "arrow" | "spell" => (["arrow", "pike", "hook", "harpoon"].includes(fxFor(what).kind) ? "arrow" : "spell");

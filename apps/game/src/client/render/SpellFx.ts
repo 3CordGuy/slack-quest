@@ -510,6 +510,11 @@ export class SpellFx {
     return m;
   }
 
+  /** How long a fired harpoon takes to fly `distance`, in seconds: faster and flatter than anything thrown. */
+  static harpoonTime(distance: number): number {
+    return Math.max(0.15, Math.min(0.45, distance / 22));
+  }
+
   /** How long a hurled pike takes to fly `distance`, in seconds. */
   static pikeTime(distance: number): number {
     return Math.max(0.2, Math.min(0.6, distance / 14));
@@ -2198,6 +2203,98 @@ export class SpellFx {
       }
       return fade > 0;
     });
+  }
+
+  /**
+   * A harpoon fired from a gun on a line (Harpoon Shot, Barbed Line): a steel shaft with a broad head and two barbs laid
+   * back, inked, flying fast and near flat from `from` to `to`, its line strung back to the gun (`gun`, the muzzle
+   * wherever it is now) all the way, slack behind it. `onLand` runs as it strikes. Then, as `after` says: `haul`, the
+   * line drawn taut between the gun and whoever it struck (`caught`) while they are hauled in; `reel`, the barb
+   * reeled back along the line into the gun; `stuck`, it missed, and stands in the ground beyond them a moment, the
+   * line slack. Returns how long the flight takes.
+   */
+  harpoon(from: THREE.Vector3, to: THREE.Vector3, gun: () => THREE.Vector3 | null, after: "haul" | "reel" | "stuck", onLand?: () => void, caught?: () => THREE.Vector3 | null): number {
+    const time = SpellFx.harpoonTime(from.distanceTo(to));
+    const g = this.add(new THREE.Group());
+    const ink = new THREE.MeshBasicMaterial({ color: OUTLINE, side: THREE.BackSide, transparent: true });
+    const part = (geometry: THREE.BufferGeometry, color: string, scale: [number, number, number], at: [number, number, number], turn: [number, number, number] = [0, 0, 0]) => {
+      const m = new THREE.Mesh(geometry, flat(color));
+      m.scale.set(...scale);
+      m.position.set(...at);
+      m.rotation.set(...turn);
+      const edge = new THREE.Mesh(geometry, ink);
+      edge.scale.set(1 + 0.03 / scale[0], 1 + 0.03 / scale[1], 1 + 0.03 / scale[2]);
+      m.add(edge);
+      g.add(m);
+    };
+    part(shaft, "#b8c2cc", [0.06, 0.06, 1.0], [0, 0, 0]);
+    part(arrowhead, "#e6ebf1", [0.14, 0.32, 0.14], [0, 0, 0.62], [Math.PI / 2, 0, 0]);
+    // The two barbs, laid back from the head either side.
+    for (const side of [-1, 1]) part(shaft, "#d6dde4", [0.035, 0.035, 0.24], [side * 0.09, 0, 0.42], [0, side * 0.6, 0]);
+    // The eye at its tail, that the line is tied to.
+    part(shaft, "#8a6238", [0.09, 0.09, 0.06], [0, 0, -0.5]);
+    const N = 14;
+    const edge = new Ribbon(N, tinted(OUTLINE, 0.8, streakTex()));
+    const line = new Ribbon(N, tinted("#d8c39a", 1, streakTex()));
+    edge.mesh.renderOrder = 4;
+    line.mesh.renderOrder = 5;
+    this.add(edge.mesh);
+    this.add(line.mesh);
+    const height = SpellFx.arcHeight("arrow", from.distanceTo(to)) * 0.3;
+    const hold = after === "haul" ? 1.2 : after === "stuck" ? 1.1 : 0.15;
+    const reel = after === "reel" ? 0.3 : 0;
+    let struck = false;
+    this.run([g, edge.mesh, line.mesh], (age) => {
+      const muzzle = gun() ?? from;
+      let tip: THREE.Vector3;
+      let sag: number;
+      if (age < time) {
+        const t = age / time;
+        tip = SpellFx.arcPoint(from, to, height, t);
+        g.position.copy(tip);
+        g.lookAt(SpellFx.arcPoint(from, to, height, t + 0.02));
+        sag = 0.35 * t;
+      } else {
+        if (!struck) {
+          struck = true;
+          this.flash(to, "#fff1c9", 0.8);
+          this.fling(to, "#e8e4da", 5, { out: 1.4, up: 1.4 });
+          if (after === "stuck") this.chips(to, "#8f7a62", 3, 0.06);
+          onLand?.();
+        }
+        const since = age - time;
+        if (after === "haul") {
+          // Taut on whoever it caught, and going with them as they are hauled in.
+          tip = caught?.() ?? to;
+          g.position.copy(tip);
+          sag = 0.02;
+        } else if (after === "reel") {
+          // A beat as it bites, then reeled home along the line.
+          const k = Math.max(0, Math.min(1, (since - hold) / reel));
+          tip = to.clone().lerp(muzzle, k * k);
+          g.position.copy(tip);
+          sag = 0.05;
+        } else {
+          tip = to;
+          sag = 0.45;
+        }
+      }
+      const out = after !== "reel" && age > time + hold ? Math.max(0, 1 - (age - time - hold) / 0.4) : 1;
+      const pts = Array.from({ length: N }, (_, i) => {
+        const t = i / (N - 1);
+        return muzzle.clone().lerp(tip, t).add(new THREE.Vector3(0, -sag * 4 * t * (1 - t), 0));
+      });
+      edge.material.opacity = 0.8 * out;
+      line.material.opacity = out;
+      g.traverse((o) => {
+        const m = (o as THREE.Mesh).material as THREE.Material | undefined;
+        if (m) m.opacity = out;
+      });
+      edge.lay(pts, () => 0.1, this.eye);
+      line.lay(pts, () => 0.06, this.eye);
+      return age < time + hold + Math.max(reel, 0.4);
+    });
+    return time;
   }
 
   /**
