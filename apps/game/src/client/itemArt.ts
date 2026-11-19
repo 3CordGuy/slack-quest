@@ -8,6 +8,7 @@
 // fare, brews, hut furniture) live in thingArt.ts and are merged in below,
 // so they go through the same lookup and admin overrides as gear.
 
+import { parseGarbIcon, type GarbPiece } from "@gantt-quest/world";
 import { C, spans, type Art, type Pen } from "./artKit";
 import { ACTION_ART } from "./actionArt";
 import { THING_ART } from "./thingArt";
@@ -743,7 +744,12 @@ function paintIcon(art: Art, accent: string, silhouette: boolean, lines = false)
 
 const drawIcon = (art: Art, accent: string, silhouette: boolean, lines = false): string => paintIcon(art, accent, silhouette, lines).toDataURL();
 
-const codeArt = (name: string): Art => ART[name] ?? ART["gem-chain"];
+/** The flat picture of a class's own piece of starting clothes ("garb-tunic:staff_sage"): the plain one of its kind. */
+const GARB_ART: Record<GarbPiece, string> = { hat: "knit-cap", tunic: "naval-tunic", trousers: "armored-pants", shoes: "deck-boots" };
+const codeArt = (name: string): Art => {
+  const garb = parseGarbIcon(name);
+  return ART[garb ? GARB_ART[garb.piece] : name] ?? ART["gem-chain"];
+};
 
 /**
  * Image URL for an item icon. `accent` is the rarity colour. With

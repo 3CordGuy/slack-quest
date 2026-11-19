@@ -14,6 +14,8 @@ import * as THREE from "three";
 import { ConvexGeometry } from "three/examples/jsm/geometries/ConvexGeometry.js";
 import { mergeVertices } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { C } from "../artKit";
+import { parseGarbIcon, type GarbPiece } from "@gantt-quest/world";
+import { LOOKS, type Look } from "./looks";
 
 type V3 = [number, number, number];
 
@@ -1340,6 +1342,299 @@ export const LOW_POLY: Record<string, LowPolyDef> = {
   },
 };
 
+// ---------- starting clothes ----------
+// Each class's own hat, tunic, trousers and shoes (garbIcon in packages/world/src/gear.ts), pictured in the class's
+// stock look as the figure draws them on a hero of that class (figures.ts): the same hat, the same colours, a coat
+// or a vest where the class has one, and what it wears over them.
+
+/** A colour a little lighter (k > 0) or darker (k < 0), as figures.ts tones its cloth. */
+const tone = (hex: string, k: number) => `#${new THREE.Color(hex).offsetHSL(0, 0, k).getHexString()}`;
+
+/** A class's hat, as its look draws it: [hat, its colour]. */
+function garbHat(k: Kit, look: Look) {
+  const c = look.hatColor ?? look.body;
+  switch (look.hat) {
+    case "lamphelm":
+      LOW_POLY["lantern-helm"].build(k);
+      return;
+    case "hood": {
+      // A peaked hood with a shadowed opening, and a mantle over the shoulders.
+      const cowl = new THREE.LatheGeometry([[0, 8.5], [1.2, 7.8], [3, 5.8], [4.4, 3], [4.9, 0], [4.8, -2.6], [4.4, -4]].reverse().map(([r, y]) => new THREE.Vector2(r, y)), 8);
+      const p = cowl.attributes.position;
+      for (let i = 0; i < p.count; i++) p.setZ(i, p.getZ(i) - Math.max(0, p.getY(i) - 2) * 0.35);
+      k.add(cowl, c);
+      k.cyl(4.4, 6.6, 3, 8, tone(c, -0.04), { at: [0, -5.4, 0] });
+      k.cyl(2.8, 2.8, 1, 10, "#141a1a", { at: [0, 0.2, 4.2], rot: [Math.PI / 2, 0, 0], scale: [1, 1, 1.3] });
+      k.ring(2.9, 0.5, tone(c, 0.06), { at: [0, 0.2, 4.6], scale: [1, 1.3, 1] }, 5, 12);
+      return;
+    }
+    case "tricorn": {
+      // A low round crown over a band, and round it a brim cocked up into three walls meeting in three points, one
+      // over the brow; a gold braid along their tops and a cockade on the left.
+      if (look.bandana) k.cyl(3.55, 3.6, 1.1, 10, look.bandana, { at: [0, -0.4, 0] });
+      k.lathe([[3.45, 0], [3.5, 2], [3, 3.6], [1.8, 4.4], [0, 4.6]], 10, c);
+      const foot = Array.from({ length: 6 }, (_, i) => {
+        const point = i % 2 === 0;
+        return { a: (i / 6) * Math.PI * 2, r: point ? 6.6 : 4.5, y: point ? 0.6 : 0, top: point ? 1.4 : 3.8 };
+      });
+      const at = (f: (typeof foot)[number], s: number, y: number): V3 => [Math.sin(f.a) * f.r * s, y, Math.cos(f.a) * f.r * s];
+      for (let i = 0; i < 6; i++) {
+        const [f, g] = [foot[i], foot[(i + 1) % 6]];
+        const pts: V3[] = [];
+        for (const s of [1, 0.88]) pts.push(at(f, s, f.y), at(g, s, g.y), at(f, s * 1.05, f.top), at(g, s * 1.05, g.top));
+        k.hull(pts, c);
+        k.rod([at(f, 1.02, f.top + 0.05), at(g, 1.02, g.top + 0.05)], 0.2, C.gold, {}, 4);
+      }
+      const w = foot[1];
+      k.ball(0.8, look.accent, { at: at(w, 1.08, 2.2), scale: [1, 1, 0.5], rot: [0, w.a, 0] });
+      k.ball(0.32, C.gold, { at: at(w, 1.16, 2.2) });
+      return;
+    }
+    case "kerchief": {
+      // Tied close over the crown, knotted on one side, two tails hanging from the knot.
+      k.lathe([[4.5, -1.2], [4.6, 0.8], [4.1, 3], [2.8, 4.6], [1.3, 5.4], [0, 5.6]], 10, c);
+      const side = look.knotSide ? 1 : 0;
+      const [x, z] = side ? [4.5, -0.6] : [0, -4.5];
+      k.ball(0.95, tone(c, -0.08), { at: [x, 0, z] }, 1);
+      for (const [dx, dz, len] of [[0.4, -0.5, 3.4], [0.2, 0.6, 2.6]] as const) {
+        const [ox, oz] = side ? [dx, dz] : [dz, -dx];
+        k.rod([[x, -0.3, z], [x + ox * 1.5, -len * 0.5, z + oz * 1.5], [x + ox * 2.2, -len, z + oz * 2.2]], 0.45, dx > 0.3 ? c : tone(c, -0.08), {}, 4);
+      }
+      return;
+    }
+    case "coral": {
+      // A band of kelp, and on it a crown of branching coral, tallest at the front, with a little shell there.
+      k.cyl(4.4, 4.5, 1.4, 10, "#3d6b2e", {});
+      for (let i = 0; i < 7; i++) {
+        const a = ((i - 3) / 3) * 1.9;
+        const tall = 1 - Math.abs(i - 3) * 0.12;
+        const col = i % 2 ? c : tone(c, 0.1);
+        const base: V3 = [Math.sin(a) * 4.3, 0.5, Math.cos(a) * 4.3];
+        const tip: V3 = [base[0] * 1.2, 0.5 + 4.4 * tall, base[2] * 1.2];
+        k.rod([base, tip], 0.42, col, {}, 5);
+        k.ball(0.32, tone(col, 0.15), { at: tip });
+        for (const [t, side, up] of [[0.4, 1, 1.8], [0.65, -1, 1.4]] as const) {
+          const mid: V3 = [base[0] + (tip[0] - base[0]) * t, base[1] + (tip[1] - base[1]) * t, base[2] + (tip[2] - base[2]) * t];
+          const end: V3 = [mid[0] + Math.cos(a) * 1.1 * side, mid[1] + up, mid[2] - Math.sin(a) * 1.1 * side];
+          k.rod([mid, end], 0.24, col, {}, 4);
+          k.ball(0.22, tone(col, 0.15), { at: end });
+        }
+      }
+      k.ball(0.6, "#f0dcc8", { at: [0, 0.3, 4.6], scale: [1, 0.8, 0.5] });
+      return;
+    }
+    case "diver": {
+      // A round brass helmet on a bolted collar: a big round window in front, a smaller one each side, a valve on top.
+      const dark = tone(c, -0.2);
+      k.lathe([[0, -3.6], [3.6, -3.3], [5, -1.5], [5.3, 0.6], [4.8, 2.8], [3.4, 4.6], [1.6, 5.5], [0, 5.7]], 12, c);
+      k.cyl(5.4, 6.2, 1.8, 12, dark, { at: [0, -4.2, 0] });
+      for (let i = 0; i < 8; i++) {
+        const a = (i / 8) * Math.PI * 2 + Math.PI / 8;
+        k.ball(0.35, tone(c, 0.12), { at: [Math.sin(a) * 6, -4.2, Math.cos(a) * 6] });
+      }
+      const port = (r: number, at: V3, rot: V3) => {
+        k.cyl(r, r, 0.5, 12, "#2b3d48", { at, rot });
+        k.ring(r, 0.32, dark, { at, rot: [rot[0] - Math.PI / 2, rot[1], rot[2]] }, 4, 14);
+      };
+      port(2.4, [0, 0.4, 5], [Math.PI / 2, 0, 0]);
+      for (const s of [-1, 1]) port(1.2, [s * 5, 0.8, -0.3], [0, 0, Math.PI / 2]);
+      k.cyl(0.6, 0.8, 1.2, 8, dark, { at: [0, 6.1, -0.6] });
+      return;
+    }
+    default: {
+      // No hat but a band of cloth round the brow, knotted behind, its two ends hanging.
+      const band = look.bandana ?? c;
+      // Turned so the knot shows, behind on the right.
+      k.within({ rot: [0, 2.3, 0] }, () => {
+        k.ring(4.3, 0.55, band, { rot: [Math.PI / 2, 0, 0], scale: [1, 1, 1.9] }, 6, 14);
+        k.ball(0.95, tone(band, -0.08), { at: [0, 0, -4.5] }, 1);
+        for (const s of [-1, 1]) k.rod([[0, -0.2, -4.6], [s * 0.9, -2, -4.9], [s * 1.5, -3.8, -4.8]], 0.45, s > 0 ? band : tone(band, -0.08), {}, 4);
+      });
+    }
+  }
+}
+
+/** A tunic's body, from the collar (y 6) to below the waist: rows of [y, half-width, front, back]. */
+type Row = readonly [y: number, halfWidth: number, front: number, back: number];
+const TORSO: readonly Row[] = [[6, 4.6, 2.4, 2.4], [3, 5, 3.2, 2.6], [-3, 4.4, 2.6, 2.3], [-6.2, 4.8, 2.7, 2.5]];
+function torsoPoints(rows: readonly Row[], grow = 0): V3[] {
+  const pts: V3[] = [];
+  for (const [y, w0, f0, b0] of rows) {
+    const [w, front, back] = [w0 + grow, f0 + grow, b0 + grow];
+    pts.push([-w, y, 0], [w, y, 0], [0, y, front], [0, y, -back]);
+    for (const sx of [-1, 1]) pts.push([sx * w * 0.72, y, front * 0.85], [sx * w * 0.72, y, -back * 0.9]);
+  }
+  return pts;
+}
+/** How far forward the tunic's front is at height `y`. */
+function frontAt(y: number, rows: readonly Row[] = TORSO): number {
+  for (let i = 0; i + 1 < rows.length; i++) {
+    const [p, q] = [rows[i], rows[i + 1]];
+    if (y <= p[0] && y >= q[0]) return p[2] + ((q[2] - p[2]) * (p[0] - y)) / (p[0] - q[0]);
+  }
+  return y > rows[0][0] ? rows[0][2] : rows[rows.length - 1][2];
+}
+
+/** A class's tunic: its shirt, and over it the coat or vest the class wears, with its sash, straps and the rest. */
+function garbTunic(k: Kit, look: Look) {
+  const shirt = look.body;
+  const coat = look.coat ? (look.coatColor ?? look.body) : null;
+  const outer = coat ?? look.vest ?? null;
+  const trim = coat ? (look.coatTrim ?? look.accent) : look.vest ? tone(look.vest, -0.1) : tone(shirt, 0.08);
+  if (outer) {
+    // Open down the front: the outer garment all round, the shirt in a strip between its fronts, trimmed either
+    // side. A coat hangs to the shins; a vest covers the chest, the shirt showing below it.
+    if (!coat) k.hull(torsoPoints(TORSO), shirt);
+    const rows: readonly Row[] = coat ? [...TORSO.slice(0, 3), [-6.2, 5, 2.8, 2.6], [-11, 5.8, 3.2, 3]] : [TORSO[0], TORSO[1], [-1.6, 4.55, 2.75, 2.35]];
+    k.hull(torsoPoints(rows, 0.15), outer);
+    const top = 5.8;
+    const bottom = coat ? -2.6 : -1.6;
+    const strip: V3[] = [];
+    for (const y of [top, 3, bottom]) {
+      const z = frontAt(y, rows) + 0.2;
+      const w = y === top ? 1.1 : 0.6;
+      strip.push([-w, y, z], [w, y, z], [-w, y, z - 0.6], [w, y, z - 0.6]);
+    }
+    k.hull(strip, shirt);
+    for (const s of [-1, 1]) {
+      const edge: V3[] = [];
+      for (const y of [top, 3, bottom]) edge.push([s * (y === top ? 1.25 : 0.75), y, frontAt(y, rows) + 0.28]);
+      k.rod(edge, 0.24, trim, {}, 4);
+    }
+    if (coat) {
+      // Below the waist the coat hangs open over the legs: a dark gap between its skirts, edged in the trim.
+      k.box(1.2, 8.2, 0.4, tone(coat, -0.25), { at: [0, -6.9, frontAt(-6.9, rows) + 0.05] });
+      for (const s of [-1, 1]) k.rod([[s * 0.75, -2.6, frontAt(-2.6, rows) + 0.28], [s * 0.75, -6.2, frontAt(-6.2, rows) + 0.3], [s * 0.9, -11, frontAt(-11, rows) + 0.25]], 0.24, trim, {}, 4);
+    } else {
+      for (const y of [1.2, 3]) for (const s of [-1, 1]) k.ball(0.28, C.gold, { at: [s * 1.25, y, frontAt(y) + 0.3] });
+    }
+  } else {
+    // A plain tunic: a placket down the front with brass buttons.
+    k.hull(torsoPoints(TORSO), shirt);
+    k.box(1.2, 6.5, 0.3, tone(shirt, 0.08), { at: [0, 2.2, frontAt(2.2) + 0.05] });
+    for (const y of [4, 2.2, 0.4]) k.ball(0.38, C.gold, { at: [0, y, frontAt(y) + 0.25] });
+  }
+  // The neck, open.
+  k.cyl(2, 2.4, 0.5, 8, C.dark, { at: [0, 6.05, 0] });
+  // Sleeves, in the outer cloth where there is a coat; none on a sleeveless shirt (a vest's arms are bare).
+  if (look.sleeveless) {
+    // Only a cap of the shirt over each shoulder.
+    for (const s of [-1, 1]) k.cyl(1.7, 1.9, 1.8, 6, shirt, { at: [s * 5, 5.1, 0], rot: [0, 0, s * 0.5] });
+  } else {
+    for (const s of [-1, 1]) {
+      const cloth = coat ?? shirt;
+      k.cyl(1.6, 1.9, 4.6, 6, cloth, { at: [s * 5.5, 4, 0], rot: [0, 0, s * 0.5] });
+      k.cyl(1.75, 1.75, 0.9, 6, coat ? trim : tone(shirt, -0.08), { at: [s * 6.6, 2.05, 0], rot: [0, 0, s * 0.5] });
+    }
+  }
+  // Bands of colour round the chest (the Paladin's surcoat).
+  if (look.stripes) for (const y of [0.6, 2.4]) k.hull(torsoPoints([[y + 0.5, 5, frontAt(y + 0.5), 2.6], [y - 0.5, 4.9, frontAt(y - 0.5), 2.55]], 0.12), look.stripes);
+  // Round the waist: the sash, wound twice and knotted on the left hip with its ends hanging; else a belt.
+  const waist = -3.8;
+  const belt = (h: number, color: string) => k.hull(torsoPoints([[waist + h / 2, 4.5, 2.7, 2.4], [waist - h / 2, 4.5, 2.7, 2.4]], outer ? 0.3 : 0.15), color);
+  if (look.sash) {
+    belt(1.8, look.sash);
+    k.ball(1, tone(look.sash, -0.06), { at: [3.4, waist, 2.2], scale: [1.1, 0.85, 0.7] });
+    for (const [dx, len] of [[0.2, 4.2], [-0.4, 3.2]] as const) k.rod([[3.4 + dx, waist - 0.4, 2.4], [3.8 + dx, waist - len * 0.55, 2.6], [3.9 + dx, waist - len, 2.5]], 0.4, look.sash, {}, 4);
+  } else {
+    belt(1.1, C.leather);
+    k.box(1.4, 1.4, 0.5, C.gold, { at: [0, waist, frontAt(waist) + 0.45] }, 0.1);
+  }
+  if (look.straps) {
+    // A strap from the right shoulder across the chest to the left hip, with a buckle.
+    const pts: V3[] = [0, 0.5, 1].map((t): V3 => {
+      const y = 5.4 - 7.6 * t;
+      return [-3 + 6 * t, y, frontAt(y) + (outer ? 0.45 : 0.3)];
+    });
+    k.rod(pts, 0.42, look.straps, {}, 4);
+    k.box(0.8, 0.8, 0.3, C.iron, { at: [-0.1, 1.6, frontAt(1.6) + 0.6] });
+  }
+  if (look.teeth) {
+    // Teeth strung round the throat, pointing down, a stone at the middle.
+    for (let i = 0; i < 9; i++) {
+      const x = -2 + (4 * i) / 8;
+      const y = 5.2 - 0.6 * Math.cos((x / 2) * (Math.PI / 2));
+      k.cone(0.24, 0.9, 4, C.bone, { at: [x, y - 0.45, frontAt(y) + 0.4], rot: [Math.PI, 0, 0] });
+    }
+    k.ball(0.4, { glow: look.teeth }, { at: [0, 4.3, frontAt(4.3) + 0.5] });
+  }
+  for (const s of [-1, 1]) {
+    const shoulder: V3 = [s * 4.4, 6.1, 0];
+    if (look.epaulettes) {
+      k.box(3, 0.6, 3.2, look.epaulettes, { at: shoulder, rot: [0, 0, -s * 0.25] }, 0.2);
+      for (let i = 0; i < 5; i++) k.box(0.22, 1.1, 0.22, tone(look.epaulettes, -0.08), { at: [s * 5.8, 5.3, -1.2 + (2.4 * i) / 4] });
+    }
+    if (look.shell) {
+      // A scallop shell on each shoulder: a fan of ribs.
+      k.dome(2.2, 7, look.shell, { at: [s * 4.6, 5.9, 0], rot: [0, 0, -s * 0.5], scale: [1, 0.45, 1.1] });
+      for (let i = 0; i < 5; i++) k.rod([[s * 4.6, 6.4, 0], [s * (4.6 + 1.4 * Math.cos(-s * 0.5)), 6.9 - 0.3 * s * s, -1.7 + (3.4 * i) / 4]], 0.09, tone(look.shell, -0.18), {}, 3);
+    }
+    if (look.barnacles) for (const [dx, dz, r] of [[0, 0.6, 0.55], [0.7, -0.8, 0.45], [-0.6, -0.3, 0.4]] as const) k.cone(r, r * 1.3, 5, "#cfc6b0", { at: [s * (4.4 + dx), 6.5, dz] });
+  }
+  if (look.corselet) {
+    // A brass plate over the shoulders, bolted round, that the diving helmet seats on.
+    k.cyl(3.4, 5.2, 1.6, 12, look.corselet, { at: [0, 6, 0] });
+    for (let i = 0; i < 8; i++) {
+      const a = (i / 8) * Math.PI * 2;
+      k.ball(0.3, tone(look.corselet, 0.12), { at: [Math.sin(a) * 4.5, 5.6, Math.cos(a) * 4.5] });
+    }
+  }
+  if (look.vines) {
+    // Kelp growing up round the torso from the hem, leaves along it.
+    for (const s of [-1, 1]) {
+      const pts: V3[] = [-5.5, -2, 1.5, 4.5].map((y, i): V3 => [s * (2.6 - i * 0.4 + (i % 2) * 0.8), y, frontAt(y) + 0.3]);
+      k.rod(pts, 0.28, look.vines, {}, 4);
+      for (const p of pts.slice(1)) k.ball(0.4, tone(look.vines, 0.12), { at: [p[0] + s * 0.4, p[1], p[2] + 0.1], scale: [0.7, 1.7, 0.35] });
+    }
+  }
+}
+
+/** A class's trousers: a waistband and two legs, in its leg colour. */
+function garbTrousers(k: Kit, look: Look) {
+  const c = look.legs;
+  k.box(8.6, 2, 4.2, tone(c, -0.06), { at: [0, 6, 0] }, 0.4);
+  k.box(8.2, 3, 4, c, { at: [0, 3.8, 0] }, 0.5);
+  for (const sx of [-1, 1]) {
+    k.cyl(2, 1.75, 10, 6, c, { at: [sx * 2.3, -2.6, 0], rot: [0, 0, sx * 0.05] });
+    k.cyl(1.85, 1.85, 0.8, 6, tone(c, -0.08), { at: [sx * 2.55, -7.2, 0] });
+  }
+  k.box(0.5, 2.2, 0.3, tone(c, -0.12), { at: [0, 3.9, 2.05] });
+}
+
+/** A class's shoes: tall leather sea boots with a band in its boot colour, turned down at the top; or plain dark shoes. */
+function garbShoes(k: Kit, look: Look) {
+  const pair = (one: () => void) => {
+    k.within({ at: [-2.6, 0, -0.6], rot: [0, -0.45, 0] }, one);
+    k.within({ at: [2.6, 0, 0.4], rot: [0, -0.3, 0] }, one);
+  };
+  if (!look.boots) {
+    pair(() => {
+      k.box(3.8, 2.6, 7, C.dark, { at: [0, -1.6, 1.6] }, 0.9);
+      k.box(4, 0.7, 7.6, tone(C.dark, -0.06), { at: [0, -3.2, 1.8] }, 0.25);
+    });
+    return;
+  }
+  const band = look.boots;
+  pair(() => {
+    k.cyl(1.9, 2.1, 6, 6, C.leather, { at: [0, 2, 0] });
+    k.cyl(2.35, 2.25, 1.6, 6, tone(C.leather, 0.08), { at: [0, 5.4, 0] });
+    k.cyl(2.15, 2.15, 0.8, 6, band, { at: [0, 4.1, 0] });
+    k.box(3.8, 2.8, 7, C.leather, { at: [0, -1.5, 1.6] }, 0.9);
+    k.box(4, 0.7, 7.6, C.bark, { at: [0, -3.2, 1.8] }, 0.25);
+  });
+}
+
+const GARB_BUILD: Record<GarbPiece, (k: Kit, look: Look) => void> = { hat: garbHat, tunic: garbTunic, trousers: garbTrousers, shoes: garbShoes };
+const GARB_VIEW: Record<GarbPiece, Omit<LowPolyDef, "build">> = { hat: { spin: 0.4, tip: 0.25 }, tunic: { spin: 0.45, tip: 0.2 }, trousers: { spin: 0.45, tip: 0.15 }, shoes: { spin: 0, tip: 0.3 } };
+
+/** The model for a class's own piece of starting clothes ("garb-tunic:staff_sage"), or null for any other icon. */
+function garbModel(icon: string): LowPolyDef | null {
+  const g = parseGarbIcon(icon);
+  const look = g && LOOKS[g.classId];
+  if (!g || !look) return null;
+  return { ...GARB_VIEW[g.piece], build: (k) => GARB_BUILD[g.piece](k, look) };
+}
+
 // ---------- building ----------
 
 const materials = new Map<string, THREE.Material>();
@@ -1375,7 +1670,7 @@ function place(o: THREE.Object3D, p: Place = {}) {
  * holds of it instead (see LowPolyDef.inHand), where that differs.
  */
 export function buildLowPoly(name: string, accent: string, inHand = false): { model: THREE.Object3D; def: LowPolyDef } | null {
-  const def = LOW_POLY[name];
+  const def = LOW_POLY[name] ?? garbModel(name);
   if (!def) return null;
   const root = new THREE.Group();
   const parents: THREE.Object3D[] = [root];

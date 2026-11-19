@@ -165,12 +165,24 @@ export const GEAR_BASES: readonly Base[] = Object.values(BASES).flat();
 export const GARB_PREFIX = "garb_";
 /** The starter hat's ref. */
 export const GARB_HAT = "garb_hat";
-const GARB: { slot: "helmet" | "body" | "legs" | "boots"; ref: string; name: string; icon: string }[] = [
-  { slot: "helmet", ref: GARB_HAT, name: "Hat", icon: "knit-cap" },
-  { slot: "body", ref: "garb_tunic", name: "Tunic", icon: "naval-tunic" },
-  { slot: "legs", ref: "garb_trousers", name: "Trousers", icon: "armored-pants" },
-  { slot: "boots", ref: "garb_shoes", name: "Shoes", icon: "deck-boots" },
+/** The pieces of starting clothes. `piece` names the class's own picture of it (garbIcon); `icon` is the plain one, for a piece with no class. */
+const GARB: { slot: "helmet" | "body" | "legs" | "boots"; ref: string; name: string; piece: GarbPiece; icon: string }[] = [
+  { slot: "helmet", ref: GARB_HAT, name: "Hat", piece: "hat", icon: "knit-cap" },
+  { slot: "body", ref: "garb_tunic", name: "Tunic", piece: "tunic", icon: "naval-tunic" },
+  { slot: "legs", ref: "garb_trousers", name: "Trousers", piece: "trousers", icon: "armored-pants" },
+  { slot: "boots", ref: "garb_shoes", name: "Shoes", piece: "shoes", icon: "deck-boots" },
 ];
+export type GarbPiece = "hat" | "tunic" | "trousers" | "shoes";
+
+/**
+ * The icon of a class's own piece of starting clothes, "garb-tunic:staff_sage": pictured in that class's look, as
+ * it is drawn on a hero of that class. Read back with parseGarbIcon.
+ */
+export const garbIcon = (piece: GarbPiece, classId: string) => `garb-${piece}:${classId}`;
+export function parseGarbIcon(icon: string): { piece: GarbPiece; classId: string } | null {
+  const m = /^garb-(hat|tunic|trousers|shoes):([a-z_]+)$/.exec(icon);
+  return m ? { piece: m[1] as GarbPiece, classId: m[2] } : null;
+}
 
 /** The class whose own hat is a lantern helm: a steel helm with a little lantern burning on top. */
 export const LANTERN_HELM_CLASS = "qa_paladin";
@@ -210,7 +222,7 @@ export function starterGarb(classId: string): ItemDef[] {
     power: 0,
     statBonus: {},
     levelReq: 1,
-    icon: lantern && g.ref === GARB_HAT ? LANTERN_HELM_ICON : g.icon,
+    icon: lantern && g.ref === GARB_HAT ? LANTERN_HELM_ICON : cls ? garbIcon(g.piece, cls.id) : g.icon,
   }));
 }
 

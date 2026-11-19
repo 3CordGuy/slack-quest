@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { GARB_HAT, LANTERN_HELM_ICON, starterGarb, wearsLanternHelm } from "./gear";
+import { GARB_HAT, LANTERN_HELM_ICON, parseGarbIcon, starterGarb, wearsLanternHelm } from "./gear";
 import { gearSheet } from "./hero";
 import {
   RARITIES,
@@ -129,9 +129,18 @@ describe("what gear does", () => {
 describe("the Lighthouse Paladin's Lantern Helm", () => {
   const hat = (classId: string) => starterGarb(classId).find((i) => i.ref === GARB_HAT)!;
 
-  it("is the Paladin's starter hat; every other class starts in a plain knitted cap", () => {
+  it("is the Paladin's starter hat; every other class starts in its own hat, pictured in its look", () => {
     expect(hat("qa_paladin")).toMatchObject({ name: "Lantern Helm", icon: LANTERN_HELM_ICON, slot: "helmet" });
-    expect(hat("refactor_rogue")).toMatchObject({ name: "Smuggler Rogue Hat", icon: "knit-cap" });
+    expect(hat("refactor_rogue")).toMatchObject({ name: "Smuggler Rogue Hat", icon: "garb-hat:refactor_rogue" });
+  });
+
+  it("names each piece of a class's starting clothes for the class, and gives it the class's own picture", () => {
+    const sage = starterGarb("staff_sage");
+    expect(sage.map((i) => i.icon)).toEqual(["garb-hat:staff_sage", "garb-tunic:staff_sage", "garb-trousers:staff_sage", "garb-shoes:staff_sage"]);
+    expect(sage.map((i) => parseGarbIcon(i.icon))).toEqual(["hat", "tunic", "trousers", "shoes"].map((piece) => ({ piece, classId: "staff_sage" })));
+    expect(parseGarbIcon("knit-cap")).toBeNull();
+    // With no class, the plain pictures.
+    expect(starterGarb("nobody").map((i) => i.icon)).toEqual(["knit-cap", "naval-tunic", "armored-pants", "deck-boots"]);
   });
 
   it("is worn by whoever has it on; any starter hat on a Paladin is one; and a Paladin with no look chosen is drawn in it bare-headed", () => {
