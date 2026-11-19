@@ -638,7 +638,7 @@ interface Unit {
    */
   dying?: number;
   /** Told it fell (see fell) before the picture had it down, at this time on the render clock, and to whom. */
-  felled?: { at: number; by?: string };
+  felled?: { at: number; by?: string; onDown?: () => void };
   /**
    * The waypoints in `path` that are jumped to, not walked: the Jump action (see leapUnit: true, and heard as
    * one), and any step of a walk that goes up or down a level of the ground (see walkUnit: false).
@@ -1698,13 +1698,17 @@ export class WorldRenderer {
 
   /**
    * Shown going down now (a zone fight's "down"): it falls at once, away from `by`, rather than waiting on a beat.
-   * Told before the picture has it down, it falls as soon as the picture does.
+   * Told before the picture has it down, it falls as soon as the picture does. `onDown` runs once it is down and
+   * lying still: at once if it is not here, or is already down, or is laid out without a fall.
    */
-  fell(id: string, by?: string) {
+  fell(id: string, by?: string, onDown?: () => void) {
     const unit = this.units.get(id);
-    if (!unit) return;
-    if (unit.dying !== undefined) return this.topple(id, by);
-    if (!unit.down) unit.felled = { at: this.clock, by };
+    if (!unit) return onDown?.();
+    if (unit.dying !== undefined) return this.topple(id, by, onDown);
+    if (!unit.down) {
+      unit.felled?.onDown?.();
+      unit.felled = { at: this.clock, by, onDown };
+    } else onDown?.();
   }
 
   /** The top of a unit's head in the world, wherever it has got to: for something drawn over it. Null if it is not on the map. */
@@ -1854,9 +1858,9 @@ export class WorldRenderer {
    * One just killed falls where it stands, limp (see Figure.fall): knocked away from `by`, who struck the blow.
    * Only for one held up for it (see Unit.dying); anyone else is already lying as they should.
    */
-  private topple(id: string, by?: string) {
+  private topple(id: string, by?: string, onDown?: () => void) {
     const unit = this.units.get(id);
-    if (!unit || unit.dying === undefined) return;
+    if (!unit || unit.dying === undefined) return onDown?.();
     unit.dying = undefined;
     unit.lying = true;
     unit.head = unit.size * LYING + 0.3;
@@ -1867,7 +1871,7 @@ export class WorldRenderer {
     this.applyLabel(unit);
     const from = by ? this.units.get(by) : undefined;
     const away = from ? unit.goal.clone().sub(from.goal).setY(0) : undefined;
-    unit.figure.fall(away && away.lengthSq() > 1e-6 ? away : undefined);
+    unit.figure.fall(away && away.lengthSq() > 1e-6 ? away : undefined, onDown);
   }
 
   private later(beat: number, run: () => void, extra = 0) {
@@ -6097,10 +6101,14 @@ export class WorldRenderer {
       // Seen going down: it stays on its feet for the blow to land, then falls (see topple).
       if (w.down && !unit.down && seen && w.falls) unit.dying = this.clock + 2;
       if (!w.down) unit.dying = undefined;
-      // Told it fell just before this: it falls now. (Told long ago, the word is stale.)
-      if (unit.felled && this.clock - unit.felled.at > 1) unit.felled = undefined;
+      // Told it fell just before this: it falls now. (Told long ago, the word is stale.) Down with no fall to show
+      // (not seen going down), it is down at once.
+      if (unit.felled && (this.clock - unit.felled.at > 1 || (w.down && unit.dying === undefined))) {
+        unit.felled.onDown?.();
+        unit.felled = undefined;
+      }
       if (unit.felled && unit.dying !== undefined) {
-        this.topple(id, unit.felled.by);
+        this.topple(id, unit.felled.by, unit.felled.onDown);
         unit.felled = undefined;
       }
       unit.down = !!w.down;

@@ -473,7 +473,18 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
         }
       });
     };
+    /** The last of each run's falls: several struck down at once fall together, and the last of them is waited for. */
+    const lastFall = new Set<number>();
+    events.forEach((ev, i) => {
+      if (ev.t !== "down") return;
+      if (!many[i]) return void lastFall.add(i);
+      let k = i + 1;
+      while (k < events.length && !CAUSES.has(events[k].t) && events[k].t !== "down") k++;
+      if (k >= events.length || events[k].t !== "down" || !many[k]) lastFall.add(i);
+    });
     for (const [i, ev] of events.entries()) {
+      /** Run once the picture has caught up with this event (see the end of the loop). */
+      let afterShown: (() => void) | null = null;
       const say = (line: string) => later(() => setFeed((f) => [...f, line].slice(-40)));
       const view = renderer.current;
       /** The unit makes its gesture (a cast, or a bow drawn), and `go`, what leaves its hand, runs as the gesture ends: at once with no view to draw it. */
@@ -1126,11 +1137,17 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
         if (u && ev.t === "down") u.hp = 0;
         if (u && ev.t === "down") {
           const by = struck.get(ev.id);
-          later(() => {
+          // Once the picture has them down: they fall then, limp and away from the blow, and nothing more is shown
+          // till they are down on the ground (the last of several struck down at once, for them all). The pause
+          // after a fall is spent falling.
+          const due = at + dwell(ev, many[i], events[i + 1]);
+          const wait = lastFall.has(i);
+          afterShown = () => {
             sounds.down({ side: u.side, kind: u.kind }, view?.whereIs(ev.id));
-            // Limp, and away from the blow, as the picture has them down.
-            view?.fell(ev.id, by);
-          });
+            const release = wait ? play.hold() : null;
+            if (!view) return release?.();
+            view.fell(ev.id, by, release ? () => release(due) : undefined);
+          };
         }
         say(ev.t === "down" ? `${name(ev.id)} is down.` : `${name(ev.id)} is back up.`);
       } else if (ev.t === "skip") {
@@ -1333,7 +1350,11 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
       }
       // What the picture shows once this event has been seen.
       const shown: Picture = structuredClone(draft);
-      later(() => setPicture(shown));
+      const then = afterShown as (() => void) | null;
+      later(() => {
+        setPicture(shown);
+        then?.();
+      });
       let wait = dwell(ev, many[i], events[i + 1], ev.t === "roll" && carried.has(ev.roll));
       if (ev.t === "moved" && already > 0) {
         // The part of this walk shown ahead has been playing since the click: only what is left of it is waited for.
