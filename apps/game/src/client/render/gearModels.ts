@@ -502,15 +502,33 @@ export const LOW_POLY: Record<string, LowPolyDef> = {
     },
   },
   maul: {
+    // A ship's anchor swung upside down, rusted and hung with weed: gripped low on a broad flat shank, the eye
+    // and a length of chain under the fist, and up top a pointed crown whose arms spread in a wide, shallow arc
+    // to big barbed flukes. Rope wound round the grip, banded in the accent.
     lean: DIAG,
     spin: 0.5,
     build: (k) => {
-      k.cyl(0.6, 0.7, 18, 6, C.wood, { at: [0, -2.5, 0] });
-      k.cyl(0.85, 0.85, 4, 6, C.leather, { at: [0, -9, 0] });
-      k.ball(0.9, C.iron, { at: [0, -11.6, 0] });
-      k.box(8, 5, 5, C.iron, { at: [0, 8.5, 0] }, 0.7);
-      for (const x of [-4.2, 4.2]) k.box(0.6, 4, 4, C.steel, { at: [x, 8.5, 0] }, 0.3);
-      k.box(2, 5.4, 5.4, k.a, { at: [0, 8.5, 0] }, 0.3);
+      const rust = "#7a4b34";
+      const dark = "#5a3626";
+      const weed = "#6f6a2c";
+      k.box(1.7, 18, 1.1, rust, { at: [0, -1.2, 0] }, 0.25);
+      k.cyl(1.15, 1.15, 3.6, 6, C.leather, { at: [0, -9, 0] });
+      k.cyl(1.2, 1.2, 0.6, 6, k.a, { at: [0, -7, 0] });
+      k.ring(1.45, 0.42, dark, { at: [0, -12.5, 0] }, 6, 10);
+      k.ring(0.75, 0.22, C.iron, { at: [0, -14.6, 0], rot: [0, Math.PI / 2, 0] }, 4, 8);
+      k.ring(0.75, 0.22, C.iron, { at: [0, -15.9, 0] }, 4, 8);
+      // The crown and arms: one broad crescent, pointed at the top.
+      k.plate([[-6.9, 6.7], [-5.4, 8.5], [-3, 9.6], [0, 11], [3, 9.6], [5.4, 8.5], [6.9, 6.7], [6, 6.1], [4.6, 7.3], [2.6, 8.1], [0.9, 8.3], [-0.9, 8.3], [-2.6, 8.1], [-4.6, 7.3], [-6, 6.1]], 1.4, rust, {}, 0.3);
+      for (const s of [-1, 1]) {
+        // A fluke: a spade on the arm's end, its point down toward the fist and a barb out to the side.
+        const f: [number, number][] = [[5.3, 7.3], [6.8, 8.2], [9, 7.8], [7.8, 6.6], [6.6, 3.5]];
+        k.plate(s > 0 ? f : f.map(([x, y]) => [-x, y] as [number, number]).reverse(), 0.9, dark, {}, 0.2);
+      }
+      // Weed hanging off the arms and wound round the shank.
+      for (const [x, z] of [[2.6, 0.8], [-4.4, -0.75], [5.6, 0.6]]) {
+        k.rod([[x, 9.2 - Math.abs(x) * 0.25, z], [x + 0.3, 7, z * 1.1], [x - 0.2, 5.2, z], [x + 0.2, 4, z * 0.9]], 0.18, weed, {}, 4);
+      }
+      k.rod([[0.95, 6, 0.7], [-0.95, 4.6, 0.7], [-0.95, 4, -0.7], [0.95, 2.6, -0.7], [0.95, 2, 0.7], [-0.6, 0.6, 0.75], [-0.3, -1.4, 0.8]], 0.2, weed, {}, 4);
     },
   },
   grimoire: {
