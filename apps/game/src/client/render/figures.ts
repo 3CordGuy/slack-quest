@@ -2128,6 +2128,7 @@ function biped(top: THREE.Group, parts: Part[], elbow = ELBOW) {
   let reading: THREE.Object3D | null = null;
   const reads = (book: THREE.Object3D) => {
     reading = book;
+    castPace = BOOK_CAST_PACE;
   };
   const chain = new THREE.Matrix4();
   /** Where `at`, a point in `frame` (any joint hung, however far down, from the torso), is in the torso's own frame (or `root`'s, further up). */
@@ -3113,6 +3114,13 @@ interface Braid {
 /** Set by makeFigure for the figure being built: parts hung on others outside the rig (braids), and the braids to swing. */
 let extraParts: Part[] = [];
 let braids: Braid[] = [];
+/**
+ * How many times longer than CAST a spell takes the figure being built (set by makeFigure, and by a rig carrying
+ * an open book): the hand waved over the pages is slow and deliberate, so a book's cast is played slower, the
+ * spell leaving as much later.
+ */
+let castPace = 1;
+const BOOK_CAST_PACE = 2;
 /** Set by makeFigure for the figure being built: eyes that light only while a spell is cast (see Look.glowOnCast). */
 let castEyes: THREE.Object3D[] = [];
 /** The front of a long (wizard's) beard on the figure being built, if it has one: where an amulet goes. */
@@ -6776,6 +6784,7 @@ export function makeFigure(kind: string, look: Look, outfit?: Outfit, opts: Figu
   bodyParts = [];
   beardFront = null;
   castEyes = [];
+  castPace = 1;
   slung = null;
   chosen = outfit?.appearance ?? null;
   lowPoly = !!chosen || !!opts.lowPoly || !BLOCKY_PREF;
@@ -6796,6 +6805,9 @@ export function makeFigure(kind: string, look: Look, outfit?: Outfit, opts: Figu
   const swinging = braids;
   const loose = dangles;
   const spellEyes = castEyes;
+  const pace = castPace;
+  /** How long an action of this kind takes this figure. */
+  const lasts = (kind: Act["kind"]) => ACT_OVER[kind] * (kind === "cast" ? pace : 1);
   // What a swinging weight bumps against: only worth fitting for someone carrying one.
   const body = loose.length > 0 ? bodyCapsules(bodyParts) : [];
   const sling = slung;
@@ -6864,11 +6876,11 @@ export function makeFigure(kind: string, look: Look, outfit?: Outfit, opts: Figu
     last = p.time;
     if (asked) [action, asked] = [{ kind: asked, at: p.time, n: ++actions, air: asked === "jump" ? airtime : 0 }, null];
     const since = action ? p.time - action.at : 0;
-    if (action && (since < 0 || since >= ACT_OVER[action.kind] + action.air)) action = null;
+    if (action && (since < 0 || since >= lasts(action.kind) + action.air)) action = null;
     const want = p.walking ? Math.sin(p.stride * 3.6) : 0;
     swing += (want - swing) * Math.min(1, dt * 20);
     const rowing = p.rowing !== undefined && !!rig.hands && !p.lying;
-    const anim: Anim = { t: p.time, swing, breath: Math.sin(p.time * 2.2 + beat), strike: Math.min(1, Math.abs(p.lean) * 2), act: action && rig.acts ? { kind: action.kind, t: since, n: action.n, air: action.air } : null, scale: 1 / scaler.scale.x, lying: p.lying, sitting: rowing ? 1 : typeof p.sitting === "number" ? Math.max(0, Math.min(1, p.sitting)) : p.sitting ? 1 : 0, oars: rowing ? Math.max(0, Math.min(1, p.rowing!)) : -1, getUp: null };
+    const anim: Anim = { t: p.time, swing, breath: Math.sin(p.time * 2.2 + beat), strike: Math.min(1, Math.abs(p.lean) * 2), act: action && rig.acts ? { kind: action.kind, t: action.kind === "cast" ? since / pace : since, n: action.n, air: action.air } : null, scale: 1 / scaler.scale.x, lying: p.lying, sitting: rowing ? 1 : typeof p.sitting === "number" ? Math.max(0, Math.min(1, p.sitting)) : p.sitting ? 1 : 0, oars: rowing ? Math.max(0, Math.min(1, p.rowing!)) : -1, getUp: null };
     // A rig with no animations of its own is leant into a blow, and a little into a hit, easing off as it always has.
     if (action && !rig.acts) anim.strike = Math.max(anim.strike, Math.min(1, (action.kind === "hit" ? 0.5 : 1.8) * Math.exp(-8 * since)));
     if (sling) stow(sling, p.walking, Math.max(anim.strike, anim.act && anim.act.kind !== "hit" ? 1 : 0), dt);
@@ -6966,14 +6978,14 @@ export function makeFigure(kind: string, look: Look, outfit?: Outfit, opts: Figu
     cast() {
       if (rig.acts && action?.kind === "cast" && !asked) {
         const since = last - action.at;
-        if (since < CAST.emit) return CAST.emit - since;
-        if (since < CAST.over - 0.25) {
-          action.at = last - CAST.emit;
+        if (since < CAST.emit * pace) return CAST.emit * pace - since;
+        if (since < (CAST.over - 0.25) * pace) {
+          action.at = last - CAST.emit * pace;
           return 0;
         }
       }
       asked = "cast";
-      return rig.acts ? CAST.emit : 0;
+      return rig.acts ? CAST.emit * pace : 0;
     },
     play() {
       if (!rig.plays) return 0;
