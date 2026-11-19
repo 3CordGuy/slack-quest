@@ -3611,6 +3611,49 @@ function lowHat(head: Part, look: Look) {
     case "helm":
       lowHelm(head, "#aeb6c2", tone("#aeb6c2", 0.07), look.accent);
       return;
+    case "lamphelm": {
+      // A keeper's helm: a steel dome banded in brass, cheek guards, and on top a little lantern burning, its
+      // brass posts round the light and a peaked cap over it.
+      const c = "#aeb6c2";
+      head.loft(c, fitted(OVER_HAIR), 10);
+      head.loft(GEAR.gold, fitted([[3.85, 3.84, 3.54], [4.45, 3.82, 3.52, -0.02]]), 10);
+      cheekGuards(head, c);
+      const d = headDelta(7.6);
+      const z = d.dz - 0.1;
+      head.cyl(GEAR.gold, 1.15, 1.35, 0.5, 0, 7.95, z, 8);
+      head.glowBox("#ffd27a", 1.3, 1.5, 1.3, 0, 8.95, z);
+      for (const [x, k] of [[-0.75, -0.75], [0.75, -0.75], [-0.75, 0.75], [0.75, 0.75]]) head.box(GEAR.gold, 0.26, 1.7, 0.26, x, 8.95, z + k);
+      head.cyl(GEAR.gold, 1.2, 1.2, 0.3, 0, 9.85, z, 8);
+      head.cone(look.accent, 1.2, 1.1, 0, 10.5, z, 8);
+      head.ball(GEAR.gold, 0.25, 0, 11.15, z, 0);
+      return;
+    }
+    case "coral": {
+      // A band of kelp round the brow, and on it a crown of branching coral, taller at the front, with a little
+      // shell at its middle.
+      const c = look.hatColor ?? look.accent;
+      const kelp = "#3d6b2e";
+      head.loft(kelp, fitted([[3.95, 3.84, 3.54], [4.65, 3.88, 3.58, -0.03]]), 10);
+      const d = headDelta(4.6);
+      for (let i = 0; i < 7; i++) {
+        const a = ((i - 3) / 3) * 1.9;
+        const tall = 1 - Math.abs(i - 3) * 0.12;
+        const base: Pt = [Math.sin(a) * (3.75 + d.rx), 4.55, Math.cos(a) * (3.5 + d.rz) + d.dz];
+        const tip: Pt = [base[0] * 1.18, 4.55 + 3.3 * tall, base[2] * 1.18];
+        const col = i % 2 ? c : tone(c, 0.1);
+        strut(head, col, base, tip, 0.42, 0.22);
+        head.ball(tone(col, 0.15), 0.26, ...tip, 0);
+        // Two side branches off each, forking up and away to either side, each with a knobbed end.
+        for (const [at, side, up] of [[0.35, 1, 1.5], [0.6, -1, 1.2]] as const) {
+          const mid: Pt = [base[0] + (tip[0] - base[0]) * at, base[1] + (tip[1] - base[1]) * at, base[2] + (tip[2] - base[2]) * at];
+          const end: Pt = [mid[0] + Math.cos(a) * 0.95 * side, mid[1] + up, mid[2] - Math.sin(a) * 0.95 * side];
+          strut(head, col, mid, end, 0.22, 0.14);
+          head.ball(tone(col, 0.15), 0.18, ...end, 0);
+        }
+      }
+      head.ball("#f0dcc8", 0.45, 0, 4.4, 3.75 + d.rz + d.dz, 0, [1, 0.8, 0.5]);
+      return;
+    }
     case "wizard": {
       // A wide brim just over the brows, a band, and a tall crown that bends back to its tip.
       head.loft(look.accent, fitted([[4.3, 5.3, 5.05, -0.05], [4.68, 5.3, 5.05, -0.05]]), 14);
@@ -4447,6 +4490,14 @@ function drawHat(head: Part, look: Look) {
     head.box(c, 7, 1.9, 6.5, 0, 5.5, -0.1);
     head.box(c, 1.2, 2.8, 0.8, 1.6, 3.4, -3.6, [0, 0, 0.2]);
     head.box(tone(c, -0.08), 1, 2.2, 0.8, -0.4, 3.7, -3.7, [0, 0, -0.15]);
+  } else if (hat === "lamphelm") {
+    head.box("#aeb6c2", 7, 2.8, 6.6, 0, 5.3, 0);
+    head.box(GEAR.gold, 7.2, 0.6, 6.8, 0, 4.2, 0);
+    head.glowBox("#ffd27a", 1.6, 1.6, 1.6, 0, 7.6, 0);
+    head.box(look.accent, 2, 0.8, 2, 0, 8.8, 0);
+  } else if (hat === "coral") {
+    head.box("#3d6b2e", 7.2, 0.9, 6.8, 0, 4.6, 0);
+    for (const x of [-2.4, -0.8, 0.8, 2.4]) head.box(look.hatColor ?? look.accent, 0.6, 2.4, 0.6, x, 6, 3);
   } else if (hat === "diver") {
     const c = look.hatColor ?? "#c2893a";
     head.box(c, 8, 8.4, 7.8, 0, 3.6, 0);
@@ -5133,6 +5184,10 @@ function person(top: THREE.Group, look: Look, outfit: Outfit | undefined, asleep
         torso.shape(look.coatColor, pts);
       }
     }
+    if (look.stripes) {
+      // Bands round the chest, like a lighthouse's.
+      for (const [y0, y1] of [[1.9, 2.7], [3.5, 4.3]]) torso.loft(look.stripes, [around(rings, y0, 0.07), around(rings, y1, 0.08)]);
+    }
     if (look.vest) {
       // A vest over the shirt, open down the front: the shirt shows in a strip between its fronts.
       torso.loft(look.vest, [around(rings, 0.7, 0.1), around(rings, 3.6, 0.12), around(rings, 5.45, 0.12), around(rings, 5.95, 0.08)]);
@@ -5242,6 +5297,22 @@ function person(top: THREE.Group, look: Look, outfit: Outfit | undefined, asleep
           lowRolledSleeve(arm, look.skin, cloth);
           inkPart(arm, region, chosen!.ink!);
         } else lowSleeve(arm, look.coat && look.coatColor ? look.coatColor : cloth, look.accent);
+        if (look.shell && !undressed) {
+          // A scallop shell on the outside of each shoulder: a ribbed fan, its hinge low, opening upward.
+          const x = s * 1.45;
+          const rim = (k: number, a: number, out: number): Pt => [x + s * out, 1.9 * k * Math.cos(a), 1.9 * k * Math.sin(a)];
+          const fan: Pt[] = [[x, -0.2, 0], [x + s * 0.25, -0.2, 0]];
+          for (let i = 0; i <= 8; i++) {
+            const a = -1.15 + (2.3 * i) / 8;
+            fan.push(rim(1, a, 0), rim(1, a, 0.3));
+          }
+          arm.shape(look.shell, fan);
+          for (let i = 0; i <= 6; i++) {
+            const a = -1 + (2 * i) / 6;
+            strut(arm, tone(look.shell, -0.18), [x + s * 0.32, -0.1, 0], rim(0.97, a, 0.34), 0.07, 0.09);
+          }
+          arm.ball(tone(look.shell, -0.2), 0.3, x + s * 0.2, -0.2, 0, 0);
+        }
         if (look.epaulettes && !undressed) {
           // A gold pad over the shoulder, fringed all along its edge.
           arm.box(look.epaulettes, 2.3, 0.4, 2.5, s * 0.35, 1.35, 0);
