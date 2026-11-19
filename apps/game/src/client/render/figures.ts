@@ -6827,6 +6827,12 @@ const RAG_TONE = 0.01;
 /** How long a body may go on settling, and how still it must be (units a step) for long enough to call it settled. */
 const RAG_MAX = 4;
 const RAG_STILL = 0.004;
+/**
+ * Down, as far as anyone watching can tell (seconds into the fall): on the ground, though it goes on settling by
+ * hairs for a while yet (too little to see, but enough that it is seldom still). A body drops its own height under
+ * RAG_GRAVITY in about this long; a wolf, measured, is on the ground by 0.55.
+ */
+const RAG_DOWN = 0.6;
 /** How fast the blow that fells it knocks its head away (units a second): enough to topple it over its feet. */
 const RAG_PUSH = 40;
 /**
@@ -6868,6 +6874,8 @@ type RagStick = [number, number, number, number];
 export interface Ragdoll {
   /** Work the fall on by `dt` seconds and pose the figure to match. False once it has come to rest. */
   step(dt: number): boolean;
+  /** Down on the ground and lying still (or given up waiting for it to be), though it may twitch on a little. */
+  down(): boolean;
   /** Put every joint back as it was when it fell (for one got up again). */
   restore(): void;
 }
@@ -6945,7 +6953,7 @@ function ragdoll(top: THREE.Group, parts: Part[], push: THREE.Vector3): Ragdoll 
     for (let o = part.joint.parent; o && o !== top; o = o.parent) depth++;
     pieces.push({ part, corners, parent: null, q0, mid0: box.getCenter(new THREE.Vector3()).applyMatrix4(m), origin0: new THREE.Vector3().setFromMatrixPosition(m), frame0: new THREE.Matrix4(), depth });
   }
-  if (pieces.length === 0) return { step: () => false, restore() {} };
+  if (pieces.length === 0) return { step: () => false, down: () => true, restore() {} };
   const atStart = new Float32Array(pos);
   for (const p of pieces) frameOf(atStart, p.corners, p.frame0);
   // What carries the rest: the biggest part hung straight from the top (a body, a torso).
@@ -7130,6 +7138,7 @@ function ragdoll(top: THREE.Group, parts: Part[], push: THREE.Vector3): Ragdoll 
       pose();
       return still < 0.5 && time < RAG_MAX;
     },
+    down: () => time >= RAG_DOWN || still >= 0.5,
     restore() {
       for (const [joint, q] of saved) joint.quaternion.copy(q);
       top.position.copy(savedTop);
@@ -7232,9 +7241,10 @@ export interface Figure {
   /**
    * Go limp and fall where it stands (a ragdoll), knocked along `push` (in the world, along the ground: away from
    * the blow) or, without one, any way. It lies as it fell for as long as it is posed lying; stood up again, it
-   * gets up from how it lay (as from any lying down) and takes its usual poses.
+   * gets up from how it lay (as from any lying down) and takes its usual poses. `onDown` runs once it is down and
+   * lying still (at once if it has already fallen, or is got up again first).
    */
-  fall(push?: THREE.Vector3): void;
+  fall(push?: THREE.Vector3, onDown?: () => void): void;
   /** Greyed, for someone down in a fight. */
   setDim(on: boolean): void;
   /** How much of it is left to see, 1 (all there) to 0 (gone): it thins out pixel by pixel as a camera passes through it. */
@@ -7335,7 +7345,13 @@ export function makeFigure(kind: string, look: Look, outfit?: Outfit, opts: Figu
   let throughColor: string | null = null;
   let actions = 0;
   /** Fallen dead: the fall under way (or come to rest), which poses it in place of the rig while it lies. */
-  let fallen: { doll: Ragdoll; moving: boolean } | null = null;
+  let fallen: { doll: Ragdoll; moving: boolean; onDown?: () => void } | null = null;
+  /** Told the one fallen is down (fall's onDown), once: it may be got up again before it is. */
+  const landed = () => {
+    const told = fallen?.onDown;
+    if (fallen) fallen.onDown = undefined;
+    told?.();
+  };
   /** Lying the frame before, to see it get up. */
   let wasLying = false;
   /** A pose: every joint's turn (the top first), and where the top is. */
@@ -7401,6 +7417,7 @@ export function makeFigure(kind: string, look: Look, outfit?: Outfit, opts: Figu
     if (wasLying && !p.lying && !first) {
       const from = hold();
       if (fallen) {
+        landed();
         fallen.doll.restore();
         fallen = null;
       }
@@ -7416,11 +7433,13 @@ export function makeFigure(kind: string, look: Look, outfit?: Outfit, opts: Figu
     if (p.lying) rising = null;
     wasLying = p.lying;
     if (fallen && !p.lying) {
+      landed();
       fallen.doll.restore();
       fallen = null;
     }
     if (fallen) {
       if (fallen.moving) fallen.moving = fallen.doll.step(first ? 0 : dt);
+      if (!fallen.moving || fallen.doll.down()) landed();
     } else {
       if (rising) put(rising.posed);
       rig.animate(anim);
@@ -7536,15 +7555,15 @@ export function makeFigure(kind: string, look: Look, outfit?: Outfit, opts: Figu
       airtime = Math.max(0.1, air);
       return rig.acts ? JUMP.spring : 0;
     },
-    fall(push) {
-      if (fallen) return;
+    fall(push, onDown) {
+      if (fallen) return onDown?.();
       // Into the figure's own space, along the ground; a blow from nowhere in particular knocks it any way.
       const dir = push ? push.clone() : new THREE.Vector3(Math.random() - 0.5, 0, Math.random() - 0.5);
       dir.applyQuaternion(scaler.getWorldQuaternion(new THREE.Quaternion()).invert());
       dir.y = 0;
       if (dir.lengthSq() < 1e-6) dir.set(0, 0, -1);
       dir.setLength(RAG_PUSH);
-      fallen = { doll: ragdoll(top, allParts, dir), moving: true };
+      fallen = { doll: ragdoll(top, allParts, dir), moving: true, onDown };
     },
     setDim(on) {
       mats.body.color.setScalar(on ? 0.5 : 1);
