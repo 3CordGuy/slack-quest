@@ -65,6 +65,14 @@ export type FxKind =
   | "aim"
   /** A harpoon fired from a gun on a line at each target: hauling them in (Harpoon Shot) or reeled back (Barbed Line). */
   | "harpoon"
+  /** Every Guiding Light put out at once: a crescent moon over each enemy that was lit (New Moon). */
+  | "snuff"
+  /** A red flare shot onto the hex marked (Chart a Course). */
+  | "chart"
+  /** Starfire on the ally helped, lasting while it does (North Star, St Elmo's Fire). */
+  | "starfire"
+  /** A bolt of seawater bursting on each target and spraying the enemies beside it (Water Burst). */
+  | "drench"
   /** A crescent blade of wind flying to each target. */
   | "blade"
   /** Lightning out of the sky onto each target, arcing from one to the next. */
@@ -129,9 +137,9 @@ const ABILITY_FX: Record<string, Fx> = {
   torch_swing: fx("melee", "#ff8a2a"),
   falling_star: fx("meteor", "#ffcf5a"),
   constellation: fx("beam", "#bcd7ff"),
-  new_moon: fx("ring", "#9aa7ff"),
-  chart_a_course: fx("bless", "#ff4d4d"),
-  north_star: fx("bless", "#ffd166"),
+  new_moon: fx("snuff", "#9aa7ff"),
+  chart_a_course: fx("chart", "#ff4d4d"),
+  north_star: fx("starfire", "#ffd166"),
   shock: fx("spark", "#c4b5fd"),
   sturdy_blow: fx("melee", "#c9b48a"),
   stand_strong: fx("bless", "#9ec9ff"),
@@ -142,8 +150,8 @@ const ABILITY_FX: Record<string, Fx> = {
   starbeam: fx("beam", "#fff3a8"),
   moonlight: fx("erupt", "#bcd7ff", "shine"),
   focus_light: fx("beam", "#fff3a8"),
-  st_elmos_fire: fx("bless", "#ffd166"),
-  water_burst: fx("bolt", "#38bdf8"),
+  st_elmos_fire: fx("starfire", "#9fd8ff"),
+  water_burst: fx("drench", "#38bdf8"),
   rust_armor: fx("erupt", "#c0642c", "rust"),
   bow_shot: fx("arrow", "#e8dcc0"),
   pistol_shot: fx("bolt", "#ffd23f"),

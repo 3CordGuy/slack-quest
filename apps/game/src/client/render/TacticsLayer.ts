@@ -12,6 +12,98 @@ import { OUTLINE } from "./figures";
 import { toonRamp } from "./SpellFx";
 import { hexToWorld, tileTop, type WorldRenderer } from "./WorldRenderer";
 
+/**
+ * A compass rose, drawn once: an inked ring with a tick for each point, four long points and four short ones between,
+ * the north point red and the rest brass and parchment. Real colours, not a shape to be tinted.
+ */
+let roseTex: THREE.CanvasTexture | null = null;
+function compassRose(): THREE.CanvasTexture {
+  if (roseTex) return roseTex;
+  const N = 256;
+  const c = document.createElement("canvas");
+  c.width = c.height = N;
+  const ctx = c.getContext("2d")!;
+  const mid = N / 2;
+  const ink = "#1b1830";
+  ctx.lineJoin = "round";
+  // The ring, with a tick at each of the sixteen points.
+  ctx.strokeStyle = ink;
+  ctx.lineWidth = 10;
+  ctx.beginPath();
+  ctx.arc(mid, mid, 112, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.strokeStyle = "#e8c66a";
+  ctx.lineWidth = 5;
+  ctx.beginPath();
+  ctx.arc(mid, mid, 112, 0, Math.PI * 2);
+  ctx.stroke();
+  for (let i = 0; i < 16; i++) {
+    const a = (i / 16) * Math.PI * 2;
+    const r0 = i % 2 ? 100 : 94;
+    ctx.strokeStyle = ink;
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.moveTo(mid + Math.cos(a) * r0, mid + Math.sin(a) * r0);
+    ctx.lineTo(mid + Math.cos(a) * 112, mid + Math.sin(a) * 112);
+    ctx.stroke();
+  }
+  // A point: a long thin diamond from the middle out along `a`, halved light and dark so it reads as raised.
+  const point = (a: number, long: number, wide: number, light: string, dark: string) => {
+    const tip = [mid + Math.cos(a) * long, mid + Math.sin(a) * long];
+    const l = [mid + Math.cos(a - Math.PI / 2) * wide, mid + Math.sin(a - Math.PI / 2) * wide];
+    const r = [mid + Math.cos(a + Math.PI / 2) * wide, mid + Math.sin(a + Math.PI / 2) * wide];
+    for (const [side, fill] of [[l, light], [r, dark]] as const) {
+      ctx.fillStyle = fill;
+      ctx.beginPath();
+      ctx.moveTo(mid, mid);
+      ctx.lineTo(side[0], side[1]);
+      ctx.lineTo(tip[0], tip[1]);
+      ctx.closePath();
+      ctx.fill();
+    }
+    ctx.strokeStyle = ink;
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.moveTo(l[0], l[1]);
+    ctx.lineTo(tip[0], tip[1]);
+    ctx.lineTo(r[0], r[1]);
+    ctx.stroke();
+  };
+  for (let i = 0; i < 4; i++) point(Math.PI / 4 + (i * Math.PI) / 2, 70, 14, "#f3e7c8", "#c9b48a");
+  for (let i = 0; i < 4; i++) {
+    const north = i === 0;
+    point(-Math.PI / 2 + (i * Math.PI) / 2, 106, 20, north ? "#ff5a4a" : "#f3e7c8", north ? "#b8231a" : "#c9b48a");
+  }
+  ctx.fillStyle = ink;
+  ctx.beginPath();
+  ctx.arc(mid, mid, 11, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "#e8c66a";
+  ctx.beginPath();
+  ctx.arc(mid, mid, 7, 0, Math.PI * 2);
+  ctx.fill();
+  roseTex = new THREE.CanvasTexture(c);
+  roseTex.colorSpace = THREE.SRGBColorSpace;
+  return roseTex;
+}
+
+/** A soft round glow, drawn once, to be tinted: what the compass rose's glow is cut from. */
+let glowCanvas: THREE.CanvasTexture | null = null;
+function glowTex(): THREE.CanvasTexture {
+  if (glowCanvas) return glowCanvas;
+  const c = document.createElement("canvas");
+  c.width = c.height = 64;
+  const ctx = c.getContext("2d")!;
+  const g = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+  g.addColorStop(0, "rgba(255,255,255,1)");
+  g.addColorStop(0.5, "rgba(255,255,255,0.45)");
+  g.addColorStop(1, "rgba(255,255,255,0)");
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, 64, 64);
+  glowCanvas = new THREE.CanvasTexture(c);
+  return glowCanvas;
+}
+
 /** How high over the ground a rain cloud hangs: clear over the heads of whoever stands in its rain. */
 const CLOUD_HEIGHT = 3.1;
 
@@ -49,6 +141,8 @@ export class TacticsLayer {
   private groundSig = "";
   /** Courses charted (Chart a Course): a red X on each hex marked. */
   private charts = new THREE.Group();
+  /** A compass rose glowing on the ground under where a course is being charted to (see setCompass). */
+  private compass: { rose: THREE.Mesh; glow: THREE.Mesh; turn: number; wrong: boolean } | null = null;
   private chartSig = "";
   private stop: () => void;
   /** Surfaces breathe a little, so the ground looks alive. */
@@ -74,6 +168,15 @@ export class TacticsLayer {
       tickGround(clock, this.goo, this.flames, this.sparks, 1 - 0.7 * renderer.night);
       tickFumes(clock, this.fumes, 1 - 0.7 * renderer.night);
       this.tickSky(clock);
+      if (this.compass) {
+        // Breathing a little, and its glow pulsing; turned to point its north along the course.
+        const { rose, glow, turn, wrong } = this.compass;
+        rose.rotation.z = turn;
+        const s = 2.1 * (1 + Math.sin(clock * 3) * 0.03);
+        rose.scale.set(s, s, 1);
+        (glow.material as THREE.MeshBasicMaterial).opacity = (wrong ? 0.25 : 0.5) * (0.75 + 0.25 * Math.sin(clock * 3));
+        (rose.material as THREE.MeshBasicMaterial).opacity = wrong ? 0.45 : 0.95;
+      }
       for (const { id, mesh } of this.marks) {
         const head = renderer.unitHead(id);
         mesh.visible = !!head;
@@ -234,6 +337,44 @@ export class TacticsLayer {
       dots.renderOrder = 3;
       this.path.add(dots);
     }
+  }
+
+  /**
+   * A compass rose glowing on the ground over `at` while a course is being charted there (Chart a Course), its north
+   * pointing on along the course from `from`; dimmed when the mark cannot go there. Null takes it away.
+   */
+  setCompass(aim: { from: HexPos; at: HexPos; wrong: boolean } | null) {
+    if (!aim) {
+      if (this.compass) {
+        this.group.remove(this.compass.rose, this.compass.glow);
+        (this.compass.rose.material as THREE.Material).dispose();
+        (this.compass.glow.material as THREE.Material).dispose();
+        this.compass.rose.geometry.dispose();
+      }
+      this.compass = null;
+      return;
+    }
+    if (!this.compass) {
+      const plane = new THREE.PlaneGeometry(1, 1);
+      const rose = new THREE.Mesh(plane, new THREE.MeshBasicMaterial({ map: compassRose(), transparent: true, depthWrite: false }));
+      rose.rotation.x = -Math.PI / 2;
+      rose.renderOrder = 5;
+      const glow = new THREE.Mesh(plane, new THREE.MeshBasicMaterial({ color: "#ffd98a", map: glowTex(), transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending }));
+      glow.rotation.x = -Math.PI / 2;
+      glow.scale.set(3.2, 3.2, 1);
+      glow.renderOrder = 4;
+      this.group.add(glow, rose);
+      this.compass = { rose, glow, turn: 0, wrong: false };
+    }
+    const { x, z } = hexToWorld(aim.at);
+    const y = this.top(aim.at);
+    const o = hexToWorld(aim.from);
+    // Laid just over the tops of the grass, so it is not lost in it.
+    this.compass.rose.position.set(x, y + 0.34, z);
+    this.compass.glow.position.set(x, y + 0.335, z);
+    // North (up the texture, -y, which lying flat is -z) turned to point from the Sage on past the mark.
+    this.compass.turn = Math.atan2(-(x - o.x), -(z - o.z));
+    this.compass.wrong = aim.wrong;
   }
 
   /** The hexes courses are charted to (Chart a Course): a red X painted across each, a little above the ground. */
