@@ -3644,6 +3644,44 @@ function lowHat(head: Part, look: Look) {
       head.shape(look.accent, sym([[0.42, 7.3, 2.1], [0.42, 8.8, 0.9], [0.42, 9.1, -0.8], [0.42, 8.2, -2.8], [0.42, 7.1, -2.6]]));
       return;
     }
+    case "diver": {
+      // A deep-sea diver's helmet: a round brass bowl over the whole head down to the neck, bolted at its foot,
+      // a big round port of dark glass in front (barred across, with a glint), a smaller one on each side, and a
+      // valve on top. It hides the face, as a great helm does.
+      const c = look.hatColor ?? "#c2893a";
+      const dark = tone(c, -0.2);
+      const glass = "#1d3a44";
+      const bowl = fitted([[-0.5, 3, 3, 0.1], [0.6, 3.65, 3.6, 0.15], [2.2, 3.9, 3.85, 0.15], [4, 3.9, 3.82, 0.08], [5.6, 3.75, 3.48, -0.02], [6.9, 2.95, 2.75, -0.05], [7.7, 1.7, 1.6, -0.05], [8.05, 0.4, 0.4, -0.05]]);
+      head.loft(c, bowl, 12);
+      head.loft(dark, fitted([[-0.7, 3.25, 3.25, 0.1], [-0.15, 3.3, 3.3, 0.1]]), 12);
+      for (let i = 0; i < 8; i++) {
+        const a = ((i + 0.5) / 8) * Math.PI * 2;
+        head.ball(tone(c, 0.12), 0.2, Math.sin(a) * 3.36, -0.42, Math.cos(a) * 3.36 + 0.1, 0);
+      }
+      // A port: a disc of glass in the bowl's face turned `turn`, with a brass rim round it.
+      const port = (y: number, k: number, r: number) => {
+        const f = facet(bowl, 12, y, k, 0.05);
+        const pts: Pt[] = [];
+        for (let i = 0; i < 10; i++) {
+          const a = (i / 10) * Math.PI * 2;
+          const u = Math.cos(a) * r;
+          for (const d of [-0.25, 0.08]) pts.push([f.x + Math.cos(f.turn) * u + Math.sin(f.turn) * d, y + Math.sin(a) * r, f.z - Math.sin(f.turn) * u + Math.cos(f.turn) * d]);
+        }
+        head.shape(glass, pts);
+        head.ring(dark, r + 0.12, 0.3, f.x + Math.sin(f.turn) * 0.1, y, f.z + Math.cos(f.turn) * 0.1, [0, f.turn, 0]);
+        return f;
+      };
+      const front = port(3.2, 0, 1.35);
+      for (const k of [-3, 3]) port(3.5, k, 0.75);
+      head.box(dark, 2.65, 0.2, 0.2, 0, 3.2, front.z + 0.2);
+      head.box(dark, 0.2, 2.65, 0.2, 0, 3.2, front.z + 0.2);
+      head.box("#cfe9ee", 0.24, 0.65, 0.1, -0.6, 3.75, front.z + 0.15, [0, 0, 0.55]);
+      // The air valve on top, and the hose coupling at the back.
+      head.cyl(dark, 0.4, 0.55, 0.5, 0, 8.2, -0.05, 8);
+      head.cyl(c, 0.6, 0.6, 0.9, 0, 5, -3.75, 8, [HALF_PI, 0, 0]);
+      head.cyl(dark, 0.75, 0.75, 0.3, 0, 5, -4.2, 8, [HALF_PI, 0, 0]);
+      return;
+    }
     case "horns": {
       head.loft(look.accent, fitted([[4.3, 3.74, 3.44], [4.8, 3.74, 3.44]]), 10);
       for (const s of [-1, 1]) {
@@ -4223,6 +4261,12 @@ function drawHat(head: Part, look: Look) {
     head.box(c, 7, 1.9, 6.5, 0, 5.5, -0.1);
     head.box(c, 1.2, 2.8, 0.8, 1.6, 3.4, -3.6, [0, 0, 0.2]);
     head.box(tone(c, -0.08), 1, 2.2, 0.8, -0.4, 3.7, -3.7, [0, 0, -0.15]);
+  } else if (hat === "diver") {
+    const c = look.hatColor ?? "#c2893a";
+    head.box(c, 8, 8.4, 7.8, 0, 3.6, 0);
+    head.box("#1d3a44", 3.2, 3, 0.4, 0, 3.3, 3.9);
+    head.box(tone(c, -0.2), 3.8, 0.45, 0.45, 0, 4.9, 3.95);
+    head.box(tone(c, -0.2), 8.3, 0.8, 8.1, 0, -0.4, 0);
   } else if (hat === "greathelm") {
     const c = look.hatColor ?? "#8b95a5";
     head.box(c, 7.4, 6.6, 6.8, 0, 3.6, 0);
@@ -4862,6 +4906,24 @@ function person(top: THREE.Group, look: Look, outfit: Outfit | undefined, asleep
     torso.box(tone(apron, -0.14), 5.8, 0.6, 0.45, 0, 1.75, 2.14);
     torso.box(apron, 5.6, 5.2, 0.4, 0, -0.9, 2.45, [-0.07, 0, 0]);
     torso.box(tone(apron, -0.08), 2.4, 1.4, 0.3, 0, -0.5, 2.52, [-0.07, 0, 0]);
+  }
+  if (look.corselet && !body && !undressed) {
+    // A diver's brass corselet: a plate over the shoulders and the top of the chest and back, up to a collar
+    // the helmet seats on, with a ring of bolts round it.
+    const c = look.corselet;
+    if (lowPoly) {
+      const rings = chestRings(m.shoulders / m.girth);
+      torso.loft(c, [around(rings, 3.9, 0.12, 0.02), around(rings, 4.8, 0.28, 0.02), around(rings, 5.7, 0.3, 0), [6.45, 2.1, 1.85, 0], [6.9, 1.75, 1.6, 0]]);
+      torso.loft(tone(c, -0.2), [around(rings, 3.75, 0.16, 0.02), around(rings, 4.05, 0.16, 0.02)]);
+      const at = ringAt(rings, 4.85);
+      for (let i = 0; i < 10; i++) {
+        const a = ((i + 0.5) / 10) * Math.PI * 2;
+        torso.ball(tone(c, 0.12), 0.24, Math.sin(a) * (at.rx + 0.38), 4.85, Math.cos(a) * (at.rz + 0.38) + at.dz, 0);
+      }
+    } else {
+      torso.box(c, 7.8, 1.8, 4.6, 0, 5.3, 0);
+      torso.box(tone(c, -0.2), 7.9, 0.4, 4.7, 0, 4.4, 0);
+    }
   }
   if (look.sash && !body && !undressed) {
     // A sash wound tight round the waist over the belt, knotted on the left hip, its two ends hanging to the
