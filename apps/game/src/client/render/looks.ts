@@ -2,7 +2,7 @@
 // hero class, NPC or enemy kind. Pure data with no three.js or DOM, so the
 // Worker can import it to validate admin palette overrides.
 
-export const HATS = ["helm", "wizard", "hood", "horns", "leaves", "feather", "tricorn", "circlet", "brim", "turban", "kerchief", "greathelm", "none"] as const;
+export const HATS = ["helm", "wizard", "hood", "horns", "leaves", "feather", "tricorn", "circlet", "brim", "turban", "kerchief", "greathelm", "diver", "none"] as const;
 export type Hat = (typeof HATS)[number];
 export const LOOK_WEAPONS = ["sword", "staff", "daggers", "club", "bow", "lute", "orb", "lantern", "scroll", "pack", "basket", "axe_shield", "grimoire", "smith_hammer", "paddle", "cleaver", "none"] as const;
 export type Weapon = (typeof LOOK_WEAPONS)[number];
@@ -19,6 +19,8 @@ export interface Look {
   hatColor?: string;
   /** Tall boots of this colour, turned down at the top, in place of the usual plain shoes. */
   boots?: string;
+  /** A brass plate of this colour over the shoulders, bolted round, that a diving helmet seats on. */
+  corselet?: string;
   /** A sash of this colour knotted at the hip, its long ends hanging in waves down the leg. */
   sash?: string;
   /** A full-length coat over the legs, for travellers. */
@@ -42,7 +44,9 @@ export const LOOKS: Record<string, Look> = {
   backend_druid: { skin: "#d9a67c", hair: "#5a3d22", body: "#5d7d3a", legs: "#4a3a26", accent: "#a6d06a", hat: "leaves", weapon: "staff" },
   frontend_bard: { skin: "#f1c9a5", hair: "#c9743a", body: "#b9433d", legs: "#3b2f5a", accent: "#e0b12e", hat: "feather", weapon: "lute" },
   staff_sage: { skin: "#e8c2a0", hair: "#d9d9e3", body: "#6a3fa0", legs: "#3a2560", accent: "#f2d675", hat: "circlet", weapon: "orb" },
-  sre_warden: { skin: "#d9a67c", hair: "#3a2a20", body: "#5b6475", legs: "#3a404c", accent: "#e8742e", hat: "greathelm", hatColor: "#8b95a5", weapon: "axe_shield" },
+  // The Warden is a deep-sea diver: a brass helmet with a glass port, a brass plate on the shoulders, a canvas suit
+  // and lead-weighted boots. The sea does not move them, and neither will you.
+  sre_warden: { skin: "#d9a67c", hair: "#3a2a20", body: "#8f7f5c", legs: "#7d6f50", accent: "#e8742e", hat: "diver", hatColor: "#c2893a", weapon: "axe_shield", boots: "#4a4a52", corselet: "#c2893a" },
   data_warlock: { skin: "#c9b8c4", hair: "#1a1424", body: "#241b33", legs: "#15101f", accent: "#6dff9e", hat: "hood", hatColor: "#4a2f6b", weapon: "grimoire" },
   // Traveling salesmen (packages/world/src/salesman.ts): each one easy to tell from the crew at a glance.
   salesman_curio: { skin: "#f1d3b8", hair: "#1f1a24", body: "#5b2f63", legs: "#2a1838", accent: "#e0b12e", hat: "brim", hatColor: "#2a1f2e", weapon: "lantern", coat: true },
