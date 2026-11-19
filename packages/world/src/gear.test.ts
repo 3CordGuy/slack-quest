@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { GARB_HAT, LANTERN_HELM_ICON, starterGarb, wearsLanternHelm } from "./gear";
 import {
   RARITIES,
   SLOTS,
@@ -121,5 +122,24 @@ describe("what gear does", () => {
     expect(bare.taken).toBeGreaterThan(0);
     expect(geared.taken).toBeLessThan(bare.taken);
     expect(geared.dealt).toBe(bare.dealt + 3);
+  });
+});
+
+describe("the Lighthouse Paladin's Lantern Helm", () => {
+  const hat = (classId: string) => starterGarb(classId).find((i) => i.ref === GARB_HAT)!;
+
+  it("is the Paladin's starter hat; every other class starts in a plain knitted cap", () => {
+    expect(hat("qa_paladin")).toMatchObject({ name: "Lantern Helm", icon: LANTERN_HELM_ICON, slot: "helmet" });
+    expect(hat("refactor_rogue")).toMatchObject({ name: "Smuggler Rogue Hat", icon: "knit-cap" });
+  });
+
+  it("is worn by whoever has it on, and a Paladin with no look chosen is drawn in it with nothing on the head", () => {
+    const on = (icon: string) => ({ helmet: { icon, ref: GARB_HAT, rarity: "common" as const } });
+    expect(wearsLanternHelm("qa_paladin", on(LANTERN_HELM_ICON))).toBe(true);
+    expect(wearsLanternHelm("refactor_rogue", on(LANTERN_HELM_ICON))).toBe(true);
+    expect(wearsLanternHelm("qa_paladin", on("knit-cap"))).toBe(false);
+    expect(wearsLanternHelm("qa_paladin", undefined)).toBe(true);
+    expect(wearsLanternHelm("qa_paladin", { appearance: {} as never })).toBe(false);
+    expect(wearsLanternHelm("refactor_rogue", undefined)).toBe(false);
   });
 });

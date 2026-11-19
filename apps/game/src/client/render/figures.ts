@@ -15,7 +15,7 @@
 import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { ConvexGeometry } from "three/examples/jsm/geometries/ConvexGeometry.js";
-import { GARB_PREFIX, INK_COLORS, INK_LEVELS, INK_REGIONS, RARITY_COLOR, WEAPONS, WEAPON_ICON, appearanceK, decodeInk, inkColorOf, inkLevelOf, type Appearance, type Ink, type InkRegion, type InkView, type Outfit, type Slot } from "@gantt-quest/world";
+import { GARB_PREFIX, INK_COLORS, LANTERN_HELM_ICON, INK_LEVELS, INK_REGIONS, RARITY_COLOR, WEAPONS, WEAPON_ICON, appearanceK, decodeInk, inkColorOf, inkLevelOf, type Appearance, type Ink, type InkRegion, type InkView, type Outfit, type Slot } from "@gantt-quest/world";
 import type { Look } from "./looks";
 import { torchFlame } from "./torchFlame";
 import { buildLowPoly, disposeLowPoly, type Dangle } from "./gearModels";
@@ -3648,6 +3648,26 @@ function lowMantle(torso: Part, c: string, over: number, tie: string, trim?: str
   }
 }
 
+/**
+ * The Lighthouse Paladin's Lantern Helm, low-poly: a steel dome banded in brass, cheek guards, and on top a little
+ * lantern burning, its brass posts round the light and a peaked cap over it in `cap`. Worn, it lights the dark
+ * (wearsLanternHelm).
+ */
+function lowLanternHelm(head: Part, cap: string) {
+  const c = "#aeb6c2";
+  head.loft(c, fitted(OVER_HAIR), 10);
+  head.loft(GEAR.gold, fitted([[3.85, 3.84, 3.54], [4.45, 3.82, 3.52, -0.02]]), 10);
+  cheekGuards(head, c);
+  const d = headDelta(7.6);
+  const z = d.dz - 0.1;
+  head.cyl(GEAR.gold, 1.15, 1.35, 0.5, 0, 7.95, z, 8);
+  head.glowBox("#ffd27a", 1.3, 1.5, 1.3, 0, 8.95, z);
+  for (const [x, k] of [[-0.75, -0.75], [0.75, -0.75], [-0.75, 0.75], [0.75, 0.75]]) head.box(GEAR.gold, 0.26, 1.7, 0.26, x, 8.95, z + k);
+  head.cyl(GEAR.gold, 1.2, 1.2, 0.3, 0, 9.85, z, 8);
+  head.cone(cap, 1.2, 1.1, 0, 10.5, z, 8);
+  head.ball(GEAR.gold, 0.25, 0, 11.15, z, 0);
+}
+
 /** The headgear a class, townsperson or enemy has by default, rounded to go with low-poly heads. */
 function lowHat(head: Part, look: Look) {
   const rings = HEAD_RINGS[chosen?.headShape ?? "round"] ?? HEAD_RINGS.round;
@@ -3655,23 +3675,9 @@ function lowHat(head: Part, look: Look) {
     case "helm":
       lowHelm(head, "#aeb6c2", tone("#aeb6c2", 0.07), look.accent);
       return;
-    case "lamphelm": {
-      // A keeper's helm: a steel dome banded in brass, cheek guards, and on top a little lantern burning, its
-      // brass posts round the light and a peaked cap over it.
-      const c = "#aeb6c2";
-      head.loft(c, fitted(OVER_HAIR), 10);
-      head.loft(GEAR.gold, fitted([[3.85, 3.84, 3.54], [4.45, 3.82, 3.52, -0.02]]), 10);
-      cheekGuards(head, c);
-      const d = headDelta(7.6);
-      const z = d.dz - 0.1;
-      head.cyl(GEAR.gold, 1.15, 1.35, 0.5, 0, 7.95, z, 8);
-      head.glowBox("#ffd27a", 1.3, 1.5, 1.3, 0, 8.95, z);
-      for (const [x, k] of [[-0.75, -0.75], [0.75, -0.75], [-0.75, 0.75], [0.75, 0.75]]) head.box(GEAR.gold, 0.26, 1.7, 0.26, x, 8.95, z + k);
-      head.cyl(GEAR.gold, 1.2, 1.2, 0.3, 0, 9.85, z, 8);
-      head.cone(look.accent, 1.2, 1.1, 0, 10.5, z, 8);
-      head.ball(GEAR.gold, 0.25, 0, 11.15, z, 0);
+    case "lamphelm":
+      lowLanternHelm(head, look.accent);
       return;
-    }
     case "coral": {
       // A band of kelp round the brow, and on it a crown of branching coral, taller at the front, with a little
       // shell at its middle.
@@ -5401,7 +5407,9 @@ function person(top: THREE.Group, look: Look, outfit: Outfit | undefined, asleep
   const inkedArms = !!chosen?.ink && (["armR.f", "armR.b", "armL.f", "armL.b"] as const).some((side) => !!chosen?.ink?.[side]);
   const helmet = armor("helmet");
   // A hood, worn or the class's own: its mantle covers the shoulders (see lowMantle).
-  const hood = helmet ? helmet.ref === "hood" || helmet.icon === "hood" : !bare("helmet") && look.hat === "hood";
+  // The Lantern Helm on the head (drawn whatever the class: see below) is no hood.
+  const lantern = outfit?.helmet?.icon === LANTERN_HELM_ICON;
+  const hood = helmet ? helmet.ref === "hood" || helmet.icon === "hood" : !bare("helmet") && !lantern && look.hat === "hood";
   for (const [arm, s] of [[armR, -1], [armL, 1]] as const) {
     if (lowPoly) {
       lowHand(arm, look.skin, s);
@@ -5505,7 +5513,7 @@ function person(top: THREE.Group, look: Look, outfit: Outfit | undefined, asleep
     head.joint.scale.setScalar(BIG_HEAD * m.head);
     // Something on the head: worn headgear, or the class's own hat on a figure that has no choice in it.
     // (The starting hat is the class's own, so it covers the hair only if the class has one.)
-    const hatted = (!!outfit?.helmet && !garb("helmet")) || ((!chosen || garb("helmet")) && look.hat !== "none");
+    const hatted = (!!outfit?.helmet && !garb("helmet")) || lantern || ((!chosen || garb("helmet")) && look.hat !== "none");
     lowHead(head, look, asleep, hatted);
   } else drawHead(head, look, asleep);
   // Over the hair and the head.
@@ -5538,6 +5546,10 @@ function person(top: THREE.Group, look: Look, outfit: Outfit | undefined, asleep
     head.box(GEAR.steel, 0.9, 2.4, 0.5, 0, 3.2, 3.2);
     head.box(GEAR.steel, 7.1, 2.6, 1, 0, 2.6, -3);
     head.box(trim("helmet"), 1.2, 1.6, 5.2, 0, 8.2, -0.2);
+  } else if (lowPoly && lantern) {
+    // The Lighthouse Paladin's Lantern Helm, on whoever has it on (it can be passed on through the crew's chest),
+    // whatever their class: it lights the dark round them in the caves (wearsLanternHelm). Its cap is in their colours.
+    lowLanternHelm(head, look.accent);
   } else if (!bare("helmet")) {
     // No helmet equipped: the class keeps its own hat (a hero who chose their look wears it as an item).
     if (lowPoly) lowHat(head, look);

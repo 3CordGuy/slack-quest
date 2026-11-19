@@ -114,6 +114,22 @@ const ART: Record<string, Art> = {
     p.r(1, 14, 3, 1, p.accent);
   },
 
+  "lantern-helm": (p) => {
+    // The Lighthouse Paladin's Lantern Helm: a steel dome banded in brass, cheek guards, and a lantern burning on top.
+    p.r(6, 0, 4, 1, "#c23b30");
+    p.r(5, 1, 6, 1, "#c23b30");
+    p.r(5, 2, 6, 1, C.gold);
+    p.r(6, 3, 4, 2, "#ffd27a");
+    p.r(5, 3, 1, 2, C.gold);
+    p.r(10, 3, 1, 2, C.gold);
+    p.r(5, 5, 6, 1, C.gold);
+    spans(p, "#aeb6c2", [[6, 4, 11], [7, 3, 12], [8, 2, 13], [9, 2, 13], [10, 2, 13]]);
+    p.r(4, 6, 3, 1, C.shine);
+    p.r(2, 11, 12, 1, C.gold);
+    p.r(2, 12, 3, 3, "#aeb6c2");
+    p.r(11, 12, 3, 3, "#aeb6c2");
+    p.r(5, 12, 6, 1, C.dark);
+  },
   "knit-cap": (p) => {
     // A knitted cap with a rolled brim and a nub.
     spans(p, "#5b3f2a", [[3, 6, 9], [4, 4, 11], [5, 3, 12], [6, 3, 12], [7, 3, 12]]);
