@@ -4968,6 +4968,8 @@ describe("Ship's guns", () => {
     unit(state, "ann").abilities = ["harpoon_shot"];
     const after = untilHit(state, { type: "use", by: "ann", unit: "ann", ability: "harpoon_shot", target: foe }, foe);
     expect(unit(after.state, foe).pos).toEqual(at(8, 6));
+    // The haul is told as pulled, a step at a time, not as a shove back.
+    expect(after.events.filter((e) => e.t === "shoved").map((e) => (e.t === "shoved" ? e.pulled : 0))).toEqual([1, 2]);
     unit(state, foe).pos = at(11, 6);
     expect(checkAbility(state, unit(state, "ann"), "harpoon_shot", { target: foe })).toMatch(/Out of range/);
   });
