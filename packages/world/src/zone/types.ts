@@ -381,7 +381,8 @@ export type ZoneEvent =
   | { t: "up"; id: string }
   | { t: "surface"; kind: SurfaceKind | null; hexes: HexPos[] }
   | { t: "burst"; hexes: HexPos[] }
-  | { t: "shoved"; id: string; target: string; from: HexPos; to: HexPos | null }
+  /** Driven from `from` to `to`, or flattened where it stands (`to` null). `pulled`: hauled toward `id` on a line, not struck back (Throw Pike, Harpoon); the number of this step of the haul, from 1. */
+  | { t: "shoved"; id: string; target: string; from: HexPos; to: HexPos | null; pulled?: number }
   | { t: "jumped"; id: string; from: HexPos; to: HexPos }
   /** One who was Unseen gives themselves away. */
   | { t: "seen"; id: string }

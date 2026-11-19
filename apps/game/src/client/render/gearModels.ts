@@ -578,12 +578,12 @@ export const LOW_POLY: Record<string, LowPolyDef> = {
     },
   },
   // ---- guns and the crossbow: the barrel up the model, muzzle at the top. A gun's grip and stock fall away
-  // toward -x, so the picture shows it side on; the crossbow's top is toward +z, so the picture looks down on
+  // toward -x, so the picture shows it side on (turned half round, so the stock hangs underneath, not above); the crossbow's top is toward +z, so the picture looks down on
   // its bow. In the hand they are turned to point ahead (see GUN and BOLT in figures.ts).
   pistol: {
     // A flintlock: an iron barrel on a walnut stock, a curved grip with a capped butt, a cock and a brass guard.
     lean: -0.7,
-    spin: 0.25,
+    spin: Math.PI + 0.25,
     build: (k) => {
       k.cyl(0.75, 0.9, 9.5, 8, C.iron, { at: [0, 3.2, 0] });
       k.cyl(1.0, 1.0, 0.6, 8, C.steel, { at: [0, 7.7, 0] });
@@ -601,7 +601,7 @@ export const LOW_POLY: Record<string, LowPolyDef> = {
   blunderbuss: {
     // A short, fat gun with a brass barrel belled out at the muzzle, a heavy stock and an iron butt plate.
     lean: DIAG,
-    spin: 0.25,
+    spin: Math.PI + 0.25,
     build: (k) => {
       const brass = "#c99a3a";
       k.lathe([[1.0, -4], [1.0, 4.5], [1.3, 7], [2.5, 9.6], [2.8, 10]], 10, brass);
@@ -621,7 +621,7 @@ export const LOW_POLY: Record<string, LowPolyDef> = {
     // A whaler's gun: a stout iron tube with a barbed harpoon standing out of it, a coil of line at its side,
     // a winding handle and a pistol grip.
     lean: DIAG,
-    spin: 0.25,
+    spin: Math.PI + 0.25,
     build: (k) => {
       const rope = "#c9b58a";
       k.cyl(1.15, 1.3, 9, 8, C.iron, { at: [0, 0, 0] });
@@ -895,6 +895,55 @@ export const LOW_POLY: Record<string, LowPolyDef> = {
       k.ring(2.9, 0.55, k.a, { at: [0, 0.2, 4.6], scale: [1, 1.3, 1] }, 5, 12);
       for (const x of [-1, 1]) k.ball(0.4, { glow: C.shine }, { at: [x, 0.7, 4.8] });
       k.ball(0.75, C.gold, { at: [0, -4.1, 4.6] });
+    },
+  },
+  "knit-cap": {
+    // A plain knitted cap, the brim rolled up round the head and a small nub on the crown.
+    spin: 0.35,
+    tip: 0.3,
+    build: (k) => {
+      const wool = "#5b3f2a";
+      k.lathe([[4.6, -1.6], [4.75, 1], [4.3, 3.4], [3.1, 5.2], [1.5, 6.2], [0.6, 6.5]], 10, wool);
+      k.cyl(5.1, 5.1, 2.6, 10, "#6e4e36", { at: [0, -1.2, 0] });
+      k.cyl(5.2, 5.2, 0.7, 10, "#7d5b40", { at: [0, 0.2, 0] });
+      k.ball(0.85, wool, { at: [0, 6.8, 0] });
+    },
+  },
+  "naval-tunic": {
+    // A plain navy tunic: a white open collar, a row of brass buttons and a leather belt.
+    spin: 0.45,
+    tip: 0.2,
+    build: (k) => {
+      const navy = "#2f4562";
+      const pts: V3[] = [];
+      for (const [y, w, front, back] of [[6, 4.6, 2.4, 2.4], [3, 5, 3.2, 2.6], [-3, 4.4, 2.6, 2.3], [-6.2, 4.8, 2.7, 2.5]] as const) {
+        pts.push([-w, y, 0], [w, y, 0], [0, y, front], [0, y, -back]);
+        for (const sx of [-1, 1]) pts.push([sx * w * 0.72, y, front * 0.85], [sx * w * 0.72, y, -back * 0.9]);
+      }
+      k.hull(pts, navy);
+      k.cyl(2, 2.4, 0.5, 8, C.dark, { at: [0, 6.05, 0] });
+      for (const sx of [-1, 1]) {
+        k.box(2.8, 0.7, 2.6, "#e8edf2", { at: [sx * 1.9, 5.5, 2.2], rot: [0.5, 0, -sx * 0.6] }, 0.2);
+        k.cyl(1.6, 1.9, 4.2, 6, navy, { at: [sx * 5.4, 4.2, 0], rot: [0, 0, sx * 0.5] });
+      }
+      for (const y of [3.4, 1.4, -0.6]) k.ball(0.45, C.gold, { at: [0, y, 3.15 - (3.4 - y) * 0.1] });
+      k.box(8.8, 1.1, 5.6, C.leather, { at: [0, -3.8, 0.1] }, 0.25);
+      k.box(1.4, 1.4, 0.5, C.gold, { at: [0, -3.8, 3] }, 0.1);
+    },
+  },
+  "deck-boots": {
+    // Plain leather sea boots with no trim: a short shaft and a round toe.
+    spin: 0,
+    tip: 0.3,
+    build: (k) => {
+      const plain = (x: number, z: number, turn: number) =>
+        k.within({ at: [x, 0, z], rot: [0, turn, 0] }, () => {
+          k.cyl(1.9, 2.1, 6, 6, "#7a5230", { at: [0, 2, 0] });
+          k.box(3.8, 2.8, 7, "#7a5230", { at: [0, -1.5, 1.6] }, 0.9);
+          k.box(4, 0.7, 7.6, C.bark, { at: [0, -3.2, 1.8] }, 0.25);
+        });
+      plain(-2.6, -0.6, -0.45);
+      plain(2.6, 0.4, -0.3);
     },
   },
   "armored-pants": {

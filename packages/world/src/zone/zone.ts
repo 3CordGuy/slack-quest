@@ -632,7 +632,7 @@ function dev(ctx: Ctx, by: string, op: DevOp): string | null {
     const u = unitById(state, op.unit);
     if (!u || u.side !== "hero" || u.summon || (u.id !== by && u.controller !== by)) return "That is not one of your heroes.";
     const weapon = WEAPONS[op.weapon];
-    if (!weapon || weapon.classId !== op.classId) return "That is not a weapon of that class.";
+    if (!weapon || (weapon.classId && weapon.classId !== op.classId)) return "That is not a weapon of that class.";
     const level = Math.max(1, Math.min(KIT_MAX_LEVEL, Math.floor(Number(op.level)) || 1));
     const sheet = standInHero(op.classId, u.id, level);
     if (!sheet) return "There is no such class.";

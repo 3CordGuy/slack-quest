@@ -56,9 +56,6 @@ const SPARE_MODELS = [
   ["sabre", "Sabre (model only)"],
   ["rapier", "Rapier (model only)"],
   ["dirk", "Dirk (model only)"],
-  ["pistol", "Pistol (model only)"],
-  ["blunderbuss", "Blunderbuss (model only)"],
-  ["harpoon-gun", "Harpoon gun (model only)"],
   ["heavy-crossbow", "Crossbow (model only)"],
 ] as const;
 const gearChoices = (slot: Slot): { ref: string; icon: string; name: string }[] =>

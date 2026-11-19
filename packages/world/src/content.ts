@@ -166,6 +166,13 @@ export const ABILITIES: Record<string, AbilityDef> = {
   eviscerate: { id: "eviscerate", name: "Eviscerate", stat: "dex", rolls: 3, target: "enemy", damage: 14, targetEffect: { effect: "bleeding", turns: 3 }, blurb: "Open them up with both knives: a heavy blow, and on a hit the target is Bleeding." },
   bow_shot: { id: "bow_shot", name: "Shot", stat: "dex", rolls: 3, target: "enemy", damage: 9, blurb: "An arrow from the shortbow." },
   take_aim: { id: "take_aim", name: "Take Aim", stat: "dex", rolls: 1, target: "self", blurb: "A Bonus action: steady your hand. Your next roll to hit has advantage." },
+  // Ship's guns, for anyone. Pistol: Pistol Shot and Pistol Whip. Blunderbuss: Scattershot and Butt Stroke. Harpoon gun: Harpoon and Barbed Line.
+  pistol_shot: { id: "pistol_shot", name: "Pistol Shot", stat: "dex", rolls: 2, target: "enemy", damage: 11, blurb: "A shot from the pistol, reaching 5 hexes." },
+  pistol_whip: { id: "pistol_whip", name: "Pistol Whip", stat: "str", rolls: 1, target: "enemy", damage: 5, blurb: "A Bonus action: crack the butt across an enemy beside you." },
+  scattershot: { id: "scattershot", name: "Scattershot", stat: "dex", rolls: 2, target: "enemy", damage: 12, blurb: "A blast of shot in a cone, 3 hexes long, that catches every enemy in it." },
+  butt_stroke: { id: "butt_stroke", name: "Butt Stroke", stat: "str", rolls: 2, target: "enemy", damage: 7, perfect: { effect: "prone", turns: 1 }, blurb: "Swing the stock at an enemy beside you. On a hit, the target must save or be knocked Prone." },
+  harpoon_shot: { id: "harpoon_shot", name: "Harpoon", stat: "dex", rolls: 2, target: "enemy", damage: 11, blurb: "Fire the harpoon up to 6 hexes. On a hit, the line hauls the target 2 hexes toward you." },
+  barbed_line: { id: "barbed_line", name: "Barbed Line", stat: "dex", rolls: 2, target: "enemy", damage: 7, perfect: { effect: "slowed", turns: 2 }, blurb: "A barb on a short line, 3 hexes. On a hit, the target must save or be Slowed." },
   tear: { id: "tear", name: "Tear", stat: "dex", rolls: 2, target: "enemy", damage: 8, perfect: { effect: "bleeding", turns: 3 }, blurb: "A tearing swing of the hook. On a hit, the target must save or start Bleeding." },
   snag: { id: "snag", name: "Snag", stat: "dex", rolls: 3, target: "enemy", damage: 8, perfect: { effect: "slowed", turns: 2 }, blurb: "Throw the hook at an enemy up to 3 hexes off. On a hit, the target must save or be Slowed." },
   // Druid weapons. Driftwood Staff: Thornlash and Rejuvenate. Sickle: Sea Slash and Binding Kelp. Coral Staff: Coral Burst and Restore.
@@ -260,7 +267,8 @@ export const ABILITIES: Record<string, AbilityDef> = {
 export interface WeaponDef {
   id: string;
   name: string;
-  classId: string;
+  /** The class that can use it. Left out, anyone can. */
+  classId?: string;
   abilities: string[];
   /** The class weapon it is nearest to: drawn as that one where it has no shape of its own. */
   looksLike?: string;
@@ -292,6 +300,10 @@ export const WEAPONS: Record<string, WeaponDef> = {
   astrolabe: { id: "astrolabe", name: "Astrolabe", classId: "staff_sage", abilities: ["moonlight", "focus_light"], looksLike: "orb" },
   boarding_pike: { id: "boarding_pike", name: "Boarding Pike", classId: "sre_warden", abilities: ["goading_strike", "throw_pike"], looksLike: "pager_axe" },
   bilge_chalice: { id: "bilge_chalice", name: "Bilge Chalice", classId: "data_warlock", abilities: ["vile_splash", "drink_deeply"], looksLike: "grimoire" },
+  // Ship's guns: no class of their own. Anyone can find one in loot and fire it.
+  pistol: { id: "pistol", name: "Flintlock Pistol", abilities: ["pistol_shot", "pistol_whip"] },
+  blunderbuss: { id: "blunderbuss", name: "Blunderbuss", abilities: ["scattershot", "butt_stroke"] },
+  harpoon_gun: { id: "harpoon_gun", name: "Harpoon Gun", abilities: ["harpoon_shot", "barbed_line"] },
   void_staff: { id: "void_staff", name: "Undertow Staff", classId: "data_warlock", abilities: ["sink", "pull_of_the_deep"] },
 };
 
