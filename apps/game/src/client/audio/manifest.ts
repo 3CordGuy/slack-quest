@@ -75,6 +75,10 @@ export const AUDIO: AudioManifest = {
     "impact.ranged": { files: "sfx/combat/arrow_hit_*", fallback: built("arrow_hit"), pitch: [-2, 2], reverb: -8 },
     "impact.magic": { files: "sfx/combat/magic_hit_*", fallback: built("spell_hit"), pitch: [-2, 2], reverb: -6 },
     ...bladeImpacts(),
+    // Lightning landing: a zap with a crackle after (Shock, Chain Lightning, Lightning Strike).
+    "impact.shock": { files: "sfx/combat/zap_*", fallback: built("zap"), pitch: [-2, 2], reverb: -6 },
+    "impact.chain_lightning": { files: "sfx/combat/zap_*", fallback: built("zap"), pitch: [-2, 2], reverb: -6 },
+    "impact.lightning_strike": { files: "sfx/combat/zap_*", fallback: built("zap"), pitch: [-3, -1], reverb: -4 },
     "impact.crit": { files: "sfx/combat/crit_*", fallback: built("crit"), gainDb: -3 },
     miss: { files: "sfx/combat/miss_*", fallback: built("whiff"), pitch: [-2, 2], gainDb: -4 },
     "miss.magic": { files: "sfx/combat/fizzle_*", fallback: built("fizzle"), pitch: [-2, 2], gainDb: -4 },
