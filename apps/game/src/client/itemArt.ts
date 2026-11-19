@@ -54,13 +54,19 @@ const ART: Record<string, Art> = {
     p.r(3, 12, 1, 1, C.gold);
   },
   "hammer-drop": (p) => {
-    p.r(7, 6, 2, 9, C.wood);
-    p.r(4, 1, 8, 5, C.iron);
-    p.r(5, 2, 6, 1, C.steel);
-    p.r(3, 2, 1, 3, C.steel);
-    p.r(12, 2, 1, 3, C.steel);
-    p.r(7, 3, 2, 2, p.accent);
-    p.r(7, 15, 2, 1, C.gold);
+    // The Anchor Mace: a grappling iron on a haft, four hooked tines curling out and down from a ringed crown,
+    // a collar in the accent, a coil of line round the haft and a wrapped grip.
+    p.r(7, 7, 2, 8, C.wood);
+    p.r(8, 7, 1, 8, C.bark);
+    p.r(7, 11, 2, 3, p.accent);
+    p.r(7, 8, 2, 2, "#c9b58a");
+    p.r(7, 6, 2, 1, p.accent);
+    p.r(7, 3, 2, 3, "#4f535b");
+    p.r(7, 0, 2, 1, "#4f535b");
+    p.r(6, 1, 4, 2, "#4f535b");
+    spans(p, "#4f535b", [[1, 3, 5], [1, 10, 12], [2, 2, 2], [2, 13, 13], [3, 2, 2], [3, 13, 13], [4, 2, 2], [4, 13, 13]]);
+    for (const [x, y] of [[2, 5], [13, 5], [3, 4], [12, 4]]) p.r(x, y, 1, 1, C.steel);
+    p.r(7, 15, 2, 1, C.iron);
   },
   "wizard-staff": (p) => {
     // The Squall Staff: an ash staff with a rope grip, and a storm glass at its head, a brass cage round a dark
