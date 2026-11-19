@@ -544,6 +544,30 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
           } else if (look.kind === "beam" && covered.length > 0) {
             const end = point(covered[covered.length - 1], 0.9);
             cast(ev.id, ev.name, end.x, end.z, () => fxs.beam(from, end, look.color));
+          } else if (look.kind === "spot" && ev.target) {
+            // The Black Spot: no blow to ride on (it does no harm of itself). Pressed on as the hand points, and held
+            // over whoever carries it for as long as the picture shows them carrying it.
+            const marked = ev.target;
+            const on = find(marked);
+            if (on) {
+              const at = point(on.pos, 0.8);
+              cast(ev.id, ev.name, at.x, at.z, () =>
+                fxs.spot(
+                  {
+                    key: `spot:${marked}`,
+                    follow: () => renderer.current?.unitHead(marked) ?? null,
+                    holding: () => !!shownNow.current?.units.find((u) => u.id === marked && u.hp > 0)?.conditions.some((c) => c.kind === "black_spot"),
+                  },
+                  look.color,
+                ),
+              );
+            }
+          } else if (look.kind === "whirl") {
+            const go = () => fxs.whirl(point(user.pos, 0.05), look.color);
+            if (view) view.burst(ev.id, ev.name, true, go);
+            else go();
+          } else if (look.kind === "omen" && aim) {
+            cast(ev.id, ev.name, aim.x, aim.z, () => fxs.omen(aim, look.color));
           } else if (look.kind === "song") {
             // A shanty struck up: played, the song rolls out, and its notes keep coming off the singer for as long as
             // the picture shows them singing it.
@@ -684,6 +708,29 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
             cast(ev.actor!, what, to.x, to.z, () =>
               kind === "thunder" ? fxs.thunder(from, end, color, land) : kind === "blade" ? fxs.blade(from, end, color, land) : fxs.sound(from, end, color, SOUND_KIND[mine?.what ?? ""] ?? "plain", land),
             );
+            return;
+          }
+          if (fxs && from && to && target && (kind === "drain" || kind === "hex" || kind === "drown" || kind === "flask" || kind === "sink")) {
+            // A curse flies (a bolt, or a flask of bilge breaking on them), or black water falls on them; what it
+            // leaves (life drained, a sigil, a drowning spiral) follows if it took.
+            const ground = point(target.pos, 0.05);
+            const end = hit ? to : to.clone().add(new THREE.Vector3(0.7, 0.5, 0.5));
+            const land = () => {
+              view?.landed(ev.target, what, hit, hit && ev.crit, ev.actor);
+              mark();
+            };
+            const after = () => {
+              land();
+              if (!hit) return;
+              if (kind === "drain") fxs.siphon(end, from, color);
+              else if (kind === "hex") fxs.sigil(point(target.pos), color);
+              else if (kind === "drown") fxs.drown(point(target.pos), color);
+            };
+            cast(ev.actor!, what, to.x, to.z, () => {
+              if (kind === "sink") fxs.sink(hit ? end : end.clone().setY(end.y - 0.3), color, land);
+              else if (kind === "flask") fxs.launch("flask", from, hit ? ground : ground.clone().add(new THREE.Vector3(0.7, 0, 0.5)), color, land);
+              else fxs.launch("bolt", from, end, color, after);
+            });
             return;
           }
           if (fxs && chained && to && target && kind === "spark") {

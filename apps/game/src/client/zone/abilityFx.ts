@@ -23,6 +23,22 @@ export type FxKind =
   | "chorus"
   /** A shanty struck up round the singer, and notes off them for as long as it lasts (see SONG_MOOD). */
   | "song"
+  /** A bolt to each target, and their life pulled back along an arc into the caster (Soul Drain). */
+  | "drain"
+  /** A bolt to each target, and a curse's spiral flaring on the ground under them (Hex). */
+  | "hex"
+  /** A weight of black water dropped on each target (Sink). */
+  | "sink"
+  /** A bolt to each target, and bubbles and a spiral of water winding up round them (Curse of Drowning). */
+  | "drown"
+  /** A flask thrown at each target, breaking on them (Vile Splash). */
+  | "flask"
+  /** The Black Spot slammed onto the one aimed at, and held over them while they carry it. */
+  | "spot"
+  /** A whirlpool round the user, dragging everything beside them in (Pull of the Deep). */
+  | "whirl"
+  /** The sky over the hex aimed at turned red (Red Sky at Morning). */
+  | "omen"
   /** A crescent blade of wind flying to each target. */
   | "blade"
   /** Lightning out of the sky onto each target, arcing from one to the next. */
@@ -92,12 +108,12 @@ const ABILITY_FX: Record<string, Fx> = {
   lightning_strike: fx("storm", "#ffe98a"),
   winds_blessing: fx("bless", "#bfe8ff"),
   dissonance: fx("sound", "#c4a7ff"),
-  hex: fx("bolt", "#e879f9"),
-  soul_drain: fx("bolt", "#e879f9"),
-  sink: fx("bolt", "#2fa4c9"),
-  vile_splash: fx("lob", "#84cc16"),
+  hex: fx("hex", "#c07cf0"),
+  soul_drain: fx("drain", "#e879f9"),
+  sink: fx("sink", "#2fa4c9"),
+  vile_splash: fx("flask", "#84cc16"),
   drink_deeply: fx("bless", "#6dff9e"),
-  pull_of_the_deep: fx("ring", "#1f7fa0"),
+  pull_of_the_deep: fx("whirl", "#1f7fa0"),
   thornlash: fx("erupt", "#4f8a3a", "thorn"),
   sea_slash: fx("melee", "#38bdf8"),
   binding_kelp: fx("erupt", "#4ade80", "kelp"),
@@ -136,11 +152,11 @@ const ABILITY_FX: Record<string, Fx> = {
   coral_armor: fx("bless", "#ff8f7a"),
   revitalizing_splash: fx("lob", "#7dffd4"),
   summon_sea_turtle: fx("bless", "#4fb286"),
-  curse_of_drowning: fx("bolt", "#2fa4c9"),
+  curse_of_drowning: fx("drown", "#2fa4c9"),
   summon_sunken_sailors: fx("bless", "#5fe0c0"),
-  red_sky_at_morning: fx("lob", "#e2483d"),
+  red_sky_at_morning: fx("omen", "#e2483d"),
   unholy_waters: fx("erupt", "#2fa4c9", "water"),
-  the_black_spot: fx("bolt", "#7a6a8f"),
+  the_black_spot: fx("spot", "#7a6a8f"),
   sailor_pistol: fx("bolt", "#ffd23f"),
   sailor_scimitar: fx("melee", "#9fb59a"),
   turtle_bite: fx("melee", "#4fb286"),

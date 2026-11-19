@@ -34,6 +34,12 @@ export type Missile = "arrow" | "bolt" | "flask" | "meteor";
  */
 export type EruptStyle = "thorn" | "kelp" | "coral" | "stone" | "water" | "shine" | "rust";
 
+/**
+ * Seconds a lasting effect (a song, the Black Spot) waits before asking whether it still holds: the condition it
+ * shows comes up in the fight's playback a beat or two after the cast that put it on.
+ */
+const GRACE = 2.5;
+
 /** How a song moves its notes: a lively shanty's bob up, a dour one's rise slowly and sink back, the wind-god's swirl. */
 export type SongMood = "lively" | "dour" | "wind";
 
@@ -189,6 +195,78 @@ function dropTexture(color: string): THREE.Texture {
   drops.set(color, tex);
   return tex;
 }
+
+/**
+ * The mark a Hex leaves on the ground: a spiral winding in (a slow curse), framed by a hexagon the shape of the map's
+ * own tiles, with a dot at each corner. White, to be tinted.
+ */
+const sigilTex = painted(128, 128, (ctx) => {
+  ctx.strokeStyle = "rgba(255,255,255,1)";
+  ctx.fillStyle = "rgba(255,255,255,1)";
+  ctx.lineCap = "round";
+  // The frame: a pointy-topped hexagon, as the tiles are.
+  ctx.lineWidth = 5;
+  ctx.beginPath();
+  for (let i = 0; i <= 6; i++) {
+    const a = (i / 6) * Math.PI * 2 - Math.PI / 2;
+    const [x, y] = [64 + Math.cos(a) * 56, 64 + Math.sin(a) * 56];
+    if (i === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+  for (let i = 0; i < 6; i++) {
+    const a = (i / 6) * Math.PI * 2 - Math.PI / 2;
+    ctx.beginPath();
+    ctx.arc(64 + Math.cos(a) * 56, 64 + Math.sin(a) * 56, 5, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  // The spiral: three turns winding in to the middle, thinning as it goes.
+  const turns = 3;
+  let last: [number, number] | null = null;
+  for (let i = 0; i <= 180; i++) {
+    const t = i / 180;
+    const a = t * turns * Math.PI * 2;
+    const r = 42 * (1 - t) + 3;
+    const p: [number, number] = [64 + Math.cos(a) * r, 64 + Math.sin(a) * r];
+    if (last) {
+      ctx.lineWidth = 5 - 3 * t;
+      ctx.beginPath();
+      ctx.moveTo(last[0], last[1]);
+      ctx.lineTo(p[0], p[1]);
+      ctx.stroke();
+    }
+    last = p;
+  }
+});
+/** The Black Spot: a ragged black blot on a scrap of old paper, splattered at its edge. */
+const blotTex = painted(64, 64, (ctx) => {
+  ctx.fillStyle = "#e8dcc0";
+  ctx.beginPath();
+  for (let i = 0; i <= 12; i++) {
+    const a = (i / 12) * Math.PI * 2;
+    const r = 27 + (i % 3) * 2;
+    if (i === 0) ctx.moveTo(32 + Math.cos(a) * r, 32 + Math.sin(a) * r);
+    else ctx.lineTo(32 + Math.cos(a) * r, 32 + Math.sin(a) * r);
+  }
+  ctx.fill();
+  ctx.strokeStyle = "#1b1830";
+  ctx.lineWidth = 3;
+  ctx.stroke();
+  ctx.fillStyle = "#14101c";
+  ctx.beginPath();
+  for (let i = 0; i <= 16; i++) {
+    const a = (i / 16) * Math.PI * 2;
+    const r = 15 + ((i * 7) % 5) - 1;
+    if (i === 0) ctx.moveTo(32 + Math.cos(a) * r, 32 + Math.sin(a) * r);
+    else ctx.lineTo(32 + Math.cos(a) * r, 32 + Math.sin(a) * r);
+  }
+  ctx.fill();
+  for (const [x, y, r] of [[52, 20, 3], [14, 44, 2.5], [46, 50, 2], [18, 16, 2]] as const) {
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+});
 
 /** Light: added over whatever is behind it, and never hiding anything. */
 const light = (color: string, opacity = 1, map?: THREE.Texture) =>
@@ -1518,7 +1596,7 @@ export class SpellFx {
     let gone = -1;
     this.run([glow], (age) => {
       const feet = bind.follow();
-      if (gone < 0 && (released || !feet || (age > 0.5 && !bind.holding()) || age > 600)) gone = age;
+      if (gone < 0 && (released || !feet || (age > GRACE && !bind.holding()) || age > 600)) gone = age;
       const k = gone < 0 ? Math.min(1, age / 0.4) : Math.max(0, 1 - (age - gone) / 0.5);
       if (feet) glow.position.copy(feet).setY(feet.y + 0.05);
       glow.material.opacity = 0.28 * k * (0.8 + 0.2 * Math.sin(age * 3));
@@ -1529,6 +1607,244 @@ export class SpellFx {
       }
       if (gone >= 0 && k <= 0 && this.bound.get(bind.key) === release) this.bound.delete(bind.key);
       return gone < 0 || k > 0;
+    });
+  }
+
+  /**
+   * A soul drained (Soul Drain): life pulled out of `from` and back along an arc into `to`, a red stream of it pulsing
+   * and motes of it running down it, and a flash where it comes home.
+   */
+  siphon(from: THREE.Vector3, to: THREE.Vector3, color: string) {
+    const life = mix(color, "#ff3b5c", 0.55);
+    const N = 18;
+    const height = 0.9 + from.distanceTo(to) * 0.12;
+    const path = Array.from({ length: N }, (_, i) => SpellFx.arcPoint(from, to, height, i / (N - 1)));
+    const stream = new Ribbon(N, tinted(life, 0.8, streakTex()));
+    const core = new Ribbon(N, light("#ffd0dc", 1, streakTex()));
+    this.add(stream.mesh);
+    this.add(core.mesh);
+    this.flash(from, life, 1.2);
+    const motes = Array.from({ length: 9 }, (_, i) => ({ s: this.halo(from, life, 0.55), late: i * 0.06 }));
+    const T = 0.75;
+    let home = false;
+    this.run([stream.mesh, core.mesh, ...motes.map((m) => m.s)], (age) => {
+      const k = Math.min(1, age / 1.1);
+      const e = k < 0.15 ? k / 0.15 : (1 - k) / 0.85;
+      stream.lay(path, (t) => 0.32 * e * (0.7 + 0.3 * Math.sin(t * 20 - age * 22)), this.eye);
+      core.lay(path, () => 0.09 * e, this.eye);
+      for (const m of motes) {
+        const t = Math.max(0, Math.min(1, (age - m.late) / T));
+        m.s.position.copy(SpellFx.arcPoint(from, to, height, t));
+        m.s.material.opacity = t > 0 && t < 1 ? 1 : 0;
+      }
+      if (!home && age > T) {
+        home = true;
+        this.flash(to, life, 1.6);
+        this.lightUp(to, life, 10, 4, 0.5);
+      }
+      return k < 1;
+    });
+  }
+
+  /** A Hex taking hold: a curse's spiral flaring up on the ground under whoever it struck, turning slowly, and wisps of it rising. */
+  sigil(at: THREE.Vector3, color: string) {
+    const mark = this.sheet(at.clone().setY(at.y + 0.07), color, sigilTex(), 0);
+    const ground = at.clone().setY(at.y + 0.05);
+    this.flash(at.clone().setY(at.y + 0.6), color, 1.6);
+    this.lightUp(at, color, 10, 4, 1);
+    for (let i = 0; i < 5; i++) this.smoke(ground.clone().add(new THREE.Vector3(rand(-0.5, 0.5), 0.1, rand(-0.5, 0.5))), paler(color, 0.2), 0.7, 0.45);
+    this.run([mark], (age) => {
+      const k = Math.min(1, age / 1.4);
+      mark.scale.setScalar(1.9 * springOut(Math.min(1, age / 0.25)));
+      mark.rotation.z = age * 1.2;
+      mark.material.opacity = k < 0.6 ? 1 : (1 - k) / 0.4;
+      return k < 1;
+    });
+  }
+
+  /**
+   * A weight of black water on someone (Sink): a dark, inked mass of it dropping out of the air onto `at`, squashing as
+   * it lands and bursting in a dark splash. `onLand` runs as it hits. Returns how long it takes to fall.
+   */
+  sink(at: THREE.Vector3, color: string, onLand?: () => void): number {
+    const dark = mix(color, "#0b1a24", 0.78);
+    const blob = this.add(new THREE.Mesh(new THREE.IcosahedronGeometry(1, 2), new THREE.MeshToonMaterial({ color: dark, gradientMap: toonRamp(), emissive: new THREE.Color(color).multiplyScalar(0.15) })));
+    blob.userData.ownGeometry = true;
+    const edge = new THREE.Mesh(blob.geometry, new THREE.MeshBasicMaterial({ color: OUTLINE, side: THREE.BackSide }));
+    edge.scale.setScalar(1.08);
+    blob.add(edge);
+    const top = at.clone().setY(at.y + 2.6);
+    const fall = 0.42;
+    let landed = false;
+    this.run([blob], (age) => {
+      const k = Math.min(1, age / fall);
+      // Falling faster as it goes, wobbling, and squashed flat on landing.
+      blob.position.copy(top).lerp(at, k * k);
+      const wobble = 1 + Math.sin(age * 30) * 0.06;
+      blob.scale.set(0.42 * wobble, 0.48 / wobble, 0.42 * wobble);
+      if (k >= 1 && !landed) {
+        landed = true;
+        this.fling(at, dark, 14, { out: 2.4, up: 3, fall: 9, life: 0.6, kind: "drop" });
+        this.fling(at, paler(color, 0.3), 6, { out: 1.8, up: 2.4, fall: 9, life: 0.5, kind: "drop" });
+        this.ring(at.clone().setY(at.y - 0.75), 1.4, color, 0.45);
+        this.renderer.shake(0.06, 0.2);
+        onLand?.();
+      }
+      return age < fall + 0.08;
+    });
+    return fall;
+  }
+
+  /** A curse of drowning taking hold: bubbles rising off whoever it struck, and a spiral of water winding up round them. */
+  drown(at: THREE.Vector3, color: string) {
+    const figure = at.clone().add(new THREE.Vector3(0, 0, 0.25));
+    const N = 30;
+    const spiral = new Ribbon(N, tinted(paler(color, 0.2), 0.8, streakTex()));
+    this.add(spiral.mesh);
+    this.run([spiral.mesh], (age) => {
+      const k = Math.min(1, age / 1.2);
+      const path = Array.from({ length: N }, (_, i) => {
+        const t = i / (N - 1);
+        const a = t * Math.PI * 5 + age * 5;
+        return figure.clone().add(new THREE.Vector3(Math.cos(a) * 0.45, 0.1 + t * 1.5 * Math.min(1, age / 0.4), Math.sin(a) * 0.45));
+      });
+      spiral.material.opacity = 0.8 * (k < 0.7 ? 1 : (1 - k) / 0.3);
+      spiral.lay(path, (t) => 0.1 * Math.sin(Math.PI * t), this.eye);
+      return k < 1;
+    });
+    for (let i = 0; i < 12; i++) {
+      this.later(i * 0.07, () => this.fling(figure.clone().add(new THREE.Vector3(rand(-0.35, 0.35), rand(0.1, 0.8), rand(-0.35, 0.35))), paler(color, 0.5), 1, { out: 0.1, up: 1.2, fall: -1, life: 0.7, size: 0.4, kind: "drop" }));
+    }
+  }
+
+  /**
+   * The Black Spot pressed on someone: the blot slammed onto their chest with a splatter of ink, and then held there,
+   * wherever they go, for as long as `bind.holding()` says they carry it. (`bind.follow` gives the top of their head:
+   * over it the name plate and badges would hide it.)
+   */
+  spot(bind: Binding, color: string) {
+    let released = false;
+    const release = () => {
+      released = true;
+    };
+    this.bound.get(bind.key)?.();
+    this.bound.set(bind.key, release);
+    const where = () => bind.follow()?.add(new THREE.Vector3(0, -0.8, 0.12)) ?? null;
+    const start = where();
+    if (!start) return;
+    // Drawn in real colours (paper and ink), unlike the white shapes the light is cut from.
+    const map = blotTex();
+    map.colorSpace = THREE.SRGBColorSpace;
+    const blot = this.add(new THREE.Sprite(new THREE.SpriteMaterial({ map, transparent: true, depthTest: false })));
+    blot.renderOrder = 8;
+    blot.position.copy(start);
+    this.flash(start, color, 1.2);
+    this.fling(start, "#14101c", 10, { out: 1.8, up: 1.2, fall: 6, life: 0.5, size: 0.4, kind: "drop" });
+    this.renderer.shake(0.05, 0.15);
+    let gone = -1;
+    this.run([blot], (age) => {
+      const at = where();
+      if (gone < 0 && (released || !at || (age > GRACE && !bind.holding()) || age > 600)) gone = age;
+      if (at) blot.position.copy(at).add(new THREE.Vector3(0, Math.sin(age * 2.2) * 0.03, 0));
+      // Slammed on: big and falling into place, then held; withering away once it is lifted.
+      const slam = Math.min(1, age / 0.18);
+      const size = 0.55 * (1 + 2.2 * (1 - slam) ** 2);
+      const fade = gone < 0 ? 1 : Math.max(0, 1 - (age - gone) / 0.4);
+      blot.scale.setScalar(size * (gone < 0 ? 1 : 0.6 + 0.4 * fade));
+      blot.material.opacity = Math.min(1, slam * 1.5) * fade;
+      if (fade <= 0 && this.bound.get(bind.key) === release) this.bound.delete(bind.key);
+      return fade > 0;
+    });
+  }
+
+  /**
+   * The sea dragging at everything round someone (Pull of the Deep): a dark whirlpool, spiral arms winding in, a band of
+   * water closing in from `radius`, and drops pulled in off the edge toward the middle, then a gulp of bubbles there.
+   */
+  whirl(at: THREE.Vector3, color: string, radius = 2.2) {
+    const dark = mix(color, "#08141c", 0.6);
+    const base = at.clone().setY(at.y + 0.07);
+    const pool = this.add(new THREE.Mesh(plane, new THREE.MeshBasicMaterial({ color: dark, map: softTex(), transparent: true, opacity: 0, depthWrite: false })));
+    pool.rotation.x = -Math.PI / 2;
+    pool.position.copy(base);
+    const band = this.sheet(base.clone().setY(base.y + 0.004), color, ringTex(), 0);
+    const N = 22;
+    // Each arm inked, as the vines and the sound are, so the swirl reads against any ground.
+    const arms = [0, 1, 2].map(() => ({ edge: new Ribbon(N, tinted(OUTLINE, 0.55, streakTex())), body: new Ribbon(N, tinted(paler(color, 0.3), 1, streakTex())) }));
+    for (const a of arms) {
+      a.edge.mesh.renderOrder = 4;
+      a.body.mesh.renderOrder = 5;
+      this.add(a.edge.mesh);
+      this.add(a.body.mesh);
+    }
+    const life = 1.1;
+    let pulled = 0;
+    this.run([pool, band, ...arms.flatMap((a) => [a.edge.mesh, a.body.mesh])], (age, dt) => {
+      const k = Math.min(1, age / life);
+      const e = k < 0.15 ? k / 0.15 : (1 - k) / 0.85;
+      pool.scale.setScalar(radius * 2.2);
+      pool.material.opacity = 0.8 * e;
+      const r = radius * (1 - k * 0.85);
+      band.scale.set(r * 2, r * 2, 1);
+      band.material.opacity = e;
+      arms.forEach((arm, j) => {
+        const path = Array.from({ length: N }, (_, i) => {
+          const t = i / (N - 1);
+          const a = j * ((Math.PI * 2) / 3) + age * 4 + t * 3.2;
+          const rr = radius * (1 - t) * (1 - k * 0.5) + 0.1;
+          return base.clone().add(new THREE.Vector3(Math.cos(a) * rr, 0.06 + t * 0.15, Math.sin(a) * rr));
+        });
+        arm.edge.material.opacity = 0.55 * e;
+        arm.body.material.opacity = e;
+        arm.edge.lay(path, (t) => 0.36 * Math.sin(Math.PI * t), this.eye);
+        arm.body.lay(path, (t) => 0.24 * Math.sin(Math.PI * t), this.eye);
+      });
+      // Drops dragged in off the edge, spiralling toward the middle.
+      pulled -= dt;
+      if (pulled <= 0 && k < 0.8) {
+        pulled = 0.04;
+        const a = Math.random() * Math.PI * 2;
+        const from = base.clone().add(new THREE.Vector3(Math.cos(a) * radius, 0.2, Math.sin(a) * radius));
+        const drop = this.speck("drop", paler(color, 0.35), from, 0.42);
+        this.run([drop], (t) => {
+          const q = Math.min(1, t / 0.5);
+          const turn = a + q * 2;
+          const rr = radius * (1 - q);
+          drop.position.set(base.x + Math.cos(turn) * rr, base.y + 0.2 + Math.sin(q * Math.PI) * 0.3, base.z + Math.sin(turn) * rr);
+          drop.material.opacity = 1 - q * q;
+          return q < 1;
+        });
+      }
+      return k < 1;
+    });
+    this.later(life * 0.8, () => this.fling(base.clone().setY(base.y + 0.1), paler(color, 0.5), 10, { out: 0.6, up: 2.2, fall: 4, life: 0.6, kind: "drop" }));
+  }
+
+  /**
+   * An omen in the sky (Red Sky at Morning): everything under it washed red, a red light over it, and red embers
+   * drifting down out of the sky onto it.
+   */
+  omen(at: THREE.Vector3, color: string, radius = 3.6) {
+    const wash = this.sheet(at.clone().setY(at.y + 0.08), color, softTex(), 0);
+    wash.scale.setScalar(radius * 2.4);
+    const set = this.lamp(color, radius * 2.2);
+    const high = at.clone().setY(at.y + 1.5);
+    let ember = 0;
+    const life = 2.2;
+    this.run([wash], (age, dt) => {
+      const k = Math.min(1, age / life);
+      const e = k < 0.25 ? k / 0.25 : (1 - k) / 0.75;
+      wash.material.opacity = 0.6 * e;
+      set(high, 18 * e);
+      ember -= dt;
+      if (ember <= 0 && k < 0.8) {
+        ember = 0.05;
+        const a = Math.random() * Math.PI * 2;
+        const d = Math.sqrt(Math.random()) * radius;
+        this.fling(at.clone().add(new THREE.Vector3(Math.cos(a) * d, rand(3, 4), Math.sin(a) * d)), paler(color, 0.25), 1, { out: 0.2, up: 0, fall: 1.5, life: 1.4 });
+      }
+      if (k >= 1) set(high, 0);
+      return k < 1;
     });
   }
 
