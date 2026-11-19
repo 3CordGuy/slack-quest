@@ -178,14 +178,22 @@ export const LANTERN_HELM_CLASS = "qa_paladin";
 export const LANTERN_HELM_ICON = "lantern-helm";
 
 /**
- * Whether a hero is wearing a lantern helm, which lights the dark around them as far as a held torch does and
- * never burns down: the Lighthouse Paladin's starter hat (on whoever has it on: it can be passed on through the
- * crew's chest), or a Paladin's own class hat on a figure with nothing on the head and no look of their own
- * chosen. Any other helmet, or a bare or hidden head, gives no light.
+ * Whether this hat, on someone of this class, is a lantern helm: the Lantern Helm itself (on whoever has it on: it
+ * can be passed on through the crew's chest), or any starter hat on a Lighthouse Paladin, whose own hat is the helm.
+ */
+export function isLanternHelm(classId: string, helmet: { icon: string; ref: string }): boolean {
+  return helmet.icon === LANTERN_HELM_ICON || (helmet.ref === GARB_HAT && classId === LANTERN_HELM_CLASS);
+}
+
+/**
+ * Whether a hero is drawn in a lantern helm, which lights the dark around them as far as a held torch does and
+ * never burns down: a hat that is one (isLanternHelm), or a Paladin's own class hat on a figure with nothing on the
+ * head and no look of their own chosen. The one rule for what is drawn and what is lit; a helm worn hidden still
+ * lights (HeroSheet.lantern), since hidden gear is worn for what it does.
  */
 export function wearsLanternHelm(classId: string, outfit: Outfit | undefined): boolean {
   const helmet = outfit?.helmet;
-  if (helmet) return helmet.icon === LANTERN_HELM_ICON;
+  if (helmet) return isLanternHelm(classId, helmet);
   return classId === LANTERN_HELM_CLASS && !outfit?.appearance;
 }
 

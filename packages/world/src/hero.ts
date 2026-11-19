@@ -7,7 +7,7 @@ import type { Combatant } from "./battle";
 import { statPct } from "./check";
 import { classAbilitiesOf, withClassAbilities } from "./classabilities";
 import { abilitiesFor } from "./content";
-import { loadoutOf, outfitOf, type ItemDef, type Outfit } from "./gear";
+import { isLanternHelm, loadoutOf, outfitOf, type ItemDef, type Outfit } from "./gear";
 import { addStats, maxFocusFor, maxHpFor } from "./progression";
 
 /** The parts of a hero that decide how they fight. A `HeroInit` or a `Hero` satisfies this. */
@@ -24,6 +24,8 @@ export interface HeroSheet {
   weaponPower: number;
   armor: number;
   outfit?: Outfit;
+  /** A lantern helm on the head, shown or hidden (isLanternHelm): it lights the dark round them in the caves. */
+  lantern?: boolean;
   /** Class traits picked so far (traits.ts). */
   traits?: string[];
   /** The class abilities chosen for the hero's slots (classabilities.ts). Fought with on top of the weapon's, in zone fights and voyage battles alike. */
@@ -40,14 +42,17 @@ export interface Vitals {
 }
 
 /** What equipped items contribute to a hero. With no weapon in hand the hero is unarmed (`weapon` is ""), and fights with bare hands. */
-export function gearSheet(_classId: string, worn: ItemDef[]): Pick<HeroSheet, "bonus" | "weapon" | "weaponPower" | "armor" | "outfit"> {
+export function gearSheet(classId: string, worn: ItemDef[]): Pick<HeroSheet, "bonus" | "weapon" | "weaponPower" | "armor" | "outfit" | "lantern"> {
   const loadout = loadoutOf(worn);
+  // The hat as worn, hidden or not: a hidden lantern helm is not drawn, but still lights the way.
+  const hat = worn.find((i) => i.slot === "helmet");
   return {
     bonus: loadout.bonus,
     weapon: loadout.weapon ?? "",
     weaponPower: loadout.weaponPower,
     armor: loadout.armor,
     outfit: outfitOf(worn),
+    ...(hat && isLanternHelm(classId, hat) ? { lantern: true } : {}),
   };
 }
 

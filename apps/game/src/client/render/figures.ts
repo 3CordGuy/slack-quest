@@ -15,7 +15,7 @@
 import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { ConvexGeometry } from "three/examples/jsm/geometries/ConvexGeometry.js";
-import { APPEARANCE_OPTIONS, GARB_PREFIX, HAIR_COLORS, SKIN_TONES, INK_COLORS, LANTERN_HELM_ICON, INK_LEVELS, INK_REGIONS, RARITY_COLOR, WEAPONS, WEAPON_ICON, appearanceK, decodeInk, inkColorOf, inkLevelOf, type Appearance, type Ink, type InkRegion, type InkView, type Outfit, type Slot } from "@gantt-quest/world";
+import { APPEARANCE_OPTIONS, GARB_PREFIX, HAIR_COLORS, SKIN_TONES, INK_COLORS, INK_LEVELS, INK_REGIONS, RARITY_COLOR, WEAPONS, WEAPON_ICON, appearanceK, decodeInk, inkColorOf, inkLevelOf, wearsLanternHelm, type Appearance, type Ink, type InkRegion, type InkView, type Outfit, type Slot } from "@gantt-quest/world";
 import type { Look } from "./looks";
 import { torchFlame } from "./torchFlame";
 import { buildLowPoly, disposeLowPoly, type Dangle, type Spin } from "./gearModels";
@@ -3256,6 +3256,8 @@ const SKIRT_PIVOT = 0.15;
 const SKIRT_FOLLOW = 1;
 /** How far a long coat's skirts stand off the legs, so a bent knee stays inside the cloth. */
 const SKIRT_EASE = 0.18;
+/** Set by makeFigure for the figure being built: its kind (a hero's class), for the rules that go by it. */
+let figureKind = "";
 /** Set by makeFigure for the figure being built: a long coat's two skirts, each folded at the knee, and the leg each swings with. */
 let skirts: { joint: THREE.Object3D; thigh: THREE.Object3D; fold: THREE.Object3D; shin: THREE.Object3D }[] = [];
 /** How much of the knee's bend the lower piece of a long coat's skirt follows: cloth bends less than a leg. */
@@ -5580,8 +5582,9 @@ function person(top: THREE.Group, look: Look, outfit: Outfit | undefined, asleep
   const inkedArms = !!chosen?.ink && (["armR.f", "armR.b", "armL.f", "armL.b"] as const).some((side) => !!chosen?.ink?.[side]);
   const helmet = armor("helmet");
   // A hood, worn or the class's own: its mantle covers the shoulders (see lowMantle).
-  // The Lantern Helm on the head (drawn whatever the class: see below) is no hood.
-  const lantern = outfit?.helmet?.icon === LANTERN_HELM_ICON;
+  // A lantern helm on the head (the Lantern Helm on anyone, or any starter hat on a Paladin: wearsLanternHelm, the
+  // same rule that lights the dark round them) is drawn as one, and is no hood.
+  const lantern = !!outfit?.helmet && wearsLanternHelm(figureKind, outfit);
   const hood = helmet ? helmet.ref === "hood" || helmet.icon === "hood" : !bare("helmet") && !lantern && look.hat === "hood";
   for (const [arm, s] of [[armR, -1], [armL, 1]] as const) {
     if (lowPoly) {
@@ -5720,8 +5723,8 @@ function person(top: THREE.Group, look: Look, outfit: Outfit | undefined, asleep
     head.box(GEAR.steel, 7.1, 2.6, 1, 0, 2.6, -3);
     head.box(trim("helmet"), 1.2, 1.6, 5.2, 0, 8.2, -0.2);
   } else if (lowPoly && lantern) {
-    // The Lighthouse Paladin's Lantern Helm, on whoever has it on (it can be passed on through the crew's chest),
-    // whatever their class: it lights the dark round them in the caves (wearsLanternHelm). Its cap is in their colours.
+    // A lantern helm, whatever the wearer's class (it can be passed on through the crew's chest): it lights the dark
+    // round them in the caves. Its cap is in their colours.
     lowLanternHelm(head, look.accent);
   } else if (!bare("helmet")) {
     // No helmet equipped: the class keeps its own hat (a hero who chose their look wears it as an item).
@@ -7164,6 +7167,7 @@ export function makeFigure(kind: string, look: Look, outfit?: Outfit, opts: Figu
   beardFront = null;
   castEyes = [];
   skirts = [];
+  figureKind = kind;
   castPace = 1;
   slung = null;
   chosen = outfit?.appearance ?? null;

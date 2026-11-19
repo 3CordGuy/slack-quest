@@ -80,7 +80,7 @@ export { WEATHER_INFO, wallHexes } from "./weather";
 export { summonsOf, summonSpots } from "./summon";
 export { breathDc, drowningStacks } from "./drowning";
 export { SHANTIES, isShanty, joinable, shantyOf, shantyRadius, songsOn, type Song } from "./song";
-export { isDark, litHexes, inDark, seenByHeroes, lightSources } from "./light";
+export { carriesLantern, isDark, litHexes, inDark, seenByHeroes, lightSources } from "./light";
 export { MAX_CATCHUP_ROUNDS } from "./clock";
 export { CHEST_PAY, bountyPay, checkOpen, unopened } from "./loot";
 export { FORCE_DC, NOISE_RANGE, checkUnlock, doorAt } from "./doors";
