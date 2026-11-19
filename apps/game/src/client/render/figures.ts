@@ -3147,10 +3147,12 @@ let braids: Braid[] = [];
  */
 let castPace = 1;
 const BOOK_CAST_PACE = 2;
-/** How high above the hips a long coat's skirts are hinged, in the torso's units: just under the waist. */
-const SKIRT_PIVOT = 0.6;
-/** How much of its leg's swing a long coat's skirt follows. */
-const SKIRT_FOLLOW = 0.7;
+/** How high above the hips a long coat's skirts are hinged, in the torso's units: at the hip joints, so each turns with its leg. */
+const SKIRT_PIVOT = 0.15;
+/** How much of its leg's swing a long coat's skirt follows: all of it, or the leg strides out through the cloth. */
+const SKIRT_FOLLOW = 1;
+/** How far a long coat's skirts stand off the legs, so a bent knee stays inside the cloth. */
+const SKIRT_EASE = 0.18;
 /** Set by makeFigure for the figure being built: a long coat's two skirts and the thigh each swings with. */
 let skirts: { joint: THREE.Object3D; thigh: THREE.Object3D }[] = [];
 /** Set by makeFigure for the figure being built: eyes that light only while a spell is cast (see Look.glowOnCast). */
@@ -5161,15 +5163,16 @@ function person(top: THREE.Group, look: Look, outfit: Outfit | undefined, asleep
     // A long coat, open at the front, down over the legs.
     const edgeColor = greatcoat ? trim("body") : look.coatTrim ?? look.accent;
     if (lowPoly) {
-      // Each side's skirt hangs from the hip on a joint of its own and swings with the leg on that side (see
-      // skirts), so the legs stride under the coat instead of through it. Its pivot is just below the waist,
-      // so the top barely moves; it is the torso's girth, as the torso's own cloth is.
+      // Each side's skirt hangs from the hip on a joint of its own and turns with the leg on that side (see
+      // skirts), so the legs stride under the coat instead of through it: hinged level with the hip joints, so
+      // skirt and leg turn about the same line, and standing a little off the leg. It is the torso's girth, as the
+      // torso's own cloth is.
       for (const s of [-1, 1]) {
         const skirt = new Part(torso.joint, 0, SKIRT_PIVOT, 0);
         skirt.skin.position.y = -SKIRT_PIVOT;
         skirt.skin.scale.set(m.girth, 1, m.girth);
-        coatPanel(skirt, greatcoat ? cloth : look.coatColor ?? cloth, s, 0.42, Math.PI + 0.05);
-        coatPanel(skirt, edgeColor, s, 0.38, 0.52, 0.06);
+        coatPanel(skirt, greatcoat ? cloth : look.coatColor ?? cloth, s, 0.42, Math.PI + 0.05, SKIRT_EASE);
+        coatPanel(skirt, edgeColor, s, 0.38, 0.52, SKIRT_EASE + 0.06);
         extraParts.push(skirt);
         skirts.push({ joint: skirt.joint, thigh: (s > 0 ? b.thighL : b.thighR).joint });
       }
