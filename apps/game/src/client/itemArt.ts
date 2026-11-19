@@ -27,6 +27,31 @@ const ART: Record<string, Art> = {
     p.r(7, 12, 2, 3, C.bark);
     p.r(7, 15, 2, 1, p.accent);
   },
+  cutlass: (p) => {
+    // A cutlass: a broad blade curving back to a clipped point, a brass shell and bow round a corded grip.
+    spans(p, C.steel, [[0, 4, 5], [1, 4, 6], [2, 5, 7], [3, 5, 7], [4, 6, 8], [5, 6, 8], [6, 6, 8], [7, 6, 8], [8, 7, 8], [9, 7, 8]]);
+    for (const [x, y] of [[4, 0], [5, 2], [6, 4], [6, 6], [7, 8]]) p.r(x, y, 1, 1, C.shine);
+    p.r(4, 10, 7, 1, C.gold);
+    p.r(10, 11, 1, 3, C.gold);
+    p.r(7, 11, 2, 3, p.accent);
+    p.r(7, 12, 2, 1, p.shade);
+    p.r(7, 14, 4, 1, C.gold);
+    p.r(7, 15, 2, 1, C.gold);
+  },
+  dirks: (p) => {
+    // A pair of dirks, crossed at the guards: straight blades, a brass cross, ivory grips banded in the accent.
+    p.l(3, 1, 8, 6, C.steel);
+    p.l(4, 1, 9, 6, C.shine);
+    p.l(12, 1, 7, 6, C.steel);
+    p.l(11, 1, 6, 6, C.iron);
+    p.r(5, 7, 6, 1, C.gold);
+    p.l(9, 8, 12, 11, C.bone);
+    p.l(6, 8, 3, 11, C.bone);
+    p.r(10, 9, 1, 1, p.accent);
+    p.r(5, 9, 1, 1, p.accent);
+    p.r(12, 12, 1, 1, C.gold);
+    p.r(3, 12, 1, 1, C.gold);
+  },
   "hammer-drop": (p) => {
     p.r(7, 6, 2, 9, C.wood);
     p.r(4, 1, 8, 5, C.iron);

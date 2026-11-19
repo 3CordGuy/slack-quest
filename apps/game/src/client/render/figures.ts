@@ -803,6 +803,7 @@ const HOLD: Record<string, Hold> = {
   "heavy-crossbow": { grip: [0, -6, 0], scale: 0.62, turn: BOLT },
   // One in each fist (see heldGear).
   daggers: { grip: [0, -1.8, 0], scale: 0.53, turn: FORWARD, pose: { tilt: 0.7 } },
+  dirks: { grip: [0, 0.5, 0], scale: 0.58, turn: FORWARD, pose: { tilt: 0.7 } },
   // In the lute's own frame (see drawLute): the belly at the origin.
   lute: { grip: [0, -3, 0], scale: 0.5 },
   // The signature weapons.
@@ -825,7 +826,7 @@ const HOLD: Record<string, Hold> = {
 type Instrument = "lute" | "flute" | "bell" | "accordion";
 
 /** Icons held one in each fist (see heldGear). */
-const PAIRED = new Set(["daggers", "gaff-hook"]);
+const PAIRED = new Set(["daggers", "dirks", "gaff-hook"]);
 
 /** The icon (so the model) a stock look's weapon is drawn as: a class weapon's own, or the one most like it. */
 const STOCK_ICON: Record<string, string> = { ...WEAPON_ICON, sword: "broadsword", bow: "crossbow", cutlass: "cutlass" };

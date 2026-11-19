@@ -80,10 +80,10 @@ export const statPoints = (item: Pick<ItemDef, "statBonus">) => Object.values(it
 /** The icon each weapon is drawn with (the admin page lists which items share an icon). */
 export const WEAPON_ICON: Record<string, string> = {
   mace: "hammer-drop",
-  greatsword: "broadsword",
+  greatsword: "cutlass",
   staff: "wizard-staff",
   tome: "scroll-unfurled",
-  daggers: "daggers",
+  daggers: "dirks",
   shortbow: "crossbow",
   root_staff: "root-staff",
   sickle: "sickle",
