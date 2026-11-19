@@ -138,19 +138,6 @@ const curvedBlade = (len: number, sweep: number, w0: number, w1: number, tip: nu
 
 const v3 = ([x, y, z]: V3) => new THREE.Vector3(x, y, z);
 
-/** A horn: a cone curled toward +x (or -x), `h` long, its base at the origin. */
-function hornGeometry(r: number, h: number, curl: number): THREE.BufferGeometry {
-  const g = new THREE.ConeGeometry(r, h, 6, 5);
-  g.translate(0, h / 2, 0);
-  const p = g.attributes.position;
-  for (let i = 0; i < p.count; i++) {
-    const t = p.getY(i) / h;
-    p.setX(i, p.getX(i) + curl * t * t);
-  }
-  g.computeVertexNormals();
-  return g;
-}
-
 /** Push each corner of a rough solid in or out a little, the same way every time, so a stone looks hewn. */
 function roughen(geo: THREE.BufferGeometry, by: number, seed: number): THREE.BufferGeometry {
   const g = mergeVertices(geo);
@@ -895,16 +882,31 @@ export const LOW_POLY: Record<string, LowPolyDef> = {
     },
   },
   "brutal-helm": {
-    spin: 0.5,
+    // The Spyglass Visor: a lookout's leather cap with a seam over the top, a riveted brass band, flaps over the
+    // ears, goggles, and a spyglass drawn out over one eye with its lens alight.
+    spin: -0.75,
     tip: 0.15,
     build: (k) => {
-      k.lathe([[4.4, -4.6], [4.9, -2], [5, 1], [4.4, 4], [2.6, 5.8], [0, 6.2]], 8, C.iron);
-      k.add(hornGeometry(1.15, 6.5, 2.4), C.bone, { at: [-3.8, 3, 0], rot: [0, 0, 1.15] });
-      k.add(hornGeometry(1.15, 6.5, -2.4), C.bone, { at: [3.8, 3, 0], rot: [0, 0, -1.15] });
-      k.box(7.6, 1, 1.2, C.steel, { at: [0, 2, 4.2] }, 0.25);
-      for (const x of [-1.6, 1.6]) k.box(1.9, 0.9, 0.8, { glow: k.a }, { at: [x, 0.6, 4.6] });
-      for (const sx of [-1, 1]) k.box(2.2, 3.6, 1, C.iron, { at: [sx * 3.1, -3.4, 3.3], rot: [0, -sx * 0.5, 0] }, 0.3);
-      for (const x of [-0.9, 0.9]) k.box(0.5, 2.4, 0.6, C.dark, { at: [x, -2.8, 4.5] });
+      const [leather, stitch, brass, bright] = ["#7a4a2a", "#5a3520", "#b8893a", "#d9ac55"];
+      k.lathe([[4.6, -2.6], [4.85, -0.5], [4.65, 2], [3.75, 4.2], [2.2, 5.6], [0, 6]], 12, leather);
+      k.rod([[0, -0.5, 4.95], [0, 2, 4.75], [0, 4.2, 3.85], [0, 5.65, 2.25], [0, 6.1, 0], [0, 5.65, -2.25], [0, 4.2, -3.85]], 0.35, stitch);
+      k.cyl(5.05, 5.05, 1.4, 12, brass, { at: [0, -2.3, 0] });
+      for (const a of [-1.1, -0.55, 0.55, 1.1]) k.ball(0.32, bright, { at: [Math.sin(a) * 5.1, -2.3, Math.cos(a) * 5.1] });
+      for (const sx of [-1, 1]) {
+        k.box(1.1, 4.4, 3.2, leather, { at: [sx * 4.55, -5, -0.2], rot: [0, 0, sx * 0.08] }, 0.3);
+        k.ball(0.35, bright, { at: [sx * 5.15, -5.4, -0.2] });
+      }
+      // The goggles under the band, and the strap between them.
+      k.box(6, 0.8, 0.8, stitch, { at: [0, -4.3, 4.1] }, 0.2);
+      for (const sx of [-1, 1]) k.cyl(1.35, 1.45, 1.1, 12, brass, { at: [sx * 1.9, -4.3, 4.5], rot: [Math.PI / 2, 0, 0] });
+      k.ring(1.3, 0.3, bright, { at: [1.9, -4.3, 5.1] }, 6, 14);
+      k.cyl(1.05, 1.05, 0.2, 12, C.dark, { at: [1.9, -4.3, 5.1], rot: [Math.PI / 2, 0, 0] });
+      // The spyglass over the other eye: a bright drawn length, a leather grip, the barrel, and its lens.
+      k.cyl(0.95, 0.95, 1.6, 12, bright, { at: [-1.9, -4.3, 5.8], rot: [Math.PI / 2, 0, 0] });
+      k.cyl(1.2, 1.2, 1.5, 12, leather, { at: [-1.9, -4.3, 7.3], rot: [Math.PI / 2, 0, 0] });
+      k.cyl(1.55, 1.4, 1.6, 12, brass, { at: [-1.9, -4.3, 8.8], rot: [Math.PI / 2, 0, 0] });
+      k.ring(1.5, 0.3, bright, { at: [-1.9, -4.3, 9.6] }, 6, 14);
+      k.cyl(1.25, 1.25, 0.2, 12, { glow: k.a }, { at: [-1.9, -4.3, 9.55], rot: [Math.PI / 2, 0, 0] });
     },
   },
   hood: {

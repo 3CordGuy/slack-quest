@@ -3526,9 +3526,6 @@ function rounded(profile: [number, number][]): number[] {
   });
 }
 
-/** Points placed beside the usual round head, moved out (or in) with the side of the head being dressed. */
-const besideHead = (pts: Pt[]): Pt[] => pts.map(([x, y, z]) => [x + Math.sign(x) * headDelta(y).rx, y, z]);
-
 /**
  * A plate over each cheek, from the brow band down to the jaw: hugging the side of the head being dressed,
  * its foot a little in from its top as the face narrows to the chin.
@@ -3893,7 +3890,87 @@ function lowDiverHelm(head: Part, c: string, dark: string) {
   head.cyl(dark, 0.75, 0.75, 0.3, 0, 5, -4.5 + d.dz, 8, [HALF_PI, 0, 0]);
 }
 
-/** Armor on the head, rounded: a leather hood, the horned visor, or a diving helm (anything else). */
+/**
+ * The Spyglass Visor, low-poly: a lookout's cap. Leather snug over the crown with a seam up the middle, a riveted
+ * brass band round the brow and flaps down over the ears; goggles over the eyes on a strap round the back; and a
+ * spyglass drawn out over one eye, in three lengths, held on an arm hinged at the temple. The far lens is alight
+ * in `trim`.
+ */
+function lowSpyglassVisor(head: Part, trim: string) {
+  const rings = headRings();
+  const leather = "#7a4a2a";
+  const stitch = "#5a3520";
+  const brass = DIVE_BRASS;
+  const bright = tone(DIVE_BRASS, 0.18);
+  // The cap, snug over the hair, and a raised seam over the top from the brow to the nape.
+  const cap = fitted([[3.95, 3.8, 3.5], [5.3, 3.77, 3.47, -0.05], [6.5, 3.14, 2.94, -0.1], [7.25, 1.98, 1.88, -0.1], [7.62, 0.6, 0.6, -0.1]]);
+  head.loft(leather, cap, 12);
+  const seam: Pt[] = [];
+  for (const y of [4.6, 5.6, 6.5, 7.1, 7.5]) {
+    const r = ringAt(cap, y);
+    seam.unshift([0, y, r.dz + r.rz + 0.04]);
+    seam.push([0, y, r.dz - r.rz - 0.04]);
+  }
+  seam.splice(seam.length / 2, 0, [0, 7.66, -0.1]);
+  for (let i = 0; i + 1 < seam.length; i++) strut(head, stitch, seam[i], seam[i + 1], 0.2);
+  // The brass band round the brow, studded with rivets.
+  const band = fitted([[3.75, 3.98, 3.68], [4.55, 3.96, 3.66, -0.02]]);
+  head.loft(brass, band, 12);
+  for (let k = -5; k <= 6; k++) {
+    if (k === 0) continue;
+    const f = facet(band, 12, 4.15, k, 0.04);
+    head.ball(bright, 0.14, f.x, 4.15, f.z);
+  }
+  // Flaps over the ears, a brass stud on each.
+  const at = (y: number, out: number) => ringAt(rings, y).rx + out;
+  for (const s of [-1, 1]) {
+    head.shape(leather, [
+      [s * at(4, 0.3), 4, 1.2], [s * at(4, 0.3), 4, -1.5], [s * at(4, 0.78), 4, 1.05], [s * at(4, 0.78), 4, -1.35],
+      [s * at(1.5, 0.22), 1.5, 0.65], [s * at(1.5, 0.22), 1.5, -0.85], [s * at(1.5, 0.62), 1.5, 0.5], [s * at(1.5, 0.62), 1.5, -0.7],
+    ]);
+    head.ball(bright, 0.2, s * at(2.2, 0.68), 2.2, -0.1);
+  }
+  // The goggles: an eyecup over each eye on a strap round the head, a bridge between them over the nose.
+  const eye = (s: number): Pt => [s * 1.15, 3.05, faceZ(rings, s * 1.15, 3.05)];
+  const strapR = ringAt(rings, 3.05);
+  const strap: Pt[] = [];
+  for (let i = 0; i <= 8; i++) {
+    const a = 0.95 + (i / 8) * (Math.PI * 2 - 1.9);
+    strap.push([Math.sin(a) * (strapR.rx + 0.85), 3.05, strapR.dz + Math.cos(a) * (strapR.rz + 0.45)]);
+  }
+  for (let i = 0; i + 1 < strap.length; i++) strut(head, stitch, strap[i], strap[i + 1], 0.24);
+  for (const s of [-1, 1]) strut(head, stitch, strap[s < 0 ? 0 : strap.length - 1], [eye(s)[0] + s * 0.55, 3.05, eye(s)[2] + 0.25], 0.24);
+  for (const s of [-1, 1]) {
+    const [x, y, z] = eye(s);
+    head.cyl(brass, 0.66, 0.72, 0.5, x, y, z + 0.2, 10, [HALF_PI, 0, 0]);
+    head.ring(bright, 0.62, 0.14, x, y, z + 0.47);
+  }
+  const [rx, ry, rz] = eye(1);
+  head.cyl(GEAR.dark, 0.55, 0.55, 0.06, rx, ry, rz + 0.44, 10, [HALF_PI, 0, 0]);
+  head.box("#e8f6f8", 0.14, 0.42, 0.06, rx - 0.22, ry + 0.16, rz + 0.48, [0, 0, 0.6]);
+  strut(head, brass, [eye(-1)[0] + 0.6, 3.2, eye(-1)[2] + 0.3], [eye(1)[0] - 0.6, 3.2, eye(1)[2] + 0.3], 0.13);
+  // The spyglass over the other eye, angled a little out: an eyepiece, a bright drawn length, a leather grip and
+  // the brass barrel, rimmed at each joint, and the lens at its end.
+  const [ex, ey, ez] = eye(-1);
+  const out = -0.14;
+  const along = (t: number, up = 0): Pt => [ex + Math.sin(out) * t, ey + up, ez + 0.2 + Math.cos(out) * t];
+  strut(head, bright, along(0.2), along(1.3), 0.5, 0.5, 10);
+  head.ring(GEAR.dark, 0.54, 0.1, ...along(1.3), [0, out, 0]);
+  strut(head, leather, along(1.3), along(2.15), 0.62, 0.62, 10);
+  head.ring(brass, 0.65, 0.12, ...along(1.45), [0, out, 0]);
+  head.ring(brass, 0.65, 0.12, ...along(2.0), [0, out, 0]);
+  strut(head, brass, along(2.15), along(2.95), 0.72, 0.82, 10);
+  head.ring(bright, 0.82, 0.16, ...along(2.95), [0, out, 0]);
+  head.glowBall(trim, 0.6, ...along(2.7));
+  // Its arm, from a knurled wheel on the band at the temple to a clamp round the drawn length.
+  const temple: Pt = [-(ringAt(band, 4.1).rx + 0.15), 4.1, 1.4];
+  head.cyl(brass, 0.5, 0.5, 0.32, ...temple, 10, [0, 0, HALF_PI]);
+  head.ball(bright, 0.2, temple[0] - 0.2, temple[1], temple[2]);
+  strut(head, brass, temple, along(0.85, 0.55), 0.14);
+  head.ring(brass, 0.54, 0.1, ...along(0.85), [0, out, 0]);
+}
+
+/** Armor on the head, rounded: a leather hood, the Spyglass Visor, or a diving helm (anything else). */
 function lowWornHelmet(head: Part, helmet: { ref: string; icon: string }, trim: string) {
   const rings = HEAD_RINGS[chosen?.headShape ?? "round"] ?? HEAD_RINGS.round;
   if (helmet.ref === "hood" || helmet.icon === "hood") {
@@ -3901,21 +3978,7 @@ function lowWornHelmet(head: Part, helmet: { ref: string; icon: string }, trim: 
     return;
   }
   if (helmet.ref === "visor" || helmet.icon === "brutal-helm") {
-    // Horned iron down over the eyes, a dark visor, one eye alight and a spyglass over the other.
-    const helm = fitted([[2.2, 3.82, 3.55, 0.12], [3.95, 3.86, 3.56], [5.4, 3.74, 3.46, -0.05], [6.7, 3.02, 2.82, -0.1], [7.5, 1.7, 1.6, -0.1], [7.8, 0.35, 0.35, -0.1]]);
-    head.loft(GEAR.iron, helm, 10);
-    for (const k of [-1, 0, 1]) {
-      const f = facet(helm, 10, 3, k, 0.02);
-      head.box(GEAR.dark, 2.2, 1.3, 0.3, f.x, 3, f.z, [0, f.turn, 0]);
-    }
-    const front = facet(helm, 10, 3, 0, 0.1);
-    head.glowBall(trim, 0.38, 0.75, 3, front.z);
-    head.cyl(GEAR.gold, 0.7, 0.55, 1.8, -0.8, 3, front.z + 0.8, 8, [HALF_PI, 0, 0]);
-    head.glowBall(trim, 0.42, -0.8, 3, front.z + 1.75);
-    for (const s of [-1, 1]) {
-      head.shape(GEAR.iron, besideHead([[s * 3.35, 2.4, 1.3], [s * 3.4, 2.4, -1.2], [s * 2.95, 0.9, 0.8], [s * 3.05, 1, -0.6], [s * 3.8, 2.4, 1], [s * 3.75, 2.2, -0.9]]));
-      head.loft(GEAR.bone, [[0, 0.85, 0.85], [1.2, 0.7, 0.7, 0.25], [2.3, 0.45, 0.45, 0.75], [3.1, 0.1, 0.1, 1.4]], 6, s * (3.3 + headDelta(5.9).rx), 5.9, 0, [0, 0, -s * 0.55]);
-    }
+    lowSpyglassVisor(head, trim);
     return;
   }
   // The Diving Helm: a diver's helmet in dark iron, trimmed in brass, with a knob of its trim on the valve.
@@ -5464,16 +5527,17 @@ function person(top: THREE.Group, look: Look, outfit: Outfit | undefined, asleep
   } else if (helmet?.ref === "hood" || helmet?.icon === "hood") {
     drawHood(head, GEAR.leather, trim("helmet"));
   } else if (helmet?.ref === "visor" || helmet?.icon === "brutal-helm") {
-    // Horned iron, a dark visor, one eye alight and a spyglass over the other.
-    head.box(GEAR.iron, 7.1, 3.6, 6.7, 0, 5, 0);
-    for (const s of [-1, 1]) {
-      head.cone(GEAR.bone, 0.85, 3, s * 4, 6.6, 0, 5, [0, 0, -s * 0.5]);
-      head.box(GEAR.iron, 0.8, 2.8, 3.2, s * 3.4, 1.9, 1.1);
-    }
-    head.box(GEAR.dark, 6.7, 1.5, 0.6, 0, 2.9, 3);
-    head.glowBox(trim("helmet"), 1, 0.6, 0.3, 1.5, 2.9, 3.4);
-    head.cyl(GEAR.gold, 0.75, 0.6, 1.8, -1.5, 2.9, 3.9, 6, [HALF_PI, 0, 0]);
-    head.glowBox(trim("helmet"), 0.7, 0.7, 0.2, -1.5, 2.9, 4.85);
+    // A lookout's leather cap banded in brass, flaps over the ears, goggles, and a spyglass over one eye alight at its end.
+    head.box("#7a4a2a", 7.1, 3, 6.7, 0, 5.4, 0);
+    head.box(DIVE_BRASS, 7.3, 0.7, 6.9, 0, 4.1, 0);
+    for (const s of [-1, 1]) head.box("#7a4a2a", 0.7, 2.8, 2.6, s * 3.45, 2.4, -0.1);
+    head.box("#5a3520", 7.2, 0.5, 6.8, 0, 2.9, -0.3);
+    head.box(DIVE_BRASS, 1.5, 1.5, 0.6, 1.5, 2.9, 3.5);
+    head.box(GEAR.dark, 1, 1, 0.2, 1.5, 2.9, 3.85);
+    head.cyl(DIVE_BRASS, 0.75, 0.75, 0.6, -1.5, 2.9, 3.6, 6, [HALF_PI, 0, 0]);
+    head.cyl(tone(DIVE_BRASS, 0.18), 0.55, 0.55, 1, -1.6, 2.9, 4.4, 6, [HALF_PI, 0, 0]);
+    head.cyl(DIVE_BRASS, 0.85, 0.7, 1.2, -1.75, 2.9, 5.4, 6, [HALF_PI, 0, 0]);
+    head.glowBox(trim("helmet"), 1, 1, 0.2, -1.75, 2.9, 6.05);
   } else if (helmet) {
     // A diving helm: a steel dome with a crest, cheek plates and a nasal.
     head.box(GEAR.steel, 7.1, 3.4, 6.7, 0, 5.2, 0);
