@@ -2495,14 +2495,16 @@ function biped(top: THREE.Group, parts: Part[], elbow = ELBOW) {
         reach(armL.joint, foreL.joint, -elbow, elbow - fist, sweep.grip.set(1.5, 5.9, 4.0), sweep.poleL, p * w);
         return;
       }
-      // The hand goes round a circle beside and over the head, what it holds tipped out along the circle, then
-      // comes down and forward to arm's length, levelled at the mark.
+      // The hand goes round a circle held out to the side and a little forward, clear of the head, what it holds
+      // tipped out along the circle and leaning away from the head, then comes down and forward to arm's length,
+      // levelled at the mark.
       const turn = along(CAST.turn, t);
       const p = along(CAST.point, t);
       const side = armR.joint.position.x;
-      const [cx, cy, cz] = [side * 0.95 + 0.9 * Math.cos(turn), 9.3, 0.4 + 0.9 * Math.sin(turn)];
+      const out = Math.sign(side);
+      const [cx, cy, cz] = [side * 1.5 + 0.6 * Math.cos(turn), 8.4, 1.7 + 0.6 * Math.sin(turn)];
       sweep.grip.set(cx + (side * 0.62 - cx) * p, cy + (5.9 - cy) * p, cz + (4.8 - cz) * p);
-      sweep.dir.set(0.55 * Math.cos(turn) * (1 - p) + 0.1 * p, 0.83 * (1 - p) + 0.1 * p, 0.55 * Math.sin(turn) * (1 - p) + p).normalize();
+      sweep.dir.set((0.4 * Math.cos(turn) + 0.75 * out) * (1 - p) + 0.1 * p, 0.8 * (1 - p) + 0.1 * p, (0.45 * Math.sin(turn) + 0.15) * (1 - p) + p).normalize();
       wield();
       if (levels.length === 0) armL.joint.rotation.x += along(CAST.off, t);
       return;
