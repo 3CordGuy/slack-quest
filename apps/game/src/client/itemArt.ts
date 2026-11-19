@@ -295,12 +295,18 @@ const ART: Record<string, Art> = {
     p.r(11, 7, 2, 2, C.gold);
   },
   "void-staff": (p) => {
-    // A black staff with a hollow ring at the head and a spark inside it.
-    p.l(3, 15, 9, 6, C.dark);
-    p.l(4, 15, 10, 6, "#3a2a4a");
-    spans(p, C.dark, [[0, 10, 13], [1, 9, 9], [1, 14, 14], [2, 9, 9], [2, 14, 14], [3, 9, 9], [3, 14, 14], [4, 10, 13]]);
-    p.r(11, 2, 2, 1, p.accent);
-    p.r(11, 1, 1, 1, C.shine);
+    // The Undertow Staff: a snapped length of black drowned mast, a rusted band and a stub of rigging in the
+    // accent, water wound down it, and at its top a whirlpool, bright water frothing round a dark throat.
+    p.l(3, 15, 9, 6, "#2c3236");
+    p.l(4, 15, 10, 6, "#3d454a");
+    p.r(8, 8, 2, 1, "#7a4b34");
+    p.r(6, 10, 2, 2, p.accent);
+    p.r(4, 12, 1, 1, "#cfc6b0");
+    for (const [x, y] of [[10, 6], [9, 7], [8, 9]]) p.r(x, y, 1, 1, "#3f9aa5");
+    spans(p, "#1f4d58", [[1, 9, 14], [2, 9, 14], [3, 10, 13], [4, 10, 13], [5, 11, 12]]);
+    spans(p, "#3f9aa5", [[1, 10, 13], [2, 10, 13], [3, 11, 12]]);
+    p.r(11, 2, 2, 1, "#1f4d58");
+    for (const [x, y] of [[9, 0], [11, 0], [13, 0], [14, 1], [10, 1], [12, 2], [11, 3]]) p.r(x, y, 1, 1, "#eaf7f7");
   },
   // ---- signature weapons ----
   "ballast-flail": (p) => {

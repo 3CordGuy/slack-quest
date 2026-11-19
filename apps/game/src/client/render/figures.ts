@@ -787,7 +787,8 @@ const HOLD: Record<string, Hold> = {
   "hammer-drop": { grip: [0, -4, 0], scale: 0.6, turn: FORWARD, pose: { tilt: 0.4 } },
   "wizard-staff": { grip: [0, -3.5, 0], scale: 0.8 },
   "root-staff": { grip: [0, -4.2, 0], scale: 0.8 },
-  "void-staff": { grip: [0, -3.5, 0], scale: 0.8 },
+  // Held low on its wrapped grip, so the whirlpool at its head rides above a hat's brim.
+  "void-staff": { grip: [0, -6, 0], scale: 0.8 },
   "scroll-unfurled": { grip: [0, 1.2, 0], scale: 0.33, turn: FORWARD },
   // Held up in front on the palm, its sigil to the front.
   grimoire: { grip: [0, -6.5, 0], scale: 0.33, at: [0, 0, 0.6], pose: { arm: -0.9 } },
@@ -899,7 +900,8 @@ function gear(p: Part, icon: string, trim: string, hold: Hold, inHand = false): 
     part.model(group, new THREE.Matrix4().makeTranslation(-pivot.x, -pivot.y, -pivot.z).multiply(at));
     disposeLowPoly(group);
     extraParts.push(part);
-    spinners.push({ joint: part.joint, axis, angle: 0, speed: SPIN_SPEED, was: new THREE.Quaternion(), seen: false });
+    const own = sp.speed ?? SPIN_SPEED;
+    spinners.push({ joint: part.joint, axis, angle: 0, speed: own, own, was: new THREE.Quaternion(), seen: false });
   }
   // What flashes (a bolt of lightning, in several forks) goes on joints of its own, one shown at a time or none
   // (see flashBolts).
@@ -931,6 +933,8 @@ interface Spinner {
   axis: THREE.Vector3;
   angle: number;
   speed: number;
+  /** The speed it turns at on its own, and eases back to (see Kit.spin). */
+  own: number;
   /** The hand's turn in the world last frame, once it has been `seen`. */
   was: THREE.Quaternion;
   seen: boolean;
@@ -990,7 +994,7 @@ function turnSpinners(list: Spinner[], dt: number) {
       const turned = 2 * Math.atan2(_spinQ.x * _spinAxis.x + _spinQ.y * _spinAxis.y + _spinQ.z * _spinAxis.z, _spinQ.w);
       // Left behind by the hand's turn, it is set spinning the other way, then eases back to its own speed.
       if (Math.abs(turned) < SPIN_SNAP) sp.speed -= Math.max(-SPIN_KICK, Math.min(SPIN_KICK, (turned / dt) * 0.6));
-      sp.speed += (SPIN_SPEED - sp.speed) * (1 - Math.exp(-SPIN_EASE * dt));
+      sp.speed += (sp.own - sp.speed) * (1 - Math.exp(-SPIN_EASE * dt));
       sp.speed = Math.max(-8, Math.min(8, sp.speed));
       sp.angle += sp.speed * dt;
     }
