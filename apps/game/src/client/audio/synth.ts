@@ -16,7 +16,7 @@ export type SynthGround = "grass" | "stone" | "wood" | "floor" | "mud" | "water"
 
 /** Every built-in combat sound. */
 export type SynthCombat =
-  | "blade" | "blunt" | "swing" | "arrow_loose" | "arrow_hit" | "spell_cast" | "spell_hit" | "crit"
+  | "blade" | "blunt" | "swing" | "arrow_loose" | "arrow_hit" | "spell_cast" | "spell_hit" | "zap" | "crit"
   | "whiff" | "fizzle"
   | "heal" | "heal_fail"
   | "bleed" | "burn" | "stun" | "buff" | "debuff"
@@ -58,7 +58,7 @@ const STEP: Record<SynthGround, { filter: BiquadFilterType; freq: number; q: num
 
 /** How long each sound runs, so the offline render is no longer than it needs to be. */
 const COMBAT_LENGTH: Record<SynthCombat, number> = {
-  blade: 0.45, blunt: 0.4, swing: 0.28, arrow_loose: 0.4, arrow_hit: 0.3, spell_cast: 0.5, spell_hit: 0.55, crit: 0.45,
+  blade: 0.45, blunt: 0.4, swing: 0.28, arrow_loose: 0.4, arrow_hit: 0.3, spell_cast: 0.5, spell_hit: 0.55, zap: 0.6, crit: 0.45,
   whiff: 0.25, fizzle: 0.25,
   heal: 0.8, heal_fail: 0.3,
   bleed: 0.15, burn: 0.35, stun: 0.35, buff: 0.3, debuff: 0.3,
@@ -206,6 +206,14 @@ function combat(r: Render, sound: SynthCombat) {
       noiseAt(r, t, { filter: "highpass", freq: 1800 * p, q: 0.8, decay: 0.08, gain: v * 0.5 });
       toneAt(r, t, { type: "sine", freq: 110 * p, freqTo: 48, decay: 0.2, gain: v * 0.7 });
       for (let i = 0; i < 4; i++) toneAt(r, t + 0.08 + r.rnd() * 0.3, { type: "sine", freq: 1800 + r.rnd() * 2400, decay: 0.05, gain: v * 0.08 });
+      break;
+    case "zap":
+      // Lightning landing: a white crack, a buzzing sizzle dropping away, a low punch under it, and crackles after.
+      noiseAt(r, t, { filter: "highpass", freq: 4200 * p, q: 0.9, decay: 0.035, gain: v * 0.8 });
+      toneAt(r, t, { type: "sawtooth", freq: 2400 * p, freqTo: 260 * p, decay: 0.2, gain: v * 0.3, cut: 4500 });
+      toneAt(r, t, { type: "square", freq: 92 * p, freqTo: 70 * p, decay: 0.28, gain: v * 0.16, cut: 1800 });
+      toneAt(r, t, { type: "sine", freq: 100 * p, freqTo: 42, decay: 0.22, gain: v * 0.6 });
+      for (let i = 0; i < 9; i++) noiseAt(r, t + 0.03 + r.rnd() * 0.4, { filter: "bandpass", freq: 2500 + r.rnd() * 3500, q: 2, decay: 0.012 + r.rnd() * 0.015, gain: v * (0.35 - i * 0.025) });
       break;
     case "crit":
       // Laid over a critical hit: a crack, a drop in the floor, and steel singing.

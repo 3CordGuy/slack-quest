@@ -100,7 +100,7 @@ import { useAudioScene } from "./audio/useAudioScene";
 import { sounds } from "./audio/gameSounds";
 import { OptionsMenu } from "./OptionsMenu";
 import * as THREE from "three";
-import { SpellFx } from "./render/SpellFx";
+import { SpellFx, WAVE_PACE } from "./render/SpellFx";
 import { TacticsLayer, type Overlay } from "./render/TacticsLayer";
 import { spriteDataUrl } from "./render/sprites";
 import { WorldRenderer, hexToWorld, tileTop, type RenderState } from "./render/WorldRenderer";
@@ -109,7 +109,7 @@ import { useCountdown } from "./ui/useCountdown";
 import { useZone, type ZoneSend } from "./useZone";
 import { Icon } from "./items";
 import { label } from "./labels";
-import { THROW_COLOR, aimKind, fxFor } from "./zone/abilityFx";
+import { AURA_ABILITIES, FLOURISH, GUARDS, SONG_MOOD, SOUND_KIND, SUMMONS, THROW_COLOR, aimKind, fxFor } from "./zone/abilityFx";
 import { COMMON_ICON, ITEM_ICON, abilityIcon } from "./zone/actionIcons";
 import { BAR_SLOTS, assignSlot, barChoices, loadBar, moveSlot, saveBar } from "./zone/hotbar";
 import { believe, foreseeWalk, giveUp, settle, standing, type Ahead } from "./zone/ahead";
@@ -234,6 +234,10 @@ const TORCH_IN_HAND = { icon: "torch", ref: "torch", rarity: "common" as const }
 
 /** The breath after several have been struck at once, before the next thing is shown. */
 const AFTER_MANY = 340;
+/** How far into a cast the spell leaves the hand (render/figures.ts CAST.emit), in ms. */
+const CAST_EMIT_MS = 440;
+/** A wave on its way: who sent it from where, when on the playback's timeline, and when it really set off. */
+type Wave = { from: THREE.Vector3; at: number; rolled: Promise<number> };
 
 /** What an attack is called, for its look and sound: an ability's name, or an enemy attack's own. */
 const blowName = (what: string) => ABILITIES[what]?.name ?? what;
@@ -252,6 +256,9 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
     return new THREE.Vector3(x, tileTop(mapNow.current ? tileAt(mapNow.current, pos) : undefined) + lift, z + (lift > 0 ? 0.25 : 0));
   };
   const [picture, setPicture] = useState<Picture | null>(null);
+  /** The picture on screen, for effects that last as long as something shown in it (vines round the Slowed). */
+  const shownNow = useRef<Picture | null>(null);
+  shownNow.current = picture;
   const [feed, setFeed] = useState<string[]>([]);
   const [roll, setRoll] = useState<Roll | null>(null);
   const [banner, setBanner] = useState<string | null>(null);
@@ -377,7 +384,16 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
 
     const draft: Picture = structuredClone(from);
     /** The thing last used, whose blows the hits and misses after it are. */
-    let use: { id: string; what: string; look: ReturnType<typeof fxFor>; last: THREE.Vector3 | null } | null = null;
+    let use: { id: string; what: string; look: ReturnType<typeof fxFor>; last: THREE.Vector3 | null; wave?: Wave } | null = null;
+    /** Run `go` when a wave rolling from `wave.from` reaches `to` (at once if there is no wave). */
+    const whenReached = (wave: Wave | undefined, to: THREE.Vector3, go: () => void) => {
+      if (!wave) return go();
+      void wave.rolled.then((t0) => {
+        const due = t0 + wave.from.clone().setY(0).distanceTo(to.clone().setY(0)) * WAVE_PACE * 1000 - performance.now();
+        if (due <= 0) go();
+        else timers.current.push(setTimeout(go, due));
+      });
+    };
     const find = (id: string) => draft.units.find((u) => u.id === id);
     const lines: string[] = [];
     /** Who last struck each one, so one that goes down falls away from them. */
@@ -447,6 +463,10 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
         const u = find(ev.target);
         const to = ev.to;
         if (u && to) u.pos = to;
+        // Swept away by a wave: not till it reaches them. Everything after waits too, so the picture never has them
+        // at the end of the line before the wave gets there.
+        const wave = use && use.id === ev.id ? use.wave : undefined;
+        if (wave) at = Math.max(at, wave.at + CAST_EMIT_MS + point(ev.from).setY(0).distanceTo(wave.from.clone().setY(0)) * WAVE_PACE * 1000);
         owe(ev.target);
         later(() => {
           // Flung back and off their feet; with nowhere to go, flattened where they stand.
@@ -464,13 +484,20 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
         const thrown = ev.what.startsWith("throw:") ? (ev.what.slice(6) as Throwable) : null;
         const look = fxFor(ev.what === "attack" ? ev.name : ev.what, ev.what === "attack" && !ev.target);
         // Where each target of this use stood, so lightning can run from one to the next.
-        use = { id: ev.id, what: ev.what === "attack" ? ev.name : ev.what, look, last: from };
+        // A wave strikes each one as it reaches them: when it set off is known once the gesture has let it go.
+        let rolled: (t: number) => void = () => {};
+        const wave = look.kind === "wave" && from ? { from, at, rolled: new Promise<number>((done) => (rolled = done)) } : undefined;
+        use = { id: ev.id, what: ev.what === "attack" ? ev.name : ev.what, look, last: from, wave };
         // What it covers, for the things that come up out of the ground or roll across it.
         const covered = user && ABILITIES[ev.what] ? abilityArea(asState({ ...next, units: draft.units }), user, ev.what, ev.at, ev.target) : [];
         // Constellation: the lines of starlight, from the user through each ally in turn, as they stood when it was cast.
         const links = user && tacticOf(ev.what)?.constellation ? constellationLinks(asState({ ...next, units: draft.units }), user).map((l) => [point(l.from.pos, 0.9), point(l.to.pos, 0.9)] as const) : [];
         const said = named === ev.id;
         if (said) named = null;
+        // A thunderclap that does no harm has no blow to ride on (Roar of Thunder Stuns and throws): it is played
+        // here, at whoever it is aimed at, and what it does to them waits till it reaches them.
+        const struckBy = look.kind === "thunder" && ev.target && !ABILITIES[ev.what]?.damage ? find(ev.target) : undefined;
+        const clap = struckBy ? point(struckBy.pos, 0.8) : null;
         later(() => {
           const fxs = spells.current;
           if (!said) view?.floatOver(ev.id, ev.name, "#fff1c9");
@@ -487,6 +514,8 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
                 fxs.launch("flask", from, land, THROW_COLOR[thrown], () => {
                   sounds.zone("shatter", { x: land.x, z: land.z });
                   fxs.ring(land, 2.4, THROW_COLOR[thrown]);
+                  // Acid leaves nothing lying on the ground: it eats into it, fizzing and fuming, and is spent.
+                  if (thrown === "acid") fxs.fizz(land, THROW_COLOR.acid);
                 }),
               true,
             );
@@ -505,16 +534,107 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
             cast(ev.id, ev.name, aim.x, aim.z, () => fxs.launch("meteor", from, aim, look.color, () => fxs.ring(aim, 2.6, look.color)));
           } else if (look.kind === "storm" && aim) {
             cast(ev.id, ev.name, aim.x, aim.z, () => {
-              fxs.spark([aim.clone().add(new THREE.Vector3(0.6, 9, -0.4)), aim], look.color);
+              fxs.strike(aim, look.color);
               fxs.ring(aim, 2.6, look.color);
             });
+          } else if (look.kind === "rain" && aim) {
+            cast(ev.id, ev.name, aim.x, aim.z, () => fxs.gather(aim, look.color));
           } else if (look.kind === "lob" && aim) {
             cast(ev.id, ev.name, aim.x, aim.z, () => fxs.launch("bolt", from, aim, look.color, () => fxs.ring(aim, 2.4, look.color)));
           } else if (look.kind === "beam" && covered.length > 0) {
             const end = point(covered[covered.length - 1], 0.9);
             cast(ev.id, ev.name, end.x, end.z, () => fxs.beam(from, end, look.color));
-          } else if (look.kind === "erupt" && covered.length > 0) {
-            cast(ev.id, ev.name, point(covered[0]).x, point(covered[0]).z, () => fxs.erupt(covered.map((p) => point(p)), look.color));
+          } else if (look.kind === "spot" && ev.target) {
+            // The Black Spot: no blow to ride on (it does no harm of itself). Pressed on as the hand points, and held
+            // over whoever carries it for as long as the picture shows them carrying it.
+            const marked = ev.target;
+            const on = find(marked);
+            if (on) {
+              const at = point(on.pos, 0.8);
+              cast(ev.id, ev.name, at.x, at.z, () =>
+                fxs.spot(
+                  {
+                    key: `spot:${marked}`,
+                    follow: () => renderer.current?.unitHead(marked) ?? null,
+                    holding: () => !!shownNow.current?.units.find((u) => u.id === marked && u.hp > 0)?.conditions.some((c) => c.kind === "black_spot"),
+                  },
+                  look.color,
+                ),
+              );
+            }
+          } else if (look.kind === "taunt") {
+            // A bellow, and a "!" over every enemy beside them that hears it.
+            const near = draft.units.filter((u) => u.side !== user.side && u.hp > 0 && hexDistance(u.pos, user.pos) === 1).map((u) => u.id);
+            const go = () => {
+              fxs.shout(point(user.pos, 0.05), look.color);
+              for (const id of near) {
+                const head = view?.unitHead(id);
+                if (head) fxs.exclaim(head, look.color);
+              }
+            };
+            // The roar goes at once: a bellow has no wind-up, and it must come before the "Taunted" it causes. The
+            // figure throws its arms wide and roars alongside it (its own gesture, not a blow).
+            view?.roar(ev.id, ev.name);
+            go();
+          } else if (look.kind === "charge" && ev.target) {
+            // Thrown bodily at them: the blow is the user's own weight, and it slams.
+            const them = find(ev.target);
+            if (them && view) {
+              const at = point(them.pos, 0.8);
+              view.strikeAt(ev.id, at, ev.name, () => fxs.slam(at, look.color));
+            }
+          } else if (look.kind === "whirl") {
+            const go = () => fxs.whirl(point(user.pos, 0.05), look.color);
+            if (view) view.burst(ev.id, ev.name, true, go);
+            else go();
+          } else if (look.kind === "omen" && aim) {
+            cast(ev.id, ev.name, aim.x, aim.z, () => fxs.omen(aim, look.color));
+          } else if (look.kind === "song") {
+            // A shanty struck up: played, the song rolls out, and its notes keep coming off the singer for as long as
+            // the picture shows them singing it.
+            const mood = SONG_MOOD[ev.what] ?? "lively";
+            const sing = () => {
+              fxs.song(point(user.pos, 0.05), look.color, mood);
+              fxs.serenade(
+                {
+                  key: `song:${ev.id}`,
+                  follow: () => renderer.current?.unitFeet(ev.id) ?? null,
+                  holding: () => !!shownNow.current?.units.find((u) => u.id === ev.id && u.hp > 0)?.conditions.some((c) => c.kind === ev.what),
+                },
+                look.color,
+                mood,
+              );
+            };
+            if (view) view.burst(ev.id, ev.name, true, sing);
+            else sing();
+          } else if (look.kind === "blast" && covered.length > 0) {
+            const line = covered.map((p) => point(p, 0.9)).sort((a, b) => a.distanceTo(from) - b.distanceTo(from));
+            const end = line[line.length - 1];
+            cast(ev.id, ev.name, end.x, end.z, () => fxs.blast(from, end, look.color));
+          } else if (look.kind === "chorus" && aim) {
+            cast(ev.id, ev.name, aim.x, aim.z, () => fxs.chorus(from, aim, look.color));
+          } else if (clap) {
+            cast(ev.id, ev.name, clap.x, clap.z, () => fxs.thunder(from, clap, look.color));
+          } else if (look.kind === "wave" && covered.length > 0) {
+            const line = covered.map((p) => point(p)).sort((a, b) => a.distanceTo(from) - b.distanceTo(from));
+            const end = line[line.length - 1];
+            cast(ev.id, ev.name, end.x, end.z, () => {
+              rolled(performance.now());
+              fxs.wave(from, line, look.color);
+            });
+          } else if (look.kind === "erupt" && (covered.length > 0 || ev.target)) {
+            // Over all it covers; or, struck at one (thorns, kelp), up out of the ground under them, and staying
+            // wound round them, wherever they go, for as long as the picture shows them Slowed (or Stunned) by it.
+            const under = covered.length > 0 ? covered : [find(ev.target!)?.pos].filter((p): p is HexPos => !!p);
+            const caught = covered.length === 0 ? ev.target : undefined;
+            const bind = caught
+              ? {
+                  key: caught,
+                  follow: () => renderer.current?.unitFeet(caught) ?? null,
+                  holding: () => !!shownNow.current?.units.find((u) => u.id === caught && u.hp > 0)?.conditions.some((c) => c.kind === "slowed" || c.kind === "stunned"),
+                }
+              : undefined;
+            if (under.length > 0) cast(ev.id, ev.name, point(under[0]).x, point(under[0]).z, () => fxs.erupt(under.map((p) => point(p)), look.color, look.style, bind));
           } else if (look.kind === "ring") {
             // Struck all round (a song, played): the ring goes out as the blow lands.
             const ring = () => fxs.ring(point(user.pos, 0.05), ev.what === "attack" ? 3.6 : covered.length > 6 ? 3.6 : 1.9, look.color);
@@ -525,8 +645,26 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
             const whom = ev.target && ev.target !== ev.id ? find(ev.target) : null;
             if (ev.what === "block" || ev.what === "raise_guard" || ev.what === "stand_strong") view?.brace(ev.id);
             else view?.bless(ev.id, whom ? point(whom.pos) : null);
+            // A heal shows as it lands (see heal). Anything else shows on whoever it is for as the gesture ends:
+            // a guard as a ward round them, a slip out of sight as smoke, a call as water where it is called to.
+            if (ABILITIES[ev.what]?.heal) return;
+            const on = point((whom ?? user).pos, 0.3);
+            timers.current.push(
+              setTimeout(() => {
+                if (GUARDS.has(ev.what)) {
+                  fxs.ward(on, look.color);
+                  if (ev.what === "against_the_waves") fxs.breaker(on, look.color);
+                }
+                else if (ev.what === "sneak" || ev.what === "smugglers_route") fxs.puff(on);
+                else if (aim && SUMMONS.has(ev.what)) fxs.erupt([aim], look.color, "water");
+                else fxs.motes(on, look.color, !!look.notes);
+                // An aura reaches the allies round them.
+                if (AURA_ABILITIES.has(ev.what)) fxs.ring(point(user.pos, 0.05), 3.4, look.color, 0.7);
+              }, 260),
+            );
           }
         });
+        if (clap && from) at += CAST_EMIT_MS + SpellFx.thunderTime(from.clone().setY(0).distanceTo(clap.clone().setY(0))) * 1000;
       } else if (ev.t === "roll") {
         if (ev.roll.kind === "initiative") {
           // Each fighter's roll comes up over their head, one after another.
@@ -572,7 +710,52 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
         if (mine && to) mine.last = to;
         later(() => {
           const fxs = spells.current;
-          if (kind === "melee") return view?.blow(ev.actor!, ev.target, what, { crit: hit && ev.crit, landed: hit, onImpact: mark });
+          // A class or weapon ability's blow is drawn in its own colour (a torch's swing in fire, a sea slash in sea).
+          if (kind === "melee") {
+            // And what the blow leaves besides its slash (FLOURISH): a shield on the striker hit or miss; sparks, or a
+            // challenge taken up, on a hit.
+            const flourish = mine ? FLOURISH[mine.what] : undefined;
+            const landedBlow = () => {
+              mark();
+              if (!fxs || !flourish) return;
+              if (flourish === "shield" && actor) fxs.ward(point(actor.pos, 0.3), mine!.look.color);
+              else if (hit && flourish === "sparks" && to) fxs.sparks(to);
+              else if (hit && flourish === "goad") {
+                const head = view?.unitHead(ev.target);
+                if (head) fxs.exclaim(head, mine!.look.color);
+              }
+            };
+            return view?.blow(ev.actor!, ev.target, what, { crit: hit && ev.crit, landed: hit, onImpact: landedBlow, color: mine && ABILITIES[mine.what] ? mine.look.color : undefined });
+          }
+          if (fxs && from && to && target && kind === "pike") {
+            // Hurled; on a hit, a rope stays strung from the thrower's hand to them as they are hauled in. A miss
+            // flies past them and sticks in the ground beyond.
+            const past = to.clone().sub(from).setY(0).normalize().multiplyScalar(1.1);
+            const end = hit ? to : point(target.pos, 0.05).add(past);
+            // The thrower's end at their hand; the caught end low on whoever it struck, from their feet, so it goes
+            // down with them if they are knocked flat (their head's height does not, while they fall).
+            const chest = (id: string) => () => view?.unitHead(id)?.add(new THREE.Vector3(0, -0.7, 0)) ?? null;
+            const low = (id: string) => () => view?.unitFeet(id)?.add(new THREE.Vector3(0, 0.45, 0)) ?? null;
+            cast(
+              ev.actor!,
+              what,
+              to.x,
+              to.z,
+              () =>
+                fxs.pike(
+                  from,
+                  end,
+                  () => {
+                    view?.landed(ev.target, what, hit, hit && ev.crit, ev.actor);
+                    mark();
+                  },
+                  hit ? { hand: chest(ev.actor!), caught: low(ev.target) } : undefined,
+                  !hit,
+                ),
+              true,
+            );
+            return;
+          }
           if (fxs && from && to && (kind === "arrow" || kind === "bolt")) {
             // A miss flies wide of the mark.
             const end = hit ? to : to.clone().add(new THREE.Vector3(0.7, 0.5, 0.5));
@@ -584,18 +767,59 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
             );
             return;
           }
-          if (fxs && chained && to && kind === "spark") {
+          if (fxs && from && to && (kind === "thunder" || kind === "blade" || kind === "sound")) {
+            const end = hit ? to : to.clone().add(new THREE.Vector3(0.7, 0.5, 0.5));
+            const land = () => {
+              view?.landed(ev.target, what, hit, hit && ev.crit, ev.actor);
+              mark();
+            };
+            cast(ev.actor!, what, to.x, to.z, () =>
+              kind === "thunder" ? fxs.thunder(from, end, color, land) : kind === "blade" ? fxs.blade(from, end, color, land) : fxs.sound(from, end, color, SOUND_KIND[mine?.what ?? ""] ?? "plain", land),
+            );
+            return;
+          }
+          if (fxs && from && to && target && (kind === "drain" || kind === "hex" || kind === "drown" || kind === "flask" || kind === "sink")) {
+            // A curse flies (a bolt, or a flask of bilge breaking on them), or black water falls on them; what it
+            // leaves (life drained, a sigil, a drowning spiral) follows if it took.
+            const ground = point(target.pos, 0.05);
+            const end = hit ? to : to.clone().add(new THREE.Vector3(0.7, 0.5, 0.5));
+            const land = () => {
+              view?.landed(ev.target, what, hit, hit && ev.crit, ev.actor);
+              mark();
+            };
+            const after = () => {
+              land();
+              if (!hit) return;
+              if (kind === "drain") fxs.siphon(end, from, color);
+              else if (kind === "hex") fxs.sigil(point(target.pos), color);
+              else if (kind === "drown") fxs.drown(point(target.pos), color);
+            };
             cast(ev.actor!, what, to.x, to.z, () => {
-              fxs.spark([chained, to], color);
+              if (kind === "sink") fxs.sink(hit ? end : end.clone().setY(end.y - 0.3), color, land);
+              else if (kind === "flask") fxs.launch("flask", from, hit ? ground : ground.clone().add(new THREE.Vector3(0.7, 0, 0.5)), color, land);
+              else fxs.launch("bolt", from, end, color, after);
+            });
+            return;
+          }
+          if (fxs && chained && to && target && kind === "spark") {
+            cast(ev.actor!, what, to.x, to.z, () => {
+              // Lightning comes down out of the sky onto each one struck (wide of it on a miss), and arcs on from the last.
+              const ground = point(target.pos, 0.05);
+              fxs.strike(hit ? ground : ground.clone().add(new THREE.Vector3(0.6, 0, 0.5)), color);
+              if (chained !== from) fxs.spark([chained, to], color);
               view?.landed(ev.target, what, hit, hit && ev.crit, ev.actor);
               mark();
             });
             return;
           }
-          if (kind === "ground") view?.landed(ev.target, what, hit);
-          else if (kind !== "none") view?.landed(ev.target, what, hit, hit && ev.crit, ev.actor);
-          mark();
+          whenReached(kind === "wave" && to ? mine?.wave : undefined, to ?? new THREE.Vector3(), () => {
+            if (kind === "ground") view?.landed(ev.target, what, hit);
+            else if (kind !== "none") view?.landed(ev.target, what, hit, hit && ev.crit, ev.actor);
+            mark();
+          });
         });
+        // A pike that takes hauls them in (a shove after this): not before it has reached them.
+        if (kind === "pike" && hit && from && to) at += CAST_EMIT_MS + SpellFx.pikeTime(from.distanceTo(to)) * 1000;
         say(hit ? `${name(ev.target)} takes ${ev.amount}${ev.crit ? " (critical hit)" : ""}.` : `${name(ev.actor)} misses ${name(ev.target)}.`);
       } else if (ev.t === "heal") {
         const u = find(ev.target);
@@ -603,7 +827,7 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
         later(() => {
           sounds.heal(blowName(ev.what), view?.whereIs(ev.target));
           const healed = find(ev.target);
-          if (healed) spells.current?.motes(point(healed.pos, 0.3), use?.look.kind === "bless" ? use.look.color : "#7dff9a");
+          if (healed) spells.current?.motes(point(healed.pos, 0.3), use?.look.kind === "bless" ? use.look.color : "#7dff9a", !!use?.look.notes);
           view?.glint(ev.target, "#7dff9a");
           view?.floatOver(ev.target, `+${ev.amount}`, "#7dff9a");
         });
@@ -792,7 +1016,10 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
           if (!at || !from || !look) return impact();
           if (look === "melee") return view ? view.strikeAt(ev.actor!, at, what, impact) : impact();
           if (fxs && (look === "arrow" || look === "bolt")) return cast(ev.actor!, what, at.x, at.z, () => fxs.launch(look, from, at, mine?.look.color ?? "#dfe9ff", impact));
-          if (fxs && look === "spark") return cast(ev.actor!, what, at.x, at.z, () => { fxs.spark([from, at], mine?.look.color ?? "#dfe9ff"); impact(); });
+          if (fxs && look === "spark") return cast(ev.actor!, what, at.x, at.z, () => { fxs.strike(at, mine?.look.color ?? "#dfe9ff"); impact(); });
+          if (fxs && look === "thunder") return cast(ev.actor!, what, at.x, at.z, () => fxs.thunder(from, at, mine?.look.color ?? "#facc15", impact));
+          if (fxs && look === "blade") return cast(ev.actor!, what, at.x, at.z, () => fxs.blade(from, at, mine?.look.color ?? "#dff4ff", impact));
+          if (fxs && look === "sound") return cast(ev.actor!, what, at.x, at.z, () => fxs.sound(from, at, mine?.look.color ?? "#ffd23f", SOUND_KIND[mine?.what ?? ""] ?? "plain", impact));
           impact();
         });
         say(`The crate takes ${ev.amount}${ev.what === "fire" ? " from the fire" : ""}.`);
@@ -939,7 +1166,7 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
 
   // In a dev build, the state and a way to act on it, for the console.
   useEffect(() => {
-    if (import.meta.env.DEV) (window as unknown as Record<string, unknown>).__gqZone = { state: zone.state, believed: state, ahead, send, layer: layer.current, view: renderer.current, click: (pos: HexPos) => click.current(pos) };
+    if (import.meta.env.DEV) (window as unknown as Record<string, unknown>).__gqZone = { state: zone.state, believed: state, ahead, send, layer: layer.current, view: renderer.current, fx: spells.current, click: (pos: HexPos) => click.current(pos) };
   }, [zone.state, state, ahead, send]);
 
   const picking = !!pick || !!dev.tool;
