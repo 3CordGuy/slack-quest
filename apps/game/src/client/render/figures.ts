@@ -890,7 +890,7 @@ function gear(p: Part, icon: string, trim: string, hold: Hold, inHand = false): 
     part.model(group, new THREE.Matrix4().makeTranslation(-pivot.x, -pivot.y, -pivot.z).multiply(at));
     disposeLowPoly(group);
     extraParts.push(part);
-    spinners.push({ joint: part.joint, axis, angle: 0, speed: SPIN_SPEED, was: null });
+    spinners.push({ joint: part.joint, axis, angle: 0, speed: SPIN_SPEED, was: new THREE.Quaternion(), seen: false });
   }
   p.model(built.model, at);
   disposeLowPoly(built.model);
@@ -904,14 +904,24 @@ interface Spinner {
   axis: THREE.Vector3;
   angle: number;
   speed: number;
-  was: THREE.Quaternion | null;
+  /** The hand's turn in the world last frame, once it has been `seen`. */
+  was: THREE.Quaternion;
+  seen: boolean;
 }
 /** Set by makeFigure for the figure being built: what turns freely in its hands. */
 let spinners: Spinner[] = [];
 /** How fast a spinner turns on its own, in radians a second, and how quickly it eases back to that after a jolt. */
 const SPIN_SPEED = 0.7;
 const SPIN_EASE = 1.4;
+/**
+ * A hand turning further than this about the axis in one frame (radians) has snapped round, as a figure does when
+ * it turns to face a new way: that leaves the ring be, rather than setting it whirling. And how much one frame's
+ * turn may add to its speed (radians a second), so a sharp flick sets it going only so fast.
+ */
+const SPIN_SNAP = 0.8;
+const SPIN_KICK = 3;
 const _spinQ = new THREE.Quaternion();
+const _spinNow = new THREE.Quaternion();
 const _spinAxis = new THREE.Vector3();
 
 /**
@@ -923,20 +933,23 @@ function turnSpinners(list: Spinner[], dt: number) {
     const hand = sp.joint.parent;
     if (!hand) continue;
     hand.updateWorldMatrix(true, false);
-    const now = new THREE.Quaternion();
+    const now = _spinNow;
     hand.matrixWorld.decompose(_pos, now, _scale);
-    if (sp.was && dt > 0) {
+    if (sp.seen && dt > 0) {
       // How far the hand has turned about the spinner's axis since last frame (the axis in the world).
       _spinQ.copy(now).multiply(_inv.copy(sp.was).invert());
+      // The shorter way round (q and -q are the same turn).
+      if (_spinQ.w < 0) _spinQ.set(-_spinQ.x, -_spinQ.y, -_spinQ.z, -_spinQ.w);
       _spinAxis.copy(sp.axis).applyQuaternion(now).normalize();
       const turned = 2 * Math.atan2(_spinQ.x * _spinAxis.x + _spinQ.y * _spinAxis.y + _spinQ.z * _spinAxis.z, _spinQ.w);
       // Left behind by the hand's turn, it is set spinning the other way, then eases back to its own speed.
-      sp.speed -= (turned / dt) * 0.6;
+      if (Math.abs(turned) < SPIN_SNAP) sp.speed -= Math.max(-SPIN_KICK, Math.min(SPIN_KICK, (turned / dt) * 0.6));
       sp.speed += (SPIN_SPEED - sp.speed) * (1 - Math.exp(-SPIN_EASE * dt));
       sp.speed = Math.max(-8, Math.min(8, sp.speed));
       sp.angle += sp.speed * dt;
     }
-    sp.was = now;
+    sp.was.copy(now);
+    sp.seen = true;
     sp.joint.quaternion.setFromAxisAngle(sp.axis, sp.angle);
   }
 }
@@ -3216,7 +3229,7 @@ let face: Face | null = null;
 const TOWNSFOLK = /^(npc|dealer|regular_|salesman_|keeper_)/;
 /** Skin tones and hair colours a townsperson may have: the everyday ones, not the painted. */
 const TOWN_SKIN = SKIN_TONES.slice(0, 8);
-const TOWN_HAIR: readonly string[] = [...HAIR_COLORS.slice(0, 7), HAIR_COLORS[7], HAIR_COLORS[8]];
+const TOWN_HAIR = HAIR_COLORS.slice(0, 9);
 
 /**
  * A face for a townsperson, the same every time for the same `key` (their id, or their kind for one who is always
@@ -3262,8 +3275,10 @@ let figureKind = "";
 let skirts: { joint: THREE.Object3D; thigh: THREE.Object3D; fold: THREE.Object3D; shin: THREE.Object3D }[] = [];
 /** How much of the knee's bend the lower piece of a long coat's skirt follows: cloth bends less than a leg. */
 const FOLD_FOLLOW = 0.6;
-/** How far down a long coat's hem hangs, in the torso's units: a little below the knee. */
+/** How far down a long coat's hem hangs, in the torso's units, for legs of the usual length: a little below the knee. Longer or shorter legs move it with the knee (see coatHem). */
 const COAT_HEM = -3.7;
+/** The hem of a long coat on the figure being built: as far below its knee as the legs are long, so it always folds at the knee. */
+const coatHem = () => COAT_HEM * m.legs;
 /** How far a long coat's upper and lower skirt pieces overlap above and below the knee, so a bend opens no gap. */
 const FOLD_OVERLAP = 0.7;
 /** Set by makeFigure for the figure being built: eyes that light only while a spell is cast (see Look.glowOnCast). */
@@ -4254,7 +4269,7 @@ function coatPanel(part: Part, color: string, s: number, a0: number, a1: number,
   const all: [number, number, number, number][] = [
     [1.4, 2.85 * (1 + m.hips) * 0.5 + grow, 2 + grow, 0.05],
     [0.2, Math.max(3.1 * m.hips, thighReach(0.2) + 0.1) + grow, 2.25 + grow, 0],
-    [COAT_HEM, Math.max(3.4 * m.hips, thighReach(0.2) + 0.25) + grow, 2.6 + grow, -0.15],
+    [coatHem(), Math.max(3.4 * m.hips, thighReach(0.2) + 0.25) + grow, 2.6 + grow, -0.15],
   ];
   // Only the stretch from `span`'s top to its bottom (a skirt folded at the knee is two): the rings inside it, and
   // one at each end, between the rings either side of it.
@@ -5380,8 +5395,8 @@ function person(top: THREE.Group, look: Look, outfit: Outfit | undefined, asleep
         const fold = new Part(skirt.joint, 0, knee - SKIRT_PIVOT, 0);
         fold.skin.position.y = -knee;
         fold.skin.scale.set(m.girth, 1, m.girth);
-        coatPanel(fold, coatCloth, s, 0.42, Math.PI + 0.05, SKIRT_EASE - 0.14, [knee + FOLD_OVERLAP, COAT_HEM]);
-        coatPanel(fold, edgeColor, s, 0.38, 0.52, SKIRT_EASE - 0.08, [knee + FOLD_OVERLAP, COAT_HEM]);
+        coatPanel(fold, coatCloth, s, 0.42, Math.PI + 0.05, SKIRT_EASE - 0.14, [knee + FOLD_OVERLAP, coatHem()]);
+        coatPanel(fold, edgeColor, s, 0.38, 0.52, SKIRT_EASE - 0.08, [knee + FOLD_OVERLAP, coatHem()]);
         extraParts.push(skirt, fold);
         skirts.push({ joint: skirt.joint, thigh, fold: fold.joint, shin: (s > 0 ? b.shinL : b.shinR).joint });
       }

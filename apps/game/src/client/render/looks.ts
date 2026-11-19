@@ -90,8 +90,8 @@ export const LOOKS: Record<string, Look> = {
   // and lead-weighted boots. The sea does not move them, and neither will you.
   sre_warden: { skin: "#d9a67c", hair: "#3a2a20", body: "#8f7f5c", legs: "#7d6f50", accent: "#e8742e", hat: "diver", hatColor: "#c2893a", weapon: "maul", boots: "#4a4a52", corselet: "#c2893a" },
   // The Warlock is a captain the sea gave back: a dripping tricorn over a red band, eyes alight, a scarf over the
-  // face, a long sea-dark coat edged in tarnished gold, a red sash, barnacles on the shoulders, and a grimoire
-  // glowing purple.
+  // face, a long sea-dark coat edged in tarnished gold, a red sash, barnacles on the shoulders, and a dark,
+  // clasped grimoire.
   data_warlock: { skin: "#a3aca4", hair: "#2a2f2c", body: "#1f2e2b", legs: "#1a1f1e", accent: "#b06cff", hat: "tricorn", hatColor: "#1d2624", weapon: "grimoire", coat: true, coatTrim: "#a8863a", sash: "#6b2230", bandana: "#6b2230", glowEyes: "#c48bff", glowOnCast: true, mask: "#2c3a39", boots: "#1d1f1f", barnacles: true },
   // Traveling salesmen (packages/world/src/salesman.ts): each one easy to tell from the crew at a glance.
   salesman_curio: { skin: "#f1d3b8", hair: "#1f1a24", body: "#5b2f63", legs: "#2a1838", accent: "#e0b12e", hat: "brim", hatColor: "#2a1f2e", weapon: "lantern", coat: true, coatTrim: "#c9a24a", vest: "#3a1f42", straps: "#4a2a3a", boots: "#2a1f2e" },

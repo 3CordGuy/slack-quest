@@ -189,9 +189,12 @@ function bowStave(k: Kit) {
 function dagger(k: Kit) {
   k.hull(bladePoints(8, 1.9, 0.75, 2.6, 0.3), C.steel);
   k.box(4.6, 0.8, 1.2, C.gold, {}, 0.25);
-  k.cyl(0.5, 0.55, 2.8, 6, C.bark, { at: [0, -1.8, 0] });
-  k.ball(0.8, C.gold, { at: [0, -3.5, 0] });
   whipping(k, [0, -1.8, 0], 0.6, 2.4);
+  k.ball(0.8, C.gold, { at: [0, -3.5, 0] });
+  // The whipping is under the fist, so a turn of the same cord round the pommel and a little knot below it show
+  // the rarity in the hand.
+  k.ring(0.8, 0.3, k.a, { at: [0, -3.5, 0], rot: [Math.PI / 2, 0, 0] }, 4, 10);
+  k.within({ at: [0, -4.1, 0], scale: 0.7 }, () => swordKnot(k, [0, 0, 0]));
 }
 
 /**
@@ -367,7 +370,7 @@ export const LOW_POLY: Record<string, LowPolyDef> = {
     lean: DIAG,
     build: (k) => {
       // A length of driftwood, crooked and grey, grown over with barnacles and hung with kelp; at its head the
-      // wood twists up and curls over a stone alight with the storm.
+      // wood twists up and curls over a stone glowing pale blue.
       const drift = "#7d6e5a";
       k.rod([[0, -10, 0], [0.4, -6, 0.2], [-0.3, -2, -0.2], [0.35, 2, 0.15], [-0.2, 6, 0], [0.2, 7.6, 0]], 0.62, drift, {}, 6);
       whipping(k, [0.2, -1, 0], 0.85, 2.6);
@@ -524,7 +527,7 @@ export const LOW_POLY: Record<string, LowPolyDef> = {
       k.cyl(0.55, 0.65, 13, 6, C.gold, { at: [0, -3, 0] });
       for (const y of [-9.6, -2.2]) k.cyl(0.9, 0.9, 0.6, 6, "#b8891f", { at: [0, y, 0] });
       whipping(k, [0, -5.9, 0], 0.7, 3.6);
-      k.cyl(2.65, 2.65, 0.7, 6, k.a, { at: [0, 5, 0] });
+      k.cyl(3, 3, 0.6, 6, k.a, { at: [0, 5, 0] });
       k.lathe([[0, 3.2], [1.6, 3.6], [2.6, 5], [2.4, 6.6], [1.4, 7.5], [0, 7.8]], 6, C.gold);
       for (let i = 0; i < 6; i++) {
         const a = (i / 6) * Math.PI * 2;
@@ -630,6 +633,7 @@ export const LOW_POLY: Record<string, LowPolyDef> = {
       k.rod([[2.0, 2.3, 0], [2.6, 0.7, 0], [2.1, -1.4, 0], [0.4, -2.2, 0]], 0.24, C.gold, {}, 5);
       whipping(k, [0, 0.2, 0], 0.55, 3.8);
       k.ball(0.95, C.gold, { at: [0, -2.2, 0] });
+      swordKnot(k, [0, -3, 0]);
     },
   },
   dirk: {
@@ -876,7 +880,7 @@ export const LOW_POLY: Record<string, LowPolyDef> = {
       k.cyl(3.75, 3.75, 0.3, 12, bilge, { at: [0, 4.65, 0] });
       k.ring(3.9, 0.36, k.a, { at: [0, 5, 0], rot: [Math.PI / 2, 0, 0] }, 4, 20);
       k.ball(1, C.gold, { at: [0, -2.5, 0] });
-      k.cyl(1.0, 1.0, 0.5, 8, k.a, { at: [0, -2.5, 0] });
+      k.cyl(1.3, 1.3, 0.45, 8, k.a, { at: [0, -2.5, 0] });
       k.ball(0.55, bilge, { at: [1, 6.2, 0.6] });
       k.ball(0.4, bilge, { at: [-1.2, 7.4, -0.3] });
       k.ball(0.3, bilge, { at: [0.3, 8.5, 0.2] });
