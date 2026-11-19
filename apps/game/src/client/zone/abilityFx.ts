@@ -73,6 +73,8 @@ export type FxKind =
   | "starfire"
   /** A bolt of seawater bursting on each target and spraying the enemies beside it (Water Burst). */
   | "drench"
+  /** A gust of wind sweeping over the hexes it covers (Trade Winds). */
+  | "gust"
   /** A crescent blade of wind flying to each target. */
   | "blade"
   /** Lightning out of the sky onto each target, arcing from one to the next. */
@@ -187,7 +189,7 @@ const ABILITY_FX: Record<string, Fx> = {
   soothing_rain: fx("rain", "#8fd3ff"),
   chain_lightning: fx("spark", "#c4b5fd"),
   roar_of_thunder: fx("thunder", "#facc15"),
-  trade_winds: fx("lob", "#d9f2e6"),
+  trade_winds: fx("gust", "#d9f2e6"),
   tidal_wave: fx("wave", "#38bdf8"),
   show_the_way: fx("way", "#fff4c2"),
   smugglers_route: fx("bless", "#a78bfa"),
