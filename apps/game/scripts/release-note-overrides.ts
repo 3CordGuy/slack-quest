@@ -7,6 +7,11 @@
 // release-notes.ts); this list is only for the past.
 
 export const OVERRIDES: Record<string, string[]> = {
+  // game-v2026.11.19 (#526). Its coat line said the same as #529's, which went further; one line on coats is enough.
+  "59c43c51d25a1c6f084578d54f804ef4b55590dc": [
+    "Heroes: starting clothes are your class's own outfit again, not a knit cap and navy tunic",
+    "Class cards: the Warden, Paladin and Druid hold the weapon they start with",
+  ],
   // game-v2026.11.18.6 (#511). The Mage's tricorn look was replaced by the storm witch (#519) and the staff's gem by
   // a driftwood one, so only what is still true is left.
   "9d724350364957ae5e21177e418d3411d0421efb": ["Sashes: the long ends of a sash swing as you walk"],
