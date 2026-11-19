@@ -21,9 +21,9 @@ export const proficiency = (level: number): number => 2 + Math.floor((Math.max(1
 
 export const statOf = (unit: Pick<Unit, "stats">, stat: StatKey): number => unit.stats?.[stat] ?? 5;
 
-/** Steps of open ground a hero can cover in a turn: 5, shifted by Agility, never under 4 or over 8. */
+/** Steps of open ground 1 AP buys a hero: half of 5 shifted by Agility (that never under 4 or over 8), so 2 to 4. */
 export function heroMove(stats: Stats): number {
-  return Math.max(4, Math.min(8, 5 + Math.floor((stats.agi - 5) / 3)));
+  return Math.max(1, Math.floor(Math.max(4, Math.min(8, 5 + Math.floor((stats.agi - 5) / 3))) / 2));
 }
 
 /** A hero's Defence: 10, plus Agility, plus half their armor (armor counts for 6 at most). */

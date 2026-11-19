@@ -3,13 +3,13 @@ import { STARTING_STATS, allHexesInGrid, hexDistance, hexNeighbors, posKey, type
 import { ABILITIES, EFFECT_TICK, ENEMIES, HERO_CLASSES, SUNDERED_DEFENCE, WEAPONS, abilitiesFor } from "../content";
 import type { Biome, Tile } from "../map";
 import { makeRng } from "../rng";
-import { walk } from "./combat";
+import { courseFor, moveLeft, walk } from "./combat";
 import { addCondition, attackContext, burnOf, damage, kindle, shieldOf, type Ctx } from "./engine";
 import { shantyOf, shantyRadius, songsOn } from "./song";
 import { chartOf, constellationLinks } from "./stars";
 import { ALERT_RANGE, DEFAULT_ZONE_OPTIONS, JOIN_RANGE, generateZone, zoneOptions } from "./gen";
 import { adjacent, blast, flies, sees, seesFor, solid, stepCost, unitAt, zoneReach } from "./geometry";
-import { AURAS, BLOCK, BOLSTER, GUARD_UP, STAND_STRONG, STURDY, ENEMY_BURST, ENEMY_KIT, EXPLORE_ROUND_MS, FLEE_RANGE, LIGHT_RADIUS, SHIELD_SET_ASIDE, TACTICS, TORCH_GROUND_ROUNDS, TORCH_HELD_ROUNDS, TORCH_ROUND_MS, abilityDice as abilityDiceFor, commonCost, enemyHp, enemyStrikes, tacticOf } from "./kit";
+import { ACTION_AP, AP_MAX, AP_TURN, AURAS, CHART, COMMON_ACTIONS, BLOCK, BONUS_AP, BOLSTER, GUARD_UP, STAND_STRONG, STURDY, ENEMY_BURST, ENEMY_HP_SCALE, ENEMY_KIT, EXPLORE_ROUND_MS, FLEE_RANGE, LIGHT_RADIUS, SHIELD_SET_ASIDE, TACTICS, TORCH_GROUND_ROUNDS, TORCH_HELD_ROUNDS, TORCH_ROUND_MS, abilityDice as abilityDiceFor, commonCost, enemyHp, enemyMove, enemyStrikes, tacticOf } from "./kit";
 import { MAX_CATCHUP_ROUNDS } from "./clock";
 import { defenceOf } from "./engine";
 import { abilityArea, checkAbility, crateBlow, enemyAct, wayBetween } from "./combat";
@@ -120,10 +120,11 @@ describe("dice", () => {
     expect(hitChance(5, 15, -1)).toBeLessThan(hitChance(5, 15, 0));
   });
 
-  it("gives a hero 4 to 8 steps a turn by Agility", () => {
-    expect(heroMove({ ...STARTING_STATS.qa_paladin, agi: 1 })).toBe(4);
-    expect(heroMove({ ...STARTING_STATS.qa_paladin, agi: 5 })).toBe(5);
-    expect(heroMove({ ...STARTING_STATS.qa_paladin, agi: 30 })).toBe(8);
+  it("gives a hero 2 to 4 steps for each AP by Agility", () => {
+    expect(heroMove({ ...STARTING_STATS.qa_paladin, agi: 1 })).toBe(2);
+    expect(heroMove({ ...STARTING_STATS.qa_paladin, agi: 5 })).toBe(2);
+    expect(heroMove({ ...STARTING_STATS.qa_paladin, agi: 11 })).toBe(3);
+    expect(heroMove({ ...STARTING_STATS.qa_paladin, agi: 30 })).toBe(4);
   });
 });
 
@@ -314,41 +315,64 @@ describe("turns", () => {
     }
   });
 
-  it("spends an Action, a Bonus action and movement, and refuses a second of each", () => {
+  it("spends AP on anything, in any order, and refuses what it cannot pay for", () => {
     let { state, foe } = duel("dummy", "qa_paladin", at(5, 6), at(8, 6));
     const budget = () => state.encounter!.budgets.ann;
-    expect(budget()).toMatchObject({ action: true, bonus: true });
-    const move = budget().move;
+    expect(budget()).toMatchObject({ ap: AP_TURN, move: 0 });
+    const stride = budget().stride;
+    expect(stride).toBe(heroMove(unit(state, "ann").stats!));
+    // A step buys a stride of movement for 1 AP, and what is left of it is spent before another AP is.
     state = must(state, { type: "move", by: "ann", unit: "ann", to: at(7, 6) });
-    expect(budget().move).toBe(move - 1);
+    expect(budget()).toMatchObject({ ap: AP_TURN - 1, move: stride - 1 });
+    // An attack (once an Action) is 2 AP; another is 2 more.
     state = must(state, { type: "use", by: "ann", unit: "ann", ability: "bash", target: foe });
-    expect(budget().action).toBe(false);
-    expect(fails(state, { type: "use", by: "ann", unit: "ann", ability: "bash", target: foe })).toMatch(/used your Action/);
+    expect(budget().ap).toBe(AP_TURN - 1 - ACTION_AP);
+    expect(fails(state, { type: "use", by: "ann", unit: "ann", ability: "bash", target: foe })).toMatch(/takes 2 AP, and you have 1 left/);
+    // Block (once a Bonus action) is 1.
     state = must(state, { type: "use", by: "ann", unit: "ann", ability: "block" });
-    expect(budget().bonus).toBe(false);
+    expect(budget().ap).toBe(0);
     expect(shieldOf(unit(state, "ann"))).toBeGreaterThan(0);
-    expect(fails(state, { type: "drink", by: "ann", unit: "ann", item: "healing" })).toMatch(/Bonus action/);
-    expect(fails(state, { type: "move", by: "ann", unit: "ann", to: at(1, 1) })).toMatch(/movement/);
+    expect(fails(state, { type: "drink", by: "ann", unit: "ann", item: "healing" })).toMatch(/takes 1 AP/);
+    expect(fails(state, { type: "move", by: "ann", unit: "ann", to: at(1, 1) })).toMatch(/AP you have left/);
   });
 
-  it("charges 2 for forest, 1 more to climb, and Dash doubles what is left to spend", () => {
+  it("carries AP left at the end of a turn into the next, to 6 at most", () => {
+    let { state } = duel("dummy", "qa_paladin", at(5, 6), at(8, 6));
+    const ann = () => state.encounter!.budgets.ann;
+    const nextTurn = (s: ZoneState) => {
+      s = must(s, { type: "end_turn", by: "ann", unit: "ann" });
+      while (!s.encounter!.acting.includes("ann") || s.encounter!.done.includes("ann")) s = must(s, { type: "timeout" });
+      return s;
+    };
+    expect(ann().ap).toBe(AP_TURN);
+    state = nextTurn(state);
+    expect(ann().ap).toBe(AP_MAX);
+    state = nextTurn(state);
+    expect(ann().ap).toBe(AP_MAX);
+    // Movement bought and not walked is not kept.
+    state.encounter!.budgets.ann.stride = 3;
+    state = must(state, { type: "move", by: "ann", unit: "ann", to: at(4, 6) });
+    expect(ann().move).toBeGreaterThan(0);
+    state = nextTurn(state);
+    expect(ann()).toMatchObject({ ap: AP_MAX, move: 0 });
+  });
+
+  it("charges 2 for forest and 1 more to climb, buying a stride at a time", () => {
     let state = board((t) => { tileEdit(at(7, 6), { biome: "forest" })(t); tileEdit(at(6, 5), { elev: 1 })(t); });
     state.aiOff = true;
     hero(state, "ann", "qa_paladin", at(5, 6));
     enemy(state, "dummy", at(9, 6));
     state = provoke(must(state, { type: "move", by: "ann", unit: "ann", to: at(6, 6) }));
     const budget = () => state.encounter!.budgets.ann;
-    const max = budget().moveMax;
-    expect(budget().move).toBe(max);
+    budget().stride = 2;
+    expect(budget()).toMatchObject({ ap: AP_TURN, move: 0 });
+    // Into the forest: 2, a stride's worth.
     state = must(state, { type: "move", by: "ann", unit: "ann", to: at(7, 6) });
-    expect(budget().move).toBe(max - 2);
-    state = must(state, { type: "common", by: "ann", unit: "ann", what: "dash" });
-    expect(budget().move).toBe(max - 2 + max);
-    const before = budget().move;
-    const up = at(6, 5);
-    state = must(state, { type: "move", by: "ann", unit: "ann", to: up });
-    // One step, onto open ground a level up: 1 + 1.
-    expect(before - budget().move).toBe(2);
+    expect(budget()).toMatchObject({ ap: AP_TURN - 1, move: 0 });
+    // One step back and up, onto open ground a level up: 1 + 1, another AP.
+    state = must(state, { type: "move", by: "ann", unit: "ann", to: at(6, 5) });
+    expect(budget()).toMatchObject({ ap: AP_TURN - 2, move: 0 });
+    expect(COMMON_ACTIONS).not.toHaveProperty("dash");
   });
 
   it("ends the turn when its timer runs out", () => {
@@ -410,18 +434,38 @@ describe("attacks", () => {
     expect(attackContext(state, { ...ann, pos: at(7, 6) }, unit(state, foe), { melee: false }).adv).toBe(-1);
   });
 
-  it("puts an ability with a cooldown out of use for that many turns", () => {
+  it("puts an ability with a cooldown out of use for that many turns, the one it was used in counted as it ends", () => {
     let { state, foe } = duel("dummy", "qa_paladin", at(6, 6), at(8, 6));
     unit(state, "ann").abilities = ["stoke_the_fire"];
     state = must(state, { type: "use", by: "ann", unit: "ann", ability: "stoke_the_fire" });
     const wait = tacticOf("stoke_the_fire").cooldown!;
-    for (let turn = 0; turn < wait; turn++) {
+    expect(fails(state, { type: "use", by: "ann", unit: "ann", ability: "stoke_the_fire" }), "the same turn").toMatch(/not ready/);
+    for (let turn = 1; turn < wait; turn++) {
       state = must(state, { type: "end_turn", by: "ann", unit: "ann" });
       expect(fails(state, { type: "use", by: "ann", unit: "ann", ability: "stoke_the_fire" }), `turn ${turn}`).toMatch(/not ready/);
     }
     state = must(state, { type: "end_turn", by: "ann", unit: "ann" });
     must(state, { type: "use", by: "ann", unit: "ann", ability: "stoke_the_fire" });
     expect(foe).toBeDefined();
+  });
+
+  it("gives a cooldown of 1 (once a turn) or more to everything but a weapon's basic attack", () => {
+    let { state, foe } = duel("dummy", "qa_paladin", at(5, 6), at(7, 6));
+    unit(state, "ann").abilities = ["bash", "armor_crush"];
+    // Once a turn: not again this turn, ready again the next.
+    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "armor_crush", target: foe });
+    expect(fails(state, { type: "use", by: "ann", unit: "ann", ability: "armor_crush", target: foe })).toMatch(/not ready/);
+    // The basic attack: as often as the AP allow.
+    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "bash", target: foe });
+    expect(fails(state, { type: "use", by: "ann", unit: "ann", ability: "bash", target: foe })).toMatch(/takes 2 AP/);
+    state = must(state, { type: "end_turn", by: "ann", unit: "ann" });
+    must(state, { type: "use", by: "ann", unit: "ann", ability: "armor_crush", target: foe });
+    const basic = new Set([...Object.values(WEAPONS).map((w) => w.abilities[0]), "punch", "torch_swing", "turtle_bite", "sailor_pistol", "sailor_scimitar"]);
+    for (const [id, t] of Object.entries(TACTICS)) {
+      if (basic.has(id) && !t.cooldown) continue;
+      expect(t.cooldown, id).toBeGreaterThanOrEqual(1);
+    }
+    for (const w of Object.values(WEAPONS)) for (const id of w.abilities.slice(1)) expect(tacticOf(id).cooldown, id).toBeGreaterThanOrEqual(1);
   });
 
   it("spends Focus for advantage", () => {
@@ -466,7 +510,7 @@ describe("opportunity attacks", () => {
     const bandit = unit(state, foe);
     const events: ZoneEvent[] = [];
     const ctx: Ctx = { state, rng: makeRng(7), events, effects: [] };
-    walk(ctx, bandit, [at(9, 6), at(10, 6)], { action: true, bonus: true, move: 5, moveMax: 5, disengaged: false });
+    walk(ctx, bandit, [at(9, 6), at(10, 6)], { ap: AP_TURN, move: 5, stride: 2, disengaged: false });
     expect(events.some((e) => e.t === "reaction" && e.id === "ann" && e.target === foe)).toBe(true);
     expect(events.some((e) => e.t === "roll" && e.roll.id === "ann" && e.roll.kind === "attack")).toBe(true);
     expect(state.encounter!.reacted).toContain("ann");
@@ -616,7 +660,7 @@ describe("light and the dark", () => {
     const events: ZoneEvent[] = [];
     state = must(state, { type: "light", by: "ann", unit: "ann" }, events);
     expect(unit(state, "ann")).toMatchObject({ torch: TORCH_HELD_ROUNDS, items: { torch: 1 } });
-    expect(state.encounter!.budgets.ann.bonus).toBe(false);
+    expect(state.encounter!.budgets.ann.ap).toBeLessThanOrEqual(AP_TURN - BONUS_AP);
     expect(events).toContainEqual({ t: "lit", id: "ann" });
     expect(fails(state, { type: "light", by: "ann", unit: "ann" })).toMatch(/already/);
   });
@@ -883,12 +927,13 @@ describe("picking up a torch", () => {
     expect(unit(state, "ann")).toMatchObject({ torch: 7, items: { torch: 2 } });
   });
 
-  it("costs a Bonus action in a fight", () => {
+  it("costs 1 AP in a fight", () => {
     let { state } = duel("dummy");
     state.lights = { [posKey(at(5, 5))]: { rounds: 3, by: null }, [posKey(at(5, 7))]: { rounds: 3, by: null } };
     state = must(state, { type: "pickup", by: "ann", unit: "ann", at: at(5, 5) });
-    expect(state.encounter!.budgets.ann.bonus).toBe(false);
-    expect(fails(state, { type: "pickup", by: "ann", unit: "ann", at: at(5, 7) })).toMatch(/Bonus/);
+    expect(state.encounter!.budgets.ann.ap).toBe(AP_TURN - BONUS_AP);
+    state.encounter!.budgets.ann.ap = 0;
+    expect(fails(state, { type: "pickup", by: "ann", unit: "ann", at: at(5, 7) })).toMatch(/takes 1 AP/);
   });
 });
 
@@ -939,16 +984,17 @@ describe("putting a held torch away", () => {
     expect(unit(state, "ann")).toMatchObject({ abilities: weapon, items: { torch: 1 } });
   });
 
-  it("costs a Bonus action in a fight, and is not done while down", () => {
+  it("costs 1 AP in a fight, and is not done while down", () => {
     let { state } = duel("dummy");
     unit(state, "ann").items.torch = 2;
     state = must(state, { type: "light", by: "ann", unit: "ann", hand: "main" });
-    expect(fails(state, { type: "stow", by: "ann", unit: "ann" })).toMatch(/Bonus/);
+    state.encounter!.budgets.ann.ap = 0;
+    expect(fails(state, { type: "stow", by: "ann", unit: "ann" })).toMatch(/takes 1 AP/);
     expect(unit(state, "ann").torchHand).toBe("main");
     const fresh = duel("dummy").state;
     unit(fresh, "ann").torch = 4;
     const stowed = must(fresh, { type: "stow", by: "ann", unit: "ann" });
-    expect(stowed.encounter!.budgets.ann.bonus).toBe(false);
+    expect(stowed.encounter!.budgets.ann.ap).toBeLessThanOrEqual(AP_TURN - BONUS_AP);
     const down = board();
     const bo = hero(down, "bo", "qa_paladin", at(3, 6));
     bo.torch = 4;
@@ -966,7 +1012,7 @@ describe("items", () => {
     const healed = events.find((e) => e.t === "heal");
     expect(healed && healed.t === "heal" && healed.amount).toBeGreaterThanOrEqual(8);
     expect(unit(state, "ann").items.healing).toBe(1);
-    expect(state.encounter!.budgets.ann).toMatchObject({ action: true, bonus: false });
+    expect(state.encounter!.budgets.ann).toMatchObject({ ap: AP_TURN - BONUS_AP });
     expect(fails(state, { type: "drink", by: "ann", unit: "ann", item: "poison" })).toMatch(/not for drinking/);
   });
 
@@ -995,7 +1041,7 @@ describe("items", () => {
 
 describe("threat", () => {
   it("makes the enemy tougher, sharper and more numerous as it rises", () => {
-    expect(enemyHp("wolf", 1, 1)).toBe(ENEMIES.wolf.hp);
+    expect(enemyHp("wolf", 1, 1)).toBe(Math.round(ENEMIES.wolf.hp * ENEMY_HP_SCALE));
     expect(enemyHp("wolf", 1, 2)).toBeGreaterThan(enemyHp("wolf", 1, 1) * 1.5);
     expect(enemyHp("wolf", 1, 3)).toBeGreaterThan(enemyHp("wolf", 1, 2));
     expect(enemyStrikes("wolf", 1, 3)[0].bonus).toBe(enemyStrikes("wolf", 1, 1)[0].bonus + 2);
@@ -1009,7 +1055,7 @@ describe("threat", () => {
 });
 
 describe("the enemy's turn", () => {
-  it("runs when nothing is in reach, giving up its attack for twice the ground", () => {
+  it("runs when nothing is in reach, spending all its AP on the ground", () => {
     let state = board();
     hero(state, "ann", "qa_paladin", at(1, 6));
     const bear = enemy(state, "bear", at(13, 6));
@@ -1017,9 +1063,8 @@ describe("the enemy's turn", () => {
     state = provoke(state, "ann", events);
     for (let i = 0; i < 3 && !events.some((e) => e.t === "moved" && e.id === bear.id); i++) state = must(state, { type: "timeout" }, events);
     const walked = events.filter((e): e is Extract<ZoneEvent, { t: "moved" }> => e.t === "moved" && e.id === bear.id).flatMap((e) => e.path);
-    expect(events.some((e) => e.t === "used" && e.id === bear.id && e.what === "dash")).toBe(true);
-    // A bear covers 5 a turn: dashing, more than that in one go.
-    expect(walked.length).toBeGreaterThan(5);
+    // A bear covers 2 for each AP: running, all 4 of them, more than the 2 AP an attack would leave it in one go.
+    expect(walked.length).toBeGreaterThan(enemyMove("bear") * (AP_TURN - ACTION_AP));
   });
 
   it("closes on a hero and attacks", () => {
@@ -1082,7 +1127,7 @@ describe("the end of a fight", () => {
       if (!actor) { state = must(state, { type: "timeout" }, events); continue; }
       const target = unit(state, foe.id);
       if (!adjacent(target.pos, unit(state, "ann").pos)) {
-        const reach = zoneReach(state, unit(state, "ann"), state.encounter.budgets.ann.move);
+        const reach = zoneReach(state, unit(state, "ann"), moveLeft(state.encounter.budgets.ann));
         const spot = [...reach.values()].filter((r) => r.stop && adjacent(r.pos, target.pos)).sort((a, b) => a.cost - b.cost)[0];
         if (spot) state = must(state, { type: "move", by: "ann", unit: "ann", to: spot.pos }, events);
       }
@@ -1127,7 +1172,7 @@ describe("the end of a fight", () => {
       if (!state.encounter.acting.includes("ann") || state.encounter.done.includes("ann")) { state = must(state, { type: "timeout" }, events); continue; }
       const target = unit(state, foe);
       if (!adjacent(target.pos, unit(state, "ann").pos)) {
-        const reach = zoneReach(state, unit(state, "ann"), state.encounter.budgets.ann.move);
+        const reach = zoneReach(state, unit(state, "ann"), moveLeft(state.encounter.budgets.ann));
         const spot = [...reach.values()].filter((r) => r.stop && adjacent(r.pos, target.pos)).sort((a, b) => a.cost - b.cost)[0];
         if (spot) state = must(state, { type: "move", by: "ann", unit: "ann", to: spot.pos }, events);
       }
@@ -1185,7 +1230,7 @@ describe("the end of a fight", () => {
           let tried = stepZone(state, { type: "use", by: id, unit: id, ability, target: target.id });
           if (!tried.ok) {
             // Walk as near as the turn allows.
-            const reach = zoneReach(state, me, fighting ? state.encounter!.budgets[id].move : 12);
+            const reach = zoneReach(state, me, fighting ? moveLeft(state.encounter!.budgets[id]) : 12);
             const spot = [...reach.values()].filter((r) => r.stop).sort((a, b) => hexDistance(a.pos, target.pos) - hexDistance(b.pos, target.pos) || a.cost - b.cost)[0];
             if (spot && hexDistance(spot.pos, target.pos) < hexDistance(me.pos, target.pos)) state = must(state, { type: "move", by: id, unit: id, to: spot.pos });
             tried = stepZone(state, { type: "use", by: id, unit: id, ability, target: target.id });
@@ -1224,7 +1269,7 @@ describe("a dead enemy's hex", () => {
     expect(state.encounter).not.toBeNull();
     // The body is still there (it is cleared when the fight ends), and it is in nobody's way.
     expect(unit(state, dead)).toMatchObject({ down: true, pos: at(5, 6) });
-    expect(zoneReach(state, unit(state, "ann"), state.encounter!.budgets.ann.move).get(posKey(at(5, 6)))).toMatchObject({ cost: 1, stop: true });
+    expect(zoneReach(state, unit(state, "ann"), moveLeft(state.encounter!.budgets.ann)).get(posKey(at(5, 6)))).toMatchObject({ cost: 1, stop: true });
     // Onto it: she stops there, and is not shuffled off it.
     const onto: ZoneEvent[] = [];
     const stood = must(state, { type: "move", by: "ann", unit: "ann", to: at(5, 6) }, onto);
@@ -1317,12 +1362,12 @@ describe("fleeing", () => {
     expect(fails(near, flee())).toMatch(/too close to get away/);
     // Clear of it, but the Action is gone.
     const { state: clear } = duel("bandit", "qa_paladin", at(3, 6), at(9, 6));
-    clear.encounter!.budgets.ann.action = false;
-    expect(fails(clear, flee())).toMatch(/used your Action/);
-    // A Rogue runs for a Bonus action.
-    expect(commonCost("flee", "refactor_rogue")).toBe("bonus");
+    clear.encounter!.budgets.ann.ap = 1;
+    expect(fails(clear, flee())).toMatch(/takes 2 AP/);
+    // A Rogue runs for 1 AP.
+    expect(commonCost("flee", "refactor_rogue")).toBe(BONUS_AP);
     const { state: rogue } = duel("bandit", "refactor_rogue", at(3, 6), at(9, 6));
-    rogue.encounter!.budgets.ann.action = false;
+    rogue.encounter!.budgets.ann.ap = 1;
     expect(stepZone(rogue, flee()).ok).toBe(true);
   });
 
@@ -1424,7 +1469,7 @@ describe("fleeing", () => {
     hero(state, "bo", "qa_paladin", at(3, 9));
     const wolf = enemy(state, "wolf", at(9, 6)).id;
     state = provoke(state);
-    const fresh = { action: true, bonus: true, move: 5, moveMax: 5, disengaged: false };
+    const fresh = { ap: AP_TURN, move: 5, stride: 2, disengaged: false };
     Object.assign(state.encounter!, { order: ["bo", "ann", wolf], init: { bo: 20, ann: 15, [wolf]: 5 }, acting: ["bo", "ann"], done: [], budgets: { bo: { ...fresh }, ann: { ...fresh } } });
     return { state, wolf };
   }
@@ -1472,7 +1517,7 @@ describe("fleeing", () => {
     state = provoke(state);
     const turnOf = (order: string[]) => {
       const s = structuredClone(state);
-      Object.assign(s.encounter!, { order, acting: ["ann"], done: [], budgets: { ann: { action: true, bonus: true, move: 5, moveMax: 5, disengaged: false } } });
+      Object.assign(s.encounter!, { order, acting: ["ann"], done: [], budgets: { ann: { ap: AP_TURN, move: 5, stride: 2, disengaged: false } } });
       return s;
     };
     const { round, turnNo } = state.encounter!;
@@ -1486,7 +1531,7 @@ describe("fleeing", () => {
     // Sharing a turn with Bo: it is still Bo's.
     const sharing = turnOf([a.id, "ann", "bo", b.id]);
     sharing.encounter!.acting = ["ann", "bo"];
-    sharing.encounter!.budgets.bo = { action: true, bonus: true, move: 5, moveMax: 5, disengaged: false };
+    sharing.encounter!.budgets.bo = { ap: AP_TURN, move: 5, stride: 2, disengaged: false };
     const after = must(sharing, flee());
     expect(after.encounter).toMatchObject({ turnNo, acting: ["bo"], done: [] });
   });
@@ -1607,7 +1652,7 @@ describe("fleeing", () => {
           const foes = state.units.filter((u) => u.side === "enemy" && !u.down && (!fighting || enc!.order.includes(u.id)));
           if (fighting && dice.int(1, 3) === 1) {
             // Run: as far from them as this turn goes (blows and all), then off, if that got clear.
-            const reach = zoneReach(state, me, enc!.budgets[id].move);
+            const reach = zoneReach(state, me, moveLeft(enc!.budgets[id]));
             const far = (p: HexPos) => Math.min(...foes.map((f) => hexDistance(f.pos, p)));
             const spot = [...reach.values()].filter((r) => r.stop).sort((a, b) => far(b.pos) - far(a.pos))[0];
             if (spot && spot.cost > 0) state = must(state, { type: "move", by: id, unit: id, to: spot.pos });
@@ -1962,9 +2007,10 @@ describe("a delve", () => {
     let { state } = duel("dummy");
     state.map.pois.push({ id: "chest9", kind: "cache", pos: at(5, 7), hidden: false, cleared: false, usedBy: [], enemies: [], loot: "chest" });
     state = must(state, { type: "open", by: "ann", unit: "ann", poi: "chest9" });
-    expect(state.encounter!.budgets.ann.action).toBe(false);
+    expect(state.encounter!.budgets.ann.ap).toBe(AP_TURN - ACTION_AP);
+    state.encounter!.budgets.ann.ap = 1;
     state.map.pois.push({ id: "chest10", kind: "cache", pos: at(5, 6), hidden: false, cleared: false, usedBy: [], enemies: [], loot: "chest" });
-    expect(fails(state, { type: "open", by: "ann", unit: "ann", poi: "chest10" })).toMatch(/Action/);
+    expect(fails(state, { type: "open", by: "ann", unit: "ann", poi: "chest10" })).toMatch(/takes 2 AP/);
   });
 });
 
@@ -2288,8 +2334,9 @@ describe("crates", () => {
     let { state } = duel("dummy");
     crate(state, "crate1", at(5, 7), 60);
     state = must(state, { type: "use", by: "ann", unit: "ann", ability: "bash", target: "crate1" });
-    expect(state.encounter!.budgets.ann.action).toBe(false);
-    expect(fails(state, { type: "use", by: "ann", unit: "ann", ability: "bash", target: "crate1" })).toMatch(/Action/);
+    expect(state.encounter!.budgets.ann.ap).toBe(AP_TURN - ACTION_AP);
+    state.encounter!.budgets.ann.ap = 1;
+    expect(fails(state, { type: "use", by: "ann", unit: "ann", ability: "bash", target: "crate1" })).toMatch(/takes 2 AP/);
   });
 
   it("keeps a hero arriving off one", () => {
@@ -2413,7 +2460,7 @@ describe("the Paladin's class abilities", () => {
     const foe = () => unit(state, dummy);
     expect(attackContext(state, unit(state, "bo"), foe(), { melee: true }).adv).toBe(0);
     state = must(state, { type: "use", by: "ann", unit: "ann", ability: "beacon_aura" });
-    expect(state.encounter!.budgets.ann).toMatchObject({ bonus: false, action: true });
+    expect(state.encounter!.budgets.ann).toMatchObject({ ap: AP_TURN - BONUS_AP });
     const bo = attackContext(state, unit(state, "bo"), foe(), { melee: true });
     expect(bo.adv).toBe(1);
     expect(bo.notes.join()).toMatch(/Beacon/);
@@ -2448,7 +2495,7 @@ describe("the Paladin's class abilities", () => {
     let { state } = party();
     for (const id of ["ann", "bo", "cy"]) unit(state, id).hp = 1;
     state = must(state, { type: "use", by: "ann", unit: "ann", ability: "healing_aura" });
-    expect(state.encounter!.budgets.ann.bonus).toBe(false);
+    expect(state.encounter!.budgets.ann.ap).toBeLessThanOrEqual(AP_TURN - BONUS_AP);
     // Nothing on the turn it is put up.
     expect(unit(state, "ann").hp).toBe(1);
     const events: ZoneEvent[] = [];
@@ -2479,7 +2526,7 @@ describe("the Paladin's class abilities", () => {
       const hit = events.some((e) => e.t === "hit" && e.target === dummy);
       if (hit) hits++;
       expect(unit(state, dummy).conditions.some((c) => c.kind === "burning")).toBe(hit);
-      expect(state.encounter!.budgets.ann.action).toBe(false);
+      expect(state.encounter!.budgets.ann.ap).toBeLessThanOrEqual(AP_TURN - ACTION_AP);
       expect(fails(nextTurn(state), { type: "use", by: "ann", unit: "ann", ability: "branding_strike", target: dummy })).toMatch(/not ready/);
     }
     expect(hits).toBeGreaterThan(0);
@@ -2516,7 +2563,7 @@ describe("the Paladin's class abilities", () => {
     let { state } = party();
     const events: ZoneEvent[] = [];
     state = must(state, { type: "use", by: "ann", unit: "ann", ability: "bolster" }, events);
-    expect(state.encounter!.budgets.ann).toMatchObject({ action: false, bonus: true });
+    expect(state.encounter!.budgets.ann).toMatchObject({ ap: AP_TURN - ACTION_AP });
     const size = BOLSTER.shield + unit(state, "ann").level;
     // The event says how big the shield is, for the bars to show it as the fight is played out.
     expect(events.filter((e) => e.t === "condition" && e.kind === "bolstered").map((e) => e.t === "condition" && [e.target, e.amount])).toEqual([["ann", size], ["bo", size]]);
@@ -2561,7 +2608,7 @@ describe("the Paladin's class abilities", () => {
     bo.conditions = (["burning", "poisoned", "slowed", "exposed", "hasted"] as const).map((kind) => ({ kind, rounds: 3 }));
     state = must(state, { type: "use", by: "ann", unit: "ann", ability: "show_the_way", target: "bo" });
     expect(unit(state, "bo").conditions.map((c) => c.kind)).toEqual(["hasted"]);
-    expect(state.encounter!.budgets.ann.action).toBe(false);
+    expect(state.encounter!.budgets.ann.ap).toBeLessThanOrEqual(AP_TURN - ACTION_AP);
   });
 
   it("Show the Way: heals the ally a little, less than a Mend", () => {
@@ -2677,7 +2724,7 @@ describe("the Mage's class abilities", () => {
     expect(healsOf(events, "bo")).toBe(1);
     expect(healsOf(events, "ann")).toBe(0);
     expect(healsOf(events, foe)).toBe(0);
-    expect(state.encounter!.budgets.ann.action).toBe(false);
+    expect(state.encounter!.budgets.ann.ap).toBeLessThanOrEqual(AP_TURN - ACTION_AP);
   });
 
   it("Soothing Rain: heals as a turn starts in it, and once a turn for walking in, however often", () => {
@@ -2846,7 +2893,7 @@ describe("the Rogue's class abilities", () => {
     state = must(state, use("smugglers_route", { at: at(8, 6) }), events);
     expect(unit(state, "ann").pos).toEqual(at(8, 6));
     expect(events.some((e) => e.t === "blinked" && e.id === "ann")).toBe(true);
-    expect(state.encounter!.budgets.ann).toMatchObject({ move, bonus: false, action: true });
+    expect(state.encounter!.budgets.ann).toMatchObject({ move, ap: AP_TURN - BONUS_AP });
     expect(unit(state, "ann").cooldowns.smugglers_route).toBe(4);
     // Bo stayed: nobody was picked to come along.
     expect(unit(state, "bo").pos).toEqual(at(4, 6));
@@ -2895,7 +2942,7 @@ describe("the Rogue's class abilities", () => {
     expect(has(state, "ann", "invisible")).toBe(true);
     expect(has(state, "bo", "invisible")).toBe(true);
     expect(has(state, "cy", "invisible")).toBe(false);
-    expect(state.encounter!.budgets.ann.action).toBe(false);
+    expect(state.encounter!.budgets.ann.ap).toBeLessThanOrEqual(AP_TURN - ACTION_AP);
     // Through the 3 turns after the one it is used on (and every enemy turn between), and no further.
     for (let turn = 1; turn <= 4; turn++) {
       expect(has(state, "ann", "invisible"), `turn ${turn}`).toBe(true);
@@ -2954,7 +3001,7 @@ describe("the Rogue's class abilities", () => {
       unit(state, "ann").level = 3;
       unit(state, dummy).pos = at(6, 6);
       const first = step(state, use("pickpocket", { target: dummy }));
-      expect(first.state.encounter!.budgets.ann).toMatchObject({ bonus: false, action: true });
+      expect(first.state.encounter!.budgets.ann).toMatchObject({ ap: AP_TURN - BONUS_AP });
       const hit = first.events.some((e) => e.t === "hit" && e.target === dummy);
       const gold = first.effects.filter((e) => e.type === "grant").map((e) => e.gold);
       expect(gold).toEqual(hit ? [3] : []);
@@ -2966,7 +3013,8 @@ describe("the Rogue's class abilities", () => {
       expect(unit(first.state, dummy).picked).toBe(true);
       // Its pockets are empty now: the next one, even landing, pays nothing.
       state = first.state;
-      state.encounter!.budgets.ann.bonus = true;
+      state.encounter!.budgets.ann.ap = AP_MAX;
+      delete unit(state, "ann").cooldowns.pickpocket;
       expect(step(state, use("pickpocket", { target: dummy })).effects).toEqual([]);
     }
     expect(paid).toBeGreaterThan(0);
@@ -2995,7 +3043,7 @@ describe("the Rogue's class abilities", () => {
       state = must(state, use("tactical_retreat", { target: dummy, at: at(5, 3) }), events);
       expect(events.filter((e) => e.t === "roll" && e.roll.kind === "attack")).toHaveLength(1);
       expect(unit(state, "ann").pos).toEqual(at(5, 3));
-      expect(state.encounter!.budgets.ann.action).toBe(false);
+      expect(state.encounter!.budgets.ann.ap).toBeLessThanOrEqual(AP_TURN - ACTION_AP);
     }
     // No hex picked: the blow alone.
     let { state, dummy } = party();
@@ -3013,7 +3061,7 @@ describe("the Rogue's class abilities", () => {
     let { state } = party();
     unit(state, "ann").items.fire = 0;
     state = must(state, use("contraband", { target: "bo" }));
-    expect(state.encounter!.budgets.ann.bonus).toBe(false);
+    expect(state.encounter!.budgets.ann.ap).toBeLessThanOrEqual(AP_TURN - BONUS_AP);
     expect(has(state, "ann", "contraband")).toBe(true);
     expect(has(state, "bo", "contraband")).toBe(true);
     // Ann has none of her own, and can throw one all the same.
@@ -3043,7 +3091,7 @@ describe("the Rogue's class abilities", () => {
     state = nextTurn(state);
     state = must(state, { type: "throw", by: "ann", unit: "ann", item: "fire", at: at(10, 6) });
     expect(has(state, "ann", "contraband")).toBe(false);
-    state.encounter!.budgets.ann.action = true;
+    state.encounter!.budgets.ann.ap = AP_MAX;
     expect(fails(state, { type: "throw", by: "ann", unit: "ann", item: "fire", at: at(10, 6) })).toMatch(/no fire bomb/i);
   });
 
@@ -3108,7 +3156,7 @@ describe("the Druid's class abilities", () => {
     expect(has(state, foe, "slowed")).toBe(true);
     expect(cuts(events, "bo")).toBe(0);
     expect(has(state, "bo", "slowed")).toBe(false);
-    expect(state.encounter!.budgets.ann.action).toBe(false);
+    expect(state.encounter!.budgets.ann.ap).toBeLessThanOrEqual(AP_TURN - ACTION_AP);
     expect(unit(state, "ann").cooldowns.coral_field).toBe(4);
   });
 
@@ -3151,7 +3199,7 @@ describe("the Druid's class abilities", () => {
     const events: ZoneEvent[] = [];
     state = must(state, use("aqueous_regeneration", { target: "bo" }), events);
     expect(events.filter((e) => e.t === "heal" && e.target === "bo")).toHaveLength(1);
-    expect(state.encounter!.budgets.ann).toMatchObject({ bonus: false, action: true });
+    expect(state.encounter!.budgets.ann).toMatchObject({ ap: AP_TURN - BONUS_AP });
     const ticks = (evs: ZoneEvent[]) => evs.filter((e) => e.t === "heal" && e.target === "bo" && e.what === "aqueous_regeneration" && e.actor === null).length;
     for (let turn = 1; turn <= 3; turn++) {
       unit(state, "bo").hp = 1;
@@ -3188,7 +3236,7 @@ describe("the Druid's class abilities", () => {
     const before = defenceOf(unit(state, "bo"));
     state = must(state, use("coral_armor", { target: "bo" }));
     expect(defenceOf(unit(state, "bo"))).toBe(before + 2);
-    expect(state.encounter!.budgets.ann).toMatchObject({ bonus: false, action: true });
+    expect(state.encounter!.budgets.ann).toMatchObject({ ap: AP_TURN - BONUS_AP });
     // Put on during bo's own (shared) turn: that turn does not count against it.
     for (let turn = 1; turn <= 3; turn++) state = nextTurn(state);
     expect(has(state, "bo", "coral_armor")).toBe(true);
@@ -3232,7 +3280,7 @@ describe("the Druid's class abilities", () => {
     expect(unit(state, "bo").hp).toBeGreaterThan(8);
     expect(events.some((e) => e.t === "heal" && e.target === foe)).toBe(false);
     expect(events.some((e) => e.t === "heal" && e.target === "ann")).toBe(false);
-    expect(state.encounter!.budgets.ann.action).toBe(false);
+    expect(state.encounter!.budgets.ann.ap).toBeLessThanOrEqual(AP_TURN - ACTION_AP);
     expect(unit(state, "ann").cooldowns.revitalizing_splash).toBe(3);
   });
 
@@ -3242,12 +3290,13 @@ describe("the Druid's class abilities", () => {
     state = must(state, use("summon_sea_turtle", { at: at(7, 6) }));
     const [turtle] = turtleOf(state);
     expect(turtle).toMatchObject({ side: "hero", kind: "sea_turtle", controller: "ann", pos: at(7, 6) });
-    expect(turtle.maxHp).toBeGreaterThan(unit(state, "ann").maxHp);
+    // Hard to hurt for its armor, not its HP: early on it has less to get through than the Druid who called it.
+    expect(turtle.maxHp).toBeLessThan(unit(state, "ann").maxHp);
     expect(defenceOf(turtle)).toBeGreaterThanOrEqual(16);
     const enc = state.encounter!;
     expect(enc.order[enc.order.indexOf("ann") + 1]).toBe(turtle.id);
     expect(enc.acting).toContain(turtle.id);
-    expect(enc.budgets[turtle.id].move).toBe(3);
+    expect(enc.budgets[turtle.id]).toMatchObject({ ap: AP_TURN, move: 0, stride: 1 });
     // Ann's player plays it; nobody else does.
     expect(fails(state, { type: "use", by: "bo", unit: turtle.id, ability: "turtle_bite", target: foe })).toMatch(/not yours/);
     const events: ZoneEvent[] = [];
@@ -3360,7 +3409,7 @@ describe("the Bard's shanties", () => {
   it("a shanty is a Bonus action, sung for 4 turns, 4 to wait; one at a time, the new one replacing the old", () => {
     let { state } = party();
     state = must(state, sing("lively_shanty"));
-    expect(state.encounter!.budgets.ann).toMatchObject({ bonus: false, action: true });
+    expect(state.encounter!.budgets.ann).toMatchObject({ ap: AP_TURN - BONUS_AP });
     expect(song(state)).toMatchObject({ kind: "lively_shanty", rounds: 4, joined: [] });
     expect(unit(state, "ann").cooldowns.lively_shanty).toBe(5);
     state = nextTurn(state);
@@ -3384,11 +3433,35 @@ describe("the Bard's shanties", () => {
     expect(songsOn(state, unit(state, "bo"))).toHaveLength(1);
   });
 
+  it("a creature called into the fight can join a shanty, once, for its own lift alone: no wider, and no more for anyone else", () => {
+    let { state, dummy } = party();
+    state = must(state, sing("lively_shanty"));
+    // A sea turtle of Bo's, beside the Bard, taking its turn with Bo's.
+    const turtle: Unit = { ...structuredClone(unit(state, "bo")), id: "s9", kind: "sea_turtle", pos: at(5, 7), summon: { by: "bo" }, controller: "bo", abilities: ["turtle_bite"], conditions: [] };
+    state.units.push(turtle);
+    const enc = state.encounter!;
+    enc.order.splice(enc.order.indexOf("bo") + 1, 0, turtle.id);
+    enc.init[turtle.id] = enc.init.bo;
+    enc.acting.push(turtle.id);
+    enc.budgets[turtle.id] = { ap: AP_TURN, move: 0, stride: 1, disengaged: false };
+    const before = { radius: shantyRadius(song(state)), bo: hitMods(state, "bo", dummy) };
+    const joinTurtle: ZoneAction = { type: "common", by: "bo", unit: turtle.id, what: "join", target: "ann" };
+    state = must(state, joinTurtle);
+    expect(has(state, turtle.id, "inspired")).toBe(true);
+    expect(song(state)).toMatchObject({ joined: [], joinedOwn: [turtle.id], surge: 0 });
+    expect(shantyRadius(song(state))).toBe(before.radius);
+    expect(hitMods(state, "bo", dummy)).toBe(before.bo);
+    expect(fails(state, joinTurtle)).toMatch(/no shanty here you have not joined/);
+    // An ally joining still widens it and lifts everyone.
+    state = must(state, join("bo"));
+    expect(shantyRadius(song(state))).toBe(before.radius + 1);
+  });
+
   it("Lively Shanty: joining is a Bonus action, once: a hex wider, advantage on your next attack, and +1 more to hit for all until the Bard's next turn", () => {
     let { state, dummy } = party();
     state = must(state, sing("lively_shanty"));
     state = must(state, join("bo"));
-    expect(state.encounter!.budgets.bo.bonus).toBe(false);
+    expect(state.encounter!.budgets.bo.ap).toBeLessThanOrEqual(AP_TURN - BONUS_AP);
     expect(song(state).joined).toEqual(["bo"]);
     expect(shantyRadius(song(state))).toBe(3);
     expect(has(state, "bo", "inspired")).toBe(true);
@@ -3444,16 +3517,17 @@ describe("the Bard's shanties", () => {
     expect(song(state).joined).toEqual(["bo", "di", "cy"]);
   });
 
-  it("Wind-god's Shanty: 2 more movement at once and every turn after, and no Slowing", () => {
+  it("Wind-god's Shanty: 1 more movement for each AP at once and every turn after, and no Slowing", () => {
     let { state } = party();
     unit(state, "bo").conditions.push({ kind: "slowed", rounds: 3 });
-    const moved = state.encounter!.budgets.bo.move;
+    const stride = state.encounter!.budgets.bo.stride;
+    const base = heroMove(unit(state, "bo").stats!);
     state = must(state, sing("windgod_shanty"));
-    expect(state.encounter!.budgets.bo.move).toBe(moved + 2);
+    expect(state.encounter!.budgets.bo.stride).toBe(stride + 1);
     expect(has(state, "bo", "slowed")).toBe(false);
     // Struck up again on a later turn, nothing more is owed for the turn the movement was already given in.
     state = nextTurn(state);
-    expect(state.encounter!.budgets.bo.move).toBe(state.encounter!.budgets.bo.moveMax + 2);
+    expect(state.encounter!.budgets.bo.stride).toBe(base + 1);
     const ctx: Ctx = { state, rng: makeRng(1), events: [], effects: [] };
     addCondition(ctx, unit(state, "bo"), "slowed", 2);
     expect(has(state, "bo", "slowed")).toBe(false);
@@ -3462,18 +3536,18 @@ describe("the Bard's shanties", () => {
     expect(has(state, "cy", "slowed")).toBe(true);
   });
 
-  it("Wind-god's Shanty: joining Disengages you, and gives 1 more movement to everyone in it, that turn only", () => {
+  it("Wind-god's Shanty: joining Disengages you, and gives 1 more movement for each AP to everyone in it, that turn only", () => {
     let { state } = party();
     state = must(state, sing("windgod_shanty"));
     const { ann, bo } = state.encounter!.budgets;
-    const [annMove, boMove] = [ann.move, bo.move];
+    const [annStride, boStride] = [ann.stride, bo.stride];
     state = must(state, join("bo"));
     expect(state.encounter!.budgets.bo.disengaged).toBe(true);
     expect(state.encounter!.budgets.ann.disengaged).toBe(false);
-    expect(state.encounter!.budgets.bo.move).toBe(boMove + 1);
-    expect(state.encounter!.budgets.ann.move).toBe(annMove + 1);
+    expect(state.encounter!.budgets.bo.stride).toBe(boStride + 1);
+    expect(state.encounter!.budgets.ann.stride).toBe(annStride + 1);
     state = nextTurn(state);
-    expect(state.encounter!.budgets.bo.move).toBe(state.encounter!.budgets.bo.moveMax + 2);
+    expect(state.encounter!.budgets.bo.stride).toBe(heroMove(unit(state, "bo").stats!) + 1);
   });
 
   function addFoe(state: ZoneState, pos: HexPos): string {
@@ -3503,7 +3577,7 @@ describe("the Bard's shanties", () => {
     expect(sung.amount).toBe(alone.amount + 3);
     expect(sung.events.some((e) => e.t === "hit" && e.target === "bo")).toBe(false);
     expect(sung.state.units.find((u) => u.id === sung.foe)!.conditions.some((c) => c.kind === "slowed")).toBe(true);
-    expect(sung.state.encounter!.budgets.ann.action).toBe(false);
+    expect(sung.state.encounter!.budgets.ann.ap).toBeLessThanOrEqual(AP_TURN - ACTION_AP);
     expect(unit(sung.state, "ann").cooldowns.chorus).toBe(4);
   });
 
@@ -3620,7 +3694,7 @@ describe("the Sage's stars", () => {
       state.rng = seed;
       const events: ZoneEvent[] = [];
       state = must(state, cast("falling_star", { target: foes[0] }), events);
-      expect(state.encounter!.budgets.ann).toMatchObject({ action: false, bonus: true });
+      expect(state.encounter!.budgets.ann).toMatchObject({ ap: AP_TURN - ACTION_AP });
       expect(unit(state, "ann").cooldowns.falling_star).toBe(4);
       if (events.some((e) => e.t === "hit" && e.what === "falling_star")) landed = state;
       else expect(has(state, foes[0], "guiding_light")).toBe(false);
@@ -3638,8 +3712,9 @@ describe("the Sage's stars", () => {
     // Two foes on the line from ann to bo, one between bo and cy, one off the links altogether.
     let { state, foes } = party([at(6, 6), at(7, 6), at(10, 6), at(6, 9)]);
     expect(constellationLinks(state, unit(state, "ann")).map((l) => [l.from.id, l.to.id])).toEqual([["ann", "bo"], ["bo", "cy"]]);
+    const ap = state.encounter!.budgets.ann.ap;
     state = must(state, cast("constellation"));
-    expect(state.encounter!.budgets.ann).toMatchObject({ action: true, bonus: false });
+    expect(state.encounter!.budgets.ann).toMatchObject({ ap: ap - BONUS_AP });
     expect(unit(state, "ann").cooldowns.constellation).toBe(4);
     for (const id of foes.slice(0, 3)) {
       expect(hurt(state, id)).toBeGreaterThan(0);
@@ -3662,8 +3737,9 @@ describe("the Sage's stars", () => {
     let { state, foes } = party([at(12, 6), at(14, 9), at(2, 10)]);
     expect(fails(state, cast("new_moon"))).toMatch(/No enemy is lit/);
     for (const id of foes.slice(0, 2)) unit(state, id).conditions.push({ kind: "guiding_light", rounds: 3 });
+    const ap = state.encounter!.budgets.ann.ap;
     state = must(state, cast("new_moon"));
-    expect(state.encounter!.budgets.ann.action).toBe(false);
+    expect(state.encounter!.budgets.ann.ap).toBe(ap - ACTION_AP);
     expect(unit(state, "ann").cooldowns.new_moon).toBe(5);
     for (const id of foes.slice(0, 2)) {
       expect(has(state, id, "guiding_light")).toBe(false);
@@ -3672,31 +3748,34 @@ describe("the Sage's stars", () => {
     expect(hurt(state, foes[2])).toBe(0);
   });
 
-  it("Chart a Course: a Bonus action marking a hex; the Sage's side moves 3 further, but only on steps toward it", () => {
+  it("Chart a Course: 1 AP marking a hex; the Sage's side moves 1 further for each AP, but only on steps toward it", () => {
     let { state } = party();
-    const move = state.encounter!.budgets.bo.move;
+    const { ap, stride } = state.encounter!.budgets.bo;
     expect(fails(state, cast("chart_a_course", { at: at(14, 6) }))).toMatch(/range/);
+    const annAp = state.encounter!.budgets.ann.ap;
     state = must(state, cast("chart_a_course", { at: at(13, 6) }));
-    expect(state.encounter!.budgets.ann.bonus).toBe(false);
+    expect(state.encounter!.budgets.ann.ap).toBe(annAp - BONUS_AP);
     expect(chartOf(unit(state, "ann"))).toEqual(at(13, 6));
-    expect(state.encounter!.budgets.bo.course).toBe(3);
+    expect(state.encounter!.budgets.bo.course).toBe(0);
     // Away from the mark, no further than ever.
-    expect(fails(state, { type: "move", by: "bo", unit: "bo", to: at(8 - move - 1, 6) })).toMatch(/movement/);
-    // Toward it, 3 further, the course's movement spent first. (Up row 6 from bo: cy is passed, the mark is past the end.)
+    expect(fails(state, { type: "move", by: "bo", unit: "bo", to: at(8 - ap * stride - 1, 6) })).toMatch(/AP you have left/);
+    // Toward it, CHART.speed further for each AP, the course's movement spent first. (Up row 6 from bo: cy is passed, the mark is past the end.)
     unit(state, "cy").pos = at(11, 2);
     unit(state, "ann").pos = at(5, 2);
     unit(state, "bo").pos = at(2, 6);
-    expect(fails(state, { type: "move", by: "bo", unit: "bo", to: at(2 + move + 4, 6) })).toMatch(/movement/);
-    state = must(state, { type: "move", by: "bo", unit: "bo", to: at(5, 6) });
-    expect(state.encounter!.budgets.bo).toMatchObject({ course: 0, move });
-    state = must(state, { type: "move", by: "bo", unit: "bo", to: at(5 + move, 6) });
-    expect(state.encounter!.budgets.bo.move).toBe(0);
+    const far = ap * (stride + CHART.speed);
+    expect(fails(state, { type: "move", by: "bo", unit: "bo", to: at(2 + far + 1, 6) })).toMatch(/AP you have left/);
+    // One AP's worth: a stride and the course's share of it.
+    state = must(state, { type: "move", by: "bo", unit: "bo", to: at(2 + stride + CHART.speed, 6) });
+    expect(state.encounter!.budgets.bo).toMatchObject({ ap: ap - 1, course: 0, move: 0 });
+    state = must(state, { type: "move", by: "bo", unit: "bo", to: at(2 + far, 6) });
+    expect(state.encounter!.budgets.bo).toMatchObject({ ap: 0, move: 0 });
   });
 
   it("Chart a Course: a way that wanders off and back still gets the course's movement for its steps toward the mark", () => {
     let { state } = party();
     state = must(state, cast("chart_a_course", { at: at(13, 6) }));
-    const move = state.encounter!.budgets.bo.move;
+    const move = 5;
     // Rock in the way along row 6 a hex past bo: the walk has to go round it, a step off the row and back.
     for (const t of state.map.tiles) if (t.q === at(9, 6).q && t.r === 6) t.biome = "rock";
     unit(state, "cy").pos = at(11, 2);
@@ -3708,7 +3787,8 @@ describe("the Sage's stars", () => {
     let { state } = party();
     state = must(state, cast("chart_a_course", { at: at(13, 6) }));
     state = nextTurn(state);
-    expect(state.encounter!.budgets.bo.course).toBe(3);
+    expect(state.encounter!.budgets.bo.course).toBe(0);
+    expect(courseFor(state, unit(state, "bo"), state.encounter!.budgets.bo)?.left).toBe(state.encounter!.budgets.bo.ap * CHART.speed);
     // Ready again once 2 more of the Sage's turns have gone by.
     state = nextTurn(state);
     expect(fails(state, cast("chart_a_course", { at: at(2, 6) }))).toMatch(/not ready/);
@@ -3801,7 +3881,7 @@ describe("the Warden's wall", () => {
   it("Against the Waves: a Bonus action, 2 turns to wait; a high shield on the Warden, higher standing in water", () => {
     let { state } = party();
     state = must(state, use("against_the_waves"));
-    expect(state.encounter!.budgets.ann).toMatchObject({ action: true, bonus: false });
+    expect(state.encounter!.budgets.ann).toMatchObject({ ap: AP_TURN - BONUS_AP });
     expect(unit(state, "ann").cooldowns.against_the_waves).toBe(3);
     expect(shieldOf(unit(state, "ann"))).toBe(10 + 1);
     expect(shieldOf(unit(state, "bo"))).toBe(0);
@@ -3826,7 +3906,7 @@ describe("the Warden's wall", () => {
 
   it("Overwhelm: a Bonus action, 2 turns to wait; won, the enemy beside you is driven 2 hexes straight back", () => {
     const { state, ids } = overwhelmed(true, [at(6, 6)]);
-    expect(state.encounter!.budgets.ann).toMatchObject({ action: true, bonus: false });
+    expect(state.encounter!.budgets.ann).toMatchObject({ ap: AP_TURN - BONUS_AP });
     expect(unit(state, "ann").cooldowns.overwhelm).toBe(3);
     expect(unit(state, ids[0]).pos).toEqual(at(8, 6));
     expect(has(state, ids[0], "stunned")).toBe(false);
@@ -3858,7 +3938,7 @@ describe("the Warden's wall", () => {
   it("Fortify: an Action, 5 hexes, 3 turns to wait; a wall of 3 hexes, broadside on to the Warden, that nobody walks through", () => {
     let { state, foes } = party([at(12, 6)]);
     state = must(state, use("fortify", { at: at(8, 6) }));
-    expect(state.encounter!.budgets.ann).toMatchObject({ action: false, bonus: true });
+    expect(state.encounter!.budgets.ann).toMatchObject({ ap: AP_TURN - ACTION_AP });
     expect(unit(state, "ann").cooldowns.fortify).toBe(4);
     const wall = state.weather!.find((w) => w.kind === "wall")!;
     expect(wall.hexes).toHaveLength(3);
@@ -3937,7 +4017,7 @@ describe("the Warden's wall", () => {
   it("Taunt: a Bonus action, 3 turns to wait; every enemy beside the Warden is Taunted by them for 2 of its turns", () => {
     let { state, foes } = party([at(6, 6), at(7, 6), at(8, 6)]);
     state = must(state, use("taunt"));
-    expect(state.encounter!.budgets.ann).toMatchObject({ action: true, bonus: false });
+    expect(state.encounter!.budgets.ann).toMatchObject({ ap: AP_TURN - BONUS_AP });
     expect(unit(state, "ann").cooldowns.taunt).toBe(4);
     expect(unit(state, foes[0]).conditions.find((c) => c.kind === "taunted")).toMatchObject({ rounds: 2, by: "ann" });
     for (const id of foes.slice(1)) expect(has(state, id, "taunted")).toBe(false);
@@ -4014,7 +4094,7 @@ describe("the Warlock's drowning", () => {
     let { state, foes } = party();
     const events: ZoneEvent[] = [];
     state = must(state, use("curse_of_drowning", { target: foes[0] }), events);
-    expect(state.encounter!.budgets.ann).toMatchObject({ action: true, bonus: false });
+    expect(state.encounter!.budgets.ann).toMatchObject({ ap: AP_TURN - BONUS_AP });
     expect(unit(state, "ann").cooldowns.curse_of_drowning).toBe(4);
     expect(events.some((e) => e.t === "roll" && e.roll.id === "ann")).toBe(false);
     expect(events.some((e) => e.t === "hit" && e.what === "curse_of_drowning" && e.target === foes[0])).toBe(true);
@@ -4059,12 +4139,14 @@ describe("the Warlock's drowning", () => {
     expect(has(state, foes[0], "drowning")).toBe(false);
   });
 
-  it("Drowning: a breath not held costs the Action, but not the move", () => {
+  it("Drowning: a breath not held costs 2 AP, one attack of the two", () => {
     /** A bandit beside the Warlock, drowning deep, its turn played over seeds until the breath goes the way asked. */
     const turn = (held: boolean) => {
       for (let seed = 1; seed < 80; seed++) {
         let { state, foes } = party([at(6, 6)], { kind: "bandit" });
         unit(state, foes[0]).conditions.push({ kind: "drowning", rounds: 3, amount: 4 });
+        // With the AI off it has saved its AP so far: a turn with just the AP_TURN it is given.
+        delete state.encounter!.banked;
         state.aiOff = false;
         state.rng = seed;
         const events: ZoneEvent[] = [];
@@ -4074,15 +4156,15 @@ describe("the Warlock's drowning", () => {
       }
       throw new Error("the breath never went that way");
     };
-    expect(turn(true)).toBe(1);
-    expect(turn(false)).toBe(0);
+    expect(turn(true)).toBe(2);
+    expect(turn(false)).toBe(1);
   });
 
   it("The Black Spot: an Action, 4 turns to wait; no roll; the enemy attacks with disadvantage, and drowns a stack deeper at the end of each of 4 turns", () => {
     let { state, foes } = party();
     const events: ZoneEvent[] = [];
     state = must(state, use("the_black_spot", { target: foes[0] }), events);
-    expect(state.encounter!.budgets.ann).toMatchObject({ action: false, bonus: true });
+    expect(state.encounter!.budgets.ann).toMatchObject({ ap: AP_TURN - ACTION_AP });
     expect(unit(state, "ann").cooldowns.the_black_spot).toBe(5);
     expect(events.some((e) => e.t === "roll" && e.roll.id === "ann")).toBe(false);
     expect(cond(state, foes[0], "black_spot")).toMatchObject({ rounds: 4, by: "ann" });
@@ -4116,8 +4198,9 @@ describe("the Warlock's drowning", () => {
 
   it("Red Sky at Morning: an Action, 5 hexes, 5 turns to wait; every enemy within 2 of the hex attacks with disadvantage for 3 turns, nobody else", () => {
     let { state, foes } = party([at(8, 6), at(9, 7), at(12, 6)], { bo: at(7, 6) });
+    const ap = state.encounter!.budgets.ann.ap;
     state = must(state, use("red_sky_at_morning", { at: at(9, 6) }));
-    expect(state.encounter!.budgets.ann).toMatchObject({ action: false, bonus: true });
+    expect(state.encounter!.budgets.ann).toMatchObject({ ap: ap - ACTION_AP });
     expect(unit(state, "ann").cooldowns.red_sky_at_morning).toBe(6);
     expect(cond(state, foes[0], "red_sky")).toMatchObject({ rounds: 3 });
     expect(has(state, foes[1], "red_sky")).toBe(true);
@@ -4133,7 +4216,7 @@ describe("the Warlock's drowning", () => {
     state = paint(state, "water", [at(9, 6)]);
     const events: ZoneEvent[] = [];
     state = must(state, use("unholy_waters", { at: at(8, 6) }), events);
-    expect(state.encounter!.budgets.ann).toMatchObject({ action: true, bonus: false });
+    expect(state.encounter!.budgets.ann).toMatchObject({ ap: AP_TURN - BONUS_AP });
     expect(unit(state, "ann").cooldowns.unholy_waters).toBe(3);
     const kind = (p: HexPos) => state.surfaces[posKey(p)]?.kind;
     expect(kind(at(8, 6))).toBe("fire");
@@ -4161,7 +4244,7 @@ describe("the Warlock's drowning", () => {
     // Straight after the Warlock in the order, in the turn they share.
     const enc = state.encounter!;
     expect(enc.order.slice(enc.order.indexOf("ann") + 1, enc.order.indexOf("ann") + 3)).toEqual([cutlass.id, gunner.id]);
-    for (const s of [cutlass, gunner]) expect(enc.budgets[s.id]).toMatchObject({ action: true, move: 4 });
+    for (const s of [cutlass, gunner]) expect(enc.budgets[s.id]).toMatchObject({ ap: AP_TURN, move: 0, stride: 2 });
     expect(fails(state, { type: "use", by: "ann", unit: gunner.id, ability: "sailor_pistol", target: foes[0] })).toMatch(/Out of range/);
     state = must(state, { type: "move", by: "ann", unit: gunner.id, to: at(9, 7) });
     const events: ZoneEvent[] = [];
@@ -4193,11 +4276,11 @@ describe("the Warlock's drowning", () => {
 const abilityDiceOf = (id: string) => abilityDiceFor(ABILITIES[id]);
 
 describe("Paladin weapons", () => {
-  it("gives each weapon two abilities of its own, none on a cooldown", () => {
+  it("gives each weapon two abilities of its own, the second once a turn", () => {
     expect(WEAPONS.mace.abilities).toEqual(["bash", "recover"]);
     expect(WEAPONS.greatsword.abilities).toEqual(["cleave", "block"]);
     expect(WEAPONS.ballast_flail.abilities).toEqual(["flail_strike", "armor_crush"]);
-    for (const id of ["bash", "recover", "cleave", "block", "flail_strike", "armor_crush"]) expect(tacticOf(id).cooldown, id).toBeUndefined();
+    for (const id of ["bash", "recover", "cleave", "block", "flail_strike", "armor_crush"]) expect(tacticOf(id).cooldown, id).toBe(Object.values(WEAPONS).some((w) => w.abilities[0] === id) ? undefined : 1);
     expect(ABILITIES.bash.perfect).toEqual({ effect: "prone", turns: 1 });
     expect(ABILITIES.flail_strike.perfect).toEqual({ effect: "slowed", turns: 2 });
     expect(ABILITIES.armor_crush.perfect).toEqual({ effect: "sundered", turns: 2 });
@@ -4221,25 +4304,26 @@ describe("Paladin weapons", () => {
   it("Bash with the Action and Armor Crush with the Bonus action, both in one turn", () => {
     let { state, foe } = duel("dummy", "qa_paladin", at(5, 6), at(7, 6));
     unit(state, "ann").abilities = ["bash", "armor_crush"];
-    expect(tacticOf("armor_crush").cost).toBe("bonus");
+    expect(tacticOf("armor_crush").cost).toBe(BONUS_AP);
     state = must(state, { type: "use", by: "ann", unit: "ann", ability: "bash", target: foe });
     state = must(state, { type: "use", by: "ann", unit: "ann", ability: "armor_crush", target: foe });
-    expect(state.encounter!.budgets.ann).toMatchObject({ action: false, bonus: false });
+    expect(state.encounter!.budgets.ann).toMatchObject({ ap: AP_TURN - ACTION_AP - BONUS_AP });
   });
 
-  it("Recover heals and Block shields, each for the Bonus action alone", () => {
+  it("Recover heals and Block shields, 1 AP each, both in one turn", () => {
     let { state } = duel("dummy", "qa_paladin", at(5, 6), at(7, 6));
     unit(state, "ann").abilities = ["recover", "block"];
     unit(state, "ann").hp = 5;
     state = must(state, { type: "use", by: "ann", unit: "ann", ability: "recover" });
     expect(unit(state, "ann").hp).toBeGreaterThan(5);
-    expect(state.encounter!.budgets.ann).toMatchObject({ action: true, bonus: false });
-    expect(fails(state, { type: "use", by: "ann", unit: "ann", ability: "block" })).toMatch(/Bonus/);
+    expect(state.encounter!.budgets.ann).toMatchObject({ ap: AP_TURN - BONUS_AP });
+    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "block" });
+    expect(state.encounter!.budgets.ann).toMatchObject({ ap: AP_TURN - 2 * BONUS_AP });
     state = duel("dummy", "qa_paladin", at(5, 6), at(7, 6)).state;
     unit(state, "ann").abilities = ["block"];
     state = must(state, { type: "use", by: "ann", unit: "ann", ability: "block" });
     expect(shieldOf(unit(state, "ann"))).toBe(BLOCK.shield + unit(state, "ann").level);
-    expect(state.encounter!.budgets.ann).toMatchObject({ action: true, bonus: false });
+    expect(state.encounter!.budgets.ann).toMatchObject({ ap: AP_TURN - BONUS_AP });
   });
 
   it("Sundered takes Defence off", () => {
@@ -4253,34 +4337,34 @@ describe("Paladin weapons", () => {
 });
 
 describe("Mage weapons", () => {
-  it("gives each weapon two abilities of its own, none on a cooldown", () => {
+  it("gives each weapon two abilities of its own, the second once a turn", () => {
     expect(WEAPONS.staff.abilities).toEqual(["shock", "mend"]);
     expect(WEAPONS.tome.abilities).toEqual(["slicing_wind", "winds_blessing"]);
     expect(WEAPONS.barometer_rod.abilities).toEqual(["waterbolt", "lightning_strike"]);
-    for (const id of ["shock", "mend", "slicing_wind", "winds_blessing", "waterbolt", "lightning_strike"]) expect(tacticOf(id).cooldown, id).toBeUndefined();
+    for (const id of ["shock", "mend", "slicing_wind", "winds_blessing", "waterbolt", "lightning_strike"]) expect(tacticOf(id).cooldown, id).toBe(Object.values(WEAPONS).some((w) => w.abilities[0] === id) ? undefined : 1);
     // Lightning hits harder on the Wet, and a Waterbolt leaves them Wet.
     expect(tacticOf("shock").vsWet).toBeGreaterThan(0);
     expect(tacticOf("lightning_strike").vsWet).toBeGreaterThan(0);
     expect(tacticOf("waterbolt").surface?.kind).toBe("water");
     expect(ABILITIES.lightning_strike.perfect).toEqual({ effect: "stunned", turns: 1 });
-    expect(tacticOf("mend").cost).toBe("action");
-    expect(tacticOf("winds_blessing").cost).toBe("bonus");
+    expect(tacticOf("mend").cost).toBe(ACTION_AP);
+    expect(tacticOf("winds_blessing").cost).toBe(BONUS_AP);
   });
 
-  it("Slicing Wind: the Mage gets a hex more movement this turn, hit or miss", () => {
+  it("Slicing Wind: the Mage gets a hex more for each AP of movement this turn, hit or miss", () => {
     let { state, foe } = duel("dummy", "devops_mage", at(5, 6), at(8, 6));
     unit(state, "ann").abilities = ["slicing_wind"];
-    const move = state.encounter!.budgets.ann.move;
+    const stride = state.encounter!.budgets.ann.stride;
     state = must(state, { type: "use", by: "ann", unit: "ann", ability: "slicing_wind", target: foe });
-    expect(state.encounter!.budgets.ann).toMatchObject({ action: false, move: move + 1 });
+    expect(state.encounter!.budgets.ann).toMatchObject({ ap: AP_TURN - ACTION_AP, stride: stride + 1 });
   });
 
-  it("Wind's Blessing: two more movement now on yourself, else on the ally's next turn", () => {
+  it("Wind's Blessing: one more movement for each AP now on yourself, else on the ally's next turn", () => {
     let { state } = duel("dummy", "devops_mage", at(5, 6), at(8, 6));
     unit(state, "ann").abilities = ["winds_blessing"];
-    const move = state.encounter!.budgets.ann.move;
+    const stride = state.encounter!.budgets.ann.stride;
     state = must(state, { type: "use", by: "ann", unit: "ann", ability: "winds_blessing", target: "ann" });
-    expect(state.encounter!.budgets.ann).toMatchObject({ action: true, bonus: false, move: move + 2 });
+    expect(state.encounter!.budgets.ann).toMatchObject({ ap: AP_TURN - BONUS_AP, stride: stride + 1 });
     expect(unit(state, "ann").conditions.some((c) => c.kind === "tailwind")).toBe(false);
 
     // An ally whose turn is over carries it to their next.
@@ -4293,11 +4377,11 @@ describe("Mage weapons", () => {
     while (!state.encounter!.acting.includes("ann") || state.encounter!.done.includes("ann")) state = must(state, { type: "timeout" });
     if (state.encounter!.acting.includes("bo") && !state.encounter!.done.includes("bo")) state = must(state, { type: "end_turn", by: "bo", unit: "bo" });
     state = must(state, { type: "use", by: "ann", unit: "ann", ability: "winds_blessing", target: "bo" });
-    expect(unit(state, "bo").conditions.find((c) => c.kind === "tailwind")?.amount).toBe(2);
+    expect(unit(state, "bo").conditions.find((c) => c.kind === "tailwind")?.amount).toBe(1);
     state = must(state, { type: "end_turn", by: "ann", unit: "ann" });
     while (!state.encounter!.acting.includes("bo") || state.encounter!.done.includes("bo")) state = must(state, { type: "timeout" });
     const budget = state.encounter!.budgets.bo;
-    expect(budget.move).toBe(budget.moveMax + 2);
+    expect(budget.stride).toBe(heroMove(unit(state, "bo").stats!) + 1);
   });
 
   it("Waterbolt: a hit leaves water under the target, and soaks it", () => {
@@ -4324,13 +4408,13 @@ describe("Rogue weapons", () => {
     throw new Error("never landed");
   };
 
-  it("gives each weapon two abilities of its own, only Eviscerate on a cooldown", () => {
+  it("gives each weapon two abilities of its own, the second once a turn, Eviscerate longer", () => {
     expect(WEAPONS.daggers.abilities).toEqual(["stab", "eviscerate"]);
     expect(WEAPONS.shortbow.abilities).toEqual(["bow_shot", "take_aim"]);
     expect(WEAPONS.gaff_hook.abilities).toEqual(["tear", "snag"]);
-    for (const id of ["stab", "bow_shot", "take_aim", "tear", "snag"]) expect(tacticOf(id).cooldown, id).toBeUndefined();
-    expect(tacticOf("eviscerate").cooldown).toBe(2);
-    expect(tacticOf("take_aim").cost).toBe("bonus");
+    for (const id of ["stab", "bow_shot", "take_aim", "tear", "snag"]) expect(tacticOf(id).cooldown, id).toBe(Object.values(WEAPONS).some((w) => w.abilities[0] === id) ? undefined : 1);
+    expect(tacticOf("eviscerate").cooldown).toBe(3);
+    expect(tacticOf("take_aim").cost).toBe(BONUS_AP);
     expect(tacticOf("stab").edge).toBeGreaterThan(0);
     expect(ABILITIES.tear.perfect).toEqual({ effect: "bleeding", turns: 3 });
     expect(ABILITIES.snag.perfect).toEqual({ effect: "slowed", turns: 2 });
@@ -4340,7 +4424,7 @@ describe("Rogue weapons", () => {
     let { state, foe } = duel("dummy", "refactor_rogue", at(5, 6), at(9, 6));
     unit(state, "ann").abilities = ["take_aim", "bow_shot"];
     state = must(state, { type: "use", by: "ann", unit: "ann", ability: "take_aim" });
-    expect(state.encounter!.budgets.ann).toMatchObject({ action: true, bonus: false });
+    expect(state.encounter!.budgets.ann).toMatchObject({ ap: AP_TURN - BONUS_AP });
     expect(unit(state, "ann").conditions.some((c) => c.kind === "inspired")).toBe(true);
     const events: ZoneEvent[] = [];
     state = must(state, { type: "use", by: "ann", unit: "ann", ability: "bow_shot", target: foe }, events);
@@ -4389,15 +4473,15 @@ describe("Druid weapons", () => {
     return [1, 2, 3].map((n) => hexes.filter((p) => hexDistance(p, from) === n).length);
   };
 
-  it("gives each weapon two abilities, only Restore on a cooldown", () => {
+  it("gives each weapon two abilities, the second once a turn, Restore longer", () => {
     expect(WEAPONS.root_staff.abilities).toEqual(["thornlash", "rejuvenate"]);
     expect(WEAPONS.sickle.abilities).toEqual(["sea_slash", "binding_kelp"]);
     expect(WEAPONS.coral_staff.abilities).toEqual(["coral_burst", "restore"]);
-    for (const id of ["sea_slash", "binding_kelp", "coral_burst"]) expect(tacticOf(id).cooldown, id).toBeUndefined();
-    expect(tacticOf("restore").cooldown).toBe(1);
-    expect(tacticOf("binding_kelp").cost).toBe("bonus");
-    expect(tacticOf("restore").cost).toBe("bonus");
-    expect(tacticOf("coral_burst").cost).toBe("action");
+    for (const id of ["sea_slash", "binding_kelp", "coral_burst"]) expect(tacticOf(id).cooldown, id).toBe(Object.values(WEAPONS).some((w) => w.abilities[0] === id) ? undefined : 1);
+    expect(tacticOf("restore").cooldown).toBe(2);
+    expect(tacticOf("binding_kelp").cost).toBe(BONUS_AP);
+    expect(tacticOf("restore").cost).toBe(BONUS_AP);
+    expect(tacticOf("coral_burst").cost).toBe(ACTION_AP);
   });
 
   it("Coral Burst: a cone of 1 hex, then 2, then 3, whichever way it is aimed", () => {
@@ -4466,7 +4550,7 @@ describe("Druid weapons", () => {
         const events: ZoneEvent[] = [];
         const next = must(tryState, { type: "use", by: "ann", unit: "ann", ability: "binding_kelp", target: foe }, events);
         expect(events.some((e) => e.t === "roll" && e.roll.kind === "attack")).toBe(false);
-        expect(next.encounter!.budgets.ann).toMatchObject({ action: true, bonus: false });
+        expect(next.encounter!.budgets.ann).toMatchObject({ ap: AP_TURN - BONUS_AP });
         got = unit(next, foe).conditions.find((c) => c.kind === "slowed" || c.kind === "stunned")?.kind ?? null;
       }
       return got;
@@ -4484,7 +4568,7 @@ describe("Druid weapons", () => {
     state = must(state, { type: "use", by: "ann", unit: "ann", ability: "restore", target: "ann" });
     expect(unit(state, "ann").hp).toBeGreaterThan(5);
     expect(unit(state, "ann").conditions.filter((c) => ["bleeding", "slowed", "exposed", "sundered"].includes(c.kind))).toEqual([]);
-    expect(state.encounter!.budgets.ann).toMatchObject({ action: true, bonus: false });
+    expect(state.encounter!.budgets.ann).toMatchObject({ ap: AP_TURN - BONUS_AP });
     state = must(state, { type: "end_turn", by: "ann", unit: "ann" });
     expect(fails(state, { type: "use", by: "ann", unit: "ann", ability: "restore", target: "ann" })).toMatch(/not ready/);
   });
@@ -4503,15 +4587,15 @@ describe("Bard weapons", () => {
     throw new Error("never landed");
   };
 
-  it("gives each weapon two abilities, only the Pipe's Soothing Tone and the Bell's Clarion Call on a cooldown", () => {
+  it("gives each weapon two abilities, the second once a turn, the Pipe's Soothing Tone and the Bell's Clarion Call longer", () => {
     expect(WEAPONS.lute.abilities).toEqual(["dissonance", "encore"]);
     expect(WEAPONS.flute.abilities).toEqual(["blasting_tone", "soothing_tone"]);
     expect(WEAPONS.ships_bell.abilities).toEqual(["peal", "clarion_call"]);
-    for (const id of ["dissonance", "encore", "blasting_tone", "peal"]) expect(tacticOf(id).cooldown, id).toBeUndefined();
-    expect(tacticOf("soothing_tone").cooldown).toBe(1);
-    expect(tacticOf("clarion_call").cooldown).toBe(1);
-    expect(tacticOf("encore").cost).toBe("bonus");
-    for (const id of ["dissonance", "blasting_tone", "soothing_tone", "peal", "clarion_call"]) expect(tacticOf(id).cost, id).toBe("action");
+    for (const id of ["dissonance", "encore", "blasting_tone", "peal"]) expect(tacticOf(id).cooldown, id).toBe(Object.values(WEAPONS).some((w) => w.abilities[0] === id) ? undefined : 1);
+    expect(tacticOf("soothing_tone").cooldown).toBe(2);
+    expect(tacticOf("clarion_call").cooldown).toBe(2);
+    expect(tacticOf("encore").cost).toBe(BONUS_AP);
+    for (const id of ["dissonance", "blasting_tone", "soothing_tone", "peal", "clarion_call"]) expect(tacticOf(id).cost, id).toBe(ACTION_AP);
   });
 
   it("Dissonance: a hit leaves the target Fumbling, with no save, and its next attack is rolled with disadvantage", () => {
@@ -4533,7 +4617,7 @@ describe("Bard weapons", () => {
     const move = state.encounter!.budgets.ann.move;
     state = must(state, { type: "use", by: "ann", unit: "ann", ability: "encore", target: "ann" });
     expect(unit(state, "ann").hp).toBeGreaterThan(5);
-    expect(state.encounter!.budgets.ann).toMatchObject({ action: true, bonus: false, move });
+    expect(state.encounter!.budgets.ann).toMatchObject({ ap: AP_TURN - BONUS_AP, move });
     expect(unit(state, "ann").conditions.some((c) => c.kind === "inspired")).toBe(true);
     expect(attackContext(state, unit(state, "ann"), unit(state, foe), { melee: false }).adv).toBe(1);
     expect(unit(state, "ann").conditions.some((c) => c.kind === "tailwind" || c.kind === "hasted")).toBe(false);
@@ -4630,12 +4714,12 @@ describe("Bard weapons", () => {
     expect(fails(state, { type: "use", by: "ann", unit: "ann", ability: "bellows_blast" })).toMatch(/not ready/);
   });
 
-  it("Hornpipe: a Bonus action that gives three more movement, leaving the Action free", () => {
+  it("Hornpipe: 1 AP that gives one more movement for each AP", () => {
     let { state } = duel("dummy", "frontend_bard", at(5, 6), at(11, 6));
     unit(state, "ann").abilities = ["hornpipe"];
-    const move = state.encounter!.budgets.ann.move;
+    const stride = state.encounter!.budgets.ann.stride;
     state = must(state, { type: "use", by: "ann", unit: "ann", ability: "hornpipe", target: "ann" });
-    expect(state.encounter!.budgets.ann).toMatchObject({ action: true, bonus: false, move: move + 3 });
+    expect(state.encounter!.budgets.ann).toMatchObject({ ap: AP_TURN - BONUS_AP, stride: stride + 1 });
   });
 
   it("Clarion Call: a big heal on the target, and a lesser one on every ally beside it, but none further off", () => {
@@ -4670,13 +4754,13 @@ describe("Sage weapons", () => {
   const failedSave = (events: ZoneEvent[]) => events.some((e) => e.t === "roll" && e.roll.kind === "save" && !e.roll.ok);
   const savedAll = (events: ZoneEvent[]) => events.some((e) => e.t === "roll" && e.roll.kind === "save") && !failedSave(events);
 
-  it("gives the orb and scepter two abilities each, with St. Elmo's Fire and Rust Armor on a cooldown", () => {
+  it("gives the orb and scepter two abilities each, with St. Elmo's Fire and Rust Armor on a longer cooldown", () => {
     expect(WEAPONS.orb.abilities).toEqual(["starbeam", "st_elmos_fire"]);
     expect(WEAPONS.scepter.abilities).toEqual(["water_burst", "rust_armor"]);
-    for (const id of ["starbeam", "water_burst"]) expect(tacticOf(id).cooldown, id).toBeUndefined();
-    expect(tacticOf("st_elmos_fire").cooldown).toBe(2);
-    expect(tacticOf("rust_armor").cooldown).toBe(1);
-    expect(tacticOf("st_elmos_fire").cost).toBe("bonus");
+    for (const id of ["starbeam", "water_burst"]) expect(tacticOf(id).cooldown, id).toBe(Object.values(WEAPONS).some((w) => w.abilities[0] === id) ? undefined : 1);
+    expect(tacticOf("st_elmos_fire").cooldown).toBe(3);
+    expect(tacticOf("rust_armor").cooldown).toBe(2);
+    expect(tacticOf("st_elmos_fire").cost).toBe(BONUS_AP);
     expect(ABILITIES.starbeam.damage).toBe(12);
     expect(ABILITIES.rust_armor.perfect).toEqual({ effect: "sundered", turns: 3 });
   });
@@ -4701,7 +4785,7 @@ describe("Sage weapons", () => {
     expect(checkAbility(state, unit(state, "ann"), "st_elmos_fire", { target: "cy" })).toMatch(/Out of range/);
     state = must(state, { type: "use", by: "ann", unit: "ann", ability: "st_elmos_fire", target: "bo" });
     expect(unit(state, "bo").conditions.some((c) => c.kind === "north_star")).toBe(true);
-    expect(state.encounter!.budgets.ann).toMatchObject({ action: true, bonus: false });
+    expect(state.encounter!.budgets.ann).toMatchObject({ ap: AP_TURN - BONUS_AP });
     state = must(state, { type: "end_turn", by: "ann", unit: "ann" });
     while (!state.encounter!.acting.includes("ann") || state.encounter!.done.includes("ann")) state = must(state, { type: "timeout" });
     expect(fails(state, { type: "use", by: "ann", unit: "ann", ability: "st_elmos_fire", target: "bo" })).toMatch(/not ready/);
@@ -4733,11 +4817,11 @@ describe("Sage weapons", () => {
     expect(dc).toBe(defenceOf(unit(state, foe), state) - 2);
   });
 
-  it("gives the astrolabe Moonlight and Focus Light, neither on a cooldown", () => {
+  it("gives the astrolabe Moonlight and Focus Light, Focus Light once a turn", () => {
     expect(WEAPONS.astrolabe.abilities).toEqual(["moonlight", "focus_light"]);
     expect(tacticOf("moonlight").cooldown).toBeUndefined();
-    expect(tacticOf("focus_light").cooldown).toBeUndefined();
-    expect(tacticOf("focus_light").cost).toBe("bonus");
+    expect(tacticOf("focus_light").cooldown).toBe(1);
+    expect(tacticOf("focus_light").cost).toBe(BONUS_AP);
     expect(tacticOf("moonlight").range).toBe(7);
     expect(tacticOf("focus_light").range).toBe(5);
   });
@@ -4762,7 +4846,7 @@ describe("Sage weapons", () => {
     const burning = (s: ZoneState) => unit(s, foe).conditions.some((c) => c.kind === "burning");
     const plain = untilHit(state, { type: "use", by: "ann", unit: "ann", ability: "focus_light", target: foe }, foe);
     expect(burning(plain.state)).toBe(false);
-    expect(plain.state.encounter!.budgets.ann).toMatchObject({ action: true, bonus: false });
+    expect(plain.state.encounter!.budgets.ann).toMatchObject({ ap: AP_TURN - BONUS_AP });
     const ctx: Ctx = { state, rng: makeRng(1), events: [], effects: [] };
     addCondition(ctx, unit(state, foe), "guiding_light", 3);
     const lit = untilHit(state, { type: "use", by: "ann", unit: "ann", ability: "focus_light", target: foe }, foe);
@@ -4785,15 +4869,15 @@ describe("Warden weapons", () => {
   const failedSave = (events: ZoneEvent[]) => events.some((e) => e.t === "roll" && e.roll.kind === "save" && !e.roll.ok);
   const savedAll = (events: ZoneEvent[]) => events.some((e) => e.t === "roll" && e.roll.kind === "save") && !failedSave(events);
 
-  it("starts the Warden with the maul, and gives each weapon two abilities, only Guard and Throw Pike on a cooldown", () => {
+  it("starts the Warden with the maul, and gives each weapon two abilities, the second once a turn, Guard and Throw Pike longer", () => {
     expect(HERO_CLASSES.find((c) => c.id === "sre_warden")!.weapons[0]).toBe("maul");
     expect(WEAPONS.maul.abilities).toEqual(["sturdy_blow", "stand_strong"]);
     expect(WEAPONS.pager_axe.abilities).toEqual(["disarming_chop", "raise_guard"]);
     expect(WEAPONS.boarding_pike.abilities).toEqual(["goading_strike", "throw_pike"]);
-    for (const id of ["sturdy_blow", "stand_strong", "disarming_chop", "goading_strike"]) expect(tacticOf(id).cooldown, id).toBeUndefined();
-    expect(tacticOf("raise_guard").cooldown).toBe(1);
-    expect(tacticOf("throw_pike").cooldown).toBe(2);
-    for (const id of ["stand_strong", "raise_guard"]) expect(tacticOf(id).cost, id).toBe("bonus");
+    for (const id of ["sturdy_blow", "stand_strong", "disarming_chop", "goading_strike"]) expect(tacticOf(id).cooldown, id).toBe(Object.values(WEAPONS).some((w) => w.abilities[0] === id) ? undefined : 1);
+    expect(tacticOf("raise_guard").cooldown).toBe(2);
+    expect(tacticOf("throw_pike").cooldown).toBe(3);
+    for (const id of ["stand_strong", "raise_guard"]) expect(tacticOf(id).cost, id).toBe(BONUS_AP);
     expect(ABILITIES.disarming_chop.perfect).toEqual({ effect: "glitched", turns: 1 });
   });
 
@@ -4822,7 +4906,7 @@ describe("Warden weapons", () => {
     expect(beside).toBe(2);
     state = must(state, { type: "use", by: "ann", unit: "ann", ability: "stand_strong" });
     expect(shieldOf(unit(state, "ann"))).toBe(STAND_STRONG.shield + unit(state, "ann").level + STAND_STRONG.perFoe * beside);
-    expect(state.encounter!.budgets.ann).toMatchObject({ action: true, bonus: false });
+    expect(state.encounter!.budgets.ann).toMatchObject({ ap: AP_TURN - BONUS_AP });
   });
 
   it("Disarming Chop: a hit leaves the target Fumbling unless it saves", () => {
@@ -4839,7 +4923,7 @@ describe("Warden weapons", () => {
     state = must(state, { type: "use", by: "ann", unit: "ann", ability: "raise_guard" });
     expect(unit(state, "ann").conditions.some((c) => c.kind === "guarded")).toBe(true);
     expect(shieldOf(unit(state, "ann"))).toBe(GUARD_UP.shield + unit(state, "ann").level);
-    expect(state.encounter!.budgets.ann).toMatchObject({ action: true, bonus: false });
+    expect(state.encounter!.budgets.ann).toMatchObject({ ap: AP_TURN - BONUS_AP });
     state = must(state, { type: "end_turn", by: "ann", unit: "ann" });
     while (!state.encounter!.acting.includes("ann") || state.encounter!.done.includes("ann")) state = must(state, { type: "timeout" });
     expect(fails(state, { type: "use", by: "ann", unit: "ann", ability: "raise_guard" })).toMatch(/not ready/);
@@ -4873,10 +4957,10 @@ describe("Warlock weapons", () => {
     expect(WEAPONS.void_staff.abilities).toEqual(["sink", "pull_of_the_deep"]);
     expect(ABILITIES.hex.damage).toBe(8);
     expect(ABILITIES.soul_drain.damage).toBe(11);
-    expect(tacticOf("soul_drain").cooldown).toBe(2);
+    expect(tacticOf("soul_drain").cooldown).toBe(3);
     expect(tacticOf("hex").cooldown).toBeUndefined();
     expect(tacticOf("sink").cooldown).toBeUndefined();
-    expect(tacticOf("pull_of_the_deep").cooldown).toBe(2);
+    expect(tacticOf("pull_of_the_deep").cooldown).toBe(3);
   });
 
   it("Sink: a hit leaves a stack of Drowning unless the target saves", () => {
@@ -4920,11 +5004,11 @@ describe("Warlock weapons", () => {
     expect(drowned).toBe(true);
   });
 
-  it("gives the chalice Vile Splash and Drink Deeply, only Drink Deeply on a cooldown", () => {
+  it("gives the chalice Vile Splash and Drink Deeply, Drink Deeply on a cooldown", () => {
     expect(WEAPONS.bilge_chalice.abilities).toEqual(["vile_splash", "drink_deeply"]);
     expect(tacticOf("vile_splash").cooldown).toBeUndefined();
-    expect(tacticOf("drink_deeply").cooldown).toBe(2);
-    expect(tacticOf("drink_deeply").cost).toBe("bonus");
+    expect(tacticOf("drink_deeply").cooldown).toBe(3);
+    expect(tacticOf("drink_deeply").cost).toBe(BONUS_AP);
   });
 
   it("Vile Splash: a hit leaves poison under the target, which Poisons it", () => {
@@ -4952,7 +5036,7 @@ describe("Warlock weapons", () => {
     expect(unit(state, "ann").hp).toBeGreaterThan(10);
     expect(unit(state, "ann").conditions.some((c) => c.kind === "poisoned")).toBe(true);
     expect(attackContext(state, unit(state, "ann"), unit(state, foe), { melee: false }).adv).toBe(-1);
-    expect(state.encounter!.budgets.ann).toMatchObject({ action: true, bonus: false });
+    expect(state.encounter!.budgets.ann).toMatchObject({ ap: AP_TURN - BONUS_AP });
     state = must(state, { type: "end_turn", by: "ann", unit: "ann" });
     while (!state.encounter!.acting.includes("ann") || state.encounter!.done.includes("ann")) state = must(state, { type: "timeout" });
     expect(unit(state, "ann").conditions.some((c) => c.kind === "poisoned")).toBe(true);
@@ -5007,9 +5091,9 @@ describe("Ship's guns", () => {
 
   it("reach as they say: the pistol 5 hexes, the harpoon 6, the barbed line 3, the whip and butt only beside you", () => {
     expect(TACTICS.pistol_shot).toMatchObject({ reach: "ranged", range: 5 });
-    expect(TACTICS.harpoon_shot).toMatchObject({ reach: "ranged", range: 6, pull: 2, cooldown: 2 });
+    expect(TACTICS.harpoon_shot).toMatchObject({ reach: "ranged", range: 6, pull: 2, cooldown: 3 });
     expect(TACTICS.barbed_line).toMatchObject({ reach: "ranged", range: 3 });
-    expect(TACTICS.pistol_whip).toMatchObject({ reach: "melee", cost: "bonus" });
+    expect(TACTICS.pistol_whip).toMatchObject({ reach: "melee", cost: BONUS_AP });
     expect(TACTICS.butt_stroke).toMatchObject({ reach: "melee" });
     const { state, foe } = gap(5);
     unit(state, "ann").abilities = ["pistol_shot"];

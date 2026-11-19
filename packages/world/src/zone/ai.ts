@@ -13,7 +13,7 @@ import { hexDistance, posKey, type HexPos } from "@gantt-quest/core";
 import { enemyAct, walk } from "./combat";
 import { attackContext, defenceOf, has, unseen, type Ctx } from "./engine";
 import { adjacent, flies, inFight, pathIn, seesFor, zoneReach } from "./geometry";
-import { ENEMY_BURST, ENEMY_KIT, enemyStrikes, type EnemyStrike } from "./kit";
+import { AP_MAX, ENEMY_BURST, ENEMY_KIT, ITEM_AP, enemyStrikes, type EnemyStrike } from "./kit";
 import { modsOf } from "./mods";
 import { diceAverage, hitChance } from "./rules";
 import { HARMFUL } from "./surfaces";
@@ -64,27 +64,36 @@ function taunter(enemy: Unit, heroes: Unit[]): Unit | undefined {
   return by ? heroes.find((h) => h.id === by) : undefined;
 }
 
-/** Play one enemy's turn: move to the best hex it can reach and attack from it. */
+/**
+ * Play one enemy's turn. While it has the AP for an attack: move to the best hex it can reach with the AP an attack
+ * leaves, and attack from it (again and again, as its AP allow). With nothing in reach, it spends all it has getting
+ * closer. What AP it has left over it keeps for its next turn.
+ */
 export function enemyTurn(ctx: Ctx, enemy: Unit, budget: Budget): void {
   const { state } = ctx;
   if (state.aiOff) return;
   const strikes = enemyStrikes(enemy.kind, enemy.level, state.options.threat, modsOf(state.options).edge);
   // The Unseen are not there, as far as it knows.
-  const heroes = state.units.filter((u) => u.side === "hero" && !u.down && !unseen(u) && inFight(state, u.id));
+  const standing = () => state.units.filter((u) => u.side === "hero" && !u.down && !unseen(u) && inFight(state, u.id));
+  let heroes = standing();
   if (strikes.length === 0 || heroes.length === 0) return;
   const kit = ENEMY_KIT[enemy.kind] ?? {};
   const air = flies(enemy);
   const harmful = new Set(Object.entries(state.surfaces).filter(([, s]) => HARMFUL.has(s.kind)).map(([key]) => key));
   // The other side's coral cuts as well as fire does.
   for (const w of state.weather ?? []) if (w.kind === "coral" && w.side !== enemy.side) for (const p of w.hexes) harmful.add(posKey(p));
-  const goaded = taunter(enemy, heroes);
+  let goaded = taunter(enemy, heroes);
 
-  /** The best place to end this move, weighing what could be done from there against what getting there costs, with blows only at `targets`. */
-  const chooseAmong = (targets: Unit[]): { path: HexPos[]; score: number; attacks: boolean } | null => {
+  /**
+   * The best place to end this move, weighing what could be done from there against what getting there costs, with blows only
+   * at `targets`. `strike`: AP are kept back for an attack from there, and only the rest spent on getting there.
+   */
+  const chooseAmong = (targets: Unit[], strike: boolean): { path: HexPos[]; score: number; attacks: boolean } | null => {
     const nearest = (pos: HexPos) => Math.min(...targets.map((h) => hexDistance(pos, h.pos)));
+    const movement = budget.move + Math.max(0, budget.ap - (strike ? ITEM_AP.attack : 0)) * budget.stride;
     // Two looks at the ground: one that will not set foot in fire or poison, and one that will.
-    const clean = zoneReach(state, enemy, budget.move, air || harmful.size === 0 ? undefined : harmful);
-    const any = air || harmful.size === 0 ? clean : zoneReach(state, enemy, budget.move);
+    const clean = zoneReach(state, enemy, movement, air || harmful.size === 0 ? undefined : harmful);
+    const any = air || harmful.size === 0 ? clean : zoneReach(state, enemy, movement);
     let best: { path: HexPos[]; score: number; attacks: boolean } | null = null;
     for (const [key, reached] of any) {
       if (!reached.stop) continue;
@@ -103,7 +112,7 @@ export function enemyTurn(ctx: Ctx, enemy: Unit, budget: Budget): void {
         }
         score -= 3 * drawn.size;
       }
-      const option = budget.action ? bestAttack(state, enemy, reached.pos, strikes, targets) : null;
+      const option = strike ? bestAttack(state, enemy, reached.pos, strikes, targets) : null;
       if (option) {
         score += option.worth;
         // Two on one: a blow lands better with a friend already at the target's side.
@@ -118,27 +127,33 @@ export function enemyTurn(ctx: Ctx, enemy: Unit, budget: Budget): void {
     return best;
   };
   /** Taunted: at the taunter if a blow can be got in on them, else as it would anyway. */
-  const choose = () => {
-    const forced = goaded ? chooseAmong([goaded]) : null;
-    return forced?.attacks ? forced : chooseAmong(heroes);
+  const choose = (strike: boolean) => {
+    const forced = goaded ? chooseAmong([goaded], strike) : null;
+    return forced?.attacks ? forced : chooseAmong(heroes, strike);
   };
 
-  let plan = choose();
-  // Nothing in reach this turn: run. The attack is given up for twice the ground.
-  if (plan && !plan.attacks && budget.action && budget.moveMax > 0) {
-    budget.action = false;
-    budget.move += budget.moveMax;
-    ctx.events.push({ t: "used", id: enemy.id, what: "dash", name: "Dash" });
-    plan = choose();
+  for (let attacks = 0; attacks <= AP_MAX; attacks++) {
+    if (enemy.down || has(enemy, "prone")) return;
+    heroes = standing();
+    if (heroes.length === 0) return;
+    goaded = taunter(enemy, heroes);
+    const plan = budget.ap >= ITEM_AP.attack ? choose(true) : null;
+    if (!plan?.attacks) {
+      // Nothing it can reach and still strike: before any blow, it spends all it has getting closer; after one, it waits.
+      if (attacks === 0) {
+        const run = choose(false);
+        if (run && run.path.length > 0) walk(ctx, enemy, run.path, budget);
+      }
+      return;
+    }
+    if (plan.path.length > 0) walk(ctx, enemy, plan.path, budget);
+    if (enemy.down || has(enemy, "prone") || budget.ap < ITEM_AP.attack) return;
+    // It may not have got where it meant to: look again from where it stands.
+    const still = standing();
+    const goadedNow = taunter(enemy, still);
+    const option = (goadedNow ? bestAttack(state, enemy, enemy.pos, strikes, [goadedNow]) : null) ?? (still.length > 0 ? bestAttack(state, enemy, enemy.pos, strikes, still) : null);
+    if (!option) return;
+    budget.ap -= ITEM_AP.attack;
+    enemyAct(ctx, enemy, option.attack, option.target);
   }
-  if (plan && plan.path.length > 0) walk(ctx, enemy, plan.path, budget);
-  if (enemy.down || has(enemy, "prone") || !budget.action) return;
-  if (enemy.down || has(enemy, "prone")) return;
-  // It may not have got where it meant to: look again from where it stands.
-  const still = state.units.filter((u) => u.side === "hero" && !u.down && !unseen(u) && inFight(state, u.id));
-  const goadedNow = taunter(enemy, still);
-  const option = (goadedNow ? bestAttack(state, enemy, enemy.pos, strikes, [goadedNow]) : null) ?? (still.length > 0 ? bestAttack(state, enemy, enemy.pos, strikes, still) : null);
-  if (!option) return;
-  budget.action = false;
-  enemyAct(ctx, enemy, option.attack, option.target);
 }

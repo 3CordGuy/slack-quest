@@ -4,7 +4,7 @@
 // bands. Keys are the party's, kept on one ring: any key opens any door.
 //
 // A door is worked from beside it (it stands across the way, a wall until it
-// opens): an Action in a fight, free out of one.
+// opens): 2 AP in a fight, free out of one.
 //
 // - With a key on the ring, it is unlocked, quietly, and the key is used up.
 // - Without one, it is forced: a Strength roll against FORCE_DC. It gives way

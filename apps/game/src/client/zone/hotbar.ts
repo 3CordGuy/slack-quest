@@ -13,7 +13,7 @@ export const BAR_ROW = 10;
 const OLD_BAR_ROW = 9;
 export const BAR_SLOTS = BAR_ROW * 2;
 
-export const COMMON_ORDER: CommonAction[] = ["dash", "disengage", "jump", "shove", "help", "flee"];
+export const COMMON_ORDER: CommonAction[] = ["disengage", "jump", "shove", "help", "flee"];
 export const ITEM_ORDER: Throwable[] = ["healing", "poison", "fire", "oil", "water", "acid", "slime", "torch"];
 
 const key = (kind: string) => `gq.zone.bar.${kind}`;
@@ -30,7 +30,7 @@ export function barChoices(abilities: string[]): string[] {
  */
 export function defaultBar(abilities: string[]): string[] {
   const top = [...abilities.map((a) => `ab:${a}`), ...COMMON_ORDER.filter((c) => c !== "flee").map((c) => `do:${c}`)];
-  return [...pad(top, BAR_ROW), ...pad([...ITEM_ORDER.map((i) => `it:${i}`), ...top.slice(BAR_ROW), "do:flee"], BAR_ROW)];
+  return [...pad(top, BAR_ROW), ...pad([...ITEM_ORDER.map((i) => `it:${i}`), ...top.slice(BAR_ROW)], BAR_ROW - 1), "do:flee"];
 }
 
 /** A bar saved when a row was OLD_BAR_ROW long, as it is now: each row gets the new slots on its end, empty. */

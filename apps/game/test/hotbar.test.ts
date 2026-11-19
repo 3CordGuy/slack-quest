@@ -26,12 +26,12 @@ describe("the fight's bar", () => {
     expect(RACK.tabs.right).toBeGreaterThan(RACK.bag + RACK.slot);
   });
 
-  it("starts out with everything a Paladin with three weapon and three class abilities has: twenty things, twenty slots", () => {
+  it("starts out with everything a Paladin with three weapon and three class abilities has: nineteen things in twenty slots", () => {
     const bar = defaultBar(paladin);
     expect(bar).toHaveLength(BAR_SLOTS);
     const want = [...paladin.map((a) => `ab:${a}`), ...COMMON_ORDER.map((c) => `do:${c}`), ...ITEM_ORDER.map((i) => `it:${i}`)];
-    expect(want).toHaveLength(BAR_SLOTS);
-    expect(new Set(bar)).toEqual(new Set(want));
+    expect(want).toHaveLength(BAR_SLOTS - 1);
+    expect(new Set(bar.filter(Boolean))).toEqual(new Set(want));
     // Abilities lead the top row; Flee ends the bottom one.
     expect(bar.slice(0, paladin.length)).toEqual(paladin.map((a) => `ab:${a}`));
     expect(bar[BAR_SLOTS - 1]).toBe("do:flee");
@@ -45,8 +45,9 @@ describe("the fight's bar", () => {
     store.set("gq.zone.bar.qa_paladin", JSON.stringify(old));
     const bar = loadBar("qa_paladin", ["bash", "block", "beacon_aura", "healing_aura", "branding_strike"]);
     expect(bar).toHaveLength(BAR_SLOTS);
-    // Where things were, they still are.
-    expect(bar.slice(0, 7)).toEqual(old.slice(0, 7));
+    // Where things were, they still are, bar Dash (there is none now): its slot goes to the first ability without one.
+    expect(bar.slice(0, 7)).toEqual(old.slice(0, 7).map((s) => (s === "do:dash" ? "ab:beacon_aura" : s)));
+    expect(bar).not.toContain("do:dash");
     expect(bar.slice(BAR_ROW, BAR_ROW + 9)).toEqual(old.slice(9));
     // And all three class abilities found a slot.
     for (const a of ["beacon_aura", "healing_aura", "branding_strike"]) expect(bar).toContain(`ab:${a}`);

@@ -129,7 +129,6 @@ export const ABILITY_ICON: Record<string, ActionIcon> = {
 export const abilityIcon = (id: string): ActionIcon => ABILITY_ICON[id] ?? ABILITY_ICON.punch;
 
 export const COMMON_ICON: Record<CommonAction, ActionIcon> = {
-  dash: icon("dash", "#facc15"),
   disengage: icon("disengage", "#8fd3ff"),
   jump: icon("jump", "#7dff9a"),
   shove: icon("shove", "#ff8a3a"),

@@ -49,9 +49,16 @@ export function addCondition(ctx: Ctx, unit: Unit, kind: Condition, rounds: numb
     unit.conditions.push(mine ? { kind, rounds, fresh: true } : { kind, rounds });
     // On its own turn, what changes how far it can go is felt at once.
     const budget = mine ? enc!.budgets[unit.id] : undefined;
-    if (budget && kind === "hasted") budget.move += budget.moveMax;
-    if (budget && kind === "slowed") budget.move = Math.floor(budget.move / 2);
-    if (budget && kind === "prone") budget.move = 0;
+    // Movement goes by the AP: hastened or slowed, each AP buys more or less from here on. Knocked flat, no more this turn.
+    if (budget && kind === "hasted") budget.stride *= 2;
+    if (budget && kind === "slowed") {
+      budget.stride = Math.min(budget.stride, Math.max(1, Math.floor(budget.stride / 2)));
+      budget.move = Math.floor(budget.move / 2);
+    }
+    if (budget && kind === "prone") {
+      budget.move = 0;
+      budget.stride = 0;
+    }
   }
   const now = unit.conditions.find((c) => c.kind === kind)!;
   if (amount !== undefined) now.amount = Math.max(now.amount ?? 0, amount);

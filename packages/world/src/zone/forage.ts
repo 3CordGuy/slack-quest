@@ -2,7 +2,7 @@
 // delve (delve.ts sets them out). Until they are picked they glow, and light
 // the hexes round them by the rules of the dark (light.ts). A hero picks
 // them from beside them, or standing among them, for a few mushrooms: free
-// out of a fight, an Action in one. Picked, the glow is gone.
+// out of a fight, 2 AP in one. Picked, the glow is gone.
 //
 // They grow on the floor and stand in nobody's way.
 
