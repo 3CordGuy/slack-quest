@@ -2620,6 +2620,49 @@ export class SpellFx {
     }
   }
 
+  /**
+   * A great blare from a squeeze box (Bellows Blast): crescents of sound and a breath of air bursting out every way
+   * from the player, notes flung among them, a ring across the ground, and the ground jolted.
+   */
+  blare(feet: THREE.Vector3, color: string) {
+    const chest = feet.clone().setY(feet.y + 1);
+    this.flash(chest, color, 1.6);
+    this.ring(feet, 2.2, color, 0.45);
+    this.renderer.shake(0.06, 0.2);
+    for (let i = 0; i < 6; i++) {
+      const a = (i / 6) * Math.PI * 2 + Math.PI / 6;
+      const to = chest.clone().add(new THREE.Vector3(Math.cos(a) * 2, -0.25, Math.sin(a) * 2));
+      this.crescents(chest, to, color, { count: 2, stagger: 0.07, time: 0.3, size: 0.8, notes: true });
+      this.smoke(chest.clone().add(new THREE.Vector3(Math.cos(a) * 0.5, -0.4, Math.sin(a) * 0.5)), "#eef7ff", 0.8, 0.5);
+    }
+  }
+
+  /**
+   * A jig struck up for someone (Hornpipe): notes bouncing up round their feet, and quick streaks of air whirling
+   * round them low to the ground, their feet made light.
+   */
+  jig(feet: THREE.Vector3, color: string) {
+    for (let i = 0; i < 8; i++) this.note(feet.clone().setY(feet.y + 0.2), color, "lively", (i / 8) * Math.PI * 2, 1.1, i * 0.05, 0.9, 0.6);
+    const N = 10;
+    const loops = [0, 1, 2].map((i) => ({ r: new Ribbon(N, tinted("#f4fbff", 0, streakTex())), off: (i / 3) * Math.PI * 2, h: 0.15 + i * 0.12 }));
+    for (const l of loops) this.add(l.r.mesh);
+    this.run(
+      loops.map((l) => l.r.mesh),
+      (age) => {
+        const k = Math.min(1, age / 0.9);
+        for (const l of loops) {
+          const pts = Array.from({ length: N }, (_, j) => {
+            const a = l.off + age * 9 - (j / (N - 1)) * 1.8;
+            return feet.clone().add(new THREE.Vector3(Math.cos(a) * 0.55, l.h, Math.sin(a) * 0.55));
+          });
+          l.r.material.opacity = 0.85 * Math.sin(Math.PI * k);
+          l.r.lay(pts, (t) => 0.08 * (1 - t), this.eye);
+        }
+        return k < 1;
+      },
+    );
+  }
+
   /** One music note floating off `at`: out along `angle` at `speed`, bobbing, sinking or swirling as the mood has it, and fading over `life`. */
   private note(at: THREE.Vector3, color: string, mood: SongMood, angle: number, speed: number, delay = 0, life = 1.1, size = 0.75) {
     const s = this.speck(Math.random() < 0.5 ? "note" : "notes", color, at, 0);
