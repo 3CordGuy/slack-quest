@@ -7,6 +7,25 @@
 // release-notes.ts); this list is only for the past.
 
 export const OVERRIDES: Record<string, string[]> = {
+  // game-v2026.11.18.6 (#511). The Mage's tricorn look was replaced by the storm witch (#519) and the staff's gem by
+  // a driftwood one, so only what is still true is left.
+  "9d724350364957ae5e21177e418d3411d0421efb": ["Sashes: the long ends of a sash swing as you walk"],
+  // game-v2026.11.18.6 (#517). The glow in the eyes now comes only with a spell (#519).
+  "d074ea89f669e00e421d1c73633021aaa61cd189": [
+    "Wreck Warlock: a drowned captain in a tricorn, with a scarf over the face",
+    "Wreck Warlock: the grimoire glows purple",
+  ],
+  // game-v2026.11.18.6 (#519). One line named two classes, so it showed with no area.
+  "3758b7fd75a869c4da5874b5acfeb734b8c4625f": [
+    "Stormcall Mage: a hooded storm witch with a barnacled driftwood staff",
+    "Starchart Sage: the ship's navigator, in a tricorn and gold epaulettes, with an armillary sphere",
+    "Shanty Bard: a red bandana, a vest over a linen shirt and a red sash",
+    "Smuggler Rogue: a headband, a long dark coat, and straps and pouches",
+    "Stormcall Mage: eyes light up while casting a spell",
+    "Wreck Warlock: eyes light up while casting a spell",
+    "Fights: casting from a book is slower and more deliberate",
+    "Fights: a staff is swung out to the side when casting, clear of the head",
+  ],
   // game-v2026.11.13.5 (#368)
   "2300bc847429c6de0e4bf348de67e8bf55f829b2": ["Sign-in: send http visits to https so returning players can sign in"],
   // game-v2026.11.15.2 (#419)
