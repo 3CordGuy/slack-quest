@@ -3070,9 +3070,9 @@ function lowWizardBeard(head: Part, c: string, rings: readonly Ring[], chinY: nu
  * Hang a length of hair in two jointed pieces, to swing as the figure moves. `side` staggers its idle stir;
  * `drape` is a braid lying over a shoulder and down the chest, which can lift off them but not swing into them.
  */
-function hang(root: Part, end: Part, side: number, drape: Drape = 0, leg?: THREE.Object3D) {
+function hang(root: Part, end: Part, side: number, drape: Drape = 0, leg?: THREE.Object3D, fence?: Fence) {
   extraParts.push(root, end);
-  braids.push({ root, end, side, drape, leg, x: 0, vx: 0, z: 0, vz: 0, ex: 0, evx: 0, ez: 0, evz: 0, last: -1 });
+  braids.push({ root, end, side, drape, leg, fence, x: 0, vx: 0, z: 0, vz: 0, ex: 0, evx: 0, ez: 0, evz: 0, last: -1 });
 }
 
 /** Turn a part's meshes, drawn hanging straight down, to hang along `dir` instead. */
@@ -3092,6 +3092,28 @@ function plait(y0: number, y1: number, dz0: number, dz1: number, r: number, rEnd
   return out;
 }
 
+/**
+ * What a sash's end may not swing into: where its two pieces hang from (in the torso's frame), how long each is,
+ * and the body's section at a height `y` as an ellipse about the torso's axis (half-widths across and front to
+ * back, and how far forward its middle is).
+ */
+interface Fence {
+  at: Pt;
+  lengths: [number, number];
+  section(y: number): [rx: number, rz: number, dz: number];
+}
+
+/** The direction a piece hangs when it is turned `x` about the across axis and `z` about the front-to-back one. */
+function hangDir(x: number, z: number, out: THREE.Vector3): THREE.Vector3 {
+  return out.set(Math.sin(z), -Math.cos(z) * Math.cos(x), -Math.cos(z) * Math.sin(x));
+}
+const _hang = new THREE.Vector3();
+/** How far inside a section a point is: over 0 when it is within it (1 at its middle), 0 or under outside. */
+function sunk(fence: Fence, x: number, y: number, z: number): number {
+  const [rx, rz, dz] = fence.section(y);
+  return 1 - Math.hypot(x / rx, (z - dz) / rz);
+}
+
 /** Where hair hangs against the body: 0 free (a ponytail), 1 down the chest, -1 down the back. */
 type Drape = 0 | 1 | -1;
 
@@ -3103,6 +3125,8 @@ interface Braid {
   drape: Drape;
   /** The thigh it hangs beside, on the outside of it (a sash's end): pushed ahead and out by it, never through it. */
   leg?: THREE.Object3D;
+  /** The body (a coat's skirts, the hips and thighs) it hangs against, which it may not swing into. */
+  fence?: Fence;
   x: number;
   vx: number;
   z: number;
@@ -3170,6 +3194,29 @@ function swingBraids(list: Braid[], a: Anim) {
       if (b.x + b.ex > front + 0.08) [b.ex, b.evx] = [front + 0.08 - b.x, Math.min(0, b.evx)];
       if (b.z < out) [b.z, b.vz] = [out, Math.max(0, b.vz)];
       if (b.z + b.ez < out) [b.ez, b.evz] = [out - b.z, Math.max(0, b.evz)];
+    }
+    if (b.fence) {
+      // A sash's end is stopped by the coat or the legs it hangs over: whichever of its two pieces is inside the
+      // body is swung out (and then the lower one, if it is still), a step at a time, its speed lost where it
+      // is stopped, so it rides over the cloth instead of sinking into it.
+      const f = b.fence;
+      const [x0, y0, z0] = f.at;
+      for (let i = 0; i < 24; i++) {
+        const d1 = hangDir(b.x, b.z, _hang);
+        const [x1, y1, z1] = [x0 + f.lengths[0] * d1.x, y0 + f.lengths[0] * d1.y, z0 + f.lengths[0] * d1.z];
+        const d2 = hangDir(b.x + b.ex, b.z + b.ez, _hang);
+        const [x2, y2, z2] = [x1 + f.lengths[1] * d2.x, y1 + f.lengths[1] * d2.y, z1 + f.lengths[1] * d2.z];
+        const upper = Math.min(sunk(f, (x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2), sunk(f, x1, y1, z1));
+        const lower = Math.min(sunk(f, (x1 + x2) / 2, (y1 + y2) / 2, (z1 + z2) / 2), sunk(f, x2, y2, z2));
+        // (Never out past a third of a turn, whatever is in the way.)
+        if (upper > -0.02 && b.z < 0.6) {
+          b.z += 0.05;
+          b.vz = Math.max(0, b.vz);
+        } else if (lower > -0.02 && b.ez < 0.6) {
+          b.ez += 0.05;
+          b.evz = Math.max(0, b.evz);
+        } else break;
+      }
     }
     b.root.joint.rotation.set(b.x, 0, b.z);
     b.end.joint.rotation.set(b.ex, 0, b.ez);
@@ -3611,6 +3658,49 @@ function lowHat(head: Part, look: Look) {
     case "helm":
       lowHelm(head, "#aeb6c2", tone("#aeb6c2", 0.07), look.accent);
       return;
+    case "lamphelm": {
+      // A keeper's helm: a steel dome banded in brass, cheek guards, and on top a little lantern burning, its
+      // brass posts round the light and a peaked cap over it.
+      const c = "#aeb6c2";
+      head.loft(c, fitted(OVER_HAIR), 10);
+      head.loft(GEAR.gold, fitted([[3.85, 3.84, 3.54], [4.45, 3.82, 3.52, -0.02]]), 10);
+      cheekGuards(head, c);
+      const d = headDelta(7.6);
+      const z = d.dz - 0.1;
+      head.cyl(GEAR.gold, 1.15, 1.35, 0.5, 0, 7.95, z, 8);
+      head.glowBox("#ffd27a", 1.3, 1.5, 1.3, 0, 8.95, z);
+      for (const [x, k] of [[-0.75, -0.75], [0.75, -0.75], [-0.75, 0.75], [0.75, 0.75]]) head.box(GEAR.gold, 0.26, 1.7, 0.26, x, 8.95, z + k);
+      head.cyl(GEAR.gold, 1.2, 1.2, 0.3, 0, 9.85, z, 8);
+      head.cone(look.accent, 1.2, 1.1, 0, 10.5, z, 8);
+      head.ball(GEAR.gold, 0.25, 0, 11.15, z, 0);
+      return;
+    }
+    case "coral": {
+      // A band of kelp round the brow, and on it a crown of branching coral, taller at the front, with a little
+      // shell at its middle.
+      const c = look.hatColor ?? look.accent;
+      const kelp = "#3d6b2e";
+      head.loft(kelp, fitted([[3.95, 3.84, 3.54], [4.65, 3.88, 3.58, -0.03]]), 10);
+      const d = headDelta(4.6);
+      for (let i = 0; i < 7; i++) {
+        const a = ((i - 3) / 3) * 1.9;
+        const tall = 1 - Math.abs(i - 3) * 0.12;
+        const base: Pt = [Math.sin(a) * (3.75 + d.rx), 4.55, Math.cos(a) * (3.5 + d.rz) + d.dz];
+        const tip: Pt = [base[0] * 1.18, 4.55 + 3.3 * tall, base[2] * 1.18];
+        const col = i % 2 ? c : tone(c, 0.1);
+        strut(head, col, base, tip, 0.42, 0.22);
+        head.ball(tone(col, 0.15), 0.26, ...tip, 0);
+        // Two side branches off each, forking up and away to either side, each with a knobbed end.
+        for (const [at, side, up] of [[0.35, 1, 1.5], [0.6, -1, 1.2]] as const) {
+          const mid: Pt = [base[0] + (tip[0] - base[0]) * at, base[1] + (tip[1] - base[1]) * at, base[2] + (tip[2] - base[2]) * at];
+          const end: Pt = [mid[0] + Math.cos(a) * 0.95 * side, mid[1] + up, mid[2] - Math.sin(a) * 0.95 * side];
+          strut(head, col, mid, end, 0.22, 0.14);
+          head.ball(tone(col, 0.15), 0.18, ...end, 0);
+        }
+      }
+      head.ball("#f0dcc8", 0.45, 0, 4.4, 3.75 + d.rz + d.dz, 0, [1, 0.8, 0.5]);
+      return;
+    }
     case "wizard": {
       // A wide brim just over the brows, a band, and a tall crown that bends back to its tip.
       head.loft(look.accent, fitted([[4.3, 5.3, 5.05, -0.05], [4.68, 5.3, 5.05, -0.05]]), 14);
@@ -3700,6 +3790,16 @@ function lowHat(head: Part, look: Look) {
       // Tied close over the hair, knotted at the back with two tails.
       const c = look.hatColor ?? look.accent;
       head.loft(c, fitted(grown(OVER_HAIR, -0.05)), 10);
+      if (look.knotSide) {
+        // Knotted on the left side, above the ear, its two tails hanging down past the jaw.
+        const d = headDelta(4.4);
+        const x = 3.85 + d.rx;
+        const z = d.dz - 0.7;
+        head.ball(tone(c, -0.08), 0.65, x + 0.1, 4.45, z, 1);
+        head.shape(c, [[x + 0.1, 4.4, z - 0.1], [x + 0.35, 4.3, z - 0.45], [x + 0.75, 2.2, z - 0.9], [x + 0.6, 2.0, z - 0.35], [x + 0.45, 2.3, z - 0.6]]);
+        head.shape(tone(c, -0.08), [[x + 0.1, 4.4, z + 0.15], [x + 0.35, 4.3, z + 0.45], [x + 0.55, 2.7, z + 0.25], [x + 0.45, 2.85, z + 0.75]]);
+        return;
+      }
       // The knot and its tails stay on the back of the head, however deep it is.
       const d = headDelta(4.9);
       const back = d.dz - d.rz;
@@ -4447,6 +4547,14 @@ function drawHat(head: Part, look: Look) {
     head.box(c, 7, 1.9, 6.5, 0, 5.5, -0.1);
     head.box(c, 1.2, 2.8, 0.8, 1.6, 3.4, -3.6, [0, 0, 0.2]);
     head.box(tone(c, -0.08), 1, 2.2, 0.8, -0.4, 3.7, -3.7, [0, 0, -0.15]);
+  } else if (hat === "lamphelm") {
+    head.box("#aeb6c2", 7, 2.8, 6.6, 0, 5.3, 0);
+    head.box(GEAR.gold, 7.2, 0.6, 6.8, 0, 4.2, 0);
+    head.glowBox("#ffd27a", 1.6, 1.6, 1.6, 0, 7.6, 0);
+    head.box(look.accent, 2, 0.8, 2, 0, 8.8, 0);
+  } else if (hat === "coral") {
+    head.box("#3d6b2e", 7.2, 0.9, 6.8, 0, 4.6, 0);
+    for (const x of [-2.4, -0.8, 0.8, 2.4]) head.box(look.hatColor ?? look.accent, 0.6, 2.4, 0.6, x, 6, 3);
   } else if (hat === "diver") {
     const c = look.hatColor ?? "#c2893a";
     head.box(c, 8, 8.4, 7.8, 0, 3.6, 0);
@@ -5133,6 +5241,10 @@ function person(top: THREE.Group, look: Look, outfit: Outfit | undefined, asleep
         torso.shape(look.coatColor, pts);
       }
     }
+    if (look.stripes) {
+      // Bands round the chest, like a lighthouse's.
+      for (const [y0, y1] of [[1.9, 2.7], [3.5, 4.3]]) torso.loft(look.stripes, [around(rings, y0, 0.07), around(rings, y1, 0.08)]);
+    }
     if (look.vest) {
       // A vest over the shirt, open down the front: the shirt shows in a strip between its fronts.
       torso.loft(look.vest, [around(rings, 0.7, 0.1), around(rings, 3.6, 0.12), around(rings, 5.45, 0.12), around(rings, 5.95, 0.08)]);
@@ -5193,7 +5305,18 @@ function person(top: THREE.Group, look: Look, outfit: Outfit | undefined, asleep
         end.loft(tone(sash, -0.05), [[0.15, 0.78, 0.15, 0.1], [-tail * 0.4, 0.84, 0.15, -0.14], [-tail * 0.8, 0.88, 0.14, 0.12], [-tail, 0.84, 0.13, 0]], 6);
         // A fringe of gold thread at the end.
         end.loft(GEAR.gold, [[-tail - 0.05, 0.85, 0.13], [-tail - 0.4, 0.78, 0.1]], 6);
-        hang(root, end, 1.5 + n * 2, 0, b.thighL.joint);
+        // The body it hangs over: a long coat's skirts (flaring over the hips and out to the shin), or the hips
+        // and tops of the thighs; a little thicker than the cloth so the sash lies on it.
+        const hip = m.hips;
+        const g = m.girth;
+        const section = (y: number): [number, number, number] => {
+          if (look.coat) {
+            const t = Math.min(1, Math.max(0, (1.4 - y) / 6));
+            return [(2.85 * (1 + hip) * 0.5 + (Math.max(3.5 * hip, thighReach(0.2) + 0.25) - 2.85 * (1 + hip) * 0.5) * t) * g + 0.25, (2 + 0.7 * t) * g + 0.25, 0.05 * (1 - t) - 0.2 * t];
+          }
+          return [Math.max(2.85 * hip, thighReach(y)) * g + 0.2, (1.95 + (hip - 1) * 0.6) * g + 0.2, 0];
+        };
+        hang(root, end, 1.5 + n * 2, 0, b.thighL.joint, { at: [root.joint.position.x, root.joint.position.y, root.joint.position.z], lengths: [len, tail], section });
       }
     } else {
       torso.box(sash, 7.4, 1.5, 4.15, 0, 1.1, 0);
@@ -5234,7 +5357,8 @@ function person(top: THREE.Group, look: Look, outfit: Outfit | undefined, asleep
       lowHand(arm, look.skin, s);
       if (!greatcoat && !body) {
         const region = s < 0 ? "armR" : "armL";
-        if (undressed) {
+        if (undressed || look.sleeveless) {
+          // Bare arms: undressed, or a shirt with no sleeves.
           lowBareArm(arm, look.skin);
           if (chosen?.ink) inkPart(arm, region, chosen.ink);
         } else if (inkedArms) {
@@ -5242,6 +5366,22 @@ function person(top: THREE.Group, look: Look, outfit: Outfit | undefined, asleep
           lowRolledSleeve(arm, look.skin, cloth);
           inkPart(arm, region, chosen!.ink!);
         } else lowSleeve(arm, look.coat && look.coatColor ? look.coatColor : cloth, look.accent);
+        if (look.shell && !undressed) {
+          // A scallop shell on the outside of each shoulder: a ribbed fan, its hinge low, opening upward.
+          const x = s * 1.45;
+          const rim = (k: number, a: number, out: number): Pt => [x + s * out, 1.9 * k * Math.cos(a), 1.9 * k * Math.sin(a)];
+          const fan: Pt[] = [[x, -0.2, 0], [x + s * 0.25, -0.2, 0]];
+          for (let i = 0; i <= 8; i++) {
+            const a = -1.15 + (2.3 * i) / 8;
+            fan.push(rim(1, a, 0), rim(1, a, 0.3));
+          }
+          arm.shape(look.shell, fan);
+          for (let i = 0; i <= 6; i++) {
+            const a = -1 + (2 * i) / 6;
+            strut(arm, tone(look.shell, -0.18), [x + s * 0.32, -0.1, 0], rim(0.97, a, 0.34), 0.07, 0.09);
+          }
+          arm.ball(tone(look.shell, -0.2), 0.3, x + s * 0.2, -0.2, 0, 0);
+        }
         if (look.epaulettes && !undressed) {
           // A gold pad over the shoulder, fringed all along its edge.
           arm.box(look.epaulettes, 2.3, 0.4, 2.5, s * 0.35, 1.35, 0);
