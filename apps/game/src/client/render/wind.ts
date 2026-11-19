@@ -1,7 +1,7 @@
 // Wind, part of "Fancy graphics". Gusts cross the island in fronts, all going
-// the way the sea's long swell goes, and the trees and the grass lean as each
-// one passes: a ripple you can watch travel from one shore to the other. It
-// blows harder in rain and hardest in a storm.
+// the one way the wind blows (WIND_DIR), and the trees and the grass lean as
+// each one passes: a ripple you can watch travel from one shore to the other.
+// It blows harder in rain and hardest in a storm.
 //
 // The same gust is worked out in two places, and they must agree: here in
 // JavaScript for the grass (whose tufts are placed one by one every frame),
@@ -9,8 +9,13 @@
 
 import * as THREE from "three";
 
-/** The way the wind blows across the map (x, z): the same heading as the sea's longest waves. */
-export const WIND_DIR = { x: 0.8, z: 0.6 };
+/**
+ * The way the wind blows across the map, a unit vector on the ground (x, z): mostly along +x, a little toward
+ * +z. Everything the wind moves goes by it: the trees and grass lean this way, the wisps travel it, rain and
+ * chimney smoke slant with it and flags stream out along it. Fixed in the world, so turning the camera never
+ * turns the weather.
+ */
+export const WIND_DIR = { x: Math.cos(0.35), z: Math.sin(0.35) };
 
 const UNIFORMS = { windTime: { value: 0 }, windPower: { value: 0 } };
 
