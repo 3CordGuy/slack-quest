@@ -135,7 +135,7 @@ export function soundNames(): Set<string> {
   const add = (list: string[] | null) => list?.forEach((n) => names.add(n));
   const attacks = [...Object.values(ABILITIES).map((a) => a.name), ...Object.values(ENEMIES).flatMap((e) => e.attacks.map((a) => a.name))];
   const fighters: Fighter[] = [
-    ...[...new Set(Object.values(WEAPONS).map((w) => w.classId))].map((kind) => ({ side: "hero" as const, kind })),
+    ...[...new Set(Object.values(WEAPONS).map((w) => w.classId))].filter((kind): kind is string => !!kind).map((kind) => ({ side: "hero" as const, kind })),
     ...Object.keys(ENEMIES).map((kind) => ({ side: "enemy" as const, kind })),
   ];
   for (const biome of Object.keys(BIOMES)) add(soundName.footstep(biome));

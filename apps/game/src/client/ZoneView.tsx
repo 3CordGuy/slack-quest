@@ -474,13 +474,14 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
         if (wave) at = Math.max(at, wave.at + CAST_EMIT_MS + point(ev.from).setY(0).distanceTo(wave.from.clone().setY(0)) * WAVE_PACE * 1000);
         owe(ev.target);
         later(() => {
-          // Flung back and off their feet; with nowhere to go, flattened where they stand.
+          // Flung back and off their feet; with nowhere to go, flattened where they stand. Hauled in on a line, they stay on their feet.
           sounds.zone("shove", view?.whereIs(ev.target));
-          if (to) view?.knock(ev.target, to);
+          if (to) view?.knock(ev.target, to, !ev.pulled);
           else view?.floor(ev.target, undefined, ev.id);
-          timers.current.push(setTimeout(() => sounds.zone("fall", view?.whereIs(ev.target)), 260));
+          if (!ev.pulled) timers.current.push(setTimeout(() => sounds.zone("fall", view?.whereIs(ev.target)), 260));
         });
-        say(!to ? `${name(ev.id)} shoves ${name(ev.target)}, who has nowhere to go and falls.` : hexDistance(ev.from, to) > 1 ? `${name(ev.target)} is swept away.` : `${name(ev.id)} shoves ${name(ev.target)} back.`);
+        // A haul of two hexes is two events; it is said once.
+        if (!ev.pulled || ev.pulled === 1) say(!to ? `${name(ev.id)} shoves ${name(ev.target)}, who has nowhere to go and falls.` : ev.pulled ? `${name(ev.id)} hauls ${name(ev.target)} in.` : hexDistance(ev.from, to) > 1 ? `${name(ev.target)} is swept away.` : `${name(ev.id)} shoves ${name(ev.target)} back.`);
       } else if (ev.t === "used") {
         // Getting away has a line of its own (fled).
         if (ev.what !== "flee") say(`${name(ev.id)}: ${ev.name}${ev.target ? ` on ${name(ev.target)}` : ""}.`);
