@@ -276,7 +276,7 @@ export interface WeaponDef {
 
 export const WEAPONS: Record<string, WeaponDef> = {
   mace: { id: "mace", name: "Anchor Mace", classId: "qa_paladin", abilities: ["bash", "recover"] },
-  greatsword: { id: "greatsword", name: "Breakwater Greatsword", classId: "qa_paladin", abilities: ["cleave", "block"] },
+  greatsword: { id: "greatsword", name: "Breakwater Cutlass", classId: "qa_paladin", abilities: ["cleave", "block"] },
   staff: { id: "staff", name: "Squall Staff", classId: "devops_mage", abilities: ["shock", "mend"] },
   tome: { id: "tome", name: "Logbook of Gales", classId: "devops_mage", abilities: ["slicing_wind", "winds_blessing"] },
   daggers: { id: "daggers", name: "Twin Gutting Knives", classId: "refactor_rogue", abilities: ["stab", "eviscerate"] },

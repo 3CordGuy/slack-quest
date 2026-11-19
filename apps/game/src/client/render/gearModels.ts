@@ -219,6 +219,16 @@ function swordKnot(k: Kit, at: V3) {
   k.cyl(0.25, 0.7, 1.6, 6, k.a, { at: [x + 0.5, y - 3.8, z] });
 }
 
+/** A midshipman's dirk, its grip at the origin: a short straight blade, a small brass cross, an ivory grip banded in the trim, a capped pommel. */
+function dirk(k: Kit) {
+  k.hull(bladePoints(9, 1.7, 0.7, 3, 3), C.steel);
+  k.box(4.4, 0.8, 1.3, C.gold, { at: [0, 2.7, 0] }, 0.25);
+  for (const x of [-2.3, 2.3]) k.ball(0.55, C.gold, { at: [x, 2.7, 0] });
+  k.cyl(0.55, 0.6, 3.4, 6, C.bone, { at: [0, 0.5, 0] });
+  k.ball(0.95, C.gold, { at: [0, -1.6, 0] });
+  for (const y of [-0.6, 1.6]) k.cyl(0.66, 0.66, 0.4, 6, k.a, { at: [0, y, 0] });
+}
+
 /** A gaff hook, its collar at the origin: a bound wooden grip, a steel shank curling over into a barbed point toward +x. */
 function gaffHook(k: Kit) {
   k.cyl(0.6, 0.7, 4.4, 6, C.wood, { at: [0, -2.2, 0] });
@@ -637,16 +647,17 @@ export const LOW_POLY: Record<string, LowPolyDef> = {
     },
   },
   dirk: {
-    // A midshipman's dirk: a short straight blade, a small brass cross, an ivory grip and a capped pommel.
+    // A midshipman's dirk, alone: the knife a Rogue's archer draws for close work (see figures.ts).
     lean: DIAG,
     pad: 0.25,
+    build: dirk,
+  },
+  dirks: {
+    // The Rogue's Twin Gutting Knives: a pair of dirks, crossed at the guards.
+    spin: 0.3,
+    inHand: dirk,
     build: (k) => {
-      k.hull(bladePoints(9, 1.7, 0.7, 3, 3), C.steel);
-      k.box(4.4, 0.8, 1.3, C.gold, { at: [0, 2.7, 0] }, 0.25);
-      for (const x of [-2.3, 2.3]) k.ball(0.55, C.gold, { at: [x, 2.7, 0] });
-      k.cyl(0.55, 0.6, 3.4, 6, C.bone, { at: [0, 0.5, 0] });
-      k.ball(0.95, C.gold, { at: [0, -1.6, 0] });
-      for (const y of [-0.6, 1.6]) k.cyl(0.66, 0.66, 0.4, 6, k.a, { at: [0, y, 0] });
+      for (const s of [-1, 1]) k.within({ at: [0, 0, s * 0.5], rot: [0, 0, -s * 0.62] }, () => k.within({ at: [0, -2.7, 0] }, () => dirk(k)));
     },
   },
   // ---- guns and the crossbow: the barrel up the model, muzzle at the top. A gun's grip and stock fall away

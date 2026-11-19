@@ -52,7 +52,6 @@ type Action = (typeof ACTIONS)[number][0];
 const nameOf = (kind: string) => (HEROES.includes(kind) ? label("class", kind) : FOES.includes(kind) ? label("enemy", kind) : kind.replace(/_/g, " "));
 /** Models with no weapon in the game yet: offered in the main hand, to see them held. */
 const SPARE_MODELS = [
-  ["cutlass", "Cutlass (model only)"],
   ["sabre", "Sabre (model only)"],
   ["rapier", "Rapier (model only)"],
   ["dirk", "Dirk (model only)"],
