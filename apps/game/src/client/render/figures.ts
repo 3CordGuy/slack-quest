@@ -24,6 +24,10 @@ import { makeSilhouette, type Silhouette } from "./silhouette";
 export const OUTLINE = "#1b1830";
 /** Set by makeFigure for the figure being built: a fishing rod goes in its right hand (gilded, for a full Catch Book). */
 let rodInHand: boolean | "gilded" = false;
+/** The diving set's riveted iron, its brass trim and its rope (see lowDiverHelm, lowDiverPlate). */
+const DIVE_IRON = "#5d6064";
+const DIVE_BRASS = "#b8893a";
+const ROPE = "#b49a62";
 const GEAR = { steel: "#c9d1dc", shine: "#f1f5fa", iron: "#8b95a5", wood: "#8a5a2b", leather: "#a0683a", gold: "#e0b12e", paper: "#e8dcc0", bone: "#eee6cf", dark: "#2a2740" };
 /** The frame a figure is modelled in, in model units: `setSize(1)` makes this one world unit tall. */
 export const FRAME = 22;
@@ -3681,52 +3685,8 @@ function lowHat(head: Part, look: Look) {
       return;
     }
     case "diver": {
-      // A deep-sea diver's helmet: a round brass bowl over the whole head on a collar round the neck, bolted at
-      // its foot, a clear round window in front (an opening, so the face shows through), a smaller one of glass
-      // on each side, and a valve on top. The bowl is a loft run front to back and laid on its side (as the hood
-      // is): its first ring is the window, and each ring's rx is its half-width, rz its half-height and dz how
-      // far up its middle is from `mid`.
       const c = look.hatColor ?? "#c2893a";
-      const dark = tone(c, -0.2);
-      const d = headDelta(4);
-      const w = (r: number) => r + d.rx;
-      const mid = 4;
-      const portY = 3;
-      const side: Rot = [-HALF_PI, 0, 0];
-      // Round as a ball, front to back, but for the window cut flat across its front.
-      const bowl: Ring[] = [[-3.75, 2.05, 2.05, portY - mid]];
-      for (const y of [-3.55, -3.1, -2.6, -1.8, -0.8, 0.3, 1.4, 2.4, 3.2, 3.8, 4.15, 4.3]) {
-        const k = Math.sqrt(Math.max(0, 1 - (y / 4.35) ** 2));
-        bowl.push([y, Math.max(0.3, w(4.05) * k), Math.max(0.3, 4.15 * k), (portY - mid) * Math.min(1, Math.max(0, (-y - 1.8) / 1.95))]);
-      }
-      head.shell(c, bowl, 16, { open: "start" }, 0, mid, d.dz, side);
-      // Its lining, in shadow, round the window.
-      head.shell(tone(c, -0.45), bowl.slice(0, 3).map(([y, rx, rz, dz = 0]) => [y + 0.05, rx - 0.14, rz - 0.14, dz] as Ring), 16, { open: "both", inward: true }, 0, mid, d.dz, side);
-      // The window's rim, and a glint on the glass at its edge.
-      head.ring(dark, 2.15, 0.34, 0, portY, 3.8 + d.dz);
-      head.box("#e8f6f8", 0.2, 0.6, 0.08, -1.3, portY + 1.15, 3.78 + d.dz, [0, 0, 0.6]);
-      // The collar round the neck that the bowl sits on, bolted round.
-      head.loft(c, fitted([[-0.6, 3.15, 3.15, 0.1], [0.4, 3.45, 3.45, 0.1], [1, 3.2, 3.2, 0.1]]), 12);
-      head.loft(dark, fitted([[-0.75, 3.3, 3.3, 0.1], [-0.2, 3.35, 3.35, 0.1]]), 12);
-      for (let i = 0; i < 8; i++) {
-        const a = ((i + 0.5) / 8) * Math.PI * 2;
-        head.ball(tone(c, 0.12), 0.2, Math.sin(a) * 3.42, -0.45, Math.cos(a) * 3.42 + 0.1, 0);
-      }
-      // A small window of glass on each side.
-      for (const s of [-1, 1]) {
-        const x = s * (w(4.05) + 0.05);
-        const pts: Pt[] = [];
-        for (let i = 0; i < 10; i++) {
-          const a = (i / 10) * Math.PI * 2;
-          for (const k of [-0.25, 0.06]) pts.push([x + s * k, 3.6 + Math.sin(a) * 0.75, Math.cos(a) * 0.75 + d.dz]);
-        }
-        head.shape("#2c5560", pts);
-        head.ring(dark, 0.87, 0.26, x + s * 0.1, 3.6, d.dz, [0, s * HALF_PI, 0]);
-      }
-      // The air valve on top, and the hose coupling at the back.
-      head.cyl(dark, 0.4, 0.55, 0.5, 0, mid + 4.1, d.dz, 8);
-      head.cyl(c, 0.6, 0.6, 0.9, 0, 5, -4.05 + d.dz, 8, [HALF_PI, 0, 0]);
-      head.cyl(dark, 0.75, 0.75, 0.3, 0, 5, -4.5 + d.dz, 8, [HALF_PI, 0, 0]);
+      lowDiverHelm(head, c, tone(c, -0.2));
       return;
     }
     case "horns": {
@@ -3738,6 +3698,56 @@ function lowHat(head: Part, look: Look) {
       return;
     }
   }
+}
+
+/**
+ * A deep-sea diver's helmet, low-poly: a round bowl over the whole head on a collar round the neck, bolted at
+ * its foot, a clear round window in front (an opening, so the face shows through), a smaller one of glass on
+ * each side, and a valve on top, in `c` trimmed with `dark`. The Warden's own is brass; the Diving Helm worn as
+ * armor is iron trimmed in brass. The bowl is a loft run front to back and laid on its side (as the hood is):
+ * its first ring is the window, and each ring's rx is its half-width, rz its half-height and dz how far up its
+ * middle is from `mid`.
+ */
+function lowDiverHelm(head: Part, c: string, dark: string) {
+  const d = headDelta(4);
+  const w = (r: number) => r + d.rx;
+  const mid = 4;
+  const portY = 3;
+  const side: Rot = [-HALF_PI, 0, 0];
+  // Round as a ball, front to back, but for the window cut flat across its front.
+  const bowl: Ring[] = [[-3.75, 2.05, 2.05, portY - mid]];
+  for (const y of [-3.55, -3.1, -2.6, -1.8, -0.8, 0.3, 1.4, 2.4, 3.2, 3.8, 4.15, 4.3]) {
+    const k = Math.sqrt(Math.max(0, 1 - (y / 4.35) ** 2));
+    bowl.push([y, Math.max(0.3, w(4.05) * k), Math.max(0.3, 4.15 * k), (portY - mid) * Math.min(1, Math.max(0, (-y - 1.8) / 1.95))]);
+  }
+  head.shell(c, bowl, 16, { open: "start" }, 0, mid, d.dz, side);
+  // Its lining, in shadow, round the window.
+  head.shell(tone(c, -0.45), bowl.slice(0, 3).map(([y, rx, rz, dz = 0]) => [y + 0.05, rx - 0.14, rz - 0.14, dz] as Ring), 16, { open: "both", inward: true }, 0, mid, d.dz, side);
+  // The window's rim, and a glint on the glass at its edge.
+  head.ring(dark, 2.15, 0.34, 0, portY, 3.8 + d.dz);
+  head.box("#e8f6f8", 0.2, 0.6, 0.08, -1.3, portY + 1.15, 3.78 + d.dz, [0, 0, 0.6]);
+  // The collar round the neck that the bowl sits on, bolted round.
+  head.loft(c, fitted([[-0.6, 3.15, 3.15, 0.1], [0.4, 3.45, 3.45, 0.1], [1, 3.2, 3.2, 0.1]]), 12);
+  head.loft(dark, fitted([[-0.75, 3.3, 3.3, 0.1], [-0.2, 3.35, 3.35, 0.1]]), 12);
+  for (let i = 0; i < 8; i++) {
+    const a = ((i + 0.5) / 8) * Math.PI * 2;
+    head.ball(tone(c, 0.12), 0.2, Math.sin(a) * 3.42, -0.45, Math.cos(a) * 3.42 + 0.1, 0);
+  }
+  // A small window of glass on each side.
+  for (const s of [-1, 1]) {
+    const x = s * (w(4.05) + 0.05);
+    const pts: Pt[] = [];
+    for (let i = 0; i < 10; i++) {
+      const a = (i / 10) * Math.PI * 2;
+      for (const k of [-0.25, 0.06]) pts.push([x + s * k, 3.6 + Math.sin(a) * 0.75, Math.cos(a) * 0.75 + d.dz]);
+    }
+    head.shape("#2c5560", pts);
+    head.ring(dark, 0.87, 0.26, x + s * 0.1, 3.6, d.dz, [0, s * HALF_PI, 0]);
+  }
+  // The air valve on top, and the hose coupling at the back.
+  head.cyl(dark, 0.4, 0.55, 0.5, 0, mid + 4.1, d.dz, 8);
+  head.cyl(c, 0.6, 0.6, 0.9, 0, 5, -4.05 + d.dz, 8, [HALF_PI, 0, 0]);
+  head.cyl(dark, 0.75, 0.75, 0.3, 0, 5, -4.5 + d.dz, 8, [HALF_PI, 0, 0]);
 }
 
 /** Armor on the head, rounded: a leather hood, the horned visor, or a diving helm (anything else). */
@@ -3765,8 +3775,9 @@ function lowWornHelmet(head: Part, helmet: { ref: string; icon: string }, trim: 
     }
     return;
   }
-  // A diving helm: a steel dome with a gold band, cheek plates, a nasal and a crest of its trim.
-  lowHelm(head, GEAR.steel, GEAR.gold, trim, true);
+  // The Diving Helm: a diver's helmet in dark iron, trimmed in brass, with a knob of its trim on the valve.
+  lowDiverHelm(head, DIVE_IRON, DIVE_BRASS);
+  head.ball(trim, 0.32, 0, 8.45, headDelta(4).dz);
 }
 
 /**
@@ -4198,8 +4209,63 @@ function lowGreatcoat(torso: Part, skin: string, oilskin: string, sh: number, tr
   return front(4.5) + 0.1;
 }
 
+/**
+ * Diver's Plate over the chest, low-poly: riveted iron plate over a dark canvas suit, a brass corselet on the
+ * shoulders bolted round, a length of chain slung from one shoulder across the chest, and rope wound round the
+ * waist and knotted, its end hanging. The trim's colour on the corselet's front plate. Returns how far forward
+ * its front is.
+ */
+function lowDiverPlate(torso: Part, skin: string, sh: number, trim: string): number {
+  const rings = lowChest(torso, skin, DIVE_IRON, sh);
+  const hip = ringAt(rings, -0.6);
+  torso.loft(tone(DIVE_IRON, -0.12), [around(rings, 0.55, 0.1), [-1.5, hip.rx + 0.32, hip.rz + 0.28, hip.dz]], 8);
+  // Rivets down the front and across the chest.
+  for (const y of [1.9, 2.9, 3.9]) {
+    for (const x of [-1.5, 1.5]) {
+      const p = onChest(rings, x, y, 0.08);
+      torso.ball(tone(DIVE_IRON, 0.2), 0.17, ...p.at, 0);
+    }
+  }
+  // The corselet: brass over the shoulders, up to a collar, bolted round, with a plate of the trim at its front.
+  torso.loft(DIVE_BRASS, [around(rings, 3.9, 0.12, 0.02), around(rings, 4.8, 0.28, 0.02), around(rings, 5.7, 0.3, 0), [6.45, 2.1, 1.85, 0], [6.9, 1.75, 1.6, 0]]);
+  torso.loft(tone(DIVE_BRASS, -0.22), [around(rings, 3.75, 0.16, 0.02), around(rings, 4.05, 0.16, 0.02)]);
+  const at = ringAt(rings, 4.85);
+  for (let i = 0; i < 10; i++) {
+    const a = ((i + 0.5) / 10) * Math.PI * 2;
+    torso.ball(tone(DIVE_BRASS, 0.14), 0.22, Math.sin(a) * (at.rx + 0.38), 4.85, Math.cos(a) * (at.rz + 0.38) + at.dz, 0);
+  }
+  const plate = onChest(rings, 0, 4.75, 0.42);
+  torso.box(trim, 1.2, 0.6, 0.25, ...plate.at);
+  // A chain from the right shoulder down across the chest to the left hip: links turned by turns.
+  for (let i = 0; i < 9; i++) {
+    const t = i / 8;
+    const x = -2.3 + 4.4 * t;
+    const y = 4.4 - 3.3 * t;
+    const p = onChest(rings, x, y, 0.22);
+    torso.ring(GEAR.dark, 0.32, 0.1, ...p.at, [0, p.yaw + (i % 2 ? HALF_PI : 0), -0.64]);
+  }
+  // Rope round the waist, wound twice and knotted at the front, its end hanging.
+  torso.loft(ROPE, [around(rings, 0.55, 0.2, 0.02), around(rings, 0.95, 0.22, 0.02)]);
+  torso.loft(tone(ROPE, -0.1), [around(rings, 1.05, 0.2, 0.03), around(rings, 1.45, 0.2, 0.03)]);
+  const knot = onChest(rings, -0.9, 0.9, 0.3);
+  torso.ball(ROPE, 0.45, ...knot.at, 0);
+  strut(torso, ROPE, knot.at, [knot.at[0] - 0.25, knot.at[1] - 2.3, knot.at[2] + 0.15], 0.17, 0.15);
+  return ringAt(rings, 4.2).rz + ringAt(rings, 4.2).dz + 0.3;
+}
+
 /** Armor on the legs, low-poly: loose sailcloth trousers tied at the shin, or iron greaves with steel at the knee and shin. */
 function lowLegArmor(thigh: Part, shin: Part, ref: string, trim: string) {
+  if (ref === "diving_legs") {
+    // Riveted Leggings: dark canvas, a riveted iron knee plate, and a brass band round the top of the shin.
+    const canvas = "#4d4a3e";
+    thigh.loft(canvas, grown(THIGH, 0.12), 6);
+    shin.loft(canvas, grown(SHIN, 0.1), 6);
+    shin.ball(DIVE_IRON, 1.05, 0, 0.05, 0.75, 0, [1.2, 1, 0.85]);
+    for (const x of [-0.55, 0.55]) shin.ball(tone(DIVE_IRON, 0.2), 0.15, x, 0.05, 1.62, 0);
+    shin.loft(DIVE_BRASS, [[-1.05, 1.36, 1.4], [-0.6, 1.38, 1.42]], 6);
+    thigh.loft(trim, [[0.05, 1.62, 1.62], [0.45, 1.58, 1.58]], 6);
+    return;
+  }
   if (ref === "trousers") {
     const cloth = "#d8cfb4";
     thigh.loft(cloth, grown(THIGH, 0.14), 6);
@@ -4217,6 +4283,16 @@ function lowLegArmor(thigh: Part, shin: Part, ref: string, trim: string) {
 
 /** Boots, low-poly: short iron-shod treads, or tall sea boots turned down at the top. */
 function lowBoots(foot: Part, shin: Part, ref: string, trim: string) {
+  if (ref === "lead_boots") {
+    // Lead Boots: heavy and dark, a brass cap over the toe, tall shafts with a brass band, a strap in the trim.
+    lowShoe(foot, "#3d3f44");
+    foot.shape(DIVE_BRASS, sym([[1.32, 0.3, 0.9], [1.0, 0.3, 2.55], [0, 0.3, 2.85], [1.1, 1.1, 0.9], [0.8, 0.85, 2.3], [0, 0.95, 2.55]]));
+    foot.shape(tone("#3d3f44", -0.1), sym([[1.45, -0.05, -1.5], [1.5, -0.05, 1.5], [1.05, -0.05, 2.75], [0, -0.05, 3], [1.45, 0.45, -1.5], [1.5, 0.45, 1.5], [1.05, 0.45, 2.75], [0, 0.45, 3]]));
+    shin.loft("#3d3f44", [[-2.35, 1.22, 1.26], [-1.2, 1.36, 1.4], [-0.55, 1.4, 1.44]], 6);
+    shin.loft(DIVE_BRASS, [[-1, 1.48, 1.52], [-0.55, 1.5, 1.54]], 6);
+    shin.loft(trim, [[-1.75, 1.36, 1.4], [-1.5, 1.37, 1.41]], 6);
+    return;
+  }
   if (ref === "treads") {
     lowShoe(foot, "#5a4632");
     foot.shape(GEAR.iron, sym([[1.42, -0.05, -1.5], [1.5, -0.05, 1.5], [1.02, -0.05, 2.7], [0, -0.05, 2.95], [1.42, 0.4, -1.5], [1.5, 0.4, 1.5], [1.02, 0.4, 2.7], [0, 0.4, 2.95]]));
@@ -4926,6 +5002,8 @@ function person(top: THREE.Group, look: Look, outfit: Outfit | undefined, asleep
     else lowTorso(torso, look, m.shoulders / m.girth);
   } else if (lowPoly && greatcoat) {
     front = lowGreatcoat(torso, look.skin, oilskin, m.shoulders / m.girth, trim("body"));
+  } else if (lowPoly && body?.ref === "diving_plate") {
+    front = lowDiverPlate(torso, look.skin, m.shoulders / m.girth, trim("body"));
   } else if (lowPoly && body) {
     front = lowHauberk(torso, look.skin, m.shoulders / m.girth, trim("body"));
   } else if (greatcoat) {
@@ -5073,6 +5151,19 @@ function person(top: THREE.Group, look: Look, outfit: Outfit | undefined, asleep
         // Oilskin sleeves, cuffed in the coat's trim.
         lowSleeve(arm, oilskin, trim("body"));
       } else {
+        if (body?.ref === "diving_plate") {
+          // Riveted iron sleeves, a big round pauldron rimmed in brass with a boss of the trim, and an iron
+          // vambrace banded in brass.
+          lowSleeve(arm, tone(DIVE_IRON, -0.08), DIVE_BRASS);
+          if (!hood) {
+            arm.ball(DIVE_IRON, 1.75, s * 0.3, 0.35, 0, 1, [1.05, 0.78, 1.12]);
+            arm.loft(DIVE_BRASS, [[-0.55, 1.72, 1.72], [-0.2, 1.72, 1.72]], 10, s * 0.25);
+            arm.ball(trim("body"), 0.4, s * 1.65, 0.75, 0, 0);
+          }
+          arm.loft(DIVE_IRON, [[-3.75, 1.18, 1.18], [-2.55, 1.24, 1.24]], 8);
+          arm.loft(DIVE_BRASS, [[-2.75, 1.3, 1.3], [-2.5, 1.3, 1.3]], 8);
+          continue;
+        }
         // Mail sleeves, a steel pauldron over the shoulder edged in the trim (under a hood's mantle, none),
         // and a steel vambrace.
         lowSleeve(arm, GEAR.iron, GEAR.steel);
