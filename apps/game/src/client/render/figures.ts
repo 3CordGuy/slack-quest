@@ -3766,9 +3766,50 @@ function lowMantle(torso: Part, c: string, over: number, tie: string, trim?: str
  */
 function lowLanternHelm(head: Part, cap: string) {
   const c = "#aeb6c2";
-  head.loft(c, fitted(OVER_HAIR), 10);
-  head.loft(GEAR.gold, fitted([[3.85, 3.84, 3.54], [4.45, 3.82, 3.52, -0.02]]), 10);
+  const dome = fitted(OVER_HAIR);
+  const band = fitted([[3.85, 3.84, 3.54], [4.45, 3.82, 3.52, -0.02]]);
+  head.loft(c, dome, 10);
+  // The brow band a twist of brass rope: a rounded roll, its strands slanting round the head.
+  const roll = fitted([[3.8, 3.84, 3.54], [3.98, 4.04, 3.74], [4.15, 4.12, 3.82, -0.01], [4.32, 4.04, 3.74, -0.02], [4.5, 3.82, 3.52, -0.02]]);
+  head.loft(GEAR.gold, roll, 14);
+  const b = ringAt(roll, 4.15);
+  const strands = 30;
+  for (let i = 0; i < strands; i++) {
+    const t = (i / strands) * Math.PI * 2;
+    head.box(tone(GEAR.gold, -0.22), 0.09, 0.66, 0.08, Math.sin(t) * (b.rx + 0.02), 4.15, Math.cos(t) * (b.rz + 0.02) + b.dz, [0, t, 0.7]);
+  }
+  // A brass comb from the brow up over the crown and down the back, under the lantern: a hull of its edge, the
+  // inside lost in the dome.
+  const comb: Pt[] = [];
+  for (const [y, out] of [[4.6, 0.2], [5.6, 0.42], [6.7, 0.55], [7.4, 0.6]] as const) {
+    const r = ringAt(dome, y);
+    comb.push([0.24, y, r.dz + r.rz + out], [0.24, y, r.dz - r.rz - out]);
+  }
+  const top = ringAt(dome, 7.75);
+  comb.push([0.24, 8.35, top.dz + 0.9], [0.24, 8.35, top.dz - 0.9]);
+  head.shape(GEAR.gold, sym(comb));
+  // A short peak over the brow, angled a little down, following the curve of the band.
+  const f = ringAt(band, 3.85);
+  const peak: Pt[] = [];
+  // Short: the camera looks down on heroes, and a longer one hides their eyes.
+  for (const [x, out] of [[0, 0.8], [1.6, 0.58], [2.9, 0.2]] as const) {
+    const z = f.dz + f.rz * Math.sqrt(Math.max(0, 1 - (x / f.rx) ** 2));
+    peak.push([x, 3.9, z - 0.1], [x, 3.7, z - 0.1], [x, 3.84 - out * 0.15, z + out], [x, 3.68 - out * 0.15, z + out]);
+  }
+  head.shape(c, sym(peak));
   cheekGuards(head, c);
+  // Brass rivets on each cheek guard, and the same line of them carried on up each side of the dome over the
+  // band, as far apart and in line with them.
+  const rivetZ = 0.35;
+  const rivetGap = 1.1;
+  for (const s of [-1, 1]) {
+    for (const y of [2.45, 2.45 + rivetGap]) head.ball(GEAR.gold, 0.19, s * (ringAt(headRings(), y).rx + 0.66), y, rivetZ, 0);
+    for (let y = 4.75; y < 7.3; y += rivetGap) {
+      const r = ringAt(dome, y);
+      const across = r.rx * Math.sqrt(Math.max(0, 1 - ((rivetZ - r.dz) / r.rz) ** 2));
+      head.ball(GEAR.gold, 0.19, s * (across + 0.04), y, rivetZ, 0);
+    }
+  }
   const d = headDelta(7.6);
   const z = d.dz - 0.1;
   head.cyl(GEAR.gold, 1.15, 1.35, 0.5, 0, 7.95, z, 8);
