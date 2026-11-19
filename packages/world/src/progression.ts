@@ -7,7 +7,6 @@ import {
   FREE_POINTS_PER_LEVEL,
   LEVELUP_AUTO_ALLOC,
   STARTING_STATS,
-  deriveMaxHp,
   xpForLevel,
   type StatKey,
   type Stats,
@@ -87,11 +86,12 @@ export function applyXp(p: Progress, amount: number): Progress & { levelsGained:
   return { ...out, levelsGained };
 }
 
-/** Every hero's hit points, at every level, against the old game's formula (deriveMaxHp, which the old game still uses as it is). */
-export const HERO_HP_SCALE = 1.2;
+/** Hit points each point of Vitality gives a hero. */
+export const HP_PER_VIT = 3;
 
+/** A hero's hit points: 16, 3 a point of Vitality and 2 a level. (The old game keeps its own formula in packages/core, at 2 a point.) */
 export function maxHpFor(stats: Stats, level: number): number {
-  return Math.round(deriveMaxHp(stats, level) * HERO_HP_SCALE);
+  return 16 + HP_PER_VIT * stats.vit + 2 * level;
 }
 
 /** Focus pool: 2, plus one per five levels. */
