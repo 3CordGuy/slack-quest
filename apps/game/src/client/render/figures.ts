@@ -18,7 +18,7 @@ import { ConvexGeometry } from "three/examples/jsm/geometries/ConvexGeometry.js"
 import { APPEARANCE_OPTIONS, GARB_PREFIX, HAIR_COLORS, SKIN_TONES, INK_COLORS, LANTERN_HELM_ICON, INK_LEVELS, INK_REGIONS, RARITY_COLOR, WEAPONS, WEAPON_ICON, appearanceK, decodeInk, inkColorOf, inkLevelOf, type Appearance, type Ink, type InkRegion, type InkView, type Outfit, type Slot } from "@gantt-quest/world";
 import type { Look } from "./looks";
 import { torchFlame } from "./torchFlame";
-import { buildLowPoly, disposeLowPoly, type Dangle } from "./gearModels";
+import { buildLowPoly, disposeLowPoly, type Dangle, type Spin } from "./gearModels";
 import { makeSilhouette, type Silhouette } from "./silhouette";
 
 export const OUTLINE = "#1b1830";
@@ -875,9 +875,70 @@ function gear(p: Part, icon: string, trim: string, hold: Hold, inHand = false): 
     }
     made.set(group, { part, pivot, chain });
   }
+  // What turns freely (an armillary sphere's inner rings) goes on a joint of its own at its pivot, turned about
+  // its axis each frame (see turnSpinners).
+  const turning: THREE.Object3D[] = [];
+  built.model.traverse((o) => {
+    if (o.userData.spin) turning.push(o);
+  });
+  for (const group of turning) {
+    group.removeFromParent();
+    const sp = group.userData.spin as Spin;
+    const pivot = new THREE.Vector3(...sp.pivot).applyMatrix4(at);
+    const axis = new THREE.Vector3(...sp.axis).transformDirection(at);
+    const part = new Part(p.joint, pivot.x, pivot.y, pivot.z);
+    part.model(group, new THREE.Matrix4().makeTranslation(-pivot.x, -pivot.y, -pivot.z).multiply(at));
+    disposeLowPoly(group);
+    extraParts.push(part);
+    spinners.push({ joint: part.joint, axis, angle: 0, speed: SPIN_SPEED, was: null });
+  }
   p.model(built.model, at);
   disposeLowPoly(built.model);
   return true;
+}
+
+/** Something turning freely about an axis in the hand (see Kit.spin): its angle, how fast it turns, and the hand's last turn. */
+interface Spinner {
+  joint: THREE.Object3D;
+  /** The axis it turns about, in the hand's frame. */
+  axis: THREE.Vector3;
+  angle: number;
+  speed: number;
+  was: THREE.Quaternion | null;
+}
+/** Set by makeFigure for the figure being built: what turns freely in its hands. */
+let spinners: Spinner[] = [];
+/** How fast a spinner turns on its own, in radians a second, and how quickly it eases back to that after a jolt. */
+const SPIN_SPEED = 0.7;
+const SPIN_EASE = 1.4;
+const _spinQ = new THREE.Quaternion();
+const _spinAxis = new THREE.Vector3();
+
+/**
+ * Turn what spins freely: on its own, slowly; and as the hand turns about its axis it stays behind, as a loose
+ * ring would, its speed taking up the difference and easing back to its own turn.
+ */
+function turnSpinners(list: Spinner[], dt: number) {
+  for (const sp of list) {
+    const hand = sp.joint.parent;
+    if (!hand) continue;
+    hand.updateWorldMatrix(true, false);
+    const now = new THREE.Quaternion();
+    hand.matrixWorld.decompose(_pos, now, _scale);
+    if (sp.was && dt > 0) {
+      // How far the hand has turned about the spinner's axis since last frame (the axis in the world).
+      _spinQ.copy(now).multiply(_inv.copy(sp.was).invert());
+      _spinAxis.copy(sp.axis).applyQuaternion(now).normalize();
+      const turned = 2 * Math.atan2(_spinQ.x * _spinAxis.x + _spinQ.y * _spinAxis.y + _spinQ.z * _spinAxis.z, _spinQ.w);
+      // Left behind by the hand's turn, it is set spinning the other way, then eases back to its own speed.
+      sp.speed -= (turned / dt) * 0.6;
+      sp.speed += (SPIN_SPEED - sp.speed) * (1 - Math.exp(-SPIN_EASE * dt));
+      sp.speed = Math.max(-8, Math.min(8, sp.speed));
+      sp.angle += sp.speed * dt;
+    }
+    sp.was = now;
+    sp.joint.quaternion.setFromAxisAngle(sp.axis, sp.angle);
+  }
 }
 
 /** One joint of something hanging loose: a length of chain, or the weight on its end. */
@@ -3197,8 +3258,12 @@ const SKIRT_FOLLOW = 1;
 const SKIRT_EASE = 0.18;
 /** Set by makeFigure for the figure being built: a long coat's two skirts, each folded at the knee, and the leg each swings with. */
 let skirts: { joint: THREE.Object3D; thigh: THREE.Object3D; fold: THREE.Object3D; shin: THREE.Object3D }[] = [];
-/** How much of the knee's bend the lower piece of a long coat's skirt follows. */
-const FOLD_FOLLOW = 0.85;
+/** How much of the knee's bend the lower piece of a long coat's skirt follows: cloth bends less than a leg. */
+const FOLD_FOLLOW = 0.6;
+/** How far down a long coat's hem hangs, in the torso's units: a little below the knee. */
+const COAT_HEM = -3.7;
+/** How far a long coat's upper and lower skirt pieces overlap above and below the knee, so a bend opens no gap. */
+const FOLD_OVERLAP = 0.7;
 /** Set by makeFigure for the figure being built: eyes that light only while a spell is cast (see Look.glowOnCast). */
 let castEyes: THREE.Object3D[] = [];
 /** The front of a long (wizard's) beard on the figure being built, if it has one: where an amulet goes. */
@@ -4187,7 +4252,7 @@ function coatPanel(part: Part, color: string, s: number, a0: number, a1: number,
   const all: [number, number, number, number][] = [
     [1.4, 2.85 * (1 + m.hips) * 0.5 + grow, 2 + grow, 0.05],
     [0.2, Math.max(3.1 * m.hips, thighReach(0.2) + 0.1) + grow, 2.25 + grow, 0],
-    [-4.6, Math.max(3.5 * m.hips, thighReach(0.2) + 0.25) + grow, 2.7 + grow, -0.2],
+    [COAT_HEM, Math.max(3.4 * m.hips, thighReach(0.2) + 0.25) + grow, 2.6 + grow, -0.15],
   ];
   // Only the stretch from `span`'s top to its bottom (a skirt folded at the knee is two): the rings inside it, and
   // one at each end, between the rings either side of it.
@@ -5302,14 +5367,16 @@ function person(top: THREE.Group, look: Look, outfit: Outfit | undefined, asleep
         const thigh = (s > 0 ? b.thighL : b.thighR).joint;
         // Folded at the knee: the upper skirt turns with the thigh, and below the knee a second piece, hinged
         // there, bends with the shin, so the hem follows the lower leg as it kicks back.
+        // The two overlap round the knee, the lower just inside the upper, so a bend slides one under the other
+        // instead of opening a gap between them.
         const knee = KNEE * m.legs;
-        coatPanel(skirt, coatCloth, s, 0.42, Math.PI + 0.05, SKIRT_EASE, [1.4, knee]);
-        coatPanel(skirt, edgeColor, s, 0.38, 0.52, SKIRT_EASE + 0.06, [1.4, knee]);
+        coatPanel(skirt, coatCloth, s, 0.42, Math.PI + 0.05, SKIRT_EASE, [1.4, knee - FOLD_OVERLAP]);
+        coatPanel(skirt, edgeColor, s, 0.38, 0.52, SKIRT_EASE + 0.06, [1.4, knee - FOLD_OVERLAP]);
         const fold = new Part(skirt.joint, 0, knee - SKIRT_PIVOT, 0);
         fold.skin.position.y = -knee;
         fold.skin.scale.set(m.girth, 1, m.girth);
-        coatPanel(fold, coatCloth, s, 0.42, Math.PI + 0.05, SKIRT_EASE, [knee, -4.6]);
-        coatPanel(fold, edgeColor, s, 0.38, 0.52, SKIRT_EASE + 0.06, [knee, -4.6]);
+        coatPanel(fold, coatCloth, s, 0.42, Math.PI + 0.05, SKIRT_EASE - 0.14, [knee + FOLD_OVERLAP, COAT_HEM]);
+        coatPanel(fold, edgeColor, s, 0.38, 0.52, SKIRT_EASE - 0.08, [knee + FOLD_OVERLAP, COAT_HEM]);
         extraParts.push(skirt, fold);
         skirts.push({ joint: skirt.joint, thigh, fold: fold.joint, shin: (s > 0 ? b.shinL : b.shinR).joint });
       }
@@ -5351,6 +5418,20 @@ function person(top: THREE.Group, look: Look, outfit: Outfit | undefined, asleep
   }
   if (lowPoly && !body && !undressed) {
     const rings = chestRings(m.shoulders / m.girth);
+    if (look.coat) {
+      // The coat's front edges, trimmed, carried up from the skirts over the chest to the collar: the same line as
+      // the skirts' edge, so it reads as one coat from the hem to the neck.
+      const trimEdge = look.coatTrim ?? look.accent;
+      for (const s of [-1, 1]) {
+        const line = [1.3, 2.4, 3.5, 4.5, 5.3, 5.95].map((y, i, ys): Pt => {
+          const r = ringAt(rings, y);
+          // It turns out a little toward the shoulder at the top, a lapel opening round the neck.
+          const a = 0.47 + 0.25 * Math.max(0, (i - (ys.length - 3)) / 2);
+          return [s * Math.sin(a) * (r.rx + 0.16), y, Math.cos(a) * (r.rz + 0.16) + r.dz];
+        });
+        for (let i = 0; i + 1 < line.length; i++) strut(torso, trimEdge, line[i], line[i + 1], 0.17);
+      }
+    }
     if (look.coat && look.coatColor) {
       // The coat over the chest, all round the back and up over the shoulders to a collar at the neck, open down
       // the front where the shirt shows.
@@ -7055,6 +7136,7 @@ export function makeFigure(kind: string, look: Look, outfit?: Outfit, opts: Figu
   extraParts = [];
   braids = [];
   dangles = [];
+  spinners = [];
   bodyParts = [];
   beardFront = null;
   castEyes = [];
@@ -7081,6 +7163,7 @@ export function makeFigure(kind: string, look: Look, outfit?: Outfit, opts: Figu
   for (const part of allParts) part.build(mats, made);
   const swinging = braids;
   const loose = dangles;
+  const turners = spinners;
   const spellEyes = castEyes;
   const hems = skirts;
   const pace = castPace;
@@ -7223,6 +7306,7 @@ export function makeFigure(kind: string, look: Look, outfit?: Outfit, opts: Figu
     }
     if (swinging.length > 0) swingBraids(swinging, anim);
     if (loose.length > 0) swingDangles(loose, first ? 0 : dt, top, body);
+    if (turners.length > 0) turnSpinners(turners, first ? 0 : dt);
     // A long coat's skirts swing with the legs under them, forward and back and out to the side.
     for (const h of hems) {
       h.joint.rotation.set(h.thigh.rotation.x * SKIRT_FOLLOW, 0, h.thigh.rotation.z * SKIRT_FOLLOW);
