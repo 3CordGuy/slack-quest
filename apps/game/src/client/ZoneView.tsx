@@ -617,6 +617,22 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
             const them = find(ev.target);
             view?.bless(ev.id, them ? point(them.pos) : null);
             if (them) timers.current.push(setTimeout(() => fxs.way(point(user.pos, 0.05), point(them.pos, 0.05), look.color), 260));
+          } else if (look.kind === "snuff") {
+            // Every light put out at once: a crescent moon over each that was lit.
+            const lit = covered.map((p) => point(p));
+            const toward = lit[0] ?? point(user.pos);
+            cast(ev.id, ev.name, toward.x, toward.z, () => lit.forEach((p, i) => timers.current.push(setTimeout(() => fxs.snuff(p, look.color), i * 70))));
+          } else if (look.kind === "chart" && aim) {
+            cast(ev.id, ev.name, aim.x, aim.z, () => fxs.chart(from, aim, look.color));
+          } else if (look.kind === "starfire") {
+            // Starfire on whoever it is for, for as long as the picture shows them carrying it.
+            const holder = ev.target ?? ev.id;
+            const them = find(holder);
+            view?.bless(ev.id, holder !== ev.id && them ? point(them.pos) : null);
+            const holding = () => !!shownNow.current?.units.find((u) => u.id === holder && u.hp > 0)?.conditions.some((c) => c.kind === "north_star");
+            timers.current.push(
+              setTimeout(() => fxs.starfire({ key: `star:${holder}`, follow: () => renderer.current?.unitHead(holder) ?? null, holding }, look.color, ev.what === "north_star"), 260),
+            );
           } else if (look.kind === "bomb") {
             // A bomb tossed to the ally, and one popped into the user's own hand (both, if they keep both).
             const ally = ev.target && ev.target !== ev.id ? find(ev.target) : null;
@@ -803,6 +819,19 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
             };
             return view?.blow(ev.actor!, ev.target, what, { crit: hit && ev.crit, landed: hit, onImpact: landedBlow, color: mine && ABILITIES[mine.what] ? mine.look.color : undefined });
           }
+          if (fxs && from && to && target && kind === "drench") {
+            // A bolt of seawater, bursting on them and spraying whoever stands beside them.
+            const end = hit ? to : to.clone().add(new THREE.Vector3(0.7, 0.5, 0.5));
+            const beside = draft.units.filter((u) => u.side === target.side && u.id !== target.id && u.hp > 0 && hexDistance(u.pos, target.pos) === 1).map((u) => point(u.pos, 0.6));
+            cast(ev.actor!, what, to.x, to.z, () =>
+              fxs.launch("bolt", from, end, color, () => {
+                view?.landed(ev.target, what, hit, hit && ev.crit, ev.actor);
+                mark();
+                if (hit) fxs.drench(end, color, beside);
+              }),
+            );
+            return;
+          }
           if (fxs && from && to && target && kind === "harpoon") {
             // Fired from the gun on a line: on a hit, Harpoon Shot's line goes taut and hauls them in, Barbed Line's barb
             // is reeled home; a miss stands in the ground beyond them.
@@ -945,7 +974,7 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
         later(() => {
           sounds.heal(blowName(ev.what), view?.whereIs(ev.target));
           const healed = find(ev.target);
-          if (healed) spells.current?.motes(point(healed.pos, 0.3), use?.look.kind === "bless" || use?.look.kind === "way" ? use.look.color : "#7dff9a", !!use?.look.notes);
+          if (healed) spells.current?.motes(point(healed.pos, 0.3), use?.look.kind === "bless" || use?.look.kind === "way" || use?.look.kind === "starfire" ? use.look.color : "#7dff9a", !!use?.look.notes);
           view?.glint(ev.target, "#7dff9a");
           view?.floatOver(ev.target, `+${ev.amount}`, "#7dff9a");
         });
@@ -1507,6 +1536,9 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
       return { from, to, height: SpellFx.arcHeight(aimKind(pick.id) === "arrow" ? "arrow" : "bolt", distance) + (tactic.shape === "blast" ? 0.6 : 0), color: wrong ? "#ff6b6b" : "#fff1c9" };
     })();
     layer.current?.setArc(aimed);
+    // Charting a course: a compass rose glowing over the hex the mark would go on.
+    const charting = !!z && !!act && pick?.kind === "ability" && !!tacticOf(pick.id).chart && !!hover;
+    layer.current?.setCompass(charting ? { from: act!.pos, at: hover!, wrong: !!checkAbility(z!, act!, pick!.id, { at: hover! }) } : null);
   }, [z, act, pick, hover]);
 
   // ---------- acting ----------

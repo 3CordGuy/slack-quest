@@ -238,6 +238,24 @@ const sigilTex = painted(128, 128, (ctx) => {
     last = p;
   }
 });
+/** A crescent moon, white, to be tinted: New Moon's mark where a light was put out. */
+const moonTex = painted(64, 64, (ctx) => {
+  ctx.fillStyle = "#1b1830";
+  ctx.beginPath();
+  ctx.arc(32, 32, 27, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "#ffffff";
+  ctx.beginPath();
+  ctx.arc(32, 32, 24, 0, Math.PI * 2);
+  ctx.fill();
+  // Bitten out of the white to leave the crescent, its inner edge inked.
+  ctx.globalCompositeOperation = "destination-out";
+  ctx.beginPath();
+  ctx.arc(43, 26, 21, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.globalCompositeOperation = "source-over";
+});
+
 /** The Black Spot: a ragged black blot on a scrap of old paper, splattered at its edge. */
 const blotTex = painted(64, 64, (ctx) => {
   ctx.fillStyle = "#e8dcc0";
@@ -2467,6 +2485,95 @@ export class SpellFx {
       this.flash(chest, paler(color, 0.4), 0.8);
       this.fling(chest, paler(color, 0.3), 3, { out: 0.4, up: 0.6, fall: 0, life: 0.5, kind: "spark", size: 0.6 });
     });
+  }
+
+  /**
+   * A light put out (New Moon), over someone it was lit on: a pale halo over them drawn in to nothing, a dark crescent
+   * moon flashing up in its place, and a burst of shadow motes as the dark strikes.
+   */
+  snuff(at: THREE.Vector3, color: string) {
+    const head = at.clone().setY(at.y + 1.3);
+    const halo = this.halo(head, "#fff3c4", 1.4, 0.9);
+    const moon = this.add(new THREE.Sprite(new THREE.SpriteMaterial({ map: moonTex(), color, transparent: true, opacity: 0, depthTest: false })));
+    moon.renderOrder = 8;
+    moon.position.copy(head);
+    this.run([halo, moon], (age) => {
+      const pull = Math.min(1, age / 0.25);
+      halo.scale.setScalar(1.4 * (1 - pull));
+      halo.material.opacity = 0.9 * (1 - pull);
+      const m = Math.max(0, Math.min(1, (age - 0.2) / 0.6));
+      moon.scale.setScalar(0.9 * springOut(Math.min(1, (age - 0.2) / 0.15)) * (m > 0 ? 1 : 0));
+      moon.material.opacity = m < 0.7 ? 1 : (1 - m) / 0.3;
+      return age < 0.85;
+    });
+    this.later(0.22, () => {
+      this.fling(at.clone().setY(at.y + 0.8), "#2a2440", 10, { out: 1.8, up: 1.6, fall: 3, life: 0.5 });
+      this.fling(at.clone().setY(at.y + 0.8), color, 5, { out: 1.4, up: 1.4, fall: 3, life: 0.45 });
+    });
+  }
+
+  /**
+   * A course charted (Chart a Course): a red flare shot high from the Sage and dropping onto the mark, bursting there
+   * in red sparkles over the X the map paints on it.
+   */
+  chart(from: THREE.Vector3, at: THREE.Vector3, color: string) {
+    const top = at.clone().setY(at.y + 2.2);
+    this.launch("bolt", from, top, color, () => {
+      this.flash(top, color, 1.6);
+      this.lightUp(at, color, 10, 5, 0.6);
+      this.fling(top, paler(color, 0.3), 10, { out: 1.2, up: 0.5, fall: 3, life: 0.9, kind: "spark", size: 0.55 });
+      this.ring(at.clone().setY(at.y + 0.02), 1.1, color, 0.5);
+    });
+  }
+
+  /**
+   * Starfire on someone (North Star, St Elmo's Fire): a twinkling star over their head and pale flames of it dancing
+   * round their shoulders, following them, for as long as `bind.holding()` says it lasts. `star` makes the star the
+   * North Star's: bigger, and flashing as it rises.
+   */
+  starfire(bind: Binding, color: string, star: boolean) {
+    let released = false;
+    const release = () => {
+      released = true;
+    };
+    this.bound.get(bind.key)?.();
+    this.bound.set(bind.key, release);
+    const crown = this.speck("spark", paler(color, 0.3), new THREE.Vector3(), 0);
+    crown.renderOrder = 8;
+    const wisps = Array.from({ length: 3 }, (_, i) => ({ s: this.halo(new THREE.Vector3(), color, 0.4, 0), a: (i / 3) * Math.PI * 2 }));
+    let gone = -1;
+    let flashed = false;
+    this.run([crown, ...wisps.map((w) => w.s)], (age) => {
+      const head = bind.follow();
+      if (gone < 0 && (released || !head || (age > GRACE && !bind.holding()) || age > 600)) gone = age;
+      const k = gone < 0 ? Math.min(1, age / 0.4) : Math.max(0, 1 - (age - gone) / 0.5);
+      if (head) {
+        if (star && !flashed) {
+          flashed = true;
+          this.flash(head.clone().setY(head.y + 0.5), color, 1.8);
+          this.lightUp(head, color, 12, 4, 0.6);
+        }
+        const twinkle = 0.75 + 0.25 * Math.sin(age * 7);
+        crown.position.copy(head).add(new THREE.Vector3(0, 0.45 + Math.sin(age * 2) * 0.05, 0));
+        crown.scale.setScalar((star ? 0.9 : 0.6) * twinkle * k);
+        for (const w of wisps) {
+          const a = w.a + age * 2.4;
+          w.s.position.copy(head).add(new THREE.Vector3(Math.cos(a) * 0.4, -0.45 + Math.sin(age * 5 + w.a) * 0.12, Math.sin(a) * 0.4));
+          w.s.scale.setScalar(0.38 * (0.8 + 0.3 * Math.sin(age * 9 + w.a)));
+          w.s.material.opacity = 0.75 * k;
+        }
+      }
+      if (k <= 0 && gone >= 0 && this.bound.get(bind.key) === release) this.bound.delete(bind.key);
+      return gone < 0 || k > 0;
+    });
+  }
+
+  /** Seawater bursting off someone struck (Water Burst): drops thrown out round them, a ring of water, and spray over each enemy beside them. */
+  drench(at: THREE.Vector3, color: string, beside: THREE.Vector3[]) {
+    this.fling(at, color, 14, { out: 2.4, up: 2.8, fall: 9, life: 0.6, kind: "drop" });
+    this.fling(at, "#ffffff", 5, { out: 1.8, up: 2.2, fall: 9, life: 0.45, kind: "drop" });
+    this.ring(at.clone().setY(at.y - 0.75), 1.9, color, 0.45);
+    for (const b of beside) this.fling(b, color, 6, { out: 0.9, up: 2, fall: 9, life: 0.5, kind: "drop" });
   }
 
   /** One music note floating off `at`: out along `angle` at `speed`, bobbing, sinking or swirling as the mood has it, and fading over `life`. */
