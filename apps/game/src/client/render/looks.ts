@@ -37,6 +37,8 @@ export interface Look {
   vest?: string;
   /** Leather of this colour: a strap from the shoulder across the chest, and a belt with pouches at the hips. */
   straps?: string;
+  /** Kelp of this colour growing up round the torso from the waist to the shoulders, in winding vines with fronds. */
+  vines?: string;
   /** Bands of this colour round the chest over the tunic, like a lighthouse's. */
   stripes?: string;
   /** A scallop shell of this colour on each shoulder. */
@@ -76,8 +78,8 @@ export const LOOKS: Record<string, Look> = {
   // with pouches, and two knives.
   refactor_rogue: { skin: "#d9a67c", hair: "#1f1c22", body: "#5a5a3e", legs: "#3d3e2e", accent: "#7a3a34", hat: "none", weapon: "daggers", bandana: "#8a8370", coat: true, coatColor: "#2a3038", coatTrim: "#1c2126", straps: "#5a3d26", boots: "#1f1f22" },
   // The Druid tends the reef: a crown of branching coral on a band of kelp, a sea-green tunic, a scallop shell on
-  // each shoulder, and a kelp sash whose ends sway with the tide.
-  backend_druid: { skin: "#c99a74", hair: "#4a3a26", body: "#2f6b5e", legs: "#3a4a3a", accent: "#ff8a6b", hat: "coral", hatColor: "#ef7a5f", weapon: "root_staff", sash: "#3d6b2e", shell: "#f0dcc8" },
+  // each shoulder, kelp growing up round the torso, and a kelp sash whose ends sway with the tide.
+  backend_druid: { skin: "#c99a74", hair: "#4a3a26", body: "#2f6b5e", legs: "#3a4a3a", accent: "#ff8a6b", hat: "coral", hatColor: "#ef7a5f", weapon: "root_staff", sash: "#3d6b2e", shell: "#f0dcc8", vines: "#8a7a2a" },
   // The Bard sings at the capstan: a red bandana knotted at the side, a sleeveless linen shirt under a weathered teal vest, a red
   // sash, olive trousers and boots.
   frontend_bard: { skin: "#d9a67c", hair: "#3a2a20", body: "#e3d9c0", legs: "#4f5440", accent: "#e0b12e", hat: "kerchief", hatColor: "#a8322a", knotSide: true, weapon: "lute", sleeveless: true, vest: "#4f6463", sash: "#a8322a", straps: "#5a3d26", boots: "#4a3426" },
@@ -92,27 +94,30 @@ export const LOOKS: Record<string, Look> = {
   // glowing purple.
   data_warlock: { skin: "#a3aca4", hair: "#2a2f2c", body: "#1f2e2b", legs: "#1a1f1e", accent: "#b06cff", hat: "tricorn", hatColor: "#1d2624", weapon: "grimoire", coat: true, coatTrim: "#a8863a", sash: "#6b2230", bandana: "#6b2230", glowEyes: "#c48bff", glowOnCast: true, mask: "#2c3a39", boots: "#1d1f1f", barnacles: true },
   // Traveling salesmen (packages/world/src/salesman.ts): each one easy to tell from the crew at a glance.
-  salesman_curio: { skin: "#f1d3b8", hair: "#1f1a24", body: "#5b2f63", legs: "#2a1838", accent: "#e0b12e", hat: "brim", hatColor: "#2a1f2e", weapon: "lantern", coat: true },
-  salesman_plans: { skin: "#d9a67c", hair: "#9a9aa2", body: "#2f5f73", legs: "#24323a", accent: "#e8dcc0", hat: "kerchief", hatColor: "#3f6fa8", weapon: "scroll" },
-  salesman_far: { skin: "#b07a52", hair: "#2a1c14", body: "#c96a2a", legs: "#4a2f1e", accent: "#2f8c8a", hat: "turban", hatColor: "#f2e6c8", weapon: "pack", coat: true },
-  salesman_herbs: { skin: "#e3c2a2", hair: "#ececec", body: "#5a6b3a", legs: "#3e4a2a", accent: "#a6d06a", hat: "hood", weapon: "basket" },
-  // The pub's regulars (packages/world/src/regulars.ts): Harbor folk, plainer than the salesmen.
-  regular_gretta: { skin: "#e8b891", hair: "#c9743a", body: "#2f8c8a", legs: "#3a404c", accent: "#e8dcc0", hat: "kerchief", hatColor: "#b9433d", weapon: "basket" },
-  regular_pike: { skin: "#d9a67c", hair: "#d9d9e3", body: "#2d3a5a", legs: "#1f2433", accent: "#e0b12e", hat: "brim", hatColor: "#1f2433", weapon: "none", coat: true },
-  regular_wen: { skin: "#c9a27c", hair: "#5a3d22", body: "#a0683a", legs: "#4a3a26", accent: "#e8dcc0", hat: "none", weapon: "club" },
-  regular_moss: { skin: "#f1c9a5", hair: "#ececec", body: "#3f6fa8", legs: "#2d357a", accent: "#f2d675", hat: "hood", hatColor: "#5b6475", weapon: "lantern", coat: true },
-  regular_dacey: { skin: "#b07a52", hair: "#1a1424", body: "#3a3030", legs: "#1f1f1f", accent: "#b9433d", hat: "hood", hatColor: "#2a2a35", weapon: "pack" },
+  salesman_curio: { skin: "#f1d3b8", hair: "#1f1a24", body: "#5b2f63", legs: "#2a1838", accent: "#e0b12e", hat: "brim", hatColor: "#2a1f2e", weapon: "lantern", coat: true, coatTrim: "#c9a24a", vest: "#3a1f42", straps: "#4a2a3a", boots: "#2a1f2e" },
+  salesman_plans: { skin: "#d9a67c", hair: "#9a9aa2", body: "#e3dccb", legs: "#24323a", accent: "#e8dcc0", hat: "kerchief", hatColor: "#3f6fa8", knotSide: true, weapon: "scroll", vest: "#2f5f73", straps: "#5a3d26", boots: "#3a2c22" },
+  salesman_far: { skin: "#b07a52", hair: "#2a1c14", body: "#c96a2a", legs: "#4a2f1e", accent: "#2f8c8a", hat: "turban", hatColor: "#f2e6c8", weapon: "pack", coat: true, coatTrim: "#2f8c8a", sash: "#2f8c8a", boots: "#4a2f1e" },
+  salesman_herbs: { skin: "#e3c2a2", hair: "#ececec", body: "#5a6b3a", legs: "#3e4a2a", accent: "#a6d06a", hat: "hood", weapon: "basket", coat: true, coatTrim: "#3a4a2a", sash: "#3d6b2e", teeth: "#a6d06a" },
+  // The pub's regulars (packages/world/src/regulars.ts): Harbor folk, plainer than the salesmen. Gretta mends nets in a
+  // work apron; Bosun Pike keeps his gold-edged coat and mustache; Wen the carpenter works bare-armed in a leather
+  // apron; Old Moss, who kept the lighthouse, wears an oilskin coat and sou'wester; Dacey, a smuggler allegedly,
+  // dresses like one.
+  regular_gretta: { skin: "#e8b891", hair: "#c9743a", body: "#2f8c8a", legs: "#3a404c", accent: "#e8dcc0", hat: "kerchief", hatColor: "#b9433d", knotSide: true, weapon: "basket", sleeveless: true, apron: "#c9b98f", boots: "#3a2c22" },
+  regular_pike: { skin: "#d9a67c", hair: "#d9d9e3", body: "#2d3a5a", legs: "#1f2433", accent: "#e0b12e", hat: "brim", hatColor: "#1f2433", weapon: "none", coat: true, coatTrim: "#c9a24a", mustache: "walrus", boots: "#141820" },
+  regular_wen: { skin: "#c9a27c", hair: "#5a3d22", body: "#d8cfb4", legs: "#4a3a26", accent: "#e8dcc0", hat: "none", weapon: "club", bandana: "#5a3d22", sleeveless: true, apron: "#8a6440", boots: "#3a2c22" },
+  regular_moss: { skin: "#f1c9a5", hair: "#ececec", body: "#3f6fa8", legs: "#2d357a", accent: "#f2d675", hat: "brim", hatColor: "#d1a83c", weapon: "lantern", coat: true, coatColor: "#d1a83c", coatTrim: "#a8862a", mustache: "bushy", boots: "#2a2420" },
+  regular_dacey: { skin: "#b07a52", hair: "#1a1424", body: "#3a3030", legs: "#1f1f1f", accent: "#b9433d", hat: "none", weapon: "pack", bandana: "#b9433d", coat: true, coatColor: "#20242b", coatTrim: "#141820", straps: "#3a2a1c", boots: "#141414" },
   // The contract dealer by the pillar in the pub (packages/world/src/pub.ts): a broker in a long coat with a scroll of terms.
-  dealer: { skin: "#e3b48c", hair: "#3a2a20", body: "#6b1f2a", legs: "#2a2228", accent: "#e0b12e", hat: "brim", hatColor: "#2a2228", weapon: "scroll", coat: true },
-  // The keepers of the smithy and the apothecary (packages/world/src/keepers.ts): the smith in a leather apron with her
-  // forging hammer, a red kerchief keeping her hair out of the fire; the apothecary in a long green coat and hood
+  dealer: { skin: "#e3b48c", hair: "#3a2a20", body: "#e3dccb", legs: "#2a2228", accent: "#e0b12e", hat: "brim", hatColor: "#2a2228", weapon: "scroll", coat: true, coatColor: "#6b1f2a", coatTrim: "#c9a24a", vest: "#3a1418", boots: "#1f1a1c" },
+  // The keepers of the smithy and the apothecary (packages/world/src/keepers.ts): the smith bare-armed in a leather apron
+  // with her forging hammer, a red kerchief knotted at the side keeping her hair out of the fire; the apothecary in a long green coat and hood
   // (a hood, not a wide hat, so the brim does not hide his stirring), with the paddle he stirs his cauldron with.
-  keeper_smith: { skin: "#d9a67c", hair: "#3a2a20", body: "#6b4a34", legs: "#3a3030", accent: "#8b95a5", hat: "kerchief", hatColor: "#b9433d", weapon: "smith_hammer" },
-  keeper_apothecary: { skin: "#e8c2a0", hair: "#d9d9e3", body: "#3e6a44", legs: "#2a3a2e", accent: "#f2d675", hat: "hood", hatColor: "#2f5a3a", weapon: "paddle", coat: true },
+  keeper_smith: { skin: "#d9a67c", hair: "#3a2a20", body: "#6b4a34", legs: "#3a3030", accent: "#8b95a5", hat: "kerchief", hatColor: "#b9433d", knotSide: true, weapon: "smith_hammer", sleeveless: true, apron: "#4a3426", boots: "#2a2220" },
+  keeper_apothecary: { skin: "#e8c2a0", hair: "#d9d9e3", body: "#3e6a44", legs: "#2a3a2e", accent: "#f2d675", hat: "hood", hatColor: "#2f5a3a", weapon: "paddle", coat: true, coatTrim: "#c9a24a", straps: "#4a3426" },
   // The galley's cook: a big, weathered man with small beady eyes, a great red nose and a heavy black mustache, in a slate shirt under a stained linen
   // apron, a cook's cloth cap wound round his head, and the cleaver he is never seen without.
   keeper_cook: { skin: "#c98f68", hair: "#2a1c14", body: "#5f6f7a", legs: "#4a3a2e", accent: "#7a3a22", hat: "turban", hatColor: "#ece7d8", weapon: "cleaver", mustache: "walrus", apron: "#e2d9c2", nose: "bulbous", eyes: "beady" },
-  npc: { skin: "#e8b891", hair: "#b9b9b9", body: "#a0683a", legs: "#5a4632", accent: "#e8dcc0", hat: "none", weapon: "none" },
+  npc: { skin: "#e8b891", hair: "#b9b9b9", body: "#e3dccb", legs: "#5a4632", accent: "#e8dcc0", hat: "none", weapon: "none", stripes: "#2d3a5a", boots: "#3a2c22" },
   // Fight enemies, made over for the sea. The Bandit is a deckhand raider: a red kerchief knotted at the side, a
   // shirt banded in navy, a leather vest, a sash, and a cutlass.
   bandit: { skin: "#d9a67c", hair: "#3a2a20", body: "#e3dccb", legs: "#3a3a3a", accent: "#8a2a2a", hat: "kerchief", hatColor: "#8a2a2a", knotSide: true, weapon: "cutlass", stripes: "#2d3a5a", vest: "#4a3426", sash: "#5a2a2a", boots: "#2a2220" },

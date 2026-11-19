@@ -775,6 +775,8 @@ interface Want {
   boat?: "barrel" | "rowboat";
   /** The way to face, about y: the two sides of a fight face each other. Otherwise a unit keeps the way it last walked. */
   face?: number;
+  /** A townsperson's id, which picks their face and hair (see makeFigure's `face`). */
+  faceKey?: string;
   /** On a stool: how high its seat is off the floor. `pos` is then the stool's own spot. */
   seat?: number;
   /** Unseen (Sneak): drawn thinned out, a ghost of itself. */
@@ -6020,7 +6022,7 @@ export class WorldRenderer {
       if (!poi || state.npcs[npc.id]?.hostile) continue;
       const pos = this.standAt(poi.pos);
       pos.x += 0.62;
-      want.set(`npc:${npc.id}`, { kind: "npc", pos, size: 1.4 });
+      want.set(`npc:${npc.id}`, { kind: "npc", pos, size: 1.4, faceKey: npc.id });
     }
     // Bands loose on the island, drawn where they stand while a hero can see them.
     for (const band of state.roamers ?? []) {
@@ -6074,7 +6076,7 @@ export class WorldRenderer {
       let unit = this.units.get(id);
       const seen = !!unit;
       if (!unit) {
-        const figure = makeFigure(w.kind, lookFor(w.kind), w.outfit, { asleep: w.asleep, rod: w.rod });
+        const figure = makeFigure(w.kind, lookFor(w.kind), w.outfit, { asleep: w.asleep, rod: w.rod, face: w.faceKey });
         for (const f of flamesIn(figure.root)) this.liveFlames.add(f);
         figure.root.position.copy(w.pos);
         this.unitGroup.add(figure.root);
