@@ -63,6 +63,12 @@ export interface Kit {
    * catch up (see figures.ts). In a picture they stay as built.
    */
   spin(pivot: V3, axis: V3, build: () => void): void;
+  /**
+   * Build one of a set of shapes that flash in turn (a bolt of lightning, each a different fork): in a hero's hand
+   * one or none of them shows at a time, changing many times a second (see figures.ts). In a picture only the
+   * first is drawn.
+   */
+  flicker(build: () => void): void;
 }
 
 /** What a group made by Kit.spin carries in its userData. */
@@ -195,6 +201,40 @@ function dagger(k: Kit) {
   // the rarity in the hand.
   k.ring(0.8, 0.3, k.a, { at: [0, -3.5, 0], rot: [Math.PI / 2, 0, 0] }, 4, 10);
   k.within({ at: [0, -4.1, 0], scale: 0.7 }, () => swordKnot(k, [0, 0, 0]));
+}
+
+/** A straight bar from `a` to `b`, `r` thick: one stroke of something drawn in straight lines (a bolt of lightning). */
+function bar(k: Kit, a: V3, b: V3, r: number, paint: Paint) {
+  const from = v3(a);
+  const along = v3(b).sub(from);
+  const turn = new THREE.Euler().setFromQuaternion(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), along.clone().normalize()));
+  const mid = from.addScaledVector(along, 0.5);
+  k.cyl(r, r, along.length() + r, 4, paint, { at: [mid.x, mid.y, mid.z], rot: [turn.x, turn.y, turn.z] });
+}
+
+/**
+ * A bolt of lightning down the face of a glass `R` round, from `top` to `bottom` (heights), turned `turn` round
+ * from the front: a jagged line of short straight strokes, kinked hard left and right, with a fork splitting
+ * off part way. `seed` makes each bolt its own.
+ */
+function lightning(k: Kit, turn: number, R: number, top: number, bottom: number, seed: number, paint: Paint) {
+  let s = seed;
+  const rnd = () => (s = (s * 9301 + 49297) % 233280) / 233280;
+  const on = (a: number, y: number): V3 => [Math.sin(turn + a / R) * R, y, Math.cos(turn + a / R) * R];
+  const steps = 6;
+  const path: { across: number; y: number }[] = [];
+  for (let i = 0; i <= steps; i++) {
+    const y = top - ((top - bottom) * (i + (i > 0 && i < steps ? (rnd() - 0.5) * 0.5 : 0))) / steps;
+    path.push({ across: i === 0 ? 0 : (i % 2 ? 1 : -1) * (0.3 + rnd() * 0.45), y });
+  }
+  for (let i = 0; i < steps; i++) bar(k, on(path[i].across, path[i].y), on(path[i + 1].across, path[i + 1].y), 0.12, paint);
+  // A fork off one of the kinks, out and down to the side it kinked toward.
+  const fork = path[2 + Math.floor(rnd() * 2)];
+  const out = Math.sign(fork.across) || 1;
+  const knee = { across: fork.across + out * 0.55, y: fork.y - 0.6 };
+  const tip = { across: knee.across - out * 0.25, y: knee.y - 0.7 };
+  bar(k, on(fork.across, fork.y), on(knee.across, knee.y), 0.09, paint);
+  bar(k, on(knee.across, knee.y), on(tip.across, tip.y), 0.07, paint);
 }
 
 /**
@@ -377,22 +417,38 @@ export const LOW_POLY: Record<string, LowPolyDef> = {
     },
   },
   "wizard-staff": {
+    // The Squall Staff: a straight ash staff with a rope grip, and at its head a storm glass, a brass cage round
+    // a glass with a dark squall turning inside it and lightning zapping through.
     lean: DIAG,
     build: (k) => {
-      // A length of driftwood, crooked and grey, grown over with barnacles and hung with kelp; at its head the
-      // wood twists up and curls over a stone glowing pale blue.
-      const drift = "#7d6e5a";
-      k.rod([[0, -10, 0], [0.4, -6, 0.2], [-0.3, -2, -0.2], [0.35, 2, 0.15], [-0.2, 6, 0], [0.2, 7.6, 0]], 0.62, drift, {}, 6);
-      whipping(k, [0.2, -1, 0], 0.85, 2.6);
-      for (const [y, x, z, r] of [[4.2, 0.55, 0.3, 0.38], [5, -0.5, 0.25, 0.32], [3.3, -0.2, -0.6, 0.3], [-5.5, 0.6, 0.2, 0.34], [-6.6, -0.35, 0.45, 0.28]]) {
-        k.ball(r, "#cfc6b0", { at: [x, y, z], scale: [1, 0.7, 1] });
+      const ash = "#b48d5e";
+      k.cyl(0.58, 0.68, 17.4, 6, ash, { at: [0, -1.5, 0] });
+      k.cyl(0.78, 0.62, 1, 6, C.gold, { at: [0, -10.3, 0] });
+      whipping(k, [0, -1, 0], 0.78, 3.4);
+      k.cyl(0.95, 0.78, 1, 8, C.gold, { at: [0, 6.9, 0] });
+      // The cage: a cap below and above, four bars between, and a ring to hang it by.
+      k.cyl(2.25, 2.0, 0.8, 8, C.gold, { at: [0, 7.7, 0] });
+      k.cyl(2.0, 2.25, 0.8, 8, C.gold, { at: [0, 13.7, 0] });
+      k.cone(1.6, 1.3, 8, C.gold, { at: [0, 14.75, 0] });
+      k.ring(0.6, 0.18, C.gold, { at: [0, 15.75, 0] }, 4, 10);
+      for (let i = 0; i < 4; i++) {
+        const t = (i / 4) * Math.PI * 2 + Math.PI / 4;
+        k.cyl(0.2, 0.2, 5.6, 4, C.gold, { at: [Math.cos(t) * 1.95, 10.7, Math.sin(t) * 1.95] });
       }
-      for (const [x, z] of [[0.6, 0.4], [-0.55, -0.3]]) k.rod([[x, 6.4, z], [x * 1.4, 4.6, z], [x * 0.9, 3, z * 1.2], [x * 1.3, 1.6, z]], 0.15, "#7a7a2c", {}, 4);
-      for (let i = 0; i < 3; i++) {
-        const a = (i / 3) * Math.PI * 2 + 0.5;
-        k.rod([[0.2, 7.4, 0], [Math.cos(a) * 2.1, 9.2, Math.sin(a) * 2.1], [Math.cos(a) * 1.9, 11.4, Math.sin(a) * 1.9], [Math.cos(a + 1) * 0.8, 12.2, Math.sin(a + 1) * 0.8]], 0.38, drift, {}, 5);
+      // Glints on the glass, between the bars.
+      for (const t of [0.25, Math.PI - 0.25]) k.box(0.14, 4.2, 0.14, C.shine, { at: [Math.sin(t) * 1.8, 10.9, Math.cos(t) * 1.8] });
+      // The squall: dark storm cloud filling the glass and swirling round in it, lightning forking down through it.
+      k.spin([0, 10.7, 0], [0, 1, 0], () => {
+        for (let i = 0; i < 7; i++) {
+          const t = i * 2.4;
+          const y = 8.6 + i * 0.7;
+          k.ball(1.05 + (i % 2) * 0.15, ["#46505e", "#5b6574", "#6f7a8a"][i % 3], { at: [Math.cos(t) * 0.55, y, Math.sin(t) * 0.55] }, 1);
+        }
+      });
+      // Lightning zapping through it: a different fork each flash, round the glass, now here, now there, now none.
+      for (const [turn, seed] of [[0, 11], [1.7, 47], [-1.4, 83], [3.0, 131], [0.6, 197]] as const) {
+        k.flicker(() => lightning(k, turn, 1.75, 13.0, 8.4, seed, { glow: "#eefaff" }));
       }
-      k.ball(1.6, { glow: "#8fe0ff" }, { at: [0, 10, 0] }, 1);
     },
   },
   "scroll-unfurled": {
@@ -1324,6 +1380,7 @@ export function buildLowPoly(name: string, accent: string, inHand = false): { mo
   const root = new THREE.Group();
   const parents: THREE.Object3D[] = [root];
   const top = () => parents[parents.length - 1];
+  let flickers = 0;
   const add: Kit["add"] = (geo, paint, p) => {
     const mesh = new THREE.Mesh(geo, Array.isArray(paint) ? paint.map(material) : material(paint));
     place(mesh, p);
@@ -1374,6 +1431,15 @@ export function buildLowPoly(name: string, accent: string, inHand = false): { mo
     dangle: (pivot, bob, build, opts) => {
       const g = new THREE.Group();
       g.userData.dangle = { pivot, bob, ...opts } satisfies Dangle;
+      top().add(g);
+      parents.push(g);
+      build();
+      parents.pop();
+    },
+    flicker: (build) => {
+      if (!inHand && flickers++ > 0) return;
+      const g = new THREE.Group();
+      g.userData.flicker = true;
       top().add(g);
       parents.push(g);
       build();
