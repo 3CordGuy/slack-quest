@@ -47,8 +47,6 @@ export interface Look {
   teeth?: string;
   /** The colour of a long coat (its skirts, sleeves and fronts), where it is not the body's. */
   coatColor?: string;
-  /** A long coat's skirts folded at the knee, the lower piece bending with the shin (a trial on the Rogue). */
-  coatFolds?: boolean;
   /** The colour of a long coat's edges, where it is not the accent. */
   coatTrim?: string;
   /** Barnacles and a little coral grown over the shoulders, as on something long under the sea. */
@@ -76,7 +74,7 @@ export const LOOKS: Record<string, Look> = {
   devops_mage: { skin: "#e8c4a6", hair: "#6b5440", body: "#2f5f5c", legs: "#2a2d2c", accent: "#7fd8ff", hat: "hood", hatColor: "#24403e", weapon: "staff", coat: true, coatTrim: "#1f3836", sash: "#3a6d70", glowEyes: "#8fe0ff", glowOnCast: true, teeth: "#3fb8a8", boots: "#2a2622" },
   // The Rogue is a smuggler: a cloth band round the brow, a long dark coat over an olive shirt, belts and straps
   // with pouches, and two knives.
-  refactor_rogue: { skin: "#d9a67c", hair: "#1f1c22", body: "#5a5a3e", legs: "#3d3e2e", accent: "#7a3a34", hat: "none", weapon: "daggers", bandana: "#8a8370", coat: true, coatColor: "#2a3038", coatTrim: "#1c2126", coatFolds: true, straps: "#5a3d26", boots: "#1f1f22" },
+  refactor_rogue: { skin: "#d9a67c", hair: "#1f1c22", body: "#5a5a3e", legs: "#3d3e2e", accent: "#7a3a34", hat: "none", weapon: "daggers", bandana: "#8a8370", coat: true, coatColor: "#2a3038", coatTrim: "#1c2126", straps: "#5a3d26", boots: "#1f1f22" },
   // The Druid tends the reef: a crown of branching coral on a band of kelp, a sea-green tunic, a scallop shell on
   // each shoulder, and a kelp sash whose ends sway with the tide.
   backend_druid: { skin: "#c99a74", hair: "#4a3a26", body: "#2f6b5e", legs: "#3a4a3a", accent: "#ff8a6b", hat: "coral", hatColor: "#ef7a5f", weapon: "root_staff", sash: "#3d6b2e", shell: "#f0dcc8" },

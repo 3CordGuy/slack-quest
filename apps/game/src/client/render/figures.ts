@@ -3195,9 +3195,9 @@ const SKIRT_PIVOT = 0.15;
 const SKIRT_FOLLOW = 1;
 /** How far a long coat's skirts stand off the legs, so a bent knee stays inside the cloth. */
 const SKIRT_EASE = 0.18;
-/** Set by makeFigure for the figure being built: a long coat's two skirts and the thigh each swings with. */
-let skirts: { joint: THREE.Object3D; thigh: THREE.Object3D; fold?: THREE.Object3D; shin?: THREE.Object3D }[] = [];
-/** How much of the knee's bend the lower piece of a skirt folded at the knee follows. */
+/** Set by makeFigure for the figure being built: a long coat's two skirts, each folded at the knee, and the leg each swings with. */
+let skirts: { joint: THREE.Object3D; thigh: THREE.Object3D; fold: THREE.Object3D; shin: THREE.Object3D }[] = [];
+/** How much of the knee's bend the lower piece of a long coat's skirt follows. */
 const FOLD_FOLLOW = 0.85;
 /** Set by makeFigure for the figure being built: eyes that light only while a spell is cast (see Look.glowOnCast). */
 let castEyes: THREE.Object3D[] = [];
@@ -4182,7 +4182,6 @@ function lowUndershirt(torso: Part, skin: string, sh: number) {
  * each a slice of a flaring ring from `a0` to `a1` (radians from +z, toward +x), a little thick.
  */
 function coatPanel(part: Part, color: string, s: number, a0: number, a1: number, grow = 0, span?: [top: number, bottom: number]) {
-  const pts: Pt[] = [];
   const steps = 6;
   // The skirts flare over the hips, wider for wide ones, and out over the tops of the thighs.
   const all: [number, number, number, number][] = [
@@ -4199,13 +4198,19 @@ function coatPanel(part: Part, color: string, s: number, a0: number, a1: number,
     return [y, p[1] + (q[1] - p[1]) * t, p[2] + (q[2] - p[2]) * t, p[3] + (q[3] - p[3]) * t];
   };
   const rings = span ? [at(span[0]), ...all.filter(([y]) => y < span[0] && y > span[1]), at(span[1])] : all;
-  for (let i = 0; i <= steps; i++) {
-    const a = a0 + ((a1 - a0) * i) / steps;
-    for (const [y, rx, rz, dz] of rings) {
-      for (const k of [1, 0.82]) pts.push([s * Math.sin(a) * rx * k, y, Math.cos(a) * rz * k + dz]);
+  // A thin shell of cloth, hollow inside: built as small curved tiles, one per step round and per band down, each
+  // the smallest solid holding its corners on the outer face and the same a cloth's thickness further in. (One
+  // solid round the whole arc would fill the inside of the curve, a slab between the legs.)
+  const thick = 0.16;
+  const on = (a: number, [y, rx, rz, dz]: [number, number, number, number], inset: number): Pt => [s * Math.sin(a) * (rx - inset), y, Math.cos(a) * (rz - inset) + dz];
+  for (let i = 0; i < steps; i++) {
+    const [p, q] = [a0 + ((a1 - a0) * i) / steps, a0 + ((a1 - a0) * (i + 1)) / steps];
+    for (let j = 0; j + 1 < rings.length; j++) {
+      const pts: Pt[] = [];
+      for (const a of [p, q]) for (const r of [rings[j], rings[j + 1]]) for (const inset of [0, thick]) pts.push(on(a, r, inset));
+      part.shape(color, pts);
     }
   }
-  part.shape(color, pts);
 }
 
 /** An arm in a sleeve with a cuff, from the shoulder joint down. */
@@ -5295,25 +5300,18 @@ function person(top: THREE.Group, look: Look, outfit: Outfit | undefined, asleep
         skirt.skin.scale.set(m.girth, 1, m.girth);
         const coatCloth = greatcoat ? cloth : look.coatColor ?? cloth;
         const thigh = (s > 0 ? b.thighL : b.thighR).joint;
-        if (look.coatFolds) {
-          // Folded at the knee: the upper skirt turns with the thigh, and below the knee a second piece, hinged
-          // there, bends with the shin, so the hem follows the lower leg as it kicks back.
-          const knee = KNEE * m.legs;
-          coatPanel(skirt, coatCloth, s, 0.42, Math.PI + 0.05, SKIRT_EASE, [1.4, knee]);
-          coatPanel(skirt, edgeColor, s, 0.38, 0.52, SKIRT_EASE + 0.06, [1.4, knee]);
-          const fold = new Part(skirt.joint, 0, knee - SKIRT_PIVOT, 0);
-          fold.skin.position.y = -knee;
-          fold.skin.scale.set(m.girth, 1, m.girth);
-          coatPanel(fold, coatCloth, s, 0.42, Math.PI + 0.05, SKIRT_EASE, [knee, -4.6]);
-          coatPanel(fold, edgeColor, s, 0.38, 0.52, SKIRT_EASE + 0.06, [knee, -4.6]);
-          extraParts.push(skirt, fold);
-          skirts.push({ joint: skirt.joint, thigh, fold: fold.joint, shin: (s > 0 ? b.shinL : b.shinR).joint });
-          continue;
-        }
-        coatPanel(skirt, coatCloth, s, 0.42, Math.PI + 0.05, SKIRT_EASE);
-        coatPanel(skirt, edgeColor, s, 0.38, 0.52, SKIRT_EASE + 0.06);
-        extraParts.push(skirt);
-        skirts.push({ joint: skirt.joint, thigh });
+        // Folded at the knee: the upper skirt turns with the thigh, and below the knee a second piece, hinged
+        // there, bends with the shin, so the hem follows the lower leg as it kicks back.
+        const knee = KNEE * m.legs;
+        coatPanel(skirt, coatCloth, s, 0.42, Math.PI + 0.05, SKIRT_EASE, [1.4, knee]);
+        coatPanel(skirt, edgeColor, s, 0.38, 0.52, SKIRT_EASE + 0.06, [1.4, knee]);
+        const fold = new Part(skirt.joint, 0, knee - SKIRT_PIVOT, 0);
+        fold.skin.position.y = -knee;
+        fold.skin.scale.set(m.girth, 1, m.girth);
+        coatPanel(fold, coatCloth, s, 0.42, Math.PI + 0.05, SKIRT_EASE, [knee, -4.6]);
+        coatPanel(fold, edgeColor, s, 0.38, 0.52, SKIRT_EASE + 0.06, [knee, -4.6]);
+        extraParts.push(skirt, fold);
+        skirts.push({ joint: skirt.joint, thigh, fold: fold.joint, shin: (s > 0 ? b.shinL : b.shinR).joint });
       }
     } else {
       for (const s of [-1, 1]) {
@@ -7228,7 +7226,7 @@ export function makeFigure(kind: string, look: Look, outfit?: Outfit, opts: Figu
     // A long coat's skirts swing with the legs under them, forward and back and out to the side.
     for (const h of hems) {
       h.joint.rotation.set(h.thigh.rotation.x * SKIRT_FOLLOW, 0, h.thigh.rotation.z * SKIRT_FOLLOW);
-      if (h.fold && h.shin) h.fold.rotation.x = h.shin.rotation.x * FOLD_FOLLOW;
+      h.fold.rotation.x = h.shin.rotation.x * FOLD_FOLLOW;
     }
     if (spellEyes.length > 0) {
       // Eyes that light with a spell: swelling up as it gathers, brightest as it leaves, and out again after.
