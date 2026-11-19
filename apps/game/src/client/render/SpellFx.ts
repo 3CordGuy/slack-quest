@@ -510,6 +510,11 @@ export class SpellFx {
     return m;
   }
 
+  /** How long a hurled pike takes to fly `distance`, in seconds. */
+  static pikeTime(distance: number): number {
+    return Math.max(0.2, Math.min(0.6, distance / 14));
+  }
+
   /** How long a thunderclap takes to reach what is `distance` off, in seconds: the bolt on the hand, then the crossing. */
   static thunderTime(distance: number): number {
     return THUNDER_LEAD + Math.max(0.18, Math.min(0.45, distance / 16));
@@ -1846,6 +1851,156 @@ export class SpellFx {
       if (k >= 1) set(high, 0);
       return k < 1;
     });
+  }
+
+  /**
+   * A pike hurled from `from` at `to`: a long wooden shaft with a steel head, inked as the figures are, flying flat and
+   * true. `onLand` runs as it strikes. With `drag` (it took), a rope is left strung from the thrower's hand to whoever
+   * it struck, following them as they are hauled in, and then slack and gone. With `stuck` (it missed, and `to` is the
+   * ground beyond them), it is left standing in the ground a moment, quivering, and then fades. Returns how long the
+   * flight takes.
+   */
+  pike(from: THREE.Vector3, to: THREE.Vector3, onLand?: () => void, drag?: { hand: () => THREE.Vector3 | null; caught: () => THREE.Vector3 | null }, stuck = false): number {
+    const time = SpellFx.pikeTime(from.distanceTo(to));
+    const g = this.add(new THREE.Group());
+    const ink = new THREE.MeshBasicMaterial({ color: OUTLINE, side: THREE.BackSide, transparent: true });
+    // Each piece with its ink: a shell a little larger round it, as the figures are drawn.
+    const piece = (geometry: THREE.BufferGeometry, color: string, scale: [number, number, number], at: [number, number, number], turn = 0) => {
+      const m = new THREE.Mesh(geometry, flat(color));
+      m.scale.set(...scale);
+      m.position.set(...at);
+      m.rotation.x = turn;
+      const edge = new THREE.Mesh(geometry, ink);
+      edge.scale.set(1 + 0.03 / scale[0], 1 + 0.03 / scale[1], 1 + 0.03 / scale[2]);
+      m.add(edge);
+      g.add(m);
+      return m;
+    };
+    piece(shaft, "#8a6238", [0.08, 0.08, 1.5], [0, 0, 0]);
+    piece(arrowhead, "#e6ebf1", [0.13, 0.38, 0.13], [0, 0, 0.92], Math.PI / 2);
+    piece(shaft, "#c9d0d8", [0.05, 0.2, 0.05], [0, 0.09, 0.66]);
+    const height = SpellFx.arcHeight("arrow", from.distanceTo(to)) * 0.5;
+    let t = 0;
+    this.live.push({
+      step: (dt) => {
+        t += dt / time;
+        const at = SpellFx.arcPoint(from, to, height, Math.min(1, t));
+        g.position.copy(at);
+        g.lookAt(SpellFx.arcPoint(from, to, height, Math.min(1, t) + 0.02));
+        if (t < 1) return true;
+        onLand?.();
+        if (stuck) {
+          // Standing in the ground where it came down, head buried, quivering, then gone.
+          this.chips(to, "#8f7a62", 3, 0.06);
+          const lean = g.quaternion.clone();
+          this.run([g], (age) => {
+            g.quaternion.copy(lean).multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), Math.sin(age * 40) * 0.08 * Math.max(0, 1 - age / 0.5)));
+            const fade = Math.max(0, Math.min(1, (age - 0.9) / 0.4));
+            g.traverse((o) => {
+              const m = (o as THREE.Mesh).material as THREE.Material | undefined;
+              if (m) m.opacity = 1 - fade;
+            });
+            return fade < 1;
+          });
+          return false;
+        }
+        this.drop(g);
+        this.flash(to, "#fff1c9", 0.9);
+        this.fling(to, "#e8e4da", 6, { out: 1.4, up: 1.4 });
+        if (drag) this.tether(drag.hand, drag.caught);
+        return false;
+      },
+    });
+    return time;
+  }
+
+  /** A rope strung between two moving points (a thrower's hand and what their pike caught), taut a while, then sagging and gone. */
+  private tether(hand: () => THREE.Vector3 | null, caught: () => THREE.Vector3 | null) {
+    const N = 12;
+    const edge = new Ribbon(N, tinted(OUTLINE, 0.8, streakTex()));
+    const rope = new Ribbon(N, tinted("#b48a55", 1, streakTex()));
+    edge.mesh.renderOrder = 4;
+    rope.mesh.renderOrder = 5;
+    this.add(edge.mesh);
+    this.add(rope.mesh);
+    let a = hand();
+    let b = caught();
+    this.run([edge.mesh, rope.mesh], (age) => {
+      a = hand() ?? a;
+      b = caught() ?? b;
+      if (!a || !b) return false;
+      const k = Math.min(1, age / 1.4);
+      const sag = k < 0.6 ? 0.05 : 0.05 + (k - 0.6) * 1.2;
+      const line = Array.from({ length: N }, (_, i) => {
+        const t = i / (N - 1);
+        return a!.clone().lerp(b!, t).add(new THREE.Vector3(0, -sag * 4 * t * (1 - t), 0));
+      });
+      const o = k < 0.75 ? 1 : (1 - k) / 0.25;
+      edge.material.opacity = 0.8 * o;
+      rope.material.opacity = o;
+      edge.lay(line, () => 0.15, this.eye);
+      rope.lay(line, () => 0.1, this.eye);
+      return k < 1;
+    });
+  }
+
+  /**
+   * A bellowed challenge (Taunt): jagged red crescents of it bursting out every way from the one who roars, a ring
+   * across the ground, and the ground jolted.
+   */
+  shout(feet: THREE.Vector3, color: string) {
+    const mouth = feet.clone().setY(feet.y + 1.1);
+    this.flash(mouth, color, 1.6);
+    this.ring(feet, 2.4, color, 0.45);
+    this.renderer.shake(0.08, 0.25);
+    for (let i = 0; i < 8; i++) {
+      const a = (i / 8) * Math.PI * 2;
+      const to = mouth.clone().add(new THREE.Vector3(Math.cos(a) * 2.2, -0.2, Math.sin(a) * 2.2));
+      this.crescents(mouth, to, color, { count: 2, stagger: 0.06, time: 0.3, size: 0.7, wobble: true });
+    }
+  }
+
+  /** A pixel "!" popping up beside someone's head: a challenge taken up (Taunted). `head` is the top of their head. */
+  exclaim(head: THREE.Vector3, color: string) {
+    // To one side of the name plate over them, not under it.
+    const at = head.clone().add(new THREE.Vector3(0.5, 0.15, 0.1));
+    const s = this.add(new THREE.Sprite(new THREE.SpriteMaterial({ map: fxTexture("bang", color), transparent: true, depthTest: false })));
+    s.renderOrder = 9;
+    s.position.copy(at);
+    this.run([s], (age) => {
+      const k = Math.min(1, age / 1.4);
+      s.scale.setScalar(0.85 * springOut(Math.min(1, age / 0.18)));
+      s.position.y = at.y + Math.min(1, age / 0.18) * 0.15 + Math.sin(age * 9) * 0.02;
+      s.material.opacity = k < 0.75 ? 1 : (1 - k) / 0.25;
+      return k < 1;
+    });
+  }
+
+  /** Steel sparks struck off something (Disarming Chop): a spray of white and steel specks, and a flash. */
+  sparks(at: THREE.Vector3) {
+    this.flash(at, "#e8f0ff", 0.9);
+    this.fling(at, "#dfe5ec", 10, { out: 2.6, up: 2.2, fall: 8, life: 0.4, size: 0.4 });
+    this.fling(at, "#ffe9a8", 5, { out: 2.2, up: 2, fall: 8, life: 0.35, size: 0.36 });
+  }
+
+  /** Someone thrown bodily at another (Overwhelm): a slam of dust and chips round the one struck, and the ground jolted. */
+  slam(at: THREE.Vector3, color: string) {
+    const feet = at.clone().setY(at.y - 0.75);
+    this.flash(at, paler(color, 0.4), 1.4);
+    this.ring(feet, 1.8, "#c9b994", 0.4);
+    this.chips(feet, "#8f7a62", 6, 0.08);
+    for (let i = 0; i < 4; i++) this.smoke(feet.clone().add(new THREE.Vector3(rand(-0.4, 0.4), 0.1, rand(-0.4, 0.4))), "#c9bfa8", 0.9, 0.6);
+    this.renderer.shake(0.12, 0.3);
+  }
+
+  /** The sea breaking on someone braced against it (Against the Waves): spray thrown up against them from one side, and a ring of water. */
+  breaker(at: THREE.Vector3, color: string) {
+    const side = new THREE.Vector3(rand(-1, 1), 0, rand(-1, 1)).normalize();
+    const hit = at.clone().add(side.clone().multiplyScalar(0.45)).setY(at.y + 0.5);
+    this.fling(hit, color, 16, { out: 1.6, up: 3.4, fall: 9, life: 0.7, kind: "drop" });
+    this.fling(hit, "#ffffff", 8, { out: 1.2, up: 3, fall: 9, life: 0.55, kind: "drop" });
+    this.ring(at.clone().setY(at.y - 0.2), 1.6, color, 0.5);
+    for (let i = 0; i < 3; i++) this.smoke(hit.clone().add(new THREE.Vector3(rand(-0.2, 0.2), rand(0, 0.4), rand(-0.2, 0.2))), "#e8f6ff", 0.8, 0.55);
   }
 
   /** One music note floating off `at`: out along `angle` at `speed`, bobbing, sinking or swirling as the mood has it, and fading over `life`. */

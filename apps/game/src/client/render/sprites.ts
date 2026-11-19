@@ -514,7 +514,7 @@ export function bubbleTexture(text: string): { texture: THREE.CanvasTexture; wid
 
 // ---------- battle effects ----------
 
-export type FxKind = "slash" | "bolt" | "arrow" | "burst" | "spark" | "mote" | "dust" | "fleck" | "splash" | "rock" | "note" | "notes";
+export type FxKind = "slash" | "bolt" | "arrow" | "burst" | "spark" | "mote" | "dust" | "fleck" | "splash" | "rock" | "note" | "notes" | "bang";
 
 const fxCache = new Map<string, THREE.CanvasTexture>();
 
@@ -618,6 +618,24 @@ export function fxTexture(kind: FxKind, color: string, flip = false): THREE.Canv
     for (const [x, y] of [[6, 5], [7, 5], [5, 6]] as const) dot(x, y, "#b9b3a6");
     dot(9, 9, "#4a4650");
     dot(10, 8, "#4a4650");
+  } else if (kind === "bang") {
+    // An exclamation mark, the colour with a dark line round it: a challenge taken up (Taunted).
+    const filled = new Set<string>();
+    for (let y = 2; y <= 9; y++) for (const x of [7, 8]) filled.add(`${x},${y}`);
+    for (const x of [6, 9]) for (let y = 3; y <= 6; y++) filled.add(`${x},${y}`);
+    for (let y = 11; y <= 12; y++) for (const x of [7, 8]) filled.add(`${x},${y}`);
+    const edge = "#1b1830";
+    for (let y = 0; y < N; y++) {
+      for (let x = 0; x < N; x++) {
+        if (filled.has(`${x},${y}`)) continue;
+        if ([[1, 0], [-1, 0], [0, 1], [0, -1]].some(([dx, dy]) => filled.has(`${x + dx},${y + dy}`))) dot(x, y, edge);
+      }
+    }
+    for (const key of filled) {
+      const [x, y] = key.split(",").map(Number);
+      dot(x, y);
+    }
+    dot(7, 3, "#ffffff");
   } else if (kind === "note" || kind === "notes") {
     // A music note (a quaver, or two beamed together), in the colour with a dark line round it and a glint on
     // each head, so it reads over grass, water or a dark cave alike.

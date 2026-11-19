@@ -109,7 +109,7 @@ import { useCountdown } from "./ui/useCountdown";
 import { useZone, type ZoneSend } from "./useZone";
 import { Icon } from "./items";
 import { label } from "./labels";
-import { AURA_ABILITIES, GUARDS, SONG_MOOD, SOUND_KIND, SUMMONS, THROW_COLOR, aimKind, fxFor } from "./zone/abilityFx";
+import { AURA_ABILITIES, FLOURISH, GUARDS, SONG_MOOD, SOUND_KIND, SUMMONS, THROW_COLOR, aimKind, fxFor } from "./zone/abilityFx";
 import { COMMON_ICON, ITEM_ICON, abilityIcon } from "./zone/actionIcons";
 import { BAR_SLOTS, assignSlot, barChoices, loadBar, moveSlot, saveBar } from "./zone/hotbar";
 import { believe, foreseeWalk, giveUp, settle, standing, type Ahead } from "./zone/ahead";
@@ -562,6 +562,27 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
                 ),
               );
             }
+          } else if (look.kind === "taunt") {
+            // A bellow, and a "!" over every enemy beside them that hears it.
+            const near = draft.units.filter((u) => u.side !== user.side && u.hp > 0 && hexDistance(u.pos, user.pos) === 1).map((u) => u.id);
+            const go = () => {
+              fxs.shout(point(user.pos, 0.05), look.color);
+              for (const id of near) {
+                const head = view?.unitHead(id);
+                if (head) fxs.exclaim(head, look.color);
+              }
+            };
+            // The roar goes at once: a bellow has no wind-up, and it must come before the "Taunted" it causes. The
+            // figure throws its arms wide and roars alongside it (its own gesture, not a blow).
+            view?.roar(ev.id, ev.name);
+            go();
+          } else if (look.kind === "charge" && ev.target) {
+            // Thrown bodily at them: the blow is the user's own weight, and it slams.
+            const them = find(ev.target);
+            if (them && view) {
+              const at = point(them.pos, 0.8);
+              view.strikeAt(ev.id, at, ev.name, () => fxs.slam(at, look.color));
+            }
           } else if (look.kind === "whirl") {
             const go = () => fxs.whirl(point(user.pos, 0.05), look.color);
             if (view) view.burst(ev.id, ev.name, true, go);
@@ -630,7 +651,10 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
             const on = point((whom ?? user).pos, 0.3);
             timers.current.push(
               setTimeout(() => {
-                if (GUARDS.has(ev.what)) fxs.ward(on, look.color);
+                if (GUARDS.has(ev.what)) {
+                  fxs.ward(on, look.color);
+                  if (ev.what === "against_the_waves") fxs.breaker(on, look.color);
+                }
                 else if (ev.what === "sneak" || ev.what === "smugglers_route") fxs.puff(on);
                 else if (aim && SUMMONS.has(ev.what)) fxs.erupt([aim], look.color, "water");
                 else fxs.motes(on, look.color, !!look.notes);
@@ -687,7 +711,51 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
         later(() => {
           const fxs = spells.current;
           // A class or weapon ability's blow is drawn in its own colour (a torch's swing in fire, a sea slash in sea).
-          if (kind === "melee") return view?.blow(ev.actor!, ev.target, what, { crit: hit && ev.crit, landed: hit, onImpact: mark, color: mine && ABILITIES[mine.what] ? mine.look.color : undefined });
+          if (kind === "melee") {
+            // And what the blow leaves besides its slash (FLOURISH): a shield on the striker hit or miss; sparks, or a
+            // challenge taken up, on a hit.
+            const flourish = mine ? FLOURISH[mine.what] : undefined;
+            const landedBlow = () => {
+              mark();
+              if (!fxs || !flourish) return;
+              if (flourish === "shield" && actor) fxs.ward(point(actor.pos, 0.3), mine!.look.color);
+              else if (hit && flourish === "sparks" && to) fxs.sparks(to);
+              else if (hit && flourish === "goad") {
+                const head = view?.unitHead(ev.target);
+                if (head) fxs.exclaim(head, mine!.look.color);
+              }
+            };
+            return view?.blow(ev.actor!, ev.target, what, { crit: hit && ev.crit, landed: hit, onImpact: landedBlow, color: mine && ABILITIES[mine.what] ? mine.look.color : undefined });
+          }
+          if (fxs && from && to && target && kind === "pike") {
+            // Hurled; on a hit, a rope stays strung from the thrower's hand to them as they are hauled in. A miss
+            // flies past them and sticks in the ground beyond.
+            const past = to.clone().sub(from).setY(0).normalize().multiplyScalar(1.1);
+            const end = hit ? to : point(target.pos, 0.05).add(past);
+            // The thrower's end at their hand; the caught end low on whoever it struck, from their feet, so it goes
+            // down with them if they are knocked flat (their head's height does not, while they fall).
+            const chest = (id: string) => () => view?.unitHead(id)?.add(new THREE.Vector3(0, -0.7, 0)) ?? null;
+            const low = (id: string) => () => view?.unitFeet(id)?.add(new THREE.Vector3(0, 0.45, 0)) ?? null;
+            cast(
+              ev.actor!,
+              what,
+              to.x,
+              to.z,
+              () =>
+                fxs.pike(
+                  from,
+                  end,
+                  () => {
+                    view?.landed(ev.target, what, hit, hit && ev.crit, ev.actor);
+                    mark();
+                  },
+                  hit ? { hand: chest(ev.actor!), caught: low(ev.target) } : undefined,
+                  !hit,
+                ),
+              true,
+            );
+            return;
+          }
           if (fxs && from && to && (kind === "arrow" || kind === "bolt")) {
             // A miss flies wide of the mark.
             const end = hit ? to : to.clone().add(new THREE.Vector3(0.7, 0.5, 0.5));
@@ -750,6 +818,8 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
             mark();
           });
         });
+        // A pike that takes hauls them in (a shove after this): not before it has reached them.
+        if (kind === "pike" && hit && from && to) at += CAST_EMIT_MS + SpellFx.pikeTime(from.distanceTo(to)) * 1000;
         say(hit ? `${name(ev.target)} takes ${ev.amount}${ev.crit ? " (critical hit)" : ""}.` : `${name(ev.actor)} misses ${name(ev.target)}.`);
       } else if (ev.t === "heal") {
         const u = find(ev.target);

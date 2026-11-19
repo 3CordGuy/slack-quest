@@ -39,6 +39,12 @@ export type FxKind =
   | "whirl"
   /** The sky over the hex aimed at turned red (Red Sky at Morning). */
   | "omen"
+  /** A pike hurled at each target, and a rope left strung to them as they are hauled in (Throw Pike). */
+  | "pike"
+  /** A bellowed challenge all round the user, and a "!" over each enemy it reaches (Taunt). */
+  | "taunt"
+  /** The user thrown bodily at the one aimed at, slamming into them (Overwhelm). */
+  | "charge"
   /** A crescent blade of wind flying to each target. */
   | "blade"
   /** Lightning out of the sky onto each target, arcing from one to the next. */
@@ -77,6 +83,12 @@ const sung = (color: string): Fx => ({ kind: "bless", color, notes: true });
 
 /** How each shanty's notes move. */
 export const SONG_MOOD: Record<string, SongMood> = { lively_shanty: "lively", dour_shanty: "dour", windgod_shanty: "wind" };
+/**
+ * What a blow by hand leaves as it lands, besides its slash: a shield gone up round the one who struck (they gain one,
+ * hit or miss), steel sparks off the target, or a "!" over it (it is goaded into coming at them).
+ */
+export const FLOURISH: Record<string, "shield" | "sparks" | "goad"> = { sturdy_blow: "shield", bulwark_strike: "shield", disarming_chop: "sparks", goading_strike: "goad" };
+
 /** How each blow of sound lands: heavy, ringing like a bell, or out of tune. Plain for any not here. */
 export const SOUND_KIND: Record<string, SoundKind> = { lead_by_example: "heavy", peal: "bell", dissonance: "discord" };
 
@@ -93,7 +105,7 @@ const ABILITY_FX: Record<string, Fx> = {
   disarming_chop: fx("melee", "#93c5fd"),
   raise_guard: fx("bless", "#fbbf24"),
   goading_strike: fx("melee", "#ff6b6b"),
-  throw_pike: fx("arrow", "#c9d6e8"),
+  throw_pike: fx("pike", "#c9d6e8"),
   starbeam: fx("beam", "#fff3a8"),
   moonlight: fx("erupt", "#bcd7ff", "shine"),
   focus_light: fx("beam", "#fff3a8"),
@@ -142,10 +154,10 @@ const ABILITY_FX: Record<string, Fx> = {
   chorus: fx("chorus", "#ff6fa8"),
   lead_by_example: fx("sound", "#ffe08a"),
   against_the_waves: fx("bless", "#5fb8ff"),
-  overwhelm: fx("melee", "#ff9a4a"),
+  overwhelm: fx("charge", "#ff9a4a"),
   fortify: fx("erupt", "#c9b48a", "stone"),
   bulwark_strike: fx("melee", "#93c5fd"),
-  taunt: fx("ring", "#ff5a3c"),
+  taunt: fx("taunt", "#ff5a3c"),
   mend: fx("bless", "#7dff9a"),
   coral_field: fx("erupt", "#ff7f6e", "coral"),
   aqueous_regeneration: fx("bless", "#5eead4"),

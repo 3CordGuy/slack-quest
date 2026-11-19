@@ -1805,6 +1805,13 @@ export class WorldRenderer {
     return unit.figure.work(how);
   }
 
+  /** A challenge bellowed (Taunt): the unit throws its arms wide and roars, and is heard. No weapon in it. */
+  roar(actorId: string, name: string) {
+    const unit = this.units.get(actorId);
+    if (unit && !unit.lying) unit.figure.taunt();
+    sounds.attack(name, "melee", this.fighter(actorId), this.spot(actorId));
+  }
+
   /** A guard put up: the unit braces behind its shield, or what it has in hand. */
   brace(actorId: string) {
     const unit = this.units.get(actorId);

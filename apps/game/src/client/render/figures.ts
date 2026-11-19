@@ -1268,7 +1268,7 @@ const GET_UP_HIPS = -1;
  * `n` counts the figure's actions, so two flinches in a row need not be the same.
  */
 interface Act {
-  kind: "strike" | "stab" | "pounce" | "heavy" | "twin" | "cast" | "play" | "fire" | "guard" | "hit" | "hammer" | "stir" | "jump";
+  kind: "strike" | "stab" | "pounce" | "heavy" | "twin" | "cast" | "play" | "fire" | "guard" | "taunt" | "hit" | "hammer" | "stir" | "jump";
   t: number;
   n: number;
   /** A jump's seconds off the ground (see JUMP). */
@@ -1787,6 +1787,20 @@ const FLINCH = {
  * forearm) brought up before the body, held a moment and let down. `hold` is when the guard is up.
  */
 const GUARD = { hold: 0.22, over: 1.2, up: [[0, 0], [0.22, 1], [0.85, 1], [1.2, 0]] as Keys };
+
+/**
+ * A challenge bellowed (Taunt): no weapon in it. The figure draws itself up and back for breath, then throws its
+ * chest forward and its arms out wide, head up, and roars at `roar`, holding it with a shake of the fists before
+ * it lets go. `lean` is forward (below 0 back), `spread` how far the arms are flung, `head` its tip (below 0 up).
+ */
+const TAUNT = {
+  roar: 0.3,
+  over: 1.2,
+  lean: [[0, 0], [0.22, -0.26], [0.32, 0.28], [0.85, 0.22], [1.2, 0]] as Keys,
+  spread: [[0, 0], [0.22, 0.25], [0.32, 1], [0.85, 1], [1.2, 0]] as Keys,
+  head: [[0, 0], [0.22, -0.12], [0.32, -0.35], [0.85, -0.3], [1.2, 0]] as Keys,
+  crouch: [[0, 0], [0.32, 0.22], [0.85, 0.2], [1.2, 0]] as Keys,
+};
 /**
  * A jump from one tile to another. The figure only makes the shapes of it; whoever jumps it carries it through
  * the air (see WorldRenderer.leapUnit). A crouch with the arms drawn back (`coil`), and at `spring` the legs
@@ -1822,7 +1836,7 @@ const BELL_MOUTH = new THREE.Vector3(0, -2.2, 0);
 const HAMMER = { hit: 0.4, over: 0.86, up: [[0, 0.25], [0.3, 1], [0.4, 0], [0.48, 0.18], [0.86, 0.25]] as Keys };
 const STIR = { over: 30, turns: 25 };
 /** How long each kind of action lasts. */
-const ACT_OVER: Record<Act["kind"], number> = { strike: SWING.over, stab: THRUST.over, pounce: POUNCE.over, heavy: SWEEP.over, twin: TWIN.over, cast: CAST.over, play: PLAY.over, fire: FIRE.ends, guard: GUARD.over, hit: FLINCH.over, hammer: HAMMER.over, stir: STIR.over, jump: JUMP.spring + JUMP.land };
+const ACT_OVER: Record<Act["kind"], number> = { strike: SWING.over, stab: THRUST.over, pounce: POUNCE.over, heavy: SWEEP.over, twin: TWIN.over, cast: CAST.over, play: PLAY.over, fire: FIRE.ends, guard: GUARD.over, taunt: TAUNT.over, hit: FLINCH.over, hammer: HAMMER.over, stir: STIR.over, jump: JUMP.spring + JUMP.land };
 /** When each kind of blow lands. */
 const ACT_HIT = { strike: SWING.hit, stab: THRUST.hit, pounce: POUNCE.hit, heavy: SWEEP.hit, twin: TWIN.hit };
 /**
@@ -2233,7 +2247,7 @@ function biped(top: THREE.Group, parts: Part[], elbow = ELBOW) {
     }
     const k = act.kind === "stab" ? THRUST : act.kind === "pounce" ? POUNCE : act.kind === "twin" ? TWIN : SWING;
     // Eased in over the first moments and back out over the last, so it starts and ends wherever the figure was.
-    const over = act.kind === "heavy" ? SWEEP.over : act.kind === "cast" ? CAST.over : act.kind === "play" ? PLAY.over : act.kind === "guard" ? GUARD.over : act.kind === "hammer" || act.kind === "stir" ? ACT_OVER[act.kind] : k.over;
+    const over = act.kind === "heavy" ? SWEEP.over : act.kind === "cast" ? CAST.over : act.kind === "play" ? PLAY.over : act.kind === "guard" ? GUARD.over : act.kind === "taunt" ? TAUNT.over : act.kind === "hammer" || act.kind === "stir" ? ACT_OVER[act.kind] : k.over;
     const fade = Math.min(1, Math.max(0, (over - t) / 0.18));
     const w = Math.min(1, t / 0.05) * fade * fade * (3 - 2 * fade);
     /**
@@ -2376,6 +2390,20 @@ function biped(top: THREE.Group, parts: Part[], elbow = ELBOW) {
       sweep.dir.set(-0.2 * Math.cos(a), -0.68, 0.72 - 0.12 * Math.sin(a)).normalize();
       wield(w, false);
       if (levels.length === 0) reach(armL.joint, foreL.joint, -elbow, elbow - fist, sweep.grip.addScaledVector(sweep.dir, -2.6), sweep.poleL, w);
+      return;
+    }
+    if (act.kind === "taunt") {
+      // Drawn back for breath, then thrown forward: the chest out, the arms flung wide and up, the head back, the
+      // knees planted; held with a shake of the fists, and let go.
+      const open = along(TAUNT.spread, t);
+      bow(along(TAUNT.lean, t), 0);
+      knees(along(TAUNT.crouch, t));
+      head.joint.rotation.x += along(TAUNT.head, t);
+      const shake = t > TAUNT.roar && t < 0.85 ? Math.sin(t * 42) * 0.08 * open : 0;
+      armL.joint.rotation.z += 1.15 * open + shake;
+      armR.joint.rotation.z -= 1.15 * open + shake;
+      armL.joint.rotation.x -= 0.55 * open;
+      armR.joint.rotation.x -= 0.55 * open;
       return;
     }
     if (act.kind === "guard") {
@@ -6235,6 +6263,11 @@ export interface Figure {
    */
   guard(): number;
   /**
+   * Bellow a challenge (Taunt): drawn back for breath, then the chest thrown out and the arms flung wide, roaring.
+   * Returns the seconds until the roar; 0 for a creature, which does nothing.
+   */
+  taunt(): number;
+  /**
    * Work at a trade: `hammer` brings a hammer down on an anvil before the figure, and returns the seconds until it
    * lands, for the sparks and the ring of it to wait; `stir` stirs a pot before it, round and round for half a
    * minute, and returns 0. A creature does nothing and returns 0.
@@ -6509,6 +6542,11 @@ export function makeFigure(kind: string, look: Look, outfit?: Outfit, opts: Figu
       if (!rig.acts) return 0;
       asked = "guard";
       return GUARD.hold;
+    },
+    taunt() {
+      if (!rig.acts) return 0;
+      asked = "taunt";
+      return TAUNT.roar;
     },
     hit() {
       asked = "hit";
