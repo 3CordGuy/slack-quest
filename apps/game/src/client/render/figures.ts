@@ -235,14 +235,22 @@ type Pt = [number, number, number];
 interface LoftShape {
   open?: "start" | "both";
   inward?: boolean;
+  /**
+   * Draw each ring up to a point at its +z side (a hood's peak, when the loft is laid on its side): for each ring,
+   * lowest first, how far past its half-depth the point reaches, as a share of it. Its sides then put a corner,
+   * not a face, at +z, so the point is a point.
+   */
+  apex?: readonly number[];
 }
 
 function loftGeometry(rings: readonly Ring[], sides: number, shape: LoftShape = {}): THREE.BufferGeometry {
   const sorted = [...rings].sort((p, q) => p[0] - q[0]);
-  const loops = sorted.map(([y, rx, rz, dz = 0]) =>
+  const loops = sorted.map(([y, rx, rz, dz = 0], i) =>
     Array.from({ length: sides }, (_, k) => {
-      const a = ((k + 0.5) / sides) * Math.PI * 2;
-      return new THREE.Vector3(Math.sin(a) * rx, y, Math.cos(a) * rz + dz);
+      const a = ((k + (shape.apex ? 0 : 0.5)) / sides) * Math.PI * 2;
+      // Drawn up to a point at +z: the corner there all the way, its neighbours a little, the rest not at all.
+      const lift = shape.apex ? 1 + (shape.apex[i] ?? 0) * Math.max(0, Math.cos(a)) ** 10 : 1;
+      return new THREE.Vector3(Math.sin(a) * rx, y, Math.cos(a) * rz * lift + dz);
     }),
   );
   const out: number[] = [];
@@ -3769,11 +3777,19 @@ function lowHood(head: Part, c: string, rings: readonly Ring[], trim?: string) {
     [4, 1.2, 1.2, 4.15 - mid],
     [4.5, 0.15, 0.15, 4.05 - mid],
   ];
-  head.shell(c, shell, 12, { open: "start" }, 0, mid, 0, side);
+  // Drawn up to a peak over the brow: the opening itself rises to a point, a pointed arch round the face, and
+  // the point carries back over the crown, easing off toward the back of the head.
+  const apex = [0.9, 0.72, 0.38, 0.12, 0, 0, 0];
+  head.shell(c, shell, 12, { open: "start", apex }, 0, mid, 0, side);
   // The lining round the face, in shadow.
   const lining: Ring[] = shell.slice(0, 3).map(([y, rx, rz, dz = 0]) => [y + 0.05, rx - 0.14, rz - 0.14, dz]);
-  head.shell(tone(c, -0.32), lining, 12, { open: "both", inward: true }, 0, mid, 0, side);
-  if (trim) head.shell(trim, [[-3.45, 2.99 + wide, half + 0.12, 0], [-3.12, 2.99 + wide, half + 0.12, 0]], 12, { open: "both" }, 0, mid, 0, side);
+  head.shell(tone(c, -0.32), lining, 12, { open: "both", inward: true, apex }, 0, mid, 0, side);
+  // Its rim round the face, following the arch: a band of the trim (a worn hood's, or a look's own hood trim), or
+  // else a thin line of outline ink, so the edge of the opening is drawn as every other edge is.
+  // It is a slanted frame, narrower at its front edge than behind, so it faces the viewer and reads as a rim.
+  const rim = (c: string, by: number) =>
+    head.shell(c, [[-3.42, 2.66 + wide, half - 0.2, 0], [-3.2, 2.95 + wide + by, half + 0.1 + by, 0]], 12, { open: "both", apex: [0.95, 0.88] }, 0, mid, 0, side);
+  rim(trim ?? OUTLINE, trim ? 0.12 : 0);
 }
 
 /**
@@ -3919,7 +3935,7 @@ function lowHat(head: Part, look: Look) {
       return;
     }
     case "hood":
-      lowHood(head, look.hatColor ?? look.body, rings);
+      lowHood(head, look.hatColor ?? look.body, rings, look.hoodTrim);
       return;
     case "leaves": {
       // A wreath: a band of twigs, leaves round it, and a berry.
