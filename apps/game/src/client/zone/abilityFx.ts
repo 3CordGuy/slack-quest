@@ -120,6 +120,8 @@ const ABILITY_FX: Record<string, Fx> = {
   encore: fx("bless", "#7dff9a"),
   blasting_tone: fx("beam", "#ff6b6b"),
   soothing_tone: fx("bless", "#5eead4"),
+  bellows_blast: fx("ring", "#f97316"),
+  hornpipe: fx("bless", "#facc15"),
   peal: fx("bolt", "#ffd23f"),
   clarion_call: fx("bless", "#ffd23f"),
   recover: fx("bless", "#ffd23f"),

@@ -113,6 +113,22 @@ const ART: Record<string, Art> = {
     for (const [x, y] of [[5, 11], [7, 9], [9, 7], [11, 5]]) p.r(x, y, 1, 1, C.dark);
     p.r(12, 2, 2, 2, p.accent);
   },
+  accordion: (p) => {
+    // A squeeze box side on: a lacquered end board each side, the pleated bellows between, keys down one board,
+    // buttons on the other, and a strap over the top.
+    const lacquer = "#b8333a";
+    for (let x = 4; x <= 11; x++) p.r(x, 5, 1, 7, x % 2 ? "#8f8470" : C.paper);
+    p.r(1, 3, 3, 11, lacquer);
+    p.r(12, 3, 3, 11, lacquer);
+    for (const x of [1, 12]) {
+      p.r(x, 3, 3, 1, C.gold);
+      p.r(x, 13, 3, 1, C.gold);
+    }
+    for (const y of [5, 7, 9, 11]) p.r(2, y, 1, 1, C.shine);
+    p.r(13, 4, 1, 9, C.bone);
+    for (const y of [5, 7, 10]) p.r(13, y, 1, 1, C.dark);
+    p.r(3, 2, 10, 1, p.accent);
+  },
   orb: (p) => {
     // A glowing sphere on a short haft.
     spans(p, p.accent, [[1, 6, 9], [2, 4, 11], [3, 3, 12], [4, 3, 12], [5, 3, 12], [6, 3, 12], [7, 4, 11], [8, 6, 9]]);

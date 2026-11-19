@@ -685,6 +685,8 @@ export function resolveAbility(ctx: Ctx, unit: Unit, ability: string, aim: Aim &
       if (!saved && tactic.guide && !victim.down) addCondition(ctx, victim, "guiding_light", tactic.guide);
       // Pull of the Deep: whoever fails to brace is dragged under.
       if (!saved && tactic.drowns) drown(ctx, victim, tactic.drowns);
+      // Bellows Blast: whoever fails to brace is blown back, away from the user.
+      for (let k = 0; !saved && k < (tactic.knockback ?? 0) && !victim.down; k++) push(ctx, unit.pos, victim, unit.id);
     }
     // A crate in it takes the lot: it cannot get out of the way.
     if (unit.side === "hero" && def.damage) for (const box of cratesOn(state, area)) hurtCrate(ctx, box, rolled, { actor: unit.id, what: def.id });
