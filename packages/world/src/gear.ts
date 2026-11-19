@@ -125,6 +125,8 @@ const BASES: Record<Exclude<Slot, "main_hand">, Base[]> = {
   body: [
     { ref: "hauberk", name: "Hauberk of Calm Seas", icon: "chest-armor" },
     { ref: "greatcoat", name: "Oilskin Greatcoat", icon: "chest-armor" },
+    // The diving set (with the Diving Helm): riveted iron and brass, as worn on the sea floor.
+    { ref: "diving_plate", name: "Diver's Plate", icon: "chest-armor" },
   ],
   helmet: [
     { ref: "hardhat", name: "Diving Helm", icon: "heavy-helm" },
@@ -134,10 +136,12 @@ const BASES: Record<Exclude<Slot, "main_hand">, Base[]> = {
   legs: [
     { ref: "greaves", name: "Deckhand Greaves", icon: "armored-pants" },
     { ref: "trousers", name: "Sailcloth Trousers", icon: "armored-pants" },
+    { ref: "diving_legs", name: "Riveted Leggings", icon: "armored-pants" },
   ],
   boots: [
     { ref: "boots", name: "Sea Boots", icon: "boots" },
     { ref: "treads", name: "Gangplank Treads", icon: "boots" },
+    { ref: "lead_boots", name: "Lead Boots", icon: "boots" },
   ],
   ring: [
     { ref: "ring", name: "Ring of Steady Tides", icon: "ring" },
