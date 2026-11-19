@@ -234,6 +234,8 @@ const TORCH_IN_HAND = { icon: "torch", ref: "torch", rarity: "common" as const }
 
 /** The breath after several have been struck at once, before the next thing is shown. */
 const AFTER_MANY = 340;
+/** How far into a long gun's firing the shot goes (render/figures.ts FIRE.long.shot), in ms. */
+const LONG_GUN_SHOT_MS = 360;
 /** How far into a heavy swing the blow lands (render/figures.ts SWEEP.hit), in ms. */
 const HEAVY_HIT_MS = 350;
 /** How far into a cast the spell leaves the hand (render/figures.ts CAST.emit), in ms. */
@@ -801,6 +803,28 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
             };
             return view?.blow(ev.actor!, ev.target, what, { crit: hit && ev.crit, landed: hit, onImpact: landedBlow, color: mine && ABILITIES[mine.what] ? mine.look.color : undefined });
           }
+          if (fxs && from && to && target && kind === "harpoon") {
+            // Fired from the gun on a line: on a hit, Harpoon Shot's line goes taut and hauls them in, Barbed Line's barb
+            // is reeled home; a miss stands in the ground beyond them.
+            const haul = mine?.what === "harpoon_shot";
+            const end = hit ? to : point(target.pos, 0.05).add(to.clone().sub(from).setY(0).normalize().multiplyScalar(1.1));
+            const muzzle = () => view?.unitHead(ev.actor!)?.add(new THREE.Vector3(0, -0.6, 0)) ?? null;
+            const caught = () => view?.unitFeet(ev.target)?.add(new THREE.Vector3(0, 0.6, 0)) ?? null;
+            cast(ev.actor!, what, to.x, to.z, () =>
+              fxs.harpoon(
+                from,
+                end,
+                muzzle,
+                !hit ? "stuck" : haul ? "haul" : "reel",
+                () => {
+                  view?.landed(ev.target, what, hit, hit && ev.crit, ev.actor);
+                  mark();
+                },
+                caught,
+              ),
+            );
+            return;
+          }
           if (fxs && from && to && target && kind === "hook") {
             // Thrown on a line from the hand, and yanked back home along it.
             const end = hit ? to : point(target.pos, 0.05).add(to.clone().sub(from).setY(0).normalize().multiplyScalar(0.6));
@@ -912,6 +936,8 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
         });
         // A pike that takes hauls them in (a shove after this): not before it has reached them.
         if (kind === "pike" && hit && from && to) at += CAST_EMIT_MS + SpellFx.pikeTime(from.distanceTo(to)) * 1000;
+        // A harpoon that takes hauls them in too (Harpoon Shot): not before the shot has left the gun and reached them.
+        if (kind === "harpoon" && hit && from && to && mine?.what === "harpoon_shot") at += LONG_GUN_SHOT_MS + SpellFx.harpoonTime(from.distanceTo(to)) * 1000;
         say(hit ? `${name(ev.target)} takes ${ev.amount}${ev.crit ? " (critical hit)" : ""}.` : `${name(ev.actor)} misses ${name(ev.target)}.`);
       } else if (ev.t === "heal") {
         const u = find(ev.target);
