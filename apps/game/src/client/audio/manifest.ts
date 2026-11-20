@@ -97,7 +97,10 @@ export const AUDIO: AudioManifest = {
     // Every one has a built-in sound, heard until a recording is bounced to the path in `files`.
     "zone.roll": { files: "sfx/zone/dice_*", fallback: built("dice"), gainDb: -5, pitch: [-1, 1], cooldown: 0.12 },
     "zone.roll.crit": { files: "sfx/zone/dice_crit_*", fallback: built("dice_crit"), gainDb: -3 },
-    "zone.initiative": { files: "sfx/zone/initiative_*", fallback: built("initiative"), gainDb: -2, cooldown: 2 },
+    // A fight breaking out, as everyone rolls initiative.
+    "zone.initiative": { files: "sfx/combat/battle_initiated", fallback: built("initiative"), cooldown: 2 },
+    // Your turn in a fight (the pub's dice tables have "turn.yours", below).
+    "zone.turn.yours": { files: "sfx/combat/start_turn", fallback: built("your_turn"), cooldown: 1 },
     "zone.turn.enemy": { files: "sfx/zone/enemy_turn_*", fallback: built("enemy_turn"), gainDb: -8, cooldown: 0.4 },
     "zone.reaction": { files: "sfx/zone/opportunity_*", fallback: built("opportunity"), gainDb: -3, reverb: -10 },
     "zone.shove": { files: "sfx/zone/shove_*", fallback: built("shove"), pitch: [-2, 2], reverb: -10 },
@@ -218,9 +221,9 @@ export const AUDIO: AudioManifest = {
     // the piece for that hour plays. A range, such as [120, 240], rests a different length each time.
     harbor_day: { file: "music/harbor_day", fadeIn: 3, fadeOut: 3, gap: 120 },
     harbor_night: { file: "music/harbor_night", fadeIn: 3, fadeOut: 3, gap: 120 },
-    island: { file: "music/island", fadeIn: 3, fadeOut: 3, bpm: 96 },
-    // Comes in on the next bar of whatever was playing.
-    battle: { file: "music/battle", fadeIn: 0.05, fadeOut: 2, bpm: 138, enter: "bar" },
+    // A fight: the start (its own intro, then the piece) plays once, and the loop takes over on the sample
+    // it ends and goes round until the fight is over. Comes in at once.
+    battle: { file: "music/combat_1_loop", intro: "music/combat_1_start", fadeIn: 0.05, fadeOut: 2 },
   },
 
   ambience: {
@@ -245,9 +248,10 @@ export const AUDIO: AudioManifest = {
     // or music: "pub" to replace the music from outside.
     hut: { inside: { of: "harbor", cutoff: 700, gainDb: -3 } },
     pub: { inside: { of: "harbor", cutoff: 700, gainDb: -3 } },
-    island: { music: "island", ambience: ["day", "night", "rain", "rainstorm"] },
-    // Under the rocks: no sky, no weather. The island's music until the caverns have their own.
-    caverns: { music: "island" },
+    // Out on a map there is no music between fights: only the atmosphere.
+    island: { music: null, ambience: ["day", "night", "rain", "rainstorm"] },
+    // Under the rocks: no sky, no weather, and no music between fights. Silent until the caverns have an atmosphere of their own.
+    caverns: { music: null },
     battle: { music: "battle", ambience: ["day", "night", "rain", "rainstorm"] },
   },
 };

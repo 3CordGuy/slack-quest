@@ -55,6 +55,24 @@
    "sampleRate": 44100,
    "channels": 2
   },
+  "music/combat_1_loop": {
+   "urls": {
+    "opus": "/audio/music/combat_1_loop.24745502e0.ogg",
+    "aac": "/audio/music/combat_1_loop.24745502e0.m4a"
+   },
+   "duration": 160,
+   "sampleRate": 44100,
+   "channels": 2
+  },
+  "music/combat_1_start": {
+   "urls": {
+    "opus": "/audio/music/combat_1_start.eced67b1e8.ogg",
+    "aac": "/audio/music/combat_1_start.eced67b1e8.m4a"
+   },
+   "duration": 164,
+   "sampleRate": 44100,
+   "channels": 2
+  },
   "music/harbor_day": {
    "urls": {
     "opus": "/audio/music/harbor_day.d93e803a2c.ogg",
@@ -70,6 +88,24 @@
     "aac": "/audio/music/harbor_night.6ec7bc3487.m4a"
    },
    "duration": 192,
+   "sampleRate": 44100,
+   "channels": 2
+  },
+  "sfx/combat/battle_initiated": {
+   "urls": {
+    "opus": "/audio/sfx/combat/battle_initiated.f483599514.ogg",
+    "aac": "/audio/sfx/combat/battle_initiated.f483599514.m4a"
+   },
+   "duration": 9.3125,
+   "sampleRate": 44100,
+   "channels": 2
+  },
+  "sfx/combat/start_turn": {
+   "urls": {
+    "opus": "/audio/sfx/combat/start_turn.f0ab54aaf2.ogg",
+    "aac": "/audio/sfx/combat/start_turn.f0ab54aaf2.m4a"
+   },
+   "duration": 4.2417,
    "sampleRate": 44100,
    "channels": 2
   },

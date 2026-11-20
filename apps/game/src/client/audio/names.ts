@@ -29,7 +29,7 @@ export const FISHING_SOUNDS = ["cast", "plop", "nibble", "plunge", "bite", "spla
 export type FishingSound = (typeof FISHING_SOUNDS)[number];
 
 /** A fight on the tiles (a zone): the d20 and what it came to, the fight starting, and the things only the tiles have; in a delve, a chest creaking open and a crate struck and broken. */
-export const ZONE_SOUNDS = ["roll", "roll.crit", "initiative", "turn.enemy", "reaction", "shove", "fall", "jump", "throw", "shatter", "burst", "chest_open", "crate_hit", "crate_break"] as const;
+export const ZONE_SOUNDS = ["roll", "roll.crit", "initiative", "turn.yours", "turn.enemy", "reaction", "shove", "fall", "jump", "throw", "shatter", "burst", "chest_open", "crate_hit", "crate_break"] as const;
 export type ZoneSound = (typeof ZONE_SOUNDS)[number];
 /** What can lie on the ground in a zone, and the conditions the tiles add to the old fights' effects. */
 export const SURFACE_SOUNDS = ["poison", "fire", "oil", "water", "ice", "slime"] as const;

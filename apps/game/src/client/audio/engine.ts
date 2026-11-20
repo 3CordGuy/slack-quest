@@ -70,7 +70,9 @@ interface LoopVoice {
   dim: GainNode;
   /** The main file, then each layer: its own level and whatever its curve gives. */
   parts: { file: string; src: AudioBufferSourceNode; gain: GainNode; gainDb: number; follow?: Follow | Follow[] }[];
-  /** When it started on the audio clock (null while loading), and where in the file. */
+  /** The intro heard once before the loop, while it is sounding or still to come. */
+  intro: AudioBufferSourceNode | null;
+  /** When it started on the audio clock (null while loading), and where in the file (less than 0 in an intro). */
   startedAt: number | null;
   offset: number;
   region: { start: number; end: number };
@@ -235,7 +237,7 @@ const follows = (f: Follow | Follow[] | undefined): Follow[] => (!f ? [] : Array
 /** Whether a loop that keeps playing across a change can carry on as it is (a change of level or curve can). */
 function sameTake(a: Loop, b: Loop) {
   const files = (l: Loop) => [l.file, ...(l.layers ?? []).map((x) => x.file)].join("|");
-  return files(a) === files(b) && a.startAt === b.startAt && JSON.stringify(a.loop) === JSON.stringify(b.loop) && JSON.stringify(a.gap) === JSON.stringify(b.gap);
+  return files(a) === files(b) && a.intro === b.intro && a.startAt === b.startAt && JSON.stringify(a.loop) === JSON.stringify(b.loop) && JSON.stringify(a.gap) === JSON.stringify(b.gap);
 }
 
 function safeStorage(): Storage | null {
@@ -779,6 +781,10 @@ export class AudioEngine {
       return false;
     });
     if (have.length === 0 || have[0] !== defs[0]) return;
+    // A piece with a gap plays through from the top, rests, and plays again; anything else goes round its loop.
+    const gapped = def.gap !== undefined;
+    // An intro with no file yet is left out: the loop starts on its own.
+    const introKey = !gapped && def.intro ? (lib.url(def.intro) ? def.intro : (this.report([`${id} (intro "${def.intro}")`]), null)) : null;
     const out = ctx.createGain();
     out.gain.value = 0;
     const filter = ctx.createBiquadFilter();
@@ -787,16 +793,29 @@ export class AudioEngine {
     const dim = ctx.createGain();
     out.connect(filter).connect(dim).connect(bus.groups[group].trim);
     const files = have.map((d) => d.file);
+    const gains = have.map(() => {
+      const gain = ctx.createGain();
+      gain.connect(out);
+      return gain;
+    });
+    // The intro is let go once it has been heard: only the loop stays in memory.
+    let introHeld = introKey !== null;
+    const letIntroGo = () => {
+      if (!introHeld || !introKey) return;
+      introHeld = false;
+      lib.unpin(introKey);
+    };
     let released = false;
     const lv: LoopVoice = {
       id,
       def,
       group,
-      urls: have.map((d) => lib.url(d.file)).join("|"),
+      urls: [...(introKey ? [introKey] : []), ...files].map((f) => lib.url(f)).join("|"),
       out,
       filter,
       dim,
       parts: [],
+      intro: null,
       startedAt: null,
       offset: 0,
       region: { start: 0, end: 0 },
@@ -806,33 +825,60 @@ export class AudioEngine {
       release: () => {
         if (released) return;
         released = true;
-        for (const part of lv.parts) part.gain.disconnect();
+        for (const gain of gains) gain.disconnect();
         dim.disconnect();
         files.forEach((f) => lib.unpin(f));
+        letIntroGo();
       },
     };
     this.loops.set(id, lv);
     this.tone(lv, 0);
     files.forEach((f) => lib.pin(f));
-    const buffers = await Promise.all(files.map((f) => lib.load(f)));
+    if (introKey) lib.pin(introKey);
+    const loading = Promise.all(files.map((f) => lib.load(f)));
     // The scene moved on while it loaded, or the main file would not load.
-    if (this.loops.get(id) !== lv || !buffers[0]) {
+    const dropped = (ok: boolean) => {
+      if (this.loops.get(id) === lv && ok) return false;
       if (this.loops.get(id) === lv) this.loops.delete(id);
       lv.release();
-      return;
-    }
-    // A piece with a gap plays through from the top, rests, and plays again; anything else goes round its loop.
-    const gapped = def.gap !== undefined;
-    // All music shares one rest, so a day piece handing over to a night piece does not start it early.
+      return true;
+    };
+    // A moment ahead, so no stem is late. A piece that was heard to its end less than a rest ago
+    // (you left and came back) waits out what is left of that rest before it starts again.
     const restKey = group === "music" ? "music" : id;
-    const region = gapped ? { start: 0, end: buffers[0].duration } : loopRegion(def, lib.file(def.file), buffers[0].duration);
+    const resume = gapped ? Math.max(0, ((this.restUntil.get(restKey) ?? 0) - performance.now()) / 1000) : 0;
+    let when = 0;
+    let introLength = 0;
+    if (introKey) {
+      // The intro starts as soon as it is ready, and the loop finishes loading under it.
+      const intro = await lib.load(introKey);
+      if (dropped(true)) return;
+      if (intro) {
+        when = Math.max(at, ctx.currentTime + 0.05);
+        const src = ctx.createBufferSource();
+        src.buffer = intro;
+        src.connect(gains[0]);
+        src.onended = () => {
+          if (lv.intro === src) lv.intro = null;
+          letIntroGo();
+        };
+        src.start(when);
+        lv.intro = src;
+        lv.startedAt = when;
+        lv.playAt = when;
+        introLength = intro.duration;
+        // The main file's own level and curve, until the loop takes over its part.
+        gains[0].gain.value = this.followLevel(def.follow);
+        fade(out.gain, when, dbToGain(def.gainDb ?? 0), fadeIn);
+      } else letIntroGo();
+    }
+    const buffers = await loading;
+    if (dropped(!!buffers[0])) return;
+    const region = gapped ? { start: 0, end: buffers[0]!.duration } : loopRegion(def, lib.file(def.file), buffers[0]!.duration);
     const offset = !gapped && def.startAt === "loop" ? region.start : 0;
     const stems = have.flatMap((d, i) => {
       const buffer = buffers[i];
-      if (!buffer) return [];
-      const gain = ctx.createGain();
-      gain.connect(out);
-      return [{ d, buffer, gain, main: i === 0 }];
+      return buffer ? [{ d, buffer, gain: gains[i], main: i === 0 }] : [];
     });
     // Every stem starts on the same sample.
     const play = (at: number) => {
@@ -863,10 +909,18 @@ export class AudioEngine {
         else lv.parts.push({ file: stem.d.file, src, gain: stem.gain, gainDb: stem.main ? 0 : (stem.d.gainDb ?? 0), follow: stem.d.follow });
       });
     };
-    // A moment ahead, so no stem is late. A piece that was heard to its end less than a rest ago
-    // (you left and came back) waits out what is left of that rest before it starts again.
-    const resume = gapped ? Math.max(0, ((this.restUntil.get(restKey) ?? 0) - performance.now()) / 1000) : 0;
-    const when = Math.max(at, ctx.currentTime + 0.05) + resume;
+    if (lv.startedAt !== null) {
+      // After the intro, on the sample it ends (or at once, in the rare case the loop took longer to load than the intro to play).
+      const loopAt = Math.max(when + introLength, ctx.currentTime + 0.05);
+      play(loopAt);
+      lv.playAt = when;
+      // Where the play is on its own timeline: less than 0 through the intro, so the bars count on from it.
+      lv.offset = offset - (loopAt - when);
+      lv.region = region;
+      this.levelParts(lv, 0);
+      return;
+    }
+    when = Math.max(at, ctx.currentTime + 0.05) + resume;
     if (resume > 0) lv.nextAt = when;
     play(when);
     lv.startedAt = when;
@@ -888,9 +942,9 @@ export class AudioEngine {
     const when = resting ? ctx.currentTime : Math.max(ctx.currentTime + wait, lv.startedAt);
     fade(lv.out.gain, when, 0, resting ? 0 : seconds);
     const end = when + (resting ? 0 : seconds) + 0.05;
-    for (const part of lv.parts) {
+    for (const src of [...lv.parts.map((p) => p.src), ...(lv.intro ? [lv.intro] : [])]) {
       try {
-        part.src.stop(end);
+        src.stop(end);
       } catch {
         /* already ended */
       }
@@ -1106,7 +1160,8 @@ export class AudioEngine {
     this.expanded.clear();
     for (const kind of [...this.emitters.keys()]) this.dropEmitter(kind);
     for (const lv of [...this.loops.values()]) {
-      const urls = [lv.def.file, ...(lv.def.layers ?? []).map((l) => l.file)]
+      const intro = lv.def.intro && lv.def.gap === undefined ? [lv.def.intro] : [];
+      const urls = [...intro, lv.def.file, ...(lv.def.layers ?? []).map((l) => l.file)]
         .map((f) => lib.url(f))
         .filter(Boolean)
         .join("|");
@@ -1155,7 +1210,7 @@ export class AudioEngine {
       scene: this.scene,
       loops: [...this.loops.values()].map((lv) => ({
         id: lv.id,
-        parts: lv.parts.map((p) => `${p.file.split("/").pop()} ${(p.gain.gain.value * lv.out.gain.value).toFixed(2)}`),
+        parts: [...(lv.intro ? [`${lv.def.intro?.split("/").pop()} (intro)`] : []), ...lv.parts.map((p) => `${p.file.split("/").pop()} ${(p.gain.gain.value * lv.out.gain.value).toFixed(2)}`)],
         /** Seconds until a resting piece plays again; 0 while it is playing. */
         rest: lv.nextAt !== null && this.ctx ? Math.max(0, lv.nextAt - this.ctx.currentTime) : 0,
       })),
