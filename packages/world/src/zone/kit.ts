@@ -136,6 +136,8 @@ export interface Tactic {
   hide?: { range: number; rounds: number };
   /** Slips the user and the ally a fire bomb each (the user two, used on themselves), good for `rounds` of each one's turns (Contraband). */
   smuggle?: { rounds: number };
+  /** Ally: heals again at the start of the ally's next turns, this many of them: the same dice and the same bonus as the heal now (Rejuvenate). */
+  echo?: number;
   /** Heals at once, then again at the start of each of the ally's turns for some rounds, more for one standing in water (Aqueous Regeneration). */
   regen?: typeof AQUEOUS;
   /** Raises the ally's Defence, and cuts whoever lands a blow on them up close, for some rounds of their turns (Coral Armor). */
@@ -219,7 +221,7 @@ export const WEATHER = {
 };
 
 /** Aqueous Regeneration: the heal again at the start of each of the ally's turns for `rounds`, and `water` more on each heal for one standing in water. */
-export const AQUEOUS = { rounds: 3, tick: { n: 1, d: 4, plus: 2 } satisfies Dice, water: 3 };
+export const AQUEOUS = { rounds: 3, tick: { n: 1, d: 4, plus: 2 } satisfies Dice, water: 2 };
 /** Coral Armor: `defence` more, for `rounds` of the wearer's turns; whoever lands a blow on them up close takes `thorns`. */
 export const CORAL_ARMOR = { defence: 2, rounds: 3, thorns: { n: 1, d: 4, plus: 1 } satisfies Dice };
 /**
@@ -380,7 +382,7 @@ export const TACTICS: Record<string, Tactic> = {
   contraband: mend(5, { cost: 1, cooldown: 4, smuggle: CONTRABAND }),
   // Druid
   thornlash: spell(5),
-  rejuvenate: mend(5, { cooldown: 1 }),
+  rejuvenate: mend(5, { cooldown: 1, echo: 1 }),
   sea_slash: melee({ surface: { kind: "water", rounds: 3, self: true } }),
   binding_kelp: spell(4, { cost: 1, bind: { slowed: 1, stunned: 1 }, cooldown: 1 }),
   coral_burst: spell(3, { shape: "cone", length: 3 }),
@@ -499,6 +501,7 @@ export const SAVE_STAT: Record<Condition, StatKey> = {
   invisible: "agi",
   contraband: "agi",
   regenerating: "vit",
+  rejuvenating: "vit",
   coral_armor: "vit",
   lively_shanty: "int_stat",
   dour_shanty: "int_stat",
@@ -538,6 +541,7 @@ export const CONDITION_INFO: Record<Condition, { name: string; blurb: string; co
   invisible: { name: "Unseen", blurb: "Enemies cannot see it to attack it. Its next roll to hit has advantage, and using any ability (or throwing, or shoving) gives it away.", color: "#b8c4d6" },
   contraband: { name: "Contraband", blurb: "Smuggled fire bombs in the pack, to throw before they are found out.", color: "#ff8a3a" },
   regenerating: { name: "Regenerating", blurb: "Heals at the start of each of its turns, more when it stands in water.", color: "#5eead4" },
+  rejuvenating: { name: "Rejuvenating", blurb: "Heals again at the start of its next turn.", color: "#8be38f" },
   coral_armor: { name: "Coral Armor", blurb: `+${CORAL_ARMOR.defence} Defence, and whoever lands a blow on it up close is cut.`, color: "#ff8f7a" },
   lively_shanty: { name: "Lively Shanty", blurb: `Singing: allies within reach get +${SHANTY.lively.hit} to hit and a little more damage. Each who joins widens it a hex and adds +${SHANTY.lively.surge} to hit until the Bard's next turn.`, color: "#ffb020" },
   dour_shanty: { name: "Dour Shanty", blurb: `Singing: allies within reach get +${SHANTY.dour.defence} Defence. Each who joins widens it a hex and adds +${SHANTY.dour.perJoin} Defence until the Bard's next turn.`, color: "#6f8fff" },

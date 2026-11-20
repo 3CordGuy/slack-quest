@@ -887,8 +887,11 @@ export function resolveAbility(ctx: Ctx, unit: Unit, ability: string, aim: Aim &
     const target = tactic.shape === "ally" && aim.target ? unitById(state, aim.target)! : unit;
     const soaked = tactic.regen && inWater(state, target) ? tactic.regen.water : 0;
     if (def.heal && !tactic.soothe) {
-      const mended = rollShown(ctx.rng, healDice(def), Math.max(0, mod(statOf(unit, def.stat))) + Math.floor(unit.level / 2) + soaked);
+      const bonus = Math.max(0, mod(statOf(unit, def.stat))) + Math.floor(unit.level / 2);
+      const mended = rollShown(ctx.rng, healDice(def), bonus + soaked);
       heal(ctx, target, mended.total, { actor: unit.id, what: def.id, dice: mended });
+      // The same heal again as their next turn starts (Rejuvenate): the bonus kept on the condition, the dice rolled then.
+      if (tactic.echo) addCondition(ctx, target, "rejuvenating", tactic.echo, bonus);
     }
     // A heal that spreads: to every ally beside the one it is aimed at (Clarion Call), or round the user (Soothing Tone).
     const healed = (u: Unit, base: number) => {

@@ -6,8 +6,8 @@ import { hexDistance, posKey, type StatKey } from "@gantt-quest/core";
 import { tileAt } from "../map";
 import type { Rng } from "../rng";
 import { adjacent, close, elevOf, inFight } from "./geometry";
-import { EFFECT_TICK, SUNDERED_DEFENCE } from "../content";
-import { AQUEOUS, AURAS, CORAL_ARMOR, ENEMY_KIT, FORTIFY, NORTH_STAR, SHIELD_SET_ASIDE, enemyDefence, enemySave } from "./kit";
+import { ABILITIES, EFFECT_TICK, SUNDERED_DEFENCE } from "../content";
+import { AQUEOUS, AURAS, CORAL_ARMOR, ENEMY_KIT, FORTIFY, NORTH_STAR, SHIELD_SET_ASIDE, enemyDefence, enemySave, healDice } from "./kit";
 import { inDark } from "./light";
 import { d20, heroDefence, mod, netAdvantage, rollShown, statOf } from "./rules";
 import { songDefence, songHit, windward } from "./song";
@@ -105,11 +105,21 @@ export const defenceOf = (unit: Unit, state?: Pick<ZoneState, "units" | "weather
 /** Whether a unit stands in water (Aqueous Regeneration heals more there). */
 export const inWater = (state: ZoneState, unit: Unit): boolean => state.surfaces[posKey(unit.pos)]?.kind === "water";
 
-/** Aqueous Regeneration comes again as a unit's turn starts (or a round passes out of a fight): more for one standing in water. */
+/**
+ * Heals that come again as a unit's turn starts (or a round passes out of a fight): Aqueous Regeneration, more for one
+ * standing in water, and Rejuvenate's second heal, its dice rolled again with the bonus the first one had.
+ */
 export function regrow(ctx: Ctx, unit: Unit): void {
-  if (unit.down || !has(unit, "regenerating") || unit.hp >= unit.maxHp) return;
-  const rolled = rollShown(ctx.rng, AQUEOUS.tick, inWater(ctx.state, unit) ? AQUEOUS.water : 0);
-  heal(ctx, unit, rolled.total, { actor: null, what: "aqueous_regeneration", dice: rolled });
+  if (unit.down) return;
+  if (has(unit, "regenerating") && unit.hp < unit.maxHp) {
+    const rolled = rollShown(ctx.rng, AQUEOUS.tick, inWater(ctx.state, unit) ? AQUEOUS.water : 0);
+    heal(ctx, unit, rolled.total, { actor: null, what: "aqueous_regeneration", dice: rolled });
+  }
+  const again = unit.conditions.find((c) => c.kind === "rejuvenating");
+  if (again && unit.hp < unit.maxHp) {
+    const rolled = rollShown(ctx.rng, healDice(ABILITIES.rejuvenate), again.amount ?? 0);
+    heal(ctx, unit, rolled.total, { actor: null, what: "rejuvenate", dice: rolled });
+  }
 }
 
 export const saveBonus = (unit: Unit, stat: StatKey): number => (unit.side === "hero" ? mod(statOf(unit, stat)) : enemySave(unit.kind));

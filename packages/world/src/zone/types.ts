@@ -26,7 +26,7 @@ export type Side = "hero" | "enemy";
  * and the Warden's: Taunted, on an enemy (it must go for the Warden who taunted it, if it can);
  * and the Warlock's (drowning.ts), all on an enemy: Drowning (stacks, `amount`), the Curse of Drowning, the Black Spot and Red Sky at Morning.
  */
-export type Condition = EffectKind | "poisoned" | "wet" | "beacon" | "mending" | "bolstered" | "invisible" | "contraband" | "regenerating" | "coral_armor" | ShantyKind | "inspired" | "guiding_light" | "north_star" | "charted" | "taunted" | "drowning" | "drowning_curse" | "black_spot" | "red_sky" | "tailwind";
+export type Condition = EffectKind | "poisoned" | "wet" | "beacon" | "mending" | "bolstered" | "invisible" | "contraband" | "regenerating" | "rejuvenating" | "coral_armor" | ShantyKind | "inspired" | "guiding_light" | "north_star" | "charted" | "taunted" | "drowning" | "drowning_curse" | "black_spot" | "red_sky" | "tailwind";
 
 /** The shanties a Bard sings (song.ts): a condition on the Bard, reaching everyone of theirs nearby. */
 export type ShantyKind = "lively_shanty" | "dour_shanty" | "windgod_shanty";

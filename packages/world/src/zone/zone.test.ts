@@ -12,7 +12,7 @@ import { ALERT_RANGE, DEFAULT_ZONE_OPTIONS, JOIN_RANGE, generateZone, zoneOption
 import { HEX_ROOM, adjacent, blast, blockerAt, flies, isDead, seesFor, solid, stepCost, unitAt, zoneReach } from "./geometry";
 import { propOf } from "./props";
 import { SITE_IDS, backdropOf, siteInside, type SiteId } from "./sites";
-import { ACTION_AP, AP_MAX, AP_TURN, SUMMON_AP_TURN, AURAS, CHART, COMMON_ACTIONS, BLOCK, BONUS_AP, BOLSTER, GUARD_UP, STAND_STRONG, STURDY, ENEMY_BURST, ENEMY_HP_SCALE, ENEMY_KIT, ENEMY_MOVE_AP, EXPLORE_ROUND_MS, FLEE_RANGE, LIGHT_RADIUS, SHIELD_SET_ASIDE, TACTICS, TORCH_GROUND_ROUNDS, TORCH_HELD_ROUNDS, TORCH_ROUND_MS, abilityDice as abilityDiceFor, commonCost, enemyHp, enemyMove, enemyStrikes, tacticOf } from "./kit";
+import { ACTION_AP, AP_MAX, AP_TURN, AQUEOUS, SUMMON_AP_TURN, AURAS, CHART, COMMON_ACTIONS, BLOCK, BONUS_AP, BOLSTER, GUARD_UP, STAND_STRONG, STURDY, ENEMY_BURST, ENEMY_HP_SCALE, ENEMY_KIT, ENEMY_MOVE_AP, EXPLORE_ROUND_MS, FLEE_RANGE, LIGHT_RADIUS, SHIELD_SET_ASIDE, TACTICS, TORCH_GROUND_ROUNDS, TORCH_HELD_ROUNDS, TORCH_ROUND_MS, abilityDice as abilityDiceFor, commonCost, enemyHp, enemyMove, enemyStrikes, tacticOf } from "./kit";
 import { MAX_CATCHUP_ROUNDS } from "./clock";
 import { d20, diceAverage, diceFor, heroMove, hitChance } from "./rules";
 import { createZone, ensureMouth, spentOut, standInHero, stepZone, zoneView } from "./zone";
@@ -3508,7 +3508,34 @@ describe("the Druid's class abilities", () => {
     expect(has(state, "bo", "regenerating")).toBe(false);
   });
 
-  it("Aqueous Regeneration: heals 3 more, now and each turn, for one standing in water", () => {
+  it("Rejuvenate: heals now, and the same again at the start of the ally's next turn, then stops", () => {
+    let { state } = party();
+    unit(state, "ann").abilities = [...unit(state, "ann").abilities, "rejuvenate"];
+    unit(state, "bo").hp = 1;
+    const events: ZoneEvent[] = [];
+    state = must(state, use("rejuvenate", { target: "bo" }), events);
+    const first = events.find((e) => e.t === "heal" && e.target === "bo" && e.what === "rejuvenate");
+    if (first?.t !== "heal" || !first.dice) throw new Error("no heal");
+    // 1d8+2, and the Druid's heal bonus on top.
+    expect([first.dice.faces.length, first.dice.d]).toEqual([1, 8]);
+    expect(first.dice.plus).toBeGreaterThanOrEqual(2);
+    expect(has(state, "bo", "rejuvenating")).toBe(true);
+    const again = (evs: ZoneEvent[]) => evs.filter((e) => e.t === "heal" && e.target === "bo" && e.what === "rejuvenate" && e.actor === null);
+    unit(state, "bo").hp = 1;
+    const seen: ZoneEvent[] = [];
+    state = nextTurn(state, seen);
+    const second = again(seen);
+    expect(second).toHaveLength(1);
+    // The same heal: the same dice, and the same bonus on top.
+    expect(second[0].t === "heal" && second[0].dice).toMatchObject({ d: 8, plus: first.dice.plus });
+    unit(state, "bo").hp = 1;
+    const after: ZoneEvent[] = [];
+    state = nextTurn(state, after);
+    expect(again(after)).toHaveLength(0);
+    expect(has(state, "bo", "rejuvenating")).toBe(false);
+  });
+
+  it("Aqueous Regeneration: heals 2 more, now and each turn, for one standing in water", () => {
     const amounts = (wet: boolean) => {
       let { state } = party();
       if (wet) state = paint(state, "water", [at(4, 6)]);
@@ -3522,7 +3549,8 @@ describe("the Druid's class abilities", () => {
     const dry = amounts(false);
     const wet = amounts(true);
     expect(dry).toHaveLength(2);
-    expect(wet).toEqual(dry.map((n) => n + 3));
+    expect(wet).toEqual(dry.map((n) => n + AQUEOUS.water));
+    expect(AQUEOUS.water).toBe(2);
   });
 
   it("Coral Armor: +2 Defence on the ally for 3 of their turns, in reach 3", () => {
@@ -3558,7 +3586,7 @@ describe("the Druid's class abilities", () => {
     expect(cut).toBeGreaterThan(0);
   });
 
-  it("Revitalizing Splash: a big heal over 4 hexes for your side, the fallen got up, enemies passed over, and water left", () => {
+  it("Revitalizing Splash: a heal over 4 hexes for your side, the fallen got up, enemies passed over, and water left", () => {
     let { state } = party();
     const foe = addFoe(state, at(7, 6));
     unit(state, "bo").pos = at(7, 5);
@@ -3571,7 +3599,8 @@ describe("the Druid's class abilities", () => {
     expect(area).toHaveLength(4);
     for (const p of area) expect(state.surfaces[posKey(p)]?.kind).toBe("water");
     expect(unit(state, "bo").down).toBe(false);
-    expect(unit(state, "bo").hp).toBeGreaterThan(8);
+    // Got up from 0 with the heal: 1d8+2 at the least, and the Druid's bonus on top.
+    expect(unit(state, "bo").hp).toBeGreaterThanOrEqual(3);
     expect(events.some((e) => e.t === "heal" && e.target === foe)).toBe(false);
     expect(events.some((e) => e.t === "heal" && e.target === "ann")).toBe(false);
     expect(state.encounter!.budgets.ann.ap).toBeLessThanOrEqual(AP_TURN - ACTION_AP);
