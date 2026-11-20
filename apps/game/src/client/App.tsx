@@ -1,18 +1,23 @@
 // Three places: the screens before you have a character and a crew, the
-// crew's shared Harbor, and an Island (a live voyage). The hash carries the
-// voyage code so it survives a reload (#run/BCDF), or a crew invite
-// (#crew/BCDFGH). #hut/<player id> is the inside of that crew member's hut;
-// #pub, #smithy, #apothecary, #galley and #lapidary are the insides of those
-// buildings.
+// crew's shared Harbor, and a map out through the waygate (a zone). The hash
+// carries the map's code so it survives a reload (#zone/BCDF), or a crew
+// invite (#crew/BCDFGH). #atlas is the crew's atlas; #hut/<player id> is the
+// inside of that crew member's hut; #pub, #smithy, #apothecary, #galley and
+// #lapidary are the insides of those buildings.
 
-import { Suspense, lazy, useCallback, useEffect, useRef, useState } from "react";
-import { isKeeperHouse, type KeeperHouse } from "@gantt-quest/world";
+import { Suspense, isValidElement, lazy, useCallback, useEffect, useRef, useState } from "react";
+import { dismissBoot } from "./boot";
+import { leaveFor } from "./render/handover";
+import { compilesAhead } from "./render/graphics";
+import { placesStaging } from "./render/preload";
+import { KEEPER_HOUSES, isKeeperHouse, type KeeperHouse } from "@gantt-quest/world";
 import { loadMe, type Me } from "./api";
 import { loadContent } from "./content";
-import { AdminView } from "./admin/AdminView";
+// The admin page is loaded on demand (below), but its stylesheet is still read here, where the page used to be
+// imported: loaded late, the sheet would come after every other and win where it now loses. (The other two
+// screens loaded on demand have no sheet of their own.)
+import "./admin/admin.css";
 import { AtlasView } from "./atlas/AtlasView";
-import { CatchGallery } from "./CatchGallery";
-import { DevToolbox } from "./DevToolbox";
 import { Harbor } from "./Harbor";
 import { HarborView } from "./HarborView";
 import { HutView } from "./HutView";
@@ -70,7 +75,9 @@ export function App() {
         setMe(first);
       })
       .catch((e: Error) => setError(e.message));
-    const onHash = () => {
+    // Going somewhere else: the place on the screen leaves its picture up first (render/handover.ts), and the
+    // next is made a frame or two later, over it.
+    const onHash = () => leaveFor(() => {
       setInvite(inviteFromHash());
       setHut(hutFromHash());
       setPub(pubFromHash());
@@ -79,11 +86,13 @@ export function App() {
       setAtlas(atlasFromHash());
       setAdmin(adminFromHash());
       setCatches(catchesFromHash());
-    };
+    });
     window.addEventListener("hashchange", onHash);
     return () => window.removeEventListener("hashchange", onHash);
   }, [refresh]);
 
+  // Nothing to wait for behind the opening screen.
+  if (error) dismissBoot();
   if (error) return <div className="centre"><div className="panel">Something went wrong: {error}</div></div>;
   if (!me) return <div className="centre"><div className="panel">Rowing ashore…</div></div>;
   // On a development deployment (local and staging) the dev toolbox sits in the corner of every screen.
@@ -97,18 +106,75 @@ export function App() {
 
 function Screen({ me, refresh, zone, atlas, invite, hut, pub, keeper, admin, catches }: { me: Me; refresh(): Promise<void>; zone: string | null; atlas: boolean; invite: string | null; hut: string | null; pub: boolean; keeper: KeeperHouse | null; admin: boolean; catches: boolean }) {
   const ready = me.character?.status === "active";
-  if (FightUiLab && location.hash === "#lab/fightui") return <Suspense fallback={null}><FightUiLab me={me} refresh={refresh} /></Suspense>;
-  if (SceneryLab && location.hash === "#lab/scenery") return <Suspense fallback={null}><SceneryLab /></Suspense>;
-  if (admin) return <AdminView me={me} onLeave={() => (location.hash = "")} />;
-  // Every catch's sprite and model, side by side: for admins, and on a development deployment.
-  if (catches && (me.isAdmin || me.devTools || import.meta.env.DEV)) return <CatchGallery onLeave={() => (location.hash = "")} />;
-  if (zone && ready) return <ZoneView key={zone} code={zone} me={me} refresh={refresh} onLeave={() => (location.hash = "")} />;
-  if (atlas && ready && me.crew) return <AtlasView me={me} refresh={refresh} onLeave={() => (location.hash = "")} />;
-  // A voyage or delve link (#run/CODE) lands in the Harbor: both are shut while they are rebuilt on the new combat.
-  if (pub && ready && me.crew) return <PubView me={me} refresh={refresh} onLeave={() => (location.hash = "")} />;
-  if (keeper && ready && me.crew) return <KeeperView key={keeper} shop={keeper} me={me} refresh={refresh} onLeave={() => (location.hash = "")} />;
-  if (hut && ready && me.crew) return <HutView key={hut} ownerId={hut} me={me} refresh={refresh} onLeave={() => (location.hash = "")} />;
-  // An invite to a different crew than your own takes you back to the gate to accept it.
-  if (ready && me.crew && (!invite || invite === me.crew.id)) return <HarborView me={me} refresh={refresh} />;
-  return <Harbor me={me} refresh={refresh} invite={invite} />;
+  const leave = () => (location.hash = "");
+  // Somewhere that is not the town: a lab, the admin page, a map, the atlas.
+  const elsewhere = FightUiLab && location.hash === "#lab/fightui" ? <Suspense fallback={null}><FightUiLab me={me} refresh={refresh} /></Suspense>
+    : SceneryLab && location.hash === "#lab/scenery" ? <Suspense fallback={null}><SceneryLab /></Suspense>
+    : admin ? <Suspense fallback={null}><AdminView me={me} onLeave={leave} /></Suspense>
+    // Every catch's sprite and model, side by side: for admins, and on a development deployment.
+    : catches && (me.isAdmin || me.devTools || import.meta.env.DEV) ? <Suspense fallback={null}><CatchGallery onLeave={leave} /></Suspense>
+    : zone && ready ? <ZoneView key={zone} code={zone} me={me} refresh={refresh} onLeave={leave} />
+    : atlas && ready && me.crew ? <AtlasView me={me} refresh={refresh} onLeave={leave} />
+    // (An old voyage link, #run/CODE, is no place any more: it falls through to the Harbor.)
+    : null;
+  // The town is the crew's: before there is a hero and a crew there are only the screens that make them. (An invite
+  // to a different crew than your own takes you back to the gate to accept it.)
+  const town = ready && !!me.crew && (!invite || invite === me.crew.id);
+  // A screen with a view of the world (the town, a map, the atlas) takes the opening screen away itself, once it
+  // has something to show (WorldRenderer's reveal). Any other has nothing to wait for.
+  const world = isValidElement(elsewhere) ? elsewhere.type === ZoneView || elsewhere.type === AtlasView : town;
+  useEffect(() => {
+    if (!world) dismissBoot();
+  }, [world]);
+  if (!town) return elsewhere ?? <Harbor me={me} refresh={refresh} invite={invite} />;
+  // The whole town is loaded once and kept: the Harbor, the pub and the workshops, each put away (its `resting`)
+  // while the player is somewhere else. So nothing is built on walking through a door, or on coming home from a
+  // map. A hut is not kept: what is in one is only known on going in.
+  const inside = elsewhere ? null : pub ? "pub" : keeper ?? (hut ? "hut" : null);
+  return (
+    <>
+      <HarborView key="harbor" me={me} refresh={refresh} resting={!!elsewhere || !!inside} />
+      <Buildings me={me} refresh={refresh} inside={inside} onLeave={leave} />
+      {inside === "hut" && <HutView key={hut} ownerId={hut!} me={me} refresh={refresh} onLeave={leave} />}
+      {elsewhere}
+    </>
+  );
+}
+
+/** The town's buildings that are loaded with the game: the pub, then each workshop. */
+const BUILDINGS = ["pub", ...KEEPER_HOUSES] as const;
+
+/**
+ * The pub and the workshops, all of them, kept for as long as the player is in town or out from it. They are made
+ * one after another as the game opens, put away, behind the opening screen (render/preload.ts holds it up until
+ * they are ready); the one the player is `inside`, if any, is on the screen.
+ *
+ * A browser that cannot compile shaders in the background (Firefox: see compilesAhead) would take several times as
+ * long over that. There each building is made when it is first walked into, and kept from then on.
+ */
+function Buildings({ me, refresh, inside, onLeave }: { me: Me; refresh(): Promise<void>; inside: string | null; onLeave(): void }) {
+  /** How many have been made so far. One more each turn of the page's loop, so the opening screen goes on moving between them. */
+  const [made, setMade] = useState(0);
+  const ahead = compilesAhead();
+  /** The buildings walked into so far: kept, whether or not they were made with the game. */
+  const [seen, setSeen] = useState<readonly string[]>([]);
+  if (inside && !seen.includes(inside)) setSeen([...seen, inside]);
+  useEffect(() => {
+    if (!ahead || made >= BUILDINGS.length) return placesStaging(false);
+    placesStaging(true);
+    const next = setTimeout(() => setMade((n) => n + 1), 0);
+    return () => clearTimeout(next);
+  }, [made, ahead]);
+  useEffect(() => () => placesStaging(false), []);
+  return (
+    <>
+      {BUILDINGS.map((b, i) => {
+        // (The one walked straight into, on a reload inside it, is made at once whatever its turn.)
+        if (i >= made && inside !== b && !seen.includes(b)) return null;
+        return b === "pub"
+          ? <PubView key="pub" me={me} refresh={refresh} onLeave={onLeave} resting={inside !== "pub"} />
+          : <KeeperView key={b} shop={b} me={me} refresh={refresh} onLeave={onLeave} resting={inside !== b} />;
+      })}
+    </>
+  );
 }

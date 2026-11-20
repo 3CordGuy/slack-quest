@@ -5,6 +5,7 @@
 // passes build the result. On with "Fancy graphics" in the options (see fancy.ts).
 
 import * as THREE from "three";
+import { programsReady } from "./graphics";
 
 /**
  * The layer for what is read rather than looked at (name plates, speech bubbles, health bars). The finishing pass
@@ -373,6 +374,38 @@ export class PostFx {
    * @param wide a map of the world, seen whole from high up: nearly all of it is kept sharp and clear, where a
    *   view from among the houses lets its distance blur and sink into the sky
    */
+  /**
+   * Compile a scene's shaders as this pass will draw it, ahead of the first frame and off the page's thread where
+   * the browser can. Done when they are ready.
+   *
+   * A shader is compiled for what draws with it and how: the lights in the picture and the kind of buffer drawn
+   * into are part of it, even for a thing no light falls on. So each of this pass's draws is asked for as it will
+   * be made (see `render`): the scene without its overlay layer, lit, into this pass's own buffer; the overlay
+   * layer alone, with no lights in it, onto the screen; and this pass's own three.
+   */
+  warm(scene: THREE.Scene, camera: THREE.PerspectiveCamera): Promise<void> {
+    const r = this.renderer;
+    const layers = camera.layers.mask;
+    camera.layers.disable(OVERLAY_LAYER);
+    r.setRenderTarget(this.scene);
+    r.compile(scene, camera);
+    r.setRenderTarget(null);
+    camera.layers.set(OVERLAY_LAYER);
+    const over: THREE.Object3D[] = [];
+    scene.traverse((o) => {
+      if (o.layers.test(camera.layers) && ((o as THREE.Mesh).isMesh || (o as THREE.Sprite).isSprite || (o as THREE.Line).isLine || (o as THREE.Points).isPoints)) over.push(o);
+    });
+    for (const o of over) r.compile(o, camera, scene);
+    camera.layers.mask = layers;
+    for (const [material, to] of [[this.bright, this.glow[0][1]], [this.blur, this.glow[0][0]], [this.final, null]] as const) {
+      this.quad.material = material;
+      r.setRenderTarget(to);
+      r.compile(this.quad, this.flat);
+    }
+    r.setRenderTarget(null);
+    return programsReady(r);
+  }
+
   render(scene: THREE.Scene, camera: THREE.PerspectiveCamera, focus: number, night: number, air: Air, wide = false) {
     const p = this.params;
     const r = this.renderer;

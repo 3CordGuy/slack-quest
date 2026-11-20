@@ -1647,7 +1647,7 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
 
   const click = useRef<(pos: HexPos, unit?: string) => void>(() => {});
   useEffect(() => {
-    const view = new WorldRenderer(mount.current!, { onHexClick: (pos, _place, unit) => click.current(pos, unit), onHover: setHover });
+    const view = new WorldRenderer(mount.current!, { onHexClick: (pos, _place, unit) => click.current(pos, unit), onHover: setHover }, { grow: true });
     renderer.current = view;
     layer.current = new TacticsLayer(view);
     spells.current = new SpellFx(view);

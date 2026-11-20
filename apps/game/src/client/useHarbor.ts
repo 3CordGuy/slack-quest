@@ -45,15 +45,15 @@ const EMPTY: HarborBoard = { members: [] };
 let harborMap: ReturnType<typeof generateHarbor> | null = null;
 const theHarbor = () => (harborMap ??= generateHarbor());
 
-/** `onMoved` fires for every walk, including your own, so the renderer can animate it; `onSaid` for every chat line, yours too, so it can show it over the speaker. */
-export function useHarbor(onMoved: (id: string, path: HexPos[]) => void, onXp?: (m: XpMessage) => void, onSaid?: (id: string, text: string) => void): HarborConnection {
-  const [you, setYou] = useState<string | null>(null);
+/**
+ * `onMoved` fires for every walk, including your own, so the renderer can animate it; `onSaid` for every chat line, yours too, so it can show it over the speaker.
+ * `here`: false while the player is inside one of the Harbor's buildings with the Harbor kept behind it (HarborView's
+ * `resting`). The connection is closed, as when they are away, so nobody sees them standing outside; it opens again
+ * as they step back out, at the door they went in by.
+ */
+export function useHarbor(onMoved: (id: string, path: HexPos[]) => void, onXp?: (m: XpMessage) => void, onSaid?: (id: string, text: string) => void, here = true): HarborConnection {
   const [crew, setCrew] = useState<HarborConnection["crew"]>(null);
-  const [players, setPlayers] = useState<HarborPlayer[]>([]);
   const [board, setBoard] = useState<HarborBoard>(EMPTY);
-  const [chat, setChat] = useState<HarborChatLine[]>([]);
-  const [status, setStatus] = useState<HarborConnection["status"]>("connecting");
-  const [error, setError] = useState<string | null>(null);
   const [trades, setTrades] = useState(0);
   const [muster, setMuster] = useState<Muster | null>(null);
   const awake = useAwake();
@@ -79,21 +79,15 @@ export function useHarbor(onMoved: (id: string, path: HexPos[]) => void, onXp?: 
     const end = path[path.length - 1];
     // Walking off rolls their bedroll back up.
     setPlayers((ps) => ps.map((p) => (p.id === id ? { ...p, pos: end, bedroll: undefined, fishing: undefined } : p)));
-    // After React has applied the new position, so the walk is not snapped over.
-    queueMicrotask(() => moved.current(id, path));
+    walked(id, path);
   };
 
-  useEffect(() => {
-    if (!awake) {
-      setStatus("paused");
-      return;
-    }
-    let closed = false;
-    let attempts = 0;
-    let retry: ReturnType<typeof setTimeout> | undefined;
-
-    const connect = () => {
-      const proto = location.protocol === "https:" ? "wss:" : "ws:";
+  const socket = useRoomSocket<HarborServerMessage>({
+    awake: awake && here,
+    looks: true,
+    elsewhere: `${HARBOR_NAME} is open in another tab.`,
+    lost: "Lost the connection to the Harbor. Reload to try again.",
+    path() {
       // Coming out of a hut: ask to arrive at its door rather than the usual spot.
       const query = new URLSearchParams(PROFILE ? { p: PROFILE } : {});
       try {
@@ -104,113 +98,97 @@ export function useHarbor(onMoved: (id: string, path: HexPos[]) => void, onXp?: 
       }
       // Back after a pause or a dropped connection: stand where you stood.
       if (!query.has("at") && standing.current) query.set("at", `${standing.current.q},${standing.current.r}`);
-      const ws = new WebSocket(`${proto}//${location.host}/api/crew/ws${query.size ? `?${query}` : ""}`);
-      socket.current = ws;
-      setStatus("connecting");
-      ws.onopen = () => {
-        attempts = 0;
-        setStatus("open");
-        setError(null);
-      };
-      ws.onmessage = (e) => {
-        if (e.data === "pong") return;
-        const msg = JSON.parse(e.data) as HarborServerMessage;
-        if (msg.type === "snapshot") {
-          // The hint has been used. (Cleared here, not on connect, so a connection dropped before it lands can ask again.)
-          try {
-            sessionStorage.removeItem("gq.harborAt");
-          } catch {
-            // Nothing to clear.
-          }
-          setYou(msg.you);
-          setCrew(msg.crew);
-          setPlayers(msg.players);
+      return `/api/crew/ws${query.size ? `?${query}` : ""}`;
+    },
+    onMessage(msg) {
+      if (msg.type === "snapshot") {
+        // The hint has been used. (Cleared here, not on connect, so a connection dropped before it lands can ask again.)
+        try {
+          sessionStorage.removeItem("gq.harborAt");
+        } catch {
+          // Nothing to clear.
+        }
+        const me = msg.players.find((p) => p.id === msg.you);
+        const asked = waiting.current;
+        waiting.current = [];
+        if (asked.length > 0 && me && believed.current?.id === me.id) {
+          // Walks were shown while this connection opened: you are left where they have taken you, and the room
+          // is asked for them now. Its answers are checked against what was shown, as ever.
+          const at = believed.current.pos;
+          people.hear({ ...msg, players: msg.players.map((p) => (p.id === me.id ? { ...p, pos: at, bedroll: undefined, fishing: undefined } : p)) });
+          believed.current = { ...believed.current, vessel: me.vessel };
+          for (const m of asked) post.current(m);
+        } else {
+          people.hear(msg);
           // A new connection: whatever was shown ahead on the old one is gone, and this is where you stand.
           ahead.current = [];
-          const me = msg.players.find((p) => p.id === msg.you);
           believed.current = me ? { id: me.id, pos: me.pos, vessel: me.vessel } : null;
-          setBoard({ members: msg.members, ships: msg.ships, log: msg.log, works: msg.works, maps: msg.maps });
-          // A trade may have changed while there was no connection to hear of it.
-          setTrades((n) => n + 1);
-        } else if (msg.type === "trades") {
-          setTrades((n) => n + 1);
-        } else if (msg.type === "muster") {
-          setMuster(msg.muster);
-        } else if (msg.type === "board") {
-          setBoard({ members: msg.members, ships: msg.ships, log: msg.log, works: msg.works, maps: msg.maps });
-        } else if (msg.type === "joined") {
-          // Your own hero as the room has them now: a boat bought since changes where you can go. Where you stand
-          // is kept as believed while walks are still ahead (the room tells this from where it last had you).
-          const mine = believed.current?.id === msg.player.id;
-          if (mine) believed.current = { id: msg.player.id, pos: ahead.current.length > 0 ? believed.current!.pos : msg.player.pos, vessel: msg.player.vessel };
-          const held = mine && ahead.current.length > 0 ? believed.current!.pos : null;
-          setPlayers((ps) => [...ps.filter((p) => p.id !== msg.player.id), held ? { ...msg.player, pos: held, bedroll: undefined, fishing: undefined } : msg.player]);
-        } else if (msg.type === "left") {
-          setPlayers((ps) => ps.filter((p) => p.id !== msg.id));
-        } else if (msg.type === "placed") {
-          // Put straight there (a stuck hero sent back): an empty walk stops any walk under way, and the unit slides over.
-          if (believed.current?.id === msg.id) {
-            ahead.current = [];
-            believed.current = { ...believed.current, pos: msg.pos };
-          }
-          setPlayers((ps) => ps.map((p) => (p.id === msg.id ? { ...p, pos: msg.pos, bedroll: undefined } : p)));
-          queueMicrotask(() => moved.current(msg.id, []));
-        } else if (msg.type === "stayed") {
-          // The room made no walk of one you asked for. If none was shown either, the picture is right as it is.
-          if (believed.current?.id !== msg.id) return;
-          const told = answeredWalk(ahead.current, null);
+        }
+        setCrew(msg.crew);
+        setBoard({ members: msg.members, works: msg.works, maps: msg.maps });
+        // A trade may have changed while there was no connection to hear of it.
+        setTrades((n) => n + 1);
+      } else if (msg.type === "trades") {
+        setTrades((n) => n + 1);
+      } else if (msg.type === "muster") {
+        setMuster(msg.muster);
+      } else if (msg.type === "board") {
+        setBoard({ members: msg.members, works: msg.works, maps: msg.maps });
+      } else if (msg.type === "joined") {
+        // Your own hero as the room has them now: a boat bought since changes where you can go. Where you stand
+        // is kept as believed while walks are still ahead (the room tells this from where it last had you).
+        const mine = believed.current?.id === msg.player.id;
+        if (mine) believed.current = { id: msg.player.id, pos: ahead.current.length > 0 ? believed.current!.pos : msg.player.pos, vessel: msg.player.vessel };
+        const held = mine && ahead.current.length > 0 ? believed.current!.pos : null;
+        setPlayers((ps) => [...ps.filter((p) => p.id !== msg.player.id), held ? { ...msg.player, pos: held, bedroll: undefined, fishing: undefined } : msg.player]);
+      } else if (msg.type === "placed") {
+        // Put straight there (a stuck hero sent back): an empty walk stops any walk under way, and the unit slides over.
+        if (believed.current?.id === msg.id) {
+          ahead.current = [];
+          believed.current = { ...believed.current, pos: msg.pos };
+        }
+        setPlayers((ps) => ps.map((p) => (p.id === msg.id ? { ...p, pos: msg.pos, bedroll: undefined } : p)));
+        walked(msg.id, []);
+      } else if (msg.type === "stayed") {
+        // The room made no walk of one you asked for. If none was shown either, the picture is right as it is.
+        if (believed.current?.id !== msg.id) return;
+        const told = answeredWalk(ahead.current, null);
+        ahead.current = told.ahead;
+        if (told.shown) return;
+        // A walk was shown that did not happen: back to where the room has you.
+        believed.current = { ...believed.current, pos: msg.pos };
+        setPlayers((ps) => ps.map((p) => (p.id === msg.id ? { ...p, pos: msg.pos } : p)));
+        walked(msg.id, []);
+      } else if (msg.type === "moved") {
+        if (believed.current?.id === msg.id) {
+          // Your own walk: most likely the one already shown at the click, and then there is nothing to do.
+          const told = answeredWalk(ahead.current, msg.path);
           ahead.current = told.ahead;
           if (told.shown) return;
-          // A walk was shown that did not happen: back to where the room has you.
-          believed.current = { ...believed.current, pos: msg.pos };
-          setPlayers((ps) => ps.map((p) => (p.id === msg.id ? { ...p, pos: msg.pos } : p)));
-          queueMicrotask(() => moved.current(msg.id, []));
-        } else if (msg.type === "moved") {
-          if (believed.current?.id === msg.id) {
-            // Your own walk: most likely the one already shown at the click, and then there is nothing to do.
-            const told = answeredWalk(ahead.current, msg.path);
-            ahead.current = told.ahead;
-            if (told.shown) return;
-            // The room walked you another way: its word stands, from here on.
-            believed.current = { ...believed.current, pos: msg.path[msg.path.length - 1] };
-          }
-          showWalk(msg.id, msg.path);
-        } else if (msg.type === "xp") {
-          // Someone here earned XP: their plate shows the new level and bar, then the sparkle plays.
-          setPlayers((ps) => ps.map((p) => (p.id === msg.id ? { ...p, level: msg.level, xp: msg.xp } : p)));
-          queueMicrotask(() => xpSeen.current?.(msg));
-        } else if (msg.type === "looked") {
-          gaze.looked(msg.id, msg.look);
-        } else if (msg.type === "said") {
-          setChat((c) => [...c, { name: msg.name, text: msg.text }].slice(-30));
-          // Over their head too, for everyone who can see them.
-          said.current?.(msg.id, msg.text);
+          // The room walked you another way: its word stands, from here on.
+          believed.current = { ...believed.current, pos: msg.path[msg.path.length - 1] };
         }
-      };
-      ws.onclose = (e) => {
-        if (closed) return;
-        setStatus("closed");
-        if (e.code === 4000) return setError(`${HARBOR_NAME} is open in another tab.`);
-        if (attempts++ < 6) retry = setTimeout(connect, Math.min(8000, 500 * 2 ** attempts));
-        else setError("Lost the connection to the Harbor. Reload to try again.");
-      };
-    };
-    connect();
-    // Which way your own hero turns to look goes to everyone else here.
-    const unhear = gaze.onLook((look) => socket.current?.readyState === WebSocket.OPEN && socket.current.send(JSON.stringify({ type: "look", look })));
-    const ping = setInterval(() => socket.current?.readyState === WebSocket.OPEN && socket.current.send("ping"), 25_000);
-    return () => {
-      closed = true;
-      unhear();
-      clearInterval(ping);
-      clearTimeout(retry);
-      socket.current?.close();
-    };
-  }, [awake]);
+        showWalk(msg.id, msg.path);
+      } else {
+        // Who left, XP, looks and the chat are as in every walk-in place.
+        people.hear(msg);
+      }
+    },
+  });
 
+  post.current = socket.send;
+  // Put away, nothing is waiting to be sent and nothing is shown ahead.
+  useEffect(() => {
+    if (here) return;
+    waiting.current = [];
+    ahead.current = [];
+  }, [here]);
   const send = useCallback((message: HarborClientMessage) => {
-    if (socket.current?.readyState !== WebSocket.OPEN) return;
-    socket.current.send(JSON.stringify(message));
+    if (!post.current(message)) {
+      // Not connected yet. A walk is kept for when it is, and shown now; anything else is let go, as before.
+      if (message.type !== "move" || !believed.current || !opening.current) return;
+      waiting.current.push(message);
+    }
     // A walk is shown now, along the way the room will find from where your hero is believed to stand.
     const me = believed.current;
     if (message.type !== "move" || !me) return;
@@ -222,5 +200,6 @@ export function useHarbor(onMoved: (id: string, path: HexPos[]) => void, onXp?: 
     believed.current = { ...me, pos: path[path.length - 1] };
     showWalk(me.id, path);
   }, []);
-  return { you, crew, players, board, chat, status, error, trades, muster, send };
+  opening.current = here && awake && socket.status === "connecting";
+  return { you, crew, players, board, chat, status: socket.status, error: socket.error, trades, muster, send };
 }

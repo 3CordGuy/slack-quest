@@ -1,12 +1,12 @@
 // The crew's shared Harbor: a walkable place where everyone present sees
-// each other. Ships are moored and boarded at the docks, each member has a
-// hut, and the notice board carries the news of each release of the game (with
+// each other. Each member has a hut, the waygate opens onto the crew's atlas,
+// and the notice board carries the news of each release of the game (with
 // a bouncing "!" over it until you have read the newest).
 
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useAudioScene } from "./audio/useAudioScene";
 import type { HexPos } from "@gantt-quest/core";
-import { GATHER_SPOTS, GATHER_SPOT_IDS, HARBOR_APOTHECARY, HARBOR_LAPIDARY, HARBOR_BOARD, HARBOR_BUILDINGS, footing, HARBOR_CAVE, HARBOR_WAYGATE, HARBOR_CHEST, HARBOR_GALLEY, HARBOR_LIGHTHOUSE, HARBOR_SMITHY, HARBOR_GATHER, HARBOR_NAME, HARBOR_PIERS, HARBOR_PLOTS, HARBOR_PLOT_FACING, HARBOR_PUB, HARBOR_RING, HARBOR_SHOP, HARBOR_SPAWN, HARBOR_WORKS, MAX_PARTY, PLOT_PRICE, RESOURCE_KINDS, SHACK_COST, binFill, binNeeds, builtProjects, BOOK_TITLE, fishSpotAt, harborDoor, seaEdge, tileAt, waterSpotAt, type FishSpot, FISH_SPOTS, generateHarbor, projectById, projectProgress, harborPoi, hutTier, poiAt, salesman, type GatherSpot, type HarborShip, type Resources } from "@gantt-quest/world";
+import { GATHER_SPOTS, GATHER_SPOT_IDS, HARBOR_APOTHECARY, HARBOR_LAPIDARY, HARBOR_BOARD, HARBOR_BUILDINGS, footing, HARBOR_CAVE, HARBOR_WAYGATE, HARBOR_CHEST, HARBOR_GALLEY, HARBOR_LIGHTHOUSE, HARBOR_SMITHY, HARBOR_GATHER, HARBOR_NAME, HARBOR_PLOTS, HARBOR_PLOT_FACING, HARBOR_PUB, HARBOR_RING, HARBOR_SHOP, HARBOR_SPAWN, HARBOR_WORKS, PLOT_PRICE, RESOURCE_KINDS, SHACK_COST, binFill, binNeeds, builtProjects, BOOK_TITLE, fishSpotAt, harborDoor, seaEdge, tileAt, waterSpotAt, type FishSpot, FISH_SPOTS, generateHarbor, projectById, projectProgress, harborPoi, hutTier, poiAt, salesman, type GatherSpot, type Resources } from "@gantt-quest/world";
 import type { Poi } from "@gantt-quest/world";
 import { MusterPanel, useMuster } from "./atlas/Muster";
 import { api, type Me } from "./api";
@@ -107,8 +107,15 @@ interface Here {
 /** What walking up to a place by clicking it does on arriving, if anything: its way in. The one rule for every place. */
 const goIn = (here: Here | null): (() => void) | null => (!here || here.closed || here.quiet ? null : here.enter ?? (here.press ? null : here.run));
 
-export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown> }) {
-  useAudioScene("harbor");
+/**
+ * `resting`: the player is somewhere else (inside one of the Harbor's buildings, out on a map, at the atlas), and
+ * the Harbor is kept behind it, built but put away: not drawn, not connected, none of its panels up. Coming back
+ * to it is then at once.
+ */
+export function HarborView({ me, refresh, resting = false }: { me: Me; refresh(): Promise<unknown>; resting?: boolean }) {
+  useAudioScene("harbor", !resting);
+  /** Whether the Harbor was made put away (the game was opened somewhere else: on a map, in a building). */
+  const born = useRef(resting);
   const mount = useRef<HTMLDivElement>(null);
   const renderer = useRef<WorldRenderer | null>(null);
   const [hover, setHover] = useState<HexPos | null>(null);
@@ -137,6 +144,7 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
     (id, path) => renderer.current?.playEvents([{ t: "moved", heroId: id, path }]),
     (m) => renderer.current?.playEvents(xpEvents(m)),
     (id, text) => renderer.current?.say(id, text),
+    !resting,
   );
   // The crew's muster, told down the Harbor's socket: whoever says they are ready is taken to the map when it starts.
   const muster = useMuster(harbor.you ?? me.player.id, { pushed: harbor.muster, onStart: () => void refresh() });
@@ -225,7 +233,7 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
       },
       onHover: setHover,
       onHoverPlace: setHoverPlace,
-    });
+    }, { resting: born.current });
     renderer.current = r;
     if (latest.current) r.setState(latest.current);
     return () => {
@@ -236,6 +244,22 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
   useEffect(() => {
     if (scene) renderer.current?.setState(scene);
   }, [scene]);
+  // Put away while a building has the screen. (A layout effect: before the building's own view is made, in the same pass.)
+  useLayoutEffect(() => {
+    if (!resting) return;
+    renderer.current?.setResting(true);
+    // Whatever was open or under way out here is over.
+    setWant(null);
+    setHover(null);
+    setHoverPlace(null);
+    setGather(null);
+    for (const close of [setSheet, setBook, setShop, setNotices, setFishmonger, setWorks, setChest, setAccount]) close(false);
+    setTradeWith(null);
+  }, [resting]);
+  // And brought back on stepping out of it, fading in over the building's last picture (render/handover.ts).
+  useEffect(() => {
+    if (!resting) renderer.current?.setResting(false);
+  }, [resting]);
   // With the bag open your hero turns to face you, so you can see what they are wearing.
   useEffect(() => {
     renderer.current?.setFacingFront(sheet);
@@ -571,11 +595,14 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
   }, [glowId]);
   const error = harbor.error;
 
+  // Put away: only the stage is kept, with the view built on it. No panel, bar or key of the Harbor's is up.
+  // (The stage is keyed, here and below, so it is the same element either way and keeps its canvas.)
+  if (resting) return <div className="run harbor-view" style={{ display: "none" }}><div key="stage" className="stage" ref={mount} /></div>;
   return (
     <div className="run harbor-view">
       {/* Someone of the crew is setting out for a place on the atlas, and asks who is coming. */}
       {muster.muster && <MusterPanel muster={muster.muster} me={harbor.you ?? me.player.id} onSay={muster.say} busy={muster.busy} error={muster.error} />}
-      <div className="stage" ref={mount} />
+      <div key="stage" className="stage" ref={mount} />
       {/* Down the left-hand side: the docks at the top, the crew's cards in the middle (the talk sits under them). */}
       <div className="hud-left">
         <DragPanel id="harbor.docks" title="Docks" foldOnPhone className="story panel docks">

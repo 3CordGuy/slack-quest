@@ -14,8 +14,30 @@
         location.replace("https://" + location.host + location.pathname + location.search + location.hash);
       }
     </script>
+    <style>
+      /* The opening screen: the game's anchor, swinging over two lines of swell under a few stars, in the same
+         place and colours as the veil the game draws itself (src/client/render/veil.ts). It is here, in the page,
+         and moved only by transform and opacity, so the browser goes on animating it while the game's own code
+         is busy building the town: the game's veil stops dead whenever the page is busy. src/client/boot.ts
+         takes it away once the first view is on the screen. */
+      #boot { position: fixed; inset: 0; z-index: 1000; background: linear-gradient(to bottom, #1f2640 0%, #23304f 46%); overflow: hidden; }
+      #boot i { position: absolute; width: 4px; height: 4px; background: #e8dcc0; opacity: 0.25; animation: boot-twinkle 3.7s ease-in-out infinite; }
+      #boot .boot-mark { position: absolute; left: 50%; top: 50%; width: 192px; height: 192px; margin: -96px 0 0 -96px; }
+      #boot .boot-mark img { display: block; width: 192px; height: 192px; image-rendering: pixelated; transform-origin: 50% -24px; animation: boot-swing 3.7s ease-in-out infinite; will-change: transform; }
+      #boot .boot-swell { position: absolute; left: 50%; height: 4px; overflow: hidden; }
+      #boot .boot-swell b { display: block; width: 400%; height: 100%; background: repeating-linear-gradient(to right, #e8dcc0 0 24px, transparent 24px 36px); will-change: transform; }
+      #boot .boot-swell.one { top: calc(50% + 136px); width: 208px; margin-left: -104px; opacity: 0.6; }
+      #boot .boot-swell.one b { animation: boot-drift 1.8s linear infinite; }
+      #boot .boot-swell.two { top: calc(50% + 156px); width: 152px; margin-left: -76px; opacity: 0.32; }
+      #boot .boot-swell.two b { animation: boot-drift 2.6s linear infinite reverse; }
+      @keyframes boot-swing { 0%, 100% { transform: rotate(-6.3deg); } 50% { transform: rotate(6.3deg); } }
+      @keyframes boot-drift { from { transform: translateX(-36px); } to { transform: translateX(0); } }
+      @keyframes boot-twinkle { 0%, 100% { opacity: 0.2; } 50% { opacity: 0.8; } }
+      @media (prefers-reduced-motion: reduce) { #boot i, #boot .boot-mark img, #boot .boot-swell b { animation: none; } }
+    </style>
   </head>
   <body>
+    <div id="boot" aria-hidden="true"><i style="left:8%;top:12%;animation-delay:-0s"></i><i style="left:19%;top:31%;animation-delay:-1.3s"></i><i style="left:27%;top:9%;animation-delay:-2.1s"></i><i style="left:36%;top:22%;animation-delay:-0.6s"></i><i style="left:44%;top:38%;animation-delay:-2.8s"></i><i style="left:58%;top:14%;animation-delay:-1.7s"></i><i style="left:66%;top:29%;animation-delay:-0.3s"></i><i style="left:73%;top:8%;animation-delay:-2.4s"></i><i style="left:81%;top:35%;animation-delay:-1.1s"></i><i style="left:91%;top:18%;animation-delay:-3.2s"></i><i style="left:13%;top:62%;animation-delay:-2.6s"></i><i style="left:87%;top:68%;animation-delay:-0.9s"></i><i style="left:5%;top:84%;animation-delay:-1.9s"></i><i style="left:94%;top:88%;animation-delay:-2.2s"></i><i style="left:33%;top:78%;animation-delay:-3.5s"></i><i style="left:69%;top:82%;animation-delay:-0.4s"></i><div class="boot-mark"><img src="/favicon.svg" alt="" /></div><div class="boot-swell one"><b></b></div><div class="boot-swell two"><b></b></div></div>
     <div id="root"></div>
     <script type="module" src="/src/client/main.tsx"></script>
   </body>

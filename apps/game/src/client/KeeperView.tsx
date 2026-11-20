@@ -10,7 +10,7 @@
 // packages/world/src/keepers.ts). Everything that costs anything goes
 // through the server, as before.
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useLayoutEffect } from "react";
 import * as THREE from "three";
 import { hexNeighbors, type HexPos } from "@gantt-quest/core";
 import { useOwnLook } from "./ownLook";
@@ -34,8 +34,15 @@ import "./pub.css";
 
 const same = (a: HexPos, b: HexPos) => a.q === b.q && a.r === b.r;
 
-export function KeeperView({ shop, me, refresh, onLeave }: { shop: KeeperHouse; me: Me; refresh(): Promise<unknown>; onLeave(): void }) {
-  useAudioScene("hut");
+/**
+ * `resting`: the player is somewhere else, and the shop is kept, built but put away: not drawn, its keeper not
+ * heard, none of its panels up. It is made that way with the game (App's Buildings), so that walking in is at once.
+ */
+export function KeeperView({ shop, me, refresh, onLeave, resting = false }: { shop: KeeperHouse; me: Me; refresh(): Promise<unknown>; onLeave(): void; resting?: boolean }) {
+  useAudioScene("hut", !resting);
+  const born = useRef(resting);
+  const away = useRef(resting);
+  away.current = resting;
   const place = KEEPER_PLACES[shop];
   const { keeper } = place;
   const room = useMemo(() => keeperRoom(shop), [shop]);
@@ -74,10 +81,10 @@ export function KeeperView({ shop, me, refresh, onLeave }: { shop: KeeperHouse; 
     () => ({
       code: shop,
       you,
-      phase: "overworld",
-      round: 0,
       map: room,
       heroes: [
+        // (In the room even while it is put away, standing at the door: so the room is drawn once, unseen, with
+        // you in it, and walking in has no figure to make.)
         { id: you, classId: c.class_id, pos, label: c.name, outfit, level: c.level, xp: c.xp },
         // The keeper stands among their work and is drawn like anyone else.
         { id: keeper.id, classId: keeper.look, pos: place.keeperPos, label: keeper.name },
@@ -120,10 +127,11 @@ export function KeeperView({ shop, me, refresh, onLeave }: { shop: KeeperHouse; 
       // Clicking the keeper walks you up to stand in front of them.
       onHexClick: (to) => walk.current(same(to, place.keeperPos) ? place.stand : to),
       onHover: setHover,
-    });
+    }, { resting: born.current });
     renderer.current = r;
-    r.setState(latest.current);
+    // (Before the room is built: its lights are part of what the room's shaders are compiled for.)
     const sparks = new SpellFx(r);
+    r.setState(latest.current);
     // The keeper at their work the whole time, you there or not: Greta's hammer rings on the anvil about once a
     // second, with a spray of sparks off the work as it lands; Ansel goes round and round his cauldron; Gorm's
     // cleaver comes down on his block, the same blow as the hammer's with an edge on it, and a thump for a ring.
@@ -144,6 +152,8 @@ export function KeeperView({ shop, me, refresh, onLeave }: { shop: KeeperHouse; 
     const round = how === "stir" || how === "grind";
     const beat = round ? 29_000 : how === "chop" ? 1300 : 1150;
     const go = () => {
+      // Nobody is in to see or hear it: looked at again in a second.
+      if (away.current) return later(go, 1000);
       const wait = r.work(keeper.id, round ? "stir" : "hammer", at);
       if (!round && wait > 0) {
         later(() => {
@@ -167,6 +177,25 @@ export function KeeperView({ shop, me, refresh, onLeave }: { shop: KeeperHouse; 
   useEffect(() => {
     renderer.current?.setState(scene);
   }, [scene]);
+  // Put away as the player leaves (a layout effect: before the next place's view is made, in the same pass), back
+  // at the door for next time, with the bag and the book shut.
+  useLayoutEffect(() => {
+    if (!resting) return;
+    renderer.current?.setResting(true);
+    setHover(null);
+    setPos(door);
+    // Stood there, not walked there: an empty walk stops whatever walk was under way.
+    queueMicrotask(() => renderer.current?.playEvents([{ t: "moved", heroId: you, path: [] }]));
+    setBag(false);
+    setBook(false);
+  }, [resting, door, you]);
+  // And brought back as they walk in, fading in over where they came from (render/handover.ts), with the shop
+  // read again: what it sells and what your gear would cost to work may have changed.
+  useEffect(() => {
+    if (resting) return;
+    renderer.current?.setResting(false);
+    void reload();
+  }, [resting, reload]);
 
   const atDoor = same(pos, door);
   const atKeeper = same(pos, place.stand);
@@ -210,9 +239,12 @@ export function KeeperView({ shop, me, refresh, onLeave }: { shop: KeeperHouse; 
     : null;
   const refused = loadError ?? (view && !view.built ? `The crew has not built ${place.title.toLowerCase()} yet. It is a crew project at the works.` : null);
 
+  // Put away: only the stage is kept, with the view built on it. (The stage is keyed, here and below, so it is the
+  // same element either way and keeps its canvas.)
+  if (resting) return <div className={`run hut-view keeper-view keeper-view-${shop}`} style={{ display: "none" }}><div key="stage" className="stage" ref={mount} /></div>;
   return (
     <div className={`run hut-view keeper-view keeper-view-${shop}`}>
-      <div className="stage" ref={mount} />
+      <div key="stage" className="stage" ref={mount} />
 
       {dealing && (shop === "lapidary"
         ? <LapidaryKeeperPanel me={me} refresh={refresh} onSay={say} onDone={() => stepAway()} />

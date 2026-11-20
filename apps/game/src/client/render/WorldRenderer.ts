@@ -32,6 +32,10 @@ import { BOAT_SCALE, OARLOCKS, ROWER_SEAT, aimOar, rowboatModel, shipOar } from 
 import { Rise } from "./rise";
 import { gaze } from "../gaze";
 import { NIGHT, VEIL_CLEAR_S, Veil } from "./veil";
+import { HOLD_MS, notShowing, nowShowing, takeOver, type Carried } from "./handover";
+import { placeLoading, placeReady, placesLoading } from "./preload";
+import { loadNote, loadShown } from "./loadLog";
+import { dismissBoot } from "../boot";
 import { VoidBackdrop, type BackdropKind } from "./backdrop";
 import { CAVE_FLOOR, ZoneScenery } from "./zoneScenery";
 import { CombatView, cutawayButton, type CutSpot } from "./cutaway";
@@ -400,68 +404,8 @@ const DRAB = new THREE.Color("#5d6a5c");
 /** What open grass is pulled toward where it has dried out (see dryPatch): straw under dead grass, dusty brown on dry ground. */
 const PARCHED = new THREE.Color("#a59a5a");
 const DUSTY = new THREE.Color("#9a835a");
-/** The pub's painted sign: a foaming tankard on an oxblood board with a gold edge. Made once and shared. */
-let pubSignTexture: THREE.CanvasTexture | null = null;
-function pubSign(): THREE.CanvasTexture {
-  pubSignTexture ??= pixelTexture(16, 14, (ctx) => {
-    ctx.fillStyle = "#6e2b26";
-    ctx.fillRect(0, 0, 16, 14);
-    stamp(ctx, [
-      "BBBBBBBBBBBBBBBB",
-      "B              B",
-      "B    W  WW     B",
-      "B   WWWWWWW    B",
-      "B  WWWWWWWWW   B",
-      "B   hhhhhhh    B",
-      "B   YyYYyYYYY  B",
-      "B   YyYYyYY  Y B",
-      "B   hhhhhhh  Y B",
-      "B   YyYYyYY  Y B",
-      "B   YyYYyYYYY  B",
-      "B   hhhhhhh    B",
-      "B              B",
-      "BBBBBBBBBBBBBBBB",
-    ], { B: "#d9b45a", W: "#f4efe1", Y: "#d08a3a", y: "#a8662a", h: "#3a2c22" });
-  });
-  return pubSignTexture;
-}
-/**
- * Fold a model's pieces that share a look into one mesh each, so a detailed building costs a handful of draw calls
- * rather than one a piece. Plain lambert pieces of the same colour fold together; a piece with any other material
- * (a pane the ambience warms, the painted sign) folds only with pieces using that very material. Glows stay apart.
- */
-function foldByLook(g: THREE.Group) {
-  const sets = new Map<string, THREE.Mesh[]>();
-  for (const o of g.children) {
-    if (!(o instanceof THREE.Mesh)) continue;
-    const m = o.material as THREE.Material;
-    const key = (m instanceof THREE.MeshLambertMaterial && !m.map ? `lambert:${m.color.getHexString()}` : m.uuid) + (o.userData.glow ? ":glow" : "");
-    const set = sets.get(key);
-    if (set) set.push(o);
-    else sets.set(key, [o]);
-  }
-  for (const meshes of sets.values()) {
-    if (meshes.length < 2) continue;
-    const parts = meshes.map((mesh) => {
-      mesh.updateMatrix();
-      const geo = (mesh.geometry.index ? mesh.geometry.toNonIndexed() : mesh.geometry.clone()).applyMatrix4(mesh.matrix);
-      geo.clearGroups();
-      return geo;
-    });
-    const folded = mergeGeometries(parts);
-    for (const p of parts) p.dispose();
-    if (!folded) continue;
-    const mesh = new THREE.Mesh(folded, meshes[0].material);
-    mesh.userData.glow = meshes[0].userData.glow;
-    for (const m of meshes) {
-      g.remove(m);
-      m.geometry.dispose();
-    }
-    g.add(mesh);
-  }
-}
 /** The places that are buildings: inked round with a dark line, like the people, so a hero and the house behind them are drawn alike. */
-const BUILDINGS = new Set<Poi["kind"]>(["hut", "plot", "pub", "shop", "works", "lighthouse", "apothecary", "smithy", "galley", "lapidary", "fishing"]);
+const BUILDINGS = new Set<Poi["kind"]>(["plot", "pub", "shop", "works", "lighthouse", "apothecary", "smithy", "galley", "lapidary", "fishing"]);
 /**
  * How thick a building's outline is, in world units: a hero's (a 0.12 edge on their 22-unit frame, drawn 1.5
  * tall), made heavier so a building's big plain walls and roofs read as inked from across the plaza.
@@ -961,6 +905,8 @@ export class WorldRenderer {
   private tiles: Tile[] = [];
   /** This map's place in the sound: where you stand, its sky, its fires and its water. */
   private ear: ReturnType<typeof openEar>;
+  /** The fires and lamps the ear was last told of: told again when the view comes back from being put away. */
+  private earLights: Parameters<ReturnType<typeof openEar>["lights"]>[0] = [];
   /** The middle of every water hex, for hearing where the sea is. */
   private water: { x: number; z: number }[] = [];
   private frames = 0;
@@ -969,6 +915,24 @@ export class WorldRenderer {
   /** The veil over the view while its place is built (a backdrop, seen only through windows, has none), and when it began to clear. */
   private veil: Veil | null = null;
   private openedAt = 0;
+  /** The last view's picture, under this one until it has a place of its own to show (handover.ts). */
+  private carried: Carried | null = null;
+  /** Put away while another place has the screen (see setResting): built and kept, but not drawn or listening. */
+  private resting = false;
+  /** Made put away, and not yet built and drawn once unseen (see `prime`). */
+  private unprimed = false;
+  /** The opening screen is waiting on this view (preload.ts): from when it is given a place to build until it is primed. */
+  private waitedOn = false;
+  /** Brought back from being put away: it is shown once your own hero is in it (or HOLD_MS after `resumedAt`). */
+  private awaited = false;
+  private resumedAt = 0;
+  /**
+   * A place's shaders are compiled before its first frame is drawn, off the page's own thread where the browser
+   * can (see `warm`): "wait" until there is a place, "busy" while they compile, then "done".
+   */
+  private warming: "wait" | "busy" | "done" = "wait";
+  /** Taken down (see dispose): whatever was still on its way for this view is let go. */
+  private gone = false;
   /** The place growing up round your hex as the veil clears; null once it is all up. */
   private rise: Rise | null = null;
   private mapCode = "";
@@ -1038,7 +1002,20 @@ export class WorldRenderer {
   private seaBase = new THREE.Color("#3577cf");
   /** How dark the tiles were last painted for, in steps, so they are only repainted when night moves on. */
   private paintedNight = -1;
+  /**
+   * What the tiles were last painted from: everything paintTiles reads that can change without the ground being
+   * built again. setState paints again only when one of these has changed. Null (a new ground): paint whatever.
+   */
+  private paintedFrom: { terrain: THREE.InstancedMesh; night: number; far: boolean; roofed: boolean; places: string; reach: Map<string, unknown> | null } | null = null;
   private pulsing = new Set<string>();
+  // Scratch for the frame loop, so a frame makes less garbage: the feet of everyone standing on the map, the next
+  // step and the resting place of the unit being moved, a spot over each torch on the ground, and a plate's place.
+  // None is kept by whoever is handed it past the call it is handed to.
+  private walkerSpots: THREE.Vector3[] = [];
+  private stepSpot = new THREE.Vector3();
+  private restSpot = new THREE.Vector3();
+  private torchSpots: THREE.Vector3[] = [];
+  private plateSpot = new THREE.Vector3();
   private floaters: Floater[] = [];
   private sleepZs: SleepZ[] = [];
   /** Footfall puffs, made as needed up to PUFF_POOL and then reused; `nextPuff` is the one to reuse next. */
@@ -1138,12 +1115,16 @@ export class WorldRenderer {
   /**
    * `backdrop`: a second view drawn off screen for another to show (the Harbor seen through the pub's
    * windows). It makes no sound, takes no keys, and draws only when the view showing it asks (see `step`).
+   * `grow`: the place grows up round your hex on arriving even when the last view's picture is faded across to it
+   * (a map, the atlas). Without it a view that is faded across to is simply there: a room, the Harbor.
+   * `resting`: made put away (see setResting), for a building loaded with the game: it is built when given its
+   * state and drawn once unseen (see `prime`), and first shown when it is brought back.
    */
-  constructor(private container: HTMLElement, private callbacks: RendererCallbacks, private opts: { backdrop?: boolean } = {}) {
+  constructor(private container: HTMLElement, private callbacks: RendererCallbacks, private opts: { backdrop?: boolean; grow?: boolean; resting?: boolean } = {}) {
     // First, before anything that would need undoing: the browser may refuse (GraphicsUnavailable).
     this.renderer = makeRenderer({ antialias: true, powerPreference: "low-power", stencil: true });
     this.seeThrough = !!this.renderer.getContext().getContextAttributes()?.stencil;
-    this.ear = opts.backdrop ? DEAF : openEar();
+    this.ear = opts.backdrop || opts.resting ? DEAF : openEar();
     this.renderer.setPixelRatio(1);
     this.renderer.localClippingEnabled = true;
     if (!this.opts.backdrop) {
@@ -1151,8 +1132,12 @@ export class WorldRenderer {
       this.veil = new Veil();
       this.rise = new Rise();
     }
+    if (opts.resting && !opts.backdrop) {
+      this.resting = this.unprimed = true;
+      this.rise = null;
+    }
     // Dev server only: the latest view, for reading draw calls (`__gqWorld.renderer.info.render.calls`) from the console.
-    if (import.meta.env.DEV && !this.opts.backdrop) (globalThis as { __gqWorld?: WorldRenderer }).__gqWorld = this;
+    if (import.meta.env.DEV && !this.opts.backdrop && !this.resting) (globalThis as { __gqWorld?: WorldRenderer }).__gqWorld = this;
     const canvas = this.renderer.domElement;
     canvas.style.width = "100%";
     canvas.style.height = "100%";
@@ -1162,6 +1147,10 @@ export class WorldRenderer {
     // an empty sea before the room is built. The canvas itself is the veil's dark until the first frame is drawn.
     canvas.style.background = NIGHT;
     container.appendChild(canvas);
+    if (!opts.backdrop && !this.resting) {
+      this.takeOver();
+      nowShowing(this);
+    }
 
     // Sky, sun and moon, shadows, and the moving decoration.
     this.ambience = new Ambience(this.scene, this.renderer);
@@ -1189,7 +1178,7 @@ export class WorldRenderer {
     canvas.addEventListener("pointerleave", this.onPointerLeave);
     canvas.addEventListener("wheel", this.onWheel, { passive: false });
     canvas.addEventListener("contextmenu", this.onContextMenu);
-    if (!opts.backdrop) {
+    if (!opts.backdrop && !this.resting) {
       addEventListener("keydown", this.onKeyDown);
       addEventListener("keyup", this.onKeyUp);
       addEventListener("blur", this.onBlur);
@@ -1242,10 +1231,152 @@ export class WorldRenderer {
       this.setState(this.state);
     });
     this.resize();
-    if (!opts.backdrop) this.raf = requestAnimationFrame(this.frame);
+    if (!opts.backdrop && !this.resting) this.raf = requestAnimationFrame(this.frame);
+  }
+
+  /** Start unseen over the last view's picture, if it left one: this view fades in once it has a place to show (see `reveal`). */
+  private takeOver() {
+    this.carried = takeOver(this.renderer.domElement);
+    if (this.carried && !this.opts.grow) this.rise = null;
+  }
+
+  /**
+   * This view's picture as the player leaves it, for the next view to be built over (handover.ts): drawn now, on
+   * its own canvas, to be copied before the browser takes the frame. Null while it has nothing of its own to show.
+   */
+  picture(): { canvas: HTMLCanvasElement; origin: { x: number; y: number } | null } | null {
+    if (this.opts.backdrop || this.resting || this.veil || this.carried || !this.terrain || this.warming !== "done") return null;
+    cancelAnimationFrame(this.raf);
+    this.frame(performance.now());
+    const mine = this.state?.you ? this.units.get(this.state.you) : undefined;
+    const at = mine ? mine.root.position.clone().project(this.camera) : null;
+    return { canvas: this.renderer.domElement, origin: at ? { x: (at.x + 1) / 2, y: (1 - at.y) / 2 } : null };
+  }
+
+  /**
+   * Ask for the place's shaders to be compiled, ahead of drawing it. The first frame of a place would otherwise
+   * compile every one of them there and then, one after another, and hold the whole page still for as long as that
+   * took. Asked for together and ahead, the browser compiles them on threads of its own while the page goes on.
+   *
+   * Called from a place's first frame, once that frame has been worked through without being drawn (see `frame`):
+   * which shaders a thing needs depends on what is lit and what is showing, and that is only settled by a frame.
+   */
+  private warm() {
+    if (this.warming !== "wait") return;
+    this.warming = "busy";
+    const asked = performance.now();
+    const done = () => {
+      if (this.warming !== "busy" || this.gone) return;
+      this.warming = "done";
+      if (!this.opts.backdrop) loadNote(`compiled ${this.mapCode}`, performance.now() - asked);
+      this.last = performance.now();
+      this.prime();
+    };
+    (this.post ? this.post.warm(this.scene, this.camera) : this.renderer.compileAsync(this.scene, this.camera)).then(done, done);
+    // Never left waiting on it: a browser that will not say is drawn for anyway.
+    setTimeout(done, 4000);
+  }
+
+  /**
+   * A view made put away draws once, unseen, as soon as its place is built and its shaders compiled. That one
+   * frame sends its models and pictures to the graphics card and compiles what only drawing compiles (shadows,
+   * the finishing pass), so the frame the player first sees of it is an ordinary one.
+   */
+  private prime() {
+    if (!this.unprimed || !this.resting || !this.terrain || this.warming === "busy") return;
+    // Its first frame is worked through undrawn and its shaders asked for; this is called again when they are ready.
+    if (this.warming === "wait") {
+      cancelAnimationFrame(this.raf);
+      this.frame(performance.now());
+      cancelAnimationFrame(this.raf);
+      return;
+    }
+    this.unprimed = false;
+    const began = performance.now();
+    cancelAnimationFrame(this.raf);
+    this.frame(performance.now());
+    cancelAnimationFrame(this.raf);
+    this.release();
+    loadNote(`primed ${this.mapCode}`, performance.now() - began);
+    this.noWait();
+  }
+
+  /** The opening screen need not wait on this view any longer. */
+  private noWait() {
+    if (this.waitedOn) placeReady();
+    this.waitedOn = false;
+  }
+
+  /**
+   * Give back what a view holds only to draw with: its picture's buffers (the finishing pass keeps several, some
+   * four times over for smooth edges) and its shadow maps. They are most of the graphics memory a view takes, and
+   * are made again in a moment when it is next drawn. Its models, pictures and shaders are kept.
+   */
+  private release() {
+    this.renderer.setSize(1, 1, false);
+    this.post?.setSize(1, 1);
+    this.scene.traverse((o) => {
+      const shadow = (o as unknown as { shadow?: THREE.LightShadow }).shadow;
+      if (!shadow?.map) return;
+      shadow.map.dispose();
+      shadow.map = null;
+    });
+  }
+
+  /**
+   * Put the view away while another place has the screen, or bring it back. Away, it stays built (its ground, its
+   * models, its compiled shaders) but draws nothing and hears no keys, so coming back to it costs nothing. The view
+   * that asks for this hides the container itself.
+   */
+  setResting(on: boolean) {
+    if (on === this.resting || this.opts.backdrop) return;
+    if (on) {
+      notShowing(this);
+      this.resting = true;
+      cancelAnimationFrame(this.raf);
+      removeEventListener("keydown", this.onKeyDown);
+      removeEventListener("keyup", this.onKeyUp);
+      removeEventListener("blur", this.onBlur);
+      this.heldKeys.clear();
+      this.pointer.down = this.pointer.inside = false;
+      // Whoever has the screen now is the one heard.
+      this.ear.close();
+      this.ear = DEAF;
+      this.release();
+      // A place still growing up when it was left is all up when it is next seen.
+      if (this.rise) {
+        this.rise = null;
+        for (const unit of this.units.values()) if (unit.label && unit.root.visible) unit.label.visible = true;
+      }
+      return;
+    }
+    this.resting = false;
+    // Wanted before it was ready: it finishes on the screen, like any view.
+    this.unprimed = false;
+    this.noWait();
+    nowShowing(this);
+    if (import.meta.env.DEV) (globalThis as { __gqWorld?: WorldRenderer }).__gqWorld = this;
+    addEventListener("keydown", this.onKeyDown);
+    addEventListener("keyup", this.onKeyUp);
+    addEventListener("blur", this.onBlur);
+    this.ear = openEar();
+    this.ear.lights(this.earLights);
+    this.resize();
+    // Its shadow maps were given back: every light's is drawn again.
+    this.ambience.stirAll();
+    this.last = this.resumedAt = performance.now();
+    this.awaited = true;
+    this.carried = takeOver(this.renderer.domElement);
+    // A few frames unseen first, as on first arriving (see `reveal`).
+    if (this.carried || this.veil) this.settling = 0;
+    this.raf = requestAnimationFrame(this.frame);
   }
 
   dispose() {
+    this.gone = true;
+    notShowing(this);
+    this.carried?.release();
+    this.noWait();
     cancelAnimationFrame(this.raf);
     this.veil?.dispose();
     this.unhearLooks?.();
@@ -1277,11 +1408,17 @@ export class WorldRenderer {
     this.endMinigame();
     this.post?.dispose();
     this.hoverGlow.dispose();
+    this.pathDot.geometry.dispose();
+    this.pathDot.material.dispose();
     this.renderer.dispose();
-    // Give the WebGL context back now, not whenever the canvas is collected: a page holds only so many, and the
-    // browser drops the oldest (the HUD's portrait renderer) to make room. Every view (the Harbor, a hut, the pub
-    // and the Harbor through its windows) makes its own canvas, so this one is not drawn on again.
-    this.renderer.forceContextLoss();
+    // Give the WebGL context back, not whenever the canvas is collected: a page holds only so many, and the
+    // browser drops the oldest (the HUD's portrait renderer) to make room. Every view makes its own canvas, so
+    // this one is not drawn on again. Giving one back holds the page still for a fifth of a second, though, so it
+    // is done a moment later, once whatever view comes next is up and the page has a quiet moment, not in the
+    // middle of going to it.
+    const spent = this.renderer;
+    const lose = () => spent.forceContextLoss();
+    setTimeout(() => (typeof requestIdleCallback === "function" ? requestIdleCallback(lose, { timeout: 4000 }) : lose()), 1500);
     canvas.remove();
   }
 
@@ -1323,10 +1460,10 @@ export class WorldRenderer {
 
   setState(state: RenderState) {
     // Dev server only: the view being fed state is the live one (a view torn down after it was made would otherwise be left in the hook).
-    if (import.meta.env.DEV && !this.opts.backdrop) (globalThis as { __gqWorld?: WorldRenderer }).__gqWorld = this;
+    if (import.meta.env.DEV && !this.opts.backdrop && !this.resting) (globalThis as { __gqWorld?: WorldRenderer }).__gqWorld = this;
     const first = this.mapCode !== state.code;
-    // The ground is redrawn for a new map, and whenever fog lifts off more of this one.
-    const lifted = state.map.tiles.reduce((n, t) => n + (t.biome === "fog" ? 0 : 1), 0);
+    // The ground is redrawn for a new map, and whenever this one has more or fewer hexes than it was drawn with.
+    const hexCount = state.map.tiles.length;
     this.ambience.floorLook = state.floor ?? "planks";
     // What lies round the map, the sea or a void it floats over: known before the ground is built, whose rim is faced to suit.
     const backdrop: BackdropKind = state.indoors || state.far || this.opts.backdrop ? "sea" : (state.backdrop ?? "sea");
@@ -1335,7 +1472,8 @@ export class WorldRenderer {
     // Under a roof the hour stands still (and the weather with it: see the ambience's heldTime).
     if (first || turned) this.ambience.heldTime = state.far ? FAR_TIME : backdrop === "dark" ? ROOF_TIME : null;
     // And for another window of a world (see RenderState.far), under a camera that stays where it is.
-    if (first || turned || lifted !== this.lifted || (!!state.far && state.map.tiles !== this.tiles)) this.buildTerrain(state, first);
+    const began = performance.now();
+    if (first || turned || hexCount !== this.hexCount || (!!state.far && state.map.tiles !== this.tiles)) this.buildTerrain(state, first);
     if (first || turned) {
       if (this.voidBackdrop) {
         this.scene.remove(this.voidBackdrop.group);
@@ -1390,28 +1528,21 @@ export class WorldRenderer {
     // A room is small enough to see whole, so indoors the camera stays on its middle.
     // Following, the camera starts on your hero indoors too.
     if (first && me && (this.follow || !state.indoors)) this.target.copy(this.standAt(me.pos));
-    if ((first || turnKey !== this.turnKey) && me && (myTurn || first) && !state.indoors) this.targetGoal.copy(this.standAt(me.pos));
-    this.turnKey = turnKey;
+    if (first && me && !state.indoors) this.targetGoal.copy(this.standAt(me.pos));
+    if (first && !this.opts.backdrop) loadNote(`built ${state.code}`, performance.now() - began);
+    // Made put away: built now, it is drawn once unseen as soon as its shaders are compiled. (A view made put away
+    // and given no place, the Harbor when the game is opened inside a building, keeps nobody waiting.)
+    if (this.unprimed && !this.waitedOn) {
+      this.waitedOn = true;
+      placeLoading();
+    }
+    this.prime();
   }
 
-  /** Animate things that just happened. Call after setState for the same update. */
-  /** Animate what just happened. `startBeat` holds the first blow back, for a fight's opening card. */
-  playEvents(events: WorldEvent[], startBeat = 0) {
-    let beat = startBeat;
-    // XP comes in one award at a time (each foe, each rite); one sparkle per hero per update, for the sum.
+  /** Animate what just happened. Call after setState for the same update. */
+  playEvents(events: SceneEvent[]) {
+    // XP comes in one award at a time; one sparkle per hero per update, for the sum.
     const xp = new Map<string, { amount: number; levelUp: boolean }>();
-    for (const ev of events) {
-      if (ev.t !== "xp" && ev.t !== "level_up") continue;
-      const got = xp.get(ev.heroId) ?? { amount: 0, levelUp: false };
-      if (ev.t === "xp") got.amount += ev.amount;
-      else got.levelUp = true;
-      xp.set(ev.heroId, got);
-    }
-    const ending = events.find((e) => e.t === "battle_end");
-    // Your turn coming round gets a soft tick, once, and not as the fight ends.
-    let myTurnAt: number | null = null;
-    /** Who last struck each target, so one killed falls away from them. */
-    const struck = new Map<string, string>();
     for (const ev of events) {
       if (ev.t === "moved") {
         const unit = this.units.get(ev.heroId);
@@ -3274,6 +3405,17 @@ export class WorldRenderer {
     const sig = state.map.pois.map((p) => `${p.id}:${p.cleared}:${p.tier ?? ""}:${p.fill ?? ""}:${p.hp ?? ""}`).join("|");
     if (sig === this.poiSig) return;
     this.poiSig = sig;
+    // The old models' shapes are to go with them: the renderer holds a shape's buffers until told it is done with.
+    // Not the lanterns' (put away below), a sprite's (three's own, one for every sprite), or the chests' and crates'
+    // shared ones (caveProps.ts). They are let go once the new models stand, less any of them those use again.
+    // (Their materials are left to be collected: disposing the last of a kind would have its shader compiled again.)
+    const oldShapes = new Set<THREE.BufferGeometry>();
+    for (const model of this.poiGroup.children) {
+      if (model === this.tableLamps.group) continue;
+      model.traverse((o) => {
+        if ((o instanceof THREE.Mesh || o instanceof THREE.Line || o instanceof THREE.Points) && !sharedShape(o.geometry)) oldShapes.add(o.geometry);
+      });
+    }
     this.poiGroup.clear();
     for (const gate of this.gates) gate.dispose();
     this.gates = [];
@@ -3461,7 +3603,8 @@ export class WorldRenderer {
     }
     this.hideLoweredWallProps();
     this.ambience.setLights(lights, flames);
-    this.ear.lights(lights.map((l) => ({ kind: l.kind, x: l.pos.x, z: l.pos.z })));
+    this.earLights = lights.map((l) => ({ kind: l.kind, x: l.pos.x, z: l.pos.z }));
+    this.ear.lights(this.earLights);
   }
 
   /** A flat gold band just inside the outer edges of a group of hexes, on the floor: the selection ring of a piece covering more than one. */
@@ -3958,7 +4101,11 @@ export class WorldRenderer {
       unit.figure.dispose();
       this.ambience.stir(unit.shadowAt);
       this.syncBoat(unit, undefined);
-      if (unit.ring) this.unitGroup.remove(unit.ring);
+      if (unit.ring) {
+        this.unitGroup.remove(unit.ring);
+        // Its shape was made for it alone. (Its material, and the health bar's two, are left to be collected, as SpellFx's are.)
+        unit.ring.geometry.dispose();
+      }
       if (unit.hpBack) this.unitGroup.remove(unit.hpBack);
       if (unit.hpFill) this.unitGroup.remove(unit.hpFill);
       if (unit.badges) {
@@ -4670,6 +4817,8 @@ export class WorldRenderer {
   }
 
   private resize() {
+    // Put away, its container has no size: it is measured again on coming back.
+    if (this.resting) return;
     this.measureCover();
     const w = Math.max(1, this.container.clientWidth);
     const h = Math.max(1, this.container.clientHeight);
@@ -4753,6 +4902,13 @@ export class WorldRenderer {
     const dt = Math.min(0.1, (now - this.last) / 1000);
     this.last = now;
     this.clock += dt;
+    // The place's shaders are still compiling: nothing of it is drawn yet. The veil, if it is up, goes on moving.
+    if (this.warming === "busy") {
+      this.veil?.draw(this.renderer, 1, this.clock, this.fine * 2);
+      return;
+    }
+    // A place's first frame is worked through but not drawn (see `warm`).
+    const dry = this.warming === "wait" && !!this.terrain;
     this.animateHover();
     const ease = 1 - Math.exp(-dt * 6);
 
@@ -5281,6 +5437,14 @@ export class WorldRenderer {
       }
       this.rise.apply();
     }
+    if (dry) {
+      this.warm();
+      this.combat.clear();
+      this.rise?.clear();
+      // (A view put away shows no veil: there is nobody to see it.)
+      if (!this.resting) this.veil?.draw(this.renderer, 1, this.clock, this.fine * 2);
+      return;
+    }
     if (this.post) {
       this.air.outdoors = this.ambience.openSky && !this.roofed;
       this.air.clock = this.clock;
@@ -5309,9 +5473,33 @@ export class WorldRenderer {
    * times. Then it clears, and under it the place grows up from the hex you stand on (see rise.ts).
    */
   private reveal(dt: number) {
-    if (this.settling >= 0 && this.terrain && ++this.settling >= REVEAL_FRAMES) {
+    // Not shown yet: a view brought back from being put away waits for your own hero to be in it (the room's
+    // answer, a moment after walking in); and the first view of all waits for the town's buildings, which are
+    // loaded behind the opening screen (preload.ts).
+    const held = this.awaited
+      ? !(this.state?.you && this.units.has(this.state.you)) && performance.now() - this.resumedAt < HOLD_MS
+      : !!this.veil && !this.carried && !this.resting && placesLoading();
+    if (this.settling >= 0 && this.terrain && !held && ++this.settling >= REVEAL_FRAMES) {
       this.settling = -1;
+      this.awaited = false;
       this.openedAt = this.clock;
+      if (!this.opts.backdrop && !this.resting) {
+        loadShown(this.mapCode);
+        // The first view of the game is ready: the page's own opening screen gives way to it.
+        dismissBoot();
+      }
+      // Fading in over the last view's picture: there is no veil to clear.
+      if (this.carried) {
+        this.carried.reveal();
+        this.carried = null;
+        this.veil?.dispose();
+        this.veil = null;
+      }
+    }
+    // Too long with no place built (the room has not answered): the view fades in anyway, showing its veil.
+    if (this.carried && !this.terrain && performance.now() - this.carried.since > HOLD_MS) {
+      this.carried.giveWay();
+      this.carried = null;
     }
     // The ring sets out once the veil is half gone, so the growing is seen rather than done behind it.
     if (this.rise && this.settling < 0 && this.clock - this.openedAt > VEIL_CLEAR_S * 0.5) {

@@ -1150,9 +1150,10 @@ export class Ambience {
     }
 
     // ---- floorboards, cobbles and pier planks: laid as one sheet each, so the pattern runs across hexes ----
-    const lay = (biome: string, map: THREE.Texture) => {
+    const lay = (biome: string, paint: () => THREE.Texture) => {
       const under = tiles.filter((t) => (t.biome as string) === biome);
       if (under.length === 0) return;
+      const map = paint();
       const positions: number[] = [];
       const normals: number[] = [];
       const uvs: number[] = [];
@@ -1173,9 +1174,9 @@ export class Ambience {
       mesh.receiveShadow = true;
       this.group.add(mesh);
     };
-    lay("floor", this.floorLook === "flags" ? flagstoneTexture() : floorTexture());
-    lay("cobble", cobbleTexture());
-    lay("dock", pierTexture());
+    lay("floor", this.floorLook === "flags" ? flagstoneTexture : floorTexture);
+    lay("cobble", cobbleTexture);
+    lay("dock", pierTexture);
     // The Harbor's grass is drabbed by the wet, as the renderer does for every grass tile in a port.
     const wet = tiles.some((t) => (t.biome as string) === "cobble");
     const grassTint = new THREE.Color("#7cb856");
@@ -1728,17 +1729,20 @@ export class Ambience {
       mesh.visible = !this.smoothSea;
       // Front row (toward the camera) is row 1.
       const off = row ? WAVE_ROW : -WAVE_ROW;
-      this.crests.forEach((c, i) => {
-        const bob = motion * Math.sin(clock * 1.8 + c.phase * 2 + row * 1.6) * 0.03;
-        this.m.set(
-          cos, 0, sin, c.x + sin * off,
-          0, 1, 0, c.y + bob - (row ? 0.03 : 0),
-          -sin, 0, cos, c.z + cos * off,
-          0, 0, 0, 1,
-        );
-        mesh.setMatrixAt(i, this.m);
-      });
-      mesh.instanceMatrix.needsUpdate = true;
+      // Put away, the crests are not set out: they are, afresh, in the frame they are shown again.
+      if (mesh.visible) {
+        this.crests.forEach((c, i) => {
+          const bob = motion * Math.sin(clock * 1.8 + c.phase * 2 + row * 1.6) * 0.03;
+          this.m.set(
+            cos, 0, sin, c.x + sin * off,
+            0, 1, 0, c.y + bob - (row ? 0.03 : 0),
+            -sin, 0, cos, c.z + cos * off,
+            0, 0, 0, 1,
+          );
+          mesh.setMatrixAt(i, this.m);
+        });
+        mesh.instanceMatrix.needsUpdate = true;
+      }
       const material = mesh.material as THREE.MeshBasicMaterial;
       material.color.copy(this.flatTint);
       material.map!.offset.x = motion * clock * (row ? 0.11 : -0.08) + row * 0.25;
@@ -2290,7 +2294,9 @@ export class Ambience {
       return halo;
     });
     this.scene.add(root);
-    this.lamps = { root, glow, halos, sizes: shown.map((g) => g.size), panes };
+    // Each pane's two colours are read out of their strings here, once, not every frame as it warms (see glimmer).
+    const paneTints = panes.map((p) => ({ unlit: new THREE.Color(p.userData.unlit as string), lit: new THREE.Color(p.userData.lit as string) }));
+    this.lamps = { root, glow, halos, sizes: shown.map((g) => g.size), panes, paneTints };
   }
 
   /** Windows and lanterns come up as the light goes, each breathing a little on its own. */
@@ -2306,7 +2312,7 @@ export class Ambience {
       h.scale.set(s, s, 1);
     });
     const warm = smooth(0.05, 0.7, dark);
-    for (const p of l.panes) p.color.set(p.userData.unlit as string).lerp(this.paneLit.set(p.userData.lit as string), warm);
+    l.panes.forEach((p, i) => p.color.copy(l.paneTints[i].unlit).lerp(l.paneTints[i].lit, warm));
   }
 
   /** Puffs leave the stack one after another, drift with the wind as they climb, and thin out. */

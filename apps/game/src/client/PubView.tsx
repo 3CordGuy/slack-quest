@@ -1,16 +1,19 @@
 // Inside the pub: a room bigger than any hut, drawn by the same renderer,
-// where the crew sees each other. Stand at the menu board to order food and
-// drink or have a word with Old Tam; stand at the dice table to play. The
-// contract dealer, by the pillar at the end of the bar, has the contracts and
-// the crew's goal.
+// where the crew sees each other. Stand at the menu board to order a meal
+// or have a word with Old Tam; stand at the dice table to play. The
+// dealer, by the pillar at the end of the bar, has word of the regulars'
+// errands.
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ComponentType, type ReactNode, type RefObject, useLayoutEffect } from "react";
 import { useAudioScene } from "./audio/useAudioScene";
 import { hexDistance, hexNeighbors, type HexPos } from "@gantt-quest/core";
-import { PUB_BARKEEP, PUB_BARKEEP_POS, PUB_COUNTER, PUB_CREW, PUB_DEALER, PUB_DEALER_POS, PUB_DEALER_STAND, PUB_DICE, PUB_FITTINGS, PUB_GRID, PUB_LEADERBOARD, PUB_MAX_TALK, PUB_MENU, PUB_REGULAR_SPOTS, PUB_SALESMAN_POS, PUB_SEATS, PUB_SHOALS, PUB_TIDE, PUB_TRADER, dueIn, gatherDay, poiAt, pubMountSpots, pubPath, pubRoom, PUB_MOUNT_SLOTS, regularsOn, salesman, type Perk, type RegularId } from "@gantt-quest/world";
+import { PUB_BARKEEP, PUB_BARKEEP_POS, PUB_COUNTER, PUB_DEALER, PUB_DEALER_POS, PUB_DEALER_STAND, PUB_FITTINGS, PUB_GRID, PUB_LEADERBOARD, PUB_MAX_TALK, PUB_MENU, PUB_REGULAR_SPOTS, PUB_SALESMAN_POS, PUB_SEATS, PUB_TRADER, dueIn, gatherDay, poiAt, pubMountSpots, pubPath, pubRoom, PUB_MOUNT_SLOTS, regularsOn, salesman, outfitOf, type PubClientMessage, type RegularId, type XpMessage } from "@gantt-quest/world";
+import { toOwned } from "./items";
+import { withLook } from "./render/sprites";
 import { CatchPanel } from "./CatchPanel";
 import { RecordBoard } from "./CatchBook";
-import { api, type Me, type PubTab, type PubWall, type RegularsView } from "./api";
+import { ChatInput } from "./ChatInput";
+import { api, type Me, type PubWall, type RegularsView } from "./api";
 import { RegularPanel } from "./RegularPanel";
 import { DealerPanel } from "./board/DealerPanel";
 import { DiceTable } from "./DiceTable";
@@ -113,14 +116,13 @@ interface TalkLine {
   text: string;
 }
 
-/** One thing ordered at the bar, with its icon, or what to say when there is none. */
-function Having({ item, none }: { item: { id: string } | undefined; none: string }) {
-  if (!item) return <strong>{none}</strong>;
-  return <span className="pub-having"><ThingIcon icon={pubIcon(item.id)} size={18} /><strong>{label("pub", item.id)}</strong></span>;
-}
-
-export function PubView({ me, refresh, onLeave }: { me: Me; refresh(): Promise<unknown>; onLeave(): void }) {
-  useAudioScene("pub");
+/**
+ * `resting`: the player is somewhere else, and the pub is kept, built but put away: not drawn, not connected, none
+ * of its panels up. It is made that way with the game (App's Buildings), so that walking in is at once.
+ */
+export function PubView({ me, refresh, onLeave, resting = false }: { me: Me; refresh(): Promise<unknown>; onLeave(): void; resting?: boolean }) {
+  useAudioScene("pub", !resting);
+  const born = useRef(resting);
   const mount = useRef<HTMLDivElement>(null);
   const renderer = useRef<WorldRenderer | null>(null);
   const [hover, setHover] = useState<HexPos | null>(null);
@@ -193,8 +195,17 @@ export function PubView({ me, refresh, onLeave }: { me: Me; refresh(): Promise<u
       if (m.id === pub.you) void refresh();
     },
     (id, text) => renderer.current?.say(id, text),
+    !resting,
   );
-  const { you, players } = pub;
+  const { you } = pub;
+  // Before the room has said who is inside (the pub is loaded with the game, put away), you are stood at the door
+  // as your own pack says you look: the room is then drawn once, unseen, with you in it, and walking in has no
+  // figure to make. The room's own word replaces this the moment it comes.
+  const myLook = useMemo(() => (me.character ? withLook(outfitOf(me.inventory.map(toOwned).filter((i) => i.equipped)), me.character.appearance) : undefined), [me.inventory, me.character]);
+  const players = useMemo<typeof pub.players>(
+    () => (pub.you || !me.character ? pub.players : [{ id: me.player.id, name: me.character.name, classId: me.character.class_id, level: me.character.level, xp: me.character.xp, pos: DOOR, outfit: myLook } as (typeof pub.players)[number]]),
+    [pub.you, pub.players, me.character, me.player.id, myLook],
+  );
   const self = players.find((p) => p.id === you);
   /** How each player is drawn, for their seat at the Shoals table. */
   const looks = useMemo(() => Object.fromEntries(players.map((p) => [p.id, { classId: p.classId, outfit: p.outfit }])), [players]);
@@ -210,8 +221,8 @@ export function PubView({ me, refresh, onLeave }: { me: Me; refresh(): Promise<u
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dicePhase]);
 
+  // (With nobody known to be inside, put away or just walked into, the room is still built: its people follow.)
   const scene = useMemo<RenderState | null>(() => {
-    if (!you) return null;
     return {
       code: "pub",
       kind: "pub",
@@ -279,7 +290,7 @@ export function PubView({ me, refresh, onLeave }: { me: Me; refresh(): Promise<u
         if (onBoard(to)) return readBoard.current();
         // Clicking the salesman walks you up to their table.
         send.current({ type: "move", to: sellerHere.current && same(to, PUB_SALESMAN_POS) ? PUB_TRADER : to });
-      }, onHover: setHover });
+      }, onHover: setHover }, { resting: born.current });
     renderer.current = r;
     if (latest.current) r.setState(latest.current);
     // With fancy graphics, the pub has windows onto the real Harbor outside: a second view of it, drawn off screen.
@@ -307,6 +318,24 @@ export function PubView({ me, refresh, onLeave }: { me: Me; refresh(): Promise<u
   useEffect(() => {
     if (scene) renderer.current?.setState(scene);
   }, [scene]);
+  // Put away as the player leaves (a layout effect: before the next place's view is made, in the same pass), with
+  // whatever was open in here closed.
+  useLayoutEffect(() => {
+    if (!resting) return;
+    renderer.current?.setResting(true);
+    wantTalk.current = null;
+    wantDeal.current = wantBoard.current = false;
+    setHover(null);
+    setTalkTo(null);
+    setStood(null);
+    for (const close of [setSellingFish, setRecords, setDealing, setReading, setBag, setBook]) close(false);
+    heroSheet.close();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resting]);
+  // And brought back as they walk in, fading in over where they came from (render/handover.ts).
+  useEffect(() => {
+    if (!resting) renderer.current?.setResting(false);
+  }, [resting]);
   useEffect(() => {
     chatEnd.current?.scrollIntoView({ block: "end" });
   }, [pub.chat.length]);
@@ -427,12 +456,13 @@ export function PubView({ me, refresh, onLeave }: { me: Me; refresh(): Promise<u
       setWaiting(false);
     }
   };
-  const having = (kind: "drink" | "food") => PUB_MENU.find((i) => i.kind === kind && tab?.orders.includes(i.id));
-  const buffText = (buff: Perk) => perkText(buff) || "nothing";
 
+  // Put away: only the stage is kept, with the view built on it. (The stage is keyed, here and below, so it is the
+  // same element either way and keeps its canvas.)
+  if (resting) return <div className="run hut-view pub-view" style={{ display: "none" }}><div key="stage" className="stage" ref={mount} /></div>;
   return (
     <div className={`run hut-view pub-view${seatedAt ? " seated" : ""}`}>
-      <div className="stage" ref={mount} />
+      <div key="stage" className="stage" ref={mount} />
 
       {you && atCounter && (
         <DragPanel id="pub.bar" title="At the bar" className="story panel pub-bar">

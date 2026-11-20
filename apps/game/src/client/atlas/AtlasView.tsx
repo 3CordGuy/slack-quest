@@ -233,7 +233,7 @@ export function AtlasView({ me, refresh, onLeave }: { me: Me; refresh(): Promise
       // A click on a place picks it; a click on open ground puts the card away.
       onHexClick: (pos) => setPicked(point.current(pos)),
       onHover: (pos) => setHovered(point.current(pos)),
-    });
+    }, { grow: true });
     renderer.current = view;
     cloud.current = new AtlasCloud(view, ATLAS_VIEW);
     layer.current = new AtlasLayer(view);
