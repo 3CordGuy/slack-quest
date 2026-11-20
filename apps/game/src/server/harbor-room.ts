@@ -275,6 +275,8 @@ export class HarborRoom extends DurableObject<Env> {
       this.here.unstick(ws, player, HARBOR_SPAWN, { bedroll: undefined });
     } else if (msg.type === "say") {
       this.here.say(player, msg.text);
+    } else if (msg.type === "emote") {
+      this.here.emote(player, msg.emote);
     }
   }
 

@@ -535,7 +535,7 @@ export function PubView({ me, refresh, onLeave, resting = false }: { me: Me; ref
           {pub.chat.map((l, i) => <div key={i} className="line hero"><strong>{l.name}: </strong>{l.text}</div>)}
           <div ref={chatEnd} />
         </div>
-        <ChatInput placeholder="Say something…" onSay={(text) => pub.send({ type: "say", text })} />
+        <ChatInput placeholder="Say something…" onSay={(text) => pub.send({ type: "say", text })} onEmote={(emote) => pub.send({ type: "emote", emote })} />
       </DragPanel>
 
       {/* Put away while seated at a game table: the table's own dock has the moves and the way to stand up, and it

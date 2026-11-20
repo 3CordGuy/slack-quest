@@ -15,7 +15,7 @@
 import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { ConvexGeometry } from "three/examples/jsm/geometries/ConvexGeometry.js";
-import { APPEARANCE_OPTIONS, GARB_PREFIX, HAIR_COLORS, SKIN_TONES, INK_COLORS, INK_LEVELS, INK_REGIONS, RARITY_COLOR, WEAPONS, WEAPON_ICON, appearanceK, decodeInk, inkColorOf, inkLevelOf, wearsLanternHelm, type Appearance, type Ink, type InkRegion, type InkView, type Outfit, type Slot } from "@gantt-quest/world";
+import { APPEARANCE_OPTIONS, GARB_PREFIX, HAIR_COLORS, SKIN_TONES, INK_COLORS, INK_LEVELS, INK_REGIONS, RARITY_COLOR, WEAPONS, WEAPON_ICON, appearanceK, decodeInk, inkColorOf, inkLevelOf, wearsLanternHelm, type Appearance, type Emote, type Ink, type InkRegion, type InkView, type Outfit, type Slot } from "@gantt-quest/world";
 import type { Look } from "./looks";
 import { torchFlame } from "./torchFlame";
 import { buildLowPoly, disposeLowPoly, type Dangle, type Spin } from "./gearModels";
@@ -1399,7 +1399,7 @@ const GET_UP_HIPS = -1;
  * `n` counts the figure's actions, so two flinches in a row need not be the same.
  */
 interface Act {
-  kind: "strike" | "stab" | "pounce" | "heavy" | "twin" | "cast" | "play" | "fire" | "guard" | "taunt" | "hit" | "hammer" | "stir" | "jump";
+  kind: "strike" | "stab" | "pounce" | "heavy" | "twin" | "cast" | "play" | "fire" | "guard" | "taunt" | "hit" | "hammer" | "stir" | "jump" | Emote;
   t: number;
   n: number;
   /** A jump's seconds off the ground (see JUMP). */
@@ -1938,6 +1938,24 @@ const TAUNT = {
   crouch: [[0, 0], [0.32, 0.22], [0.85, 0.2], [1.2, 0]] as Keys,
 };
 /**
+ * Emotes (see EMOTES), only for show: nothing in hand is put down. A wave is the free hand (the left) raised beside
+ * the head and rocked from side to side. A cheer is both fists thrown up, with a hop or two. A bow is the right hand
+ * brought to the chest, the left swept back, and a bend at the waist. A dance is a jig: a hop from foot to foot,
+ * the knees lifted in turn and the arms pumping, on a `beat` per second; it stops early if the dancer walks off.
+ * `up` (and `down` for the bow) is how far into the pose it is, 0 to 1.
+ */
+const WAVE = { over: 1.9, up: [[0, 0], [0.3, 1], [1.55, 1], [1.9, 0]] as Keys };
+const CHEER = { over: 1.5, up: [[0, 0], [0.2, 1], [1.2, 1], [1.5, 0]] as Keys };
+const BOW = { over: 1.8, down: [[0, 0], [0.45, 1], [1.15, 1], [1.8, 0]] as Keys };
+const DANCE = { over: 5, beat: 2.4, up: [[0, 0], [0.25, 1], [4.7, 1], [5, 0]] as Keys };
+/**
+ * A breakdance: down into a deep crouch with the left hand planted, then spun round on it, the right leg swept out
+ * wide and the right arm flung out, `turns` times round from `spin[0]` to `spin[1]` seconds (whole turns, so it
+ * comes up facing the way it went down), then back up.
+ */
+const BREAK = { over: 5, spin: [0.5, 4.5], turns: 6, down: [[0, 0], [0.45, 1], [4.55, 1], [5, 0]] as Keys };
+const EMOTE_OVER: Record<Emote, number> = { wave: WAVE.over, cheer: CHEER.over, bow: BOW.over, dance: DANCE.over, breakdance: BREAK.over };
+/**
  * A jump from one tile to another. The figure only makes the shapes of it; whoever jumps it carries it through
  * the air (see WorldRenderer.leapUnit). A crouch with the arms drawn back (`coil`), and at `spring` the legs
  * straighten and the feet leave the ground, the body tipping forward all the while (`lean`, and `wind` for the arms). Off it, the arms are thrown forward and up (`arms`, -1 back to 1 up),
@@ -1976,7 +1994,7 @@ const RECORDER_LENGTH = 6.4;
 const HAMMER = { hit: 0.4, over: 0.86, up: [[0, 0.25], [0.3, 1], [0.4, 0], [0.48, 0.18], [0.86, 0.25]] as Keys };
 const STIR = { over: 30, turns: 25 };
 /** How long each kind of action lasts. */
-const ACT_OVER: Record<Act["kind"], number> = { strike: SWING.over, stab: THRUST.over, pounce: POUNCE.over, heavy: SWEEP.over, twin: TWIN.over, cast: CAST.over, play: PLAY.over, fire: FIRE.ends, guard: GUARD.over, taunt: TAUNT.over, hit: FLINCH.over, hammer: HAMMER.over, stir: STIR.over, jump: JUMP.spring + JUMP.land };
+const ACT_OVER: Record<Act["kind"], number> = { strike: SWING.over, stab: THRUST.over, pounce: POUNCE.over, heavy: SWEEP.over, twin: TWIN.over, cast: CAST.over, play: PLAY.over, fire: FIRE.ends, guard: GUARD.over, taunt: TAUNT.over, hit: FLINCH.over, hammer: HAMMER.over, stir: STIR.over, jump: JUMP.spring + JUMP.land, ...EMOTE_OVER };
 /** When each kind of blow lands. */
 const ACT_HIT = { strike: SWING.hit, stab: THRUST.hit, pounce: POUNCE.hit, heavy: SWEEP.hit, twin: TWIN.hit };
 /**
@@ -2561,6 +2579,91 @@ function biped(top: THREE.Group, parts: Part[], elbow = ELBOW) {
       sweep.dir.set(-0.2 * Math.cos(a), -0.68, 0.72 - 0.12 * Math.sin(a)).normalize();
       wield(w, false);
       if (levels.length === 0) reach(armL.joint, foreL.joint, -elbow, elbow - fist, sweep.grip.addScaledVector(sweep.dir, -2.6), sweep.poleL, w);
+      return;
+    }
+    if (act.kind === "wave") {
+      // The free hand (the left) up beside the head, the elbow out and down, rocked from side to side.
+      const up = along(WAVE.up, t);
+      const rock = Math.sin(t * 11) * up;
+      sweep.grip.copy(armL.joint.position).add(sweep.side.set(2.4 + 0.9 * rock, 4.6, 0.9));
+      sweep.lead.set(1, -0.7, 0.1);
+      reach(armL.joint, foreL.joint, -elbow, elbow - fist, sweep.grip, sweep.lead, up);
+      head.joint.rotation.y -= 0.12 * up;
+      top.rotation.z -= 0.05 * up;
+      return;
+    }
+    if (act.kind === "cheer") {
+      // Both fists flung up in a V, clear of the head, shaken, and a hop or two on bent knees.
+      const up = along(CHEER.up, t);
+      const hop = Math.max(0, Math.sin((t - 0.2) * 9)) * up;
+      const shake = 0.5 * Math.sin(t * 14) * up;
+      sweep.lead.set(1, 0, -0.4);
+      sweep.grip.copy(armL.joint.position).add(sweep.side.set(4.2, 8 + shake, 1.2));
+      reach(armL.joint, foreL.joint, -elbow, elbow - fist, sweep.grip, sweep.lead, up);
+      sweep.lead.set(-1, 0, -0.4);
+      sweep.grip.copy(armR.joint.position).add(sweep.side.set(-4.2, 8 - shake, 1.2));
+      reach(armR.joint, foreR.joint, -elbow, elbow - fist, sweep.grip, sweep.lead, up);
+      // Whatever each hand holds stands straight up beside the head, as it would in the torso at rest, not swung
+      // over with the arm into the face: the hold undoes the arm's turn.
+      for (const [arm, fore, held] of [[armL, foreL, heldL], [armR, foreR, heldR]] as const) {
+        sweep.hold.copy(arm.joint.quaternion).multiply(fore.joint.quaternion).invert();
+        held.joint.quaternion.slerp(sweep.hold, up);
+      }
+      head.joint.rotation.x -= 0.25 * up;
+      knees(0.18 * up * (1 - hop));
+      top.position.y += 0.9 * hop;
+      return;
+    }
+    if (act.kind === "bow") {
+      // The right hand to the chest, the left swept back, and a bend at the waist with the head down.
+      const down = along(BOW.down, t);
+      bow(0.5 * down, 0);
+      head.joint.rotation.x += 0.25 * down;
+      sweep.grip.set(0.4, 6.4, 3.1);
+      sweep.lead.set(-1, -0.6, 0);
+      reach(armR.joint, foreR.joint, -elbow, elbow - fist, sweep.grip, sweep.lead, down);
+      armL.joint.rotation.x += 0.6 * down;
+      armL.joint.rotation.z += 0.2 * down;
+      return;
+    }
+    if (act.kind === "breakdance") {
+      const down = along(BREAK.down, t);
+      const k = Math.min(1, Math.max(0, (t - BREAK.spin[0]) / (BREAK.spin[1] - BREAK.spin[0])));
+      top.rotation.y += k * BREAK.turns * Math.PI * 2;
+      // Low to the floor, leant over onto the planted hand.
+      top.rotation.z += 0.38 * down;
+      knees(1.05 * down);
+      bow(0.6 * down, 0);
+      // The left hand planted on the ground beside the feet, taking the weight.
+      sweep.grip.copy(armL.joint.position).add(sweep.side.set(2.2, -8, 2));
+      sweep.lead.set(1, 0, -0.5);
+      reach(armL.joint, foreL.joint, -elbow, elbow - fist, sweep.grip, sweep.lead, down);
+      // The right leg swept out wide and straight, kicking as it goes round; the right arm flung out for balance.
+      const kick = 0.25 * Math.sin(t * 10) * down;
+      thighR.joint.rotation.z -= 1.45 * down + kick;
+      shinR.joint.rotation.x -= 1.45 * down;
+      armR.joint.rotation.z -= 1.3 * down;
+      head.joint.rotation.x -= 0.2 * down;
+      return;
+    }
+    if (act.kind === "dance") {
+      // A jig: hopping from foot to foot, each knee lifted in turn, the arms pumping and the body swaying with it.
+      const up = along(DANCE.up, t);
+      const ph = t * DANCE.beat * Math.PI * 2;
+      const side = Math.sin(ph);
+      const hop = Math.abs(Math.sin(ph)) * up;
+      thighL.joint.rotation.x -= Math.max(0, side) * 1.1 * up;
+      shinL.joint.rotation.x += Math.max(0, side) * 1.5 * up;
+      thighR.joint.rotation.x -= Math.max(0, -side) * 1.1 * up;
+      shinR.joint.rotation.x += Math.max(0, -side) * 1.5 * up;
+      top.position.y += 0.7 * hop;
+      top.rotation.z += 0.12 * side * up;
+      top.rotation.y += 0.25 * Math.sin(ph / 2) * up;
+      head.joint.rotation.z -= 0.1 * side * up;
+      armL.joint.rotation.z += (1.1 + 0.6 * side) * up;
+      armR.joint.rotation.z -= (1.1 - 0.6 * side) * up;
+      foreL.joint.rotation.x -= 0.6 * up;
+      foreR.joint.rotation.x -= 0.6 * up;
       return;
     }
     if (act.kind === "taunt") {
@@ -7544,6 +7647,11 @@ export interface Figure {
    * minute, and returns 0. A creature does nothing and returns 0.
    */
   work(how: "hammer" | "stir"): number;
+  /**
+   * Wave, cheer, bow, dance or breakdance where it stands (see EMOTES). A dance or a breakdance stops when the figure walks off; anything else
+   * asked of it (a blow, a jump) takes over at once. A creature does nothing.
+   */
+  emote(emote: Emote): void;
   /** Take a blow: the figure flinches from it. */
   hit(): void;
   /**
@@ -7715,6 +7823,8 @@ export function makeFigure(kind: string, look: Look, outfit?: Outfit, opts: Figu
     if (asked) [action, asked] = [{ kind: asked, at: p.time, n: ++actions, air: asked === "jump" ? airtime : 0 }, null];
     const since = action ? p.time - action.at : 0;
     if (action && (since < 0 || since >= lasts(action.kind) + action.air)) action = null;
+    // Walking off ends a dance (or any emote) at once.
+    if (action && p.walking && action.kind in EMOTE_OVER) action = null;
     const want = p.walking ? Math.sin(p.stride * 3.6) : 0;
     swing += (want - swing) * Math.min(1, dt * 20);
     const rowing = p.rowing !== undefined && !!rig.hands && !p.lying;
@@ -7861,6 +7971,9 @@ export function makeFigure(kind: string, look: Look, outfit?: Outfit, opts: Figu
       if (!rig.acts) return 0;
       asked = "taunt";
       return TAUNT.roar;
+    },
+    emote(emote) {
+      if (rig.acts) asked = emote;
     },
     hit() {
       asked = "hit";

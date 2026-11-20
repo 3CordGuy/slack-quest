@@ -16,7 +16,7 @@ import "./camera.css";
 import { PINCH_PAN_SLACK, followIconSvg, readFollow, writeFollow } from "./cameraFollow";
 import type { HexPos } from "@gantt-quest/core";
 import { hexDistance } from "@gantt-quest/core";
-import { lookStep, lookYaw, BASE_HEIGHT, HARBOR_HEART_AT, BIG_REACH, ENEMIES, HEX_DIRS, SEATS, tileCost, WALL_FACE_HALF, WALL_ITEM_BOTTOM, WALL_ITEM_TOP, hexAt, xpProgress, reachable, tileAt, wallFace, wallFaces, type Biome, type Clime, type Outfit, type Poi, type Tile, type WorldMap } from "@gantt-quest/world";
+import { lookStep, lookYaw, BASE_HEIGHT, HARBOR_HEART_AT, BIG_REACH, ENEMIES, HEX_DIRS, SEATS, tileCost, WALL_FACE_HALF, WALL_ITEM_BOTTOM, WALL_ITEM_TOP, hexAt, xpProgress, reachable, tileAt, wallFace, wallFaces, type Biome, type Clime, type Emote, type Outfit, type Poi, type Tile, type WorldMap } from "@gantt-quest/world";
 import { fancy, fancyGrass } from "./fancy";
 import { NightLife } from "./nightlife";
 import { Storm } from "./storm";
@@ -31,6 +31,7 @@ import { HIDES, hidingMaterial } from "./silhouette";
 import { BOAT_SCALE, OARLOCKS, ROWER_SEAT, aimOar, rowboatModel, shipOar } from "./rowboat";
 import { Rise } from "./rise";
 import { gaze } from "../gaze";
+import { emotes } from "../emotes";
 import { NIGHT, VEIL_CLEAR_S, Veil } from "./veil";
 import { HOLD_MS, notShowing, nowShowing, takeOver, type Carried } from "./handover";
 import { placeLoading, placeReady, placesLoading } from "./preload";
@@ -837,6 +838,7 @@ export class WorldRenderer {
   /** Which way everyone else's hero is looking (a turn about y), as their players' pointers have it; gone once they walk. */
   private looks = new Map<string, number>();
   private unhearLooks: (() => void) | null = null;
+  private unhearEmotes: (() => void) | null = null;
   /** The last look of your own hero's that was sent, and when: only a change is sent, and not too often. */
   private lookSent = -1;
   private lookSentAt = 0;
@@ -1129,6 +1131,7 @@ export class WorldRenderer {
     this.renderer.localClippingEnabled = true;
     if (!this.opts.backdrop) {
       this.unhearLooks = gaze.onLooked((id, step) => this.looks.set(id, lookYaw(step)));
+      this.unhearEmotes = emotes.onEmoted((id, emote) => this.emote(id, emote));
       this.veil = new Veil();
       this.rise = new Rise();
     }
@@ -1380,6 +1383,7 @@ export class WorldRenderer {
     cancelAnimationFrame(this.raf);
     this.veil?.dispose();
     this.unhearLooks?.();
+    this.unhearEmotes?.();
     this.ear.close();
     this.resizeObserver.disconnect();
     this.coverObserver?.disconnect();
@@ -1944,6 +1948,12 @@ export class WorldRenderer {
     const unit = this.units.get(actorId);
     if (unit && !unit.lying) unit.figure.taunt();
     sounds.attack(name, "melee", this.fighter(actorId), this.spot(actorId));
+  }
+
+  /** An emote (see EMOTES), where the unit stands. Not from one lying down; a dance stops when it walks. */
+  emote(unitId: string, emote: Emote) {
+    const unit = this.units.get(unitId);
+    if (unit && !unit.lying) unit.figure.emote(emote);
   }
 
   /** A guard put up: the unit braces behind its shield, or what it has in hand. */

@@ -45,6 +45,11 @@ const ACTIONS = [
   ["guard", "Guard", "Braced: knees bent and the shield brought up in front; with no shield, what is in hand and the other forearm. Shield Wall and Hold the Line."],
   ["jump", "Jump", "The jump from tile to tile: a crouch with the arms drawn back, a spring, the knees drawn up over the top and the feet put out to land, then a deep crouch on landing. Here it goes straight up and down; in the game it is carried across the tiles."],
   ["hit", "Flinch", "Taking a blow: thrown back, arms flung wide, then gathered again."],
+  ["wave", "Wave", "Emote: the free hand raised beside the head and rocked side to side."],
+  ["cheer", "Cheer", "Emote: both fists thrown up, with a hop or two."],
+  ["bow", "Bow", "Emote: a hand to the chest, the other swept back, and a bend at the waist."],
+  ["dance", "Dance", "Emote: a jig, hopping foot to foot with the knees lifted and arms pumping, for five seconds (walking stops it)."],
+  ["breakdance", "Breakdance", "Emote: down on one hand, spun round six times with a leg swept out, and back up (walking stops it)."],
   ["lean", "Lean", "The plain lean, easing off: what every attack used to be, and a stomp still is."],
 ] as const;
 type Action = (typeof ACTIONS)[number][0];
@@ -198,6 +203,10 @@ export default function FigureLab({ me, onClose }: { me: Me; onClose(): void }) 
         const wait = figure.jump(JUMP_AIR);
         sprang = t + wait;
         return wait > 0 ? `The feet leave the ground ${wait.toFixed(2)}s in, and come down ${(wait + JUMP_AIR).toFixed(2)}s in.` : "A creature: it has no crouch, and springs at once.";
+      }
+      if (action === "wave" || action === "cheer" || action === "bow" || action === "dance" || action === "breakdance") {
+        figure.emote(action);
+        return "";
       }
       if (action === "guard") {
         const wait = figure.guard();

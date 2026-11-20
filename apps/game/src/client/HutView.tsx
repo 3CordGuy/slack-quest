@@ -867,7 +867,7 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
           {hut.chat.map((l, i) => <div key={i} className="line hero"><strong>{l.name}: </strong>{l.text}</div>)}
           <div ref={chatEnd} />
         </div>
-        <ChatInput placeholder="Say something…" onSay={(text) => hut.send({ type: "say", text })} />
+        <ChatInput placeholder="Say something…" onSay={(text) => hut.send({ type: "say", text })} onEmote={(emote) => hut.send({ type: "emote", emote })} />
       </DragPanel>
 
       <HudBar

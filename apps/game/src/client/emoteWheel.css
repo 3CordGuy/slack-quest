@@ -1,0 +1,23 @@
+/* The emote wheel (EmoteWheel.tsx). */
+.emote-button { flex: none; min-width: 34px; padding: 2px 8px; display: grid; place-items: center; }
+.emote-veil { position: fixed; inset: 0; z-index: 900; }
+.emote-wheel { position: absolute; width: 0; height: 0; }
+.emote-wheel::before {
+  content: ""; position: absolute; left: -116px; top: -116px; width: 232px; height: 232px; border-radius: 50%;
+  background: radial-gradient(circle, var(--panel-lo, #1e1610) 0 30%, rgba(23, 19, 16, 0.94) 31% 100%);
+  border: 2px solid var(--brass-lo, #8a6a2a); box-shadow: 0 0 0 2px var(--out, #000), 0 6px 0 rgba(0, 0, 0, 0.35);
+  pointer-events: none;
+}
+.emote-hub {
+  position: absolute; transform: translate(-50%, -50%); width: 64px; text-align: center; font-size: 11px;
+  color: var(--gold, #e3b757); pointer-events: none; text-transform: uppercase; letter-spacing: 0.05em;
+}
+.emote-slice {
+  position: absolute; transform: translate(-50%, -50%); width: 66px; height: 54px; padding: 2px;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px;
+  border-radius: 12px; background: var(--panel-hi, #211b16);
+}
+.emote-slice.hot { border-color: var(--gold, #e3b757); background: var(--panel-lo, #1e1610); transform: translate(-50%, -50%) scale(1.12); }
+.emote-glyph { display: grid; place-items: center; height: 26px; color: var(--gold, #e3b757); }
+.emote-glyph .pixel-glyph { display: block; image-rendering: pixelated; }
+.emote-name { font-size: 11px; }

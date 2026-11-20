@@ -132,6 +132,7 @@ import { TacticsLayer, type Overlay } from "./render/TacticsLayer";
 import { spriteDataUrl } from "./render/sprites";
 import { WorldRenderer, hexToWorld, tileTop, type RenderState } from "./render/WorldRenderer";
 import { HudBar, type HudSlot } from "./ui/Hud";
+import { EmoteWheel } from "./EmoteWheel";
 import { useZone, type ZoneSend } from "./useZone";
 import { Icon } from "./items";
 import { label } from "./labels";
@@ -2434,6 +2435,7 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
   // What can be done right here, as buttons: over the rack out of a fight, over the turn bar in one.
   const quick = (
     <>
+        {!fighting && !act.down && <EmoteWheel onEmote={zone.emote} />}
         {fighting && myTurn && joinable(asState(state), act).map((s) => (
           <button key={`join:${s.bard.id}`} className="small" style={{ fontSize: 12, padding: "1px 7px", color: CONDITION_INFO[s.song.kind].color, borderColor: CONDITION_INFO[s.song.kind].color }} disabled={!canPay(commonCost("join", act.kind))} title={joinTip(s.bard.name, s.song.kind, !!act.summon)} onClick={() => common("join", { target: s.bard.id })}>
             ♪ Join song
@@ -2794,6 +2796,8 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
         }}
         // While the trade table is open it has the bag beside it already.
         onBag={() => !tradeWith && setBag((open) => !open)}
+        // In a fight the emote wheel hangs off the side of the hotbar (out of one it is with the quick buttons).
+        emote={fighting && !act.down ? <EmoteWheel onEmote={zone.emote} tab /> : undefined}
         menu={<OptionsMenu title={state.options.name ?? `Map ${code}`} subtitle={<>{state.options.biome} · {state.options.size}{state.options.tier ? ` · ${state.options.tier} ${state.options.tier === 1 ? "ring" : "rings"} out` : ""}</>} actions={[caves
           ? {
               label: "Leave the cave",

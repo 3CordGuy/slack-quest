@@ -123,6 +123,8 @@ interface Props {
   turn?: { seconds: number | null; onEnd?(): void; waitingFor?: string };
   /** Resting, where it can be done. */
   rest?: { run(): void; hint: string; disabled?: boolean };
+  /** The emote wheel's button (EmoteWheel), in the lower tab off the left end: only where there is no resting (on a map, in a fight). */
+  emote?: ReactNode;
   onBag?(): void;
   /** Why the bag cannot be opened right now. */
   bagBlocked?: string;
@@ -148,7 +150,7 @@ function Tip({ name, line, more, keys }: { name: string; line?: string; more?: s
   );
 }
 
-export function HudBar({ me, place, children, hp, meter, pips = [], chips, slots, onSlotMove, onSlotMenu, torch, turn, rest, onBag, bagBlocked, onBook, menu }: Props) {
+export function HudBar({ me, place, children, hp, meter, pips = [], chips, slots, onSlotMove, onSlotMenu, torch, turn, rest, emote, onBag, bagBlocked, onBook, menu }: Props) {
   const c = me.character;
   // The pack is read out of its stored form (each row's JSON) when it changes, not every time the bar is drawn.
   const items = useMemo(() => me.inventory.map(toOwned), [me.inventory]);
@@ -431,12 +433,17 @@ export function HudBar({ me, place, children, hp, meter, pips = [], chips, slots
           <Icon name="sea-bag" color="#e0b12e" size={40} />
         </button>
 
-        {/* The tabs off each end: the logbook and rest on the left, the bag's key and the menu on the right. */}
+        {/* The tabs off each end: the logbook and rest (or the emote wheel) on the left, the bag's key and the menu on the right. */}
         <button className={`hud-tab ${news ? "news" : ""}`} style={tab("left", 0)} aria-label="Logbook" disabled={!onBook} onClick={onBook} {...hover(4, <Tip name="Logbook" line={news ? "Something to spend or pick" : "Your hero, stats and skills"} keys="L" />)}>L</button>
         {rest && (
           <button className="hud-tab" style={tab("left", 1)} aria-label="Rest" disabled={rest.disabled} onClick={rest.run} {...hover(4, <Tip name="Rest" line={rest.hint} />)}>
             <PixelIcon rows={FIRE} size={11} />
           </button>
+        )}
+        {!rest && emote && (
+          <span className="hud-tab emote" style={tab("left", 1)} {...hover(4, <Tip name="Emotes" line="Wave, cheer, bow, dance or breakdance. It costs nothing and takes no turn." keys="G" />)}>
+            {emote}
+          </span>
         )}
         <button className="hud-tab" style={tab("right", 0)} aria-label="Sea bag" disabled={!onBag || !!bagBlocked} onClick={onBag} {...hover(RACK.w - 4, <Tip name="Sea bag" line={bagBlocked} keys="I" />)}>I</button>
         <span className="hud-tab cog" style={tab("right", 1)} {...hover(RACK.w - 4, <Tip name="Menu" line="Settings, your account and the way out" keys="Esc" />)}>{menu}</span>

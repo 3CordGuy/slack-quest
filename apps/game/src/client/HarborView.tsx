@@ -637,7 +637,7 @@ export function HarborView({ me, refresh, resting = false }: { me: Me; refresh()
           {harbor.chat.map((l, i) => <div key={i} className="line hero"><strong>{l.name}: </strong>{l.text}</div>)}
           <div ref={chatEnd} />
         </div>
-        <ChatInput placeholder="Say something to the crew…" onSay={(text) => harbor.send({ type: "say", text })} />
+        <ChatInput placeholder="Say something to the crew…" onSay={(text) => harbor.send({ type: "say", text })} onEmote={(emote) => harbor.send({ type: "emote", emote })} />
       </DragPanel>
 
       {/* Put away while a gathering outing (fishing, felling, the quarry) has the view: nothing on it is any use

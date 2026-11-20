@@ -12,7 +12,8 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { HexPos } from "@gantt-quest/core";
-import type { HarborPlayer, LookMessage, XpMessage } from "@gantt-quest/world";
+import type { EmoteMessage, HarborPlayer, LookMessage, XpMessage } from "@gantt-quest/world";
+import { emotes } from "./emotes";
 import { PROFILE } from "./api";
 import { gaze } from "./gaze";
 
@@ -163,6 +164,7 @@ export type PeopleMessage =
   | { type: "placed"; id: string; pos: HexPos }
   | { type: "said"; id: string; name: string; text: string }
   | LookMessage
+  | EmoteMessage
   | XpMessage;
 
 /**
@@ -208,6 +210,8 @@ export function useRoomPeople(onMoved: (id: string, path: HexPos[]) => void, onX
       queueMicrotask(() => xpSeen.current?.(msg));
     } else if (msg.type === "looked") {
       gaze.looked(msg.id, msg.look);
+    } else if (msg.type === "emoted") {
+      emotes.emoted(msg.id, msg.emote);
     } else if (msg.type === "said") {
       setChat((c) => [...c, { name: msg.name, text: msg.text }].slice(-30));
       overhead(msg.id, msg.text);
