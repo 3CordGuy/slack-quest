@@ -134,9 +134,9 @@ export const LOOKS: Record<string, Look> = {
   cultist: { skin: "#a9b8b2", hair: "#1f2a28", body: "#2a4a44", legs: "#1a2a28", accent: "#5fe0d0", hat: "hood", hatColor: "#1f4a46", weapon: "coral_staff", glowEyes: "#5fe0d0", mask: "#24302f", barnacles: true, teeth: "#5fe0d0", coat: true, coatTrim: "#1a3a36" },
   // The Brute is a dockside bruiser: bare arms, a band round the brow, a leather vest and straps, and an axe.
   brute: { skin: "#c9a27c", hair: "#2a1c14", body: "#8a7a62", legs: "#3a2e22", accent: "#b9433d", hat: "none", weapon: "pager_axe", sleeveless: true, bandana: "#3a3030", vest: "#5a3d26", straps: "#3a2a1c", boots: "#2a2220" },
-  // The Archer keeps the lookout with a blunderbuss: a wide-brimmed hat, a long oilskin coat over a dark shirt, and
-  // a strap across the chest.
-  archer: { skin: "#d9a67c", hair: "#3a2a20", body: "#3a3a34", legs: "#33402a", accent: "#e8dcc0", hat: "brim", hatColor: "#3a2f22", weapon: "blunderbuss", coat: true, coatColor: "#9a7f3a", coatTrim: "#6b5828", straps: "#4a3426", boots: "#2a2220" },
+  // The Archer keeps the lookout with a bow: a weathered hood, a leather vest over an olive shirt, and a strap
+  // across the chest.
+  archer: { skin: "#d9a67c", hair: "#3a2a20", body: "#5a6440", legs: "#3a3226", accent: "#e8dcc0", hat: "hood", hatColor: "#3d4a34", weapon: "bow", vest: "#5a3d26", straps: "#3a2a1c", boots: "#2a2220" },
   // The Guardian is a statue raised from the seabed: grey stone crusted with barnacles, kelp wound round its waist,
   // and eyes alight.
   guardian: { skin: "#9aa4b2", hair: "#7b8494", body: "#6b7280", legs: "#4b5563", accent: "#7fe3ff", hat: "none", weapon: "none", barnacles: true, sash: "#3d6b2e", glowEyes: "#7fe3ff" },

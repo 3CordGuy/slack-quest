@@ -109,8 +109,8 @@ import {
   type GroundSurface,
   type Poi,
   type Roll,
-  type Budget,
   type Throwable,
+  type Budget,
   type Unit,
   type ZoneEvent,
   type ShantyKind,
@@ -2534,7 +2534,7 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
             if (!u || u.lost) return [];
             const hidden = !!state.dark?.includes(id);
             return [{
-              id, name: u.name, side: u.side, portrait: hidden ? "" : spriteDataUrl(u.kind, u.outfit), hp: seen(u).hp, maxHp: u.maxHp, shield: shieldOf(seen(u)), init: enc.init[id] ?? 0, ...(enc.tie?.[id] !== undefined && Number.isInteger(enc.tie[id]) ? { tie: enc.tie[id] } : {}),
+              id, name: u.name, side: u.side, portrait: hidden ? "" : spriteDataUrl(u.kind, u.outfit, false, u.side === "hero" ? undefined : u.id), hp: seen(u).hp, maxHp: u.maxHp, shield: shieldOf(seen(u)), init: enc.init[id] ?? 0, ...(enc.tie?.[id] !== undefined && Number.isInteger(enc.tie[id]) ? { tie: enc.tie[id] } : {}),
               turn: spot ? id === spot : enc.acting.includes(id) && !enc.done.includes(id), spent: !spot && enc.acting.includes(id) && enc.done.includes(id), down: u.down, mine: mine.some((m) => m.id === id), ...(hidden ? { hidden } : {}),
             }];
           })}

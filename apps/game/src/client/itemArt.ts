@@ -408,15 +408,21 @@ const ART: Record<string, Art> = {
     p.r(8, 2, 1, 2, C.shine);
   },
   "bilge-chalice": (p) => {
-    // A gold chalice brimming with glowing bilge, bubbles rising and a drip down the side.
-    spans(p, C.gold, [[4, 3, 12], [5, 3, 12], [6, 4, 11], [7, 4, 11], [8, 5, 10], [9, 6, 9]]);
-    p.r(4, 3, 8, 1, "#6dff9e");
-    p.r(5, 5, 1, 2, "#f2d675");
-    p.r(7, 10, 2, 4, C.gold);
-    p.r(7, 11, 2, 2, p.accent);
-    spans(p, C.gold, [[14, 5, 10], [15, 4, 11]]);
-    for (const [x, y] of [[6, 1], [9, 0], [8, 2]]) p.r(x, y, 1, 1, "#6dff9e");
-    p.r(12, 5, 1, 3, "#6dff9e");
+    // The Bilge Chalice: a dented tin mug brimming with glowing bilge, slopping over the rim, bubbles rising, rust
+    // running down it and a lanyard in the accent through its handle.
+    p.r(2, 5, 9, 10, "#9aa1a8");
+    p.r(2, 5, 2, 10, "#b6bcc2");
+    p.r(9, 5, 2, 10, "#7f868d");
+    p.r(2, 4, 9, 1, "#6f767d");
+    p.r(2, 15, 9, 1, "#6f767d");
+    p.r(3, 4, 7, 1, "#6dff9e");
+    p.r(8, 5, 1, 3, "#6dff9e");
+    p.r(5, 6, 1, 3, "#8a5a3a");
+    p.r(4, 12, 1, 1, "#8a5a3a");
+    spans(p, "#9aa1a8", [[6, 11, 13], [7, 13, 13], [8, 13, 13], [9, 13, 13], [10, 13, 13], [11, 11, 13]]);
+    p.r(13, 12, 1, 3, p.accent);
+    p.r(12, 14, 1, 1, p.accent);
+    for (const [x, y] of [[4, 2], [7, 1], [5, 0]]) p.r(x, y, 1, 1, "#6dff9e");
   },
   "round-shield": (p) => {
     spans(p, C.iron, [[2, 5, 10], [3, 3, 12], [4, 2, 13], [5, 2, 13], [6, 2, 13], [7, 2, 13], [8, 2, 13], [9, 2, 13], [10, 2, 13], [11, 2, 13], [12, 3, 12], [13, 5, 10]]);

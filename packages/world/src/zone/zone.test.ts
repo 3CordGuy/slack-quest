@@ -373,30 +373,39 @@ describe("starting a fight", () => {
 // ---------- turns ----------
 
 describe("turns", () => {
-  it("gives heroes next to each other in the order one shared turn", () => {
+  /** Ann and Bo in a fight with a dummy, on the initiatives given, with the dummy's turn just over: the round comes round to them. */
+  function rolled(init: { ann: number; bo: number }, share = true) {
     let state = board();
     state.aiOff = true;
+    // Whether heroes side by side in the order take a turn together is the tests' own switch: in play nobody does.
+    state.shareTurns = share;
     hero(state, "ann", "qa_paladin", at(5, 6));
     hero(state, "bo", "qa_paladin", at(5, 7));
-    enemy(state, "dummy", at(9, 6));
+    const dummy = enemy(state, "dummy", at(9, 6));
     state = provoke(must(state, { type: "move", by: "ann", unit: "ann", to: at(6, 6) }));
-    const enc = state.encounter!;
-    const a = enc.order.indexOf("ann");
-    const b = enc.order.indexOf("bo");
-    if (Math.abs(a - b) === 1) {
-      while (state.encounter!.acting.length !== 2) state = must(state, { type: "timeout" });
-      expect(new Set(state.encounter!.acting)).toEqual(new Set(["ann", "bo"]));
-      // Either can go first, and the turn passes only when both have ended theirs.
-      state = must(state, { type: "end_turn", by: "bo", unit: "bo" });
-      expect(state.encounter!.acting).toContain("ann");
-      expect(fails(state, { type: "end_turn", by: "bo", unit: "bo" })).toMatch(/not your turn/);
-      const turn = state.encounter!.turnNo;
-      state = must(state, { type: "end_turn", by: "ann", unit: "ann" });
-      expect(state.encounter!.turnNo).toBeGreaterThan(turn);
-    } else {
-      // The dummy rolled between them: each has a turn alone.
-      expect(state.encounter!.acting.length).toBe(1);
-    }
+    Object.assign(state.encounter!, { order: ["ann", "bo", dummy.id], init: { ...init, [dummy.id]: 1 }, acting: [dummy.id], done: [dummy.id], budgets: {} });
+    return must(state, { type: "timeout" });
+  }
+
+  it("under the tests' switch for shared turns, gives heroes side by side in the order one shared turn", () => {
+    let state = rolled({ ann: 15, bo: 15 });
+    expect(new Set(state.encounter!.acting)).toEqual(new Set(["ann", "bo"]));
+    // Either can go first, and the turn passes only when both have ended theirs.
+    state = must(state, { type: "end_turn", by: "bo", unit: "bo" });
+    expect(state.encounter!.acting).toContain("ann");
+    expect(fails(state, { type: "end_turn", by: "bo", unit: "bo" })).toMatch(/not your turn/);
+    const turn = state.encounter!.turnNo;
+    state = must(state, { type: "end_turn", by: "ann", unit: "ann" });
+    expect(state.encounter!.turnNo).toBeGreaterThan(turn);
+  });
+
+  it("gives heroes next to each other in the order a turn each, one right after the other, whatever they rolled", () => {
+    let state = rolled({ ann: 15, bo: 14 }, false);
+    expect(state.encounter!.acting).toEqual(["ann"]);
+    expect(fails(state, { type: "end_turn", by: "bo", unit: "bo" })).toMatch(/not your turn/);
+    const turn = state.encounter!.turnNo;
+    state = must(state, { type: "end_turn", by: "ann", unit: "ann" });
+    expect(state.encounter).toMatchObject({ turnNo: turn + 1, acting: ["bo"] });
   });
 
   it("spends AP on anything, in any order, and refuses what it cannot pay for", () => {
