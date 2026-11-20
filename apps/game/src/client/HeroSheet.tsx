@@ -28,7 +28,8 @@ import {
   type PublicHero,
   type Slot, abilitiesFor, } from "@gantt-quest/world";
 import type { StatKey } from "@gantt-quest/core";
-import { api } from "./api";
+import { api, type Me } from "./api";
+import { LogbookButton } from "./Logbook";
 import { ChangeLook, LOOK_CHANGED } from "./ChangeLook";
 import { perkText } from "./hutDrops";
 import { Icon, ItemDetail, ItemTile } from "./items";
@@ -90,9 +91,11 @@ interface Props {
   onClose(): void;
   /** On a voyage: their HP and focus as they are now. */
   live?: LiveVitals;
+  /** Your own hero as the logbook reads them, and how to open it: a button on your own sheet. */
+  logbook?: { hero: NonNullable<Me["character"]>; open(): void };
 }
 
-export function HeroSheet({ id, you, onClose, live }: Props) {
+export function HeroSheet({ id, you, onClose, live, logbook }: Props) {
   // Bumped after they save a new look, to read their sheet again (with any starting clothes they were given).
   const [reload, setReload] = useState(0);
   const { hero, error } = useHero(id, reload);
@@ -254,6 +257,8 @@ export function HeroSheet({ id, you, onClose, live }: Props) {
           <span>{hero.xp} / {need} XP</span>
         </div>
       </div>
+      {/* Your own sheet: the way into the logbook, under the XP it is spent from. */}
+      {hero.id === you && logbook && <LogbookButton hero={logbook.hero} onOpen={logbook.open} wide />}
 
       <div className="hs-doll">
         <div className="hs-col">{LEFT.map(slot)}</div>

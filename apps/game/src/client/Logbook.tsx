@@ -26,6 +26,7 @@ import {
   pendingTraitTiers,
   statPct,
   traitsFor,
+  unlockedFor,
   xpToNext,
 } from "@gantt-quest/world";
 import { api, type Me, type StatKey } from "./api";
@@ -37,6 +38,34 @@ import { spriteDataUrl, withLook } from "./render/sprites";
 import "./book.css";
 
 type Page = "stats" | "traits" | "skills";
+
+type Hero = NonNullable<Me["character"]>;
+
+/**
+ * Whether the logbook has something waiting: points to spend, a trait to pick, or a class ability slot
+ * left empty while there is an opened ability to put in it. Marks every way into the logbook.
+ */
+export function logbookNews(c: Hero): boolean {
+  if (c.unspent_points > 0) return true;
+  if (pendingTraitTiers(c.class_id, c.level, parseTraits(c.traits)).length > 0) return true;
+  return abilitySlotOpen(c);
+}
+
+/** A class ability slot gives nothing while there is an opened ability not yet slotted. */
+function abilitySlotOpen(c: Hero): boolean {
+  const slotted = classAbilitiesOf(c.class_id, c.level, parseAbilityLoadout(c.ability_loadout));
+  return slotted.length < Math.min(ABILITY_SLOTS, unlockedFor(c.class_id, c.level).length);
+}
+
+/** The way into the logbook from another panel: "Assign skills and stats", with a diamond when something is waiting. */
+export function LogbookButton({ hero, onOpen, wide = false }: { hero: Hero; onOpen(): void; /** Stretched across the panel it sits in. */ wide?: boolean }) {
+  const news = logbookNews(hero);
+  return (
+    <button type="button" className={`small logbook-btn ${wide ? "wide" : ""}`} onClick={onOpen} title={news ? "Something to spend or pick in the logbook (L)" : "Open the logbook (L)"}>
+      Assign skills and stats{news && <i className="news-diamond" aria-label="something waiting" />}
+    </button>
+  );
+}
 
 interface Props {
   me: Me;

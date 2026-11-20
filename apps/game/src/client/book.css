@@ -135,3 +135,8 @@
 .ability-slot:disabled, .book-pool-item:disabled { opacity: 0.55; cursor: default; }
 .ability-slot small, .book-pool-item small { flex-basis: 100%; font-size: 13px; color: #5a4a30; }
 .book-pool { display: grid; gap: 4px; margin: 4px 0 8px; padding-left: 12px; border-left: 2px solid #c29a4c; }
+
+/* The way into the logbook from the sea bag and your own hero sheet, with a diamond when something waits there. */
+.logbook-btn { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.logbook-btn.wide { display: flex; justify-content: center; width: 100%; margin: 4px 0 2px; }
+.news-diamond { display: inline-block; width: 7px; height: 7px; rotate: 45deg; background: var(--gold); border: 1px solid #000; }

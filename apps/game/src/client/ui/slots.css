@@ -24,6 +24,8 @@
 .run:has(.bag-overlay) .camera-rotate { right: calc(724px * var(--ui-z, 1)); }
 .overlay .bag.panel { --u: 51px; position: relative; pointer-events: auto; width: calc(var(--u) * 12 + 46px); max-width: 100%; max-height: 100%; display: flex; flex-direction: column; gap: 8px; padding: 22px 18px 14px; gap: 10px; }
 .bag-close { position: absolute; top: -6px; right: -6px; width: 30px; height: 30px; font-size: 20px; line-height: 1; z-index: 5; }
+.bag-top { display: flex; align-items: center; gap: 10px; flex: none; }
+.bag-top .bag-close { position: relative; top: auto; right: auto; }
 
 /* The figure's slots: each the size of what it holds, set out as it is worn. */
 .bag-doll {

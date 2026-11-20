@@ -688,7 +688,7 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
       {title && hoverPoi && !panelOpen && <PlaceTitle renderer={renderer} poiId={hoverPoi.id} title={title} />}
       {error && <div className="toast">{error}</div>}
       {note && !error && <div className="toast note">{note}</div>}
-      {sheet && !tradeWith && !chest && me.character && <InventoryScreen me={me} refresh={refreshAll} onClose={() => setSheet(false)} />}
+      {sheet && !tradeWith && !chest && me.character && <InventoryScreen me={me} refresh={refreshAll} onClose={() => setSheet(false)} onLogbook={() => { setSheet(false); setBook(true); }} />}
       {book && me.character && <Logbook me={me} refresh={refreshAll} onClose={() => setBook(false)} />}
       {account && <AccountPanel me={me} refresh={refresh} onClose={() => setAccount(false)} />}
       {notices && <NoticeBoard seen={me.seenRelease} onSeen={() => void refresh()} onClose={() => setNotices(false)} />}
@@ -699,7 +699,7 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
       {fishmonger && me.character && <CatchPanel buyer="market" onGold={() => void refresh()} onClose={() => setFishmonger(false)} />}
       {shop && me.character && <ShopScreen me={me} refresh={refreshAll} onClose={() => setShop(false)} />}
       {me.character && <Trading me={me} partners={board.members.filter((m) => m.id !== you)} withId={tradeWith} onWith={setTradeWith} refresh={refresh} nudge={harbor.trades} />}
-      {heroSheet.open && you && <HeroSheet id={heroSheet.open} you={you} onClose={heroSheet.close} />}
+      {heroSheet.open && you && <HeroSheet id={heroSheet.open} you={you} onClose={heroSheet.close} logbook={me.character ? { hero: me.character, open: () => { heroSheet.close(); setBook(true); } } : undefined} />}
     </div>
   );
 }
