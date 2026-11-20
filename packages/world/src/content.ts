@@ -159,11 +159,11 @@ export const ABILITIES: Record<string, AbilityDef> = {
   bow_shot: { id: "bow_shot", name: "Shot", stat: "dex", rolls: 3, target: "enemy", damage: 7, blurb: "An arrow from the shortbow." },
   take_aim: { id: "take_aim", name: "Take Aim", stat: "dex", rolls: 1, target: "self", blurb: "Steady your hand. Your next roll to hit has advantage." },
   // Ship's guns, for anyone. Pistol: Pistol Shot and Pistol Whip. Blunderbuss: Scattershot and Butt Stroke. Harpoon gun: Harpoon and Barbed Line.
-  pistol_shot: { id: "pistol_shot", name: "Pistol Shot", stat: "dex", rolls: 2, target: "enemy", damage: 11, blurb: "A shot from the pistol, reaching 5 hexes." },
+  pistol_shot: { id: "pistol_shot", name: "Pistol Shot", stat: "dex", rolls: 2, target: "enemy", damage: 8, blurb: "A shot from the pistol, reaching 6 hexes." },
   pistol_whip: { id: "pistol_whip", name: "Pistol Whip", stat: "str", rolls: 1, target: "enemy", damage: 5, blurb: "Crack the butt across an enemy beside you." },
-  scattershot: { id: "scattershot", name: "Scattershot", stat: "dex", rolls: 2, target: "enemy", damage: 12, blurb: "A blast of shot in a cone, 3 hexes long, that catches every enemy in it." },
-  butt_stroke: { id: "butt_stroke", name: "Butt Stroke", stat: "str", rolls: 2, target: "enemy", damage: 7, perfect: { effect: "prone", turns: 1 }, blurb: "Swing the stock at an enemy beside you. On a hit, the target must save or be knocked Prone." },
-  harpoon_shot: { id: "harpoon_shot", name: "Harpoon", stat: "dex", rolls: 2, target: "enemy", damage: 11, blurb: "Fire the harpoon up to 6 hexes. On a hit, the line hauls the target 2 hexes toward you." },
+  scattershot: { id: "scattershot", name: "Scattershot", stat: "dex", rolls: 2, target: "enemy", damage: 10, blurb: "A blast of shot in a cone, 3 hexes long, that catches every enemy in it." },
+  butt_stroke: { id: "butt_stroke", name: "Bludgeon", stat: "str", rolls: 2, target: "enemy", damage: 7, perfect: { effect: "prone", turns: 1 }, blurb: "Swing the stock at an enemy beside you. On a hit, the target must save or be knocked Prone." },
+  harpoon_shot: { id: "harpoon_shot", name: "Harpoon", stat: "dex", rolls: 2, target: "enemy", damage: 8, blurb: "Fire the harpoon up to 6 hexes. On a hit, the line hauls the target 2 hexes toward you." },
   barbed_line: { id: "barbed_line", name: "Barbed Line", stat: "dex", rolls: 2, target: "enemy", damage: 7, perfect: { effect: "slowed", turns: 2 }, blurb: "A barb on a short line, 3 hexes. On a hit, the target must save or be Slowed." },
   tear: { id: "tear", name: "Tear", stat: "dex", rolls: 2, target: "enemy", damage: 8, perfect: { effect: "bleeding", turns: 3 }, blurb: "A tearing swing of the hook. On a hit, the target must save or start Bleeding." },
   snag: { id: "snag", name: "Snag", stat: "dex", rolls: 3, target: "enemy", damage: 8, perfect: { effect: "slowed", turns: 2 }, blurb: "Throw the hook at an enemy up to 3 hexes off. On a hit, the target must save or be Slowed." },
@@ -294,8 +294,8 @@ export const WEAPONS: Record<string, WeaponDef> = {
   bilge_chalice: { id: "bilge_chalice", name: "Bilge Chalice", classId: "data_warlock", abilities: ["vile_splash", "drink_deeply"], looksLike: "grimoire" },
   // Ship's guns: no class of their own. Anyone can find one in loot and fire it.
   pistol: { id: "pistol", name: "Flintlock Pistol", abilities: ["pistol_shot", "pistol_whip"] },
-  blunderbuss: { id: "blunderbuss", name: "Blunderbuss", abilities: ["scattershot", "butt_stroke"] },
-  harpoon_gun: { id: "harpoon_gun", name: "Harpoon Gun", abilities: ["harpoon_shot", "barbed_line"] },
+  blunderbuss: { id: "blunderbuss", name: "Blunderbuss", abilities: ["butt_stroke", "scattershot"] },
+  harpoon_gun: { id: "harpoon_gun", name: "Harpoon Gun", abilities: ["barbed_line", "harpoon_shot"] },
   void_staff: { id: "void_staff", name: "Undertow Staff", classId: "data_warlock", abilities: ["sink", "pull_of_the_deep"] },
 };
 

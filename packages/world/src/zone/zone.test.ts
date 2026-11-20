@@ -5370,25 +5370,29 @@ describe("Ship's guns", () => {
   };
   it("are weapons no class owns, with two abilities each, that a Paladin can carry into a fight", () => {
     expect(WEAPONS.pistol.abilities).toEqual(["pistol_shot", "pistol_whip"]);
-    expect(WEAPONS.blunderbuss.abilities).toEqual(["scattershot", "butt_stroke"]);
-    expect(WEAPONS.harpoon_gun.abilities).toEqual(["harpoon_shot", "barbed_line"]);
+    expect(WEAPONS.blunderbuss.abilities).toEqual(["butt_stroke", "scattershot"]);
+    expect(WEAPONS.harpoon_gun.abilities).toEqual(["barbed_line", "harpoon_shot"]);
+    // The first of each is the plain attack, with no wait.
+    for (const id of ["butt_stroke", "barbed_line"]) expect(TACTICS[id].cooldown, id).toBeUndefined();
+    expect(ABILITIES.butt_stroke.name).toBe("Bludgeon");
     for (const id of ["pistol", "blunderbuss", "harpoon_gun"]) expect(WEAPONS[id].classId, id).toBeUndefined();
     const { state } = duel("dummy", "qa_paladin", at(4, 6), at(8, 6));
     unit(state, "ann").abilities = abilitiesFor("pistol");
     expect(unit(state, "ann").abilities).toContain("pistol_shot");
   });
 
-  it("reach as they say: the pistol 5 hexes, the harpoon 6, the barbed line 3, the whip and butt only beside you", () => {
-    expect(TACTICS.pistol_shot).toMatchObject({ reach: "ranged", range: 5 });
+  it("reach as they say: the pistol 6 hexes, the harpoon 6, the barbed line 3, the whip and butt only beside you", () => {
+    expect(TACTICS.pistol_shot).toMatchObject({ reach: "ranged", range: 6 });
     expect(TACTICS.harpoon_shot).toMatchObject({ reach: "ranged", range: 6, pull: 2, cooldown: 3 });
     expect(TACTICS.barbed_line).toMatchObject({ reach: "ranged", range: 3 });
     expect(TACTICS.pistol_whip).toMatchObject({ reach: "melee", cost: BONUS_AP });
     expect(TACTICS.butt_stroke).toMatchObject({ reach: "melee" });
-    const { state, foe } = gap(5);
+    const { state, foe } = gap(6);
     unit(state, "ann").abilities = ["pistol_shot"];
-    expect(hexDistance(unit(state, "ann").pos, unit(state, foe).pos)).toBe(5);
+    expect(hexDistance(unit(state, "ann").pos, unit(state, foe).pos)).toBe(6);
     expect(checkAbility(state, unit(state, "ann"), "pistol_shot", { target: foe })).toBeNull();
-    unit(state, foe).pos = at(10, 6);
+    unit(state, foe).pos = at(11, 6);
+    expect(hexDistance(unit(state, "ann").pos, unit(state, foe).pos)).toBe(7);
     expect(checkAbility(state, unit(state, "ann"), "pistol_shot", { target: foe })).toMatch(/Out of range/);
   });
 
