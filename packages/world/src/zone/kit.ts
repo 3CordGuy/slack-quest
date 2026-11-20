@@ -55,6 +55,8 @@ export interface Tactic {
   cooldown?: number;
   /** Added to the attack roll. */
   toHit?: number;
+  /** Damage dice set outright, in place of those worked out from the ability's `damage` (abilityDice). The hero's stat, weapon and level still add on top (Pickpocket). */
+  dice?: Dice;
   /** Left on the hexes it covers (or under a single target). `self`: also under the user, when it lands (Sea Slash). */
   surface?: { kind: SurfaceKind; rounds: number; self?: boolean };
   /** Fire: sets light to oil or poison under whatever it hits. */
@@ -348,7 +350,7 @@ export const TACTICS: Record<string, Tactic> = {
   mend: mend(5, { cooldown: 1 }),
   stab: melee({ edge: 3 }),
   eviscerate: melee({ cooldown: 3 }),
-  bow_shot: shot(8),
+  bow_shot: shot(7),
   take_aim: { ...guard(), steady: 1, cooldown: 1 },
   tear: melee(),
   snag: shot(3, { cooldown: 1 }),
@@ -373,8 +375,8 @@ export const TACTICS: Record<string, Tactic> = {
   // Rogue class abilities
   smugglers_route: { cost: 1, reach: "spell", range: ROUTE_RANGE, shape: "self", cooldown: 4, blink: { range: ROUTE_RANGE, carry: true } },
   sneak: { cost: 2, reach: "spell", range: 0, shape: "self", cooldown: 5, hide: SNEAK },
-  pickpocket: melee({ cost: 1, steal: true, cooldown: 1 }),
-  tactical_retreat: melee({ cooldown: 3, blink: { range: RETREAT_RANGE } }),
+  pickpocket: melee({ cost: 1, steal: true, cooldown: 1, dice: { n: 1, d: 6, plus: 0 } }),
+  tactical_retreat: melee({ cooldown: 3, blink: { range: RETREAT_RANGE }, dice: { n: 2, d: 6, plus: 0 } }),
   contraband: mend(5, { cost: 1, cooldown: 4, smuggle: CONTRABAND }),
   // Druid
   thornlash: spell(5),
@@ -452,8 +454,8 @@ export const TACTICS: Record<string, Tactic> = {
 
 export const tacticOf = (ability: string): Tactic => TACTICS[ability] ?? TACTICS.punch;
 
-/** An ability's damage dice: a little under its old number, because the hero's stat, weapon and level are added on top. */
-export const abilityDice = (def: AbilityDef): Dice => diceFor(Math.max(2, (def.damage ?? 0) - 2));
+/** An ability's damage dice: a little under its old number, because the hero's stat, weapon and level are added on top. Or what its tactic sets outright. */
+export const abilityDice = (def: AbilityDef): Dice => TACTICS[def.id]?.dice ?? diceFor(Math.max(2, (def.damage ?? 0) - 2));
 export const healDice = (def: AbilityDef): Dice => diceFor(Math.max(2, (def.heal ?? 0) - 1));
 
 /** What a hero strikes with when an enemy walks out of reach: their first melee ability, or bare hands. */

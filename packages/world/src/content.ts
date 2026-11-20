@@ -155,8 +155,8 @@ export const ABILITIES: Record<string, AbilityDef> = {
   lightning_strike: { id: "lightning_strike", name: "Lightning Strike", stat: "int_stat", rolls: 3, target: "enemy", damage: 12, perfect: { effect: "stunned", turns: 1 }, blurb: "Lightning out of the sky: a heavy blow, 3 harder on anything Wet. On a hit, the target must save or be Stunned." },
   // Rogue weapons. Knives: Stab and Eviscerate. Shortbow: Shot and Take Aim. Gaff Hook: Tear and Snag.
   stab: { id: "stab", name: "Stab", stat: "dex", rolls: 2, target: "enemy", damage: 8, blurb: "A quick stab with the knives. Made with advantage, it finds a gap: 3 more damage." },
-  eviscerate: { id: "eviscerate", name: "Eviscerate", stat: "dex", rolls: 3, target: "enemy", damage: 14, targetEffect: { effect: "bleeding", turns: 3 }, blurb: "Open them up with both knives: a heavy blow, and on a hit the target is Bleeding." },
-  bow_shot: { id: "bow_shot", name: "Shot", stat: "dex", rolls: 3, target: "enemy", damage: 9, blurb: "An arrow from the shortbow." },
+  eviscerate: { id: "eviscerate", name: "Eviscerate", stat: "dex", rolls: 3, target: "enemy", damage: 14, perfect: { effect: "bleeding", turns: 3 }, blurb: "Open them up with both knives: a heavy blow, and on a hit the target must save or start Bleeding." },
+  bow_shot: { id: "bow_shot", name: "Shot", stat: "dex", rolls: 3, target: "enemy", damage: 7, blurb: "An arrow from the shortbow." },
   take_aim: { id: "take_aim", name: "Take Aim", stat: "dex", rolls: 1, target: "self", blurb: "Steady your hand. Your next roll to hit has advantage." },
   // Ship's guns, for anyone. Pistol: Pistol Shot and Pistol Whip. Blunderbuss: Scattershot and Butt Stroke. Harpoon gun: Harpoon and Barbed Line.
   pistol_shot: { id: "pistol_shot", name: "Pistol Shot", stat: "dex", rolls: 2, target: "enemy", damage: 11, blurb: "A shot from the pistol, reaching 5 hexes." },

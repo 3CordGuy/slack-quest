@@ -3293,6 +3293,8 @@ describe("the Rogue's class abilities", () => {
   });
 
   it("Pickpocket: a Bonus action blow that, landing, pays gold equal to your level, once an enemy", () => {
+    // A light cut: plain 1d6, its dice set outright rather than worked out from its damage.
+    expect(abilityDiceFor(ABILITIES.pickpocket)).toEqual({ n: 1, d: 6, plus: 0 });
     let paid = 0;
     let missed = 0;
     for (let seed = 1; seed <= 12; seed++) {
@@ -4695,12 +4697,13 @@ describe("Rogue weapons", () => {
     expect(unit(state, "ann").conditions.some((c) => c.kind === "inspired")).toBe(false);
   });
 
-  it("Eviscerate: a hit always leaves the target Bleeding, no save", () => {
+  it("Eviscerate: a hit leaves the target Bleeding unless it saves", () => {
     const { state, foe } = duel("dummy", "refactor_rogue", at(5, 6), at(7, 6));
     unit(state, "ann").abilities = ["eviscerate"];
     const after = untilHit(state, { type: "use", by: "ann", unit: "ann", ability: "eviscerate", target: foe }, foe);
-    expect(unit(after.state, foe).conditions.some((c) => c.kind === "bleeding")).toBe(true);
-    expect(after.events.some((e) => e.t === "roll" && e.roll.kind === "save")).toBe(false);
+    const save = after.events.find((e) => e.t === "roll" && e.roll.kind === "save");
+    expect(save?.t === "roll" && save.roll.label).toBe("Resist Eviscerate");
+    expect(unit(after.state, foe).conditions.some((c) => c.kind === "bleeding")).toBe(!(save?.t === "roll" && save.roll.ok));
   });
 
   it("Snag: reaches 3 hexes, leaves the target where it is, and Slows it unless it saves", () => {
